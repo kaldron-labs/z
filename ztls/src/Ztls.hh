@@ -57,14 +57,14 @@ template <
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = ZiIOBuf_HeapID{}()>
 using RxBufAlloc =
-  Zi::IOBufAlloc<RxQueue::Node, Size, MaxSize, ZuStringT<HeapID>>;
+  Zi::IOBufBuiltin<RxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
 template <
   unsigned Size = ZiIOBuf_DefltSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = ZiIOBuf_HeapID{}()>
 using TxBufAlloc =
-  Zi::IOBufAlloc<TxQueue::Node, Size, MaxSize, ZuStringT<HeapID>>;
+  Zi::IOBufBuiltin<TxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
 } // namespace Ztls_
 
@@ -131,6 +131,7 @@ struct HubParams {
   }
   HubParams &&errorFn(ErrorFn v) { m_errorFn = ZuMv(v); return ZuMv(*this); }
 
+  ZiMultiplex *multiplex() const { return m_mx; }
   ZiMultiplex *mx() const { return m_mx; }
   Zi::IOBufAllocator *rxAllocator() const { return m_rxAllocator; }
   Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
@@ -337,10 +338,8 @@ class Link :
 public:
   using RxBufAlloc = RxBufAlloc_;
   using TxBufAlloc = TxBufAlloc_;
-  using RxAllocator = Zi::RxTLSBufAllocator<typename RxBufAlloc::Buf,
-    RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxAllocator = Zi::TxTLSBufAllocator<typename TxBufAlloc::Buf,
-    TxBufAlloc::Size, TxBufAlloc::MaxSize>;
+  using RxAllocator = Zi::IOBufAllocator;
+  using TxAllocator = Zi::IOBufAllocator;
   using Cxn = Cxn_;
   using CxnRef = CxnRef_;
   using Rx = ZiRx<Impl, RxBufAlloc>;
@@ -383,6 +382,16 @@ public:
   }
 
   App *app() const { return m_app; }
+  static Zi::IOBufAllocator *rxAllocator(ZiMultiplex *mx) {
+    return mx->allocator<Zi::IOBufType::RxTLS, typename RxBufAlloc::Buf,
+      RxBufAlloc::Size, RxBufAlloc::MaxSize, ZiIOBuf_DefltAlign,
+      typename RxBufAlloc::Heap>();
+  }
+  static Zi::IOBufAllocator *txAllocator(ZiMultiplex *mx) {
+    return mx->allocator<Zi::IOBufType::TxTLS, typename TxBufAlloc::Buf,
+      TxBufAlloc::Size, TxBufAlloc::MaxSize, ZiIOBuf_DefltAlign,
+      typename TxBufAlloc::Heap>();
+  }
   RxAllocator *rxAllocator() const {
     return static_cast<RxAllocator *>(app()->rxAllocator());
   }
@@ -1881,7 +1890,7 @@ protected:
     if (!m_errorFn) m_errorFn = defaultErrorFn();
     if (!validate_(params)) return false;
     m_mx = params.mx();
-    if (!m_mx->allocator(params.rxAllocator()) ||
+    if (params.rxAllocator()->mx() != m_mx ||
 	!allocator(params.txAllocator())) return false;
     m_rxAllocator = params.rxAllocator();
     m_txAllocator = params.txAllocator();
@@ -1890,16 +1899,7 @@ protected:
     m_asyncThread = params.asyncThread() ?
       m_mx->sid(params.asyncThread()) : 0;
 
-    bool ok = ZmBlock<bool>{}([
-      this, params = ZuMv(params), l = ZuFwd<L>(l)
-    ](auto wake) mutable {
-      rxInvoke([
-	this, params = ZuMv(params), l = ZuMv(l), wake = ZuMv(wake)
-      ]() mutable {
-	wake(init_context_(params, l));
-      });
-    });
-    if (!ok) return false;
+    if (!init_context_(params, l)) return false;
     Ztc::HubMgr::add(this);
     m_registered = true;
     return true;
@@ -1942,10 +1942,6 @@ private:
     if (rxThread == txThread) {
       error_(ZeEXCEPT(Error, "Ztls",
 	"TLS Rx and Tx threads must differ"));
-      return false;
-    }
-    if (!params.mx()->running()) {
-      error_(ZeEXCEPT(Error, "Ztls", "multiplexer not running"));
       return false;
     }
     if (params.asyncThread()) {
@@ -1997,13 +1993,7 @@ private:
     m_ctx.cipher_suites = m_cipherSuites;
     m_ctx.server_cipher_preference = 1;
     init_alpn_(params.alpn());
-    if (asyncConfigured_())
-      if (!startAsyncLoop()) return false;
-    if (!l(params)) {
-      stopAsyncLoop();
-      return false;
-    }
-    return true;
+    return l(params);
   }
 
 public:
@@ -2045,13 +2035,14 @@ public:
   }
   bool txInvoked() { return m_mx->invoked(m_txThread); }
 
-  // Register application-owned Tx TLS backing with the underlying Mx.
+  // Validate Tx TLS backing created by the underlying Mx.
   bool allocator(Zi::IOBufAllocator *a) {
-    return a && a->type() == Zi::IOBufType::TxTLS && m_mx && m_mx->allocator(a);
+    return a && a->type() == Zi::IOBufType::TxTLS && m_mx &&
+      a->mx() == m_mx;
   }
 
-  Zi::IOBufAllocator *rxAllocator() const { return m_rxAllocator.ptr(); }
-  Zi::IOBufAllocator *txAllocator() const { return m_txAllocator.ptr(); }
+  Zi::IOBufAllocator *rxAllocator() const { return m_rxAllocator; }
+  Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
 
   void linkConnected_() { }
   void linkDisconnected_() { }
@@ -2128,28 +2119,27 @@ protected:
   }
 
 private:
-  bool startAsyncLoop() {
-    if (!asyncConfigured_() || m_eventLoopStarted) return true;
+  void startAsyncLoop() {
+    if (!asyncConfigured_() || m_eventLoopStarted) {
+      this->started(true);
+      return;
+    }
     m_eventLoop.init(m_mx, m_asyncThread,
       ZiEvent::FailFn{[this](ZeException e) { error_(ZuMv(e)); }});
     m_eventLoopInit = true;
-    bool ok = ZmBlock<bool>{}([this](auto wake) mutable {
-      m_eventLoop.start(ZiEvent::StartFn{
-	[this, wake = ZuMv(wake)](ZiEvent::StartResult result) mutable {
-	  if (result.is<ZiEvent::Exception>()) {
-	    error_(ZuMv(result).p<ZiEvent::Exception>());
-	    wake(false);
-	    return;
+    m_eventLoop.start(ZiEvent::StartFn{
+      [this](ZiEvent::StartResult result) mutable {
+	bool ok = !result.is<ZiEvent::Exception>();
+	if (!ok) error_(ZuMv(result).p<ZiEvent::Exception>());
+	rxRun([this, ok]() {
+	  m_eventLoopStarted = ok;
+	  if (!ok) {
+	    m_eventLoop.final();
+	    m_eventLoopInit = false;
 	  }
-	  wake(true);
-	}});
-    });
-    m_eventLoopStarted = ok;
-    if (!ok) {
-      m_eventLoop.final();
-      m_eventLoopInit = false;
-    }
-    return ok;
+	  this->started(ok);
+	});
+      }});
   }
 
   void stopAsyncLoop() {
@@ -2217,7 +2207,7 @@ private:
 
 protected:
   void start_() {
-    this->started(true);
+    startAsyncLoop();
   }
 
   // ZmEngine hook; public stop(done) retains done until stop_1() calls
@@ -2408,9 +2398,9 @@ private:
 
   // stable after init(); m_errorFn is cleared during final()
   const ZuID			m_id;
-  using AllocatorRef = ZmRef<Zi::IOBufAllocator>;
-  AllocatorRef		m_rxAllocator;
-  AllocatorRef		m_txAllocator;
+  using AllocatorRef = Zi::IOBufAllocator *;
+  AllocatorRef		m_rxAllocator = nullptr;
+  AllocatorRef		m_txAllocator = nullptr;
   ZiMultiplex			*m_mx = nullptr;
   ErrorFn			m_errorFn;
   ptls_context_t		m_ctx{};
@@ -2580,7 +2570,7 @@ struct App : public Server<App> {
 
     void disconnected(bool peer); // Ztls Rx thread
     void connectFailed(bool transient); // I/O Tx thread
-    
+
     // process() should return:
     // +ve - consumed some data and can continue
     // 0   - more data needed - leave buffers queued

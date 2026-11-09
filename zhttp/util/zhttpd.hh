@@ -109,8 +109,6 @@ struct Forward {
 };
 
 struct Options {
-  unsigned		rxRingSize = ZiIOBuf_DefltRxRingSize;
-  unsigned		txRingSize = ZiIOBuf_DefltTxRingSize;
   HdrString		root;
   HdrString		addr{"0.0.0.0"};
   unsigned		port = 8080;
@@ -163,8 +161,6 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
-  (rxRingSize, (CLI::Long<"rx-ring-size">),			UInt32),
-  (txRingSize, (CLI::Long<"tx-ring-size">),			UInt32),
   (root,            (CLI::Arg<1>),						String),
   (addr,            (CLI::Long<"addr">),		String),
   (port,            (CLI::Long<"port">),			UInt32),
@@ -1121,13 +1117,6 @@ inline bool initFileState(State &state, S &error) {
 
 template <typename S>
 inline bool validate(Options &options, S &error) {
-  if (options.rxRingSize < ZiMxParams::MinRingSize ||
-      options.rxRingSize > ZiMxParams::MaxRingSize ||
-      options.txRingSize < ZiMxParams::MinRingSize ||
-      options.txRingSize > ZiMxParams::MaxRingSize) {
-    error = "ring size outside [2, 32768]";
-    return false;
-  }
   if (!options.root) { error = "root required"; return false; }
   if ((options.https || options.http3) && (!options.cert || !options.key)) {
     error = "--https/--http3 require --cert and --key";
@@ -1167,8 +1156,9 @@ public:
 
   bool init(Options, ZeString &);
   void done(ZmFn<void(), ZmFnHeapID<"zhttpd.Done">>);
-  bool startMultiplex();
+  // Register server allocators before starting the multiplexer.
   bool initServer();
+  bool startMultiplex();
   bool startServer();
   bool stopServer();
   void finalServer();

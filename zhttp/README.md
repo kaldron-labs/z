@@ -5,14 +5,18 @@ HTTP/2 uses `Ztls`, and HTTP/3 uses `Zquic`. HPACK, H2, QPACK, H3, ALPN
 selection, physical-session management, and logical request streams remain
 inside `zhttp/src`.
 
-Applications configure their receive policies with
-`Zhttp::HubConfig::rxBufAllocators(params)` after setting `ZiMxParams` ring sizes
-and before constructing the multiplexer. This public configuration operation
-installs the existing QUIC packet Base/capacity and TLS receive geometry in the
-caller-owned parameters. QUIC payload capacity includes recvmsg metadata;
-generic UDP tuning can be too small for an Initial. Pool initialization remains
-at this explicit application configuration boundary, with no live multiplexer
-mutation or allocator registry. Endpoints retain the original receive buffers.
+Initialize HTTP hubs and client pools before starting their `ZiMultiplex`.
+Default hubs own and register their typed receive/transmit allocators during
+initialization. Registration requires the multiplexer to be stopped.
+
+Applications that discover additional destinations while running can register
+one matching typed allocator pair before startup and retain it in
+`TCPConfig::rxAllocator/txAllocator` or `TLSConfig::rxAllocator/txAllocator`
+(`H2Config::tls()` exposes the TLS configuration). Later hubs select those
+already-bound policies. The configuration retains their references; the policy
+buffer type and geometry must match the selected transport's
+`NativeTraits<Profile>::Transport::RxAllocator/TxAllocator` types. Endpoints
+retain the original receive buffers.
 
 The HTTP/3 surface includes ordinary messages and ordered Extended CONNECT
 logical streams:

@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZdbusAdapter.hh>
 #include <zlib/ZdbusConnection.hh>
 #include <zlib/ZdbusMessage.hh>
@@ -172,8 +173,11 @@ static void frameRanges(bool shortTail)
   unsigned tail = shortTail ? 8 : total;
   // The parser's input need not start at its backing's original address.
   unsigned start = sizeof(uint32_t) + 1;
-  ZmRef<ZiIOBuf> input = new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-    Wire::MaxMessageSize, ZuStringT<"Zdbus.FrameTest">>{nullptr, 0};
+  ZmRef<ZiIOBuf> input = new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zdbus.FrameTest">,
+      Wire::MaxMessageSize>{
+      ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf,
+        ZiIOBuf_DefltSize, Wire::MaxMessageSize, ZiIOBuf_Align,
+        ZuStringT<"Zdbus.FrameTest">>>::instance()};
   ZuCheckRT(input->ensure(start + total + tail), log_("input allocation failed"));
   if (input->size < start + total + tail) return;
   input->skip = start;
@@ -273,8 +277,11 @@ static void frameAssembly()
   ZuCheckRT(bool(first) && bool(second));
   if (!first || !second) return;
 
-  ZmRef<ZiIOBuf> input = new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-    Wire::MaxMessageSize, ZuStringT<"Zdbus.FrameTest">>{nullptr, 0};
+  ZmRef<ZiIOBuf> input = new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zdbus.FrameTest">,
+      Wire::MaxMessageSize>{
+      ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf,
+        ZiIOBuf_DefltSize, Wire::MaxMessageSize, ZiIOBuf_Align,
+        ZuStringT<"Zdbus.FrameTest">>>::instance()};
   ZuCheckRT(input->append(first.buf->cspan()));
   ZuCheckRT(input->append(second.buf->data(), Wire::MinHeaderSize));
   auto parsed = frame(input->cspan());

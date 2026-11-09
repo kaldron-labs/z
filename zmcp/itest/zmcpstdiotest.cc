@@ -11,6 +11,7 @@
 #include <zlib/ZuObject.hh>
 #include <zlib/ZuRef.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmObject.hh>
@@ -446,8 +447,8 @@ static void testFailure()
   started.wait();
   ZuCheck(startOK);
 
-  ZmRef<ZiIOBuf> first = new Zjrpc::StdioBuf{nullptr, 0};
-  ZmRef<ZiIOBuf> second = new Zjrpc::StdioBuf{nullptr, 0};
+  ZmRef<ZiIOBuf> first = new Zjrpc::StdioBuf{ZmSingleton<typename Zjrpc::StdioBuf::Allocator>::instance()};
+  ZmRef<ZiIOBuf> second = new Zjrpc::StdioBuf{ZmSingleton<typename Zjrpc::StdioBuf::Allocator>::instance()};
   first->alloc(TestFrameBytes);
   second->alloc(TestFrameBytes);
   memset(first->data(), 'x', TestFrameBytes);
@@ -476,7 +477,7 @@ static ZtString<> readLine(ZiFile &file)
 {
   ZtString<> line;
   for (;;) {
-    ZmRef<ZiIOBuf> buf = new Zjrpc::StdioBuf{nullptr, 0};
+    ZmRef<ZiIOBuf> buf = new Zjrpc::StdioBuf{ZmSingleton<typename Zjrpc::StdioBuf::Allocator>::instance()};
     int length = file.read(buf->data(), buf->size, false);
     if (length <= 0) return {};
     buf->length = unsigned(length);

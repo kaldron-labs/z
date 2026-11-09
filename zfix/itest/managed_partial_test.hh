@@ -150,15 +150,15 @@ friend inline ZuStringT<"Zfix.ManagedPartial.Server"> ZmNHeapID(Link *);
 };
 
 inline bool PartialServer::init(Network::ServerParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::Server<PartialServer, Dictionary, Network>::init(ZuMv(params));
 }
@@ -225,15 +225,15 @@ friend inline ZuStringT<"Zfix.ManagedPartial.Client"> ZmNHeapID(Link *);
 };
 
 inline bool PartialClient::init(Network::ClientParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::Client<PartialClient, Dictionary, Network>::init(ZuMv(params));
 }
@@ -257,13 +257,13 @@ static bool partialLogon(int fd)
   Session::Msg msg; msg.p<Session::Logon>(Session::Logon{});
   Fmt::Error error;
   auto body = TxBody::control(msg, error);
-  using Allocator = Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
   auto frame = body ? txFrame(ZmSingleton<Allocator>::instance()->allocBuf(),
     *body, txConfig(config(true,
     Transport::FIX4, Version::V4_4)), TxContext{.seqNo = 1,
       .sendingTime = ZuDateTime{Zm::now()}}, error) : ZmRef<ZiIOBuf>{};
   if (error || !frame || !partialWrite(fd, frame->cspan())) return false;
-  ZmRef<ZiIOBuf> input = ZmSingleton<Zi::AppBufAllocator<
+  ZmRef<ZiIOBuf> input = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
     ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
   for (;;) {
     auto r = Fmt::frame(input->cspan());
@@ -323,7 +323,7 @@ static void managedPartial()
       if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size))) { s->fail(); return; }
       s->socket = fd; s->watch = 1;
       link->app()->txRun([link] {
-	ZmRef<ZiIOBuf> data = ZmSingleton<Zi::AppBufAllocator<
+	ZmRef<ZiIOBuf> data = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
 	  ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
 	data->ensure(PayloadBytes);
 	memset(data->data(), 'X', PayloadBytes); data->length = PayloadBytes;

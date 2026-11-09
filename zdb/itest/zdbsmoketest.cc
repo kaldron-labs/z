@@ -107,10 +107,8 @@ static void run()
 
   try {
     auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
+    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
 
-    if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbsmoketest", "multiplexer start failed");
 
     store = new zdbtest::Store();
     db = new Zdb();
@@ -129,6 +127,7 @@ static void run()
 
     orders = db->initTable<Order>("order"); // might throw
 
+    if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbsmoketest", "multiplexer start failed");
     db->start();
     done.wait(); // ensure active
 
@@ -205,7 +204,6 @@ static void run()
     mx->stop();
     db->final();
 
-    mx->start();
     db->init(ZdbCf{cfFields.zdb.p<const ZfCf::AnyNode *>()}, mx, ZdbHandler{
       .upFn = [](Zdb *, ZdbHost *host) {
 	ZiLOG(Info, "zdbsmoketest", ([id = host ? ZuID{host->id()} : ZuID{"unset"}](auto &s) {
@@ -217,6 +215,7 @@ static void run()
 
     orders = db->initTable<Order>("order"); // might throw
 
+    mx->start();
     db->start();
 
     ZiLOG(Info, "zdbsmoketest", ([count = orders->count()](auto &s) {

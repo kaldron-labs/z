@@ -17,9 +17,11 @@
 
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmPolyHash.hh>
+#include <zlib/ZmSingleton.hh>
 
 #include <zlib/Zfb.hh>
 #include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiTx.hh>
 #include <zlib/ZiRxStream.hh>
 
@@ -65,14 +67,12 @@ class DB;
 // --- I/O buffer
 
 struct IOBuf_ : public ZiTxBuf {
-  uint32_t	framePos = 0;	// immutable message origin, relative to data_()
   mutable void	*rep = nullptr;	// typed replication buffer RepBuf<T>
 
   using ZiTxBuf::ZiTxBuf;
 
-  void seal_() { framePos = skip; }
-  auto hdr() const { return reinterpret_cast<const Hdr *>(data_() + framePos); }
-  auto hdr() { return reinterpret_cast<Hdr *>(data_() + framePos); }
+  auto hdr() const { return reinterpret_cast<const Hdr *>(ZiIOBuf::data()); }
+  auto hdr() { return reinterpret_cast<Hdr *>(ZiIOBuf::data()); }
   auto frameSpan() const { return msgData(hdr()); }
 
   template <typename T>
@@ -111,54 +111,63 @@ struct IOBuf : public BufCacheUN::Node {
   using ZiIOBuf::data;
 };
 
-// Publish the complete DB message before transport can advance its cursor.
-template <typename Builder>
-ZmRef<IOBuf> saveFrame(Builder &fbb, void *owner = nullptr) {
-  ZmRef<IOBuf> buf = saveHdr(fbb, owner);
-  if (buf) buf->seal_();
-  return buf;
-}
-
 // A frame view owns only metadata; the original receive payload stays in place.
 struct RxFrame : public ZmNHeap<RxFrame>, public IOBuf {
   ZmRef<ZiIOBuf> backing;
 
   friend inline ZuStringT<"Zdb.RxFrame"> ZmNHeapID(RxFrame *);
-  RxFrame(Zi::RxRange value) :
-    IOBuf{value.buf->data_(), value.buf->size, nullptr, value.length},
-    backing{ZuMv(value.buf)}
+  RxFrame(ZmRef<ZiIOBuf> buf) :
+    IOBuf{buf->data_(), buf->size, buf->allocator, nullptr, buf->length},
+    backing{ZuMv(buf)}
   {
-    skip = value.offset;
-    seal_();
-  }
-  void releaseView_() override { backing = nullptr; }
-  uint64_t memory() const override {
-    return sizeof(RxFrame) + storageMemory_() + (backing ? backing->memory() : 0);
+    skip = backing->skip;
   }
 };
 
-using RxBufAllocator = Zi::RxTCPBufAllocator<
-  ZiRxQueue::Node, DefltBufSize, MaxBufSize, ZdbBuf_HeapID<void>>;
+// Each connection queues its own descriptor while retaining the source frame.
+struct TxFrame : public ZmNHeap<TxFrame>, public ZiTxBuf {
+  using ZiIOBuf::data;
+  ZmRef<Zdb_::IOBuf> backing;
+
+  friend inline ZuStringT<"Zdb.TxFrame"> ZmNHeapID(TxFrame *);
+  TxFrame(Zi::IOBufAllocator *allocator, ZmRef<Zdb_::IOBuf> buf) :
+    ZiTxBuf{nullptr, 0, allocator}, backing{ZuMv(buf)}
+  {
+    auto span = backing->frameSpan();
+    data__ = reinterpret_cast<uintptr_t>(span.data()) | Builtin;
+    size = length = span.length();
+  }
+};
+
+using RxBufAlloc =
+  Zi::IOBufBuiltin<ZiRxQueue::Node, DefltBufSize, ZiIOBuf_Align, ZiIOBuf_HeapID, MaxBufSize>;
+using RxBufAllocator = Zi::IOBufAllocator;
 
 // buffer allocation
 
 template <typename T = void>
 using IOBufAlloc =
-  Zi::IOBufAlloc<IOBuf, ZdbBuf_Size<T>{}, MaxBufSize, ZdbBuf_HeapID<T>>;
+  Zi::IOBufBuiltin<IOBuf, ZdbBuf_Size<T>{}, ZiIOBuf_Align, ZdbBuf_HeapID<T>, MaxBufSize>;
+
+template <typename T = void>
+auto localBufAllocator() {
+  return ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
+    IOBuf, ZdbBuf_Size<T>{}, MaxBufSize, ZiIOBuf_Align, ZdbBuf_HeapID<T>>>::instance();
+}
 
 template <typename T>
 class RowBuilder : public Zfb::IOBuilder<Zfb::BufferAlign<T>::N> {
   using Base = Zfb::IOBuilder<Zfb::BufferAlign<T>::N>;
 public:
-  RowBuilder() : Base{new IOBufAlloc<T>{nullptr, 0}, Base::Align, UINT32_MAX,
+  RowBuilder() : Base{new IOBufAlloc<T>{
+    Zdb_::localBufAllocator<T>(), nullptr, 0}, Base::Align, UINT32_MAX,
     0, Zfb::Wire::MaxAlign} { }
 };
 
 template <typename T>
-using TableBufAllocator = Zi::TxTCPBufAllocator<
-  IOBuf, ZdbBuf_Size<T>{}, MaxBufSize, ZdbBuf_HeapID<T>>;
+using TableBufAllocator = Zi::IOBufAllocator;
 
-// The callback retains its allocator; this raw handle is cold teardown metadata.
+// The callback retains its allocator; the handle registers transport ownership.
 class IOBufAllocFn :
   public ZmFn<ZmRef<IOBuf>(), ZmFnHeapID<"Zdb.BufAlloc">> {
   using Base = ZmFn<ZmRef<IOBuf>(), ZmFnHeapID<"Zdb.BufAlloc">>;
@@ -171,27 +180,26 @@ public:
 private:
   Zi::IOBufAllocator *m_allocator = nullptr;
 };
-using IOBufAllocFactory = ZmFn<IOBufAllocFn(unsigned)>;
+using IOBufAllocFactory = ZmFn<IOBufAllocFn(ZiMultiplex *)>;
 
 template <typename T>
-IOBufAllocFn tableBufAllocFn(unsigned ringSize = ZiIOBuf_DefltTxRingSize) {
-  auto allocator = ZmRef<Zi::IOBufAllocator>{new TableBufAllocator<T>{ringSize}};
-  auto ptr = allocator.ptr();
-  IOBufAllocFn fn{[allocator = ZuMv(allocator)]() {
-    auto buf = ZmRef<IOBuf>::acquire(
-      static_cast<IOBuf *>(allocator->alloc().release()));
+IOBufAllocFn tableBufAllocFn(ZiMultiplex *mx) {
+  auto allocator = mx->allocator<Zi::IOBufType::TxTCP,
+    IOBuf, ZdbBuf_Size<T>{}, MaxBufSize, ZiIOBuf_Align, ZdbBuf_HeapID<T>>();
+  IOBufAllocFn fn{[allocator]() {
+    auto buf = ZmRef<IOBuf>{static_cast<IOBuf *>(allocator->allocBuf().ptr())};
     // Reserve the envelope before the backwards-growing row arena starts.
     buf->skip = Zfb::Wire::MaxAlign;
     return buf;
   }};
-  fn.allocator(ptr);
+  fn.allocator(allocator);
   return fn;
 }
 
 template <typename T>
 IOBufAllocFn localBufAllocFn() {
   return IOBufAllocFn{[]() {
-    auto buf = ZmRef<IOBuf>{new IOBufAlloc<T>{nullptr, 0}};
+    auto buf = ZmRef<IOBuf>{new IOBufAlloc<T>{Zdb_::localBufAllocator<T>(), nullptr, 0}};
     buf->skip = Zfb::Wire::MaxAlign;
     return buf;
   }};

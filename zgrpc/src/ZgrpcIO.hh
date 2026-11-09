@@ -44,7 +44,7 @@ struct WireCatalog {
   }
 };
 
-using RxChunks = ZmList<Zi::RxRange, ZmListHeapID<"Zgrpc.RxChunks">>;
+using RxChunks = ZmList<ZmRef<ZiIOBuf>, ZmListHeapID<"Zgrpc.RxChunks">>;
 
 // All members are Rx-owned. The parser and each scheduled continuation retain
 // this object independently, so HTTP reset cannot erase deferred input or its
@@ -73,20 +73,19 @@ public:
   bool failed() const { return m_failed; }
 
   bool accept(Zhttp::Channel *);
-  bool enqueue(Zi::RxRange);
+  bool enqueue(ZmRef<ZiIOBuf>);
   void complete(Zhttp::Channel *, bool);
   void fail(Code::T);
 
   template <typename Rx> bool body(Rx &rx) {
     if (m_failed || m_peerEnd || m_finished) return false;
-    // Extract each existing contiguous range. Borrowed backing and positions
-    // survive scheduled parsing without changing shared HTTP buffer metadata.
+    // Transfer each detached buffer; scheduled parsing owns its cursor.
     while (!rx.empty()) {
-      Zi::RxRange range;
+      ZmRef<ZiIOBuf> buf;
       auto n = rx.extract([](ZuSpan<uint8_t> span) -> int64_t {
 	return span.length();
-      }, []() { return ZmRef<typename Rx::Queue::Node>{}; }, range);
-      if (n <= 0 || !enqueue(ZuMv(range))) {
+      }, []() { return ZmRef<typename Rx::Queue::Node>{}; }, buf);
+      if (n <= 0 || !enqueue(ZuMv(buf))) {
 	fail(Code::RESOURCE_EXHAUSTED);
 	return false;
       }
@@ -123,23 +122,17 @@ private:
   bool m_finished = false;
 };
 
-struct OutputFrame {
-  ZmRef<ZiIOBuf> buf;
-  bool writerOwned = false;
-};
-
-// Final protobuf/envelope buffers; retain whether the concrete Base came from
-// the active writer, so external raw storage never enters an incompatible queue. Queue
-// accounting ends at HTTP handoff; transport retention remains independent.
+// Final owned protobuf/envelope buffers. Queue accounting ends at HTTP handoff;
+// the destination writer decides whether its concrete storage can be adopted.
 class ZgrpcAPI TxFrames {
 public:
-  bool push(ZmRef<ZiIOBuf>, const Limits &, bool writerOwned);
-  OutputFrame shift();
+  bool push(ZmRef<ZiIOBuf>, const Limits &);
+  ZmRef<ZiIOBuf> shift();
   unsigned count() const { return m_frames.count_(); }
   uint64_t bytes() const { return m_bytes; }
   void clear() { m_frames.clean(); m_bytes = 0; }
 private:
-  ZmList<OutputFrame, ZmListHeapID<"Zgrpc.Tx.Frames">> m_frames;
+  ZmList<ZmRef<ZiIOBuf>, ZmListHeapID<"Zgrpc.Tx.Frames">> m_frames;
   uint64_t m_bytes = 0;
 };
 

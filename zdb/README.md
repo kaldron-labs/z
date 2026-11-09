@@ -82,8 +82,7 @@ Handlers run on the DB thread and must return promptly. Activation can recur
 after failover. `downFn` distinguishes failure from orderly deactivation.
 
 Graceful stop drains the framework's pending work, closes tables/stops the store,
-drains resulting shard callbacks, and waits for table/store/heartbeat allocator
-services to unbind from the I/O shards. It cannot finish a step whose application
+and drains resulting shard callbacks before publishing completion. It cannot finish a step whose application
 has retained its completion indefinitely. Keep the multiplex, DB, and tables
 alive until stop completes. A stopped DB can be started again; after
 `final()`, initialize and register it again before reuse. For a saga DB, call
@@ -878,29 +877,32 @@ not satisfy its error assertion.
 Network buffer ownership
 ------------------------
 
-Configure the replication multiplexer with
-`tcpBufAllocator(new Zdb_::RxBufAllocator{})` for its database receive size and heap policy. Shared HTTP/TLS multiplexers
-may use their larger transport pool with the same `ZiRxQueue::Node` Base;
-received database frame metadata lives in a retained range descriptor. Each table instance owns separate typed transmit allocator
-callbacks for every producer shard and for its store; ADL `ZdbBufSize` and
-`ZdbBufHeapID` policies continue to select row allocation. Heartbeat buffers use
-the database-owned control allocator.
+The DB owns a dedicated receive allocator and heartbeat transmit allocator,
+registers both with its multiplexer, and passes its receive allocator explicitly
+to replication listeners and connections. Received database frame metadata lives
+in a typed database buffer retaining the original payload without a copy.
+Each table instance owns separate typed transmit allocator callbacks for every
+producer shard and for its store; ADL `ZdbBufSize` and `ZdbBufHeapID` policies
+continue to select row allocation. Local builders use an application allocator.
 
-`IOBufAllocFn` retains the callback's existing ownership and exposes a borrowed
-allocator handle for cold teardown. `tableBufAllocFn<T>()` records that handle
-automatically. A custom native callback must retain its allocator and record the
-same handle with `fn.allocator(ptr)`; ordinary local callbacks leave it null.
-Buffer allocation and release do not acquire allocator references.
+`IOBufAllocFn` retains the callback's ownership and exposes a borrowed allocator
+handle for registration with the table's multiplexer. `tableBufAllocFn<T>()`
+records that handle automatically. A custom network callback must retain its
+allocator and record the same handle with `fn.allocator(ptr)`; ordinary local
+callbacks leave it null. Buffer allocation and release do not acquire allocator
+references.
 
-Finalize typed DB record builders with `saveFrame(builder, owner)`. It prepends
-the wire header and seals the message's physical origin before replication and
-store work share the original buffer. `hdr()` and `frameSpan()` retain that
-complete message while transport advances the buffer's active `skip`/`length`.
+Finalize typed DB record builders with `saveHdr(builder, owner)`. It prepends
+the wire header before replication and store work share the original buffer.
+The database buffer's current `skip`/`length` identify its complete message. Each connection sends an independent
+transmit descriptor retaining that source buffer, with its own cursor and queue
+links. Forwarding a received frame retains the original payload and uses the
+DB's registered transmit allocator without copying payload bytes.
 Recovery copies preserve this canonical span and its alignment when changing
 the replication discriminator.
 
-Await database stop before finalizing tables/database objects. Stop completion
-includes retirement of their native ring service watches; the shared multiplexer
-can remain running through DB finalization and replacement. Stopping the
+Await database stop before finalizing tables/database objects. The shared multiplexer can
+remain running through DB finalization and replacement; registered allocators
+remain retained until multiplexer destruction. Stopping the
 multiplexer before DB finalization also remains valid. Release retained network
 frames before their allocator owners.

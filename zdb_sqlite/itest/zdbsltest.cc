@@ -558,10 +558,8 @@ int main(int argc_, char **argv)
 
   try {
     auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
+    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
 
-    if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbsltest", "multiplexer start failed");
 
     db = new Zdb();
 
@@ -578,6 +576,7 @@ int main(int argc_, char **argv)
     payments = db->initTable<Order>("payment");
     allTypes = db->initTable<AllTypes>("all_types");
 
+    if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbsltest", "multiplexer start failed");
     if (!db->start()) throw ZeEXCEPT(Fatal, "zdbsltest", "Zdb start failed");
 
     ZuTestCall(zdbtest::tableBufPolicy<Order>, orders.ptr(), payments.ptr());

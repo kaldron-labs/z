@@ -1,0 +1,411 @@
+Source: https://man7.org/linux/man-pages/man7/ip.7.html
+Raw snapshot: /home/ubuntu/src/z/review_context/07-man7.org_linux_man-pages_man7_ip.7.html.raw
+
+
+
+    ip(7) - Linux manual page
+
+                        man7.org > Linux > man-pages
+
+Linux/UNIX system programming training
+
+ip(7) — Linux manual page
+
+NAME | SYNOPSIS | DESCRIPTION | ERRORS | NOTES | BUGS | SEE ALSO | COLOPHON
+
+ip(7)                Miscellaneous Information Manual               ip(7)
+
+NAME          top
+
+       ip - Linux IPv4 protocol implementation
+
+SYNOPSIS          top
+
+       #include <sys/socket.h>
+       #include <netinet/in.h>
+       #include <netinet/ip.h>  /* superset of previous */
+
+       tcp_socket = socket(AF_INET, SOCK_STREAM, 0);
+       udp_socket = socket(AF_INET, SOCK_DGRAM, 0);
+       raw_socket = socket(AF_INET, SOCK_RAW, protocol);
+
+DESCRIPTION          top
+
+       Linux implements the Internet Protocol, version 4, described in
+       RFC 791 and RFC 1122.  ip contains a level 2 multicasting
+       implementation conforming to RFC 1112.  It also contains an IP
+       router including a packet filter.
+
+       The programming interface is BSD-sockets compatible.  For more
+       information on sockets, see socket(7).
+
+       An IP socket is created using socket(2):
+
+           socket(AF_INET, socket_type, protocol);
+
+       Valid socket types include SOCK_STREAM to open a stream socket,
+       SOCK_DGRAM to open a datagram socket, and SOCK_RAW to open a
+       raw(7) socket to access the IP protocol directly.
+
+       protocol is the IP protocol in the IP header to be received or
+       sent.  Valid values for protocol include:
+
+       •  0 and IPPROTO_TCP for tcp(7) stream sockets;
+
+       •  0 and IPPROTO_UDP for udp(7) datagram sockets;
+
+       •  IPPROTO_SCTP for sctp(7) stream sockets; and
+
+       •  IPPROTO_UDPLITE for udplite(7) datagram sockets.
+
+       For SOCK_RAW you may specify a valid IANA IP protocol defined in
+       RFC 1700 assigned numbers.
+
+       When a process wants to receive new incoming packets or
+       connections, it should bind a socket to a local interface address
+       using bind(2).  In this case, only one IP socket may be bound to
+       any given local (address, port) pair.  When INADDR_ANY is
+       specified in the bind call, the socket will be bound to all local
+       interfaces.  When listen(2) is called on an unbound socket, the
+       socket is automatically bound to a random free port with the local
+       address set to INADDR_ANY.  When connect(2) is called on an
+       unbound socket, the socket is automatically bound to a random free
+       port or to a usable shared port with the local address set to
+       INADDR_ANY.
+
+       A TCP local socket address that has been bound is unavailable for
+       some time after closing, unless the SO_REUSEADDR flag has been
+       set.  Care should be taken when using this flag as it makes TCP
+       less reliable.
+
+   Address format
+       An IP socket address is defined as a combination of an IP
+       interface address and a 16-bit port number.  The basic IP protocol
+       does not supply port numbers, they are implemented by higher level
+       protocols like udp(7) and tcp(7).  On raw sockets .sin_port is set
+       to the IP protocol.
+
+       See sockaddr_in(3type).
+
+       .sin_family is always set to AF_INET.  This is required; in Linux
+       2.2 most networking functions return EINVAL when this setting is
+       missing.  .sin_port contains the port in network byte order.  The
+       port numbers below 1024 are called privileged ports (or sometimes:
+       reserved ports).  Only a privileged process (on Linux: a process
+       that has the CAP_NET_BIND_SERVICE capability in the user namespace
+       governing its network namespace) may bind(2) to these sockets.
+       Note that the raw IPv4 protocol as such has no concept of a port,
+       they are implemented only by higher protocols like tcp(7) and
+       udp(7).
+
+       .sin_addr is the IP host address.  The .s_addr member of the
+       in_addr(3type) structure contains the host interface address in
+       network byte order.  in_addr(3type) should be assigned one of the
+       INADDR_* values (e.g., INADDR_LOOPBACK) using htonl(3) or set
+       using the inet_aton(3), inet_addr(3), inet_makeaddr(3) library
+       functions or directly with the name resolver (see
+       gethostbyname(3)).
+
+       IPv4 addresses are divided into unicast, broadcast, and multicast
+       addresses.  Unicast addresses specify a single interface of a
+       host, broadcast addresses specify all hosts on a network, and
+       multicast addresses address all hosts in a multicast group.
+       Datagrams to broadcast addresses can be sent or received only when
+       the SO_BROADCAST socket flag is set.  In the current
+       implementation, connection-oriented sockets are allowed to use
+       only unicast addresses.
+
+       Note that the address and the port are always stored in network
+       byte order.  In particular, this means that you need to call
+       htons(3) on the number that is assigned to a port.  All
+       address/port manipulation functions in the standard library work
+       in network byte order.
+
+   Special and reserved addresses
+       There are several special addresses:
+
+       INADDR_LOOPBACK (127.0.0.1)
+              always refers to the local host via the loopback device;
+
+       INADDR_ANY (0.0.0.0)
+              means any address for socket binding;
+
+       INADDR_BROADCAST (255.255.255.255)
+              A packet addressed to INADDR_BROADCAST through a socket
+              which has SO_BROADCAST set will be broadcast to all hosts
+              on the local network segment, as long as the link is
+              broadcast-capable.
+
+       Highest-numbered address
+       Lowest-numbered address
+              On any locally-attached non-point-to-point IP subnet with a
+              link type that supports broadcasts, the highest-numbered
+              address (e.g., the .255 address on a subnet with netmask
+              255.255.255.0) is designated as a broadcast address.  It
+              cannot usefully be assigned to an individual interface, and
+              can only be addressed with a socket on which the
+              SO_BROADCAST option has been set.  Internet standards have
+              historically also reserved the lowest-numbered address
+              (e.g., the .0 address on a subnet with netmask
+              255.255.255.0) for broadcast, though they call it
+              "obsolete" for this purpose.  (Some sources also refer to
+              this as the "network address.")  Since Linux 5.14, it is
+              treated as an ordinary unicast address and can be assigned
+              to an interface.
+
+       Internet standards have traditionally also reserved various
+       addresses for particular uses, though Linux no longer treats some
+       of these specially.
+
+       [0.0.0.1, 0.255.255.255]
+       [240.0.0.0, 255.255.255.254]
+              Addresses in these ranges (0/8 and 240/4) are reserved
+              globally.  Since Linux 5.3 and Linux 2.6.25, respectively,
+              the 0/8 and 240/4 addresses, other than INADDR_ANY and
+              INADDR_BROADCAST, are treated as ordinary unicast
+              addresses.  Systems that follow the traditional behaviors
+              may not interoperate with these historically reserved
+              addresses.
+
+       [127.0.0.1, 127.255.255.254]
+              Addresses in this range (127/8) are treated as loopback
+              addresses akin to the standardized local loopback address
+              INADDR_LOOPBACK (127.0.0.1);
+
+       [224.0.0.0, 239.255.255.255]
+              Addresses in this range (224/4) are dedicated to multicast
+              use.
+
+   Socket options
+       See IPPROTO_IP(2const).
+
+   /proc interfaces
+       See proc_sys_net_ipv4(5).
+
+   Ioctls
+       All ioctls described in socket(7) apply to ip.
+
+       Ioctls to configure generic device parameters are described in
+       netdevice(7).
+
+ERRORS          top
+
+       EACCES The user tried to execute an operation without the
+              necessary permissions.  These include: sending a packet to
+              a broadcast address without having the SO_BROADCAST flag
+              set; sending a packet via a prohibit route; modifying
+              firewall settings without superuser privileges (the
+              CAP_NET_ADMIN capability); binding to a privileged port
+              without superuser privileges (the CAP_NET_BIND_SERVICE
+              capability).
+
+       EADDRINUSE
+              Tried to bind to an address already in use.
+
+       EADDRNOTAVAIL
+              A nonexistent interface was requested or the requested
+              source address was not local.
+
+       EAGAIN Operation on a nonblocking socket would block.
+
+       EALREADY
+              A connection operation on a nonblocking socket is already
+              in progress.
+
+       ECONNABORTED
+              A connection was closed during an accept(2).
+
+       EHOSTUNREACH
+              No valid routing table entry matches the destination
+              address.  This error can be caused by an ICMP message from
+              a remote router or for the local routing table.
+
+       EINVAL Invalid argument passed.  For send operations this can be
+              caused by sending to a blackhole route.
+
+       EISCONN
+              connect(2) was called on an already connected socket.
+
+       EMSGSIZE
+              Datagram is bigger than an MTU on the path and it cannot be
+              fragmented.
+
+       ENOBUFS
+       ENOMEM Not enough free memory.  This often means that the memory
+              allocation is limited by the socket buffer limits, not by
+              the system memory, but this is not 100% consistent.
+
+       ENOENT SIOCGSTAMP was called on a socket where no packet arrived.
+
+       ENOPKG A kernel subsystem was not configured.
+
+       ENOPROTOOPT
+       EOPNOTSUPP
+              Invalid socket option passed.
+
+       ENOTCONN
+              The operation is defined only on a connected socket, but
+              the socket wasn't connected.
+
+       EPERM  User doesn't have permission to set high priority, change
+              configuration, or send signals to the requested process or
+              group.
+
+       EPIPE  The connection was unexpectedly closed or shut down by the
+              other end.
+
+       ESOCKTNOSUPPORT
+              The socket is not configured or an unknown socket type was
+              requested.
+
+       Other errors may be generated by the overlaying protocols; see
+       tcp(7), raw(7), udp(7), and socket(7).
+
+NOTES          top
+
+       Be very careful with the SO_BROADCAST option - it is not
+       privileged in Linux.  It is easy to overload the network with
+       careless broadcasts.  For new application protocols it is better
+       to use a multicast group instead of broadcasting.  Broadcasting is
+       discouraged.  See RFC 6762 for an example of a protocol (mDNS)
+       using the more modern multicast approach to communicating with an
+       open-ended group of hosts on the local network.
+
+       Using the SOL_IP socket options level isn't portable; BSD-based
+       stacks use the IPPROTO_IP level.
+
+       INADDR_ANY (0.0.0.0) and INADDR_BROADCAST (255.255.255.255) are
+       byte-order-neutral.  This means htonl(3) has no effect on them.
+
+   Compatibility
+       For compatibility with Linux 2.0, the obsolete socket(AF_INET,
+       SOCK_PACKET, protocol) syntax is still supported to open a
+       packet(7) socket.  This is deprecated and should be replaced by
+       socket(AF_PACKET, SOCK_RAW, protocol) instead.  The main
+       difference is the new sockaddr_ll address structure for generic
+       link layer information instead of the old sockaddr_pkt.
+
+BUGS          top
+
+       There are too many inconsistent error values.
+
+       The error used to diagnose exhaustion of the ephemeral port range
+       differs across the various system calls (connect(2), bind(2),
+       listen(2), sendto(2)) that can assign ephemeral ports.
+
+       The ioctls to configure IP-specific interface options and ARP
+       tables are not described.
+
+       Receiving the original destination address with MSG_ERRQUEUE in
+       msg_name by recvmsg(2) does not work in some Linux 2.2 kernels.
+
+SEE ALSO          top
+
+       IPPROTO_IP(2const), recvmsg(2), sendmsg(2), byteorder(3),
+       capabilities(7), icmp(7), ipv6(7), netdevice(7), netlink(7),
+       raw(7), socket(7), tcp(7), udp(7), ip(8)
+
+       The kernel source file Documentation/networking/ip-sysctl.rst.
+
+       RFC 791 for the original IP specification.  RFC 1122 for the IPv4
+       host requirements.  RFC 1812 for the IPv4 router requirements.
+
+COLOPHON          top
+
+       This page is part of the man-pages (Linux kernel and C library
+       user-space interface documentation) project.  Information about
+       the project can be found at 
+       ⟨https://www.kernel.org/doc/man-pages/⟩.  If you have a bug report
+       for this manual page, see
+       ⟨https://git.kernel.org/pub/scm/docs/man-pages/man-pages.git/tree/CONTRIBUTING⟩.
+       This page was obtained from the tarball man-pages-6.19.tar.gz
+       fetched from
+       ⟨https://mirrors.edge.kernel.org/pub/linux/docs/man-pages/⟩ on
+       2026-09-09.  If you discover any rendering problems in this HTML
+       version of the page, or you believe there is a better or more up-
+       to-date source for the page, or you have corrections or
+       improvements to the information in this COLOPHON (which is not
+       part of the original manual page), send a mail to
+       man-pages@man7.org
+
+Linux man-pages 6.19            2026-02-08                          ip(7)
+
+Pages that refer to this page:
+    bind(2), 
+    connect(2), 
+    getpeername(2), 
+    getsockname(2), 
+    getsockopt(2), 
+    in_pktinfo(2type), 
+    IP_ADD_MEMBERSHIP(2const), 
+    IP_ADD_SOURCE_MEMBERSHIP(2const), 
+    IP_BIND_ADDRESS_NO_PORT(2const), 
+    IP_BLOCK_SOURCE(2const), 
+    IP_DROP_MEMBERSHIP(2const), 
+    IP_DROP_SOURCE_MEMBERSHIP(2const), 
+    IP_FREEBIND(2const), 
+    IP_HDRINCL(2const), 
+    IP_LOCAL_PORT_RANGE(2const), 
+    ip_mreqn(2type), 
+    ip_mreq_source(2type), 
+    IP_MSFILTER(2const), 
+    IP_MTU(2const), 
+    IP_MTU_DISCOVER(2const), 
+    IP_MULTICAST_ALL(2const), 
+    IP_MULTICAST_IF(2const), 
+    IP_MULTICAST_LOOP(2const), 
+    IP_MULTICAST_TTL(2const), 
+    IP_NODEFRAG(2const), 
+    IP_OPTIONS(2const), 
+    IP_PASSSEC(2const), 
+    IP_PKTINFO(2const), 
+    IPPROTO_IP(2const), 
+    IP_RECVERR(2const), 
+    IP_RECVOPTS(2const), 
+    IP_RECVORIGDSTADDR(2const), 
+    IP_RECVTOS(2const), 
+    IP_RECVTTL(2const), 
+    IP_RETOPTS(2const), 
+    IP_ROUTER_ALERT(2const), 
+    IP_TOS(2const), 
+    IP_TRANSPARENT(2const), 
+    IP_TTL(2const), 
+    IP_UNBLOCK_SOURCE(2const), 
+    listen(2), 
+    recv(2), 
+    send(2), 
+    socket(2), 
+    getaddrinfo(3), 
+    getaddrinfo_a(3), 
+    sctp_connectx(3), 
+    sd_is_fifo(3), 
+    proc_sys_net(5), 
+    proc_sys_net_ipv4(5), 
+    systemd.socket(5), 
+    address_families(7), 
+    arp(7), 
+    icmp(7), 
+    ipv6(7), 
+    netdevice(7), 
+    packet(7), 
+    raw(7), 
+    rtnetlink(7), 
+    sctp(7), 
+    socket(7), 
+    tcp(7), 
+    udp(7), 
+    udplite(7), 
+    ifconfig(8)
+
+            HTML rendering created 2026-09-09
+            by Michael Kerrisk,
+            author of
+            The Linux Programming Interface.
+
+            For details of in-depth
+            Linux/UNIX system programming training courses
+            that I teach, look here.
+
+            Hosting by jambit GmbH.
+
+

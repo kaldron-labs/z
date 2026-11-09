@@ -87,8 +87,12 @@ enum {
   DefltMaxHeaderSection = 1<<16	// 64K
 };
 
-using BodyBufAlloc = Zi::IOBufAlloc<ZiRxQueue::Node,
-  ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zhttp.Body.Rx">>;
+using BodyBufAlloc = Zi::IOBufBuiltin<
+  ZiRxQueue::Node,
+  ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"Zhttp.Body.Rx">,
+  ZiIOBuf_DefltMaxSize>;
 
 ZtEnumStruct(ZhttpAPI, Version, int8_t, H1, H2, H3);
 ZtEnumStruct(ZhttpAPI, Transport, int8_t, TCP, TLS, QUIC);
@@ -273,7 +277,7 @@ struct WriterOps {
   ZmRef<ZiIOBuf> (*alloc)(void *, unsigned);
   ZuSpan<uint8_t> (*reserve)(void *, unsigned);
   void (*commit)(void *, unsigned);
-  bool (*range)(void *, Zi::RxRange);
+  bool (*owned)(void *, ZmRef<ZiIOBuf>);
   bool (*canAdopt)(const void *, const ZiIOBuf &, unsigned, unsigned) = nullptr;
   bool (*allocated)(const void *, const ZiIOBuf *) = nullptr;
   bool (*takeAllocated)(void *, ZmRef<ZiIOBuf>) = nullptr;
@@ -317,17 +321,10 @@ public:
     return reserve < maxSize() && length <= maxSize() - reserve &&
       buf.skip - head >= headRoom() && buf.avail() - tail >= tailRoom();
   }
-  bool appendRange(ZmRef<ZiIOBuf> buf, unsigned offset, unsigned length) {
-    if (!buf || offset > buf->length || length > buf->length - offset)
-      return appendRange(Zi::RxRange{});
-    return appendRange(Zi::RxRange{ZuMv(buf), offset, length});
-  }
-  bool appendRange(Zi::RxRange range) {
+  bool appendBuf(ZmRef<ZiIOBuf> buf) {
     m_span = {};
-    if (failed() || !m_ops->range || !range.buf ||
-	range.offset > range.buf->size ||
-	range.length > range.buf->size - range.offset ||
-	!m_ops->range(m_ctx, ZuMv(range))) {
+    if (failed() || !m_ops->owned || !buf || buf->failed() ||
+	!m_ops->owned(m_ctx, ZuMv(buf))) {
       m_failed = true;
       return false;
     }

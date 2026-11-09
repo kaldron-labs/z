@@ -553,7 +553,8 @@ private:
 };
 
 static bool initClient(Client &client, ZiMultiplex &mx,
-    const Zhttp::URLView &url, ZuCSpan caPath)
+    const Zhttp::URLView &url, ZuCSpan caPath,
+    const Zhttp::TCPConfig &tcp, const Zhttp::TLSConfig &tlsPolicy)
 {
   bool secure = url.scheme == Zhttp::Scheme::https;
   auto config = Zhttp::Config().links(1).concurrency(1).linkMax(1)
@@ -561,7 +562,8 @@ static bool initClient(Client &client, ZiMultiplex &mx,
     .protocol(Zhttp::ProtoPolicy::DisableH3)
     .secure(secure).tcp(true).tls(secure).quic(false);
   if (!client.init(Zhttp::HubConfig{&mx, "rx", "tx"}, 1,
-      config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.tls([&caPath](auto &tls) {
+      config, tcp, Zhttp::H2Config{}.tls([&](auto &tls) {
+        tls = tlsPolicy;
         tls.caPath(caPath);
       }),
       Zhttp::QUICConfig{})) return false;
@@ -705,9 +707,7 @@ static ZiMxParams mxParams()
       .thread(2, [](auto &t) { t.name("tx"); t.isolated(1); })
       .thread(3, [](auto &t) { t.name("cb-rx"); t.isolated(1); })
       .thread(4, [](auto &t) { t.name("cb-tx"); t.isolated(1); });
-  }).rxThread(1).txThread(2)
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
-      ZuStringT<"Zhttp.TLS.Rx">>>();
+  }).rxThread(1).txThread(2);
 }
 
 static bool tokenJSON(String &json, ZumVaultClient::Credential &tokens)
@@ -967,10 +967,26 @@ int main(int argc, char **argv)
   ZmTrap::trap();
 
   ZiMultiplex mx{mxParams()};
+  using TCP = Zhttp::NativeTraits<Zhttp::H1TCP>::Transport;
+  using TLS = Zhttp::NativeTraits<Zhttp::H1TLS>::Transport;
+  Zhttp::TCPConfig tcp;
+  Zhttp::TLSConfig tls;
+  tcp.rxAllocator(mx.allocator<Zi::IOBufType::RxTCP,
+      TCP::RxAllocator::Buf, TCP::RxAllocator::Size, TCP::RxAllocator::MaxSize,
+      TCP::RxAllocator::Align, TCP::RxAllocator::Heap>())
+      .txAllocator(mx.allocator<Zi::IOBufType::TxTCP,
+      TCP::TxAllocator::Buf, TCP::TxAllocator::Size, TCP::TxAllocator::MaxSize,
+      TCP::TxAllocator::Align, TCP::TxAllocator::Heap>());
+  tls.rxAllocator(mx.allocator<Zi::IOBufType::RxTLS,
+      TLS::RxAllocator::Buf, TLS::RxAllocator::Size, TLS::RxAllocator::MaxSize,
+      TLS::RxAllocator::Align, TLS::RxAllocator::Heap>())
+      .txAllocator(mx.allocator<Zi::IOBufType::TxTLS,
+      TLS::TxAllocator::Buf, TLS::TxAllocator::Size, TLS::TxAllocator::MaxSize,
+      TLS::TxAllocator::Align, TLS::TxAllocator::Heap>());
   if (!mx.start()) return 1;
 
   Client issuerClient;
-  if (!initClient(issuerClient, mx, issuerURL.url(), config.caPath)) {
+  if (!initClient(issuerClient, mx, issuerURL.url(), config.caPath, tcp, tls)) {
     std::cerr << "zum: issuer HTTP client start failed\n";
     mx.stop(); ZiLog::stop(); return 1;
   }
@@ -997,13 +1013,13 @@ int main(int argc, char **argv)
 
   Client tokenClient;
   Client managementClient;
-  if (!initClient(tokenClient, mx, tokenURL.url(), config.caPath)) {
+  if (!initClient(tokenClient, mx, tokenURL.url(), config.caPath, tcp, tls)) {
     std::cerr << "zum: token HTTP client start failed\n";
     issuerClient.stop(); issuerClient.final();
     mx.stop(); ZiLog::stop(); return 1;
   }
   if (!initClient(managementClient, mx,
-      managementURL.url(), config.caPath)) {
+      managementURL.url(), config.caPath, tcp, tls)) {
     std::cerr << "zum: management HTTP client start failed\n";
     tokenClient.stop(); tokenClient.final();
     issuerClient.stop(); issuerClient.final();
@@ -1013,7 +1029,7 @@ int main(int argc, char **argv)
   ZumVaultClient::Credential tokens{config.issuerURL,
     config.managementURL, config.clientID};
   auto login = [&config, &mx, &options, &metadata, &authorizationURL,
-      &tokenURL, &tokenClient, &tokens]() {
+      &tokenURL, &tokenClient, &tokens, &tcp]() {
     Ztls::Random rng;
     Bytes random;
     random.length(32, false);
@@ -1033,7 +1049,7 @@ int main(int argc, char **argv)
     callback.expectedState = state;
     auto callbackConfig = Zhttp::ServerConfig().localIP(ZiIP("127.0.0.1"))
       .port(config.callbackPort).idleTimeout(ClientTimeout)
-      .retainedBodyMax(BodyMax).tcp();
+      .retainedBodyMax(BodyMax).tcp(tcp);
     bool callbackInited = callback.init(
       Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"}, ZuMv(callbackConfig));
     bool callbackUp = callbackInited && callback.start();

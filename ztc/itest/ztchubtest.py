@@ -817,6 +817,7 @@ def main():
             token=front_token, expect=1)
         fronts.append(native)
         wait_line(agent_process1, "agent request ")
+        wait_line(native, "front ack")
         wait_line(native, "front telemetry 1")
         native.wait(timeout=15)
         assert native.returncode == 0
@@ -877,7 +878,9 @@ def main():
             root, "front", fixture.issuer(app_id), agent1["id"], wss1, cert,
             token=front_token, expect=1000, stall_ms=2000)
         fronts.append(control_front)
-        wait_line(control_front, "front ack")
+        # The intentional control overflow may close before any ACK is delivered.
+        # Synchronize the actual second-request burst, then require its failure.
+        wait_line(agent_process1, "agent request ")
         control_front.wait(timeout=15)
         assert control_front.returncode != 0
 

@@ -21,6 +21,7 @@
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmQueue.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmTrap.hh>
 
 #include <zlib/ZfCLI.hh>
@@ -44,7 +45,7 @@ namespace ZtcHub_ {
 
 using Ztc::Protocol;
 
-using HubBuf = Zi::IOBufAlloc<ZiIOBuf, 1024, 1U<<30, ZuStringT<"Ztc.Hub.Frame">>;
+using HubBuf = Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Hub.Frame">, 1U<<30>;
 
 namespace SSF_ {
 
@@ -288,8 +289,9 @@ static Ztc::HubBuildFn agentFrame(
     unsigned maxFrame, bool *valid)
 {
   auto bytes = message.get<Ztc::ZfField(Msg, data)>();
-  auto offset = unsigned(bytes.data() - backing->data_());
-  auto payload = Zi::RxRange::fromStorage(ZuMv(backing), offset, bytes.length());
+  backing->skip = unsigned(bytes.data() - backing->data_());
+  backing->length = bytes.length();
+  auto payload = ZuMv(backing);
   return Ztc::HubBuildFn{[route, payload = ZuMv(payload), maxFrame, valid](
     Ztc::HubFrame frame, unsigned tailRoom) {
     auto output = Ztc::wrapHubFrame(ZuMv(frame), payload,
@@ -367,10 +369,10 @@ struct App {
   struct LinkState {
     // Pooled transport buffers also serve other owners; they cannot carry
     // this link's queue intrusion. Retain/move their existing shared handles.
-    using Pending = ZmQueue<Zi::RxRange,
+    using Pending = ZmQueue<Ztc::HubFrame,
       ZmQueueHeapID<"Ztc.Hub.Pending">>;
 
-    ZiRxStream<ZiRxQueue>	frame;
+    Ztc::HubFrame		frame;
     Pending		pending;
     uint64_t		pendingBytes = 0;
     Egresses		egresses;
@@ -448,7 +450,9 @@ struct App {
       unsigned head = lower.headRoom() + sizeof(uint16_t) + sizeof(uint64_t);
       head = (head + Ztc::Builder::Align - 1) & ~(Ztc::Builder::Align - 1);
       auto buf = lower.allocBuf(head);
-      if (buf) frame = build(ZuMv(buf), lower.tailRoom());
+      // Rx reserves TLS overhead at the head; Tx divides it between head and tail.
+      // Preserve enough trailing storage when the detached output changes owners.
+      if (buf) frame = build(ZuMv(buf), lower.headRoom() + lower.tailRoom());
     });
     return frame;
   }
@@ -607,7 +611,7 @@ struct App {
       state.closed = true;
       return -1;
     }
-    state.frame.clean();
+    state.frame = nullptr;
     state.opcode = opcode;
     return 1;
   }
@@ -615,7 +619,7 @@ struct App {
   template <typename Link, typename Rx>
   int process(Link &link, Rx &rx) {
     auto &state = link.state();
-    unsigned size = unsigned(state.frame.length() + rx.length());
+    unsigned size = unsigned((state.frame ? state.frame->length : 0) + rx.length());
     if ((!state.authenticated || state.pending.length()) &&
 	(size > hub->config().controlBytes ||
 	 state.pendingBytes > hub->config().controlBytes - size)) {
@@ -623,17 +627,21 @@ struct App {
     }
     auto &message = state.frame;
     unsigned incoming = rx.length();
-    if (incoming > hub->config().maxFrame - message.length()) { state.closed = true; return -1; }
-    while (rx) {
-      if (rx.splice(message, [](ZuBSpan span) -> int64_t { return span.length(); }) <= 0)
-	{ state.closed = true; return -1; }
+    unsigned held = message ? message->length : 0;
+    if (incoming > hub->config().maxFrame - held) { state.closed = true; return -1; }
+    while (rx.length()) {
+      Ztc::HubFrame buf;
+      auto n = rx.extract(
+        [](ZuBSpan span) -> int64_t { return span.length(); },
+        []() {
+          using Buf = Zi::IOBufBuiltin<ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
+          return ZmRef<ZiRxQueue::Node>{new Buf{
+            ZmSingleton<typename Buf::Allocator>::instance()}};
+        }, buf);
+      if (n <= 0) { state.closed = true; return -1; }
+      if (!message) message = ZuMv(buf);
+      else if (!message->append(buf->cspan())) { state.closed = true; return -1; }
     }
-    if (message.length() > message.span().length() &&
-	!message.gather(unsigned(message.length()), [&link]() {
-	  auto allocator = link.app()->mx()->rxAllocator(false);
-	  return ZmRef<ZiRxQueue::Node>::acquire(static_cast<ZiRxQueue::Node *>(
-	    allocator->alloc().release()));
-	})) { state.closed = true; return -1; }
     return 1;
   }
 
@@ -641,20 +649,18 @@ struct App {
   int messageEnd(Link &link) {
     auto &state = link.state();
     if (!state.authenticated || state.pending.length()) {
-      state.pendingBytes += state.frame.length();
-      state.pending.push(state.frame.range());
-      state.frame.clean();
+      state.pendingBytes += state.frame ? state.frame->length : 0;
+      state.pending.push(ZuMv(state.frame));
       return 1;
     }
-    auto frame = state.frame.range();
-    state.frame.clean();
+    auto frame = ZuMv(state.frame);
     return processFrame(link, frame);
   }
 
   template <typename Link>
-  int processFrame(Link &link, const Zi::RxRange &frame) {
+  int processFrame(Link &link, const Ztc::HubFrame &frame) {
     auto &state = link.state();
-    auto msg = Ztc::msg(frame.cspan());
+    auto msg = frame ? Ztc::msg(frame->cspan()) : Ztc::MsgView{};
     if (!msg) {
       ZiLOG(Warning, "Ztc.Hub", "invalid Ztc message");
       link.close(Zws::CloseCode::InvalidData);
@@ -727,7 +733,7 @@ struct App {
         return -1;
       }
       bool valid = true;
-      auto output = agentFrame(route, msg, frame.buf, hub->config().maxFrame, &valid);
+      auto output = agentFrame(route, msg, frame, hub->config().maxFrame, &valid);
       if (!output) {
         link.close(Zws::CloseCode::InvalidData);
         return -1;
@@ -875,7 +881,7 @@ struct App {
     auto &state = hold->state();
     if (state.closed || !state.pending.length()) return;
     auto frame = state.pending.shift();
-    state.pendingBytes -= frame.length;
+    state.pendingBytes -= frame ? frame->length : 0;
     if (hold->app()->app()->processFrame(*hold, frame) < 0) state.closed = true;
     if (state.closed || !state.pending.length()) return;
     auto server = hold->app();
@@ -1053,8 +1059,7 @@ int main(int argc, char **argv)
       return 1;
     }
     ZiMxParams params;
-    params.tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
-      ZuStringT<"Zhttp.TLS.Rx">>>();
+
     params.scheduler([](auto &s) {
       s.nThreads(4)
         .thread(1, [](auto &t) { t.name("rx"); t.isolated(1); })
@@ -1063,11 +1068,10 @@ int main(int argc, char **argv)
         .thread(4, [](auto &t) { t.isolated(1); t.name("hubstore"); });
     }).rxThread(1).txThread(2);
     ZiMultiplex mx{ZuMv(params)};
-    if (!mx.start()) return 1;
     Ztc::Hubd hub;
     Zum::PingHTTP transport;
     if (!transport.init(&mx, cf.issuerURL, cf.managementIssuer,
-        cf.managementURL, cf.caPath) || !transport.start() ||
+        cf.managementURL, cf.caPath) ||
         !hub.init(ZuMv(cf), &mx, transport.fn(),
           Zum::Bytes{ZuCSpan{credential.clientSecret}},
 	  credential.callbackAuth)) {
@@ -1133,6 +1137,11 @@ int main(int argc, char **argv)
       if (active) listeners.start(ZuMv(completed));
       else listeners.stop(ZuMv(completed));
     });
+    if (!mx.start() || !transport.start()) {
+      std::cerr << "ztchub runtime startup failed\n";
+      (void)finish();
+      return 1;
+    }
     bool ready = false;
     ZmSemaphore started;
     hub.start([&hub, &ready, &started](bool ok) {

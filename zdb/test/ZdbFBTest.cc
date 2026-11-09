@@ -48,13 +48,14 @@ struct Large {
 static void run()
 {
   ZuTestScope(buffers);
+  ZiMultiplex mx{ZiMxParams{}};
   static_assert(ZdbBuf_Size<Small>{} == 256);
   static_assert(ZdbBuf_Size<Large>{} == 1024);
   static_assert(ZuIsSame<ZdbBuf_HeapID<Small>, ZuStringT<"Zdb.Test.Small">>{});
   static_assert(ZuIsSame<ZdbBuf_HeapID<Large>, ZuStringT<"Zdb.Test.Large">>{});
-  auto first = tableBufAllocFn<Small>();
-  auto second = tableBufAllocFn<Small>();
-  auto large = tableBufAllocFn<Large>();
+  auto first = tableBufAllocFn<Small>(&mx);
+  auto second = tableBufAllocFn<Small>(&mx);
+  auto large = tableBufAllocFn<Large>(&mx);
   ZuCheck(first.allocator() && second.allocator() && large.allocator());
   ZuCheck(first.allocator() != second.allocator());
   auto copied = first;
@@ -75,21 +76,31 @@ static void run()
   ZuCheck(a->size >= 256 && c->size >= 1024);
   ZuCheck(a->skip >= sizeof(Hdr));
   ZuCheck(!a->rep && !b->rep && !c->rep);
-  ZuCheck(!a->ring() || a->ring() != b->ring());
+  ZuCheck(a->allocator != b->allocator);
   auto ptr = a->data();
   Builder builder{ZuMv(a), Zfb::Wire::Align};
   builder.finish(saveMsg(builder,
     saveCommit(builder, "test", 42, 0), Msg::Tag::Commit));
-  ZmRef<IOBuf> frame = saveFrame(builder);
+  ZmRef<IOBuf> frame = saveHdr(builder);
   ZuCheck(frame && frame->data_() + Zfb::Wire::MaxAlign == ptr);
   ZuCheck(frame->hdr()->length == frame->length - sizeof(Hdr));
+  auto txAllocator = mx.allocator<Zi::IOBufType::TxTCP, ZiTxBuf,
+    Zdb_::HBBufSize, Zdb_::MaxBufSize>();
+  auto firstSend = ZmRef<TxFrame>{new TxFrame{txAllocator, frame}};
+  auto secondSend = ZmRef<TxFrame>{new TxFrame{txAllocator, frame}};
+  auto frameData = frame->data();
+  auto frameLength = frame->length;
+  ZuCheck(firstSend->data() == frameData && secondSend->data() == frameData);
+  firstSend->advance(sizeof(Hdr));
+  ZuCheck(secondSend->data() == frameData && secondSend->length == frameLength);
+  ZuCheck(frame->data() == frameData && frame->length == frameLength);
+  firstSend = {}; secondSend = {};
   auto refs = frame->refCount();
   auto original = frame->data();
   auto hdr = frame->hdr();
   auto length = frame->length;
-  auto range = Zi::RxRange{frame, 0, frame->length};
+  auto view = ZmRef<RxFrame>{new RxFrame{frame}};
   frame->advance(sizeof(Hdr));
-  auto view = ZmRef<IOBuf>{new RxFrame{ZuMv(range)}};
   ZuCheck(frame->refCount() == refs + 1);
   ZuCheck(view->data() == original && view->length == length);
   ZuCheck(view->hdr()->length == hdr->length);
@@ -97,7 +108,9 @@ static void run()
   ZuCheck(!frame->length && view->data() == original &&
     view->hdr()->length == length - sizeof(Hdr));
   ZuCheck(view->ensure(view->size + 1024));
-  ZuCheck(view->jumbo());
+  ZuCheck(!view->builtin());
+  ZuCheck(view->backing && frame->refCount() == refs + 1);
+  view = {};
   ZuCheck(frame->refCount() == refs);
   ZuCheck(hdr->length == length - sizeof(Hdr));
 }
@@ -105,26 +118,31 @@ static void run()
 static void frameOrigin()
 {
   ZuTestScope(frameOrigin);
-  auto alloc = tableBufAllocFn<Small>();
+  ZiMultiplex mx{ZiMxParams{}};
+  auto alloc = tableBufAllocFn<Small>(&mx);
   Builder builder{alloc()};
   auto nested = builder.startNested();
   auto data = builder.endNested(nested, Zfb::save(builder, SchemaTest::Row{7, 11}));
   auto record = saveRecord(builder, "frame", 17, 23, 0, 1, data);
   builder.finish(saveMsg(builder, record, Msg::Tag::Replication));
-  auto packet = saveFrame(builder);
-  ZuCheck(packet && packet->framePos == packet->skip && packet->framePos);
+  ZmRef<IOBuf> packet = saveHdr(builder);
+  ZuCheck(packet && packet->skip &&
+    reinterpret_cast<uint8_t *>(packet->hdr()) == packet->data());
   auto hdr = packet->hdr();
   auto span = packet->frameSpan();
   auto length = packet->length;
   ZmRef<RepBuf<SchemaTest::Row>> cached = new RepBuf<SchemaTest::Row>{packet};
-  packet->advance(length >> 1);
-  ZuCheck(packet->data() == span.data() + (length >> 1));
+  auto txAllocator = mx.allocator<Zi::IOBufType::TxTCP, ZiTxBuf,
+    Zdb_::HBBufSize, Zdb_::MaxBufSize>();
+  auto sending = ZmRef<TxFrame>{new TxFrame{txAllocator, packet}};
+  sending->advance(length >> 1);
+  ZuCheck(sending->data() == span.data() + (length >> 1));
   ZuCheck(packet->hdr() == hdr && packet->frameSpan() == span);
   ZuCheck(IOBuf_UNAxor(*packet) == 17 &&
     cached->fbo_().get<SchemaTest::ZfField(Row, id)>() == 7 &&
     cached->fbo_().get<SchemaTest::ZfField(Row, value)>() == 11);
-  packet->advance(packet->length);
-  ZuCheck(!packet->length && packet->data() == span.data() + length);
+  sending->advance(sending->length);
+  ZuCheck(!sending->length && sending->data() == span.data() + length);
   ZuCheck(packet->hdr() == hdr && packet->frameSpan() == span &&
     packet->rep == cached.ptr());
   auto committed = record_(msg_(packet->hdr()));

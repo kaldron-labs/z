@@ -40,9 +40,7 @@ static void execute(uint64_t repeats, bool rollback)
   ZuTestScopeRT(execute);
   auto cf = config();
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
-  ZuCheckRT(mx.start());
+  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   using DB = zdbtest::LiveDB;
   ZmRef<DB> db = new DB{};
@@ -52,6 +50,7 @@ static void execute(uint64_t repeats, bool rollback)
   context->orders = orders;
   db->sagas({zdbtest::repeatLiveSagaDef()});
   context->failStep = rollback ? 2 : UINT32_MAX;
+  ZuCheckRT(mx.start());
   ZuCheckRT(db->start());
   auto saga = zdbtest::repeatLiveSaga(1, repeats);
   ZuCheckRT(saga->nPhases() == 3 && saga->nSteps() == repeats + 2);
@@ -99,9 +98,7 @@ static void invalidRecovery(bool overflow)
   ZuTestScopeRT(invalidRecovery);
   auto cf = config();
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
-  ZuCheckRT(mx.start());
+  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
   using DB = zdbtest::LiveDB;
@@ -112,6 +109,7 @@ static void invalidRecovery(bool overflow)
   context->orders = orders;
   auto definition = zdbtest::repeatLiveSagaDef();
   db->sagas({definition});
+  ZuCheckRT(mx.start());
   ZuCheckRT(db->start());
   unsigned completed = 0;
   auto invalid = zdbtest::repeatLiveSaga(1, UINT64_MAX);
@@ -149,11 +147,11 @@ static void invalidRecovery(bool overflow)
   context->orders = nullptr;
   ZuCheckRT(mx.stop());
   db->final();
-  ZuCheckRT(mx.start());
   db->init(ZdbCf{fields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {}, store);
   orders = db->initTable<zdbtest::Order>("o");
   context->orders = orders;
   db->sagas({definition});
+  ZuCheckRT(mx.start());
   ZuCheckRT(!db->start());
   ZuCheckRT(!context->runs);
   orders = {};

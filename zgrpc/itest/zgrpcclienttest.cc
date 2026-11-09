@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmContext.hh>
@@ -90,18 +91,7 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal)
     state.payload.length((256U << 10) + 7);
     memset(state.payload.data(), 0x71, state.payload.length());
   }
-  // Keep a complete retained message plus request/reply retirement overlap;
-  // TLS emits records, while QUIC emits path-sized packets.
-  unsigned rxSlots = 4 * ((state.payload.length() + ZiIOBuf_DefltSize - 1)/
-    ZiIOBuf_DefltSize);
-  unsigned txBytes = h3 ? Zquic::MinUDPPayload : 16U << 10;
-  unsigned txSlots = 4 * ((state.payload.length() + txBytes - 1)/txBytes);
   ZiMultiplex mx{ZiMxParams{}
-    .rxRingSize(rxSlots < ZiIOBuf_DefltRxRingSize ?
-      ZiIOBuf_DefltRxRingSize : rxSlots)
-    .txRingSize(txSlots < ZiIOBuf_DefltTxRingSize ?
-      ZiIOBuf_DefltTxRingSize : txSlots)
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
     .scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
@@ -110,7 +100,6 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal)
       .thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
   state.mx = &mx;
-  ZuCheckRT(mx.start(), (return));
   unsigned port = peerPort(h3);
   ZuCheckRT(port, ({ mx.stop(); return; }));
   Zhttp::HubConfig hub{&mx, "3", "4"};
@@ -125,10 +114,6 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal)
     .policy(Zhttp::H2Policy::Force));
   bool initialized = server.init(hub, serverConfig);
   ZuCheckRT(initialized);
-  bool started = initialized && server.start();
-  ZuCheckRT(started);
-  bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCheckRT(listening && !state.errors.load_());
   ClientApp app;
   Zgrpc::Client<ClientApp, Matrix> client;
   ClientConfig config;
@@ -136,13 +121,19 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal)
   config.bodyMax(uint64_t(-1)).retainedBodyMax(1U << 20)
     .maxRedirects(0).protocol(h3 ? Zhttp::ProtoPolicy::ForceH3 : Zhttp::ProtoPolicy::DisableH3);
   if (state.redirect) config.maxRetries(3).maxRedirects(3);
-  bool cliInit = listening && client.init(hub, 1, config, &app, {},
+  bool cliInit = initialized && client.init(hub, 1, config, &app, {},
     Zhttp::H2Config{}.tls([&cert](auto &tls) {
       tls.caPath(cert);
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
   ZuCheckRT(cliInit);
-  bool pooled = cliInit && client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
+  ZuCheckRT(mx.start(), (return));
+  bool started = initialized && server.start();
+  ZuCheckRT(started);
+  bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
+  ZuCheckRT(listening && !state.errors.load_());
+  bool pooled = listening && cliInit &&
+    client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
   ZuCheckRT(pooled);
   if (state.redirect && pooled)
     ZuCheckRT(!client.config(0)->maxRetries() && !client.config(0)->maxRedirects());
@@ -202,7 +193,7 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal)
   if (mode == Mode::LateRx) ZuCheckRT(!state.headers);
   if (started) ZuCheckRT(server.stop());
   server.final();
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   ZuCheckRT(mx.stop());
   ZuCheckRT(!state.errors.load_());
@@ -242,11 +233,11 @@ static void encodeExpiry()
   State state;
   state.mx = &mx;
   state.expectedFailure = Code::DEADLINE_EXCEEDED;
-  ZuCheck(mx.start(), (return));
   ClientApp app;
   Zgrpc::Client<ClientApp, Matrix> client;
   bool initialized = client.init(Zhttp::HubConfig{&mx, "3", "4"}, 1, ClientConfig{}, &app);
   ZuCheck(initialized);
+  ZuCheck(mx.start(), (return));
   if (initialized) {
     ZmSemaphore held, release, encoded, drained;
     mx.run([&held, &release]() { held.post(); release.wait(); }, 3);
@@ -288,11 +279,11 @@ static void inputFailure(bool metadata, Zhttp::ResultCode::T code, bool expired 
   State state;
   state.mx = &mx;
   state.expectedFailure = expired ? Code::DEADLINE_EXCEEDED : Code::UNIMPLEMENTED;
-  ZuCheckRT(mx.start(), (return));
   ClientApp app;
   Zgrpc::Client<ClientApp, Matrix> client;
   bool initialized = client.init(Zhttp::HubConfig{&mx, "3", "4"}, 1, ClientConfig{}, &app);
   ZuCheckRT(initialized);
+  ZuCheckRT(mx.start(), (return));
   if (initialized) {
     ZmRef<Call> observer = new Call{&state};
     observer->metadata = metadata ? MetaError::Encoding : MetaError::OK;
@@ -410,13 +401,21 @@ struct GoPeer : Zhttp::ProtocolServer<GoPeer<Profile>, Profile, GoLink<Profile>>
       auto tx = link->transmit_(builder);
       builder.begin(tx);
       FrameError::T error;
-      auto buf = encodeFrame(ZmRef<ZiIOBuf>{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-      ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}},
+      auto buf = encodeFrame(ZmRef<ZiIOBuf>{new Zi::IOBufBuiltin<
+        ZiIOBuf,
+        ZiIOBuf_DefltSize,
+        ZiIOBuf_DefltAlign,
+        ZiIOBuf_HeapID,
+        ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<
+          ZiIOBuf,
+          ZiIOBuf_DefltSize,
+          ZiIOBuf_DefltAlign,
+          ZiIOBuf_HeapID,
+          ZiIOBuf_DefltMaxSize>::Allocator>::instance()}},
 	0, Default::MaxMessageBytes, Packet{42, {}}, error);
       if (!buf || error != FrameError::OK) { ++s->errors; return; }
       auto body = builder.body(tx);
-      auto length = buf->length;
-      if (!body.appendRange(ZuMv(buf), 0, length)) { ++s->errors; return; }
+      if (!body.appendBuf(ZuMv(buf))) { ++s->errors; return; }
       if (!body.flush() || !builder.trailers(tx, GoTrailers{}) || !tx.flush())
 	++s->errors;
       link->finish();
@@ -532,13 +531,11 @@ static void goaway(bool drain = false)
   state.drain = drain;
   state.version = h3 ? Zhttp::Version::H3 : Zhttp::Version::H2;
   ZiMultiplex mx{ZiMxParams{}
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
     .scheduler([](auto &s) {
     s.nThreads(4);
     for (unsigned i = 1; i <= 4; ++i) s.thread(i, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
   state.mx = &mx;
-  ZuCheckRT(mx.start(), (return));
   state.port = peerPort(h3);
   ZuCheckRT(state.port, ({ mx.stop(); return; }));
   Zhttp::HubConfig hub{&mx, "3", "4"};
@@ -551,22 +548,24 @@ static void goaway(bool drain = false)
       tls.certPath(cert).keyPath(key);
     }).policy(Zhttp::H2Policy::Force));
   ZuCheckRT(initialized);
-  bool started = initialized && server.start();
-  ZuCheckRT(started);
-  bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCheckRT(listening && !state.errors.load_());
   ClientApp app;
   Zgrpc::Client<ClientApp, Matrix> client;
   ClientConfig config;
   if (drain) config.links(1).linkMax(2).concurrency(2);
   config.protocol(h3 ? Zhttp::ProtoPolicy::ForceH3 : Zhttp::ProtoPolicy::DisableH3);
-  bool cliInit = listening && client.init(hub, 1, config, &app, {},
+  bool cliInit = initialized && client.init(hub, 1, config, &app, {},
     Zhttp::H2Config{}.tls([&cert](auto &tls) {
       tls.caPath(cert);
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
   ZuCheckRT(cliInit);
-  bool pooled = cliInit && client.pool(0, Zhttp::Destination{"localhost", uint16_t(state.port)});
+  ZuCheckRT(mx.start(), (return));
+  bool started = initialized && server.start();
+  ZuCheckRT(started);
+  bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
+  ZuCheckRT(listening && !state.errors.load_());
+  bool pooled = listening && cliInit &&
+    client.pool(0, Zhttp::Destination{"localhost", uint16_t(state.port)});
   ZuCheckRT(pooled);
   bool cliUp = pooled && client.start();
   ZuCheckRT(cliUp);
@@ -599,7 +598,7 @@ static void goaway(bool drain = false)
   client.final();
   if (started) ZuCheckRT(server.stop());
   server.final();
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   ZuCheckRT(mx.stop());
   ZuCheckRT(!state.errors.load_());
@@ -617,13 +616,11 @@ static void transition()
     Zhttp::Test::writeLocalhostCert(other, badCert, badKey), (return));
   GoState state, bad;
   ZiMultiplex mx{ZiMxParams{}
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
     .scheduler([](auto &s) {
     s.nThreads(4);
     for (unsigned i = 1; i <= 4; ++i) s.thread(i, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
   state.mx = bad.mx = &mx;
-  ZuCheck(mx.start(), (return));
   unsigned port = peerPort(false);
   bad.port = peerPort(true);
   state.altPort = bad.port;
@@ -637,28 +634,30 @@ static void transition()
     }).policy(Zhttp::H2Policy::Force));
   bool initialized = server.init(hub, serverConfig);
   ZuCheck(initialized);
-  bool started = initialized && server.start();
-  ZuCheck(started);
   GoPeer<Zhttp::H3QUIC> untrusted{&bad};
   bool badInit = untrusted.init(hub,
     Zhttp::QUICConfig{}.certPath(badCert).keyPath(badKey));
   ZuCheck(badInit);
-  bool badUp = badInit && untrusted.start();
-  ZuCheck(badUp);
-  bool listening = started && badUp && state.listening.timedwait(Zm::now(10)) == 0 &&
-    bad.listening.timedwait(Zm::now(10)) == 0;
-  ZuCheck(listening && !state.errors.load_() && !bad.errors.load_());
   ClientApp app;
   Zgrpc::Client<ClientApp, Matrix> client;
   ClientConfig config;
   config.protocol(Zhttp::ProtoPolicy::PreferH3).maxRetries(3).maxRedirects(3);
-  bool cliInit = listening && client.init(hub, 1, config, &app, {},
+  bool cliInit = initialized && client.init(hub, 1, config, &app, {},
     Zhttp::H2Config{}.tls([&cert](auto &tls) {
       tls.caPath(cert);
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
   ZuCheck(cliInit);
-  bool pooled = cliInit && client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
+  ZuCheck(mx.start(), (return));
+  bool started = initialized && server.start();
+  ZuCheck(started);
+  bool badUp = badInit && untrusted.start();
+  ZuCheck(badUp);
+  bool listening = started && badUp && state.listening.timedwait(Zm::now(10)) == 0 &&
+    bad.listening.timedwait(Zm::now(10)) == 0;
+  ZuCheck(listening && !state.errors.load_() && !bad.errors.load_());
+  bool pooled = listening && cliInit &&
+    client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
   ZuCheck(pooled);
   if (pooled) ZuCheck(!client.config(0)->maxRetries() && !client.config(0)->maxRedirects());
   bool cliUp = pooled && client.start();
@@ -686,7 +685,7 @@ static void transition()
   untrusted.final();
   if (started) ZuCheck(server.stop());
   server.final();
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   ZuCheck(mx.stop());
   ZuCheck(!state.errors.load_() && !bad.errors.load_());

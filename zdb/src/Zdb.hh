@@ -164,14 +164,15 @@ using TableModelT = ZuDecay<decltype(*ZdbTableModel(ZuDeclVal<Impl *>()))>;
 
 class Cxn_ :
   public ZiConnection,
-  public ZiRx<Cxn_>,
+  public ZiRx<Cxn_, RxBufAlloc>,
   public ZiTx<Cxn_> {
 friend DB;
 friend Host;
 friend AnyTable;
 
-  using Rx = ZiRx<Cxn_>;
+  using Rx = ZiRx<Cxn_, RxBufAlloc>;
   using Tx = ZiTx<Cxn_>;
+friend Rx;
 
   using Rx::recv; // de-conflict with ZiConnection
   using Tx::send; // ''
@@ -187,6 +188,10 @@ private:
   void connected(ZiRxContext &);
   void disconnected(bool);
 
+  auto rxAllocator() const {
+    return static_cast<RxBufAllocator *>(info().rxAllocator);
+  }
+  void send(ZmRef<IOBuf>);
   void msgRead(ZiRxContext &);
   int msgRead2(ZmRef<IOBuf>);
   void msgRead3(ZmRef<IOBuf>);
@@ -1002,7 +1007,7 @@ private:
 
 public:
   Table_(DB *db, TableCf *cf, bool internal) :
-    AnyTable{db, cf, internal, [](unsigned ringSize) { return tableBufAllocFn<T>(ringSize); }},
+    AnyTable{db, cf, internal, [](ZiMultiplex *mx) { return tableBufAllocFn<T>(mx); }},
     m_schema(Zfb::SchemaOut::Schema<T>::Size)
   {
     Zfb::saveSchema<T>(m_schema);
@@ -2097,8 +2102,6 @@ private:
   void stop_0();
   void stop_1();
   void stop_2();
-  void stop_3();
-  void unbind_(Zi::IOBufAllocator *);
   using DrainFn = ZmFn<void(), ZmFnHeapID<"Zdb.DrainFn">>;
   template <typename L>
   void drainShards(unsigned shard, L &&l) {
@@ -2204,7 +2207,8 @@ private:
   DBCf			m_cf;
   ZiMultiplex		*m_mx = nullptr;
   ZmRef<Store>		m_store;
-  ZmRef<Zi::IOBufAllocator> m_hbAllocator;
+  Zi::IOBufAllocator	*m_rxAllocator = nullptr;
+  Zi::IOBufAllocator	*m_hbAllocator = nullptr;
   bool			m_repStore = false;	// replicated data store
 
   // immutable after optional pre-start saga registration
@@ -2232,7 +2236,6 @@ private:
   AllDoneFn		m_allDoneFn;		// ''
   unsigned		m_allCount = 0;		// remaining count
   unsigned		m_allNotOK = 0;		// remaining not OK
-  unsigned		m_unbinding = 0;	// allocator service detach count
 
   ZmRef<SagaHashObj>	m_sagaHash;
   ZmRef<SagaStepHashObj> m_sagaStepHash;
@@ -2320,7 +2323,8 @@ inline void Table_<Impl_>::count(GroupKey<KeyID> key, L &&l)
 
   auto context = ZmRef(new Context{ZuFwd<L>(l)});
 
-  Builder fbb{new IOBufAlloc<T>{nullptr, 0}, Zfb::BufferAlign<GroupKey<KeyID>>::N};
+  Builder fbb{new IOBufAlloc<T>{
+    Zdb_::localBufAllocator<T>(), nullptr, 0}, Zfb::BufferAlign<GroupKey<KeyID>>::N};
   fbb.finish(Zfb::save(fbb, key));
   auto keyBuf = fbb.buf();
   AnyTable::count(KeyID, ZuMv(keyBuf), ZuMv(context));
@@ -2341,7 +2345,8 @@ inline void Table_<Impl_>::select_(
 
   auto context = ZmRef(new Context{this, ZuFwd<L>(l)});
 
-  Builder fbb{new IOBufAlloc<T>{nullptr, 0}, Zfb::BufferAlign<SelectKey>::N};
+  Builder fbb{new IOBufAlloc<T>{
+    Zdb_::localBufAllocator<T>(), nullptr, 0}, Zfb::BufferAlign<SelectKey>::N};
   fbb.finish(Zfb::save(fbb, selectKey));
   auto keyBuf = fbb.buf();
 
@@ -2400,7 +2405,8 @@ inline void Table_<Impl_>::retrieve(
   auto context = ZmRef(new Context{
     this, shard, ZuMv(key), ZuFwd<L>(l)});
 
-  Builder fbb{new IOBufAlloc<T>{nullptr, 0}, Zfb::BufferAlign<Key_>::N};
+  Builder fbb{new IOBufAlloc<T>{
+    Zdb_::localBufAllocator<T>(), nullptr, 0}, Zfb::BufferAlign<Key_>::N};
   fbb.finish(Zfb::save(fbb, context->key));
   auto keyBuf = fbb.buf();
   AnyTable::retrieve(KeyID, ZuMv(keyBuf), ZuMv(context));

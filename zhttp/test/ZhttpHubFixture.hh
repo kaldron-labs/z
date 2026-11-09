@@ -76,9 +76,6 @@ struct State {
 ZiMxParams mxParams()
 {
   return ZiMxParams()
-#ifdef ZHTTP_H3_HUB_TEST
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
-#endif
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -603,8 +600,6 @@ void runUpgrade(const TempDir &temp)
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "Upgrade multiplexer start failed");
-  if (!mx.running()) return;
 
   Zhttp::HubConfig hub{&mx, "3", "4"};
   UpgradeServer<Profile> server{&state};
@@ -619,6 +614,8 @@ void runUpgrade(const TempDir &temp)
     return;
   }
 
+  ZuCHECK(mx.start(), "Upgrade multiplexer start failed");
+  if (!mx.running()) return;
   bool serverStart = server.start();
   bool clientStart = client.start();
   ZuCHECK(serverStart && clientStart, "Upgrade hub start failed");
@@ -690,8 +687,6 @@ void run(
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "H1 multiplexer start failed");
-  if (!mx.running()) return;
 
   Zhttp::HubConfig hub{&mx, "3", "4"};
   Server<Profile> server{&state};
@@ -707,6 +702,8 @@ void run(
   }
   state.trace.push(LifeEvt::Init);
 
+  ZuCHECK(mx.start(), "H1 multiplexer start failed");
+  if (!mx.running()) return;
   bool serverStart = server.start();
   bool clientStart = client.start();
   ZuCHECK(serverStart && clientStart, "H1 hub start failed");
@@ -804,8 +801,6 @@ void runServerStop(const TempDir &temp)
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "active-stop multiplexer start failed");
-  if (!mx.running()) return;
 
   Zhttp::HubConfig hub{&mx, "3", "4"};
   Server<Profile> server{&state};
@@ -821,6 +816,8 @@ void runServerStop(const TempDir &temp)
     return;
   }
 
+  ZuCHECK(mx.start(), "active-stop multiplexer start failed");
+  if (!mx.running()) return;
   bool serverStart = server.start();
   bool clientStart = client.start();
   ZuCHECK(serverStart && clientStart, "active-stop hub start failed");
@@ -910,8 +907,6 @@ void testTLSFailure(const TempDir &cert, const TempDir &otherCA)
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "TLS failure multiplexer start failed");
-  if (!mx.running()) return;
 
   Zhttp::HubConfig hub{&mx, "3", "4"};
   Server<Zhttp::H1TLS> server{&state};
@@ -927,6 +922,8 @@ void testTLSFailure(const TempDir &cert, const TempDir &otherCA)
     return;
   }
 
+  ZuCHECK(mx.start(), "TLS failure multiplexer start failed");
+  if (!mx.running()) return;
   bool serverStart = server.start();
   bool clientStart = client.start();
   ZuCHECK(serverStart && clientStart, "TLS failure hub start failed");

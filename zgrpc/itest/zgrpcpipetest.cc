@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <string.h>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZgrpcCall.hh>
@@ -36,7 +37,12 @@ template <int K> struct Contract : Method {
   enum { Kind = K, ReqBorrowed = 1, ResBorrowed = 1 };
 };
 
-using Pool = Zi::IOBufAlloc<ZiIOBuf, 32, 1U << 20, ZuStringT<"Zgrpc.ITest">>;
+using Pool = Zi::IOBufBuiltin<
+  ZiIOBuf,
+  32,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"Zgrpc.ITest">,
+  1U << 20>;
 
 // Component integration before the transport adapter is available. This is
 // deliberately not counted as HTTP or independent-peer qualification.
@@ -58,7 +64,7 @@ template <int K> class Pipe {
 	return false;
       }
       FrameError::T error;
-      ZmRef<ZiIOBuf> initial = new Pool{nullptr, 0};
+      ZmRef<ZiIOBuf> initial = new Pool{ZmSingleton<typename Pool::Allocator>::instance()};
       initial->skip = 8;
       auto buf = encodeFrame(ZuMv(initial), 4, Default::MaxMessageBytes,
 	message.object(), error);

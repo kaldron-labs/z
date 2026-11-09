@@ -207,12 +207,7 @@ void emitSignedBody(const Impl *impl, Emit &&emit, Encode &&encode)
     impl->signBody(out, object, out.cspan().offset(offset));
     if (out.failed()) return Zhttp::WriteOutcome::Abort;
     buf = out.take();
-    if (s.canAdopt_(*buf)) s << ZuMv(buf);
-    else {
-      auto length = buf->length;
-      if (!s.appendRange(Zi::RxRange{ZuMv(buf), 0, length}))
-	return Zhttp::WriteOutcome::Abort;
-    }
+    if (!s.appendBuf(ZuMv(buf))) return Zhttp::WriteOutcome::Abort;
     s.flush();
     impl->bodyLength = s.produced();
     return Zhttp::WriteOutcome::End;

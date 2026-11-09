@@ -736,9 +736,9 @@ ZmHashDerive(ClientGenHash, ClientGenEntry,
 	ZmHashHeapID<"Zhttp.H2.Generations">>>>));
 
 template <typename App>
-class ClientHub : public Ztls::Client<ClientHub<App>> {
+class ClientHub : public Transport_::Traits<Zhttp::TLS>::template Client<ClientHub<App>> {
 public:
-  using Base = Ztls::Client<ClientHub>;
+  using Base = Transport_::Traits<Zhttp::TLS>::template Client<ClientHub>;
   using Link = CliLinkT<App>;
   using StopFn = ZmFn<void(bool), ZmFnHeapID<"Zhttp.H2">>;
   using Slots = ZtArray<ClientSlot,
@@ -917,7 +917,7 @@ template <typename App>
 class CliLink :
   public ZmNHeap<CliLink<App>>,
   public Ztls::CliLink<ClientHub<App>, CliLink<App>,
-    Transport_::TLSTxBufAlloc>,
+    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
   public Wire<CliLink<App>, typename App::Link> {
 friend inline ZuStringT<"Zhttp.H2.Link"> ZmNHeapID(CliLink *);
 
@@ -925,7 +925,7 @@ public:
   using Hub = ClientHub<App>;
   using AppLink = App::Link;
   using Base = Ztls::CliLink<Hub, CliLink,
-    Transport_::TLSTxBufAlloc>;
+    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
   using Wire_ = Wire<CliLink, AppLink>;
 friend Wire_;
   using Base::up;
@@ -1677,9 +1677,9 @@ struct ClientChoice {
 
 template <typename App, typename H1AppLink_, typename H2AppLink_>
 class ClientHub :
-  public Ztls::Client<ClientHub<App, H1AppLink_, H2AppLink_>> {
+  public Transport_::Traits<Zhttp::TLS>::template Client<ClientHub<App, H1AppLink_, H2AppLink_>> {
 public:
-  using Base = Ztls::Client<ClientHub>;
+  using Base = Transport_::Traits<Zhttp::TLS>::template Client<ClientHub>;
   using Link = CliLinkT<App, H1AppLink_, H2AppLink_>;
   using H1AppLink = H1AppLink_;
   using H2AppLink = H2AppLink_;
@@ -1951,7 +1951,7 @@ class CliLink :
   public Ztls::CliLink<
     ClientHub<App, H1AppLink_, H2AppLink_>,
     CliLink<App, H1AppLink_, H2AppLink_>,
-    Transport_::TLSTxBufAlloc>,
+    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
   public H2_::Wire<
     CliLink<App, H1AppLink_, H2AppLink_>, H2AppLink_> {
 friend inline ZuStringT<"Zhttp.TLS.Link"> ZmNHeapID(CliLink *);
@@ -1962,7 +1962,7 @@ public:
   using H2AppLink = H2AppLink_;
   using Choice = Hub::Choice;
   using Base = Ztls::CliLink<Hub, CliLink,
-    Transport_::TLSTxBufAlloc>;
+    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
   using Wire = H2_::Wire<CliLink, H2AppLink>;
 friend Wire;
   using Base::up;

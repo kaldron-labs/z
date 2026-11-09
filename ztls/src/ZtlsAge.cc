@@ -555,7 +555,7 @@ static ZuUnion<void, ZeException> writePayload_(
   Ztls::Pico::AeadCtx ctx;
   if (!ctx.init(Ztls::Backend::chacha20poly1305(), true, key, baseIV))
     return ZeEXCEPT(Error, "ZtlsAge", "payload cipher setup failed");
-  Zi::AppBufAllocator<ZiIOBuf, ChunkCipherSize, ChunkCipherSize> allocator;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ChunkCipherSize, ChunkCipherSize> allocator;
   ZmRef<ZiIOBuf> chunk = allocator.allocBuf();
   size_t offset = 0;
   uint64_t counter = 0;
@@ -647,7 +647,7 @@ static ZuUnion<size_t, ZeException> readPayload_(
   Ztls::Pico::AeadCtx ctx;
   if (!ctx.init(Ztls::Backend::chacha20poly1305(), false, key, baseIV))
     return ZeEXCEPT(Error, "ZtlsAge", "payload cipher setup failed");
-  Zi::AppBufAllocator<ZiIOBuf, ChunkCipherSize, ChunkCipherSize> allocator;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ChunkCipherSize, ChunkCipherSize> allocator;
   ZmRef<ZiIOBuf> chunk = allocator.allocBuf();
   uint64_t counter = 0;
   for (;;) {

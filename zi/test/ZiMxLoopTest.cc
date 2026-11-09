@@ -77,17 +77,18 @@ private:
 
 class LoopMx : public ZiMultiplex {
 public:
-  using RxAllocator = Zi::RxTCPBufAllocator<ZiIOBuf, 4>;
-  using TxAllocator = Zi::TxTCPBufAllocator<ZiIOBuf, 4>;
+  using RxAllocator = Zi::IOBufAllocator;
+  using TxAllocator = Zi::IOBufAllocator;
 
   LoopMx(ZiIP loopIP, unsigned port) :
     m_loopIP{loopIP}, m_listenPort{port} {
-    if (!allocator(m_rx.ptr()) || !allocator(m_tx.ptr())) ZmFail(allocator_registration);
+    m_registered = state() == ZmEngineState::Stopped &&
+      m_rx && m_rx->mx() == this && m_tx && m_tx->mx() == this;
   }
   ~LoopMx() = default;
 
-  RxAllocator *rxAllocator() const { return m_rx.ptr(); }
-  TxAllocator *txAllocator() const { return m_tx.ptr(); }
+  RxAllocator *rxAllocator() const { return m_rx; }
+  TxAllocator *txAllocator() const { return m_tx; }
 
   ZiConnection *connected(const ZiCxnInfo &ci)
   {
@@ -122,12 +123,19 @@ public:
 
   void startLoopback()
   {
+    if (!m_registered.load_()) { markIOFailure(); return; }
     ZiMultiplex::listen(
       ZiListenFn{this, ZmFnPtr<&LoopMx::listening>{}},
       ZiFailFn{this, ZmFnPtr<&LoopMx::failed>{}},
       ZiConnectFn{this, ZmFnPtr<&LoopMx::connected>{}},
       m_loopIP, m_listenPort, 1,
-      m_rx.ptr(), ZiCxnOptions());
+      m_rx, ZiCxnOptions());
+  }
+
+  bool registered_() const { return m_registered.load_(); }
+  bool singleRegistration_() const {
+    return state() == ZmEngineState::Stopped &&
+      m_rx && m_tx && m_rx->mx() == this && m_tx->mx() == this;
   }
 
   bool waitDone(int seconds)
@@ -204,7 +212,7 @@ private:
       ZiFailFn{this, ZmFnPtr<&LoopMx::failed>{}},
       m_loopIP, 0,
       m_loopIP, m_listenPort,
-      m_rx.ptr(), ZiCxnOptions());
+      m_rx, ZiCxnOptions());
   }
 
   void maybeDone()
@@ -227,8 +235,9 @@ private:
   }
 
 private:
-  ZmRef<RxAllocator> m_rx = new RxAllocator{};
-  ZmRef<TxAllocator> m_tx = new TxAllocator{};
+  RxAllocator *m_rx = allocator<Zi::IOBufType::RxTCP, ZiIOBuf, 4>();
+  TxAllocator *m_tx = allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 4>();
+  ZmAtomic<unsigned> m_registered = 0;
 	  ZmSemaphore		m_done;
 	  ZmSemaphore		m_discDone;
 	  ZmScheduler::Timer	m_retryTimer;
@@ -249,17 +258,18 @@ private:
 
 class UdpTOSMx : public ZiMultiplex {
 public:
-  using RxAllocator = Zi::RxUDPBufAllocator<ZiIOBuf, 4>;
-  using TxAllocator = Zi::TxUDPBufAllocator<ZiIOBuf, 4>;
+  using RxAllocator = Zi::IOBufAllocator;
+  using TxAllocator = Zi::IOBufAllocator;
 
   UdpTOSMx(ZiIP loopIP, unsigned port) :
     m_loopIP{loopIP}, m_serverPort{uint16_t(port)} {
-    if (!allocator(m_rx.ptr()) || !allocator(m_tx.ptr())) ZmFail(allocator_registration);
+    m_registered = state() == ZmEngineState::Stopped &&
+      m_rx && m_rx->mx() == this && m_tx && m_tx->mx() == this;
   }
   ~UdpTOSMx() = default;
 
-  RxAllocator *rxAllocator() const { return m_rx.ptr(); }
-  TxAllocator *txAllocator() const { return m_tx.ptr(); }
+  RxAllocator *rxAllocator() const { return m_rx; }
+  TxAllocator *txAllocator() const { return m_tx; }
 
   ZiConnection *connected(const ZiCxnInfo &ci)
   {
@@ -279,12 +289,19 @@ public:
 
   void startServer()
   {
+    if (!m_registered.load_()) { ioFailure(); return; }
     ZiCxnOptions options;
     options.udp(true);
     udp(
       ZiConnectFn{this, ZmFnPtr<&UdpTOSMx::connected>{}},
       ZiFailFn{this, ZmFnPtr<&UdpTOSMx::failed>{}},
-      m_loopIP, m_serverPort, ZiIP{}, 0, m_rx.ptr(), options);
+      m_loopIP, m_serverPort, ZiIP{}, 0, m_rx, options);
+  }
+
+  bool registered_() const { return m_registered.load_(); }
+  bool singleRegistration_() const {
+    return state() == ZmEngineState::Stopped &&
+      m_rx && m_tx && m_rx->mx() == this && m_tx->mx() == this;
   }
 
   void serverReady(ZiConnection *cxn)
@@ -335,12 +352,13 @@ private:
     udp(
       ZiConnectFn{this, ZmFnPtr<&UdpTOSMx::connected>{}},
       ZiFailFn{this, ZmFnPtr<&UdpTOSMx::failed>{}},
-      m_loopIP, 0, m_loopIP, m_serverPort, m_rx.ptr(), options);
+      m_loopIP, 0, m_loopIP, m_serverPort, m_rx, options);
   }
 
 private:
-  ZmRef<RxAllocator> m_rx = new RxAllocator{};
-  ZmRef<TxAllocator> m_tx = new TxAllocator{};
+  RxAllocator *m_rx = allocator<Zi::IOBufType::RxUDP, ZiIOBuf, 4>();
+  TxAllocator *m_tx = allocator<Zi::IOBufType::TxUDP, ZiIOBuf, 4>();
+  ZmAtomic<unsigned> m_registered = 0;
   ZmSemaphore		m_done;
   ZiIP			m_loopIP;
   uint16_t		m_serverPort = 0;
@@ -564,6 +582,8 @@ struct LoopResult {
   bool		started = false;
   bool		telemetry = false;
   bool		emptyCxns = false;
+  bool		registered = false;
+  bool		singleRegistration = false;
   bool		done = false;
   bool		failed = false;
   unsigned	failKind = 0;
@@ -607,6 +627,7 @@ LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP, unsigned port)
   mx.startLoopback();
 
   result.done = mx.waitDone(5);
+  result.registered = mx.registered_();
 
   // Some constrained sandboxes deny loopback socket setup; gate integration
   // assertions to keep the suite deterministic across environments.
@@ -626,6 +647,7 @@ LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP, unsigned port)
   result.peerDisconnects = mx.peerDisconnects_();
   result.localDisconnects = mx.localDisconnects_();
   mx.stop();
+  result.singleRegistration = mx.singleRegistration_();
   return result;
 }
 
@@ -634,10 +656,12 @@ LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP, unsigned port)
   ZuCheck((result).telemetry); \
   ZuCheck((result).emptyCxns); \
   ZuCheck((result).done); \
+  ZuCheck((result).registered); \
   if ((result).failed) { \
     ZuCheck((result).failKind == 1); \
     return; \
   } \
+  ZuCheck((result).singleRegistration); \
   ZuCheck((result).clientEcho); \
   ZuCheck((result).clientDisc); \
   ZuCheck((result).serverDisc); \
@@ -675,6 +699,8 @@ void testUdpTOSIPv4()
   ZuCheck(mx.waitDone(5));
   mx.stop();
 
+  ZuCheck(mx.registered_());
+  ZuCheck(mx.singleRegistration_());
   ZuCheck(!mx.failed_());
   ZuCheck(mx.payloadOK_());
   ZuCheck(mx.haveTOS_());

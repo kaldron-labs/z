@@ -14,8 +14,8 @@ to a concrete HTTP profile. H1 profiles include `Zhttp::H1TCP` and
 profile selection determines the transport, rather than a WebSocket frame
 codec creating its own socket.
 
-An HTTP/3 binding uses the multiplexer UDP packet policy described in
-[Zhttp's setup](../zhttp/README.md); H1-only applications need no QUIC policy.
+An HTTP/3 binding uses dedicated QUIC receive and transmit packet allocators
+registered with the multiplexer by its hub. See [Zhttp's setup](../zhttp/README.md).
 
 The [client](src/zws.cc) and [echo server](src/zwsd.cc) show complete H1
 applications, including multiplexer setup, trust configuration, signals and

@@ -41,11 +41,7 @@ class Stream :
   // Rx thread exclusive base. Only the Rx thread may use ZmPQRx APIs/state.
   public ZmPQRx<
     Stream<Link_, Impl, TxBufAlloc_>,
-    StreamRxPQueue, ZmPQRxGapIgnore<>>,
-  // Tx thread exclusive base. Only the Tx thread may use ZmPQTx APIs/state.
-  public ZmPQTx<
-    Stream<Link_, Impl, TxBufAlloc_>,
-    TxDataPQueue> {
+    StreamRxPQueue, ZmPQRxGapIgnore<>> {
 template <typename, typename, typename, typename>
 friend class CliLink;
 template <typename, typename, typename, typename>
@@ -59,12 +55,9 @@ public:
   using Impl_ = Impl;
   using TxBufAlloc = TxBufAlloc_;
   using Rx = ZmPQRx<Self, StreamRxPQueue, ZmPQRxGapIgnore<>>;
-  using Tx = ZmPQTx<Self, TxDataPQueue>;
   using RxMsg = StreamRxPQueue::Node;
   using RxQueueSpan = StreamRxPQueue::Span;
   using TxMsg = TxDataPQueue::Node;
-  using TxSpan = TxDataPQueue::Span;
-  using TxKey = TxDataPQueue::Key;
   using TxUnackdQueue = StreamTxPQueue;
 
   auto impl() const { return static_cast<const Impl *>(this); }
@@ -89,7 +82,7 @@ public:
     uint64_t limit = m_resetReceived ? finalSize() : m_rxDelivered;
     return m_rxRetired < limit ? limit - m_rxRetired : 0;
   }
-  unsigned txRangeCount() const { return m_txQueue.count_() + m_txRanges.count_(); }
+  unsigned txRangeCount() const { return m_txRanges.count_(); }
   unsigned txQueueCount() const { return m_txQueueCount.load_(); }
   unsigned txQueueMax() const { return m_txQueueMax; }
   void txQueueMax(unsigned v) { m_txQueueMax = v; }
@@ -173,7 +166,6 @@ public:
     while (m_rxQueue.shift());
     m_rx.clean();
   }
-  TxDataPQueue *txQueue() { return &m_txQueue; }
   TxUnackdQueue *txUnackdQueue() { return &m_txUnackd; }
 
   void txCredit(uint64_t limit) {
@@ -320,41 +312,14 @@ public:
       m_link->streamRxDequeued_(ZmRef<Impl>{impl()});
   }
 
-  bool send_(TxMsg *, bool) { return true; }
-  bool resend_(TxMsg *, bool) { return true; }
-  bool sendGap_(const TxSpan &, bool) { return true; }
-  bool resendGap_(const TxSpan &, bool) { return true; }
-  void archive_(TxMsg *) { }
-  ZmRef<TxMsg> retrieve_(TxKey, TxKey) { return nullptr; }
-  void scheduleSend() { }
-  void rescheduleSend() { }
-  void idleSend() { }
-  void scheduleResend() { }
-  void rescheduleResend() { }
-  void idleResend() { }
-  void scheduleArchive() { }
-  void rescheduleArchive() { }
-  void idleArchive() { }
-
   bool txRange(unsigned i, TxRange &range) const {
-    auto original = m_txQueue.citer();
-    auto retained = m_txRanges.citer();
-    auto node = original();
-    auto part = retained();
-    while (node || part) {
-      bool fromRange = part && (!node ||
-	part->data().range.streamOffset < node->data().streamOffset);
-      if (!i--) {
-	if (fromRange) range = part->data().range;
-	else {
-	  const auto &data = node->data();
-	  range = TxRange{node, uint32_t(data.skip), uint32_t(data.length),
-	    data.streamOffset};
-	}
-	return true;
-      }
-      if (fromRange) part = retained();
-      else node = original();
+    auto iter = m_txRanges.citer();
+    while (auto node = iter()) {
+      if (i--) continue;
+      const auto &data = node->data();
+      range = TxRange{data.buf, data.buf->skip, data.buf->length,
+	data.streamOffset};
+      return true;
     }
     return false;
   }
@@ -388,50 +353,36 @@ public:
     if (!length) return false;
     if (!selected.buf) return false;
     uint64_t key = selected.streamOffset;
-    if (auto part = m_txRanges.find(key)) {
-      const auto &stored = part->data().range;
-      if (stored.buf != selected.buf || stored.offset != selected.offset ||
-	  stored.length != selected.length || length > stored.length) return false;
-      auto node = m_txRanges.del(key);
-      range = stored;
-      range.length = length;
-      m_txBufferedBytes -= length;
-      if (length < node->data().length()) {
-	node->data().clipHead(length);
-	m_txRanges.add(ZuMv(node).release());
-      } else --m_txQueueCount;
-      return true;
-    }
-    auto current = m_txQueue.find(key);
-    if (!current) return false;
-    ZiIOBuf *currentBuf = current.ptr();
-    if (selected.buf.ptr() != currentBuf) return false;
-    const auto &selectedData = current->data();
-    if (selected.offset != selectedData.skip ||
-	selected.streamOffset != selectedData.streamOffset ||
-	selected.length != selectedData.length ||
-	length > selectedData.length)
-      return false;
-    auto node = Tx::abort(key);
-    if (!node || node.ptr() != current.ptr()) return false;
-    auto &data = node->data();
-    if (selected.offset != data.skip ||
-	selected.streamOffset != data.streamOffset ||
-	selected.length != data.length ||
-	length > data.length)
-      return false;
-    range = TxRange{
-      node, uint32_t(data.skip), length, data.streamOffset};
+    auto part = m_txRanges.find(key);
+    if (!part) return false;
+    const auto &stored = part->data();
+    if (stored.buf != selected.buf || stored.buf->skip != selected.offset ||
+	stored.buf->length != selected.length || length > stored.length()) return false;
+    auto node = m_txRanges.del(key);
+    range = selected;
     range.length = length;
-    if (length > m_txBufferedBytes) m_txBufferedBytes = 0;
-    else m_txBufferedBytes -= length;
-    if (length < data.length) {
-      data.clipHead(length);
-      Tx::send(ZuMv(node));
-    } else
+    m_txBufferedBytes -= length;
+    if (length < node->data().length()) {
+      node->data().clipHead(length);
+      m_txRanges.add(ZuMv(node).release());
+    } else {
       --m_txQueueCount;
+      // Return producer credit after this packetizer turn has committed flow
+      // credit, FIN and recovery metadata. Recovery retains the plaintext until
+      // ACK independently of the now-empty application queue.
+      if constexpr (!ZuIsSame<decltype(&Impl::txDequeued_), void (Self::*)()>{}) {
+	if (m_link) m_link->app()->txRun([
+	  link = ZmRef<Link>{m_link}, stream = ZmRef<Impl>{impl()}
+	]() mutable {
+	  if (!link->disconnecting_() && !stream->resetSent() &&
+	      stream->txError() == StreamError::None)
+	    stream->txDequeued_();
+	});
+      }
+    }
     return true;
   }
+
   bool dequeueFin(uint64_t &offset) {
     if (!finReady()) return false;
     offset = m_txBytes;
@@ -496,25 +447,29 @@ public:
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
       ZiAssert(skip <= BufSize, "Zquic", (skip),
 	"invalid stream headroom " << skip, return nullptr);
-      ZmRef<ZiIOBuf> buf = new TxDataPQueue::Node{m_stream};
+      ZmRef<ZiIOBuf> buf = new TxDataPQueue::Node{
+	ZmSingleton<Zi::IOBufBuiltinAllocator<>>::instance(), m_stream};
       buf->skip = skip;
       buf->length = 0;
       return buf;
     }
 
-    bool sendRange_(Zi::RxRange source) {
-      TxRange range{ZuMv(source.buf), source.offset, source.length};
-      if constexpr (AppThread) return m_stream->sendRange(ZuMv(range));
-      else return m_stream->sendRange_(ZuMv(range));
+    bool appendBuf(ZmRef<ZiIOBuf> buf) {
+      if (!Base::flush()) return false;
+      if (buf && !buf->failed() && !buf->length) return true;
+      bool ok = sendBuf_(ZuMv(buf), false);
+      if (!ok) this->fail();
+      return ok;
+    }
+    using Base::operator <<;
+    TxStream_ &operator <<(ZmRef<ZiIOBuf> buf) {
+      appendBuf(ZuMv(buf));
+      return *this;
     }
 
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
-      buf->owner = m_stream;
-      auto stream = static_cast<Stream *>(buf->owner);
-      if constexpr (AppThread)
-	return stream->send(ZuMv(buf));
-      else
-	return stream->send_(ZuMv(buf));
+      if constexpr (AppThread) return m_stream->send(ZuMv(buf));
+      else return m_stream->send_(ZuMv(buf));
     }
 
   private:
@@ -548,7 +503,6 @@ public:
     // Packet recovery retains its own references. A reset forbids further
     // STREAM retransmission and releases all stream-owned queued ranges now.
     unsigned queued = txRangeCount();
-    m_txQueue.clean();
     m_txRanges.clean();
     m_txQueueCount -= queued; // Pending off-shard admissions still retire once.
     m_txBufferedBytes = 0;
@@ -667,6 +621,9 @@ public:
 
   void txComplete_(bool) { }
   void txDrained_() { }
+  // AppTx, once per fully packetized source buffer, on a later dispatch turn.
+  // This returns producer queue credit; it does not indicate peer ACK receipt.
+  void txDequeued_() { }
 
 private:
   static void setError_(uint64_t &appError, StreamError::T &error,
@@ -778,64 +735,28 @@ private:
     return false;
   }
 
-  bool sendRange(TxRange range) {
-    if (!admitTx_()) return sendError_("QUIC stream transmit queue limit exceeded");
-    txInvoke_([this, range = ZuMv(range)]() mutable {
-      sendRangeAdmitted_(ZuMv(range));
-    });
-    return true;
-  }
-  bool sendRange_(TxRange range) {
-    ZiAssert(txInvoked_(), "Zquic", (),
-      "QUIC stream range send outside Tx thread", return false);
-    if (!admitTx_()) return sendError_("QUIC stream transmit queue limit exceeded");
-    return sendRangeAdmitted_(ZuMv(range));
-  }
-
   bool send(ZmRef<ZiIOBuf> buf) {
-    if (ZuUnlikely(!buf || buf->failed() || !buf->length)) return false;
-    if (ZuUnlikely(!admitTx_())) return sendError_(
-      "QUIC stream transmit queue limit exceeded");
-    buf->owner = this;
-    txInvoke_([buf = ZuMv(buf)]() mutable {
-      auto stream = static_cast<Stream *>(buf->owner);
+    if (!buf || buf->failed() || !buf->length) return false;
+    if (!admitTx_()) return sendError_("QUIC stream transmit queue limit exceeded");
+    txInvoke_([stream = ZmRef<Impl>{impl()}, buf = ZuMv(buf)]() mutable {
       stream->sendAdmitted_(ZuMv(buf));
     });
     return true;
   }
-
-  bool send_(ZmRef<TxMsg> buf) { // direct call from within tx thread
+  bool send_(ZmRef<ZiIOBuf> buf) {
     ZiAssert(txInvoked_(), "Zquic", (),
-      "QUIC stream send_ outside Tx thread", return false);
-    if (ZuUnlikely(!admitTx_())) return sendError_(
-      "QUIC stream transmit queue limit exceeded");
+      "QUIC stream send outside Tx thread", return false);
+    if (!admitTx_()) return sendError_("QUIC stream transmit queue limit exceeded");
     return sendAdmitted_(ZuMv(buf));
   }
 
 private:
-  bool sendRangeAdmitted_(TxRange range) {
-    if (!range.buf || range.buf->failed() || !range.length || m_resetSent ||
-	range.offset > range.buf->size ||
-	range.length > range.buf->size - range.offset) {
-      --m_txQueueCount;
-      return sendError_("invalid QUIC stream transmit range");
-    }
-    // Retained and packetizer ranges use physical allocation offsets.
-    range.streamOffset = m_txBytes;
-    auto length = range.length;
-    m_txRanges.add(new StreamTxRanges::Node{StreamTxRange{ZuMv(range)}});
-    m_txBytes += length;
-    m_txBufferedBytes += length;
-    notifyTx_();
-    return true;
-  }
-
   bool admitTx_() {
     if (++m_txQueueCount <= m_txQueueMax) return true;
     --m_txQueueCount;
     return false;
   }
-  bool sendAdmitted_(ZmRef<TxMsg> buf) {
+  bool sendAdmitted_(ZmRef<ZiIOBuf> buf) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream send_ outside Tx thread",
       --m_txQueueCount; return false);
@@ -846,10 +767,8 @@ private:
     ZiAssert(buf->skip + buf->length <= buf->size, "Zquic", (),
       "stream Tx buffer range violation",
       --m_txQueueCount; return false);
-    uint32_t offset = buf->skip;
     uint32_t length = buf->length;
-    buf->data().publish(offset, length, m_txBytes);
-    Tx::send(ZuMv(buf));
+    m_txRanges.add(new StreamTxRanges::Node{ZuMv(buf), m_txBytes});
     if (m_link)
       ZquicLOG(m_link->app()->qlogTrace(), ([
 	streamID = id() >= 0 ? uint64_t(id()) : U64Null,
@@ -1015,7 +934,6 @@ private:
   PendingControl	m_resetStreamControl;
   PendingControl	m_stopSendingControl;
   bool			m_txQueued = false;
-  TxDataPQueue		m_txQueue{0};
   StreamTxPQueue	m_txUnackd{0};
 };
 

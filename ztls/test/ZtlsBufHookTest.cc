@@ -431,22 +431,25 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
   using TxBufAlloc = Ztls::TxBufAlloc<BufSize, MaxSize>;
   using Base = Ztls::Client<BaseClient<State>>;
 
-  using RxPolicy = Zi::RxTLSBufAllocator<
+  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTLS,
     typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::TxTLSBufAllocator<
+  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTLS,
     typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
-  ZmRef<RxPolicy> rxBufAllocator;
-  ZmRef<TxPolicy> txBufAllocator;
+  Zi::IOBufAllocator *rxBufAllocator = nullptr;
+  Zi::IOBufAllocator *txBufAllocator = nullptr;
 
   template <typename Params>
   Params buffers(Params params) {
+    if (!params.multiplex()) return params;
     if (!params.rxAllocator()) {
-      rxBufAllocator = new RxPolicy{};
-      params.rxAllocator(rxBufAllocator.ptr());
+      rxBufAllocator = params.multiplex()->template allocator<RxPolicy::BufType, typename RxPolicy::Buf::Buf,
+      RxPolicy::Size, RxPolicy::MaxSize, RxPolicy::Buf::Align, typename RxPolicy::Heap>();
+      params.rxAllocator(rxBufAllocator);
     }
     if (!params.txAllocator()) {
-      txBufAllocator = new TxPolicy{};
-      params.txAllocator(txBufAllocator.ptr());
+      txBufAllocator = params.multiplex()->template allocator<TxPolicy::BufType, typename TxPolicy::Buf::Buf,
+      TxPolicy::Size, TxPolicy::MaxSize, TxPolicy::Buf::Align, typename TxPolicy::Heap>();
+      params.txAllocator(txBufAllocator);
     }
     return params;
   }
@@ -551,22 +554,25 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
   using TxBufAlloc = Ztls::TxBufAlloc<BufSize, MaxSize>;
   using Base = Ztls::Server<BaseServer<State>>;
 
-  using RxPolicy = Zi::RxTLSBufAllocator<
+  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTLS,
     typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::TxTLSBufAllocator<
+  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTLS,
     typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
-  ZmRef<RxPolicy> rxBufAllocator;
-  ZmRef<TxPolicy> txBufAllocator;
+  Zi::IOBufAllocator *rxBufAllocator = nullptr;
+  Zi::IOBufAllocator *txBufAllocator = nullptr;
 
   template <typename Params>
   Params buffers(Params params) {
+    if (!params.multiplex()) return params;
     if (!params.rxAllocator()) {
-      rxBufAllocator = new RxPolicy{};
-      params.rxAllocator(rxBufAllocator.ptr());
+      rxBufAllocator = params.multiplex()->template allocator<RxPolicy::BufType, typename RxPolicy::Buf::Buf,
+      RxPolicy::Size, RxPolicy::MaxSize, RxPolicy::Buf::Align, typename RxPolicy::Heap>();
+      params.rxAllocator(rxBufAllocator);
     }
     if (!params.txAllocator()) {
-      txBufAllocator = new TxPolicy{};
-      params.txAllocator(txBufAllocator.ptr());
+      txBufAllocator = params.multiplex()->template allocator<TxPolicy::BufType, typename TxPolicy::Buf::Buf,
+      TxPolicy::Size, TxPolicy::MaxSize, TxPolicy::Buf::Align, typename TxPolicy::Heap>();
+      params.txAllocator(txBufAllocator);
     }
     return params;
   }
@@ -714,10 +720,6 @@ void run_in_process(
   BaseServer<TestState> server(state, state.ip);
   BaseClient<TestState> client(state);
   ZiMultiplex mx(mx_params());
-  bool mxStarted = mx.start();
-  ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
-  if (!mxStarted) return;
-
   Ztls::ServerParams serverParams{&mx, "3", "4"};
   serverParams.certPath(temp.certPath.data()).keyPath(temp.keyPath.data());
   if (clientKey)
@@ -741,6 +743,10 @@ void run_in_process(
     server.override_cipher_suites(cipherSuites);
     client.override_cipher_suites(cipherSuites);
   }
+
+  bool mxStarted = mx.start();
+  ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
+  if (!mxStarted) return;
 
   bool serverStarted = server.start();
   bool clientStarted = client.start();
@@ -1158,14 +1164,14 @@ void testConnectFailureShard(TempDir &temp, LogCapture &capture)
 
   BaseClient<TestState> client{state};
   ZiMultiplex mx(mx_params());
-  bool mxStarted = mx.start();
-  ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
-  if (!mxStarted) return;
-
   bool clientOK = client.init(Ztls::ClientParams(&mx, "3", "4").hub(
     [&temp](auto &p) { p.caPath(temp.certPath.data()); }));
   ZTLS_CHECK_RT(clientOK, "TLS failure client init failed");
   if (!clientOK) { mx.stop(); return; }
+
+  bool mxStarted = mx.start();
+  ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
+  if (!mxStarted) return;
 
   bool clientStarted = client.start();
   ZTLS_CHECK_RT(clientStarted, "TLS failure client failed to start");
@@ -1209,10 +1215,6 @@ void testWrongHostname(TempDir &temp, LogCapture &capture)
   BaseServer<TestState> server{state, state.ip};
   BaseClient<TestState> client{state};
   ZiMultiplex mx(mx_params());
-  bool mxStarted = mx.start();
-  ZTLS_CHECK_RT(mxStarted, "wrong-hostname multiplexer start failed");
-  if (!mxStarted) return;
-
   bool serverOK = server.init(Ztls::ServerParams(&mx, "3", "4")
     .certPath(temp.certPath.data()).keyPath(temp.keyPath.data()));
   ZTLS_CHECK_RT(serverOK, "wrong-hostname server init failed");
@@ -1220,6 +1222,10 @@ void testWrongHostname(TempDir &temp, LogCapture &capture)
     [&temp](auto &p) { p.caPath(temp.certPath.data()); }));
   ZTLS_CHECK_RT(clientOK, "wrong-hostname client init failed");
   if (!serverOK || !clientOK) { mx.stop(); return; }
+
+  bool mxStarted = mx.start();
+  ZTLS_CHECK_RT(mxStarted, "wrong-hostname multiplexer start failed");
+  if (!mxStarted) return;
 
   bool serverStarted = server.start();
   bool clientStarted = client.start();
@@ -1327,7 +1333,7 @@ bool tls12_roundtrip(
 {
   constexpr unsigned TxRecordCapacity = 16 * 1024;
   unsigned headroom = 5 + suite->aead->tls12.record_iv_size;
-  using Allocator = Zi::AppBufAllocator<ZiTxBuf, BufSize, MaxSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, BufSize, MaxSize>;
 
   ZmRef<ZiIOBuf> buf = ZmSingleton<Allocator>::instance()->allocBuf();
   if (!buf || !buf->ensure(TxRecordCapacity)) return false;
@@ -1415,10 +1421,6 @@ void run_tls12_handshake_rejected(
 
   BaseServer<TestState> server(state, state.ip);
   ZiMultiplex mx(mx_params());
-  bool mxStarted = mx.start();
-  ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
-  if (!mxStarted) return;
-
   bool serverOK = server.init(
     Ztls::ServerParams(&mx, "3", "4")
       .certPath(temp.certPath.data())
@@ -1426,6 +1428,10 @@ void run_tls12_handshake_rejected(
   ZTLS_CHECK_RT(serverOK, "TLS server init failed");
   if (!serverOK) { mx.stop(); return; }
   server.override_tls12_cipher_suites(suites.list);
+  bool mxStarted = mx.start();
+  ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
+  if (!mxStarted) return;
+
   bool serverStarted = server.start();
   ZTLS_CHECK_RT(serverStarted, "TLS server failed to start");
   if (!serverStarted) { server.final(); mx.stop(); return; }
@@ -1505,9 +1511,6 @@ void testTLS13ConcurrentRecords(TempDir &temp, LogCapture &capture)
   BaseServer<TestState> server(state, state.ip);
   BaseClient<TestState> client(state);
   ZiMultiplex mx(mx_params());
-  bool mxStarted = mx.start();
-  ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
-  if (!mxStarted) return;
   bool serverOK = server.init(
     Ztls::ServerParams(&mx, "3", "4")
       .certPath(temp.certPath.data()).keyPath(temp.keyPath.data()));
@@ -1516,6 +1519,9 @@ void testTLS13ConcurrentRecords(TempDir &temp, LogCapture &capture)
   bool clientOK = client.init(ZuMv(clientParams));
   ZTLS_CHECK_RT(serverOK && clientOK, "TLS stress init failed");
   if (!serverOK || !clientOK) { mx.stop(); return; }
+  bool mxStarted = mx.start();
+  ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
+  if (!mxStarted) return;
   bool serverStarted = server.start();
   bool clientStarted = client.start();
   ZTLS_CHECK_RT(serverStarted && clientStarted, "TLS stress start failed");

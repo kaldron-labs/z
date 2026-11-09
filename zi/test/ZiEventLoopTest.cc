@@ -415,7 +415,7 @@ void testSocketBackpressure()
 
   // Limit the fixture's work even if the host has a large socket send buffer.
   constexpr unsigned FillLimit = 1U << 20;
-  Zi::AppBufAllocator<ZiIOBuf, ZiIOBuf_DefltSize> allocator;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize> allocator{nullptr};
   ZmRef<ZiIOBuf> fill = allocator.allocBuf();
   memset(fill->data(), 'F', fill->size);
   unsigned filled = 0;
@@ -690,7 +690,7 @@ void testHandleWriteReady()
     return;
   }
 
-  Zi::AppBufAllocator<ZiIOBuf, ZiIOBuf_DefltSize> allocator;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize> allocator{nullptr};
   ZmRef<ZiIOBuf> fill = allocator.allocBuf();
   memset(fill->data(), 'F', fill->size);
   unsigned filled = 0;

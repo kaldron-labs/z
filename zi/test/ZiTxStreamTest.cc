@@ -20,7 +20,7 @@ using namespace ZuTestUtil;
 
 namespace ZiTxStreamTest_ {
 
-using StreamAllocator = Zi::AppBufAllocator<ZiIOBuf, 64, 256>;
+using StreamAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 64, 256>;
 
 struct BigPrint_Print;
 struct BigPrint {

@@ -342,9 +342,9 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
     if (n <= 0 || !payload.commitScratch(unsigned(n))) return false;
     auto alloc = []() {
       return ZmRef<ZiIOBuf>{([](void *owner) {
-      static ZmRef<Zi::IOBufAllocator> allocator =
-	new Zquic::PktTxBufAllocator<>;
-      return allocator->alloc(owner, 0);
+      static Zi::IOBufAllocator *allocator =
+	([] { static ZiMultiplex mx; return Zquic::pktTxAllocator(&mx); })();
+      return allocator->allocBuf(owner, 0);
     })(nullptr)};
     };
     auto send = [&packet](auto buf, ZiSockAddr) {
@@ -685,10 +685,10 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
 
 struct HubFixture {
   HubFixture() : mx{mxParams_()} {
-    ZiAssert(mx.start(), "Zquic", (),
-      "API test multiplexer start failed", return);
     ZiAssert(app.init(Zquic::HubParams(&mx, "3", "4")),
       "Zquic", (), "API test hub init failed", return);
+    ZiAssert(mx.start(), "Zquic", (),
+      "API test multiplexer start failed", return);
   }
   ~HubFixture() {
     app.final();
@@ -696,7 +696,7 @@ struct HubFixture {
   }
 
   static ZiMxParams mxParams_() {
-    return ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    return ZiMxParams()
       .scheduler([](auto &s) {
 	s.nThreads(4);
       })
@@ -720,9 +720,9 @@ static ZmRef<ZiIOBuf> streamPkt_(
   Zquic::Frame &frame, unsigned &used)
 {
   ZmRef<ZiIOBuf> packet = ([](void *owner) {
-      static ZmRef<Zi::IOBufAllocator> allocator =
-	new Zquic::PktRxBufAllocator<>;
-      return allocator->alloc(owner, 0);
+      static Zi::IOBufAllocator *allocator =
+	([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
+      return allocator->allocBuf(owner, 0);
     })(nullptr);
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, id, offset, payload, fin);
@@ -931,10 +931,6 @@ void testAlignedSurfaceShape()
   ZuTestScope(testAlignedSurfaceShape);
 
   ZiMultiplex mx{HubFixture::mxParams_()};
-  bool mxOK = mx.start();
-  ZuCHECK(mxOK, "aligned shape multiplexer start failed");
-  if (!mxOK) return;
-
   ClientShapeApp clientApp;
   bool clientOK = clientApp.init(
     Zquic::ClientParams(&mx, "3", "4").alpn(ZuSpan<ZuCSpan>{"h3"}));
@@ -943,6 +939,22 @@ void testAlignedSurfaceShape()
     mx.stop();
     return;
   }
+  ServerShapeApp serverApp;
+  bool serverOK = serverApp.init(
+    Zquic::ServerParams(&mx, "3", "4")
+      .certPath("server.pem")
+      .keyPath("server.key")
+      .alpn(ZuSpan<ZuCSpan>{"h3"}));
+  ZuCHECK(serverOK, "aligned server app init failed");
+  if (!serverOK) {
+    clientApp.final();
+    mx.stop();
+    return;
+  }
+  bool mxOK = mx.start();
+  ZuCHECK(mxOK, "aligned shape multiplexer start failed");
+  if (!mxOK) return;
+
   ZmRef<ClientShapeLink> client = new ClientShapeLink{&clientApp};
   ZmRef<ClientShapeStream> c0;
   ZmBlock<>{}([&clientApp, &client, &c0](auto wake) {
@@ -959,18 +971,6 @@ void testAlignedSurfaceShape()
     "default client stream-open hook was not visible in diagnostics");
 #endif
 
-  ServerShapeApp serverApp;
-  bool serverOK = serverApp.init(
-    Zquic::ServerParams(&mx, "3", "4")
-      .certPath("server.pem")
-      .keyPath("server.key")
-      .alpn(ZuSpan<ZuCSpan>{"h3"}));
-  ZuCHECK(serverOK, "aligned server app init failed");
-  if (!serverOK) {
-    clientApp.final();
-    mx.stop();
-    return;
-  }
   ZmRef<ServerShapeLink> server = new ServerShapeLink{&serverApp};
   ZmRef<ServerShapeStream> s0;
   ZmBlock<>{}([&serverApp, &server, &s0](auto wake) {
@@ -2158,7 +2158,7 @@ void testInitValidate()
   }
 
   ZiMultiplex mx(
-      ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+      ZiMxParams()
 	.scheduler([](auto &s) {
 	  s.nThreads(5)
 	    .thread(1, [](auto &t) { t.isolated(1); })
@@ -2166,13 +2166,6 @@ void testInitValidate()
 	    .thread(3, [](auto &t) { t.isolated(1); })
 	    .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
-
-  bool mxStarted = mx.start();
-  ZuCHECK(mxStarted, "ZiMultiplex start failed");
-  if (!mxStarted) {
-    ZiLog::stop();
-    return;
-  }
 
   {
     unsigned errors = 0;

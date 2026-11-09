@@ -14,7 +14,7 @@
 #include <zlib/ZfixRxMsg.hh>
 
 static ZmRef<ZiIOBuf> frameBuf() {
-  using Allocator = Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
   return ZmSingleton<Allocator>::instance()->allocBuf();
 }
 
@@ -165,7 +165,7 @@ friend inline ZuStringT<"Zfix.RawTest.Endpoint"> ZmNHeapID(Endpoint *);
   WireGeometry fixGeometryTx() const { return {}; }
 
   ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
-    ZmRef<ZiIOBuf> b = ZmSingleton<Zi::AppBufAllocator<
+    ZmRef<ZiIOBuf> b = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
       ZiTxBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
     b->skip = head; return b;
   }

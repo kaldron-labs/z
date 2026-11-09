@@ -11,11 +11,10 @@ The program warms ten waves of JOBS requests, measures COUNT requests in waves
 of at most JOBS, then holds JOBS response routes before releasing them. It reports
 request submission through logical completion latency (p50/p99), elapsed time,
 framework heap allocation calls (including cache hits), received payload bytes,
-application receive-copy bytes, and live framework heap bytes before/after a
+and live framework heap bytes before/after a
 connection and while responses are held. The main thread waits on semaphores;
 Rx/Tx barriers retire the preceding wave before heap snapshots. Payload reception
-consumes borrowed spans without staging. `app_copy_bytes=0` refers to that receive
-path, not TLS/QUIC internals, allocator overhead, or process RSS.
+consumes borrowed spans without staging.
 
 The scheduler uses four threads, with I/O on 1/2 and endpoint Rx/Tx on 3/4. Pool
 configuration fixes one link, JOBS concurrency and JOBS per-link operations.

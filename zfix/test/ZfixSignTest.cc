@@ -19,7 +19,7 @@
 #include <zlib/ZfixTx.hh>
 
 static ZmRef<ZiIOBuf> frameBuf() {
-  using Allocator = Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
   return ZmSingleton<Allocator>::instance()->allocBuf();
 }
 
@@ -253,7 +253,7 @@ static void policies()
   }
   // A signature larger than the initial pooled output forces sink relocation.
   ZtArray<uint8_t, ZtArrayHeapID<"Zfix.SignGrowth">> large;
-  large.length(Zi::IOBufAlloc<ZiIOBuf>::Size + 1);
+  large.length(Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Size + 1);
   memset(large.data(), 0x01, large.length());
   VariableSign signer{ZuBSpan{large}};
   wire = txFrame(frameBuf(), *body, config(), context(), error, {}, signer);
@@ -422,7 +422,7 @@ friend ZuStringT<"Zfix.SignRaw"> ZmNHeapID(RawEndpoint *);
   }
   WireGeometry fixGeometryTx() const { return {}; }
   ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
-    ZmRef<ZiIOBuf> b = ZmSingleton<Zi::AppBufAllocator<
+    ZmRef<ZiIOBuf> b = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
       ZiTxBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
     b->skip = head; return b;
   }

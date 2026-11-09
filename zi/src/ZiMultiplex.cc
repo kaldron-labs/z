@@ -30,7 +30,7 @@
 #ifdef ZiMultiplex_DEBUG
 static ZmRef<ZiIOBuf> debugBuf(const void *data, unsigned length)
 {
-  using Allocator = Zi::AppBufAllocator<ZiIOBuf, ZiIOBuf_DefltSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<>;
   auto allocator = ZmSingleton<Allocator,
     ZmSingletonCleanup<ZmCleanup::Platform>>::instance();
   auto buf = allocator->allocBuf(nullptr, length);
@@ -525,29 +525,6 @@ static void putTOS(WSAMSG &msg, WSABUF &control, ZiTOS tos, int level, int type)
 }
 #endif
 
-
-bool ZiMultiplex::allocator(Zi::IOBufAllocator *a)
-{
-  if (!a || a->finalized() ||
-      a->type() == Zi::IOBufType::App) return false;
-  if (a->mx()) return a->mx() == this;
-  auto publish = [this, a]() {
-    if (!a->bind(this)) return false;
-    m_allocators.pushNode(a);
-    return true;
-  };
-  if (!running()) return publish();
-  if (invoked(rxThread()) || invoked(txThread())) return false;
-  ZmSemaphore done;
-  bool ok = false;
-  rxRun([publish, &done, &ok]() mutable {
-    ok = publish();
-    done.post();
-  });
-  done.wait();
-  return ok;
-}
-
 ZiConnection::ZiConnection(ZiMultiplex *mx, const ZiCxnInfo &info) :
   m_mx(mx), m_info(info), m_rxUp(1),
   m_txUp(1), m_rxCalls(0), m_rxBytes(0),
@@ -570,9 +547,9 @@ ZiConnection::~ZiConnection()
 }
 
 void ZiMultiplex::udp(ZiConnectFn fn, ZiFailFn failFn,
-    ZiIP localIP, uint16_t localPort,
-    ZiIP remoteIP, uint16_t remotePort,
-    Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
+  ZiIP localIP, uint16_t localPort,
+  ZiIP remoteIP, uint16_t remotePort,
+  Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
 {
   if (ZuUnlikely(!running())) {
     Error("udp", Zi::NotReady, ZeOK);
@@ -589,11 +566,13 @@ void ZiMultiplex::udp(ZiConnectFn fn, ZiFailFn failFn,
 }
 
 void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
-    ZiIP localIP, uint16_t localPort,
-    ZiIP remoteIP, uint16_t remotePort,
-    Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
+  ZiIP localIP, uint16_t localPort,
+  ZiIP remoteIP, uint16_t remotePort,
+  Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
 {
-  ZiAssert(invoked(rxThread()), "ZiMultiplex", (), "Rx owner", return);
+  ZiAssert(invoked(rxThread()), "ZiMultiplex", (), "Rx exclusive", return);
+  ZiAssert(rxAllocator->mx() == this, "ZiMultiplex", (), "Rx allocator", return);
+
   if (ZuUnlikely(!running())) {
     Error("udp", Zi::NotReady, ZeOK);
     failFn(false);
@@ -606,25 +585,29 @@ void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
     return;
   }
 
-  if (!rxAllocator || rxAllocator->mx() != this ||
-      rxAllocator->type() != Zi::IOBufType::RxUDP) {
-    Error("Rx allocator", Zi::IOError, ZeError{ZiEINVAL});
-    failFn(false);
-    return;
-  }
-
-  Socket s;
   ZiIPType::T ipType;
+
   if (!cxnType(localIP, remoteIP, ipType)) {
     Error("udp", Zi::IOError, ZeError(ZiEINVAL));
     failFn(false);
     return;
   }
+
   if (options.multicast() && !options.multicastValid(ipType)) {
     Error("udp", Zi::IOError, ZeError(ZiEINVAL));
     failFn(false);
     return;
   }
+
+  if (ZuLikely(m_plugin)) {
+    m_plugin->udp(
+      ZuMv(fn), ZuMv(failFn),
+      ipType, localIP, localPort, remoteIP, remotePort,
+      rxAllocator, options);
+    return;
+  }
+
+  Socket s;
 
 #ifndef _WIN32
 
@@ -975,8 +958,9 @@ void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
 }
 
 void ZiMultiplex::connect(
-    ZiConnectFn fn, ZiFailFn failFn, ZiIP localIP, uint16_t localPort,
-    ZiIP remoteIP, uint16_t remotePort, Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
+  ZiConnectFn fn, ZiFailFn failFn, ZiIP localIP, uint16_t localPort,
+  ZiIP remoteIP, uint16_t remotePort,
+  Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
 {
   if (ZuUnlikely(!running())) {
     Error("connect", Zi::NotReady, ZeOK);
@@ -993,10 +977,13 @@ void ZiMultiplex::connect(
 }
 
 void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
-    ZiIP localIP, uint16_t localPort,
-    ZiIP remoteIP, uint16_t remotePort, Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
+  ZiIP localIP, uint16_t localPort,
+  ZiIP remoteIP, uint16_t remotePort,
+  Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
 {
-  ZiAssert(invoked(rxThread()), "ZiMultiplex", (), "Rx owner", return);
+  ZiAssert(invoked(rxThread()), "ZiMultiplex", (), "Rx exclusive", return);
+  ZiAssert(rxAllocator->mx() == this, "ZiMultiplex", (), "Rx allocator", return);
+
   if (ZuUnlikely(!running())) {
     Error("connect", Zi::NotReady, ZeOK);
     failFn(false);
@@ -1009,15 +996,6 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
     return;
   }
 
-  if (!rxAllocator || rxAllocator->mx() != this ||
-      (rxAllocator->type() != Zi::IOBufType::RxTCP &&
-       rxAllocator->type() != Zi::IOBufType::RxTLS)) {
-    Error("Rx allocator", Zi::IOError, ZeError{ZiEINVAL});
-    failFn(false);
-    return;
-  }
-
-  Socket s;
   ZiIPType::T ipType = ZiIPType::V4;
 
   if (!remoteIP || !cxnType(localIP, remoteIP, ipType)) {
@@ -1025,7 +1003,16 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
     failFn(false);
     return;
   }
-  s = ::socket(family(ipType), SOCK_STREAM, IPPROTO_TCP);
+
+  if (ZuLikely(m_plugin)) {
+    m_plugin->connect(
+      ZuMv(fn), ZuMv(failFn),
+      ipType, localIP, localPort, remoteIP, remotePort,
+      rxAllocator, options);
+    return;
+  }
+
+  Socket s = ::socket(family(ipType), SOCK_STREAM, IPPROTO_TCP);
   if (Zi::nullSocket(s)) {
     ZeError e = ZeLastSockError;
     Error("socket", Zi::IOError, e);
@@ -1296,7 +1283,19 @@ void ZiConnection::telemetry(Ztc::CxnTelemetry &data) const
 
 unsigned ZiMultiplex::allCxns(Ztc::Mx::AllCxnsFn fn) const
 {
-  // Retain registry ownership while callbacks may release the multiplexer.
+  if (m_plugin) return m_plugin->allCxns(fn);
+  return allCxns_(ZuMv(fn));
+}
+
+unsigned ZiMultiplex::allQueues(Ztc::QueueMgr::AllFn fn) const
+{
+  unsigned n = 0;
+  if (m_plugin) n = m_plugin->allQueues(fn);
+  return ZmScheduler::allQueues(ZuMv(fn)) + n;
+}
+
+unsigned ZiMultiplex::allCxns_(Ztc::Mx::AllCxnsFn fn) const
+{
   ZmRef<CxnHash> cxns = m_cxns;
   if (!cxns) return 0;
   unsigned n = cxns->count_();
@@ -1315,8 +1314,9 @@ unsigned ZiMultiplex::allCxns(Ztc::Mx::AllCxnsFn fn) const
 }
 
 void ZiMultiplex::listen(
-    ZiListenFn listenFn, ZiFailFn failFn, ZiConnectFn acceptFn,
-    ZiIP localIP, uint16_t localPort, unsigned nAccepts, Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
+  ZiListenFn listenFn, ZiFailFn failFn, ZiConnectFn acceptFn,
+  ZiIP localIP, uint16_t localPort, unsigned nAccepts,
+  Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
 {
   if (ZuUnlikely(!running())) {
     Error("listen", Zi::NotReady, ZeOK);
@@ -1333,21 +1333,24 @@ void ZiMultiplex::listen(
 }
 
 void ZiMultiplex::listen_(
-    ZiListenFn listenFn, ZiFailFn failFn, ZiConnectFn acceptFn,
-    ZiIP localIP, uint16_t localPort, unsigned nAccepts, Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
+  ZiListenFn listenFn, ZiFailFn failFn, ZiConnectFn acceptFn,
+  ZiIP localIP, uint16_t localPort, unsigned nAccepts,
+  Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
 {
-  ZiAssert(invoked(rxThread()), "ZiMultiplex", (), "Rx owner", return);
+  ZiAssert(invoked(rxThread()), "ZiMultiplex", (), "Rx exclusive", return);
+  ZiAssert(rxAllocator->mx() == this, "ZiMultiplex", (), "Rx allocator", return);
+
   if (ZuUnlikely(!running())) {
     Error("listen", Zi::NotReady, ZeOK);
     failFn(false);
     return;
   }
 
-  if (!rxAllocator || rxAllocator->mx() != this ||
-      (rxAllocator->type() != Zi::IOBufType::RxTCP &&
-       rxAllocator->type() != Zi::IOBufType::RxTLS)) {
-    Error("Rx allocator", Zi::IOError, ZeError{ZiEINVAL});
-    failFn(false);
+  if (ZuLikely(m_plugin)) {
+    m_plugin->listen(
+      ZuMv(listenFn), ZuMv(failFn), ZuMv(acceptFn),
+      localIP, localPort, nAccepts,
+      rxAllocator, options);
     return;
   }
 
@@ -1536,6 +1539,11 @@ void ZiMultiplex::stopListening(ZiIP localIP, uint16_t localPort)
 
 void ZiMultiplex::stopListening_(ZiIP localIP, uint16_t localPort)
 {
+  if (ZuLikely(m_plugin)) {
+    m_plugin->stopListening(localIP, localPort);
+    return;
+  }
+
   Socket lsocket;
   unsigned nAccepts;
 
@@ -1708,7 +1716,8 @@ void ZiConnection::recv(ZiRxFn fn)
 
 void ZiConnection::recv_(ZiRxFn fn)
 {
-  ZiAssert(m_mx->invoked(m_mx->rxThread()), "ZiMultiplex", (), "Rx owner", return);
+  ZiAssert(m_mx->invoked(m_mx->rxThread()), "ZiMultiplex", (), "Rx exclusive", return);
+
   m_rxContext.init_(ZuMv(fn));
 
 #ifdef ZiMultiplex_IOCP
@@ -2098,18 +2107,6 @@ void ZiConnection::sync()
   });
 }
 
-bool ZiConnection::allocatorOK()
-{
-  auto a = m_txContext.buf->allocator;
-  if (ZuUnlikely(!a || a->mx() != m_mx)) ZmFail(unregistered_tx_allocator);
-  if (ZuUnlikely((m_info.options.udp() ? a->type() != Zi::IOBufType::TxUDP :
-      a->type() != Zi::IOBufType::TxTCP && a->type() != Zi::IOBufType::TxTLS))) {
-    errorSend(Zi::IOError, ZeError{ZiEINVAL});
-    return false;
-  }
-  return true;
-}
-
 void ZiConnection::send()
 {
 #ifdef ZiMultiplex_DEBUG
@@ -2120,38 +2117,35 @@ void ZiConnection::send()
 
   if (ZuLikely(m_txContext.completed())) return;
 
-  if (!allocatorOK()) return;
+  if (auto plugin = m_mx->plugin()) { plugin->send(this); return; }
 
   unsigned n;
+
+  auto buf = m_txContext.buf->data() + m_txContext.offset;
+  unsigned len = m_txContext.buf->length - m_txContext.offset;
+  ZeError e;
+
 #ifdef ZiMultiplex_IOCP
   WSABUF wsaBuf;
-  wsaBuf.buf = reinterpret_cast<char *>(m_txContext.buf->data() + m_txContext.offset);
-  wsaBuf.len = m_txContext.buf->length - m_txContext.offset;
+  wsaBuf.buf = reinterpret_cast<char *>(buf);
+  wsaBuf.len = len;
 
-  ZeError e;
   DWORD n_;
 #endif
 
 #ifdef ZiMultiplex_EPoll
-  auto buf = m_txContext.buf->data() + m_txContext.offset;
-  unsigned len = m_txContext.buf->length - m_txContext.offset;
-
-  ZeError e;
   int n_;
 #endif
 
 #ifdef ZiMultiplex_FILTER
-  if (ZuUnlikely(m_mx->filterTx(
-	  this, m_txContext.buf->data() + m_txContext.offset,
-	  m_txContext.buf->length - m_txContext.offset))) {
-    n = m_txContext.buf->length - m_txContext.offset;
+  if (ZuUnlikely(m_mx->filterTx(this, buf, len))) {
+    n = len;
     goto executed;
   }
 #endif
 
 #ifdef ZiMultiplex_IOCP
 retry:
-  if (!allocatorOK()) return;
   ZiDEBUG(m_mx, ([
     socket = m_info.socket,
     size = m_txContext.buf->length,
@@ -2223,7 +2217,6 @@ retry:
 
 #ifdef ZiMultiplex_EPoll
 retry:
-  if (!allocatorOK()) return;
   ZiDEBUG(m_mx, ([
     socket = m_info.socket,
     size = m_txContext.buf->length,
@@ -2315,14 +2308,12 @@ executed:
     return;
   }
 
-#ifdef ZiMultiplex_IOCP
-  wsaBuf.buf = reinterpret_cast<char *>(m_txContext.buf->data() + m_txContext.offset);
-  wsaBuf.len = m_txContext.buf->length - m_txContext.offset;
-#endif
-
-#ifdef ZiMultiplex_EPoll
   buf = m_txContext.buf->data() + m_txContext.offset;
   len = m_txContext.buf->length - m_txContext.offset;
+
+#ifdef ZiMultiplex_IOCP
+  wsaBuf.buf = reinterpret_cast<char *>(buf);
+  wsaBuf.len = len;
 #endif
 
   goto retry;
@@ -2507,6 +2498,7 @@ void ZiMultiplex::cxnDel(Socket s)
 void ZiMultiplex::watch(
     Ztc::Mx::AddCxnFn addCxnFn, Ztc::Mx::DelCxnFn delCxnFn)
 {
+  if (m_plugin) { m_plugin->watch(addCxnFn, delCxnFn); return; }
   ZmGuard<ZmRWLock> guard(m_cxnWatchLock);
   ZmAssert(!m_addCxnFn && !m_delCxnFn, return);
   m_addCxnFn = ZuMv(addCxnFn);
@@ -2515,6 +2507,7 @@ void ZiMultiplex::watch(
 
 void ZiMultiplex::unwatch()
 {
+  if (m_plugin) { m_plugin->unwatch(); return; }
   ZmGuard<ZmRWLock> guard(m_cxnWatchLock);
   m_addCxnFn = {};
   m_delCxnFn = {};
@@ -2775,10 +2768,10 @@ ZiMultiplex::ZiMultiplex(ZiMxParams mxParams) :
   m_rxThread(mxParams.rxThread()),
   m_txThread(mxParams.txThread()),
   m_rxBufSize(mxParams.rxBufSize()),
-  m_txBufSize(mxParams.txBufSize())
+  m_txBufSize(mxParams.txBufSize()),
+  m_rxQuantum(mxParams.rxQuantum())
 #ifdef ZiMultiplex_EPoll
-  , m_epollMaxFDs(mxParams.epollMaxFDs()),
-  m_epollQuantum(mxParams.epollQuantum())
+  , m_epollMaxFDs(mxParams.epollMaxFDs())
 #endif
 #ifdef ZiMultiplex_DEBUG
   , m_trace(mxParams.trace()),
@@ -2818,23 +2811,36 @@ ZiMultiplex::~ZiMultiplex()
 {
   ZiMxMgr_::instance()->del(this);
   // Registrations and allocator storage survive stop until final teardown.
-  while (auto node = m_allocators.shift()) {
-    auto a = static_cast<Zi::IOBufAllocator *>(node.ptr());
-    a->finalMx();
-  }
+  m_allocators.clean();
 }
 
+void ZiMultiplex::plugin(ZmRef<ZiMxPlugin> plugin)
+{
+  ZmAssert(state() == ZmEngineState::Stopped);
+  m_plugin = ZuMv(plugin);
+}
 
 bool ZiMultiplex::start__()
 {
-#ifdef ZiMultiplex_EPoll
-  if (!m_epollQuantum || m_epollQuantum > unsigned(INT_MAX)) {
-    Error("epollQuantum", Zi::NotReady, ZeError{ZiEINVAL});
+  if (!m_rxQuantum || m_rxQuantum > unsigned(INT_MAX)) {
+    Error("rxQuantum", Zi::NotReady, ZeError{ZiEINVAL});
     return false;
   }
-#endif
 
   if (!ZmScheduler::start__()) return false;
+
+  if (m_plugin) {
+    auto &starting = ZmTLS<ZmSemaphore, &ZiMultiplex::start__>();
+
+    m_starting = &starting;
+
+    m_pluginFailed = false;
+    m_plugin->start();
+
+    starting.wait();
+
+    if (m_pluginFailed) return false;
+  }
 
 #ifdef ZiMultiplex_IOCP
   {
@@ -2899,7 +2905,17 @@ bool ZiMultiplex::start__()
   wakeFn(rxThread(),
     WakeFn{this, [](ZiMultiplex *mx) { mx->wakeRx(); }});
   push([this]() { rx(); }, rxThread());
+
   return true;
+}
+
+void ZiMultiplex::pluginStarted(ZiMxPlugin::StartResult result)
+{
+  if (result.is<ZeException>()) {
+    ZiLogEvent(ZuMv(result).p<ZeException>());
+    m_pluginFailed = true;
+  }
+  m_starting->post();
 }
 
 bool ZiMultiplex::stop()
@@ -2919,6 +2935,12 @@ bool ZiMultiplex::stop__()
 
   stopping.wait();
 
+  if (m_plugin) {
+    m_plugin->stop();
+
+    stopping.wait();
+  }
+
   bool ok = ZmScheduler::stop__();
 
   stop_2();
@@ -2926,6 +2948,13 @@ bool ZiMultiplex::stop__()
   m_stopping = nullptr;
 
   return ok;
+}
+
+void ZiMultiplex::pluginStopped(ZiMxPlugin::StopResult result)
+{
+  if (result.is<ZeException>())
+    ZiLogEvent(ZuMv(result).p<ZeException>());
+  m_stopping->post();
 }
 
 void ZiMultiplex::stop_0()
@@ -2995,6 +3024,8 @@ void ZiMultiplex::stop_2()
 
 void ZiMultiplex::rx()
 {
+  if (ZuLikely(m_plugin)) { m_plugin->rx(); return; }
+
 #ifdef ZiMultiplex_IOCP
   DWORD len;
   ULONG_PTR key;
@@ -3048,7 +3079,7 @@ void ZiMultiplex::rx()
   int r;
   ZeError e;
   auto ev = static_cast<epoll_event *>(
-    ZuAlloca(m_epollQuantum * sizeof(epoll_event), alignof(epoll_event)));
+    ZuAlloca(m_rxQuantum * sizeof(epoll_event), alignof(epoll_event)));
   if (ZuUnlikely(!ev)) return;
 
   for (;;) {
@@ -3073,7 +3104,7 @@ void ZiMultiplex::rx()
 #endif
 #endif
 
-    r = epoll_wait(m_epollFD, ev, m_epollQuantum, -1);
+    r = epoll_wait(m_epollFD, ev, m_rxQuantum, -1);
 
 #if 0
 #ifdef ZiMultiplex_DEBUG
@@ -3161,6 +3192,8 @@ void ZiMultiplex::rx()
 void ZiMultiplex::wake()
 {
   ZiDEBUG(this, "wake");
+
+  if (ZuLikely(m_plugin)) { m_plugin->wake(); return; }
 
 #ifdef ZiMultiplex_IOCP
   PostQueuedCompletionStatus(m_completionPort, 0, 0, 0);

@@ -262,11 +262,14 @@ public:
     return m_ackLevel == level && m_ackLevel < PktNumSpace::N;
   }
   void markAck(unsigned level) { m_ackLevel = level; }
+  bool pathValidation() const { return m_pathValidation; }
+  void markPathValidation() { m_pathValidation = true; }
 
   void reset() {
     m_plain.reset();
     m_scratchLen = 0;
     m_ackLevel = PktNumSpace::N;
+    m_pathValidation = false;
   }
 
   bool commitScratch(unsigned len) {
@@ -310,6 +313,7 @@ private:
 			    PktBuildScratchSize, false);
   unsigned		m_scratchLen = 0;
   unsigned		m_ackLevel = PktNumSpace::N;
+  bool			m_pathValidation = false;
 };
 
 } // namespace Zquic

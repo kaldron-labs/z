@@ -10,6 +10,7 @@
 
 #include <zlib/ZuMatcher.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZhttpFields.hh>
 
 #include "ZhttpNative.hh"
@@ -80,7 +81,7 @@ const WriterOps &FinalFields::writerOps_()
     [](const void *) { return 0U; },
     [](const void *) { return 0U; },
     [](void *, unsigned head) -> ZmRef<ZiIOBuf> {
-      auto buf = ZmRef<ZiIOBuf>{new Alloc{nullptr, 0}};
+      auto buf = ZmRef<ZiIOBuf>{new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()}};
       buf->skip = head;
       return buf;
     },
@@ -90,11 +91,10 @@ const WriterOps &FinalFields::writerOps_()
     [](void *ctx, unsigned length) {
       static_cast<FinalFields *>(ctx)->commit_(length);
     },
-    [](void *ctx, Zi::RxRange range) {
-      if (!range.buf || range.offset > range.buf->size ||
-	  range.length > range.buf->size - range.offset) return false;
+    [](void *ctx, ZmRef<ZiIOBuf> buf) {
+      if (!buf || buf->failed()) return false;
       auto self = static_cast<FinalFields *>(ctx);
-      self->append_(range.cspan());
+      self->append_(buf->cspan());
       return !self->m_failed;
     }};
   return ops;
@@ -104,7 +104,7 @@ ZuSpan<uint8_t> FinalFields::reserve_(unsigned length)
 {
   if (m_failed) return {};
   if (length > m_limit - m_cost) { m_failed = true; return {}; }
-  if (!m_bytes) m_bytes = new Alloc{nullptr, 0};
+  if (!m_bytes) m_bytes = new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()};
   auto data = m_bytes->ensure(m_bytes->length + length);
   if (!data) { m_failed = true; return {}; }
   m_reserved = length;

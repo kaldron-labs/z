@@ -181,9 +181,14 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
   inline expression to the base type.
 
 ### Trailing underscores
-- Use trailing underscores for internal-only or thread-dedicated functions/types.
+- Use trailing underscores only to distinguish related wrapper and implementation names:
+  - generically for wrapped functions and macros; wrapper chains may add one underscore per layer: `x` wraps `x_`, which wraps `x__`.
+  - to distinguish internal-only functions/types from external functions, that are primarily wrappers of the internal function.
+  - to distinguish thread-dedicated functions/types from those that are callable from any thread, that are primarily wrappers of the thread-dedicated function.
 - Example: `send` may `txInvoke` a `send_` call on the Tx thread; `send_` can assume the correct thread and elide the check/context switch.
 - Example: `template <typename T> struct Foo : public Foo_ { ... };` where `Foo` is the API and `Foo_` is a `T`-independent common base.
+- Use numbered suffixes `_0`, `_1`, ... for multi-step functions and variable-argument macros, e.g. `stop_0`, `stop_1`, ...; do not use repeated trailing underscores to label steps or argument counts.
+- When repairing names, remove unjustified trailing underscores and update all affected declarations and uses; do not introduce a wrapper merely to justify an underscore.
 
 ### Vocabulary
 - Prefer precise project vocabulary: "utilities" not "helpers", "duplex" not "bidi", etc.

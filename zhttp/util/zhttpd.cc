@@ -17,6 +17,7 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuUnion.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmBitmap.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmSemaphore.hh>
@@ -46,8 +47,6 @@ void usage(int code = 1)
   std::cerr <<
     "Usage: zhttpd /path/to/wwwroot [OPTION]...\n\n"
     "Options:\n"
-    "  --rx-ring-size=N   receive pool/ring slots, default 128 (2..32768)\n"
-    "  --tx-ring-size=N   transmit pool/ring slots, default 128 (2..32768)\n"
     "  --port number              listen port, default 8080\n"
     "  --addr ip                  listen address, default all interfaces\n"
     "  --ipv6                     listen on IPv6 address\n"
@@ -199,8 +198,12 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
 
   using HdrCatalog = FixedRespHeaders;
   using ContentLength = ZuStringT<"content-length">;
-  using FileBuf = Zi::IOBufAlloc<ZiIOBuf,
-    FileChunk, FileChunk, ZuStringT<"Zhttpd.FileBody">>;
+  using FileBuf = Zi::IOBufBuiltin<
+    ZiIOBuf,
+    FileChunk,
+    ZiIOBuf_DefltAlign,
+    ZuStringT<"Zhttpd.FileBody">,
+    FileChunk>;
   using ProducerClose = ZmFn<void(),
     ZmFnHeapID<"zhttpd.FileProducerClose">>;
 
@@ -234,7 +237,8 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
       state->mx->run([
 	self = ZmRef<Self>{this}, file = ZuMv(file),
 	offset_, n, final]() mutable {
-	ZmRef<ZiIOBuf> buf = new FileBuf{nullptr, 0};
+	ZmRef<ZiIOBuf> buf = new FileBuf{
+	  ZmSingleton<typename FileBuf::Allocator>::instance(), nullptr, 0};
 	int r = file.pread(offset_, buf->data(), n);
 	if (r == int(n)) buf->length = n;
 	State *state_ = self->state;
@@ -256,7 +260,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
 
       (void)emit_([self = ZmRef<Self>{this}, buf = ZuMv(buf), final](
 	  auto &body) mutable {
-	if (!body.appendRange(buf, 0, buf->length)) return Zhttp::WriteOutcome::Failed;
+	if (!body.appendBuf(ZuMv(buf))) return Zhttp::WriteOutcome::Failed;
 	if (final) return Zhttp::WriteOutcome::End;
 	if (!self->read_()) return Zhttp::WriteOutcome::Failed;
 	return Zhttp::WriteOutcome::Stream;
@@ -607,7 +611,6 @@ void Parser::complete(Zhttp::Channel *link, bool ok)
 ZiMxParams mxParams(const Options &options)
 {
   auto params = ZiMxParams()
-    .rxRingSize(options.rxRingSize).txRingSize(options.txRingSize)
     .scheduler([](auto &s) {
       s.nThreads(5)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -617,7 +620,6 @@ ZiMxParams mxParams(const Options &options)
 	.thread(5, [](auto &t) { t.isolated(1); });
     })
     .rxThread(1).txThread(2);
-  Zhttp::HubConfig::rxBufAllocators(params);
 #ifdef ZiMultiplex_DEBUG
   if (options.debug) params.debug(true);
   if (options.frag) params.frag(true);
@@ -686,9 +688,12 @@ bool Zhttpd::Application::startMultiplex()
 
 bool Zhttpd::Application::initServer()
 {
-  if (!m_impl || !m_impl->mxStarted || m_impl->serverInited) return false;
+  if (!m_impl || m_impl->mxStarted || m_impl->serverInited) return false;
   auto &state = m_impl->state;
   auto &options = state.options;
+  state.mx = &m_impl->mx;
+  state.txThread = m_impl->mx.sid("4");
+  state.fileThread = m_impl->mx.sid("5");
   auto config = Zhttp::ServerConfig()
     .localIP(ZiIP(options.addr))
     .port(options.port)
@@ -849,12 +854,6 @@ int main(int argc, char **argv)
   }
 
   ZiMultiplex mx(mxParams(options));
-  if (!mx.start()) {
-    ZiLOG(Error, "zhttpd", "ZiMultiplex start failed");
-    state.log.final();
-    ZiLog::stop();
-    return 1;
-  }
   state.mx = &mx;
   state.txThread = mx.sid("4");
   state.fileThread = mx.sid("5");
@@ -919,6 +918,14 @@ int main(int argc, char **argv)
     ZiLog::stop();
     return 1;
   }
+  if (!mx.start()) {
+    ZiLOG(Error, "zhttpd", "ZiMultiplex start failed");
+    app.final();
+    state.log.final();
+    ZiLog::stop();
+    return 1;
+  }
+
   if (!app.start()) {
     ZiLOG(Error, "zhttpd", "HTTP hub start failed");
     (void)app.stop();

@@ -11,7 +11,7 @@
 #include <zlib/ZfixRxMsg.hh>
 #include "ZfixDemo.hh"
 static ZmRef<ZiIOBuf> frameBuf() {
-  using Allocator = Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
   return ZmSingleton<Allocator>::instance()->allocBuf();
 }
 

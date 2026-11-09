@@ -308,7 +308,7 @@ public:
 	  out = ZuMv(frame);
 	  node->advance(consumed);
 	} else {
-	  auto next = alloc();
+	  ZmRef<typename Queue::Node> next = alloc();
 	  if (ZuUnlikely(!next)) return -1;
 	  next->alloc(right);
 	  next->append(node->span().data() + consumed, right);
@@ -492,8 +492,8 @@ private:
   uint64_t		m_length = 0;
 };
 
-// Receive-side protocol geometry.  Each layer adds its framing head/tail room
-// to the complete requirement exposed by the layer below it.  The outermost
+// Receive-side protocol geometry. Each layer adds its framing head/tail room
+// to the complete requirement exposed by the layer below it. The outermost
 // values are passed to the lowest pooled-buffer allocation boundary.
 template <typename Below>
 class RxLayer {

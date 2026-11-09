@@ -117,7 +117,6 @@ static void deadline(bool h3, bool zero = false)
   ZtString<> cert, key;
   ZuCheckRT(Zhttp::Test::writeLocalhostCert(temp, cert, key), (return));
   ZiMultiplex mx{ZiMxParams{}
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
     .scheduler([](auto &s) {
     s.nThreads(6);
     for (unsigned i = 1; i <= 6; ++i)
@@ -125,7 +124,6 @@ static void deadline(bool h3, bool zero = false)
   }).rxThread(1).txThread(2)};
   DeadlineState state;
   state.mx = &mx;
-  ZuCheckRT(mx.start(), (return));
   unsigned port = peerPort(h3);
   ZuCheckRT(port, ({ mx.stop(); return; }));
   RPCApp app{&state};
@@ -138,21 +136,23 @@ static void deadline(bool h3, bool zero = false)
   }));
   bool initialized = server.init(Zhttp::HubConfig{&mx, "3", "4"}, config, &app);
   ZuCheckRT(initialized);
-  bool started = initialized && server.start();
-  ZuCheckRT(started);
-  bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCheckRT(listening && !state.errors.load_());
   Client client;
   Zhttp::Config clientConfig;
   clientConfig.protocol(h3 ? Zhttp::ProtoPolicy::ForceH3 : Zhttp::ProtoPolicy::DisableH3)
     .bodyMax(uint64_t(-1)).maxRetries(0).maxRedirects(0);
-  bool cliInit = listening && client.init(Zhttp::HubConfig{&mx, "5", "6"}, 1, clientConfig,
+  bool cliInit = initialized && client.init(Zhttp::HubConfig{&mx, "5", "6"}, 1, clientConfig,
     {}, Zhttp::H2Config{}.tls([&cert](auto &tls) {
       tls.caPath(cert);
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
   ZuCheckRT(cliInit);
-  bool pooled = cliInit && client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
+  ZuCheckRT(mx.start(), (return));
+  bool started = initialized && server.start();
+  ZuCheckRT(started);
+  bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
+  ZuCheckRT(listening && !state.errors.load_());
+  bool pooled = listening && cliInit &&
+    client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
   ZuCheckRT(pooled);
   bool cliUp = pooled && client.start();
   ZuCheckRT(cliUp);
@@ -177,7 +177,7 @@ static void deadline(bool h3, bool zero = false)
   if (started) ZuCheckRT(server.stop());
   ZuCheckRT(!server.pending());
   server.final();
-  ZiResolver::stopSync(); ZiResolver::final();
+  ZiResolver::stop(); ZiResolver::final();
   ZuCheckRT(mx.stop());
   ZuCheckRT(state.httpOK && state.status == Code::DEADLINE_EXCEEDED &&
     state.cancels == unsigned(!zero) && !state.errors.load_());

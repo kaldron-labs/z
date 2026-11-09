@@ -16,15 +16,17 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuTime.hh>
 
+#include <zlib/ZmRef.hh>
+
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiIP.hh>
+#include <zlib/ZiIOBuf.hh>
 
 #include <zlib/ZhttpProfiles.hh>
 
 class ZiMultiplex;
-class ZiMxParams;
 
 namespace Zhttp {
 
@@ -37,9 +39,6 @@ ZuDerive(ConfigString, ZtString<ZtStringHeapID<"Zhttp.Config">>);
 
 class HubConfig {
 public:
-  // Configure caller-owned receive pools after ring sizing, before mx construction.
-  static ZhttpAPI void rxBufAllocators(ZiMxParams &);
-
   HubConfig(
     ZiMultiplex *mx = nullptr,
     ZuCSpan rxThread = {},
@@ -67,10 +66,23 @@ private:
 };
 
 class TCPConfig {
+public:
+  Zi::IOBufAllocator *rxAllocator() const { return m_rxAllocator; }
+  Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
+  TCPConfig &rxAllocator(Zi::IOBufAllocator *v) { m_rxAllocator = v; return *this; }
+  TCPConfig &txAllocator(Zi::IOBufAllocator *v) { m_txAllocator = v; return *this; }
+
+private:
+  Zi::IOBufAllocator *m_rxAllocator = nullptr;
+  Zi::IOBufAllocator *m_txAllocator = nullptr;
 };
 
 class TLSConfig {
 public:
+  Zi::IOBufAllocator *rxAllocator() const { return m_rxAllocator; }
+  Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
+  TLSConfig &rxAllocator(Zi::IOBufAllocator *v) { m_rxAllocator = v; return *this; }
+  TLSConfig &txAllocator(Zi::IOBufAllocator *v) { m_txAllocator = v; return *this; }
   ZuCSpan caPath() const { return m_caPath; }
   ZuCSpan certPath() const { return m_certPath; }
   ZuCSpan keyPath() const { return m_keyPath; }
@@ -84,6 +96,8 @@ public:
   TLSConfig &cacheTimeout(int v) { m_cacheTimeout = v; return *this; }
 
 private:
+  Zi::IOBufAllocator *m_rxAllocator = nullptr;
+  Zi::IOBufAllocator *m_txAllocator = nullptr;
   ConfigString	m_caPath;
   ConfigString	m_certPath;
   ConfigString	m_keyPath;

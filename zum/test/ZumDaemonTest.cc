@@ -57,7 +57,6 @@ static void initFinal()
   }};
   ZuCheckRT(daemon.state() == ZmEngineState::Stopped);
   daemon.final(); // valid without even starting the borrowed runtime
-  ZuCheckRT(mx.start());
   ZuCheckRT(daemon.init(&db, &requests, &mx, config()));
   ZuCheckRT(daemon.state() == ZmEngineState::Stopped);
   daemon.final();
@@ -79,7 +78,6 @@ static void partialInit()
     daemon.final();
     ZuCheckRT(mx.stop());
   }};
-  ZuCheckRT(mx.start());
   auto value = config();
   value.port = 0; // child HTTP init rejects this after provider init succeeds
   ZuCheckRT(!daemon.init(&db, &requests, &mx, ZuMv(value)));

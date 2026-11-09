@@ -1128,7 +1128,7 @@ namespace ZmBitmap_ {
 }
 
 // Application and higher-layer mappings supply { T, Code, save(), load() }
-// through ADL. zf never depends on ZiIP or application value definitions.
+// through ADL.
 void ZfbTransform(...);
 
 namespace Zfb {

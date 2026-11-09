@@ -72,15 +72,14 @@ TraceRef WireTrace::capture_(ZuCSpan wire, const Fmt::FrameView *known,
   TxContext context, Resolve resolve, void *owner)
 {
   if (!enabled_()) return {};
-  using Alloc = Zi::IOBufAlloc<TraceQueue::Node,
-    ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zfix.TraceBuf">>;
+  using Alloc = Zi::IOBufBuiltin<TraceQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zfix.TraceBuf">, ZiIOBuf_DefltMaxSize>;
   uint64_t charge = uint64_t(ZmHeapAllocSize<sizeof(Alloc)>{}) +
     (m_limits.recordBytes > Alloc::Size ? jumboBytes(m_limits.recordBytes) : 0);
   if (m_limits.recordBytes > Alloc::MaxSize || charge > m_limits.bytes) {
     ++m_stats.dropped; return {};
   }
   while (m_stats.bytes > m_limits.bytes - charge) { pop_(); ++m_stats.rotated; }
-  using Allocator = Zi::AppBufAllocator<TraceQueue::Node,
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, TraceQueue::Node,
     ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize>;
   ZmRef<TraceQueue::Node> node = ZmSingleton<Allocator,
     ZmSingletonCleanup<ZmCleanup::Platform>>::instance()->allocBuf();

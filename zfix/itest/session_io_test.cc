@@ -716,15 +716,15 @@ friend inline ZuStringT<"Zfix.session_io_test.Link"> ZmNHeapID(Link *);
 };
 
 bool CliHub::init(Network::ClientParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::Client<CliHub, Dictionary, Network>::init(ZuMv(params));
 }
@@ -796,15 +796,15 @@ friend inline ZuStringT<"Zfix.session_io_test.Link"> ZmNHeapID(ServerLink *);
 };
 
 bool SrvHub::init(Network::ServerParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::Server<SrvHub, Dictionary, Network>::init(ZuMv(params));
 }
@@ -842,7 +842,6 @@ static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
       .thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   Net::ServerParams sp{&mx, "3", "4"}; Net::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   const char *cert = getenv("ZFIX_TEST_CERT"), *key = getenv("ZFIX_TEST_KEY");
@@ -850,6 +849,7 @@ static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
   sp.certPath(cert).keyPath(key); cp.caPath(cert);
 #endif
   bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<CliHub::Link> link;
   if (ss && cs) {
@@ -988,7 +988,6 @@ static void routeMatrix(unsigned mode) {
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   auto srvParams = [&mx] {
     Net::ServerParams p{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
@@ -1005,6 +1004,7 @@ static void routeMatrix(unsigned mode) {
   };
   bool si = server.init(srvParams()), oi = other.init(srvParams());
   bool ci = client.init(cliParams()); ZuCheck(si && oi && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), os = oi && other.start();
   bool cs = ci && client.start(); ZuCheck(ss && os && cs);
   server.listen(); other.listen();
@@ -1082,12 +1082,13 @@ static void listenerCleanup() {
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool si = server.init(srvParams(&mx)); ZuCheck(si);
+  bool ri = rival.init(srvParams(&mx)); ZuCheck(ri);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(); ZuCheck(ss);
   server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   retry.listenPort = state.port;
-  bool ri = rival.init(srvParams(&mx)), rs = ri && rival.start(); ZuCheck(ri && rs);
+  bool rs = ri && rival.start(); ZuCheck(ri && rs);
   rival.listen(); ZuCheck(retry.listening.timedwait(Zm::now(5)) == 0);
   ZuCheck(retry.listenFailures.load_() == 1 && !retry.port);
   bool rstop = rival.stop(), sstop = server.stop(); ZuCheck(rstop && sstop);
@@ -1135,11 +1136,9 @@ static void startupCleanup(unsigned mode) {
     client.final(); server.final(); return !si && !ci && stopped;
   };
   ZuCheck(failInit(srvParams(nullptr), cliParams(nullptr)));
-  ZuCheck(failInit(srvParams(&mx), cliParams(&mx)));
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   ZuCheck(failInit(srvParams(&mx, "3", "3"), cliParams(&mx, "3", "3")));
   ZuCheck(failInit(srvParams(&mx, "9", "4"), cliParams(&mx, "9", "4")));
-  ZuCheck(errors.load_() == 8);
+  ZuCheck(errors.load_() == 6);
 #ifdef ZFIX_TEST_TLS
   // Fail after CA/certificate allocation, then explicitly finalize. No rollback
   // or implicit reinitialization policy is imposed by the FIX endpoint wrapper.
@@ -1151,6 +1150,7 @@ static void startupCleanup(unsigned mode) {
   }
 #endif
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx)); ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
@@ -1196,13 +1196,13 @@ static void setupCleanup(unsigned mode) {
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   Net::ServerParams sp{&mx, "3", "4"}; Net::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   sp.certPath(getenv("ZFIX_TEST_CERT")).keyPath(getenv("ZFIX_TEST_KEY"));
   cp.caPath(getenv("ZFIX_TEST_CERT"));
 #endif
   bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   // A bound UDP socket with no responder makes DNS wait deterministically.
@@ -1361,9 +1361,9 @@ static void reloadBudget(bool local) {
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, "5", "6"));
   ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
@@ -1501,9 +1501,9 @@ static void adminBudget(unsigned kind) {
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, kind == 8 ? "1" : "5",
     kind == 8 ? "2" : "6")); ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client}, rival;
@@ -1770,8 +1770,8 @@ static void readAheadOverload() {
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx)); ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
@@ -2272,15 +2272,15 @@ friend inline ZuStringT<"Zfix.Own.Server"> ZmNHeapID(OwnSrvLink *);
 };
 
 bool OwnServer::init(Network::ServerParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::Server<OwnServer, Dictionary, Network>::init(ZuMv(params));
 }
@@ -2434,15 +2434,15 @@ friend inline ZuStringT<"Zfix.Own.Client"> ZmNHeapID(OwnCliLink *);
 };
 
 bool OwnClient::init(Network::ClientParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::Client<OwnClient, Dictionary, Network>::init(ZuMv(params));
 }
@@ -2457,9 +2457,9 @@ static void nativeReplacement(unsigned mode, bool established = false)
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, "5", "6"));
   ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<OwnCliLink> a, b;
   bool attemptedA = false, attemptedB = false, exchangedAll = false;
@@ -2609,9 +2609,9 @@ static void nativeChain(unsigned mode)
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, "5", "6"));
   ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<OwnCliLink> a, b, c, other;
   bool triedA = false, triedB = false, triedC = false, triedSide = false, exchanged = false;

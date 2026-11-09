@@ -179,14 +179,9 @@ static PathStatus appendOutput_(ZuCSpan path, const Zi::Path &downloads,
   return PathOK;
 }
 
-static ZiMxParams mxParams_(const Env &env)
+static ZiMxParams mxParams_()
 {
   return ZiMxParams()
-    .rxRingSize(env.rxRingSize).txRingSize(env.txRingSize)
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -195,20 +190,6 @@ static ZiMxParams mxParams_(const Env &env)
 	.thread(4, [](auto &t) { t.isolated(1); });
     })
     .rxThread(1).txThread(2);
-}
-
-static bool readFile_(const Zi::Path &path, ZtString<> &data)
-{
-  ZiFile file;
-  if (file.open(path, ZiFile::ReadOnly | ZiFile::NoFollow |
-      ZiFile::GC) != Zi::OK)
-    return false;
-  auto stat = file.fstat();
-  if (!stat || stat.isdir() || stat.size() > 128 * 1024 * 1024)
-    return false;
-  data.length(unsigned(stat.size()));
-  int n = file.read(data.data(), data.length());
-  return n == int(data.length());
 }
 
 static ZmSemaphore *sigDone_;
@@ -357,9 +338,13 @@ struct HQServerStream :
   using Base::Base;
 
   int process(Zquic::RxStream &rx);
+  bool pumpFile_();
+  void txDequeued_();
 
   ZtString<>	request;
-  bool		done = false;
+  ZiFile		file; // App Rx owns file progress; Tx posts producer-credit continuations
+  uint64_t	remaining = 0;
+  bool		done = false, finished = false;
 };
 
 struct HQServerLink :
@@ -406,15 +391,73 @@ int HQServerStream::process(Zquic::RxStream &rx)
     this->link()->disconnect();
     return -1;
   }
-  ZtString<> data;
-  if (!readFile_(path, data) ||
-      !this->link()->send(
-	ZmRef<HQServerStream>{this}, data, true)) {
+  if (file.open(path, ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) != Zi::OK) {
+    this->link()->app()->errors = 1;
+    this->link()->disconnect();
+    return -1;
+  }
+  auto stat = file.fstat();
+  if (!stat || stat.isdir() || stat.size() > 128 * 1024 * 1024) {
+    file.close();
+    this->link()->app()->errors = 1;
+    this->link()->disconnect();
+    return -1;
+  }
+  remaining = stat.size();
+  if (!pumpFile_()) {
     this->link()->app()->errors = 1;
     this->link()->disconnect();
     return -1;
   }
   return 1;
+}
+
+bool HQServerStream::pumpFile_()
+{
+  if (finished) return true;
+  if (this->link()->disconnecting_() || this->stopReceived()) {
+    finished = true;
+    file.close();
+    return true;
+  }
+  enum { ChunkSize = 64<<10 };
+  using FileBuf = Zi::IOBufBuiltin<
+    ZiIOBuf,
+    ChunkSize,
+    ZiIOBuf_DefltAlign,
+    ZuStringT<"ZhttpQIR.HQFile">,
+    ChunkSize>;
+  if (!remaining) {
+    finished = true;
+    file.close();
+    return this->link()->send(ZmRef<HQServerStream>{this}, ZuBSpan{}, true);
+  }
+  ZmRef<ZiIOBuf> buf = new FileBuf{ZmSingleton<typename FileBuf::Allocator>::instance()};
+  unsigned count = remaining < ChunkSize ? unsigned(remaining) : unsigned(ChunkSize);
+  int n = file.read(buf->data(), count);
+  if (n <= 0 || unsigned(n) > count) {
+    finished = true;
+    file.close();
+    return false;
+  }
+  buf->length = unsigned(n);
+  remaining -= unsigned(n);
+  bool final = !remaining;
+  if (final) { finished = true; file.close(); }
+  return this->link()->send(ZmRef<HQServerStream>{this}, ZuMv(buf), final);
+}
+
+void HQServerStream::txDequeued_()
+{
+  // Keep one unsent file chunk. QUIC recovery retains preceding chunks until
+  // acknowledged; producer credit lets the next chunk sustain wire progress.
+  auto link = ZmRef{this->link()};
+  link->app()->rxRun([link = ZuMv(link), stream = ZmRef<HQServerStream>{this}]() mutable {
+    if (!stream->pumpFile_()) {
+      link->app()->errors = 1;
+      link->disconnect();
+    }
+  });
 }
 
 struct HQClient : public Zquic::Client<HQClient> {
@@ -912,20 +955,6 @@ int loadEnv(Role role, Env &env, const char *(*getenvFn)(const char *),
   getpathFn("QLOGDIR", env.qlogPath);
   setQLogPath_(env.qlogPath, role);
 
-  auto ringSize = [&](const char *name, unsigned &size) {
-    ZuCSpan s = env_(getenvFn, name);
-    if (!s.length()) return true;
-    ZuBox<unsigned> box;
-    if (box.scan(s) != s.length()) return false;
-    unsigned v = box;
-    if (v < ZiMxParams::MinRingSize || v > ZiMxParams::MaxRingSize)
-      return false;
-    size = v;
-    return true;
-  };
-  if (!ringSize("ZHTTP_QIR_RX_RING_SIZE", env.rxRingSize) ||
-      !ringSize("ZHTTP_QIR_TX_RING_SIZE", env.txRingSize)) return Usage;
-
   env.port = DefaultPort;
   ZuCSpan port = env_(getenvFn, "ZHTTP_QIR_PORT");
   if (port.length() && !scanPort_(port, env.port)) return Usage;
@@ -1042,11 +1071,7 @@ static int runHQServer_(const Env &env)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
-  ZiMultiplex mx{mxParams_(env)};
-  if (!mx.start()) {
-    ZiLog::stop();
-    return Error;
-  }
+  ZiMultiplex mx{mxParams_()};
 
   HQServer server{env};
   struct sigaction oldInt{};
@@ -1060,7 +1085,7 @@ static int runHQServer_(const Env &env)
 	  .keyLogPath(env.keyLog)
 	  .qlog(bool(env.qlogPath))
 	  .qlogPath(env.qlogPath), env)) &&
-      server.start()) {
+      mx.start() && server.start()) {
     server.done.wait();
     rc = server.errors ? Error : OK;
     server.stop();
@@ -1081,11 +1106,7 @@ static int runHQClient_(const Env &env, Requests requests)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
-  ZiMultiplex mx{mxParams_(env)};
-  if (!mx.start()) {
-    ZiLog::stop();
-    return Error;
-  }
+  ZiMultiplex mx{mxParams_()};
 
   HQClient client{env, ZuMv(requests)};
   int rc = Error;
@@ -1095,7 +1116,7 @@ static int runHQClient_(const Env &env, Requests requests)
 	  .alpn(ZuSpan<ZuCSpan>{HQALPN})
 	  .keyLogPath(env.keyLog)
 	  .qlog(bool(env.qlogPath))
-	  .qlogPath(env.qlogPath), env))) {
+	  .qlogPath(env.qlogPath), env)) && mx.start()) {
     ZmRef<HQClient::Link> link = new HQClient::Link{&client};
     link->connect(Zquic::Host{client.requests[0].host}, client.requests[0].port);
     if (client.done.timedwait(Zm::now(timeouts().total)) != 0)
@@ -1131,11 +1152,7 @@ static int runH3Client_(const Env &env, Requests requests)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
-  ZiMultiplex mx{mxParams_(env)};
-  if (!mx.start()) {
-    ZiLog::stop();
-    return Error;
-  }
+  ZiMultiplex mx{mxParams_()};
 
   H3Client client{env, ZuMv(requests)};
   int rc = Error;
@@ -1149,7 +1166,7 @@ static int runH3Client_(const Env &env, Requests requests)
 	  .maxData(H3DataMax)
 	  .maxStreamData(H3StreamDataMax)
 	  .maxStreamsDuplex(client.maxStreamsDuplex())
-	  .maxStreamsSimplex(H3UniMax), env))) {
+	  .maxStreamsSimplex(H3UniMax), env)) && mx.start()) {
     ZmRef<H3Client::Link> link = new H3Client::Link{&client};
     link->connect(Zquic::Host{client.requests[0].host}, client.requests[0].port);
     if (client.done.timedwait(Zm::now(timeouts().total)) != 0)
@@ -1168,8 +1185,6 @@ static int runH3Client_(const Env &env, Requests requests)
 static int runH3Server_(const Env &env)
 {
   Zhttpd::Options options;
-  options.rxRingSize = env.rxRingSize;
-  options.txRingSize = env.txRingSize;
   options.root = env.www;
   options.addr = "0.0.0.0";
   options.port = env.port;
@@ -1202,7 +1217,7 @@ static int runH3Server_(const Env &env)
   if (app.init(ZuMv(options), error)) {
     app.done(ZmFn<void(), ZmFnHeapID<"zhttpd.Done">>{
       [&done]() { done.post(); }});
-    if (app.startMultiplex() && app.initServer() && app.startServer()) {
+    if (app.initServer() && app.startMultiplex() && app.startServer()) {
       done.wait();
       if (app.stopServer() && !app.errors()) rc = OK;
     }

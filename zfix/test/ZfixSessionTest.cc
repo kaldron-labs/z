@@ -56,7 +56,7 @@ template <typename Facet> static void authFacet()
   Session::Logon value;
   value.rawAuth = ZuBSpan{Payload};
   value.nextExpected = 17; value.defaultAppVerID = "9";
-  ZmRef<ZiIOBuf> buffer = ZmSingleton<Zi::AppBufAllocator<
+  ZmRef<ZiIOBuf> buffer = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
     ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
   Sink out{{buffer->data(), buffer->size}};
   ZuCheck((save<Facet, ArchiveField>(out, value) && out.flush()));

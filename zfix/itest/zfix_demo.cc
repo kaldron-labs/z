@@ -29,13 +29,13 @@ template <typename Net> static int run(Options options) {
       .thread(3, [](auto &t) { t.isolated(1); })
       .thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  if (!mx.start()) return 1;
   typename Net::ServerParams sp{&mx, "3", "4"};
   typename Net::ClientParams cp{&mx, "3", "4"};
   if constexpr (Net::Encrypted) {
     sp.certPath(options.cert).keyPath(options.key); cp.caPath(options.ca);
   }
   bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp));
+  if (!mx.start()) return 1;
   bool ss = si && server.start(), cs = ci && client.start();
   ZmRef<Link<Net, true>> link;
   if (!ss || !cs) state.fail();

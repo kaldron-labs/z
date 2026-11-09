@@ -17,6 +17,7 @@
 
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmRef.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZiIOBuf.hh>
 
 #include <zlib/ZmScheduler.hh>
@@ -56,6 +57,8 @@ public:
       fail_(Failure::InputPressure);
     } else if (lower) {
       uint64_t remaining = lower;
+      using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, ZiIOBuf_DefltSize>;
+      auto alloc = []() { return ZmRef<ZiRxQueue::Node>{ZmSingleton<Alloc>::instance()->allocBuf().ptr<ZiRxQueue::Node>()}; };
       int64_t n = httpRx.splice(
 	m_wire,
 	[&remaining](ZuBSpan span) mutable -> int64_t {
@@ -64,7 +67,7 @@ public:
 	    return 0;
 	  }
 	  return remaining;
-	});
+	}, alloc, alloc);
       if (ZuUnlikely(n <= 0))
 	fail_(Failure::InvalidHeader);
       else
@@ -379,6 +382,8 @@ private:
     int appRC = 1;
     if (length) {
       uint64_t remaining = length;
+      using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, ZiIOBuf_DefltSize>;
+      auto alloc = []() { return ZmRef<ZiRxQueue::Node>{ZmSingleton<Alloc>::instance()->allocBuf().ptr<ZiRxQueue::Node>()}; };
       int64_t consumed = rx.splice(
 	m_rx,
 	[&remaining](ZuBSpan span) mutable -> int64_t {
@@ -387,7 +392,7 @@ private:
 	    return 0;
 	  }
 	  return remaining;
-	});
+	}, alloc, alloc);
       if (ZuUnlikely(consumed <= 0))
 	return fail_(Failure::InvalidHeader), -1;
       m_frameRemain -= length;

@@ -10,6 +10,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 
@@ -529,8 +530,7 @@ void crossDateReplay()
   {
     ZiFile data{todayData, ZiFile::GC};
     ZmRef<ZiIOBuf> frame = new
-      Zi::IOBufAlloc<ZiIOBuf,
-        1024, Ztc::AppCf::DefltMaxFrame, ZuStringT<"Ztc.Alert.TestRx">>{nullptr, 0};
+      Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Alert.TestRx">, Ztc::AppCf::DefltMaxFrame>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Alert.TestRx">, Ztc::AppCf::DefltMaxFrame>::Allocator>::instance()};
     if (data && identitySize > 0 &&
 	identitySize <= Ztc::AppCf::DefltMaxFrame &&
 	frame->alloc(unsigned(identitySize))) {

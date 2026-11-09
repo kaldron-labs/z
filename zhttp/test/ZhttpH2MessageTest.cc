@@ -8,6 +8,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/Zhttp.hh>
 #include "../src/ZhttpServerImpl.hh"
 
@@ -39,7 +40,8 @@ bool data(Parser &parser, ZuBSpan payload, bool endStream = false)
 {
   enum { Header = 9 };
   unsigned length = Header + payload.length();
-  ZmRef<ZiRxQueue::Node> buf = new Zhttp::BodyRx::MetaBufAlloc{nullptr, 0};
+  ZmRef<ZiRxQueue::Node> buf = new Zhttp::BodyRx::MetaBufAlloc{
+    ZmSingleton<typename Zhttp::BodyRx::MetaBufAlloc::Allocator>::instance()};
   buf->alloc(length);
   buf->length = length;
   auto io = static_cast<ZiIOBuf *>(buf.ptr());
@@ -695,7 +697,8 @@ void testBodyRejection()
 	checked.field(":path", "/") && checked.endHeaders(false), log_(
       "H2 rejected-frame transfer setup"));
     enum { Head = Zhttp::H2::FrameHeaderSize, Payload = 3 };
-    ZmRef<ZiRxQueue::Node> buf = new Zhttp::BodyRx::MetaBufAlloc{nullptr, 0};
+    ZmRef<ZiRxQueue::Node> buf = new Zhttp::BodyRx::MetaBufAlloc{
+      ZmSingleton<typename Zhttp::BodyRx::MetaBufAlloc::Allocator>::instance()};
     buf->length = Head + Payload + 2;
     auto io = static_cast<ZiIOBuf *>(buf.ptr());
     memset(io->data(), 0, Head);

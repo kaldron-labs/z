@@ -75,28 +75,30 @@ void testValidation()
     App app;
     ZTCP_CHECK_RT(!app.init(Ztcp::HubParams(&stoppedMx, "3", "4").
 	errorFn(countErrors(errors))),
-      "non-running multiplexer unexpectedly succeeded");
+      "missing TCP allocators unexpectedly succeeded");
   }
 
   ZiMultiplex mx(mxParams());
-  bool mxStarted = mx.start();
-  ZTCP_CHECK_RT(mxStarted, "ZiMultiplex start failed");
-  if (!mxStarted) return;
 
   {
     App app;
-    using RxAllocator = Zi::RxTCPBufAllocator<ZiRxQueue::Node, ZiIOBuf_DefltSize>;
-    using TxAllocator = Zi::TxTCPBufAllocator<ZiTxQueue::Node, ZiIOBuf_DefltSize>;
-    ZmRef<RxAllocator> rx = new RxAllocator{};
-    ZmRef<TxAllocator> tx = new TxAllocator{};
+    using RxAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTCP, ZiRxQueue::Node, ZiIOBuf_DefltSize>;
+    using TxAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTCP, ZiTxQueue::Node, ZiIOBuf_DefltSize>;
+    Zi::IOBufAllocator *rx = mx.template allocator<RxAllocator::BufType, typename RxAllocator::Buf::Buf,
+      RxAllocator::Size, RxAllocator::MaxSize, RxAllocator::Buf::Align, typename RxAllocator::Heap>();
+    Zi::IOBufAllocator *tx = mx.template allocator<TxAllocator::BufType, typename TxAllocator::Buf::Buf,
+      TxAllocator::Size, TxAllocator::MaxSize, TxAllocator::Buf::Align, typename TxAllocator::Heap>();
     ZTCP_CHECK_RT(app.init(Ztcp::HubParams(&mx, "3", "4").
-	rxAllocator(rx.ptr()).txAllocator(tx.ptr()).errorFn(countErrors(errors))),
+	rxAllocator(rx).txAllocator(tx).errorFn(countErrors(errors))),
       "valid TCP hub initialization failed");
     ZTCP_CHECK_RT(app.rxThread() == 3, "unexpected Rx thread");
     ZTCP_CHECK_RT(app.txThread() == 4, "unexpected Tx thread");
     app.final();
   }
 
+  bool mxStarted = mx.start();
+  ZTCP_CHECK_RT(mxStarted, "ZiMultiplex start failed");
+  if (!mxStarted) return;
   mx.stop();
   ZTCP_CHECK_RT(errors.load_() == 5, "unexpected validation error count");
 }

@@ -55,10 +55,6 @@ struct State {
 ZiMxParams mxParams()
 {
   return ZiMxParams()
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -256,8 +252,8 @@ struct TLSClient : public Ztls::Client<TLSClient> {
 };
 
 struct TLSClient::Link :
-  public Ztls::CliLink<TLSClient, Link, TxBufAlloc> {
-  using Base = Ztls::CliLink<TLSClient, Link, TxBufAlloc>;
+  public Ztls::CliLink<TLSClient, Link, Ztls::RxBufAlloc<>, TxBufAlloc> {
+  using Base = Ztls::CliLink<TLSClient, Link, Ztls::RxBufAlloc<>, TxBufAlloc>;
 
   Link(TLSClient *app) : Base{app} { }
 
@@ -296,8 +292,8 @@ struct TLSServer : public Ztls::Server<TLSServer> {
 };
 
 struct TLSServer::Link :
-  public Ztls::SrvLink<TLSServer, Link, TxBufAlloc> {
-  using Base = Ztls::SrvLink<TLSServer, Link, TxBufAlloc>;
+  public Ztls::SrvLink<TLSServer, Link, Ztls::RxBufAlloc<>, TxBufAlloc> {
+  using Base = Ztls::SrvLink<TLSServer, Link, Ztls::RxBufAlloc<>, TxBufAlloc>;
 
   Link(TLSServer *app) : Base{app} { }
 
@@ -451,16 +447,30 @@ ZmRef<QUICServer::Link> QUICServer::accepted(const Zquic::InitialInfo &)
   return link;
 }
 
-template <typename Client, typename Server, typename ClientParams,
+template <Zi::IOBufType::T Type, typename Buf>
+auto bufAllocator(ZiMultiplex &mx)
+{
+  return mx.allocator<Type, typename Buf::Buf,
+    Buf::Size, Buf::MaxSize, Buf::Align, typename Buf::Heap>();
+}
+
+template <typename Client, typename Server,
+  Zi::IOBufType::T RxType, Zi::IOBufType::T TxType, typename ClientParams,
   typename ServerParams>
 void runH1(
-  ClientParams cliParams, ServerParams srvParams,
+  ZiMultiplex &mx, ClientParams cliParams, ServerParams srvParams,
   State &state)
 {
   ZuTestScopeRT(runH1);
 
   Client client{&state};
   Server server{&state};
+  auto cliRx = bufAllocator<RxType, typename Client::Link::RxBufAlloc>(mx);
+  auto cliTx = bufAllocator<TxType, typename Client::Link::TxBufAlloc>(mx);
+  auto srvRx = bufAllocator<RxType, typename Server::Link::RxBufAlloc>(mx);
+  auto srvTx = bufAllocator<TxType, typename Server::Link::TxBufAlloc>(mx);
+  cliParams.rxAllocator(cliRx).txAllocator(cliTx);
+  srvParams.rxAllocator(srvRx).txAllocator(srvTx);
   bool serverInit = server.init(ZuMv(srvParams));
   bool clientInit = client.init(ZuMv(cliParams));
   ZuCheckRT(serverInit && clientInit, log_("hub initialization failed"));
@@ -470,6 +480,8 @@ void runH1(
     return;
   }
   state.trace.push(LifeEvt::Init);
+  ZuCheckRT(mx.start(), log_("multiplexer start failed"));
+  if (!mx.running()) return;
 
   bool serverStart = server.start();
   bool clientStart = client.start();
@@ -519,10 +531,9 @@ void testTCP()
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCheckRT(mx.start(), log_("TCP multiplexer start failed"));
-  if (!mx.running()) return;
-  ZuTestCallRT((runH1<TCPClient, TCPServer>),
-    Ztcp::ClientParams(&mx, "3", "4"),
+  ZuTestCallRT((runH1<TCPClient, TCPServer,
+    Zi::IOBufType::RxTCP, Zi::IOBufType::TxTCP>),
+    mx, Ztcp::ClientParams(&mx, "3", "4"),
     Ztcp::ServerParams(&mx, "3", "4"), state);
   mx.stop();
 }
@@ -537,10 +548,9 @@ void testTLS(const TempDir &temp)
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCheckRT(mx.start(), log_("TLS multiplexer start failed"));
-  if (!mx.running()) return;
-  ZuTestCallRT((runH1<TLSClient, TLSServer>),
-    Ztls::ClientParams(&mx, "3", "4").hub(
+  ZuTestCallRT((runH1<TLSClient, TLSServer,
+    Zi::IOBufType::RxTLS, Zi::IOBufType::TxTLS>),
+    mx, Ztls::ClientParams(&mx, "3", "4").hub(
       [&temp](auto &p) { p.caPath(temp.certPath.cspan()); }),
     Ztls::ServerParams(&mx, "3", "4")
       .certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan()),
@@ -558,8 +568,6 @@ void testQUIC(const TempDir &temp)
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCheckRT(mx.start(), log_("QUIC multiplexer start failed"));
-  if (!mx.running()) return;
 
   QUICServer server{&state};
   QUICClient client{&state};
@@ -580,6 +588,8 @@ void testQUIC(const TempDir &temp)
     return;
   }
   state.trace.push(LifeEvt::Init);
+  ZuCheckRT(mx.start(), log_("multiplexer start failed"));
+  if (!mx.running()) return;
 
   bool serverStart = server.start();
   bool clientStart = client.start();

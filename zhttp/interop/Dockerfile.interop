@@ -1,4 +1,5 @@
-FROM debian:stable-slim
+# Match the build host's glibc for the staged native libraries.
+FROM ubuntu:26.04
 ARG ZHTTP_QIR_ROOT=qir-root
 ARG ZHTTP_QIR_REV=local
 COPY ${ZHTTP_QIR_ROOT}/usr/local /usr/local

@@ -269,15 +269,15 @@ friend inline ZuStringT<"Zfix.raw_io_test.Link"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator delete; using Peer::Peer; };
 
 bool CliHub::init(Network::ClientParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::RawClient<CliHub, Dictionary, Network>::init(ZuMv(params));
 }
@@ -309,15 +309,15 @@ friend inline ZuStringT<"Zfix.raw_io_test.Link"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator delete; using Peer::Peer; };
 
 bool SrvHub::init(Network::ServerParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::RawServer<SrvHub, Dictionary, Network>::init(ZuMv(params));
 }
@@ -327,7 +327,7 @@ static void loopback(bool pause, bool stop, bool quota, unsigned payload = 4) {
   ZuTestScope(loopback);
   TestState state; state.pause = pause; state.deferStop = stop; state.quota = quota;
     state.payload = payload;
-  state.text = ZmSingleton<Zi::AppBufAllocator<
+  state.text = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
     ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
   state.text->ensure(payload);
   constexpr auto Bits = "ABCD"_z;
@@ -340,7 +340,6 @@ static void loopback(bool pause, bool stop, bool quota, unsigned payload = 4) {
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   typename Network::ServerParams sp{&mx, "3", "4"}; typename Network::ClientParams cp{&mx, "3",
     "4"};
 #ifdef ZFIX_TEST_TLS
@@ -349,6 +348,7 @@ static void loopback(bool pause, bool stop, bool quota, unsigned payload = 4) {
   sp.certPath(cert).keyPath(key); cp.caPath(cert);
 #endif
   bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
   server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0);
@@ -383,12 +383,12 @@ static void setupCleanup(bool deferred) {
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   typename Network::ClientParams params{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   params.caPath(getenv("ZFIX_TEST_CERT"));
 #endif
   bool init = client.init(ZuMv(params)); ZuCheck(init);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool up = init && client.start(); ZuCheck(up);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
   for (unsigned i = 0; i < 3; ++i) {
@@ -601,15 +601,15 @@ friend inline ZuStringT<"Zfix.RawSwap.Client"> ZmNHeapID(Link *);
 };
 
 bool SwapClient::init(Network::ClientParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::RawClient<SwapClient, Dictionary, Network>::init(ZuMv(params));
 }
@@ -641,15 +641,15 @@ friend inline ZuStringT<"Zfix.RawSwap.Server"> ZmNHeapID(Link *);
 };
 
 bool SwapServer::init(Network::ServerParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::RawServer<SwapServer, Dictionary, Network>::init(ZuMv(params));
 }
@@ -667,7 +667,6 @@ static void replacement() {
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   typename Network::ServerParams sp{&mx, "3", "4"};
   typename Network::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
@@ -676,6 +675,7 @@ static void replacement() {
   sp.certPath(cert).keyPath(key); cp.caPath(cert);
 #endif
   bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0);
   ZmRef<SwapClient::Link> a = new SwapClient::Link{&client};

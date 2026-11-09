@@ -13,6 +13,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuSort.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZtArray.hh>
@@ -73,20 +74,19 @@ ZfStruct(, (Config, Cf),
   (key,		(Mutable),		String));
 
 using Frame = ZmRef<ZiIOBuf>;
-using Buf = Zi::IOBufAlloc<ZiIOBuf, 1024, 1U << 16, ZuStringT<"Ztc.Load.Frame">>;
+using Buf = Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Load.Frame">, 1U << 16>;
 
 static void send(auto &link, Frame frame)
 {
   link.txStream([frame = ZuMv(frame)](auto &tx) mutable {
-    auto length = frame->length;
-    tx.appendRange(ZuMv(frame), 0, length);
+    tx << frame->cspan();
     tx.flush();
   }, Zws::Opcode::Binary);
 }
 
 static Frame request(ZuCSpan device, uint64_t sub, bool subscribe)
 {
-  Ztc::Builder builder{Frame{new Buf{nullptr, 0}}};
+  Ztc::Builder builder{Frame{new Buf{ZmSingleton<typename Buf::Allocator>::instance()}}};
   auto nested = builder.startNested();
   auto body = Zfb::save(builder, Ztc::Request{
     .seqNo = 0, .interval = subscribe ? 1000U : 0U,
@@ -197,7 +197,7 @@ struct App {
       auto publisher = unsigned((sent / routes.length()) % cf->publishers);
       ZtString<> name{"publisher-"};
       name << publisher;
-      Ztc::Builder builder{Frame{new Buf{nullptr, 0}}};
+      Ztc::Builder builder{Frame{new Buf{ZmSingleton<typename Buf::Allocator>::instance()}}};
       auto nested = builder.startNested();
       auto id = builder.string(name);
       auto value = Zfb::save(builder, Ztc::AppTelemetry{
@@ -259,7 +259,7 @@ struct App {
   template <typename L> int messageStart(L &link, Zws::Opcode::T opcode) {
     if (opcode != Zws::Opcode::Binary) { fail("opcode"); return -1; }
     auto &frame = link.state().frame;
-    if (!frame) frame = new Buf{nullptr, 0};
+    if (!frame) frame = new Buf{ZmSingleton<typename Buf::Allocator>::instance()};
     frame->length = 0;
     return 1;
   }
@@ -286,7 +286,7 @@ struct App {
       if (!body.get<Ztc::ZfField(Request, subscribe)>()) return 1;
       if (routes.length() >= uint64_t(cf->clients) * cf->subs) { fail("route count"); return -1; }
       routes.push(Route{&link, body.get<Ztc::ZfField(Request, seqNo)>()});
-      Ztc::Builder builder{Frame{new Buf{nullptr, 0}}};
+      Ztc::Builder builder{Frame{new Buf{ZmSingleton<typename Buf::Allocator>::instance()}}};
       auto nested = builder.startNested();
       auto ack = Zfb::save(builder,
 	Ztc::Ack{ZuID{"publisher"}, body.get<Ztc::ZfField(Request, seqNo)>(), 1000});
@@ -407,7 +407,7 @@ struct Echo {
   template <typename L> void disconnected(L &, bool) { }
   template <typename L> int messageStart(L &link, Zws::Opcode::T opcode) {
     if (opcode != Zws::Opcode::Binary) return -1;
-    link.state().frame = new Buf{nullptr, 0};
+    link.state().frame = new Buf{ZmSingleton<typename Buf::Allocator>::instance()};
     return 1;
   }
   template <typename L, typename Rx> int process(L &link, Rx &rx) {
@@ -429,25 +429,17 @@ struct Echo {
 
 static bool runEcho(const Config &cf, const Zws::URI &uri)
 {
-  // Fan-out reserves request/reply and retirement overlap for each active
-  // publisher/subscription across clients; the kernel bounds the shared pool.
-  uint64_t slots = uint64_t(cf.clients) * (cf.publishers + uint64_t(cf.subs)) * 4;
-  if (slots > ZiMxParams::MaxRingSize) slots = ZiMxParams::MaxRingSize;
   ZiMxParams params;
-  params.rxRingSize(unsigned(slots) < ZiIOBuf_DefltRxRingSize ?
-      ZiIOBuf_DefltRxRingSize : unsigned(slots))
-    .txRingSize(unsigned(slots) < ZiIOBuf_DefltTxRingSize ?
-      ZiIOBuf_DefltTxRingSize : unsigned(slots));
   params.scheduler([](auto &s) {
     s.nThreads(4);
     for (unsigned i = 1; i <= 4; ++i) s.thread(i).isolated(true);
   }).rxThread(1).txThread(2);
   ZiMultiplex mx{ZuMv(params)};
-  if (!mx.start()) return false;
   Echo app;
   Zws::Server<Echo, Zhttp::H1TLS> server{&app, ZiIP{uri.host}, uri.port};
   auto tls = Zhttp::TLSConfig{}.certPath(cf.ca).keyPath(cf.key);
-  if (!server.init(Zhttp::HubConfig{&mx, "1", "2"}, tls) || !server.start()) {
+  if (!server.init(Zhttp::HubConfig{&mx, "1", "2"}, tls) ||
+      !mx.start() || !server.start()) {
     server.final();
     mx.stop();
     return false;
@@ -480,21 +472,12 @@ static bool run(const char *path)
     tokens.length() != cf.devices.length())) {
     return false;
   }
-  // Fan-out reserves request/reply and retirement overlap for each active
-  // publisher/subscription across clients; the kernel bounds the shared pool.
-  uint64_t slots = uint64_t(cf.clients) * (cf.publishers + uint64_t(cf.subs)) * 4;
-  if (slots > ZiMxParams::MaxRingSize) slots = ZiMxParams::MaxRingSize;
   ZiMxParams params;
-  params.rxRingSize(unsigned(slots) < ZiIOBuf_DefltRxRingSize ?
-      ZiIOBuf_DefltRxRingSize : unsigned(slots))
-    .txRingSize(unsigned(slots) < ZiIOBuf_DefltTxRingSize ?
-      ZiIOBuf_DefltTxRingSize : unsigned(slots));
   params.scheduler([](auto &s) {
     s.nThreads(8);
     for (unsigned i = 1; i <= 8; ++i) s.thread(i).isolated(true);
   }).rxThread(1).txThread(2);
   ZiMultiplex mx{ZuMv(params)};
-  if (!mx.start()) return false;
   App app{&cf};
   app.timings.length(app.rate() * cf.rounds);
   App::Client client{&app};
@@ -509,7 +492,8 @@ static bool run(const char *path)
   if (!client.init(Zhttp::HubConfig{&mx, "3", "4"}, tls,
       Zhttp::Destination{uri.host, uri.port, uri.ipv6Literal}, ws,
       Zhttp::Config{}.links(cf.devices.length() + cf.clients)
-	.concurrency(cf.devices.length() + cf.clients)) || !client.start()) {
+	.concurrency(cf.devices.length() + cf.clients)) ||
+      !mx.start() || !client.start()) {
     client.final();
     mx.stop();
     return false;

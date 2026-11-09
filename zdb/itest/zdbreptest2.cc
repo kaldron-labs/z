@@ -111,10 +111,8 @@ static void run()
 
   try {
     auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
+    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
 
-    if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbreptest2", "multiplexer start failed");
 
     ZmAtomic<unsigned> ok = 0;
 
@@ -137,7 +135,10 @@ static void run()
       }, store[i]);
 
       orders[i] = db[i]->initTable<Order>("order"); // might throw
+    }
 
+    if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbreptest2", "multiplexer start failed");
+    for (unsigned i = 0; i < 2; i++) {
       db[i]->start([&ok](bool ok_) { if (ok_) ++ok; done.post(); });
     }
 

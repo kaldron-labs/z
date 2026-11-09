@@ -16,30 +16,26 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuTraits.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/Zjrpc.hh>
 
 namespace Zjrpc {
 
-using BatchBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZuStringT<"Zjrpc.Batch">>;
+using BatchBuf = Zi::IOBufBuiltin<
+  ZiIOBuf,
+  ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"Zjrpc.Batch">,
+  ZiIOBuf_DefltMaxSize>;
 
-using InputBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZuStringT<"Zjrpc.Input">>;
-
-struct InputView : public ZmNHeap<InputView>, public ZiIOBuf {
-  ZmRef<ZiIOBuf> backing;
-
-  friend inline ZuStringT<"Zjrpc.InputView"> ZmNHeapID(InputView *);
-  InputView(Zi::RxRange range) :
-    ZiIOBuf{range.buf->data_() + range.offset, range.length, nullptr, range.length},
-    backing{ZuMv(range.buf)} { }
-  void releaseView_() override { backing = nullptr; }
-  uint64_t memory() const override {
-    return sizeof(InputView) + storageMemory_() + (backing ? backing->memory() : 0);
-  }
-};
+using InputBuf = Zi::IOBufBuiltin<
+  ZiIOBuf,
+  ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"Zjrpc.Input">,
+  ZiIOBuf_DefltMaxSize>;
 
 template <typename Out>
 class Output {
@@ -144,8 +140,13 @@ public:
   }
   bool feed(ZuSpan<uint8_t> span) {
     if (!m_active) return false;
-    if (!m_body) m_body = new InputBuf{nullptr, 0};
-    if (m_hint && !m_body->ensure(m_hint)) return false;
+    if (!m_body) m_body = new InputBuf{ZmSingleton<typename InputBuf::Allocator>::instance()};
+    if (m_body->refCount() > 1) {
+      auto held = ZuMv(m_body);
+      m_body = new InputBuf{ZmSingleton<typename InputBuf::Allocator>::instance()};
+      if (!m_body->append(held->cspan())) { reset(); return false; }
+    }
+    if (m_hint && !m_body->ensure(m_hint)) { reset(); return false; }
     unsigned length = m_body->length;
     if (length > m_max || span.length() > m_max - length || !m_body->append(span)) {
       m_body = nullptr;
@@ -154,39 +155,40 @@ public:
     }
     return true;
   }
-  bool feed(Zi::RxRange range) {
-    if (!m_active || !range.buf || range.length > m_max - (m_body ? m_body->length : 0)) {
-      reset();
-      return false;
+  bool feed(ZmRef<ZiIOBuf> buf) {
+    if (!m_active || !buf || buf->length > m_max - (m_body ? m_body->length : 0)) {
+      reset(); return false;
     }
-    if (!m_body) {
-      m_body = new InputView{ZuMv(range)};
-      return true;
-    }
-    return feed(range.span());
+    if (!m_body) { m_body = ZuMv(buf); return true; }
+    return feed(buf->span());
   }
   template <typename Rx>
-  bool body(Rx &rx) { return body_(rx, 0); }
+  bool body(Rx &rx) {
+    auto used = m_body ? m_body->length : 0;
+    if (!m_active || rx.length() > m_max - used) { reset(); return false; }
+    while (rx.length()) {
+      ZmRef<ZiIOBuf> buf;
+      auto n = rx.extract(
+        [](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
+        []() {
+          using Buf = Zi::IOBufBuiltin<
+            ZiRxQueue::Node,
+            ZiIOBuf_DefltSize,
+            ZiIOBuf_DefltAlign,
+            ZuStringT<"Zjrpc.Input">,
+            ZiIOBuf_DefltMaxSize>;
+          return ZmRef<ZiRxQueue::Node>{new Buf{
+            ZmSingleton<typename Buf::Allocator>::instance()}};
+        }, buf);
+      if (n <= 0 || !feed(ZuMv(buf))) { reset(); return false; }
+    }
+    return true;
+  }
   const ZmRef<ZiIOBuf> &buffer() const { return m_body; }
   ZmRef<ZiIOBuf> take() { return ZuMv(m_body); }
   void reset() { m_body = nullptr; m_active = false; }
 
 private:
-  template <typename Rx>
-  auto body_(Rx &rx, int) -> decltype(rx.range(), bool()) {
-    auto range = rx.range();
-    auto length = range.length;
-    bool ok = feed(ZuMv(range));
-    rx.consume([length](ZuSpan<uint8_t>) -> int64_t { return length; },
-      [](ZuSpan<uint8_t>) { });
-    return ok;
-  }
-  template <typename Rx>
-  bool body_(Rx &rx, long) {
-    rx.consume([](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
-      [this](ZuSpan<uint8_t> span) { (void)feed(span); });
-    return m_active;
-  }
   ZmRef<ZiIOBuf> m_body;
   unsigned m_max = 0;
   unsigned m_hint = 0;

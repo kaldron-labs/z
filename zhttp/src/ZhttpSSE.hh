@@ -21,6 +21,7 @@
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuTraits.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmRef.hh>
 
 #include <zlib/ZtString.hh>
@@ -31,8 +32,12 @@ namespace Zhttp {
 
 ZuDerive(SSELine, (ZtString<ZtStringHeapID<"Zhttp.SSE.Line">>));
 ZuDerive(SSEID, (ZtString<ZtStringHeapID<"Zhttp.SSE.ID">>));
-ZuDerive(SSEInputBuf, (Zi::IOBufAlloc<ZiIOBuf,
-  ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zhttp.SSE.Input">>));
+ZuDerive(SSEInputBuf, (Zi::IOBufBuiltin<
+  ZiIOBuf,
+  ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"Zhttp.SSE.Input">,
+  ZiIOBuf_DefltMaxSize>));
 
 namespace Private {
 ZhttpAPI int sseField(ZuCSpan field);
@@ -142,7 +147,7 @@ private:
 	  close();
 	  return;
 	}
-	if (!m_data) m_data = new SSEInputBuf{nullptr, 0};
+	if (!m_data) m_data = new SSEInputBuf{ZmSingleton<typename SSEInputBuf::Allocator>::instance()};
 	if ((separator && !m_data->append(ZuBSpan{"\n"})) ||
 	    !m_data->append(value)) close();
 	else m_haveData = true;

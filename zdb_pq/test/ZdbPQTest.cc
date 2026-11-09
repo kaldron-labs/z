@@ -9,12 +9,14 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmStackAvail.hh>
 #include <zlib/ZmThread.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZtScratch.hh>
 #include <zlib/ZfbReflect.hh>
 #include <zlib/ZdbPQ.hh>
 
-using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZuStringT<"Zdb.PQTest">>;
+using LocalBuf =
+  Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zdb.PQTest">,
+    ZiIOBuf_DefltMaxSize>;
 
 using namespace ZuTestUtil;
 
@@ -62,7 +64,7 @@ static void paramPlanning()
     ZdbPQ::Value::Index<ZdbPQ::Int8Vec>{}});
   const uint8_t byte[] = {1};
   BoundRow row{"x", byte, {1}, {1}};
-  Zfb::IOBuilder<> input{new LocalBuf{nullptr, 0}};
+  Zfb::IOBuilder<> input{ZmSingleton<LocalBuf::Allocator>::instance()->allocBuf()};
   input.finish(Zfb::save(input, row));
   auto source = input.buf();
   Zfb::TableView table{Zfb::root(source->cspan())};
@@ -115,7 +117,7 @@ static void floatWire()
   for (float real: {1.5f, -2.5f}) {
     FloatRow row{real, {-0.0f, 1.25f, -2.5f},
       {"", "short", "a CStringVec element longer than builtin string storage"}};
-    Zfb::IOBuilder<> input{new LocalBuf{nullptr, 0}};
+    Zfb::IOBuilder<> input{ZmSingleton<LocalBuf::Allocator>::instance()->allocBuf()};
     input.finish(Zfb::save(input, row));
     auto source = input.buf();
     Zfb::TableView fbo{Zfb::root(source->cspan())};
@@ -132,7 +134,7 @@ static void floatWire()
       log_("Float32 scalar widens including omitted default"));
     ZuCheckRT(values[1].p<ZdbPQ::FloatVec>().v.length() == ZdbPQ::vecSize(3, 8),
       log_("Float32 vector uses double-width postgres encoding"));
-    ZdbPQ::Builder output{new LocalBuf{nullptr, 0}};
+    ZdbPQ::Builder output{ZmSingleton<LocalBuf::Allocator>::instance()->allocBuf()};
     output.finish(ZdbPQ::saveTuple(output, fields, fields, 2, values));
     auto dest = output.buf();
     ZuCheckRT(dest && Zfb::verify<FloatRow>(dest->cspan()),
@@ -168,7 +170,7 @@ static void fieldAlignment()
   auto values = ZtScratch(ZdbPQ::Tuple, 1);
   ZuBSpan data{"alignment"};
   values.push(ZdbPQ::Value{data});
-  ZdbPQ::Builder builder{new LocalBuf{nullptr, 0}};
+  ZdbPQ::Builder builder{ZmSingleton<LocalBuf::Allocator>::instance()->allocBuf()};
   builder.finish(ZdbPQ::saveTuple(builder, fields, fields, 1, values));
   auto buf = builder.buf();
   ZuCHECK(buf && Zfb::verify<AlignedRow>(buf->cspan()), "aligned store output");
@@ -503,7 +505,7 @@ static void ipOffset()
       log_("pack IP"));
     constexpr unsigned I = ZdbPQ::Value::Index<ZdbPQ::IP>{};
     ZdbPQ::Value value{packed};
-    ZdbPQ::Builder fbb{new LocalBuf{nullptr, 0}};
+    ZdbPQ::Builder fbb{ZmSingleton<LocalBuf::Allocator>::instance()->allocBuf()};
     ZdbPQ::SavedOffset saved;
     ZdbPQ::Offsets offsets{&saved};
     ZdbPQ::saveOffset<I>(fbb, offsets, {}, 1, value);

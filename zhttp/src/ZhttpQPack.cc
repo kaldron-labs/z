@@ -519,7 +519,7 @@ void QPackTxTable::rebuildHashes()
     h.index = i;
     h.key = {order[i].name, order[i].value};
     if (!exact->add(h)) {
-      ZmAssert(false);
+      ZmFail(QPackTxExactHash::add);
       return;
     }
     auto name = const_cast<QPackTxNameEntry *>(
@@ -529,7 +529,7 @@ void QPackTxTable::rebuildHashes()
       name->key = Compression::NameView{order[i].name};
     } else if (!names->add(QPackTxNameEntry{
 	order[i].abs, Compression::NameView{order[i].name}})) {
-      ZmAssert(false);
+      ZmFail(QPackTxNameHash::add);
       return;
     }
   }

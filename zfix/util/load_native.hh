@@ -128,15 +128,15 @@ template <typename Net> struct NativeHub<Net, true> : Zfix::Client<NativeHub<Net
     Net>{nativeLimits(s->options, s->options.sessions)}, state{s} { }
 
   bool init(typename Net::ClientParams params) {
-    ZmRef<typename Link::RxAllocator> rx;
-    ZmRef<typename Link::TxAllocator> tx;
+    Zi::IOBufAllocator *rx = nullptr;
+    Zi::IOBufAllocator *tx = nullptr;
     if (!params.rxAllocator()) {
-      rx = new typename Link::RxAllocator{};
-      params.rxAllocator(rx.ptr());
+      rx = Link::rxAllocator(params.multiplex());
+      params.rxAllocator(rx);
     }
     if (!params.txAllocator()) {
-      tx = new typename Link::TxAllocator{};
-      params.txAllocator(tx.ptr());
+      tx = Link::txAllocator(params.multiplex());
+      params.txAllocator(tx);
     }
     return Zfix::Client<NativeHub, Dictionary, Net>::init(ZuMv(params));
   }
@@ -223,15 +223,15 @@ friend inline ZuStringT<"Zfix.Load.Hub"> ZmNHeapID(NativeHub *);
   }
 
   bool init(typename Net::ServerParams params) {
-    ZmRef<typename Link::RxAllocator> rx;
-    ZmRef<typename Link::TxAllocator> tx;
+    Zi::IOBufAllocator *rx = nullptr;
+    Zi::IOBufAllocator *tx = nullptr;
     if (!params.rxAllocator()) {
-      rx = new typename Link::RxAllocator{};
-      params.rxAllocator(rx.ptr());
+      rx = Link::rxAllocator(params.multiplex());
+      params.rxAllocator(rx);
     }
     if (!params.txAllocator()) {
-      tx = new typename Link::TxAllocator{};
-      params.txAllocator(tx.ptr());
+      tx = Link::txAllocator(params.multiplex());
+      params.txAllocator(tx);
     }
     return Zfix::Server<NativeHub, Dictionary, Net>::init(ZuMv(params));
   }
@@ -506,6 +506,11 @@ private:
   template <typename O> Zfix::Fmt::Error serve_(const O &o,
       const Zfix::RequestContext &context) {
     if (state()->errors.load_()) return {Zfix::Fmt::ErrorCode::Output};
+    unsigned qty;
+    if constexpr (ZuIsSame<O, Replace>{}) qty = o.order.qty;
+    else qty = o.qty;
+    // Native conversion delivers null numeric values to application policy.
+    if (!qty || ZuCmp<unsigned>::null(qty)) return {Zfix::Fmt::ErrorCode::Value, 38};
     Zfix::Fmt::Error error;
     bool ok = broker_().receive(o, context.context().replay, [this, &error](const Report &r) {
       // Broker emits exactly these four one-byte report kinds.

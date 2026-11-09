@@ -329,12 +329,11 @@ int main(int argc, char **argv)
       .thread(2, [](auto &t) { t.name("tx"); t.isolated(1); })
       .thread(ServiceSID, [](auto &t) { t.name("auth"); t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  if (!mx.start()) { ZiLog::stop(); return 1; }
   Zum::PingHTTP transport;
   App app;
   bool ok = transport.init(&mx, config.zum.issuerURL,
     config.zum.managementIssuerURL, config.zum.managementURL,
-    config.caPath) && transport.start();
+    config.caPath);
   Zum::String ssfURL = config.ssfDeliveryURL;
   if (!ssfURL) ssfURL << "http://127.0.0.1:" << config.port << "/ssf";
   bool initialized = ok && app.service.init(Zum::ServiceConfig{
@@ -351,6 +350,14 @@ int main(int argc, char **argv)
       .transmitterIssuer = config.zum.issuerURL,
       .audience = config.audience, .lease = config.ssfLease}}, transport.fn());
   ok = initialized;
+  bool listener = false;
+  if (ok) {
+    auto settings = Zhttp::ServerConfig().localIP(ZiIP(config.addr))
+      .port(config.port).idleTimeout(30).retainedBodyMax(BodyMax).tcp();
+    listener = app.init(Zhttp::HubConfig{&mx, "rx", "tx"}, ZuMv(settings));
+    ok = listener;
+  }
+  if (ok) ok = mx.start() && transport.start();
   if (ok) {
     // Ping has no long-lived sessions; the callback still installs the
     // resource-server revocation hook used by stateful consumers.
@@ -382,13 +389,7 @@ int main(int argc, char **argv)
       ok = false;
     }
   }
-  bool listener = false;
-  if (ok) {
-    auto settings = Zhttp::ServerConfig().localIP(ZiIP(config.addr))
-      .port(config.port).idleTimeout(30).retainedBodyMax(BodyMax).tcp();
-    listener = app.init(Zhttp::HubConfig{&mx, "rx", "tx"}, ZuMv(settings));
-    ok = listener && app.start();
-  }
+  if (ok) ok = app.start();
   if (ok) done.wait();
   else std::cerr << "zumpingd: service authentication, publication or listener failed\n";
   if (listener) { (void)app.stop(); app.final(); }

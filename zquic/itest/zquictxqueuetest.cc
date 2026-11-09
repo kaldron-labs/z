@@ -62,28 +62,26 @@ static void testDrain()
 {
   ZuTestScope(testDrain);
   ZiMultiplex mx{ZiMxParams{}
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
     .scheduler([](auto &s) {
       s.nThreads(2).thread(1, [](auto &t) { t.isolated(1); })
 	.thread(2, [](auto &t) { t.isolated(1); });
     }).rxThread(1).txThread(2)};
-  ZuCheck(mx.start(), (return));
+  Zi::IOBufAllocator *rxAllocator = Zquic::pktRxAllocator(&mx);
+  Zi::IOBufAllocator *txAllocator = Zquic::pktTxAllocator(&mx);
+  bool registered = rxAllocator && txAllocator;
   Endpoint rx, tx;
-  bool opened = rx.init(&mx) && tx.init(&mx) && rx.open() && tx.open();
+  ZuCheck(mx.start(), (return));
+  bool opened = registered && rx.init(&mx, rxAllocator, txAllocator) &&
+    tx.init(&mx, rxAllocator, txAllocator) && rx.open() && tx.open();
   ZuCheck(opened);
   bool active = false, admitted = false, received = false;
   if (opened) {
-    bool native = mx.backend() == ZiMxBackend::URing;
     auto addr = rx.local();
-    ZmBlock<>{}([&mx, &tx, &active, &admitted, native, addr](auto wake) {
-      mx.txRun([&tx, &active, &admitted, native, addr,
+    ZmBlock<>{}([&mx, &tx, &active, &admitted, addr](auto wake) {
+      mx.txRun([&tx, &active, &admitted, addr,
 	  wake = ZuMv(wake)]() mutable {
-	if (native) tx.drainFn = [&tx, &active, &admitted, addr]() {
-	  active = tx.diag().txPending;
-	  admitted &= tx.packet(3, addr);
-	};
-	admitted = tx.packet(1, addr) && tx.packet(2, addr);
-	if (!native) { active = true; admitted &= tx.packet(3, addr); }
+	active = true;
+	admitted = tx.packet(1, addr) && tx.packet(2, addr) && tx.packet(3, addr);
 	wake();
       });
     });

@@ -17,7 +17,7 @@ void testInitAndCallback()
   ZuTestScope(testInitAndCallback);
 
   ZiTxContext io;
-  Zi::AppBufAllocator<ZiIOBuf, 8> allocator;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 8> allocator{nullptr};
   ZmRef<ZiIOBuf> buf = allocator.allocBuf();
   bool called = false;
 
@@ -46,7 +46,7 @@ void testCompleteAndDisconnect()
   ZuTestScope(testCompleteAndDisconnect);
 
   ZiRxContext io;
-  Zi::AppBufAllocator<ZiIOBuf, 4> allocator;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 4> allocator{nullptr};
   ZmRef<ZiIOBuf> buf = allocator.allocBuf();
 
   io.tos = uint8_t(2);

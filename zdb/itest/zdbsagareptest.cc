@@ -181,15 +181,10 @@ static bool policyRecord(Zdb_::IOBuf *buf)
 }
 
 template <typename T>
-static bool policyAllocated(Zdb_::IOBuf *buf, Zi::IOBufRing *ring = nullptr)
+static bool policyAllocated(Zdb_::IOBuf *buf, Zi::IOBufAllocator_ *allocator = nullptr)
 {
-  if (dynamic_cast<Zdb_::IOBufAlloc<T> *>(buf)) return !ring;
-#if Zi_URing
-  using RingBuf = Zi::IOBufURing<Zdb_::IOBuf, ZdbBuf_HeapID<T>>;
-  if (dynamic_cast<RingBuf *>(buf))
-    return buf->ring() == ring || (!buf->ring() && buf->jumbo());
-#endif
-  return false;
+  return dynamic_cast<Zdb_::IOBufAlloc<T> *>(buf) &&
+    (!allocator || buf->allocator == allocator);
 }
 
 // Store completion observes the exact frame handed to the committing store.
@@ -197,9 +192,9 @@ static bool policyAllocated(Zdb_::IOBuf *buf, Zi::IOBufRing *ring = nullptr)
 struct PolicyObserve {
   ZmSemaphore done;
   ZtArray<ZmRef<Zdb_::IOBuf>, ZtArrayHeapID<"Zdb.Repl.Held">> held;
-  Zi::IOBufRing *smallRing = nullptr;
-  Zi::IOBufRing *otherRing = nullptr;
-  Zi::IOBufRing *largeRing = nullptr;
+  Zi::IOBufAllocator_ *smallAllocator = nullptr;
+  Zi::IOBufAllocator_ *otherAllocator = nullptr;
+  Zi::IOBufAllocator_ *largeAllocator = nullptr;
   bool receiver = false;
   unsigned failures = 0;
 
@@ -217,9 +212,10 @@ struct PolicyObserve {
 	    frame.data() + frame.length() > view->backing->data_() + view->backing->size)
 	  failed |= 2;
       } else {
-	auto ring = id == "small" ? smallRing : id == "other" ? otherRing : largeRing;
-	bool typed = id == "large" ? policyAllocated<zdbtest::PolicyLarge>(buf, ring) :
-	  policyAllocated<zdbtest::PolicySmall>(buf, ring);
+	auto allocator = id == "small" ? smallAllocator :
+	  id == "other" ? otherAllocator : largeAllocator;
+	bool typed = id == "large" ? policyAllocated<zdbtest::PolicyLarge>(buf, allocator) :
+	  policyAllocated<zdbtest::PolicySmall>(buf, allocator);
 	if (!typed) failed |= 4;
       }
       auto record = Zdb_::record_(Zdb_::msg_(buf->hdr()));
@@ -271,7 +267,7 @@ static bool policyInsert(ZdbTable<T> *table)
 }
 
 template <typename T>
-static bool policyRead(ZdbTable<T> *table, Zi::IOBufRing *shardRing)
+static bool policyRead(ZdbTable<T> *table, Zi::IOBufAllocator_ *shardAllocator)
 {
   using Key = ZuDecay<decltype(ZuDeclVal<T>().id)>;
   bool dispatched = ZmBlock<bool>{}([table](auto done) {
@@ -287,38 +283,31 @@ static bool policyRead(ZdbTable<T> *table, Zi::IOBufRing *shardRing)
   });
   if (!dispatched || !result.template is<Zdb_::RowData>()) return false;
   auto buf = ZuMv(result).template p<Zdb_::RowData>().buf;
-  bool typed = policyAllocated<T>(buf.ptr(), buf->ring());
-  if (buf->ring()) typed &= buf->ring() != shardRing;
+  bool typed = policyAllocated<T>(buf.ptr(), buf->allocator);
+  if (buf->allocator) typed &= buf->allocator != shardAllocator;
   return typed && !buf->rep && policyRecord<T>(buf);
 }
 
-static void policyReplication(ZiMxBackend::T backend)
+static void policyReplication()
 {
   ZuTestScopeRT(policyReplication);
-  if (backend == ZiMxBackend::URing && !Zi::uring()) {
-    log("native policy replication unavailable; no native runtime claim");
-    return;
-  }
   auto config = ZfCf::scan(
     "thread: zdb, store: {thread: store}, hostID: 0,\n"
     "hosts: {0: {priority: 100, ip: 127.0.0.1, port: 9955},\n"
-    "        1: {priority: 80, ip: 127.0.0.1, port: 9956}},\n"
+    "        1: {priority: 80, ip: 127.0.0.1, port: 9956},\n"
+    "        2: {priority: 60, ip: 127.0.0.1, port: 9957}},\n"
     "tables: {small: {}, other: {}, large: {}},\n"
     "mx: {nThreads: 4, threads: {\n"
     "1: {name: rx, isolated: true}, 2: {name: tx, isolated: true},\n"
     "3: {name: zdb, isolated: true}, 4: {name: store, isolated: true}\n"
     "}, rxThread: rx, txThread: tx}\n").p<1>();
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>().backend(backend)};
-  bool mxOK = mx.start();
-  ZuCheckRT(mxOK);
-  if (!mxOK) return;
-  ZuCheckRT(mx.backend() == backend);
+  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::PolicyDB> leader = new zdbtest::PolicyDB{},
-    follower = new zdbtest::PolicyDB{};
-  ZmRef<zdbtest::Store> first = new zdbtest::Store{}, second = new zdbtest::Store{};
-  ZmSemaphore leaderUp, followerUp, started;
+    follower = new zdbtest::PolicyDB{}, terminal = new zdbtest::PolicyDB{};
+  ZmRef<zdbtest::Store> first = new zdbtest::Store{},
+    second = new zdbtest::Store{}, third = new zdbtest::Store{};
+  ZmSemaphore leaderUp, followerUp, terminalUp, started;
   auto init = [&config, &mx](zdbtest::PolicyDB *db,
       zdbtest::Store *store, ZuCSpan id, ZmSemaphore *up) {
     db->up = up;
@@ -332,34 +321,46 @@ static void policyReplication(ZiMxBackend::T backend)
   };
   init(leader, first, "0", &leaderUp);
   init(follower, second, "1", &followerUp);
+  init(terminal, third, "2", &terminalUp);
   auto small = leader->initTable<zdbtest::PolicySmall>("small");
   auto other = leader->initTable<zdbtest::PolicySmall>("other");
   auto large = leader->initTable<zdbtest::PolicyLarge>("large");
   auto rxSmall = follower->initTable<zdbtest::PolicySmall>("small");
   auto rxOther = follower->initTable<zdbtest::PolicySmall>("other");
   auto rxLarge = follower->initTable<zdbtest::PolicyLarge>("large");
+  auto lastSmall = terminal->initTable<zdbtest::PolicySmall>("small");
+  auto lastOther = terminal->initTable<zdbtest::PolicySmall>("other");
+  auto lastLarge = terminal->initTable<zdbtest::PolicyLarge>("large");
+  bool mxOK = mx.start();
+  ZuCheckRT(mxOK);
+  if (!mxOK) return;
   ZmRef<Zdb_::IOBuf> a, b, c, ra, rb, rc;
-  PolicyObserve sent, received;
+  PolicyObserve sent, received, forwarded;
   auto finish = [&]() {
     ZuCheckRT(leader->stop());
     ZuCheckRT(follower->stop());
+    ZuCheckRT(terminal->stop());
     ZuCheckRT(mx.stop());
-    for (const auto &buf : received.held) ZuCheckRT(bool(buf) && buf->memory());
-    for (const auto &buf : sent.held) ZuCheckRT(bool(buf) && buf->memory());
-    sent.held.null(); received.held.null();
+    for (const auto &buf : received.held) ZuCheckRT(bool(buf) && buf->size);
+    for (const auto &buf : forwarded.held) ZuCheckRT(bool(buf) && buf->size);
+    for (const auto &buf : sent.held) ZuCheckRT(bool(buf) && buf->size);
+    sent.held.null(); received.held.null(); forwarded.held.null();
     a = {}; b = {}; c = {}; ra = {}; rb = {}; rc = {};
     small = {}; other = {}; large = {}; rxSmall = {}; rxOther = {}; rxLarge = {};
-    first->commitObserve({}); second->commitObserve({});
-    leader->final(); follower->final();
+    lastSmall = {}; lastOther = {}; lastLarge = {};
+    first->commitObserve({}); second->commitObserve({}); third->commitObserve({});
+    leader->final(); follower->final(); terminal->final();
   };
-  bool leaderOK = false, followerOK = false;
+  bool leaderOK = false, followerOK = false, terminalOK = false;
   ZuGuard cleanup{finish};
   leader->start([&leaderOK, &started](bool ok) { leaderOK = ok; started.post(); });
   follower->start([&followerOK, &started](bool ok) { followerOK = ok; started.post(); });
+  terminal->start([&terminalOK, &started](bool ok) { terminalOK = ok; started.post(); });
   auto startup = Zm::now(10);
-  bool ready = started.timedwait(startup) == 0 && started.timedwait(startup) == 0;
-  ZuCheckRT(ready && leaderOK && followerOK);
-  if (!ready || !leaderOK || !followerOK) return;
+  bool ready = started.timedwait(startup) == 0 && started.timedwait(startup) == 0 &&
+    started.timedwait(startup) == 0;
+  ZuCheckRT(ready && leaderOK && followerOK && terminalOK);
+  if (!ready || !leaderOK || !followerOK || !terminalOK) return;
   ready = leaderUp.timedwait(Zm::now(10)) == 0;
   ZuCheckRT(ready);
   if (!ready) return;
@@ -369,15 +370,20 @@ static void policyReplication(ZiMxBackend::T backend)
   ra = policySample<zdbtest::PolicySmall>(rxSmall.ptr());
   rb = policySample<zdbtest::PolicySmall>(rxOther.ptr());
   rc = policySample<zdbtest::PolicyLarge>(rxLarge.ptr());
-  if (a->ring()) ZuCheckRT(a->ring() != b->ring());
-  if (ra->ring()) ZuCheckRT(ra->ring() != rb->ring());
-  sent.smallRing = a->ring(); sent.otherRing = b->ring(); sent.largeRing = c->ring();
-  received.receiver = true;
+  ZuCheckRT(a->allocator != b->allocator);
+  ZuCheckRT(ra->allocator != rb->allocator);
+  sent.smallAllocator = a->allocator;
+  sent.otherAllocator = b->allocator;
+  sent.largeAllocator = c->allocator;
+  received.receiver = forwarded.receiver = true;
   first->commitObserve([&sent](ZuCSpan id, auto original, auto buf, bool ok) {
     sent(id, original, buf, ok);
   });
   second->commitObserve([&received](ZuCSpan id, auto original, auto buf, bool ok) {
     received(id, original, buf, ok);
+  });
+  third->commitObserve([&forwarded](ZuCSpan id, auto original, auto buf, bool ok) {
+    forwarded(id, original, buf, ok);
   });
   ZuCheckRT(policyInsert<zdbtest::PolicySmall>(small.ptr()));
   ZuCheckRT(policyInsert<zdbtest::PolicySmall>(other.ptr()));
@@ -385,17 +391,27 @@ static void policyReplication(ZiMxBackend::T backend)
   auto deadline = Zm::now(10);
   bool replicated = true;
   for (unsigned i = 0; i < 3 && replicated; ++i)
-    replicated = sent.done.timedwait(deadline) == 0 && received.done.timedwait(deadline) == 0;
+    replicated = sent.done.timedwait(deadline) == 0 && received.done.timedwait(deadline) == 0 &&
+      forwarded.done.timedwait(deadline) == 0;
   ZuCheckRT(replicated);
   if (!replicated) return;
-  first->sync(); second->sync();
+  first->sync(); second->sync(); third->sync();
   log("policy failures sender=", sent.failures, " receiver=", received.failures);
   ZuCheckRT(!sent.failures);
   ZuCheckRT(!received.failures);
-  ZuCheckRT(sent.held.length() == 3 && received.held.length() == 3);
-  ZuCheckRT(policyRead<zdbtest::PolicySmall>(rxSmall.ptr(), ra->ring()));
-  ZuCheckRT(policyRead<zdbtest::PolicySmall>(rxOther.ptr(), rb->ring()));
-  ZuCheckRT(policyRead<zdbtest::PolicyLarge>(rxLarge.ptr(), rc->ring()));
+  ZuCheckRT(!forwarded.failures);
+  ZuCheckRT(sent.held.length() == 3 && received.held.length() == 3 &&
+    forwarded.held.length() == 3);
+  ZuCheckRT(policyRead<zdbtest::PolicySmall>(rxSmall.ptr(), ra->allocator));
+  ZuCheckRT(policyRead<zdbtest::PolicySmall>(rxOther.ptr(), rb->allocator));
+  ZuCheckRT(policyRead<zdbtest::PolicyLarge>(rxLarge.ptr(), rc->allocator));
+  auto lastA = policySample<zdbtest::PolicySmall>(lastSmall.ptr());
+  auto lastB = policySample<zdbtest::PolicySmall>(lastOther.ptr());
+  auto lastC = policySample<zdbtest::PolicyLarge>(lastLarge.ptr());
+  ZuCheckRT(policyRead<zdbtest::PolicySmall>(lastSmall.ptr(), lastA->allocator));
+  ZuCheckRT(policyRead<zdbtest::PolicySmall>(lastOther.ptr(), lastB->allocator));
+  ZuCheckRT(policyRead<zdbtest::PolicyLarge>(lastLarge.ptr(), lastC->allocator));
+  lastA = {}; lastB = {}; lastC = {};
   finish();
   cleanup.cancel();
 }
@@ -416,9 +432,7 @@ static void recovery(unsigned mode)
     "  4: {name: store, isolated: true}\n"
     "}, rxThread: rx, txThread: tx}\n").p<1>();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
-  ZuCheck(mx.start());
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
 
   ZmRef<zdbtest::ReplDB> leader = new zdbtest::ReplDB{};
   ZmRef<zdbtest::ReplDB> follower = new zdbtest::ReplDB{};
@@ -449,6 +463,7 @@ static void recovery(unsigned mode)
     leader->pauseReverse = true;
     follower->failUpdate = mode == Mode::RetryFailure;
   }
+  ZuCheck(mx.start());
   ZmSemaphore firstUp, secondUp, paused, replicated, started;
   leader->up = &firstUp;
   follower->up = &secondUp;
@@ -540,8 +555,7 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
   ZuTestMain();
-  ZuTestCall(policyReplication, ZiMxBackend::EPoll);
-  ZuTestCall(policyReplication, ZiMxBackend::URing);
+  ZuTestCall(policyReplication);
   ZuTestCall(recovery, Mode::Forward);
   ZuTestCall(recovery, Mode::RetrySuccess);
   ZuTestCall(recovery, Mode::RetryFailure);

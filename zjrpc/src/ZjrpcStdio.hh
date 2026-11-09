@@ -17,6 +17,7 @@
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuTraits.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmFn.hh>
@@ -72,8 +73,12 @@ private:
   Zi::Handle	m_output = Zi::nullHandle();
 };
 
-using StdioBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZuStringT<"Zjrpc.Stdio.Buf">>;
+using StdioBuf = Zi::IOBufBuiltin<
+  ZiIOBuf,
+  ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"Zjrpc.Stdio.Buf">,
+  ZiIOBuf_DefltMaxSize>;
 
 class StdioFramer {
 public:
@@ -102,7 +107,7 @@ public:
 	return false;
       }
       auto frame = ZuMv(m_tail);
-      if (!frame) frame = new StdioBuf{nullptr, 0};
+      if (!frame) frame = new StdioBuf{ZmSingleton<typename StdioBuf::Allocator>::instance()};
       if (!frame->append(ZuBSpan{input}.offset(begin).trunc(length))) {
 	close();
 	return false;
@@ -118,7 +123,7 @@ public:
       close();
       return false;
     }
-    if (!m_tail) m_tail = new StdioBuf{nullptr, 0};
+    if (!m_tail) m_tail = new StdioBuf{ZmSingleton<typename StdioBuf::Allocator>::instance()};
     if (!m_tail->append(ZuBSpan{input}.offset(begin).trunc(length))) {
       close();
       return false;
@@ -143,7 +148,7 @@ private:
 
 inline ZmRef<ZiIOBuf> stdioFrame(ZuCSpan message)
 {
-  ZmRef<ZiIOBuf> frame = new StdioBuf{nullptr, 0};
+  ZmRef<ZiIOBuf> frame = new StdioBuf{ZmSingleton<typename StdioBuf::Allocator>::instance()};
   *frame << message << '\n';
   if (frame->failed()) return nullptr;
   return frame;
@@ -151,7 +156,7 @@ inline ZmRef<ZiIOBuf> stdioFrame(ZuCSpan message)
 
 inline ZmRef<ZiIOBuf> stdioFrame(ZuCSpan message, unsigned maxLine)
 {
-  ZmRef<ZiIOBuf> frame = new StdioBuf{nullptr, 0};
+  ZmRef<ZiIOBuf> frame = new StdioBuf{ZmSingleton<typename StdioBuf::Allocator>::instance()};
   BufOutput out{*frame, uint64_t(maxLine) + 1};
   out << message << '\n';
   if (!out) return nullptr;
@@ -161,7 +166,7 @@ inline ZmRef<ZiIOBuf> stdioFrame(ZuCSpan message, unsigned maxLine)
 template <typename M>
 inline ZmRef<ZiIOBuf> stdioFrame(const M &message, unsigned maxLine)
 {
-  ZmRef<ZiIOBuf> frame = new StdioBuf{nullptr, 0};
+  ZmRef<ZiIOBuf> frame = new StdioBuf{ZmSingleton<typename StdioBuf::Allocator>::instance()};
   BufOutput out{*frame, uint64_t(maxLine) + 1};
   message.write(out);
   out << '\n';
@@ -176,8 +181,12 @@ struct StdioRecord {
 
 ZmListDerive(StdioRxQueue, ZiIOBuf,
   ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
-using StdioRxBuf = Zi::IOBufAlloc<StdioRxQueue::Node, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZuStringT<"Zjrpc.Stdio.Buf">>;
+using StdioRxBuf = Zi::IOBufBuiltin<
+  StdioRxQueue::Node,
+  ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"Zjrpc.Stdio.Buf">,
+  ZiIOBuf_DefltMaxSize>;
 
 ZmListDerive(StdioTxQueue, StdioRecord,
   ZmListNode<StdioRecord, ZmListHeapID<"Zjrpc.Stdio.TxQueue">>);
@@ -328,7 +337,8 @@ private:
 	  rxOutcome_(StdioOutcome::Failed);
 	  break;
 	}
-	ZmRef<StdioRxQueue::Node> buf = new StdioRxBuf{nullptr, 0};
+	ZmRef<StdioRxQueue::Node> buf = new StdioRxBuf{
+	  ZmSingleton<typename StdioRxBuf::Allocator>::instance()};
 	int n = input.read(buf->ZiIOBuf::data(), buf->size, false);
 	if (m_rxStopping) break;
 	if (n <= 0) {

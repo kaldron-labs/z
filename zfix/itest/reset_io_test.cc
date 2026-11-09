@@ -269,15 +269,15 @@ friend inline ZuStringT<"Zfix.reset_io_test.Link"> ZmNHeapID(Link *);
 };
 
 bool CliHub::init(Network::ClientParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::Client<CliHub, Dictionary, Network>::init(ZuMv(params));
 }
@@ -311,15 +311,15 @@ friend inline ZuStringT<"Zfix.reset_io_test.Link"> ZmNHeapID(Link *);
 };
 
 bool SrvHub::init(Network::ServerParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::Server<SrvHub, Dictionary, Network>::init(ZuMv(params));
 }
@@ -377,7 +377,6 @@ static void resetLoop(unsigned mode, unsigned path, bool clientDriver = true,
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   Network::ClientParams cp{&mx, "3", "4"}; Network::ServerParams sp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   const char *cert = getenv("ZFIX_TEST_CERT"), *key = getenv("ZFIX_TEST_KEY");
@@ -386,6 +385,7 @@ static void resetLoop(unsigned mode, unsigned path, bool clientDriver = true,
 #endif
   bool ci = client.init(ZuMv(cp)), si = server.init(ZuMv(sp)); ZuCheck(ci && si);
   if (!ci || !si) { client.final(); server.final(); mx.stop(); return; }
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool cs = client.start(), ss = server.start(); ZuCheck(cs && ss);
   if (!cs || !ss) {
     if (cs) client.stop(); if (ss) server.stop();

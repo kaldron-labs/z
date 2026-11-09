@@ -38,7 +38,7 @@ namespace Net = Ztcp;
 #include <zlib/ZfixWire.hh>
 
 static ZmRef<ZiIOBuf> frameBuf() {
-  using Allocator = Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
   return ZmSingleton<Allocator>::instance()->allocBuf();
 }
 
@@ -68,7 +68,7 @@ struct PacketSigner {
 };
 static ZmRef<ZiIOBuf> makePacket(unsigned payload) {
   if (!payload) {
-    ZmRef<ZiIOBuf> buf = ZmSingleton<Zi::AppBufAllocator<
+    ZmRef<ZiIOBuf> buf = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
     ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
   buf->append(Wire); return buf;
   }
@@ -250,30 +250,32 @@ static void sendFrames(Link *link) {
 }
 struct Client : public Net::Client<Client> {
   using RxBufAlloc = Net::RxBufAlloc<>;
-  using TxBufAlloc = Zi::IOBufAlloc<ZiTxBuf>;
+  using TxBufAlloc = Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
 #ifdef ZFIX_TEST_TLS
-  using RxPolicy = Zi::RxTLSBufAllocator<
+  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTLS,
     typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::TxTLSBufAllocator<
+  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTLS,
     typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
 #else
-  using RxPolicy = Zi::RxTCPBufAllocator<
+  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTCP,
     typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::TxTCPBufAllocator<
+  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTCP,
     typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
 #endif
-  ZmRef<RxPolicy> rxBufAllocator;
-  ZmRef<TxPolicy> txBufAllocator;
+  Zi::IOBufAllocator *rxBufAllocator = nullptr;
+  Zi::IOBufAllocator *txBufAllocator = nullptr;
 
   template <typename Params>
   bool init(Params params) {
     if (!params.rxAllocator()) {
-      rxBufAllocator = new RxPolicy{};
-      params.rxAllocator(rxBufAllocator.ptr());
+      rxBufAllocator = params.multiplex()->template allocator<RxPolicy::BufType, typename RxPolicy::Buf::Buf,
+      RxPolicy::Size, RxPolicy::MaxSize, RxPolicy::Buf::Align, typename RxPolicy::Heap>();
+      params.rxAllocator(rxBufAllocator);
     }
     if (!params.txAllocator()) {
-      txBufAllocator = new TxPolicy{};
-      params.txAllocator(txBufAllocator.ptr());
+      txBufAllocator = params.multiplex()->template allocator<TxPolicy::BufType, typename TxPolicy::Buf::Buf,
+      TxPolicy::Size, TxPolicy::MaxSize, TxPolicy::Buf::Align, typename TxPolicy::Heap>();
+      params.txAllocator(txBufAllocator);
     }
     return Net::Client<Client>::init(ZuMv(params));
   }
@@ -286,12 +288,12 @@ struct Client : public Net::Client<Client> {
 };
 
 struct Client::Link : public ZmNHeap<Link>, public Net::CliLink<Client, Link,
-  Net::RxBufAlloc<>, Zi::IOBufAlloc<ZiTxBuf>> {
+  Net::RxBufAlloc<>, Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>> {
 friend inline ZuStringT<"Zfix.transport_test.Link"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator new;
   using ZmNHeap<Link>::operator delete;
   using Base = Net::CliLink<Client, Link,
-    Net::RxBufAlloc<>, Zi::IOBufAlloc<ZiTxBuf>>;
+    Net::RxBufAlloc<>, Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>>;
   Output<Link>		output{this};
   Zfix::RxFramer	frame;
 
@@ -333,30 +335,32 @@ friend inline ZuStringT<"Zfix.transport_test.Link"> ZmNHeapID(Link *);
 
 struct Server : public Net::Server<Server> {
   using RxBufAlloc = Net::RxBufAlloc<>;
-  using TxBufAlloc = Zi::IOBufAlloc<ZiTxBuf>;
+  using TxBufAlloc = Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
 #ifdef ZFIX_TEST_TLS
-  using RxPolicy = Zi::RxTLSBufAllocator<
+  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTLS,
     typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::TxTLSBufAllocator<
+  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTLS,
     typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
 #else
-  using RxPolicy = Zi::RxTCPBufAllocator<
+  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTCP,
     typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::TxTCPBufAllocator<
+  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTCP,
     typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
 #endif
-  ZmRef<RxPolicy> rxBufAllocator;
-  ZmRef<TxPolicy> txBufAllocator;
+  Zi::IOBufAllocator *rxBufAllocator = nullptr;
+  Zi::IOBufAllocator *txBufAllocator = nullptr;
 
   template <typename Params>
   bool init(Params params) {
     if (!params.rxAllocator()) {
-      rxBufAllocator = new RxPolicy{};
-      params.rxAllocator(rxBufAllocator.ptr());
+      rxBufAllocator = params.multiplex()->template allocator<RxPolicy::BufType, typename RxPolicy::Buf::Buf,
+      RxPolicy::Size, RxPolicy::MaxSize, RxPolicy::Buf::Align, typename RxPolicy::Heap>();
+      params.rxAllocator(rxBufAllocator);
     }
     if (!params.txAllocator()) {
-      txBufAllocator = new TxPolicy{};
-      params.txAllocator(txBufAllocator.ptr());
+      txBufAllocator = params.multiplex()->template allocator<TxPolicy::BufType, typename TxPolicy::Buf::Buf,
+      TxPolicy::Size, TxPolicy::MaxSize, TxPolicy::Buf::Align, typename TxPolicy::Heap>();
+      params.txAllocator(txBufAllocator);
     }
     return Net::Server<Server>::init(ZuMv(params));
   }
@@ -379,12 +383,12 @@ struct Server : public Net::Server<Server> {
 };
 
 struct Server::Link : public ZmNHeap<Link>, public Net::SrvLink<Server, Link,
-  Net::RxBufAlloc<>, Zi::IOBufAlloc<ZiTxBuf>> {
+  Net::RxBufAlloc<>, Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>> {
 friend inline ZuStringT<"Zfix.transport_test.Link"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator new;
   using ZmNHeap<Link>::operator delete;
   using Base = Net::SrvLink<Server, Link,
-    Net::RxBufAlloc<>, Zi::IOBufAlloc<ZiTxBuf>>;
+    Net::RxBufAlloc<>, Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>>;
   Output<Link>		output{this};
   Zfix::RxFramer	frame;
 
@@ -453,7 +457,6 @@ static void loopback(const char *name, unsigned sessions, unsigned payload = 0,
       .thread(3, [](auto &t) { t.isolated(1); })
       .thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2).rxBufSize(partial ? 4096 : 0).txBufSize(partial ? 4096 : 0)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   Net::ServerParams sp{&mx, "3", "4"};
   Net::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
@@ -463,6 +466,7 @@ static void loopback(const char *name, unsigned sessions, unsigned payload = 0,
 #endif
   bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp));
   ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start();
   ZuCheck(ss && cs);
   ZtArray<ZmRef<Client::Link>, ZtArrayHeapID<"Zfix.TransportTest">> links;
@@ -567,28 +571,30 @@ struct SwapCli : Net::Client<SwapCli> {
   using RxBufAlloc = Net::RxBufAlloc<>;
   using TxBufAlloc = Net::TxBufAlloc<>;
 #ifdef ZFIX_TEST_TLS
-  using RxPolicy = Zi::RxTLSBufAllocator<
+  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTLS,
     typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::TxTLSBufAllocator<
+  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTLS,
     typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
 #else
-  using RxPolicy = Zi::RxTCPBufAllocator<
+  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTCP,
     typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::TxTCPBufAllocator<
+  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTCP,
     typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
 #endif
-  ZmRef<RxPolicy> rxBufAllocator;
-  ZmRef<TxPolicy> txBufAllocator;
+  Zi::IOBufAllocator *rxBufAllocator = nullptr;
+  Zi::IOBufAllocator *txBufAllocator = nullptr;
 
   template <typename Params>
   bool init(Params params) {
     if (!params.rxAllocator()) {
-      rxBufAllocator = new RxPolicy{};
-      params.rxAllocator(rxBufAllocator.ptr());
+      rxBufAllocator = params.multiplex()->template allocator<RxPolicy::BufType, typename RxPolicy::Buf::Buf,
+      RxPolicy::Size, RxPolicy::MaxSize, RxPolicy::Buf::Align, typename RxPolicy::Heap>();
+      params.rxAllocator(rxBufAllocator);
     }
     if (!params.txAllocator()) {
-      txBufAllocator = new TxPolicy{};
-      params.txAllocator(txBufAllocator.ptr());
+      txBufAllocator = params.multiplex()->template allocator<TxPolicy::BufType, typename TxPolicy::Buf::Buf,
+      TxPolicy::Size, TxPolicy::MaxSize, TxPolicy::Buf::Align, typename TxPolicy::Heap>();
+      params.txAllocator(txBufAllocator);
     }
     return Net::Client<SwapCli>::init(ZuMv(params));
   }
@@ -639,28 +645,30 @@ struct SwapSrv : Net::Server<SwapSrv> {
   using RxBufAlloc = Net::RxBufAlloc<>;
   using TxBufAlloc = Net::TxBufAlloc<>;
 #ifdef ZFIX_TEST_TLS
-  using RxPolicy = Zi::RxTLSBufAllocator<
+  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTLS,
     typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::TxTLSBufAllocator<
+  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTLS,
     typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
 #else
-  using RxPolicy = Zi::RxTCPBufAllocator<
+  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTCP,
     typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::TxTCPBufAllocator<
+  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTCP,
     typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
 #endif
-  ZmRef<RxPolicy> rxBufAllocator;
-  ZmRef<TxPolicy> txBufAllocator;
+  Zi::IOBufAllocator *rxBufAllocator = nullptr;
+  Zi::IOBufAllocator *txBufAllocator = nullptr;
 
   template <typename Params>
   bool init(Params params) {
     if (!params.rxAllocator()) {
-      rxBufAllocator = new RxPolicy{};
-      params.rxAllocator(rxBufAllocator.ptr());
+      rxBufAllocator = params.multiplex()->template allocator<RxPolicy::BufType, typename RxPolicy::Buf::Buf,
+      RxPolicy::Size, RxPolicy::MaxSize, RxPolicy::Buf::Align, typename RxPolicy::Heap>();
+      params.rxAllocator(rxBufAllocator);
     }
     if (!params.txAllocator()) {
-      txBufAllocator = new TxPolicy{};
-      params.txAllocator(txBufAllocator.ptr());
+      txBufAllocator = params.multiplex()->template allocator<TxPolicy::BufType, typename TxPolicy::Buf::Buf,
+      TxPolicy::Size, TxPolicy::MaxSize, TxPolicy::Buf::Align, typename TxPolicy::Heap>();
+      params.txAllocator(txBufAllocator);
     }
     return Net::Server<SwapSrv>::init(ZuMv(params));
   }
@@ -830,7 +838,7 @@ void SwapSrv::checkClosed(ZmRef<ZiConnection> cxn) {
   auto io = this->mx();
   io->txRun([s = state, cxn = ZuMv(cxn)] {
     if (cxn->up()) { s->fail(); return; }
-    Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize> allocator;
+    Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize> allocator;
     ZmRef<ZiTxBuf> buf = allocator.allocBuf();
     if (!buf->append(Wire)) { s->fail(); return; }
     // ZiConnection::send invokes its real I/O-context starter inline on this
@@ -896,8 +904,6 @@ static void replacement(bool late = false, bool refuse = false,
   auto run = new SwapRun;
   auto &s = run->state;
   s.late = late; s.refuse = refuse;
-  bool started = run->mx.start(); ZuCheck(started);
-  if (!started) { delete run; return; }
 #ifdef __linux__
   swapState = &s;
 #endif
@@ -916,6 +922,8 @@ static void replacement(bool late = false, bool refuse = false,
 #endif
   bool si = run->server.init(ZuMv(sp)), ci = run->client.init(ZuMv(cp));
   ZuCheck(si && ci);
+  bool started = run->mx.start(); ZuCheck(started);
+  if (!started) { delete run; return; }
   bool ss = si && run->server.start(), cs = ci && run->client.start();
   ZuCheck(ss && cs);
   bool serverClosed = false;
@@ -1034,12 +1042,12 @@ static void partialReplacement()
   s.checkLate = true;
   TestState writes;
   sendState = &writes; swapState = &s;
-  bool started = run->mx.start(); ZuCheck(started);
-  if (!started) { sendState = nullptr; swapState = nullptr; delete run; return; }
   Net::ServerParams sp{&run->mx, "3", "4"};
   Net::ClientParams cp{&run->mx, "3", "4"};
   bool si = run->server.init(ZuMv(sp)), ci = run->client.init(ZuMv(cp));
   ZuCheck(si && ci);
+  bool started = run->mx.start(); ZuCheck(started);
+  if (!started) { sendState = nullptr; swapState = nullptr; delete run; return; }
   bool ss = si && run->server.start(), cs = ci && run->client.start();
   ZuCheck(ss && cs);
   int raw = -1;
@@ -1115,11 +1123,11 @@ static void resetTxPolicy()
   auto &s = run->state;
   TestState writes;
   sendState = &writes; swapState = &s;
-  bool started = run->mx.start(); ZuCheck(started);
-  if (!started) { sendState = nullptr; swapState = nullptr; delete run; return; }
   Net::ServerParams sp{&run->mx, "3", "4"};
   bool initialized = run->server.init(ZuMv(sp));
   ZuCheck(initialized);
+  bool started = run->mx.start(); ZuCheck(started);
+  if (!started) { sendState = nullptr; swapState = nullptr; delete run; return; }
   bool active = initialized && run->server.start(); ZuCheck(active);
   int a = -1, b = -1;
   if (active) {

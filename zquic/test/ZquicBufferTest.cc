@@ -6,6 +6,7 @@
 
 #include <string.h>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zquic.hh>
 
@@ -150,10 +151,10 @@ void testPacketAllocRoles()
 {
   ZuTestScope(testPacketAllocRoles);
 
-  ZmRef<Zi::IOBufAllocator> rx = new Zquic::PktRxBufAllocator<>;
-  ZmRef<Zi::IOBufAllocator> tx = new Zquic::PktTxBufAllocator<>;
-  auto packet = rx->alloc();
-  auto wire = tx->alloc();
+  Zi::IOBufAllocator *rx = ([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
+  Zi::IOBufAllocator *tx = ([] { static ZiMultiplex mx; return Zquic::pktTxAllocator(&mx); })();
+  auto packet = rx->allocBuf();
+  auto wire = tx->allocBuf();
   ZuCHECK(packet->avail() >= Zquic::BufSize && wire->avail() >= Zquic::BufSize,
     "UDP recvmsg metadata must not reduce packet payload capacity");
   ZuCHECK(rx->type() == Zi::IOBufType::RxUDP &&
@@ -161,30 +162,37 @@ void testPacketAllocRoles()
     "packet allocator roles mismatch");
   packet->data()[0] = 0x5a;
   packet->data()[1] = 0xa5;
-  Zquic::StreamRxData first{packet, packet->data(), 1, nullptr, 0};
-  Zquic::StreamRxData second{packet, packet->data() + 1, 1, nullptr, 1};
+  ZmRef<ZiIOBuf> observer = packet;
   auto backing = packet.ptr();
-  packet = nullptr;
-  ZuCHECK(first.packet.ptr() == backing && second.packet.ptr() == backing &&
-      first.span()[0] == 0x5a && second.span()[0] == 0xa5,
-    "STREAM slices must retain original packet backing");
-  first.packet = nullptr;
-  ZuCHECK(second.packet.ptr() == backing && second.span()[0] == 0xa5,
-    "one STREAM release must not recycle another STREAM's packet");
+  {
+    Zquic::StreamRxData first{packet, packet->data(), 1, nullptr, 0};
+    Zquic::StreamRxData second{packet, packet->data() + 1, 1, nullptr, 1};
+    packet = nullptr;
+    ZuCHECK(first.packet.ptr() == backing && second.packet.ptr() == backing &&
+	first.span()[0] == 0x5a && second.span()[0] == 0xa5 && backing->refCount() == 3,
+      "STREAM slices must retain original packet backing");
+    first.packet = nullptr;
+    ZuCHECK(second.packet.ptr() == backing && second.span()[0] == 0xa5 &&
+	backing->refCount() == 2,
+      "one STREAM release must not recycle another STREAM's packet");
+    ZuCHECK(second.ensure(second.size + 1) && !second.builtin() &&
+	second.packet.ptr() == backing && second.span()[0] == 0xa5 &&
+	backing->refCount() == 2,
+      "grown STREAM descriptor must preserve bytes and its packet lifetime");
+  }
+  ZuCHECK(observer->refCount() == 1 && observer->data()[1] == 0xa5,
+    "STREAM descriptor teardown must release exactly its retained packet reference");
+  observer = nullptr;
 
-  auto heldMemory = second.memory();
-  ZuCHECK(second.ensure(second.size + 1) && second.jumbo() &&
-      !second.packet && second.span()[0] == 0xa5,
-    "growing a retained STREAM view must immediately release its packet owner");
-  ZuCHECK(heldMemory >= sizeof(Zquic::StreamRxData),
-    "retained STREAM view memory includes its descriptor and backing");
-
-  ZmRef<ZiIOBuf> stream = new Zquic::StreamTxBufAlloc<>{nullptr, 0};
-  ZmRef<ZiIOBuf> crypto = new Zquic::CryptoTxBufAlloc<>{nullptr, 0};
+  ZmRef<ZiIOBuf> stream = new Zquic::StreamTxBufAlloc<>{
+    ZmSingleton<typename Zquic::StreamTxBufAlloc<>::Allocator>::instance(), nullptr, 0};
+  ZmRef<ZiIOBuf> crypto = new Zquic::CryptoTxBufAlloc<>{
+    ZmSingleton<typename Zquic::CryptoTxBufAlloc<>::Allocator>::instance(), nullptr, 0};
   ZmRef<ZiIOBuf> reassembly =
-    new Zquic::CryptoRxBufAlloc<>{nullptr, 0};
-  ZuCHECK(!stream->uring() && !crypto->uring() && !reassembly->uring() &&
-      !stream->ring() && !crypto->ring() && !reassembly->ring(),
+    new Zquic::CryptoRxBufAlloc<>{ZmSingleton<typename Zquic::CryptoRxBufAlloc<>::Allocator>::instance(), nullptr, 0};
+  ZuCHECK(stream->allocator->type() == Zi::IOBufType::App &&
+      crypto->allocator->type() == Zi::IOBufType::App &&
+      reassembly->allocator->type() == Zi::IOBufType::App,
     "retained plaintext must remain ordinary allocation");
 }
 

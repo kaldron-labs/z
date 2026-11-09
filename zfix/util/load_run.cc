@@ -124,7 +124,8 @@ Prepared Broker::prepare(const Order &o, bool replay) {
 }
 Prepared Broker::prepare(const Cancel &o, bool replay) {
   if (m_flow != Workflow::Cancel || !o.original || !o.key ||
-      !o.qty || !*o.time || o.symbol != "ZFIX" || o.side != "1") return {};
+      !o.qty || ZuCmp<unsigned>::null(o.qty) || !*o.time ||
+      o.symbol != "ZFIX" || o.side != "1") return {};
   return change(o.key, o.original, o.qty, {}, o.time, Request::Cancel, replay);
 }
 Prepared Broker::prepare(const Replace &o, bool replay) {

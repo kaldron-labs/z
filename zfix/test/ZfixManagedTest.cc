@@ -16,7 +16,7 @@
 #include <zlib/ZfixRx.hh>
 
 static ZmRef<ZiIOBuf> frameBuf() {
-  using Allocator = Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
   return ZmSingleton<Allocator>::instance()->allocBuf();
 }
 
@@ -524,7 +524,7 @@ void RxSide::piece_(ZmRef<ZiIOBuf> source, TxContext context, unsigned start, un
   if (byteConnection != context.connection) {
     bytes = nullptr; parser.reset(); byteConnection = context.connection;
   }
-  if (!bytes) bytes = ZmSingleton<Zi::AppBufAllocator<
+  if (!bytes) bytes = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
     ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
   ZmAssert(source && start <= source->length && count <= source->length - start &&
     bytes->length == start && count <= Fmt::Limits::FrameBytes - bytes->length);

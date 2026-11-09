@@ -831,7 +831,7 @@ private:
     auto data = fbb.endNested(nested, root);
     auto record = saveRecord(fbb, this->id(), row->un, row->sn, row->vn, row->shard, data);
     fbb.finish(saveMsg(fbb, record, Recovery ? Msg::Tag::Recovery : Msg::Tag::Replication));
-    return saveFrame(fbb);
+    return saveHdr(fbb);
   }
 
 public:

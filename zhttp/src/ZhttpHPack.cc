@@ -289,7 +289,7 @@ void HPackTxTable::rebuild_()
     auto &entry = m_entries[i];
     if (!m_exact->add(HPackTxExactEntry{
 	  entry.abs, {entry.name, entry.value}})) {
-      ZmAssert(false);
+      ZmFail(HPackTxExactHash::add);
       return;
     }
     auto name = const_cast<HPackTxNameEntry *>(
@@ -299,7 +299,7 @@ void HPackTxTable::rebuild_()
       name->key = Compression::NameView{entry.name};
     } else if (!m_names->add(HPackTxNameEntry{
 	  entry.abs, Compression::NameView{entry.name}})) {
-      ZmAssert(false);
+      ZmFail(HPackTxNameHash::add);
       return;
     }
   }

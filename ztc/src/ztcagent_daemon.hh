@@ -85,6 +85,7 @@ public:
 
 private:
   void start_();
+  bool initRuntime_();
   void startHTTP_();
   void startWS_();
   void startScan_();

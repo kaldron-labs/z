@@ -129,31 +129,6 @@ static void testEnvLoading()
   }
   {
     const TestEnvKV env[] = {
-      {"TESTCASE", "http3"},
-      {"ZHTTP_QIR_RX_RING_SIZE", "257"},
-      {"ZHTTP_QIR_TX_RING_SIZE", "513"},
-      {nullptr, nullptr}
-    };
-    testEnv_ = env;
-    Env out;
-    ZuCHECK(loadEnv(Server, out, testGetenv_, testGetpath_) == OK &&
-      out.rxRingSize == 257 && out.txRingSize == 513,
-      "non-power-of-two ring overrides retained");
-    {
-      ZuTestRepeat(ringBounds, 4);
-      for (const char *value : {"0", "1", "32769", "bad"}) {
-	const TestEnvKV bad[] = {
-	  {"TESTCASE", "http3"}, {"ZHTTP_QIR_RX_RING_SIZE", value},
-	  {nullptr, nullptr}
-	};
-	testEnv_ = bad;
-	ZuCHECK(loadEnv(Server, out, testGetenv_, testGetpath_) == Usage,
-	  "invalid ring override rejected");
-      }
-    }
-  }
-  {
-    const TestEnvKV env[] = {
       {"TESTCASE", "transfer"},
       {"REQUESTS", "https://server/a"},
       {"SSLKEYLOGFILE", "/tmp/keylog"},

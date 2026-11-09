@@ -53,7 +53,8 @@ Report report(const Order &o, uint64_t exec, ZuCSpan kind,
     o.price, fill ? o.price : ZuDecimal{0}, fill ? o.price : ZuDecimal{0}, o.time, o.text};
 }
 bool valid(const Order &o) {
-  return o.key && o.qty && o.price > ZuDecimal{0} && *o.time && o.symbol == "ZFIX" &&
+  return o.key && o.qty && !ZuCmp<unsigned>::null(o.qty) &&
+    o.price > ZuDecimal{0} && *o.time && o.symbol == "ZFIX" &&
     o.side == "1" && o.type == "2" && o.handling == "1";
 }
 static bool matches(const Report &r, uint64_t key, unsigned qty,

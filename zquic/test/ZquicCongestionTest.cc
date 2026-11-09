@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zquic.hh>
 
@@ -197,7 +198,8 @@ void testRetransmitQueue()
 {
   ZuTestScope(testRetransmitQueue);
 
-  ZmRef<ZiIOBuf> buf = new Zquic::StreamTxBufAlloc<>{nullptr, 0};
+  ZmRef<ZiIOBuf> buf = new Zquic::StreamTxBufAlloc<>{
+    ZmSingleton<typename Zquic::StreamTxBufAlloc<>::Allocator>::instance(), nullptr, 0};
   memcpy(buf->data_(), "data", 4);
   buf->length = 4;
 

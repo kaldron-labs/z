@@ -12,12 +12,10 @@ This manifest covers the complete program-only source closure:
 use the adjacent, non-installed `runtime.hh` semaphore bridge.
 All reusable HTTP mechanism is provided by installed `Zhttp` headers.
 
-The utilities configure caller-owned `ZiMxParams` ring sizes and then call
-`Zhttp::HubConfig::rxBufAllocators(params)` before constructing the multiplexer.
-The public HTTP configuration policy installs the existing QUIC packet Base and
-TLS receive geometry once, using those ring sizes. Native allocation types and
-transport headers stay in libZhttp; utilities do not mutate a running multiplexer
-or use a forwarding alias to name private transport policy.
+The utilities configure scheduler and socket parameters before constructing the
+multiplexer. The transport hubs own their receive allocators and register them
+with the multiplexer before network use. Native allocation types and transport
+headers stay in libZhttp.
 
 ### `zhttp.cc`
 

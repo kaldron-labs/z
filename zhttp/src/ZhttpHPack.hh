@@ -218,14 +218,14 @@ private:
   void compact_();
   void rebuild_();
 
-  HPackTxEntries	m_entries;
-  ZuPtr<HPackTxExactHash> m_exact;
-  ZuPtr<HPackTxNameHash> m_names;
-  unsigned	m_head = 0;
-  uint64_t	m_insertCount = 0;
-  uint32_t	m_capacity = 0;
-  uint32_t	m_localCapacity = 0;
-  uint32_t	m_used = 0;
+  HPackTxEntries		m_entries;
+  ZuPtr<HPackTxExactHash>	m_exact;
+  ZuPtr<HPackTxNameHash>	m_names;
+  unsigned			m_head = 0;
+  uint64_t			m_insertCount = 0;
+  uint32_t			m_capacity = 0;
+  uint32_t			m_localCapacity = 0;
+  uint32_t			m_used = 0;
 };
 
 class ZhttpAPI HPack {

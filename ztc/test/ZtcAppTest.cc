@@ -7,6 +7,7 @@
 #include <stdlib.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmBlock.hh>
 
 #include <zlib/ZtString.hh>
@@ -288,7 +289,7 @@ static void appTest()
 
   Ztc::Hdr badHdr{uint32_t(4)};
   uint32_t badBody = 0;
-  ZmRef<ZiIOBuf> bad = new ZtcTestClient::Frame{nullptr, 0};
+  ZmRef<ZiIOBuf> bad = new ZtcTestClient::Frame{ZmSingleton<typename ZtcTestClient::Frame::Allocator>::instance()};
   unsigned badSize = sizeof(badHdr) + sizeof(badBody);
   ZuCheck(bad->alloc(badSize));
   memcpy(bad->data(), &badHdr, sizeof(badHdr));

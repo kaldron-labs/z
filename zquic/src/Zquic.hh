@@ -36,6 +36,7 @@
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmQueue.hh>
+#include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZmScratch.hh>
@@ -396,6 +397,11 @@ inline bool sendCryptoFlights_(
     if (!spaceFromTLSEpoch(epoch, space)) continue;
     unsigned off = unsigned(offsets[epoch]);
     unsigned remaining = unsigned(offsets[epoch + 1] - offsets[epoch]);
+    ZmRef<ZiIOBuf> flight = new CryptoFlight{data, offsets, epoch};
+    if (!txCrypto[space].sent(txCrypto[space].txOffset(), ZuMv(flight))) {
+      ++diag.failures;
+      return false;
+    }
     while (remaining) {
       unsigned chunk = remaining > chunkMax ? chunkMax : remaining;
       using Frame = ZtArray<uint8_t, ZtArrayHeapID<"Zquic.Runtime.Frame">>;
@@ -407,10 +413,6 @@ inline bool sendCryptoFlights_(
 	return false;
       }
       SentFrameRef ref = SentFrameRef::crypto(cryptoOffset, chunk);
-      if (!txCrypto[space].sent(cryptoOffset, Zi::RxRange{data, off, chunk})) {
-	++diag.failures;
-	return false;
-      }
       diag.cryptoBytesTx += chunk;
       if (!send(space, byteSpan(frame.data(), unsigned(n)),
 	    byteSpan(data->data() + off, chunk), ref, addr))
@@ -445,7 +447,8 @@ inline bool sendCryptoFlights(
     ++diag.failures;
     return false;
   }
-  ZmRef<ZiIOBuf> backing = new CryptoTxBufAlloc<>{nullptr, 0};
+  ZmRef<ZiIOBuf> backing = new CryptoTxBufAlloc<>{
+    ZmSingleton<typename CryptoTxBufAlloc<>::Allocator>::instance(), nullptr, 0};
   if (!backing->append(ZuBSpan{data, len})) return false;
   return sendCryptoFlights_(
     txCrypto, diag, ZuMv(backing), offsets_, chunkMax, ZuMv(addr), ZuMv(send));
@@ -749,6 +752,8 @@ public:
   }
 
   ZiMultiplex *mx() const { return m_mx; }
+  Zi::IOBufAllocator *rxPktAllocator() const { return m_rxPktAllocator; }
+  Zi::IOBufAllocator *txPktAllocator() const { return m_txPktAllocator; }
   unsigned rxThread() const { return m_rxThread; }
   unsigned txThread() const { return m_txThread; }
   unsigned asyncThread() const { return m_asyncThread; }
@@ -847,6 +852,8 @@ protected:
       if (!m_errorFn) m_errorFn = defaultErrorFn();
       if (!validate_(params)) return false;
       m_mx = params.mx();
+      m_rxPktAllocator = pktRxAllocator(m_mx);
+      m_txPktAllocator = pktTxAllocator(m_mx);
       m_rxThread = thread_(params.rxThread(), m_mx->rxThread());
       m_txThread = thread_(params.txThread(), m_mx->txThread());
       m_asyncThread = params.asyncThread() ?
@@ -1025,10 +1032,6 @@ private:
 	"QUIC Rx and Tx threads must differ"));
       return false;
     }
-    if (!params.mx()->running()) {
-      error_(ZeEXCEPT(Error, "Zquic", "multiplexer not running"));
-      return false;
-    }
     if (params.maxUDP() > BufSize) {
       error_(ZeEXCEPT(Error, "Zquic",
 	([maxUDP = params.maxUDP()](auto &s) {
@@ -1085,6 +1088,9 @@ private:
       m_alpn.push(ptls_iovec_t{m_alpnData.data() + offset, s.length()});
     }
   }
+
+  Zi::IOBufAllocator *m_rxPktAllocator = nullptr;
+  Zi::IOBufAllocator *m_txPktAllocator = nullptr;
 
   // immutable after init()
   const ZuID		m_id;
@@ -1542,7 +1548,7 @@ private:
     Base::warmup_();
     ZiIP localIP = this->app()->localIP();
     uint16_t localPort = this->app()->localPort();
-    if (!Endpoint::init(this->mx()) ||
+    if (!Endpoint::init(this->mx(), this->rxPktAllocator(), this->txPktAllocator()) ||
 	!Endpoint::openUDP(PathMode::ServerUnconnected, localIP, localPort)) {
       Base::stopQLog_([this]() { this->started(false); });
     }

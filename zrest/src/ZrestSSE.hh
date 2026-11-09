@@ -13,6 +13,7 @@
 
 #include <zlib/ZhttpSSE.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmHeap.hh>
@@ -33,9 +34,12 @@ struct SSEData : public ZiIOBuf {
 };
 ZmListDerive(SSEQueue, SSEData,
   ZmListNode<SSEData, ZmListHeapID<"">>);
-using SSEBuf = Zi::IOBufAlloc<SSEQueue::Node,
-  ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-  ZuStringT<"Zrest.SSE.Buffer">>;
+using SSEBuf = Zi::IOBufBuiltin<
+  SSEQueue::Node,
+  ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"Zrest.SSE.Buffer">,
+  ZiIOBuf_DefltMaxSize>;
 
 class SSEProducer;
 
@@ -84,7 +88,7 @@ public:
       ++m_queued;
       m_bytes += framed;
     }
-    ZmRef<SSEQueue::Node> record = new SSEBuf{nullptr, 0};
+    ZmRef<SSEQueue::Node> record = new SSEBuf{ZmSingleton<typename SSEBuf::Allocator>::instance()};
     if (!Zhttp::saveSSE(*record, id, retry, body) || record->failed() ||
 	record->length != framed) {
       ZmGuard guard{m_admit};
@@ -159,8 +163,7 @@ public:
       m_bytes -= record->length;
     }
     bool terminal = record->data().terminal;
-    auto length = record->length;
-    if (!out.appendRange(Zi::RxRange{ZuMv(record), 0, length}))
+    if (!out.appendBuf(ZuMv(record)))
       return Zhttp::WriteOutcome::Abort;
     return terminal ?
       Zhttp::WriteOutcome::End : Zhttp::WriteOutcome::Stream;

@@ -14,10 +14,9 @@ The test uses loopback ports 9945 and 9946. Run it directly with
 `prove -j1 zdb/itest/zdbsagareptest`; use `./libtool exec` for debugging or
 Valgrind. It does not need PostgreSQL and does not change an external database.
 
-`zdbsagareptest` also runs `policyReplication` with explicit epoll and io_uring
-selection (the native case reports unavailable capability without claiming a
-native pass). It replicates two row types with distinct ADL sizes/heaps and two
+`zdbsagareptest` also runs `policyReplication` through three hosts. It replicates two row types with distinct ADL sizes/heaps and two
 instances of the smaller type, checking typed producer/store allocations,
 receiver frame backing, store-completion identity and retained buffers through
-multiplexer stop. The fixture uses ports 9955 and 9956, and serializes backend
-runs. Startup and delivery waits are bounded on the controlling test thread.
+multiplexer stop. The intermediate host forwards the original receive backing
+through an independent transmit descriptor; all three stores must observe each
+row. The fixture uses ports 9955 through 9957. Startup and delivery waits are bounded on the controlling test thread.

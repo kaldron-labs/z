@@ -84,6 +84,7 @@ static void dbDown(Zdb *db, bool)
 static ZmRef<TestDB> startDB(
     const ZfCf::AnyNode *cf, ZiMultiplex &mx, ZmRef<Zum::DB> &context)
 {
+  if (!mx.stop()) return {};
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
   ZmRef<TestDB> db = new TestDB{};
   db->requests = new Zum::Requests{};
@@ -92,6 +93,7 @@ static ZmRef<TestDB> startDB(
     ZdbHandler{.upFn = dbUp, .downFn = dbDown});
   Zum::registerSchema(db);
   context = db;
+  if (!mx.start()) return {};
   if (!db->start()) return {};
   db->active.wait();
   return db;

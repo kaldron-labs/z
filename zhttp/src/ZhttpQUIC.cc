@@ -15,14 +15,6 @@
 
 namespace Zhttp {
 
-void HubConfig::rxBufAllocators(ZiMxParams &params)
-{
-  params.udpBufAllocator<Zquic::PktRxBufAllocator<>>()
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Zhttp.Net.Rx">>>();
-}
-
 class QUICPool final : public ZmNHeap<QUICPool>,
   public ClientPool<PoolImpl, H3QUIC, PoolImpl::LiveReq, RequestRecord, BoundResParser> {
   friend inline ZuStringT<"Zhttp.QUIC.Pool"> ZmNHeapID(QUICPool *);

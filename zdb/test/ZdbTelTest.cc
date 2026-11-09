@@ -168,7 +168,7 @@ void run()
   {
     Zdb_::DBState state{2};
     state.update("o", ZdbShard{1}, 42);
-    Zdb_::Builder fbb{new Zdb_::IOBufAlloc<>{nullptr, 0}};
+    Zdb_::Builder fbb{new Zdb_::IOBufAlloc<>{Zdb_::localBufAllocator<>(), nullptr, 0}};
     auto bytes = fbb.finish(Zfb::save(fbb, state));
     auto fbo = Zfb::view<Zdb_::Msg::DBState>(bytes);
     Zdb_::DBState loaded{fbo};
@@ -178,9 +178,7 @@ void run()
     ZuCheck(!loaded.find("o", ZdbShard{0}));
   }
 
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
-  ZuCheck(mx.start());
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
 
   {
     Zdb empty;
@@ -188,8 +186,10 @@ void run()
     emptyCf.nShards = 1;
     emptyCf.threads.length(0);
     empty.init(ZuMv(emptyCf), &mx, {}, new zdbtest::Store{});
+    ZuCheck(mx.start());
     ZuCheck(empty.start());
     ZuCheck(empty.stop());
+    ZuCheck(mx.stop());
     empty.final();
   }
 
@@ -249,25 +249,6 @@ void run()
   ZuCheck(db->nShards() == 2);
   ZuCheck(db->shardSID(0) == mx.sid("zdb0"));
   ZuCheck(db->shardSID(1) == mx.sid("zdb1"));
-  ZtArray<unsigned> shardOK;
-  shardOK.length(2);
-  ZmSemaphore shardDone;
-  for (ZdbShard shard = 0; shard < db->nShards(); ++shard)
-    db->shardRun(shard, [
-      db = db.ptr(), shard, shardOK = shardOK.data(), shardDone = &shardDone
-    ]() {
-      bool runOK = db->shardInvoked(shard) &&
-	db->mx()->invoked(db->shardSID(shard));
-      db->shardInvoke(shard, [
-	db, shard, runOK, shardOK, shardDone
-      ]() {
-	shardOK[shard] = runOK && db->shardInvoked(shard);
-	shardDone->post();
-      });
-    });
-  for (unsigned i = 0; i < db->nShards(); ++i) shardDone.wait();
-  ZuCheck(shardOK[0]);
-  ZuCheck(shardOK[1]);
   ZuCheck(watch.dbAdds == 1);
   ZuCheck(watch.dbDataOK);
   ZuCheck(watch.hostSeeds == 1);
@@ -310,6 +291,26 @@ void run()
   ZuCheck(dbData.reconnectFreq == 103);
   ZuCheck(dbData.electionTimeout == 104);
 
+  ZuCheck(mx.start());
+  ZtArray<unsigned> shardOK;
+  shardOK.length(2);
+  ZmSemaphore shardDone;
+  for (ZdbShard shard = 0; shard < db->nShards(); ++shard)
+    db->shardRun(shard, [
+      db = db.ptr(), shard, shardOK = shardOK.data(), shardDone = &shardDone
+    ]() {
+      bool runOK = db->shardInvoked(shard) &&
+	db->mx()->invoked(db->shardSID(shard));
+      db->shardInvoke(shard, [
+	db, shard, runOK, shardOK, shardDone
+      ]() {
+	shardOK[shard] = runOK && db->shardInvoked(shard);
+	shardDone->post();
+      });
+    });
+  for (unsigned i = 0; i < db->nShards(); ++i) shardDone.wait();
+  ZuCheck(shardOK[0]);
+  ZuCheck(shardOK[1]);
   ZuCheck(db->start());
   active.wait();
 
@@ -641,9 +642,9 @@ void run()
   ZuCheck(watch.dbDelKeyOK);
   ZuCheck(Ztc::DBMgr::all({[](Ztc::DB *) { }}) == 0);
 
-  ZuCheck(mx.start());
   init();
   orders = db->initTable<Order>("o");
+  ZuCheck(mx.start());
   orders = {};
   ZuCheck(mx.stop());
   db->final();

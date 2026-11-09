@@ -17,9 +17,8 @@ namespace HeaderLifeTest {
 
 struct State {
   ZmAtomic<unsigned> sequence{0}, headers{0}, allocatorStep{0};
-  ZmAtomic<unsigned> firstStep{0}, lastStep{0}, recycled{0}, cleanSource{0};
+  ZmAtomic<unsigned> firstStep{0}, lastStep{0}, cleanSource{0};
   ZmSemaphore gone;
-  uint8_t *slot = nullptr;
   Zi::IOBufAllocator *allocator = nullptr; // borrowed from the fixture owner
 };
 
@@ -31,24 +30,14 @@ struct Header : Zhttp::Transport_::TCPHeader {
     auto step = state->sequence.xchAdd(1) + 1;
     if (firstHeader) state->firstStep = step;
     state->lastStep = step;
-#if Zi_URing
-    if (state->allocator && state->allocator->ring()) {
-      auto ring = state->allocator->ring();
-      auto slot = ring->allocSlot();
-      if (slot && slot == state->slot) state->recycled = 1;
-      if (slot) ring->free(slot);
-    }
-#endif
     ++state->headers;
     state->gone.post();
   }
 };
 
-using BufHeap = ZuStringT<"Zhttp.Header.LifeBuf">;
-using Ordinary = Zi::AppBufAllocator<Header,
-  ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, BufHeap>;
-using Network = Zi::TxTCPBufAllocator<Header,
-  ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, BufHeap>;
+using Ordinary = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, Header,
+  ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize>;
+
 
 template <typename Base>
 struct Allocator : ZmNHeap<Allocator<Base>>, Base {
@@ -58,20 +47,20 @@ struct Allocator : ZmNHeap<Allocator<Base>>, Base {
   State *state;
   template <typename ...Args>
   Allocator(State *state_, Args &&...args) : Base{ZuFwd<Args>(args)...}, state{state_} { }
-  ~Allocator() override {
+  ~Allocator() {
     state->allocator = nullptr;
     state->allocatorStep = state->sequence.xchAdd(1) + 1;
   }
 };
 
-ZmRef<Header> allocate(Zi::IOBufAllocator &allocator, State &state, bool first)
+template <typename A>
+ZmRef<Header> allocate(A &allocator, State &state, bool first)
 {
-  auto raw = allocator.alloc();
+  auto raw = allocator.allocBuf();
   auto head = ZmRef<Header>::acquire(static_cast<Header *>(ZuMv(raw).release()));
   head->state = &state;
   head->firstHeader = first;
   *static_cast<ZiIOBuf *>(head.ptr()) << "header";
-  if (first) state.slot = head->data_();
   return head;
 }
 
@@ -79,42 +68,37 @@ void ordinaryLifetime()
 {
   ZuTestScope(ordinaryLifetime);
   State state;
-  ZmRef<Allocator<Ordinary>> allocator = new Allocator<Ordinary>{&state};
-  auto refs = allocator->refCount();
+  auto allocator = new Allocator<Ordinary>{&state};
   auto head = allocate(*allocator, state, true);
-  ZuCheck(allocator->refCount() == refs);
-  allocator = nullptr; // ordinary embedded backing needs no allocator pin
+  delete allocator; // ordinary embedded backing needs no allocator pin
   ZuCheck(state.allocatorStep && !state.headers && head->cspan() == "header");
   head = nullptr;
   ZuCheck(state.headers == 1 && state.allocatorStep < state.firstStep);
 }
 
-#if Zi_URing
 void registeredLifetime(bool jumbo)
 {
   ZuTestScopeRT(registeredLifetime);
-  if (!Zi::uring()) { log("registered allocator unavailable: native case untested"); return; }
   State state;
-  // The protocol owner retains its allocator through descriptor/task drain.
-  // One slot makes its exact return observable in the actual Header destructor.
-  ZmRef<Allocator<Network>> allocator = new Allocator<Network>{&state, 1U};
-  state.allocator = allocator.ptr();
-  auto refs = allocator->refCount();
-  auto head = allocate(*allocator, state, true);
-  ZuCheckRT(head->uring() && allocator->ring()->fd() >= 0 &&
-    allocator->refCount() == refs);
-  if (jumbo) {
-    ZuCheckRT(head->ensure(head->size + 1));
-    ZuCheckRT(!head->uring() && !head->ring() && head->cspan() == "header");
+  {
+    ZiMultiplex mx{ZiMxParams{}};
+    auto allocator = mx.allocator<Zi::IOBufType::TxTCP, Header>();
+    state.allocator = allocator;
+    auto head = allocate(*allocator, state, true);
+    ZuCheckRT(head->allocator == allocator && allocator->mx() == &mx &&
+      allocator->type() == Zi::IOBufType::TxTCP);
+    if (jumbo) {
+      ZuCheckRT(head->ensure(head->size + 1));
+      ZuCheckRT(!head->builtin() && head->cspan() == "header");
+    }
+    ZuCheckRT(!state.allocatorStep && !state.headers && head->cspan() == "header");
+    head = nullptr;
+    ZuCheckRT(state.headers == 1 && !state.allocatorStep);
+    allocator = nullptr;
+    ZuCheckRT(!state.allocatorStep); // multiplexer owns the registered allocator
   }
-  ZuCheckRT(!state.allocatorStep && !state.headers && head->cspan() == "header");
-  head = nullptr;
-  ZuCheckRT(state.headers == 1 && state.recycled && !state.allocatorStep &&
-    allocator->refCount() == refs);
-  allocator = nullptr; // cold owner finalization follows actual slot return
-  ZuCheckRT(state.firstStep < state.allocatorStep);
+  ZuCheckRT(state.headers == 1);
 }
-#endif
 
 struct Cxn : ZmNHeap<Cxn>, ZiConnection {
   friend inline ZuStringT<"Zhttp.Header.LifeCxn"> ZmNHeapID(Cxn *) { return {}; }
@@ -155,13 +139,12 @@ void postedLifetime(bool early)
   State state;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
     .rxThread(1).txThread(2)};
+  auto allocator = mx.allocator<Zi::IOBufType::TxTCP, Header>();
   bool started = mx.start();
   ZuCheckRT(started);
   if (!started) return;
   ZmRef<Cxn> cxn = new Cxn{&mx};
-  ZmRef<Allocator<Network>> allocator = new Allocator<Network>{&state, 1U};
-  state.allocator = allocator.ptr();
-  auto refs = allocator->refCount();
+  state.allocator = allocator;
   auto head = allocate(*allocator, state, true);
   configureCallbacks(head, mx);
   head->connection = cxn;
@@ -179,12 +162,9 @@ void postedLifetime(bool early)
   cxn = nullptr;
   mx.stop();
   ZuCheckRT(destroyed && state.headers == 1 && state.cleanSource == 1);
-  ZuCheckRT(!state.allocatorStep && allocator->refCount() == refs);
-#if Zi_URing
-  if (Zi::uring()) ZuCheckRT(state.recycled);
-#endif
+  ZuCheckRT(!state.allocatorStep);
   allocator = nullptr;
-  ZuCheckRT(state.firstStep < state.allocatorStep);
+  ZuCheckRT(state.firstStep);
 }
 
 } // namespace HeaderLifeTest
@@ -194,10 +174,8 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(ordinaryLifetime);
-#if Zi_URing
   ZuTestCall(registeredLifetime, false);
   ZuTestCall(registeredLifetime, true);
-#endif
   ZuTestCall(postedLifetime, false);
   ZuTestCall(postedLifetime, true);
   return 0;

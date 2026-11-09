@@ -85,9 +85,7 @@ void usage(int code = 1)
 
 ZiMxParams mxParams()
 {
-  return ZiMxParams().tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Zhttp.Net.Rx">>>()
+  return ZiMxParams()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -191,11 +189,6 @@ int run(const Options &options)
   ZmTrap::trap();
 
   ZiMultiplex mx{mxParams()};
-  if (!mx.start()) {
-    trapDone = nullptr;
-    return 1;
-  }
-
   App app{&done, options.target, options.protocol, options.verbose};
   Zws::Server<App, Profile> server{
     &app, ZiIP{options.address}, options.port};
@@ -212,6 +205,11 @@ int run(const Options &options)
 
   bool initialized =
     server.init(Zhttp::HubConfig{&mx, "3", "4"}, config, wsConfig);
+  if (!mx.start()) {
+    trapDone = nullptr;
+    return 1;
+  }
+
   bool started = initialized && server.start();
   if (!started) {
     std::cerr << "server initialization/start failed\n";

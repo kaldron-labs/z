@@ -17,6 +17,7 @@
 
 #include <zlib/ZuIntrin.hh>
 #include <zlib/ZmAssert.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZfDBUS.hh>
 #include <zlib/ZdbusEnvelope.hh>
@@ -104,9 +105,9 @@ BuildResult message(const HeadSpec &head, const Body &body,
     result.error = BuildError::Resource;
     return result;
   }
-  using Buf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-    Wire::MaxMessageSize, ZuStringT<"Zdbus.Message">>;
-  result.buf = new Buf{nullptr, 0};
+  using Buf = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize,
+    Wire::MaxMessageSize, ZiIOBuf_Align, ZuStringT<"Zdbus.Message">>;
+  result.buf = ZmSingleton<Buf>::instance()->allocBuf();
   result.buf->ensure(total);
   Sink sink{result.buf.ptr()};
   writeHead(sink, plan, head, signature, total - plan.bodyOffset);

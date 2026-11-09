@@ -204,8 +204,10 @@ void DB::init(
 
     m_cf = ZuMv(config);
     m_mx = mx;
-    m_hbAllocator = new Zi::TxTCPBufAllocator<
-      ZiTxBuf, HBBufSize, MaxBufSize, ZuStringT<"Zdb.HB">>{mx->txRingSize()};
+    m_rxAllocator = mx->allocator<Zi::IOBufType::RxTCP,
+      ZiRxQueue::Node, DefltBufSize, MaxBufSize>();
+    m_hbAllocator = mx->allocator<Zi::IOBufType::TxTCP,
+      ZiTxBuf, HBBufSize, MaxBufSize>();
     m_handler = ZuMv(handler);
     {
       if (!m_cf.storeCf)
@@ -872,33 +874,8 @@ void DB::stop_2()
       ZiLogEvent(ZuMv(result).p<Event>());
       ZiLOG(Fatal, "Zdb", "data store stop failed");
     }
-    run([this]() { drainShards(0, [this]() { stop_3(); }); });
+    run([this]() { drainShards(0, [this]() { stopped(true); }); });
   });
-}
-
-void DB::stop_3()
-{
-  ZmAssert(invoked());
-
-  // Producers and connection data/notification holds have drained. Keep their
-  // existing owners alive until allocator service controls detach as well.
-  m_unbinding = 1;
-  all_([this](AnyTable *table) {
-    for (const auto &fn : table->m_bufAllocFn) unbind_(fn.allocator());
-    unbind_(table->m_storeBufAllocFn.allocator());
-  });
-  unbind_(m_hbAllocator.ptr());
-  if (!--m_unbinding) stopped(true);
-}
-
-void DB::unbind_(Zi::IOBufAllocator *allocator)
-{
-  ZmAssert(invoked());
-  if (!allocator) return; // ordinary local/custom allocation callback
-  ++m_unbinding;
-  m_mx->unbind(allocator, {[this] {
-    run([this] { if (!--m_unbinding) stopped(true); });
-  }});
 }
 
 bool DB::disconnectAll()
@@ -925,7 +902,7 @@ void DB::listen()
 	ZiListenFn{this, ZmFnPtr<&DB::listening>{}},
 	ZiFailFn{this, ZmFnPtr<&DB::listenFailed>{}},
 	ZiConnectFn{this, ZmFnPtr<&DB::accepted>{}},
-	m_self->ip(), m_self->port(), m_cf.nAccepts);
+	m_self->ip(), m_self->port(), m_cf.nAccepts, m_rxAllocator);
 }
 
 void DB::listening(const ZiListenInfo &)
@@ -1214,7 +1191,7 @@ void Host::connect()
   m_mx->connect(
       ZiConnectFn{this, ZmFnPtr<&Host::connected>{}},
       ZiFailFn{this, ZmFnPtr<&Host::connectFailed>{}},
-      ZiIP{}, 0, config().ip, config().port);
+      ZiIP{}, 0, config().ip, config().port, m_db->m_rxAllocator);
 }
 
 void Host::connectFailed(bool transient)
@@ -1236,8 +1213,8 @@ ZiConnection *Host::connected(const ZiCxnInfo &ci)
 {
   ZiLOG(Info, "Zdb",
       ([id = ZeString{this->id()},
-	remoteIP = ci.remoteIP, remotePort = ci.remotePort,
-	localIP = ci.localIP, localPort = ci.localPort](auto &s) {
+	remoteIP = ci.remote.ip(), remotePort = ci.remote.port(),
+	localIP = ci.local.ip(), localPort = ci.local.port()](auto &s) {
     s << "connected to host " << id << " ("
       << remoteIP << ':' << remotePort << "): "
       << localIP << ':' << localPort;
@@ -1251,8 +1228,8 @@ ZiConnection *Host::connected(const ZiCxnInfo &ci)
 ZiConnection *DB::accepted(const ZiCxnInfo &ci)
 {
   ZiLOG(Info, "Zdb",
-      ([remoteIP = ci.remoteIP, remotePort = ci.remotePort,
-	localIP = ci.localIP, localPort = ci.localPort](auto &s) {
+      ([remoteIP = ci.remote.ip(), remotePort = ci.remote.port(),
+	localIP = ci.local.ip(), localPort = ci.local.port()](auto &s) {
     s << "accepted cxn on ("
       << remoteIP << ':' << remotePort << "): "
       << localIP << ':' << localPort;
@@ -1371,7 +1348,7 @@ void Cxn_::hbTimeout()
 {
   ZiLOG(Info, "Zdb",
       ([id = m_host ? ZuID{m_host->id()} : ZuID{"unknown"},
-	ip = info().remoteIP, port = info().remotePort](auto &s) {
+	ip = info().remote.ip(), port = info().remote.port()](auto &s) {
     s << "heartbeat timeout on host "
       << id << " (" << ip << ':' << port << ')';
   }));
@@ -1383,7 +1360,7 @@ void Cxn_::disconnected(bool)
 {
   ZiLOG(Info, "Zdb",
       ([id = m_host ? ZuID{m_host->id()} : ZuID{"unknown"},
-	ip = info().remoteIP, port = info().remotePort](auto &s) {
+	ip = info().remote.ip(), port = info().remote.port()](auto &s) {
     s << "disconnected from host "
       << id << " (" << ip << ':' << port << ')';
   }));
@@ -1672,9 +1649,8 @@ ZmRef<IOBuf> AnyTable::mkBuf(Shard shard, UN un)
     auto copy = allocBuf(shard);
     // Both allocations have pooled base alignment. Preserve the source
     // residue required by this row/envelope, including its nested roots.
-    copy->skip = buf->framePos & (rowAlign() - 1);
+    copy->skip = buf->skip & (rowAlign() - 1);
     if (!copy->append(buf->frameSpan())) return nullptr;
-    copy->seal_();
     copy->owner = this;
     auto message = msg_(copy->hdr());
     constexpr unsigned tagID =
@@ -1695,7 +1671,7 @@ void AnyTable::commitSend(Shard shard, UN un)
   Zfb::IOBuilder<> fbb{allocBuf(shard)};
   auto commit = saveCommit(fbb, config().id, un, shard);
   fbb.finish(saveMsg(fbb, commit, Msg::Tag::Commit));
-  m_db->replicate(saveFrame(fbb, this));
+  m_db->replicate(saveHdr(fbb, this));
 }
 
 // prepare replication data
@@ -1714,7 +1690,7 @@ ZmRef<IOBuf> AnyRow::replicate(int type)
   auto data = fbb.endNested(nested, root);
   auto record = saveRecord(fbb, m_table->config().id, m_un, m_sn, m_vn, m_shard, data);
   fbb.finish(saveMsg(fbb, record, type));
-  return saveFrame(fbb, m_table);
+  return saveHdr(fbb, m_table);
 }
 
 void DB::repStop()
@@ -1733,26 +1709,24 @@ void DB::repStop()
   m_nPeers = 1;
 }
 
+void Cxn_::send(ZmRef<IOBuf> buf)
+{
+  if (!buf) return;
+  Tx::send(new TxFrame{m_db->m_hbAllocator, ZuMv(buf)});
+}
+
 void Cxn_::msgRead(ZiRxContext &io)
 {
   recv<
-    [](const ZiRxContext &, Rx::Stream &stream) -> int {
-      if (stream.length() < sizeof(Hdr)) return INT_MAX;
+    [](Cxn_ *, const ZiRxContext &, ZiIOBuf *buf) -> int {
+      if (buf->length < sizeof(Hdr)) return INT_MAX;
       Hdr hdr;
-      stream.copy(0, ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)});
+      memcpy(&hdr, buf->data(), sizeof(Hdr));
       unsigned length = hdr.length;
       return length > INT_MAX - sizeof(Hdr) ? -1 : int(sizeof(Hdr) + length);
     },
-    [](Cxn_ *cxn, const ZiRxContext &io, Rx::Stream &stream, unsigned length) -> int {
-      // Consolidate only fragmented frames, into their final receive owner.
-      if (stream.span().length() < length && !stream.gather(length, [&io]() {
-        return ZmRef<ZiRxQueue::Node>::acquire(static_cast<ZiRxQueue::Node *>(
-          io.cxn->mx()->rxAllocator(false)->alloc().release()));
-      })) return -1;
-      auto range = stream.range();
-      range.length = length;
-      auto result = cxn->msgRead2(new RxFrame{ZuMv(range)});
-      return result < 0 ? result : int(length);
+    [](Cxn_ *cxn, const ZiRxContext &, ZmRef<ZiIOBuf> buf) -> int {
+      return cxn->msgRead2(new RxFrame{ZuMv(buf)});
     }>(io);
 }
 int Cxn_::msgRead2(ZmRef<IOBuf> buf)
@@ -1953,13 +1927,13 @@ void Cxn_::hbSend()
   ZmAssert(m_db->invoked());
 
   Host *self = m_db->self();
-  Zfb::IOBuilder<> fbb{m_db->m_hbAllocator->alloc(), Zfb::Wire::Align, UINT32_MAX,
+  Zfb::IOBuilder<> fbb{m_db->m_hbAllocator->allocBuf(), Zfb::Wire::Align, UINT32_MAX,
     0, Zfb::Wire::MaxAlign};
   auto heartbeat = Zfb::save(fbb, Heartbeat{
     self->id(), uint32_t(m_db->state()), m_db->nShards(), &self->dbState()});
   fbb.finish(saveMsg(fbb, heartbeat, Msg::Tag::Heartbeat));
 
-  send(saveHdr(fbb, this));
+  Tx::send(ZmRef<ZiTxBuf>{saveHdr(fbb, this)});
 
   ZdbDEBUG(m_db, ZeString{}
     << "hbSend() self{id=" << self->id()
@@ -2049,11 +2023,11 @@ void DB::replicated(Host *host, ZuCSpan tblID, Shard shard, UN un, SN sn)
 AnyTable::AnyTable(
   DB *db, TableCf *cf, bool internal, IOBufAllocFactory factory) :
   m_db{db}, m_cf{cf}, m_mx{db->mx()}, m_internal{internal},
-  m_storeBufAllocFn{factory(m_mx->txRingSize())}
+  m_storeBufAllocFn{factory(m_mx)}
 {
   unsigned n = db->nShards();
   m_bufAllocFn.length(n);
-  for (unsigned i = 0; i < n; ++i) m_bufAllocFn[i] = factory(m_mx->txRingSize());
+  for (unsigned i = 0; i < n; ++i) m_bufAllocFn[i] = factory(m_mx);
   m_nextUN.length(n);
   m_cacheUN.length(n);
   m_bufCacheUN.length(n);

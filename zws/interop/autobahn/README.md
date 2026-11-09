@@ -31,8 +31,5 @@ Each runner writes reports in an owned residue directory under `ZI_LOGDIR`
 prints and retains the directory, with the newest eight failures kept.
 Override `AUTOBAHN_IMAGE` to pin a particular testsuite image.
 
-The client reserves a 1 MiB echo burst in each direction plus 128 control/
-retirement slots (1198 Rx slots at 980 bytes, 192 Tx slots at 16 KiB).
-Use `--rx-ring-size=N --tx-ring-size=N` to tune larger or concurrent runs;
-valid counts are 2 through 32768. These bound pooled working sets, not message
-length. The suite still assembles and echoes complete messages.
+The transport hub owns its receive allocator. The suite assembles and echoes
+complete messages.

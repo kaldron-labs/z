@@ -79,7 +79,7 @@ public:
       }, [this]() { noteFailure_(Code::INTERNAL); });
     } catch (...) { ok = false; }
     if (!ok || !buf) return fail_(error);
-    if (!m_frames.push(ZuMv(buf), m_limits, true)) return fail_(Code::RESOURCE_EXHAUSTED);
+    if (!m_frames.push(ZuMv(buf), m_limits)) return fail_(Code::RESOURCE_EXHAUSTED);
     return queued_();
   }
   bool send_(ObjectValue<Object> object) { return send_(Message<Object>{ZuMv(object)}); }
@@ -113,14 +113,14 @@ public:
       }, [this]() { noteFailure_(Code::INTERNAL); });
     } catch (...) { ok = false; }
     if (!ok || !buf) return fail_(error);
-    if (!m_frames.push(ZuMv(buf), m_limits, true)) return fail_(Code::RESOURCE_EXHAUSTED);
+    if (!m_frames.push(ZuMv(buf), m_limits)) return fail_(Code::RESOURCE_EXHAUSTED);
     return queued_();
   }
   // Producers transfer mutable unpublished output with the lower writer's
   // head/tail room plus PrefixSize reserved before encoding raw protobuf.
-  // writerOwned also guarantees that writer's concrete Base. Other mutable
-  // storage uses ranges after framing; published payloads use the span overload.
-  bool sendRaw_(ZmRef<ZiIOBuf> source, bool writerOwned) {
+  // The destination writer handles concrete storage authority and geometry;
+  // published payloads use the borrowed-span overload.
+  bool sendRaw_(ZmRef<ZiIOBuf> source) {
     if (m_sealed) return fail_(Code::INTERNAL);
     if (!source || source->failed() ||
 	m_frames.bytes() + PrefixSize > m_limits.maxQueueBytes ||
@@ -142,7 +142,7 @@ public:
       }, [this]() { noteFailure_(Code::INTERNAL); });
     } catch (...) { ok = false; }
     if (!ok || !prepared) return fail_(Code::INTERNAL);
-    if (!m_frames.push(ZuMv(source), m_limits, writerOwned))
+    if (!m_frames.push(ZuMv(source), m_limits))
       return fail_(Code::RESOURCE_EXHAUSTED);
     return queued_();
   }
@@ -157,14 +157,7 @@ public:
 	unsigned n = 0;
 	while (m_frames.count() && n++ < m_limits.workBatch) {
 	  auto frame = m_frames.shift();
-	  if (frame.writerOwned && writer.canAdopt_(*frame.buf)) {
-	    if (!writer.allocatedBuf_(frame.buf)) return false;
-	    writer << ZuMv(frame.buf);
-	    if (writer.failed()) return false;
-	  } else {
-	    unsigned length = frame.buf->length;
-	    if (!writer.appendRange(ZuMv(frame.buf), 0, length)) return false;
-	  }
+	  if (!writer.appendBuf(ZuMv(frame))) return false;
 	}
 	return true;
       }, [this]() { noteFailure_(Code::INTERNAL); });

@@ -260,10 +260,6 @@ void ReqBuilder_::completed(const Zhttp::Result &result) {
 ZiMxParams mxParams()
 {
   return ZiMxParams()
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -406,12 +402,6 @@ void fallback()
   }
 
   ZiMultiplex mx{mxParams()};
-  bool mxUp = mx.start();
-  ZuCHECK(mxUp, "start multiplexer");
-  if (!mxUp) {
-    (void)stopServer(server);
-    return;
-  }
   Zhttp::HubConfig hub{&mx, "3", "4"};
 
   Resolver resolver;
@@ -430,6 +420,12 @@ void fallback()
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port});
   agent.discoveryResolver(&resolver.ops);
   ZuCHECK(agentInited, "initialize prefer-mode agent");
+  bool mxUp = mx.start();
+  ZuCHECK(mxUp, "start multiplexer");
+  if (!mxUp) {
+    (void)stopServer(server);
+    return;
+  }
   bool agentUp = agentInited && agent.start();
   ZuCHECK(agentUp, "start prefer-mode agent");
 

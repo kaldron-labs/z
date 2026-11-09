@@ -73,12 +73,7 @@ struct State {
 ZiMxParams mxParams()
 {
   return ZiMxParams()
-#ifdef ZWS_H3_TEST
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
-#endif
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Zhttp.Net.Rx">>>()
+
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -390,8 +385,6 @@ void run(const TempDir &temp)
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start());
-  if (!mx.running()) return;
 
   ServerApp serverApp{&state};
   ClientApp clientApp{&state};
@@ -411,6 +404,22 @@ void run(const TempDir &temp)
     mx.stop();
     return;
   }
+
+  RejectState rejectState;
+  RejectClient rejectClient{&rejectState};
+  bool rejectInit = false;
+  if constexpr (ZuIsSame<Profile, Zhttp::H1TCP>{}) {
+    RejectClient::Link::RxAllocator *rejectRx =
+      RejectClient::Link::rxAllocator(&mx);
+    RejectClient::Link::TxAllocator *rejectTx =
+      RejectClient::Link::txAllocator(&mx);
+    Ztcp::ClientParams rejectParams{&mx, "3", "4"};
+    rejectParams.rxAllocator(rejectRx).txAllocator(rejectTx);
+    rejectInit = rejectClient.init(ZuMv(rejectParams));
+    ZuCHECK(rejectInit);
+  }
+  ZuCHECK(mx.start());
+  if (!mx.running()) return;
 
   bool serverStart = server.start();
   bool clientStart = client.start();
@@ -442,11 +451,6 @@ void run(const TempDir &temp)
   }
 
   if constexpr (ZuIsSame<Profile, Zhttp::H1TCP>{}) {
-    RejectState rejectState;
-    RejectClient rejectClient{&rejectState};
-    bool rejectInit =
-      rejectClient.init(Ztcp::ClientParams{&mx, "3", "4"});
-    ZuCHECK(rejectInit);
     bool rejectStarted = rejectInit && rejectClient.start();
     ZuCHECK(rejectStarted);
     if (rejectStarted) {
@@ -468,11 +472,21 @@ void run(const TempDir &temp)
   server.stopAccepting();
   ZuCHECK(client.stop() && server.stop());
   if constexpr (ZuIsSame<Profile, Zhttp::H1TCP>{}) {
-    bool consumed = state.ownedPrefixes.length() == 2;
-    for (const auto &buf : state.ownedPrefixes)
-      consumed &= !buf->length && buf->skip > 14;
-    ZuCHECK(consumed,
-      "delayed owned prefixes must be the actual buffers advanced by TCP");
+    // TCP tracks send progress in its I/O context. The original allocation
+    // retains the exact masked continuation frame until our last ref releases.
+    bool framed = state.ownedPrefixes.length() == 2;
+    for (const auto &buf : state.ownedPrefixes) {
+      bool geometry = buf->skip == 6 && buf->length == payloadLen - 3 + 8;
+      framed &= geometry && buf->refCount() == 1;
+      if (!geometry) continue;
+      auto data = buf->data();
+      framed &= data[0] == 0x80 && data[1] == 0xfe &&
+	((unsigned(data[2])<<8) | data[3]) == payloadLen - 3;
+      for (unsigned i = 0; i < payloadLen - 3; ++i)
+	framed &= (data[8 + i] ^ data[4 + (i & 3)]) == uint8_t(request[3 + i]);
+    }
+    ZuCHECK(framed,
+      "delayed owned output must retain exact framing and release TCP backing");
     state.ownedPrefixes.length(0); // before the real allocator owner finalizes
   }
   link = nullptr;
@@ -517,8 +531,6 @@ void runConcurrentWSS(const TempDir &temp)
   ZuCHECK(state.port);
   if (!state.port) return;
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start());
-  if (!mx.running()) return;
   ServerApp serverApp{&state};
   ClientApp clientApp{&state};
   using Server = Zws::Server<ServerApp, Zhttp::H1TLS>;
@@ -530,6 +542,8 @@ void runConcurrentWSS(const TempDir &temp)
   ZuCHECK(client.init(hub, ProfileConfig<Zhttp::H1TLS>::client(temp),
     Zhttp::Destination{"127.0.0.1", uint16_t(state.port)}, {},
     Zhttp::Config{}.links(Clients).concurrency(Clients)));
+  ZuCHECK(mx.start());
+  if (!mx.running()) return;
   ZuCHECK(server.start() && client.start());
   ZuCHECK(state.listening.timedwait(Zm::now(10)) == 0);
   Zws::URI uri;
@@ -567,9 +581,6 @@ void rejectTLS(const TempDir &temp)
   ZuCheckRT(state.port);
   if (!state.port) return;
   ZiMultiplex mx{mxParams()};
-  bool mxStarted = mx.start();
-  ZuCheckRT(mxStarted);
-  if (!mxStarted) return;
   ServerApp serverApp{&state};
   Zws::Server<ServerApp, Zhttp::H1TLS> server{
     &serverApp, ZiIP{"127.0.0.1"}, state.port};
@@ -577,18 +588,27 @@ void rejectTLS(const TempDir &temp)
     ProfileConfig<Zhttp::H1TLS>::server(temp));
   ZuCheckRT(serverInit);
   if (!serverInit) { mx.stop(); return; }
+  RejectState response;
+  RejectTLSClient client{&response};
+  RejectTLSClient::Link::RxAllocator *rejectRx =
+    RejectTLSClient::Link::rxAllocator(&mx);
+  RejectTLSClient::Link::TxAllocator *rejectTx =
+    RejectTLSClient::Link::txAllocator(&mx);
+  Ztls::ClientParams rejectParams{&mx, "3", "4"};
+  rejectParams.rxAllocator(rejectRx).txAllocator(rejectTx);
+  rejectParams.hub([&temp](auto &p) {
+    p.caPath(temp.certPath.cspan()).alpn(ZuSpan<ZuCSpan>{"http/1.1"});
+  });
+  bool clientInit = client.init(ZuMv(rejectParams));
+  ZuCheckRT(clientInit);
+  bool mxStarted = mx.start();
+  ZuCheckRT(mxStarted);
+  if (!mxStarted) return;
   bool started = server.start();
   ZuCheckRT(started);
   if (!started) { server.final(); mx.stop(); return; }
   bool listening = state.listening.timedwait(Zm::now(10)) == 0;
   ZuCheckRT(listening);
-  RejectState response;
-  RejectTLSClient client{&response};
-  bool clientInit = client.init(Ztls::ClientParams{&mx, "3", "4"}.hub(
-    [&temp](auto &p) {
-      p.caPath(temp.certPath.cspan()).alpn(ZuSpan<ZuCSpan>{"http/1.1"});
-    }));
-  ZuCheckRT(clientInit);
   bool clientStarted = clientInit && client.start();
   ZuCheckRT(clientStarted);
   ZmRef<RejectTLSClient::Link> link;

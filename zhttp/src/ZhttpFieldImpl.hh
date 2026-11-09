@@ -16,6 +16,7 @@
 #include <limits.h>
 #include <string.h>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
 
@@ -81,9 +82,13 @@ const WriterOps &bufferWriterOps()
     [](const void *) { return 0U; },
     [](const void *) { return 0U; },
     [](void *, unsigned head) -> ZmRef<ZiIOBuf> {
-      using Alloc = Zi::IOBufAlloc<ZiRxQueue::Node,
-	ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zhttp.Header.Print">>;
-      auto buf = ZmRef<ZiIOBuf>{new Alloc{nullptr, 0}};
+      using Alloc = Zi::IOBufBuiltin<
+        ZiRxQueue::Node,
+        ZiIOBuf_DefltSize,
+        ZiIOBuf_DefltAlign,
+        ZuStringT<"Zhttp.Header.Print">,
+        ZiIOBuf_DefltMaxSize>;
+      auto buf = ZmRef<ZiIOBuf>{new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()}};
       buf->skip = head;
       return buf;
     },
@@ -99,12 +104,11 @@ const WriterOps &bufferWriterOps()
       if constexpr (String) out.length(out.length() + length);
       else printCommit(out, length, 0);
     },
-    [](void *ctx, Zi::RxRange range) {
-      if (!range.buf || range.offset > range.buf->size ||
-	  range.length > range.buf->size - range.offset) return false;
+    [](void *ctx, ZmRef<ZiIOBuf> buf) {
+      if (!buf || buf->failed()) return false;
       auto &out = *static_cast<Out *>(ctx);
       // A semantic formatting destination owns the resulting representation.
-      out << range.cspan();
+      out << buf->cspan();
       if constexpr (String) return true;
       else return !printFailed(out, 0);
     }};
@@ -235,9 +239,12 @@ public:
   using Queue = ZiRxQueue;
   using Stream = ZiRxStream<Queue>;
   using BufAlloc = BodyBufAlloc;
-  using MetaBufAlloc = Zi::IOBufAlloc<
-    Queue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-    ZuStringT<"Zhttp.Meta.Rx">>;
+  using MetaBufAlloc = Zi::IOBufBuiltin<
+    Queue::Node,
+    ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltAlign,
+    ZuStringT<"Zhttp.Meta.Rx">,
+    ZiIOBuf_DefltMaxSize>;
 
   BodyRx(uint64_t max = uint64_t(-1)) : m_max{max} { }
 
@@ -293,6 +300,8 @@ public:
     if (ZuLikely(length <= m_max - m_rx.length())) {
       int64_t n = src.splice(
 	m_rx, ZuFwd<Frame>(frame),
+	[]() { return new MetaBufAlloc{ZmSingleton<typename MetaBufAlloc::Allocator>::instance()}; },
+	[]() { return new MetaBufAlloc{ZmSingleton<typename MetaBufAlloc::Allocator>::instance()}; },
 	headLen, tailLen, ZuFwd<Transform>(transform));
       if (n <= 0) return n;
       m_received += length;
@@ -326,7 +335,10 @@ public:
 	    return 0;
 	  }
 	  return rest;
-	}, 0, 0, transform);
+	},
+	[]() { return new MetaBufAlloc{ZmSingleton<typename MetaBufAlloc::Allocator>::instance()}; },
+	[]() { return new MetaBufAlloc{ZmSingleton<typename MetaBufAlloc::Allocator>::instance()}; },
+	0, 0, transform);
       if (ZuUnlikely(moved <= 0)) return discard();
       m_received += n;
       remaining -= n;

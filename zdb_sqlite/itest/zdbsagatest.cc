@@ -320,9 +320,7 @@ static void exercise(unsigned mode)
   ZuTestScopeRT(exercise);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
-  ZuCheckRT(mx.start());
+  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<DB> db = new DB{};
   db->init(ZdbCf{cf}, &mx, {});
   auto orders = db->initTable<zdbtest::Order>("sl_saga_order");
@@ -332,6 +330,7 @@ static void exercise(unsigned mode)
   context->items = items;
   auto contextPtr = context.ptr();
   db->sagas({zdbtest::liveSagaDef(), zdbtest::batchSagaDef()});
+  ZuCheckRT(mx.start());
   bool started = db->start();
   ZuCheckRT(started);
   if (!started) {
@@ -408,7 +407,6 @@ static void exercise(unsigned mode)
       ZuCheckRT(mx.stop());
       db->final();
       db = new zdbtest::SagaDB{};
-      ZuCheckRT(mx.start());
       db->init(ZdbCf{cf}, &mx, {});
       orders = db->initTable<zdbtest::Order>("sl_saga_order");
       items = db->initTable<zdbtest::Order>("sl_saga_item");
@@ -418,6 +416,7 @@ static void exercise(unsigned mode)
       context->done = &done;
       contextPtr = context.ptr();
       db->sagas({zdbtest::liveSagaDef(), zdbtest::batchSagaDef()});
+      ZuCheckRT(mx.start());
       started = db->start();
       ZuCheckRT(started);
       if (!started) {
@@ -467,12 +466,9 @@ static void batches(
   ZuTestScopeRT(batches);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
-  ZuCheckRT(mx.start());
+  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   auto cuts = recover ? (fail ? 2 : 2 * (2 * count + 1)) : 1;
   for (unsigned cut = 0; cut < cuts; ++cut) {
-    if (cut) ZuCheckRT(mx.start());
     ZmRef<DB> db;
     ZdbTblRef<zdbtest::Order> orders, items;
     ZmRef<zdbtest::SagaDB> context;
@@ -485,7 +481,7 @@ static void batches(
       context->orders = orders;
       context->items = items;
       db->sagas({zdbtest::liveSagaDef(), zdbtest::batchSagaDef()});
-      return db->start();
+      return mx.start() && db->start();
     };
     auto stop = [&db, &orders, &items, &context, &mx]() {
       bool ok = db->stop(); // drains SQLite and shard callbacks
@@ -531,8 +527,7 @@ static void batches(
 	context->pausedComplete(false);
       });
       ZuCheckRT(stop());
-      ZuCheckRT(mx.start());
-      ZuCheckRT(start());
+          ZuCheckRT(start());
       // Recovered work has no callback from the interrupted live instance.
     } else {
       done.wait();
@@ -600,7 +595,8 @@ static Zdb_::OpenResult open(
     store->open(internal, ZuMv(id), ZfVFields<Order>(), ZfVKeyFields<Order>(),
       schema, localBufAllocFn<Order>(),
       [wake = ZuMv(wake)](OpenResult result) mutable {
-	if (result.is<ZeException>()) ZiLogEvent(result.p<ZeException>());
+	if (result.is<ZeException>())
+	  ZiLogEvent(ZuMv(result).p<ZeException>());
 	wake(ZuMv(result));
       });
   });
@@ -620,12 +616,12 @@ static bool write(Zdb_::OpenData &state, ZuCSpan id, int vn, int qty)
   UN un = state.un[0] == nullUN() ? 0 : state.un[0] + 1;
   SN sn = state.sn + 1;
   Order row{"NS", 1, "NS", "probe", 0, zdbtest::Side::Buy, {100}, {qty}};
-  Builder fbb{new Zdb_::IOBufAlloc<Order>{nullptr, 0}};
+  Builder fbb{new Zdb_::IOBufAlloc<Order>{localBufAllocator<Order>(), nullptr, 0}};
   auto nested = fbb.startNested();
   auto data = fbb.endNested(nested, Zfb::save(fbb, row));
   fbb.finish(saveMsg(fbb, saveRecord(fbb, id, un, sn, vn, 0, data),
     Msg::Tag::Replication));
-  bool ok = ZmBlock<bool>{}([table = state.storeTbl, buf = saveFrame(fbb)](auto wake) mutable {
+  bool ok = ZmBlock<bool>{}([table = state.storeTbl, buf = saveHdr(fbb)](auto wake) mutable {
     table->write(ZuMv(buf),
       [wake = ZuMv(wake)](ZmRef<IOBuf>, CommitResult result) mutable {
 	wake(result.is<void>());
@@ -640,7 +636,7 @@ static int read(Zdb_::StoreTbl *table)
   using namespace Zdb_;
   using zdbtest::Order;
   Table<Order>::Key<0> key{"NS", 1};
-  Builder fbb{new Zdb_::IOBufAlloc<Order>{nullptr, 0}};
+  Builder fbb{new Zdb_::IOBufAlloc<Order>{localBufAllocator<Order>(), nullptr, 0}};
   fbb.finish(Zfb::save(fbb, key));
   return ZmBlock<int>{}([table, buf = fbb.buf()](auto wake) mutable {
     table->find(0, ZuMv(buf), [wake = ZuMv(wake)](RowResult result) mutable {
@@ -666,12 +662,11 @@ static void namespaces(bool maxID)
     while (id.length() < IDSize_ - 1) id << 'n';
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
-  ZuCheckRT(mx.start());
+  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<Zdb> db = new Zdb{};
   db->init(ZdbCf{cf}, &mx, {});
   auto orders = db->initTable<zdbtest::Order>("sl_saga_order");
+  ZuCheckRT(mx.start());
   bool started = db->start();
   ZuCheckRT(started);
   if (!started) {
@@ -727,9 +722,9 @@ static void namespaces(bool maxID)
 	  orders = {};
 	  ZuCheckRT(mx.stop());
 	  db->final();
-	  ZuCheckRT(mx.start());
 	  db->init(ZdbCf{cf}, &mx, {});
 	  orders = db->initTable<zdbtest::Order>("sl_saga_order");
+	  ZuCheckRT(mx.start());
 	}
 	bool started = db->start();
 	ZuCheckRT(started);

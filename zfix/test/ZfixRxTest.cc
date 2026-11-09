@@ -41,7 +41,7 @@ static SessionConfig config(unsigned mode = Transport::FIX4)
 }
 static ZmRef<RxQueue::Node> rawFrame(ZuCSpan content)
 {
-  ZmRef<ZiIOBuf> buffer = ZmSingleton<Zi::AppBufAllocator<
+  ZmRef<ZiIOBuf> buffer = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
     ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
   ZuSpan<char> storage{buffer->data(), buffer->size};
   Fmt::FrameWriter writer{storage, "FIX.4.4"};
@@ -61,7 +61,7 @@ static ZmRef<RxQueue::Node> rawFrame(ZuCSpan content)
 static ZmRef<RxQueue::Node> frame(uint64_t seqNo, ZuCSpan type, ZuCSpan body,
     bool dup = false, int age = 0, ZuCSpan sender = "PEER")
 {
-  ZmRef<ZiIOBuf> buffer = ZmSingleton<Zi::AppBufAllocator<
+  ZmRef<ZiIOBuf> buffer = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
     ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
   ZuSpan<char> storage{buffer->data(), buffer->size};
   Fmt::FrameWriter writer{storage, "FIX.4.4"};
@@ -306,11 +306,13 @@ static void steadyRecovery()
 static void ordered()
 {
   ZuTestScope(ordered);
+  using Buf = Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
   Receiver r{config()}; r.ready();
   ZuCheck(r.send(4, "D", "11=44\1") == RxResult::Accepted);
   ZuCheck(!r.session_().ready_() && r.expected_() == 3 && !r.business.length());
   ZuCheck(r.retained_() == 1
-    && r.retainedBytes_() >= Zi::IOBufAlloc<ZiIOBuf>::Size + sizeof(RxQueue::Node));
+    && r.retainedBytes_() >= Buf::Size + sizeof(RxQueue::Node));
   ZuCheck(r.send(3, "D", "11=33\1") == RxResult::Accepted);
   r.drain();
   ZuCheck(r.business.length() == 2 && r.business[0] == 33 && r.business[1] == 44);
@@ -522,7 +524,7 @@ static void businessLimits()
 static void limitsAndRaw()
 {
   ZuTestScope(limitsAndRaw);
-  enum { Charge = Zi::IOBufAlloc<ZiIOBuf>::Size + sizeof(RxQueue::Node) };
+  enum { Charge = Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Size + sizeof(RxQueue::Node) };
   Receiver r{config(), RxLimits{.readAheadBytes = Charge}}; r.ready();
   r.send(5, "D", "11=55\1");
   ZuCheck(r.retainedBytes_() == Charge);
@@ -781,7 +783,7 @@ static void stateChanges()
 static void faultMatrix()
 {
   ZuTestScope(faultMatrix);
-  enum { Charge = Zi::IOBufAlloc<ZiIOBuf>::Size + sizeof(RxQueue::Node) };
+  enum { Charge = Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Size + sizeof(RxQueue::Node) };
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode)
     for (bool driver : {false, true})
       for (unsigned n = 0; n < 10; ++n) {

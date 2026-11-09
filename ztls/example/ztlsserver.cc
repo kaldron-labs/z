@@ -163,20 +163,20 @@ int main(int argc, char **argv)
 	  .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
 
-  ZmRef<App::Link::RxAllocator> rx = new App::Link::RxAllocator{};
-  ZmRef<App::Link::TxAllocator> tx = new App::Link::TxAllocator{};
+  Zi::IOBufAllocator *rx = App::Link::rxAllocator(&mx);
+  Zi::IOBufAllocator *tx = App::Link::txAllocator(&mx);
+
+  Ztls::ServerParams params(&mx, "3", "4");
+  params.alpn(alpn).certPath(argv[3]).keyPath(argv[4]);
+  params.rxAllocator(rx).txAllocator(tx);
+  if (!app.init(ZuMv(params))) {
+    std::cerr << "TLS server initialization failed\n" << std::flush;
+    app.final(); mx.stop(); ZiLog::stop(); return 1;
+  }
 
   if (!mx.start()) {
     std::cerr << "ZiMultiplex start failed\n" << std::flush;
     return 1;
-  }
-
-  Ztls::ServerParams params(&mx, "3", "4");
-  params.alpn(alpn).certPath(argv[3]).keyPath(argv[4]);
-  params.rxAllocator(rx.ptr()).txAllocator(tx.ptr());
-  if (!app.init(ZuMv(params))) {
-    std::cerr << "TLS server initialization failed\n" << std::flush;
-    app.final(); mx.stop(); ZiLog::stop(); return 1;
   }
 
   if (!app.start()) { app.final(); mx.stop(); ZiLog::stop(); return 1; }

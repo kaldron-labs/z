@@ -19,6 +19,7 @@
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuTraits.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRef.hh>
@@ -33,22 +34,12 @@
 
 namespace Zrest {
 
-ZuDerive(InputBuf, (Zi::IOBufAlloc<ZiIOBuf,
-  ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zrest.Input">>));
-
-struct InputSlice : public ZmNHeap<InputSlice>, public ZiIOBuf {
-  ZmRef<ZiIOBuf> backing;
-
-  friend inline ZuStringT<"Zrest.InputSlice"> ZmNHeapID(InputSlice *);
-  InputSlice(Zi::RxRange range) :
-    ZiIOBuf{range.buf->data_() + range.offset, range.length, nullptr, range.length},
-    backing{ZuMv(range.buf)} { }
-  void releaseView_() override { backing = nullptr; }
-  uint64_t memory() const override {
-    return ZmHeapAllocSize<sizeof(InputSlice)>{} + storageMemory_() +
-      (backing ? backing->memory() : 0);
-  }
-};
+ZuDerive(InputBuf, (Zi::IOBufBuiltin<
+  ZiIOBuf,
+  ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"Zrest.Input">,
+  ZiIOBuf_DefltMaxSize>));
 
 class Input {
 public:
@@ -68,7 +59,7 @@ public:
     buffer();
     if (m_body->refCount() > 1) {
       auto shared = ZuMv(m_body);
-      m_body = new InputBuf{nullptr, 0};
+      m_body = new InputBuf{ZmSingleton<typename InputBuf::Allocator>::instance()};
       m_body->ensure(m_length + span.length());
       m_body->append(shared->cspan());
     }
@@ -77,32 +68,41 @@ public:
     return true;
   }
 
+  bool feed(ZmRef<ZiIOBuf> buf) {
+    if (!buf || !fits_(buf->length)) { reset(); return false; }
+    if (!m_body) {
+      m_length = buf->length;
+      m_body = ZuMv(buf);
+      return true;
+    }
+    return feed(buf->span());
+  }
+
   template <typename Rx>
   bool body(Rx &rx) {
-    auto length = rx.length();
-    if (!fits_(length)) { reset(); return false; }
-    rx.eachRange(length, [this](Zi::RxRange range) -> int64_t {
-      auto n = range.length;
-      retain_(ZuMv(range));
-      return n;
-    });
-    rx.advance(length);
+    if (!fits_(rx.length())) { reset(); return false; }
+    while (rx.length()) {
+      ZmRef<ZiIOBuf> buf;
+      auto n = rx.extract(
+        [](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
+        []() {
+          using Buf = Zi::IOBufBuiltin<
+            ZiRxQueue::Node,
+            ZiIOBuf_DefltSize,
+            ZiIOBuf_DefltAlign,
+            ZuStringT<"Zrest.Input">,
+            ZiIOBuf_DefltMaxSize>;
+          return ZmRef<ZiRxQueue::Node>{new Buf{
+            ZmSingleton<typename Buf::Allocator>::instance()}};
+        }, buf);
+      if (n <= 0 || !feed(ZuMv(buf))) { reset(); return false; }
+    }
     return true;
   }
 
   const ZmRef<ZiIOBuf> &buffer() {
-    if (m_body || !m_max) return m_body;
-    if (m_ranges.length() == 1) {
-      auto range = ZuMv(m_ranges[0]);
-      if (range.offset == range.buf->skip && range.length == range.buf->length)
-	m_body = ZuMv(range.buf);
-      else m_body = new InputSlice{ZuMv(range)};
-    } else {
-      m_body = new InputBuf{nullptr, 0};
-      m_body->ensure(m_length);
-      for (const auto &range : m_ranges) m_body->append(range.cspan());
-    }
-    m_ranges.length(0);
+    if (!m_body && m_max)
+      m_body = new InputBuf{ZmSingleton<typename InputBuf::Allocator>::instance()};
     return m_body;
   }
   ZmRef<ZiIOBuf> take() {
@@ -111,27 +111,14 @@ public:
     reset();
     return result;
   }
-  void reset() { m_body = nullptr; m_ranges.length(0); m_max = m_length = 0; }
+  void reset() { m_body = nullptr; m_max = m_length = 0; }
 
 private:
   bool fits_(uint64_t length) const {
     return m_max && length <= m_max - m_length;
   }
-  void retain_(Zi::RxRange range) {
-    if (m_body) {
-      auto n = m_body->length;
-      m_ranges.push(Zi::RxRange{ZuMv(m_body), 0, n});
-    }
-    auto n = m_ranges.length();
-    if (n && m_ranges[n - 1].buf == range.buf &&
-	m_ranges[n - 1].offset + m_ranges[n - 1].length == range.offset)
-      m_ranges[n - 1].length += range.length;
-    else m_ranges.push(range);
-    m_length += range.length;
-  }
 
   ZmRef<ZiIOBuf> m_body;
-  ZtArray<Zi::RxRange, ZtArrayHeapID<"Zrest.Input.Ranges">> m_ranges;
   unsigned m_max = 0;
   unsigned m_length = 0;
 };
@@ -158,7 +145,7 @@ friend inline ZuStringT<"Zrest.Borrowed"> ZmNHeapID(BorrowedData *);
   template <typename Span>
   bool retain(Span input, Span &output) {
     if (!input.length()) { output = input; return true; }
-    ZmRef<ZiIOBuf> buffer = new InputBuf{nullptr, 0};
+    ZmRef<ZiIOBuf> buffer = new InputBuf{ZmSingleton<typename InputBuf::Allocator>::instance()};
     if (!buffer->append(input)) return false;
     output = Span{buffer->data(), buffer->length};
     buffers.push(ZuMv(buffer));

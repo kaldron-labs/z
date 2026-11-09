@@ -28,7 +28,7 @@ int main(int argc, char **argv)
     return Usage;
   }
   int status = run(role);
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   return status;
 }

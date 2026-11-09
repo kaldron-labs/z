@@ -28,26 +28,26 @@ static void deadline(const Zquic::RttEstimator &rtt, ZuTime expected)
   Zquic::PktTxSpace tx;
   ZuCheckRT(tx.add(packet(1, sent)) &&
       tx.add(packet(2, sent + Zquic::timeUS(1000))) && tx.ack(2),
-    "loss deadline setup must acknowledge a later packet");
+    log_("loss deadline setup must acknowledge a later packet"));
   ZuCheckRT(rtt.timeThreshold() == expected,
-    "loss threshold must use max(latest, smoothed) at full precision");
+    log_("loss threshold must use max(latest, smoothed) at full precision"));
   ZuTime due = sent + expected;
   ZuCheckRT(tx.nextLossTime(2, rtt.timeThreshold()) == due &&
       !tx.markPktThreshLoss(2, 3),
-    "deadline must apply without packet-threshold evidence");
+    log_("deadline must apply without packet-threshold evidence"));
   ZuCheckRT(!tx.markTimeThreshLoss(
       2, due - ZuTime{0, 1}, rtt.timeThreshold()) &&
       tx.bytesInFlight() == 1200 && !tx.lost(),
-    "packet must remain in flight one nanosecond before deadline");
+    log_("packet must remain in flight one nanosecond before deadline"));
   uint64_t bytes = 0;
   ZuTime lostSent;
   ZuCheckRT(tx.markTimeThreshLoss(
       2, due, rtt.timeThreshold(), &bytes, &lostSent) == 1 &&
       bytes == 1200 && lostSent == sent && !tx.bytesInFlight() &&
       !tx.nextLossTime(2, rtt.timeThreshold()),
-    "packet must become lost exactly at deadline and retire once");
+    log_("packet must become lost exactly at deadline and retire once"));
   ZuCheckRT(!tx.markTimeThreshLoss(2, due, rtt.timeThreshold(), &bytes) && !bytes,
-    "repeated time loss scan must not retire bytes twice");
+    log_("repeated time loss scan must not retire bytes twice"));
 }
 
 void testFallingRTT()
@@ -66,25 +66,25 @@ void testFallingRTT()
       !tx.markTimeThreshLoss(2, sent + Zquic::timeUS(20000), rtt.timeThreshold()) &&
       tx.bytesInFlight() == 1200,
     "falling RTT must retain a 20 ms-old packet with a later ACK");
-  deadline(rtt, ZuTime{0, 99843750});
+  ZuTestCall(deadline, rtt, ZuTime{0, 99843750});
 }
 
 void testOtherRTT()
 {
   ZuTestScope(testOtherRTT);
   Zquic::RttEstimator initial;
-  deadline(initial, Zquic::timeUS(374625));
+  ZuTestCall(deadline, initial, Zquic::timeUS(374625));
   Zquic::RttEstimator rising;
   rising.sample(Zquic::timeUS(10000), ZuTime{0}, false);
   rising.sample(Zquic::timeUS(100000), ZuTime{0}, false);
-  deadline(rising, Zquic::timeUS(112500));
+  ZuTestCall(deadline, rising, Zquic::timeUS(112500));
   Zquic::RttEstimator constant;
   constant.sample(Zquic::timeUS(10000), ZuTime{0}, false);
   constant.sample(Zquic::timeUS(10000), ZuTime{0}, false);
-  deadline(constant, Zquic::timeUS(11250));
+  ZuTestCall(deadline, constant, Zquic::timeUS(11250));
   Zquic::RttEstimator floor;
   floor.sample(Zquic::timeUS(100), ZuTime{0}, false);
-  deadline(floor, Zquic::RttEstimator::Granularity);
+  ZuTestCall(deadline, floor, Zquic::RttEstimator::Granularity);
 }
 
 int main(int argc, char **argv)

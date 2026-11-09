@@ -34,7 +34,7 @@ template <
   unsigned Size = ZiIOBuf_DefltSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = ZiIOBuf_HeapID{}()>
-using ZiRxBufAlloc = Zi::IOBufAlloc<ZiRxBuf, Size, MaxSize, ZuStringT<HeapID>>;
+using ZiRxBufAlloc = Zi::IOBufBuiltin<ZiRxBuf, Size, ZiIOBuf_DefltAlign, ZuStringT<HeapID>, MaxSize>;
 
 template <typename Impl_, typename BufAlloc_>
 class ZiRx {

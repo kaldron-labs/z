@@ -88,20 +88,20 @@ public:
     });
     return true;
   }
-  bool send(StreamRef stream, Zi::RxRange payload, bool fin = true) {
-    if (Base::disconnecting_() || !stream || (!payload.length && !fin)) return false;
+  bool send(StreamRef stream, ZmRef<ZiIOBuf> payload, bool fin = true) {
+    if (Base::disconnecting_() || !stream || (!payload && !fin)) return false;
+    if (app()->txInvoked()) return send_(ZuMv(stream), ZuMv(payload), fin);
     app()->txInvoke([link = this->impl(), stream = ZuMv(stream),
 	payload = ZuMv(payload), fin]() mutable {
       if (!link->disconnecting_()) link->send_(ZuMv(stream), ZuMv(payload), fin);
     });
     return true;
   }
-  bool send_(StreamRef stream, Zi::RxRange payload, bool fin = true) {
+  bool send_(StreamRef stream, ZmRef<ZiIOBuf> payload, bool fin = true) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC retained send outside Tx thread", return false);
-    if (Base::linkClosedTx_() || !stream || (!payload.length && !fin)) return false;
-    if (payload.length && !stream->sendRange_(
-	TxRange{ZuMv(payload.buf), payload.offset, payload.length})) return false;
+    if (Base::linkClosedTx_() || !stream || (!payload && !fin)) return false;
+    if (payload && payload->length && !stream->send_(ZuMv(payload))) return false;
     if (fin) stream->fin();
     queueTxFlush_();
     return true;
@@ -115,7 +115,7 @@ public:
     if (payload) {
       auto tx = stream->txStream_();
       tx << payload;
-      tx.flush();
+      if (!tx.flush()) return false;
     }
     if (fin) stream->fin();
     queueTxFlush_();
@@ -182,6 +182,16 @@ public:
 	Base::requeueRetransmit_(level, ref);
 	break;
       }
+      if (ref.kind == SentFrameKind::Control &&
+	  ref.controlType == FrameType::PathChallenge) {
+	// Validation recovery belongs to the candidate tuple and peer CID.
+	if (!sendPassiveMigChal_()) {
+	  Base::requeueRetransmit_(level, ref);
+	  break;
+	}
+	sent = true;
+	continue;
+      }
       if (ref.kind == SentFrameKind::Stream) {
 	if (!Base::buildRetxStream_(build, ref)) {
 	  if (Base::debugLog_())
@@ -190,7 +200,8 @@ public:
 		ref.streamID << " offset=" << ref.offset <<
 		" length=" << ref.length << " fin=" << int(ref.fin);
 	    }));
-	  continue;
+	  (void)Base::requeueStreamRef_(level, ref);
+	  break;
 	}
       } else if (!Base::buildRetxCtl_(build, ref))
 	continue;
@@ -551,7 +562,7 @@ private:
       ZiSockAddr remote = addr;
       ZiSockAddr responseAddr = addr;
       link->observePathRxTx_(
-	ZuMv(local), ZuMv(remote), rxBytes, true, false);
+	ZuMv(local), ZuMv(remote), rxBytes);
       link->sendPathResponseTx_(
 	payload, ZuMv(responseAddr));
     });
@@ -584,6 +595,9 @@ private:
     if (!Base::establishedTx_()) {
       return flushPendingAcks_(addr);
     }
+    // Ingress ACK snapshots can precede candidate CID selection. Ordinary
+    // output follows the active tuple; candidate probes use their own route.
+    addr = m_peerAddr;
     bool sent = Base::flushCtlStreamsBatch_(
 	addr,
 	[this](PktBuild &build) {

@@ -226,19 +226,19 @@ int main(int argc, char **argv)
 	  .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
 
-  ZmRef<App::Link::RxAllocator> rx = new App::Link::RxAllocator{};
-  ZmRef<App::Link::TxAllocator> tx = new App::Link::TxAllocator{};
-
-  if (!mx.start()) {
-    std::cerr << "ZiMultiplex start failed\n" << std::flush;
-    return 1;
-  }
+  Zi::IOBufAllocator *rx = App::Link::rxAllocator(&mx);
+  Zi::IOBufAllocator *tx = App::Link::txAllocator(&mx);
 
   if (!app.init(Ztls::ClientParams(&mx, "3", "4").hub(
       [&alpn, ca, &rx, &tx](auto &p) {
-	p.alpn(alpn).caPath(ca).rxAllocator(rx.ptr()).txAllocator(tx.ptr());
+	p.alpn(alpn).caPath(ca).rxAllocator(rx).txAllocator(tx);
       }))) {
     std::cerr << "TLS client initialization failed\n" << std::flush;
+    return 1;
+  }
+
+  if (!mx.start()) {
+    std::cerr << "ZiMultiplex start failed\n" << std::flush;
     return 1;
   }
 

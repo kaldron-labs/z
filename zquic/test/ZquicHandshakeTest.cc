@@ -11,6 +11,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZuPtr.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmBlock.hh>
@@ -95,8 +96,7 @@ struct TLSMessage : public ZiIOBuf {
 
 ZmListDerive(TLSQueue, TLSMessage,
   ZmListNode<TLSMessage, ZmListHeapID<"">>);
-using TLSBuf = Zi::IOBufAlloc<TLSQueue::Node, ZiIOBuf_DefltSize,
-  TLSBufSize, ZuStringT<"Zquic.Test.TLSBuf">>;
+using TLSBuf = Zi::IOBufBuiltin<TLSQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zquic.Test.TLSBuf">, TLSBufSize>;
 
 struct TLSPeer : public ZmNHeap<TLSPeer> {
 friend inline ZuStringT<"Zquic.Test.TLSPeer"> ZmNHeapID(TLSPeer *);
@@ -121,7 +121,8 @@ bool enqueueFlight_(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
     unsigned size = 1 + Zquic::VarInt::length(tx.txOffset()) +
       Zquic::VarInt::length(len) + len;
     if (size > TLSBufSize) return false;
-    ZmRef<TLSQueue::Node> msg = new TLSBuf{nullptr, 0};
+    ZmRef<TLSQueue::Node> msg = new TLSBuf{
+      ZmSingleton<typename TLSBuf::Allocator>::instance(), nullptr, 0};
     int n = tx.writeFrame(msg->alloc(size), size, bytes_(data + off, len));
     if (n < 0) return false;
     msg->epoch = epoch;
@@ -135,7 +136,8 @@ bool handleTLS_(
   TLSPeer &dst, TLSQueue &out, const TLSMessage *msg)
 {
   ZmRef<ZiIOBuf> buf =
-    new Zquic::CryptoTxBufAlloc<TLSBufSize, TLSBufSize>{nullptr, 0};
+    new Zquic::CryptoTxBufAlloc<TLSBufSize, TLSBufSize>{
+      ZmSingleton<typename Zquic::CryptoTxBufAlloc<TLSBufSize, TLSBufSize>::Allocator>::instance(), nullptr, 0};
   size_t offsets[5] = {};
   ZuBSpan in;
   size_t inEpoch = msg ? msg->epoch : 0;

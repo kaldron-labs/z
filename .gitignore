@@ -177,6 +177,3 @@ zhttp/itest/zhttpserverstreamtest.ZhttpServerStop-*/
 /zfix/test/ZfixSessionTest
 
 /zfix/test/ZfixRxTest
-
-# Configured public Zi backend selection
-/zi/src/ZiConfig.hh

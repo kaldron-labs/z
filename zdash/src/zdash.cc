@@ -19,6 +19,7 @@
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmTrap.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmRing.hh>
 #include <zlib/ZmHeap.hh>
@@ -80,7 +81,9 @@ ZuDerive(Secret, (ZtString<ZtStringSecret<true,
 // Bound network reassembly and queued telemetry independently of ring size.
 enum { FrameMax = 1U << 20, QueuedInputMax = 1U << 22 };
 using Frame = ZmRef<ZiIOBuf>;
-using FrameBuf = Zi::IOBufAlloc<ZiIOBuf, 1024, FrameMax, ZuStringT<"ZDash.Frame">>;
+using FrameBuf =
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 1024, FrameMax, ZiIOBuf_Align,
+    ZuStringT<"ZDash.Frame">>;
 
 struct Subscription {
   using Filter = Ztc::RequestFilter;
@@ -1186,8 +1189,8 @@ public:
   using AppItem = TelItem<Ztc::AppTelemetry>;
   using DBItem = TelItem<Ztc::DBTelemetry>;
 
-  bool init(ZiMultiplex *mx, AppCf config, ZuCSpan caPath, ZuCSpan token,
-      ModuleSession *module) {
+  bool init(ZiMultiplex *mx, AppCf config, const Zhttp::TLSConfig &tls,
+      ZuCSpan token, ModuleSession *module) {
     m_module = module;
     m_offline = module && module->offline;
     if (!m_offline && (!Zws::URI::parse(m_uri, config.wssURL).ok() ||
@@ -1239,11 +1242,11 @@ public:
     if (!m_gtkReady) return false;
     if (m_offline) return true;
 
-    return transportInit(mx, caPath, token);
+    return transportInit(mx, tls, token);
   }
 
   // Main-thread lifecycle; GTK and the TLS client survive credential renewal.
-  bool transportInit(ZiMultiplex *mx, ZuCSpan caPath, ZuCSpan token) {
+  bool transportInit(ZiMultiplex *mx, const Zhttp::TLSConfig &tls, ZuCSpan token) {
     Zws::Config ws;
     ws.maxMessage = FrameMax;
     ws.maxQueuedInput = QueuedInputMax;
@@ -1251,8 +1254,6 @@ public:
     ws.closeTimeout = 5;
     ws.pingInterval = 30;
     ws.pongTimeout = 60;
-    Zhttp::TLSConfig tls;
-    if (caPath) tls.caPath(caPath);
     if (!m_client.init(Zhttp::HubConfig{mx, "rx", "tx"}, tls,
 	Zhttp::Destination{m_uri.host, m_uri.port, m_uri.ipv6Literal}, ws))
       return false;
@@ -1365,12 +1366,7 @@ public:
       auto frame = requestFrame(sub, subscribe, tx.allocBuf(head), tx.tailRoom());
       if (!frame) return;
       if (m_module && m_module->requested) m_module->requested(frame->cspan());
-      if (tx.canAdopt_(*frame)) {
-	tx << ZuMv(frame);
-      } else {
-	unsigned length = frame->length;
-	tx.appendRange(ZuMv(frame), 0, length);
-      }
+      tx << ZuMv(frame);
       tx.flush();
     }, Zws::Opcode::Binary);
   }
@@ -1404,23 +1400,31 @@ public:
     auto &message = m_frame;
     unsigned incoming = rx.length();
     if (incoming > FrameMax - message.length()) { return reject(link, Zws::CloseCode::TooLarge); }
+    using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, 1024, FrameMax>;
+    auto alloc = []() { return ZmSingleton<Alloc>::instance()->allocBuf(); };
     while (rx) {
-      if (rx.splice(message, [](ZuBSpan span) -> int64_t { return span.length(); }) <= 0)
+      if (rx.splice(message,
+	[](ZuBSpan span) -> int64_t { return span.length(); }, alloc, alloc) <= 0)
 	{ return reject(link, Zws::CloseCode::TooLarge); }
     }
-    if (message.length() > message.span().length() &&
-	!message.gather(unsigned(message.length()), [&link]() {
-	  auto allocator = link.app()->mx()->rxAllocator(false);
-	  return ZmRef<ZiRxQueue::Node>::acquire(static_cast<ZiRxQueue::Node *>(
-	    allocator->alloc().release()));
-	})) { return reject(link, Zws::CloseCode::TooLarge); }
     return 1;
   }
 
   template <typename L>
   int messageEnd(L &link) {
-    auto frame = m_frame.range();
-    auto code = receive_(frame.cspan(), true);
+    uint64_t remaining = m_frame.length();
+    ZmRef<ZiIOBuf> frame;
+    using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, 1024, FrameMax>;
+    auto length = m_frame.extract(
+      [&remaining](ZuBSpan span) -> int64_t {
+	if (remaining > span.length()) {
+	  remaining -= span.length();
+	  return 0;
+	}
+	return remaining;
+      }, []() { return ZmSingleton<Alloc>::instance()->allocBuf(); }, frame);
+    auto code = length > 0 ? receive_(frame->cspan(), true) :
+      Zws::CloseCode::InvalidData;
     m_frame.clean();
     return code == Zws::CloseCode::Normal ? 1 : reject(link, code);
   }
@@ -1652,7 +1656,7 @@ public:
       host.gtkRun = {ZGtk::App::sched(), ZGtk::App::sid(),
 	[this]() { return !m_gtkClosing; }};
       host.request_ = [this]() {
-	return requestFrame(m_sub, true, Frame{new FrameBuf{nullptr, 0}});
+	return requestFrame(m_sub, true, Frame{ZmSingleton<FrameBuf>::instance()->allocBuf()});
       };
       host.subscription_ = [this](ZuCSpan device, ZuCSpan publisher,
 	  unsigned group) -> uint64_t {
@@ -2087,14 +2091,20 @@ static bool session(
       .thread(ZDash::RxSID, [](auto &t) { t.name("rx"); t.isolated(1); })
       .thread(ZDash::TxSID, [](auto &t) { t.name("tx"); t.isolated(1); })
       .thread(ZDash::GtkSID, [](auto &t) { t.name("gtk"); t.isolated(1); });
-  }).rxThread(1).txThread(2)
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
-      ZuStringT<"Zhttp.TLS.Rx">>>()};
+  }).rxThread(1).txThread(2)};
+  using TLS = Zhttp::NativeTraits<Zhttp::H1TLS>::Transport;
+  auto tlsRx = mx.allocator<Zi::IOBufType::RxTLS,
+    TLS::RxAllocator::Buf, TLS::RxAllocator::Size, TLS::RxAllocator::MaxSize,
+    TLS::RxAllocator::Align, TLS::RxAllocator::Heap>();
+  auto tlsTx = mx.allocator<Zi::IOBufType::TxTLS,
+    TLS::TxAllocator::Buf, TLS::TxAllocator::Size, TLS::TxAllocator::MaxSize,
+    TLS::TxAllocator::Align, TLS::TxAllocator::Heap>();
+  auto tls = Zhttp::TLSConfig{}.caPath(caPath).rxAllocator(tlsRx).txAllocator(tlsTx);
   if (!mx.start()) return false;
   signalApp = &app;
   ZmTrap::sigintFn(sigint);
   ZmTrap::trap();
-  bool ok = app.init(&mx, ZuMv(config), caPath, token, module);
+  bool ok = app.init(&mx, ZuMv(config), tls, token, module);
   if (ok && lease) {
     while (!app.waitUntil(lease->renewAt)) {
       if (!lease->refresh(*lease)) { ok = false; break; }

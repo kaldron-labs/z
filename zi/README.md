@@ -142,10 +142,13 @@ Initialize the multiplexer, construct its typed Rx and Tx allocators, register
 both with `mx.allocator(a)`, then start the multiplexer and publish listeners or
 connections. Direct Zi use initializes the multiplexer in its constructor;
 Ztcp/Ztls dependents initialize their hub before preparing its allocator policies.
-Registration returns success only after the binding is complete. The default
-setup path registers immediately after initialization. Registration after start
-is supported from the main/control thread when needed; I/O shards cannot wait
-for it. Selecting an allocator for I/O never registers it implicitly.
+Registration requires `state() == ZmEngineState::Stopped` and asserts that
+precondition. All allocators, including those registered by protocol client/server
+initialization, must be registered before `start()`. Binding and registry
+insertion complete directly before return; there is no I/O-thread dispatch.
+The application must serialize registration against other registrations,
+`start()` and teardown. The assertion does not prevent a concurrent start race.
+Selecting an allocator for I/O never registers it implicitly.
 
 Each network allocator is permanently dedicated to one multiplexer. Allocators
 are app-owned, and the multiplexer retains one intrusive list entry per bound

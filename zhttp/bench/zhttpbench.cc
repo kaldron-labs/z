@@ -179,26 +179,14 @@ int run(const Zhttp::Test::TempDir &cert, unsigned count, unsigned jobs, unsigne
   State state;
   state.samples.size(count);
   state.held.size(jobs);
-  // Request/response and retirement overlap for every concurrent job.
-  uint64_t needed = uint64_t(jobs) * 4;
-  unsigned slots = needed > ZiMxParams::MaxRingSize ?
-    unsigned(ZiMxParams::MaxRingSize) : unsigned(needed);
   ZiMultiplex mx{ZiMxParams()
-    .rxRingSize(slots < ZiIOBuf_DefltRxRingSize ?
-      ZiIOBuf_DefltRxRingSize : slots)
-    .txRingSize(slots < ZiIOBuf_DefltTxRingSize ?
-      ZiIOBuf_DefltTxRingSize : slots)
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Zhttp.Net.Rx">>>().scheduler([](auto &s) {
+    .scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); })
       .thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  if (!mx.start()) return 1;
   Zhttp::HubConfig hub{&mx, "3", "4"};
   Server<Mask> server{&state};
   Client<Mask> client;
@@ -221,7 +209,7 @@ int run(const Zhttp::Test::TempDir &cert, unsigned count, unsigned jobs, unsigne
     }),
     Zhttp::QUICConfig{}.caPath(cert.certPath.cspan()));
   if (!initialized || !client.pool(0, Zhttp::Destination{"127.0.0.1", uint16_t(port)}) ||
-      !server.start() || !client.start()) return 1;
+      !mx.start() || !server.start() || !client.start()) return 1;
   unsigned listeners = unsigned(tcp) + unsigned(bool(selected & 6)) + unsigned(h3);
   for (unsigned i = 0; i < listeners; ++i)
     if (state.listening.timedwait(Zm::now(10))) return 1;
@@ -279,7 +267,7 @@ int run(const Zhttp::Test::TempDir &cert, unsigned count, unsigned jobs, unsigne
   qsort(state.samples.data(), count, sizeof(uint64_t), cmp);
   printf("mask=%u jobs=%u samples=%u warmup=%u payload=64 "
     "p50_ns=%lu p99_ns=%lu elapsed_ns=%ld alloc_calls=%lu rx_bytes=%lu "
-    "app_copy_bytes=0 idle_heap_bytes=%lu connection_heap_delta=%ld "
+    "idle_heap_bytes=%lu connection_heap_delta=%ld "
     "held_heap_delta=%ld errors=%u\n",
     selected, jobs, count, jobs * 10, state.samples[(count - 1) / 2],
     state.samples[(uint64_t(count) * 99 + 99) / 100 - 1], elapsed,
@@ -305,7 +293,7 @@ int main(int argc, char **argv)
   ZiLog::level(Ze::Error);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
-  ZiResolver::startSync();
+  ZiResolver::start();
   ZiTestResidue::init("zhttpbench");
   Zhttp::Test::TempDir cert;
   int result = 1;
@@ -315,7 +303,7 @@ int main(int argc, char **argv)
     ZhttpBench_Run(6); ZhttpBench_Run(12); ZhttpBench_Run(15);
 #undef ZhttpBench_Run
   }
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiLog::stop();
   return result;
 }

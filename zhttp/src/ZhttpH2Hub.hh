@@ -176,6 +176,7 @@ inline Ztls::ClientParams clientParams(
     hub.mx(), hub.rxThread(), hub.txThread()};
   const auto &tls = config.tls();
   params.asyncThread(hub.asyncThread())
+    .rxAllocator(tls.rxAllocator()).txAllocator(tls.txAllocator())
     .caPath(tls.caPath()).certPath(tls.certPath())
     .keyPath(tls.keyPath());
   alpn(params, config.policy());
@@ -189,9 +190,10 @@ inline Ztls::ServerParams serverParams(
     hub.mx(), hub.rxThread(), hub.txThread()};
   const auto &tls = config.tls();
   params.asyncThread(hub.asyncThread())
+    .rxAllocator(tls.rxAllocator()).txAllocator(tls.txAllocator())
     .caPath(tls.caPath()).certPath(tls.certPath())
-    .keyPath(tls.keyPath())
-    .mTLS(tls.mTLS()).cacheTimeout(tls.cacheTimeout());
+    .keyPath(tls.keyPath());
+  params.mTLS(tls.mTLS()).cacheTimeout(tls.cacheTimeout());
   alpn(params, config.policy());
   return params;
 }
@@ -290,32 +292,33 @@ struct StreamBytes {
 };
 
 // Protocol pending state owns framing metadata, not the socket context. A
-// complete frame can use its original output buffer. Retained ranges carry
-// the RFC 7540 nine-byte header inline until TLS protects the final wire bytes.
+// complete frame can use its original output buffer. Owned payload buffers
+// carry an inline RFC 7540 header until TLS protects the final wire bytes.
 struct TxFrame {
   ZmRef<ZiIOBuf> buf;
-  Zi::RxRange payload;
+  ZmRef<ZiIOBuf> payload;
   ZuBArray<FrameHeaderSize> header;
 
   TxFrame() = default;
   TxFrame(ZmRef<ZiIOBuf> buf_) : buf{ZuMv(buf_)} { }
-  TxFrame(FrameHeader h, Zi::RxRange payload_) : payload{ZuMv(payload_)} {
+  TxFrame(FrameHeader h, ZmRef<ZiIOBuf> payload_) : payload{ZuMv(payload_)} {
     putHeader(header, h);
   }
 
   bool operator !() const { return !buf && !header.length(); }
   ZuOpBool
   bool failed() const {
-    return buf ? buf->failed() : header.length() != FrameHeaderSize;
+    return buf ? buf->failed() : header.length() != FrameHeaderSize ||
+      (payload && payload->failed());
   }
   uint64_t length() const {
-    return (buf ? buf->length : header.length()) + payload.length;
+    return (buf ? buf->length : header.length()) + (payload ? payload->length : 0);
   }
   template <typename L>
   void each(L &&l) const {
     if (buf) l(ZuBSpan{buf->data(), buf->length});
     else l(ZuBSpan{header});
-    if (payload.length) l(payload.cspan());
+    if (payload && payload->length) l(payload->cspan());
   }
   uint8_t *data() { return buf ? buf->data() : header.data(); }
   const uint8_t *data() const { return buf ? buf->data() : header.data(); }
@@ -342,6 +345,22 @@ public:
 
   ~DataStream() { this->flush(); }
 
+  bool appendBuf(ZmRef<ZiIOBuf> buf) {
+    if (!buf || buf->failed()) { this->fail(); return false; }
+    Base::operator <<(ZuMv(buf));
+    return !this->failed();
+  }
+  DataStream &operator <<(ZmRef<ZiIOBuf> buf) {
+    appendBuf(ZuMv(buf));
+    return *this;
+  }
+  template <typename V,
+    typename = ZuIfT<!ZuIsConvertible<V, ZmRef<ZiIOBuf>>{}>>
+  DataStream &operator <<(V &&value) {
+    Base::operator <<(ZuFwd<V>(value));
+    return *this;
+  }
+
   bool prepareBuf_(ZiIOBuf *buf, bool) {
     if (m_remaining != uint64_t(-1)) {
       if (ZuUnlikely(m_remaining < buf->length)) {
@@ -365,26 +384,6 @@ public:
     out[6] = uint8_t(m_streamID>>16);
     out[7] = uint8_t(m_streamID>>8);
     out[8] = uint8_t(m_streamID);
-    return true;
-  }
-  bool prepareRange_(Zi::RxRange range) {
-    if (m_remaining != uint64_t(-1) && m_remaining < range.length) {
-      m_valid = false;
-      range.length = unsigned(m_remaining);
-    }
-    if (m_remaining != uint64_t(-1)) m_remaining -= range.length;
-    unsigned max = this->maxSize() - this->headRoom() - this->tailRoom();
-    while (range.length) {
-      auto n = range.length < max ? range.length : max;
-      if (!n) return false;
-      m_lower << TxFrame{FrameHeader{
-	.length = n, .streamID = m_streamID, .type = FrameType::Data},
-	range.subspan(0, n)};
-      if (m_lower.failed()) return false;
-      range.offset += n;
-      range.length -= n;
-      m_produced += n;
-    }
     return true;
   }
   uint64_t produced() const { return m_produced; }
@@ -513,13 +512,15 @@ public:
 	uint64_t offset, unsigned length) {
       do {
 	unsigned chunk = length < m_frameSize ? length : m_frameSize;
+	ZmRef<ZiIOBuf> part = new BodyBufAlloc{ZmSingleton<typename BodyBufAlloc::Allocator>::instance()};
+	part->append(payload->data() + unsigned(offset), chunk);
 	m_frames.push(TxFrame{FrameHeader{
 	  .length = chunk,
 	  .streamID = m_streamID,
 	  .type = uint8_t(first ? FrameType::Headers : FrameType::Continuation),
 	  .flags = uint8_t((first && m_endStream ? Flag::EndStream : 0) |
 	    (remaining == chunk ? Flag::EndHeaders : 0))},
-	  Zi::RxRange{payload, unsigned(offset), chunk}});
+	  ZuMv(part)});
 	remaining -= chunk;
 	offset += chunk;
 	length -= chunk;
@@ -850,6 +851,13 @@ class Wire : public H2::Connection<Wire<Impl, AppLink>> {
   };
 
 public:
+  bool sendSource_(const TxFrame &frame) {
+    // TLS serializes the actual HTTP frame directly into its output records.
+    // The protocol owns these buffers throughout the synchronous write.
+    auto tx = impl_()->txStream_();
+    frame.each([&tx](ZuBSpan bytes) { tx << bytes; });
+    return tx.flush() && !tx.failed();
+  }
   bool initWire(bool server, const H2Config &config) {
     m_server = server;
     m_nextLocalStream = server ? 2 : 1;
@@ -2285,12 +2293,28 @@ private:
 	  h.streamID = id;
 	  h.type = FrameType::Data;
 	  h.flags = head->data()[4] & ~Flag::EndStream;
-	  auto source = head->payload;
-	  if (!source.buf) source = {head->buf, FrameHeaderSize, length};
-	  pending = TxFrame{h, source.subspan(0, prefix)};
+	  auto flags = head->data()[4];
+	  auto source = ZuMv(head->payload);
+	  if (!source) {
+	    source = ZuMv(head->buf);
+	    source->advance(FrameHeaderSize);
+	  }
+	  ZmRef<ZiIOBuf> copy = new BodyBufAlloc{
+	    ZmSingleton<typename BodyBufAlloc::Allocator>::instance()};
+	  ZmRef<ZiIOBuf> first, rest;
+	  if (prefix <= length - prefix) {
+	    copy->append(source->data(), prefix);
+	    source->advance(prefix);
+	    first = ZuMv(copy); rest = ZuMv(source);
+	  } else {
+	    copy->append(source->data() + prefix, length - prefix);
+	    source->length = prefix;
+	    first = ZuMv(source); rest = ZuMv(copy);
+	  }
+	  pending = TxFrame{h, ZuMv(first)};
 	  h.length = length - prefix;
-	  h.flags = head->data()[4];
-	  *head = TxFrame{h, source.subspan(prefix, length - prefix)};
+	  h.flags = flags;
+	  *head = TxFrame{h, ZuMv(rest)};
 	  partial = true;
 	} else
 	  pending = entry_->frames.shift();

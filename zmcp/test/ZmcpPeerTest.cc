@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZiRxStream.hh>
 #include <string.h>
 
 #include <zlib/ZuDerive.hh>
@@ -11,6 +12,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZtcHeap.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmSemaphore.hh>
 
@@ -101,23 +103,18 @@ static ZuSpan<uint8_t> mutableBytes(char (&s)[N]) {
   return ZuSpan<char>{s, N - 1};
 }
 
-struct HTTPRx {
-  ZuSpan<uint8_t> data;
-
-  template <typename Available, typename Consume>
-  void consume(Available &&available, Consume &&consume) {
-    int64_t n = available(data);
-    if (n > 0) {
-      auto span = data;
-      span.trunc(n);
-      consume(span);
-    }
+struct HTTPRx : ZiRxStream<ZiRxQueue> {
+  HTTPRx(ZuSpan<uint8_t> data) {
+    using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, ZiIOBuf_DefltSize>;
+    auto buf = ZmRef<ZiRxQueue::Node>{ZmSingleton<Alloc>::instance()->allocBuf().ptr<ZiRxQueue::Node>()};
+    buf->append(data);
+    push(ZuMv(buf));
   }
 };
 
 struct HTTPBodyOut {
-  bool appendRange(ZmRef<ZiIOBuf> buf, unsigned offset, unsigned length) {
-    data << buf->cspan().offset(offset).trunc(length);
+  bool appendBuf(ZmRef<ZiIOBuf> buf) {
+    data << buf->cspan();
     return !failure;
   }
 
@@ -408,7 +405,7 @@ struct HTTPResponderHarness : public Zjrpc::Dispatcher<HTTPResponderHarness<Cata
     return true;
   }
   bool receive(ZuCSpan input) {
-    ZmRef<ZiIOBuf> body = new Zjrpc::BatchBuf{nullptr, 0};
+    ZmRef<ZiIOBuf> body = new Zjrpc::BatchBuf{ZmSingleton<typename Zjrpc::BatchBuf::Allocator>::instance()};
     *body << input;
     return Dispatch::receive(ZuMv(body), [this](auto message, int policy) {
       if (policy == Zjrpc::RoutePolicy::Abort) { failed(); return false; }
@@ -591,7 +588,7 @@ public:
   template <typename L> void continue_(L &&l) { m_turns.push(ZuFwd<L>(l)); }
 
   bool receive(ZuCSpan input) {
-    ZmRef<ZiIOBuf> body = new Zjrpc::BatchBuf{nullptr, 0};
+    ZmRef<ZiIOBuf> body = new Zjrpc::BatchBuf{ZmSingleton<typename Zjrpc::BatchBuf::Allocator>::instance()};
     *body << input;
     return Dispatch::receive(ZuMv(body), [this](auto message, int policy) {
       if (policy == Zjrpc::RoutePolicy::Abort) { fail_(); return false; }
@@ -820,7 +817,7 @@ static void emptyTest()
     "\"supportedVersions\":[\"2026-07-28\"]}}";
   ZuCheck(client.receive(discovered, emit));
   ZuCheck(client.tools(emit).is<int64_t>());
-  ZmRef<ZiIOBuf> listed = new Zjrpc::StdioBuf{nullptr, 0};
+  ZmRef<ZiIOBuf> listed = new Zjrpc::StdioBuf{ZmSingleton<typename Zjrpc::StdioBuf::Allocator>::instance()};
   *listed << "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{"
     "\"tools\":[]}}";
   ZuCheck(client.receive(ZuMv(listed), emit));
@@ -903,7 +900,7 @@ static void clientTest()
   ZuCheck(out == expected);
   auto toolsID = client.tools(emit);
   ZuCheck(toolsID.is<int64_t>() && toolsID.template p<int64_t>() == 3);
-  ZmRef<ZiIOBuf> catalog = new Zjrpc::StdioBuf{nullptr, 0};
+  ZmRef<ZiIOBuf> catalog = new Zjrpc::StdioBuf{ZmSingleton<typename Zjrpc::StdioBuf::Allocator>::instance()};
   *catalog << "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{"
     "\"tools\":[{\"name\":\"echo\"}]}}";
   ZuCheck(client.receive(ZuMv(catalog), emit));
@@ -1382,7 +1379,7 @@ static void httpTest()
   ZuCheckRT(generic.bodyPolicy() == Zhttp::BodyPolicy::None);
 
   // HTTP output must retain the dispatcher's borrowed input until it closes.
-  ZmRef<Zjrpc::BatchBuf> input = new Zjrpc::BatchBuf{nullptr, 0};
+  ZmRef<Zjrpc::BatchBuf> input = new Zjrpc::BatchBuf{ZmSingleton<typename Zjrpc::BatchBuf::Allocator>::instance()};
   using WireMessage = Zmcp::Server_::DispatchPolicy<EchoCatalog>::Message;
   WireMessage pinned{Zjrpc::ErrorMessage{
     Zjrpc::ID{int64_t{23}}, Zjrpc::ErrorCode::InvalidRequest, "Duplicate request ID"}};

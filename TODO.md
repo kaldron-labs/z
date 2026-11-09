@@ -1,5 +1,7 @@
 # TODO
 
+- migrate all ZiMultiplex dependents to new buffer allocators
+
 - fix `ZmList<X, ZmListNode<X>>` to be `ZmList<X, ZmListNode<>>`
   - needlessly repeating X is elided
   - apply this to all the other containers with this pattern (`ZmHash`, etc.)

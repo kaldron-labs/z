@@ -25,7 +25,8 @@ in `docs/README.md`.
 
 - `PktRxBufAllocator` defaults to the `"Zquic.Pkt.Rx"` heap for received UDP
   datagrams and in-place QUIC packet protection removal. Configure it through
-  `ZiMxParams::udpBufAllocator`; the endpoint receives the original `io.buf`.
+  `ZiMultiplex::allocator` registration and the UDP call's receive allocator;
+  the endpoint receives the original `io.buf`.
 - `PktTxBufAllocator` defaults to the `"Zquic.Pkt.Tx"` heap for transmit
   packetization and packet protection output. Each endpoint retains its own
   allocator; active output belongs to `ZiTxContext::buf` until kernel retirement.

@@ -18,7 +18,7 @@ constexpr auto Wire = "8=FIX.4.4\1" "9=13\1" "35=D\1" "58=ABCD\1" "10=155\1"_z;
 using Queue = ZiRxQueue;
 using Stream = ZiRxStream<Queue>;
 
-using BufferAllocator = Zi::AppBufAllocator<Queue::Node, ZiIOBuf_DefltSize>;
+using BufferAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, Queue::Node, ZiIOBuf_DefltSize>;
 static auto alloc() { return ZmSingleton<BufferAllocator>::instance()->allocBuf(); }
 static void push(Stream &stream, ZuCSpan bytes) {
   auto buf = alloc(); buf->append(bytes); stream.push(ZuMv(buf));

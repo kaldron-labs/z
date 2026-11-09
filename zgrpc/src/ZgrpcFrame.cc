@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <string.h>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZgrpcFrame.hh>
 
 namespace Zgrpc {
@@ -14,8 +15,12 @@ ZtEnumImplNS(FrameResult);
 
 // Reuse Zi's tuned packet size and heap, allowing assembly up to the codec's
 // implementation ceiling. The per-call limit is checked before allocation.
-using MessageBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  INT_MAX, ZuStringT<"Zgrpc.Message">>;
+using MessageBuf = Zi::IOBufBuiltin<
+  ZiIOBuf,
+  ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"Zgrpc.Message">,
+  INT_MAX>;
 
 void FrameRx::reset(unsigned limit)
 {
@@ -77,7 +82,7 @@ FrameResult::T FrameRx::feed(ZuBSpan input, ZmRef<ZiIOBuf> backing,
       if (!m_buf->ensure(m_length)) return fail(FrameError::Limit);
     } else {
       if (!m_buf) {
-	m_buf = new MessageBuf{nullptr, 0};
+	m_buf = new MessageBuf{ZmSingleton<typename MessageBuf::Allocator>::instance()};
 	m_buf->alloc(m_length);
       }
       memcpy(m_buf->data() + m_received, input.data() + used, n);

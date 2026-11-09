@@ -10,6 +10,7 @@
 #include <zlib/ZrestClient.hh>
 #include <zlib/ZrestServer.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZtlsHMAC.hh>
 
@@ -38,12 +39,8 @@ struct BodySink {
   unsigned headRoom() const { return 0; }
   unsigned tailRoom() const { return 0; }
   unsigned maxSize() const { return UINT_MAX; }
-  bool canAdopt_(const ZiIOBuf &buf, unsigned head = 0, unsigned tail = 0) const {
-    return head <= buf.skip && tail <= buf.avail() &&
-      uint64_t(buf.length) + head + tail <= maxSize();
-  }
   ZmRef<ZiIOBuf> allocBuf(unsigned head) {
-    allocated = new Zrest::InputBuf{nullptr, 0};
+    allocated = new Zrest::InputBuf{ZmSingleton<typename Zrest::InputBuf::Allocator>::instance()};
     allocated->skip = head;
     return allocated;
   }
@@ -52,9 +49,9 @@ struct BodySink {
     data << submitted->cspan();
     return *this;
   }
-  bool appendRange(Zi::RxRange range) {
-    data << range.cspan();
-    submitted = ZuMv(range.buf);
+  bool appendBuf(ZmRef<ZiIOBuf> buf) {
+    data << buf->cspan();
+    submitted = ZuMv(buf);
     return true;
   }
   template <typename T> BodySink &operator <<(T &&value) {
@@ -283,30 +280,17 @@ static void endpointHandoffTest()
   ZuCheck(call->processed == 1 && call->failures == 2);
 }
 
-struct FragmentRx {
-  ZmRef<ZiIOBuf> owner;
-  ZuSpan<uint8_t> data;
-
+struct FragmentRx : public ZiRxStream<ZiRxQueue> {
   FragmentRx(ZuSpan<uint8_t> bytes) {
-    owner = new Zrest::InputBuf{nullptr, 0};
-    owner->append(bytes);
-    data = owner->span();
-  }
-  unsigned length() const { return data.length(); }
-  void advance(unsigned n) { data.offset(n); }
-  template <typename L> int64_t eachRange(unsigned n, L &&l) {
-    return l(Zi::RxRange{owner, unsigned(data.data() - owner->data()), n});
-  }
-
-  template <typename Check, typename Consume>
-  int64_t consume(Check &&check, Consume &&consume) {
-    auto n = check(data);
-    if (!n) return 0;
-    auto part = data;
-    part.trunc(n);
-    consume(part);
-    data.offset(n);
-    return n;
+    using Buf = Zi::IOBufBuiltin<
+      ZiRxQueue::Node,
+      ZiIOBuf_DefltSize,
+      ZiIOBuf_DefltAlign,
+      ZuStringT<"Zrest.Test.Rx">,
+      ZiIOBuf_DefltMaxSize>;
+    ZmRef<ZiRxQueue::Node> buf = new Buf{ZmSingleton<typename Buf::Allocator>::instance()};
+    buf->append(bytes);
+    push(ZuMv(buf));
   }
 };
 
@@ -630,10 +614,10 @@ static void fixedBodyTest()
   ZuCheck(raw.bodyInfo(Zhttp::BodyType::Fixed, 4));
   TestString partial{"ab"};
   auto first = fragment(partial);
-  ZuCheck(raw.body(first) && first.data.length() == 2);
+  ZuCheck(raw.body(first) && first.length() == 2);
   TestString full{"abcd"};
   auto second = fragment(full);
-  ZuCheck(raw.body(second) && !second.data);
+  ZuCheck(raw.body(second) && !second.length());
   ZuCheck(raw.finishBody() && raw.object->data == "abcd");
   raw.reset();
 
@@ -645,9 +629,9 @@ static void fixedBodyTest()
   ZuCheck(json.bodyInfo(Zhttp::BodyType::Fixed, valid.length()));
   TestString shortBody{"{\"value\""};
   auto third = fragment(shortBody);
-  ZuCheck(json.body(third) && third.data.length() == shortBody.length());
+  ZuCheck(json.body(third) && third.length() == shortBody.length());
   auto fourth = fragment(valid);
-  ZuCheck(json.body(fourth) && !fourth.data);
+  ZuCheck(json.body(fourth) && !fourth.length());
   ZuCheck(json.finishBody() && json.object->value == "ok");
   json.reset();
 
@@ -1445,33 +1429,44 @@ static void signatureQueryTest()
   ZuCheck(!authQueryReceive(unsignedWire));
 }
 
-static void inputRangesTest()
+static void inputOwnedTest()
 {
-  ZuTestScope(inputRanges);
-  using Alloc = Zi::IOBufAlloc<ZiRxQueue::Node, 32, 512,
-    ZuStringT<"Zrest.InputRangeTest">>;
-  ZmRef<ZiRxQueue::Node> original = new Alloc{nullptr, 0};
+  ZuTestScope(inputOwned);
+  using Alloc = Zi::IOBufBuiltin<
+    ZiRxQueue::Node,
+    32,
+    ZiIOBuf_DefltAlign,
+    ZuStringT<"Zrest.InputOwnedTest">,
+    512>;
+  auto alloc = []() {
+    return ZmRef<ZiRxQueue::Node>{new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()}};
+  };
+  auto original = alloc();
   *original << "xxbodytail";
-  auto data = original->span().data();
+  original->advance(2);
+  original->length = 4;
+  auto source = original.ptr();
+  auto data = original->ZiIOBuf::data();
   ZiRxStream<ZiRxQueue> rx;
-  rx.push(Zi::RxRange{original, 2, 4});
+  rx.push(ZuMv(original));
   Zrest::Input input;
   ZuCheck(input.begin(4, 32) && input.body(rx) && !rx);
   auto retained = input.take();
-  ZuCheck(retained && retained->data() == data + 2 && retained->cspan() == "body");
-  ZuCheck(original->skip == 0 && original->length == 10);
-  auto memory = retained->memory();
-  ZuCheck(retained->ensure(128) && retained->jumbo() && retained->cspan() == "body");
-  ZuCheck(original->refCount() == 1 && memory >= original->memory());
+  ZuCheck(retained.ptr() == source && retained->data() == data && retained->cspan() == "body");
+  ZuCheck(retained->ensure(128) && !retained->builtin() && retained->cspan() == "body");
+  ZuCheck(retained->refCount() == 1);
   retained = nullptr;
   input.reset();
   ZuCheck(input.begin(8, 32));
-  rx.push(Zi::RxRange{original, 2, 4});
+  auto first = alloc(), last = alloc();
+  *first << "body"; *last << "tail";
+  auto firstData = first->ZiIOBuf::data();
+  rx.push(ZuMv(first));
   ZuCheck(input.body(rx));
-  rx.push(Zi::RxRange{original, 6, 4});
+  rx.push(ZuMv(last));
   ZuCheck(input.body(rx));
   retained = input.take();
-  ZuCheck(retained->data() == data + 2 && retained->cspan() == "bodytail");
+  ZuCheck(retained->data() == firstData && retained->cspan() == "bodytail");
   input.reset();
   ZuCheck(input.begin(8, 32));
   uint8_t head[] = {'b', 'o', 'd', 'y'};
@@ -1482,14 +1477,12 @@ static void inputRangesTest()
   ZuCheck(input.take()->cspan() == "bodytail");
   input.reset();
   ZuCheck(input.begin(0, 32));
-  rx.push(Zi::RxRange{original, 2, 4});
-  ZuCheck(input.body(rx));
-  ZmRef<ZiRxQueue::Node> fragment = new Alloc{nullptr, 0};
-  *fragment << "tail";
-  rx.push(fragment);
-  ZuCheck(input.body(rx));
+  first = alloc(); last = alloc();
+  *first << "body"; *last << "tail";
+  rx.push(ZuMv(first)); rx.push(ZuMv(last));
+  ZuCheck(input.body(rx) && !rx);
   retained = input.take();
-  ZuCheck(retained->data() != data + 2 && retained->cspan() == "bodytail");
+  ZuCheck(retained->cspan() == "bodytail");
 }
 
 struct OwnedRaw : public ZmNHeap<OwnedRaw>, public ZmObject {
@@ -1511,15 +1504,19 @@ static void fragmentedFixedBody()
   parser.init();
   parser.bodyMax(4);
   ZuCheckRT(parser.bodyInfo(Zhttp::BodyType::Fixed, 4));
-  using Alloc = Zi::IOBufAlloc<ZiRxQueue::Node, 32, 512,
-    ZuStringT<"Zrest.Test.FixedBody">>;
+  using Alloc = Zi::IOBufBuiltin<
+    ZiRxQueue::Node,
+    32,
+    ZiIOBuf_DefltAlign,
+    ZuStringT<"Zrest.Test.FixedBody">,
+    512>;
   Zhttp::Input rx;
-  ZmRef<ZiRxQueue::Node> first = new Alloc{nullptr, 0};
+  ZmRef<ZiRxQueue::Node> first = new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()};
   *first << "ab";
   rx.push(first);
   ZuCheckRT(parser.body(rx));
   ZuCheckRT(rx.length() == 2 && !parser.bodySeen);
-  ZmRef<ZiRxQueue::Node> second = new Alloc{nullptr, 0};
+  ZmRef<ZiRxQueue::Node> second = new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()};
   *second << "cd";
   rx.push(second);
   ZuCheckRT(parser.body(rx));
@@ -1548,7 +1545,7 @@ int main(int argc, char **argv)
   ZuTestCall(skipPathTest);
   ZuTestCall(rootPathTest);
   ZuTestCall(signedBodyTest);
-  ZuTestCall(inputRangesTest);
+  ZuTestCall(inputOwnedTest);
   ZuTestCall(signatureBodyTest);
   ZuTestCall(signatureQueryTest);
   return 0;

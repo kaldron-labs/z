@@ -15,10 +15,10 @@ struct FlowApp : public Zquic::Hub<FlowApp> {
   using Base = Zquic::Hub<FlowApp>;
 
   FlowApp() : m_mx{mxParams_()} {
-    ZiAssert(m_mx.start(), "Zquic", (),
-      "flow test multiplexer start failed", return);
     ZiAssert(Base::init(Zquic::HubParams(&m_mx, "3", "4")),
       "Zquic", (), "flow test app init failed", return);
+    ZiAssert(m_mx.start(), "Zquic", (),
+      "flow test multiplexer start failed", return);
   }
   ~FlowApp() {
     Base::final();
@@ -35,7 +35,7 @@ struct FlowApp : public Zquic::Hub<FlowApp> {
 
 private:
   static ZiMxParams mxParams_() {
-    return ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    return ZiMxParams()
       .scheduler([](auto &s) {
 	s.nThreads(4);
       })
@@ -65,9 +65,9 @@ static ZmRef<ZiIOBuf> streamPkt_(
   Zquic::Frame &frame, unsigned &used)
 {
   ZmRef<ZiIOBuf> packet = ([](void *owner) {
-      static ZmRef<Zi::IOBufAllocator> allocator =
-	new Zquic::PktRxBufAllocator<>;
-      return allocator->alloc(owner, 0);
+      static Zi::IOBufAllocator *allocator =
+	([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
+      return allocator->allocBuf(owner, 0);
     })(nullptr);
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, id, offset, payload, fin);

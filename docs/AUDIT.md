@@ -29,6 +29,12 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
   and its direct dependents without disturbing other work.
 
 ### Code structure
+- Red Flag: long names that violate [STYLE.md's length and abbreviation guidelines](STYLE.md#length-and-abbreviations), including the 28-byte hard upper limit.
+  Problem: verbose names obscure meaning and make declarations and uses harder to scan.
+  Fix: shorten names using the approved industry-standard abbreviations in the naming guidelines and elide redundant words; avoid ambiguous or obfuscated abbreviations and update all affected declarations and uses.
+- Red Flag: trailing underscores without a related wrapper or API counterpart, or multi-step functions and variable-argument macros that do not use numbered suffixes, contrary to [STYLE.md's trailing-underscore guidelines](STYLE.md#trailing-underscores).
+  Problem: the suffix implies a wrapper or API relationship that does not exist, or obscures the step or argument count.
+  Fix: rename declarations and uses per [STYLE.md's trailing-underscore guidelines](STYLE.md#trailing-underscores).
 - Amber Flag: a data-member type is too long to preserve tabular member alignment.
   Problem: the member name and initializer no longer align with adjacent declarations, obscuring the composite layout.
   Fix: introduce a concise local `using` alias, then declare the member with that alias; place the alias immediately before the exposed data it supports.

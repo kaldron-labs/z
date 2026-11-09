@@ -19,7 +19,7 @@ using namespace ZuTestUtil;
 
 namespace {
 
-using BufAllocator = Zi::AppBufAllocator<ZiRxQueue::Node, 16>;
+using BufAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, 16>;
 
 ZmRef<ZiIOBuf> buf(ZuCSpan s)
 {

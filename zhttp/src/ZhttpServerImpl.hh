@@ -261,9 +261,9 @@ template <typename App, typename AppLink> class ServerHub;
 template <typename App, typename AppLink> class SrvLink;
 
 template <typename App, typename AppLink>
-class ServerHub : public Ztls::Server<ServerHub<App, AppLink>> {
+class ServerHub : public Transport_::Traits<Zhttp::TLS>::template Server<ServerHub<App, AppLink>> {
 public:
-  using Base = Ztls::Server<ServerHub>;
+  using Base = Transport_::Traits<Zhttp::TLS>::template Server<ServerHub>;
   using Link = SrvLink<App, AppLink>;
   using StopFn = ZmFn<void(bool), ZmFnHeapID<"Zhttp.H2">>;
   using StopFns = ZtArray<StopFn,
@@ -367,13 +367,13 @@ template <typename App, typename AppLink>
 class SrvLink :
   public ZmNHeap<SrvLink<App, AppLink>>,
   public Ztls::SrvLink<ServerHub<App, AppLink>, SrvLink<App, AppLink>,
-    Transport_::TLSTxBufAlloc>,
+    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
   public Wire<SrvLink<App, AppLink>, AppLink> {
   friend inline ZuStringT<"Zhttp.Server.H2Link"> ZmNHeapID(SrvLink *);
 public:
   using Hub = ServerHub<App, AppLink>;
   using Base = Ztls::SrvLink<Hub, SrvLink,
-    Transport_::TLSTxBufAlloc>;
+    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
   using Wire_ = Wire<SrvLink, AppLink>;
 friend Wire_;
   using Cxn = Base::Cxn;
@@ -381,7 +381,7 @@ friend Wire_;
 
   SrvLink(
     Hub *app, const ZiCxnInfo &ci, const H2Config &config) :
-      Base{app}, m_remoteIP{ci.remoteIP}, m_remotePort{ci.remotePort}
+      Base{app}, m_remoteIP{ci.remote.ip()}, m_remotePort{ci.remote.port()}
   {
     Wire_::initWire(true, config);
     Base::txErrorFn(ZiTxErrorFn{ZmFnPtr<&H2_::nativeTxError>{}});
@@ -881,9 +881,9 @@ private:
 };
 
 template <typename App>
-class ServerHub : public Ztls::Server<ServerHub<App>> {
+class ServerHub : public Transport_::Traits<Zhttp::TLS>::template Server<ServerHub<App>> {
 public:
-  using Base = Ztls::Server<ServerHub>;
+  using Base = Transport_::Traits<Zhttp::TLS>::template Server<ServerHub>;
   using Link = SrvLink<App>;
   using StopFn = ZmFn<void(bool), ZmFnHeapID<"Zhttp.H2">>;
   using StopFns = ZtArray<StopFn,
@@ -993,7 +993,7 @@ template <typename App>
 class SrvLink :
   public ZmNHeap<SrvLink<App>>,
   public Ztls::SrvLink<ServerHub<App>, SrvLink<App>,
-    Transport_::TLSTxBufAlloc>,
+    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
   public H2_::Wire<SrvLink<App>, typename App::H2Link>,
   public Transport_::TLSClose<SrvLink<App>> {
   friend inline ZuStringT<"Zhttp.Server.TLSLink"> ZmNHeapID(SrvLink *);
@@ -1002,7 +1002,7 @@ public:
   using H1AppLink = App::H1Link;
   using H2AppLink = App::H2Link;
   using Base = Ztls::SrvLink<Hub, SrvLink,
-    Transport_::TLSTxBufAlloc>;
+    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
   using Wire = H2_::Wire<SrvLink, H2AppLink>;
 friend Wire;
   friend Transport_::TLSClose<SrvLink>;
@@ -1011,7 +1011,7 @@ friend Wire;
 
   SrvLink(
     Hub *app, const ZiCxnInfo &ci, const H2Config &config) :
-      Base{app}, m_remoteIP{ci.remoteIP}, m_remotePort{ci.remotePort},
+      Base{app}, m_remoteIP{ci.remote.ip()}, m_remotePort{ci.remote.port()},
       m_policy{config.policy()}
   {
     Wire::initWire(true, config);

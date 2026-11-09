@@ -365,10 +365,8 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
 ZiMxParams mxParams()
 {
   return ZiMxParams()
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Zhttp.Net.Rx">>>()
+
+
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -435,9 +433,6 @@ void idle()
   ZiMultiplex mx{mxParams()};
   state.mx = &mx;
   state.checkThreads = true;
-  bool mxUp = mx.start();
-  ZuCHECK(mxUp, "start multiplexer");
-  if (!mxUp) return;
   Zhttp::HubConfig hub{&mx, "3", "4"};
 
   App app{&state};
@@ -448,16 +443,19 @@ void idle()
   bool serverInited =
     app.init(hub, ZuMv(serverConfig));
   ZuCHECK(serverInited, "initialize server");
+  Client<Zhttp::H3QUIC> client{&state};
+  bool clientInited = serverInited && client.init(
+    hub, Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(10000));
+  ZuCHECK(clientInited, "initialize client");
+  bool mxUp = mx.start();
+  ZuCHECK(mxUp, "start multiplexer");
+  if (!mxUp) return;
   bool serverUp = serverInited && app.start();
   ZuCHECK(serverUp, "start server");
   bool listening = serverUp &&
     state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening, "server listens for HTTP/3");
 
-  Client<Zhttp::H3QUIC> client{&state};
-  bool clientInited = listening && client.init(
-    hub, Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(10000));
-  ZuCHECK(clientInited, "initialize client");
   bool clientUp = clientInited && client.start();
   ZuCHECK(clientUp, "start client");
   using ClientLink = Client<Zhttp::H3QUIC>::Link;
@@ -493,7 +491,7 @@ void idle()
   ZuCHECK(serverStopped, "stop server after idle expiry");
   if (clientInited) client.final();
   if (serverInited) app.final();
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   mx.stop();
   ZuCHECK(!state.errors.load_(), "idle expiry has no transport error");
@@ -526,9 +524,6 @@ void activeStop()
   ZiMultiplex mx{mxParams()};
   state.mx = &mx;
   state.checkThreads = true;
-  bool mxUp = mx.start();
-  ZuCHECK(mxUp, "start multiplexer");
-  if (!mxUp) return;
   Zhttp::HubConfig hub{&mx, "3", "4"};
 
   App app{&state};
@@ -549,30 +544,33 @@ void activeStop()
   bool serverInited =
     app.init(hub, ZuMv(serverConfig));
   ZuCHECK(serverInited, "initialize server");
-  bool serverUp = serverInited && app.start();
-  ZuCHECK(serverUp, "start server");
-  bool listening = serverUp &&
-    state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(listening, "server listens for HTTP/3");
-
   Client<Profile> client{&state};
   bool clientInited = false;
   if constexpr (ZuIsSame<Protocol, Zhttp::TCP>{})
-    clientInited = listening && client.init(hub, Zhttp::TCPConfig{});
+    clientInited = serverInited && client.init(hub, Zhttp::TCPConfig{});
   else if constexpr (ZuIsSame<Protocol, Zhttp::TLS>{})
     if constexpr (HTTP::Multiplexed)
-      clientInited = listening && client.init(
+      clientInited = serverInited && client.init(
 	hub, Zhttp::H2Config{}.tls([&cert](auto &tls) {
 	  tls.caPath(cert);
 	})
 	  .policy(Zhttp::H2Policy::Force));
     else
       clientInited =
-	listening && client.init(hub, Zhttp::TLSConfig{}.caPath(cert));
+	serverInited && client.init(hub, Zhttp::TLSConfig{}.caPath(cert));
   else
-    clientInited = listening && client.init(
+    clientInited = serverInited && client.init(
       hub, Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(10000));
   ZuCHECK(clientInited, "initialize client");
+  bool mxUp = mx.start();
+  ZuCHECK(mxUp, "start multiplexer");
+  if (!mxUp) return;
+  bool serverUp = serverInited && app.start();
+  ZuCHECK(serverUp, "start server");
+  bool listening = serverUp &&
+    state.listening.timedwait(Zm::now(10)) == 0;
+  ZuCHECK(listening, "server listens for HTTP/3");
+
   bool clientUp = clientInited && client.start();
   ZuCHECK(clientUp, "start client");
   using ClientLink = Client<Profile>::Link;
@@ -683,7 +681,7 @@ void activeStop()
   overflowLink = nullptr;
   if (clientInited) client.final();
   if (serverInited) app.final();
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   mx.stop();
   ZuCHECK(!state.errors.load_(), "active server stop has no error");
@@ -701,9 +699,6 @@ void retryInit()
 
   ZiMultiplex mx{mxParams()};
   state.mx = &mx;
-  bool mxUp = mx.start();
-  ZuCHECK(mxUp, "start retry multiplexer");
-  if (!mxUp) return;
   Zhttp::HubConfig hub{&mx, "3", "4"};
   App app{&state};
   ZuCHECK(app.state() == ZmEngineState::Stopped,
@@ -735,6 +730,9 @@ void retryInit()
   bool reusedInit = app.init(hub, ZuMv(reused));
   ZuCHECK(reusedInit, "initialize after final succeeds");
   ZuCHECK(app.hubCount() == 1, "new lifecycle registers one hub");
+  bool mxUp = mx.start();
+  ZuCHECK(mxUp, "start retry multiplexer");
+  if (!mxUp) return;
   bool started = reusedInit && app.start();
   ZuCHECK(started, "reinitialized server starts");
   if (started) {
@@ -743,6 +741,8 @@ void retryInit()
     ZuCHECK(app.stop(), "reinitialized server stops");
   }
   app.final();
+
+  mx.stop();
 
   App partial{&state};
   auto invalidAgain = Zhttp::ServerConfig()
@@ -771,9 +771,6 @@ void seedSets()
   if (!certOK) return;
 
   ZiMultiplex mx{mxParams()};
-  bool mxUp = mx.start();
-  ZuCHECK(mxUp, "start seed multiplexer");
-  if (!mxUp) return;
   Zhttp::HubConfig hub{&mx, "3", "4"};
   SeedApp app;
   Zhttp::HPackSeedCatalog hpack;

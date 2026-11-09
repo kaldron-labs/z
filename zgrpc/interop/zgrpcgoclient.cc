@@ -220,7 +220,7 @@ static void run()
   auto ca = getenv("ZGRPC_GO_CA"), port = getenv("ZGRPC_GO_PORT");
   ZuCheckRT(ca && port, (return));
   bool h3 = getenv("ZGRPC_GO_H3");
-  ZiMultiplex mx{peerMxParams(h3).scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(2).thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
@@ -228,7 +228,6 @@ static void run()
   state.version = h3 ? Zhttp::Version::H3 : Zhttp::Version::H2;
   App app;
   Endpoint client;
-  ZuCheckRT(mx.start(), (return));
   ClientConfig config;
   config.links(1).linkMax(16).concurrency(16)
     .protocol(h3 ? Zhttp::ProtoPolicy::ForceH3 : Zhttp::ProtoPolicy::DisableH3);
@@ -242,6 +241,7 @@ static void run()
   ZuCheckRT(initialized);
   bool pooled = initialized && client.pool(0, Zhttp::Destination{"localhost", uint16_t(atoi(port))});
   ZuCheckRT(pooled);
+  ZuCheckRT(mx.start(), (return));
   bool started = pooled && client.start();
   ZuCheckRT(started);
   if (started) {
@@ -261,7 +261,7 @@ static void run()
   }
   ZuCheckRT(!client.pending());
   client.final();
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   ZuCheckRT(mx.stop());
 }

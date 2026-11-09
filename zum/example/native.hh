@@ -41,6 +41,7 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiFile.hh>
 
+#include <zlib/ZhttpNative.hh>
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
 #include <zlib/ZrestClient.hh>
@@ -359,7 +360,8 @@ class ClientBase : public ZmObject, public Zhttp::Client<ClientBase, Pool> {
   using Base = Zhttp::Client<ClientBase, Pool>;
 public:
 
-  bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
+  bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath,
+      const Zhttp::TCPConfig &tcp, const Zhttp::TLSConfig &tlsPolicy) {
     m_origin = Zhttp::Origin{url.origin()};
     bool secure = url.scheme == Zhttp::Scheme::https;
     auto config = Zhttp::Config().links(1).concurrency(1).linkMax(1)
@@ -367,7 +369,8 @@ public:
       .protocol(Zhttp::ProtoPolicy::DisableH3)
       .secure(secure).tcp(true).tls(secure).quic(false);
     if (!Base::init(Zhttp::HubConfig{mx, "rx", "tx"}, 1,
-        config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.tls([&caPath](auto &tls) {
+        config, tcp, Zhttp::H2Config{}.tls([&caPath, &tlsPolicy](auto &tls) {
+          tls = tlsPolicy;
           tls.caPath(caPath);
         }),
         Zhttp::QUICConfig{})) return false;
@@ -415,12 +418,32 @@ friend inline ZuStringT<"Zum.Native.Client"> ZmNHeapID(Client *);
 
 class Clients {
 public:
+  bool init(ZiMultiplex *mx) {
+    using TCP = Zhttp::NativeTraits<Zhttp::H1TCP>::Transport;
+    using TLS = Zhttp::NativeTraits<Zhttp::H1TLS>::Transport;
+    m_tcp.rxAllocator(mx->allocator<Zi::IOBufType::RxTCP,
+      TCP::RxAllocator::Buf, TCP::RxAllocator::Size, TCP::RxAllocator::MaxSize,
+      TCP::RxAllocator::Align, TCP::RxAllocator::Heap>())
+      .txAllocator(mx->allocator<Zi::IOBufType::TxTCP,
+	TCP::TxAllocator::Buf, TCP::TxAllocator::Size, TCP::TxAllocator::MaxSize,
+	TCP::TxAllocator::Align, TCP::TxAllocator::Heap>());
+    m_tls.rxAllocator(mx->allocator<Zi::IOBufType::RxTLS,
+      TLS::RxAllocator::Buf, TLS::RxAllocator::Size, TLS::RxAllocator::MaxSize,
+      TLS::RxAllocator::Align, TLS::RxAllocator::Heap>())
+      .txAllocator(mx->allocator<Zi::IOBufType::TxTLS,
+	TLS::TxAllocator::Buf, TLS::TxAllocator::Size, TLS::TxAllocator::MaxSize,
+	TLS::TxAllocator::Align, TLS::TxAllocator::Heap>());
+    return true;
+  }
+
+  const Zhttp::TCPConfig &tcp() const { return m_tcp; }
+
   bool add(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
     for (auto &client: m_clients)
       if (client->origin(url)) return true;
     if (m_clients.length() >= DestinationMax) return false;
     ZmRef<Client> client = new Client{};
-    if (!client->init(mx, url, caPath)) return false;
+    if (!client->init(mx, url, caPath, m_tcp, m_tls)) return false;
     m_clients.push(ZuMv(client));
     return true;
   }
@@ -454,6 +477,8 @@ public:
   }
 
 private:
+  Zhttp::TCPConfig m_tcp;
+  Zhttp::TLSConfig m_tls;
   ZtArray<ZmRef<Client>> m_clients;
 };
 
@@ -669,9 +694,8 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
   ZmTrap::trap();
 
   ZiMultiplex mx{mxParams()};
-  if (!mx.start()) return false;
-
   Clients clients;
+  if (!clients.init(&mx) || !mx.start()) return false;
   if (!clients.add(&mx, issuerURL.url(), config.caPath)) {
     std::cerr << "OAuth: issuer HTTP client start failed\n";
     clients.final(); mx.stop(); ZiLog::stop(); return false;
@@ -783,7 +807,7 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
     callback.expectedState = state;
     auto callbackConfig = Zhttp::ServerConfig().localIP(ZiIP("127.0.0.1"))
       .port(config.callbackPort).idleTimeout(ClientTimeout)
-      .retainedBodyMax(BodyMax).tcp();
+      .retainedBodyMax(BodyMax).tcp(clients.tcp());
     bool callbackInited = callback.init(
       Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"}, ZuMv(callbackConfig));
     bool callbackUp = callbackInited && callback.start();

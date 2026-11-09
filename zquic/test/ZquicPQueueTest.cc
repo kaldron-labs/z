@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/Zquic.hh>
@@ -22,9 +23,9 @@ void fill_(ZiIOBuf *buf, ZuBSpan data)
 ZmRef<ZiIOBuf> packet_(ZuBSpan data)
 {
   ZmRef<ZiIOBuf> packet = ([](void *owner) {
-      static ZmRef<Zi::IOBufAllocator> allocator =
-	new Zquic::PktRxBufAllocator<>;
-      return allocator->alloc(owner, 0);
+      static Zi::IOBufAllocator *allocator =
+	([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
+      return allocator->allocBuf(owner, 0);
     })(nullptr);
   fill_(packet, data);
   return packet;
@@ -35,7 +36,7 @@ void testCryptoRxClipping()
   ZuTestScope(testCryptoRxClipping);
 
   ZmRef<Zquic::CryptoRxPQueue::Node> buf =
-    new Zquic::CryptoRxBufAlloc<>{nullptr, 0};
+    new Zquic::CryptoRxBufAlloc<>{ZmSingleton<typename Zquic::CryptoRxBufAlloc<>::Allocator>::instance(), nullptr, 0};
   fill_(buf, "abcdef");
   auto &data = buf->data();
   data.skip = 1;

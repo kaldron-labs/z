@@ -13,6 +13,7 @@
 #include <zlib/ZjrpcLib.hh>
 #endif
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmHash.hh>
@@ -401,7 +402,7 @@ public:
     return n;
   }
   ZmRef<ZiIOBuf> frame(unsigned maxBytes) const {
-    ZmRef<ZiIOBuf> body = new BatchBuf{nullptr, 0};
+    ZmRef<ZiIOBuf> body = new BatchBuf{ZmSingleton<typename BatchBuf::Allocator>::instance()};
     BufOutput out{*body, maxBytes};
     write(out);
     return out ? ZuMv(body) : ZmRef<ZiIOBuf>{};

@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zquic.hh>
 #include <zlib/ZtlsPico.hh>
@@ -63,7 +64,9 @@ void testEarlyDataTLSProperties()
 
   ZmRef<ZiIOBuf> out =
     new Zquic::CryptoTxBufAlloc<
-      Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>{nullptr, 0};
+      Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>{
+        ZmSingleton<typename Zquic::CryptoTxBufAlloc<
+      Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>::Allocator>::instance(), nullptr, 0};
   size_t offsets[5] = {};
   int n = crypto.handleTLSMessage(out.ptr(), offsets, 0, {});
   ZuCHECK(n > 0, "client TLS initial output failed");
@@ -129,7 +132,9 @@ void testTLSOutputBuffer()
 
   ZmRef<ZiIOBuf> out =
     new Zquic::CryptoTxBufAlloc<
-      Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>{nullptr, 0};
+      Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>{
+        ZmSingleton<typename Zquic::CryptoTxBufAlloc<
+      Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>::Allocator>::instance(), nullptr, 0};
   size_t offsets[5] = {};
   Ztls::Pico::reset_stats();
   int n = crypto.handleTLSMessage(out.ptr(), offsets, 0, {});
@@ -205,7 +210,9 @@ void testOwnedCryptoFlights()
       false, false, "h3", {}, {}, {}, "localhost"}),
     "owned TLS output initialization failed");
   ZmRef<ZiIOBuf> out = new Zquic::CryptoTxBufAlloc<
-    Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>{nullptr, 0};
+    Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>{
+      ZmSingleton<typename Zquic::CryptoTxBufAlloc<
+    Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>::Allocator>::instance(), nullptr, 0};
   size_t positions[5] = {};
   int n = crypto.handleTLSMessage(out.ptr(), positions, 0, {});
   ZuCHECK(n > 0, "owned TLS output generation failed");
@@ -237,20 +244,21 @@ void testOwnedCryptoFlights()
     "epoch reset retained retired TLS output");
 }
 
-void testCryptoOwnedRanges()
+void testCryptoOwnedBuffers()
 {
-  ZuTestScope(testCryptoOwnedRanges);
+  ZuTestScope(testCryptoOwnedBuffers);
 
-  ZmRef<ZiIOBuf> first = new Zquic::CryptoTxBufAlloc<>{nullptr, 0};
-  ZmRef<ZiIOBuf> second = new Zquic::CryptoTxBufAlloc<>{nullptr, 0};
+  ZmRef<ZiIOBuf> first = new Zquic::CryptoTxBufAlloc<>{
+    ZmSingleton<typename Zquic::CryptoTxBufAlloc<>::Allocator>::instance(), nullptr, 0};
+  ZmRef<ZiIOBuf> second = new Zquic::CryptoTxBufAlloc<>{
+    ZmSingleton<typename Zquic::CryptoTxBufAlloc<>::Allocator>::instance(), nullptr, 0};
   first->append(bytes_(reinterpret_cast<const uint8_t *>("prefixabcdef"), 12)); first->advance(6);
   second->append(bytes_(reinterpret_cast<const uint8_t *>("padghij"), 7)); second->advance(3);
   const uint8_t *a = first->data(), *b = second->data();
   Zquic::CryptoStream stream;
-  ZuCHECK(stream.sent(0, Zi::RxRange{first, 0, 3}) &&
-      stream.sent(3, Zi::RxRange{first, 3, 3}) &&
-      stream.sent(6, Zi::RxRange{second, 0, 4}),
-    "owned CRYPTO range admission failed");
+  ZuCHECK(stream.sent(0, ZuMv(first)) &&
+      stream.sent(6, ZuMv(second)),
+    "owned CRYPTO buffer admission failed");
   first = nullptr; second = nullptr;
   ZuBSpan payload;
   ZuCHECK(stream.txPayload(0, 10, payload) && payload.data() == a &&
@@ -267,7 +275,8 @@ void testCryptoOwnedRanges()
       !stream.txPayload(9, 2, payload),
     "CRYPTO gap, empty tail or invalid retained range handling changed");
 
-  ZmRef<ZiIOBuf> shifted = new Zquic::CryptoTxBufAlloc<>{nullptr, 0};
+  ZmRef<ZiIOBuf> shifted = new Zquic::CryptoTxBufAlloc<>{
+    ZmSingleton<typename Zquic::CryptoTxBufAlloc<>::Allocator>::instance(), nullptr, 0};
   shifted->append(bytes_(reinterpret_cast<const uint8_t *>("skipklmnop"), 10)); shifted->advance(4);
   const uint8_t *c = shifted->data();
   Zquic::CryptoOffsets offsets(Zquic::TLSEpochCount + 1, false);
@@ -302,5 +311,5 @@ int main(int argc, char **argv)
   ZuTestCall(testTLSOutputBuffer);
   ZuTestCall(testCryptoFlightOffsets);
   ZuTestCall(testOwnedCryptoFlights);
-  ZuTestCall(testCryptoOwnedRanges);
+  ZuTestCall(testCryptoOwnedBuffers);
 }

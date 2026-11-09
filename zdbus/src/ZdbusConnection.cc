@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <zlib/ZmAssert.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuObject.hh>
@@ -23,8 +24,8 @@ namespace Zdbus_ {
 
 ZtEnumImplNS(CxnState);
 
-using FrameAlloc = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  Wire::MaxMessageSize, ZuStringT<"Zdbus.Frame">>;
+using FrameAlloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize,
+  Wire::MaxMessageSize, ZiIOBuf_Align, ZuStringT<"Zdbus.Frame">>;
 
 struct StopDispatch : ZmNHeap<StopDispatch>, ZuObject {
 friend inline ZuStringT<"Zdbus.CxnStopDispatch"> ZmNHeapID(StopDispatch *);
@@ -236,7 +237,7 @@ void Connection::connected_()
 {
   ZiAssert(m_loop.invoked(), "Zdbus", (), "connected off Rx", return);
   m_state = CxnState::Authenticating;
-  ZmRef<ZiIOBuf> buf = new FrameAlloc{nullptr, 0};
+  ZmRef<ZiIOBuf> buf = ZmSingleton<FrameAlloc>::instance()->allocBuf();
   m_auth.start(*buf, unsigned(geteuid()));
   m_output.pushNode(new Out{ZuMv(buf), {}, 0});
 }
@@ -299,7 +300,7 @@ bool Connection::auth_()
     return true;
   }
   m_state = CxnState::Hello;
-  ZmRef<ZiIOBuf> begin = new FrameAlloc{nullptr, 0};
+  ZmRef<ZiIOBuf> begin = ZmSingleton<FrameAlloc>::instance()->allocBuf();
   *begin << Auth::begin();
   m_output.pushNode(new Out{ZuMv(begin), {}, 0});
   rxWrite_();
@@ -322,7 +323,7 @@ bool detachInput_(ZmRef<ZiIOBuf> &input, unsigned size)
   ZmAssert_(input && size >= input->length);
   // A delivered frame still borrows this backing. Construct only the
   // unfinished tail in its final storage before receiving further bytes.
-  ZmRef<ZiIOBuf> next = new FrameAlloc{nullptr, 0};
+  ZmRef<ZiIOBuf> next = ZmSingleton<FrameAlloc>::instance()->allocBuf();
   if (!next->ensure(size)) return false;
   unsigned n = input->length;
   if (n) memcpy(next->data(), input->data(), n);
@@ -369,10 +370,10 @@ void Connection::rxRead_()
   unsigned budget = m_params.rxBytes;
   unsigned msgs = 0;
   while (budget && msgs < m_params.msgs) {
-    if (!m_input) m_input = new FrameAlloc{nullptr, 0};
+    if (!m_input) m_input = ZmSingleton<FrameAlloc>::instance()->allocBuf();
     if (!consume_(msgs)) return;
     if (msgs == m_params.msgs) break;
-    if (!m_input) m_input = new FrameAlloc{nullptr, 0};
+    if (!m_input) m_input = ZmSingleton<FrameAlloc>::instance()->allocBuf();
     unsigned n = m_input->length;
     unsigned want, reserve;
     if (m_state == CxnState::Authenticating) {

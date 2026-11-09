@@ -64,9 +64,9 @@ static void eviction()
   Endpoint a, b;
   ZuCheckRT(a.open() && b.open());
   ZiMultiplex mx{params()};
-  ZuCheckRT(mx.start());
   Zum::OIDCHTTP http;
   ZuCheckRT(http.init(&mx, 3, 1));
+  ZuCheckRT(mx.start());
   ZuCheckRT(http.start());
   auto send = http.fn();
   // Bound but non-listening sockets reserve the ports and refuse connections.
@@ -104,9 +104,9 @@ static void saturation()
   Endpoint held, other;
   ZuCheck(held.open(true) && other.open());
   ZiMultiplex mx{params()};
-  ZuCheck(mx.start());
   Zum::OIDCHTTP http;
   ZuCheck(http.init(&mx, 3, 1));
+  ZuCheck(mx.start());
   ZuCheck(http.start());
   auto send = http.fn();
   unsigned completed = 0;
@@ -134,9 +134,9 @@ static void startupDrain()
   Endpoint held;
   ZuCheck(held.open(true));
   ZiMultiplex mx{params()};
-  ZuCheck(mx.start());
   Zum::OIDCHTTP http;
   ZuCheck(http.init(&mx, 3, 1));
+  ZuCheck(mx.start());
   ZuCheck(http.start());
   auto send = http.fn();
   unsigned completed = 0;

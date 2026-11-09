@@ -17,6 +17,7 @@
 #include <zlib/ZtArray.hh>
 
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZiProgram.hh>
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZtcFB.hh>
@@ -30,7 +31,7 @@ namespace ZtcTestClient {
 using Ring = Ztc::Ring;
 
 using Frame =
-  Zi::IOBufAlloc<ZiIOBuf, 1024, Ztc::AppCf::DefltMaxFrame, ZuStringT<"Ztc.TestClient.Frame">>;
+  Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.TestClient.Frame">, Ztc::AppCf::DefltMaxFrame>;
 
 inline ZmRef<ZiIOBuf> request(
     uint64_t seqNo, Ztc::Group::T group, ZuCSpan filter,
@@ -38,7 +39,7 @@ inline ZmRef<ZiIOBuf> request(
     uint32_t alertDate = 0, uint64_t alertSeqNo = 0,
     ZuCSpan id = {})
 {
-  Ztc::Builder fbb{Ztc::frameBuf(ZmRef<ZiIOBuf>{new Frame{nullptr, 0}})};
+  Ztc::Builder fbb{Ztc::frameBuf(ZmRef<ZiIOBuf>{new Frame{ZmSingleton<typename Frame::Allocator>::instance()}})};
   auto nested = fbb.startNested();
   Ztc::Request data;
   data.filter = filter;
@@ -111,7 +112,7 @@ public:
 	continue;
       }
       unsigned size = Ztc::ringSize(ptr);
-      ZmRef<ZiIOBuf> frame = new Frame{nullptr, 0};
+      ZmRef<ZiIOBuf> frame = new Frame{ZmSingleton<typename Frame::Allocator>::instance()};
       if (size <= Ztc::AppCf::DefltMaxFrame) {
 	frame->alloc(size);
 	memcpy(frame->data(), ptr, size);

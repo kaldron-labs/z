@@ -120,7 +120,7 @@ struct TraceRecord : public ZiIOBuf {
   unsigned	wireBytes = 0;
   bool		truncated = false;
 
-  TraceRecord(uint8_t *data, unsigned size, Zi::IOBufAllocator *allocator,
+  TraceRecord(uint8_t *data, unsigned size, Zi::IOBufAllocator_ *allocator,
       void *owner = nullptr, unsigned length = 0) :
     ZiIOBuf{data, size, allocator, owner, length} { }
 

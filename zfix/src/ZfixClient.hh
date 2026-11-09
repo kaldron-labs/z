@@ -20,7 +20,7 @@ namespace Zfix {
 
 template <typename App, typename Impl, typename MTList, typename Net = TCP,
   typename RxAlloc = typename Net::template RxBufAlloc<>,
-  typename TxAlloc = Zi::IOBufAlloc<ZiTxBuf>,
+  typename TxAlloc = Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>,
   template <typename, typename> class Engine = Link>
 class CliLink : public Net::template CliLink<App, Impl, RxAlloc, TxAlloc>,
     public Engine<Impl, NativeRx<Net>>, public LinkHooks_<Impl, Net>,
@@ -91,14 +91,14 @@ public:
   using Params = typename Net::ClientParams;
   using MessageCatalog = MTList;
   template <typename Impl> using LinkBase = CliLink<App, Impl, MTList, Net,
-    typename Net::template RxBufAlloc<>, Zi::IOBufAlloc<ZiTxBuf>, Engine>;
+    typename Net::template RxBufAlloc<>, Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>, Engine>;
 };
 
 template <typename App, typename MTList, typename Net = TCP>
 using RawClient = Client<App, MTList, Net, Raw>;
 template <typename App, typename Impl, typename MTList, typename Net = TCP,
   typename RxAlloc = typename Net::template RxBufAlloc<>,
-  typename TxAlloc = Zi::IOBufAlloc<ZiTxBuf>>
+  typename TxAlloc = Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>>
 using RawCliLink = CliLink<App, Impl, MTList, Net, RxAlloc, TxAlloc, Raw>;
 } // Zfix
 

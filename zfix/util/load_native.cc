@@ -74,8 +74,8 @@ static bool load(const Options &o, NativeCheckpoint &s) {
     h.body = Zfix::TxBody::restore<NewOrder>(body, id, error);
     if (error || !h.body || h.body->memory() > o.cacheBytes - bytes) return false;
     Order order;
-    if (Zfix::Fmt::load(order, body) || !id || order.key != id || id > s.businessKey)
-      return false;
+    if (!Zfix::Fmt::read<Order, ZuFacet::FIX, Zfix::ArchiveField>(order, body, error) ||
+        !id || order.key != id || id > s.businessKey) return false;
     bytes += h.body->memory(); last = h.seqNo; s.history.push(ZuMv(h));
   }
   return f.offset() == f.size();
@@ -88,17 +88,20 @@ template <typename Net> static int server(const Options &options, Ports ports) {
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
   auto deadline = Zm::now(options.deadline); auto start = monotonic();
-  if (!mx.start()) return 1;
   using Hub = NativeHub<Net, false>;
   Rows<ZuPtr<Hub>> hubs;
   for (unsigned i = 0; i < options.sessions; ++i) {
     ZuPtr<Hub> hub{new Hub{&state, i}};
     typename Net::ServerParams params{&mx, "3", "4"};
     if constexpr (Net::Encrypted) params.certPath(options.cert).keyPath(options.key);
-    hub->initialized = hub->init(ZuMv(params)); hub->active = hub->initialized && hub->start();
+    hub->initialized = hub->init(ZuMv(params));
+    hubs.push(ZuMv(hub));
+  }
+  if (!mx.start()) return 1;
+  for (auto &hub : hubs) {
+    hub->active = hub->initialized && hub->start();
     if (!hub->active) state.fail();
     else hub->listen();
-    hubs.push(ZuMv(hub));
   }
   if (!state.errors.load_()) {
     for (unsigned i = 0; i < options.sessions; ++i)
@@ -156,10 +159,11 @@ template <typename Net> static int client(const Options &options, Ports ports) {
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
   auto deadline = Zm::now(options.deadline);
-  if (!mx.start()) return 1;
   typename Net::ClientParams params{&mx, "3", "4"};
   if constexpr (Net::Encrypted) params.caPath(options.ca);
-  bool initialized = hub.init(ZuMv(params)), active = initialized && hub.start();
+  bool initialized = hub.init(ZuMv(params));
+  if (!mx.start()) return 1;
+  bool active = initialized && hub.start();
   Rows<ZmRef<NativeLink<Net, true>>> links;
   if (!active) state.fail();
   else {

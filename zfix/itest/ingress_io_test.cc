@@ -144,15 +144,15 @@ friend inline ZuStringT<"Zfix.ingress_io_test.Link"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator delete; using Peer::Peer; };
 
 bool CliHub::init(Network::ClientParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::RawClient<CliHub, Dictionary, Network>::init(ZuMv(params));
 }
@@ -186,15 +186,15 @@ friend inline ZuStringT<"Zfix.ingress_io_test.Link"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator delete; using Peer::Peer; };
 
 bool SrvHub::init(Network::ServerParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::RawServer<SrvHub, Dictionary, Network>::init(ZuMv(params));
 }
@@ -219,7 +219,6 @@ struct Harness {
     client{cli}, server{&state, srv} { }
 
   bool start(bool submitZero = false) {
-    if (!mx.start()) return false;
     Network::ClientParams cp{&mx, "5", "6"}; Network::ServerParams sp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
     auto cert = getenv("ZFIX_TEST_CERT"), key = getenv("ZFIX_TEST_KEY");
@@ -228,6 +227,7 @@ struct Harness {
 #endif
     bool ci = client.init(ZuMv(cp)), si = server.init(ZuMv(sp));
     if (!ci || !si) { client.final(); server.final(); mx.stop(); return false; }
+    if (!mx.start()) return false;
     bool cs = client.start(), ss = server.start();
     if (!cs || !ss) {
       if (cs) client.stop(); if (ss) server.stop();

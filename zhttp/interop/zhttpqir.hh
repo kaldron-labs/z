@@ -72,11 +72,6 @@ struct Env {
   Zi::Path	cert;
   Zi::Path	key;
   Zi::Path	qlogPath;
-  // One MiB packet burst plus control and retirement reserve.
-  unsigned	rxRingSize = ZiIOBuf_DefltRxRingSize +
-    ((1U<<20) + Zquic::MinUDPPayload - 1) / Zquic::MinUDPPayload;
-  unsigned	txRingSize = ZiIOBuf_DefltTxRingSize +
-    ((1U<<20) + Zquic::MinUDPPayload - 1) / Zquic::MinUDPPayload;
   unsigned	port = DefaultPort;
 };
 

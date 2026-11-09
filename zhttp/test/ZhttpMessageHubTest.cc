@@ -7,10 +7,12 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiResolver.hh>
+#include <zlib/ZtcHub.hh>
 
 #include <zlib/Zquic.hh>
 
@@ -407,12 +409,6 @@ struct Server : public Zhttp::Server<Server<Profile>, ServerParser<Profile>,
 ZiMxParams mxParams()
 {
   return ZiMxParams()
-#ifdef ZHTTP_TEST_H3
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
-#endif
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -421,6 +417,67 @@ ZiMxParams mxParams()
 	.thread(4, [](auto &t) { t.isolated(1); });
     })
     .rxThread(1).txThread(2);
+}
+
+void tcpTelemetry(ZiMultiplex &mx)
+{
+  struct Snapshot {
+    unsigned links = 0, queues = 0, tx = 0;
+    uint64_t admitted = 0, sent = 0;
+    bool valid = true;
+  };
+  // Fence accepted body/end publications through I/O and their existing App Tx
+  // acknowledgements before capturing the final queue state on I/O Tx.
+  ZmBlock<>{}([&mx](auto wake) {
+    mx.run([&mx, wake = ZuMv(wake)]() mutable {
+      mx.txRun([&mx, wake = ZuMv(wake)]() mutable {
+	mx.run([wake = ZuMv(wake)]() mutable { wake(); }, 4);
+      });
+    }, 4);
+  });
+  auto result = ZmBlock<Snapshot>{}([&mx](auto wake) {
+    mx.txRun([&mx, wake = ZuMv(wake)]() mutable {
+	Snapshot result;
+	Ztc::HubMgr::all([&mx, &result](Ztc::Hub *hub) {
+	  if (hub->telKey().template p<0>() != Ztc::LinkType::TCP) return;
+	  Ztc::HubTelemetry data;
+	  hub->telemetry(data);
+	  if (data.mxID != mx.id()) return;
+	  hub->allLinks([&result](Ztc::Link *link) {
+	    ++result.links;
+	    auto linkKey = link->telKey();
+	    Ztc::LinkTelemetry physical;
+	    link->telemetry(physical);
+	    unsigned count = 0;
+	    auto n = link->allQueues([&result, &linkKey, &physical, &count](Ztc::Queue *queue) {
+	      auto key = queue->telKey();
+	      Ztc::QueueTelemetry data;
+	      queue->telemetry(data);
+	      result.valid &= key.template p<0>() == linkKey.template p<0>() &&
+		key.template p<1>() == linkKey.template p<1>() &&
+		key.template p<2>() == (count ? Ztc::QueueType::Tx : Ztc::QueueType::Rx) &&
+		data.ownerID == key.template p<0>() && data.id == key.template p<1>() &&
+		data.type == key.template p<2>() && !data.size && !data.full;
+	      ++count;
+	      ++result.queues;
+	      if (data.type != Ztc::QueueType::Tx) return;
+	      ++result.tx;
+	      result.admitted += data.inBytes;
+	      result.sent += data.outBytes;
+	      result.valid &= data.inCount && data.inBytes && data.outCount &&
+		!data.count && data.outBytes == physical.txBytes &&
+		data.outCount == physical.txCalls;
+	    });
+	    result.valid &= n == 2 && count == n;
+	  });
+	});
+	wake(result);
+    });
+  });
+  ZuCheckRT(result.valid && result.links == 2 && result.queues == 4 && result.tx == 2,
+    log_("HTTP TCP telemetry preserves native queue identity, counters and drained state"));
+  ZuCheckRT(result.admitted && result.admitted == result.sent,
+    log_("HTTP TCP telemetry counts every admitted header and body byte once"));
 }
 
 template <typename Profile>
@@ -438,8 +495,6 @@ void run(const Zhttp::Test::TempDir &cert, bool channel = false)
   ZuCheckRT(state.port, log_( "port allocation failed"));
   if (!state.port) return;
   ZiMultiplex mx{mxParams()};
-  ZuCheckRT(mx.start(), log_( "multiplexer start failed"));
-  if (!mx.running()) return;
   Zhttp::HubConfig hub{&mx, "3", "4"};
   Server<Profile> server{&state};
   Client<Profile> client;
@@ -470,6 +525,8 @@ void run(const Zhttp::Test::TempDir &cert, bool channel = false)
     Zhttp::Destination{"127.0.0.1", state.port});
   ZuCheckRT(serverInit, log_( "server initialized"));
   ZuCheckRT(pooled, log_( "client pool initialized"));
+  ZuCheckRT(mx.start(), log_( "multiplexer start failed"));
+  if (!mx.running()) return;
   bool serverUp = serverInit && server.start();
   bool clientUp = pooled && client.start();
   ZuCheckRT(serverUp && clientUp, log_( "endpoints started"));
@@ -503,6 +560,8 @@ void run(const Zhttp::Test::TempDir &cert, bool channel = false)
   if (state.admissions != 1) log_("session admissions=", state.admissions.load_());
   ZuCheckRT(state.admissions == 1, log_(
     "physical connection admissions normalized"));
+  if constexpr (ZuIsSame<typename Profile::Protocol, Zhttp::TCP>{})
+    if (responses && serverUp && clientUp) tcpTelemetry(mx);
   if (clientInit) client.stop();
   bool stopped = !serverInit || server.stop();
   ZuCheckRT(stopped && !state.errors, log_( "endpoints stopped"));
@@ -534,7 +593,7 @@ int main(int argc, char **argv)
   ZuTestCall(catalogs);
   Zhttp::Test::TempDir cert;
   if (!cert.init()) return 1;
-  ZiResolver::startSync();
+  ZiResolver::start();
 #if defined(ZHTTP_TEST_H1TCP)
   ZuTestCall((run<Case<Zhttp::H1TCP>>), cert);
   ZuTestCall((run<Case<Zhttp::H1TCP>>), cert, true);
@@ -563,6 +622,6 @@ int main(int argc, char **argv)
 #else
 #error HTTP profile test is not selected
 #endif
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
 }

@@ -10,6 +10,7 @@
 #undef main
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZtScratch.hh>
 
@@ -17,11 +18,12 @@ using namespace ZuTestUtil;
 
 namespace ZtcHubRxTest_ {
 
-using TestRxAllocator = Zi::RxTCPBufAllocator<ZiRxQueue::Node, 64, 1U << 20,
-  ZuStringT<"Ztc.Test.HubRx">>;
+using TestRxAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTCP, ZiRxQueue::Node, 64, 1U << 20>;
 
 struct Timers {
-  ZmRef<Zi::IOBufAllocator> allocator{new TestRxAllocator{2}};
+  ZiMultiplex mx;
+  Zi::IOBufAllocator *allocator{mx.template allocator<TestRxAllocator::BufType, typename TestRxAllocator::Buf::Buf,
+      TestRxAllocator::Size, TestRxAllocator::MaxSize, TestRxAllocator::Buf::Align, typename TestRxAllocator::Heap>()};
   auto rxAllocator(bool) { return allocator; }
   template <typename ...Args> void add(Args &&...) { }
   template <typename T> void del(T *) { }
@@ -48,14 +50,12 @@ struct Sink {
   unsigned headRoom() const { return 0; }
   unsigned tailRoom() const { return 0; }
   ZmRef<ZiIOBuf> allocBuf(unsigned head) {
-    ZmRef<ZiIOBuf> buf = new ZtcHub_::HubBuf{nullptr, 0};
+    ZmRef<ZiIOBuf> buf = new ZtcHub_::HubBuf{ZmSingleton<typename ZtcHub_::HubBuf::Allocator>::instance()};
     buf->skip = head;
     return buf;
   }
-  bool canAdopt_(const ZiIOBuf &) const { return false; }
   template <typename P> Sink &operator <<(P &&) { return *this; }
   bool appendOwned_(ZmRef<ZiIOBuf>) { return true; }
-  bool appendRange(Zi::RxRange) { return true; }
   void flush() { }
 };
 struct Link_ : public ZmNHeap<Link_>, public ZmObject {
@@ -102,7 +102,7 @@ static Ztc::HubdCf config(unsigned frames)
   return cf;
 }
 
-template <auto &ZuTest_scope>
+template <auto &ZuTest_scope, bool RT = false>
 struct Fixture {
   Ztc::Hubd hub;
   ZtcHub_::App app{&hub};
@@ -110,7 +110,10 @@ struct Fixture {
   ZmRef<Link> link{new Link{&server}};
 
   Fixture(unsigned frames = 4) {
-    ZuCheck(hub.init(config(frames)) && hub.start());
+    if constexpr (RT)
+      ZuCheckRT(hub.init(config(frames)) && hub.start());
+    else
+      ZuCheck(hub.init(config(frames)) && hub.start());
     link->input.sessionID = 1;
     link->input.generation = 1;
   }
@@ -121,13 +124,14 @@ struct Fixture {
   }
   int start() { return app.messageStart(*link, Zws::Opcode::Binary); }
   int receive(ZuSpan<uint8_t> bytes) {
-    auto backing = server.timers.allocator->alloc();
+    auto backing = server.timers.allocator->allocBuf();
     if (!backing || !backing->append(ZuBSpan{bytes})) return -1;
-    return receive(Zi::RxRange{ZuMv(backing), 0, bytes.length()});
+    return receive(ZuMv(backing));
   }
-  int receive(Zi::RxRange range) {
+  int receive(ZmRef<ZiIOBuf> backing) {
     ZiRxStream<ZiRxQueue> rx;
-    rx.push(ZuMv(range));
+    rx.push(ZmRef<ZiRxQueue::Node>::acquire(
+      static_cast<ZiRxQueue::Node *>(ZuMv(backing).release())));
     return app.process(*link, rx);
   }
   int end() { return app.messageEnd(*link); }
@@ -149,7 +153,7 @@ struct Fixture {
 
 static Ztc::HubFrame ack(uint64_t seqNo, ZuCSpan id = "publisher")
 {
-  Ztc::Builder builder{new ZtcHub_::HubBuf{nullptr, 0}};
+  Ztc::Builder builder{new ZtcHub_::HubBuf{ZmSingleton<typename ZtcHub_::HubBuf::Allocator>::instance()}};
   auto nested = builder.startNested();
   auto value = Zfb::save(builder, Ztc::Ack{
     .id = ZuID{id}, .seqNo = seqNo, .status = Ztc::AckStatus::OK});
@@ -163,7 +167,7 @@ static ZuSpan<uint8_t> bytes(const Ztc::HubFrame &frame)
 
 static Ztc::HubFrame packetStorage()
 {
-  Ztc::HubFrame frame = new ZtcHub_::HubBuf{nullptr, 0};
+  Ztc::HubFrame frame = new ZtcHub_::HubBuf{ZmSingleton<typename ZtcHub_::HubBuf::Allocator>::instance()};
   frame->skip = 32; // composed lower framing room in this test writer
   return frame;
 }
@@ -174,34 +178,31 @@ static Bytes packetBytes(const Ztc::HubPacket &packet)
 {
   Bytes result;
   result.length(unsigned(packet.length()));
-  memcpy(result.data(), packet.head.cspan().data(), packet.head.length);
-  if (packet.tail.length)
-    memcpy(result.data() + packet.head.length,
-      packet.tail.cspan().data(), packet.tail.length);
+  memcpy(result.data(), packet.head->cspan().data(), packet.head->length);
+  if ((packet.tail ? packet.tail->length : 0))
+    memcpy(result.data() + packet.head->length,
+      packet.tail->cspan().data(), (packet.tail ? packet.tail->length : 0));
   return result;
 }
 
 struct PacketSink {
-  ZtArray<Zi::RxRange, ZtArrayHeapID<"Ztc.Test.PacketParts">> parts;
+  ZtArray<Ztc::HubFrame, ZtArrayHeapID<"Ztc.Test.PacketParts">> parts;
 
-  bool canAdopt_(const ZiIOBuf &) const { return false; }
-  PacketSink &operator <<(ZmRef<ZiIOBuf> buf) {
-    auto length = buf->length;
-    parts.push(Zi::RxRange{ZuMv(buf), 0, length});
+  PacketSink &operator <<(ZuBSpan span) {
+    // Foreign/replayed WS output is serialized into destination storage.
+    auto copy = packetStorage();
+    ZmAssert(copy->append(span));
+    parts.push(ZuMv(copy));
     return *this;
   }
-  bool appendRange(Zi::RxRange range) {
-    parts.push(ZuMv(range));
-    return true;
-  }
   bool appendOwned_(ZmRef<ZiIOBuf> buf) {
-    auto length = buf->length;
-    return appendRange(Zi::RxRange{ZuMv(buf), 0, length});
+    parts.push(ZuMv(buf));
+    return true;
   }
 };
 
-// Like TCPStream, a writer retains its allocation as provenance. A compatible
-// non-retaining lower layer can otherwise mutate any buffer handed to it.
+// Like the real WS writer, only explicit unpublished destination output grants
+// in-place framing/masking authority; foreign input is serialized first.
 struct PacketWriter : public PacketSink {
   Ztc::HubFrame allocated;
   Ztc::HubFrame sent;
@@ -212,17 +213,13 @@ struct PacketWriter : public PacketSink {
     allocated->skip = head;
     return allocated;
   }
-  bool canAdopt_(const ZiIOBuf &buf) const {
+  bool fits(const ZiIOBuf &buf) const {
     return buf.skip >= 32 && buf.avail() >= 16;
   }
-  PacketWriter &operator <<(ZmRef<ZiIOBuf> buf) {
+  bool appendOwned_(ZmRef<ZiIOBuf> buf) {
     ++adopted;
     buf->data()[0] ^= 0x5a; // observable stand-in for in-place WS masking
     sent = ZuMv(buf);
-    return *this;
-  }
-  bool appendOwned_(ZmRef<ZiIOBuf> buf) {
-    *this << ZuMv(buf);
     return true;
   }
 };
@@ -231,6 +228,7 @@ static void prefixAuthority()
 {
   ZuTestScope(prefixAuthority);
   auto source = ack(51);
+  auto physical = source->data();
   auto message = Ztc::msg(source->cspan());
   Bytes original;
   original.length(source->length);
@@ -243,31 +241,32 @@ static void prefixAuthority()
   auto storage = writer.allocBuf(32);
   auto allocated = storage.ptr();
   auto packet = build(ZuMv(storage), 16);
-  ZuCheck(valid && packet && packet.head.buf.ptr() == allocated, (return));
-  ZuCheck(packet.head.buf->refCount() > 1 && writer.canAdopt_(*allocated));
-  auto payload = packet.head.cspan().data();
+  ZuCheck(valid && packet && packet.head.ptr() == allocated, (return));
+  ZuCheck(packet.head->refCount() > 1 && writer.fits(*allocated));
+  auto payload = packet.head->cspan().data();
   auto first = payload[0];
   ZuMv(packet).write(writer, true);
   ZuCheck(writer.adopted == 1 && writer.sent.ptr() == allocated &&
-    writer.parts.length() == 1 && writer.parts[0].buf == source, (return));
+    writer.parts.length() == 1 && writer.parts[0] != source && writer.parts[0]->cspan() == source->cspan(), (return));
   ZuCheck(writer.sent->data() == payload && payload[0] == uint8_t(first ^ 0x5a));
-  ZuCheck(source->cspan() == ZuBSpan{original});
+  ZuCheck(!memcmp(physical, original.data(), original.length()));
 
   auto borrowed = build(packetStorage(), 16);
   ZuCheck(valid && borrowed, (return));
   auto expected = packetBytes(borrowed);
-  auto backing = borrowed.head.buf.ptr();
+  auto backing = borrowed.head;
   auto offset = backing->skip, length = backing->length;
   PacketWriter lower;
-  ZuCheck(backing->refCount() == 1 && lower.canAdopt_(*backing));
+  ZuCheck(backing->refCount() == 2 && lower.fits(*backing));
   ZuMv(borrowed).write(lower, false);
   ZuCheck(!lower.adopted && !lower.sent && lower.parts.length() == 2, (return));
-  ZuCheck(lower.parts[0].buf.ptr() == backing && lower.parts[1].buf == source &&
+  ZuCheck(lower.parts[0] != backing && lower.parts[1] != source &&
+    lower.parts[1]->cspan() == source->cspan() &&
     backing->skip == offset && backing->length == length);
   Ztc::HubPacket retained;
   retained.head = lower.parts[0]; retained.tail = lower.parts[1];
   auto actual = packetBytes(retained);
-  ZuCheck(ZuBSpan{actual} == ZuBSpan{expected} && source->cspan() == ZuBSpan{original});
+  ZuCheck(ZuBSpan{actual} == ZuBSpan{expected} && !memcmp(physical, original.data(), original.length()));
 }
 
 static void segmentedEnvelope()
@@ -277,10 +276,12 @@ static void segmentedEnvelope()
   f.authorize();
   auto first = ack(11), second = ack(22);
   ZuCheck(f.start() == 1 && f.receive(bytes(first)) == 1);
-  auto source = f.link->input.frame.range().buf.ptr();
+  auto sourceHold = f.link->input.frame;
+  auto source = sourceHold.ptr();
   auto original = source->data_();
   auto message = Ztc::msg(source->cspan());
   auto payload = message.get<Ztc::ZfField(Msg, data)>();
+  ZuCheck(f.end() == 1 && !f.link->input.frame);
   Ztc::RouteInfo a, b;
   a.subID = 7; a.deviceID = "device-a"; a.agentGeneration = 3;
   b.subID = 19; b.deviceID = "a-different-device-with-a-longer-identifier";
@@ -296,29 +297,28 @@ static void segmentedEnvelope()
   auto packetB = buildB(ZuMv(storageB), 16);
   buildA = {}; buildB = {};
   ZuCheck(validA && validB && packetA && packetB, (return));
-  ZuCheck(packetA.head.buf.ptr() == allocatedA && packetB.head.buf.ptr() == allocatedB);
-  ZuCheck(packetA.head.offset >= 32 && packetB.head.offset >= 32 &&
+  ZuCheck(packetA.head.ptr() == allocatedA && packetB.head.ptr() == allocatedB);
+  ZuCheck(packetA.head->skip >= 32 && packetB.head->skip >= 32 &&
     allocatedA->avail() >= 16 && allocatedB->avail() >= 16);
-  ZuCheck(packetA.tail.buf.ptr() == source && packetB.tail.buf.ptr() == source &&
-    packetA.tail.cspan().data() == payload.data() &&
-    packetB.tail.cspan().data() == payload.data() &&
-    packetA.tail.length == payload.length() && packetB.tail.length == payload.length());
-  ZuCheck(!(packetA.head.length & (Ztc::Builder::Align - 1)) &&
-    !(packetB.head.length & (Ztc::Builder::Align - 1)));
+  ZuCheck(packetA.tail.ptr() == source && packetB.tail.ptr() == source &&
+    packetA.tail->cspan().data() == payload.data() &&
+    packetB.tail->cspan().data() == payload.data() &&
+    packetA.tail->length == payload.length() && packetB.tail->length == payload.length());
+  ZuCheck(!(packetA.head->length & (Ztc::Builder::Align - 1)) &&
+    !(packetB.head->length & (Ztc::Builder::Align - 1)));
   PacketSink pending;
   auto delivered = packetA;
   ZuMv(delivered).write(pending, false);
   ZuCheck(pending.parts.length() == 2 &&
-    pending.parts[0].buf == packetA.head.buf && pending.parts[1].buf.ptr() == source &&
-    pending.parts[1].cspan().data() == payload.data());
-  ZuCheck(f.end() == 1 && !f.link->input.frame);
-  // Another delivery may finish while this one is still queued. All geometry
-  // above is physical, independent of the backing descriptor's current cursor.
-  source->advance(source->length);
-  allocatedA->advance(allocatedA->length);
-  ZuCheck(source->data_() == original && packetA.tail.cspan().data() == payload.data() &&
+    pending.parts[0] != packetA.head && pending.parts[1].ptr() != source &&
+    pending.parts[1]->cspan() == payload);
+  sourceHold = nullptr;
+  // Draining serialized foreign output must not alter another queued delivery.
+  pending.parts[0]->advance(pending.parts[0]->length);
+  pending.parts[1]->advance(pending.parts[1]->length);
+  ZuCheck(source->data_() == original && packetA.tail->cspan().data() == payload.data() &&
     packetA.body().get<Ztc::Body::Ack>().get<Ztc::ZfField(Ack, seqNo)>() == 11);
-  ZuCheck(f.start() == 1 && f.link->input.frame.range().buf.ptr() != source &&
+  ZuCheck(f.start() == 1 && f.link->input.frame.ptr() != source &&
     f.receive(bytes(second)) == 1 && f.end() == 1);
   auto wireA = packetBytes(packetA), wireB = packetBytes(packetB);
   auto msgA = Ztc::msg(wireA), msgB = Ztc::msg(wireB);
@@ -351,7 +351,7 @@ static void packetBounds()
   auto exact = ZtcHub_::agentFrame(route, message, source, length, &valid);
   auto accepted = exact(packetStorage(), 16);
   ZuCheck(valid && accepted && accepted.length() == length &&
-    accepted.tail.cspan().data() == packet.tail.cspan().data(), (return));
+    accepted.tail->cspan().data() == packet.tail->cspan().data(), (return));
   auto bounded = ZtcHub_::agentFrame(route, message, source, length - 1, &valid);
   auto rejected = bounded(packetStorage(), 16);
   ZuCheck(!valid && !rejected);
@@ -377,7 +377,7 @@ static void packetCharges()
   auto max = f.hub.config().controlBytes - f.hub.config().maxFrame;
   unsigned count = max / packet.length() + 1;
   ZuCheck(valid && packet && count <= f.hub.config().controlFrames - 1 &&
-    uint64_t(count) * packet.head.length <= max);
+    uint64_t(count) * packet.head->length <= max);
   f.link->input.sending = true; // an earlier Tx turn still owns this connection
   for (unsigned i = 0; i < count; ++i) ZtcHub_::App::enqueue(f.link, packet, false);
   auto egress = f.link->input.egresses.find(route.subID);
@@ -406,10 +406,10 @@ static void packetAlign()
     auto build = ZtcHub_::agentFrame(route, message, source, UINT32_MAX, &valid);
     auto packet = build(packetStorage(), 16);
     ZuCheckRT(valid && packet, (return));
-    partialEnd |= bool(packet.tail.length & (Ztc::Builder::Align - 1));
+    partialEnd |= bool((packet.tail ? packet.tail->length : 0) & (Ztc::Builder::Align - 1));
     auto wire = packetBytes(packet);
     auto msg = Ztc::msg(wire);
-    ZuCheckRT(msg && !(packet.head.length & (Ztc::Builder::Align - 1)), (return));
+    ZuCheckRT(msg && !(packet.head->length & (Ztc::Builder::Align - 1)), (return));
     ZuCheckRT(msg.get<Ztc::ZfField(Msg, subID)>() == i &&
       msg.get<Ztc::ZfField(Msg, deviceID)>() == route.deviceID &&
       msg.get<Ztc::ZfField(Msg, agentGen)>() == route.agentGeneration &&
@@ -449,7 +449,7 @@ static void byteLimit()
   ZuCheck(f.start() == 1);
   ZuCheck(f.receive(data.span().trunc(1)) == 1);
   ZuCheck(f.receive(data.span().trunc(1)) < 0);
-  ZuCheck(f.link->input.pendingBytes == 511 && f.link->input.frame.length() == 1);
+  ZuCheck(f.link->input.pendingBytes == 511 && (f.link->input.frame ? f.link->input.frame->length : 0) == 1);
   f.authorize();
   ZuCheck(f.link->input.closed && !f.link->input.authenticated);
 }
@@ -475,11 +475,11 @@ static void partial()
   ZuCheck(f.start() == 1);
   auto half = second->length >> 1;
   ZuCheck(f.receive(bytes(second).trunc(half)) == 1);
-  auto saved = f.link->input.frame.range().buf.ptr();
+  auto saved = f.link->input.frame.ptr();
   f.authorize();
   ZuCheck(f.link->input.authenticated && !f.link->input.closed);
   ZuCheck(!f.link->input.pending.length() && !f.link->input.pendingBytes);
-  ZuCheck(f.link->input.frame.range().buf.ptr() == saved && saved->length == half);
+  ZuCheck(f.link->input.frame.ptr() == saved && saved->length == half);
   ZuCheck(f.receive(bytes(second).offset(half)) == 1);
   ZuCheck(f.end() == 1);
   ZuCheck(!f.link->closeCode && !f.link->input.pending.length());
@@ -573,29 +573,34 @@ static void retainedInput()
   ZuTestScope(retainedInput);
   Fixture<ZuTest_scope> f;
   auto first = ack(71), second = ack(72);
-  Ztc::HubFrame wire = new ZtcHub_::HubBuf{nullptr, 0};
+  using Wire = Zi::IOBufBuiltin<ZiRxQueue::Node, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Test.Input">, 1U<<20>;
+  ZmRef<ZiRxQueue::Node> wire = new Wire{ZmSingleton<typename Wire::Allocator>::instance()};
   const uint8_t prefix[13] = {};
   wire->append(prefix, sizeof(prefix));
   wire->append(first->cspan()); wire->append(second->cspan());
-  auto expected = wire->data() + sizeof(prefix);
-  ZuCheck(f.start() == 1 && f.receive(Zi::RxRange{wire, sizeof(prefix), first->length}) == 1);
-  auto retained = f.link->input.frame.range();
-  ZuCheck(retained.buf == wire && retained.cspan().data() == expected &&
-    retained.length == first->length && !memcmp(retained.cspan().data(),
-      first->data(), first->length));
-  ZuCheck(f.end() == 1 && f.link->input.pendingBytes == first->length &&
-    !f.link->input.frame);
-  ZuCheck(f.start() == 1 && f.receive(Zi::RxRange{
-    wire, unsigned(sizeof(prefix)) + first->length, second->length}) == 1 && f.end() == 1);
+  ZiRxStream<ZiRxQueue> input;
+  input.push(wire);
+  input.advance(sizeof(prefix));
+  Ztc::HubFrame part;
+  auto alloc = [&f]() { return f.server.timers.allocator->allocBuf(); };
+  ZuCheck(input.extract([&first](ZuBSpan) -> int64_t { return first->length; },
+    alloc, part) == first->length);
+  auto retained = part;
+  ZuCheck(f.start() == 1 && f.receive(ZuMv(part)) == 1 && f.end() == 1);
+  ZuCheck(f.link->input.pendingBytes == first->length && !f.link->input.frame);
+  ZuCheck(input.extract([&second](ZuBSpan) -> int64_t { return second->length; },
+    alloc, part) == second->length && !input);
+  ZuCheck(part != retained && part->cspan() == second->cspan());
+  ZuCheck(f.start() == 1 && f.receive(ZuMv(part)) == 1 && f.end() == 1);
   ZuCheck(f.link->input.pendingBytes == first->length + second->length &&
     f.link->input.pending.length() == 2);
   auto queued = f.link->input.pending.shift();
-  ZuCheck(queued.buf == wire && queued.cspan().data() == expected &&
-    Ztc::msgBody(Ztc::msg(queued.cspan())).get<Ztc::Body::Ack>()
+  ZuCheck(queued == retained && queued->cspan() == first->cspan() &&
+    Ztc::msgBody(Ztc::msg(queued->cspan())).get<Ztc::Body::Ack>()
       .get<Ztc::ZfField(Ack, seqNo)>() == 71);
   auto next = f.link->input.pending.shift();
-  ZuCheck(next.buf == wire && next.offset == queued.offset + queued.length &&
-    Ztc::msgBody(Ztc::msg(next.cspan())).get<Ztc::Body::Ack>()
+  ZuCheck(next != queued && next->cspan() == second->cspan() &&
+    Ztc::msgBody(Ztc::msg(next->cspan())).get<Ztc::Body::Ack>()
       .get<Ztc::ZfField(Ack, seqNo)>() == 72);
   f.link->input.pendingBytes = 0;
 }
@@ -603,34 +608,25 @@ static void retainedInput()
 static void fragmentedInput()
 {
   ZuTestScopeRT(fragmentedInput);
-  Fixture<ZuTest_scope> f;
+  Fixture<ZuTest_scope, true> f;
   ZtString<> id;
   for (unsigned i = 0; i < 144; ++i) id << 'x';
   auto source = ack(81, id);
   ZuCheckRT(source->length > 128 && source->length <= f.hub.config().maxFrame, (return));
-#if Zi_URing
-  if (Zi::uring()) {
-    auto ring = f.server.timers.allocator->ring();
-    ZuCheckRT(ring && ring->bufCount() == 2 && ring->bufSize() == 64, (return));
-  }
-#endif
   ZuCheckRT(f.start() == 1);
   for (unsigned off = 0; off < source->length;) {
     unsigned n = source->length - off;
     if (n > 23) n = 23;
-    auto backing = f.server.timers.allocator->alloc();
+    auto backing = f.server.timers.allocator->allocBuf();
     ZuCheckRT(backing && backing->append(source->data() + off, n), (return));
-#if Zi_URing
-    if (Zi::uring()) ZuCheckRT(backing->uring(), (return));
-#endif
-    ZuCheckRT(f.receive(Zi::RxRange{ZuMv(backing), 0, n}) == 1, (return));
+    ZuCheckRT(f.receive(ZuMv(backing)) == 1, (return));
     off += n;
-    auto range = f.link->input.frame.range();
-    ZuCheckRT(range.length == off && !memcmp(range.cspan().data(), source->data(), off));
+    auto frame = f.link->input.frame;
+    ZuCheckRT(frame->length == off && !memcmp(frame->data(), source->data(), off));
   }
-  auto frame = f.link->input.frame.range();
+  auto frame = f.link->input.frame;
   ZuCheckRT(f.end() == 1 && f.link->input.pendingBytes == source->length &&
-    frame.length == source->length && frame.buf->jumbo());
+    frame->length == source->length && !frame->builtin());
 }
 
 } // namespace ZtcHubRxTest_

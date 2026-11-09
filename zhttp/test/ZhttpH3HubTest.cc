@@ -623,8 +623,6 @@ void runStream(const Zhttp::Test::TempDir &temp, bool large = false)
   if (!state.port) return;
 
   ZiMultiplex mx{ZhttpH1HubTest_::mxParams()};
-  ZuCHECK(mx.start(), "H3 stream multiplexer start failed");
-  if (!mx.running()) return;
 
   Zhttp::HubConfig hub{&mx, "3", "4"};
   auto serverConfig = Zhttp::QUICConfig{}
@@ -645,6 +643,8 @@ void runStream(const Zhttp::Test::TempDir &temp, bool large = false)
     mx.stop();
     return;
   }
+  ZuCHECK(mx.start(), "H3 stream multiplexer start failed");
+  if (!mx.running()) return;
   bool started = server.start() && client.start();
   ZuCHECK(started, "H3 stream hubs started");
   bool listening = state.listening.timedwait(Zm::now(10)) == 0;
@@ -722,15 +722,19 @@ void detachedResponse()
   ZuTestScopeRT(detachedResponse);
   using Client = ZhttpH1HubTest_::Client<Zhttp::H3QUIC>;
   using Stream = Zhttp::H3_::ClientStream<Client, Client::Link>;
-  using Alloc = Zi::IOBufAlloc<ZiRxQueue::Node, 128, 256,
-    ZuStringT<"Zhttp.Test.DetachedRx">>;
+  using Alloc = Zi::IOBufBuiltin<
+    ZiRxQueue::Node,
+    128,
+    ZiIOBuf_DefltAlign,
+    ZuStringT<"Zhttp.Test.DetachedRx">,
+    256>;
   ZmRef<Stream> stream = new Stream{nullptr, 40};
   Zquic::RxStream rx;
   // A deadline can detach HTTP before the peer's final response arrives.
   // Neither an empty delivery nor retained late bytes are a QUIC error.
   ZuCheckRT(!stream->appLink);
   ZuCheckRT(stream->process(rx) == 0);
-  ZmRef<ZiRxQueue::Node> buffer = new Alloc{nullptr, 0};
+  ZmRef<ZiRxQueue::Node> buffer = new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()};
   buffer->length = 115;
   rx.push(buffer);
   ZuCheckRT(rx.count_() == 1 && buffer->refCount() == 2);

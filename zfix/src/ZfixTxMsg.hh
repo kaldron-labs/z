@@ -181,7 +181,7 @@ class ZfixAPI TxBody : public ZiIOBuf {
 public:
   using Ref = ZmRef<const TxBody>;
 
-  TxBody(uint8_t *data, unsigned size, Zi::IOBufAllocator *allocator,
+  TxBody(uint8_t *data, unsigned size, Zi::IOBufAllocator_ *allocator,
       void *owner = nullptr, unsigned length = 0) :
     ZiIOBuf{data, size, allocator, owner, length} { }
 

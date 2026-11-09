@@ -36,6 +36,8 @@ Counters counters;
 
 using CtxHeap = ZmVHeap<
   "Ztls.Pico.Ctx", 128, (1U<<17), ZiIOBuf_Align>;
+using BufHeap = ZmVHeap<
+  "Ztls.Pico.Buf", ZmVHeap_DefltMin, ZmVHeap_DefltMax, ZiIOBuf_Align>;
 
 constexpr unsigned log2_align_(unsigned value) {
   unsigned bits = 0;
@@ -71,7 +73,7 @@ static uint8_t *internal_alloc_(unsigned capacity)
   return static_cast<uint8_t *>(
     ZmHeapAlloc<ZiIOBuf_Align>(capacity));
 #else
-  return static_cast<uint8_t *>(Zi::VHeap::valloc(capacity));
+  return static_cast<uint8_t *>(BufHeap::valloc(capacity));
 #endif
 }
 
@@ -80,7 +82,7 @@ static void internal_free_(void *ptr)
 #if ZtlsPico_ASAN
   Zm::alignedFree(ptr);
 #else
-  Zi::VHeap::vfree(ptr);
+  BufHeap::vfree(ptr);
 #endif
 }
 

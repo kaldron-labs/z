@@ -74,8 +74,8 @@ struct Packet : public ZiTxBuf {
   ZiTOS tos;
 };
 
-using RxAllocator = Zi::RxUDPBufAllocator<ZiIOBuf, ZiIOBuf_DefltSize>;
-using TxAllocator = Zi::TxUDPBufAllocator<Packet, ZiIOBuf_DefltSize>;
+using RxAllocator = Zi::IOBufAllocator;
+using TxAllocator = Zi::IOBufAllocator;
 
 class Connection : public ZiConnection, public ZiTx<Connection> {
 public:
@@ -126,7 +126,6 @@ public:
     m_localIP(localIP), m_localPort(localPort),
     m_remoteIP(remoteIP), m_remotePort(remotePort),
     m_connect(connect), m_options(options), m_nMessages(nMessages) {
-    if (!allocator(m_rx) || !allocator(m_allocator)) ZmFail(allocator_registration);
   }
   ~Mx() { }
 		
@@ -154,11 +153,11 @@ public:
 	  }
 
   unsigned nMessages() const { return m_nMessages; }
-  TxAllocator *txAllocator() const { return m_allocator.ptr(); }
+  TxAllocator *txAllocator() const { return m_allocator; }
 
 private:
-  ZmRef<RxAllocator> m_rx = new RxAllocator{};
-  ZmRef<TxAllocator> m_allocator = new TxAllocator{};
+  RxAllocator *m_rx = allocator<Zi::IOBufType::RxUDP, ZiIOBuf, ZiIOBuf_DefltSize>();
+  TxAllocator *m_allocator = allocator<Zi::IOBufType::TxUDP, Packet, ZiIOBuf_DefltSize>();
   ZiIP		m_localIP;
   unsigned	m_localPort;
   ZiIP		m_remoteIP;
@@ -171,7 +170,7 @@ private:
 
 bool Connection::recvComplete(ZiRxContext &io)
 {
-  auto buf = mx()->txAllocator()->allocBuf();
+  ZmRef<Packet> buf = mx()->txAllocator()->allocBuf().ptr<Packet>();
   buf->append(io.buf->cspan());
   io.buf = rxAllocator()->allocBuf(this);
   buf->addr = !m_dest ? io.addr : m_dest;
@@ -270,7 +269,7 @@ int main(int argc, const char *argv[])
 	  int j;
 	  if ((j = atoi(argv[++i])) <= 0) usage();
 #ifdef ZiMultiplex_EPoll
-	  params.epollQuantum(j);
+	  params.rxQuantum(j);
 #endif
 	}
 	break;

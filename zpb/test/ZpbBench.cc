@@ -11,14 +11,14 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuMatcher.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZpbReflect.hh>
 
-using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
+using LocalBuf = Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
 
 using namespace ZuTestUtil;
 
@@ -48,8 +48,7 @@ struct BenchLarge { ZuBSpan bytes; ZuCSpan text; };
 ZfStruct(, (BenchLarge, PB), (bytes,, Bytes), (text,, String));
 Zpb::AsMessage<"bench.Large"> Zpb_Fmt(BenchLarge *);
 
-using BenchPool = Zi::IOBufAlloc<ZiIOBuf, 32, 1024,
-  ZuStringT<"ZpbBench.TxPool">>;
+using BenchPool = Zi::IOBufBuiltin<ZiIOBuf, 32, ZiIOBuf_Align, ZuStringT<"ZpbBench.TxPool">, 1024>;
 struct BenchTx : ZiTxStream<BenchTx> {
   using Base = ZiTxStream<BenchTx>;
   using Base::operator <<;
@@ -61,7 +60,7 @@ struct BenchTx : ZiTxStream<BenchTx> {
     capture{capture_} { }
   ~BenchTx() { flush(); }
   ZmRef<ZiIOBuf> allocBuf_(unsigned head) {
-    ZmRef<ZiIOBuf> buf = new BenchPool{nullptr, 0};
+    ZmRef<ZiIOBuf> buf = new BenchPool{ZmSingleton<typename BenchPool::Allocator>::instance()};
     buf->skip = head;
     return buf;
   }
@@ -100,7 +99,7 @@ static bool roundTrip(const T &object, ZuCSpan name, Check check)
   auto decoded = Zpb::load<T>(wire);
   if (!check(decoded)) return false;
 
-  Zpb::IOBuilder pooled{new LocalBuf{nullptr, 0}};
+  Zpb::IOBuilder pooled{new LocalBuf{ZmSingleton<typename LocalBuf::Allocator>::instance()}};
   auto pooledWire = Zpb::save(pooled, object);
   if (pooled.failed() || pooledWire.length() != wire.length() ||
     memcmp(pooledWire.data(), wire.data(), wire.length())) return false;
@@ -211,7 +210,7 @@ static bool measure(const T &object, ZuCSpan name, Check check,
 	break;
       }
       case 1: {
-	Zpb::IOBuilder next{new LocalBuf{nullptr, 0}};
+	Zpb::IOBuilder next{new LocalBuf{ZmSingleton<typename LocalBuf::Allocator>::instance()}};
 	auto bytes = Zpb::save(next, object);
 	if (next.failed()) return false;
 	auto owner = next.buf();

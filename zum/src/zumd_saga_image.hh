@@ -17,18 +17,20 @@
 
 #include <zlib/Zfb.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZiIOBuf.hh>
 
 namespace Zum {
 
 struct SagaImage {
-  using Buf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-    ZuStringT<"Zum.Saga.Image">>;
+  using Buf =
+    Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZiIOBuf_Align,
+      ZuStringT<"Zum.Saga.Image">>;
 
   template <typename T>
   static Bytes save(const T &item)
   {
-    Zfb::IOBuilder<Zfb::BufferAlign<T>::N> fbb{new Buf{nullptr, 0}};
+    Zfb::IOBuilder<Zfb::BufferAlign<T>::N> fbb{ZmSingleton<Buf>::instance()->allocBuf()};
     fbb.finish(Zfb::save(fbb, item));
     return Bytes{fbb.span()};
   }

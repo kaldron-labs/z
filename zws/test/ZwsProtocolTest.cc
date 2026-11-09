@@ -8,6 +8,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmList.hh>
 
@@ -21,8 +22,12 @@ using namespace ZuTestUtil;
 
 namespace ZwsProtocolTest_ {
 
-using BufAlloc = Zi::IOBufAlloc<ZiIOBuf, 256, 1<<20,
-  ZuStringT<"ZwsProtocolTest.Buf">>;
+using BufAlloc = Zi::IOBufBuiltin<
+  ZiIOBuf,
+  256,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"ZwsProtocolTest.Buf">,
+  1<<20>;
 
 struct WireTx : public ZiTxStream<WireTx> {
   using Base = ZiTxStream<WireTx>;
@@ -38,22 +43,16 @@ struct WireTx : public ZiTxStream<WireTx> {
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
     // Admission can reject a request before any Z heap allocation.
     if (!admitOK) return nullptr;
-    ZmRef<ZiIOBuf> buf = new BufAlloc{nullptr, 0};
+    ZmRef<ZiIOBuf> buf = new BufAlloc{ZmSingleton<typename BufAlloc::Allocator>::instance()};
     buf->skip = headRoom;
     return buf;
   }
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
     ++sends;
     if (!sendOK || !buf || !buf->length) return false;
-    parts.push(Zi::RxRange{buf, 0, buf->length});
+    parts.push(buf);
     bufs.push(ZuMv(buf));
     finals.push(uint8_t(final));
-    return true;
-  }
-  bool sendRange_(Zi::RxRange range) {
-    if (!sendOK) return false;
-    parts.push(ZuMv(range));
-    ++sends;
     return true;
   }
   bool flush() {
@@ -61,7 +60,7 @@ struct WireTx : public ZiTxStream<WireTx> {
     return Base::flush();
   }
 
-  ZtArray<Zi::RxRange, ZtArrayHeapID<"ZwsTest.Parts">> parts;
+  ZtArray<ZmRef<ZiIOBuf>, ZtArrayHeapID<"ZwsTest.Parts">> parts;
   Bufs					bufs;
   ZtArray<uint8_t, ZtArrayHeapID<"ZwsTest.Final">> finals;
   unsigned				flushCalls = 0;
@@ -191,18 +190,26 @@ const Zhttp::ChannelOps &channelOps() {
 }
 
 using OuterRx = ZiRxStream<ZiRxQueue>;
-using OuterBufAlloc = Zi::IOBufAlloc<
-	ZiRxQueue::Node, 256, 1<<20, ZuStringT<"ZwsTest.OuterRx">>;
+using OuterBufAlloc = Zi::IOBufBuiltin<
+  ZiRxQueue::Node,
+  256,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"ZwsTest.OuterRx">,
+  1<<20>;
 
 using Bytes = ZtArray<uint8_t, ZtArrayHeapID<"ZwsTest.Bytes">>;
 
 using H1Rx = ZiRxStream<ZiRxQueue>;
-using H1BufAlloc = Zi::IOBufAlloc<
-	ZiRxQueue::Node, 256, 2048, ZuStringT<"ZwsTest.H1Rx">>;
+using H1BufAlloc = Zi::IOBufBuiltin<
+  ZiRxQueue::Node,
+  256,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"ZwsTest.H1Rx">,
+  2048>;
 
 void push(H1Rx &rx, ZuCSpan data)
 {
-  ZmRef<ZiRxQueue::Node> buf = new H1BufAlloc{nullptr, 0};
+  ZmRef<ZiRxQueue::Node> buf = new H1BufAlloc{ZmSingleton<typename H1BufAlloc::Allocator>::instance()};
   *buf << data;
   rx.push(ZuMv(buf));
 }
@@ -294,7 +301,7 @@ struct App :
 
   int feed(Bytes &wire) {
     if (wire) {
-      ZmRef<ZiRxQueue::Node> buf = new OuterBufAlloc{nullptr, 0};
+      ZmRef<ZiRxQueue::Node> buf = new OuterBufAlloc{ZmSingleton<typename OuterBufAlloc::Allocator>::instance()};
       *buf << wire;
       auto span = buf->span();
       wireData = span.data();
@@ -1478,55 +1485,50 @@ void codec()
 }
 
 template <bool Masked>
-void txRangeCase()
+void txOwnedViewCase()
 {
-  ZuTestScope(txRangeCase);
+  ZuTestScope(txOwnedViewCase);
   WireTx lower;
   CounterRandom random;
-  ZmRef<ZiIOBuf> source = new BufAlloc{nullptr, 0};
-  source->skip = 5;
+  ZmRef<ZiIOBuf> source = new BufAlloc{ZmSingleton<typename BufAlloc::Allocator>::instance()};
+  source->skip = 16;
   *source << "xxpayloadtail";
-  auto data = source->data();
   auto out = Zws::txLayer<Masked>(lower, Zws::Opcode::Binary, &random);
-  ZuCheck(out.appendRange(source, 2, 7) && out.flush());
+  source->advance(2);
+  source->length = 7;
+  out << source;
+  ZuCheck(out.flush());
+  ZuCheck(lower.parts.length() == 1 && lower.parts[0] == source);
   Bytes bytes;
-  bool retained = false;
-  for (const auto &part : lower.parts) {
-    retained |= part.buf == source && part.offset == 7 && part.length == 7;
-    bytes << part.cspan();
-  }
-  if constexpr (Masked) ZuCheck(!retained);
-  else ZuCheck(retained);
-  ZuCheck(source->data() == data && source->skip == 5 && source->cspan() == "xxpayloadtail");
+  for (const auto &part : lower.parts) bytes << part->cspan();
   ZuBSpan wire = bytes;
   Zws::HeaderParser parser;
   Zws::Frame frame_;
   Zws::Failure::T failure = Zws::Failure::None;
   ZuCheck(parser.process(wire, frame_, failure) == Zws::HeaderParser::Result::Complete);
-  ZuCheck(!frame_.final && frame_.length == 7 && frame_.masked == Masked);
+  ZuCheck(frame_.final && frame_.length == 7 && frame_.masked == Masked);
   auto prefix = unsigned(wire.data() - bytes.data());
   auto payload = bytes.span().offset(prefix).trunc(7);
   if constexpr (Masked) Zws::mask(payload, frame_.key);
   ZuCheck(payload == "payload");
   wire.offset(7);
-  parser.reset();
-  ZuCheck(parser.process(wire, frame_, failure) == Zws::HeaderParser::Result::Complete);
-  ZuCheck(frame_.final && !frame_.length && frame_.opcode == Zws::Opcode::Continuation);
+  ZuCheck(!wire.length());
 }
 
 template <bool Masked>
-void txMixedRangeCase()
+void txMixedOwnedCase()
 {
-  ZuTestScopeRT(txMixedRangeCase);
+  ZuTestScopeRT(txMixedOwnedCase);
   WireTx lower;
   CounterRandom random;
-  ZmRef<ZiIOBuf> source = new BufAlloc{nullptr, 0};
+  ZmRef<ZiIOBuf> source = new BufAlloc{ZmSingleton<typename BufAlloc::Allocator>::instance()};
   *source << "payload";
   auto out = Zws::txLayer<Masked>(lower, Zws::Opcode::Binary, &random);
   out << "pre";
-  ZuCheckRT(out.appendRange(source, 0, source->length) && out.flush());
+  out << source;
+  ZuCheckRT(out.flush());
   Bytes bytes;
-  for (const auto &part : lower.parts) bytes << part.cspan();
+  for (const auto &part : lower.parts) bytes << part->cspan();
   ZuBSpan wire = bytes;
   Bytes decoded;
   unsigned frames = 0;
@@ -1548,28 +1550,85 @@ void txMixedRangeCase()
     if (ended) ZuCheckRT(!wire.length());
     ++frames;
   }
-  ZuCheckRT(frames == 3 && ended && decoded == "prepayload" && source->cspan() == "payload");
+  ZuCheckRT(frames == 1 && ended && decoded == "prepayload" && source->cspan() == "payload");
 }
 
 struct TCPOwnedLink {
   using TxBufAlloc = Zhttp::Transport_::TCPTxBufAlloc;
-  ZmRef<Zi::IOBufAllocator> allocator = new TxBufAlloc;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, typename TxBufAlloc::Buf,
+    TxBufAlloc::Size, TxBufAlloc::MaxSize>;
+  Allocator allocator;
   ZmRef<Zhttp::Transport_::TCPHeader> head;
-  ZtArray<Zi::RxRange, ZtArrayHeapID<"Zws.Test.OwnedParts">> parts;
-  unsigned allocated = 0, ended = 0;
+  ZtArray<ZmRef<ZiIOBuf>, ZtArrayHeapID<"Zws.Test.OwnedParts">> parts;
+  unsigned allocated = 0, ended = 0, owned = 0;
 
-  template <bool> ZmRef<ZiIOBuf> allocTxBuf_() {
+  ZmRef<ZiIOBuf> allocTxBuf_() {
     ++allocated;
-    return allocator->alloc();
+    return allocator.allocBuf();
   }
   bool startTCP_(ZmRef<Zhttp::Transport_::TCPHeader> h, bool) {
     head = ZuMv(h); return true;
   }
-  bool partTCP_(ZmRef<Zhttp::Transport_::TCPHeader>, Zi::RxRange range) {
-    parts.push(ZuMv(range)); return true;
+  bool partTCP_(ZmRef<Zhttp::Transport_::TCPHeader>, Zhttp::RetainedEntry entry) {
+    ++owned;
+    parts.push(ZuMv(entry.buf));
+    return true;
   }
   void endTCP_(ZmRef<Zhttp::Transport_::TCPHeader>) { ++ended; }
 };
+
+void txOwnedAllocationOrder(bool isControl, bool prior)
+{
+  ZuTestScopeRT(txOwnedAllocationOrder);
+  TCPOwnedLink link;
+  Zhttp::Transport_::TCPStream<TCPOwnedLink, false> lower{link};
+  CounterRandom random;
+  auto opcode = isControl ? Zws::Opcode::Ping : Zws::Opcode::Binary;
+  auto out = Zws::txLayer<true>(lower, opcode, &random);
+  if (prior) out << "pre";
+  auto packet = out.allocBuf(out.headRoom());
+  auto priorHeader = link.head.ptr();
+  *packet << "owned";
+  ZuCheckRT(out.appendOwned_(packet) && out.flush());
+  if (!prior)
+    ZuCheckRT(link.allocated == 1 && link.head.ptr() == packet.ptr());
+  else if (!isControl)
+    ZuCheckRT(priorHeader && link.allocated == 2 && link.parts.length() == 1 &&
+	link.parts[0] == packet);
+  else
+    ZuCheckRT(!link.parts.length() && packet->cspan() == "owned");
+
+  Bytes bytes;
+  bytes << link.head->cspan();
+  for (const auto &part : link.parts) bytes << part->cspan();
+  ZuBSpan wire = bytes;
+  Bytes decoded;
+  unsigned index = 0;
+  while (wire.length()) {
+    Zws::HeaderParser parser;
+    Zws::Frame frame_;
+    Zws::Failure::T failure = Zws::Failure::None;
+    bool parsed = parser.process(wire, frame_, failure) ==
+      Zws::HeaderParser::Result::Complete;
+    ZuCheckRT(parsed && frame_.masked && frame_.length <= wire.length());
+    if (!parsed || frame_.length > wire.length()) break;
+    auto payload = bytes.span().offset(unsigned(wire.data() - bytes.data()))
+      .trunc(unsigned(frame_.length));
+    Zws::mask(payload, frame_.key);
+    decoded << payload;
+    bool fragmented = prior && !isControl;
+    ZuCheckRT(frame_.opcode == (index ? Zws::Opcode::Continuation : opcode) &&
+	frame_.final == (!fragmented || index == 1));
+    wire.offset(unsigned(frame_.length));
+    ++index;
+  }
+  ZuCheckRT(index == unsigned(prior && !isControl ? 2 : 1) &&
+      decoded == (prior ? "preowned" : "owned"));
+  lower.endTCP_();
+  link.parts.length(0);
+  link.head = nullptr;
+  ZuCheckRT(link.ended == 1 && packet->refCount() == 1);
+}
 
 void txOwnedTCP()
 {
@@ -1591,30 +1650,30 @@ void txOwnedTCP()
     *later << "later";
     out << later;
     ZuCheckRT(out.flush() && link.allocated == 2 && link.parts.length() == 1 &&
-      link.parts[0].buf.ptr() == later.ptr());
+      link.parts[0].ptr() == later.ptr());
   }
   Bytes replay;
   replay << later->cspan();
   ZuCheckRT(!lower.allocatedBuf_(later.ptr()));
   {
     auto out = Zws::txLayer<true>(lower, Zws::Opcode::Binary, &random);
-    out << later;
-    ZuCheckRT(out.flush() && link.allocated == 4 && link.parts.length() == 3 &&
-      link.parts[1].buf.ptr() != later.ptr() && later->cspan() == replay);
+    out << later->cspan();
+    ZuCheckRT(out.flush() && link.allocated == 3 && link.parts.length() == 2 &&
+      link.parts[1].ptr() != later.ptr() && later->cspan() == replay);
   }
-  ZmRef<ZiIOBuf> borrowed = new BufAlloc{nullptr, 0};
+  ZmRef<ZiIOBuf> borrowed = new BufAlloc{ZmSingleton<typename BufAlloc::Allocator>::instance()};
   *borrowed << "borrowed";
   {
     auto out = Zws::txLayer<true>(lower, Zws::Opcode::Binary, &random);
-    out << borrowed;
-    ZuCheckRT(out.flush() && link.allocated == 6 && link.parts.length() == 5 &&
-      link.parts[3].buf.ptr() != borrowed.ptr() && borrowed->cspan() == "borrowed");
+    out << borrowed->cspan();
+    ZuCheckRT(out.flush() && link.allocated == 4 && link.parts.length() == 3 &&
+      link.parts[2].ptr() != borrowed.ptr() && borrowed->cspan() == "borrowed");
   }
   // Decode a test-only snapshot; the actual final backing identities above
   // are the zero-copy oracle, and borrowed input remains immutable.
   Bytes bytes;
   bytes << link.head->cspan();
-  for (const auto &part : link.parts) bytes << part.cspan();
+  for (const auto &part : link.parts) bytes << part->cspan();
   ZuBSpan wire = bytes;
   unsigned index = 0;
   while (wire.length()) {
@@ -1631,15 +1690,14 @@ void txOwnedTCP()
     switch (index) {
       case 0: ZuCheckRT(frame_.final && frame_.opcode == Zws::Opcode::Binary && payload == "first"); break;
       case 1: ZuCheckRT(frame_.final && frame_.opcode == Zws::Opcode::Binary && payload == "later"); break;
-      case 2: ZuCheckRT(!frame_.final && frame_.opcode == Zws::Opcode::Binary && payload == replay); break;
-      case 3: case 5: ZuCheckRT(frame_.final && frame_.opcode == Zws::Opcode::Continuation && !payload.length()); break;
-      case 4: ZuCheckRT(!frame_.final && frame_.opcode == Zws::Opcode::Binary && payload == "borrowed"); break;
+      case 2: ZuCheckRT(frame_.final && frame_.opcode == Zws::Opcode::Binary && payload == replay); break;
+      case 3: ZuCheckRT(frame_.final && frame_.opcode == Zws::Opcode::Binary && payload == "borrowed"); break;
       default: ZuCheckRT(false); break;
     }
     wire.offset(unsigned(frame_.length)); ++index;
   }
   lower.endTCP_();
-  ZuCheckRT(index == 6 && link.ended == 1 && borrowed->cspan() == "borrowed" &&
+  ZuCheckRT(index == 4 && link.ended == 1 && borrowed->cspan() == "borrowed" &&
     later->cspan() == replay);
 }
 
@@ -1663,11 +1721,12 @@ void txOwnedTCPTurns(bool prior)
     if (prior) out << "pre";
     ZuCheckRT(out.appendOwned_(packet) && out.flush());
     ZuCheckRT(link.allocated == unsigned(prior ? 2 : 1) &&
-      (prior ? link.parts.length() == 1 && link.parts[0].buf.ptr() == packet.ptr() :
+      (prior ? link.parts.length() == 1 && link.parts[0].ptr() == packet.ptr() :
 	link.head.ptr() == packet.ptr()));
+    ZuCheckRT(link.owned == unsigned(prior));
     Bytes bytes;
     bytes << link.head->cspan();
-    for (const auto &part : link.parts) bytes << part.cspan();
+    for (const auto &part : link.parts) bytes << part->cspan();
     ZuBSpan wire = bytes;
     Bytes decoded;
     unsigned index = 0;
@@ -1691,9 +1750,9 @@ void txOwnedTCPTurns(bool prior)
     Bytes original; original << packet->cspan();
     unsigned allocated = link.allocated, parts = link.parts.length();
     auto replay = Zws::txLayer<true>(writer, Zws::Opcode::Binary, &random);
-    replay << packet;
-    ZuCheckRT(replay.flush() && link.allocated == allocated + 2 &&
-      link.parts.length() == parts + 2 && link.parts[parts].buf.ptr() != packet.ptr() &&
+    replay << packet->cspan();
+    ZuCheckRT(replay.flush() && link.allocated == allocated + 1 &&
+      link.parts.length() == parts + 1 && link.parts[parts].ptr() != packet.ptr() &&
       packet->cspan() == original);
   }
   ZuCheckRT(link.ended == 1);
@@ -1707,7 +1766,7 @@ void txOwnedNoCapability()
   auto ops = Zhttp::Native_::writerOps<decltype(lower)>();
   ops.allocated = nullptr; ops.takeAllocated = nullptr;
   Zhttp::Writer writer{&lower, ops};
-  auto packet = link.allocTxBuf_<false>();
+  auto packet = writer.allocBuf(14);
   *packet << "held";
   CounterRandom random;
   auto out = Zws::txLayer<true>(writer, Zws::Opcode::Binary, &random);
@@ -1730,13 +1789,17 @@ int main(int argc, char **argv)
   ZuTestCall(header);
   ZuTestCall(tx);
   ZuTestCall(txOwnedTCP);
+  ZuTestCall(txOwnedAllocationOrder, false, false);
+  ZuTestCall(txOwnedAllocationOrder, false, true);
+  ZuTestCall(txOwnedAllocationOrder, true, false);
+  ZuTestCall(txOwnedAllocationOrder, true, true);
   ZuTestCall(txOwnedTCPTurns, false);
   ZuTestCall(txOwnedTCPTurns, true);
   ZuTestCall(txOwnedNoCapability);
-  ZuTestCall(txRangeCase<false>);
-  ZuTestCall(txRangeCase<true>);
-  ZuTestCall(txMixedRangeCase<false>);
-  ZuTestCall(txMixedRangeCase<true>);
+  ZuTestCall(txOwnedViewCase<false>);
+  ZuTestCall(txOwnedViewCase<true>);
+  ZuTestCall(txMixedOwnedCase<false>);
+  ZuTestCall(txMixedOwnedCase<true>);
   ZuTestCall(codec);
   return 0;
 }

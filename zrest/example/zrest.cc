@@ -650,7 +650,7 @@ static unsigned callbackPort()
 static ZiMxParams mxParams(const Options &options)
 {
   auto params = ZiMxParams()
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+
     .scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.name("rx"); t.isolated(1); })
@@ -750,7 +750,6 @@ int main(int argc, char **argv)
   ZmTrap::trap();
 
   ZiMultiplex mx{mxParams(options)};
-  if (!mx.start()) return 1;
 
   Zhttp::ProtoPolicy::T policy;
   switch (options.http3) {
@@ -798,7 +797,7 @@ int main(int argc, char **argv)
     ZiLOG(Error, "zrest", ([e](auto &s) { s << "transmit error: " << e; }));
     return false;
   }});
-  bool clientUp = poolsInited && client.start();
+  bool clientUp = poolsInited && mx.start() && client.start();
   if (!clientUp) {
     if (clientInited) client.stop();
     client.final(); mx.stop(); ZiLog::stop(); return 1;

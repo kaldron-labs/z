@@ -248,7 +248,7 @@ public:
 
   struct Traits : public ZuBaseTraits<ZiMReq> { enum { IsPOD = 1 }; };
   friend Traits ZuTraitsType(ZiMReq *);
-  
+
   friend ZuPrintFn ZuPrintType(ZiMReq *);
 
 private:
@@ -505,8 +505,8 @@ private:
 // derived class must supply connected() and disconnected() functions
 // (and probably a destructor)
 class ZiAPI ZiConnection :
-    public ZmPolymorph,
-    public Ztc::Connection
+  public ZmPolymorph,
+  public Ztc::Connection
 {
   ZiConnection(const ZiConnection &) = delete;
   ZiConnection &operator =(const ZiConnection &) = delete;
@@ -563,6 +563,10 @@ public:
   Ztc::Connection::TelKey telKey() const override;
   void telemetry(Ztc::CxnTelemetry &data) const override;
 
+  // for ZiMxPlugin use
+  ZiRxContext &rxContext() { return m_rxContext; } // Rx thread exclusive
+  ZiTxContext &txContext() { return m_txContext; } // Tx thread exclusive
+
 private:
   void connected();
 
@@ -594,7 +598,6 @@ private:
   void errorDisconnect(int status, ZeError e, bool peer);
   void executedDisconnect(bool peer);
   void notifyDisconnected(bool peer);
-
 
   // immutable
   ZiMultiplex		*m_mx;
@@ -628,15 +631,14 @@ private:
   ZiTxContext		m_txContext;
   uint64_t		m_txCalls;
   uint64_t		m_txBytes;
-
 };
 
 // named parameter list for configuring ZiMultiplex
 class ZiMxParams {
 public:
   enum { RxThread = 1, TxThread = 2 }; // defaults
-  // Event-array capacity and IOCP quantum; Linux handlers drain ready I/O.
-  enum { IOQuantum = 8, EPollMaxFDs = 256 };
+  enum { RxQuantum = 8 };
+  enum { EPollMaxFDs = 256 };
 
   ZiMxParams() :
     m_scheduler{ZmSchedParams{}
@@ -661,16 +663,16 @@ public:
     unsigned tid = m_scheduler.sid(id);
     return txThread(tid && tid <= m_scheduler.nThreads() ? tid : 0);
   }
-#ifdef ZiMultiplex_EPoll
-  ZiMxParams &&epollMaxFDs(unsigned n)
-    { m_epollMaxFDs = n; return ZuMv(*this); }
-  ZiMxParams &&epollQuantum(unsigned n)
-    { m_epollQuantum = n; return ZuMv(*this); }
-#endif
   ZiMxParams &&rxBufSize(unsigned v)
     { m_rxBufSize = v; return ZuMv(*this); }
   ZiMxParams &&txBufSize(unsigned v)
     { m_txBufSize = v; return ZuMv(*this); }
+  ZiMxParams &&rxQuantum(unsigned n)
+    { m_rxQuantum = n; return ZuMv(*this); }
+#ifdef ZiMultiplex_EPoll
+  ZiMxParams &&epollMaxFDs(unsigned n)
+    { m_epollMaxFDs = n; return ZuMv(*this); }
+#endif
   ZiMxParams &&listenerHash(const char *id)
     { m_listenerHash = id; return ZuMv(*this); }
   ZiMxParams &&requestHash(const char *id)
@@ -696,12 +698,12 @@ public:
   unsigned txThread() const { return m_txThread; }
   ZuCSpan rxThreadID() const { return m_scheduler.thread(m_rxThread).name(); }
   ZuCSpan txThreadID() const { return m_scheduler.thread(m_txThread).name(); }
-#ifdef ZiMultiplex_EPoll
-  unsigned epollMaxFDs() const { return m_epollMaxFDs; }
-  unsigned epollQuantum() const { return m_epollQuantum; }
-#endif
   unsigned rxBufSize() const { return m_rxBufSize; }
   unsigned txBufSize() const { return m_txBufSize; }
+  unsigned rxQuantum() const { return m_rxQuantum; }
+#ifdef ZiMultiplex_EPoll
+  unsigned epollMaxFDs() const { return m_epollMaxFDs; }
+#endif
   ZuCSpan listenerHash() const { return m_listenerHash; }
   ZuCSpan requestHash() const { return m_requestHash; }
   ZuCSpan cxnHash() const { return m_cxnHash; }
@@ -716,12 +718,12 @@ private:
   ZmSchedParams		m_scheduler;
   unsigned		m_rxThread = RxThread;
   unsigned		m_txThread = TxThread;
-#ifdef ZiMultiplex_EPoll
-  unsigned		m_epollMaxFDs = EPollMaxFDs;
-  unsigned		m_epollQuantum = IOQuantum;
-#endif
   unsigned		m_rxBufSize = 0;
   unsigned		m_txBufSize = 0;
+  unsigned		m_rxQuantum = RxQuantum;
+#ifdef ZiMultiplex_EPoll
+  unsigned		m_epollMaxFDs = EPollMaxFDs;
+#endif
 
   const char		*m_listenerHash = "ZiMultiplex.ListenerHash";
   const char		*m_requestHash = "ZiMultiplex.RequestHash";
@@ -734,8 +736,67 @@ private:
 #endif
 };
 
-class ZiAPI ZiMultiplex :
-    public ZmScheduler, public Ztc::Mx {
+// ZiMultiplex plugin for user-mode TCP/UDP
+class ZiMxPlugin : public ZmPolymorph, public Ztc::Mx {
+public:
+  // start/stop result
+  using StartResult = ZuUnion<void, ZeException>;
+  using StopResult = ZuUnion<void, ZeException>;
+
+  // the derived class ctor can inspect mx->rxQuantum()
+  ZiMxPlugin(ZiMultiplex *mx) : m_mx(mx) { }
+
+  ZiMultiplex *mx() const { return m_mx; }
+
+  // type will be one of RxUDP, TxUDP, RxTCP, TxTCP, RxTLS, TxTLS
+  virtual Zi::IOBufPlugin *allocator(Zi::IOBufType::T type,
+    unsigned size, unsigned maxSize, unsigned align) = 0;
+
+  // Rx thread idempotent start/stop
+
+  virtual void start() = 0;		// callback: started
+  virtual void stop() = 0;		// callback: stopped
+
+  // Rx thread functions
+
+  virtual void rx() = 0;		// handle I/O events until woken or rxQuantum processed
+
+  // callbacks: listening, listenFailed, accepted
+  virtual void listen(
+      ZiListenFn listenFn, ZiFailFn failFn, ZiConnectFn acceptFn,
+      ZiIP localIP, uint16_t localPort, unsigned nAccepts,
+      Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options) = 0;
+  virtual void stopListening(ZiIP localIP, uint16_t localPort) = 0;
+
+  // callbacks: connected, connectFailed
+  virtual void connect(
+      ZiConnectFn fn, ZiFailFn failFn,
+      ZiIPType::T ipType,
+      ZiIP localIP, uint16_t localPort,
+      ZiIP remoteIP, uint16_t remotePort,
+      Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options) = 0;
+
+  // callbacks: udp, udpFailed
+  virtual void udp(
+      ZiConnectFn fn, ZiFailFn failFn,
+      ZiIPType::T ipType,
+      ZiIP localIP, uint16_t localPort,
+      ZiIP remoteIP, uint16_t remotePort,
+      Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options) = 0;
+
+  // Tx thread
+
+  virtual void send(ZiConnection *);	// equivalent of ZiConnection::send()
+
+  // non-Rx thread functions
+
+  virtual void wake() = 0;		// wake up rx(), cause it to return
+
+private:
+  ZiMultiplex	*m_mx = nullptr;
+};
+
+class ZiAPI ZiMultiplex : public ZmScheduler, public Ztc::Mx {
 friend ZiConnection;
 
   class Listener_;
@@ -884,7 +945,6 @@ friend Connect_;
   ZuDerive(Connect, (Connect_));
 #endif
 
-  // Connections are shared with protocol owners and cannot own this registry node.
   ZmHashDerive(CxnHash, ZmRef<ZiConnection>,
     (ZmHashKey<ZiConnection::SocketAxor,
 	ZmHashHeapID<"ZiMultiplex.Connection">>));
@@ -898,13 +958,7 @@ public:
   ZiMultiplex(const ZiMultiplex &) = delete;
   ZiMultiplex &operator =(const ZiMultiplex &) = delete;
 
-  unsigned allCxns(Ztc::Mx::AllCxnsFn fn) const override;
-  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
-    return ZmScheduler::allQueues(ZuMv(fn));
-  }
-  void watch(Ztc::Mx::AddCxnFn, Ztc::Mx::DelCxnFn) override;
-  void unwatch() override;
-
+  // main API
   void listen(
       ZiListenFn listenFn, ZiFailFn failFn, ZiConnectFn acceptFn,
       ZiIP localIP, uint16_t localPort, unsigned nAccepts,
@@ -940,8 +994,30 @@ public:
 
   bool stop();
 
-  bool allocator(Zi::IOBufAllocator *);
+  // register allocators and any plugin while stopped, before start() and I/O use
+  template <
+    Zi::IOBufType::T Type = Zi::IOBufType::App,
+    typename Base = Zi::IOBuf,
+    unsigned Size = ZiIOBuf_DefltSize,
+    unsigned MaxSize = ZiIOBuf_DefltMaxSize,
+    unsigned Align = ZiIOBuf_DefltAlign,
+    typename HeapID = ZiIOBuf_HeapID>
+  Zi::IOBufAllocator *allocator() {
+    ZmAssert(state() == ZmEngineState::Stopped);
+    Zi::IOBufAllocator *a;
+    if (m_plugin)
+      a = new Zi::IOBufPluginAllocator<Type, Size, Base>(
+	this, m_plugin->allocator(Type, Size, MaxSize, Align));
+    else
+      a = new Zi::IOBufBuiltinAllocator<Type, Base, Size, MaxSize, Align, HeapID>(this);
+    m_allocators.pushNode(a);
+    return a;
+  }
 
+  void plugin(ZmRef<ZiMxPlugin> plugin);
+  ZiMxPlugin *plugin() const { return m_plugin; }
+
+  // threads
   unsigned rxThread() const { return m_rxThread; }
   unsigned txThread() const { return m_txThread; }
 
@@ -958,6 +1034,20 @@ public:
     invoke(ZuFwd<Args>(args)..., m_txThread);
   }
 
+  // plugin callbacks
+  void pluginStarted(ZiMxPlugin::StartResult);
+  void pluginStopped(ZiMxPlugin::StopResult);
+
+  // telemetry
+  unsigned allCxns(Ztc::Mx::AllCxnsFn fn) const override;
+  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override;
+  void watch(Ztc::Mx::AddCxnFn, Ztc::Mx::DelCxnFn) override;
+  void unwatch() override;
+
+private:
+  unsigned allCxns_(Ztc::Mx::AllCxnsFn fn) const;
+
+public:
 #ifdef ZiMultiplex_DEBUG
   template <typename S> void traceDump(S &s) { m_tracer.dump(s); }
   bool trace() const { return m_trace; }
@@ -974,25 +1064,17 @@ public:
   void txFilter(FilterFn fn) { m_txFilter = ZuMv(fn); }
 #endif
 
-#ifdef ZiMultiplex_EPoll
-  unsigned epollMaxFDs() const { return m_epollMaxFDs; }
-  unsigned epollQuantum() const { return m_epollQuantum; }
-#endif
   unsigned rxBufSize() const { return m_rxBufSize; }
   unsigned txBufSize() const { return m_txBufSize; }
+  unsigned rxQuantum() const { return m_rxQuantum; }
+#ifdef ZiMultiplex_EPoll
+  unsigned epollMaxFDs() const { return m_epollMaxFDs; }
+#endif
 
   TelKey telKey() const override { return {id()}; }
   void telemetry(Ztc::MxTelemetry &data) const override;
 
 private:
-  // IOCP callback quantum; Linux drains available input and output.
-  unsigned ioQuantum() const {
-#ifdef ZiMultiplex_EPoll
-    return m_epollQuantum;
-#else
-    return ZiMxParams::IOQuantum;
-#endif
-  }
 
 #ifdef ZiMultiplex_FILTER
   bool filterRx(ZiConnection *cxn, uint8_t *buf, unsigned n) {
@@ -1057,26 +1139,28 @@ private:
   void writeWake();
 #endif
 
-
 #ifdef ZiMultiplex_DEBUG
   void traceCapture() { m_tracer.capture(1); }
 #endif
 
   // immutable
+  ZmRef<ZiMxPlugin>	m_plugin = 0;
   unsigned		m_rxThread = 0;
   unsigned		m_txThread = 0;
   unsigned		m_rxBufSize = 0; // setsockopt SO_RCVBUF option
   unsigned		m_txBufSize = 0; // setsockopt SO_SNDBUF option
+  unsigned		m_rxQuantum = ZiMxParams::RxQuantum;
 #ifdef ZiMultiplex_EPoll
   unsigned		m_epollMaxFDs = 0;
-  unsigned		m_epollQuantum = 0;
 #endif
 
   // mutable shared
+  ZmSemaphore		*m_starting = nullptr;
   ZmSemaphore		*m_stopping = nullptr;
   ZmRWLock		m_cxnWatchLock;
   Ztc::Mx::AddCxnFn	m_addCxnFn;
   Ztc::Mx::DelCxnFn	m_delCxnFn;
+  bool			m_pluginFailed = false;
 
 #ifdef ZiMultiplex_DEBUG
   bool			m_trace = false;
@@ -1085,7 +1169,6 @@ private:
   bool			m_yield = false;
   ZmBackTracer<64>	m_tracer;
 #endif
-
 
   // Rx thread exclusive
 #ifdef ZiMultiplex_IOCP
@@ -1097,7 +1180,7 @@ private:
   int			m_epollFD = -1;
   int			m_wakeFD = -1;
 #endif
-  // Control owns pre-start setup; Rx owns registration publication while live.
+  // Registration is stopped-only; the app serializes it with lifecycle changes.
   Zi::IOBufAllocatorList m_allocators;
   ZmRef<ListenerHash>	m_listeners;
 #if ZiMultiplex__ConnectHash

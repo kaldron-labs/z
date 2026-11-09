@@ -102,18 +102,7 @@ static void wire(bool h3, bool empty)
     state.payload.length((256U << 10) + 7);
     memset(state.payload.data(), 0x71, state.payload.length());
   }
-  // Keep a complete retained message plus request/reply retirement overlap;
-  // TLS emits records, while QUIC emits path-sized packets.
-  unsigned rxSlots = 4 * ((state.payload.length() + ZiIOBuf_DefltSize - 1)/
-    ZiIOBuf_DefltSize);
-  unsigned txBytes = h3 ? Zquic::MinUDPPayload : 16U << 10;
-  unsigned txSlots = 4 * ((state.payload.length() + txBytes - 1)/txBytes);
   ZiMultiplex mx{ZiMxParams{}
-    .rxRingSize(rxSlots < ZiIOBuf_DefltRxRingSize ?
-      ZiIOBuf_DefltRxRingSize : rxSlots)
-    .txRingSize(txSlots < ZiIOBuf_DefltTxRingSize ?
-      ZiIOBuf_DefltTxRingSize : txSlots)
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
     .scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
@@ -122,7 +111,6 @@ static void wire(bool h3, bool empty)
       .thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
   state.mx = &mx;
-  ZuCheckRT(mx.start(), (return));
   unsigned port = peerPort(h3);
   ZuCheckRT(port, ({ mx.stop(); return; }));
   Zhttp::HubConfig hub{&mx, "3", "4"};
@@ -137,21 +125,23 @@ static void wire(bool h3, bool empty)
     .policy(Zhttp::H2Policy::Force));
   bool initialized = server.init(hub, serverConfig);
   ZuCheckRT(initialized);
-  bool started = initialized && server.start();
-  ZuCheckRT(started);
-  bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCheckRT(listening && !state.errors.load_());
   Client client;
   Zhttp::Config config;
   config.bodyMax(uint64_t(-1)).retainedBodyMax(1U << 20)
     .maxRedirects(0).protocol(h3 ? Zhttp::ProtoPolicy::ForceH3 : Zhttp::ProtoPolicy::DisableH3);
-  bool cliInit = listening && client.init(hub, 1, config, {},
+  bool cliInit = initialized && client.init(hub, 1, config, {},
     Zhttp::H2Config{}.tls([&cert](auto &tls) {
       tls.caPath(cert);
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
   ZuCheckRT(cliInit);
-  bool pooled = cliInit && client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
+  ZuCheckRT(mx.start(), (return));
+  bool started = initialized && server.start();
+  ZuCheckRT(started);
+  bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
+  ZuCheckRT(listening && !state.errors.load_());
+  bool pooled = listening && cliInit &&
+    client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
   ZuCheckRT(pooled);
   bool cliUp = pooled && client.start();
   ZuCheckRT(cliUp);
@@ -177,7 +167,7 @@ static void wire(bool h3, bool empty)
   request = nullptr;
   if (started) ZuCheckRT(server.stop());
   server.final();
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   ZuCheckRT(mx.stop());
   ZuCheckRT(!state.errors.load_() && state.received == 1);

@@ -372,7 +372,8 @@ class ClientBase : public ZmObject, public Zhttp::Client<ClientBase, Pool> {
   using Base = Zhttp::Client<ClientBase, Pool>;
 public:
 
-  bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
+  bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath,
+      const Zhttp::TCPConfig &tcp, const Zhttp::TLSConfig &tlsConfig) {
     m_origin = Zhttp::Origin{url.origin()};
     bool secure = url.scheme == Zhttp::Scheme::https;
     auto config = Zhttp::Config().links(1).concurrency(1).linkMax(1)
@@ -380,7 +381,8 @@ public:
       .protocol(Zhttp::ProtoPolicy::DisableH3)
       .secure(secure).tcp(true).tls(secure).quic(false);
     if (!Base::init(Zhttp::HubConfig{mx, "rx", "tx"}, 1,
-        config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.tls([&caPath](auto &tls) {
+        config, tcp, Zhttp::H2Config{}.tls([&caPath, &tlsConfig](auto &tls) {
+          tls = tlsConfig;
           tls.caPath(caPath);
         }),
         Zhttp::QUICConfig{})) return false;
@@ -428,12 +430,14 @@ friend inline ZuStringT<"Zum.Native.Client"> ZmNHeapID(Client *);
 
 class Clients {
 public:
+  Clients(Zhttp::TCPConfig tcp, Zhttp::TLSConfig tls) :
+    m_tcp{ZuMv(tcp)}, m_tls{ZuMv(tls)} { }
   bool add(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
     for (auto &client: m_clients)
       if (client->origin(url)) return true;
     if (m_clients.length() >= DestinationMax) return false;
     ZmRef<Client> client = new Client{};
-    if (!client->init(mx, url, caPath)) return false;
+    if (!client->init(mx, url, caPath, m_tcp, m_tls)) return false;
     m_clients.push(ZuMv(client));
     return true;
   }
@@ -468,6 +472,8 @@ public:
 
 private:
   ZtArray<ZmRef<Client>> m_clients;
+  Zhttp::TCPConfig m_tcp;
+  Zhttp::TLSConfig m_tls;
 };
 
 class CallbackApp;
@@ -626,9 +632,7 @@ static ZiMxParams mxParams()
       .thread(2, [](auto &t) { t.name("tx"); t.isolated(1); })
       .thread(3, [](auto &t) { t.name("cb-rx"); t.isolated(1); })
       .thread(4, [](auto &t) { t.name("cb-tx"); t.isolated(1); });
-  }).rxThread(1).txThread(2)
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
-      ZuStringT<"Zhttp.TLS.Rx">>>();
+  }).rxThread(1).txThread(2);
 }
 
 // Main-thread lease; token borrows the Vault credential until the next refresh.
@@ -764,9 +768,15 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
   ZmTrap::trap();
 
   ZiMultiplex mx{mxParams()};
+  auto tcpRx = mx.allocator<Zi::IOBufType::RxTCP>();
+  auto tcpTx = mx.allocator<Zi::IOBufType::TxTCP, ZiTxBuf>();
+  auto tlsRx = mx.allocator<Zi::IOBufType::RxTLS>();
+  auto tlsTx = mx.allocator<Zi::IOBufType::TxTLS, ZiTxBuf>();
+  auto tcp = Zhttp::TCPConfig{}.rxAllocator(tcpRx).txAllocator(tcpTx);
+  auto tls = Zhttp::TLSConfig{}.rxAllocator(tlsRx).txAllocator(tlsTx);
+  Clients clients{tcp, tls};
   if (!mx.start()) return false;
 
-  Clients clients;
   if (!clients.add(&mx, issuerURL.url(), config.caPath)) {
     std::cerr << "OAuth: issuer HTTP client start failed\n";
     clients.final(); mx.stop(); ZiLog::stop(); return false;
@@ -846,7 +856,7 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
     callback.expectedState = state;
     auto callbackConfig = Zhttp::ServerConfig().localIP(ZiIP("127.0.0.1"))
       .port(config.callbackPort).idleTimeout(ClientTimeout)
-      .retainedBodyMax(BodyMax).tcp();
+      .retainedBodyMax(BodyMax).tcp(tcp);
     bool callbackInited = callback.init(
       Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"}, ZuMv(callbackConfig));
     bool callbackUp = callbackInited && callback.start();

@@ -19,6 +19,7 @@
 #include <zlib/ZiResolver.hh>
 
 #include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpNative.hh>
 #include <zlib/ZhttpDiscovery.hh>
 #include <zlib/ZhttpURL.hh>
 #include <zlib/ZrestClient.hh>
@@ -244,7 +245,8 @@ class ClientBase : public ZmObject, public Zhttp::Client<ClientBase, Pool> {
 public:
   using Base = Zhttp::Client<ClientBase, Pool>;
 
-  bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
+  bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath,
+      const Zhttp::TCPConfig &tcp, const Zhttp::TLSConfig &tlsPolicy) {
     m_secure = url.scheme == Zhttp::Scheme::https;
     m_host = url.host;
     m_port = url.port;
@@ -256,7 +258,8 @@ public:
       .secure(url.scheme == Zhttp::Scheme::https).tcp(true)
       .tls(url.scheme == Zhttp::Scheme::https).quic(false);
     if (!Base::init(Zhttp::HubConfig{mx, "rx", "tx"}, 1,
-        config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.tls([&caPath](auto &tls) {
+        config, tcp, Zhttp::H2Config{}.tls([&caPath, &tlsPolicy](auto &tls) {
+          tls = tlsPolicy;
           tls.caPath(caPath);
         }),
         Zhttp::QUICConfig{})) return false;
@@ -340,6 +343,20 @@ public:
       ZuCSpan management, ZuCSpan caPath) {
     m_mx = mx;
     m_caPath = caPath;
+    using TCP = Zhttp::NativeTraits<Zhttp::H1TCP>::Transport;
+    using TLS = Zhttp::NativeTraits<Zhttp::H1TLS>::Transport;
+    m_tcp.rxAllocator(mx->allocator<Zi::IOBufType::RxTCP,
+      TCP::RxAllocator::Buf, TCP::RxAllocator::Size, TCP::RxAllocator::MaxSize,
+      TCP::RxAllocator::Align, TCP::RxAllocator::Heap>())
+      .txAllocator(mx->allocator<Zi::IOBufType::TxTCP,
+	TCP::TxAllocator::Buf, TCP::TxAllocator::Size, TCP::TxAllocator::MaxSize,
+	TCP::TxAllocator::Align, TCP::TxAllocator::Heap>());
+    m_tls.rxAllocator(mx->allocator<Zi::IOBufType::RxTLS,
+      TLS::RxAllocator::Buf, TLS::RxAllocator::Size, TLS::RxAllocator::MaxSize,
+      TLS::RxAllocator::Align, TLS::RxAllocator::Heap>())
+      .txAllocator(mx->allocator<Zi::IOBufType::TxTLS,
+	TLS::TxAllocator::Buf, TLS::TxAllocator::Size, TLS::TxAllocator::MaxSize,
+	TLS::TxAllocator::Align, TLS::TxAllocator::Heap>());
     m_resolverOwned = !ZiResolver::instance()->initialized();
     if (m_resolverOwned)
       ZiResolver::init(ZiResolverParams{}.timeoutMS(2000).tries(2));
@@ -392,7 +409,7 @@ private:
       if (client->origin(url)) return true;
     if (m_clients.length() >= PingHTTP_::DestinationMax) return false;
     ZmRef<PingHTTP_::Client> client = new PingHTTP_::Client{};
-    if (!client->init(m_mx, url, m_caPath)) {
+    if (!client->init(m_mx, url, m_caPath, m_tcp, m_tls)) {
       client->final();
       return false;
     }
@@ -519,6 +536,8 @@ private:
 private:
   ZtArray<ZmRef<PingHTTP_::Client>,
     ZtArrayHeapID<"Zum.PingHTTP.Clients">> m_clients;
+  Zhttp::TCPConfig m_tcp;
+  Zhttp::TLSConfig m_tls;
   ZiMultiplex *m_mx = nullptr;
   String m_caPath;
   bool m_resolverOwned = false;

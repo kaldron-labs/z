@@ -288,22 +288,22 @@ void testLoop(
   ServerApp server(&state);
   ClientApp client(&state);
   ZiMultiplex mx(mxParams());
+  Zi::IOBufAllocator *serverRx = ServerApp::Link::rxAllocator(&mx);
+  Zi::IOBufAllocator *serverTx = ServerApp::Link::txAllocator(&mx);
+  Ztcp::ServerParams serverParams(&mx, "3", "4");
+  serverParams.rxAllocator(serverRx).txAllocator(serverTx);
+  ZTCP_CHECK_RT(server.init(ZuMv(serverParams)),
+    "server init failed");
+  Zi::IOBufAllocator *clientRx = ClientApp::Link::rxAllocator(&mx);
+  Zi::IOBufAllocator *clientTx = ClientApp::Link::txAllocator(&mx);
+  Ztcp::ClientParams clientParams(&mx, "3", "4");
+  clientParams.rxAllocator(clientRx).txAllocator(clientTx);
+  ZTCP_CHECK_RT(client.init(ZuMv(clientParams)),
+    "client init failed");
   bool mxStarted = mx.start();
   ZTCP_CHECK_RT(mxStarted, "ZiMultiplex start failed");
   if (!mxStarted) return;
 
-  ZmRef<ServerApp::Link::RxAllocator> serverRx = new ServerApp::Link::RxAllocator{};
-  ZmRef<ServerApp::Link::TxAllocator> serverTx = new ServerApp::Link::TxAllocator{};
-  Ztcp::ServerParams serverParams(&mx, "3", "4");
-  serverParams.rxAllocator(serverRx.ptr()).txAllocator(serverTx.ptr());
-  ZTCP_CHECK_RT(server.init(ZuMv(serverParams)),
-    "server init failed");
-  ZmRef<ClientApp::Link::RxAllocator> clientRx = new ClientApp::Link::RxAllocator{};
-  ZmRef<ClientApp::Link::TxAllocator> clientTx = new ClientApp::Link::TxAllocator{};
-  Ztcp::ClientParams clientParams(&mx, "3", "4");
-  clientParams.rxAllocator(clientRx.ptr()).txAllocator(clientTx.ptr());
-  ZTCP_CHECK_RT(client.init(ZuMv(clientParams)),
-    "client init failed");
   bool serverStarted = server.start();
   bool clientStarted = client.start();
   ZTCP_CHECK_RT(serverStarted && clientStarted,

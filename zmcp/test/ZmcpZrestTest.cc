@@ -11,6 +11,7 @@
 
 #include <zlib/ZrestClient.hh>
 #include <zlib/ZrestServer.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmcpClient.hh>
 
 using namespace ZuTestUtil;
@@ -136,9 +137,13 @@ static SharedOutcome restCall(ZuCSpan authorization)
   constexpr unsigned jsonLength = sizeof(json) - 1;
   request.bodyMax(jsonLength);
   if (!request.bodyInfo(Zhttp::BodyType::Fixed, jsonLength)) return {};
-  using Alloc = Zi::IOBufAlloc<ZiRxQueue::Node,
-    ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zmcp.ZrestTest.Rx">>;
-  ZmRef<ZiRxQueue::Node> buf = new Alloc{nullptr, 0};
+  using Alloc = Zi::IOBufBuiltin<
+    ZiRxQueue::Node,
+    ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltAlign,
+    ZuStringT<"Zmcp.ZrestTest.Rx">,
+    ZiIOBuf_DefltMaxSize>;
+  ZmRef<ZiRxQueue::Node> buf = new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()};
   if (!buf->append(ZuSpan<uint8_t>{json, jsonLength})) return {};
   ZiRxStream<ZiRxQueue> rx;
   rx.push(ZuMv(buf));

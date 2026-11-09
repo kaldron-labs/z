@@ -27,6 +27,7 @@
 #include <zlib/ZmList.hh>
 #include <zlib/ZmPQueue.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmTrap.hh>
 
 #include <zlib/ZtArray.hh>
@@ -49,6 +50,7 @@
 
 #include <zlib/Zws.hh>
 
+#include <zlib/ZhttpNative.hh>
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
 #include <zlib/ZhttpURL.hh>
@@ -367,7 +369,8 @@ class ClientBase : public ZmObject, public Zhttp::Client<ClientBase, Pool> {
   using Base = Zhttp::Client<ClientBase, Pool>;
 public:
 
-  bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
+  bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath,
+      const Zhttp::TCPConfig &tcp, const Zhttp::TLSConfig &tlsPolicy) {
     m_origin = Zhttp::Origin{url.origin()};
     bool secure = url.scheme == Zhttp::Scheme::https;
     auto config = Zhttp::Config().links(1).concurrency(1).linkMax(1)
@@ -375,7 +378,8 @@ public:
       .protocol(Zhttp::ProtoPolicy::DisableH3)
       .secure(secure).tcp(true).tls(secure).quic(false);
     if (!Base::init(Zhttp::HubConfig{mx, "rx", "tx"}, 1,
-        config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.tls([&caPath](auto &tls) {
+        config, tcp, Zhttp::H2Config{}.tls([&](auto &tls) {
+          tls = tlsPolicy;
           tls.caPath(caPath);
         }),
         Zhttp::QUICConfig{})) return false;
@@ -423,12 +427,32 @@ friend inline ZuStringT<"Zum.Native.Client"> ZmNHeapID(Client *);
 
 class Clients {
 public:
+  bool init(ZiMultiplex *mx) {
+    using TCP = Zhttp::NativeTraits<Zhttp::H1TCP>::Transport;
+    using TLS = Zhttp::NativeTraits<Zhttp::H1TLS>::Transport;
+    m_tcp.rxAllocator(mx->allocator<Zi::IOBufType::RxTCP,
+      TCP::RxAllocator::Buf, TCP::RxAllocator::Size, TCP::RxAllocator::MaxSize,
+      TCP::RxAllocator::Align, TCP::RxAllocator::Heap>())
+      .txAllocator(mx->allocator<Zi::IOBufType::TxTCP,
+      TCP::TxAllocator::Buf, TCP::TxAllocator::Size, TCP::TxAllocator::MaxSize,
+      TCP::TxAllocator::Align, TCP::TxAllocator::Heap>());
+    m_tls.rxAllocator(mx->allocator<Zi::IOBufType::RxTLS,
+      TLS::RxAllocator::Buf, TLS::RxAllocator::Size, TLS::RxAllocator::MaxSize,
+      TLS::RxAllocator::Align, TLS::RxAllocator::Heap>())
+      .txAllocator(mx->allocator<Zi::IOBufType::TxTLS,
+      TLS::TxAllocator::Buf, TLS::TxAllocator::Size, TLS::TxAllocator::MaxSize,
+      TLS::TxAllocator::Align, TLS::TxAllocator::Heap>());
+    return true;
+  }
+
+  const Zhttp::TCPConfig &tcp() const { return m_tcp; }
+
   bool add(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
     for (auto &client: m_clients)
       if (client->origin(url)) return true;
     if (m_clients.length() >= DestinationMax) return false;
     ZmRef<Client> client = new Client{};
-    if (!client->init(mx, url, caPath)) return false;
+    if (!client->init(mx, url, caPath, m_tcp, m_tls)) return false;
     m_clients.push(ZuMv(client));
     return true;
   }
@@ -462,6 +486,8 @@ public:
   }
 
 private:
+  Zhttp::TCPConfig m_tcp;
+  Zhttp::TLSConfig m_tls;
   ZtArray<ZmRef<Client>> m_clients;
 };
 
@@ -600,8 +626,7 @@ static void interrupted() { callbackDone.post(); }
 
 static ZiMxParams mxParams()
 {
-  return ZiMxParams().tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
-      ZuStringT<"Zhttp.TLS.Rx">>>().scheduler([](auto &s) {
+  return ZiMxParams().scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.name("rx"); t.isolated(1); })
       .thread(2, [](auto &t) { t.name("tx"); t.isolated(1); })
@@ -733,9 +758,8 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
   ZmTrap::trap();
 
   ZiMultiplex mx{mxParams()};
-  if (!mx.start()) return false;
-
   Clients clients;
+  if (!clients.init(&mx) || !mx.start()) return false;
   if (!clients.add(&mx, issuerURL.url(), config.caPath)) {
     std::cerr << "OAuth: issuer HTTP client start failed\n";
     clients.final(); mx.stop(); ZiLog::stop(); return false;
@@ -816,7 +840,7 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
     callback.expectedState = state;
     auto callbackConfig = Zhttp::ServerConfig().localIP(ZiIP("127.0.0.1"))
       .port(config.callbackPort).idleTimeout(ClientTimeout)
-      .retainedBodyMax(BodyMax).tcp();
+      .retainedBodyMax(BodyMax).tcp(clients.tcp());
     bool callbackInited = callback.init(
       Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"}, ZuMv(callbackConfig));
     bool callbackUp = callbackInited && callback.start();
@@ -967,24 +991,31 @@ struct App {
     if (incoming > (1U << 20) - message.length()) {
       link.close(Zws::CloseCode::TooLarge); failed = true; return -1;
     }
+    using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, 1024, 1U << 20>;
+    auto alloc = []() { return ZmSingleton<Alloc>::instance()->allocBuf(); };
     while (rx) {
-      if (rx.splice(message, [](ZuBSpan span) -> int64_t { return span.length(); }) <= 0)
+      if (rx.splice(message,
+	[](ZuBSpan span) -> int64_t { return span.length(); }, alloc, alloc) <= 0)
 	{ link.close(Zws::CloseCode::TooLarge); failed = true; return -1; }
     }
-    if (message.length() > message.span().length() &&
-	!message.gather(unsigned(message.length()), [&link]() {
-	  auto allocator = link.app()->mx()->rxAllocator(false);
-	  return ZmRef<ZiRxQueue::Node>::acquire(static_cast<ZiRxQueue::Node *>(
-	    allocator->alloc().release()));
-	})) { link.close(Zws::CloseCode::TooLarge); failed = true; return -1; }
     return 1;
   }
 
   template <typename Link_>
   int messageEnd(Link_ &link)
   {
-    auto bytes = frame.range();
-    auto msg = Ztc::msg(bytes.cspan());
+    uint64_t remaining = frame.length();
+    Frame bytes;
+    using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, 1024, 1U << 20>;
+    auto length = frame.extract(
+      [&remaining](ZuBSpan span) -> int64_t {
+	if (remaining > span.length()) {
+	  remaining -= span.length();
+	  return 0;
+	}
+	return remaining;
+      }, []() { return ZmSingleton<Alloc>::instance()->allocBuf(); }, bytes);
+    Ztc::MsgView msg = length > 0 ? Ztc::msg(bytes->cspan()) : Ztc::MsgView{};
     if (!msg || !msg.get<Ztc::ZfField(Msg, deviceID)>() ||
       !msg.get<Ztc::ZfField(Msg, agentGen)>() ||
 	msg.get<Ztc::ZfField(Msg, subID)>() != subID ||
@@ -1037,8 +1068,7 @@ struct App {
 
 static ZiMxParams mxParams()
 {
-  return ZiMxParams().tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
-      ZuStringT<"Zhttp.TLS.Rx">>>().scheduler([](auto &s) {
+  return ZiMxParams().scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
@@ -1064,7 +1094,6 @@ static int session(const ZtcHubClient_::Options &options, ZuCSpan token)
   ZmTrap::sigintFn(interrupted);
   ZmTrap::trap();
   ZiMultiplex mx{mxParams()};
-  if (!mx.start()) return 1;
   App app{&done, {}, options.deviceID};
   App::Client client{&app};
   Zws::Config ws;
@@ -1078,7 +1107,7 @@ static int session(const ZtcHubClient_::Options &options, ZuCSpan token)
   if (options.caPath) tls.caPath(options.caPath);
   if (!client.init(Zhttp::HubConfig{&mx, "3", "4"}, tls,
       Zhttp::Destination{uri.host, uri.port, uri.ipv6Literal}, ws) ||
-      !client.start()) {
+      !mx.start() || !client.start()) {
     client.final();
     mx.stop();
     signalDone = nullptr;

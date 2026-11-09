@@ -10,6 +10,7 @@
 
 #include <string.h>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
 
@@ -75,8 +76,8 @@ static void records()
   role.actions.length(128);
   role.actions.set(7);
 
-  Zfb::IOBuilder<Zfb::BufferAlign<Zum::Role>::N> fbb{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
+  auto bufAllocator = ZmSingleton<Zi::IOBufBuiltinAllocator<>>::instance();
+  Zfb::IOBuilder<Zfb::BufferAlign<Zum::Role>::N> fbb{bufAllocator->allocBuf()};
   fbb.finish(Zfb::save(fbb, role));
   auto buf = fbb.buf();
   ZuBSpan bytes{buf->data(), buf->length};
@@ -91,8 +92,8 @@ static void records()
 template <typename T>
 static T roundTrip(const T &value)
 {
-  Zfb::IOBuilder<Zfb::BufferAlign<T>::N> fbb{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
+  auto bufAllocator = ZmSingleton<Zi::IOBufBuiltinAllocator<>>::instance();
+  Zfb::IOBuilder<Zfb::BufferAlign<T>::N> fbb{bufAllocator->allocBuf()};
   fbb.finish(Zfb::save(fbb, value));
   auto buf = fbb.buf();
   return Zfb::load<T>({buf->data(), buf->length});

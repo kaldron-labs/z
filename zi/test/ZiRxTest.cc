@@ -20,7 +20,7 @@ namespace ZiRxTest_ {
 struct RxBuf : public ZiIOBuf {
   using ZiIOBuf::ZiIOBuf;
 };
-using RxBufAlloc = Zi::IOBufAlloc<RxBuf, 32, 64, ZuStringT<"ZiRxTest.Buf">>;
+using RxBufAlloc = Zi::IOBufBuiltin<RxBuf, 32, ZiIOBuf_DefltAlign, ZuStringT<"ZiRxTest.Buf">, 64>;
 
 struct RxHarness : public ZiRx<RxHarness, RxBufAlloc> {
   enum BodyMode {
@@ -29,7 +29,7 @@ struct RxHarness : public ZiRx<RxHarness, RxBufAlloc> {
     Fail
   };
 
-  Zi::AppBufAllocator<RxBuf, 32, 64> allocator;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, RxBuf, 32, 64> allocator{nullptr};
   BodyMode	mode = Normal;
 
   unsigned	hdrCalls = 0;

@@ -40,6 +40,7 @@
 #include <zlib/ZiResolver.hh>
 
 #include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpNative.hh>
 #include <zlib/ZhttpURL.hh>
 
 #include <zlib/ZrestClient.hh>
@@ -1531,7 +1532,8 @@ friend inline ZuStringT<"Zum.zumd.oidc.Client"> ZmNHeapID(OIDCClient *);
 public:
   using Base = Zhttp::Client<OIDCClient, Pool>;
 
-  bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
+  bool init(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath,
+      const Zhttp::TCPConfig &tcp, const Zhttp::TLSConfig &tlsPolicy) {
     m_host = url.host;
     m_port = url.port;
     m_ipv6Literal = url.ipv6Literal;
@@ -1541,7 +1543,8 @@ public:
       .protocol(Zhttp::ProtoPolicy::DisableH3)
       .secure(true).tcp(true).tls(true).quic(false);
     if (!Base::init(Zhttp::HubConfig{mx, "rx", "tx"}, 1,
-        config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.tls([&caPath](auto &tls) {
+        config, tcp, Zhttp::H2Config{}.tls([&caPath, &tlsPolicy](auto &tls) {
+          tls = tlsPolicy;
           tls.caPath(caPath);
         }),
         Zhttp::QUICConfig{})) return false;
@@ -1648,6 +1651,20 @@ public:
     m_sid = sid;
     m_origins = origins;
     m_caPath = caPath;
+    using TCP = Zhttp::NativeTraits<Zhttp::H1TCP>::Transport;
+    using TLS = Zhttp::NativeTraits<Zhttp::H1TLS>::Transport;
+    m_tcp.rxAllocator(mx->allocator<Zi::IOBufType::RxTCP,
+      TCP::RxAllocator::Buf, TCP::RxAllocator::Size, TCP::RxAllocator::MaxSize,
+      TCP::RxAllocator::Align, TCP::RxAllocator::Heap>())
+      .txAllocator(mx->allocator<Zi::IOBufType::TxTCP,
+	TCP::TxAllocator::Buf, TCP::TxAllocator::Size, TCP::TxAllocator::MaxSize,
+	TCP::TxAllocator::Align, TCP::TxAllocator::Heap>());
+    m_tls.rxAllocator(mx->allocator<Zi::IOBufType::RxTLS,
+      TLS::RxAllocator::Buf, TLS::RxAllocator::Size, TLS::RxAllocator::MaxSize,
+      TLS::RxAllocator::Align, TLS::RxAllocator::Heap>())
+      .txAllocator(mx->allocator<Zi::IOBufType::TxTLS,
+	TLS::TxAllocator::Buf, TLS::TxAllocator::Size, TLS::TxAllocator::MaxSize,
+	TLS::TxAllocator::Align, TLS::TxAllocator::Heap>());
     m_resolverOwned = !ZiResolver::instance()->initialized();
     if (m_resolverOwned)
       ZiResolver::init(ZiResolverParams{}.timeoutMS(2000).tries(2));
@@ -1837,7 +1854,7 @@ private:
     auto &entry = m_clients[slot];
     if (!entry.client) {
       ZmRef<OIDCHTTP_::OIDCClient> candidate = new OIDCHTTP_::OIDCClient{};
-      if (!candidate->init(m_mx, url, m_caPath)) {
+      if (!candidate->init(m_mx, url, m_caPath, m_tcp, m_tls)) {
         candidate->final();
         finish_(ZuMv(action));
         return;
@@ -1871,6 +1888,8 @@ private:
     });
   }
 
+  Zhttp::TCPConfig m_tcp;
+  Zhttp::TLSConfig m_tls;
   ZiMultiplex *m_mx = nullptr;
   String m_caPath;
   unsigned m_sid = 0;

@@ -39,8 +39,7 @@ static void httpLifecycle()
   ZuCheckRT(!http.start());
   ZuCheckRT(http.stop());
   http.final();
-  // The borrowed multiplexer runs independently of this HTTP controller.
-  ZuCheckRT(mx.start());
+  // Register the controller's allocators before starting the borrowed multiplexer.
   ZuCheckRT(init(http));
   ZuCheckRT(http.state() == ZmEngineState::Stopped);
   auto retained = http.fn();
@@ -54,13 +53,16 @@ static void httpLifecycle()
 
   ZiResolver::init();
   ZuCheckRT(init(http));
+  ZuCheckRT(mx.start());
   ZuCheckRT(!http.start()); // borrowed resolver is stopped
   ZuCheckRT(http.state() == ZmEngineState::Stopped);
   http.final();
   ZuCheckRT(ZiResolver::instance()->initialized());
   ZiResolver::final();
+  ZuCheckRT(mx.stop());
 
   ZuCheckRT(init(http));
+  ZuCheckRT(mx.start());
   ZuCheckRT(http.start());
   ZuCheckRT(http.start());
   ZuCheckRT(http.state() == ZmEngineState::Running);

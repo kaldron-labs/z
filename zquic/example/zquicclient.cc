@@ -148,7 +148,7 @@ int main(int argc, char **argv)
   ZiLog::start();
 
   ZiMultiplex mx(
-      ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+      ZiMxParams()
 	.scheduler([](auto &s) {
 	  s.nThreads(4)
 	  .thread(1, [](auto &t) { t.isolated(1); })
@@ -157,11 +157,6 @@ int main(int argc, char **argv)
 	  .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
 
-  if (!mx.start()) {
-    std::cerr << "ZiMultiplex start failed\n" << std::flush;
-    ZiLog::stop();
-    return 1;
-  }
 
   App app{request};
 
@@ -174,6 +169,13 @@ int main(int argc, char **argv)
     ZiLog::stop();
     return 1;
   }
+  if (!mx.start()) {
+    std::cerr << "ZiMultiplex start failed\n" << std::flush;
+    app.final();
+    ZiLog::stop();
+    return 1;
+  }
+
 
   {
     ZmRef<App::Link> link = new App::Link{&app};

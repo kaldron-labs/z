@@ -17,6 +17,7 @@
 
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/Zquic.hh>
+#include <zlib/ZhttpNative.hh>
 
 #include <zlib/ZmcpClient.hh>
 #include <zlib/ZmcpServer.hh>
@@ -277,8 +278,8 @@ friend inline ZuStringT<"ZmcpITest.ClientCall"> ZmNHeapID(ClientCall *);
 };
 
 class RawHTTP;
-using RawHTTPBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZuStringT<"Zmcp.HTTP.Raw">>;
+using RawRxAllocator = Zi::IOBufAllocator;
+using RawTxAllocator = Zi::IOBufAllocator;
 
 class RawHTTPCxn : public ZiConnection {
 public:
@@ -297,14 +298,16 @@ private:
 
 class RawHTTP {
 public:
-  RawHTTP(ZiMultiplex &mx, unsigned port, ZuCSpan request) :
-      m_mx{mx}, m_request{new RawHTTPBuf{nullptr, 0}} {
+  RawHTTP(ZiMultiplex &mx, RawRxAllocator *rx, RawTxAllocator *tx,
+      unsigned port, ZuCSpan request) :
+      m_mx{mx}, m_rx{rx}, m_tx{tx},
+      m_request{m_tx->allocBuf()} {
     // Acquire the caller's borrowed malicious-peer wire bytes once.
     m_request->append(request);
     m_mx.connect(
       ZiConnectFn{this, ZmFnPtr<&RawHTTP::connected>{}},
       ZiFailFn{this, ZmFnPtr<&RawHTTP::failed>{}},
-      ZiIP{}, 0, ZiIP{"127.0.0.1"}, uint16_t(port));
+      ZiIP{}, 0, ZiIP{"127.0.0.1"}, uint16_t(port), m_rx);
   }
 
   ZiConnection *connected(const ZiCxnInfo &ci) {
@@ -370,6 +373,8 @@ public:
 
 private:
   ZiMultiplex		&m_mx;
+  RawRxAllocator *m_rx = nullptr;
+  RawTxAllocator *m_tx = nullptr;
   ZmRef<ZiIOBuf>		m_request;
   ZtString<>		m_response;
   ZmRef<RawHTTPCxn>	m_cxn;
@@ -386,13 +391,14 @@ RawHTTPCxn::RawHTTPCxn(
 
 void RawHTTPCxn::connected(ZiRxContext &io)
 {
-  io.init(ZiRxFn{this, ZmFnPtr<&RawHTTPCxn::recv_>{}});
+  io.init(ZiRxFn{this, ZmFnPtr<&RawHTTPCxn::recv_>{}},
+    static_cast<RawRxAllocator *>(info().rxAllocator)->allocBuf(this));
   send(ZiTxFn{this, ZmFnPtr<&RawHTTPCxn::send_>{}});
 }
 
 void RawHTTPCxn::disconnected(bool peer)
 {
-  m_owner->disconnected(peer);
+  if (auto owner = ZuMvPtr(m_owner)) owner->disconnected(peer);
 }
 
 bool RawHTTPCxn::recv_(ZiRxContext &io)
@@ -401,6 +407,7 @@ bool RawHTTPCxn::recv_(ZiRxContext &io)
   auto buf = ZuMv(io.buf);
   bool complete = m_owner->received(ZuCSpan{buf->cspan()});
   if (complete) io.disconnect();
+  else io.buf = static_cast<RawRxAllocator *>(info().rxAllocator)->allocBuf(this);
   return true;
 }
 
@@ -416,14 +423,17 @@ bool RawHTTPCxn::sent_(ZiTxContext &io)
     io.disconnect();
     return true;
   }
+  io.offset += io.length;
+  if (io.offset < io.buf->length) return true;
   io.complete();
   return true;
 }
 
 static bool rawHTTP(
-    ZiMultiplex &mx, unsigned port, ZuCSpan request, ZtString<> &response)
+    ZiMultiplex &mx, RawRxAllocator *rx, RawTxAllocator *tx,
+    unsigned port, ZuCSpan request, ZtString<> &response)
 {
-  RawHTTP call{mx, port, request};
+  RawHTTP call{mx, rx, tx, port, request};
   return call.wait(response);
 }
 
@@ -585,15 +595,24 @@ static void httpTest()
 	.thread(2, [](auto &thread) { thread.isolated(1); });
     }).rxThread(1).txThread(2);
   ZiMultiplex mx{ZuMv(params)};
-  ZuCheck(mx.start());
+  RawRxAllocator *rawRx = mx.allocator<Zi::IOBufType::RxTCP>();
+  RawTxAllocator *rawTx = mx.allocator<Zi::IOBufType::TxTCP>();
+  using TCP = Zhttp::NativeTraits<Zhttp::H1TCP>::Transport;
+  Zi::IOBufAllocator *tcpRx = mx.allocator<Zi::IOBufType::RxTCP,
+    TCP::RxAllocator::Buf, TCP::RxAllocator::Size, TCP::RxAllocator::MaxSize>();
+  Zi::IOBufAllocator *tcpTx = mx.allocator<Zi::IOBufType::TxTCP,
+    TCP::TxAllocator::Buf, TCP::TxAllocator::Size, TCP::TxAllocator::MaxSize>();
+  ZuCheck(rawRx && rawTx && tcpRx && tcpTx);
+  Zhttp::TCPConfig tcp;
+  tcp.rxAllocator(tcpRx).txAllocator(tcpTx);
 
   App app;
   app.mx = &mx;
   Zmcp::HTTPServer<App, Catalog, Zhttp::AllProfiles> server;
   Zhttp::HubConfig hub{&mx, "1", "2"};
-  auto serverConfig = [port](bool invalid) {
+  auto serverConfig = [port, tcp](bool invalid) {
     Zmcp::ServerConfig config;
-    config.localIP(ZiIP{"127.0.0.1"}).port(port).tcp();
+    config.localIP(ZiIP{"127.0.0.1"}).port(port).tcp(tcp);
     if (invalid)
       config.tls(Zhttp::H2Config{}.tls([](auto &tls) {
         tls.certPath("/nonexistent/mcp-retry-cert.pem").keyPath("/nonexistent/mcp-retry-key.pem");
@@ -604,6 +623,7 @@ static void httpTest()
   ZuCheck(!server.init(hub, serverConfig(true), &app));
   bool initialized = server.init(hub, serverConfig(false), &app);
   ZuCheck(initialized);
+  ZuCheck(mx.start());
   bool started = initialized && server.start();
   ZuCheck(started);
   ZmSemaphore httpStarted;
@@ -627,7 +647,7 @@ static void httpTest()
     "Connection: close\r\nContent-Length: " << body.length()
     << "\r\n\r\n" << body;
   ZtString<> response;
-  ZuCheck(started && rawHTTP(mx, port, request, response));
+  ZuCheck(started && rawHTTP(mx, rawRx, rawTx, port, request, response));
   ZuCheck(response.find("HTTP/1.1 200") >= 0);
   ZuCheck(response.find(
     "{\"jsonrpc\":\"2.0\",\"id\":42,\"result\":{"
@@ -647,7 +667,7 @@ static void httpTest()
     << ZuBoxed(body.length()).hex<false>() << "\r\n" << body
     << "\r\n0\r\n\r\n";
   response.length_(0);
-  ZuCheck(rawHTTP(mx, port, request, response));
+  ZuCheck(rawHTTP(mx, rawRx, rawTx, port, request, response));
   ZuCheck(response.find("HTTP/1.1 200") >= 0);
   ZuCheck(response.find("\"id\":44") >= 0);
   ZuCheck(response.find("\"value\":44") >= 0);
@@ -662,7 +682,7 @@ static void httpTest()
     "Connection: close\r\nContent-Length: " << body.length()
     << "\r\n\r\n" << body;
   response.length_(0);
-  ZuCheck(rawHTTP(mx, port, request, response));
+  ZuCheck(rawHTTP(mx, rawRx, rawTx, port, request, response));
   ZuCheck(response.find("HTTP/1.1 200") >= 0);
   ZuCheck(response.find("text/event-stream") >= 0);
   ZuCheck(response.find("data: {\"jsonrpc\":\"2.0\",\"id\":43,"
@@ -679,7 +699,7 @@ static void httpTest()
     "Connection: close\r\nContent-Length: " << body.length()
     << "\r\n\r\n" << body;
   response.length_(0);
-  ZuCheck(rawHTTP(mx, port, request, response));
+  ZuCheck(rawHTTP(mx, rawRx, rawTx, port, request, response));
   auto sessionID = headerValue(response, "mcp-session-id:");
   if (!sessionID)
     sessionID = headerValue(response, "Mcp-Session-Id:");
@@ -693,7 +713,7 @@ static void httpTest()
     "MCP-Session-Id: " << sessionID << "\r\nConnection: close\r\n"
     "Content-Length: " << body.length() << "\r\n\r\n" << body;
   response.length_(0);
-  ZuCheck(rawHTTP(mx, port, request, response));
+  ZuCheck(rawHTTP(mx, rawRx, rawTx, port, request, response));
   ZuCheck(response.find("HTTP/1.1 202") >= 0);
 
   body = "{\"jsonrpc\":\"2.0\",\"id\":51,\"method\":\"tools/call\","
@@ -703,7 +723,7 @@ static void httpTest()
     "MCP-Session-Id: " << sessionID << "\r\nConnection: close\r\n"
     "Content-Length: " << body.length() << "\r\n\r\n" << body;
   response.length_(0);
-  ZuCheck(rawHTTP(mx, port, request, response));
+  ZuCheck(rawHTTP(mx, rawRx, rawTx, port, request, response));
   ZuCheck(response.find("\"id\":51") >= 0);
   ZuCheck(response.find("\"value\":51") >= 0);
 
@@ -713,7 +733,7 @@ static void httpTest()
   request << "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n"
     "MCP-Session-Id: " << sessionID << "\r\nConnection: close\r\n"
     "Content-Length: " << body.length() << "\r\n\r\n" << body;
-  RawHTTP call52{mx, port, request};
+  RawHTTP call52{mx, rawRx, rawTx, port, request};
   app.called_.wait();
 
   body = "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\","
@@ -723,7 +743,7 @@ static void httpTest()
     "MCP-Session-Id: " << sessionID << "\r\nConnection: close\r\n"
     "Content-Length: " << body.length() << "\r\n\r\n" << body;
   response.length_(0);
-  ZuCheck(rawHTTP(mx, port, request, response));
+  ZuCheck(rawHTTP(mx, rawRx, rawTx, port, request, response));
   ZuCheck(response.find("HTTP/1.1 202") >= 0);
   app.cancelled_.wait();
   ownerTurn(mx);
@@ -740,7 +760,7 @@ static void httpTest()
   request << "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n"
     "MCP-Session-Id: " << sessionID << "\r\nConnection: close\r\n"
     "Content-Length: " << body.length() << "\r\n\r\n" << body;
-  RawHTTP call53{mx, port, request};
+  RawHTTP call53{mx, rawRx, rawTx, port, request};
   app.called_.wait();
   app.sessionClosed_.wait();
   ownerTurn(mx);
@@ -754,7 +774,7 @@ static void httpTest()
     "MCP-Session-Id: " << sessionID
     << "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
   response.length_(0);
-  ZuCheck(rawHTTP(mx, port, request, response));
+  ZuCheck(rawHTTP(mx, rawRx, rawTx, port, request, response));
   ZuCheck(response.find("HTTP/1.1 202") >= 0);
   ZuCheck(!app.failures);
 
@@ -774,7 +794,7 @@ static void httpTest()
   bool clientInited = client.init(
     Zhttp::HubConfig{&mx, "1", "2"},
     Zhttp::Destination{"127.0.0.1", uint16_t(port)},
-    ZuMv(clientConfig), &clientApp);
+    ZuMv(clientConfig), &clientApp, tcp);
   ZuCheck(clientInited);
   bool clientStarted = clientInited && client.start();
   ZuCheck(clientStarted);
@@ -877,7 +897,7 @@ static void httpTest()
   ZuCheck(legacyPort);
   LegacyApp legacyApp;
   Zhttp::ServerConfig legacyConfig;
-  legacyConfig.localIP(ZiIP{"127.0.0.1"}).port(legacyPort).tcp();
+  legacyConfig.localIP(ZiIP{"127.0.0.1"}).port(legacyPort).tcp(tcp);
   bool legacyInited = legacyApp.init(
     Zhttp::HubConfig{&mx, "1", "2"}, ZuMv(legacyConfig));
   ZuCheck(legacyInited);
@@ -896,7 +916,7 @@ static void httpTest()
   bool legacyClientInited = legacyClient.init(
     Zhttp::HubConfig{&mx, "1", "2"},
     Zhttp::Destination{"127.0.0.1", uint16_t(legacyPort)},
-    ZuMv(legacyClientConfig), &legacyClientApp);
+    ZuMv(legacyClientConfig), &legacyClientApp, tcp);
   ZuCheck(legacyClientInited);
   bool legacyClientStarted = legacyClientInited && legacyClient.start();
   ZuCheck(legacyClientStarted);
@@ -970,7 +990,7 @@ static void httpTest()
   bool sessionlessInited = sessionlessClient.init(
     Zhttp::HubConfig{&mx, "1", "2"},
     Zhttp::Destination{"127.0.0.1", uint16_t(legacyPort)},
-    ZuMv(sessionlessConfig), &sessionlessApp);
+    ZuMv(sessionlessConfig), &sessionlessApp, tcp);
   ZuCheck(sessionlessInited);
   bool sessionlessStarted =
     sessionlessInited && sessionlessClient.start();
@@ -998,7 +1018,7 @@ static void httpTest()
   statelessApp.mx = &mx;
   Zmcp::HTTPServer<App, Catalog, Zhttp::AllProfiles> statelessServer;
   Zmcp::ServerConfig statelessConfig;
-  statelessConfig.localIP(ZiIP{"127.0.0.1"}).port(statelessPort).tcp();
+  statelessConfig.localIP(ZiIP{"127.0.0.1"}).port(statelessPort).tcp(tcp);
   statelessConfig.absentOrigin(true).legacySessions(false);
   bool statelessInited = statelessServer.init(
     Zhttp::HubConfig{&mx, "1", "2"},
@@ -1016,7 +1036,7 @@ static void httpTest()
     "Content-Length: " << body.length() << "\r\n\r\n" << body;
   response.length_(0);
   ZuCheck(statelessStarted &&
-    rawHTTP(mx, statelessPort, request, response));
+    rawHTTP(mx, rawRx, rawTx, statelessPort, request, response));
   ZuCheck(response.find("\"protocolVersion\":\"2025-11-25\"") >= 0);
   ZuCheck(!headerValue(response, "mcp-session-id:") &&
     !headerValue(response, "Mcp-Session-Id:"));
@@ -1028,7 +1048,7 @@ static void httpTest()
     "MCP-Protocol-Version: 2025-11-25\r\nConnection: close\r\n"
     "Content-Length: " << body.length() << "\r\n\r\n" << body;
   response.length_(0);
-  ZuCheck(rawHTTP(mx, statelessPort, request, response));
+  ZuCheck(rawHTTP(mx, rawRx, rawTx, statelessPort, request, response));
   ZuCheck(response.find("\"id\":81") >= 0);
   ZuCheck(response.find("\"value\":81") >= 0);
   ZuCheck(response.find("\"resultType\"") < 0);
@@ -1058,10 +1078,11 @@ static void httpTest()
   ZuCheck(app.modernContexts == 12);
   ZuCheck(app.legacyContexts == 3);
   server.final();
+  mx.stop();
   bool reused = server.init(hub, serverConfig(false), &app);
   ZuCheck(reused);
   if (reused) {
-    bool restarted = server.start();
+    bool restarted = mx.start() && server.start();
     ZuCheck(restarted);
     if (restarted) {
       app.listening_.wait();
@@ -1069,6 +1090,7 @@ static void httpTest()
     }
   }
   server.final();
+  mx.stop();
   Zmcp::HTTPServer<App, Catalog, Zhttp::AllProfiles> partial;
   ZuCheck(!partial.init(hub, serverConfig(true), &app));
   partial.final();
@@ -1098,16 +1120,13 @@ static void secureTest()
     if (!port) continue;
 
     auto params = ZiMxParams()
-      .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+
       .scheduler([](auto &scheduler) {
 	scheduler.nThreads(2)
 	  .thread(1, [](auto &thread) { thread.isolated(1); })
 	  .thread(2, [](auto &thread) { thread.isolated(1); });
       }).rxThread(1).txThread(2);
     ZiMultiplex mx{ZuMv(params)};
-    bool mxUp = mx.start();
-    ZuCheckRT(mxUp);
-    if (!mxUp) continue;
 
     bool h3 = transport == Secure::H3;
     bool multiplexed = transport != Secure::H1;
@@ -1128,10 +1147,6 @@ static void secureTest()
     Zhttp::HubConfig hub{&mx, "1", "2"};
     bool initialized = server.init(hub, ZuMv(config), &app);
     ZuCheckRT(initialized);
-    bool started = initialized && server.start();
-    ZuCheckRT(started);
-    if (started) app.listening_.wait();
-
     ClientApp clientApp;
     Zmcp::HTTPClient<ClientApp, Catalog, Zhttp::AllProfiles> client;
     Zmcp::ClientConfig clientConfig;
@@ -1148,10 +1163,17 @@ static void secureTest()
       Zhttp::H2Policy::Force : Zhttp::H2Policy::Disable);
     Zhttp::QUICConfig quic;
     quic.caPath(cert).maxIdleTimeout(10000);
-    bool clientInited = started && client.init(
+    bool clientInited = initialized && client.init(
       hub, Zhttp::Destination{"localhost", uint16_t(port)},
       ZuMv(clientConfig), &clientApp, {}, h2, quic);
     ZuCheckRT(clientInited);
+    bool mxUp = mx.start();
+    ZuCheckRT(mxUp);
+    if (!mxUp) continue;
+    bool started = initialized && server.start();
+    ZuCheckRT(started);
+    if (started) app.listening_.wait();
+
     bool clientStarted = clientInited && client.start();
     ZuCheckRT(clientStarted);
     if (clientStarted) clientApp.ready_.wait();

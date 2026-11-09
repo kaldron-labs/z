@@ -33,7 +33,6 @@ LT_LANG([C++])
 
 AS_CASE([$host_os], [linux*], [z_linux=yes], [z_linux=no])
 AM_CONDITIONAL([LINUX], [test "$z_linux" = yes])
-ZI_IO_URING
 AS_IF([test "$z_linux" = yes], [
   PKG_CHECK_MODULES([DBUS], [dbus-1], [z_have_dbus=yes], [z_have_dbus=no])
 ], [z_have_dbus=no])

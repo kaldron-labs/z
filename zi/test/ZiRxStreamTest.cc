@@ -23,12 +23,12 @@ using namespace ZuTestUtil;
 namespace ZiRxStreamTest_ {
 
 ZmListDerive(RxQueue, ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
-using RxAllocator = Zi::AppBufAllocator<RxQueue::Node, 64, 256>;
+using RxAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, RxQueue::Node, 64, 256>;
 
 ZmRef<RxQueue::Node> mkBuf(const char *s)
 {
   unsigned n = static_cast<unsigned>(::strlen(s));
-  ZmRef<RxQueue::Node> buf = ZmSingleton<RxAllocator>::instance()->allocBuf();
+  ZmRef<RxQueue::Node> buf = ZmRef<RxQueue::Node>{ZmSingleton<RxAllocator>::instance()->allocBuf().ptr<RxQueue::Node>()};
   auto iobuf = static_cast<ZiIOBuf *>(buf.ptr());
   if (n) {
     ::memcpy(iobuf->data(), s, n);
@@ -234,7 +234,7 @@ int64_t extractN(
     },
     [&allocs]() -> ZmRef<RxQueue::Node> {
       ++allocs;
-      return ZmSingleton<RxAllocator>::instance()->allocBuf();
+      return ZmRef<RxQueue::Node>{ZmSingleton<RxAllocator>::instance()->allocBuf().ptr<RxQueue::Node>()};
     },
     out);
 }
@@ -304,7 +304,7 @@ void testExtractWaitAndError()
     [](ZuBSpan) -> int64_t { return -1; },
     [&allocs]() -> ZmRef<RxQueue::Node> {
       ++allocs;
-      return ZmSingleton<RxAllocator>::instance()->allocBuf();
+      return ZmRef<RxQueue::Node>{ZmSingleton<RxAllocator>::instance()->allocBuf().ptr<RxQueue::Node>()};
     },
     out);
   ZuCheck(n < 0);
@@ -324,7 +324,7 @@ int64_t spliceN(
     ++allocs;
     // Model a rejected buffer request; nonzero Z heap allocations do not fail.
     if (reject) return {};
-    return ZmSingleton<RxAllocator>::instance()->allocBuf();
+    return ZmRef<RxQueue::Node>{ZmSingleton<RxAllocator>::instance()->allocBuf().ptr<RxQueue::Node>()};
   };
   return src.splice(
     dst,
@@ -448,7 +448,7 @@ void testSpliceTransform()
   unsigned allocs = 0;
   auto alloc = [&allocs]() -> ZmRef<RxQueue::Node> {
     ++allocs;
-    return ZmSingleton<RxAllocator>::instance()->allocBuf();
+    return ZmRef<RxQueue::Node>{ZmSingleton<RxAllocator>::instance()->allocBuf().ptr<RxQueue::Node>()};
   };
   int64_t n = src.splice(
     dst,

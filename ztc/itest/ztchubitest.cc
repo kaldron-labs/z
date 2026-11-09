@@ -8,6 +8,7 @@
 
 #include <zlib/ZuBox.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiMultiplex.hh>
 
@@ -86,7 +87,6 @@ static void productionInit()
       .thread(4, [](auto &t) { t.isolated(1); t.name("hubstore"); });
   }).rxThread(1).txThread(2);
   ZiMultiplex mx{ZuMv(params)};
-  ZuCheck(mx.start());
   auto cf = config();
   cf.managementURL = "https://zum.example";
   cf.ssfDeliveryURL = "https://ztchub.example/ssf";
@@ -96,6 +96,7 @@ static void productionInit()
   ZuCheck(hub.init(ZuMv(cf), &mx, ZuMv(http), Zum::Bytes{"secret"},
     "Bearer callback"));
   ZuCheck(hub.state() == ZmEngineState::Stopped);
+  ZuCheck(mx.start());
   ZuCheck(mx.stop());
   hub.final();
 }
@@ -154,7 +155,7 @@ static void routingScale()
       ZuCheckRT(hub.removeSubscription(10000 + i, j + 1));
 
   Ztc::HubFrame frame = new
-    Zi::IOBufAlloc<ZiIOBuf, 1024, 1U << 30, ZuStringT<"Ztc.Hub.Frame">>{nullptr, 0};
+    Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Hub.Frame">, 1U << 30>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Hub.Frame">, 1U << 30>::Allocator>::instance()};
   frame->length = 1;
   bool telemetryOK = true;
   uint64_t sent = 0;

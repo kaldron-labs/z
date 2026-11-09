@@ -229,8 +229,8 @@ public:
 
   // output routines - terminal I/O thread
 
-  unsigned width() const { return m_width; } 
-  unsigned height() const { return m_height; } 
+  unsigned width() const { return m_width; }
+  unsigned height() const { return m_height; }
   unsigned pos() const { return m_pos; }
 
   void mv(unsigned pos);	// move to position
@@ -368,7 +368,7 @@ private:
 
 #ifndef _WIN32
   void tputs(const char *cap);
-  
+
   static char *tigetstr(const char *cap) {
     char *s = ::tigetstr(cap);
     if (s == reinterpret_cast<char *>(static_cast<uintptr_t>(-1)))
@@ -432,7 +432,7 @@ private:
 
   // input state
 
-  ZuRef<VKeyMatch>	m_vkeyMatch;			
+  ZuRef<VKeyMatch>	m_vkeyMatch;
   KeyFn			m_keyFn;
 
   // output state (cursor position is relative to beginning of current line)

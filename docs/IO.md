@@ -46,6 +46,25 @@ If a class inherits both, as `Zquic::Stream` does, each base subobject still
 keeps its own shard ownership. Rx code may use only the `ZmPQRx` side; Tx code
 may use only the `ZmPQTx` side.
 
+### Allocator registration
+
+`ZiMultiplex::allocator(a)` requires `state() == ZmEngineState::Stopped` and
+asserts that precondition. Register all allocators before `start()` and before
+their use by `listen`, `connect`, UDP setup or a send. Initialize protocol clients
+and servers that register allocators while their multiplexer is stopped.
+
+Registration binds the allocator and modifies the registry directly before
+returning. It does not dispatch to an I/O thread or wait for one. Repeating
+registration of an allocator already bound to that same multiplexer is permitted
+while stopped and does not insert it again.
+
+The application must serialize registration against other registrations,
+`start()` and teardown. The stopped-state assertion does not synchronize a
+concurrent `start()`; that race is the application's responsibility.
+Allocator selection never registers it implicitly. A network allocator remains
+bound to one multiplexer for its lifetime; an application allocator cannot be
+registered as a network allocator. See the [Zi buffer contract](../zi/README.md#buffers-and-streams).
+
 ### I/O Function Organization
 Functions should be organized by owning shard:
 

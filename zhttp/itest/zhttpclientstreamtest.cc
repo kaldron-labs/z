@@ -313,24 +313,16 @@ void run()
   ZuCheckRT(port);
   if (!port) return;
   ZiMultiplex mx{ZiMxParams{}
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
     .scheduler([](auto &s) {
     s.nThreads(4);
   }).rxThread(1).txThread(2)};
   state.mx = &mx;
-  bool up = mx.start();
-  ZuCheckRT(up);
-  if (!up) return;
   ZiMultiplex peerMx{ZiMxParams{}
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
     .scheduler([](auto &s) {
     s.nThreads(4);
   }).rxThread(3).txThread(4)};
   if constexpr (Turn == Mode::Peer) {
     // Holding client Tx must not also hold the peer's physical I/O queue.
-    bool peerUp = peerMx.start();
-    ZuCheckRT(peerUp);
-    if (!peerUp) { mx.stop(); return; }
     state.srvMx = &peerMx;
   }
 
@@ -350,8 +342,7 @@ void run()
     }).initialWindowSize(128));
   bool srv = server.init(Zhttp::HubConfig{state.srvMx ? state.srvMx : &mx, "3", "4"},
     ZuMv(serverConfig));
-  bool listening = srv && server.start() && await(state.listening);
-  ZuCheckRT(listening && !state.errors.load_());
+
 
   Client client;
   auto config = Zhttp::Config{}.links(1).concurrency(1).linkMax(1)
@@ -359,14 +350,25 @@ void run()
     .tcp(tcp).tls(!tcp && !h3).quic(h3).blindH3(h3)
     .protocol(h3 ? Zhttp::ProtoPolicy::ForceH3 : Zhttp::ProtoPolicy::DisableH3)
     .h2Policy(Zhttp::H2Policy::Force);
-  bool cli = listening && client.init(Zhttp::HubConfig{&mx, "1", "2"}, 1,
+  bool cli = srv && client.init(Zhttp::HubConfig{&mx, "1", "2"}, 1,
     config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.tls([&certPath](auto &tls) {
       tls.caPath(certPath.cspan());
     })
 	.policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(certPath.cspan()));
-  bool started = cli && client.pool(0, Zhttp::Destination{"localhost", port}) &&
-    client.start();
+  bool pooled = cli && client.pool(0, Zhttp::Destination{"localhost", port});
+  bool up = mx.start();
+  ZuCheckRT(up);
+  if (!up) return;
+  if constexpr (Turn == Mode::Peer) {
+    bool peerUp = peerMx.start();
+    ZuCheckRT(peerUp);
+    if (!peerUp) { mx.stop(); return; }
+  }
+
+  bool listening = srv && server.start() && await(state.listening);
+  ZuCheckRT(listening && !state.errors.load_());
+  bool started = pooled && listening && client.start();
   ZuCheckRT(started);
   ZmRef<Requests::Node> request;
   if (started) {
@@ -664,13 +666,9 @@ void earlyWire()
   if (!tls) return;
   unsigned port = testPort();
   ZiMultiplex mx{ZiMxParams{}
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
     .scheduler([](auto &s) { s.nThreads(4); })
     .rxThread(1).txThread(2)};
   state.mx = &mx;
-  bool up = port && mx.start();
-  ZuCheck(up);
-  if (!up) return;
   Server server{&state};
   auto config = Zhttp::ServerConfig{}.localIP(ZiIP{"127.0.0.1"}).port(port)
     .bodyMax(uint64_t(-1)).retainedBodyMax(2);
@@ -681,8 +679,6 @@ void earlyWire()
       tls.certPath(cert.cspan()).keyPath(key.cspan());
     }));
   bool srv = server.init(Zhttp::HubConfig{&mx, "3", "4"}, ZuMv(config));
-  bool listening = srv && server.start() && await(state.listening);
-  ZuCheck(listening);
   WirePeer<Profile> peer{&state};
   bool cli;
   if constexpr (ZuIsSame<Profile, Zhttp::H3QUIC>{})
@@ -693,6 +689,11 @@ void earlyWire()
 	Zhttp::H2Config{}.tls([&cert](auto &tls) {
 	  tls.caPath(cert.cspan());
 	}).policy(Zhttp::H2Policy::Force));
+  bool up = port && mx.start();
+  ZuCheck(up);
+  if (!up) return;
+  bool listening = srv && server.start() && await(state.listening);
+  ZuCheck(listening);
   bool started = listening && cli && peer.start();
   ZuCheck(started);
   using Link = WirePeer<Profile>::Link;
@@ -723,18 +724,17 @@ void ownedResolver()
 {
   ZuTestScope(ownedResolver);
   ZiMultiplex mx{ZiMxParams{}
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
     .scheduler([](auto &s) {
     s.nThreads(4);
   }).rxThread(1).txThread(2)};
-  bool up = mx.start();
-  ZuCheck(up);
-  if (!up) return;
   Client client;
   bool initialized = client.init(Zhttp::HubConfig{&mx, "3", "4"}, 1,
     Zhttp::Config{}.secure(false).tcp(true).tls(false).quic(false)) && client.pool(0,
       Zhttp::Destination{"127.0.0.1", ZhttpITestPort::ClientStream});
   ZuCheck(initialized);
+  bool up = mx.start();
+  ZuCheck(up);
+  if (!up) return;
   bool started = initialized && client.start();
   ZuCheck(started && ZiResolver::instance()->running());
   ZmSemaphore done;
@@ -756,7 +756,7 @@ int main(int argc, char **argv)
   using namespace zhttpclientstreamtest_;
   parse(argc, argv);
   ZiTestResidue::init("zhttpclientstreamtest");
-  ZiResolver::startSync();
+  ZiResolver::start();
   ZuTestMain();
   ZuTestCall((run<Zhttp::H1TCP, Mode::Restart>));
   ZuTestCall((run<Zhttp::H2TLS, Mode::Restart>));
@@ -784,7 +784,7 @@ int main(int argc, char **argv)
   ZuTestCall((run<Zhttp::H1TCP, Mode::Channel>));
   ZuTestCall(earlyWire<Zhttp::H2TLS>);
   ZuTestCall(earlyWire<Zhttp::H3QUIC>);
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   ZuTestCall(ownedResolver);
   return 0;

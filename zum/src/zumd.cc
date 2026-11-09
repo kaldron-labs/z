@@ -492,9 +492,7 @@ int main(int argc, char **argv)
     Zum::String ssfIssuer = options.ssfIssuer;
     if (!ssfIssuer) ssfIssuer = ssfConfig.issuer;
     if (!ssfIssuer) ssfIssuer = options.issuer;
-    ZiMultiplex mx{ZvMxParams("mx", node(ConfigField::Mx))
-      .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
-      ZuStringT<"Zhttp.TLS.Rx">>>()};
+    ZiMultiplex mx{ZvMxParams("mx", node(ConfigField::Mx))};
     ZmRef<DB> db = new DB{};
     db->requests = new Zum::Requests{};
     db->bootstrapRequests = new Zum::Requests{};
@@ -542,12 +540,6 @@ int main(int argc, char **argv)
       db->final();
     };
     try {
-      mxStarted = mx.start();
-      if (!mxStarted || !(dbStarted = db->start()))
-        throw ZeEXCEPT(Fatal, "zumd", "Zdb start failed");
-      Ztls::Random rng;
-      if (!rng.init())
-        throw ZeEXCEPT(Fatal, "zumd", "random initialization failed");
       if (!options.once && !options.rekey) {
         OIDCConfig oidcConfig;
         if (auto oidc = node(ConfigField::OIDC))
@@ -556,8 +548,6 @@ int main(int argc, char **argv)
           options.oidcOrigins, oidcConfig.caPath);
         if (!oidcHTTPInited)
           throw ZeEXCEPT(Fatal, "zumd", "OIDC HTTP initialization failed");
-        if (!oidcHTTP.start())
-          throw ZeEXCEPT(Fatal, "zumd", "OIDC HTTP startup failed");
         daemonInited = daemon.init(db, db->requests, &mx,
             Zum::DaemonConfig{
               .addr = options.addr, .port = uint16_t(options.port),
@@ -571,6 +561,16 @@ int main(int argc, char **argv)
               .cleanupInterval = options.cleanupInterval});
         if (!daemonInited)
           throw ZeEXCEPT(Fatal, "zumd", "HTTP server initialization failed");
+      }
+      mxStarted = mx.start();
+      if (!mxStarted || !(dbStarted = db->start()))
+        throw ZeEXCEPT(Fatal, "zumd", "Zdb start failed");
+      Ztls::Random rng;
+      if (!rng.init())
+        throw ZeEXCEPT(Fatal, "zumd", "random initialization failed");
+      if (oidcHTTPInited) {
+        if (!oidcHTTP.start())
+          throw ZeEXCEPT(Fatal, "zumd", "OIDC HTTP startup failed");
       }
       uint64_t prepared = 0;
       bool reissue = options.bootstrapReissue;

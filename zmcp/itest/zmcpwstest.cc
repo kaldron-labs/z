@@ -228,13 +228,12 @@ static void testWS(const Zquic::Test::TempDir &temp, unsigned port)
 {
   ZuTestScopeRT(testWS);
   ZiMultiplex mx{ZiMxParams{}
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+
     .scheduler([](auto &scheduler) {
     scheduler.nThreads(2)
       .thread(1, [](auto &thread) { thread.isolated(1); })
       .thread(2, [](auto &thread) { thread.isolated(1); });
   }).rxThread(1).txThread(2)};
-  ZuCheckRT(mx.start(), (return));
   SrvApp srv;
   CliApp<Profile> cli;
   Zmcp::WSServer<SrvApp, Catalog, Profile> server;
@@ -246,7 +245,7 @@ static void testWS(const Zquic::Test::TempDir &temp, unsigned port)
       Zhttp::Destination{"127.0.0.1", uint16_t(port)}, Zjrpc::WSConfig{}, &cli);
   ZuCheckRT(initialized);
   if (!initialized) { client.final(); server.final(); mx.stop(); return; }
-  bool started = server.start();
+  bool started = mx.start() && server.start();
   ZuCheckRT(started);
   bool listening = started && wait(srv.listening_) && !srv.failures;
   ZuCheckRT(listening);
@@ -341,13 +340,12 @@ static void testLegacyWS(const Zquic::Test::TempDir &temp, unsigned port)
 {
   ZuTestScope(testLegacyWS);
   ZiMultiplex mx{ZiMxParams{}
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+
     .scheduler([](auto &scheduler) {
     scheduler.nThreads(2)
       .thread(1, [](auto &thread) { thread.isolated(1); })
       .thread(2, [](auto &thread) { thread.isolated(1); });
   }).rxThread(1).txThread(2)};
-  ZuCheck(mx.start(), (return));
   LegacyApp srv;
   CliApp<Profile> cli;
   Zjrpc::WSServer<LegacyApp, LegacyCatalog, Profile> server;
@@ -362,7 +360,7 @@ static void testLegacyWS(const Zquic::Test::TempDir &temp, unsigned port)
       Zjrpc::WSConfig{}.limits(limits), &cli);
   ZuCheck(initialized);
   if (!initialized) { client.final(); server.final(); mx.stop(); return; }
-  bool started = server.start();
+  bool started = mx.start() && server.start();
   ZuCheck(started);
   bool listening = started && wait(srv.listening_) && !srv.failures;
   ZuCheck(listening);
@@ -406,13 +404,12 @@ static void testBadWS(const Zquic::Test::TempDir &temp, unsigned port, int kind)
 {
   ZuTestScope(testBadWS);
   ZiMultiplex mx{ZiMxParams{}
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+
     .scheduler([](auto &scheduler) {
     scheduler.nThreads(2)
       .thread(1, [](auto &thread) { thread.isolated(1); })
       .thread(2, [](auto &thread) { thread.isolated(1); });
   }).rxThread(1).txThread(2)};
-  ZuCheck(mx.start(), (return));
   SrvApp srv;
   CliApp<Profile> cli;
   Zmcp::WSServer<SrvApp, Catalog, Profile> server;
@@ -427,7 +424,7 @@ static void testBadWS(const Zquic::Test::TempDir &temp, unsigned port, int kind)
       Zjrpc::WSConfig{}.limits(limits), &cli);
   ZuCheck(initialized);
   if (!initialized) { client.final(); server.final(); mx.stop(); return; }
-  bool started = server.start();
+  bool started = mx.start() && server.start();
   ZuCheck(started);
   bool listening = started && wait(srv.listening_) && !srv.failures;
   ZuCheck(listening);

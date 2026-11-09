@@ -179,9 +179,7 @@ static void runtimeManagement()
   auto config = dbConfig();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
   ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
-      ZuStringT<"Zhttp.TLS.Rx">>>()};
-  ZuCheckRT(mx.start());
+    };
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   ZmRef<TestDB> db = new TestDB{};
   db->requests = new Zum::Requests{};
@@ -190,6 +188,7 @@ static void runtimeManagement()
     ZdbHandler{.upFn = dbUp, .downFn = dbDown}, store);
   Zum::registerSchema(db);
   ZmRef<Zum::DB> context = db;
+  ZuCheckRT(mx.start());
   ZuCheckRT(db->start());
   db->active.wait();
   ZuCheckRT(insertRecord(context->apps, Zum::App{

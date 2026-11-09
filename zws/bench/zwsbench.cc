@@ -64,20 +64,9 @@ void usage(int code = 1)
   ::exit(code);
 }
 
-ZiMxParams mxParams(unsigned bytes)
+ZiMxParams mxParams()
 {
-  // One outstanding round trip, including framing and retirement overlap.
-  uint64_t needed = 4 * ((uint64_t(bytes) + ZiIOBuf_DefltSize - 1)/ZiIOBuf_DefltSize);
-  unsigned slots = needed > ZiMxParams::MaxRingSize ?
-    unsigned(ZiMxParams::MaxRingSize) : unsigned(needed);
   return ZiMxParams()
-    .rxRingSize(slots < ZiIOBuf_DefltRxRingSize ?
-      ZiIOBuf_DefltRxRingSize : slots)
-    .txRingSize(slots < ZiIOBuf_DefltTxRingSize ?
-      ZiIOBuf_DefltTxRingSize : slots)
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -124,7 +113,6 @@ struct State {
   unsigned		warmup = 0;
   unsigned		completed = 0;
   uint64_t		rxBytes = 0;
-  uint64_t		appCopyBytes = 0;
   Zws::Opcode::T	opcode = Zws::Opcode::Text;
   bool			control = false;
   bool			txOwner = false;
@@ -250,7 +238,6 @@ private:
     if (state->completed == state->warmup) {
       state->before = heapStats();
       state->rxBytes = 0;
-      state->appCopyBytes = 0;
     }
     if (state->failed || state->finished())
       link.close();
@@ -316,8 +303,7 @@ void report(const Options &options, State &state, const HeapStats &after)
     " cache-allocs=" << (after.cacheAllocs - state.before.cacheAllocs) <<
     " cache-frees=" << (after.cacheFrees - state.before.cacheFrees) <<
     " heap-frees=" << (after.heapFrees - state.before.heapFrees) <<
-    " rx-bytes=" << state.rxBytes <<
-    " application-copy-bytes=" << state.appCopyBytes << '\n';
+    " rx-bytes=" << state.rxBytes << '\n';
 }
 
 template <typename Profile>
@@ -338,8 +324,7 @@ int run(const Options &options, const TempDir &temp)
   for (unsigned i = 0; i < payloadLen; ++i)
     payloadData[i] = 'a' + (i % 26);
 
-  ZiMultiplex mx{mxParams(options.size)};
-  if (!state.port || !mx.start()) return 1;
+  ZiMultiplex mx{mxParams()};
   ServerApp serverApp{&state};
   ClientApp clientApp{&state};
   Zws::Server<ServerApp, Profile> server{
@@ -355,6 +340,7 @@ int run(const Options &options, const TempDir &temp)
   bool serverInit = server.init(hub, serverConfig);
   bool clientInit = client.init(hub, clientConfig,
     Zhttp::Destination{"127.0.0.1", uint16_t(state.port)});
+  if (!state.port || !mx.start()) return 1;
   bool serverStart = serverInit && server.start();
   bool clientStart = clientInit && client.start();
   if (!serverStart || !clientStart) {

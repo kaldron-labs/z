@@ -140,7 +140,7 @@ int main(int argc, char **argv)
   ZiLog::start();
 
   ZiMultiplex mx(
-      ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+      ZiMxParams()
 	.scheduler([](auto &s) {
 	  s.nThreads(4)
 	  .thread(1, [](auto &t) { t.isolated(1); })
@@ -149,11 +149,6 @@ int main(int argc, char **argv)
 	  .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
 
-  if (!mx.start()) {
-    std::cerr << "ZiMultiplex start failed\n" << std::flush;
-    ZiLog::stop();
-    return 1;
-  }
 
   App app{server, port, count};
 
@@ -164,6 +159,13 @@ int main(int argc, char **argv)
 	  .alpn(ZuSpan<ZuCSpan>{"zquic-echo"}))) {
     std::cerr << "QUIC server initialization failed\n" << std::flush;
     mx.stop();
+    ZiLog::stop();
+    return 1;
+  }
+
+  if (!mx.start()) {
+    std::cerr << "ZiMultiplex start failed\n" << std::flush;
+    app.final();
     ZiLog::stop();
     return 1;
   }

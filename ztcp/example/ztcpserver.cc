@@ -112,14 +112,14 @@ int main(int argc, char **argv)
 	  .thread(3, [](auto &t) { t.isolated(1); })
 	  .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
-  if (!mx.start()) return 1;
-  ZmRef<App::Link::RxAllocator> rx = new App::Link::RxAllocator{};
-  ZmRef<App::Link::TxAllocator> tx = new App::Link::TxAllocator{};
+  Zi::IOBufAllocator *rx = App::Link::rxAllocator(&mx);
+  Zi::IOBufAllocator *tx = App::Link::txAllocator(&mx);
   Ztcp::ServerParams params(&mx, "3", "4");
-  params.rxAllocator(rx.ptr()).txAllocator(tx.ptr());
+  params.rxAllocator(rx).txAllocator(tx);
   if (!app.init(ZuMv(params))) {
     app.final(); mx.stop(); ZiLog::stop(); return 1;
   }
+  if (!mx.start()) return 1;
   if (!app.start()) { app.final(); mx.stop(); ZiLog::stop(); return 1; }
   app.listen();
   app.done.wait();

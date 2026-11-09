@@ -185,15 +185,15 @@ template <typename Net> struct Server : Zfix::Server<Server<Net>, MTList, Net> {
   }); }
 
   bool init(typename Net::ServerParams params) {
-    ZmRef<typename Link::RxAllocator> rx;
-    ZmRef<typename Link::TxAllocator> tx;
+    Zi::IOBufAllocator *rx = nullptr;
+    Zi::IOBufAllocator *tx = nullptr;
     if (!params.rxAllocator()) {
-      rx = new typename Link::RxAllocator{};
-      params.rxAllocator(rx.ptr());
+      rx = Link::rxAllocator(params.multiplex());
+      params.rxAllocator(rx);
     }
     if (!params.txAllocator()) {
-      tx = new typename Link::TxAllocator{};
-      params.txAllocator(tx.ptr());
+      tx = Link::txAllocator(params.multiplex());
+      params.txAllocator(tx);
     }
     return Zfix::Server<Server<Net>, MTList, Net>::init(ZuMv(params));
   }
@@ -205,10 +205,11 @@ template <typename Net> static int run(const Options &options) {
     s.nThreads(4).thread(3, [](auto &t) { t.isolated(1); })
       .thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  if (!mx.start()) return 1;
   typename Net::ServerParams params{&mx, "3", "4"};
   if constexpr (Net::Encrypted) params.certPath(options.cert).keyPath(options.key);
-  bool initialized = server.init(ZuMv(params)), running = initialized && server.start();
+  bool initialized = server.init(ZuMv(params));
+  if (!mx.start()) return 1;
+  bool running = initialized && server.start();
   if (!running) server.fail("server initialization failed");
   else {
     server.listen();

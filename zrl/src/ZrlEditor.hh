@@ -331,7 +331,7 @@ class Registers { // maintains a unified Vi/Emacs register store
 public:
   static int index(char c) {
     return
-      (ZuLikely(c >= '0' && c <= '9')) ? c - '0' :	
+      (ZuLikely(c >= '0' && c <= '9')) ? c - '0' :
       (ZuLikely(c >= 'a' && c <= 'z')) ? c - 'a' + 10 :
       (ZuLikely(c >= 'A' && c <= 'Z')) ? c - 'A' + 10 :
       (ZuLikely(c == '/')) ? 36 :		// search string
@@ -494,7 +494,7 @@ struct CmdContext {
     undoNext = 0;
     undo.clear();
   }
-  
+
   void reset() {
     startPos = 0;
 

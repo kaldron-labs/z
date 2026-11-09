@@ -1696,7 +1696,7 @@ void App::finish_()
 static ZiMxParams mxParams(const Options &options)
 {
   auto params = ZiMxParams()
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -1754,11 +1754,6 @@ int main(int argc, char **argv)
   }
 
   ZiMultiplex mx(mxParams(options));
-  if (!mx.start()) {
-    ZiLOG(Error, "zrestd", "ZiMultiplex start failed");
-    ZiLog::stop();
-    return 1;
-  }
   App app{&options};
   if (!app.init()) {
     ZiLOG(Error, "zrestd", "random source initialization failed");
@@ -1813,7 +1808,7 @@ int main(int argc, char **argv)
     Zhttp::HubConfig{&mx, "3", "4"}, ZuMv(config), &app);
   bool appActive = serverInited && app.activate("ping") &&
     app.activate("other");
-  bool serverStarted = appActive && server.start();
+  bool serverStarted = appActive && mx.start() && server.start();
   if (!serverStarted) {
     ZiLOG(Error, "zrestd", ([serverInited, appActive](auto &s) {
       if (!serverInited) s << "HTTP server initialization failed";

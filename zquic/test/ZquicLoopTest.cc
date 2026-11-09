@@ -24,12 +24,11 @@ struct App : public Zquic::Hub<App> {
   using Base = Zquic::Hub<App>;
 
   App() : m_mx{mxParams_()} {
-    bool ok = m_mx.start();
-    ZiAssert(ok, "Zquic", (), "loop test multiplexer start failed", return);
-    if (ok)
-      ok = Base::init(
-	Zquic::HubParams(&m_mx, "3", "4").maxUDP(Zquic::BufSize));
+    bool ok = Base::init(
+      Zquic::HubParams(&m_mx, "3", "4").maxUDP(Zquic::BufSize));
     ZiAssert(ok, "Zquic", (), "loop test app init failed", return);
+    ZiAssert(m_mx.start(), "Zquic", (),
+      "loop test multiplexer start failed", return);
   }
   ~App() {
     Base::final();
@@ -46,7 +45,7 @@ struct App : public Zquic::Hub<App> {
 
 private:
   static ZiMxParams mxParams_() {
-    return ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    return ZiMxParams()
       .scheduler([](auto &s) {
 	s.nThreads(4);
       })
@@ -69,8 +68,6 @@ struct TestLink :
   public Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>
 {
-friend inline ZuStringT<"Zquic.LoopTest.Link"> ZmNHeapID(TestLink *);
-
   using Base = Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>;
   friend inline ZuStringT<"Zquic.Loop.Link"> ZmNHeapID(TestLink *);
@@ -94,9 +91,9 @@ friend inline ZuStringT<"Zquic.LoopTest.Link"> ZmNHeapID(TestLink *);
   }
   void receiveDatagram(unsigned bytes) {
     ZmRef<ZiIOBuf> buf = ([](void *owner) {
-      static ZmRef<Zi::IOBufAllocator> allocator =
-	new Zquic::PktRxBufAllocator<>;
-      return allocator->alloc(owner, 0);
+      static Zi::IOBufAllocator *allocator =
+	([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
+      return allocator->allocBuf(owner, 0);
     })(this);
     memset(buf->data_(), 0, bytes);
     buf->skip = 0;
@@ -261,9 +258,9 @@ static ZmRef<ZiIOBuf> streamPkt_(
   Zquic::Frame &frame, unsigned &used)
 {
   ZmRef<ZiIOBuf> packet = ([](void *owner) {
-      static ZmRef<Zi::IOBufAllocator> allocator =
-	new Zquic::PktRxBufAllocator<>;
-      return allocator->alloc(owner, 0);
+      static Zi::IOBufAllocator *allocator =
+	([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
+      return allocator->allocBuf(owner, 0);
     })(nullptr);
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, id, offset, payload, fin);
@@ -563,8 +560,8 @@ void testDatagramPayloadHeadroom(unsigned headroom)
   ZuTestScopeRT(testDatagramPayloadHeadroom);
   App app;
   TestLink link{&app};
-  ZmRef<Zi::IOBufAllocator> allocator = new Zquic::PktRxBufAllocator<>;
-  auto buf = allocator->alloc();
+  Zi::IOBufAllocator *allocator = ([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
+  auto buf = allocator->allocBuf();
   memset(buf->data_(), 0, headroom); // model metadata before received payload
   buf->skip = headroom;
   Zquic::CxnID dcid{"dst"}, scid{"src"};

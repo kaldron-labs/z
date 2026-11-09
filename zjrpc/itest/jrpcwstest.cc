@@ -135,13 +135,12 @@ static void testWS(const Zquic::Test::TempDir &temp, unsigned port)
 {
   ZuTestScopeRT(testWS);
   ZiMultiplex mx{ZiMxParams{}
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+
     .scheduler([](auto &scheduler) {
     scheduler.nThreads(2)
       .thread(1, [](auto &thread) { thread.isolated(1); })
       .thread(2, [](auto &thread) { thread.isolated(1); });
   }).rxThread(1).txThread(2)};
-  ZuCheckRT(mx.start(), (return));
   SrvApp<Profile> srv;
   CliApp cli;
   typename SrvApp<Profile>::Server server;
@@ -153,7 +152,7 @@ static void testWS(const Zquic::Test::TempDir &temp, unsigned port)
       Zhttp::Destination{"127.0.0.1", uint16_t(port)}, Zjrpc::WSConfig{}, &cli);
   ZuCheckRT(initialized);
   if (!initialized) { client.final(); server.final(); mx.stop(); return; }
-  bool started = server.start();
+  bool started = mx.start() && server.start();
   ZuCheckRT(started);
   bool listening = started && wait(srv.listening_) && !srv.failures;
   ZuCheckRT(listening);

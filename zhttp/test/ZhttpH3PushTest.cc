@@ -6,6 +6,7 @@
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/Zhttp.hh>
@@ -16,13 +17,17 @@ using namespace ZuTestUtil;
 namespace ZhttpH3PushTest_ {
 
 using RxQueue = ZiRxQueue;
-using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, 256, 1<<20,
-  ZuStringT<"ZhttpH3PushTest.RxBuf">>;
+using RxBufAlloc = Zi::IOBufBuiltin<
+  RxQueue::Node,
+  256,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"ZhttpH3PushTest.RxBuf">,
+  1<<20>;
 using RxStream = ZiRxStream<RxQueue>;
 
 static ZmRef<RxQueue::Node> rxBuf(ZuBSpan span)
 {
-  ZmRef<RxQueue::Node> buf = new RxBufAlloc{nullptr, 0};
+  ZmRef<RxQueue::Node> buf = new RxBufAlloc{ZmSingleton<typename RxBufAlloc::Allocator>::instance()};
   if (span.length()) buf->append(span);
   return buf;
 }

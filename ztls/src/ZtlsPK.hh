@@ -513,7 +513,7 @@ public:
 
     return {};
   }
-  
+
   // verify signature
   template <MDType MDType = SHA256>
   ZuUnion<bool, ZeException> verify(ZuBSpan data, ZuBSpan signature) {
@@ -570,7 +570,7 @@ friend inline ZuStringT<"Ztls.SK_ED25519"> ZmNHeapID(SK_ED25519 *);
 
     return {};
   }
-  
+
   // save public key
   template <typename S>
   ZuUnion<void, ZeException> savePK(S &s) const { return PK_::save(s); }

@@ -13,6 +13,7 @@
 #include <zlib/ZiRxStream.hh>
 #include <zlib/Zhttp.hh>
 #include "../src/ZhttpServerImpl.hh"
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZtString.hh>
 
 using namespace ZuTestUtil;
@@ -20,15 +21,19 @@ using namespace ZuTestUtil;
 namespace ZhttpParserTest_ {
 
 using RxQueue = ZiRxQueue;
-using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, 256, 2048,
-  ZuStringT<"ZhttpParserTest.Buf">>;
+using RxBufAlloc = Zi::IOBufBuiltin<
+  RxQueue::Node,
+  256,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"ZhttpParserTest.Buf">,
+  2048>;
 using RxStream = ZiRxStream<RxQueue>;
 ZuDerive(BodyData, (ZtString<ZtStringHeapID<"ZhttpParserTest.BodyData">>));
 
 ZmRef<RxQueue::Node> mkBuf(const char *s)
 {
   unsigned n = ::strlen(s);
-  ZmRef<RxQueue::Node> buf = new RxBufAlloc{nullptr, 0};
+  ZmRef<RxQueue::Node> buf = new RxBufAlloc{ZmSingleton<typename RxBufAlloc::Allocator>::instance()};
   if (n) buf->append(ZuCSpan{s, n});
   return buf;
 }

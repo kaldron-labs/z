@@ -36,8 +36,8 @@ const char Request[] =
   "Host: localhost\r\n"
   "\r\n";
 
-using RxAllocator = Zi::RxTCPBufAllocator<ZiRxBuf, 4096>;
-using TxAllocator = Zi::TxTCPBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+using RxAllocator = Zi::IOBufAllocator;
+using TxAllocator = Zi::IOBufAllocator;
 
 class Connection : public ZiConnection,
     public ZiRx<Connection, ZiRxBufAlloc<4096>>, public ZiTx<Connection> {
@@ -159,12 +159,11 @@ public:
     m_nConnections(nConnections), m_nConcurrent(nConcurrent),
     m_maxRecv(maxRecv), m_reconnInterval(reconnInterval),
     m_nDisconnects(0) {
-    if (!allocator(m_rx) || !allocator(m_allocator)) ZmFail(allocator_registration);
   }
   ~Mx() { }
 
   ZiConnection *connected(const ZiCxnInfo &ci) {
-    return new Connection(this, ci, Zm::now(), m_allocator.ptr());
+    return new Connection(this, ci, Zm::now(), m_allocator);
   }
 
   void disconnected(Connection *connection) {
@@ -197,8 +196,8 @@ public:
   unsigned maxRecv() const { return m_maxRecv; }
 
 private:
-  ZmRef<RxAllocator> m_rx = new RxAllocator{};
-  ZmRef<TxAllocator> m_allocator = new TxAllocator{};
+  RxAllocator *m_rx = allocator<Zi::IOBufType::RxTCP, ZiRxBuf, 4096>();
+  TxAllocator *m_allocator = allocator<Zi::IOBufType::TxTCP, ZiTxBuf, ZiIOBuf_DefltSize>();
   ZiIP			m_ip;
   unsigned		m_port;
   ZiCxnOptions		m_options;
@@ -321,7 +320,7 @@ int main(int argc, char **argv)
 	  int j;
 	  if ((j = atoi(argv[++i])) <= 0) usage();
 #ifdef ZiMultiplex_EPoll
-	  params.epollQuantum(j);
+	  params.rxQuantum(j);
 #endif
 	}
 	break;

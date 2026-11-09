@@ -21,14 +21,10 @@
 
 namespace Zquic_ {
 
-// Intrusive base shared by packet, stream and crypto buffers; Zi::IOBufAlloc
+// Intrusive base shared by packet, stream and crypto buffers; Zi::IOBufBuiltin
 // supplies the role heap. It is deliberately independent of either I/O queue.
 struct BufNode : public ZiIOBuf {
-  BufNode(uint8_t *data_, unsigned size_) : ZiIOBuf(data_, size_, nullptr, 0) { }
-  BufNode(uint8_t *data_, unsigned size_, void *owner_) :
-    ZiIOBuf(data_, size_, owner_, 0) { }
-  BufNode(uint8_t *data_, unsigned size_, void *owner_, unsigned length_) :
-    ZiIOBuf(data_, size_, owner_, length_) { }
+  using ZiIOBuf::ZiIOBuf;
 };
 
 using RxStream = ZiRxStream<ZiRxQueue>;
@@ -38,7 +34,7 @@ template <
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = "Zquic.Buf">
 using BufAlloc =
-  Zi::IOBufAlloc<BufNode, Size, MaxSize, ZuStringT<HeapID>>;
+  Zi::IOBufBuiltin<BufNode, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
 } // namespace Zquic_
 
@@ -50,15 +46,19 @@ template <
   unsigned Size = BufSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = "Zquic.Pkt.Rx">
-using PktRxBufAllocator =
-  Zi::RxUDPBufAllocator<Zquic_::BufNode, Size, MaxSize, ZuStringT<HeapID>>;
+Zi::IOBufAllocator *pktRxAllocator(ZiMultiplex *mx) {
+  return mx->allocator<Zi::IOBufType::RxUDP, Zquic_::BufNode,
+    Size, MaxSize, ZiIOBuf_Align, ZuStringT<HeapID>>();
+}
 
 template <
   unsigned Size = BufSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = "Zquic.Pkt.Tx">
-using PktTxBufAllocator =
-  Zi::TxUDPBufAllocator<Zquic_::BufNode, Size, MaxSize, ZuStringT<HeapID>>;
+Zi::IOBufAllocator *pktTxAllocator(ZiMultiplex *mx) {
+  return mx->allocator<Zi::IOBufType::TxUDP, Zquic_::BufNode,
+    Size, MaxSize, ZiIOBuf_Align, ZuStringT<HeapID>>();
+}
 
 template <
   unsigned Size = BufSize,

@@ -196,29 +196,21 @@ bool CryptoStream::sent(uint64_t offset, ZuBSpan payload)
   if (offset != m_txBytes) return false;
   if (!payload.length()) return true;
   // Public borrowed ingress acquires final retained plaintext storage once.
-  ZmRef<ZiIOBuf> buf = new CryptoTxBufAlloc<>{nullptr, 0};
+  ZmRef<ZiIOBuf> buf = new CryptoTxBufAlloc<>{
+    ZmSingleton<typename CryptoTxBufAlloc<>::Allocator>::instance(), nullptr, 0};
   if (!buf->append(payload)) return false;
-  return sent(offset, Zi::RxRange{ZuMv(buf), 0, unsigned(payload.length())});
+  return sent(offset, ZuMv(buf));
 }
 
-bool CryptoStream::sent(uint64_t offset, Zi::RxRange payload)
+bool CryptoStream::sent(uint64_t offset, ZmRef<ZiIOBuf> payload)
 {
-  uint64_t end = offset + payload.length;
-  if (!payload.buf || payload.offset > payload.buf->size ||
-      payload.length > payload.buf->size - payload.offset ||
-      end < offset || end > MaxBufSize) return false;
-  if (offset < m_txBytes) return matches_(offset, payload.cspan());
+  if (!payload || payload->failed() || payload->skip > payload->size ||
+      payload->length > payload->size - payload->skip) return false;
+  uint64_t end = offset + payload->length;
+  if (end < offset || end > MaxBufSize) return false;
+  if (offset < m_txBytes) return matches_(offset, payload->cspan());
   if (offset != m_txBytes) return false;
-  if (!payload.length) return true;
-  if (m_txRanges.length()) {
-    auto &last = m_txRanges[m_txRanges.length() - 1];
-    if (last.data.buf == payload.buf &&
-	last.data.offset + last.data.length == payload.offset) {
-      last.data.length += payload.length;
-      m_txBytes = end;
-      return true;
-    }
-  }
+  if (!payload->length) return true;
   m_txRanges.push(TxRange{ZuMv(payload), offset});
   m_txBytes = end;
   return true;
@@ -230,11 +222,11 @@ bool CryptoStream::txPayload(
   uint64_t end = offset + length;
   if (end < offset || end > m_txBytes) return false;
   for (const auto &range : m_txRanges) {
-    if (offset < range.offset || offset >= range.offset + range.data.length) continue;
+    if (offset < range.offset || offset >= range.offset + range.data->length) continue;
     unsigned begin = unsigned(offset - range.offset);
-    unsigned n = range.data.length - begin;
+    unsigned n = range.data->length - begin;
     if (length < n) n = unsigned(length);
-    payload = range.data.cspan().offset(begin).trunc(n);
+    payload = range.data->cspan().offset(begin).trunc(n);
     return true;
   }
   payload = {};
@@ -299,7 +291,8 @@ int CryptoStream::receive(
   uint64_t bytes = rxSpanBytes(spans);
   if (!queueRxSpans(spans, offset, payload,
 	[](unsigned) -> ZmRef<CryptoRxPQueue::Node> {
-	  return new CryptoRxBufAlloc<BufSize, MaxBufSize>{nullptr, 0};
+	  return new CryptoRxBufAlloc<BufSize, MaxBufSize>{
+	    ZmSingleton<typename CryptoRxBufAlloc<BufSize, MaxBufSize>::Allocator>::instance(), nullptr, 0};
 	},
 	[this](ZmRef<CryptoRxPQueue::Node> buf, uint64_t offset, unsigned) {
 	  buf->offset = offset;

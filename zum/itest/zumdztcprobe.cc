@@ -14,19 +14,23 @@
 #include <zlib/ZuMatcher.hh>
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuLib.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZiRing.hh>
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZtcFB.hh>
 #include <zlib/ZtcMsg.hh>
 #include <zlib/ZtcRing.hh>
 
-using Frame = Zi::IOBufAlloc<ZiIOBuf, 1024, Ztc::AppCf::DefltMaxFrame,
-  ZuStringT<"Zum.ZtcProbe.Frame">>;
+using Frame =
+  Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Zum.ZtcProbe.Frame">,
+    Ztc::AppCf::DefltMaxFrame>;
 
 static ZmRef<ZiIOBuf> request(ZuCSpan id, Ztc::Group::T group,
     uint64_t seqNo, uint32_t interval, bool subscribe)
 {
-  Ztc::Builder builder{Ztc::frameBuf(ZmRef<ZiIOBuf>{new Frame{nullptr, 0}})};
+
+       Ztc::Builder builder{Ztc::frameBuf(
+    ZmRef<ZiIOBuf>{ZmSingleton<Frame::Allocator>::instance()->allocBuf()})};
   auto nested = builder.startNested();
   Ztc::Request value;
   value.id = id;

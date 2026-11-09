@@ -284,9 +284,7 @@ static int run()
 {
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbsaga::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
-  if (!mx.start()) return 1;
+  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
 
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   ZmRef<DB> db = new DB{};
@@ -302,6 +300,7 @@ static int run()
   db->accounts = accounts;
   db->sagas({balanceTransferDef()});
 
+  if (!mx.start()) return 1;
   bool ok = db->start();
   if (ok) {
     db->active.wait();

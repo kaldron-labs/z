@@ -27,7 +27,7 @@ template <
   unsigned Size = ZiIOBuf_DefltSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = ZiIOBuf_HeapID{}()>
-using ZiTxBufAlloc = Zi::IOBufAlloc<ZiTxBuf, Size, MaxSize, ZuStringT<HeapID>>;
+using ZiTxBufAlloc = Zi::IOBufBuiltin<ZiTxBuf, Size, ZiIOBuf_DefltAlign, ZuStringT<HeapID>, MaxSize>;
 
 // CRTP - implementation must conform to the following interface:
 #if 0

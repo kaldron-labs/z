@@ -220,6 +220,12 @@ static void businessDuplicates(Scenario::T scenario) {
   auto original = model.next(1, ZuDateTime{Zm::now()});
   Rows<Report> replies;
   auto emit = [&replies](const Report &r) { replies.push(r); return true; };
+  auto invalid = original;
+  invalid.qty = ZuCmp<unsigned>::null();
+  ZuCheck(!broker.receive(invalid, false, emit));
+  invalid.qty = 0;
+  ZuCheck(!broker.receive(invalid, false, emit));
+  ZuCheck(!broker.progress.admitted && !broker.results.count() && !replies.length());
   ZuCheck(broker.receive(original, false, emit));
   ZuCheck(replies.length() == 1 && replies[0].kind == "0");
   auto ack = replies[0];

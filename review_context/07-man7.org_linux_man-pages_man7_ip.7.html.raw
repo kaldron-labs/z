@@ -1,0 +1,527 @@
+
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>ip(7) - Linux manual page</title>
+    <link rel="stylesheet" type="text/css" href="../../../style.css" title="style" />
+    <link rel="stylesheet" type="text/css" href="../style.css" title="style" />
+</head>
+
+<body>
+
+<div class="page-top"><a id="top_of_page"></a></div>
+<!--%%%TOP_BAR%%%-->
+    <div class="nav-bar">
+        <table class="nav-table">
+            <tr>
+                <td class="nav-cell">
+                    <p class="nav-text">
+                        <a href="../../../index.html">man7.org</a> &gt; Linux &gt; <a href="../index.html">man-pages</a>
+                    </p>
+                </td>
+                <td class="training-cell">
+                    <p class="training-text"><a class="training-link" href="http://man7.org/training/">Linux/UNIX system programming training</a></p>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+<hr class="nav-end" />
+
+<!--%%%PAGE_START%%%-->
+<h1>ip(7) &mdash; Linux manual page</h1>
+
+
+<table class="sec-table">
+<tr>
+    <td>
+        <p class="section-dir">
+<a href="#NAME">NAME</a> | <a href="#SYNOPSIS">SYNOPSIS</a> | <a href="#DESCRIPTION">DESCRIPTION</a> | <a href="#ERRORS">ERRORS</a> | <a href="#NOTES">NOTES</a> | <a href="#BUGS">BUGS</a> | <a href="#SEE_ALSO">SEE&nbsp;ALSO</a> | <a href="#COLOPHON">COLOPHON</a>
+        </p>
+    </td>
+</tr>
+<tr>
+    <td class="search-box">
+        <div class="man-search-box">
+
+            <form method="get" action="https://www.google.com/search">
+                <fieldset class="man-search">
+                    <input type="text" name="q" size="10" maxlength="255" value="" />
+                    <input type="hidden" name="sitesearch" value="man7.org/linux/man-pages" />
+                    <input type="submit" name="sa" value="Search online pages" />
+                </fieldset>
+            </form>
+
+        </div>
+    </td>
+    <td> </td>
+</tr>
+</table>
+
+<!--%%%TEXT_START%%%-->
+<pre>
+<span class="headline"><i>ip</i>(7)                Miscellaneous Information Manual               <i>ip</i>(7)</span>
+</pre>
+<h2><a id="NAME" href="#NAME"></a>NAME  &nbsp; &nbsp; &nbsp; &nbsp; <a href="#top_of_page"><span class="top-link">top</span></a></h2><pre>
+       ip - Linux IPv4 protocol implementation
+</pre>
+<h2><a id="SYNOPSIS" href="#SYNOPSIS"></a>SYNOPSIS  &nbsp; &nbsp; &nbsp; &nbsp; <a href="#top_of_page"><span class="top-link">top</span></a></h2><pre>
+       <b>#include &lt;sys/socket.h&gt;</b>
+       <b>#include &lt;netinet/in.h&gt;</b>
+       <b>#include &lt;netinet/ip.h&gt;  </b>/* superset of previous */
+
+       <i>tcp_socket</i> <b>= socket(AF_INET, SOCK_STREAM, 0);</b>
+       <i>udp_socket</i> <b>= socket(AF_INET, SOCK_DGRAM, 0);</b>
+       <i>raw_socket</i> <b>= socket(AF_INET, SOCK_RAW, </b><i>protocol</i><b>);</b>
+</pre>
+<h2><a id="DESCRIPTION" href="#DESCRIPTION"></a>DESCRIPTION  &nbsp; &nbsp; &nbsp; &nbsp; <a href="#top_of_page"><span class="top-link">top</span></a></h2><pre>
+       Linux implements the Internet Protocol, version 4, described in
+       RFC 791 and RFC 1122.  <b>ip </b>contains a level 2 multicasting
+       implementation conforming to RFC 1112.  It also contains an IP
+       router including a packet filter.
+
+       The programming interface is BSD-sockets compatible.  For more
+       information on sockets, see <a href="../man7/socket.7.html">socket(7)</a>.
+
+       An IP socket is created using <a href="../man2/socket.2.html">socket(2)</a>:
+
+           socket(AF_INET, socket_type, protocol);
+
+       Valid socket types include <b>SOCK_STREAM </b>to open a stream socket,
+       <b>SOCK_DGRAM </b>to open a datagram socket, and <b>SOCK_RAW </b>to open a
+       <a href="../man7/raw.7.html">raw(7)</a> socket to access the IP protocol directly.
+
+       <i>protocol</i> is the IP protocol in the IP header to be received or
+       sent.  Valid values for <i>protocol</i> include:
+
+       •  0 and <b>IPPROTO_TCP </b>for <a href="../man7/tcp.7.html">tcp(7)</a> stream sockets;
+
+       •  0 and <b>IPPROTO_UDP </b>for <a href="../man7/udp.7.html">udp(7)</a> datagram sockets;
+
+       •  <b>IPPROTO_SCTP </b>for <a href="../man7/sctp.7.html">sctp(7)</a> stream sockets; and
+
+       •  <b>IPPROTO_UDPLITE </b>for <a href="../man7/udplite.7.html">udplite(7)</a> datagram sockets.
+
+       For <b>SOCK_RAW </b>you may specify a valid IANA IP protocol defined in
+       RFC 1700 assigned numbers.
+
+       When a process wants to receive new incoming packets or
+       connections, it should bind a socket to a local interface address
+       using <a href="../man2/bind.2.html">bind(2)</a>.  In this case, only one IP socket may be bound to
+       any given local (address, port) pair.  When <b>INADDR_ANY </b>is
+       specified in the bind call, the socket will be bound to <i>all</i> local
+       interfaces.  When <a href="../man2/listen.2.html">listen(2)</a> is called on an unbound socket, the
+       socket is automatically bound to a random free port with the local
+       address set to <b>INADDR_ANY</b>.  When <a href="../man2/connect.2.html">connect(2)</a> is called on an
+       unbound socket, the socket is automatically bound to a random free
+       port or to a usable shared port with the local address set to
+       <b>INADDR_ANY</b>.
+
+       A TCP local socket address that has been bound is unavailable for
+       some time after closing, unless the <b>SO_REUSEADDR </b>flag has been
+       set.  Care should be taken when using this flag as it makes TCP
+       less reliable.
+
+   <b>Address format</b>
+       An IP socket address is defined as a combination of an IP
+       interface address and a 16-bit port number.  The basic IP protocol
+       does not supply port numbers, they are implemented by higher level
+       protocols like <a href="../man7/udp.7.html">udp(7)</a> and <a href="../man7/tcp.7.html">tcp(7)</a>.  On raw sockets <i>.sin_port</i> is set
+       to the IP protocol.
+
+       See <a href="../man3/sockaddr_in.3type.html">sockaddr_in(3type)</a>.
+
+       <i>.sin_family</i> is always set to <b>AF_INET</b>.  This is required; in Linux
+       2.2 most networking functions return <b>EINVAL </b>when this setting is
+       missing.  <i>.sin_port</i> contains the port in network byte order.  The
+       port numbers below 1024 are called <i>privileged ports</i> (or sometimes:
+       <i>reserved ports</i>).  Only a privileged process (on Linux: a process
+       that has the <b>CAP_NET_BIND_SERVICE </b>capability in the user namespace
+       governing its network namespace) may <a href="../man2/bind.2.html">bind(2)</a> to these sockets.
+       Note that the raw IPv4 protocol as such has no concept of a port,
+       they are implemented only by higher protocols like <a href="../man7/tcp.7.html">tcp(7)</a> and
+       <a href="../man7/udp.7.html">udp(7)</a>.
+
+       <i>.sin_addr</i> is the IP host address.  The <i>.s_addr</i> member of the
+       <a href="../man3/in_addr.3type.html">in_addr(3type)</a> structure contains the host interface address in
+       network byte order.  <a href="../man3/in_addr.3type.html">in_addr(3type)</a> should be assigned one of the
+       <b>INADDR_* </b>values (e.g., <b>INADDR_LOOPBACK</b>) using <a href="../man3/htonl.3.html">htonl(3)</a> or set
+       using the <a href="../man3/inet_aton.3.html">inet_aton(3)</a>, <a href="../man3/inet_addr.3.html">inet_addr(3)</a>, <a href="../man3/inet_makeaddr.3.html">inet_makeaddr(3)</a> library
+       functions or directly with the name resolver (see
+       <a href="../man3/gethostbyname.3.html">gethostbyname(3)</a>).
+
+       IPv4 addresses are divided into unicast, broadcast, and multicast
+       addresses.  Unicast addresses specify a single interface of a
+       host, broadcast addresses specify all hosts on a network, and
+       multicast addresses address all hosts in a multicast group.
+       Datagrams to broadcast addresses can be sent or received only when
+       the <b>SO_BROADCAST </b>socket flag is set.  In the current
+       implementation, connection-oriented sockets are allowed to use
+       only unicast addresses.
+
+       Note that the address and the port are always stored in network
+       byte order.  In particular, this means that you need to call
+       <a href="../man3/htons.3.html">htons(3)</a> on the number that is assigned to a port.  All
+       address/port manipulation functions in the standard library work
+       in network byte order.
+
+   <b>Special and reserved addresses</b>
+       There are several special addresses:
+
+       <b>INADDR_LOOPBACK </b>(127.0.0.1)
+              always refers to the local host via the loopback device;
+
+       <b>INADDR_ANY </b>(0.0.0.0)
+              means any address for socket binding;
+
+       <b>INADDR_BROADCAST </b>(255.255.255.255)
+              A packet addressed to <b>INADDR_BROADCAST </b>through a socket
+              which has <b>SO_BROADCAST </b>set will be broadcast to all hosts
+              on the local network segment, as long as the link is
+              broadcast-capable.
+
+       Highest-numbered address
+       Lowest-numbered address
+              On any locally-attached non-point-to-point IP subnet with a
+              link type that supports broadcasts, the highest-numbered
+              address (e.g., the .255 address on a subnet with netmask
+              255.255.255.0) is designated as a broadcast address.  It
+              cannot usefully be assigned to an individual interface, and
+              can only be addressed with a socket on which the
+              <b>SO_BROADCAST </b>option has been set.  Internet standards have
+              historically also reserved the lowest-numbered address
+              (e.g., the .0 address on a subnet with netmask
+              255.255.255.0) for broadcast, though they call it
+              "obsolete" for this purpose.  (Some sources also refer to
+              this as the "network address.")  Since Linux 5.14, it is
+              treated as an ordinary unicast address and can be assigned
+              to an interface.
+
+       Internet standards have traditionally also reserved various
+       addresses for particular uses, though Linux no longer treats some
+       of these specially.
+
+       [0.0.0.1, 0.255.255.255]
+       [240.0.0.0, 255.255.255.254]
+              Addresses in these ranges (0/8 and 240/4) are reserved
+              globally.  Since Linux 5.3 and Linux 2.6.25, respectively,
+              the 0/8 and 240/4 addresses, other than <b>INADDR_ANY </b>and
+              <b>INADDR_BROADCAST</b>, are treated as ordinary unicast
+              addresses.  Systems that follow the traditional behaviors
+              may not interoperate with these historically reserved
+              addresses.
+
+       [127.0.0.1, 127.255.255.254]
+              Addresses in this range (127/8) are treated as loopback
+              addresses akin to the standardized local loopback address
+              <b>INADDR_LOOPBACK </b>(127.0.0.1);
+
+       [224.0.0.0, 239.255.255.255]
+              Addresses in this range (224/4) are dedicated to multicast
+              use.
+
+   <b>Socket options</b>
+       See <a href="../man2/IPPROTO_IP.2const.html">IPPROTO_IP(2const)</a>.
+
+   <b>/proc interfaces</b>
+       See <a href="../man5/proc_sys_net_ipv4.5.html">proc_sys_net_ipv4(5)</a>.
+
+   <b>Ioctls</b>
+       All ioctls described in <a href="../man7/socket.7.html">socket(7)</a> apply to <b>ip</b>.
+
+       Ioctls to configure generic device parameters are described in
+       <a href="../man7/netdevice.7.html">netdevice(7)</a>.
+</pre>
+<h2><a id="ERRORS" href="#ERRORS"></a>ERRORS  &nbsp; &nbsp; &nbsp; &nbsp; <a href="#top_of_page"><span class="top-link">top</span></a></h2><pre>
+       <b>EACCES </b>The user tried to execute an operation without the
+              necessary permissions.  These include: sending a packet to
+              a broadcast address without having the <b>SO_BROADCAST </b>flag
+              set; sending a packet via a <i>prohibit</i> route; modifying
+              firewall settings without superuser privileges (the
+              <b>CAP_NET_ADMIN </b>capability); binding to a privileged port
+              without superuser privileges (the <b>CAP_NET_BIND_SERVICE</b>
+              capability).
+
+       <b>EADDRINUSE</b>
+              Tried to bind to an address already in use.
+
+       <b>EADDRNOTAVAIL</b>
+              A nonexistent interface was requested or the requested
+              source address was not local.
+
+       <b>EAGAIN </b>Operation on a nonblocking socket would block.
+
+       <b>EALREADY</b>
+              A connection operation on a nonblocking socket is already
+              in progress.
+
+       <b>ECONNABORTED</b>
+              A connection was closed during an <a href="../man2/accept.2.html">accept(2)</a>.
+
+       <b>EHOSTUNREACH</b>
+              No valid routing table entry matches the destination
+              address.  This error can be caused by an ICMP message from
+              a remote router or for the local routing table.
+
+       <b>EINVAL </b>Invalid argument passed.  For send operations this can be
+              caused by sending to a <i>blackhole</i> route.
+
+       <b>EISCONN</b>
+              <a href="../man2/connect.2.html">connect(2)</a> was called on an already connected socket.
+
+       <b>EMSGSIZE</b>
+              Datagram is bigger than an MTU on the path and it cannot be
+              fragmented.
+
+       <b>ENOBUFS</b>
+       <b>ENOMEM </b>Not enough free memory.  This often means that the memory
+              allocation is limited by the socket buffer limits, not by
+              the system memory, but this is not 100% consistent.
+
+       <b>ENOENT SIOCGSTAMP </b>was called on a socket where no packet arrived.
+
+       <b>ENOPKG </b>A kernel subsystem was not configured.
+
+       <b>ENOPROTOOPT</b>
+       <b>EOPNOTSUPP</b>
+              Invalid socket option passed.
+
+       <b>ENOTCONN</b>
+              The operation is defined only on a connected socket, but
+              the socket wasn't connected.
+
+       <b>EPERM  </b>User doesn't have permission to set high priority, change
+              configuration, or send signals to the requested process or
+              group.
+
+       <b>EPIPE  </b>The connection was unexpectedly closed or shut down by the
+              other end.
+
+       <b>ESOCKTNOSUPPORT</b>
+              The socket is not configured or an unknown socket type was
+              requested.
+
+       Other errors may be generated by the overlaying protocols; see
+       <a href="../man7/tcp.7.html">tcp(7)</a>, <a href="../man7/raw.7.html">raw(7)</a>, <a href="../man7/udp.7.html">udp(7)</a>, and <a href="../man7/socket.7.html">socket(7)</a>.
+</pre>
+<h2><a id="NOTES" href="#NOTES"></a>NOTES  &nbsp; &nbsp; &nbsp; &nbsp; <a href="#top_of_page"><span class="top-link">top</span></a></h2><pre>
+       Be very careful with the <b>SO_BROADCAST </b>option - it is not
+       privileged in Linux.  It is easy to overload the network with
+       careless broadcasts.  For new application protocols it is better
+       to use a multicast group instead of broadcasting.  Broadcasting is
+       discouraged.  See RFC 6762 for an example of a protocol (mDNS)
+       using the more modern multicast approach to communicating with an
+       open-ended group of hosts on the local network.
+
+       Using the <b>SOL_IP </b>socket options level isn't portable; BSD-based
+       stacks use the <b>IPPROTO_IP </b>level.
+
+       <b>INADDR_ANY </b>(0.0.0.0) and <b>INADDR_BROADCAST </b>(255.255.255.255) are
+       byte-order-neutral.  This means <a href="../man3/htonl.3.html">htonl(3)</a> has no effect on them.
+
+   <b>Compatibility</b>
+       For compatibility with Linux 2.0, the obsolete <b>socket(AF_INET,</b>
+       <b>SOCK_PACKET, </b><i>protocol</i><b>) </b>syntax is still supported to open a
+       <a href="../man7/packet.7.html">packet(7)</a> socket.  This is deprecated and should be replaced by
+       <b>socket(AF_PACKET, SOCK_RAW, </b><i>protocol</i><b>) </b>instead.  The main
+       difference is the new <i>sockaddr_ll</i> address structure for generic
+       link layer information instead of the old <b>sockaddr_pkt</b>.
+</pre>
+<h2><a id="BUGS" href="#BUGS"></a>BUGS  &nbsp; &nbsp; &nbsp; &nbsp; <a href="#top_of_page"><span class="top-link">top</span></a></h2><pre>
+       There are too many inconsistent error values.
+
+       The error used to diagnose exhaustion of the ephemeral port range
+       differs across the various system calls (<a href="../man2/connect.2.html">connect(2)</a>, <a href="../man2/bind.2.html">bind(2)</a>,
+       <a href="../man2/listen.2.html">listen(2)</a>, <a href="../man2/sendto.2.html">sendto(2)</a>) that can assign ephemeral ports.
+
+       The ioctls to configure IP-specific interface options and ARP
+       tables are not described.
+
+       Receiving the original destination address with <b>MSG_ERRQUEUE </b>in
+       <i>msg_name</i> by <a href="../man2/recvmsg.2.html">recvmsg(2)</a> does not work in some Linux 2.2 kernels.
+</pre>
+<h2><a id="SEE_ALSO" href="#SEE_ALSO"></a>SEE ALSO  &nbsp; &nbsp; &nbsp; &nbsp; <a href="#top_of_page"><span class="top-link">top</span></a></h2><pre>
+       <a href="../man2/IPPROTO_IP.2const.html">IPPROTO_IP(2const)</a>, <a href="../man2/recvmsg.2.html">recvmsg(2)</a>, <a href="../man2/sendmsg.2.html">sendmsg(2)</a>, <a href="../man3/byteorder.3.html">byteorder(3)</a>,
+       <a href="../man7/capabilities.7.html">capabilities(7)</a>, <a href="../man7/icmp.7.html">icmp(7)</a>, <a href="../man7/ipv6.7.html">ipv6(7)</a>, <a href="../man7/netdevice.7.html">netdevice(7)</a>, <a href="../man7/netlink.7.html">netlink(7)</a>,
+       <a href="../man7/raw.7.html">raw(7)</a>, <a href="../man7/socket.7.html">socket(7)</a>, <a href="../man7/tcp.7.html">tcp(7)</a>, <a href="../man7/udp.7.html">udp(7)</a>, <a href="../man8/ip.8.html">ip(8)</a>
+
+       The kernel source file <i>Documentation/networking/ip-sysctl.rst</i>.
+
+       RFC 791 for the original IP specification.  RFC 1122 for the IPv4
+       host requirements.  RFC 1812 for the IPv4 router requirements.
+</pre>
+<h2><a id="COLOPHON" href="#COLOPHON"></a>COLOPHON  &nbsp; &nbsp; &nbsp; &nbsp; <a href="#top_of_page"><span class="top-link">top</span></a></h2><pre>
+       This page is part of the <i>man-pages</i> (Linux kernel and C library
+       user-space interface documentation) project.  Information about
+       the project can be found at 
+       ⟨<a href="https://www.kernel.org/doc/man-pages/">https://www.kernel.org/doc/man-pages/</a>⟩.  If you have a bug report
+       for this manual page, see
+       ⟨<a href="https://git.kernel.org/pub/scm/docs/man-pages/man-pages.git/tree/CONTRIBUTING">https://git.kernel.org/pub/scm/docs/man-pages/man-pages.git/tree/CONTRIBUTING</a>⟩.
+       This page was obtained from the tarball man-pages-6.19.tar.gz
+       fetched from
+       ⟨<a href="https://mirrors.edge.kernel.org/pub/linux/docs/man-pages/">https://mirrors.edge.kernel.org/pub/linux/docs/man-pages/</a>⟩ on
+       2026-09-09.  If you discover any rendering problems in this HTML
+       version of the page, or you believe there is a better or more up-
+       to-date source for the page, or you have corrections or
+       improvements to the information in this COLOPHON (which is <i>not</i>
+       part of the original manual page), send a mail to
+       man-pages@man7.org
+
+<span class="footline">Linux man-pages 6.19            2026-02-08                          <i>ip</i>(7)</span>
+</pre>
+
+<hr class="end-man-text" />
+<p>Pages that refer to this page:
+    <a href="../man2/bind.2.html">bind(2)</a>,&nbsp;
+    <a href="../man2/connect.2.html">connect(2)</a>,&nbsp;
+    <a href="../man2/getpeername.2.html">getpeername(2)</a>,&nbsp;
+    <a href="../man2/getsockname.2.html">getsockname(2)</a>,&nbsp;
+    <a href="../man2/getsockopt.2.html">getsockopt(2)</a>,&nbsp;
+    <a href="../man2/in_pktinfo.2type.html">in_pktinfo(2type)</a>,&nbsp;
+    <a href="../man2/IP_ADD_MEMBERSHIP.2const.html">IP_ADD_MEMBERSHIP(2const)</a>,&nbsp;
+    <a href="../man2/IP_ADD_SOURCE_MEMBERSHIP.2const.html">IP_ADD_SOURCE_MEMBERSHIP(2const)</a>,&nbsp;
+    <a href="../man2/IP_BIND_ADDRESS_NO_PORT.2const.html">IP_BIND_ADDRESS_NO_PORT(2const)</a>,&nbsp;
+    <a href="../man2/IP_BLOCK_SOURCE.2const.html">IP_BLOCK_SOURCE(2const)</a>,&nbsp;
+    <a href="../man2/IP_DROP_MEMBERSHIP.2const.html">IP_DROP_MEMBERSHIP(2const)</a>,&nbsp;
+    <a href="../man2/IP_DROP_SOURCE_MEMBERSHIP.2const.html">IP_DROP_SOURCE_MEMBERSHIP(2const)</a>,&nbsp;
+    <a href="../man2/IP_FREEBIND.2const.html">IP_FREEBIND(2const)</a>,&nbsp;
+    <a href="../man2/IP_HDRINCL.2const.html">IP_HDRINCL(2const)</a>,&nbsp;
+    <a href="../man2/IP_LOCAL_PORT_RANGE.2const.html">IP_LOCAL_PORT_RANGE(2const)</a>,&nbsp;
+    <a href="../man2/ip_mreqn.2type.html">ip_mreqn(2type)</a>,&nbsp;
+    <a href="../man2/ip_mreq_source.2type.html">ip_mreq_source(2type)</a>,&nbsp;
+    <a href="../man2/IP_MSFILTER.2const.html">IP_MSFILTER(2const)</a>,&nbsp;
+    <a href="../man2/IP_MTU.2const.html">IP_MTU(2const)</a>,&nbsp;
+    <a href="../man2/IP_MTU_DISCOVER.2const.html">IP_MTU_DISCOVER(2const)</a>,&nbsp;
+    <a href="../man2/IP_MULTICAST_ALL.2const.html">IP_MULTICAST_ALL(2const)</a>,&nbsp;
+    <a href="../man2/IP_MULTICAST_IF.2const.html">IP_MULTICAST_IF(2const)</a>,&nbsp;
+    <a href="../man2/IP_MULTICAST_LOOP.2const.html">IP_MULTICAST_LOOP(2const)</a>,&nbsp;
+    <a href="../man2/IP_MULTICAST_TTL.2const.html">IP_MULTICAST_TTL(2const)</a>,&nbsp;
+    <a href="../man2/IP_NODEFRAG.2const.html">IP_NODEFRAG(2const)</a>,&nbsp;
+    <a href="../man2/IP_OPTIONS.2const.html">IP_OPTIONS(2const)</a>,&nbsp;
+    <a href="../man2/IP_PASSSEC.2const.html">IP_PASSSEC(2const)</a>,&nbsp;
+    <a href="../man2/IP_PKTINFO.2const.html">IP_PKTINFO(2const)</a>,&nbsp;
+    <a href="../man2/IPPROTO_IP.2const.html">IPPROTO_IP(2const)</a>,&nbsp;
+    <a href="../man2/IP_RECVERR.2const.html">IP_RECVERR(2const)</a>,&nbsp;
+    <a href="../man2/IP_RECVOPTS.2const.html">IP_RECVOPTS(2const)</a>,&nbsp;
+    <a href="../man2/IP_RECVORIGDSTADDR.2const.html">IP_RECVORIGDSTADDR(2const)</a>,&nbsp;
+    <a href="../man2/IP_RECVTOS.2const.html">IP_RECVTOS(2const)</a>,&nbsp;
+    <a href="../man2/IP_RECVTTL.2const.html">IP_RECVTTL(2const)</a>,&nbsp;
+    <a href="../man2/IP_RETOPTS.2const.html">IP_RETOPTS(2const)</a>,&nbsp;
+    <a href="../man2/IP_ROUTER_ALERT.2const.html">IP_ROUTER_ALERT(2const)</a>,&nbsp;
+    <a href="../man2/IP_TOS.2const.html">IP_TOS(2const)</a>,&nbsp;
+    <a href="../man2/IP_TRANSPARENT.2const.html">IP_TRANSPARENT(2const)</a>,&nbsp;
+    <a href="../man2/IP_TTL.2const.html">IP_TTL(2const)</a>,&nbsp;
+    <a href="../man2/IP_UNBLOCK_SOURCE.2const.html">IP_UNBLOCK_SOURCE(2const)</a>,&nbsp;
+    <a href="../man2/listen.2.html">listen(2)</a>,&nbsp;
+    <a href="../man2/recv.2.html">recv(2)</a>,&nbsp;
+    <a href="../man2/send.2.html">send(2)</a>,&nbsp;
+    <a href="../man2/socket.2.html">socket(2)</a>,&nbsp;
+    <a href="../man3/getaddrinfo.3.html">getaddrinfo(3)</a>,&nbsp;
+    <a href="../man3/getaddrinfo_a.3.html">getaddrinfo_a(3)</a>,&nbsp;
+    <a href="../man3/sctp_connectx.3.html">sctp_connectx(3)</a>,&nbsp;
+    <a href="../man3/sd_is_fifo.3.html">sd_is_fifo(3)</a>,&nbsp;
+    <a href="../man5/proc_sys_net.5.html">proc_sys_net(5)</a>,&nbsp;
+    <a href="../man5/proc_sys_net_ipv4.5.html">proc_sys_net_ipv4(5)</a>,&nbsp;
+    <a href="../man5/systemd.socket.5.html">systemd.socket(5)</a>,&nbsp;
+    <a href="../man7/address_families.7.html">address_families(7)</a>,&nbsp;
+    <a href="../man7/arp.7.html">arp(7)</a>,&nbsp;
+    <a href="../man7/icmp.7.html">icmp(7)</a>,&nbsp;
+    <a href="../man7/ipv6.7.html">ipv6(7)</a>,&nbsp;
+    <a href="../man7/netdevice.7.html">netdevice(7)</a>,&nbsp;
+    <a href="../man7/packet.7.html">packet(7)</a>,&nbsp;
+    <a href="../man7/raw.7.html">raw(7)</a>,&nbsp;
+    <a href="../man7/rtnetlink.7.html">rtnetlink(7)</a>,&nbsp;
+    <a href="../man7/sctp.7.html">sctp(7)</a>,&nbsp;
+    <a href="../man7/socket.7.html">socket(7)</a>,&nbsp;
+    <a href="../man7/tcp.7.html">tcp(7)</a>,&nbsp;
+    <a href="../man7/udp.7.html">udp(7)</a>,&nbsp;
+    <a href="../man7/udplite.7.html">udplite(7)</a>,&nbsp;
+    <a href="../man8/ifconfig.8.html">ifconfig(8)</a>
+</p>
+<hr/>
+
+ 
+<hr class="start-footer" />
+
+<div class="footer">
+
+<table class="colophon-table">
+    <tr>
+    <td class="pub-info">
+        <p>
+            HTML rendering created 2026-09-09
+            by <a href="https://man7.org/mtk/index.html">Michael Kerrisk</a>,
+            author of
+            <a href="https://man7.org/tlpi/"><em>The Linux Programming Interface</em></a>.
+        </p>
+        <p>
+            For details of in-depth
+            <strong>Linux/UNIX system programming training courses</strong>
+            that I teach, look <a href="https://man7.org/training/">here</a>.
+        </p>
+        <p>
+            Hosting by <a href="https://www.jambit.com/index_en.html">jambit GmbH</a>.
+        </p>
+    </td>
+    <td class="colophon-divider">
+    </td>
+    <td class="tlpi-cover">
+        <a href="https://man7.org/tlpi/"><img src="https://man7.org/tlpi/cover/TLPI-front-cover-vsmall.png" alt="Cover of TLPI" /></a>
+    </td>
+    </tr>
+</table>
+
+</div>
+
+<hr class="end-footer" />
+
+
+
+<!--BEGIN-SITETRACKING-->
+<!-- SITETRACKING.man7.org_linux_man-pages -->
+
+<!-- Default Statcounter code for man7.org/linux/man-pages
+http://www.man7.org/linux/man-pages -->
+<script type="text/javascript">
+var sc_project=7422636;
+var sc_invisible=1;
+var sc_security="9b6714ff";
+</script>
+<script type="text/javascript"
+src="https://www.statcounter.com/counter/counter.js"
+async></script>
+<noscript><div class="statcounter"><a title="Web Analytics
+Made Easy - StatCounter" href="https://statcounter.com/"
+target="_blank"><img class="statcounter"
+src="https://c.statcounter.com/7422636/0/9b6714ff/1/"
+alt="Web Analytics Made Easy -
+StatCounter"></a></div></noscript>
+<!-- End of Statcounter Code -->
+
+
+
+<!-- Start of Google Analytics Code -->
+
+<script type="text/javascript">
+
+  var _gaq = _gaq || [];
+  _gaq.push(['_setAccount', 'UA-9830363-8']);
+  _gaq.push(['_trackPageview']);
+
+  (function() {
+    var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+    ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+  })();
+
+</script>
+
+<!-- End of Google Analytics Code -->
+
+<!--END-SITETRACKING-->
+
+</body>
+</html>

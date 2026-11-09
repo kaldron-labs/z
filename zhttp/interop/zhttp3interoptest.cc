@@ -92,10 +92,6 @@ void parseArgs(int argc, char **argv)
 ZiMxParams mxParams(bool h3 = false)
 {
   auto params = ZiMxParams()
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(5)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -548,10 +544,10 @@ struct TLSServer : public Ztls::Server<TLSServer> {
 
 struct TLSServer::Link :
   public Ztls::SrvLink<TLSServer, TLSServer::Link,
-    TLSServer::TxBufAlloc>,
+    Ztls::RxBufAlloc<>, TLSServer::TxBufAlloc>,
   public H1ServerLinkOps<TLSServer::Link> {
   using Base = Ztls::SrvLink<TLSServer, TLSServer::Link,
-    TLSServer::TxBufAlloc>;
+    Ztls::RxBufAlloc<>, TLSServer::TxBufAlloc>;
   using Base::Base;
 
   Link(TLSServer *app) : Base{app} { }
@@ -839,9 +835,9 @@ struct TLSClient : public Ztls::Client<TLSClient> {
   using TxBufAlloc = Ztls::TxBufAlloc<8<<10, 4<<20>;
   struct Link :
     public H1ClientLinkOps<TLSClient,
-      Ztls::CliLink<TLSClient, Link, TxBufAlloc>> {
+      Ztls::CliLink<TLSClient, Link, Ztls::RxBufAlloc<>, TxBufAlloc>> {
     using Base = H1ClientLinkOps<TLSClient,
-      Ztls::CliLink<TLSClient, Link, TxBufAlloc>>;
+      Ztls::CliLink<TLSClient, Link, Ztls::RxBufAlloc<>, TxBufAlloc>>;
     using Base::Base;
   };
   TLSClient(ClientState *state_) : state{state_} { }
@@ -1090,14 +1086,18 @@ void testZhttpClientCaddyHttp()
     "Zhttp client->Caddy HTTP did not become ready");
 
   ZiMultiplex mx(mxParams());
-  bool mxStarted = mx.start();
-  ZuCHECK(mxStarted, "Zhttp client->Caddy HTTP multiplexer start failed");
-  if (!mxStarted) return;
   ClientState state;
   state.body = "";
   TCPClient client{&state};
-  ZuCHECK(client.init(Ztcp::ClientParams(&mx, "3", "4")),
+  TCPClient::Link::RxAllocator *rxAllocator = TCPClient::Link::rxAllocator(&mx);
+  TCPClient::Link::TxAllocator *txAllocator = TCPClient::Link::txAllocator(&mx);
+  auto params = Ztcp::ClientParams(&mx, "3", "4");
+  params.rxAllocator(rxAllocator).txAllocator(txAllocator);
+  ZuCHECK(client.init(ZuMv(params)),
     "Zhttp client->Caddy HTTP client init failed");
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "Zhttp client->Caddy HTTP multiplexer start failed");
+  if (!mxStarted) return;
   ZuCHECK(client.start(), "Zhttp client->Caddy HTTP client start failed");
   ZmRef<TCPClient::Link> link = new TCPClient::Link{&client};
   link->connect("127.0.0.1", port);
@@ -1138,18 +1138,21 @@ void testZhttpClientCaddyHttpsH1()
     "Zhttp client->Caddy HTTPS/H1 did not become ready");
 
   ZiMultiplex mx(mxParams());
-  bool mxStarted = mx.start();
-  ZuCHECK(mxStarted, "Zhttp client->Caddy HTTPS/H1 multiplexer start failed");
-  if (!mxStarted) return;
   ClientState state;
   state.body = "";
   TLSClient client{&state};
+  TLSClient::Link::RxAllocator *rxAllocator = TLSClient::Link::rxAllocator(&mx);
+  TLSClient::Link::TxAllocator *txAllocator = TLSClient::Link::txAllocator(&mx);
   ZuCSpan alpn[] = { "http/1.1" };
   ZuCHECK(client.init(Ztls::ClientParams(&mx, "3", "4").hub(
-      [&certPath, &alpn](auto &p) {
-	p.caPath(certPath.cspan()).alpn(alpn);
+      [&certPath, &alpn, &rxAllocator, &txAllocator](auto &p) {
+	p.caPath(certPath.cspan()).alpn(alpn)
+	  .rxAllocator(rxAllocator).txAllocator(txAllocator);
       })),
     "Zhttp client->Caddy HTTPS/H1 client init failed");
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "Zhttp client->Caddy HTTPS/H1 multiplexer start failed");
+  if (!mxStarted) return;
   ZuCHECK(client.start(), "Zhttp client->Caddy HTTPS/H1 client start failed");
   ZmRef<TLSClient::Link> link = new TLSClient::Link{&client};
   link->connect("localhost", port);
@@ -1192,9 +1195,6 @@ void testZhttpClientCaddyHttpsH3()
     "Zhttp client->Caddy HTTPS/H3 did not become H3-ready");
 
   ZiMultiplex mx(mxParams(true));
-  bool mxStarted = mx.start();
-  ZuCHECK(mxStarted, "Zhttp client->Caddy HTTPS/H3 multiplexer start failed");
-  if (!mxStarted) return;
   ClientState state;
   state.body = "";
   H3Client client{&state};
@@ -1205,6 +1205,9 @@ void testZhttpClientCaddyHttpsH3()
 	.maxData(32768).maxStreamData(8192)
 	.maxStreamsDuplex(8).maxStreamsSimplex(8)),
     "Zhttp client->Caddy HTTPS/H3 client init failed");
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "Zhttp client->Caddy HTTPS/H3 multiplexer start failed");
+  if (!mxStarted) return;
   ZuCHECK(client.start(), "Zhttp client->Caddy HTTPS/H3 client start failed");
   ZmRef<H3Client::Link> link = new H3Client::Link{&client};
   link->connect(Zquic::Host{"localhost"}, port);
@@ -1301,12 +1304,16 @@ void testCurlZhttpHttpServer()
   ZuCHECK(state.port, "curl->Zhttp HTTP port allocation failed");
   if (!state.port) return;
   ZiMultiplex mx(mxParams());
+  TCPServer server{&state};
+  TCPServer::Link::RxAllocator *rxAllocator = TCPServer::Link::rxAllocator(&mx);
+  TCPServer::Link::TxAllocator *txAllocator = TCPServer::Link::txAllocator(&mx);
+  auto params = Ztcp::ServerParams(&mx, "3", "4");
+  params.rxAllocator(rxAllocator).txAllocator(txAllocator);
+  ZuCHECK(server.init(ZuMv(params)),
+    "curl->Zhttp HTTP server init failed");
   bool mxStarted = mx.start();
   ZuCHECK(mxStarted, "curl->Zhttp HTTP multiplexer start failed");
   if (!mxStarted) return;
-  TCPServer server{&state};
-  ZuCHECK(server.init(Ztcp::ServerParams(&mx, "3", "4")),
-    "curl->Zhttp HTTP server init failed");
   ZuCHECK(server.start(), "curl->Zhttp HTTP server start failed");
   server.listen();
   ZuCHECK(waitDone(state.listening), "curl->Zhttp HTTP listen timed out");
@@ -1337,15 +1344,18 @@ void testCurlZhttpHttpsH1Server()
   ZuCHECK(state.port, "curl->Zhttp HTTPS/H1 port allocation failed");
   if (!state.port) return;
   ZiMultiplex mx(mxParams());
+  TLSServer server{&state};
+  TLSServer::Link::RxAllocator *rxAllocator = TLSServer::Link::rxAllocator(&mx);
+  TLSServer::Link::TxAllocator *txAllocator = TLSServer::Link::txAllocator(&mx);
+  ZuCSpan alpn[] = { "http/1.1" };
+  auto params = Ztls::ServerParams(&mx, "3", "4");
+  params.rxAllocator(rxAllocator).txAllocator(txAllocator)
+    .certPath(certPath.cspan()).keyPath(keyPath.cspan()).alpn(alpn);
+  ZuCHECK(server.init(ZuMv(params)),
+    "curl->Zhttp HTTPS/H1 server init failed");
   bool mxStarted = mx.start();
   ZuCHECK(mxStarted, "curl->Zhttp HTTPS/H1 multiplexer start failed");
   if (!mxStarted) return;
-  TLSServer server{&state};
-  ZuCSpan alpn[] = { "http/1.1" };
-  ZuCHECK(server.init(
-      Ztls::ServerParams(&mx, "3", "4")
-	.certPath(certPath.cspan()).keyPath(keyPath.cspan()).alpn(alpn)),
-    "curl->Zhttp HTTPS/H1 server init failed");
   ZuCHECK(server.start(), "curl->Zhttp HTTPS/H1 server start failed");
   server.listen();
   ZuCHECK(waitDone(state.listening), "curl->Zhttp HTTPS/H1 listen timed out");
@@ -1373,9 +1383,6 @@ void testCurlZhttpHttpsH3Server()
   ServerTest state;
   state.body = "server-h3-ok";
   ZiMultiplex mx(mxParams(true));
-  bool mxStarted = mx.start();
-  ZuCHECK(mxStarted, "curl->Zhttp HTTPS/H3 multiplexer start failed");
-  if (!mxStarted) return;
   H3Server server{&state};
   ZuCSpan alpn[] = { "h3" };
   ZuCHECK(server.init(
@@ -1385,6 +1392,9 @@ void testCurlZhttpHttpsH3Server()
 	.maxData(32768).maxStreamData(8192)
 	.maxStreamsDuplex(8).maxStreamsSimplex(8)),
     "curl->Zhttp HTTPS/H3 server init failed");
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "curl->Zhttp HTTPS/H3 multiplexer start failed");
+  if (!mxStarted) return;
   ZuCHECK(server.start(), "curl->Zhttp HTTPS/H3 server listen failed");
   ZuCHECK(waitDone(state.listening),
     "curl->Zhttp HTTPS/H3 server did not become ready");
@@ -1430,7 +1440,7 @@ int main(int argc, char **argv)
   ZuTestCall(testCurlZhttpHttpsH1Server);
   ZuTestCall(testCurlZhttpHttpsH3Server);
   ZuTestCall(testZhttpClientCaddyHttpsH3);
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   ZiLog::stop();
 }

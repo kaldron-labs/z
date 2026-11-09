@@ -144,14 +144,13 @@ int main(int argc, char **argv)
   ZiLog::start();
 
   ZiMultiplex mx{mxParams()};
-  if (!mx.start()) return 1;
   App app;
   bool ok = false;
   if (options.stdio) {
     Zjrpc::IOClient<App, ExampleCatalog> client;
     auto config = Zjrpc::StdioConfig{}
       .rxThread("stdioRx").txThread("stdioTx");
-    if (client.init(&mx, ZuMv(config), &app) && client.start())
+    if (client.init(&mx, ZuMv(config), &app) && mx.start() && client.start())
       ok = run(client, options, app);
     client.final();
   } else if (options.ws) {
@@ -163,7 +162,7 @@ int main(int argc, char **argv)
     bool started = Zws::URI::parse(uri, text).ok() && client.init(
 	Zhttp::HubConfig{&mx}, Zhttp::TCPConfig{},
 	Zhttp::Destination{uri.host, uri.port, uri.ipv6Literal}, Zjrpc::WSConfig{}, &app) &&
-	client.start();
+	mx.start() && client.start();
     if (started && client.connect(uri, "jrpc"))
       ok = run(client, options, app);
     else if (started) (void)client.stop();
@@ -175,7 +174,7 @@ int main(int argc, char **argv)
     if (client.init(
         Zhttp::HubConfig{&mx},
         Zhttp::Destination{options.host, uint16_t(options.port)},
-        ZuMv(config), &app) && client.start())
+        ZuMv(config), &app) && mx.start() && client.start())
       ok = run(client, options, app);
     client.final();
   }

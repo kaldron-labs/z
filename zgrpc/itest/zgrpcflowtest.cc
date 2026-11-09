@@ -141,8 +141,8 @@ static void flow(bool h3)
   Zhttp::Test::TempDir temp;
   ZtString<> cert, key;
   ZuCheck(temp.init("ZgrpcFlow") && Zhttp::Test::writeLocalhostCert(temp, cert, key), (return));
-  // Retention is bounded by StreamWindow; keep the default pool for backpressure.
-  ZiMultiplex mx{ZiMxParams{}.udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+  // Retention is bounded by StreamWindow.
+  ZiMultiplex mx{ZiMxParams{}
     .scheduler([](auto &s) {
     s.nThreads(6);
     for (unsigned i = 1; i <= 6; ++i) s.thread(i, [](auto &t) { t.isolated(1); });
@@ -152,7 +152,6 @@ static void flow(bool h3)
   state.version = h3 ? Zhttp::Version::H3 : Zhttp::Version::H2;
   state.payload.length(PayloadBytes);
   memset(state.payload.data(), 0x71, state.payload.length());
-  ZuCheck(mx.start(), (return));
   unsigned port = peerPort(h3);
   ZuCheck(port, ({ mx.stop(); return; }));
   RPCApp app{&state};
@@ -166,23 +165,25 @@ static void flow(bool h3)
   }));
   bool initialized = server.init(Zhttp::HubConfig{&mx, "3", "4"}, config, &app);
   ZuCheck(initialized);
-  bool started = initialized && server.start();
-  ZuCheck(started);
-  bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCheck(listening && !state.errors.load_());
   Client client;
   Zhttp::Config clientConfig;
   clientConfig.protocol(h3 ? Zhttp::ProtoPolicy::ForceH3 : Zhttp::ProtoPolicy::DisableH3)
     .links(1).linkMax(2).concurrency(2).bodyMax(uint64_t(-1))
     .retainedBodyMax(PayloadBytes).maxRetries(0).maxRedirects(0);
-  bool cliInit = listening && client.init(Zhttp::HubConfig{&mx, "5", "6"}, 1, clientConfig,
+  bool cliInit = initialized && client.init(Zhttp::HubConfig{&mx, "5", "6"}, 1, clientConfig,
     {}, Zhttp::H2Config{}.tls([&cert](auto &tls) {
       tls.caPath(cert);
     }).policy(Zhttp::H2Policy::Force)
 	.initialWindowSize(StreamWindow),
     Zhttp::QUICConfig{}.caPath(cert).maxStreamData(StreamWindow).maxData(PayloadBytes));
   ZuCheck(cliInit);
-  bool pooled = cliInit && client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
+  ZuCheck(mx.start(), (return));
+  bool started = initialized && server.start();
+  ZuCheck(started);
+  bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
+  ZuCheck(listening && !state.errors.load_());
+  bool pooled = listening && cliInit &&
+    client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
   ZuCheck(pooled);
   bool cliUp = pooled && client.start();
   ZuCheck(cliUp);
@@ -220,7 +221,7 @@ static void flow(bool h3)
   if (started) ZuCheck(server.stop());
   ZuCheck(!server.pending());
   server.final();
-  ZiResolver::stopSync(); ZiResolver::final();
+  ZiResolver::stop(); ZiResolver::final();
   ZuCheck(mx.stop());
   ZuCheck(state.messages == 2 && state.liveEnds == 2 && state.stalledEnds == 1 &&
     state.results == 3 && state.retired == 3 && !state.errors.load_());

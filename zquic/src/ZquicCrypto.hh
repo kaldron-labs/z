@@ -209,6 +209,21 @@ struct CryptoDiag {
 
 using CryptoStreamRxNTP = ZmPQRxGapIgnore<>;
 
+// A TLS epoch retains its original picotls output through one buffer view.
+// The active skip/length identify exactly this epoch's CRYPTO bytes.
+struct CryptoFlight : public ZmNHeap<CryptoFlight>, public ZiIOBuf {
+friend inline ZuStringT<"Zquic.Crypto.Flight"> ZmNHeapID(CryptoFlight *);
+  CryptoFlight(ZmRef<ZiIOBuf> output, const CryptoOffsets &offsets, unsigned epoch) :
+    ZiIOBuf{output->data_(), output->size,
+      ZmSingleton<Zi::IOBufBuiltinAllocator<>>::instance(), nullptr, 0},
+    tlsOutput{ZuMv(output)} {
+    skip = tlsOutput->skip + unsigned(offsets[epoch]);
+    length = unsigned(offsets[epoch + 1] - offsets[epoch]);
+  }
+
+  ZmRef<ZiIOBuf> tlsOutput;
+};
+
 class ZquicAPI CryptoStream :
   public ZmPQRx<CryptoStream, CryptoRxPQueue, CryptoStreamRxNTP> {
 public:
@@ -233,7 +248,7 @@ public:
 
   void reset();
   bool sent(uint64_t, ZuBSpan);
-  bool sent(uint64_t, Zi::RxRange);
+  bool sent(uint64_t, ZmRef<ZiIOBuf>);
   bool txPayload(uint64_t, uint64_t, ZuBSpan &) const;
   int writeFramePrefix(uint8_t *, unsigned, unsigned, CryptoDiag * = nullptr);
   int writeFrame(uint8_t *, unsigned, ZuBSpan, CryptoDiag * = nullptr);
@@ -261,7 +276,7 @@ ZuDerive(Delivery,
       ZtArrayHeapID<"Zquic.CryptoDelivery">>>,
   BuiltinBufSize>));
   struct TxRange {
-    Zi::RxRange data;
+    ZmRef<ZiIOBuf> data;
     uint64_t offset;
   };
   using TxRanges = ZtArray<TxRange, ZtArrayHeapID<"Zquic.CryptoTx.Ranges">>;

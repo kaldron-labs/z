@@ -13,6 +13,7 @@
 #include <zlib/ZuPtr.hh>
 
 #include <zlib/ZmPQueue.hh>
+#include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZtArray.hh>
 
@@ -44,15 +45,14 @@ struct StreamRxData : public ZiRxQueue::Node {
   ZmRef<ZiIOBuf>	packet;
   uint64_t		offset = 0;
 
-  StreamRxData() : Base{nullptr, 0, nullptr, 0} { }
+  StreamRxData() : Base{nullptr, 0,
+    ZmSingleton<Zi::IOBufBuiltinAllocator<>>::instance(), nullptr, 0} { }
   StreamRxData(
     ZmRef<ZiIOBuf> packet_, const uint8_t *data_, unsigned length_,
     void *owner_, uint64_t offset_) :
-    Base{const_cast<uint8_t *>(data_), length_, owner_, length_},
+    Base{const_cast<uint8_t *>(data_), length_,
+      ZmSingleton<Zi::IOBufBuiltinAllocator<>>::instance(), owner_, length_},
     packet{ZuMv(packet_)}, offset{offset_} { }
-
-  void releaseView_() override { packet = nullptr; }
-  uint64_t memory() const override;
 
   uint64_t key() const { return offset; }
 
@@ -80,12 +80,12 @@ using StreamRxPQueueFn =
     ZquicPQueueBufLenAxor()>;
 
 struct StreamTxData : public ZiIOBuf {
-  // ZiIOBuf requires payload storage inline at a stable offset for pool reuse.
+  // Application stream storage remains owned through ACK or retransmission.
   alignas(ZiIOBuf_Align) uint8_t data_[BufSize];
   uint64_t		streamOffset = 0;
 
-  StreamTxData() : ZiIOBuf{data_, BufSize, nullptr, 0} { }
-  explicit StreamTxData(void *owner_) : ZiIOBuf{data_, BufSize, owner_, 0} { }
+  explicit StreamTxData(Zi::IOBufAllocator_ *allocator_, void *owner_ = nullptr) :
+    ZiIOBuf{data_, BufSize, allocator_, owner_, 0} { }
 
   void publish(uint32_t offset_, uint32_t length_, uint64_t streamOffset_) {
     skip = offset_;
@@ -463,10 +463,6 @@ using StreamRxPQueue =
 	    ZmPQueueBits<2,
 	      ZmPQueueLevels<2>>>>>>>;
 
-inline uint64_t StreamRxData::memory() const {
-  return ZmHeapAllocSize<sizeof(StreamRxPQueue::Node)>{} + storageMemory_() +
-    (packet ? packet->memory() : 0);
-}
 
 using CryptoRxPQueue =
   ZmPQueue<CryptoRxData,
@@ -482,8 +478,7 @@ template <
   unsigned Size = BufSize,
   unsigned MaxSize = (64<<10), // 64K
   ZuString HeapID = "Zquic.Crypto.RxBuf">
-using CryptoRxBufAlloc = Zi::IOBufAlloc<
-  CryptoRxPQueue::Node, Size, MaxSize, ZuStringT<HeapID>>;
+using CryptoRxBufAlloc = Zi::IOBufBuiltin<CryptoRxPQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
 using TxDataPQueue =
   ZmPQueue<StreamTxData,
@@ -493,24 +488,26 @@ using TxDataPQueue =
 	  ZmPQueueBits<2,
 	    ZmPQueueLevels<3>>>>>>;
 
-// Ownership-bearing application ranges coexist with the original intrusive
-// plaintext nodes. Packetization consumes metadata without editing backing.
+// Each queued application buffer transfers its active skip/length to Tx.
+// Packet and recovery records separately track logical STREAM positions.
 struct StreamTxRange {
-  TxRange range;
+  ZmRef<ZiIOBuf> buf;
+  uint64_t streamOffset = 0;
 
   StreamTxRange() = default;
-  explicit StreamTxRange(TxRange range_) : range{ZuMv(range_)} { }
-  uint64_t key() const { return range.streamOffset; }
-  uint64_t length() const { return range.length; }
+  StreamTxRange(ZmRef<ZiIOBuf> buf_, uint64_t offset_) :
+    buf{ZuMv(buf_)}, streamOffset{offset_} { }
+  uint64_t key() const { return streamOffset; }
+  uint64_t length() const { return buf ? buf->length : 0; }
   uint64_t clipHead(uint64_t n) {
-    if (n > range.length) n = range.length;
-    range.offset += n;
-    range.streamOffset += n;
-    return range.length -= n;
+    if (n > length()) n = length();
+    buf->advance(unsigned(n));
+    streamOffset += n;
+    return length();
   }
   uint64_t clipTail(uint64_t n) {
-    if (n > range.length) n = range.length;
-    return range.length -= n;
+    if (n > length()) n = length();
+    return buf->length -= n;
   }
   template <typename I> void write(const I &) { }
 };

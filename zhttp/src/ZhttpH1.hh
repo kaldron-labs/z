@@ -640,12 +640,6 @@ private:
   bool		m_deliverHeaders = true;
 };
 
-template <typename Lower, typename = void>
-struct RetainsBuffers : ZuFalse { };
-template <typename Lower>
-struct RetainsBuffers<Lower, decltype(Lower::RetainBuffers, void())> :
-  ZuBool<Lower::RetainBuffers> { };
-
 // HTTP 1.1 non-chunked body Tx streaming
 template <typename Lower>
 class BodyStream : public ZiTxLayer<BodyStream<Lower>, Lower> {
@@ -657,15 +651,23 @@ public:
 
   ~BodyStream() { this->flush(); }
 
-  bool prepareAppend_(ZmRef<ZiIOBuf> &buf) {
-    if constexpr (RetainsBuffers<Lower>{}) {
-      auto length = buf->length;
-      this->appendRange(Zi::RxRange{ZuMv(buf), 0, length});
-      return true;
-    }
-    return false;
+  bool appendBuf(ZmRef<ZiIOBuf> buf) {
+    if (!this->flush() || !buf || buf->failed()) { this->fail(); return false; }
+    if (!prepareBuf_(buf.ptr(), false)) { this->fail(); return false; }
+    m_lower << ZuMv(buf);
+    if (m_lower.failed()) { this->fail(); return false; }
+    return true;
   }
-
+  BodyStream &operator <<(ZmRef<ZiIOBuf> buf) {
+    appendBuf(ZuMv(buf));
+    return *this;
+  }
+  template <typename V,
+    typename = ZuIfT<!ZuIsConvertible<V, ZmRef<ZiIOBuf>>{}>>
+  BodyStream &operator <<(V &&value) {
+    Base::operator <<(ZuFwd<V>(value));
+    return *this;
+  }
 
   bool prepareBuf_(ZiIOBuf *buf, bool) {
     if (ZuUnlikely(m_contentLength < buf->length)) {
@@ -675,15 +677,6 @@ public:
     m_contentLength -= buf->length;
     m_produced += buf->length;
     return true;
-  }
-  bool prepareRange_(Zi::RxRange range) {
-    if (m_contentLength < range.length) {
-      m_valid = false;
-      range.length = unsigned(m_contentLength);
-    }
-    m_contentLength -= range.length;
-    m_produced += range.length;
-    return m_lower.appendRange(ZuMv(range));
   }
   uint64_t produced() const { return m_produced; }
   bool valid() const { return m_valid && !Base::operator !(); }
@@ -714,15 +707,29 @@ public:
 
   ~ChunkedStream() { this->flush(); }
 
-  bool prepareAppend_(ZmRef<ZiIOBuf> &buf) {
-    if constexpr (RetainsBuffers<Lower>{}) {
-      auto length = buf->length;
-      this->appendRange(Zi::RxRange{ZuMv(buf), 0, length});
-      return true;
-    }
-    return false;
+  bool appendBuf(ZmRef<ZiIOBuf> buf) {
+    if (!this->flush() || !buf || buf->failed()) { this->fail(); return false; }
+    auto length = buf->length;
+    if (!length) return true;
+    auto header = m_lower.allocBuf(m_lower.headRoom());
+    if (!header) { this->fail(); return false; }
+    using Fmt = ZuFmt::Hex<1, ZuFmt::Right<8>>;
+    *header << ZuBoxed(length).template fmt<Fmt>() << "\r\n";
+    m_lower << ZuMv(header) << ZuMv(buf) << "\r\n";
+    m_produced += length;
+    if (m_lower.failed()) { this->fail(); return false; }
+    return true;
   }
-
+  ChunkedStream &operator <<(ZmRef<ZiIOBuf> buf) {
+    appendBuf(ZuMv(buf));
+    return *this;
+  }
+  template <typename V,
+    typename = ZuIfT<!ZuIsConvertible<V, ZmRef<ZiIOBuf>>{}>>
+  ChunkedStream &operator <<(V &&value) {
+    Base::operator <<(ZuFwd<V>(value));
+    return *this;
+  }
 
   bool prepareBuf_(ZiIOBuf *buf, bool) {
     m_produced += buf->length;
@@ -741,19 +748,6 @@ public:
     return !buf->failed();
   }
 
-  bool prepareRange_(Zi::RxRange range) {
-    auto length = range.length;
-    auto header = m_lower.allocBuf(m_lower.headRoom());
-    if (!header) return false;
-    using Fmt = ZuFmt::Hex<1, ZuFmt::Right<8>>;
-    *header << ZuBoxed(range.length).template fmt<Fmt>() << "\r\n";
-    m_lower << ZuMv(header);
-    if (m_lower.failed() ||
-	!m_lower.appendRange(ZuMv(range))) return false;
-    m_lower << "\r\n";
-    m_produced += length;
-    return !m_lower.failed();
-  }
   uint64_t produced() const { return m_produced; }
   bool valid() const { return !Base::operator !(); }
 

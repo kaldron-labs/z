@@ -51,14 +51,8 @@ ZfStruct(ZvAPI, (ZiMxParams, Cf),
   ((txThread, AliasFn, txThreadID, txThread), (Mutable),	String),
 #ifdef ZiMultiplex_EPoll
   ((epollMaxFDs, Fn),	(Mutable, (Range<1U, 100000U>)),	UInt32),
-  ((epollQuantum, Fn),	(Mutable, (Range<1U, 1024U>)),		UInt32),
 #endif
-  ((rxRingSize, Fn),
-    (Mutable, (Range<unsigned(ZiMxParams::MinRingSize),
-      unsigned(ZiMxParams::MaxRingSize)>)),			UInt32),
-  ((txRingSize, Fn),
-    (Mutable, (Range<unsigned(ZiMxParams::MinRingSize),
-      unsigned(ZiMxParams::MaxRingSize)>)),			UInt32),
+  ((rxQuantum, Fn),	(Mutable, (Range<1U, 1024U>)),		UInt32),
   ((rxBufSize, Fn),	(Mutable, (Range<0U, INT_MAX>)),	UInt32),
   ((txBufSize, Fn),	(Mutable, (Range<0U, INT_MAX>)),	UInt32)
 #ifdef ZiMultiplex_DEBUG

@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // shared memory inter-process ring buffer
-// layered on ZmRing, but ZiRing is always multiple reader (MR)
+// - layered on ZmRing, but ZiRing is always multiple reader (MR)
 // - single/multiple writers/producers - supports SWMR MWMR
 // - fixed- and variable-sized messages (types)
 // - broadcast - all readers receive all messages

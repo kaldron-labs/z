@@ -524,7 +524,7 @@ struct StreamProbe {
   ZmRef<StreamQ::Node> request;
   bool inited = false;
 
-  bool run(const Zhttp::HubConfig &hub, uint16_t port, ZuCSpan cert, bool json) {
+  bool init(const Zhttp::HubConfig &hub, uint16_t port, ZuCSpan cert, bool json) {
     state.json = json;
     Zhttp::H2Config tls;
     Zhttp::QUICConfig quic;
@@ -533,7 +533,11 @@ struct StreamProbe {
     if constexpr (ZuIsSame<Protocol, Zhttp::QUIC>{})
       quic.caPath(cert).maxIdleTimeout(10000);
     inited = client.init(hub, 1, {}, {}, tls, quic);
-    bool up = inited && client.pool(0, Zhttp::Destination{"localhost", port}) && client.start();
+    return inited && client.pool(0, Zhttp::Destination{"localhost", port});
+  }
+
+  bool run() {
+    bool up = inited && client.start();
     if (up) {
       request = new StreamQ::Node{};
       request->state = &state;
@@ -541,7 +545,7 @@ struct StreamProbe {
     }
     bool done = request && state.done.timedwait(Zm::now(10)) == 0;
     return done && state.complete && state.status == 200 &&
-      (json ? state.body.find("\"json payload\"") >= 0 : state.body == "raw payload");
+      (state.json ? state.body.find("\"json payload\"") >= 0 : state.body == "raw payload");
   }
   void final() {
     if (inited) { client.stop(); client.final(); }
@@ -680,7 +684,7 @@ struct StreamResFixture {
     bool partialOK = false;
   };
 
-  Result run(const Zhttp::HubConfig &hub, uint16_t port, ZuCSpan cert,
+  bool init(const Zhttp::HubConfig &hub, uint16_t port, ZuCSpan cert,
       ZuCSpan key, bool h3, bool h1)
   {
     Zhttp::ServerConfig serverConfig;
@@ -696,9 +700,6 @@ struct StreamResFixture {
       })
 	.policy(Zhttp::H2Policy::Force));
     serverInited = server.init(hub, ZuMv(serverConfig));
-    if (!serverInited || !server.start() ||
-	server.listeningSem.timedwait(Zm::now(10)) != 0 ||
-	server.listenFailures.load_()) return {};
 
     Zrest::ClientConfig clientConfig;
     clientConfig.links(1).concurrency(2).linkMax(2)
@@ -716,9 +717,14 @@ struct StreamResFixture {
 	  tls.caPath(cert);
 	}).policy(Zhttp::H2Policy::Force),
 	Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(10000));
-    if (!clientInited || !client.pool(0,
-	Zhttp::Destination{h1 ? "127.0.0.1" : "localhost", port, false}) ||
-	!client.start()) return {};
+    return serverInited && clientInited && client.pool(0,
+      Zhttp::Destination{h1 ? "127.0.0.1" : "localhost", port, false});
+  }
+
+  Result run() {
+    if (!serverInited || !server.start() ||
+	server.listeningSem.timedwait(Zm::now(10)) != 0 ||
+	server.listenFailures.load_() || !clientInited || !client.start()) return {};
     Result result;
     result.body = bodyRoundTrips(client);
     ZmRef<EventCall> events = new EventCall{};
@@ -768,7 +774,7 @@ struct StreamResFixture {
 ZiMxParams mxParams()
 {
   return ZiMxParams()
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+
     .scheduler([](auto &scheduler) {
     scheduler.nThreads(2)
       .thread(1, [](auto &thread) {
@@ -846,9 +852,6 @@ void cancelDrain()
 {
   ZuTestScope(cancelDrain);
   ZiMultiplex mx{mxParams()};
-  bool mxUp = mx.start();
-  ZuCheck(mxUp);
-  if (!mxUp) return;
   App app;
   Server server;
   Zrest::ServerConfig config;
@@ -858,6 +861,9 @@ void cancelDrain()
     .port(Zhttp::Test::loopbackPort(20820)).tcp();
   config.limits(limits);
   bool inited = server.init({&mx, "rx", "tx"}, ZuMv(config), &app);
+  bool mxUp = mx.start();
+  ZuCheck(mxUp);
+  if (!mxUp) return;
   bool started = inited && server.start();
   ZuCheck(started);
   if (started) {
@@ -938,9 +944,6 @@ void multiplexed(bool h3)
   if (!certOK) return;
 
   ZiMultiplex mx{mxParams()};
-  bool mxUp = mx.start();
-  ZuCheck(mxUp);
-  if (!mxUp) return;
   Zhttp::HubConfig hub{&mx, "rx", "tx"};
   uint16_t port = uint16_t(Zhttp::Test::loopbackPort(20810 + h3));
   ZuCheck(port);
@@ -961,12 +964,6 @@ void multiplexed(bool h3)
     }).policy(Zhttp::H2Policy::Force));
   bool serverInited = server.init(hub, ZuMv(serverConfig), &app);
   ZuCheck(serverInited);
-  bool serverUp = serverInited && server.start();
-  ZuCheck(serverUp);
-  bool listening = serverUp &&
-    app.listeningSem.timedwait(Zm::now(10)) == 0;
-  ZuCheck(listening && app.port == port);
-
   ClientApp clientApp;
   Client client;
   Zrest::ClientConfig clientConfig;
@@ -979,7 +976,7 @@ void multiplexed(bool h3)
     .h2Policy(Zhttp::H2Policy::Force).blindH3(h3)
     .secure(true).tcp(false).tls(!h3).quic(h3);
   clientConfig.limits(limits);
-  bool clientInited = listening && client.init(hub, 1,
+  bool clientInited = serverInited && client.init(hub, 1,
     ZuMv(clientConfig), &clientApp, Zhttp::TCPConfig{},
     Zhttp::H2Config{}.tls([&cert](auto &tls) {
       tls.caPath(cert);
@@ -989,6 +986,21 @@ void multiplexed(bool h3)
   bool pooled = clientInited && client.pool(0,
     Zhttp::Destination{"localhost", port, false});
   ZuCheck(pooled);
+  ZuCheck(h3 ? h3Raw.init(hub, port, cert, false) :
+    h2Raw.init(hub, port, cert, false));
+  ZuCheck(h3 ? h3JSON.init(hub, port, cert, true) :
+    h2JSON.init(hub, port, cert, true));
+  ZuCheck(responseStream.init(hub,
+    uint16_t(Zhttp::Test::loopbackPort(20820 + h3)), cert, key, h3, false));
+  bool mxUp = mx.start();
+  ZuCheck(mxUp);
+  if (!mxUp) return;
+  bool serverUp = serverInited && server.start();
+  ZuCheck(serverUp);
+  bool listening = serverUp &&
+    app.listeningSem.timedwait(Zm::now(10)) == 0;
+  ZuCheck(listening && app.port == port);
+
   bool clientUp = pooled && client.start();
   ZuCheck(clientUp);
   if (clientUp) {
@@ -997,15 +1009,13 @@ void multiplexed(bool h3)
     ZuCheck(bodyResult.rawOK);
     ZuCheck(bodyResult.jsonAccepted);
     ZuCheck(bodyResult.jsonOK);
-    ZuCheck(h3 ? h3Raw.run(hub, port, cert, false) :
-      h2Raw.run(hub, port, cert, false));
-    ZuCheck(h3 ? h3JSON.run(hub, port, cert, true) :
-      h2JSON.run(hub, port, cert, true));
+    ZuCheck(h3 ? h3Raw.run() :
+      h2Raw.run());
+    ZuCheck(h3 ? h3JSON.run() :
+      h2JSON.run());
   }
   if (clientUp) {
-    auto responseResult = responseStream.run(hub,
-      uint16_t(Zhttp::Test::loopbackPort(20820 + h3)), cert, key,
-      h3, false);
+    auto responseResult = responseStream.run();
     ZuCheck(responseResult.body.rawAccepted && responseResult.body.rawOK);
     ZuCheck(responseResult.body.jsonAccepted && responseResult.body.jsonOK);
     ZuCheck(responseResult.eventsAccepted && responseResult.eventsOK);
@@ -1147,9 +1157,6 @@ void retryLimit()
 {
   ZuTestScope(retryLimit);
   ZiMultiplex mx{mxParams()};
-  bool mxUp = mx.start();
-  ZuCheck(mxUp);
-  if (!mxUp) return;
   Zhttp::HubConfig hub{&mx, "rx", "tx"};
   uint16_t port = uint16_t(Zhttp::Test::loopbackPort(20840));
   ZuCheck(port);
@@ -1165,6 +1172,9 @@ void retryLimit()
   bool pooled = inited && client.pool(0,
     Zhttp::Destination{"127.0.0.1", port, false});
   ZuCheck(pooled);
+  bool mxUp = mx.start();
+  ZuCheck(mxUp);
+  if (!mxUp) return;
   bool up = pooled && client.start();
   ZuCheck(up);
   ZmRef<RetryCall> call = new RetryCall{};
@@ -1188,9 +1198,6 @@ void call()
   StreamProbe<Zhttp::H1TCP> streamRaw, streamJSON;
   StreamResFixture responseStream;
   ZiMultiplex mx{mxParams()};
-  bool mxUp = mx.start();
-  ZuCheckRT(mxUp);
-  if (!mxUp) return;
   Zhttp::HubConfig hub{&mx, "rx", "tx"};
   uint16_t port = uint16_t(Zhttp::Test::loopbackPort(20800));
   ZuCheckRT(port);
@@ -1213,12 +1220,6 @@ void call()
   serverConfig.limits(serverLimits);
   bool serverInited = server.init(hub, ZuMv(serverConfig), &app);
   ZuCheckRT(serverInited);
-  bool serverUp = serverInited && server.start();
-  ZuCheckRT(serverUp);
-  bool listening = serverUp &&
-    app.listeningSem.timedwait(Zm::now(10)) == 0;
-  ZuCheckRT(listening && app.port == port);
-
   ClientApp clientApp;
   Client invalidClient;
   Zrest::ClientConfig invalidClientConfig;
@@ -1237,12 +1238,25 @@ void call()
     .bodyMax(4096).retainedBodyMax(4096).protocol(Zhttp::ProtoPolicy::DisableH3)
     .secure(false).tcp(true).tls(false).quic(false);
   clientConfig.limits(clientLimits);
-  bool clientInited = listening &&
+  bool clientInited = serverInited &&
     client.init(hub, 1, ZuMv(clientConfig), &clientApp);
   ZuCheckRT(clientInited);
   bool pooled = clientInited && client.pool(0,
     Zhttp::Destination{"127.0.0.1", port, false});
   ZuCheckRT(pooled);
+  ZuCheckRT(streamRaw.init(hub, port, {}, false));
+  ZuCheckRT(streamJSON.init(hub, port, {}, true));
+  ZuCheckRT(responseStream.init(hub,
+    uint16_t(Zhttp::Test::loopbackPort(20830)), {}, {}, false, true));
+  bool mxUp = mx.start();
+  ZuCheckRT(mxUp);
+  if (!mxUp) return;
+  bool serverUp = serverInited && server.start();
+  ZuCheckRT(serverUp);
+  bool listening = serverUp &&
+    app.listeningSem.timedwait(Zm::now(10)) == 0;
+  ZuCheckRT(listening && app.port == port);
+
   bool clientUp = pooled && client.start();
   ZuCheckRT(clientUp);
   if (clientUp) {
@@ -1251,12 +1265,11 @@ void call()
     ZuCheckRT(bodyResult.rawOK);
     ZuCheckRT(bodyResult.jsonAccepted);
     ZuCheckRT(bodyResult.jsonOK);
-    ZuCheckRT(streamRaw.run(hub, port, {}, false));
-    ZuCheckRT(streamJSON.run(hub, port, {}, true));
+    ZuCheckRT(streamRaw.run());
+    ZuCheckRT(streamJSON.run());
   }
   if (clientUp) {
-    auto responseResult = responseStream.run(hub,
-      uint16_t(Zhttp::Test::loopbackPort(20830)), {}, {}, false, true);
+    auto responseResult = responseStream.run();
     ZuCheckRT(responseResult.body.rawAccepted && responseResult.body.rawOK);
     ZuCheckRT(responseResult.body.jsonAccepted && responseResult.body.jsonOK);
     ZuCheckRT(responseResult.eventsAccepted && responseResult.eventsOK);
@@ -1561,24 +1574,29 @@ void call()
     ZuCheckRT(server.stop());
     server.final();
   }
+  streamRaw.final();
+  streamJSON.final();
+  responseStream.final();
+  mx.stop();
   Zrest::ServerConfig reuseServerConfig;
   reuseServerConfig.localIP(ZiIP{"127.0.0.1"}).port(port)
     .bodyMax(4096).retainedBodyMax(4096).tcp();
   bool serverReused = server.init(hub, ZuMv(reuseServerConfig), &app);
   ZuCheckRT(serverReused);
-  bool serverRestarted = serverReused && server.start() &&
-    app.listeningSem.timedwait(Zm::now(10)) == 0;
-  ZuCheckRT(serverRestarted);
   Zrest::ClientConfig reuseClientConfig;
   reuseClientConfig.links(1).concurrency(2).linkMax(2)
     .bodyMax(4096).retainedBodyMax(4096).protocol(Zhttp::ProtoPolicy::DisableH3)
     .secure(false).tcp(true).tls(false).quic(false);
   reuseClientConfig.limits(clientLimits);
-  bool clientReused = serverRestarted &&
+  bool clientReused = serverReused &&
     client.init(hub, 1, ZuMv(reuseClientConfig), &clientApp);
   ZuCheckRT(clientReused);
-  bool clientRestarted = clientReused && client.pool(0,
-    Zhttp::Destination{"127.0.0.1", port, false}) && client.start();
+  bool clientReusedPool = clientReused && client.pool(0,
+    Zhttp::Destination{"127.0.0.1", port, false});
+  bool serverRestarted = clientReusedPool && mx.start() && server.start() &&
+    app.listeningSem.timedwait(Zm::now(10)) == 0;
+  ZuCheckRT(serverRestarted);
+  bool clientRestarted = serverRestarted && client.start();
   ZuCheckRT(clientRestarted);
   if (clientRestarted) {
     ZmRef<Call> reused = new Call{};
@@ -1593,10 +1611,7 @@ void call()
   if (clientReused) { ZuCheckRT(client.stop()); client.final(); }
   if (serverReused) { ZuCheckRT(server.stop()); server.final(); }
 
-  streamRaw.final();
-  streamJSON.final();
-  responseStream.final();
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   mx.stop();
 }

@@ -123,7 +123,7 @@ static void interrupted() { done.post(); }
 template <typename Server>
 static int run(Server &server, bool initialized, ZiMultiplex &mx)
 {
-  bool started = initialized && server.start();
+  bool started = initialized && mx.start() && server.start();
   if (!started) {
     server.final();
     mx.stop();
@@ -158,7 +158,6 @@ int main(int argc, char **argv)
   ZmTrap::trap();
 
   ZiMultiplex mx{mxParams()};
-  if (!mx.start()) return 1;
 
   App app{&options};
   if (options.stdio) {

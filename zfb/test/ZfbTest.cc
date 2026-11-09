@@ -10,6 +10,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuPtr.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRef.hh>
@@ -23,8 +24,7 @@
 
 #include "ZfbTest.hh"
 
-using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
+using LocalBuf = Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
 
 using namespace ZuTestUtil;
 
@@ -167,7 +167,7 @@ static void run()
   ZuTestScope(meta);
   ZuCheck(MI::N == 5 && ME::N == 5);
   ZuCheck(Zfb::As<Key>::name() == Zfb::As<Implicit>::name());
-  Zfb::IOBuilder<> builder{new LocalBuf{nullptr, 0}};
+  Zfb::IOBuilder<> builder{new LocalBuf{ZmSingleton<typename LocalBuf::Allocator>::instance()}};
   // All includes a read-only getter without ctor/key metadata; Save omits it.
   auto bytes = builder.finish(
     Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(builder, SaveOnly{42}));

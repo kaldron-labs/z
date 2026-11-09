@@ -236,7 +236,7 @@ bool Terminal::open_()
   // obtain input capabilities
   m_smkx = tigetstr("smkx");
   m_rmkx = tigetstr("rmkx");
- 
+
   // obtain output capabilities
   m_am = tigetflag("am");
   m_xenl = tigetflag("xenl");

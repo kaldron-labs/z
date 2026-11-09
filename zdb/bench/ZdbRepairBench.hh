@@ -116,10 +116,12 @@ template <typename T>
 static auto key(const T &value)
 {
 #ifdef Zfb_HH
-  Zdb_::Builder b{new Zdb_::IOBufAlloc<zdbtest::Order>{nullptr, 0}, Zfb::BufferAlign<T>::N};
+  Zdb_::Builder b{new Zdb_::IOBufAlloc<zdbtest::Order>{
+    Zdb_::localBufAllocator<zdbtest::Order>(), nullptr, 0}, Zfb::BufferAlign<T>::N};
   b.finish(Zfb::save(b, value));
 #else
-  Zfb::IOBuilder b{new Zdb_::IOBufAlloc<zdbtest::Order>{nullptr, 0}};
+  Zfb::IOBuilder b{new Zdb_::IOBufAlloc<zdbtest::Order>{
+    Zdb_::localBufAllocator<zdbtest::Order>(), nullptr, 0}};
   b.Finish(ZfbStruct::save(b, value));
 #endif
   return b.buf();
@@ -130,14 +132,16 @@ static auto record(const zdbtest::Order &row, Zdb_::UN un, Zdb_::VN vn)
 {
   using namespace Zdb_;
 #ifdef Zfb_HH
-  Builder b{new Zdb_::IOBufAlloc<zdbtest::Order>{nullptr, 0}, Zfb::BufferAlign<zdbtest::Order>::N};
+  Builder b{new Zdb_::IOBufAlloc<zdbtest::Order>{
+    Zdb_::localBufAllocator<zdbtest::Order>(), nullptr, 0}, Zfb::BufferAlign<zdbtest::Order>::N};
   auto nested = b.startNested();
   auto data = b.endNested(nested,
     Zfb::save<ZuFacet::FB, Filter>(b, row));
   b.finish(saveMsg(b, saveRecord(b, "repairbench", un, SN{un}, vn, 0, data),
     Msg::Tag::Replication));
 #else
-  Zfb::IOBuilder b{new Zdb_::IOBufAlloc<zdbtest::Order>{nullptr, 0}};
+  Zfb::IOBuilder b{new Zdb_::IOBufAlloc<zdbtest::Order>{
+    Zdb_::localBufAllocator<zdbtest::Order>(), nullptr, 0}};
   auto data = Zfb::Save::nest(b, [&row](Zfb::Builder &b) {
     return ZfbStruct::save<ZuFacet::Core, Filter>(b, row).Union();
   });
@@ -145,7 +149,7 @@ static auto record(const zdbtest::Order &row, Zdb_::UN un, Zdb_::VN vn)
   b.Finish(fbs::CreateMsg(b, fbs::Body::Replication,
     fbs::CreateRecord(b, Zfb::Save::str(b, "repairbench"), un, &sn, vn, 0, data).Union()));
 #endif
-  return saveFrame(b);
+  return ZmRef<IOBuf>{saveHdr(b)};
 }
 
 template <template <typename> class Filter>
@@ -184,8 +188,7 @@ static void store(unsigned count, unsigned rounds, unsigned width)
   using T = zdbtest::Order;
   auto config = RepairBench::config();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   check(mx.start());
   auto store = newStore();
   auto storeFields = ZfCf::handler<zdbtest::ConfigFields>(
@@ -318,8 +321,7 @@ static void sagas(unsigned count, unsigned rounds, unsigned width)
   using M = ZdbAnySaga<SagaDB>;
   auto config = RepairBench::config();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   check(mx.start());
   auto store = newStore();
   ZmRef<SagaDB> db = new SagaDB{};
@@ -387,8 +389,7 @@ static void scheduler(unsigned count, unsigned rounds)
 {
   auto config = RepairBench::config();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   check(mx.start());
   Samples samples((count + 1)*3);
   for (unsigned round = 0; round < rounds; ++round) {

@@ -12,6 +12,7 @@
 #include <zlib/ZuPtr.hh>
 #include <zlib/ZuRef.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmHeap.hh>
@@ -23,8 +24,7 @@
 
 #include <zlib/Zpb.hh>
 
-using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
+using LocalBuf = Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
 
 using namespace ZuTestUtil;
 
@@ -1719,7 +1719,7 @@ static void testPointer()
   ZuCheck(!Zpb::save(partialBuilder, partial).length() &&
     partialBuilder.error() == Zpb::Error::Required &&
     partialBuilder.size() == 2);
-  Zpb::IOBuilder pooledPartial{new LocalBuf{nullptr, 0}};
+  Zpb::IOBuilder pooledPartial{new LocalBuf{ZmSingleton<typename LocalBuf::Allocator>::instance()}};
   ZuCheck(!Zpb::save(pooledPartial, partial).length() &&
     pooledPartial.error() == Zpb::Error::Required &&
     !pooledPartial.buf());

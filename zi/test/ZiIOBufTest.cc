@@ -19,7 +19,7 @@ void testSliceAndEnsurePreserveSpan()
 {
   ZuTestScope(testSliceAndEnsurePreserveSpan);
 
-  Zi::AppBufAllocator<ZiIOBuf, ZiIOBuf_DefltSize> allocator;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize> allocator{nullptr};
   ZmRef<ZiIOBuf> buf = allocator.allocBuf();
   *buf << "fbah";
   ZtString<> s;
@@ -50,7 +50,7 @@ void testAdvanceRewind()
 {
   ZuTestScope(testAdvanceRewind);
 
-  Zi::AppBufAllocator<ZiIOBuf, ZiIOBuf_DefltSize> allocator;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize> allocator{nullptr};
   ZmRef<ZiIOBuf> buf = allocator.allocBuf();
   *buf << "abcdef";
   buf->advance(2);
@@ -75,7 +75,7 @@ void testPrependAndGrow()
 {
   ZuTestScope(testPrependAndGrow);
 
-  Zi::AppBufAllocator<ZiIOBuf, 8, 4096> allocator;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 8, 4096> allocator{nullptr};
   ZmRef<ZiIOBuf> buf = allocator.allocBuf();
   buf->clear();
   buf->skip = buf->size;
@@ -94,7 +94,7 @@ void testSpanOffsetAndLargeEnsure()
 {
   ZuTestScope(testSpanOffsetAndLargeEnsure);
 
-  Zi::AppBufAllocator<ZiIOBuf, 16, 1<<20> allocator;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 16, 1<<20> allocator{nullptr};
   ZmRef<ZiIOBuf> buf = allocator.allocBuf();
   *buf << "0123456789";
 
@@ -114,7 +114,7 @@ void testPrependTailRoom()
 {
   ZuTestScope(testPrependTailRoom);
 
-  Zi::AppBufAllocator<ZiIOBuf, 8, 4096> allocator;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 8, 4096> allocator{nullptr};
   ZmRef<ZiIOBuf> buf = allocator.allocBuf();
   buf->owner = &buf;
   auto data = buf->data_();
@@ -153,6 +153,60 @@ void testPrependTailRoom()
   ZuCheck(intact && buf->owner == &buf);
 }
 
+struct BufPlugin : Zi::IOBufPlugin {
+  uint8_t *initialPtr = nullptr, *growthPtr = nullptr;
+  unsigned initialSize = 0, growthSize = 0;
+  unsigned initialAllocs = 0, growthAllocs = 0;
+  unsigned initialFrees = 0, growthFrees = 0;
+  bool valid = true;
+
+  uint8_t *alloc(uint32_t size, bool initial) override {
+    auto ptr = static_cast<uint8_t *>(malloc(size));
+    if (initial) {
+      ++initialAllocs;
+      initialPtr = ptr;
+      initialSize = size;
+    } else {
+      ++growthAllocs;
+      growthPtr = ptr;
+      growthSize = size;
+    }
+    return ptr;
+  }
+  void free(uint8_t *ptr, uint32_t size, bool initial) override {
+    if (initial) {
+      ++initialFrees;
+      valid &= ptr == initialPtr && size == initialSize;
+    } else {
+      ++growthFrees;
+      valid &= ptr == growthPtr && size == growthSize;
+    }
+    ::free(ptr);
+  }
+};
+
+void testPluginBacking(bool grow)
+{
+  ZuTestScopeRT(testPluginBacking);
+  BufPlugin plugin;
+  Zi::IOBufPluginAllocator<Zi::IOBufType::RxTCP, 32> allocator{nullptr, &plugin};
+  int owner = 0;
+  auto buf = allocator.allocBuf(&owner);
+  ZuCheckRT(buf->initial() && !buf->builtin() && buf->size == 32);
+  ZuCheckRT(plugin.initialAllocs == 1 && !plugin.growthAllocs && !plugin.initialFrees);
+  *buf << "padpayload";
+  buf->advance(3);
+  if (grow) {
+    ZuCheckRT(buf->ensure(128));
+    ZuCheckRT(!buf->initial() && !buf->builtin() && buf->size >= 131);
+    ZuCheckRT(buf->skip == 3 && buf->cspan() == "payload" && buf->owner == &owner);
+    ZuCheckRT(plugin.growthAllocs == 1 && plugin.initialFrees == 1 && !plugin.growthFrees);
+  }
+  buf = nullptr;
+  ZuCheckRT(plugin.valid && plugin.initialFrees == 1);
+  ZuCheckRT(plugin.growthAllocs == unsigned(grow) && plugin.growthFrees == unsigned(grow));
+}
+
 struct HugePrint;
 struct HugePrintFn : ZuPrintBuffer {
   static unsigned length(const HugePrint &) { return UINT_MAX; }
@@ -178,7 +232,7 @@ void testOutputFailure()
 {
   ZuTestScope(testOutputFailure);
 
-  Zi::AppBufAllocator<ZiIOBuf, ZiIOBuf_DefltSize> allocator;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize> allocator{nullptr};
   ZmRef<ZiIOBuf> buf = allocator.allocBuf();
   *buf << "prefix";
   ZuCheck(!buf->append(reinterpret_cast<const uint8_t *>("x"), UINT_MAX));
@@ -229,5 +283,7 @@ int main(int argc, char **argv)
   ZuTestCall(testPrependTailRoom);
   ZuTestCall(testSpanOffsetAndLargeEnsure);
   ZuTestCall(testOutputFailure);
+  ZuTestCall(testPluginBacking, false);
+  ZuTestCall(testPluginBacking, true);
   return 0;
 }

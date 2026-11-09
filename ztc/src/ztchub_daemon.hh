@@ -47,48 +47,43 @@ ZuDerive(HubString, (ZtString<ZtStringHeapID<"Ztc.Hub.String">>));
 ZuDerive(HubStrings, (ZtArray<HubString, ZtArrayHeapID<"Ztc.Hub.Strings">>));
 using HubFrame = ZmRef<ZiIOBuf>;
 
-// Delivery metadata snapshots physical spans: another delivery may advance the
-// same backing descriptor while this packet is still queued on its Rx owner.
+// A delivery retains actual buffers with their active skip/length.
 struct HubPacket {
-  Zi::RxRange head;
-  Zi::RxRange tail;
+  HubFrame head;
+  HubFrame tail;
 
   HubPacket() = default;
-  explicit HubPacket(HubFrame frame, Zi::RxRange tail_ = {}) :
-      tail{ZuMv(tail_)} {
-    if (frame) {
-      auto length = frame->length;
-      head = Zi::RxRange{ZuMv(frame), 0, length};
-    }
+  explicit HubPacket(HubFrame frame, HubFrame tail_ = {}) :
+    head{ZuMv(frame)}, tail{ZuMv(tail_)} { }
+  explicit operator bool() const { return bool(head); }
+  uint64_t length() const {
+    return uint64_t(head ? head->length : 0) + (tail ? tail->length : 0);
   }
-  explicit operator bool() const { return bool(head.buf); }
-  uint64_t length() const { return uint64_t(head.length) + tail.length; }
 
   // The outer fields are entirely in head. A segmented packet's Bytes vector
   // points at tail on the wire, so never dereference it through the prefix.
-  MsgView message() const { return Zfb::view<Msg>(head.cspan()); }
+  MsgView message() const {
+    return Zfb::view<Msg>(head ? head->cspan() : ZuBSpan{});
+  }
   auto body() const {
-    auto payload = tail.buf ? tail.cspan() : message().get<ZfField(Msg, data)>();
+    auto payload = tail ? tail->cspan() : message().get<ZfField(Msg, data)>();
     return Zfb::view<Payload>(payload).get<ZfField(Payload, body)>();
   }
 
   template <typename Tx>
   void write(Tx &tx, bool writerOwned) && {
-    auto buf = head.buf.ptr();
-    // A writer may retain a provenance reference to its own unpublished
-    // allocation. The producing BuildFn grants mutability, not its RC count.
-    if (writerOwned && head.offset == buf->skip &&
-	head.length == buf->length && tx.canAdopt_(*buf))
-      tx.appendOwned_(ZuMv(head.buf));
-    else tx.appendRange(ZuMv(head));
-    if (tail.buf) tx.appendRange(ZuMv(tail));
+    // Only an unpublished allocation from this writer grants mutability.
+    // Serialize foreign/replayed storage into the transport's registered allocator.
+    if (writerOwned) tx.appendOwned_(ZuMv(head));
+    else tx << head->cspan();
+    if (tail) tx << tail->cspan();
   }
 };
 
 // Build the real destination-owned Msg prefix with its empty Bytes child
 // first. Backwards construction leaves that child's length word at the end;
 // its aligned payload is the original nested root appended by reference.
-inline HubPacket wrapHubFrame(HubFrame frame, Zi::RxRange payload,
+inline HubPacket wrapHubFrame(HubFrame frame, HubFrame payload,
     uint64_t subID, ZuCSpan deviceID, uint64_t generation, unsigned tailRoom) {
   Builder builder{ZuMv(frame), Builder::Align, UINT32_MAX, tailRoom};
   auto data = builder.copyRoot({}, Builder::Align);
@@ -99,7 +94,7 @@ inline HubPacket wrapHubFrame(HubFrame frame, Zi::RxRange payload,
     head->data() + head->length);
   ZmAssert(!(head->length & (Builder::Align - 1)));
   Zfb::write<Zfb::Offset>(head->data() + head->length - sizeof(Zfb::Offset),
-    payload.length);
+    payload->length);
   return HubPacket{ZuMv(head), ZuMv(payload)};
 }
 

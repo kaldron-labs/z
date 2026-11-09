@@ -19,6 +19,7 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmQueue.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmVHeap.hh>
 
 
@@ -39,11 +40,11 @@ namespace App_ {
 
 enum { DefltFrameSize = 1024 }; // common telemetry/request frame
 using ReqFrame =
-  Zi::IOBufAlloc<ZiIOBuf, DefltFrameSize, AppCf::DefltMaxFrame, ZuStringT<"Ztc.App.ReqFrame">>;
+  Zi::IOBufBuiltin<ZiIOBuf, DefltFrameSize, ZiIOBuf_Align, ZuStringT<"Ztc.App.ReqFrame">, AppCf::DefltMaxFrame>;
 using MsgFrame =
-  Zi::IOBufAlloc<ZiIOBuf, DefltFrameSize, AppCf::DefltMaxFrame, ZuStringT<"Ztc.App.MsgFrame">>;
+  Zi::IOBufBuiltin<ZiIOBuf, DefltFrameSize, ZiIOBuf_Align, ZuStringT<"Ztc.App.MsgFrame">, AppCf::DefltMaxFrame>;
 using AlertFrame =
-  Zi::IOBufAlloc<ZiIOBuf, DefltFrameSize, AppCf::DefltMaxFrame, ZuStringT<"Ztc.App.AlertFrame">>;
+  Zi::IOBufBuiltin<ZiIOBuf, DefltFrameSize, ZiIOBuf_Align, ZuStringT<"Ztc.App.AlertFrame">, AppCf::DefltMaxFrame>;
 
 template <typename T, ZuString HeapID>
 using Samples = ZtArray<T, ZtArrayHeapID<HeapID>>;
@@ -427,7 +428,7 @@ private:
       return LoadResult::Corrupt;
     if (total > uint64_t(dataSize) - offset)
       return LoadResult::Incomplete;
-    ZmRef<ZiIOBuf> loaded = new AlertFrame{nullptr, 0};
+    ZmRef<ZiIOBuf> loaded = new AlertFrame{ZmSingleton<typename AlertFrame::Allocator>::instance()};
     loaded->alloc(unsigned(total));
     loaded->length = unsigned(total);
     if (data.pread(
@@ -731,7 +732,8 @@ ZmRef<ZiIOBuf> telemetryFrame(
   ZuCSpan id, uint64_t seqNo, unsigned type, const T &data)
 {
   Ztc::Builder fbb{
-    frameBuf(ZmRef<ZiIOBuf>{new MsgFrame{nullptr, 0}})};
+    frameBuf(ZmRef<ZiIOBuf>{new MsgFrame{
+      ZmSingleton<typename MsgFrame::Allocator>::instance()}})};
   auto nested = fbb.startNested();
   auto id_ = fbb.string(id);
   auto value =
@@ -745,7 +747,8 @@ ZmRef<ZiIOBuf> telemetryFrame(
 
 ZmRef<ZiIOBuf> shutdownFrame(ZuCSpan id)
 {
-  Ztc::Builder fbb{frameBuf(ZmRef<ZiIOBuf>{new MsgFrame{nullptr, 0}})};
+  Ztc::Builder fbb{frameBuf(ZmRef<ZiIOBuf>{new MsgFrame{
+      ZmSingleton<typename MsgFrame::Allocator>::instance()}})};
   auto nested = fbb.startNested();
   auto id_ = fbb.string(id);
   auto value = Zfb::save(fbb, Shutdown{});
@@ -757,7 +760,7 @@ ZmRef<ZiIOBuf> shutdownFrame(ZuCSpan id)
 
 ZmRef<ZiIOBuf> alertFrame(uint64_t seqNo, const ZiIOBuf *canonical)
 {
-  ZmRef<ZiIOBuf> frame = new MsgFrame{nullptr, 0};
+  ZmRef<ZiIOBuf> frame = new MsgFrame{ZmSingleton<typename MsgFrame::Allocator>::instance()};
   frame->append(canonical->data(), canonical->length);
   if (ZuUnlikely(frame->length != canonical->length)) return {};
   auto root = msg_(frame->ptr<Hdr>());
@@ -1230,7 +1233,8 @@ void App::alert_(ZmRef<App_::AlertEvent> event)
     uint64_t alertSeqNo = m_state->alertSeqNo++;
 
     Ztc::Builder fbb{
-      frameBuf(ZmRef<ZiIOBuf>{new App_::AlertFrame{nullptr, 0}})};
+      frameBuf(ZmRef<ZiIOBuf>{new App_::AlertFrame{
+        ZmSingleton<typename App_::AlertFrame::Allocator>::instance()}})};
     auto nested = fbb.startNested();
     auto id = fbb.string(m_cf.id);
     auto message = fbb.string(event->message());
@@ -1522,7 +1526,7 @@ void App::reqRun_()
       }
 
       unsigned size = ringSize(ptr);
-      ZmRef<ZiIOBuf> buf = new App_::ReqFrame{nullptr, 0};
+      ZmRef<ZiIOBuf> buf = new App_::ReqFrame{ZmSingleton<typename App_::ReqFrame::Allocator>::instance()};
       if (size <= m_cf.maxFrame) {
 	buf->alloc(size);
 	memcpy(buf->data(), ptr, size);
@@ -2383,7 +2387,8 @@ void App::sendAck_(
     uint64_t seqNo, AckStatus::T status, uint32_t interval)
 {
   Ztc::Builder fbb{
-    frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame{nullptr, 0}})};
+    frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame{
+      ZmSingleton<typename App_::MsgFrame::Allocator>::instance()}})};
   auto nested = fbb.startNested();
   auto ack = Zfb::save(fbb, Ack{m_cf.id, seqNo, interval, uint8_t(status)});
   fbb.finish(saveMsg(fbb, nested, Body::Ack, ack));
@@ -2393,7 +2398,8 @@ void App::sendAck_(
 void App::sendError_(uint64_t seqNo, int32_t code, ZuCSpan message)
 {
   Ztc::Builder fbb{
-    frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame{nullptr, 0}})};
+    frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame{
+      ZmSingleton<typename App_::MsgFrame::Allocator>::instance()}})};
   auto nested = fbb.startNested();
   auto error = Zfb::save(fbb, Error{ErrorMessage{message}, m_cf.id, seqNo, code});
   fbb.finish(saveMsg(fbb, nested, Body::Error, error));
@@ -2403,7 +2409,8 @@ void App::sendError_(uint64_t seqNo, int32_t code, ZuCSpan message)
 void App::sendEOS_(uint64_t seqNo)
 {
   Ztc::Builder fbb{
-    frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame{nullptr, 0}})};
+    frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame{
+      ZmSingleton<typename App_::MsgFrame::Allocator>::instance()}})};
   auto nested = fbb.startNested();
   auto eos = Zfb::save(fbb, EOS{m_cf.id, seqNo});
   fbb.finish(saveMsg(fbb, nested, Body::EOS, eos));

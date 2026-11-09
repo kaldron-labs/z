@@ -624,10 +624,6 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
 ZiMxParams mxParams()
 {
   return ZiMxParams()
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -676,9 +672,6 @@ void activeStop()
   ZiMultiplex mx{mxParams()};
   state.mx = &mx;
   state.checkThreads = true;
-  bool mxUp = mx.start();
-  ZuCheckRT(mxUp, log_("start multiplexer"));
-  if (!mxUp) return;
   Zhttp::HubConfig hub{&mx, "3", "4"};
 
   App app{&state};
@@ -708,19 +701,13 @@ void activeStop()
   bool serverInited =
     app.init(hub, ZuMv(serverConfig));
   ZuCheckRT(serverInited, log_("initialize server"));
-  bool serverUp = serverInited && app.start();
-  ZuCheckRT(serverUp, log_("start server"));
-  bool listening = serverUp &&
-    state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCheckRT(listening, log_("server listens for HTTP/3"));
-
   Client<Profile> client{&state};
   bool clientInited = false;
   if constexpr (ZuIsSame<Protocol, Zhttp::TCP>{})
-    clientInited = listening && client.init(hub, Zhttp::TCPConfig{});
+    clientInited = serverInited && client.init(hub, Zhttp::TCPConfig{});
   else if constexpr (ZuIsSame<Protocol, Zhttp::TLS>{})
     if constexpr (HTTP::Multiplexed)
-      clientInited = listening && client.init(
+      clientInited = serverInited && client.init(
 	hub, Zhttp::H2Config{}.tls([&cert](auto &tls) {
 	  tls.caPath(cert);
 	})
@@ -732,9 +719,9 @@ void activeStop()
 	    128 : Zhttp::H2::DefltWindow));
     else
       clientInited =
-	listening && client.init(hub, Zhttp::TLSConfig{}.caPath(cert));
+	serverInited && client.init(hub, Zhttp::TLSConfig{}.caPath(cert));
   else
-    clientInited = listening && client.init(
+    clientInited = serverInited && client.init(
       hub, Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(10000)
 	.maxStreamData((StreamResult == StreamTurn::StalledTrailers ||
 	    StreamResult == StreamTurn::StopTrailers ||
@@ -742,7 +729,16 @@ void activeStop()
 	    StreamResult == StreamTurn::ResetTrailers) ?
 	  128 : Zhttp::QUICConfig{}.maxStreamData()));
   ZuCheckRT(clientInited, log_("initialize client"));
-  bool clientUp = clientInited && client.start();
+  bool mxUp = mx.start();
+  ZuCheckRT(mxUp, log_("start multiplexer"));
+  if (!mxUp) return;
+  bool serverUp = serverInited && app.start();
+  ZuCheckRT(serverUp, log_("start server"));
+  bool listening = serverUp &&
+    state.listening.timedwait(Zm::now(10)) == 0;
+  ZuCheckRT(listening, log_("server listens for HTTP/3"));
+
+  bool clientUp = listening && clientInited && client.start();
   ZuCheckRT(clientUp, log_("start client"));
   using ClientLink = Client<Profile>::Link;
   ZmRef<ClientLink> link;
@@ -993,7 +989,7 @@ void activeStop()
   link = nullptr;
   if (clientInited) client.final();
   if (serverInited) app.final();
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   mx.stop();
   if constexpr (StreamResult == StreamTurn::HighTurns ||
@@ -1044,14 +1040,14 @@ void failedStop()
 {
   ZuTestScope(failedStop);
   ZiMultiplex mx{mxParams()};
-  bool running = mx.start();
-  ZuCHECK(running, "start failed-connection drain test");
-  if (!running) return;
   FailedStopState state;
   FailedStopClient client{&state};
   bool initialized = client.init(Zhttp::HubConfig{&mx, "3", "4"},
     Zhttp::QUICConfig{}.maxIdleTimeout(1));
   ZuCHECK(initialized, "initialize failed-connection client");
+  bool running = mx.start();
+  ZuCHECK(running, "start failed-connection drain test");
+  if (!running) return;
   bool started = initialized && client.start();
   ZuCHECK(started, "start failed-connection client");
   ZmRef<FailedStopClient::Link> link;
@@ -1067,7 +1063,7 @@ void failedStop()
   if (initialized && !stopped) (void)client.stop();
   link = nullptr;
   if (initialized && !state.finalized) client.final();
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   mx.stop();
 }

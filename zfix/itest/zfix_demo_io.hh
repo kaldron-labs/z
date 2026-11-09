@@ -85,15 +85,15 @@ template <typename Net> struct Hub<Net, true> : Zfix::Client<Hub<Net, true>, Dic
   explicit Hub(State *value) : state{value} { }
 
   bool init(typename Net::ClientParams params) {
-    ZmRef<typename Link::RxAllocator> rx;
-    ZmRef<typename Link::TxAllocator> tx;
+    Zi::IOBufAllocator *rx = nullptr;
+    Zi::IOBufAllocator *tx = nullptr;
     if (!params.rxAllocator()) {
-      rx = new typename Link::RxAllocator{};
-      params.rxAllocator(rx.ptr());
+      rx = Link::rxAllocator(params.multiplex());
+      params.rxAllocator(rx);
     }
     if (!params.txAllocator()) {
-      tx = new typename Link::TxAllocator{};
-      params.txAllocator(tx.ptr());
+      tx = Link::txAllocator(params.multiplex());
+      params.txAllocator(tx);
     }
     return Zfix::Client<Hub, Dictionary, Net>::init(ZuMv(params));
   }
@@ -117,15 +117,15 @@ template <typename Net> struct Hub<Net, false> : Zfix::Server<Hub<Net, false>, D
   void listenFailed(bool) { state->fail(); state->listening.post(); }
 
   bool init(typename Net::ServerParams params) {
-    ZmRef<typename Link::RxAllocator> rx;
-    ZmRef<typename Link::TxAllocator> tx;
+    Zi::IOBufAllocator *rx = nullptr;
+    Zi::IOBufAllocator *tx = nullptr;
     if (!params.rxAllocator()) {
-      rx = new typename Link::RxAllocator{};
-      params.rxAllocator(rx.ptr());
+      rx = Link::rxAllocator(params.multiplex());
+      params.rxAllocator(rx);
     }
     if (!params.txAllocator()) {
-      tx = new typename Link::TxAllocator{};
-      params.txAllocator(tx.ptr());
+      tx = Link::txAllocator(params.multiplex());
+      params.txAllocator(tx);
     }
     return Zfix::Server<Hub, Dictionary, Net>::init(ZuMv(params));
   }

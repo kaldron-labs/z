@@ -267,18 +267,7 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal, unsigned count = 
     state.payload.length((256U << 10) + 7);
     memset(state.payload.data(), 0x71, state.payload.length());
   }
-  // Keep a complete retained message plus request/reply retirement overlap;
-  // TLS emits records, while QUIC emits path-sized packets.
-  unsigned rxSlots = 4 * ((state.payload.length() + ZiIOBuf_DefltSize - 1)/
-    ZiIOBuf_DefltSize);
-  unsigned txBytes = h3 ? Zquic::MinUDPPayload : 16U << 10;
-  unsigned txSlots = 4 * ((state.payload.length() + txBytes - 1)/txBytes);
   ZiMultiplex mx{ZiMxParams{}
-    .rxRingSize(rxSlots < ZiIOBuf_DefltRxRingSize ?
-      ZiIOBuf_DefltRxRingSize : rxSlots)
-    .txRingSize(txSlots < ZiIOBuf_DefltTxRingSize ?
-      ZiIOBuf_DefltTxRingSize : txSlots)
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
     .scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
@@ -287,7 +276,6 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal, unsigned count = 
       .thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
   state.mx = &mx;
-  ZuCheckRT(mx.start(), (return));
   unsigned port = peerPort(h3);
   ZuCheckRT(port, ({ mx.stop(); return; }));
   uint64_t baseline = mode == Mode::Long ? rpcAllocated() : 0;
@@ -310,10 +298,6 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal, unsigned count = 
     .policy(Zhttp::H2Policy::Force));
   bool initialized = server.init(hub, serverConfig, &rpc);
   ZuCheckRT(initialized);
-  bool started = initialized && server.start();
-  ZuCheckRT(started);
-  bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCheckRT(listening && !state.errors.load_());
   ClientApp app{&state};
   Zgrpc::Client<ClientApp, Matrix> client;
   ClientConfig config;
@@ -322,13 +306,19 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal, unsigned count = 
   config.bodyMax(uint64_t(-1)).retainedBodyMax(1U << 20)
     .maxRedirects(0).protocol(mode == Mode::Discovery ? Zhttp::ProtoPolicy::PreferH3 :
       h3 ? Zhttp::ProtoPolicy::ForceH3 : Zhttp::ProtoPolicy::DisableH3);
-  bool cliInit = listening && client.init(hub, 1, config, &app, {},
+  bool cliInit = initialized && client.init(hub, 1, config, &app, {},
     Zhttp::H2Config{}.tls([&cert](auto &tls) {
       tls.caPath(cert);
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
   ZuCheckRT(cliInit);
-  bool pooled = cliInit && client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
+  ZuCheckRT(mx.start(), (return));
+  bool started = initialized && server.start();
+  ZuCheckRT(started);
+  bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
+  ZuCheckRT(listening && !state.errors.load_());
+  bool pooled = listening && cliInit &&
+    client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
   ZuCheckRT(pooled);
   bool cliUp = pooled && client.start();
   ZuCheckRT(cliUp);
@@ -454,7 +444,7 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal, unsigned count = 
   if (started) ZuCheckRT(server.stop());
   server.final();
   rpc.duplex = nullptr;
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   ZuCheckRT(mx.stop());
   ZuCheckRT(!state.errors.load_());
@@ -502,8 +492,8 @@ static void initFinal()
   config.port(1).tls(Zhttp::H2Config{}.tls([&cert, &key](auto &tls) {
     tls.certPath(cert).keyPath(key);
   }));
-  ZuCheck(mx.start(), (return));
   ZuCheck(server.init(Zhttp::HubConfig{&mx}, config, &rpc));
+  ZuCheck(mx.start(), (return));
   server.final();
   ZuCheck(!server.up() && !server.pending());
   ZuCheck(mx.stop());
@@ -528,9 +518,9 @@ static void inputFailure(Code::T transport)
   config.port(1).tls(Zhttp::H2Config{}.tls([&cert, &key](auto &tls) {
     tls.certPath(cert).keyPath(key);
   }));
-  ZuCheck(mx.start(), (return));
   bool initialized = server.init(Zhttp::HubConfig{&mx, "3", "4"}, config, &app);
   ZuCheck(initialized);
+  ZuCheck(mx.start(), (return));
   if (initialized) {
     using Work = ServerWorkT<RPCApp, Matrix, Unary>;
     ZmRef<Work> work = new Work{&server, 1, {}, Code::OK};

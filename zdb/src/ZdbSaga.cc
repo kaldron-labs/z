@@ -619,7 +619,7 @@ void SagaDB::sagaCatalogWrite(ZmRef<SagaCatalog> context)
   auto data = fbb.endNested(nested, root);
   auto record = saveRecord(fbb, "saga_type", un, sn, 0, 0, data);
   fbb.finish(saveMsg(fbb, record, Msg::Tag::Replication));
-  context->table->write(saveFrame(fbb), CommitFn{[this, context](
+  context->table->write(saveHdr(fbb), CommitFn{[this, context](
       ZmRef<IOBuf>, CommitResult result) mutable {
       if (ZuUnlikely(result.is<Event>()))
 	context->error = ZuMv(result).p<Event>();

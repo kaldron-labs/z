@@ -10,9 +10,8 @@
 
 namespace Zfix {
 
-using TxBodyAlloc = Zi::IOBufAlloc<TxBody, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZuStringT<"Zfix.TxBody">>;
-using BodyAllocator = Zi::AppBufAllocator<TxBody, ZiIOBuf_DefltSize>;
+using TxBodyAlloc = Zi::IOBufBuiltin<TxBody, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zfix.TxBody">, ZiIOBuf_DefltMaxSize>;
+using BodyAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, TxBody, ZiIOBuf_DefltSize>;
 
 unsigned TxBody::TxBodyAllocMax_() { return TxBodyAlloc::MaxSize; }
 

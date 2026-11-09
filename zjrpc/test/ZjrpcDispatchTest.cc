@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZjrpcDispatch.hh>
 
@@ -98,7 +99,7 @@ public:
 
   bool receive(ZuCSpan input, bool retain = false,
       Zjrpc::WorkControl *control = nullptr, bool peer = true) {
-    ZmRef<ZiIOBuf> body = new Zjrpc::BatchBuf{nullptr, 0};
+    ZmRef<ZiIOBuf> body = new Zjrpc::BatchBuf{ZmSingleton<typename Zjrpc::BatchBuf::Allocator>::instance()};
     *body << input;
     return Base::receive(ZuMv(body), [this, retain](auto message, int policy) {
       if (policy == Zjrpc::RoutePolicy::Abort) { m_aborted = true; return true; }

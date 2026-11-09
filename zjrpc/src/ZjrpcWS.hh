@@ -13,6 +13,7 @@
 #include <zlib/ZjrpcLib.hh>
 #endif
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRef.hh>
@@ -155,7 +156,7 @@ protected:
   }
   template <bool Closed, typename Link>
   void control_(Link &link, uint16_t code, ZuBSpan payload) {
-    ZmRef<ZiIOBuf> body = new InputBuf{nullptr, 0};
+    ZmRef<ZiIOBuf> body = new InputBuf{ZmSingleton<typename InputBuf::Allocator>::instance()};
     if (!body->append(payload)) { link.close(Zws::CloseCode::Internal); return; }
     link.app()->txRun([this, link = ZmRef{&link}, body = ZuMv(body), code]() mutable {
       (void)code;

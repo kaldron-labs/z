@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZgrpcMulti.hh>
 
@@ -39,8 +40,17 @@ ZgrpcCatalogImpl(Matrix);
 struct Sink : ZiTxStream<Sink> {
   Sink() : ZiTxStream<Sink>{1U << 20, 8, 4} { }
   ZmRef<ZiIOBuf> allocBuf_(unsigned head) {
-    ZmRef<ZiIOBuf> buf = new Zi::IOBufAlloc<ZiIOBuf, 32, 1U << 20,
-      ZuStringT<"Zgrpc.HTTPTest">>{nullptr, 0};
+    ZmRef<ZiIOBuf> buf = new Zi::IOBufBuiltin<
+      ZiIOBuf,
+      32,
+      ZiIOBuf_DefltAlign,
+      ZuStringT<"Zgrpc.HTTPTest">,
+      1U << 20>{ZmSingleton<typename Zi::IOBufBuiltin<
+        ZiIOBuf,
+        32,
+        ZiIOBuf_DefltAlign,
+        ZuStringT<"Zgrpc.HTTPTest">,
+        1U << 20>::Allocator>::instance()};
     buf->skip = head;
     allocated = buf;
     return buf;
@@ -48,20 +58,20 @@ struct Sink : ZiTxStream<Sink> {
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
     if (reject) return false;
     data << buf->cspan();
-    lastRange = buf;
+    lastBuf = buf;
     ++buffers;
     return true;
   }
-  bool sendRange_(Zi::RxRange range) {
-    if (reject) return false;
-    data << range.cspan();
-    lastRange = ZuMv(range.buf);
+  bool appendBuf(ZmRef<ZiIOBuf> buf) {
+    if (!flush() || reject || !buf) return false;
+    data << buf->cspan();
+    lastBuf = ZuMv(buf);
     ++buffers;
     return true;
   }
   Bytes data;
   ZmRef<ZiIOBuf> allocated;
-  ZmRef<ZiIOBuf> lastRange;
+  ZmRef<ZiIOBuf> lastBuf;
   unsigned buffers = 0;
   bool reject = false;
 };
@@ -78,12 +88,10 @@ static const Zhttp::WriterOps writerOps{
   [](void *p, unsigned n) { return static_cast<Sink *>(p)->allocBuf(n); },
   [](void *p, unsigned n) { return static_cast<Sink *>(p)->reserve(n); },
   [](void *p, unsigned n) { static_cast<Sink *>(p)->commit(n); },
-  [](void *p, Zi::RxRange range) {
-    return static_cast<Sink *>(p)->appendRange(ZuMv(range));
+  [](void *p, ZmRef<ZiIOBuf> buf) {
+    return static_cast<Sink *>(p)->appendBuf(ZuMv(buf));
   },
-  [](const void *p, const ZiIOBuf &buf, unsigned head, unsigned tail) {
-    return static_cast<const Sink *>(p)->canAdopt_(buf, head, tail);
-  },
+  nullptr,
   [](const void *p, const ZiIOBuf *buf) {
     return static_cast<const Sink *>(p)->allocated.ptr() == buf;
   },
@@ -347,7 +355,7 @@ friend inline ZuStringT<"Zgrpc.HTTPTest.Recv"> ZmNHeapID(Receiver *);
 };
 struct Parser : ResParser<Parser, Duplex> { };
 
-static void deferredReceive(bool advance)
+static void deferredReceive(bool releaseSource)
 {
   ZuTestScope(deferredReceive);
   ZmScheduler scheduler{ZmSchedParams{}.nThreads(1)};
@@ -362,14 +370,23 @@ static void deferredReceive(bool advance)
   };
   field(Zhttp::FieldSection::Final, "content-type", "application/grpc");
   ZuCheck(parser.bodyInfo(nullptr, Zhttp::BodyType::Streamed, 0));
-  ZmRef<ZiRxBuf> coalesced = new ZiRxBufAlloc<>{nullptr, 0};
+  ZmRef<ZiRxBuf> coalesced = new ZiRxBufAlloc<>{ZmSingleton<typename ZiRxBufAlloc<>::Allocator>::instance()};
   coalesced->append(ZuBSpan{"prefix"});
   unsigned prefix = coalesced->length;
   const uint8_t *payload = nullptr;
   for (unsigned i = 1; i <= 3; ++i) {
     FrameError::T error;
-    auto buf = encodeFrame(ZmRef<ZiIOBuf>{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-      ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}}, 0, 100,
+    auto buf = encodeFrame(ZmRef<ZiIOBuf>{new Zi::IOBufBuiltin<
+      ZiIOBuf,
+      ZiIOBuf_DefltSize,
+      ZiIOBuf_DefltAlign,
+      ZiIOBuf_HeapID,
+      ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<
+        ZiIOBuf,
+        ZiIOBuf_DefltSize,
+        ZiIOBuf_DefltAlign,
+        ZiIOBuf_HeapID,
+        ZiIOBuf_DefltMaxSize>::Allocator>::instance()}}, 0, 100,
       Packet{i, {"data"}}, error);
     auto offset = coalesced->length;
     coalesced->append(buf->cspan());
@@ -380,13 +397,15 @@ static void deferredReceive(bool advance)
   }
   coalesced->advance(prefix);
   auto backing = coalesced;
+  auto identity = backing.ptr();
   auto storage = backing->data_();
   auto size = backing->size;
   ZiRxStream<ZiRxQueue> incoming;
   incoming.push(ZuMv(coalesced));
   ZuCheck(parser.body(incoming) && incoming.empty());
-  if (advance) backing->advance(backing->length);
   ZuCheck(backing->data_() == storage && backing->size == size);
+  // Queued decoding owns the transferred cursor; callers may release their hold.
+  if (releaseSource) backing = nullptr;
   bool yielded = false;
   scheduler.run([receiver, &yielded]() { yielded = receiver->messages == 1 && !receiver->ends; }, 1);
   field(Zhttp::FieldSection::Trailers, "grpc-status", "0");
@@ -400,7 +419,7 @@ static void deferredReceive(bool advance)
   ZuCheck(receiver->last.is<Message<Packet>>() &&
     receiver->last.p<Message<Packet>>().object().payload == ZuBSpan{"data"});
   ZuCheck(receiver->last.is<Message<Packet>>() &&
-    receiver->last.p<Message<Packet>>().backing.ptr() == backing.ptr() &&
+    receiver->last.p<Message<Packet>>().backing.ptr() == identity &&
     receiver->last.p<Message<Packet>>().object().payload.data() == payload);
 }
 
@@ -513,11 +532,10 @@ static void failedInput(ZuBSpan wire, Code::T expected, bool overflow = false,
   if (!response) input->meta().header(initial, "te", "trailers");
   ZuCheckRT(input->accept(nullptr));
   if (wire.length()) {
-    ZmRef<ZiIOBuf> buf = new ZiRxBufAlloc<>{nullptr, 0};
+    ZmRef<ZiIOBuf> buf = new ZiRxBufAlloc<>{ZmSingleton<typename ZiRxBufAlloc<>::Allocator>::instance()};
     buf->append(wire);
-    Zi::RxRange range{ZuMv(buf), 0, unsigned(wire.length())};
-    ZuCheckRT(input->enqueue(range));
-    if (overflow) ZuCheckRT(!input->enqueue(ZuMv(range)));
+    ZuCheckRT(input->enqueue(buf));
+    if (overflow) ZuCheckRT(!input->enqueue(ZuMv(buf)));
   }
   input->complete(nullptr, true);
   input->complete(nullptr, true);
@@ -619,19 +637,36 @@ static void corruptInput()
 	"content-type", "application/grpc");
     input->meta().header(Zhttp::FieldSection::Final, "te", "trailers");
     ZuCheckRT(input->accept(&channel));
-    ZmRef<ZiIOBuf> buf = new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-      ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0};
+    ZmRef<ZiIOBuf> buf = new Zi::IOBufBuiltin<
+      ZiIOBuf,
+      ZiIOBuf_DefltSize,
+      ZiIOBuf_DefltAlign,
+      ZiIOBuf_HeapID,
+      ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<
+        ZiIOBuf,
+        ZiIOBuf_DefltSize,
+        ZiIOBuf_DefltAlign,
+        ZiIOBuf_HeapID,
+        ZiIOBuf_DefltMaxSize>::Allocator>::instance()};
     buf->append(i ? ZuBSpan{bytes} : ZuBSpan{scalar});
-    auto length = buf->length;
-    ZuCheckRT(input->enqueue({ZuMv(buf), 0, length}));
+    ZuCheckRT(input->enqueue(ZuMv(buf)));
     ZuCheckRT(input->finished() && input->failed() && !input->retainedBytes());
     ZuCheckRT(resets == 1 && receiver->ends == 1 && !receiver->ok &&
 	receiver->code == Code::INTERNAL && !receiver->messages);
     input->complete(&channel, false);
     input->fail(Code::CANCELLED);
     ZuCheckRT(resets == 1 && receiver->ends == 1);
-    ZuCheckRT(!input->enqueue({new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-      ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}, 0, 0}));
+    ZuCheckRT(!input->enqueue({new Zi::IOBufBuiltin<
+      ZiIOBuf,
+      ZiIOBuf_DefltSize,
+      ZiIOBuf_DefltAlign,
+      ZiIOBuf_HeapID,
+      ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<
+        ZiIOBuf,
+        ZiIOBuf_DefltSize,
+        ZiIOBuf_DefltAlign,
+        ZiIOBuf_HeapID,
+        ZiIOBuf_DefltMaxSize>::Allocator>::instance()}}));
   }
 }
 
@@ -646,16 +681,16 @@ static void ownedRawOutput()
   buf->ensure(3 + emit->sink.tailRoom());
   buf->append(ZuBSpan{"abc"});
   auto identity = buf.ptr();
-  ZuCheck(res.sendRaw_(ZuMv(buf), true));
-  ZuCheck(emit->sink.lastRange.ptr() == identity);
+  ZuCheck(res.sendRaw_(ZuMv(buf)));
+  ZuCheck(emit->sink.lastBuf.ptr() == identity);
   FrameRx parser;
   Frame frame;
   unsigned used;
-  ZuCheck(parser.feed(emit->sink.data, emit->sink.lastRange, used, frame) ==
+  ZuCheck(parser.feed(emit->sink.data, emit->sink.lastBuf, used, frame) ==
     FrameResult::Message);
   ZuCheck(frame.bytes == ZuBSpan{"abc"});
-  ZuCheck(emit->sink.lastRange->skip >= emit->sink.headRoom());
-  ZuCheck(emit->sink.lastRange->avail() >= emit->sink.tailRoom());
+  ZuCheck(emit->sink.lastBuf->skip >= emit->sink.headRoom());
+  ZuCheck(emit->sink.lastBuf->avail() >= emit->sink.tailRoom());
 }
 
 int main(int argc, char **argv)

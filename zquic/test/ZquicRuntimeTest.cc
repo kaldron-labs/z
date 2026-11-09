@@ -13,12 +13,14 @@
 
 #include <iostream>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZfJSON.hh>
 #include <zlib/Zquic.hh>
 
 #include "ZiTestResidue.hh"
@@ -573,6 +575,59 @@ ZtString<> readFile_(ZuCSpan path)
     data.length(unsigned(n));
   return data;
 }
+
+ZuTuple<unsigned, bool> challengeSizes_(ZuCSpan sequence)
+{
+  using Node = ZfJSON::AnyNode;
+  auto field = [](const Node *object, ZuCSpan key) -> const Node * {
+    if (!object || !object->has<Node::Object>()) return nullptr;
+    for (const auto &entry : object->data<Node::Object>())
+      if (entry.p<0>() == key) return entry.p<1>().ptr();
+    return nullptr;
+  };
+  unsigned count = 0, offset = 0;
+  bool valid = true;
+  while (offset < sequence.length()) {
+    if (sequence[offset++] != '\x1e') return {0, false};
+    unsigned start = offset;
+    while (offset < sequence.length() && sequence[offset] != '\n') ++offset;
+    if (offset == sequence.length()) return {0, false};
+    ZtString<> json;
+    json << ZuCSpan{sequence.data() + start, offset - start};
+    ++offset;
+    auto parsed = ZfJSON::scan(json);
+    if (parsed.p<0>() != int(json.length())) return {0, false};
+    auto root = parsed.p<1>().ptr();
+    if (!root || !root->has<Node::Array>()) return {0, false};
+    const auto &values = root->data<Node::Array>();
+    if (values.length() != 1) return {0, false};
+    auto event = values[0].ptr();
+    auto name = field(event, "name");
+    if (!name || !name->has<Node::String>() ||
+	name->data<Node::String>() != "quic:packet_sent") continue;
+    auto data = field(event, "data");
+    auto frames = field(data, "frames");
+    if (!frames || !frames->has<Node::Array>()) continue;
+    bool challenge = false;
+    for (const auto &frame : frames->data<Node::Array>()) {
+      auto type = field(frame.ptr(), "frame_type");
+      if (type && type->has<Node::String>() &&
+	  type->data<Node::String>() == "path_challenge") {
+	challenge = true;
+	break;
+      }
+    }
+    if (!challenge) continue;
+    ++count;
+    auto length = field(field(data, "raw"), "length");
+    if (!length || !length->has<Node::Number>()) return {count, false};
+    auto text = length->data<Node::Number>();
+    ZuBox<unsigned> bytes;
+    valid &= bytes.scan(text) == int(text.length()) &&
+      bytes >= Zquic::MinUDPPayload;
+  }
+  return {count, valid};
+}
 #endif
 
 void dumpDiag(
@@ -667,25 +722,27 @@ void testOwnedStreamAPI(const Sender &sender, const Receiver &receiver,
   auto output = openStream(sender);
   ZQUIC_CHECK_RT(output, "owned stream did not open");
   if (!output) return;
-  ZmRef<ZiIOBuf> backing = new Zquic::StreamTxBufAlloc<8192, 8192>{nullptr, 0};
+  ZmRef<ZiIOBuf> backing = new Zquic::StreamTxBufAlloc<8192, 8192>{
+    ZmSingleton<typename Zquic::StreamTxBufAlloc<8192, 8192>::Allocator>::instance(), nullptr, 0};
   backing->skip = 9;
   backing->append(reinterpret_cast<const uint8_t *>("prefix!"), 7);
   backing->append(expected, N);
+  backing->advance(7);
   bool accepted;
   if (offThread) {
-    accepted = sender->send(output, Zi::RxRange{backing, 7, N});
+    accepted = sender->send(output, ZuMv(backing));
     backing = nullptr; // release caller ownership immediately after public return
   } else accepted = ZmBlock<bool>{}([sender, output, &backing, arm](auto wake) {
     sender->app()->txRun([
       sender, output, backing = ZuMv(backing), arm, wake = ZuMv(wake)
     ]() mutable {
       arm(); // unchanged fixture packet-drop mechanism, on its Tx owner
-      bool ok = sender->send(output, Zi::RxRange{backing, 7, N});
+      bool ok = sender->send(output, ZuMv(backing));
       backing = nullptr; // no fixture capture survives public send return
       wake(ok);
     });
   });
-  ZQUIC_CHECK_RT(accepted && !backing, "owned range API admission/caller release failed");
+  ZQUIC_CHECK_RT(accepted && !backing, "owned buffer API admission/caller release failed");
   auto checkInput = [receiver](const auto &stream, const uint8_t *bytes, unsigned size) {
     auto id = stream->id();
     return waitUntil([receiver, id, bytes, size]() {
@@ -715,7 +772,7 @@ void testOwnedStreamAPI(const Sender &sender, const Receiver &receiver,
       });
     });
   });
-  ZQUIC_CHECK_RT(completed, "owned range FIN/ACK did not drain");
+  ZQUIC_CHECK_RT(completed, "owned buffer FIN/ACK did not drain");
   auto borrowedStream = openStream(sender);
   ZQUIC_CHECK_RT(borrowedStream, "borrowed stream did not open");
   if (!borrowedStream) return;
@@ -738,7 +795,7 @@ void testEndpointOpen()
   ZtString<> clientQLogPath = temp.pathOf("client.sqlog");
 
   ZiMultiplex mx(
-      ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+      ZiMxParams()
 	.scheduler([](auto &s) {
 	  s.nThreads(5)
 	    .thread(1, [](auto &t) { t.isolated(1); })
@@ -746,10 +803,6 @@ void testEndpointOpen()
 	    .thread(3, [](auto &t) { t.isolated(1); })
 	    .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
-
-  bool mxStarted = mx.start();
-  ZuCHECK(mxStarted, "runtime multiplexer start failed");
-  if (!mxStarted) return;
 
   TestServer server;
   ZuCHECK(server.init(
@@ -766,21 +819,6 @@ void testEndpointOpen()
 	.maxStreamsSimplex(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "runtime server init failed");
-  ZuCHECK(server.start(),
-    "runtime server listen failed");
-  ZuCHECK(server.listening(),
-    "runtime server endpoint did not become ready");
-  ZuCHECK(server.listening() &&
-      !endpointDiag(server).failures() &&
-      server.local().port(),
-    "runtime server endpoint diagnostics mismatch");
-	  if (!server.listening()) {
-	    server.stop();
-	    server.final();
-	    mx.stop();
-	    return;
-	  }
-
   TestClient client;
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4")
@@ -794,6 +832,27 @@ void testEndpointOpen()
 	.maxStreamsSimplex(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "runtime client init failed");
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "runtime multiplexer start failed");
+  if (!mxStarted) { client.final(); server.final(); return; }
+
+  ZuCHECK(server.start(),
+    "runtime server listen failed");
+  ZuCHECK(server.listening(),
+    "runtime server endpoint did not become ready");
+  ZuCHECK(server.listening() &&
+      !endpointDiag(server).failures() &&
+      server.local().port(),
+    "runtime server endpoint diagnostics mismatch");
+	  if (!server.listening()) {
+	    server.stop();
+	    client.final();
+	    server.final();
+	    mx.stop();
+	    return;
+	  }
+
+
   ZmRef<TestClient::Link> clientLink = new TestClient::Link{&client};
   clientLink->connect(
     Zquic::Host{"localhost"}, server.local().port(), ZiIP{"127.0.0.1"});
@@ -1029,7 +1088,7 @@ void testHandshakeCryptoLoss()
   ZQUIC_CHECK_RT(temp.init(), "loss runtime temporary TLS certificate failed");
 
   ZiMultiplex mx(
-      ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+      ZiMxParams()
 	.scheduler([](auto &s) {
 	  s.nThreads(5)
 	    .thread(1, [](auto &t) { t.isolated(1); })
@@ -1037,10 +1096,6 @@ void testHandshakeCryptoLoss()
 	    .thread(3, [](auto &t) { t.isolated(1); })
 	    .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
-
-  bool mxStarted = mx.start();
-  ZQUIC_CHECK_RT(mxStarted, "loss runtime multiplexer start failed");
-  if (!mxStarted) return;
 
   for (unsigned dropHandshake = 0; dropHandshake < 2; ++dropHandshake) {
     TestServer server;
@@ -1054,19 +1109,6 @@ void testHandshakeCryptoLoss()
 	  .maxStreamsSimplex(8)
 	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
       "loss runtime server init failed");
-    ZQUIC_CHECK_RT(server.start(), "loss runtime server listen failed");
-    bool listening = server.listening();
-    ZQUIC_CHECK_RT(listening, "loss runtime server did not listen");
-	    if (!server.listening()) {
-	      server.stop();
-	      server.final();
-	      continue;
-	    }
-    if (dropHandshake)
-      server.dropNextHandshake = 4;
-    else
-      server.dropNextInitial = 1;
-
     TestClient client;
     ZQUIC_CHECK_RT(client.init(
 	Zquic::ClientParams(&mx, "3", "4")
@@ -1077,6 +1119,26 @@ void testHandshakeCryptoLoss()
 	  .maxStreamsSimplex(8)
 	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
       "loss runtime client init failed");
+    bool mxStarted = mx.start();
+    ZQUIC_CHECK_RT(mxStarted, "loss runtime multiplexer start failed");
+    if (!mxStarted) { client.final(); server.final(); return; }
+
+    ZQUIC_CHECK_RT(server.start(), "loss runtime server listen failed");
+    bool listening = server.listening();
+    ZQUIC_CHECK_RT(listening, "loss runtime server did not listen");
+	    if (!server.listening()) {
+	      server.stop();
+	      client.final();
+	      server.final();
+	      mx.stop();
+	      continue;
+	    }
+    if (dropHandshake)
+      server.dropNextHandshake = 4;
+    else
+      server.dropNextInitial = 1;
+
+
     ZmRef<TestClient::Link> clientLink = new TestClient::Link{&client};
     clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
 
@@ -1121,6 +1183,7 @@ void testHandshakeCryptoLoss()
     serverLink = nullptr;
     client.final();
     server.final();
+    mx.stop();
   }
 
   mx.stop();
@@ -1134,36 +1197,41 @@ void testMigrationLoss()
   bool cert = temp.init();
   ZQUIC_CHECK_RT(cert, "migration loss certificate failed");
   if (!cert) return;
+  ZtString<> serverQLog = temp.pathOf("migration-server.sqlog");
+  ZtString<> clientQLog = temp.pathOf("migration-client.sqlog");
 
   ZiMultiplex mx{
-    ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    ZiMxParams()
       .scheduler([](auto &s) { s.nThreads(5); })
       .rxThread(1).txThread(2)};
-  bool started = mx.start();
-  ZQUIC_CHECK_RT(started, "migration loss multiplexer start failed");
-  if (!started) return;
-
   TestServer server;
   bool serverInit = server.init(
     Zquic::ServerParams(&mx, "3", "4")
       .certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan())
+      .qlog(true).qlogPath(serverQLog.cspan()).qlogRingSize(1<<16)
       .migrationMode(Zquic::MigrationMode::Active).migCIDRes(2)
       .maxData(32768).maxStreamData(8192).maxStreamsDuplex(8)
       .alpn(ZuSpan<ZuCSpan>{"h3"}));
   ZQUIC_CHECK_RT(serverInit, "migration loss server init failed");
   if (!serverInit) { mx.stop(); return; }
-  bool serverStart = server.start();
-  ZQUIC_CHECK_RT(serverStart, "migration loss server start failed");
-
   TestClient client;
   client.dropMigChallenge = true; // immutable before init and publication
   bool clientInit = client.init(
     Zquic::ClientParams(&mx, "3", "4")
       .caPath(temp.certPath.cspan())
+      .qlog(true).qlogPath(clientQLog.cspan()).qlogRingSize(1<<16)
       .migrationMode(Zquic::MigrationMode::Active).migCIDRes(2)
       .maxData(32768).maxStreamData(8192).maxStreamsDuplex(8)
       .alpn(ZuSpan<ZuCSpan>{"h3"}));
   ZQUIC_CHECK_RT(clientInit, "migration loss client init failed");
+  bool started = mx.start();
+  ZQUIC_CHECK_RT(started, "migration loss multiplexer start failed");
+  if (!started) { client.final(); server.final(); return; }
+
+  bool serverStart = server.start();
+  ZQUIC_CHECK_RT(serverStart, "migration loss server start failed");
+
+
   ZmRef<TestClient::Link> clientLink;
   ZmRef<TestServer::Link> serverLink;
   auto exercise = [&]() {
@@ -1230,6 +1298,12 @@ void testMigrationLoss()
 	clientLink->connectedCount == 1 && accepted() == serverLink,
       "migration loss replaced the established QUIC connection");
     if (!promoted) return;
+    bool serverPromoted = waitUntil([&serverLink]() {
+      return diag(serverLink).tx.pathValidationPromoted != 0;
+    });
+    ZQUIC_CHECK_RT(serverPromoted,
+      "migration loss server did not validate its own candidate challenge");
+    if (!serverPromoted) return;
 
     auto stream = openStream(serverLink);
     ZQUIC_CHECK_RT(stream, "migration loss stream open failed");
@@ -1288,6 +1362,12 @@ void testMigrationLoss()
   server.clearLinks();
   if (clientInit) client.final();
   server.final();
+#ifdef Zquic_DEBUG
+  auto sizes = challengeSizes_(readFile_(clientQLog.cspan()));
+  ZQUIC_CHECK_RT(sizes.p<0>() >= 2 && sizes.p<1>(),
+    "initial and recovered active PATH_CHALLENGE packets must each reach 1200 bytes; "
+    "count=", sizes.p<0>(), " valid=", sizes.p<1>());
+#endif
   mx.stop();
 }
 
@@ -1299,7 +1379,7 @@ void testSrvMultiCxn()
   ZuCHECK(temp.init(), "multi runtime temporary TLS certificate failed");
 
   ZiMultiplex mx(
-      ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+      ZiMxParams()
 	.scheduler([](auto &s) {
 	  s.nThreads(5)
 	    .thread(1, [](auto &t) { t.isolated(1); })
@@ -1307,10 +1387,6 @@ void testSrvMultiCxn()
 	    .thread(3, [](auto &t) { t.isolated(1); })
 	    .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
-
-  bool mxStarted = mx.start();
-  ZuCHECK(mxStarted, "multi runtime multiplexer start failed");
-  if (!mxStarted) return;
 
   ZmAtomic<unsigned> serverErrors = 0;
   TestServer server;
@@ -1327,10 +1403,6 @@ void testSrvMultiCxn()
 	  ++serverErrors;
 	}})),
     "multi runtime server init failed");
-  ZuCHECK(server.start(), "multi runtime server listen failed");
-  ZuCHECK(server.listening(),
-    "multi runtime server did not become ready");
-
   TestClient client;
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4")
@@ -1341,6 +1413,15 @@ void testSrvMultiCxn()
 	.maxStreamsSimplex(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "multi runtime client init failed");
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "multi runtime multiplexer start failed");
+  if (!mxStarted) { client.final(); server.final(); return; }
+
+  ZuCHECK(server.start(), "multi runtime server listen failed");
+  ZuCHECK(server.listening(),
+    "multi runtime server did not become ready");
+
+
 
   ZmRef<TestClient::Link> clients[TestSrvCxnCount];
   ZmRef<TestServer::Link> serverLinks[TestSrvCxnCount];
@@ -1483,7 +1564,7 @@ void testRetryAddrValidate()
   ZuCHECK(temp.init(), "retry runtime temporary TLS certificate failed");
 
   ZiMultiplex mx(
-      ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+      ZiMxParams()
 	.scheduler([](auto &s) {
 	  s.nThreads(5)
 	    .thread(1, [](auto &t) { t.isolated(1); })
@@ -1491,10 +1572,6 @@ void testRetryAddrValidate()
 	    .thread(3, [](auto &t) { t.isolated(1); })
 	    .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
-
-  bool mxStarted = mx.start();
-  ZuCHECK(mxStarted, "retry runtime multiplexer start failed");
-  if (!mxStarted) return;
 
   TestServer server;
   ZtString<> qlogPath = temp.pathOf("retry.sqlog");
@@ -1516,16 +1593,6 @@ void testRetryAddrValidate()
 	.addrValidationLifetime(60)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "retry runtime server init failed");
-  ZuCHECK(server.start(), "retry runtime server listen failed");
-  ZuCHECK(server.listening(),
-    "retry runtime server did not listen");
-	  if (!server.listening()) {
-	    server.stop();
-	    server.final();
-	    mx.stop();
-	    return;
-	  }
-
   TestClient client;
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4")
@@ -1536,6 +1603,22 @@ void testRetryAddrValidate()
 	.maxStreamsSimplex(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "retry runtime client init failed");
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "retry runtime multiplexer start failed");
+  if (!mxStarted) { client.final(); server.final(); return; }
+
+  ZuCHECK(server.start(), "retry runtime server listen failed");
+  ZuCHECK(server.listening(),
+    "retry runtime server did not listen");
+	  if (!server.listening()) {
+	    server.stop();
+	    client.final();
+	    server.final();
+	    mx.stop();
+	    return;
+	  }
+
+
   ZmRef<TestClient::Link> clientLink = new TestClient::Link{&client};
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
 
@@ -1552,6 +1635,7 @@ void testRetryAddrValidate()
 	  if (!established || !serverLink) {
 	    client.final();
 	    server.stop();
+	    client.final();
 	    server.final();
 	    mx.stop();
 	    return;
@@ -1600,6 +1684,7 @@ void testRetryAddrValidate()
 	  if (!established2 || !serverLink2) {
 	    client.final();
 	    server.stop();
+	    client.final();
 	    server.final();
 	    mx.stop();
 	    return;
@@ -1673,7 +1758,7 @@ void testRejectedTokenQLog()
   for (unsigned i = 0, n = secret.length(); i < n; ++i) secret[i] = uint8_t(i + 1);
 
   ZiMultiplex mx(
-      ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+      ZiMxParams()
 	.scheduler([](auto &s) {
 	  s.nThreads(5)
 	    .thread(1, [](auto &t) { t.isolated(1); })
@@ -1681,10 +1766,6 @@ void testRejectedTokenQLog()
 	    .thread(3, [](auto &t) { t.isolated(1); })
 	    .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
-
-  bool mxStarted = mx.start();
-  ZQUIC_CHECK_RT(mxStarted, "rejected-token runtime multiplexer start failed");
-  if (!mxStarted) return;
 
   TestServer server;
   ZQUIC_CHECK_RT(server.init(
@@ -1705,16 +1786,6 @@ void testRejectedTokenQLog()
 	.addrValidationLifetime(60)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "rejected-token runtime server init failed");
-  ZQUIC_CHECK_RT(server.start(), "rejected-token runtime server listen failed");
-  ZQUIC_CHECK_RT(server.listening(),
-    "rejected-token runtime server did not listen");
-	  if (!server.listening()) {
-	    server.stop();
-	    server.final();
-	    mx.stop();
-	    return;
-	  }
-
   TestClient client;
   client.tokenSecret = secret;
   client.tokenNow = uint64_t(Zm::now().sec());
@@ -1727,6 +1798,22 @@ void testRejectedTokenQLog()
 	  .maxStreamsSimplex(8)
 	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
     "rejected-token runtime client init failed");
+  bool mxStarted = mx.start();
+  ZQUIC_CHECK_RT(mxStarted, "rejected-token runtime multiplexer start failed");
+  if (!mxStarted) { client.final(); server.final(); return; }
+
+  ZQUIC_CHECK_RT(server.start(), "rejected-token runtime server listen failed");
+  ZQUIC_CHECK_RT(server.listening(),
+    "rejected-token runtime server did not listen");
+	  if (!server.listening()) {
+	    server.stop();
+	    client.final();
+	    server.final();
+	    mx.stop();
+	    return;
+	  }
+
+
   ZmRef<TestClient::Link> clientLink = new TestClient::Link{&client};
 
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
@@ -1744,6 +1831,7 @@ void testRejectedTokenQLog()
 	  if (!established || !serverLink) {
 	    client.final();
 	    server.stop();
+	    client.final();
 	    server.final();
 	    mx.stop();
 	    return;
@@ -1798,6 +1886,7 @@ void testRejectedTokenQLog()
   server.clearLinks();
   server.final();
 
+  mx.stop();
   TestServer policyServer;
   ZQUIC_CHECK_RT(policyServer.init(
       Zquic::ServerParams(&mx, "3", "4")
@@ -1817,6 +1906,10 @@ void testRejectedTokenQLog()
 	.addrValidationLifetime(60)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "rejected-token policy server init failed");
+  bool policyMxStarted = mx.start();
+  ZQUIC_CHECK_RT(policyMxStarted,
+    "rejected-token policy multiplexer start failed");
+  if (!policyMxStarted) { client.final(); policyServer.final(); return; }
   ZQUIC_CHECK_RT(policyServer.start(), "rejected-token policy server listen failed");
   ZQUIC_CHECK_RT(policyServer.listening(),
     "rejected-token policy server did not listen");
@@ -1871,7 +1964,7 @@ void testIdleTimeoutQLog()
   unlink(qlogPath.data());
 
   ZiMultiplex mx(
-      ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+      ZiMxParams()
 	.scheduler([](auto &s) {
 	  s.nThreads(5)
 	    .thread(1, [](auto &t) { t.isolated(1); })
@@ -1879,10 +1972,6 @@ void testIdleTimeoutQLog()
 	    .thread(3, [](auto &t) { t.isolated(1); })
 	    .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
-
-  bool mxStarted = mx.start();
-  ZuCHECK(mxStarted, "idle runtime multiplexer start failed");
-  if (!mxStarted) return;
 
   TestServer server;
   ZuCHECK(server.init(
@@ -1900,16 +1989,6 @@ void testIdleTimeoutQLog()
 	.maxIdleTimeout(1)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "idle runtime server init failed");
-  ZuCHECK(server.start(), "idle runtime server listen failed");
-  ZuCHECK(server.listening(),
-    "idle runtime server did not listen");
-	  if (!server.listening()) {
-	    server.stop();
-	    server.final();
-	    mx.stop();
-	    return;
-	  }
-
   TestClient client;
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4")
@@ -1921,6 +2000,22 @@ void testIdleTimeoutQLog()
 	.maxIdleTimeout(1)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "idle runtime client init failed");
+  bool mxStarted = mx.start();
+  ZuCHECK(mxStarted, "idle runtime multiplexer start failed");
+  if (!mxStarted) { client.final(); server.final(); return; }
+
+  ZuCHECK(server.start(), "idle runtime server listen failed");
+  ZuCHECK(server.listening(),
+    "idle runtime server did not listen");
+	  if (!server.listening()) {
+	    server.stop();
+	    client.final();
+	    server.final();
+	    mx.stop();
+	    return;
+	  }
+
+
   ZmRef<TestClient::Link> clientLink = new TestClient::Link{&client};
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
 
@@ -1937,6 +2032,7 @@ void testIdleTimeoutQLog()
 	  if (!established || !serverLink) {
 	    client.final();
 	    server.stop();
+	    client.final();
 	    server.final();
 	    mx.stop();
 	    return;

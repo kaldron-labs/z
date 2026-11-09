@@ -331,7 +331,7 @@ void cancel()
   request->cancel();
   ZuCHECK(callbacks == 1 && code == Zhttp::DiscoveryCode::Cancelled,
     "cancel completes exactly once");
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
 }
 
@@ -371,7 +371,7 @@ void direct()
       resolved[0].priority == endpoint.priority &&
       resolved[0].source == endpoint.source,
     "direct resolution preserves Alt-Svc endpoint identity");
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
 }
 

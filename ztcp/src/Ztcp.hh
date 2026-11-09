@@ -46,14 +46,14 @@ template <
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = ZiIOBuf_HeapID{}()>
 using RxBufAlloc =
-  Zi::IOBufAlloc<RxQueue::Node, Size, MaxSize, ZuStringT<HeapID>>;
+  Zi::IOBufBuiltin<RxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
 template <
   unsigned Size = ZiIOBuf_DefltSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = ZiIOBuf_HeapID{}()>
 using TxBufAlloc =
-  Zi::IOBufAlloc<TxQueue::Node, Size, MaxSize, ZuStringT<HeapID>>;
+  Zi::IOBufBuiltin<TxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
 } // namespace Ztcp_
 
@@ -93,6 +93,7 @@ struct HubParams {
   HubParams &&txAllocator(Zi::IOBufAllocator *v) {
     txAllocator_ = v; return ZuMv(*this);
   }
+  ZiMultiplex *multiplex() const { return mx; }
   Zi::IOBufAllocator *rxAllocator() const { return rxAllocator_; }
   Zi::IOBufAllocator *txAllocator() const { return txAllocator_; }
 
@@ -188,10 +189,8 @@ class Link :
 public:
   using RxBufAlloc = RxBufAlloc_;
   using TxBufAlloc = TxBufAlloc_;
-  using RxAllocator = Zi::RxTCPBufAllocator<typename RxBufAlloc::Buf,
-    RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxAllocator = Zi::TxTCPBufAllocator<typename TxBufAlloc::Buf,
-    TxBufAlloc::Size, TxBufAlloc::MaxSize>;
+  using RxAllocator = Zi::IOBufAllocator;
+  using TxAllocator = Zi::IOBufAllocator;
   using Cxn = Cxn_;
   using CxnRef = CxnRef_;
   using Tx = ZiTx<Impl>;
@@ -211,6 +210,16 @@ friend Cxn;
   ~Link() { app()->linkDeleted_(this, state_()); }
 
   App *app() const { return m_app; }
+  static Zi::IOBufAllocator *rxAllocator(ZiMultiplex *mx) {
+    return mx->allocator<Zi::IOBufType::RxTCP, typename RxBufAlloc::Buf,
+      RxBufAlloc::Size, RxBufAlloc::MaxSize, ZiIOBuf_DefltAlign,
+      typename RxBufAlloc::Heap>();
+  }
+  static Zi::IOBufAllocator *txAllocator(ZiMultiplex *mx) {
+    return mx->allocator<Zi::IOBufType::TxTCP, typename TxBufAlloc::Buf,
+      TxBufAlloc::Size, TxBufAlloc::MaxSize, ZiIOBuf_DefltAlign,
+      typename TxBufAlloc::Heap>();
+  }
   RxAllocator *rxAllocator() const {
     return static_cast<RxAllocator *>(app()->rxAllocator());
   }
@@ -824,7 +833,7 @@ protected:
     if (!m_errorFn) m_errorFn = defaultErrorFn();
     if (!validate_(params)) return false;
     m_mx = params.mx;
-    if (!m_mx->allocator(params.rxAllocator()) ||
+    if (params.rxAllocator()->mx() != m_mx ||
 	!allocator(params.txAllocator())) return false;
     m_rxAllocator = params.rxAllocator();
     m_txAllocator = params.txAllocator();
@@ -866,10 +875,6 @@ private:
     if (rxThread == txThread) {
       error_(ZeEXCEPT(Error, "Ztcp",
 	"TCP Rx and Tx threads must differ"));
-      return false;
-    }
-    if (!params.mx->running()) {
-      error_(ZeEXCEPT(Error, "Ztcp", "multiplexer not running"));
       return false;
     }
     if (!params.rxAllocator() ||
@@ -919,13 +924,14 @@ public:
   }
   bool txInvoked() { return m_mx->invoked(m_txThread); }
 
-  // Register application-owned Tx TCP backing with the underlying Mx.
+  // Validate Tx TCP backing created by the underlying Mx.
   bool allocator(Zi::IOBufAllocator *a) {
-    return a && a->type() == Zi::IOBufType::TxTCP && m_mx && m_mx->allocator(a);
+    return a && a->type() == Zi::IOBufType::TxTCP && m_mx &&
+      a->mx() == m_mx;
   }
 
-  Zi::IOBufAllocator *rxAllocator() const { return m_rxAllocator.ptr(); }
-  Zi::IOBufAllocator *txAllocator() const { return m_txAllocator.ptr(); }
+  Zi::IOBufAllocator *rxAllocator() const { return m_rxAllocator; }
+  Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
 
   void linkConnected_() { }
   void linkDisconnected_() { }
@@ -1034,9 +1040,9 @@ private:
 
   // stable after init(); m_errorFn is cleared during final()
   const ZuID		m_id;
-  using AllocatorRef = ZmRef<Zi::IOBufAllocator>;
-  AllocatorRef		m_rxAllocator;
-  AllocatorRef		m_txAllocator;
+  using AllocatorRef = Zi::IOBufAllocator *;
+  AllocatorRef		m_rxAllocator = nullptr;
+  AllocatorRef		m_txAllocator = nullptr;
   ZiMultiplex		*m_mx = nullptr;
   ErrorFn		m_errorFn;
   bool			m_registered = false;

@@ -110,7 +110,7 @@ int main()
   auto cert = getenv("ZGRPC_GO_CERT"), key = getenv("ZGRPC_GO_KEY"), port = getenv("ZGRPC_GO_PORT");
   if (!cert || !key || !port) return 1;
   bool h3 = getenv("ZGRPC_GO_H3");
-  ZiMultiplex mx{peerMxParams(h3).scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(4).thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); })
@@ -124,13 +124,13 @@ int main()
   else config.tls(Zhttp::H2Config{}.tls([&cert, &key](auto &tls) {
     tls.certPath(cert).keyPath(key);
   }).policy(Zhttp::H2Policy::Force));
-  bool started = mx.start() && server.init(Zhttp::HubConfig{&mx, "3", "4"}, config, &app)
-    && server.start();
+  bool started = server.init(Zhttp::HubConfig{&mx, "3", "4"}, config, &app)
+    && mx.start() && server.start();
   bool ready = started && app.ready.timedwait(Zm::now(10)) == 0 && app.listenOK;
   if (ready) (void)getchar(); // The harness owns shutdown through this pipe.
   bool stopped = !started || server.stop();
   server.final();
-  ZiResolver::stopSync(); ZiResolver::final();
+  ZiResolver::stop(); ZiResolver::final();
   bool drained = mx.stop();
   return ready && stopped && drained ? 0 : 1;
 }

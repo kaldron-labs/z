@@ -365,7 +365,6 @@ int main(int argc_, char **argv)
     auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
     mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
 
-    if (!mx->start()) throw ZeEXCEPT(Fatal, "zdffptest", "multiplexer start failed");
 
     db = new Zdb();
 
@@ -388,6 +387,7 @@ int main(int argc_, char **argv)
     store = new Zdf::Store{};
     store->init(db);
 
+    if (!mx->start()) throw ZeEXCEPT(Fatal, "zdffptest", "multiplexer start failed");
     if (!db->start()) gtfo();
     done.wait(); // ensure active
 

@@ -433,15 +433,15 @@ friend inline ZuStringT<"Zfix.recovery_io_test.Link"> ZmNHeapID(Link *);
 };
 
 bool CliHub::init(Network::ClientParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::Client<CliHub, Dictionary, Network>::init(ZuMv(params));
 }
@@ -478,15 +478,15 @@ friend inline ZuStringT<"Zfix.recovery_io_test.Link"> ZmNHeapID(Link *);
 };
 
 bool SrvHub::init(Network::ServerParams params) {
-  ZmRef<Link::RxAllocator> rx;
-  ZmRef<Link::TxAllocator> tx;
+  Zi::IOBufAllocator *rx = nullptr;
+  Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
-    rx = new Link::RxAllocator{};
-    params.rxAllocator(rx.ptr());
+    rx = Link::rxAllocator(params.multiplex());
+    params.rxAllocator(rx);
   }
   if (!params.txAllocator()) {
-    tx = new Link::TxAllocator{};
-    params.txAllocator(tx.ptr());
+    tx = Link::txAllocator(params.multiplex());
+    params.txAllocator(tx);
   }
   return Zfix::Server<SrvHub, Dictionary, Network>::init(ZuMv(params));
 }
@@ -505,7 +505,6 @@ static void run(TestState &state, unsigned begin, unsigned end) {
       .thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   typename Network::ServerParams sp{&mx, "3", "4"};
   typename Network::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
@@ -514,6 +513,7 @@ static void run(TestState &state, unsigned begin, unsigned end) {
   sp.certPath(cert).keyPath(key); cp.caPath(cert);
 #endif
   bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
   server.session = new SrvHub::Link{&server};
@@ -598,7 +598,6 @@ static void failover(unsigned mode, bool cold) {
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
 #ifdef ZFIX_TEST_TLS
   if (!getenv("ZFIX_TEST_CERT") || !getenv("ZFIX_TEST_KEY")) {
     ZuCheck(false); mx.stop(); return;
@@ -618,6 +617,7 @@ static void failover(unsigned mode, bool cold) {
   bool pi = primary.init(serverParams()), bi = backup.init(serverParams()),
     ci = client.init(ZuMv(cp));
   ZuCheck(pi && bi && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ps = pi && primary.start(), bs = bi && backup.start(), cs = ci && client.start();
   auto final = [&primary, &backup, &client, &mx, &ps, &bs, &cs, &state] {
     bool ok = true;

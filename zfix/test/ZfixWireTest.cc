@@ -17,7 +17,7 @@
 #include <zlib/ZfixWire.hh>
 
 static ZmRef<ZiIOBuf> frameBuf() {
-  using Allocator = Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
   return ZmSingleton<Allocator>::instance()->allocBuf();
 }
 
@@ -50,7 +50,7 @@ struct Completion {
 };
 
 struct Harness : public WireTx<Harness> {
-  using Alloc = Zi::IOBufAlloc<ZiTxBuf, 64>;
+  using Alloc = Zi::IOBufBuiltin<ZiTxBuf, 64, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
   using Base = WireTx<Harness>;
   Items<ZmRef<ZiIOBuf>>	records;
   Items<Completion>	done;
@@ -62,7 +62,7 @@ struct Harness : public WireTx<Harness> {
 
   ZmRef<ZiIOBuf> recordAlloc(unsigned head) {
     if (refuseAlloc) return {};
-    ZmRef<ZiIOBuf> buf = ZmSingleton<Zi::AppBufAllocator<ZiTxBuf, 64>>::instance()->allocBuf();
+    ZmRef<ZiIOBuf> buf = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, 64>>::instance()->allocBuf();
     buf->skip = head; return buf;
   }
 
@@ -244,7 +244,7 @@ struct SessionOutput : public WireTx<SessionOutput> {
   explicit SessionOutput(SessionOwner *owner_, WireLimits limits = {}) :
     WireTx<SessionOutput>{limits}, owner{owner_} { }
 
-  ZmRef<ZiIOBuf> recordAlloc(unsigned) { return ZmSingleton<Zi::AppBufAllocator<
+  ZmRef<ZiIOBuf> recordAlloc(unsigned) { return ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
       ZiTxBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
   }
   bool recordSend(ZmRef<ZiIOBuf>);
@@ -495,8 +495,7 @@ struct AdmitApp {
 struct AdmitLink : ZmNHeap<AdmitLink>, ZmObject, Link<AdmitLink> {
 friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
   using MessageCatalog = MTList<Entry>;
-  using RxBufAlloc = Zi::IOBufAlloc<ZiRxQueue::Node, ZiIOBuf_DefltSize,
-    ZiIOBuf_DefltMaxSize, ZuStringT<"Zfix.WireTest.Rx">>;
+  using RxBufAlloc = Zi::IOBufBuiltin<ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zfix.WireTest.Rx">, ZiIOBuf_DefltMaxSize>;
   using Stream = ZiRxStream<ZiRxQueue>;
   using Records = Items<ZmRef<ZiIOBuf>>;
   // ZmFn's POD relocation trait deliberately omits array element destruction.
@@ -530,12 +529,12 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
   WireGeometry fixGeometryTx() { ++geometries; return {}; }
 
   ZmRef<ZiRxQueue::Node> fixAllocRx() {
-    return ZmSingleton<Zi::AppBufAllocator<
+    return ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
       ZiRxQueue::Node, ZiIOBuf_DefltSize>>::instance()->allocBuf();
   }
 
   ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
-    ZmRef<ZiIOBuf> buf = ZmSingleton<Zi::AppBufAllocator<
+    ZmRef<ZiIOBuf> buf = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
       ZiTxBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
     buf->skip = head; return buf;
   }

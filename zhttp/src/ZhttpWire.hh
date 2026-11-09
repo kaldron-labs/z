@@ -341,15 +341,6 @@ public:
 
   ~RetainedTx() { this->flush(); }
 
-  bool appendBuf_(ZmRef<ZiIOBuf> &buf) {
-    if constexpr (KeepBuffers) {
-      auto length = buf->length;
-      appendRange(Zi::RxRange{ZuMv(buf), 0, length});
-      return true; // handled even when appendRange sets sticky failure
-    }
-    return false;
-  }
-
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
     if (ZuUnlikely(m_lower.failed())) return nullptr;
     return m_lower.allocBuf(headRoom);
@@ -363,27 +354,24 @@ public:
     return true;
   }
 
-  bool canAdopt_(const ZiIOBuf &buf, unsigned head = 0, unsigned tail = 0) const {
-    return m_lower.canAdopt_(buf, head, tail);
-  }
-  bool appendRange(ZmRef<ZiIOBuf> buf, unsigned offset, unsigned length) {
-    if (!buf || offset > buf->length || length > buf->length - offset)
-      return appendRange(Zi::RxRange{});
-    return appendRange(Zi::RxRange{ZuMv(buf), offset, length});
-  }
-  bool appendRange(Zi::RxRange range) {
-    if (!this->flush_(false) || !range.buf || range.offset > range.buf->size ||
-	range.length > range.buf->size - range.offset || !m_budget.add(range.length)) {
+  bool appendBuf(ZmRef<ZiIOBuf> buf) {
+    if (!this->flush() || !buf || buf->failed() || !m_budget.add(buf->length)) {
       m_valid = false;
       this->fail();
       return false;
     }
-    if (!range.length) return true;
-    auto entry = new (m_entries.push()) RetainedEntry{ZuMv(range.buf), false};
-    entry->offset = range.offset;
-    entry->length = range.length;
-    entry->range = true;
+    if (buf->length) new (m_entries.push()) RetainedEntry{ZuMv(buf), false};
     return true;
+  }
+  RetainedTx &operator <<(ZmRef<ZiIOBuf> buf) {
+    appendBuf(ZuMv(buf));
+    return *this;
+  }
+  template <typename V,
+    typename = ZuIfT<!ZuIsConvertible<V, ZmRef<ZiIOBuf>>{}>>
+  RetainedTx &operator <<(V &&value) {
+    Base::operator <<(ZuFwd<V>(value));
+    return *this;
   }
 
   bool seal() { return this->flush() && valid(); }
@@ -392,18 +380,13 @@ public:
   }
   template <typename Owner>
   bool commitWith(RetainedTx &body, Owner &owner) {
-    if constexpr (HasRetainedTCP<Owner>{}) {
+    if constexpr (HasRetainedTCP<Owner>{} && KeepBuffers) {
       if (!seal() || !body.seal()) return false;
-      bool ranges = false;
-      for (const auto &part : m_entries) ranges |= part.range;
-      for (const auto &part : body.m_entries) ranges |= part.range;
-      if (ranges) {
-	for (auto &part : body.m_entries) m_entries.push(ZuMv(part));
-	body.m_entries.length(0);
-	if (owner.sendRetained_(ZuMv(m_entries))) return true;
-	this->fail();
-	return false;
-      }
+      for (auto &part : body.m_entries) m_entries.push(ZuMv(part));
+      body.m_entries.length(0);
+      if (owner.sendRetained_(ZuMv(m_entries))) return true;
+      this->fail();
+      return false;
     }
     return commit() && body.commit();
   }
@@ -411,19 +394,7 @@ public:
     if (!seal()) { m_entries.length(0); return false; }
     for (unsigned i = 0, n = m_entries.length(); i < n; ++i) {
       auto &entry = m_entries[i];
-      if (entry.range) {
-	if constexpr (KeepBuffers) {
-	  // TCP borrowed entries are admitted with their actual header by
-	  // commitWith(); this fallback contains only serialized output.
-	  ZiAssert(false, "Zhttp", (), "retained TCP entry without header batch",
-	    this->fail(); m_entries.length(0); return false);
-	} else if (!m_lower.appendRange(Zi::RxRange::fromStorage(
-	    ZuMv(entry.buf), entry.offset, entry.length))) {
-	  this->fail();
-	  m_entries.length(0);
-	  return false;
-	}
-      } else m_lower << ZuMv(entry.buf);
+      m_lower << ZuMv(entry.buf);
       if (m_entries[i].final) m_lower << Zi::Flush{};
       if (m_lower.failed()) {
 	this->fail();
@@ -432,6 +403,7 @@ public:
       }
     }
     m_entries.length(0);
+    if (!m_lower.flush()) { this->fail(); return false; }
     return true;
   }
 

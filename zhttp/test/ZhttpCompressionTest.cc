@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZhttpCompression.hh>
 
@@ -377,8 +378,17 @@ void testWriterSectionRanges()
   struct Writer {
     unsigned headRoom() const { return 0; }
     ZmRef<ZiIOBuf> allocBuf(unsigned) {
-      return new Zi::IOBufAlloc<ZiIOBuf, 32, 512,
-	ZuStringT<"Zhttp.WriterBytesTest">>{nullptr, 0};
+      return new Zi::IOBufBuiltin<
+        ZiIOBuf,
+        32,
+        ZiIOBuf_DefltAlign,
+        ZuStringT<"Zhttp.WriterBytesTest">,
+        512>{ZmSingleton<typename Zi::IOBufBuiltin<
+          ZiIOBuf,
+          32,
+          ZiIOBuf_DefltAlign,
+          ZuStringT<"Zhttp.WriterBytesTest">,
+          512>::Allocator>::instance()};
     }
   } writer;
   Zhttp::Compression::WriterBytes bytes{writer};
@@ -391,7 +401,7 @@ void testWriterSectionRanges()
   // Grow the final storage after recording a gap; retained patch positions are
   // offsets in the surviving descriptor, never stale allocation pointers.
   bytes.ensure(128);
-  ZuCheck(bytes.buf().ptr() == original && bytes.buf()->jumbo());
+  ZuCheck(bytes.buf().ptr() == original && !bytes.buf()->builtin());
   HdrBytes wire;
   unsigned spans = 0;
   section.eachRange(0, [&](uint64_t start, unsigned n) {

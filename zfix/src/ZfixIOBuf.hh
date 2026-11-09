@@ -19,9 +19,9 @@ namespace Zfix {
 
 // Known variable-heap backing; excludes allocator bookkeeping and idle caches.
 inline uint64_t jumboBytes(unsigned size) {
-  uint64_t bytes = uint64_t(size) + ZiIOBuf_Align;
-  unsigned i = Zi::VHeap::cacheI(bytes);
-  return i < Zi::VHeap::NCaches ? Zi::VHeap::blockSize(i) : bytes;
+  using Heap = Zi::IOBufBuiltinAllocator<>::VHeap;
+  unsigned i = Heap::cacheI(size);
+  return i < Heap::NCaches ? Heap::blockSize(i) : size;
 }
 } // Zfix
 

@@ -17,6 +17,7 @@
 #include <zlib/ZuID.hh>
 
 #include <zlib/ZmHash.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmObject.hh>
@@ -131,7 +132,7 @@ ZmHashDerive(Reqs, Req,
       ZmHashLock<ZmNoLock,
         ZmHashHeapID<"Ztc.Agent.PubReq">>>>));
 
-using Frame = Zi::IOBufAlloc<ZiIOBuf, 1024, AgentCf::MaxFrame, ZuStringT<"Ztc.Agent.Frame">>;
+using Frame = Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Agent.Frame">, AgentCf::MaxFrame>;
 
 struct Mx final : public ZmNHeap<Mx>, public ZiMultiplex {
 friend inline ZuStringT<"Ztc.Agent.Mx"> ZmNHeapID(Mx *);
@@ -174,7 +175,7 @@ struct StateData {
   ZmScheduler::Timer	reconnectTimer;
   ZmScheduler::Timer	pubGCTimer;
   unsigned	reconnectDelay = 1;
-  ZiRxStream<ZiRxQueue> rxFrame;
+  ZmRef<ZiIOBuf> rxFrame;
   Pubs	pubs;
   PubIdx	pubIdx;
   Reqs	reqs;
@@ -220,7 +221,7 @@ static bool rewriteSeq(uint8_t *data, uint64_t seqNo)
 static ZmRef<ZiIOBuf> requestFrame(const Request &request)
 {
   Ztc::Builder builder{
-    frameBuf(ZmRef<ZiIOBuf>{new Frame{nullptr, 0}})};
+    frameBuf(ZmRef<ZiIOBuf>{new Frame{ZmSingleton<typename Frame::Allocator>::instance()}})};
   auto nested = builder.startNested();
   auto value = Zfb::save(builder, request);
   builder.finish(saveMsg(builder, nested, Body::Request,
@@ -272,8 +273,7 @@ static void transmit(
     if (state->currentGeneration.load_() != generation || !link)
       return;
     link->txStream([frame = ZuMv(frame)](auto &tx) mutable {
-      auto length = frame->length;
-      tx.appendRange(ZuMv(frame), 0, length);
+      tx << frame->cspan();
       tx.flush();
     }, Zws::Opcode::Binary);
   });
@@ -509,10 +509,10 @@ static void drainReq(Agent::State *state,
 }
 
 static void admitRequest(Agent::State *state,
-    Zi::RxRange frame, uint64_t generation)
+    ZmRef<ZiIOBuf> frame, uint64_t generation)
 {
   if (state->stop.load_() || state->routeGeneration != generation || !frame) return;
-  auto root = Zfb::view<Msg>(frame.cspan());
+  auto root = Zfb::view<Msg>(frame->cspan());
   if (msgBody(root).tag() != Body::Request) return;
   auto value = msgBody(root).get<Body::Request>();
   auto request = Zfb::handler<Request>(value).ctor();
@@ -703,7 +703,7 @@ static void telemetry(Agent::State *state)
         state->telRing.shift2(recordSize);
         break;
       }
-      ZmRef<ZiIOBuf> frame = new Frame{nullptr, 0};
+      ZmRef<ZiIOBuf> frame = new Frame{ZmSingleton<typename Frame::Allocator>::instance()};
       frame->alloc(size);
       memcpy(frame->data(), hdr->data(), size);
       frame->length = size;
@@ -962,8 +962,7 @@ void Agent::start_()
   ZmAssert_(!m_state->mx && m_credit.load_() == AgentCredit::Closed);
   try {
     m_state->mx = new Agent_::Mx{
-      ZiMxParams{}.tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
-      ZuStringT<"Zhttp.TLS.Rx">>>().scheduler([](auto &scheduler) {
+      ZiMxParams{}.scheduler([](auto &scheduler) {
         scheduler.nThreads(3)
           .thread(1, [](auto &thread) { thread.name("rx"); thread.isolated(true); })
           .thread(2, [](auto &thread) { thread.name("tx"); thread.isolated(true); })
@@ -973,8 +972,18 @@ void Agent::start_()
     Engine::started(false);
     return;
   }
+  if (!initRuntime_()) {
+    m_state->client.final();
+    m_state->http.final();
+    delete m_state->mx;
+    m_state->mx = nullptr;
+    Engine::started(false);
+    return;
+  }
   m_state->mx->ZmEngine<ZmScheduler>::start([this](bool ok) {
     if (!ok) {
+      m_state->client.final();
+      m_state->http.final();
       delete m_state->mx;
       m_state->mx = nullptr;
       Engine::started(false);
@@ -984,13 +993,27 @@ void Agent::start_()
   });
 }
 
+bool Agent::initRuntime_()
+{
+  // Register both transports before entering an I/O owner callback.
+  if (!m_state->http.init(m_state->mx, m_state->env.issuerURL,
+      m_state->env.issuerURL, m_state->env.issuerURL, m_state->env.caPath)) return false;
+  Zws::Config ws;
+  ws.maxMessage = m_state->cf.maxFrame;
+  ws.maxQueuedInput = m_state->cf.reqBytes;
+  ws.handshakeTimeout = m_state->cf.upgradeTimeout;
+  ws.closeTimeout = m_state->cf.closeTimeout;
+  ws.pingInterval = m_state->cf.pingInterval;
+  ws.pongTimeout = m_state->cf.idleTimeout;
+  Zhttp::TLSConfig tls;
+  if (m_state->env.caPath) tls.caPath(m_state->env.caPath);
+  return m_state->client.init(
+    Zhttp::HubConfig{m_state->mx, "1", "2"}, ZuMv(tls),
+    Zhttp::Destination{m_state->uri.host, m_state->uri.port, m_state->uri.ipv6Literal}, ws);
+}
+
 void Agent::startHTTP_()
 {
-  if (!m_state->http.init(m_state->mx, m_state->env.issuerURL,
-      m_state->env.issuerURL, m_state->env.issuerURL, m_state->env.caPath)) {
-    stopRx_(true);
-    return;
-  }
   m_state->http.start([this](bool ok) {
     m_state->mx->rxRun([this, ok]() {
       if (!ok) { stopRx_(true); return; }
@@ -1002,21 +1025,6 @@ void Agent::startHTTP_()
 
 void Agent::startWS_()
 {
-  Zws::Config ws;
-  ws.maxMessage = m_state->cf.maxFrame;
-  ws.maxQueuedInput = m_state->cf.reqBytes;
-  ws.handshakeTimeout = m_state->cf.upgradeTimeout;
-  ws.closeTimeout = m_state->cf.closeTimeout;
-  ws.pingInterval = m_state->cf.pingInterval;
-  ws.pongTimeout = m_state->cf.idleTimeout;
-  Zhttp::TLSConfig tls;
-  if (m_state->env.caPath) tls.caPath(m_state->env.caPath);
-  if (!m_state->client.init(
-      Zhttp::HubConfig{m_state->mx, "1", "2"}, ZuMv(tls),
-      Zhttp::Destination{m_state->uri.host, m_state->uri.port, m_state->uri.ipv6Literal}, ws)) {
-    stopRx_(true);
-    return;
-  }
   m_state->client.start([this](bool ok) {
     m_state->mx->rxRun([this, ok]() {
       if (!ok) { stopRx_(true); return; }
@@ -1201,6 +1209,7 @@ void Agent::closeRuntime_(bool failed)
     if (m_state->telRing.rdrID() >= 0) m_state->telRing.detach();
     m_state->telRing.close();
   }
+  m_state->rxFrame = nullptr;
   delete m_state->mx;
   m_state->mx = nullptr;
   m_state->childrenDrained = false;
@@ -1208,7 +1217,6 @@ void Agent::closeRuntime_(bool failed)
   m_state->awaitingProvision = false;
   m_state->tokenPending = false;
   m_state->pubGCID.null();
-  m_state->rxFrame.clean();
   if (m_state->token.mutable_()) ZuClear(m_state->token);
   m_state->token.null();
   if (failed) Engine::started(false);
@@ -1296,7 +1304,7 @@ int Agent::messageStart(Link &link, Zws::Opcode::T opcode)
 {
   if (&link != m_state->link.ptr()) return -1;
   if (opcode != Zws::Opcode::Binary) return -1;
-  m_state->rxFrame.clean();
+  m_state->rxFrame = nullptr;
   return 1;
 }
 
@@ -1306,17 +1314,21 @@ int Agent::process(Link_ &link, Rx &rx)
   if (&link != m_state->link.ptr()) return -1;
   auto &message = m_state->rxFrame;
   unsigned incoming = rx.length();
-  if (incoming > m_state->cf.maxFrame - message.length()) { return -1; }
-  while (rx) {
-    if (rx.splice(message, [](ZuBSpan span) -> int64_t { return span.length(); }) <= 0)
-      { return -1; }
+  unsigned held = message ? message->length : 0;
+  if (incoming > m_state->cf.maxFrame - held) return -1;
+  while (rx.length()) {
+    ZmRef<ZiIOBuf> buf;
+    auto n = rx.extract(
+      [](ZuBSpan span) -> int64_t { return span.length(); },
+      []() {
+        using Buf = Zi::IOBufBuiltin<ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
+        return ZmRef<ZiRxQueue::Node>{new Buf{
+          ZmSingleton<typename Buf::Allocator>::instance()}};
+      }, buf);
+    if (n <= 0) return -1;
+    if (!message) message = ZuMv(buf);
+    else if (!message->append(buf->cspan())) return -1;
   }
-  if (message.length() > message.span().length() &&
-      !message.gather(unsigned(message.length()), [&link]() {
-	auto allocator = link.app()->mx()->rxAllocator(false);
-	return ZmRef<ZiRxQueue::Node>::acquire(static_cast<ZiRxQueue::Node *>(
-	  allocator->alloc().release()));
-      })) { return -1; }
   return 1;
 }
 
@@ -1324,9 +1336,8 @@ template <typename Link>
 int Agent::messageEnd(Link &link)
 {
   if (m_state->stop.load_() || &link != m_state->link.ptr()) return -1;
-  auto frame = m_state->rxFrame.range();
-  m_state->rxFrame.clean();
-  auto msg = frame ? Ztc::msg(frame.cspan()) : Ztc::MsgView{};
+  auto frame = ZuMv(m_state->rxFrame);
+  auto msg = frame ? Ztc::msg(frame->cspan()) : Ztc::MsgView{};
   if (!msg || msgBody(msg).tag() != Body::Request ||
       !m_state->currentGeneration.load_()) {
     link.close(Zws::CloseCode::Protocol);

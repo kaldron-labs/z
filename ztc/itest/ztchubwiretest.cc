@@ -17,6 +17,7 @@
 
 #include <zlib/ZuLib.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmThread.hh>
@@ -117,8 +118,7 @@ static bool bearer(ZtString<> &value)
 static ZmRef<ZiIOBuf> subscribe(ZuCSpan deviceID, uint32_t interval,
     Ztc::Group::T group)
 {
-  Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
+  Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
   auto nested = builder.startNested();
   auto request = Zfb::save(builder, Ztc::Request{
     .filter = "*", .seqNo = 0, .interval = interval,
@@ -130,8 +130,7 @@ static ZmRef<ZiIOBuf> subscribe(ZuCSpan deviceID, uint32_t interval,
 
 static ZmRef<ZiIOBuf> ack(uint64_t seqNo)
 {
-  Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
+  Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
   auto nested = builder.startNested();
   auto value = Zfb::save(builder, Ztc::Ack{ZuID{"wire"}, seqNo, 1000});
   builder.finish(Ztc::saveMsg(
@@ -141,8 +140,7 @@ static ZmRef<ZiIOBuf> ack(uint64_t seqNo)
 
 static ZmRef<ZiIOBuf> telemetry(uint64_t seqNo, uint32_t payload)
 {
-  Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
+  Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
   auto nested = builder.startNested();
   ZtString<> id;
   id.length(payload ? payload : 4);
@@ -164,8 +162,8 @@ static ZmRef<ZiIOBuf> telemetry(uint64_t seqNo, uint32_t payload)
 // Inject an empty unsolicited snapshot completion on the public telemetry ring.
 static bool emptySnapshot(const Ztc::AppCf &cf)
 {
-  using MsgFrame = Zi::IOBufAlloc<ZiIOBuf, 1024, 1U<<20, ZuStringT<"Ztc.Wire.Snapshot">>;
-  Ztc::Builder builder{Ztc::frameBuf(ZmRef<ZiIOBuf>{new MsgFrame{nullptr, 0}})};
+  using MsgFrame = Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Wire.Snapshot">, 1U<<20>;
+  Ztc::Builder builder{Ztc::frameBuf(ZmRef<ZiIOBuf>{new MsgFrame{ZmSingleton<typename MsgFrame::Allocator>::instance()}})};
   auto nested = builder.startNested();
   auto eos = Zfb::save(builder, Ztc::EOS{cf.id, 0});
   builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::EOS, eos));
@@ -186,8 +184,7 @@ static bool emptySnapshot(const Ztc::AppCf &cf)
 
 static ZmRef<ZiIOBuf> unsubscribe(ZuCSpan deviceID, uint64_t subID, bool inventory)
 {
-  Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
+  Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
   auto nested = builder.startNested();
   auto value = Zfb::save(builder, Ztc::Request{
     .filter = inventory ? "*" : "", .seqNo = 0,
@@ -201,8 +198,7 @@ static ZmRef<ZiIOBuf> unsubscribe(ZuCSpan deviceID, uint64_t subID, bool invento
 static void sendFrame(auto &link, ZmRef<ZiIOBuf> frame)
 {
   link.txStream([frame = ZuMv(frame)](auto &tx) mutable {
-    auto length = frame->length;
-    tx.appendRange(ZuMv(frame), 0, length);
+    tx << frame->cspan();
     tx.flush();
   }, Zws::Opcode::Binary);
 }
@@ -284,12 +280,14 @@ struct App {
   {
     auto msg = Ztc::msg(ZuBSpan{frame});
     if (!msg) {
+      std::cerr << "invalid message bytes=" << frame.length() << '\n';
       failed = true;
       link.close(Zws::CloseCode::InvalidData);
       return -1;
     }
     if (agent) {
       if (Ztc::msgBody(msg).tag() != Ztc::Body::Request) {
+        std::cerr << "agent received body=" << Ztc::msgBody(msg).tag() << '\n';
         failed = true;
         link.close(Zws::CloseCode::Protocol);
         return -1;
@@ -297,6 +295,7 @@ struct App {
       auto request = Ztc::msgBody(msg).get<Ztc::Body::Request>();
       requestSeqNo = request.get<Ztc::ZfField(Request, seqNo)>();
       if (!requestSeqNo) {
+        std::cerr << "agent received request without sequence\n";
         failed = true;
         link.close(Zws::CloseCode::Protocol);
         return -1;
@@ -453,10 +452,15 @@ struct App {
   }
 
   template <typename Link_>
+  void error(Link_ &, Zws::Failure::T failure)
+  {
+    std::cerr << (agent ? "agent" : "front") << " websocket failure=" << int(failure) << '\n';
+  }
+
+  template <typename Link_>
   void disconnected(Link_ &, bool)
   {
-    if (!agent)
-      std::cerr << "front disconnected received=" << received <<
+    std::cerr << (agent ? "agent" : "front") << " disconnected received=" << received <<
         " completed=" << completed << " failed=" << failed << '\n';
     if (!received) failed = true;
     if (!agent && !completed) failed = true;
@@ -578,7 +582,6 @@ int main(int argc, char **argv)
   if (options.mode == "front" && options.stallMS) params.rxBufSize(4096);
 #endif
   ZiMultiplex mx{ZuMv(params)};
-  if (!mx.start()) return 1;
   App app{&options, &done, {}, {}, authorization,
     options.mode == "agent"};
   App::Client client{&app};
@@ -593,7 +596,7 @@ int main(int argc, char **argv)
   if (options.caPath) tls.caPath(options.caPath);
   if (!client.init(Zhttp::HubConfig{&mx, "3", "4"}, tls,
       Zhttp::Destination{uri.host, uri.port, uri.ipv6Literal}, ws) ||
-      !client.start()) {
+      !mx.start() || !client.start()) {
     client.final();
     mx.stop();
     return 1;

@@ -16,6 +16,7 @@
 #include <zlib/ZuByteSwap.hh>
 #include <zlib/Zu_aton.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmRandom.hh>
 #include <zlib/ZmScratch.hh>
 
@@ -458,7 +459,7 @@ private:
 	rx.advance(unsigned(n));
 	return retire_(stream, unsigned(n)) ? n : -1;
       }
-      m_qpackBuf = new BodyRx::MetaBufAlloc{nullptr, 0};
+      m_qpackBuf = new BodyRx::MetaBufAlloc{ZmSingleton<typename BodyRx::MetaBufAlloc::Allocator>::instance()};
     }
     auto buf = m_qpackBuf.ptr();
     if (buf->length >= QPackInsnMax)
@@ -958,7 +959,7 @@ private:
     }
     if (ZuUnlikely(frame.total > UINT_MAX)) return fail_(ExcessiveLoad);
     uint64_t remaining = frame.total;
-    Zi::RxRange range;
+    ZmRef<ZiIOBuf> buf;
     int64_t n = rx.extract(
       [&remaining](ZuBSpan span) -> int64_t {
 	if (remaining > span.length()) {
@@ -966,10 +967,10 @@ private:
 	  return 0;
 	}
 	return remaining;
-      }, metaAlloc_, range);
+      }, metaAlloc_, buf);
     if (ZuUnlikely(n <= 0)) return fail_(InternalError);
     if (!retire_(stream, frame.total)) return false;
-    auto span = range.span();
+    auto span = buf->span();
     span.offset(frame.header);
     bool ok = payloadFrame_(frame.type, span);
     if (!ok) return fail_(MessageError);
@@ -1021,7 +1022,7 @@ private:
   }
 
   static ZmRef<ZiRxQueue::Node> metaAlloc_() {
-    return new BodyRx::MetaBufAlloc{nullptr, 0};
+    return new BodyRx::MetaBufAlloc{ZmSingleton<typename BodyRx::MetaBufAlloc::Allocator>::instance()};
   }
 
 public:
@@ -1083,7 +1084,7 @@ public:
 	  case 0x03: // CANCEL_PUSH
 	  case 0x05: // PUSH_PROMISE
 	  case 0x0d: // MAX_PUSH_ID
-	    m_metaBuf = new BodyRx::MetaBufAlloc{nullptr, 0};
+	    m_metaBuf = new BodyRx::MetaBufAlloc{ZmSingleton<typename BodyRx::MetaBufAlloc::Allocator>::instance()};
 	    break;
 	}
 	rx.advance(frame.header);
@@ -1318,6 +1319,22 @@ public:
 
   ~DataStream() { this->flush(); }
 
+  bool appendBuf(ZmRef<ZiIOBuf> buf) {
+    if (!buf || buf->failed()) { this->fail(); return false; }
+    Base::operator <<(ZuMv(buf));
+    return !this->failed();
+  }
+  DataStream &operator <<(ZmRef<ZiIOBuf> buf) {
+    appendBuf(ZuMv(buf));
+    return *this;
+  }
+  template <typename V,
+    typename = ZuIfT<!ZuIsConvertible<V, ZmRef<ZiIOBuf>>{}>>
+  DataStream &operator <<(V &&value) {
+    Base::operator <<(ZuFwd<V>(value));
+    return *this;
+  }
+
   bool prepareBuf_(ZiIOBuf *buf, bool) {
     if (m_remaining != uint64_t(-1)) {
       if (ZuUnlikely(m_remaining < buf->length)) {
@@ -1339,31 +1356,6 @@ public:
     SpanBytes frameHdr{{buf->data(), frameHdrLength}};
     putVar(frameHdr, 0);
     putVar(frameHdr, length);
-    return true;
-  }
-  bool prepareRange_(Zi::RxRange range) {
-    if (m_remaining != uint64_t(-1) && m_remaining < range.length) {
-      m_valid = false;
-      range.length = unsigned(m_remaining);
-    }
-    if (m_remaining != uint64_t(-1)) m_remaining -= range.length;
-    unsigned max = this->maxSize() - this->headRoom() - this->tailRoom();
-    while (range.length) {
-      auto n = range.length < max ? range.length : max;
-      if (!n) return false;
-      auto header = m_lower.allocBuf(m_lower.headRoom());
-      if (!header) return false;
-      CountBytes count;
-      putVar(count, 0); putVar(count, n);
-      header->length = unsigned(count.length());
-      SpanBytes out{{header->data(), header->length}};
-      putVar(out, 0); putVar(out, n);
-      m_lower << ZuMv(header);
-      if (m_lower.failed() || !m_lower.appendRange(range.subspan(0, n))) return false;
-      range.offset += n;
-      range.length -= n;
-      m_produced += n;
-    }
     return true;
   }
   uint64_t produced() const { return m_produced; }
@@ -1488,7 +1480,7 @@ private:
       if (!ok) return;
       never |= params.neverIndex(name);
       if (putString(out, uint8_t(0x20 | (never ? 0x10 : 0)),
-            3, name) < 0 || putString(out, 0, 7, value) < 0)
+	    3, name) < 0 || putString(out, 0, 7, value) < 0)
 	ok = false;
     }
     template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
@@ -1658,8 +1650,11 @@ private:
     bool submitted = true;
     section.eachRange(start, [&stream, &fields, &submitted](
 	uint64_t offset, unsigned length) {
-      if (submitted)
-	submitted = stream.appendRange(fields.buf(), unsigned(offset), length);
+      if (!submitted) return;
+      auto buf = stream.allocBuf(stream.headRoom());
+      if (!buf) { submitted = false; return; }
+      buf->append(fields.buf()->data() + unsigned(offset), length);
+      submitted = stream.appendBuf(ZuMv(buf));
     });
     if (!submitted) {
       impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);

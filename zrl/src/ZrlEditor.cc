@@ -79,7 +79,7 @@ ZrlExtern void print_(uint32_t op, ZuVStream &s)
 Editor::Editor()
 {
   // manual initialization of opcode-indexed jump table
- 
+
   m_cmdFn[Op::Nop] = &Editor::cmdNop;
   m_cmdFn[Op::Syn] = &Editor::cmdSyn;
 

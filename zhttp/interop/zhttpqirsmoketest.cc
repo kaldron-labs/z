@@ -149,7 +149,7 @@ static void testClientFilesystemPrep()
   ZuCHECK(runStatus_(cmd, 2), "client rejects escaped output path");
 }
 
-static bool runHQSingleFile_(ZuCSpan testCase)
+static bool runHQSingleFile_(ZuCSpan testCase, unsigned largeSize = 0)
 {
   TempDir temp;
   if (!temp.init("ZhttpQIRHQ")) return false;
@@ -167,7 +167,22 @@ static bool runHQSingleFile_(ZuCSpan testCase)
 
   ZtString<> src;
   src << www << "/file.bin";
-  if (!writeFile_(src, "hq-body")) return false;
+  if (!largeSize) {
+    if (!writeFile_(src, "hq-body")) return false;
+  } else {
+    ZiFile file;
+    if (file.open(src,
+	ZiFile::Write | ZiFile::Create | ZiFile::Truncate | ZiFile::GC,
+	0666) != Zi::OK)
+      return false;
+    char block[4096];
+    for (unsigned i = 0; i < sizeof(block); ++i) block[i] = char(i * 17 + i / 251);
+    while (largeSize) {
+      unsigned n = largeSize < sizeof(block) ? largeSize : sizeof(block);
+      if (file.write(block, n) != Zi::OK) return false;
+      largeSize -= n;
+    }
+  }
 
   unsigned port = loopbackPort(ZhttpInteropPort::QIRHQSingle);
   const char *qlogDir = static_cast<const char *>(temp.path);
@@ -196,6 +211,14 @@ static void testHQSingleFile()
   ZuTestScope(testHQSingleFile);
 
   ZuCHECK(runHQSingleFile_("transfer"), "transfer hq single-file");
+}
+
+static void testHQLargeFile()
+{
+  ZuTestScope(testHQLargeFile);
+
+  ZuCHECK(runHQSingleFile_("transfer", 10<<20),
+    "10 MiB HQ transfer exceeds the former whole-file transmit queue limit");
 }
 
 static void testHQHandshakeFile()
@@ -392,6 +415,7 @@ int main(int argc, char **argv)
   ZuTestCall(testH3SingleFile);
   ZuTestCall(testH3MultiFile);
   ZuTestCall(testHQSingleFile);
+  ZuTestCall(testHQLargeFile);
   ZuTestCall(testHQMultiFile);
   ZuTestCall(testHQHandshakeFile);
   ZuTestCall(testHQRebindPortFile);

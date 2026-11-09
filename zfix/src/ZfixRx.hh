@@ -317,7 +317,7 @@ private:
     uint64_t cap = m_limits.bufferBytes;
     if (!cap) {
       cap = m_limits.codec.frameBytes;
-      using Buffer = Zi::IOBufAlloc<ZiIOBuf>;
+      using Buffer = Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
       if (cap < Buffer::Size) cap = Buffer::Size;
     }
     if (!input.buffer || input.buffer->size > cap ||

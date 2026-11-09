@@ -124,7 +124,6 @@ static void testHTTP()
       .thread(1, [](auto &thread) { thread.isolated(1); })
       .thread(2, [](auto &thread) { thread.isolated(1); });
   }).rxThread(1).txThread(2)};
-  ZuCheckRT(mx.start(), (return));
   SrvApp srv;
   srv.mx = &mx;
   CliApp cli;
@@ -150,6 +149,15 @@ static void testHTTP()
   ZuCheckRT(initialized);
   if (!initialized) { mx.stop(); return; }
   srv.context = Zjrpc::HTTPPeer::create(server);
+  Zjrpc::ClientConfig clientConfig;
+  clientConfig.endpoint("/rpc").http([](auto &http) {
+    http.secure(false).tcp(true).tls(false).quic(false)
+      .protocol(Zhttp::ProtoPolicy::DisableH3).h2Policy(Zhttp::H2Policy::Disable)
+      .links(1).linkMax(1).concurrency(4).requestTimeout(5);
+  });
+  bool clientInited = client.init(hub,
+    Zhttp::Destination{"127.0.0.1", 21100}, ZuMv(clientConfig), &cli);
+  ZuCheckRT(mx.start(), (return));
   bool started = server.start();
   ZuCheckRT(started);
   if (!started) { server.final(); mx.stop(); return; }
@@ -162,14 +170,7 @@ static void testHTTP()
   httpStarted.wait();
   ZuCheckRT(httpStartOK);
   srv.listening_.wait();
-  Zjrpc::ClientConfig clientConfig;
-  clientConfig.endpoint("/rpc").http([](auto &http) {
-    http.secure(false).tcp(true).tls(false).quic(false)
-      .protocol(Zhttp::ProtoPolicy::DisableH3).h2Policy(Zhttp::H2Policy::Disable)
-      .links(1).linkMax(1).concurrency(4).requestTimeout(5);
-  });
-  bool clientReady = !srv.failures && client.init(hub,
-    Zhttp::Destination{"127.0.0.1", 21100}, ZuMv(clientConfig), &cli) && client.start();
+  bool clientReady = !srv.failures && clientInited && client.start();
   ZuCheckRT(clientReady);
   if (clientReady) {
     cli.ready_.wait();
@@ -221,10 +222,11 @@ static void testHTTP()
   ZuCheckRT(server.stop());
   srv.context = nullptr;
   server.final();
+  mx.stop();
   bool reused = server.init(hub, serverConfig(false), &srv);
   ZuCheckRT(reused);
   if (reused) {
-    bool restarted = server.start();
+    bool restarted = mx.start() && server.start();
     ZuCheckRT(restarted);
     if (restarted) {
       srv.listening_.wait();
@@ -232,6 +234,7 @@ static void testHTTP()
     }
   }
   server.final();
+  mx.stop();
   Zjrpc::HTTPServer<SrvApp, Catalog, Zhttp::Profiles<Zhttp::H1TCP, Zhttp::H1TLS,
     Zhttp::H2TLS>> partial;
   ZuCheckRT(!partial.init(hub, serverConfig(true), &srv));

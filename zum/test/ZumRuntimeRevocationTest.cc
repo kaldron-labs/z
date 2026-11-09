@@ -278,9 +278,7 @@ static void runtimeRevocation()
   auto config = dbConfig();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
   ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
-      ZuStringT<"Zhttp.TLS.Rx">>>()};
-  ZuCheck(mx.start());
+    };
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   ZmRef<TestDB> db = new TestDB{};
   db->requests = new Zum::Requests{};
@@ -289,6 +287,7 @@ static void runtimeRevocation()
     ZdbHandler{.upFn = dbUp, .downFn = dbDown}, store);
   Zum::registerSchema(db);
   ZmRef<Zum::DB> context = db;
+  ZuCheck(mx.start());
   ZuCheck(db->start());
   db->active.wait();
   ZuCheck(insertIssuer(context, "issuer"));

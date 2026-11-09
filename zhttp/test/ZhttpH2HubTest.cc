@@ -6,6 +6,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
 
@@ -192,9 +193,12 @@ void runH1Shards()
 }
 
 struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
-  using BufAlloc = Zi::IOBufAlloc<
-    Zhttp::Transport_::TxBufNode, 65544, 65544,
-    ZuStringT<"Zhttp.H2.FlowTest">>;
+  using BufAlloc = Zi::IOBufBuiltin<
+    Zhttp::Transport_::TxBufNode,
+    65544,
+    ZiIOBuf_DefltAlign,
+    ZuStringT<"Zhttp.H2.FlowTest">,
+    65544>;
 
   struct Tx : public ZiTxStream<Tx> {
     using Base = ZiTxStream<Tx>;
@@ -204,15 +208,16 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
     ~Tx() { this->flush(); }
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-      ZmRef<ZiIOBuf> buf = new BufAlloc{nullptr, 0};
+      ZmRef<ZiIOBuf> buf = new BufAlloc{ZmSingleton<typename BufAlloc::Allocator>::instance()};
       buf->skip = headRoom;
       buf->length = 0;
       return buf;
     }
-    bool sendRange_(Zi::RxRange range) {
-      if (!range.buf || wire->rejectControl || wire->transportClosed) return false;
-      wire->lastRange = ZuMv(range);
-      ++wire->rangeCalls;
+    bool appendBuf(ZmRef<ZiIOBuf> buf) {
+      if (!this->flush() || !buf) return false;
+      if (!buf || wire->rejectControl || wire->transportClosed) return false;
+      wire->lastBuf = ZuMv(buf);
+      ++wire->ownedCalls;
       return true;
     }
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
@@ -230,7 +235,7 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
   template <bool> unsigned txHeadRoom() const { return 0; }
   template <bool> unsigned txTailRoom() const { return 0; }
   template <bool> ZmRef<ZiIOBuf> txAllocBuf(unsigned headRoom) {
-    ZmRef<ZiIOBuf> buf = new BufAlloc{nullptr, 0};
+    ZmRef<ZiIOBuf> buf = new BufAlloc{ZmSingleton<typename BufAlloc::Allocator>::instance()};
     buf->skip = headRoom;
     buf->length = 0;
     return buf;
@@ -260,9 +265,9 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
   }
   bool sendSource_(const Zhttp::H2_::TxFrame &frame) {
     if (!frameSent_(frame.header)) return false;
-    if (frame.payload.length) {
-      lastRange = frame.payload;
-      ++rangeCalls;
+    if (frame.payload && frame.payload->length) {
+      lastBuf = frame.payload;
+      ++ownedCalls;
     }
     return true;
   }
@@ -291,8 +296,8 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
 
   FlowApp	*app_;
   unsigned	sends = 0;
-  Zi::RxRange	lastRange;
-  unsigned	rangeCalls = 0;
+  ZmRef<ZiIOBuf>	lastBuf;
+  unsigned	ownedCalls = 0;
   unsigned	dataLength = 0;
   unsigned	dataFlags = 0;
   unsigned	capacityCalls = 0;
@@ -395,7 +400,7 @@ void runInitialControlFailure()
 
 ZmRef<ZiIOBuf> flowData(unsigned length, uint32_t id = 1)
 {
-  ZmRef<ZiIOBuf> buf = new FlowWire::BufAlloc{nullptr, 0};
+  ZmRef<ZiIOBuf> buf = new FlowWire::BufAlloc{ZmSingleton<typename FlowWire::BufAlloc::Allocator>::instance()};
   buf->length = length + Zhttp::H2::FrameHeaderSize;
   uint8_t *data = buf->data();
   data[0] = uint8_t(length>>16);
@@ -790,12 +795,10 @@ void runNegativeWindow()
   buf->data()[4] = Zhttp::H2::Flag::EndStream;
   memcpy(buf->data() + Zhttp::H2::FrameHeaderSize, "payload", 7);
   auto original = buf;
-  auto data = original->data();
   ZuCHECK(wire.sendData(id, ZuMv(buf)) && wire.dataLength == 3 &&
       !(wire.dataFlags & Zhttp::H2::Flag::EndStream),
     "queued DATA is split to available credit without ending its prefix");
-  ZuCheck(wire.lastRange.buf == original &&
-    wire.lastRange.offset == Zhttp::H2::FrameHeaderSize && wire.lastRange.length == 3);
+  ZuCheck(wire.lastBuf && wire.lastBuf->cspan() == "pay");
   unsigned sends = wire.sends;
   ZuCHECK(wire.peerInitialWindow(2) && wire.sends == sends,
     "negative stream window blocks remaining DATA");
@@ -807,12 +810,9 @@ void runNegativeWindow()
   ZuCHECK(wire.dataLength == 3 &&
       (wire.dataFlags & Zhttp::H2::Flag::EndStream),
     "final suffix retains END_STREAM after multiple DATA splits");
-  ZuCheck(wire.rangeCalls == 3 && wire.lastRange.buf == original &&
-    wire.lastRange.offset == Zhttp::H2::FrameHeaderSize + 4 && wire.lastRange.length == 3);
-  ZuCheck(original->data() == data && original->skip == 0 &&
-    original->length == Zhttp::H2::FrameHeaderSize + 7 &&
-    original->data()[4] == Zhttp::H2::Flag::EndStream &&
-    !memcmp(original->data() + Zhttp::H2::FrameHeaderSize, "payload", 7));
+  ZuCheck(wire.ownedCalls == 3 && wire.lastBuf == original &&
+    wire.lastBuf->cspan() == "oad");
+  ZuCheck(original->skip == Zhttp::H2::FrameHeaderSize + 4 && original->length == 3);
   wire.clearStreams([]() { });
   app.runTx([&wire, id]() {
     ZuCHECK(!wire.sendData<false>(id, flowData(1)),
@@ -1759,9 +1759,7 @@ int SharedClient::process(
 
 ZiMxParams mxParams()
 {
-  return ZiMxParams().tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Zhttp.Net.Rx">>>()
+  return ZiMxParams()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -1786,8 +1784,6 @@ void run()
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "multiplexer start failed");
-  if (!mx.running()) return;
 
   Zhttp::HubConfig hub{&mx, "3", "4"};
   auto serverConfig = Zhttp::H2Config().tls([&cert](auto &tls) {
@@ -1809,6 +1805,8 @@ void run()
     mx.stop();
     return;
   }
+  ZuCHECK(mx.start(), "multiplexer start failed");
+  if (!mx.running()) return;
   bool started = server.start() && client.start();
   ZuCHECK(started, "H2 hubs started");
   bool listening =
@@ -1870,8 +1868,6 @@ void runStream()
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "multiplexer start failed");
-  if (!mx.running()) return;
 
   Zhttp::HubConfig hub{&mx, "3", "4"};
   auto serverConfig = Zhttp::H2Config().tls([&cert](auto &tls) {
@@ -1895,6 +1891,8 @@ void runStream()
     mx.stop();
     return;
   }
+  ZuCHECK(mx.start(), "multiplexer start failed");
+  if (!mx.running()) return;
   bool started = server.start() && client.start();
   ZuCHECK(started, "Extended CONNECT hubs started");
   bool listening =
@@ -1956,8 +1954,6 @@ void runSharedTLS()
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "multiplexer start failed");
-  if (!mx.running()) return;
 
   Zhttp::HubConfig hub{&mx, "3", "4"};
   auto serverConfig = Zhttp::H2Config().tls([&cert](auto &tls) {
@@ -1988,6 +1984,8 @@ void runSharedTLS()
     mx.stop();
     return;
   }
+  ZuCHECK(mx.start(), "multiplexer start failed");
+  if (!mx.running()) return;
   bool started =
     server.start() && h2Client.start() && h1Client.start();
   ZuCHECK(started, "shared TLS hubs started");
@@ -2123,8 +2121,6 @@ void runForceMismatch()
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "multiplexer start failed");
-  if (!mx.running()) return;
 
   Zhttp::HubConfig hub{&mx, "3", "4"};
   auto serverConfig = Zhttp::H2Config().tls([&cert](auto &tls) {
@@ -2146,6 +2142,8 @@ void runForceMismatch()
     mx.stop();
     return;
   }
+  ZuCHECK(mx.start(), "multiplexer start failed");
+  if (!mx.running()) return;
   bool started = server.start() && client.start();
   ZuCHECK(started, "mismatch hubs started");
   bool listening =

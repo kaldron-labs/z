@@ -9,6 +9,7 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuMatcher.hh>
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZtcHash.hh>
 #include <zlib/ZiLog.hh>
@@ -30,8 +31,12 @@ static void appendBytes(Zhttp::H3::HdrBytes &bytes, ZuBSpan s)
 
 namespace ZhttpQPackDynamicTest_ {
 
-using StreamAlloc = Zi::IOBufAlloc<ZiIOBuf, 256, 4096,
-  ZuStringT<"ZhttpQPackDynamicTest.Buf">>;
+using StreamAlloc = Zi::IOBufBuiltin<
+  ZiIOBuf,
+  256,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"ZhttpQPackDynamicTest.Buf">,
+  4096>;
 using BuilderHeaderList = ZhttpHeaders("accept");
 ZhttpHdrCatalogDerive(BuilderHeaders, BuilderHeaderList);
 ZhttpHdrCatalogImpl(BuilderHeaders)
@@ -48,13 +53,17 @@ struct CustomTarget {
   friend ZuPrintFn ZuPrintType(CustomTarget *);
 };
 using RxQueue = ZiRxQueue;
-using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, 256, 1<<20,
-  ZuStringT<"ZhttpQPackDynamicTest.RxBuf">>;
+using RxBufAlloc = Zi::IOBufBuiltin<
+  RxQueue::Node,
+  256,
+  ZiIOBuf_DefltAlign,
+  ZuStringT<"ZhttpQPackDynamicTest.RxBuf">,
+  1<<20>;
 using RxStream = ZiRxStream<RxQueue>;
 
 static ZmRef<RxQueue::Node> rxBuf(ZuBSpan span)
 {
-  ZmRef<RxQueue::Node> buf = new RxBufAlloc{nullptr, 0};
+  ZmRef<RxQueue::Node> buf = new RxBufAlloc{ZmSingleton<typename RxBufAlloc::Allocator>::instance()};
   if (span.length()) buf->append(span);
   return buf;
 }
@@ -112,18 +121,19 @@ struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
   ~CaptureTxStream() { this->flush(); }
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-    ZmRef<ZiIOBuf> buf = new StreamAlloc{nullptr, 0};
+    ZmRef<ZiIOBuf> buf = new StreamAlloc{ZmSingleton<typename StreamAlloc::Allocator>::instance()};
     buf->skip = headRoom;
     buf->length = 0;
     allocated = buf.ptr();
     return buf;
   }
 
-  bool sendRange_(Zi::RxRange range) {
-    if (!sendOK || !range.buf) return false;
-    ++ranges;
-    original &= range.buf.ptr() == allocated;
-    for (auto c : range.cspan()) bytes.push(c);
+  bool appendBuf(ZmRef<ZiIOBuf> buf) {
+      if (!this->flush() || !buf) return false;
+    if (!sendOK || !buf) return false;
+    ++ownedBuffers;
+    original &= buf.ptr() == allocated;
+    for (auto c : buf->cspan()) bytes.push(c);
     return true;
   }
 
@@ -136,7 +146,7 @@ struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
   Zhttp::H3::HdrBytes	bytes;
   bool sendOK = true;
   ZiIOBuf *allocated = nullptr;
-  unsigned ranges = 0;
+  unsigned ownedBuffers = 0;
   bool original = true;
 };
 
@@ -2619,8 +2629,8 @@ void testBuilderQueryPath()
   custom.customTarget = true;
   CaptureTxStream customStream;
   custom.begin(customStream);
-  ZuCHECK(customStream.original && customStream.ranges > 1,
-    "unknown-length QPACK fields must submit original backing ranges across prefix gaps");
+  ZuCHECK(customStream.original && customStream.ownedBuffers > 1,
+    "unknown-length QPACK fields must send owned output buffers across prefix gaps");
   ZuCHECK(headersPayload(customStream.bytes, payload),
     "custom printable target did not emit a valid HEADERS frame");
   sawPath = false;

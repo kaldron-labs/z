@@ -56,10 +56,10 @@ static void borrowedResolver()
 {
   ZuTestScopeRT(borrowedResolver);
   ZiMultiplex mx{mxParams()};
-  ZuCheckRT(mx.start());
   ZiResolver::init(ZiResolverParams{}.timeoutMS(2000).tries(2));
   Zum::OIDCHTTP http;
   ZuCheckRT(http.init(&mx, 3));
+  ZuCheckRT(mx.start());
   // An externally owned resolver must already be running. Its failure to meet
   // that startup dependency leaves no owner job or child client to drain.
   ZuCheckRT(!http.start());
@@ -75,7 +75,6 @@ static void oidcHTTP()
 {
   ZuTestScopeRT(oidcHTTP);
   ZiMultiplex mx{mxParams()};
-  ZuCheckRT(mx.start());
   Zum::OIDCHTTP http;
   ZuCheckRT(!http.init(&mx, 0));
   ZuCheckRT(!http.init(&mx, 1));
@@ -83,6 +82,7 @@ static void oidcHTTP()
   ZuCheckRT(!http.init(&mx, 4));
   ZuCheckRT(!http.init(&mx, 3, 0));
   ZuCheckRT(http.init(&mx, 3));
+  ZuCheckRT(mx.start());
   ZuCheckRT(http.start());
   auto send = http.fn();
 
@@ -135,12 +135,12 @@ static void publicOIDC()
 {
   ZuTestScope(publicOIDC);
   ZiMultiplex mx{mxParams()};
-  ZuCheck(mx.start());
   Zum::OIDCHTTP http;
   Zum::String caPath;
   if (auto path = Zt::getpath("ZUM_OIDC_TEST_CA")) caPath = path;
   ZuCheck(http.init(&mx, 3, Zum::OIDCHTTP::DefaultOrigins,
       caPath));
+  ZuCheck(mx.start());
   ZuCheck(http.start());
   auto send = http.fn();
   ZmSemaphore done;

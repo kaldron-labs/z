@@ -1990,7 +1990,7 @@ ZmRef<IOBuf> StoreTbl::row_(sqlite3_stmt *stmt)
   auto data = fbb.endNested(nested, root);
   auto record = saveRecord(fbb, id(), un, sn, vn, shard, data);
   fbb.finish(saveMsg(fbb, record, Recovery ? Msg::Tag::Recovery : Msg::Tag::Replication));
-  return saveFrame(fbb);
+  return saveHdr(fbb);
 }
 
 static Event shutdownError(ZuCSpan operation, ZuCSpan id)

@@ -11,6 +11,7 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmLock.hh>
@@ -422,10 +423,8 @@ void ReqBuilder_::retired() { ++app->retiredEvents; }
 ZiMxParams mxParams()
 {
   return ZiMxParams()
-    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Zhttp.Net.Rx">>>()
+
+
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -445,7 +444,7 @@ bool startApp(
       Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{});
   bool pooled = inited && app.pool(
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port});
-  bool started = pooled && app.start();
+  bool started = pooled && mx.start() && app.start();
   return started;
 }
 
@@ -550,7 +549,8 @@ void attemptState()
       !typedParser.status_ && !typedParser.completed && !typedParser.ok,
     "response completion enters closing phase and resets the parser");
 
-  ZmRef<ZiRxQueue::Node> buffer = new Zhttp::BodyBufAlloc{nullptr, 0};
+  ZmRef<ZiRxQueue::Node> buffer = new Zhttp::BodyBufAlloc{
+    ZmSingleton<typename Zhttp::BodyBufAlloc::Allocator>::instance()};
   static_cast<ZiIOBuf *>(buffer.ptr())->data()[0] = 'a';
   static_cast<ZiIOBuf *>(buffer.ptr())->data()[1] = 'b';
   static_cast<ZiIOBuf *>(buffer.ptr())->data()[2] = 'c';
@@ -1192,7 +1192,6 @@ void cancel()
   if (fd < 0) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start multiplexer");
 
   App app;
   app.expected = 2;
@@ -1240,7 +1239,6 @@ void outOfOrder()
   if (fd < 0) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start multiplexer");
 
   App app;
   app.expected = 2;
@@ -1291,7 +1289,6 @@ void pipeline()
   if (fd < 0) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start multiplexer");
 
   App app;
   app.expected = 2;
@@ -1341,7 +1338,6 @@ void pipelineTxError()
   if (fd < 0) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start pipeline Tx-error multiplexer");
 
   App app;
   app.expected = 2;
@@ -1401,13 +1397,6 @@ void pipelineCancellation(unsigned cancelAt)
   if (fd < 0) return;
 
   ZiMultiplex mx{mxParams()};
-  bool mxUp = mx.start();
-  ZuCHECK(mxUp,
-    "start FIFO-cancellation multiplexer for position ", cancelAt);
-  if (!mxUp) {
-    ::close(fd);
-    return;
-  }
 
   App app;
   app.expected = Requests;
@@ -1474,7 +1463,6 @@ void limited()
   if (fd < 0) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start multiplexer");
 
   App app;
   app.expected = 2;
@@ -1553,7 +1541,6 @@ void limitedSaturated()
   if (fd < 0) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start combined capacity-gate multiplexer");
 
   App app;
   app.expected = 4;
@@ -1641,7 +1628,6 @@ void parallelism()
   if (fd < 0) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start parallelism multiplexer");
 
   App app;
   app.expected = Requests;
@@ -1710,7 +1696,6 @@ void waves()
   uint64_t heapBaseline = zhttpClientAllocated();
   {
     ZiMultiplex mx{mxParams()};
-    ZuCHECK(mx.start(), "start successive-wave multiplexer");
     app.expected = 2;
     ZmAtomic<unsigned> serverOK = 0;
     ServerSockets sockets{fd};
@@ -1757,7 +1742,6 @@ void sealedAdmission()
   ZuTestScope(sealedAdmission);
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start sealed-admission multiplexer");
   App app;
   app.expected = 1;
   auto config = Zhttp::Config()
@@ -1798,7 +1782,6 @@ void stopQueuedLimited()
   uint64_t heapBaseline = zhttpClientAllocated();
   {
     ZiMultiplex mx{mxParams()};
-    ZuCHECK(mx.start(), "start queued-stop multiplexer");
     app.expected = 1;
     auto config = Zhttp::Config()
       .links(1).concurrency(1).linkMax(1)
@@ -1860,7 +1843,6 @@ void stopActivePipeline()
   ZuCHECK(fd >= 0 && port, "create active-stop listener");
   if (fd < 0) return;
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start active-stop multiplexer");
 
   App app;
   app.expected = Requests;
@@ -1923,7 +1905,6 @@ void stopReusableIdle()
   uint64_t heapBaseline = zhttpClientAllocated();
   {
     ZiMultiplex mx{mxParams()};
-    ZuCHECK(mx.start(), "start reusable-idle stop multiplexer");
 
     app.expected = 1;
     ZmAtomic<unsigned> serverOK = 0;
@@ -1987,7 +1968,6 @@ void boundedLinkScan()
   if (fd < 0) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start bounded-scan multiplexer");
 
   App app;
   app.expected = 1;
@@ -2038,7 +2018,6 @@ void timeout()
   if (fd < 0) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start multiplexer");
 
   App app;
   app.expected = 1;
@@ -2079,7 +2058,6 @@ void retry()
   ::close(reserve);
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start multiplexer");
 
   App app;
   app.expected = 1;
@@ -2148,7 +2126,6 @@ void redirectUnsafe(bool noReplay = false)
   }};
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start unsafe redirect multiplexer");
   App app;
   app.expected = 1;
   auto config = Zhttp::Config()
@@ -2204,7 +2181,6 @@ void redirect()
   }};
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start multiplexer");
   App app;
   app.expected = 1;
   auto config = Zhttp::Config()
@@ -2263,7 +2239,6 @@ void crossOriginRedirect()
   }};
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start multiplexer");
   App app;
   app.expected = 1;
   auto config = Zhttp::Config()
@@ -2309,7 +2284,6 @@ void retryLimit(bool noReplay = false, bool tls = false)
   ::close(reserve);
 
   ZiMultiplex mx{mxParams()};
-  ZuCheckRT(mx.start(), log_( "start multiplexer"));
   App app;
   app.expected = 1;
   auto config = Zhttp::Config()
@@ -2323,7 +2297,7 @@ void retryLimit(bool noReplay = false, bool tls = false)
       Zhttp::HubConfig{&mx, "3", "4"}, 1, config,
       Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{});
     started = started && app.pool(
-      0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port}) && app.start();
+      0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port}) && mx.start() && app.start();
   } else {
     started = startApp(app, mx, port, config);
   }
@@ -2368,7 +2342,6 @@ void configuration()
   ZuTestScope(configuration);
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start configuration multiplexer");
 
   auto defaults = Zhttp::Config()
     .links(2).concurrency(4).linkMax(2).secure(false)
@@ -2400,7 +2373,9 @@ void configuration()
   ZuCHECK(!app.pool(
       0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, 2}),
     "reject duplicate pool slot");
+  ZuCHECK(mx.start(), "start multiplexer for incomplete pool configuration");
   ZuCHECK(!app.start(), "reject start with an unconfigured pool slot");
+  ZuCHECK(mx.stop(), "stop multiplexer before completing pool configuration");
   ZuCHECK(!app.pool(
       1, Zhttp::Destination{ZuBSpan{"localhost"}, 2},
       Zhttp::Config{}.links(0)),
@@ -2426,7 +2401,7 @@ void configuration()
   ZuCHECK(app.pool(
       1, Zhttp::Destination{ZuBSpan{"localhost"}, 2}, overrides),
     "configure pool slot 1 with common-type overrides");
-  ZuCHECK(app.start(), "start all configured pools");
+  ZuCHECK(mx.start() && app.start(), "start multiplexer and all configured pools");
   ZuCHECK(!app.pool(
       1, Zhttp::Destination{ZuBSpan{"localhost"}, 3}),
     "reject pool registration after start");
@@ -2502,7 +2477,6 @@ void stopResolving()
   };
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start resolving-stop multiplexer");
   auto config = Zhttp::Config()
     .links(1).concurrency(1).linkMax(1).secure(false)
     .protocol(Zhttp::ProtoPolicy::DisableH3)
@@ -2516,7 +2490,7 @@ void stopResolving()
     0, Zhttp::Destination{ZuBSpan{"pending.invalid"}, 80});
   HoldingResolver resolver;
   app.discoveryResolver(&resolver.ops);
-  ZuCHECK(inited && app.start(), "start pool with an injected resolver");
+  ZuCHECK(inited && mx.start() && app.start(), "start pool with an injected resolver");
 
   for (unsigned i = 0; i < Requests; ++i)
     app.send(0, app.request());
@@ -2566,7 +2540,6 @@ void multiplePools()
   }};
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start multi-pool multiplexer");
   auto config = Zhttp::Config()
     .links(1).concurrency(1).linkMax(1).secure(false)
     .protocol(Zhttp::ProtoPolicy::DisableH3)
@@ -2577,7 +2550,7 @@ void multiplePools()
     Zhttp::HubConfig{&mx, "3", "4"}, 2, config,
     Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{});
   inited = inited && app.pool(0, dest0) && app.pool(1, dest1);
-  ZuCHECK(inited && app.start(), "initialize/start two destination pools");
+  ZuCHECK(inited && mx.start() && app.start(), "initialize/start two destination pools");
 
   auto request0 = app.request();
   auto request1 = app.request();
@@ -2635,7 +2608,6 @@ void sameOriginPools()
   }};
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start same-origin multiplexer");
   auto defaults = Zhttp::Config()
     .links(2).concurrency(2).linkMax(2).secure(false)
     .protocol(Zhttp::ProtoPolicy::DisableH3)
@@ -2649,7 +2621,7 @@ void sameOriginPools()
   auto override = Zhttp::Config().links(1).concurrency(1)
     .linkMax(1);
   inited = inited && app.pool(0, dest) && app.pool(1, dest, override);
-  ZuCHECK(inited && app.start(),
+  ZuCHECK(inited && mx.start() && app.start(),
     "configure independent policies for two same-origin pools");
 
   auto request0 = app.request();
@@ -2697,7 +2669,6 @@ void poolTimeoutOverride()
   }};
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start policy-override multiplexer");
   auto defaults = Zhttp::Config()
     .links(1).concurrency(1).linkMax(1).requestTimeout(1)
     .secure(false).protocol(Zhttp::ProtoPolicy::DisableH3)
@@ -2712,7 +2683,7 @@ void poolTimeoutOverride()
   inited = inited && app.pool(
     1, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, responsivePort},
     Zhttp::Config{}.requestTimeout(0));
-  ZuCHECK(inited && app.start(),
+  ZuCHECK(inited && mx.start() && app.start(),
     "start pools with isolated timeout policies");
 
   app.send(0, app.request());
@@ -2763,7 +2734,6 @@ void poolRetryOverride()
   ::close(overrideFD);
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start retry-override multiplexer");
   auto defaults = Zhttp::Config()
     .links(1).concurrency(1).linkMax(1).maxRetries(0)
     .secure(false).protocol(Zhttp::ProtoPolicy::DisableH3)
@@ -2778,7 +2748,7 @@ void poolRetryOverride()
   inited = inited && app.pool(
     1, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, overridePort},
     Zhttp::Config{}.maxRetries(2));
-  ZuCHECK(inited && app.start(),
+  ZuCHECK(inited && mx.start() && app.start(),
     "start pools with isolated retry budgets");
 
   app.send(0, app.request());
@@ -2834,7 +2804,6 @@ void poolRedirectOverride()
   }};
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start redirect-override multiplexer");
   auto defaults = Zhttp::Config()
     .links(1).concurrency(1).linkMax(1).maxRedirects(0)
     .secure(false).protocol(Zhttp::ProtoPolicy::DisableH3)
@@ -2849,7 +2818,7 @@ void poolRedirectOverride()
   inited = inited && app.pool(
     1, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, overridePort},
     Zhttp::Config{}.maxRedirects(1));
-  ZuCHECK(inited && app.start(),
+  ZuCHECK(inited && mx.start() && app.start(),
     "start pools with isolated redirect budgets");
 
   auto defaultRequest = app.request();
@@ -2915,7 +2884,6 @@ void poolBodyMaxOverride()
   }};
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start retained-body override multiplexer");
   auto defaults = Zhttp::Config()
     .links(1).concurrency(1).linkMax(1).bodyMax(4).retainedBodyMax(2)
     .secure(false).protocol(Zhttp::ProtoPolicy::DisableH3)
@@ -2930,7 +2898,7 @@ void poolBodyMaxOverride()
   inited = inited && app.pool(
     1, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, overridePort},
     Zhttp::Config{}.bodyMax(5));
-  ZuCHECK(inited && app.start(),
+  ZuCHECK(inited && mx.start() && app.start(),
     "start pools with isolated retained response limits");
 
   app.send(0, app.request());
@@ -2985,7 +2953,6 @@ void poolRetainedMessageOverride()
   }};
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start retained-message override multiplexer");
   auto defaults = Zhttp::Config()
     .links(1).concurrency(1).linkMax(1)
     .retainedBodyMax(Body.length()).retainedMessageMax(Body.length() - 1)
@@ -3001,7 +2968,7 @@ void poolRetainedMessageOverride()
   inited = inited && app.pool(
     1, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, overridePort},
     Zhttp::Config{}.retainedMessageMax(1024));
-  ZuCHECK(inited && app.start(),
+  ZuCHECK(inited && mx.start() && app.start(),
     "start pools with isolated retained request limits");
 
   auto defaultRequest = app.request();
@@ -3059,7 +3026,6 @@ void poolLinkMaxOverride()
   }};
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start per-link override multiplexer");
   auto defaults = Zhttp::Config()
     .links(1).concurrency(Requests).linkMax(1)
     .secure(false).protocol(Zhttp::ProtoPolicy::DisableH3)
@@ -3074,7 +3040,7 @@ void poolLinkMaxOverride()
   inited = inited && app.pool(
     1, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, overridePort},
     Zhttp::Config{}.linkMax(Requests));
-  ZuCHECK(inited && app.start(),
+  ZuCHECK(inited && mx.start() && app.start(),
     "start pools with distinct per-link concurrency");
 
   app.seal(0);
@@ -3106,9 +3072,6 @@ void resolverLifecycle()
 
   ZiResolver::final();
   ZiMultiplex mx{mxParams()};
-  bool mxUp = mx.start();
-  ZuCHECK(mxUp, "start resolver lifecycle multiplexer");
-  if (!mxUp) return;
 
   Zhttp::Config config;
   config
@@ -3142,7 +3105,8 @@ void resolverLifecycle()
       "agent finalizes its resolver");
   }
 
-  ZiResolver::startSync();
+  mx.stop();
+  ZiResolver::start();
   ZuCHECK(ZiResolver::instance()->running(), "start external resolver");
   {
     App app;
@@ -3166,7 +3130,7 @@ void resolverLifecycle()
     ZuCHECK(ZiResolver::instance()->running(),
       "agent preserves externally owned resolver");
   }
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
   mx.stop();
 }

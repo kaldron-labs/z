@@ -13,25 +13,15 @@
 #include <zlib/ZwsLib.hh>
 #endif
 
+#include <zlib/ZmRef.hh>
+
 #include <zlib/ZiAssert.hh>
+#include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiTxStream.hh>
 
 #include <zlib/ZwsProtocol.hh>
 
 namespace Zws {
-
-template <typename Lower, typename = void>
-struct RetainsBuffers : ZuFalse { };
-template <typename Lower>
-struct RetainsBuffers<Lower, decltype(Lower::RetainBuffers, void())> :
-  ZuBool<Lower::RetainBuffers> { };
-
-template <typename Lower, typename = void>
-struct HasAllocatedBuf : ZuFalse { };
-template <typename Lower>
-struct HasAllocatedBuf<Lower, decltype(
-  ZuDeclVal<const Lower &>().allocatedBuf_(ZuDeclVal<const ZiIOBuf *>()), void())> :
-  ZuTrue { };
 
 template <typename Lower, bool Masked, typename Random>
 class TxLayer :
@@ -59,25 +49,54 @@ public:
       return *this;
     }
     static_cast<Base &>(*this) << ZuFwd<P>(p);
+    m_appended = true;
     return *this;
   }
   TxLayer &operator <<(Zi::Flush) {
     flush();
     return *this;
   }
+  TxLayer &operator <<(ZmRef<ZiIOBuf> buf) {
+    if (!buf || buf->failed()) { this->fail(); return *this; }
+    if (control(m_opcode) && m_appended)
+      return *this << buf->cspan();
+    if (!allocated_(m_lower, buf.ptr(), 0))
+      return *this << buf->cspan();
+    if (m_finalized) { m_valid = false; this->fail(); return *this; }
+    static_cast<Base &>(*this) << ZuMv(buf);
+    m_appended = true;
+    return *this;
+  }
 
-  // Only mutable unpublished output from this destination's writer is owned.
-  // Queued/prebuilt caller and replay storage must use ordinary ranges.
+  ZmRef<ZiIOBuf> allocBuf(unsigned headRoom) {
+    if (!control(m_opcode)) {
+	if (!flushPartial_()) return nullptr;
+    }
+    return Base::allocBuf(headRoom);
+  }
+
+  // Transfer mutable output from the destination writer. Foreign or replay
+  // storage uses the span overload and is serialized into final output.
   bool appendOwned_(ZmRef<ZiIOBuf> buf) {
-    if (m_finalized) { m_valid = false; this->fail(); return false; }
-    if (!valid()) return false;
-    if (!buf || buf->failed()) { this->fail(); return false; }
-    if constexpr (RetainsBuffers<Lower>{} || HasAllocatedBuf<Lower>{}) {
-      // Preserve a pending frame as non-final before transferring authority.
-      // The TCP-specific setter also publishes its older pending first header.
-      if (!this->flush_(false) || !m_lower.allocatedBuf_(buf)) {
-	this->fail(); return false;
-      }
+    uint64_t reserve = uint64_t(this->headRoom()) + this->tailRoom();
+    if (m_finalized || !valid() || !buf || buf->failed() ||
+	reserve >= this->maxSize() ||
+	buf->skip < this->headRoom() || buf->avail() < this->tailRoom() ||
+	buf->length > this->maxSize() - reserve) {
+      this->fail();
+      return false;
+    }
+    // Control payload remains in one final frame. An existing prefix makes
+    // serialization into that final output buffer necessary and bounded.
+    if (control(m_opcode) && m_appended) {
+      *this << buf->cspan();
+      return valid();
+    }
+    // Publish an earlier fragment before changing the HTTP writer's actual
+    // first-header allocation authority. This message continues in buf.
+    if (!flushPartial_() || !takeOwned_(m_lower, buf, 0)) {
+      this->fail();
+      return false;
     }
     *this << ZuMv(buf);
     return valid();
@@ -96,66 +115,37 @@ public:
   bool valid() const { return m_valid && !this->failed(); }
   using Base::fail;
 
-  bool prepareAppend_(ZmRef<ZiIOBuf> &buf) {
-    if constexpr (RetainsBuffers<Lower>{} || HasAllocatedBuf<Lower>{}) {
-      // Exact writer storage is final frame output, including later parts.
-      if (allocated_(m_lower, buf.ptr(), 0)) return false;
-      if (control(m_opcode)) {
-	// A control packet has one actual final wire buffer. Its bounded
-	// application bytes are serialized there, without a staging buffer.
-	static_cast<Base &>(*this) << buf->cspan();
-	buf = nullptr;
-      } else {
-	auto n = buf->length;
-	this->appendRange(Zi::RxRange{ZuMv(buf), 0, n});
-      }
-      return true;
-    }
-    return false;
-  }
-
-  bool prepareBuf_(ZiIOBuf *buf, bool final) { return prepare_(buf, final, {}); }
-
-  bool prepareRange_(Zi::RxRange range) {
-    // Control frames use their existing single, final owned-buffer path.
-    if (m_finalized || control(m_opcode)) return false;
-    unsigned max = this->maxSize() - this->headRoom() - this->tailRoom();
-    while (range.length) {
-      unsigned n = range.length < max ? range.length : max;
-      if (!n) return false;
-      auto buf = this->allocBuf_(this->headRoom());
-      if (!buf) return false;
-      auto part = range.cspan().trunc(n);
-      if constexpr (Masked) {
-	if (!buf->ensure(n + this->tailRoom())) return false;
-	buf->length = n;
-      }
-      if (!prepare_(buf.ptr(), false, part)) return false;
-      m_lower << ZuMv(buf);
-      if (m_lower.failed()) return false;
-      if constexpr (!Masked)
-	if (!m_lower.appendRange(range.subspan(0, n))) return false;
-      range.offset += n;
-      range.length -= n;
-    }
-    return true;
+  bool prepareBuf_(ZiIOBuf *buf, bool final) {
+    return prepare_(buf, final && !m_partial);
   }
 
 private:
-  template <typename T, typename = decltype(
-    ZuDeclVal<const T &>().allocatedBuf_(ZuDeclVal<const ZiIOBuf *>()))>
-  static bool allocated_(const T &lower, const ZiIOBuf *buf, int) {
-    return lower.allocatedBuf_(buf);
+  bool flushPartial_() {
+    m_partial = !control(m_opcode);
+    bool ok = Base::flush();
+    m_partial = false;
+    return ok;
+  }
+
+  template <typename T>
+  static auto allocated_(const T &lower, const ZiIOBuf *buf, int)
+    -> decltype(lower.allocatedBuf_(buf)) { return lower.allocatedBuf_(buf); }
+  template <typename T>
+  static bool allocated_(const T &, const ZiIOBuf *, ...) { return true; }
+  template <typename T>
+  static auto takeOwned_(T &lower, ZmRef<ZiIOBuf> buf, int)
+    -> decltype(lower.allocatedBuf_(ZuMv(buf))) {
+    return lower.allocatedBuf_(ZuMv(buf));
   }
   template <typename T>
-  static bool allocated_(const T &, const ZiIOBuf *, ...) { return false; }
+  static bool takeOwned_(T &, ZmRef<ZiIOBuf>, ...) { return true; }
 
-  bool prepare_(ZiIOBuf *buf, bool final, ZuBSpan source) {
+  bool prepare_(ZiIOBuf *buf, bool final) {
     if (!m_valid) {
       buf->length = 0;
       return false;
     }
-    uint64_t length = source.data() ? source.length() : buf->length;
+    uint64_t length = buf->length;
     Opcode::T opcode = m_emitted ? Opcode::Continuation : m_opcode;
     if (control(opcode) && (!final || length > MaxControl)) {
       m_valid = false;
@@ -196,10 +186,7 @@ private:
       uint32_t key32 =
 	(uint32_t(key[0])<<24) | (uint32_t(key[1])<<16) |
 	(uint32_t(key[2])<<8) | key[3];
-      if (source.data()) {
-	for (unsigned i = 0; i < length; ++i)
-	  payload[i] = source[i] ^ key[i & 3];
-      } else mask({payload, unsigned(length)}, key32);
+      mask({payload, unsigned(length)}, key32);
     }
     ++m_emitted;
     return true;
@@ -220,6 +207,8 @@ private:
   Opcode::T	m_opcode;
   bool		m_valid = true;
   bool		m_finalized = false;
+  bool		m_partial = false;
+  bool		m_appended = false;
 };
 
 template <bool Masked, typename Random = void, typename Lower>

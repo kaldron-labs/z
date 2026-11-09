@@ -15,8 +15,8 @@ signatures and missing signatures fail verification. Signing-disabled cases
 also suppress the marked field. The existing `signedBodyTest` checks that
 `prefixBody` bytes are excluded from the span passed to both body signing hooks.
 
-`inputRangesTest` checks adoption of contiguous HTTP body ranges without changing
-source metadata, adjacent-range reuse, one final consolidation for disjoint
-fragments, and immediate release of a view's source after growth. Signed-body
+`inputOwnedTest` checks transfer of a narrowed HTTP body buffer with its
+existing `skip`/`length`, descriptor and payload identity, growth after ownership
+transfer, assembly of owned fragments, and copying borrowed input at ingress. Signed-body
 fixtures also assert that the destination writer's allocated descriptor is the
 one submitted after serialization and signing.

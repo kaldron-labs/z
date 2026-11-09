@@ -355,11 +355,14 @@ private:
 	m_endpoint->received_(Datagram{ZuMv(io.buf), ZuMv(addr), ecn});
     }
     if (m_closing.load_()) io.complete();
+    else if (!io.buf)
+	io.buf = m_endpoint->m_rxBufAllocator->allocBuf(this);
     return true;
   }
 
   void armRecv_(ZiRxContext &io) {
-    io.init(ZiRxFn{this, ZmFnPtr<&EndpointCxn_::recvDone_>{}});
+    io.init(ZiRxFn{this, ZmFnPtr<&EndpointCxn_::recvDone_>{}},
+      m_endpoint->m_rxBufAllocator->allocBuf(this));
   }
 
   bool sendStart_(ZiTxContext &io) {
@@ -425,7 +428,8 @@ class Endpoint_ {
 
 public:
   using Impl = Impl_;
-  using TxPktAllocator = PktTxBufAllocator<>;
+  using RxPktAllocator = Zi::IOBufAllocator;
+  using TxPktAllocator = Zi::IOBufAllocator;
   using CxnRef = ZmRef<Cxn_>;
 
   Endpoint_() = default;
@@ -437,13 +441,14 @@ public:
   Endpoint_(const Endpoint_ &) = delete;
   Endpoint_ &operator =(const Endpoint_ &) = delete;
 
-  bool init(ZiMultiplex *mx) {
+  bool init(ZiMultiplex *mx, RxPktAllocator *rx, TxPktAllocator *tx) {
     ZiAssert(mx, "Zquic", (), "null endpoint multiplexer", return false);
-    ZiAssert(mx->running(), "Zquic", (),
-      "endpoint multiplexer is not running", return false);
-    if (m_mx) return m_mx == mx;
+    if (!rx || !tx || rx->mx() != mx || tx->mx() != mx) return false;
+    if (m_mx) return m_mx == mx && m_rxBufAllocator == rx &&
+      m_txBufAllocator == tx;
     m_mx = mx;
-    m_txBufAllocator = new TxPktAllocator{mx->txRingSize()};
+    m_rxBufAllocator = rx;
+    m_txBufAllocator = tx;
     return true;
   }
 
@@ -489,7 +494,7 @@ public:
       localIP, localPort,
       mode == PathMode::ClientConnected ? remoteIP : ZiIP{},
       mode == PathMode::ClientConnected ? remotePort : 0,
-      options);
+      m_rxBufAllocator, options);
 
     return true;
   }
@@ -564,7 +569,7 @@ private:
       localIP, localPort,
       m_mode == PathMode::ClientConnected ? remoteIP : ZiIP{},
       m_mode == PathMode::ClientConnected ? remotePort : 0,
-      options);
+      m_rxBufAllocator, options);
     return true;
   }
 
@@ -612,7 +617,7 @@ public:
   }
   SockDiag sockDiag() const { return m_sockDiag; }
   void failure() { ++m_rxDiag.failures; }
-  ZmRef<ZiIOBuf> allocTxPkt() { return m_txBufAllocator->alloc(this, 0); }
+  ZmRef<ZiIOBuf> allocTxPkt() { return m_txBufAllocator->allocBuf(this, 0); }
 
   bool send(
       ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
@@ -712,9 +717,9 @@ private:
   template <typename ImplRef_>
   void unbindEndpoint_(ImplRef_ impl_, CxnRef cxn = {}) {
     m_unbinding = true;
-    // The endpoint outlives every connection (including obsolete rebinds) and
-    // its allocator controls. No destructor dispatches into a live I/O loop.
-    m_mx->unbind(m_txBufAllocator.ptr(), {[
+    // Allocators remain registered until multiplexer finalization. Drain Tx
+    // before the endpoint completion returns to Rx.
+    m_mx->txRun([
       impl = ZuMvPtr(impl_), cxn = ZuMv(cxn)
     ]() mutable {
       auto self = static_cast<Endpoint_ *>(static_cast<Impl *>(impl));
@@ -736,7 +741,7 @@ private:
 	  Endpoint_::runDiscFns_(fns);
 	});
       });
-    }});
+    });
   }
 
   void failed_(bool transient) {
@@ -857,7 +862,8 @@ private:
 
   // shared: stable after init()
   ZiMultiplex		*m_mx = nullptr;
-  ZmRef<Zi::IOBufAllocator> m_txBufAllocator;
+  RxPktAllocator	*m_rxBufAllocator = nullptr;
+  TxPktAllocator	*m_txBufAllocator = nullptr;
 
   // shared read-mostly active connection identity; mutation is Rx-owned
   CxnRef		m_cxn;

@@ -47,6 +47,7 @@
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuMatcher.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZfJSON.hh>
@@ -2751,9 +2752,9 @@ static String adminCursorEncode(
   constexpr unsigned macLength = Ztls::HMAC<>::Size;
   constexpr unsigned align = Zfb::BufferAlign<Key>::N;
   constexpr unsigned headRoom = (headerLength + align - 1) & ~(align - 1);
-  using Buf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-    ZiIOBuf_DefltMaxSize, ZuStringT<"Zum.Admin.Cursor">>;
-  Zfb::IOBuilder<align> fbb{new Buf{nullptr, 0}, align,
+  using Buf = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_Align, ZuStringT<"Zum.Admin.Cursor">>;
+  Zfb::IOBuilder<align> fbb{ZmSingleton<Buf>::instance()->allocBuf(), align,
     ZiIOBuf_DefltMaxSize, macLength, headRoom};
   fbb.finish(Zfb::save(fbb, key));
   auto raw = fbb.buf();

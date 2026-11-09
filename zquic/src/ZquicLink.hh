@@ -1919,12 +1919,6 @@ protected:
 	remote == m_migration.path.remote()) {
       if (bytes) m_migration.path.received(bytes);
       ++m_txDiag.pathValidationActive;
-      if (m_migration.state == MigrationState::Validating &&
-	  (m_migration.localRebind ||
-	    m_migration.reason == MigrationReason::Passive)) {
-	promotePath_();
-	return;
-      }
       return;
     }
     if (remote == m_path.remote()) {
@@ -2425,7 +2419,11 @@ protected:
     build.reset();
     int n = frame.write(build.scratch(), build.scratchAvail());
     if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
-    return refs.add(controlRef_(frame));
+    if (!refs.add(controlRef_(frame))) return false;
+    // Keep the challenge recoverable until its matching response arrives.
+    (void)txQueueControl_(frame);
+    build.markPathValidation();
+    return true;
   }
   void passiveMigChalSent_(const ControlFrame &frame) {
     controlSent_(frame);
@@ -2453,6 +2451,7 @@ protected:
     ControlFrame frame = ControlFrame::pathResponse(data);
     int n = frame.write(build.scratch(), build.scratchAvail());
     if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
+    build.markPathValidation();
     return refs.add(controlRef_(frame));
   }
   template <typename Send>
@@ -4225,7 +4224,8 @@ protected:
     SendFlights sendFlights, MarkEstablished markEstablished,
     AfterEstablished afterEstablished) {
     ZmRef<ZiIOBuf> out =
-      new CryptoTxBufAlloc<TLSBufSize_, TLSBufSize_>{this, 0};
+      new CryptoTxBufAlloc<TLSBufSize_, TLSBufSize_>{
+	ZmSingleton<typename CryptoTxBufAlloc<TLSBufSize_, TLSBufSize_>::Allocator>::instance(), this, 0};
     // picotls writes this fixed five-offset array through its C callback ABI.
     size_t offsets[5] = {};
     int n =
@@ -4335,6 +4335,8 @@ protected:
 	!build.commitScratch(unsigned(n)))
       return false;
     if (!refs.add(controlRef_(frame))) return false;
+    if (frame.type == FrameType::PathChallenge || frame.type == FrameType::PathResponse)
+      build.markPathValidation();
     sentControls.push(frame);
     return true;
   }
@@ -6180,6 +6182,13 @@ protected:
     PktNumSpace::T probeLevel = PktNumSpace::Initial;
     unsigned probeCount = 0;
     bool probe = reclaimPTO_(probeLevel, probeCount);
+    // A lost candidate challenge must not wait behind old-path STREAM probes.
+    if (m_isServer && m_migration.active &&
+	m_migration.state == MigrationState::Validating &&
+	impl()->sendPassiveMigChal_()) {
+      schedulePTO_();
+      return;
+    }
     if (!probe && probeLevel <= PktNumSpace::Handshake)
       if (sendCryptoPTO_(sendCrypto)) return;
     if (impl()->retransmit_(true)) {
@@ -6375,15 +6384,46 @@ nextSpace:
     return m_txPkts[level].requeueRetransmit(ref);
   }
 
-  bool buildRetxStream_(PktBuild &build, const SentFrameRef &ref) {
+  bool buildRetxStream_(PktBuild &build, SentFrameRef &ref) {
     if (ref.kind != SentFrameKind::Stream) return false;
     build.reset();
     if (!appendPendingAck_(PktNumSpace::AppData, build)) return false;
+    // ACK ranges and path MTU can change while this plaintext is retained.
+    // Split the recovery reference without consuming flow credit again.
+    int header = Pkt::shortHdrLen(
+      cid_(CIDSel::Peer), txPNLength_(PktNumSpace::AppData));
+    if (header < 0) return false;
+    unsigned overhead = unsigned(header) + txSecret_(PktNumSpace::AppData).tagLen;
+    unsigned maxUDP = m_path.activeMaxUDP();
+    if (overhead >= maxUDP || build.bytes() >= maxUDP - overhead) return false;
+    unsigned available = maxUDP - overhead - build.bytes();
     int n = FrameCodec::writeStreamPrefix(
       build.scratch(), build.scratchAvail(), ref.streamID, ref.offset,
       ref.length, ref.fin);
-    if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
-    return build.add(ref.range);
+    if (n <= 0 || unsigned(n) > available) return false;
+    SentFrameRef head, tail;
+    auto selected = &ref;
+    if (ref.length > available - unsigned(n)) {
+      unsigned length = available - unsigned(n);
+      if (!length) return false;
+      uint64_t split = ref.offset + length;
+      head = ref;
+      tail = ref;
+      if (!clipStreamRef_(head, ref.offset, split) ||
+	  !clipStreamRef_(tail, split, ref.offset + ref.length + (ref.fin ? 1 : 0)))
+	return false;
+      selected = &head;
+      n = FrameCodec::writeStreamPrefix(
+	build.scratch(), build.scratchAvail(), head.streamID, head.offset,
+	head.length, head.fin);
+    }
+    if (n <= 0 || !build.commitScratch(unsigned(n)) || !build.add(selected->range))
+      return false;
+    if (tail) {
+      if (!requeueRetransmit_(PktNumSpace::AppData, tail)) return false;
+      ref = ZuMv(head);
+    }
+    return true;
   }
 
   bool buildRetxCtl_(PktBuild &build, const SentFrameRef &ref) {
@@ -6396,7 +6436,9 @@ nextSpace:
     build.reset();
     if (!appendPendingAck_(PktNumSpace::AppData, build)) return false;
     int n = frame.write(build.scratch(), build.scratchAvail());
-    return n > 0 && build.commitScratch(unsigned(n));
+    if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
+    if (frame.type == FrameType::PathChallenge) build.markPathValidation();
+    return true;
   }
 
   bool buildPingProbe_(PktNumSpace::T level, PktBuild &build) {
@@ -7970,7 +8012,8 @@ nextSpace:
     unsigned pmtudSize = 0) {
     return sendProtShortPkt_(
       cid_(dcid), pnLength, payload, ZuMv(addr), recordFrame,
-      recordRefs, ackEliciting, ZuMv(allocTxPkt), ZuMv(sendPkt), pmtudSize);
+      recordRefs, ackEliciting, ZuMv(allocTxPkt), ZuMv(sendPkt),
+      pmtudSize);
   }
 
   template <typename AllocTxPkt, typename SendPkt>
@@ -8008,11 +8051,14 @@ nextSpace:
     if (!payload.padForProtSample(
 	  pnLength, txSecret_(PktNumSpace::AppData).tagLen))
       return false;
-    if (pmtudSize) {
+    unsigned minSize = payload.pathValidation() &&
+      (!m_isServer || txPath_(addr).canSend(MinUDPPayload)) ? MinUDPPayload : 0;
+    unsigned paddedSize = pmtudSize > minSize ? pmtudSize : minSize;
+    if (paddedSize) {
       unsigned tagLen = txSecret_(PktNumSpace::AppData).tagLen;
       unsigned headerBytes = unsigned(headerLen);
-      if (pmtudSize <= headerBytes + tagLen) return false;
-      if (!payload.padTo(pmtudSize - headerBytes - tagLen)) return false;
+      if (paddedSize <= headerBytes + tagLen) return false;
+      if (!payload.padTo(paddedSize - headerBytes - tagLen)) return false;
     }
     uint64_t pn = m_txPN[PktNumSpace::AppData];
     int n = PktProt::protectShortV(

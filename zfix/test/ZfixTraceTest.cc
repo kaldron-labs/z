@@ -46,7 +46,7 @@ static bool contains(ZuCSpan text, ZuCSpan term) {
   return text.find(term) >= 0;
 }
 static ZmRef<ZiIOBuf> wire(ZuCSpan type, ZuCSpan content) {
-  ZmRef<ZiIOBuf> b = ZmSingleton<Zi::AppBufAllocator<
+  ZmRef<ZiIOBuf> b = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
     ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
   constexpr auto Envelope = "8=FIX.4.4\1" "9=4294967295\1" "35=\1" "10=255\1"_z;
   b->ensure(type.length() + content.length() + Envelope.length());
