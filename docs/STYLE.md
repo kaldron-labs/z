@@ -132,7 +132,7 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
   - `implementation` -> `impl`
   - ... and so on (this is not an exhaustive list)
 - Example: `packet` is fine; `reservePacketProtection` is too long; use `resPktProt`.
-- use "ack" and "ackd", not "ackd"; example: `packetAckd`
+- use "ack" and "ackd", not "acked"; example: `packetAckd`
 - use "nak and "nakd", not "nack", "nackd" or "nacked"; example: `packetNakd`
 - do not prefix or namespace file-scoped `static` functions in `.cc` files:
   - use short meaningful names, e.g. in `ZiIP.cc`: `pton4` not `ZiIP_pton4`
@@ -181,10 +181,11 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
   inline expression to the base type.
 
 ### Trailing underscores
-- Use trailing underscores only to distinguish related wrapper and implementation names:
+- Use trailing underscores only to distinguish related wrapper, implementation and reserved names:
   - generically for wrapped functions and macros; wrapper chains may add one underscore per layer: `x` wraps `x_`, which wraps `x__`.
   - to distinguish internal-only functions/types from external functions, that are primarily wrappers of the internal function.
   - to distinguish thread-dedicated functions/types from those that are callable from any thread, that are primarily wrappers of the thread-dedicated function.
+  - to avoid collisions with reserved words (`namespace_`, etc.)
 - Example: `send` may `txInvoke` a `send_` call on the Tx thread; `send_` can assume the correct thread and elide the check/context switch.
 - Example: `template <typename T> struct Foo : public Foo_ { ... };` where `Foo` is the API and `Foo_` is a `T`-independent common base.
 - Use numbered suffixes `_0`, `_1`, ... for multi-step functions and variable-argument macros, e.g. `stop_0`, `stop_1`, ...; do not use repeated trailing underscores to label steps or argument counts.
