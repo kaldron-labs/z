@@ -73,6 +73,35 @@ run_result()
   esac
 }
 
+case_result()
+{
+  if [ -f "$1/results.json" ]; then
+    python3 - "$1/results.json" "$2" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        data = json.load(f)
+    results = [test.get("result") for row in data["results"] for test in row
+               if test.get("name") == sys.argv[2]]
+    result = results[0] if len(results) == 1 else None
+    print({"succeeded": "pass", "failed": "fail",
+           "unsupported": "unsupported"}.get(result, "unknown"))
+except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    print("unknown")
+PY
+  elif [ "$3" = 0 ]; then
+    if [ -f "$1/stdout" ] && grep -qx 'dry-run' "$1/stdout"; then
+      printf '%s\n' planned
+    else
+      printf '%s\n' unknown
+    fi
+  else
+    run_result "$3"
+  fi
+}
+
 failure_artifacts()
 {
   find "$1" -type f \( \
@@ -131,6 +160,8 @@ tmp=$out_file.tmp
 
   echo "## Matrix"
   echo
+  echo "Status is the runner exit code; result is the exported testcase outcome."
+  echo
   echo "| server | client | testcase | status | result | command | artifacts |"
   echo "|---|---|---|---:|---|---|---|"
 
@@ -142,12 +173,12 @@ tmp=$out_file.tmp
     name=$(basename "$d")
     status=unknown
     [ -f "$d/status" ] && status=$(cat "$d/status")
-    result=$(run_result "$status")
     command=$(tr '\n' ' ' <"$d/command" | sed 's/|/\\|/g')
     artifacts=$(printf '%s' "$d" | sed 's/|/\\|/g')
     server=$(run_server "$d" "$name" | sed 's/|/\\|/g')
     client=$(run_client "$d" "$name" | sed 's/|/\\|/g')
     for testcase in $(csv_words "$(run_tests "$d")"); do
+      result=$(case_result "$d" "$testcase" "$status")
       testcase=$(printf '%s' "$testcase" | sed 's/|/\\|/g')
       echo "| \`$server\` | \`$client\` | \`$testcase\` | $status | $result | \`$command\` | \`$artifacts\` |"
     done
