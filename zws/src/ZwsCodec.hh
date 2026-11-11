@@ -17,7 +17,7 @@
 
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmRef.hh>
-#include <zlib/ZmSingleton.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiIOBuf.hh>
 
 #include <zlib/ZmScheduler.hh>
@@ -29,6 +29,25 @@
 #include <zlib/ZwsTx.hh>
 
 namespace Zws {
+
+inline Zi::IOBufAllocator *frameRxAllocator(Zi::IOBufType::T type)
+{
+  if (type == Zi::IOBufType::RxTCP) {
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Zi::IOBufType::RxTCP,
+      ZiRxQueue::Node>();
+    return allocator;
+  }
+  if (type == Zi::IOBufType::RxTLS) {
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Zi::IOBufType::RxTLS,
+      ZiRxQueue::Node>();
+    return allocator;
+  }
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiRxQueue::Node>();
+  return allocator;
+}
 
 template <typename Impl, typename Link, bool Server, typename Random>
 class Codec {
@@ -57,8 +76,10 @@ public:
       fail_(Failure::InputPressure);
     } else if (lower) {
       uint64_t remaining = lower;
-      using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, ZiIOBuf_DefltSize>;
-      auto alloc = []() { return ZmRef<ZiRxQueue::Node>{ZmSingleton<Alloc>::instance()->allocBuf().ptr<ZiRxQueue::Node>()}; };
+      auto allocator = frameRxAllocator(m_stream->rxBufType());
+      auto alloc = [allocator]() -> ZmRef<ZiRxQueue::Node> {
+	return allocator->allocBuf();
+      };
       int64_t n = httpRx.splice(
 	m_wire,
 	[&remaining](ZuBSpan span) mutable -> int64_t {
@@ -382,8 +403,10 @@ private:
     int appRC = 1;
     if (length) {
       uint64_t remaining = length;
-      using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, ZiIOBuf_DefltSize>;
-      auto alloc = []() { return ZmRef<ZiRxQueue::Node>{ZmSingleton<Alloc>::instance()->allocBuf().ptr<ZiRxQueue::Node>()}; };
+      auto allocator = frameRxAllocator(m_stream->rxBufType());
+      auto alloc = [allocator]() -> ZmRef<ZiRxQueue::Node> {
+	return allocator->allocBuf();
+      };
       int64_t consumed = rx.splice(
 	m_rx,
 	[&remaining](ZuBSpan span) mutable -> int64_t {

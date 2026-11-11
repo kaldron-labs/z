@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "ZfixTestAllocator.hh"
+
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmList.hh>
@@ -15,7 +17,7 @@
 
 static ZmRef<ZiIOBuf> frameBuf() {
   using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
-  return ZmSingleton<Allocator>::instance()->allocBuf();
+  return ZfixTest::Allocator<Allocator>::get()->allocBuf();
 }
 
 using namespace ZuTestUtil;
@@ -165,9 +167,9 @@ friend inline ZuStringT<"Zfix.RawTest.Endpoint"> ZmNHeapID(Endpoint *);
   WireGeometry fixGeometryTx() const { return {}; }
 
   ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
-    ZmRef<ZiIOBuf> b = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-      ZiTxBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
-    b->skip = head; return b;
+    ZmRef<ZiIOBuf> b = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
+      ZiTxBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
+    b->skip += head; return b;
   }
 
   bool fixSendTx(ZmRef<ZiIOBuf> b) { records.push(Record{ZuMv(b)}); return true; }

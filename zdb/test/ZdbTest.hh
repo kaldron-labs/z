@@ -21,6 +21,11 @@
 
 namespace zdbtest {
 
+template <typename T>
+using PolicyStorage = Zi::IOBufBuiltin<Zdb_::IOBuf,
+  Zi::BuiltinSize<Zdb_::IOBuf, ZiIOBuf_Align>(ZdbBuf_Size<T>{}),
+  ZiIOBuf_Align, ZdbBuf_HeapID<T>>;
+
 ZtEnumNS(, Side, int8_t, Buy, Sell);
 namespace Side { Zfb::AsEnum<"zdbtest.fbs.Side"> Zfb_Fmt(Map *); }
 

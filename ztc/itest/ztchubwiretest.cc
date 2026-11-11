@@ -17,7 +17,6 @@
 
 #include <zlib/ZuLib.hh>
 
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmThread.hh>
@@ -115,10 +114,17 @@ static bool bearer(ZtString<> &value)
   return true;
 }
 
+static ZmRef<ZiIOBuf> allocTxFrame()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::TxTLS>();
+  return allocator->allocBuf();
+}
+
 static ZmRef<ZiIOBuf> subscribe(ZuCSpan deviceID, uint32_t interval,
     Ztc::Group::T group)
 {
-  Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Ztc::Builder builder{allocTxFrame()};
   auto nested = builder.startNested();
   auto request = Zfb::save(builder, Ztc::Request{
     .filter = "*", .seqNo = 0, .interval = interval,
@@ -130,7 +136,7 @@ static ZmRef<ZiIOBuf> subscribe(ZuCSpan deviceID, uint32_t interval,
 
 static ZmRef<ZiIOBuf> ack(uint64_t seqNo)
 {
-  Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Ztc::Builder builder{allocTxFrame()};
   auto nested = builder.startNested();
   auto value = Zfb::save(builder, Ztc::Ack{ZuID{"wire"}, seqNo, 1000});
   builder.finish(Ztc::saveMsg(
@@ -140,7 +146,7 @@ static ZmRef<ZiIOBuf> ack(uint64_t seqNo)
 
 static ZmRef<ZiIOBuf> telemetry(uint64_t seqNo, uint32_t payload)
 {
-  Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Ztc::Builder builder{allocTxFrame()};
   auto nested = builder.startNested();
   ZtString<> id;
   id.length(payload ? payload : 4);
@@ -162,8 +168,10 @@ static ZmRef<ZiIOBuf> telemetry(uint64_t seqNo, uint32_t payload)
 // Inject an empty unsolicited snapshot completion on the public telemetry ring.
 static bool emptySnapshot(const Ztc::AppCf &cf)
 {
-  using MsgFrame = Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Wire.Snapshot">, 1U<<20>;
-  Ztc::Builder builder{Ztc::frameBuf(ZmRef<ZiIOBuf>{new MsgFrame{ZmSingleton<typename MsgFrame::Allocator>::instance()}})};
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 1024, ZiIOBuf_Align,
+    ZuStringT<"Ztc.Wire.Snapshot">, 1U<<20>();
+  Ztc::Builder builder{Ztc::frameBuf(allocator->allocBuf())};
   auto nested = builder.startNested();
   auto eos = Zfb::save(builder, Ztc::EOS{cf.id, 0});
   builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::EOS, eos));
@@ -184,7 +192,7 @@ static bool emptySnapshot(const Ztc::AppCf &cf)
 
 static ZmRef<ZiIOBuf> unsubscribe(ZuCSpan deviceID, uint64_t subID, bool inventory)
 {
-  Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Ztc::Builder builder{allocTxFrame()};
   auto nested = builder.startNested();
   auto value = Zfb::save(builder, Ztc::Request{
     .filter = inventory ? "*" : "", .seqNo = 0,

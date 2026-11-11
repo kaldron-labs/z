@@ -302,6 +302,7 @@ public:
       m_app, m_link, request, &m_response, &m_responseActive};
   }
   void reset() {
+    m_parser.bufType(m_link->channel().rxBufType());
     m_parser.reset(m_app->bodyMax(), m_app->retainedBodyMax());
     if constexpr (Message::ID != Version::H1) {
       if (!m_request || !m_operationOK) return;
@@ -4564,7 +4565,8 @@ public:
       unsigned generation = ++m_generation;
       this->txErrorFn(ZiTxErrorFn{
 	[this, generation](ZeException &e) {
-	  return pool()->owner()->poolH1TxError(m_id, generation, e);
+	  return pool()->owner()->poolH1TxError(
+	    NativeTraits<Profile>::Transport::ID, m_id, generation, e);
 	}});
       if (wasStopped) pool()->liveInc();
       pool()->owner()->poolConnect(*this, *request);
@@ -5552,6 +5554,7 @@ struct BoundResParser : public Zhttp::Parser {
   void init(RequestRecord &request, Channel *channel) {
     channel->resetFrames();
     binding.channel = channel;
+    binding.ops->bufType(binding.ctx, channel->rxBufType());
     binding.ops->init(binding.ctx, request.ctx);
   }
   void bodyMax(uint64_t max) { binding.ops->bodyMax(binding.ctx, max); }
@@ -6093,11 +6096,12 @@ public:
     return m_txErrorFn(e);
   }
   bool poolH1TxError(
-      unsigned link, unsigned generation, ZeException &e) {
+      Transport::T transport, unsigned link, unsigned generation, ZeException &e) {
     bool handled = !m_txErrorFn || m_txErrorFn(e);
-    rxRun_([this, link, generation]() {
+    rxRun_([this, transport, link, generation]() {
       assertRx();
-      m_tcp.txFailed(link, generation);
+      if (transport == Transport::TLS) m_tls.txFailed(link, generation);
+      else m_tcp.txFailed(link, generation);
     });
     return handled;
   }

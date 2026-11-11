@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "ZfixTestAllocator.hh"
+
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZtArray.hh>
@@ -56,8 +58,8 @@ template <typename Facet> static void authFacet()
   Session::Logon value;
   value.rawAuth = ZuBSpan{Payload};
   value.nextExpected = 17; value.defaultAppVerID = "9";
-  ZmRef<ZiIOBuf> buffer = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-    ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
+  ZmRef<ZiIOBuf> buffer = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
+    ZiIOBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
   Sink out{{buffer->data(), buffer->size}};
   ZuCheck((save<Facet, ArchiveField>(out, value) && out.flush()));
   Session::Logon received;

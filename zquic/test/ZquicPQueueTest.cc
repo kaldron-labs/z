@@ -4,7 +4,6 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/Zquic.hh>
@@ -27,6 +26,7 @@ ZmRef<ZiIOBuf> packet_(ZuBSpan data)
 	([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
       return allocator->allocBuf(owner, 0);
     })(nullptr);
+  if (ZuUnlikely(!packet)) return nullptr;
   fill_(packet, data);
   return packet;
 }
@@ -35,8 +35,9 @@ void testCryptoRxClipping()
 {
   ZuTestScope(testCryptoRxClipping);
 
+  ZiMultiplex mx;
   ZmRef<Zquic::CryptoRxPQueue::Node> buf =
-    new Zquic::CryptoRxBufAlloc<>{ZmSingleton<typename Zquic::CryptoRxBufAlloc<>::Allocator>::instance(), nullptr, 0};
+    Zquic::plaintextAllocator<Zquic::CryptoRxBufAlloc<>>(&mx)->allocBuf();
   fill_(buf, "abcdef");
   auto &data = buf->data();
   data.skip = 1;
@@ -65,23 +66,25 @@ void testRxOverlapDrop()
 {
   ZuTestScope(testRxOverlapDrop);
 
+  ZiMultiplex mx;
+  auto allocator = mx.allocator<Zi::IOBufType::RxTLS>();
   Zquic::StreamRxPQueue q{0};
   auto first = packet_("world");
   auto dup = packet_("WORLD");
   auto second = packet_("helloworldtails");
 
   q.add(new Zquic::StreamRxPQueue::Node{
-    first, first->data(), first->length, nullptr, 5});
+    first, first->data(), first->length, allocator, nullptr, 5});
   unsigned count = q.count_();
   q.add(new Zquic::StreamRxPQueue::Node{
-    dup, dup->data(), dup->length, nullptr, 5});
+    dup, dup->data(), dup->length, allocator, nullptr, 5});
   ZuCHECK(q.count_() == count,
     "fully duplicate STREAM data mutated retained queue");
 
   q.add(new Zquic::StreamRxPQueue::Node{
-    second, second->data(), 5, nullptr, 0});
+    second, second->data(), 5, allocator, nullptr, 0});
   q.add(new Zquic::StreamRxPQueue::Node{
-    second, second->data() + 10, 5, nullptr, 10});
+    second, second->data() + 10, 5, allocator, nullptr, 10});
 
   unsigned spans = 0;
   uint64_t firstKey = 0, firstLength = 0;
@@ -101,17 +104,19 @@ void testOutOfOrderDrain()
 {
   ZuTestScopeRT(testOutOfOrderDrain);
 
+  ZiMultiplex mx;
+  auto allocator = mx.allocator<Zi::IOBufType::RxTLS>();
   Zquic::StreamRxPQueue q{0};
   for (unsigned i = 1; i < 32; ++i) {
     auto packet = packet_("x");
     q.add(new Zquic::StreamRxPQueue::Node{
-      packet, packet->data(), packet->length, nullptr, uint64_t(i)});
+      packet, packet->data(), packet->length, allocator, nullptr, uint64_t(i)});
   }
   ZQUIC_CHECK_RT(!q.dequeue(), "out-of-order queue drained before gap was filled");
 
   auto head = packet_("x");
   q.add(new Zquic::StreamRxPQueue::Node{
-    head, head->data(), head->length, nullptr, 0});
+    head, head->data(), head->length, allocator, nullptr, 0});
 
   unsigned drained = 0;
   while (auto node = q.dequeue()) {

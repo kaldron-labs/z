@@ -16,8 +16,6 @@
 
 #include <zlib/ZtScratch.hh>
 
-#include <zlib/ZiIOBuf.hh>
-
 #include <zlib/ZtlsAge.hh>
 #include <zlib/ZtlsBackend.hh>
 #include <zlib/ZtlsHMAC.hh>
@@ -555,19 +553,19 @@ static ZuUnion<void, ZeException> writePayload(
   Ztls::Pico::AeadCtx ctx;
   if (!ctx.init(Ztls::Backend::chacha20poly1305(), true, key, baseIV))
     return ZeEXCEPT(Error, "ZtlsAge", "payload cipher setup failed");
-  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ChunkCipherSize, ChunkCipherSize> allocator;
-  ZmRef<ZiIOBuf> chunk = allocator.allocBuf();
+  auto scratch = ZmScratch(uint8_t, ChunkCipherSize, AgeScratchHeap);
+  auto chunk = scratch.data();
   size_t offset = 0;
   uint64_t counter = 0;
   do {
     size_t remaining = plaintext.length() - offset;
     size_t n = remaining < ChunkSize ? remaining : ChunkSize;
     bool final = remaining <= ChunkSize;
-    const uint8_t *input = n ? plaintext.data() + offset : chunk->data();
-    size_t written = ptls_aead_encrypt(ctx.get(), chunk->data(), input,
+    const uint8_t *input = n ? plaintext.data() + offset : chunk;
+    size_t written = ptls_aead_encrypt(ctx.get(), chunk, input,
       n, (counter << 8) | unsigned(final), nullptr, 0);
     if (written != n + TagSize ||
-        !write_(file, ZuBSpan{chunk->data(), written}))
+        !write_(file, ZuBSpan{chunk, written}))
       return ZeEXCEPT(Error, "ZtlsAge", "payload write failed");
     offset += n;
     ++counter;
@@ -647,11 +645,11 @@ static ZuUnion<size_t, ZeException> readPayload(
   Ztls::Pico::AeadCtx ctx;
   if (!ctx.init(Ztls::Backend::chacha20poly1305(), false, key, baseIV))
     return ZeEXCEPT(Error, "ZtlsAge", "payload cipher setup failed");
-  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ChunkCipherSize, ChunkCipherSize> allocator;
-  ZmRef<ZiIOBuf> chunk = allocator.allocBuf();
+  auto scratch = ZmScratch(uint8_t, ChunkCipherSize, AgeScratchHeap);
+  auto chunk = scratch.data();
   uint64_t counter = 0;
   for (;;) {
-    int n = reader.read(chunk->data(), ChunkCipherSize);
+    int n = reader.read(chunk, ChunkCipherSize);
     if (n < TagSize)
       return ZeEXCEPT(Error, "ZtlsAge", "truncated payload chunk");
     int more = n == ChunkCipherSize ? reader.peek() : 0;
@@ -662,10 +660,10 @@ static ZuUnion<size_t, ZeException> readPayload(
     if ((!plainLength && produced) ||
         plainLength > plaintext.length() - produced)
       return ZeEXCEPT(Error, "ZtlsAge", "invalid payload length");
-    uint8_t *dst = plainLength ? plaintext.data() + produced : chunk->data();
+    uint8_t *dst = plainLength ? plaintext.data() + produced : chunk;
     produced += plainLength;
     if (ptls_aead_decrypt(ctx.get(), dst,
-        chunk->data(), n, (counter << 8) | unsigned(final),
+        chunk, n, (counter << 8) | unsigned(final),
         nullptr, 0) != plainLength)
       return ZeEXCEPT(Error, "ZtlsAge", "payload authentication failed");
     if (final) {

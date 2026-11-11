@@ -30,8 +30,8 @@
 #include <zlib/ZiResolver.hh>
 #include <zlib/ZiEventLoop.hh>
 #include <zlib/ZiIOBuf.hh>
-#include <zlib/ZiRx.hh>
 #include <zlib/ZiTx.hh>
+#include <zlib/ZiRx.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTxStream.hh>
 #include <zlib/ZtcHub.hh>
@@ -48,27 +48,40 @@
 
 namespace Ztls_ {
 
+// Plaintext buffers hold one complete TLS application record.
+enum {
+  TxRecordCapacity = 16 << 10,
+  // Includes TLS 1.3 inner type/padding within zpicotls' supported bound.
+  RxRecordCapacity = PTLS_RECEIVE_RECORD_CAPACITY,
+  // Local packet payload geometry; independent of the peer/outbound MPS.
+  RxPacketCapacity = 1460
+};
+
 using RxQueue = ZiRxQueue;
 using TxQueue = ZiTxQueue;
 using RxStream = ZiRxStream<RxQueue>;
 
 template <
-  unsigned Size = ZiIOBuf_DefltSize,
-  unsigned MaxSize = ZiIOBuf_DefltMaxSize,
+  unsigned Size = Ztls_::RxRecordCapacity,
+  unsigned MaxSize = ZiIOBuf_DefltVHMaxSize,
   ZuString HeapID = ZiIOBuf_HeapID{}()>
 using RxBufAlloc =
-  Zi::IOBufBuiltin<RxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTLS,
+    RxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
 template <
-  unsigned Size = ZiIOBuf_DefltSize,
-  unsigned MaxSize = ZiIOBuf_DefltMaxSize,
+  unsigned Size = TxRecordCapacity,
+  unsigned MaxSize = ZiIOBuf_DefltVHMaxSize,
   ZuString HeapID = ZiIOBuf_HeapID{}()>
 using TxBufAlloc =
-  Zi::IOBufBuiltin<TxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTLS,
+    TxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
 } // namespace Ztls_
 
 namespace Ztls {
+
+using TxPacket = Backend::TxPacket;
 
 ZuDerive(CertSpansScratch, (ZtArray<ZuBSpan,
   ZtArrayHeapID<"Ztls.CertSpans", ZtArraySharded<true>>>));
@@ -115,6 +128,12 @@ struct HubParams {
   HubParams &&txAllocator(Zi::IOBufAllocator *v) {
     m_txAllocator = v; return ZuMv(*this);
   }
+  HubParams &&txPacketAllocator(Zi::IOBufAllocator *v) {
+    m_txPacketAllocator = v; return ZuMv(*this);
+  }
+  HubParams &&socketRxAllocator(Zi::IOBufAllocator *v) {
+    m_socketRxAllocator = v; return ZuMv(*this);
+  }
 
   HubParams &&caPath(ZuCSpan v) { m_caPath = v; return ZuMv(*this); }
   HubParams &&certPath(ZuCSpan v) { m_certPath = v; return ZuMv(*this); }
@@ -135,6 +154,8 @@ struct HubParams {
   ZiMultiplex *mx() const { return m_mx; }
   Zi::IOBufAllocator *rxAllocator() const { return m_rxAllocator; }
   Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
+  Zi::IOBufAllocator *txPacketAllocator() const { return m_txPacketAllocator; }
+  Zi::IOBufAllocator *socketRxAllocator() const { return m_socketRxAllocator; }
   ZuCSpan rxThread() const { return m_rxThread; }
   ZuCSpan txThread() const { return m_txThread; }
   const ParamStrings &alpn() const { return m_alpn; }
@@ -150,6 +171,8 @@ private:
   ZiMultiplex	*m_mx = nullptr;
   Allocator	*m_rxAllocator = nullptr;
   Allocator	*m_txAllocator = nullptr;
+  Allocator	*m_txPacketAllocator = nullptr;
+  Allocator	*m_socketRxAllocator = nullptr;
   ParamString	m_rxThread;
   ParamString	m_txThread;
   ParamStrings	m_alpn;
@@ -282,37 +305,27 @@ template <typename Link> using SrvCxn = Cxn<Link, ZmRef<Link>>;
 using RxStream = Ztls_::RxStream;
 
 template <
-  unsigned Size = ZiIOBuf_DefltSize,
-  unsigned MaxSize = ZiIOBuf_DefltMaxSize,
+  unsigned Size = Ztls_::RxRecordCapacity,
+  unsigned MaxSize = ZiIOBuf_DefltVHMaxSize,
   ZuString HeapID = "Ztls.RxBuf">
 using RxBufAlloc = Ztls_::RxBufAlloc<Size, MaxSize, HeapID>;
 
 template <
-  unsigned Size = ZiIOBuf_DefltSize,
-  unsigned MaxSize = ZiIOBuf_DefltMaxSize,
+  unsigned Size = Ztls_::TxRecordCapacity,
+  unsigned MaxSize = ZiIOBuf_DefltVHMaxSize,
   ZuString HeapID = "Ztls.TxBuf">
 using TxBufAlloc = Ztls_::TxBufAlloc<Size, MaxSize, HeapID>;
-
-template <typename RxBufAlloc>
-inline int parseHdr(const ZiRxContext &, ZiIOBuf *buf) {
-  if (ZuUnlikely(buf->length < 5)) return INT_MAX;
-  auto hdr = buf->data();
-  auto n = 5U + ((unsigned(hdr[3]) << 8) | unsigned(hdr[4]));
-  if (n > RxBufAlloc::MaxSize) return -1;
-  return n;
-}
 
 template <
   typename App, typename Impl, typename RxBufAlloc_, typename TxBufAlloc_,
   typename Cxn_, typename CxnRef_>
 class Link :
   public ZmPolymorph,
-  public ZiRx<Impl, RxBufAlloc_>,
   public ZiTx<Impl>,
   public Ztc::Link
 {
-  ZuAssert((ZuIs_<RxBufAlloc_, Ztls_::RxQueue::Node>{}));
-  ZuAssert((ZuIs_<TxBufAlloc_, Ztls_::TxQueue::Node>{}));
+  ZuAssert((ZuIs_<typename RxBufAlloc_::Buf, Ztls_::RxQueue::Node>{}));
+  ZuAssert((ZuIs_<typename TxBufAlloc_::Buf, Ztls_::TxQueue::Node>{}));
 
   class TelQueue final : public Ztc::Queue {
   public:
@@ -342,7 +355,6 @@ public:
   using TxAllocator = Zi::IOBufAllocator;
   using Cxn = Cxn_;
   using CxnRef = CxnRef_;
-  using Rx = ZiRx<Impl, RxBufAlloc>;
   using Tx = ZiTx<Impl>;
   using ImplRef = Cxn::LinkRef;
   using Stream = Impl;
@@ -383,17 +395,33 @@ public:
 
   App *app() const { return m_app; }
   static Zi::IOBufAllocator *rxAllocator(ZiMultiplex *mx) {
-    return mx->allocator<Zi::IOBufType::RxTLS, typename RxBufAlloc::Buf,
-      RxBufAlloc::Size, RxBufAlloc::MaxSize, ZiIOBuf_DefltAlign,
-      typename RxBufAlloc::Heap>();
+    return [mx]<
+      Zi::IOBufType::T Type, typename Buf, unsigned Size, unsigned Align,
+      typename HeapID, unsigned VHMaxSize, auto Grow
+    >(Zi::IOBufBuiltinAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow> *) {
+      return mx->allocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>();
+    }(static_cast<RxBufAlloc *>(nullptr));
   }
   static Zi::IOBufAllocator *txAllocator(ZiMultiplex *mx) {
-    return mx->allocator<Zi::IOBufType::TxTLS, typename TxBufAlloc::Buf,
-      TxBufAlloc::Size, TxBufAlloc::MaxSize, ZiIOBuf_DefltAlign,
-      typename TxBufAlloc::Heap>();
+    return [mx]<
+      Zi::IOBufType::T Type, typename Buf, unsigned Size, unsigned Align,
+      typename HeapID, unsigned VHMaxSize, auto Grow
+    >(Zi::IOBufBuiltinAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow> *) {
+      return mx->allocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>();
+    }(static_cast<TxBufAlloc *>(nullptr));
+  }
+  static Zi::IOBufAllocator *txPacketAllocator(
+    ZiMultiplex *mx, unsigned count = ZiIOBuf_DefltCount)
+  {
+    // Validate the actual record reservation after provider activation and
+    // negotiation; allocator provisioning encapsulates packet backing.
+    return mx->allocator<Zi::IOBufType::TxTCP, TxPacket>(count);
+  }
+  Zi::IOBufAllocator *txPacketAllocator() const {
+    return app()->txPacketAllocator();
   }
   RxAllocator *rxAllocator() const {
-    return static_cast<RxAllocator *>(app()->rxAllocator());
+    return app()->rxAllocator();
   }
   TxAllocator *txAllocator() const {
     return static_cast<TxAllocator *>(app()->txAllocator());
@@ -451,18 +479,18 @@ protected:
   void reset_handshake_props() { memset(&m_props, 0, sizeof(m_props)); }
 
 private:
-  static constexpr unsigned TxRecordCapacity = 16 * 1024;
+  static constexpr unsigned TxRecordCapacity = Ztls_::TxRecordCapacity;
   static constexpr unsigned TxMaxOverhead = 325;
-  static constexpr unsigned TxMaxPlaintext = TxRecordCapacity - TxMaxOverhead;
+  static constexpr unsigned TxMaxPlaintext = TxRecordCapacity;
 
   // called from Cxn::connected(ZiRxContext &)
   // this is the internal TCP-level connected; once handshake is completed,
   // the application's connected_() will be called
   void connected_0(Cxn *cxn, ZiRxContext &io) { // runs on I/O Rx thread
+    io.complete();
     app()->rxInvoke([impl = ZmRef(this->impl()), cxn = ZmRef(cxn)]() {
       impl->connected_1(ZuMv(cxn));
     });
-    Rx::template recv<parseHdr<RxBufAlloc>, &Impl::recvRecord>(io);
   }
 
   void connected_1(ZmRef<Cxn> cxn) {
@@ -497,79 +525,119 @@ private:
     app()->linkConnected_();
     if (!impl()->connectSocket_(replacing)) { impl()->disconnect_(false); return; }
     impl()->connected_(); // client initiates handshake
+    // Install the first admission with the initialized TLS generation.
+    rearmInput_();
   }
 
-  int recvRecord(const ZiRxContext &io, ZmRef<ZiIOBuf> buf) {
-    auto n = int(buf->length);
-    auto cxn = static_cast<Cxn *>(io.cxn);
-    app()->rxInvoke([
-      impl = ZmRef(this->impl()),
-      cxn = ZmRef(cxn),
-      buf = ZuMv(buf)
-    ]() mutable {
-      if (ZuUnlikely(impl->m_cxn != cxn.ptr())) return;
-      impl->record_(ZuMv(buf));
-    });
-    return n;
-  }
-
-  void record_(ZmRef<ZiIOBuf> buf) {
-    // direct call from within rx thread
-    ZiAssert(app()->rxInvoked(), "Ztls", (),
-      "TLS record dispatch outside Rx thread", return);
-    if (ZuUnlikely(!m_tls)) return;
-    // Handshake records do not enter the application Rx path.
-    if (ptls_handshake_is_complete(m_tls))
-      rcvd_(ZuMv(buf));
-    else
-      handshake_(ZuMv(buf));
+  // Mux Rx owns contexts. Disarm while the original backing is on TLS Rx;
+  // rearming through recv() also notifies packet providers of admission.
+  void armInput(ZiRxContext &io, uint64_t gen) {
+    if (!io.cxn->up()) { io.complete(); return; }
+    auto fn = ZiRxFn{[this, gen](ZiRxContext &io) {
+      if (io.buf && io.buf->length) {
+	// complete() destroys this callback; snapshot its captures first.
+	auto link = this;
+	auto generation = gen;
+	auto cxn = static_cast<Cxn *>(io.cxn);
+	auto buf = ZuMv(io.buf);
+	io.complete();
+	link->app()->rxRun([link, generation, cxn = ZmRef(cxn), buf = ZuMv(buf)]() mutable {
+	  if (link->m_cxn != cxn.ptr() || link->m_disconnecting.load_() ||
+	      generation != link->m_tlsGen.load_()) return;
+	  link->m_rxPaused = true;
+	  link->m_rxInput = ZuMv(buf);
+	  link->receiveInput_();
+	});
+	return true;
+      }
+      if (!io.buf) io.buf = app()->socketRxAllocator()->allocBuf(impl());
+      if (!io.buf) io.disconnect();
+      return true;
+    }};
+    if (!io.buf) io.buf = app()->socketRxAllocator()->allocBuf(impl());
+    if (!io.buf) { io.disconnect(); return; }
+    io.init(ZuMv(fn), ZuMv(io.buf));
   }
 
 protected:
   bool handshake_(ZmRef<ZiIOBuf> buf) {
-    // direct call from within rx thread
-    ZiAssert(app()->rxInvoked(), "Ztls", (),
-      "TLS handshake outside Rx thread", return false);
-    const uint8_t *input = nullptr;
-    size_t inlen_;
-    size_t *inlen = nullptr;
-    if (buf) {
-      input = buf->data();
-      inlen_ = buf->length;
-      inlen = &inlen_;
-    }
-    if (buf && ZuUnlikely(asyncPending_())) {
-      app()->error_(ZeEXCEPT(Error, "Ztls",
-	"TLS handshake input received while async operation is pending"));
-      disconnect_(false);
-      return false;
-    }
+    if (buf) m_rxInput = ZuMv(buf);
+    return receiveInput_();
+  }
 
-    ZmRef<Cxn> target{m_cxn};
-    ptls_buffer_t pbuf;
-    auto txbuf = rxTxBuf(pbuf);
-    int n;
-    if (ZuUnlikely(!txbuf))
-      n = PTLS_ERROR_NO_MEMORY;
-    else {
-      // Handshake input is read-only here; pbuf is only handshake Tx output.
-      n = ptls_handshake(m_tls, &pbuf, input, inlen, &m_props);
-      finalizeTxBuf(pbuf, ZuMv(txbuf), target.ptr());
+private:
+  bool receiveInput_() {
+    ZiAssert(app()->rxInvoked(), "Ztls", (),
+      "TLS input outside Rx thread", return false);
+    if (!m_tls || !m_cxn || m_disconnecting.load_()) return false;
+    if (asyncPending_()) return true;
+    unsigned records = 0;
+    do {
+      auto gen = m_tlsGen.load_();
+      ZmRef<Cxn> target{m_cxn};
+      PacketTarget output{this, target.ptr(), gen};
+      auto reservation = packetSink(output);
+      auto sink = reservation.sink();
+      auto plaintext = m_plaintext.sink();
+      size_t consumed = m_rxInput ? m_rxInput->length : 0;
+      int n = ptls_receive_stream(m_tls, &plaintext, &sink,
+	m_rxInput ? m_rxInput->data() : nullptr, &consumed, &m_props);
+      if (m_rxInput) {
+	m_rxInput->advance(unsigned(consumed));
+	if (!m_rxInput->length) m_rxInput = nullptr;
+      }
+      if (n != 0 && n != PTLS_ERROR_IN_PROGRESS && n != PTLS_ERROR_ASYNC_OPERATION) {
+	m_plaintext.clear();
+	m_rxInput = nullptr;
+	if (PTLS_ERROR_GET_CLASS(n) == PTLS_ERROR_CLASS_PEER_ALERT &&
+	    PTLS_ERROR_TO_ALERT(n) == PTLS_ALERT_CLOSE_NOTIFY) {
+	  m_peerClosed = true;
+	  disconnect_(true);
+	} else {
+	  app()->error_(ZeEXCEPT(Error, "Ztls", ([n](auto &s) {
+	    s << "ptls_receive_stream(): " << strerror_(n);
+	  })));
+	  disconnect_(false);
+	}
+	return false;
+      }
+      if (n == PTLS_ERROR_ASYNC_OPERATION) return asyncHandshake_0();
+      if (ptls_handshake_is_complete(m_tls) && !m_handshook && !m_txPending)
+	if (!finishHandshake_0()) return false;
+      if (auto buf = m_plaintext.take()) {
+	if (buf->length) {
+	  ++m_rxInCount;
+	  m_rxInBytes += buf->length;
+	  m_rxStream.push(ZuMv(buf));
+	}
+      }
+      while (ptls_take_key_update_request(m_tls))
+	if (!updateKey_0()) return false;
+      if (m_handshook) processRx_();
+      if (gen != m_tlsGen.load_() || m_cxn != target.ptr() ||
+	  m_disconnecting.load_()) return false;
+      if (!m_rxInput) break;
+      if (++records == 32) {
+	app()->rxRun([this, gen, target = ZuMv(target)]() {
+	  if (gen == m_tlsGen.load_() && m_cxn == target.ptr()) receiveInput_();
+	});
+	return true;
+      }
+    } while (true);
+    if (m_rxPaused) {
+      m_rxPaused = false;
+      rearmInput_();
     }
-    if (!n) return finishHandshake_0();
-    if (n == PTLS_ERROR_IN_PROGRESS) return true;
-    if (n == PTLS_ERROR_ASYNC_OPERATION) return asyncHandshake_0();
-    if (PTLS_ERROR_GET_CLASS(n) == PTLS_ERROR_CLASS_PEER_ALERT &&
-	PTLS_ERROR_TO_ALERT(n) == PTLS_ALERT_CLOSE_NOTIFY) {
-      m_peerClosed = true;
-      disconnect_(true);
-      return false;
-    }
-    app()->error_(ZeEXCEPT(Error, "Ztls", ([n](auto &s) {
-      s << "ptls_handshake(): " << strerror_(n);
-    })));
-    disconnect_(false);
-    return false;
+    return true;
+  }
+
+  void rearmInput_() {
+    if (!m_cxn || m_disconnecting.load_()) return;
+    auto gen = m_tlsGen.load_();
+    m_cxn->recv(ZiRxFn{[this, gen](ZiRxContext &io) {
+      armInput(io, gen);
+      return true;
+    }});
   }
 
 private:
@@ -623,31 +691,47 @@ private:
     m_txDeferred = false;
     m_txPending = true;
     app()->txRun([
-      impl = ZmRef(impl()), txTLS, gen, headroom = m_headroom,
+      impl = ZmRef(impl()), txTLS, gen,
       cxn = ZmRef<Cxn>{m_cxn}
     ]() mutable {
-      impl->finishHandshake_1(txTLS, gen, headroom, ZuMv(cxn));
+      impl->finishHandshake_1(txTLS, gen, ZuMv(cxn));
     });
     return true;
   }
 
-  void finishHandshake_1(ptls_tx_t *txTLS, uint64_t gen, unsigned headroom, ZmRef<Cxn> cxn) {
+  void finishHandshake_1(ptls_tx_t *txTLS, uint64_t gen, ZmRef<Cxn> cxn) {
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS Tx install outside Tx thread", ptls_tx_free(txTLS); return);
     bool installed = false;
-    if (ZuLikely(gen == m_tlsGen.load_() && !m_disconnecting.load_())) {
+    if (ZuLikely(gen == m_tlsGen.load_() && !m_disconnecting.load_() &&
+	cxn && cxn->up())) {
       if (m_txTLSGen != gen) {
 	ptls_tx_free(m_txTLS);
 	m_txTLS = nullptr;
 	m_txCxn = nullptr;
       }
       if (!m_txTLS) {
-	m_txTLS = txTLS;
-	m_txCxn = cxn;
-	m_txTLSGen = gen;
-	m_txHeadroom = headroom;
-	txTLS = nullptr;
-	installed = true;
+	// Providers are active now and the physical payload cap is known. Check
+	// the complete supported record budget before exposing application Tx.
+	auto mps = cxn->info().mps;
+	Backend::RecordSink probe{txPacketAllocator(), impl(), mps, nullptr,
+	  [](void *, ZmRef<ZiIOBuf>) -> int { return 0; }};
+	auto sink = probe.sink();
+	auto overhead = ptls_tx_get_record_overhead(txTLS);
+	size_t maxWire = TxRecordCapacity + overhead;
+	if (ptls_tx_get_protocol_version(txTLS) == PTLS_PROTOCOL_VERSION_TLS13)
+	  maxWire += 5 + overhead; // KeyUpdate handshake header and request byte
+	int n = sink.reserve(sink.ctx, maxWire);
+	sink.discard(sink.ctx);
+	if (n) {
+	  cxn->close();
+	} else {
+	  m_txTLS = txTLS;
+	  m_txCxn = cxn;
+	  m_txTLSGen = gen;
+	  txTLS = nullptr;
+	  installed = true;
+	}
       }
     }
     ptls_tx_free(txTLS);
@@ -688,121 +772,54 @@ private:
     return m_tls ? ptls_get_cipher(const_cast<ptls_t *>(m_tls)) : nullptr;
   }
 
-  unsigned rxAlignBits() const {
-    if (auto cipher = rxCipher())
-      if (cipher->aead) return cipher->aead->align_bits;
-    return 0;
+  struct PacketTarget {
+    Link *link;
+    Cxn *cxn;
+    uint64_t gen;
+    const ZiIOBuf *plaintext = nullptr;
+  };
+
+  Backend::RecordSink packetSink(PacketTarget &target) {
+    auto cxn = target.cxn;
+    auto mps = cxn ? cxn->info().mps : 0;
+    return Backend::RecordSink{
+      txPacketAllocator(), impl(), mps, &target,
+      [](void *ctx, ZmRef<ZiIOBuf> buf) -> int {
+	auto target = static_cast<PacketTarget *>(ctx);
+	if (!target->cxn || !target->cxn->up() ||
+	    target->gen != target->link->m_tlsGen.load_())
+	  return PTLS_ERROR_LIBRARY;
+	return target->link->finalizeTxBuf(ZuMv(buf), target->cxn) ?
+	  0 : PTLS_ERROR_LIBRARY;
+      }, target.plaintext ? +[](void *ctx, ZmRef<ZiIOBuf> last) {
+	auto target = static_cast<PacketTarget *>(ctx);
+	++target->link->m_txInCount;
+	target->link->impl()->txProtected();
+	target->link->impl()->txPacketized(target->plaintext, ZuMv(last));
+      } : nullptr};
   }
 
-  unsigned txAlignBits() const {
-    if (auto cipher = ptls_tx_get_cipher(m_txTLS))
-      if (cipher->aead) return cipher->aead->align_bits;
-    return 0;
-  }
-
-  bool aligned(const uint8_t *base, unsigned align_bits) {
-    if (!align_bits) return true;
-    uintptr_t mask = (uintptr_t(1) << align_bits) - 1;
-    ZiAssert(!(reinterpret_cast<uintptr_t>(base) & mask), "Ztls", (),
-      "TLS buffer misaligned", return false);
-    return true;
-  }
-
-  bool assertTxBuf(ptls_buffer_t &pbuf, ZiIOBuf *buf) {
-    // Ztls-owned Tx output is always the origin buffer at data_().
-    auto raw = buf->data_();
-    ZiAssert(pbuf.origin == buf, "Ztls", (),
-      "TLS Tx buffer origin mismatch", return false);
-    auto offset = pbuf.base - raw;
-    ZiAssert(!offset, "Ztls", (),
-      "TLS Tx buffer base shifted", return false);
-    ZiAssert(pbuf.off <= UINT32_MAX && pbuf.off <= buf->size,
-      "Ztls", (), "TLS Tx buffer bounds exceeded", return false);
-    return true;
-  }
-
-  bool finalizeTxBuf(ptls_buffer_t &pbuf, ZmRef<ZiIOBuf> buf, Cxn *cxn) {
-    if (!assertTxBuf(pbuf, buf.ptr())) return false;
-    if (!pbuf.off) return true;
-    // Publish exactly the serialized TLS record bytes.
-    buf->skip = 0;
-    buf->length = uint32_t(pbuf.off);
-    ++m_txInCount;
+  bool finalizeTxBuf(ZmRef<ZiIOBuf> buf, Cxn *cxn) {
+    if (!buf->length) return true;
     m_txInBytes += buf->length;
-    Tx::send(cxn, ZuMv(buf));
-    return true;
-  }
-
-  bool assertRxBuf(ptls_buffer_t &pbuf, ZiIOBuf *buf, uint8_t *plain) {
-    // Ztls-owned Rx output is plaintext behind the record headroom.
-    ZiAssert(pbuf.origin == buf, "Ztls", (),
-      "TLS Rx buffer origin mismatch", return false);
-    ZiAssert(pbuf.base == plain, "Ztls", (),
-      "TLS Rx buffer base mismatch", return false);
-    ZiAssert(pbuf.off <= UINT32_MAX && pbuf.off <= buf->size - m_headroom,
-      "Ztls", (), "TLS Rx buffer bounds exceeded", return false);
-    return true;
-  }
-
-  // Handshake/control Tx starts at data_(); application Tx uses its own buffer.
-  ZmRef<ZiIOBuf> rxTxBuf(ptls_buffer_t &pbuf) {
-    ZmRef<ZiIOBuf> buf = txAllocator()->allocBuf(impl());
-    if (ZuUnlikely(buf->size < TxRecordCapacity))
-      buf->ensure(TxRecordCapacity);
-    auto base = buf->data_(); // record base; skip is 0 on this path
-    auto align_bits = rxAlignBits();
-    if (!aligned(base, align_bits)) return nullptr;
-    ptls_buffer_init_tx(&pbuf, base, TxRecordCapacity);
-    pbuf.origin = buf.ptr();
-    pbuf.align_bits = align_bits;
-    return buf;
-  }
-
-  void rcvd_(ZmRef<ZiIOBuf> buf) {
-    ptls_buffer_t pbuf;
-    auto base = rxBuf(pbuf, buf);
-    if (ZuUnlikely(!base)) return;
-    size_t inlen = buf->length;
-    // Decrypt in-place from record body to plaintext behind headroom.
-    int n = ptls_receive(m_tls, &pbuf, base, &inlen); // in-place overwrite
-    auto plain = base + m_headroom;
-    if (!assertRxBuf(pbuf, buf.ptr(), plain)) return;
-    // Transport framing supplies exactly one complete TLS record.
-    if (ZuUnlikely(inlen != buf->length)) {
-      app()->error_(ZeEXCEPT(Error, "Ztls",
-	"ptls_receive() partial record"));
-      disconnect_(false);
-      return;
-    }
-    if (!n) {
-      if (!m_handshook && !m_txPending)
-	if (ZuUnlikely(!finishHandshake_0())) return;
-      if (pbuf.off) {
-	// Application plaintext becomes the active ZiIOBuf span.
-	buf->skip = m_headroom;
-	buf->length = uint32_t(pbuf.off);
-	++m_rxInCount;
-	m_rxInBytes += buf->length;
-	m_rxStream.push(ZuMv(buf));
+    buf->owner = impl();
+    cxn->send(ZiTxFn::mvFn(ZuMv(buf), [](ZmRef<ZiIOBuf> buf, ZiTxContext &io) {
+      auto cxn = static_cast<Cxn *>(io.cxn);
+      if (ZuUnlikely(!cxn->up())) return false;
+      auto link = Tx::impl(buf);
+      if (auto count = link->Tx::txQueue.count_();
+	  ZuUnlikely(count && count >= link->maxQueueLen())) {
+	// Complete the rejection callback before asynchronous teardown.
+	link->sent(ZuMv(buf), false);
+	cxn->close();
+	return false;
       }
-      while (ptls_take_key_update_request(m_tls))
-	if (ZuUnlikely(!updateKey_0())) return;
-      // Application data can arrive before the detached Tx state has been
-      // installed.  Retain it until finishHandshake_2() publishes connected().
-      if (ZuLikely(m_handshook)) processRx_();
-      return;
-    }
-    if (PTLS_ERROR_GET_CLASS(n) == PTLS_ERROR_CLASS_PEER_ALERT &&
-	PTLS_ERROR_TO_ALERT(n) == PTLS_ALERT_CLOSE_NOTIFY) {
-      m_peerClosed = true;
-      disconnect_(true);
-      return;
-    }
-    app()->error_(ZeEXCEPT(Error, "Ztls", ([n](auto &s) {
-      s << "ptls_receive(): " << strerror_(n);
-    })));
-    disconnect_(false);
-    return;
+      link->Tx::send(cxn, ZuMv(buf));
+      return false;
+    }));
+    // Dispatch has transferred ownership. A peer can consume this last packet
+    // and close before this thread resumes; sent() owns its completion result.
+    return true;
   }
 
   void processRx_() {
@@ -814,32 +831,6 @@ private:
 	return;
       }
     }
-  }
-
-  uint8_t *rxBuf(ptls_buffer_t &pbuf, ZiIOBuf *buf) {
-    ZiAssert(!buf->skip, "Ztls", (),
-      "TLS Rx buffer skip is non-zero", return nullptr);
-    ZiAssert(buf->size >= ptls_get_record_overhead(m_tls), "Ztls", (),
-      "TLS Rx buffer smaller than record overhead", return nullptr);
-    ZiAssert(buf->length <= UINT32_MAX - m_headroom, "Ztls", (),
-      "TLS Rx buffer length overflow", return nullptr);
-    auto required = buf->length + m_headroom;
-    // Reserve before ptls_receive(); zpicotls parses input pointers first.
-    if (ZuUnlikely(buf->size < required))
-      if (ZuUnlikely(!buf->ensure(required))) {
-	app()->error_(ZeEXCEPT(Error, "Ztls",
-	  "TLS Rx buffer capacity/status rejected"));
-	disconnect_(false);
-	return nullptr;
-      }
-    auto base = buf->data_(); // record base; skip is asserted 0 above
-    auto align_bits = rxAlignBits();
-    if (!aligned(base, align_bits)) return nullptr;
-    // Capacity starts at plaintext base but spans the full record reserve.
-    ptls_buffer_init_rx(&pbuf, base + m_headroom, buf->size - m_headroom);
-    pbuf.origin = buf;
-    pbuf.align_bits = align_bits;
-    return base;
   }
 
   Cxn *closing_() const { return m_closing.load_(); }
@@ -855,27 +846,32 @@ private:
       // The close token makes these barriers cleanup-free after replacement.
       impl->disconnected_(cxn);
       auto gen = impl->tlsGen();
-      auto app = impl->app();
-      // drain Tx while keeping cxn/impl referenced
-      app->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer]() mutable {
-	if (impl->closing_() == cxn.ptr()) impl->clearTx(gen);
-	// TLS Tx has stopped producing; drain its queued socket sends next.
-	auto mx = cxn->mx();
-	mx->txRun([
-	  impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer
-	]() mutable {
-	  if (impl->closing_() == cxn.ptr() && gen == impl->tlsGen())
-	    impl->Tx::txQueue.clean();
-	  auto app = impl->app();
-	  app->rxRun([
+
+      // Retire queued mux Rx admissions before releasing the link. Reception
+      // is disarmed, and TLS Rx can no longer post a rearm for this connection.
+      cxn->mx()->rxRun([impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer]() mutable {
+	auto app = impl->app();
+	// drain Tx while keeping cxn/impl referenced
+	app->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer]() mutable {
+	  if (impl->closing_() == cxn.ptr()) impl->clearTx(gen);
+	  // TLS Tx has stopped producing; drain its queued socket sends next.
+	  auto mx = cxn->mx();
+	  mx->txRun([
 	    impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer
 	  ]() mutable {
-	    if (impl->closing_() == cxn.ptr()) {
-	      impl->closing_(nullptr);
-	      if (gen == impl->tlsGen()) impl->disconnected_1(peer);
-	    }
-	    impl->app()->linkDisconnected_();
-	    (void)cxn;
+	    if (impl->closing_() == cxn.ptr() && gen == impl->tlsGen())
+	      impl->Tx::txQueue.clean();
+	    auto app = impl->app();
+	    app->rxRun([
+	      impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer
+	    ]() mutable {
+	      if (impl->closing_() == cxn.ptr()) {
+		impl->closing_(nullptr);
+		if (gen == impl->tlsGen()) impl->disconnected_1(peer);
+	      }
+	      impl->app()->linkDisconnected_();
+	      (void)cxn;
+	    });
 	  });
 	});
       });
@@ -906,17 +902,15 @@ private:
   }
 
 public:
-  // Buffer geometry at its origin. App callers reserve worst-case overhead;
-  // AppThread == false requires the Tx shard for negotiated headroom.
+  // Plaintext capacity is independent of packet and TLS framing geometry.
   static constexpr unsigned txMaxSize() { return TxRecordCapacity; }
   template <bool AppThread>
   unsigned txHeadRoom() const {
-    if constexpr (AppThread) return TxMaxOverhead;
-    else return m_txHeadroom;
+    return 0;
   }
   template <bool AppThread>
   unsigned txTailRoom() const {
-    return TxMaxOverhead - txHeadRoom<AppThread>();
+    return 0;
   }
   template <bool AppThread>
   ZmRef<ZiIOBuf> txAllocBuf(unsigned skip) {
@@ -930,10 +924,8 @@ public:
 
 private:
   ZmRef<ZiIOBuf> allocTxBuf(unsigned headroom) { // App/Tx threads
-    auto buf = txAllocator()->allocBuf(impl());
-    if (ZuUnlikely(buf->size < TxRecordCapacity))
-      buf->ensure(TxRecordCapacity);
-    // Application plaintext is staged after record headroom.
+    auto buf = txAllocator()->allocBuf(impl(), TxRecordCapacity);
+    // Preserve only headroom requested by application framing.
     buf->skip = headroom;
     buf->length = 0;
     return buf;
@@ -954,7 +946,7 @@ private:
       Base(
 	link.txMaxSize(),
 	headroom,
-	unsigned(TxMaxOverhead - headroom)),
+	0),
       m_link{&link},
       m_gen{link.m_tlsGen.load_()},
       m_headroom{headroom}
@@ -962,7 +954,11 @@ private:
     }
 
   public:
-    ~TxStream_() { this->flush(); }
+    ~TxStream_() {
+      this->flush();
+      if (this->failed())
+	m_link->txError(m_gen, "TLS plaintext stream failed");
+    }
     TxStream_(TxStream_ &&) = default;
     TxStream_ &operator =(TxStream_ &&) = default;
 
@@ -1050,54 +1046,32 @@ private:
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS send_ outside Tx thread", return false);
     if (ZuUnlikely(!buf || buf->failed() || !buf->length || gen != m_tlsGen.load_() ||
-	!m_txTLS || m_txTLSGen != gen || m_txClosing)) {
+	!m_txTLS || m_txTLSGen != gen || m_txClosing ||
+	!m_txCxn || !m_txCxn->up())) {
       txError(gen, "TLS session is closed for transmission",
 	bool(m_txCxn) && m_txTLSGen == gen);
       return false;
     }
 
-    ZiAssert(buf->skip >= m_txHeadroom && buf->skip <= TxRecordCapacity,
-      "Ztls", (), "TLS Tx buffer missing headroom", return false);
-    // App-thread streams reserve the full worst-case record overhead.  The
-    // plaintext is still bounded by that same worst-case overhead; its larger
-    // skip is staging space which ptls_tx_send() overwrites in place, not
-    // additional wire overhead.
     ZiAssert(buf->length <= TxMaxPlaintext,
       "Ztls", (), "TLS Tx plaintext exceeds record limit", return false);
-    ZiAssert(buf->length <= buf->size - buf->skip, "Ztls", (),
-      "TLS Tx plaintext bounds exceeded", return false);
-
-    if (ZuUnlikely(buf->size < TxRecordCapacity))
-      buf->ensure(TxRecordCapacity - buf->skip);
-
-    ptls_buffer_t pbuf;
-    // Application Tx encrypts data() into a serialized record at data_().
-    auto data = buf->data();
-    auto length = buf->length;
-    auto base = buf->data_();
-    auto align_bits = txAlignBits();
-    if (!aligned(base, align_bits)) return false;
-    ptls_buffer_init_tx(&pbuf, base, TxRecordCapacity);
-    pbuf.origin = buf.ptr();
-    pbuf.align_bits = align_bits;
-    int n = ptls_tx_send(m_txTLS, &pbuf, data, length); // in-place overwrite
-    if (!assertTxBuf(pbuf, buf.ptr())) {
-      txError(gen, "TLS Tx buffer invariant failed");
-      return false;
-    }
+    ZiAssert(buf->skip <= buf->size && buf->length <= buf->size - buf->skip,
+      "Ztls", (), "TLS Tx plaintext bounds exceeded", return false);
+    ZmRef<Cxn> target{m_txCxn};
+    PacketTarget output{this, target.ptr(), gen, buf.ptr()};
+    auto reservation = packetSink(output);
+    auto sink = reservation.sink();
+    int n = ptls_tx_send_chunks(m_txTLS, &sink, buf->data(), buf->length);
     if (n) {
-      txError(gen, "ptls_tx_send()", n);
-      return false;
-    }
-    impl()->txProtected();
-    if (!finalizeTxBuf(pbuf, ZuMv(buf), m_txCxn.ptr())) {
-      txError(gen, "TLS Tx buffer finalization failed");
+      txError(gen, "ptls_tx_send_chunks()", n);
       return false;
     }
     return true;
   }
 
 public:
+  void txPacketized(const ZiIOBuf *, ZmRef<ZiIOBuf>) { }
+
   void sent(ZmRef<ZiTxBuf>, bool ok) {
     // The underlying connection closes its own failed socket after this
     // diagnostic. It may already have been displaced by another TLS session.
@@ -1106,44 +1080,17 @@ public:
   }
 
 private:
-  ZmRef<ZiIOBuf> txBuf(ptls_buffer_t &pbuf) {
-    ZiAssert(app()->txInvoked(), "Ztls", (),
-      "TLS Tx buffer allocation outside Tx thread", return nullptr);
-    ZmRef<ZiIOBuf> buf = txAllocator()->allocBuf(impl());
-    if (ZuUnlikely(buf->size < TxRecordCapacity))
-      buf->ensure(TxRecordCapacity);
-    auto base = buf->data_();
-    auto align_bits = txAlignBits();
-    if (!aligned(base, align_bits)) return nullptr;
-    ptls_buffer_init_tx(&pbuf, base, TxRecordCapacity);
-    pbuf.origin = buf.ptr();
-    pbuf.align_bits = align_bits;
-    return buf;
-  }
-
   void updateKey_1(uint64_t gen, bool requestUpdate) {
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS KeyUpdate outside Tx thread", return);
     if (ZuUnlikely(gen != m_tlsGen.load_() ||
 	!m_txTLS || m_txTLSGen != gen || m_txClosing)) return;
-    ptls_buffer_t pbuf;
-    auto buf = txBuf(pbuf);
-    if (ZuUnlikely(!buf)) {
-      txError(gen, "TLS KeyUpdate buffer geometry rejected");
-      return;
-    }
-    int n = ptls_tx_update_key(
-      m_txTLS, &pbuf, requestUpdate ? 1 : 0);
-    if (!assertTxBuf(pbuf, buf.ptr())) {
-      txError(gen, "TLS KeyUpdate buffer invariant failed");
-      return;
-    }
-    if (ZuUnlikely(n)) {
-      txError(gen, "ptls_tx_update_key()", n);
-      return;
-    }
-    if (!finalizeTxBuf(pbuf, ZuMv(buf), m_txCxn.ptr()))
-      txError(gen, "TLS KeyUpdate buffer finalization failed");
+    ZmRef<Cxn> target{m_txCxn};
+    PacketTarget output{this, target.ptr(), gen};
+    auto reservation = packetSink(output);
+    auto sink = reservation.sink();
+    int n = ptls_tx_key_chunks(m_txTLS, &sink, requestUpdate ? 1 : 0);
+    if (ZuUnlikely(n)) txError(gen, "ptls_tx_key_chunks()", n);
   }
 
   void closeTx_(ZmRef<Cxn> cxn, uint64_t gen) {
@@ -1151,19 +1098,12 @@ private:
       "TLS close outside Tx thread", return);
     if (gen == m_tlsGen.load_() && m_txTLS &&
 	m_txTLSGen == gen && !m_txClosing) {
-      ptls_buffer_t pbuf;
-      auto buf = txBuf(pbuf);
-      int n = buf ? ptls_tx_send_alert(
-	m_txTLS, &pbuf,
-	PTLS_ALERT_LEVEL_WARNING, PTLS_ALERT_CLOSE_NOTIFY) :
-	PTLS_ERROR_NO_MEMORY;
-      if (buf && !assertTxBuf(pbuf, buf.ptr())) {
-	txError(gen, "TLS alert buffer invariant failed");
-      } else if (ZuUnlikely(n)) {
-	txError(gen, "ptls_tx_send_alert()", n);
-      } else if (buf && !finalizeTxBuf(pbuf, ZuMv(buf), m_txCxn.ptr())) {
-	txError(gen, "TLS alert buffer finalization failed");
-      }
+      PacketTarget output{this, cxn.ptr(), gen};
+      auto reservation = packetSink(output);
+      auto sink = reservation.sink();
+      int n = ptls_tx_alert_chunks(m_txTLS, &sink,
+	PTLS_ALERT_LEVEL_WARNING, PTLS_ALERT_CLOSE_NOTIFY);
+      if (ZuUnlikely(n)) txError(gen, "ptls_tx_alert_chunks()", n);
       m_txClosing = true;
     }
     auto mx = cxn->mx();
@@ -1171,21 +1111,33 @@ private:
   }
 
   void txError(uint64_t gen, const char *message, bool origin = true) {
-    app()->rxRun([impl = ZmRef(impl()), gen, message, origin]() mutable {
+    ZmRef<Cxn> cxn;
+    if (app()->txInvoked() && gen == m_txTLSGen) {
+      m_txClosing = true;
+      if (origin) cxn = m_txCxn;
+    }
+    app()->rxRun([impl = ZmRef(impl()), cxn = ZuMv(cxn), gen, message, origin]() {
+      if (cxn) cxn->close();
       auto e = ZeEXCEPT(Error, "Ztls", message);
-      bool close = impl->m_txErrorFn && !impl->m_txErrorFn(e);
-      if (close && origin && gen == impl->tlsGen() && impl->m_cxn)
+      if (impl->m_txErrorFn) impl->m_txErrorFn(e);
+      if (origin && gen == impl->tlsGen() && impl->m_cxn)
 	impl->disconnect_(false);
     });
   }
 
   void txError(uint64_t gen, const char *function, int n) {
-    app()->rxRun([impl = ZmRef(impl()), gen, function, n]() mutable {
+    ZmRef<Cxn> cxn;
+    if (app()->txInvoked() && gen == m_txTLSGen) {
+      m_txClosing = true;
+      cxn = m_txCxn;
+    }
+    app()->rxRun([impl = ZmRef(impl()), cxn = ZuMv(cxn), gen, function, n]() {
+      if (cxn) cxn->close();
       auto e = ZeEXCEPT(Error, "Ztls", ([function, n](auto &s) {
 	s << function << ": " << strerror_(n);
       }));
-      bool close = impl->m_txErrorFn && !impl->m_txErrorFn(e);
-      if (close && gen == impl->tlsGen() && impl->m_cxn)
+      if (impl->m_txErrorFn) impl->m_txErrorFn(e);
+      if (gen == impl->tlsGen() && impl->m_cxn)
 	impl->disconnect_(false);
     });
   }
@@ -1198,7 +1150,6 @@ private:
       m_txTLS = nullptr;
       m_txCxn = nullptr;
       m_txTLSGen = 0;
-      m_txHeadroom = 0;
       m_txClosing = false;
     }
   }
@@ -1211,7 +1162,6 @@ private:
     m_txTLS = nullptr;
     m_txCxn = nullptr;
     m_txTLSGen = 0;
-    m_txHeadroom = 0;
     m_txClosing = false;
   }
 
@@ -1404,12 +1354,19 @@ protected:
       if (!asyncRetireTLS())
 	ptls_free(m_tls);
     }
+    m_plaintext.reset(app()->rxAllocator(), impl());
+    m_rxInput = nullptr;
+    m_rxPaused = false;
     m_tls = ptls_new(app()->ctx(), m_isServer);
     if (!m_tls) {
       app()->error_(ZeEXCEPT(Error, "Ztls", "ptls_new() failed"));
       return;
     }
     *ptls_get_data_ptr(m_tls) = impl();
+    if (ptls_receive_stream_check(m_tls)) {
+      app()->error_(ZeEXCEPT(Error, "Ztls", "selected TLS backend lacks serial decryption"));
+      return;
+    }
     auto oldState = state_();
     m_headroom = 0;
     m_txPending = false;
@@ -1520,6 +1477,9 @@ private:
   ptls_handshake_properties_t m_props{};
   AsyncJob		*m_asyncJob = nullptr;
   RxStream		m_rxStream;
+  ZmRef<ZiIOBuf>	m_rxInput;
+  Backend::PlaintextSink m_plaintext;
+  bool			m_rxPaused = false;
 
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
@@ -1527,7 +1487,6 @@ private:
   // Detached keys and their physical destination have the same Tx lifetime.
   ZmRef<Cxn>		m_txCxn;
   uint64_t		m_txTLSGen = 0;
-  unsigned		m_txHeadroom = 0;
   bool			m_txClosing = false;
 };
 
@@ -1664,7 +1623,7 @@ template <typename> friend class Client;
       ZiFailFn{ZmRef(impl()), [](Impl *impl, bool transient) {
 	auto app = impl->app();
 	app->rxRun([owner = ZmRef(impl), transient] { owner->setupFailed_(transient); });
-      }}, ZiIP{}, 0, ip, m_port, app()->rxAllocator());
+      }}, ZiIP{}, 0, ip, m_port, app()->socketRxAllocator());
   }
 
 private:
@@ -1890,10 +1849,15 @@ protected:
     if (!m_errorFn) m_errorFn = defaultErrorFn();
     if (!validate_(params)) return false;
     m_mx = params.mx();
-    if (params.rxAllocator()->mx() != m_mx ||
-	!allocator(params.txAllocator())) return false;
+    if (params.rxAllocator()->mx != m_mx ||
+	!allocator(params.txAllocator()) ||
+	params.txPacketAllocator()->mx != m_mx) return false;
     m_rxAllocator = params.rxAllocator();
+    m_socketRxAllocator = params.socketRxAllocator();
+    if (!m_socketRxAllocator)
+      m_socketRxAllocator = m_mx->allocator<Zi::IOBufType::RxTCP, ZiRxBuf, Ztls_::RxPacketCapacity>();
     m_txAllocator = params.txAllocator();
+    m_txPacketAllocator = params.txPacketAllocator();
     m_rxThread = thread_(params.rxThread(), m_mx->rxThread());
     m_txThread = thread_(params.txThread(), m_mx->txThread());
     m_asyncThread = params.asyncThread() ?
@@ -1917,10 +1881,28 @@ private:
       return false;
     }
     if (!params.rxAllocator() ||
-	params.rxAllocator()->type() != Zi::IOBufType::RxTLS ||
+	params.rxAllocator()->type != Zi::IOBufType::RxTLS ||
 	!params.txAllocator() ||
-	params.txAllocator()->type() != Zi::IOBufType::TxTLS) {
-      error_(ZeEXCEPT(Error, "Ztls", "TLS Rx/Tx allocators are required"));
+	params.txAllocator()->type != Zi::IOBufType::TxTLS ||
+	!params.txPacketAllocator() ||
+	params.txPacketAllocator()->type != Zi::IOBufType::TxTCP) {
+      error_(ZeEXCEPT(Error, "Ztls", "TLS Rx, plaintext Tx and packet Tx allocators are required"));
+      return false;
+    }
+    if (auto a = params.socketRxAllocator(); a &&
+	(a->mx != params.mx() || a->type != Zi::IOBufType::RxTCP)) {
+      error_(ZeEXCEPT(Error, "Ztls", "invalid TLS socket Rx allocator"));
+      return false;
+    }
+    if (!params.socketRxAllocator() &&
+	params.mx()->state() != ZmEngineState::Stopped) {
+      error_(ZeEXCEPT(Error, "Ztls",
+	"running multiplexer requires a prepared TLS socket Rx allocator"));
+      return false;
+    }
+    if (params.rxAllocator()->capacity() < Ztls_::RxRecordCapacity) {
+      error_(ZeEXCEPT(Error, "Ztls",
+	"RxTLS builtin capacity must be at least PTLS_RECEIVE_RECORD_CAPACITY"));
       return false;
     }
     unsigned rxThread = params.rxThread() ?
@@ -1993,7 +1975,33 @@ private:
     m_ctx.cipher_suites = m_cipherSuites;
     m_ctx.server_cipher_preference = 1;
     init_alpn(params.alpn());
-    return l(params);
+    if (!l(params)) return false;
+    auto available = [this](ptls_cipher_suite_t **suites) {
+      if (!suites) return true;
+      for (auto p = suites; *p; ++p) {
+	uint8_t key[PTLS_MAX_SECRET_SIZE]{}, iv[PTLS_MAX_IV_SIZE]{};
+	auto aead = ptls_aead_new_direct((*p)->aead, 1, key, iv);
+	bool ok = aead && aead->do_enc_begin &&
+	  aead->do_enc_chunk && aead->do_enc_end;
+	if (aead) ptls_aead_free(aead);
+	if (!ok) {
+	  error_(ZeEXCEPT(Error, "Ztls", "selected AEAD lacks serial record output"));
+	  return false;
+	}
+      }
+      return true;
+    };
+    if (!available(m_ctx.cipher_suites) || !available(m_ctx.tls12_cipher_suites))
+      return false;
+    auto probe = ptls_new(&m_ctx, 0);
+    if (!probe) return false;
+    int status = ptls_receive_stream_check(probe);
+    ptls_free(probe);
+    if (status) {
+      error_(ZeEXCEPT(Error, "Ztls", "selected AEAD lacks serial record decryption"));
+      return false;
+    }
+    return true;
   }
 
 public:
@@ -2037,12 +2045,14 @@ public:
 
   // Validate Tx TLS backing created by the underlying Mx.
   bool allocator(Zi::IOBufAllocator *a) {
-    return a && a->type() == Zi::IOBufType::TxTLS && m_mx &&
-      a->mx() == m_mx;
+    return a && a->type == Zi::IOBufType::TxTLS && m_mx &&
+      a->mx == m_mx;
   }
 
   Zi::IOBufAllocator *rxAllocator() const { return m_rxAllocator; }
+  Zi::IOBufAllocator *socketRxAllocator() const { return m_socketRxAllocator; }
   Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
+  Zi::IOBufAllocator *txPacketAllocator() const { return m_txPacketAllocator; }
 
   void linkConnected_() { }
   void linkDisconnected_() { }
@@ -2400,7 +2410,9 @@ private:
   const ZuID			m_id;
   using AllocatorRef = Zi::IOBufAllocator *;
   AllocatorRef		m_rxAllocator = nullptr;
+  AllocatorRef		m_socketRxAllocator = nullptr;
   AllocatorRef		m_txAllocator = nullptr;
+  AllocatorRef		m_txPacketAllocator = nullptr;
   ZiMultiplex			*m_mx = nullptr;
   ErrorFn			m_errorFn;
   ptls_context_t		m_ctx{};
@@ -2429,7 +2441,7 @@ private:
 // CRTP - implementation must conform to the following interface:
 #if 0
 struct App : public Client<App> {
-  using RxBufAlloc = Ztls::RxBufAlloc<BufSize>;
+  using RxBufAlloc = Ztls::RxBufAlloc<>;
   using TxBufAlloc = Ztls::TxBufAlloc<BufSize>;
 
   void exception(ZmRef<ZeEvent>); // optional
@@ -2559,7 +2571,7 @@ bool Client<App>::init(ClientParams params)
 // CRTP - implementation must conform to the following interface:
 #if 0
 struct App : public Server<App> {
-  using RxBufAlloc = Ztls::RxBufAlloc<BufSize>;
+  using RxBufAlloc = Ztls::RxBufAlloc<>;
   using TxBufAlloc = Ztls::TxBufAlloc<BufSize>;
 
   void exception(ZmRef<ZeEvent>); // optional
@@ -2649,7 +2661,7 @@ public:
 	[](App *app, const ZiCxnInfo &ci) -> ZiConnection * {
 	  return app->accepted(ci);
 	}},
-      app()->localIP(), app()->localPort(), app()->nAccepts(), this->rxAllocator(), ZiCxnOptions());
+      app()->localIP(), app()->localPort(), app()->nAccepts(), app()->socketRxAllocator(), ZiCxnOptions());
   }
 
   void stopListening() {

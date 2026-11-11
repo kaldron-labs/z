@@ -4,20 +4,22 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZmSingleton.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZfixTxMsg.hh>
 #include <zlib/ZfixIOBuf.hh>
 
 namespace Zfix {
 
-using TxBodyAlloc = Zi::IOBufBuiltin<TxBody, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zfix.TxBody">, ZiIOBuf_DefltMaxSize>;
-using BodyAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, TxBody, ZiIOBuf_DefltSize>;
+constexpr unsigned BodyMax = 1<<20;
+using BodyHeapID = ZuStringT<"Zfix.TxBody">;
+using BodyAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, TxBody,
+  ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, BodyHeapID>;
 
-unsigned TxBody::TxBodyAllocMax() { return TxBodyAlloc::MaxSize; }
+unsigned TxBody::TxBodyAllocMax() { return BodyMax; }
 
 uint64_t TxBody::memory() const
 {
-  return ZmHeapAllocSize<sizeof(TxBodyAlloc)>{} +
+  return ZmHeapAllocSize<sizeof(Zi::IOBufBuiltin<TxBody, BodyAllocator::Size, ZiIOBuf_Align>)>{} +
     (!builtin() ? Zfix::jumboBytes(size) : 0);
 }
 
@@ -27,15 +29,18 @@ ZmRef<TxBody> TxBody::start(ZuCSpan type, unsigned slots, uint64_t id, bool admi
   error = {};
   if (!type.length()) { error = {Fmt::ErrorCode::Required, 35}; return {}; }
   if (type.length() > limits.fieldBytes || type.length() >= limits.frameBytes ||
-      type.length() > TxBodyAlloc::MaxSize) {
+      type.length() > BodyMax) {
     error = {Fmt::ErrorCode::Size, 35}; return {};
   }
   uint64_t metadata = uint64_t(slots) * sizeof(Fmt::FieldPos);
-  if (metadata > TxBodyAlloc::MaxSize || type.length() > TxBodyAlloc::MaxSize - metadata) {
+  if (metadata > BodyMax ||
+      type.length() > BodyMax - metadata) {
     error = {Fmt::ErrorCode::Size}; return {};
   }
-  ZmRef<TxBody> buf = ZmSingleton<BodyAllocator,
-    ZmSingletonCleanup<ZmCleanup::Platform>>::instance()->allocBuf();
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App, TxBody,
+    ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, BodyHeapID>();
+  ZmRef<TxBody> buf = allocator->allocBuf();
   if (!buf->ensure(metadata + type.length())) { error = {Fmt::ErrorCode::Size}; return {}; }
   memcpy(buf->data() + metadata, type.data(), type.length());
   buf->m_slots = slots;
@@ -48,7 +53,7 @@ ZmRef<TxBody> TxBody::start(ZuCSpan type, unsigned slots, uint64_t id, bool admi
 ZuSpan<char> TxBody::grow(void *owner, unsigned used, unsigned needed)
 {
   auto buf = static_cast<TxBody *>(owner);
-  if (needed > TxBodyAlloc::MaxSize - buf->m_bodyOffset) return {};
+  if (needed > BodyMax - buf->m_bodyOffset) return {};
   buf->length = buf->m_bodyOffset + used;
   if (!buf->ensure(buf->m_bodyOffset + needed)) return {};
   return buf->storage();
@@ -89,7 +94,7 @@ TxFrame::TxFrame(ZmRef<ZiIOBuf> buf, ZuCSpan beginString, Fmt::Limits limits) :
 ZuSpan<char> TxFrame::grow(void *owner, unsigned used, unsigned needed)
 {
   auto buf = static_cast<ZiIOBuf *>(owner);
-  if (needed > ZiIOBuf_DefltMaxSize) return {};
+  if (needed > BodyMax) return {};
   // Initial envelope headroom may exceed an empty built-in buffer when an
   // application supplies a long BeginString. Those bytes are not initialized
   // until finish, so preserve only the part present in the current allocation.

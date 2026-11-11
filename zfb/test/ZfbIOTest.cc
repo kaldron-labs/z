@@ -5,12 +5,17 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZmSingleton.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZtScratch.hh>
 #include <zlib/Zfb.hh>
 #include <zlib/ZiTxStream.hh>
 
-using LocalBuf = Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
+static auto localBufAllocator()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<>();
+  return allocator;
+}
 
 using namespace ZuTestUtil;
 
@@ -32,7 +37,7 @@ static void addresses()
   in6_addr v6;
   memset(&v6, 0xa5, sizeof(v6));
   // Exercise each address alternative through the same pooled writer.
-  Zfb::IOBuilder<> builder{new LocalBuf{ZmSingleton<typename LocalBuf::Allocator>::instance()}};
+  Zfb::IOBuilder<> builder{localBufAllocator()->allocBuf()};
   auto check = [&builder](ZiIP ip) {
     ZuTestScope(check);
     builder.clear();
@@ -58,7 +63,7 @@ static void save(B &builder, ZuBSpan payload)
 static void pooled()
 {
   ZuTestScope(pooled);
-  ZmRef<ZiIOBuf> owner = new LocalBuf{ZmSingleton<typename LocalBuf::Allocator>::instance()};
+  ZmRef<ZiIOBuf> owner = localBufAllocator()->allocBuf();
   owner->skip = Zfb::IOBuilder<>::Align;
   void *tag = owner.ptr();
   owner->owner = tag;
@@ -91,7 +96,7 @@ static void pooled()
 static void alignment()
 {
   ZuTestScope(alignment);
-  ZmRef<ZiIOBuf> owner = new LocalBuf{ZmSingleton<typename LocalBuf::Allocator>::instance()};
+  ZmRef<ZiIOBuf> owner = localBufAllocator()->allocBuf();
   owner->skip = 32;
   Zfb::IOBuilder<32> builder{owner};
   auto bytes = builder.copyRoot(ZuBSpan{"abcdefgh"}, 32);
@@ -107,7 +112,7 @@ static void alignment()
 static void abandonment()
 {
   ZuTestScope(abandonment);
-  ZmRef<ZiIOBuf> owner = new LocalBuf{ZmSingleton<typename LocalBuf::Allocator>::instance()};
+  ZmRef<ZiIOBuf> owner = localBufAllocator()->allocBuf();
   unsigned n = owner->size<<2;
   {
     Zfb::IOBuilder<> builder{owner};
@@ -127,7 +132,9 @@ static void abandonment()
 static void framingTailRoom()
 {
   ZuTestScope(framingTailRoom);
-  ZmRef<ZiIOBuf> owner = new Zi::IOBufBuiltin<ZiIOBuf, 208, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, 208, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()};
+  ZiMultiplex mx;
+  auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 208>();
+  ZmRef<ZiIOBuf> owner = allocator->allocBuf();
   Zfb::IOBuilder<Zfb::Wire::MaxAlign> builder{owner};
   ::save(builder, ZuBSpan{"tail room"});
   auto buf = builder.buf();
@@ -146,7 +153,7 @@ static void framingTailRoom()
 static void runtimeAlign(unsigned align)
 {
   ZuTestScopeRT(runtimeAlign);
-  ZmRef<ZiIOBuf> owner = new LocalBuf{ZmSingleton<typename LocalBuf::Allocator>::instance()};
+  ZmRef<ZiIOBuf> owner = localBufAllocator()->allocBuf();
   unsigned initial = owner->size;
   owner->skip = align;
   Zfb::IOBuilder<Zfb::Wire::MaxAlign> builder{owner, align};
@@ -218,9 +225,9 @@ struct TxTest : public ZiTxStream<TxTest> {
   ZmRef<ZiIOBuf> allocBuf_(unsigned head) {
     ++allocs;
     if (reject) return nullptr;
-    allocated = new LocalBuf{ZmSingleton<typename LocalBuf::Allocator>::instance()};
+    allocated = localBufAllocator()->allocBuf();
     initialSize = allocated->size;
-    allocated->skip = head;
+    allocated->skip += head;
     return allocated;
   }
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool flush) {
@@ -279,7 +286,7 @@ static void ioRelocation()
     Message msg{{payload.data(), n}};
     TxTest stream;
     ZuCheckRT(Zfb::save(stream, msg) == Zfb::Error::OK);
-    ZmRef<ZiIOBuf> owner = new LocalBuf{ZmSingleton<typename LocalBuf::Allocator>::instance()};
+    ZmRef<ZiIOBuf> owner = localBufAllocator()->allocBuf();
     owner->skip = head;
     GrowStorage storage{owner, Align, stream.maxSize(), stream.tailRoom()};
     storage.tailRoom = stream.tailRoom();

@@ -66,7 +66,9 @@ static pid_t startServer_(
   }
 
   ::close(ready[0]);
-  int fd = ::open("/dev/null", O_RDWR);
+  ZtString<> serverLog;
+  serverLog << www << "/../server.log";
+  int fd = ::open(serverLog.data(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
   if (fd >= 0) {
     ::dup2(fd, 1);
     ::dup2(fd, 2);
@@ -91,8 +93,13 @@ static bool stopServer_(pid_t pid)
   ::kill(pid, SIGTERM);
   int status = 0;
   if (::waitpid(pid, &status, 0) != pid) return false;
-  if (WIFEXITED(status)) return WEXITSTATUS(status) == 0;
-  return WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM;
+  if (WIFEXITED(status)) {
+    if (WEXITSTATUS(status)) log_("QIR server exit status ", WEXITSTATUS(status));
+    return WEXITSTATUS(status) == 0;
+  }
+  if (WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM) return true;
+  if (WIFSIGNALED(status)) log_("QIR server signal ", WTERMSIG(status));
+  return false;
 }
 
 static bool writeFile_(ZuCSpan path, ZuCSpan body)

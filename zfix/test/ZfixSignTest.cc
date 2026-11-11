@@ -5,6 +5,8 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // Application HMAC policy; the codec imposes no cryptographic algorithm.
+#include "ZfixTestAllocator.hh"
+
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuHex.hh>
 #include <zlib/ZuPtr.hh>
@@ -20,7 +22,7 @@
 
 static ZmRef<ZiIOBuf> frameBuf() {
   using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
-  return ZmSingleton<Allocator>::instance()->allocBuf();
+  return ZfixTest::Allocator<Allocator>::get()->allocBuf();
 }
 
 using namespace ZuTestUtil;
@@ -253,7 +255,8 @@ static void policies()
   }
   // A signature larger than the initial pooled output forces sink relocation.
   ZtArray<uint8_t, ZtArrayHeapID<"Zfix.SignGrowth">> large;
-  large.length(Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Size + 1);
+  large.length(Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltVHMaxSize>::Size + 1);
   memset(large.data(), 0x01, large.length());
   VariableSign signer{ZuBSpan{large}};
   wire = txFrame(frameBuf(), *body, config(), context(), error, {}, signer);
@@ -422,9 +425,9 @@ friend ZuStringT<"Zfix.SignRaw"> ZmNHeapID(RawEndpoint *);
   }
   WireGeometry fixGeometryTx() const { return {}; }
   ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
-    ZmRef<ZiIOBuf> b = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-      ZiTxBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
-    b->skip = head; return b;
+    ZmRef<ZiIOBuf> b = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
+      ZiTxBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
+    b->skip += head; return b;
   }
   bool fixSendTx(ZmRef<ZiIOBuf> b) {
     records.push(ZuMv(b)); return true;

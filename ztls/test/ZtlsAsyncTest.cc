@@ -15,10 +15,6 @@ struct ClientApp : public Ztls::Client<ClientApp> {
   using RxBufAlloc = Ztls::RxBufAlloc<>;
   using TxBufAlloc = Ztls::TxBufAlloc<>;
 
-  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTLS,
-    typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTLS,
-    typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
   Zi::IOBufAllocator *rxBufAllocator = nullptr;
   Zi::IOBufAllocator *txBufAllocator = nullptr;
 
@@ -26,14 +22,17 @@ struct ClientApp : public Ztls::Client<ClientApp> {
   Params buffers(Params params) {
     if (!params.multiplex()) return params;
     if (!params.rxAllocator()) {
-      rxBufAllocator = params.multiplex()->template allocator<RxPolicy::BufType, typename RxPolicy::Buf::Buf,
-      RxPolicy::Size, RxPolicy::MaxSize, RxPolicy::Buf::Align, typename RxPolicy::Heap>();
+      rxBufAllocator = Link::rxAllocator(params.multiplex());
       params.rxAllocator(rxBufAllocator);
     }
     if (!params.txAllocator()) {
-      txBufAllocator = params.multiplex()->template allocator<TxPolicy::BufType, typename TxPolicy::Buf::Buf,
-      TxPolicy::Size, TxPolicy::MaxSize, TxPolicy::Buf::Align, typename TxPolicy::Heap>();
+      txBufAllocator = Link::txAllocator(params.multiplex());
       params.txAllocator(txBufAllocator);
+    }
+    if (!params.txPacketAllocator()) {
+      params.txPacketAllocator(params.multiplex()->template allocator<
+	Zi::IOBufType::TxTCP, Ztls::TxPacket, 1514, ZiIOBuf_DefltAlign,
+	ZuStringT<"Ztls.Test.Packet">>(1024));
     }
     return params;
   }
@@ -57,10 +56,6 @@ struct ServerApp : public Ztls::Server<ServerApp> {
   using RxBufAlloc = Ztls::RxBufAlloc<>;
   using TxBufAlloc = Ztls::TxBufAlloc<>;
 
-  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTLS,
-    typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTLS,
-    typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
   Zi::IOBufAllocator *rxBufAllocator = nullptr;
   Zi::IOBufAllocator *txBufAllocator = nullptr;
 
@@ -68,14 +63,17 @@ struct ServerApp : public Ztls::Server<ServerApp> {
   Params buffers(Params params) {
     if (!params.multiplex()) return params;
     if (!params.rxAllocator()) {
-      rxBufAllocator = params.multiplex()->template allocator<RxPolicy::BufType, typename RxPolicy::Buf::Buf,
-      RxPolicy::Size, RxPolicy::MaxSize, RxPolicy::Buf::Align, typename RxPolicy::Heap>();
+      rxBufAllocator = Link::rxAllocator(params.multiplex());
       params.rxAllocator(rxBufAllocator);
     }
     if (!params.txAllocator()) {
-      txBufAllocator = params.multiplex()->template allocator<TxPolicy::BufType, typename TxPolicy::Buf::Buf,
-      TxPolicy::Size, TxPolicy::MaxSize, TxPolicy::Buf::Align, typename TxPolicy::Heap>();
+      txBufAllocator = Link::txAllocator(params.multiplex());
       params.txAllocator(txBufAllocator);
+    }
+    if (!params.txPacketAllocator()) {
+      params.txPacketAllocator(params.multiplex()->template allocator<
+	Zi::IOBufType::TxTCP, Ztls::TxPacket, 1514, ZiIOBuf_DefltAlign,
+	ZuStringT<"Ztls.Test.Packet">>(1024));
     }
     return params;
   }
@@ -102,10 +100,6 @@ struct ServerApp : public Ztls::Server<ServerApp> {
 struct HubApp : public Ztls::Hub<HubApp> {
   using RxBufAlloc = Ztls::RxBufAlloc<>;
   using TxBufAlloc = Ztls::TxBufAlloc<>;
-  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTLS,
-    typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTLS,
-    typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
   Zi::IOBufAllocator *rxBufAllocator = nullptr;
   Zi::IOBufAllocator *txBufAllocator = nullptr;
 
@@ -113,14 +107,19 @@ struct HubApp : public Ztls::Hub<HubApp> {
   Params buffers(Params params) {
     if (!params.multiplex()) return params;
     if (!params.rxAllocator()) {
-      rxBufAllocator = params.multiplex()->template allocator<RxPolicy::BufType, typename RxPolicy::Buf::Buf,
-      RxPolicy::Size, RxPolicy::MaxSize, RxPolicy::Buf::Align, typename RxPolicy::Heap>();
+      rxBufAllocator = params.multiplex()->template allocator<Zi::IOBufType::RxTLS, ZiRxQueue::Node,
+	Ztls_::RxRecordCapacity, ZiIOBuf_Align, ZuStringT<"Ztls.RxBuf">>();
       params.rxAllocator(rxBufAllocator);
     }
     if (!params.txAllocator()) {
-      txBufAllocator = params.multiplex()->template allocator<TxPolicy::BufType, typename TxPolicy::Buf::Buf,
-      TxPolicy::Size, TxPolicy::MaxSize, TxPolicy::Buf::Align, typename TxPolicy::Heap>();
+      txBufAllocator = params.multiplex()->template allocator<Zi::IOBufType::TxTLS, ZiTxBuf,
+	Ztls_::TxRecordCapacity, ZiIOBuf_Align, ZuStringT<"Ztls.TxBuf">>();
       params.txAllocator(txBufAllocator);
+    }
+    if (!params.txPacketAllocator()) {
+      params.txPacketAllocator(params.multiplex()->template allocator<
+	Zi::IOBufType::TxTCP, Ztls::TxPacket, 1514, ZiIOBuf_DefltAlign,
+	ZuStringT<"Ztls.Test.Packet">>(1024));
     }
     return params;
   }
@@ -202,15 +201,13 @@ void testInitValidation()
     bool initialized = hub.init(app.buffers(Ztls::HubParams(&mx, "3", "4").alpn(alpn)));
     ZuCHECK(initialized, "client stream fixture hub init failed");
     if (initialized) {
-      using OutputPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTLS, ZiTxBuf, ZiIOBuf_DefltSize * 2>;
-      Zi::IOBufAllocator *output = mx.template allocator<OutputPolicy::BufType, typename OutputPolicy::Buf::Buf,
-      OutputPolicy::Size, OutputPolicy::MaxSize, OutputPolicy::Buf::Align, typename OutputPolicy::Heap>();
+      Zi::IOBufAllocator *output = mx.allocator<Zi::IOBufType::TxTLS, ZiTxBuf, ZiIOBuf_DefltSize * 2>();
       bool prepared = hub.allocator(output);
       ZuCHECK(prepared, "client stream fixture allocator registration failed");
       ZuCHECK(!hub.allocator(app.rxBufAllocator), "RxTLS allocator accepted for Tx");
       if (prepared) {
 	auto buf = output->allocBuf();
-	ZuCHECK(buf->allocator == output && output->mx() == &mx,
+	ZuCHECK(buf && buf->allocator() == output && output->mx == &mx,
 	  "additional TLS output lost its registered allocator");
 	ClientApp::Link link(&app);
 	ZuCHECK(link.stream() == &link, "TLS client bidi stream is not link");
@@ -306,10 +303,76 @@ void testInitValidation()
   ZiLog::stop();
 }
 
+void testPreparedAllocators()
+{
+  ZuTestScope(testPreparedAllocators);
+  ZiMultiplex mx, other;
+  auto rx = mx.allocator<Zi::IOBufType::RxTLS, ZiRxQueue::Node, Ztls_::RxRecordCapacity>();
+  auto tx = mx.allocator<Zi::IOBufType::TxTLS, ZiTxBuf, Ztls_::TxRecordCapacity>();
+  auto txPacket = mx.allocator<Zi::IOBufType::TxTCP, Ztls::TxPacket, 1514>();
+  auto socket = mx.allocator<Zi::IOBufType::RxTCP, ZiRxQueue::Node, Ztls_::RxPacketCapacity>();
+  auto wrong = mx.allocator<Zi::IOBufType::App, ZiRxQueue::Node>();
+  auto otherSocket = other.allocator<Zi::IOBufType::RxTCP>();
+  auto params = [&mx, rx, tx, txPacket]() {
+    return Ztls::HubParams{&mx}.rxAllocator(rx).txAllocator(tx).txPacketAllocator(txPacket)
+      .errorFn(Ztls::ErrorFn{[](ZeException) { }});
+  };
+
+  {
+    auto small = mx.allocator<Zi::IOBufType::RxTLS, ZiRxQueue::Node, 1024>();
+    HubApp app;
+    auto p = params();
+    p.rxAllocator(small).socketRxAllocator(socket);
+    ZuCheck(!app.init(ZuMv(p)));
+  }
+  for (auto invalid : {wrong, otherSocket}) {
+    HubApp app;
+    auto p = params();
+    p.socketRxAllocator(invalid);
+    ZuCheck(!app.init(ZuMv(p)));
+  }
+  {
+    HubApp app;
+    auto p = params();
+    p.socketRxAllocator(socket);
+    bool initialized = app.init(ZuMv(p));
+    ZuCheck(initialized);
+    if (initialized) {
+      ZuCheck(app.socketRxAllocator() == socket);
+      app.final();
+    }
+  }
+
+  // A later origin reuses all four roles without registering on a running Mx.
+  bool started = mx.start();
+  ZuCheck(started);
+  if (!started) return;
+  {
+    HubApp app;
+    auto p = params();
+    p.socketRxAllocator(socket);
+    bool initialized = app.init(ZuMv(p));
+    ZuCheck(initialized);
+    if (initialized) {
+      ZuCheck(app.rxAllocator() == rx && app.txAllocator() == tx);
+      ZuCheck(app.txPacketAllocator() == txPacket &&
+	tx->type == Zi::IOBufType::TxTLS && txPacket->type == Zi::IOBufType::TxTCP);
+      ZuCheck(app.socketRxAllocator() == socket);
+      app.final();
+    }
+  }
+  {
+    HubApp app;
+    ZuCheck(!app.init(params()));
+  }
+  ZuCheck(mx.stop());
+}
+
 int main(int argc, char **argv)
 {
   ZuTestUtil::parse(argc, argv);
 
   ZuTestMain();
   ZuTestCall(testInitValidation);
+  ZuTestCall(testPreparedAllocators);
 }

@@ -6,6 +6,8 @@
 
 // HTTP native transport trait and public configuration contract
 
+#include "ZhttpTestAllocator.hh"
+
 #include <string.h>
 
 #ifndef _WIN32
@@ -16,9 +18,11 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmSingleton.hh>
+#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmPolymorph.hh>
+#include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZiResolver.hh>
 #include <zlib/ZiRxStream.hh>
@@ -79,18 +83,15 @@ void drainBatches()
 {
   ZuTestScopeRT(drainBatches);
   using Header = Zhttp::Transport_::TCPHeader;
-  using Alloc = Zi::IOBufBuiltin<
-    Header,
-    Zhttp::Transport_::H1BufSize,
-    ZiIOBuf_DefltAlign,
-    ZuStringT<"Zhttp.Test.DrainHeader">,
-    Zhttp::Transport_::H1BufMax>;
+  using Alloc = Zi::IOBufBuiltinAllocator<
+    Zi::IOBufType::App, Header, Zhttp::Transport_::H1BufSize, ZiIOBuf_DefltAlign,
+    ZuStringT<"Zhttp.Test.DrainHeader">, Zhttp::Transport_::H1BufMax>;
   DrainApp app;
   ZmRef<DrainLink> link = new DrainLink{&app};
   // Two Tx drain batches precede either Rx delivery. Each callback belongs
   // only to its own batch, even while the previous batch still owns storage.
   for (unsigned i = 0; i < 2; ++i) {
-    ZmRef<Header> header = new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()};
+    ZmRef<Header> header = ZhttpTest::Allocator<Alloc>::get()->allocBuf();
     header->link = ZmRef<ZmPolymorph>{link.ptr()};
     header->endIO();
     header->appTerminal = true;
@@ -110,10 +111,92 @@ void drainBatches()
   ZuCheckRT(link->refCount() == 1 && !app.posts.length());
 }
 
+struct CleanupApp {
+  ZiMultiplex *multiplex;
+  ZmAtomic<unsigned> destroyed = 0, notified = 0;
+  ZmSemaphore done;
+
+  ZiMultiplex *mx() { return multiplex; }
+  unsigned rxThread() const { return 3; }
+  template <typename L> void txRun(L &&fn) {
+    multiplex->run(ZuFwd<L>(fn), 4);
+  }
+};
+struct CleanupBase : ZmPolymorph {
+  CleanupApp *application;
+  CleanupBase(CleanupApp *app) : application{app} { }
+  CleanupApp *app() { return application; }
+};
+struct CleanupLink;
+using CleanupProtocol = Zhttp::Transport_::TCPProtocol<
+  CleanupBase, CleanupLink, Zhttp::Transport_::Traits<Zhttp::TCP>>;
+struct CleanupLink : ZmNHeap<CleanupLink>, CleanupProtocol {
+  friend inline ZuStringT<"Zhttp.Test.CleanupLink"> ZmNHeapID(CleanupLink *);
+  using CleanupProtocol::CleanupProtocol;
+  void tcpDrained() { }
+};
+struct CleanupCxn : ZmNHeap<CleanupCxn>, ZiConnection {
+  friend inline ZuStringT<"Zhttp.Test.CleanupCxn"> ZmNHeapID(CleanupCxn *);
+  ZmAtomic<unsigned> *destroyed;
+  ZmRef<CleanupLink> link;
+
+  CleanupCxn(ZiMultiplex *mx, ZmAtomic<unsigned> *destroyed_,
+      ZmRef<CleanupLink> link_) :
+    ZiConnection{mx, ZiCxnInfo{
+      .type = ZiCxnType::TCPOut, .socket = Zi::nullSocket()}},
+    destroyed{destroyed_}, link{ZuMv(link_)} { }
+  ~CleanupCxn() { *destroyed = 1; }
+  void connected(ZiRxContext &) override { }
+  void disconnected(bool) override { }
+};
+
+void cleanupDrain()
+{
+  ZuTestScopeRT(cleanupDrain);
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &params) { params.nThreads(4); })
+    .rxThread(1).txThread(2)};
+  CleanupApp app{&mx};
+  bool started = mx.start();
+  ZuCheckRT(started);
+  if (!started) return;
+  ZmSemaphore entered, release, queued, txBarrier, rxBarrier;
+  mx.txRun([&entered, &release] { entered.post(); release.wait(); });
+  bool blocked = entered.timedwait(Zm::now(5)) == 0;
+  ZuCheckRT(blocked);
+  if (!blocked) { release.post(); mx.stop(); return; }
+
+  ZmRef<CleanupLink> link = new CleanupLink{&app};
+  ZmRef<ZiConnection> cxn = new CleanupCxn{&mx, &app.destroyed, link};
+  app.txRun([link, cxn = ZuMv(cxn), &queued]() mutable {
+    link->cleanupTCP_(ZuMv(cxn));
+    link->drainTCP(false, [](ZmRef<CleanupLink> link, bool) {
+      auto app = link->app();
+      app->notified = 1;
+      app->done.post();
+    });
+    queued.post();
+  });
+  bool submitted = queued.timedwait(Zm::now(5)) == 0;
+  ZuCheckRT(submitted);
+  app.txRun([&txBarrier] { txBarrier.post(); });
+  bool checkedTx = txBarrier.timedwait(Zm::now(5)) == 0;
+  mx.run([&rxBarrier] { rxBarrier.post(); }, app.rxThread());
+  bool checkedRx = rxBarrier.timedwait(Zm::now(5)) == 0;
+  // Even an empty physical cleanup must hold the hub's stop notification.
+  ZuCheckRT(checkedTx && checkedRx && !app.notified.load_());
+  release.post();
+  bool drained = app.done.timedwait(Zm::now(5)) == 0;
+  ZuCheckRT(drained && app.destroyed.load_());
+  mx.run([&rxBarrier] { rxBarrier.post(); }, app.rxThread());
+  bool settled = rxBarrier.timedwait(Zm::now(5)) == 0;
+  ZuCheckRT(settled && link->refCount() == 1);
+  mx.stop();
+}
+
 struct Tx : ZiTxStream<Tx> {
   Tx() : ZiTxStream<Tx>{128, 0, 0} { }
   ZmRef<ZiIOBuf> allocBuf_(unsigned) {
-    ZmRef<ZiIOBuf> buffer = new Zhttp::BodyBufAlloc{ZmSingleton<typename Zhttp::BodyBufAlloc::Allocator>::instance()};
+    ZmRef<ZiIOBuf> buffer = ZhttpTest::Allocator<Zhttp::BodyBufAlloc>::get()->allocBuf();
     return buffer;
   }
   bool appendBuf(ZmRef<ZiIOBuf> buf) {
@@ -410,12 +493,9 @@ using Contract =
 ZuAssert(sizeof(Contract) == 1);
 
 using TxBufAlloc =
-  Zi::IOBufBuiltin<
-    Zhttp::Transport_::TxBufNode,
-    64,
-    ZiIOBuf_DefltAlign,
-    ZuStringT<"Zhttp.Contract.TxBuf">,
-    256>;
+  Zi::IOBufBuiltinAllocator<
+    Zi::IOBufType::App, Zhttp::Transport_::TxBufNode, 64, ZiIOBuf_DefltAlign,
+    ZuStringT<"Zhttp.Contract.TxBuf">, 256>;
 
 struct AppLink {
   ZuDerive(Wire, (ZtString<ZtStringHeapID<"Zhttp.Contract.StreamWire">>));
@@ -437,8 +517,8 @@ struct AppLink {
     ~Tx() { this->flush(); }
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-      ZmRef<ZiIOBuf> buf = new TxBufAlloc{ZmSingleton<typename TxBufAlloc::Allocator>::instance()};
-      buf->skip = headRoom;
+      ZmRef<ZiIOBuf> buf = ZhttpTest::Allocator<TxBufAlloc>::get()->allocBuf();
+      buf->skip += headRoom;
       buf->length = 0;
       return buf;
     }
@@ -505,8 +585,8 @@ struct TxLink {
     ~Stream() { this->flush(); }
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-      ZmRef<ZiIOBuf> buf = new TxBufAlloc{ZmSingleton<typename TxBufAlloc::Allocator>::instance()};
-      buf->skip = headRoom;
+      ZmRef<ZiIOBuf> buf = ZhttpTest::Allocator<TxBufAlloc>::get()->allocBuf();
+      buf->skip += headRoom;
       buf->length = 0;
       return buf;
     }
@@ -629,8 +709,8 @@ struct H2Native {
   template <bool> ZmRef<ZiIOBuf> txAllocBuf(unsigned headRoom) {
     // Admission can reject a request before any Z heap allocation.
     if (!admitOK) return nullptr;
-    ZmRef<ZiIOBuf> buf = new TxBufAlloc{ZmSingleton<typename TxBufAlloc::Allocator>::instance()};
-    buf->skip = headRoom;
+    ZmRef<ZiIOBuf> buf = ZhttpTest::Allocator<TxBufAlloc>::get()->allocBuf();
+    buf->skip += headRoom;
     buf->length = 0;
     return buf;
   }
@@ -1098,13 +1178,11 @@ void testRetainedBufAdmission()
   ZhttpContractTCP_::Tx lower;
   Zhttp::RetainedBudget budget{.max = 4};
   Zhttp::RetainedTx tx{lower, budget};
-  ZmRef<ZiIOBuf> source = new Zhttp::BodyBufAlloc{
-    ZmSingleton<typename Zhttp::BodyBufAlloc::Allocator>::instance()};
+  ZmRef<ZiIOBuf> source = ZhttpTest::Allocator<Zhttp::BodyBufAlloc>::get()->allocBuf();
   *source << "abcdef";
   source->advance(1); source->length = 3;
   ZuCheck(tx.appendBuf(source));
-  ZmRef<ZiIOBuf> excess = new Zhttp::BodyBufAlloc{
-    ZmSingleton<typename Zhttp::BodyBufAlloc::Allocator>::instance()};
+  ZmRef<ZiIOBuf> excess = ZhttpTest::Allocator<Zhttp::BodyBufAlloc>::get()->allocBuf();
   *excess << "xy";
   ZuCheck(!tx.appendBuf(excess) && tx.failed());
   ZuCheck(!tx.appendBuf(source) && !tx.commit() && !lower.wire);
@@ -1131,12 +1209,12 @@ void testRetainedTCPBatch()
   Zhttp::RetainedBudget budget{.max = 512};
   Zhttp::RetainedTx<decltype(lower), true> header{lower, budget}, body{lower, budget};
   header << "HTTP-header";
-  ZmRef<ZiIOBuf> source = new Zhttp::BodyBufAlloc{ZmSingleton<typename Zhttp::BodyBufAlloc::Allocator>::instance()};
+  ZmRef<ZiIOBuf> source = ZhttpTest::Allocator<Zhttp::BodyBufAlloc>::get()->allocBuf();
   source->skip = 5;
   *source << "xpayloady";
   source->advance(1); source->length = 7;
   ZuCheck(body.appendBuf(source));
-  ZmRef<ZiIOBuf> whole = new Zhttp::BodyBufAlloc{ZmSingleton<typename Zhttp::BodyBufAlloc::Allocator>::instance()};
+  ZmRef<ZiIOBuf> whole = ZhttpTest::Allocator<Zhttp::BodyBufAlloc>::get()->allocBuf();
   whole->ensure(257);
   whole->length = 257;
   memset(whole->data(), 'x', whole->length);
@@ -1288,6 +1366,28 @@ void testParams()
       tlsSrv.alpn().length() == 1 &&
       tlsSrv.alpn()[0] == "http/1.1",
     "TLS server defaults mismatch");
+
+  ZiMultiplex mx;
+  auto rx = TLS::registerRx(&mx);
+  auto tx = TLS::registerTx(&mx);
+  auto txPacket = TLS::registerTxPacket(&mx);
+  auto socketRx = TCP::registerRx(&mx);
+  auto prepared = Zhttp::TLSConfig{}.rxAllocator(rx).txAllocator(tx).txPacketAllocator(txPacket)
+    .socketRxAllocator(socketRx);
+  auto preparedCli = TLS::clientParams(hub, prepared);
+  auto preparedSrv = TLS::serverParams(hub, prepared);
+  auto preparedH2 = Zhttp::H2Config{}.tls([&prepared](auto &tls) { tls = prepared; });
+  auto preparedH2Cli = Zhttp::TLS_::clientParams(hub, preparedH2);
+  auto preparedH2Srv = Zhttp::TLS_::serverParams(hub, preparedH2);
+  auto checkPrepared = [rx, tx, txPacket, socketRx](const auto &params) {
+    return params.rxAllocator() == rx && params.txAllocator() == tx &&
+      params.txPacketAllocator() == txPacket &&
+      tx->type == Zi::IOBufType::TxTLS && txPacket->type == Zi::IOBufType::TxTCP &&
+      params.socketRxAllocator() == socketRx;
+  };
+  ZuCHECK(checkPrepared(preparedCli) && checkPrepared(preparedSrv) &&
+      checkPrepared(preparedH2Cli) && checkPrepared(preparedH2Srv),
+    "H1/H2 client/server preserve all prepared TLS allocator roles");
 
   auto force = Zhttp::H2Config{}.tls([](auto &tls) {
     tls.caPath("h2-ca.pem").certPath("h2-cert.pem").keyPath("h2-key.pem")
@@ -1465,8 +1565,8 @@ void testBodyRx()
   ZuTestScope(testBodyRx);
 
   auto buf = [](ZuCSpan value) {
-    ZmRef<Zhttp::BodyRx::Queue::Node> buf = new Zhttp::BodyRx::BufAlloc{
-      ZmSingleton<typename Zhttp::BodyRx::BufAlloc::Allocator>::instance()};
+    ZmRef<Zhttp::BodyRx::Queue::Node> buf =
+      ZhttpTest::Allocator<Zhttp::BodyRx::BufAlloc>::get()->allocBuf();
     auto io = static_cast<ZiIOBuf *>(buf.ptr());
     memcpy(io->data(), value.data(), value.length());
     buf->length = value.length();
@@ -1538,8 +1638,7 @@ void testBodySplitOwnership()
 {
   ZuTestScope(testBodySplitOwnership);
 
-  ZmRef<ZiRxQueue::Node> node = new Zhttp::BodyRx::BufAlloc{
-    ZmSingleton<typename Zhttp::BodyRx::BufAlloc::Allocator>::instance()};
+  ZmRef<ZiRxQueue::Node> node = ZhttpTest::Allocator<Zhttp::BodyRx::BufAlloc>::get()->allocBuf();
   node->append(reinterpret_cast<const uint8_t *>("HbodyTnext"), 10);
   auto backing = node.ptr();
   auto payload = node->span().data() + 1;
@@ -1554,8 +1653,9 @@ void testBodySplitOwnership()
     "body split must preserve exact payload bytes and the original wire tail");
   ZmRef<ZiIOBuf> extracted;
   ZuCHECK(body.rx().extract([](ZuBSpan) { return int64_t(4); },
-      []() { return new Zhttp::BodyRx::BufAlloc{
-        ZmSingleton<typename Zhttp::BodyRx::BufAlloc::Allocator>::instance()}; }, extracted) == 4 && extracted &&
+      []() {
+	return ZhttpTest::Allocator<Zhttp::BodyRx::BufAlloc>::get()->allocBuf();
+      }, extracted) == 4 && extracted &&
       extracted.ptr() != backing && extracted->cspan() == "body",
     "contiguous body extraction must own the smaller copied payload");
   wire.clean();
@@ -1585,8 +1685,8 @@ void testStream()
     "logical-stream Tx terminal forwarding mismatch");
 
   auto buf = [](ZuCSpan value) {
-    ZmRef<Zhttp::BodyRx::Queue::Node> buf = new Zhttp::BodyRx::BufAlloc{
-      ZmSingleton<typename Zhttp::BodyRx::BufAlloc::Allocator>::instance()};
+    ZmRef<Zhttp::BodyRx::Queue::Node> buf =
+      ZhttpTest::Allocator<Zhttp::BodyRx::BufAlloc>::get()->allocBuf();
     auto io = static_cast<ZiIOBuf *>(buf.ptr());
     memcpy(io->data(), value.data(), value.length());
     buf->length = value.length();
@@ -1758,6 +1858,7 @@ int main(int argc, char **argv)
   ZuTestCall(ZhttpContractTCP_::intrusive);
   ZuTestCall(ZhttpContractTCP_::parser);
   ZuTestCall(ZhttpContractTCP_::drainBatches);
+  ZuTestCall(ZhttpContractTCP_::cleanupDrain);
   ZuTestCall(testTraits);
   ZuTestCall(testParams);
   ZuTestCall(testMetadata);

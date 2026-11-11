@@ -146,6 +146,13 @@ public:
     send(node->data());
   }
 
+  // TLS replaces the final plaintext record with its final ciphertext packet
+  // before publication; existing per-packet completion then retires the frame.
+  void packetized_(const ZiIOBuf *plain, ZmRef<ZiIOBuf> packet) {
+    if (m_submitting && m_submitting->frame.ptr() == plain)
+      m_submitting->frame = ZuMv(packet);
+  }
+
   bool record_(const ZiIOBuf *buf, bool ok) {
     auto node = m_queue.headPtr();
     if (!m_live || !node || buf != node->data().frame.ptr() ||
@@ -184,7 +191,10 @@ private:
   void send(WireFrame &item) {
     if (!m_live) return;
     if (!m_geometry.size) {
-      if (!impl()->recordSend(item.frame)) fail();
+      m_submitting = &item;
+      bool ok = impl()->recordSend(item.frame);
+      m_submitting = nullptr;
+      if (!ok) fail();
       return;
     }
     unsigned offset = 0;
@@ -196,11 +206,18 @@ private:
       if (!buf || buf->size < m_geometry.size) { fail(); return; }
       unsigned length = size - offset;
       if (length > capacity) length = capacity;
-      buf->skip = m_geometry.head; buf->length = 0;
+      if (buf->skip < m_geometry.head) buf->skip = m_geometry.head;
+      if (uint64_t(buf->skip) + length + m_geometry.tail > buf->size) {
+	fail(); return;
+      }
+      buf->length = 0;
       if (!buf->append(data + offset, length)) { fail(); return; }
       offset += length;
       if (offset == size) item.frame = buf;
-      if (!impl()->recordSend(ZuMv(buf))) { fail(); return; }
+      m_submitting = &item;
+      bool ok = impl()->recordSend(ZuMv(buf));
+      m_submitting = nullptr;
+      if (!ok) { fail(); return; }
     }
   }
 
@@ -211,6 +228,7 @@ private:
   WireGeometry		m_geometry;
   WireQueue		m_queue;
   WireQueue::Node	*m_staged = nullptr;
+  WireFrame	*m_submitting = nullptr;
   uint64_t		m_connection = 0;
   uint64_t		m_bytes = 0;
   bool			m_live = false;

@@ -472,6 +472,7 @@ void fallback()
 
   if (agentInited) agent.stop();
   if (agentInited) agent.final();
+  mx.stop();
 
   Resolver noReplayResolver;
   ClientApp noReplayClient;
@@ -485,7 +486,9 @@ void fallback()
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port});
   noReplayClient.discoveryResolver(&noReplayResolver.ops);
   ZuCHECK(noReplayInited, "initialize no-replay prefer-mode agent");
-  bool noReplayUp = noReplayInited && noReplayClient.start();
+  mxUp = mx.start();
+  ZuCHECK(mxUp, "restart multiplexer for no-replay agent");
+  bool noReplayUp = mxUp && noReplayInited && noReplayClient.start();
   ZuCHECK(noReplayUp, "start no-replay prefer-mode agent");
   if (noReplayUp) {
     auto request = noReplayClient.request();
@@ -514,6 +517,7 @@ void fallback()
   }
   if (noReplayInited) noReplayClient.stop();
   if (noReplayInited) noReplayClient.final();
+  mx.stop();
 
   Resolver cacheResolver;
   ClientApp cachedClient;
@@ -531,7 +535,9 @@ void fallback()
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port});
   cachedClient.discoveryResolver(&cacheResolver.ops);
   ZuCHECK(cacheInited, "initialize cached-routing agent");
-  bool cacheUp = cacheInited && cachedClient.start();
+  mxUp = mx.start();
+  ZuCHECK(mxUp, "restart multiplexer for cached-routing agent");
+  bool cacheUp = mxUp && cacheInited && cachedClient.start();
   ZuCHECK(cacheUp, "start cached-routing agent");
   if (cacheUp) {
     auto request0 = cachedClient.request();
@@ -571,6 +577,7 @@ void fallback()
     "Alt-Svc response wave completes before client teardown");
   if (cacheInited) cachedClient.stop();
   if (cacheInited) cachedClient.final();
+  mx.stop();
 
   ClientApp forcedClient;
   auto forcedDefaults = Zhttp::Config()
@@ -586,7 +593,9 @@ void fallback()
       .protocol(Zhttp::ProtoPolicy::ForceH3).blindH3(true)
       .tls(false).quic(true));
   ZuCHECK(forcedInited, "initialize forced-H3 pool override");
-  bool forcedUp = forcedInited && forcedClient.start();
+  mxUp = mx.start();
+  ZuCHECK(mxUp, "restart multiplexer for forced-H3 agent");
+  bool forcedUp = mxUp && forcedInited && forcedClient.start();
   ZuCHECK(forcedUp, "start forced-H3 agent");
   if (forcedUp) {
     auto request = forcedClient.request();
@@ -604,6 +613,7 @@ void fallback()
     "forced-H3 response completes before client teardown");
   if (forcedInited) forcedClient.stop();
   if (forcedInited) forcedClient.final();
+  mx.stop();
 
   ClientApp disabledClient;
   auto disabledDefaults = Zhttp::Config()
@@ -623,7 +633,9 @@ void fallback()
       .h2Policy(Zhttp::H2Policy::Force)
       .tls(true).quic(false));
   ZuCHECK(disabledInited, "initialize H3-disabled pool override");
-  bool disabledUp = disabledInited && disabledClient.start();
+  mxUp = mx.start();
+  ZuCHECK(mxUp, "restart multiplexer for H3-disabled agent");
+  bool disabledUp = mxUp && disabledInited && disabledClient.start();
   ZuCHECK(disabledUp, "start H3-disabled agent");
   if (disabledUp) {
     auto request = disabledClient.request();

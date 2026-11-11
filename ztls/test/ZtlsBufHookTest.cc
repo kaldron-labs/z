@@ -158,7 +158,6 @@ struct TestState {
   ZmAtomic<uint64_t>	client_wire_bytes{0};
   ZmAtomic<uint64_t>	server_wire_count{0};
   ZmAtomic<uint64_t>	server_wire_bytes{0};
-  ZmAtomic<Ztc::Link *>	server_link{nullptr};
   Ztc::QueueTelemetry	client_rx;
   Ztc::QueueTelemetry	client_tx;
   Ztc::QueueTelemetry	server_rx;
@@ -427,14 +426,10 @@ void send_payload(Link *link, const ZtArray<uint8_t> &payload)
 
 template <typename State>
 struct BaseClient : public Ztls::Client<BaseClient<State>> {
-  using RxBufAlloc = Ztls::RxBufAlloc<BufSize, MaxSize>;
-  using TxBufAlloc = Ztls::TxBufAlloc<BufSize, MaxSize>;
+  using RxBufAlloc = Ztls::RxBufAlloc<Ztls_::RxRecordCapacity, MaxSize>;
+  using TxBufAlloc = Ztls::TxBufAlloc<>;
   using Base = Ztls::Client<BaseClient<State>>;
 
-  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTLS,
-    typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTLS,
-    typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
   Zi::IOBufAllocator *rxBufAllocator = nullptr;
   Zi::IOBufAllocator *txBufAllocator = nullptr;
 
@@ -442,14 +437,17 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
   Params buffers(Params params) {
     if (!params.multiplex()) return params;
     if (!params.rxAllocator()) {
-      rxBufAllocator = params.multiplex()->template allocator<RxPolicy::BufType, typename RxPolicy::Buf::Buf,
-      RxPolicy::Size, RxPolicy::MaxSize, RxPolicy::Buf::Align, typename RxPolicy::Heap>();
+      rxBufAllocator = Link::rxAllocator(params.multiplex());
       params.rxAllocator(rxBufAllocator);
     }
     if (!params.txAllocator()) {
-      txBufAllocator = params.multiplex()->template allocator<TxPolicy::BufType, typename TxPolicy::Buf::Buf,
-      TxPolicy::Size, TxPolicy::MaxSize, TxPolicy::Buf::Align, typename TxPolicy::Heap>();
+      txBufAllocator = Link::txAllocator(params.multiplex());
       params.txAllocator(txBufAllocator);
+    }
+    if (!params.txPacketAllocator()) {
+      params.txPacketAllocator(params.multiplex()->template allocator<
+	Zi::IOBufType::TxTCP, Ztls::TxPacket, 1514, ZiIOBuf_DefltAlign,
+	ZuStringT<"Ztls.Test.Packet">>(1024));
     }
     return params;
   }
@@ -507,6 +505,10 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
     }
     void sent(ZmRef<ZiTxBuf> buf, bool ok) {
       auto &state = this->app()->state;
+      BaseLink::sent(buf, ok);
+      if (buf->allocator() != this->txPacketAllocator() ||
+	  buf->allocator() == this->txAllocator() || buf->skip)
+	state.fail("TLS wire output lost its separate kernel packet backing");
       if (!ok) {
 	state.fail("client TLS wire send failed");
 	return;
@@ -527,10 +529,6 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
 	if (complete && (state.multi || !state.client_closed.xch(1))) {
 	  if (!state.multi) {
 	    queue_telemetry(*this, state.client_rx, state.client_tx);
-	    if (auto serverLink = state.server_link.load_()) {
-	      queue_telemetry(
-		*serverLink, state.server_rx, state.server_tx);
-	    }
 	  }
 	  if (!state.serverDisconnectAfterSend) this->disconnect_();
 	}
@@ -550,14 +548,10 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
 
 template <typename State>
 struct BaseServer : public Ztls::Server<BaseServer<State>> {
-  using RxBufAlloc = Ztls::RxBufAlloc<BufSize, MaxSize>;
-  using TxBufAlloc = Ztls::TxBufAlloc<BufSize, MaxSize>;
+  using RxBufAlloc = Ztls::RxBufAlloc<Ztls_::RxRecordCapacity, MaxSize>;
+  using TxBufAlloc = Ztls::TxBufAlloc<>;
   using Base = Ztls::Server<BaseServer<State>>;
 
-  using RxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTLS,
-    typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
-  using TxPolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTLS,
-    typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
   Zi::IOBufAllocator *rxBufAllocator = nullptr;
   Zi::IOBufAllocator *txBufAllocator = nullptr;
 
@@ -565,14 +559,17 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
   Params buffers(Params params) {
     if (!params.multiplex()) return params;
     if (!params.rxAllocator()) {
-      rxBufAllocator = params.multiplex()->template allocator<RxPolicy::BufType, typename RxPolicy::Buf::Buf,
-      RxPolicy::Size, RxPolicy::MaxSize, RxPolicy::Buf::Align, typename RxPolicy::Heap>();
+      rxBufAllocator = Link::rxAllocator(params.multiplex());
       params.rxAllocator(rxBufAllocator);
     }
     if (!params.txAllocator()) {
-      txBufAllocator = params.multiplex()->template allocator<TxPolicy::BufType, typename TxPolicy::Buf::Buf,
-      TxPolicy::Size, TxPolicy::MaxSize, TxPolicy::Buf::Align, typename TxPolicy::Heap>();
+      txBufAllocator = Link::txAllocator(params.multiplex());
       params.txAllocator(txBufAllocator);
+    }
+    if (!params.txPacketAllocator()) {
+      params.txPacketAllocator(params.multiplex()->template allocator<
+	Zi::IOBufType::TxTCP, Ztls::TxPacket, 1514, ZiIOBuf_DefltAlign,
+	ZuStringT<"Ztls.Test.Packet">>(1024));
     }
     return params;
   }
@@ -590,7 +587,6 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
     void connected(Ztls::Connected info) {
       auto &state = this->app()->state;
       check_queues(*this);
-      state.server_link = this;
       state.server_connected = 1;
       state.server_tlsver = unsigned(info.version);
       state.server_cipher = this->tlsInfo().cipherID;
@@ -599,6 +595,8 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
       auto &state = this->app()->state;
       if (!this->txQueue.empty_())
 	state.fail("server disconnect completed before I/O Tx drained");
+      if (!state.multi && state.server_connected.load_())
+	queue_telemetry(*this, state.server_rx, state.server_tx);
       state.done_one();
     }
     void txProtected() {
@@ -613,6 +611,10 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
     }
     void sent(ZmRef<ZiTxBuf> buf, bool ok) {
       auto &state = this->app()->state;
+      BaseLink::sent(buf, ok);
+      if (buf->allocator() != this->txPacketAllocator() ||
+	  buf->allocator() == this->txAllocator() || buf->skip)
+	state.fail("TLS wire output lost its separate kernel packet backing");
       if (!ok) {
 	state.fail("server TLS wire send failed");
 	return;
@@ -1333,9 +1335,10 @@ bool tls12_roundtrip(
 {
   constexpr unsigned TxRecordCapacity = 16 * 1024;
   unsigned headroom = 5 + suite->aead->tls12.record_iv_size;
-  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, BufSize, MaxSize>;
-
-  ZmRef<ZiIOBuf> buf = ZmSingleton<Allocator>::instance()->allocBuf();
+  ZiMultiplex mx;
+  auto allocator = mx.allocator<Zi::IOBufType::TxTLS, ZiTxBuf,
+    BufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, MaxSize>();
+  auto buf = allocator->allocBuf();
   if (!buf || !buf->ensure(TxRecordCapacity)) return false;
   memcpy(buf->data_() + headroom, payload.data(), payload.length());
 

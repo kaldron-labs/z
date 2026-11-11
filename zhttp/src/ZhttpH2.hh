@@ -568,6 +568,8 @@ public:
     m_bodyMax{bodyMax}, m_retainedBodyMax{retainedBodyMax},
     m_bodyRx{retainedBodyMax} { }
 
+  void bufType(Zi::IOBufType::T type) { m_bodyRx.bufType(type); }
+
   auto impl() { return static_cast<Impl *>(this); }
 
   enum { Request = Request_ };

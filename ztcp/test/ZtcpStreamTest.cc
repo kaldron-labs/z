@@ -8,7 +8,6 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZtArray.hh>
 
 #include <zlib/Ztcp.hh>
@@ -19,11 +18,16 @@ using namespace ZuTestUtil;
 
 namespace {
 
-using BufAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, 16>;
+Zi::IOBufAllocator *bufAllocator()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::RxTCP, ZiRxQueue::Node, 16>();
+  return allocator;
+}
 
 ZmRef<ZiIOBuf> buf(ZuCSpan s)
 {
-  ZmRef<ZiIOBuf> b = ZmSingleton<BufAllocator>::instance()->allocBuf();
+  ZmRef<ZiIOBuf> b = bufAllocator()->allocBuf();
   *b << s;
   return b;
 }
@@ -42,7 +46,7 @@ void pushPayload(Ztcp::RxStream &rx, const ZtArray<uint8_t> &p)
   while (off < l) {
     unsigned n = l - off;
     if (n > 13) n = 13;
-    ZmRef<ZiIOBuf> b = ZmSingleton<BufAllocator>::instance()->allocBuf();
+    ZmRef<ZiIOBuf> b = bufAllocator()->allocBuf();
     b->append(p.data() + off, n);
     rx.push(ZuMv(b));
     off += n;

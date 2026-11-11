@@ -8,7 +8,6 @@
 
 #include <zlib/ZuBox.hh>
 
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiMultiplex.hh>
 
@@ -154,8 +153,10 @@ static void routingScale()
     for (unsigned j = 0; j < cf.subscriptionsPerFrontEnd; ++j)
       ZuCheckRT(hub.removeSubscription(10000 + i, j + 1));
 
-  Ztc::HubFrame frame = new
-    Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Hub.Frame">, 1U << 30>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Hub.Frame">, 1U << 30>::Allocator>::instance()};
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 1024,
+    ZiIOBuf_Align, ZuStringT<"Ztc.Hub.Frame">, 1U << 30>();
+  Ztc::HubFrame frame = allocator->allocBuf();
   frame->length = 1;
   bool telemetryOK = true;
   uint64_t sent = 0;

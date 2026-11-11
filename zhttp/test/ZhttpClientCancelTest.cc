@@ -6,6 +6,8 @@
 
 // multi-protocol client cancellation and shutdown tests
 
+#include "ZhttpTestAllocator.hh"
+
 #include <string.h>
 
 #include <zlib/ZuDerive.hh>
@@ -549,8 +551,7 @@ void attemptState()
       !typedParser.status_ && !typedParser.completed && !typedParser.ok,
     "response completion enters closing phase and resets the parser");
 
-  ZmRef<ZiRxQueue::Node> buffer = new Zhttp::BodyBufAlloc{
-    ZmSingleton<typename Zhttp::BodyBufAlloc::Allocator>::instance()};
+  ZmRef<ZiRxQueue::Node> buffer = ZhttpTest::Allocator<Zhttp::BodyBufAlloc>::get()->allocBuf();
   static_cast<ZiIOBuf *>(buffer.ptr())->data()[0] = 'a';
   static_cast<ZiIOBuf *>(buffer.ptr())->data()[1] = 'b';
   static_cast<ZiIOBuf *>(buffer.ptr())->data()[2] = 'c';
@@ -1365,7 +1366,7 @@ void pipelineTxError()
   bool handled = false;
   if (emitted && app.poolImpl) {
     ZeException e;
-    handled = app.poolImpl->poolH1TxError(0, 1, e);
+    handled = app.poolImpl->poolH1TxError(Zhttp::Transport::TCP, 0, 1, e);
   }
   bool completed = emitted && app.done.timedwait(Zm::now(10)) == 0;
   ZuCHECK(handled && completed,
@@ -1381,6 +1382,37 @@ void pipelineTxError()
       app.completedEvents == 2,
     "Tx failure completes each pipelined operation exactly once");
 
+  app.final();
+  mx.stop();
+}
+
+void tlsTxError()
+{
+  ZuTestScope(tlsTxError);
+  ZiMultiplex mx{mxParams()};
+  App app;
+  auto config = Zhttp::Config{}.links(1).concurrency(1)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
+    .secure(true).tcp(false).tls(true).quic(false);
+  bool initialized = app.init(Zhttp::HubConfig{&mx, "3", "4"}, 1, config,
+    Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{});
+  ZuCHECK(initialized);
+  if (!initialized) { app.final(); return; }
+  bool pooled = app.pool(0, Zhttp::Destination{"127.0.0.1", 443});
+  ZuCHECK(pooled);
+  bool started = pooled && mx.start() && app.start();
+  ZuCHECK(started);
+  if (started && app.poolImpl) {
+    // A late H1 TLS error can outlive its operation. In a TLS-only pool the
+    // TCP backend has never been initialized and must not receive the error.
+    ZeException error;
+    ZuCHECK(app.poolImpl->poolH1TxError(Zhttp::Transport::TLS, 0, 1, error));
+    ZmSemaphore drained;
+    app.poolImpl->rxRun([&drained]() { drained.post(); });
+    ZuCHECK(drained.timedwait(Zm::now(10)) == 0);
+    ZuCHECK(!app.completed() && !app.failed());
+  }
+  app.stop();
   app.final();
   mx.stop();
 }
@@ -3167,6 +3199,7 @@ int main(int argc, char **argv)
   ZuTestCall(poolLinkMaxOverride);
   ZuTestCall(pipeline);
   ZuTestCall(pipelineTxError);
+  ZuTestCall(tlsTxError);
   ZuTestCall(pipelineCancellation, 0U);
   ZuTestCall(pipelineCancellation, 1U);
   ZuTestCall(pipelineCancellation, 2U);

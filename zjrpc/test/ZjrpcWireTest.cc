@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZhttpSSE.hh>
@@ -46,13 +47,11 @@ struct BodyOut {
 
 struct Rx : public ZiRxStream<ZiRxQueue> {
   template <typename Span> Rx(Span bytes) {
-    using Buf = Zi::IOBufBuiltin<
-      ZiRxQueue::Node,
-      ZiIOBuf_DefltSize,
-      ZiIOBuf_DefltAlign,
-      ZuStringT<"Zjrpc.Test.Rx">,
-      ZiIOBuf_DefltMaxSize>;
-    ZmRef<ZiRxQueue::Node> buf = new Buf{ZmSingleton<typename Buf::Allocator>::instance()};
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<
+      Zi::IOBufType::App, ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
+      ZuStringT<"Zjrpc.Test.Rx">, ZiIOBuf_DefltVHMaxSize>();
+    ZmRef<ZiRxQueue::Node> buf = allocator->allocBuf();
     buf->append(bytes);
     push(ZuMv(buf));
   }
@@ -208,8 +207,8 @@ struct FinalOut {
   unsigned headRoom() const { return 19; }
   unsigned tailRoom() const { return 23; }
   ZmRef<ZiIOBuf> allocBuf(unsigned head) {
-    allocated = new Zjrpc::BatchBuf{ZmSingleton<typename Zjrpc::BatchBuf::Allocator>::instance()};
-    allocated->skip = head;
+    allocated = Zjrpc::batchBufAllocator()->allocBuf();
+    allocated->skip += head;
     ++allocs;
     return allocated;
   }
@@ -258,16 +257,10 @@ static void finalSSETest()
 static void retainedInputTest()
 {
   ZuTestScope(retainedInput);
-  ZmRef<ZiRxQueue::Node> source = new
-    Zi::IOBufBuiltin<
-      ZiRxQueue::Node,
-      ZiIOBuf_DefltSize,
-      ZiIOBuf_DefltAlign,
-      ZuStringT<"Zjrpc.Wire.Rx">,
-      ZiIOBuf_DefltMaxSize>{
-        ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node,
-          ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZiIOBuf_DefltAlign,
-          ZuStringT<"Zjrpc.Wire.Rx">>>::instance()};
+  ZiMultiplex mx;
+  auto allocator = mx.allocator<Zi::IOBufType::App, ZiRxQueue::Node,
+    ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zjrpc.Wire.Rx">>();
+  ZmRef<ZiRxQueue::Node> source = allocator->allocBuf();
   *source << "padprefix{\"x\":1}tail";
   source->advance(9);
   source->length = 7;
@@ -284,26 +277,8 @@ static void retainedInputTest()
   ZuCheck(body->cspan() == "{\"x\":1}");
 
   ZiRxStream<ZiRxQueue> fragments;
-  ZmRef<ZiRxQueue::Node> first = new
-    Zi::IOBufBuiltin<
-      ZiRxQueue::Node,
-      ZiIOBuf_DefltSize,
-      ZiIOBuf_DefltAlign,
-      ZuStringT<"Zjrpc.Wire.Rx">,
-      ZiIOBuf_DefltMaxSize>{
-        ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node,
-          ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZiIOBuf_DefltAlign,
-          ZuStringT<"Zjrpc.Wire.Rx">>>::instance()};
-  ZmRef<ZiRxQueue::Node> last = new
-    Zi::IOBufBuiltin<
-      ZiRxQueue::Node,
-      ZiIOBuf_DefltSize,
-      ZiIOBuf_DefltAlign,
-      ZuStringT<"Zjrpc.Wire.Rx">,
-      ZiIOBuf_DefltMaxSize>{
-        ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node,
-          ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZiIOBuf_DefltAlign,
-          ZuStringT<"Zjrpc.Wire.Rx">>>::instance()};
+  ZmRef<ZiRxQueue::Node> first = allocator->allocBuf();
+  ZmRef<ZiRxQueue::Node> last = allocator->allocBuf();
   *first << "{\"x\":";
   *last << "1}";
   auto original = first->ZiIOBuf::data();
@@ -426,6 +401,8 @@ struct WSFixture : public Zjrpc::WSIO<WSFixture> {
     Link(WSFixture *owner_) : owner{owner_} { }
     WSFixture *app() { return owner; }
     Link &state() { return *this; }
+    Link &channel() { return *this; }
+    auto rxBufType() const { return Zi::IOBufType::App; }
     void close(unsigned code) { closeCode = code; }
   };
 

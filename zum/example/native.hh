@@ -39,6 +39,7 @@
 #include <zlib/ZfURI.hh>
 
 #include <zlib/ZiLog.hh>
+#include <zlib/ZiRx.hh>
 #include <zlib/ZiFile.hh>
 
 #include <zlib/ZhttpNative.hh>
@@ -421,18 +422,13 @@ public:
   bool init(ZiMultiplex *mx) {
     using TCP = Zhttp::NativeTraits<Zhttp::H1TCP>::Transport;
     using TLS = Zhttp::NativeTraits<Zhttp::H1TLS>::Transport;
-    m_tcp.rxAllocator(mx->allocator<Zi::IOBufType::RxTCP,
-      TCP::RxAllocator::Buf, TCP::RxAllocator::Size, TCP::RxAllocator::MaxSize,
-      TCP::RxAllocator::Align, TCP::RxAllocator::Heap>())
-      .txAllocator(mx->allocator<Zi::IOBufType::TxTCP,
-	TCP::TxAllocator::Buf, TCP::TxAllocator::Size, TCP::TxAllocator::MaxSize,
-	TCP::TxAllocator::Align, TCP::TxAllocator::Heap>());
-    m_tls.rxAllocator(mx->allocator<Zi::IOBufType::RxTLS,
-      TLS::RxAllocator::Buf, TLS::RxAllocator::Size, TLS::RxAllocator::MaxSize,
-      TLS::RxAllocator::Align, TLS::RxAllocator::Heap>())
-      .txAllocator(mx->allocator<Zi::IOBufType::TxTLS,
-	TLS::TxAllocator::Buf, TLS::TxAllocator::Size, TLS::TxAllocator::MaxSize,
-	TLS::TxAllocator::Align, TLS::TxAllocator::Heap>());
+    m_tcp.rxAllocator(TCP::registerRx(mx))
+      .txAllocator(TCP::registerTx(mx));
+    m_tls.rxAllocator(TLS::registerRx(mx))
+      .txAllocator(TLS::registerTx(mx))
+      .txPacketAllocator(TLS::registerTxPacket(mx))
+      .socketRxAllocator(mx->allocator<Zi::IOBufType::RxTCP, ZiIOBuf,
+        Ztls_::RxPacketCapacity>());
     return true;
   }
 

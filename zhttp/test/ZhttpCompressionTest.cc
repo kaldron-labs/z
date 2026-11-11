@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "ZhttpTestAllocator.hh"
+
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZtArray.hh>
@@ -378,17 +380,9 @@ void testWriterSectionRanges()
   struct Writer {
     unsigned headRoom() const { return 0; }
     ZmRef<ZiIOBuf> allocBuf(unsigned) {
-      return new Zi::IOBufBuiltin<
-        ZiIOBuf,
-        32,
-        ZiIOBuf_DefltAlign,
-        ZuStringT<"Zhttp.WriterBytesTest">,
-        512>{ZmSingleton<typename Zi::IOBufBuiltin<
-          ZiIOBuf,
-          32,
-          ZiIOBuf_DefltAlign,
-          ZuStringT<"Zhttp.WriterBytesTest">,
-          512>::Allocator>::instance()};
+      return ZhttpTest::Allocator<Zi::IOBufBuiltinAllocator<
+	Zi::IOBufType::App, ZiIOBuf, 32, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.WriterBytesTest">,
+	512>>::get()->allocBuf();
     }
   } writer;
   Zhttp::Compression::WriterBytes bytes{writer};

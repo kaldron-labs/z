@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "../test/ZgrpcTestAllocator.hh"
+
 #include <string.h>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZuTestUtil.hh>
@@ -37,12 +39,8 @@ template <int K> struct Contract : Method {
   enum { Kind = K, ReqBorrowed = 1, ResBorrowed = 1 };
 };
 
-using Pool = Zi::IOBufBuiltin<
-  ZiIOBuf,
-  32,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"Zgrpc.ITest">,
-  1U << 20>;
+using Pool = Zi::IOBufBuiltinAllocator<
+  Zi::IOBufType::App, ZiIOBuf, 32, ZiIOBuf_DefltAlign, ZuStringT<"Zgrpc.ITest">, 1U << 20>;
 
 // Component integration before the transport adapter is available. This is
 // deliberately not counted as HTTP or independent-peer qualification.
@@ -64,14 +62,16 @@ template <int K> class Pipe {
 	return false;
       }
       FrameError::T error;
-      ZmRef<ZiIOBuf> initial = new Pool{ZmSingleton<typename Pool::Allocator>::instance()};
+      ZmRef<ZiIOBuf> initial = ZgrpcTest::Allocator<Pool>::get()->allocBuf();
       initial->skip = 8;
       auto buf = encodeFrame(ZuMv(initial), 4, Default::MaxMessageBytes,
 	message.object(), error);
       self->m_txOK &= buf && error == FrameError::OK;
       if (!buf) { self->m_messageDone.post(); return false; }
       self->m_txOK &= buf->skip >= 8 && buf->avail() >= 4;
-      self->m_scheduler.run([self, buf = ZuMv(buf)]() mutable {
+      buf->owner = self;
+      self->m_scheduler.run([buf = ZuMv(buf)]() mutable {
+	auto self = static_cast<Pipe *>(buf->owner);
 	self->receive_(ZuMv(buf), 0);
       }, Rx);
       return true;
@@ -133,8 +133,9 @@ template <int K> class Pipe {
       }
     }
     if (offset < buf->length) {
-      m_scheduler.run([this, buf = ZuMv(buf), offset]() mutable {
-	receive_(ZuMv(buf), offset);
+      m_scheduler.run([buf = ZuMv(buf), offset]() mutable {
+	auto self = static_cast<Pipe *>(buf->owner);
+	self->receive_(ZuMv(buf), offset);
       }, Rx);
       return;
     }

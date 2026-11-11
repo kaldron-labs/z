@@ -17,12 +17,19 @@
 
 #include <zlib/ZuIntrin.hh>
 #include <zlib/ZmAssert.hh>
-#include <zlib/ZmSingleton.hh>
-#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZfDBUS.hh>
 #include <zlib/ZdbusEnvelope.hh>
 
 namespace Zdbus_ {
+
+inline auto messageAllocator()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf,
+    ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zdbus.Message">, Wire::MaxMessageSize>();
+  return allocator;
+}
 
 struct HeadSpec {
   ZuCSpan	path;
@@ -105,9 +112,7 @@ BuildResult message(const HeadSpec &head, const Body &body,
     result.error = BuildError::Resource;
     return result;
   }
-  using Buf = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize,
-    Wire::MaxMessageSize, ZiIOBuf_Align, ZuStringT<"Zdbus.Message">>;
-  result.buf = ZmSingleton<Buf>::instance()->allocBuf();
+  result.buf = messageAllocator()->allocBuf();
   result.buf->ensure(total);
   Sink sink{result.buf.ptr()};
   writeHead(sink, plan, head, signature, total - plan.bodyOffset);

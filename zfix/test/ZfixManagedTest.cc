@@ -5,6 +5,8 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 // Complete-frame fake transport; actual Rx/Tx owners and protocol codecs.
+#include "ZfixTestAllocator.hh"
+
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmList.hh>
@@ -17,7 +19,7 @@
 
 static ZmRef<ZiIOBuf> frameBuf() {
   using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
-  return ZmSingleton<Allocator>::instance()->allocBuf();
+  return ZfixTest::Allocator<Allocator>::get()->allocBuf();
 }
 
 using namespace ZuTestUtil;
@@ -524,8 +526,8 @@ void RxSide::piece(ZmRef<ZiIOBuf> source, TxContext context, unsigned start, uns
   if (byteConnection != context.connection) {
     bytes = nullptr; parser.reset(); byteConnection = context.connection;
   }
-  if (!bytes) bytes = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-    ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
+  if (!bytes) bytes = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
+    ZiIOBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
   ZmAssert(source && start <= source->length && count <= source->length - start &&
     bytes->length == start && count <= Fmt::Limits::FrameBytes - bytes->length);
   auto dst = bytes->ensure(bytes->length + count); ZmAssert(dst);

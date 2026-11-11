@@ -535,7 +535,7 @@ public:
   unsigned active() const;
   unsigned hubCount() const;
   void printQUICDiag();
-  bool poolH1TxError(unsigned, unsigned, ZeException &);
+  bool poolH1TxError(Transport::T, unsigned, unsigned, ZeException &);
 
 protected:
   PoolCore(ClientCore *, const PoolQueueOps &,

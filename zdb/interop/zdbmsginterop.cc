@@ -19,10 +19,6 @@
 #include "../../zfb/interop/iobaseline.hh"
 #include <zlib/ZfbReflect.hh>
 
-using LocalBuf =
-  Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zdb.MsgInterop">,
-    ZiIOBuf_DefltMaxSize>;
-
 using namespace ZuTestUtil;
 namespace M = Zdb_::Msg;
 namespace C = Zdb_::fbs;
@@ -69,8 +65,8 @@ static void records()
   ZuCheck(Zfb::save(row, Row{42}) == Zfb::Error::OK);
   // Match the erased database writer: a nested row and envelope share one
   // pooled downward arena, including storage for forced row alignment.
-  Zfb::IOBuilder<Zfb::Wire::MaxAlign> builder{new Zdb_::IOBufAlloc<>{
-    Zdb_::localBufAllocator<>(), nullptr, 0}, RowAlign};
+  Zfb::IOBuilder<Zfb::Wire::MaxAlign> builder{
+    Zdb_::localBufAllocator<>()->allocBuf(), RowAlign};
   auto nested = builder.startNested();
   auto root = Zfb::save(builder, Row{42});
   auto data = builder.endNested(nested, root);
@@ -155,7 +151,7 @@ static void heartbeat()
 static void commit()
 {
   ZuTestScope(commit);
-  Zfb::IOBuilder<> builder{new LocalBuf{Zdb_::localBufAllocator<>(), nullptr, 0}};
+  Zfb::IOBuilder<> builder{Zdb_::localBufAllocator<>()->allocBuf()};
   auto payload = Zdb_::saveCommit(builder, "rows", 17, 3);
   builder.finish(Zdb_::saveMsg(builder, payload, M::Tag::Commit));
   auto owner = builder.buf();
@@ -186,7 +182,7 @@ static void commit()
   view = Zfb::view<M::Root>(incoming);
   ZuCheck(!Zdb_::record(view) && !Zdb_::hb(view) && !Zdb_::commit(view));
 
-  Zfb::IOBuilder<> empty{new LocalBuf{Zdb_::localBufAllocator<>(), nullptr, 0}};
+  Zfb::IOBuilder<> empty{Zdb_::localBufAllocator<>()->allocBuf()};
   empty.finish(Zdb_::saveMsg(empty, 0, M::Tag::None));
   auto emptyOwner = empty.buf();
   ZuCheck(Zfb::verify<M::Root>(emptyOwner->cspan()));
@@ -283,7 +279,7 @@ static int reads(unsigned count, unsigned rounds, unsigned payload)
   if (!count || !rounds || !payload || payload >= Zdb_::MaxBufSize) return 1;
   auto data = ZtScratch(Zfb::Buffer, payload, payload);
   for (unsigned i = 0; i < payload; ++i) data[i] = uint8_t(i);
-  IOBuilder b{new Zdb_::IOBufAlloc<>{Zdb_::localBufAllocator<>(), nullptr, 0}};
+  IOBuilder b{Zdb_::localBufAllocator<>()->allocBuf()};
   auto bytes = b.CreateVector(data.data(), data.length());
   auto name = b.CreateString("Zdb.Saga");
   Zf::UInt128 sn{0, 123};
@@ -344,8 +340,9 @@ struct Canonical {
 
 struct Native {
   using Builder = Zfb::IOBuilder<Zfb::Wire::MaxAlign>;
-  static Builder make() { return Builder{new Zdb_::IOBufAlloc<>{
-    Zdb_::localBufAllocator<>(), nullptr, 0}, RowAlign}; }
+  static Builder make() {
+    return Builder{Zdb_::localBufAllocator<>()->allocBuf(), RowAlign};
+  }
   static void save(Builder &b, uint64_t seq) {
     auto nested = b.startNested();
     auto root = Zfb::save(b, Row{42});
@@ -373,8 +370,7 @@ static void measure(ZuCSpan name, unsigned count, bool fresh)
 {
   auto builder = []() {
     if constexpr (ZuIsSame<Codec, Native>{}) return Codec::make();
-    else return typename Codec::Builder{new Zdb_::IOBufAlloc<>{
-      Zdb_::localBufAllocator<>(), nullptr, 0}};
+    else return typename Codec::Builder{Zdb_::localBufAllocator<>()->allocBuf()};
   }();
   auto owner = save<Codec>(builder, 1);
   auto hdr = reinterpret_cast<const Zdb_::Hdr *>(owner->data());
@@ -406,7 +402,7 @@ static void measure(ZuCSpan name, unsigned count, bool fresh)
     sum += C::GetMsg(hdr->data())->body_as_Replication()->un();
     total += owner->length;
     capacity = owner->size;
-    if (fresh) owner = new Zdb_::IOBufAlloc<>{Zdb_::localBufAllocator<>(), nullptr, 0};
+    if (fresh) owner = Zdb_::localBufAllocator<>()->allocBuf();
     else owner->clear();
     builder.buf(owner);
   }
@@ -541,8 +537,7 @@ template <typename B>
 static void sagaBuffer(ZuCSpan name, const Zdb_::SagaData &row,
     unsigned count, bool fresh)
 {
-  B b{new Zdb_::IOBufAlloc<Zdb_::SagaData>{
-    Zdb_::localBufAllocator<Zdb_::SagaData>(), nullptr, 0}};
+  B b{Zdb_::localBufAllocator<Zdb_::SagaData>()->allocBuf()};
   b.save(row, 1);
   auto owner = b.buf();
   flatbuffers::Verifier v{owner->data(), owner->length};
@@ -557,8 +552,7 @@ static void sagaBuffer(ZuCSpan name, const Zdb_::SagaData &row,
       value->shard() != 0 || value->deadline()->sec() != 123 ||
       value->deadline()->nsec() != 456 || value->data()->size() != row.data.length() ||
       memcmp(value->data()->data(), row.data.data(), row.data.length())) Zm::exit(1);
-  if (fresh) owner = new Zdb_::IOBufAlloc<Zdb_::SagaData>{
-    Zdb_::localBufAllocator<Zdb_::SagaData>(), nullptr, 0};
+  if (fresh) owner = Zdb_::localBufAllocator<Zdb_::SagaData>()->allocBuf();
   else owner->clear();
   b.buf(owner);
   b.growth = {};
@@ -572,8 +566,7 @@ static void sagaBuffer(ZuCSpan name, const Zdb_::SagaData &row,
     bytes += owner->length;
     sum += C::GetMsg(owner->data())->body_as_Replication()->un();
     capacity = owner->size;
-    if (fresh) owner = new Zdb_::IOBufAlloc<Zdb_::SagaData>{
-      Zdb_::localBufAllocator<Zdb_::SagaData>(), nullptr, 0};
+    if (fresh) owner = Zdb_::localBufAllocator<Zdb_::SagaData>()->allocBuf();
     else owner->clear();
     b.buf(owner);
   }

@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "ZhttpTestAllocator.hh"
+
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
@@ -21,11 +23,8 @@ using namespace ZuTestUtil;
 namespace ZhttpParserTest_ {
 
 using RxQueue = ZiRxQueue;
-using RxBufAlloc = Zi::IOBufBuiltin<
-  RxQueue::Node,
-  256,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"ZhttpParserTest.Buf">,
+using RxBufAlloc = Zi::IOBufBuiltinAllocator<
+  Zi::IOBufType::App, RxQueue::Node, 256, ZiIOBuf_DefltAlign, ZuStringT<"ZhttpParserTest.Buf">,
   2048>;
 using RxStream = ZiRxStream<RxQueue>;
 ZuDerive(BodyData, (ZtString<ZtStringHeapID<"ZhttpParserTest.BodyData">>));
@@ -33,7 +32,7 @@ ZuDerive(BodyData, (ZtString<ZtStringHeapID<"ZhttpParserTest.BodyData">>));
 ZmRef<RxQueue::Node> mkBuf(const char *s)
 {
   unsigned n = ::strlen(s);
-  ZmRef<RxQueue::Node> buf = new RxBufAlloc{ZmSingleton<typename RxBufAlloc::Allocator>::instance()};
+  ZmRef<RxQueue::Node> buf = ZhttpTest::Allocator<RxBufAlloc>::get()->allocBuf();
   if (n) buf->append(ZuCSpan{s, n});
   return buf;
 }

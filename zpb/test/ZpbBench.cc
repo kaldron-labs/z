@@ -11,14 +11,19 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuMatcher.hh>
-#include <zlib/ZmSingleton.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZpbReflect.hh>
 
-using LocalBuf = Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
+static auto localBufAllocator()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<>();
+  return allocator;
+}
 
 using namespace ZuTestUtil;
 
@@ -48,7 +53,13 @@ struct BenchLarge { ZuBSpan bytes; ZuCSpan text; };
 ZfStruct(, (BenchLarge, PB), (bytes,, Bytes), (text,, String));
 Zpb::AsMessage<"bench.Large"> Zpb_Fmt(BenchLarge *);
 
-using BenchPool = Zi::IOBufBuiltin<ZiIOBuf, 32, ZiIOBuf_Align, ZuStringT<"ZpbBench.TxPool">, 1024>;
+static auto benchBufAllocator()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 32, ZiIOBuf_Align,
+    ZuStringT<"ZpbBench.TxPool">, 1024>();
+  return allocator;
+}
 struct BenchTx : ZiTxStream<BenchTx> {
   using Base = ZiTxStream<BenchTx>;
   using Base::operator <<;
@@ -60,8 +71,8 @@ struct BenchTx : ZiTxStream<BenchTx> {
     capture{capture_} { }
   ~BenchTx() { flush(); }
   ZmRef<ZiIOBuf> allocBuf_(unsigned head) {
-    ZmRef<ZiIOBuf> buf = new BenchPool{ZmSingleton<typename BenchPool::Allocator>::instance()};
-    buf->skip = head;
+    ZmRef<ZiIOBuf> buf = benchBufAllocator()->allocBuf();
+    buf->skip += head;
     return buf;
   }
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
@@ -99,7 +110,7 @@ static bool roundTrip(const T &object, ZuCSpan name, Check check)
   auto decoded = Zpb::load<T>(wire);
   if (!check(decoded)) return false;
 
-  Zpb::IOBuilder pooled{new LocalBuf{ZmSingleton<typename LocalBuf::Allocator>::instance()}};
+  Zpb::IOBuilder pooled{localBufAllocator()->allocBuf()};
   auto pooledWire = Zpb::save(pooled, object);
   if (pooled.failed() || pooledWire.length() != wire.length() ||
     memcmp(pooledWire.data(), wire.data(), wire.length())) return false;
@@ -210,7 +221,7 @@ static bool measure(const T &object, ZuCSpan name, Check check,
 	break;
       }
       case 1: {
-	Zpb::IOBuilder next{new LocalBuf{ZmSingleton<typename LocalBuf::Allocator>::instance()}};
+	Zpb::IOBuilder next{localBufAllocator()->allocBuf()};
 	auto bytes = Zpb::save(next, object);
 	if (next.failed()) return false;
 	auto owner = next.buf();

@@ -180,12 +180,30 @@ PKG_CHECK_VAR([PTLS_LIBDIR], [zpicotls-core], [libdir], [], [
 CPPFLAGS="$PTLS_CFLAGS $CPPFLAGS"
 z_save_LIBS=$LIBS
 LIBS="$PTLS_LIBS $LIBS"
-AC_MSG_CHECKING([for zpicotls vector Tx records])
-AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <zpicotls.h>]], [[
-  return ptls_tx_sendv(0, 0, 0, 0);
+AC_MSG_CHECKING([for zpicotls serial record output])
+AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <zpicotls.h>
+#if !PTLS_HAVE_RECORD_CHUNKS
+#error serial record output required
+#endif]], [[
+  int n = ptls_tx_send_chunks(0, 0, 0, 0);
+  n += ptls_handshake_chunks(0, 0, 0, 0, 0);
+  return n + ptls_recv_chunks(0, 0, 0, 0, 0);
 ]])], [AC_MSG_RESULT([yes])], [
   AC_MSG_RESULT([no])
-  AC_MSG_ERROR([zpicotls with ptls_tx_sendv required; rebuild the zpicotls dependency])
+  AC_MSG_ERROR([zpicotls with PTLS_HAVE_RECORD_CHUNKS and serial record APIs required; rebuild the zpicotls dependency])
+])
+AC_MSG_CHECKING([for zpicotls incremental record receive])
+AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <zpicotls.h>
+#if !PTLS_HAVE_RECEIVE_STREAM
+#error incremental record receive required
+#endif]], [[
+  ptls_plaintext_sink_t plaintext = {0};
+  size_t length = 0;
+  int n = ptls_receive_stream_check(0);
+  return n + ptls_receive_stream(0, &plaintext, 0, 0, &length, 0);
+]])], [AC_MSG_RESULT([yes])], [
+  AC_MSG_RESULT([no])
+  AC_MSG_ERROR([zpicotls with PTLS_HAVE_RECEIVE_STREAM and incremental receive APIs required; rebuild the zpicotls dependency])
 ])
 LIBS=$z_save_LIBS
 

@@ -7,7 +7,7 @@
 // IO Rx
 // - framing CRTP receiver
 // - implementation supplies Hdr, Body functions (see below)
-// - implementation supplies a typed rxAllocator()
+// - implementation supplies an App framing rxAllocator()
 // - ZuInvoke is used - functions can be implementation member functions,
 //   bound functions (first parameter is Impl *), or unbound
 
@@ -26,22 +26,16 @@
 
 #include <zlib/ZiIOContext.hh>
 #include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiRxStream.hh>
 
 using ZiRxBuf = ZiRxQueue::Node;
 
-template <
-  unsigned Size = ZiIOBuf_DefltSize,
-  unsigned MaxSize = ZiIOBuf_DefltMaxSize,
-  ZuString HeapID = ZiIOBuf_HeapID{}()>
-using ZiRxBufAlloc = Zi::IOBufBuiltin<ZiRxBuf, Size, ZiIOBuf_DefltAlign, ZuStringT<HeapID>, MaxSize>;
-
-template <typename Impl_, typename BufAlloc_>
+template <typename Impl_, unsigned MaxBufSize_>
 class ZiRx {
 public:
   using Impl = Impl_;
-  using BufAlloc = BufAlloc_;
-  static constexpr unsigned MaxBufSize = BufAlloc::MaxSize;
+  static constexpr unsigned MaxBufSize = MaxBufSize_;
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
@@ -50,6 +44,7 @@ public:
     return static_cast<Impl *>(buf->owner);
   }
 
+public:
   // I/O receiver
 
   // int Hdr(Impl *, const ZiRxContext &io, ZiIOBuf *buf)
@@ -64,137 +59,126 @@ public:
   //   +ve - buffer consumed
   //   -ve - disconnect immediately
   template <auto Hdr, auto Body>
-  void recv(ZiRxContext &io) {
-    auto fn = [](ZiRxContext &io) {
-      auto buf = io.buf.ptr();
-      auto impl_ = impl(buf);
-      unsigned len = buf->length;
-
-      // scan header
-      int frameLen = ZuInvoke<Hdr>(impl_, io, buf);
-      if (ZuUnlikely(frameLen < 0)) {
-	io.disconnect();
-	return true;
-      }
-      if (ZuUnlikely(frameLen != INT_MAX && unsigned(frameLen) > MaxBufSize)) {
-	ZiLOG(Error, "ZiRx", "TCP message too big / corrupt");
-	io.disconnect();
-	return true;
-      }
-      if (len < unsigned(frameLen)) {
-	if (frameLen != INT_MAX && ZuUnlikely(buf->size < unsigned(frameLen))) {
-	  // grow buffer
-	  if (ZuUnlikely(!buf->ensure(frameLen))) {
-	    io.disconnect();
-	    return true;
-	  }
-	}
-	return true;
-      }
-
-      // due to queuing, cannot recycle rx msg buffer for the next message
-      ZmRef<ZiIOBuf> next;
-      unsigned nextLen = len - frameLen;
-      uint8_t *nextPtr = nullptr;
-
-      // copy any trailing data that is (part of) the next message(s)
-      if (nextLen) {
-	next = impl_->rxAllocator()->allocBuf(impl_);
-	nextPtr = next->ensure(nextLen);
-	memcpy(nextPtr, buf->data() + frameLen, nextLen);
-	next->length = nextLen;
-	buf->length = frameLen;
-      }
-
-      // process body
-      frameLen = ZuInvoke<Body>(impl_, io, ZuMv(io.buf));
-      if (ZuUnlikely(frameLen < 0)) {
-	io.disconnect();
-	return true;
-      }
-      if (!frameLen) {
-	// Body may have rearmed reception with its own buffer.
-	if (!io.completed() && !io.buf)
-	  io.buf = impl_->rxAllocator()->allocBuf(impl_);
-	return true;
-      }
-
-      // no trailing data - allocate blank next message
-      if (!next) {
-	next = impl_->rxAllocator()->allocBuf(impl_);
-      }
-
-      // set up I/O context for next message
-      io.buf = ZuMv(next);
-      return false;
-    };
-    if (!io.buf) io.buf = impl()->rxAllocator()->allocBuf(impl());
-    if (io.fn)
-      io.fn = ZiRxFn{ZuMv(fn)};
-    else
-      io.init(ZiRxFn{ZuMv(fn)}, ZuMv(io.buf));
-  }
+  void recv(ZiRxContext &io) { arm<false, Hdr, Body>(io); }
 
   // synchronous receive from ZiRxContext
   //
-  // int Body(const ZiRxContext &io, ZiIOBuf *buf, unsigned len)
+  // int Body(Impl *, const ZiRxContext &io, ZiIOBuf *buf, unsigned len)
   //   0   - skip remaining data (defends against DOS)
-  //   +ve - length of hdr+body (may be <= that returned by Hdr())
+  //   +ve - consumed length, no greater than the framed length
   //   -ve - disconnect immediately
   template <auto Hdr, auto Body>
-  void recvSync(ZiRxContext &io) {
-    auto fn = [](ZiRxContext &io) {
-      auto buf = io.buf.ptr();
-      auto impl_ = impl(buf);
-      unsigned len = buf->length;
+  void recvSync(ZiRxContext &io) { arm<true, Hdr, Body>(io); }
 
-      // scan header
-      int frameLen = ZuInvoke<Hdr>(impl_, io, buf);
-      if (ZuUnlikely(frameLen < 0)) {
-	io.disconnect();
-	return true;
-      }
-      if (ZuUnlikely(frameLen != INT_MAX && unsigned(frameLen) > MaxBufSize)) {
-	ZiLOG(Error, "ZiRx", "ZiRx::recv TCP message too big / corrupt");
-	io.disconnect();
-	return true;
-      }
-      if (len < unsigned(frameLen)) {
-	if (frameLen != INT_MAX && ZuUnlikely(buf->size < unsigned(frameLen))) {
-	  // grow buffer
-	  if (ZuUnlikely(!buf->ensure(frameLen))) {
-	    io.disconnect();
-	    return true;
-	  }
-	}
-	return true;
-      }
-
-      // process body
-      frameLen = ZuInvoke<Body>(impl_, io, buf, frameLen);
-      if (ZuUnlikely(frameLen < 0)) {
-	io.disconnect();
-	return true;
-      }
-      if (!frameLen) return true;
-
-      // calculate length of trailing data
-      unsigned nextLen = len - frameLen;
-
-      // move trailing data down - recycle buffer for subsequent messages
-      if (nextLen) memmove(buf->data(), buf->data() + frameLen, nextLen);
-
-      // set up I/O context for next message
-      buf->length = nextLen;
-      return false;
-    };
-    if (!io.buf) io.buf = impl()->rxAllocator()->allocBuf(impl());
-    if (io.fn)
-      io.fn = ZiRxFn{ZuMv(fn)};
-    else
-      io.init(ZiRxFn{ZuMv(fn)}, ZuMv(io.buf));
+private:
+  // rxAllocator() supplies App message storage only. Transport receive slots
+  // always come from the physical connection's network allocator.
+  static ZmRef<ZiIOBuf> copyFrame(Impl *impl_, const ZiIOBuf *buf, unsigned off) {
+    unsigned len = buf->length - off;
+    auto copy = impl_->rxAllocator()->allocBuf(impl_, len);
+    memcpy(copy->data(), buf->data() + off, len);
+    return copy;
   }
 
+  template <bool Sync, auto Hdr, auto Body>
+  static ZmRef<ZiIOBuf> frames(
+    Impl *impl_, ZiRxContext &io, const ZmAnyFn &current,
+    ZmRef<ZiIOBuf> msg, ZmRef<ZiIOBuf> input)
+  {
+    while (msg || input) {
+      if (!msg) msg = ZuMv(input);
+      unsigned len = msg->length;
+      int frameLen = ZuInvoke<Hdr>(impl_, io, msg.ptr());
+      if (io.fn != current) return nullptr;
+      if (ZuUnlikely(frameLen < 0 ||
+	  (frameLen != INT_MAX && unsigned(frameLen) > MaxBufSize) ||
+	  (frameLen == INT_MAX && len >= MaxBufSize))) {
+	ZiLOG(Error, "ZiRx", "message too big / corrupt");
+	io.disconnect();
+	return nullptr;
+      }
+      if (len < unsigned(frameLen)) {
+	// An incomplete packet is copied once into App storage. Subsequent
+	// chunks append to that accumulator, never to the transport target.
+	if (msg->allocator() != impl_->rxAllocator()) {
+	  msg = copyFrame(impl_, msg, 0);
+	}
+	unsigned limit = frameLen == INT_MAX ? MaxBufSize : unsigned(frameLen);
+	unsigned reserve = limit;
+	if (frameLen == INT_MAX) {
+	  reserve = len + (input ? input->length : 0);
+	  if (reserve > limit) reserve = limit;
+	}
+	if (ZuUnlikely(!msg->ensure(reserve))) { io.disconnect(); return nullptr; }
+	if (!input) return msg;
+	unsigned n = input->length;
+	if (n > limit - len) n = limit - len;
+	memcpy(msg->data() + len, input->data(), n);
+	msg->length += n;
+	input->skip += n;
+	input->length -= n;
+	if (!input->length) input = nullptr;
+	continue;
+      }
+
+      if constexpr (Sync) {
+	int used = ZuInvoke<Body>(impl_, io, msg.ptr(), unsigned(frameLen));
+	// Body may have destroyed/replaced its receive callback. All input
+	// held here is local; never touch the retired closure's accumulator.
+	if (io.fn != current) return nullptr;
+	if (ZuUnlikely(used < 0 || unsigned(used) > unsigned(frameLen))) {
+	  io.disconnect();
+	  return nullptr;
+	}
+	if (!used) return nullptr;
+	msg->skip += used;
+	msg->length -= used;
+	if (!msg->length) msg = nullptr;
+      } else {
+	ZmRef<ZiIOBuf> next;
+	if (len > unsigned(frameLen)) {
+	  next = copyFrame(impl_, msg, frameLen);
+	  msg->length = frameLen;
+	}
+	int used = ZuInvoke<Body>(impl_, io, ZuMv(msg));
+	if (io.fn != current) return nullptr;
+	if (ZuUnlikely(used < 0)) { io.disconnect(); return nullptr; }
+	if (!used) return nullptr;
+	msg = ZuMv(next);
+      }
+    }
+    return nullptr;
+  }
+
+  template <bool Sync, auto Hdr, auto Body>
+  void arm(ZiRxContext &io) {
+    auto impl_ = impl();
+    // Owner-directed setup also notifies a plugin when Body explicitly rearms.
+    io.cxn->recv(ZiRxFn{[impl_](ZiRxContext &io) {
+      auto buf = io.cxn->info().rxAllocator->allocBuf(impl_, 0);
+      if (ZuUnlikely(!buf)) { io.disconnect(); return true; }
+      io.init(ZiRxFn{[
+	impl_, pending = ZmRef<ZiIOBuf>{}
+      ](ZiRxContext &io) mutable {
+	if (!io.buf || !io.buf->length) return true; // empty/stub before receive
+	// Keep this invocation alive across Body completion/replacement, and
+	// move accumulation out before calling any external parser callback.
+	auto current = io.fn;
+	auto implLocal = impl_;
+	auto msg = ZuMv(pending);
+	auto input = ZuMv(io.buf);
+	io.buf = io.cxn->info().rxAllocator->allocBuf(implLocal, 0);
+	if (ZuUnlikely(!io.buf)) { io.disconnect(); return true; }
+	auto next = frames<Sync, Hdr, Body>(
+	  implLocal, io, current, ZuMv(msg), ZuMv(input));
+	if (io.fn == current) pending = ZuMv(next);
+	return true;
+      }}, ZuMv(buf));
+      return true;
+    }});
+  }
+
+public:
   // in-memory receiver
 
   // int Hdr(Impl *, const ZiIOBuf *buf)
@@ -215,6 +199,7 @@ public:
     unsigned oldLen = buf->length;
     unsigned len = oldLen + rxLen;
     auto rxData = buf->ensure(len);
+    if (ZuUnlikely(!rxData)) return -1;
     memcpy(rxData + oldLen, data, rxLen);
     buf->length = len;
 
@@ -237,14 +222,11 @@ public:
       // due to queuing, cannot recycle rx msg buffer for the next message
       ZmRef<ZiIOBuf> next;
       unsigned nextLen = len - frameLen;
-      uint8_t *nextPtr = nullptr;
-
-      // copy any trailing data that is (part of) the next message
+      // copy any trailing data that is (part of) the next message(s)
       if (nextLen) {
-	next = impl()->rxAllocator()->allocBuf(impl());
-	nextPtr = next->ensure(nextLen);
-	memcpy(nextPtr, buf->data() + frameLen, nextLen);
-	next->length = nextLen;
+	next = impl()->rxAllocator()->allocBuf(impl(), nextLen);
+	if (ZuUnlikely(!next)) return -1;
+	memcpy(next->data(), buf->data() + frameLen, nextLen);
 	buf->length = frameLen;
       }
 
@@ -277,6 +259,7 @@ public:
     unsigned oldLen = buf->length;
     unsigned len = oldLen + rxLen;
     auto rxData = buf->ensure(len);
+    if (ZuUnlikely(!rxData)) return -1;
     memcpy(rxData + oldLen, data, rxLen);
     buf->length = len;
 

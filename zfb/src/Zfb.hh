@@ -2771,8 +2771,8 @@ int save(S &stream, const O &o, const char *id = nullptr) {
     if (!buf) return Error::OK;
     unsigned tail = stream.tailRoom();
     unsigned maxSize = stream.maxSize();
-    unsigned capacity = maxSize > uint64_t(head) + tail ?
-      (maxSize - head - tail) & ~(Align - 1) : 0;
+    unsigned capacity = maxSize > uint64_t(buf->skip) + tail ?
+      (maxSize - buf->skip - tail) & ~(Align - 1) : 0;
     IOBuilder<Align> builder{ZuMv(buf), Align, maxSize, tail};
     return save_(builder, [&stream, &builder, capacity](ZuBSpan bytes) {
       if (bytes.length() <= capacity)

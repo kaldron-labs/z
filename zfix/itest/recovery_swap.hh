@@ -155,6 +155,10 @@ inline bool ReplayServer::init(Network::ServerParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
+#ifdef ZFIX_TEST_TLS
+  if (!params.txPacketAllocator())
+    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
+#endif
   return Zfix::Server<ReplayServer, Dictionary, Network>::init(ZuMv(params));
 }
 
@@ -236,6 +240,10 @@ inline bool ReplayClient::init(Network::ClientParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
+#ifdef ZFIX_TEST_TLS
+  if (!params.txPacketAllocator())
+    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
+#endif
   return Zfix::Client<ReplayClient, Dictionary, Network>::init(ZuMv(params));
 }
 
@@ -250,7 +258,6 @@ static void replayReplacement(unsigned mode, bool logoutA)
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   Network::ServerParams sp{&mx, "3", "4"}; Network::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   auto cert = getenv("ZFIX_TEST_CERT"), key = getenv("ZFIX_TEST_KEY");
@@ -258,6 +265,7 @@ static void replayReplacement(unsigned mode, bool logoutA)
   sp.certPath(cert).keyPath(key); cp.caPath(cert);
 #endif
   bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<ReplayClient::Link> a, b;
   bool attemptedA = false, attemptedB = false, success = false;

@@ -12,7 +12,7 @@
 #include <unistd.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZmSingleton.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmAtomic.hh>
@@ -159,6 +159,8 @@ static void transport()
     return;
   }
 
+  ZiMultiplex mx;
+  auto allocator = mx.allocator<>();
   ZdbusConnection cxn;
   ZmSemaphore ready;
   ZmSemaphore frame;
@@ -226,7 +228,7 @@ static void transport()
       'l', 5, 0, 1, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0
     };
     ZuAssert(sizeof(msg) == Zdbus_::Wire::MinHeaderSize);
-    ZmRef<ZiIOBuf> oversized = ZmSingleton<Zi::IOBufBuiltinAllocator<>>::instance()->allocBuf();
+    ZmRef<ZiIOBuf> oversized = allocator->allocBuf();
     oversized->append(msg);
     *oversized << char(0);
     cxn.send(ZuMv(oversized), [&rejected, &rejectedOK](bool ok) {
@@ -235,7 +237,7 @@ static void transport()
     });
     ZDBUS_CHECK_RT(waitFor(rejected) && rejectedOK.load_(),
       "oversized queued frame was not rejected");
-    ZmRef<ZiIOBuf> outbound = ZmSingleton<Zi::IOBufBuiltinAllocator<>>::instance()->allocBuf();
+    ZmRef<ZiIOBuf> outbound = allocator->allocBuf();
     outbound->append(msg);
     cxn.send(ZuMv(outbound), [&sent, &failures, &stage](bool ok) {
       if (!ok) ++failures;

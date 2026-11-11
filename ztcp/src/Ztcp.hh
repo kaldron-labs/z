@@ -43,17 +43,19 @@ using RxStream = ZiRxStream<RxQueue>;
 
 template <
   unsigned Size = ZiIOBuf_DefltSize,
-  unsigned MaxSize = ZiIOBuf_DefltMaxSize,
+  unsigned MaxSize = ZiIOBuf_DefltVHMaxSize,
   ZuString HeapID = ZiIOBuf_HeapID{}()>
 using RxBufAlloc =
-  Zi::IOBufBuiltin<RxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTCP,
+    RxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
 template <
   unsigned Size = ZiIOBuf_DefltSize,
-  unsigned MaxSize = ZiIOBuf_DefltMaxSize,
+  unsigned MaxSize = ZiIOBuf_DefltVHMaxSize,
   ZuString HeapID = ZiIOBuf_HeapID{}()>
 using TxBufAlloc =
-  Zi::IOBufBuiltin<TxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTCP,
+    TxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
 } // namespace Ztcp_
 
@@ -144,13 +146,13 @@ using RxStream = Ztcp_::RxStream;
 
 template <
   unsigned Size = ZiIOBuf_DefltSize,
-  unsigned MaxSize = ZiIOBuf_DefltMaxSize,
+  unsigned MaxSize = ZiIOBuf_DefltVHMaxSize,
   ZuString HeapID = "Ztcp.RxBuf">
 using RxBufAlloc = Ztcp_::RxBufAlloc<Size, MaxSize, HeapID>;
 
 template <
   unsigned Size = ZiIOBuf_DefltSize,
-  unsigned MaxSize = ZiIOBuf_DefltMaxSize,
+  unsigned MaxSize = ZiIOBuf_DefltVHMaxSize,
   ZuString HeapID = "Ztcp.TxBuf">
 using TxBufAlloc = Ztcp_::TxBufAlloc<Size, MaxSize, HeapID>;
 
@@ -162,8 +164,8 @@ class Link :
   public ZiTx<Impl>,
   public Ztc::Link
 {
-  ZuAssert((ZuIs_<RxBufAlloc_, Ztcp_::RxQueue::Node>{}));
-  ZuAssert((ZuIs_<TxBufAlloc_, Ztcp_::TxQueue::Node>{}));
+  ZuAssert((ZuIs_<typename RxBufAlloc_::Buf, Ztcp_::RxQueue::Node>{}));
+  ZuAssert((ZuIs_<typename TxBufAlloc_::Buf, Ztcp_::TxQueue::Node>{}));
 
   class TelQueue final : public Ztc::Queue {
   public:
@@ -211,14 +213,20 @@ friend Cxn;
 
   App *app() const { return m_app; }
   static Zi::IOBufAllocator *rxAllocator(ZiMultiplex *mx) {
-    return mx->allocator<Zi::IOBufType::RxTCP, typename RxBufAlloc::Buf,
-      RxBufAlloc::Size, RxBufAlloc::MaxSize, ZiIOBuf_DefltAlign,
-      typename RxBufAlloc::Heap>();
+    return [mx]<
+      Zi::IOBufType::T Type, typename Buf, unsigned Size, unsigned Align,
+      typename HeapID, unsigned VHMaxSize, auto Grow
+    >(Zi::IOBufBuiltinAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow> *) {
+      return mx->allocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>();
+    }(static_cast<RxBufAlloc *>(nullptr));
   }
   static Zi::IOBufAllocator *txAllocator(ZiMultiplex *mx) {
-    return mx->allocator<Zi::IOBufType::TxTCP, typename TxBufAlloc::Buf,
-      TxBufAlloc::Size, TxBufAlloc::MaxSize, ZiIOBuf_DefltAlign,
-      typename TxBufAlloc::Heap>();
+    return [mx]<
+      Zi::IOBufType::T Type, typename Buf, unsigned Size, unsigned Align,
+      typename HeapID, unsigned VHMaxSize, auto Grow
+    >(Zi::IOBufBuiltinAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow> *) {
+      return mx->allocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>();
+    }(static_cast<TxBufAlloc *>(nullptr));
   }
   RxAllocator *rxAllocator() const {
     return static_cast<RxAllocator *>(app()->rxAllocator());
@@ -268,20 +276,28 @@ private:
   }
 
   void recvRaw_(ZiRxContext &io) {
+    const auto &ci = io.cxn->info();
+    auto buf = static_cast<RxAllocator *>(ci.rxAllocator)->allocBuf(
+      impl(), 0, ci.mps);
+    if (ZuUnlikely(!buf)) { io.disconnect(); return; }
     io.init(ZiRxFn{impl(), [](Impl *link, ZiRxContext &io) {
       auto buf = ZuMv(io.buf);
       if (buf->length) {
 	auto cxn = static_cast<Cxn *>(io.cxn);
 	link->app()->rxRun([
-	  impl = ZmRef(link), cxn = ZmRef(cxn), buf = ZuMv(buf)
+	  cxn = ZmRef(cxn), buf = ZuMv(buf)
 	]() mutable {
-	  impl->rcvd_(cxn.ptr(), ZuMv(buf));
+	  auto link = static_cast<Impl *>(buf->owner);
+	  link->rcvd_(cxn.ptr(), ZuMv(buf));
 	});
-	buf = static_cast<RxAllocator *>(io.cxn->info().rxAllocator)->allocBuf(link);
+	const auto &ci = io.cxn->info();
+	buf = static_cast<RxAllocator *>(ci.rxAllocator)->allocBuf(
+	  link, 0, ci.mps);
       }
+      if (ZuUnlikely(!buf)) { io.disconnect(); return true; }
       io.buf = ZuMv(buf);
       return true;
-    }}, static_cast<RxAllocator *>(io.cxn->info().rxAllocator)->allocBuf(impl()));
+    }}, ZuMv(buf));
   }
 
   void connected_1(ZmRef<Cxn> cxn) {
@@ -390,10 +406,22 @@ private:
   }
 
 public:
+  unsigned txMPS_() const {
+    Cxn *cxn = m_cxn;
+    return cxn ? cxn->info().mps : ~uint32_t(0);
+  }
+
+  unsigned txBufSize_() const {
+    auto allocator = txAllocator();
+    unsigned ps = allocator->capacity();
+    unsigned mps = txMPS_();
+    if (ps > mps) ps = mps;
+    return ps + allocator->headRoom + allocator->tailRoom;
+  }
+
   ZmRef<ZiIOBuf> allocTxBuf_() {
-    auto buf = txAllocator()->allocBuf(impl());
-    buf->skip = 0;
-    buf->length = 0;
+    auto buf = txAllocator()->allocBuf(impl(), 0, txMPS_());
+    if (ZuUnlikely(!buf)) return nullptr;
     return buf;
   }
 
@@ -403,7 +431,8 @@ public:
 
   public:
     TxStream_(Link &link) :
-      Base(TxBufAlloc::Size, 0, 0),
+      Base(link.txBufSize_(),
+	link.txAllocator()->headRoom, link.txAllocator()->tailRoom),
       m_link{&link}
     {
     }
@@ -414,7 +443,10 @@ public:
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
       auto buf = m_link->allocTxBuf_();
-      if (ZuUnlikely(!buf || skip > buf->size))
+      if (ZuUnlikely(!buf)) return nullptr;
+      if (skip < buf->skip) skip = buf->skip;
+      if (ZuUnlikely(skip > buf->size ||
+	  Base::tailRoom() > buf->size - skip))
 	return nullptr;
       buf->skip = skip;
       return buf;
@@ -472,7 +504,20 @@ protected:
     auto length = buf->length;
     m_txInCount.store_(m_txInCount.load_() + 1);
     m_txInBytes.store_(m_txInBytes.load_() + length);
-    Tx::send(m_txCxn.ptr(), ZuMv(buf));
+    m_txCxn->send(ZiTxFn::mvFn(ZuMv(buf), [](ZmRef<ZiIOBuf> buf, ZiTxContext &io) {
+      auto cxn = static_cast<Cxn *>(io.cxn);
+      if (ZuUnlikely(!cxn->up())) return false;
+      auto link = Tx::impl(buf);
+      if (auto count = link->Tx::txQueue.count_();
+	  ZuUnlikely(count && count >= link->maxQueueLen())) {
+	cxn->close();
+	link->tcpTxError_("TCP transmit queue full");
+	return false;
+      }
+      // ZiTx admission runs inline on this physical connection's I/O Tx thread.
+      link->Tx::send(cxn, ZuMv(buf));
+      return false;
+    }));
     return true;
   }
 
@@ -833,7 +878,7 @@ protected:
     if (!m_errorFn) m_errorFn = defaultErrorFn();
     if (!validate_(params)) return false;
     m_mx = params.mx;
-    if (params.rxAllocator()->mx() != m_mx ||
+    if (params.rxAllocator()->mx != m_mx ||
 	!allocator(params.txAllocator())) return false;
     m_rxAllocator = params.rxAllocator();
     m_txAllocator = params.txAllocator();
@@ -878,9 +923,9 @@ private:
       return false;
     }
     if (!params.rxAllocator() ||
-	params.rxAllocator()->type() != Zi::IOBufType::RxTCP ||
+	params.rxAllocator()->type != Zi::IOBufType::RxTCP ||
 	!params.txAllocator() ||
-	params.txAllocator()->type() != Zi::IOBufType::TxTCP) {
+	params.txAllocator()->type != Zi::IOBufType::TxTCP) {
       error_(ZeEXCEPT(Error, "Ztcp", "TCP Rx/Tx allocators are required"));
       return false;
     }
@@ -926,8 +971,8 @@ public:
 
   // Validate Tx TCP backing created by the underlying Mx.
   bool allocator(Zi::IOBufAllocator *a) {
-    return a && a->type() == Zi::IOBufType::TxTCP && m_mx &&
-      a->mx() == m_mx;
+    return a && a->type == Zi::IOBufType::TxTCP && m_mx &&
+      a->mx == m_mx;
   }
 
   Zi::IOBufAllocator *rxAllocator() const { return m_rxAllocator; }

@@ -55,6 +55,14 @@ FieldName CatalogView::match(ZuBSpan name) const
 
 namespace Native_ {
 
+ZmRef<ZiIOBuf> FinalFields::allocBytes_()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::TxTLS, ZiRxQueue::Node,
+    ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.Final.Bytes">>();
+  return allocator->allocBuf();
+}
+
 const WriterOps &FinalFields::writerOps_()
 {
   static const WriterOps ops{
@@ -81,8 +89,9 @@ const WriterOps &FinalFields::writerOps_()
     [](const void *) { return 0U; },
     [](const void *) { return 0U; },
     [](void *, unsigned head) -> ZmRef<ZiIOBuf> {
-      auto buf = ZmRef<ZiIOBuf>{new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()}};
-      buf->skip = head;
+      auto buf = allocBytes_();
+      if (head > buf->size - buf->skip) return nullptr;
+      buf->skip += head;
       return buf;
     },
     [](void *ctx, unsigned length) {
@@ -104,7 +113,7 @@ ZuSpan<uint8_t> FinalFields::reserve_(unsigned length)
 {
   if (m_failed) return {};
   if (length > m_limit - m_cost) { m_failed = true; return {}; }
-  if (!m_bytes) m_bytes = new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()};
+  if (!m_bytes) m_bytes = allocBytes_();
   auto data = m_bytes->ensure(m_bytes->length + length);
   if (!data) { m_failed = true; return {}; }
   m_reserved = length;

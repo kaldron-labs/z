@@ -6,7 +6,6 @@
 
 #include <string.h>
 
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmBlock.hh>
@@ -140,6 +139,23 @@ struct TestCIDRoutes {
   unsigned	retires = 0;
   unsigned	tombstones = 0;
 };
+// The real ACK/loss/controller path calls these CRTP producer hooks on owner4.
+// Recovery notification really posts to that owner; ordinary bulk output can
+// consume every byte of newly opened congestion credit before it executes.
+struct RecoveryService {
+  enum { MaxEvents = 16 };
+  unsigned events = 0, recovered = 0, blocked = 0, queued = 0;
+  char order[MaxEvents] = {};
+  uint64_t recoveredPN = 0;
+  ZiIOBuf *origin = nullptr;
+  bool valid = true;
+
+  void note(char kind) {
+    if (events < MaxEvents) order[events++] = kind;
+    else valid = false;
+  }
+};
+
 struct TestLink :
   public ZmNHeap<TestLink>,
   public Zquic::Link<App, TestLink,
@@ -152,6 +168,13 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
   friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
   using ZmNHeap<TestLink>::operator new;
   using ZmNHeap<TestLink>::operator delete;
+
+  RecoveryService *service = nullptr;
+  unsigned *probeSpaces = nullptr;
+  bool rejectProbe = false;
+  Zquic::PktNumSpace::T rejectProbeSpace = Zquic::PktNumSpace::N;
+  bool recordRejectedProbe = false;
+  unsigned rejectedProbeRecords = 0;
 
   TestLink(App *app, bool isServer = false) : Base{app, isServer} {
     Base::configLocalParams(app);
@@ -349,6 +372,12 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     new (ack.ranges.push()) Zquic::AckRange{pn, 0};
     Base::processAckFrameTx_(ack);
   }
+  void ackRange(uint64_t first, uint64_t largest) {
+    Base::AckSnapshot ack;
+    ack.level = Zquic::PktNumSpace::AppData;
+    new (ack.ranges.push()) Zquic::AckRange{largest, first};
+    Base::processAckFrameTx_(ack);
+  }
   void ackOnly(
     uint64_t pn, Zquic::PktNumSpace::T level = Zquic::PktNumSpace::AppData) {
     Base::AckSnapshot ack;
@@ -357,8 +386,9 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     Base::processAckFrameTx_(ack);
   }
 	  bool nextRetransmitRef(
-	    Zquic::PktNumSpace::T &level, Zquic::SentFrameRef &ref) {
-	    return Base::nextRetransmit_(level, ref);
+	    Zquic::PktNumSpace::T &level, Zquic::SentFrameRef &ref,
+	    Zquic::PktNumSpace::T onlySpace = Zquic::PktNumSpace::N) {
+	    return Base::nextRetransmit_(level, ref, onlySpace);
 	  }
 	  bool forcePTOReclaimQLog(
 	    Zquic::PktNumSpace::T &level, unsigned &probes) {
@@ -371,9 +401,10 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
   bool sendCryptoBytes(
     ZuBSpan data, Zquic::PktNumSpace::T level = Zquic::PktNumSpace::AppData) {
     size_t offsets[5] = {0, 0, 0, 0, data.length()};
+    if (level == Zquic::PktNumSpace::Initial)
+      for (unsigned i = 1; i < 4; ++i) offsets[i] = data.length();
     if (level == Zquic::PktNumSpace::Handshake) offsets[3] = data.length();
-    ZmRef<ZiIOBuf> backing = new Zquic::CryptoTxBufAlloc<>{
-      ZmSingleton<typename Zquic::CryptoTxBufAlloc<>::Allocator>::instance(), nullptr, 0};
+    ZmRef<ZiIOBuf> backing = app()->cryptoTxAllocator()->allocBuf();
     backing->append(data);
     Zquic::CryptoOffsets positions(Zquic::TLSEpochCount + 1, false);
     for (unsigned i = 0; i <= Zquic::TLSEpochCount; ++i) positions[i] = offsets[i];
@@ -390,6 +421,51 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
   }
   bool installHandshake(const Zquic::TrafficSecret &secret) {
     return Base::txInstallSecret(Zquic::PktNumSpace::Handshake, secret);
+  }
+  bool installAppTx(const Zquic::TrafficSecret &secret) {
+    return Base::txInstallSecret(Zquic::PktNumSpace::AppData, secret);
+  }
+  void confirmHandshake() {
+    Base::discardPktNumSpace_1(Zquic::PktNumSpace::Handshake);
+  }
+  bool recordProbePkt(
+    Zquic::PktNumSpace::T level, unsigned bytes,
+    const Zquic::SentFrameRef &ref) {
+    Base::TxPktRefs refs;
+    refs.add(ref);
+    uint64_t pn = sentPkts++;
+    Base::setTxPN(level, pn);
+    return Base::recordProtPktTx(level, pn, bytes, {}, &refs, true);
+  }
+  void probePTO(
+    unsigned *spaces, bool reject = false,
+    Zquic::PktNumSpace::T rejectSpace = Zquic::PktNumSpace::N,
+    bool recordRejected = false) {
+    probeSpaces = spaces;
+    rejectProbe = reject;
+    rejectProbeSpace = rejectSpace;
+    recordRejectedProbe = recordRejected;
+    rejectedProbeRecords = 0;
+    Base::ptoRecovery(
+      [this, spaces, reject, rejectSpace](Zquic::PktNumSpace::T level,
+	  Zquic::PktBuild &build, const Zquic::SentFrameRef &ref) {
+	if (reject || level == rejectSpace) return false;
+	if (!recordProbePkt(level, build.bytes(), ref)) return false;
+	++spaces[level];
+	return true;
+      },
+      []() { return false; },
+      [this, spaces, reject, rejectSpace](Zquic::PktNumSpace::T level) {
+	if (reject || level == rejectSpace) return false;
+	Zquic::PktBuild build;
+	if (!Base::buildPingProbe(level, build)) return false;
+	if (!recordProbePkt(level, build.bytes(),
+	    Zquic::SentFrameRef::control()))
+	  return false;
+	++spaces[level];
+	return true;
+      });
+    probeSpaces = nullptr;
   }
   bool nextCryptoPTO(
     Zquic::PktNumSpace::T &level, Zquic::SentFrameRef &ref) {
@@ -511,6 +587,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
 	([] { static ZiMultiplex mx; return Zquic::pktTxAllocator(&mx); })();
       return allocator->allocBuf(owner, 0);
     })(nullptr);
+    if (ZuUnlikely(!initial || !handshake)) return false;
     initial->skip = handshake->skip = 0;
     initial->length = 100;
     handshake->length = 40;
@@ -621,6 +698,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
 	([] { static ZiMultiplex mx; return Zquic::pktTxAllocator(&mx); })();
       return allocator->allocBuf(owner, 0);
     })(nullptr);
+    if (ZuUnlikely(!buf)) return false;
     buf->skip = 0;
     buf->length = bytes;
     return Base::sendPathPkt(
@@ -849,16 +927,78 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
 		  earlyData);
 	      });
 	  }
-  void flushTx_() { ++txFlushQueued; }
+  void flushTx_() {
+    ++txFlushQueued;
+    if (service) {
+      service->valid &= app()->mx()->invoked(app()->txThread());
+      service->note('N');
+      fillCwnd(); // continuously writable ordinary producer consumes credit
+    }
+  }
   void flushTx_(ZiSockAddr) { ++txFlushQueued; }
   void queueTxFlush() { ++txFlushQueued; }
   void queueTxFlush(ZiSockAddr) { ++txFlushQueued; }
   void pto_() { ++ptos; }
-  void queueRetransmit() { ++retransmits; }
-  bool retransmit_(bool = false) {
+  void queueRetransmit() {
+    ++retransmits;
+    if (service) {
+      ++service->queued;
+      app()->txRun([this]() { retransmit_(); });
+    }
+  }
+  bool retransmit_(
+    bool pto = false, unsigned maxPackets = 2,
+    Zquic::PktNumSpace::T onlySpace = Zquic::PktNumSpace::N) {
     ++retransmits;
     ++retransmitCalls;
-    return false;
+    if (pto && probeSpaces) {
+      Zquic::PktNumSpace::T level;
+      Zquic::SentFrameRef ref;
+      unsigned sent = 0;
+      while (sent < maxPackets &&
+	  Base::nextRetransmit_(level, ref, onlySpace)) {
+	Zquic::PktBuild build;
+	if (ref.kind == Zquic::SentFrameKind::Crypto &&
+	    !Base::buildRetxCrypto(level, build, ref))
+	  continue;
+	if (rejectProbe || level == rejectProbeSpace) {
+	  if (recordRejectedProbe && !rejectedProbeRecords) {
+	    uint64_t pn = sentPkts;
+	    if (recordProbePkt(level, build.bytes(), ref)) {
+	      Base::discardProtPktTx(level, pn, build.bytes(), true);
+	      ++rejectedProbeRecords;
+	    }
+	  }
+	  Base::requeueRetransmit_(level, ref);
+	  break;
+	}
+	if (!recordProbePkt(level, build.bytes(), ref)) {
+	  Base::requeueRetransmit_(level, ref);
+	  break;
+	}
+	++probeSpaces[level];
+	++sent;
+      }
+      return sent;
+    }
+    if (!service) return false;
+    service->valid &= app()->mx()->invoked(app()->txThread());
+    Zquic::PktNumSpace::T level;
+    Zquic::SentFrameRef ref;
+    if (!Base::nextRetransmit_(level, ref)) return false;
+    if (!pto && !Base::congestionAllowance_()) {
+      ++service->blocked;
+      Base::requeueRetransmit_(level, ref);
+      return false;
+    }
+    service->valid &= ref.kind == Zquic::SentFrameKind::Stream &&
+      ref.range.buf.ptr() == service->origin && ref.length == 8 &&
+      !memcmp(ref.range.buf->data_() + ref.range.offset, "retained", 8);
+    service->note('R');
+    service->recoveredPN = sentPkts;
+    recordSentPkt(level, sentPkts++, 100, ref, true);
+    ++service->recovered;
+    return true;
   }
   bool sendPassiveMigChal() {
     if (!directPassive) return false;
@@ -916,6 +1056,7 @@ static ZmRef<ZiIOBuf> shortPing(
 	([] { static ZiMultiplex mx; return Zquic::pktTxAllocator(&mx); })();
       return allocator->allocBuf(owner, 0);
     })(nullptr);
+  if (ZuUnlikely(!buf)) return {};
   enum { PNLength = 2 };
   int h = Zquic::Pkt::writeShort(
     buf->data_(), buf->size, dcid, pn, PNLength, keyPhase);
@@ -941,6 +1082,7 @@ static ZmRef<ZiIOBuf> zeroRTTLongHdr(uint64_t pn)
 	([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
       return allocator->allocBuf(owner, 0);
     })(nullptr);
+  if (ZuUnlikely(!buf)) return {};
   Zquic::CxnID dcid{"server01"};
   Zquic::CxnID scid{"client01"};
   enum { PNLength = 2 };
@@ -973,6 +1115,7 @@ static ZmRef<ZiIOBuf> streamPkt(
 	([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
       return allocator->allocBuf(owner, 0);
     })(nullptr);
+  if (ZuUnlikely(!packet)) return nullptr;
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, id, offset, payload, fin);
   if (n <= 0) return nullptr;
@@ -1131,6 +1274,8 @@ void testStreamRxSliceDelivery()
 	([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
       return allocator->allocBuf(owner, 0);
     })(nullptr);
+  ZuCHECK(bool(packet), "packet buffer allocation failed");
+  if (!packet) return;
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, stream->id(), 0, "slice", false);
   ZuCHECK(n > 0, "packet-backed STREAM frame write failed");
@@ -1365,9 +1510,9 @@ void testStreamTxRetainedBuffers()
   backing->append(reinterpret_cast<const uint8_t *>("A-gap-BC"), 8);
   auto original = backing->data();
   ZmRef<ZiIOBuf> first = new Zquic::StreamRxPQueue::Node{
-    backing, original, 1, nullptr, 0};
+    backing, original, 1, app.streamRxAllocator(), nullptr, 0};
   ZmRef<ZiIOBuf> second = new Zquic::StreamRxPQueue::Node{
-    backing, original + 6, 2, nullptr, 0};
+    backing, original + 6, 2, app.streamRxAllocator(), nullptr, 0};
   auto firstView = first.ptr(), secondView = second.ptr();
   ZuCHECK(tx.appendBuf(ZuMv(first)) && tx.appendBuf(ZuMv(second)) &&
       !first && !second,
@@ -1693,8 +1838,7 @@ void testStreamProducerCredit()
   auto stream = link->stream(Zquic::StreamType::Duplex);
   unsigned callbacks = 0;
   bool stable = true;
-  ZmRef<ZiIOBuf> next = new StreamTxBufAlloc{
-    ZmSingleton<typename StreamTxBufAlloc::Allocator>::instance()};
+  ZmRef<ZiIOBuf> next = app.streamTxAllocator()->allocBuf();
   next->append(reinterpret_cast<const uint8_t *>("def"), 3);
   Zquic::StreamFrameInfo retained;
   auto packetize = [&stream](unsigned credit, Zquic::StreamFrameInfo &info) {
@@ -2189,6 +2333,181 @@ void testCryptoRetxBudget()
   }
 }
 
+void testPTOMultipleSpaces()
+{
+  ZuTestScopeRT(testPTOMultipleSpaces);
+
+  App app;
+  Zquic::TrafficSecret secret;
+  ZQUIC_CHECK_RT(trafficSecret(secret, 0x71), "PTO secret setup failed");
+  for (bool inFlight : {false, true})
+    for (bool appKeys : {false, true})
+      for (bool reject : {false, true}) {
+	auto link = testLink(&app);
+	ZQUIC_CHECK_RT(link->installHandshake(secret) &&
+	    (!appKeys || link->installAppTx(secret)), "PTO key install failed");
+	ZQUIC_CHECK_RT(link->sendCryptoBytes(
+	    "finished", Zquic::PktNumSpace::Handshake), "PTO flight setup failed");
+	if (inFlight)
+	  link->recordSentPkt(Zquic::PktNumSpace::AppData, link->sentPkts++, 100,
+	    Zquic::SentFrameRef::control(), true);
+	for (unsigned i = 0; i < 3; ++i) {
+	  unsigned spaces[Zquic::PktNumSpace::N] = {};
+	  uint64_t before = link->diag().tx.packetsTx;
+	  link->probePTO(spaces, reject);
+	  ZQUIC_CHECK_RT(spaces[Zquic::PktNumSpace::Handshake] == !reject &&
+	      spaces[Zquic::PktNumSpace::AppData] ==
+		unsigned(!reject && inFlight && appKeys) &&
+	      !spaces[Zquic::PktNumSpace::Initial] &&
+	      link->diag().tx.packetsTx - before <= 2,
+	    "PTO omitted outstanding space or sent an unsolicited/excess probe");
+	}
+	link->teardown();
+      }
+
+  // A failed primary Handshake probe must not turn into an unsolicited
+  // 1-RTT probe, even when that other encryption level can send.
+  for (bool inFlight : {false, true}) {
+    auto rejected = testLink(&app);
+    ZQUIC_CHECK_RT(rejected->installHandshake(secret) &&
+	rejected->installAppTx(secret) && rejected->sendCryptoBytes(
+	  "finished", Zquic::PktNumSpace::Handshake),
+      "rejected primary PTO setup failed");
+    if (inFlight)
+      rejected->recordSentPkt(
+	Zquic::PktNumSpace::AppData, rejected->sentPkts++, 100,
+	Zquic::SentFrameRef::control(), true);
+    unsigned spaces[Zquic::PktNumSpace::N] = {};
+    rejected->probePTO(spaces, false, Zquic::PktNumSpace::Handshake);
+    ZQUIC_CHECK_RT(!spaces[Zquic::PktNumSpace::Initial] &&
+	!spaces[Zquic::PktNumSpace::Handshake] &&
+	!spaces[Zquic::PktNumSpace::AppData],
+      "failed primary PTO substituted an unrelated packet-number space");
+    rejected->teardown();
+  }
+
+  // Local rejection happens after packet protection/recording. Consuming a
+  // packet number and incrementing packetsTx does not prove primary admission.
+  auto recorded = testLink(&app);
+  ZQUIC_CHECK_RT(recorded->installHandshake(secret) &&
+      recorded->installAppTx(secret) && recorded->sendCryptoBytes(
+	"finished", Zquic::PktNumSpace::Handshake),
+    "recorded rejection PTO setup failed");
+  Zquic::PktNumSpace::T recordedLevel;
+  unsigned recordedProbes = 0;
+  ZQUIC_CHECK_RT(recorded->forcePTOReclaimQLog(recordedLevel, recordedProbes) &&
+      recordedLevel == Zquic::PktNumSpace::Handshake &&
+      recorded->diag().tx.retransmitPending[Zquic::PktNumSpace::Handshake],
+    "recorded rejection did not retain a Handshake retransmission");
+  recorded->recordSentPkt(Zquic::PktNumSpace::AppData, recorded->sentPkts++, 100,
+    Zquic::SentFrameRef::control(), true);
+  unsigned recordedSpaces[Zquic::PktNumSpace::N] = {};
+  uint64_t recordedPN = recorded->sentPkts;
+  uint64_t recordedPackets = recorded->diag().tx.packetsTx;
+  recorded->probePTO(
+    recordedSpaces, false, Zquic::PktNumSpace::Handshake, true);
+  ZQUIC_CHECK_RT(recorded->sentPkts == recordedPN + 1 &&
+      recorded->diag().tx.packetsTx == recordedPackets + 1 &&
+      recorded->rejectedProbeRecords == 1 &&
+      !recordedSpaces[Zquic::PktNumSpace::Initial] &&
+      !recordedSpaces[Zquic::PktNumSpace::Handshake] &&
+      !recordedSpaces[Zquic::PktNumSpace::AppData],
+    "recorded local rejection was mistaken for primary PTO admission");
+  recorded->teardown();
+
+  // Generic retransmission scans Initial first. Pending Initial loss work
+  // must not consume the selected Handshake probe's single-packet budget.
+  auto mixed = testLink(&app);
+  ZQUIC_CHECK_RT(mixed->installHandshake(secret) && mixed->installAppTx(secret) &&
+      mixed->sendCryptoBytes("finished", Zquic::PktNumSpace::Handshake),
+    "mixed-space retained PTO setup failed");
+  uint64_t initialPN = mixed->sentPkts;
+  ZQUIC_CHECK_RT(mixed->sendCryptoBytes("initial", Zquic::PktNumSpace::Initial),
+    "mixed-space retained Initial flight setup failed");
+  uint64_t ackPN = initialPN + 3;
+  mixed->recordSentPkt(Zquic::PktNumSpace::Initial, ackPN, 100,
+    Zquic::SentFrameRef::control(), true);
+  mixed->sentPkts = ackPN + 1;
+  mixed->ackOnly(ackPN, Zquic::PktNumSpace::Initial);
+  mixed->recordSentPkt(Zquic::PktNumSpace::AppData, mixed->sentPkts++, 100,
+    Zquic::SentFrameRef::control(), true);
+  ZQUIC_CHECK_RT(mixed->diag().tx.retransmitPending[
+      Zquic::PktNumSpace::Initial] == 1,
+    "mixed-space setup did not retain pending Initial loss work");
+  unsigned rejectedSpaces[Zquic::PktNumSpace::N] = {};
+  mixed->probePTO(rejectedSpaces, false, Zquic::PktNumSpace::Handshake);
+  ZQUIC_CHECK_RT(!rejectedSpaces[Zquic::PktNumSpace::Initial] &&
+      !rejectedSpaces[Zquic::PktNumSpace::Handshake] &&
+      !rejectedSpaces[Zquic::PktNumSpace::AppData] &&
+      mixed->diag().tx.retransmitPending[Zquic::PktNumSpace::Initial] == 1,
+    "failed primary PTO emitted another space's retained CRYPTO flight");
+  unsigned mixedSpaces[Zquic::PktNumSpace::N] = {};
+  mixed->probePTO(mixedSpaces);
+  ZQUIC_CHECK_RT(!mixedSpaces[Zquic::PktNumSpace::Initial] &&
+      mixedSpaces[Zquic::PktNumSpace::Handshake] == 1 &&
+      mixedSpaces[Zquic::PktNumSpace::AppData] == 1 &&
+      mixed->diag().tx.retransmitPending[Zquic::PktNumSpace::Initial] == 1,
+    "other-space recovery consumed the primary/companion PTO budget");
+  Zquic::PktNumSpace::T pendingLevel;
+  Zquic::SentFrameRef pendingRef;
+  ZQUIC_CHECK_RT(mixed->nextRetransmitRef(
+      pendingLevel, pendingRef, Zquic::PktNumSpace::Initial) &&
+      pendingLevel == Zquic::PktNumSpace::Initial &&
+      pendingRef.kind == Zquic::SentFrameKind::Crypto &&
+      pendingRef.offset == 0 && pendingRef.length == 7,
+    "PTO lost another space's retained recovery reference");
+  mixed->teardown();
+
+  // Confirmation retires the selected Handshake space. It must immediately
+  // move the live PTO timer to outstanding AppData without another send/ACK.
+  auto transition = testLink(&app);
+  ZQUIC_CHECK_RT(transition->installHandshake(secret) &&
+      transition->installAppTx(secret) && transition->sendCryptoBytes(
+	"finished", Zquic::PktNumSpace::Handshake),
+    "confirmation PTO transition setup failed");
+  transition->recordSentPkt(
+    Zquic::PktNumSpace::AppData, transition->sentPkts++, 100,
+    Zquic::SentFrameRef::control(), true);
+  auto beforeConfirm = transition->diag().tx;
+  ZQUIC_CHECK_RT(beforeConfirm.ptoTimerActive &&
+      beforeConfirm.sentPackets[Zquic::PktNumSpace::Handshake] &&
+      beforeConfirm.pktBytesInFlight[Zquic::PktNumSpace::AppData] == 100,
+    "confirmation transition did not start with both packet spaces in flight");
+  transition->confirmHandshake();
+  auto afterConfirm = transition->diag().tx;
+  ZQUIC_CHECK_RT(afterConfirm.ptoTimerActive &&
+      afterConfirm.ptoArmed == beforeConfirm.ptoArmed + 1 &&
+      !afterConfirm.sentPackets[Zquic::PktNumSpace::Handshake] &&
+      afterConfirm.pktBytesInFlight[Zquic::PktNumSpace::AppData] == 100,
+    "Handshake retirement did not immediately rearm PTO for AppData");
+  unsigned transitionSpaces[Zquic::PktNumSpace::N] = {};
+  transition->probePTO(transitionSpaces);
+  ZQUIC_CHECK_RT(transitionSpaces[Zquic::PktNumSpace::AppData] == 1 &&
+      !transitionSpaces[Zquic::PktNumSpace::Handshake],
+    "confirmed PTO still selected the retired Handshake space");
+  transition->teardown();
+
+  // 1-RTT keys and outstanding output alone must not arm an AppData PTO.
+  auto client = testLink(&app);
+  ZQUIC_CHECK_RT(client->installAppTx(secret), "App-only PTO key setup failed");
+  client->recordSentPkt(Zquic::PktNumSpace::AppData, client->sentPkts++, 100,
+    Zquic::SentFrameRef::control(), true);
+  unsigned spaces[Zquic::PktNumSpace::N] = {};
+  client->probePTO(spaces);
+  ZQUIC_CHECK_RT(!spaces[Zquic::PktNumSpace::AppData] &&
+      !client->diag().tx.ptoTimerActive,
+    "unconfirmed client independently probed AppData");
+  uint64_t armed = client->diag().tx.ptoArmed;
+  client->confirmHandshake();
+  ZQUIC_CHECK_RT(client->diag().tx.ptoTimerActive &&
+      client->diag().tx.ptoArmed == armed + 1,
+    "confirmation did not immediately arm previously blocked AppData PTO");
+  client->probePTO(spaces);
+  ZQUIC_CHECK_RT(spaces[Zquic::PktNumSpace::AppData] == 1,
+    "confirmed client did not resume AppData PTO");
+  client->teardown();
+}
+
 void testPktNumLength()
 {
   ZuTestScope(testPktNumLength);
@@ -2228,6 +2547,68 @@ void testLongHeaderCoalescing()
       bytes == 140,
     "Initial/Handshake coalescing did not emit one combined datagram");
   link->closeForTest();
+}
+
+static void ackCreditServicesRetx(bool pending)
+{
+  ZuTestScopeRT(ackCreditServicesRetx);
+
+  App app;
+  app.deferredTx = true;
+  auto link = testLink(&app);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
+  auto retained = app.streamTxAllocator()->allocBuf();
+  retained->append(reinterpret_cast<const uint8_t *>("retained"), 8);
+  RecoveryService service;
+  service.origin = retained;
+  bool setup = false, kept = false, released = false;
+  app.onTx([&link, &stream, &retained, &service, &setup, pending]() {
+    link->grantDataCredit(8);
+    stream->txCredit(8);
+    {
+      auto out = stream->txStream_();
+      out.appendBuf(retained);
+      out.flush();
+    }
+    // Record real retained STREAM references, then declare only that packet
+    // lost through the real ACK packet-threshold path. No synthetic lost queue.
+    bool sent = link->flushCongestedStream(stream);
+    if (pending) {
+      link->sendAckEliciting(4, 100);
+      link->ackOnly(4);
+      link->sentPkts = 5;
+    }
+    link->fillCwnd();
+    setup = sent && stream->txStillUnackd(0, 8) &&
+      link->diag().tx.retransmitPending[Zquic::PktNumSpace::AppData] ==
+        unsigned(pending) && !link->congestionAllowance();
+    link->service = &service;
+    if (pending) {
+      // Open credit without newly detecting loss: pre-existing pending
+      // recovery must still be serviced on the ACK owner.
+      link->ackOnly(5);
+    } else {
+      // Also exercise the newly-lost notification. Its real deferred owner
+      // task must not lose all credit to a synchronous ordinary flush.
+      link->ackRange(3, link->sentPkts - 1);
+    }
+  });
+  app.drainTx(); // includes any genuinely deferred recovery notification
+  app.onTx([&link, &stream, &service, &kept, &released]() {
+    kept = stream->txStillUnackd(0, 8) && service.valid;
+    link->service = nullptr;
+    if (service.recovered) link->ackOnly(service.recoveredPN);
+    released = service.recovered && !stream->txStillUnackd(0, 8);
+  });
+  link->teardown();
+  ZQUIC_CHECK_RT(setup, "retained STREAM and closed congestion setup failed");
+  ZQUIC_CHECK_RT(service.recovered == 1 && service.events >= 2 &&
+      service.order[0] == 'R' && service.order[1] == 'N',
+    "ACK-reopened credit went to bulk before already-pending recovery");
+  ZQUIC_CHECK_RT(!service.blocked && !service.queued,
+    "recovery was deferred behind the synchronous bulk flush");
+  ZQUIC_CHECK_RT(kept && released,
+    "retained STREAM backing/ACK ownership changed while servicing recovery");
 }
 
 void congestionBudgetGatesSends()
@@ -2442,6 +2823,7 @@ void passivePathChallengeRecovery()
   ZiSockAddr newRemote{ip4_(0x0a000002), 50001};
   {
     auto blocked = testLink(&app, true);
+    blocked->confirmHandshake();
     blocked->initServerPath(local, oldRemote);
     blocked->validatePath();
     auto older = blocked->stream(Zquic::StreamType::Duplex);
@@ -4249,6 +4631,7 @@ void testPTOQLog()
 	  "PTO qlog init failed");
 	ZquicLogger::start();
 	ZmRef<TestLink> link = testLink(&app);
+  link->confirmHandshake();
   link->recordSentPkt(
     Zquic::PktNumSpace::AppData, 7, Zquic::MinUDPPayload,
     Zquic::SentFrameRef::control(), true);
@@ -4368,9 +4751,12 @@ int main(int argc, char **argv)
   ZuTestCall(testStreamRetxClipsUnackdFin);
   ZuTestCall(cryptoRetxClipsUnackd);
   ZuTestCall(testCryptoRetxBudget);
+  ZuTestCall(testPTOMultipleSpaces);
   ZuTestCall(testPktNumLength);
   ZuTestCall(testLongHeaderCoalescing);
   ZuTestCall(congestionBudgetGatesSends);
+  ZuTestCall(ackCreditServicesRetx, true);
+  ZuTestCall(ackCreditServicesRetx, false);
   ZuTestCall(testStreamBatchContinuation);
   ZuTestCall(testActivePathBudget);
   ZuTestCall(pathValidationStateMachine);

@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "ZhttpTestAllocator.hh"
+
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmSingleton.hh>
@@ -193,12 +195,9 @@ void runH1Shards()
 }
 
 struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
-  using BufAlloc = Zi::IOBufBuiltin<
-    Zhttp::Transport_::TxBufNode,
-    65544,
-    ZiIOBuf_DefltAlign,
-    ZuStringT<"Zhttp.H2.FlowTest">,
-    65544>;
+  using BufAlloc = Zi::IOBufBuiltinAllocator<
+    Zi::IOBufType::App, Zhttp::Transport_::TxBufNode, 65544, ZiIOBuf_DefltAlign,
+    ZuStringT<"Zhttp.H2.FlowTest">, 65544>;
 
   struct Tx : public ZiTxStream<Tx> {
     using Base = ZiTxStream<Tx>;
@@ -208,8 +207,8 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
     ~Tx() { this->flush(); }
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-      ZmRef<ZiIOBuf> buf = new BufAlloc{ZmSingleton<typename BufAlloc::Allocator>::instance()};
-      buf->skip = headRoom;
+      ZmRef<ZiIOBuf> buf = ZhttpTest::Allocator<BufAlloc>::get()->allocBuf();
+      buf->skip += headRoom;
       buf->length = 0;
       return buf;
     }
@@ -235,14 +234,15 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
   template <bool> unsigned txHeadRoom() const { return 0; }
   template <bool> unsigned txTailRoom() const { return 0; }
   template <bool> ZmRef<ZiIOBuf> txAllocBuf(unsigned headRoom) {
-    ZmRef<ZiIOBuf> buf = new BufAlloc{ZmSingleton<typename BufAlloc::Allocator>::instance()};
-    buf->skip = headRoom;
+    ZmRef<ZiIOBuf> buf = ZhttpTest::Allocator<BufAlloc>::get()->allocBuf();
+    buf->skip += headRoom;
     buf->length = 0;
     return buf;
   }
   bool frameSent(ZuBSpan frame) {
     ++sends;
     if (rejectControl) return false;
+    if (onFrame) onFrame(frame);
     uint8_t type = frame.data()[3], flags = frame.data()[4];
     if (headerOpen && type != Zhttp::H2::FrameType::Continuation)
       ++interleaved;
@@ -278,7 +278,9 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
     ++capacityCalls;
     if (value) ++saturatedCalls;
   }
-  void h2LocalEnd(uint32_t) { }
+  void h2LocalEnd(uint32_t id) {
+    if (auto entry = h2Stream(id)) entry->localEnd = true;
+  }
   void h2SettingsReceived() { ++settingsApplied; }
   void h2Cancel(uint32_t) { }
   bool h2Closed(uint32_t id) const { return streamClosed(id); }
@@ -295,6 +297,7 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
   }
 
   FlowApp	*app_;
+  ZmFn<void(ZuBSpan)> onFrame;
   unsigned	sends = 0;
   ZmRef<ZiIOBuf>	lastBuf;
   unsigned	ownedCalls = 0;
@@ -400,7 +403,7 @@ void runInitialControlFailure()
 
 ZmRef<ZiIOBuf> flowData(unsigned length, uint32_t id = 1)
 {
-  ZmRef<ZiIOBuf> buf = new FlowWire::BufAlloc{ZmSingleton<typename FlowWire::BufAlloc::Allocator>::instance()};
+  ZmRef<ZiIOBuf> buf = ZhttpTest::Allocator<FlowWire::BufAlloc>::get()->allocBuf();
   buf->length = length + Zhttp::H2::FrameHeaderSize;
   uint8_t *data = buf->data();
   data[0] = uint8_t(length>>16);
@@ -423,6 +426,41 @@ Zhttp::H2_::HeaderFrames flowHeaders()
   buf->data()[4] = Zhttp::H2::Flag::EndHeaders;
   frames.push(Zhttp::H2_::TxFrame{ZuMv(buf)});
   return frames;
+}
+
+void runLocalEndPublication()
+{
+  ZuTestScope(runLocalEndPublication);
+  FlowApp app;
+  app.deferred = true;
+  FlowWire wire{&app};
+  ZuCHECK(wire.initWire(false, Zhttp::H2Config().settingsTimeout(0)),
+    "initialize H2 END_STREAM ordering harness");
+  auto stream = wire.openLocalStream(new FlowAppLink);
+  ZuCHECK(stream, "open stream for local completion");
+  if (!stream) return;
+  uint32_t id = stream->id;
+  while (app.step(FlowApp::Tx)) { }
+  bool published = false;
+  wire.onFrame = ZmFn<void(ZuBSpan)>{[&app, &wire, &published, id](ZuBSpan frame) {
+    if (frame[3] != Zhttp::H2::FrameType::Data ||
+	!(frame[4] & Zhttp::H2::Flag::EndStream)) return;
+    // A peer can return HEADERS as soon as native output exposes END_STREAM.
+    app.rxRun([&wire, &published, id]() {
+      published = wire.h2Stream(id)->localEnd;
+    });
+    while (app.step(FlowApp::Rx)) { }
+  }};
+  app.runTx([&wire, id]() {
+    ZuCHECK(wire.endData<false>(id), "submit local END_STREAM");
+  });
+  while (app.step(FlowApp::Tx) || app.step(FlowApp::Rx)) { }
+  ZuCHECK(published, "Rx observes local closure before peer response ingress");
+  bool removed = false;
+  wire.removeStream(id, [&removed]() { removed = true; });
+  while (app.step(FlowApp::Tx) || app.step(FlowApp::Rx)) { }
+  ZuCHECK(removed, "retire local completion stream before wire teardown");
+  wire.finalWire();
 }
 
 void runFlowCapacity()
@@ -1829,12 +1867,17 @@ void run()
   ZiMultiplex mx{mxParams()};
 
   Zhttp::HubConfig hub{&mx, "3", "4"};
-  auto serverConfig = Zhttp::H2Config().tls([&cert](auto &tls) {
-    tls.certPath(cert.certPath).keyPath(cert.keyPath);
+  auto tx = Zhttp::Transport_::Traits<Zhttp::TLS>::registerTx(&mx);
+  auto txPacket = Zhttp::Transport_::Traits<Zhttp::TLS>::registerTxPacket(&mx);
+  ZuCHECK(tx->type == Zi::IOBufType::TxTLS &&
+    txPacket->type == Zi::IOBufType::TxTCP, "TLS plaintext and packet allocator roles");
+  auto serverConfig = Zhttp::H2Config().tls([&cert, tx, txPacket](auto &tls) {
+    tls.certPath(cert.certPath).keyPath(cert.keyPath)
+      .txAllocator(tx).txPacketAllocator(txPacket);
   })
     .maxConcurrentStreams(1).maxQueuedFrames(16);
-  auto clientConfig = Zhttp::H2Config().tls([&cert](auto &tls) {
-    tls.caPath(cert.certPath);
+  auto clientConfig = Zhttp::H2Config().tls([&cert, tx, txPacket](auto &tls) {
+    tls.caPath(cert.certPath).txAllocator(tx).txPacketAllocator(txPacket);
   }).initialWindowSize(1)
     .maxConcurrentStreams(1);
   Server server{&state};
@@ -2230,6 +2273,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(ZhttpH2HubTest_::runH1Shards);
   ZuTestCall(ZhttpH2HubTest_::runInitialControlFailure);
+  ZuTestCall(ZhttpH2HubTest_::runLocalEndPublication);
   ZuTestCall(ZhttpH2HubTest_::runFlowCapacity);
   ZuTestCall(ZhttpH2HubTest_::runBlockedRequeue);
   ZuTestCall(ZhttpH2HubTest_::runWindowChanges);

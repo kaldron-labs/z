@@ -109,11 +109,11 @@ struct ReqParser : public Request, public Zhttp::Parser {
       uint64_t max = Impl::BodyLimit ? Impl::BodyLimit : inputMax;
       if (streamed) {
 	if constexpr (Impl::Body == BodyPolicy::URI) return false;
-	else return input.begin(length, max);
+	else return input.begin(length, max, this->bufType());
       }
       if (length > UINT_MAX || (max && length > max)) return false;
       bodyLength = unsigned(length);
-      if constexpr (Impl::Borrowed) return input.begin(length, max);
+      if constexpr (Impl::Borrowed) return input.begin(length, max, this->bufType());
       return true;
     }
   }
@@ -169,7 +169,7 @@ struct ReqParser : public Request, public Zhttp::Parser {
 
 private:
   BorrowedData &backing_() {
-    if (!borrowed) borrowed = new BorrowedData{};
+    if (!borrowed) borrowed = new BorrowedData{this->bufType()};
     return *borrowed;
   }
 
@@ -393,6 +393,7 @@ struct MReqPolicy {
 		 path.length() <= n || path[n] != '?')) return false;
 	  }
 	  auto request = new (parser.u.template new_<Req, true>()) Req();
+	  request->bufType(parser.bufType());
 	  request->init();
 	  bool ok;
 	  {
@@ -448,6 +449,7 @@ struct MReqRootPolicy {
       using Root = ZuType<I, Roots>;
       using Child = Root::Parser;
       auto child = new (parser.u.template new_<I + 1, true>()) Child();
+      child->bufType(parser.bufType());
       if constexpr (ZuIsSame<Server, ZuVoid>{}) child->init();
       else child->init(*server);
       child->bodyMax(parser.inputMax);
@@ -942,7 +944,8 @@ public:
       Limits limits) {
     if (m_selected || m_cancelled) return {};
     if (!m_producer)
-      m_producer = new SSEProducer{scheduler, thread, limits};
+      m_producer = new SSEProducer{scheduler, thread, limits,
+        m_route ? m_route.channel()->txBufType() : Zi::IOBufType::T{Zi::IOBufType::App}};
     return m_producer;
   }
   uint64_t seq() const { return m_seq; }

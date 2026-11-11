@@ -10,7 +10,6 @@
 
 #include <string.h>
 
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
 
@@ -18,6 +17,7 @@
 
 #include "../../zdb/test/ZdbTestCf.hh"
 #include <zlib/ZiLog.hh>
+#include <zlib/ZiMultiplex.hh>
 
 #include <zlib/ZvMxParams.hh>
 
@@ -76,7 +76,8 @@ static void records()
   role.actions.length(128);
   role.actions.set(7);
 
-  auto bufAllocator = ZmSingleton<Zi::IOBufBuiltinAllocator<>>::instance();
+  ZiMultiplex mx;
+  auto bufAllocator = mx.allocator<>();
   Zfb::IOBuilder<Zfb::BufferAlign<Zum::Role>::N> fbb{bufAllocator->allocBuf()};
   fbb.finish(Zfb::save(fbb, role));
   auto buf = fbb.buf();
@@ -92,7 +93,8 @@ static void records()
 template <typename T>
 static T roundTrip(const T &value)
 {
-  auto bufAllocator = ZmSingleton<Zi::IOBufBuiltinAllocator<>>::instance();
+  ZiMultiplex mx;
+  auto bufAllocator = mx.allocator<>();
   Zfb::IOBuilder<Zfb::BufferAlign<T>::N> fbb{bufAllocator->allocBuf()};
   fbb.finish(Zfb::save(fbb, value));
   auto buf = fbb.buf();

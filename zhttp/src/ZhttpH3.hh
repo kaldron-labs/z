@@ -459,7 +459,7 @@ private:
 	rx.advance(unsigned(n));
 	return retire_(stream, unsigned(n)) ? n : -1;
       }
-      m_qpackBuf = new BodyRx::MetaBufAlloc{ZmSingleton<typename BodyRx::MetaBufAlloc::Allocator>::instance()};
+      m_qpackBuf = BodyRx::allocMeta<Zi::IOBufType::RxTLS>();
     }
     auto buf = m_qpackBuf.ptr();
     if (buf->length >= QPackInsnMax)
@@ -644,7 +644,9 @@ public:
   Parser(uint64_t bodyMax = DefltMaxBody,
       uint64_t retainedBodyMax = DefltMaxBody) :
     m_bodyMax{bodyMax}, m_retainedBodyMax{retainedBodyMax},
-    m_bodyRx{retainedBodyMax} { }
+    m_bodyRx{retainedBodyMax} { bufType(Zi::IOBufType::RxTLS); }
+
+  void bufType(Zi::IOBufType::T type) { m_bodyRx.bufType(type); }
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
@@ -1022,7 +1024,7 @@ private:
   }
 
   static ZmRef<ZiRxQueue::Node> metaAlloc() {
-    return new BodyRx::MetaBufAlloc{ZmSingleton<typename BodyRx::MetaBufAlloc::Allocator>::instance()};
+    return BodyRx::allocMeta<Zi::IOBufType::RxTLS>();
   }
 
 public:
@@ -1084,7 +1086,7 @@ public:
 	  case 0x03: // CANCEL_PUSH
 	  case 0x05: // PUSH_PROMISE
 	  case 0x0d: // MAX_PUSH_ID
-	    m_metaBuf = new BodyRx::MetaBufAlloc{ZmSingleton<typename BodyRx::MetaBufAlloc::Allocator>::instance()};
+	    m_metaBuf = BodyRx::allocMeta<Zi::IOBufType::RxTLS>();
 	    break;
 	}
 	rx.advance(frame.header);

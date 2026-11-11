@@ -49,6 +49,7 @@ class ZgrpcAPI FrameRx {
 public:
   explicit FrameRx(unsigned limit = Default::MaxMessageBytes) : m_limit{limit} { }
   void reset(unsigned limit);
+  void bufType(Zi::IOBufType::T type) { m_bufType = type; }
 
   // Consume at most one message and budget bytes; caller resumes the remaining
   // span in a bounded scheduler turn. A supplied backing must keep this slice
@@ -65,6 +66,7 @@ public:
 private:
   FrameResult::T fail(FrameError::T error);
 
+  Zi::IOBufType::T	m_bufType = Zi::IOBufType::App;
   unsigned		m_limit;
   uint8_t		m_prefix[PrefixSize];
   unsigned		m_prefixLen = 0;
@@ -87,6 +89,7 @@ ZmRef<ZiIOBuf> encodeFrame(ZmRef<ZiIOBuf> buf, unsigned tailRoom,
 {
   ZuAssert(!Zpb::Config<Facet>::SizePrefixed);
   error = FrameError::OK;
+  if (!buf) { error = FrameError::Encode; return {}; }
   uint64_t reserve = uint64_t(buf->skip) + tailRoom + PrefixSize;
   if (reserve > INT_MAX) { error = FrameError::Limit; return nullptr; }
   uint64_t maxSize = reserve + limit;

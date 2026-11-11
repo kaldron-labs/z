@@ -8,7 +8,6 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZmList.hh>
@@ -16,6 +15,7 @@
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiRxStream.hh>
 
 using namespace ZuTestUtil;
@@ -23,12 +23,18 @@ using namespace ZuTestUtil;
 namespace ZiRxStreamTest_ {
 
 ZmListDerive(RxQueue, ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
-using RxAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, RxQueue::Node, 64, 256>;
+ZmRef<RxQueue::Node> allocBuf()
+{
+  static ZiMultiplex mx;
+  static auto allocator =
+    mx.allocator<Zi::IOBufType::App, RxQueue::Node, 64, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 256>();
+  return ZmRef<RxQueue::Node>{allocator->allocBuf().ptr<RxQueue::Node>()};
+}
 
 ZmRef<RxQueue::Node> mkBuf(const char *s)
 {
   unsigned n = static_cast<unsigned>(::strlen(s));
-  ZmRef<RxQueue::Node> buf = ZmRef<RxQueue::Node>{ZmSingleton<RxAllocator>::instance()->allocBuf().ptr<RxQueue::Node>()};
+  ZmRef<RxQueue::Node> buf = allocBuf();
   auto iobuf = static_cast<ZiIOBuf *>(buf.ptr());
   if (n) {
     ::memcpy(iobuf->data(), s, n);
@@ -234,7 +240,7 @@ int64_t extractN(
     },
     [&allocs]() -> ZmRef<RxQueue::Node> {
       ++allocs;
-      return ZmRef<RxQueue::Node>{ZmSingleton<RxAllocator>::instance()->allocBuf().ptr<RxQueue::Node>()};
+      return allocBuf();
     },
     out);
 }
@@ -304,7 +310,7 @@ void testExtractWaitAndError()
     [](ZuBSpan) -> int64_t { return -1; },
     [&allocs]() -> ZmRef<RxQueue::Node> {
       ++allocs;
-      return ZmRef<RxQueue::Node>{ZmSingleton<RxAllocator>::instance()->allocBuf().ptr<RxQueue::Node>()};
+      return allocBuf();
     },
     out);
   ZuCheck(n < 0);
@@ -324,7 +330,7 @@ int64_t spliceN(
     ++allocs;
     // Model a rejected buffer request; nonzero Z heap allocations do not fail.
     if (reject) return {};
-    return ZmRef<RxQueue::Node>{ZmSingleton<RxAllocator>::instance()->allocBuf().ptr<RxQueue::Node>()};
+    return allocBuf();
   };
   return src.splice(
     dst,
@@ -448,7 +454,7 @@ void testSpliceTransform()
   unsigned allocs = 0;
   auto alloc = [&allocs]() -> ZmRef<RxQueue::Node> {
     ++allocs;
-    return ZmRef<RxQueue::Node>{ZmSingleton<RxAllocator>::instance()->allocBuf().ptr<RxQueue::Node>()};
+    return allocBuf();
   };
   int64_t n = src.splice(
     dst,

@@ -21,7 +21,6 @@
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmQueue.hh>
 #include <zlib/ZmSemaphore.hh>
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmTrap.hh>
 
 #include <zlib/ZfCLI.hh>
@@ -44,8 +43,6 @@
 namespace ZtcHub_ {
 
 using Ztc::Protocol;
-
-using HubBuf = Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Hub.Frame">, 1U<<30>;
 
 namespace SSF_ {
 
@@ -634,9 +631,12 @@ struct App {
       auto n = rx.extract(
         [](ZuBSpan span) -> int64_t { return span.length(); },
         []() {
-          using Buf = Zi::IOBufBuiltin<ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
-          return ZmRef<ZiRxQueue::Node>{new Buf{
-            ZmSingleton<typename Buf::Allocator>::instance()}};
+          static ZiMultiplex mx{ZiMxParams{}.scheduler(
+            [](auto &params) { params.id(Link::TLS ? "Ztc.Hub.RxTLS" : "Ztc.Hub.RxTCP"); })};
+          static auto allocator = mx.allocator<
+            Link::TLS ? Zi::IOBufType::RxTLS : Zi::IOBufType::RxTCP, ZiRxQueue::Node,
+            ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltVHMaxSize>();
+          return ZmRef<ZiRxQueue::Node>{allocator->allocBuf().template ptr<ZiRxQueue::Node>()};
         }, buf);
       if (n <= 0) { state.closed = true; return -1; }
       if (!message) message = ZuMv(buf);

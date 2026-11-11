@@ -294,6 +294,7 @@ struct ParserOps {
   void (*reset)(void *);
   void (*connectedInfo)(void *, void *, Channel *, const ConnectedInfo &);
   void (*disconnected)(void *, Channel *, bool);
+  void (*bufType)(void *, Zi::IOBufType::T);
 };
 
 struct ParserBinding {

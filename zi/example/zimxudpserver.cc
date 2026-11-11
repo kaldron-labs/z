@@ -97,8 +97,9 @@ public:
   void connected(ZiRxContext &io) { recvEcho(io); }
 
   bool recvEcho(ZiRxContext &io) {
-    io.init(ZiRxFn{this, ZmFnPtr<&Connection::recvComplete>{}},
-      rxAllocator()->allocBuf(this));
+    auto buf = rxAllocator()->allocBuf(this, 0, info().mps);
+    if (ZuUnlikely(!buf)) { io.disconnect(); return true; }
+    io.init(ZiRxFn{this, ZmFnPtr<&Connection::recvComplete>{}}, ZuMv(buf));
     return true;
   }
   bool recvComplete(ZiRxContext &);
@@ -170,9 +171,12 @@ private:
 
 bool Connection::recvComplete(ZiRxContext &io)
 {
-  ZmRef<Packet> buf = mx()->txAllocator()->allocBuf().ptr<Packet>();
+  ZmRef<Packet> buf = mx()->txAllocator()->allocBuf(
+    nullptr, 0, info().mps).ptr<Packet>();
+  if (ZuUnlikely(!buf)) { io.disconnect(); return true; }
   buf->append(io.buf->cspan());
-  io.buf = rxAllocator()->allocBuf(this);
+  io.buf = rxAllocator()->allocBuf(this, 0, info().mps);
+  if (ZuUnlikely(!io.buf)) { io.disconnect(); return true; }
   buf->addr = !m_dest ? io.addr : m_dest;
   buf->tos = io.tos;
   std::cout << ZtHexDump(

@@ -45,6 +45,29 @@ template <typename Net> static void layout() {
 }
 
 
+struct CloseProbe : Zfix::LinkHooks<CloseProbe, Zfix::TCP> {
+  void		*physical = nullptr;
+  unsigned	closes = 0;
+  bool		notify = true;
+
+  void *cxn() { return physical; }
+  void disconnect_(bool value) { ++closes; notify = value; }
+};
+
+static void physicalClose() {
+  ZuTestScope(physicalClose);
+  CloseProbe probe;
+  probe.fixCloseRx(true);
+  ZuCheck(!probe.closes);
+  probe.physical = &probe;
+  probe.fixCloseRx(false);
+  ZuCheck(probe.closes == 1 && !probe.notify);
+  // Late protocol notices cannot reassert native disconnect after Rx closed it.
+  probe.physical = nullptr;
+  probe.fixCloseRx(true);
+  ZuCheck(probe.closes == 1);
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -52,6 +75,7 @@ int main(int argc, char **argv)
   ZuCheck(ZfixLib[0] == '@');
   ZuCheck(ZfixFmtLib[0] == '@');
   ZuCheck(Entry::MsgType == "D");
+  ZuTestCall(physicalClose);
   ZuTestCall(layout<Zfix::TCP>);
   ZuTestCall(layout<Zfix::TLS>);
   return 0;

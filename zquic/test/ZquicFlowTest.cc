@@ -69,6 +69,7 @@ static ZmRef<ZiIOBuf> streamPkt(
 	([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
       return allocator->allocBuf(owner, 0);
     })(nullptr);
+  if (ZuUnlikely(!packet)) return nullptr;
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, id, offset, payload, fin);
   if (n <= 0) return nullptr;

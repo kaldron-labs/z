@@ -135,15 +135,15 @@ static void wire(bool h3, bool empty)
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
   ZuCheckRT(cliInit);
+  bool pooled = cliInit &&
+    client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
+  ZuCheckRT(pooled);
   ZuCheckRT(mx.start(), (return));
   bool started = initialized && server.start();
   ZuCheckRT(started);
   bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
   ZuCheckRT(listening && !state.errors.load_());
-  bool pooled = listening && cliInit &&
-    client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
-  ZuCheckRT(pooled);
-  bool cliUp = pooled && client.start();
+  bool cliUp = pooled && listening && client.start();
   ZuCheckRT(cliUp);
   bool admitted = false;
   ZmRef<Requests::Node> request;

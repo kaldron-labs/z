@@ -17,20 +17,25 @@
 
 #include <zlib/Zfb.hh>
 
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiMultiplex.hh>
 
 namespace Zum {
 
 struct SagaImage {
-  using Buf =
-    Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZiIOBuf_Align,
-      ZuStringT<"Zum.Saga.Image">>;
+  static ZmRef<ZiIOBuf> allocImage()
+  {
+    static ZiMultiplex mx{ZiMxParams{}.scheduler(
+      [](auto &params) { params.id("Zum.Saga.Image"); })};
+    static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize,
+      ZiIOBuf_Align, ZuStringT<"Zum.Saga.Image">>();
+    return allocator->allocBuf();
+  }
 
   template <typename T>
   static Bytes save(const T &item)
   {
-    Zfb::IOBuilder<Zfb::BufferAlign<T>::N> fbb{ZmSingleton<Buf>::instance()->allocBuf()};
+    Zfb::IOBuilder<Zfb::BufferAlign<T>::N> fbb{allocImage()};
     fbb.finish(Zfb::save(fbb, item));
     return Bytes{fbb.span()};
   }

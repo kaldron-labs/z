@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "ZgrpcTestAllocator.hh"
+
 #include <string.h>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSingleton.hh>
@@ -13,12 +15,8 @@
 
 using namespace ZuTestUtil;
 using namespace Zgrpc;
-using Pool = Zi::IOBufBuiltin<
-  ZiIOBuf,
-  32,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"ZgrpcFrameTest">,
-  1U << 20>;
+using Pool = Zi::IOBufBuiltinAllocator<
+  Zi::IOBufType::App, ZiIOBuf, 32, ZiIOBuf_DefltAlign, ZuStringT<"ZgrpcFrameTest">, 1U << 20>;
 
 struct Payload { ZuBSpan bytes; };
 ZfStruct(, (Payload, PB), (bytes, (Ctor<0>, PB::FieldID<1>), Bytes));
@@ -172,7 +170,7 @@ static void budgets()
 static void buffers()
 {
   ZuTestScope(buffers);
-  ZmRef<ZiIOBuf> buf = new Pool{ZmSingleton<typename Pool::Allocator>::instance()};
+  ZmRef<ZiIOBuf> buf = ZgrpcTest::Allocator<Pool>::get()->allocBuf();
   const uint8_t wire[] = {0, 0, 0, 0, 3, 'a', 'b', 'c'};
   memcpy(buf->data(), wire, sizeof(wire));
   buf->length = sizeof(wire);
@@ -192,7 +190,7 @@ static void protobuf()
     Bytes data;
     data.length(size);
     if (size) memset(data.data(), 0x71, size);
-    ZmRef<ZiIOBuf> initial = new Pool{ZmSingleton<typename Pool::Allocator>::instance()};
+    ZmRef<ZiIOBuf> initial = ZgrpcTest::Allocator<Pool>::get()->allocBuf();
     initial->skip = 8;
     FrameError::T error;
     auto identity = initial.ptr();
@@ -208,21 +206,20 @@ static void protobuf()
     ZuCheckRT(object.bytes == ZuBSpan{data});
   }
   FrameError::T error;
-  auto empty = encodeFrame(ZmRef<ZiIOBuf>{new Pool{
-    ZmSingleton<typename Pool::Allocator>::instance()}}, 0, 0, Payload{}, error);
+  auto empty = encodeFrame(
+    ZgrpcTest::Allocator<Pool>::get()->allocBuf(), 0, 0, Payload{}, error);
   ZuCheckRT(empty && empty->length == PrefixSize && error == FrameError::OK);
-  ZmRef<ZiIOBuf> tiny = new Pool{ZmSingleton<typename Pool::Allocator>::instance()};
+  ZmRef<ZiIOBuf> tiny = ZgrpcTest::Allocator<Pool>::get()->allocBuf();
   tiny->skip = tiny->size - 2;
   auto identity = tiny.ptr();
   auto grown = encodeFrame(ZuMv(tiny), 0, 0, Payload{}, error);
   ZuCheckRT(grown && grown.ptr() == identity && grown->length == PrefixSize);
   ZuCheckRT(grown->skip + grown->length <= grown->size && !grown->builtin());
   ZuCheckRT(error == FrameError::OK);
-  auto fail = encodeFrame(ZmRef<ZiIOBuf>{new Pool{
-    ZmSingleton<typename Pool::Allocator>::instance()}}, 0, 1, Payload{{"abc"}}, error);
+  auto fail = encodeFrame(
+    ZgrpcTest::Allocator<Pool>::get()->allocBuf(), 0, 1, Payload{{"abc"}}, error);
   ZuCheckRT(!fail && error == FrameError::Limit);
-  auto overflow = encodeFrame(ZmRef<ZiIOBuf>{new Pool{
-    ZmSingleton<typename Pool::Allocator>::instance()}}, UINT_MAX, UINT_MAX,
+  auto overflow = encodeFrame(ZgrpcTest::Allocator<Pool>::get()->allocBuf(), UINT_MAX, UINT_MAX,
     Payload{}, error);
   ZuCheckRT(!overflow && error == FrameError::Limit);
 }
@@ -231,8 +228,7 @@ static void decoding()
 {
   ZuTestScope(decoding);
   FrameError::T error;
-  auto encoded = encodeFrame(ZmRef<ZiIOBuf>{new Pool{
-    ZmSingleton<typename Pool::Allocator>::instance()}}, 0, 100,
+  auto encoded = encodeFrame(ZgrpcTest::Allocator<Pool>::get()->allocBuf(), 0, 100,
     CtorOnly{Payload{{"borrowed"}}}, error);
   FrameRx rx;
   Frame frame;
@@ -282,7 +278,7 @@ static void rich()
       }
     };
     auto size = sizeof(wire) + (changed ? sizeof(last) : 0);
-    ZmRef<ZiIOBuf> input = new Pool{ZmSingleton<typename Pool::Allocator>::instance()};
+    ZmRef<ZiIOBuf> input = ZgrpcTest::Allocator<Pool>::get()->allocBuf();
     ZuCheckRT(input->ensure(PrefixSize + size), (return));
     framePrefix(input->data(), size);
     memcpy(input->data() + PrefixSize, wire, sizeof(wire));
@@ -301,8 +297,8 @@ static void rich()
     frame = {};
     check(message.object()); // Nested/container views survive receive retirement.
     FrameError::T error;
-    auto output = encodeFrame(ZmRef<ZiIOBuf>{new Pool{
-      ZmSingleton<typename Pool::Allocator>::instance()}}, 0, 1024, message.object(), error);
+    auto output = encodeFrame(
+      ZgrpcTest::Allocator<Pool>::get()->allocBuf(), 0, 1024, message.object(), error);
     ZuCheckRT(output && error == FrameError::OK, (return));
     ZuCheckRT(rx.feed(output->cspan(), output, used, frame) == FrameResult::Message && rx.end());
     auto round = decodeFrame<RichRPC::Response,
@@ -319,7 +315,7 @@ static void rich()
 static void fragmentedOwner()
 {
   ZuTestScope(fragmentedOwner);
-  ZmRef<ZiIOBuf> first = new Pool{ZmSingleton<typename Pool::Allocator>::instance()};
+  ZmRef<ZiIOBuf> first = ZgrpcTest::Allocator<Pool>::get()->allocBuf();
   uint8_t prefix[PrefixSize];
   framePrefix(prefix, 6);
   first->append(ZuBSpan{prefix});

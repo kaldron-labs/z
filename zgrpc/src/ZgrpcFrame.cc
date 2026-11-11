@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <string.h>
-#include <zlib/ZmSingleton.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZgrpcFrame.hh>
 
 namespace Zgrpc {
@@ -15,12 +15,14 @@ ZtEnumImplNS(FrameResult);
 
 // Reuse Zi's tuned packet size and heap, allowing assembly up to the codec's
 // implementation ceiling. The per-call limit is checked before allocation.
-using MessageBuf = Zi::IOBufBuiltin<
-  ZiIOBuf,
-  ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"Zgrpc.Message">,
-  INT_MAX>;
+template <Zi::IOBufType::T Type>
+static ZmRef<ZiIOBuf> allocMessage(unsigned length)
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Type, ZiIOBuf,
+    ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zgrpc.Message">>();
+  return allocator->allocBuf(nullptr, length);
+}
 
 void FrameRx::reset(unsigned limit)
 {
@@ -82,8 +84,11 @@ FrameResult::T FrameRx::feed(ZuBSpan input, ZmRef<ZiIOBuf> backing,
       if (!m_buf->ensure(m_length)) return fail(FrameError::Limit);
     } else {
       if (!m_buf) {
-	m_buf = new MessageBuf{ZmSingleton<typename MessageBuf::Allocator>::instance()};
-	m_buf->alloc(m_length);
+	switch (m_bufType) {
+	  case Zi::IOBufType::RxTCP: m_buf = allocMessage<Zi::IOBufType::RxTCP>(m_length); break;
+	  case Zi::IOBufType::RxTLS: m_buf = allocMessage<Zi::IOBufType::RxTLS>(m_length); break;
+	  default: m_buf = allocMessage<Zi::IOBufType::App>(m_length); break;
+	}
       }
       memcpy(m_buf->data() + m_received, input.data() + used, n);
     }

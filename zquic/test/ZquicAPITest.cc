@@ -419,6 +419,8 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
   }
   void pto_() { }
   void queueRetransmit() { }
+  bool retransmit_(bool = false, unsigned = 2,
+    Zquic::PktNumSpace::T = Zquic::PktNumSpace::N) { return false; }
   void statelessReset() { ++statelessResetCount; }
   void migrationStarted(const Zquic::MigrationResult &result) {
     lastMigration = result;
@@ -724,6 +726,7 @@ static ZmRef<ZiIOBuf> streamPkt(
 	([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
       return allocator->allocBuf(owner, 0);
     })(nullptr);
+  if (ZuUnlikely(!packet)) return nullptr;
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, id, offset, payload, fin);
   if (n <= 0) return nullptr;

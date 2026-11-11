@@ -10,9 +10,9 @@
 #include <zlib/ZuTestUtil.hh>
 
 
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
+#include <zlib/ZiMultiplex.hh>
 
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZtcAlert.hh>
@@ -529,8 +529,11 @@ void crossDateReplay()
   bool identityMutated = false;
   {
     ZiFile data{todayData, ZiFile::GC};
-    ZmRef<ZiIOBuf> frame = new
-      Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Alert.TestRx">, Ztc::AppCf::DefltMaxFrame>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Alert.TestRx">, Ztc::AppCf::DefltMaxFrame>::Allocator>::instance()};
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf,
+      1024, ZiIOBuf_Align, ZuStringT<"Ztc.Alert.TestRx">,
+      Ztc::AppCf::DefltMaxFrame>();
+    ZmRef<ZiIOBuf> frame = allocator->allocBuf();
     if (data && identitySize > 0 &&
 	identitySize <= Ztc::AppCf::DefltMaxFrame &&
 	frame->alloc(unsigned(identitySize))) {

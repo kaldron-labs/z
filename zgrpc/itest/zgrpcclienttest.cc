@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "../test/ZgrpcTestAllocator.hh"
+
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmBlock.hh>
@@ -127,17 +129,17 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal)
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
   ZuCheckRT(cliInit);
+  bool pooled = cliInit &&
+    client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
+  ZuCheckRT(pooled);
   ZuCheckRT(mx.start(), (return));
   bool started = initialized && server.start();
   ZuCheckRT(started);
   bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
   ZuCheckRT(listening && !state.errors.load_());
-  bool pooled = listening && cliInit &&
-    client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
-  ZuCheckRT(pooled);
   if (state.redirect && pooled)
     ZuCheckRT(!client.config(0)->maxRetries() && !client.config(0)->maxRedirects());
-  bool cliUp = pooled && client.start();
+  bool cliUp = pooled && listening && client.start();
   ZuCheckRT(cliUp);
   ZmSemaphore held, release;
   bool blocked = cliUp && (mode == Mode::Ingress || mode == Mode::Deadline);
@@ -401,17 +403,9 @@ struct GoPeer : Zhttp::ProtocolServer<GoPeer<Profile>, Profile, GoLink<Profile>>
       auto tx = link->transmit_(builder);
       builder.begin(tx);
       FrameError::T error;
-      auto buf = encodeFrame(ZmRef<ZiIOBuf>{new Zi::IOBufBuiltin<
-        ZiIOBuf,
-        ZiIOBuf_DefltSize,
-        ZiIOBuf_DefltAlign,
-        ZiIOBuf_HeapID,
-        ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<
-          ZiIOBuf,
-          ZiIOBuf_DefltSize,
-          ZiIOBuf_DefltAlign,
-          ZiIOBuf_HeapID,
-          ZiIOBuf_DefltMaxSize>::Allocator>::instance()}},
+      auto buf = encodeFrame(ZgrpcTest::Allocator<Zi::IOBufBuiltinAllocator<
+	Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID,
+	ZiIOBuf_DefltVHMaxSize>>::get()->allocBuf(),
 	0, Default::MaxMessageBytes, Packet{42, {}}, error);
       if (!buf || error != FrameError::OK) { ++s->errors; return; }
       auto body = builder.body(tx);
@@ -559,15 +553,15 @@ static void goaway(bool drain = false)
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
   ZuCheckRT(cliInit);
+  bool pooled = cliInit &&
+    client.pool(0, Zhttp::Destination{"localhost", uint16_t(state.port)});
+  ZuCheckRT(pooled);
   ZuCheckRT(mx.start(), (return));
   bool started = initialized && server.start();
   ZuCheckRT(started);
   bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
   ZuCheckRT(listening && !state.errors.load_());
-  bool pooled = listening && cliInit &&
-    client.pool(0, Zhttp::Destination{"localhost", uint16_t(state.port)});
-  ZuCheckRT(pooled);
-  bool cliUp = pooled && client.start();
+  bool cliUp = pooled && listening && client.start();
   ZuCheckRT(cliUp);
   ZmRef<GoCall> first, last;
   if (drain && cliUp) {
@@ -648,6 +642,9 @@ static void transition()
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
   ZuCheck(cliInit);
+  bool pooled = cliInit &&
+    client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
+  ZuCheck(pooled);
   ZuCheck(mx.start(), (return));
   bool started = initialized && server.start();
   ZuCheck(started);
@@ -656,11 +653,8 @@ static void transition()
   bool listening = started && badUp && state.listening.timedwait(Zm::now(10)) == 0 &&
     bad.listening.timedwait(Zm::now(10)) == 0;
   ZuCheck(listening && !state.errors.load_() && !bad.errors.load_());
-  bool pooled = listening && cliInit &&
-    client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
-  ZuCheck(pooled);
   if (pooled) ZuCheck(!client.config(0)->maxRetries() && !client.config(0)->maxRedirects());
-  bool cliUp = pooled && client.start();
+  bool cliUp = pooled && listening && client.start();
   ZuCheck(cliUp);
   ZmRef<GoCall> first = new GoCall{&state, true};
   if (cliUp) {

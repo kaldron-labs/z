@@ -8,6 +8,8 @@
 #define managed_partial_test_HH
 
 #if defined(__linux__) && !defined(ZFIX_TEST_TLS)
+#include "../test/ZfixTestAllocator.hh"
+
 #include <arpa/inet.h>
 #include <errno.h>
 #include <poll.h>
@@ -258,13 +260,13 @@ static bool partialLogon(int fd)
   Fmt::Error error;
   auto body = TxBody::control(msg, error);
   using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
-  auto frame = body ? txFrame(ZmSingleton<Allocator>::instance()->allocBuf(),
+  auto frame = body ? txFrame(ZfixTest::Allocator<Allocator>::get()->allocBuf(),
     *body, txConfig(config(true,
     Transport::FIX4, Version::V4_4)), TxContext{.seqNo = 1,
       .sendingTime = ZuDateTime{Zm::now()}}, error) : ZmRef<ZiIOBuf>{};
   if (error || !frame || !partialWrite(fd, frame->cspan())) return false;
-  ZmRef<ZiIOBuf> input = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-    ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
+  ZmRef<ZiIOBuf> input = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
+    ZiIOBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
   for (;;) {
     auto r = Fmt::frame(input->cspan());
     if (r.state == Fmt::FrameState::Complete) {
@@ -294,10 +296,10 @@ static void managedPartial()
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
   partialSend = &state;
-  bool started = mx.start(); ZuCheck(started);
-  if (!started) { partialSend = nullptr; return; }
   bool si = server.init(Network::ServerParams{&mx, "3", "4"});
   bool ci = client.init(Network::ClientParams{&mx, "3", "4"}); ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started);
+  if (!started) { partialSend = nullptr; return; }
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<PartialClient::Link> b;
   int raw = -1; bool attemptedB = false, success = false;
@@ -323,8 +325,8 @@ static void managedPartial()
       if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size))) { s->fail(); return; }
       s->socket = fd; s->watch = 1;
       link->app()->txRun([link] {
-	ZmRef<ZiIOBuf> data = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-	  ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
+	ZmRef<ZiIOBuf> data = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
+	  ZiIOBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
 	data->ensure(PayloadBytes);
 	memset(data->data(), 'X', PayloadBytes); data->length = PayloadBytes;
 	Fmt::Error error;

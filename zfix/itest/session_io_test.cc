@@ -19,6 +19,7 @@
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZiLog.hh>
 #ifdef ZFIX_TEST_TLS
 #include <zlib/Ztls.hh>
 namespace Net = Ztls;
@@ -716,6 +717,8 @@ friend inline ZuStringT<"Zfix.session_io_test.Link"> ZmNHeapID(Link *);
 };
 
 bool CliHub::init(Network::ClientParams params) {
+  if (!params.multiplex())
+    return Zfix::Client<CliHub, Dictionary, Network>::init(ZuMv(params));
   Zi::IOBufAllocator *rx = nullptr;
   Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
@@ -726,6 +729,10 @@ bool CliHub::init(Network::ClientParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
+#ifdef ZFIX_TEST_TLS
+  if (!params.txPacketAllocator())
+    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
+#endif
   return Zfix::Client<CliHub, Dictionary, Network>::init(ZuMv(params));
 }
 
@@ -796,6 +803,8 @@ friend inline ZuStringT<"Zfix.session_io_test.Link"> ZmNHeapID(ServerLink *);
 };
 
 bool SrvHub::init(Network::ServerParams params) {
+  if (!params.multiplex())
+    return Zfix::Server<SrvHub, Dictionary, Network>::init(ZuMv(params));
   Zi::IOBufAllocator *rx = nullptr;
   Zi::IOBufAllocator *tx = nullptr;
   if (!params.rxAllocator()) {
@@ -806,6 +815,10 @@ bool SrvHub::init(Network::ServerParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
+#ifdef ZFIX_TEST_TLS
+  if (!params.txPacketAllocator())
+    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
+#endif
   return Zfix::Server<SrvHub, Dictionary, Network>::init(ZuMv(params));
 }
 
@@ -1614,7 +1627,15 @@ static void adminBudget(unsigned kind) {
 	    ++c.seqNo; frame = txFrame(link->fixAllocTx(0), *body, cfg, c, error);
 	    if (error || !frame || !buf->append(frame->cspan())) { state.fail(); return; }
 	  }
+#ifdef ZFIX_TEST_TLS
+	  // FIX frames can exceed one TLS application record; retain their exact
+	  // bytes while the native plaintext stream splits record output.
+	  auto stream = link->txStream_();
+	  stream << buf->cspan() << Zi::flush();
+	  if (stream.failed()) state.fail();
+#else
 	  if (!link->sendRecord(ZuMv(buf))) state.fail();
+#endif
 	});
       };
       auto received = [&sampleRx, &rx, &local, &hub, initial](unsigned n) {
@@ -1971,7 +1992,8 @@ struct OwnState {
     readyB, lateAccepted, clientLogon, physicalAny, stoppedMiddle, prefix;
   ZmAtomic<unsigned>	errors{0}, accepted{0}, logical{0}, physicalOpen{0}, physicalClosed{0},
     serverStops{0}, aReady{0}, bReady{0}, bStarted{0}, served{0}, received{0}, oldDecisions{0},
-    loadPublished{0}, workReplied{0};
+    loadPublished{0}, workReplied{0}, stopOutputFaults{0}, stopOutputEvents{0},
+    stopTransportEvents{0};
   unsigned		port = 0;
   uint64_t		bLogon = 0; // client Tx; published before business semaphore
   AdmitFn		admit; // server AppRx
@@ -1990,7 +2012,7 @@ struct OwnState {
   unsigned connection() const { return independent ? 1U : preauth || chain ? 3U : 2U; }
 
   void fail(const char *file = __builtin_FILE(), unsigned line = __builtin_LINE()) {
-    log("# replacement failure ", file, ":", line, " mode=", mode);
+    log_("# replacement failure ", file, ":", line, " mode=", mode);
     ++errors;
   }
 };
@@ -2061,7 +2083,11 @@ template <typename Impl> static void ownStopped(Impl *link)
 {
   Ztc::LinkTelemetry data;
   link->telemetry(data);
-  if (data.state != Ztc::LinkState::Down) link->test->fail();
+  if (data.state != Ztc::LinkState::Down) {
+    log_("# stopped native state=", int(data.state), " id=", data.id,
+      " connection=", bool(link->cxn()));
+    link->test->fail();
+  }
 }
 
 struct OwnServer : Zfix::Server<OwnServer, Dictionary, Network> {
@@ -2248,7 +2274,7 @@ friend inline ZuStringT<"Zfix.Own.Server"> ZmNHeapID(OwnSrvLink *);
   }
 
   void fixFaultTx(TxContext c, Fmt::Error error) {
-    log("# replacement server Tx fault code=", error.code, " tag=", error.tag, " epoch=",
+    log_("# replacement server Tx fault code=", error.code, " tag=", error.tag, " epoch=",
       c.epoch, " conn=", c.connection, " seq=", c.seqNo);
     test->fail();
   }
@@ -2282,6 +2308,10 @@ bool OwnServer::init(Network::ServerParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
+#ifdef ZFIX_TEST_TLS
+  if (!params.txPacketAllocator())
+    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
+#endif
   return Zfix::Server<OwnServer, Dictionary, Network>::init(ZuMv(params));
 }
 
@@ -2380,10 +2410,24 @@ friend inline ZuStringT<"Zfix.Own.Client"> ZmNHeapID(OwnCliLink *);
   }
 
   void fixEventRx(SessionEvent e, ZmRef<Zfix::RxQueue::Node>) {
+    // A queued Logon can lose the stop-before-bind race before native loss
+    // reaches AppRx. Verify its output-failure pair as the terminal outcome.
+    if (test->terminal && !primary && !started &&
+	(e.actions & SessionAction::Failure) && !(e.actions & SessionAction::Ready) &&
+	e.error == SessionError::Output &&
+	e.epoch == 1 && e.connection == 1 && !e.tag &&
+	test->stopOutputFaults.load_() == 1) {
+      ++test->stopOutputEvents;
+      return;
+    }
+    if (test->terminal && !primary && !started &&
+	(e.actions & SessionAction::Failure) && !(e.actions & SessionAction::Ready) &&
+	e.error == SessionError::Transport &&
+	e.epoch == 1 && e.connection == 1 && !e.tag) ++test->stopTransportEvents;
     if ((e.actions & SessionAction::Failure) && !primary &&
 	(e.error != SessionError::Transport ||
 	 (!test->terminal && !(middle && test->accepted.load_() >= 4)))) {
-      log("# replacement B failure state=", e.state, " error=", e.error, " tag=", e.tag,
+      log_("# replacement B failure state=", e.state, " error=", e.error, " tag=", e.tag,
 	" actions=", e.actions, " conn=", e.connection, " epoch=", e.epoch);
       test->fail();
     }
@@ -2422,7 +2466,13 @@ friend inline ZuStringT<"Zfix.Own.Client"> ZmNHeapID(OwnCliLink *);
 
   void fixFaultTx(TxContext c, Fmt::Error error) {
     if (primary) return;
-    log("# replacement B Tx fault code=", error.code, " tag=", error.tag, " epoch=", c.epoch,
+    if (test->terminal && error.code == Fmt::ErrorCode::Output &&
+	!error.tag && c.epoch == 1 && c.connection == 1 && c.seqNo &&
+	!test->bReady.load_()) {
+      ++test->stopOutputFaults;
+      return;
+    }
+    log_("# replacement B Tx fault code=", error.code, " tag=", error.tag, " epoch=", c.epoch,
       " conn=", c.connection, " seq=", c.seqNo);
     test->fail();
   }
@@ -2444,7 +2494,23 @@ bool OwnClient::init(Network::ClientParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
+#ifdef ZFIX_TEST_TLS
+  if (!params.txPacketAllocator())
+    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
+#endif
   return Zfix::Client<OwnClient, Dictionary, Network>::init(ZuMv(params));
+}
+
+// completeWork's local reference posts its budget return on destruction.
+// Observe its return before sampling Rx so the sample follows that post.
+static void completeWork(OwnServer &server, ZmRef<OwnSrvLink> link)
+{
+  ZmBlock<>{}([&server, link = ZuMv(link)](auto wake) mutable {
+    server.rxRun([link = ZuMv(link), wake = ZuMv(wake)]() mutable {
+      link->completeWork();
+      wake();
+    });
+  });
 }
 
 static void nativeReplacement(unsigned mode, bool established = false)
@@ -2542,7 +2608,7 @@ static void nativeReplacement(unsigned mode, bool established = false)
       sample();
       ZuCheck(local.count == 1 && local.bytes && hub.count == 1 && hub.bytes == local.bytes &&
 	state.loadPublished.load_() == 1);
-      server.rxRun([link = state.serverLink] { link->completeWork(); });
+      completeWork(server, state.serverLink);
       ZuCheck(state.business.timedwait(Zm::now(5)) == 0);
       sample();
       ZuCheck(!local.count && !local.bytes && !hub.count && !hub.bytes &&
@@ -2732,7 +2798,7 @@ static void nativeChain(unsigned mode)
     mx.rxRun([&state] { auto close = ZuMv(state.oldClose); if (close) close(); });
     ZuCheck(physical(2));
     ZuCheck(!state.serverStops.load_() && !side.serverStops.load_());
-    server.rxRun([link = state.serverLink] { link->completeWork(); });
+    completeWork(server, state.serverLink);
     ZuCheck(state.business.timedwait(Zm::now(5)) == 0);
     sample();
     ZuCheck(!local.count && !local.bytes && !hub.count && !hub.bytes &&
@@ -2779,7 +2845,9 @@ static void nativeChain(unsigned mode)
 #include "session_preauth_test.hh"
 
 int main(int argc, char **argv) {
-  parse(argc, argv); ZuTestMain();
+  parse(argc, argv);
+  ZiLog::init("ZfixSessionIOTest"); ZiLog::level(0); ZiLog::start();
+  ZuTestMain();
   ZuTestCall(gapTimerDrain);
   ZuTestCall(loopback, Transport::FIX4, false, 0, Scenario::Normal, false, true, false, 0, true);
   ZuTestCall(loopback, Transport::FIX44A, false, 0, Scenario::Normal, false, true, false, 0, true);
@@ -2851,5 +2919,6 @@ int main(int argc, char **argv) {
   ZuTestCall(nativeStopBeforeBind, Transport::FIX44A);
   ZuTestCall(nativeStopBeforeBind, Transport::FIXT11);
 #endif
+  ZiLog::stop();
   return 0;
 }

@@ -797,9 +797,21 @@ int main(int argc, char **argv)
     ZiLOG(Error, "zrest", ([e](auto &s) { s << "transmit error: " << e; }));
     return false;
   }});
-  bool clientUp = poolsInited && mx.start() && client.start();
+  CallbackApp callback;
+  CallbackServer callbackServer;
+  unsigned port = callbackPort();
+  Zrest::ServerConfig callbackConfig;
+  callbackConfig.localIP(ZiIP("127.0.0.1")).port(port)
+    .idleTimeout(options.callbackTimeout).bodyMax(OAuthURLMax)
+    .retainedBodyMax(OAuthURLMax).tcp();
+  callbackConfig.limits(limits);
+  bool callbackInited = poolsInited && port && callbackServer.init(
+    Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"},
+    ZuMv(callbackConfig), &callback);
+  bool clientUp = callbackInited && mx.start() && client.start();
   if (!clientUp) {
     if (clientInited) client.stop();
+    if (callbackInited) callbackServer.final();
     client.final(); mx.stop(); ZiLog::stop(); return 1;
   }
 
@@ -839,21 +851,10 @@ int main(int argc, char **argv)
   }
   if (ok) state = encode<OAuthSecret>(random);
 
-  CallbackApp callback;
-  CallbackServer callbackServer;
-  bool callbackInited = false, callbackUp = false;
+  bool callbackUp = false;
   pid_t browserPID = -1;
   if (ok) {
-    unsigned port = callbackPort();
-    Zrest::ServerConfig callbackConfig;
-    callbackConfig.localIP(ZiIP("127.0.0.1")).port(port)
-      .idleTimeout(options.callbackTimeout).bodyMax(OAuthURLMax)
-      .retainedBodyMax(OAuthURLMax).tcp();
-    callbackConfig.limits(limits);
-    callbackInited = port && callbackServer.init(
-      Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"},
-      ZuMv(callbackConfig), &callback);
-    callbackUp = callbackInited && callbackServer.start();
+    callbackUp = callbackServer.start();
     ok = callbackUp && !callback.ready.timedwait(Zm::now(5)) && callback.port;
   }
   if (ok) {

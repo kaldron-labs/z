@@ -16,26 +16,68 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuTraits.hh>
-#include <zlib/ZmSingleton.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/Zjrpc.hh>
 
 namespace Zjrpc {
 
-using BatchBuf = Zi::IOBufBuiltin<
-  ZiIOBuf,
-  ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"Zjrpc.Batch">,
-  ZiIOBuf_DefltMaxSize>;
+inline auto batchBufAllocator()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<
+    Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
+    ZuStringT<"Zjrpc.Batch">, ZiIOBuf_DefltVHMaxSize>();
+  return allocator;
+}
 
-using InputBuf = Zi::IOBufBuiltin<
-  ZiIOBuf,
-  ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"Zjrpc.Input">,
-  ZiIOBuf_DefltMaxSize>;
+inline Zi::IOBufAllocator *inputBufAllocator(Zi::IOBufType::T type)
+{
+  if (type == Zi::IOBufType::App) {
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Zi::IOBufType::App,
+      ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zjrpc.Input">>();
+    return allocator;
+  }
+  if (type == Zi::IOBufType::RxTCP) {
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Zi::IOBufType::RxTCP,
+      ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zjrpc.Input">>();
+    return allocator;
+  }
+  {
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Zi::IOBufType::RxTLS,
+      ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zjrpc.Input">>();
+    return allocator;
+  }
+}
+
+inline Zi::IOBufAllocator *inputNodeAllocator(Zi::IOBufType::T type)
+{
+  if (type == Zi::IOBufType::App) {
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Zi::IOBufType::App,
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
+      ZuStringT<"Zjrpc.Input">>();
+    return allocator;
+  }
+  if (type == Zi::IOBufType::RxTCP) {
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Zi::IOBufType::RxTCP,
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
+      ZuStringT<"Zjrpc.Input">>();
+    return allocator;
+  }
+  {
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Zi::IOBufType::RxTLS,
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
+      ZuStringT<"Zjrpc.Input">>();
+    return allocator;
+  }
+}
 
 template <typename Out>
 class Output {
@@ -131,7 +173,9 @@ private:
 // Bounded assembly of one transport message, independent of RPC routing/policy.
 class Input {
 public:
-  bool begin(uint64_t length, unsigned max) {
+  bool begin(uint64_t length, unsigned max,
+      Zi::IOBufType::T type = Zi::IOBufType::App) {
+    m_type = type;
     m_body = nullptr;
     m_max = max;
     m_hint = length <= max ? unsigned(length) : 0;
@@ -140,10 +184,10 @@ public:
   }
   bool feed(ZuSpan<uint8_t> span) {
     if (!m_active) return false;
-    if (!m_body) m_body = new InputBuf{ZmSingleton<typename InputBuf::Allocator>::instance()};
+    if (!m_body) m_body = inputBufAllocator(m_type)->allocBuf();
     if (m_body->refCount() > 1) {
       auto held = ZuMv(m_body);
-      m_body = new InputBuf{ZmSingleton<typename InputBuf::Allocator>::instance()};
+      m_body = inputBufAllocator(m_type)->allocBuf();
       if (!m_body->append(held->cspan())) { reset(); return false; }
     }
     if (m_hint && !m_body->ensure(m_hint)) { reset(); return false; }
@@ -170,15 +214,8 @@ public:
       ZmRef<ZiIOBuf> buf;
       auto n = rx.extract(
         [](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
-        []() {
-          using Buf = Zi::IOBufBuiltin<
-            ZiRxQueue::Node,
-            ZiIOBuf_DefltSize,
-            ZiIOBuf_DefltAlign,
-            ZuStringT<"Zjrpc.Input">,
-            ZiIOBuf_DefltMaxSize>;
-          return ZmRef<ZiRxQueue::Node>{new Buf{
-            ZmSingleton<typename Buf::Allocator>::instance()}};
+        [this]() -> ZmRef<ZiRxQueue::Node> {
+	  return inputNodeAllocator(m_type)->allocBuf();
         }, buf);
       if (n <= 0 || !feed(ZuMv(buf))) { reset(); return false; }
     }
@@ -190,6 +227,7 @@ public:
 
 private:
   ZmRef<ZiIOBuf> m_body;
+  Zi::IOBufType::T m_type = Zi::IOBufType::App;
   unsigned m_max = 0;
   unsigned m_hint = 0;
   bool m_active = false;

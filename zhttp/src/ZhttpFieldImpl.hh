@@ -18,6 +18,7 @@
 
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiRxStream.hh>
 
 #include <zlib/ZhttpCore.hh>
@@ -82,14 +83,12 @@ const WriterOps &bufferWriterOps()
     [](const void *) { return 0U; },
     [](const void *) { return 0U; },
     [](void *, unsigned head) -> ZmRef<ZiIOBuf> {
-      using Alloc = Zi::IOBufBuiltin<
-        ZiRxQueue::Node,
-        ZiIOBuf_DefltSize,
-        ZiIOBuf_DefltAlign,
-        ZuStringT<"Zhttp.Header.Print">,
-        ZiIOBuf_DefltMaxSize>;
-      auto buf = ZmRef<ZiIOBuf>{new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()}};
-      buf->skip = head;
+      static ZiMultiplex mx;
+      static auto allocator = mx.allocator<Zi::IOBufType::App, ZiRxQueue::Node,
+	ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.Header.Print">>();
+      auto buf = allocator->allocBuf();
+      if (head > buf->size - buf->skip) return nullptr;
+      buf->skip += head;
       return buf;
     },
     [](void *ctx, unsigned length) -> ZuSpan<uint8_t> {
@@ -239,14 +238,30 @@ public:
   using Queue = ZiRxQueue;
   using Stream = ZiRxStream<Queue>;
   using BufAlloc = BodyBufAlloc;
-  using MetaBufAlloc = Zi::IOBufBuiltin<
-    Queue::Node,
-    ZiIOBuf_DefltSize,
-    ZiIOBuf_DefltAlign,
-    ZuStringT<"Zhttp.Meta.Rx">,
-    ZiIOBuf_DefltMaxSize>;
+  using MetaBufAlloc = Zi::IOBufBuiltinAllocator<
+    Zi::IOBufType::App, Queue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
+    ZuStringT<"Zhttp.Meta.Rx">, ZiIOBuf_DefltVHMaxSize>;
 
   BodyRx(uint64_t max = uint64_t(-1)) : m_max{max} { }
+
+  void bufType(Zi::IOBufType::T type) { m_type = type; }
+  Zi::IOBufType::T bufType() const { return m_type; }
+
+  template <Zi::IOBufType::T Type>
+  static ZmRef<ZiRxQueue::Node> allocMeta() {
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Type, Queue::Node,
+      ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.Meta.Rx">>();
+    return allocator->allocBuf();
+  }
+
+  ZmRef<ZiRxQueue::Node> allocMeta() const {
+    switch (m_type) {
+      case Zi::IOBufType::RxTCP: return allocMeta<Zi::IOBufType::RxTCP>();
+      case Zi::IOBufType::RxTLS: return allocMeta<Zi::IOBufType::RxTLS>();
+      default: return allocMeta<Zi::IOBufType::App>();
+    }
+  }
 
   void reset() {
     m_rx.clean();
@@ -300,8 +315,8 @@ public:
     if (ZuLikely(length <= m_max - m_rx.length())) {
       int64_t n = src.splice(
 	m_rx, ZuFwd<Frame>(frame),
-	[]() { return new MetaBufAlloc{ZmSingleton<typename MetaBufAlloc::Allocator>::instance()}; },
-	[]() { return new MetaBufAlloc{ZmSingleton<typename MetaBufAlloc::Allocator>::instance()}; },
+	[this]() { return allocMeta(); },
+	[this]() { return allocMeta(); },
 	headLen, tailLen, ZuFwd<Transform>(transform));
       if (n <= 0) return n;
       m_received += length;
@@ -336,8 +351,8 @@ public:
 	  }
 	  return rest;
 	},
-	[]() { return new MetaBufAlloc{ZmSingleton<typename MetaBufAlloc::Allocator>::instance()}; },
-	[]() { return new MetaBufAlloc{ZmSingleton<typename MetaBufAlloc::Allocator>::instance()}; },
+	[this]() { return allocMeta(); },
+	[this]() { return allocMeta(); },
 	0, 0, transform);
       if (ZuUnlikely(moved <= 0)) return discard();
       m_received += n;
@@ -361,6 +376,7 @@ public:
 
 private:
   Stream	m_rx;
+  Zi::IOBufType::T m_type = Zi::IOBufType::App;
   uint64_t	m_max;
   uint64_t	m_received = 0;
   uint64_t	m_consumed = 0;

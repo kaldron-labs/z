@@ -616,7 +616,7 @@ static bool write(Zdb_::OpenData &state, ZuCSpan id, int vn, int qty)
   UN un = state.un[0] == nullUN() ? 0 : state.un[0] + 1;
   SN sn = state.sn + 1;
   Order row{"NS", 1, "NS", "probe", 0, zdbtest::Side::Buy, {100}, {qty}};
-  Builder fbb{new Zdb_::IOBufAlloc<Order>{localBufAllocator<Order>(), nullptr, 0}};
+  Builder fbb{localBufAllocator<Order>()->allocBuf()};
   auto nested = fbb.startNested();
   auto data = fbb.endNested(nested, Zfb::save(fbb, row));
   fbb.finish(saveMsg(fbb, saveRecord(fbb, id, un, sn, vn, 0, data),
@@ -636,7 +636,7 @@ static int read(Zdb_::StoreTbl *table)
   using namespace Zdb_;
   using zdbtest::Order;
   Table<Order>::Key<0> key{"NS", 1};
-  Builder fbb{new Zdb_::IOBufAlloc<Order>{localBufAllocator<Order>(), nullptr, 0}};
+  Builder fbb{localBufAllocator<Order>()->allocBuf()};
   fbb.finish(Zfb::save(fbb, key));
   return ZmBlock<int>{}([table, buf = fbb.buf()](auto wake) mutable {
     table->find(0, ZuMv(buf), [wake = ZuMv(wake)](RowResult result) mutable {

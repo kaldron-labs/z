@@ -214,8 +214,7 @@ using CryptoStreamRxNTP = ZmPQRxGapIgnore<>;
 struct CryptoFlight : public ZmNHeap<CryptoFlight>, public ZiIOBuf {
 friend inline ZuStringT<"Zquic.Crypto.Flight"> ZmNHeapID(CryptoFlight *);
   CryptoFlight(ZmRef<ZiIOBuf> output, const CryptoOffsets &offsets, unsigned epoch) :
-    ZiIOBuf{output->data_(), output->size,
-      ZmSingleton<Zi::IOBufBuiltinAllocator<>>::instance(), nullptr, 0},
+    ZiIOBuf{output->data_(), output->size, output->allocator(), nullptr, 0, true},
     tlsOutput{ZuMv(output)} {
     skip = tlsOutput->skip + unsigned(offsets[epoch]);
     length = unsigned(offsets[epoch + 1] - offsets[epoch]);
@@ -239,8 +238,15 @@ public:
   using DeliveryFn = ZmFn<void(ZuBSpan),
     ZmFnHeapID<"Zquic.Crypto.DeliveryFn">>;
 
-  CryptoStream() :
+  CryptoStream(Zi::IOBufAllocator *rx = nullptr, Zi::IOBufAllocator *tx = nullptr) :
+    m_rxAllocator{rx}, m_txAllocator{tx},
     m_dequeueFn{this, [](CryptoStream *s) { s->dequeueRx_(); }} { }
+
+  void allocators(Zi::IOBufAllocator *rx, Zi::IOBufAllocator *tx) {
+    m_rxAllocator = rx;
+    m_txAllocator = tx;
+  }
+  Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
 
   uint64_t txOffset() const { return m_txOffset; }
   uint64_t rxOffset() const { return m_rxOffset; }
@@ -285,6 +291,8 @@ ZuDerive(Delivery,
   void appendDelivery(const uint8_t *, uint64_t);
   void resumeReadyDequeue();
 
+  Zi::IOBufAllocator	*m_rxAllocator;
+  Zi::IOBufAllocator	*m_txAllocator;
   uint64_t		m_txOffset = 0;
   uint64_t		m_rxOffset = 0;
   CryptoRxPQueue	m_rxQueue{0};

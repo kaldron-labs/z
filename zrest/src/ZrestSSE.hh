@@ -13,7 +13,7 @@
 
 #include <zlib/ZhttpSSE.hh>
 
-#include <zlib/ZmSingleton.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmHeap.hh>
@@ -34,12 +34,30 @@ struct SSEData : public ZiIOBuf {
 };
 ZmListDerive(SSEQueue, SSEData,
   ZmListNode<SSEData, ZmListHeapID<"">>);
-using SSEBuf = Zi::IOBufBuiltin<
-  SSEQueue::Node,
-  ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"Zrest.SSE.Buffer">,
-  ZiIOBuf_DefltMaxSize>;
+inline Zi::IOBufAllocator *sseBufAllocator(Zi::IOBufType::T type)
+{
+  if (type == Zi::IOBufType::App) {
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Zi::IOBufType::App,
+      SSEQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
+      ZuStringT<"Zrest.SSE.Buffer">>();
+    return allocator;
+  }
+  if (type == Zi::IOBufType::TxTCP) {
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Zi::IOBufType::TxTCP,
+      SSEQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
+      ZuStringT<"Zrest.SSE.Buffer">>();
+    return allocator;
+  }
+  {
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Zi::IOBufType::TxTLS,
+      SSEQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
+      ZuStringT<"Zrest.SSE.Buffer">>();
+    return allocator;
+  }
+}
 
 class SSEProducer;
 
@@ -61,8 +79,10 @@ class SSEProducer : public ZmNHeap<SSEProducer>, public ZmObject {
 friend inline ZuStringT<"Zrest.SSE.Producer"> ZmNHeapID(SSEProducer *);
 
 public:
-  SSEProducer(ZmScheduler *scheduler, unsigned thread, Limits limits) :
-    m_scheduler{scheduler}, m_thread{thread}, m_limits{limits} { }
+  SSEProducer(ZmScheduler *scheduler, unsigned thread, Limits limits,
+      Zi::IOBufType::T type = Zi::IOBufType::App) :
+    m_scheduler{scheduler}, m_thread{thread}, m_limits{limits},
+    m_allocator{sseBufAllocator(type)} { }
   ~SSEProducer() { close_(); }
 
   bool emit(ZuCSpan body, ZuCSpan id = {}, int64_t retry = -1,
@@ -88,7 +108,7 @@ public:
       ++m_queued;
       m_bytes += framed;
     }
-    ZmRef<SSEQueue::Node> record = new SSEBuf{ZmSingleton<typename SSEBuf::Allocator>::instance()};
+    ZmRef<SSEQueue::Node> record = m_allocator->allocBuf();
     if (!Zhttp::saveSSE(*record, id, retry, body) || record->failed() ||
 	record->length != framed) {
       ZmGuard guard{m_admit};
@@ -278,6 +298,7 @@ private:
   ZmScheduler *m_scheduler = nullptr;
   unsigned m_thread = 0;
   Limits m_limits;
+  Zi::IOBufAllocator *m_allocator;
   ZmSpinLock m_admit;
   // Tx queue/producer state; send admission is shared with posting threads.
   alignas(Zm::CacheLineSize)

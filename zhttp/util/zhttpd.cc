@@ -198,12 +198,13 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
 
   using HdrCatalog = FixedRespHeaders;
   using ContentLength = ZuStringT<"content-length">;
-  using FileBuf = Zi::IOBufBuiltin<
-    ZiIOBuf,
-    FileChunk,
-    ZiIOBuf_DefltAlign,
-    ZuStringT<"Zhttpd.FileBody">,
-    FileChunk>;
+  template <Zi::IOBufType::T Type>
+  static Zi::IOBufAllocator *fileAllocator() {
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Type, ZiIOBuf, FileChunk, ZiIOBuf_DefltAlign,
+      ZuStringT<"Zhttpd.FileBody">, FileChunk>();
+    return allocator;
+  }
   using ProducerClose = ZmFn<void(),
     ZmFnHeapID<"zhttpd.FileProducerClose">>;
 
@@ -215,9 +216,10 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
     using Emitter = ZuUnion<void, Emit>;
 
     FileProducer(
-      State *state_, Emit emit_, const ZiFile &handle_,
+      State *state_, Emit emit_, const ZiFile &handle_, Zi::IOBufAllocator *allocator_,
       uint64_t offset_, uint64_t length_) :
-      state{state_}, emitter{ZuMv(emit_)}, offset{offset_}, length{length_} {
+      state{state_}, emitter{ZuMv(emit_)}, allocator{allocator_},
+      offset{offset_}, length{length_} {
       (void)handle.dup(handle_, ZiFile::GC);
     }
 
@@ -237,8 +239,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
       state->mx->run([
 	self = ZmRef<Self>{this}, file = ZuMv(file),
 	offset_, n, final]() mutable {
-	ZmRef<ZiIOBuf> buf = new FileBuf{
-	  ZmSingleton<typename FileBuf::Allocator>::instance(), nullptr, 0};
+	ZmRef<ZiIOBuf> buf = self->allocator->allocBuf();
 	int r = file.pread(offset_, buf->data(), n);
 	if (r == int(n)) buf->length = n;
 	State *state_ = self->state;
@@ -258,8 +259,9 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
 	return;
       }
 
-      (void)emit_([self = ZmRef<Self>{this}, buf = ZuMv(buf), final](
-	  auto &body) mutable {
+      buf->owner = this;
+      (void)emit_([buf = ZuMv(buf), final](auto &body) mutable {
+	auto self = static_cast<Self *>(buf->owner);
 	if (!body.appendBuf(ZuMv(buf))) return Zhttp::WriteOutcome::Failed;
 	if (final) return Zhttp::WriteOutcome::End;
 	if (!self->read_()) return Zhttp::WriteOutcome::Failed;
@@ -278,6 +280,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
     State	*state;
     Emitter	emitter;
     ZiFile	handle;
+    Zi::IOBufAllocator *allocator;
     uint64_t	offset;
     uint64_t	length;
   };
@@ -342,7 +345,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
 	}
 	using Producer = FileProducer<ZuDecay<Emit>>;
 	ZmRef<Producer> producer = new Producer{
-	  state, emit, plan.fileHandle, plan.fileOffset, plan.fileLength};
+	  state, emit, plan.fileHandle, fileBodyAllocator, plan.fileOffset, plan.fileLength};
 	ZmRef<Producer> start{producer};
 	producerClose = ProducerClose{ProducerClose::mvFn(
 	  ZuMv(producer), [](ZmRef<Producer> producer_) {
@@ -388,6 +391,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
   ResponsePlan		plan;
   ZhttpPut::Record	putRecord;
   State			*state = nullptr;
+  Zi::IOBufAllocator	*fileBodyAllocator = nullptr;
   Zhttp::Method::T	method_ = -1;
   unsigned		contentLength = 0;
   int8_t		mode = Mode::Empty;
@@ -514,8 +518,12 @@ struct App : public Zhttp::Server<App, ::Parser, ::ResBuilderQ, Zhttp::AllProfil
       response->plan = planner.plan(request);
     }
     if (response->mode != ResBuilder::Mode::JSON) {
-      if (response->plan.file)
+      if (response->plan.file) {
 	response->mode = ResBuilder::Mode::File;
+	response->fileBodyAllocator = route.session().transport == Zhttp::Transport::TCP ?
+	  ResBuilder::fileAllocator<Zi::IOBufType::TxTCP>() :
+	  ResBuilder::fileAllocator<Zi::IOBufType::TxTLS>();
+      }
       else if (response->plan.generated)
 	response->mode = ResBuilder::Mode::Generated;
       else if (response->plan.sendBody)

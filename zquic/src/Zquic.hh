@@ -36,7 +36,6 @@
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmQueue.hh>
-#include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZmScratch.hh>
@@ -447,8 +446,9 @@ inline bool sendCryptoFlights(
     ++diag.failures;
     return false;
   }
-  ZmRef<ZiIOBuf> backing = new CryptoTxBufAlloc<>{
-    ZmSingleton<typename CryptoTxBufAlloc<>::Allocator>::instance(), nullptr, 0};
+  auto allocator = txCrypto[0].txAllocator();
+  if (ZuUnlikely(!allocator)) return false;
+  auto backing = allocator->allocBuf();
   if (!backing->append(ZuBSpan{data, len})) return false;
   return sendCryptoFlights_(
     txCrypto, diag, ZuMv(backing), offsets_, chunkMax, ZuMv(addr), ZuMv(send));
@@ -754,6 +754,11 @@ public:
   ZiMultiplex *mx() const { return m_mx; }
   Zi::IOBufAllocator *rxPktAllocator() const { return m_rxPktAllocator; }
   Zi::IOBufAllocator *txPktAllocator() const { return m_txPktAllocator; }
+  Zi::IOBufAllocator *cryptoRxAllocator() const { return m_cryptoRxAllocator; }
+  Zi::IOBufAllocator *cryptoTxAllocator() const { return m_cryptoTxAllocator; }
+  Zi::IOBufAllocator *tlsOutputAllocator() const { return m_tlsOutputAllocator; }
+  Zi::IOBufAllocator *streamRxAllocator() const { return m_streamRxAllocator; }
+  Zi::IOBufAllocator *streamTxAllocator() const { return m_streamTxAllocator; }
   unsigned rxThread() const { return m_rxThread; }
   unsigned txThread() const { return m_txThread; }
   unsigned asyncThread() const { return m_asyncThread; }
@@ -854,6 +859,12 @@ protected:
       m_mx = params.mx();
       m_rxPktAllocator = pktRxAllocator(m_mx);
       m_txPktAllocator = pktTxAllocator(m_mx);
+      m_cryptoRxAllocator = plaintextAllocator<CryptoRxBufAlloc<>>(m_mx);
+      m_cryptoTxAllocator = plaintextAllocator<CryptoTxBufAlloc<>>(m_mx);
+      m_tlsOutputAllocator = plaintextAllocator<
+	CryptoTxBufAlloc<Crypto::TLSOutputMax, Crypto::TLSOutputMax>>(m_mx);
+      m_streamRxAllocator = m_mx->allocator<Zi::IOBufType::RxTLS>();
+      m_streamTxAllocator = plaintextAllocator<StreamTxBufAlloc<>>(m_mx);
       m_rxThread = thread_(params.rxThread(), m_mx->rxThread());
       m_txThread = thread_(params.txThread(), m_mx->txThread());
       m_asyncThread = params.asyncThread() ?
@@ -1091,6 +1102,11 @@ private:
 
   Zi::IOBufAllocator *m_rxPktAllocator = nullptr;
   Zi::IOBufAllocator *m_txPktAllocator = nullptr;
+  Zi::IOBufAllocator *m_cryptoRxAllocator = nullptr;
+  Zi::IOBufAllocator *m_cryptoTxAllocator = nullptr;
+  Zi::IOBufAllocator *m_tlsOutputAllocator = nullptr;
+  Zi::IOBufAllocator *m_streamRxAllocator = nullptr;
+  Zi::IOBufAllocator *m_streamTxAllocator = nullptr;
 
   // immutable after init()
   const ZuID		m_id;
@@ -1332,9 +1348,9 @@ friend ZmEngine<App>;
   ptls_encrypt_ticket_t *ticketEncryptCB() {
     return Ztls::Backend::ticket_encrypt_cb(m_ticketKey);
   }
-  bool sendPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+  bool sendPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, bool priority = false) {
     if (!this->app()->sendPkt(buf)) return true;
-    return Endpoint::send(ZuMv(buf), ZuMv(addr));
+    return Endpoint::send(ZuMv(buf), ZuMv(addr), EcnMark::NotECT, priority);
   }
   bool sendPktRaw(
       ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
@@ -1459,10 +1475,10 @@ private:
     auto packet = d.buf->cspan();
     if (Pkt::isLong(packet) || !token.valid()) return false;
     ZmRef<ZiIOBuf> buf = allocTxPkt_();
+    if (ZuUnlikely(!buf)) return false;
     int n = StatelessReset::writeForUnknownCID(
-      buf->data_(), buf->size, packet, token);
+      buf->data(), txPktCapacity(buf), packet, token);
     if (n < 0) return false;
-    buf->skip = 0;
     buf->length = unsigned(n);
     bool sent = sendPkt_(ZuMv(buf), d.addr);
     if (sent) {
@@ -1583,10 +1599,10 @@ private:
 
   bool sendVerNeg(const LongHdr &h, ZiSockAddr addr) {
     ZmRef<ZiIOBuf> buf = allocTxPkt_();
+    if (ZuUnlikely(!buf)) return false;
     int n = VersionNeg::write(
-      buf->data_(), buf->size, h.scid, h.dcid);
+      buf->data(), txPktCapacity(buf), h.scid, h.dcid);
     if (n < 0) return false;
-    buf->skip = 0;
     buf->length = unsigned(n);
     bool sent = sendPkt_(ZuMv(buf), ZuMv(addr));
     if (sent) {
@@ -1780,13 +1796,13 @@ private:
 	  app()->addrValidatePeerPort()))
       return false;
     ZmRef<ZiIOBuf> buf = allocTxPkt_();
+    if (ZuUnlikely(!buf)) return false;
     int n = Pkt::writeRetryAuth(
-      buf->data_(), buf->size, h.scid, retrySCID,
+      buf->data(), txPktCapacity(buf), h.scid, retrySCID,
       token, h.dcid);
     if (n < 0) return false;
-    buf->skip = 0;
     buf->length = unsigned(n);
-    bool sent = sendPkt_(ZuMv(buf), ZuMv(addr));
+    bool sent = sendPkt_(ZuMv(buf), ZuMv(addr), true);
     if (sent) {
       ++m_addrValidationDiag.retrySent;
       ZquicLOG(app()->qlogTrace(), ([

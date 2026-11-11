@@ -168,7 +168,7 @@ void run()
   {
     Zdb_::DBState state{2};
     state.update("o", ZdbShard{1}, 42);
-    Zdb_::Builder fbb{new Zdb_::IOBufAlloc<>{Zdb_::localBufAllocator<>(), nullptr, 0}};
+    Zdb_::Builder fbb{Zdb_::localBufAllocator<>()->allocBuf()};
     auto bytes = fbb.finish(Zfb::save(fbb, state));
     auto fbo = Zfb::view<Zdb_::Msg::DBState>(bytes);
     Zdb_::DBState loaded{fbo};

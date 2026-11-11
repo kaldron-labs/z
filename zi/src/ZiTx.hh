@@ -25,14 +25,16 @@ using ZiTxBuf = ZiTxQueue::Node;
 
 template <
   unsigned Size = ZiIOBuf_DefltSize,
-  unsigned MaxSize = ZiIOBuf_DefltMaxSize,
+  unsigned VHMaxSize = ZiIOBuf_DefltVHMaxSize,
   ZuString HeapID = ZiIOBuf_HeapID{}()>
-using ZiTxBufAlloc = Zi::IOBufBuiltin<ZiTxBuf, Size, ZiIOBuf_DefltAlign, ZuStringT<HeapID>, MaxSize>;
+using ZiTxBufAlloc = Zi::IOBufBuiltinAllocator<
+  Zi::IOBufType::App, ZiTxBuf, Size, ZiIOBuf_DefltAlign, ZuStringT<HeapID>, VHMaxSize>;
 
 // CRTP - implementation must conform to the following interface:
 #if 0
 struct Impl : public ZiTx<Impl> {
   ZiConnection *cxn();				// optional
+  unsigned maxQueueLen();			// ''
   void sent(ZmRef<ZiTxBuf>, bool ok);		// ''
   void sending(ZiTxContext &);			// '' - per-buffer address/TOS
   void aborted(ZmRef<ZiTxBuf> buf, bool ok);	// ''
@@ -63,45 +65,49 @@ public:
   void send(Cxn *cxn, ZmRef<ZiTxBuf> buf) {
     if (ZuUnlikely(!buf || !buf->length || !cxn)) return;
     buf->owner = impl();
-    cxn->send(ZiTxFn::mvFn(ZuMv(buf),
-	[](ZmRef<ZiIOBuf> buf, ZiTxContext &io) {
-	  // A queued setup can run after abrupt close and physical-queue handoff.
-	  if (ZuUnlikely(!io.cxn->up())) return false;
+    cxn->send(ZiTxFn::mvFn(ZuMv(buf), [](ZmRef<ZiIOBuf> buf, ZiTxContext &io) {
+      // A queued setup can run after abrupt close and physical-queue handoff.
+      if (ZuUnlikely(!io.cxn->up())) return false;
+      auto impl_ = impl(buf);
+      auto &queue = impl_->ZiTx::txQueue;
+      if (auto count = queue.count_()) {
+	if (count >= impl_->maxQueueLen())
+	  impl_->sent(ZuMv(buf), false);
+	else
+	  queue.pushNode(ZuMv(buf));
+	return true;
+      }
+      auto buf_ = buf.ptr();
+      queue.pushNode(ZuMv(buf));
+      io.init(ZiTxFn{queue.headPtr(),
+	[](ZiIOBuf *buf, ZiTxContext &io) {
 	  auto impl_ = impl(buf);
 	  auto &queue = impl_->ZiTx::txQueue;
-	  if (queue.count_()) {
-	    queue.pushNode(ZuMv(buf));
+	  if (ZuUnlikely(io.length < 0)) {
+	    impl_->sent(queue.shift(), false);
+	    queue.clean();
+	    io.complete();
 	    return true;
 	  }
-	  auto buf_ = buf.ptr();
-	  queue.pushNode(ZuMv(buf));
-	  io.init(ZiTxFn{queue.headPtr(),
-	    [](ZiIOBuf *buf, ZiTxContext &io) {
-	      auto impl_ = impl(buf);
-	      auto &queue = impl_->ZiTx::txQueue;
-	      if (ZuUnlikely(io.length < 0)) {
-		impl_->sent(queue.shift(), false);
-		queue.clean();
-		io.complete();
-		return true;
-	      }
-	      if (ZuUnlikely((io.offset += io.length) < io.buf->length)) return true;
-	      impl_->sent(queue.shift(), true);
-	      if (queue.count_()) {
-		buf = queue.headPtr();
-		io.fn.object(buf);
-		io.buf = ZmRef<ZiIOBuf>{buf};
-		io.offset = 0;
-		impl_->sending(io);
-	      } else {
-		io.complete();
-	      }
-	      return true;
-	    }}, ZmRef<ZiIOBuf>{buf_});
-	  impl_->sending(io);
+	  if (ZuUnlikely((io.offset += io.length) < io.buf->length)) return true;
+	  impl_->sent(queue.shift(), true);
+	  if (queue.count_()) {
+	    buf = queue.headPtr();
+	    io.fn.object(buf);
+	    io.buf = ZmRef<ZiIOBuf>{buf};
+	    io.offset = 0;
+	    impl_->sending(io);
+	  } else {
+	    io.complete();
+	  }
 	  return true;
-	}));
+	}}, ZmRef<ZiIOBuf>{buf_});
+      impl_->sending(io);
+      return true;
+    }));
   }
+
+  unsigned maxQueueLen() { return 1<<10; } // can be overridden
 
   void sent(ZmRef<ZiTxBuf>, bool ok) { } // can be overridden
   void sending(ZiTxContext &) { } // optional per-buffer address/TOS setup

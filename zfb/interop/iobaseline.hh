@@ -30,10 +30,9 @@ public:
     m_buf{ZuMv(buf)} {
     ZmAssert(!(m_buf->skip & (Align - 1)));
     m_buf->length = 0;
-    m_buf->size &= ~(Align - 1);
   }
 
-  // Release the builder arena while its owning IOBuf is still alive,
+  // Reset the builder's view while its owning IOBuf is still alive,
   // including when serialization throws before Finish()/buf().
   ~IOBuilder() { Reset(); }
 
@@ -44,9 +43,8 @@ public:
   void buf(ZmRef<ZiIOBuf> buf) {
     ZmAssert(!(buf->skip & (Align - 1)));
     buf->length = 0;
-    buf->size &= ~(Align - 1);
     Builder::operator =(
-      Builder{buf->size - buf->skip, this, false, Align});
+      Builder{(buf->size & ~(Align - 1)) - buf->skip, this, false, Align});
     m_buf = ZuMv(buf);
   }
 
@@ -66,16 +64,15 @@ public:
   const ZiIOBuf *cspan() const { return m_buf.ptr(); }
 
 protected:
-  uint8_t *allocate(size_t size) {
+  uint8_t *allocate(size_t size) override {
     ZmAssert(m_buf);
     if (ZuUnlikely(size > UINT32_MAX - m_buf->skip)) return nullptr;
     m_buf->alloc(unsigned(size) + m_buf->skip);
     return m_buf->data();
   }
 
-  void deallocate(uint8_t *ptr, size_t size) {
-    if (m_buf) m_buf->free(ptr - m_buf->skip);
-  }
+  // The builder borrows the arena. IOBuf releases the backing storage.
+  void deallocate(uint8_t *, size_t) override { }
 
   // override ZiIOBuf's default grow() with a pass-through because flatbuffers
   // has it's own buffer growth algorithm in vector_downward::reallocate()
@@ -84,7 +81,7 @@ private:
 protected:
   uint8_t *reallocate_downward(
       uint8_t *old_p, size_t old_size, size_t new_size,
-      size_t in_use_back, size_t in_use_front) {
+      size_t in_use_back, size_t in_use_front) override {
     ZmAssert(m_buf);
     if (ZuUnlikely(new_size > UINT32_MAX - m_buf->skip)) return nullptr;
     return m_buf->template realloc<grow>(

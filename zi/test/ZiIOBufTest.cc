@@ -12,6 +12,7 @@
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiMultiplex.hh>
 
 using namespace ZuTestUtil;
 
@@ -19,8 +20,9 @@ void testSliceAndEnsurePreserveSpan()
 {
   ZuTestScope(testSliceAndEnsurePreserveSpan);
 
-  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize> allocator{nullptr};
-  ZmRef<ZiIOBuf> buf = allocator.allocBuf();
+  ZiMultiplex allocatorMx;
+  auto allocator = allocatorMx.allocator<>();
+  ZmRef<ZiIOBuf> buf = allocator->allocBuf();
   *buf << "fbah";
   ZtString<> s;
   s << ZuCSpan(buf->cspan());
@@ -50,8 +52,9 @@ void testAdvanceRewind()
 {
   ZuTestScope(testAdvanceRewind);
 
-  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize> allocator{nullptr};
-  ZmRef<ZiIOBuf> buf = allocator.allocBuf();
+  ZiMultiplex allocatorMx;
+  auto allocator = allocatorMx.allocator<>();
+  ZmRef<ZiIOBuf> buf = allocator->allocBuf();
   *buf << "abcdef";
   buf->advance(2);
   ZuCheck(buf->length == 4);
@@ -75,8 +78,10 @@ void testPrependAndGrow()
 {
   ZuTestScope(testPrependAndGrow);
 
-  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 8, 4096> allocator{nullptr};
-  ZmRef<ZiIOBuf> buf = allocator.allocBuf();
+  ZiMultiplex allocatorMx;
+  auto allocator = allocatorMx.allocator<
+    Zi::IOBufType::App, ZiIOBuf, 8, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 4096>();
+  ZmRef<ZiIOBuf> buf = allocator->allocBuf();
   buf->clear();
   buf->skip = buf->size;
   uint8_t *tail = buf->prepend(4);
@@ -94,8 +99,10 @@ void testSpanOffsetAndLargeEnsure()
 {
   ZuTestScope(testSpanOffsetAndLargeEnsure);
 
-  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 16, 1<<20> allocator{nullptr};
-  ZmRef<ZiIOBuf> buf = allocator.allocBuf();
+  ZiMultiplex allocatorMx;
+  auto allocator = allocatorMx.allocator<
+    Zi::IOBufType::App, ZiIOBuf, 16, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 1<<20>();
+  ZmRef<ZiIOBuf> buf = allocator->allocBuf();
   *buf << "0123456789";
 
   auto s = buf->cspan(1000);
@@ -114,8 +121,10 @@ void testPrependTailRoom()
 {
   ZuTestScope(testPrependTailRoom);
 
-  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 8, 4096> allocator{nullptr};
-  ZmRef<ZiIOBuf> buf = allocator.allocBuf();
+  ZiMultiplex allocatorMx;
+  auto allocator = allocatorMx.allocator<
+    Zi::IOBufType::App, ZiIOBuf, 8, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 4096>();
+  ZmRef<ZiIOBuf> buf = allocator->allocBuf();
   buf->owner = &buf;
   auto data = buf->data_();
   auto size = buf->size;
@@ -153,58 +162,157 @@ void testPrependTailRoom()
   ZuCheck(intact && buf->owner == &buf);
 }
 
-struct BufPlugin : Zi::IOBufPlugin {
-  uint8_t *initialPtr = nullptr, *growthPtr = nullptr;
-  unsigned initialSize = 0, growthSize = 0;
-  unsigned initialAllocs = 0, growthAllocs = 0;
-  unsigned initialFrees = 0, growthFrees = 0;
-  bool valid = true;
+void testAllocatorPolicy()
+{
+  ZuTestScope(testAllocatorPolicy);
+  ZiMultiplex mx;
+  auto allocator =
+    mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 32, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 64>();
+  auto buf = allocator->allocBuf();
+  ZuCheck(allocator->mx == &mx && allocator->type == Zi::IOBufType::TxTCP);
+  ZuCheck(buf->builtin() && !buf->registered() && buf->size == allocator->size);
+  int owner = 0;
+  auto length = allocator->size + 1;
+  auto large = allocator->allocBuf(&owner, length);
+  ZuCheck(large->allocator() == allocator && large->owner == &owner);
+  ZuCheck(!large->builtin() && !large->registered() && large->length == length);
 
-  uint8_t *alloc(uint32_t size, bool initial) override {
-    auto ptr = static_cast<uint8_t *>(malloc(size));
-    if (initial) {
-      ++initialAllocs;
-      initialPtr = ptr;
-      initialSize = size;
-    } else {
-      ++growthAllocs;
-      growthPtr = ptr;
-      growthSize = size;
-    }
-    return ptr;
+  // A packet's exposed capacity must honor MPS even with larger inline backing.
+  unsigned mps = allocator->capacity() - 1;
+  auto packet = allocator->allocBuf(&owner, mps, mps);
+  ZuCheck(bool(packet));
+  if (!packet) return;
+  ZuCheck(packet->builtin() && packet->size == mps && packet->length == mps);
+  ZuCheck(packet->owner == &owner && !packet->avail());
+  ZuCheck(!allocator->allocBuf(&owner, mps + 1, mps));
+}
+
+struct BufPlugin : Zi::IOBufPlugin {
+  uint8_t *registeredPtr = nullptr;
+  unsigned registeredAllocs = 0, registeredFrees = 0;
+  bool exhausted = false, valid = true;
+
+  BufPlugin() {
+    size = 32;
+    headRoom = 3;
+    tailRoom = 4;
   }
-  void free(uint8_t *ptr, uint32_t size, bool initial) override {
-    if (initial) {
-      ++initialFrees;
-      valid &= ptr == initialPtr && size == initialSize;
-    } else {
-      ++growthFrees;
-      valid &= ptr == growthPtr && size == growthSize;
-    }
+
+  uint8_t *alloc() override {
+    if (exhausted) return nullptr;
+    ++registeredAllocs;
+    registeredPtr = static_cast<uint8_t *>(malloc(size));
+    return registeredPtr;
+  }
+  void free(uint8_t *ptr) override {
+    ++registeredFrees;
+    valid &= ptr == registeredPtr;
     ::free(ptr);
   }
+};
+
+struct MxPlugin : ZiMxPlugin {
+  ZmRef<BufPlugin> backing = new BufPlugin;
+
+  explicit MxPlugin(ZiMultiplex *mx) : ZiMxPlugin(mx) { }
+
+  Zi::IOBufPlugin *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override {
+    return backing;
+  }
+  void start() override { }
+  void stop() override { }
+  void rx() override { }
+  void listen(ZiListenFn, ZiFailFn, ZiConnectFn, ZiIP, uint16_t, unsigned,
+    Zi::IOBufAllocator *, ZiCxnOptions) override { }
+  void stopListening(ZiIP, uint16_t) override { }
+  void connect(ZiConnectFn, ZiFailFn, ZiIPType::T, ZiIP, uint16_t, ZiIP, uint16_t,
+    Zi::IOBufAllocator *, ZiCxnOptions) override { }
+  void udp(ZiConnectFn, ZiFailFn, ZiIPType::T, ZiIP, uint16_t, ZiIP, uint16_t,
+    Zi::IOBufAllocator *, ZiCxnOptions) override { }
+  void recv(ZiConnection *) override { }
+  void send(ZiConnection *) override { }
+  void disconnect(ZiConnection *, bool) override { }
+  void close(ZiConnection *, bool) override { }
+  void wake() override { }
+  TelKey telKey() const override { return {}; }
+  void telemetry(Ztc::MxTelemetry &) const override { }
+  unsigned allCxns(AllCxnsFn) const override { return 0; }
+  unsigned allQueues(Ztc::QueueMgr::AllFn) const override { return 0; }
+  void watch(AddCxnFn, DelCxnFn) override { }
+  void unwatch() override { }
 };
 
 void testPluginBacking(bool grow)
 {
   ZuTestScopeRT(testPluginBacking);
-  BufPlugin plugin;
-  Zi::IOBufPluginAllocator<Zi::IOBufType::RxTCP, 32> allocator{nullptr, &plugin};
+  ZiMultiplex mx;
+  ZmRef<MxPlugin> transport = new MxPlugin{&mx};
+  mx.plugin(transport);
+  auto plugin = transport->backing.ptr();
+  auto allocator = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 32>();
   int owner = 0;
-  auto buf = allocator.allocBuf(&owner);
-  ZuCheckRT(buf->initial() && !buf->builtin() && buf->size == 32);
-  ZuCheckRT(plugin.initialAllocs == 1 && !plugin.growthAllocs && !plugin.initialFrees);
-  *buf << "padpayload";
-  buf->advance(3);
+  auto buf = allocator->allocBuf(&owner);
+  ZuCheckRT(bool(buf));
+  if (!buf) return;
+  ZuCheckRT(buf->registered() && !buf->builtin() && buf->size == plugin->size);
+  ZuCheckRT(buf->skip == plugin->headRoom);
+  ZuCheckRT(plugin->registeredAllocs == 1 && !plugin->registeredFrees);
+  *buf << "payload";
   if (grow) {
     ZuCheckRT(buf->ensure(128));
-    ZuCheckRT(!buf->initial() && !buf->builtin() && buf->size >= 131);
+    ZuCheckRT(!buf->registered() && !buf->builtin() && buf->size >= 131);
     ZuCheckRT(buf->skip == 3 && buf->cspan() == "payload" && buf->owner == &owner);
-    ZuCheckRT(plugin.growthAllocs == 1 && plugin.initialFrees == 1 && !plugin.growthFrees);
+    ZuCheckRT(plugin->registeredAllocs == 1 && plugin->registeredFrees == 1);
   }
   buf = nullptr;
-  ZuCheckRT(plugin.valid && plugin.initialFrees == 1);
-  ZuCheckRT(plugin.growthAllocs == unsigned(grow) && plugin.growthFrees == unsigned(grow));
+  ZuCheckRT(plugin->valid && plugin->registeredAllocs == 1 && plugin->registeredFrees == 1);
+}
+
+void testPluginAllocation()
+{
+  ZuTestScope(testPluginAllocation);
+  ZiMultiplex mx;
+  ZmRef<MxPlugin> transport = new MxPlugin{&mx};
+  mx.plugin(transport);
+  auto plugin = transport->backing.ptr();
+  auto tx = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 32>();
+  auto rx = mx.allocator<Zi::IOBufType::RxTCP, ZiIOBuf, 32>();
+  int owner = 0;
+  ZuCheck(!tx->allocBuf(&owner, tx->capacity() + 1));
+  ZuCheck(!rx->allocBuf(&owner, 1));
+  plugin->exhausted = true;
+  ZuCheck(!tx->allocBuf(&owner));
+  {
+    auto buf = rx->allocBuf(&owner);
+    ZuCheck(bool(buf));
+    if (!buf) return;
+    ZuCheck(buf->registered() && !buf->builtin() && !buf->data_() && !buf->size);
+    ZuCheck(buf->owner == &owner && buf->skip == plugin->headRoom);
+    ZuCheck(buf->ensure(8) && !buf->registered() && buf->avail() >= 8);
+  }
+  ZuCheck(!plugin->registeredAllocs && !plugin->registeredFrees);
+  plugin->exhausted = false;
+  {
+    auto buf = tx->allocBuf(&owner, tx->capacity());
+    ZuCheck(bool(buf));
+    if (!buf) return;
+    ZuCheck(buf->registered() && buf->length == tx->capacity());
+    ZuCheck(buf->avail() == plugin->tailRoom);
+  }
+  ZuCheck(plugin->valid && plugin->registeredAllocs == 1 && plugin->registeredFrees == 1);
+
+  // MPS excludes the plugin's reserved bytes on both sides of the payload.
+  unsigned mps = tx->capacity() - 1;
+  ZuCheck(!tx->allocBuf(&owner, mps + 1, mps));
+  {
+    auto buf = tx->allocBuf(&owner, mps, mps);
+    ZuCheck(bool(buf));
+    if (!buf) return;
+    ZuCheck(buf->registered() && buf->length == mps);
+    ZuCheck(buf->size == mps + plugin->headRoom + plugin->tailRoom);
+    ZuCheck(buf->skip == plugin->headRoom && buf->avail() == plugin->tailRoom);
+  }
+  ZuCheck(plugin->valid && plugin->registeredAllocs == 2 && plugin->registeredFrees == 2);
 }
 
 struct HugePrint;
@@ -232,8 +340,9 @@ void testOutputFailure()
 {
   ZuTestScope(testOutputFailure);
 
-  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize> allocator{nullptr};
-  ZmRef<ZiIOBuf> buf = allocator.allocBuf();
+  ZiMultiplex allocatorMx;
+  auto allocator = allocatorMx.allocator<>();
+  ZmRef<ZiIOBuf> buf = allocator->allocBuf();
   *buf << "prefix";
   ZuCheck(!buf->append(reinterpret_cast<const uint8_t *>("x"), UINT_MAX));
   ZuCheck(buf->failed());
@@ -283,6 +392,8 @@ int main(int argc, char **argv)
   ZuTestCall(testPrependTailRoom);
   ZuTestCall(testSpanOffsetAndLargeEnsure);
   ZuTestCall(testOutputFailure);
+  ZuTestCall(testPluginAllocation);
+  ZuTestCall(testAllocatorPolicy);
   ZuTestCall(testPluginBacking, false);
   ZuTestCall(testPluginBacking, true);
   return 0;

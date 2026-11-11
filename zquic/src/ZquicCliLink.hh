@@ -262,8 +262,8 @@ public:
   bool send(StreamRef stream, ZmRef<ZiIOBuf> payload, bool fin = true) {
     if (Base::disconnecting_() || !stream || (!payload && !fin)) return false;
     if (app()->txInvoked()) return send_(ZuMv(stream), ZuMv(payload), fin);
-    app()->txInvoke([link = this->impl(), stream = ZuMv(stream),
-	payload = ZuMv(payload), fin]() mutable {
+    app()->txInvoke([stream = ZuMv(stream), payload = ZuMv(payload), fin]() mutable {
+      auto link = stream->link();
       if (!link->disconnecting_()) link->send_(ZuMv(stream), ZuMv(payload), fin);
     });
     return true;
@@ -321,7 +321,9 @@ public:
     });
   }
 
-  bool retransmit_(bool pto = false) { // direct call from within tx thread
+  bool retransmit_(
+    bool pto = false, unsigned maxPackets = 2,
+    PktNumSpace::T onlySpace = PktNumSpace::N) { // Tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client retransmit outside Tx thread", return false);
     if (Base::linkClosedTx_() || !Endpoint::connected())
@@ -331,7 +333,10 @@ public:
     PktNumSpace::T level;
     constexpr unsigned MaxBatch = 16;
     unsigned processed = 0;
-    while (processed < MaxBatch && Base::nextRetransmit_(level, ref)) {
+    uint64_t packetsBefore = Base::txPackets();
+    while (processed < MaxBatch &&
+	(!pto || Base::txPackets() - packetsBefore < maxPackets) &&
+	Base::nextRetransmit_(level, ref, onlySpace)) {
       ++processed;
       PktBuild build;
       if (ref.kind == SentFrameKind::Crypto) {
@@ -385,7 +390,7 @@ public:
       sent = true;
     }
     if (sent) Base::schedulePTO_();
-    if (sent && processed == MaxBatch) queueRetransmit();
+    if (sent && !pto && processed == MaxBatch) queueRetransmit();
     return sent;
   }
 
@@ -737,7 +742,7 @@ private:
   }
 
   bool emitTLS_(size_t inEpoch, ZuBSpan input, ZiSockAddr addr) {
-    bool ok = Base::template advanceTLS<TLSBufSize>(
+    bool ok = Base::advanceTLS(
       inEpoch, input, ZuMv(addr),
       [this](
 	  ZmRef<ZiIOBuf> data, const CryptoOffsets &offsets,
@@ -762,13 +767,14 @@ private:
     }
     typename Base::TxCryptoSnapshot txCrypto;
     Base::snapshotTxCrypto(txCrypto);
+    data->owner = impl();
     app()->txRun([
-      link = impl(),
       txCrypto,
       payload = ZuMv(data),
       offsets,
       addr = ZuMv(addr)
     ]() mutable {
+      auto link = static_cast<Impl *>(payload->owner);
       if (link->disconnecting_()) return;
       if (!link->installTxCrypto(txCrypto)) return;
       (void)link->sendCryptoFlightsTx_(
@@ -1013,10 +1019,10 @@ private:
     Base::failMig(MigrationReason::Validation);
   }
 
-  bool sendMigChal() {
+  bool sendMigChal(bool retry = false) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client migration challenge outside Tx thread", return false);
-    if (!Base::activateMig())
+    if (!retry && !Base::activateMig())
       return false;
     PktBuild build;
     typename Base::TxPktRefs refs;

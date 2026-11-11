@@ -27,18 +27,12 @@
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiMultiplex.hh>
 
 namespace Zhttp {
 
 ZuDerive(SSELine, (ZtString<ZtStringHeapID<"Zhttp.SSE.Line">>));
 ZuDerive(SSEID, (ZtString<ZtStringHeapID<"Zhttp.SSE.ID">>));
-ZuDerive(SSEInputBuf, (Zi::IOBufBuiltin<
-  ZiIOBuf,
-  ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"Zhttp.SSE.Input">,
-  ZiIOBuf_DefltMaxSize>));
-
 namespace Private {
 ZhttpAPI int sseField(ZuCSpan field);
 }
@@ -66,6 +60,7 @@ public:
     m_state = Open;
   }
 
+  void bufType(Zi::IOBufType::T type) { m_bufType = type; }
   int state() const { return m_state; }
   bool complete() const {
     return m_state == Open && !m_line.length() && !m_haveData;
@@ -147,7 +142,7 @@ private:
 	  close();
 	  return;
 	}
-	if (!m_data) m_data = new SSEInputBuf{ZmSingleton<typename SSEInputBuf::Allocator>::instance()};
+	if (!m_data) m_data = allocData_();
 	if ((separator && !m_data->append(ZuBSpan{"\n"})) ||
 	    !m_data->append(value)) close();
 	else m_haveData = true;
@@ -162,6 +157,22 @@ private:
     }
   }
 
+  template <Zi::IOBufType::T Type>
+  static ZmRef<ZiIOBuf> allocData_() {
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<Type, ZiIOBuf,
+      ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.SSE.Input">>();
+    return allocator->allocBuf();
+  }
+  ZmRef<ZiIOBuf> allocData_() {
+    switch (m_bufType) {
+      case Zi::IOBufType::RxTCP: return allocData_<Zi::IOBufType::RxTCP>();
+      case Zi::IOBufType::RxTLS: return allocData_<Zi::IOBufType::RxTLS>();
+      default: return allocData_<Zi::IOBufType::App>();
+    }
+  }
+
+  Zi::IOBufType::T m_bufType = Zi::IOBufType::App;
   SSELine	m_line;
   ZmRef<ZiIOBuf>	m_data;
   bool		m_haveData = false;

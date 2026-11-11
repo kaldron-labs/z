@@ -111,6 +111,8 @@ public:
     for (auto &pn : m_txLargestAckd) pn = U64Null;
     for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       CryptoStream *crypto = &m_rxCrypto[i];
+      crypto->allocators(app->cryptoRxAllocator(), nullptr);
+      m_txCrypto[i].allocators(nullptr, app->cryptoTxAllocator());
       crypto->dequeueFn([this, crypto]() {
 	this->app()->rxRun([crypto]() {
 	  crypto->dequeueRx_();
@@ -1271,7 +1273,7 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Tx crypto snapshot install outside Tx thread", return false);
     for (unsigned i = 0; i < PktNumSpace::N; ++i)
-      if (snapshot.installed[i] &&
+      if (!m_txSpaceDiscarded[i] && snapshot.installed[i] &&
 	  !txInstallSecret(PktNumSpace::T(i), snapshot.secrets[i]))
 	return false;
     if (snapshot.earlyInstalled &&
@@ -3131,6 +3133,7 @@ protected:
   void streamCredit(Zquic::StreamType::T) { }
   void queueTxFlush() { }
   bool sendPassiveMigChal() { return false; }
+  bool sendMigChal(bool = false) { return false; }
   void statelessReset() { ++m_rxDiag.unhandledAppEvents; }
   void disconnected(bool peer) {
     disconnected(peer, []() { });
@@ -4217,15 +4220,13 @@ protected:
   void resetDisconnected() { impl()->disconnected(true); }
 
   template <
-    unsigned TLSBufSize_, typename SendFlights,
+    typename SendFlights,
     typename MarkEstablished, typename AfterEstablished>
   bool advanceTLS(
     size_t inEpoch, ZuBSpan input, ZiSockAddr addr,
     SendFlights sendFlights, MarkEstablished markEstablished,
     AfterEstablished afterEstablished) {
-    ZmRef<ZiIOBuf> out =
-      new CryptoTxBufAlloc<TLSBufSize_, TLSBufSize_>{
-	ZmSingleton<typename CryptoTxBufAlloc<TLSBufSize_, TLSBufSize_>::Allocator>::instance(), this, 0};
+    auto out = app()->tlsOutputAllocator()->allocBuf(this);
     // picotls writes this fixed five-offset array through its C callback ABI.
     size_t offsets[5] = {};
     int n =
@@ -4952,6 +4953,7 @@ protected:
   void noteAck(
     PktNumSpace::T level, uint64_t pn, bool ackEliciting, ZiSockAddr addr,
     bool forceImmediate = false, EcnMark::T ecn = EcnMark::NotECT) {
+    if (m_rxSpaceDiscarded[level]) return;
     PktNumSpace::T space = level;
     uint64_t now = nowUS();
     bool immediate = ackEliciting && (forceImmediate || immediateAck_(level));
@@ -4970,7 +4972,7 @@ protected:
   }
 
   void noteDupAck(PktNumSpace::T level, uint64_t pn, ZiSockAddr addr) {
-    if (drainingRx() || closingRx_()) return;
+    if (m_rxSpaceDiscarded[level] || drainingRx() || closingRx_()) return;
     if (!m_rxAcks.ackEliciting(
 	level, pn, nowUS(), localMaxAckDelayUS(), true))
       return;
@@ -5025,6 +5027,7 @@ protected:
       ackPost.ready = false;
       ackPost.posted = false;
     }
+    if (m_txSpaceDiscarded[level]) return;
     // A coalesced ACK for a new peer key phase must use the corresponding
     // updated sending keys, even if its Tx post predates the key update.
     if (level == PktNumSpace::AppData &&
@@ -5959,8 +5962,9 @@ protected:
   }
 
   void discardPktNumSpace_0(PktNumSpace::T level) {
-    if (level == PktNumSpace::AppData) return;
+    if (level == PktNumSpace::AppData || m_rxSpaceDiscarded[level]) return;
     m_rxSpaceDiscarded[level] = true;
+    if (level == PktNumSpace::Handshake) m_crypto.discardSecret(level);
     m_rxCrypto[level].reset();
     m_rxAcks.sent(PktNumSpace::T(level));
 	    ZquicLOG(app()->qlogTrace(), ([level, linkInfo = linkInfo_()](auto &o, ZuTime time) {
@@ -5984,8 +5988,9 @@ protected:
 	  void discardPktNumSpace_1(PktNumSpace::T level) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC sent-packet discard outside Tx thread", return);
-    if (level == PktNumSpace::AppData) return;
+    if (level == PktNumSpace::AppData || m_txSpaceDiscarded[level]) return;
     m_txSpaceDiscarded[level] = true;
+    m_txProt[level].clear();
     m_congestion.release(m_txPkts[level].bytesInFlight());
     m_txPkts[level].clear();
     m_txCrypto[level].reset();
@@ -6008,6 +6013,7 @@ protected:
     }));
     updateCongestionDiag();
     scheduleLossTimer();
+    schedulePTO_();
   }
 
   void rejectEarlyData(ZeroRTTReason::T reason) {
@@ -6162,10 +6168,11 @@ protected:
   }
 
   template <typename SendCrypto>
-  bool sendCryptoPTO(SendCrypto sendCrypto) {
+  bool sendCryptoPTO(
+    SendCrypto sendCrypto, PktNumSpace::T onlySpace = PktNumSpace::N) {
     SentFrameRef cryptoRef;
     PktNumSpace::T cryptoLevel;
-    if (!nextCryptoPTO_(cryptoLevel, cryptoRef)) return false;
+    if (!nextCryptoPTO_(cryptoLevel, cryptoRef, onlySpace)) return false;
     PktBuild build;
     if (!buildRetxCrypto(cryptoLevel, build, cryptoRef)) return false;
     if (!sendCrypto(cryptoLevel, build, cryptoRef)) return false;
@@ -6180,48 +6187,69 @@ protected:
       "QUIC PTO recovery outside Tx thread", return);
     notePTOExpired();
     PktNumSpace::T probeLevel = PktNumSpace::Initial;
+    if (!ptoLevel(probeLevel)) return;
+    // RFC 9002 6.2.4: probe another space with data in flight, within
+    // the two-datagram PTO budget. A successful Handshake retransmission
+    // must not indefinitely suppress the client's outstanding 1-RTT flight.
+    PktNumSpace::T companion = PktNumSpace::N;
+    for (unsigned i = 0; i < PktNumSpace::N; ++i) {
+      auto level = PktNumSpace::T(i);
+      if (level == probeLevel || m_txSpaceDiscarded[level] ||
+	  !txSecretInstalled_(level) || !m_txPkts[level].ackElicitingInFlight())
+	continue;
+      companion = level;
+      break;
+    }
+    uint64_t primaryPN = m_txPN[probeLevel];
+    uint64_t companionPN = companion < PktNumSpace::N ? m_txPN[companion] : 0;
+    uint64_t packetsBefore = txPackets();
+    unsigned budget = companion < PktNumSpace::N ? 1 : 2;
+    auto finish = [this, &sendProbe, probeLevel, companion,
+	primaryPN, companionPN, packetsBefore](bool primarySent) {
+      if (primarySent && companion < PktNumSpace::N &&
+	  m_txPN[probeLevel] != primaryPN &&
+	  m_txPN[companion] == companionPN && txPackets() - packetsBefore < 2) {
+	if (sendProbe(companion)) notePTOProbe(companion, 1);
+      }
+      schedulePTO_();
+    };
     unsigned probeCount = 0;
-    bool probe = reclaimPTO(probeLevel, probeCount);
-    // A lost candidate challenge must not wait behind old-path STREAM probes.
-    if (m_isServer && m_migration.active &&
+    bool probe = reclaimPTO(probeLevel, probeCount, budget);
+    // Candidate proof must precede recovery of unrelated old-path data.
+    if (m_migration.active &&
 	m_migration.state == MigrationState::Validating &&
-	impl()->sendPassiveMigChal()) {
+	(m_isServer ? impl()->sendPassiveMigChal() : impl()->sendMigChal(true))) {
       schedulePTO_();
       return;
     }
     if (!probe && probeLevel <= PktNumSpace::Handshake)
-      if (sendCryptoPTO(sendCrypto)) return;
-    if (impl()->retransmit_(true)) {
+      if (sendCryptoPTO(sendCrypto, probeLevel)) { finish(true); return; }
+    if (impl()->retransmit_(true, budget, probeLevel)) {
       notePTORetx();
+      finish(true);
       return;
     }
     if (probe && probeLevel <= PktNumSpace::Handshake)
-      if (sendCryptoPTO(sendCrypto)) return;
-    uint64_t packetsTx = txPackets();
-    if (flushTx()) {
-      notePTOFlush();
-      if (txPackets() != packetsTx) {
-	schedulePTO_();
-	return;
+      if (sendCryptoPTO(sendCrypto, probeLevel)) { finish(true); return; }
+    if (!probe) {
+      uint64_t packetsTx = txPackets();
+      if (flushTx()) {
+	notePTOFlush();
+	if (txPackets() != packetsTx) finish(false);
       }
+      return;
     }
-    if (!probe) return;
     notePTOProbe(probeLevel, probeCount);
-    if (!sendProbe(probeLevel) && probeLevel == PktNumSpace::Handshake) {
-      if (txSecretInstalled_(PktNumSpace::AppData))
-	(void)sendProbe(PktNumSpace::AppData);
-      else
-	(void)sendProbe(PktNumSpace::Initial);
-    }
-    schedulePTO_();
+    bool sent = sendProbe(probeLevel);
+    finish(sent);
   }
 
-  bool reclaimPTO(PktNumSpace::T &level, unsigned &probes) {
+  bool reclaimPTO(PktNumSpace::T &level, unsigned &probes, unsigned limit = 2) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PTO reclaim outside Tx thread", return false);
     probes = 0;
     if (!ptoLevel(level)) return false;
-    unsigned n = m_txPkts[level].reclaimOnPTO(2);
+    unsigned n = m_txPkts[level].reclaimOnPTO(limit);
     bool fallbackProbe = !n && fallbackProbeLevel(level);
     if (fallbackProbe) {
       ZuTime now = now_();
@@ -6325,11 +6353,14 @@ protected:
   }
   uint64_t txPackets() const { return m_txDiag.packetsTx.load_(); }
 
-  bool nextRetransmit_(PktNumSpace::T &level, SentFrameRef &ref) {
+  bool nextRetransmit_(
+    PktNumSpace::T &level, SentFrameRef &ref,
+    PktNumSpace::T onlySpace = PktNumSpace::N) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC retransmit selection outside Tx thread", return false);
     for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       PktNumSpace::T l = PktNumSpace::T(i);
+      if (onlySpace < PktNumSpace::N && l != onlySpace) continue;
       if (m_txSpaceDiscarded[l]) continue;
       do {
 	if (!m_txPkts[l].nextRetransmit(ref)) goto nextSpace;
@@ -6347,11 +6378,14 @@ nextSpace:
     return false;
   }
 
-  bool nextCryptoPTO_(PktNumSpace::T &level, SentFrameRef &ref) {
+  bool nextCryptoPTO_(
+    PktNumSpace::T &level, SentFrameRef &ref,
+    PktNumSpace::T onlySpace = PktNumSpace::N) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC PTO crypto selection outside Tx thread", return false);
     for (unsigned i = 0; i <= unsigned(PktNumSpace::Handshake); ++i) {
       PktNumSpace::T l = PktNumSpace::T(i);
+      if (onlySpace < PktNumSpace::N && l != onlySpace) continue;
       if (m_txSpaceDiscarded[l] || !m_txCryptoUnackd[l].count_()) continue;
       if (l == PktNumSpace::Handshake &&
 	  !txSecretInstalled_(PktNumSpace::Handshake))
@@ -7143,9 +7177,21 @@ nextSpace:
     updateCongestionDiag();
     schedulePTO_();
     scheduleLossTimer();
-    if (work.congestionOpened || congestionAllowance_())
+    bool retransmitted = false;
+    unsigned allowance = congestionAllowance_();
+    if (work.congestionOpened || allowance) {
+      // Spend ACK-reopened credit on retained loss before ordinary producers.
+      // Posting recovery after a synchronous bulk flush can starve it while
+      // new data keeps resetting PTO. Include losses queued by earlier ACKs.
+      if (allowance)
+	for (unsigned i = 0; i < PktNumSpace::N; ++i)
+	  if (m_txPkts[i].retransmitPending()) {
+	    retransmitted = impl()->retransmit_(); // existing bounded batch
+	    break;
+	  }
       impl()->flushTx_();
-    if (work.retransmit) impl()->queueRetransmit();
+    }
+    if (work.retransmit && !retransmitted) impl()->queueRetransmit();
   }
 
   bool ackFrameValidTx(const AckSnapshot &ack) const {
@@ -7764,13 +7810,15 @@ nextSpace:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Initial packet protection outside Tx thread", return false);
     ZmRef<ZiIOBuf> buf = allocTxPkt();
+    if (ZuUnlikely(!buf)) return false;
+    unsigned capacity = txPktCapacity(buf);
     const auto &initialKeys = initialKeys_(keyDir);
     int headerLen = -1;
     unsigned payloadPlainLen = payload.bytes();
     unsigned targetPlainLen = payloadPlainLen;
     for (unsigned i = 0; i < 4; ++i) {
       headerLen = Pkt::writeInitial(
-	buf->data_(), buf->size, cid_(dcid), cid_(scid),
+	buf->data(), capacity, cid_(dcid), cid_(scid),
 	token, targetPlainLen + InitialSecret::TagLen, pnLength);
       if (headerLen < 0) return false;
       if (!padInitial) break;
@@ -7785,13 +7833,13 @@ nextSpace:
     }
     if (padInitial && !payload.padTo(targetPlainLen)) return false;
     if (PktNumber::encode(
-	  buf->data_() + headerLen, buf->size - unsigned(headerLen),
+	  buf->data() + headerLen, capacity - unsigned(headerLen),
 	  m_txPN[PktNumSpace::Initial], pnLength) != int(pnLength))
       return false;
     uint64_t pn = m_txPN[PktNumSpace::Initial];
     int n = InitialPktProt::protectLongV(
-      buf->data_(), buf->size, initialKeys, pn,
-      byteSpan(buf->data_(), unsigned(headerLen) + pnLength),
+      buf->data(), capacity, initialKeys, pn,
+      byteSpan(buf->data(), unsigned(headerLen) + pnLength),
       payload.data(), payload.count(), unsigned(headerLen), pnLength);
     if (n < 0) {
       ++m_txDiag.failures;
@@ -7811,7 +7859,6 @@ nextSpace:
       }));
       return false;
     }
-    buf->skip = 0;
     buf->length = unsigned(n);
     uint8_t ackLevel;
     uint64_t ackLargest;
@@ -7858,25 +7905,27 @@ nextSpace:
       return false;
     }
     ZmRef<ZiIOBuf> buf = allocTxPkt();
+    if (ZuUnlikely(!buf)) return false;
+    unsigned capacity = txPktCapacity(buf);
     if (!payload.padForProtSample(
 	  pnLength, txSecret_(PktNumSpace::Handshake).tagLen))
       return false;
     int headerLen = Pkt::writeHandshake(
-      buf->data_(), buf->size, cid_(dcid), cid_(scid),
+      buf->data(), capacity, cid_(dcid), cid_(scid),
       payload.bytes() +
 	txSecret_(PktNumSpace::Handshake).tagLen,
       pnLength);
     if (headerLen < 0)
       return false;
     if (PktNumber::encode(
-	  buf->data_() + headerLen, buf->size - unsigned(headerLen),
+	  buf->data() + headerLen, capacity - unsigned(headerLen),
 	  m_txPN[PktNumSpace::Handshake], pnLength) != int(pnLength))
       return false;
     uint64_t pn = m_txPN[PktNumSpace::Handshake];
     int n = PktProt::protectLongV(
-      buf->data_(), buf->size,
+      buf->data(), capacity,
       txProtState_(PktNumSpace::Handshake), pn,
-      byteSpan(buf->data_(), unsigned(headerLen) + pnLength),
+      byteSpan(buf->data(), unsigned(headerLen) + pnLength),
       payload.data(), payload.count(), unsigned(headerLen), pnLength);
     if (n < 0) {
       ++m_txDiag.failures;
@@ -7896,7 +7945,6 @@ nextSpace:
       }));
       return false;
     }
-    buf->skip = 0;
     buf->length = unsigned(n);
     uint8_t ackLevel;
     uint64_t ackLargest;
@@ -7944,25 +7992,27 @@ nextSpace:
       return false;
     }
     ZmRef<ZiIOBuf> buf = allocTxPkt();
+    if (ZuUnlikely(!buf)) return false;
+    unsigned capacity = txPktCapacity(buf);
     const TrafficSecret &secret =
       txKeySecret_(PktKeyLevel::ZeroRTT);
     if (!payload.padForProtSample(
 	  pnLength, secret.tagLen))
       return false;
     int headerLen = Pkt::writeLong(
-      buf->data_(), buf->size, PktType::ZeroRTT,
+      buf->data(), capacity, PktType::ZeroRTT,
       cid_(dcid), cid_(scid),
       payload.bytes() + secret.tagLen, pnLength);
     if (headerLen < 0 ||
 	PktNumber::encode(
-	  buf->data_() + headerLen, buf->size - unsigned(headerLen),
+	  buf->data() + headerLen, capacity - unsigned(headerLen),
 	  m_txPN[PktNumSpace::AppData], pnLength) != int(pnLength))
       return false;
     uint64_t pn = m_txPN[PktNumSpace::AppData];
     int n = PktProt::protectLongV(
-      buf->data_(), buf->size,
+      buf->data(), capacity,
       txKeyProtState_(PktKeyLevel::ZeroRTT), pn,
-      byteSpan(buf->data_(), unsigned(headerLen) + pnLength),
+      byteSpan(buf->data(), unsigned(headerLen) + pnLength),
       payload.data(), payload.count(), unsigned(headerLen), pnLength);
     if (n < 0) {
       ++m_txDiag.failures;
@@ -7982,7 +8032,6 @@ nextSpace:
       }));
       return false;
     }
-    buf->skip = 0;
     buf->length = unsigned(n);
     uint8_t ackLevel;
     uint64_t ackLargest;
@@ -8044,8 +8093,10 @@ nextSpace:
       return false;
     }
     ZmRef<ZiIOBuf> buf = allocTxPkt();
+    if (ZuUnlikely(!buf)) return false;
+    unsigned capacity = txPktCapacity(buf);
     int headerLen = Pkt::writeShort(
-      buf->data_(), buf->size, dcid,
+      buf->data(), capacity, dcid,
       m_txPN[PktNumSpace::AppData], pnLength, m_txKeyPhase);
     if (headerLen < 0) return false;
     if (!payload.padForProtSample(
@@ -8062,9 +8113,9 @@ nextSpace:
     }
     uint64_t pn = m_txPN[PktNumSpace::AppData];
     int n = PktProt::protectShortV(
-      buf->data_(), buf->size,
+      buf->data(), capacity,
       txProtState_(PktNumSpace::AppData), pn,
-      byteSpan(buf->data_(), unsigned(headerLen)),
+      byteSpan(buf->data(), unsigned(headerLen)),
       payload.data(), payload.count(),
       unsigned(headerLen) - pnLength, pnLength);
     if (n < 0) {
@@ -8085,7 +8136,6 @@ nextSpace:
       }));
       return false;
     }
-    buf->skip = 0;
     buf->length = unsigned(n);
     uint8_t ackLevel;
     uint64_t ackLargest;
@@ -9496,6 +9546,10 @@ private:
     for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       auto l = PktNumSpace::T(i);
       if (m_txSpaceDiscarded[l]) continue;
+      if (l == PktNumSpace::AppData &&
+	  !(m_txSpaceDiscarded[PktNumSpace::Handshake] ||
+	    (m_isServer && establishedTx())))
+	continue;
       const auto &tx = m_txPkts[l];
       if (!tx.ackElicitingInFlight() && !tx.retransmitPending()) continue;
       ZuTime deadline = ptoDeadline(l);
@@ -9525,7 +9579,8 @@ private:
     };
     candidate(PktNumSpace::Initial, initProbePending());
     candidate(PktNumSpace::Handshake, handshakeProbePending());
-    candidate(PktNumSpace::AppData, appProbePending());
+    candidate(PktNumSpace::AppData,
+      m_txSpaceDiscarded[PktNumSpace::Handshake] && appProbePending());
     return have;
   }
 

@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "ZfixTestAllocator.hh"
+
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmRef.hh>
@@ -46,8 +48,8 @@ static bool contains(ZuCSpan text, ZuCSpan term) {
   return text.find(term) >= 0;
 }
 static ZmRef<ZiIOBuf> wire(ZuCSpan type, ZuCSpan content) {
-  ZmRef<ZiIOBuf> b = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-    ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
+  ZmRef<ZiIOBuf> b = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
+    ZiIOBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
   constexpr auto Envelope = "8=FIX.4.4\1" "9=4294967295\1" "35=\1" "10=255\1"_z;
   b->ensure(type.length() + content.length() + Envelope.length());
   ZuSpan<char> storage{b->data(), b->size};

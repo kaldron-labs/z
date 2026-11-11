@@ -116,12 +116,11 @@ template <typename T>
 static auto key(const T &value)
 {
 #ifdef Zfb_HH
-  Zdb_::Builder b{new Zdb_::IOBufAlloc<zdbtest::Order>{
-    Zdb_::localBufAllocator<zdbtest::Order>(), nullptr, 0}, Zfb::BufferAlign<T>::N};
+  Zdb_::Builder b{Zdb_::localBufAllocator<zdbtest::Order>()->allocBuf(),
+    Zfb::BufferAlign<T>::N};
   b.finish(Zfb::save(b, value));
 #else
-  Zfb::IOBuilder b{new Zdb_::IOBufAlloc<zdbtest::Order>{
-    Zdb_::localBufAllocator<zdbtest::Order>(), nullptr, 0}};
+  Zfb::IOBuilder b{Zdb_::localBufAllocator<zdbtest::Order>()->allocBuf()};
   b.Finish(ZfbStruct::save(b, value));
 #endif
   return b.buf();
@@ -132,16 +131,15 @@ static auto record(const zdbtest::Order &row, Zdb_::UN un, Zdb_::VN vn)
 {
   using namespace Zdb_;
 #ifdef Zfb_HH
-  Builder b{new Zdb_::IOBufAlloc<zdbtest::Order>{
-    Zdb_::localBufAllocator<zdbtest::Order>(), nullptr, 0}, Zfb::BufferAlign<zdbtest::Order>::N};
+  Builder b{Zdb_::localBufAllocator<zdbtest::Order>()->allocBuf(),
+    Zfb::BufferAlign<zdbtest::Order>::N};
   auto nested = b.startNested();
   auto data = b.endNested(nested,
     Zfb::save<ZuFacet::FB, Filter>(b, row));
   b.finish(saveMsg(b, saveRecord(b, "repairbench", un, SN{un}, vn, 0, data),
     Msg::Tag::Replication));
 #else
-  Zfb::IOBuilder b{new Zdb_::IOBufAlloc<zdbtest::Order>{
-    Zdb_::localBufAllocator<zdbtest::Order>(), nullptr, 0}};
+  Zfb::IOBuilder b{Zdb_::localBufAllocator<zdbtest::Order>()->allocBuf()};
   auto data = Zfb::Save::nest(b, [&row](Zfb::Builder &b) {
     return ZfbStruct::save<ZuFacet::Core, Filter>(b, row).Union();
   });

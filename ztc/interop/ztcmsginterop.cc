@@ -10,14 +10,22 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuBox.hh>
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZtScratch.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZtcMsg.hh>
 
 #include "telemetry_generated.h"
 #include "../../zfb/interop/iobaseline.hh"
 #include <zlib/ZfbReflect.hh>
+
+static ZmRef<ZiIOBuf> allocFrame()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf,
+    ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltVHMaxSize>();
+  return allocator->allocBuf();
+}
 
 using namespace ZuTestUtil;
 using Text = ZtString<ZtStringHeapID<"ztcmsginterop.Text">>;
@@ -84,7 +92,7 @@ static void schema()
 static void request()
 {
   ZuTestScope(request);
-  Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Ztc::Builder builder{allocFrame()};
   auto nested = builder.startNested();
   Ztc::Request request;
   request.filter = "heap*";
@@ -149,7 +157,7 @@ static void copy()
   peer.Finish(Peer::CreatePayload(peer, Peer::Body::Telemetry, telemetry.Union()));
   ZuBSpan original{peer.GetBufferPointer(), peer.GetSize()};
   ZuCheck(Zfb::verify<Ztc::Payload>(original));
-  Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Ztc::Builder builder{allocFrame()};
   auto data = builder.copyRoot(original, Ztc::Builder::Align);
   builder.finish(Ztc::saveMsg(builder, data, 59, "routed", 61));
   auto owner = builder.buf();
@@ -250,7 +258,7 @@ template <typename Codec, bool Copy>
 static void measure(ZuCSpan name, const Ztc::Request &row, ZuBSpan original,
     unsigned count, bool fresh)
 {
-  ZmRef<ZiIOBuf> owner = new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()};
+  ZmRef<ZiIOBuf> owner = allocFrame();
   typename Codec::Builder builder{owner};
   // Verify both roots and their independent field expectations before timing.
   Codec::template save<Copy>(builder, row, original, 1);
@@ -284,7 +292,7 @@ static void measure(ZuCSpan name, const Ztc::Request &row, ZuBSpan original,
     __asm__ __volatile__("" : : "g"(owner->data()), "g"(owner->length) : "memory");
     sum += Peer::GetMsg(owner->data())->sub_id();
     bytes += owner->length;
-    if (fresh) owner = new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()};
+    if (fresh) owner = allocFrame();
     else owner->clear();
     builder.buf(owner);
   }
@@ -305,7 +313,7 @@ static int run(unsigned count, unsigned rounds)
   row.group = Ztc::Group::Heap;
   row.interval = 7;
   row.subscribe = true;
-  Canonical::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Canonical::Builder builder{allocFrame()};
   Canonical::save<false>(builder, row, {}, 1);
   auto original = builder.buf();
   auto data = Peer::GetMsg(original->data())->data();

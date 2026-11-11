@@ -567,17 +567,17 @@ void testPTOReclaimUsesRetxQueue()
   Zquic::SentFrameRef ref;
   ZuCHECK(tx.nextRetransmit(ref) &&
       ref.kind == Zquic::SentFrameKind::Crypto &&
-      ref.offset == 80 &&
-      ref.length == 9 &&
+      ref.offset == 70 &&
+      ref.length == 8 &&
       !tx.nextRetransmit(ref),
-    "PTO retransmit fallback did not choose newest outstanding packet");
+    "PTO retransmit fallback did not choose oldest outstanding packet");
   ZuCHECK(tx.reclaimOnPTO(1) == 1 &&
       tx.retransmitPending() == 1,
     "PTO reclaim did not skip already reclaimed packet");
   ZuCHECK(tx.nextRetransmit(ref) &&
       ref.kind == Zquic::SentFrameKind::Crypto &&
-      ref.offset == 70 &&
-      ref.length == 8 &&
+      ref.offset == 80 &&
+      ref.length == 9 &&
       !tx.nextRetransmit(ref),
     "PTO retransmit fallback did not move to next outstanding packet");
 }
@@ -684,6 +684,72 @@ static Zquic::TxPkt txControlPkt(
   p.frames.clear();
   p.addFrame(ref);
   return p;
+}
+
+void ptoProgressWithNewPackets()
+{
+  ZuTestScopeRT(ptoProgressWithNewPackets);
+
+  Zquic::PktTxSpace tx;
+  ZQUIC_CHECK_RT(tx.add(txControlPkt(
+      0, Zquic::SentFrameRef::handshakeDone())),
+    "HANDSHAKE_DONE packet setup failed");
+  for (uint64_t pn = 1; pn < 4; ++pn)
+    ZQUIC_CHECK_RT(tx.add(txStreamPkt(pn, 7, (pn - 1) << 5, 32)),
+      "STREAM packet setup failed");
+
+  unsigned served = 0;
+  Zquic::SentFrameRef ref;
+  for (unsigned round = 0; round < 4; ++round) {
+    ZQUIC_CHECK_RT(tx.reclaimOnPTO(1) == 1 &&
+	!tx.lost() && !tx.ackd() &&
+	tx.bytesInFlight() == uint64_t(4 + round) * 100 &&
+	tx.nextRetransmit(ref) && !tx.retransmitPending(),
+      "PTO changed loss/accounting or failed to produce its bounded probe");
+    if (ref.kind == Zquic::SentFrameKind::Control) {
+      ZQUIC_CHECK_RT(ref.controlType == Zquic::FrameType::HandshakeDone,
+	"PTO produced an unrelated control frame");
+      served |= 1;
+    } else {
+      ZQUIC_CHECK_RT(ref.kind == Zquic::SentFrameKind::Stream &&
+	ref.streamID == 7 && ref.length == 32 && ref.offset < 96,
+	"PTO produced an unrelated STREAM range");
+      served |= 1U << (1 + (ref.offset >> 5));
+    }
+    auto packet = txPkt(4 + round);
+    packet.frames.clear();
+    packet.addFrame(ref);
+    ZQUIC_CHECK_RT(tx.add(packet), "PTO retransmission packet add failed");
+#ifdef ZDEBUG
+    ZQUIC_CHECK_RT(tx.verifyOutstanding(),
+      "PTO retransmission changed the outstanding-frame index");
+#endif
+  }
+  ZQUIC_CHECK_RT(served == 15 && tx.bytesInFlight() == 800,
+    "new retransmission packets starved older HANDSHAKE_DONE/STREAM work");
+
+  ZQUIC_CHECK_RT(tx.ack(0) && tx.ack(4) &&
+      tx.ackd() == 2 && tx.bytesInFlight() == 600 &&
+      tx.lose(7) && tx.lost() == 1 && tx.bytesInFlight() == 500 &&
+      tx.nextRetransmit(ref) &&
+      ref.kind == Zquic::SentFrameKind::Stream && ref.offset == 64 &&
+      !tx.nextRetransmit(ref),
+    "ACK/loss after PTO did not retire control packets or retain STREAM work");
+  auto packet = txPkt(8);
+  packet.frames.clear();
+  packet.addFrame(ref);
+  ZQUIC_CHECK_RT(tx.add(packet), "lost STREAM retransmission add failed");
+  for (unsigned range = 0; range < 3; ++range)
+    ZQUIC_CHECK_RT(tx.reclaimOnPTO(1) == 1 &&
+	tx.nextRetransmit(ref) &&
+	ref.kind == Zquic::SentFrameKind::Stream &&
+	ref.offset == uint64_t(range << 5) &&
+	!tx.nextRetransmit(ref) && tx.bytesInFlight() == 600,
+      "PTO revisited retired control work or changed flight accounting");
+#ifdef ZDEBUG
+  ZQUIC_CHECK_RT(tx.verifyOutstanding(),
+    "ACK/loss after PTO changed the outstanding-frame index");
+#endif
 }
 
 void testFlowControlRetransmit()
@@ -967,6 +1033,7 @@ int main(int argc, char **argv)
   ZuTestCall(testAckLeavesOnlyRetxPending);
   ZuTestCall(retxSkipsUnackdStreamBytes);
   ZuTestCall(testTypedControlRefs);
+  ZuTestCall(ptoProgressWithNewPackets);
   ZuTestCall(testFlowControlRetransmit);
   ZuTestCall(testPktNumSpaceBatchCursors);
   ZuTestCall(testAckManager);

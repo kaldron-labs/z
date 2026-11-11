@@ -39,18 +39,26 @@ const char Request[] =
 using RxAllocator = Zi::IOBufAllocator;
 using TxAllocator = Zi::IOBufAllocator;
 
-class Connection : public ZiConnection,
-    public ZiRx<Connection, ZiRxBufAlloc<4096>>, public ZiTx<Connection> {
-  using Rx = ZiRx<Connection, ZiRxBufAlloc<4096>>;
+class Connection :
+  public ZiConnection,
+  public ZiRx<Connection, 100U << 20>,
+  public ZiTx<Connection>
+{
+  using Rx = ZiRx<Connection, 100U << 20>;
   using Tx = ZiTx<Connection>;
 
   class Output : public ZiTxStream<Output> {
   public:
-    Output(Connection *cxn, unsigned size) : ZiTxStream<Output>{size, 0, 0}, m_cxn{cxn} { }
+    Output(Connection *cxn, unsigned size) :
+      ZiTxStream<Output>{
+	cxn->info().mps < size ? cxn->info().mps : size, 0, 0},
+      m_cxn{cxn} { }
     ~Output() { flush(); }
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-      auto buf = m_cxn->m_allocator->allocBuf();
-      buf->skip = headRoom;
+      auto buf = m_cxn->m_allocator->allocBuf(
+	nullptr, 0, m_cxn->info().mps);
+      if (ZuUnlikely(!buf)) return nullptr;
+      buf->skip += headRoom;
       return buf;
     }
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
@@ -62,13 +70,15 @@ class Connection : public ZiConnection,
     Connection *m_cxn;
   };
 public:
-  Connection(ZiMultiplex *mx, const ZiCxnInfo &ci, ZuTime now, TxAllocator *allocator) :
-      ZiConnection(mx, ci), m_headerLen(0), m_connectTime(now), m_allocator(allocator) { }
+  Connection(ZiMultiplex *mx, const ZiCxnInfo &ci, ZuTime now,
+      RxAllocator *rxAllocator, TxAllocator *allocator) :
+    ZiConnection(mx, ci), m_headerLen(0), m_connectTime(now),
+    m_rxAllocator(rxAllocator), m_allocator(allocator) { }
   ~Connection() { }
 
   Mx *mx() { return (Mx *)ZiConnection::mx(); }
   RxAllocator *rxAllocator() const {
-    return static_cast<RxAllocator *>(info().rxAllocator);
+    return m_rxAllocator;
   }
 
   void disconnected(bool);
@@ -76,7 +86,7 @@ public:
   void connected(ZiRxContext &io) {
     Rx::recv<&Connection::frame, &Connection::received>(io);
     // std::cout << Request << std::flush;
-    Output out{this, ZiIOBuf_DefltSize};
+    Output out{this, m_allocator->capacity()};
     out << Request;
     if (!out.flush()) disconnect();
   }
@@ -143,6 +153,7 @@ private:
   ZuTime	m_recvTime;
   ZuTime	m_completedTime;
   bool		m_notified = false;
+  RxAllocator *m_rxAllocator;
   TxAllocator *m_allocator;
 };
 
@@ -163,7 +174,7 @@ public:
   ~Mx() { }
 
   ZiConnection *connected(const ZiCxnInfo &ci) {
-    return new Connection(this, ci, Zm::now(), m_allocator);
+    return new Connection(this, ci, Zm::now(), m_frameAllocator, m_allocator);
   }
 
   void disconnected(Connection *connection) {
@@ -197,6 +208,7 @@ public:
 
 private:
   RxAllocator *m_rx = allocator<Zi::IOBufType::RxTCP, ZiRxBuf, 4096>();
+  RxAllocator *m_frameAllocator = allocator<Zi::IOBufType::App, ZiRxBuf, 4096>();
   TxAllocator *m_allocator = allocator<Zi::IOBufType::TxTCP, ZiTxBuf, ZiIOBuf_DefltSize>();
   ZiIP			m_ip;
   unsigned		m_port;

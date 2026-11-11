@@ -448,7 +448,7 @@ public:
       ZiAssert(skip <= BufSize, "Zquic", (skip),
 	"invalid stream headroom " << skip, return nullptr);
       ZmRef<ZiIOBuf> buf = new TxDataPQueue::Node{
-	ZmSingleton<Zi::IOBufBuiltinAllocator<>>::instance(), m_stream};
+	m_stream->link()->app()->streamTxAllocator(), m_stream};
       buf->skip = skip;
       buf->length = 0;
       return buf;
@@ -718,7 +718,8 @@ private:
 	return false;
       auto data = frame.payload.data() + payloadOffset;
       Rx::rcvd(new StreamRxPQueue::Node{
-	packet, data, unsigned(length64), this, spans[i].first});
+	packet, data, unsigned(length64), link()->app()->streamRxAllocator(),
+	this, spans[i].first});
     }
     return true;
   }
@@ -738,6 +739,8 @@ private:
   bool send(ZmRef<ZiIOBuf> buf) {
     if (!buf || buf->failed() || !buf->length) return false;
     if (!admitTx()) return sendError("QUIC stream transmit queue limit exceeded");
+    // Stream retirement can precede this admission's Tx dispatch. Keep the
+    // stream alive until sendAdmitted_ installs the retained range.
     txInvoke_([stream = ZmRef<Impl>{impl()}, buf = ZuMv(buf)]() mutable {
       stream->sendAdmitted_(ZuMv(buf));
     });

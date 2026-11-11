@@ -6,13 +6,161 @@
 
 #include <string.h>
 
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zquic.hh>
 
 using namespace ZuTestUtil;
 
 #define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+
+ZuAssert((ZuIsBase<Zquic_::TxPkt, ZiTxBuf>{}));
+ZuAssert((!ZuIsBase<Zquic_::BufNode, ZiTxBuf>{}));
+
+struct PacketBacking : Zi::IOBufPlugin {
+  enum { Size = 1600, Head = 17, Tail = 11, Payload = 64 };
+  alignas(ZiIOBuf_Align) uint8_t bytes[Size];
+  unsigned acquired = 0, released = 0;
+  bool intact = true;
+
+  PacketBacking() {
+    size = Size;
+    headRoom = Head;
+    tailRoom = Tail;
+  }
+  uint8_t *alloc() override {
+    if (acquired != released) return nullptr;
+    ++acquired;
+    memset(bytes, 0xa5, Size);
+    return bytes;
+  }
+  void free(uint8_t *ptr) override {
+    intact &= ptr == bytes && acquired == released + 1;
+    for (unsigned i = 0; i < Head; ++i) intact &= bytes[i] == 0xa5;
+    for (unsigned i = Head + Payload; i < Size; ++i) intact &= bytes[i] == 0xa5;
+    ++released;
+  }
+};
+
+// Exercise the ordinary mx factory, including its construction of Tx metadata.
+struct PacketPlugin : ZiMxPlugin {
+  ZmRef<PacketBacking> backing = new PacketBacking;
+  Zi::IOBufType::T requestedType = Zi::IOBufType::App;
+  unsigned requestedSize = 0, requestedAlign = 0, requestedCount = 0;
+
+  explicit PacketPlugin(ZiMultiplex *mx) : ZiMxPlugin{mx} { }
+  Zi::IOBufPlugin *allocator(
+      Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count) override {
+    requestedType = type;
+    requestedSize = size;
+    requestedAlign = align;
+    requestedCount = count;
+    return backing;
+  }
+  void start() override { }
+  void stop() override { }
+  void rx() override { }
+  void listen(ZiListenFn, ZiFailFn, ZiConnectFn, ZiIP, uint16_t, unsigned,
+    Zi::IOBufAllocator *, ZiCxnOptions) override { }
+  void stopListening(ZiIP, uint16_t) override { }
+  void connect(ZiConnectFn, ZiFailFn, ZiIPType::T, ZiIP, uint16_t, ZiIP, uint16_t,
+    Zi::IOBufAllocator *, ZiCxnOptions) override { }
+  void udp(ZiConnectFn, ZiFailFn, ZiIPType::T, ZiIP, uint16_t, ZiIP, uint16_t,
+    Zi::IOBufAllocator *, ZiCxnOptions) override { }
+  void recv(ZiConnection *) override { }
+  void send(ZiConnection *) override { }
+  void disconnect(ZiConnection *, bool) override { }
+  void close(ZiConnection *, bool) override { }
+  void wake() override { }
+  TelKey telKey() const override { return {}; }
+  void telemetry(Ztc::MxTelemetry &) const override { }
+  unsigned allCxns(AllCxnsFn) const override { return 0; }
+  unsigned allQueues(Ztc::QueueMgr::AllFn) const override { return 0; }
+  void watch(AddCxnFn, DelCxnFn) override { }
+  void unwatch() override { }
+};
+
+void testTxPacketGeometry(bool registered)
+{
+  ZuTestScopeRT(testTxPacketGeometry);
+
+  ZiMultiplex mx;
+  ZmRef<PacketPlugin> plugin;
+  if (registered) {
+    plugin = new PacketPlugin{&mx};
+    mx.plugin(plugin);
+  }
+  auto allocator = Zquic::pktTxAllocator<1536, 4096, "Zquic.Test.Pkt.Tx">(&mx);
+  using Heap = ZuStringT<"Zquic.Test.Pkt.Tx">;
+  if (registered) {
+    ZQUIC_CHECK_RT((dynamic_cast<Zi::IOBufPluginAllocator<Zi::IOBufType::TxUDP,
+      Zquic_::TxPkt, 1536, ZiIOBuf_Align, Heap, 4096> *>(allocator)),
+      "plugin allocator must preserve Tx node, geometry and heap policy");
+    ZQUIC_CHECK_RT(plugin->requestedType == Zi::IOBufType::TxUDP &&
+      plugin->requestedSize == 1536 && plugin->requestedAlign == ZiIOBuf_Align &&
+      plugin->requestedCount == ZiIOBuf_DefltCount,
+      "packet allocator factory request changed");
+  } else {
+    ZQUIC_CHECK_RT((dynamic_cast<Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxUDP,
+      Zquic_::TxPkt, 1536, ZiIOBuf_Align, Heap, 4096> *>(allocator)),
+      "builtin allocator must preserve Tx node, geometry and heap policy");
+  }
+  int owner;
+  auto buf = allocator->allocBuf(&owner, 0, PacketBacking::Payload);
+  ZQUIC_CHECK_RT(bool(buf), "packet allocation failed");
+  if (!buf) return;
+  auto pkt = static_cast<Zquic_::TxPkt *>(buf.ptr());
+  auto data = buf->data();
+  auto skip = registered ? PacketBacking::Head : 0;
+  auto tail = registered ? PacketBacking::Tail : 0;
+  ZQUIC_CHECK_RT(buf->allocator() == allocator && buf->owner == &owner &&
+    buf->builtin() == !registered && buf->registered() == registered &&
+    buf->skip == skip && buf->size == skip + PacketBacking::Payload + tail &&
+    Zquic::txPktCapacity(buf) == PacketBacking::Payload,
+    "packet storage must retain allocator identity and MPS-clamped geometry");
+  ZQUIC_CHECK_RT(pkt->ecn == Zquic::EcnMark::NotECT,
+    "Tx packet metadata was not constructed");
+  ZiSockAddr addr{ZiIP{"127.0.0.1"}, 4433};
+  pkt->addr = addr;
+  pkt->ecn = Zquic::EcnMark::ECT1;
+  uint8_t cid[8] = {0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08};
+  Zquic::InitialKeyMaterial keys;
+  bool derived = Zquic::InitialCrypto::derive(keys, Zquic::CxnID{ZuBSpan{cid, sizeof(cid)}});
+  ZQUIC_CHECK_RT(derived, "test packet key derivation failed");
+  if (!derived) return;
+  uint8_t plaintext[PacketBacking::Payload - Zquic::InitialSecret::TagLen];
+  for (unsigned i = 0; i < sizeof(plaintext); ++i) plaintext[i] = uint8_t(i ^ 0x6d);
+  int encrypted = Zquic::InitialCrypto::encrypt(
+    data, Zquic::txPktCapacity(buf), keys.client, 2, "packet header",
+    ZuBSpan{plaintext, sizeof(plaintext)});
+  ZQUIC_CHECK_RT(encrypted == PacketBacking::Payload,
+    "packet protection must write directly into allocator-provided storage");
+  if (encrypted != PacketBacking::Payload) return;
+  uint8_t ciphertext[PacketBacking::Payload];
+  memcpy(ciphertext, data, sizeof(ciphertext));
+  buf->length = PacketBacking::Payload;
+  auto packet = buf.ptr();
+  ZiTxQueue queue;
+  queue.pushNode(ZuMv(buf));
+  ZQUIC_CHECK_RT(queue.count_() == 1 && queue.headPtr() == packet,
+    "Tx queue must retain the packet node directly");
+  buf = queue.shift();
+  ZQUIC_CHECK_RT(buf.ptr() == packet && buf->data() == data && buf->skip == skip &&
+    buf->allocator() == allocator && buf->owner == &owner &&
+    pkt->addr == addr && pkt->ecn == Zquic::EcnMark::ECT1,
+    "queueing changed packet backing or destination metadata");
+  ZQUIC_CHECK_RT(!memcmp(data, ciphertext, sizeof(ciphertext)) && buf->avail() == tail,
+    "queueing changed encrypted packet bytes or reserved tailroom");
+  uint8_t decrypted[sizeof(plaintext)];
+  int plainLength = Zquic::InitialCrypto::decrypt(
+    decrypted, sizeof(decrypted), keys.client, 2, "packet header", buf->cspan());
+  ZQUIC_CHECK_RT(plainLength == sizeof(plaintext) &&
+    !memcmp(decrypted, plaintext, sizeof(plaintext)),
+    "queued protected packet must authenticate and recover its original plaintext");
+  buf = nullptr;
+  if (registered)
+    ZQUIC_CHECK_RT(plugin->backing->intact && plugin->backing->acquired == 1 &&
+      plugin->backing->released == 1, "registered packet must retire once with guards intact");
+}
 
 void testDiagAggregation()
 {
@@ -151,22 +299,26 @@ void testPacketAllocRoles()
 {
   ZuTestScope(testPacketAllocRoles);
 
-  Zi::IOBufAllocator *rx = ([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
-  Zi::IOBufAllocator *tx = ([] { static ZiMultiplex mx; return Zquic::pktTxAllocator(&mx); })();
+  ZiMultiplex mx;
+  auto rx = Zquic::pktRxAllocator(&mx);
+  auto tx = Zquic::pktTxAllocator(&mx);
+  auto streamRx = mx.allocator<Zi::IOBufType::RxTLS>();
   auto packet = rx->allocBuf();
   auto wire = tx->allocBuf();
+  ZuCHECK(packet && wire, "packet buffer allocation failed");
+  if (!packet || !wire) return;
   ZuCHECK(packet->avail() >= Zquic::BufSize && wire->avail() >= Zquic::BufSize,
     "UDP recvmsg metadata must not reduce packet payload capacity");
-  ZuCHECK(rx->type() == Zi::IOBufType::RxUDP &&
-      tx->type() == Zi::IOBufType::TxUDP,
+  ZuCHECK(rx->type == Zi::IOBufType::RxUDP &&
+      tx->type == Zi::IOBufType::TxUDP,
     "packet allocator roles mismatch");
   packet->data()[0] = 0x5a;
   packet->data()[1] = 0xa5;
   ZmRef<ZiIOBuf> observer = packet;
   auto backing = packet.ptr();
   {
-    Zquic::StreamRxData first{packet, packet->data(), 1, nullptr, 0};
-    Zquic::StreamRxData second{packet, packet->data() + 1, 1, nullptr, 1};
+    Zquic::StreamRxData first{packet, packet->data(), 1, streamRx, nullptr, 0};
+    Zquic::StreamRxData second{packet, packet->data() + 1, 1, streamRx, nullptr, 1};
     packet = nullptr;
     ZuCHECK(first.packet.ptr() == backing && second.packet.ptr() == backing &&
 	first.span()[0] == 0x5a && second.span()[0] == 0xa5 && backing->refCount() == 3,
@@ -184,22 +336,21 @@ void testPacketAllocRoles()
     "STREAM descriptor teardown must release exactly its retained packet reference");
   observer = nullptr;
 
-  ZmRef<ZiIOBuf> stream = new Zquic::StreamTxBufAlloc<>{
-    ZmSingleton<typename Zquic::StreamTxBufAlloc<>::Allocator>::instance(), nullptr, 0};
-  ZmRef<ZiIOBuf> crypto = new Zquic::CryptoTxBufAlloc<>{
-    ZmSingleton<typename Zquic::CryptoTxBufAlloc<>::Allocator>::instance(), nullptr, 0};
-  ZmRef<ZiIOBuf> reassembly =
-    new Zquic::CryptoRxBufAlloc<>{ZmSingleton<typename Zquic::CryptoRxBufAlloc<>::Allocator>::instance(), nullptr, 0};
-  ZuCHECK(stream->allocator->type() == Zi::IOBufType::App &&
-      crypto->allocator->type() == Zi::IOBufType::App &&
-      reassembly->allocator->type() == Zi::IOBufType::App,
-    "retained plaintext must remain ordinary allocation");
+  auto stream = Zquic::plaintextAllocator<Zquic::StreamTxBufAlloc<>>(&mx)->allocBuf();
+  auto crypto = Zquic::plaintextAllocator<Zquic::CryptoTxBufAlloc<>>(&mx)->allocBuf();
+  auto reassembly = Zquic::plaintextAllocator<Zquic::CryptoRxBufAlloc<>>(&mx)->allocBuf();
+  ZuCHECK(stream->allocator()->type == Zi::IOBufType::TxTLS &&
+      crypto->allocator()->type == Zi::IOBufType::TxTLS &&
+      reassembly->allocator()->type == Zi::IOBufType::RxTLS,
+    "retained plaintext allocator roles mismatch");
 }
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(testTxPacketGeometry, false);
+  ZuTestCall(testTxPacketGeometry, true);
   ZuTestCall(testPacketAllocRoles);
   ZuTestCall(testDiagAggregation);
   ZuTestCall(testPktBuildMetadata);

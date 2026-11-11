@@ -20,12 +20,12 @@ namespace Zfix {
 
 template <typename App, typename Impl, typename MTList, typename Net = TCP,
   typename RxAlloc = typename Net::template RxBufAlloc<>,
-  typename TxAlloc = Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>,
+  typename TxAlloc = typename Net::template TxBufAlloc<>,
   template <typename, typename> class Engine = Link>
 class SrvLink : public Net::template SrvLink<App, Impl, RxAlloc, TxAlloc>,
     public Engine<Impl, NativeRx<Net>>, public LinkHooks<Impl, Net>,
     public NetInput<Impl, typename Net::RxStream> {
-  ZuAssert((ZuIs_<TxAlloc, ZiTxBuf>{}));
+  ZuAssert((ZuIs_<typename TxAlloc::Buf, ZiTxBuf>{}));
   using NetBase = Net::template SrvLink<App, Impl, RxAlloc, TxAlloc>;
   using EngineBase = Engine<Impl, NativeRx<Net>>;
   using Hooks = LinkHooks<Impl, Net>;
@@ -36,6 +36,7 @@ public:
   using EngineBase::send;
   using EngineBase::reply;
   using EngineBase::work;
+  using Hooks::fixCloseRx;
   using Hooks::fixTraceField;
   using Hooks::fixTraceSecret;
   using typename NetBase::Cxn;
@@ -61,11 +62,20 @@ public:
 
   void connected(typename Net::Connected) { this->clearInput(); this->transportUp_0(); }
 
+  void down() override {
+    // Native hub stop can visit a link retained only for FIX completion drain.
+    if (this->cxn()) NetBase::down();
+  }
+
   void disconnected(bool peer) { this->clearInput(); this->transportDown_0(peer); }
 
   int process(typename Net::RxStream &s) { this->input_(s); return this->process_(s); }
 
   bool sendRecord(ZmRef<ZiIOBuf> b) { return NetBase::send_(ZuMv(b)); }
+
+  void txPacketized(const ZiIOBuf *plain, ZmRef<ZiIOBuf> packet) {
+    if constexpr (Net::Encrypted) this->transportPacketized(plain, ZuMv(packet));
+  }
 
   void sent(ZmRef<ZiTxBuf> b, bool ok) {
     this->transportSent(b, ok);
@@ -85,14 +95,14 @@ public:
   using Params = typename Net::ServerParams;
   using MessageCatalog = MTList;
   template <typename Impl> using LinkBase = SrvLink<App, Impl, MTList, Net,
-    typename Net::template RxBufAlloc<>, Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>, Engine>;
+    typename Net::template RxBufAlloc<>, typename Net::template TxBufAlloc<>, Engine>;
 };
 
 template <typename App, typename MTList, typename Net = TCP>
 using RawServer = Server<App, MTList, Net, Raw>;
 template <typename App, typename Impl, typename MTList, typename Net = TCP,
   typename RxAlloc = typename Net::template RxBufAlloc<>,
-  typename TxAlloc = Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>>
+  typename TxAlloc = typename Net::template TxBufAlloc<>>
 using RawSrvLink = SrvLink<App, Impl, MTList, Net, RxAlloc, TxAlloc, Raw>;
 } // Zfix
 

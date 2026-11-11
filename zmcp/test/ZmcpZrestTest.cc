@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZiIOBuf.hh>
@@ -137,13 +138,11 @@ static SharedOutcome restCall(ZuCSpan authorization)
   constexpr unsigned jsonLength = sizeof(json) - 1;
   request.bodyMax(jsonLength);
   if (!request.bodyInfo(Zhttp::BodyType::Fixed, jsonLength)) return {};
-  using Alloc = Zi::IOBufBuiltin<
-    ZiRxQueue::Node,
-    ZiIOBuf_DefltSize,
-    ZiIOBuf_DefltAlign,
-    ZuStringT<"Zmcp.ZrestTest.Rx">,
-    ZiIOBuf_DefltMaxSize>;
-  ZmRef<ZiRxQueue::Node> buf = new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()};
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<
+    Zi::IOBufType::App, ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
+    ZuStringT<"Zmcp.ZrestTest.Rx">, ZiIOBuf_DefltVHMaxSize>();
+  ZmRef<ZiRxQueue::Node> buf = allocator->allocBuf();
   if (!buf->append(ZuSpan<uint8_t>{json, jsonLength})) return {};
   ZiRxStream<ZiRxQueue> rx;
   rx.push(ZuMv(buf));

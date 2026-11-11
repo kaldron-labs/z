@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "../test/ZhttpTestAllocator.hh"
+
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
@@ -34,27 +36,20 @@ constexpr unsigned FallbackBufSize = 8<<10;
 constexpr unsigned FallbackMaxBody = 64<<10;
 
 using IOBufAlloc =
-  Zi::IOBufBuiltin<
-    ZiIOBuf,
-    FallbackBufSize,
-    ZiIOBuf_DefltAlign,
-    ZuStringT<"Zhttp.Fallback.Buf">,
-    FallbackMaxBody>;
+  Zi::IOBufBuiltinAllocator<
+    Zi::IOBufType::App, ZiIOBuf, FallbackBufSize, ZiIOBuf_DefltAlign,
+    ZuStringT<"Zhttp.Fallback.Buf">, FallbackMaxBody>;
 
 using RxQueue = ZiRxQueue;
-using RxBufAlloc = Zi::IOBufBuiltin<
-  RxQueue::Node,
-  FallbackBufSize,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"Zhttp.Fallback.RxBuf">,
-  FallbackMaxBody>;
+using RxBufAlloc = Zi::IOBufBuiltinAllocator<
+  Zi::IOBufType::App, RxQueue::Node, FallbackBufSize, ZiIOBuf_DefltAlign,
+  ZuStringT<"Zhttp.Fallback.RxBuf">, FallbackMaxBody>;
 using RxStream = ZiRxStream<RxQueue>;
 ZuDerive(BodyData, (ZtString<ZtStringHeapID<"Zhttp.Fallback.BodyData">>));
 
 ZmRef<RxQueue::Node> mkBuf(const uint8_t *data, unsigned len)
 {
-  ZmRef<RxQueue::Node> buf = new RxBufAlloc{
-    ZmSingleton<typename RxBufAlloc::Allocator>::instance(), nullptr, 0};
+  ZmRef<RxQueue::Node> buf = ZhttpTest::Allocator<RxBufAlloc>::get()->allocBuf();
   if (len) buf->append(data, len);
   return buf;
 }
@@ -354,8 +349,7 @@ pid_t startZhttpH1Server(
   }
 
   ResponseBuilder resp{responseBody.length()};
-  BufTx tx{new IOBufAlloc{
-    ZmSingleton<typename IOBufAlloc::Allocator>::instance(), nullptr, 0}};
+  BufTx tx{ZhttpTest::Allocator<IOBufAlloc>::get()->allocBuf()};
   resp.begin(tx);
   tx << responseBody;
   resp.finish(tx);
@@ -464,8 +458,7 @@ void cliHttp11Fallback()
   }
 
   RequestBuilder req;
-  BufTx tx{new IOBufAlloc{
-    ZmSingleton<typename IOBufAlloc::Allocator>::instance(), nullptr, 0}};
+  BufTx tx{ZhttpTest::Allocator<IOBufAlloc>::get()->allocBuf()};
   req.begin(tx);
   req.finish(tx);
   ZuCHECK(sendAll(fd, tx.buf->data(), tx.buf->length),

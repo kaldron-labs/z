@@ -19,13 +19,13 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmQueue.hh>
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmVHeap.hh>
 
 
 #include <zlib/ZiAssert.hh>
 #include <zlib/ZiDir.hh>
 #include <zlib/ZiPIDFile.hh>
+#include <zlib/ZiMultiplex.hh>
 
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZtcAlert.hh>
@@ -39,12 +39,25 @@ namespace Ztc {
 namespace App_ {
 
 enum { DefltFrameSize = 1024 }; // common telemetry/request frame
-using ReqFrame =
-  Zi::IOBufBuiltin<ZiIOBuf, DefltFrameSize, ZiIOBuf_Align, ZuStringT<"Ztc.App.ReqFrame">, AppCf::DefltMaxFrame>;
-using MsgFrame =
-  Zi::IOBufBuiltin<ZiIOBuf, DefltFrameSize, ZiIOBuf_Align, ZuStringT<"Ztc.App.MsgFrame">, AppCf::DefltMaxFrame>;
-using AlertFrame =
-  Zi::IOBufBuiltin<ZiIOBuf, DefltFrameSize, ZiIOBuf_Align, ZuStringT<"Ztc.App.AlertFrame">, AppCf::DefltMaxFrame>;
+struct FrameAllocators {
+  ZiMultiplex mx{ZiMxParams{}.scheduler(
+    [](auto &params) { params.id("Ztc.App.Frames"); })};
+  Zi::IOBufAllocator *req = mx.allocator<
+    Zi::IOBufType::App, ZiIOBuf, DefltFrameSize, ZiIOBuf_Align,
+    ZuStringT<"Ztc.App.ReqFrame">, AppCf::DefltMaxFrame>();
+  Zi::IOBufAllocator *msg = mx.allocator<
+    Zi::IOBufType::App, ZiIOBuf, DefltFrameSize, ZiIOBuf_Align,
+    ZuStringT<"Ztc.App.MsgFrame">, AppCf::DefltMaxFrame>();
+  Zi::IOBufAllocator *alert = mx.allocator<
+    Zi::IOBufType::App, ZiIOBuf, DefltFrameSize, ZiIOBuf_Align,
+    ZuStringT<"Ztc.App.AlertFrame">, AppCf::DefltMaxFrame>();
+};
+
+static FrameAllocators &frameAllocators()
+{
+  static FrameAllocators allocators;
+  return allocators;
+}
 
 template <typename T, ZuString HeapID>
 using Samples = ZtArray<T, ZtArrayHeapID<HeapID>>;
@@ -428,7 +441,7 @@ private:
       return LoadResult::Corrupt;
     if (total > uint64_t(dataSize) - offset)
       return LoadResult::Incomplete;
-    ZmRef<ZiIOBuf> loaded = new AlertFrame{ZmSingleton<typename AlertFrame::Allocator>::instance()};
+    ZmRef<ZiIOBuf> loaded = frameAllocators().alert->allocBuf();
     loaded->alloc(unsigned(total));
     loaded->length = unsigned(total);
     if (data.pread(
@@ -626,6 +639,7 @@ struct StateData {
   PendingIdx		pending;
   SubIdx		subs;
   SubDueSets		due;
+  Samples<Ztc::Mx *, "Ztc.App.UnnamedMxs"> unnamedMxs;
   AlertTail		tail;
   AlertStore		store;
   ZmRef<Ingress>	ingress;
@@ -732,8 +746,7 @@ ZmRef<ZiIOBuf> telemetryFrame(
   ZuCSpan id, uint64_t seqNo, unsigned type, const T &data)
 {
   Ztc::Builder fbb{
-    frameBuf(ZmRef<ZiIOBuf>{new MsgFrame{
-      ZmSingleton<typename MsgFrame::Allocator>::instance()}})};
+    frameBuf(frameAllocators().msg->allocBuf())};
   auto nested = fbb.startNested();
   auto id_ = fbb.string(id);
   auto value =
@@ -747,8 +760,7 @@ ZmRef<ZiIOBuf> telemetryFrame(
 
 ZmRef<ZiIOBuf> shutdownFrame(ZuCSpan id)
 {
-  Ztc::Builder fbb{frameBuf(ZmRef<ZiIOBuf>{new MsgFrame{
-      ZmSingleton<typename MsgFrame::Allocator>::instance()}})};
+  Ztc::Builder fbb{frameBuf(frameAllocators().msg->allocBuf())};
   auto nested = fbb.startNested();
   auto id_ = fbb.string(id);
   auto value = Zfb::save(fbb, Shutdown{});
@@ -760,7 +772,7 @@ ZmRef<ZiIOBuf> shutdownFrame(ZuCSpan id)
 
 ZmRef<ZiIOBuf> alertFrame(uint64_t seqNo, const ZiIOBuf *canonical)
 {
-  ZmRef<ZiIOBuf> frame = new MsgFrame{ZmSingleton<typename MsgFrame::Allocator>::instance()};
+  ZmRef<ZiIOBuf> frame = frameAllocators().msg->allocBuf();
   frame->append(canonical->data(), canonical->length);
   if (ZuUnlikely(frame->length != canonical->length)) return {};
   auto root = msg_(frame->ptr<Hdr>());
@@ -1233,8 +1245,7 @@ void App::alert_(ZmRef<App_::AlertEvent> event)
     uint64_t alertSeqNo = m_state->alertSeqNo++;
 
     Ztc::Builder fbb{
-      frameBuf(ZmRef<ZiIOBuf>{new App_::AlertFrame{
-        ZmSingleton<typename App_::AlertFrame::Allocator>::instance()}})};
+      frameBuf(App_::frameAllocators().alert->allocBuf())};
     auto nested = fbb.startNested();
     auto id = fbb.string(m_cf.id);
     auto message = fbb.string(event->message());
@@ -1363,21 +1374,44 @@ void App::unwatch_()
   DBMgr::unwatch();
   HubMgr::unwatch();
   MxMgr::unwatch();
+  m_state->unnamedMxs.clear();
   m_watching = false;
 }
 
 void App::mxAdded(Ztc::Mx *mx_)
 {
-  App_::indexAdd(m_mxIdx, ZuID{mx_->telKey().p<0>()}, mx_);
+  ZuID id{mx_->telKey().p<0>()};
+  if (!id) {
+    // The telemetry primary key can represent one unnamed multiplexer.
+    auto &unnamed = m_state->unnamedMxs;
+    if (unnamed.find(ZuSpan{&mx_, 1}) >= 0) return;
+    unnamed.push(mx_);
+    if (unnamed.length() > 1) return;
+  }
+  App_::indexAdd(m_mxIdx, ZuMv(id), mx_);
   mx_->allQueues(
     {[this](Ztc::Queue *queue) { mxQueueAdded(queue); }});
 }
 
 void App::mxDeleted(Ztc::Mx *mx_)
 {
+  ZuID id{mx_->telKey().p<0>()};
+  auto &unnamed = m_state->unnamedMxs;
+  if (!id) {
+    auto pos = unnamed.find(ZuSpan{&mx_, 1});
+    if (pos < 0) return;
+    unnamed.splice(pos, 1);
+    if (pos) return;
+  }
   mx_->allQueues(
     {[this](Ztc::Queue *queue) { mxQueueDeleted(queue); }});
-  App_::indexDel(m_mxIdx, ZuID{mx_->telKey().p<0>()}, mx_);
+  App_::indexDel(m_mxIdx, id, mx_);
+  if (!id && unnamed.length()) {
+    auto replacement = unnamed[0];
+    App_::indexAdd(m_mxIdx, ZuMv(id), replacement);
+    replacement->allQueues(
+      {[this](Ztc::Queue *queue) { mxQueueAdded(queue); }});
+  }
 }
 
 void App::mxQueueAdded(Ztc::Queue *queue)
@@ -1526,7 +1560,7 @@ void App::req_0()
       }
 
       unsigned size = ringSize(ptr);
-      ZmRef<ZiIOBuf> buf = new App_::ReqFrame{ZmSingleton<typename App_::ReqFrame::Allocator>::instance()};
+      ZmRef<ZiIOBuf> buf = App_::frameAllocators().req->allocBuf();
       if (size <= m_cf.maxFrame) {
 	buf->alloc(size);
 	memcpy(buf->data(), ptr, size);
@@ -1544,8 +1578,10 @@ void App::req_0()
 	}, m_cf.workerThread);
 	continue;
       }
-      scheduler->run([this, buf = ZuMv(buf)]() mutable {
-	if (active_()) request_(ZuMv(buf));
+      buf->owner = this;
+      scheduler->run([buf = ZuMv(buf)]() mutable {
+	auto app = static_cast<App *>(buf->owner);
+	if (app->active_()) app->request_(ZuMv(buf));
       }, m_cf.workerThread);
     }
   } catch (...) {
@@ -2387,8 +2423,7 @@ void App::sendAck(
     uint64_t seqNo, AckStatus::T status, uint32_t interval)
 {
   Ztc::Builder fbb{
-    frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame{
-      ZmSingleton<typename App_::MsgFrame::Allocator>::instance()}})};
+    frameBuf(App_::frameAllocators().msg->allocBuf())};
   auto nested = fbb.startNested();
   auto ack = Zfb::save(fbb, Ack{m_cf.id, seqNo, interval, uint8_t(status)});
   fbb.finish(saveMsg(fbb, nested, Body::Ack, ack));
@@ -2398,8 +2433,7 @@ void App::sendAck(
 void App::sendError(uint64_t seqNo, int32_t code, ZuCSpan message)
 {
   Ztc::Builder fbb{
-    frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame{
-      ZmSingleton<typename App_::MsgFrame::Allocator>::instance()}})};
+    frameBuf(App_::frameAllocators().msg->allocBuf())};
   auto nested = fbb.startNested();
   auto error = Zfb::save(fbb, Error{ErrorMessage{message}, m_cf.id, seqNo, code});
   fbb.finish(saveMsg(fbb, nested, Body::Error, error));
@@ -2409,8 +2443,7 @@ void App::sendError(uint64_t seqNo, int32_t code, ZuCSpan message)
 void App::sendEOS(uint64_t seqNo)
 {
   Ztc::Builder fbb{
-    frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame{
-      ZmSingleton<typename App_::MsgFrame::Allocator>::instance()}})};
+    frameBuf(App_::frameAllocators().msg->allocBuf())};
   auto nested = fbb.startNested();
   auto eos = Zfb::save(fbb, EOS{m_cf.id, seqNo});
   fbb.finish(saveMsg(fbb, nested, Body::EOS, eos));

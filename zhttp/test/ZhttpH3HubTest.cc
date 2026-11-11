@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "ZhttpTestAllocator.hh"
+
 #include "ZhttpHubFixture.hh"
 #include "../src/ZhttpServerImpl.hh"
 #include "../src/ZhttpClientImpl.hh"
@@ -722,19 +724,16 @@ void detachedResponse()
   ZuTestScopeRT(detachedResponse);
   using Client = ZhttpH1HubTest_::Client<Zhttp::H3QUIC>;
   using Stream = Zhttp::H3_::ClientStream<Client, Client::Link>;
-  using Alloc = Zi::IOBufBuiltin<
-    ZiRxQueue::Node,
-    128,
-    ZiIOBuf_DefltAlign,
-    ZuStringT<"Zhttp.Test.DetachedRx">,
-    256>;
+  using Alloc = Zi::IOBufBuiltinAllocator<
+    Zi::IOBufType::App, ZiRxQueue::Node, 128, ZiIOBuf_DefltAlign,
+    ZuStringT<"Zhttp.Test.DetachedRx">, 256>;
   ZmRef<Stream> stream = new Stream{nullptr, 40};
   Zquic::RxStream rx;
   // A deadline can detach HTTP before the peer's final response arrives.
   // Neither an empty delivery nor retained late bytes are a QUIC error.
   ZuCheckRT(!stream->appLink);
   ZuCheckRT(stream->process(rx) == 0);
-  ZmRef<ZiRxQueue::Node> buffer = new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()};
+  ZmRef<ZiRxQueue::Node> buffer = ZhttpTest::Allocator<Alloc>::get()->allocBuf();
   buffer->length = 115;
   rx.push(buffer);
   ZuCheckRT(rx.count_() == 1 && buffer->refCount() == 2);

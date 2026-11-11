@@ -8,7 +8,6 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiTx.hh>
@@ -16,8 +15,6 @@
 using namespace ZuTestUtil;
 
 namespace {
-
-using TxAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, 32, 128>;
 
 struct FakeConnection : ZiConnection {
   ZiTxContext	io;
@@ -87,7 +84,10 @@ struct TxHarness : public FakeConnection, public ZiTx<TxHarness> {
 
 ZmRef<ZiTxBuf> mkBuf(char c, unsigned n)
 {
-  ZmRef<ZiTxBuf> buf = ZmRef<ZiTxBuf>{ZmSingleton<TxAllocator>::instance()->allocBuf().ptr<ZiTxBuf>()};
+  static ZiMultiplex mx;
+  static auto allocator =
+    mx.allocator<Zi::IOBufType::App, ZiTxBuf, 32, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 128>();
+  ZmRef<ZiTxBuf> buf{allocator->allocBuf().ptr<ZiTxBuf>()};
   for (unsigned i = 0; i < n; ++i)
     buf->append(ZuSpan{&c, 1});
   return buf;

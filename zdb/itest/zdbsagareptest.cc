@@ -183,8 +183,8 @@ static bool policyRecord(Zdb_::IOBuf *buf)
 template <typename T>
 static bool policyAllocated(Zdb_::IOBuf *buf, Zi::IOBufAllocator_ *allocator = nullptr)
 {
-  return dynamic_cast<Zdb_::IOBufAlloc<T> *>(buf) &&
-    (!allocator || buf->allocator == allocator);
+  return dynamic_cast<zdbtest::PolicyStorage<T> *>(buf) &&
+    (!allocator || buf->allocator() == allocator);
 }
 
 // Store completion observes the exact frame handed to the committing store.
@@ -196,6 +196,8 @@ struct PolicyObserve {
   Zi::IOBufAllocator_ *otherAllocator = nullptr;
   Zi::IOBufAllocator_ *largeAllocator = nullptr;
   bool receiver = false;
+  bool fragmented = false;
+  unsigned appFrames = 0;
   unsigned failures = 0;
 
   void operator ()(ZuCSpan id, Zdb_::IOBuf *original, Zdb_::IOBuf *buf, bool ok) {
@@ -206,11 +208,17 @@ struct PolicyObserve {
       failed |= 1;
     if (frame.length() >= sizeof(Zdb_::Hdr)) {
       if (receiver) {
-	auto view = dynamic_cast<Zdb_::RxFrame *>(buf);
+	auto view = dynamic_cast<Zdb_::RxBuf *>(buf);
 	if (!view || !view->backing ||
 	    frame.data() < view->backing->data_() ||
 	    frame.data() + frame.length() > view->backing->data_() + view->backing->size)
 	  failed |= 2;
+	if (view && view->backing) {
+	  auto type = view->backing->allocator()->type;
+	  if (type == Zi::IOBufType::App) ++appFrames;
+	  if ((type != Zi::IOBufType::App && type != Zi::IOBufType::RxTCP) ||
+	      (fragmented && type != Zi::IOBufType::App)) failed |= 2;
+	}
       } else {
 	auto allocator = id == "small" ? smallAllocator :
 	  id == "other" ? otherAllocator : largeAllocator;
@@ -283,12 +291,12 @@ static bool policyRead(ZdbTable<T> *table, Zi::IOBufAllocator_ *shardAllocator)
   });
   if (!dispatched || !result.template is<Zdb_::RowData>()) return false;
   auto buf = ZuMv(result).template p<Zdb_::RowData>().buf;
-  bool typed = policyAllocated<T>(buf.ptr(), buf->allocator);
-  if (buf->allocator) typed &= buf->allocator != shardAllocator;
+  bool typed = policyAllocated<T>(buf.ptr(), buf->allocator());
+  if (buf->allocator()) typed &= buf->allocator() != shardAllocator;
   return typed && !buf->rep && policyRecord<T>(buf);
 }
 
-static void policyReplication()
+static void policyReplication(bool fragmented)
 {
   ZuTestScopeRT(policyReplication);
   auto config = ZfCf::scan(
@@ -303,6 +311,11 @@ static void policyReplication()
     "}, rxThread: rx, txThread: tx}\n").p<1>();
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
   ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+#ifdef ZiMultiplex_DEBUG
+  // Five bytes per fresh receive slot splits every replication frame, while
+  // the normal pass permits complete/coalesced stream input.
+  mx.frag(fragmented);
+#endif
   ZmRef<zdbtest::PolicyDB> leader = new zdbtest::PolicyDB{},
     follower = new zdbtest::PolicyDB{}, terminal = new zdbtest::PolicyDB{};
   ZmRef<zdbtest::Store> first = new zdbtest::Store{},
@@ -370,12 +383,13 @@ static void policyReplication()
   ra = policySample<zdbtest::PolicySmall>(rxSmall.ptr());
   rb = policySample<zdbtest::PolicySmall>(rxOther.ptr());
   rc = policySample<zdbtest::PolicyLarge>(rxLarge.ptr());
-  ZuCheckRT(a->allocator != b->allocator);
-  ZuCheckRT(ra->allocator != rb->allocator);
-  sent.smallAllocator = a->allocator;
-  sent.otherAllocator = b->allocator;
-  sent.largeAllocator = c->allocator;
+  ZuCheckRT(a->allocator() != b->allocator());
+  ZuCheckRT(ra->allocator() != rb->allocator());
+  sent.smallAllocator = a->allocator();
+  sent.otherAllocator = b->allocator();
+  sent.largeAllocator = c->allocator();
   received.receiver = forwarded.receiver = true;
+  received.fragmented = forwarded.fragmented = fragmented;
   first->commitObserve([&sent](ZuCSpan id, auto original, auto buf, bool ok) {
     sent(id, original, buf, ok);
   });
@@ -400,17 +414,21 @@ static void policyReplication()
   ZuCheckRT(!sent.failures);
   ZuCheckRT(!received.failures);
   ZuCheckRT(!forwarded.failures);
+  if (fragmented) {
+    ZuCheckRT(received.appFrames == 3);
+    ZuCheckRT(forwarded.appFrames == 3);
+  }
   ZuCheckRT(sent.held.length() == 3 && received.held.length() == 3 &&
     forwarded.held.length() == 3);
-  ZuCheckRT(policyRead<zdbtest::PolicySmall>(rxSmall.ptr(), ra->allocator));
-  ZuCheckRT(policyRead<zdbtest::PolicySmall>(rxOther.ptr(), rb->allocator));
-  ZuCheckRT(policyRead<zdbtest::PolicyLarge>(rxLarge.ptr(), rc->allocator));
+  ZuCheckRT(policyRead<zdbtest::PolicySmall>(rxSmall.ptr(), ra->allocator()));
+  ZuCheckRT(policyRead<zdbtest::PolicySmall>(rxOther.ptr(), rb->allocator()));
+  ZuCheckRT(policyRead<zdbtest::PolicyLarge>(rxLarge.ptr(), rc->allocator()));
   auto lastA = policySample<zdbtest::PolicySmall>(lastSmall.ptr());
   auto lastB = policySample<zdbtest::PolicySmall>(lastOther.ptr());
   auto lastC = policySample<zdbtest::PolicyLarge>(lastLarge.ptr());
-  ZuCheckRT(policyRead<zdbtest::PolicySmall>(lastSmall.ptr(), lastA->allocator));
-  ZuCheckRT(policyRead<zdbtest::PolicySmall>(lastOther.ptr(), lastB->allocator));
-  ZuCheckRT(policyRead<zdbtest::PolicyLarge>(lastLarge.ptr(), lastC->allocator));
+  ZuCheckRT(policyRead<zdbtest::PolicySmall>(lastSmall.ptr(), lastA->allocator()));
+  ZuCheckRT(policyRead<zdbtest::PolicySmall>(lastOther.ptr(), lastB->allocator()));
+  ZuCheckRT(policyRead<zdbtest::PolicyLarge>(lastLarge.ptr(), lastC->allocator()));
   lastA = {}; lastB = {}; lastC = {};
   finish();
   cleanup.cancel();
@@ -555,7 +573,10 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
   ZuTestMain();
-  ZuTestCall(policyReplication);
+  ZuTestCall(policyReplication, false);
+#ifdef ZiMultiplex_DEBUG
+  ZuTestCall(policyReplication, true);
+#endif
   ZuTestCall(recovery, Mode::Forward);
   ZuTestCall(recovery, Mode::RetrySuccess);
   ZuTestCall(recovery, Mode::RetryFailure);

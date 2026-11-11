@@ -527,7 +527,7 @@ public:
   void header(Zhttp::FieldSection::T, ZuBSpan, ZuSpan<uint8_t>) { }
 
   bool bodyInfo(Zhttp::BodyType::T, uint64_t length) {
-    m_state = m_input.begin(length, impl()->limits().maxJSONBytes) ?
+    m_state = m_input.begin(length, impl()->limits().maxJSONBytes, this->bufType()) ?
       HTTPState::Receiving : HTTPState::OverLimit;
     return m_state == HTTPState::Receiving;
   }
@@ -605,12 +605,13 @@ public:
     }
     m_state = HTTPState::Receiving;
     if (m_streaming) {
+      m_sse.bufType(this->bufType());
       m_sse.reset(
 	impl()->limits().maxSSELineBytes,
 	impl()->limits().maxSSEEventBytes);
       return true;
     }
-    if (!m_input.begin(length, impl()->limits().maxJSONBytes)) {
+    if (!m_input.begin(length, impl()->limits().maxJSONBytes, this->bufType())) {
       m_state = HTTPState::OverLimit;
       return false;
     }

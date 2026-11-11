@@ -616,10 +616,10 @@ static void tableBufPolicies()
   });
   ZuCheckRT(first && second && third);
   ZuCheckRT(first->size >= 256 && third->size >= 1024);
-  ZuCheckRT(first->allocator != second->allocator);
-  ZuCheckRT(first->allocator->mx() == &mx && second->allocator->mx() == &mx);
-  ZuCheckRT(bool(dynamic_cast<IOBufAlloc<zdbtest::SmallPolicy> *>(first.ptr())));
-  ZuCheckRT(bool(dynamic_cast<IOBufAlloc<zdbtest::LargePolicy> *>(third.ptr())));
+  ZuCheckRT(first->allocator() != second->allocator());
+  ZuCheckRT(first->allocator()->mx == &mx && second->allocator()->mx == &mx);
+  ZuCheckRT(bool(dynamic_cast<zdbtest::PolicyStorage<zdbtest::SmallPolicy> *>(first.ptr())));
+  ZuCheckRT(bool(dynamic_cast<zdbtest::PolicyStorage<zdbtest::LargePolicy> *>(third.ptr())));
   *first << "policy growth";
   ZuCheckRT(first->ensure(first->size + 1));
   ZuCheckRT(!first->builtin() && first->cspan() == "policy growth" && !first->rep);
@@ -644,22 +644,22 @@ static void tableBufPolicies()
       auto buf = ZuMv(result).template p<RowData>().buf;
       ZuCheckRT(bool(buf));
       ZuCheckRT(!buf->rep);
-      ZuCheckRT(buf->allocator && buf->allocator != allocator);
+      ZuCheckRT(buf->allocator() && buf->allocator() != allocator);
       auto record = record_(msg_(buf->hdr()));
       auto bytes = record.template get<Msg::ZfField(Record, data)>();
       ZuCheckRT(Zfb::verify<T>(bytes));
       ZuCheckRT(!(uintptr_t(bytes.data()) & (Zfb::BufferAlign<T>::N - 1)));
       auto value = Zfb::load<T>(bytes);
       ZuCheckRT(value.id == 7 && value.value == "retained policy row");
-      ZuCheckRT(bool(dynamic_cast<IOBufAlloc<T> *>(buf.ptr())));
+      ZuCheckRT(bool(dynamic_cast<zdbtest::PolicyStorage<T> *>(buf.ptr())));
       auto old = buf->hdr()->length;
       ZuCheckRT(buf->ensure(buf->size + 1024));
       ZuCheckRT(!buf->builtin() && buf->hdr()->length == old);
     }
   };
-  check.template operator()<zdbtest::SmallPolicy>(small.ptr(), first->allocator);
-  check.template operator()<zdbtest::SmallPolicy>(other.ptr(), second->allocator);
-  check.template operator()<zdbtest::LargePolicy>(large.ptr(), third->allocator);
+  check.template operator()<zdbtest::SmallPolicy>(small.ptr(), first->allocator());
+  check.template operator()<zdbtest::SmallPolicy>(other.ptr(), second->allocator());
+  check.template operator()<zdbtest::LargePolicy>(large.ptr(), third->allocator());
   first = {}; second = {}; third = {};
   auto retained = small->bufAllocFn(0);
   ZuCheckRT(db->stop());
@@ -713,7 +713,7 @@ static void collisions()
   auto insert = [table](UN un, uint64_t seqNo) {
     Order row{"IBM", 1, "FIX0", "collision", seqNo,
       zdbtest::Side::Buy, {100}, {1}};
-    Builder fbb{new Zdb_::IOBufAlloc<Order>{Zdb_::localBufAllocator<Order>(), nullptr, 0}};
+    Builder fbb{Zdb_::localBufAllocator<Order>()->allocBuf()};
     auto nested = fbb.startNested();
     auto data = fbb.endNested(nested, Zfb::save(fbb, row));
     fbb.finish(saveMsg(fbb,
@@ -734,7 +734,7 @@ static void collisions()
   bool unchanged = false;
   unsigned rows = 0;
   ZmSemaphore selected;
-  Builder fbb{new Zdb_::IOBufAlloc<Order>{Zdb_::localBufAllocator<Order>(), nullptr, 0}};
+  Builder fbb{Zdb_::localBufAllocator<Order>()->allocBuf()};
   using GroupKey = SplitKey<Order, 0>::GroupKey;
   fbb.finish(Zfb::save(fbb, GroupKey{}));
   table->select(true, false, false, 0, fbb.buf(), 10,
@@ -1599,8 +1599,7 @@ static bool catalogWrite(const Zdb_::OpenData &data, unsigned mode)
     SagaOp::T(partial ? SagaOp::Delete : SagaOp::Update)};
   // Catalog columns are immutable: replace a row with delete/insert.
   for (unsigned i = 0, n = partial ? 1 : 2; i < n; ++i) {
-    Builder fbb{new Zdb_::IOBufAlloc<SagaTypeStep>{
-      Zdb_::localBufAllocator<SagaTypeStep>(), nullptr, 0}};
+    Builder fbb{Zdb_::localBufAllocator<SagaTypeStep>()->allocBuf()};
     auto nested = fbb.startNested();
     auto payload = fbb.endNested(nested, Zfb::save(fbb, row));
     fbb.finish(saveMsg(fbb,

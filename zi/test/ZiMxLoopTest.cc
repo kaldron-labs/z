@@ -83,7 +83,7 @@ public:
   LoopMx(ZiIP loopIP, unsigned port) :
     m_loopIP{loopIP}, m_listenPort{port} {
     m_registered = state() == ZmEngineState::Stopped &&
-      m_rx && m_rx->mx() == this && m_tx && m_tx->mx() == this;
+      m_rx && m_rx->mx == this && m_tx && m_tx->mx == this;
   }
   ~LoopMx() = default;
 
@@ -92,6 +92,7 @@ public:
 
   ZiConnection *connected(const ZiCxnInfo &ci)
   {
+    if (!ci.mps || ci.mps == ~uint32_t(0)) m_mpsOK = 0;
     auto cxn = new LoopCxn(this, ci);
     if (ci.type == ZiCxnType::TCPOut)
       m_clientCxn = cxn;
@@ -135,7 +136,7 @@ public:
   bool registered_() const { return m_registered.load_(); }
   bool singleRegistration_() const {
     return state() == ZmEngineState::Stopped &&
-      m_rx && m_tx && m_rx->mx() == this && m_tx->mx() == this;
+      m_rx && m_tx && m_rx->mx == this && m_tx->mx == this;
   }
 
   bool waitDone(int seconds)
@@ -198,6 +199,7 @@ public:
   bool failed_() const { return m_failed.load_(); }
   unsigned failKind_() const { return m_failKind.load_(); }
   bool clientEcho_() const { return m_clientEcho.load_(); }
+  bool mpsOK_() const { return m_mpsOK.load_(); }
   bool clientDisc_() const { return m_clientDisc.load_(); }
   bool serverDisc_() const { return m_serverDisc.load_(); }
   unsigned disconnects_() const { return m_disconnects.load_(); }
@@ -249,6 +251,7 @@ private:
   ZmAtomic<unsigned>	m_failed = 0;
   ZmAtomic<unsigned>	m_failKind = 0;
   ZmAtomic<unsigned>	m_clientEcho = 0;
+  ZmAtomic<unsigned>	m_mpsOK = 1;
   ZmAtomic<unsigned>	m_clientDisc = 0;
   ZmAtomic<unsigned>	m_serverDisc = 0;
   ZmAtomic<unsigned>	m_disconnects = 0;
@@ -264,7 +267,7 @@ public:
   UdpTOSMx(ZiIP loopIP, unsigned port) :
     m_loopIP{loopIP}, m_serverPort{uint16_t(port)} {
     m_registered = state() == ZmEngineState::Stopped &&
-      m_rx && m_rx->mx() == this && m_tx && m_tx->mx() == this;
+      m_rx && m_rx->mx == this && m_tx && m_tx->mx == this;
   }
   ~UdpTOSMx() = default;
 
@@ -273,6 +276,8 @@ public:
 
   ZiConnection *connected(const ZiCxnInfo &ci)
   {
+    if (!!ci.remote ? (!ci.mps || ci.mps == ~uint32_t(0)) : ci.mps != ~uint32_t(0))
+      m_mpsOK = 0;
     auto cxn = new UdpTOSCxn(this, ci);
     if (!!ci.remote)
       m_clientCxn = cxn;
@@ -301,7 +306,7 @@ public:
   bool registered_() const { return m_registered.load_(); }
   bool singleRegistration_() const {
     return state() == ZmEngineState::Stopped &&
-      m_rx && m_tx && m_rx->mx() == this && m_tx->mx() == this;
+      m_rx && m_tx && m_rx->mx == this && m_tx->mx == this;
   }
 
   void serverReady(ZiConnection *cxn)
@@ -341,6 +346,7 @@ public:
 
   bool failed_() const { return m_failed.load_(); }
   bool payloadOK_() const { return m_payloadOK.load_(); }
+  bool mpsOK_() const { return m_mpsOK.load_(); }
   bool haveTOS_() const { return m_haveTOS.load_(); }
   uint8_t tos_() const { return m_tos; }
 
@@ -366,6 +372,7 @@ private:
   ZmRef<UdpTOSCxn>	m_clientCxn;
   ZmAtomic<unsigned>	m_failed = 0;
   ZmAtomic<unsigned>	m_payloadOK = 0;
+  ZmAtomic<unsigned>	m_mpsOK = 1;
   ZmAtomic<unsigned>	m_haveTOS = 0;
   uint8_t		m_tos = 0;
 };
@@ -379,15 +386,20 @@ LoopCxn::LoopCxn(LoopMx *mx, const ZiCxnInfo &ci) :
 
 void LoopCxn::connected(ZiRxContext &io)
 {
+  auto buf = m_owner->rxAllocator()->allocBuf(
+    this, 0, info().mps);
+  if (ZuUnlikely(!buf)) {
+    m_owner->markIOFailure(); io.disconnect(); return;
+  }
   if (m_client) {
     io.init(
       ZiRxFn{this, ZmFnPtr<&LoopCxn::recvClient>{}},
-      m_owner->rxAllocator()->allocBuf(this));
+      ZuMv(buf));
     send(ZiTxFn{this, ZmFnPtr<&LoopCxn::sendClient>{}});
   } else {
     io.init(
       ZiRxFn{this, ZmFnPtr<&LoopCxn::recvServer>{}},
-      m_owner->rxAllocator()->allocBuf(this));
+      ZuMv(buf));
   }
 }
 
@@ -401,7 +413,11 @@ void LoopCxn::disconnected(bool peer)
 
 bool LoopCxn::sendClient(ZiTxContext &io)
 {
-  auto buf = m_owner->txAllocator()->allocBuf(this);
+  auto buf = m_owner->txAllocator()->allocBuf(
+    this, 0, info().mps);
+  if (ZuUnlikely(!buf)) {
+    m_owner->markIOFailure(); io.disconnect(); return true;
+  }
   buf->append(ZuBSpan{Msg, sizeof(Msg)});
   io.init(
     ZiTxFn{this, ZmFnPtr<&LoopCxn::sendClientDone>{}},
@@ -446,7 +462,11 @@ bool LoopCxn::recvServer(ZiRxContext &io)
 
 bool LoopCxn::sendServer(ZiTxContext &io)
 {
-  auto buf = m_owner->txAllocator()->allocBuf(this);
+  auto buf = m_owner->txAllocator()->allocBuf(
+    this, 0, info().mps);
+  if (ZuUnlikely(!buf)) {
+    m_owner->markIOFailure(); io.disconnect(); return true;
+  }
   buf->append(ZuBSpan{Msg, sizeof(Msg)});
   io.init(
     ZiTxFn{this, ZmFnPtr<&LoopCxn::sendServerDone>{}},
@@ -480,9 +500,14 @@ void UdpTOSCxn::connected(ZiRxContext &io)
     send(ZiTxFn{this, ZmFnPtr<&UdpTOSCxn::send_>{}});
     io.complete();
   } else {
+    auto buf = m_owner->rxAllocator()->allocBuf(
+      this, 0, info().mps);
+    if (ZuUnlikely(!buf)) {
+      m_owner->ioFailure(); io.disconnect(); return;
+    }
     io.init(
       ZiRxFn{this, ZmFnPtr<&UdpTOSCxn::recv_>{}},
-      m_owner->rxAllocator()->allocBuf(this));
+      ZuMv(buf));
     m_owner->serverReady(this);
   }
 }
@@ -493,7 +518,11 @@ void UdpTOSCxn::disconnected(bool)
 
 bool UdpTOSCxn::send_(ZiTxContext &io)
 {
-  auto buf = m_owner->txAllocator()->allocBuf(this);
+  auto buf = m_owner->txAllocator()->allocBuf(
+    this, 0, info().mps);
+  if (ZuUnlikely(!buf)) {
+    m_owner->ioFailure(); io.disconnect(); return true;
+  }
   buf->append(ZuBSpan{Msg, sizeof(Msg)});
   io.init(
     ZiTxFn{this, ZmFnPtr<&UdpTOSCxn::sendDone_>{}},
@@ -588,6 +617,7 @@ struct LoopResult {
   bool		failed = false;
   unsigned	failKind = 0;
   bool		clientEcho = false;
+  bool		mpsOK = false;
   bool		clientDisc = false;
   bool		serverDisc = false;
   bool		waitDisc = false;
@@ -636,6 +666,7 @@ LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP, unsigned port)
   if (result.failed) return result;
 
   result.clientEcho = mx.clientEcho_();
+  result.mpsOK = mx.mpsOK_();
   result.clientDisc = mx.clientDisc_();
   result.serverDisc = mx.serverDisc_();
   unsigned disconnects = result.disconnects = mx.disconnects_();
@@ -663,6 +694,7 @@ LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP, unsigned port)
   } \
   ZuCheck((result).singleRegistration); \
   ZuCheck((result).clientEcho); \
+  ZuCheck((result).mpsOK); \
   ZuCheck((result).clientDisc); \
   ZuCheck((result).serverDisc); \
   ZuCheck((result).waitDisc); \
@@ -703,8 +735,24 @@ void testUdpTOSIPv4()
   ZuCheck(mx.singleRegistration_());
   ZuCheck(!mx.failed_());
   ZuCheck(mx.payloadOK_());
+  ZuCheck(mx.mpsOK_());
   ZuCheck(mx.haveTOS_());
   ZuCheck(mx.tos_() == 0x2e);
+}
+
+void testUdpMPSIPv6()
+{
+  ZuTestScope(testUdpMPSIPv6);
+
+  UdpTOSMx mx{ZiIP{"::1"}, ZiTestPort::MxLoopUDP6};
+  ZuCheck(mx.start());
+  mx.startServer();
+  ZuCheck(mx.waitDone(5));
+  mx.stop();
+
+  ZuCheck(!mx.failed_());
+  ZuCheck(mx.payloadOK_());
+  ZuCheck(mx.mpsOK_());
 }
 
 struct MxWatchState {
@@ -820,6 +868,7 @@ int main(int argc, char **argv)
   ZuTestCall(testTcpLoopbackIPv4);
   ZuTestCall(testTcpLoopbackIPv6);
   ZuTestCall(testUdpTOSIPv4);
+  ZuTestCall(testUdpMPSIPv6);
   ZuTestCall(testMxWatch);
   ZuTestCall(testWakeBurst);
   return 0;

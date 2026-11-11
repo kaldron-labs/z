@@ -7,14 +7,20 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZmSingleton.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/Zpb.hh>
 
 using namespace ZuTestUtil;
 
 ZuDerive(Output, (ZtArray<uint8_t, ZtArrayHeapID<"ZpbIOTest.Output">>));
-using Pool = Zi::IOBufBuiltin<ZiIOBuf, 32, ZiIOBuf_Align, ZuStringT<"ZpbIOTest.Pool">, 1024>;
+static auto testBufAllocator()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 32, ZiIOBuf_Align,
+    ZuStringT<"ZpbIOTest.Pool">, 1024>();
+  return allocator;
+}
 
 struct Payload { ZuBSpan bytes; };
 ZfStruct(, (Payload, PB), (bytes, (PB::FieldID<1>), Bytes));
@@ -50,7 +56,7 @@ static void pooled()
   auto wire = Zpb::save(reference, object);
   ZuCheck(!reference.failed() && Zpb::verify<Envelope>(wire));
 
-  ZmRef<ZiIOBuf> owner = new Pool{ZmSingleton<typename Pool::Allocator>::instance()};
+  ZmRef<ZiIOBuf> owner = testBufAllocator()->allocBuf();
   owner->skip = 8;
   owner->owner = owner.ptr();
   memset(owner->data_(), 0xa5, owner->skip);
@@ -81,7 +87,7 @@ static void limits()
   data.length(300);
   memset(data.data(), 0x7f, data.length());
   Envelope object{{data}};
-  Zpb::IOBuilder builder{new Pool{ZmSingleton<typename Pool::Allocator>::instance()}, 128};
+  Zpb::IOBuilder builder{testBufAllocator()->allocBuf(), 128};
   auto wire = Zpb::save(builder, object);
   ZuCheck(!wire.length() && builder.failed());
   ZuCheck(builder.error() == Zpb::Error::Limit);
@@ -89,7 +95,7 @@ static void limits()
   ZuCheck(!Zpb::save(builder, object).length() &&
     builder.error() == Zpb::Error::Limit);
 
-  Zpb::IOBuilder prefixed{new Pool{ZmSingleton<typename Pool::Allocator>::instance()}, 1024};
+  Zpb::IOBuilder prefixed{testBufAllocator()->allocBuf(), 1024};
   auto framed = Zpb::save<ZuFacet::PrefixedPB>(prefixed, object);
   ZuCheck((!prefixed.failed() &&
     Zpb::verify<Envelope, ZuFacet::PrefixedPB>(framed)));
@@ -177,8 +183,8 @@ struct TxTest : public ZiTxStream<TxTest> {
   ZmRef<ZiIOBuf> allocBuf_(unsigned head) {
     ++allocs;
     if (reject) return nullptr;
-    ZmRef<ZiIOBuf> buf = new Pool{ZmSingleton<typename Pool::Allocator>::instance()};
-    buf->skip = head;
+    ZmRef<ZiIOBuf> buf = testBufAllocator()->allocBuf();
+    buf->skip += head;
     return buf;
   }
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool flush) {

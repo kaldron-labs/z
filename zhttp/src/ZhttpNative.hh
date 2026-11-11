@@ -92,8 +92,9 @@ struct TCPHeader : public TxBufNode {
   bool appTerminal = false, appSettled = false; // App Tx owner
 
   TCPHeader(uint8_t *data, unsigned size, Zi::IOBufAllocator_ *allocator,
-      void *owner = nullptr, unsigned length = 0, bool initial = false) :
-    TxBufNode{data, size, allocator, owner, length, initial} { }
+      void *owner = nullptr, unsigned length = 0, bool builtin = false,
+      bool registered = false) :
+    TxBufNode{data, size, allocator, owner, length, builtin, registered} { }
 
   void detach_() {
     connection = nullptr; state = nullptr;
@@ -263,6 +264,7 @@ private:
     } else {
       auto &entry = head->entries[head->cursor++];
       io.buf = owner<Impl>(head)->wireTCP_(entry.buf);
+      if (!io.buf) { io.disconnect(); return true; }
     }
     io.offset = 0;
     io.length = 0;
@@ -293,17 +295,20 @@ using TCPActorT = ZuIf<Traits::ID == Transport::TCP, TCPActor<Impl>, TCPNoActor>
 template <typename Link, bool AppThread>
 class TCPStream : public ZiTxStream<TCPStream<Link, AppThread>> {
   using Base = ZiTxStream<TCPStream<Link, AppThread>>;
-  using Alloc = typename Link::TxBufAlloc;
 public:
   enum { RetainBuffers = true };
   TCPStream(Link &link, ZmRef<TCPHeader> *slot = nullptr) :
-    Base{Alloc::Size, 0, 0}, m_link{&link}, m_slot{slot},
+    Base{link.txBufSize_(),
+      link.txAllocator()->headRoom, link.txAllocator()->tailRoom},
+    m_link{&link}, m_slot{slot},
     m_head{slot ? *slot : ZmRef<TCPHeader>{}} { }
   ~TCPStream() { this->flush(); if (!m_slot) endTCP(); }
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
     auto buf = m_link->allocTxBuf_();
-    if (!buf || skip > buf->size) return nullptr;
+    if (!buf) return nullptr;
+    if (skip < buf->skip) skip = buf->skip;
+    if (skip > buf->size || Base::tailRoom() > buf->size - skip) return nullptr;
     buf->skip = skip;
     m_allocated = buf;
     return buf;
@@ -341,7 +346,7 @@ public:
     if (!m_head) {
       if (buf != m_allocated) {
 	auto own = m_link->allocTxBuf_();
-	own->append(buf->cspan());
+	if (!own || !own->append(buf->cspan())) return false;
 	buf = ZuMv(own);
       }
       auto head = ZmRef<TCPHeader>::acquire(
@@ -371,17 +376,15 @@ private:
 };
 
 using TCPRxBufAlloc = Ztcp::RxBufAlloc<H1BufSize, H1BufMax, "Zhttp.TCP.Rx">;
-using TCPTxBufAlloc = Zi::IOBufBuiltin<
-  TCPHeader,
-  H1BufSize,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"Zhttp.TCP.Tx">,
+using TCPTxBufAlloc = Zi::IOBufBuiltinAllocator<
+  Zi::IOBufType::TxTCP, TCPHeader, H1BufSize, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.TCP.Tx">,
   H1BufMax>;
-using TLSRxBufAlloc = Ztls::RxBufAlloc<H1BufSize, H1BufMax, "Zhttp.TLS.Rx">;
+using TLSRxBufAlloc = Ztls::RxBufAlloc<
+  Ztls_::RxRecordCapacity, H1BufMax, "Zhttp.TLS.Rx">;
 using TLSTxBufAlloc = Ztls::TxBufAlloc<
-  H1BufSize, H1BufMax, "Zhttp.TLS.Tx">;
+  Ztls_::TxRecordCapacity, H1BufMax, "Zhttp.TLS.Tx">;
 using H3TxBufAlloc = Zquic::StreamTxBufAlloc<
-  Zquic::BufSize, ZiIOBuf_DefltMaxSize, "Zhttp.H3.Tx">;
+  Zquic::BufSize, ZiIOBuf_DefltVHMaxSize, "Zhttp.H3.Tx">;
 
 template <typename Link, typename = void>
 struct HasTxStream : public ZuFalse { };
@@ -456,6 +459,8 @@ inline Ztls::ClientParams tlsParams(
       [&hub, &config](auto &p) {
 	p.asyncThread(hub.asyncThread())
 	  .rxAllocator(config.rxAllocator()).txAllocator(config.txAllocator())
+	  .txPacketAllocator(config.txPacketAllocator())
+	  .socketRxAllocator(config.socketRxAllocator())
 	  .caPath(config.caPath()).certPath(config.certPath())
 	  .keyPath(config.keyPath()).alpn(ZuSpan<ZuCSpan>{"http/1.1"});
       });
@@ -492,30 +497,37 @@ inline Zquic::HubParams quicParams(
 
 // Native hubs retain dedicated receive/transmit allocator ownership. Reuse a
 // live registration across init/final cycles; a finalized multiplexer requires
-// a new pair rather than republishing its retired allocators.
-template <typename Native, typename Rx, typename Tx, Zi::IOBufType::T RxType,
-  Zi::IOBufType::T TxType>
+// new allocators rather than republishing its retired allocators.
+template <typename Native, typename Transport>
 class Hub : public Native {
 public:
   using Native::Native;
   template <typename Params> bool init(Params params) {
     auto mx = mx_(params);
+    if (!mx) return false;
+    if (m_allocatorMx != mx) {
+      m_allocatorMx = mx;
+      m_rx = m_tx = m_txPacket = nullptr;
+    }
     if (params.rxAllocator()) m_rx = params.rxAllocator();
-    else if (!m_rx || m_rx->mx() != mx)
-      m_rx = mx->template allocator<RxType, typename Rx::Buf, Rx::Size, Rx::MaxSize,
-	Rx::Align, typename Rx::Heap>();
+    else if (!m_rx) m_rx = Transport::registerRx(mx);
     if (params.txAllocator()) m_tx = params.txAllocator();
-    else if (!m_tx || m_tx->mx() != mx)
-      m_tx = mx->template allocator<TxType, typename Tx::Buf, Tx::Size, Tx::MaxSize,
-	Tx::Align, typename Tx::Heap>();
+    else if (!m_tx) m_tx = Transport::registerTx(mx);
     params.rxAllocator(m_rx).txAllocator(m_tx);
+    if constexpr (Transport::Secure) {
+      if (params.txPacketAllocator()) m_txPacket = params.txPacketAllocator();
+      else if (!m_txPacket) m_txPacket = Transport::registerTxPacket(mx);
+      params.txPacketAllocator(m_txPacket);
+    }
     return Native::init(ZuMv(params));
   }
 private:
   static ZiMultiplex *mx_(const Ztcp::HubParams &params) { return params.mx; }
   static ZiMultiplex *mx_(const Ztls::HubParams &params) { return params.mx(); }
+  ZiMultiplex *m_allocatorMx = nullptr;
   Zi::IOBufAllocator *m_rx = nullptr;
   Zi::IOBufAllocator *m_tx = nullptr;
+  Zi::IOBufAllocator *m_txPacket = nullptr;
 };
 
 template <typename Protocol> struct Traits;
@@ -535,12 +547,18 @@ template <> struct Traits<TCP> {
 
   using RxAllocator = TCPRxBufAlloc;
   using TxAllocator = TCPTxBufAlloc;
+  static Zi::IOBufAllocator *registerRx(ZiMultiplex *mx) {
+    return mx->allocator<Zi::IOBufType::RxTCP, typename RxAllocator::Buf,
+      H1BufSize, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.TCP.Rx">, H1BufMax>();
+  }
+  static Zi::IOBufAllocator *registerTx(ZiMultiplex *mx) {
+    return mx->allocator<Zi::IOBufType::TxTCP, TCPHeader,
+      H1BufSize, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.TCP.Tx">, H1BufMax>();
+  }
   template <typename App>
-  using Client = Hub<Ztcp::Client<App>, RxAllocator, TxAllocator,
-    Zi::IOBufType::RxTCP, Zi::IOBufType::TxTCP>;
+  using Client = Hub<Ztcp::Client<App>, Traits>;
   template <typename App>
-  using Server = Hub<Ztcp::Server<App>, RxAllocator, TxAllocator,
-    Zi::IOBufType::RxTCP, Zi::IOBufType::TxTCP>;
+  using Server = Hub<Ztcp::Server<App>, Traits>;
   template <typename App, typename Link>
   using ClientLink =
     Ztcp::CliLink<App, Link, TCPRxBufAlloc, TCPTxBufAlloc>;
@@ -592,12 +610,22 @@ template <> struct Traits<TLS> {
 
   using RxAllocator = TLSRxBufAlloc;
   using TxAllocator = TLSTxBufAlloc;
+  static Zi::IOBufAllocator *registerRx(ZiMultiplex *mx) {
+    return mx->allocator<Zi::IOBufType::RxTLS, typename RxAllocator::Buf,
+      Ztls_::RxRecordCapacity, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.TLS.Rx">, H1BufMax>();
+  }
+  static Zi::IOBufAllocator *registerTx(ZiMultiplex *mx) {
+    return mx->allocator<Zi::IOBufType::TxTLS, typename TxAllocator::Buf,
+      Ztls_::TxRecordCapacity, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.TLS.Tx">, H1BufMax>();
+  }
+  static Zi::IOBufAllocator *registerTxPacket(ZiMultiplex *mx) {
+    return mx->allocator<Zi::IOBufType::TxTCP, Ztls::TxPacket,
+      1514, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.TLS.Packet">>(1024);
+  }
   template <typename App>
-  using Client = Hub<Ztls::Client<App>, RxAllocator, TxAllocator,
-    Zi::IOBufType::RxTLS, Zi::IOBufType::TxTLS>;
+  using Client = Hub<Ztls::Client<App>, Traits>;
   template <typename App>
-  using Server = Hub<Ztls::Server<App>, RxAllocator, TxAllocator,
-    Zi::IOBufType::RxTLS, Zi::IOBufType::TxTLS>;
+  using Server = Hub<Ztls::Server<App>, Traits>;
   template <typename App, typename Link>
   using ClientLink =
     Ztls::CliLink<App, Link, TLSRxBufAlloc, TLSTxBufAlloc>;
@@ -618,6 +646,8 @@ template <> struct Traits<TLS> {
     params
       .asyncThread(hub.asyncThread())
       .rxAllocator(config.rxAllocator()).txAllocator(config.txAllocator())
+      .txPacketAllocator(config.txPacketAllocator())
+      .socketRxAllocator(config.socketRxAllocator())
       .caPath(config.caPath()).certPath(config.certPath())
       .keyPath(config.keyPath()).alpn(ZuSpan<ZuCSpan>{"http/1.1"});
     params.mTLS(config.mTLS()).cacheTimeout(config.cacheTimeout());
@@ -765,14 +795,22 @@ public:
   }
   template <typename T = Traits, typename = ZuIfT<T::ID == Transport::TCP>>
   void cleanupTCP_(ZmRef<ZiConnection> cxn) {
+    ++m_tcp.count; // cleanup must retire before disconnected drain completes
     cxn->send(ZiTxFn{[
       link = ZmRef(impl()), cxn = ZuMv(cxn)
     ](ZiTxContext &io) mutable {
       (void)cxn; // retain the exact physical connection through cleanup
       io.complete();
       TCPTxOps::cleanup(link.ptr(), link->m_tcp.io, io.cxn);
-      auto app = link->app();
-      app->rxRun([link = ZuMv(link)] { }); // release final link holds on Rx
+      auto mx = link->app()->mx();
+      // Let this callback release its physical Cxn before acknowledging cleanup.
+      mx->txRun([link = ZuMv(link)]() mutable {
+	auto app = link->app();
+	app->txRun([link = ZuMv(link)]() mutable {
+	  auto impl = link.ptr();
+	  impl->retireTCP(ZuMv(link));
+	});
+      });
       return false;
     }});
   }
@@ -781,9 +819,9 @@ public:
     // Ownership has transferred. Dedicated output already has the correct
     // lifetime/allocator role; foreign application or receive data is serialized
     // once into real HTTP output backing, without retagging its allocator.
-    if (source->allocator == this->txAllocator()) return source;
+    if (source->allocator() == this->txAllocator()) return source;
     auto out = this->allocTxBuf_();
-    out->append(source->cspan());
+    if (!out || !out->append(source->cspan())) return nullptr;
     return out;
   }
   template <typename Builder, typename T = Traits,
@@ -891,19 +929,21 @@ public:
     // Move the native-link hold to Rx BEFORE dropping any Cxn hold. Final link
     // destruction follows the same Rx ownership as normal disconnected drain.
     auto link = ZmRef<Impl>::acquire(static_cast<Impl *>(ZuMv(header->link).release()));
+    header->detach_();
+    // Release the descriptor before signaling the App-owned logical drain.
+    header = nullptr;
+    retireTCP(ZuMv(link));
+  }
+  template <typename T = Traits, typename = ZuIfT<T::ID == Transport::TCP>>
+  void retireTCP(ZmRef<Impl> link) {
     auto mx = this->app()->mx();
     auto rx = this->app()->rxThread();
-    header->detach_();
     decltype(m_tcp.drains) fns;
     bool drained = !--m_tcp.count;
     if (drained) {
       fns = ZuMv(m_tcp.drains);
       m_tcp.drains.init_();
     }
-    // Release this descriptor before signaling the App-owned logical drain.
-    // Backend retirement copies still retain their own actual source handles;
-    // physical disconnected drain precedes allocator-owner stop completion.
-    header = nullptr;
     if (drained) impl()->tcpDrained();
     // LAST App-owner operation. Release our extra hold on Rx before invoking
     // the existing drain callbacks, whose own release/completion order stands.
@@ -1873,12 +1913,7 @@ private:
     bool never;
   };
   using Storage = ZtArray<Field, ZtArrayHeapID<"Zhttp.Final.Fields">>;
-  using Alloc = Zi::IOBufBuiltin<
-    ZiRxQueue::Node,
-    ZiIOBuf_DefltSize,
-    ZiIOBuf_DefltAlign,
-    ZuStringT<"Zhttp.Final.Bytes">,
-    ZiIOBuf_DefltMaxSize>;
+  static ZmRef<ZiIOBuf> allocBytes_();
 
   static const WriterOps &writerOps_();
   ZuSpan<uint8_t> reserve_(unsigned);

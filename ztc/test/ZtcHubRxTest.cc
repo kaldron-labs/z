@@ -9,8 +9,8 @@
 #include "../src/ztchub.cc"
 #undef main
 
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZtScratch.hh>
 
@@ -18,12 +18,17 @@ using namespace ZuTestUtil;
 
 namespace ZtcHubRxTest_ {
 
-using TestRxAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTCP, ZiRxQueue::Node, 64, 1U << 20>;
+static ZmRef<ZiIOBuf> allocFrame()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 1024,
+    ZiIOBuf_Align, ZuStringT<"Ztc.Hub.Frame">, 1U<<30>();
+  return allocator->allocBuf();
+}
 
 struct Timers {
   ZiMultiplex mx;
-  Zi::IOBufAllocator *allocator{mx.template allocator<TestRxAllocator::BufType, typename TestRxAllocator::Buf::Buf,
-      TestRxAllocator::Size, TestRxAllocator::MaxSize, TestRxAllocator::Buf::Align, typename TestRxAllocator::Heap>()};
+  Zi::IOBufAllocator *allocator{mx.allocator<Zi::IOBufType::RxTLS, ZiRxQueue::Node, 64>()};
   auto rxAllocator(bool) { return allocator; }
   template <typename ...Args> void add(Args &&...) { }
   template <typename T> void del(T *) { }
@@ -50,8 +55,8 @@ struct Sink {
   unsigned headRoom() const { return 0; }
   unsigned tailRoom() const { return 0; }
   ZmRef<ZiIOBuf> allocBuf(unsigned head) {
-    ZmRef<ZiIOBuf> buf = new ZtcHub_::HubBuf{ZmSingleton<typename ZtcHub_::HubBuf::Allocator>::instance()};
-    buf->skip = head;
+    ZmRef<ZiIOBuf> buf = allocFrame();
+    buf->skip += head;
     return buf;
   }
   template <typename P> Sink &operator <<(P &&) { return *this; }
@@ -61,6 +66,7 @@ struct Sink {
 struct Link_ : public ZmNHeap<Link_>, public ZmObject {
 friend inline ZuStringT<"Ztc.Test.HubLink"> ZmNHeapID(Link_ *);
 
+  enum { TLS = true };
   Server *server;
   ZtcHub_::App::LinkState input;
   unsigned closeCode = 0;
@@ -153,7 +159,7 @@ struct Fixture {
 
 static Ztc::HubFrame ack(uint64_t seqNo, ZuCSpan id = "publisher")
 {
-  Ztc::Builder builder{new ZtcHub_::HubBuf{ZmSingleton<typename ZtcHub_::HubBuf::Allocator>::instance()}};
+  Ztc::Builder builder{allocFrame()};
   auto nested = builder.startNested();
   auto value = Zfb::save(builder, Ztc::Ack{
     .id = ZuID{id}, .seqNo = seqNo, .status = Ztc::AckStatus::OK});
@@ -167,7 +173,7 @@ static ZuSpan<uint8_t> bytes(const Ztc::HubFrame &frame)
 
 static Ztc::HubFrame packetStorage()
 {
-  Ztc::HubFrame frame = new ZtcHub_::HubBuf{ZmSingleton<typename ZtcHub_::HubBuf::Allocator>::instance()};
+  Ztc::HubFrame frame = allocFrame();
   frame->skip = 32; // composed lower framing room in this test writer
   return frame;
 }
@@ -210,7 +216,7 @@ struct PacketWriter : public PacketSink {
 
   Ztc::HubFrame allocBuf(unsigned head) {
     allocated = packetStorage();
-    allocated->skip = head;
+    allocated->skip += head;
     return allocated;
   }
   bool fits(const ZiIOBuf &buf) const {
@@ -573,8 +579,10 @@ static void retainedInput()
   ZuTestScope(retainedInput);
   Fixture<ZuTest_scope> f;
   auto first = ack(71), second = ack(72);
-  using Wire = Zi::IOBufBuiltin<ZiRxQueue::Node, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Test.Input">, 1U<<20>;
-  ZmRef<ZiRxQueue::Node> wire = new Wire{ZmSingleton<typename Wire::Allocator>::instance()};
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiRxQueue::Node, 1024, ZiIOBuf_Align,
+    ZuStringT<"Ztc.Test.Input">, 1U<<20>();
+  ZmRef<ZiRxQueue::Node> wire{allocator->allocBuf().ptr<ZiRxQueue::Node>()};
   const uint8_t prefix[13] = {};
   wire->append(prefix, sizeof(prefix));
   wire->append(first->cspan()); wire->append(second->cspan());

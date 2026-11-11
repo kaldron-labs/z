@@ -596,6 +596,7 @@ void rejectTLS(const TempDir &temp)
     RejectTLSClient::Link::txAllocator(&mx);
   Ztls::ClientParams rejectParams{&mx, "3", "4"};
   rejectParams.rxAllocator(rejectRx).txAllocator(rejectTx);
+  rejectParams.txPacketAllocator(RejectTLSClient::Link::txPacketAllocator(&mx));
   rejectParams.hub([&temp](auto &p) {
     p.caPath(temp.certPath.cspan()).alpn(ZuSpan<ZuCSpan>{"http/1.1"});
   });

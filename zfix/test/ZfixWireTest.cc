@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "ZfixTestAllocator.hh"
+
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmRef.hh>
@@ -18,7 +20,7 @@
 
 static ZmRef<ZiIOBuf> frameBuf() {
   using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
-  return ZmSingleton<Allocator>::instance()->allocBuf();
+  return ZfixTest::Allocator<Allocator>::get()->allocBuf();
 }
 
 using namespace ZuTestUtil;
@@ -50,26 +52,34 @@ struct Completion {
 };
 
 struct Harness : public WireTx<Harness> {
-  using Alloc = Zi::IOBufBuiltin<ZiTxBuf, 64, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
+  using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, 64, ZiIOBuf_Align,
+    ZiIOBuf_HeapID, ZiIOBuf_DefltVHMaxSize>;
   using Base = WireTx<Harness>;
   Items<ZmRef<ZiIOBuf>>	records;
   Items<Completion>	done;
   unsigned		refuseAt = 0, sends = 0;
-  bool			refuseAlloc = false;
+  bool			refuseAlloc = false, packetize = false;
   bool			notice = false, early = false;
 
   explicit Harness(WireLimits limits = {}) : Base{limits} { }
 
   ZmRef<ZiIOBuf> recordAlloc(unsigned head) {
     if (refuseAlloc) return {};
-    ZmRef<ZiIOBuf> buf = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, 64>>::instance()->allocBuf();
-    buf->skip = head; return buf;
+    ZmRef<ZiIOBuf> buf = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf,
+      64>>::get()->allocBuf();
+    buf->skip += head; return buf;
   }
 
   bool recordSend(ZmRef<ZiIOBuf> buf) {
     if (!notice) early = true;
     if (++sends == refuseAt) return false;
-    records.push(ZuMv(buf)); return true;
+    if (packetize) {
+      auto prefix = recordAlloc(0), tail = recordAlloc(0);
+      prefix->append("wire prefix"_z); tail->append("wire tag"_z);
+      packetized_(buf.ptr(), tail);
+      records.push(ZuMv(prefix)); records.push(ZuMv(tail));
+    } else records.push(ZuMv(buf));
+    return true;
   }
 
   void outputDone(TxBody::Ref body, TxContext c, bool ok) {
@@ -81,7 +91,7 @@ struct Harness : public WireTx<Harness> {
 
   WireGeometry geometry() const {
     // Five plaintext bytes per record exercise every partial completion.
-    return {7, 1, 1, sizeof(Alloc) + Alloc::Size};
+    return {7, 1, 1, sizeof(Zi::IOBufBuiltin<ZiTxBuf, Alloc::Size, ZiIOBuf_Align>) + Alloc::Size};
   }
 
   void finish(unsigned i, bool ok = true) {
@@ -103,6 +113,39 @@ static void tcpFrame() {
   ZuCheck(h.done.length() == 1 && h.done[0].ok && h.done[0].body == native);
   ZuCheck(!h.count_() && !h.bytes_());
   h.finish(0); ZuCheck(h.done.length() == 1);
+}
+static void packetCompletion() {
+  ZuTestScope(packetCompletion);
+  for (bool split : {false, true}) {
+    Harness h; h.packetize = true;
+    ZuCheck(h.open_(1, split ? h.geometry() : WireGeometry{}));
+    auto bytes = frame();
+    ZuCheck(h.admit_(body(), {1, 1, 1}, bytes)); h.flush();
+    ZuCheck(h.records.length() >= 2 && !h.done.length());
+    // Plaintext and leading ciphertext packets cannot complete a frame.
+    ZuCheck(!h.record_(bytes.ptr(), true));
+    for (unsigned i = 0; i + 1 < h.records.length(); ++i) {
+      h.finish(i); ZuCheck(!h.done.length() && h.count_() == 1);
+    }
+    h.finish(h.records.length() - 1);
+    ZuCheck(h.done.length() == 1 && h.done[0].ok && !h.count_() && !h.bytes_());
+    h.finish(h.records.length() - 1); ZuCheck(h.done.length() == 1);
+    auto old = h.records[h.records.length() - 1];
+    ZuCheck(h.open_(2, split ? h.geometry() : WireGeometry{}));
+    ZuCheck(h.admit_(body(), {1, 2, 2}, frame())); h.flush();
+    ZuCheck(!h.record_(old.ptr(), true) && h.count_() == 1);
+    h.close_(2);
+    ZuCheck(h.done.length() == 2 && !h.done[1].ok && !h.count_() && !h.bytes_());
+    h.finish(h.records.length() - 1); ZuCheck(h.done.length() == 2);
+    ZuCheck(h.open_(3, split ? h.geometry() : WireGeometry{}));
+    ZuCheck(h.admit_(body(), {1, 3, 3}, frame())); h.flush();
+    h.finish(h.records.length() - 2);
+    ZuCheck(h.done.length() == 2);
+    h.finish(h.records.length() - 1, false);
+    ZuCheck(h.done.length() == 3 && !h.done[2].ok && h.failed_() &&
+      !h.count_() && !h.bytes_());
+    h.finish(h.records.length() - 1, false); ZuCheck(h.done.length() == 3);
+  }
 }
 static void records() {
   ZuTestScope(records);
@@ -244,8 +287,9 @@ struct SessionOutput : public WireTx<SessionOutput> {
   explicit SessionOutput(SessionOwner *owner_, WireLimits limits = {}) :
     WireTx<SessionOutput>{limits}, owner{owner_} { }
 
-  ZmRef<ZiIOBuf> recordAlloc(unsigned) { return ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-      ZiTxBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
+  ZmRef<ZiIOBuf> recordAlloc(unsigned) {
+    return ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
+      ZiTxBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
   }
   bool recordSend(ZmRef<ZiIOBuf>);
 
@@ -495,7 +539,8 @@ struct AdmitApp {
 struct AdmitLink : ZmNHeap<AdmitLink>, ZmObject, Link<AdmitLink> {
 friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
   using MessageCatalog = MTList<Entry>;
-  using RxBufAlloc = Zi::IOBufBuiltin<ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zfix.WireTest.Rx">, ZiIOBuf_DefltMaxSize>;
+  using RxBufAlloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node,
+    ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zfix.WireTest.Rx">, ZiIOBuf_DefltVHMaxSize>;
   using Stream = ZiRxStream<ZiRxQueue>;
   using Records = Items<ZmRef<ZiIOBuf>>;
   // ZmFn's POD relocation trait deliberately omits array element destruction.
@@ -529,14 +574,14 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
   WireGeometry fixGeometryTx() { ++geometries; return {}; }
 
   ZmRef<ZiRxQueue::Node> fixAllocRx() {
-    return ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-      ZiRxQueue::Node, ZiIOBuf_DefltSize>>::instance()->allocBuf();
+    return ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
+      ZiRxQueue::Node, ZiIOBuf_DefltSize>>::get()->allocBuf();
   }
 
   ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
-    ZmRef<ZiIOBuf> buf = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-      ZiTxBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
-    buf->skip = head; return buf;
+    ZmRef<ZiIOBuf> buf = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
+      ZiTxBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
+    buf->skip += head; return buf;
   }
 
   bool fixSendTx(ZmRef<ZiIOBuf> buf) {
@@ -924,6 +969,7 @@ int main(int argc, char **argv) {
   parse(argc, argv); ZuTestMain();
   ZuTestCall(tcpFrame);
   ZuTestCall(records);
+  ZuTestCall(packetCompletion);
   ZuTestCall(queued);
   ZuTestCall(failures);
   ZuTestCall(replacement);

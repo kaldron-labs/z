@@ -1793,7 +1793,9 @@ public:
   unsigned reclaimOnPTO(unsigned limit) {
     unsigned n = 0;
     auto reclaim = [this, limit, &n](bool reclaimed, bool needFrames) {
-      auto iter = m_packets.riter();
+      // New probes append newer packets. Start with the oldest eligible work
+      // so their retransmissions cannot keep older control frames off PTO.
+      auto iter = m_packets.iter();
       while (n < limit) {
 	auto node = iter();
 	if (!node) break;

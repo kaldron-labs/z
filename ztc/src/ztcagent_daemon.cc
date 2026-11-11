@@ -17,7 +17,6 @@
 #include <zlib/ZuID.hh>
 
 #include <zlib/ZmHash.hh>
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmObject.hh>
@@ -132,7 +131,14 @@ ZmHashDerive(Reqs, Req,
       ZmHashLock<ZmNoLock,
         ZmHashHeapID<"Ztc.Agent.PubReq">>>>));
 
-using Frame = Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Agent.Frame">, AgentCf::MaxFrame>;
+static ZmRef<ZiIOBuf> allocFrame()
+{
+  static ZiMultiplex mx{ZiMxParams{}.scheduler(
+    [](auto &params) { params.id("Ztc.Agent.Frame"); })};
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 1024, ZiIOBuf_Align,
+    ZuStringT<"Ztc.Agent.Frame">, AgentCf::MaxFrame>();
+  return allocator->allocBuf();
+}
 
 struct Mx final : public ZmNHeap<Mx>, public ZiMultiplex {
 friend inline ZuStringT<"Ztc.Agent.Mx"> ZmNHeapID(Mx *);
@@ -221,7 +227,7 @@ static bool rewriteSeq(uint8_t *data, uint64_t seqNo)
 static ZmRef<ZiIOBuf> requestFrame(const Request &request)
 {
   Ztc::Builder builder{
-    frameBuf(ZmRef<ZiIOBuf>{new Frame{ZmSingleton<typename Frame::Allocator>::instance()}})};
+    frameBuf(allocFrame())};
   auto nested = builder.startNested();
   auto value = Zfb::save(builder, request);
   builder.finish(saveMsg(builder, nested, Body::Request,
@@ -266,7 +272,9 @@ static void transmit(
     Agent::State *state, ZmRef<ZiIOBuf> frame, uint64_t generation)
 {
   if (!frame || !generation || state->stop.load_()) return;
-  state->client.rxRun([state, frame = ZuMv(frame), generation]() mutable {
+  frame->owner = state;
+  state->client.rxRun([frame = ZuMv(frame), generation]() mutable {
+    auto state = static_cast<Agent::State *>(frame->owner);
     ZmAssert(state->client.mx()->invoked(state->client.rxThread()));
     if (state->stop.load_()) return;
     auto link = state->link;
@@ -703,12 +711,14 @@ static void telemetry(Agent::State *state)
         state->telRing.shift2(recordSize);
         break;
       }
-      ZmRef<ZiIOBuf> frame = new Frame{ZmSingleton<typename Frame::Allocator>::instance()};
+      ZmRef<ZiIOBuf> frame = allocFrame();
       frame->alloc(size);
       memcpy(frame->data(), hdr->data(), size);
       frame->length = size;
       auto generation = state->currentGeneration.load_();
-      state->mx->run([state, frame = ZuMv(frame), generation, size]() mutable {
+      frame->owner = state;
+      state->mx->run([frame = ZuMv(frame), generation, size]() mutable {
+	auto state = static_cast<Agent::State *>(frame->owner);
 	Agent_::releaseTelemetry(state, size);
 	Agent_::routeTelemetry(state, ZuMv(frame), generation);
       }, 1);
@@ -1321,9 +1331,12 @@ int Agent::process(Link_ &link, Rx &rx)
     auto n = rx.extract(
       [](ZuBSpan span) -> int64_t { return span.length(); },
       []() {
-        using Buf = Zi::IOBufBuiltin<ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
-        return ZmRef<ZiRxQueue::Node>{new Buf{
-          ZmSingleton<typename Buf::Allocator>::instance()}};
+        static ZiMultiplex mx{ZiMxParams{}.scheduler(
+          [](auto &params) { params.id(Link_::TLS ? "Ztc.Agent.RxTLS" : "Ztc.Agent.RxTCP"); })};
+        static auto allocator = mx.allocator<
+          Link_::TLS ? Zi::IOBufType::RxTLS : Zi::IOBufType::RxTCP, ZiRxQueue::Node,
+          ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltVHMaxSize>();
+        return ZmRef<ZiRxQueue::Node>{allocator->allocBuf().template ptr<ZiRxQueue::Node>()};
       }, buf);
     if (n <= 0) return -1;
     if (!message) message = ZuMv(buf);
@@ -1344,7 +1357,9 @@ int Agent::messageEnd(Link &link)
     return -1;
   }
   auto generation = m_state->currentGeneration.load_();
-  m_state->mx->run([state = m_state, frame = ZuMv(frame), generation]() mutable {
+  frame->owner = m_state;
+  m_state->mx->run([frame = ZuMv(frame), generation]() mutable {
+    auto state = static_cast<Agent::State *>(frame->owner);
     Agent_::admitRequest(state, ZuMv(frame), generation);
   }, 1);
   return 1;

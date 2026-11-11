@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "ZhttpTestAllocator.hh"
+
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSingleton.hh>
@@ -17,17 +19,14 @@ using namespace ZuTestUtil;
 namespace ZhttpH3PushTest_ {
 
 using RxQueue = ZiRxQueue;
-using RxBufAlloc = Zi::IOBufBuiltin<
-  RxQueue::Node,
-  256,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"ZhttpH3PushTest.RxBuf">,
+using RxBufAlloc = Zi::IOBufBuiltinAllocator<
+  Zi::IOBufType::App, RxQueue::Node, 256, ZiIOBuf_DefltAlign, ZuStringT<"ZhttpH3PushTest.RxBuf">,
   1<<20>;
 using RxStream = ZiRxStream<RxQueue>;
 
 static ZmRef<RxQueue::Node> rxBuf(ZuBSpan span)
 {
-  ZmRef<RxQueue::Node> buf = new RxBufAlloc{ZmSingleton<typename RxBufAlloc::Allocator>::instance()};
+  ZmRef<RxQueue::Node> buf = ZhttpTest::Allocator<RxBufAlloc>::get()->allocBuf();
   if (span.length()) buf->append(span);
   return buf;
 }

@@ -11,7 +11,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZuPtr.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmBlock.hh>
@@ -96,7 +95,17 @@ struct TLSMessage : public ZiIOBuf {
 
 ZmListDerive(TLSQueue, TLSMessage,
   ZmListNode<TLSMessage, ZmListHeapID<"">>);
-using TLSBuf = Zi::IOBufBuiltin<TLSQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zquic.Test.TLSBuf">, TLSBufSize>;
+using TLSBufAlloc = Zi::IOBufBuiltinAllocator<
+  Zi::IOBufType::TxTLS, TLSQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_Align,
+  ZuStringT<"Zquic.Test.TLSBufAlloc">, TLSBufSize>;
+
+template <typename Policy>
+Zi::IOBufAllocator *allocator()
+{
+  static ZiMultiplex mx;
+  static auto allocator = Zquic::plaintextAllocator<Policy>(&mx);
+  return allocator;
+}
 
 struct TLSPeer : public ZmNHeap<TLSPeer> {
 friend inline ZuStringT<"Zquic.Test.TLSPeer"> ZmNHeapID(TLSPeer *);
@@ -107,7 +116,12 @@ friend inline ZuStringT<"Zquic.Test.TLSPeer"> ZmNHeapID(TLSPeer *);
   ZuArray<Zquic::CryptoStream, 4> rx;
 
   explicit TLSPeer(Zquic::Crypto *crypto_) :
-    crypto{crypto_}, tx(4), rx(4) { }
+    crypto{crypto_}, tx(4), rx(4) {
+    for (auto &stream : tx)
+      stream.allocators(nullptr, allocator<Zquic::CryptoTxBufAlloc<>>());
+    for (auto &stream : rx)
+      stream.allocators(allocator<Zquic::CryptoRxBufAlloc<>>(), nullptr);
+  }
 };
 
 bool enqueueFlight(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
@@ -121,8 +135,7 @@ bool enqueueFlight(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
     unsigned size = 1 + Zquic::VarInt::length(tx.txOffset()) +
       Zquic::VarInt::length(len) + len;
     if (size > TLSBufSize) return false;
-    ZmRef<TLSQueue::Node> msg = new TLSBuf{
-      ZmSingleton<typename TLSBuf::Allocator>::instance(), nullptr, 0};
+    ZmRef<TLSQueue::Node> msg = allocator<TLSBufAlloc>()->allocBuf();
     int n = tx.writeFrame(msg->alloc(size), size, bytes_(data + off, len));
     if (n < 0) return false;
     msg->epoch = epoch;
@@ -136,8 +149,7 @@ bool handleTLS(
   TLSPeer &dst, TLSQueue &out, const TLSMessage *msg)
 {
   ZmRef<ZiIOBuf> buf =
-    new Zquic::CryptoTxBufAlloc<TLSBufSize, TLSBufSize>{
-      ZmSingleton<typename Zquic::CryptoTxBufAlloc<TLSBufSize, TLSBufSize>::Allocator>::instance(), nullptr, 0};
+    allocator<Zquic::CryptoTxBufAlloc<TLSBufSize, TLSBufSize>>()->allocBuf();
   size_t offsets[5] = {};
   ZuBSpan in;
   size_t inEpoch = msg ? msg->epoch : 0;
@@ -229,7 +241,7 @@ void testCryptoStreamFrames()
 
   uint8_t frame[64];
   Zquic::CryptoDiag diag;
-  Zquic::CryptoStream tx;
+  Zquic::CryptoStream tx{nullptr, allocator<Zquic::CryptoTxBufAlloc<>>()};
   int n = tx.writeFrame(frame, sizeof(frame), "abc", &diag);
   ZuCHECK(n > 0 && tx.txOffset() == 3 &&
       diag.cryptoBytesTx == 3,
@@ -268,7 +280,7 @@ void testCryptoStreamFrames()
   int f2 = Zquic::FrameCodec::writeCrypto(second, sizeof(second), 5, "world");
   ZuCHECK(f1 > 0 && f2 > 0, "CRYPTO frame setup failed");
 
-  Zquic::CryptoStream rx;
+  Zquic::CryptoStream rx{allocator<Zquic::CryptoRxBufAlloc<>>()};
   ZuBSpan contiguous;
   ZuCHECK(!Zquic::FrameCodec::parse(bytes_(second, unsigned(f2)),
       parsed, used) &&
@@ -287,7 +299,7 @@ void testCryptoStreamFrames()
   ZuCHECK(diag.cryptoBytesRx == 10,
     "CRYPTO Rx diagnostics failed");
 
-  Zquic::CryptoStream asyncRx;
+  Zquic::CryptoStream asyncRx{allocator<Zquic::CryptoRxBufAlloc<>>()};
   ZtString<> delivered;
   asyncRx.deliveryFn([&delivered](ZuBSpan bytes) {
     delivered << ZuCSpan{bytes};

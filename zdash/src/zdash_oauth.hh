@@ -386,9 +386,7 @@ public:
           tls.caPath(caPath);
         }),
         Zhttp::QUICConfig{})) return false;
-    if (Base::pool(0, Zhttp::Destination{url.origin()}) && Base::start())
-      return true;
-    Base::stop();
+    if (Base::pool(0, Zhttp::Destination{url.origin()})) return true;
     Base::final();
     return false;
   }
@@ -438,6 +436,11 @@ public:
     if (m_clients.length() >= DestinationMax) return false;
     ZmRef<Client> client = new Client{};
     if (!client->init(mx, url, caPath, m_tcp, m_tls)) return false;
+    if (mx->state() == ZmEngineState::Running && !client->start()) {
+      client->stop();
+      client->final();
+      return false;
+    }
     m_clients.push(ZuMv(client));
     return true;
   }
@@ -460,6 +463,12 @@ public:
       return true;
     }
     return false;
+  }
+
+  bool start() {
+    for (auto &client: m_clients)
+      if (!client->start()) return false;
+    return true;
   }
 
   void final() {
@@ -770,24 +779,17 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
   ZiMultiplex mx{mxParams()};
   using TCP = Zhttp::NativeTraits<Zhttp::H1TCP>::Transport;
   using TLS = Zhttp::NativeTraits<Zhttp::H1TLS>::Transport;
-  auto tcpRx = mx.allocator<Zi::IOBufType::RxTCP,
-    TCP::RxAllocator::Buf, TCP::RxAllocator::Size, TCP::RxAllocator::MaxSize,
-    TCP::RxAllocator::Align, TCP::RxAllocator::Heap>();
-  auto tcpTx = mx.allocator<Zi::IOBufType::TxTCP,
-    TCP::TxAllocator::Buf, TCP::TxAllocator::Size, TCP::TxAllocator::MaxSize,
-    TCP::TxAllocator::Align, TCP::TxAllocator::Heap>();
-  auto tlsRx = mx.allocator<Zi::IOBufType::RxTLS,
-    TLS::RxAllocator::Buf, TLS::RxAllocator::Size, TLS::RxAllocator::MaxSize,
-    TLS::RxAllocator::Align, TLS::RxAllocator::Heap>();
-  auto tlsTx = mx.allocator<Zi::IOBufType::TxTLS,
-    TLS::TxAllocator::Buf, TLS::TxAllocator::Size, TLS::TxAllocator::MaxSize,
-    TLS::TxAllocator::Align, TLS::TxAllocator::Heap>();
+  auto tcpRx = TCP::registerRx(&mx);
+  auto tcpTx = TCP::registerTx(&mx);
+  auto tlsRx = TLS::registerRx(&mx);
+  auto tlsTx = TLS::registerTx(&mx);
   auto tcp = Zhttp::TCPConfig{}.rxAllocator(tcpRx).txAllocator(tcpTx);
-  auto tls = Zhttp::TLSConfig{}.rxAllocator(tlsRx).txAllocator(tlsTx);
+  auto tls = Zhttp::TLSConfig{}.rxAllocator(tlsRx).txAllocator(tlsTx)
+    .txPacketAllocator(TLS::registerTxPacket(&mx))
+    .socketRxAllocator(mx.allocator<Zi::IOBufType::RxTCP, ZiRxQueue::Node, Ztls_::RxPacketCapacity>());
   Clients clients{tcp, tls};
-  if (!mx.start()) return false;
-
-  if (!clients.add(&mx, issuerURL.url(), config.caPath)) {
+  if (!clients.add(&mx, issuerURL.url(), config.caPath) ||
+      !mx.start() || !clients.start()) {
     std::cerr << "OAuth: issuer HTTP client start failed\n";
     clients.final(); mx.stop(); ZiLog::stop(); return false;
   }

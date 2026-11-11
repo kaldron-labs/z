@@ -26,3 +26,5 @@ ZgrpcMetaTest_SOURCES = ZgrpcMetaTest.cc
 .PHONY: test
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)
+
+noinst_HEADERS = ZgrpcTestAllocator.hh

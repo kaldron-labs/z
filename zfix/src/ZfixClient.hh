@@ -20,12 +20,12 @@ namespace Zfix {
 
 template <typename App, typename Impl, typename MTList, typename Net = TCP,
   typename RxAlloc = typename Net::template RxBufAlloc<>,
-  typename TxAlloc = Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>,
+  typename TxAlloc = typename Net::template TxBufAlloc<>,
   template <typename, typename> class Engine = Link>
 class CliLink : public Net::template CliLink<App, Impl, RxAlloc, TxAlloc>,
     public Engine<Impl, NativeRx<Net>>, public LinkHooks<Impl, Net>,
     public NetInput<Impl, typename Net::RxStream> {
-  ZuAssert((ZuIs_<TxAlloc, ZiTxBuf>{}));
+  ZuAssert((ZuIs_<typename TxAlloc::Buf, ZiTxBuf>{}));
   using NetBase = Net::template CliLink<App, Impl, RxAlloc, TxAlloc>;
   using EngineBase = Engine<Impl, NativeRx<Net>>;
   using Hooks = LinkHooks<Impl, Net>;
@@ -36,6 +36,7 @@ public:
   using EngineBase::send;
   using EngineBase::reply;
   using EngineBase::work;
+  using Hooks::fixCloseRx;
   using Hooks::fixTraceField;
   using Hooks::fixTraceSecret;
   using typename NetBase::Cxn;
@@ -73,6 +74,10 @@ public:
 
   bool sendRecord(ZmRef<ZiIOBuf> b) { return NetBase::send_(ZuMv(b)); }
 
+  void txPacketized(const ZiIOBuf *plain, ZmRef<ZiIOBuf> packet) {
+    if constexpr (Net::Encrypted) this->transportPacketized(plain, ZuMv(packet));
+  }
+
   void sent(ZmRef<ZiTxBuf> b, bool ok) {
     this->transportSent(b, ok);
     NetBase::sent(ZuMv(b), ok);
@@ -91,14 +96,14 @@ public:
   using Params = typename Net::ClientParams;
   using MessageCatalog = MTList;
   template <typename Impl> using LinkBase = CliLink<App, Impl, MTList, Net,
-    typename Net::template RxBufAlloc<>, Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>, Engine>;
+    typename Net::template RxBufAlloc<>, typename Net::template TxBufAlloc<>, Engine>;
 };
 
 template <typename App, typename MTList, typename Net = TCP>
 using RawClient = Client<App, MTList, Net, Raw>;
 template <typename App, typename Impl, typename MTList, typename Net = TCP,
   typename RxAlloc = typename Net::template RxBufAlloc<>,
-  typename TxAlloc = Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>>
+  typename TxAlloc = typename Net::template TxBufAlloc<>>
 using RawCliLink = CliLink<App, Impl, MTList, Net, RxAlloc, TxAlloc, Raw>;
 } // Zfix
 

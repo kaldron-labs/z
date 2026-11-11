@@ -275,9 +275,16 @@ public:
     transportDown_1(m_connection);
   }
 
+  void transportPacketized(const ZiIOBuf *plain, ZmRef<ZiIOBuf> packet) {
+    ZmAssert(app()->txInvoked());
+    m_tx.packetized_(plain, ZuMv(packet));
+  }
+
   void transportSent(ZmRef<ZiIOBuf> buf, bool ok) {
-    app()->txRun([this, buf = ZuMv(buf), ok] {
-      m_tx.record_(buf.ptr(), ok);
+    buf->owner = this;
+    app()->txRun([buf = ZuMv(buf), ok] {
+      auto link = static_cast<Raw *>(buf->owner);
+      link->m_tx.record_(buf.ptr(), ok);
     });
   }
 
@@ -300,7 +307,8 @@ public:
     }
     if (bytes->size > cap) { faultRx({Fmt::ErrorCode::Size}); return -1; }
     m_pending = new RawInput;
-    m_pending->charge = ZmHeapAllocSize<sizeof(typename Impl::RxBufAlloc)>{} +
+    m_pending->charge = ZmHeapAllocSize<sizeof(Zi::IOBufBuiltin<typename Impl::RxBufAlloc::Buf,
+      Impl::RxBufAlloc::Size, ZiIOBuf_Align>)>{} +
       ZmHeapAllocSize<sizeof(RawInput)>{} +
       (!bytes->builtin() ? Zfix::jumboBytes(bytes->size) : 0);
     m_pending->buffer = ZuMv(bytes); m_pending->frame = frame;

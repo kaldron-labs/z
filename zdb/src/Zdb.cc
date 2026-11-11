@@ -205,9 +205,11 @@ void DB::init(
     m_cf = ZuMv(config);
     m_mx = mx;
     m_rxAllocator = mx->allocator<Zi::IOBufType::RxTCP,
-      ZiRxQueue::Node, DefltBufSize, MaxBufSize>();
+      ZiRxQueue::Node, DefltBufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, MaxBufSize>();
+    m_frameAllocator = mx->allocator<Zi::IOBufType::App,
+      ZiRxQueue::Node, DefltBufSize, ZiIOBuf_Align, ZiIOBuf_HeapID, MaxBufSize>();
     m_hbAllocator = mx->allocator<Zi::IOBufType::TxTCP,
-      ZiTxBuf, HBBufSize, MaxBufSize>();
+      ZiTxBuf, HBBufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, MaxBufSize>();
     m_handler = ZuMv(handler);
     {
       if (!m_cf.storeCf)
@@ -1240,6 +1242,8 @@ ZiConnection *DB::accepted(const ZiCxnInfo &ci)
   return new Cxn{this, nullptr, ci};
 }
 
+Zi::IOBufAllocator *Cxn_::rxAllocator() const { return m_db->m_frameAllocator; }
+
 Cxn_::Cxn_(DB *db, Host *host, const ZiCxnInfo &ci) :
   ZiConnection{db->mx(), ci},
   m_db{db},
@@ -1647,6 +1651,7 @@ ZmRef<IOBuf> AnyTable::mkBuf(Shard shard, UN un)
   if (auto buf = findBufUN(shard, un)) {
     ZmAssert(record_(msg_(buf->hdr())).get<Msg::ZfField(Record, shard)>() == shard);
     auto copy = allocBuf(shard);
+    if (ZuUnlikely(!copy)) return nullptr;
     // Both allocations have pooled base alignment. Preserve the source
     // residue required by this row/envelope, including its nested roots.
     copy->skip = buf->skip & (rowAlign() - 1);
@@ -1712,7 +1717,14 @@ void DB::repStop()
 void Cxn_::send(ZmRef<IOBuf> buf)
 {
   if (!buf) return;
-  Tx::send(new TxFrame{m_db->m_hbAllocator, ZuMv(buf)});
+  Tx::send(new TxBuf{m_db->m_hbAllocator, ZuMv(buf)});
+}
+
+void Cxn_::sent(ZmRef<ZiTxBuf>, bool ok)
+{
+  // ZiConnection closes the socket after a failed write. A rejected queue
+  // submission also needs to close this connection to recover the record gap.
+  if (ZuUnlikely(!ok && txContext().length >= 0 && up())) close();
 }
 
 void Cxn_::msgRead(ZiRxContext &io)
@@ -1726,7 +1738,7 @@ void Cxn_::msgRead(ZiRxContext &io)
       return length > INT_MAX - sizeof(Hdr) ? -1 : int(sizeof(Hdr) + length);
     },
     [](Cxn_ *cxn, const ZiRxContext &, ZmRef<ZiIOBuf> buf) -> int {
-      return cxn->msgRead2(new RxFrame{ZuMv(buf)});
+      return cxn->msgRead2(new RxBuf{ZuMv(buf)});
     }>(io);
 }
 int Cxn_::msgRead2(ZmRef<IOBuf> buf)
@@ -1927,8 +1939,14 @@ void Cxn_::hbSend()
   ZmAssert(m_db->invoked());
 
   Host *self = m_db->self();
-  Zfb::IOBuilder<> fbb{m_db->m_hbAllocator->allocBuf(), Zfb::Wire::Align, UINT32_MAX,
-    0, Zfb::Wire::MaxAlign};
+  auto allocator = m_db->m_hbAllocator;
+  auto buf = allocator->allocBuf(this, 0, info().mps);
+  if (ZuUnlikely(!buf)) return;
+  constexpr uint64_t align = Zfb::Wire::Align;
+  uint64_t head = (uint64_t(buf->skip) + sizeof(Hdr) + align - 1) & ~(align - 1);
+  unsigned tail = allocator->tailRoom;
+  if (ZuUnlikely(head + tail > buf->size)) return;
+  Zfb::IOBuilder<> fbb{ZuMv(buf), align, UINT32_MAX, tail, unsigned(head)};
   auto heartbeat = Zfb::save(fbb, Heartbeat{
     self->id(), uint32_t(m_db->state()), m_db->nShards(), &self->dbState()});
   fbb.finish(saveMsg(fbb, heartbeat, Msg::Tag::Heartbeat));

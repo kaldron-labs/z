@@ -7,7 +7,6 @@
 #include <stdlib.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmBlock.hh>
 
 #include <zlib/ZtString.hh>
@@ -256,7 +255,7 @@ static void appTest()
   ZuCheck(hashes.valid && hashes.frames);
   auto threads = snapshot(SeqNo + 3, Ztc::Group::Thread, "*");
   ZuCheck(threads.valid && threads.frames);
-  auto mxs = snapshot(SeqNo + 4, Ztc::Group::Mx, "*");
+  auto mxs = snapshot(SeqNo + 4, Ztc::Group::Mx, "ztc-app-test");
   ZuCheck(mxs.valid && mxs.frames == 1);
   auto queues = snapshot(SeqNo + 5, Ztc::Group::Queue, "*:*:*");
   ZuCheck(queues.valid && queues.frames);
@@ -289,7 +288,7 @@ static void appTest()
 
   Ztc::Hdr badHdr{uint32_t(4)};
   uint32_t badBody = 0;
-  ZmRef<ZiIOBuf> bad = new ZtcTestClient::Frame{ZmSingleton<typename ZtcTestClient::Frame::Allocator>::instance()};
+  ZmRef<ZiIOBuf> bad = ZtcTestClient::allocFrame();
   unsigned badSize = sizeof(badHdr) + sizeof(badBody);
   ZuCheck(bad->alloc(badSize));
   memcpy(bad->data(), &badHdr, sizeof(badHdr));

@@ -63,8 +63,9 @@ PoolCore::PoolCore(ClientCore *client, const PoolQueueOps &ops,
   m_impl{new PoolImpl{client, this}}, m_queueOps{&ops},
   m_reqCatalog{&req}, m_resCatalog{&res} { }
 PoolCore::~PoolCore() { delete m_impl; }
-bool PoolCore::poolH1TxError(unsigned slot, unsigned generation, ZeException &error) {
-  return m_impl->poolH1TxError(slot, generation, error);
+bool PoolCore::poolH1TxError(
+    Transport::T transport, unsigned slot, unsigned generation, ZeException &error) {
+  return m_impl->poolH1TxError(transport, slot, generation, error);
 }
 
 bool PoolCore::init(unsigned slot, Destination dest, const HubConfig &hub,

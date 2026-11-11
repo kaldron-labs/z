@@ -8,7 +8,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/ZmSingleton.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmList.hh>
 
@@ -22,12 +22,13 @@ using namespace ZuTestUtil;
 
 namespace ZwsProtocolTest_ {
 
-using BufAlloc = Zi::IOBufBuiltin<
-  ZiIOBuf,
-  256,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"ZwsProtocolTest.Buf">,
-  1<<20>;
+static auto testBufAllocator()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 256, ZiIOBuf_DefltAlign,
+    ZuStringT<"ZwsProtocolTest.Buf">, 1<<20>();
+  return allocator;
+}
 
 struct WireTx : public ZiTxStream<WireTx> {
   using Base = ZiTxStream<WireTx>;
@@ -43,8 +44,8 @@ struct WireTx : public ZiTxStream<WireTx> {
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
     // Admission can reject a request before any Z heap allocation.
     if (!admitOK) return nullptr;
-    ZmRef<ZiIOBuf> buf = new BufAlloc{ZmSingleton<typename BufAlloc::Allocator>::instance()};
-    buf->skip = headRoom;
+    ZmRef<ZiIOBuf> buf = testBufAllocator()->allocBuf();
+    buf->skip += headRoom;
     return buf;
   }
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
@@ -190,26 +191,30 @@ const Zhttp::ChannelOps &channelOps() {
 }
 
 using OuterRx = ZiRxStream<ZiRxQueue>;
-using OuterBufAlloc = Zi::IOBufBuiltin<
-  ZiRxQueue::Node,
-  256,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"ZwsTest.OuterRx">,
-  1<<20>;
+static auto outerBufAllocator()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<
+    Zi::IOBufType::App, ZiRxQueue::Node, 256, ZiIOBuf_DefltAlign,
+    ZuStringT<"ZwsTest.OuterRx">, 1<<20>();
+  return allocator;
+}
 
 using Bytes = ZtArray<uint8_t, ZtArrayHeapID<"ZwsTest.Bytes">>;
 
 using H1Rx = ZiRxStream<ZiRxQueue>;
-using H1BufAlloc = Zi::IOBufBuiltin<
-  ZiRxQueue::Node,
-  256,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"ZwsTest.H1Rx">,
-  2048>;
+static auto h1BufAllocator()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<
+    Zi::IOBufType::App, ZiRxQueue::Node, 256, ZiIOBuf_DefltAlign,
+    ZuStringT<"ZwsTest.H1Rx">, 2048>();
+  return allocator;
+}
 
 void push(H1Rx &rx, ZuCSpan data)
 {
-  ZmRef<ZiRxQueue::Node> buf = new H1BufAlloc{ZmSingleton<typename H1BufAlloc::Allocator>::instance()};
+  ZmRef<ZiRxQueue::Node> buf = h1BufAllocator()->allocBuf();
   *buf << data;
   rx.push(ZuMv(buf));
 }
@@ -301,7 +306,7 @@ struct App :
 
   int feed(Bytes &wire) {
     if (wire) {
-      ZmRef<ZiRxQueue::Node> buf = new OuterBufAlloc{ZmSingleton<typename OuterBufAlloc::Allocator>::instance()};
+      ZmRef<ZiRxQueue::Node> buf = outerBufAllocator()->allocBuf();
       *buf << wire;
       auto span = buf->span();
       wireData = span.data();
@@ -1490,7 +1495,7 @@ void txOwnedViewCase()
   ZuTestScope(txOwnedViewCase);
   WireTx lower;
   CounterRandom random;
-  ZmRef<ZiIOBuf> source = new BufAlloc{ZmSingleton<typename BufAlloc::Allocator>::instance()};
+  ZmRef<ZiIOBuf> source = testBufAllocator()->allocBuf();
   source->skip = 16;
   *source << "xxpayloadtail";
   auto out = Zws::txLayer<Masked>(lower, Zws::Opcode::Binary, &random);
@@ -1521,7 +1526,7 @@ void txMixedOwnedCase()
   ZuTestScopeRT(txMixedOwnedCase);
   WireTx lower;
   CounterRandom random;
-  ZmRef<ZiIOBuf> source = new BufAlloc{ZmSingleton<typename BufAlloc::Allocator>::instance()};
+  ZmRef<ZiIOBuf> source = testBufAllocator()->allocBuf();
   *source << "payload";
   auto out = Zws::txLayer<Masked>(lower, Zws::Opcode::Binary, &random);
   out << "pre";
@@ -1555,16 +1560,20 @@ void txMixedOwnedCase()
 
 struct TCPOwnedLink {
   using TxBufAlloc = Zhttp::Transport_::TCPTxBufAlloc;
-  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, typename TxBufAlloc::Buf,
-    TxBufAlloc::Size, TxBufAlloc::MaxSize>;
-  Allocator allocator;
+  ZiMultiplex mx;
+  Zi::IOBufAllocator *allocator = mx.allocator<Zi::IOBufType::TxTCP,
+    typename TxBufAlloc::Buf, TxBufAlloc::Size, ZiIOBuf_DefltAlign,
+    ZiIOBuf_HeapID, TxBufAlloc::VHMaxSize>();
   ZmRef<Zhttp::Transport_::TCPHeader> head;
   ZtArray<ZmRef<ZiIOBuf>, ZtArrayHeapID<"Zws.Test.OwnedParts">> parts;
   unsigned allocated = 0, ended = 0, owned = 0;
 
+  Zi::IOBufAllocator *txAllocator() const { return allocator; }
+  unsigned txBufSize_() const { return allocator->size; }
+
   ZmRef<ZiIOBuf> allocTxBuf_() {
     ++allocated;
-    return allocator.allocBuf();
+    return allocator->allocBuf();
   }
   bool startTCP(ZmRef<Zhttp::Transport_::TCPHeader> h, bool) {
     head = ZuMv(h); return true;
@@ -1661,7 +1670,7 @@ void txOwnedTCP()
     ZuCheckRT(out.flush() && link.allocated == 3 && link.parts.length() == 2 &&
       link.parts[1].ptr() != later.ptr() && later->cspan() == replay);
   }
-  ZmRef<ZiIOBuf> borrowed = new BufAlloc{ZmSingleton<typename BufAlloc::Allocator>::instance()};
+  ZmRef<ZiIOBuf> borrowed = testBufAllocator()->allocBuf();
   *borrowed << "borrowed";
   {
     auto out = Zws::txLayer<true>(lower, Zws::Opcode::Binary, &random);

@@ -178,6 +178,8 @@ inline Ztls::ClientParams clientParams(
   const auto &tls = config.tls();
   params.asyncThread(hub.asyncThread())
     .rxAllocator(tls.rxAllocator()).txAllocator(tls.txAllocator())
+    .txPacketAllocator(tls.txPacketAllocator())
+    .socketRxAllocator(tls.socketRxAllocator())
     .caPath(tls.caPath()).certPath(tls.certPath())
     .keyPath(tls.keyPath());
   alpn(params, config.policy());
@@ -192,6 +194,8 @@ inline Ztls::ServerParams serverParams(
   const auto &tls = config.tls();
   params.asyncThread(hub.asyncThread())
     .rxAllocator(tls.rxAllocator()).txAllocator(tls.txAllocator())
+    .txPacketAllocator(tls.txPacketAllocator())
+    .socketRxAllocator(tls.socketRxAllocator())
     .caPath(tls.caPath()).certPath(tls.certPath())
     .keyPath(tls.keyPath());
   params.mTLS(tls.mTLS()).cacheTimeout(tls.cacheTimeout());
@@ -402,6 +406,14 @@ private:
   bool m_valid = true;
 };
 
+inline ZmRef<ZiIOBuf> allocPayloadTx()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::TxTLS, ZiRxQueue::Node,
+    ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.H2.Tx">>();
+  return allocator->allocBuf();
+}
+
 template <typename Native, bool AppThread = true>
 class HeaderBlock {
   using DataFrames =
@@ -513,7 +525,7 @@ public:
 	uint64_t offset, unsigned length) {
       do {
 	unsigned chunk = length < m_frameSize ? length : m_frameSize;
-	ZmRef<ZiIOBuf> part = new BodyBufAlloc{ZmSingleton<typename BodyBufAlloc::Allocator>::instance()};
+	ZmRef<ZiIOBuf> part = allocPayloadTx();
 	part->append(payload->data() + unsigned(offset), chunk);
 	m_frames.push(TxFrame{FrameHeader{
 	  .length = chunk,
@@ -839,9 +851,10 @@ class Wire : public H2::Connection<Wire<Impl, AppLink>> {
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       if (!m_wire->m_controlAdmission.push()) return false;
       if constexpr (AppThread) {
-	m_wire->impl_()->app()->txRun([
-	  wire = m_wire, buf = ZuMv(buf)]() mutable {
-	  wire->queueControlTx(ZuMv(buf));
+	buf->owner = m_wire->impl_();
+	m_wire->impl_()->app()->txRun([buf = ZuMv(buf)]() mutable {
+	  auto link = static_cast<Impl *>(buf->owner);
+	  link->queueControlTx(ZuMv(buf));
 	});
       } else
 	m_wire->queueControlTx(ZuMv(buf));
@@ -2320,8 +2333,7 @@ private:
 	    source = ZuMv(head->buf);
 	    source->advance(FrameHeaderSize);
 	  }
-	  ZmRef<ZiIOBuf> copy = new BodyBufAlloc{
-	    ZmSingleton<typename BodyBufAlloc::Allocator>::instance()};
+	  ZmRef<ZiIOBuf> copy = allocPayloadTx();
 	  ZmRef<ZiIOBuf> first, rest;
 	  if (prefix <= length - prefix) {
 	    copy->append(source->data(), prefix);
@@ -2355,6 +2367,19 @@ private:
 	    frame[3] == FrameType::Continuation &&
 	    (frame[4] & Flag::EndHeaders))
 	  m_headerStream = 0;
+      } else {
+	ZmAssert(entry_->endMarker);
+	entry_->endMarker = false;
+	endStream = true;
+      }
+      // Publish closure before the peer can observe END_STREAM and reply.
+      // Rx reclamation returns through Tx, after this drain turn completes.
+      if (endStream)
+	impl_()->app()->rxRun([
+	  link = impl_(), id]() {
+	  link->h2LocalEnd(id);
+	});
+      if (pending) {
 	bool ok;
 	if (pending.buf) {
 	  auto tx = impl_()->txStream_();
@@ -2369,18 +2394,9 @@ private:
 	  frameTxFailed();
 	  return;
 	}
-      } else {
-	ZmAssert(entry_->endMarker);
-	entry_->endMarker = false;
-	endStream = true;
       }
       if (!partial) m_frameAdmission.pop();
       scheduleFrameTx(entry_);
-      if (endStream)
-	impl_()->app()->rxRun([
-	  link = impl_(), id]() {
-	  link->h2LocalEnd(id);
-	});
     }
     frameDrain_0();
     impl_()->h2CapacityTx(!m_connectionFrames.empty_());

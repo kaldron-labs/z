@@ -6,7 +6,7 @@
 
 // I/O Transmit Stream
 // - streams output into a sequence of fixed-capacity buffers
-// - each buffer is assumed to be a single protocol frame, e.g. a TLS record
+// - each buffer is assumed to be a single protocol frame, e.g. a TLS record or TCP packet
 // - applications define:
 //   - maxSize - overall capacity for each buffer
 //   - headRoom - how much space is reserved for a frame header
@@ -53,7 +53,6 @@ using TxErrorFn =
 
 struct Flush { };
 inline Flush flush() { return {}; }
-
 
 // CRTP - implementation must conform to the following interface:
 #if 0

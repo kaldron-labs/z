@@ -421,18 +421,15 @@ bool HQServerStream::pumpFile_()
     return true;
   }
   enum { ChunkSize = 64<<10 };
-  using FileBuf = Zi::IOBufBuiltin<
-    ZiIOBuf,
-    ChunkSize,
-    ZiIOBuf_DefltAlign,
-    ZuStringT<"ZhttpQIR.HQFile">,
-    ChunkSize>;
   if (!remaining) {
     finished = true;
     file.close();
     return this->link()->send(ZmRef<HQServerStream>{this}, ZuBSpan{}, true);
   }
-  ZmRef<ZiIOBuf> buf = new FileBuf{ZmSingleton<typename FileBuf::Allocator>::instance()};
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::TxTLS, ZiIOBuf,
+    ChunkSize, ZiIOBuf_DefltAlign, ZuStringT<"ZhttpQIR.HQFile">, ChunkSize>();
+  auto buf = allocator->allocBuf();
   unsigned count = remaining < ChunkSize ? unsigned(remaining) : unsigned(ChunkSize);
   int n = file.read(buf->data(), count);
   if (n <= 0 || unsigned(n) > count) {

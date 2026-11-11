@@ -228,10 +228,11 @@ int main(int argc, char **argv)
 
   Zi::IOBufAllocator *rx = App::Link::rxAllocator(&mx);
   Zi::IOBufAllocator *tx = App::Link::txAllocator(&mx);
+  auto txPacket = App::Link::txPacketAllocator(&mx);
 
   if (!app.init(Ztls::ClientParams(&mx, "3", "4").hub(
-      [&alpn, ca, &rx, &tx](auto &p) {
-	p.alpn(alpn).caPath(ca).rxAllocator(rx).txAllocator(tx);
+      [&alpn, ca, &rx, &tx, txPacket](auto &p) {
+	p.alpn(alpn).caPath(ca).rxAllocator(rx).txAllocator(tx).txPacketAllocator(txPacket);
       }))) {
     std::cerr << "TLS client initialization failed\n" << std::flush;
     return 1;

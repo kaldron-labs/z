@@ -164,15 +164,16 @@ using TableModelT = ZuDecay<decltype(*ZdbTableModel(ZuDeclVal<Impl *>()))>;
 
 class Cxn_ :
   public ZiConnection,
-  public ZiRx<Cxn_, RxBufAlloc>,
+  public ZiRx<Cxn_, MaxBufSize>,
   public ZiTx<Cxn_> {
 friend DB;
 friend Host;
 friend AnyTable;
 
-  using Rx = ZiRx<Cxn_, RxBufAlloc>;
+  using Rx = ZiRx<Cxn_, MaxBufSize>;
   using Tx = ZiTx<Cxn_>;
 friend Rx;
+friend Tx;
 
   using Rx::recv; // de-conflict with ZiConnection
   using Tx::send; // ''
@@ -188,10 +189,9 @@ private:
   void connected(ZiRxContext &);
   void disconnected(bool);
 
-  auto rxAllocator() const {
-    return static_cast<RxBufAllocator *>(info().rxAllocator);
-  }
+  Zi::IOBufAllocator *rxAllocator() const;
   void send(ZmRef<IOBuf>);
+  void sent(ZmRef<ZiTxBuf>, bool ok);
   void msgRead(ZiRxContext &);
   int msgRead2(ZmRef<IOBuf>);
   void msgRead3(ZmRef<IOBuf>);
@@ -2208,6 +2208,7 @@ private:
   ZiMultiplex		*m_mx = nullptr;
   ZmRef<Store>		m_store;
   Zi::IOBufAllocator	*m_rxAllocator = nullptr;
+  Zi::IOBufAllocator	*m_frameAllocator = nullptr;
   Zi::IOBufAllocator	*m_hbAllocator = nullptr;
   bool			m_repStore = false;	// replicated data store
 
@@ -2323,8 +2324,8 @@ inline void Table_<Impl_>::count(GroupKey<KeyID> key, L &&l)
 
   auto context = ZmRef(new Context{ZuFwd<L>(l)});
 
-  Builder fbb{new IOBufAlloc<T>{
-    Zdb_::localBufAllocator<T>(), nullptr, 0}, Zfb::BufferAlign<GroupKey<KeyID>>::N};
+  Builder fbb{Zdb_::localBufAllocator<T>()->allocBuf(),
+    Zfb::BufferAlign<GroupKey<KeyID>>::N};
   fbb.finish(Zfb::save(fbb, key));
   auto keyBuf = fbb.buf();
   AnyTable::count(KeyID, ZuMv(keyBuf), ZuMv(context));
@@ -2345,8 +2346,7 @@ inline void Table_<Impl_>::select_(
 
   auto context = ZmRef(new Context{this, ZuFwd<L>(l)});
 
-  Builder fbb{new IOBufAlloc<T>{
-    Zdb_::localBufAllocator<T>(), nullptr, 0}, Zfb::BufferAlign<SelectKey>::N};
+  Builder fbb{Zdb_::localBufAllocator<T>()->allocBuf(), Zfb::BufferAlign<SelectKey>::N};
   fbb.finish(Zfb::save(fbb, selectKey));
   auto keyBuf = fbb.buf();
 
@@ -2405,8 +2405,7 @@ inline void Table_<Impl_>::retrieve(
   auto context = ZmRef(new Context{
     this, shard, ZuMv(key), ZuFwd<L>(l)});
 
-  Builder fbb{new IOBufAlloc<T>{
-    Zdb_::localBufAllocator<T>(), nullptr, 0}, Zfb::BufferAlign<Key_>::N};
+  Builder fbb{Zdb_::localBufAllocator<T>()->allocBuf(), Zfb::BufferAlign<Key_>::N};
   fbb.finish(Zfb::save(fbb, context->key));
   auto keyBuf = fbb.buf();
   AnyTable::retrieve(KeyID, ZuMv(keyBuf), ZuMv(context));

@@ -317,8 +317,11 @@ private:
     uint64_t cap = m_limits.bufferBytes;
     if (!cap) {
       cap = m_limits.codec.frameBytes;
-      using Buffer = Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
-      if (cap < Buffer::Size) cap = Buffer::Size;
+      // A native plaintext record may be larger than this FIX frame limit.
+      // Bound retained backing by its configured pool geometry independently
+      // of the checked message length; explicit bufferBytes remains a hard cap.
+      if (input.buffer && cap < input.buffer->allocator()->size)
+	cap = input.buffer->allocator()->size;
     }
     if (!input.buffer || input.buffer->size > cap ||
 	input.frame.wire.length() > m_limits.codec.frameBytes) {

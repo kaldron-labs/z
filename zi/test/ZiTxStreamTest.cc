@@ -10,17 +10,15 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZtArray.hh>
 
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiTxStream.hh>
 
 using namespace ZuTestUtil;
 
 namespace ZiTxStreamTest_ {
-
-using StreamAllocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 64, 256>;
 
 struct BigPrint_Print;
 struct BigPrint {
@@ -47,6 +45,9 @@ struct StreamHarness {
   using SentBufs =
     ZtArray<Sent, ZtArrayHeapID<"ZiTxStreamTest.Sent">>;
 
+  ZiMultiplex mx;
+  Zi::IOBufAllocator *allocator =
+    mx.allocator<Zi::IOBufType::App, ZiIOBuf, 64, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 256>();
   SentBufs		sent;
   unsigned		allocCount = 0;
   bool			sendOK = true;
@@ -55,8 +56,8 @@ struct StreamHarness {
   ZmRef<ZiIOBuf> alloc(unsigned headRoom) {
     // Model lower-layer admission rejection, not Z heap allocation failure.
     if (++allocCount == rejectAt) return nullptr;
-    ZmRef<ZiIOBuf> buf = ZmSingleton<StreamAllocator>::instance()->allocBuf();
-    buf->skip = headRoom;
+    ZmRef<ZiIOBuf> buf = allocator->allocBuf();
+    buf->skip += headRoom;
     buf->length = 0;
     return buf;
   }
@@ -130,7 +131,7 @@ void testAdoptedBuffers()
   ZuTestScope(testAdoptedBuffers);
   StreamHarness direct;
   TestTxStream same{direct, 12, 2, 1};
-  ZmRef<ZiIOBuf> small = ZmSingleton<StreamAllocator>::instance()->allocBuf();
+  ZmRef<ZiIOBuf> small = direct.allocator->allocBuf();
   small->skip = 3;
   small->append(ZuBSpan{"small"});
   same << small;
@@ -140,7 +141,7 @@ void testAdoptedBuffers()
 
   StreamHarness split;
   TestTxStream frames{split, 12, 2, 1};
-  ZmRef<ZiIOBuf> large = ZmSingleton<StreamAllocator>::instance()->allocBuf();
+  ZmRef<ZiIOBuf> large = split.allocator->allocBuf();
   large->skip = 7;
   large->append(ZuBSpan{"abcdefghijklmnopqrst"});
   frames << large;
@@ -154,7 +155,7 @@ void testAdoptedBuffers()
 
   StreamHarness geometry;
   TestTxStream adjusted{geometry, 12, 2, 1};
-  ZmRef<ZiIOBuf> noRoom = ZmSingleton<StreamAllocator>::instance()->allocBuf();
+  ZmRef<ZiIOBuf> noRoom = geometry.allocator->allocBuf();
   noRoom->append(ZuBSpan{"space"});
   noRoom->size = noRoom->length; // readable storage has no head or tail space
   adjusted << noRoom;

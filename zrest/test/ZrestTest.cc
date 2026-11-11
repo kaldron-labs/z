@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuHex.hh>
 
@@ -40,8 +41,8 @@ struct BodySink {
   unsigned tailRoom() const { return 0; }
   unsigned maxSize() const { return UINT_MAX; }
   ZmRef<ZiIOBuf> allocBuf(unsigned head) {
-    allocated = new Zrest::InputBuf{ZmSingleton<typename Zrest::InputBuf::Allocator>::instance()};
-    allocated->skip = head;
+    allocated = Zrest::inputBufAllocator(Zi::IOBufType::App)->allocBuf();
+    allocated->skip += head;
     return allocated;
   }
   BodySink &operator <<(ZmRef<ZiIOBuf> value) {
@@ -282,13 +283,11 @@ static void endpointHandoffTest()
 
 struct FragmentRx : public ZiRxStream<ZiRxQueue> {
   FragmentRx(ZuSpan<uint8_t> bytes) {
-    using Buf = Zi::IOBufBuiltin<
-      ZiRxQueue::Node,
-      ZiIOBuf_DefltSize,
-      ZiIOBuf_DefltAlign,
-      ZuStringT<"Zrest.Test.Rx">,
-      ZiIOBuf_DefltMaxSize>;
-    ZmRef<ZiRxQueue::Node> buf = new Buf{ZmSingleton<typename Buf::Allocator>::instance()};
+    static ZiMultiplex mx;
+    static auto allocator = mx.allocator<
+      Zi::IOBufType::App, ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
+      ZuStringT<"Zrest.Test.Rx">, ZiIOBuf_DefltVHMaxSize>();
+    ZmRef<ZiRxQueue::Node> buf = allocator->allocBuf();
     buf->append(bytes);
     push(ZuMv(buf));
   }
@@ -1432,14 +1431,12 @@ static void signatureQueryTest()
 static void inputOwnedTest()
 {
   ZuTestScope(inputOwned);
-  using Alloc = Zi::IOBufBuiltin<
-    ZiRxQueue::Node,
-    32,
-    ZiIOBuf_DefltAlign,
-    ZuStringT<"Zrest.InputOwnedTest">,
-    512>;
-  auto alloc = []() {
-    return ZmRef<ZiRxQueue::Node>{new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()}};
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<
+    Zi::IOBufType::App, ZiRxQueue::Node, 32, ZiIOBuf_DefltAlign,
+    ZuStringT<"Zrest.InputOwnedTest">, 512>();
+  auto alloc = []() -> ZmRef<ZiRxQueue::Node> {
+    return allocator->allocBuf();
   };
   auto original = alloc();
   *original << "xxbodytail";
@@ -1504,19 +1501,17 @@ static void fragmentedFixedBody()
   parser.init();
   parser.bodyMax(4);
   ZuCheckRT(parser.bodyInfo(Zhttp::BodyType::Fixed, 4));
-  using Alloc = Zi::IOBufBuiltin<
-    ZiRxQueue::Node,
-    32,
-    ZiIOBuf_DefltAlign,
-    ZuStringT<"Zrest.Test.FixedBody">,
-    512>;
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<
+    Zi::IOBufType::App, ZiRxQueue::Node, 32, ZiIOBuf_DefltAlign,
+    ZuStringT<"Zrest.Test.FixedBody">, 512>();
   Zhttp::Input rx;
-  ZmRef<ZiRxQueue::Node> first = new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()};
+  ZmRef<ZiRxQueue::Node> first = allocator->allocBuf();
   *first << "ab";
   rx.push(first);
   ZuCheckRT(parser.body(rx));
   ZuCheckRT(rx.length() == 2 && !parser.bodySeen);
-  ZmRef<ZiRxQueue::Node> second = new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()};
+  ZmRef<ZiRxQueue::Node> second = allocator->allocBuf();
   *second << "cd";
   rx.push(second);
   ZuCheckRT(parser.body(rx));

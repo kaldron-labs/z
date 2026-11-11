@@ -402,7 +402,7 @@ public:
     return n;
   }
   ZmRef<ZiIOBuf> frame(unsigned maxBytes) const {
-    ZmRef<ZiIOBuf> body = new BatchBuf{ZmSingleton<typename BatchBuf::Allocator>::instance()};
+    ZmRef<ZiIOBuf> body = batchBufAllocator()->allocBuf();
     BufOutput out{*body, maxBytes};
     write(out);
     return out ? ZuMv(body) : ZmRef<ZiIOBuf>{};

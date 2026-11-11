@@ -9,6 +9,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZiIOContext.hh>
+#include <zlib/ZiMultiplex.hh>
 
 using namespace ZuTestUtil;
 
@@ -17,8 +18,9 @@ void testInitAndCallback()
   ZuTestScope(testInitAndCallback);
 
   ZiTxContext io;
-  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 8> allocator{nullptr};
-  ZmRef<ZiIOBuf> buf = allocator.allocBuf();
+  ZiMultiplex allocatorMx;
+  auto allocator = allocatorMx.allocator<Zi::IOBufType::App, ZiIOBuf, 8>();
+  ZmRef<ZiIOBuf> buf = allocator->allocBuf();
   bool called = false;
 
   io.tos = uint8_t(3);
@@ -46,8 +48,9 @@ void testCompleteAndDisconnect()
   ZuTestScope(testCompleteAndDisconnect);
 
   ZiRxContext io;
-  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 4> allocator{nullptr};
-  ZmRef<ZiIOBuf> buf = allocator.allocBuf();
+  ZiMultiplex allocatorMx;
+  auto allocator = allocatorMx.allocator<Zi::IOBufType::App, ZiIOBuf, 4>();
+  ZmRef<ZiIOBuf> buf = allocator->allocBuf();
 
   io.tos = uint8_t(2);
   io.init(ZiRxFn{[](ZiRxContext &) { return true; }}, buf);

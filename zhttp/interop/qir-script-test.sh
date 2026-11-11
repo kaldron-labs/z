@@ -7,6 +7,21 @@ builddir=${2:?build directory required}
 zi_residue_init zhttp-qir-script-test
 
 tmp=$ZI_RESIDUE_DIR
+# These tests use a synthetic runner. Keep metadata and cleanup calls away
+# from the host daemon, which may be serving a concurrent real QIR run.
+mkdir -p "$tmp/bin"
+cat >"$tmp/bin/docker" <<'EOF'
+#!/bin/sh
+case "$1" in
+  version) printf '%s\n' fixture ;;
+  image|rm) ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$tmp/bin/docker"
+PATH="$(CDPATH= cd -- "$tmp/bin" && pwd):$PATH"
+export PATH
+
 cleanup()
 {
   status=$?
@@ -182,7 +197,7 @@ grep -q 'started_at=' "$tmp/run/metadata.env"
 grep -q 'finished_at=' "$tmp/run/metadata.env"
 grep -q 'host_kernel=' "$tmp/run/metadata.env"
 grep -q 'cpu_model=' "$tmp/run/metadata.env"
-grep -q 'docker_version=' "$tmp/run/metadata.env"
+grep -q '^docker_version=fixture$' "$tmp/run/metadata.env"
 "$srcdir/scripts/qir-report" \
   --in "$tmp/run" \
   --out "$tmp/run-report.md"

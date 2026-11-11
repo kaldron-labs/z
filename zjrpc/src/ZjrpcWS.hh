@@ -61,9 +61,9 @@ private:
 // where Zws's own Rx queue no longer accounts for their retained input buffers.
 class WSRx {
 public:
-  int begin(Zws::Opcode::T opcode, const Limits &limits) {
+  int begin(Zws::Opcode::T opcode, const Limits &limits, Zi::IOBufType::T type) {
     if (m_closed || opcode != Zws::Opcode::Text) return -1;
-    return m_input.begin(0, limits.maxJSONBytes) ? 1 : -1;
+    return m_input.begin(0, limits.maxJSONBytes, type) ? 1 : -1;
   }
   template <typename Rx>
   int process(Rx &rx) {
@@ -124,7 +124,8 @@ public:
       link.close(Zws::CloseCode::Unsupported);
       return -1;
     }
-    int rc = link.state().rx.begin(opcode, endpoint()->limits());
+    int rc = link.state().rx.begin(
+      opcode, endpoint()->limits(), link.channel().rxBufType());
     if (rc < 0) link.close(Zws::CloseCode::TooLarge);
     return rc;
   }
@@ -156,7 +157,7 @@ protected:
   }
   template <bool Closed, typename Link>
   void control_(Link &link, uint16_t code, ZuBSpan payload) {
-    ZmRef<ZiIOBuf> body = new InputBuf{ZmSingleton<typename InputBuf::Allocator>::instance()};
+    ZmRef<ZiIOBuf> body = inputBufAllocator(link.channel().rxBufType())->allocBuf();
     if (!body->append(payload)) { link.close(Zws::CloseCode::Internal); return; }
     link.app()->txRun([this, link = ZmRef{&link}, body = ZuMv(body), code]() mutable {
       (void)code;

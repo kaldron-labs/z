@@ -34,7 +34,7 @@ public:
     while (input == stream && *stream) {
       int n = impl->process_(*stream);
       if (!n) return;
-      if (n < 0) { impl->disconnect_(); return; }
+      if (n < 0) { impl->fixCloseRx(true); return; }
     }
   }
 
@@ -56,8 +56,11 @@ struct TCP {
   using SrvLink = Ztcp::SrvLink<App, Impl, Rx, Tx>;
   using RxStream = Ztcp::RxStream;
   template <unsigned Size = ZiIOBuf_DefltSize,
-    unsigned Max = ZiIOBuf_DefltMaxSize, ZuString Heap = "Zfix.TCP.Rx">
+    unsigned Max = ZiIOBuf_DefltVHMaxSize, ZuString Heap = "Zfix.TCP.Rx">
   using RxBufAlloc = Ztcp::RxBufAlloc<Size, Max, Heap>;
+  template <unsigned Size = ZiIOBuf_DefltSize,
+    unsigned Max = ZiIOBuf_DefltVHMaxSize, ZuString Heap = ZiIOBuf_HeapID{}()>
+  using TxBufAlloc = Ztcp::TxBufAlloc<Size, Max, Heap>;
 };
 
 struct TLS {
@@ -72,9 +75,12 @@ struct TLS {
   template <typename App, typename Impl, typename Rx, typename Tx>
   using SrvLink = Ztls::SrvLink<App, Impl, Rx, Tx>;
   using RxStream = Ztls::RxStream;
-  template <unsigned Size = ZiIOBuf_DefltSize,
-    unsigned Max = ZiIOBuf_DefltMaxSize, ZuString Heap = "Zfix.TLS.Rx">
+  template <unsigned Size = Ztls_::RxRecordCapacity,
+    unsigned Max = ZiIOBuf_DefltVHMaxSize, ZuString Heap = "Zfix.TLS.Rx">
   using RxBufAlloc = Ztls::RxBufAlloc<Size, Max, Heap>;
+  template <unsigned Size = Ztls_::TxRecordCapacity,
+    unsigned Max = ZiIOBuf_DefltVHMaxSize, ZuString Heap = ZiIOBuf_HeapID{}()>
+  using TxBufAlloc = Ztls::TxBufAlloc<Size, Max, Heap>;
 };
 
 // Immutable defaults shared by newly constructed links; posted quotas are hub
@@ -113,6 +119,12 @@ template <typename Net> struct NativeRx {
 // Stateless native hooks for managed and raw links.
 template <typename Impl, typename Net> class LinkHooks {
 public:
+  void fixCloseRx(bool notify) {
+    // A queued protocol notice may arrive after native Rx has discharged the
+    // physical close, while the FIX owner drain is still pending.
+    if (impl()->cxn()) impl()->disconnect_(notify);
+  }
+
   TraceField fixTraceField(ZuCSpan type, int32_t tag) {
     return traceField<typename Impl::MessageCatalog>(type, tag);
   }
@@ -184,7 +196,18 @@ public:
   }
 
   ZmRef<ZiRxQueue::Node> fixAllocRx() {
-    return impl()->rxAllocator()->allocBuf(impl());
+    if constexpr (Net::Encrypted) return impl()->app()->rxAllocator()->allocBuf(impl());
+    else {
+      // FIX framing may need writable storage while gathering TCP fragments.
+      static auto allocator = []<
+        Zi::IOBufType::T Type, typename Buf, unsigned Size, unsigned Align,
+        typename HeapID, unsigned VHMaxSize, auto Grow
+      >(Zi::IOBufBuiltinAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow> *) {
+        static ZiMultiplex mx;
+        return mx.allocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>();
+      }(static_cast<typename Impl::RxBufAlloc *>(nullptr));
+      return allocator->allocBuf(impl());
+    }
   }
 
   WireGeometry fixGeometryTx() {
@@ -194,17 +217,23 @@ public:
       g.size = impl()->txMaxSize();
       g.head = impl()->template txHeadRoom<false>();
       g.tail = impl()->template txTailRoom<false>();
-      g.memory = ZmHeapAllocSize<sizeof(typename Impl::TxBufAlloc)>{} +
+      g.memory = ZmHeapAllocSize<sizeof(Zi::IOBufBuiltin<typename Impl::TxBufAlloc::Buf,
+	Impl::TxBufAlloc::Size, ZiIOBuf_Align>)>{} +
 	(g.size > Impl::TxBufAlloc::Size ? Zfix::jumboBytes(g.size) : 0);
     }
     return g;
   }
 
   ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
-    ZmRef<ZiIOBuf> b = impl()->txAllocator()->allocBuf(impl()); b->skip = head;
+    auto allocator = impl()->txAllocator();
+    auto b = allocator->allocBuf(impl());
+    if (ZuUnlikely(!b)) return nullptr;
+    if (head < b->skip) head = b->skip;
+    if (head > b->size || allocator->tailRoom > b->size - head) return nullptr;
+    b->skip = head;
     if constexpr (Net::Encrypted) {
       unsigned size = impl()->txMaxSize();
-      if (b->size < size) b->ensure(size - head);
+      if (b->size < size && !b->ensure(size - head)) return nullptr;
     }
     return b;
   }

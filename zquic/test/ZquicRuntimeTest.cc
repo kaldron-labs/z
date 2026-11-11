@@ -13,7 +13,6 @@
 
 #include <iostream>
 
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZtString.hh>
@@ -182,6 +181,9 @@ struct TestServer :
   using Link = TestServerLink;
   using Stream = TestServerStream;
 
+  ZmAtomic<unsigned> holdHandshakeDone = 0;
+  ZmAtomic<unsigned> heldHandshakeDone = 0;
+
   ZmRef<Link> link(unsigned i = unsigned(-1));
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
   void clearLinks();
@@ -220,6 +222,12 @@ struct TestServer :
     return false;
   }
   bool sendFrame(const Zquic::SentFrameRef &ref) {
+    if (holdHandshakeDone &&
+	ref.kind == Zquic::SentFrameKind::Control &&
+	ref.controlType == Zquic::FrameType::HandshakeDone) {
+      ++heldHandshakeDone;
+      return false;
+    }
     if (ref.kind != Zquic::SentFrameKind::Stream) return true;
     ++streamFrames;
     if (dropStreamID < 0 || ref.streamID != uint64_t(dropStreamID))
@@ -272,12 +280,31 @@ friend inline ZuStringT<"Zquic.Runtime.CliLink"> ZmNHeapID(Link *);
   using Base = Zquic::CliLink<TestClient, TestClient::Link,
     TestClient::Stream>;
   using Base::Base;
+  using CryptoSnapshot = typename Base::TxCryptoSnapshot;
+
+  CryptoSnapshot handshakeKeys;
 
   Link(TestClient *app) : Base{app} { }
 
   void connected(Zquic::Connected) {
+    Base::snapshotTxCrypto(handshakeKeys);
     ++connectedCount;
     connectedEvent.post();
+  }
+  bool handshakeRxKeysLive() {
+    auto &crypto = Base::crypto_();
+    return crypto.rxSecretInstalled(Zquic::PktNumSpace::Handshake) ||
+      crypto.txSecretInstalled(Zquic::PktNumSpace::Handshake) ||
+      crypto.rxProtState(Zquic::PktNumSpace::Handshake).valid() ||
+      crypto.txProtState(Zquic::PktNumSpace::Handshake).valid();
+  }
+  bool handshakeTxKeysLive() const {
+    return Base::txSecretInstalled_(Zquic::PktNumSpace::Handshake);
+  }
+  bool staleKeysStayRetired() {
+    return Base::installTxCrypto(handshakeKeys) &&
+      !handshakeTxKeysLive() &&
+      Base::txSecretInstalled_(Zquic::PktNumSpace::AppData);
   }
   void disconnected(bool) {
     if (cxn()) ++earlyDisconnects;
@@ -410,12 +437,31 @@ friend inline ZuStringT<"Zquic.Runtime.SrvLink"> ZmNHeapID(TestServerLink *);
   using Base = Zquic::SrvLink<TestServer, TestServerLink,
     TestServerStream>;
   using Base::Base;
+  using CryptoSnapshot = typename Base::TxCryptoSnapshot;
+
+  CryptoSnapshot handshakeKeys;
 
   TestServerLink(TestServer *app) : Base{app} { }
 
   void connected(Zquic::Connected) {
+    Base::snapshotTxCrypto(handshakeKeys);
     ++connectedCount;
     connectedEvent.post();
+  }
+  bool handshakeRxKeysLive() {
+    auto &crypto = Base::crypto_();
+    return crypto.rxSecretInstalled(Zquic::PktNumSpace::Handshake) ||
+      crypto.txSecretInstalled(Zquic::PktNumSpace::Handshake) ||
+      crypto.rxProtState(Zquic::PktNumSpace::Handshake).valid() ||
+      crypto.txProtState(Zquic::PktNumSpace::Handshake).valid();
+  }
+  bool handshakeTxKeysLive() const {
+    return Base::txSecretInstalled_(Zquic::PktNumSpace::Handshake);
+  }
+  bool staleKeysStayRetired() {
+    return Base::installTxCrypto(handshakeKeys) &&
+      !handshakeTxKeysLive() &&
+      Base::txSecretInstalled_(Zquic::PktNumSpace::AppData);
   }
   void streamed(ZmRef<Stream>) {
     ++streamedCount;
@@ -722,8 +768,10 @@ void testOwnedStreamAPI(const Sender &sender, const Receiver &receiver,
   auto output = openStream(sender);
   ZQUIC_CHECK_RT(output, "owned stream did not open");
   if (!output) return;
-  ZmRef<ZiIOBuf> backing = new Zquic::StreamTxBufAlloc<8192, 8192>{
-    ZmSingleton<typename Zquic::StreamTxBufAlloc<8192, 8192>::Allocator>::instance(), nullptr, 0};
+  static ZiMultiplex mx;
+  static auto allocator = Zquic::plaintextAllocator<
+    Zquic::StreamTxBufAlloc<8192, 8192>>(&mx);
+  auto backing = allocator->allocBuf();
   backing->skip = 9;
   backing->append(reinterpret_cast<const uint8_t *>("prefix!"), 7);
   backing->append(expected, N);
@@ -1186,6 +1234,109 @@ void testHandshakeCryptoLoss()
     mx.stop();
   }
 
+  mx.stop();
+}
+
+template <typename Link>
+unsigned handshakeKeysLive(const ZmRef<Link> &link)
+{
+  return ZmBlock<unsigned>{}([&link](auto wake) {
+    link->app()->rxRun([link, wake = ZuMv(wake)]() mutable {
+      unsigned rx = link->handshakeRxKeysLive();
+      link->app()->txRun([link, rx, wake = ZuMv(wake)]() mutable {
+	wake(rx | (unsigned(link->handshakeTxKeysLive()) << 1));
+      });
+    });
+  });
+}
+
+template <typename Link>
+bool staleKeysStayRetired(const ZmRef<Link> &link)
+{
+  return ZmBlock<bool>{}([&link](auto wake) {
+    link->app()->txRun([link, wake = ZuMv(wake)]() mutable {
+      wake(link->staleKeysStayRetired());
+    });
+  });
+}
+
+void testHandshakeKeyRetirement()
+{
+  ZuTestScopeRT(testHandshakeKeyRetirement);
+
+  TempDir temp;
+  ZQUIC_CHECK_RT(temp.init(), "key retirement TLS certificate failed");
+  ZiMultiplex mx(
+    ZiMxParams().scheduler([](auto &s) {
+      s.nThreads(5)
+	.thread(1, [](auto &t) { t.isolated(1); })
+	.thread(2, [](auto &t) { t.isolated(1); })
+	.thread(3, [](auto &t) { t.isolated(1); })
+	.thread(4, [](auto &t) { t.isolated(1); });
+    }).rxThread(1).txThread(2));
+  TestServer server;
+  ZQUIC_CHECK_RT(server.init(
+      Zquic::ServerParams(&mx, "3", "4")
+	.certPath(temp.certPath.cspan())
+	.keyPath(temp.keyPath.cspan())
+	.maxData(32768).maxStreamData(8192).maxStreamsDuplex(8)
+	.alpn(ZuSpan<ZuCSpan>{"h3"})),
+    "key retirement server init failed");
+  TestClient client;
+  ZQUIC_CHECK_RT(client.init(
+      Zquic::ClientParams(&mx, "3", "4")
+	.caPath(temp.certPath.cspan())
+	.maxData(32768).maxStreamData(8192).maxStreamsDuplex(8)
+	.alpn(ZuSpan<ZuCSpan>{"h3"})),
+    "key retirement client init failed");
+  bool started = mx.start();
+  ZQUIC_CHECK_RT(started, "key retirement mx start failed");
+  if (!started) { client.final(); server.final(); return; }
+  ZQUIC_CHECK_RT(server.start() && server.listening(),
+    "key retirement server listen failed");
+  if (!server.listening()) {
+    server.stop(); client.final(); server.final(); mx.stop(); return;
+  }
+
+  server.holdHandshakeDone = true;
+  ZmRef<TestClient::Link> clientLink = new TestClient::Link{&client};
+  clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
+  ZmRef<TestServer::Link> serverLink;
+  bool established = waitEstablished(clientLink, server, serverLink);
+  ZQUIC_CHECK_RT(established, "key retirement handshake failed");
+  if (established) {
+    ZQUIC_CHECK_RT(waitUntil([&server]() { return bool(server.heldHandshakeDone); }),
+      "key retirement did not hold HANDSHAKE_DONE");
+    ZQUIC_CHECK_RT(waitUntil([&serverLink]() {
+      return !handshakeKeysLive(serverLink);
+    }), "server retained Handshake keys pending HANDSHAKE_DONE acknowledgment");
+    ZQUIC_CHECK_RT(handshakeKeysLive(clientLink) == 3,
+      "client discarded Handshake keys before confirmation");
+    ZQUIC_CHECK_RT(staleKeysStayRetired(serverLink),
+      "stale TLS snapshot restored retired server Handshake keys");
+
+    server.holdHandshakeDone = false;
+    auto stream = openStream(serverLink);
+    ZQUIC_CHECK_RT(stream && serverLink->send(stream, "confirm"),
+      "key retirement confirmation flush failed");
+    ZQUIC_CHECK_RT(clientLink->waitStreams(1, Zm::now(10)),
+      "key retirement protected response did not arrive");
+    ZQUIC_CHECK_RT(waitUntil([&clientLink]() {
+      return !handshakeKeysLive(clientLink);
+    }), "client retained Handshake keys after HANDSHAKE_DONE");
+    ZQUIC_CHECK_RT(staleKeysStayRetired(clientLink),
+      "stale TLS snapshot restored retired client Handshake keys");
+  }
+  bool closed = clientLink->close();
+  server.stop();
+  ZQUIC_CHECK_RT(closed && !server.connected(),
+    "key retirement endpoints remained connected");
+  waitDisconnect(server);
+  clientLink = nullptr;
+  serverLink = nullptr;
+  server.clearLinks();
+  client.final();
+  server.final();
   mx.stop();
 }
 
@@ -2072,6 +2223,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testEndpointOpen);
   ZuTestCall(testHandshakeCryptoLoss);
+  ZuTestCall(testHandshakeKeyRetirement);
   ZuTestCall(testMigrationLoss);
   ZuTestCall(testSrvMultiCxn);
   ZuTestCall(testRetryAddrValidate);

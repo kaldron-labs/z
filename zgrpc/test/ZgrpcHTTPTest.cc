@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "ZgrpcTestAllocator.hh"
+
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmSemaphore.hh>
@@ -40,18 +42,10 @@ ZgrpcCatalogImpl(Matrix);
 struct Sink : ZiTxStream<Sink> {
   Sink() : ZiTxStream<Sink>{1U << 20, 8, 4} { }
   ZmRef<ZiIOBuf> allocBuf_(unsigned head) {
-    ZmRef<ZiIOBuf> buf = new Zi::IOBufBuiltin<
-      ZiIOBuf,
-      32,
-      ZiIOBuf_DefltAlign,
-      ZuStringT<"Zgrpc.HTTPTest">,
-      1U << 20>{ZmSingleton<typename Zi::IOBufBuiltin<
-        ZiIOBuf,
-        32,
-        ZiIOBuf_DefltAlign,
-        ZuStringT<"Zgrpc.HTTPTest">,
-        1U << 20>::Allocator>::instance()};
-    buf->skip = head;
+    ZmRef<ZiIOBuf> buf = ZgrpcTest::Allocator<Zi::IOBufBuiltinAllocator<
+      Zi::IOBufType::App, ZiIOBuf, 32, ZiIOBuf_DefltAlign, ZuStringT<"Zgrpc.HTTPTest">,
+      1U << 20>>::get()->allocBuf();
+    buf->skip += head;
     allocated = buf;
     return buf;
   }
@@ -355,6 +349,8 @@ friend inline ZuStringT<"Zgrpc.HTTPTest.Recv"> ZmNHeapID(Receiver *);
 };
 struct Parser : ResParser<Parser, Duplex> { };
 
+using RxFixturePolicy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node>;
+
 static void deferredReceive(bool releaseSource)
 {
   ZuTestScope(deferredReceive);
@@ -370,23 +366,15 @@ static void deferredReceive(bool releaseSource)
   };
   field(Zhttp::FieldSection::Final, "content-type", "application/grpc");
   ZuCheck(parser.bodyInfo(nullptr, Zhttp::BodyType::Streamed, 0));
-  ZmRef<ZiRxBuf> coalesced = new ZiRxBufAlloc<>{ZmSingleton<typename ZiRxBufAlloc<>::Allocator>::instance()};
+  ZmRef<ZiRxBuf> coalesced = ZgrpcTest::Allocator<RxFixturePolicy>::get()->allocBuf();
   coalesced->append(ZuBSpan{"prefix"});
   unsigned prefix = coalesced->length;
   const uint8_t *payload = nullptr;
   for (unsigned i = 1; i <= 3; ++i) {
     FrameError::T error;
-    auto buf = encodeFrame(ZmRef<ZiIOBuf>{new Zi::IOBufBuiltin<
-      ZiIOBuf,
-      ZiIOBuf_DefltSize,
-      ZiIOBuf_DefltAlign,
-      ZiIOBuf_HeapID,
-      ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<
-        ZiIOBuf,
-        ZiIOBuf_DefltSize,
-        ZiIOBuf_DefltAlign,
-        ZiIOBuf_HeapID,
-        ZiIOBuf_DefltMaxSize>::Allocator>::instance()}}, 0, 100,
+    auto buf = encodeFrame(ZgrpcTest::Allocator<Zi::IOBufBuiltinAllocator<
+      Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID,
+      ZiIOBuf_DefltVHMaxSize>>::get()->allocBuf(), 0, 100,
       Packet{i, {"data"}}, error);
     auto offset = coalesced->length;
     coalesced->append(buf->cspan());
@@ -532,7 +520,7 @@ static void failedInput(ZuBSpan wire, Code::T expected, bool overflow = false,
   if (!response) input->meta().header(initial, "te", "trailers");
   ZuCheckRT(input->accept(nullptr));
   if (wire.length()) {
-    ZmRef<ZiIOBuf> buf = new ZiRxBufAlloc<>{ZmSingleton<typename ZiRxBufAlloc<>::Allocator>::instance()};
+    ZmRef<ZiIOBuf> buf = ZgrpcTest::Allocator<RxFixturePolicy>::get()->allocBuf();
     buf->append(wire);
     ZuCheckRT(input->enqueue(buf));
     if (overflow) ZuCheckRT(!input->enqueue(ZuMv(buf)));
@@ -637,17 +625,9 @@ static void corruptInput()
 	"content-type", "application/grpc");
     input->meta().header(Zhttp::FieldSection::Final, "te", "trailers");
     ZuCheckRT(input->accept(&channel));
-    ZmRef<ZiIOBuf> buf = new Zi::IOBufBuiltin<
-      ZiIOBuf,
-      ZiIOBuf_DefltSize,
-      ZiIOBuf_DefltAlign,
-      ZiIOBuf_HeapID,
-      ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<
-        ZiIOBuf,
-        ZiIOBuf_DefltSize,
-        ZiIOBuf_DefltAlign,
-        ZiIOBuf_HeapID,
-        ZiIOBuf_DefltMaxSize>::Allocator>::instance()};
+    ZmRef<ZiIOBuf> buf = ZgrpcTest::Allocator<Zi::IOBufBuiltinAllocator<
+      Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID,
+      ZiIOBuf_DefltVHMaxSize>>::get()->allocBuf();
     buf->append(i ? ZuBSpan{bytes} : ZuBSpan{scalar});
     ZuCheckRT(input->enqueue(ZuMv(buf)));
     ZuCheckRT(input->finished() && input->failed() && !input->retainedBytes());
@@ -656,17 +636,9 @@ static void corruptInput()
     input->complete(&channel, false);
     input->fail(Code::CANCELLED);
     ZuCheckRT(resets == 1 && receiver->ends == 1);
-    ZuCheckRT(!input->enqueue({new Zi::IOBufBuiltin<
-      ZiIOBuf,
-      ZiIOBuf_DefltSize,
-      ZiIOBuf_DefltAlign,
-      ZiIOBuf_HeapID,
-      ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<
-        ZiIOBuf,
-        ZiIOBuf_DefltSize,
-        ZiIOBuf_DefltAlign,
-        ZiIOBuf_HeapID,
-        ZiIOBuf_DefltMaxSize>::Allocator>::instance()}}));
+    ZuCheckRT(!input->enqueue({ZgrpcTest::Allocator<Zi::IOBufBuiltinAllocator<
+      Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID,
+      ZiIOBuf_DefltVHMaxSize>>::get()->allocBuf()}));
   }
 }
 

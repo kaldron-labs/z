@@ -447,13 +447,6 @@ ZmRef<QUICServer::Link> QUICServer::accepted(const Zquic::InitialInfo &)
   return link;
 }
 
-template <Zi::IOBufType::T Type, typename Buf>
-auto bufAllocator(ZiMultiplex &mx)
-{
-  return mx.allocator<Type, typename Buf::Buf,
-    Buf::Size, Buf::MaxSize, Buf::Align, typename Buf::Heap>();
-}
-
 template <typename Client, typename Server,
   Zi::IOBufType::T RxType, Zi::IOBufType::T TxType, typename ClientParams,
   typename ServerParams>
@@ -465,12 +458,22 @@ void runH1(
 
   Client client{&state};
   Server server{&state};
-  auto cliRx = bufAllocator<RxType, typename Client::Link::RxBufAlloc>(mx);
-  auto cliTx = bufAllocator<TxType, typename Client::Link::TxBufAlloc>(mx);
-  auto srvRx = bufAllocator<RxType, typename Server::Link::RxBufAlloc>(mx);
-  auto srvTx = bufAllocator<TxType, typename Server::Link::TxBufAlloc>(mx);
+  auto cliRx = Client::Link::rxAllocator(&mx);
+  auto cliTx = Client::Link::txAllocator(&mx);
+  auto srvRx = Server::Link::rxAllocator(&mx);
+  auto srvTx = Server::Link::txAllocator(&mx);
   cliParams.rxAllocator(cliRx).txAllocator(cliTx);
   srvParams.rxAllocator(srvRx).txAllocator(srvTx);
+  if constexpr (TxType == Zi::IOBufType::TxTLS) {
+    auto cliPacket = Client::Link::txPacketAllocator(&mx);
+    auto srvPacket = Server::Link::txPacketAllocator(&mx);
+    cliParams.txPacketAllocator(cliPacket);
+    srvParams.txPacketAllocator(srvPacket);
+    ZuCheckRT(cliTx->type == Zi::IOBufType::TxTLS &&
+      srvTx->type == Zi::IOBufType::TxTLS &&
+      cliPacket->type == Zi::IOBufType::TxTCP &&
+      srvPacket->type == Zi::IOBufType::TxTCP, log_("TLS allocator role mismatch"));
+  }
   bool serverInit = server.init(ZuMv(srvParams));
   bool clientInit = client.init(ZuMv(cliParams));
   ZuCheckRT(serverInit && clientInit, log_("hub initialization failed"));

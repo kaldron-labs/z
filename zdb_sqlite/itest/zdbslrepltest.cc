@@ -69,6 +69,11 @@ int main()
   auto followerCf = config(followerPath, "1");
 
   ZiMultiplex mx{ZvMxParams("mx", leaderCfFields.mx.p<const ZfCf::AnyNode *>())};
+#ifdef ZiMultiplex_DEBUG
+  // Fresh transport slots start with a five-byte read, splitting the frame
+  // header while message storage remains separate from the receive target.
+  mx.frag(true);
+#endif
 
   ZmSemaphore leaderUp;
   ZmSemaphore followerUp;
@@ -104,12 +109,12 @@ int main()
     orders->run(0, [orders, wake = ZuMv(wake)]() mutable {
       ZdbRowRef<zdbtest::Order> row = new ZdbRow<zdbtest::Order>{orders, 0};
       orders->insert(ZuMv(row), [wake = ZuMv(wake)](
-          ZdbRow<zdbtest::Order> *row) mutable {
-        if (!row) { wake(false); return; }
-        new (row->ptr()) zdbtest::Order{
-          "REPL", 1, "SL", "sqlite", 1,
-          zdbtest::Side::Buy, {100}, {7}};
-        wake(bool(row->commit()));
+	  ZdbRow<zdbtest::Order> *row) mutable {
+	if (!row) { wake(false); return; }
+	new (row->ptr()) zdbtest::Order{
+	  "REPL", 1, "SL", "sqlite", 1,
+	  zdbtest::Side::Buy, {100}, {7}};
+	wake(bool(row->commit()));
       });
     });
   });
@@ -120,12 +125,27 @@ int main()
   bool replicated = ZmBlock<bool>{}([orders = followerOrders.ptr()](auto wake) {
     orders->run(0, [orders, wake = ZuMv(wake)]() mutable {
       orders->find<0>(0, ZuFwdTuple("REPL", UINT64_C(1)),
-        [wake = ZuMv(wake)](ZdbRowRef<zdbtest::Order> row) mutable {
-          wake(row && row->data().clOrdID == "sqlite");
-        });
+	[wake = ZuMv(wake)](ZdbRowRef<zdbtest::Order> row) mutable {
+	  wake(row && row->data().clOrdID == "sqlite");
+	});
     });
   });
   ZuCheck(replicated);
+  ZuCheck(follower->stop());
+  // Reopen the promoted follower's own file and evict the cached row so this
+  // read verifies persisted replicated data through the store, not memory.
+  ZuCheck(follower->start());
+  followerUp.wait();
+  bool persisted = ZmBlock<bool>{}([orders = followerOrders.ptr()](auto wake) {
+    orders->run(0, [orders, wake = ZuMv(wake)]() mutable {
+      orders->evict<0>(0, ZuFwdTuple("REPL", uint64_t{1}));
+      orders->find<0>(0, ZuFwdTuple("REPL", uint64_t{1}),
+	[wake = ZuMv(wake)](ZdbRowRef<zdbtest::Order> row) mutable {
+	  wake(row && row->data().clOrdID == "sqlite");
+	});
+    });
+  });
+  ZuCheck(persisted);
   ZuCheck(follower->stop());
 
   leaderOrders = {};

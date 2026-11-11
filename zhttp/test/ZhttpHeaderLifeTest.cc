@@ -35,28 +35,11 @@ struct Header : Zhttp::Transport_::TCPHeader {
   }
 };
 
-using Ordinary = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, Header,
-  ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize>;
-
-
-template <typename Base>
-struct Allocator : ZmNHeap<Allocator<Base>>, Base {
-  friend inline ZuStringT<"Zhttp.Header.LifeAlloc"> ZmNHeapID(Allocator *) { return {}; }
-  using ZmNHeap<Allocator>::operator new;
-  using ZmNHeap<Allocator>::operator delete;
-  State *state;
-  template <typename ...Args>
-  Allocator(State *state_, Args &&...args) : Base{ZuFwd<Args>(args)...}, state{state_} { }
-  ~Allocator() {
-    state->allocator = nullptr;
-    state->allocatorStep = state->sequence.xchAdd(1) + 1;
-  }
-};
-
 template <typename A>
 ZmRef<Header> allocate(A &allocator, State &state, bool first)
 {
   auto raw = allocator.allocBuf();
+  if (ZuUnlikely(!raw)) return nullptr;
   auto head = ZmRef<Header>::acquire(static_cast<Header *>(ZuMv(raw).release()));
   head->state = &state;
   head->firstHeader = first;
@@ -68,9 +51,14 @@ void ordinaryLifetime()
 {
   ZuTestScope(ordinaryLifetime);
   State state;
-  auto allocator = new Allocator<Ordinary>{&state};
-  auto head = allocate(*allocator, state, true);
-  delete allocator; // ordinary embedded backing needs no allocator pin
+  ZmRef<Header> head;
+  {
+    ZiMultiplex mx;
+    head = allocate(*mx.allocator<Zi::IOBufType::App, Header>(), state, true);
+    ZuCheck(bool(head));
+    if (!head) return;
+  }
+  state.allocatorStep = state.sequence.xchAdd(1) + 1;
   ZuCheck(state.allocatorStep && !state.headers && head->cspan() == "header");
   head = nullptr;
   ZuCheck(state.headers == 1 && state.allocatorStep < state.firstStep);
@@ -85,8 +73,10 @@ void registeredLifetime(bool jumbo)
     auto allocator = mx.allocator<Zi::IOBufType::TxTCP, Header>();
     state.allocator = allocator;
     auto head = allocate(*allocator, state, true);
-    ZuCheckRT(head->allocator == allocator && allocator->mx() == &mx &&
-      allocator->type() == Zi::IOBufType::TxTCP);
+    ZuCheckRT(bool(head));
+    if (!head) return;
+    ZuCheckRT(head->allocator() == allocator && allocator->mx == &mx &&
+      allocator->type == Zi::IOBufType::TxTCP);
     if (jumbo) {
       ZuCheckRT(head->ensure(head->size + 1));
       ZuCheckRT(!head->builtin() && head->cspan() == "header");
@@ -146,6 +136,8 @@ void postedLifetime(bool early)
   ZmRef<Cxn> cxn = new Cxn{&mx};
   state.allocator = allocator;
   auto head = allocate(*allocator, state, true);
+  ZuCheckRT(bool(head));
+  if (!head) { mx.stop(); return; }
   configureCallbacks(head, mx);
   head->connection = cxn;
   if (early) {

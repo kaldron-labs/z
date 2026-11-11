@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "ZhttpTestAllocator.hh"
+
 #include <string.h>
 
 #include <zlib/ZuDerive.hh>
@@ -31,11 +33,8 @@ static void appendBytes(Zhttp::H3::HdrBytes &bytes, ZuBSpan s)
 
 namespace ZhttpQPackDynamicTest_ {
 
-using StreamAlloc = Zi::IOBufBuiltin<
-  ZiIOBuf,
-  256,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"ZhttpQPackDynamicTest.Buf">,
+using StreamAlloc = Zi::IOBufBuiltinAllocator<
+  Zi::IOBufType::App, ZiIOBuf, 256, ZiIOBuf_DefltAlign, ZuStringT<"ZhttpQPackDynamicTest.Buf">,
   4096>;
 using BuilderHeaderList = ZhttpHeaders("accept");
 ZhttpHdrCatalogDerive(BuilderHeaders, BuilderHeaderList);
@@ -53,17 +52,14 @@ struct CustomTarget {
   friend ZuPrintFn ZuPrintType(CustomTarget *);
 };
 using RxQueue = ZiRxQueue;
-using RxBufAlloc = Zi::IOBufBuiltin<
-  RxQueue::Node,
-  256,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"ZhttpQPackDynamicTest.RxBuf">,
-  1<<20>;
+using RxBufAlloc = Zi::IOBufBuiltinAllocator<
+  Zi::IOBufType::App, RxQueue::Node, 256, ZiIOBuf_DefltAlign,
+  ZuStringT<"ZhttpQPackDynamicTest.RxBuf">, 1<<20>;
 using RxStream = ZiRxStream<RxQueue>;
 
 static ZmRef<RxQueue::Node> rxBuf(ZuBSpan span)
 {
-  ZmRef<RxQueue::Node> buf = new RxBufAlloc{ZmSingleton<typename RxBufAlloc::Allocator>::instance()};
+  ZmRef<RxQueue::Node> buf = ZhttpTest::Allocator<RxBufAlloc>::get()->allocBuf();
   if (span.length()) buf->append(span);
   return buf;
 }
@@ -121,8 +117,8 @@ struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
   ~CaptureTxStream() { this->flush(); }
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-    ZmRef<ZiIOBuf> buf = new StreamAlloc{ZmSingleton<typename StreamAlloc::Allocator>::instance()};
-    buf->skip = headRoom;
+    ZmRef<ZiIOBuf> buf = ZhttpTest::Allocator<StreamAlloc>::get()->allocBuf();
+    buf->skip += headRoom;
     buf->length = 0;
     allocated = buf.ptr();
     return buf;

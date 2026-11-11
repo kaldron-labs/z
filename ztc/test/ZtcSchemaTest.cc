@@ -4,16 +4,24 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZmSingleton.hh>
 #include <limits.h>
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
 
 
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZtcDB.hh>
 #include <zlib/ZtcFB.hh>
 #include <zlib/ZtcMsg.hh>
+
+static ZmRef<ZiIOBuf> allocFrame()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf,
+    ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltVHMaxSize>();
+  return allocator->allocBuf();
+}
 
 using namespace ZuTestUtil;
 
@@ -22,7 +30,7 @@ void defaults()
   ZuTestScope(defaults);
   using ReqH = Zfb::As<Ztc::Request>::Handler<Ztc::Request>;
   using ErrH = Zfb::As<Ztc::Error>::Handler<Ztc::Error>;
-  Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Ztc::Builder builder{allocFrame()};
   auto table = builder.startTable();
   auto bytes = builder.finish(builder.endTable(table));
   auto loaded = Zfb::view<Ztc::Request>(bytes);
@@ -77,7 +85,7 @@ void app()
   data.degraded = true;
   data.rag = Ztc::RAG::Amber;
 
-  Ztc::Builder fbb{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Ztc::Builder fbb{allocFrame()};
   auto bytes = fbb.finish(Zfb::save(fbb, data));
   ZuCheck(Zfb::verify<Ztc::AppTelemetry>(bytes));
   auto fbo = Zfb::view<Ztc::AppTelemetry>(bytes);
@@ -114,7 +122,7 @@ void alert()
   data.date = uint32_t(20991231);
   data.severity = -7;
 
-  Ztc::Builder fbb{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Ztc::Builder fbb{allocFrame()};
   auto bytes = fbb.finish(Zfb::save(fbb, data));
   ZuCheck(Zfb::verify<Ztc::AlertTelemetry>(bytes));
   auto fbo = Zfb::view<Ztc::AlertTelemetry>(bytes);
@@ -139,7 +147,7 @@ void alert()
   ZuCheck(loaded.date == data.date);
   ZuCheck(loaded.severity == data.severity);
 
-  Ztc::Builder msgBuilder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Ztc::Builder msgBuilder{allocFrame()};
   auto nested = msgBuilder.startNested();
   auto id = msgBuilder.string("app");
   auto value = Zfb::save(msgBuilder, data);
@@ -160,7 +168,7 @@ void framing()
 {
   ZuTestScope(framing);
   Ztc::Builder fbb{
-    Ztc::frameBuf(ZmRef<ZiIOBuf>{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}})};
+    Ztc::frameBuf(allocFrame())};
   auto nested = fbb.startNested();
   Ztc::Request data;
   data.filter = "app";
@@ -199,8 +207,7 @@ void framing()
   ZuCheck(Ztc::loadHdr(buf.ptr(), UINT32_MAX) == INT_MAX);
 
   // Compose an unaligned lower transport reserve with the telemetry prefix.
-  ZmRef<ZiIOBuf> composed = new
-    Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()};
+  ZmRef<ZiIOBuf> composed = allocFrame();
   composed->skip = 19;
   auto original = composed->data_();
   Ztc::Builder outer{Ztc::frameBuf(composed)};
@@ -223,7 +230,7 @@ void framing()
   struct NoHeadroomBuilder : public NoHeadroom {
     ZmRef<ZiIOBuf> buf() { return buf_(); }
   };
-  ZmRef<ZiIOBuf> noHeadroomBuf = new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()};
+  ZmRef<ZiIOBuf> noHeadroomBuf = allocFrame();
   uint8_t noHeadroomByte = 42;
   noHeadroomBuf->append(&noHeadroomByte, 1);
   auto noHeadroomBody = noHeadroomBuf->data();
@@ -232,8 +239,7 @@ void framing()
   ZuCheck(noHeadroomBuf->data() == noHeadroomBody &&
     noHeadroomBuf->length == 1 && noHeadroomBuf->data()[0] == 42);
 
-  Ztc::Builder invalidOuter{Ztc::frameBuf(ZmRef<ZiIOBuf>{new
-    Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}})};
+  Ztc::Builder invalidOuter{Ztc::frameBuf(allocFrame())};
   auto outerNested = invalidOuter.startNested();
   auto req = Zfb::save(invalidOuter, Ztc::Request{.seqNo = 2});
   invalidOuter.finish(Ztc::saveMsg(invalidOuter, outerNested,
@@ -246,8 +252,7 @@ void framing()
   *const_cast<uint8_t *>(tag) = 127;
   ZuCheck(!Ztc::msg(invalidOuterBuf->ptr<Ztc::Hdr>()));
 
-  Ztc::Builder invalidValue{Ztc::frameBuf(ZmRef<ZiIOBuf>{new
-    Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}})};
+  Ztc::Builder invalidValue{Ztc::frameBuf(allocFrame())};
   auto valueNested = invalidValue.startNested();
   auto id = invalidValue.string("app");
   auto value = Zfb::save(invalidValue, Ztc::AppTelemetry{});
@@ -267,8 +272,7 @@ void framing()
 void requestFields()
 {
   ZuTestScope(requestFields);
-  Ztc::Builder builder{Ztc::frameBuf(ZmRef<ZiIOBuf>{new
-    Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}})};
+  Ztc::Builder builder{Ztc::frameBuf(allocFrame())};
   auto nested = builder.startNested();
   Ztc::Request data{
     .filter = "Tx:hub:link*", .seqNo = uint64_t(0x123456789abcdef0),
@@ -294,7 +298,7 @@ void requestFields()
 template <typename T>
 bool unionValue(unsigned type, const T &data)
 {
-  Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Ztc::Builder builder{allocFrame()};
   auto nested = builder.startNested();
   auto id = builder.string("app");
   auto value = Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(builder, data);
@@ -460,7 +464,7 @@ void telemetryValues()
     data.partition = uint16_t(0x8001);
     data.sharded = 3;
     data.alignment = 64;
-    Ztc::Builder fbb{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+    Ztc::Builder fbb{allocFrame()};
     fbb.finish(
       Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, data));
     auto fbo = Zfb::verify<Ztc::HeapTelemetry>(fbb.span()) ?
@@ -502,7 +506,7 @@ void telemetryValues()
     data.cBits = 9;
     data.linear = 1;
     data.shadow = 2;
-    Ztc::Builder fbb{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+    Ztc::Builder fbb{allocFrame()};
     fbb.finish(
       Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, data));
     auto fbo = Zfb::verify<Ztc::HashTelemetry>(fbb.span()) ?
@@ -516,7 +520,7 @@ void telemetryValues()
       ZuCheck(loaded.count == data.count && loaded.maxCount == data.maxCount);
       loaded.count = 0;
       loaded.effLoadFactor = 0;
-      Ztc::Builder drained{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+      Ztc::Builder drained{allocFrame()};
       drained.finish(
 	Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(drained, loaded));
       auto roundtrip = Zfb::verify<Ztc::HashTelemetry>(drained.span()) ?
@@ -548,7 +552,7 @@ void telemetryValues()
     data.priority = ZmThreadPriority::High;
     data.main = true;
     data.detached = true;
-    Ztc::Builder fbb{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+    Ztc::Builder fbb{allocFrame()};
     fbb.finish(
       Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, data));
     auto fbo = Zfb::verify<Ztc::ThreadTelemetry>(fbb.span()) ?
@@ -577,7 +581,7 @@ void telemetryValues()
     data.size = uint32_t(0x80000015);
     data.full = uint32_t(0x80000016);
     data.type = Ztc::QueueType::Tx;
-    Ztc::Builder fbb{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+    Ztc::Builder fbb{allocFrame()};
     fbb.finish(
       Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, data));
     auto fbo = Zfb::verify<Ztc::QueueTelemetry>(fbb.span()) ?
@@ -617,7 +621,7 @@ void telemetryValues()
     data.remotePort = uint16_t(50002);
     data.flags = 5;
     data.type = ZiCxnType::TCPOut;
-    Ztc::Builder fbb{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+    Ztc::Builder fbb{allocFrame()};
     fbb.finish(
       Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, data));
     auto fbo = Zfb::verify<Ztc::CxnTelemetry>(fbb.span()) ?
@@ -659,7 +663,7 @@ void telemetryValues()
     data.ll = 1;
     data.priority = 7;
     data.nThreads = 9;
-    Ztc::Builder fbb{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+    Ztc::Builder fbb{allocFrame()};
     fbb.finish(
       Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, data));
     auto fbo = Zfb::verify<Ztc::MxTelemetry>(fbb.span()) ?
@@ -693,7 +697,7 @@ void telemetryValues()
     data.txThread = 202;
     data.linkType = Ztc::LinkType::QUIC;
     data.state = ZmEngineState::Running;
-    Ztc::Builder fbb{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+    Ztc::Builder fbb{allocFrame()};
     fbb.finish(
       Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, data));
     auto fbo = Zfb::verify<Ztc::HubTelemetry>(fbb.span()) ?
@@ -724,7 +728,7 @@ void telemetryValues()
     data.reconnects = uint32_t(0x80000045);
     data.type = Ztc::LinkType::TLS;
     data.state = Ztc::LinkState::Failed;
-    Ztc::Builder fbb{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+    Ztc::Builder fbb{allocFrame()};
     fbb.finish(
       Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, data));
     auto fbo = Zfb::verify<Ztc::LinkTelemetry>(fbb.span()) ?
@@ -753,7 +757,7 @@ void telemetryValues()
     data.down = uint16_t(0x800a);
     data.type = Ztc::LinkType::TCP;
     data.state = Ztc::PoolState::Failed;
-    Ztc::Builder fbb{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+    Ztc::Builder fbb{allocFrame()};
     fbb.finish(
       Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, data));
     auto fbo = Zfb::verify<Ztc::PoolTelemetry>(fbb.span()) ?

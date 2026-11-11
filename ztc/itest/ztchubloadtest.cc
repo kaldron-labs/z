@@ -13,7 +13,6 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuSort.hh>
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZtArray.hh>
@@ -74,7 +73,20 @@ ZfStruct(, (Config, Cf),
   (key,		(Mutable),		String));
 
 using Frame = ZmRef<ZiIOBuf>;
-using Buf = Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.Load.Frame">, 1U << 16>;
+static ZmRef<ZiIOBuf> allocTxFrame()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::TxTLS, ZiIOBuf, 1024, ZiIOBuf_Align,
+    ZuStringT<"Ztc.Load.Frame">, 1U << 16>();
+  return allocator->allocBuf();
+}
+static ZmRef<ZiIOBuf> allocRxFrame()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::RxTLS, ZiIOBuf, 1024, ZiIOBuf_Align,
+    ZuStringT<"Ztc.Load.Frame">, 1U << 16>();
+  return allocator->allocBuf();
+}
 
 static void send(auto &link, Frame frame)
 {
@@ -86,7 +98,7 @@ static void send(auto &link, Frame frame)
 
 static Frame request(ZuCSpan device, uint64_t sub, bool subscribe)
 {
-  Ztc::Builder builder{Frame{new Buf{ZmSingleton<typename Buf::Allocator>::instance()}}};
+  Ztc::Builder builder{Frame{allocTxFrame()}};
   auto nested = builder.startNested();
   auto body = Zfb::save(builder, Ztc::Request{
     .seqNo = 0, .interval = subscribe ? 1000U : 0U,
@@ -197,7 +209,7 @@ struct App {
       auto publisher = unsigned((sent / routes.length()) % cf->publishers);
       ZtString<> name{"publisher-"};
       name << publisher;
-      Ztc::Builder builder{Frame{new Buf{ZmSingleton<typename Buf::Allocator>::instance()}}};
+      Ztc::Builder builder{Frame{allocTxFrame()}};
       auto nested = builder.startNested();
       auto id = builder.string(name);
       auto value = Zfb::save(builder, Ztc::AppTelemetry{
@@ -259,7 +271,7 @@ struct App {
   template <typename L> int messageStart(L &link, Zws::Opcode::T opcode) {
     if (opcode != Zws::Opcode::Binary) { fail("opcode"); return -1; }
     auto &frame = link.state().frame;
-    if (!frame) frame = new Buf{ZmSingleton<typename Buf::Allocator>::instance()};
+    if (!frame) frame = allocRxFrame();
     frame->length = 0;
     return 1;
   }
@@ -286,7 +298,7 @@ struct App {
       if (!body.get<Ztc::ZfField(Request, subscribe)>()) return 1;
       if (routes.length() >= uint64_t(cf->clients) * cf->subs) { fail("route count"); return -1; }
       routes.push(Route{&link, body.get<Ztc::ZfField(Request, seqNo)>()});
-      Ztc::Builder builder{Frame{new Buf{ZmSingleton<typename Buf::Allocator>::instance()}}};
+      Ztc::Builder builder{Frame{allocTxFrame()}};
       auto nested = builder.startNested();
       auto ack = Zfb::save(builder,
 	Ztc::Ack{ZuID{"publisher"}, body.get<Ztc::ZfField(Request, seqNo)>(), 1000});
@@ -407,7 +419,7 @@ struct Echo {
   template <typename L> void disconnected(L &, bool) { }
   template <typename L> int messageStart(L &link, Zws::Opcode::T opcode) {
     if (opcode != Zws::Opcode::Binary) return -1;
-    link.state().frame = new Buf{ZmSingleton<typename Buf::Allocator>::instance()};
+    link.state().frame = allocRxFrame();
     return 1;
   }
   template <typename L, typename Rx> int process(L &link, Rx &rx) {

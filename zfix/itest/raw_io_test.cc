@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "../test/ZfixTestAllocator.hh"
+
 #include <stdlib.h>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSingleton.hh>
@@ -113,7 +115,7 @@ struct Peer : Base {
   auto state() { return this->app()->state; }
 
   TxConfig routing() {
-    auto c = txConfig(config()); c.beginString = "FIX.9.9";
+    TxConfig c; c.mode = Transport::Raw; c.beginString = "FIX.9.9";
     c.identity.local = Client ? "EXTERNAL-C" : "EXTERNAL-S";
     c.identity.peer = Client ? "EXTERNAL-S" : "EXTERNAL-C";
     return c;
@@ -279,6 +281,10 @@ bool CliHub::init(Network::ClientParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
+#ifdef ZFIX_TEST_TLS
+  if (!params.txPacketAllocator())
+    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
+#endif
   return Zfix::RawClient<CliHub, Dictionary, Network>::init(ZuMv(params));
 }
 
@@ -319,6 +325,10 @@ bool SrvHub::init(Network::ServerParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
+#ifdef ZFIX_TEST_TLS
+  if (!params.txPacketAllocator())
+    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
+#endif
   return Zfix::RawServer<SrvHub, Dictionary, Network>::init(ZuMv(params));
 }
 
@@ -327,8 +337,8 @@ static void loopback(bool pause, bool stop, bool quota, unsigned payload = 4) {
   ZuTestScope(loopback);
   TestState state; state.pause = pause; state.deferStop = stop; state.quota = quota;
     state.payload = payload;
-  state.text = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-    ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
+  state.text = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
+    ZiIOBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
   state.text->ensure(payload);
   constexpr auto Bits = "ABCD"_z;
   for (unsigned i = 0; i < payload; ++i) state.text->data()[i] = Bits[i % Bits.length()];
@@ -430,6 +440,7 @@ struct SwapPeer : Base {
   RawStopFn		txStop;
   ZmRef<ZiTxBuf>	oldOutput;
   ZmRef<ZiIOBuf>	firstOutput;
+  bool		holdFirst = true;
 
   template <typename Hub> explicit SwapPeer(Hub *hub) : Base{hub, config()} { }
 
@@ -447,7 +458,7 @@ struct SwapPeer : Base {
   }
 
   TxConfig routing() {
-    auto c = txConfig(config()); c.beginString = "FIX.9.9";
+    TxConfig c; c.mode = Transport::Raw; c.beginString = "FIX.9.9";
     c.identity.local = Client ? "EXTERNAL-C" : "EXTERNAL-S";
     c.identity.peer = Client ? "EXTERNAL-S" : "EXTERNAL-C";
     return c;
@@ -483,13 +494,21 @@ struct SwapPeer : Base {
   }
 
   bool fixSendTx(ZmRef<ZiIOBuf> b) {
-    if constexpr (!Client) if (!firstOutput) firstOutput = b;
+    if constexpr (!Client) if (holdFirst) {
+      holdFirst = false;
+      firstOutput = b;
+    }
     return Base::fixSendTx(ZuMv(b));
   }
 
   Fmt::Error fixReplyRx(Entry *, Response *, const RawInput &input) {
     return input.connection == this->rawConnection() ? Fmt::Error{} :
       Fmt::Error{Fmt::ErrorCode::Unresolved, 35};
+  }
+
+  void txPacketized(const ZiIOBuf *plain, ZmRef<ZiIOBuf> packet) {
+    if constexpr (!Client) if (firstOutput.ptr() == plain) firstOutput = packet;
+    Base::txPacketized(plain, ZuMv(packet));
   }
 
   void sent(ZmRef<ZiTxBuf> b, bool ok) {
@@ -611,6 +630,10 @@ bool SwapClient::init(Network::ClientParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
+#ifdef ZFIX_TEST_TLS
+  if (!params.txPacketAllocator())
+    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
+#endif
   return Zfix::RawClient<SwapClient, Dictionary, Network>::init(ZuMv(params));
 }
 
@@ -651,6 +674,10 @@ bool SwapServer::init(Network::ServerParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
+#ifdef ZFIX_TEST_TLS
+  if (!params.txPacketAllocator())
+    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
+#endif
   return Zfix::RawServer<SwapServer, Dictionary, Network>::init(ZuMv(params));
 }
 

@@ -36,7 +36,7 @@ noinst_PROGRAMS = \
 dist_noinst_SCRIPTS = ZhttpBoundaryFixture.sh
 dist_noinst_DATA = ZhttpHeaderLifeTest.txt ZhttpJ2N100000HashTune.csv \
 	ZhttpJ2N100000HeapTune.csv
-noinst_HEADERS = ZhttpHubFixture.hh ZhttpTestPorts.hh ZhttpTestUtil.hh
+noinst_HEADERS = ZhttpTestAllocator.hh ZhttpHubFixture.hh ZhttpTestPorts.hh ZhttpTestUtil.hh
 ZhttpParserTest_SOURCES = ZhttpParserTest.cc
 ZhttpCompressionTest_SOURCES = ZhttpCompressionTest.cc
 ZhttpFieldsTest_SOURCES = ZhttpFieldsTest.cc

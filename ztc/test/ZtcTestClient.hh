@@ -17,8 +17,8 @@
 #include <zlib/ZtArray.hh>
 
 
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZiProgram.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZtcFB.hh>
 #include <zlib/ZtcMsg.hh>
@@ -30,8 +30,13 @@ namespace ZtcTestClient {
 
 using Ring = Ztc::Ring;
 
-using Frame =
-  Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZuStringT<"Ztc.TestClient.Frame">, Ztc::AppCf::DefltMaxFrame>;
+inline ZmRef<ZiIOBuf> allocFrame()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 1024, ZiIOBuf_Align,
+    ZuStringT<"Ztc.TestClient.Frame">, Ztc::AppCf::DefltMaxFrame>();
+  return allocator->allocBuf();
+}
 
 inline ZmRef<ZiIOBuf> request(
     uint64_t seqNo, Ztc::Group::T group, ZuCSpan filter,
@@ -39,7 +44,7 @@ inline ZmRef<ZiIOBuf> request(
     uint32_t alertDate = 0, uint64_t alertSeqNo = 0,
     ZuCSpan id = {})
 {
-  Ztc::Builder fbb{Ztc::frameBuf(ZmRef<ZiIOBuf>{new Frame{ZmSingleton<typename Frame::Allocator>::instance()}})};
+  Ztc::Builder fbb{Ztc::frameBuf(allocFrame())};
   auto nested = fbb.startNested();
   Ztc::Request data;
   data.filter = filter;
@@ -112,7 +117,7 @@ public:
 	continue;
       }
       unsigned size = Ztc::ringSize(ptr);
-      ZmRef<ZiIOBuf> frame = new Frame{ZmSingleton<typename Frame::Allocator>::instance()};
+      ZmRef<ZiIOBuf> frame = allocFrame();
       if (size <= Ztc::AppCf::DefltMaxFrame) {
 	frame->alloc(size);
 	memcpy(frame->data(), ptr, size);

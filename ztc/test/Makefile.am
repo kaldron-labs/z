@@ -15,6 +15,7 @@ AM_LDFLAGS = @Z_LDFLAGS@
 LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/ztc/src/libZtc.la \
 	$(top_builddir)/zum/src/libZum.la \
+	$(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zdb/src/libZdbMem.la \
 	$(top_builddir)/zdb/src/libZdb.la \
 	$(top_builddir)/zv/src/libZv.la \

@@ -27,7 +27,6 @@
 #include <zlib/ZmList.hh>
 #include <zlib/ZmPQueue.hh>
 #include <zlib/ZmSemaphore.hh>
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmTrap.hh>
 
 #include <zlib/ZtArray.hh>
@@ -43,6 +42,7 @@
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZiRx.hh>
 
 
 #include <zlib/ZtlsMD.hh>
@@ -430,18 +430,13 @@ public:
   bool init(ZiMultiplex *mx) {
     using TCP = Zhttp::NativeTraits<Zhttp::H1TCP>::Transport;
     using TLS = Zhttp::NativeTraits<Zhttp::H1TLS>::Transport;
-    m_tcp.rxAllocator(mx->allocator<Zi::IOBufType::RxTCP,
-      TCP::RxAllocator::Buf, TCP::RxAllocator::Size, TCP::RxAllocator::MaxSize,
-      TCP::RxAllocator::Align, TCP::RxAllocator::Heap>())
-      .txAllocator(mx->allocator<Zi::IOBufType::TxTCP,
-      TCP::TxAllocator::Buf, TCP::TxAllocator::Size, TCP::TxAllocator::MaxSize,
-      TCP::TxAllocator::Align, TCP::TxAllocator::Heap>());
-    m_tls.rxAllocator(mx->allocator<Zi::IOBufType::RxTLS,
-      TLS::RxAllocator::Buf, TLS::RxAllocator::Size, TLS::RxAllocator::MaxSize,
-      TLS::RxAllocator::Align, TLS::RxAllocator::Heap>())
-      .txAllocator(mx->allocator<Zi::IOBufType::TxTLS,
-      TLS::TxAllocator::Buf, TLS::TxAllocator::Size, TLS::TxAllocator::MaxSize,
-      TLS::TxAllocator::Align, TLS::TxAllocator::Heap>());
+    m_tcp.rxAllocator(TCP::registerRx(mx))
+      .txAllocator(TCP::registerTx(mx));
+    m_tls.rxAllocator(TLS::registerRx(mx))
+      .txAllocator(TLS::registerTx(mx))
+      .txPacketAllocator(TLS::registerTxPacket(mx))
+      .socketRxAllocator(mx->allocator<Zi::IOBufType::RxTCP, ZiIOBuf,
+        Ztls_::RxPacketCapacity>());
     return true;
   }
 
@@ -991,8 +986,12 @@ struct App {
     if (incoming > (1U << 20) - message.length()) {
       link.close(Zws::CloseCode::TooLarge); failed = true; return -1;
     }
-    using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, 1024, 1U << 20>;
-    auto alloc = []() { return ZmSingleton<Alloc>::instance()->allocBuf(); };
+    static ZiMultiplex mx{ZiMxParams{}.scheduler(
+      [](auto &params) { params.id(Link_::TLS ? "Ztc.Client.RxTLS" : "Ztc.Client.RxTCP"); })};
+    static auto allocator = mx.allocator<
+      Link_::TLS ? Zi::IOBufType::RxTLS : Zi::IOBufType::RxTCP, ZiRxQueue::Node, 1024,
+      ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 1U << 20>();
+    auto alloc = []() { return allocator->allocBuf(); };
     while (rx) {
       if (rx.splice(message,
 	[](ZuBSpan span) -> int64_t { return span.length(); }, alloc, alloc) <= 0)
@@ -1006,7 +1005,11 @@ struct App {
   {
     uint64_t remaining = frame.length();
     Frame bytes;
-    using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, 1024, 1U << 20>;
+    static ZiMultiplex mx{ZiMxParams{}.scheduler(
+      [](auto &params) { params.id(Link_::TLS ? "Ztc.Client.EndTLS" : "Ztc.Client.EndTCP"); })};
+    static auto allocator = mx.allocator<
+      Link_::TLS ? Zi::IOBufType::RxTLS : Zi::IOBufType::RxTCP, ZiRxQueue::Node, 1024,
+      ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 1U << 20>();
     auto length = frame.extract(
       [&remaining](ZuBSpan span) -> int64_t {
 	if (remaining > span.length()) {
@@ -1014,7 +1017,7 @@ struct App {
 	  return 0;
 	}
 	return remaining;
-      }, []() { return ZmSingleton<Alloc>::instance()->allocBuf(); }, bytes);
+      }, []() { return allocator->allocBuf(); }, bytes);
     Ztc::MsgView msg = length > 0 ? Ztc::msg(bytes->cspan()) : Ztc::MsgView{};
     if (!msg || !msg.get<Ztc::ZfField(Msg, deviceID)>() ||
       !msg.get<Ztc::ZfField(Msg, agentGen)>() ||

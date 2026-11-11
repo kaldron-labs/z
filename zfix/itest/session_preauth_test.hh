@@ -34,9 +34,11 @@ static void preauthReleaseOld(ZiMultiplex &mx, OwnServer &server, OwnState &stat
       // Follow the native stale-close path through each actual owner. The
       // final observation follows A's resource/accounting retirement.
       server.rxRun([&mx, &server, wake = ZuMv(wake)]() mutable {
-	server.txRun([&mx, &server, wake = ZuMv(wake)]() mutable {
-	  mx.txRun([&server, wake = ZuMv(wake)]() mutable {
-	    server.rxRun([wake = ZuMv(wake)]() mutable { wake(); });
+	mx.rxRun([&mx, &server, wake = ZuMv(wake)]() mutable {
+	  server.txRun([&mx, &server, wake = ZuMv(wake)]() mutable {
+	    mx.txRun([&server, wake = ZuMv(wake)]() mutable {
+	      server.rxRun([wake = ZuMv(wake)]() mutable { wake(); });
+	    });
 	  });
 	});
       });
@@ -55,9 +57,9 @@ static void nativePreauth(unsigned mode, bool alert)
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, "5", "6"));
   ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<OwnCliLink> a, c;
   ZmRef<OwnSrvLink> owner;
@@ -185,9 +187,9 @@ static void nativeStopBeforeBind(unsigned mode)
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, "5", "6"));
   ZuCheck(si && ci);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<OwnCliLink> a, b;
   ZmSemaphore hubStopped;
@@ -268,6 +270,11 @@ static void nativeStopBeforeBind(unsigned mode)
   bool cstop = !cs || client.stop(); ZuCheck(cstop);
   client.final(); server.final(); mx.stop();
   state.serverLink = nullptr; a = b = nullptr;
+  ZuCheck(state.stopOutputFaults.load_() <= 1 &&
+    state.stopOutputEvents.load_() <= state.stopOutputFaults.load_() &&
+    state.stopOutputEvents.load_() + state.stopTransportEvents.load_() <= 1 &&
+    (!state.stopOutputFaults.load_() ||
+      state.stopOutputEvents.load_() + state.stopTransportEvents.load_() == 1));
   ZuCheck(exercised && !state.errors.load_() && !state.admit && !state.oldClose &&
     state.logical.load_() == 1 && state.accepted.load_() == 2 &&
     state.physicalOpen.load_() == 2 && state.physicalClosed.load_() == 2 &&

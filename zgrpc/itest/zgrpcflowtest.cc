@@ -177,15 +177,15 @@ static void flow(bool h3)
 	.initialWindowSize(StreamWindow),
     Zhttp::QUICConfig{}.caPath(cert).maxStreamData(StreamWindow).maxData(PayloadBytes));
   ZuCheck(cliInit);
+  bool pooled = cliInit &&
+    client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
+  ZuCheck(pooled);
   ZuCheck(mx.start(), (return));
   bool started = initialized && server.start();
   ZuCheck(started);
   bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
   ZuCheck(listening && !state.errors.load_());
-  bool pooled = listening && cliInit &&
-    client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
-  ZuCheck(pooled);
-  bool cliUp = pooled && client.start();
+  bool cliUp = pooled && listening && client.start();
   ZuCheck(cliUp);
   if (cliUp) {
     auto send = [&client, &state](uint64_t sequence) {

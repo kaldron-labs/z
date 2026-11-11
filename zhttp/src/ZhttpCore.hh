@@ -87,12 +87,9 @@ enum {
   DefltMaxHeaderSection = 1<<16	// 64K
 };
 
-using BodyBufAlloc = Zi::IOBufBuiltin<
-  ZiRxQueue::Node,
-  ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltAlign,
-  ZuStringT<"Zhttp.Body.Rx">,
-  ZiIOBuf_DefltMaxSize>;
+using BodyBufAlloc = Zi::IOBufBuiltinAllocator<
+  Zi::IOBufType::App, ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
+  ZuStringT<"Zhttp.Body.Rx">, ZiIOBuf_DefltVHMaxSize>;
 
 ZtEnumStruct(ZhttpAPI, Version, int8_t, H1, H2, H3);
 ZtEnumStruct(ZhttpAPI, Transport, int8_t, TCP, TLS, QUIC);
@@ -734,6 +731,16 @@ public:
   Channel(const ChannelOps &ops) : m_channelOps{&ops} { }
 
   Session session() const { return m_channelOps->session(ctx); }
+  Zi::IOBufType::T rxBufType() const {
+    if (!m_channelOps->session) return Zi::IOBufType::App;
+    return session().transport == Transport::TCP ?
+      Zi::IOBufType::RxTCP : Zi::IOBufType::RxTLS;
+  }
+  Zi::IOBufType::T txBufType() const {
+    if (!m_channelOps->session) return Zi::IOBufType::App;
+    return session().transport == Transport::TCP ?
+      Zi::IOBufType::TxTCP : Zi::IOBufType::TxTLS;
+  }
   uint64_t streamID() const { return m_channelOps->streamID(ctx); }
   uint64_t requestSequence() const { return m_channelOps->sequence(ctx); }
   const ZiIP &remoteIP() const { return m_channelOps->remoteIP(ctx); }

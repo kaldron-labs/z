@@ -182,8 +182,9 @@ public:
   using Ref = ZmRef<const TxBody>;
 
   TxBody(uint8_t *data, unsigned size, Zi::IOBufAllocator_ *allocator,
-      void *owner = nullptr, unsigned length = 0) :
-    ZiIOBuf{data, size, allocator, owner, length} { }
+      void *owner = nullptr, unsigned length = 0,
+      bool builtin = false, bool registered = false) :
+    ZiIOBuf{data, size, allocator, owner, length, builtin, registered} { }
 
   // Rounded pool object plus jumbo heap prefix/cache class, for factory bodies.
   uint64_t memory() const;

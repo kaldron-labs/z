@@ -525,7 +525,7 @@ ZiConnection *TCPServer::accepted(const ZiCxnInfo &ci)
 }
 
 struct TLSServer : public Ztls::Server<TLSServer> {
-  using TxBufAlloc = Ztls::TxBufAlloc<8<<10, 4<<20>;
+  using TxBufAlloc = Ztls::TxBufAlloc<Ztls_::TxRecordCapacity, 4<<20>;
   struct Link;
 
   TLSServer(ServerTest *state_) : state{state_} { }
@@ -832,7 +832,7 @@ struct TCPClient : public Ztcp::Client<TCPClient> {
 };
 
 struct TLSClient : public Ztls::Client<TLSClient> {
-  using TxBufAlloc = Ztls::TxBufAlloc<8<<10, 4<<20>;
+  using TxBufAlloc = Ztls::TxBufAlloc<Ztls_::TxRecordCapacity, 4<<20>;
   struct Link :
     public H1ClientLinkOps<TLSClient,
       Ztls::CliLink<TLSClient, Link, Ztls::RxBufAlloc<>, TxBufAlloc>> {
@@ -1142,12 +1142,13 @@ void testZhttpClientCaddyHttpsH1()
   state.body = "";
   TLSClient client{&state};
   TLSClient::Link::RxAllocator *rxAllocator = TLSClient::Link::rxAllocator(&mx);
-  TLSClient::Link::TxAllocator *txAllocator = TLSClient::Link::txAllocator(&mx);
+  auto txAllocator = TLSClient::Link::txAllocator(&mx);
+  auto txPacket = TLSClient::Link::txPacketAllocator(&mx);
   ZuCSpan alpn[] = { "http/1.1" };
   ZuCHECK(client.init(Ztls::ClientParams(&mx, "3", "4").hub(
-      [&certPath, &alpn, &rxAllocator, &txAllocator](auto &p) {
+      [&certPath, &alpn, &rxAllocator, &txAllocator, txPacket](auto &p) {
 	p.caPath(certPath.cspan()).alpn(alpn)
-	  .rxAllocator(rxAllocator).txAllocator(txAllocator);
+	  .rxAllocator(rxAllocator).txAllocator(txAllocator).txPacketAllocator(txPacket);
       })),
     "Zhttp client->Caddy HTTPS/H1 client init failed");
   bool mxStarted = mx.start();
@@ -1346,10 +1347,11 @@ void testCurlZhttpHttpsH1Server()
   ZiMultiplex mx(mxParams());
   TLSServer server{&state};
   TLSServer::Link::RxAllocator *rxAllocator = TLSServer::Link::rxAllocator(&mx);
-  TLSServer::Link::TxAllocator *txAllocator = TLSServer::Link::txAllocator(&mx);
+  auto txAllocator = TLSServer::Link::txAllocator(&mx);
+  auto txPacket = TLSServer::Link::txPacketAllocator(&mx);
   ZuCSpan alpn[] = { "http/1.1" };
   auto params = Ztls::ServerParams(&mx, "3", "4");
-  params.rxAllocator(rxAllocator).txAllocator(txAllocator)
+  params.rxAllocator(rxAllocator).txAllocator(txAllocator).txPacketAllocator(txPacket)
     .certPath(certPath.cspan()).keyPath(keyPath.cspan()).alpn(alpn);
   ZuCHECK(server.init(ZuMv(params)),
     "curl->Zhttp HTTPS/H1 server init failed");

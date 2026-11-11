@@ -6,6 +6,12 @@
 
 // socket I/O multiplexing
 
+#ifdef _WIN32
+#ifndef NTDDI_VERSION
+#define NTDDI_VERSION 0x0a000003 // Windows 10 1703 (SIO_TCP_INFO)
+#endif
+#endif
+
 #include <new>
 
 #include <zlib/ZmAssert.hh>
@@ -27,15 +33,46 @@
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiAssert.hh>
 
-#ifdef ZiMultiplex_DEBUG
-static ZmRef<ZiIOBuf> debugBuf(const void *data, unsigned length)
+#ifdef _WIN32
+#include <mstcpip.h>
+#endif
+
+static unsigned tcpMPS(Zi::Socket s)
 {
-  using Allocator = Zi::IOBufBuiltinAllocator<>;
-  auto allocator = ZmSingleton<Allocator,
-    ZmSingletonCleanup<ZmCleanup::Platform>>::instance();
-  auto buf = allocator->allocBuf(nullptr, length);
-  memcpy(buf->data(), data, length);
-  return buf;
+#ifndef _WIN32
+  int mss = 0;
+  socklen_t len = sizeof(mss);
+  if (getsockopt(s, IPPROTO_TCP, TCP_MAXSEG, &mss, &len) < 0 || mss <= 0)
+    return ~uint32_t(0);
+  return unsigned(mss);
+#else
+  DWORD version = 0, len = 0;
+  TCP_INFO_v0 info{};
+  if (WSAIoctl(s, SIO_TCP_INFO, &version, sizeof(version),
+      &info, sizeof(info), &len, nullptr, nullptr)) return ~uint32_t(0);
+  return info.Mss;
+#endif
+}
+
+static unsigned udpMPS(Zi::Socket s, int ipType)
+{
+  int mtu = 0;
+#ifndef _WIN32
+  socklen_t len = sizeof(mtu);
+#else
+  int len = sizeof(mtu);
+#endif
+  bool v6 = ipType == ZiIPType::V6;
+  if (getsockopt(s, v6 ? IPPROTO_IPV6 : IPPROTO_IP,
+      v6 ? IPV6_MTU : IP_MTU, (char *)&mtu, &len)) return ~uint32_t(0);
+  int overhead = v6 ? 48 : 28;
+  return mtu > overhead ? unsigned(mtu - overhead) : ~uint32_t(0);
+}
+
+#ifdef ZiMultiplex_DEBUG
+static ZtArray<uint8_t> debugBuf(const void *data, unsigned length)
+{
+  return ZtArray<uint8_t>{static_cast<const uint8_t *>(data), length};
 }
 #endif
 
@@ -571,7 +608,7 @@ void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
   Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
 {
   ZiAssert(invoked(rxThread()), "ZiMultiplex", (), "Rx exclusive", return);
-  ZiAssert(rxAllocator->mx() == this, "ZiMultiplex", (), "Rx allocator", return);
+  ZiAssert(rxAllocator->mx == this, "ZiMultiplex", (), "Rx allocator", return);
 
   if (ZuUnlikely(!running())) {
     Error("udp", Zi::NotReady, ZeOK);
@@ -939,7 +976,8 @@ void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
 
   cxn = fn(ZiCxnInfo {
       ZiCxnType::UDP, s, options,
-      {localIP, localPort}, {remoteIP, remotePort}, rxAllocator });
+      {localIP, localPort}, {remoteIP, remotePort},
+      !!remoteIP ? udpMPS(s, ipType) : ~uint32_t(0), rxAllocator });
 
   if (!cxn) {
     Zi::closeSocket(s);
@@ -982,7 +1020,7 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
   Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
 {
   ZiAssert(invoked(rxThread()), "ZiMultiplex", (), "Rx exclusive", return);
-  ZiAssert(rxAllocator->mx() == this, "ZiMultiplex", (), "Rx allocator", return);
+  ZiAssert(rxAllocator->mx == this, "ZiMultiplex", (), "Rx allocator", return);
 
   if (ZuUnlikely(!running())) {
     Error("connect", Zi::NotReady, ZeOK);
@@ -1060,7 +1098,8 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
 #ifdef ZiMultiplex_IOCP
   Connect *request = new Connect(
       this, fn, failFn,
-      ZiCxnType::TCPOut, s, options, ZiSockAddr{localIP, localPort}, remote, rxAllocator);
+      ZiCxnType::TCPOut, s, options,
+      ZiSockAddr{localIP, localPort}, remote, ~uint32_t(0), rxAllocator);
   using Executed = Zi_Overlapped::Executed;
   Zi_Overlapped &overlapped = request->overlapped();
   overlapped.init(Executed::Member<&Connect::executed>::fn(request));
@@ -1077,7 +1116,8 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
 
 #ifdef ZiMultiplex_EPoll
   ZmRef<Connect> request = new Connect(this, fn, failFn,
-      ZiCxnType::TCPOut, s, options, ZiSockAddr{localIP, localPort}, remote, rxAllocator);
+      ZiCxnType::TCPOut, s, options,
+      ZiSockAddr{localIP, localPort}, remote, ~uint32_t(0), rxAllocator);
 
   if (!connectAdd(request, s)) {
     Zi::closeSocket(s);
@@ -1099,6 +1139,14 @@ void ZiMultiplex::overlappedConnect(Connect *request,
     ::closesocket(ci.socket);
     if (!m_stopping) Error("ConnectEx", status, e);
     request->fail(true);
+    return;
+  }
+
+  if (setsockopt(ci.socket, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, nullptr, 0)) {
+    ZeError e(WSAGetLastError());
+    ::closesocket(ci.socket);
+    Error("setsockopt(SO_UPDATE_CONNECT_CONTEXT)", Zi::IOError, e);
+    request->fail(false);
     return;
   }
 
@@ -1189,8 +1237,9 @@ retry:
 }
 #endif
 
-void ZiMultiplex::executedConnect(ZiConnectFn fn, const ZiCxnInfo &ci)
+void ZiMultiplex::executedConnect(ZiConnectFn fn, ZiCxnInfo &ci)
 {
+  ci.mps = tcpMPS(ci.socket);
   ZmRef<ZiConnection> cxn = fn(ci);
 
   if (!cxn) {
@@ -1338,7 +1387,7 @@ void ZiMultiplex::listen_(
   Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
 {
   ZiAssert(invoked(rxThread()), "ZiMultiplex", (), "Rx exclusive", return);
-  ZiAssert(rxAllocator->mx() == this, "ZiMultiplex", (), "Rx allocator", return);
+  ZiAssert(rxAllocator->mx == this, "ZiMultiplex", (), "Rx allocator", return);
 
   if (ZuUnlikely(!running())) {
     Error("listen", Zi::NotReady, ZeOK);
@@ -1635,10 +1684,11 @@ retry:
       << " ACCEPTING from " << ip << ':' << port;
   }));
 
-  executedConnect(listener->acceptFn(), ZiCxnInfo {
+  ZiCxnInfo ci{
       ZiCxnType::TCPIn, s, listener->info().options,
       {listener->info().ip, listener->info().port},
-      remote, listener->info().rxAllocator });
+      remote, ~uint32_t(0), listener->info().rxAllocator };
+  executedConnect(listener->acceptFn(), ci);
 
   goto retry;
 #endif
@@ -1694,7 +1744,6 @@ void ZiConnection::connected()
 {
   connected(m_rxContext);
 
-
 #ifdef ZiMultiplex_IOCP
   if (ZuLikely(!m_rxContext.completed()))
     recv();
@@ -1720,23 +1769,25 @@ void ZiConnection::recv_(ZiRxFn fn)
 
   m_rxContext.init_(ZuMv(fn));
 
+  if (ZuUnlikely(m_rxContext.completed())) return;
+
+  if (auto plugin = m_mx->plugin()) { plugin->recv(this); return; }
+
 #ifdef ZiMultiplex_IOCP
-  if (ZuLikely(!m_rxContext.completed())) recv();
+  recv();
 #endif
 
 #ifdef ZiMultiplex_EPoll
-  if (ZuLikely(!m_rxContext.completed())) {
-    if (!m_mx->epollRecv(this, m_info.socket, EPOLLIN | EPOLLRDHUP))
-      m_rxContext.complete();
-    else
-      recv(); // strictly speaking this pump-priming should not be needed,
-	      // but edge-triggered epoll does not behave identically
-	      // under valgrind; while this call does potentially reduce
-	      // latency, that benefit is marginal - in a latency-sensitive
-	      // app, recv_() is invoked just once or twice per connection
-	      // during initial setup - the receive context will remain
-	      // open for the bulk of the communication
-  }
+  if (!m_mx->epollRecv(this, m_info.socket, EPOLLIN | EPOLLRDHUP))
+    m_rxContext.complete();
+  else
+    recv(); // strictly speaking this pump-priming should not be needed,
+	    // but edge-triggered epoll does not behave identically
+	    // under valgrind; while this call does potentially reduce
+	    // latency, that benefit is marginal - in a latency-sensitive
+	    // app, recv_() is invoked just once or twice per connection
+	    // during initial setup - the receive context will remain
+	    // open for the bulk of the communication
 #endif
 }
 
@@ -1966,7 +2017,7 @@ retry:
   ](auto &s) {
     s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " recv(" << len << "): " << n << '\n'
-      << ZtHexDump_(buf->cspan());
+      << ZtHexDump_(buf.cspan());
   }));
 
   if (ZuUnlikely(!n && !m_info.options.udp())) {
@@ -2025,7 +2076,7 @@ void ZiConnection::overlappedRecv(int status, unsigned n, ZeError e)
   ](auto &s) {
     s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " WSARecv(" << n << ")\n"
-      << ZtHexDump_(buf->cspan());
+      << ZtHexDump_(buf.cspan());
   }));
 
   if (m_info.options.udp()) {
@@ -2153,9 +2204,9 @@ retry:
     buf = debugBuf(wsaBuf.buf, wsaBuf.len)
   ](auto &s) {
     s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
-      << " WSASend(" << buf->length << ") size: " << size
+      << " WSASend(" << buf.length() << ") size: " << size
       << " offset: " << offset << '\n'
-      << ZtHexDump_(buf->cspan());
+      << ZtHexDump_(buf.cspan());
   }));
 
   if (m_info.options.udp()) {
@@ -2224,9 +2275,9 @@ retry:
     buf = debugBuf(buf, len)
   ](auto &s) {
     s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
-      << " send(" << buf->length << ") size: " << size
+      << " send(" << buf.length() << ") size: " << size
       << " offset: " << offset << '\n'
-      << ZtHexDump_(buf->cspan());
+      << ZtHexDump_(buf.cspan());
   }));
 
   if (m_info.options.udp()) {

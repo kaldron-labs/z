@@ -303,6 +303,7 @@ public:
       m_mx{mx}, m_rx{rx}, m_tx{tx},
       m_request{m_tx->allocBuf()} {
     // Acquire the caller's borrowed malicious-peer wire bytes once.
+    if (ZuUnlikely(!m_request)) { m_done.post(); return; }
     m_request->append(request);
     m_mx.connect(
       ZiConnectFn{this, ZmFnPtr<&RawHTTP::connected>{}},
@@ -391,8 +392,9 @@ RawHTTPCxn::RawHTTPCxn(
 
 void RawHTTPCxn::connected(ZiRxContext &io)
 {
-  io.init(ZiRxFn{this, ZmFnPtr<&RawHTTPCxn::recv_>{}},
-    static_cast<RawRxAllocator *>(info().rxAllocator)->allocBuf(this));
+  auto buf = static_cast<RawRxAllocator *>(info().rxAllocator)->allocBuf(this);
+  if (ZuUnlikely(!buf)) { io.disconnect(); return; }
+  io.init(ZiRxFn{this, ZmFnPtr<&RawHTTPCxn::recv_>{}}, ZuMv(buf));
   send(ZiTxFn{this, ZmFnPtr<&RawHTTPCxn::send_>{}});
 }
 
@@ -407,7 +409,10 @@ bool RawHTTPCxn::recv_(ZiRxContext &io)
   auto buf = ZuMv(io.buf);
   bool complete = m_owner->received(ZuCSpan{buf->cspan()});
   if (complete) io.disconnect();
-  else io.buf = static_cast<RawRxAllocator *>(info().rxAllocator)->allocBuf(this);
+  else {
+    io.buf = static_cast<RawRxAllocator *>(info().rxAllocator)->allocBuf(this);
+    if (ZuUnlikely(!io.buf)) io.disconnect();
+  }
   return true;
 }
 
@@ -598,10 +603,8 @@ static void httpTest()
   RawRxAllocator *rawRx = mx.allocator<Zi::IOBufType::RxTCP>();
   RawTxAllocator *rawTx = mx.allocator<Zi::IOBufType::TxTCP>();
   using TCP = Zhttp::NativeTraits<Zhttp::H1TCP>::Transport;
-  Zi::IOBufAllocator *tcpRx = mx.allocator<Zi::IOBufType::RxTCP,
-    TCP::RxAllocator::Buf, TCP::RxAllocator::Size, TCP::RxAllocator::MaxSize>();
-  Zi::IOBufAllocator *tcpTx = mx.allocator<Zi::IOBufType::TxTCP,
-    TCP::TxAllocator::Buf, TCP::TxAllocator::Size, TCP::TxAllocator::MaxSize>();
+  Zi::IOBufAllocator *tcpRx = TCP::registerRx(&mx);
+  Zi::IOBufAllocator *tcpTx = TCP::registerTx(&mx);
   ZuCheck(rawRx && rawTx && tcpRx && tcpTx);
   Zhttp::TCPConfig tcp;
   tcp.rxAllocator(tcpRx).txAllocator(tcpTx);

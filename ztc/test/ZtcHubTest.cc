@@ -4,15 +4,23 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZmSingleton.hh>
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZtcAppTypes.hh>
 #include <zlib/ZtcMsg.hh>
 #include <zlib/ZtcFB.hh>
 #include <zlib/ztchub_daemon.hh>
+
+static ZmRef<ZiIOBuf> allocFrame()
+{
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf,
+    ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltVHMaxSize>();
+  return allocator->allocBuf();
+}
 
 using namespace ZuTestUtil;
 
@@ -55,7 +63,7 @@ static void protocol()
   ZuTestScope(protocol);
   auto check = [](ZuCSpan deviceID, uint64_t subID, unsigned group,
       bool subscribe, uint64_t generation) {
-    Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+    Ztc::Builder builder{allocFrame()};
     auto nested = builder.startNested();
     auto request = Zfb::save(builder, Ztc::Request{
       .seqNo = 9, .interval = 1000, .group = uint8_t(group),
@@ -74,7 +82,7 @@ static void protocol()
   ZuCheck(!Ztc::validMsg({}));
 
   auto app = [](ZuCSpan deviceID, unsigned group, ZuCSpan filter) {
-    Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+    Ztc::Builder builder{allocFrame()};
     auto nested = builder.startNested();
     auto request = Zfb::save(builder, Ztc::Request{
       .filter = Ztc::RequestFilter{filter}, .seqNo = 0,
@@ -89,7 +97,7 @@ static void protocol()
   ZuCheck(!app({}, unsigned(Ztc::Group::Heap), {}));
   ZuCheck(!app({}, unsigned(Ztc::Group::App), "app-*"));
 
-  Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Ztc::Builder builder{allocFrame()};
   auto nested = builder.startNested();
   auto request = Zfb::save(builder, Ztc::Request{
     .filter = "*", .seqNo = 0, .interval = 1000,
@@ -115,7 +123,7 @@ static void messages()
 {
   ZuTestScope(messages);
   auto verify = [](auto make, unsigned expected) {
-    Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+    Ztc::Builder builder{allocFrame()};
     auto nested = builder.startNested();
     auto body = make(builder);
     auto bytes = builder.finish(Ztc::saveMsg(
@@ -153,10 +161,10 @@ static void messages()
 static void payloadCopy()
 {
   ZuTestScope(payloadCopy);
-  Ztc::Builder routed{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Ztc::Builder routed{allocFrame()};
   ZuBSpan bytes;
   {
-    Ztc::Builder source{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+    Ztc::Builder source{allocFrame()};
     auto nested = source.startNested();
     auto id = source.string("publisher");
     auto value = Zfb::save(source, Ztc::AppTelemetry{});
@@ -296,7 +304,7 @@ static void routing()
 static bool app(Ztc::Hubd &hub, uint64_t agent, uint64_t generation,
     ZuCSpan publisher, ZuCSpan version, uint64_t seqNo = 0)
 {
-  Ztc::Builder builder{new Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Allocator>::instance()}};
+  Ztc::Builder builder{allocFrame()};
   auto nested = builder.startNested();
   auto id = builder.string(publisher);
   Ztc::AppTelemetry value;
@@ -381,8 +389,10 @@ static void appInventory()
   ZuCheck(hub.addFrontend(20, browser, Ztc::HubSendFn{
     [&frames](Ztc::HubPacket frame, Ztc::HubBuildFn build) {
       if (build) {
-	ZmRef<ZiIOBuf> buf = new
-	  Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZiIOBuf_HeapID, 1U << 30>{ZmSingleton<typename Zi::IOBufBuiltin<ZiIOBuf, 1024, ZiIOBuf_Align, ZiIOBuf_HeapID, 1U << 30>::Allocator>::instance()};
+	static ZiMultiplex mx;
+	static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf,
+	  1024, ZiIOBuf_Align, ZiIOBuf_HeapID, 1U << 30>();
+	ZmRef<ZiIOBuf> buf = allocator->allocBuf();
 	auto allocated = buf.ptr();
 	buf->skip = 32;
 	frame = build(ZuMv(buf), 16);

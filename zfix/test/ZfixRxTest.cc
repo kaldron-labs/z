@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "ZfixTestAllocator.hh"
+
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSingleton.hh>
 #include <zlib/ZmAssert.hh>
@@ -41,8 +43,8 @@ static SessionConfig config(unsigned mode = Transport::FIX4)
 }
 static ZmRef<RxQueue::Node> rawFrame(ZuCSpan content)
 {
-  ZmRef<ZiIOBuf> buffer = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-    ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
+  ZmRef<ZiIOBuf> buffer = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
+    ZiIOBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
   ZuSpan<char> storage{buffer->data(), buffer->size};
   Fmt::FrameWriter writer{storage, "FIX.4.4"};
   writer.body() << content;
@@ -59,10 +61,12 @@ static ZmRef<RxQueue::Node> rawFrame(ZuCSpan content)
 }
 
 static ZmRef<RxQueue::Node> frame(uint64_t seqNo, ZuCSpan type, ZuCSpan body,
-    bool dup = false, int age = 0, ZuCSpan sender = "PEER")
+    bool dup = false, int age = 0, ZuCSpan sender = "PEER",
+    Zi::IOBufAllocator *allocator = nullptr)
 {
-  ZmRef<ZiIOBuf> buffer = ZmSingleton<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-    ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
+  if (!allocator) allocator = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<
+    Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize>>::get();
+  ZmRef<ZiIOBuf> buffer = allocator->allocBuf();
   ZuSpan<char> storage{buffer->data(), buffer->size};
   Fmt::FrameWriter writer{storage, "FIX.4.4"};
   auto &out = writer.body();
@@ -306,8 +310,8 @@ static void steadyRecovery()
 static void ordered()
 {
   ZuTestScope(ordered);
-  using Buf = Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize,
-    ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>;
+  using Buf = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltVHMaxSize>;
   Receiver r{config()}; r.ready();
   ZuCheck(r.send(4, "D", "11=44\1") == RxResult::Accepted);
   ZuCheck(!r.session_().ready_() && r.expected_() == 3 && !r.business.length());
@@ -524,7 +528,8 @@ static void businessLimits()
 static void limitsAndRaw()
 {
   ZuTestScope(limitsAndRaw);
-  enum { Charge = Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Size + sizeof(RxQueue::Node) };
+  enum { Charge = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltVHMaxSize>::Size + sizeof(RxQueue::Node) };
   Receiver r{config(), RxLimits{.readAheadBytes = Charge}}; r.ready();
   r.send(5, "D", "11=55\1");
   ZuCheck(r.retainedBytes_() == Charge);
@@ -573,6 +578,28 @@ static void publicationNotices()
   ZuCheck(close);
   r.closed_(r.session_().connection_());
   ZuCheck(r.session_().state_() == State::Disconnected);
+}
+
+static void backingGeometry()
+{
+  ZuTestScope(backingGeometry);
+  using Pool = Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTLS, ZiIOBuf, 16640>;
+  auto allocator = ZfixTest::Allocator<Pool>::get();
+  RxLimits limits; limits.codec.frameBytes = 4096;
+  Receiver receiver{config(), limits}; receiver.ready();
+  auto message = frame(3, "D", "11=42\1", false, 0, "PEER", allocator);
+  ZuCheck(message->data().buffer->size > limits.codec.frameBytes);
+  ZuCheck(receiver.receive_(receiver.session_().connection_(), message,
+    receiver.now, stamp) == RxResult::Accepted);
+  receiver.drain();
+  ZuCheck(receiver.business.length() == 1 && receiver.business[0] == 42);
+
+  limits.bufferBytes = limits.codec.frameBytes;
+  Receiver bounded{config(), limits}; bounded.ready();
+  message = frame(3, "D", "11=42\1", false, 0, "PEER", allocator);
+  ZuCheck(bounded.receive_(bounded.session_().connection_(), message,
+    bounded.now, stamp) == RxResult::Overload);
+  ZuCheck(!bounded.business.length());
 }
 
 static void earlyProbeReply()
@@ -783,7 +810,8 @@ static void stateChanges()
 static void faultMatrix()
 {
   ZuTestScope(faultMatrix);
-  enum { Charge = Zi::IOBufBuiltin<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>::Size + sizeof(RxQueue::Node) };
+  enum { Charge = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltVHMaxSize>::Size + sizeof(RxQueue::Node) };
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode)
     for (bool driver : {false, true})
       for (unsigned n = 0; n < 10; ++n) {
@@ -1028,6 +1056,7 @@ int main(int argc, char **argv)
   ZuTestCall(highLogout);
   ZuTestCall(businessLimits);
   ZuTestCall(publicationNotices);
+  ZuTestCall(backingGeometry);
   ZuTestCall(earlyProbeReply);
   ZuTestCall(restoredDrainGap);
   ZuTestCall(resetPreparation);

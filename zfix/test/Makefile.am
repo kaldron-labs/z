@@ -2,11 +2,11 @@ METASOURCES = AUTO
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I$(top_srcdir)/zfix/src @Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
-EXTRA_DIST = ZfixDemo.hh README.md SESSION.md
+EXTRA_DIST = ZfixDemo.hh ZfixTestAllocator.hh README.md SESSION.md
 noinst_PROGRAMS = ZfixSignTest ZfixLoadTest ZfixLoadFIXTest ZfixLoadRunTest ZfixDemoTest ZfixWorkTest ZfixSelectTest ZfixContextTest ZfixDispatchTest ZfixTraceTest ZfixIngressTest ZfixRawTest ZfixWireTest ZfixRxFramerTest ZfixDeclTest ZfixLinkTest ZfixCodecTest ZfixGroupTest ZfixUnionTest ZfixFrameTest ZfixSessionTest ZfixSeqTest ZfixSeqTxTest ZfixLinkStateTest ZfixRxTest ZfixTxMsgTest ZfixTxTest ZfixLinkTxTest ZfixManagedTest ZfixRestoreTest
 ZfixDemoTest_SOURCES = ZfixDemoTest.cc ZfixDemo.cc
 ZfixDemoTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
-ZfixDemoTest_LDADD = $(ZfixLinkTest_LDADD)
+ZfixDemoTest_LDADD = $(ZfixRxTest_LDADD)
 ZfixWorkTest_SOURCES = ZfixWorkTest.cc
 ZfixWorkTest_LDADD = $(ZfixLinkTest_LDADD)
 ZfixSelectTest_SOURCES = ZfixSelectTest.cc
@@ -67,7 +67,7 @@ ZfixSeqTest_SOURCES = ZfixSeqTest.cc
 ZfixSeqTest_LDADD = $(ZfixLinkTest_LDADD)
 ZfixSessionTest_SOURCES = ZfixSessionTest.cc
 ZfixSessionTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
-ZfixSessionTest_LDADD = $(ZfixLinkTest_LDADD)
+ZfixSessionTest_LDADD = $(ZfixRxTest_LDADD)
 ZfixFrameTest_LDADD = $(ZfixDeclTest_LDADD)
 ZfixUnionTest_LDADD = $(ZfixDeclTest_LDADD)
 ZfixGroupTest_LDADD = $(ZfixDeclTest_LDADD)
@@ -171,7 +171,7 @@ asan-test:
 	      zfix_extra_cpp="-I$(top_srcdir)/zi/src"; zfix_extra_lib="$(top_builddir)/zi/src/libZi.la";; \
 	    Wire) zfix_extra="$(top_srcdir)/zfix/src/ZfixLinkState.cc $(top_srcdir)/zfix/src/ZfixTxMsg.cc $(top_srcdir)/zfix/src/ZfixTx.cc $(top_srcdir)/zfix/src/ZfixLinkTx.cc"; \
 	      zfix_extra_cpp="-I$(top_srcdir)/zi/src"; zfix_extra_lib="$(top_builddir)/zi/src/libZi.la";; \
-	    RxFramer) zfix_extra_cpp="-I$(top_srcdir)/zi/src"; zfix_extra_lib="$(top_builddir)/zi/src/libZi.la";; \
+	    RxFramer|Session) zfix_extra_cpp="-I$(top_srcdir)/zi/src"; zfix_extra_lib="$(top_builddir)/zi/src/libZi.la";; \
 	    LinkState) zfix_extra="$(top_srcdir)/zfix/src/ZfixLinkState.cc";; \
 	    Restore) zfix_extra="$(top_srcdir)/zfix/src/ZfixLinkState.cc $(top_srcdir)/zfix/src/ZfixRx.cc $(top_srcdir)/zfix/src/ZfixTxMsg.cc $(top_srcdir)/zfix/src/ZfixTx.cc"; \
 	      zfix_extra_cpp="-I$(top_srcdir)/zi/src"; zfix_extra_lib="$(top_builddir)/zi/src/libZi.la";; \
@@ -331,7 +331,7 @@ asan-demo-test:
 	$(LIBTOOL) --tag=CXX --mode=link $(CXX) $(DEFS) $(ZfixDemoTest_CPPFLAGS) \
 	  $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -fsanitize=address \
 	  -fno-omit-frame-pointer $(srcdir)/ZfixDemoTest.cc \
-	  $(srcdir)/ZfixDemo.cc $(ZfixLinkTest_LDADD) -o ZfixAsanDemoTest
+	  $(srcdir)/ZfixDemo.cc $(ZfixDemoTest_LDADD) -o ZfixAsanDemoTest
 	ASAN_OPTIONS=detect_leaks=1 prove ./ZfixAsanDemoTest
 installed-demo-test:
 	$(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) \

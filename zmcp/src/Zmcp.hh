@@ -2161,7 +2161,7 @@ public:
       m_state = ParserState::OriginRejected;
       return false;
     }
-    if (!m_input.begin(length, impl()->limits().maxJSONBytes)) {
+    if (!m_input.begin(length, impl()->limits().maxJSONBytes, this->bufType())) {
       m_state = ParserState::OverLimit;
       return false;
     }

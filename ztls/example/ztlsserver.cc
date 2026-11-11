@@ -165,10 +165,11 @@ int main(int argc, char **argv)
 
   Zi::IOBufAllocator *rx = App::Link::rxAllocator(&mx);
   Zi::IOBufAllocator *tx = App::Link::txAllocator(&mx);
+  auto txPacket = App::Link::txPacketAllocator(&mx);
 
   Ztls::ServerParams params(&mx, "3", "4");
   params.alpn(alpn).certPath(argv[3]).keyPath(argv[4]);
-  params.rxAllocator(rx).txAllocator(tx);
+  params.rxAllocator(rx).txAllocator(tx).txPacketAllocator(txPacket);
   if (!app.init(ZuMv(params))) {
     std::cerr << "TLS server initialization failed\n" << std::flush;
     app.final(); mx.stop(); ZiLog::stop(); return 1;

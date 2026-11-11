@@ -93,7 +93,7 @@ struct NoLinkRx {
 // Impl is a reference-counted physical transport link. Its app() supplies the
 // existing hub's isolated Rx/Tx dispatch and mx(). Transport hooks are:
 // fixGeometryTx(), fixAllocTx(head), fixSendTx(buffer), resumeRx_(), and
-// disconnect_(). Socket callbacks retain their completed buffer until
+// fixCloseRx(notify), defaulting to disconnect_(). Socket callbacks retain their buffer until
 // transportSent() runs on the Tx owner.
 //
 // Public dispatchers post retained handles/fixed values. Trailing-underscore
@@ -386,7 +386,7 @@ public:
     m_txStopped = m_adminFailed = false;
     auto e = m_rx.start_(Zm::now());
     if (m_adminFailed) return;
-    if (e.actions & SessionAction::Refuse) { impl()->disconnect_(); return; }
+    if (e.actions & SessionAction::Refuse) { impl()->fixCloseRx(true); return; }
   }
 
   void transportDown_0(bool peer) {
@@ -401,9 +401,16 @@ public:
     app()->txRun([this, connection] { m_tx.stop(connection); });
   }
 
+  void transportPacketized(const ZiIOBuf *plain, ZmRef<ZiIOBuf> packet) {
+    ZmAssert(app()->txInvoked());
+    m_tx.Wire::packetized_(plain, ZuMv(packet));
+  }
+
   void transportSent(ZmRef<ZiIOBuf> buf, bool ok) {
-    app()->txRun([this, buf = ZuMv(buf), ok] {
-      m_tx.Wire::record_(buf.ptr(), ok); m_tx.checkStop();
+    buf->owner = this;
+    app()->txRun([buf = ZuMv(buf), ok] {
+      auto link = static_cast<Link *>(buf->owner);
+      link->m_tx.Wire::record_(buf.ptr(), ok); link->m_tx.checkStop();
     });
   }
 
@@ -660,6 +667,9 @@ public:
 
   void fixStopTx(uint64_t) { }
   void fixStopRx(uint64_t, uint64_t) { }
+  // Standalone engines delegate the transport close to their implementation.
+  void fixCloseRx(bool notify) { impl()->disconnect_(notify); }
+
   void fixStoppedRx(bool) { }
 
   void fixBlockedRx(TxContext) { }
@@ -784,7 +794,7 @@ private:
     const auto &session = m_rx.session_();
     if (c.connection != session.connection_() || c.epoch != session.epoch_()) return;
     if (m_live && session.state_() == State::Disconnected) {
-      impl()->disconnect_(false); return;
+      impl()->fixCloseRx(false); return;
     }
     m_rx.outputFailed(c.connection, c.epoch);
   }
@@ -794,7 +804,8 @@ private:
   }
 
   static uint64_t rxMemory(const ZiIOBuf &b) {
-    return ZmHeapAllocSize<sizeof(typename Impl::RxBufAlloc)>{} +
+    return ZmHeapAllocSize<sizeof(Zi::IOBufBuiltin<typename Impl::RxBufAlloc::Buf,
+      Impl::RxBufAlloc::Size, ZiIOBuf_Align>)>{} +
       (!b.builtin() ? Zfix::jumboBytes(b.size) : 0);
   }
 
@@ -822,7 +833,7 @@ private:
     m_adminFailed = true;
     // Do not turn refusal into another queued control or recursively fault on
     // its terminal event. Physical teardown has its own fixed drain barrier.
-    fault_(SessionError::Overload); impl()->disconnect_(false);
+    fault_(SessionError::Overload); impl()->fixCloseRx(false);
   }
 
   void fault_(unsigned error, int32_t tag = 0) {
@@ -884,7 +895,7 @@ private:
     }
     impl()->fixEventRx(event, ZuMv(msg));
     if (m_live && event.connection == m_rx.session_().connection_() &&
-	(event.actions & SessionAction::Close)) impl()->disconnect_(!m_adminFailed);
+	(event.actions & SessionAction::Close)) impl()->fixCloseRx(!m_adminFailed);
   }
 
   void cancelTimer() {

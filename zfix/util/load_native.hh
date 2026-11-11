@@ -138,6 +138,9 @@ template <typename Net> struct NativeHub<Net, true> : Zfix::Client<NativeHub<Net
       tx = Link::txAllocator(params.multiplex());
       params.txAllocator(tx);
     }
+    if constexpr (Net::Encrypted)
+      if (!params.txPacketAllocator())
+        params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
     return Zfix::Client<NativeHub, Dictionary, Net>::init(ZuMv(params));
   }
 };
@@ -233,6 +236,9 @@ friend inline ZuStringT<"Zfix.Load.Hub"> ZmNHeapID(NativeHub *);
       tx = Link::txAllocator(params.multiplex());
       params.txAllocator(tx);
     }
+    if constexpr (Net::Encrypted)
+      if (!params.txPacketAllocator())
+        params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
     return Zfix::Server<NativeHub, Dictionary, Net>::init(ZuMv(params));
   }
 };

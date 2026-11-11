@@ -116,8 +116,10 @@ void Client::frame_(ZmRef<ZiIOBuf> frame, FrameInfo info)
   switch (info.type) {
     case MessageType::MethodReturn:
     case MessageType::Error:
-      m_sched->invoke([this, frame = ZuMv(frame), info]() mutable {
-        txReply(ZuMv(frame), info);
+      frame->owner = this;
+      m_sched->invoke([frame = ZuMv(frame), info]() mutable {
+        auto client = static_cast<Client *>(frame->owner);
+        client->txReply(ZuMv(frame), info);
       }, m_txSid);
       return;
     case MessageType::Signal:

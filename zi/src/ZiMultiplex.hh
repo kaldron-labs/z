@@ -449,6 +449,12 @@ struct ZiCxnInfo { // pure aggregate, no ctor
   ZiCxnOptions 		options;
   ZiSockAddr		local;
   ZiSockAddr		remote;
+  uint32_t		mps = ~uint32_t(0);
+
+  // mps is max payload size:
+  // - TCP: MSS
+  // - UDP: MTU - overhead
+  // - ~uint32_t(0): unknown (including unconnected UDP sockets)
 
   Zi::IOBufAllocator *rxAllocator = nullptr;
 
@@ -559,6 +565,9 @@ public:
   uint64_t rxBytes() const { return m_rxBytes; }
   uint64_t txCalls() const { return m_txCalls; }
   uint64_t txBytes() const { return m_txBytes; }
+  // telemetry updates - must run on-thread
+  void rxCall(uint64_t n) { m_rxCalls++, m_rxBytes += n; } // Rx thread
+  void txCall(uint64_t n) { m_txCalls++, m_txBytes += n; } // Tx thread
 
   Ztc::Connection::TelKey telKey() const override;
   void telemetry(Ztc::CxnTelemetry &data) const override;
@@ -749,9 +758,9 @@ public:
   ZiMultiplex *mx() const { return m_mx; }
 
   // type will be one of RxUDP, TxUDP, RxTCP, TxTCP, RxTLS, TxTLS
-  virtual Zi::IOBufPlugin *allocator(Zi::IOBufType::T type,
-    unsigned size, unsigned maxSize, unsigned align,
-    unsigned count) = 0;
+  virtual Zi::IOBufPlugin *allocator(
+    Zi::IOBufType::T type,
+    unsigned size, unsigned align, unsigned count) = 0;
 
   // Rx thread idempotent start/stop
 
@@ -785,9 +794,11 @@ public:
       ZiIP remoteIP, uint16_t remotePort,
       Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options) = 0;
 
+  virtual void recv(ZiConnection *) = 0;	// called from ZiConnection::recv()
+
   // Tx thread
 
-  virtual void send(ZiConnection *) = 0;	// equivalent of ZiConnection::send()
+  virtual void send(ZiConnection *) = 0;	// called from ZiConnection::send()
 
   virtual void disconnect(ZiConnection *, bool peer) = 0;	// graceful - drains
   virtual void close(ZiConnection *, bool peer) = 0;		// abrupt
@@ -1001,19 +1012,26 @@ public:
   // register allocators and any plugin while stopped, before start() and I/O use
   template <
     Zi::IOBufType::T Type = Zi::IOBufType::App,
-    typename Base = Zi::IOBuf,
+    typename Buf = Zi::IOBuf,
     unsigned Size = ZiIOBuf_DefltSize,
-    unsigned MaxSize = ZiIOBuf_DefltMaxSize,
     unsigned Align = ZiIOBuf_DefltAlign,
-    typename HeapID = ZiIOBuf_HeapID>
+    typename HeapID = ZiIOBuf_HeapID,
+    unsigned VHMaxSize = ZiIOBuf_DefltVHMaxSize,
+    auto Grow = ZmGrow>
   Zi::IOBufAllocator *allocator(unsigned count = ZiIOBuf_DefltCount) {
     ZmAssert(state() == ZmEngineState::Stopped);
-    Zi::IOBufAllocator *a;
-    if (m_plugin)
-      a = new Zi::IOBufPluginAllocator<Type, Size, Base>(
-	this, m_plugin->allocator(Type, Size, MaxSize, Align, count));
-    else
-      a = new Zi::IOBufBuiltinAllocator<Type, Base, Size, MaxSize, Align, HeapID>(this);
+    Zi::IOBufAllocator *a = nullptr;
+    if constexpr (
+	Type == Zi::IOBufType::RxUDP || 
+	Type == Zi::IOBufType::TxUDP || 
+	Type == Zi::IOBufType::RxTCP || 
+	Type == Zi::IOBufType::TxTCP) {
+      if (m_plugin)
+	a = new Zi::IOBufPluginAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>(
+	  this, m_plugin->allocator(Type, Size, Align, count));
+    }
+    if (!a)
+      a = new Zi::IOBufBuiltinAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>(this);
     m_allocators.pushNode(a);
     return a;
   }
@@ -1111,7 +1129,7 @@ private:
 #ifdef ZiMultiplex_IOCP
   void overlappedConnect(Connect *, int status, unsigned, ZeError e);
 #endif
-  void executedConnect(ZiConnectFn, const ZiCxnInfo &);
+  void executedConnect(ZiConnectFn, ZiCxnInfo &);
 
   void accept(Listener *);
 #ifdef ZiMultiplex_IOCP

@@ -14,6 +14,7 @@
 
 #include <zlib/ZiEventLoop.hh>
 #include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiMultiplex.hh>
 
 #include "ZiTestPorts.hh"
 
@@ -415,8 +416,9 @@ void testSocketBackpressure()
 
   // Limit the fixture's work even if the host has a large socket send buffer.
   constexpr unsigned FillLimit = 1U << 20;
-  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize> allocator{nullptr};
-  ZmRef<ZiIOBuf> fill = allocator.allocBuf();
+  ZiMultiplex allocatorMx;
+  auto allocator = allocatorMx.allocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize>();
+  ZmRef<ZiIOBuf> fill = allocator->allocBuf();
   memset(fill->data(), 'F', fill->size);
   unsigned filled = 0;
   bool blocked = false;
@@ -690,8 +692,9 @@ void testHandleWriteReady()
     return;
   }
 
-  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize> allocator{nullptr};
-  ZmRef<ZiIOBuf> fill = allocator.allocBuf();
+  ZiMultiplex allocatorMx;
+  auto allocator = allocatorMx.allocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize>();
+  ZmRef<ZiIOBuf> fill = allocator->allocBuf();
   memset(fill->data(), 'F', fill->size);
   unsigned filled = 0;
   for (;;) {

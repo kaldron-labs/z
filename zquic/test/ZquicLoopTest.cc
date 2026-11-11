@@ -79,6 +79,8 @@ struct TestLink :
   void queueTxFlush() { }
   void pto_() { }
   void queueRetransmit() { }
+  bool retransmit_(bool = false, unsigned = 2,
+    Zquic::PktNumSpace::T = Zquic::PktNumSpace::N) { return false; }
   void initPath(ZiSockAddr local, ZiSockAddr remote) {
     Base::initClientPathTx_(ZuMv(local), ZuMv(remote));
   }
@@ -95,6 +97,7 @@ struct TestLink :
 	([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
       return allocator->allocBuf(owner, 0);
     })(this);
+    if (ZuUnlikely(!buf)) return;
     memset(buf->data_(), 0, bytes);
     buf->skip = 0;
     buf->length = bytes;
@@ -262,6 +265,7 @@ static ZmRef<ZiIOBuf> streamPkt(
 	([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
       return allocator->allocBuf(owner, 0);
     })(nullptr);
+  if (ZuUnlikely(!packet)) return nullptr;
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, id, offset, payload, fin);
   if (n <= 0) return nullptr;
@@ -562,6 +566,8 @@ void testDatagramPayloadHeadroom(unsigned headroom)
   TestLink link{&app};
   Zi::IOBufAllocator *allocator = ([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
   auto buf = allocator->allocBuf();
+  ZuCheckRT(bool(buf));
+  if (!buf) return;
   memset(buf->data_(), 0, headroom); // model metadata before received payload
   buf->skip = headroom;
   Zquic::CxnID dcid{"dst"}, scid{"src"};

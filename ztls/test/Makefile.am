@@ -14,7 +14,7 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZtlsPKTest ZtlsX25519Test ZtlsKEMTest ZtlsHybridTest ZtlsHPKETest ZtlsAgeTest ZtlsVaultTest ZtlsBufHookTest ZtlsAsyncTest ZtlsSecTest
+noinst_PROGRAMS = ZtlsPKTest ZtlsX25519Test ZtlsKEMTest ZtlsHybridTest ZtlsHPKETest ZtlsAgeTest ZtlsVaultTest ZtlsBufHookTest ZtlsAsyncTest ZtlsSecTest ZtlsTxPacketTest ZtlsRxPacketTest ZtlsRxStubTest
 noinst_LTLIBRARIES = libZtlsVaultFixture.la
 libZtlsVaultFixture_la_SOURCES = ZtlsVaultFixture.cc
 libZtlsVaultFixture_la_CPPFLAGS = $(AM_CPPFLAGS) -DZTLS_EXPORTS
@@ -38,6 +38,9 @@ endif
 ZtlsBufHookTest_SOURCES = ZtlsBufHookTest.cc
 ZtlsAsyncTest_SOURCES = ZtlsAsyncTest.cc
 ZtlsSecTest_SOURCES = ZtlsSecTest.cc
+ZtlsTxPacketTest_SOURCES = ZtlsTxPacketTest.cc
+ZtlsRxPacketTest_SOURCES = ZtlsRxPacketTest.cc
+ZtlsRxStubTest_SOURCES = ZtlsRxStubTest.cc
 dist_noinst_SCRIPTS = ZtlsKeygen.sh
 
 .PHONY: test

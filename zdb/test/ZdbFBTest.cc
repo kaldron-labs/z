@@ -76,7 +76,7 @@ static void run()
   ZuCheck(a->size >= 256 && c->size >= 1024);
   ZuCheck(a->skip >= sizeof(Hdr));
   ZuCheck(!a->rep && !b->rep && !c->rep);
-  ZuCheck(a->allocator != b->allocator);
+  ZuCheck(a->allocator() != b->allocator());
   auto ptr = a->data();
   Builder builder{ZuMv(a), Zfb::Wire::Align};
   builder.finish(saveMsg(builder,
@@ -85,9 +85,9 @@ static void run()
   ZuCheck(frame && frame->data_() + Zfb::Wire::MaxAlign == ptr);
   ZuCheck(frame->hdr()->length == frame->length - sizeof(Hdr));
   auto txAllocator = mx.allocator<Zi::IOBufType::TxTCP, ZiTxBuf,
-    Zdb_::HBBufSize, Zdb_::MaxBufSize>();
-  auto firstSend = ZmRef<TxFrame>{new TxFrame{txAllocator, frame}};
-  auto secondSend = ZmRef<TxFrame>{new TxFrame{txAllocator, frame}};
+    Zdb_::HBBufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, Zdb_::MaxBufSize>();
+  auto firstSend = ZmRef<TxBuf>{new TxBuf{txAllocator, frame}};
+  auto secondSend = ZmRef<TxBuf>{new TxBuf{txAllocator, frame}};
   auto frameData = frame->data();
   auto frameLength = frame->length;
   ZuCheck(firstSend->data() == frameData && secondSend->data() == frameData);
@@ -99,7 +99,7 @@ static void run()
   auto original = frame->data();
   auto hdr = frame->hdr();
   auto length = frame->length;
-  auto view = ZmRef<RxFrame>{new RxFrame{frame}};
+  auto view = ZmRef<RxBuf>{new RxBuf{frame}};
   frame->advance(sizeof(Hdr));
   ZuCheck(frame->refCount() == refs + 1);
   ZuCheck(view->data() == original && view->length == length);
@@ -133,8 +133,8 @@ static void frameOrigin()
   auto length = packet->length;
   ZmRef<RepBuf<SchemaTest::Row>> cached = new RepBuf<SchemaTest::Row>{packet};
   auto txAllocator = mx.allocator<Zi::IOBufType::TxTCP, ZiTxBuf,
-    Zdb_::HBBufSize, Zdb_::MaxBufSize>();
-  auto sending = ZmRef<TxFrame>{new TxFrame{txAllocator, packet}};
+    Zdb_::HBBufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, Zdb_::MaxBufSize>();
+  auto sending = ZmRef<TxBuf>{new TxBuf{txAllocator, packet}};
   sending->advance(length >> 1);
   ZuCheck(sending->data() == span.data() + (length >> 1));
   ZuCheck(packet->hdr() == hdr && packet->frameSpan() == span);

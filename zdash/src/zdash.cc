@@ -19,7 +19,6 @@
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmTrap.hh>
 #include <zlib/ZmSemaphore.hh>
-#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmRing.hh>
 #include <zlib/ZmHeap.hh>
@@ -81,9 +80,14 @@ ZuDerive(Secret, (ZtString<ZtStringSecret<true,
 // Bound network reassembly and queued telemetry independently of ring size.
 enum { FrameMax = 1U << 20, QueuedInputMax = 1U << 22 };
 using Frame = ZmRef<ZiIOBuf>;
-using FrameBuf =
-  Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 1024, FrameMax, ZiIOBuf_Align,
-    ZuStringT<"ZDash.Frame">>;
+static ZmRef<ZiIOBuf> allocFrame()
+{
+  static ZiMultiplex mx{ZiMxParams{}.scheduler(
+    [](auto &params) { params.id("ZDash.Frame"); })};
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 1024, ZiIOBuf_Align,
+    ZuStringT<"ZDash.Frame">, FrameMax>();
+  return allocator->allocBuf();
+}
 
 struct Subscription {
   using Filter = Ztc::RequestFilter;
@@ -1232,21 +1236,30 @@ public:
       return false;
 
     i18n("zdash", DATADIR);
-    attach(mx, config.gtkThread);
+    m_mx = mx;
+    m_gtkThread = config.gtkThread;
+    return m_offline || transportInit(mx, tls);
+  }
+
+  bool start(ZuCSpan token) {
+    attach(m_mx, m_gtkThread);
     m_attached = true;
-    mx->run([this]() {
+    m_mx->run([this]() {
       gtkInit_();
       m_executed.post();
-    }, config.gtkThread);
+    }, m_gtkThread);
     m_executed.wait();
     if (!m_gtkReady) return false;
     if (m_offline) return true;
 
-    return transportInit(mx, tls, token);
+    if (!m_client.start()) return false;
+    m_clientStarted = true;
+    linkOpen(token);
+    return true;
   }
 
   // Main-thread lifecycle; GTK and the TLS client survive credential renewal.
-  bool transportInit(ZiMultiplex *mx, const Zhttp::TLSConfig &tls, ZuCSpan token) {
+  bool transportInit(ZiMultiplex *mx, const Zhttp::TLSConfig &tls) {
     Zws::Config ws;
     ws.maxMessage = FrameMax;
     ws.maxQueuedInput = QueuedInputMax;
@@ -1258,9 +1271,6 @@ public:
 	Zhttp::Destination{m_uri.host, m_uri.port, m_uri.ipv6Literal}, ws))
       return false;
     m_clientInited = true;
-    if (!m_client.start()) return false;
-    m_clientStarted = true;
-    linkOpen(token);
     return true;
   }
 
@@ -1400,8 +1410,12 @@ public:
     auto &message = m_frame;
     unsigned incoming = rx.length();
     if (incoming > FrameMax - message.length()) { return reject(link, Zws::CloseCode::TooLarge); }
-    using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, 1024, FrameMax>;
-    auto alloc = []() { return ZmSingleton<Alloc>::instance()->allocBuf(); };
+    static ZiMultiplex mx{ZiMxParams{}.scheduler(
+      [](auto &params) { params.id(L::TLS ? "ZDash.RxTLS" : "ZDash.RxTCP"); })};
+    static auto allocator = mx.allocator<
+      L::TLS ? Zi::IOBufType::RxTLS : Zi::IOBufType::RxTCP, ZiRxQueue::Node, 1024,
+      ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, FrameMax>();
+    auto alloc = []() { return allocator->allocBuf(); };
     while (rx) {
       if (rx.splice(message,
 	[](ZuBSpan span) -> int64_t { return span.length(); }, alloc, alloc) <= 0)
@@ -1414,7 +1428,11 @@ public:
   int messageEnd(L &link) {
     uint64_t remaining = m_frame.length();
     ZmRef<ZiIOBuf> frame;
-    using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node, 1024, FrameMax>;
+    static ZiMultiplex mx{ZiMxParams{}.scheduler(
+      [](auto &params) { params.id(L::TLS ? "ZDash.EndTLS" : "ZDash.EndTCP"); })};
+    static auto allocator = mx.allocator<
+      L::TLS ? Zi::IOBufType::RxTLS : Zi::IOBufType::RxTCP, ZiRxQueue::Node, 1024,
+      ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, FrameMax>();
     auto length = m_frame.extract(
       [&remaining](ZuBSpan span) -> int64_t {
 	if (remaining > span.length()) {
@@ -1422,7 +1440,7 @@ public:
 	  return 0;
 	}
 	return remaining;
-      }, []() { return ZmSingleton<Alloc>::instance()->allocBuf(); }, frame);
+      }, []() { return allocator->allocBuf(); }, frame);
     auto code = length > 0 ? receive_(frame->cspan(), true) :
       Zws::CloseCode::InvalidData;
     m_frame.clean();
@@ -1656,7 +1674,7 @@ public:
       host.gtkRun = {ZGtk::App::sched(), ZGtk::App::sid(),
 	[this]() { return !m_gtkClosing; }};
       host.request_ = [this]() {
-	return requestFrame(m_sub, true, Frame{ZmSingleton<FrameBuf>::instance()->allocBuf()});
+	return requestFrame(m_sub, true, Frame{allocFrame()});
       };
       host.subscription_ = [this](ZuCSpan device, ZuCSpan publisher,
 	  unsigned group) -> uint64_t {
@@ -2066,6 +2084,8 @@ private:
   GtkTree::Details	*m_details = nullptr;
   GtkTree::Model	*m_gtkModel = nullptr;
   GtkStyleContext	*m_styleContext = nullptr;
+  ZiMultiplex		*m_mx = nullptr;
+  unsigned		m_gtkThread = 0;
   GtkWindow		*m_mainWindow = nullptr;
   gulong		m_mainDestroy = 0;
   bool			m_gtkReady = false;
@@ -2093,18 +2113,18 @@ static bool session(
       .thread(ZDash::GtkSID, [](auto &t) { t.name("gtk"); t.isolated(1); });
   }).rxThread(1).txThread(2)};
   using TLS = Zhttp::NativeTraits<Zhttp::H1TLS>::Transport;
-  auto tlsRx = mx.allocator<Zi::IOBufType::RxTLS,
-    TLS::RxAllocator::Buf, TLS::RxAllocator::Size, TLS::RxAllocator::MaxSize,
-    TLS::RxAllocator::Align, TLS::RxAllocator::Heap>();
-  auto tlsTx = mx.allocator<Zi::IOBufType::TxTLS,
-    TLS::TxAllocator::Buf, TLS::TxAllocator::Size, TLS::TxAllocator::MaxSize,
-    TLS::TxAllocator::Align, TLS::TxAllocator::Heap>();
-  auto tls = Zhttp::TLSConfig{}.caPath(caPath).rxAllocator(tlsRx).txAllocator(tlsTx);
-  if (!mx.start()) return false;
+  auto tlsRx = TLS::registerRx(&mx);
+  auto tlsTx = TLS::registerTx(&mx);
+  auto tls = Zhttp::TLSConfig{}.caPath(caPath).rxAllocator(tlsRx).txAllocator(tlsTx)
+    .txPacketAllocator(TLS::registerTxPacket(&mx))
+    .socketRxAllocator(mx.allocator<Zi::IOBufType::RxTCP, ZiIOBuf,
+      Ztls_::RxPacketCapacity>());
+  bool ok = app.init(&mx, ZuMv(config), tls, token, module);
+  if (!ok || !mx.start()) { app.final(); return false; }
   signalApp = &app;
   ZmTrap::sigintFn(sigint);
   ZmTrap::trap();
-  bool ok = app.init(&mx, ZuMv(config), tls, token, module);
+  ok = app.start(token);
   if (ok && lease) {
     while (!app.waitUntil(lease->renewAt)) {
       if (!lease->refresh(*lease)) { ok = false; break; }

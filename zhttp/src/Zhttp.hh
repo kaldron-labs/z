@@ -103,6 +103,9 @@ struct Parser { // base class with defaulted types and member functions
 
   Parser() = default;
 
+  Zi::IOBufType::T bufType() const { return m_bufType; }
+  void bufType(Zi::IOBufType::T type) { m_bufType = type; }
+
   template <typename Context>
   void init(Context &) { }
 
@@ -153,6 +156,9 @@ struct Parser { // base class with defaulted types and member functions
   void complete(Link *, bool ok) { }
 
   void reset() { }
+
+private:
+  Zi::IOBufType::T m_bufType = Zi::IOBufType::App;
 };
 
 struct Builder {
@@ -566,6 +572,9 @@ struct TypedParser : public ZmNHeap<TypedParser<P, Context, ContextAxor>> {
 	[](void *ctx, Channel *channel, bool peer) {
 	  static_cast<TypedParser *>(ctx)->parser.disconnected(channel, peer);
 	};
+      table.bufType = [](void *ctx, Zi::IOBufType::T type) {
+        static_cast<TypedParser *>(ctx)->parser.bufType(type);
+      };
       return table;
     }();
     return {new TypedParser{}, &ops, &catalog};

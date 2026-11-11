@@ -196,8 +196,8 @@ bool CryptoStream::sent(uint64_t offset, ZuBSpan payload)
   if (offset != m_txBytes) return false;
   if (!payload.length()) return true;
   // Public borrowed ingress acquires final retained plaintext storage once.
-  ZmRef<ZiIOBuf> buf = new CryptoTxBufAlloc<>{
-    ZmSingleton<typename CryptoTxBufAlloc<>::Allocator>::instance(), nullptr, 0};
+  if (ZuUnlikely(!m_txAllocator)) return false;
+  auto buf = m_txAllocator->allocBuf();
   if (!buf->append(payload)) return false;
   return sent(offset, ZuMv(buf));
 }
@@ -289,10 +289,10 @@ int CryptoStream::receive(
     RxSpan, m_rxQueue.count_() + 1, RxSpans::VHeap);
   if (!rxNovelSpans(m_rxQueue, first, end, spans)) return -1;
   uint64_t bytes = rxSpanBytes(spans);
+  if (ZuUnlikely(!m_rxAllocator)) return -1;
   if (!queueRxSpans(spans, offset, payload,
-	[](unsigned) -> ZmRef<CryptoRxPQueue::Node> {
-	  return new CryptoRxBufAlloc<BufSize, MaxBufSize>{
-	    ZmSingleton<typename CryptoRxBufAlloc<BufSize, MaxBufSize>::Allocator>::instance(), nullptr, 0};
+	[this](unsigned) -> ZmRef<CryptoRxPQueue::Node> {
+	  return m_rxAllocator->allocBuf();
 	},
 	[this](ZmRef<CryptoRxPQueue::Node> buf, uint64_t offset, unsigned) {
 	  buf->offset = offset;
