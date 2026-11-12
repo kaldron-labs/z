@@ -88,6 +88,12 @@ Explicit Rx and Tx ownership, pooled [`ZiIOBuf`](https://github.com/kaldron-labs
 placement carry through the transport and application layers. [Zi](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiProgram.hh) also supplies
 file I/O, asynchronous DNS resolution, logging integration and allocation tuning.
 
+[`ZiMultiplex`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh) is Z's I/O reactor (epoll / IOCP); it supports plugin replacement of the kernel TCP/IP + UDP stack.
+
+[`Zutcp`](https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh) is a user-mode TCP/IP stack running on raw Ethernet [`Zxdp`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh) that can be plugged into Z's reactor [`ZiMultiplex`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh) (**work in progress**)
+
+[`Zxdp`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh) encapsulates AF_XDP for zero-copy DMA rx/tx of raw Ethernet packets. Planned work will add DPDK, NVIDIA (Mellanox) `libibverbs` and AMD (SolarFlare) `ef_vi`.
+
 ### Compile-time strings, matching and reflection
 
 [`ZuString`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuString.hh) is a structural compile-time string usable
@@ -105,8 +111,8 @@ notable features; large instantiations also have a compile-time cost.
 
 [`ZuStruct`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuStruct.hh#L460) and [`ZfStruct`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfStruct.hh#L3438) describe existing C++ objects, including members,
 accessors, defaults, bounds, keys and format-specific field views (facets).
-The same metadata supports JSON, URI, CLI, CSV, ASN.1 and D-Bus adapters, plus
-native FlatBuffers and protobuf codecs. Borrowed views, typed dispatch and
+The same metadata supports JSON, URI, CLI, CSV, FIX, ASN.1 and D-Bus adapters,
+plus native FlatBuffers and protobuf codecs. Borrowed views, typed dispatch and
 direct buffer construction avoid unnecessary intermediate object trees.
 `zflatc` and `zprotoc` supply schema tooling; normal codec use does not require
 the canonical FlatBuffers or protobuf C++ runtimes.
