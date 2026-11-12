@@ -34,6 +34,49 @@ LT_LANG([C++])
 AS_CASE([$host_os], [linux*], [z_linux=yes], [z_linux=no])
 AM_CONDITIONAL([LINUX], [test "$z_linux" = yes])
 AS_IF([test "$z_linux" = yes], [
+  AC_MSG_CHECKING([for Zxdp AF_XDP and BPF kernel headers])
+  AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+#include <sys/socket.h>
+#include <sys/syscall.h>
+#include <linux/bpf.h>
+#include <linux/if_link.h>
+#include <linux/if_xdp.h>
+#include <linux/rtnetlink.h>
+  ]], [[
+    sockaddr_xdp address{};
+    address.sxdp_family = AF_XDP;
+    address.sxdp_flags = XDP_USE_NEED_WAKEUP;
+    xdp_umem_reg registration{};
+    registration.chunk_size = 4096;
+    registration.headroom = XDP_PACKET_HEADROOM;
+    xdp_mmap_offsets offsets{};
+    offsets.rx.flags = offsets.tx.flags = offsets.fr.flags = offsets.cr.flags = 0;
+    xdp_desc descriptor{};
+    descriptor.options = 0;
+    xdp_options options{};
+    options.flags = XDP_OPTIONS_ZEROCOPY;
+    bpf_attr attribute{};
+    attribute.map_type = BPF_MAP_TYPE_XSKMAP;
+    attribute.prog_type = BPF_PROG_TYPE_XDP;
+    attribute.expected_attach_type = BPF_XDP;
+    (void)address; (void)registration; (void)offsets;
+    (void)descriptor; (void)options; (void)attribute;
+    (void)__NR_bpf; (void)SO_NETNS_COOKIE; (void)SOL_XDP;
+    (void)XDP_MMAP_OFFSETS; (void)XDP_UMEM_REG; (void)XDP_OPTIONS;
+    (void)XDP_RX_RING; (void)XDP_TX_RING; (void)XDP_UMEM_FILL_RING;
+    (void)XDP_UMEM_COMPLETION_RING; (void)XDP_RING_NEED_WAKEUP;
+    (void)XDP_PGOFF_RX_RING; (void)XDP_PGOFF_TX_RING;
+    (void)XDP_UMEM_PGOFF_FILL_RING; (void)XDP_UMEM_PGOFF_COMPLETION_RING;
+    (void)IFLA_XDP_EXPECTED_FD; (void)IFLA_XDP_DRV_PROG_ID;
+    (void)IFLA_XDP_SKB_PROG_ID; (void)IFLA_XDP_HW_PROG_ID;
+    (void)XDP_FLAGS_UPDATE_IF_NOEXIST; (void)XDP_FLAGS_REPLACE;
+    (void)BPF_OBJ_GET_INFO_BY_FD; (void)BPF_MAP_CREATE; (void)BPF_PROG_LOAD;
+  ]])], [AC_MSG_RESULT([yes])], [
+    AC_MSG_RESULT([no])
+    AC_MSG_ERROR([Linux headers with AF_XDP ring flags/options, BPF XSK maps, expected-FD XDP attachment and SO_NETNS_COOKIE are required for Zxdp])
+  ])
+])
+AS_IF([test "$z_linux" = yes], [
   PKG_CHECK_MODULES([DBUS], [dbus-1], [z_have_dbus=yes], [z_have_dbus=no])
 ], [z_have_dbus=no])
 AM_CONDITIONAL([HAVE_DBUS], [test "$z_have_dbus" = yes])
@@ -335,7 +378,7 @@ AM_CONDITIONAL([GTK], [test ".$with_gtk" = ".yes"])
 CPPFLAGS=`echo $CPPFLAGS | perl -pe 's/-I(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$I{$1}++ ? "" : "-I${1}${2}"/ge;'`
 LDFLAGS=`echo $LDFLAGS | perl -pe 's|/[^/]+/\.\./|/|g; s/-L(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$L{$1}++ ? "" : "-L${1}${2}"/ge; s/(-Wl,-R,|-R)(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$R{$2}++ ? "" : "${1}${2}${3}"/ge'`
 
-for i in zu zm zt ze zf zi zpb zfb zv zdbus ztcp ztls zfix zquic zhttp zgrpc zrest zjrpc zmcp zws zdb zdb_pq zdb_sqlite ztc zum zdf zrl zgtk zdash; do {
+for i in zu zm zt ze zf zi zxdp zpb zfb zv zdbus ztcp ztls zfix zquic zhttp zgrpc zrest zjrpc zmcp zws zdb zdb_pq zdb_sqlite ztc zum zdf zrl zgtk zdash; do {
   for j in src ext; do {
     if test -d $i/$j -a ! -e $i/$j/AC_PACKAGE_NAME; then (
       cd $i/$j;
@@ -356,6 +399,8 @@ AC_CONFIG_FILES([Makefile \
 	zf/Makefile zf/src/Makefile zf/test/Makefile \
 	zi/Makefile zi/src/Makefile zi/test/Makefile zi/itest/Makefile \
 	zi/example/Makefile \
+	zxdp/Makefile zxdp/src/Makefile zxdp/test/Makefile zxdp/util/Makefile \
+	zxdp/itest/Makefile \
 	zpb/Makefile zpb/src/Makefile zpb/test/Makefile zpb/itest/Makefile \
 	zpb/example/Makefile zpb/interop/Makefile \
 	zfb/Makefile zfb/src/Makefile zfb/test/Makefile zfb/itest/Makefile \

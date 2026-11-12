@@ -5,7 +5,7 @@ EXTRA_DIST = TESTING.md DEPENDENCIES.md GUIDELINES.md z.config .lsan-suppression
 	scripts/qir-run-local scripts/qir-collect-results scripts/qir-report
 SUBDIRS = zu zm zt ze zf zi zpb zfb zv zrl
 if LINUX
-SUBDIRS += zdbus
+SUBDIRS += zdbus zxdp
 endif
 SUBDIRS += ztcp ztls zfix zquic zhttp zws
 SUBDIRS += zgrpc zrest
@@ -25,7 +25,8 @@ SUBDIRS += zgtk
 endif
 # SUBDIRS += zdash
 
-DIST_SUBDIRS = zu zm zt ze zf zi zpb zfb zv zrl zdbus ztcp ztls zfix zquic zhttp zws zgrpc zrest zjrpc zmcp zdb ztc \
+DIST_SUBDIRS = zu zm zt ze zf zi zpb zfb zv zrl zdbus zxdp ztcp ztls zfix zquic \
+	zhttp zws zgrpc zrest zjrpc zmcp zdb ztc \
 	zdb_pq zdb_sqlite zdf zum zgtk # zdash
 
 .PHONY: test
