@@ -9,9 +9,7 @@ EXTRA_DIST += results/ONEPASS.md results/2026-11-01-onepass.tar.xz
 EXTRA_DIST += results/TAGS.md results/2026-11-01-static-tags.tar.xz
 EXTRA_DIST += results/LOADERS.md results/2026-11-01-loaders.tar.xz
 EXTRA_DIST += results/CONVERT.md results/2026-11-01-convert.tar.xz
-EXTRA_DIST += REPAIR3.md results/repair3/inspect.cc \
-	results/repair3/before-0.jsonl results/repair3/before-1.jsonl results/repair3/before-2.jsonl \
-	results/repair3/after-0.jsonl results/repair3/after-1.jsonl results/repair3/after-2.jsonl
+EXTRA_DIST += results/repair3/inspect.cc
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I$(top_srcdir)/zfix/src @Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@

@@ -107,8 +107,9 @@ python3 zgrpc/interop/run-dotnet.py \
 
 Install .NET SDK 10 and the platform's MsQuic runtime before invoking those
 targets; see [Microsoft's HTTP/3 requirements](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/servers/kestrel/http3?view=aspnetcore-10.0).
-NuGet dependencies are pinned in `Peer.csproj` and `packages.lock.json` and
-restored in locked mode. They are confined to these explicit peer targets.
+NuGet dependencies are pinned in `Peer.csproj` and `packages.lock.toml`. The
+peer make target renders `obj/packages.lock.json` for NuGet and restores in locked
+mode. They are confined to these explicit peer targets.
 The fixture generates protobuf bindings from the shared `zgrpc.proto`.
 
 The peer self-test has 13 cases. Actual native qualification runs both roles

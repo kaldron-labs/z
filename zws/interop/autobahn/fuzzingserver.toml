@@ -1,0 +1,6 @@
+url = "ws://0.0.0.0:9001"
+outdir = "/reports/client"
+cases = ["*"]
+exclude-cases = []
+
+[exclude-agent-cases]

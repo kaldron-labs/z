@@ -1,0 +1,9 @@
+outdir = "/reports/server"
+cases = ["*"]
+exclude-cases = []
+
+[[servers]]
+agent = "Zws"
+url = "ws://host.docker.internal:9001"
+
+[exclude-agent-cases]

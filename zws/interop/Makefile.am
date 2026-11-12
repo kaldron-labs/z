@@ -21,7 +21,7 @@ noinst_PROGRAMS = zwsautobahnclient
 zwsautobahnclient_SOURCES = zwsautobahnclient.cc
 dist_noinst_SCRIPTS = zwsbinancetest.sh \
 	autobahn/run-server.sh autobahn/run-client.sh
-EXTRA_DIST = autobahn/fuzzingclient.json autobahn/fuzzingserver.json \
+EXTRA_DIST = autobahn/fuzzingclient.toml autobahn/fuzzingserver.toml \
 	autobahn/README.md
 
 .PHONY: test

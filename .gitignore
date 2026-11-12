@@ -14,6 +14,7 @@ gtags.files
 Makefile
 !zpb/interop/go/Makefile
 !zgrpc/interop/go/Makefile
+!zgrpc/interop/dotnet/Makefile
 Makefile.in
 aclocal.m4
 config.*

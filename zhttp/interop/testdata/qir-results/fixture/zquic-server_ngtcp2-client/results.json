@@ -1,6 +1,0 @@
-{
-  "results": [[
-    {"name": "handshake", "abbr": "H", "result": "succeeded"},
-    {"name": "transfer", "abbr": "DC", "result": "succeeded"}
-  ]]
-}

@@ -25,7 +25,7 @@ EXTRA_DIST = run-go.py README.md zgrpc.proto go/Makefile go/go.mod go/go.sum go/
 	go/main.go go/peer.go go/peer_test.go \
 	go/pb/zgrpc.pb.go go/pb/zgrpc_grpc.pb.go
 EXTRA_DIST += run-dotnet.py dotnet/Makefile dotnet/Peer.csproj \
-	dotnet/Program.cs dotnet/packages.lock.json dotnet/.gitignore
+	dotnet/Program.cs dotnet/packages.lock.toml dotnet/.gitignore
 
 # Canonical gRPC/protobuf dependencies are confined to explicit interop targets.
 .PHONY: go-peer go-test peer-test peer-race test

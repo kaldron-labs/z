@@ -158,8 +158,13 @@ grep -q '| `missing` | `missing` | `handshake` | 0 | unknown |' "$tmp/report.md"
 grep -q 'logs/a/log.txt' "$tmp/report.md"
 grep -q 'stderr' "$tmp/report.md"
 
+cp -R "$srcdir/zhttp/interop/testdata/qir-results/fixture" "$tmp/fixture"
+python3 "$srcdir/scripts/toml-to-json" \
+  "$tmp/fixture/zquic-server_ngtcp2-client/results.toml" \
+  >"$tmp/fixture/zquic-server_ngtcp2-client/results.json"
+
 "$srcdir/scripts/qir-report" \
-  --in "$srcdir/zhttp/interop/testdata/qir-results/fixture" \
+  --in "$tmp/fixture" \
   --out "$tmp/fixture-report.md"
 grep -q 'fixture-kernel' "$tmp/fixture-report.md"
 grep -q '| `zquic` | `ngtcp2` | `handshake` | 0 | pass |' \

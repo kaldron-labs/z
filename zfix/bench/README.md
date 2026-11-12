@@ -29,9 +29,8 @@ and the original measurement snapshot below remain historical. Current-build
 functional verification is recorded in [STATUS.md](../STATUS.md). Historical
 installation and timing results do not establish the new Binary/API gate.
 
-The dispatch simplification has a separate instrumented comparison in
-[REPAIR3.md](REPAIR3.md), with raw observations in [results/repair3](results/repair3).
-It does not replace the historical process-load measurements below.
+The dispatch inspection source is [inspect.cc](results/repair3/inspect.cc).
+Generated comparison reports are local run output and are not distributed.
 
 The [recorded baseline](RESULTS.md) covers all four pairings over TCP/TLS,
 six profiles and three repetitions, with separate allocation/copy diagnostics.

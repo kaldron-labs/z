@@ -1,6 +1,8 @@
 # Autobahn WebSocket tests
 
-These tests are opt-in and require Docker.
+These tests are opt-in and require Docker and Python 3.11+ (or Python with Tomli).
+The checked-in TOML configurations are rendered as JSON in the owned report
+directory before invoking Autobahn.
 
 To test the Zws server, start the plain H1 echo example from the build tree:
 

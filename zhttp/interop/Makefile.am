@@ -41,7 +41,7 @@ EXTRA_DIST = Dockerfile.interop README.md qir-script-test.sh \
 	testdata/qir-results/fixture/zquic-server_ngtcp2-client/collected_at \
 	testdata/qir-results/fixture/zquic-server_ngtcp2-client/command \
 	testdata/qir-results/fixture/zquic-server_ngtcp2-client/runner.rev \
-	testdata/qir-results/fixture/zquic-server_ngtcp2-client/results.json \
+	testdata/qir-results/fixture/zquic-server_ngtcp2-client/results.toml \
 	testdata/qir-results/fixture/zquic-server_ngtcp2-client/server \
 	testdata/qir-results/fixture/zquic-server_ngtcp2-client/status \
 	testdata/qir-results/fixture/zquic-server_ngtcp2-client/stderr \
