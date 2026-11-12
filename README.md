@@ -138,30 +138,66 @@ These are equivalents **in purpose**, not interchangeable APIs, data layouts or
 performance claims. A dash means no close counterpart is listed. In particular,
 ordinary STL containers do not supply Z's intrusive ownership and tuning model.
 
-| Z facility | STL / standard C++ | Boost | Folly | BDE |
+### Containers and value storage
+
+| Z facility | STL | Boost | Folly | BDE |
 | --- | --- | --- | --- | --- |
-| `ZmHash` | `std::unordered_map`, `std::unordered_set` | `boost::unordered_map`; `boost::intrusive::unordered_set` for intrusive nodes | `F14NodeMap`, `F14NodeSet` for node-based hash lookup | `bsl::unordered_map`; `bdlcc::StripedUnorderedMap` for striped locking |
-| `ZmList`, `ZmRBTree` | `std::list`, `std::map`, `std::set` | Intrusive `list`, `rbtree`, `set` | — | `bsl::list`, `bsl::map`, `bsl::set` |
-| `ZmRef` | `std::shared_ptr` serves shared ownership, but uses a control block | `boost::intrusive_ptr` | — | `bsl::shared_ptr` serves shared ownership |
-| `ZtArray`, `ZuArray` | `std::vector`, `std::inplace_vector` (C++26); fixed storage differs from `std::array`'s fixed logical size | Container `vector`, `static_vector` | `fbvector`, `small_vector` | `bsl::vector` |
+| `ZtArray`, `ZuArray` | `std::vector`, `std::inplace_vector` (C++26); `std::array` has a fixed logical size | Container `vector`, `static_vector` | `fbvector`, `small_vector` | `bsl::vector`, `bsl::array` |
 | `ZtString`, `ZuCSpan` | `std::string`, `std::string_view` | Container `string`, Utility `string_view` | `fbstring`, `StringPiece` | `bsl::string`, `bsl::string_view` |
 | `ZuTuple`, `ZuUnion` | `std::tuple`, `std::variant` | Tuple, Variant2 | — | `bsl::tuple`, `bsl::variant` |
+| `ZmList` | `std::list` | Intrusive `list` | `IntrusiveList`, `CountedIntrusiveList` | Intrusive `bslalg::BidirectionalLinkListUtil`; owning `bsl::list` |
+| `ZmStack`, `ZmQueue` | `std::stack`, `std::deque`, `std::queue` | Container `vector`, `deque`; CircularBuffer | `AtomicLinkedList`, `MPMCQueue` for related stack/queue operations | `bdlcc::Deque`, `BoundedQueue` |
+| `ZmRBTree` | `std::map`, `std::set` and multi variants | Intrusive `rbtree`, `set` | `ConcurrentSkipList` for an ordered index | Intrusive `bslalg::RbTreeUtil`; owning `bsl::map`, `bsl::set` |
+| `ZmHash`, `ZmLHash` | `std::unordered_map`, `std::unordered_set` | Intrusive `unordered_set`; Unordered node/flat hash containers | `F14NodeMap`, `F14ValueMap`, `ConcurrentHashMap` | `bsl::unordered_map`, `bdlc::FlatHashMap`, `bdlcc::StripedUnorderedMap` |
+| `ZmPolyHash` | Multiple containers plus coordinated index maintenance | MultiIndex | — | Multiple indices plus application coordination |
+| `ZmCache`, `ZmPolyCache` | Hash/list composition; multiple-key cache needs coordinated indices | MultiIndex with hashed/sequenced indices and eviction policy | `EvictingCacheMap` for a single-key cache | `bdlcc::Cache` for a single-key cache |
+| `ZmPQueue`, `ZmPQRx`, `ZmPQTx` | `std::map` plus sequence-range/reassembly logic | ICL plus an ordered index | `ConcurrentSkipList` plus sequence/reassembly logic | `bdlcc::SkipList` plus sequence/reassembly logic |
+
+`ZmPQueue` is a sequence-reassembly queue with gaps, overlaps and retained
+messages. Its counterparts above are building blocks for those semantics.
+The [container verb Rosetta stone](docs/Z_STL_BOOST_FOLLY_BDE.md#container-verb-rosetta-stone)
+shows insertion, node transfer, lookup, iteration and removal idioms.
+
+### Foundation and runtime facilities
+
+| Z facility | STL | Boost | Folly | BDE / NTF |
+| --- | --- | --- | --- | --- |
+| `ZmRef` | `std::shared_ptr` serves shared ownership, but uses a control block | `boost::intrusive_ptr` | — | `bsl::shared_ptr` serves shared ownership |
 | `ZuTL`, `ZuTraits`, `ZuPP` | Type traits and integer sequences | Mp11, TypeTraits, Preprocessor | Traits utilities | `bslmf` metaprogramming utilities |
 | `ZuString` | No standard C++23 structural string class for literal template arguments | `hana::string` is a related compile-time string | — | — |
 | `ZuMatcher` | No direct compile-time multi-pattern automaton | Regex/Xpressive solve related pattern problems, not the same fixed-string dispatch | — | — |
 | `ZmFn` | `std::function`, `std::move_only_function` | Function | `Function` | `bsl::function` |
 | `ZmNHeap`, `ZmVHeap` | `std::pmr` pool resources | Pool | `Arena` (different lifetime model) | `bdlma::ConcurrentPool`, `bdlma::ConcurrentPoolAllocator` |
-| `ZmRing` | No concurrent ring container | Lockfree `spsc_queue`, `queue` for queue use cases | `ProducerConsumerQueue`, `MPMCQueue` for queue use cases | `bdlcc::FixedQueue` for bounded queues |
 | `ZmScheduler` | Threads and synchronization primitives, no equivalent sharded scheduler | Asio `thread_pool`, `io_context`, timers | `CPUThreadPoolExecutor`, `EventBase` | `bdlmt::MultiQueueThreadPool`, `bdlmt::EventScheduler` |
-| `ZiMultiplex`, `ZiIOBuf` | No standard C++23 asynchronous socket runtime | Asio `io_context`, sockets and buffer sequences | `EventBase`, `AsyncSocket`, `IOBuf` | No direct equivalent in core BDE |
+| `ZiMultiplex`, `ZiIOBuf` | No standard C++23 asynchronous socket runtime | Asio `io_context`, sockets and buffer sequences | `EventBase`, `AsyncSocket`, `IOBuf` | `ntci::Interface`, `Reactor`/`Proactor`; `bdlbb::Blob` for segmented buffers |
 | `ZuStruct`, `ZfStruct` | No standard C++23 reflection facility | Describe, Hana Struct adaptation | — | `bdlat` attribute/selection protocols |
 | `ZfJSON`, `ZtRegex`, `ZiLog` | No JSON codec; `std::regex`; streams cover only basic output | JSON, Regex, Log | `dynamic`/JSON utilities, logging | `baljsn`, `bdlpcre`, `ball` |
 
-`ZmRing`'s variable-size records and broadcast semantics go beyond the queue
-analogues above. `ZiRing` combines shared-memory transport with those semantics;
-Boost.Interprocess supplies related shared-memory building blocks, not the same
-ready-made ring. `ZiMultiplex` additionally combines the reactor/completion
-mechanism with Z's explicit shard and buffer ownership.
+### Inter-thread communication: ZmRing
+
+`ZmRing` communicates between threads through fixed- or variable-sized records,
+with single/multiple producer policies and optional broadcast readers. Its
+readers explicitly retire records. `ZmRingFn` supplies in-ring callable dispatch.
+
+| Z facility | STL | Boost | Folly | BDE |
+| --- | --- | --- | --- | --- |
+| `ZmRing` | No corresponding inter-thread ring facility | Lockfree `spsc_queue`, `queue` for FIFO communication | [`ProducerConsumerQueue`](https://github.com/facebook/folly/blob/main/folly/ProducerConsumerQueue.h) for an SPSC FIFO ring; [`LockFreeRingBuffer`](https://github.com/facebook/folly/blob/main/folly/concurrency/container/LockFreeRingBuffer.h) for a concurrent cursor-based overwrite ring | `bdlcc::SingleProducerSingleConsumerBoundedQueue`, `FixedQueue` for typed bounded communication |
+| `ZmRingFn` | Callable wrappers plus a communication channel | Function plus a Lockfree queue | `Function` plus a queue | `bsl::function` plus a bounded queue |
+
+Folly's FIFO and overwrite-history rings provide related communication
+facilities with their own delivery policies. ZmRing additionally supports
+variable-sized records and broadcast-reader retirement.
+
+### Inter-process communication: ZiRing
+
+`ZiRing` communicates between processes using shared memory. It builds on
+ZmRing's record transport, with named shared mappings and broadcast readers.
+
+| Z facility | STL | Boost | Folly | BDE |
+| --- | --- | --- | --- | --- |
+| `ZiRing` | No shared-memory IPC ring facility | Interprocess shared memory/message queues provide related building blocks | No corresponding shared-memory IPC ring facility | No corresponding shared-memory IPC ring facility |
+
+`ZiMultiplex` combines I/O service with Z's explicit shard and buffer ownership.
 
 Reference documentation: [Boost.Intrusive](https://www.boost.org/doc/libs/latest/doc/html/intrusive.html),
 [Boost.Hana strings](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/structboost_1_1hana_1_1string.html),

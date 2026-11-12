@@ -89,8 +89,9 @@ without duplicates; the independent receiver must receive every progress
 marker. Completion counters and intercepted successful syscalls must account
 for all 4096 packets per drain.
 
-The rebind case holds active and queued packets on the old physical socket,
-rebinds, and verifies that only replacement output reaches the receiver. It
+The reopen case holds active and queued packets on the old physical socket,
+disconnects and drains it, then opens a new socket and verifies that only new
+output reaches the receiver. It
 then stops with another held active queue, restarts and verifies the next
 packet's source and sequence. All endpoint closes finish before mx shutdown.
 Successful runs leave no files or listeners behind.

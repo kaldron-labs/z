@@ -15,52 +15,50 @@ is not a complete transport datagram and requires IP reassembly outside these
 helpers. Header construction changes framing/padding only; it neither allocates
 nor moves payload. Linux UDP peer coverage lives in `../itest/zutcpiptest.cc`.
 
-The other programs still cover the mechanically renamed transport baseline
-during phase-1 adaptation. They do not establish the stripped native working
-pair or TCP interoperability. See `../../zutcp_plan.md` for the current scope.
+The other programs cover the surviving connection, codec, recovery and runtime
+facilities during phase-1 adaptation. They do not establish the stripped native
+working pair or TCP interoperability. See `../../zutcp_plan.md` for the current
+scope.
 
 `ZutcpAPITest::testPeerParamOwnership` delays the Rx-to-Tx handoff and checks
-that new Tx streams retain the previous credit until Tx installs the snapshot.
-The decoded caller storage is overwritten before delivery. Crypto no longer
-provides a duplicate TLS parameter carrier; the copied runtime tests still
-exercise TLS flights/readiness pending their removal.
+that connection credit changes only when Tx installs its bounded snapshot. The
+decoded caller storage is overwritten before delivery.
 
-`ZutcpHandshakeTest` now tests the plaintext Initial codec and bootstrap transcript:
+`ZutcpHandshakeTest` tests the plaintext Initial codec and bootstrap transcript:
 parameter-bearing request, ACK-bearing response, and final ACK without parameters.
-It uses the actual CID bootstrap, frame codec and sent-packet accounting. It also
-checks a fixed wire vector, all truncated extents, packet-number widths and
-coalesced-packet bounds. Parameters and frames borrow the original input; output
-frames are constructed directly in their declared final extent. These tests
-replace four copied TLS/CRYPTO scenarios with three intermediate-protocol cases.
-They do not establish live handshake timers, callbacks or the native working pair.
+It uses the actual CID bootstrap, frame codec and sent-packet accounting, with a
+fixed wire vector, truncated extents and packet-number width coverage. The
+Initial header places payload length directly after its CIDs, with no token
+length or payload. Parameters and frames borrow the original input; output frames
+use their declared final extent. Deleted crypto/token/handshake-confirmation frame
+codes are checked as unknown; connection admission rejects them.
 
-The live client/server Initial path now uses the same plaintext codec, including
-existing Retry tokens. `ZutcpRuntimeTest` inspects emitted server Initials without
-decryption and requires a decoded parameter record with matching source CID.
-The copied TLS flight still supplies frames and readiness, while Handshake and
-application packets remain protected until their production conversion. Passing
-these tests therefore does not prove the stripped native working-pair gate.
+The live client/server setup also uses this plaintext codec. `ZutcpRuntimeTest`
+checks emitted Initial parameters, repeats setup after deliberately dropped
+responses, exchanges retained bytes in both directions, and exercises connection
+ownership, multiple clients and idle shutdown. Certificate provisioning and
+TLS/protection/early-data/Retry-specific cases have been removed. The remaining
+transport path uses kernel UDP sockets until the native endpoint is wired; these
+cases do not establish the native AF_XDP working-pair gate.
 
-Connection-only setup credit replaces copied per-stream byte/count negotiation.
+Connection-only setup credit replaces per-stream byte/count negotiation.
 `ZutcpCodecTest::testTransportParamCoverage` checks an independent exact parameter
 vector containing the connection byte limit and no stream limits. Parameter qlog
-coverage requires obsolete stream negotiation fields to be absent. The delayed
-owner handoff case now checks the connection credit snapshot. Copied stream
-object/control tests remain transitional and do not establish consolidation.
+coverage requires obsolete stream negotiation fields to be absent. Reset-token
+transport parameters are removed; the former parameter code follows ordinary
+unknown-parameter handling. Bootstrap tests retain CID identity checks.
 
-The copied transport owner API is now `Connection`, `CliConnection` and
-`SrvConnection`, with matching headers. Fixtures use those names directly.
-The byte-state implementation has now moved into Connection. The old separate
-stream implementation and registries are deleted; some copied fixtures still
-reference their removed APIs and require migration before the full suite builds.
+The transport owner API is `Connection`, `CliConnection` and `SrvConnection`,
+with matching headers. Byte state, reassembly, producer queues and retained Tx
+ranges belong directly to Connection. No separate stream owner or registry is
+required by these fixtures.
 
 `ZutcpConnectionTest` exercises the physically merged connection directly, without
 stream factories, IDs or child objects. It covers reordered packet slices,
 partial byte delivery and retirement, duplicate suppression, producer queue
 pressure, credit-limited packetization retaining original backing, FIN and partial
 ACK retirement. This focused test does not replace the remaining recovery,
-lifecycle and native endpoint gates. During consolidation, the copied fixtures
-still require porting before the full unit suite can build.
+lifecycle and native endpoint gates. The full suite and native endpoint gates are recorded in the plan.
 
 `ZutcpFlowTest` now uses a real merged connection to check a single byte window,
 retirement-driven credit replenishment, advisory blocking and stale peer-credit
@@ -88,6 +86,16 @@ buffers on one connection. Independent subcases use separate connections.
 The stream ID/count/registry/GC cases are removed, with no compatibility factory
 or dummy ID. Prefix-only packetization is bounded by scratch capacity while its
 payload remains a separately retained range; insufficient prefix/packet budget
-must leave queue and assembly state untouched. Retained crypto/path cases still
-exercise copied facilities scheduled for removal; this program does not establish
-the stripped native working pair or TCP interoperability.
+must leave queue and assembly state untouched. Crypto and protected-packet
+cases are removed; surviving path cases remain
+scheduled for phase-1 deletion. This program does not establish the stripped
+native working pair or TCP interoperability.
+
+CID rotation, reset-token/path-challenge value tests and migration-only fixtures
+are removed. Router tests retain variable CID length matching, active route
+lifecycle and bounded tombstone FIFO coverage. Byte/control assembly tests use
+MAX_DATA, RESET and STOP_SENDING; send refusal and congestion retain queued
+controls. The runtime pair also injects a fresh data packet with the established
+CID from a foreign tuple and checks that it cannot admit bytes; the original pair
+then exchanges its exact application bytes. Endpoint queue coverage uses explicit
+disconnect/drain/reopen and preserves capacity, ownership and generation checks.
