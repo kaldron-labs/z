@@ -1,4 +1,4 @@
-# Zgrpc
+# Zgrpc: GRPC
 
 Native gRPC over Zhttp H2/H3, using Zpb for protobuf payloads. The full
 implementation and acceptance requirements are in [grpc.md](../grpc.md).

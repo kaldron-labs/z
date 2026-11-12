@@ -1,4 +1,4 @@
-# Zquic
+# Zquic: QUIC transport
 
 `Zquic` is the QUIC transport module. It owns QUIC connection state, packet
 encoding/protection, stream scheduling, UDP path handling, loss recovery, flow

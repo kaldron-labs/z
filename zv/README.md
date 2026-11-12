@@ -1,4 +1,4 @@
-# Zv: configuration files and runtime parameter binding
+# Zv: Framework server-side utilities
 
 Zv adds file loading/saving and runtime parameter adapters to Zf's configuration
 codecs. It supports Z's native configuration syntax, TOML and YAML, and maps

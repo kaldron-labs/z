@@ -1,4 +1,4 @@
-# Zrest endpoints
+# Zrest: REST APIs
 
 `Zrest::Client<App, Catalog, Profiles>` and `Zrest::Server<App, Catalog, Decoder, Profiles>`
 compose the existing REST request and response codecs with Zhttp pools and

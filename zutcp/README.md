@@ -1,6 +1,6 @@
-# Zutcp: user-mode TCP over AF_XDP
+# Zutcp: User-mode TCP/IP stack
 
-Zutcp is the Linux user-mode TCP backend for `ZiMultiplex`, using
+Zutcp is a Linux user-mode TCP/IP stack integrated with `ZiMultiplex`, using
 [Zxdp](../zxdp/README.md) for raw AF_XDP packet I/O. It targets short FIX order,
 execution and market-data messages while keeping the existing Zi connection,
 allocator and application framing interfaces.

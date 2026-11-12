@@ -1,4 +1,4 @@
-# Zfb: FlatBuffers serialization
+# Zfb: Flatbuffers
 
 `zfb` provides the FlatBuffers codec. Include `<zlib/Zfb.hh>` and link with
 `libZfb`. It depends on `zi` for I/O and `zf` for field metadata.

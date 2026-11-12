@@ -1,4 +1,4 @@
-# `zdbus`
+# Zdbus: D-Bus clients, servers and typed message routing
 
 `libZdbus` is Linux-only. `ZdbusClient` connects to a D-Bus bus, owns message
 serials and pending calls, and receives returns, named errors, and signals.

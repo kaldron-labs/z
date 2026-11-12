@@ -1,4 +1,4 @@
-# Zhttp HTTP/1.1, HTTP/2, and HTTP/3
+# Zhttp: HTTP/1.1, HTTP/2 and HTTP/3
 
 `Zhttp` owns production HTTP behavior. HTTP/1.1 uses `Ztcp` or `Ztls`,
 HTTP/2 uses `Ztls`, and HTTP/3 uses `Zquic`. HPACK, H2, QPACK, H3, ALPN

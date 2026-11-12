@@ -1,4 +1,4 @@
-# Zf: structured data and formats
+# Zf: Structured metadata and format adapters
 
 `zf` supplies field metadata, serialization, command-line binding, and
 configuration parsing. Include the installed headers as `<zlib/ZfJSON.hh>`

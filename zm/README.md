@@ -1,4 +1,4 @@
-# Zm: concurrency, containers and memory
+# Zm: Multithreading foundation
 
 Zm supplies Z's execution and allocation runtime: policy-based containers,
 intrusive ownership, delegates, threads, rings, scheduling, named heaps and

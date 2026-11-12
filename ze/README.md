@@ -1,4 +1,4 @@
-# Ze: errors, events and exception vocabulary
+# Ze: Framework error handling
 
 Ze represents native operating-system errors and structured diagnostic events.
 It supplies severity, timestamp, source location, component identity and message

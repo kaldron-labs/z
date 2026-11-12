@@ -1,4 +1,4 @@
-# Zi: I/O, buffers and process services
+# Zi: Framework I/O
 
 Zi integrates files, sockets, DNS, event loops, shared-memory rings and logging
 with Z's scheduler and allocation model. Include individual headers such as

@@ -1,4 +1,4 @@
-# Zt: owning vocabulary types and text utilities
+# Zt: Framework types
 
 Zt supplies dynamically sized arrays and strings, scratch storage, regular
 expressions, bitmaps/windows, text formatting, time-zone and platform utilities.

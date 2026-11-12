@@ -1,4 +1,4 @@
-# Zdb SQLite store
+# ZdbSL: SQLite backing store
 
 `libZdbSL` is the persistent SQLite backend for Zdb. It uses one SQLite file,
 one connection, and one configured isolated `ZmScheduler` thread per store.

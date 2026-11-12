@@ -1,4 +1,4 @@
-# Ztcp: asynchronous TCP links
+# Ztcp: Asynchronous TCP links
 
 Ztcp provides CRTP client/server links over `ZiMultiplex`, with pooled receive
 and transmit streams and explicit Rx/Tx ownership. It supplies TCP connection

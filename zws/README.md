@@ -1,4 +1,4 @@
-# Zws: WebSocket clients, servers and codecs
+# Zws: Websockets
 
 Zws implements WebSocket handshakes, framing and message lifecycle over Zhttp
 channels. It supports HTTP/1 Upgrade and HTTP/2/3 Extended CONNECT bindings,

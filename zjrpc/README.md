@@ -1,4 +1,4 @@
-# JSON-RPC wire layer
+# Zjrpc: JSON RPC
 
 `Zjrpc.hh` provides compile-time declarations, owned IDs, envelope codecs and
 borrowed JSON payload views. Keep the parsed tree alive while using those views.

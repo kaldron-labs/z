@@ -1,4 +1,4 @@
-# Zu: universal foundation
+# Zu: Framework underlying foundation
 
 Zu provides the vocabulary and compile-time machinery used throughout Z:
 traits, spans, structural strings, matching, reflection, numeric types,

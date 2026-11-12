@@ -1,4 +1,4 @@
-# Zdb
+# Zdb: Typed, sharded, replicated database
 
 Zdb is an in-process, typed database layer for stateful C++ services. It combines
 row and replication-buffer caches, asynchronous backing stores, DB-wide sharding,

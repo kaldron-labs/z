@@ -1,4 +1,4 @@
-# `zmcp`
+# Zmcp: Model Context Protocol
 
 `zmcp` is the Z Framework MCP tool-provider and tool-caller library.  One set
 of reflected application request and response types can be exposed over

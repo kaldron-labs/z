@@ -1,4 +1,4 @@
-# Zpb: protobuf serialization and schema tooling
+# Zpb: Protobuf implementation
 
 Zpb supplies a native protobuf codec driven by `ZfStruct` metadata, wire
 verification and views, pooled output, reflection and the `zprotoc` compiler.
