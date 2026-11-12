@@ -5,9 +5,11 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
 
 * Creation takes named parameters: interface, optional destination network mask,
   intrusive Tx pool list with count and size, one dedicated Rx pool, receive
-  callback. The author has removed `CompleteFn`/`Params::txCompleted` from the
-  target API; remove the existing callback implementation and its callers.
-  Without a mask all traffic is selected.
+  callback. No transmit-completion callback. Without a mask all traffic is selected.
+* Keep allocation and kernel leases distinct in preallocated slot bookkeeping.
+  Explicit pool return may run before or after CQ. Recycle only after both leases
+  end; safe close releases kernel leases while caller-held backing stays valid.
+  One descriptor may be outstanding for a slot. Rejected send acquires no lease.
 * Application and transport adaptation belongs to the caller. This library owns
   arena provisioning, raw packet allocation/return and kernel ring service.
 * Preallocate arenas and all packet bookkeeping at setup. Recycle each pool with

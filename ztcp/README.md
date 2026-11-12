@@ -11,8 +11,9 @@ For encrypted transport see [Ztls](../ztls/README.md); for HTTP applications use
 
 A client derives from `Ztcp::Client<App>` and defines a link derived from
 `Ztcp::CliLink<App, Link, RxBufAlloc, TxBufAlloc>`. A server uses
-`Ztcp::Server<App>` and `Ztcp::SrvLink` instead. Select pooled buffer sizes with
+`Ztcp::Server<App>` and `Ztcp::SrvLink` instead. Select allocator policies with
 `Ztcp::RxBufAlloc<N, MaxSize, HeapID>` and `Ztcp::TxBufAlloc<N>` on the link.
+These aliases describe allocators; `Policy::Buf` names the queue-node header.
 The application supplies primary allocators matching `App::Link::RxAllocator`
 and `App::Link::TxAllocator` through the hub parameters' `rxAllocator()` and
 `txAllocator()` setters. Hub initialization registers them with the multiplexer
@@ -41,17 +42,18 @@ the snippets here are extracts used inside those application/link types.
 
 ## Multiplexer and lifecycle
 
-Initialize and start a configured `ZiMultiplex`, then initialize the client/server
-with `Ztcp::ClientParams(&mx, rxThreadID, txThreadID)` or `ServerParams`. The hub
-requires a running scheduler. Create the application-owned allocators after
-multiplexer initialization and supply them before hub initialization:
+Construct a configured `ZiMultiplex`, then create and register its primary
+allocator policies while it is stopped. Supply the allocators when initializing
+the client/server with `Ztcp::ClientParams(&mx, rxThreadID, txThreadID)` or
+`ServerParams`, then start the multiplexer:
 
 ```cpp
-ZmRef<App::Link::RxAllocator> rx = new App::Link::RxAllocator{};
-ZmRef<App::Link::TxAllocator> tx = new App::Link::TxAllocator{};
+auto rx = App::Link::rxAllocator(&mx);
+auto tx = App::Link::txAllocator(&mx);
 Ztcp::ClientParams params(&mx, rxThreadID, txThreadID);
-params.rxAllocator(rx.ptr()).txAllocator(tx.ptr());
+params.rxAllocator(rx).txAllocator(tx);
 if (!app.init(ZuMv(params))) return false;
+if (!mx.start()) return false;
 ```
 
 Check initialization and start results. The thread IDs select transport work
@@ -60,8 +62,8 @@ application and Tx streams allocate through the supplied primary Tx policy.
 Additional application-owned Tx TCP allocators register through
 `hub.allocator(allocator)`; send buffers allocated from them directly with
 `link.send(buf)`. Callers of `allocBuf()` know their concrete allocator type.
-Ordinary `IOBufAlloc` supplies built-in storage, with growth through the original
-allocator. Each allocator stays dedicated to its multiplexer; the hub and
+Ordinary `IOBufBuiltinAllocator` supplies inline storage, with separate heap
+backing for larger allocations and growth through the original allocator. Each allocator stays dedicated to its multiplexer; the hub and
 multiplexer retain registered allocators until their owning lifetimes end.
 
 For clients, retain the link with `ZmRef`, call `connect(host, port)` and handle

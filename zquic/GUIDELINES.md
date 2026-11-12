@@ -3,7 +3,7 @@
 These guidelines are the audit checklist for code changes in `zquic`.  They
 supplement the repo-wide rules in `../GUIDELINES.md`; follow both when editing
 or reviewing `zquic` code.  Implementation discovery and source navigation live
-in `docs/README.md`.
+in `README.md`.
 
 # General zquic
 
@@ -38,6 +38,39 @@ in `docs/README.md`.
 - `CryptoTxBufAlloc` defaults to the `"Zquic.Crypto.TxBuf"` heap for TLS
   output staged for QUIC CRYPTO frame packetization.
 
+Completed transmit datagrams use `Zquic_::TxPkt`, an intrinsic `ZiTxBuf`
+node with destination address and ECN metadata. Rx and retained plaintext buffers
+remain separate metadata types. The mx factory selects TxUDP backing; no builtin
+backing assumption is permitted. Packet protection writes directly into the
+provider's writable span with its original headroom and tailroom.
+
+Each physical `EndpointCxn` owns its common `ZiTx` queue on mx Tx. Its 4096-packet
+capacity includes the installed active head. Reject full-queue submissions before
+counting submitted bytes, recording both backpressure and a local drop. Posted
+submissions may acknowledge posting before rejection; QUIC recovery still owns
+retained plaintext and packet records above this boundary. Priority admission
+inserts immediately after the active head, newest priority first among pending
+packets. Ordinary submissions remain FIFO. Address and ECN stay immutable while
+queued and are installed afresh for every selected head.
+
+Posted output snapshots only raw physical identity and generation. Compare that
+identity on Tx without dereferencing or retaining the old connection; obtain the
+current connection locally at admission. Existing endpoint owner-drain rules
+protect the raw endpoint callback. Do not add per-packet owner references.
+
+When a protocol ACK opens congestion credit, service the existing bounded retained
+retransmission batch before ordinary producers. Fresh bulk output must not spend
+all reopened credit before deferred recovery runs. Socket completion reports one
+local datagram and byte count, without ACK,
+recovery retirement or producer notification. EAGAIN retains the same protected
+packet. Bind posted output to its original physical connection; reject stale
+submissions after rebind rather than routing them through a replacement. Closing
+prevents admission; physical disconnect and Tx owner drain precede context and
+queue retirement. Backend-held backing remains the backend's responsibility until
+its retirement. ZiTx advances queued output in the common completion turn rather
+than posting the former per-packet scheduler continuation; pacing remains above
+this queue. Measure bounded-drain latency when changing the capacity.
+
 `BufSize` is `1472`.  It is packet-buffer capacity, not the active UDP payload
 limit.  The active path payload starts at the QUIC minimum and is raised only by
 PMTUD/DPLPMTUD success.
@@ -68,6 +101,29 @@ them. Packet protection reads those ranges directly into final UDP output.
 Hidden fallback copies below the public API boundary are forbidden.  Any new
 copy path must be documented in this section and covered by a test that explains
 why the copy is required.
+
+# Recovery and handshake confirmation
+
+PTO reclamation selects the oldest eligible retained packets. Newly emitted
+retransmissions must not indefinitely displace older STREAM or control work.
+Use the existing recovery references and ACK retirement for HANDSHAKE_DONE;
+do not add a separate completion timer or retry queue.
+
+A PTO services its selected packet-number space. When another space has data
+in flight and transmit keys, leave room for an acknowledgment-eliciting probe
+there within the two-datagram budget (RFC 9002 section 6.2.4). A successful
+Handshake retransmission must not suppress all outstanding 1-RTT probes. A
+failed primary send does not authorize an unrelated substitute. Application
+Data does not independently select PTO before handshake confirmation.
+Candidate path proof retains priority over ordinary recovery for both active
+client migration and passive server rebinding.
+
+Server confirmation occurs at TLS completion; client confirmation occurs on
+HANDSHAKE_DONE. Retire the actual Handshake secrets on Rx and the independent
+Tx protector/recovery state on Tx. Defer server Rx retirement until its current
+CRYPTO delivery callback unwinds. Late crypto and ACK snapshots must not
+repopulate a retired packet-number space. Initial-key storage has a separate
+existing cross-owner read and is not changed by the Handshake retirement repair.
 
 # qlog
 

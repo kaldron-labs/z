@@ -1,8 +1,11 @@
-# Zxdp
+# Zxdp: Linux AF_XDP packet I/O
 
 Zxdp supplies raw AF_XDP packet arenas, intrusive pools and kernel ring service.
 The [interface contract](INTERFACE.md) defines its boundary. The caller supplies
 transport state, application adaptation and scheduling.
+Include `<zlib/Zxdp.hh>` and link `libZxdp` and its framework dependencies.
+For Zi provider and transport integration see [Zutcp](../zutcp/README.md).
+Both modules are Linux-only and are excluded from Windows builds.
 
 ## Interface
 
@@ -16,23 +19,22 @@ Include `Zxdp.hh`. Create an `Instance` with named `Params` members:
   supplies `count` and maximum packet `size`.
 * `rxPool`: one nonempty caller-owned pool with a dedicated Rx region.
 * `rx`: callback receiving the raw packet address and length.
-* The author has removed `CompleteFn`/`txCompleted` from the target API; the
-  existing completion-callback implementation is pending migration.
 * `spin`: idle probe rounds before the receive loop blocks (default 1000).
 
 Allocate with `txPool.alloc()`, construct the complete Ethernet packet directly
 in that backing and call `instance->send(packet, length)`. A false return leaves
-ownership with the caller. A true return publishes a descriptor; keep its backing
-alive and immutable until completion. Completion returns kernel ownership, not
-proof of successful wire transmission. Explicitly return backing with
-`pool.free(packet)`. Exhaustion returns null and never allocates a replacement.
+ownership with the caller. A true return publishes a descriptor and holds a kernel
+lease; keep bytes immutable until kernel retirement. Explicitly return the caller's
+allocation lease with `pool.free(packet)`. Recycling waits for both leases to end,
+so return may precede CQ. Kernel completion does not prove successful wire delivery.
+Exhaustion returns null and never allocates a replacement.
 Rx callbacks likewise own their packet until they return it to the Rx pool.
 An advanced Rx wire pointer can be passed directly to `rxPool.free()`.
 
-Repeated immutable Tx submissions may share backing. Count accepted submissions
-and completions before recycling it. Normal completion reports each retired
-submission; close may coalesce remaining submissions of one backing. The library
-creates no application packet objects.
+One descriptor may be outstanding for a slot. A caller can retain its allocation
+lease past CQ and resubmit the same backing, then return it when transport recovery
+permits. `pollTx()` returns the number of kernel submissions retired and releases
+their kernel leases; there is no completion callback or application packet object.
 
 ## Arenas and service
 

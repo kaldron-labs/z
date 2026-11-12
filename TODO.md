@@ -1,6 +1,6 @@
 # TODO
 
-- migrate all ZiMultiplex dependents to new buffer allocators
+- `ZiTx` needs `Ztc::Queue` telemetry
 
 - fix `ZmList<X, ZmListNode<X>>` to be `ZmList<X, ZmListNode<>>`
   - needlessly repeating X is elided

@@ -15,11 +15,12 @@ The primary include is `Zquic.hh`, which pulls in the transport vocabulary,
 packet/frame codecs, crypto, recovery, stream/link runtime, socket adapter,
 diagnostics, and qlog support.
 
-Before starting its multiplexer, an application supplies
-`ZiMxParams::udpBufAllocator(new Zquic::PktRxBufAllocator<>)`. This reserves the
-packet payload and recvmsg metadata together. Concrete application links use
-their own first-base `ZmNHeap<Link>` so cache-line alignment and allocation size
-match the actual link type; the examples demonstrate both policies.
+Initialize the QUIC hub before starting its multiplexer. Hub initialization uses
+`Zquic::pktRxAllocator(mx)` and `Zquic::pktTxAllocator(mx)`, which create and
+register packet allocators through `ZiMultiplex::allocator` on that multiplexer.
+Concrete application links use their own first-base `ZmNHeap<Link>` so cache-line
+alignment and allocation size match the actual link type; the examples demonstrate
+both policies.
 
 Applications use the CRTP API:
 
@@ -98,6 +99,18 @@ server's stream response.
 
 ## Feature Landmarks
 
+- PTO recovery selects the oldest eligible retained packets, so newly emitted
+  retransmissions cannot continually displace older control or STREAM work.
+  It services the selected packet-number space and can probe another space
+  with data in flight within the two-datagram budget. Application Data does
+  not independently arm PTO before handshake confirmation. Candidate path
+  validation keeps priority over ordinary recovery.
+- Handshake keys retire at server TLS completion and client receipt of
+  `HANDSHAKE_DONE`, on their respective Rx and Tx owners. Retirement updates
+  both loss and PTO timers; stale crypto or ACK posts cannot restore the
+  retired space. The regression suites cover confirmation held in flight,
+  protected transfer after retirement, and recovery with newer packets added
+  during consecutive PTOs.
 - QUIC version support is currently v1 only. `VersionNeg` and server
   long-header routing live in `Zquic.hh`; packet codec support is in
   `ZquicPacket.*`.
@@ -163,3 +176,29 @@ Log subsystem names used by the implementation:
 
 `Zquic.Endpoint` is the internal UDP-adapter diagnostic category; the public
 runtime API is `Client` / `Server` with `CliLink` / `SrvLink`.
+
+## Completed UDP output
+
+Transmit packets are intrinsic `Zquic_::TxPkt` nodes selected through the mx
+TxUDP allocator factory, with destination and ECN stored alongside their queue
+links. Each physical endpoint uses `ZiTx`; no separately allocated packet wrapper
+or private completion pump is used. Retained stream and CRYPTO plaintext stays
+under QUIC ACK/loss recovery ownership.
+
+The endpoint capacity is 4096 datagrams including the active head. Full admission
+returns false to direct callers and records backpressure/drop; posted calls can
+return true before a later local drop. Priority packets are inserted immediately
+after the active head, with the newest priority ahead of previous pending work.
+Every head installs its own destination and ECN. Socket completion updates local
+output diagnostics only. Queued packets and late completions belong to their
+original physical connection through rebind and retirement. Posted sends carry
+raw physical identity and generation; they do not pin an owner per packet.
+
+Protocol ACK handling services pending retained retransmissions before ordinary
+output consumes reopened congestion credit. This preserves recovery progress under
+bulk transfer and rebinding while using the existing bounded batch and records.
+
+ZiTx services queued successors within the common I/O turn. QUIC pacing remains
+above that queue. See `itest/README.md` for sustained-output and servicing checks,
+and `../review_context/zquic-zitx-contracts.md` for frozen dependency contracts,
+including the positive-short UDP backend limitation.

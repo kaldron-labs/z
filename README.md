@@ -17,7 +17,7 @@ limitations.
 [Build dependencies](docs/DEPENDENCIES.md) · [Testing and environment setup](docs/TESTING.md) ·
 [Repository guidance map](AGENTS.md)
 
-See [Z, STL and Boost equivalents](docs/Z_STL_BOOST.md) for feature comparisons
+See [Z, STL, Boost, Folly, BDE and NTF equivalents](docs/Z_STL_BOOST_FOLLY_BDE.md) for feature comparisons
 and the benefits and tradeoffs of Z facilities.
 
 Development guidance is split by task; start with the map and read the relevant
@@ -179,6 +179,8 @@ and [BDE striped hash maps](https://bloomberg.github.io/bde-resources/doxygen/bd
 | [ze](ze/README.md) | Platform errors, event and log vocabulary; Zi supplies asynchronous log sinks |
 | [zf](zf/README.md) | Structured metadata and format adapters |
 | [zi](zi/README.md) | Files, sockets, DNS, multiplexing, pooled buffers, shared-memory rings and heap tuning |
+| [zxdp](zxdp/README.md) | Linux AF_XDP packet I/O, registered arenas and raw packet pools |
+| [zutcp](zutcp/README.md) | Linux user-mode TCP backend for ZiMultiplex over Zxdp; planned TCP facility, implementation in progress |
 | [zpb](zpb/README.md), [zfb](zfb/README.md) | Native protobuf and FlatBuffers codecs and schema compilers |
 | [zv](zv/README.md) | Configuration trees, TOML/YAML and runtime parameter binding |
 | [zdbus](zdbus/README.md) | Native Linux D-Bus client/server and typed message routing |

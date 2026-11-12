@@ -14,10 +14,12 @@ Instance creation takes named parameters:
 * One Rx pool, with its own dedicated Rx arena.
 * Raw packet receive callback.
 
-The author has removed the transmit-completion callback from the target API.
-Delete `CompleteFn` and `Params::txCompleted`; callers do not supply a completion
-handler. The implementation migration is pending. Accepted/rejected submission
-and explicit pool return must preserve backing ownership and safe DMA retirement.
+There is no transmit-completion callback. Allocation holds one caller lease;
+accepted submission holds a separate kernel lease. Explicit pool return releases
+the caller lease, and kernel CQ or safe close releases the kernel lease. Recycle
+only when both are gone. Return may precede CQ; a caller can also retain backing
+past CQ for retransmission and return it later. Rejected send adds no kernel lease.
+One descriptor may be outstanding for an allocated slot at a time.
 
 The packet operations are allocation from a Tx pool, return to an Rx or Tx pool,
 and submission of a Tx packet. Application and transport object ownership is

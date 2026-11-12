@@ -95,5 +95,8 @@ make -C zdb_sqlite test
 
 The suite covers codecs, schema validation and repair, durability configuration,
 CLI inspection and dump/restore, persistence and recovery, saga failure/crash
-paths, and Zdb replication/promotion between two distinct SQLite files. The
+paths, and Zdb replication/promotion between two distinct SQLite files. The replication
+fixture forces fragmented network receives in debug builds, restarts the
+promoted follower and evicts its cached row before checking persisted replicated
+data through the store. The
 integration databases are disposable and are modified by the tests.

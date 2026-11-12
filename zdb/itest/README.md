@@ -20,3 +20,11 @@ receiver frame backing, store-completion identity and retained buffers through
 multiplexer stop. The intermediate host forwards the original receive backing
 through an independent transmit descriptor; all three stores must observe each
 row. The fixture uses ports 9955 through 9957. Startup and delivery waits are bounded on the controlling test thread.
+
+In debug builds the three-host case runs again with the multiplexer fragmentation
+fixture enabled. Each fresh TCP receive is limited to five bytes, splitting
+replication headers and bodies across network buffers. Both receiving stores
+must retain an `RxBuf` backed by App framing storage; network receive slots
+remain RxTCP. The same table reads, forwarding and retention through stop checks
+run in both passes. Deterministic coalesced frames and partial trailing headers
+are covered separately by `zi/test/ZiRxTest`'s connection framing matrix.

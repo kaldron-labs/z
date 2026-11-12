@@ -220,6 +220,17 @@ passing functional gate or measured performance acceptance.
 parsers must handle fragmented input, while writers should flush at deliberate
 message boundaries. A span into a buffer is only a view, not an ownership token.
 
+`ZiRx` provisions connection receive contexts exclusively from
+`ZiCxnInfo::rxAllocator` (RxTCP or RxUDP). Its CRTP `rxAllocator()` hook
+supplies App storage for framing and the memory-only receive entry points.
+An exact complete message retains the received backing; incomplete messages
+accumulate in callback-local App storage. Trailing bytes for asynchronous Body
+callbacks are copied into that App storage before delivery. App buffers never
+become transport receive targets, and a registered receive stub is left empty
+until its backend attaches packet backing. Body completion, disconnect and
+explicit rearm retire the old accumulator through the callback lifetime;
+owner-directed rearm also notifies the transport plugin.
+
 Use `ZiRxContext` and `ZiTxContext` for low-level receive and transmit
 callbacks, respectively. Both are defined in `ZiIOContext.hh`.
 Transport-specific buffer allocators in Ztcp/Ztls reuse this infrastructure.

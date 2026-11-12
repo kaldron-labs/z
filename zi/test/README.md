@@ -359,3 +359,15 @@ buffers are exhausted. Native capacity verification checks actual pool backing
 and successful kernel registration; configured counts alone do not establish
 that registration succeeded. Account for the number of allocator owners and
 slot geometry when setting the process memory-lock limit.
+
+`ZiRxTest` retains the memory-only framing tests and exercises connection framing
+on the real mx Rx dispatcher using a synthetic transport. Run `make -C zi/src`
+then `make -C zi/test ZiRxTest` and `./zi/test/ZiRxTest` under the shared build
+jobserver when required by the execution plan. The connection matrix covers
+asynchronous/synchronous Body callbacks, TCP/UDP allocator identities, builtin
+packets and backingless registered stubs with headroom/tailroom. It checks
+original-backing delivery, every short frame split, coalesced frames, larger
+messages, bounded unknown headers, malformed input, drop/error/completion,
+replacement/rearm notifications, allocation rejection, partial teardown and
+final packet release off the Rx owner. No network listeners or test residue are
+created by this synthetic fixture.

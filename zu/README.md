@@ -7,7 +7,7 @@ formatting, time, encoding and ownership. Include individual headers as
 provide the threaded runtime or dynamically growing containers; those live in
 [Zm](../zm/README.md) and [Zt](../zt/README.md).
 
-See [Z, STL and Boost equivalents](../docs/Z_STL_BOOST.md) for comparisons of Zu
+See [Z, STL, Boost, Folly, BDE and NTF equivalents](../docs/Z_STL_BOOST_FOLLY_BDE.md) for comparisons of Zu
 facilities with their closest STL and Boost counterparts.
 
 ## Strings, spans and arrays
@@ -123,5 +123,5 @@ provide the TAP test framework used across the repository.
 
 Run `make -C zu test` from a configured build tree. The [test directory](test/)
 contains executable API examples and boundary cases. See the top-level
-[testing guide](docs/TESTING.md) for environment, diagnostics and port allocations,
-and [dependencies](docs/DEPENDENCIES.md) for build prerequisites.
+[testing guide](../docs/TESTING.md) for environment, diagnostics and port allocations,
+and [dependencies](../docs/DEPENDENCIES.md) for build prerequisites.

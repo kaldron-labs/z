@@ -25,4 +25,4 @@ Modules use short prefixes (`zu`, `zm`, `zt`, `ze`, `zf`, `zi`, `zdb`, etc.).
 Library code lives in `<module>/src`; unit tests in `<module>/test`.
 See `docs/BUILD.md` for other directory roles. Top-level build inputs are
 `configure.ac`, `Makefile.am`, and `m4/`; `z.config` centralizes configuration.
-See [README.md](docs/README.md) for platform setup and `scripts/` for utilities.
+See [README.md](README.md) for platform setup and `scripts/` for utilities.
