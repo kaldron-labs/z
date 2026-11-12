@@ -1,5 +1,80 @@
 # Z, STL, Boost, Folly, BDE and NTF equivalents
 
+## Container verb Rosetta stone
+
+`a` is an owning mutable `ZtArray<T>`; `v` is `std::vector<T>`. `l`, `h`,
+`t` and `q` denote `ZmList`, `ZmHash`, `ZmRBTree` and `ZmPQueue`; `s` is
+`std::list<T>`, and `m` is the appropriate ordered or unordered STL associative
+container; `findVal` rows use key/value maps. `src` is an array/span. `n` denotes
+a count in array operations and an existing node in node operations. Node
+ownership follows the Z container's configured policy. The STL snippets for `back()`, `front()` and extrema assume
+a nonempty container.
+
+| Z idiom | STL |
+| --- | --- |
+| `a.push(x)` | `v.push_back(x)`; Z also returns the inserted element's address |
+| `a.push()` | No exact equivalent: Z extends the logical length and returns uninitialized storage; `v.emplace_back(args...)` constructs at the back |
+| `new (a.push()) T(args...)` | `v.emplace_back(args...)` |
+| `auto x = a.pop()` | `auto x = std::move(v.back()); v.pop_back();` |
+| `a.unshift(x)` | `v.insert(v.begin(), x)` |
+| `a.unshift()` | No exact equivalent: Z opens an uninitialized front slot; `v.emplace(v.begin(), args...)` constructs at the front |
+| `new (a.unshift()) T(args...)` | `v.emplace(v.begin(), args...)` |
+| `auto x = a.shift()` | `auto x = std::move(v.front()); v.erase(v.begin());` |
+| `a.shift(n)` | `v.erase(v.begin(), v.begin() + std::min<std::size_t>(n, v.size()))` |
+| `a << src` | `v.insert(v.end(), src.begin(), src.end())` |
+| `a.length()` | `v.size()` |
+| `a.size()` | `v.capacity()` |
+| `a.length(n)` | Closest: `v.resize(n)`; Z leaves newly exposed primitive elements uninitialized |
+| `a.ensure(n)` | `v.reserve(n)`; Z returns the backing address |
+| `a.clear()` | `v.clear()` |
+| `a.truncate()` | Closest: `v.shrink_to_fit()`; the STL request is nonbinding |
+| `for (auto &x : a) use(x);` | `for (auto &x : v) use(x);` |
+| `for (auto i = a.cbegin(); i != a.cend(); ++i) use(*i);` | `for (auto i = v.cbegin(); i != v.cend(); ++i) use(*i);` |
+| `auto pos = a.find([&](const auto &x) { return x == value; })` | `auto i = std::find(v.begin(), v.end(), value);`; Z returns an index, or `-1` on a miss |
+| `l.push(x)` | `s.push_back(x)`; Z constructs and returns a node |
+| `l.unshift(x)` | `s.push_front(x)`; Z constructs a node |
+| `l.pushNode(n)` / `l.addNode(n)` | No raw-node insertion API in `std::list`; `s.splice(s.end(), other, i)` transfers an existing STL-owned node |
+| `l.unshiftNode(n)` | No raw-node insertion API; `s.splice(s.begin(), other, i)` transfers an existing STL-owned node to the front |
+| `auto n = l.pop()` / `l.shift()` | Z detaches and returns the back/front node; `s.pop_back()` / `s.pop_front()` erase and destroy the STL-owned node |
+| `l.head()` / `l.tail()` | Closest: `s.front()` / `s.back()`; Z returns the value by value |
+| `l.headNode()` / `l.tailNode()` | Closest positions: `s.begin()` / `std::prev(s.end())`; Z returns node handles |
+| `l.find(k)` | `std::find_if(s.begin(), s.end(), key_matches)`; Z returns a node handle rather than an iterator |
+| `l.del(k)` | Closest: `std::find_if` followed by `s.erase(i)`; Z returns the detached node |
+| `h.add(x)` / `t.add(x)` | `m.insert(x)` / `m.emplace(args...)`; Z constructs and returns a node |
+| `h.addNode(n)` / `t.addNode(n)` | Closest: `m.insert(std::move(handle))` for a compatible C++17 node handle; STL node handles come from `extract()`, not arbitrary user nodes |
+| `h.find(k)` / `t.find(k)` | `m.find(k)`; a Z miss is an empty node handle, an STL miss is `m.end()` |
+| `h.findPtr(k)` / `t.findPtr(k)` | `auto i = m.find(k); auto p = i == m.end() ? nullptr : std::addressof(*i);`; Z returns a raw node pointer |
+| `h.findVal(k)` / `t.findVal(k)` | Closest: `m.find(k)` followed by `i->second`; Z's null-value policy applies on a miss |
+| `h.del(k)` / `t.del(k)` | Closest: `m.extract(k)`; both return ownership of a removed node under their respective node policies |
+| `l.delNode(n)` / `h.delNode(n)` / `t.delNode(n)` | Closest: `m.extract(i)` for associative containers, or `s.erase(i)` for a list; Z identifies the existing node directly |
+| `c.clean()` (`c` = `l`, `h`, `t` or `q`) | `s.clear()` / `m.clear()`; Z releases nodes according to its ownership policy |
+| `for (auto i = c.iter(); auto *n = i(); ) use(n->data());` (`c` = `l`, `h`, `t` or `q`) | `for (auto &x : s) use(x);` / `for (auto &x : m) use(x);` |
+| `for (auto i = c.citer(); const auto *n = i(); ) use(n->data());` | `for (auto i = m.cbegin(); i != m.cend(); ++i) use(*i);`; use `s.cbegin()` / `s.cend()` for lists |
+| `for (auto i = h.iter(k); auto *n = i(); ) use(n->data());` | `auto [first, last] = m.equal_range(k); for (auto i = first; i != last; ++i) use(*i);` |
+| `i.del()` after `i()` (`ZmList`, `ZmHash`, `ZmPQueue` iterators) | Closest: `i = m.erase(i)` / `i = s.erase(i)`; Z returns the removed node, STL `erase` returns the next iterator |
+| `i.del(n)` (`ZmRBTree` iterator) | Closest: `i = m.erase(i)`; the Z tree iterator accepts the node and returns its removed-node handle |
+| `t.minimum()` / `t.maximum()` | `m.begin()` / `std::prev(m.end())`; Z returns node handles |
+| `t.find<ZmRBTreeGreaterEqual>(k)` | `m.lower_bound(k)` |
+| `t.find<ZmRBTreeGreater>(k)` | `m.upper_bound(k)` |
+| `for (auto i = t.iter(k); auto *n = i(); ) use(n->data());` | `for (auto i = m.lower_bound(k); i != m.end(); ++i) use(*i);` |
+| `t.iter<ZmRBTreeLessEqual>()` / `t.citer<ZmRBTreeLessEqual>()` | `m.rbegin()` / `m.crbegin()` with reverse traversal |
+| `q.add(n)` | No exact equivalent; ordered insertion plus sequence-range overlap/reassembly logic |
+| `q.unshift(n)` | No exact equivalent; prepend sequence data before the queue's current head |
+| `q.find(k)` / `q.has(k)` | No direct range-containment lookup; use an ordered predecessor search and check the segment's end; the Z key may lie inside a stored segment |
+| `q.del(k)` | Closest: `m.extract(k)` with segment-start keys; Z removes the exact-start segment and leaves a sequence gap |
+| `q.dequeue()` | No exact equivalent; delivers the next contiguous segment at the sequence head, retaining later data across gaps |
+| `q.shift()` | Closest: extract the first ordered segment and advance an application sequence cursor to its end; Z deliberately ignores gaps |
+| `q.rotate(n)` | No exact equivalent; may immediately return an arriving head segment or retain it for later delivery |
+| `q.head()` / `q.tail()` | No direct equivalent: these are sequence cursor keys, which may delimit gaps, rather than first/last stored map entries |
+| `q.reset(k)` | `m.clear()` plus resetting application-maintained sequence cursors to `k` |
+| `q.riter()` / `q.rciter()` | Ordered-container `rbegin()` / `crbegin()` with reverse traversal |
+
+Z iterator objects manage the configured container or bucket locks. `citer()`
+selects read iteration; the explicit `const auto *` above also makes the node
+view const. STL iterators provide their normal value constness and leave
+synchronization to the caller. `ZmPQueue` verbs operate on sequence ranges,
+gaps and overlaps; the STL sketches describe building blocks for that behavior.
+
 # Zu
 
 ## Abbreviated forwarding and move operations
@@ -75,7 +150,7 @@
 | `ZuNotSame` | Negated `std::is_same` constraint | Boost.DisableIf + `boost::is_same` | Composition: [`bsl::enable_if_t<!bsl::is_same_v<A, B>, R>`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) |
 | `ZuIs`<br>➕ decays types and accepts identity or accessible pointer base conversion | Partial: `std::same_as` / `std::derived_from` constraint | Partial: Boost.TypeTraits + EnableIf | Composition: [`bsl::enable_if + remove_cvref + identity/accessible pointer-conversion tests`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) |
 | `ZuIsNot` | Negation of the identity/base-conversion constraint | Partial: Boost.TypeTraits + DisableIf | Composition: [`bsl::enable_if + negated normalized identity/accessible pointer-conversion tests`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) |
-| `ZuIsBase`<br>➖ argument order and identity/access rules differ from `is_base_of` | Partial: `std::is_base_of` / `std::derived_from` | Partial: `boost::is_base_of` | Partial: [`bsl::is_base_of / is_convertible`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) |
+| `ZuIsBase<From, To>` — derived-to-base argument order; Z identity/access rules | Partial: `std::is_base_of` / `std::derived_from` | Partial: `boost::is_base_of` | Partial: [`bsl::is_base_of / is_convertible`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) |
 | `ZuBase` | Constraint on strict accessible base conversion | Partial: Boost.EnableIf + TypeTraits | Composition: [`bsl::enable_if + normalized identity/pointer-conversion tests + original-type inequality`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) |
 | `ZuNotBase` | Negated strict accessible base-conversion constraint | Partial: Boost.DisableIf + TypeTraits | Composition: [`bsl::enable_if + negation of the strict identity/pointer-conversion test`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) |
 
@@ -83,7 +158,7 @@
 
 | Z facility | STL | Boost | BDE |
 | --- | --- | --- | --- |
-| `ZuIsConvertible`<br>➖ uses Z's reference-normalized probe semantics | Partial: `std::is_convertible` | Partial: `boost::is_convertible` | [`bsl::is_convertible`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_isconvertible.h) |
+| `ZuIsConvertible` — reference-normalized probe semantics | Partial: `std::is_convertible` | Partial: `boost::is_convertible` | [`bsl::is_convertible`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_isconvertible.h) |
 | `ZuConvertible` | Partial: `std::enable_if_t<std::is_convertible_v<From, To>, R>` | Partial: Boost.EnableIf + `boost::is_convertible` | Composition: [`bsl::enable_if_t<bsl::is_convertible_v<From, To>, R>`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) |
 | `ZuNotConvertible` | Partial: negated `std::is_convertible` constraint | Partial: Boost.DisableIf + `boost::is_convertible` | Composition: [`bsl::enable_if_t<!bsl::is_convertible_v<From, To>, R>`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) |
 | `ZuIsConstructible`<br>➖ source/destination API and cast probing differ | Partial: `std::is_constructible`<br>➕ variadic constructor-argument API | Partial: `boost::is_constructible` | [`bsl::is_constructible`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) |
@@ -579,7 +654,7 @@ Relevant counterparts: [Boost.Container](https://www.boost.org/doc/libs/latest/d
 | `ZmBackTracer`<br>➕ keeps a bounded ring of captured traces | Partial: `std::stacktrace` + bounded storage | Partial: Boost.Stacktrace + CircularBuffer | Partial: [`folly::symbolizer stack traces`](https://github.com/facebook/folly/blob/main/folly/debugging/symbolizer/Symbolizer.h)<br>➖ bounded trace-history ring is application work | Partial: [`balst::StackTrace`](https://github.com/bloomberg/bde/blob/main/groups/bal/balst/balst_stacktrace.h)<br>➖ captures individual traces; no built-in bounded trace-history ring |
 | `ZmTrap`<br>➕ last-ditch diagnostics and signal trapping | Partial: `std::signal`, `std::set_terminate` | Partial: Boost.Stacktrace signal-handler integration | Partial: [`folly symbolizer fatal-signal handlers`](https://github.com/facebook/folly/blob/main/folly/debugging/symbolizer/SignalHandler.h) | N/A |
 
-## Sequential containers and nodes
+## Containers, indices and caches
 
 | Z facility | STL | Boost | Folly | BDE |
 | --- | --- | --- | --- | --- |
@@ -587,38 +662,27 @@ Relevant counterparts: [Boost.Container](https://www.boost.org/doc/libs/latest/d
 | `ZmList`<br>➕ intrusive ownership, heap and locking policies | `std::list`<br>➕ standard iterators and algorithms | `boost::intrusive::list` | [`folly::IntrusiveList / CountedIntrusiveList`](https://github.com/facebook/folly/blob/main/folly/container/IntrusiveList.h)<br>➖ different locking/allocation/ownership policies | Partial: [`bslalg::BidirectionalLink / BidirectionalLinkListUtil`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslalg/bslalg_bidirectionallinklistutil.h) |
 | `ZmStack`<br>➕ deletion inside stack for queued cancellation<br>➖ requires sentinel-null value semantics | `std::stack` / `std::vector` composition | `boost::container::vector` with stack operations | Partial: [`folly::AtomicLinkedList`](https://github.com/facebook/folly/blob/main/folly/AtomicLinkedList.h)<br>➖ bulk-sweep atomic stack rather than Z's indexed/removable stack | Partial: [`bdlcc::Deque`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_deque.h) |
 | `ZmQueue`<br>➕ FIFO/LIFO operations without shifting remaining items<br>➖ sentinel-null value contract | `std::deque`, `std::queue` | Boost.CircularBuffer / Container deque | Partial: [`folly::MPMCQueue`](https://github.com/facebook/folly/blob/main/folly/MPMCQueue.h)<br>➕ bounded concurrent producer/consumer queue<br>➖ different sizing and FIFO/LIFO contract | Partial: [`bdlcc::Deque`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_deque.h) |
-
-## Ordered and hash indices
-
-| Z facility | STL | Boost | Folly | BDE |
-| --- | --- | --- | --- | --- |
 | `ZmRBTree`<br>➕ intrusive nodes and configurable locking/ownership | `std::map`, `std::set`, multi variants | `boost::intrusive::rbtree` / set | Partial: [`folly::ConcurrentSkipList`](https://github.com/facebook/folly/blob/main/folly/ConcurrentSkipList.h)<br>➖ ordered skip-list set rather than intrusive red/black tree | Partial: [`bslalg::RbTreeNode / RbTreeUtil`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslalg/bslalg_rbtreeutil.h) |
 | `ZmLHash`<br>➕ by-value linear probing with Z policies | `std::unordered_map` / `std::unordered_set`<br>➖ standard node-oriented contracts differ | `boost::unordered_flat_map` / `unordered_flat_set` | Partial: [`folly::F14ValueMap / F14FastMap`](https://github.com/facebook/folly/blob/main/folly/container/F14Map.h)<br>➕ optimized value/node/vector storage choices<br>➖ different probing, locking and ownership policies | Partial: [`bdlc::FlatHashMap / FlatHashSet`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlc/bdlc_flathashmap.h)<br>➕ allocator-aware flat storage |
 | `ZmHash`<br>➕ intrusive chaining, lock striping and named tuning | `std::unordered_map` / `std::unordered_set`<br>➖ caller supplies synchronization | `boost::intrusive::unordered_set`; partial: Boost.Unordered concurrent containers | Partial: [`folly::ConcurrentHashMap`](https://github.com/facebook/folly/blob/main/folly/concurrency/ConcurrentHashMap.h)<br>➕ concurrent lookup/update and reclamation<br>➖ not Z intrusive nodes or named hash/heap tuning | Partial: [`bdlcc::StripedUnorderedMap`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_stripedunorderedmap.h)<br>➕ concurrent operations with striped locking<br>➖ no named hash/heap tuning registry |
 | `ZmHashMgr`<br>➕ named sizing, striping and telemetry | N/A; per-container load-factor/rehash controls only | Partial: Boost.Unordered controls with custom registry | N/A | N/A |
 | `ZmPolyHash`<br>➕ reflected multiple intrusive hash indices in one allocation | N/A; multiple containers with manual index maintenance | Boost.MultiIndex<br>➕ also supports ordered, sequenced and other index kinds | N/A | N/A |
-
-## Caches and eviction
-
-| Z facility | STL | Boost | Folly | BDE |
-| --- | --- | --- | --- | --- |
 | `ZmCacheStats` | N/A; application counters | Partial: Boost.Accumulators or custom counters | N/A | N/A |
 | `ZmCache`<br>➕ integrated hash lookup and LRU eviction | Partial: `std::list` + `std::unordered_map` | Partial: Boost.MultiIndex hashed + sequenced indices | [`folly::EvictingCacheMap`](https://github.com/facebook/folly/blob/main/folly/container/EvictingCacheMap.h)<br>➖ different locking/node/heap policy | Partial: [`bdlcc::Cache`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_cache.h)<br>➕ LRU/FIFO eviction and allocator support |
 | `ZmPolyCache`<br>➕ reflected multiple keys with LRU eviction | N/A; custom multi-index cache | Partial: Boost.MultiIndex + eviction policy | Partial: [`folly::EvictingCacheMap`](https://github.com/facebook/folly/blob/main/folly/container/EvictingCacheMap.h)<br>➖ no reflected multiple-key indices | Partial: [`bdlcc::Cache`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_cache.h)<br>➖ no built-in reflected multiple-key indices |
+| `ZmPQueue`, `ZmPQRx`, `ZmPQTx`<br>➕ deterministic skip-list sequence reassembly; gaps and overlaps | Partial: `std::map` plus interval/reassembly logic | Partial: Boost.ICL + ordered index | Partial: [`folly::ConcurrentSkipList`](https://github.com/facebook/folly/blob/main/folly/ConcurrentSkipList.h) + application sequence/reassembly logic | Partial: [`bdlcc::SkipList`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_skiplist.h) + application sequence/reassembly logic |
 
-## Sequence reassembly
+## ZmRing — inter-thread communication
 
-| Z facility | STL | Boost | Folly |
-| --- | --- | --- | --- |
-| `ZmPQueue`, `ZmPQRx`, `ZmPQTx`<br>➕ deterministic skip-list sequence reassembly; gaps and overlaps | Partial: `std::map` plus interval/reassembly logic<br>➖ `std::priority_queue` does not implement this contract | Partial: Boost.ICL + ordered index<br>➖ Boost.Heap is an ordinary priority heap, not sequence reassembly | Partial: [`folly::ConcurrentSkipList`](https://github.com/facebook/folly/blob/main/folly/ConcurrentSkipList.h)<br>➖ no sequence-gap/overlap reassembly or retransmission contract |
-
-## Ring storage and callable dispatch
+`ZmRing` carries records between threads; `ZmRingFn` adds in-ring callable
+dispatch. Folly provides related fixed-record ring facilities: its FIFO
+`ProducerConsumerQueue` and cursor-based overwrite-history `LockFreeRingBuffer`.
 
 | Z facility | STL | Boost | Folly | BDE |
 | --- | --- | --- | --- | --- |
 | `ZmRingMirror`<br>➕ double-mapped storage simplifies wraparound records | N/A | Partial: Boost.Interprocess mapping primitives<br>➖ mirror arrangement is application work | N/A | N/A |
-| `ZmRing`<br>➕ fixed/variable records, producer policies and broadcast readers<br>➖ multi-reader mode broadcasts rather than distributes work | N/A; custom bounded queue | Partial: Boost.Lockfree queues<br>➖ different record/broadcast contracts | Partial: [`folly::LockFreeRingBuffer`](https://github.com/facebook/folly/blob/main/folly/concurrency/container/LockFreeRingBuffer.h)<br>➖ fixed-record overwrite ring; delivery/retirement differs | Partial: [`bdlcc::SingleProducerSingleConsumerBoundedQueue`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_singleproducersingleconsumerboundedqueue.h)<br>➖ fixed typed slots; no variable-record broadcast or per-reader retirement |
-| `ZmRingFn`<br>➕ captured callable payloads stored in variable-record rings | Partial: callable wrapper queued in a container | Partial: Boost.Function + Lockfree queue composition | Partial: [`folly::Function with a Folly queue`](https://github.com/facebook/folly/blob/main/folly/Function.h)<br>➖ no callable-in-variable-record-ring representation | Partial: [`bdlcc::BoundedQueue<bsl::function<...>>`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_boundedqueue.h)<br>➖ no callable-in-ring storage with broadcast-reader retirement |
+| `ZmRing`<br>➕ fixed/variable records, producer policies and broadcast readers | N/A; custom bounded queue | Partial: Boost.Lockfree queues<br>➖ different record/broadcast contracts | Partial: [`folly::ProducerConsumerQueue`](https://github.com/facebook/folly/blob/main/folly/ProducerConsumerQueue.h) (SPSC FIFO ring); [`folly::LockFreeRingBuffer`](https://github.com/facebook/folly/blob/main/folly/concurrency/container/LockFreeRingBuffer.h) (concurrent cursor-based overwrite ring) | Partial: [`bdlcc::SingleProducerSingleConsumerBoundedQueue`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_singleproducersingleconsumerboundedqueue.h) (typed SPSC communication) |
+| `ZmRingFn`<br>➕ captured callable payloads stored in variable-record rings | Partial: callable wrapper queued in a container | Partial: Boost.Function + Lockfree queue composition | Partial: [`folly::Function with a Folly queue`](https://github.com/facebook/folly/blob/main/folly/Function.h) (callable queueing) | Partial: [`bdlcc::BoundedQueue<bsl::function<...>>`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_boundedqueue.h) (callable queueing) |
 
 ## Topology and threads
 
@@ -867,7 +931,7 @@ The STL has no C++23 socket/event-loop API.
 | `ZiMxPlugin`<br>➕ transport-plugin lifecycle integrated with the multiplexer | N/A | Partial: custom Asio service/executor/stream implementation | N/A | N/A |
 | `ZiMultiplex` / `ZiMxParams`<br>➕ shard-directed I/O with scheduler and allocator integration | N/A | Boost.Asio sockets, `io_context`, executors and strands<br>➕ completion tokens and coroutine integration<br>➖ Z shard/buffer ownership contracts need application composition | Partial: [`folly::IOThreadPoolExecutor + EventBase`](https://github.com/facebook/folly/blob/main/folly/executors/IOThreadPoolExecutor.h)<br>➖ matching Z Rx/Tx destinations and buffer ownership needs composition | Partial: [`ntci::Interface`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_interface.h)<br>➕ socket/timer factories, thread management and executor/strand integration |
 
-## Interprocess broadcast rings
+## ZiRing — inter-process communication using shared memory
 
 | Z facility | STL | Boost |
 | --- | --- | --- |
