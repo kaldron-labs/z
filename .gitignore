@@ -177,3 +177,15 @@ zhttp/itest/zhttpserverstreamtest.ZhttpServerStop-*/
 /zfix/test/ZfixSessionTest
 
 /zfix/test/ZfixRxTest
+
+# Local Markdown/JSON reports stay untracked; existing tracked files are unaffected.
+*.md
+*.json
+*.jsonl
+*.ndjson
+!/docs/
+!/docs/**/
+!/docs/**/*.md
+!/docs/**/*.json
+!/docs/**/*.jsonl
+!/docs/**/*.ndjson
