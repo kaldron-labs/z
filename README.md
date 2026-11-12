@@ -155,7 +155,7 @@ ordinary STL containers do not supply Z's intrusive ownership and tuning model.
 
 [`ZmPQueue`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPQueue.hh) is a sequence-reassembly queue with gaps, overlaps and retained
 messages. Its counterparts above are building blocks for those semantics.
-The [container verb Rosetta stone](docs/Z_STL_BOOST_FOLLY_BDE.md#container-verb-rosetta-stone)
+The [container verb Rosetta stone](docs/ROSETTA.md)
 shows insertion, node transfer, lookup, iteration and removal idioms.
 
 ### Foundation and runtime facilities
