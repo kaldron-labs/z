@@ -1,5 +1,18 @@
 # Phase-1 execution boundary
 
+The live transport must use Zxdp, with IP directly replacing the copied UDP
+carriage as an early stripping change. Kernel UDP is a phase-1 violation, not a
+supported transitional mode. The current source still has that defect; the
+stripping re-audit at the top of `../zutcp_plan.md` governs repair. Do not add
+another UDP wrapper, kernel fallback or separate backend interface. Cold kernel
+interface/route/static-neighbor queries remain permitted control-plane work.
+
+The re-audit found `migCloseOnFail` configuration residue and unused
+`asyncThread` settings, which are now removed. Server establishment without
+response ACK evidence remains an open finding.
+Earlier deletion claims below do not close those findings. Retain the agreed
+Initial/response/ACK and bootstrap IDs while correcting the live path.
+
 The mechanically renamed baseline is recorded in
 `../review_context/zutcp-execution/zutcp-mechanical-rename.json`. Phase 1 is now
 being adapted under `../zutcp_plan.md`; the QUIC-specific material below describes
@@ -26,11 +39,11 @@ Use `ZutcpConnectionUtil.hh` for connection credit and receive final-size state.
 Data/reset/stop wire records have no stream ID; connection controls are
 `MaxData` and `DataBlocked`. Do not restore removed per-stream/count controls,
 ID/limit utilities, child owner pointers, stream lifecycle logging or a
-self-selection/refcount step in packetization. CID sequence metadata is distinct
-from connection byte offsets. Remaining copied fixtures must be ported directly.
+self-selection/refcount step in packetization. Bootstrap CIDs remain fixed for the connection; CID rotation and sequence metadata
+are removed.
 
 Use `dataRxAllocator()`/`dataTxAllocator()` for connection byte storage. Parsed
-`Frame` has no generic sequence/ID field; CID control records use `cidSeq`.
+`Frame` has no sequence/ID field or CID rotation controls.
 Data recovery identity consists of wire offset, length and FIN, independently of
 buffer coordinates or CID/control metadata. Remove obsolete stream diagnostics
 and accessors outright; do not preserve their layout or add compatibility aliases.
@@ -47,33 +60,53 @@ Tx/control provider over its embedded caller-owned raw pool. `ZutcpMx::Stack`
 composes those providers with one physical Rx reserve, accepted-output metadata
 detachment and mx owner lifecycle; see the current checkpoint in
 `../zutcp_plan.md`. The stripped transport remains subsequent work.
-`ZutcpIP` owns intermediate Ethernet/IP/UDP framing and integrity checks. Its
-writer receives an already populated payload at the family-specific header
-offset and writes only headers/padding. Keep payload ownership and endpoint
-routing in the transport; there is no packet codec or route lookup in Zxdp.
-`resolveUDPPath` queries kernel route/static-neighbor state during cold control
-setup only. Never run its blocking request/reply on packet Rx/Tx owners. It
-constrains lookup to the configured interface, preserves an explicit local source
-and publishes the resulting path only on complete success. It does not run ARP/ND
-or keep a routing-table replica.
-Peer transport parameters now belong to the Rx link, independently of the
-remaining TLS readiness/flight machinery. Crypto no longer encodes, stores or
-decodes transport parameters; only plaintext Initial input installs peer limits. Sender ACK timing and stream-credit readers use the
-bounded snapshot installed on Tx. Do not restore reads of Crypto-owned peer
-parameters or write Tx connection credit from Rx. Initial output now uses the
-plaintext codec on Tx with a separately constructed local parameter record and copied bootstrap identity. Rx installs decoded peer
-parameters. TLS readiness, Handshake/application protection deletion and native
-establishment remain phase-1 execution work.
+`ZutcpIP` owns direct Ethernet/IP framing. Its writer receives payload already
+at the family-specific header offset and writes headers/padding only. It adds no
+UDP header, ports, transport shim or payload checksum; transport integrity still
+requires integration before phase-1 acceptance. Keep payload ownership and
+endpoint routing in the transport; there is no packet codec or route lookup in
+Zxdp. `resolveIPPath` queries kernel route/static-neighbor state during cold
+control setup only. Never run its blocking request/reply on packet Rx/Tx owners.
+It constrains lookup to the configured interface, preserves an explicit local
+source and publishes the resulting path only on complete success. It does not
+run ARP/ND or keep a routing-table replica.
+Peer transport parameters belong to Rx and are installed only from plaintext
+Initial input. Tx receives a bounded snapshot for ACK timing and connection byte
+credit; installation/reset run on Tx. Do not write Tx connection credit from Rx.
+TLS/protection/early-data implementation and certificate/ALPN configuration are
+removed, along with the separate protected Handshake packet space. Do not restore
+those APIs or a Crypto-owned parameter carrier when porting callers.
+
 `InitialPkt` in `ZutcpTransport` supplies the plaintext codec: parameter-length
-prefix, encoded values and directly constructed frames, without protection or
-tag/sample reservations. The codec does not install limits or complete setup;
-the owning link must do that. The transitional Initial sender gathers retained
-frame spans directly into the final packet after its encoded parameters. This copy constructs the required
-contiguous datagram; it adds no intermediate payload buffer. The TLS frame
-carrier itself remains scheduled for deletion.
-Bootstrap no longer generates reset tokens. Existing Retry tokens remain
-in the normal Initial header. Pure ACK Initials omit parameter values so a
-parameter response cannot induce an ACK loop.
+prefix, encoded values and directly constructed frames. Rx installs peer limits;
+the owning connection establishes from that state. Initial output constructs its
+own local parameter record on Tx and gathers retained frame spans into the final
+packet. This copy constructs the contiguous datagram without an intermediate
+payload buffer. Short packets also carry ordinary frames. Neither output path
+reserves protection tags or samples. Pure ACK Initials omit parameters to avoid
+a parameter-response ACK loop.
+
+Preserve bounded packet/frame, ACK, connection, parameter and recovery logging
+while removing feature-specific TLS/key/crypto events. Construct event records on
+the logger thread and keep metadata capture inside `ZutcpLOG`. Unknown/removed
+frame types fail admission and produce a packet-drop event. Close output may
+piggyback a pending ACK without waiting for its delay timer.
+
+Initial token framing, Retry bootstrap/parameter state and the `NEW_TOKEN` and
+`HANDSHAKE_DONE` facilities are removed. Payload length follows the CIDs directly
+in the Initial header; do not restore a token-taking writer overload or a
+confirmation-control slot. Bootstrap still creates its routing CIDs, without
+generating reset tokens. Reset-token transport parameters, their codec and
+parameter-event logging are removed. The separate reset-token and path-challenge types, CID rotation controls/tables,
+migration APIs/settings/diagnostics, candidate-path state/timers and endpoint
+rebinding are removed. Bootstrap routing uses the fixed local CID plus the
+original destination CID, with bounded router tombstones. The server records its
+peer tuple on Rx at successful bootstrap and drops packets from other tuples
+before packet admission. Tx keeps its own peer destination. Preserve ordinary
+MTU, ECN and initial send-budget accounting. Opening that initial budget on
+establishment does not create a candidate path or validation exchange.
+Native endpoint wiring remains phase-1 work; the copied migration guidance below
+is historical.
 Keep Zi types, adapter state and mx scheduler integration in Zutcp. Zxdp owns
 its required configurable spin-before-epoll `rx()` and interrupting `wake()`.
 Delegate the plugin hooks to that pair; use the raw named-parameter pool/callback

@@ -1,23 +1,31 @@
 # Container verb Rosetta stone
 
+Z uses Perl-aligned verbs: `push`, `pop`, `shift` and `unshift`. For a nonempty
+array, `auto x = a.shift()` retrieves and removes the first value. For
+[`std::vector<T>`](https://en.cppreference.com/cpp/container/vector), the corresponding
+idiom is `T x = std::move(v.front()); v.erase(v.begin());`. If the removed value
+is discarded, `v.erase(v.begin())` alone suffices.
+
 `a` is an owning mutable [`ZtArray`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh)`<T>`; `v` is [`std::vector`](https://en.cppreference.com/cpp/container/vector)`<T>`. `l`, `h`,
 `t` and `q` denote [`ZmList`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmList.hh), [`ZmHash`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmHash.hh), [`ZmRBTree`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRBTree.hh) and [`ZmPQueue`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPQueue.hh); `s` is
 [`std::list`](https://en.cppreference.com/cpp/container/list)`<T>`, and `m` is the appropriate ordered or unordered STL associative
 container; `findVal` rows use key/value maps. `src` is an array/span. `n` denotes
 a count in array operations and an existing node in node operations. Node
 ownership follows the Z container's configured policy. The STL snippets for `back()`, `front()` and extrema assume
-a nonempty container.
+a nonempty container. On an empty `ZtArray`, `pop()` and `shift()` return the
+configured null sentinel. The STL extraction snippets explicitly construct a
+`T` value, avoiding a retained proxy for `std::vector<bool>`.
 
 | Z idiom | STL |
 | --- | --- |
 | [`a.push`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh#L1465)`(x)` | [`v.push_back`](https://en.cppreference.com/cpp/container/vector/push_back)`(x)`; Z also returns the inserted element's address |
 | [`a.push`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh#L1450)`()` | No exact equivalent: Z extends the logical length and returns uninitialized storage; [`v.emplace_back`](https://en.cppreference.com/cpp/container/vector/emplace_back)`(args...)` constructs at the back |
 | `new (`[`a.push`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh#L1450)`()) T(args...)` | [`v.emplace_back`](https://en.cppreference.com/cpp/container/vector/emplace_back)`(args...)` |
-| `auto x = `[`a.pop`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh#L1470)`()` | `auto x = `[`std::move`](https://en.cppreference.com/cpp/utility/move)`(`[`v.back`](https://en.cppreference.com/cpp/container/vector/back)`()); `[`v.pop_back`](https://en.cppreference.com/cpp/container/vector/pop_back)`();` |
+| `auto x = `[`a.pop`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh#L1470)`()` | `T x = `[`std::move`](https://en.cppreference.com/cpp/utility/move)`(`[`v.back`](https://en.cppreference.com/cpp/container/vector/back)`()); `[`v.pop_back`](https://en.cppreference.com/cpp/container/vector/pop_back)`();` |
 | [`a.unshift`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh#L1526)`(x)` | [`v.insert`](https://en.cppreference.com/cpp/container/vector/insert)`(`[`v.begin`](https://en.cppreference.com/cpp/container/vector/begin)`(), x)` |
 | [`a.unshift`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh#L1509)`()` | No exact equivalent: Z opens an uninitialized front slot; [`v.emplace`](https://en.cppreference.com/cpp/container/vector/emplace)`(`[`v.begin`](https://en.cppreference.com/cpp/container/vector/begin)`(), args...)` constructs at the front |
 | `new (`[`a.unshift`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh#L1509)`()) T(args...)` | [`v.emplace`](https://en.cppreference.com/cpp/container/vector/emplace)`(`[`v.begin`](https://en.cppreference.com/cpp/container/vector/begin)`(), args...)` |
-| `auto x = `[`a.shift`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh#L1483)`()` | `auto x = `[`std::move`](https://en.cppreference.com/cpp/utility/move)`(`[`v.front`](https://en.cppreference.com/cpp/container/vector/front)`()); `[`v.erase`](https://en.cppreference.com/cpp/container/vector/erase)`(`[`v.begin`](https://en.cppreference.com/cpp/container/vector/begin)`());` |
+| `auto x = `[`a.shift`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh#L1483)`()` | `T x = `[`std::move`](https://en.cppreference.com/cpp/utility/move)`(`[`v.front`](https://en.cppreference.com/cpp/container/vector/front)`()); `[`v.erase`](https://en.cppreference.com/cpp/container/vector/erase)`(`[`v.begin`](https://en.cppreference.com/cpp/container/vector/begin)`());` |
 | [`a.shift`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh#L1531)`(n)` | [`v.erase`](https://en.cppreference.com/cpp/container/vector/erase)`(`[`v.begin`](https://en.cppreference.com/cpp/container/vector/begin)`(), `[`v.begin`](https://en.cppreference.com/cpp/container/vector/begin)`() + `[`std::min`](https://en.cppreference.com/cpp/algorithm/min)`<`[`std::size_t`](https://en.cppreference.com/cpp/types/size_t)`>(n, `[`v.size`](https://en.cppreference.com/cpp/container/vector/size)`()))` |
 | [`a <<`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh#L1328)` src` | [`v.insert`](https://en.cppreference.com/cpp/container/vector/insert)`(`[`v.end`](https://en.cppreference.com/cpp/container/vector/end)`(), src.begin(), src.end())` |
 | [`a.length`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh#L1004)`()` | [`v.size`](https://en.cppreference.com/cpp/container/vector/size)`()` |

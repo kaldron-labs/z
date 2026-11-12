@@ -1,5 +1,12 @@
 # Zutcp unit tests
 
+The current live protocol tests/examples still use kernel UDP. That is an
+unrepaired phase-1 violation: the required live path is direct IP through Zxdp.
+Their successful byte/recovery regressions do not establish native acceptance.
+The existing IP/UDP codec and socket fixtures below describe current coverage,
+not the required final carriage. Replace them with the corrected IP/Zxdp path;
+see the stripping re-audit at the top of `../../zutcp_plan.md`.
+
 Reuse the configured Clang/debug/ASan tree. Build from the top level with
 `make -j8`, then run:
 
@@ -7,13 +14,13 @@ Reuse the configured Clang/debug/ASan tree. Build from the top level with
 ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 make -C zutcp/test test
 ```
 
-`ZutcpIPTest` covers the intermediate Ethernet/IP/UDP carriage helpers using
-independent IPv4/IPv6 wire vectors, borrowed payload identity, checksum corruption
-and computed-zero encoding, every payload length through MTU, truncated extents,
-IPv4 options and common IPv6 extension/atomic-fragment headers. Fragmented input
-is not a complete transport datagram and requires IP reassembly outside these
-helpers. Header construction changes framing/padding only; it neither allocates
-nor moves payload. Linux UDP peer coverage lives in `../itest/zutcpiptest.cc`.
+`ZutcpIPTest` covers direct Ethernet/IP framing using independent IPv4/IPv6
+wire vectors, borrowed payload identity, IPv4 header checksum corruption, every
+payload length through MTU, truncated extents, IPv4 options and common IPv6
+extension/atomic-fragment headers. Fragmented input requires IP reassembly outside
+these helpers. Framing writes headers/padding only and adds no UDP header, ports,
+payload shim or payload checksum. Transport integrity is a separate unresolved
+phase-1 gate. The independent raw-IP peer lives in `../itest/zutcpiptest.cc`.
 
 The other programs cover the surviving connection, codec, recovery and runtime
 facilities during phase-1 adaptation. They do not establish the stripped native

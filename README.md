@@ -215,23 +215,24 @@ and [BDE striped hash maps](https://bloomberg.github.io/bde-resources/doxygen/bd
 | [ze](ze/README.md) | Framework error handling: platform errors, event and log vocabulary; Zi supplies asynchronous log sinks |
 | [zf](zf/README.md) | Structured metadata and format adapters |
 | [zi](zi/README.md) | Framework I/O: files, sockets, DNS, multiplexing, pooled buffers, shared-memory rings and heap tuning |
-| [zxdp](zxdp/README.md) | Linux AF_XDP packet I/O, registered arenas and raw packet pools |
+| [zxdp](zxdp/README.md) | Linux AF_XDP packet I/O: registered arenas and raw packet pools |
 | [zutcp](zutcp/README.md) | User-mode TCP/IP stack over Zxdp on Linux, integrated with ZiMultiplex; implementation in progress |
+| [zv](zv/README.md) | Framework server-side utilities: configuration trees, TOML/YAML and runtime parameter binding |
 | [zpb](zpb/README.md) | Protobuf implementation: native codec and schema compiler |
 | [zfb](zfb/README.md) | Flatbuffers: native codec and schema compiler |
-| [zv](zv/README.md) | Framework server-side utilities: configuration trees, TOML/YAML and runtime parameter binding |
-| [zdbus](zdbus/README.md) | Native Linux D-Bus client/server and typed message routing |
+| [zdbus](zdbus/README.md) | D-Bus clients, servers and typed message routing: Linux-only |
 | [ztcp](ztcp/README.md) | Asynchronous TCP links |
 | [ztls](ztls/README.md) | TLS transport, cryptography and credential storage |
-| [zquic](zquic/README.md) | QUIC transport, streams, recovery, flow control, path migration and qlog |
-| [zhttp](zhttp/README.md) | HTTP/1.1, HTTP/2 and HTTP/3 applications, pools and streams |
+| [zquic](zquic/README.md) | QUIC transport: streams, recovery, flow control, path migration and qlog |
+| [zhttp](zhttp/README.md) | HTTP/1.1, HTTP/2 and HTTP/3: applications, pools and streams |
 | [zws](zws/README.md) | Websockets over H1/H2/H3 |
 | [zrest](zrest/README.md) | REST APIs: typed request/response catalogs, clients/servers and SSE |
 | [zgrpc](zgrpc/README.md) | GRPC over HTTP/2 and HTTP/3 |
 | [zjrpc](zjrpc/README.md) | JSON RPC: envelopes, correlation and dispatch |
 | [zmcp](zmcp/README.md) | Model Context Protocol endpoints |
-| [zdb](zdb/README.md) | Typed, sharded, replicated database and recoverable sagas |
-| [zdb_sqlite](zdb_sqlite/README.md), [zdb_pq](zdb_pq/README.md) | SQLite/PostgreSQL persistence; PostgreSQL type integration |
+| [zdb](zdb/README.md) | Typed, sharded, replicated database: recoverable sagas |
+| [zdb_pq](zdb_pq/README.md) | PostgreSQL backing store and native types |
+| [zdb_sqlite](zdb_sqlite/README.md) | SQLite backing store |
 | [zdf](zdf/README.md) | Compressed dataframes, time series, live readers and statistics |
 | [zum](zum/README.md) | Authentication, authorization, OAuth 2.0/OIDC server and management tools |
 | [ztc](ztc/README.md) | Telemetry publishers, collector agent and hub |

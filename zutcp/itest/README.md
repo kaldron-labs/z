@@ -1,12 +1,15 @@
-# Phase-1 Ethernet/IP/UDP carriage
+# Direct IP carriage through Zxdp
 
-`zutcpiptest` uses ordinary Linux UDP sockets as an independent wire-format
-peer of the raw packet Stack, for IPv4 and IPv6. It checks zero/odd/full-MTU
-payloads, incoming original UMEM views, tuple/ECN decoding and kernel validation
-of transmitted IP/UDP checksums. The Zutcp side creates no kernel UDP socket.
-This verifies carriage, not the native intermediate transport handshake or
-stream/recovery working-pair gate. Kernel route/static-neighbor lookup and native
-endpoint wiring remain implementation work.
+`zutcpiptest` uses an independent Linux raw-IP fixture peer for IPv4 and IPv6.
+The Zutcp side receives and submits through the raw packet Stack/Zxdp. It checks
+zero/odd/full-IP-MTU payloads, borrowed ingress backing, protocol/ECN fields,
+exact output and cold route/static-neighbor lookup. There are no UDP headers or
+ports. Protocol 253 is a fixture value passed explicitly to the generic IP
+writer; this does not select the production intermediate transport profile.
+IP framing does not supply a transport payload checksum. This verifies the IP
+carriage primitive, not the Initial/response/ACK transport working-pair gate.
+The copied live protocol still uses kernel UDP, an open stripping violation.
+
 
 Build unprivileged with `make -j8`, then run the compiled integration programs
 inside the fixture (no privileged compilation):
@@ -118,5 +121,5 @@ QUIC pacing remains above the completed-packet queue.
 The scoped fixture supplies direct, gateway/route-MTU, missing-neighbor and
 dynamic-neighbor cases. Tests check interface/source/MAC selection, explicit
 source preservation, failure publication and refusal of the wrong interface.
-The existing raw UDP carriage cases still run. This helper coverage does not
+The direct-IP carriage cases use Zxdp and the independent raw-IP fixture peer. This helper coverage does not
 establish native connection integration or physical NIC behavior.
