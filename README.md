@@ -20,6 +20,8 @@ limitations.
 See [Z, STL, Boost, Folly, BDE and NTF equivalents](docs/Z_STL_BOOST_FOLLY_BDE.md) for feature comparisons
 and the benefits and tradeoffs of Z facilities.
 
+Agentic software engineering is a game changer: Z reinvents multiple wheels, intentionally, for efficient vertical integration. Built with Codex, Elephant/Goldfish Model and Devlayer.
+
 Development guidance is split by task; start with the map and read the relevant
 documents:
 
