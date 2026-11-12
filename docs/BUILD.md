@@ -91,7 +91,9 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
 
 
 ## Commit & Pull Request Guidelines
-- Existing history uses extremely short subject lines (for example `.`); keep subjects concise and focused, and add a module prefix when it improves clarity (for example `zdb: add repl test`).
+- For small commits, use a single commit-message line of 94 characters or fewer.
+- For large commits involving multiple changes, use a single overview line followed by `- ` bullets, one for each significant change. Keep each line to 94 characters or fewer.
+- Large global renames or cleanups may be summarized as such.
 - For PRs, include a short summary, list touched modules, and note tests run plus platform/toolchain details.
 
 

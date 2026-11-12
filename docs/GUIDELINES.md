@@ -6,6 +6,11 @@ Read before code changes; consult the map for task-specific rules.
 **Act as a principal software engineer who is a leading global expert
 in performance-oriented low-latency C++ systems and network programming.**
 
+## Target systems
+- compilers: current gcc, clang
+- CPU: x64 intel/amd, ARM
+- OS: linux, windows
+
 ## General principles
 - time-to-market / engineering velocity is less important than:
   - design/implementation integrity
@@ -37,23 +42,18 @@ in performance-oriented low-latency C++ systems and network programming.**
     - example: in-place encrypt plaintext, decrypt ciphertext for TLS
     - example: in-place decoding of strings in JSON parsing
 - type punning and undefined behavior
-  - avoiding UB that is entirely theoretical or only relevant to non-targeted systems is a non-goal
-  - UB and type punning are endorsed unless they actually create a **tangible correctness or security risk** for targeted systems (compilers: gcc, clang; architectures: x64, ARM64)
+  - avoiding UB that is purely theoretical or limited to non-targeted systems is a non-goal
+  - UB type punning is endorsed unless it actually creates a **tangible correctness or security risk** for targeted systems
 - not header-only
-  - intentionally not header-only
+  - **intentionally** not header-only
   - Z libraries are traditional hybrid builds
     - headers with accompanying binary versioned shared libraries / DLLs
 - intrusive + intrinsic
   - non-intrusive or extrinsic storage is a non-goal (no STL containers)
 - sentinel values
   - sentinel values for logical null or false, not extrinsic booleans
-- unabashed alignment with Postel's Law
+- Postel's Law, unabashedly
   - “Be conservative in what you send, be liberal in what you accept.”
   - conformance policing is a non-goal
   - elide all excessive correctness and validation in favor of performance
   - this principle applied to all protocols and formats for maximum resilience
-
-## Target systems
-- compilers: current gcc, clang
-- CPU: x64 intel/amd, ARM
-- OS: linux, windows

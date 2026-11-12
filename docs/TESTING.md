@@ -37,13 +37,20 @@ Use the source-tree libtool wrappers when debugging, never `.libs` binaries:
 ./libtool exec valgrind --leak-check=full ./zt/test/ZtArrayTest
 ```
 
+Shared Valgrind suppression files live in `.valgrind/`. Valgrind does not
+automatically scan this directory; select files explicitly with
+`--suppressions=PATH` (relative to the working directory), or put those options
+in `~/.valgrindrc`, `$VALGRIND_OPTS`, or the current directory's `.valgrindrc`.
+It does not search parent directories for `.valgrindrc`. These reviewed
+exceptions remain opt-in.
+
 For TLS Memcheck runs with the dependency/tool pair documented in
-`openssl.valgrind.supp`, enable that reviewed suppression explicitly:
+`.valgrind/openssl.valgrind.supp`, enable that reviewed suppression explicitly:
 
 ```sh
 ./libtool exec valgrind --error-exitcode=99 --leak-check=full \
   --errors-for-leak-kinds=definite,indirect \
-  --suppressions=openssl.valgrind.supp ./ztls/test/ZtlsBufHookTest -q
+  --suppressions=.valgrind/openssl.valgrind.supp ./ztls/test/ZtlsBufHookTest -q
 ```
 
 The rule suppresses `Memcheck:Cond` on the reviewed libcrypto tag-verification
