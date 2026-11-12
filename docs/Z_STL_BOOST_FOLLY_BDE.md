@@ -23,8 +23,8 @@
 | `ZuFalse` | `std::false_type` | `boost::false_type` | N/A | [`bsl::false_type`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_integralconstant.h) |
 | `ZuAlwaysTrue` | Partial: dependent `std::true_type` wrapper | Partial: `boost::mp11::mp_true` wrapper | N/A | Partial: [`bsl::true_type`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)<br>➖ requires the corresponding Z predicate/adaptation composition |
 | `ZuAlwaysFalse` | Partial: dependent `std::false_type` wrapper | Partial: `boost::mp11::mp_false` wrapper | N/A | Partial: [`bsl::false_type`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)<br>➖ requires the corresponding Z predicate/adaptation composition |
-| `ZuInt128` | Partial: `std::integral_constant` over compiler 128-bit integer | Partial: constant wrapper over a supported 128-bit type | N/A | Partial: [`bsl::integral_constant with compiler 128-bit type`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_integralconstant.h)<br>➖ compiler-extension support required |
-| `ZuUInt128` | Partial: `std::integral_constant` over compiler unsigned 128-bit integer | Partial: constant wrapper over a supported 128-bit type | N/A | Partial: [`bsl::integral_constant with compiler 128-bit type`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_integralconstant.h)<br>➖ compiler-extension support required |
+| `ZuInt128` | Partial: `std::integral_constant` over compiler 128-bit integer | Partial: constant wrapper over a supported 128-bit type | N/A | Partial: [`bsl::integral_constant with compiler 128-bit type`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_integralconstant.h) |
+| `ZuUInt128` | Partial: `std::integral_constant` over compiler unsigned 128-bit integer | Partial: constant wrapper over a supported 128-bit type | N/A | Partial: [`bsl::integral_constant with compiler 128-bit type`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_integralconstant.h) |
 
 ## Abbreviated type transformations and normalizations
 
