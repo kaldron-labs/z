@@ -1,6 +1,8 @@
 ACLOCAL_AMFLAGS = -I m4
 METASOURCES = AUTO
 EXTRA_DIST = TESTING.md DEPENDENCIES.md GUIDELINES.md z.config .lsan-suppressions \
+	.valgrind/openssl.valgrind.supp .valgrind/uring.valgrind.supp \
+	.valgrind/helgrind.supp \
 	scripts/qir-build-image scripts/qir-upload-image \
 	scripts/qir-run-local scripts/qir-collect-results scripts/qir-report \
 	scripts/toml-to-json
