@@ -5,7 +5,7 @@ lookup, iteration and removal idioms.
 
 ## Contents
 
-- [Zu](#zu)
+- [Zu - Framework underlying foundation](#zu---framework-underlying-foundation)
   - [Abbreviated forwarding and move operations](#abbreviated-forwarding-and-move-operations)
   - [Compile-time constants](#compile-time-constants)
   - [Abbreviated type transformations and normalizations](#abbreviated-type-transformations-and-normalizations)
@@ -48,7 +48,7 @@ lookup, iteration and removal idioms.
   - [Testing](#testing)
   - [Structure reflection and facets](#structure-reflection-and-facets)
   - [ZuMatcher — compile-time multi-string matching](#zumatcher--compile-time-multi-string-matching)
-- [Zm](#zm)
+- [Zm - Multithreading foundation](#zm---multithreading-foundation)
   - [Platform and cache alignment](#platform-and-cache-alignment)
   - [Atomic operations and locks](#atomic-operations-and-locks)
   - [Conditions, semaphores and blocking adapters](#conditions-semaphores-and-blocking-adapters)
@@ -65,7 +65,7 @@ lookup, iteration and removal idioms.
   - [Topology and threads](#topology-and-threads)
   - [Scheduling and engine lifecycle](#scheduling-and-engine-lifecycle)
   - [Runtime telemetry](#runtime-telemetry)
-- [Zt](#zt)
+- [Zt - Framework types](#zt---framework-types)
   - [Platform and environment](#platform-and-environment)
   - [Boolean and enum vocabulary](#boolean-and-enum-vocabulary)
   - [Text formatting](#text-formatting)
@@ -75,18 +75,18 @@ lookup, iteration and removal idioms.
   - [Timezone conversion](#timezone-conversion)
   - [Demangling](#demangling)
   - [Regular expressions](#regular-expressions)
-- [Ze](#ze)
+- [Ze - Framework error handling](#ze---framework-error-handling)
   - [Native errors](#native-errors)
   - [Diagnostic metadata and events](#diagnostic-metadata-and-events)
   - [Exceptions](#exceptions)
-- [Zf](#zf)
+- [Zf - Structured metadata and format adapters](#zf---structured-metadata-and-format-adapters)
   - [Configuration trees and typed loading](#configuration-trees-and-typed-loading)
   - [Structure reflection and serialization metadata](#structure-reflection-and-serialization-metadata)
   - [Text and web formats](#text-and-web-formats)
   - [Configuration formats](#configuration-formats)
   - [Command-line binding](#command-line-binding)
   - [Binary wire formats](#binary-wire-formats)
-- [Zi](#zi)
+- [Zi - Framework I/O](#zi---framework-io)
   - [Native paths and scatter/gather descriptors](#native-paths-and-scattergather-descriptors)
   - [Process and module utilities](#process-and-module-utilities)
   - [Directories and path completion](#directories-and-path-completion)
@@ -100,73 +100,71 @@ lookup, iteration and removal idioms.
   - [Logging and assertions](#logging-and-assertions)
   - [Resource tuning](#resource-tuning)
   - [I/O telemetry](#io-telemetry)
-- [Zxdp](#zxdp)
+- [Zxdp - Linux AF_XDP packet I/O](#zxdp---linux-af_xdp-packet-io)
   - [Registered packet storage](#registered-packet-storage)
   - [Raw packet I/O and service](#raw-packet-io-and-service)
-- [Zutcp](#zutcp)
+- [Zutcp - User-mode TCP/IP stack](#zutcp---user-mode-tcpip-stack)
   - [User-mode TCP/IP stack](#user-mode-tcpip-stack)
   - [TCP connection and recovery](#tcp-connection-and-recovery)
-- [Zv](#zv)
+- [Zv - Framework server-side utilities](#zv---framework-server-side-utilities)
   - [Thread, stack and ring parameter binding](#thread-stack-and-ring-parameter-binding)
   - [Connection and multiplexer parameter binding](#connection-and-multiplexer-parameter-binding)
   - [Configuration file loading and saving](#configuration-file-loading-and-saving)
-- [Zpb](#zpb)
+- [Zpb - Protobuf implementation](#zpb---protobuf-implementation)
   - [Protobuf wire format and typed messages](#protobuf-wire-format-and-typed-messages)
   - [Schema reflection and compiler](#schema-reflection-and-compiler)
-- [Zfb](#zfb)
+- [Zfb - Flatbuffers](#zfb---flatbuffers)
   - [FlatBuffers construction and access](#flatbuffers-construction-and-access)
   - [Schema reflection and compiler](#schema-reflection-and-compiler-1)
-- [Zdbus](#zdbus)
+- [Zdbus - D-Bus clients, servers and typed message routing](#zdbus---d-bus-clients-servers-and-typed-message-routing)
   - [Addresses, authentication and framing](#addresses-authentication-and-framing)
   - [Typed message adapters and runtime](#typed-message-adapters-and-runtime)
-- [Ztcp](#ztcp)
+- [Ztcp - Asynchronous TCP links](#ztcp---asynchronous-tcp-links)
   - [Buffer policies and byte streams](#buffer-policies-and-byte-streams)
   - [TCP links and endpoints](#tcp-links-and-endpoints)
-- [Ztls](#ztls)
+- [Ztls - TLS transport, cryptography and credential storage](#ztls---tls-transport-cryptography-and-credential-storage)
   - [Cryptographic primitives](#cryptographic-primitives)
   - [Keys, encapsulation and encrypted files](#keys-encapsulation-and-encrypted-files)
   - [Credential storage](#credential-storage)
   - [TLS byte streams and endpoints](#tls-byte-streams-and-endpoints)
-- [Zquic](#zquic)
+- [Zquic - QUIC transport](#zquic---quic-transport)
   - [Packet, frame and crypto codecs](#packet-frame-and-crypto-codecs)
   - [Recovery, paths and stream ownership](#recovery-paths-and-stream-ownership)
   - [Transport endpoints and diagnostics](#transport-endpoints-and-diagnostics)
-- [Zhttp](#zhttp)
+- [Zhttp - HTTP/1.1, HTTP/2 and HTTP/3](#zhttp---http11-http2-and-http3)
   - [URLs, fields and protocol configuration](#urls-fields-and-protocol-configuration)
   - [Discovery and event framing](#discovery-and-event-framing)
   - [Messages, body streams and response routes](#messages-body-streams-and-response-routes)
   - [HTTP wire protocols and endpoints](#http-wire-protocols-and-endpoints)
-- [Zws](#zws)
+- [Zws - Websockets](#zws---websockets)
   - [URI, handshake and frame codecs](#uri-handshake-and-frame-codecs)
   - [WebSocket endpoints](#websocket-endpoints)
-- [Zrest](#zrest)
+- [Zrest - REST APIs](#zrest---rest-apis)
   - [Typed request/response contracts](#typed-requestresponse-contracts)
   - [Adapters, completion and server-sent events](#adapters-completion-and-server-sent-events)
   - [REST endpoints](#rest-endpoints)
-- [Zgrpc](#zgrpc)
+- [Zgrpc - GRPC](#zgrpc---grpc)
   - [Method, metadata and status vocabulary](#method-metadata-and-status-vocabulary)
   - [Envelope, protobuf and HTTP adapters](#envelope-protobuf-and-http-adapters)
   - [Call ownership and endpoints](#call-ownership-and-endpoints)
-- [Zjrpc](#zjrpc)
+- [Zjrpc - JSON RPC](#zjrpc---json-rpc)
   - [JSON-RPC envelopes and declarations](#json-rpc-envelopes-and-declarations)
   - [Correlation, completion and batches](#correlation-completion-and-batches)
   - [Transport bindings and endpoints](#transport-bindings-and-endpoints)
-- [Zmcp](#zmcp)
+- [Zmcp - Model Context Protocol](#zmcp---model-context-protocol)
   - [Typed tools and protocol vocabulary](#typed-tools-and-protocol-vocabulary)
   - [MCP endpoints](#mcp-endpoints)
-- [Zdb](#zdb)
+- [Zdb - Typed, sharded, replicated database](#zdb---typed-sharded-replicated-database)
   - [Schema, rows and indices](#schema-rows-and-indices)
   - [Database operations and lifecycle](#database-operations-and-lifecycle)
   - [Replication and recoverable workflows](#replication-and-recoverable-workflows)
   - [Pluggable backing stores](#pluggable-backing-stores)
-- [ZdbPQ](#zdbpq)
+- [ZdbPQ - PostgreSQL backing store and native types](#zdbpq---postgresql-backing-store-and-native-types)
   - [PostgreSQL backing store](#postgresql-backing-store)
-- [ZdbSL](#zdbsl)
+- [ZdbSL - SQLite backing store](#zdbsl---sqlite-backing-store)
   - [SQLite backing store and inspection](#sqlite-backing-store-and-inspection)
 
-# Zu
-
-Framework underlying foundation.
+# Zu - Framework underlying foundation
 
 ## Abbreviated forwarding and move operations
 
@@ -640,9 +638,7 @@ Relevant counterparts: [standard containers](https://eel.is/c++draft/containers)
 | --- | --- | --- | --- |
 | [`ZuMatcher`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuMatcher.hh#L447)<br>➕ compile-time Aho–Corasick for fixed multiple keys<br>➖ large instantiations increase compile cost | Partial: [`std::search`](https://en.cppreference.com/cpp/algorithm/search), Boyer–Moore searchers<br>➖ single-pattern facilities | Partial: [Boost.Algorithm](https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/string.hpp) searching / [Boost.Spirit](https://github.com/boostorg/spirit/blob/master/include/boost/spirit.hpp) symbols | Partial: [`bsl::boyer_moore_horspool_searcher`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_functional.h)<br>➖ single-pattern search rather than a compiled multi-key automaton |
 
-# Zm
-
-Multithreading foundation.
+# Zm - Multithreading foundation
 
 ## Platform and cache alignment
 
@@ -798,9 +794,7 @@ dispatch. Folly provides related fixed-record ring facilities: its FIFO
 | --- | --- | --- | --- |
 | [`ZtcHeap`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcHeap.hh), [`ZtcHash`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcHash.hh), [`ZtcQueue`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcQueue.hh), [`ZtcThread`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcThread.hh), [`ZtcTypes`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcTypes.hh) (in `zm`)<br>➕ reflected runtime telemetry vocabulary | N/A | Partial: application-defined [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) / [Serialization](https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html) records | Partial: [`balm::MetricsManager`](https://github.com/bloomberg/bde/blob/main/groups/bal/balm/balm_metricsmanager.h)`  /  `[`bdlm::MetricsRegistry`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlm/bdlm_metricsregistry.h) |
 
-# Zt
-
-Framework types.
+# Zt - Framework types
 
 ## Platform and environment
 
@@ -870,9 +864,7 @@ Container comparisons use [Boost.Container](https://www.boost.org/doc/libs/lates
 | --- | --- | --- | --- |
 | [`ZtRegex`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtRegex.hh) / [`ZtREGEX`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtRegex.hh#L290)<br>➕ PCRE syntax, captures and substitutions<br>➖ external PCRE dependency | [`std::regex`](https://en.cppreference.com/cpp/regex/basic_regex)<br>➖ different syntax/feature contract | [Boost.Regex](https://www.boost.org/doc/libs/latest/libs/regex/doc/html/boost_regex/ref.html) | [`bdlpcre::RegEx`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlpcre/bdlpcre_regex.h)<br>➕ compiled PCRE expression wrapper |
 
-# Ze
-
-Framework error handling.
+# Ze - Framework error handling
 
 ## Native errors
 
@@ -902,9 +894,7 @@ Sources: [ZePlatform.hh](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePl
 | [`ZeException`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh)<br>➕ same diagnostic vocabulary as logging events<br>➖ not the [`std::exception::what`](https://en.cppreference.com/cpp/error/exception/what)`()` interface | [`std::exception`](https://en.cppreference.com/cpp/error/exception), [`std::system_error`](https://en.cppreference.com/cpp/error/system_error)<br>➕ standard catch and message interface | [Boost.Exception](https://www.boost.org/doc/libs/latest/libs/exception/doc/boost-exception.html)<br>➕ extensible attached diagnostic information | Partial: [`folly::exception_wrapper`](https://github.com/facebook/folly/blob/main/folly/ExceptionWrapper.h)<br>➖ type-erased existing exception, not a structured [Ze](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh) diagnostic event | Partial: [`bsl::system_error`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h) |
 | [`ZeEXCEPT`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh#L391) / [`ZeMkException`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh#L380) | Partial: construct exception with [`std::source_location`](https://en.cppreference.com/cpp/utility/source_location) metadata | Partial: [`BOOST_THROW_EXCEPTION`](https://github.com/boostorg/throw_exception/blob/master/include/boost/throw_exception.hpp) / [`boost::enable_error_info`](https://github.com/boostorg/exception/blob/master/include/boost/exception/enable_error_info.hpp)<br>➖ throw macro throws; [`ZeEXCEPT`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh#L391) only constructs | Partial: [`folly::makeSystemErrorExplicit`](https://github.com/facebook/folly/blob/main/folly/Exception.h)<br>➖ system-error construction, not arbitrary severity/component event construction | Partial: [`bsl::system_error`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h) |
 
-# Zf
-
-Structured metadata and format adapters.
+# Zf - Structured metadata and format adapters
 
 ## Configuration trees and typed loading
 
@@ -955,9 +945,7 @@ Format parsers assembled with Spirit are **partial** equivalents, not supplied c
 | [`ZfASN1`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfASN1.hh)<br>➕ schema properties bind C++ fields to tags and wire encodings | N/A | N/A; [Spirit](https://github.com/boostorg/spirit/blob/master/include/boost/spirit.hpp)-based ASN.1 implementation would be custom work | Partial: [`balber::BerEncoder`](https://github.com/bloomberg/bde/blob/main/groups/bal/balber/balber_berencoder.h)`  /  `[`BerDecoder`](https://github.com/bloomberg/bde/blob/main/groups/bal/balber/balber_berdecoder.h) |
 | [`ZfDBUS`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfDBUS.hh)<br>➕ reflected signatures, alignment and message-body serialization | N/A | N/A; no dedicated Boost D-Bus structural codec | N/A |
 
-# Zi
-
-Framework I/O.
+# Zi - Framework I/O
 
 ## Native paths and scatter/gather descriptors
 
@@ -1058,9 +1046,7 @@ The STL has no C++23 socket/event-loop API.
 | --- | --- | --- | --- |
 | [`ZtcMx`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZtcMx.hh), [`ZtcLink`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZtcLink.hh), [`ZtcPool`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZtcPool.hh), [`ZtcHub`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZtcHub.hh) (in `zi`)<br>➕ reflected I/O telemetry records | N/A | Partial: application-defined [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) / [Serialization](https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html) records | Partial: [`balm::MetricsManager`](https://github.com/bloomberg/bde/blob/main/groups/bal/balm/balm_metricsmanager.h) |
 
-# Zxdp
-
-Linux AF_XDP packet I/O.
+# Zxdp - Linux AF_XDP packet I/O
 
 ## Registered packet storage
 
@@ -1078,9 +1064,7 @@ Linux-only; excluded from Windows builds.
 | [`Zxdp::Params`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh), [`Instance`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh)<br>➕ direct AF_XDP packet submission and receive over one interface<br>➕ optional destination-mask steering with host-stack coexistence<br>➖ Linux AF_XDP and suitable kernel/driver support required | N/A | Partial: [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) generic raw sockets<br>➖ kernel socket path rather than AF_XDP rings and registered backing |
 | [`Zxdp::Instance::rx`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L62), [`wake`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L65), [`pollTx`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L66), [`close`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L70)<br>➕ configurable spin-before-epoll receive service and explicit wake<br>➕ bounded Tx retirement with retryable kernel-safe close | N/A | Partial: [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) event/cancellation machinery<br>➖ no matching raw-ring ownership, lease retirement or close contract |
 
-# Zutcp
-
-User-mode TCP/IP stack.
+# Zutcp - User-mode TCP/IP stack
 
 ## User-mode TCP/IP stack
 
@@ -1101,9 +1085,7 @@ progress. Linux-only; excluded from Windows builds.
 | [TCP ACK/window/recovery facilities](https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh)<br>➕ cumulative ACKs, optional SACK/DSACK, scaling and timestamps/PAWS<br>➕ RACK-TLP, RTO/persist and ECN/NewReno on explicit owners | N/A | N/A; [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) delegates these mechanisms to kernel TCP | N/A |
 | [TCP initial sequences and Fast Open](https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh)<br>➕ secure keyed ISNs and bounded cookie state independent of TLS<br>➕ default-off, application-authorized early data with ordinary fallback | N/A | Partial: platform-specific socket options around kernel TCP<br>➖ no portable user-mode ISN/cookie or early-delivery policy | N/A |
 
-# Zv
-
-Framework server-side utilities.
+# Zv - Framework server-side utilities
 
 ## Thread, stack and ring parameter binding
 
@@ -1134,9 +1116,7 @@ lists those facilities and the other Boost components referenced above.
 | [`ZvTOML`](https://github.com/kaldron-labs/z/blob/main/zv/src/ZvTOML.hh)<br>➕ file I/O for reflected TOML and its owned tree | N/A | N/A; no built-in Boost TOML loader |
 | [`ZvYAML`](https://github.com/kaldron-labs/z/blob/main/zv/src/ZvYAML.hh)<br>➕ file I/O for [Zf](https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh)'s reflected YAML subset | N/A | N/A; no built-in Boost YAML loader |
 
-# Zpb
-
-Protobuf implementation.
+# Zpb - Protobuf implementation
 
 ## Protobuf wire format and typed messages
 
@@ -1155,9 +1135,7 @@ Protobuf implementation.
 | [`Zpb::Reflect`](https://github.com/kaldron-labs/z/blob/main/zpb/src/ZpbReflect.hh) ([`ZpbReflect`](https://github.com/kaldron-labs/z/blob/main/zpb/src/ZpbReflect.hh)`.hh`)<br>➕ protobuf schema/descriptor representation integrated with Z metadata | Partial: [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) / [Hana](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html)<br>➖ no protobuf descriptor model |
 | [`zprotoc`](https://github.com/kaldron-labs/z/blob/main/zpb/src/zprotoc.cc)<br>➕ compiles supported protobuf declarations into Z metadata<br>➖ supported declaration profile is narrower than the complete protobuf ecosystem | N/A |
 
-# Zfb
-
-Flatbuffers.
+# Zfb - Flatbuffers
 
 ## FlatBuffers construction and access
 
@@ -1176,9 +1154,7 @@ Flatbuffers.
 | [`Zfb::Reflect`](https://github.com/kaldron-labs/z/blob/main/zfb/src/ZfbReflect.hh) ([`ZfbReflect`](https://github.com/kaldron-labs/z/blob/main/zfb/src/ZfbReflect.hh)`.hh`)<br>➕ emits and consumes BFBS/FBS schema metadata from reflected types | Partial: [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) / [Hana](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html)<br>➖ no FlatBuffers schema emission |
 | [`zflatc`](https://github.com/kaldron-labs/z/blob/main/zfb/src/zflatc.cc)<br>➕ FlatBuffers schema tooling for Z types | N/A |
 
-# Zdbus
-
-D-Bus clients, servers and typed message routing.
+# Zdbus - D-Bus clients, servers and typed message routing
 
 ## Addresses, authentication and framing
 
@@ -1199,9 +1175,7 @@ Used by the Linux [Ztls](https://github.com/kaldron-labs/z/blob/main/ztls/src/Zt
 | [`ZdbusClient`](https://github.com/kaldron-labs/z/blob/main/zdbus/src/ZdbusClient.hh)<br>➕ asynchronous calls, serial correlation, named errors and signal subscriptions<br>➖ Linux-only module | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) local sockets, timers and pending-call map<br>➖ no complete Boost D-Bus client |
 | [`ZdbusServer`](https://github.com/kaldron-labs/z/blob/main/zdbus/src/ZdbusServer.hh)<br>➕ service-side method routes and typed returns/errors over the shared bus client<br>➖ Linux-only module | N/A; service routing would be application code over [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) |
 
-# Ztcp
-
-Asynchronous TCP links.
+# Ztcp - Asynchronous TCP links
 
 ## Buffer policies and byte streams
 
@@ -1219,9 +1193,7 @@ Asynchronous TCP links.
 | [`Ztcp::CliLink`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh), [`SrvLink`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh)<br>➕ CRTP connection callbacks, queued writes and reconnect integration | [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) [`ip::tcp::socket`](https://github.com/boostorg/asio/blob/master/include/boost/asio/ip/tcp.hpp) with composed connection/read/write operations | Partial: [`folly::AsyncSocket`](https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSocket.h)<br>➖ reconnect/hub behavior remains application policy | Partial: [`ntci::StreamSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h)`  /  `[`StreamSocketSession`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocketsession.h) |
 | [`Ztcp::Client`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh), [`Server`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh)<br>➕ hub-managed link/listener lifecycle and restart after drain | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) resolver, sockets and acceptor<br>➖ hub lifecycle and reconnect policy remain application work | Partial: [`folly::AsyncSocket / AsyncServerSocket`](https://github.com/facebook/folly/blob/main/folly/io/async/AsyncServerSocket.h)<br>➖ endpoint startup/drain/restart orchestration is additional work | Partial: [`ntci::ListenerSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_listenersocket.h)`  +  `[`StreamSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h) |
 
-# Ztls
-
-TLS transport, cryptography and credential storage.
+# Ztls - TLS transport, cryptography and credential storage
 
 ## Cryptographic primitives
 
@@ -1266,9 +1238,7 @@ TLS counterpart: [Boost.Asio SSL](https://www.boost.org/doc/libs/latest/doc/html
 | [`Ztls::CliLink`](https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh), [`SrvLink`](https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh)<br>➕ handshake/session callbacks integrated with pooled transport and shard ownership | [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) [`ssl::stream`](https://github.com/boostorg/asio/blob/master/include/boost/asio/ssl/stream.hpp)`<`[`ip::tcp::socket`](https://github.com/boostorg/asio/blob/master/include/boost/asio/ip/tcp.hpp)`>`<br>➕ standard [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) asynchronous-stream composition | [`folly::AsyncSSLSocket`](https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSSLSocket.h) | Partial: [`ntci::StreamSocket::upgrade`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h)` / downgrade`<br>➕ TLS upgrade/downgrade of an existing stream socket |
 | [`Ztls::Client`](https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh), [`Server`](https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh)<br>➕ managed TLS link/listener startup, drain and restart | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) SSL streams, acceptors and application lifecycle | Partial: [`folly::AsyncSSLSocket / AsyncServerSocket`](https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSSLSocket.h)<br>➖ listener acceptance and lifecycle require composition | Partial: [`ntci::EncryptionDriver`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_encryptiondriver.h)`  +  `[`StreamSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h)`  /  `[`ListenerSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_listenersocket.h) |
 
-# Zquic
-
-QUIC transport.
+# Zquic - QUIC transport
 
 ## Packet, frame and crypto codecs
 
@@ -1302,9 +1272,7 @@ V2 adds no application capabilities and does not deprecate v1
 | [`Zquic::Client`](https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh), [`Server`](https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh)<br>➕ QUIC connection bootstrap and UDP listener lifecycle over [Zi](https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh) | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) UDP sockets and timers<br>➖ no QUIC transport implementation |
 | [`ZquicLogger`](https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicLog.hh), [`ZquicLogSink`](https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicLog.hh), transport diagnostics<br>➕ qlog JSON-SEQ events with bounded queues and controlled drain/restart | Partial: [Boost.Log](https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp) + [JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp)<br>➖ QUIC/qlog event model and instrumentation are custom work |
 
-# Zhttp
-
-HTTP/1.1, HTTP/2 and HTTP/3.
+# Zhttp - HTTP/1.1, HTTP/2 and HTTP/3
 
 ## URLs, fields and protocol configuration
 
@@ -1344,9 +1312,7 @@ supplies HTTP/1 and WebSocket facilities; [Zhttp](https://github.com/kaldron-lab
 | [`Zhttp::Pool`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpProfiles.hh), [`Client`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpClient.hh)<br>➕ pooled destinations with independent link/request concurrency, retry and protocol fallback | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) client examples + custom pooling/request coordinator |
 | [`Zhttp::Server`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpServer.hh)<br>➕ typed admission, listeners, sessions and graceful drain across selected HTTP profiles | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) server examples + custom runtime<br>➖ no native H2/H3 endpoints |
 
-# Zws
-
-Websockets.
+# Zws - Websockets
 
 ## URI, handshake and frame codecs
 
@@ -1368,9 +1334,7 @@ WebSocket counterpart: [Boost.Beast](https://www.boost.org/doc/libs/latest/libs/
 | [`Zws::Config`](https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsProtocol.hh) and link state<br>➕ bounded messages with handshake/close/heartbeat policy and per-link state | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) WebSocket options + application state |
 | [`Zws::Client`](https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsHub.hh), [`Server`](https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsHub.hh) and native links<br>➕ CRTP message callbacks and streaming output over H1/H2/H3 bindings | [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) [`websocket::stream`](https://github.com/boostorg/beast/blob/master/include/boost/beast/websocket/stream.hpp) + application accept/connect lifecycle |
 
-# Zrest
-
-REST APIs.
+# Zrest - REST APIs
 
 ## Typed request/response contracts
 
@@ -1396,9 +1360,7 @@ REST APIs.
 | --- | --- |
 | [`Zrest::Client`](https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestClient.hh), [`Server`](https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestServer.hh), endpoint configs and limits<br>➕ typed calls/routes, admission limits and full REST/HTTP drain boundary | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) + [JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp)/[Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) + [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html)<br>➖ no complete matching Boost REST endpoint framework |
 
-# Zgrpc
-
-GRPC.
+# Zgrpc - GRPC
 
 ## Method, metadata and status vocabulary
 
@@ -1426,9 +1388,7 @@ GRPC.
 | [`Zgrpc::ClientCall`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcCall.hh), [`ServerCall`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcCall.hh), call tokens and directional state<br>➕ invalidatable Rx/Tx routes, cardinality and one-shot finish/cancel admission | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) cancellation and completion primitives<br>➖ gRPC call semantics remain custom work |
 | [`Zgrpc::Client`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcClient.hh), [`Server`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcServer.hh), endpoint configs and limits<br>➕ unary/client-streaming/server-streaming/duplex RPCs, deadlines and bounded shutdown | N/A; no complete Boost gRPC endpoint library |
 
-# Zjrpc
-
-JSON RPC.
+# Zjrpc - JSON RPC
 
 ## JSON-RPC envelopes and declarations
 
@@ -1458,9 +1418,7 @@ JSON parsing alone does not supply JSON-RPC dispatch or correlation.
 | JSON-RPC HTTP/SSE and WebSocket bindings<br>➕ shared RPC work/correlation over [Zhttp](https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh)/[Zws](https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsH1.hh) channels | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) HTTP/WebSocket + [JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp)<br>➖ RPC/SSE work and lifecycle remain application code | N/A |
 | [`Zjrpc::IOClient`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcClient.hh), [`IOServer`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcServer.hh), [`HTTPClient`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcClient.hh), [`HTTPServer`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcServer.hh), [`WSClient`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcClient.hh), [`WSServer`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcServer.hh)<br>➕ typed calls/notifications/batches and coordinated restart after drain | N/A; no complete matching Boost [JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp)-RPC endpoint library | N/A |
 
-# Zmcp
-
-Model Context Protocol.
+# Zmcp - Model Context Protocol
 
 ## Typed tools and protocol vocabulary
 
@@ -1482,9 +1440,7 @@ Uses [Zjrpc](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/Zjrpc.hh), [Z
 | [`Zmcp::IOClient`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpClient.hh), [`IOServer`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpServer.hh)<br>➕ newline-delimited MCP over inherited stdio with bounded work and lifecycle<br>➖ peer process creation/supervision is application-owned | Partial: [Boost.Process](https://github.com/boostorg/process/blob/master/include/boost/process.hpp) + custom MCP protocol/runtime |
 | [`Zmcp::HTTPClient`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpClient.hh), [`HTTPServer`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpServer.hh), [`WSClient`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpClient.hh), [`WSServer`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpServer.hh)<br>➕ shared typed tool handlers over Streamable HTTP and WebSockets with full drain<br>➖ authentication/authorization remain application-owned | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html)/[Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) + [JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp)<br>➖ no complete Boost MCP endpoint library |
 
-# Zdb
-
-Typed, sharded, replicated database.
+# Zdb - Typed, sharded, replicated database
 
 ## Schema, rows and indices
 
@@ -1524,9 +1480,7 @@ is a database client, not an equivalent of [Zdb](https://github.com/kaldron-labs
 | [`Zdb_::Store`](https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbStore.hh), [`StoreTbl`](https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbStore.hh) and store-module loading<br>➕ asynchronous store contract with reflected schemas and query/write callbacks | Partial: [Boost.DLL](https://www.boost.org/doc/libs/latest/doc/html/boost_dll/reference.html) + custom database adapter<br>➖ no matching Boost backing-store interface | N/A | N/A |
 | [`ZdbMem::Store`](https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbMemStore.hh) / [`libZdbMem`](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh)<br>➕ in-memory implementation of the same store contract<br>➖ process loss loses locally stored data | Partial: [Boost.MultiIndex](https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html)<br>➖ persistence/replication/store contracts require custom code | Partial: [`folly::F14FastMap / ConcurrentHashMap`](https://github.com/facebook/folly/blob/main/folly/container/F14Map.h)<br>➖ in-memory indices only; no [Zdb](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh) store/query contract | Partial: [`bdlc::FlatHashMap`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlc/bdlc_flathashmap.h)`  /  `[`bdlcc::StripedUnorderedMap`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_stripedunorderedmap.h)` (index building blocks only)` |
 
-# ZdbPQ
-
-PostgreSQL backing store and native types.
+# ZdbPQ - PostgreSQL backing store and native types
 
 ## PostgreSQL backing store
 
@@ -1537,9 +1491,7 @@ PostgreSQL backing store and native types.
 | [`ZdbPQ`](https://github.com/kaldron-labs/z/blob/main/zdb_pq/src/ZdbPQ.hh) / [`libZdbPQ`](https://github.com/kaldron-labs/z/blob/main/zdb_pq/src/ZdbPQ.hh)<br>➕ asynchronous libpq store with reflected prepared SQL and binary I/O<br>➖ requires PostgreSQL/libpq and configured server-side types | N/A; [Boost.MySQL](https://www.boost.org/doc/libs/latest/libs/mysql/doc/html/mysql/ref.html) speaks a different database protocol |
 | PostgreSQL [`libz`](https://github.com/kaldron-labs/z/blob/main/zdb_pq/src/ZdbPQ.hh) type extension<br>➕ native database representations for Z decimal, time and bitmap values | N/A |
 
-# ZdbSL
-
-SQLite backing store.
+# ZdbSL - SQLite backing store
 
 ## SQLite backing store and inspection
 
