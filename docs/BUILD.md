@@ -79,7 +79,7 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
 - `make install` installs libraries/headers into the configured prefix.
 - `make test` runs tests.
 - Use `libtool exec` to run source-tree test binaries under `gdb`, `valgrind`, and similar tools; do not run binaries from `.libs` directly.
-- Some optional features (for example libbfd backtracing) require external builds; see `README.md` for platform-specific steps.
+- Some optional features (for example libbfd backtracing) require external builds; see [README.md](../README.md) for platform-specific steps.
 
 
 ## Testing Guidelines

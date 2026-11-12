@@ -37,7 +37,7 @@ Boost, Folly or BDE for its production libraries.
 | [hwloc](https://www.open-mpi.org/projects/hwloc/) | `hwloc >= 2` | Hardware topology, affinity and NUMA placement |
 | [PCRE](https://www.pcre.org/) | Original `libpcre`, discovered by `AX_PATH_LIB_PCRE` | `ZtRegex`; PCRE2 is not a drop-in replacement for this build |
 | [c-ares](https://c-ares.org/) | `libcares` | Asynchronous DNS resolution |
-| [zpicotls](https://github.com/kaldron-labs/zpicotls) | `zpicotls-core`, `zpicotls-openssl`, `zpicotls-fusion`, each `>= 1.3` | TLS 1.3 and QUIC cryptographic integration |
+| [zpicotls](https://github.com/kaldron-labs/zpicotls) | `zpicotls-core`, `zpicotls-openssl`, `zpicotls-fusion`, each `>= 1.3` | TLS 1.2/1.3 and QUIC cryptographic integration |
 | [OpenSSL](https://openssl-library.org/) | `openssl >= 3.5`, with working ML-KEM-768 provider/API | zpicotls backend and Z cryptographic operations |
 | [BFD and libiberty](https://www.gnu.org/software/binutils/) | `-lbfd -liberty` in `zm/src/Makefile.am` | Backtraces and symbol handling; current Zm build links both unconditionally |
 | [ncurses/terminfo](https://invisible-island.net/ncurses/) | Linux `-lncurses`; other Unix branch uses `-lterminfo` | Terminal capabilities for Zrl |
@@ -46,7 +46,18 @@ Boost, Folly or BDE for its production libraries.
 Use **zpicotls**, the Z fork of [picotls](https://github.com/h2o/picotls),
 with all three pkg-config components above. Installing upstream picotls alone
 does not satisfy configure. Follow the fork's build instructions, including
-its submodules and backend prerequisites. OpenSSL is checked independently:
+its submodules and backend prerequisites.
+
+Ztls requires a rebuilt zpicotls exposing `PTLS_HAVE_RECORD_CHUNKS`,
+`ptls_tx_send_chunks`, `ptls_handshake_chunks` and `ptls_recv_chunks`.
+It also requires `PTLS_HAVE_RECEIVE_STREAM`, `ptls_receive_stream` and
+`ptls_receive_stream_check`, plus the private plaintext sink declared by that
+header. Its selected OpenSSL and Fusion AEADs must supply checked serial
+encryption and decryption begin/chunk/end callbacks; unsupported selected
+providers fail configuration rather than gathering ciphertext. Rebuild and install
+zpicotls before configuring Z and rebuilding its Ztls, Zquic and Zhttp consumers; older vector-only builds are insufficient.
+
+OpenSSL is checked independently:
 configure creates an ML-KEM-768 key and initializes encapsulation, rather than
 accepting the version string alone. Cross-compilation defers that runtime check.
 
@@ -54,6 +65,23 @@ Platform runtime linkage also includes the C/C++ runtimes, math and atomic
 support; Linux uses pthreads, realtime and dynamic-loading facilities. Windows
 uses Winsock, DNS and Advapi32 system libraries. These are supplied by the
 platform/toolchain rather than separate Z packages.
+
+## Linux packet I/O
+
+[Zxdp](../zxdp/README.md) uses Linux AF_XDP and BPF directly, without libxdp or
+libbpf. Kernel headers must provide AF_XDP UMEM/ring offsets and need-wakeup
+flags, XDP capability queries, BPF XSK maps, expected-FD XDP attachment protection
+and socket network-namespace cookies. The running kernel must enable those
+facilities and permit the setup operations. Driver-supported zero-copy is queried
+at runtime; veth exercises software copy mode.
+
+The scoped packet fixtures need root privileges (normally through sudo),
+`unshare`, `iproute2`, Bash, Perl/prove and coreutils. They create anonymous
+network namespaces and their own veth/dummy links. Physical tests additionally
+need caller-provisioned interfaces, queue steering, addressing and static kernel
+neighbors on two hosts; the helper does not reconfigure those interfaces.
+See [packet setup](../zxdp/util/README.md) and
+[privileged tests](../zxdp/itest/README.md).
 
 ## Required platform services
 

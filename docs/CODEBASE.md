@@ -33,6 +33,16 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - Network-specific ring-buffer utilities in `zi/src/ZiRing.hh:22`.
 - Connections: provides I/O primitives and pooled buffers used by Zfb, Zpb, and higher-level modules (for example, `zi/src/ZiIOBuf.hh` and `zdb/src/Zdb.hh`).
 
+### Zxdp (Linux packet I/O)
+- [Zxdp](../zxdp/README.md) provides fixed packet backing pools, normalized
+  interface handles and asynchronous lifecycle operations in `zxdp/src/Zxdp.hh`.
+- Direct AF_XDP/BPF, mapped rings, endpoint steering and driver wakeups stay
+  private. RX/FILL run on mx Rx; TX/COMPLETION run on mx Tx.
+- Depends on Zi and its foundation libraries; Zxdp has no TLS or crypto
+  dependency. It supplies Ethernet packets rather than an IP or TCP stack.
+- Standalone packet endpoints and scoped veth fixtures live in `zxdp/util`;
+  unit and privileged integration coverage live in `zxdp/test` and `zxdp/itest`.
+
 ### Zt (text and data structures)
 - Core Zt module exports and text-oriented types in `zt/src/ZtLib.hh:10` and `zt/src/ZtString.hh:20`.
 - Regex, timezone, formatting, and other vocabulary helpers in `zt/src/ZtRegex.hh:10`, `zt/src/ZtTimeZone.hh:20`, and `zt/src/ZtFmt.hh:11`.

@@ -7,6 +7,9 @@ formatting, time, encoding and ownership. Include individual headers as
 provide the threaded runtime or dynamically growing containers; those live in
 [Zm](../zm/README.md) and [Zt](../zt/README.md).
 
+See [Z, STL and Boost equivalents](../docs/Z_STL_BOOST.md) for comparisons of Zu
+facilities with their closest STL and Boost counterparts.
+
 ## Strings, spans and arrays
 
 Choose the representation according to ownership and when its size is known:

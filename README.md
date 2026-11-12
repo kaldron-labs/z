@@ -14,19 +14,22 @@ and headers with versioned shared libraries/DLLs. Development is active;
 individual module documentation describes supported protocol profiles and
 limitations.
 
-[Build dependencies](DEPENDENCIES.md) · [Testing and environment setup](TESTING.md) ·
-[Repository guidance map](../AGENTS.md)
+[Build dependencies](docs/DEPENDENCIES.md) · [Testing and environment setup](docs/TESTING.md) ·
+[Repository guidance map](AGENTS.md)
+
+See [Z, STL and Boost equivalents](docs/Z_STL_BOOST.md) for feature comparisons
+and the benefits and tradeoffs of Z facilities.
 
 Development guidance is split by task; start with the map and read the relevant
 documents:
 
-- [Engineering principles](GUIDELINES.md): performance priorities and target systems.
-- [Build and development](BUILD.md): module layout, commands, verification and PR conventions.
-- [C++ rules](CPP.md): language idioms, constraints and portability.
-- [Code style](STYLE.md): header layout, indentation, class shape and naming.
-- [Framework facilities](FRAMEWORK.md): Z types, storage, concurrency and other APIs.
-- [I/O ownership](IO.md): Rx/Tx sharding, handoffs, lifetime and teardown.
-- [Audit flags and fixes](AUDIT.md): audit scope, repair procedure and review criteria.
+- [Engineering principles](docs/GUIDELINES.md): performance priorities and target systems.
+- [Build and development](docs/BUILD.md): module layout, commands, verification and PR conventions.
+- [C++ rules](docs/CPP.md): language idioms, constraints and portability.
+- [Code style](docs/STYLE.md): header layout, indentation, class shape and naming.
+- [Framework facilities](docs/FRAMEWORK.md): Z types, storage, concurrency and other APIs.
+- [I/O ownership](docs/IO.md): Rx/Tx sharding, handoffs, lifetime and teardown.
+- [Audit flags and fixes](docs/AUDIT.md): audit scope, repair procedure and review criteria.
 
 Individual modules may also provide a `GUIDELINES.md` with library-specific rules.
 
@@ -194,7 +197,7 @@ and [BDE striped hash maps](https://bloomberg.github.io/bde-resources/doxygen/bd
 
 ## Build and explore
 
-Install the requirements in [DEPENDENCIES.md](DEPENDENCIES.md), then:
+Install the requirements in [DEPENDENCIES.md](docs/DEPENDENCIES.md), then:
 
 ```sh
 ./z.config -c -G -P /opt/z
@@ -216,4 +219,4 @@ module libraries. Start with the [reflection examples](zf/README.md),
 [HTTP applications](zhttp/README.md), [REST examples](zrest/example/), or
 [database lifecycle](zdb/README.md). Module `example/` directories contain
 runnable programs. Test commands, fixture services, logs and port assignments
-are in [TESTING.md](TESTING.md).
+are in [TESTING.md](docs/TESTING.md).

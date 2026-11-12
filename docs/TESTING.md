@@ -37,6 +37,19 @@ Use the source-tree libtool wrappers when debugging, never `.libs` binaries:
 ./libtool exec valgrind --leak-check=full ./zt/test/ZtArrayTest
 ```
 
+For TLS Memcheck runs with the dependency/tool pair documented in
+`openssl.valgrind.supp`, enable that reviewed suppression explicitly:
+
+```sh
+./libtool exec valgrind --error-exitcode=99 --leak-check=full \
+  --errors-for-leak-kinds=definite,indirect \
+  --suppressions=openssl.valgrind.supp ./ztls/test/ZtlsBufHookTest -q
+```
+
+The rule suppresses `Memcheck:Cond` on the reviewed libcrypto tag-verification
+stack; invalid accesses, allocation errors and leaks remain checked. Revalidate the
+rule when OpenSSL or Valgrind changes. Keep accelerated crypto enabled.
+
 For a Clang AddressSanitizer build, reconfigure with `./z.config -c -D -G -P
 /opt/z`, then rebuild. `-D` selects Clang and enables debug assertions and ASan;
 use leak detection where supported. See [GUIDELINES.md](GUIDELINES.md) for
@@ -65,6 +78,30 @@ sanitized or debug builds; record compiler, CPU, affinity and heap tuning.
 - [HTTP interoperability](zhttp/interop/README.md) covers external H2/H3 peers
   and the Docker QUIC Interop Runner. [Autobahn](zws/interop/autobahn/README.md)
   is opt-in and uses port 9001 outside the allocations below.
+
+## Zxdp packet tests
+
+After a top-level `make -j8`, run the unprivileged synthetic-ring, pool and
+ownership suite with `make -C zxdp/test test`. Actual AF_XDP/BPF coverage needs
+the anonymous-namespace setup in [Zxdp integration tests](../zxdp/itest/README.md),
+followed by `make -C zxdp/itest test` inside that fixture. Missing privileges or
+fixture variables produce visible skips; skips do not establish packet coverage.
+`ZXDP_RUN_FIXTURE=1` enables the separate-process packet fixture tests.
+
+The independently usable [packet helper](../zxdp/util/README.md) runs veth
+request/reply with `sudo -n ./zxdp/util/zxdpfixture.sh`. Its `wait`, `spin` and
+`ll` modes cover indefinite waits, finite spin/wait and low-latency polling.
+Use `--count 10000 --timer-ms 1` for timer progress during sustained traffic.
+Logs and configuration remain in the printed artifact directory on either result.
+
+Run these suites in configured release and Clang `-D` builds with
+`ASAN_OPTIONS=detect_leaks=1:abort_on_error=1`; change build modes with a top-level
+clean rebuild. Run Memcheck under a non-ASan build. The Nif driver isolates its
+expected fatal-Tx cases in child processes. Run its successful `--kernel-probe`
+directly under Memcheck as well, because default Memcheck does not follow exec
+children. Veth results record copy mode and establish no physical zero-copy or
+latency claim. Physical comparison and profiling use matching Clang release
+builds, with the selected interfaces, peers, affinity and actual mode recorded.
 
 ## Logs and cleanup
 
