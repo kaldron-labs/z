@@ -448,8 +448,11 @@ ZuAssert(!((sizeof(IOBufBuiltin<
 	ZiIOBuf_DefltAlign,
 	ZiIOBuf_HeapID>)) & (Zm::CacheLineSize - 1)));
 
+struct IOBufPlugin;
+
 struct IOBufAllocator : public IOBufAllocator_ {
   using IOBufAllocator_::IOBufAllocator_;
+  virtual IOBufPlugin *provider() const { return nullptr; }
   virtual ZmRef<IOBuf> allocBuf(
     void *owner = nullptr, uint32_t length = 0, uint32_t mps = ~uint32_t(0)) = 0;
 };
@@ -536,6 +539,8 @@ struct IOBufPluginAllocator : public IOBufAllocator {
     IOBufAllocator(mx, Type,
       plugin_->size, plugin_->headRoom, plugin_->tailRoom),
     plugin(plugin_) { }
+
+  IOBufPlugin *provider() const override { return plugin; }
 
   ZmRef<IOBuf> allocBuf(
     void *owner = nullptr, uint32_t length = 0, uint32_t mps = ~uint32_t(0)) override
