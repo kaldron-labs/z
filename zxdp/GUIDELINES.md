@@ -10,6 +10,9 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
   Explicit pool return may run before or after CQ. Recycle only after both leases
   end; safe close releases kernel leases while caller-held backing stays valid.
   One descriptor may be outstanding for a slot. Rejected send acquires no lease.
+  The Tx-owner writable query requires a caller-held allocation and reads only
+  existing direct-slot lease state. It authorizes header changes after kernel
+  retirement, with no new callback, tracking allocation or packet search.
 * Application and transport adaptation belongs to the caller. This library owns
   arena provisioning, raw packet allocation/return and kernel ring service.
 * Preallocate arenas and all packet bookkeeping at setup. Recycle each pool with

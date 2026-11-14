@@ -157,6 +157,7 @@ struct Endpoint {
       put16(p + 40, check ? check : 65535);
     }
     if (instance->send(pending, config.payload + 42)) {
+      tx.free(pending); // allocation lease ends; kernel retirement permits reuse
       pending = nullptr;
       sequence = 0;
       ++sent;
@@ -198,11 +199,7 @@ struct Endpoint {
     rx.size = tx.size = link.mtu + 14;
     instance = Zxdp::Instance::create({.interface = index, .txPools = &tx, .rxPool = &rx,
       .rx = [this](uint8_t *p, unsigned n) { receive(p, n); },
-      .txCompleted = [this](uint8_t *p, unsigned n) {
-        completed += n;
-        tx.free(p);
-        if (received == config.count && completed == config.count) instance->wake();
-      }, .spin = config.spin}, error);
+      .spin = config.spin}, error);
     if (!instance || !instance->ready()) failed = true;
     if (!failed && config.readyFile) {
       ZiFile file;
@@ -215,6 +212,8 @@ struct Endpoint {
       ZmThread service{[this, deadline] {
         while (!failed && (received != config.count || completed != config.count)) {
           auto work = instance->pollTx();
+          completed += work;
+          if (received == config.count && completed == config.count) instance->wake();
           auto seq = nextSeq.xch(0);
           if (seq) transmit(seq);
           else if (sequence) transmit(sequence);

@@ -1,15 +1,120 @@
 # Phase-1 execution boundary
 
-The live transport must use Zxdp, with IP directly replacing the copied UDP
-carriage as an early stripping change. Kernel UDP is a phase-1 violation, not a
-supported transitional mode. The current source still has that defect; the
-stripping re-audit at the top of `../zutcp_plan.md` governs repair. Do not add
-another UDP wrapper, kernel fallback or separate backend interface. Cold kernel
-interface/route/static-neighbor queries remain permitted control-plane work.
+The live transport now uses Stack/Zxdp with TCP-aligned IP carriage. The native
+endpoint checkpoint at the top of `../zutcp_plan.md` records the client/server
+cutover and basic working-pair evidence. Do not restore a kernel UDP mode,
+fallback or separate backend. Cold interface/route/static-neighbor queries remain
+control work outside Rx/Tx.
+
+Allocator dependency is strictly one way: Zutcp supplies lower-level pool
+providers through the ZiMxPlugin allocator hook. Do not call
+`ZiMultiplex::allocator` from Zutcp, directly or through a helper. Stack owns its
+internal native packet pool and metadata adapters independently of that factory.
+Queued Tx ranges now retain their existing node through `TxBacking`. Keep stable
+base/extent and raw lease ownership there, separately from the queue's mutable
+offset/length. Retained frames must survive queue removal and submitted Zi
+metadata destruction without owning a connection. Before raw handoff the node's
+pending descriptor owns source storage; clear that descriptor after accepted
+detachment. Native writers now allocate through Stack's local producer adapter
+and first submission reuses the same registered slot. The inline TxData type and
+queue are removed. Preserve whole-buffer credit admission, bounded piggyback
+prefix space and unchanged application payload addresses. Restore producer view
+metadata on refusal. Preserve the copied recovery/packetization algorithms in
+Phase 1. Native first submission reuses its original registered allocation;
+recovery builds the inherited selected ranges using the existing source storage.
+Do not restore covering-packet retransmission, header movement into ACKed payload,
+queued path-cap migration or the CQ waiter extension as Phase 1 requirements.
+Backing-lifetime fixes remain: final ACK of all prepared native source bytes
+returns the caller lease before producer callbacks, while kernel retirement
+independently gates physical reuse. Historical frame metadata cannot resurrect
+ACKed native byte work or assemble retired payload storage.
+
+Phase 1 is stripping plus IP/Zxdp wiring and regression testing. No new recovery,
+congestion, flow-control or packetization behavior belongs in that phase. Broader
+pressure/fairness/lifecycle/observation matrices are later work, not extra exit
+gates. See the current scope at the top of ../zutcp_plan.md.
+
+Framework/application callers request their own higher-level allocators from mx;
+factory exercises belong in tests or clients. The locally owned builtin byte
+adapter remains for receive heap replacement; it is not a native producer
+fallback. Shared source nodes own native data leases through their frame ranges;
+existing sent-record nodes own copied/control packet leases. Both are independent
+of kernel CQ. Keep temporary Zi handoff scoped to synchronous submission and
+clear it before refusal can discard its record. Provider owners drain all these
+references before provider destruction. Qlog captures scalar summaries only and
+must not retain a source-storage reference.
+
+Zi Tx submission uses the same retained source node as native writers. Its
+PacketBuf base is a borrowed wire view; stable payload coordinates and the caller
+lease remain separate. Reuse that view for registered first submission, preserving
+the original payload address. Detach both the wire view and submitted application
+metadata only after raw acceptance. PacketLease releases through the original Zi
+allocator, so independent application pools need no lookup or extra provider index.
+Application Tx factory geometry includes the bounded intermediate protocol reserve.
+
+ZiTxContext completion reports local admission in length. Its callback owns offset
+advancement; do not advance it before invoking the callback. Queued output retains
+metadata until raw submission, while accepted output retains backing independently
+of metadata. A full connection queue leaves its current context pending; the
+existing Tx dequeue notification resumes it. Reentrant send notification defers
+through the existing Tx owner queue. No CQ callback or protocol recovery extension
+belongs in this context mapping.
+
+Control output now uses a dedicated protocol-sized pool, including Initial,
+ACK, window, probe, close and version-negotiation output. Positive DATA remains
+on data backing; FIN-only/control packets may use the control pool. HubParams
+owns controlBufCount (256) and txControlCredits (64), applied to Stack under the
+serialized stopped lifecycle. The old StackParams::controlCount is removed.
+Callers sharing Stack use matching instance settings. Do not mutate control count
+while old control backing remains held or resize a live arena.
+
+Data admission uses total accepted outstanding < capacity - reserved; control
+uses total outstanding < capacity. Provisioned physical Tx counts supply the
+conservative capacity. Charge only accepted sends and release only on CQ or
+successful kernel retirement, independently of transport caller leases. This
+requires no class ledger, packet search or completion callback. Keep the policy
+in Zutcp; do not add reserved credits or priority parameters to Zxdp.
+
+Large ACKs that cannot piggyback are sent from control backing before native
+data. Refusal leaves ACK state pending; preserve successful control work in the
+flush result if later data is blocked. Use txAdmission only on Tx or under the
+serialized stopped control path. Receive-frame admission is now wired through
+connection DATA; full native pressure/fairness/lifecycle/observation gates remain open.
+
+Receive slices embed an allocator adapter that owns their existing original
+packet reference. Generic heap replacement releases that reference immediately;
+aliases retain the same original packet independently. Release slice storage
+before its embedded allocator is destroyed, and leave the base destructor no
+storage to free. Do not restore a borrowed builtin view that pins the original
+packet after heap replacement or add another backing reference count.
+
+Physical ingress owns a preallocated RxFrames table. Final provider return
+publishes its slot ID before raw pool free; only Rx reconciles the account.
+Drain pending returns before dispatching a reused physical slot. Use the
+existing coalesced mx return task/wake and Rx service boundaries, with no scans
+or pre-FILL backend callback. Stopped returns drain on serialized inspection,
+next start or destruction. Each slot holds a stable small RxAccount identity,
+never a Connection reference; retire/recreate accounts with connection generations
+rather than repurposing an account while its frames remain held.
+
+HubParams configures rxRetainFrames/rxRetainFramesPerCxn/rxReserveFrames, default
+1024/256/64. Validate against actual ingress geometry, preserving old charges
+and pool counts. Reject R <= reserve; never enlarge small pools silently.
+The effective shared cap is min(requested, R - reserve), with the per-connection
+cap further bounded by it. Connection acquires a charge only for novel DATA,
+before byte/state/ACK commitment. Resource refusal is not a peer protocol error.
+Continue later controls but withhold the packet ACK when any DATA is refused.
+
+At a cap, refuse new out-of-order retention. Contiguous/gap service copies only
+its bounded novel packet slices through existing ensure heap replacement before
+handoff, so application backpressure cannot pin the ingress reserve. Keep byte
+credit checks on that path; do not add a new fallback pool, retry queue or raw
+backend policy. Ordinary admitted slices retain original backing.
 
 The re-audit found `migCloseOnFail` configuration residue and unused
-`asyncThread` settings, which are now removed. Server establishment without
-response ACK evidence remains an open finding.
+`asyncThread` settings, which are now removed. Server establishment now waits for retained response ACK evidence, completed Tx
+ACK work and generation-checked Rx publication; the response-ACK checkpoint closes
+that finding.
 Earlier deletion claims below do not close those findings. Retain the agreed
 Initial/response/ACK and bootstrap IDs while correcting the live path.
 
@@ -19,9 +124,17 @@ being adapted under `../zutcp_plan.md`; the QUIC-specific material below describ
 the copied baseline until the corresponding facilities are removed. It does not
 require retaining TLS/protection, migration or multiple streams in Zutcp.
 
-The public transport owner is `Connection`, specialized by `CliConnection` and
-`SrvConnection`; use the corresponding Connection-named headers. No old Link
-owner type/header aliases are retained.
+The common transport owner is `Connection`; Link and Connection are the same
+concept and must remain consolidated. The role names are `CliCxn` and `SrvCxn`,
+with corresponding headers and no compatibility aliases. During
+ZiMxPlugin connection integration, connect uses CliCxn and accept uses SrvCxn.
+Connection has `ZiConnection *mxCxn`; install both `cxn->mxCxn = mxCxn` and
+`mxCxn->plugin(cxn)` using the common Connection pointer before publication.
+Connection-directed MxPlugin callbacks navigate through `mxCxn->plugin()`;
+callbacks into Zi navigate through `cxn->mxCxn`. Neither direction uses a
+hash/tree lookup or separate association registry. Wire packet demultiplexing
+uses the existing endpoint index independently of this association.
+Fence owner-directed work and clear the association before either object dies.
 
 Phase 1 consolidates `Stream` into `Connection`. There is no separate stream
 concept in the target implementation: no Stream/CliStream/SrvStream type, object,
@@ -62,14 +175,27 @@ detachment and mx owner lifecycle; see the current checkpoint in
 `../zutcp_plan.md`. The stripped transport remains subsequent work.
 `ZutcpIP` owns direct Ethernet/IP framing. Its writer receives payload already
 at the family-specific header offset and writes headers/padding only. It adds no
-UDP header, ports, transport shim or payload checksum; transport integrity still
-requires integration before phase-1 acceptance. Keep payload ownership and
+UDP header or transport shim. `writeTCP` builds the TCP base header over payload
+already at `tcpHead(type)`, with protocol 6, source/destination ports and the TCP
+pseudo-header/header/payload checksum. `readTCP` validates that checksum before
+publishing borrowed option/payload spans. Sequence, ACK, window and state semantics
+belong to the connection; this codec alone does not establish TCP interoperability.
+The live endpoint and final-packet recovery lease integration are implemented;
+the retained protocol regression suite is the Phase 1 acceptance gate. Keep payload ownership and
 endpoint routing in the transport; there is no packet codec or route lookup in
 Zxdp. `resolveIPPath` queries kernel route/static-neighbor state during cold
 control setup only. Never run its blocking request/reply on packet Rx/Tx owners.
 It constrains lookup to the configured interface, preserves an explicit local
 source and publishes the resulting path only on complete success. It does not
 run ARP/ND or keep a routing-table replica.
+Server establishment requires ACK evidence for a retained ACK-eliciting Initial
+response. Accumulate evidence through the existing bounded ACK work, then publish
+the installed Tx generation to Rx. Check the current generation and peer parameter
+readiness there. Do not establish on parameter installation, submission, an ACK
+sample or a Tx-side mutation of Rx state. Valid data alongside the ACK can queue
+its response while handshaking; resume it after state/budget publication and before
+application notification, which may initiate teardown.
+
 Peer transport parameters belong to Rx and are installed only from plaintext
 Initial input. Tx receives a bounded snapshot for ACK timing and connection byte
 credit; installation/reset run on Tx. Do not write Tx connection credit from Rx.
@@ -105,12 +231,21 @@ peer tuple on Rx at successful bootstrap and drops packets from other tuples
 before packet admission. Tx keeps its own peer destination. Preserve ordinary
 MTU, ECN and initial send-budget accounting. Opening that initial budget on
 establishment does not create a candidate path or validation exchange.
-Native endpoint wiring remains phase-1 work; the copied migration guidance below
-is historical.
+Native endpoint wiring is implemented; complete the remaining ownership,
+admission/control and owner/race gates. The copied migration guidance below is
+historical.
 Keep Zi types, adapter state and mx scheduler integration in Zutcp. Zxdp owns
 its required configurable spin-before-epoll `rx()` and interrupting `wake()`.
 Delegate the plugin hooks to that pair; use the raw named-parameter pool/callback
 interface in the updated plan.
+Stack owns native local address/port membership on Rx. Bind/unbind there; dispatch
+validates TCP integrity and advances the original registered Rx view without
+copying payload or taking an endpoint reference. Remove membership before draining
+the endpoint's raw callbacks. `Stack::resolvePath` uses an existing mx worker
+outside Rx/Tx and posts completion to Rx. Native setup must provide that worker,
+drain every accepted setup callback and fence its generation before owner release.
+Stack stop waits for pending setup before the Tx/backend drain. No blocking route
+lookup or independent protocol owner thread belongs on the packet path.
 
 Reuse Clang/debug/ASan for development and acceptance with leak detection enabled.
 Apply `../REBUILD.md` dependency order, freezes, batching and build reuse with the

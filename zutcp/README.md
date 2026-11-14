@@ -10,6 +10,12 @@ Implementation is in progress. This guide describes the final facility in
 intermediate transport is interoperable TCP. The plan records implementation
 checkpoints and remaining acceptance work.
 
+The current native path carries connection byte sequence, cumulative ACK, FIN
+and the unscaled receive window in the TCP header. Plain packet ACK ranges still
+serve the intermediate bootstrap/control protocol. Relative byte positions and
+bootstrap IDs remain pending TCP establishment and lifecycle conversion; window
+scaling and final wire interoperability are later work.
+
 ## Application integration
 
 `Zutcp::Stack` implements `ZiMxPlugin`. Register it on a stopped multiplexer

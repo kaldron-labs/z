@@ -6,11 +6,16 @@ EXTRA_DIST = TESTING.md DEPENDENCIES.md GUIDELINES.md z.config .lsan-suppression
 	scripts/qir-build-image scripts/qir-upload-image \
 	scripts/qir-run-local scripts/qir-collect-results scripts/qir-report \
 	scripts/toml-to-json
-SUBDIRS = zu zm zt ze zf zi zpb zfb zv zrl
+SUBDIRS = zu zm zt ze zf zi
 if LINUX
-SUBDIRS += zdbus zxdp
+SUBDIRS += zxdp zutcp
 endif
-SUBDIRS += ztcp ztls zfix zquic zhttp zws
+SUBDIRS += zpb zfb zv zrl
+if LINUX
+SUBDIRS += zdbus
+endif
+SUBDIRS += ztcp ztls zfix zquic
+SUBDIRS += zhttp zws
 SUBDIRS += zgrpc zrest
 SUBDIRS += zjrpc zmcp
 SUBDIRS += zdb
@@ -28,7 +33,11 @@ SUBDIRS += zgtk
 endif
 # SUBDIRS += zdash
 
-DIST_SUBDIRS = zu zm zt ze zf zi zpb zfb zv zrl zdbus zxdp ztcp ztls zfix zquic \
+DIST_SUBDIRS = zu zm zt ze zf zi
+if LINUX
+DIST_SUBDIRS += zxdp zutcp
+endif
+DIST_SUBDIRS += zpb zfb zv zrl zdbus ztcp ztls zfix zquic \
 	zhttp zws zgrpc zrest zjrpc zmcp zdb ztc \
 	zdb_pq zdb_sqlite zdf zum zgtk # zdash
 

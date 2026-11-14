@@ -21,6 +21,13 @@ only when both are gone. Return may precede CQ; a caller can also retain backing
 past CQ for retransmission and return it later. Rejected send adds no kernel lease.
 One descriptor may be outstanding for an allocated slot at a time.
 
+`BufPool::writable(packet)` is a Tx-owner query with the caller allocation
+lease held. It reads the existing direct-slot lease state and becomes true
+only after kernel use retires. Use it before changing retained packet headers
+for another submission. It acquires no lease and supplies no callback, object
+association or additional bookkeeping. The caller must serialize the query,
+header writes and send on its Tx owner.
+
 The packet operations are allocation from a Tx pool, return to an Rx or Tx pool,
 and submission of a Tx packet. Application and transport object ownership is
 outside this module. The caller owns adapter composition.

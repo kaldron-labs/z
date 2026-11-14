@@ -24,9 +24,6 @@
 namespace Zxdp {
 
 using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zxdp.Receive">>;
-// Canonical backing and retired submission count. Keep repeated submissions
-// immutable until all completions; close may coalesce their remaining counts.
-using CompleteFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zxdp.Complete">>;
 
 struct Params {
   unsigned interface = 0; // network-interface index in the current namespace
@@ -34,12 +31,12 @@ struct Params {
   BufPool *txPools = nullptr;
   BufPool *rxPool = nullptr;
   RecvFn rx;
-  CompleteFn txCompleted;
   unsigned spin = 1000; // empty receive probe rounds before blocking in epoll
 };
 
 // The caller drives Rx/Tx on their respective single owners. Allocation/free
-// may run on other threads. Backing stays owned by the caller through completion.
+// may run on other threads. Allocation holds backing until explicit pool return;
+// an accepted send also holds it until kernel completion or safe close.
 class ZxdpAPI Instance : public ZmPolymorph {
 friend struct InstanceData;
 
@@ -56,6 +53,9 @@ public:
   unsigned mtu() const;
   bool zeroCopy() const;
   const uint8_t *mac() const;
+  // False acquires no kernel lease. After true, keep bytes immutable until
+  // kernel retirement. Pool return may precede retirement; recycling waits for
+  // both the allocation lease and kernel lease to end. One descriptor per slot.
   bool send(uint8_t *packet, unsigned length);
   // Process packets on the Rx owner until woken (or the device fails).
   // Idle service spins Params::spin rounds, then blocks internally in epoll.
@@ -63,7 +63,7 @@ public:
   // Any thread, including the receive callback. Each posted wake returns one
   // rx() call; a wake before entry remains pending. No per-wake allocation.
   void wake();
-  unsigned pollTx();
+  unsigned pollTx(); // number of kernel submissions retired this turn
 
   // Wake/join Rx and quiesce Tx and all wake callers first. A false result preserves the handle for
   // retry; only successful kernel retirement permits pending backing to return.

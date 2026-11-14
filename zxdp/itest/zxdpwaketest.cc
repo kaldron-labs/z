@@ -6,6 +6,7 @@
 
 #include <arpa/inet.h>
 #include <iostream>
+#include <poll.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
@@ -19,6 +20,7 @@
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmThread.hh>
+#include <zlib/ZmTime.hh>
 #include <zlib/Zxdp.hh>
 
 using namespace ZuTestUtil;
@@ -46,6 +48,26 @@ static void closeInstance(ZmRef<Zxdp::Instance> &instance)
   instance = nullptr;
 }
 
+// Kernel queue release can outlast a completed close. Retry from this test's
+// control caller with the same drained pool, never from packet service.
+static ZmRef<Zxdp::Instance> createInstance(
+  const Zxdp::Params &params, ZtString<> &error)
+{
+  auto deadline = Zm::now() + ZuTime{2};
+  unsigned attempts = 0;
+  do {
+    ++attempts;
+    auto instance = Zxdp::Instance::create(params, error);
+    if (instance && instance->ready()) {
+      std::cout << "# raw wake startup attempts=" << attempts << '\n';
+      return instance;
+    }
+    if (instance) closeInstance(instance);
+    poll(nullptr, 0, 1);
+  } while (Zm::now() < deadline);
+  return nullptr;
+}
+
 static void testWake()
 {
   ZuTestScopeRT(testWake);
@@ -53,7 +75,7 @@ static void testWake()
   Zxdp::BufPool pool{8, 1514}; // two queues, four receive slots each
   ZtString<> error;
   ZmSemaphore packet;
-  auto instance = Zxdp::Instance::create({
+  auto instance = createInstance({
     .interface = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10)),
     .rxPool = &pool, .rx = [&pool, &packet](uint8_t *p, unsigned) {
       pool.free(p);
@@ -138,7 +160,7 @@ static void testActiveWake()
   ZmSemaphore active, release;
   Zxdp::Instance *current = nullptr;
   unsigned packets = 0;
-  auto instance = Zxdp::Instance::create({
+  auto instance = createInstance({
     .interface = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10)),
     .rxPool = &pool, .rx = [&pool, &packets, &active, &release](uint8_t *p, unsigned) {
       ++packets;

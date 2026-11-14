@@ -42,7 +42,6 @@ friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
   using Queues = ZtArray<Queue *, ZtArrayHeapID<"Zxdp.Queues">>;
   BufPool	*txPools, *rxPool;
   RecvFn	receive;
-  CompleteFn	completed;
   LinkState	link;
   unsigned	interface, spin;
   ZmRef<UMem>	arena;
@@ -58,10 +57,10 @@ friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
   Indices	rxActive;
   unsigned	rxHeld = 0, nextQueue = 0;
   alignas(Zm::CacheLineSize) Packets txActive;
-  unsigned	txHeld = 0, txPending = 0;
+  unsigned	txHeld = 0;
 
   InstanceData(Params params) : Instance{this}, txPools{params.txPools}, rxPool{params.rxPool},
-    receive{ZuMv(params.rx)}, completed{ZuMv(params.txCompleted)},
+    receive{ZuMv(params.rx)},
     interface{params.interface}, spin{params.spin} { }
   ~InstanceData() override {
     ZmAssert_(state == Closed);
@@ -84,10 +83,6 @@ friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
       link.mtu, error);
     if (!arena) return false;
     const auto &layout = arena->layout();
-    if (layout.txCount && !completed) {
-      error = "Tx pools require a completion callback";
-      return false;
-    }
     auto round = [](unsigned n) -> unsigned {
       if (n > (unsigned(1)<<31)) return 0;
       if (n < 2) return 2;
@@ -237,11 +232,9 @@ friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
       auto p = txActive[--txHeld];
       auto pool = arena->pool(p);
       auto &slot = arena->txSlot(*pool, pool->slot(p));
-      auto count = slot.pending;
-      slot.pending = 0;
+      slot.pending = false;
       slot.active = End;
-      txPending -= count;
-      if (completed) completed(p, count);
+      pool->free(p);
     }
     if (txHeld) return false;
     bool detached = attachment.detach(error);
@@ -291,16 +284,14 @@ bool Instance::send(uint8_t *packet, unsigned length)
   auto wire = unsigned(packet - canonical);
   if (length > pool->size - wire) return false;
   auto &slot = m_data->arena->txSlot(*pool, id);
-  if (slot.pending && slot.wire != wire) return false;
+  if (slot.pending) return false;
   auto &ring = m_data->queues[0]->socket.tx();
-  if (m_data->txPending == ring.count() || !ring.reserve(1)) return false;
-  if (!slot.pending) {
-    slot.wire = wire;
-    slot.active = m_data->txHeld;
-    m_data->txActive[m_data->txHeld++] = canonical;
-  }
-  ++slot.pending;
-  ++m_data->txPending;
+  if (m_data->txHeld == ring.count() || !ring.reserve(1)) return false;
+  slot.wire = wire;
+  slot.active = m_data->txHeld;
+  m_data->txActive[m_data->txHeld++] = canonical;
+  slot.pending = true;
+  ++slot.refs;
   auto address = uint64_t(packet - m_data->arena->data());
   ring.entry(0) = {address, length, 0};
   ring.commit();
@@ -385,7 +376,6 @@ unsigned Instance::pollTx()
 {
   if (!ready()) return 0;
   m_data->kick();
-  uint8_t *returned[InstanceData::Quantum];
   unsigned count = 0;
   auto &ring = m_data->queues[0]->socket.comp();
   auto n = ring.reserve(InstanceData::Quantum);
@@ -400,23 +390,24 @@ unsigned Instance::pollTx()
     if (id == BufPool::NoSlot) continue;
     auto canonical = pool->backing(id);
     auto &slot = m_data->arena->txSlot(*pool, id);
-    if (!slot.pending || slot.wire != unsigned(p - canonical)) continue;
-    if (!--slot.pending) {
-      auto last = --m_data->txHeld;
-      if (slot.active != last) {
-	auto moved = m_data->txActive[last];
-	m_data->txActive[slot.active] = moved;
-	auto owner = m_data->arena->pool(moved);
-	m_data->arena->txSlot(*owner, owner->slot(moved)).active = slot.active;
-      }
-      slot.active = InstanceData::End;
+    // Generic Linux Tx tags the skb destructor address in bit zero and CQ
+    // clears that bit. A slot has only one outstanding descriptor; compare
+    // its offset excluding that tag, without a search or extra bookkeeping.
+    if (!slot.pending || ((slot.wire ^ unsigned(p - canonical)) & ~1U)) continue;
+    slot.pending = false;
+    auto last = --m_data->txHeld;
+    if (slot.active != last) {
+      auto moved = m_data->txActive[last];
+      m_data->txActive[slot.active] = moved;
+      auto owner = m_data->arena->pool(moved);
+      m_data->arena->txSlot(*owner, owner->slot(moved)).active = slot.active;
     }
-    --m_data->txPending;
-    returned[count++] = canonical;
+    slot.active = InstanceData::End;
+    pool->free(canonical);
+    ++count;
   }
   ring.commit();
-  if (m_data->completed) for (unsigned i = 0; i < count; ++i) m_data->completed(returned[i], 1);
-  return n;
+  return count;
 }
 
 } // namespace Zxdp

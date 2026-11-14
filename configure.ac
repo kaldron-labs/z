@@ -379,7 +379,10 @@ AM_CONDITIONAL([GTK], [test ".$with_gtk" = ".yes"])
 CPPFLAGS=`echo $CPPFLAGS | perl -pe 's/-I(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$I{$1}++ ? "" : "-I${1}${2}"/ge;'`
 LDFLAGS=`echo $LDFLAGS | perl -pe 's|/[^/]+/\.\./|/|g; s/-L(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$L{$1}++ ? "" : "-L${1}${2}"/ge; s/(-Wl,-R,|-R)(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$R{$2}++ ? "" : "${1}${2}${3}"/ge'`
 
-for i in zu zm zt ze zf zi zxdp zpb zfb zv zdbus ztcp ztls zfix zquic zhttp zgrpc zrest zjrpc zmcp zws zdb zdb_pq zdb_sqlite ztc zum zdf zrl zgtk zdash; do {
+for i in zu zm zt ze zf zi zxdp zutcp zpb zfb zv zdbus ztcp ztls zfix zquic zhttp zgrpc zrest zjrpc zmcp zws zdb zdb_pq zdb_sqlite ztc zum zdf zrl zgtk zdash; do {
+  case $i in
+    zxdp|zutcp) test "$z_linux" = yes || continue;;
+  esac
   for j in src ext; do {
     if test -d $i/$j -a ! -e $i/$j/AC_PACKAGE_NAME; then (
       cd $i/$j;
@@ -399,9 +402,14 @@ AC_CONFIG_FILES([Makefile \
 	ze/Makefile ze/src/Makefile ze/test/Makefile \
 	zf/Makefile zf/src/Makefile zf/test/Makefile \
 	zi/Makefile zi/src/Makefile zi/test/Makefile zi/itest/Makefile \
-	zi/example/Makefile \
-	zxdp/Makefile zxdp/src/Makefile zxdp/test/Makefile zxdp/util/Makefile \
-	zxdp/itest/Makefile \
+	zi/example/Makefile])
+AS_IF([test "$z_linux" = yes], [
+  AC_CONFIG_FILES([zxdp/Makefile zxdp/src/Makefile zxdp/test/Makefile \
+	zxdp/util/Makefile zxdp/itest/Makefile \
+	zutcp/Makefile zutcp/src/Makefile zutcp/test/Makefile \
+	zutcp/itest/Makefile zutcp/example/Makefile])
+])
+AC_CONFIG_FILES([\
 	zpb/Makefile zpb/src/Makefile zpb/test/Makefile zpb/itest/Makefile \
 	zpb/example/Makefile zpb/interop/Makefile \
 	zfb/Makefile zfb/src/Makefile zfb/test/Makefile zfb/itest/Makefile \

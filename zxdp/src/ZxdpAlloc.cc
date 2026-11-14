@@ -25,6 +25,7 @@ void BufPool::init(ZmRef<UMem> arena, uint64_t offset, unsigned stride, unsigned
   m_shift = __builtin_ctz(stride);
   m_prefix = prefix;
   m_first = first;
+  m_tx = offset >= m_arena->layout().rxLength;
   m_head = 0;
   // Same non-sharded payload-overlay slist initialization as ZmHeap arenas.
   for (unsigned i = count; i; --i) {
@@ -46,6 +47,7 @@ loop:
   if (ZuUnlikely(m_head.cmpXch(p | 1, p) != p)) goto loop;
   ++m_used;
   m_head = reinterpret_cast<ZmAtomic<uintptr_t> *>(p)->load_();
+  if (m_tx) m_arena->txSlot(*this, slot(reinterpret_cast<void *>(p))).refs = 1;
   return reinterpret_cast<uint8_t *>(p);
 }
 
@@ -53,6 +55,7 @@ void BufPool::free(void *packet)
 {
   auto id = slot(packet);
   ZmAssert_(id != NoSlot);
+  if (m_tx && --m_arena->txSlot(*this, id).refs) return;
   auto p = backing(id);
   uintptr_t next;
 loop:
@@ -76,6 +79,11 @@ unsigned BufPool::slot(const void *packet) const
   return id < count && within < size ? unsigned(id) : NoSlot;
 }
 bool BufPool::owns(const void *packet) const { return slot(packet) != NoSlot; }
+bool BufPool::writable(const void *packet) const
+{
+  auto id = slot(packet);
+  return m_tx && id != NoSlot && unsigned(m_arena->txSlot(*this, id).refs) == 1;
+}
 uint8_t *BufPool::backing(unsigned id) const {
   ZmAssert_(m_arena && id < count);
   return m_arena->data() + m_offset + (uint64_t(id)<<m_shift) + m_prefix;
