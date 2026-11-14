@@ -13,6 +13,7 @@
 #include <zlib/ZiLib.hh>
 #endif
 
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmGuard.hh>
 
@@ -25,7 +26,8 @@
 #include <dirent.h>
 #endif
 
-class ZiAPI ZiDir {
+class ZiAPI ZiDir : public ZmNHeap<ZiDir> {
+friend inline ZuStringT<"ZiDir"> ZmNHeapID(ZiDir *);
 public:
   using Path = Zi::Path;
 

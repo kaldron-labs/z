@@ -4,7 +4,9 @@ Zxdp supplies raw AF_XDP packet arenas, intrusive pools and kernel ring service.
 The [interface contract](INTERFACE.md) defines its boundary. The caller supplies
 transport state, application adaptation and scheduling.
 Include `<zlib/Zxdp.hh>` and link `libZxdp` and its framework dependencies.
-For Zi provider and transport integration see [Zutcp](../zutcp/README.md).
+For Zi provider and transport integration see [Zutcp](../zutcp/README.md) and its
+[kernel/native quickstart](../zutcp/util/README.md), including sudo, interface
+ownership, routes and static neighbors.
 Both modules are Linux-only and are excluded from Windows builds.
 
 ## Interface

@@ -171,9 +171,9 @@ void testAdoptedBuffers()
   ZuCheck(refused.sent[0].buf->cspan() == "abcdefghi");
 }
 
-void testPrimitiveAppendAccounting()
+void testPrimitiveAppend()
 {
-  ZuTestScope(testPrimitiveAppendAccounting);
+  ZuTestScope(testPrimitiveAppend);
 
   StreamHarness h;
   TestTxStream stream{h, 10, 1, 1};
@@ -328,9 +328,9 @@ void testMoveFailure()
   ZuCheck(h.sent.length() == 1 && h.sent[0].buf->cspan() == "abc");
 }
 
-void testExactCapacityAndDestruction()
+void testCapacityDestruction()
 {
-  ZuTestScope(testExactCapacityAndDestruction);
+  ZuTestScope(testCapacityDestruction);
 
   StreamHarness h;
   {
@@ -492,14 +492,14 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testSplitAndFlush);
   ZuTestCall(testAdoptedBuffers);
-  ZuTestCall(testPrimitiveAppendAccounting);
+  ZuTestCall(testPrimitiveAppend);
   ZuTestCall(testRealPrimitiveFormatting);
   ZuTestCall(testFlushElidesEmptyBuffer);
   ZuTestCall(testOversizePrintableFails);
   ZuTestCall(testDelegateAndAdmission);
   ZuTestCall(testMoveFailure);
   ZuTestCall(testLayerFailure);
-  ZuTestCall(testExactCapacityAndDestruction);
+  ZuTestCall(testCapacityDestruction);
   ZuTestCall(testMove);
   ZuTestCall(testFailureState);
   ZuTestCall(testLayerComposition);

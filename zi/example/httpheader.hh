@@ -6,13 +6,14 @@
 
 // a HTTP header ends with two CR/LFs
 bool httpHeaderEnd(void *ptr, unsigned offset, unsigned length) {
+  auto data = static_cast<const char *>(ptr);
   int n = offset + length - 3;
   if (n <= 0) return false;
   int i = offset - 3;
   if (i < 0) i = 0;
   while (i < n) {
-    if (((char *)ptr)[i]      == '\r' && ((char *)ptr)[i + 1] == '\n' &&
-	((char *)ptr)[i += 2] == '\r' && ((char *)ptr)[i + 1] == '\n') {
+    if (data[i]      == '\r' && data[i + 1] == '\n' &&
+	data[i += 2] == '\r' && data[i + 1] == '\n') {
       m_headerLen = i + 2;
       return true;
     }

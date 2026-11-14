@@ -18,9 +18,8 @@
 
 using namespace ZuTestUtil;
 
-namespace {
 
-ZiIP ip4(uint32_t n)
+static ZiIP ip4(uint32_t n)
 {
   in_addr addr;
   addr.s_addr = htonl(n);
@@ -158,9 +157,8 @@ private:
   ZmAtomic<unsigned>	m_stopping = 0;
 };
 
-} // namespace
 
-void testParseResolveAndPrint()
+static void testParseResolveAndPrint()
 {
   ZuTestScope(testParseResolveAndPrint);
 
@@ -201,7 +199,7 @@ void testParseResolveAndPrint()
   ZiResolver::final();
 }
 
-void testSpanParse()
+static void testSpanParse()
 {
   ZuTestScopeRT(testSpanParse);
 
@@ -230,11 +228,12 @@ void testSpanParse()
 
   const char framed[] = "x2001:db8::1y";
   ZiIP ip;
-  ZuCheckRT(ZiIP::parse(ip, ZuCSpan{framed + 1, sizeof(framed) - 3}), log_("non-NUL-terminated subspan"));
+  ZuCheckRT(ZiIP::parse(ip, ZuCSpan{framed + 1, sizeof(framed) - 3}),
+    log_("non-NUL-terminated subspan"));
   ZuCheckRT(ip.v6(), log_("subspan is IPv6"));
 }
 
-void testMulticastBoundaries()
+static void testMulticastBoundaries()
 {
   ZuTestScope(testMulticastBoundaries);
 
@@ -253,7 +252,7 @@ void testMulticastBoundaries()
   ZuCheck(ZiIP{"ffff::1"}.multicast());
 }
 
-void testSockAddrHelpers()
+static void testSockAddrHelpers()
 {
   ZuTestScope(testSockAddrHelpers);
 
@@ -294,7 +293,7 @@ void testSockAddrHelpers()
   ZuCheck(snapshot.ip() == ip && snapshot.port() == 4242);
 }
 
-void testNullWildcardCompareHash()
+static void testNullWildcardCompareHash()
 {
   ZuTestScope(testNullWildcardCompareHash);
 

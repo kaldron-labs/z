@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z QUIC priority-queue item contracts
+// TCP byte receive queues and SACK metadata
 
 #ifndef Zutcp_HH
 #error "include zlib/Zutcp.hh before this header"
@@ -15,6 +15,8 @@
 #include <zlib/ZmPQueue.hh>
 
 #include <zlib/ZtArray.hh>
+
+#include <zlib/ZutcpOptions.hh>
 
 namespace Zutcp {
 
@@ -111,20 +113,6 @@ using DataRxPQueueFn =
     ZmPQueueDefaultKeyAxor(),
     ZutcpPQueueBufLenAxor()>;
 
-struct RxPktMark {
-  uint64_t	pn = 0;
-
-  RxPktMark() = default;
-  explicit RxPktMark(uint64_t pn_) : pn{pn_} { }
-
-  uint64_t key() const { return pn; }
-  uint64_t length() const { return 1; }
-  uint64_t clipHead(uint64_t) { return 0; }
-  uint64_t clipTail(uint64_t) { return 0; }
-  template <typename I>
-  void write(const I &) { }
-};
-
 struct TxUnackdRange {
   uint64_t	offset = 0;
   uint64_t	bytes = 0;
@@ -176,11 +164,11 @@ struct TxUnackdRange {
 
 class TxUnackdRanges {
 public:
-  static constexpr unsigned Max = 128; // preserved former public capacity
+  enum { Max = 128 }; // preserved former public capacity
   // Ordinary focused cases had a 95th percentile of two retained ranges;
   // eight leaves one allocation-free growth class.  The adversarial case
   // reached 256 ranges and deliberately exercises named heap fallback.
-  static constexpr unsigned BuiltinRanges = 8;
+  enum { BuiltinRanges = 8 };
   using Ranges = ZtBuiltin<
     ZtArray<TxUnackdRange,
       ZtArrayHeapID<"Zutcp.Connection.TxUnackdRanges">>,
@@ -223,14 +211,14 @@ public:
       return addIndexed(range);
     bool fin = range.fin;
     unsigned i = lowerBound(first);
-    if (i && end_(m_ranges[i - 1]) >= first)
+    if (i && endOffset(m_ranges[i - 1]) >= first)
       --i;
     unsigned begin = i;
     uint64_t removed = 0;
     unsigned n = m_ranges.length();
     while (i < n) {
       uint64_t rangeFirst = m_ranges[i].offset;
-      uint64_t rangeEnd = end_(m_ranges[i]);
+      uint64_t rangeEnd = endOffset(m_ranges[i]);
       if (end < rangeFirst) break;
       if (rangeFirst < first) first = rangeFirst;
       if (rangeEnd > end) {
@@ -257,7 +245,7 @@ public:
     uint64_t end = offset + length;
     if (m_index) return clearIndexed(offset, end);
     unsigned i = lowerBound(offset);
-    if (i && end_(m_ranges[i - 1]) > offset) --i;
+    if (i && endOffset(m_ranges[i - 1]) > offset) --i;
     unsigned begin = i;
     uint64_t removed = 0;
     ZuArray<TxUnackdRange, 2> survivors;
@@ -265,7 +253,7 @@ public:
     while (i < n) {
       const TxUnackdRange &range = m_ranges[i];
       uint64_t first = range.offset;
-      uint64_t rangeEnd = end_(range);
+      uint64_t rangeEnd = endOffset(range);
       if (first >= end) break;
       removed += range.length();
       if (first < offset)
@@ -293,12 +281,12 @@ public:
       while (auto node = iter()) {
 	const TxUnackdRange &range = node->data();
 	if (range.offset >= end) break;
-	if (end_(range) > offset && !l(range)) return false;
+	if (endOffset(range) > offset && !l(range)) return false;
       }
       return true;
     }
     unsigned i = lowerBound(offset);
-    if (i && end_(m_ranges[i - 1]) > offset) --i;
+    if (i && endOffset(m_ranges[i - 1]) > offset) --i;
     for (unsigned n = m_ranges.length(); i < n; ++i) {
       uint64_t first = m_ranges[i].offset;
       if (first >= end) break;
@@ -341,7 +329,7 @@ public:
       if (!m_ranges[i]) return false;
       if (m_ranges[i].offset > uint64_t(-1) - m_ranges[i].length())
 	return false;
-      if (i && end_(m_ranges[i - 1]) >=
+      if (i && endOffset(m_ranges[i - 1]) >=
 	  m_ranges[i].offset)
 	return false;
       if (length > uint64_t(-1) - m_ranges[i].length())
@@ -363,17 +351,17 @@ private:
   }
   ZmPQResult::T addIndexed(const TxUnackdRange &range) {
     uint64_t first = range.offset;
-    uint64_t end = end_(range);
+    uint64_t end = endOffset(range);
     bool fin = range.fin;
     if (first) {
       auto prev = m_index->find(first - 1);
-      if (prev && end_(prev->data()) >= first) {
+      if (prev && endOffset(prev->data()) >= first) {
 	TxUnackdRange old = prev->data();
 	first = old.offset;
-	if (end_(old) > end) {
-	  end = end_(old);
+	if (endOffset(old) > end) {
+	  end = endOffset(old);
 	  fin = old.fin;
-	} else if (end_(old) == end)
+	} else if (endOffset(old) == end)
 	  fin = fin || old.fin;
 	(void)m_index->del(old.offset);
       }
@@ -382,7 +370,7 @@ private:
     while (auto node = iter()) {
       const TxUnackdRange &old = node->data();
       if (old.offset > end) break;
-      uint64_t oldEnd = end_(old);
+      uint64_t oldEnd = endOffset(old);
       if (oldEnd > end) {
 	end = oldEnd;
 	fin = old.fin;
@@ -400,7 +388,7 @@ private:
     while (auto node = iter()) {
       TxUnackdRange range = node->data();
       uint64_t first = range.offset;
-      uint64_t rangeEnd = end_(range);
+      uint64_t rangeEnd = endOffset(range);
       if (first >= end) break;
       if (rangeEnd <= offset) continue;
       changed = true;
@@ -414,7 +402,7 @@ private:
       addIndexed(survivors[i]);
     return changed;
   }
-  static uint64_t end_(const TxUnackdRange &range) {
+  static uint64_t endOffset(const TxUnackdRange &range) {
     return range.offset + range.length();
   }
   unsigned lowerBound(uint64_t offset) const {
@@ -499,19 +487,111 @@ using TxRanges = ZmPQueue<TxStoredRange,
 
 using DataTxPQueue = TxUnackdRanges;
 
-using PktRxPQueue =
-  ZmPQueue<RxPktMark,
-    ZmPQueueNode<ZuObject,
-      ZmPQueueHeapID<"Zutcp.Pkt.RxQueue",
-	ZmPQueueOverwrite<false,
-	  ZmPQueueBits<4,
-	    ZmPQueueLevels<4>>>>>>;
-
 struct RxSpan {
   uint64_t	first = 0;
   uint64_t	last = 0;
 
   uint64_t length() const { return last - first; }
+};
+
+// Rx-owned report ordering only. The receive queue remains the sole owner of
+// accepted byte ranges/backing; these markers are never a reassembly registry.
+class RxSACK {
+public:
+  void reset() {
+    m_recentCount = 0;
+    m_duplicate = {};
+    m_dupVersion = 0;
+  }
+  void accepted(uint64_t first) {
+    unsigned n = m_recentCount;
+    for (unsigned i = 0; i < n; ++i)
+      if (m_recent[i] == first) { n = i; break; }
+    if (n == TCPOptions::MaxSACKBlocks) --n;
+    for (unsigned i = n; i; --i) m_recent[i] = m_recent[i - 1];
+    m_recent[0] = first;
+    if (m_recentCount < TCPOptions::MaxSACKBlocks && n == m_recentCount)
+      ++m_recentCount;
+  }
+  // The caller has validated the actual duplicate range and advances the
+  // external window serial for each replacement report, even without new DATA.
+  bool duplicate(uint64_t first, uint64_t last, uint64_t serial) {
+    if (last <= first || last - first >= uint64_t(0x80000000)) return false;
+    m_duplicate = {first, last};
+    m_dupVersion = serial;
+    return true;
+  }
+  void sent(uint64_t serial, bool actualDSACK) {
+    if (actualDSACK && serial >= m_dupVersion) m_duplicate = {};
+  }
+
+  // Preserve caller option flags/timestamp values; emit relative wire edges.
+  // Return whether the selected snapshot actually includes the pending DSACK.
+  template <typename Queue>
+  bool fill(const Queue &queue, uint64_t next, TCPOptions &options) {
+    RxSpan candidates[TCPOptions::MaxSACKBlocks] = {};
+    unsigned ranks[TCPOptions::MaxSACKBlocks] = {};
+    unsigned count = 0;
+    RxSpan containing;
+    queue.spans([this, next, &candidates, &ranks, &count, &containing](const auto &span) {
+      uint64_t first = span.key(), last = first + span.length();
+      if (first <= next || last <= first) return true;
+      if (m_duplicate.first > next && first <= m_duplicate.first &&
+	  last >= m_duplicate.last) containing = {first, last};
+      unsigned rank = m_recentCount;
+      for (unsigned i = 0; i < m_recentCount; ++i)
+	if (first <= m_recent[i] && m_recent[i] < last) { rank = i; break; }
+      unsigned at = 0;
+      while (at < count && ranks[at] <= rank) ++at;
+      if (at == TCPOptions::MaxSACKBlocks) return true;
+      if (count < TCPOptions::MaxSACKBlocks) ++count;
+      for (unsigned i = count - 1; i > at; --i) {
+	candidates[i] = candidates[i - 1];
+	ranks[i] = ranks[i - 1];
+      }
+      candidates[at] = {first, last};
+      ranks[at] = rank;
+      return true;
+    });
+    options.sackCount = 0;
+    for (auto &block : options.sack) block = {};
+    unsigned capacity = options.flags & TCPOptions::TS ? 3 : TCPOptions::MaxSACKBlocks;
+    bool dsack = m_duplicate.last > m_duplicate.first &&
+      (m_duplicate.last <= next || containing.last > containing.first);
+    auto append = [&options](const RxSpan &span) {
+      options.sack[options.sackCount++] = {uint32_t(span.first), uint32_t(span.last)};
+    };
+    if (dsack) {
+      append(m_duplicate);
+      if (m_duplicate.first > next) append(containing);
+    }
+    bool selected[TCPOptions::MaxSACKBlocks] = {};
+    bool included = false;
+    for (unsigned i = 0; i < count; ++i) {
+      bool containsDuplicate = dsack && m_duplicate.first > next &&
+	candidates[i].first == containing.first;
+      if (containsDuplicate) { selected[i] = included = true; continue; }
+      if (options.sackCount >= capacity) continue;
+      append(candidates[i]);
+      selected[i] = true;
+    }
+    // Retain normal report priorities, keeping the block containing the latest
+    // accepted marker first even when DSACK forces another block onto the wire.
+    m_recentCount = 0;
+    for (unsigned i = 0; i < count; ++i)
+      if (selected[i]) m_recent[m_recentCount++] = candidates[i].first;
+    if (dsack && m_duplicate.first > next && !included)
+      m_recent[m_recentCount++] = containing.first;
+    for (unsigned i = 0; i < count && m_recentCount < TCPOptions::MaxSACKBlocks; ++i)
+      if (!selected[i]) m_recent[m_recentCount++] = candidates[i].first;
+    return dsack;
+  }
+
+private:
+  uint64_t	m_recent[TCPOptions::MaxSACKBlocks] = {};
+  unsigned	m_recentCount = 0;
+  RxSpan	m_duplicate;
+  uint64_t	m_dupVersion = 0;
 };
 
 ZuDerive(RxSpans, (ZtArray<RxSpan, ZtArrayHeapID<"Zutcp.RxSpans">>));

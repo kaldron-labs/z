@@ -38,16 +38,14 @@ public:
   using ZmNHeap<TestConnection>::operator delete;
   TestConnection(TestApp *app) : Base{app} { configLocalParams(app); }
   int process(Zutcp::Reader &) { return 0; }
-  bool flushTx_() { return false; }
-  void pto_() { }
+  bool flushTx() { return false; }
+  void pto() { }
   void queueRetransmit() { }
-  bool retransmit_(bool = false, unsigned = 2,
-      Zutcp::PktNumSpace::T = Zutcp::PktNumSpace::N) { return false; }
+  bool retransmit(bool = false, unsigned = 2) { return false; }
   bool retry(const Zutcp::TxRange &range, bool fin) {
-    return Base::requeueDataRef(Zutcp::PktNumSpace::AppData,
-      Zutcp::SentFrameRef::data(range, fin));
+    return Base::requeueDataRef(Zutcp::SentFrameRef::data(range, fin));
   }
-  void resetRuntime() { Base::resetLink_(); configLocalParams(app()); }
+  void resetRuntime() { Base::resetLink(); configLocalParams(app()); }
 };
 
 static ZmRef<ZiIOBuf> packet(TestApp &app, ZuBSpan bytes)
@@ -58,10 +56,9 @@ static ZmRef<ZiIOBuf> packet(TestApp &app, ZuBSpan bytes)
   return buf;
 }
 
-static Zutcp::Frame dataFrame(ZiIOBuf *buf, uint64_t offset, bool fin = false)
+static Zutcp::ByteData dataFrame(ZiIOBuf *buf, uint64_t offset, bool fin = false)
 {
-  Zutcp::Frame frame;
-  frame.type = Zutcp::FrameType::Data;
+  Zutcp::ByteData frame;
   frame.offset = offset;
   frame.length = buf->length;
   frame.payload = buf->cspan();

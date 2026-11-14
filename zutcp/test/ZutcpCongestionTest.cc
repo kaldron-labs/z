@@ -12,105 +12,20 @@
 
 using namespace ZuTestUtil;
 
-void testSentPktTracker()
+static Zutcp::SentPkt dataPacket(uint64_t id, uint64_t offset, ZuTime sent,
+  unsigned bytes = 1200, bool probe = false)
 {
-  ZuTestScope(testSentPktTracker);
-
-  Zutcp::SentPktTracker tracker;
-  ZuCHECK(tracker.add(Zutcp::SentPkt{
-	.pn = 1,
-	.sentTime = Zutcp::timeUS(1000),
-	.bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true,
-	.inFlight = true }),
-    "sent packet add failed");
-  ZuCHECK(tracker.add(Zutcp::SentPkt{
-	.pn = 2,
-	.sentTime = Zutcp::timeUS(1001),
-	.bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true,
-	.inFlight = true,
-	.pmtudProbe = true }),
-    "PMTUD sent packet add failed");
-  ZuCHECK(!tracker.add(Zutcp::SentPkt{
-	.pn = 2,
-	.sentTime = Zutcp::timeUS(1002),
-	.bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true,
-	.inFlight = true }),
-    "duplicate packet number accepted");
-  ZuCHECK(tracker.bytesInFlight() == 2400, "bytes-in-flight mismatch");
-  ZuCHECK(tracker.ack(1) && tracker.bytesInFlight() == 1200,
-    "ACK accounting mismatch");
-  ZuCHECK(tracker.lose(2) && tracker.lost() == 1 &&
-    tracker.retransmittable() == 0,
-    "PMTUD loss accounting mismatch");
-
-  ZuCHECK(tracker.add(Zutcp::SentPkt{
-	.pn = 3,
-	.sentTime = Zutcp::timeUS(2000),
-	.bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true,
-	.inFlight = true }),
-    "timed sent packet add failed");
-  ZuCHECK(!tracker.markTimeThreshLoss(
-      4, Zutcp::timeUS(2500), Zutcp::timeUS(600)),
-    "time loss fired too early");
-  ZuCHECK(tracker.markTimeThreshLoss(
-      4, Zutcp::timeUS(2600), Zutcp::timeUS(600)) == 1 &&
-    tracker.lost() == 2 && tracker.retransmittable() == 1,
-    "time threshold loss mismatch");
-}
-
-void testAckRangeProcessing()
-{
-  ZuTestScope(testAckRangeProcessing);
-
-  Zutcp::SentPktTracker tracker;
-  ZuCHECK(tracker.add(Zutcp::SentPkt{
-	.pn = 1,
-	.sentTime = Zutcp::timeUS(1000),
-	.bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true,
-	.inFlight = true }) &&
-      tracker.add(Zutcp::SentPkt{
-	.pn = 2,
-	.sentTime = Zutcp::timeUS(1001),
-	.bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true,
-	.inFlight = true }) &&
-      tracker.add(Zutcp::SentPkt{
-	.pn = 3,
-	.sentTime = Zutcp::timeUS(1002),
-	.bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true,
-	.inFlight = true }) &&
-      tracker.add(Zutcp::SentPkt{
-	.pn = 6,
-	.sentTime = Zutcp::timeUS(1003),
-	.bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true,
-	.inFlight = true }),
-    "sent packet range setup failed");
-
-  Zutcp::AckTracker ranges;
-  ZuCHECK(ranges.add(3) && ranges.add(6), "ACK range setup failed");
-  unsigned lost = 0;
-  ZuCHECK(tracker.ack(ranges, &lost) == 2 &&
-      lost == 2 &&
-      tracker.ackd() == 2 &&
-      tracker.lost() == 2 &&
-      tracker.retransmittable() == 2 &&
-      !tracker.bytesInFlight(),
-    "ACK range processing/loss mismatch");
+  Zutcp::SentPkt packet;
+  packet.pn = id;
+  packet.sentTime = sent;
+  packet.bytes = bytes;
+  packet.ackEliciting = packet.inFlight = true;
+  packet.pmtudProbe = probe;
+  Zutcp::TxRange range;
+  range.dataOffset = offset;
+  range.length = 10;
+  packet.addFrame(Zutcp::SentFrameRef::data(range, false));
+  return packet;
 }
 
 void testPersistentCongestion()
@@ -118,28 +33,9 @@ void testPersistentCongestion()
   ZuTestScope(testPersistentCongestion);
 
   Zutcp::SentPktTracker tracker;
-  ZuCHECK(tracker.add(Zutcp::SentPkt{
-	.pn = 1,
-	.sentTime = Zutcp::timeUS(1000),
-	.bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true,
-	.inFlight = true }) &&
-      tracker.add(Zutcp::SentPkt{
-	.pn = 2,
-	.sentTime = Zutcp::timeUS(1800),
-	.bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true,
-	.inFlight = true,
-	.pmtudProbe = true }) &&
-      tracker.add(Zutcp::SentPkt{
-	.pn = 3,
-	.sentTime = Zutcp::timeUS(2600),
-	.bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true,
-	.inFlight = true }),
+  ZuCHECK(tracker.add(dataPacket(1, (1 - 1) * 10, Zutcp::timeUS(1000), 1200)) &&
+      tracker.add(dataPacket(2, (2 - 1) * 10, Zutcp::timeUS(1800), 1200, true)) &&
+      tracker.add(dataPacket(3, (3 - 1) * 10, Zutcp::timeUS(2600), 1200)),
     "persistent congestion setup failed");
   ZuCHECK(tracker.lose(1) && tracker.lose(2) && tracker.lose(3),
     "persistent congestion loss setup failed");
@@ -149,29 +45,13 @@ void testPersistentCongestion()
     "persistent congestion ignored threshold duration");
 
   Zutcp::SentPktTracker interrupted;
-  ZuCHECK(interrupted.add(Zutcp::SentPkt{
-	.pn = 1,
-	.sentTime = Zutcp::timeUS(1000),
-	.bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true,
-	.inFlight = true }) &&
-      interrupted.add(Zutcp::SentPkt{
-	.pn = 2,
-	.sentTime = Zutcp::timeUS(1800),
-	.bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true,
-	.inFlight = true }) &&
-      interrupted.add(Zutcp::SentPkt{
-	.pn = 3,
-	.sentTime = Zutcp::timeUS(2600),
-	.bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true,
-	.inFlight = true }),
+  ZuCHECK(interrupted.add(dataPacket(1, (1 - 1) * 10, Zutcp::timeUS(1000), 1200)) &&
+      interrupted.add(dataPacket(2, (2 - 1) * 10, Zutcp::timeUS(1800), 1200)) &&
+      interrupted.add(dataPacket(3, (3 - 1) * 10, Zutcp::timeUS(2600), 1200)),
     "interrupted persistent congestion setup failed");
-  ZuCHECK(interrupted.lose(1) && interrupted.ack(2) && interrupted.lose(3) &&
+  Zutcp::PktAckBatch ack;
+  ZuCHECK(interrupted.lose(1) && interrupted.ackBytesBatch(20, ack, 8) &&
+      interrupted.lose(3) &&
       !interrupted.persistentCongestion(Zutcp::timeUS(1500)),
     "ACKd packet did not interrupt persistent congestion");
 
@@ -208,17 +88,15 @@ void testRetransmitQueue()
     .pn = 9,
     .sentTime = Zutcp::timeUS(3000),
     .bytes = 64,
-    .space = Zutcp::PktNumSpace::AppData,
     .ackEliciting = true,
     .inFlight = true };
-  ZuCHECK(packet.addFrame(Zutcp::SentFrameRef::data( range, true)) &&
-      packet.addFrame(Zutcp::SentFrameRef::control()),
+  ZuCHECK(packet.addFrame(Zutcp::SentFrameRef::data( range, true)),
     "sent packet frame references were not retained");
 
   Zutcp::SentPktTracker tracker;
   ZuCHECK(tracker.add(packet) && tracker.lose(9) &&
       tracker.retransmittable() == 1 &&
-      tracker.retransmitPending() == 2,
+      tracker.retransmitPending() == 1,
     "lost packet did not enqueue retransmission frames");
 
   Zutcp::SentFrameRef frame;
@@ -231,16 +109,12 @@ void testRetransmitQueue()
       frame.range.dataOffset == 12 &&
       frame.range.offset == 0 && frame.range.length == 4,
     "connection data retransmission frame reference mismatch");
-  ZuCHECK(tracker.nextRetransmit(frame) &&
-      frame.kind == Zutcp::SentFrameKind::Control &&
-      !tracker.nextRetransmit(frame),
-    "control retransmission queue order mismatch");
+  ZuCHECK(!tracker.nextRetransmit(frame), "one original queues exactly one byte range");
 
   Zutcp::SentPkt pmtud{
     .pn = 10,
     .sentTime = Zutcp::timeUS(4000),
     .bytes = 1200,
-    .space = Zutcp::PktNumSpace::AppData,
     .ackEliciting = true,
     .inFlight = true,
     .pmtudProbe = true };
@@ -248,21 +122,6 @@ void testRetransmitQueue()
       tracker.add(pmtud) && tracker.lose(10) &&
       !tracker.retransmitPending(),
     "PMTUD probe loss enqueued retransmission work");
-}
-
-void testPTOBackoff()
-{
-  ZuTestScope(testPTOBackoff);
-
-  Zutcp::RttEstimator rtt;
-  rtt.sample(Zutcp::timeUS(1000), ZuTime{0}, true);
-  Zutcp::PTOBackoff pto;
-  ZuTime t0 = pto.timeout(rtt, Zutcp::timeUS(25));
-  pto.expired();
-  ZuCHECK(pto.timeout(rtt, Zutcp::timeUS(25)) == Zutcp::timePow2(t0, 1),
-    "PTO backoff mismatch");
-  pto.reset();
-  ZuCHECK(pto.count() == 0, "PTO reset mismatch");
 }
 
 void testRecoveryEpochs()
@@ -300,27 +159,20 @@ void testRecoveryEpochs()
 void testAckEpochClassification()
 {
   ZuTestScope(testAckEpochClassification);
-  // Includes equality, old/new bytes, and a non-flight ACK-only packet.
+  // Includes equality and mixed old/new accepted byte transmissions.
   for (unsigned mode = 0; mode < 3; ++mode) {
     Zutcp::PktTxSpace tx;
     Zutcp::NewReno cc{1200};
     cc.congestionEventAt(100, 1000);
     for (unsigned pn = 1; pn <= 3; ++pn) {
       uint64_t sent = mode == 0 ? 999 : mode == 1 ? 1001 : 999 + pn;
-      ZuCHECK(tx.add(Zutcp::SentPkt{
-	.pn = pn, .sentTime = Zutcp::timeUS(sent), .bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true, .inFlight = true }), "epoch packet setup");
+      ZuCHECK(tx.add(dataPacket(pn, (pn - 1) * 10, Zutcp::timeUS(sent))),
+	"epoch original setup");
       cc.sent(1200);
     }
-    ZuCHECK(tx.add(Zutcp::SentPkt{
-      .pn = 4, .sentTime = Zutcp::timeUS(1002), .bytes = 40,
-      .space = Zutcp::PktNumSpace::AppData }), "ACK-only setup");
-    Zutcp::AckRange range{4, 1};
     Zutcp::PktAckBatch batch;
     Zutcp::PktTxUpdate update;
-    ZuCHECK(tx.ackBatch(&range, 1, batch, 16,
-      Zutcp::PktNumSpace::AppData, &update, cc.recoveryStartTime()),
+    ZuCHECK(tx.ackBytesBatch(30, batch, 16, &update, cc.recoveryStartTime()),
       "epoch ACK traversal");
     uint64_t eligible = mode == 0 ? 0 : mode == 1 ? 3600 : 2400;
     ZuCHECK(update.normalAckdBytes == 3600 && update.eligibleAckdBytes == eligible,
@@ -330,8 +182,7 @@ void testAckEpochClassification()
       "mixed epoch ACK retirement and congestion avoidance growth");
     Zutcp::PktAckBatch duplicate;
     Zutcp::PktTxUpdate again;
-    tx.ackBatch(&range, 1, duplicate, 16, Zutcp::PktNumSpace::AppData,
-      &again, cc.recoveryStartTime());
+    tx.ackBytesBatch(30, duplicate, 16, &again, cc.recoveryStartTime());
     ZuCHECK(!again.normalAckdBytes && !again.eligibleAckdBytes,
       "duplicate ACK cannot retire or grow twice");
   }
@@ -359,34 +210,28 @@ void testAckResponseOrdering()
   for (bool ecn : {false, true}) {
     Zutcp::PktTxSpace tx;
     Zutcp::NewReno cc{1200};
-    for (unsigned pn : {1, 4}) {
-      ZuCHECK(tx.add(Zutcp::SentPkt{
-	.pn = pn, .sentTime = Zutcp::timeUS(100 * pn), .bytes = 1200,
-	.space = Zutcp::PktNumSpace::AppData,
-	.ackEliciting = true, .inFlight = true }), "same ACK setup");
-      cc.sent(1200);
-    }
-    Zutcp::AckRange range{4, 4};
+    ZuCHECK(tx.add(dataPacket(1, 0, Zutcp::timeUS(100))) &&
+	tx.add(dataPacket(4, 10, Zutcp::timeUS(400))), "same ACK originals");
+    cc.sent(2400);
     Zutcp::PktAckBatch ack;
     Zutcp::PktTxUpdate update;
-    tx.ackBatch(&range, 1, ack, 16, Zutcp::PktNumSpace::AppData, &update);
+    tx.ackBytesBatch(10, ack, 16, &update);
     Zutcp::AckGrowth growth;
     uint64_t classifiedEpoch = cc.epoch();
-    if (ecn) cc.congestionEventAt(400, 1000);
+    if (ecn) cc.congestionEventAt(100, 1000);
     growth.stage(cc, classifiedEpoch, update.eligibleAckdBytes);
     cc.release(update.normalAckdBytes);
-    Zutcp::PktLossBatch loss;
+    Zutcp::PktSACKLossBatch loss;
     Zutcp::PktTxUpdate losses;
-    tx.markPktThreshLossBatch(4, 3, loss, 16, &losses);
+    tx.loseSACKHolesBatch(20, loss, 16, losses);
     cc.lostAt(losses.normalLostBytes,
       uint64_t(losses.normalLostSentTime.microsecs()), 1001);
     growth.commit(cc);
     ZuCHECK(cc.cwnd() == 6000 && !cc.bytesInFlight(),
-      "same ACK loss/ECN must precede growth (never halve 13200 to 6600)");
+      "same ACK loss/ECE precedes growth and shares the accepted-flight epoch");
   }
 
-  // An event in a different packet space between ACK continuations shares
-  // this controller and invalidates only credits already collected.
+  // An intervening congestion event invalidates only credits already collected.
   Zutcp::NewReno cc{1200};
   Zutcp::AckGrowth growth;
   growth.stage(cc, cc.epoch(), 1200);
@@ -410,23 +255,19 @@ void testAckContinuationEpoch()
   ZuTestScope(testAckContinuationEpoch);
   Zutcp::PktTxSpace tx;
   Zutcp::NewReno cc{1200};
-  // PN1 is ACKed before recovery, PN2 is sent before its boundary, and
-  // PN3 is transmitted after the intervening event.
+  // Original1 retires before recovery, original2 precedes its boundary,
+  // and original3 is transmitted after the intervening event.
   for (unsigned pn = 1; pn <= 3; ++pn) {
-    ZuCHECK(tx.add(Zutcp::SentPkt{
-      .pn = pn, .sentTime = Zutcp::timeUS(pn == 3 ? 1100 : 100 * pn),
-      .bytes = 1200, .space = Zutcp::PktNumSpace::AppData,
-      .ackEliciting = true, .inFlight = true }), "continuation setup");
+    ZuCHECK(tx.add(dataPacket(pn, (pn - 1) * 10,
+      Zutcp::timeUS(pn == 3 ? 1100 : 100 * pn))), "continuation originals");
     cc.sent(1200);
   }
-  Zutcp::AckRange range{3, 1};
   Zutcp::PktAckBatch batch;
   Zutcp::AckGrowth growth;
   for (unsigned turn = 0; turn < 3; ++turn) {
     if (turn == 1) cc.congestionEventAt(100, 1000);
     Zutcp::PktTxUpdate update;
-    tx.ackBatch(&range, 1, batch, 1, Zutcp::PktNumSpace::AppData,
-      &update, cc.recoveryStartTime());
+    tx.ackBytesBatch(30, batch, 1, &update, cc.recoveryStartTime());
     ZuCHECK(update.normalAckdBytes == 1200 &&
       update.eligibleAckdBytes == (turn == 1 ? 0 : 1200),
       "each continuation must classify with the current boundary");
@@ -438,57 +279,66 @@ void testAckContinuationEpoch()
   growth.commit(cc);
   ZuCHECK(cc.cwnd() == 6240, "only the post-boundary continuation can grow");
   Zutcp::PktTxUpdate end;
-  ZuCHECK(tx.ackBatch(&range, 1, batch, 1, Zutcp::PktNumSpace::AppData,
-    &end, cc.recoveryStartTime()) && !end.normalAckdBytes,
+  ZuCHECK(tx.ackBytesBatch(30, batch, 1, &end, cc.recoveryStartTime()) && !end.normalAckdBytes,
     "final continuation cannot retire twice");
 }
 
 void testSplitLossEpoch()
 {
   ZuTestScope(testSplitLossEpoch);
-  for (bool timed : {false, true}) {
-    Zutcp::PktTxSpace spaces[2];
-    Zutcp::NewReno cc{1200};
-    for (unsigned space = 0; space < 2; ++space) {
-      for (unsigned pn = 1; pn <= 2; ++pn) {
-	ZuCHECK(spaces[space].add(Zutcp::SentPkt{
-	  .pn = pn, .sentTime = Zutcp::timeUS(100 * pn), .bytes = 1200,
-	  .space = Zutcp::PktNumSpace::T(space),
-	  .ackEliciting = true, .inFlight = true }), "split loss setup");
-	cc.sent(1200);
-      }
-      Zutcp::PktLossBatch batch;
-      bool done = false;
-      unsigned turns = 0;
-      while (!done && turns < 4) {
-	Zutcp::PktTxUpdate update;
-	done = timed ? spaces[space].markTimeThreshLossBatch(
-	  5, Zutcp::timeUS(900), Zutcp::timeUS(500), batch, 1, &update) :
-	  spaces[space].markPktThreshLossBatch(5, 3, batch, 1, &update);
-	if (update.normalLostBytes)
-	  cc.lostAt(update.normalLostBytes,
-	    uint64_t(update.normalLostSentTime.microsecs()), 1000 + turns);
-	++turns;
-      }
-      ZuCHECK(done && turns >= 2 && cc.cwnd() == 6000,
-	"split loss scans and packet spaces share one recovery response");
-    }
-    ZuCHECK(!cc.bytesInFlight(), "split loss retires each byte exactly once");
+  Zutcp::PktTxSpace tx;
+  Zutcp::NewReno cc{1200};
+  for (unsigned id = 1; id <= 4; ++id) {
+    ZuCHECK(tx.add(dataPacket(id, (id - 1) * 10, Zutcp::timeUS(100 * id))),
+      "split byte loss setup");
+    cc.sent(1200);
   }
+  Zutcp::PktSACKLossBatch batch;
+  unsigned turns = 0;
+  bool done = false;
+  while (!done && turns < 6) {
+    Zutcp::PktTxUpdate update;
+    done = tx.loseSACKHolesBatch(40, batch, 1, update);
+    if (update.normalLostBytes)
+      cc.lostAt(update.normalLostBytes,
+	uint64_t(update.normalLostSentTime.microsecs()), 1000 + turns);
+    ++turns;
+  }
+  ZuCHECK(done && turns == 5 && cc.cwnd() == 6000 && !cc.bytesInFlight(),
+    "bounded loss continuations retire once and share one congestion response");
+}
+
+void testClassicECNCongestion() {
+  ZuTestScope(testClassicECNCongestion);
+  Zutcp::NewReno cc{1200};
+  cc.sent(1200);
+  bool reduced = cc.ecnEventAt(100,200);
+  auto window = cc.cwnd(), epoch = cc.epoch();
+  cc.lostAt(1200,100,201);
+  ZuCHECK(reduced && window == 6000 && cc.cwnd() == window && cc.epoch() == epoch,
+    "ECN and loss from one accepted flight must share the existing congestion epoch");
+  Zutcp::NewReno small{1200};
+  small.persistentCongestion();
+  ZuCHECK(small.ecnEventAt(100,200) && small.cwnd() == 1200 && small.ssthresh() == 2400,
+    "ECN halves two-MSS cwnd to one while preserving the independent ssthresh floor");
+  cc.timeout(300);
+  epoch = cc.epoch();
+  ZuCHECK(cc.cwnd() == 1200 && !cc.ecnEventAt(200,301) && cc.epoch() == epoch,
+    "old ECE after RTO cannot reduce a second time or raise the one-MSS window");
+  ZuCHECK(cc.ecnEventAt(400,500) && cc.cwnd() == 1200 && cc.ssthresh() == 2400,
+    "a later flight's ECE records its new epoch without increasing one-MSS cwnd");
 }
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testAckContinuationEpoch);
+  ZuTestCall(testClassicECNCongestion);
   ZuTestCall(testSplitLossEpoch);
+  ZuTestCall(testAckContinuationEpoch);
   ZuTestCall(testAckResponseOrdering);
   ZuTestCall(testRecoveryEpochs);
   ZuTestCall(testAckEpochClassification);
-  ZuTestCall(testSentPktTracker);
-  ZuTestCall(testAckRangeProcessing);
   ZuTestCall(testPersistentCongestion);
   ZuTestCall(testRetransmitQueue);
-  ZuTestCall(testPTOBackoff);
 }

@@ -47,6 +47,47 @@ static Zutcp::ClosedTuple closedTuple(unsigned n, bool v6 = false)
     .lastSentTS = n * 23, .timestamps = v6};
 }
 
+void testSequenceTupleReuse()
+{
+  ZuTestScope(testSequenceTupleReuse);
+  Zutcp::ClosedTuple complete{.txNext = 100, .rxNext = 200, .fin = true};
+  ZuCHECK(Zutcp::reuseCxnTuple(complete, 100, 200),
+    "new ISNs at the old NEXT positions must be after the previous last-used positions");
+  ZuCHECK(!Zutcp::reuseCxnTuple(complete, 99, 200) &&
+      !Zutcp::reuseCxnTuple(complete, 100, 199) &&
+      !Zutcp::reuseCxnTuple(complete, 98, 201) &&
+      !Zutcp::reuseCxnTuple(complete, 101, 198),
+    "both directions must be strictly newer; equal or older ISNs cannot authorize reuse");
+  ZuCHECK(!Zutcp::reuseCxnTuple(complete, uint32_t(99 + 0x80000000u), 200) &&
+      !Zutcp::reuseCxnTuple(complete, 100, uint32_t(199 + 0x80000000u)) &&
+      !Zutcp::reuseSequence(0, 0x80000000u),
+    "the exact half-space has no serial ordering and must remain refused");
+  complete.txNext = complete.rxNext = 0;
+  ZuCHECK(Zutcp::reuseCxnTuple(complete, 0, 0) &&
+      Zutcp::reuseCxnTuple(complete, 1, 2) &&
+      !Zutcp::reuseCxnTuple(complete, UINT32_MAX, 0) &&
+      !Zutcp::reuseCxnTuple(complete, 0, UINT32_MAX),
+    "last-used subtraction and strict comparisons must wrap while ISN zero stays valid");
+  complete.txNext = 0xfffffff0;
+  complete.rxNext = 0xfffffffe;
+  ZuCHECK(Zutcp::reuseCxnTuple(complete, 0, 1) &&
+      !Zutcp::reuseCxnTuple(complete, 0xffffffee, 1),
+    "new sequence positions may cross zero without admitting old-side candidates");
+  complete.txNext = 100;
+  complete.rxNext = 200;
+  complete.fin = false;
+  ZuCHECK(!Zutcp::reuseCxnTuple(complete, 101, 201),
+    "an incomplete receive frontier cannot bound old DATA still in flight after abort");
+  complete.timestamps = true;
+  complete.tsRecent = complete.lastSentTS = UINT32_MAX;
+  ZuCHECK(!Zutcp::reuseCxnTuple(complete, 101, 201),
+    "timestamp evidence without complete peer FIN must not invent Phase4 timestamp eligibility");
+  complete.fin = true;
+  ZuCHECK(!Zutcp::reuseCxnTuple(complete, 99, 201) &&
+      !Zutcp::reuseCxnTuple(complete, 101, 199),
+    "timestamp fields cannot override either insufficient sequence direction");
+}
+
 void testClosedTupleRing()
 {
   ZuTestScope(testClosedTupleRing);
@@ -149,29 +190,30 @@ void testPendingAdmissionTransfer()
 {
   ZuTestScope(testPendingAdmissionTransfer);
   Zutcp::CxnSlots slots;
-  using Pending = ZmHashKV<Zutcp::CxnID, Zutcp::CxnSlot,
+  using Pending = ZmHashKV<Zutcp::ClosedTupleKey, Zutcp::CxnSlot,
     ZmHashHeapID<"Zutcp.Test.PendingAdmission">>;
   ZmRef<Pending> pending = new Pending;
-  Zutcp::CxnID cid{"routecid"};
+  Zutcp::ClosedTupleKey tuple{ZiSockAddr{ZiIP{"198.18.0.1"}, 18191},
+    ZiSockAddr{ZiIP{"198.18.0.2"}, 18192}};
   auto route = slots.reserve(2, 1);
-  pending->add(cid, ZuMv(route));
-  auto found = pending->findPtr(cid);
+  pending->add(tuple, ZuMv(route));
+  auto found = pending->findPtr(tuple);
   auto a = slots.admission(2, 1);
   ZuCHECK(found && !route && a.total == 1 && a.pending == 1 && !a.refused,
-    "cold route preparation must transfer one reservation to existing CID dedup state");
-  // A retransmitted Initial only finds existing state. A distinct Initial
+    "cold route preparation must transfer one reservation to existing tuple dedup state");
+  // A retransmitted SYN only finds existing state. A distinct tuple
   // competes for the same pending capacity, before any factory is invoked.
-  auto duplicate = pending->findPtr(cid);
+  auto duplicate = pending->findPtr(tuple);
   auto other = slots.reserve(2, 1);
   ZuCHECK(duplicate == found && !other && slots.admission(2, 1).refused == 1,
-    "CID retransmission must reuse pending state while distinct candidates share its cap");
+    "SYN retransmission must reuse pending state while distinct candidates share its cap");
   found->val().release();
-  pending->del(cid);
+  pending->del(tuple);
   auto retried = slots.reserve(2, 1);
-  pending->add(cid, ZuMv(retried));
-  found = pending->findPtr(cid);
+  pending->add(tuple, ZuMv(retried));
+  found = pending->findPtr(tuple);
   Zutcp::CxnSlot full = ZuMv(found->val());
-  pending->del(cid);
+  pending->del(tuple);
   full.established();
   a = slots.admission(2, 1);
   ZuCHECK(!retried && !pending->count_() && a.total == 1 && !a.pending,
@@ -194,7 +236,7 @@ void testConservativeClientTuple(bool v6)
   ZiSockAddr old{ip, Zutcp::ClientPorts::First};
   Zutcp::ClosedTuples history{2};
   auto first = history.remember({.key = {old, peer}, .txNext = 20, .rxNext = 30,
-    .fin = true, .txPN = 77});
+    .tsRecent = 77, .fin = true});
   auto stats = history.stats();
   ZmRef<Zutcp::EndpointBindings> bindings = new Zutcp::EndpointBindings;
   unsigned next = Zutcp::ClientPorts::First;
@@ -227,7 +269,7 @@ void testConservativeClientTuple(bool v6)
     "wildcard listeners must bind independently of peer-specific closed history");
   Zutcp::ClosedTuple after;
   auto unchanged = history.stats();
-  ZuCHECK(history.find(first.key, after) && after.id == first.id && after.txPN == 77 &&
+  ZuCHECK(history.find(first.key, after) && after.id == first.id && after.tsRecent == 77 &&
       after.txNext == 20 && after.rxNext == 30 && unchanged.inserted == stats.inserted &&
       unchanged.evicted == stats.evicted,
     "all selection and refusal paths must preserve old record identity, evidence and FIFO order");
@@ -269,6 +311,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testConnectionUtilities);
   ZuTestCall(testClosedTupleRing);
+  ZuTestCall(testSequenceTupleReuse);
   ZuTestCall(testSharedAdmissionTokens);
   ZuTestCall(testPendingAdmissionTransfer);
   ZuTestCall(testConservativeClientTuple, false);

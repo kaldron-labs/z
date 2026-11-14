@@ -27,7 +27,8 @@ ZmRef<RxQueue::Node> allocBuf()
 {
   static ZiMultiplex mx;
   static auto allocator =
-    mx.allocator<Zi::IOBufType::App, RxQueue::Node, 64, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 256>();
+    mx.allocator<Zi::IOBufType::App, RxQueue::Node, 64,
+      ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 256>();
   return ZmRef<RxQueue::Node>{allocator->allocBuf().ptr<RxQueue::Node>()};
 }
 
@@ -75,9 +76,9 @@ bool consumeExact(Stream &stream, unsigned n, const char *expected)
   return consumed == n && called && ok;
 }
 
-void testConsumeAcrossQueuedBuffers()
+void testConsumeQueuedBufs()
 {
-  ZuTestScope(testConsumeAcrossQueuedBuffers);
+  ZuTestScope(testConsumeQueuedBufs);
 
   ZiRxStream<RxQueue> stream;
 
@@ -101,9 +102,9 @@ void testConsumeAcrossQueuedBuffers()
   ZuCheck(!consumeExact(stream, 2, ""));
 }
 
-void testPushFiltersZeroLengthNodes()
+void testPushEmptyNodes()
 {
-  ZuTestScope(testPushFiltersZeroLengthNodes);
+  ZuTestScope(testPushEmptyNodes);
 
   ZiRxStream<RxQueue> stream;
 
@@ -122,9 +123,9 @@ void testPushFiltersZeroLengthNodes()
   ZuCheck(stream.count_() == 0);
 }
 
-void testConsumeStepsThroughQueuedBuffers()
+void testConsumeQueuedSteps()
 {
-  ZuTestScope(testConsumeStepsThroughQueuedBuffers);
+  ZuTestScope(testConsumeQueuedSteps);
 
   ZiRxStream<RxQueue> stream;
   stream.push(mkBuf("abcd"));
@@ -138,9 +139,9 @@ void testConsumeStepsThroughQueuedBuffers()
   ZuCheck(!stream);
 }
 
-void testConsumeGathersFragmentedFrame()
+void testConsumeFragmentedFrame()
 {
-  ZuTestScope(testConsumeGathersFragmentedFrame);
+  ZuTestScope(testConsumeFragmentedFrame);
 
   ZiRxStream<RxQueue> stream;
   stream.push(mkBuf("abc"));
@@ -173,9 +174,9 @@ void testConsumeGathersFragmentedFrame()
   ZuCheck(!stream.length());
 }
 
-void testConsumePaddingAcrossQueuedBuffers()
+void testConsumeQueuedPadding()
 {
-  ZuTestScope(testConsumePaddingAcrossQueuedBuffers);
+  ZuTestScope(testConsumeQueuedPadding);
 
   ZiRxStream<RxQueue> stream;
   stream.push(mkBuf("abc\r"));
@@ -603,11 +604,11 @@ int main(int argc, char **argv)
 
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testConsumeAcrossQueuedBuffers);
-  ZuTestCall(testPushFiltersZeroLengthNodes);
-  ZuTestCall(testConsumeStepsThroughQueuedBuffers);
-  ZuTestCall(testConsumeGathersFragmentedFrame);
-  ZuTestCall(testConsumePaddingAcrossQueuedBuffers);
+  ZuTestCall(testConsumeQueuedBufs);
+  ZuTestCall(testPushEmptyNodes);
+  ZuTestCall(testConsumeQueuedSteps);
+  ZuTestCall(testConsumeFragmentedFrame);
+  ZuTestCall(testConsumeQueuedPadding);
   ZuTestCall(testCleanResetsState);
   ZuTestCall(testExtractCompleteFrames);
   ZuTestCall(testExtractWaitAndError);

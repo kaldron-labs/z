@@ -5,18 +5,44 @@ Zutcp is a Linux user-mode TCP/IP stack integrated with `ZiMultiplex`, using
 execution and market-data messages while keeping the existing Zi connection,
 allocator and application framing interfaces.
 
-Implementation is in progress. This guide describes the final facility in
-[the execution plan](../zutcp_plan.md); it does not claim that the current
-intermediate transport is interoperable TCP. The plan records implementation
-checkpoints and remaining acceptance work.
+The native transport uses standard TCP headers/options and raw application payload.
+Selected IPv4/IPv6 native and real Linux-kernel peer fixtures validate transfer,
+recovery, options and lifecycle behavior. See [native tests](itest/README.md) and
+[independent-peer tests](interop/README.md) for runnable commands and coverage.
+Physical-Ethernet peer operation has not been validated in this environment.
 
-The current native path carries connection byte sequence, cumulative ACK, FIN
-and the unscaled receive window in the TCP header. Plain packet ACK ranges still
-serve the intermediate bootstrap/control protocol. Relative byte positions and
-bootstrap IDs remain pending TCP establishment and lifecycle conversion; window
-scaling and final wire interoperability are later work.
+The current native path carries SYN/SYNACK sequence origins, connection byte
+sequence, cumulative ACK, FIN and negotiated receive windows in the TCP header.
+Standard options carry MSS, SACK/DSACK, window scaling and timestamps/PAWS.
+Initial sequence numbers use HMAC-SHA256 through OpenSSL's crypto library.
+Internal byte positions remain wide offsets relative to the chosen origins.
+Endpoint routing uses the TCP four-tuple. Intermediate packet/frame codecs,
+bootstrap IDs and packet-number acknowledgment formats have been removed.
+
+`HubParams::sackPermitted`, `windowScale` and `timestamps` default to enabled.
+Configure them before starting the multiplexer. SACK permission is directional;
+scaling and timestamps require both peers' offers. The receive scale derives
+from `maxData`. Without a peer MSS option, the send cap is 536 bytes for IPv4 or
+1220 for IPv6; actual TCP option bytes reduce the application budget.
+Establishment publishes that budget before callbacks.
+SACK retains original transmit backing until cumulative acknowledgment, including
+when a receiver reneges on its earlier report.
+
+The native pair uses RACK send chronology and one accepted TLP probe
+per episode when SACK is available. Timestamp-free recovery remains supported;
+without SACK it uses cumulative ACK recovery and RTO. Classic TCP ECN is
+configured through the existing default-off `ecn` setting. New DATA carries ECT
+only after negotiation; retransmissions and control packets remain Not-ECT.
+Accepted DATA sends create pacing debt; pure ACK/window traffic can proceed.
+
+Without timestamps, an exact full sequence-cycle alias can be indistinguishable
+from current data. PAWS adds timestamp checks under its ordinary clock and
+segment-lifetime assumptions; it does not create an unlimited wire epoch.
 
 ## Application integration
+
+See the [kernel/native quickstart](util/README.md) for the stopped-multiplexer
+setup, actual command-line tools, sudo fixture commands and deployment prerequisites.
 
 `Zutcp::Stack` implements `ZiMxPlugin`. Register it on a stopped multiplexer
 before creating application allocators or starting I/O. Select the interface and
@@ -77,13 +103,13 @@ composition. Native connection facilities are under `Zutcp.hh`; IP framing and
 route helpers live in `ZutcpIP.hh`. Link `libZutcp`, `libZxdp` and their framework
 dependencies. Both modules are Linux-only and are excluded from Windows builds.
 
-The module follows the standard `src`, `test`, `itest` and `example` layout.
-Build through the top-level `make -j8`; isolated tests run through
-`make -C zutcp/test test`. Privileged packet tests and their scoped network
-fixtures are described in [itest/README.md](itest/README.md).
+The module uses `src`, `test`, `util`, `itest`, `example`, `interop` and `bench`.
+Build `zutcp/src` first with `-j8`, then affected module targets. Isolated tests
+run through `make -C zutcp/test test`. Ztcp and Ztls are optional application
+consumers, not dependencies. Privileged packet tests and their scoped fixtures
+are described in [itest/README.md](itest/README.md).
 
-Final acceptance includes Zutcp pairs over veth and physical Ethernet, plus
-independent Linux TCP peers in both client and server roles, with loss,
-reordering, pressure and lifecycle coverage. Performance benefits remain to be
-measured against the kernel path; current intermediate-protocol results do not
-establish TCP interoperability or a latency improvement.
+Native veth and independent Linux TCP fixtures cover both endpoint roles and IP
+families, including recovery, options, flow control and lifecycle. Physical
+Ethernet acceptance remains unverified. Performance tuning is separate; current
+veth measurements establish no latency or throughput advantage over kernel TCP.

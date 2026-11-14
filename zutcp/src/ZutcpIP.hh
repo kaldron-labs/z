@@ -19,6 +19,8 @@
 #include <zlib/ZtString.hh>
 #include <zlib/ZiIP.hh>
 
+#include <zlib/ZutcpOptions.hh>
+
 namespace Zutcp {
 
 // Linux owns interface configuration. Query before creating Zi adapters so
@@ -68,6 +70,7 @@ struct TCPHeader {
   uint32_t	seq = 0, ack = 0;
   uint16_t	window = 0, urgent = 0;
   uint8_t	flags = 0;
+  TCPOptions	options = {};
 };
 
 struct TCPView {
@@ -80,12 +83,18 @@ inline unsigned tcpHead(ZiIPType::T type) {
   return head ? head + 20 : 0;
 }
 
+inline unsigned tcpHead(ZiIPType::T type, const TCPHeader &header) {
+  unsigned head = tcpHead(type);
+  int options = header.options.encodedLength(header.flags & 0x02);
+  return head && options >= 0 ? head + unsigned(options) : 0;
+}
+
 inline unsigned tcpPayload(unsigned mtu, ZiIPType::T type) {
   unsigned head = tcpHead(type);
   return head && mtu > head - 14 ? mtu - (head - 14) : 0;
 }
 
-// Construct a base TCP header over payload already at frame + tcpHead(type).
+// Construct TCP header/options over payload already at frame + tcpHead(type, header).
 // Includes IP framing and the mandatory TCP pseudo-header checksum. No payload
 // move or allocation; invalid geometry leaves the frame unchanged. Sequence,
 // ACK, flags and window semantics belong to the connection, not this codec.

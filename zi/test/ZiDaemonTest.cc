@@ -48,16 +48,15 @@ ZfStruct(, Options,
 			  CLI::Opt<'l'>),		String),
   (help,		(CLI::Flag<'h'>),	Bool));
 
-namespace {
 
-Zi::Path g_root;
+static Zi::Path g_root;
 
-Zi::Path path(const char *name)
+static Zi::Path path(const char *name)
 {
   return ZiFile::append(g_root, name);
 }
 
-bool writeFile(const Zi::Path &path, ZuCSpan text)
+static bool writeFile(const Zi::Path &path, ZuCSpan text)
 {
   ZiFile f;
   if (f.open(path, ZiFile::Write | ZiFile::GC, 0666) != Zi::OK) {
@@ -71,14 +70,14 @@ bool writeFile(const Zi::Path &path, ZuCSpan text)
   return true;
 }
 
-bool writePID(const Zi::Path &path, int pid)
+static bool writePID(const Zi::Path &path, int pid)
 {
   ZtString<> text;
   text << ZuBox<int>(pid);
   return writeFile(path, text);
 }
 
-int readPID(const Zi::Path &path)
+static int readPID(const Zi::Path &path)
 {
   ZiFile f;
   if (f.open(path, ZiFile::ReadOnly | ZiFile::GC, 0) != Zi::OK) {
@@ -95,7 +94,7 @@ int readPID(const Zi::Path &path)
   return ZuBox<int>{ZuCSpan{buf, static_cast<unsigned>(n)}};
 }
 
-ZtString<> readText(const Zi::Path &path)
+static ZtString<> readText(const Zi::Path &path)
 {
   ZiFile f;
   if (f.open(path, ZiFile::ReadOnly | ZiFile::GC, 0) != Zi::OK) {
@@ -114,7 +113,7 @@ ZtString<> readText(const Zi::Path &path)
   return out;
 }
 
-bool waitForFile(const Zi::Path &path)
+static bool waitForFile(const Zi::Path &path)
 {
   for (unsigned i = 0; i < 50; i++) {
     if (ZiStat{path}.size() > 0) return true;
@@ -126,7 +125,7 @@ bool waitForFile(const Zi::Path &path)
 }
 
 template <typename Argv>
-int loadOptions(Options &options, const Argv &argv)
+static int loadOptions(Options &options, const Argv &argv)
 {
   ZfCLI::Parser<Options, ZuFacet::Core> parser;
   parser.scanArgv(argv);
@@ -134,13 +133,13 @@ int loadOptions(Options &options, const Argv &argv)
   return parser.argc;
 }
 
-int loadOptions(Options &options, int argc, const char *const *argv)
+static int loadOptions(Options &options, int argc, const char *const *argv)
 {
   ZfCLI::InArgv<> in(argc, argv);
   return loadOptions(options, in.argv);
 }
 
-int childMain(const Options &options)
+static int childMain(const Options &options)
 {
   ZiLog::init("ZiDaemonTest.child");
   ZiLog::level(0);
@@ -162,7 +161,7 @@ int childMain(const Options &options)
 }
 
 #ifndef _WIN32
-int runSelf(const char *self, ZuCSpan arg1, ZuCSpan arg2 = {},
+static int runSelf(const char *self, ZuCSpan arg1, ZuCSpan arg2 = {},
     ZuCSpan arg3 = {}, ZuCSpan arg4 = {}, ZuCSpan arg5 = {},
     ZuCSpan arg6 = {}, ZuCSpan arg7 = {})
 {
@@ -194,14 +193,14 @@ int runSelf(const char *self, ZuCSpan arg1, ZuCSpan arg2 = {},
 }
 #endif
 
-void testNoPIDFile()
+static void testNoPIDFile()
 {
   ZuTestScope(testNoPIDFile);
 
   ZuCheck(ZiDaemon::init(nullptr, nullptr, -1, false, {}) == ZiDaemon::OK);
 }
 
-void testPIDFileCreateAndRewrite()
+static void testPIDFileCreateAndRewrite()
 {
   ZuTestScope(testPIDFileCreateAndRewrite);
 
@@ -226,7 +225,7 @@ void testPIDFileCreateAndRewrite()
   ZuCheck(!ZiStat{pidFile}.exists());
 }
 
-void testRunningPID()
+static void testRunningPID()
 {
   ZuTestScope(testRunningPID);
 
@@ -238,16 +237,16 @@ void testRunningPID()
   ZiFile::remove(pidFile);
 }
 
-void testBadUserDoesNotBypassPIDChecks()
+static void testBadUserPIDChecks()
 {
-  ZuTestScope(testBadUserDoesNotBypassPIDChecks);
+  ZuTestScope(testBadUserPIDChecks);
 
   ZuCheck(
     ZiDaemon::init("ZiDaemonTest.NoSuchUser", nullptr, -1, false, {}) ==
       ZiDaemon::OK);
 }
 
-void testPIDFileOpenError()
+static void testPIDFileOpenError()
 {
   ZuTestScope(testPIDFileOpenError);
 
@@ -259,7 +258,7 @@ void testPIDFileOpenError()
   ZuCheck(file.init(g_root, "pid-dir") == ZiPIDFile::Error);
 }
 
-void testCLIParsing()
+static void testCLIParsing()
 {
   ZuTestScope(testCLIParsing);
 
@@ -280,7 +279,7 @@ void testCLIParsing()
   ZuCheck(options.marker == "x.marker");
 }
 
-void testChildAndDaemonize(const char *self)
+static void testChildAndDaemonize(const char *self)
 {
   ZuTestScope(testChildAndDaemonize);
 
@@ -307,7 +306,7 @@ void testChildAndDaemonize(const char *self)
 #endif
 }
 
-void usage(const char *self)
+static void usage(const char *self)
 {
   std::cerr <<
     "Usage: " << self <<
@@ -315,7 +314,6 @@ void usage(const char *self)
   ::exit(1);
 }
 
-} // namespace
 
 int main(int argc, char **argv)
 {
@@ -342,7 +340,7 @@ int main(int argc, char **argv)
   ZuTestCall(testNoPIDFile);
   ZuTestCall(testPIDFileCreateAndRewrite);
   ZuTestCall(testRunningPID);
-  ZuTestCall(testBadUserDoesNotBypassPIDChecks);
+  ZuTestCall(testBadUserPIDChecks);
   ZuTestCall(testPIDFileOpenError);
   ZuTestCall(testCLIParsing);
   ZuTestCall(testChildAndDaemonize, argv[0]);

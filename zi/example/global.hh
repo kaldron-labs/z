@@ -44,10 +44,13 @@ private:
 
   static Global *instance();
 
+  enum { NIntervals = 3 }; // connect, send and receive observations
   ZmSemaphore		m_sem;
-  TimeInterval		m_timeIntervals[8];
+  TimeInterval		m_timeIntervals[NIntervals];
+  alignas(Zm::CacheLineSize)
   uint64_t		m_recvRequests;
   uint64_t		m_recvBytes;
+  alignas(Zm::CacheLineSize)
   uint64_t		m_sendRequests;
   uint64_t		m_sendBytes;
 };

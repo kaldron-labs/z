@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z QUIC private implementation helpers
+// Native TCP endpoint and tuple routing helpers
 
 #ifndef Zutcp_HH
 #error "include zlib/Zutcp.hh before this header"
@@ -15,174 +15,51 @@
 namespace Zutcp_ {
 
 template <typename Link_>
-struct Cxn {
-  CxnID			id;
-  Link_			*link = nullptr;
-  CxnState::T		state = CxnState::Active;
-
-  Cxn() = default;
-  Cxn(
-    const CxnID &id_, Link_ *link_, CxnState::T state_) :
-      id{id_},
-      link{link_},
-      state{state_} { }
+struct TupleRoute {
+  ClosedTupleKey tuple;
+  Link_ *link = nullptr;
 };
 
 template <typename Link_>
-inline const CxnID &Cxn_IDAxor(const Cxn<Link_> &cxn) { return cxn.id; }
+inline const ClosedTupleKey &tupleRouteKey(const TupleRoute<Link_> &route) {
+  return route.tuple;
+}
 
-ZmHashDeriveT((Link_), CxnRoutes_, Cxn<Link_>,
-  (ZmHashNode<Cxn<Link_>,
-    ZmHashKey<Cxn_IDAxor<Link_>,
-	ZmHashHeapID<"Zutcp.Endpoint.CxnRouter">>>));
+ZmHashDeriveT((Link_), TupleRoutes, TupleRoute<Link_>,
+  (ZmHashNode<TupleRoute<Link_>,
+    ZmHashKey<tupleRouteKey<Link_>, ZmHashHeapID<"Zutcp.Endpoint.TupleRouter">>>));
 
+// Rx-owned lookup only. The existing ServerLinks membership owns each link.
 template <typename Link_>
-class CxnRouter {
+class TupleRouter {
 public:
-  using Route = Cxn<Link_>;
-  using Routes = CxnRoutes_<Link_>;
-  static constexpr unsigned TombstoneMax = 64;
-  using Tombstones = ZmQueue<CxnID,
-    ZmQueueHeapID<"Zutcp.Endpoint.CxnRouter.Tombstones">>;
-
-  CxnRouter() { init(); }
-
+  TupleRouter() { init(); }
   void init() {
     if (!m_routes)
       m_routes = new Routes{ZmHashParams().bits(5).loadFactor(1).cBits(3)};
   }
-
-  bool add(const CxnID &id, Link_ *link) {
-    if (!id || !link) return false;
-    if (auto route = m_routes->find(id)) {
-      if (route->state == CxnState::Tombstone) return false;
-      route->link = link;
-      return true;
-    }
-    m_routes->add(Route{id, link, CxnState::Active});
-    addLength(id.length());
+  bool add(const ClosedTupleKey &tuple, Link_ *link) {
+    if (!link || !tuple.template p<0>().port() || !tuple.template p<1>().port()) return false;
+    if (auto route = m_routes->findPtr(tuple)) return route->data().link == link;
+    m_routes->add(TupleRoute<Link_>{tuple, link});
     return true;
   }
-
-  Link_ *find(const CxnID &id) const {
-    auto route = m_routes->find(id);
-    if (!route || route->state != CxnState::Active) return nullptr;
-    return route->link;
+  Link_ *find(const ClosedTupleKey &tuple) const {
+    auto route = m_routes->findPtr(tuple);
+    return route ? route->data().link : nullptr;
   }
-  Link_ *matchShort(ZuBSpan packet, CxnID *id = nullptr) const {
-    const Route *route = matchShortRoute(packet);
-    if (!route) return nullptr;
-    if (id) *id = route->id;
-    return route->link;
-  }
-
-  bool retire(const CxnID &id) {
-    auto route = m_routes->find(id);
-    if (!route || route->state != CxnState::Active) return false;
-    delLength(id.length());
-    m_routes->del(id);
+  bool retire(const ClosedTupleKey &tuple, Link_ *link) {
+    auto route = m_routes->findPtr(tuple);
+    if (!route || route->data().link != link) return false;
+    m_routes->del(tuple);
     return true;
   }
-
-  bool tombstone(const CxnID &id) {
-    if (!id) return false;
-    if (auto route = m_routes->find(id)) {
-      if (route->state == CxnState::Tombstone) return true;
-      if (route->state == CxnState::Active) delLength(id.length());
-      route->state = CxnState::Tombstone;
-      route->link = nullptr;
-      m_tombstones.push(id);
-      trimTombstones();
-      return true;
-    }
-    m_routes->add(Route{id, nullptr, CxnState::Tombstone});
-    m_tombstones.push(id);
-    trimTombstones();
-    return true;
-  }
-
-  CxnState::T state(const CxnID &id) const {
-    auto route = m_routes->find(id);
-    return route ? route->state : CxnState::Tombstone;
-  }
-
-  void clear() {
-    if (!m_routes) return;
-    m_routes->clean();
-    m_tombstones.clean();
-    m_lengthMask = 0;
-    m_lengthCount = fixedArray<unsigned, CxnIDMax + 1>();
-  }
-  void final() {
-    clear();
-    m_routes = nullptr;
-  }
-
   unsigned count() const { return m_routes->count_(); }
-  unsigned tombstoneCount() const { return m_tombstones.count_(); }
-#ifdef ZDEBUG
-  uint64_t shortProbes() const { return m_shortProbes; }
-  void resetShortProbes() const { m_shortProbes = 0; }
-#endif
-  unsigned active() const {
-    unsigned n = 0;
-    all([&n](const Route &) { ++n; });
-    return n;
-  }
-  template <typename L>
-  void all(L &&l) const {
-    auto i = m_routes->citer();
-    while (auto node = i()) {
-      const auto &route = *node;
-      if (route.state == CxnState::Active) l(route);
-    }
-  }
+  void clear() { m_routes->clean(); }
 
 private:
-  void addLength(unsigned length) {
-    if (!m_lengthCount[length]++) m_lengthMask |= uint32_t(1) << length;
-  }
-  void delLength(unsigned length) {
-    if (!--m_lengthCount[length]) m_lengthMask &= ~(uint32_t(1) << length);
-  }
-  void trimTombstones() {
-    while (m_tombstones.count_() > TombstoneMax) {
-      CxnID id = m_tombstones.shift();
-      if (id) m_routes->del(id);
-    }
-  }
-  const Route *matchShortRoute(ZuBSpan packet) const {
-    if (!packet || packet.length() < 2 || Pkt::isLong(packet)) return nullptr;
-    unsigned max = packet.length() - 1;
-    if (max > CxnIDMax) max = CxnIDMax;
-    uint32_t lengths = m_lengthMask;
-    while (max) {
-      if (!(lengths & (uint32_t(1) << max))) {
-	--max;
-	continue;
-      }
-      CxnID id{ZuBSpan{packet.data() + 1, max}};
-#ifdef ZDEBUG
-      ++m_shortProbes;
-#endif
-      if (auto route = m_routes->find(id)) {
-	if (route->state == CxnState::Active)
-	  return route;
-      }
-      --max;
-    }
-    return nullptr;
-  }
-
-  // Rx thread exclusive
-  ZmRef<Routes>	m_routes;
-  Tombstones	m_tombstones{ZmQueueParams{}.initial(TombstoneMax)};
-  ZuArray<unsigned, CxnIDMax + 1>
-		m_lengthCount = fixedArray<unsigned, CxnIDMax + 1>();
-  uint32_t	m_lengthMask = 0;
-#ifdef ZDEBUG
-  mutable uint64_t m_shortProbes = 0;
-#endif
+  using Routes = TupleRoutes<Link_>;
+  ZmRef<Routes> m_routes;
 };
 
 struct EndpointLink : public ZmPolymorph {
@@ -260,19 +137,19 @@ public:
 	    if (!m_open || generation != unsigned(m_generation)) {
 	      setupDone(); return;
 	    }
-	    if (!!error || tcpPayload(resolved.mtu, resolved.local.type()) < MinPktPayload) {
-	      setupDone(); failed_(); return;
+	    if (!!error || !tcpPayload(resolved.mtu, resolved.local.type())) {
+	      setupDone(); setupFailed(); return;
 	    }
 	    m_payloadLimit = tcpPayload(resolved.mtu, resolved.local.type());
 	    m_local.init(resolved.local, m_local.port());
-	    install_(generation, resolved);
+	    install(generation, resolved);
 	  })) {
 	--m_setupPending;
 	m_open = false;
 	m_gate = 1;
 	return false;
       }
-    } else install_(generation, {});
+    } else install(generation, {});
     return true;
   }
 
@@ -331,12 +208,12 @@ public:
   }
 
 private:
-  void install_(unsigned generation, IPPath path) {
+  void install(unsigned generation, IPPath path) {
     ZtString<> error;
     ZiSockAddr remote = m_mode == PathMode::ClientConnected ? m_remote : ZiSockAddr{};
-    if (!m_stack->bind(m_local, this, &Endpoint_::receive_, remote, &error)) {
+    if (!m_stack->bind(m_local, this, &Endpoint_::receivePacket, remote, &error)) {
       ZiLOG(Error, "Zutcp", ([text = ZeString{error}](auto &out) { out << text; }));
-      setupDone(); failed_(); return;
+      setupDone(); setupFailed(); return;
     }
     m_bound = m_tupleBound = true;
     m_mx->txRun([this, generation, path] {
@@ -349,7 +226,7 @@ private:
 	setupDone();
 	if (!ready) return;
 	m_connected = m_listening = true;
-	impl()->endpointReady_(this);
+	impl()->endpointReady(this);
       });
     });
   }
@@ -360,14 +237,14 @@ private:
     if (!--m_setupPending && m_draining) drainTx();
   }
 
-  void failed_() {
+  void setupFailed() {
     ++m_rxDiag.failures;
     m_gate = 1;
     m_open = m_connected = m_listening = false;
     impl()->endpointFailed(false);
   }
 
-  static void receive_(
+  static void receivePacket(
     void *owner, ZmRef<ZiIOBuf> buf, ZiSockAddr local, ZiSockAddr peer, unsigned ecn,
     const TCPHeader &tcp)
   {
@@ -389,7 +266,8 @@ private:
     ++m_txDiag.sendCalls;
     if (direct) ++m_txDiag.directCalls; else ++m_txDiag.asyncCalls;
     const auto &path = supplied ? *supplied : m_txPath;
-    unsigned head = tcpHead(path.local.type());
+    auto header = static_cast<PacketBuf *>(buf.ptr())->tcp;
+    unsigned head = tcpHead(path.local.type(), header);
     if (unsigned(m_gate) || !m_txOpen || generation != m_txGeneration ||
 	!buf->registered() || !head || buf->skip != head ||
 	path.remote != addr.ip() || !addr.port()) {
@@ -397,7 +275,6 @@ private:
       return false;
     }
     unsigned bytes = buf->length;
-    auto header = static_cast<PacketBuf *>(buf.ptr())->tcp;
     header.srcPort = m_local.port();
     header.dstPort = addr.port();
     unsigned wire = writeTCP(buf->data_(), buf->size, path, header, bytes, ecnBits(ecn));
@@ -463,16 +340,18 @@ private:
   ZiSockAddr m_local, m_remote;
   ZmAtomic<unsigned> m_generation{0}, m_gate{1};
   ZmAtomic<unsigned> m_connected{0}, m_listening{0};
-  EndpointRxDiag m_rxDiag;
-  EndpointTxDiag m_txDiag;
 
   // Rx-owned setup and membership.
+  alignas(Zm::CacheLineSize)
+  EndpointRxDiag m_rxDiag;
   bool m_open = false, m_bound = false, m_draining = false, m_downPending = false;
   // Retain successful assignment after unbind for initialized, unpublished history.
   bool m_tupleBound = false;
   unsigned m_setupPending = 0;
   EndpointDiscFns m_discFns;
   // Tx-owned route and admission generation.
+  alignas(Zm::CacheLineSize)
+  EndpointTxDiag m_txDiag;
   IPPath m_txPath{};
   unsigned m_txGeneration = 0;
   bool m_txOpen = false;

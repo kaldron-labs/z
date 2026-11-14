@@ -26,7 +26,7 @@ using namespace ZfCSV;
 
 using Path = Zi::Path;
 
-enum WriteMode {
+enum {
   Replace,
   Create,
   Append
@@ -102,7 +102,7 @@ private:
     error = overflow();
     return false;
   }
-  void open(WriteMode mode) {
+  void open(int mode) {
     switch (mode) {
       case Replace:
 	if (file.open(path, ZiFile::Write | ZiFile::GC) != Zi::OK) {
@@ -140,8 +140,8 @@ private:
   }
 
 public:
-  PushFile(Path path_, WriteMode mode) : path{ZuMv(path_)} { open(mode); }
-  PushFile(Columns columns, Path path_, WriteMode mode) :
+  PushFile(Path path_, int mode) : path{ZuMv(path_)} { open(mode); }
+  PushFile(Columns columns, Path path_, int mode) :
       Base{columns}, path{ZuMv(path_)} {
     open(mode);
   }
@@ -169,14 +169,14 @@ public:
 template <
   typename O,
   typename Facet = ZuFacet::Core>
-inline auto writeFile(Path path, WriteMode mode) {
+inline auto writeFile(Path path, int mode) {
   return PushFile<O, Facet>{ZuMv(path), mode};
 }
 
 template <
   typename O,
   typename Facet = ZuFacet::Core>
-inline auto writeFile(Columns columns, Path path, WriteMode mode) {
+inline auto writeFile(Columns columns, Path path, int mode) {
   return PushFile<O, Facet>{columns, ZuMv(path), mode};
 }
 
@@ -226,7 +226,7 @@ private:
     error = overflow();
     return false;
   }
-  bool open(ZiFile &file, const Path &path, WriteMode mode) {
+  bool open(ZiFile &file, const Path &path, int mode) {
     switch (mode) {
       case Replace:
 	if (file.open(path, ZiFile::Write | ZiFile::GC) != Zi::OK) {
@@ -263,7 +263,7 @@ private:
   }
 
   template <typename L>
-  bool write(const Path &path, WriteMode mode, L l) {
+  bool write(const Path &path, int mode, L l) {
     ZiFile file;
     if (!open(file, path, mode)) return false;
     auto data = ZmScratch(char, MaxRowLen);
@@ -280,11 +280,11 @@ private:
 
 public:
   template <typename L>
-  PullFile(const Path &path, WriteMode mode, L l) {
+  PullFile(const Path &path, int mode, L l) {
     write(path, mode, ZuMv(l));
   }
   template <typename L>
-  PullFile(Columns columns, const Path &path, WriteMode mode, L l) :
+  PullFile(Columns columns, const Path &path, int mode, L l) :
       Base{columns} {
     write(path, mode, ZuMv(l));
   }
@@ -303,7 +303,7 @@ template <
   typename O,
   typename Facet = ZuFacet::Core,
   typename L>
-ZuUnion<void, ZeException> writeFile(Path path, WriteMode mode, L l) {
+ZuUnion<void, ZeException> writeFile(Path path, int mode, L l) {
   PullFile<O, Facet> pull(ZuMv(path), mode, ZuMv(l));
   if (pull) return {};
   return ZuMv(pull.error);
@@ -314,7 +314,7 @@ template <
   typename Facet = ZuFacet::Core,
   typename L>
 ZuUnion<void, ZeException> writeFile(
-    Columns columns, Path path, WriteMode mode, L l) {
+    Columns columns, Path path, int mode, L l) {
   PullFile<O, Facet> pull(
     columns, ZuMv(path), mode, ZuMv(l));
   if (pull) return {};

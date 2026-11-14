@@ -8,16 +8,6 @@
 
 namespace Zutcp {
 
-ZuCSpan Diag::packetSpaceName(PktNumSpace::T space)
-{
-  return PktNumSpace{}.name(space);
-}
-
-ZuCSpan Diag::frameTypeName(FrameType::T type)
-{
-  return FrameType{}.name(type);
-}
-
 void Diag::summary(DiagText &out) const
 {
   out.length(0);
@@ -33,8 +23,8 @@ void Diag::summary(DiagText &out) const
     " dataBytesRx=" << dataBytesRx <<
     " dataBytesTx=" << dataBytesTx <<
     " packetsLost=" << packetsLost <<
-    " ptoCount=" << ptoCount <<
-    " retransmittedFrames=" << retransmittedFrames <<
+    " synRetries=" << synRetries <<
+    " retransmittedRanges=" << retransmittedRanges <<
     " cwnd=" << cwnd <<
     " bytesInFlight=" << bytesInFlight <<
 #ifdef Zutcp_DEBUG
@@ -53,8 +43,8 @@ void Diag::recoverySummary(DiagText &out) const
   out << "cwnd=" << cwnd <<
     " bytesInFlight=" << bytesInFlight <<
     " packetsLost=" << packetsLost <<
-    " ptoCount=" << ptoCount <<
-    " retransmittedFrames=" << retransmittedFrames;
+    " synRetries=" << synRetries <<
+    " retransmittedRanges=" << retransmittedRanges;
 #endif
 }
 

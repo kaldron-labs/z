@@ -12,6 +12,7 @@
 
 #include <string.h>
 
+#include <zlib/ZuTime.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZutcpAlloc.hh>
@@ -68,7 +69,16 @@ struct BufDiag { };
 // independently of historical packet/frame references retained for late ACKs.
 // Its PacketBuf base is a borrowed wire view, using the same node/reference
 // count. Stable payload coordinates below remain independent of that view.
+// Tx-owned chronology shared by every retained copy of one original packet.
+struct RackTransmission {
+  ZuTime	sentTime;
+  uint64_t	pn = 0, end = 0;
+  uint32_t	tsval = 0;
+  bool		known = false, retransmitted = false, tsKnown = false;
+};
+
 struct TxBacking : public PacketBuf {
+  RackTransmission rack;
   ZmRef<ZiIOBuf> pending;
   PacketLease backing;
   Zi::IOBufAllocator *native = nullptr;

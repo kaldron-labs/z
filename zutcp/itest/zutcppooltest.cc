@@ -113,7 +113,8 @@ static void testProvider()
       // Close below while recycled remains application-owned, then release it through
       // the still-live Zi provider. No connection object is needed for that free.
       bool closed = closeInstance(instance, error);
-      ZuCheckRT(closed, log_("kernel retirement completes independently of the application: ", error));
+      ZuCheckRT(closed,
+	log_("kernel retirement completes independently of the application: ", error));
       ZmAssert_(closed);
       ZuCheckRT(provider->pool.used() == 1 && recycled && recycled->data_() == canonical &&
           control->pool.used() == 1 && ctl->data_() == heldOrigin &&

@@ -59,10 +59,8 @@ public:
 private:
   void init(ZmRef<UMem>, uint64_t offset, unsigned stride, unsigned prefix, unsigned first);
   void retire() { m_active = 0; }
-  UMem *arena() const { return m_arena; }
   unsigned first() const { return m_first; }
   unsigned stride() const { return unsigned(1)<<m_shift; }
-  uint64_t offset() const { return m_offset; }
 
   using Head = ZmAtomic<uintptr_t>;
   using Count = ZmAtomic<unsigned>;

@@ -30,12 +30,15 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZutcpAlloc.hh>
 #include <zlib/ZutcpIP.hh>
+#include <zlib/ZutcpTFO.hh>
 #include <zlib/ZutcpISN.hh>
 #include <zlib/Zxdp.hh>
 
 namespace Zutcp_ { struct EndpointLink; }
 
 namespace Zutcp {
+
+struct Datagram;
 
 using PacketFn = ZmFn<void(ZmRef<Zi::IOBuf>), ZmFnHeapID<"Zutcp.Packet">>;
 using RouteFn = ZmFn<void(IPPath, ZtString<>), ZmFnHeapID<"Zutcp.Route">>;
@@ -133,13 +136,39 @@ using ClosedTupleKey = ZuTuple<ZiSockAddr, ZiSockAddr>; // local, remote
 struct ClosedTuple {
   ClosedTupleKey key;
   uint64_t id = 0;
+  ZuTime tsRecentTime;
   uint32_t txNext = 0, rxNext = 0, tsRecent = 0, lastSentTS = 0;
   bool timestamps = false, fin = false;
-  // Retained plaintext carrier only; removed with the intermediate envelope.
-  ZuBArray<20> localCID, peerCID;
-  uint64_t txPN = 0;
 };
 inline const ClosedTupleKey &closedTupleKey(const ClosedTuple &record) { return record.key; }
+
+inline bool reuseSequence(uint32_t candidate, uint32_t previous) {
+  uint32_t distance = candidate - previous;
+  return distance && distance < 0x80000000U;
+}
+inline bool reuseCxnTuple(const ClosedTuple &record, uint32_t localISN, uint32_t peerISN) {
+  // Records contain NEXT wire positions. Incomplete peer history cannot bound
+  // an old out-of-order tail; timestamp-only eligibility belongs to Phase 5.
+  return record.fin && reuseSequence(localISN, uint32_t(record.txNext - 1)) &&
+    reuseSequence(peerISN, uint32_t(record.rxNext - 1));
+}
+
+// Timestamp evidence augments the remote direction only. Complete peer FIN
+// and the separately selected local sequence proof remain caller requirements.
+inline bool reusePeerTuple(
+  const ClosedTuple &record, const TCPHeader &syn, bool timestamps, ZuTime now)
+{
+  if (!record.fin) return false;
+  bool newerSequence = reuseSequence(syn.seq, uint32_t(record.rxNext - 1));
+  bool proposed = timestamps && (syn.options.flags & TCPOptions::TS);
+  if (!record.timestamps) return proposed || newerSequence;
+  if (!proposed) return newerSequence;
+  bool recent = *record.tsRecentTime && (now < record.tsRecentTime ||
+    now - record.tsRecentTime <= ZuTime{24*24*60*60});
+  if (!recent) return newerSequence;
+  uint32_t distance = syn.options.tsval - record.tsRecent;
+  return (distance && distance < uint32_t(0x80000000)) || (!distance && newerSequence);
+}
 
 struct ClosedTupleStats {
   unsigned capacity = 0, count = 0;
@@ -168,7 +197,7 @@ public:
   ClosedTupleStats stats() const;
 
 private:
-  void append_(const ClosedTuple &);
+  void append(const ClosedTuple &);
   Slots m_slots;
   ZmRef<Index> m_index;
   Order m_order;
@@ -186,6 +215,24 @@ ZutcpAPI CxnBindError::T bindCxnTuple(
   ZiSockAddr &local, const ZiSockAddr &remote, unsigned &nextPort,
   EndpointBindings &bindings, const ClosedTuples &history, void *owner, EndpointFn);
 
+// Scalar timestamp clock; Stack samples it only on Tx using the existing clock.
+// A backward wall step adjusts the logical offset without freezing later ticks.
+class TCPClock {
+public:
+  bool sample(ZuTime now, uint32_t &out) {
+    if (!*now || now < ZuTime{0}) return false;
+    uint64_t wall = uint64_t(now.microsecs()) / 1000;
+    if (!m_known) { m_ticks = wall; m_known = true; }
+    else if (wall >= m_wall) m_ticks += wall - m_wall;
+    m_wall = wall;
+    out = uint32_t(m_ticks);
+    return true;
+  }
+private:
+  uint64_t	m_wall = 0, m_ticks = 0;
+  bool		m_known = false;
+};
+
 struct StackConfig {
   unsigned controlBufCount = DefaultControlBufCount;
   unsigned txControlCredits = DefaultTxControlCredits;
@@ -195,6 +242,7 @@ struct StackConfig {
   uint64_t maxData = DefaultMaxData;
   unsigned maxCxns = DefaultMaxCxns, maxPendingCxns = DefaultMaxPendingCxns;
   unsigned closedTupleRingSize = DefaultClosedTupleRingSize;
+  unsigned tfoCookieCacheSize = DefaultTFOCookieCacheSize;
   ZuTime connectTimeout{DefaultConnectTimeout};
   ZuTime userTimeout{DefaultUserTimeout};
   ZuTime closeDrainTimeout{DefaultCloseDrainTimeout}, finWaitTimeout{DefaultFinWaitTimeout};
@@ -219,12 +267,21 @@ public:
   ZmRef<PacketBuf> allocPacket(void *owner, ZiIPType::T, bool control = false);
   bool configureControl(unsigned count, unsigned credits, ZtString<> &error);
   bool configure(const StackConfig &, ZtString<> &error);
+  const StackConfig &config() const { return m_config; }
   CxnAdmission cxnAdmission() const;
   CxnSlot reserveCxn();
   void establishedCxn(CxnSlot &);
   void closingCxn(CxnSlot &);
   void releaseCxn(CxnSlot &);
   bool chooseISN(const ZiSockAddr &, const ZiSockAddr &, uint32_t &) const;
+  bool tfoCookie(const ZiIP &, const ZiSockAddr &, TFOCookie &) const;
+  void saveTFOCookie(const ZiIP &, const ZiSockAddr &, const TFOCookie &);
+  bool issueTFO(const ZiSockAddr &, const ZiIP &, TFOCookie &) const;
+  bool validTFO(const ZiSockAddr &, const ZiIP &, const TFOCookie &) const;
+  // Live owners qualify their current window/PAWS first, then offer stale input.
+  bool recoverClosed(const Datagram &);
+  void resetUnmatched(const Datagram &);
+  bool tcpTimestamp(ZuTime, uint32_t &);
   ClosedTuple rememberClosed(ClosedTuple);
   bool closedTuple(const ClosedTupleKey &, ClosedTuple &) const;
   bool updateClosed(const ClosedTuple &);
@@ -282,12 +339,17 @@ private:
   void received(uint8_t *, unsigned);
   bool closedPacket(const uint8_t *, const IPView &, const TCPView &);
   void replyClosed(ClosedTuple, IPPath);
+  void resetReply(const TCPHeader &, unsigned, IPPath);
+  void replyControl(TCPHeader, IPPath);
   void pollTx();
   void observed(Zutcp_::EndpointLink *);
   void unobserved(Zutcp_::EndpointLink *);
 
   using PacketAllocator = Zi::IOBufPluginAllocator<Zi::IOBufType::RxTCP>;
   ISN		m_isn;
+  TFOKey	m_tfoKey;
+  TFOCache	m_tfoCookies;
+  TCPClock	m_tcpClock;
   unsigned	m_interface, m_mtu, m_spin;
   ZmRef<EndpointBindings> m_endpoints;
   unsigned	m_nextPort = ClientPorts::First, m_routePending = 0;

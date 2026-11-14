@@ -16,7 +16,10 @@ using namespace ZuTestUtil;
 #define ZUTCP_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 
-struct PacketBacking : Zi::IOBufPlugin {
+struct PacketBacking : ZmNHeap<PacketBacking>, Zi::IOBufPlugin {
+friend inline ZuStringT<"Zutcp.Test.PacketBacking"> ZmNHeapID(PacketBacking *);
+  using ZmNHeap<PacketBacking>::operator new;
+  using ZmNHeap<PacketBacking>::operator delete;
   enum { Size = 1600, Head = 17, Tail = 11, Payload = 64 };
   alignas(ZiIOBuf_Align) uint8_t bytes[Size];
   unsigned acquired = 0, released = 0;
@@ -42,7 +45,10 @@ struct PacketBacking : Zi::IOBufPlugin {
 };
 
 // Exercise the ordinary mx factory, including its construction of Tx metadata.
-struct PacketPlugin : ZiMxPlugin {
+struct PacketPlugin : ZmNHeap<PacketPlugin>, ZiMxPlugin {
+friend inline ZuStringT<"Zutcp.Test.PacketPlugin"> ZmNHeapID(PacketPlugin *);
+  using ZmNHeap<PacketPlugin>::operator new;
+  using ZmNHeap<PacketPlugin>::operator delete;
   ZmRef<PacketBacking> backing = new PacketBacking;
   Zi::IOBufType::T requestedType = Zi::IOBufType::App;
   unsigned requestedSize = 0, requestedAlign = 0, requestedCount = 0, requests = 0;
@@ -203,13 +209,12 @@ void testDiagAggregation()
     .pn = 1,
     .sentTime = ZuTime{0},
     .bytes = 100,
-    .space = Zutcp::PktNumSpace::AppData,
     .ackEliciting = true,
     .inFlight = true });
-  diag.notePTO();
-  diag.noteRetransmit(Zutcp::SentFrameRef::control());
+  diag.noteSYNRetransmit();
+  diag.noteRetransmit(Zutcp::SentFrameRef::data({}, true));
   diag.setRecovery(12000, 500);
-  diag.setHandshakeState("one_rtt");
+  diag.setHandshakeState("established");
 
   Zutcp::BufDiag buf;
   diag.add(buf);
@@ -220,11 +225,6 @@ void testDiagAggregation()
   path.probesLost = 1;
   path.blackholes = 1;
   diag.add(path);
-
-  ZuCHECK(Zutcp::Diag::packetSpaceName(Zutcp::PktNumSpace::AppData) ==
-      "AppData" &&
-      Zutcp::Diag::frameTypeName(Zutcp::FrameType::Data) == "Data",
-    "diagnostic stable names mismatch");
 
 #ifdef Zutcp_DEBUG
   ZuCHECK(diag.packetsRx == 1 &&
@@ -238,11 +238,11 @@ void testDiagAggregation()
       diag.dataBytesRx == 30 &&
       diag.dataBytesTx == 40 &&
       diag.packetsLost == 1 &&
-      diag.ptoCount == 1 &&
-      diag.retransmittedFrames == 1 &&
+      diag.synRetries == 1 &&
+      diag.retransmittedRanges == 1 &&
       diag.cwnd == 12000 &&
       diag.bytesInFlight == 500 &&
-      diag.handshakeState == "one_rtt" &&
+      diag.handshakeState == "established" &&
       diag.pmtudProbes == 2 &&
       diag.pmtudSuccess == 1 &&
       diag.pmtudFailure == 2,
@@ -253,13 +253,13 @@ void testDiagAggregation()
       strstr(summary.data(), "headerBytesRx=11") &&
       strstr(summary.data(), "bodyBytesTx=14") &&
       strstr(summary.data(), "cwnd=12000") &&
-      strstr(summary.data(), "handshakeState=one_rtt") &&
+      strstr(summary.data(), "handshakeState=established") &&
       strstr(summary.data(), "pmtudFailure=2"),
     "diagnostic summary text mismatch");
 
   Zutcp::DiagText recovery = diag.recoverySummary();
   ZuCHECK(strstr(recovery.data(), "bytesInFlight=500") &&
-      strstr(recovery.data(), "retransmittedFrames=1"),
+      strstr(recovery.data(), "retransmittedRanges=1"),
     "diagnostic recovery summary mismatch");
 
   Zutcp::DiagText streams = diag.dataSummary();
@@ -273,8 +273,8 @@ void testDiagAggregation()
       diag.bytesRx == 0 &&
       diag.bytesTx == 0 &&
       diag.packetsLost == 0 &&
-      diag.ptoCount == 0 &&
-      diag.retransmittedFrames == 0,
+      diag.synRetries == 0 &&
+      diag.retransmittedRanges == 0,
     "release diagnostics should be inert");
 
   ZuCHECK(!diag.summary() &&
@@ -282,33 +282,6 @@ void testDiagAggregation()
       !diag.dataSummary(),
     "release diagnostic summaries should be empty");
 #endif
-}
-
-void testPktBuildMetadata()
-{
-  ZuTestScopeRT(testPktBuildMetadata);
-
-  uint8_t byte = 0x5a;
-  Zutcp::PktBuild build;
-  for (unsigned i = 0; i < Zutcp::PlainVec::Max; ++i)
-    ZUTCP_CHECK_RT(build.add(ZuBSpan{&byte, 1}),
-      "packet plaintext vector append failed");
-  ZUTCP_CHECK_RT(build.count() == Zutcp::PlainVec::Max &&
-      build.bytes() == Zutcp::PlainVec::Max &&
-      !build.add(ZuBSpan{&byte, 1}) &&
-      !build.pad(1),
-    "packet plaintext vector capacity was not enforced");
-
-  build.reset();
-  ZUTCP_CHECK_RT(build.scratchAvail() == Zutcp::PktBuildScratchSize &&
-      build.padTo(Zutcp::MinPktPayload) &&
-      build.count() == 1 &&
-      build.bytes() == Zutcp::MinPktPayload &&
-      build.data()[0].data()[0] == 0 &&
-      build.data()[0].data()[Zutcp::MinPktPayload - 1] == 0,
-    "QUIC Initial minimum padding metadata mismatch");
-
-
 }
 
 void testPacketAllocRoles()
@@ -324,7 +297,7 @@ void testPacketAllocRoles()
   ZuCHECK(packet && wire, "packet buffer allocation failed");
   if (!packet || !wire) return;
   ZuCHECK(packet->avail() >= Zutcp::BufSize && wire->avail() >= Zutcp::BufSize,
-    "UDP recvmsg metadata must not reduce packet payload capacity");
+    "native receive metadata must not reduce packet payload capacity");
   ZuCHECK(rx->type == Zi::IOBufType::RxTCP &&
       tx->type == Zi::IOBufType::TxTCP,
     "packet allocator roles mismatch");
@@ -338,20 +311,20 @@ void testPacketAllocRoles()
     packet = nullptr;
     ZuCHECK(first.slice.packet.ptr() == backing && second.slice.packet.ptr() == backing &&
 	first.span()[0] == 0x5a && second.span()[0] == 0xa5 && backing->refCount() == 3,
-      "STREAM slices must retain original packet backing");
+      "byte slices must retain original packet backing");
     ZuCHECK(first.ensure(first.size + 1) && !first.slice.packet &&
 	first.span()[0] == 0x5a,
       "heap replacement must release the first slice's packet reference");
     ZuCHECK(second.slice.packet.ptr() == backing && second.span()[0] == 0xa5 &&
 	backing->refCount() == 2,
-      "one STREAM release must not recycle another STREAM's packet");
+      "one byte release must not recycle another byte's packet");
     ZuCHECK(second.ensure(second.size + 1) && !second.builtin() &&
 	!second.slice.packet && second.span()[0] == 0xa5 &&
 	backing->refCount() == 1,
       "grown receive descriptor must preserve bytes and release packet backing");
   }
   ZuCHECK(observer->refCount() == 1 && observer->data()[1] == 0xa5,
-    "STREAM descriptor teardown must release exactly its retained packet reference");
+    "byte descriptor teardown must release exactly its retained packet reference");
   observer = nullptr;
 
   auto stream = ZutcpTest::plaintextAllocator<Zutcp::TxBufAlloc<>>(&mx)->allocBuf();
@@ -416,5 +389,4 @@ int main(int argc, char **argv)
   ZuTestCall(testPacketAllocRoles);
   ZuTestCall(testRxSliceReturn);
   ZuTestCall(testDiagAggregation);
-  ZuTestCall(testPktBuildMetadata);
 }

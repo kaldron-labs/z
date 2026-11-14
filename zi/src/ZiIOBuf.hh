@@ -412,8 +412,8 @@ friend inline HeapID ZmNHeapID(IOBufBuiltin *);
   using Buf = Buf_;
   using Buf::data;
 
-  static constexpr unsigned Size = Size_;
-  static constexpr unsigned Align = Align_;
+  enum { Size = Size_ };
+  enum { Align = Align_ };
 
   alignas(Align) uint8_t	data_[Size];
 
@@ -469,11 +469,17 @@ template <
   typename HeapID = ZiIOBuf_HeapID,
   unsigned VHMaxSize_ = ZiIOBuf_DefltVHMaxSize,
   auto Grow = ZmGrow>
-struct IOBufBuiltinAllocator : public IOBufAllocator {
+struct IOBufBuiltinAllocator :
+  public ZmNHeap<IOBufBuiltinAllocator<Type, Buf_, Size_, Align, HeapID, VHMaxSize_, Grow>>,
+  public IOBufAllocator {
+friend inline ZuStringT<"Zi.IOBufBuiltinAllocator"> ZmNHeapID(IOBufBuiltinAllocator *);
+  using Heap = ZmNHeap<IOBufBuiltinAllocator<Type, Buf_, Size_, Align, HeapID, VHMaxSize_, Grow>>;
+  using Heap::operator new;
+  using Heap::operator delete;
   enum { BufType = Type };
   using Buf = Buf_;
-  static constexpr unsigned Size = BuiltinSize<Buf, Align>(Size_);
-  static constexpr unsigned VHMaxSize = BuiltinSize<Buf, Align>(VHMaxSize_);
+  enum { Size = BuiltinSize<Buf, Align>(Size_) };
+  enum { VHMaxSize = BuiltinSize<Buf, Align>(VHMaxSize_) };
   using VHeap = ZmVHeap_<HeapID, Size, VHMaxSize, Align>;
 
   IOBufBuiltinAllocator(ZiMultiplex *mx = nullptr) :
@@ -521,7 +527,11 @@ template <
   typename HeapID = ZiIOBuf_HeapID,
   unsigned VHMaxSize_ = ZiIOBuf_DefltVHMaxSize,
   auto Grow = ZmGrow>
-struct IOBufPluginAllocator : public IOBufAllocator {
+struct IOBufPluginAllocator :
+  public ZmNHeap<IOBufPluginAllocator<Type, Buf_, Size_, Align, HeapID, VHMaxSize_, Grow>>,
+  public IOBufAllocator {
+friend inline ZuStringT<"Zi.IOBufPluginAllocator"> ZmNHeapID(IOBufPluginAllocator *);
+  using Heap = ZmNHeap<IOBufPluginAllocator<Type, Buf_, Size_, Align, HeapID, VHMaxSize_, Grow>>;
   ZuAssert(
     Type == IOBufType::RxUDP || 
     Type == IOBufType::TxUDP || 
@@ -529,11 +539,14 @@ struct IOBufPluginAllocator : public IOBufAllocator {
     Type == IOBufType::TxTCP);
 
   using Buf = Buf_;
-  static constexpr unsigned Size = BuiltinSize<Buf, Align>(Size_);
-  static constexpr unsigned VHMaxSize = BuiltinSize<Buf, Align>(VHMaxSize_);
+  enum { Size = BuiltinSize<Buf, Align>(Size_) };
+  enum { VHMaxSize = BuiltinSize<Buf, Align>(VHMaxSize_) };
   using VHeap = ZmVHeap_<HeapID, Size, VHMaxSize, Align>;
 
   ZmRef<IOBufPlugin>	plugin;
+
+  using Heap::operator new;
+  using Heap::operator delete;
 
   IOBufPluginAllocator(ZiMultiplex *mx, IOBufPlugin *plugin_) :
     IOBufAllocator(mx, Type,

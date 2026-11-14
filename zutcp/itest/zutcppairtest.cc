@@ -53,6 +53,18 @@ static void testAckLossV4() { exchange(false, "ack-loss"); }
 static void testAckLossV6() { exchange(true, "ack-loss"); }
 static void testPartialAckV4() { exchange(false, "partial-ack"); }
 static void testPartialAckV6() { exchange(true, "partial-ack"); }
+static void testSACKHolesV4() { exchange(false, "sack-holes"); }
+static void testSACKHolesV6() { exchange(true, "sack-holes"); }
+static void testRenegingV4() { exchange(false, "sack-reneging"); }
+static void testRenegingV6() { exchange(true, "sack-reneging"); }
+static void testTLPV4() { exchange(false, "tail-matrix"); }
+static void testTLPV6() { exchange(true, "tail-matrix"); }
+static void testECNV4() { exchange(false, "ecn-matrix"); }
+static void testECNV6() { exchange(true, "ecn-matrix"); }
+static void testTFOV4() { exchange(false, "tfo-matrix"); }
+static void testTFOV6() { exchange(true, "tfo-matrix"); }
+static void testOptionsV4() { exchange(false, "option-matrix"); }
+static void testOptionsV6() { exchange(true, "option-matrix"); }
 
 int main(int argc, char **argv)
 {
@@ -79,4 +91,16 @@ int main(int argc, char **argv)
   ZuTestCall(testAckLossV6);
   ZuTestCall(testPartialAckV4);
   ZuTestCall(testPartialAckV6);
+  ZuTestCall(testSACKHolesV4);
+  ZuTestCall(testSACKHolesV6);
+  ZuTestCall(testRenegingV4);
+  ZuTestCall(testRenegingV6);
+  ZuTestCall(testOptionsV4);
+  ZuTestCall(testOptionsV6);
+  ZuTestCall(testECNV4);
+  ZuTestCall(testECNV6);
+  ZuTestCall(testTLPV4);
+  ZuTestCall(testTLPV6);
+  ZuTestCall(testTFOV4);
+  ZuTestCall(testTFOV6);
 }

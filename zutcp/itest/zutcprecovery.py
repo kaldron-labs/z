@@ -2,8 +2,7 @@
 # (c) Copyright 2026 Huw Rogers
 # This code is licensed by the MIT license (see LICENSE for details).
 
-"""Private fixture faults and assertions for the intermediate plaintext wire.
-CIDs are the fixture's default eight bytes, validated from captured Initials.
+"""Private fixture faults and assertions for standard TCP/IP carriage.
 This helper runs separately from the library and is never a production I/O path.
 """
 
@@ -20,20 +19,32 @@ MASK32 = (1 << 32) - 1
 
 
 def wire_tcp(frame):
+    """Decode standard TCP/IP bytes; application payload has no inner framing."""
+    if len(frame) < 14:
+        return None
     ip = frame[14:]
     if frame[12:14] == b'\x08\x00' and len(ip) >= 20 and ip[9] == 6:
-        tcp = ip[(ip[0] & 15) * 4:int.from_bytes(ip[2:4], 'big')]
+        head, length = (ip[0] & 15) << 2, int.from_bytes(ip[2:4], 'big')
+        assert ip[0] >> 4 == 4 and 20 <= head <= length <= len(ip)
+        assert not int.from_bytes(ip[6:8], 'big') & 0x3fff
+        assert abort_checksum(ip[:head]) == 0
+        tcp = ip[head:length]
         source, target = ip[12:16], ip[16:20]
+        pseudo = source + target + b'\0\6' + len(tcp).to_bytes(2, 'big')
     elif frame[12:14] == b'\x86\xdd' and len(ip) >= 40 and ip[6] == 6:
-        tcp = ip[40:40 + int.from_bytes(ip[4:6], 'big')]
+        length = int.from_bytes(ip[4:6], 'big')
+        assert ip[0] >> 4 == 6 and 40 + length <= len(ip)
+        tcp = ip[40:40 + length]
         source, target = ip[8:24], ip[24:40]
+        pseudo = source + target + len(tcp).to_bytes(4, 'big') + b'\0\0\0\6'
     else:
         return None
-    if len(tcp) < 20 or (tcp[12] >> 4) * 4 > len(tcp):
-        return None
+    assert len(tcp) >= 20 and abort_checksum(pseudo + tcp) == 0
+    head = (tcp[12] >> 4) << 2
+    assert 20 <= head <= min(60, len(tcp))
     sport, dport, seq, ack = struct.unpack('!HHII', tcp[:12])
     return {'key': (source.hex(), sport, target.hex(), dport),
-            'tcp': tcp, 'body': tcp[(tcp[12] >> 4) * 4:],
+            'tcp': tcp, 'body': tcp[head:], 'options': tcp[20:head].hex(),
             'sport': sport, 'dport': dport, 'wire_seq': seq, 'wire_ack': ack,
             'flags': tcp[13], 'window': int.from_bytes(tcp[14:16], 'big')}
 
@@ -55,10 +66,9 @@ def pcap_frames(path):
 
 
 class WireOrigins:
-    """Learn actual SYN incarnations; a denied new CID cannot replace an old flow."""
+    """Tuple and SYN sequence origins; no fabricated packet/CID identity."""
     def __init__(self):
         self.flows = {}
-        self.shorts = {}
 
     @staticmethod
     def reverse(key):
@@ -66,98 +76,72 @@ class WireOrigins:
 
     def observe(self, frame):
         packet = wire_tcp(frame)
-        if packet is None:
+        if packet is None or not packet['flags'] & 2:
             return
-        body, flags = packet['body'], packet['flags']
-        if len(body) < 7 or not body[0] & 128 or not flags & 2:
-            return
-        dl = body[5]
-        assert dl <= 20 and len(body) >= 7 + dl
-        sl = body[6 + dl]
-        dcid, scid = body[6:6 + dl].hex(), body[7 + dl:7 + dl + sl].hex()
-        assert sl <= 20 and len(scid) == sl * 2
-        key = packet['key']
-        offset = 7 + dl + sl
-        assert offset < len(body)
-        width = 1 << (body[offset] >> 6)
-        offset += width
-        pn_width = (body[0] & 3) + 1
-        pn = int.from_bytes(body[offset:offset + pn_width], 'big')
-        if flags & 0x17 == 0x02:
-            assert packet['wire_ack'] == 0, packet
-            identity = (key, dcid, scid)
-            flow = self.flows.get(identity)
-            if flow is None:
-                flow = {'client': key, 'original_cid': dcid, 'client_cid': scid,
-                        'client_isn': packet['wire_seq'], 'syns': 0, 'synacks': 0,
-                        'final_acks': 0, 'client_syn_pns': [], 'server_syn_pns': []}
-                self.flows[identity] = flow
-            assert flow['client_isn'] == packet['wire_seq'], (flow, packet)
+        key, flags = packet['key'], packet['flags']
+        if flags & 0x17 == 2:
+            assert packet['wire_ack'] == 0
+            identity = (key, packet['wire_seq'])
+            flow = self.flows.setdefault(identity, {
+                'client': key, 'client_isn': packet['wire_seq'], 'syns': 0,
+                'synacks': 0, 'final_acks': 0, 'early_bytes': len(packet['body'])})
             flow['syns'] += 1
-            if pn not in flow['client_syn_pns']:
-                flow['client_syn_pns'].append(pn)
-            self.shorts.setdefault((key, dcid), (flow, False))
-        else:
-            assert flags & 0x17 == 0x12, packet
-            candidates = [flow for flow in self.flows.values()
-                          if flow['client'] == self.reverse(key) and flow['client_cid'] == dcid
-                          and (flow['client_isn'] + 1) & MASK32 == packet['wire_ack']]
-            assert len(candidates) == 1, (packet, candidates)
-            flow = candidates[0]
-            if flow['synacks']:
-                assert flow['server_isn'] == packet['wire_seq'] and flow['server_cid'] == scid
-            flow['server_isn'], flow['server_cid'] = packet['wire_seq'], scid
-            flow['synacks'] += 1
-            if pn not in flow['server_syn_pns']:
-                flow['server_syn_pns'].append(pn)
-            self.shorts[(flow['client'], scid)] = (flow, False)
-            self.shorts[(key, flow['client_cid'])] = (flow, True)
+            return
+        assert flags & 0x17 == 0x12, packet
+        candidates = [f for f in self.flows.values()
+                      if f['client'] == self.reverse(key) and
+                      (packet['wire_ack'] - f['client_isn'] - 1) & MASK32 <= f['early_bytes']]
+        assert len(candidates) == 1, (packet, candidates)
+        flow = candidates[0]
+        if flow['synacks']:
+            assert flow['server_isn'] == packet['wire_seq'], (flow, packet)
+        flow['server_isn'] = packet['wire_seq']
+        flow['synacks'] += 1
 
     def relative(self, frame):
         packet = wire_tcp(frame)
-        if packet is None or not packet['body'] or packet['body'][0] & 128:
+        if packet is None or packet['flags'] & 2:
             return None
-        cid = packet['body'][1:9].hex()
-        match = self.shorts.get((packet['key'], cid))
-        if packet['flags'] & 0x17 == 0x04:
-            pending = [flow for flow in self.flows.values()
-                       if flow['client'] == packet['key'] and flow['original_cid'] == cid
-                       and not flow['synacks'] and packet['wire_ack'] == 0
-                       and (flow['client_isn'] + 1) & MASK32 == packet['wire_seq']]
-            if pending:
-                assert len(pending) == 1, (packet, pending)
-                match = pending[0], False
-        assert match is not None, ('short packet lacks captured SYN origin', packet)
-        flow, server = match
-        seq_base = (flow['server_isn' if server else 'client_isn'] + 1) & MASK32
-        peer = 'client_isn' if server else 'server_isn'
-        ack_base = (flow[peer] + 1) & MASK32 if peer in flow else None
-        if packet['flags'] & 16:
-            assert ack_base is not None, packet
-            ack = (packet['wire_ack'] - ack_base) & MASK32
-        else:
-            assert packet['wire_ack'] == 0 and packet['flags'] & 4, packet
-            ack = 0
-        packet.update(seq=(packet['wire_seq'] - seq_base) & MASK32, ack=ack,
-                      seq_base=seq_base, ack_base=ack_base, cid=cid)
+        matches = []
+        for flow in self.flows.values():
+            if not flow['synacks']:
+                base = (flow['client_isn'] + 1) & MASK32
+                if packet['key'] == flow['client'] and packet['flags'] & 0x14 == 4:
+                    seq = (packet['wire_seq'] - base) & MASK32
+                    matches.append((seq, seq, 0, base, None))
+                elif (packet['key'] == self.reverse(flow['client']) and
+                      packet['flags'] & 0x14 == 0x14 and packet['wire_ack'] == base):
+                    # SYN-SENT RST qualifies only by the known local SYN ACK.
+                    # Its sender has not supplied a peer sequence origin.
+                    matches.append((0, None, 0, None, base))
+                continue
+            server = packet['key'] == self.reverse(flow['client'])
+            if not server and packet['key'] != flow['client']:
+                continue
+            seq_base = (flow['server_isn' if server else 'client_isn'] + 1) & MASK32
+            ack_base = (flow['client_isn' if server else 'server_isn'] + 1) & MASK32
+            seq, ack = (packet['wire_seq'] - seq_base) & MASK32, 0
+            if packet['flags'] & 16:
+                ack = (packet['wire_ack'] - ack_base) & MASK32
+            # Current scripted streams fit below halfspace. Persist uses NXT-1.
+            distance = min(seq, (seq + 1) & MASK32) + ack
+            matches.append((distance, seq, ack, seq_base, ack_base))
+        assert matches, ('TCP segment lacks captured SYN origin', packet)
+        matches.sort(key=lambda row: row[0])
+        if len(matches) > 1:
+            assert matches[0][0] != matches[1][0], ('ambiguous incarnation', packet)
+        _, seq, ack, seq_base, ack_base = matches[0]
+        packet.update(seq=seq, ack=ack, seq_base=seq_base, ack_base=ack_base)
         return packet
 
     def final_ack(self, frame):
         packet = wire_tcp(frame)
         if packet is None or packet['flags'] & 0x17 != 0x10:
             return
-        body = packet['body']
-        if len(body) < 7 or not body[0] & 128 or not int.from_bytes(body[1:5], 'big'):
-            return
-        dl = body[5]
-        dcid = body[6:6 + dl].hex()
-        sl = body[6 + dl]
-        scid = body[7 + dl:7 + dl + sl].hex()
         for flow in self.flows.values():
             if (flow['client'] == packet['key'] and flow['synacks'] and
-                    flow['client_cid'] == scid and dcid in (flow['original_cid'], flow['server_cid'])):
-                assert packet['wire_seq'] == (flow['client_isn'] + 1) & MASK32
-                assert packet['wire_ack'] == (flow['server_isn'] + 1) & MASK32
+                    packet['wire_seq'] == (flow['client_isn'] + 1) & MASK32 and
+                    packet['wire_ack'] == (flow['server_isn'] + 1) & MASK32):
                 flow['final_acks'] += 1
 
     def evidence(self):
@@ -224,21 +208,142 @@ def syn_evidence(directory, retransmit=False):
     origins = capture_origins(out / 'bootstrap-client.pcap')
     paired = [flow for flow in origins.evidence() if flow['synacks']]
     assert paired and all(flow['final_acks'] for flow in paired), paired
+    counts = {}
+    for side, syn_flags in (('client', 2), ('server', 0x12)):
+        capture = out / ('bootstrap-' + side + '.pcap')
+        source = [wire_tcp(frame) for _, frame in pcap_frames(capture)]
+        source = [p for p in source if p is not None and p['flags'] & 0x17 == syn_flags]
+        assert source
+        assert len({p['wire_seq'] for p in source}) == 1
+        counts[side] = len(source)
     if retransmit:
-        assert any(len(flow['client_syn_pns']) >= 2 and len(flow['server_syn_pns']) >= 2
-                   for flow in paired), paired
+        assert all(count >= 2 for count in counts.values()), counts
     (out / 'tcp-origins-evidence.json').write_text(json.dumps({
-        'handshakes': paired, 'retransmission_required': retransmit,
+        'handshakes': paired, 'source_syn_submissions': counts,
+        'retransmission_required': retransmit,
     }, indent=2) + '\n')
     print('# native SYN origins: anchored data bases, final ACK and stable retransmissions passed')
+
+
+def reorder_host_resets(packets, source, ends, counts):
+    """Only kernel-counted CLOSED replies to source-proven queued old DATA qualify."""
+    fins = {}
+    for sender in ('client', 'server'):
+        fins[sender] = min(p['time'] for p in packets if p['sender'] == sender and
+                           p['flags'] & 1 and
+                           (p['wire_seq'] + len(p['body']) + 1) & MASK32 == ends[sender])
+    closed = max(min(p['time'] for p in packets if p['sender'] == sender and
+                     p['flags'] & 0x14 == 0x10 and p['wire_ack'] == ends[peer] and
+                     p['time'] >= fins[peer])
+                 for sender, peer in (('client', 'server'), ('server', 'client')))
+    resets = sorted((p for p in packets if p['flags'] & 4), key=lambda p: p['time'])
+    for sender in ('client', 'server'):
+        actual = [p for p in source if p['sender'] == sender and p['flags'] & 4]
+        delivered = [p for p in resets if p['sender'] == sender]
+        before, after = counts[sender]
+        assert before['time'] < min(p['time'] for p in source)
+        assert after['time'] > max(p['time'] for p in packets + source)
+        assert after['out_rsts'] - before['out_rsts'] == len(actual) == len(delivered), \
+            ('kernel reset count or capture mismatch', sender, counts[sender], len(actual))
+    assert not any(p['body'] and p['time'] > closed for p in source), \
+        'new DATA source output after both FIN acknowledgments'
+    used_source, used_trigger, used_reset, evidence = set(), set(), set(), []
+    for reset in resets:
+        assert reset['time'] > closed and reset['flags'] == 4
+        assert not reset['wire_ack'] and not reset['window'] and not reset['options']
+        assert not reset['body']
+        assert len(bytes.fromhex(reset['frame'])) == (54 if reset['family'] == 4 else 74), \
+            'RST has native padding or unexpected header geometry'
+        copies = [(i, p) for i, p in enumerate(source) if i not in used_reset and
+                  p['sender'] == reset['sender'] and p['frame'] == reset['frame'] and
+                  closed < p['time'] <= reset['time']]
+        assert copies, ('reset lacks its actual kernel-counted source copy', reset)
+        index, emitted = copies[0]
+        used_reset.add(index)
+        triggers = [(i, p) for i, p in enumerate(packets) if i not in used_trigger and
+                    p['sender'] != reset['sender'] and
+                    p['key'] == WireOrigins.reverse(reset['key']) and
+                    p['flags'] & 0x17 == 0x10 and p['body'] and
+                    1024 <= p['ip_size'] < 2048 and
+                    closed < p['time'] < emitted['time'] and
+                    reset['wire_seq'] == p['wire_ack']]
+        assert triggers, ('CLOSED reset lacks a new queued DATA trigger', reset)
+        index, trigger = max(triggers, key=lambda item: item[1]['time'])
+        used_trigger.add(index)
+        copies = [(i, p) for i, p in enumerate(source) if i not in used_source and
+                  p['sender'] == trigger['sender'] and p['frame'] == trigger['frame'] and
+                  p['time'] < closed]
+        assert copies, ('queued DATA lacks its actual pre-close source copy', trigger)
+        index, sent = copies[0]
+        used_source.add(index)
+        evidence.append({'owner': 'kernel TCP CLOSED', 'sender': reset['sender'],
+                         'both_fin_acks_time': closed, 'source_time': sent['time'],
+                         'trigger_time': trigger['time'], 'reset_time': reset['time'],
+                         'reset_source_time': emitted['time'],
+                         'reset_wire_seq': reset['wire_seq'],
+                         'trigger_wire_ack': trigger['wire_ack'],
+                         'trigger_sha256': hashlib.sha256(
+                             bytes.fromhex(trigger['frame'])).hexdigest()})
+    return evidence
+
+
+def reorder_host_evidence(out, request, response):
+    origins = capture_origins(out / 'to-server.pcap').evidence()
+    assert len(origins) == 1 and origins[0]['synacks']
+    flow = origins[0]
+    key = tuple(flow['client'])
+    packets, source, counts = [], [], {}
+    for sender, target in (('client', 'server'), ('server', 'client')):
+        for name, destination in ((f'to-{target}', packets), (f'{sender}-source', source)):
+            assert '0 packets dropped by kernel' in (out / f'{name}.capture').read_text()
+            for stamp, frame in pcap_frames(out / f'{name}.pcap'):
+                p = wire_tcp(frame)
+                if p is None:
+                    continue
+                assert p['key'] == (key if sender == 'client' else WireOrigins.reverse(key))
+                p.update(time=stamp, sender=sender, frame=frame.hex(),
+                         family=4 if frame[12:14] == b'\x08\x00' else 6,
+                         ip_size=int.from_bytes(frame[16:18] if frame[12:14] == b'\x08\x00'
+                                                else frame[18:20], 'big'))
+                destination.append(p)
+        counts[sender] = [json.loads((out / f'{sender}-host-{phase}.json').read_text())
+                          for phase in ('before', 'after')]
+    ends = {'client': (flow['client_isn'] + 1 + len(request) + 1) & MASK32,
+            'server': (flow['server_isn'] + 1 + len(response) + 1) & MASK32}
+    evidence = reorder_host_resets(packets, source, ends, counts)
+    (out / 'closed-host-reset-evidence.json').write_text(json.dumps(
+        {'kernel_counts': counts, 'causal_chains': evidence}, indent=2) + '\n')
+    return evidence
+
+
+def pair(directory, reorder=False):
+    out = Path(directory)
+    expected = (out / 'expected').read_bytes()
+    assert expected.startswith(b'echo: ') and expected.endswith(b'\n')
+    response, request = expected[:-1], expected[6:-1]
+    assert (out / 'client.out').read_bytes() == expected
+    streams = {}
+    for side, payload, peer in (('server', request, response), ('client', response, request)):
+        assert '0 packets dropped by kernel' in (out / ('to-' + side + '.capture')).read_text()
+        stream = decode(out / ('to-' + side + '.pcap'), payload)
+        assert len({p['offset'] for p in stream['data']}) > 1
+        assert any(p['type'] == 'fin' for p in stream['controls'])
+        assert any(p['next'] == len(peer) + 1 for p in stream['acks'])
+        headers = reset_packets(out / ('to-' + side + '.pcap'))
+        if not reorder:
+            assert not any(p['flags'] & 4 for p in headers)
+        streams[side] = stream
+    if reorder:
+        streams['closed_host_resets'] = reorder_host_evidence(out, request, response)
+    (out / 'pair-tcp-evidence.json').write_text(json.dumps(streams, indent=2) + '\n')
+    print('# native standard TCP: exact payload, multi-packet stream, FIN and ACK passed')
 
 
 def selector_evidence(directory, frontier=None):
     out = Path(directory)
     learned = json.loads((out / 'wire-origins.json').read_text())
     actual = [flow for flow in capture_origins(out / 'client-side.pcap').evidence()
-              if flow['synacks'] and flow['client_cid'] == learned['client_cid'] and
-              flow['original_cid'] == learned['original_cid'] and
+              if flow['synacks'] and flow['client_isn'] == learned['client_isn'] and
               tuple(flow['client']) == tuple(learned['client'])]
     assert len(actual) == 1, (learned, actual)
     flow = actual[0]
@@ -270,13 +375,9 @@ def selector_evidence(directory, frontier=None):
 
 
 def inject(filename):
-    """Inject an interior TCP ACK using a real dropped peer packet's PN/ranges.
-    Frontier 536 crosses only this fixture's >=1024 ACK-loss selector. PING supplies
-    an intermediate packet-receipt witness."""
-    if (
-        os.environ.get('ZXDP_RUN_FIXTURE') != '1'
-        or os.readlink('/proc/self/ns/net') == os.readlink('/proc/1/ns/net')
-    ):
+    """Inject an interior standard TCP ACK from a real receiver header."""
+    if (os.environ.get('ZXDP_RUN_FIXTURE') != '1' or
+            os.readlink('/proc/self/ns/net') == os.readlink('/proc/1/ns/net')):
         raise RuntimeError('requires the private native packet fixture')
     out = Path(filename)
     rx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
@@ -284,269 +385,124 @@ def inject(filename):
     tx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
     tx.bind(('zutcpca', 0))
     out.with_suffix('.ready').write_text('ready')
-
-    def var(b, i):
-        n = 1 << (b[i] >> 6)
-        assert i + n <= len(b)
-        return (int.from_bytes(b[i:i + n], 'big') & (1 << 8 * n - 2) - 1, i + n)
-
-    def checksum(b):
-        if len(b) & 1:
-            b += b'\x00'
-        total = sum(struct.unpack('!%dH' % (len(b) // 2), b))
-        while total >> 16:
-            total = (total & 65535) + (total >> 16)
-        return ~total & 65535
     origins = WireOrigins()
     first = None
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         rx.settimeout(deadline - time.monotonic())
-        wire, address = rx.recvfrom(65535)
+        wire = rx.recv(65535)
         origins.observe(wire)
-        eth = int.from_bytes(wire[12:14], 'big')
-        if eth == 2048:
-            ip = bytearray(wire[14:14 + int.from_bytes(wire[16:18], 'big')])
-            if ip[9] != 6:
-                continue
-            iphead = (ip[0] & 15) * 4
-        elif eth == 34525:
-            ip = bytearray(wire[14:14 + 40 + int.from_bytes(wire[18:20], 'big')])
-            if ip[6] != 6:
-                continue
-            iphead = 40
-        else:
+        raw = wire_tcp(wire)
+        packet = origins.relative(wire) if raw is not None and not raw['flags'] & 2 else None
+        if packet is None:
             continue
-        tcp = ip[iphead:]
-        head = (tcp[12] >> 4) * 4
-        body = bytes(tcp[head:])
-        if not body or body[0] & 128:
+        if packet['dport'] == 18181 and len(packet['body']) >= 1024 and first is None:
+            first = (time.monotonic(), time.time(), len(packet['body']))
+        if (packet['sport'] != 18181 or first is None or not packet['flags'] & 16 or
+                packet['ack'] < 1072):
             continue
-        sport, dport = struct.unpack('!HH', tcp[:4])
-        if dport == 18181 and len(ip) >= 1024 and (first is None):
-            first = (time.monotonic(), time.time())
-        if sport != 18181 or first is None:
-            continue
-        sh = 1 + 8 + (body[0] & 3) + 1
-        if sh >= len(body) or body[sh] not in (2, 3):
-            continue
-        relative = origins.relative(wire)
-        frontier = relative['ack']
-        if frontier < 1072:
-            continue
-        inner = sh
-        t = body[sh]
-        i = sh + 1
-        largest, i = var(body, i)
-        delay, i = var(body, i)
-        nr, i = var(body, i)
-        length, i = var(body, i)
-        for n in range(nr):
-            gap, i = var(body, i)
-            length, i = var(body, i)
-        if t == 3:
-            for n in range(3):
-                v, i = var(body, i)
         partial = 536
-        payload = body[:sh] + body[inner:i] + b'\x01'
-        tcp = tcp[:head] + payload
-        tcp[8:12] = ((relative['ack_base'] + partial) & MASK32).to_bytes(4, 'big')
-        tcp[16:18] = b'\x00\x00'
-        if eth == 2048:
-            pseudo = bytes(ip[12:20]) + b'\x00\x06' + len(tcp).to_bytes(2, 'big')
-            header = ip[:iphead]
-            header[2:4] = (iphead + len(tcp)).to_bytes(2, 'big')
-            header[10:12] = b'\x00\x00'
-            header[10:12] = checksum(bytes(header)).to_bytes(2, 'big')
+        assert partial < first[2]
+        tcp = bytearray(packet['tcp'][:(packet['tcp'][12] >> 4) << 2])
+        tcp[13] = 16
+        tcp[8:12] = ((packet['ack_base'] + partial) & MASK32).to_bytes(4, 'big')
+        # Retain actual TS echo; SACK blocks would make an unrelated selective claim.
+        index = 20
+        while index < len(tcp):
+            kind = tcp[index]
+            if not kind:
+                break
+            if kind == 1:
+                index += 1
+                continue
+            length = tcp[index + 1]
+            assert length >= 2 and index + length <= len(tcp)
+            if kind == 5:
+                tcp[index:index + length] = b'\1' * length
+            index += length
+        ip = wire[14:]
+        if wire[12:14] == b'\x08\x00':
+            head = bytearray(ip[:(ip[0] & 15) << 2])
+            head[2:4] = (len(head) + len(tcp)).to_bytes(2, 'big')
+            head[10:12] = b'\0\0'
+            head[10:12] = abort_checksum(bytes(head)).to_bytes(2, 'big')
+            pseudo = bytes(head[12:20]) + b'\0\6' + len(tcp).to_bytes(2, 'big')
         else:
-            pseudo = bytes(ip[8:40]) + len(tcp).to_bytes(4, 'big') + b'\x00\x00\x00\x06'
-            header = ip[:40]
-            header[4:6] = len(tcp).to_bytes(2, 'big')
-        tcp[16:18] = checksum(pseudo + bytes(tcp)).to_bytes(2, 'big')
-        packet = wire[:14] + bytes(header) + bytes(tcp)
-        wait = first[0] + 0.15 - time.monotonic()
+            head = bytearray(ip[:40])
+            head[4:6] = len(tcp).to_bytes(2, 'big')
+            pseudo = bytes(head[8:40]) + len(tcp).to_bytes(4, 'big') + b'\0\0\0\6'
+        tcp[16:18] = b'\0\0'
+        tcp[16:18] = abort_checksum(pseudo + bytes(tcp)).to_bytes(2, 'big')
+        injected = wire[:14] + bytes(head) + bytes(tcp)
+        wait = first[0] + .15 - time.monotonic()
         if wait > 0:
             time.sleep(wait)
         stamp = time.time()
-        sent = tx.send(packet)
-        assert sent == len(packet)
+        assert tx.send(injected) == len(injected)
         out.write_text(json.dumps({
-            'partial_frontier': partial,
-            'original_frontier': frontier,
-            'wire_original_frontier': relative['wire_ack'],
-            'ack_base': relative['ack_base'],
-            'wire_partial_frontier': (relative['ack_base'] + partial) & MASK32,
-            'peer_pn': int.from_bytes(body[9:sh], 'big'),
-            'ack_largest_client_pn': largest,
-            'first_data_time': first[1],
-            'injected_time': stamp,
+            'partial_frontier': partial, 'original_frontier': packet['ack'],
+            'wire_original_frontier': packet['wire_ack'], 'ack_base': packet['ack_base'],
+            'wire_partial_frontier': (packet['ack_base'] + partial) & MASK32,
+            'first_data_time': first[1], 'injected_time': stamp,
             'delay_from_first_data': stamp - first[1],
-            'packet_sha256': hashlib.sha256(packet).hexdigest(),
+            'packet_sha256': hashlib.sha256(injected).hexdigest(),
         }, indent=2) + '\n')
         rx.close()
         tx.close()
-        break
-    else:
-        raise RuntimeError('no established DATA/ACK suitable for partial ACK injection')
+        return
+    raise RuntimeError('no established DATA/ACK suitable for partial ACK injection')
 
 
-def decode(path, expected, cid=None):
+def decode(path, expected, key=None, base=None):
     origins = capture_origins(path)
-    raw = path.read_bytes()
-    formats = {
-        b'\xd4\xc3\xb2\xa1': ('<', 1000000),
-        b'M<\xb2\xa1': ('<', 1000000000),
-        b'\xa1\xb2\xc3\xd4': ('>', 1000000),
-        b'\xa1\xb2<M': ('>', 1000000000),
-    }
-    endian, scale = formats[raw[:4]]
-    assert struct.unpack(endian + 'I', raw[20:24])[0] == 1
-    pos = 24
-    data = []
-    acks = []
-    controls = []
+    data, acks, controls = [], [], []
     coverage = bytearray(len(expected))
-    cids = set()
-    unknown = set()
     packets = 0
-    while pos < len(raw):
-        sec, sub, cap, wire = struct.unpack(endian + 'IIII', raw[pos:pos + 16])
-        pos += 16
-        frame = raw[pos:pos + cap]
-        pos += cap
+    for stamp, frame in pcap_frames(path):
+        packet = origins.relative(frame)
+        if packet is None:
+            continue
+        if key is not None and packet['key'] != tuple(key):
+            continue
+        if base is not None and packet['seq_base'] != base:
+            continue
         packets += 1
-        assert len(frame) == cap and cap == wire
-        eth = int.from_bytes(frame[12:14], 'big')
-        ip = frame[14:]
-        if eth == 2048:
-            if ip[9] != 6:
-                continue
-            tcp = ip[(ip[0] & 15) * 4:int.from_bytes(ip[2:4], 'big')]
-        elif eth == 34525:
-            if ip[6] != 6:
-                continue
-            tcp = ip[40:40 + int.from_bytes(ip[4:6], 'big')]
-        else:
-            continue
-        p = tcp[(tcp[12] >> 4) * 4:]
-        stamp = sec + sub / scale
-        if not p:
-            continue
-        if p[0] & 128:
-            dl = p[5]
-            sl = p[6 + dl]
-            cids.update([dl, sl])
-            continue
-        assert p[0] & 64
-        destination = p[1:9].hex()
-        if cid is not None and destination != cid:
-            continue
-        i = 1 + 8 + (p[0] & 3) + 1
-        pn = int.from_bytes(p[9:i], 'big')
-        relative = origins.relative(frame)
-        seq, frontier = relative['seq'], relative['ack']
-        width = int.from_bytes(tcp[14:16], 'big')
-        ack = {'wire_seq': relative['wire_seq'], 'wire_ack': relative['wire_ack'],
-               'seq_base': relative['seq_base'], 'ack_base': relative['ack_base'],
-               'time': stamp, 'pn': pn, 'next': frontier, 'seq': seq,
-               'window': width, 'ranges': [], 'cid': destination}
-        if tcp[13] & 16:
-            acks.append(ack)
-
-        def var():
-            nonlocal i
-            n = 1 << (p[i] >> 6)
-            assert i + n <= len(p)
-            v = int.from_bytes(p[i:i + n], 'big') & (1 << n * 8 - 2) - 1
-            i += n
-            return v
-        while i < len(p):
-            t = p[i]
-            i += 1
-            if t in (0, 1, 30):
-                if t == 1 and seq + 1 == len(expected) // 2:
-                    controls.append({'time': stamp, 'pn': pn, 'type': 1,
-                                     'value': seq + 1, 'cid': destination})
-                continue
-            if t in (2, 3):
-                largest = var()
-                delay = var()
-                nr = var()
-                first = var()
-                low = largest - first
-                ranges = [[low, largest]]
-                for unused in range(nr):
-                    gap = var()
-                    length = var()
-                    high = low - gap - 2
-                    low = high - length
-                    ranges.append([low, high])
-                if t == 3:
-                    var()
-                    var()
-                    var()
-                ack['ranges'] = ranges
-            elif 8 <= t <= 15:
-                offset = var() if t & 4 else 0
-                length = var() if t & 2 else len(p) - i
-                body = p[i:i + length]
-                assert len(body) == length
-                i += length
-                assert seq == offset & 0xffffffff, (path, seq, offset)
-                assert body == expected[offset:offset + length], (path, offset, length)
-                coverage[offset:offset + length] = b'\x01' * length
-                if length:
-                    data.append({
-                        'time': stamp,
-                        'pn': pn,
-                        'offset': offset,
-                        'length': length,
-                        'fin': bool(t & 1),
-                        'cid': destination,
-                        'sha256': hashlib.sha256(body).hexdigest(),
-                    })
-            elif t == 4:
-                var()
-                var()
-            elif t in (16, 20, 31):
-                raise AssertionError('native legacy byte ACK/window carrier')
-            elif t in (5, 25):
-                var()
-            elif t in (26, 27):
-                i += 8
-            elif t in (28, 29):
-                break
-            else:
-                unknown.add(t)
-                break
-    assert cids == {8}, (path, cids)
+        seq, body = packet['seq'], packet['body']
+        if packet['flags'] & 16:
+            acks.append({'time': stamp, 'next': packet['ack'], 'seq': seq,
+                         'window': packet['window'], 'wire_seq': packet['wire_seq'],
+                         'wire_ack': packet['wire_ack'], 'seq_base': packet['seq_base'],
+                         'ack_base': packet['ack_base'], 'options': packet['options']})
+        if body:
+            assert seq + len(body) <= len(expected), (path, seq, len(body))
+            assert body == expected[seq:seq + len(body)], (path, seq, len(body))
+            coverage[seq:seq + len(body)] = b'\1' * len(body)
+            data.append({'time': stamp, 'offset': seq, 'length': len(body),
+                         'fin': bool(packet['flags'] & 1), 'key': packet['key'],
+                         'seq_base': packet['seq_base'],
+                         'sha256': hashlib.sha256(body).hexdigest()})
+        if packet['flags'] & 1:
+            assert seq + len(body) == len(expected), (path, seq, len(body), len(expected))
+            controls.append({'time': stamp, 'type': 'fin', 'value': seq + len(body)})
+        elif not body and packet['flags'] & 0x1f == 0x10:
+            frontier = max((v['offset'] + v['length'] for v in data), default=0)
+            if (seq + 1) & MASK32 == frontier:
+                controls.append({'time': stamp, 'type': 'persist', 'value': frontier})
     assert all(coverage), (path, sum(coverage), len(expected))
-    unique = []
-    seen = set()
-    maximum = -1
-    reordered = False
-    for d in data:
-        offset = d['offset']
+    unique, seen, maximum, reordered = [], set(), -1, False
+    for packet in data:
+        offset = packet['offset']
         if offset in seen:
             continue
         seen.add(offset)
         unique.append(offset)
-        if offset < maximum:
-            reordered = True
+        reordered |= offset < maximum
         maximum = max(maximum, offset)
-    return {
-        'packets': packets,
-        'data': data,
-        'acks': acks,
-        'controls': controls,
-        'first_seen_offsets': unique,
-        'reordered': reordered,
-        'payload_bytes_covered': sum(coverage),
-        'expected_bytes': len(expected),
-        'unknown_control_types': sorted(unknown),
-        'pcap_sha256': hashlib.sha256(raw).hexdigest(),
-        'tcp_origins': origins.evidence(),
-    }
+    return {'packets': packets, 'data': data, 'acks': acks, 'controls': controls,
+            'first_seen_offsets': unique, 'reordered': reordered,
+            'payload_bytes_covered': sum(coverage), 'expected_bytes': len(expected),
+            'pcap_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+            'tcp_origins': origins.evidence()}
 
 
 
@@ -573,28 +529,23 @@ def check(directory, mode):
                   if packet["offset"] == 0 and packet["length"] == first["length"]]
         assert len(copies) >= 3
         assert len({packet["sha256"] for packet in copies}) == 1
-        assert len({packet["pn"] for packet in copies}) == len(copies)
         gaps = [round(copies[i + 1]["time"] - copies[i]["time"], 6)
                 for i in range(len(copies) - 1)]
         evidence = {"offset": 0, "length": first["length"], "gaps_seconds": gaps,
-                    "packet_numbers": [packet["pn"] for packet in copies],
                     "payload_sha256": first["sha256"]}
         if mode == "ack-loss":
             assert gaps[0] > .15 and gaps[1] > gaps[0] * 1.5
         else:
             injection = json.loads((out / "injection.json").read_text())
-            peer = injection["peer_pn"]
             partial = injection["partial_frontier"]
             assert 0 < partial < first["length"]
             receipts = [ack for ack in streams["client"]["acks"]
-                        if ack["next"] == partial and ack["pn"] == peer]
+                        if ack["next"] == partial]
             assert len(receipts) == 1
             stamp = receipts[0]["time"]
             delay = stamp - copies[0]["time"]
             restart = copies[1]["time"] - stamp
             assert .12 < delay < .19 and .15 < restart < .30 and gaps[0] > .30
-            assert any(ack["time"] >= stamp and any(lo <= peer <= hi for lo, hi in ack["ranges"])
-                       for ack in streams["server"]["acks"])
             evidence.update(partial_ack_frontier=partial,
                             injection_delay_seconds=round(delay, 6),
                             retry_since_partial_ack_seconds=round(restart, 6))
@@ -623,22 +574,22 @@ def window(directory, restart=False, lost=False):
         if restart:
             streams = {}
             for side, stream in decoded.items():
-                cids = {p['cid'] for p in stream['data']
+                keys = {p['key'] for p in stream['data']
                         if p['offset'] == 0 and p['length'] == size}
-                assert len(cids) == 1, (side, size, cids)
+                assert len(keys) == 1, (side, size, keys)
                 streams[side] = decode(out / ('to-' + side + '.pcap'),
-                                       message[:size] * 2, next(iter(cids)))
+                                       message[:size] * 2, next(iter(keys)))
         for side, peer in (('client', 'server'), ('server', 'client')):
             stream = streams[side]
             other = streams[peer]
             capture = (out / ('to-' + side + '.capture')).read_text()
             assert '0 packets dropped by kernel' in capture
-            assert not stream['unknown_control_types']
             first = next(p for p in stream['data'] if p['offset'] == 0)
             second = next(p for p in stream['data'] if p['offset'] == size)
             assert first['length'] == second['length'] == size
             assert second['time'] - first['time'] > 3.2
-            probes = [p for p in stream['controls'] if p['type'] == 1 and p['value'] == size]
+            probes = [p for p in stream['controls'] if p['type'] == 'persist' and
+                      p['value'] == size]
             assert len(probes) >= 2, (side, probes)
             gap = probes[1]['time'] - probes[0]['time']
             assert .9 < probes[0]['time'] - first['time'] < 1.5
@@ -676,41 +627,28 @@ def window(directory, restart=False, lost=False):
           + 'exact bytes, probe/backoff/reply and immediate reopening passed')
 
 
-def retired_recovery(packets, active, data, first_pn=0, next_pn=None):
-    """Match a retired ACK to repeated byte-bearing DATA or FIN, never an ACK."""
-    peer = [p for p in packets if p['sport'] != active]
-    peer_cid = data[0]['cid']
-    active_cid = next(p['cid'] for p in packets if p['sport'] == active and p['flags'] & 8)
-    payloads = {(p['cid'], p['pn']): p for p in data}
-    requests = []
-    for packet in peer:
-        if packet['flags'] & 4 or not packet['flags'] & 9:
-            continue
-        payload = payloads.get((packet['cid'], packet['pn']))
-        size = payload['length'] if payload else 0
-        if packet['flags'] & 8:
-            assert payload and size > 0 and packet['seq'] == payload['offset'], packet
+def retired_recovery(packets, active, data, after=0):
+    """Cold reply follows a repeated byte-bearing request after owner/drop gates."""
+    requests = [p for p in packets if p['sport'] != active and not p['flags'] & 4 and
+                (p['data_length'] or p['flags'] & 1)]
+    for packet in requests:
+        assert packet['seq'] < 20
+        if packet['data_length']:
+            assert packet['seq'] == 0 and packet['data_length'] == 19
         if packet['flags'] & 1:
-            assert packet['seq'] + size == 19, packet
-        assert packet['seq'] < 20 and packet['cid'] == peer_cid, packet
-        requests.append(dict(packet, data_length=size))
-    replies = [p for p in packets if p['sport'] == active and p['flags'] == 0x10
-               and p['pn_length'] == 4 and p['body'] == '00'
-               and first_pn <= p['pn'] and (next_pn is None or p['pn'] < next_pn)]
-    assert replies and all(p['seq'] == 20 and p['ack'] == 20 and
-                           p['cid'] == active_cid for p in replies), replies
-    chains = []
-    previous = float('-inf')
+            assert packet['seq'] + packet['data_length'] == 19
+    replies = [p for p in packets if p['sport'] == active and p['flags'] == 0x10 and
+               not p['data_length'] and not p['window'] and
+               p['time'] > after and p['ack'] == 20]
+    assert replies and all(p['seq'] == 20 for p in replies), replies
+    chains, previous = [], after
     for reply in replies:
         candidates = [p for p in requests if previous < p['time'] < reply['time']]
-        assert candidates, ('retired ACK without a preceding DATA/FIN request', reply)
+        assert candidates, ('retired ACK without a new DATA/FIN request', reply)
         request = candidates[-1]
-        # A carrier PN changes on RTO; TCP bytes/FIN are the recovery identity.
-        earlier = [p for p in requests if p['time'] < request['time'] and
-                   p['cid'] == request['cid'] and p['seq'] == request['seq'] and
-                   bool(p['flags'] & 8) == bool(request['flags'] & 8) and
-                   p['data_length'] == request['data_length']]
-        assert earlier, ('history response must follow retransmitted DATA/FIN', request)
+        assert any(p['time'] < request['time'] and p['seq'] == request['seq'] and
+                   p['data_length'] == request['data_length'] and
+                   bool(p['flags'] & 1) == bool(request['flags'] & 1) for p in requests), request
         chains.append({'request': request, 'reply': reply})
         previous = reply['time']
     return chains
@@ -723,9 +661,10 @@ def final_ack(directory):
     assert not any(p['flags'] & 4 for p in packets), 'graceful final-ACK recovery emitted RST'
     passive = peer[0]['sport']
     active = 18191 if passive == 18192 else 18192
-    cid = next(p['cid'] for p in peer if p['flags'] & 8)
-    stream = decode(out / 'peer-fin.pcap', b'native-mx-byte-path', cid)
-    chains = retired_recovery(packets, active, stream['data'])
+    key = next(p['key'] for p in peer if p['data_length'])
+    stream = decode(out / 'peer-fin.pcap', b'native-mx-byte-path', key)
+    cut = max((out / 'retired').stat().st_mtime, (out / 'final-ack.loss').stat().st_mtime)
+    chains = retired_recovery(packets, active, stream['data'], cut)
     assert any(p['flags'] & 1 for p in peer), peer
     assert '0 packets dropped by kernel' in (out / 'peer-fin.capture').read_text()
     assert '0 packets dropped by kernel' in (out / 'final-ack.capture').read_text()
@@ -743,30 +682,15 @@ def final_ack(directory):
 
 def fin_window_packet(frame, origins):
     origins.observe(frame)
-    eth = int.from_bytes(frame[12:14], 'big')
-    ip = frame[14:]
-    if eth == 2048 and ip[9] == 6:
-        tcp = ip[(ip[0] & 15) * 4:int.from_bytes(ip[2:4], 'big')]
-    elif eth == 34525 and ip[6] == 6:
-        tcp = ip[40:40 + int.from_bytes(ip[4:6], 'big')]
-    else:
+    raw = wire_tcp(frame)
+    if raw is None or raw['flags'] & 2:
         return None
-    if len(tcp) < 20:
-        return None
-    body = tcp[(tcp[12] >> 4) * 4:]
-    if not body or body[0] & 128:
-        return None
-    inner = 1 + 8 + (body[0] & 3) + 1
     relative = origins.relative(frame)
-    return {
-        'wire_seq': relative['wire_seq'], 'wire_ack': relative['wire_ack'],
-        'seq_base': relative['seq_base'], 'ack_base': relative['ack_base'],
-        'sport': int.from_bytes(tcp[:2], 'big'),
-        'seq': relative['seq'],
-        'ack': relative['ack'],
-        'flags': tcp[13], 'window': int.from_bytes(tcp[14:16], 'big'),
-        'ping': len(body) == inner + 1 and body[inner] == 1,
-    }
+    return {name: relative[name] for name in (
+        'wire_seq', 'wire_ack', 'seq_base', 'ack_base', 'sport', 'dport', 'seq', 'ack',
+        'flags', 'window')} | {
+            'data_length': len(relative['body']),
+            'persist': not relative['body'] and relative['flags'] & 0x1f == 0x10}
 
 
 def fin_window_probe(directory, interface):
@@ -787,7 +711,7 @@ def fin_window_probe(directory, interface):
             continue
         if packet['sport'] == initiator:
             assert not packet['flags'] & 1, packet
-            if packet['ping'] and packet['seq'] == 18 and zero is not None:
+            if packet['persist'] and packet['seq'] == 18 and zero is not None:
                 (out / 'persist-observed.json').write_text(json.dumps({
                     'zero_window': zero, 'persist': packet,
                 }, indent=2) + '\n')
@@ -832,7 +756,7 @@ def fin_window(directory):
     packets.sort(key=lambda packet: packet['time'])
     data = [p for p in packets if p['sport'] == initiator and p['flags'] & 8]
     fins = [p for p in packets if p['sport'] == initiator and p['flags'] & 1]
-    probes = [p for p in packets if p['sport'] == initiator and p['ping']]
+    probes = [p for p in packets if p['sport'] == initiator and p['persist']]
     zero = [p for p in packets if p['sport'] != initiator and p['ack'] == 19
             and not p['window']]
     assert data and data[0]['seq'] == 0 and not data[0]['flags'] & 1, data
@@ -852,38 +776,15 @@ def fin_window(directory):
 
 def reset_packets(path):
     origins = capture_origins(path)
-    raw = path.read_bytes()
-    formats = {
-        b'\xd4\xc3\xb2\xa1': ('<', 1000000),
-        b'M<\xb2\xa1': ('<', 1000000000),
-        b'\xa1\xb2\xc3\xd4': ('>', 1000000),
-        b'\xa1\xb2<M': ('>', 1000000000),
-    }
-    endian, scale = formats[raw[:4]]
-    assert struct.unpack(endian + 'I', raw[20:24])[0] == 1
     packets = []
-    pos = 24
-    while pos < len(raw):
-        sec, sub, cap, wire = struct.unpack(endian + 'IIII', raw[pos:pos + 16])
-        pos += 16
-        frame = raw[pos:pos + cap]
-        pos += cap
-        assert cap == wire and len(frame) == cap
-        packet = fin_window_packet(frame, origins)
+    for stamp, frame in pcap_frames(path):
+        packet = origins.relative(frame)
         if packet is None:
             continue
-        ip = frame[14:]
-        tcp = ip[(ip[0] & 15) * 4:] if frame[12:14] == b'\x08\x00' else ip[40:]
-        body = tcp[(tcp[12] >> 4) * 4:]
-        head = 1 + 8 + (body[0] & 3) + 1
-        packet.update({
-            'time': sec + sub / scale,
-            'dport': int.from_bytes(tcp[2:4], 'big'),
-            'pn': int.from_bytes(body[9:head], 'big'),
-            'cid': body[1:9].hex(),
-            'pn_length': (body[0] & 3) + 1,
-            'body': body[head:].hex(),
-        })
+        packet.pop('tcp')
+        packet['data_length'] = len(packet.pop('body'))
+        packet['persist'] = not packet['data_length'] and packet['flags'] & 0x1f == 0x10
+        packet.update(time=stamp)
         packets.append(packet)
     return packets
 
@@ -900,7 +801,7 @@ def reset_pair(directory):
         reset = resets[0]
         assert reset['sport'] == initiator and reset['flags'] == 0x14, reset
         assert reset['seq'] == 19 and reset['ack'] == 0, reset
-        assert reset['pn_length'] == 4 and reset['body'] == '00', reset
+        assert not reset['data_length'], reset
         # No peer DATA was delivered on this tuple. Once RST arrives, there
         # must be neither an ACK of it nor a reflected reset on the same tuple.
         later_peer = [p for p in old if p['sport'] != initiator and
@@ -935,8 +836,7 @@ def half_close(directory):
     fins = [p for p in headers['server'] if p['flags'] & 1]
     assert fins, headers['server']
     first_fin = min(fins, key=lambda p: p['time'])
-    data_length = next((p['length'] for p in streams['server']['data']
-                        if p['pn'] == first_fin['pn']), 0)
+    data_length = first_fin['data_length']
     assert first_fin['seq'] + data_length == len(request), first_fin
     first_reply = min(streams['client']['data'], key=lambda p: p['time'])
     assert first_reply['time'] > first_fin['time'], (first_fin, first_reply)
@@ -956,15 +856,12 @@ def half_close(directory):
 
 
 def abort_tcp(frame, origins):
-    packet = fin_window_packet(frame, origins)
-    if packet is None:
+    origins.observe(frame)
+    raw = wire_tcp(frame)
+    if raw is None or raw['flags'] & 2:
         return None
-    ip = frame[14:]
-    tcp = ip[(ip[0] & 15) * 4:] if frame[12:14] == b'\x08\x00' else ip[40:]
-    body = tcp[(tcp[12] >> 4) * 4:]
-    head = 1 + 8 + (body[0] & 3) + 1
-    packet.update({'dport': int.from_bytes(tcp[2:4], 'big'),
-                   'pn': int.from_bytes(body[9:head], 'big')})
+    packet = origins.relative(frame)
+    tcp, body = packet.pop('tcp'), packet.pop('body')
     return packet, tcp, body
 
 
@@ -977,17 +874,40 @@ def abort_checksum(data):
     return ~total & 65535
 
 
-def abort_packet(template, seq, pn, frames, flags):
+def timestamp_offset(tcp):
+    head = (tcp[12] >> 4) * 4
+    assert 20 <= head <= min(60, len(tcp))
+    offset = 20
+    while offset < head:
+        kind = tcp[offset]
+        if kind == 0:
+            return None
+        if kind == 1:
+            offset += 1
+            continue
+        assert offset + 2 <= head
+        length = tcp[offset + 1]
+        assert 2 <= length <= head - offset
+        if kind == 8:
+            assert length == 10
+            return offset + 2
+        offset += length
+    return None
+
+
+def tcp_packet(template, seq, payload, flags, tsval=None):
     ip = bytearray(template[14:])
     v4 = template[12:14] == b'\x08\x00'
     iphead = (ip[0] & 15) * 4 if v4 else 40
-    tcp = bytearray(ip[iphead:iphead + 20])
-    assert tcp[12] >> 4 == 5
-    original = bytes(ip[iphead + 20:])
-    assert original[0] & 64 and not original[0] & 128
-    payload = bytes([(original[0] & 0xfc) | 3]) + original[1:9] + pn.to_bytes(4, 'big') + frames
+    tcphead = (ip[iphead + 12] >> 4) * 4
+    assert 20 <= tcphead <= 60 and iphead + tcphead <= len(ip)
+    tcp = bytearray(ip[iphead:iphead + tcphead])
     tcp[4:8] = seq.to_bytes(4, 'big')
     tcp[13] = flags
+    if tsval is not None:
+        offset = timestamp_offset(tcp)
+        if offset is not None:
+            tcp[offset:offset + 4] = (tsval & MASK32).to_bytes(4, 'big')
     tcp[16:18] = b'\x00\x00'
     tcp += payload
     if v4:
@@ -1004,43 +924,23 @@ def abort_packet(template, seq, pn, frames, flags):
     return template[:14] + bytes(ip + tcp)
 
 
-def abort_ranges(body):
-    i = 1 + 8 + (body[0] & 3) + 1
-    ranges = []
-
-    def var():
-        nonlocal i
-        n = 1 << (body[i] >> 6)
-        assert i + n <= len(body)
-        value = int.from_bytes(body[i:i + n], 'big') & ((1 << (8 * n - 2)) - 1)
-        i += n
-        return value
-
-    while i < len(body):
-        kind = body[i]
-        i += 1
-        if kind in (0, 1, 30):
-            continue
-        if kind in (2, 3):
-            largest, delay, count, first = var(), var(), var(), var()
-            low = largest - first
-            ranges.append([low, largest])
-            for unused in range(count):
-                gap, length = var(), var()
-                high = low - gap - 2
-                low = high - length
-                ranges.append([low, high])
-            if kind == 3:
-                var()
-                var()
-                var()
-        elif 8 <= kind <= 15:
-            if kind & 4:
-                var()
-            size = var() if kind & 2 else len(body) - i
-            i += size
-        else:
+def tcp_sacks(tcp, base):
+    index, end, ranges = 20, (tcp[12] >> 4) << 2, []
+    while index < end:
+        kind = tcp[index]
+        if not kind:
             break
+        if kind == 1:
+            index += 1
+            continue
+        length = tcp[index + 1]
+        assert length >= 2 and index + length <= end
+        if kind == 5:
+            assert length >= 10 and (length - 2) % 8 == 0
+            for offset in range(index + 2, index + length, 8):
+                left, right = struct.unpack('!II', tcp[offset:offset + 8])
+                ranges.append([(left - base) & MASK32, (right - base) & MASK32])
+        index += length
     return ranges
 
 
@@ -1072,9 +972,14 @@ def abort_inject(directory, interface):
                 template = frame
                 break
     assert template is not None, 'no actual established DATA suitable for fatal-input injection'
-    original = abort_tcp(template, origins)[0]
-    pn = original['pn'] + 100
-    future = abort_packet(template, (original['seq_base'] + 32) & MASK32, pn, b'\x0e\x20\x01?', 0x18)
+    original, template_tcp, unused = abort_tcp(template, origins)
+    offset = timestamp_offset(template_tcp)
+    # This probe targets final-size handling, so an old copied timestamp must
+    # not turn it into a PAWS test. The out-of-order probe cannot update Recent.
+    fresh_ts = None if offset is None else (
+        int.from_bytes(template_tcp[offset:offset + 4], 'big') + 1000) & MASK32
+    future = tcp_packet(template, (original['seq_base'] + 32) & MASK32,
+                        b'?', 0x18, fresh_ts)
     (out / 'future-data.packet').write_bytes(future)
     assert tx.send(future) == len(future)
     witness = None
@@ -1086,19 +991,20 @@ def abort_inject(directory, interface):
         packet, tcp, body = parsed
         if packet['sport'] != victim or packet['dport'] != original['sport']:
             continue
-        ranges = abort_ranges(body)
-        if any(low <= pn <= high for low, high in ranges):
+        ranges = tcp_sacks(tcp, packet['ack_base'])
+        if [32, 33] in ranges:
             assert packet['ack'] == 19, packet
-            witness = {'header': packet, 'packet_ranges': ranges}
+            witness = {'header': packet, 'sack_blocks': ranges}
             break
     assert witness is not None, 'future DATA was not acknowledged as retained'
     # The FIN's byte position is in-window, but conflicts with that retained byte.
-    final = abort_packet(template, (original['seq_base'] + 19) & MASK32, pn + 1, b'\x0f\x13\x00', 0x11)
+    final = tcp_packet(template, (original['seq_base'] + 19) & MASK32,
+                       b'', 0x11, fresh_ts)
     (out / 'conflicting-fin.packet').write_bytes(final)
     assert tx.send(final) == len(final)
     (out / 'fatal-injection.json').write_text(json.dumps({
-        'template_pn': original['pn'], 'future_pn': pn, 'fin_pn': pn + 1,
         'future_sequence': 32, 'fin_sequence': 19,
+        'probe_timestamp': fresh_ts,
         'retained_future_ack': witness,
         'future_sha256': hashlib.sha256(future).hexdigest(),
         'fin_sha256': hashlib.sha256(final).hexdigest(),
@@ -1122,7 +1028,7 @@ def abort_pair(directory):
         reset = resets[0]
         assert reset['sport'] == victim and reset['flags'] == 0x14, reset
         assert reset['seq'] == 0 and reset['ack'] == (19 if fatal else 0), reset
-        assert reset['body'] == '00' and reset['pn_length'] == 4, reset
+        assert not reset['data_length'], reset
         replies = [p for p in old if p['sport'] != victim and p['time'] > reset['time']
                    and (p['flags'] & 4 or p['flags'] & 0x1d == 0x10)]
         assert not replies, replies
@@ -1136,8 +1042,7 @@ def abort_pair(directory):
     if fatal:
         injection = json.loads((out / 'fatal-injection.json').read_text())
         assert injection['retained_future_ack']['header']['ack'] == 19
-        assert any(low <= injection['future_pn'] <= high for low, high in
-                   injection['retained_future_ack']['packet_ranges'])
+        assert [32, 33] in injection['retained_future_ack']['sack_blocks']
         evidence['injection'] = injection
         evidence['suppressed_injected_ack'] = (out / 'injected-ack.loss').read_text()
         evidence['wire_fault_selector'] = selector_evidence(out, 19)
@@ -1151,15 +1056,14 @@ def native_history(directory):
     passive = 18191 if active == 18192 else 18192
     before = [int(value) for value in (out / 'retired').read_text().split()]
     after = [int(value) for value in (out / 'recovered').read_text().split()]
-    assert before[0] > 0 and before[0] == after[0] and after[1] > before[1]
-    assert before[2:] == after[2:], (before, after)
+    assert before[0] > 0 and before == after and len(before) == 3
     assert (out / 'post-eof').is_file() and (out / 'held-reader').is_file()
     captures = {side: reset_packets(out / (side + '-side.pcap'))
                 for side in ('client', 'server')}
     old_headers = [p for p in captures['client'] if 18192 in (p['sport'], p['dport'])]
     active_header = next(p for p in old_headers if p['sport'] == active)
-    offsets = [(before[2] - active_header['seq_base']) & MASK32,
-               (before[3] - active_header['ack_base']) & MASK32]
+    offsets = [(before[1] - active_header['seq_base']) & MASK32,
+               (before[2] - active_header['ack_base']) & MASK32]
     assert offsets == [20, 20], (before, active_header)
     evidence = {'normalized_closed_frontiers': offsets}
     for side, packets in captures.items():
@@ -1169,8 +1073,8 @@ def native_history(directory):
         assert old and fresh
         streams = {}
         for port in (18191, 18192):
-            cid = next(p['cid'] for p in old if p['sport'] == port)
-            streams[port] = decode(out / (side + '-side.pcap'), b'native-mx-byte-path', cid)
+            key = next(p['key'] for p in old if p['sport'] == port)
+            streams[port] = decode(out / (side + '-side.pcap'), b'native-mx-byte-path', key)
         active_fin = next(p for p in old if p['sport'] == active and p['flags'] & 1)
         positive_reply = min(streams[passive]['data'], key=lambda p: p['time'])
         assert positive_reply['time'] > active_fin['time'], (active_fin, positive_reply)
@@ -1185,7 +1089,9 @@ def native_history(directory):
     fins = [p for p in old if p['sport'] == passive and p['flags'] & 1]
     assert fins, old
     data = evidence[active_side]['first_streams'][passive]['data']
-    chains = retired_recovery(old, active, data, before[1], after[1])
+    cut = max((out / 'retired').stat().st_mtime,
+              (out / 'native-final-ack.loss').stat().st_mtime)
+    chains = retired_recovery(old, active, data, cut)
     replies = [chain['reply'] for chain in chains]
     evidence['retired_recovery_chains'] = chains
     evidence['closed_record_before'] = before
@@ -1200,35 +1106,15 @@ def native_history(directory):
 
 
 def admission_packets(path):
-    raw = path.read_bytes()
-    formats = {b'\xd4\xc3\xb2\xa1': ('<', 1000000), b'M<\xb2\xa1': ('<', 1000000000),
-               b'\xa1\xb2\xc3\xd4': ('>', 1000000), b'\xa1\xb2<M': ('>', 1000000000)}
-    endian, scale = formats[raw[:4]]
-    assert struct.unpack(endian + 'I', raw[20:24])[0] == 1
     packets = []
-    pos = 24
-    while pos < len(raw):
-        sec, sub, cap, wire = struct.unpack(endian + 'IIII', raw[pos:pos + 16])
-        pos += 16
-        frame = raw[pos:pos + cap]
-        pos += cap
-        assert cap == wire and len(frame) == cap
-        ip = frame[14:]
-        if frame[12:14] == b'\x08\x00' and ip[9] == 6:
-            tcp = ip[(ip[0] & 15) * 4:int.from_bytes(ip[2:4], 'big')]
-        elif frame[12:14] == b'\x86\xdd' and ip[6] == 6:
-            tcp = ip[40:40 + int.from_bytes(ip[4:6], 'big')]
-        else:
+    for stamp, frame in pcap_frames(path):
+        packet = wire_tcp(frame)
+        if packet is None:
             continue
-        body = tcp[(tcp[12] >> 4) * 4:]
-        if not body:
-            continue
-        packets.append({'sport': int.from_bytes(tcp[:2], 'big'),
-                        'dport': int.from_bytes(tcp[2:4], 'big'),
-                        'flags': tcp[13], 'long': bool(body[0] & 128),
-                        'cid': (body[6:6 + body[5]] if body[0] & 128 else body[1:9]).hex(),
-                        'version': int.from_bytes(body[1:5], 'big') if body[0] & 128 else None,
-                        'time': sec + sub / scale})
+        packet.pop('tcp')
+        packet['data_length'] = len(packet.pop('body'))
+        packet['time'] = stamp
+        packets.append(packet)
     return packets
 
 
@@ -1248,19 +1134,26 @@ def shared_admission(directory):
             assert sum(bool(p['flags'] & 1) for p in flow) >= 2, flow
             streams = {}
             for source in (port, 18195 if port == 18196 else 18191):
-                cid = next(p['cid'] for p in flow if p['sport'] == source)
-                streams[source] = decode(path, b'native-mx-byte-path', cid)
+                key = next(p['key'] for p in flow if p['sport'] == source)
+                streams[source] = decode(path, b'native-mx-byte-path', key)
             flows[port] = streams
         if passive:
             denied = [p for p in all_packets if p['sport'] == 18193 and p['dport'] == 18195]
-            assert denied and any(p['long'] for p in denied), denied
-            assert not any(p['sport'] == 18195 and p['dport'] == 18193 for p in all_packets)
-            evidence[side] = {'flows': flows, 'denied_initials': denied}
+            assert denied and any(bool(p['flags'] & 2) for p in denied), denied
+            requests = [p for p in denied if p['flags'] & 0x17 == 2]
+            refusals = [p for p in all_packets if p['sport'] == 18195 and p['dport'] == 18193]
+            assert refusals and all(p['flags'] == 0x14 and not p['data_length'] and
+                not p['wire_seq'] and not p['window'] and not p['options'] and
+                any(q['time'] < p['time'] and
+                    p['wire_ack'] == (q['wire_seq'] + 1) & MASK32 for q in requests)
+                for p in refusals)
+            evidence[side] = {'flows': flows, 'denied_initials': denied,
+                              'refusal_resets': refusals}
         else:
             assert not any(18194 in (p['sport'], p['dport']) or
                            18198 in (p['sport'], p['dport']) for p in all_packets)
             pending = [p for p in all_packets if p['sport'] == 18197 and p['dport'] == 18199]
-            assert pending and any(p['long'] for p in pending), pending
+            assert pending and any(bool(p['flags'] & 2) for p in pending), pending
             evidence[side] = {'flows': flows, 'pending_initials': pending,
                               'mapped_denial_packets': 0}
     (out / 'shared-admission-evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
@@ -1281,15 +1174,15 @@ def conservative_tuple(directory):
             assert flow and sum(bool(p['flags'] & 1) for p in flow) >= 2, flow
             streams = {}
             for source in (port, 18191):
-                cid = next(p['cid'] for p in flow if p['sport'] == source)
-                streams[source] = decode(path, b'native-mx-byte-path', cid)
+                key = next(p['key'] for p in flow if p['sport'] == source)
+                streams[source] = decode(path, b'native-mx-byte-path', key)
             flows[port] = streams
         first_fin = min(p['time'] for p in packets if
                         49152 in (p['sport'], p['dport']) and p['flags'] & 1)
         late_initials = [p for p in envelopes if p['sport'] == 49152 and
-                         p['long'] and p['time'] > first_fin]
+                         bool(p['flags'] & 2) and p['time'] > first_fin]
         assert not late_initials, late_initials
-        new_initials = [p for p in envelopes if p['sport'] == 49153 and p['long']]
+        new_initials = [p for p in envelopes if p['sport'] == 49153 and bool(p['flags'] & 2)]
         assert new_initials and min(p['time'] for p in new_initials) > first_fin
         evidence[side] = {'flows': flows, 'rejected_reuse_initials': late_initials,
                           'automatic_port_initials': new_initials}
@@ -1318,7 +1211,7 @@ def positive_window_probe(directory, interface):
                 zero = packet
             elif packet['sport'] == 18192:
                 assert not packet['flags'] & 1, packet
-                if packet['ping'] and packet['seq'] == 999 and zero is not None:
+                if packet['persist'] and packet['seq'] == 999 and zero is not None:
                     evidence.append({'zero_window': zero, 'persist': packet})
                     with (out / name).open('w') as gate:
                         gate.write('R')
@@ -1337,7 +1230,8 @@ def positive_window(directory):
         path = out / (side + '-side.pcap')
         packets = reset_packets(path)
         assert packets and not any(p['flags'] & 4 for p in packets), packets
-        stream = decode(path, expected)
+        key = next(p['key'] for p in packets if p['sport'] == 18192 and p['data_length'])
+        stream = decode(path, expected, key)
         data = stream['data']
         assert len(data) >= 3 and stream['payload_bytes_covered'] == 1000, stream
         assert all(p['offset'] == 0 and p['length'] == 1000 and not p['fin'] for p in data), data
@@ -1352,14 +1246,15 @@ def positive_window(directory):
         for frontier in (400, 800):
             zero = next(p for p in packets if p['sport'] == 18191 and
                         p['ack'] == frontier and not p['window'])
-            probe = next(p for p in packets if p['sport'] == 18192 and p['ping'] and
+            probe = next(p for p in packets if p['sport'] == 18192 and p['persist'] and
                          p['seq'] == 999 and p['time'] > zero['time'])
             opening = next(p for p in packets if p['sport'] == 18191 and
                            p['ack'] == frontier and p['window'] == 400 and
                            p['time'] > probe['time'])
             assert not any(zero['time'] < p['time'] < opening['time'] for p in data), phases
             phases.append({'zero': zero, 'probe': probe, 'opening': opening})
-        assert any(p['sport'] == 18191 and p['flags'] & 1 for p in packets), packets
+        reverse_fin = [p for p in packets if p['sport'] == 18191 and p['flags'] & 1]
+        assert reverse_fin and all(not p['data_length'] and not p['seq'] for p in reverse_fin)
         evidence[side] = {'original_data': data, 'zero_reopen': phases,
                           'fin_credit': eligible, 'final_ack': final, 'standalone_fin': client_fin}
     evidence['observed_probes'] = json.loads((out / 'positive-window-probes.json').read_text())
@@ -1384,7 +1279,7 @@ def native_lifecycle(directory):
             reset = resets[0]
             assert reset['sport'] == initiator and reset['flags'] == 0x14, reset
             assert reset['seq'] == 19 and reset['ack'] == 0, reset
-            assert reset['body'] == '00' and reset['pn_length'] == 4, reset
+            assert not reset['data_length'], reset
             assert not any(p['sport'] == receiver and p['time'] > reset['time'] for p in old)
             assert not any(p['flags'] & 1 for p in old), old
             fresh = [p for p in packets if 18193 in (p['sport'], p['dport'])]
@@ -1392,8 +1287,8 @@ def native_lifecycle(directory):
             assert sum(bool(p['flags'] & 1) for p in fresh) >= 2
             streams = {}
             for port in (18193, 18195):
-                cid = next(p['cid'] for p in fresh if p['sport'] == port)
-                streams[port] = decode(path, b'native-mx-byte-path', cid)
+                key = next(p['key'] for p in fresh if p['sport'] == port)
+                streams[port] = decode(path, b'native-mx-byte-path', key)
             evidence[side] = {'reset': reset, 'surviving_listener_streams': streams}
             if side == ('client' if initiator == 18192 else 'server'):
                 data = [p for p in old if p['sport'] == initiator and p['flags'] & 8]
@@ -1404,8 +1299,8 @@ def native_lifecycle(directory):
             assert sum(bool(p['flags'] & 1) for p in old) >= 2
             streams = {}
             for port in (18191, 18192):
-                cid = next(p['cid'] for p in old if p['sport'] == port)
-                streams[port] = decode(path, b'native-mx-byte-path', cid)
+                key = next(p['key'] for p in old if p['sport'] == port)
+                streams[port] = decode(path, b'native-mx-byte-path', key)
             local_fin = min(p['time'] for p in old if p['sport'] == 18192 and p['flags'] & 1)
             reverse = min(p['time'] for p in streams[18191]['data'])
             assert reverse > local_fin, (local_fin, reverse)
@@ -1417,49 +1312,202 @@ def native_lifecycle(directory):
     print('# native public lifecycle: zero/default FIN or numeric/Hub RST with listener reuse passed')
 
 
+def paws_wrap(directory):
+    """Only the independent raw peer chooses its own wire timestamp values."""
+    out = Path(directory)
+    accepted, rejected = b'reuse-mx-byte-path!', b'native-mx-byte-path'
+    evidence = {}
+    for side in ('client', 'server'):
+        path = out / (side + '-side.pcap')
+        origins = capture_origins(path)
+        initial_flows = [f for f in origins.flows.values() if f['client'][1] == 49152]
+        reset_flows = [f for f in origins.flows.values() if f['client'][1] == 49153]
+        assert len(initial_flows) == len(reset_flows) == 1
+        flow, reset_flow = initial_flows[0], reset_flows[0]
+        assert reset_flow['synacks'] and reset_flow['final_acks']
+        assert flow['synacks'] and flow['final_acks']
+        records = []
+        for stamp, frame in pcap_frames(path):
+            packet = wire_tcp(frame)
+            if packet is None or {packet['sport'], packet['dport']} != {49152, 18191}:
+                continue
+            assert not packet['flags'] & 4
+            tcp = packet['tcp']
+            offset = timestamp_offset(tcp)
+            assert offset is not None
+            tsval, tsecr = struct.unpack('!II', tcp[offset:offset + 8])
+            row = {'time': stamp, 'sport': packet['sport'], 'flags': packet['flags'],
+                   'tsval': tsval, 'tsecr': tsecr, 'wire_seq': packet['wire_seq'],
+                   'wire_ack': packet['wire_ack'], 'syn': bool(packet['flags'] & 2)}
+            if not row['syn']:
+                relative = origins.relative(frame)
+                row.update(seq=relative['seq'], ack=relative['ack'], data=[])
+                if packet['body'] or packet['flags'] & 1:
+                    row['data'].append({'offset': row['seq'], 'length': len(packet['body']),
+                                        'bytes': packet['body'].hex(),
+                                        'fin': bool(packet['flags'] & 1)})
+            else:
+                assert not packet['body'], 'ordinary SYN must have no intermediate envelope'
+            records.append(row)
+        syn = next(p for p in records if p['sport'] == 49152 and p['flags'] == 2)
+        synack = next(p for p in records if p['sport'] == 18191 and p['flags'] == 0x12)
+        setup_ack = next(p for p in records if p['sport'] == 49152 and p['flags'] == 0x10)
+        assert syn['tsval'] == 0xfffffff0 and not syn['tsecr']
+        assert synack['tsecr'] == syn['tsval']
+        assert setup_ack['seq'] == setup_ack['ack'] == 0
+        assert setup_ack['tsval'] == 0xfffffff1 and setup_ack['tsecr'] == synack['tsval']
+        sent = [p for p in records if p['sport'] == 49152 and not p['syn'] and
+                p is not setup_ack]
+        assert len(sent) == 5, sent
+        old, wrapped, old_tail, fin, final_ack = sent
+        assert [p['seq'] for p in sent] == [0, 0, 19, 19, 20]
+        assert [p['tsval'] for p in sent] == [0xfffffff0, 0x10, 0xfffffff0, 0x11, 0x12]
+        for packet, payload, offset in ((old, rejected, 0), (wrapped, accepted, 0),
+                                        (old_tail, rejected, 19)):
+            assert packet['flags'] == 0x18 and packet['data'] == [
+                {'offset': offset, 'length': 19, 'bytes': payload.hex(), 'fin': False}]
+        assert fin['flags'] == 0x11 and fin['data'] == [
+            {'offset': 19, 'length': 0, 'bytes': '', 'fin': True}]
+        assert final_ack['flags'] == 0x10 and not final_ack['data'] and final_ack['ack'] == 20
+        replies = [p for p in records if p['sport'] == 18191 and not p['syn']]
+        def rejection_reply(request, following, ack, echo):
+            matches = [p for p in replies if request['time'] < p['time'] < following['time']
+                       and p['ack'] == ack and p['tsecr'] == echo and not p['data']]
+            assert matches, (request, following, replies)
+            return matches[0]
+        first_reply = rejection_reply(old, wrapped, 0, 0xfffffff1)
+        tail_reply = rejection_reply(old_tail, fin, 19, 0x10)
+        assert 0 < ((wrapped['tsval'] - setup_ack['tsval']) & MASK32) < 0x80000000
+        data = [p for p in replies if any(d['length'] for d in p['data'])]
+        assert data and all(p['tsecr'] == 0x11 and all(
+            d['offset'] == 0 and d['length'] == 19 and d['bytes'] == rejected.hex()
+            for d in p['data'] if d['length']) for p in data)
+        fins = [p for p in replies if p['flags'] & 1]
+        assert fins and all(p['ack'] in (19, 20) and p['tsecr'] == 0x11 and
+                            p['seq'] + sum(d['length'] for d in p['data']) == 19 and
+                            [d['offset'] + d['length'] for d in p['data'] if d['fin']] == [19]
+                            for p in fins)
+        # The application may queue its FIN before the Rx FIN-retirement ACK
+        # snapshot reaches Tx. Require that final cumulative ACK on the wire,
+        # whether carried by FIN itself or the following ACK-only segment.
+        assert all(p['time'] > fin['time'] for p in fins)
+        assert any(p['ack'] == 20 and p['time'] <= final_ack['time'] for p in replies)
+        assert final_ack['time'] > fins[0]['time'] and final_ack['tsecr'] == fins[0]['tsval']
+        live_reset = []
+        for stamp, frame in pcap_frames(path):
+            raw = wire_tcp(frame)
+            if raw is None or {raw['sport'], raw['dport']} != {49153, 18191}:
+                continue
+            if raw['flags'] & 2:
+                assert timestamp_offset(raw['tcp']) is not None
+                continue
+            packet = origins.relative(frame)
+            packet.pop('tcp')
+            packet['data_length'] = len(packet.pop('body'))
+            packet['time'] = stamp
+            live_reset.append(packet)
+        resets = [p for p in live_reset if p['flags'] & 4]
+        assert len(resets) == 1
+        reset = resets[0]
+        assert reset['sport'] == 49153 and reset['flags'] == 0x14 and not reset['options']
+        assert reset['seq'] == reset['ack'] == reset['data_length'] == 0
+        assert not any(p['flags'] & 1 or p['data_length'] for p in live_reset)
+        assert not any(p['sport'] == 18191 and p['time'] > reset['time'] for p in live_reset)
+        evidence[side] = {'syn': syn, 'synack': synack, 'setup_ack': setup_ack,
+                          'old_data': old, 'old_data_reply': first_reply,
+                          'wrapped_data': wrapped, 'old_tail': old_tail,
+                          'old_tail_reply': tail_reply, 'valid_fin': fin,
+                          'reverse_data': data, 'reverse_fins': fins, 'final_ack': final_ack,
+                          'origins': origins.evidence(),
+                          'live_reset_without_ts': reset,
+                          'live_reset_no_reflection': True}
+    (out / 'paws-wrap-evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
+    print('# actual native PAWS: rejected old bytes, accepted wrapped TS and exact FIN passed')
+
+
 def passive_tuple(directory):
     out = Path(directory)
     controls = json.loads((out / 'passive-controls.json').read_text())
     assert controls == {'guarded_total': 1, 'guarded_pending': 0, 'race_pending': 1,
                         'duplicate_pending': 1, 'released_total': 0,
-                        'factory_calls': 3, 'stop_callbacks': 1}, controls
+                        'factory_calls': 3, 'stop_callbacks': 1}
     evidence = {'controlled_server_paths': controls}
     for side in ('client', 'server'):
         path = out / (side + '-side.pcap')
-        packets = reset_packets(path)
-        envelopes = admission_packets(path)
-        assert not any(p['flags'] & 4 for p in envelopes), envelopes
-        requests = [p for p in envelopes if p['sport'] == 49152 and p['dport'] == 18191
-                    and p['long'] and p['cid'] == b'pass-old'.hex()]
-        assert len(requests) == 1, requests
-        request = requests[0]
-        assert not any(p['sport'] == 18191 and p['dport'] == 49152 and
-                       p['time'] > request['time'] for p in envelopes), envelopes
+        packets, headers = reset_packets(path), admission_packets(path)
+        assert not any(p['flags'] & 4 for p in headers)
+        origins = capture_origins(path)
+        paired = [f for f in origins.flows.values() if f['client'][1] == 49152 and
+                  f['client'][3] == 18191 and f['synacks']]
+        assert len(paired) == 2
+        def first_syn(flow):
+            return min(p['time'] for p in headers if p['flags'] & 0x17 == 2 and
+                       p['key'] == flow['client'] and p['wire_seq'] == flow['client_isn'])
+        prior, current = sorted(paired, key=first_syn)
+        assert current['client'] == prior['client']
+        def after(value, previous):
+            return 0 < (value - previous) & MASK32 < 0x80000000
+        assert after(current['client_isn'], (prior['client_isn'] + 20) & MASK32)
+        assert after(current['server_isn'], (prior['server_isn'] + 20) & MASK32)
+        assert current['final_acks'] and prior['final_acks']
         flows = {}
         for port, server_port in ((49152, 18191), (49153, 18191), (49154, 18195)):
-            flow = [p for p in packets if port in (p['sport'], p['dport'])]
-            assert flow and sum(bool(p['flags'] & 1) for p in flow) >= 2, flow
+            candidates = [f for f in origins.flows.values() if f['client'][1] == port and
+                          f['client'][3] == server_port and f['synacks']]
+            flow = prior if port == 49152 else candidates[0]
             streams = {}
-            for source in (port, server_port):
-                cid = next(p['cid'] for p in flow if p['sport'] == source)
-                streams[source] = decode(path, b'native-mx-byte-path', cid)
+            for source, key, base in (
+                    (port, flow['client'], (flow['client_isn'] + 1) & MASK32),
+                    (server_port, WireOrigins.reverse(flow['client']),
+                     (flow['server_isn'] + 1) & MASK32)):
+                streams[source] = decode(path, b'native-mx-byte-path', key, base)
             flows[port] = streams
-        first_fin = min(p['time'] for p in packets if
-                        49152 in (p['sport'], p['dport']) and p['flags'] & 1)
+        reuse_streams = {
+            49152: decode(path, b'reuse-mx-byte-path!', current['client'],
+                          (current['client_isn'] + 1) & MASK32),
+            18191: decode(path, b'reuse-mx-byte-path!', WireOrigins.reverse(current['client']),
+                          (current['server_isn'] + 1) & MASK32)}
+        new_start = first_syn(current)
+        old_requests = [p for p in packets if p['key'] == prior['client'] and
+                        p['seq_base'] == (prior['client_isn'] + 1) & MASK32 and
+                        p['time'] > new_start and (p['data_length'] or p['flags'] & 1)]
+        assert len(old_requests) == 2 and [p['flags'] for p in old_requests] == [0x18, 0x11]
+        assert [p['seq'] for p in old_requests] == [0, 19]
+        old_replies = [p for p in packets if p['key'] == WireOrigins.reverse(prior['client']) and
+                       p['seq_base'] == (prior['server_isn'] + 1) & MASK32 and
+                       p['time'] > new_start]
+        assert len(old_replies) == 2 and all(p['seq'] == p['ack'] == 20 and
+               p['flags'] == 0x10 and not p['data_length'] for p in old_replies)
+        new_data = min(p['time'] for p in reuse_streams[49152]['data'])
+        assert all(p['time'] < new_data for p in old_requests)
+        assert all(a['time'] < b['time'] for a, b in zip(old_requests, old_replies))
+        refused = [p for p in headers if p['key'] == prior['client'] and
+                   p['flags'] & 0x17 == 2 and
+                   p['wire_seq'] == (prior['client_isn'] + 20) & MASK32]
+        assert len(refused) == 1
         marker = min(p['time'] for p in flows[49153][49153]['data'])
-        assert first_fin < request['time'] < marker, (first_fin, request, marker)
-        negotiation = [p for p in envelopes if p['sport'] == 18191 and p['dport'] == 19190
-                       and p['long'] and p['version'] == 0]
-        assert negotiation, envelopes
-        evidence[side] = {'refused_fresh_cid_request': request, 'flows': flows,
-                          'ordered_fresh_data_marker': marker,
-                          'preserved_version_negotiation': negotiation}
+        first_fin = min(p['time'] for p in packets if p['key'] == prior['client'] and
+                        p['flags'] & 1 and p['time'] < new_start)
+        assert first_fin < refused[0]['time'] < marker
+        assert not any(p['key'] == WireOrigins.reverse(prior['client']) and
+                       refused[0]['time'] < p['time'] < marker for p in headers)
+        evidence[side] = {'refused_syn': refused[0], 'flows': flows,
+                          'ordered_fresh_data_marker': marker, 'prior_origins': prior,
+                          'reused_origins': current, 'reused_streams': reuse_streams,
+                          'old_requests_with_new_owner': old_requests,
+                          'old_history_replies_with_new_owner': old_replies}
     (out / 'passive-tuple-evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
-    print('# passive tuple: wire refusal, real pending-route race, FIFO eviction and reuse passed')
+    print('# passive tuple: conservative SYN refusal, pending race, FIFO and eligible reuse '
+          'passed')
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 5 and sys.argv[1] == "wire-gate":
+    if len(sys.argv) == 3 and sys.argv[1] == "pair-reorder":
+        pair(sys.argv[2], True)
+        raise SystemExit(0)
+    if len(sys.argv) == 3 and sys.argv[1] == "pair":
+        pair(sys.argv[2])
+    elif len(sys.argv) == 5 and sys.argv[1] == "wire-gate":
         wire_gate(sys.argv[2], sys.argv[3], sys.argv[4])
     elif len(sys.argv) == 5 and sys.argv[1] == "ack-bands":
         ack_bands(sys.argv[2], sys.argv[3], sys.argv[4])
@@ -1469,6 +1517,8 @@ if __name__ == "__main__":
         positive_window_probe(sys.argv[2], sys.argv[3])
     elif len(sys.argv) == 3 and sys.argv[1] == "positive-window":
         positive_window(sys.argv[2])
+    elif len(sys.argv) == 3 and sys.argv[1] == "paws-wrap":
+        paws_wrap(sys.argv[2])
     elif len(sys.argv) == 3 and sys.argv[1] == "passive-tuple":
         passive_tuple(sys.argv[2])
     elif len(sys.argv) == 3 and sys.argv[1] == "native-lifecycle":

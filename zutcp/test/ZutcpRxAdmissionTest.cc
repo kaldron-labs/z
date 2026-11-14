@@ -42,24 +42,19 @@ friend inline ZuStringT<"Zutcp.Test.RxAdmission"> ZmNHeapID(AdmissionCxn *);
 
   AdmissionCxn(AdmissionApp *app) : Base{app} { configLocalParams(app); }
   int process(Reader &) { return 0; } // deliberately hold delivered bytes
-  bool flushTx_(ZiSockAddr = {}) { return false; }
+  bool flushTx(ZiSockAddr = {}) { return false; }
   void queueTxFlush(ZiSockAddr = {}) { }
   void queueRetransmit() { }
-  void pto_() { }
-  bool retransmit_(bool = false, unsigned = 2,
-      PktNumSpace::T = PktNumSpace::N) { return false; }
-  void finish() { Base::resetLink_(); }
-  bool receive(ZmRef<ZiIOBuf> packet) {
-    Datagram d;
-    d.buf = ZuMv(packet);
-    return Base::receiveShortPkt(d, 0, d.buf->length,
-      [this](PktNumSpace::T level, uint64_t pn, ZuBSpan frames, ZiSockAddr addr,
-	  const ZmRef<ZiIOBuf> &buf, Base::RxAckMeta &ack, auto *qlog) {
-	return Base::consumeFrames(level, pn, frames, addr, buf, ack, qlog,
-	  [this](auto, const Frame &, auto) { ++controls; return true; });
-      });
+  void pto() { }
+  bool retransmit(bool = false, unsigned = 2) { return false; }
+  void finish() { Base::resetLink(); }
+  int receive(const ByteData &data, ZmRef<ZiIOBuf> packet, bool *admitted = nullptr) {
+    bool refused = false;
+    int result = Base::processFrame(data, ZuMv(packet), nullptr, &refused);
+    if (admitted) *admitted = !refused;
+    return refused ? 0 : result;
   }
-  bool seen(uint64_t pn) const { return Base::rxPktSeen(PktNumSpace::AppData, pn); }
+
 };
 
 static ZmRef<ZiIOBuf> bytes(AdmissionApp &app, ZuBSpan data)
@@ -70,10 +65,9 @@ static ZmRef<ZiIOBuf> bytes(AdmissionApp &app, ZuBSpan data)
   return buf;
 }
 
-static Frame dataFrame(ZiIOBuf *buf, uint64_t offset)
+static ByteData dataFrame(ZiIOBuf *buf, uint64_t offset)
 {
-  Frame frame;
-  frame.type = FrameType::Data;
+  ByteData frame;
   frame.offset = offset;
   frame.length = buf->length;
   frame.payload = buf->cspan();
@@ -88,16 +82,16 @@ static void testRefusedData()
   auto source = bytes(app, "tail");
   app.allow = false;
   bool admitted = true;
-  ZuCHECK(cxn->receiveFrame(dataFrame(source, 4), source, nullptr, nullptr, &admitted) == 0 &&
+  ZuCHECK(cxn->receive(dataFrame(source, 4), source, &admitted) == 0 &&
       !admitted && !cxn->rxPending() && !cxn->rxCreditUsed() &&
       !cxn->rxAdmitted() && cxn->rxError() == DataError::None,
     "resource refusal must not commit bytes, final size or a protocol error");
   app.allow = true;
-  ZuCHECK(cxn->receiveFrame(dataFrame(source, 4), source, nullptr, nullptr, &admitted) == 0 &&
+  ZuCHECK(cxn->receive(dataFrame(source, 4), source, &admitted) == 0 &&
       admitted && cxn->rxPending() == 1 && cxn->rxAdmitted() == 4,
     "the same unacknowledged range must be admissible after capacity returns");
   unsigned demands = app.demands;
-  ZuCHECK(cxn->receiveFrame(dataFrame(source, 4), source) == 0 && app.demands == demands,
+  ZuCHECK(cxn->receive(dataFrame(source, 4), source) == 0 && app.demands == demands,
     "duplicate bytes must demand no additional physical frame");
   cxn->closeRx();
 }
@@ -148,29 +142,6 @@ static void testServiceWindow()
   cxn->closeRx();
 }
 
-static void testControlAfterRefusal()
-{
-  ZuTestScope(testControlAfterRefusal);
-  AdmissionApp app;
-  app.allow = false;
-  ZmRef<AdmissionCxn> cxn = new AdmissionCxn{&app};
-  auto packet = ZutcpTest::pktTxAllocator(app.mx())->allocBuf();
-  int header = Pkt::writeShort(packet->data(), packet->avail(), {}, 7, 2);
-  int data = FrameCodec::writeData(packet->data() + header,
-    packet->avail() - unsigned(header), 4, ZuBSpan{"tail"}, false);
-  int control = FrameCodec::writeMaxData(packet->data() + header + data,
-    packet->avail() - unsigned(header + data), 32);
-  ZmAssert_(header > 0 && data > 0 && control > 0);
-  packet->length = unsigned(header + data + control);
-  ZuCHECK(!cxn->receive(packet) && cxn->controls == 1 && !cxn->seen(7) &&
-      !cxn->rxPending() && cxn->rxError() == DataError::None,
-    "later control must process while refused DATA commits no packet ACK");
-  app.allow = true;
-  ZuCHECK(cxn->receive(packet) && cxn->seen(7) && cxn->rxPending() == 1,
-    "retry after resource recovery must commit the packet ACK normally");
-  cxn->finish();
-}
-
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -178,5 +149,4 @@ int main(int argc, char **argv)
   ZuTestCall(testRefusedData);
   ZuTestCall(testGapService);
   ZuTestCall(testServiceWindow);
-  ZuTestCall(testControlAfterRefusal);
 }

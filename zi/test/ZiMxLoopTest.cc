@@ -26,12 +26,12 @@
 
 using namespace ZuTestUtil;
 
-namespace {
 
 class LoopMx;
 class UdpTOSMx;
 
-class LoopCxn : public ZiConnection {
+class LoopCxn : public ZmNHeap<LoopCxn>, public ZiConnection {
+friend inline ZuStringT<"ZiMxLoopTest.LoopCxn"> ZmNHeapID(LoopCxn *);
   static constexpr uint8_t Msg[4] = { 'P', 'I', 'N', 'G' };
 
 public:
@@ -55,7 +55,8 @@ private:
   bool		m_client = false;
 };
 
-class UdpTOSCxn : public ZiConnection {
+class UdpTOSCxn : public ZmNHeap<UdpTOSCxn>, public ZiConnection {
+friend inline ZuStringT<"ZiMxLoopTest.UdpTOSCxn"> ZmNHeapID(UdpTOSCxn *);
   static constexpr uint8_t Msg[4] = { 'T', 'O', 'S', '!' };
 
 public:
@@ -552,7 +553,7 @@ bool UdpTOSCxn::recv_(ZiRxContext &io)
   return true;
 }
 
-void testMulticastOptions()
+static void testMulticastOptions()
 {
   ZuTestScope(testMulticastOptions);
 
@@ -632,7 +633,7 @@ struct MxCheck {
   unsigned	visited = 0;
 };
 
-LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP, unsigned port)
+static LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP, unsigned port)
 {
   LoopResult result;
   LoopMx mx{loopIP, port};
@@ -703,7 +704,7 @@ LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP, unsigned port)
   ZuCheck((result).localDisconnects >= 4); \
 } while (0)
 
-void testTcpLoopbackIPv4()
+static void testTcpLoopbackIPv4()
 {
   ZuTestScope(testTcpLoopbackIPv4);
 
@@ -712,7 +713,7 @@ void testTcpLoopbackIPv4()
   CheckTcpLoopback(result);
 }
 
-void testTcpLoopbackIPv6()
+static void testTcpLoopbackIPv6()
 {
   ZuTestScope(testTcpLoopbackIPv6);
 
@@ -721,7 +722,7 @@ void testTcpLoopbackIPv6()
   CheckTcpLoopback(result);
 }
 
-void testUdpTOSIPv4()
+static void testUdpTOSIPv4()
 {
   ZuTestScope(testUdpTOSIPv4);
 
@@ -740,7 +741,7 @@ void testUdpTOSIPv4()
   ZuCheck(mx.tos_() == 0x2e);
 }
 
-void testUdpMPSIPv6()
+static void testUdpMPSIPv6()
 {
   ZuTestScope(testUdpMPSIPv6);
 
@@ -762,7 +763,7 @@ struct MxWatchState {
   unsigned	queueSeeds = 0;
 };
 
-void testMxWatch()
+static void testMxWatch()
 {
   ZuTestScope(testMxWatch);
   MxWatchState state;
@@ -791,7 +792,7 @@ void testMxWatch()
 }
 
 #ifdef linux
-void testNativeStartFailure()
+static void testNativeStartFailure()
 {
   ZuTestScopeRT(testNativeStartFailure);
   // Keep descriptor limits and failure-time cleanup isolated from the harness.
@@ -835,7 +836,7 @@ void testNativeStartFailure()
 }
 #endif
 
-void testWakeBurst()
+static void testWakeBurst()
 {
   ZuTestScope(testWakeBurst);
   ZiMultiplex mx;
@@ -844,9 +845,9 @@ void testWakeBurst()
   // Exceed the usual 64 KiB wake pipe while its Rx reader is posting work.
   constexpr unsigned count = 128 * 1024;
   ZuCheck(mx.start());
-  mx.rxRun([&]() {
+  mx.rxRun([&mx, &completed, &done]() {
     for (unsigned i = 0; i < count; ++i)
-      mx.rxRun([&]() { if (++completed == count) done.post(); });
+      mx.rxRun([&completed, &done]() { if (++completed == count) done.post(); });
   });
   ZuCheck(done.timedwait(Zm::now(30)) == 0);
   ZuCheck(mx.stop());
@@ -855,7 +856,6 @@ void testWakeBurst()
 
 #undef CheckTcpLoopback
 
-} // namespace
 
 int main(int argc, char **argv)
 {

@@ -407,7 +407,8 @@ AS_IF([test "$z_linux" = yes], [
   AC_CONFIG_FILES([zxdp/Makefile zxdp/src/Makefile zxdp/test/Makefile \
 	zxdp/util/Makefile zxdp/itest/Makefile \
 	zutcp/Makefile zutcp/src/Makefile zutcp/test/Makefile \
-	zutcp/itest/Makefile zutcp/example/Makefile])
+	zutcp/util/Makefile zutcp/itest/Makefile zutcp/example/Makefile \
+	zutcp/interop/Makefile zutcp/bench/Makefile])
 ])
 AC_CONFIG_FILES([\
 	zpb/Makefile zpb/src/Makefile zpb/test/Makefile zpb/itest/Makefile \

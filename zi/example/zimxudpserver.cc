@@ -77,7 +77,8 @@ struct Packet : public ZiTxBuf {
 using RxAllocator = Zi::IOBufAllocator;
 using TxAllocator = Zi::IOBufAllocator;
 
-class Connection : public ZiConnection, public ZiTx<Connection> {
+class Connection : public ZmNHeap<Connection>, public ZiConnection, public ZiTx<Connection> {
+friend inline ZuStringT<"zimxudpserver.Connection"> ZmNHeapID(Connection *);
 public:
   Connection(
       ZiMultiplex *mx, const ZiCxnInfo &ci,

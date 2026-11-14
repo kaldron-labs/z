@@ -38,7 +38,7 @@ public:
   using Lock = ZmLock;
   using Guard = ZmGuard<Lock>;
 
-  enum Flags {
+  enum {
     GC	= 0x001,	// unload() handle in destructor
     Pre	= 0x002		// equivalent to LD_PRELOAD / RTLD_DEEPBIND
   };

@@ -23,8 +23,9 @@ namespace Zxdp {
 // One kernel ring set per hardware Rx queue, sharing one UMEM registration.
 struct Queue : public ZmNHeap<Queue> {
 friend inline ZuStringT<"Zxdp.Queue"> ZmNHeapID(Queue *);
+  using Retirement = KernelRetirement;
   Xsk		socket;
-  KernelRetirement retirement;
+  Retirement	retirement;
   unsigned	rxHeld = 0, quota = 0;
   bool		published = false;
 
@@ -269,7 +270,10 @@ Instance::~Instance() = default;
 bool Instance::ready() const { return m_data->state == InstanceData::Active; }
 unsigned Instance::ifindex() const { return m_data->interface; }
 unsigned Instance::mtu() const { return m_data->link.mtu; }
-bool Instance::zeroCopy() const { return (m_data->queues.length() && m_data->queues[0] && m_data->queues[0]->socket.zeroCopy()); }
+bool Instance::zeroCopy() const {
+  auto queue = m_data->queues.length() ? m_data->queues[0] : nullptr;
+  return queue && queue->socket.zeroCopy();
+}
 const uint8_t *Instance::mac() const { return m_data->link.mac; }
 bool Instance::close(ZtString<> &error) { return m_data->close(error); }
 
@@ -304,14 +308,15 @@ void Instance::wake() { m_data->notify(); }
 void Instance::rx()
 {
   unsigned idle = 0, empty = 0;
+  auto queues = m_data->queues.length(); // frozen until the caller quiesces Rx for close
   while (ready()) {
     if (m_data->woken()) return;
     auto q = m_data->nextQueue++;
-    if (m_data->nextQueue == m_data->queues.length()) m_data->nextQueue = 0;
+    if (m_data->nextQueue == queues) m_data->nextQueue = 0;
     if (m_data->receiveQueue(q)) { idle = empty = 0; continue; }
     // Check/replenish each hardware queue before parking. This visits queues,
     // never searches packets or buffers, and is independent of arena capacity.
-    if (++empty < m_data->queues.length()) continue;
+    if (++empty < queues) continue;
     empty = 0;
     if (idle < m_data->spin) { ++idle; continue; }
     epoll_event event;

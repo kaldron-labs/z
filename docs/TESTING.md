@@ -110,6 +110,24 @@ children. Veth results record copy mode and establish no physical zero-copy or
 latency claim. Physical comparison and profiling use matching Clang release
 builds, with the selected interfaces, peers, affinity and actual mode recorded.
 
+## Zutcp TCP tests
+
+Build its dependency closure before `zutcp/src`, then the affected `test`, `util`,
+`itest`, `example`, `interop` and `bench` targets, using `-j8` in each directory.
+`make -C zutcp/test test` runs isolated TCP state, sequence, options, recovery,
+flow-control and ownership checks. The [native fixtures](../zutcp/itest/README.md)
+exercise actual AF_XDP with sudo in private namespaces; the
+[independent peer matrix](../zutcp/interop/README.md) uses actual Linux TCP in both
+roles over IPv4 and IPv6. The [quickstart](../zutcp/util/README.md) supplies the
+shipped launcher, privilege requirements and kernel/native application setup.
+Ztcp and Ztls application checks are optional consumers, not Zutcp dependencies.
+
+Use a separate consistent optimized closure for [benchmarks](../zutcp/bench/README.md):
+`z.config -L` selects Clang release (`-O3 -DNDEBUG`), and `-p` adds profiling.
+Do not compare ASan timings with release timings or change build modes without
+cleaning and rebuilding the closure. Veth measurements establish no physical NIC
+speedup; performance tuning is separate from functional TCP acceptance.
+
 ## Logs and cleanup
 
 For direct invocations, set `ZI_LOGDIR` to a writable artifact directory;

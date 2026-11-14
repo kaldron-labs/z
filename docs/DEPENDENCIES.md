@@ -71,6 +71,10 @@ support; Linux uses pthreads, realtime and dynamic-loading facilities. Windows
 uses Winsock, DNS and Advapi32 system libraries. These are supplied by the
 platform/toolchain rather than separate Z packages.
 
+Zutcp links OpenSSL libcrypto directly through `CRYPTO_LIBS` for HMAC-SHA256
+initial sequence numbers and Fast Open cookies. It does not depend on Ztls or
+libssl. Its framework closure is Zu, Zm, Zt, Ze, Zf, Zi and Zxdp.
+
 ## Linux packet I/O
 
 [Zxdp](../zxdp/README.md) uses Linux AF_XDP and BPF directly, without libxdp or
@@ -86,7 +90,9 @@ network namespaces and their own veth/dummy links. Physical tests additionally
 need caller-provisioned interfaces, queue steering, addressing and static kernel
 neighbors on two hosts; the helper does not reconfigure those interfaces.
 See [packet setup](../zxdp/util/README.md) and
-[privileged tests](../zxdp/itest/README.md).
+[privileged tests](../zxdp/itest/README.md). Zutcp adds standard TCP over that
+packet service; see its [kernel/native quickstart](../zutcp/util/README.md).
+Native and independent-kernel fixtures also require ethtool, tcpdump and Python3.
 
 ## Required platform services
 

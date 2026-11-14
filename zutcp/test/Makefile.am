@@ -15,27 +15,25 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZutcpISNTest ZutcpConnectionTest ZutcpIPTest ZutcpAPITest ZutcpSockTest \
-	ZutcpCodecTest  \
+noinst_PROGRAMS = ZutcpTFOTest ZutcpISNTest ZutcpOptionsTest ZutcpConnectionTest ZutcpIPTest ZutcpAPITest ZutcpSockTest \
 	ZutcpHandshakeTest ZutcpRecoveryTest ZutcpRttLossTest \
-	ZutcpConnectionStateTest ZutcpPMTUDTest ZutcpVersionTest ZutcpCIDTest \
+	ZutcpConnectionStateTest ZutcpPMTUDTest \
 	ZutcpDataTest ZutcpFlowTest ZutcpBufferTest \
 	ZutcpCongestionTest ZutcpPQueueTest ZutcpLoopTest ZutcpRuntimeTest \
 	ZutcpTimerTest ZutcpLogTest ZutcpRxAccountingTest ZutcpRxAdmissionTest
 noinst_HEADERS = ZutcpTestAlloc.hh ZutcpConnectionFixture.hh ZutcpTestPorts.hh
+ZutcpTFOTest_SOURCES = ZutcpTFOTest.cc
 ZutcpISNTest_SOURCES = ZutcpISNTest.cc
+ZutcpOptionsTest_SOURCES = ZutcpOptionsTest.cc
 ZutcpConnectionTest_SOURCES = ZutcpConnectionTest.cc
 ZutcpIPTest_SOURCES = ZutcpIPTest.cc
 ZutcpAPITest_SOURCES = ZutcpAPITest.cc
 ZutcpSockTest_SOURCES = ZutcpSockTest.cc
-ZutcpCodecTest_SOURCES = ZutcpCodecTest.cc
 ZutcpHandshakeTest_SOURCES = ZutcpHandshakeTest.cc
 ZutcpRecoveryTest_SOURCES = ZutcpRecoveryTest.cc
 ZutcpRttLossTest_SOURCES = ZutcpRttLossTest.cc
 ZutcpConnectionStateTest_SOURCES = ZutcpConnectionStateTest.cc
 ZutcpPMTUDTest_SOURCES = ZutcpPMTUDTest.cc
-ZutcpVersionTest_SOURCES = ZutcpVersionTest.cc
-ZutcpCIDTest_SOURCES = ZutcpCIDTest.cc
 ZutcpDataTest_SOURCES = ZutcpDataTest.cc
 ZutcpFlowTest_SOURCES = ZutcpFlowTest.cc
 ZutcpBufferTest_SOURCES = ZutcpBufferTest.cc

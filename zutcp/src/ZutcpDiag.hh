@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z QUIC diagnostics
+// TCP byte transport diagnostics
 
 #ifndef Zutcp_HH
 #error "include zlib/Zutcp.hh before this header"
@@ -51,16 +51,13 @@ struct ZutcpAPI Diag {
   [[no_unique_address]] DiagCounter dataBytesRx = 0;
   [[no_unique_address]] DiagCounter dataBytesTx = 0;
   [[no_unique_address]] DiagCounter packetsLost = 0;
-  [[no_unique_address]] DiagCounter ptoCount = 0;
-  [[no_unique_address]] DiagCounter retransmittedFrames = 0;
+  [[no_unique_address]] DiagCounter synRetries = 0;
+  [[no_unique_address]] DiagCounter retransmittedRanges = 0;
   [[no_unique_address]] DiagCounter cwnd = 0;
   [[no_unique_address]] DiagCounter bytesInFlight = 0;
   [[no_unique_address]] DiagCounter pmtudProbes = 0;
   [[no_unique_address]] DiagCounter pmtudSuccess = 0;
   [[no_unique_address]] DiagCounter pmtudFailure = 0;
-
-  static ZuCSpan packetSpaceName(PktNumSpace::T);
-  static ZuCSpan frameTypeName(FrameType::T);
 
   void notePktRx(unsigned bytes) {
     ++packetsRx;
@@ -77,8 +74,8 @@ struct ZutcpAPI Diag {
   void noteDataRx(unsigned bytes) { dataBytesRx += bytes; }
   void noteDataTx(unsigned bytes) { dataBytesTx += bytes; }
   void noteLoss(const SentPkt &) { ++packetsLost; }
-  void notePTO() { ++ptoCount; }
-  void noteRetransmit(const SentFrameRef &) { ++retransmittedFrames; }
+  void noteSYNRetransmit() { ++synRetries; }
+  void noteRetransmit(const SentFrameRef &) { ++retransmittedRanges; }
   void setRecovery(uint64_t cwnd_, uint64_t bytesInFlight_) {
     cwnd = cwnd_;
     bytesInFlight = bytesInFlight_;
@@ -119,22 +116,16 @@ struct ZutcpAPI Diag {
 };
 
 struct LinkRxDiag {
-  AckECN	ecnRx[PktNumSpace::N];
-
   [[no_unique_address]] DiagCounter endpointReady = 0;
   ZmAtomic<uint64_t>	datagramsRx = 0;
   ZmAtomic<uint64_t>	bytesRx = 0;
   [[no_unique_address]] DiagCounter packetsRx = 0;
-  [[no_unique_address]] DiagCounter framesRx = 0;
-  [[no_unique_address]] DiagCounter duplicatePacketsRx = 0;
   [[no_unique_address]] DiagCounter ackCommitsRx = 0;
   [[no_unique_address]] DiagCounter ackElicitingRx = 0;
   [[no_unique_address]] DiagCounter ackImmediateRx = 0;
   [[no_unique_address]] DiagCounter ackSnapshotPostsRx = 0;
   [[no_unique_address]] DiagCounter dataZeroResultRx = 0;
   [[no_unique_address]] DiagCounter dataBytesRx = 0;
-  [[no_unique_address]] DiagCounter invalidDataFrames = 0;
-  [[no_unique_address]] DiagCounter closedDataFrames = 0;
   [[no_unique_address]] DiagCounter suspectDataCloses = 0;
   [[no_unique_address]] DiagCounter unhandledAppEvents = 0;
   [[no_unique_address]] DiagCounter failures = 0;
@@ -142,8 +133,6 @@ struct LinkRxDiag {
 };
 
 struct LinkTxDiag {
-  AckECN	peerAckECN[PktNumSpace::N];
-  bool		ptoTimerActive = false;
   bool		lossTimerActive = false;
 
   ZmAtomic<uint64_t>	packetsTx = 0;
@@ -154,47 +143,21 @@ struct LinkTxDiag {
   [[no_unique_address]] DiagCounter ackDataPacketsTx = 0;
   [[no_unique_address]] DiagCounter ackSnapshotInstallsTx = 0;
   [[no_unique_address]] DiagCounter ackDueInstallsTx = 0;
-  [[no_unique_address]] DiagCounter ackAppendTx = 0;
-  [[no_unique_address]] DiagCounter ackAppendEmptyTx = 0;
-  [[no_unique_address]] DiagCounter ackAppendNotDueTx = 0;
   [[no_unique_address]] DiagCounter ackSentTx = 0;
-  [[no_unique_address]] DiagCounter ctlOnlyPktsTx = 0;
-  [[no_unique_address]] DiagCounter ackCtlPktsTx = 0;
-  [[no_unique_address]] DiagCounter dataCtlPktsTx = 0;
-  [[no_unique_address]] DiagCounter ackDataCtlPktsTx = 0;
   [[no_unique_address]] DiagCounter otherPacketsTx = 0;
-  [[no_unique_address]] DiagCounter dataFramesTx = 0;
-  [[no_unique_address]] DiagCounter controlFramesTx = 0;
-  [[no_unique_address]] DiagCounter maxDataTx = 0;
-  [[no_unique_address]] DiagCounter dataBlockedTx = 0;
-  [[no_unique_address]] DiagCounter resetDataTx = 0;
-  [[no_unique_address]] DiagCounter stopSendingTx = 0;
-  [[no_unique_address]] DiagCounter ptoSched = 0;
-  [[no_unique_address]] DiagCounter ptoNoLevel = 0;
-  [[no_unique_address]] DiagCounter ptoArmed = 0;
-  [[no_unique_address]] DiagCounter ptoExpired = 0;
-  [[no_unique_address]] DiagCounter ptoFlush = 0;
-  [[no_unique_address]] DiagCounter ptoRetx = 0;
-  [[no_unique_address]] DiagCounter ptoProbe = 0;
-  [[no_unique_address]] DiagCounter ptoCount = 0;
-  [[no_unique_address]] DiagCounter ptoBackoff = 0;
-  [[no_unique_address]] DiagCounter ptoTimeoutUS = 0;
-  [[no_unique_address]] DiagCounter retransmittedFrames = 0;
+  [[no_unique_address]] DiagCounter synRetries = 0;
+  [[no_unique_address]] DiagCounter retransmittedRanges = 0;
   [[no_unique_address]] DiagCounter lossArmed = 0;
   [[no_unique_address]] DiagCounter lossCanceled = 0;
   [[no_unique_address]] DiagCounter lossExpired = 0;
-  [[no_unique_address]] DiagCounter
-    pktBytesInFlight[PktNumSpace::N] = {};
-  [[no_unique_address]] DiagCounter sentPackets[PktNumSpace::N] = {};
-  [[no_unique_address]] DiagCounter
-    retransmitPending[PktNumSpace::N] = {};
-  [[no_unique_address]] DiagCounter
-    retransmittable[PktNumSpace::N] = {};
+  [[no_unique_address]] DiagCounter pktBytesInFlight = 0;
+  [[no_unique_address]] DiagCounter sentPackets = 0;
+  [[no_unique_address]] DiagCounter retransmitPending = 0;
+  [[no_unique_address]] DiagCounter retransmittable = 0;
   [[no_unique_address]] DiagCounter congestionWindow = 0;
   [[no_unique_address]] DiagCounter congestionSSThresh = 0;
   [[no_unique_address]] DiagCounter bytesInFlight = 0;
   [[no_unique_address]] DiagCounter persistentCongestion = 0;
-  [[no_unique_address]] DiagCounter ecnValidationFailures = 0;
   [[no_unique_address]] DiagCounter unhandledAppEvents = 0;
   [[no_unique_address]] DiagCounter failures = 0;
 };

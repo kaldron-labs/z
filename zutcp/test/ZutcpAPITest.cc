@@ -12,85 +12,31 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmList.hh>
-#include <zlib/ZfJSON.hh>
 #include <zlib/ZtString.hh>
-#include <zlib/ZiFile.hh>
 #include <zlib/Zutcp.hh>
 #include "ZutcpTestAlloc.hh"
 
 
-#include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
 
 #define ZUTCP_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
-namespace {
 
 using TxBufAlloc = Zutcp::TxBufAlloc<>;
 
-#ifdef Zutcp_DEBUG
-static Zi::Path g_residue;
-
-static Zi::Path testPath(ZuCSpan name)
-{
-  return ZiFile::append(g_residue, name);
-}
-
-static ZtString<> readFile_(const Zi::Path &path)
-{
-  ZtString<> data;
-  ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
-  if (!file) return data;
-  auto size = file.size();
-  if (size <= 0 || size > (1<<20)) return data;
-  data.length(unsigned(size));
-  int n = file.read(data.data(), data.length());
-  if (n <= 0)
-    data.length(0);
-  else
-    data.length(unsigned(n));
-  return data;
-}
-
-static unsigned parseJSONSeq(ZuCSpan data)
-{
-  unsigned n = 0;
-  unsigned i = 0, l = data.length();
-  while (i < l) {
-    ZuCSpan rest{data.data() + i, l - i};
-    if (!rest.match<"\x1e">()) return 0;
-    ++i;
-    unsigned start = i;
-    while (i < l && data[i] != '\n') ++i;
-    if (i >= l) return 0;
-    ZtString<> json;
-    json << ZuCSpan{data.data() + start, i - start};
-    auto scan = ZfJSON::scan(json);
-    if (scan.p<0>() != int(json.length())) return 0;
-    ++n;
-    ++i;
-  }
-  return n;
-}
-
-static void closeQLog(ZutcpLogger::Trace &trace)
-{
-  ZmBlock<>{}([&trace](auto wake) {
-    ZutcpLogger::close(trace, ZuMv(wake));
-  });
-}
-#endif
-
 struct TestLink;
 struct HubApp : public Zutcp::Hub<HubApp> {
-  Zi::IOBufAllocator *dataTxAllocator() const { return Zutcp::inlineAllocator(); }
-  enum Shard { Rx, Tx };
+  enum { Rx, Tx };
   using PendingQueue =
     ZmList<ZmFn<>, ZmListHeapID<"Zutcp.APITest.Pending">>;
 
+  PendingQueue rxPendingQ;
+  PendingQueue txPendingQ;
+  unsigned shard = Rx;
+  bool deferMode = false;
 
-
+  Zi::IOBufAllocator *dataTxAllocator() const { return Zutcp::inlineAllocator(); }
 
   bool rxInvoked() const { return !deferMode || shard == Rx; }
   bool txInvoked() const { return !deferMode || shard == Tx; }
@@ -131,10 +77,6 @@ struct HubApp : public Zutcp::Hub<HubApp> {
     fn();
   }
 
-  PendingQueue rxPendingQ;
-  PendingQueue txPendingQ;
-  Shard shard = Rx;
-  bool deferMode = false;
 };
 struct ClientApp : public Zutcp::Client<ClientApp> { };
 struct ServerAppLink;
@@ -171,6 +113,9 @@ friend inline ZuStringT<"Zutcp.APITest.CliCxn"> ZmNHeapID(ClientShapeLink *);
     ClientShapeApp, ClientShapeLink,
     TxBufAlloc>;
 
+  ZmAtomic<unsigned> failures = 0;
+  ZmAtomic<unsigned> disconnects = 0;
+
   ClientShapeLink(ClientShapeApp *app) : Base{app} { }
 
   int process(Zutcp::Reader &) { return 0; }
@@ -179,8 +124,6 @@ friend inline ZuStringT<"Zutcp.APITest.CliCxn"> ZmNHeapID(ClientShapeLink *);
   void disconnected(bool) { ++disconnects; }
   using Base::diag;
 
-  ZmAtomic<unsigned> failures = 0;
-  ZmAtomic<unsigned> disconnects = 0;
 };
 
 struct ServerShapeLink;
@@ -204,11 +147,8 @@ friend inline ZuStringT<"Zutcp.APITest.SrvCxn"> ZmNHeapID(ServerShapeLink *);
   int process(Zutcp::Reader &) { return 0; }
   void connected(Zutcp::Connected) { }
 
-
-
-
   void initSrvPath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::initServerPathTx_(ZuMv(local), ZuMv(remote));
+    Base::initServerPathTx(ZuMv(local), ZuMv(remote));
   }
 #ifdef Zutcp_DEBUG
 
@@ -217,199 +157,48 @@ friend inline ZuStringT<"Zutcp.APITest.SrvCxn"> ZmNHeapID(ServerShapeLink *);
 
 };
 
-struct TestLink :
-    public ZmNHeap<TestLink>,
-    public Zutcp::Connection<
-      HubApp, TestLink, TxBufAlloc> {
+struct TestLink : public ZmNHeap<TestLink>,
+  public Zutcp::Connection<HubApp, TestLink, TxBufAlloc> {
 friend inline ZuStringT<"Zutcp.APITest.Link"> ZmNHeapID(TestLink *);
+  using Base = Zutcp::Connection<HubApp, TestLink, TxBufAlloc>;
   using ZmNHeap<TestLink>::operator new;
   using ZmNHeap<TestLink>::operator delete;
+  unsigned rxCalls = 0;
 
-  using Base = Zutcp::Connection<
-    HubApp, TestLink, TxBufAlloc>;
-  TestLink(HubApp *app, bool isServer = false) : Base{app, isServer} {
-    Base::configLocalParams(app);
-  }
-
-  static constexpr unsigned RecBatch = Base::RecoveryScanBatch;
-
-  bool recoveryPackets(unsigned count, bool ecn = false) {
-    if (ecn) Base::setEcnDisabled_(false);
-    Base::setTxPN(Zutcp::PktNumSpace::Initial, count + 1);
-    for (unsigned pn = 1; pn <= count; ++pn)
-      if (!Base::recordTxPkt(Zutcp::PktNumSpace::Initial, pn, 1200,
-	  Zutcp::SentFrameRef{}, true, false, 0, Zutcp::PktNumSpace::N, 0,
-	  Zutcp::PktType::Initial,
-	  ecn ? Zutcp::EcnMark::ECT0 : Zutcp::EcnMark::NotECT))
-	return false;
-    return true;
-  }
-  void recoveryAck(unsigned largest, unsigned first, bool ecn = false) {
-    Base::AckSnapshot ack;
-    ack.level = Zutcp::PktNumSpace::Initial;
-    ack.ranges.push(Zutcp::AckRange{largest, first});
-    if (ecn) {
-      ack.ecn.ect0 = largest - first;
-      ack.ecn.ce = 1;
-    }
-    Base::processAckFrameTx_(ack);
-  }
-  auto recoveryDiag() {
-    // Continuation assertions inspect the controller after partial retirement,
-    // before production publishes its end-of-ACK diagnostic update.
-    Base::updateCongestionDiag();
-    return Base::txDiag_();
-  }
-  auto recoveryPathDiag() const { return Base::pathDiag_(); }
-  void recoveryStop() { Base::cancelTimers_(); }
-  void recoveryReset() { Base::resetTx_(); }
-  void resetRuntime() { Base::resetLink_(); }
-  void recoveryDiscard() {
-    Base::discardPktNumSpace_1(Zutcp::PktNumSpace::Initial);
-  }
-
-
-
-  const Zutcp::TransportParams &localParams() const {
-    return Base::localTransportParams();
-  }
-
+  TestLink(HubApp *app, bool server = false) : Base{app, server} { configLocalParams(app); }
   int process(Zutcp::Reader &) { ++rxCalls; return 0; }
-  void rxReset(uint64_t appError, uint64_t finalSize) {
-    lastResetAppError = appError;
-    lastResetFinalSize = finalSize;
-    ++resetReceivedCount;
-  }
-  void txReset(uint64_t appError, uint64_t finalSize) {
-    lastResetSentAppError = appError;
-    lastResetSentFinalSize = finalSize;
-    ++resetSentCount;
-  }
-  void txStopped(uint64_t appError) {
-    lastStopSentAppError = appError;
-    ++stopSentCount;
-  }
-  void txComplete(bool) { ++txCompleteCount; }
-  void flowBlocked(uint64_t maximum) {
-    lastFlowMaximum = maximum;
-    ++flowBlockedCount;
-  }
-  void transportClose(Zutcp::FrameType::T type, uint64_t errorCode) {
-    lastCloseType = type;
-    lastCloseError = errorCode;
-    ++transportCloseCount;
-  }
-  void pto_() { }
+  bool flushTx() { return false; }
+  void queueTxFlush() { }
+  void pto() { }
   void queueRetransmit() { }
-  bool retransmit_(bool = false, unsigned = 2,
-    Zutcp::PktNumSpace::T = Zutcp::PktNumSpace::N) { return false; }
-
-
-
-
-
-
-	  void setRuntimeCIDs(const Zutcp::CxnID &local, const Zutcp::CxnID &peer) {
-	    Base::setRuntimeCIDs_(Zutcp::CxnID{"initcid0"}, local, peer);
-	  }
-
-	  void setPeerTransportParams(const Zutcp::TransportParams &params) {
-	    Base::peerParams(params);
-	  }
-
-
-
-
-
-
-
-
-
-
-  Zutcp::CxnID activeTxPeerCID() const {
-    return Base::cid_(Base::CIDSel::Peer);
+  bool retransmit(bool = false, unsigned = 2) { return false; }
+  void recoveryReset() { Base::resetTx_(); }
+  void resetRuntime() { Base::resetLink(); }
+  bool startHandshakeForTest() { return Base::startHandshake(); }
+  bool handshakingRx() const { return Base::handshakeStartedRx() && !Base::establishedRx(); }
+  bool handshakingTx() const { return Base::handshakeStartedTx() && !Base::establishedTx(); }
+  bool closingRx() const { return Base::closingRx(); }
+  bool closingTx() const { return Base::closingTx(); }
+  bool linkClosedRx() const { return Base::linkClosedRx(); }
+  bool linkClosedTx() const { return Base::linkClosedTx(); }
+  uint64_t closeErrorRx() const { return Base::closeErrorRx(); }
+  uint64_t closeErrorTx() const { return Base::closeErrorTx(); }
+  void closeTxForTest(uint64_t error, bool application = false) {
+    Base::closeStateTx(error, application);
   }
-
-
-
-	  bool draining() const { return Base::drainingRx(); }
-	  bool startHandshakeForTest() { return Base::startHandshake(); }
-	  bool handshakingRx() const {
-	    return Base::handshakeStartedRx() && !Base::establishedRx();
-	  }
-	  bool handshakingTx() const {
-	    return Base::handshakeStartedTx() && !Base::establishedTx();
-	  }
-	  bool closingRx() const { return Base::closingRx_(); }
-	  bool closingTx() const { return Base::closingTx_(); }
-	  bool linkClosedRx() const { return Base::linkClosedRx_(); }
-	  bool linkClosedTx() const { return Base::linkClosedTx_(); }
-	  uint64_t closeErrorRx() const { return Base::closeErrorRx_(); }
-	  uint64_t closeErrorTx() const { return Base::closeErrorTx_(); }
-	  void closeTxForTest(uint64_t errorCode, bool application = false) {
-	    Base::closeStateTx(errorCode, application);
-	  }
+  void closeForTest(uint64_t error = 0) { Base::closeState(error); }
   void scheduleDataForTest() { Base::dataWritable(); }
   bool takeDataForTest() { return Base::takeTxReady(); }
   void clearDataForTest() { Base::clearWritableData(); }
   bool dataReadyForTest() const { return Base::txReady(); }
-  bool flushControlSends() {
-    return Base::flushData(
-      ZiSockAddr{},
-      [](Zutcp::PktBuild &) { return true; },
-      [](Zutcp::PktBuild &, ZiSockAddr, const Base::TxPktRefs &) {
-	return true;
-      });
-  }
-  void dataBlockedForTest(uint64_t maximum) {
-    Base::dataBlocked(maximum);
-  }
-	  void closeTransport(Zutcp::FrameType::T type, uint64_t errorCode) {
-	    Base::closeLink(errorCode);
-	    Base::transportClose_(type, errorCode);
-	  }
-	  void closeForTest(uint64_t errorCode = 0) {
-	    Base::closeState(errorCode);
-	  }
-  void initServerPath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::initServerPathTx_(ZuMv(local), ZuMv(remote));
-  }
-  void initClientPath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::initClientPathTx_(ZuMv(local), ZuMv(remote));
-  }
-
-
-
-
-
-
-
-  void flushTx_() { ++txFlushQueued; }
-  void flushTx_(ZiSockAddr) { ++txFlushQueued; }
-  void queueTxFlush() { ++txFlushQueued; }
-  void queueTxFlush(ZiSockAddr) { ++txFlushQueued; }
-  Zutcp::LinkDiag diag() const { return Base::diag_(); }
-
-  uint64_t lastResetAppError = 0;
-  uint64_t lastResetFinalSize = 0;
-  uint64_t lastResetSentAppError = 0;
-  uint64_t lastResetSentFinalSize = 0;
-  uint64_t lastStopSentAppError = 0;
-  uint64_t lastFlowMaximum = 0;
-  uint64_t lastCloseError = 0;
-  Zutcp::FrameType::T lastFlowType = Zutcp::FrameType::Unknown;
-  Zutcp::FrameType::T lastCloseType = Zutcp::FrameType::Unknown;
-  unsigned resetReceivedCount = 0;
-  unsigned resetSentCount = 0;
-  unsigned stopSentCount = 0;
-  unsigned flowBlockedCount = 0;
-  unsigned transportCloseCount = 0;
-  unsigned txFlushQueued = 0;
-  unsigned rxCalls = 0, txCompleteCount = 0;
-	};
-
+};
 struct HubFixture {
-  HubFixture() : mx{mxParams_()} {
+  ZiMultiplex	mx;
+  HubApp	app;
+  Zi::IOBufAllocator *rx = nullptr;
+
+  HubFixture() : mx{mxParams()} {
+    rx = ZutcpTest::pktRxAllocator(&mx);
     ZiAssert(app.init(Zutcp::HubParams(&mx)),
       "Zutcp", (), "API test hub init failed", return);
     ZiAssert(mx.start(), "Zutcp", (),
@@ -420,7 +209,7 @@ struct HubFixture {
     mx.stop();
   }
 
-  static ZiMxParams mxParams_() {
+  static ZiMxParams mxParams() {
     return ZiMxParams()
       .scheduler([](auto &s) {
 	s.nThreads(4);
@@ -428,43 +217,7 @@ struct HubFixture {
       .rxThread(1).txThread(2);
   }
 
-  ZiMultiplex	mx;
-  HubApp	app;
 };
-
-static bool parseFrame(const uint8_t *b, int n, Zutcp::Frame &frame)
-{
-  unsigned used = 0;
-  return n > 0 && !Zutcp::FrameCodec::parse(
-    ZuBSpan{b, unsigned(n)}, frame, used) &&
-    used == unsigned(n);
-}
-
-static ZmRef<ZiIOBuf> dataPkt(
-  uint64_t offset, ZuBSpan payload, bool fin,
-  Zutcp::Frame &frame, unsigned &used)
-{
-  ZmRef<ZiIOBuf> packet = ([](void *owner) {
-      static Zi::IOBufAllocator *allocator =
-	([] { static ZiMultiplex mx; return ZutcpTest::pktRxAllocator(&mx); })();
-      return allocator->allocBuf(owner, 0);
-    })(nullptr);
-  if (ZuUnlikely(!packet)) return nullptr;
-  int n = Zutcp::FrameCodec::writeData(
-    packet->data_(), packet->size, offset, payload, fin);
-  if (n <= 0) return nullptr;
-  packet->skip = 0;
-  packet->length = unsigned(n);
-  if (Zutcp::FrameCodec::parse(
-      ZuBSpan{packet->data(), packet->length}, frame, used) ||
-      used != packet->length)
-    return nullptr;
-  return packet;
-}
-
-} // namespace
-
-
 
 void testParams()
 {
@@ -480,6 +233,14 @@ void testParams()
   ZuCHECK(params.connectTimeout() == ZuTime{30} &&
       params.connectTimeout(ZuTime{7}).connectTimeout() == ZuTime{7},
     "connect timeout must retain its adopted default and explicit override");
+  ZuCHECK(params.tfoCookieCacheSize() == 1024 &&
+      params.tfoCookieCacheSize(7).tfoCookieCacheSize() == 7,
+    "Fast Open cache has a bounded default and explicit stopped size override");
+  HubApp policy;
+  ZuCHECK(!policy.earlyData(static_cast<TestLink *>(nullptr)) &&
+      !policy.maxEarlyData(static_cast<TestLink *>(nullptr)) &&
+      !policy.allowEarlyStream(static_cast<TestLink *>(nullptr), 0, true),
+    "Fast Open application policy denies transmission and receive delivery by default");
   ZuCHECK(params.closedTupleRingSize() == 4096 &&
       params.closedTupleRingSize(7).closedTupleRingSize() == 7,
     "closed tuple history defaults and stopped size overrides must be retained");
@@ -509,8 +270,7 @@ void testConnectionShape()
   ZuCHECK(client->txBytes() == 3, "connection writer byte accounting mismatch");
   client->fin();
   client->reset(7);
-  client->stop(9);
-  ZuCHECK(client->finSent() && client->resetSent() && client->stopSent(),
+  ZuCHECK(client->finSent() && client->resetSent() && client->txAppError() == 7,
     "connection direction state was not recorded");
   client->closeForTest(42);
   ZuCHECK(client->closed() && client->closeError() == 42, "connection close mismatch");
@@ -538,7 +298,7 @@ void testAlignedSurfaceShape()
 {
   ZuTestScope(testAlignedSurfaceShape);
 
-  ZiMultiplex mx{HubFixture::mxParams_()};
+  ZiMultiplex mx{HubFixture::mxParams()};
   ClientShapeApp clientApp;
   bool clientOK = clientApp.init(
     Zutcp::ClientParams(&mx));
@@ -726,27 +486,6 @@ void testDeferredByteReset()
   ZuCHECK(!cxn->txQueueCount() && !cxn->txBytes() && !cxn->txRangeCount(),
     "repeated reset must drain without queue credit underflow");
 
-  cxn->stop(11);
-  fixture.app.enterRx();
-  cxn->resetRuntime();
-  ZuCHECK(fixture.app.rxPending(), "STOP must have queued its Rx handoff");
-  while (fixture.app.rxPending()) fixture.app.runRx();
-  ZuCHECK(cxn->rxError() == Zutcp::DataError::None && !cxn->rxAppError(),
-    "an old STOP handoff must not restore an Rx error after reset");
-  while (fixture.app.txPending()) fixture.app.runTx();
-  fixture.app.enterRx();
-  Zutcp::Frame stop;
-  stop.type = Zutcp::FrameType::StopSending;
-  stop.errorCode = 13;
-  ZuCHECK(cxn->receiveStop(stop) && fixture.app.txPending(),
-    "received STOP must queue its Tx completion");
-  fixture.app.enterTx();
-  cxn->recoveryReset();
-  while (fixture.app.txPending()) fixture.app.runTx();
-  ZuCHECK(cxn->txError() == Zutcp::DataError::None && !cxn->txAppError() &&
-    !cxn->txCompleted() && !cxn->txCompleteCount,
-    "an old STOP completion must not complete the new byte direction");
-
   fixture.app.enterRx();
   cxn->resetRuntime();
   auto gen = cxn->dataGen();
@@ -757,209 +496,6 @@ void testDeferredByteReset()
     "Tx reset must install the published generation without discarding new work");
   cxn->recoveryReset();
 }
-
-void testPeerParamOwnership()
-{
-  ZuTestScope(testPeerParamOwnership);
-  HubFixture fixture;
-  ZmRef<TestLink> cxn = new TestLink{&fixture.app};
-  fixture.app.defer();
-  fixture.app.enterTx();
-  ZuCHECK(!cxn->txCreditLimit(), "unset peer limits must grant no credit");
-  Zutcp::TransportParams params;
-  params.initialMaxData = 16384;
-  fixture.app.enterRx();
-  cxn->setPeerTransportParams(params);
-  params = {};
-  ZuCHECK(cxn->peerParamsSet() && cxn->peerParams().initialMaxData == 16384,
-    "Rx owns its parameter record independently of decoded storage");
-  fixture.app.enterTx();
-  ZuCHECK(!cxn->txCreditLimit(), "Tx must wait for its parameter handoff");
-  while (fixture.app.txPending()) fixture.app.runTx();
-  ZuCHECK(cxn->txCreditLimit() == 16384 && cxn->txFrameMax() == 16384,
-    "Tx must install copied connection credit and the initial writer limit");
-  Zutcp::Frame update;
-  update.type = Zutcp::FrameType::MaxData;
-  update.value = 32768;
-  ZuCHECK(cxn->consumeTxCredit(1024) && cxn->applyMaxData(update),
-    "credit extension setup failed");
-  fixture.app.enterRx();
-  params.initialMaxData = 16384;
-  cxn->setPeerTransportParams(params);
-  fixture.app.enterTx();
-  while (fixture.app.txPending()) fixture.app.runTx();
-  ZuCHECK(cxn->txCreditLimit() == 32768 && cxn->txCreditAvailable() == 31744 &&
-    cxn->txFrameMax() == 16384,
-    "a repeated setup record must not shrink current credit or reset consumed bytes");
-  while (fixture.app.rxPending()) fixture.app.runRx();
-}
-
-
-
-void testRecoveryRuntimeOrdering()
-{
-  ZuTestScope(testRecoveryRuntimeOrdering);
-  for (unsigned mode = 0; mode < 3; ++mode) {
-    bool ecn = mode != 0;
-    unsigned count = mode == 2 ? 2 : 4;
-    HubFixture fixture;
-    ZmRef<TestLink> link = new TestLink{&fixture.app};
-    link->recoveryReset();
-    uint64_t initial = link->recoveryDiag().congestionWindow;
-    ZuCHECK(link->recoveryPackets(count, ecn), "runtime recovery packet setup");
-    link->recoveryAck(count, count, ecn);
-    auto diag = link->recoveryDiag();
-    ZuCHECK(diag.congestionWindow == initial/2 &&
-      diag.bytesInFlight == (mode == 2 ? 1200 : 2400),
-      "runtime same ACK must establish loss/ECN before growth");
-    ZuCHECK(link->recoveryPathDiag().ecnCEEvents == unsigned(ecn) &&
-      !link->recoveryPathDiag().ecnValidationFailures,
-      "ECN variant must exercise the validated CE response");
-    link->recoveryStop();
-  }
-  for (bool reset : {false, true}) {
-    HubFixture fixture;
-    ZmRef<TestLink> link = new TestLink{&fixture.app};
-    link->recoveryReset();
-    uint64_t initial = link->recoveryDiag().congestionWindow;
-    ZuCHECK(link->recoveryPackets(TestLink::RecBatch + 1),
-      "runtime continuation packet setup");
-    fixture.app.defer();
-    fixture.app.enterTx();
-    link->recoveryAck(TestLink::RecBatch + 1, 1);
-    ZuCHECK(fixture.app.txPending() &&
-      link->recoveryDiag().congestionWindow == initial &&
-      link->recoveryDiag().bytesInFlight == 1200,
-      "runtime first continuation retires without committing growth");
-    if (reset) link->recoveryReset();
-    else link->recoveryDiscard();
-    while (fixture.app.txPending()) fixture.app.runTx();
-    ZuCHECK(link->recoveryDiag().congestionWindow == initial &&
-      !link->recoveryDiag().bytesInFlight,
-      "runtime reset/discard must reject queued growth and retire once");
-    while (fixture.app.rxPending()) fixture.app.runRx();
-    fixture.app.enterTx();
-    link->recoveryStop();
-  }
-}
-
-void testApplicationCallbacks()
-{
-  ZuTestScope(testApplicationCallbacks);
-
-  HubFixture fixture;
-  ZmRef<TestLink> server = new TestLink{&fixture.app, true};
-  ZmRef<TestLink> client = new TestLink{&fixture.app};
-  uint8_t b[128];
-  Zutcp::Frame frame;
-  unsigned used = 0;
-
-  auto packet = dataPkt(0, "abc", false, frame, used);
-  ZuCHECK(packet && server->receiveFrame(frame, packet) == 0 &&
-    server->rxCalls == 1 && server->rxBytes() == 3,
-    "connection receive delivery callback mismatch");
-  int n = Zutcp::FrameCodec::writeReset(b, sizeof(b), 7, 3);
-  ZuCHECK(parseFrame(b, n, frame) && server->receiveFrame(frame) == 0 &&
-    server->resetReceivedCount == 1 && server->lastResetAppError == 7 &&
-    server->lastResetFinalSize == 3, "reset receive callback mismatch");
-  n = Zutcp::FrameCodec::writeStopSending(b, sizeof(b), 9);
-  ZuCHECK(parseFrame(b, n, frame) && client->receiveFrame(frame) == 0 &&
-    client->stopReceived() && client->txCompleteCount == 1,
-    "peer stop must complete the Tx direction once");
-  client->reset(11);
-  ZuCHECK(client->resetSentCount == 1 && client->lastResetSentAppError == 11,
-    "local reset callback mismatch");
-  client->stop(12);
-  ZuCHECK(client->stopSentCount == 1 && client->lastStopSentAppError == 12,
-    "local stop callback mismatch");
-  client->dataBlockedForTest(4096);
-  ZuCHECK(client->flowBlockedCount == 1 && client->lastFlowMaximum == 4096,
-    "flow blocked callback mismatch");
-  client->closeTransport(Zutcp::FrameType::ConnectionClose, 42);
-  ZuCHECK(client->transportCloseCount == 1 &&
-    client->lastCloseType == Zutcp::FrameType::ConnectionClose &&
-    client->lastCloseError == 42, "transport close callback mismatch");
-
-
-}
-
-void testStopSendingOwnership()
-{
-  ZuTestScope(testStopSendingOwnership);
-
-  HubFixture fixture;
-  ZmRef<TestLink> link = new TestLink{&fixture.app};
-  uint8_t b[128];
-  Zutcp::Frame frame;
-  int n = Zutcp::FrameCodec::writeStopSending(
-    b, sizeof(b), 9);
-  ZuCHECK(parseFrame(b, n, frame),
-    "STOP_SENDING ownership setup failed");
-
-  fixture.app.defer();
-  ZuCHECK(link->receiveFrame(frame) == 0 && link->stopReceived() &&
-      fixture.app.txPending() && !link->txCompleteCount &&
-      link->rxError() == Zutcp::DataError::None,
-    "STOP_SENDING did not defer completion to Tx");
-  ZuCHECK(link->receiveFrame(frame) == 0 && fixture.app.txPending() &&
-      !link->txCompleteCount,
-    "duplicate STOP_SENDING queued duplicate completion");
-
-  fixture.app.enterTx();
-  link->reset(11);
-  ZuCHECK(link->txCompleteCount == 1 &&
-      link->txError() == Zutcp::DataError::Reset &&
-      link->txAppError() == 11,
-    "racing reset did not complete stream on Tx");
-  fixture.app.runTx();
-  ZuCHECK(link->txCompleteCount == 1 &&
-      link->txError() == Zutcp::DataError::Reset &&
-      link->txAppError() == 11,
-    "STOP_SENDING/reset race completed Tx more than once");
-  for (unsigned i = 0; fixture.app.txPending() && i < 4; ++i)
-    fixture.app.runTx();
-  ZuCHECK(!fixture.app.txPending() && link->txCompleteCount == 1,
-    "STOP_SENDING/reset race did not drain queued Tx work exactly once");
-
-  HubFixture resetFixture;
-  ZmRef<TestLink> resetLink = new TestLink{&resetFixture.app};
-  resetFixture.app.defer();
-  resetFixture.app.enterTx();
-  resetLink->stop(13);
-  ZuCHECK(resetFixture.app.rxPending() &&
-      resetLink->txError() == Zutcp::DataError::None,
-    "local STOP_SENDING did not defer its Rx cause");
-
-  n = Zutcp::FrameCodec::writeReset(
-    b, sizeof(b), 17, 0);
-  ZuCHECK(parseFrame(b, n, frame),
-    "RESET_STREAM ownership setup failed");
-  resetFixture.app.enterRx();
-  ZuCHECK(resetLink->receiveFrame(frame) == 0 &&
-      resetLink->rxError() == Zutcp::DataError::Reset &&
-      resetLink->rxAppError() == 17,
-    "racing peer reset did not establish the Rx cause");
-  resetFixture.app.runRx();
-  ZuCHECK(resetLink->rxError() == Zutcp::DataError::Reset &&
-      resetLink->rxAppError() == 17,
-    "deferred STOP_SENDING overwrote the Rx reset cause");
-  for (unsigned i = 0;
-      (resetFixture.app.rxPending() || resetFixture.app.txPending()) && i < 8;
-      ++i) {
-    if (resetFixture.app.rxPending()) resetFixture.app.runRx();
-    if (resetFixture.app.txPending()) resetFixture.app.runTx();
-  }
-  ZuCHECK(!resetFixture.app.rxPending() && !resetFixture.app.txPending(),
-    "STOP_SENDING/RESET_STREAM race did not drain deferred work");
-}
-
-
-
-
-
-
-
-
 
 void testInitValidate()
 {
@@ -1017,6 +553,14 @@ void testInitValidate()
     ZuCHECK(!app.init(ZuMv(params)) && errors == 1,
       "zero closed tuple capacity must fail before initialization");
   }
+  {
+    HubApp app;
+    unsigned errors = 0;
+    auto params = Zutcp::HubParams(&mx).tfoCookieCacheSize(0)
+      .errorFn(Zutcp::ErrorFn{[&errors](ZeException) { ++errors; }});
+    ZuCHECK(!app.init(ZuMv(params)) && errors == 1,
+      "zero Fast Open cookie capacity must fail before initialization");
+  }
   for (auto timeout : {ZuTime{}, ZuTime{0}, ZuTime{-1}}) {
     HubApp app;
     unsigned errors = 0;
@@ -1071,15 +615,30 @@ void testInitValidate()
   ZiLog::stop();
 }
 
+void testApplicationByteSurface()
+{
+  ZuTestScope(testApplicationByteSurface);
+  HubFixture fixture;
+  ZmRef<TestLink> link = new TestLink{&fixture.app};
+  auto buf = fixture.rx->allocBuf(nullptr, 3);
+  memcpy(buf->data(), "abc", 3);
+  buf->length = 3;
+  Zutcp::ByteData data{.offset = 0, .length = 3, .payload = buf->cspan()};
+  ZuCHECK(link->processFrame(data, buf) == 0 && link->rxCalls == 1 &&
+      link->reader().length() == 3 && link->rxAdmitted() == 3,
+    "application byte delivery retains its original packet-backed input");
+  auto consumed = link->reader().consume(
+    [](auto part) -> int64_t { return part.length(); }, [](auto) { });
+  ZuCHECK(consumed == 3 && link->retireRx(3), "consumed bytes retire through the public API");
+  Zutcp::ByteData fin{.offset = 3, .fin = true};
+  ZuCHECK(link->processFrame(fin, {}) == 0 && link->rxCalls == 2 && link->rxComplete(),
+    "a payload-free FIN reports EOF independently of application bytes");
+  link->closeRx();
+}
+
 int main(int argc, char **argv)
 {
   ZuTestUtil::parse(argc, argv);
-
-  ZiTestResidue::init("ZutcpAPITest");
-#ifdef Zutcp_DEBUG
-  g_residue = ZiTestResidue::dir("qlog");
-#endif
-
   ZuTestMain();
   ZuTestCall(testParams);
   ZuTestCall(testConnectionShape);
@@ -1087,9 +646,6 @@ int main(int argc, char **argv)
   ZuTestCall(testAlignedSurfaceShape);
   ZuTestCall(testLinkStateOwnership);
   ZuTestCall(testDeferredByteReset);
-  ZuTestCall(testPeerParamOwnership);
-  ZuTestCall(testRecoveryRuntimeOrdering);
-  ZuTestCall(testApplicationCallbacks);
-  ZuTestCall(testStopSendingOwnership);
   ZuTestCall(testInitValidate);
+  ZuTestCall(testApplicationByteSurface);
 }

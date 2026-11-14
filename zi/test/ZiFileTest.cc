@@ -18,18 +18,17 @@
 
 using namespace ZuTestUtil;
 
-namespace {
-Zi::Path g_root;
-Zi::Path g_foo;
-Zi::Path g_bar;
-Zi::Path g_baz;
-Zi::Path g_copy;
-Zi::Path g_renamed;
-Zi::Path g_dir;
-Zi::Path g_child;
-Zi::Path g_link;
+static Zi::Path g_root;
+static Zi::Path g_foo;
+static Zi::Path g_bar;
+static Zi::Path g_baz;
+static Zi::Path g_copy;
+static Zi::Path g_renamed;
+static Zi::Path g_dir;
+static Zi::Path g_child;
+static Zi::Path g_link;
 
-void initPaths()
+static void initPaths()
 {
   g_root = ZiTestResidue::dir("files");
 
@@ -44,7 +43,7 @@ void initPaths()
 
 }
 
-void cleanupFiles()
+static void cleanupFiles()
 {
   ZiFile::remove(g_link);
   ZiFile::remove(g_child);
@@ -56,7 +55,7 @@ void cleanupFiles()
   ZiFile::rmdir(g_dir);
 }
 
-Zi::Path path_(const char *s)
+static Zi::Path path(const char *s)
 {
 #ifndef _WIN32
   return s;
@@ -67,7 +66,7 @@ Zi::Path path_(const char *s)
 #endif
 }
 
-bool makeSymlink(const Zi::Path &target, const Zi::Path &link)
+static bool makeSymlink(const Zi::Path &target, const Zi::Path &link)
 {
 #ifndef _WIN32
   return ::symlink(target, link) == 0;
@@ -81,7 +80,7 @@ bool makeSymlink(const Zi::Path &target, const Zi::Path &link)
 #endif
 }
 
-void testWriteReadAndBlockSize()
+static void testWriteReadAndBlockSize()
 {
   ZuTestScope(testWriteReadAndBlockSize);
 
@@ -124,7 +123,7 @@ void testWriteReadAndBlockSize()
   }
 }
 
-void testSparseReadDefaultsToZero()
+static void testSparseReadDefaultsToZero()
 {
   ZuTestScope(testSparseReadDefaultsToZero);
 
@@ -149,7 +148,7 @@ void testSparseReadDefaultsToZero()
   f.close();
 }
 
-void testVectoredIO()
+static void testVectoredIO()
 {
   ZuTestScope(testVectoredIO);
 
@@ -199,7 +198,7 @@ void testVectoredIO()
   f.close();
 }
 
-void testSeekSizeTruncateSync()
+static void testSeekSizeTruncateSync()
 {
   ZuTestScope(testSeekSizeTruncateSync);
 
@@ -232,7 +231,7 @@ void testSeekSizeTruncateSync()
   r.close();
 }
 
-void testMMapSpans()
+static void testMMapSpans()
 {
   ZuTestScope(testMMapSpans);
 
@@ -258,7 +257,7 @@ void testMMapSpans()
   file.close();
 }
 
-void testMetadataAndPathHelpers()
+static void testMetadataAndPathHelpers()
 {
   ZuTestScope(testMetadataAndPathHelpers);
 
@@ -296,10 +295,10 @@ void testMetadataAndPathHelpers()
   ZuCHECK(ZiFile::copy(g_renamed, g_copy) == Zi::OK, "copy failed");
   ZuCheck(copyStat.exists());
   auto canonical = ZiFile::canonical(
-    ZiFile::append(ZiFile::dirname(g_copy), path_("./copy")));
+    ZiFile::append(ZiFile::dirname(g_copy), path("./copy")));
   ZuCheck(!!canonical);
   ZuCheck(ZiFile::absolute(canonical));
-  ZuCheck(ZiFile::leafname(canonical) == path_("copy"));
+  ZuCheck(ZiFile::leafname(canonical) == path("copy"));
 
   ZiFile f;
   ZuCHECK(f.open(g_copy, ZiFile::ReadOnly, 0777) == Zi::OK, "open copy failed: ", f.error());
@@ -325,15 +324,16 @@ void testMetadataAndPathHelpers()
   ZuCheck(!!missing.error());
 }
 
-void testNegativeOpen()
+static void testNegativeOpen()
 {
   ZuTestScope(testNegativeOpen);
 
   ZiFile f;
-  ZuCheck(f.open(ZiFile::append(g_root, "does-not-exist"), ZiFile::ReadOnly, 0777) == Zi::IOError);
+  ZuCheck(f.open(ZiFile::append(g_root, "does-not-exist"),
+    ZiFile::ReadOnly, 0777) == Zi::IOError);
 }
 
-void testTxStream()
+static void testTxStream()
 {
   ZuTestScope(testTxStream);
 
@@ -378,7 +378,7 @@ struct FileBigPrintFn : ZuPrintBuffer {
 };
 struct FileBigPrint { friend FileBigPrintFn ZuPrintType(FileBigPrint *); };
 
-void testTxFailures()
+static void testTxFailures()
 {
   ZuTestScopeRT(testTxFailures);
   cleanupFiles();
@@ -421,7 +421,7 @@ void testTxFailures()
 #endif
 }
 
-void testOpenAtNoFollowAndStat()
+static void testOpenAtNoFollowAndStat()
 {
   ZuTestScope(testOpenAtNoFollowAndStat);
 
@@ -445,7 +445,7 @@ void testOpenAtNoFollowAndStat()
   ZuCheck(dirStat.isdir());
 
   ZiFile file;
-  ZuCHECK(file.openAt(dir, path_("child.txt"),
+  ZuCHECK(file.openAt(dir, path("child.txt"),
       ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) == Zi::OK,
     "openAt child failed: ", file.error());
 
@@ -468,18 +468,18 @@ void testOpenAtNoFollowAndStat()
   ZuCheck(ZuCSpan(buf, 5) == "child");
 
   ZiFile bad;
-  ZuCheck(bad.openAt(dir, path_("nested/name"), ZiFile::ReadOnly) == Zi::IOError);
+  ZuCheck(bad.openAt(dir, path("nested/name"), ZiFile::ReadOnly) == Zi::IOError);
   ZuCheck(bad.openAt(dir, g_child, ZiFile::ReadOnly) == Zi::IOError);
 
   if (makeSymlink(g_child, g_link)) {
     ZiFile link;
-    ZuCheck(link.openAt(dir, path_("link.txt"),
+    ZuCheck(link.openAt(dir, path("link.txt"),
 	ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) == Zi::IOError);
     ZiFile::remove(g_link);
   }
 }
 
-void testModeAndTmpDir()
+static void testModeAndTmpDir()
 {
   ZuTestScope(testModeAndTmpDir);
 
@@ -516,7 +516,7 @@ void testModeAndTmpDir()
   ZuCheck(ZiStat{tmp}.isdir());
 }
 
-void testFormattedStream()
+static void testFormattedStream()
 {
   ZuTestScope(testFormattedStream);
   cleanupFiles();
@@ -536,7 +536,6 @@ void testFormattedStream()
   ZuCheck((ZuCSpan{data.data(), data.size()} == "value=105\n"));
 }
 
-} // namespace
 
 int main(int argc, char **argv)
 {

@@ -11,6 +11,7 @@ using namespace ZuTestUtil;
 
 #include "ZutcpConnectionFixture.hh"
 
+
 void testFlowCredit()
 {
   ZuTestScope(testFlowCredit);
@@ -31,63 +32,23 @@ void testConnectionCredit()
   TestApp app;
   ZmRef<TestConnection> cxn = new TestConnection{&app};
   auto buf = packet(app, "abcdefghijkl");
-  auto frame = dataFrame(buf, 0);
-  ZuCHECK(cxn->processFrame(frame, buf) == 0 && cxn->rxCreditUsed() == 12 &&
-    cxn->rxCreditLimit() == 16, "connection window setup failed");
+  auto data = dataFrame(buf, 0);
+  ZuCHECK(cxn->processFrame(data, buf) == 0 && cxn->rxCreditUsed() == 12 &&
+      cxn->rxCreditLimit() == 16, "connection byte window setup");
   auto extra = packet(app, "abcde");
-  frame = dataFrame(extra, 12);
-  ZuCHECK(!cxn->receiveDataFrame(frame, extra) && cxn->rxCreditUsed() == 12 &&
-    cxn->rxAdmitted() == 12, "over-window input must preserve admitted state");
-  frame = {};
-  frame.type = Zutcp::FrameType::DataBlocked;
-  frame.value = 16;
-  ZuCHECK(cxn->receiveDataBlocked(frame) && cxn->rxCreditUsed() == 12 &&
-    cxn->rxCreditLimit() == 16, "blocked advice must not grant receive credit");
+  data = dataFrame(extra, 12);
+  ZuCHECK(!cxn->receiveDataFrame(data, extra) && cxn->rxCreditUsed() == 12 &&
+      cxn->rxAdmitted() == 12, "over-window bytes preserve admitted state");
   ZuCHECK(consume(cxn->reader(), "abcdefgh") && cxn->retireRx(8) &&
-    cxn->rxCreditLimit() == 24 && cxn->rxRetired() == 8 &&
-    cxn->queuedControlFrames() == 1,
-    "retired bytes must replenish the connection window once");
+      cxn->rxCreditLimit() == 24 && cxn->rxRetired() == 8,
+    "retiring reader bytes replenishes the receive right edge once");
   cxn->txCredit(4);
   cxn->consumeTxCredit(4);
-  frame = {};
-  frame.type = Zutcp::FrameType::MaxData;
-  frame.value = 9;
-  ZuCHECK(cxn->applyMaxData(frame) && cxn->txCreditAvailable() == 5,
-    "peer credit must extend the same transmit window");
-  frame.value = 3;
-  ZuCHECK(cxn->applyMaxData(frame) && cxn->txCreditAvailable() == 5,
-    "stale credit must not shrink the window");
+  cxn->extendTxCredit(9);
+  ZuCHECK(cxn->txCreditAvailable() == 5, "extended byte credit becomes available");
+  cxn->extendTxCredit(3);
+  ZuCHECK(cxn->txCreditAvailable() == 5, "older credit cannot retract an extension");
   cxn->closeRx();
-}
-
-void testControlFrames()
-{
-  ZuTestScope(testControlFrames);
-  uint8_t bytes[64];
-  Zutcp::Frame frame;
-  unsigned used = 0;
-  auto control = Zutcp::ControlFrame::blocked(1024);
-  int n = control.write(bytes, sizeof(bytes));
-  ZuCHECK(n > 0 && !Zutcp::FrameCodec::parse({bytes, unsigned(n)}, frame, used) &&
-    frame.type == Zutcp::FrameType::DataBlocked && frame.value == 1024,
-    "blocked control must encode only the connection limit");
-  control = Zutcp::ControlFrame::flowUpdate({Zutcp::FrameType::MaxData, 2048});
-  n = control.write(bytes, sizeof(bytes));
-  ZuCHECK(n > 0 && !Zutcp::FrameCodec::parse({bytes, unsigned(n)}, frame, used) &&
-    frame.type == Zutcp::FrameType::MaxData && frame.value == 2048,
-    "credit update must encode only the connection window");
-  TestApp app;
-  ZmRef<TestConnection> cxn = new TestConnection{&app};
-  const uint8_t excluded[] = {0x11, 0x12, 0x13, 0x15, 0x16, 0x17};
-  bool rejected = true;
-  for (auto code : excluded) {
-    bytes[0] = code;
-    bytes[1] = bytes[2] = 0;
-    rejected &= !Zutcp::FrameCodec::parse({bytes, 3}, frame, used) &&
-      frame.type == Zutcp::FrameType::Unknown &&
-      !cxn->frameLegal(Zutcp::PktNumSpace::AppData, frame);
-  }
-  ZuCHECK(rejected, "removed stream/count wire records must be unsupported");
 }
 
 void testPacing()
@@ -113,6 +74,5 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testFlowCredit);
   ZuTestCall(testConnectionCredit);
-  ZuTestCall(testControlFrames);
   ZuTestCall(testPacing);
 }

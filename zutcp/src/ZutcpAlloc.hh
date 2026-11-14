@@ -27,14 +27,11 @@
 
 namespace Zutcp {
 
-// Intermediate Short/DATA framing and a bounded piggyback allowance. This
-// reserve is also excluded from producer capacity before packet scheduling.
-inline constexpr unsigned TxDataPktReserve = 64;
-inline constexpr unsigned DefaultControlBufCount = 256;
-inline constexpr unsigned DefaultTxControlCredits = 64;
-inline constexpr unsigned DefaultRxRetainFrames = 1024;
-inline constexpr unsigned DefaultRxRetainPerCxn = 256;
-inline constexpr unsigned DefaultRxReserveFrames = 64;
+enum { DefaultControlBufCount = 256 };
+enum { DefaultTxControlCredits = 64 };
+enum { DefaultRxRetainFrames = 1024 };
+enum { DefaultRxRetainPerCxn = 256 };
+enum { DefaultRxReserveFrames = 64 };
 
 // Rx-owned identity, independent of Connection lifetime. A slot retains this
 // account while application aliases hold its original registered packet.

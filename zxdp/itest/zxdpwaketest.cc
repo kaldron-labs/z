@@ -110,7 +110,8 @@ static void testWake()
   instance->wake();
   release.post();
   receiver.join();
-  ZuCheckRT(waits == 1, log_("zero spin selects blocking epoll and an entry-racing wake returns"));
+  ZuCheckRT(waits == 1,
+    log_("zero spin selects blocking epoll and an entry-racing wake returns"));
   gate = nullptr;
 
   // Run many receive/wake cycles, allowing the actual wait to race naturally
@@ -119,7 +120,8 @@ static void testWake()
   ZmThread repeated{[&instance] { for (unsigned i = 0; i < Turns; ++i) instance->rx(); }};
   for (unsigned i = 0; i < Turns; ++i) { parked.wait(); instance->wake(); }
   repeated.join();
-  ZuCheckRT(waits == Turns + 1, log_("repeated eventfd wakeups neither disappear nor return extra calls"));
+  ZuCheckRT(waits == Turns + 1,
+    log_("repeated eventfd wakeups neither disappear nor return extra calls"));
 
   int wire = socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC, htons(ETH_P_ALL));
   sockaddr_ll address{};

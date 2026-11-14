@@ -7,7 +7,7 @@
 #include <zlib/ZuLib.hh>
 
 #include <stdlib.h>
-#include <stdio.h>
+#include <zlib/ZiFile.hh>
 #include <net/if.h>
 
 #include <iostream>
@@ -24,6 +24,11 @@ ZuDerive(AppRequest,
 class App : public Zutcp::Client<App> {
 public:
   class Cxn;
+  bool tfo() const { return m_tfo; }
+  bool earlyData(Cxn *);
+  bool allowEarlyStream(Cxn *, uint64_t, bool);
+  void earlyDataAccepted(Cxn *);
+  void earlyDataRejected(Cxn *);
   App(ZuCSpan request) { m_request << request; }
   ZuCSpan request() const { return m_request; }
   void done() { m_established.post(); m_done.post(); }
@@ -31,11 +36,16 @@ public:
   void waitReady() { m_established.wait(); }
   void wait() { m_done.wait(); }
   void setError(const char *msg) {
-    if (!m_error.xch(1)) std::cerr << "error: " << msg << '\n' << std::flush;
+    if (!m_error.xch(1))
+      ZiLOG(Error, "zutcpclient", ([msg = ZeString{msg}](auto &out) {
+	out << "error: " << msg;
+      }));
   }
   bool error() const { return m_error.load_(); }
 
 private:
+  bool			m_tfo = getenv("ZUTCP_TEST_TFO") != nullptr;
+  bool			m_allowEarly = getenv("ZUTCP_TEST_TFO_SEND_DENIED") == nullptr;
   ZmSemaphore		m_done, m_established;
   AppRequest		m_request;
   ZmAtomic<unsigned>	m_error = 0;
@@ -48,29 +58,47 @@ friend inline ZuStringT<"Zutcp.Example.CliCxn"> ZmNHeapID(Cxn *);
 public:
   using ZmNHeap<Cxn>::operator new;
   using ZmNHeap<Cxn>::operator delete;
-  Cxn(App *app) : Base{app} {
+  Cxn(App *app, unsigned tfoID = 0) : Base{app}, m_tfoID{tfoID} {
     txErrorFn(ZiTxErrorFn{[](ZeException &e) {
       ZiLOG(Error, "zutcpclient", ([e](auto &out) { out << "transmit error: " << e; }));
       return false;
     }});
   }
-  void connected(Zutcp::Connected info) {
-    std::cerr << "connection established version=" << info.version << '\n' << std::flush;
-    if (getenv("ZUTCP_WIRE_GATE_DIR")) app()->ready();
-    else startRequest();
+  void connected(Zutcp::Connected) {
+    std::cerr << "connection established\n" << std::flush;
+    if (app()->tfo()) {
+      std::cerr << "tfo connected=" << m_tfoID << '\n' << std::flush;
+      if (startRequest(false) && !send(ZuBSpan{}, true)) {
+	app()->setError("request FIN failed");
+	app()->done();
+      }
+    } else if (getenv("ZUTCP_WIRE_GATE_DIR")) {
+      auto out = writer(); // Empty public Writer observes the published producer geometry.
+      unsigned capacity = out.maxSize() - out.headRoom() - out.tailRoom();
+      std::cerr << "wire producer=" << capacity << '\n' << std::flush;
+      app()->ready();
+    } else startRequest();
   }
-  void startRequest() {
-    if (!send(app()->request())) {
+  unsigned tfoID() const { return m_tfoID; }
+  bool startRequest(bool fin = true) {
+    if (app()->tfo()) {
+      if (m_requestQueued) return true;
+      m_requestQueued = true;
+      std::cerr << "tfo queued=" << m_tfoID << '\n' << std::flush;
+    }
+    if (!send(app()->request(), fin)) {
       app()->setError("request send failed");
       app()->done();
+      return false;
     }
+    return true;
   }
   int process(Zutcp::Reader &reader) {
     auto length = reader.length();
     if (length) {
       reader.each(length, [](auto part) -> int64_t {
-        std::cout.write(reinterpret_cast<const char *>(part.data()), part.length());
-        return part.length();
+	std::cout << ZuCSpan{part.data(), part.length()};
+	return part.length();
       });
       reader.clean();
       if (!retireRx(length)) return -1;
@@ -91,8 +119,32 @@ public:
   void connectFailed(bool) { app()->setError("connect failed"); app()->done(); }
 
 private:
-  bool m_responseSeen = false; // Rx
+  unsigned	m_tfoID = 0;
+  bool		m_requestQueued = false;
+  bool		m_responseSeen = false; // Rx
 };
+
+bool App::earlyData(Cxn *link)
+{
+  if (!m_tfo) return false;
+  bool queued = link->startRequest(false);
+  return queued && allowEarlyStream(link, 0, true);
+}
+
+bool App::allowEarlyStream(Cxn *link, uint64_t, bool)
+{
+  return m_tfo && (m_allowEarly || link->tfoID() == 1);
+}
+
+void App::earlyDataAccepted(Cxn *link)
+{
+  if (m_tfo) std::cerr << "tfo accepted=" << link->tfoID() << '\n' << std::flush;
+}
+
+void App::earlyDataRejected(Cxn *link)
+{
+  if (m_tfo) std::cerr << "tfo rejected=" << link->tfoID() << '\n' << std::flush;
+}
 
 static void usage()
 {
@@ -112,6 +164,13 @@ int main(int argc, char **argv)
 
   ZuCSpan request = argc == 5 ? argv[4] : "zutcp-example";
 
+  unsigned count = 1;
+  if (getenv("ZUTCP_TEST_TFO")) {
+    const char *value = getenv("ZUTCP_TEST_TFO_COUNT");
+    count = value ? unsigned(ZuBox<unsigned>(value)) : 2;
+    if (!count) usage();
+  }
+
   ZiLog::init("zutcpclient");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
@@ -129,32 +188,40 @@ int main(int argc, char **argv)
 
   App app{request};
 
-  if (!app.init(
-	Zutcp::ClientParams(&mx))) {
-    std::cerr << "client initialization failed\n" << std::flush;
+  auto params = Zutcp::ClientParams(&mx);
+  if (const char *profile = getenv("ZUTCP_TEST_CLIENT_OPTIONS")) {
+    unsigned options = ZuBox<unsigned>(profile);
+    params.sackPermitted(options & 1).windowScale(options & 2).timestamps(options & 4)
+      .ecn(options & 8);
+    params.maxData(131072);
+  }
+  if (const char *delay = getenv("ZUTCP_TEST_TLP_DELAY_US"))
+    params.tlpPeerAckDelay(Zutcp::timeUS(ZuBox<unsigned>(delay)));
+  if (!app.init(params)) {
+    ZiLOG(Error, "zutcpclient", ([](auto &out) { out << "client initialization failed"; }));
     mx.stop();
     ZiLog::stop();
     return 1;
   }
   if (!mx.start()) {
-    std::cerr << "ZiMultiplex start failed\n" << std::flush;
+    ZiLOG(Error, "zutcpclient", ([](auto &out) { out << "ZiMultiplex start failed"; }));
     app.final();
     ZiLog::stop();
     return 1;
   }
 
 
-  {
-    ZmRef<App::Cxn> link = new App::Cxn{&app};
+  for (unsigned i = 0; i < count && !app.error(); ++i) {
+    ZmRef<App::Cxn> link = new App::Cxn{&app, i + 1};
     link->connect(Zutcp::Host{server}, port);
     if (const char *directory = getenv("ZUTCP_WIRE_GATE_DIR")) {
       app.waitReady();
       if (!app.error()) {
 	ZtString<> path;
 	path << directory << "/wire-release";
-	auto file = fopen(path, "r"); // Fixture control thread waits before request output.
-	bool released = file && fgetc(file) == 'R';
-	if (file) fclose(file);
+	ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC}; // Fixture main waits before output.
+	char value;
+	bool released = file && file.read(&value, 1) == 1 && value == 'R';
 	if (released) link->startRequest();
 	else { app.setError("wire fixture gate failed"); app.done(); }
       }
@@ -163,6 +230,23 @@ int main(int argc, char **argv)
     ZmBlock<>{}([&link](auto wake) {
       link->disconnect([wake = ZuMv(wake)]() mutable { wake(); });
     });
+    if (app.tfo() && !i && count > 1) {
+      if (const char *directory = getenv("ZUTCP_TEST_TFO_GATE_DIR")) {
+	link = nullptr;
+	ZtString<> path;
+	path << directory << "/tfo-first-complete";
+	ZiFile marker{path, ZiFile::Write | ZiFile::GC};
+	constexpr auto ready = "ready\n"_z;
+	if (!marker || marker.write(ready.data(), ready.length()) != Zi::OK ||
+	    marker.close() != Zi::OK) { app.setError("TFO fixture marker failed"); break; }
+	ZtString<> next;
+	next << directory << "/tfo-next";
+	ZiFile gate{next, ZiFile::ReadOnly | ZiFile::GC}; // Fixture main waits for peer/fault.
+	char value;
+	bool released = gate && gate.read(&value, 1) == 1 && value == 'R';
+	if (!released) { app.setError("TFO fixture gate failed"); break; }
+      }
+    }
   }
 
   app.final();

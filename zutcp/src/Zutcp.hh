@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z QUIC transport API
+// Z TCP transport API
 
 #ifndef Zutcp_HH
 #define Zutcp_HH
@@ -58,20 +58,29 @@ namespace Zutcp {
 namespace Zutcp_ { using namespace Zutcp; }
 
 #include <zlib/ZutcpIP.hh>
+#include <zlib/ZutcpOptions.hh>
 #include <zlib/ZutcpMx.hh>
 #include <zlib/ZutcpTypes.hh>
 #include <zlib/ZutcpBuf.hh>
-#include <zlib/ZutcpPacket.hh>
-#include <zlib/ZutcpFrame.hh>
 #include <zlib/ZutcpPQueue.hh>
 #include <zlib/ZutcpConnectionUtil.hh>
 #include <zlib/ZutcpSched.hh>
-#include <zlib/ZutcpTransport.hh>
 #include <zlib/ZutcpLog.hh>
 #include <zlib/ZutcpRecovery.hh>
 #include <zlib/ZutcpPath.hh>
 #include <zlib/ZutcpSock.hh>
 #include <zlib/ZutcpDiag.hh>
+
+namespace Zutcp_ {
+
+struct PendingInitial {
+  CxnSlot slot;
+  ClosedTupleKey tuple;
+  uint64_t evidenceID = 0; // Nonzero also marks a chosen ISN; zero ISN is valid.
+  uint32_t localISN = 0;
+};
+
+} // namespace Zutcp_
 
 namespace Zutcp {
 
@@ -81,7 +90,7 @@ ZuDerive(ParamStrings,
   (ZtArray<ParamString, ZtArrayHeapID<"Zutcp.ParamStrings">>));
 
 struct InitialInfo {
-  LongHdr	header;
+  TCPHeader	header;
   ZiSockAddr	peer;
   unsigned	datagramLength = 0;
   IPPath	path{};
@@ -100,162 +109,16 @@ inline ZuBSpan byteSpan(const uint8_t *data, unsigned len)
   return ZuBSpan{data, len};
 }
 
-inline bool sentFrameRef(
-  ZuBSpan bytes, SentFrameRef &ref, bool &ackEliciting)
-{
-  ref = {};
-  ackEliciting = false;
-  if (!bytes) return true;
-  Frame frame;
-  unsigned used = 0;
-  if (FrameCodec::parse(bytes, frame, used) < 0 || !used) return false;
-  ackEliciting = FrameCodec::ackEliciting(frame.type);
-  if (!ackEliciting) return true;
-  switch (frame.type) {
-  case FrameType::Data:
-    ref.kind = SentFrameKind::Data;
-    ref.offset = frame.offset;
-    ref.length = frame.length;
-    ref.fin = frame.fin;
-    ref.range = TxRange{
-      nullptr, 0, uint32_t(frame.length), frame.offset};
-    return true;
-  case FrameType::MaxData:
-    ref = SentFrameRef::flowUpdate({FrameType::MaxData, frame.value});
-    break;
-  case FrameType::DataBlocked:
-    ref = SentFrameRef::blocked(frame.value);
-    break;
-  default:
-    ref = SentFrameRef::control();
-    break;
-  }
-  return true;
-}
-
-struct VersionNeg {
-  static bool supported(uint32_t version) { return version == Version1; }
-  static uint32_t preferred() { return Version1; }
-
-  static uint32_t choose(const uint32_t *versions, unsigned nVersions) {
-    for (unsigned i = 0; i < nVersions; ++i)
-      if (supported(versions[i])) return versions[i];
-    return 0;
-  }
-
-  static int write(
-    uint8_t *out, unsigned len, const CxnID &dcid,
-    const CxnID &scid) {
-    uint32_t versions[] = { Version1 };
-    return Pkt::writeVerNeg(out, len, dcid, scid, versions, 1);
-  }
-
-  static int parse(
-    ZuBSpan in, uint32_t *versions, unsigned capacity, unsigned &nVersions) {
-    return Pkt::parseVerNeg(in, versions, capacity, nVersions);
-  }
-};
-
-struct ServerPktDecision {
-  ServerPktAction::T	action = ServerPktAction::Drop;
-  LongHdr		header;
-  unsigned		responseLength = 0;
-};
-
-struct ZutcpAPI ServerPkt {
-  static ServerPktDecision routeLongHdr(
-    ZuBSpan, uint8_t *response, unsigned responseLen);
-};
-
-
-
 } // namespace Zutcp
 
 #include <zlib/Zutcp_.hh>
 
 namespace Zutcp {
 
-using Zutcp_::Cxn;
-using Zutcp_::CxnRouter;
+using Zutcp_::TupleRouter;
 using Zutcp_::Endpoint_;
 using Zutcp_::ServerLinks;
 
-// Connection bootstrap
-struct ZutcpAPI CxnIDGen {
-  static constexpr unsigned InitialLength = MinCIDLength;
-
-  static bool random(CxnID &, unsigned length = InitialLength);
-  static bool randomPair(
-    CxnID &initialDCID, CxnID &initialSCID,
-    unsigned dcidLength = InitialLength, unsigned scidLength = InitialLength);
-};
-
-class ZutcpAPI ClientBootstrap {
-public:
-  bool started() const { return m_started; }
-
-
-
-  const CxnID &initialDCID() const { return m_initialDCID; }
-  const CxnID &initialSCID() const { return m_initialSCID; }
-
-
-  bool start(const CxnID &initialDCID, const CxnID &initialSCID) {
-    if (initialDCID.length() < MinCIDLength ||
-	initialSCID.length() < MinCIDLength)
-      return false;
-    m_initialDCID = initialDCID;
-    m_initialSCID = initialSCID;
-    m_started = true;
-    return true;
-  }
-  bool startRandom(
-    unsigned dcidLength = CxnIDGen::InitialLength,
-    unsigned scidLength = CxnIDGen::InitialLength);
-
-
-
-
-
-  bool validateServerParams(
-    const TransportParams &params,
-    const CxnID &serverInitialSCID) const {
-    return m_started && params.origDCID == m_initialDCID &&
-      params.initialSCID == serverInitialSCID;
-  }
-
-private:
-  CxnID		m_initialDCID;
-  CxnID		m_initialSCID;
-  bool		m_started = false;
-};
-
-class ZutcpAPI ServerBootstrap {
-public:
-  bool accepted() const { return m_accepted; }
-  const CxnID &initialDCID() const { return m_initialDCID; }
-  const CxnID &origDCID() const { return m_origDCID; }
-  const CxnID &clientInitialSCID() const { return m_clientInitialSCID; }
-  const CxnID &localInitialSCID() const { return m_localInitialSCID; }
-
-  bool acceptInitial(const LongHdr &, unsigned datagramLength);
-  bool transportParams(TransportParams &) const;
-
-private:
-  CxnID		m_initialDCID;
-  CxnID		m_origDCID;
-  CxnID		m_clientInitialSCID;
-  CxnID		m_localInitialSCID;
-  bool		m_accepted = false;
-};
-
-
-
-
-
-
-
-// Hub configuration
 class HubParams {
 public:
   HubParams(ZiMultiplex *mx = nullptr)
@@ -284,10 +147,14 @@ public:
     return ZuMv(*this);
   }
 
+  HubParams &&sackPermitted(bool v) { m_sackPermitted = v; return ZuMv(*this); }
+  HubParams &&windowScale(bool v) { m_windowScale = v; return ZuMv(*this); }
+  HubParams &&timestamps(bool v) { m_timestamps = v; return ZuMv(*this); }
   HubParams &&maxData(uint64_t v) { m_maxData = v; return ZuMv(*this); }
   HubParams &&maxCxns(unsigned v) { m_maxCxns = v; return ZuMv(*this); }
   HubParams &&maxPendingCxns(unsigned v) { m_maxPendingCxns = v; return ZuMv(*this); }
   HubParams &&closedTupleRingSize(unsigned v) { m_closedTupleRingSize = v; return ZuMv(*this); }
+  HubParams &&tfoCookieCacheSize(unsigned v) { m_tfoCookieCacheSize = v; return ZuMv(*this); }
   HubParams &&connectTimeout(ZuTime v) { m_connectTimeout = v; return ZuMv(*this); }
   HubParams &&userTimeout(ZuTime v) { m_userTimeout = v; return ZuMv(*this); }
   HubParams &&closeDrainTimeout(ZuTime v) { m_closeDrainTimeout = v; return ZuMv(*this); }
@@ -305,6 +172,7 @@ public:
   HubParams &&minRto(ZuTime v) { m_rtoParams.min = v; return ZuMv(*this); }
   HubParams &&maxRto(ZuTime v) { m_rtoParams.max = v; return ZuMv(*this); }
   HubParams &&rtoGranularity(ZuTime v) { m_rtoParams.granularity = v; return ZuMv(*this); }
+  HubParams &&tlpPeerAckDelay(ZuTime v) { m_tlpPeerAckDelay = v; return ZuMv(*this); }
   HubParams &&ecn(bool v) { m_ecn = v; return ZuMv(*this); }
   HubParams &&controlBufCount(unsigned v) { m_controlBufCount = v; return ZuMv(*this); }
   HubParams &&txControlCredits(unsigned v) { m_txControlCredits = v; return ZuMv(*this); }
@@ -332,10 +200,14 @@ public:
 
   const ZutcpLogParams &qlogParams() const { return m_qlogParams; }
 
+  bool sackPermitted() const { return m_sackPermitted; }
+  bool windowScale() const { return m_windowScale; }
+  bool timestamps() const { return m_timestamps; }
   uint64_t maxData() const { return m_maxData; }
   unsigned maxCxns() const { return m_maxCxns; }
   unsigned maxPendingCxns() const { return m_maxPendingCxns; }
   unsigned closedTupleRingSize() const { return m_closedTupleRingSize; }
+  unsigned tfoCookieCacheSize() const { return m_tfoCookieCacheSize; }
   ZuTime connectTimeout() const { return m_connectTimeout; }
   ZuTime userTimeout() const { return m_userTimeout; }
   ZuTime closeDrainTimeout() const { return m_closeDrainTimeout; }
@@ -347,6 +219,7 @@ public:
   unsigned controlBufCount() const { return m_controlBufCount; }
   unsigned txControlCredits() const { return m_txControlCredits; }
   const RtoParams &rtoParams() const { return m_rtoParams; }
+  ZuTime tlpPeerAckDelay() const { return m_tlpPeerAckDelay; }
   unsigned rxRetainFrames() const { return m_rxRetainFrames; }
   unsigned rxRetainFramesPerCxn() const { return m_rxRetainPerCxn; }
   unsigned rxReserveFrames() const { return m_rxReserveFrames; }
@@ -365,7 +238,7 @@ private:
     if (!*v || v == ZuTime{0}) return {};
     if (v < ZuTime{0} || v.nsec() < 0 || v.nsec() >= 1000000000)
       throw ZeEXCEPT(Error, "Zutcp",
-	"invalid QUIC heartbeat interval");
+	"invalid TCP heartbeat interval");
     return v;
   }
 
@@ -374,19 +247,22 @@ private:
   uint64_t		m_maxData = DefaultMaxData;
   unsigned		m_maxCxns = DefaultMaxCxns, m_maxPendingCxns = DefaultMaxPendingCxns;
   unsigned		m_closedTupleRingSize = DefaultClosedTupleRingSize;
+  unsigned		m_tfoCookieCacheSize = DefaultTFOCookieCacheSize;
   ZuTime		m_connectTimeout{DefaultConnectTimeout};
   ZuTime		m_userTimeout{DefaultUserTimeout};
   ZuTime		m_closeDrainTimeout{DefaultCloseDrainTimeout};
   ZuTime		m_finWaitTimeout{DefaultFinWaitTimeout};
   uint64_t		m_maxIdleTimeout = 0;
   ZuTime		m_heartBeat;
-  unsigned		m_maxPayload = MinPktPayload;
+  unsigned		m_maxPayload = DefaultMaxPayload;
   unsigned		m_controlBufCount = DefaultControlBufCount;
   unsigned		m_txControlCredits = DefaultTxControlCredits;
   RtoParams		m_rtoParams;
+  ZuTime		m_tlpPeerAckDelay{0, 200000000};
   unsigned		m_rxRetainFrames = DefaultRxRetainFrames;
   unsigned		m_rxRetainPerCxn = DefaultRxRetainPerCxn;
   unsigned		m_rxReserveFrames = DefaultRxReserveFrames;
+  bool			m_sackPermitted = true, m_windowScale = true, m_timestamps = true;
   bool			m_ecn = false;
   ErrorFn		m_errorFn;
 };
@@ -422,7 +298,7 @@ public:
 
   ZuTime transportNow() const { return Zm::now(); }
 
-  Hub() : m_id{ZuID{} << "quic:" <<
+  Hub() : m_id{ZuID{} << "tcp:" <<
     ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>()} { }
 
   bool init(HubParams params) {
@@ -433,7 +309,7 @@ public:
   bool stop() override { return HubCtl::stop(); }
 
   TelKey telKey() const override {
-    return {Ztc::LinkType::QUIC, m_id};
+    return {Ztc::LinkType::TCP, m_id};
   }
   void telemetry(Ztc::HubTelemetry &data) const override {
     data.id = m_id;
@@ -447,7 +323,7 @@ public:
     data.nLinks = m_nLinks.load_();
     data.rxThread = m_rxThread;
     data.txThread = m_txThread;
-    data.linkType = Ztc::LinkType::QUIC;
+    data.linkType = Ztc::LinkType::TCP;
     data.state = state();
   }
   unsigned allLinks(Ztc::Hub::AllLinksFn fn) const override {
@@ -471,19 +347,22 @@ public:
       m_errorFn = ErrorFn{};
       m_qlogParams = {};
       m_maxData = DefaultMaxData;
+      m_sackPermitted = m_windowScale = m_timestamps = true;
       m_maxCxns = DefaultMaxCxns;
       m_maxPendingCxns = DefaultMaxPendingCxns;
       m_closedTupleRingSize = DefaultClosedTupleRingSize;
+      m_tfoCookieCacheSize = DefaultTFOCookieCacheSize;
       m_connectTimeout = ZuTime{DefaultConnectTimeout};
       m_userTimeout = ZuTime{DefaultUserTimeout};
       m_closeDrainTimeout = ZuTime{DefaultCloseDrainTimeout};
       m_finWaitTimeout = ZuTime{DefaultFinWaitTimeout};
       m_maxIdleTimeout = 0;
       m_heartBeat = {};
-      m_maxPayload = MinPktPayload;
+      m_maxPayload = DefaultMaxPayload;
       m_controlBufCount = DefaultControlBufCount;
       m_txControlCredits = DefaultTxControlCredits;
       m_rtoParams = {};
+      m_tlpPeerAckDelay = ZuTime{0, 200000000};
       m_rxRetainFrames = DefaultRxRetainFrames;
       m_rxRetainPerCxn = DefaultRxRetainPerCxn;
       m_rxReserveFrames = DefaultRxReserveFrames;
@@ -492,7 +371,7 @@ public:
       return true;
     });
     ZiAssert(ok, "Zutcp", (),
-      "QUIC hub finalization while not stopped", return);
+      "TCP hub finalization while not stopped", return);
   }
 
   ZiMultiplex *mx() const { return m_mx; }
@@ -534,10 +413,14 @@ public:
 
   ZutcpLogger::Trace &qlogTrace() { return m_qlogTrace; }
   ZutcpLogDiag qlogDiag() const { return ZutcpLogger::diag(); }
+  bool sackPermitted() const { return m_sackPermitted; }
+  bool windowScale() const { return m_windowScale; }
+  bool timestamps() const { return m_timestamps; }
   uint64_t maxData() const { return m_maxData; }
   unsigned maxCxns() const { return m_maxCxns; }
   unsigned maxPendingCxns() const { return m_maxPendingCxns; }
   unsigned closedTupleRingSize() const { return m_closedTupleRingSize; }
+  unsigned tfoCookieCacheSize() const { return m_tfoCookieCacheSize; }
   ZuTime connectTimeout() const { return m_connectTimeout; }
   ZuTime userTimeout() const { return m_userTimeout; }
   ZuTime closeDrainTimeout() const { return m_closeDrainTimeout; }
@@ -549,6 +432,7 @@ public:
   unsigned controlBufCount() const { return m_controlBufCount; }
   unsigned txControlCredits() const { return m_txControlCredits; }
   const RtoParams &rtoParams() const { return m_rtoParams; }
+  ZuTime tlpPeerAckDelay() const { return m_tlpPeerAckDelay; }
   unsigned rxRetainFrames() const { return m_rxRetainFrames; }
   unsigned rxRetainFramesPerCxn() const { return m_rxRetainPerCxn; }
   unsigned rxReserveFrames() const { return m_rxReserveFrames; }
@@ -592,7 +476,7 @@ private:
   }
 
 public:
-  void linkState_(
+  void linkState(
       Ztc::LinkState::T oldState, Ztc::LinkState::T newState) {
     switch (oldState) {
       case Ztc::LinkState::Down: Ztc::Hub::linkDownDec_(); break;
@@ -614,7 +498,7 @@ protected:
 	[this, params = ZuMv(params), vantage, native, l = ZuFwd<L>(l)]() mutable -> bool {
       m_errorFn = ZuMv(params.errorFn());
       if (!m_errorFn) m_errorFn = defaultErrorFn();
-      if (!validate_(params)) return false;
+      if (!validateParams(params)) return false;
       auto mx = params.mx();
       auto stack = native ? native : dynamic_cast<Stack *>(mx->plugin());
       if (stack && !native) {
@@ -629,11 +513,12 @@ protected:
 	      .maxCxns = params.maxCxns(),
 	      .maxPendingCxns = params.maxPendingCxns(),
 	      .closedTupleRingSize = params.closedTupleRingSize(),
+	      .tfoCookieCacheSize = params.tfoCookieCacheSize(),
 	      .connectTimeout = params.connectTimeout(),
 	      .userTimeout = params.userTimeout(),
 	      .closeDrainTimeout = params.closeDrainTimeout(),
 	      .finWaitTimeout = params.finWaitTimeout()}, error)) {
-	  error_(ZeEXCEPT(Error, "Zutcp", error));
+	  reportError(ZeEXCEPT(Error, "Zutcp", error));
 	  return false;
 	}
       }
@@ -644,9 +529,13 @@ protected:
       m_txThread = m_mx->txThread();
       m_qlogParams = params.qlogParams();
       m_maxData = params.maxData();
+      m_sackPermitted = params.sackPermitted();
+      m_windowScale = params.windowScale();
+      m_timestamps = params.timestamps();
       m_maxCxns = params.maxCxns();
       m_maxPendingCxns = params.maxPendingCxns();
       m_closedTupleRingSize = params.closedTupleRingSize();
+      m_tfoCookieCacheSize = params.tfoCookieCacheSize();
       m_connectTimeout = params.connectTimeout();
       m_userTimeout = params.userTimeout();
       m_closeDrainTimeout = params.closeDrainTimeout();
@@ -657,6 +546,7 @@ protected:
       m_controlBufCount = params.controlBufCount();
       m_txControlCredits = params.txControlCredits();
       m_rtoParams = params.rtoParams();
+      m_tlpPeerAckDelay = params.tlpPeerAckDelay();
       m_rxRetainFrames = params.rxRetainFrames();
       m_rxRetainPerCxn = params.rxRetainFramesPerCxn();
       m_rxReserveFrames = params.rxReserveFrames();
@@ -676,7 +566,7 @@ protected:
   unsigned allLinks_(Ztc::Hub::AllLinksFn) const { return 0; }
   unsigned allPools_(Ztc::Hub::AllPoolsFn) const { return 0; }
 
-  void error_(ZeException e) {
+  void reportError(ZeException e) {
     if (m_errorFn)
       m_errorFn(ZuMv(e));
     else
@@ -739,6 +629,16 @@ protected:
 
   template <typename Link>
   void disconnected(Link *, bool) { }
+public:
+  // Fast Open carries application-authorized, replay-safe work only.
+  template <typename Link> bool earlyData(Link *) { return false; }
+  template <typename Link> uint32_t maxEarlyData(Link *) { return 0; }
+  template <typename Link> bool allowEarlyStream(Link *, uint64_t, bool) { return false; }
+  template <typename Link> void earlyDataAccepted(Link *) { }
+  template <typename Link> void earlyDataRejected(Link *) { }
+
+protected:
+
   template <typename Link>
   void retireLinkRoutes(Link *) { }
 
@@ -751,44 +651,52 @@ protected:
 
 private:
   template <typename Params>
-  bool validate_(const Params &params) {
+  bool validateParams(const Params &params) {
     if (ZuUnlikely(!params.mx())) {
-      error_(ZeEXCEPT(Error, "Zutcp", "multiplexer is null"));
+      reportError(ZeEXCEPT(Error, "Zutcp", "multiplexer is null"));
       return false;
     }
     if (!params.rtoParams().valid()) {
-      error_(ZeEXCEPT(Error, "Zutcp", "invalid RTO bounds or granularity"));
+      reportError(ZeEXCEPT(Error, "Zutcp", "invalid RTO bounds or granularity"));
       return false;
     }
     if (!positiveTimeout(params.userTimeout()) && params.userTimeout() != ZuTime{0}) {
-      error_(ZeEXCEPT(Error, "Zutcp", "invalid user timeout"));
+      reportError(ZeEXCEPT(Error, "Zutcp", "invalid user timeout"));
       return false;
     }
     if (!positiveTimeout(params.closeDrainTimeout()) ||
 	!positiveTimeout(params.finWaitTimeout())) {
-      error_(ZeEXCEPT(Error, "Zutcp", "invalid close timeout"));
+      reportError(ZeEXCEPT(Error, "Zutcp", "invalid close timeout"));
+      return false;
+    }
+    if (!params.tfoCookieCacheSize()) {
+      reportError(ZeEXCEPT(Error, "Zutcp", "invalid Fast Open cookie cache size"));
       return false;
     }
     if (!params.closedTupleRingSize()) {
-      error_(ZeEXCEPT(Error, "Zutcp", "invalid closed tuple ring size"));
+      reportError(ZeEXCEPT(Error, "Zutcp", "invalid closed tuple ring size"));
       return false;
     }
     if (!positiveTimeout(params.connectTimeout())) {
-      error_(ZeEXCEPT(Error, "Zutcp", "invalid connect timeout"));
+      reportError(ZeEXCEPT(Error, "Zutcp", "invalid connect timeout"));
       return false;
     }
     if (!params.maxCxns() || !params.maxPendingCxns() ||
 	params.maxPendingCxns() > params.maxCxns()) {
-      error_(ZeEXCEPT(Error, "Zutcp", "invalid connection admission limits"));
+      reportError(ZeEXCEPT(Error, "Zutcp", "invalid connection admission limits"));
+      return false;
+    }
+    if (params.tlpPeerAckDelay() < ZuTime{0}) {
+      reportError(ZeEXCEPT(Error, "Zutcp", "negative peer ACK allowance"));
       return false;
     }
     if (!params.controlBufCount() || !params.txControlCredits()) {
-      error_(ZeEXCEPT(Error, "Zutcp", "control buffer count and credits must be positive"));
+      reportError(ZeEXCEPT(Error, "Zutcp", "control buffer count and credits must be positive"));
       return false;
     }
     if (!params.rxRetainFrames() || !params.rxRetainFramesPerCxn() ||
 	!params.rxReserveFrames()) {
-      error_(ZeEXCEPT(Error, "Zutcp", "Rx retention limits and reserve must be positive"));
+      reportError(ZeEXCEPT(Error, "Zutcp", "Rx retention limits and reserve must be positive"));
       return false;
     }
     unsigned rxThread = params.mx()->rxThread();
@@ -796,13 +704,13 @@ private:
     if (!rxThread || !txThread || rxThread == txThread ||
 	rxThread > params.mx()->params().nThreads() ||
 	txThread > params.mx()->params().nThreads()) {
-      error_(ZeEXCEPT(Error, "Zutcp", "invalid multiplexer Rx/Tx owners"));
+      reportError(ZeEXCEPT(Error, "Zutcp", "invalid multiplexer Rx/Tx owners"));
       return false;
     }
-    if (params.maxPayload() > BufSize) {
-      error_(ZeEXCEPT(Error, "Zutcp",
+    if (!params.maxPayload() || params.maxPayload() > BufSize) {
+      reportError(ZeEXCEPT(Error, "Zutcp",
 	([maxPayload = params.maxPayload()](auto &s) {
-	s << "maxPayload " << maxPayload << " exceeds packet buffer size " << BufSize;
+	s << "invalid maxPayload " << maxPayload << "; packet buffer size " << BufSize;
       })));
       return false;
     }
@@ -825,19 +733,22 @@ private:
   uint64_t		m_maxData = DefaultMaxData;
   unsigned		m_maxCxns = DefaultMaxCxns, m_maxPendingCxns = DefaultMaxPendingCxns;
   unsigned		m_closedTupleRingSize = DefaultClosedTupleRingSize;
+  unsigned		m_tfoCookieCacheSize = DefaultTFOCookieCacheSize;
   ZuTime		m_connectTimeout{DefaultConnectTimeout};
   ZuTime		m_userTimeout{DefaultUserTimeout};
   ZuTime		m_closeDrainTimeout{DefaultCloseDrainTimeout};
   ZuTime		m_finWaitTimeout{DefaultFinWaitTimeout};
   uint64_t		m_maxIdleTimeout = 0;
   ZuTime		m_heartBeat;
-  unsigned		m_maxPayload = MinPktPayload;
+  unsigned		m_maxPayload = DefaultMaxPayload;
   unsigned		m_controlBufCount = DefaultControlBufCount;
   unsigned		m_txControlCredits = DefaultTxControlCredits;
   RtoParams		m_rtoParams;
+  ZuTime		m_tlpPeerAckDelay{0, 200000000};
   unsigned		m_rxRetainFrames = DefaultRxRetainFrames;
   unsigned		m_rxRetainPerCxn = DefaultRxRetainPerCxn;
   unsigned		m_rxReserveFrames = DefaultRxReserveFrames;
+  bool			m_sackPermitted = true, m_windowScale = true, m_timestamps = true;
   bool			m_ecn = false;
   bool			m_registered = false;
 
@@ -864,7 +775,6 @@ template <typename App_> class Client : public Hub<App_> {
 public:
   using App = App_;
   using Base = Hub<App>;
-  static constexpr unsigned PNLength = 2;
 
   bool init(ClientParams params) {
     return this->init_(ZuMv(params), Zutcp::Vantage::Client,
@@ -910,8 +820,7 @@ public:
   using Endpoint = Endpoint_<Server>;
   using Base::app;
   using Base::allLinks;
-  static constexpr bool EndpointRef = false;
-  static constexpr unsigned PNLength = Client<App>::PNLength;
+  enum { EndpointRef = false };
 
 template <typename, typename, typename>
 friend class SrvCxn;
@@ -926,7 +835,7 @@ friend ZmEngine<App>;
 
   void final() {
     m_links = nullptr;
-    m_routes.final();
+    m_routes.clear();
     Base::final();
   }
 
@@ -951,7 +860,7 @@ friend ZmEngine<App>;
   template <typename L, typename Done>
   void allLinks(L &&l, Done &&done) {
     ZiAssert(this->mx() && this->rxThread(), "Zutcp", (),
-      "QUIC server link iteration before app initialization", return);
+      "TCP server link iteration before app initialization", return);
     if (this->rxInvoked()) {
       if (this->state() == ZmEngineState::Running)
 	allLinks_0([&l](LinkRef &ref) { l(ZuMv(ref)); });
@@ -978,14 +887,14 @@ friend ZmEngine<App>;
   bool sendFrame(const SentFrameRef &) { return true; }
 
   void listenFailed(bool transient) {
-    this->error_(ZeEXCEPT(Error, "Zutcp",
+    this->reportError(ZeEXCEPT(Error, "Zutcp",
       ([transient](auto &s) {
-	s << "QUIC server listen failed transient=" << transient;
+	s << "TCP server listen failed transient=" << transient;
       })));
   }
   LinkRef accepted(const InitialInfo &) {
-    this->error_(ZeEXCEPT(Error, "Zutcp",
-      "QUIC server App must provide accepted(const InitialInfo &)"));
+    this->reportError(ZeEXCEPT(Error, "Zutcp",
+      "TCP server App must provide accepted(const InitialInfo &)"));
     return {};
   }
 
@@ -993,10 +902,6 @@ friend ZmEngine<App>;
     return Endpoint::allocTxPkt(control);
   }
 
-  bool sendPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, const IPPath &path) {
-    if (!this->app()->sendPkt(buf)) return true;
-    return Endpoint::send(ZuMv(buf), ZuMv(addr), EcnMark::NotECT, false, &path);
-  }
   bool sendPktRaw(
       ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
       EcnMark::T ecn, bool priority, const IPPath &path) {
@@ -1005,16 +910,15 @@ friend ZmEngine<App>;
 
   void refreshLinkRoutes(Link *link) {
     if (this->state() == ZmEngineState::Running && link)
-      link->installRoutes_(m_routes);
+      m_routes.add(link->closedKeyRx(), link);
   }
 
 public:
   void endpointDatagram(Datagram d) {
-    this->rxRun([this, d = ZuMv(d)]() mutable {
-      received_(ZuMv(d));
-    });
+    if (this->rxInvoked()) { received_(ZuMv(d)); return; }
+    this->rxRun([this, d = ZuMv(d)]() mutable { received_(ZuMv(d)); });
   }
-  void endpointReady_(Endpoint *) {
+  void endpointReady(Endpoint *) {
     this->rxRun([this]() {
       switch (this->state()) {
 	case ZmEngineState::Starting:
@@ -1062,117 +966,129 @@ private:
   }
 
   void received_(Datagram d) {
-    if (this->state() != ZmEngineState::Running || !d.buf || !d.buf->length) return;
-    CxnID routedDCID;
-    Link *link = nullptr;
-    auto packet = d.buf->cspan();
-    if (Pkt::isLong(packet)) {
-      LongHdr header;
-      if (Pkt::parseLong(packet, header) < 0) { Endpoint::failure(); return; }
-      link = m_routes.find(header.dcid);
-      if (!link) {
-        if (header.type == PktType::Initial || !VersionNeg::supported(header.version))
-          prepareInitial(ZuMv(d), header);
-        return;
-      }
-    } else link = routeShort(d, packet, &routedDCID);
-    deliver_(link, ZuMv(d), routedDCID);
-  }
-
-  void deliver_(Link *link, Datagram d, const CxnID &routedDCID = {}) {
-    if (!link) { Endpoint::failure(); return; }
-    if (link->receivedRouted(ZuMv(d), routedDCID)) link->installRoutes_(m_routes);
-    else if (this->nativeTx())
-      link->abortLocalRx_(0, [link] { link->tcpResetAbort_(false); });
-    else link->disconnect();
-  }
-
-  void prepareInitial(Datagram d, const LongHdr &header) {
-    if (m_pending->findPtr(header.dcid)) return;
+    if (this->state() != ZmEngineState::Running || !d.buf) return;
+    ClosedTupleKey tuple{d.local, d.addr};
+    if (auto link = m_routes.find(tuple)) {
+      deliver(link, ZuMv(d));
+      return;
+    }
     auto stack = this->nativeStack();
-    if (header.type == PktType::Initial && VersionNeg::supported(header.version) &&
-	(d.tcp.flags & 0x17) != 0x02) return;
-    ClosedTuple record;
-    if (header.type == PktType::Initial && VersionNeg::supported(header.version) &&
-	stack->closedTuple({d.local, d.addr}, record)) return;
+    if (stack->recoverClosed(d)) return;
+    if ((d.tcp.flags & 0x17) != 0x02) {
+      stack->resetUnmatched(d);
+      return;
+    }
+    prepareSYN(ZuMv(d));
+  }
+
+  void deliver(Link *link, Datagram d) {
+    if (!link) return;
+    if (!link->acceptsLiveTCP(d) && this->nativeStack()->recoverClosed(d)) return;
+    (void)link->receivedRouted(ZuMv(d));
+  }
+
+  bool tupleClaimed(const ClosedTupleKey &tuple, bool includePending = true) const {
+    if (includePending && m_pending->findPtr(tuple)) return true;
+    auto links = m_links->citer();
+    while (auto node = links())
+      if (static_cast<Link *>(node)->closedKeyRx() == tuple) return true;
+    return false;
+  }
+
+  bool qualifyReuse(const Datagram &d, Zutcp_::PendingInitial &pending) {
+    auto stack = this->nativeStack();
+    ClosedTuple current;
+    if (!stack->closedTuple(pending.tuple, current)) return true;
+    if (!reusePeerTuple(current, d.tcp, this->timestamps(), this->transportNow())) return false;
+    if (!pending.evidenceID) {
+      if (!stack->chooseISN(d.local, d.addr, pending.localISN)) return false;
+      pending.evidenceID = current.id;
+    }
+    return reuseSequence(pending.localISN, uint32_t(current.txNext - 1)) &&
+      reusePeerTuple(current, d.tcp, this->timestamps(), this->transportNow());
+  }
+
+  void prepareSYN(Datagram d) {
+    auto stack = this->nativeStack();
+    ClosedTupleKey tuple{d.local, d.addr};
+    if (tupleClaimed(tuple)) return;
+    ClosedTuple current;
+    if (stack->closedTuple(tuple, current) &&
+	!reusePeerTuple(current, d.tcp, this->timestamps(), this->transportNow())) return;
     auto slot = stack->reserveCxn();
-    if (!slot) return;
-    m_pending->add(header.dcid, ZuMv(slot));
+    if (!slot) { stack->resetUnmatched(d); return; }
+    Zutcp_::PendingInitial pending{ZuMv(slot), tuple};
+    if (!qualifyReuse(d, pending)) {
+      stack->releaseCxn(pending.slot);
+      return;
+    }
+    m_pending->add(tuple, ZuMv(pending));
+    // All header/options are already copied; ordinary SYN needs no packet
+    // ownership while cold route work runs. Positive early DATA stays in place.
+    if (!d.buf->length) d.buf = nullptr;
     IPPath path{d.local.ip(), d.addr.ip(), {}, {}, 0};
     unsigned generation = Endpoint::generation();
     if (!stack->resolvePath(path,
-	[this, stack, d = ZuMv(d), header, generation](
+	[this, stack, d = ZuMv(d), tuple, generation](
 	    IPPath resolved, ZtString<> error) mutable {
-	  auto pending = m_pending->findPtr(header.dcid);
-	  ZmAssert_(pending);
-	  CxnSlot slot = ZuMv(pending->val());
-          m_pending->del(header.dcid);
-          if (this->state() == ZmEngineState::Running &&
-              generation == Endpoint::generation() && !error &&
-              tcpPayload(resolved.mtu, resolved.local.type()) >= MinPktPayload) {
-            if (!VersionNeg::supported(header.version))
-	      this->txRun([this, header, addr = d.addr, path = resolved, generation]() mutable {
-		if (generation == Endpoint::generation()) sendVerNeg(header, ZuMv(addr), path);
-	      });
-            else {
-	      ClosedTuple retained;
-	      if (!stack->closedTuple({d.local, d.addr}, retained)) {
-		InitialInfo info{header, d.addr, d.buf->length, resolved, d.local};
-		if (auto link = accept_(info, slot)) {
-		  link->initIPPath(resolved);
-		  deliver_(link, ZuMv(d));
-		}
-              }
-            }
-          }
+	  auto node = m_pending->findPtr(tuple);
+	  ZmAssert_(node);
+	  auto &pending = node->val();
+	  CxnSlot slot = ZuMv(pending.slot);
+	  if (this->state() == ZmEngineState::Running &&
+	      generation == Endpoint::generation() && !error &&
+	      tcpPayload(resolved.mtu, resolved.local.type()) &&
+	      !tupleClaimed(tuple, false) && qualifyReuse(d, pending)) {
+	    InitialInfo info{d.tcp, d.addr, d.buf ? d.buf->length : 0, resolved, d.local};
+	    if (auto link = acceptInitial(info, slot, pending)) {
+	      link->initIPPath(resolved);
+	      deliver(link, ZuMv(d));
+	      if (m_links->findPtr(link) && !link->abortingRx() &&
+		  link->closedKeyRx() == tuple)
+		m_routes.add(tuple, link);
+	    }
+	  }
+	  // Keep the tuple claim through factory reentrancy and first delivery.
 	  stack->releaseCxn(slot);
-          if (m_waitSetup && !m_stopCount && !m_pending->count_()) {
-            m_waitSetup = false;
-            stop_1();
-          }
-        })) {
-      stack->releaseCxn(m_pending->findPtr(header.dcid)->val());
-      m_pending->del(header.dcid);
+	  m_pending->del(tuple);
+	  if (m_waitSetup && !m_stopCount && !m_pending->count_()) {
+	    m_waitSetup = false;
+	    stop_1();
+	  }
+	})) {
+      stack->releaseCxn(m_pending->findPtr(tuple)->val().slot);
+      m_pending->del(tuple);
       Endpoint::failure();
     }
   }
 
-  Link *routeShort(
-      const Datagram &, ZuBSpan packet, CxnID *routedDCID) {
-    return m_routes.matchShort(packet, routedDCID);
-  }
-
-
-
-  Link *accept_(const InitialInfo &info, CxnSlot &slot) {
+  Link *acceptInitial(
+    const InitialInfo &info, CxnSlot &slot, const Zutcp_::PendingInitial &pending)
+  {
     LinkRef link;
     link = this->app()->accepted(info);
-    if (!link || link->hasCxnSlotRx_()) return nullptr;
-    ZutcpLOG(app()->qlogTrace(), ([
-      local = local(),
-      remote = info.peer,
-      origDCID = info.header.dcid,
-      dcid = info.header.dcid,
-      scid = info.header.scid
-    ](auto &o, ZuTime time) {
-      Zutcp::LinkInfo linkInfo{
-	.vantage = Zutcp::Vantage::Server,
-	.origDCID = origDCID,
-	.groupID = origDCID,
-	.dcid = dcid,
-	.scid = scid
-      };
+    if (!link || link->hasCxnSlotRx()) return nullptr;
+    if (pending.evidenceID &&
+	!link->stageReuseISNRx(pending.localISN, pending.evidenceID)) {
+      link->discardUnadoptedRx();
+      return nullptr;
+    }
+    ZutcpLOG(app()->qlogTrace(), ([local = info.local, remote = info.peer](
+      auto &o, ZuTime time) {
+      LinkInfo linkInfo{.vantage = Vantage::Server, .local = local, .remote = remote};
       o.logCxnStarted(
-	CxnStartedEvt{.local = local, .remote = remote, .linkInfo = linkInfo},
-	time);
+	CxnStartedEvt{.local = local, .remote = remote, .linkInfo = linkInfo}, time);
     }));
     Link *ptr = link.ptr();
-    if (!addLink(ZuMv(link))) return nullptr;
-    ptr->adoptCxnSlotRx_(ZuMv(slot));
+    if (!addLink(ZuMv(link))) {
+      link->discardUnadoptedRx();
+      return nullptr;
+    }
+    ptr->adoptCxnSlotRx(ZuMv(slot));
     return ptr;
   }
 
-  bool addLink(LinkRef link) {
+  bool addLink(LinkRef &&link) {
     if (!link) return false;
     if (this->state() != ZmEngineState::Running) return false;
     Link *ptr = link.ptr();
@@ -1184,15 +1100,16 @@ private:
 public:
   void disconnected(Link *link, bool) {
     LinkRef hold{link};
+    m_routes.retire(link->closedKeyRx(), link);
     m_links->del(link);
-    if (!link->deferCxnRelease()) link->releaseCxnSlotRx_();
+    if (!link->deferCxnRelease()) link->releaseCxnSlotRx();
     // The engine can stop before Rx has counted the remaining links.
     if (m_stopCount && !--m_stopCount) stop_1();
   }
 
   void retireLinkRoutes(Link *link) {
     if (this->state() == ZmEngineState::Running && link)
-      link->retireRoutes_(m_routes);
+      m_routes.retire(link->closedKeyRx(), link);
   }
 
 private:
@@ -1226,7 +1143,7 @@ private:
 	LinkRef ref{static_cast<Link *>(node)};
 	if (this->nativeTx()) {
 	  auto link = ref.ptr();
-	  link->abortLocalRx_(0, [link] { link->tcpResetAbort_(false); });
+	  link->abortLocalRx(0, [link] { link->tcpResetAbort(false); });
 	} else ref->disconnect();
 	++m_stopCount;
       }
@@ -1245,42 +1162,12 @@ private:
     });
   }
 
-  bool sendVerNeg(const LongHdr &h, ZiSockAddr addr, const IPPath &path) {
-    ZiAssert(this->txInvoked(), "Zutcp", (), "version negotiation outside Tx", return false);
-    ZmRef<ZiIOBuf> buf = allocTxPkt_(true);
-    if (ZuUnlikely(!buf)) return false;
-    int n = VersionNeg::write(
-      buf->data(), txPktCapacity(buf), h.scid, h.dcid);
-    if (n < 0) return false;
-    buf->length = unsigned(n);
-    bool sent = sendPkt_(ZuMv(buf), ZuMv(addr), path);
-    if (sent) {
-      ZutcpLOG(app()->qlogTrace(), ([
-	version = h.version
-      ](auto &o, ZuTime time) {
-	VersionEvt event;
-	new (event.serverVersions.push()) uint32_t(Version1);
-	new (event.clientVersions.push()) uint32_t(version);
-	o.logVersionInfo(event, time);
-      }));
-    }
-    return sent;
-  }
-
-
-
-
-
-
-
-
-
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   ZmRef<LinkTable>	m_links = new LinkTable{
     ZmHashParams().bits(5).loadFactor(1).cBits(3)};
-  CxnRouter<Link>	m_routes;
-  using Pending = ZmHashKV<CxnID, CxnSlot, ZmHashHeapID<"Zutcp.Pending">>;
+  TupleRouter<Link>	m_routes;
+  using Pending = ZmHashKV<ClosedTupleKey, Zutcp_::PendingInitial, ZmHashHeapID<"Zutcp.Pending">>;
   ZmRef<Pending>	m_pending = new Pending;
   unsigned		m_stopCount = 0;
   bool			m_waitSetup = false;

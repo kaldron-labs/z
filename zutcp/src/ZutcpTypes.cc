@@ -14,22 +14,18 @@ ZtEnumImplStruct(DataError);
   ZtEnumImplStruct(ID); \
   ZtEnumImplStruct(ID, JSON)
 
-ZutcpEnumMatchers(PktNumSpace);
-ZutcpEnumMatchers(PktType);
+ZutcpEnumMatchers(Vantage);
 ZutcpEnumMatchers(LinkState);
-ZutcpEnumMatchers(FrameType);
 ZutcpEnumMatchers(EcnMark);
 
 #undef ZutcpEnumMatchers
 
 ZtEnumImplStruct(TransportError);
-ZtEnumImplStruct(CxnState);
 ZtEnumImplStruct(PathMode);
 ZtEnumImplStruct(IPFamily);
 ZtEnumImplStruct(PMTUDState);
 ZtEnumImplStruct(PathECNState);
 ZtEnumImplStruct(PathHintKind);
-ZtEnumImplStruct(ServerPktAction);
 ZtEnumImplStruct(RecEvt);
 ZtEnumImplStruct(SentFrameKind);
 

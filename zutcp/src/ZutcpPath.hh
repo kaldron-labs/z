@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z QUIC path state
+// TCP route, MTU and congestion-mark observations
 
 #ifndef Zutcp_HH
 #error "include zlib/Zutcp.hh before this header"
@@ -33,18 +33,14 @@ struct PathDiag {
   uint64_t	blackholes = 0;
   uint64_t	kernelHints = 0;
   uint64_t	sendTooBigHints = 0;
-  uint64_t	ecnProbesSent = 0;
-  uint64_t	ecnProbesAckd = 0;
   uint64_t	ecnFailures = 0;
-  uint64_t	ecnValidationFailures = 0;
   uint64_t	ecnCEEvents = 0;
   uint64_t	ecnCEBytes = 0;
 };
 
 class Path {
 public:
-  static constexpr unsigned MaxProbeAttempts = 3;
-  static constexpr unsigned ECNProbeThreshold = 10;
+  enum { MaxProbeAttempts = 3 };
 
   Path() = default;
   Path(PathMode::T mode, ZiSockAddr local, ZiSockAddr remote) :
@@ -67,25 +63,6 @@ public:
   }
   PathECNState::T ecnState() const { return m_ecnState; }
   EcnMark::T activeECN() const { return m_activeECN; }
-  const AckECN &peerAckECN(PktNumSpace::T space) const {
-    return m_peerAckECN[space];
-  }
-  AckECN &peerAckECN(PktNumSpace::T space) {
-    return m_peerAckECN[space];
-  }
-  const AckECN &sentECN(PktNumSpace::T space) const {
-    return m_sentECN[space];
-  }
-  AckECN &sentECN(PktNumSpace::T space) {
-    return m_sentECN[space];
-  }
-  unsigned ecnProbeSent() const { return m_ecnProbeSent; }
-  unsigned ecnProbeAckd() const { return m_ecnProbeAckd; }
-  bool ecnProbeExpired() const {
-    return m_ecnState == PathECNState::Testing &&
-      m_ecnProbeSent >= ECNProbeThreshold;
-  }
-
   unsigned activeMaxPayload() const { return m_activeMaxPayload; }
   unsigned peerMaxPayload() const { return m_peerMaxPayload; }
   unsigned configuredMaxPayload() const { return m_configuredMaxPayload; }
@@ -114,7 +91,6 @@ public:
       ecnDisabledState();
   }
   void ecnTesting() {
-    clearECNCounters();
     m_ecnState = PathECNState::Testing;
     m_activeECN = EcnMark::ECT0;
   }
@@ -128,70 +104,39 @@ public:
     m_activeECN = EcnMark::NotECT;
   }
   void ecnDisabledState() {
-    clearECNCounters();
     m_ecnState = PathECNState::Disabled;
     m_activeECN = EcnMark::NotECT;
-  }
-  EcnMark::T txECN(
-      PktNumSpace::T level, bool ackEliciting, bool pmtudProbe) const {
-    if (level != PktNumSpace::AppData || !ackEliciting || pmtudProbe)
-      return EcnMark::NotECT;
-    switch (m_ecnState) {
-      case PathECNState::Testing:
-      case PathECNState::Capable:
-	return m_activeECN;
-      default:
-	return EcnMark::NotECT;
-    }
-  }
-  void sentECN(PktNumSpace::T space, EcnMark::T ecn) {
-    AckECN &sent = m_sentECN[space];
-    switch (ecn) {
-      case EcnMark::ECT0: ++sent.ect0; break;
-      case EcnMark::ECT1: ++sent.ect1; break;
-      case EcnMark::CE: ++sent.ce; break;
-      default: break;
-    }
-    if (m_ecnState == PathECNState::Testing && ecn != EcnMark::NotECT) {
-      ++m_ecnProbeSent;
-      ++m_diag.ecnProbesSent;
-    }
-  }
-  void ackdECN(unsigned packets) {
-    if (!packets) return;
-    if (m_ecnState == PathECNState::Testing) {
-      m_ecnProbeAckd += packets;
-      m_diag.ecnProbesAckd += packets;
-      ecnCapable();
-    }
   }
   void ceECN(uint64_t bytes) {
     if (!bytes) return;
     ++m_diag.ecnCEEvents;
     m_diag.ecnCEBytes += bytes;
   }
-  void ecnValidationFailed() {
-    ++m_diag.ecnValidationFailures;
-    failECN();
-  }
-
   void peerMaxPayload(unsigned v) {
-    ZiAssert(v >= MinPktPayload && v <= BufSize, "Zutcp", (v),
+    ZiAssert(v && v <= BufSize, "Zutcp", (v),
       "invalid peer max packet payload " << v, return);
     m_peerMaxPayload = v;
     clampActive();
   }
   void configuredMaxPayload(unsigned v) {
-    ZiAssert(v >= MinPktPayload && v <= BufSize, "Zutcp", (v),
+    ZiAssert(v && v <= BufSize, "Zutcp", (v),
       "invalid configured max packet payload " << v, return);
     m_configuredMaxPayload = v;
     clampActive();
   }
 
   void routePayload(unsigned v) {
-    ZiAssert(v >= MinPktPayload, "Zutcp", (v), "route payload below setup floor", return);
+    ZiAssert(v, "Zutcp", (), "zero route payload", return);
     m_routePayload = v;
     clampActive();
+  }
+
+  void useRoutePayload() { m_activeMaxPayload = ceiling(); }
+
+  unsigned basePayload() const {
+    unsigned fallback = m_local.type() == ZiIPType::V6 ? 1220 : 536;
+    unsigned limit = ceiling();
+    return fallback < limit ? fallback : limit;
   }
 
   unsigned ceiling() const {
@@ -224,33 +169,9 @@ public:
     return startProbeChecked(n);
   }
 
-  bool canSend(unsigned bytes) const {
-    if (bytes > m_activeMaxPayload) return false;
-    if (m_validated) return true;
-    return bytes <= antiAmpRemaining();
-  }
-  bool canSendProbe(unsigned bytes) const {
-    if (bytes < MinPktPayload || bytes > ceiling()) return false;
-    if (m_validated) return true;
-    return bytes <= antiAmpRemaining();
-  }
-
-  uint64_t antiAmpLimit() const {
-    if (m_validated) return uint64_t(-1);
-    if (m_bytesRx > uint64_t(-1) / 3) return uint64_t(-1);
-    return m_bytesRx * 3;
-  }
-  uint64_t antiAmpRemaining() const {
-    if (m_validated) return uint64_t(-1);
-    uint64_t limit = antiAmpLimit();
-    return m_bytesTx < limit ? limit - m_bytesTx : 0;
-  }
-  unsigned sendAllowance() const {
-    unsigned n = m_activeMaxPayload;
-    uint64_t r = antiAmpRemaining();
-    if (r < n) n = r;
-    return n;
-  }
+  bool canSend(unsigned bytes) const { return bytes <= m_activeMaxPayload; }
+  bool canSendProbe(unsigned bytes) const { return bytes && bytes <= ceiling(); }
+  unsigned sendAllowance() const { return m_activeMaxPayload; }
   bool reserveSend(unsigned bytes) {
     if (!canSend(bytes)) return false;
     sent(bytes);
@@ -271,7 +192,6 @@ public:
       "PMTUD probe started while another probe is pending", return);
     unsigned c = ceiling();
     if (size > c) size = c;
-    if (size < MinPktPayload) size = MinPktPayload;
     if (size == m_retryProbeSize)
       m_retryProbeSize = 0;
     else if (size != m_probeAttemptSize) {
@@ -287,7 +207,6 @@ public:
   bool startProbeChecked(unsigned size) {
     unsigned c = ceiling();
     if (size > c) size = c;
-    if (size < MinPktPayload) size = MinPktPayload;
     if (!canSendProbe(size)) return false;
     startProbe(size);
     return true;
@@ -318,7 +237,7 @@ public:
       m_pmtudState = PMTUDState::Base;
       return true;
     }
-    if (size <= m_activeMaxPayload && m_activeMaxPayload > MinPktPayload) {
+    if (size <= m_activeMaxPayload && m_activeMaxPayload > basePayload()) {
       blackhole();
       return false;
     }
@@ -326,7 +245,7 @@ public:
     return false;
   }
   void blackhole() {
-    m_activeMaxPayload = MinPktPayload;
+    m_activeMaxPayload = basePayload();
     m_probeSize = 0;
     m_retryProbeSize = 0;
     m_probeAttemptSize = 0;
@@ -336,7 +255,7 @@ public:
   }
 
   void applyHint(PathHint hint) {
-    if (!hint || hint.mtu < MinPktPayload) return;
+    if (!hint || !hint.mtu) return;
     if (hint.mtu < m_activeMaxPayload) m_activeMaxPayload = hint.mtu;
     if (hint.mtu < m_peerMaxPayload) m_peerMaxPayload = hint.mtu;
     if (!m_failureFloor || hint.mtu < m_failureFloor)
@@ -356,16 +275,9 @@ public:
   }
 
 private:
-  void clearECNCounters() {
-    for (auto &ecn : m_peerAckECN) ecn.reset();
-    for (auto &ecn : m_sentECN) ecn.reset();
-    m_ecnProbeSent = 0;
-    m_ecnProbeAckd = 0;
-  }
   void clampActive() {
     unsigned c = ceiling();
     if (m_activeMaxPayload > c) m_activeMaxPayload = c;
-    if (m_activeMaxPayload < MinPktPayload) m_activeMaxPayload = MinPktPayload;
   }
   void failProbe(unsigned size) {
     if (size && (!m_failureFloor || size < m_failureFloor))
@@ -385,15 +297,7 @@ private:
   EcnMark::T	m_activeECN = EcnMark::NotECT;
   uint64_t	m_bytesRx = 0;
   uint64_t	m_bytesTx = 0;
-  ZuArray<AckECN, PktNumSpace::N>
-		m_peerAckECN =
-		  ZuArray<AckECN, PktNumSpace::N>(PktNumSpace::N);
-  ZuArray<AckECN, PktNumSpace::N>
-		m_sentECN =
-		  ZuArray<AckECN, PktNumSpace::N>(PktNumSpace::N);
-  unsigned	m_ecnProbeSent = 0;
-  unsigned	m_ecnProbeAckd = 0;
-  unsigned	m_activeMaxPayload = MinPktPayload;
+  unsigned	m_activeMaxPayload = BufSize;
   unsigned	m_peerMaxPayload = BufSize;
   unsigned	m_routePayload = BufSize;
   unsigned	m_configuredMaxPayload = BufSize;

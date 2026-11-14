@@ -94,7 +94,7 @@ case $mode in
   native-history-client|native-history-server|abort-fatal-client|abort-fatal-server|fin-client|fin-server|lost-window)
     start_wire_gate ;;
 esac
-if [[ $mode == passive-tuple ]]; then
+if [[ $mode == passive-tuple || $mode == paws-wrap ]]; then
   for side in client server; do
     dev=zutcpmlpa
     if [[ $side == server ]]; then dev=zutcpmlpb; fi
@@ -108,8 +108,12 @@ if [[ $mode == passive-tuple ]]; then
     done
     grep -q 'listening on' "$out/$side-side.capture"
   done
-  env ZUTCP_PASSIVE_TUPLE="$family" ZUTCP_PASSIVE_TUPLE_DIR="$out" \
-    ./zutcpmxtest > "$out/native.out" 2> "$out/native.err" &
+  if [[ $mode == paws-wrap ]]; then
+    env ZUTCP_PAWS_WRAP="$family" ./zutcpmxtest > "$out/native.out" 2> "$out/native.err" &
+  else
+    env ZUTCP_PASSIVE_TUPLE="$family" ZUTCP_PASSIVE_TUPLE_DIR="$out" \
+      ./zutcpmxtest > "$out/native.out" 2> "$out/native.err" &
+  fi
   child=$!
   wait "$child"
   child=
@@ -119,7 +123,7 @@ if [[ $mode == passive-tuple ]]; then
     grep -q '0 packets dropped by kernel' "$out/$side-side.capture"
   done
   prove --exec cat "$out/native.out" > "$out/tapcheck.log"
-  python3 ./zutcprecovery.py passive-tuple "$out"
+  python3 ./zutcprecovery.py "$mode" "$out"
   exit 0
 fi
 if [[ $mode == positive-window ]]; then
@@ -349,8 +353,8 @@ if [[ $mode == abort-reject || $mode == abort-fatal-client || $mode == abort-fat
     tc qdisc add dev "$source_dev" root handle 1: prio bands 3 \
       priomap 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
     tc qdisc add dev "$source_dev" parent 1:3 handle 30: netem loss 100%
-    # The real sender must not process ACKs of the injected future packet number.
-    # Observe those ACKs at the victim bridge port before this opposite-port drop.
+    # Hold real sender feedback while the raw peer proves an accepted out-of-order
+    # byte through standard SACK. Observe it before the opposite-port drop.
     # Only pure ACKs for the first tuple/data frontier match; RST and port18193 pass.
   fi
   printf '%s\n' "$victim" > "$out/abort-victim"
@@ -666,7 +670,7 @@ for dev in zutcpmlpa zutcpmlpb; do
   tc qdisc add dev "$dev" parent 1:3 handle 30: netem loss 100%
   tc filter add dev "$dev" parent 1: protocol "$protocol" pref 1 u32 \
     match u8 6 0xff at "$protocol_offset" \
-    match u8 0 0x80 at "$short_offset" \
+    match u8 0x08 0x0e at "$((short_offset - 7))" \
     match u8 0x04 0xfc at "$length_offset" flowid 1:3
 done
 env ZUTCP_MX_LOSS="$family" ./zutcpmxtest > "$out/mapped.out" 2> "$out/mapped.err" &

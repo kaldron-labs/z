@@ -28,22 +28,21 @@ ZfStruct(, LogCsvRow,
   (component, (Ctor<6>),	String),
   (msg,       (Ctor<7>),	String));
 
-namespace {
 
-Zi::Path g_root;
-Zi::Path g_log;
-Zi::Path g_log1;
-Zi::Path g_log2;
-Zi::Path g_csv;
-Zi::Path g_csv1;
+static Zi::Path g_root;
+static Zi::Path g_log;
+static Zi::Path g_log1;
+static Zi::Path g_log2;
+static Zi::Path g_csv;
+static Zi::Path g_csv1;
 
-bool contains(const ZtString<> &s, const char *needle)
+static bool contains(const ZtString<> &s, const char *needle)
 {
   ZuCSpan span{s};
   return ::memmem(span.data(), span.length(), needle, ::strlen(needle));
 }
 
-void initPaths()
+static void initPaths()
 {
   g_root = ZiTestResidue::dir("log");
   g_log = ZiFile::append(g_root, "ZiLogTest.log");
@@ -59,7 +58,7 @@ void initPaths()
 
 }
 
-void resetArtifacts()
+static void resetArtifacts()
 {
   ZiFile::remove(g_log);
   ZiFile::remove(g_log1);
@@ -68,7 +67,7 @@ void resetArtifacts()
   ZiFile::remove(g_csv1);
 }
 
-void configure(ZmRef<ZiSink> sink)
+static void configure(ZmRef<ZiSink> sink)
 {
   ZiLog::stop();
   ZiLog::init("ZiLogTest");
@@ -76,7 +75,7 @@ void configure(ZmRef<ZiSink> sink)
   ZiLog::sink(ZuMv(sink));
 }
 
-ZtString<> readFile(const Zi::Path &path)
+static ZtString<> readFile(const Zi::Path &path)
 {
   ZiFile f;
   if (f.open(path, ZiFile::ReadOnly | ZiFile::GC) != Zi::OK) {
@@ -98,7 +97,7 @@ ZtString<> readFile(const Zi::Path &path)
   return out;
 }
 
-void testFileSinkWritesAndAges()
+static void testFileSinkWritesAndAges()
 {
   ZuTestScope(testFileSinkWritesAndAges);
 
@@ -119,7 +118,7 @@ void testFileSinkWritesAndAges()
   ZuCheck(ZiStat{g_log1}.exists());
 }
 
-void testCsvSinkWritesAndParses()
+static void testCsvSinkWritesAndParses()
 {
   ZuTestScope(testCsvSinkWritesAndParses);
 
@@ -153,7 +152,7 @@ void testCsvSinkWritesAndParses()
   ZuCheck(ZiStat{g_csv1}.exists());
 }
 
-void testLambdaSinkReceivesEvents()
+static void testLambdaSinkReceivesEvents()
 {
   ZuTestScope(testLambdaSinkReceivesEvents);
 
@@ -183,7 +182,6 @@ void testLambdaSinkReceivesEvents()
   ZuCheck(contains(msg, "lambda sink message"));
 }
 
-} // namespace
 
 static void testOverflowStop()
 {

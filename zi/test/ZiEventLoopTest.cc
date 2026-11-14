@@ -493,7 +493,8 @@ void testSocketBackpressure()
     break;
   }
   bool signalled = waitFor(writable);
-  ZuCheckRT(signalled && sender.sent == int(BudgetLength), log_("bounded writable continuation did not finish after would-block"));
+  ZuCheckRT(signalled && sender.sent == int(BudgetLength),
+    log_("bounded writable continuation did not finish after would-block"));
   if (signalled && sender.sent == int(BudgetLength)) {
     ZuArray<char, BudgetLength> received;
     unsigned n = 0;
@@ -504,7 +505,8 @@ void testSocketBackpressure()
       n += unsigned(r);
     }
     ZuCheckRT(n == BudgetLength &&
-      !memcmp(received.data(), BudgetPayload.data(), BudgetLength), log_("bounded writable payload mismatch"));
+      !memcmp(received.data(), BudgetPayload.data(), BudgetLength),
+    log_("bounded writable payload mismatch"));
     closeSocket_(peerSocket);
     ZuCheckRT(waitFor(closed), log_("peer EOF was not dispatched"));
   }
@@ -521,7 +523,8 @@ void testSocketBackpressure()
   closeSocket_(loopSocket);
   closeSocket_(peerSocket);
   ZuCheckRT(sender.sent == int(BudgetLength) &&
-    sender.continuations == BudgetLength - 1, log_("write budget did not post one continuation per remaining byte"));
+    sender.continuations == BudgetLength - 1,
+    log_("write budget did not post one continuation per remaining byte"));
   ZuCheckRT(stage.load_() == 3, log_("send, EOF, stop order was violated"));
   ZuCheckRT(!failed.load_(), log_("backpressure path failed"));
 }

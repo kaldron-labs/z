@@ -19,8 +19,15 @@
 class AppCxn;
 class App : public Zutcp::Server<App, AppCxn> {
 public:
+  bool tfo() const { return m_tfo; }
+  uint32_t maxEarlyData(AppCxn *) { return m_tfo && m_service ? 400 : 0; }
+  bool allowEarlyStream(AppCxn *, uint64_t, bool) { return m_tfo && m_allowEarly; }
   App(ZiIP ip, unsigned port, unsigned target, bool waitEOF) :
-    m_localIP{ip}, m_localPort{port}, m_target{target}, m_waitEOF{waitEOF} { }
+    m_localIP{ip}, m_localPort{port}, m_target{target}, m_waitEOF{waitEOF} {
+    if (m_tfo)
+      if (const char *first = getenv("ZUTCP_TEST_TFO_SERVER_FIRST"))
+	m_nextCxn = unsigned(ZuBox<unsigned>(first)) - 1;
+  }
   ZmRef<AppCxn> accepted(const Zutcp::InitialInfo &);
   ZiIP localIP() const { return m_localIP; }
   unsigned localPort() const { return m_localPort; }
@@ -29,11 +36,18 @@ public:
   void done() { if (++m_doneCount >= m_target) m_done.post(); }
   void wait() { m_done.wait(); }
   void setError(const char *msg) {
-    if (!m_error.xch(1)) std::cerr << "error: " << msg << '\n' << std::flush;
+    if (!m_error.xch(1))
+      ZiLOG(Error, "zutcpserver", ([msg = ZeString{msg}](auto &out) {
+	out << "error: " << msg;
+      }));
   }
   bool error() const { return m_error.load_(); }
 
 private:
+  bool			m_tfo = getenv("ZUTCP_TEST_TFO") != nullptr;
+  bool			m_service = getenv("ZUTCP_TEST_TFO_SERVER_DISABLED") == nullptr;
+  bool			m_allowEarly = getenv("ZUTCP_TEST_TFO_RECEIVE_DENIED") == nullptr;
+  unsigned		m_nextCxn = 0;
   ZmSemaphore		m_done;
   ZiIP			m_localIP;
   unsigned		m_localPort = 0;
@@ -49,18 +63,26 @@ friend inline ZuStringT<"Zutcp.Example.SrvCxn"> ZmNHeapID(AppCxn *);
 public:
   using ZmNHeap<AppCxn>::operator new;
   using ZmNHeap<AppCxn>::operator delete;
-  AppCxn(App *app) : Base{app} {
+  AppCxn(App *app, unsigned tfoID) : Base{app}, m_tfoID{tfoID} {
     txErrorFn(ZiTxErrorFn{[](ZeException &e) {
       ZiLOG(Error, "zutcpserver", ([e](auto &out) { out << "transmit error: " << e; }));
       return false;
     }});
   }
-  void connected(Zutcp::Connected info) {
-    std::cerr << "connection established version=" << info.version << '\n' << std::flush;
+  void connected(Zutcp::Connected) {
+    m_connected = true;
+    if (app()->tfo())
+      std::cerr << "tfo connected=" << m_tfoID << '\n' << std::flush;
+    std::cerr << "connection established\n" << std::flush;
   }
   int process(Zutcp::Reader &reader) {
     if (m_finQueued) return 0;
     auto length = reader.length();
+    if (app()->tfo() && length && !m_reported) {
+      m_reported = true;
+      std::cerr << "tfo process=" << m_tfoID << " early=" << unsigned(!m_connected)
+	<< " bytes=" << length << '\n' << std::flush;
+    }
     bool final = finReceived() && rxComplete();
     if (app()->waitEOF() && !final) return 0;
     if (!length && !final) return 0;
@@ -73,8 +95,8 @@ public:
     }
     if (length) {
       auto n = reader.each(length, [this](auto part) -> int64_t {
-        if (!send(ZuBSpan{part.data(), part.length()}, false)) return -1;
-        return part.length();
+	if (!send(ZuBSpan{part.data(), part.length()}, false)) return -1;
+	return part.length();
       });
       if (n != int64_t(length)) { complete(false); return -1; }
       reader.clean();
@@ -95,12 +117,17 @@ private:
     if (!ok) app()->setError("echo did not complete");
     app()->done();
   }
+  unsigned		m_tfoID = 0;
+  bool			m_connected = false, m_reported = false;
   bool			m_prefixSent = false; // Rx
   bool			m_finQueued = false; // Rx
   ZmAtomic<unsigned>	m_completed = 0; // Rx/Tx completion publication
 };
 
-ZmRef<AppCxn> App::accepted(const Zutcp::InitialInfo &) { return new AppCxn{this}; }
+ZmRef<AppCxn> App::accepted(const Zutcp::InitialInfo &)
+{
+  return new AppCxn{this, ++m_nextCxn};
+}
 
 static void usage()
 {
@@ -139,23 +166,31 @@ int main(int argc, char **argv)
 
   App app{server, port, count, waitEOF};
 
-  if (!app.init(
-	Zutcp::ServerParams(&mx))) {
-    std::cerr << "server initialization failed\n" << std::flush;
+  auto params = Zutcp::ServerParams(&mx);
+  if (const char *profile = getenv("ZUTCP_TEST_SERVER_OPTIONS")) {
+    unsigned options = ZuBox<unsigned>(profile);
+    params.sackPermitted(options & 1).windowScale(options & 2).timestamps(options & 4)
+      .ecn(options & 8);
+    params.maxData(131072);
+  }
+  if (const char *delay = getenv("ZUTCP_TEST_TLP_DELAY_US"))
+    params.tlpPeerAckDelay(Zutcp::timeUS(ZuBox<unsigned>(delay)));
+  if (!app.init(params)) {
+    ZiLOG(Error, "zutcpserver", ([](auto &out) { out << "server initialization failed"; }));
     mx.stop();
     ZiLog::stop();
     return 1;
   }
 
   if (!mx.start()) {
-    std::cerr << "ZiMultiplex start failed\n" << std::flush;
+    ZiLOG(Error, "zutcpserver", ([](auto &out) { out << "ZiMultiplex start failed"; }));
     app.final();
     ZiLog::stop();
     return 1;
   }
 
   if (!app.start()) {
-    std::cerr << "server listen failed\n" << std::flush;
+    ZiLOG(Error, "zutcpserver", ([](auto &out) { out << "server listen failed"; }));
     app.final();
     mx.stop();
     ZiLog::stop();

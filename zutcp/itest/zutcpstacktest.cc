@@ -24,7 +24,7 @@
 
 using namespace ZuTestUtil;
 
-enum { RxCount = 4, Head = 14 + 40 + 60 + Zutcp::TxDataPktReserve, Payload = 32,
+enum { RxCount = 4, Head = 14 + 40 + 60, Payload = 32,
   WireSize = Head + Payload, Repeats = 1 }; // exact fixture workload
 
 struct Probe {
@@ -59,72 +59,45 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
   bool offerAck = true;
   bool original = true, detached = true, bounded = true, reused = true;
 
-  static bool controlSelection() {
-    uint8_t frame[32]; // FIN and one-byte DATA fixture encodings
-    int n = Zutcp::FrameCodec::writeData(frame, sizeof(frame), 0, {}, true);
-    bool fin = n > 0 && Base::txControlPacket({frame, unsigned(n)}, nullptr);
-    uint8_t byte = 1;
-    n = Zutcp::FrameCodec::writeData(frame, sizeof(frame), 0, {&byte, 1}, false);
-    return fin && n > 0 && !Base::txControlPacket({frame, unsigned(n)}, nullptr);
-  }
   explicit WriterCxn(WriterApp *app) : Base{app} { }
-  bool flushTx_() { return false; } // this fixture explicitly steps packetization
+  bool flushTx() { return false; } // this fixture explicitly steps packetization
   void queueTxFlush(ZiSockAddr = {}) { }
   void queueRetransmit() { }
-  void pto_() { }
-  bool retransmit_(bool = false, unsigned = 2,
-      Zutcp::PktNumSpace::T = Zutcp::PktNumSpace::N) { return false; }
+  void pto() { }
+  bool retransmit(bool = false, unsigned = 2) { return false; }
   int process(Zutcp::Reader &) { return 0; }
   void prepareRx() {
-    Base::configLocalParams(app());
-    Zutcp::TransportParams params;
-    params.initialMaxData = 0;
-    Base::peerParams(params);
     Base::startHandshake();
     // This synthetic writer bypasses setup; explicitly keep logical data bases at zero.
-    Base::setTCPOriginsRx_({.local = UINT32_MAX, .peer = UINT32_MAX,
+    Base::setTCPOriginsRx({.local = UINT32_MAX, .peer = UINT32_MAX,
       .localKnown = true, .peerKnown = true});
-    Base::establish_();
+    Base::establish();
   }
   void prepareTx() {
-    Base::initClientPathTx_(
+    Base::initClientPathTx(
       ZiSockAddr{ZiIP{"198.18.0.1"}, 18181},
       ZiSockAddr{ZiIP{"198.18.0.2"}, 18181});
   }
-  void clearRx() { Base::resetLink_(); }
+  void clearRx() { Base::resetLink(); }
   bool sendNext(Zutcp::Stack *stack) {
-    return Base::flushData({},
-      [this](auto &build) {
-	if (!offerAck) return true;
-	enum { Ranges = 32 }; // exceeds the reserved piggyback prefix
-	Zutcp::AckRange ranges[Ranges];
-	for (unsigned i = 0; i < Ranges; ++i) ranges[i] = {3 * i, 3 * i};
-	int n = Zutcp::FrameCodec::writeAckRanges(
-	  build.scratch(), build.scratchAvail(), ranges, Ranges, 0);
-	return n > int(Zutcp::TxDataPktReserve) && build.commitScratch(unsigned(n));
-      },
-      [this, stack](auto &build, auto addr, const auto &refs) {
-	if (!refs.count()) {
-	  return Base::sendShortPkt_(Zutcp::CxnID{}, 1, build, addr, {}, &refs, false,
-	    [this, stack]() { return stack->allocPacket(this, ZiIPType::V4, true); },
-	    [this, stack](auto packet, auto, auto) {
-	      bool sent = submit(stack, ZuMv(packet), true);
-	      if (sent) offerAck = false;
-	      return sent;
-	    });
-	}
-	const auto &range = refs[refs.count() - 1].range;
-	if (submitted == 1) retry = refs[refs.count() - 1];
-	auto summary = refs.summary();
-	original &= !summary[summary.count() - 1].range.storage;
-	auto payload = range.storage->data + range.offset;
-	return Base::sendShortPkt_(Zutcp::CxnID{}, 1, build, addr, {}, &refs, true,
-	  [this, stack]() { ++extraAlloc; return stack->allocPacket(this, ZiIPType::V4); },
-	  [this, stack, payload](auto packet, auto, auto) {
-	    original &= packet->data() + packet->length - 8 == payload;
-	    bounded &= packet->length < Zutcp::TxDataPktReserve;
-	    return submit(stack, ZuMv(packet));
-	  });
+    if (offerAck) {
+      bool sent = Base::sendTCP({}, false, 0x10,
+	[this, stack]() { return stack->allocPacket(this, ZiIPType::V4, true); },
+	[this, stack](auto packet, auto) { return submit(stack, ZuMv(packet), true); });
+      if (!sent) return false;
+      offerAck = false;
+    }
+    Zutcp::TxRange range;
+    if (!Base::txRange(0, range)) return false;
+    auto ref = Zutcp::SentFrameRef::data(range, false);
+    if (submitted == 1) retry = ref;
+    auto payload = range.storage->data + range.offset;
+    return Base::sendTCP(ref, false, 0,
+      [this, stack]() { ++extraAlloc; return stack->allocPacket(this, ZiIPType::V4); },
+      [this, stack, payload](auto packet, auto) {
+	original &= packet->data() == payload;
+	bounded &= packet->length == 8;
+	return submit(stack, ZuMv(packet));
       });
   }
   bool submit(Zutcp::Stack *stack, ZmRef<ZiIOBuf> packet, bool control = false) {
@@ -139,27 +112,37 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
     return sent;
   }
   void ackFirst() {
-    Base::AckSnapshot ack;
-    ack.level = Zutcp::PktNumSpace::AppData;
-    ack.byteNext = 8;
-    new (ack.ranges.push()) Zutcp::AckRange{1, 1}; // preceding ACK-only packet uses PN 0
-    Base::processAckFrameTx_(ack);
+    Zutcp::TCPHeader header;
+    header.flags = 0x10;
+    header.ack = 8;
+    header.window = 4; // retain the original right edge at byte 12
+    Base::applyTCP(header);
   }
   bool replay(Zutcp::Stack *stack) {
-    auto ref = retry;
-    Zutcp::PktBuild build;
-    if (!Base::buildRetxData(build, ref)) return false;
-    Base::TxPktRefs refs;
-    refs.add(ref);
-    return Base::sendShortPkt_(Zutcp::CxnID{}, 1, build, {}, {}, &refs, true,
+    return Base::sendTCP(retry, false, 0,
       [this, stack]() { ++extraAlloc; return stack->allocPacket(this, ZiIPType::V4); },
-      [this, stack](auto packet, auto, auto) {
-	auto payload = packet->data() + packet->length - 8;
+      [this, stack](auto packet, auto) {
+	auto payload = packet->data();
 	reused &= payload == retry.range.storage->data + retry.range.offset &&
-	  !memcmp(payload, "second--", 8);
+	  packet->length == 8 && !memcmp(payload, "second--", 8);
 	return submit(stack, ZuMv(packet));
       });
   }
+  bool finControl(Zutcp::Stack *stack) {
+    Base::extendTxCredit(17);
+    Base::fin();
+    Zutcp::SentFrameRef ref;
+    ref.kind = Zutcp::SentFrameKind::Data;
+    ref.offset = Base::txNext();
+    ref.fin = true;
+    return Base::sendTCP(ref, false, 0,
+      [this, stack]() { return stack->allocPacket(this, ZiIPType::V4, true); },
+      [this, stack](auto packet, auto) {
+	bounded &= !packet->length;
+	return submit(stack, ZuMv(packet), true);
+      });
+  }
+
 };
 
 struct RetxProbe {
@@ -197,6 +180,9 @@ struct LeaseProbe {
     p.pn = pn;
     p.bytes = 64;
     p.ackEliciting = p.inFlight = true;
+    Zutcp::TxRange range;
+    range.length = 1;
+    p.addFrame(Zutcp::SentFrameRef::data(range, false));
     return p;
   }
   static void frame(Zutcp::PacketBuf *packet) {
@@ -244,7 +230,8 @@ struct LeaseProbe {
     Zutcp::SentPkt snapshot = recovery.txQueue()->find(1)->data();
     bool lost = recovery.lose(1) &&
       !stack->allocPacket(this, ZiIPType::V4);
-    bool ackd = recovery.ack(1);
+    Zutcp::PktAckBatch ack;
+    bool ackd = recovery.ackBytesBatch(1, ack, 8) && !recovery.count();
     auto packet = stack->allocPacket(this, ZiIPType::V4);
     retired = submitted && exhausted && marker->data_() != origin && ackd &&
       snapshot.pn == 1 && lost && packet && packet->data_() == origin;
@@ -269,6 +256,7 @@ struct LeaseProbe {
     ZmRef<Zutcp::TxRanges::Node> queued = new Zutcp::TxRanges::Node{packet, 0};
     heldRange = Zutcp::SentFrameRef::data(Zutcp::TxRange{queued, 14, 1}, false);
     auto dataPacket = record(3);
+    dataPacket.frames.clear();
     dataPacket.addFrame(heldRange);
     if (!recovery.add(dataPacket)) { done.post(); return; }
     shutdownLease = &queued->backing;
@@ -399,7 +387,7 @@ static void testStack()
       stack->txAdmission().controlCount == Zutcp::DefaultControlBufCount,
     log_("failed Hub control configuration publishes no owner or changed pool"));
   bool appReady = app.init(Zutcp::HubParams{&mx}.controlBufCount(2).txControlCredits(3)
-    .rxReserveFrames(1).closedTupleRingSize(3));
+    .rxReserveFrames(1).closedTupleRingSize(3).tfoCookieCacheSize(3));
   ZuCheckRT(appReady && app.dataTxAllocator() == stack->dataTxAllocator(),
     log_("Hub obtains its producer adapter directly from its owned native service"));
   auto rxLimits = stack->rxAdmission();
@@ -441,6 +429,35 @@ static void testStack()
   });
   owner.wait();
   ZuCheckRT(remembered, log_("Rx inserts fixed records without application or packet owners"));
+
+  const ZiIP tfoClients[] = {ZiIP{"198.18.0.1"}, ZiIP{"2001:db8::1"}};
+  const ZiSockAddr tfoServers[] = {
+    ZiSockAddr{ZiIP{"198.18.0.2"},443}, ZiSockAddr{ZiIP{"2001:db8::2"},443}
+  };
+  Zutcp::TFOCookie tfoIssued[2];
+  bool tfoStored = true;
+  mx.rxRun([&stack, &tfoClients, &tfoServers, &tfoIssued, &tfoStored, &owner] {
+    for (unsigned i = 0; i < 2; ++i) {
+      tfoStored &= stack->issueTFO(tfoServers[i],tfoClients[i],tfoIssued[i]) &&
+	stack->validTFO(tfoServers[i],tfoClients[i],tfoIssued[i]);
+      auto submitted = tfoIssued[i];
+      stack->saveTFOCookie(tfoClients[i],tfoServers[i],submitted);
+      submitted.bytes[0] ^= 1;
+      Zutcp::TFOCookie snapshot, retained;
+      tfoStored &= stack->tfoCookie(tfoClients[i],tfoServers[i],snapshot) &&
+	snapshot.length == tfoIssued[i].length &&
+	!memcmp(snapshot.bytes,tfoIssued[i].bytes,sizeof(snapshot.bytes));
+      snapshot.bytes[0] ^= 1;
+      tfoStored &= stack->tfoCookie(tfoClients[i],tfoServers[i],retained) &&
+	retained.length == tfoIssued[i].length &&
+	!memcmp(retained.bytes,tfoIssued[i].bytes,sizeof(retained.bytes));
+    }
+    owner.post();
+  });
+  owner.wait();
+  ZuCheckRT(tfoStored,
+    log_("actual Stack Rx owns TFO keys/cache and copies both input cookies "
+      "and output snapshots"));
 
 
   int wire = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(ETH_P_ALL));
@@ -569,8 +586,6 @@ static void testStack()
   ZuCheckRT(probe.packet && probe.packet->data_() == sentOrigin,
     log_("CQ restores the exact pool slot after submitted metadata has destructed"));
 
-  ZuCheckRT(WriterCxn::controlSelection(),
-    log_("FIN-only encoding selects control backing; positive DATA selects application backing"));
   ZmRef<WriterCxn> cxn = new WriterCxn{&app};
   mx.rxRun([&cxn, &owner] { cxn->prepareRx(); owner.post(); });
   owner.wait();
@@ -600,7 +615,8 @@ static void testStack()
   });
   owner.wait();
   ZuCheckRT(produced && whole && exhausted,
-    log_("positive credit sends both original packets and charges every byte without allocation"));
+    log_("positive credit sends both original packets "
+      "and charges every byte without allocation"));
   unsigned dataSeen = 0;
   for (unsigned tries = 0; tries < 16 && dataSeen != 3; ++tries) {
     pollfd ready{wire, POLLIN, 0};
@@ -627,6 +643,15 @@ static void testStack()
     replaySeen = n >= 8 && !memcmp(observed + n - 8, "second--", 8);
   }
   ZuCheckRT(replaySeen, log_("independent peer verifies retransmitted payload bytes"));
+  bool finControl = false;
+  mx.txRun([&cxn, &stack, &owner, &finControl] {
+    finControl = cxn->finControl(stack) && cxn->controls == 2 && !cxn->extraAlloc &&
+      cxn->bounded && cxn->detached;
+    owner.post();
+  });
+  owner.wait();
+  ZuCheckRT(finControl,
+    log_("FIN-only TCP construction uses control backing without DATA allocation"));
   mx.rxRun([&mx, &cxn, &owner] {
     cxn->clearRx();
     mx.txRun([&mx, &owner] { mx.rxRun([&owner] { owner.post(); }); });
@@ -743,13 +768,10 @@ static void testStack()
   // Owners are stopped. Clearing recovery returns its lease through the still
   // live provider; the subsequent restart also verifies pool drain.
   leases.recovery.clear();
-  Zutcp::PktBuild retained;
-  ZuCheckRT(leases.heldRange.range.storage &&
-      !leases.heldRange.range.storage->pending &&
-      retained.add(leases.heldRange.range) && retained.bytes() == 1 &&
-      retained.data()[0][0] == 0x5a && **leases.shutdownLease,
+  const auto &retained = leases.heldRange.range;
+  ZuCheckRT(retained.storage && !retained.storage->pending && retained.length == 1 &&
+      retained.storage->data[retained.offset] == 0x5a && **leases.shutdownLease,
     log_("retained raw range outlives Zi metadata, queue and sent-record retirement"));
-  retained.reset();
   leases.heldRange = {};
   auto stoppedRx = stack->rxAdmission();
   ZuCheckRT(stoppedRx.retained == 1 && rxAccount->frames == 1 &&
@@ -764,8 +786,13 @@ static void testStack()
   for (auto &p : reserves) p = nullptr;
   probe.packet = nullptr;
   app.final();
+  // Construct only while stopped. This instance is never installed as the mx
+  // plugin or started, so it binds no backend and shares no provider leases.
+  ZmRef<Zutcp::Stack> freshStack = new Zutcp::Stack{&mx,
+    {.interface = index, .spin = 0, .packetCount = 2}};
   bool configured = app.init(Zutcp::HubParams{&mx}.controlBufCount(3).txControlCredits(3)
-    .rxReserveFrames(1).rxRetainFrames(2).rxRetainFramesPerCxn(1).closedTupleRingSize(2));
+    .rxReserveFrames(1).rxRetainFrames(2).rxRetainFramesPerCxn(1).closedTupleRingSize(2)
+    .tfoCookieCacheSize(3));
   ZuCheckRT(configured && app.controlBufCount() == 3 && app.txControlCredits() == 3 &&
       stack->txAdmission().controlCount == 3 && stack->txAdmission().capacity == 9,
     log_("stopped Hub reinitialization changes control count and preserves application counts"));
@@ -799,6 +826,34 @@ static void testStack()
   owner.wait();
   ZuCheckRT(historyKept, log_("restart and stopped shrink preserve newest tuple identities"));
 
+  bool tfoKept = true, tfoNewInstance = true;
+  mx.rxRun([&stack, &freshStack, &tfoClients, &tfoServers, &tfoIssued,
+    &tfoKept, &tfoNewInstance, &owner] {
+    for (unsigned i = 0; i < 2; ++i) {
+      Zutcp::TFOCookie repeated, cached, replacement;
+      tfoKept &= stack->issueTFO(tfoServers[i],tfoClients[i],repeated) &&
+	repeated.length == tfoIssued[i].length &&
+	!memcmp(repeated.bytes,tfoIssued[i].bytes,sizeof(repeated.bytes)) &&
+	stack->validTFO(tfoServers[i],tfoClients[i],tfoIssued[i]) &&
+	stack->tfoCookie(tfoClients[i],tfoServers[i],cached) &&
+	cached.length == tfoIssued[i].length &&
+	!memcmp(cached.bytes,tfoIssued[i].bytes,sizeof(cached.bytes));
+      tfoNewInstance &= !freshStack->tfoCookie(tfoClients[i],tfoServers[i],cached) &&
+	!freshStack->validTFO(tfoServers[i],tfoClients[i],tfoIssued[i]) &&
+	freshStack->issueTFO(tfoServers[i],tfoClients[i],replacement) &&
+	freshStack->validTFO(tfoServers[i],tfoClients[i],replacement) &&
+	!stack->validTFO(tfoServers[i],tfoClients[i],replacement);
+    }
+    owner.post();
+  });
+  owner.wait();
+  ZuCheckRT(tfoKept && configured && app.tfoCookieCacheSize() == 3,
+    log_("same-size stopped configuration and actual restart retain TFO key "
+      "and cookie evidence"));
+  ZuCheckRT(tfoNewInstance && mx.plugin() == stack.ptr() && !freshStack->ready(),
+    log_("a new unstarted Stack has an independent key/cache "
+      "without replacing the active backend"));
+
   ZmRef<ZiIOBuf> pressureRx[3];
   bool arrived = restarted;
   for (unsigned i = 0; arrived && i < 3; ++i) {
@@ -819,28 +874,29 @@ static void testStack()
       ZmRef<WriterCxn> c = new WriterCxn{&app};
       a->rxCredit(16); b->rxCredit(16); c->rxCredit(16);
       auto frame = [](ZiIOBuf *buf, uint64_t offset, unsigned length = 1) {
-	Zutcp::Frame value;
-	value.type = Zutcp::FrameType::Data;
+	Zutcp::ByteData value;
 	value.offset = offset;
 	value.length = length;
 	value.payload = {buf->data() + 14, length};
 	return value;
       };
-      bool admitted = false;
-      bool first = a->receiveFrame(frame(pressureRx[0], 2), pressureRx[0],
-	nullptr, nullptr, &admitted) == 0 && admitted;
-      bool perCxn = a->receiveFrame(frame(pressureRx[1], 4), pressureRx[1],
-	nullptr, nullptr, &admitted) == 0 && !admitted && a->rxCreditUsed() == 3;
-      bool second = b->receiveFrame(frame(pressureRx[1], 2), pressureRx[1],
-	nullptr, nullptr, &admitted) == 0 && admitted;
-      bool shared = c->receiveFrame(frame(pressureRx[2], 4), pressureRx[2],
-	nullptr, nullptr, &admitted) == 0 && !admitted && !c->rxCreditUsed();
+      bool refused = false;
+      auto receive = [&refused](WriterCxn *cxn, const Zutcp::ByteData &data,
+	  ZmRef<ZiIOBuf> packet) {
+	refused = false;
+	return cxn->processFrame(data, ZuMv(packet), nullptr, &refused);
+      };
+      bool first = receive(a.ptr(), frame(pressureRx[0], 2), pressureRx[0]) >= 0 && !refused;
+      bool perCxn = receive(a.ptr(), frame(pressureRx[1], 4), pressureRx[1]) < 0 &&
+	refused && a->rxCreditUsed() == 3;
+      bool second = receive(b.ptr(), frame(pressureRx[1], 2), pressureRx[1]) >= 0 && !refused;
+      bool shared = receive(c.ptr(), frame(pressureRx[2], 4), pressureRx[2]) < 0 &&
+	refused && !c->rxCreditUsed();
       auto before = pressureRx[2]->refCount();
-      bool service = c->receiveFrame(frame(pressureRx[2], 0), pressureRx[2],
-	nullptr, nullptr, &admitted) == 0 && admitted && c->rxBytes() == 1 &&
+      bool service = receive(c.ptr(), frame(pressureRx[2], 0), pressureRx[2]) >= 0 &&
+	!refused && c->rxBytes() == 1 &&
 	pressureRx[2]->refCount() == before;
-      bool gap = a->receiveFrame(frame(pressureRx[2], 0, 2), pressureRx[2],
-	nullptr, nullptr, &admitted) == 0 && admitted &&
+      bool gap = receive(a.ptr(), frame(pressureRx[2], 0, 2), pressureRx[2]) >= 0 && !refused &&
 	pressureRx[2]->refCount() == before;
       auto stats = stack->rxAdmission();
       pressurePassed = first && perCxn && second && shared && service && gap &&
@@ -871,6 +927,7 @@ static void testStack()
   ZuCheckRT(restarted && running && stopped,
     log_("released pools restart with stable providers: start ", restarted,
 	" ready ", running, " stop ", stopped));
+  freshStack = nullptr;
   close(wire);
   app.final();
   alarm(0);

@@ -13,7 +13,7 @@ using namespace ZuTestUtil;
 
 struct Endpoint : Zutcp_::Endpoint_<Endpoint> {
   enum { EndpointRef = false };
-  void endpointReady_(Endpoint *) { }
+  void endpointReady(Endpoint *) { }
   void endpointDown_(Endpoint *) { }
   void endpointFailed(bool) { }
   void endpointDatagram(Zutcp::Datagram) { }

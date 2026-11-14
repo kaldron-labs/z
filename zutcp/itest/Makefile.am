@@ -29,7 +29,7 @@ zutcptlsapptest_LDFLAGS = $(AM_LDFLAGS) -R@PTLS_LIBDIR@
 zutcptlsapptest_LDADD = $(LDADD) $(top_builddir)/ztls/src/libZtls.la \
 	$(top_builddir)/zdbus/src/libZdbus.la @PTLS_LIBS@
 EXTRA_DIST = README.md zutcpipfixture.sh zutcppairfixture.sh zutcpmxfixture.sh \
-	zutcpappfixture.sh zutcpmxlossfixture.sh zutcprecovery.py
+	zutcpappfixture.sh zutcpmxlossfixture.sh zutcprecovery.py zutcpoptions.py zutcptfo.py
 
 .PHONY: test
 test: all

@@ -1,8 +1,28 @@
-# Phase-1 execution boundary
+# Current Phase 8 execution boundary
+
+The live protocol uses standard
+TCP headers/options and raw application bytes over Stack/Zxdp. Endpoint ownership
+uses TCP tuples; accepted byte history, canonical backing and owner handoffs
+remain authoritative. Intermediate packet/frame codecs and peer packet-number
+acknowledgments are deleted. Providers reserve the maximum standard Ethernet,
+IPv6 and TCP headers (114 bytes); the intermediate extra64-byte reserve is gone.
+
+Keep the accepted whole-original send/recovery policy, including positive peer
+windows smaller than an original. RST receive policy is window-qualified, with
+silent out-of-window rejection and no reflection of accepted peer resets.
+
+Build/test Zutcp and its dependency closure in explicit directory/target order.
+Use the five native drivers and separate independent-kernel interop runner while
+finishing TCP. Selected Ztcp/Ztls application checks follow TCP completion; they
+are optional consumers and are not dependencies of Zutcp. Preserve the existing mx/XDP ownership model throughout.
+
+The phase-specific notes below record earlier implementation boundaries. Current
+Phase 8 wire changes supersede their references to intermediate framing.
+
+# Historical Phase 1 execution boundary
 
 The live transport now uses Stack/Zxdp with TCP-aligned IP carriage. The native
-endpoint checkpoint at the top of `../zutcp_plan.md` records the client/server
-cutover and basic working-pair evidence. Do not restore a kernel UDP mode,
+endpoint tests exercise the client/server cutover and working pairs. Do not restore a kernel UDP mode,
 fallback or separate backend. Cold interface/route/static-neighbor queries remain
 control work outside Rx/Tx.
 
@@ -32,7 +52,7 @@ ACKed native byte work or assemble retired payload storage.
 Phase 1 is stripping plus IP/Zxdp wiring and regression testing. No new recovery,
 congestion, flow-control or packetization behavior belongs in that phase. Broader
 pressure/fairness/lifecycle/observation matrices are later work, not extra exit
-gates. See the current scope at the top of ../zutcp_plan.md.
+gates. See the current boundary above.
 
 Framework/application callers request their own higher-level allocators from mx;
 factory exercises belong in tests or clients. The locally owned builtin byte

@@ -51,30 +51,27 @@ void testRetainedTx()
   ZuCHECK(cxn->enqueue_(buf) && !cxn->enqueue_(buf) && cxn->txQueueCount() == 1,
     "queue pressure must reject without duplicating retained ownership");
   cxn->fin();
-  uint8_t wire[64];
-  Zutcp::PktBudget budget;
-  Zutcp::PktAssembly assembly;
-  Zutcp::DataFrameInfo first;
-  ZuCHECK(Zutcp::DataPktizer::writeNext(wire, sizeof(wire), budget, assembly,
-    *cxn, &first) > 0 && first.length == 4 && !first.fin &&
-    first.range.storage->pending == buf && cxn->txCreditAvailable() == 0 &&
-    cxn->txBufferedBytes() == 2, "packetization must respect the single byte window");
-  ZuCHECK(cxn->recordTxUnackd(first.offset, first.length, first.fin),
-    "sent bytes must remain unacknowledged independently of the producer queue");
-  ZuCHECK(cxn->retry(first.range, first.fin) && cxn->txCreditAvailable() == 0 &&
-    cxn->txUnackdBytes() == 4,
-    "a failed packet build must requeue without charging byte credit twice");
+  Zutcp::TxRange original;
+  ZuCHECK(cxn->txRange(0, original) && original.length == 6 &&
+      original.storage->pending == buf && cxn->txCreditAvailable() == 4 &&
+      cxn->txBufferedBytes() == 6,
+    "window pressure must leave the whole original queued without preparing a prefix");
   cxn->extendTxCredit(6);
-  Zutcp::DataFrameInfo last;
-  ZuCHECK(Zutcp::DataPktizer::writeNext(wire, sizeof(wire), budget, assembly,
-    *cxn, &last) > 0 && last.offset == 4 && last.length == 2 && last.fin &&
-    last.range.storage->pending == buf && !cxn->txQueueCount() && !cxn->txBufferedBytes(),
-    "remaining bytes and FIN must retain the original backing");
-  ZuCHECK(cxn->recordTxUnackd(last.offset, last.length, last.fin) &&
-    cxn->txUnackdBytes() == 7, "FIN must remain retained through peer acknowledgment");
+  Zutcp::TxRange committed;
+  ZuCHECK(cxn->commitTxRange(committed, original, original.length) &&
+      cxn->consumeTxCredit(committed.length) && !cxn->txQueueCount() &&
+      !cxn->txBufferedBytes() && committed.storage->pending == buf,
+    "whole-original commitment releases its admission while retaining its backing");
+  ZuCHECK(cxn->recordTxUnackd(0, 6, false) && cxn->retry(committed, false) &&
+      !cxn->txCreditAvailable() && cxn->txUnackdBytes() == 6,
+    "recovery retains original bytes without consuming credit again");
+  uint64_t fin = 0;
+  ZuCHECK(cxn->dequeueFin(fin) && fin == 6 && cxn->recordTxUnackd(fin, 0, true) &&
+      cxn->txUnackdBytes() == 7,
+    "FIN consumes its own sequence position independently of application byte credit");
   ZuCHECK(cxn->ackTxUnackd(0, 4) && !cxn->txCompleted() &&
-    cxn->ackTxUnackd(4, 2, true) && cxn->txCompleted() && cxn->txDrained(),
-    "partial and final acknowledgments must retire exactly their ranges");
+      cxn->ackTxUnackd(4, 2, true) && cxn->txCompleted() && cxn->txDrained(),
+    "partial and final acknowledgments retire exactly their byte/FIN ranges");
 }
 
 void testRuntimeReset()
@@ -104,7 +101,7 @@ void testRuntimeReset()
   ZuCHECK(!cxn->txBytes() && !cxn->txBufferedBytes() && !cxn->txRangeCount() &&
     !cxn->txQueueCount() && !cxn->txUnackdCount() && !cxn->finSent() &&
     !cxn->txCompleted() && !cxn->resetSent() && !cxn->stopSent() &&
-    !cxn->byteControlCount() && cxn->txError() == Zutcp::DataError::None,
+    cxn->txError() == Zutcp::DataError::None,
     "reset must release old Tx ranges and clear FIN/control/error state");
   auto fresh = packet(app, "new");
   ZuCHECK(cxn->processFrame(dataFrame(fresh, 0, true), fresh) == 0 &&
@@ -121,16 +118,9 @@ void testRuntimeReset()
     "reused Tx must restart at zero with the new backing");
   cxn->reset(17);
   cxn->stop(23);
-  Zutcp::Frame reset;
-  reset.type = Zutcp::FrameType::Reset;
-  reset.length = 3;
-  reset.errorCode = 31;
-  ZuCHECK(cxn->receiveReset(reset) && cxn->resetReceived() &&
-    cxn->rxError() == Zutcp::DataError::Reset && cxn->txCompleted(),
-    "second reset setup must install terminal byte states and errors");
   cxn->resetRuntime();
   ZuCHECK(!cxn->resetReceived() && !cxn->stopReceived() && !cxn->stopSent() &&
-    !cxn->resetSent() && !cxn->txCompleted() && !cxn->byteControlCount() &&
+    !cxn->resetSent() && !cxn->txCompleted() &&
     cxn->rxError() == Zutcp::DataError::None && !cxn->rxAppError() &&
     cxn->txError() == Zutcp::DataError::None && !cxn->txAppError(),
     "reuse must clear terminal flags and error causes in both directions");

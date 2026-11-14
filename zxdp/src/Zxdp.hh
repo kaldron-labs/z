@@ -65,8 +65,8 @@ public:
   void wake();
   unsigned pollTx(); // number of kernel submissions retired this turn
 
-  // Wake/join Rx and quiesce Tx and all wake callers first. A false result preserves the handle for
-  // retry; only successful kernel retirement permits pending backing to return.
+  // Wake/join Rx and quiesce Tx and all wake callers first. A false result preserves the handle
+  // for retry; only successful kernel retirement permits pending backing to return.
   bool close(ZtString<> &error);
 
 private:

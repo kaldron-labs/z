@@ -247,10 +247,55 @@ static void testTCPOptions()
     segment[23] ^= 1;
     ZuCHECK(!Zutcp::readTCP(ip, tcp), "TCP checksum covers options");
     segment[23] ^= 1;
+    segment[21] = 3;
+    tcp.header.options = {.flags = Zutcp::TCPOptions::TS, .tsval = 42};
+    ++segment[23]; // The length decrement and MSS increment preserve the checksum sum.
+    ZuCHECK(!Zutcp::readTCP(ip, tcp) && tcp.header.options.tsval == 42,
+      "a checksum-valid malformed known option must fail before publishing header values");
+    segment[21] = 4;
+    --segment[23];
     segment[12] = 0x40;
     ZuCHECK(!Zutcp::readTCP(ip, tcp), "TCP data offset below base header");
     segment[12] = 0xf0;
     ZuCHECK(!Zutcp::readTCP(ip, tcp), "TCP data offset beyond received segment");
+  }
+}
+
+static void testTCPOptionWire()
+{
+  ZuTestScope(testTCPOptionWire);
+  const uint8_t expected[] = {8,10,1,2,3,4,0,0,0,0,0,0};
+  for (bool ipv6 : {false, true}) {
+    auto route = path(ipv6);
+    Zutcp::TCPHeader header{.srcPort = 12345, .dstPort = 443, .seq = 7,
+      .ack = 9, .window = 400, .flags = 0x18,
+      .options = {.flags = Zutcp::TCPOptions::TS, .tsval = 0x01020304}};
+    uint8_t frame[1600];
+    memset(frame, 0xa5, sizeof(frame));
+    unsigned base = Zutcp::tcpHead(route.local.type());
+    unsigned head = Zutcp::tcpHead(route.local.type(), header);
+    memcpy(frame + head, "abcde", 5);
+    auto original = frame + head;
+    unsigned wire = Zutcp::writeTCP(frame, sizeof(frame), route, header, 5);
+    Zutcp::IPView ip;
+    Zutcp::TCPView tcp;
+    bool parsed = wire && Zutcp::readIP({frame, wire}, ip) && Zutcp::readTCP(ip, tcp);
+    ZuCHECK(parsed && head == base + sizeof(expected) && frame[base - 8] == 0x80 &&
+	!memcmp(frame + base, expected, sizeof(expected)) &&
+	tcp.header.options.flags == Zutcp::TCPOptions::TS &&
+	tcp.header.options.tsval == 0x01020304 && !tcp.header.options.tsecr &&
+	tcp.payload.data() == original && tcp.payload.length() == 5 &&
+	!memcmp(original, "abcde", 5),
+      "actual option bytes, data offset and checksum must retain the original payload address");
+    uint8_t saved[sizeof(frame)];
+    memcpy(saved, frame, sizeof(frame));
+    bool refused = !Zutcp::writeTCP(frame, head + 4, route, header, 5);
+    header.options.sackCount = 4;
+    for (unsigned i = 0; i < 4; ++i) header.options.sack[i] = {10*i, 10*i + 5};
+    refused &= !Zutcp::tcpHead(route.local.type(), header) &&
+      !Zutcp::writeTCP(frame, sizeof(frame), route, header, 5);
+    ZuCHECK(refused && !memcmp(saved, frame, sizeof(frame)),
+      "capacity or unrepresentable option geometry must fail before modifying the packet");
   }
 }
 
@@ -264,4 +309,5 @@ int main(int argc, char **argv)
   ZuTestCall(testTCPVectors);
   ZuTestCall(testTCPGeometry);
   ZuTestCall(testTCPOptions);
+  ZuTestCall(testTCPOptionWire);
 }

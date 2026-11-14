@@ -20,33 +20,32 @@
 
 using namespace ZuTestUtil;
 
-namespace {
 enum { TestAge = 3 }; // exercise bounded rotation with a short history
 
-Zi::Path g_base;
-Zi::Path g_root;
+static Zi::Path g_base;
+static Zi::Path g_root;
 
-Zi::Path rotated(unsigned i)
+static Zi::Path rotated(unsigned i)
 {
   Zi::Path path;
   path << g_base << '.' << ZuBox<unsigned>(i);
   return path;
 }
 
-void initPaths()
+static void initPaths()
 {
   g_root = ZiTestResidue::dir("age");
   g_base = ZiFile::append(g_root, "file");
 }
 
-void cleanupAge()
+static void cleanupAge()
 {
   ZiFile::remove(g_base);
   for (unsigned i = 0; i <= 8; i++)
     ZiFile::remove(rotated(i));
 }
 
-void writeBase(const char *s)
+static void writeBase(const char *s)
 {
   ZiFile f;
   if (f.open(g_base, ZiFile::Write | ZiFile::GC) != Zi::OK) {
@@ -60,14 +59,14 @@ void writeBase(const char *s)
   f.close();
 }
 
-bool writePath(const Zi::Path &path, const char *s)
+static bool writePath(const Zi::Path &path, const char *s)
 {
   ZiFile f;
   if (f.open(path, ZiFile::Write | ZiFile::GC) != Zi::OK) return false;
   return f.write(s, static_cast<unsigned>(::strlen(s))) == Zi::OK;
 }
 
-ZtString<> readPath(const Zi::Path &path)
+static ZtString<> readPath(const Zi::Path &path)
 {
   ZiFile f;
   if (f.open(path, ZiFile::ReadOnly, 0777) != Zi::OK) {
@@ -86,7 +85,7 @@ ZtString<> readPath(const Zi::Path &path)
   return out;
 }
 
-void testAgeRotationBounded()
+static void testAgeRotationBounded()
 {
   ZuTestScope(testAgeRotationBounded);
 
@@ -117,7 +116,7 @@ void testAgeRotationBounded()
   cleanupAge();
 }
 
-void testTreeAgeAndRemoval()
+static void testTreeAgeAndRemoval()
 {
   ZuTestScope(testTreeAgeAndRemoval);
 
@@ -143,7 +142,7 @@ void testTreeAgeAndRemoval()
   ZuCheck(ZiFile::removeTree(archived2) == Zi::OK);
 }
 
-void testTreeDoesNotFollowSymlink()
+static void testTreeDoesNotFollowSymlink()
 {
   ZuTestScope(testTreeDoesNotFollowSymlink);
 #ifndef _WIN32
@@ -161,7 +160,7 @@ void testTreeDoesNotFollowSymlink()
 #endif
 }
 
-void testTreeRemovalError()
+static void testTreeRemovalError()
 {
   ZuTestScope(testTreeRemovalError);
 #ifndef _WIN32
@@ -180,7 +179,6 @@ void testTreeRemovalError()
 #endif
 }
 
-} // namespace
 
 int main(int argc, char **argv)
 {

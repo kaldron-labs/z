@@ -32,6 +32,7 @@
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuSpan.hh>
 
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmBackTrace.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmCleanup.hh>
@@ -63,7 +64,8 @@ struct ZiSink : public ZmPolymorph {
   virtual void age() = 0;
 };
 
-struct ZiSinkOptions {
+class ZiSinkOptions {
+public:
   ZiSinkOptions &path(ZuCSpan path) { m_path = path; return *this; }
   ZiSinkOptions &age(unsigned age) { m_age = age; return *this; }
   ZiSinkOptions &tzOffset(unsigned tzOffset)
@@ -79,7 +81,8 @@ private:
   int		m_tzOffset = 0;
 };
 
-class ZeAPI ZiFileSink : public ZiSink {
+class ZiAPI ZiFileSink : public ZmNHeap<ZiFileSink>, public ZiSink {
+friend inline ZuStringT<"ZiFileSink"> ZmNHeapID(ZiFileSink *);
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
 
@@ -105,7 +108,8 @@ private:
   ZiFile		m_file;
 };
 
-class ZeAPI ZiDebugSink : public ZiSink {
+class ZiAPI ZiDebugSink : public ZmNHeap<ZiDebugSink>, public ZiSink {
+friend inline ZuStringT<"ZiDebugSink"> ZmNHeapID(ZiDebugSink *);
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
 
@@ -145,7 +149,8 @@ ZfStruct(ZiAPI, ZiSinkEvent,
   ((component, AliasRd, info.component),,	String),
   ((msg,       Rd),,				String));
 
-class ZeAPI ZiCSVSink : public ZiSink {
+class ZiAPI ZiCSVSink : public ZmNHeap<ZiCSVSink>, public ZiSink {
+friend inline ZuStringT<"ZiCSVSink"> ZmNHeapID(ZiCSVSink *);
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
 
@@ -172,7 +177,8 @@ private:
   ZuUnion<void, Writer>		m_writer;
 };
 
-struct ZeAPI ZiSysSink : public ZiSink {
+struct ZiAPI ZiSysSink : public ZmNHeap<ZiSysSink>, public ZiSink {
+friend inline ZuStringT<"ZiSysSink"> ZmNHeapID(ZiSysSink *);
   ZiSysSink() : ZiSink{ZiSinkType::System} { }
 
   void pre(ZeLogBuf &, const ZeEventInfo &);
@@ -180,7 +186,8 @@ struct ZeAPI ZiSysSink : public ZiSink {
   void age() { } // unused
 };
 
-struct ZeAPI ZiLambdaSink_ : public ZiSink {
+class ZiAPI ZiLambdaSink_ : public ZiSink {
+public:
   ZiLambdaSink_(int tzOffset = 0) :
       ZiSink{ZiSinkType::Lambda}, m_dateFmt{tzOffset} { }
 
@@ -191,7 +198,8 @@ private:
 };
 
 template <typename L>
-struct ZiLambdaSink : public ZiLambdaSink_ {
+struct ZiLambdaSink : public ZmNHeap<ZiLambdaSink<L>>, public ZiLambdaSink_ {
+friend inline ZuStringT<"ZiLambdaSink"> ZmNHeapID(ZiLambdaSink *);
   L	l;
 
   ZiLambdaSink(L l_, int tzOffset = 0) :
@@ -201,7 +209,7 @@ struct ZiLambdaSink : public ZiLambdaSink_ {
   void age() { } // unused
 };
 
-class ZeAPI ZiLog {
+class ZiAPI ZiLog {
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
 

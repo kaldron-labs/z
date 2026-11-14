@@ -255,8 +255,11 @@ unsigned writeTCP(
   uint8_t *frame, unsigned capacity, const IPPath &path, const TCPHeader &header,
   unsigned payload, unsigned ecn)
 {
-  if (payload > 65535 - 20) return 0;
-  unsigned length = payload + 20;
+  unsigned head = tcpHead(path.local.type(), header);
+  unsigned base = ipHead(path.local.type());
+  if (!head || head < base || payload > 65535 - (head - base)) return 0;
+  unsigned options = head - base - 20;
+  unsigned length = payload + 20 + options;
   unsigned wire = writeIP(frame, capacity, path, IPPROTO_TCP, length, ecn);
   if (!wire) return 0;
   auto tcp = frame + ipHead(path.local.type());
@@ -264,11 +267,12 @@ unsigned writeTCP(
   put16(tcp + 2, header.dstPort);
   put32(tcp + 4, header.seq);
   put32(tcp + 8, header.ack);
-  tcp[12] = 5<<4;
+  tcp[12] = uint8_t(((20 + options)>>2)<<4);
   tcp[13] = header.flags;
   put16(tcp + 14, header.window);
   put16(tcp + 16, 0);
   put16(tcp + 18, header.urgent);
+  if (header.options.encode(tcp + 20, options, header.flags & 0x02) != int(options)) return 0;
   put16(tcp + 16, checksum(sum(tcp, length,
     tcpSum(path.local, path.remote, length))));
   return wire;
@@ -285,9 +289,11 @@ bool readTCP(const IPView &ip, TCPView &view)
   unsigned head = (tcp[12]>>4)<<2;
   if (head < 20 || head > length ||
       checksum(sum(tcp, length, tcpSum(ip.local, ip.remote, length)))) return false;
-  view.header = {
+  TCPHeader header{
     uint16_t(get16(tcp)), uint16_t(get16(tcp + 2)), get32(tcp + 4), get32(tcp + 8),
     uint16_t(get16(tcp + 14)), uint16_t(get16(tcp + 18)), tcp[13]};
+  if (header.options.decode({tcp + 20, head - 20}, header.flags & 0x02) < 0) return false;
+  view.header = header;
   view.options = {tcp + 20, head - 20};
   view.payload = {tcp + head, length - head};
   return true;

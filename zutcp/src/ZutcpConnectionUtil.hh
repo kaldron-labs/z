@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z QUIC connection utilities
+// TCP byte credit and receive final-size state
 
 #ifndef Zutcp_HH
 #error "include zlib/Zutcp.hh before this header"
@@ -65,19 +65,6 @@ public:
 private:
   uint64_t	m_used = 0;
   uint64_t	m_limit = 0;
-};
-
-struct FlowUpdate {
-  FrameType::T	type = FrameType::Unknown;
-  uint64_t	maximum = 0;
-
-  bool needed() const { return type != FrameType::Unknown; }
-
-  int write(uint8_t *out, unsigned len) const {
-    if (type == FrameType::MaxData)
-      return FrameCodec::writeMaxData(out, len, maximum);
-    return -1;
-  }
 };
 
 class RxState {

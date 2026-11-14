@@ -14,7 +14,6 @@
 
 using namespace ZuTestUtil;
 
-namespace {
 
 struct FakeConnection : ZiConnection {
   ZiTxContext	io;
@@ -82,7 +81,7 @@ struct TxHarness : public FakeConnection, public ZiTx<TxHarness> {
   }
 };
 
-ZmRef<ZiTxBuf> mkBuf(char c, unsigned n)
+static ZmRef<ZiTxBuf> mkBuf(char c, unsigned n)
 {
   static ZiMultiplex mx;
   static auto allocator =
@@ -93,9 +92,9 @@ ZmRef<ZiTxBuf> mkBuf(char c, unsigned n)
   return buf;
 }
 
-void testFifoAndPartialSendContinuation()
+static void testFifoPartialSend()
 {
-  ZuTestScope(testFifoAndPartialSendContinuation);
+  ZuTestScope(testFifoPartialSend);
 
   TxHarness tx;
 
@@ -135,7 +134,7 @@ void testFifoAndPartialSendContinuation()
   ZuCheck(tx.io.completed());
 }
 
-void testSendFailureDrainsQueue()
+static void testSendFailureDrainsQueue()
 {
   ZuTestScope(testSendFailureDrainsQueue);
 
@@ -157,7 +156,7 @@ void testSendFailureDrainsQueue()
   ZuCheck(tx.io.completed());
 }
 
-void testAbortQueuedAndHeadCases()
+static void testAbortQueuedAndHeadCases()
 {
   ZuTestScope(testAbortQueuedAndHeadCases);
 
@@ -209,13 +208,12 @@ void testAbortQueuedAndHeadCases()
   }
 }
 
-} // namespace
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testFifoAndPartialSendContinuation);
+  ZuTestCall(testFifoPartialSend);
   ZuTestCall(testSendFailureDrainsQueue);
   ZuTestCall(testAbortQueuedAndHeadCases);
   return 0;

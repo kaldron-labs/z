@@ -75,10 +75,12 @@ using RxAllocator = Zi::IOBufAllocator;
 using TxAllocator = Zi::IOBufAllocator;
 
 class Connection :
+  public ZmNHeap<Connection>,
   public ZiConnection,
   public ZiRx<Connection, 100U << 20>,
   public ZiTx<Connection>
 {
+friend inline ZuStringT<"zimxudpclient.Connection"> ZmNHeapID(Connection *);
   using Rx = ZiRx<Connection, 100U << 20>;
   using Tx = ZiTx<Connection>;
 
@@ -90,7 +92,7 @@ class Connection :
       m_cxn{cxn} { }
     ~Output() { flush(); }
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-      auto buf = m_cxn->m_allocator->allocBuf(
+      auto buf = m_cxn->txAllocator()->allocBuf(
 	nullptr, 0, m_cxn->info().mps);
       if (ZuUnlikely(!buf)) return nullptr;
       buf->skip += headRoom;
@@ -113,6 +115,8 @@ public:
   ~Connection() { }
 
   Mx *mx() { return (Mx *)ZiConnection::mx(); }
+  TxAllocator *txAllocator() const { return m_allocator; }
+
   RxAllocator *rxAllocator() const {
     return m_rxAllocator;
   }

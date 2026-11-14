@@ -74,8 +74,6 @@ struct EndpointTxDiag {
 };
 
 struct EndpointDiag {
-  uint64_t failures() const { return rx.failures + tx.failures; }
-
   EndpointRxDiag	rx;
   EndpointTxDiag	tx;
   uint64_t	txPending = 0;

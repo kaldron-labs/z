@@ -35,7 +35,7 @@ template <typename Impl_, unsigned MaxBufSize_>
 class ZiRx {
 public:
   using Impl = Impl_;
-  static constexpr unsigned MaxBufSize = MaxBufSize_;
+  enum { MaxBufSize = MaxBufSize_ };
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
