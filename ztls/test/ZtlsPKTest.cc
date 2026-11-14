@@ -140,7 +140,7 @@ void checkKey(Ztls::Random &rng, ZuCSpan type)
   }
 
   checkCSR(sk, type);
-  ZTLS_CHECK_RT(!Ztls::Backend::pkey_csr(sk->key, nullptr, rejectCSR),
+  ZTLS_CHECK_RT(!Ztls::PK::pkey_csr(sk->key, nullptr, rejectCSR),
     type, " CSR sink failure ignored");
 
   ZtBArray asn;
@@ -195,7 +195,7 @@ void checkKey(Ztls::Random &rng, ZuCSpan type)
       return;
     }
     auto pk = ZuMv(r).template p<0>();
-    ZTLS_CHECK_RT(!Ztls::Backend::pkey_csr(pk->key, nullptr, acceptCSR),
+    ZTLS_CHECK_RT(!Ztls::PK::pkey_csr(pk->key, nullptr, acceptCSR),
       type, " public-only CSR generation succeeded");
     ZtBArray asn3;
     pk->save(asn3);
@@ -324,7 +324,7 @@ void testED25519(Ztls::Random &rng)
   ZuCheckRT(!memcmp(mapped, derived, sizeof(mapped)));
   uint8_t invalid[32];
   memset(invalid, 0xff, sizeof(invalid));
-  ZuCheckRT(!Ztls::Backend::ed25519_to_x25519(invalid, mapped));
+  ZuCheckRT(!Ztls::PK::ed25519_to_x25519(invalid, mapped));
 }
 
 } // namespace

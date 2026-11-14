@@ -9,7 +9,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiRxStream.hh>
-#include <zlib/ZtlsBackend.hh>
+#include <zlib/ZtlsPico.hh>
 
 using namespace ZuTestUtil;
 
@@ -61,7 +61,7 @@ void sinkGeometry()
 {
   ZuTestScope(sinkGeometry);
   PlainPool pool;
-  Ztls::Backend::PlaintextSink output{&pool, &pool};
+  Ztls::Pico::PlaintextSink output{&pool, &pool};
   auto sink = output.sink();
   void *base = nullptr;
   size_t capacity = 0;
@@ -114,11 +114,11 @@ void fragmentedRecord(ptls_cipher_suite_t *cipher, unsigned step, bool corrupt, 
   if (corrupt) wire.base[wire.off - 1] ^= 1;
   size_t length = truncate ? truncate : wire.off;
   PlainPool pool;
-  Ztls::Backend::PlaintextSink output{&pool, &pool};
+  Ztls::Pico::PlaintextSink output{&pool, &pool};
   auto sink = output.sink();
   ZiMultiplex mx;
-  auto packetOutput = mx.allocator<Zi::IOBufType::TxTCP, Ztls::Backend::TxPacket, 71>();
-  Ztls::Backend::RecordSink writer{packetOutput, &pool, 71, nullptr,
+  auto packetOutput = mx.allocator<Zi::IOBufType::TxTCP, Ztls::Pico::TxPacket, 71>();
+  Ztls::Pico::RecordSink writer{packetOutput, &pool, 71, nullptr,
     [](void *, ZmRef<ZiIOBuf>) { return 0; }};
   auto recordOutput = writer.sink();
   auto input = mx.allocator<Zi::IOBufType::RxTCP, ZiRxQueue::Node, 31>();

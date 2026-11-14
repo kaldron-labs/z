@@ -419,16 +419,18 @@ public:
 #pragma GCC diagnostic ignored "-Wstringop-overflow"
 #endif
   VaultResult init(const VaultConfig &cf) override {
-    MD<SHA256> hash;
-    hash.update(cf.account);
-    uint8_t digest[MD<SHA256>::Size];
-    hash.finish(digest);
-    char hex[ZuHex::enclen(sizeof(digest))];
-    ZuHex::encode(hex, digest);
-    ZuClear(digest, sizeof(digest));
-    m_path = ZiFile::append(m_dir,
-      Zi::Path{} << ZuCSpan{hex, sizeof(hex)} << ".age");
-    return m_store->init(cf);
+    try {
+      MD<SHA256> hash;
+      hash.update(cf.account);
+      uint8_t digest[MD<SHA256>::Size];
+      hash.finish(digest);
+      char hex[ZuHex::enclen(sizeof(digest))];
+      ZuHex::encode(hex, digest);
+      ZuClear(digest, sizeof(digest));
+      m_path = ZiFile::append(m_dir,
+        Zi::Path{} << ZuCSpan{hex, sizeof(hex)} << ".age");
+      return m_store->init(cf);
+    } catch (const ZeException &e) { return e; }
   }
 #if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
 #pragma GCC diagnostic pop

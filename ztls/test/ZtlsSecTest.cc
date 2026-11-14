@@ -111,7 +111,7 @@ static void verify()
   ZuCheck(rng.init());
   Ztls::PK::SK_EC sk{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t key[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheck(Ztls::Backend::pkey_ec_export_public(sk.key, key));
+  ZuCheck(Ztls::PK::pkey_ec_export_public(sk.key, key));
   ZuBSpan data{"signed bytes"};
   uint8_t digest[Ztls::MD<>::Size];
   { Ztls::MD<> md; md.update(data); md.finish(digest); }

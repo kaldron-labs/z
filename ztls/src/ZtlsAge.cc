@@ -17,13 +17,13 @@
 #include <zlib/ZtScratch.hh>
 
 #include <zlib/ZtlsAge.hh>
-#include <zlib/ZtlsBackend.hh>
+#include <zlib/ZtlsKDF.hh>
+#include <zlib/ZtlsAEAD.hh>
 #include <zlib/ZtlsHMAC.hh>
 #include <zlib/ZtlsHPKE.hh>
 #include <zlib/ZtlsKEM.hh>
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsPK.hh>
-#include <zlib/ZtlsPico.hh>
 #include <zlib/ZtlsSec.hh>
 
 namespace Ztls_ {
@@ -335,6 +335,7 @@ static void sshFingerprint(ZuBSpan blob, ZuSpan<uint8_t> output)
 
 ZuUnion<Age::Recipient, ZeException> Age::decodeSSHRecipient(
   ZuCSpan authorizedKey, ZuSpan<uint8_t> output)
+try
 {
   size_t cursor = 0, n = authorizedKey.length();
   while (cursor < n) {
@@ -373,7 +374,7 @@ ZuUnion<Age::Recipient, ZeException> Age::decodeSSHRecipient(
     return Recipient{SshED25519Recipient{blob}};
   }
   return ZeEXCEPT(Error, "ZtlsAge", "invalid SSH public key");
-}
+} catch (const ZeException &e) { return e; }
 
 static ZeException invalidOpenSSH()
 {
@@ -382,6 +383,7 @@ static ZeException invalidOpenSSH()
 
 ZuUnion<Age::SshKey, ZeException> Age::loadOpenSSH(
   ZuSpan<char> privateKey, ZuSpan<uint8_t> publicKey)
+try
 {
   ZuGuard clear{[&privateKey]() {
     ZuClear(privateKey);
@@ -483,20 +485,13 @@ ZuUnion<Age::SshKey, ZeException> Age::loadOpenSSH(
     return invalidOpenSSH();
   memcpy(publicKey.data(), blob.data(), blob.length());
   return SshKey{ZuMv(key), {publicKey.data(), blob.length()}};
-}
+} catch (const ZeException &e) { return e; }
 
 static bool hkdf(
   ZuBSpan input, ZuBSpan salt, ZuCSpan info, ZuSpan<uint8_t> output)
 {
-  uint8_t prk[KeySize];
-  ZuGuard clear{[&prk]() { ZuClear(prk, sizeof(prk)); }};
-  auto hash = Ztls::Backend::hash_algorithm(Ztls::SHA256);
-  return !ptls_hkdf_extract(hash, prk,
-      ptls_iovec_init(salt.data(), salt.length()),
-      ptls_iovec_init(input.data(), input.length())) &&
-    !ptls_hkdf_expand(hash, output.data(), output.length(),
-      ptls_iovec_init(prk, sizeof(prk)),
-      ptls_iovec_init(info.data(), info.length()));
+  Ztls::KDF::HKDF kdf;
+  return kdf.init() && kdf.derive(salt, input, info, output);
 }
 
 static bool write_(ZiFile &file, ZuBSpan data)
@@ -512,30 +507,31 @@ static bool scryptKey(
   ZuGuard clear{[&fullSalt]() { ZuClear(fullSalt, sizeof(fullSalt)); }};
   memcpy(fullSalt, ScryptLabel.data(), ScryptLabel.length());
   memcpy(fullSalt + ScryptLabel.length(), salt.data(), SaltSize);
-  return Ztls::Backend::scrypt(passphrase, fullSalt,
+  return Ztls::KDF::scrypt(passphrase, fullSalt,
     uint64_t{1} << logN, 8, 1, ScryptMaxMemory, output);
 }
 
 static bool sealKey(
   ZuBSpan wrappingKey, ZuBSpan fileKey, ZuSpan<uint8_t> body)
 {
-  uint8_t nonce[12]{};
-  Ztls::Pico::AeadCtx ctx;
-  if (!ctx.init(Ztls::Backend::chacha20poly1305(), true,
-      wrappingKey.data(), nonce)) return false;
-  return ptls_aead_encrypt(ctx.get(), body.data(), fileKey.data(),
-    fileKey.length(), 0, nullptr, 0) == fileKey.length() + TagSize;
+  uint8_t nonce[Ztls::ChaCha20Poly1305::NonceSize]{};
+  Ztls::ChaCha20Poly1305 ctx;
+  return ctx.init(true, wrappingKey) && ctx.seal(nonce, {}, fileKey, body);
 }
 
 static bool openKey(
   ZuBSpan wrappingKey, ZuBSpan body, ZuSpan<uint8_t> fileKey)
 {
-  uint8_t nonce[12]{};
-  Ztls::Pico::AeadCtx ctx;
-  if (!ctx.init(Ztls::Backend::chacha20poly1305(), false,
-      wrappingKey.data(), nonce)) return false;
-  return ptls_aead_decrypt(ctx.get(), fileKey.data(), body.data(),
-    body.length(), 0, nullptr, 0) == FileKeySize;
+  uint8_t nonce[Ztls::ChaCha20Poly1305::NonceSize]{};
+  Ztls::ChaCha20Poly1305 ctx;
+  return ctx.init(false, wrappingKey) && ctx.open(nonce, {}, body, fileKey);
+}
+
+static void payloadNonce(uint8_t *nonce, uint64_t counter, bool final)
+{
+  memset(nonce, 0, 4);
+  uint64_t seq = (counter << 8) | unsigned(final);
+  for (unsigned i = 0; i < 8; ++i) nonce[4 + i] = uint8_t(seq >> (56 - (i << 3)));
 }
 
 static ZuUnion<void, ZeException> writePayload(
@@ -549,9 +545,9 @@ static ZuUnion<void, ZeException> writePayload(
   if (!rng.random(nonce) || !hkdf(fileKey, nonce, PayloadInfo, key) ||
       !write_(file, nonce))
     return ZeEXCEPT(Error, "ZtlsAge", "payload setup failed");
-  uint8_t baseIV[12]{};
-  Ztls::Pico::AeadCtx ctx;
-  if (!ctx.init(Ztls::Backend::chacha20poly1305(), true, key, baseIV))
+  uint8_t iv[Ztls::ChaCha20Poly1305::NonceSize];
+  Ztls::ChaCha20Poly1305 ctx;
+  if (!ctx.init(true, key))
     return ZeEXCEPT(Error, "ZtlsAge", "payload cipher setup failed");
   auto scratch = ZmScratch(uint8_t, ChunkCipherSize, AgeScratchHeap);
   auto chunk = scratch.data();
@@ -562,10 +558,9 @@ static ZuUnion<void, ZeException> writePayload(
     size_t n = remaining < ChunkSize ? remaining : ChunkSize;
     bool final = remaining <= ChunkSize;
     const uint8_t *input = n ? plaintext.data() + offset : chunk;
-    size_t written = ptls_aead_encrypt(ctx.get(), chunk, input,
-      n, (counter << 8) | unsigned(final), nullptr, 0);
-    if (written != n + TagSize ||
-        !write_(file, ZuBSpan{chunk, written}))
+    payloadNonce(iv, counter, final);
+    if (!ctx.seal(iv, {}, {input, n}, {chunk, n + TagSize}) ||
+        !write_(file, ZuBSpan{chunk, n + TagSize}))
       return ZeEXCEPT(Error, "ZtlsAge", "payload write failed");
     offset += n;
     ++counter;
@@ -641,9 +636,9 @@ static ZuUnion<size_t, ZeException> readPayload(
   if (reader.read(nonce, sizeof(nonce)) != sizeof(nonce) ||
       !hkdf(fileKey, nonce, PayloadInfo, key))
     return ZeEXCEPT(Error, "ZtlsAge", "invalid payload nonce");
-  uint8_t baseIV[12]{};
-  Ztls::Pico::AeadCtx ctx;
-  if (!ctx.init(Ztls::Backend::chacha20poly1305(), false, key, baseIV))
+  uint8_t iv[Ztls::ChaCha20Poly1305::NonceSize];
+  Ztls::ChaCha20Poly1305 ctx;
+  if (!ctx.init(false, key))
     return ZeEXCEPT(Error, "ZtlsAge", "payload cipher setup failed");
   auto scratch = ZmScratch(uint8_t, ChunkCipherSize, AgeScratchHeap);
   auto chunk = scratch.data();
@@ -662,9 +657,8 @@ static ZuUnion<size_t, ZeException> readPayload(
       return ZeEXCEPT(Error, "ZtlsAge", "invalid payload length");
     uint8_t *dst = plainLength ? plaintext.data() + produced : chunk;
     produced += plainLength;
-    if (ptls_aead_decrypt(ctx.get(), dst,
-        chunk, n, (counter << 8) | unsigned(final),
-        nullptr, 0) != plainLength)
+    payloadNonce(iv, counter, final);
+    if (!ctx.open(iv, {}, {chunk, unsigned(n)}, {dst, plainLength}))
       return ZeEXCEPT(Error, "ZtlsAge", "payload authentication failed");
     if (final) {
       size_t result = produced;
@@ -767,7 +761,7 @@ static ZuUnion<void, ZeException> appendSshRSA(
   if (!sshRSA_(publicKey, data))
     return ZeEXCEPT(Error, "ZtlsAge", "invalid SSH RSA public key");
   Ztls::PK::PK_RSA key{data};
-  size_t keySize = Ztls::Backend::pkey_rsa_size(key.key);
+  size_t keySize = Ztls::PK::pkey_rsa_size(key.key);
   if (keySize < 256 || keySize > HeaderMaxSize / 2)
     return ZeEXCEPT(Error, "ZtlsAge", "unsupported SSH RSA key size");
   unsigned n = keySize;
@@ -844,6 +838,7 @@ static ZuUnion<void, ZeException> appendSshED(
 ZuUnion<void, ZeException> Age::encrypt(
   Ztls::Random &rng, ZuSpan<const Recipient> recipients,
   ZuBSpan plaintext, ZiFile &file)
+try
 {
   unsigned n = recipients.length();
   if (!n || n > RecipientMax)
@@ -908,7 +903,7 @@ ZuUnion<void, ZeException> Age::encrypt(
   if (file.write(header.data(), header.length()) != Zi::OK)
     return ZeEXCEPT(Error, "ZtlsAge", "header write failed");
   return writePayload(rng, file, fileKey, plaintext);
-}
+} catch (const ZeException &e) { return e; }
 
 static bool nextLine(ZuBSpan header, size_t &cursor, ZuCSpan &line)
 {
@@ -1016,7 +1011,7 @@ static bool parseSshRSA(
   sshFingerprint(identity.publicKey, fingerprint);
   if (memcmp(args.data() + SshRSAArg.length(),
       fingerprint, sizeof(fingerprint))) return false;
-  size_t keySize = Ztls::Backend::pkey_rsa_size(identity.key->key);
+  size_t keySize = Ztls::PK::pkey_rsa_size(identity.key->key);
   if (keySize < 256 || keySize > HeaderMaxSize / 2 ||
       bodyChars != ZuBase64::enclen<false>(keySize)) return false;
   unsigned n = keySize;
@@ -1041,6 +1036,7 @@ static bool parseSshRSA(
 static bool parseSshED(
   ZuCSpan args, ZuCSpan body,
   const Age::SshED25519Identity &identity, ZuSpan<uint8_t> fileKey)
+try
 {
   if (!identity.key ||
       args.length() != SshEDArg.length() +
@@ -1081,11 +1077,12 @@ static bool parseSshED(
   if (r.template is<ZeException>()) return false;
   return hkdf(data.tweaked, data.salt, SshEDLabel, data.wrapKey) &&
     openKey(data.wrapKey, data.wrapped, fileKey);
-}
+} catch (const ZeException &e) { return false; }
 
 static bool verifyHeader(
   ZuBSpan header, size_t macStart,
   ZuBSpan expected, ZuBSpan fileKey)
+try
 {
   uint8_t key[KeySize], actual[KeySize];
   ZuGuard clear{[&key, &actual]() {
@@ -1098,11 +1095,12 @@ static bool verifyHeader(
   mac.update({header.data(), macStart + 3});
   mac.finish(actual);
   return Ztls::ctEqual(actual, expected);
-}
+} catch (const ZeException &e) { return false; }
 
 ZuUnion<size_t, ZeException> Age::decrypt(
   ZiFile &file, ZuSpan<const Identity> identities,
   ZuSpan<uint8_t> plaintext)
+try
 {
   if (!identities)
     return ZeEXCEPT(Error, "ZtlsAge", "no identities");
@@ -1210,6 +1208,6 @@ ZuUnion<size_t, ZeException> Age::decrypt(
   if (cursor != macStart || !stanzas || (scrypt && stanzas != 1) || !found)
     return ZeEXCEPT(Error, "ZtlsAge", "no usable recipient");
   return readPayload(reader, candidate, plaintext);
-}
+} catch (const ZeException &e) { return e; }
 
 } // Ztls_

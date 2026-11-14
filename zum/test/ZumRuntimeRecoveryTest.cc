@@ -1041,7 +1041,7 @@ static void runtimeRecovery()
   Ztls::PK::SK_EC recoveryPasskey{
     rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t recoveryPublic[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheck(Ztls::Backend::pkey_ec_export_public(
+  ZuCheck(Ztls::PK::pkey_ec_export_public(
     recoveryPasskey.key, recoveryPublic));
   ZuCheck(makeRegistration(recoveryPublic, 1, "recovery-credential",
     recoveryGrant.challenge, "https://example.com", "example.com",
@@ -1126,7 +1126,7 @@ static void runtimeRecovery()
   Ztls::PK::SK_EC browserPasskey{
     rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t browserPublic[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheck(Ztls::Backend::pkey_ec_export_public(
+  ZuCheck(Ztls::PK::pkey_ec_export_public(
     browserPasskey.key, browserPublic));
   ZuCheck(makeRegistration(browserPublic, 0, "browser-credential",
     browserEnrollmentGrant.challenge, "https://example.com", "example.com",

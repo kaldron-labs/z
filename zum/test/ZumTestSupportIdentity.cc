@@ -1114,7 +1114,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   passkeyHandle = enrollmentGrant.userHandle;
   passkey = new Ztls::PK::SK_EC{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t passkeyPublic[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheckRT(Ztls::Backend::pkey_ec_export_public(passkey->key, passkeyPublic));
+  ZuCheckRT(Ztls::PK::pkey_ec_export_public(passkey->key, passkeyPublic));
   Zum::RegistrationInput registrationInput;
   ZuCheckRT(makeRegistration(passkeyPublic, 5, "credential",
     enrollmentGrant.challenge,
@@ -1364,7 +1364,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   Ztls::PK::SK_EC secondPasskey{
     rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t secondPublic[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheckRT(Ztls::Backend::pkey_ec_export_public(
+  ZuCheckRT(Ztls::PK::pkey_ec_export_public(
     secondPasskey.key, secondPublic));
   ZuCheckRT(makeRegistration(secondPublic, 0, "credential-2",
     addGrant.challenge, "https://example.com", "example.com",

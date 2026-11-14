@@ -8,7 +8,7 @@
 
 #include "ZquicOpenSSL.hh"
 
-#include <zlib/ZtlsBackend.hh>
+#include <zlib/ZtlsPico.hh>
 
 #include <zlib/ZmScratch.hh>
 
@@ -999,7 +999,7 @@ bool Crypto::initTLS(const CryptoConfig &config)
 
 bool Crypto::initTLSContext(const CryptoConfig &config)
 {
-  if (!Ztls::Backend::init()) return false;
+  if (!Ztls::Pico::init()) return false;
 
   memset(&m_tlsCtx, 0, sizeof(m_tlsCtx));
   m_tlsCtx.random_bytes = ptls_openssl_random_bytes;
@@ -1018,13 +1018,12 @@ bool Crypto::initTLSContext(const CryptoConfig &config)
 
   if (m_isServer) {
     if (!config.certPath || !config.keyPath) return false;
-    if (!Ztls::Backend::load_certificates(&m_tlsCtx, config.certPath.data()))
+    if (!Ztls::Pico::load_certificates(&m_tlsCtx, config.certPath.data()))
       return false;
-    m_key = Ztls::Backend::pkey_load_pem(config.keyPath.data());
-    if (!m_key) return false;
-    m_sign = Ztls::Backend::sign_cert_new(m_key);
+    if (!Ztls::PK::loadPEM(m_key, config.keyPath.data())) return false;
+    m_sign = Ztls::Pico::sign_cert_new(m_key);
     if (!m_sign) return false;
-    m_tlsCtx.sign_certificate = Ztls::Backend::sign_cert_cb(m_sign);
+    m_tlsCtx.sign_certificate = Ztls::Pico::sign_cert_cb(m_sign);
     static ptls_on_client_hello_t onClientHello{
       .cb = &Crypto::onClientHelloCB
     };
@@ -1041,17 +1040,17 @@ bool Crypto::initTLSContext(const CryptoConfig &config)
       m_tlsCtx.save_ticket = &saveSessionTicket;
     }
     if (config.caPath) {
-      m_certStore = Ztls::Backend::cert_store_new();
+      m_certStore = Ztls::Pico::cert_store_new();
       if (!m_certStore) return false;
       bool ok = isDir(config.caPath) ?
-	Ztls::Backend::cert_store_load_path(
+	Ztls::Pico::cert_store_load_path(
 	  m_certStore, config.caPath.data()) :
-	Ztls::Backend::cert_store_load_file(
+	Ztls::Pico::cert_store_load_file(
 	  m_certStore, config.caPath.data());
       if (!ok) return false;
-      m_verify = Ztls::Backend::verify_cert_new(m_certStore);
+      m_verify = Ztls::Pico::verify_cert_new(m_certStore);
       if (!m_verify) return false;
-      m_tlsCtx.verify_certificate = Ztls::Backend::verify_cert_cb(m_verify);
+      m_tlsCtx.verify_certificate = Ztls::Pico::verify_cert_cb(m_verify);
     }
   }
 
@@ -1112,19 +1111,16 @@ void Crypto::resetTLS_()
   }
   freeCertificates(m_tlsCtx);
   if (m_sign) {
-    Ztls::Backend::sign_cert_free(m_sign);
+    Ztls::Pico::sign_cert_free(m_sign);
     m_sign = nullptr;
   }
-  if (m_key) {
-    Ztls::Backend::pkey_free(m_key);
-    m_key = nullptr;
-  }
+  m_key.reset(nullptr);
   if (m_verify) {
-    Ztls::Backend::verify_cert_free(m_verify);
+    Ztls::Pico::verify_cert_free(m_verify);
     m_verify = nullptr;
   }
   if (m_certStore) {
-    Ztls::Backend::cert_store_free(m_certStore);
+    Ztls::Pico::cert_store_free(m_certStore);
     m_certStore = nullptr;
   }
   memset(&m_tlsCtx, 0, sizeof(m_tlsCtx));

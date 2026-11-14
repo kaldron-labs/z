@@ -58,7 +58,7 @@ static void jwt()
   ZuCheck(rng.init());
   Ztls::PK::SK_EC sk{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t publicKey[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheck(Ztls::Backend::pkey_ec_export_public(sk.key, publicKey));
+  ZuCheck(Ztls::PK::pkey_ec_export_public(sk.key, publicKey));
 
   Zum::User user;
   user.handle = Zum::Bytes{ZuBSpan{"opaque user handle"}};
@@ -235,7 +235,7 @@ static void ssfSET()
   ZuCheck(rng.init());
   Ztls::PK::SK_EC sk{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t publicKey[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheck(Ztls::Backend::pkey_ec_export_public(sk.key, publicKey));
+  ZuCheck(Ztls::PK::pkey_ec_export_public(sk.key, publicKey));
   Zum::SignKey key{.id = "key-1", .issuer = "https://issuer"};
   Zum::String set;
   Zum::makeSSF(key, "https://receiver", Zum::RefreshID{

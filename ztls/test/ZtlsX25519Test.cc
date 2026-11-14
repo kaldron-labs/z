@@ -68,6 +68,21 @@ static void vectors()
   PK_X25519 imported{alicePub};
   ZuCheck(!imported.exportPK(out).template is<ZeException>());
   ZuCheck(!memcmp(out, alicePub, sizeof(out)));
+  // Failed replacement must not discard the existing native key.
+  ZuCheck(!pkey_x25519_import_private(a.key, {alice, 31}));
+  ZuCheck(!pkey_x25519_import_public(a.key, {alicePub, 31}));
+  ZuCheck(!loadPEM(a.key, nullptr));
+  ZuCheck(!a.exportPK(out).template is<ZeException>());
+  ZuCheck(!memcmp(out, alicePub, sizeof(out)));
+  ZuCheck(!a.exportSK(seed).template is<ZeException>());
+  ZuCheck(!memcmp(seed, alice, sizeof(seed)));
+  ZuClear(seed, sizeof(seed));
+  a.key.reset(a.key.get());
+  ZuCheck(!a.agree(bobPub, out).template is<ZeException>());
+  ZuCheck(!memcmp(out, shared, sizeof(out)));
+  Key empty;
+  ZuCheck(!check(empty, false));
+  empty.reset(nullptr);
   ZuCheck(a.agree({bobPub, 31}, out).template is<ZeException>());
   ZuCheck(a.agree(bobPub, {out, 31}).template is<ZeException>());
   uint8_t zero[32]{};
@@ -79,7 +94,7 @@ static void vectors()
   ZuCheck(a.exportSK({seed, 31}).template is<ZeException>());
   ZuCheck(imported.exportPK({out, 31}).template is<ZeException>());
   SK_X25519 failed{alice};
-  ZuCheck(Ztls::Backend::pkey_x25519_import_public(failed.key, alicePub));
+  ZuCheck(Ztls::PK::pkey_x25519_import_public(failed.key, alicePub));
   memset(seed, 0xa5, sizeof(seed));
   ZuCheck(failed.exportSK(seed).template is<ZeException>());
   cleared = true;

@@ -37,7 +37,7 @@
 #include <zlib/ZtcHub.hh>
 
 #include <zlib/ZtlsRandom.hh>
-#include <zlib/ZtlsBackend.hh>
+#include <zlib/ZtlsPico.hh>
 #include <zlib/ZtlsPK.hh>
 
 #include <stdlib.h>
@@ -81,7 +81,7 @@ using TxBufAlloc =
 
 namespace Ztls {
 
-using TxPacket = Backend::TxPacket;
+using TxPacket = Pico::TxPacket;
 
 ZuDerive(CertSpansScratch, (ZtArray<ZuBSpan,
   ZtArrayHeapID<"Ztls.CertSpans", ZtArraySharded<true>>>));
@@ -714,7 +714,7 @@ private:
 	// Providers are active now and the physical payload cap is known. Check
 	// the complete supported record budget before exposing application Tx.
 	auto mps = cxn->info().mps;
-	Backend::RecordSink probe{txPacketAllocator(), impl(), mps, nullptr,
+	Pico::RecordSink probe{txPacketAllocator(), impl(), mps, nullptr,
 	  [](void *, ZmRef<ZiIOBuf>) -> int { return 0; }};
 	auto sink = probe.sink();
 	auto overhead = ptls_tx_get_record_overhead(txTLS);
@@ -779,10 +779,10 @@ private:
     const ZiIOBuf *plaintext = nullptr;
   };
 
-  Backend::RecordSink packetSink(PacketTarget &target) {
+  Pico::RecordSink packetSink(PacketTarget &target) {
     auto cxn = target.cxn;
     auto mps = cxn ? cxn->info().mps : 0;
-    return Backend::RecordSink{
+    return Pico::RecordSink{
       txPacketAllocator(), impl(), mps, &target,
       [](void *ctx, ZmRef<ZiIOBuf> buf) -> int {
 	auto target = static_cast<PacketTarget *>(ctx);
@@ -1478,7 +1478,7 @@ private:
   AsyncJob		*m_asyncJob = nullptr;
   RxStream		m_rxStream;
   ZmRef<ZiIOBuf>	m_rxInput;
-  Backend::PlaintextSink m_plaintext;
+  Pico::PlaintextSink m_plaintext;
   bool			m_rxPaused = false;
 
   // Tx thread exclusive
@@ -1800,9 +1800,9 @@ private:
 	::free(m_ctx.certificates.list[i].base);
       ::free(m_ctx.certificates.list);
     }
-    Backend::verify_cert_free(m_verify);
+    Pico::verify_cert_free(m_verify);
     m_verify = nullptr;
-    Backend::cert_store_free(m_cacert);
+    Pico::cert_store_free(m_cacert);
     m_cacert = nullptr;
     memset(&m_ctx, 0, sizeof(m_ctx));
     m_alpnData.init();
@@ -1963,14 +1963,14 @@ private:
 
   template <typename Params, typename L>
   bool init_context(Params &params, L &l) {
-    if (!Random::init()) {
-      error_(ZeEXCEPT(Error, "Ztls", "backend init failed"));
+    if (!Pico::init()) {
+      error_(ZeEXCEPT(Error, "Ztls", "protocol initialization failed"));
       return false;
     }
     memset(&m_ctx, 0, sizeof(m_ctx));
-    m_ctx.random_bytes = Backend::random_bytes_cb();
+    m_ctx.random_bytes = ptls_openssl_random_bytes;
     m_ctx.get_time = &ptls_get_time;
-    m_ctx.key_exchanges = Backend::key_exchanges();
+    m_ctx.key_exchanges = ptls_openssl_key_exchanges_all;
     init_cipher_suites();
     m_ctx.cipher_suites = m_cipherSuites;
     m_ctx.server_cipher_preference = 1;
@@ -2270,7 +2270,7 @@ protected:
     return loadCA_(path ? path.data() : nullptr, &certs);
   }
   bool loadCA_(const char *path, const Certs *certs) {
-    if (!m_cacert) m_cacert = Backend::cert_store_new();
+    if (!m_cacert) m_cacert = Pico::cert_store_new();
     if (!m_cacert) {
       error_(ZeEXCEPT(Error, "Ztls", "cert_store_new() failed"));
       return false;
@@ -2302,7 +2302,7 @@ protected:
 
       PCCERT_CONTEXT context = nullptr;
       while (context = CertEnumCertificatesInStore(store, context)) {
-	if (!Backend::cert_store_add_der(m_cacert,
+	if (!Pico::cert_store_add_der(m_cacert,
 	      {context->pbCertEncoded, context->cbCertEncoded})) {
 	  error_(ZeEXCEPT(Error, "Ztls", "cert_store_add_der() failed"));
 	  CertFreeCertificateContext(context);
@@ -2319,10 +2319,10 @@ protected:
       const char *function;
       if (ZiStat{path}.isdir()) {
 	function = "cert_store_load_path";
-	ok = Backend::cert_store_load_path(m_cacert, path);
+	ok = Pico::cert_store_load_path(m_cacert, path);
       } else {
 	function = "cert_store_load_file";
-	ok = Backend::cert_store_load_file(m_cacert, path);
+	ok = Pico::cert_store_load_file(m_cacert, path);
       }
       if (!ok) {
 	error_(ZeEXCEPT(Error, "Ztls", ([function, path](auto &s) {
@@ -2335,19 +2335,19 @@ protected:
       unsigned n = certs->length();
       for (unsigned i = 0; i < n; ++i) {
 	const auto &cert = (*certs)[i];
-	if (!Backend::cert_store_add_ca(m_cacert, cert)) {
+	if (!Pico::cert_store_add_ca(m_cacert, cert)) {
 	  error_(ZeEXCEPT(Error, "Ztls", "cert_store_add_ca() failed"));
 	  return false;
 	}
       }
     }
-    if (m_verify) Backend::verify_cert_free(m_verify);
-    m_verify = Backend::verify_cert_new(m_cacert);
+    if (m_verify) Pico::verify_cert_free(m_verify);
+    m_verify = Pico::verify_cert_new(m_cacert);
     if (!m_verify) {
       error_(ZeEXCEPT(Error, "Ztls", "verify_cert_new() failed"));
       return false;
     }
-    m_ctx.verify_certificate = Backend::verify_cert_cb(m_verify);
+    m_ctx.verify_certificate = Pico::verify_cert_cb(m_verify);
     return true;
   }
 
@@ -2381,13 +2381,13 @@ private:
       static ptls_cipher_suite_t fusion_aes256gcmsha384 = {
 	.id = PTLS_CIPHER_SUITE_AES_256_GCM_SHA384,
 	.aead = &ptls_fusion_aes256gcm,
-	.hash = Backend::hash_algorithm(SHA384),
+	.hash = &ptls_openssl_sha384,
 	.name = PTLS_CIPHER_SUITE_NAME_AES_256_GCM_SHA384
       };
       static ptls_cipher_suite_t fusion_aes128gcmsha256 = {
 	.id = PTLS_CIPHER_SUITE_AES_128_GCM_SHA256,
 	.aead = &ptls_fusion_aes128gcm,
-	.hash = Backend::hash_algorithm(SHA256),
+	.hash = &ptls_openssl_sha256,
 	.name = PTLS_CIPHER_SUITE_NAME_AES_128_GCM_SHA256
       };
       // Non-temporal fusion decrypt is not exact-in-place safe: it overwrites
@@ -2396,7 +2396,7 @@ private:
       m_cipherSuites[n++] = &fusion_aes128gcmsha256;
 #endif
     }
-    for (auto p = Backend::cipher_suites(); *p; ++p) {
+    for (auto p = ptls_openssl_cipher_suites; *p; ++p) {
       if (use_fusion &&
 	  ((*p)->id == PTLS_CIPHER_SUITE_AES_256_GCM_SHA384 ||
 	   (*p)->id == PTLS_CIPHER_SUITE_AES_128_GCM_SHA256))
@@ -2419,8 +2419,8 @@ private:
   ptls_cipher_suite_t		*m_cipherSuites[16]{};
   ALPNData			m_alpnData;
   ALPN				m_alpn;
-  Backend::CertStore		*m_cacert = nullptr;
-  Backend::VerifyCert		*m_verify = nullptr;
+  Pico::CertStore		*m_cacert = nullptr;
+  Pico::VerifyCert		*m_verify = nullptr;
   unsigned			m_rxThread = 0;
   unsigned			m_txThread = 0;
   unsigned			m_asyncThread = 0;
@@ -2477,8 +2477,7 @@ friend Base;
 
   Client() { }
   ~Client() {
-    Backend::sign_cert_free(m_sign);
-    if (!m_keyRef) Backend::pkey_free(m_key);
+    Pico::sign_cert_free(m_sign);
   }
 
   // specify certPath and keyPath for mTLS
@@ -2491,8 +2490,9 @@ protected:
 
 private:
   // stable after init(); released by the destructor
-  Backend::PKey			*m_key = nullptr;
-  Backend::SignCert		*m_sign = nullptr;
+  PK::Key			m_ownedKey;
+  const PK::Key			*m_key = nullptr;
+  Pico::SignCert		*m_sign = nullptr;
   ZmRef<PK::AnyPK>		m_keyRef;
 };
 
@@ -2531,38 +2531,38 @@ bool Client<App>::init(ClientParams params)
     if (!loadCA(ZuCSpan{params.caPath()}, params.caCerts())) return false;
 
     if (params.certPath() && params.keyPath()) {
-      if (!Backend::load_certificates(ctx, params.certPath().data()))
+      if (!Pico::load_certificates(ctx, params.certPath().data()))
 	return false;
-      m_key = Backend::pkey_load_pem(params.keyPath().data());
-      if (!m_key) return false;
-      m_sign = Backend::sign_cert_new(m_key);
+      if (!PK::loadPEM(m_ownedKey, params.keyPath().data())) return false;
+      m_key = &m_ownedKey;
+      m_sign = Pico::sign_cert_new(*m_key);
       if (!m_sign) {
-	Backend::pkey_free(m_key);
+	m_ownedKey.reset(nullptr);
 	m_key = nullptr;
 	return false;
       }
-      ctx->sign_certificate = Backend::sign_cert_cb(m_sign);
+      ctx->sign_certificate = Pico::sign_cert_cb(m_sign);
     } else if (params.key()) {
       m_keyRef = ZuMv(params.m_key);
       const auto &certs = params.certs();
       unsigned n = certs.length();
       auto spans = ZtScratch(CertSpansScratch, n);
       for (unsigned i = 0; i < n; ++i) spans.push(certs[i]);
-      m_key = m_keyRef->key;
-      m_sign = Backend::sign_cert_new(m_key);
+      m_key = &m_keyRef->key;
+      m_sign = Pico::sign_cert_new(*m_key);
       if (!m_sign) {
 	m_key = nullptr;
 	m_keyRef = {};
 	return false;
       }
-      if (!Backend::load_certificates_der(ctx, spans, m_key)) {
-	Backend::sign_cert_free(m_sign);
+      if (!Pico::load_certificates_der(ctx, spans, *m_key)) {
+	Pico::sign_cert_free(m_sign);
 	m_sign = nullptr;
 	m_key = nullptr;
 	m_keyRef = {};
 	return false;
       }
-      ctx->sign_certificate = Backend::sign_cert_cb(m_sign);
+      ctx->sign_certificate = Pico::sign_cert_cb(m_sign);
     }
     return true;
   });
@@ -2626,11 +2626,11 @@ friend Base;
 
 private:
   void release_() {
-    Backend::ticket_key_free(m_ticketKey);
+    Pico::ticket_key_free(m_ticketKey);
     m_ticketKey = nullptr;
-    Backend::sign_cert_free(m_sign);
+    Pico::sign_cert_free(m_sign);
     m_sign = nullptr;
-    Backend::pkey_free(m_key);
+    m_ownedKey.reset(nullptr);
     m_key = nullptr;
   }
 
@@ -2770,9 +2770,10 @@ protected:
 
 private:
   // stable after init(); released by the destructor
-  Backend::PKey			*m_key = nullptr;
-  Backend::SignCert		*m_sign = nullptr;
-  Backend::TicketKey		*m_ticketKey = nullptr;
+  PK::Key			m_ownedKey;
+  const PK::Key			*m_key = nullptr;
+  Pico::SignCert		*m_sign = nullptr;
+  Pico::TicketKey		*m_ticketKey = nullptr;
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
@@ -2821,25 +2822,25 @@ bool Server<App>::init(ServerParams params)
       params.cacheTimeout() < 0 ? 86400 : params.cacheTimeout();
     if (!loadCA(ZuCSpan{params.caPath()})) return false;
 
-    if (!Backend::load_certificates(ctx, params.certPath().data()))
+    if (!Pico::load_certificates(ctx, params.certPath().data()))
       return false;
-    m_key = Backend::pkey_load_pem(params.keyPath().data());
-    if (!m_key) return false;
-    m_sign = Backend::sign_cert_new(m_key);
+    if (!PK::loadPEM(m_ownedKey, params.keyPath().data())) return false;
+    m_key = &m_ownedKey;
+    m_sign = Pico::sign_cert_new(*m_key);
     if (!m_sign) {
-      Backend::pkey_free(m_key);
+      m_ownedKey.reset(nullptr);
       m_key = nullptr;
       return false;
     }
-    if (params.asyncThread() && !Backend::sign_cert_async(m_sign, true)) {
+    if (params.asyncThread() && !Pico::sign_cert_async(m_sign, true)) {
       error_(ZeEXCEPT(Error, "Ztls",
 	"async server certificate signing is unsupported"));
       return false;
     }
-    ctx->sign_certificate = Backend::sign_cert_cb(m_sign);
-    if (!m_ticketKey) m_ticketKey = Backend::ticket_key_new();
+    ctx->sign_certificate = Pico::sign_cert_cb(m_sign);
+    if (!m_ticketKey) m_ticketKey = Pico::ticket_key_new();
     if (!m_ticketKey) return false;
-    ctx->encrypt_ticket = Backend::ticket_encrypt_cb(m_ticketKey);
+    ctx->encrypt_ticket = Pico::ticket_encrypt_cb(m_ticketKey);
     return true;
   });
 }

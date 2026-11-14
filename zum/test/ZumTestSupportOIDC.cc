@@ -897,7 +897,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
   Ztls::PK::SK_EC upstreamKey{
     rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t upstreamPublic[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheckRT(Ztls::Backend::pkey_ec_export_public(
+  ZuCheckRT(Ztls::PK::pkey_ec_export_public(
     upstreamKey.key, upstreamPublic));
   auto x = base64URL(ZuBSpan{
     upstreamPublic + 1, Ztls::COSE::ES256::CoordinateSize});

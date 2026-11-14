@@ -133,13 +133,27 @@ paths through TCP/TLS hubs, including explicit TLS trust/key failure cleanup.
 | `ZtlsKEM.hh` | Key-encapsulation algorithm vocabulary and operations |
 | `ZtlsCOSE.hh` | COSE-related key/signature handling |
 | `ZtlsPK.hh` | Public/private key parsing and formatting |
+| `ZtlsPKOps.hh` | Concrete `PK::Key` EVP key ownership and shared key operations |
+| `ZtlsKDF.hh` | HKDF/SHA256 and scrypt |
+| `ZtlsAEAD.hh` | Reusable ChaCha20-Poly1305 encryption and authentication |
 
 Use the selected primitive's initialization, update and finalization operations
 and check its result before consuming output. Buffer sizes and algorithm choices
 are part of the API; avoid silently truncating key or digest material. The
 [test directory](test/) contains concrete key, MAC and signature fixtures.
-`ZtlsBackend` and `ZtlsPico` connect these facilities to the crypto/TLS backends;
-most applications should use the public wrappers.
+Standalone cryptography uses OpenSSL libcrypto directly. `ZtlsPico` contains
+zpicotls protocol adapters, record sinks, certificate/ticket callbacks, and Fusion
+integration. `Ztls::cryptoInit()` initializes standalone crypto;
+`Ztls::Pico::init()` also installs protocol buffer hooks once. `Ztls::init()`
+initializes the protocol and throws on initialization failure.
+
+MD/HMAC owners cannot be copied or moved. Digest finalization takes a snapshot;
+HMAC finalization resets to the same key. Streaming failures throw `ZeException`
+and invalidate the operation; recover with MD `reset()` or HMAC `start()`.
+HKDF and AEAD report failure through `bool` and clear the intended output.
+`PK::Key` embeds native EVP key ownership; imports replace a key only on success.
+The former `Ztls::Backend` API and headers have been removed. All dependents must
+use the concrete crypto operations and Pico protocol APIs.
 
 ## HPKE, age and TOTP
 
@@ -158,6 +172,13 @@ with the independent age command-line tool.
 `ZtlsTOTP.hh` supplies time-based one-time-password operations. Follow the
 header and tests for secret, counter/time and digit parameters; applications
 own enrollment, verification policy and replay/rate controls.
+
+The existing `Ztls::TOTP::calc` in `src/ZtlsTOTP.cc` interprets the four selected
+HMAC bytes as a native-endian integer (`ZuPun`), rather than the standard's
+big-endian truncation. Its results on little-endian targets are retained by the
+direct-libcrypto migration. Correcting truncation is a separate behavioral
+change; HMAC-SHA1 counter vectors establish primitive correctness, not TOTP
+conformance.
 
 ## Credential Vault
 

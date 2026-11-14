@@ -444,7 +444,7 @@ static void sshRSAFile()
   ZuCheckRT(rng.init());
   Ztls::PK::SK_RSA key{rng, 2048};
   uint8_t modulus[256], exponent[8];
-  ZuCheckRT(Ztls::Backend::pkey_rsa_export_public(
+  ZuCheckRT(Ztls::PK::pkey_rsa_export_public(
     key.key, modulus, exponent));
   Bytes blob;
   sshString(blob, ZuBSpan{"ssh-rsa"});

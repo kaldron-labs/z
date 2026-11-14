@@ -4,29 +4,27 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// backend RNG wrapper
+// libcrypto random generation
 
 #ifndef ZtlsRandom_HH
 #define ZtlsRandom_HH
 
 #include <zlib/ZtlsLib.hh>
 
-#include <zlib/ZtlsBackend.hh>
+#include <zlib/ZuSpan.hh>
 
 namespace Ztls {
 
-class Random {
+class ZtlsAPI Random {
 public:
   Random() { }
   ~Random() { }
 
   bool init() {
-    return Backend::init();
+    return cryptoInit();
   }
 
-  bool random(ZuSpan<uint8_t> data) {
-    return Backend::random_bytes(data);
-  }
+  bool random(ZuSpan<uint8_t> data);
 };
 
 }

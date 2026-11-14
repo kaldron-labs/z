@@ -507,10 +507,10 @@ private:
   ptls_iovec_t			m_alpnVec{};
   size_t			m_maxEarlyData = 0;
   int				m_tlsResult = PTLS_ERROR_IN_PROGRESS;
-  Ztls::Backend::CertStore	*m_certStore = nullptr;
-  Ztls::Backend::VerifyCert	*m_verify = nullptr;
-  Ztls::Backend::PKey		*m_key = nullptr;
-  Ztls::Backend::SignCert	*m_sign = nullptr;
+  Ztls::Pico::CertStore	*m_certStore = nullptr;
+  Ztls::Pico::VerifyCert	*m_verify = nullptr;
+  Ztls::PK::Key		m_key;
+  Ztls::Pico::SignCert	*m_sign = nullptr;
 };
 
 } // namespace Zquic

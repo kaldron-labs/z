@@ -1,10 +1,10 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Huw Rogers
+// (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// message digest wrapper (zpicotls/OpenSSL backend)
+// Streaming libcrypto message digests
 
 #ifndef ZtlsMD_HH
 #define ZtlsMD_HH
@@ -13,51 +13,46 @@
 #include <zlib/ZtlsLib.hh>
 #endif
 
-#include <zlib/ZmAssert.hh>
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZtlsAlg.hh>
 
 namespace Ztls {
 
-template <MDType Type> struct MDTraits;
-template <> struct MDTraits<SHA1> { enum { Size = 20 }; };
-template <> struct MDTraits<SHA256> { enum { Size = 32 }; };
-template <> struct MDTraits<SHA384> { enum { Size = 48 }; };
-template <> struct MDTraits<SHA512> { enum { Size = 64 }; };
+class ZtlsAPI MD_ {
+public:
+  ~MD_();
+  MD_(const MD_ &) = delete;
+  MD_ &operator =(const MD_ &) = delete;
+  MD_(MD_ &&) = delete;
+  MD_ &operator =(MD_ &&) = delete;
 
-template <MDType Type = SHA256> class MD {
+  void update(ZuBSpan);
+  void finish(ZuSpan<uint8_t>);
+  void reset();
+
+protected:
+  explicit MD_(MDType);
+
+private:
+  void clear();
+  [[noreturn]] void fail(const char *, ZuSpan<uint8_t> = {});
+
+  EVP_MD_CTX	*m_ctx = nullptr;
+  EVP_MD_CTX	*m_snapshot = nullptr;
+  MDType	m_type;
+  unsigned	m_size;
+};
+
+template <MDType Type = SHA256> class MD : public MD_ {
 public:
   enum { Size = MDTraits<Type>::Size };
 
-  MD() {
-    m_ctx = Backend::hash_algorithm(Type)->create();
-  }
-  ~MD() { dispose_(); }
-
-  ZuInline void update(ZuBSpan a) {
-    m_ctx->update(m_ctx, a.data(), a.length());
-  }
-
-  ZuInline void finish(ZuSpan<uint8_t> output) {
-    ZmAssert(output.length() >= Size);
-    m_ctx->final(m_ctx, &output[0], PTLS_HASH_FINAL_MODE_SNAPSHOT);
-  }
-
-  ZuInline void reset() {
-    uint8_t tmp[Size];
-    m_ctx->final(m_ctx, tmp, PTLS_HASH_FINAL_MODE_RESET);
-  }
-
-private:
-  void dispose_() {
-    if (!m_ctx) return;
-    uint8_t tmp[Size];
-    m_ctx->final(m_ctx, tmp, PTLS_HASH_FINAL_MODE_FREE);
-    m_ctx = nullptr;
-  }
-
-  ptls_hash_context_t	*m_ctx = nullptr;
+  MD() : MD_{Type} { }
 };
 
-}
+ZtlsAPI bool shake256(ZuBSpan, ZuSpan<uint8_t>);
+ZtlsAPI bool sha3_256(ZuSpan<const ZuBSpan>, ZuSpan<uint8_t>);
+
+} // Ztls
 
 #endif /* ZtlsMD_HH */

@@ -13,14 +13,19 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
-	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZtlsPKTest ZtlsX25519Test ZtlsKEMTest ZtlsHybridTest ZtlsHPKETest ZtlsAgeTest ZtlsVaultTest ZtlsBufHookTest ZtlsAsyncTest ZtlsSecTest ZtlsTxPacketTest ZtlsRxPacketTest ZtlsRxStubTest
+	@PTLS_LIBS@ @CRYPTO_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+noinst_PROGRAMS = ZtlsCryptoTest ZtlsCryptoFailTest ZtlsInitTest ZtlsKDFTest ZtlsAEADTest ZtlsPKTest ZtlsX25519Test ZtlsKEMTest ZtlsHybridTest ZtlsHPKETest ZtlsAgeTest ZtlsVaultTest ZtlsBufHookTest ZtlsAsyncTest ZtlsSecTest ZtlsTxPacketTest ZtlsRxPacketTest ZtlsRxStubTest
 noinst_LTLIBRARIES = libZtlsVaultFixture.la
 libZtlsVaultFixture_la_SOURCES = ZtlsVaultFixture.cc
 libZtlsVaultFixture_la_CPPFLAGS = $(AM_CPPFLAGS) -DZTLS_EXPORTS
 libZtlsVaultFixture_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version -rpath $(abs_builddir)
 libZtlsVaultFixture_la_LIBADD = $(top_builddir)/ztls/src/libZtls.la
 noinst_HEADERS = ZtlsTestPorts.hh
+ZtlsCryptoTest_SOURCES = ZtlsCryptoTest.cc
+ZtlsCryptoFailTest_SOURCES = ZtlsCryptoFailTest.cc
+ZtlsInitTest_SOURCES = ZtlsInitTest.cc
+ZtlsKDFTest_SOURCES = ZtlsKDFTest.cc
+ZtlsAEADTest_SOURCES = ZtlsAEADTest.cc
 ZtlsPKTest_SOURCES = ZtlsPKTest.cc
 ZtlsX25519Test_SOURCES = ZtlsX25519Test.cc
 ZtlsKEMTest_SOURCES = ZtlsKEMTest.cc

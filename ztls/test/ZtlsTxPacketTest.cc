@@ -6,7 +6,7 @@
 
 #include <string.h>
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZtlsBackend.hh>
+#include <zlib/ZtlsPico.hh>
 #include <zlib/ZiMultiplex.hh>
 
 using namespace ZuTestUtil;
@@ -47,7 +47,7 @@ struct PacketPool : Zi::IOBufAllocator {
       used[i] = true; ++live; ++acquired;
       memset(bytes[i], 0xa5, Size);
       extent[i] = payload + Head + Tail;
-      auto buf = ZmRef<ZiIOBuf>{new Zi::IOBufStub<Ztls::Backend::TxPacket>{
+      auto buf = ZmRef<ZiIOBuf>{new Zi::IOBufStub<Ztls::Pico::TxPacket>{
 	bytes[i], extent[i], this, owner, length, false, true}};
       buf->skip = Head;
       return buf;
@@ -94,7 +94,7 @@ void reservationFailure()
     PacketPool pool;
     pool.failAt = fail;
     Published output;
-    Ztls::Backend::RecordSink writer{&pool, &output, 53, &output, Published::publish};
+    Ztls::Pico::RecordSink writer{&pool, &output, 53, &output, Published::publish};
     auto sink = writer.sink();
     ZuCheckRT(sink.reserve(sink.ctx, sizeof(plaintext)) == PTLS_ERROR_NO_MEMORY);
     sink.discard(sink.ctx);
@@ -111,7 +111,7 @@ void geometryAndLifetime()
   for (uint32_t mps : limits) {
     PacketPool pool;
     Published output;
-    Ztls::Backend::RecordSink writer{&pool, &output, mps, &output, Published::publish};
+    Ztls::Pico::RecordSink writer{&pool, &output, mps, &output, Published::publish};
     auto sink = writer.sink();
     uint8_t input[23];
     for (unsigned i = 0; i < sizeof(input); ++i) input[i] = uint8_t(i);
@@ -139,8 +139,8 @@ void sharedGeometry()
   ZuTestScopeRT(sharedGeometry);
   PacketPool pool;
   Published first, second;
-  Ztls::Backend::RecordSink small{&pool, &first, 31, &first, Published::publish};
-  Ztls::Backend::RecordSink large{&pool, &second, 73, &second, Published::publish};
+  Ztls::Pico::RecordSink small{&pool, &first, 31, &first, Published::publish};
+  Ztls::Pico::RecordSink large{&pool, &second, 73, &second, Published::publish};
   auto a = small.sink(), b = large.sink();
   uint8_t bytes[97]{};
   ZuCheckRT(!a.reserve(a.ctx, sizeof(bytes)) && !b.reserve(b.ctx, sizeof(bytes)));
@@ -156,10 +156,10 @@ void sharedGeometry()
   ZuCheckRT(!pool.live && pool.intact && pool.acquired == pool.released);
 
   ZiMultiplex mx;
-  auto kernel = mx.allocator<Zi::IOBufType::TxTCP, Ztls::Backend::TxPacket, 64>();
+  auto kernel = mx.allocator<Zi::IOBufType::TxTCP, Ztls::Pico::TxPacket, 64>();
   ZuCheckRT(!kernel->allocBuf(nullptr, 18, 17));
   Published output;
-  Ztls::Backend::RecordSink builtin{kernel, &output, 17, &output, Published::publish};
+  Ztls::Pico::RecordSink builtin{kernel, &output, 17, &output, Published::publish};
   auto sink = builtin.sink();
   ZuCheckRT(!sink.reserve(sink.ctx, sizeof(bytes)));
   ZuCheckRT(!write(sink, bytes, sizeof(bytes)) && !sink.finish(sink.ctx));
@@ -176,7 +176,7 @@ void sequencingAndPublishFailure()
   ZuTestScopeRT(sequencingAndPublishFailure);
   PacketPool pool;
   Published output;
-  Ztls::Backend::RecordSink writer{&pool, &output, 13, &output, Published::publish};
+  Ztls::Pico::RecordSink writer{&pool, &output, 13, &output, Published::publish};
   auto sink = writer.sink();
   void *base;
   size_t capacity;
@@ -193,7 +193,7 @@ void sequencingAndPublishFailure()
   ZuCheckRT(output.calls == 2 && pool.live == 1 && pool.released == 2);
   output.packets.clean();
   ZuCheckRT(!pool.live && pool.intact && pool.acquired == pool.released);
-  Ztls::Backend::RecordSink zero{&pool, nullptr, 0, &output, Published::publish};
+  Ztls::Pico::RecordSink zero{&pool, nullptr, 0, &output, Published::publish};
   auto invalid = zero.sink();
   auto attempts = pool.attempts;
   ZuCheckRT(invalid.reserve(invalid.ctx, 1) == PTLS_ERROR_LIBRARY);

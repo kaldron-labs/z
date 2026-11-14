@@ -70,16 +70,20 @@ bool verify(ZuBSpan publicKey, ZuBSpan data, ZuBSpan signature)
 {
   if (!data) return false;
   uint8_t digest[MD<>::Size];
-  { MD<> md; md.update(data); md.finish(digest); }
-  return verify_(publicKey, digest, signature);
+  try {
+    MD<> md; md.update(data); md.finish(digest);
+    return verify_(publicKey, digest, signature);
+  } catch (const ZeException &) { return false; }
 }
 
 bool verify(ZuBSpan publicKey, ZuBSpan first, ZuBSpan second, ZuBSpan signature)
 {
   if (!first || !second) return false;
   uint8_t digest[MD<>::Size];
-  { MD<> md; md.update(first); md.update(second); md.finish(digest); }
-  return verify_(publicKey, digest, signature);
+  try {
+    MD<> md; md.update(first); md.update(second); md.finish(digest);
+    return verify_(publicKey, digest, signature);
+  } catch (const ZeException &) { return false; }
 }
 
 bool validPK(ZuBSpan publicKey)

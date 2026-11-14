@@ -1023,7 +1023,7 @@ void zumtest::prepareToken(ZmRef<RuntimeDB> db,
     });
   }));
 
-  ZuCheck(Ztls::Backend::pkey_ec_export_public(tokenKey.key, tokenPublic));
+  ZuCheck(Ztls::PK::pkey_ec_export_public(tokenKey.key, tokenPublic));
   ZuCheck(setKeyRetirement(context, "app-token-key", 250));
   auto issued = issueTokenRequest(db->requests, db, rng,
     Zum::String{"grant_type=client_credentials"},

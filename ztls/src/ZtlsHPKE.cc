@@ -11,8 +11,8 @@
 #include <zlib/ZmVHeap.hh>
 
 #include <zlib/ZtlsHPKE.hh>
-#include <zlib/ZtlsBackend.hh>
-#include <zlib/ZtlsPico.hh>
+#include <zlib/ZtlsKDF.hh>
+#include <zlib/ZtlsAEAD.hh>
 
 namespace Ztls::HPKE {
 
@@ -43,7 +43,7 @@ struct KeyNonce {
 };
 
 static bool extract(
-  ptls_hash_algorithm_t *hash, ZuBSpan salt, ZuCSpan label,
+  KDF::HKDF &kdf, ZuBSpan salt, ZuCSpan label,
   ZuBSpan ikm, ZuSpan<uint8_t> output)
 {
   size_t prefix = Version.length() + sizeof(Suite) + label.length();
@@ -58,13 +58,11 @@ static bool extract(
   memcpy(p, label.data(), label.length());
   p += label.length();
   if (ikm) memcpy(p, ikm.data(), ikm.length());
-  return !ptls_hkdf_extract(hash, output.data(),
-    ptls_iovec_init(salt.data(), salt.length()),
-    ptls_iovec_init(buf.data(), n));
+  return kdf.extract(salt, {buf.data(), n}, output);
 }
 
 static bool expand(
-  ptls_hash_algorithm_t *hash, ZuBSpan prk, ZuCSpan label,
+  KDF::HKDF &kdf, ZuBSpan prk, ZuCSpan label,
   ZuBSpan info, ZuSpan<uint8_t> output)
 {
   size_t prefix = 2 + Version.length() + sizeof(Suite) + label.length();
@@ -82,25 +80,24 @@ static bool expand(
   memcpy(p, label.data(), label.length());
   p += label.length();
   if (info) memcpy(p, info.data(), info.length());
-  return !ptls_hkdf_expand(hash, output.data(), output.length(),
-    ptls_iovec_init(prk.data(), prk.length()),
-    ptls_iovec_init(buf.data(), n));
+  return kdf.expand(prk, {buf.data(), n}, output);
 }
 
 static bool schedule(ZuBSpan shared, ZuBSpan info, KeyNonce &material)
 {
-  auto hash = Backend::hash_algorithm(SHA256);
+  KDF::HKDF kdf;
+  if (!kdf.init()) return false;
   uint8_t secret[HashSize];
   ZuGuard clear{[&secret]() { ZuClear(secret, sizeof(secret)); }};
   uint8_t context[ContextSize];
   context[0] = 0; // mode_base
   memcpy(context + 1, PskIDHash, HashSize);
-  if (!extract(hash, {}, "info_hash", info,
+  if (!extract(kdf, {}, "info_hash", info,
         {context + 1 + HashSize, HashSize}) ||
-      !extract(hash, shared, "secret", {}, secret))
+      !extract(kdf, shared, "secret", {}, secret))
     return false;
-  return expand(hash, secret, "key", context, material.key) &&
-    expand(hash, secret, "base_nonce", context, material.nonce);
+  return expand(kdf, secret, "key", context, material.key) &&
+    expand(kdf, secret, "base_nonce", context, material.nonce);
 }
 
 ZuUnion<void, ZeException> sealBase(
@@ -121,13 +118,10 @@ ZuUnion<void, ZeException> sealBase(
     return ZuMv(r).template p<ZeException>();
   if (!schedule(secrets.shared, info, secrets.material))
     return ZeEXCEPT(Error, "ZtlsHPKE", "base-mode key schedule failed");
-  Pico::AeadCtx aead;
-  if (!aead.init(Backend::chacha20poly1305(), true,
-      secrets.material.key, secrets.material.nonce))
+  ChaCha20Poly1305 aead;
+  if (!aead.init(true, secrets.material.key))
     return ZeEXCEPT(Error, "ZtlsHPKE", "ChaCha20-Poly1305 setup failed");
-  size_t n = ptls_aead_encrypt(aead.get(), ciphertext.data(),
-    plaintext.data(), plaintext.length(), 0, aad.data(), aad.length());
-  if (n != plaintext.length() + TagSize) {
+  if (!aead.seal(secrets.material.nonce, aad, plaintext, ciphertext)) {
     ZuClear(ciphertext.data(), plaintext.length() + TagSize);
     return ZeEXCEPT(Error, "ZtlsHPKE", "ChaCha20-Poly1305 seal failed");
   }
@@ -142,6 +136,8 @@ ZuUnion<size_t, ZeException> openBase(
   if (ciphertext.length() < TagSize ||
       plaintext.length() < ciphertext.length() - TagSize)
     return ZeEXCEPT(Error, "ZtlsHPKE", "insufficient plaintext capacity");
+  size_t size = ciphertext.length() - TagSize;
+  ZuGuard clearOutput{[output = plaintext.data(), size]() { ZuClear(output, size); }};
   struct {
     uint8_t shared[PK::HybridSecretSize];
     KeyNonce material;
@@ -152,17 +148,13 @@ ZuUnion<size_t, ZeException> openBase(
     return ZuMv(r).template p<ZeException>();
   if (!schedule(secrets.shared, info, secrets.material))
     return ZeEXCEPT(Error, "ZtlsHPKE", "base-mode key schedule failed");
-  Pico::AeadCtx aead;
-  if (!aead.init(Backend::chacha20poly1305(), false,
-      secrets.material.key, secrets.material.nonce))
+  ChaCha20Poly1305 aead;
+  if (!aead.init(false, secrets.material.key))
     return ZeEXCEPT(Error, "ZtlsHPKE", "ChaCha20-Poly1305 setup failed");
-  size_t n = ptls_aead_decrypt(aead.get(), plaintext.data(),
-    ciphertext.data(), ciphertext.length(), 0, aad.data(), aad.length());
-  if (n != ciphertext.length() - TagSize) {
-    ZuClear(plaintext.data(), ciphertext.length() - TagSize);
+  if (!aead.open(secrets.material.nonce, aad, ciphertext, plaintext))
     return ZeEXCEPT(Error, "ZtlsHPKE", "ChaCha20-Poly1305 open failed");
-  }
-  return n;
+  clearOutput.cancel();
+  return size;
 }
 
 } // Ztls::HPKE

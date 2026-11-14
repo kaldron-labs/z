@@ -929,12 +929,12 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
 
   ZuBSpan chain[] = {leaf, root};
   ptls_context_t ctx{};
-  ZTLS_CHECK_RT(Ztls::Backend::load_certificates_der(
+  ZTLS_CHECK_RT(Ztls::Pico::load_certificates_der(
       &ctx, chain, key->key), type, " in-memory chain validation failed");
   auto installed = ctx.certificates.list;
   auto installedCount = ctx.certificates.count;
   ZuBSpan malformed[] = {ZuBSpan{"bad"}};
-  ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+  ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
       &ctx, malformed, key->key), type, " malformed certificate accepted");
   ZTLS_CHECK_RT(ctx.certificates.list == installed &&
       ctx.certificates.count == installedCount,
@@ -942,9 +942,9 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
   free_certificates(ctx);
 
   ZuBSpan reversed[] = {root, leaf};
-  ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+  ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
       &ctx, reversed, key->key), type, " reversed chain accepted");
-  ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+  ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
       &ctx, {}, key->key), type, " empty chain accepted");
 
   ZmRef<T> other;
@@ -954,7 +954,7 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
     other = new T{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   else
     other = new T{rng};
-  ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+  ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
       &ctx, chain, other->key), type, " mismatched key accepted");
 
   auto publicResult = key->mkPK();
@@ -962,7 +962,7 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
     type, " public key creation failed");
   if (!publicResult.template is<ZeException>()) {
     auto publicKey = ZuMv(publicResult).template p<0>();
-    ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+    ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
         &ctx, chain, publicKey->key), type, " public-only key accepted");
   }
 
@@ -981,7 +981,7 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
     Ztls::Cert broken{leaf};
     broken[broken.length() - 1] ^= 1;
     ZuBSpan brokenChain[] = {broken, root};
-    ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+    ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
         &ctx, brokenChain, key->key), type, " broken chain accepted");
 
     auto rejectIssued = [&](ZuCSpan name, ZuCSpan validity,
@@ -1001,7 +1001,7 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
       ZTLS_CHECK_RT(read, type, " ", name, " read failed");
       if (!read) return;
       ZuBSpan invalid[] = {cert, root};
-      ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+      ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
           &ctx, invalid, key->key), type, " ", name, " accepted");
     };
     rejectIssued("expired.der",
@@ -1062,12 +1062,12 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
     ZTLS_CHECK_RT(constrained, type, " constrained chain read failed");
     if (constrained) {
       ZuBSpan constrainedChain[] = {constrainedLeaf, int1, int0, root};
-      ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+      ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
           &ctx, constrainedChain, key->key),
         type, " path-length constraint violation accepted");
 
       ZuBSpan unrelatedChain[] = {leaf, int0};
-      ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+      ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
           &ctx, unrelatedChain, key->key),
         type, " unrelated chain anchor accepted");
     }
@@ -1104,20 +1104,20 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
     ZTLS_CHECK_RT(nonCA, type, " non-CA chain read failed");
     if (nonCA) {
       ZuBSpan nonCAChain[] = {nonCALeaf, nonCACert, root};
-      ZTLS_CHECK_RT(!Ztls::Backend::load_certificates_der(
+      ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
           &ctx, nonCAChain, key->key),
         type, " non-CA intermediate accepted");
     }
   }
 
-  auto store = Ztls::Backend::cert_store_new();
-  ZTLS_CHECK_RT(store && Ztls::Backend::cert_store_add_ca(store, root),
+  auto store = Ztls::Pico::cert_store_new();
+  ZTLS_CHECK_RT(store && Ztls::Pico::cert_store_add_ca(store, root),
     type, " supplemental CA rejected");
-  ZTLS_CHECK_RT(store && Ztls::Backend::cert_store_add_ca(store, root),
+  ZTLS_CHECK_RT(store && Ztls::Pico::cert_store_add_ca(store, root),
     type, " duplicate supplemental CA rejected");
-  ZTLS_CHECK_RT(store && !Ztls::Backend::cert_store_add_ca(store, leaf),
+  ZTLS_CHECK_RT(store && !Ztls::Pico::cert_store_add_ca(store, leaf),
     type, " non-CA supplemental certificate accepted");
-  ZTLS_CHECK_RT(store && !Ztls::Backend::cert_store_add_ca(
+  ZTLS_CHECK_RT(store && !Ztls::Pico::cert_store_add_ca(
       store, ZuBSpan{"bad"}), type, " malformed supplemental CA accepted");
   if constexpr (ZuIsSame<T, Ztls::PK::SK_RSA>{}) {
     ZtString<> expiredCAPath = temp.pathOf("expired-ca.der");
@@ -1134,10 +1134,10 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
     expiredCA = expiredCA && read_bytes(expiredCAPath.data(), cert);
     ZTLS_CHECK_RT(expiredCA, type, " expired CA read failed");
     if (expiredCA)
-      ZTLS_CHECK_RT(!Ztls::Backend::cert_store_add_ca(store, cert),
+      ZTLS_CHECK_RT(!Ztls::Pico::cert_store_add_ca(store, cert),
         type, " expired supplemental CA accepted");
   }
-  Ztls::Backend::cert_store_free(store);
+  Ztls::Pico::cert_store_free(store);
 
   Ztls::Cert leaf2{leaf};
   Ztls::Cert root2{root};
@@ -1318,9 +1318,9 @@ bool import_tls12_one(
 bool import_tls12_pair(ptls_cipher_suite_t *suite, ImportedTLS &pair)
 {
   pair.suites.set(suite);
-  pair.ctx.random_bytes = Ztls::Backend::random_bytes_cb();
+  pair.ctx.random_bytes = ptls_openssl_random_bytes;
   pair.ctx.get_time = &ptls_get_time;
-  pair.ctx.cipher_suites = Ztls::Backend::cipher_suites();
+  pair.ctx.cipher_suites = ptls_openssl_cipher_suites;
   pair.ctx.tls12_cipher_suites = pair.suites.list;
   return
     import_tls12_one(&pair.ctx, suite, false, pair) &&
@@ -1407,7 +1407,7 @@ void run_tls12_handshake_rejected(
   capture.reset();
 
   SuiteList suites;
-  auto suite = Ztls::Backend::tls12RSA_AES128GCM();
+  auto suite = &ptls_openssl_tls12_ecdhe_rsa_aes128gcmsha256;
   ZTLS_CHECK_RT(suite, "TLS 1.2 AES-GCM suite unavailable");
   if (!suite) return;
   suites.set(suite);
@@ -1564,7 +1564,7 @@ void testTLS13KeyUpdate(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testTLS13KeyUpdate);
   SuiteList suites;
-  auto suite = Ztls::Backend::cipher_suite(PTLS_CIPHER_SUITE_AES_128_GCM_SHA256);
+  auto suite = ptls_find_cipher_suite(ptls_openssl_cipher_suites, PTLS_CIPHER_SUITE_AES_128_GCM_SHA256);
   ZTLS_CHECK_RT(suite, "TLS 1.3 AES-GCM suite unavailable");
   if (!suite) return;
   suites.set(suite);
@@ -1598,7 +1598,7 @@ void testTLS13ComposedHeadroom(TempDir &temp, LogCapture &capture)
     16 * 1024 - 325 - ExtraHeadroom - ExtraTailroom;
   constexpr unsigned Payload = RecordPayload * 2 + 1;
 
-  for (auto suites = Ztls::Backend::cipher_suites(); *suites; ++suites) {
+  for (auto suites = ptls_openssl_cipher_suites; *suites; ++suites) {
     SuiteList selected;
     selected.set(*suites);
     run_in_process(
@@ -1613,7 +1613,7 @@ void testTLS12ExplicitIV(TempDir &temp, LogCapture &capture)
   (void)temp;
   (void)capture;
   ZuTestScopeRT(testTLS12ExplicitIV);
-  auto suite = Ztls::Backend::tls12RSA_AES128GCM();
+  auto suite = &ptls_openssl_tls12_ecdhe_rsa_aes128gcmsha256;
   ZTLS_CHECK_RT(suite, "TLS 1.2 AES-GCM suite unavailable");
   if (!suite) return;
   ZTLS_CHECK_RT(suite->aead->tls12.record_iv_size > 0,
@@ -1626,7 +1626,10 @@ void testTLS12NoExplicitIV(TempDir &temp, LogCapture &capture)
   (void)temp;
   (void)capture;
   ZuTestScopeRT(testTLS12NoExplicitIV);
-  auto suite = Ztls::Backend::tls12RSA_ChaCha20();
+  ptls_cipher_suite_t *suite = nullptr;
+#if PTLS_OPENSSL_HAVE_CHACHA20_POLY1305
+  suite = &ptls_openssl_tls12_ecdhe_rsa_chacha20poly1305sha256;
+#endif
   if (!suite) {
     std::cout << "# TLS 1.2 ChaCha20-Poly1305 unavailable in this backend\n";
     return;

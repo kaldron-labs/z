@@ -99,7 +99,7 @@ bool signKeyMatch(Ztls::Random &rng, const SignKey &key, ZuBSpan privateKey)
     Ztls::PK::SK_EC signer{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1, privateKey};
     ZuBArray<Ztls::COSE::ES256::PublicKeySize> point(
       Ztls::COSE::ES256::PublicKeySize, false);
-    return Ztls::Backend::pkey_ec_export_public(signer.key, point) &&
+    return Ztls::PK::pkey_ec_export_public(signer.key, point) &&
       publicKeyValid(key, point);
   } catch (...) {
     return false;

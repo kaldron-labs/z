@@ -118,8 +118,18 @@ static void roundtrip()
     .template is<ZeException>());
   ZuCheck(Ztls::HPKE::openBase(sk, aad, aad, enc, ct, plain)
     .template is<ZeException>());
+  // Encapsulation rejection happens before key derivation or AEAD writes.
+  // Every failure clears the expected plaintext prefix, preserving extra room.
+  uint8_t guarded[sizeof(input) + 8];
+  memset(guarded, 0xA5, sizeof(guarded));
   ZuCheck(Ztls::HPKE::openBase(sk, info, aad,
-    {enc, sizeof(enc) - 1}, ct, plain).template is<ZeException>());
+    {enc, sizeof(enc) - 1}, ct, guarded).template is<ZeException>());
+  bool prefixClear = true, tailUnchanged = true;
+  for (unsigned i = 0; i < sizeof(input); ++i) prefixClear &= !guarded[i];
+  for (unsigned i = sizeof(input); i < sizeof(guarded); ++i)
+    tailUnchanged &= guarded[i] == 0xA5;
+  ZuCheck(prefixClear);
+  ZuCheck(tailUnchanged);
   ZuCheck(Ztls::HPKE::openBase(sk, info, aad, enc,
     {ct, sizeof(ct) - 1}, plain).template is<ZeException>());
   ZuCheck(Ztls::HPKE::openBase(sk, info, aad, enc,

@@ -45,7 +45,7 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZtcHub.hh>
 
-#include <zlib/ZtlsBackend.hh>
+#include <zlib/ZtlsPico.hh>
 
 #if defined(ZDEBUG) && !defined(Zquic_DEBUG)
 #define Zquic_DEBUG	// enable testing / debugging
@@ -1255,7 +1255,7 @@ friend ZmEngine<App>;
     }
     return this->init_(ZuMv(params), Zquic::Vantage::Server,
       [this](const ServerParams &) {
-	if (!m_ticketKey) m_ticketKey = Ztls::Backend::ticket_key_new();
+	if (!m_ticketKey) m_ticketKey = Ztls::Pico::ticket_key_new();
 	return m_ticketKey;
       });
   }
@@ -1346,7 +1346,7 @@ friend ZmEngine<App>;
     return Endpoint::allocTxPkt();
   }
   ptls_encrypt_ticket_t *ticketEncryptCB() {
-    return Ztls::Backend::ticket_encrypt_cb(m_ticketKey);
+    return Ztls::Pico::ticket_encrypt_cb(m_ticketKey);
   }
   bool sendPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, bool priority = false) {
     if (!this->app()->sendPkt(buf)) return true;
@@ -1827,7 +1827,7 @@ private:
 
   void finalTicketKey() {
     if (!m_ticketKey) return;
-    Ztls::Backend::ticket_key_free(m_ticketKey);
+    Ztls::Pico::ticket_key_free(m_ticketKey);
     m_ticketKey = nullptr;
   }
 
@@ -1837,7 +1837,7 @@ private:
     ZmHashParams().bits(5).loadFactor(1).cBits(3)};
   CxnRouter<Link>	m_routes;
   AddrValidationDiag	m_addrValidationDiag;
-  Ztls::Backend::TicketKey *m_ticketKey	= nullptr;
+  Ztls::Pico::TicketKey *m_ticketKey	= nullptr;
   unsigned		m_stopCount = 0;
 };
 

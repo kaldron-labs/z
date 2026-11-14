@@ -250,15 +250,16 @@ AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <zpicotls.h>
 ])
 LIBS=$z_save_LIBS
 
-PKG_CHECK_MODULES([OPENSSL], [openssl >= 3.5], [], [
-  AC_MSG_ERROR([OpenSSL >= 3.5 with ML-KEM-768 support required])
+PKG_CHECK_MODULES([CRYPTO], [libcrypto >= 3.5], [], [
+  AC_MSG_ERROR([OpenSSL libcrypto >= 3.5 with ML-KEM-768 support required])
 ])
-AC_SUBST(OPENSSL_LIBS)
-AC_SUBST(OPENSSL_CFLAGS)
+AC_SUBST(CRYPTO_LIBS)
+AC_SUBST(CRYPTO_CFLAGS)
+Z_CPPFLAGS="$Z_CPPFLAGS $CRYPTO_CFLAGS"
 z_save_CPPFLAGS=$CPPFLAGS
 z_save_LIBS=$LIBS
-CPPFLAGS="$OPENSSL_CFLAGS $CPPFLAGS"
-LIBS="$OPENSSL_LIBS $LIBS"
+CPPFLAGS="$CRYPTO_CFLAGS $CPPFLAGS"
+LIBS="$CRYPTO_LIBS $LIBS"
 AC_RUN_IFELSE([AC_LANG_PROGRAM([[#include <openssl/evp.h>
 #include <openssl/core_names.h>]], [[
   EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_name(0, "ML-KEM-768", 0);

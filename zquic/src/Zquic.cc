@@ -8,7 +8,7 @@
 
 #include <string.h>
 
-#include <zlib/ZtlsBackend.hh>
+#include <zlib/ZtlsRandom.hh>
 #include <zlib/ZtlsHMAC.hh>
 
 namespace Zquic {
@@ -36,13 +36,18 @@ static uint64_t tokenGet64(const uint8_t *in)
 static bool tokenHMAC(uint8_t *out, ZuBSpan secret, ZuBSpan data)
 {
   if (!secret || secret.length() < AddressToken::SecretLength) return false;
-  Ztls::HMAC<> hmac;
-  hmac.start(secret);
-  hmac.update(data);
-  ZuBArray<Ztls::HMAC<>::Size> mac(Ztls::HMAC<>::Size, false);
-  hmac.finish(mac.span());
-  memcpy(out, mac.data(), AddressToken::TagLength);
-  return true;
+  try {
+    Ztls::HMAC<> hmac;
+    hmac.start(secret);
+    hmac.update(data);
+    ZuBArray<Ztls::HMAC<>::Size> mac(Ztls::HMAC<>::Size, false);
+    hmac.finish(mac.span());
+    memcpy(out, mac.data(), AddressToken::TagLength);
+    return true;
+  } catch (const ZeException &) {
+    ZuClear(out, AddressToken::TagLength);
+    return false;
+  }
 }
 
 static bool tokenTagEquals(ZuBSpan a, const uint8_t *b)
@@ -58,8 +63,8 @@ static bool tokenTagEquals(ZuBSpan a, const uint8_t *b)
 bool AddressToken::generateSecret(TokenSecret &secret)
 {
   secret.length(SecretLength);
-  return Ztls::Backend::init() &&
-    Ztls::Backend::random_bytes(
+  return Ztls::cryptoInit() &&
+    Ztls::Random{}.random(
       ZuSpan<uint8_t>{secret.data(), SecretLength});
 }
 
@@ -118,8 +123,8 @@ bool AddressToken::encode(
   o += addrLen;
   out[o++] = uint8_t(addr.port() >> 8);
   out[o++] = uint8_t(addr.port());
-  if (!Ztls::Backend::init() ||
-      !Ztls::Backend::random_bytes(
+  if (!Ztls::cryptoInit() ||
+      !Ztls::Random{}.random(
 	ZuSpan<uint8_t>{out + o, NonceLength}))
     return false;
   o += NonceLength;
@@ -266,8 +271,8 @@ bool ResetToken::set(ZuBSpan token)
 bool ResetToken::generate()
 {
   ZuBArray<Length> bytes(Length, false);
-  if (!Ztls::Backend::init() ||
-      !Ztls::Backend::random_bytes(bytes.span()))
+  if (!Ztls::cryptoInit() ||
+      !Ztls::Random{}.random(bytes.span()))
     return false;
   return set(bytes.cspan());
 }
@@ -289,8 +294,8 @@ bool PathChallenge::set(ZuBSpan data)
 bool PathChallenge::generate()
 {
   ZuBArray<Length> bytes(Length, false);
-  if (!Ztls::Backend::init() ||
-      !Ztls::Backend::random_bytes(bytes.span()))
+  if (!Ztls::cryptoInit() ||
+      !Ztls::Random{}.random(bytes.span()))
     return false;
   return set(bytes.cspan());
 }
@@ -342,8 +347,8 @@ int StatelessReset::writeForUnknownCID(
   if (n < MinLength) return -1;
 
   unsigned randomLen = n - TokenLength;
-  if (!Ztls::Backend::init() ||
-      !Ztls::Backend::random_bytes(ZuSpan<uint8_t>{out, randomLen}))
+  if (!Ztls::cryptoInit() ||
+      !Ztls::Random{}.random(ZuSpan<uint8_t>{out, randomLen}))
     return -1;
 
   out[0] &= 0x7fU;
@@ -358,8 +363,8 @@ bool CxnIDGen::random(CxnID &cid, unsigned length)
 
   CxnID generated;
   generated.length(length);
-  if (!Ztls::Backend::init() ||
-      !Ztls::Backend::random_bytes(
+  if (!Ztls::cryptoInit() ||
+      !Ztls::Random{}.random(
 	ZuSpan<uint8_t>{generated.data(), length}))
     return false;
 

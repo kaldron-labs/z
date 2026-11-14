@@ -58,7 +58,7 @@ static void webAuthn()
   ZuCheck(rng.init());
   Ztls::PK::SK_EC sk{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t publicKey[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheck(Ztls::Backend::pkey_ec_export_public(sk.key, publicKey));
+  ZuCheck(Ztls::PK::pkey_ec_export_public(sk.key, publicKey));
 
   Zum::AssertionInput input;
   ZuCheck(makeAssertion(rng, sk, 6, input));

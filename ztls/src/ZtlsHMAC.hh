@@ -1,10 +1,10 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Huw Rogers
+// (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// HMAC wrapper (zpicotls/OpenSSL backend)
+// Streaming libcrypto HMAC
 
 #ifndef ZtlsHMAC_HH
 #define ZtlsHMAC_HH
@@ -13,55 +13,43 @@
 #include <zlib/ZtlsLib.hh>
 #endif
 
-#include <zlib/ZmAssert.hh>
 #include <zlib/ZuSpan.hh>
-
-#include <zlib/ZtlsMD.hh>
+#include <zlib/ZtlsAlg.hh>
 
 namespace Ztls {
 
-template <MDType Type = SHA256> class HMAC {
+class ZtlsAPI HMAC_ {
 public:
-  enum { Size = MD<Type>::Size };
+  ~HMAC_();
+  HMAC_(const HMAC_ &) = delete;
+  HMAC_ &operator =(const HMAC_ &) = delete;
+  HMAC_(HMAC_ &&) = delete;
+  HMAC_ &operator =(HMAC_ &&) = delete;
 
-  HMAC() { }
-  ~HMAC() { dispose_(); }
+  void start(ZuBSpan);
+  void update(ZuBSpan);
+  void finish(ZuSpan<uint8_t>);
+  void reset();
 
-  ZuInline void start(ZuBSpan a) {
-    dispose_();
-    m_ctx = Backend::hmac_create(Type, a);
-    ZmAssert(m_ctx);
-  }
-
-  ZuInline void update(ZuBSpan a) {
-    ZmAssert(m_ctx);
-    m_ctx->update(m_ctx, a.data(), a.length());
-  }
-
-  ZuInline void finish(ZuSpan<uint8_t> output) {
-    ZmAssert(output.length() >= Size);
-    ZmAssert(m_ctx);
-    // zpicotls HMAC supports RESET and FREE, but not hash snapshots.
-    m_ctx->final(m_ctx, &output[0], PTLS_HASH_FINAL_MODE_RESET);
-  }
-
-  ZuInline void reset() {
-    ZmAssert(m_ctx);
-    uint8_t tmp[Size];
-    m_ctx->final(m_ctx, tmp, PTLS_HASH_FINAL_MODE_RESET);
-  }
+protected:
+  explicit HMAC_(MDType);
 
 private:
-  void dispose_() {
-    if (!m_ctx) return;
-    uint8_t tmp[Size];
-    m_ctx->final(m_ctx, tmp, PTLS_HASH_FINAL_MODE_FREE);
-    m_ctx = nullptr;
-  }
+  void clear();
+  [[noreturn]] void fail(const char *, ZuSpan<uint8_t> = {});
 
-  ptls_hash_context_t	*m_ctx = nullptr;
+  EVP_MAC_CTX	*m_ctx = nullptr;
+  MDType	m_type;
+  unsigned	m_size;
 };
 
-}
+template <MDType Type = SHA256> class HMAC : public HMAC_ {
+public:
+  enum { Size = MDTraits<Type>::Size };
+
+  HMAC() : HMAC_{Type} { }
+};
+
+} // Ztls
 
 #endif /* ZtlsHMAC_HH */

@@ -217,7 +217,7 @@ static void serviceToken()
   ZuCheckRT(rng.init());
   Ztls::PK::SK_EC key{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t point[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheckRT(Ztls::Backend::pkey_ec_export_public(key.key, point));
+  ZuCheckRT(Ztls::PK::pkey_ec_export_public(key.key, point));
   auto x = encode({point + 1, Ztls::COSE::ES256::CoordinateSize});
   auto y = encode({point + 1 + Ztls::COSE::ES256::CoordinateSize,
     Ztls::COSE::ES256::CoordinateSize});
@@ -562,7 +562,7 @@ static void serviceToken()
 static Zum::String keyJWK(Ztls::PK::SK_EC &key, ZuCSpan id)
 {
   uint8_t point[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheckRT(Ztls::Backend::pkey_ec_export_public(key.key, point));
+  ZuCheckRT(Ztls::PK::pkey_ec_export_public(key.key, point));
   return Zum::String{"{\"kid\":\""} << id <<
     "\",\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"" <<
     encode({point + 1, Ztls::COSE::ES256::CoordinateSize}) <<

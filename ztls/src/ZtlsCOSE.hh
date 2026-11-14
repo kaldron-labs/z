@@ -245,7 +245,7 @@ public:
           if (!p256(data, point)) break;
           ZmRef<PK::SK_EC> key{new PK::SK_EC{m_rng,
             PK::OIDs::EC_GRP_SECP256R1, data.d}};
-          if (!Backend::pkey_ec_export_public(key->key, derived) ||
+          if (!PK::pkey_ec_export_public(key->key, derived) ||
               memcmp(point, derived, sizeof(point))) break;
           return ZmRef<PK::AnyKey>{ZuMv(key)};
         }
@@ -256,7 +256,7 @@ public:
               data.d.length() != Ed25519::KeySize) break;
           ZmRef<PK::SK_ED25519> key{new PK::SK_ED25519{data.d}};
           uint8_t derived[Ed25519::KeySize];
-          if (!Backend::pkey_ed25519_export_public(key->key, derived) ||
+          if (!PK::pkey_ed25519_export_public(key->key, derived) ||
               memcmp(data.x.data(), derived, sizeof(derived))) break;
           return ZmRef<PK::AnyKey>{ZuMv(key)};
         }
@@ -279,14 +279,14 @@ private:
 
 template <typename S>
 inline ZuUnion<void, ZeException> save(S &s, const PK::PK_EC *key) {
-  unsigned oidLen = Backend::pkey_ec_oid_size(key->key);
+  unsigned oidLen = PK::pkey_ec_oid_size(key->key);
   auto oid = ZtScratch(Scratch, oidLen); oid.length(oidLen);
-  if (!Backend::pkey_ec_export_oid(key->key, oid) ||
+  if (!PK::pkey_ec_export_oid(key->key, oid) ||
       ZuBSpan{oid} != PK::OIDs::EC_GRP_SECP256R1)
     return ZeEXCEPT(Error, "ZtlsCOSE", "unsupported EC curve");
   auto point = ZtScratch(Scratch, ES256::PublicKeySize);
   point.length(ES256::PublicKeySize);
-  if (!Backend::pkey_ec_export_public(key->key, point) || point[0] != 4)
+  if (!PK::pkey_ec_export_public(key->key, point) || point[0] != 4)
     return ZeEXCEPT(Error, "ZtlsCOSE", "EC public key export failed");
   ZfCBOR::save(s, Data::EC2PK{KeyType::EC2, Curve::P256,
     {point.data() + 1, ES256::CoordinateSize},
@@ -300,13 +300,13 @@ inline ZuUnion<void, ZeException> save(S &s, const PK::SK_EC *key) {
   point.length(ES256::PublicKeySize);
   auto d = ZtScratch(Scratch, ES256::CoordinateSize);
   d.length(ES256::CoordinateSize);
-  unsigned oidLen = Backend::pkey_ec_oid_size(key->key);
+  unsigned oidLen = PK::pkey_ec_oid_size(key->key);
   auto oid = ZtScratch(Scratch, oidLen); oid.length(oidLen);
-  if (!Backend::pkey_ec_export_oid(key->key, oid) ||
+  if (!PK::pkey_ec_export_oid(key->key, oid) ||
       ZuBSpan{oid} != PK::OIDs::EC_GRP_SECP256R1)
     return ZeEXCEPT(Error, "ZtlsCOSE", "unsupported EC curve");
-  if (!Backend::pkey_ec_export_public(key->key, point) || point[0] != 4 ||
-      !Backend::pkey_ec_export_private(key->key, d))
+  if (!PK::pkey_ec_export_public(key->key, point) || point[0] != 4 ||
+      !PK::pkey_ec_export_private(key->key, d))
     return ZeEXCEPT(Error, "ZtlsCOSE", "EC private key export failed");
   ZfCBOR::save(s, Data::EC2SK{KeyType::EC2, Curve::P256,
     {point.data() + 1, ES256::CoordinateSize},
@@ -317,7 +317,7 @@ inline ZuUnion<void, ZeException> save(S &s, const PK::SK_EC *key) {
 template <typename S>
 inline ZuUnion<void, ZeException> save(S &s, const PK::PK_ED25519 *key) {
   uint8_t x[Ed25519::KeySize];
-  if (!Backend::pkey_ed25519_export_public(key->key, x))
+  if (!PK::pkey_ed25519_export_public(key->key, x))
     return ZeEXCEPT(Error, "ZtlsCOSE", "ED25519 public key export failed");
   ZfCBOR::save(s, Data::OKPPK{KeyType::OKP, Curve::Ed25519, x});
   return {};
@@ -326,8 +326,8 @@ inline ZuUnion<void, ZeException> save(S &s, const PK::PK_ED25519 *key) {
 template <typename S>
 inline ZuUnion<void, ZeException> save(S &s, const PK::SK_ED25519 *key) {
   uint8_t x[Ed25519::KeySize], d[Ed25519::KeySize];
-  if (!Backend::pkey_ed25519_export_public(key->key, x) ||
-      !Backend::pkey_ed25519_export_private(key->key, d))
+  if (!PK::pkey_ed25519_export_public(key->key, x) ||
+      !PK::pkey_ed25519_export_private(key->key, d))
     return ZeEXCEPT(Error, "ZtlsCOSE", "ED25519 private key export failed");
   ZfCBOR::save(s, Data::OKPSK{KeyType::OKP, Curve::Ed25519, x, d});
   return {};
@@ -335,11 +335,11 @@ inline ZuUnion<void, ZeException> save(S &s, const PK::SK_ED25519 *key) {
 
 template <typename S>
 inline ZuUnion<void, ZeException> save(S &s, const PK::PK_RSA *key) {
-  unsigned n = Backend::pkey_rsa_size(key->key);
+  unsigned n = PK::pkey_rsa_size(key->key);
   auto scratch = ZtScratch(Scratch, n + RSA::ExponentSize);
   ZuSpan<uint8_t> modulus{scratch.data(), n};
   ZuSpan<uint8_t> exponent{scratch.data() + n, RSA::ExponentSize};
-  if (!Backend::pkey_rsa_export_public(key->key, modulus, exponent))
+  if (!PK::pkey_rsa_export_public(key->key, modulus, exponent))
     return ZeEXCEPT(Error, "ZtlsCOSE", "RSA public key export failed");
   ZfCBOR::save(s, Data::RSAPK{KeyType::RSA, modulus, exponent});
   return {};
@@ -347,7 +347,7 @@ inline ZuUnion<void, ZeException> save(S &s, const PK::PK_RSA *key) {
 
 template <typename S>
 inline ZuUnion<void, ZeException> save(S &s, const PK::SK_RSA *key) {
-  unsigned n = Backend::pkey_rsa_size(key->key), p = n >> 1;
+  unsigned n = PK::pkey_rsa_size(key->key), p = n >> 1;
   auto scratch = ZtScratch(Scratch, 2 * n + 5 * p + RSA::ExponentSize);
   auto ptr = scratch.data();
   ZuSpan<uint8_t> modulus{ptr, n}; ptr += n;
@@ -358,7 +358,7 @@ inline ZuUnion<void, ZeException> save(S &s, const PK::SK_RSA *key) {
   ZuSpan<uint8_t> exp1{ptr, p}; ptr += p;
   ZuSpan<uint8_t> exp2{ptr, p}; ptr += p;
   ZuSpan<uint8_t> coeff{ptr, p};
-  if (!Backend::pkey_rsa_export_private(key->key, modulus, exponent, d,
+  if (!PK::pkey_rsa_export_private(key->key, modulus, exponent, d,
       prime1, prime2, exp1, exp2, coeff))
     return ZeEXCEPT(Error, "ZtlsCOSE", "RSA private key export failed");
   ZfCBOR::save(s, Data::RSASK{KeyType::RSA, modulus, exponent, d,

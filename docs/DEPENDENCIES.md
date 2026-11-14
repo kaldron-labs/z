@@ -38,7 +38,7 @@ Boost, Folly or BDE for its production libraries.
 | [PCRE](https://www.pcre.org/) | Original `libpcre`, discovered by `AX_PATH_LIB_PCRE` | `ZtRegex`; PCRE2 is not a drop-in replacement for this build |
 | [c-ares](https://c-ares.org/) | `libcares` | Asynchronous DNS resolution |
 | [zpicotls](https://github.com/kaldron-labs/zpicotls) | `zpicotls-core`, `zpicotls-openssl`, `zpicotls-fusion`, each `>= 1.3` | TLS 1.2/1.3 and QUIC cryptographic integration |
-| [OpenSSL](https://openssl-library.org/) | `openssl >= 3.5`, with working ML-KEM-768 provider/API | zpicotls backend and Z cryptographic operations |
+| [OpenSSL](https://openssl-library.org/) | `libcrypto >= 3.5`, with working ML-KEM-768 provider/API | Direct Z cryptographic operations and the zpicotls OpenSSL implementation |
 | [BFD and libiberty](https://www.gnu.org/software/binutils/) | `-lbfd -liberty` in `zm/src/Makefile.am` | Backtraces and symbol handling; current Zm build links both unconditionally |
 | [ncurses/terminfo](https://invisible-island.net/ncurses/) | Linux `-lncurses`; other Unix branch uses `-lterminfo` | Terminal capabilities for Zrl |
 | [GNU libiconv](https://www.gnu.org/software/libiconv/) | MinGW `-liconv`; libc supplies iconv on Linux | Character encoding conversion |
@@ -57,7 +57,12 @@ encryption and decryption begin/chunk/end callbacks; unsupported selected
 providers fail configuration rather than gathering ciphertext. Rebuild and install
 zpicotls before configuring Z and rebuilding its Ztls, Zquic and Zhttp consumers; older vector-only builds are insufficient.
 
-OpenSSL is checked independently:
+OpenSSL libcrypto is checked independently through pkg-config, supplying
+`CRYPTO_CFLAGS` and `CRYPTO_LIBS` without a direct libssl dependency;
+zpicotls-openssl supplies its own libssl linkage. Standalone Ztls digests, MACs,
+HKDF, Age/HPKE AEAD, random generation, and key operations use libcrypto
+directly. Zpicotls remains responsible for TLS processing and QUIC protocol
+integration, including Fusion support.
 configure creates an ML-KEM-768 key and initializes encapsulation, rather than
 accepting the version string alone. Cross-compilation defers that runtime check.
 

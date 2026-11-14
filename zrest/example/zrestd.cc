@@ -816,7 +816,7 @@ bool Application::init(Ztls::Random &rng)
   }
   publicKey.length(Ztls::COSE::ES256::PublicKeySize);
   if (!randomText(rng, keyID) ||
-      !Ztls::Backend::pkey_ec_export_public(key->key, publicKey)) return false;
+      !Ztls::PK::pkey_ec_export_public(key->key, publicKey)) return false;
   keyID.length(16);
   active = true;
   return true;

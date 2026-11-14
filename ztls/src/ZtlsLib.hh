@@ -30,19 +30,14 @@
 
 #endif
 
-namespace Ztls {
-namespace Backend {
-ZtlsAPI size_t format_error(int err, char *buf, size_t len);
-}
-}
-
-#include <zlib/ZtlsBackend.hh>
-
 #include <zlib/ZmSpecific.hh>
 
 #include <zlib/ZtString.hh>
 
 namespace Ztls {
+
+ZtlsAPI bool cryptoInit();
+ZtlsAPI size_t format_error(int, char *, size_t);
 
 ZtlsExtern void init(); // can be called repeatedly
 
@@ -51,7 +46,7 @@ struct StrError { char buf[200]; };
 ZtlsAPI inline ZuCSpan strerror_(int e) {
   char *buf = ZmTLS<StrError>().buf;
   constexpr unsigned N = sizeof(StrError{}.buf);
-  unsigned n = Backend::format_error(e, buf, N);
+  unsigned n = format_error(e, buf, N);
   for (unsigned i = 0; i < N; i++) if (!buf[i]) { n = i; break; }
   ZuCSpan s{&buf[0], n};
   s.chomp();
