@@ -573,20 +573,6 @@ ZiConnection::ZiConnection(ZiMultiplex *mx, const ZiCxnInfo &info) :
   m_rxContext.cxn = m_txContext.cxn = this;
 }
 
-void ZiConnection::rxDown()
-{
-  ZiAssert(m_mx->invoked(m_mx->rxThread()), "ZiMultiplex", (), "Rx exclusive", return);
-  m_rxUp = 0;
-  m_rxContext.complete();
-}
-
-void ZiConnection::txDown()
-{
-  ZiAssert(m_mx->invoked(m_mx->txThread()), "ZiMultiplex", (), "Tx exclusive", return);
-  m_txUp = 0;
-  m_txContext.complete();
-}
-
 ZiConnection::~ZiConnection()
 {
   // precautionary code to ensure no leaking of sockets

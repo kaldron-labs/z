@@ -575,8 +575,8 @@ public:
   // for ZiMxPlugin use
   void *plugin() const { return m_plugin; }
   void plugin(void *plugin) { m_plugin = plugin; }
-  void rxDown(); // Rx owner: close input state/context after plugin drain
-  void txDown(); // Tx owner: fence later producers and close output context
+  ZmAtomic<unsigned> &rxUp() { return m_rxUp; }
+  ZmAtomic<unsigned> &txUp() { return m_txUp; }
   ZiRxContext &rxContext() { return m_rxContext; } // Rx thread exclusive
   ZiTxContext &txContext() { return m_txContext; } // Tx thread exclusive
 
