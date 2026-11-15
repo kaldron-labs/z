@@ -19,6 +19,36 @@ struct TCPStateTest {
   template <typename T> static bool application(const T &link) {
     return link.m_txAppClose.application;
   }
+  template <typename T> static void stageEarly(T &link) {
+    auto &c = static_cast<typename T::Base::Base &>(link);
+    c.initServerPath({ZiIP{"198.18.0.1"}, 18181}, {ZiIP{"198.18.0.2"}, 18182}, 1200);
+    c.setTCPOriginsRx({1000, 2000, true, true, true});
+    c.startHandshake();
+    c.installTCPOptionsRx({.seq = 2000, .flags = 0x02,
+      .options = {.flags = TCPOptions::MSS, .mss = 1200}});
+  }
+  template <typename T> static int earlyInput(T &link) {
+    auto &c = static_cast<typename T::Base::Base &>(link);
+    auto packet = link.app()->packets.allocBuf();
+    memcpy(packet->data(), "abc", 3);
+    packet->length = 3;
+    ByteData frame{.offset = 0, .length = 3, .payload = packet->cspan()};
+    c.m_rxTFOAllow = true;
+    int result = c.processFrame(frame, ZuMv(packet));
+    c.m_rxTFOAllow = false;
+    return result;
+  }
+  template <typename T> static bool earlyPending(T &link) {
+    auto &c = static_cast<typename T::Base::Base &>(link);
+    return c.m_mpsPendingRx && !c.m_mpsReadyRx;
+  }
+  template <typename T> static void peerACK(T &link) {
+    auto &c = static_cast<typename T::Base::Base &>(link);
+    c.m_rxSynAcked = true;
+    // The raced establishment path encounters the existing pending checkpoint.
+    c.prepareMPSRx();
+  }
+
 };
 }
 
@@ -33,8 +63,15 @@ struct GateApp : Zutcp::Hub<GateApp> {
   bool native = false, inlineRx = false;
   ZuTime clock;
   ZiMultiplex multiplex;
+  Zi::IOBufAllocator *testTx = nullptr;
+  Zxdp::BufPool *testPool = nullptr;
 
-  Zi::IOBufAllocator *dataTxAllocator() const { return Zutcp::inlineAllocator(); }
+  Zi::IOBufAllocator *dataTxAllocator() const {
+    return testTx ? testTx : Zutcp::inlineAllocator();
+  }
+  Zxdp::BufPool *txPool(Zi::IOBufAllocator *allocator) const {
+    return allocator && allocator == testTx ? testPool : nullptr;
+  }
   bool nativeTx() const { return native; }
   ZuTime transportNow() const { return *clock ? clock : Zutcp::Hub<GateApp>::transportNow(); }
 
@@ -77,7 +114,8 @@ struct GateApp : Zutcp::Hub<GateApp> {
     return ZmRef<Zutcp::PacketBuf>{static_cast<Zutcp::PacketBuf *>(buf.ptr())};
   }
   bool sendPktRaw(ZmRef<ZiIOBuf> buf, ZiSockAddr, Zutcp::EcnMark::T, bool,
-      const Zutcp::IPPath &) {
+      const Zutcp::IPPath &, const Zxdp::CommitFn &commit) {
+    if (commit && !commit()) return false;
     auto tcp = static_cast<Zutcp::PacketBuf *>(buf.ptr())->tcp;
     if (tcp.flags & 0x02) { ++longSent; responseTCP = tcp; response = ZuMv(buf); }
     else ++shortSent;
@@ -137,7 +175,8 @@ friend ZuStringT<"Zutcp.Handshake.AbortCli"> ZmNHeapID(AbortCli *);
   void idleTickForTest() { State::cxnTimer(Zutcp::CxnTimer::Idle); }
   bool sendTCPReset() {
     return State::sendTCP({}, false, 0x14, [this] { return app()->allocTxPkt_(); },
-      [this](auto buf, auto) {
+      [this](auto buf, auto, const Zxdp::CommitFn &commit) {
+	if (!commit()) return false;
 	++resetPackets;
 	lastReset = buf->tcp;
 	return app()->txInvoked();
@@ -186,7 +225,8 @@ friend inline ZuStringT<"Zutcp.Handshake.CloseSrv"> ZmNHeapID(CloseSrv *);
   bool appCloseTxForTest() const { return Zutcp::TCPStateTest::application(*this); }
   bool sendTCPReset() {
     return State::sendTCP({}, false, 0x14, [this] { return app()->allocTxPkt_(); },
-      [this](auto buf, auto) {
+      [this](auto buf, auto, const Zxdp::CommitFn &commit) {
+	if (!commit()) return false;
 	++resetPackets;
 	lastReset = buf->tcp;
 	return app()->txInvoked();
@@ -912,7 +952,7 @@ struct GateCxn : ZmNHeap<GateCxn>, Zutcp::SrvCxn<GateApp, GateCxn> {
 friend ZuStringT<"Zutcp.Handshake.Gate"> ZmNHeapID(GateCxn *);
   unsigned connections = 0, deliveries = 0;
   unsigned *destroyed = nullptr;
-  bool early = false;
+  bool early = false, resetOnProcess = false, reply = false;
   using Base = Zutcp::SrvCxn<GateApp, GateCxn>;
 
   using Base::receivedRouted;
@@ -925,10 +965,12 @@ friend ZuStringT<"Zutcp.Handshake.Gate"> ZmNHeapID(GateCxn *);
     if (!n) return 0;
     ++deliveries;
     early |= !established();
+    if (resetOnProcess) { reset(); return 0; }
     reader.clean();
     if (!retireRx(n)) return -1;
     const uint8_t reply[] = {'r'};
-    return send(ZuBSpan{reply, sizeof(reply)}, false) ? 1 : -1;
+    this->reply = send(ZuBSpan{reply, sizeof(reply)}, false);
+    return this->reply ? 1 : -1;
   }
   void reset() { Base::resetLink(); }
   bool originForTest(uint32_t local) {
@@ -947,6 +989,74 @@ friend ZuStringT<"Zutcp.Handshake.Gate"> ZmNHeapID(GateCxn *);
     State::disconnect(false);
   }
 };
+
+struct EarlyBacking : ZmNHeap<EarlyBacking>, Zi::IOBufPlugin {
+friend inline ZuStringT<"Zutcp.Handshake.EarlyBacking"> ZmNHeapID(EarlyBacking *);
+  using ZmNHeap<EarlyBacking>::operator new;
+  using ZmNHeap<EarlyBacking>::operator delete;
+  alignas(ZiIOBuf_Align) uint8_t bytes[512];
+  unsigned acquired = 0, returned = 0;
+  bool valid = true;
+  EarlyBacking() { size = sizeof(bytes); headRoom = 128; }
+  uint8_t *alloc() override {
+    if (acquired != returned) return nullptr;
+    ++acquired;
+    return bytes;
+  }
+  void free(uint8_t *p) override {
+    valid &= p == bytes && acquired == returned + 1;
+    ++returned;
+  }
+};
+
+static void testEarlyWriterReadiness(unsigned scenario)
+{
+  ZuTestScopeRT(testEarlyWriterReadiness);
+  GateApp app;
+  app.native = true;
+  ZmRef<EarlyBacking> backing = new EarlyBacking;
+  Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP, ZiIOBuf, 512> allocator{
+    app.mx(), backing};
+  Zxdp::BufPool pool{1, sizeof(backing->bytes)};
+  app.testTx = &allocator; app.testPool = &pool;
+  ZmRef<GateCxn> link = new GateCxn{&app};
+  Zutcp::TCPStateTest::stageEarly(*link);
+  bool cold = !link->dataMPS();
+  int accepted = Zutcp::TCPStateTest::earlyInput(*link);
+  unsigned jobs = app.tx.count_();
+  int duplicate = Zutcp::TCPStateTest::earlyInput(*link);
+  if (scenario == 1 || scenario == 3) Zutcp::TCPStateTest::peerACK(*link);
+  ZuCHECK(cold && accepted >= 0 && duplicate >= 0 && !link->deliveries &&
+      link->reader().length() == 3 && !backing->acquired &&
+      Zutcp::TCPStateTest::earlyPending(*link) && app.tx.count_() == jobs &&
+      !link->connections,
+    "early data waits in Reader with zero native writer capacity and one readiness checkpoint");
+  app.runTx();
+  ZuCHECK(link->dataMPS() && !link->deliveries && app.rx.count_() == 1,
+    "route/options Tx work publishes writer capacity before early application delivery");
+  if (scenario == 2) link->reset();
+  if (scenario == 3) link->resetOnProcess = true;
+  app.runRx(); app.runTx();
+  if (scenario == 2) {
+    ZuCHECK(!link->deliveries && !link->connections && !backing->acquired &&
+	!link->reader().length(),
+      "reset invalidates the old readiness completion without delivering retained data");
+  } else if (scenario == 3) {
+    ZuCHECK(link->deliveries == 1 && link->early && !link->connections && !backing->acquired,
+      "an application reset during early delivery prevents establishment of the replacement");
+  } else {
+    Zutcp::TxRange range;
+    bool queued = link->txRange(0, range);
+    ZuCHECK(link->deliveries == 1 && link->early && link->reply &&
+	link->connections == unsigned(scenario == 1) && backing->acquired == 1 &&
+	queued && range.storage->native == &allocator && range.length == 1 &&
+	range.storage->data[range.offset] == 'r',
+      "early delivery writes a registered native reply before any raced connected notification");
+  }
+  link->reset(); app.drain(); link = nullptr; app.drain();
+  ZuCheck(backing->valid && backing->returned == backing->acquired && !app.errors);
+  app.testTx = nullptr; app.testPool = nullptr;
+}
 
 static void testRejectedOwnerDrain()
 {
@@ -999,4 +1109,8 @@ int main(int argc, char **argv)
   ZuTestCall(testCoalescedNativeConnect);
   ZuTestCall(testNativeSetupFailureDrain);
   ZuTestCall(testRejectedOwnerDrain);
+  ZuTestCall(testEarlyWriterReadiness, 0);
+  ZuTestCall(testEarlyWriterReadiness, 1);
+  ZuTestCall(testEarlyWriterReadiness, 2);
+  ZuTestCall(testEarlyWriterReadiness, 3);
 }

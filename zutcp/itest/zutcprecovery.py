@@ -601,11 +601,29 @@ def window(directory, restart=False, lost=False):
                            if c['next'] == size and c['window'] == size and c['seq'] == size)
             assert -.01 <= second['time'] - opening['time'] < .5
             if lost:
-                assert len(probes) >= 3
-                later_gap = probes[2]['time'] - probes[1]['time']
+                recovery = probes
+                recovery_side = side
+                if len(probes) >= 3:
+                    assert 3.8 < probes[2]['time'] - probes[1]['time'] < 4.5
+                if len(probes) < 3 or opening['time'] < probes[2]['time']:
+                    # A peer's third probe can elicit our opening ACK, then
+                    # resumed peer DATA carries its window before our third
+                    # probe is observed, even if that probe is already racing.
+                    # Require the observed duplex causal chain in either case.
+                    recovery = [p for p in other['controls'] if p['type'] == 'persist' and
+                                p['value'] == size]
+                    recovery_side = peer
+                    assert len(recovery) >= 3, (side, probes, recovery)
+                    assert any(p['offset'] == size and p['time'] == opening['time']
+                               for p in other['data']), (side, opening)
+                    assert any(c['seq'] == size and c['next'] == size and
+                               c['window'] == size and
+                               recovery[2]['time'] <= c['time'] <= opening['time']
+                               for c in stream['acks']), (side, recovery[2], opening)
+                later_gap = recovery[2]['time'] - recovery[1]['time']
                 assert 3.8 < later_gap < 4.5
-                assert 0 <= opening['time'] - probes[2]['time'] < .5
-                assert second['time'] >= probes[2]['time']
+                assert 0 <= opening['time'] - recovery[2]['time'] < .5
+                assert second['time'] >= recovery[2]['time']
                 port = 'zutcpmlpa' if side == 'client' else 'zutcpmlpb'
                 assert int((out / (port + '.opening-drops')).read_text()) > 0
             stream['persist_evidence'] = {
@@ -615,6 +633,11 @@ def window(directory, restart=False, lost=False):
                 'opening_edge': size * 2,
                 'resume_seconds': second['time'] - opening['time'],
             }
+            if lost:
+                stream['persist_evidence'].update(
+                    recovery_probe_stream=recovery_side,
+                    recovery_probe_time=recovery[2]['time'],
+                    duplex_reopening=recovery_side != side)
         rounds.append({'window': size, 'streams': streams})
     evidence = {'rounds': rounds} if restart else rounds[0]['streams']
     if lost:

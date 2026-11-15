@@ -1,5 +1,10 @@
 # Short FIX comparison (OQ7)
 
+The [2026-11-15 performance milestone](MILESTONE.md) records the managed
+`zfix/bench/zfixbench` comparison, including kernel-relative results, validation
+and remaining tail-latency work. The direct Zi benchmark described here is a
+separate application fixture.
+
 One `ZiMultiplex` / `ZiConnection` / `ZiRx` / `ZiTx` application supplies both
 choices. `kernel` leaves the plugin unset and uses ordinary TCP sockets. `native`
 installs the existing `Zutcp::Stack` before registration of application allocators.
@@ -63,6 +68,22 @@ uses the ordinary peer-close drain. Both await normal disconnect
 before stopping. Native stopped snapshots also verify connection-slot,
 retained-Rx and physical-Tx/control-credit drains.
 
+## Scheduler placement
+
+Each endpoint configures exactly three scheduler slots: sid 1 for Rx, sid 2
+for Tx, and isolated sid 3 for XDP transmission. Application callbacks execute
+on the existing Rx/Tx slots. Both transport selections configure the same
+slots; kernel runs leave sid 3 idle. The scheduler owns slot startup, spinning,
+waiting and shutdown. XDP submits sender work using `run()` on sid 3 without
+an additional sender pthread or semaphore. `scheduler_threads=3` counts these
+slots, excluding the scheduler's control/timer thread.
+
+The direct Zi benchmark pins Rx/Tx using its positional CPU arguments. Both
+benchmarks accept `BENCH_CLIENT_XDP_TX_CPU` and `BENCH_SERVER_XDP_TX_CPU` for
+sid 3, defaulting to the endpoint's Rx CPU. With all three slots
+isolated there is no general worker; native cold route setup dispatches to
+sid 3 and returns completion to Rx.
+
 ## Registration and build scope
 
 `Makefile.am` links only the existing Zu/Zm/Zt/Ze/Zf/Zi/Zxdp/Zutcp libraries.
@@ -120,15 +141,24 @@ counters, wrapper and real ELF hashes, and workload/configuration. There is no
 physical interface selection or physical-NIC/zero-copy advantage claim.
 
 For custom rows, shared overrides are `BENCH_WORKLOAD`, `BENCH_BURST_SIZE`,
-`BENCH_BURST_US`, `BENCH_MESSAGES`, `BENCH_WARMUP`, `BENCH_PIPELINE`,
+`BENCH_BURST_US`, `BENCH_ACK_HOLD_US`, `BENCH_MESSAGES`, `BENCH_WARMUP`, `BENCH_PIPELINE`,
 `BENCH_CONNECTIONS`, `BENCH_RESERVE`, `BENCH_SPIN`, `BENCH_CLIENT_RX_CPU`,
 `BENCH_CLIENT_TX_CPU`, `BENCH_SERVER_RX_CPU`, `BENCH_SERVER_TX_CPU`,
 `BENCH_FAMILIES` and `BENCH_BACKENDS`. Defaults select four CPUs in the allowed
 affinity set, reusing CPUs when fewer are available. Explicit placement is
 recommended. Both modes use the same three-thread scheduler, Rx=1, Tx=2, queue
 65536, wait timeout 1 ms, Rx quantum 8, scheduler quantum 1 us, low-latency mode
-false and selected spin count. First Rx/Tx turns record actual CPUs. Kernel
+false and selected spin count. `BENCH_LL=1` selects continuous scheduler-ring
+spinning for both backends; the default is `0`. The startup config line records
+the effective `ll` value. `BENCH_CLIENT_XDP_TX_CPU` and
+`BENCH_SERVER_XDP_TX_CPU` pin sid 3, defaulting to the endpoint's Rx CPU.
+Assign all six endpoint slots explicit CPUs for continuous-spin comparisons.
+These environment settings are read once at initialization.
+First Rx/Tx turns record actual CPUs. Kernel
 `TCP_NODELAY` is set/read back. Native retains its immediate whole-original sender.
+`BENCH_ACK_HOLD_US` configures native cumulative ACK hold once at startup; it
+defaults to 25 milliseconds, accepts 0 to disable holding, and must be below
+500000 microseconds. Kernel TCP ignores this setting.
 
 `BENCH_RESERVE` is the **requested** network/Tx allocator count and native ingress
 packet count, not equal physical pool mechanics. The builtin kernel allocator

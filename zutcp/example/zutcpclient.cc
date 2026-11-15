@@ -106,15 +106,12 @@ public:
     if (finReceived() && rxComplete() && !m_responseSeen) {
       m_responseSeen = true;
       std::cout << '\n' << std::flush;
-      app()->done();
     }
     return length ? 1 : 0;
   }
   void disconnected(bool) {
-    if (!m_responseSeen) {
-      app()->setError("disconnected before response");
-      app()->done();
-    }
+    if (!m_responseSeen) app()->setError("disconnected before response");
+    app()->done();
   }
   void connectFailed(bool) { app()->setError("connect failed"); app()->done(); }
 
@@ -179,11 +176,12 @@ int main(int argc, char **argv)
   ZiMultiplex mx(
       ZiMxParams()
 	.scheduler([](auto &s) {
-	  s.nThreads(3)
+	  s.nThreads(4)
 	  .thread(1, [](auto &t) { t.isolated(1); })
-	  .thread(2, [](auto &t) { t.isolated(1); }); })
+	  .thread(2, [](auto &t) { t.isolated(1); })
+	  .thread(4, [](auto &t) { t.isolated(true); }); })
 	.rxThread(1).txThread(2));
-  mx.plugin(new Zutcp::Stack{&mx, {.interface = interface}});
+  mx.plugin(new Zutcp::Stack{&mx, {.interface = interface, .txSid = 4}});
 
 
   App app{request};

@@ -124,6 +124,7 @@ struct Engine : LinkTx<Engine> {
   unsigned		flushed = 0;
   unsigned		completions = 0;
   bool			block = false;
+  bool			allocBlocked = false;
   bool			delayRelease = false;
   bool			delayHistory = false;
   uint64_t		historyTicket = 0;
@@ -202,7 +203,8 @@ struct Engine : LinkTx<Engine> {
 
   void faultTx(TxContext, Error e) { error = e; }
 
-  ZmRef<ZiIOBuf> allocTx() { return frameBuf(); }
+  ZmRef<ZiIOBuf> allocTx() { return allocBlocked ? nullptr : frameBuf(); }
+  bool waitFrameTx() { return allocBlocked; }
 
   bool admitFrameTx(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> frame,
     ZuDateTime original) {
@@ -1144,6 +1146,27 @@ static void sessionObservation()
   ZuCheck(refused.observed.length() == 1 && refused.output.length() == 1);
 }
 
+static void logonAllocationPressure()
+{
+  ZuTestScope(logonAllocationPressure);
+  Engine tx;
+  tx.allocBlocked = true; tx.start();
+  ZuCheck(!tx.error && !tx.output.length() && !tx.stats_().encodeErrors &&
+    tx.next_() == 2 && tx.published_() == 1);
+  // Writable must resume the priority Logon before normal wire publication starts.
+  tx.allocBlocked = false;
+  ZuCheck(tx.writable_(1)); tx.drain();
+  ZuCheck(!tx.error && tx.output.length() == 1 && tx.output[0].body->msgType() == "A" &&
+    tx.output[0].context.seqNo == 1 && tx.published_() == 2);
+  tx.complete(0);
+  tx.apply_(tx.event(State::Established, SessionAction::Ready));
+  ZuCheck(tx.sendOrder(19) == TxSelect::Accepted); tx.drain();
+  ZuCheck(tx.output.length() == 2 && tx.output[1].body->id() == 19 &&
+    tx.output[1].context.seqNo == 2);
+  tx.complete(1); tx.close_(1); tx.drain();
+  ZuCheck(!tx.inFlight_());
+}
+
 static void managedAbort()
 {
   ZuTestScope(managedAbort);
@@ -1195,5 +1218,6 @@ int main(int argc, char **argv)
   ZuTestCall(peerReject);
   ZuTestCall(sessionObservation);
   ZuTestCall(managedAbort);
+  ZuTestCall(logonAllocationPressure);
   return 0;
 }

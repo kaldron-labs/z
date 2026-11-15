@@ -22,7 +22,9 @@ public:
   using Base::Base;
   using Base::app;
   using Base::impl;
-  bool applicationReadyRx() const { return Base::establishedRx(); }
+  bool applicationReadyRx(bool early = false) {
+    return early ? Base::prepareMPSRx(true) : Base::establishedRx();
+  }
   friend Base;
 
   template <typename, typename> friend class Server;
@@ -190,9 +192,9 @@ public:
       bool persist = false) {
     return Base::sendTCP(ref, syn, control,
       [this, &ref] { return app()->allocTxPkt_(!bool(ref.length)); },
-      [this](auto buf, EcnMark::T ecn) {
+      [this](auto buf, EcnMark::T ecn, const Zxdp::CommitFn &commit) {
 	if (!app()->sendPkt(buf)) return false;
-	return app()->sendPktRaw(ZuMv(buf), m_peerAddr, ecn, true, m_txIP);
+	return app()->sendPktRaw(ZuMv(buf), m_peerAddr, ecn, true, m_txIP, commit);
       }, persist);
   }
   bool sendSyn() {

@@ -32,10 +32,51 @@ The packet operations are allocation from a Tx pool, return to an Rx or Tx pool,
 and submission of a Tx packet. Application and transport object ownership is
 outside this module. The caller owns adapter composition.
 
+`send(packet, length, commit)` optionally accepts a borrowed synchronous
+`CommitFn` (`ZmFn<bool()>`). After every ordinary admission check and a successful
+Tx-ring reservation, the sole producer invokes it before changing slot ownership,
+adding the kernel lease, or publishing the descriptor. False cancels the reservation
+and returns false with no lease or descriptor. True commits the initialized
+descriptor with no further refusal. This is a publication hook, not a completion
+callback. It must not throw, retain its borrowed context, reenter Tx service, or
+perform asynchronous work. Bind a raw context pointer and `ZmFnPtr` to avoid
+allocation; a context on the caller's stack remains live through the synchronous
+call. Release-publish any caller state before returning true so a peer response
+cannot precede that state after kernel consumption. Empty hooks preserve raw send.
+
+`send()` submits and coalesces sender service on the application-assigned
+`Params::txSid`. Before scheduler startup the application configures that slot
+with `Params::txThread`, a `ZmSchedTParams` defaulting to `isolated(true)`.
+The dedicated sender calls nonblocking `sendto()` to drive kernel Tx processing.
+The caller remains the only descriptor producer and CQ owner. Descriptor
+consumption is separate from CQ retirement and never authorizes backing reuse.
+
+Submission increments a shared pending-descriptor counter before committing the
+initialized descriptor. A zero-to-one transition schedules sender service with
+`scheduler->run()` after commit. The active sender observes the kernel consumer
+cursor and tracks its unsigned delta from a persistent cursor. While no additional
+pending descriptors are visible beyond that delta, it spins for `Params::spin`
+rounds and checks shutdown. It then subtracts the observed delta atomically and
+uses the returned count to decide whether to continue. A racing publication is
+therefore retained in the count or starts a new scheduled invocation. There is
+no intentional accumulation delay and no Tx wait timeout.
+
+Tx service uses no custom scheduler wake function, epoll set or eventfd. The
+scheduler owns idle waiting after the sender returns. Rx retains its independent
+epoll/eventfd implementation described below.
+Start the scheduler before submitting packets and drain the instance before
+stopping the scheduler. After Tx production is quiescent, `stopSender()` publishes
+exit and queues a FIFO sender-slot barrier. The active loop checks exit, including
+during idle spin; the barrier clears pending state and marks sender exit before
+calling `txStopped`. Socket retirement follows that barrier. The scheduler owns
+thread startup and shutdown. Arrange CQ service independently of arrivals.
+
 All arenas, ring mappings and packet bookkeeping are allocated during setup.
-Packet service performs no heap allocation. Allocation and return use the
-agreed non-sharded ZmHeap payload-overlay slist. Packet admission, receive and
-completion resolve backing directly; they never search packets or buffers.
+Packet storage and metadata are reused during service. Allocation and return use
+the agreed non-sharded ZmHeap payload-overlay slist. Normal sender callbacks are
+placed directly in the scheduler ring; scheduler overflow can allocate fallback
+entries. Packet admission, receive and completion resolve backing directly;
+they never search packets or buffers.
 
 The receive entry is `rx()`: process incoming packets through the configured
 callback, spin for a configurable count when idle, then use the most efficient
@@ -43,8 +84,9 @@ suitable kernel blocking mechanism. An epoll implementation waits on packet
 readiness and an internal `eventfd`, following ZiEventLoop/ZiMultiplex. Packet
 readiness resumes processing; the call returns when explicitly woken. Expose
 `wake()` for Zutcp to interrupt the spinning or blocked receive loop and cause
-`rx()` to return. With epoll, `wake()` posts to that `eventfd`; no per-wakeup
-object is allocated. Wake observation must remain prompt during continuous traffic
+`rx()` to return. With epoll, `wake()` posts to that `eventfd` only while Rx has
+published a wait attempt; active and preposted wake pulses stay in userspace.
+No per-wakeup object is allocated. Wake observation must remain prompt during continuous traffic
 and must not be lost at the transition into epoll. The wait mechanism and its
 internal descriptors belong to this library; caller scheduling remains outside.
 

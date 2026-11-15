@@ -16,6 +16,7 @@
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZutcpAlloc.hh>
+#include <zlib/ZutcpQueue.hh>
 #include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZiAssert.hh>
@@ -31,7 +32,7 @@ struct BufNode : public ZiIOBuf {
   using ZiIOBuf::ZiIOBuf;
 };
 
-using Reader = ZiRxStream<ZiRxQueue>;
+using Reader = Zutcp::Queue<ZiRxStream<ZiRxQueue>, "reader", Ztc::QueueType::Rx>;
 
 template <
   unsigned Size = BufSize,

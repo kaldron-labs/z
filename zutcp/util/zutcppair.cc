@@ -11,6 +11,7 @@
 
 #include <iostream>
 
+#include <zlib/ZmPlatform.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/Zutcp.hh>
 #include <zlib/ZtString.hh>
@@ -112,11 +113,12 @@ public:
 	<< tx.tailRoom() << " capacity=" << tx.maxSize() - tx.headRoom() - tx.tailRoom()
 	<< " chunk=" << chunk << "\n";
     }
-    for (unsigned offset = 0; offset < request.length();) {
-      unsigned length = request.length() - offset;
+    unsigned total = request.length();
+    for (unsigned offset = 0; offset < total;) {
+      unsigned length = total - offset;
       if (length > chunk) length = chunk;
       if (!send(ZuCSpan{request.data() + offset, length},
-	  offset + length == request.length())) { complete(false); return; }
+	  offset + length == total)) { complete(false); return; }
       offset += length;
     }
   }
@@ -222,11 +224,12 @@ private:
   using Flag = ZmAtomic<unsigned>;
   Result		&m_result;
   ZiIP		m_address;
-  unsigned	m_port = 0, m_target = 1, m_accepted = 0; // Rx accepted count
-  Flag		m_completed = 0;
-  ZmRef<ServerCxn>	m_held; // Rx, fixture hold through the existing Reader only
+  unsigned	m_port = 0, m_target = 1;
   const bool	m_tfo = getenv("ZUTCP_KERNEL_TFO");
   const bool	m_denyEarly = getenv("ZUTCP_KERNEL_TFO_DENY");
+  alignas(Zm::CacheLineSize) Flag m_completed = 0;
+  alignas(Zm::CacheLineSize) unsigned m_accepted = 0; // Rx accepted count
+  ZmRef<ServerCxn>	m_held; // Rx, fixture hold through the existing Reader only
 };
 
 class ServerCxn : public ZmNHeap<ServerCxn>, public Zutcp::SrvCxn<ServerApp, ServerCxn> {
@@ -314,14 +317,14 @@ private:
   }
   using Closed = Zutcp::ClosedTuple;
   using Flag = ZmAtomic<unsigned>;
-  PeerBytes	m_request; // application request, retired from transport as consumed
-  const bool	m_reset;
+  alignas(Zm::CacheLineSize) const bool m_reset;
   const unsigned	m_id;
+  alignas(Zm::CacheLineSize) PeerBytes m_request; // Rx request bytes
   bool		m_connected = false; // Rx
   Closed		m_fixtureHistory; // Rx, explicitly seeded while this owner is live
   bool		m_replied = false; // Rx
   bool		m_holdReader = getenv("ZUTCP_KERNEL_READ_GATE"); // Rx
-  Flag		m_completed = 0; // Rx/Tx final publication
+  alignas(Zm::CacheLineSize) Flag m_completed = 0; // Rx/Tx final publication
 };
 
 void ServerApp::disconnected(ServerCxn *link, bool peer)
@@ -424,10 +427,11 @@ int main(int argc, char **argv)
   }
   Result result;
   ZiMultiplex mx{ZiMxParams().scheduler([](auto &s) {
-    s.nThreads(3).thread(1, [](auto &t) { t.isolated(1); })
-      .thread(2, [](auto &t) { t.isolated(1); });
+    s.nThreads(4).thread(1, [](auto &t) { t.isolated(1); })
+      .thread(2, [](auto &t) { t.isolated(1); })
+      .thread(4, [](auto &t) { t.isolated(true); });
   }).rxThread(1).txThread(2)};
-  auto stack = new Zutcp::Stack{&mx, {.interface = interface}};
+  auto stack = new Zutcp::Stack{&mx, {.interface = interface, .txSid = 4}};
   mx.plugin(stack);
   if (server) {
     ServerApp app{result, address, port, count};

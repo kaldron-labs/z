@@ -85,6 +85,8 @@ struct TxLimits {
 //   invokes reloaded_; historyArchive(epoch, begin, end) reports archive ranges;
 // txPost(kind, ticket) posts run_ back to Tx; utcTx() samples SendingTime;
 // errorTx(TxContext, Fmt::Error) reports an unpublished frame failure.
+// Optional waitAllocTx() reports that a null allocation is awaiting storage;
+// the owner resumes publication after an exact buffer grant.
 // Optional ackdTx(owner context, previous, next) reports exclusive progress;
 // context.seqNo is zero; history retention stays with the application.
 // Optional limitTx(next context, maximum, control headroom) reports entering the
@@ -204,6 +206,7 @@ public:
   // Optional ordered notification, independent of application archive policy.
   void ackdTx(TxContext, uint64_t, uint64_t) { }
   void limitTx(TxContext, uint64_t, unsigned) { }
+  bool waitAllocTx() { return false; }
 
   bool resume_() {
     if (!m_attached || resetting()) return false;
@@ -455,7 +458,9 @@ private:
     context.sendingTime = now;
     context.origSendingTime = replay ? history.originalTime : ZuDateTime{};
     context.possDup = replay;
-    auto frame = txFrame(impl()->allocTx(), *history.body, m_config, context, error,
+    auto buffer = impl()->allocTx();
+    if (!buffer && impl()->waitAllocTx()) return false;
+    auto frame = txFrame(ZuMv(buffer), *history.body, m_config, context, error,
       m_limits.codec, impl()->signer_());
     if (!frame) { ++m_stats.encodeErrors; impl()->errorTx(context, error); return false; }
     auto original = replay ? history.originalTime : now;
@@ -480,7 +485,9 @@ private:
     auto now = impl()->utcTx();
     context.sendingTime = context.origSendingTime = now;
     context.possDup = true;
-    auto output = txFrame(impl()->allocTx(), *body, m_config, context, error,
+    auto buffer = impl()->allocTx();
+    if (!buffer && impl()->waitAllocTx()) return false;
+    auto output = txFrame(ZuMv(buffer), *body, m_config, context, error,
       m_limits.codec, impl()->signer_());
     if (!output) { ++m_stats.encodeErrors; impl()->errorTx(context, error); return false; }
     bool ok = impl()->frameTx(ZuMv(body), context, ZuMv(output), now);

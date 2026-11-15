@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZtString.hh>
 
@@ -387,6 +388,74 @@ void testPluginAllocation()
   ZuCheck(plugin->valid && plugin->registeredAllocs == 2 && plugin->registeredFrees == 2);
 }
 
+void testAsyncAllocation(bool native, unsigned mode)
+{
+  ZuTestScopeRT(testAsyncAllocation);
+  ZiMultiplex mx;
+  ZmRef<MxPlugin> transport;
+  if (native) {
+    transport = new MxPlugin{&mx};
+    transport->backing->exhausted = mode == 2;
+    mx.plugin(transport);
+  }
+  auto allocator = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 32>();
+  struct State {
+    ZiMultiplex *mx;
+    Zi::IOBufAllocator *allocator;
+    Zi::IOBufWait request;
+    ZmSemaphore done;
+    unsigned mode, callbacks = 0, cancelled = 0;
+    bool native, submitted = false, valid = true;
+  } state{&mx, allocator, {}, {}, mode, 0, 0, native};
+  auto started = mx.start();
+  ZuCheckRT(started);
+  if (!started) return;
+  mx.run([state = &state] {
+    auto fn = [state](Zi::IOBufWaitResult::T result, ZmRef<ZiIOBuf> buf) {
+      ++state->callbacks;
+      state->valid &= state->submitted && state->mx->invoked(3);
+      state->valid &= state->request.busy() == (state->mode == 3);
+      if (state->mode == 1 || state->mode == 2) {
+	state->valid &= result == Zi::IOBufWaitResult::Failed && !buf;
+      } else {
+	state->valid &= result == Zi::IOBufWaitResult::Ready && bool(buf);
+	if (buf) {
+	  state->valid &= buf->allocator() == state->allocator && buf->owner == state;
+	  state->valid &= buf->length == 7 && buf->registered() == state->native;
+	  state->valid &= buf->size == 11 + state->allocator->headRoom +
+	    state->allocator->tailRoom && buf->skip == state->allocator->headRoom;
+	}
+      }
+      buf = nullptr;
+      if (state->mode != 3) state->done.post();
+    };
+    state->allocator->waitBuf(state->request, 3, state,
+      state->mode == 1 ? 12 : 7, 11, ZuMv(fn));
+    if (state->mode == 3) {
+      // Start and cancel are FIFO on mx Tx. The provider has already posted its
+      // exact grant when cancellation reaches it; completion must precede ack.
+      state->allocator->cancelBuf(state->request, [state] {
+	++state->cancelled;
+	state->valid &= state->callbacks == 1 && !state->request.busy();
+	state->valid &= state->mx->invoked(3);
+	state->done.post();
+      });
+    }
+    state->submitted = true;
+  }, 3);
+  auto completed = state.done.timedwait(Zm::now(5)) == 0;
+  ZuCheckRT(completed);
+  ZuCheckRT(mx.stop());
+  ZuCheckRT(state.valid && state.callbacks == 1 && !state.request.busy());
+  ZuCheckRT(state.cancelled == unsigned(mode == 3));
+  if (native) {
+    auto provider = transport->backing.ptr();
+    auto expected = unsigned(mode == 0 || mode == 3);
+    ZuCheckRT(provider->valid && provider->registeredAllocs == expected &&
+      provider->registeredFrees == expected);
+  }
+}
+
 struct HugePrint;
 struct HugePrintFn : ZuPrintBuffer {
   static unsigned length(const HugePrint &) { return UINT_MAX; }
@@ -469,5 +538,11 @@ int main(int argc, char **argv)
   ZuTestCall(testSyncOwnerProgress);
   ZuTestCall(testPluginBacking, false);
   ZuTestCall(testPluginBacking, true);
+  ZuTestCall(testAsyncAllocation, false, 0);
+  ZuTestCall(testAsyncAllocation, false, 1);
+  ZuTestCall(testAsyncAllocation, true, 0);
+  ZuTestCall(testAsyncAllocation, true, 1);
+  ZuTestCall(testAsyncAllocation, true, 2);
+  ZuTestCall(testAsyncAllocation, true, 3);
   return 0;
 }

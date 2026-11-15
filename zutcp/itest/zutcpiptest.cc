@@ -173,7 +173,7 @@ static void testCarriage(bool v6, bool tcp = false)
   if (!bound) { if (fd >= 0) close(fd); alarm(0); return; }
 
   ZiMultiplex mx{ZiMxParams{}.rxBufSize(32).rxQuantum(8)
-    .scheduler([](auto &p) { p.nThreads(3); })};
+    .scheduler([](auto &p) { p.nThreads(4).thread(4, [](auto &t) { t.isolated(true); }); })};
   ZmSemaphore rxDone, txDone, controlDone;
   ZmRef<Zi::IOBuf> input;
   Zutcp::IPView seen;
@@ -195,7 +195,7 @@ static void testCarriage(bool v6, bool tcp = false)
       onRx = mx.invoked(mx.rxThread()) && buf->registered();
       input = ZuMv(buf);
       rxDone.post();
-    }, .spin = 0};
+    }, .spin = 0, .txSid = 4};
   if (tcp) params.packet = {};
   ZmRef<Zutcp::Stack> stack = new Zutcp::Stack{&mx, ZuMv(params)};
   mx.plugin(stack);

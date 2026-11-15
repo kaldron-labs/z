@@ -7,6 +7,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmScratch.hh>
 #include <zlib/Zutcp.hh>
 
 
@@ -37,11 +38,15 @@ struct TCPStateTest {
       c.m_congestion.sent(1);
     }
     c.m_dataRto.sent(start, c.m_rtt, c.app()->rtoParams());
+    c.scheduleDataRto();
     c.app()->clock += timeUS(20000);
-    c.dataRtoExpired();
+    bool fired = c.app()->mx()->holdCallback(&c.m_rtoTimer,
+      [&](auto &callback) { callback(); });
     return c.m_txPkts.lost() == 1 && c.m_txPkts.bytesInFlight() == 1 &&
+      fired &&
       c.m_rack.deadline == start + timeUS(45000) && c.m_lossTimer &&
       c.m_lossTimerOut == c.m_rack.deadline && !c.m_rtoTimer &&
+      !*c.m_rtoTimerRes &&
       !*c.m_rtoTimerOut && c.m_dataRto.deadline() == start + timeUS(60000);
   }
   template <typename T> static bool restoreRtoAfterLoss(T &link) {
@@ -52,6 +57,7 @@ struct TCPStateTest {
     c.rackExpired(c.m_txRuntimeGen, {});
     return !*c.m_rack.deadline && !c.m_lossTimer && !*c.m_lossTimerOut &&
       c.m_rtoTimer && c.m_rtoTimerOut == c.m_dataRto.deadline() &&
+      c.m_rtoTimerRes == c.m_rtoTimerOut &&
       c.m_rtoTimerOut == c.app()->clock + timeUS(15000);
   }
   template <typename T> static void armLoss(T &link, ZuTime out) {
@@ -71,6 +77,40 @@ struct TCPStateTest {
     work.gen = c.m_txRuntimeGen;
     c.processAckTx(ZuMv(work));
   }
+  template <typename T> static void armReserved(T &link, CxnTimer::T action, ZuTime out) {
+    auto &c = static_cast<typename T::Base &>(link);
+    auto state = c.timerState(action);
+    c.scheduleCxnTimer("reservation test", action, out, ZmScheduler::Update,
+      state.timer, c.timerReservation(action));
+  }
+  template <typename T> static ZuTime deadline(T &link, CxnTimer::T action) {
+    auto &c = static_cast<typename T::Base &>(link);
+    return *c.timerState(action).deadline;
+  }
+  template <typename T> static ZuTime reservation(T &link, CxnTimer::T action) {
+    auto &c = static_cast<typename T::Base &>(link);
+    auto res = c.timerReservation(action);
+    return res ? *res : ZuTime{};
+  }
+  template <typename T> static ZmScheduler::Timer *timerNode(T &link, CxnTimer::T action) {
+    auto &c = static_cast<typename T::Base &>(link);
+    return c.timerState(action).timer;
+  }
+  template <typename T> static void softDisarm(T &link, CxnTimer::T action) {
+    auto &c = static_cast<typename T::Base &>(link);
+    switch (action) {
+      case CxnTimer::User: c.m_userTimerOut = ZuTime{}; break;
+      case CxnTimer::PTO: c.disarmPTO_(); break;
+      case CxnTimer::RTO: c.disarmDataRto(); break;
+      default: break;
+    }
+  }
+  template <typename T> static bool closePolicyDisarmed(T &link) {
+    auto &c = static_cast<typename T::Base &>(link);
+    return !*c.m_closeDrainTimerOut && !c.m_closeDrainTimer &&
+      !*c.m_finWaitTimerOut && !c.m_finWaitTimer &&
+      !*c.m_userTimerOut && !*c.m_ptoTimerOut && !*c.m_rtoTimerOut;
+  }
 };
 } // namespace Zutcp
 
@@ -84,7 +124,40 @@ static ZuBSpan span_(const uint8_t *data, unsigned len)
 
 struct TimerApp : public Zutcp::Hub<TimerApp> {
   using Base = Zutcp::Hub<TimerApp>;
-  ZiMultiplex multiplex;
+  struct TimerMx : ZiMultiplex {
+    using ZiMultiplex::ZiMultiplex;
+    ZmAtomic<unsigned> adds{0}, cancels{0};
+    ZmScheduler::Timer *watched = nullptr;
+    ZmAtomic<unsigned> watchedAdds{0};
+    template <typename ArmFn>
+    void add(ZmScheduler::Timer *timer, ZuTime out, int mode,
+      ArmFn &&armFn, unsigned sid = 0) {
+      ++adds;
+      if (timer == watched) ++watchedAdds;
+      ZiMultiplex::add(timer, out, mode, ZuFwd<ArmFn>(armFn), sid);
+    }
+    bool cancel(ZmScheduler::Timer *timer) {
+      ++cancels;
+      return ZiMultiplex::cancel(timer);
+    }
+    template <typename F>
+    bool holdCallback(ZmScheduler::Timer *timer, F &&f) {
+      cancel(timer);
+      auto callback = ZuMv(timer->fn);
+      timer->fn = {};
+      if (!callback) return false;
+      auto fire = [&callback] {
+	auto size = callback.pushSize();
+	auto storage = ZmScratch(uint64_t, unsigned((size + sizeof(uint64_t) - 1) / sizeof(uint64_t)));
+	callback.push(storage.data());
+	decltype(callback)::invoke(storage.data());
+      };
+      f(fire);
+      return true;
+    }
+    void watchTimer(ZmScheduler::Timer *timer) { watched = timer; watchedAdds = 0; }
+  };
+  TimerMx multiplex;
   ZuTime clock;
   bool native = false;
   Zi::IOBufAllocator *dataTxAllocator() const { return Zutcp::inlineAllocator(); }
@@ -108,6 +181,8 @@ struct TimerApp : public Zutcp::Hub<TimerApp> {
   ZuTime transportNow() const {
     return *clock ? clock : Base::transportNow();
   }
+  TimerMx *mx() { return &multiplex; }
+  const TimerMx *mx() const { return &multiplex; }
 
   bool rxInvoked() const { return true; }
   bool txInvoked() const { return true; }
@@ -164,7 +239,9 @@ friend inline ZuStringT<"Zutcp.TimerTest.Link"> ZmNHeapID(TimerLink *);
   }
   void armData() {
     Zutcp::TxRange range{nullptr, 0, 1, 0};
-    Base::acceptTxData(Zutcp::SentFrameRef::data(range, false));
+    auto ref = Zutcp::SentFrameRef::data(range, false);
+    Base::publishTxCommit(ref, false);
+    Base::acceptTxData(ref);
   }
   bool flushTx() { return false; }
   bool armPersist() {
@@ -179,12 +256,31 @@ friend inline ZuStringT<"Zutcp.TimerTest.Link"> ZmNHeapID(TimerLink *);
   }
   void cancelAll() { Base::cancelTimers_(); }
   void deliverPTO() { Base::cxnTimer(Zutcp::CxnTimer::PTO); }
+  void deliver(Zutcp::CxnTimer::T action) { Base::cxnTimer(action); }
+  void armReserved(Zutcp::CxnTimer::T action, ZuTime out) {
+    Zutcp::TCPStateTest::armReserved(*this, action, out);
+  }
+  void softDisarm(Zutcp::CxnTimer::T action) {
+    Zutcp::TCPStateTest::softDisarm(*this, action);
+  }
+  ZuTime deadline(Zutcp::CxnTimer::T action) {
+    return Zutcp::TCPStateTest::deadline(*this, action);
+  }
+  ZuTime reservation(Zutcp::CxnTimer::T action) {
+    return Zutcp::TCPStateTest::reservation(*this, action);
+  }
+  ZmScheduler::Timer *timerNode(Zutcp::CxnTimer::T action) {
+    return Zutcp::TCPStateTest::timerNode(*this, action);
+  }
   void deliverAck() { Base::cxnTimer(Zutcp::CxnTimer::AckDelay); }
   bool startSetup() { return Base::startHandshake(); }
   void finishSetup() { Base::establish(); Base::cancelHBTimer(); }
   void resetSetup() { Base::resetLink(); }
   void deliverConnect() { Base::cxnTimer(Zutcp::CxnTimer::Connect); }
   bool pendingTimers() const { return Base::timersActive(); }
+  bool closePolicyDisarmed() {
+    return Zutcp::TCPStateTest::closePolicyDisarmed(*this);
+  }
   void deliverUser() { Base::cxnTimer(Zutcp::CxnTimer::User); }
   void deliverCloseDrain() { Base::cxnTimer(Zutcp::CxnTimer::CloseDrain); }
   void deliverFinWait() { Base::cxnTimer(Zutcp::CxnTimer::FinWait); }
@@ -199,8 +295,9 @@ friend inline ZuStringT<"Zutcp.TimerTest.Link"> ZmNHeapID(TimerLink *);
   }
   void deliverPersist() { Base::cxnTimer(Zutcp::CxnTimer::Persist); }
   void sentRange(uint64_t offset, unsigned length, bool fin = false) {
-    Base::acceptTxData(Zutcp::SentFrameRef::data(
-      Zutcp::TxRange{nullptr, 0, length, offset}, fin));
+    auto ref = Zutcp::SentFrameRef::data(Zutcp::TxRange{nullptr, 0, length, offset}, fin);
+    Base::publishTxCommit(ref, false);
+    Base::acceptTxData(ref);
   }
   void byteAck(uint64_t next) { Zutcp::TCPStateTest::byteAck(*this, next); }
   void armAckPTO(ZuTime ack, ZuTime pto) {
@@ -336,18 +433,31 @@ void testUserDeadline()
     link->sentRange(0, fin ? 0 : 2, fin);
     app.clock += ZuTime{60};
     link->byteAck(fin ? 1 : 2);
-    ZuCHECK(!link->pendingTimers(), "full data or FIN acknowledgment must cancel the episode");
+    ZuCHECK(!*link->deadline(Zutcp::CxnTimer::User) &&
+	*link->reservation(Zutcp::CxnTimer::User),
+	"full data or FIN acknowledgment must disarm the policy and retain its wake");
+    if (!fin) {
+      app.multiplex.watchTimer(link->timerNode(Zutcp::CxnTimer::User));
+      link->sentRange(2, 1);
+      ZuCHECK(!app.multiplex.watchedAdds &&
+	link->deadline(Zutcp::CxnTimer::User) == app.clock + ZuTime{120},
+	"new original before old User wake must reuse its physical reservation");
+    }
     app.clock += ZuTime{60};
     link->deliverUser();
-    ZuCHECK(!link->user && !link->closed(), "an old timer cannot abort a quiescent connection");
+    ZuCHECK(!link->user && !link->closed(),
+	"old User wake must not abort a quiescent or newly active connection");
     if (!fin) {
-      link->sentRange(2, 1);
-      app.clock += ZuTime{119};
+      ZuCHECK(app.multiplex.watchedAdds == 1 &&
+	link->reservation(Zutcp::CxnTimer::User) == app.clock + ZuTime{60},
+	"stale User wake must rearm once at the new episode deadline");
+      app.clock += ZuTime{59};
       link->deliverUser();
       ZuCHECK(!link->user, "new data after quiescence must start a fresh deadline");
       app.clock += ZuTime{1};
       link->deliverUser();
       ZuCHECK(link->user == 1, "a fresh outstanding episode must still expire");
+      app.multiplex.watchTimer(nullptr);
     }
     link->disconnect();
   }
@@ -438,6 +548,7 @@ void testCloseDeadlines()
 	"unacknowledged simultaneous or passive FIN retains the original drain deadline");
     }
     link->disconnect();
+    ZuCHECK(!link->pendingTimers(), "disconnect must remove every retained timer node");
   }
   for (unsigned order = 0; order < 3; ++order) {
     TimerApp app{ZuTime{0}};
@@ -454,7 +565,7 @@ void testCloseDeadlines()
     link->ackTxUnackd(0, 0, true);
     if (!order) ZuCHECK(link->peerData(0, 0, true), "peer FIN must finish FIN-WAIT-2");
     ZuCHECK(link->tcpCloseState() == (order == 2 ? State::Closed : State::TimeWait) &&
-	!link->pendingTimers(),
+	link->closePolicyDisarmed(),
       "both FIN directions must cancel drain and FIN-wait policy timers");
     app.clock += ZuTime{120};
     link->deliverCloseDrain();
@@ -462,6 +573,7 @@ void testCloseDeadlines()
     ZuCHECK(!link->closeDrain && !link->finWait && !link->closed(),
       "retired close-policy callbacks cannot abort a completed handshake");
     link->disconnect();
+    ZuCHECK(!link->pendingTimers(), "disconnect must remove every retained timer node");
   }
 }
 
@@ -624,6 +736,107 @@ void testTimerGuard()
   link->disconnect();
 }
 
+void testTimerReservation()
+{
+  ZuTestScope(testTimerReservation);
+  for (auto action : {Zutcp::CxnTimer::RTO, Zutcp::CxnTimer::PTO,
+      Zutcp::CxnTimer::User}) {
+    TimerApp app;
+    app.clock = Zm::now() + ZuTime{1000};
+    ZmRef<TimerLink> link = new TimerLink{&app};
+    ZuCHECK(link->establish(), "reservation test requires an established owner");
+    link->cancelAll();
+    ZuTime start = app.clock;
+    unsigned adds = app.multiplex.adds, cancels = app.multiplex.cancels;
+    link->armReserved(action, start + ZuTime{100});
+    ZuCHECK(app.multiplex.adds == adds + 1 &&
+	link->reservation(action) == start + ZuTime{100},
+	"first logical deadline must reserve one physical wake");
+    link->armReserved(action, start + ZuTime{150});
+    link->armReserved(action, start + ZuTime{150});
+    ZuCHECK(app.multiplex.adds == adds + 1 &&
+	link->deadline(action) == start + ZuTime{150} &&
+	link->reservation(action) == start + ZuTime{100},
+	"later and equal logical updates must reuse the earlier physical wake");
+    link->softDisarm(action);
+    ZuCHECK(!*link->deadline(action) &&
+	link->reservation(action) == start + ZuTime{100} &&
+	app.multiplex.cancels == cancels,
+	"ordinary disarm must retain the physical reservation without cancel");
+    link->armReserved(action, start + ZuTime{200});
+    ZuCHECK(app.multiplex.adds == adds + 1 &&
+	link->deadline(action) == start + ZuTime{200},
+	"new episode before stale wake must reuse its physical reservation");
+    bool held = app.multiplex.holdCallback(link->timerNode(action), [&](auto &old) {
+      link->armReserved(action, start + ZuTime{50});
+      ZuCHECK(app.multiplex.adds == adds + 2 &&
+	  link->reservation(action) == start + ZuTime{50},
+	  "earlier deadline must advance the physical wake");
+      app.clock = start + ZuTime{25};
+      old(); // invoke the scheduler-stored callback after its node was rearmed
+      ZuCHECK(app.multiplex.adds == adds + 3 &&
+	  link->deadline(action) == start + ZuTime{50} &&
+	  link->reservation(action) == start + ZuTime{50},
+	  "old queued callback must preserve and re-reserve the current deadline");
+    });
+    ZuCHECK(held, "earlier rearm fixture requires a stored scheduler callback");
+    app.clock = start + ZuTime{50};
+    link->deliver(action);
+    link->deliver(action);
+    ZuCHECK(!*link->deadline(action) && !*link->reservation(action) &&
+	(action != Zutcp::CxnTimer::PTO || link->ptoCount == 1),
+	"due current deadline must dispatch once despite a queued old callback");
+    link->armReserved(action, start + ZuTime{300});
+    ZuCHECK(app.multiplex.adds == adds + 4,
+	"expired reservation must permit a fresh physical wake");
+    link->cancelAll();
+    ZuCHECK(!*link->deadline(action) && !*link->reservation(action) &&
+	!link->pendingTimers() && app.multiplex.cancels > cancels,
+	"hard cancel must remove all physical nodes and reservations");
+    unsigned prior = link->ptoCount;
+    link->armReserved(action, app.clock + ZuTime{100});
+    held = app.multiplex.holdCallback(link->timerNode(action), [&](auto &old) {
+      link->resetSetup();
+      ZuCHECK(link->startSetup(), "reset must start a new timer generation");
+      link->finishSetup();
+      link->cancelAll();
+      link->armReserved(action, app.clock + ZuTime{100});
+      adds = app.multiplex.adds;
+      old(); // invoke the scheduler-stored callback from the prior generation
+      ZuCHECK(app.multiplex.adds == adds + 1 &&
+	  link->deadline(action) == app.clock + ZuTime{100} &&
+	  link->reservation(action) == app.clock + ZuTime{100} &&
+	  link->ptoCount == prior,
+	  "old-generation callback must recheck the new logical deadline");
+    });
+    ZuCHECK(held, "reset fixture requires a stored scheduler callback");
+    link->disconnect();
+  }
+  {
+    TimerApp app;
+    app.clock = Zm::now() + ZuTime{1000};
+    ZmRef<TimerLink> link = new TimerLink{&app};
+    ZuCHECK(link->establish(), "active recovery test requires an established owner");
+    link->cancelAll();
+    link->sentRange(0, 1);
+    auto rto = link->deadline(Zutcp::CxnTimer::RTO);
+    auto user = link->deadline(Zutcp::CxnTimer::User);
+    ZuCHECK(*rto && *user && rto < user,
+	"accepted original must arm independent RTO and User obligations");
+    app.clock = rto;
+    bool rtoHeld = app.multiplex.holdCallback(link->timerNode(Zutcp::CxnTimer::RTO),
+      [&](auto &fire) { fire(); });
+    ZuCHECK(rtoHeld && link->rto == 1,
+	"stored RTO callback must service a due original exactly once");
+    app.clock = user;
+    bool userHeld = app.multiplex.holdCallback(link->timerNode(Zutcp::CxnTimer::User),
+      [&](auto &fire) { fire(); });
+    ZuCHECK(userHeld && link->user == 1 && link->closed(),
+	"stored User callback must expire one active unacknowledged episode");
+    link->disconnect();
+  }
+}
+
 void testRtoLossTimerHandoff()
 {
   ZuTestScope(testRtoLossTimerHandoff);
@@ -655,4 +868,5 @@ int main(int argc, char **argv)
   ZuTestCall(testRtoLossTimerHandoff);
   ZuTestCall(testPersistTimer);
   ZuTestCall(testTimerGuard);
+  ZuTestCall(testTimerReservation);
 }

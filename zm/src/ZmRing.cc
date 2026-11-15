@@ -58,38 +58,28 @@ int Blocker::wait(
   /* new (&logBuf[(logIndex++) & 1023])
     Log{"wait", Zm::now(), 0, this,
       reinterpret_cast<uint32_t *>(&addr), val}; */
+  // The ring spins before registering Waiting; this blocker only parks.
   if (ZuUnlikely(params.timeout)) {
     ZuTime out{ZuTime::Nano{int128_t(params.timeout) * 1000000}};
-    unsigned i = 0;
-    do {
-      if (ZuUnlikely(i >= params.spin)) {
-	if (syscall(SYS_futex, reinterpret_cast<volatile int *>(&addr),
-	      FUTEX_WAIT | FUTEX_PRIVATE_FLAG,
-	      static_cast<int>(val), &out, 0, 0) < 0) {
-	  auto errno_ = errno;
-	  /* new (&logBuf[(logIndex++) & 1023])
-	    Log{"woke", Zm::now(), errno_, this,
-	      reinterpret_cast<uint32_t *>(&addr), addr}; */
-	  if (errno_ == ETIMEDOUT) return Zu::NotReady;
-	  if (errno_ == EAGAIN) return Zu::OK;
-	}
-	i = 0;
-      } else
-	++i;
-    } while (addr == val);
-  } else {
-    unsigned i = 0;
-    do {
-      if (ZuUnlikely(i >= params.spin)) {
-	syscall(SYS_futex, reinterpret_cast<volatile int *>(&addr),
-	    FUTEX_WAIT | FUTEX_PRIVATE_FLAG, static_cast<int>(val), 0, 0, 0);
+    while (addr == val) {
+      if (syscall(SYS_futex, reinterpret_cast<volatile int *>(&addr),
+	    FUTEX_WAIT | FUTEX_PRIVATE_FLAG, int(val), &out, 0, 0) < 0) {
+	auto errno_ = errno;
 	/* new (&logBuf[(logIndex++) & 1023])
-	  Log{"woke", Zm::now(), errno, this,
+	  Log{"woke", Zm::now(), errno_, this,
 	    reinterpret_cast<uint32_t *>(&addr), addr}; */
-	i = 0;
-      } else
-	++i;
-    } while (addr == val);
+	if (errno_ == ETIMEDOUT) return Zu::NotReady;
+	if (errno_ == EAGAIN) return Zu::OK;
+      }
+    }
+  } else {
+    while (addr == val) {
+      syscall(SYS_futex, reinterpret_cast<volatile int *>(&addr),
+	  FUTEX_WAIT | FUTEX_PRIVATE_FLAG, int(val), 0, 0, 0);
+      /* new (&logBuf[(logIndex++) & 1023])
+	Log{"woke", Zm::now(), errno, this,
+	  reinterpret_cast<uint32_t *>(&addr), addr}; */
+    }
   }
   return Zu::OK;
 }
@@ -140,11 +130,6 @@ int Blocker::wait(
     const Params &params)
 {
   DWORD timeout = params.timeout ? params.timeout : INFINITE;
-  unsigned i = 0;
-  while (i < params.spin) {
-    if (addr != val) return Zu::OK;
-    ++i;
-  }
   while (addr == val) {
     if (ZuUnlikely(!m_sem)) return Zu::IOError;
     DWORD r = WaitForSingleObject(m_sem, timeout);

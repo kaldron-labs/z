@@ -85,4 +85,12 @@ ZmHeapTest_SOURCES = ZmHeapTest.cc ZmHeapTest.hh $(zm_common_sources)
 ZmHeapTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir) -DZM_EXPORTS -DZmHeap_TEST
 ZmHeapTest_LDADD = $(top_builddir)/zu/src/libZu.la \
 	@Z_MT_LIBS@ @Z_LIBS@
+TESTPROGS += ZmSchedProgressTest ZmRingWaitTest ZmSchedServiceTest
+ZmSchedServiceTest_SOURCES = ZmSchedServiceTest.cc
+ZmRingWaitTest_SOURCES = ZmRingWaitTest.cc ZmRingWaitTest.hh
+ZmSchedProgressTest_SOURCES = ZmSchedProgressTest.cc ZmSchedProgressTest.hh \
+	$(zm_srcdir)/ZmHeap.cc $(zm_common_sources)
+ZmSchedProgressTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir) -DZM_EXPORTS -DZmSchedProgress_TEST
+ZmSchedProgressTest_LDADD = $(top_builddir)/zu/src/libZu.la \
+	@Z_MT_LIBS@ @Z_LIBS@
 EXTRA_DIST = README.md

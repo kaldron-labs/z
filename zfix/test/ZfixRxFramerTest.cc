@@ -69,6 +69,34 @@ static void coalesced() {
   stream.push(ZuMv(exact));
   ZuCheck(frame.next_(stream, alloc, first) == 1 && first.ptr() == ptr);
 }
+static void coalescedShared() {
+  ZuTestScope(coalescedShared);
+  Stream stream; RxFramer frame;
+  auto buf = alloc(); buf->append(Wire); buf->append(Wire); buf->append(Wire);
+  auto data = buf->data();
+  stream.push(ZuMv(buf));
+  unsigned slices = 0, copies = 0;
+  auto copied = [&copies]() -> ZmRef<Queue::Node> { ++copies; return alloc(); };
+  auto slice = [&slices](Queue::Node *source, uint8_t *p, unsigned n)
+      -> ZmRef<Queue::Node> {
+    ++slices;
+    auto heap = source->allocator();
+    if (auto view = dynamic_cast<Zi::RxSlice<Queue::Node> *>(source))
+      heap = view->slice.heap;
+    return new Zi::RxSlice<Queue::Node>{source, p, n, heap};
+  };
+  ZmRef<ZiIOBuf> first, second, third; Fmt::FrameView view;
+  ZuCheck(frame.nextShared_(stream, copied, slice, first, &view) == 1);
+  ZuCheck(first && first->data() == data &&
+    view.wire.data() == reinterpret_cast<const char *>(data) &&
+    view.msgType == "D" && slices == 2 && !copies);
+  ZuCheck(frame.nextShared_(stream, copied, slice, second) == 1 &&
+    second->data() == data + Wire.length() && slices == 4 && !copies);
+  ZuCheck(frame.nextShared_(stream, copied, slice, third) == 1 &&
+    third->data() == data + (Wire.length()<<1) && !stream && !copies);
+  stream.clean(); frame.reset_();
+  ZuCheck(first->cspan() == Wire && second->cspan() == Wire && third->cspan() == Wire);
+}
 static void mixed() {
   ZuTestScope(mixed);
   for (unsigned split = 1; split < Wire.length(); ++split) {
@@ -216,6 +244,7 @@ int main(int argc, char **argv) {
   ZuTestCall(splits);
   ZuTestCall(bytes);
   ZuTestCall(coalesced);
+  ZuTestCall(coalescedShared);
   ZuTestCall(mixed);
   ZuTestCall(gathered);
   ZuTestCall(refusal);

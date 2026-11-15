@@ -17,6 +17,7 @@
 #include <zlib/ZtArray.hh>
 
 #include <zlib/ZutcpOptions.hh>
+#include <zlib/ZutcpQueue.hh>
 
 namespace Zutcp {
 
@@ -162,7 +163,7 @@ struct TxUnackdRange {
   void write(const I &) { }
 };
 
-class TxUnackdRanges {
+class TxUnackdRanges : public QueueTelemetry<"unacknowledged", Ztc::QueueType::Tx> {
 public:
   enum { Max = 128 }; // preserved former public capacity
   // Ordinary focused cases had a 95th percentile of two retained ranges;
@@ -193,6 +194,10 @@ public:
   };
 
   explicit TxUnackdRanges(uint64_t = 0) { }
+  void telemetry(Ztc::QueueTelemetry &data) const override {
+    queueTelemetry(data);
+    data.count = count_();
+  }
 
   ZmPQResult::T add(Node *node) {
     ZmRef<Node> node_{node};
@@ -440,14 +445,14 @@ private:
 #endif
 };
 
-using DataRxPQueue =
+using DataRxPQueue = Queue<
   ZmPQueue<DataRx,
     ZmPQueueNode<DataRx,
       ZmPQueueHeapID<"Zutcp.Connection.RxQueue",
 	ZmPQueueFn<DataRxPQueueFn,
 	  ZmPQueueOverwrite<false,
 	    ZmPQueueBits<2,
-	      ZmPQueueLevels<2>>>>>>>;
+	      ZmPQueueLevels<2>>>>>>>, "reassembly", Ztc::QueueType::Rx, true>;
 
 
 // Queue coordinates change as bytes are packetized. Shared storage keeps the
@@ -479,11 +484,11 @@ struct TxStoredRange : public TxBacking {
   }
   template <typename I> void write(const I &) { }
 };
-using TxRanges = ZmPQueue<TxStoredRange,
+using TxRanges = Queue<ZmPQueue<TxStoredRange,
   ZmPQueueNode<TxStoredRange,
     ZmPQueueHeapID<"Zutcp.Connection.TxRanges",
       ZmPQueueFn<ZmPQueueDefaultFn<TxStoredRange>,
-	ZmPQueueBits<2, ZmPQueueLevels<3>>>>>>;
+	ZmPQueueBits<2, ZmPQueueLevels<3>>>>>>, "pending", Ztc::QueueType::Tx, true>;
 
 using DataTxPQueue = TxUnackdRanges;
 
@@ -529,6 +534,12 @@ public:
   // Return whether the selected snapshot actually includes the pending DSACK.
   template <typename Queue>
   bool fill(const Queue &queue, uint64_t next, TCPOptions &options) {
+    options.sackCount = 0;
+    for (auto &block : options.sack) block = {};
+    if (ZuLikely(!queue.count_() && m_duplicate.last <= m_duplicate.first)) {
+      m_recentCount = 0;
+      return false;
+    }
     RxSpan candidates[TCPOptions::MaxSACKBlocks] = {};
     unsigned ranks[TCPOptions::MaxSACKBlocks] = {};
     unsigned count = 0;
@@ -553,8 +564,6 @@ public:
       ranks[at] = rank;
       return true;
     });
-    options.sackCount = 0;
-    for (auto &block : options.sack) block = {};
     unsigned capacity = options.flags & TCPOptions::TS ? 3 : TCPOptions::MaxSACKBlocks;
     bool dsack = m_duplicate.last > m_duplicate.first &&
       (m_duplicate.last <= next || containing.last > containing.first);

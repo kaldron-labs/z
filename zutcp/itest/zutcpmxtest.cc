@@ -15,6 +15,7 @@
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZtArray.hh>
 #include <zlib/Zutcp.hh>
 #include "ZiTestResidue.hh"
 
@@ -223,9 +224,10 @@ static ZiMxParams mxParams()
 {
   return ZiMxParams{}.rxBufSize(128).rxThread(1).txThread(2)
     .scheduler([](auto &s) {
-      s.nThreads(3)
+      s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
-	.thread(2, [](auto &t) { t.isolated(1); });
+	.thread(2, [](auto &t) { t.isolated(1); })
+	.thread(4, [](auto &t) { t.isolated(true); });
     });
 }
 
@@ -290,6 +292,94 @@ static bool extraInitial(
   });
 }
 
+using QueueSamples = ZtArray<Ztc::QueueTelemetry,
+  ZtArrayHeapID<"Zutcp.MxTest.QueueSamples">>;
+
+static bool queueCoverage(
+  const QueueSamples &rows, bool client, const ZuID &mxID, unsigned listeners = 0)
+{
+  static constexpr const char *core[] = {
+    "reader", "reassembly", "admission", "pending",
+    "unacknowledged", "sent", "retransmit", "lost"};
+  static constexpr const char *stack[] = {
+    "closed-tuples", "tfo-cookies", "rx-returns", "waiting-providers"};
+  static constexpr const char *rings[] = {".rx", ".fill", ".tx", ".cq"};
+  unsigned seen[8] = {}, stackSeen[4] = {}, ringSeen[4] = {};
+  unsigned closeWaiters = 0, endpoints = 0, allocations = 0;
+  ZuID owner;
+  auto prefix = [](ZuCSpan s, const char *text) {
+    unsigned n = strlen(text);
+    return s.length() >= n && !memcmp(s.data(), text, n);
+  };
+  for (unsigned at = 0, n = rows.length(); at < n; ++at) {
+    const auto &row = rows[at];
+    for (unsigned before = 0; before < at; ++before) {
+      const auto &other = rows[before];
+      if (row.ownerID == other.ownerID && row.id == other.id && row.type == other.type)
+        return false;
+    }
+    bool found = false;
+    for (unsigned i = 0; i < 8; ++i) {
+      if (row.id != core[i]) continue;
+      ++seen[i];
+      if (!owner) owner = row.ownerID;
+      if (row.ownerID != owner || row.type != (i < 2 ? Ztc::QueueType::Rx : Ztc::QueueType::Tx))
+        return false;
+      unsigned capacity = i == 2 ? 4096 : i == 7 ? 1024 : 0;
+      if (row.size != capacity || (!capacity && row.full)) return false;
+      found = true;
+      break;
+    }
+    if (found) continue;
+    if (row.id == "close-waiters") {
+      if (row.ownerID != owner || row.type != Ztc::QueueType::Rx || row.size || row.full)
+        return false;
+      ++closeWaiters;
+      continue;
+    }
+    if (row.ownerID != mxID) {
+#ifdef Zutcp_DEBUG
+      if (row.ownerID == "Zutcp.Log" && (row.id == "ring" || row.id == "overflow"))
+        continue;
+#endif
+      return false;
+    }
+    for (unsigned i = 0; i < 4; ++i) {
+      if (row.id != stack[i]) continue;
+      ++stackSeen[i];
+      if (row.type != (i == 3 ? Ztc::QueueType::Tx : Ztc::QueueType::Rx)) return false;
+      if (i < 3 ? !row.size : (row.size || row.full)) return false;
+      found = true;
+      break;
+    }
+    if (found) continue;
+    if (prefix(row.id, "endpoint-close:")) {
+      if (row.type != Ztc::QueueType::Rx || row.size || row.full) return false;
+      ++endpoints;
+    } else if (prefix(row.id, "allocation-waits:")) {
+      if (row.type != Ztc::QueueType::Tx || row.size || row.full) return false;
+      ++allocations;
+    } else if (prefix(row.id, "xdp.")) {
+      for (unsigned i = 0; i < 4; ++i) {
+        unsigned len = strlen(rings[i]);
+        if (row.id.length() < len ||
+            memcmp(row.id.data() + row.id.length() - len, rings[i], len)) continue;
+        ++ringSeen[i];
+        if (!row.size || row.type != (i == 0 || i == 3 ? Ztc::QueueType::Rx : Ztc::QueueType::Tx))
+          return false;
+        found = true;
+        break;
+      }
+      if (!found) return false;
+    } else return false;
+  }
+  for (unsigned i = 0; i < 8; ++i) if (seen[i] != 1) return false;
+  for (unsigned i = 0; i < 4; ++i)
+    if (stackSeen[i] != 1 || !ringSeen[i] || ringSeen[i] != ringSeen[0]) return false;
+  // This fixture creates the packet/control providers and one application Tx provider.
+  return closeWaiters == unsigned(client) && endpoints == 1 + listeners && allocations == 3;
+}
+
 enum { PassiveTotal = 1, PassivePending = 2 };
 
 static void testMxConnections(
@@ -349,9 +439,9 @@ static void testMxConnections(
   // This fixture deliberately leaves the active SYN to an unbound port unanswered.
   // Ordinary unbound TCP would correctly reset it before pending-cap admission.
   ZmRef<Zutcp::Stack> clientStack = new Zutcp::Stack{&client, {
-    .interface = a, .packet = pendingPeer}};
+    .interface = a, .packet = pendingPeer, .txSid = 4}};
   ZmRef<Zutcp::Stack> serverStack = new Zutcp::Stack{&server, {
-    .interface = b, .packet = pendingPeer}};
+    .interface = b, .packet = pendingPeer, .txSid = 4}};
   client.plugin(clientStack);
   server.plugin(serverStack);
   ZtString<> error;
@@ -553,12 +643,14 @@ static void testMxConnections(
 	if (cxn == cliCxn.ptr()) ++connections;
       });
       bool queueKeys = true;
-      auto n = clientStack->allQueues([&queues, &queueKeys](Ztc::Queue *queue) {
+      QueueSamples samples;
+      auto n = clientStack->allQueues([&queues, &queueKeys, &samples](Ztc::Queue *queue) {
 	Ztc::QueueTelemetry data;
 	queue->telemetry(data);
 	auto key = queue->telKey();
 	queueKeys &= data.ownerID == key.template p<0>() && data.id == key.template p<1>() &&
 	  data.type == key.template p<2>();
+	new (samples.push()) Ztc::QueueTelemetry{data};
 	++queues;
       });
       bool onTx = ZmBlock<bool>{}([&client, cliCxn](auto done) {
@@ -570,8 +662,9 @@ static void testMxConnections(
 	  done(n == 1 && found == 1);
 	});
       });
-      ZuCHECK(count == 1 && connections == 1 && n == 2 && queues == 2 && queueKeys && onTx,
-	"cold enumeration must expose the live connection and its two queues on control and Tx");
+      ZuCHECK(count == 1 && connections == 1 && n == queues && queueKeys && onTx &&
+          queueCoverage(samples, true, client.id(), unsigned(bool(passiveLimit))),
+	"cold enumeration exposes each actual native, Stack, provider and XDP queue with unique keys");
     }
     if (connected && !stopActive) {
       // Fresh-stub notifications exercise the plugin-to-native pointer dispatch.
@@ -587,30 +680,35 @@ static void testMxConnections(
       });
       ZuCHECK(stillConnected && !srv.disconnected,
 	"stopListening must preserve its established connection");
-      unsigned snapshots = 0;
-      bool snapshotValid = true, acceptedClosed = false, serverStopped = false;
+      QueueSamples retiredQueues;
+      unsigned visited = 0;
+      bool queueValid = true, acceptedClosed = false, serverStopped = false;
       bool closed = false;
       auto count = serverStack->allQueues([
-	&snapshots, &snapshotValid, &acceptedClosed, &serverStopped, &server, &srv,
+	&visited, &queueValid, &retiredQueues, &acceptedClosed, &srv,
 	&cli, cliCxn, &closed
       ](Ztc::Queue *queue) {
-	if (!snapshots++) {
+	if (!visited++) {
 	  cliCxn->close();
 	  closed = wait(cli.closed);
 	  acceptedClosed = wait(srv.closed);
-	  serverStopped = server.stop();
 	}
 	Ztc::QueueTelemetry data;
 	queue->telemetry(data);
 	auto key = queue->telKey();
-	snapshotValid &= key.p<0>() == data.ownerID && key.p<1>() == data.id &&
+	queueValid &= key.p<0>() == data.ownerID && key.p<1>() == data.id &&
 	  key.p<2>() == data.type && data.type >= 0 && data.type < Ztc::QueueType::N;
+	new (retiredQueues.push()) Ztc::QueueTelemetry{data};
       });
+      // Actual queue observations pin native owners. Complete synchronous stop
+      // after returning those borrowed owners, while still testing retirement
+      // and disconnected notifications inside the observer.
+      serverStopped = server.stop();
       ZuCHECK(closed && cli.valid && cli.disconnected == 1,
 	"close must drain native work and clear both pointers before Zi notification");
       ZuCHECK(acceptedClosed && serverStopped && srv.valid && srv.disconnected == 1 &&
-	  count == 2 && snapshots == 2 && snapshotValid,
-	"queue snapshots must survive connection and listener retirement inside the observer");
+	  count == visited && queueValid && queueCoverage(retiredQueues, false, server.id()),
+	"actual queues survive retirement during observation; releasing their pins permits full stop");
     }
     if (connected && stopActive && !passiveLimit) {
       client.connect(ZiConnectFn{[&unexpected](const ZiCxnInfo &) -> ZiConnection * {
@@ -710,14 +808,14 @@ static void testConnectTimeout(bool v6)
 	syn.localBase = base;
 	syn.seen.post();
       } else if (syn.localBase != base) ++syn.errors;
-    }}};
+    }, .txSid = 4}};
   ZmRef<Zutcp::Stack> serverStack = new Zutcp::Stack{&server, {
     .interface = b, .packet = [&marker](ZmRef<Zi::IOBuf> buf) {
       Zutcp::IPView ip;
       Zutcp::TCPView tcp;
       if (Zutcp::readIP(buf->cspan(), ip) && Zutcp::readTCP(ip, tcp) &&
 	  tcp.header.dstPort == 18199) marker.post();
-    }}};
+    }, .txSid = 4}};
   client.plugin(clientStack);
   server.plugin(serverStack);
   auto clientRx = client.allocator<Zi::IOBufType::RxTCP>();
@@ -824,8 +922,8 @@ static void testUserTimeout(bool v6)
   ZiIP local{v6 ? "2001:db8::10" : "198.18.0.10"};
   ZiIP remote{v6 ? "2001:db8::11" : "198.18.0.11"};
   ZiMultiplex client{mxParams()}, server{mxParams()};
-  ZmRef<Zutcp::Stack> clientStack = new Zutcp::Stack{&client, {.interface = a}};
-  ZmRef<Zutcp::Stack> serverStack = new Zutcp::Stack{&server, {.interface = b}};
+  ZmRef<Zutcp::Stack> clientStack = new Zutcp::Stack{&client, {.interface = a, .txSid = 4}};
+  ZmRef<Zutcp::Stack> serverStack = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(clientStack);
   server.plugin(serverStack);
   auto clientRx = client.allocator<Zi::IOBufType::RxTCP>();
@@ -942,8 +1040,8 @@ static void testGracefulFin(
 	tcp.header.seq == late.expectedSeq && tcp.header.ack == late.expectedAck;
       ++late.responses;
       late.event.post();
-    }}};
-  ZmRef<Zutcp::Stack> serverStack = new Zutcp::Stack{&server, {.interface = b}};
+    }, .txSid = 4}};
+  ZmRef<Zutcp::Stack> serverStack = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(clientStack);
   server.plugin(serverStack);
   auto clientRx = client.allocator<Zi::IOBufType::RxTCP>();
@@ -1213,8 +1311,8 @@ static void testResetPair(bool v6, bool serverFirst)
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"};
   ZiIP remote{v6 ? "2001:db8::21" : "198.18.0.21"};
   ZiMultiplex client{mxParams()}, server{mxParams()};
-  ZmRef<Zutcp::Stack> clientStack = new Zutcp::Stack{&client, {.interface = a}};
-  ZmRef<Zutcp::Stack> serverStack = new Zutcp::Stack{&server, {.interface = b}};
+  ZmRef<Zutcp::Stack> clientStack = new Zutcp::Stack{&client, {.interface = a, .txSid = 4}};
+  ZmRef<Zutcp::Stack> serverStack = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(clientStack);
   server.plugin(serverStack);
   auto clientRx = client.allocator<Zi::IOBufType::RxTCP>();
@@ -1337,8 +1435,8 @@ static void testAbortPair(bool v6, bool reject, bool serverTarget)
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"};
   ZiIP remote{v6 ? "2001:db8::21" : "198.18.0.21"};
   ZiMultiplex client{mxParams()}, server{mxParams()};
-  ZmRef<Zutcp::Stack> clientStack = new Zutcp::Stack{&client, {.interface = a}};
-  ZmRef<Zutcp::Stack> serverStack = new Zutcp::Stack{&server, {.interface = b}};
+  ZmRef<Zutcp::Stack> clientStack = new Zutcp::Stack{&client, {.interface = a, .txSid = 4}};
+  ZmRef<Zutcp::Stack> serverStack = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(clientStack);
   server.plugin(serverStack);
   auto clientRx = client.allocator<Zi::IOBufType::RxTCP>();
@@ -1783,8 +1881,8 @@ static void testNativeHistoryPair(bool v6, bool serverFirst)
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
   ZiMultiplex client{mxParams()}, server{mxParams()};
-  ZmRef<Zutcp::Stack> clientStack = new Zutcp::Stack{&client, {.interface = a}};
-  ZmRef<Zutcp::Stack> serverStack = new Zutcp::Stack{&server, {.interface = b}};
+  ZmRef<Zutcp::Stack> clientStack = new Zutcp::Stack{&client, {.interface = a, .txSid = 4}};
+  ZmRef<Zutcp::Stack> serverStack = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(clientStack);
   server.plugin(serverStack);
   HistoryEvents cli[2];
@@ -1969,7 +2067,7 @@ static void testSharedAdmissionPair(bool v6, bool passive)
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
   ZiMultiplex client{mxParams()}, server{mxParams()};
-  ZmRef<Zutcp::Stack> cs = new Zutcp::Stack{&client, {.interface = a}};
+  ZmRef<Zutcp::Stack> cs = new Zutcp::Stack{&client, {.interface = a, .txSid = 4}};
   ZmSemaphore initial;
   ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b,
     .packet = [&initial](ZmRef<ZiIOBuf> packet) {
@@ -1977,7 +2075,7 @@ static void testSharedAdmissionPair(bool v6, bool passive)
       Zutcp::TCPView tcp;
       if (Zutcp::readIP(packet->cspan(), ip) && Zutcp::readTCP(ip, tcp) &&
 	  tcp.header.dstPort == 18199 && (tcp.header.flags & 2)) initial.post();
-    }}};
+    }, .txSid = 4}};
   client.plugin(cs);
   server.plugin(ss);
   auto mappedRx = client.allocator<Zi::IOBufType::RxTCP>();
@@ -2196,8 +2294,8 @@ static void testConservativeTuplePair(bool v6)
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
   ZiMultiplex client{mxParams()}, server{mxParams()};
-  ZmRef<Zutcp::Stack> cs = new Zutcp::Stack{&client, {.interface = a}};
-  ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b}};
+  ZmRef<Zutcp::Stack> cs = new Zutcp::Stack{&client, {.interface = a, .txSid = 4}};
+  ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(cs);
   server.plugin(ss);
   HistoryClient app;
@@ -2326,8 +2424,8 @@ static void testPositiveWindowPair(bool v6)
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
   ZiMultiplex client{mxParams()}, server{mxParams()};
-  ZmRef<Zutcp::Stack> cs = new Zutcp::Stack{&client, {.interface = a}};
-  ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b}};
+  ZmRef<Zutcp::Stack> cs = new Zutcp::Stack{&client, {.interface = a, .txSid = 4}};
+  ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(cs);
   server.plugin(ss);
   HistoryClient app;
@@ -2453,8 +2551,8 @@ static void testNativeLifecyclePair(
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
   ZiMultiplex client{mxParams()}, server{mxParams()};
-  ZmRef<Zutcp::Stack> cs = new Zutcp::Stack{&client, {.interface = a}};
-  ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b}};
+  ZmRef<Zutcp::Stack> cs = new Zutcp::Stack{&client, {.interface = a, .txSid = 4}};
+  ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(cs);
   server.plugin(ss);
   HistoryClient app;
@@ -2771,8 +2869,8 @@ static void testPAWSPair(bool v6)
     .packet = [&peer, &resetPeer](ZmRef<ZiIOBuf> buf) {
       peer.received(buf);
       resetPeer.received(ZuMv(buf));
-    }}};
-  ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b}};
+    }, .txSid = 4}};
+  ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(cs); server.plugin(ss);
   HistoryServer listener{v6};
   listener.events[0].expected = Accepted;
@@ -2977,8 +3075,8 @@ static void testPassiveTuplePair(bool v6)
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
   ZiMultiplex client{mxParams()}, server{mxParams()};
-  ZmRef<Zutcp::Stack> cs = new Zutcp::Stack{&client, {.interface = a}};
-  ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b}};
+  ZmRef<Zutcp::Stack> cs = new Zutcp::Stack{&client, {.interface = a, .txSid = 4}};
+  ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(cs);
   server.plugin(ss);
   HistoryClient app;

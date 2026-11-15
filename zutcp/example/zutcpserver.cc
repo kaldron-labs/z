@@ -13,6 +13,7 @@
 #include <iostream>
 
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmPlatform.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/Zutcp.hh>
 
@@ -47,14 +48,14 @@ private:
   bool			m_tfo = getenv("ZUTCP_TEST_TFO") != nullptr;
   bool			m_service = getenv("ZUTCP_TEST_TFO_SERVER_DISABLED") == nullptr;
   bool			m_allowEarly = getenv("ZUTCP_TEST_TFO_RECEIVE_DENIED") == nullptr;
-  unsigned		m_nextCxn = 0;
-  ZmSemaphore		m_done;
   ZiIP			m_localIP;
   unsigned		m_localPort = 0;
   unsigned		m_target = 1;
   bool			m_waitEOF = false;
+  alignas(Zm::CacheLineSize) ZmSemaphore m_done;
   ZmAtomic<unsigned>	m_doneCount = 0;
   ZmAtomic<unsigned>	m_error = 0;
+  alignas(Zm::CacheLineSize) unsigned m_nextCxn = 0; // Rx
 };
 
 class AppCxn : public ZmNHeap<AppCxn>, public Zutcp::SrvCxn<App, AppCxn> {
@@ -117,11 +118,11 @@ private:
     if (!ok) app()->setError("echo did not complete");
     app()->done();
   }
-  unsigned		m_tfoID = 0;
+  alignas(Zm::CacheLineSize) unsigned m_tfoID = 0;
   bool			m_connected = false, m_reported = false;
   bool			m_prefixSent = false; // Rx
   bool			m_finQueued = false; // Rx
-  ZmAtomic<unsigned>	m_completed = 0; // Rx/Tx completion publication
+  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> m_completed = 0; // Rx/Tx publication
 };
 
 ZmRef<AppCxn> App::accepted(const Zutcp::InitialInfo &)
@@ -157,11 +158,12 @@ int main(int argc, char **argv)
   ZiMultiplex mx(
       ZiMxParams()
 	.scheduler([](auto &s) {
-	  s.nThreads(3)
+	  s.nThreads(4)
 	  .thread(1, [](auto &t) { t.isolated(1); })
-	  .thread(2, [](auto &t) { t.isolated(1); }); })
+	  .thread(2, [](auto &t) { t.isolated(1); })
+	  .thread(4, [](auto &t) { t.isolated(true); }); })
 	.rxThread(1).txThread(2));
-  mx.plugin(new Zutcp::Stack{&mx, {.interface = interface}});
+  mx.plugin(new Zutcp::Stack{&mx, {.interface = interface, .txSid = 4}});
 
 
   App app{server, port, count, waitEOF};

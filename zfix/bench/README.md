@@ -349,3 +349,316 @@ fields must not add another allocation per retained body; crossing the built-in
 pool threshold can legitimately change capacity/charge and must be reported.
 The full `nativecodec` timing remains necessary to detect ordinary message
 regressions outside this isolated retained-body factory.
+
+## Managed plain FIX over TCP
+
+The [2026-11-15 native TCP milestone](../../zutcp/bench/MILESTONE.md) records
+the matched kernel/native results and their measurement conditions.
+
+`zfixbench` drives managed `Zfix::Client` and `Zfix::Server` sessions through
+`Zfix::TCP`, `Ztcp`, `Zi`, and either kernel TCP or `Zutcp`/`Zxdp`. It uses the
+same role/backend positional CLI as `zutcpbench`:
+
+```sh
+zfix/bench/zfixbench server|client kernel|native INTERFACE ADDRESS MESSAGES \
+  WARMUP PIPELINE CONNECTIONS RESERVE RX_CPU TX_CPU SPIN [SAMPLES.csv]
+zfix/bench/zfixbench --selftest
+```
+
+`BENCH_WORKLOAD=order|marketdata|updates` selects typed FIX message pairs.
+`BENCH_BURST_SIZE` and `BENCH_BURST_US` pace application offers in bursts;
+zero burst size sends as pipeline credit permits.
+
+`BENCH_CONGESTION_CONTROL=0|1` selects the native stack's congestion policy
+(default `1`). It is read once before startup and reported as
+`congestion_control` in the configuration line. `0` disables native congestion
+control and pacing while retaining receiver flow control and retransmission.
+Kernel endpoints retain their normal congestion control and report `1`.
+
+Each endpoint configures exactly three scheduler slots: sid 1 owns Rx, sid 2
+owns Tx, and isolated sid 3 services XDP transmission. Managed application
+callbacks use the existing Rx/Tx slots. Both kernel and native runs configure
+the same three slots; kernel runs leave sid 3 idle. `BENCH_APP_COLOCATE` defaults
+to `1` and accepts only `1`; separate `BENCH_APP_RX_CPU`/`BENCH_APP_TX_CPU`
+settings do not change the application placement. The `config` and `result`
+lines report `app_colocate=1`. These slot counts exclude the scheduler's
+control/timer thread.
+
+`BENCH_LL=1` selects continuous scheduler-ring spinning; the default `0` spins
+for the configured count before waiting. It is read once at startup, applies
+equally to kernel and native endpoints, and is reported as `ll` in the config
+line. Continuous mode also spins the kernel endpoint's idle sid 3; assign all
+six endpoint slots explicit CPUs when comparing this mode.
+
+`BENCH_QUEUE_SIZE` selects 65536 bytes (the benchmark default) or 131072 bytes
+(the scheduler default) for each slot. Traffic and calibration read it once at
+startup; apply the same setting to both endpoints and every compared backend.
+`queue_size` reports the actual capacity. After workers stop, `scheduler_queue`
+reports each ring's existing counters and capacity, plus `overflow_in`,
+`overflow_out`, and `overflow_count` from its fallback queue. Ring input and
+`full` counters can lose concurrent updates; they are diagnostic observations,
+not exact delivery counts. Fallback counters are protected and final occupancy
+is read after stop. Counters cover the whole process lifecycle, have finite
+width, and do not measure peak backlog or isolate the timed interval.
+
+`BENCH_ALLOC_TUNE=1` enables a bounded cold metadata-cache and hash-sizing
+policy for traffic mode; unset or `0` leaves allocator/hash defaults unchanged.
+Other values fail argument validation. It is read once, before logging, State,
+workers, transport stacks and hubs are constructed. Kernel and native endpoints
+receive the same policy; selftest and generator calibration do not apply it.
+
+The policy configures partition 0, size-class shift 0 caches with these slot
+capacities: `ZiIOBuf` 256; `Zutcp.Pkt.OutstandingRange` 512;
+`Zutcp.Pkt.TxSentNode` 2048; `Zutcp.Connection.TxRanges` 1024;
+`Zutcp.Connection.RxQueue` 64; `Zfix.Rx` and `Zfix.WireQueue` 128 each;
+`Zfix.Tx` 4096; and `Zfix.TxBody` and `Zfix.TCP.Rx` 8192 each. Counts round up
+observed object peaks from the 128-connection order workload. They apply to
+each instantiated size class of the named heap, with normal backing allocation
+still available when a cache is empty. They do not resize UMEM, packet pools,
+producer admission limits or scheduler rings. `ZmScheduler.Fn` is not tuned.
+
+`Zutcp.Endpoints`, `Zutcp.Endpoint.TupleRouter`, `Zutcp.ServerLinks` and
+the multiplexer request hash (configured through `ZiMxParams::requestHash()`,
+default key `ZiMultiplex.RequestHash`) round connections up to a power of two,
+with a minimum of 32 buckets. Existing load factors and lock-sharding defaults
+are retained. Configuration must precede construction to affect these tables.
+Its telemetry ID remains `ZiMultiplex.Connect`; the telemetry ID is not its
+configuration key. The `config` line reports the actual `request_hash` key,
+`allocation_tuning` and `hash_bits` (zero when disabled);
+enabled runs also print each `heap_plan` and an `allocation_tuning` summary.
+Its `observed_bytes_estimate` uses previously observed size classes, not an
+absolute memory limit or actual allocation. Sum the actual heap CSV rows'
+`size * cacheSize` for instantiated cache storage, and retain `heapAllocs`,
+queue `full` and fallback counters when evaluating the policy.
+
+Set `BENCH_TELEMETRY_DIR` to a separate fresh existing directory for each endpoint
+and `BENCH_TELEMETRY_PEER_DIR` to its peer's directory. Both settings are read once
+at initialization. After all measured replies finish, the endpoints rendezvous
+through `ready`/`dumped` files before starting logout. This retains live connection
+queues for `queue-live.csv`, `hash-live.csv`, and `heap-live.csv` while keeping
+file I/O outside the measured exchange interval. After worker shutdown,
+`queue-drained.csv` and `heap-drained.csv` capture the remaining registered owners.
+The queue CSV enumerates `ZiMultiplex::allQueues`, including plugin queues.
+Dump failures fail the run while preserving normal teardown.
+Check hash `resized` values above zero and compare cache-served allocations with
+backing-heap allocations. Global heap totals repeat across arena rows and must
+not be summed repeatedly. Report each scheduler queue's telemetry `full` count
+alongside its fallback-entry counters; later posts can join an existing fallback
+backlog without another ring-full event.
+
+The `traffic_usage` line reports process-wide `getrusage` deltas: `user_us`,
+`system_us`, `voluntary`, and `involuntary`. Two main-thread snapshots bracket
+listen/connect through measured completion, before the first telemetry barrier
+write. This covers connection setup, warmup and measured traffic, excluding
+CSV output, barrier waits, logout and final drain. It is not an active-only
+measurement or a syscall count. Keep whole-job `/usr/bin/time -v` results
+separate: they include reporting and teardown, whose work differs by backend.
+
+`BENCH_CLIENT_XDP_TX_CPU` and `BENCH_SERVER_XDP_TX_CPU` select the CPU for each
+endpoint's sid 3. Each value is read once at startup and must name an allowed
+CPU. Without an override, sid 3 is explicitly assigned the corresponding Rx
+CPU. The config line reports `scheduler_threads=3`, `xdp_tx_sid=3`,
+`native_xdp_sender_threads`, and `xdp_tx_cpu`. Verify actual affinity separately
+when profiling. XDP transmission uses scheduler `run()` on sid 3; there is no
+additional sender pthread or sender semaphore. A pending-descriptor counter
+coalesces zero-to-one notifications; sid 3 calls nonblocking `sendto()` and uses
+`BENCH_SPIN` for idle probing before returning to the scheduler. There is no Tx
+wait timeout or Tx epoll/eventfd. Native Rx retains its epoll/eventfd mechanism.
+Record separate sender CPU assignments in comparisons.
+
+The managed corpus uses the same representative order/execution, market-data
+request/snapshot, and update/feedback business fields as the fixed direct Zi
+corpus in `zutcp/bench`. The FIX group counts describe one typed entry each;
+both update directions use the same `X` message schema and body. Its serial
+business IDs retain the direct corpus's 10-character formatting. Managed
+SendingTime, sequence numbers, Logon, and Logout remain session controlled, so
+full frames and process costs differ from the direct byte-stream benchmark.
+`check-wire.py` validates captured FIX framing, checksums, session controls,
+exact typed business fields and ordering, frame sizes, and TCP byte identity.
+Use a bridge capture for native/native evidence. Small functional smoke runs:
+
+```sh
+sudo unshare -n -- bash zutcp/bench/private-veth.sh \
+  "$PWD/zfix/bench/zfixbench" kernel 4 /tmp/zfix-kernel-smoke \
+  0 1 2 3 10 2 1 1 1024 0 check 0
+sudo unshare -n -- bash zutcp/bench/private-veth.sh \
+  "$PWD/zfix/bench/zfixbench" native 4 /tmp/zfix-native-smoke \
+  0 1 2 3 10 2 1 1 1024 0 check 0
+```
+
+These commands check basic function only. Managed application callbacks share
+the multiplexer Rx/Tx slots. Any `BENCH_CLIENT_APP_RX_CPU`,
+`BENCH_CLIENT_APP_TX_CPU`, `BENCH_SERVER_APP_RX_CPU`, or
+`BENCH_SERVER_APP_TX_CPU` override must match its role's Rx/Tx CPU.
+Assign the third slot through `BENCH_CLIENT_XDP_TX_CPU` and
+`BENCH_SERVER_XDP_TX_CPU`. The fixture does not
+invoke the managed wire checker automatically. Run `check-wire.py` on captured
+directories before treating them as wire evidence.
+
+### Fixed scheduled offers
+
+Set `BENCH_OFFER_RATE` to a positive integer requests/second **per connection**,
+and `BENCH_PENDING_CAP` to the maximum due but not admitted requests per connection.
+Both are read once at initialization. Rate mode is incompatible with legacy
+`BENCH_BURST_SIZE`; an unset rate leaves the existing feedback/burst timing intact.
+A cap without a rate is rejected. Rate is at most one billion; cap is at most two
+million. The final scheduled offer must be less than 110 seconds after the origin,
+within the existing 120-second application and 150-second fixture deadlines.
+The existing two-million aggregate sample and bounded pipeline limits still apply.
+
+All client connections finish warmup before a common measured origin is chosen.
+With zero warmup they join this barrier when their FIX sessions become ready.
+Connections start aligned: measured request index `j` is due at
+`origin + floor(j * 1,000,000,000 / rate)` nanoseconds. Deadlines are immutable.
+There is no pending packet allocation: sequence counters encode unadmitted work.
+The application admits the oldest due request into its bounded pipeline immediately
+before formatting it. A full pipeline waits for a response; the existing per-link
+timer services the next offer or the first deadline that would exceed the pending
+cap. Late service does not reset the offer clock. Exceeding the cap or failing to
+complete is a failed row, never a lower offered-rate success.
+
+Scheduled sampling uses `CLOCK_MONOTONIC`. The existing scheduler uses realtime,
+so each timer arm converts the remaining monotonic interval to an absolute
+scheduler deadline and the callback rechecks its due time. `offer_clock` records
+the common monotonic origin, the observation time, and initial/final realtime
+clock offsets. No new worker or scheduler implementation is introduced.
+
+In rate mode, the client CSV has these columns:
+
+```
+connection,sequence,scheduled_ns,admitted_ns,completed_ns,status
+```
+
+All times are offsets from the reported common origin. Every planned request is
+written, including failed runs; missing admission/completion values are blank.
+Status is `unadmitted`, `admitted`, or `completed`. A zero scheduled offset is valid.
+`offer_progress` reports planned/due/admitted/completed counts, missing counts,
+`pending` and `pending_peak`. The latter is the maximum observed in application
+service, not an exact failed-run queue high-water mark: another connection may
+stop before servicing its timer. `pending` is max(due minus admitted, zero).
+On failure, due uses the observation cutoff while admitted/completed totals
+include work collected through drain; these are not one atomic snapshot. Raw
+admission/completion timestamps permit separate cutoff counts. Due counts use the first failure
+or main-thread stop observation, before teardown; callbacks which finish while
+draining remain visible in the raw timestamps. If phase start was never reached,
+origin and due are zero and the planned offsets have no realized absolute epoch.
+
+Exact runs report loaded latency (`completed - scheduled`), admission delay
+(`admitted - scheduled`) and service latency (`completed - admitted`) separately.
+Each includes p50, p99, p99.9, maximum and counts above 1, 10 and 100 milliseconds.
+The usual `measurement` quantiles are loaded latency in this mode. Request rate
+uses common origin through last completed response, including backlog/drain;
+`offered_requests_per_second` separately reports rate times connections. Failure
+rows retain partial records but do not emit a successful latency measurement.
+Analysis must inspect process exit status and exact delivery, not just percentiles.
+
+Scheduled storage is two `uint64_t` timestamps per planned request (at most 32 MB),
+allocated before work. One at-most-16 MB scratch array is reused for distributions
+after workers stop. Legacy CSV remains `connection,sequence,rtt_ns` and legacy
+RTT remains pre-format offer through validated response.
+
+Every mode now reports `measured_rx_bytes`, the exact validated business FIX frame
+bytes received after warmup. Server totals are request bytes; client totals are
+response bytes. Administrative traffic and retransmitted TCP bytes do not count.
+For exact runs, sum both totals and divide by the client measured envelope for
+useful FIX frame bytes/second; retain each direction separately. This includes FIX
+framing and excludes TCP/IP/Ethernet overhead. For failed runs retain the two
+partial totals separately; their sum is not completed round-trip bytes. Endpoint
+connection IDs do not necessarily correspond across independently accepted links.
+The new shared receive counter changes measured application work, so legacy
+comparisons also require a fresh baseline with this same executable.
+
+`--selftest` includes rational schedule boundaries (including non-divisor rate
+three), delayed-service timestamp decomposition, finite terminal count, exact
+pending-cap expiry and the changed overflow deadline after a response frees a
+slot. Live validation must additionally cover zero/nonzero warmup, all backends
+and families, deliberate overload with complete partial CSV output, teardown and
+independent capture agreement for request/response byte totals. The veth fixture
+collects both endpoint statuses on a failed case and never writes its `complete`
+marker when either fails.
+
+On failure as well as normal completion, main keeps the multiplexer running until
+all initiated client links or actually accepted server links have reported their
+terminal FIX callback. Client admission and timers are revoked on Rx before
+waiting. Server hub stop supplies the listener/transport barrier before the
+accepted-link count is read. The `drain` line reports expected and observed
+terminal counts; hub finalization follows this completion handshake.
+
+Before accepting a scheduled campaign, independently calibrate generator/timer
+headroom at its declared rate/connection grid. An unloaded calibration does not
+prove headroom under actual Rx work. Predeclare any generator/environment
+invalidation rule for whole comparison groups; transport backpressure, pending
+cap overflow and unfinished offers remain failed workload observations. This
+mode itself does not certify calibration or performance parity.
+
+### Offer generator calibration
+
+`--calibrate` measures the unloaded scheduled-offer generator on a `ZiMultiplex`
+with no connections, listeners or plugin. It does not construct a FIX session:
+
+```sh
+zfix/bench/zfixbench --calibrate MESSAGES CONNECTIONS RATE CAP TURN \
+  RX_CPU TX_CPU SENDER_CPU SPIN [SAMPLES.csv]
+```
+
+`RATE` is offers/second per connection and `CAP` bounds due but unobserved offers
+per connection. `TURN` bounds offers serviced by one callback; it is distinct
+from the scheduler's 1,000 ns quantum. Use the comparison's pipeline value for
+`TURN`. The same message/connection/sample/rate/cap bounds as scheduled workload
+mode apply. `BENCH_LL` and `BENCH_QUEUE_SIZE` are read once at initialization;
+other benchmark environment settings do not select a transport or alter this
+diagnostic's explicit arguments.
+All three requested CPUs must be in the process's allowed affinity set.
+
+The diagnostic configures exactly three isolated scheduler slots, each with the
+same selected queue size (64 KiB by default), spin setting and scheduler quantum
+as the benchmark. Rx is
+slot 1; the configured Tx and sender slots 2 and 3 are idle during measurement.
+A startup callback on each slot records its actual CPU before timing begins.
+All connection streams share one aligned monotonic origin. They reuse the exact
+`OfferSchedule` arithmetic and monotonic-to-realtime timer conversion used by
+the scheduled workload. One future timer or one immediate same-owner continuation
+continues each stream. A callback emits at most `TURN` due offers, preserving their
+original deadlines; it does not wait for a response or format a FIX message.
+The fixed timer array uses the benchmark's existing 128-connection limit.
+
+Storage uses the same bounded, preallocated pair of uint64 timestamps per sample.
+The first timestamp records service of a due offer. The second follows its first
+store. Their difference includes due-count/cap checks, bookkeeping and the second
+clock read; it is not an isolated memory-store measurement or network completion.
+No per-offer allocation is added. Raw CSV columns are:
+
+```
+connection,sequence,scheduled_ns,observed_ns,recorded_ns,status
+```
+
+Times are offsets from the shared `calibration_clock origin_ns`. All planned
+rows are emitted after the scheduler stops, including failures. Unobserved rows
+have blank observed/recorded fields and status `pending`; observed rows have
+status `observed`. `calibration_connection` reports counts, the observed pending
+peak and valid service calls by initial/timer/continuation source. On timeout,
+due counts use the main-thread cutoff while observations can continue until the
+Rx cancellation callback; these are not one atomic snapshot. The raw timestamps
+retain that distinction. A cap violation or deadline failure returns nonzero,
+reports `exact=0`, and emits no successful latency/rate summary.
+
+On complete runs, `latency metric=generator` measures observed minus scheduled
+and `metric=recording` measures recorded minus observed. `calibration_rate`
+reports the final recorded timestamp's envelope and the aggregate nominal rate.
+Actual CPUs and the three-slot configuration accompany the result. Teardown
+revokes work and cancels every timer on Rx, posts a same-owner drain continuation,
+and stops the scheduler before destroying timer/sample owners. `calibration_drain`
+records the stream count and scheduler stop result.
+
+The unloaded multiplexer exercises the common kernel I/O owner's event-loop
+wake path with Rx quantum 8. It omits native plugin/AF_XDP Rx service, FIX
+formatting/validation, transport work, response callbacks and their contention.
+A successful high-rate calibration establishes only unloaded generator/timestamp/
+timer headroom. It cannot justify excluding transport backpressure, pending-cap
+overflow or missing responses from matched-load results, and it does not prove
+headroom under the real workload. Freeze the finite calibration grid and its
+interpretation before collection. The shared schedule selftest includes rounded
+rate-three boundaries, delayed service and the two-million-sample arithmetic
+boundary at 240,000 offers/second. Live checks should additionally cover a single
+zero-offset offer, future timers, bounded catch-up, cap failure, retained partial
+records and timer-owner teardown.

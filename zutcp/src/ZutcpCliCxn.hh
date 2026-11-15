@@ -26,24 +26,29 @@ public:
   using Base::Base;
   using Base::app;
   using Base::impl;
-  bool applicationReadyRx() const { return Base::establishedRx(); }
+  bool applicationReadyRx(bool early = false) {
+    return early ? Base::prepareMPSRx(true) : Base::establishedRx();
+  }
   friend Base;
   friend Endpoint;
 
   CliCxn(App *app) : Base{app, false} { }
   CliCxn(App *app, ZuID id) : Base{app, false, ZuMv(id)} {
-   
   }
   CliCxn(App *app, Host server, uint16_t port) :
     Base{app, false}, m_server{ZuMv(server)}, m_port{port} {
-   
   }
   CliCxn(App *app, ZuID id, Host server, uint16_t port) :
     Base{app, false, ZuMv(id)},
     m_server{ZuMv(server)}, m_port{port} {
-   
   }
   ~CliCxn() = default;
+
+  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
+    unsigned count = Base::allQueues(fn) + Endpoint::endpointQueues(fn);
+    fn(const_cast<CloseWaiters *>(&m_closeWaiters));
+    return count + 1;
+  }
 
   void connect() {
     ZiAssert(app() && app()->mx(), "Zutcp", (),
@@ -377,9 +382,9 @@ public:
       bool persist = false) {
     return Base::sendTCP(ref, syn, control,
       [this, &ref] { return Endpoint::allocTxPkt(!bool(ref.length)); },
-      [this](auto buf, EcnMark::T ecn) {
+      [this](auto buf, EcnMark::T ecn, const Zxdp::CommitFn &commit) {
 	if (!app()->sendPkt(buf)) return false;
-	return Endpoint::send(ZuMv(buf), Endpoint::remote(), ecn, true);
+	return Endpoint::send(ZuMv(buf), Endpoint::remote(), ecn, true, nullptr, commit);
       }, persist);
   }
   bool sendSyn() {
@@ -685,7 +690,8 @@ private:
     });
   }
 
-  // shared
+  // Shared readiness must not reuse the Tx-owned Endpoint base tail.
+  alignas(Zm::CacheLineSize)
   ZmAtomic<uint64_t>	m_readyCount = 0;
   ZmAtomic<unsigned>	m_ready = 0;
 
@@ -700,8 +706,13 @@ private:
   bool			m_endpointAttemptRx = false;
   bool			m_closeDrainPending = false, m_closeDrainNotify = false;
   uint64_t		m_closeDrainedGen = U64Null;
-  using CloseWaiters = ZmQueue<CloseFn, ZmQueueHeapID<"Zutcp.CliCxn.CloseWaiters">>;
-  CloseWaiters		m_closeWaiters;
+  class CloseWaiters : public Queue<
+    ZmQueue<CloseFn, ZmQueueHeapID<"Zutcp.CliCxn.CloseWaiters">>,
+    "close-waiters", Ztc::QueueType::Rx> {
+  public:
+    CloseWaiters(const ZuID &owner) { this->queueOwner(owner); }
+  };
+  CloseWaiters		m_closeWaiters{Base::queueOwnerID()};
 
 };
 

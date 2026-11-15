@@ -5,11 +5,13 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <unistd.h>
+#include <net/if.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmHashMgr.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZtString.hh>
@@ -615,6 +617,92 @@ void testInitValidate()
   ZiLog::stop();
 }
 
+void testCongestionControl()
+{
+  ZuTestScope(testCongestionControl);
+  ZiMultiplex mx{HubFixture::mxParams()};
+  HubApp app;
+  ZuCHECK(Zutcp::HubParams{}.congestionControl() &&
+      Zutcp::StackConfig{}.congestionControl && app.congestionControl(),
+    "congestion control must remain enabled by default for both configuration paths");
+  for (bool enabled : {true, false}) for (bool ecn : {true, false}) {
+    auto params = Zutcp::HubParams{&mx}.congestionControl(enabled).ecn(ecn);
+    bool ok = app.init(params);
+    ZuCHECK(ok && params.congestionControl() == enabled && params.ecn() == ecn &&
+	app.congestionControl() == enabled && app.ecn() == (ecn && enabled),
+      "Hub must cache congestion control and suppress ECN when it is disabled");
+    params.congestionControl(!enabled).ecn(!ecn);
+    ZuCHECK(app.congestionControl() == enabled && app.ecn() == (ecn && enabled),
+      "subsequent parameter changes must not mutate initialized transport policy");
+    if (ok) app.final();
+    ZuCHECK(app.congestionControl() && !app.ecn(),
+      "finalization must restore policy defaults before the next initialization");
+  }
+}
+
+// The membership hash cannot allocate its inner node: retain the concrete heap.
+struct HashMember : public ZmNHeap<HashMember>, public Zutcp_::ServerLinks::Node {
+friend inline ZuStringT<"Zutcp.APITest.HashMember"> ZmNHeapID(HashMember *);
+  using ZmNHeap<HashMember>::operator new;
+  using ZmNHeap<HashMember>::operator delete;
+};
+
+void testHashSizing(bool tuned)
+{
+  ZuTestScopeRT(testHashSizing);
+  static constexpr const char *ids[] = {
+    "Zutcp.Endpoints", "Zutcp.Endpoint.TupleRouter", "Zutcp.ServerLinks"};
+  ZmHashParams saved[3];
+  for (unsigned i = 0; i < 3; ++i) {
+    saved[i] = ZmHashParams{}.bits(5).loadFactor(1).cBits(3).init(ids[i]);
+    if (tuned) ZmHashMgr::init(ids[i], ZmHashParams{}.bits(8).loadFactor(1).cBits(2));
+  }
+  {
+    ZiMultiplex mx{ZiMxParams{}.rxBufSize(8)};
+    // Cold construction only: no AF_XDP socket, endpoint bind or network traffic.
+    ZmRef<Zutcp::Stack> stack = new Zutcp::Stack{&mx,
+      {.interface = if_nametoindex("lo"), .packetCount = 8}};
+    ServerApp app;
+    using Routes = Zutcp_::TupleRoutes<ServerAppLink>;
+    ZmRef<Zutcp::EndpointBindings> endpoints;
+    ZmRef<Routes> routes;
+    ZmRef<Zutcp_::ServerLinks> links;
+    Ztc::HashMgr::all([&endpoints, &routes, &links](Ztc::Hash *table) {
+      auto id = table->telKey().p<0>();
+      if (id == ids[0]) endpoints = dynamic_cast<Zutcp::EndpointBindings *>(table);
+      else if (id == ids[1]) routes = dynamic_cast<Routes *>(table);
+      else if (id == ids[2]) links = dynamic_cast<Zutcp_::ServerLinks *>(table);
+    });
+    bool found = endpoints && routes && links;
+    auto geometry = [tuned](auto &table, unsigned count) {
+      Ztc::HashTelemetry data;
+      table->telemetry(data);
+      // These owner-local tables use ZmNoLock; configured cBits add no stripes.
+      return data.bits == (tuned ? 8 : 5) && !data.cBits &&
+	data.loadFactor == 1 && data.count == count && !data.resized;
+    };
+    ZuCHECK(found && geometry(endpoints, 0) && geometry(routes, 0) && geometry(links, 0),
+      "actual endpoint, routing and server membership constructors honor named hash settings");
+    if (found && tuned) {
+      for (unsigned i = 0; i < 128; ++i) {
+	ZiSockAddr local{ZiIP{"198.18.0.1"}, uint16_t(20000 + i)};
+	ZiSockAddr peer{ZiIP{"198.18.0.2"}, uint16_t(30000 + i)};
+	endpoints->add(Zutcp::EndpointBinding{.local = local});
+	routes->add(Zutcp_::TupleRoute<ServerAppLink>{{local, peer}, nullptr});
+	links->addNode(new HashMember);
+      }
+      ZuCHECK(geometry(endpoints, 128) && geometry(routes, 128) && geometry(links, 128),
+	"128 endpoint, tuple and concrete intrusive membership entries require no hash resize");
+    }
+    if (endpoints) endpoints->clean();
+    if (routes) routes->clean();
+    if (links) links->clean();
+  }
+  // HashMgr has no removal API; restore the previously effective settings.
+  if (tuned)
+    for (unsigned i = 0; i < 3; ++i) ZmHashMgr::init(ids[i], saved[i]);
+}
+
 void testApplicationByteSurface()
 {
   ZuTestScope(testApplicationByteSurface);
@@ -647,5 +735,8 @@ int main(int argc, char **argv)
   ZuTestCall(testLinkStateOwnership);
   ZuTestCall(testDeferredByteReset);
   ZuTestCall(testInitValidate);
+  ZuTestCall(testCongestionControl);
   ZuTestCall(testApplicationByteSurface);
+  ZuTestCall(testHashSizing, false);
+  ZuTestCall(testHashSizing, true);
 }

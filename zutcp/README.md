@@ -33,7 +33,33 @@ per episode when SACK is available. Timestamp-free recovery remains supported;
 without SACK it uses cumulative ACK recovery and RTO. Classic TCP ECN is
 configured through the existing default-off `ecn` setting. New DATA carries ECT
 only after negotiation; retransmissions and control packets remain Not-ECT.
-Accepted DATA sends create pacing debt; pure ACK/window traffic can proceed.
+With congestion control enabled, accepted DATA sends create pacing debt;
+pure ACK/window traffic can proceed.
+
+`HubParams::congestionControl(false)` disables congestion-window limits,
+congestion accounting and pacing for controlled low-latency networks. For the
+ZiMultiplex plugin, set `StackConfig::congestionControl = false` before starting
+the multiplexer. The default is enabled; the setting is cached at initialization.
+Disabled mode suppresses ECN negotiation while retaining receiver flow control,
+bounded local buffer credits, ACK/SACK retirement, loss recovery and RTO backoff.
+Nagle remains disabled in both modes.
+
+`HubParams::ackHoldTimeout` configures the cumulative ACK hold; the
+`ZiMultiplex` plugin uses `StackConfig::ackHoldTimeout`. Both default to 25
+milliseconds, accept zero to disable holding, and require a value below 500
+milliseconds. Eligible in-order DATA may hold one pending ACK; each receive
+updates it to the latest cumulative position. Outgoing DATA can carry that ACK
+before the deadline. A second full-size segment, FIN, receive gap, duplicate,
+ECN exception or receive-window reopening requests an immediate reply.
+
+Native submission publishes its cumulative sent frontier after descriptor
+reservation and before the AF_XDP producer index becomes visible. A borrowed
+synchronous commit callback rejects a stale generation before publication;
+refused reservations leave the frontier unchanged. Recovery bookkeeping then
+finishes on the same Tx owner before queued peer ACK work runs. Rx validates
+ACKs directly against that committed frontier, including an explicit committed
+SYN/TFO extent, without retaining packets for a validation roundtrip. A future
+ACK is rejected immediately; subsequent valid traffic remains admissible.
 
 Without timestamps, an exact full sequence-cycle alias can be indistinguishable
 from current data. PAWS adds timestamp checks under its ordinary clock and
@@ -62,9 +88,37 @@ Application parsers must handle arbitrary receive boundaries. Protocol work runs
 on the multiplexer Rx and Tx owners configured through `ZiMxParams`, shared by
 multiple connections.
 
+### Returning to kernel TCP
+
+Use fresh application owners and a fresh default-kernel multiplexer. A graceful
+process replacement provides that separation:
+
+1. Stop accepting or producing new application work. Close existing sessions
+   through their normal owner callbacks while the native multiplexer remains
+   running, and wait for every initiated connection's terminal notification.
+2. Stop and finalize the application. Stop the native multiplexer and await its
+   plugin completion: accepted Tx submissions must retire before sender shutdown
+   and backend close. Socket closure alone does not establish kernel retirement.
+3. Destroy remaining application owners before the native multiplexer. Allocator
+   registrations remain valid through this teardown, and providers/pools outlive
+   every packet lease. Check the normal process exit and teardown errors, not
+   merely a successful final application message.
+4. Verify that the instance's XDP attachment has been removed before starting
+   kernel endpoints. Preserve interfaces, addresses, routes and neighbors owned
+   by deployment configuration; the transport does not own them. Do not remove
+   another owner's XDP program to force a transition.
+5. Start fresh kernel processes, or construct a fresh multiplexer without the
+   plugin and obtain fresh builtin allocators while it is stopped. Reinitialize
+   application owners, start the multiplexer and establish new TCP sessions.
+
+Do not clear the plugin on a stopped native multiplexer and reuse its existing
+allocator registrations. An established native TCP session cannot be transferred
+to a kernel socket. The process-replacement procedure does not establish an
+in-process backend-switching facility.
+
 ## TCP facilities
 
-The planned TCP implementation includes cumulative ACKs, SACK/DSACK, window
+The TCP implementation includes cumulative ACKs, SACK/DSACK, window
 scaling, timestamps with PAWS, RACK-TLP loss detection, RTO and zero-window
 persist handling, ECN and NewReno congestion response. Peer extensions are
 negotiated optionally, with fallback when absent. Connection establishment,
@@ -92,9 +146,36 @@ admission independently of allocator counts.
 
 Transport ACK/recovery ownership retains the raw allocation lease independently
 of the kernel submission lease. CQ retires kernel access, not peer delivery.
-Refused output retains caller ownership. Shutdown drains work on its owners and
+Refused output retains caller ownership. Shutdown keeps sender and CQ service
+active after admission stops, until accepted submissions complete on a healthy
+backend. This includes the final FIN ACK. The sender barrier and socket retirement
+follow that completion gate; a failed backend retains cancellation semantics.
+Shutdown drains work on its owners and
 retries raw close until kernel access retires. Providers and pools outlive every
 application-held or recovery-held packet.
+
+## Connection hash sizing
+
+Before constructing the Stack or server, applications can configure the existing
+`ZmHashMgr` IDs `Zutcp.Endpoints`, `Zutcp.Endpoint.TupleRouter`, and
+`Zutcp.ServerLinks`. These constructors retain their default 32 buckets and load
+factor 1 when no named override is installed. The tables are owner-local and use
+`ZmNoLock`, so they have no lock stripes regardless of configured `cBits`. Named
+settings are applied after the defaults, including server membership recreation
+on restart. For 128 connections, a 256-bucket setting (`bits(8)`) leaves headroom
+without resizing these indexes. This configures initial geometry, not a capacity
+limit. Server membership still uses the concrete connection's heap; naming its
+hash does not enable allocation of the inner intrusive node.
+
+## Queue telemetry lifetime
+
+`ZiMultiplex::allQueues` includes the plugin's actual transport queues through
+`ZiMxPlugin::allQueues`. Callbacks borrow those queue objects; native owners stay
+alive until enumeration returns, even if a callback requests connection closure
+and observes disconnection. Complete a synchronous full multiplexer shutdown
+after returning from enumeration: shutdown waits for those same native owners to
+retire. Queue pointers must not escape the callback. Fields are advisory cold
+reads, and unsupported optional normalized metrics remain zero.
 
 ## Source and verification
 

@@ -64,6 +64,8 @@ struct StackParams {
   PacketFn packet;
   unsigned spin = 1000;
   unsigned packetCount = ZiIOBuf_DefltCount;
+  ZmSchedTParams txThread = ZmSchedTParams().isolated(true);
+  unsigned txSid = 0;
 };
 
 // Tx-owned runtime snapshot, or cold control access while stopped.
@@ -177,7 +179,7 @@ struct ClosedTupleStats {
 
 // Rx-owned fixed slot ring. The intrusive FIFO preserves closure order while
 // the hash indexes those same slots. Evidence updates never refresh FIFO order.
-class ZutcpAPI ClosedTuples {
+class ZutcpAPI ClosedTuples : public QueueTelemetry<"closed-tuples", Ztc::QueueType::Rx> {
   ZmHashDerive(Index, ClosedTuple,
     (ZmHashNode<ClosedTuple,
       ZmHashKey<closedTupleKey,
@@ -195,6 +197,14 @@ public:
   bool update(const ClosedTuple &); // matching record identity only
   void resize(unsigned); // stopped, preserve newest records in order
   ClosedTupleStats stats() const;
+  void telemetry(Ztc::QueueTelemetry &data) const override {
+    queueTelemetry(data);
+    data.count = m_order.count_();
+    data.size = m_slots.length();
+    data.inCount = m_inserted;
+    data.outCount = m_evicted;
+    data.full = m_full;
+  }
 
 private:
   void append(const ClosedTuple &);
@@ -202,6 +212,7 @@ private:
   ZmRef<Index> m_index;
   Order m_order;
   uint64_t m_nextID = 0, m_inserted = 0, m_evicted = 0;
+  unsigned m_full = 0;
 };
 
 struct ClientPorts {
@@ -246,6 +257,8 @@ struct StackConfig {
   ZuTime connectTimeout{DefaultConnectTimeout};
   ZuTime userTimeout{DefaultUserTimeout};
   ZuTime closeDrainTimeout{DefaultCloseDrainTimeout}, finWaitTimeout{DefaultFinWaitTimeout};
+  ZuTime ackHoldTimeout{0, 25000000};
+  bool congestionControl = true;
 };
 
 class ZutcpAPI Stack : public ZmNHeap<Stack>, public ZiMxPlugin {
@@ -262,8 +275,12 @@ public:
 
   // Native phase-1 entry: complete contiguous Ethernet packet on mx Tx.
   // Acceptance detaches backing; refusal leaves the buffer unchanged.
-  bool sendPacket(const ZmRef<Zi::IOBuf> &, PacketLease * = nullptr);
+  bool sendPacket(const ZmRef<Zi::IOBuf> &, PacketLease * = nullptr,
+    const Zxdp::CommitFn &commit = {});
   void reconcileTx(); // Tx owner: retire kernel leases before retained header changes
+  void waitTx(Allocator *, Zi::IOBufWait &); // allocator callbacks on mx Tx
+  void cancelTx(Allocator *, Zi::IOBufWait &);
+  void returnedTx(Allocator *); // post a provider's claimed service obligation
   ZmRef<PacketBuf> allocPacket(void *owner, ZiIPType::T, bool control = false);
   bool configureControl(unsigned count, unsigned credits, ZtString<> &error);
   bool configure(const StackConfig &, ZtString<> &error);
@@ -334,6 +351,7 @@ private:
   void start_();
   void stopRx();
   void stopTx();
+  void senderStopped();
   void stopEndpoints();
   void returned();
   void received(uint8_t *, unsigned);
@@ -342,52 +360,71 @@ private:
   void resetReply(const TCPHeader &, unsigned, IPPath);
   void replyControl(TCPHeader, IPPath);
   void pollTx();
+  void txService(bool);
+  void serviceWaits(Allocator *);
   void observed(Zutcp_::EndpointLink *);
   void unobserved(Zutcp_::EndpointLink *);
 
   using PacketAllocator = Zi::IOBufPluginAllocator<Zi::IOBufType::RxTCP>;
+  using NativeTxAllocator = Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP,
+    PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Pkt.Tx">>;
+  using NativeDataAllocator = Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP,
+    PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Data.Tx">>;
+  using NativeControlAllocator = Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP,
+    PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Control.Tx">>;
+
+  // Fixed configuration and handles while running. Secrets initialize before
+  // m_interface calls requireTCPSecrets(); their live operations are const.
   ISN		m_isn;
   TFOKey	m_tfoKey;
-  TFOCache	m_tfoCookies;
-  TCPClock	m_tcpClock;
-  unsigned	m_interface, m_mtu, m_spin;
-  ZmRef<EndpointBindings> m_endpoints;
-  unsigned	m_nextPort = ClientPorts::First, m_routePending = 0;
+  unsigned	m_interface, m_mtu, m_spin, m_txSid;
   ZtString<>	m_netmask;
   PacketFn	m_packet;
   ZmRef<Allocator> m_ingress;
   StackConfig m_config;
-  CxnSlots m_cxnSlots;
-  ClosedTuples m_closed;
   PacketAllocator m_rxAllocator;
   ZmRef<Allocator> m_packets;
   Allocator *m_providers = nullptr, *m_control;
-  using NativeTxAllocator = Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP,
-    PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Pkt.Tx">>;
   NativeTxAllocator m_packetAllocator;
-  using NativeDataAllocator = Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP,
-    PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Data.Tx">>;
   NativeDataAllocator m_dataAllocator;
-  using NativeControlAllocator = Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP,
-    PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Control.Tx">>;
   NativeControlAllocator m_controlAllocator;
   uint64_t m_txCapacity = 0;
   unsigned m_controlCredits = DefaultTxControlCredits;
-  ZmRef<Zxdp::Instance> m_backend;
+
+  // Shared publication and ordered lifecycle handoffs.
+  alignas(Zm::CacheLineSize) ZmRef<Zxdp::Instance> m_backend;
   ZmAtomic<Zxdp::Instance *> m_current{nullptr};
-  ZmAtomic<unsigned> m_state{Stopped}, m_wakeUsers{0}, m_returnQueued{0};
-  Connections *m_cxns = nullptr; // Rx-owned native application/connection lifetime
-  bool		m_startFailure = false, m_endpointDrain = false;
-  ZtString<>	m_error;
-  mutable ZmRWLock m_observeLock, m_watchLock;
+  ZmAtomic<unsigned> m_state{Stopped};
+  bool m_startFailure = false;
+  ZtString<> m_error;
+  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> m_wakeUsers{0};
+  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> m_returnQueued{0};
+
+  // Independently locked observation and watch state.
+  alignas(Zm::CacheLineSize) mutable ZmRWLock m_observeLock;
   Zutcp_::EndpointLink *m_observed = nullptr;
   unsigned m_observedCount = 0;
-  AddCxnFn	m_addCxn;
-  DelCxnFn	m_delCxn;
-  alignas(Zm::CacheLineSize) unsigned m_rxPackets = 0;
-  alignas(Zm::CacheLineSize) unsigned m_txPending = 0;
+  alignas(Zm::CacheLineSize) mutable ZmRWLock m_watchLock;
+  AddCxnFn m_addCxn;
+  DelCxnFn m_delCxn;
+
+  // Rx-owned protocol, endpoint and connection state.
+  alignas(Zm::CacheLineSize) TFOCache m_tfoCookies;
+  ZmRef<EndpointBindings> m_endpoints;
+  unsigned m_nextPort = ClientPorts::First, m_routePending = 0;
+  CxnSlots m_cxnSlots;
+  ClosedTuples m_closed;
+  Connections *m_cxns = nullptr;
+  unsigned m_rxPackets = 0;
+  bool m_endpointDrain = false;
+
+  // Tx-owned timestamp, completion and allocation-wait service.
+  alignas(Zm::CacheLineSize) TCPClock m_tcpClock;
+  Queue<AllocatorList, "waiting-providers", Ztc::QueueType::Tx> m_waitProviders;
+  unsigned m_txPending = 0;
+  bool m_senderStopping = false;
+  bool m_txServicing = false, m_txDraining = false, m_allocDraining = false;
   uint64_t m_dataStalls = 0, m_controlStalls = 0;
-  ZmScheduler::Timer m_txTimer;
 };
 
 } // namespace Zutcp

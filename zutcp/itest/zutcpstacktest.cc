@@ -17,6 +17,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmThread.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/Zutcp.hh>
@@ -83,7 +84,9 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
     if (offerAck) {
       bool sent = Base::sendTCP({}, false, 0x10,
 	[this, stack]() { return stack->allocPacket(this, ZiIPType::V4, true); },
-	[this, stack](auto packet, auto) { return submit(stack, ZuMv(packet), true); });
+	[this, stack](auto packet, auto, const Zxdp::CommitFn &commit) {
+	  return submit(stack, ZuMv(packet), commit, true);
+	});
       if (!sent) return false;
       offerAck = false;
     }
@@ -94,19 +97,20 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
     auto payload = range.storage->data + range.offset;
     return Base::sendTCP(ref, false, 0,
       [this, stack]() { ++extraAlloc; return stack->allocPacket(this, ZiIPType::V4); },
-      [this, stack, payload](auto packet, auto) {
+      [this, stack, payload](auto packet, auto, const Zxdp::CommitFn &commit) {
 	original &= packet->data() == payload;
 	bounded &= packet->length == 8;
-	return submit(stack, ZuMv(packet));
+	return submit(stack, ZuMv(packet), commit);
       });
   }
-  bool submit(Zutcp::Stack *stack, ZmRef<ZiIOBuf> packet, bool control = false) {
+  bool submit(Zutcp::Stack *stack, ZmRef<ZiIOBuf> packet,
+      const Zxdp::CommitFn &commit, bool control = false) {
     memset(packet->data_(), 0, packet->skip);
     memset(packet->data_(), 0xff, 6);
     packet->data_()[6] = 2;
     packet->data_()[12] = 0x88; packet->data_()[13] = 0xb5;
     packet->rewind(packet->skip);
-    bool sent = stack->sendPacket(packet);
+    bool sent = stack->sendPacket(packet, nullptr, commit);
     detached &= sent && !packet->data_() && !packet->size;
     if (sent) { if (control) ++controls; else ++submitted; }
     return sent;
@@ -121,11 +125,11 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
   bool replay(Zutcp::Stack *stack) {
     return Base::sendTCP(retry, false, 0,
       [this, stack]() { ++extraAlloc; return stack->allocPacket(this, ZiIPType::V4); },
-      [this, stack](auto packet, auto) {
+      [this, stack](auto packet, auto, const Zxdp::CommitFn &commit) {
 	auto payload = packet->data();
 	reused &= payload == retry.range.storage->data + retry.range.offset &&
 	  packet->length == 8 && !memcmp(payload, "second--", 8);
-	return submit(stack, ZuMv(packet));
+	return submit(stack, ZuMv(packet), commit);
       });
   }
   bool finControl(Zutcp::Stack *stack) {
@@ -137,9 +141,9 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
     ref.fin = true;
     return Base::sendTCP(ref, false, 0,
       [this, stack]() { return stack->allocPacket(this, ZiIPType::V4, true); },
-      [this, stack](auto packet, auto) {
+      [this, stack](auto packet, auto, const Zxdp::CommitFn &commit) {
 	bounded &= !packet->length;
-	return submit(stack, ZuMv(packet), true);
+	return submit(stack, ZuMv(packet), commit, true);
       });
   }
 
@@ -310,7 +314,7 @@ static void testStack()
   auto index = unsigned(strtoul(getenv("ZXDP_RX_TEST_IFINDEX"), nullptr, 10));
   auto peer = unsigned(strtoul(getenv("ZXDP_RX_TEST_PEER_IFINDEX"), nullptr, 10));
   ZiMultiplex mx{ZiMxParams{}.rxBufSize(RxCount).rxQuantum(1)
-    .scheduler([](auto &p) { p.nThreads(2); })};
+    .scheduler([](auto &p) { p.nThreads(3).thread(3, [](auto &t) { t.isolated(true); }); })};
   ZmSemaphore received;
   ZmRef<Zi::IOBuf> input[RxCount], extra;
   unsigned packets = 0;
@@ -322,7 +326,7 @@ static void testStack()
       if (packets < RxCount) input[packets] = ZuMv(buf); else extra = ZuMv(buf);
       ++packets;
       received.post();
-    }, .spin = 0, .packetCount = 2}};
+    }, .spin = 0, .packetCount = 2, .txSid = 3}};
   mx.plugin(stack);
   ZtString<> configError;
   bool invalidCount = !stack->configureControl(0, 1, configError);
@@ -752,8 +756,56 @@ static void testStack()
   });
   owner.wait();
   ZuCheckRT(lateCharge, log_("a retained ingress charge survives backend shutdown"));
-  ZuCheckRT(mx.stop() && !stack->ready(),
+  uint8_t shutdownFrame[64]{}, shutdownWire[2048];
+  while (recv(wire, shutdownWire, sizeof(shutdownWire), 0) >= 0) { }
+  ZmSemaphore senderEntered, senderRelease;
+  mx.run([&senderEntered, &senderRelease] {
+    senderEntered.post();
+    senderRelease.wait(); // Deliberately hold kernel service behind admission.
+  }, 3);
+  senderEntered.wait();
+  bool shutdownSubmitted = false;
+  mx.txRun([&stack, &shutdownFrame, &shutdownSubmitted, &owner] {
+    auto packet = stack->allocPacket(&stack, ZiIPType::V4, true);
+    if (packet) {
+      ControlProbe::frame(packet, 0xfe);
+      for (unsigned i = 15; i < sizeof(shutdownFrame); ++i)
+	packet->data()[i] = uint8_t(i ^ 0xa7);
+      memcpy(shutdownFrame, packet->data(), sizeof(shutdownFrame));
+      shutdownSubmitted = stack->sendPacket(packet) && !packet->data_();
+    }
+    owner.post();
+  });
+  owner.wait();
+  ZuCheckRT(shutdownSubmitted,
+    log_("final frame is accepted while the sender is gated"));
+  ZmThread releaseSender{[&mx, &stack, &senderRelease] {
+    while (stack->ready()) Zm::yield();
+    // Stopping is published on Rx. Its FIFO successor posts behind stopTx,
+    // so the sender remains gated until shutdown has observed the admission.
+    mx.rxRun([&mx, &senderRelease] {
+      mx.txRun([&senderRelease] { senderRelease.post(); });
+    });
+  }};
+  bool txStopped = mx.stop();
+  releaseSender.join();
+  ZuCheckRT(txStopped && !stack->ready(),
     log_("asynchronous Rx then Tx drain retires the raw backend"));
+  pollfd shutdownReady{wire, POLLIN, 0};
+  bool shutdownDelivered = false;
+  auto shutdownDeadline = Zm::now() + ZuTime{2};
+  while (!shutdownDelivered) {
+    auto remaining = (shutdownDeadline - Zm::now()).millisecs();
+    if (remaining <= 0) break;
+    if (poll(&shutdownReady, 1, int(remaining)) <= 0) continue;
+    ssize_t n;
+    while ((n = recv(wire, shutdownWire, sizeof(shutdownWire), 0)) >= 0)
+      if (n == sizeof(shutdownFrame) &&
+	  !memcmp(shutdownWire, shutdownFrame, sizeof(shutdownFrame)))
+	shutdownDelivered = true;
+  }
+  ZuCheckRT(shutdownSubmitted && shutdownDelivered,
+    log_("shutdown sends an accepted frame before stopping the gated kernel-service owner"));
   ZtString<> controlError;
   bool busyControl = !stack->configureControl(3, 3, controlError);
   ZuCheckRT(busyControl && !!controlError && stack->txAdmission().controlCount == 2 &&
@@ -789,7 +841,7 @@ static void testStack()
   // Construct only while stopped. This instance is never installed as the mx
   // plugin or started, so it binds no backend and shares no provider leases.
   ZmRef<Zutcp::Stack> freshStack = new Zutcp::Stack{&mx,
-    {.interface = index, .spin = 0, .packetCount = 2}};
+    {.interface = index, .spin = 0, .packetCount = 2, .txSid = 3}};
   bool configured = app.init(Zutcp::HubParams{&mx}.controlBufCount(3).txControlCredits(3)
     .rxReserveFrames(1).rxRetainFrames(2).rxRetainFramesPerCxn(1).closedTupleRingSize(2)
     .tfoCookieCacheSize(3));

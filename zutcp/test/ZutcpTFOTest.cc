@@ -218,6 +218,10 @@ static void testTFOCacheFIFO()
       cache.find(peer(i - 1),cookie) && cache.find(peer(i),cookie);
   }
   ZuCHECK(wrap, "fixed-capacity FIFO wrap keeps precisely the newest three insertion keys");
+  Ztc::QueueTelemetry telemetry;
+  cache.telemetry(telemetry);
+  ZuCHECK(telemetry.count == 3 && telemetry.size == 3 && telemetry.full == 102,
+    "capacity evictions count as full; updates and free-slot refill do not");
 }
 
 static void testTFOCacheResize()

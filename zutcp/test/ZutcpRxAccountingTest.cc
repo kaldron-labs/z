@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <stdint.h>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmThread.hh>
@@ -16,6 +17,8 @@ static void testDistinctFrames()
 {
   ZuTestScope(testDistinctFrames);
   ZmRef<RxFrames> frames = new RxFrames{4, 2};
+  ZuCHECK(!(uintptr_t(frames.ptr()) % Zm::CacheLineSize),
+    "framework heap preserves receive-accounting cacheline alignment");
   ZmRef<RxAccount> first = new RxAccount{1, 1};
   ZmRef<RxAccount> second = new RxAccount{2, 1};
   ZuCHECK(frames->retain(0, first) && frames->retain(0, first) &&

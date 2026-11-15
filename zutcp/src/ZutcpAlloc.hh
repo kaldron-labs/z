@@ -18,11 +18,13 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmFn.hh>
+#include <zlib/ZmList.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZutcpIP.hh>
+#include <zlib/ZutcpQueue.hh>
 #include <zlib/ZxdpAlloc.hh>
 
 namespace Zutcp {
@@ -53,7 +55,8 @@ struct RxFrameStats {
 
 // One preallocated entry per physical ingress slot, not per packet/slice.
 // All operations except returned() run on Rx (or serialized stopped control).
-class ZutcpAPI RxFrames : public ZmNHeap<RxFrames>, public ZmObject {
+class ZutcpAPI RxFrames final : public ZmNHeap<RxFrames>, public ZmObject,
+  public QueueTelemetry<"rx-returns", Ztc::QueueType::Rx> {
 friend inline ZuStringT<"Zutcp.RxFrames"> ZmNHeapID(RxFrames *);
 public:
   RxFrames(unsigned count, unsigned limit);
@@ -62,34 +65,66 @@ public:
   void returned(unsigned slot); // final provider return, on any thread
   unsigned reconcile();
   RxFrameStats stats() const;
+  void telemetry(Ztc::QueueTelemetry &data) const override {
+    queueTelemetry(data);
+    // The intrusive MPSC return chain cannot overflow: each physical slot
+    // publishes once before reuse. Do not traverse concurrently or add hot RMW
+    // counters solely for telemetry. Its finite slot capacity is available.
+    data.size = m_slots.length();
+  }
   void limit(unsigned); // serialized stopped configuration; preserves old charges
 
 private:
   enum { NoSlot = unsigned(-1) };
-  struct Slot {
+  struct alignas(Zm::CacheLineSize) Slot {
     ZmRef<RxAccount> account;
     unsigned next = NoSlot;
   };
   ZtArray<Slot, ZtArrayHeapID<"Zutcp.RxSlots">> m_slots;
-  ZmAtomic<unsigned> m_returns{NoSlot};
-  unsigned m_limit, m_retained = 0;
+  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> m_returns{NoSlot};
+  alignas(Zm::CacheLineSize) unsigned m_limit;
+  unsigned m_retained = 0;
   uint64_t m_admitted = 0, m_refused = 0, m_retired = 0;
 };
 
 // Zi adapters retain this provider through final registered returns. Its pool
 // therefore outlives the packet instance and all application/DMA-held buffers.
 // Freeze geometry and intrusive links while the raw instance is active.
-struct ZutcpAPI Allocator : public ZmNHeap<Allocator>, public Zi::IOBufPlugin {
-friend inline ZuStringT<"Zutcp.Allocator"> ZmNHeapID(Allocator *);
+class Stack;
+struct Allocator;
+
+struct AllocatorData : public Zi::IOBufPlugin {
   using ReturnedFn = ZmFn<void(), ZmFnHeapID<"Zutcp.Returned">>;
+  enum { Waiting = 1, Posted = 2 };
   Zxdp::BufPool	pool;
-  Allocator	*next = nullptr;
+  Allocator	*nextProvider = nullptr;
   ReturnedFn	returned;
   ZmRef<RxFrames> rxFrames; // physical ingress only; absent for Tx providers
+  Stack		*stack = nullptr; // fixed before start, cleared after drain
+  ZmAtomic<unsigned> notify{0}; // return gate and outstanding service obligation
+  // The inherited provider-list links follow this Tx-owned group, not notify.
+  ZuID queueID; // immutable provider identity, set before registration
+  using Waits = Queue<Zi::IOBufWaitList, "allocation-waits", Ztc::QueueType::Tx>;
+  alignas(Zm::CacheLineSize) Waits waits;
+
+  AllocatorData(unsigned count, unsigned bytes) : pool{count, bytes} { }
+};
+
+using AllocatorList = ZmList<AllocatorData,
+  ZmListNode<AllocatorData, ZmListShadow<>>>;
+
+struct ZutcpAPI Allocator : public ZmNHeap<Allocator>, public AllocatorList::Node {
+friend inline ZuStringT<"Zutcp.Allocator"> ZmNHeapID(Allocator *);
+  using ZmNHeap<Allocator>::operator new;
+  using ZmNHeap<Allocator>::operator delete;
 
   Allocator(unsigned count, unsigned bytes, unsigned head = 0, unsigned tail = 0);
+  ~Allocator();
   uint8_t *alloc() override;
   void free(uint8_t *) override;
+  void wait(Zi::IOBufWait &) override;
+  void cancel(Zi::IOBufWait &) override;
+  void notifyReturn();
 };
 
 // The caller allocation lease lives in an existing recovery/source node,

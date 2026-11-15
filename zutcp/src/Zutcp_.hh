@@ -11,6 +11,7 @@
 #endif
 
 #include <zlib/ZutcpMx.hh>
+#include <zlib/ZutcpQueue.hh>
 
 namespace Zutcp_ {
 
@@ -36,7 +37,8 @@ public:
   TupleRouter() { init(); }
   void init() {
     if (!m_routes)
-      m_routes = new Routes{ZmHashParams().bits(5).loadFactor(1).cBits(3)};
+      m_routes = new Routes{ZmHashParams().bits(5).loadFactor(1).cBits(3)
+	.init("Zutcp.Endpoint.TupleRouter")};
   }
   bool add(const ClosedTupleKey &tuple, Link_ *link) {
     if (!link || !tuple.template p<0>().port() || !tuple.template p<1>().port()) return false;
@@ -77,11 +79,13 @@ inline const EndpointLink *EndpointLinkKey(const EndpointLink &link) {
 // application links provide the allocator; this inner node only adds the link.
 ZmHashDerive(ServerLinks, EndpointLink,
   (ZmHashNode<EndpointLink,
-    ZmHashKey<EndpointLinkKey, ZmHashHeapID<"">>>));
+    ZmHashKey<EndpointLinkKey,
+      ZmHashID<"Zutcp.ServerLinks", ZmHashHeapID<"">>>>));
 
 using EndpointDiscFn = ZmFn<void(), ZmFnHeapID<"Zutcp.Endpoint.DiscFn">>;
-ZmQueueDerive(EndpointDiscFns, EndpointDiscFn,
-  ZmQueueHeapID<"Zutcp.Endpoint.DiscFns">);
+using EndpointDiscFns = Zutcp::Queue<
+  ZmQueue<EndpointDiscFn, ZmQueueHeapID<"Zutcp.Endpoint.DiscFns">>,
+  "endpoint-close", Ztc::QueueType::Rx>;
 
 // Native endpoint membership and submission. This owns no kernel socket or
 // ZiConnection. The endpoint owner drains setup and posted Tx work before release.
@@ -105,6 +109,9 @@ public:
     if (m_mx) return m_mx == mx && m_stack == stack;
     m_mx = mx;
     m_stack = stack;
+    m_queueID = ZuID{} << "endpoint-close:" << ZuBoxPtr(this).hex<false>();
+    m_discFns.queueOwner(mx->id());
+    m_discFns.queueName(m_queueID);
     return true;
   }
 
@@ -173,6 +180,11 @@ public:
     });
   }
 
+  unsigned endpointQueues(Ztc::QueueMgr::AllFn fn) const {
+    if (!m_mx) return 0;
+    fn(const_cast<EndpointDiscFns *>(&m_discFns));
+    return 1;
+  }
   bool listening() const { return m_listening; }
   bool connected() const { return m_connected; }
   const ZiSockAddr &local() const { return m_local; }
@@ -191,12 +203,14 @@ public:
   bool send(
     ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
     EcnMark::T ecn = EcnMark::NotECT, bool priority = false,
-    const IPPath *path = nullptr)
+    const IPPath *path = nullptr, const Zxdp::CommitFn &commit = {})
   {
     if (!buf || !m_mx || unsigned(m_gate)) return false;
     unsigned generation = m_generation;
     if (endpointTxInvoked())
-      return send_(ZuMv(buf), ZuMv(addr), ecn, generation, path, true);
+      return send_(ZuMv(buf), ZuMv(addr), ecn, generation, path, true, commit);
+    // A commit hook borrows its caller's stack; only direct owner sends may use it.
+    if (commit) return false;
     // Path metadata is bounded. This post retains the submitted buffer only
     // until admission; accepted Stack output detaches its backing immediately.
     IPPath route = path ? *path : IPPath{};
@@ -260,7 +274,8 @@ private:
   }
 
   bool send_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, EcnMark::T ecn,
-    unsigned generation, const IPPath *supplied, bool direct)
+    unsigned generation, const IPPath *supplied, bool direct,
+    const Zxdp::CommitFn &commit = {})
   {
     ZiAssert(endpointTxInvoked(), "Zutcp", (), "native send outside Tx", return false);
     ++m_txDiag.sendCalls;
@@ -283,7 +298,7 @@ private:
     buf->length = wire;
     // Native endpoint output is built with PacketBuf metadata, including the
     // retained source node's borrowed wire view.
-    if (!m_stack->sendPacket(buf, static_cast<PacketBuf *>(buf.ptr())->retained)) {
+    if (!m_stack->sendPacket(buf, static_cast<PacketBuf *>(buf.ptr())->retained, commit)) {
       buf->skip = head;
       buf->length = bytes;
       ++m_txDiag.txBackPressure;
@@ -334,6 +349,7 @@ private:
   // Stable configuration; publish before setup/packet servicing.
   ZiMultiplex *m_mx = nullptr;
   Stack *m_stack = nullptr;
+  ZuID m_queueID;
   ZiIPType::T m_family = ZiIPType::Null;
   unsigned m_payloadLimit = 0;
   PathMode::T m_mode = PathMode::ServerUnconnected;

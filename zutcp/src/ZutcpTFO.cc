@@ -129,6 +129,7 @@ bool TFOCache::store(const TFOCookieKey &key, ZuBSpan input)
     node = &m_slots[m_free];
     m_free = node->freeNext;
   } else {
+    ++m_full;
     node = m_order.shift();
     m_index->delNode(node);
   }

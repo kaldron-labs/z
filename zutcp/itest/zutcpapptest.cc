@@ -144,12 +144,12 @@ static bool service(
   ZiIP peer{peerText};
   ZiMultiplex mx{ZiMxParams{}.rxBufSize(128).rxThread(1).txThread(2)
     .scheduler([](auto &s) {
-      s.nThreads(5);
+      s.nThreads(6).thread(6, [](auto &t) { t.isolated(true); });
       for (unsigned i = 1; i <= 4; ++i) s.thread(i, [](auto &t) { t.isolated(1); });
     })};
   ZmRef<Zutcp::Stack> stack;
   if (native) {
-    stack = new Zutcp::Stack{&mx, {.interface = interface}};
+    stack = new Zutcp::Stack{&mx, {.interface = interface, .txSid = 6}};
     mx.plugin(stack);
     ZtString<> error;
     if (!stack->configure({.rxRetainFrames = 96, .rxRetainFramesPerCxn = 64,

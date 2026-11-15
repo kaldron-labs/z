@@ -16,6 +16,7 @@
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmEngine.hh>
 #include <zlib/ZmGuard.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmQueue.hh>
 #include <zlib/ZmRing.hh>
@@ -28,6 +29,7 @@
 
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiIP.hh>
+#include <zlib/ZutcpQueue.hh>
 
 namespace ZutcpLog_ {
 
@@ -150,15 +152,29 @@ private:
   ZiFile	m_file;
 };
 
-class ZutcpAPI ZutcpLogger : private ZmEngine<ZutcpLogger> {
+class ZutcpAPI ZutcpLogger :
+  public ZmNHeap<ZutcpLogger>, private ZmEngine<ZutcpLogger> {
+friend inline ZuStringT<"Zutcp.Logger"> ZmNHeapID(ZutcpLogger *);
 friend ZmEngine<ZutcpLogger>;
   using Engine = ZmEngine<ZutcpLogger>;
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
-  ZuDerive(Ring, (ZmRing<ZmRingMW<true>>));
+  class Ring : public ZmRing<ZmRingMW<true>>,
+    public Zutcp::QueueTelemetry<"ring", Ztc::QueueType::Thread> {
+  public:
+    void telemetry(Ztc::QueueTelemetry &data) const override {
+      queueTelemetry(data);
+      if (!closed()) {
+        stats(data.inCount, data.inBytes, data.outCount, data.outBytes);
+        data.count = count_();
+      }
+      data.size = params().size;
+      data.full = full();
+    }
+  };
   using Fn = ZmRingFn<ZutcpLogger *>;
   ZmQueueDerive(Queue_, Fn, ZmQueueHeapID<"Zutcp.Log.Queue">);
-  class Queue : public Queue_ {
+  class Queue : public Zutcp::Queue<Queue_, "overflow", Ztc::QueueType::Thread> {
   public:
     using Lock = ZmPLock;
     using Guard = ZmGuard<Lock>;
@@ -181,9 +197,12 @@ friend ZmEngine<ZutcpLogger>;
   };
 
 public:
+  using ZmNHeap<ZutcpLogger>::operator new;
+  using ZmNHeap<ZutcpLogger>::operator delete;
+
   using CtrlFn = ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
 
-  struct Trace {
+  struct alignas(Zm::CacheLineSize) Trace {
     bool		configured = false;
     bool		sinkOpened = false;
     bool		headerWritten = false;
@@ -193,6 +212,12 @@ public:
   };
 
   ~ZutcpLogger();
+  static unsigned allQueues(Ztc::QueueMgr::AllFn fn) {
+    auto logger = instance();
+    fn(&logger->m_ring);
+    fn(&logger->m_queue);
+    return 2;
+  }
 
   ZutcpLogger(const ZutcpLogger &) = delete;
   ZutcpLogger &operator =(const ZutcpLogger &) = delete;
@@ -409,21 +434,28 @@ private:
   bool writeEvent(ZuCSpan, const ZutcpLog_::CxnStateEvt &, ZuTime);
 
 private:
+  const ZuID		m_queueID{"Zutcp.Log"};
   unsigned		m_configured = 0;
   ZutcpLogParams	m_params;
   ZmThread		m_thread;
   Ring			m_ring;
   Queue			m_queue;
+  mutable Lock		m_lock;
+
+  // Producers share admission counters; the writer also drains queueCount.
+  alignas(Zm::CacheLineSize)
   ZmAtomic<unsigned>	m_queueCount = 0;
-  Trace			*m_activeTrace = nullptr;
-  ZeLogBuf		m_buf;
   ZmAtomic<uint64_t>	m_recordsEnqueued = 0;
-  ZmAtomic<uint64_t>	m_recordsWritten = 0;
   ZmAtomic<uint64_t>	m_recordsDropped = 0;
   ZmAtomic<uint64_t>	m_ringBackPressure = 0;
+
+  // Writer-exclusive work and publication counters.
+  alignas(Zm::CacheLineSize)
+  Trace			*m_activeTrace = nullptr;
+  ZeLogBuf		m_buf;
+  ZmAtomic<uint64_t>	m_recordsWritten = 0;
   ZmAtomic<uint64_t>	m_writerFailures = 0;
   ZmAtomic<uint64_t>	m_bytesWritten = 0;
-  mutable Lock		m_lock;
 };
 
 #else /* Zutcp_DEBUG */
@@ -433,6 +465,7 @@ struct ZutcpLogger {
 
   struct Trace { };
   static constexpr bool enabled() { return false; }
+  static unsigned allQueues(Ztc::QueueMgr::AllFn) { return 0; }
   static bool init(
     Trace &, const ZutcpLogParams &, Zutcp::Vantage::T) {
     return true;

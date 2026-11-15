@@ -6,6 +6,7 @@
 
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZutcpAlloc.hh>
+#include <zlib/ZutcpMx.hh>
 
 namespace Zutcp {
 
@@ -56,6 +57,9 @@ void RxFrames::returned(unsigned id)
 
 unsigned RxFrames::reconcile()
 {
+  // Final return publishes here before making the physical slot reusable.
+  // An empty acquire avoids exchanging a cache line on every ingress probe.
+  if (unsigned(m_returns) == NoSlot) return 0;
   unsigned retired = 0;
   auto id = m_returns.xch(NoSlot);
   while (id != NoSlot) {
@@ -88,7 +92,7 @@ void RxFrames::limit(unsigned value)
 }
 
 Allocator::Allocator(unsigned count, unsigned bytes, unsigned head, unsigned tail)
-: pool{count, bytes}
+: AllocatorList::Node{count, bytes}
 {
   ZmAssert_(head <= bytes && tail <= bytes - head);
   size = bytes;
@@ -96,7 +100,18 @@ Allocator::Allocator(unsigned count, unsigned bytes, unsigned head, unsigned tai
   tailRoom = tail;
 }
 
-uint8_t *Allocator::alloc() { return pool.alloc(); }
+Allocator::~Allocator()
+{
+  ZmAssert_(waits.empty_() && !unsigned(notify));
+}
+
+uint8_t *Allocator::alloc()
+{
+  // Once queued, producers receive reserved grants in FIFO order. An already
+  // racing allocation may finish, but fresh traffic cannot starve the queue.
+  if (ZuUnlikely(unsigned(notify) & Waiting)) return nullptr;
+  return pool.alloc();
+}
 void Allocator::free(uint8_t *packet)
 {
   // Publish before raw free makes this slot eligible for FILL again. Rx must
@@ -105,6 +120,30 @@ void Allocator::free(uint8_t *packet)
   if (rxFrames) rxFrames->returned(pool.slot(packet));
   pool.free(packet);
   if (returned) returned();
+  notifyReturn();
+}
+
+void Allocator::notifyReturn()
+{
+  unsigned state;
+  do {
+    state = notify;
+    if (!(state & Waiting) || (state & Posted)) return;
+  } while (notify.cmpXch(state | Posted, state) != state);
+  // Claim the stop obligation before touching Stack. An empty/drained provider
+  // can outlive Stack and must not read its pointer on ordinary final returns.
+  stack->returnedTx(this);
+}
+
+void Allocator::wait(Zi::IOBufWait &request)
+{
+  if (stack) stack->waitTx(this, request);
+  else IOBufPlugin::wait(request);
+}
+
+void Allocator::cancel(Zi::IOBufWait &request)
+{
+  if (stack) stack->cancelTx(this, request);
 }
 
 PacketLease::~PacketLease() { reset(); }

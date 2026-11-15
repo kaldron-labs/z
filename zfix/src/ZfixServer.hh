@@ -39,6 +39,8 @@ public:
   using Hooks::fixCloseRx;
   using Hooks::fixTraceField;
   using Hooks::fixTraceSecret;
+  using Hooks::fixSharedRx;
+  using Hooks::fixAllocSliceRx;
   using typename NetBase::Cxn;
   using typename NetBase::RxBufAlloc;
   using typename NetBase::TxBufAlloc;
@@ -47,7 +49,9 @@ public:
     SrvLink{app, ZuMv(config), app->fixLinkLimits(), epoch} { }
 
   SrvLink(App *app, SessionConfig config, LinkLimits limits, uint64_t epoch = 1) :
-    NetBase{app}, EngineBase{Hooks::role(ZuMv(config), false), limits, epoch} { }
+    NetBase{app}, EngineBase{Hooks::role(ZuMv(config), false), limits, epoch} {
+    if constexpr (!Net::Encrypted) NetBase::rxCap_(Hooks::fixRxCap(limits));
+  }
 
   bool connectSocket_(bool replacing) {
     if (!NetBase::connectSocket_(replacing)) return false;

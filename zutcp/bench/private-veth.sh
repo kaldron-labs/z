@@ -5,13 +5,20 @@ set -euo pipefail
 [[ $# == 16 ]]
 binary=$1 backend=$2 family=$3 out=$4
 crx=$5 ctx=$6 srx=$7 stx=$8
+carx=${BENCH_CLIENT_APP_RX_CPU:-$crx}
+catx=${BENCH_CLIENT_APP_TX_CPU:-$ctx}
+sarx=${BENCH_SERVER_APP_RX_CPU:-$srx}
+satx=${BENCH_SERVER_APP_TX_CPU:-$stx}
+if [[ ${BENCH_APP_COLOCATE:-0} == 1 ]]; then
+  carx=$crx catx=$ctx sarx=$srx satx=$stx
+fi
 messages=$9 warmup=${10} pipeline=${11} connections=${12}
 reserve=${13} spin=${14} label=${15} capture=${16}
 client_backend=$backend server_backend=$backend matched=1
 case $backend in
   kernel|native) ;;
-  native-client) client_backend=native server_backend=kernel matched=0 ;;
-  native-server) client_backend=kernel server_backend=native matched=0 ;;
+  native-client) client_backend=native server_backend=kernel ;;
+  native-server) client_backend=kernel server_backend=native ;;
   *) exit 2 ;;
 esac
 if [[ $label == check ]]; then matched=0; fi
@@ -141,10 +148,15 @@ printf '%s\n' "backend=$backend" "family=$family" "build_label=$label" "topology
   "performance_comparison=$matched" \
   "capture=$capture" "messages=$messages" "warmup=$warmup" "pipeline=$pipeline" \
   "connections=$connections" "reserve_requested=$reserve" "spin=$spin" \
+  "scheduler_ll=${BENCH_LL:-0}" \
   "workload=${BENCH_WORKLOAD:-order}" "burst_size=${BENCH_BURST_SIZE:-0}" \
+  "ack_hold_us=${BENCH_ACK_HOLD_US:-25000}" \
+  "offer_rate=${BENCH_OFFER_RATE:-0}" "pending_cap=${BENCH_PENDING_CAP:-0}" \
   "recovery=$recovery" \
   "burst_interval_us=${BENCH_BURST_US:-1000}" \
-  "client_cpus=$crx,$ctx" "server_cpus=$srx,$stx" > "$out/settings"
+  "client_cpus=$crx,$ctx" "server_cpus=$srx,$stx" \
+  "client_app_cpus=$carx,$catx" "server_app_cpus=$sarx,$satx" \
+  "app_colocate=${BENCH_APP_COLOCATE:-0}" > "$out/settings"
 snapshot before
 if [[ $capture == 1 ]]; then
   if [[ $topology == bridge ]]; then
@@ -217,7 +229,8 @@ if [[ $family == 6 ]]; then address=2001:db8:87::2; fi
 # cd gives each role its own ordinary gmon.out; GMON_OUT_PREFIX also separates PIDs
 # on runtimes which implement it. No clock or transport behavior is changed.
 ip netns exec "$srv" sh -c 'cd "$1"; shift; exec "$@"' sh "$out/server" \
-  env "GMON_OUT_PREFIX=$out/server/gmon" /usr/bin/time -v -o "$out/server/time" \
+  env "GMON_OUT_PREFIX=$out/server/gmon" "BENCH_APP_RX_CPU=$sarx" \
+  "BENCH_APP_TX_CPU=$satx" /usr/bin/time -v -o "$out/server/time" \
   timeout 150 "$binary" server "$server_backend" zbenchs "$address" "$messages" "$warmup" \
   "$pipeline" "$connections" "$reserve" "$srx" "$stx" "$spin" \
   > "$out/server/output" 2> "$out/server/errors" &
@@ -228,7 +241,8 @@ for ((i=0;i<1000;i++)); do
 done
 grep -q '^ready=1$' "$out/server/output"
 ip netns exec "$cli" sh -c 'cd "$1"; shift; exec "$@"' sh "$out/client" \
-  env "GMON_OUT_PREFIX=$out/client/gmon" /usr/bin/time -v -o "$out/client/time" \
+  env "GMON_OUT_PREFIX=$out/client/gmon" "BENCH_APP_RX_CPU=$carx" \
+  "BENCH_APP_TX_CPU=$catx" /usr/bin/time -v -o "$out/client/time" \
   timeout 150 "$binary" client "$client_backend" zbenchc "$address" "$messages" "$warmup" \
   "$pipeline" "$connections" "$reserve" "$crx" "$ctx" "$spin" "$out/client/samples.csv" \
   > "$out/client/output" 2> "$out/client/errors" &
@@ -286,8 +300,11 @@ if [[ $recovery != none ]]; then
     tc filter del dev zbenchsa parent 1: protocol "$protocol" pref 20 u32
   fi
 fi
-wait "$client_pid"; client_pid=
-wait "$server_pid"; server_pid=
+client_status=0 server_status=0
+wait "$client_pid" || client_status=$?
+client_pid=
+wait "$server_pid" || server_status=$?
+server_pid=
 if [[ $recovery != none ]]; then
   drained=0
   for ((i=0;i<500;i++)); do
@@ -302,6 +319,8 @@ if [[ $recovery != none ]]; then
 fi
 snapshot after
 stopCapture
+printf '%s\n' "client=$client_status" "server=$server_status" > "$out/exit-status"
+if ((client_status || server_status)); then exit 1; fi
 for side in client server; do
   expected=$client_backend
   if [[ $side == server ]]; then expected=$server_backend; fi

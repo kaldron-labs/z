@@ -8,12 +8,15 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSingleton.hh>
+#include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZiTx.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZfixLinkTx.hh>
 #include <zlib/ZfixLink.hh>
 #include <zlib/ZfixWire.hh>
@@ -543,6 +546,9 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
     ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zfix.WireTest.Rx">, ZiIOBuf_DefltVHMaxSize>;
   using Stream = ZiRxStream<ZiRxQueue>;
   using Records = Items<ZmRef<ZiIOBuf>>;
+  // Immutable library bodies are shared with submission/completion holders;
+  // this application FIFO cannot embed mutable links in const TxBody storage.
+  using Bodies = ZmList<TxBody::Ref, ZmListHeapID<"Zfix.WireTest.Pending">>;
   // ZmFn's POD relocation trait deliberately omits array element destruction.
   // A containing object gives this owning array normal callback destruction.
   struct Reply {
@@ -553,6 +559,9 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
   Items<Reply>		replies;
   Records		records;
   Items<Completion>	completions;
+  Bodies		pending;
+  Items<unsigned>	submissions;
+  TxBody::Ref		beforeReady, afterReady;
   unsigned		stopped = 0, stops = 0, closes = 0;
   unsigned		pureTimers = 0, faults = 0, geometries = 0, epochs = 0;
   bool			refuseLogon = false, native = false, holdOutput = false;
@@ -578,7 +587,8 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
       ZiRxQueue::Node, ZiIOBuf_DefltSize>>::get()->allocBuf();
   }
 
-  ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
+  ZmRef<ZiIOBuf> fixAllocTx(unsigned head, Zi::IOBufAllocator **wait = nullptr) {
+    if (wait) *wait = nullptr;
     ZmRef<ZiIOBuf> buf = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
       ZiTxBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
     buf->skip += head; return buf;
@@ -615,8 +625,21 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
 
   TxBody::Ref fixLogonTx(TxBody::Ref body) { return refuseLogon ? TxBody::Ref{} : body; }
 
+  void fixStateRx(SessionEvent e) {
+    if (!(e.actions & SessionAction::Ready) || !beforeReady) return;
+    // This observer precedes the Link's actual Ready handoff to Tx.
+    app()->txRun([this, body = ZuMv(beforeReady)] {
+      auto result = submit_(body); fixSubmittedTx(body, result);
+    });
+  }
+
   void fixEventRx(SessionEvent e, ZmRef<Msg>) {
     if (e.actions == SessionAction::Timers) ++pureTimers;
+    if (!(e.actions & SessionAction::Ready) || !afterReady) return;
+    // This observer follows that handoff; all three jobs preserve the Tx FIFO.
+    app()->txRun([this, body = ZuMv(afterReady)] {
+      auto result = submit_(body); fixSubmittedTx(body, result);
+    });
   }
 
   void fixEpochTx(TxContext, uint64_t, TxProgress, uint64_t) {
@@ -627,6 +650,24 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
   }
 
   void fixFaultTx(TxContext, Fmt::Error) { ++faults; }
+
+  unsigned fixAssociateTx(TxBody::Ref, TxContext, uint64_t) {
+    return TxLoad::Accepted;
+  }
+
+  void fixSubmittedTx(TxBody::Ref body, unsigned result) {
+    submissions.push(result);
+    if (result == TxSelect::Busy || result == TxSelect::Held) {
+      pending.push(ZuMv(body)); queued();
+    }
+  }
+
+  TxBody::Ref fixDequeueTx() {
+    auto node = pending.shift();
+    return node ? ZuMv(node->data()) : TxBody::Ref{};
+  }
+
+  void fixStopTx(uint64_t) { pending.clean(); }
 
   void fixCompleteTx(TxBody::Ref body, TxContext c, bool ok) {
     completions.push(Completion{ZuMv(body), c, ok});
@@ -650,6 +691,42 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
     return control(1, msg);
   }
 };
+
+static void queuedBeforeReady()
+{
+  ZuTestScope(queuedBeforeReady);
+  AdmitApp app;
+  ZmRef<AdmitLink> link = new AdmitLink{&app, LinkLimits{}, true};
+  link->up(); app.drain();
+  ZuCheck(link->logon() == 1); app.drain();
+  ZuCheck(link->replies.length() == 1 && link->session_().admissionPending());
+
+  Fmt::Error error;
+  link->beforeReady = TxBody::encode<Entry>(Order{"first"}, 1, error);
+  link->afterReady = TxBody::encode<Entry>(Order{"second"}, 2, error);
+  ZuCheck(link->beforeReady && link->afterReady && !error);
+  // Public Ready observers bracket the real lifecycle handoff with submissions.
+  // Admission itself is not Ready: it requires Tx/Rx recovery owner turns first.
+  link->replies[0].fn(true);
+  app.drain();
+  ZuCheck(link->session_().ready_() && !link->beforeReady && !link->afterReady);
+  ZuCheck(link->submissions.length() == 2 && link->submissions[0] == TxSelect::Held &&
+    link->submissions[1] == TxSelect::Busy);
+
+  unsigned count = 0;
+  bool ordered = true;
+  for (const auto &completion : link->completions) {
+    if (completion.body->administrative()) continue;
+    ++count;
+    ordered &= completion.ok && completion.body->id() == count &&
+      completion.context.seqNo == count + 1;
+  }
+  ZuCheck(ordered && count == 2 && !link->pending.count_() && !link->faults);
+  link->down(true); app.drain();
+  ZuCheck(link->stopped == 1 && !app.queue.count_());
+  link->replies.clear(); link = nullptr;
+  ZuCheck(app.destroyed == 1);
+}
 
 static void earlyAssociation()
 {
@@ -965,8 +1042,128 @@ static void overlapAdmission()
   }
 }
 
+// One registered slot, with the provider on mx Tx (sid 2) and FIX Tx on sid 3.
+// The real allocator handoff and Link teardown need no socket in this fixture.
+struct PressurePool : ZmNHeap<PressurePool>, Zi::IOBufPlugin {
+friend inline ZuStringT<"Zfix.WireTest.PressurePool"> ZmNHeapID(PressurePool *);
+  alignas(ZiIOBuf_Align) uint8_t bytes[ZiIOBuf_DefltSize];
+  Zi::IOBufWait	*request = nullptr;
+  ZmSemaphore	blocked;
+  ZmAtomic<unsigned> returns{0};
+  unsigned	waits = 0, cancels = 0;
+
+  PressurePool() { size = sizeof(bytes); }
+  uint8_t *alloc() override { return nullptr; }
+  void free(uint8_t *p) override { ZmAssert_(p == bytes); ++returns; }
+  void wait(Zi::IOBufWait &r) override {
+    ZmAssert_(!request); request = &r; r.queued = true; ++waits; blocked.post();
+  }
+  void cancel(Zi::IOBufWait &r) override {
+    ZmAssert_(request == &r); request = nullptr; r.queued = false; ++cancels;
+  }
+  void grant() {
+    auto r = request; ZmAssert_(r); request = nullptr; r->queued = false;
+    r->grant(bytes);
+  }
+};
+
+struct PressureApp {
+  ZiMultiplex	mux{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
+    s.nThreads(3)
+      .thread(1, [](auto &t) { t.isolated(true); })
+      .thread(2, [](auto &t) { t.isolated(true); })
+      .thread(3, [](auto &t) { t.isolated(true); });
+  })};
+  PostedIngress	admin;
+
+  ZiMultiplex *mx() { return &mux; }
+  unsigned rxThread() const { return 1; }
+  unsigned txThread() const { return 3; }
+  bool rxInvoked() const { return mux.invoked(rxThread()); }
+  bool txInvoked() const { return mux.invoked(txThread()); }
+  PostedIngress &fixAdminRx() { return admin; }
+  template <typename Fn> void rxRun(Fn &&fn) { mux.run(ZuFwd<Fn>(fn), rxThread()); }
+  template <typename Fn> void txRun(Fn &&fn) { mux.run(ZuFwd<Fn>(fn), txThread()); }
+};
+
+struct PressureLink : ZmNHeap<PressureLink>, ZmObject, Link<PressureLink> {
+friend inline ZuStringT<"Zfix.WireTest.PressureLink"> ZmNHeapID(PressureLink *);
+  using MessageCatalog = MTList<Entry>;
+  using RxBufAlloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node,
+    ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zfix.WireTest.Rx">, ZiIOBuf_DefltVHMaxSize>;
+  PressureApp	*const owner;
+  Zi::IOBufAllocator *const allocator;
+  ZmSemaphore	published, stopped;
+  unsigned	faults = 0, outputs = 0;
+  bool		native = false;
+
+  PressureLink(PressureApp *p, Zi::IOBufAllocator *a) :
+    Link{[] { auto c = SessionOwner::config(); c.initiator = true; return c; }()},
+    owner{p}, allocator{a} { }
+
+  PressureApp *app() const { return owner; }
+  WorkState workState() const { return {}; }
+  PostedState txPosted() const { return {}; }
+  WireGeometry fixGeometryTx() { return {}; }
+  ZmRef<ZiRxQueue::Node> fixAllocRx() {
+    return ZfixTest::Allocator<RxBufAlloc>::get()->allocBuf();
+  }
+  ZmRef<ZiIOBuf> fixAllocTx(unsigned head, Zi::IOBufAllocator **wait = nullptr) {
+    if (wait) *wait = nullptr;
+    auto buf = allocator->allocBuf(this);
+    if (!buf) { if (wait) *wait = allocator; return {}; }
+    buf->skip += head; return buf;
+  }
+  bool fixSendTx(ZmRef<ZiIOBuf> buf) { transportSent(ZuMv(buf), true); return true; }
+  void fixPublishedTx(TxBody::Ref, TxContext, ZuDateTime) { ++outputs; published.post(); }
+  void fixFaultTx(TxContext, Fmt::Error) { ++faults; }
+  void fixStoppedRx(bool) { stopped.post(); }
+  PressureLink *cxn() { return native ? this : nullptr; }
+  void resumeRx() { }
+  void disconnect_(bool = true) { down(); }
+  void up() {
+    bool replacing = native; native = true;
+    ZmAssert_(transportBind(replacing)); transportUp_0();
+  }
+  void down() { native = false; transportDown_0(true); }
+};
+
+static void managedAllocPressure(unsigned mode)
+{
+  ZuTestScopeRT(managedAllocPressure);
+  PressureApp app;
+  ZmRef<PressurePool> pool = new PressurePool;
+  using Allocator = Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP, ZiTxBuf>;
+  Allocator allocator{app.mx(), pool};
+  ZmRef<PressureLink> link = new PressureLink{&app, &allocator};
+  ZuCheckRT(app.mux.start());
+  app.rxRun([link = link.ptr()] { link->up(); });
+  ZuCheckRT(!pool->blocked.timedwait(Zm::now() + ZuTime{5}));
+  if (mode == 2) {
+    // The successor cannot reuse its embedded request until cancellation of
+    // the earlier physical connection has drained on both scheduler slots.
+    app.rxRun([link = link.ptr()] { link->up(); });
+    ZuCheckRT(!pool->blocked.timedwait(Zm::now() + ZuTime{5}));
+  }
+  if (!mode) {
+    app.mux.txRun([pool = pool.ptr()] { pool->grant(); });
+    ZuCheckRT(!link->published.timedwait(Zm::now() + ZuTime{5}));
+  }
+  app.rxRun([link = link.ptr()] { link->down(); });
+  ZuCheckRT(!link->stopped.timedwait(Zm::now() + ZuTime{5}));
+  ZuCheckRT(app.mux.stop());
+  ZuCheckRT(!link->faults && link->outputs == unsigned(!mode));
+  ZuCheckRT(pool->waits == (mode == 2 ? 2U : 1U) &&
+    pool->cancels == (mode == 2 ? 2U : unsigned(bool(mode))) &&
+    unsigned(pool->returns) == unsigned(!mode) && !pool->request);
+  link = nullptr;
+}
+
 int main(int argc, char **argv) {
   parse(argc, argv); ZuTestMain();
+  ZuTestCall(managedAllocPressure, 0);
+  ZuTestCall(managedAllocPressure, 1);
+  ZuTestCall(managedAllocPressure, 2);
   ZuTestCall(tcpFrame);
   ZuTestCall(records);
   ZuTestCall(packetCompletion);
@@ -980,6 +1177,7 @@ int main(int argc, char **argv) {
   ZuTestCall(writable);
   ZuTestCall(rawMetadata);
   ZuTestCall(statistics);
+  ZuTestCall(queuedBeforeReady);
   ZuTestCall(earlyAssociation);
   ZuTestCall(preauthClose);
   ZuTestCall(resetTimerOrder);

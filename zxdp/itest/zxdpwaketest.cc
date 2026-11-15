@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -18,6 +19,8 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmAssert.hh>
+#include <zlib/ZmScheduler.hh>
+#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmTime.hh>
@@ -29,6 +32,35 @@ using namespace ZuTestUtil;
 // readiness or production wait hooks: the kernel still handles epoll/eventfd.
 static ZmSemaphore *entered = nullptr, *gate = nullptr;
 static unsigned waits = 0;
+static bool captureWake = false;
+static int wakeFD = -1;
+static ZmAtomic<unsigned> wakeReads{0}, wakeWrites{0};
+static ZmSemaphore *writing = nullptr, *writeGate = nullptr;
+
+extern "C" __attribute__((visibility("default")))
+int eventfd(unsigned value, int flags) noexcept
+{
+  int fd = syscall(SYS_eventfd2, value, flags);
+  if (captureWake && wakeFD < 0) wakeFD = fd;
+  return fd;
+}
+
+extern "C" __attribute__((visibility("default")))
+ssize_t write(int fd, const void *data, size_t size)
+{
+  if (fd == wakeFD) {
+    ++wakeWrites;
+    if (writing) { writing->post(); writeGate->wait(); }
+  }
+  return syscall(SYS_write, fd, data, size);
+}
+
+extern "C" __attribute__((visibility("default")))
+ssize_t read(int fd, void *data, size_t size)
+{
+  if (fd == wakeFD) ++wakeReads;
+  return syscall(SYS_read, fd, data, size);
+}
 
 extern "C" __attribute__((visibility("default")))
 int epoll_wait(int fd, epoll_event *events, int count, int timeout)
@@ -57,7 +89,10 @@ static ZmRef<Zxdp::Instance> createInstance(
   unsigned attempts = 0;
   do {
     ++attempts;
+    wakeFD = -1;
+    captureWake = true;
     auto instance = Zxdp::Instance::create(params, error);
+    captureWake = false;
     if (instance && instance->ready()) {
       std::cout << "# raw wake startup attempts=" << attempts << '\n';
       return instance;
@@ -75,20 +110,34 @@ static void testWake()
   Zxdp::BufPool pool{8, 1514}; // two queues, four receive slots each
   ZtString<> error;
   ZmSemaphore packet;
-  auto instance = createInstance({
+  Zxdp::Params params{
     .interface = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10)),
     .rxPool = &pool, .rx = [&pool, &packet](uint8_t *p, unsigned) {
       pool.free(p);
       packet.post();
-    }, .spin = 0}, error);
+    }, .spin = 0};
+  ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,
+    [&params](auto &thread) { thread = params.txThread; })};
+  params.scheduler = &scheduler;
+  params.txSid = 1;
+  bool started = scheduler.start();
+  ZuCheckRT(started);
+  if (!started) { alarm(0); return; }
+  auto instance = createInstance(params, error);
   bool ready = instance && instance->ready();
   ZuCheckRT(ready, log_("zero-spin receive instance starts: ", error));
-  if (!ready) { if (instance) closeInstance(instance); alarm(0); return; }
+  if (!ready) {
+    if (instance) closeInstance(instance);
+    ZuCheckRT(scheduler.stop());
+    alarm(0);
+    return;
+  }
 
   ZmSemaphore parked, release;
   entered = &parked;
   waits = 0;
   // Preserve one return for each queued scheduler wake, including before entry.
+  wakeReads = wakeWrites = 0;
   instance->wake(); instance->wake(); instance->wake();
   instance->rx(); instance->rx(); instance->rx();
   ZuCheckRT(!waits, log_("preposted wake pulses return separate receive calls without blocking"));
@@ -101,6 +150,8 @@ static void testWake()
   for (auto &waker : wakers) waker.join();
   for (unsigned i = 0; i < Wakers * Pulses; ++i) instance->rx();
   ZuCheckRT(!waits, log_("concurrent wake producers preserve every queued return"));
+  ZuCheckRT(!unsigned(wakeReads) && !unsigned(wakeWrites),
+    log_("preposted/concurrent pulses use only userspace while Rx is not parked"));
 
   // Post the wake precisely after the loop decided to sleep but before the
   // actual syscall. Eventfd readiness must close this check-to-wait race.
@@ -146,9 +197,32 @@ static void testWake()
   receiving.join();
   ZuCheckRT(sent && waits >= before + 2,
     log_("packet readiness resumes processing; rx returns only on explicit wake"));
+  // Delay a real notifier after it observed the published park. Packet
+  // readiness lets Rx consume the pulse before that writer reaches eventfd.
+  ZmSemaphore writeStarted, releaseWrite;
+  ZmThread racingRx{[&instance] { instance->rx(); }};
+  parked.wait();
+  writing = &writeStarted; writeGate = &releaseWrite;
+  ZmThread notifier{[&instance] { instance->wake(); }};
+  writeStarted.wait();
+  bool raced = wire >= 0 && sendto(wire, bytes, sizeof(bytes), 0,
+    reinterpret_cast<sockaddr *>(&address), sizeof(address)) == sizeof(bytes);
+  ZuCheckRT(raced, log_("packet readiness releases Rx before a delayed notifier write"));
+  racingRx.join();
+  releaseWrite.post(); notifier.join();
+  writing = writeGate = nullptr;
+  before = waits;
+  ZmThread staleRx{[&instance] { instance->rx(); }};
+  packet.wait();
+  parked.wait(); // stale readiness is drained but must not return rx()
+  parked.wait(); // an actual wait follows, needing its own new pulse
+  instance->wake(); staleRx.join();
+  ZuCheckRT(waits == before + 2,
+    log_("stale eventfd readiness neither invents a return nor loses the next pulse"));
   if (wire >= 0) close(wire);
   entered = nullptr;
   closeInstance(instance);
+  ZuCheckRT(scheduler.stop());
   ZuCheckRT(!pool.used(), log_("receive/wake resources retire with all kernel-held packets"));
   alarm(0);
 }
@@ -162,17 +236,30 @@ static void testActiveWake()
   ZmSemaphore active, release;
   Zxdp::Instance *current = nullptr;
   unsigned packets = 0;
-  auto instance = createInstance({
+  Zxdp::Params params{
     .interface = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10)),
     .rxPool = &pool, .rx = [&pool, &packets, &active, &release](uint8_t *p, unsigned) {
       ++packets;
       active.post();
       release.wait();
       pool.free(p);
-    }, .spin = unsigned(-1)}, error);
+    }, .spin = unsigned(-1)};
+  ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,
+    [&params](auto &thread) { thread = params.txThread; })};
+  params.scheduler = &scheduler;
+  params.txSid = 1;
+  bool started = scheduler.start();
+  ZuCheckRT(started);
+  if (!started) { alarm(0); return; }
+  auto instance = createInstance(params, error);
   bool ready = instance && instance->ready();
   ZuCheckRT(ready, log_("long-spin receive instance starts: ", error));
-  if (!ready) { if (instance) closeInstance(instance); alarm(0); return; }
+  if (!ready) {
+    if (instance) closeInstance(instance);
+    ZuCheckRT(scheduler.stop());
+    alarm(0);
+    return;
+  }
   current = instance.ptr();
   int wire = socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC, htons(ETH_P_ALL));
   sockaddr_ll address{};
@@ -185,6 +272,7 @@ static void testActiveWake()
   ZmSemaphore parked;
   entered = &parked;
   waits = 0;
+  wakeReads = wakeWrites = 0;
   ZmThread receiver{[current] { current->rx(); }};
   bool sent = wire >= 0 && sendto(wire, bytes, sizeof(bytes), 0,
     reinterpret_cast<sockaddr *>(&address), sizeof(address)) == sizeof(bytes);
@@ -193,11 +281,13 @@ static void testActiveWake()
   current->wake();
   release.post();
   receiver.join();
-  ZuCheckRT(sent && packets == 1 && !waits,
-    log_("a wake during active callback processing returns without entering epoll"));
+  ZuCheckRT(sent && packets == 1 && !waits &&
+      !unsigned(wakeReads) && !unsigned(wakeWrites),
+    log_("active callback wake returns without epoll or eventfd syscalls"));
   entered = nullptr;
   if (wire >= 0) close(wire);
   closeInstance(instance);
+  ZuCheckRT(scheduler.stop());
   alarm(0);
 }
 

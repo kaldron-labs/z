@@ -19,6 +19,7 @@
 #include <zlib/ZmQueue.hh>
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZutcpAlloc.hh>
+#include <zlib/ZutcpQueue.hh>
 
 namespace Zutcp {
 
@@ -873,7 +874,8 @@ struct PktTxUpdate {
 	pmtudAckdSize = p.pmtudSize;
     } else {
       normalAckdBytes += p.bytes;
-      if (!boundary || uint64_t(p.sentTime.microsecs()) > boundary)
+      // U64Null disables congestion-growth classification, not retirement.
+      if (boundary != U64Null && (!boundary || uint64_t(p.sentTime.microsecs()) > boundary))
 	eligibleAckdBytes += p.bytes;
     }
   }
@@ -960,14 +962,14 @@ struct SentPktNode : public ZuObject {
   BytePktTree::Node byteNode; // non-owning, non-reference-counted intrusive index hook
 };
 
-using TxPktQueue =
+using TxPktQueue = Queue<
   ZmPQueue<TxPkt,
     ZmPQueueNode<SentPktNode,
       ZmPQueueHeapID<"Zutcp.Pkt.TxSentNode",
 	ZmPQueueBits<3,
-	  ZmPQueueLevels<4>>>>>;
+	  ZmPQueueLevels<4>>>>>, "sent", Ztc::QueueType::Tx, true, false>;
 
-class RetransmitQueue {
+class RetransmitQueue : public QueueTelemetry<"retransmit", Ztc::QueueType::Tx> {
 public:
   using Queue =
     ZmQueue<SentFrameRef,
@@ -1018,6 +1020,10 @@ public:
     return !batch.remaining;
   }
 
+  void telemetry(Ztc::QueueTelemetry &data) const override {
+    queueTelemetry(data);
+    data.count = m_frames.count_();
+  }
   unsigned count() const { return m_frames.count_(); }
   unsigned dropped() const { return m_dropped; }
   bool empty() const { return !m_frames.count_(); }
@@ -1045,9 +1051,34 @@ class PktTxSpace :
 public:
   enum { RetainedLostMax = 1024 };
   using Queue = TxPktQueue;
-  using LostPNs =
-    ZmQueue<uint64_t,
-      ZmQueueHeapID<"Zutcp.Pkt.TxLostPNs">>;
+  class LostPNs : public Zutcp::Queue<
+    ZmQueue<uint64_t, ZmQueueHeapID<"Zutcp.Pkt.TxLostPNs">>,
+    "lost", Ztc::QueueType::Tx> {
+    using Base = Zutcp::Queue<
+      ZmQueue<uint64_t, ZmQueueHeapID<"Zutcp.Pkt.TxLostPNs">>,
+      "lost", Ztc::QueueType::Tx>;
+  public:
+    using Base::Base;
+    void overflow() { ++m_full; }
+    void telemetry(Ztc::QueueTelemetry &data) const override {
+      Base::telemetry(data);
+      data.size = RetainedLostMax;
+      data.full = m_full;
+    }
+  private:
+    unsigned m_full = 0;
+  };
+  void queueOwner(const ZuID &id) {
+    m_packets.queueOwner(id);
+    m_retransmit.queueOwner(id);
+    m_lostPNs.queueOwner(id);
+  }
+  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const {
+    fn(const_cast<TxPktQueue *>(&m_packets));
+    fn(const_cast<RetransmitQueue *>(&m_retransmit));
+    fn(const_cast<LostPNs *>(&m_lostPNs));
+    return 3;
+  }
   using Tx = ZmPQTx<PktTxSpace, Queue>;
   using Msg = Queue::Node;
   using Span = Queue::Span;
@@ -1219,7 +1250,7 @@ public:
 	  if (rack) rackDelivered(p, *rack, ackTime, echoKnown, echo);
 	  p.sackEpoch = m_sackEpoch;
 	  p.sackCounted = true;
-	  for (unsigned i = 0; i < p.framesUsed(); ++i) {
+	  for (unsigned i = 0, n = p.framesUsed(); i < n; ++i) {
 	    const auto &ref = p.frame(i);
 	    if (ref.kind != SentFrameKind::Data) continue;
 	    const auto &tx = transmission(ref);
@@ -1331,7 +1362,7 @@ public:
     if (!node) return;
     TxPkt &p = node->data();
     p.sentTime = now;
-    for (unsigned i = 0; i < p.framesUsed(); ++i) {
+    for (unsigned i = 0, n = p.framesUsed(); i < n; ++i) {
       const auto &ref = p.frame(i);
       if (ref.kind != SentFrameKind::Data || (!ref.length && !ref.fin) ||
 	  (ref.length && !ref.range.storage)) continue;
@@ -1364,7 +1395,7 @@ public:
       batch.nextPN = p.pn + 1;
       if (p.inFlight && !p.lost && !p.ackd && p.sackEpoch != m_sackEpoch) {
 	bool eligible = false, expired = false;
-	for (unsigned i = 0; i < p.framesUsed(); ++i) {
+	for (unsigned i = 0, n = p.framesUsed(); i < n; ++i) {
 	  const auto &ref = p.frame(i);
 	  if (ref.kind != SentFrameKind::Data || (!ref.length && !ref.fin) ||
 	      (ref.length && !ref.range.storage)) continue;
@@ -1565,7 +1596,7 @@ private:
 
   void rackDelivered(const SentPkt &p, RackState &rack, ZuTime now,
     bool echoKnown, uint32_t echo) {
-    for (unsigned i = 0; i < p.framesUsed(); ++i) {
+    for (unsigned i = 0, n = p.framesUsed(); i < n; ++i) {
       const auto &ref = p.frame(i);
       if (ref.kind != SentFrameKind::Data || (!ref.length && !ref.fin) ||
 	  (ref.length && !ref.range.storage)) continue;
@@ -1597,6 +1628,7 @@ private:
       if (!p.lost || p.ackd) continue;
       unlinkByte(p);
       (void)m_packets.del(pn);
+      m_lostPNs.overflow();
       --m_retainedLost;
     }
   }

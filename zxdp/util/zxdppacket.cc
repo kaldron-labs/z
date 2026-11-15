@@ -21,6 +21,7 @@
 
 #include <zlib/ZuMatcher.hh>
 #include <zlib/ZmAssert.hh>
+#include <zlib/ZmScheduler.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmPlatform.hh>
@@ -125,7 +126,9 @@ struct Endpoint {
   Zxdp::BufPool rx, tx;
   ZmRef<Zxdp::Instance> instance;
   ZtString<> error;
-  ZmAtomic<unsigned> received{0}, completed{0}, failed{0}, nextSeq{0};
+  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> failed{0}, nextSeq{0};
+  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> received{0}; // Rx publication
+  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> completed{0}; // Tx publication
   alignas(Zm::CacheLineSize) unsigned sent = 0, sequence = 0; // Tx-exclusive
   uint8_t *pending = nullptr;
 
@@ -205,9 +208,19 @@ struct Endpoint {
       return false;
     }
     rx.size = tx.size = link.mtu + 14;
-    instance = Zxdp::Instance::create({.interface = index, .txPools = &tx, .rxPool = &rx,
+    Zxdp::Params params{.interface = index, .txPools = &tx, .rxPool = &rx,
       .rx = [this](uint8_t *p, unsigned n) { receive(p, n); },
-      .spin = config.spin}, error);
+      .spin = config.spin};
+    ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).spin(config.spin).
+      timeout(config.timeout).thread(1,
+        [&params](auto &thread) { thread = params.txThread; })};
+    params.scheduler = &scheduler;
+    params.txSid = 1;
+    if (!scheduler.start()) {
+      ZiLOG(Error, "Zxdp.Packet", "sender scheduler startup failed");
+      return false;
+    }
+    instance = Zxdp::Instance::create(ZuMv(params), error);
     if (!instance || !instance->ready()) failed = true;
     if (!failed && config.readyFile) {
       ZiFile file;
@@ -255,6 +268,7 @@ struct Endpoint {
       ZmAssert_(closed); // unresolved kernel DMA never authorizes backing release
       instance = nullptr;
     }
+    if (!scheduler.stop()) failed = true;
     if (pending) { tx.free(pending); pending = nullptr; }
     auto ok = !failed && received == config.count && completed == config.count;
     std::cout << (ok ? "PASS" : "FAIL") << " role=" << (config.server ? "server" : "client")

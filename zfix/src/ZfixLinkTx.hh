@@ -138,6 +138,7 @@ public:
   using Base::abortTx;
 
   void epochTx(TxContext, uint64_t, TxProgress, uint64_t) { }
+  bool waitFrameTx() { return false; }
 
   ZuTime idleDeadline_() const { return m_idleDeadline; }
 
@@ -638,6 +639,7 @@ private:
   }
 
   ZmRef<ZiIOBuf> allocTx() { return impl()->allocTx(); }
+  bool waitAllocTx() { return impl()->waitFrameTx(); }
 
   bool frameTx(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> frame, ZuDateTime original) {
     if (m_resetArmed && body->msgType() == "A" && context.seqNo != 1) {

@@ -43,6 +43,7 @@ ClosedTuple ClosedTuples::remember(ClosedTuple record)
     node = m_order.shift();
     m_index->delNode(node); // remove old key before overwriting the slot
     ++m_evicted;
+    ++m_full;
   }
   if (!++m_nextID) ++m_nextID;
   record.id = m_nextID;
@@ -187,6 +188,7 @@ public:
   void remove(Listener *);
   void drained();
   void objectRetired(ZiFailFn, bool);
+  unsigned allQueues(Ztc::QueueMgr::AllFn) const;
   template <typename C> bool publish(C *, ZiConnectFn &, ZiCxnInfo);
   template <typename C, typename L> void retire(C *, bool, L &&);
   template <typename L> static void visit(ZiConnection *, L &&);
@@ -371,7 +373,8 @@ template <typename P> P Stack::Connections::params() const
     .closedTupleRingSize(config.closedTupleRingSize)
     .tfoCookieCacheSize(config.tfoCookieCacheSize)
     .connectTimeout(config.connectTimeout).userTimeout(config.userTimeout)
-    .closeDrainTimeout(config.closeDrainTimeout).finWaitTimeout(config.finWaitTimeout);
+    .closeDrainTimeout(config.closeDrainTimeout).finWaitTimeout(config.finWaitTimeout)
+    .ackHoldTimeout(config.ackHoldTimeout).congestionControl(config.congestionControl);
   return params;
 }
 
@@ -425,11 +428,14 @@ void Stack::Connections::listen(
     if (failed) failed(false);
     return;
   }
-  listener->ownerPrev = &m_listeners;
-  listener->ownerNext = m_listeners;
-  if (m_listeners) m_listeners->ownerPrev = &listener->ownerNext;
-  m_listeners = listener;
-  ZmREF(listener.ptr());
+  {
+    ZmGuard guard(m_stack->m_observeLock);
+    listener->ownerPrev = &m_listeners;
+    listener->ownerNext = m_listeners;
+    if (m_listeners) m_listeners->ownerPrev = &listener->ownerNext;
+    m_listeners = listener;
+    ZmREF(listener.ptr());
+  }
   listener->begin();
 }
 
@@ -532,12 +538,28 @@ void Stack::Connections::remove(Cli *cxn)
 
 void Stack::Connections::remove(Listener *listener)
 {
-  if (listener->ownerNext) listener->ownerNext->ownerPrev = listener->ownerPrev;
-  *listener->ownerPrev = listener->ownerNext;
-  listener->ownerNext = nullptr;
-  listener->ownerPrev = nullptr;
+  {
+    ZmGuard guard(m_stack->m_observeLock);
+    if (listener->ownerNext) listener->ownerNext->ownerPrev = listener->ownerPrev;
+    *listener->ownerPrev = listener->ownerNext;
+    listener->ownerNext = nullptr;
+    listener->ownerPrev = nullptr;
+  }
   ZmDEREF(listener);
   drained();
+}
+
+unsigned Stack::Connections::allQueues(Ztc::QueueMgr::AllFn fn) const
+{
+  ZtArray<ZmRef<Listener>, ZtArrayHeapID<"Zutcp.Mx.ListenerQueueOwners">> owners;
+  {
+    ZmReadGuard guard(m_stack->m_observeLock);
+    for (auto listener = m_listeners; listener; listener = listener->ownerNext)
+      new (owners.push()) ZmRef<Listener>{listener};
+  }
+  unsigned count = 0;
+  for (auto &listener : owners) count += listener->endpointQueues(fn);
+  return count;
 }
 
 void Stack::Connections::drained()
@@ -646,18 +668,24 @@ Stack::Stack(ZiMultiplex *mx, StackParams params)
 : ZiMxPlugin{mx}, m_interface{requireTCPSecrets(m_isn, m_tfoKey, params.interface)},
   m_mtu{requireMTU(mx, params.interface)},
   m_spin{params.spin},
-  m_endpoints{new EndpointBindings{ZmHashParams{}.bits(5).loadFactor(1).cBits(3)}},
+  m_txSid{params.txSid},
   m_netmask{params.netmask}, m_packet{ZuMv(params.packet)},
   m_ingress{new Allocator{mx->rxBufSize() ? mx->rxBufSize() : ZiIOBuf_DefltCount,
     m_mtu + 14}}, m_rxAllocator{mx, m_ingress},
   m_packets{new Allocator{requirePackets(params.packetCount), m_mtu + 14, 14 + 40 + 60}},
   m_control{new Allocator{DefaultControlBufCount, m_mtu + 14, 14 + 40 + 60}},
   m_packetAllocator{mx, m_packets}, m_dataAllocator{mx, m_packets},
-  m_controlAllocator{mx, m_control}
+  m_controlAllocator{mx, m_control},
+  m_endpoints{new EndpointBindings{ZmHashParams{}.bits(5).loadFactor(1).cBits(3)
+    .init("Zutcp.Endpoints")}}
 {
   ZmAssert_(mx->state() == ZmEngineState::Stopped);
   // TCP controls use separate native backing and never borrow application slots.
   m_ingress->rxFrames = new RxFrames{m_ingress->pool.count, m_ingress->pool.count};
+  m_ingress->rxFrames->queueOwner(mx->id());
+  m_tfoCookies.queueOwner(mx->id());
+  m_closed.queueOwner(mx->id());
+  m_waitProviders.queueOwner(mx->id());
   // A standalone packet shell has no connection-retention policy. Hub applies
   // its explicit transport limits before publishing any connection owner.
   m_config.rxRetainFrames = m_config.rxRetainFramesPerCxn = m_ingress->pool.count;
@@ -670,7 +698,9 @@ Stack::Stack(ZiMultiplex *mx, StackParams params)
 Stack::~Stack()
 {
   ZmAssert_(m_state == Stopped && !m_current && !unsigned(m_wakeUsers));
-  ZmAssert_(!m_txPending && !m_ingress->pool.used() && !m_packets->pool.used());
+  ZmAssert_(m_waitProviders.empty_() && !m_allocDraining);
+  ZmAssert_(!m_txServicing && !m_txPending &&
+    !m_ingress->pool.used() && !m_packets->pool.used());
   ZmAssert_(!m_control->pool.used());
   ZmAssert_(!m_routePending && !m_endpoints->count_());
   ZmAssert_(!m_observed && !m_observedCount);
@@ -680,17 +710,22 @@ Stack::~Stack()
   m_backend = nullptr;
   while (m_providers) {
     auto p = m_providers;
-    m_providers = p->next;
-    p->next = nullptr;
+    m_providers = p->nextProvider;
+    p->nextProvider = nullptr;
+    ZmAssert_(!p->pool.used() && p->waits.empty_() && !unsigned(p->notify));
+    p->stack = nullptr;
     ZmDEREF(p); // stopped, long-lived configuration ownership
   }
 }
 
 void Stack::addProvider(Allocator *p)
 {
+  p->queueID = ZuID{} << "allocation-waits:" << ZuBoxPtr(p).hex<false>();
+  p->waits.queueOwner(mx()->id());
+  p->waits.queueName(p->queueID);
   ZmREF(p);
   m_txCapacity += p->pool.count;
-  p->next = m_providers;
+  p->nextProvider = m_providers;
   p->pool.next = m_providers ? &m_providers->pool : nullptr;
   m_providers = p;
 }
@@ -716,6 +751,7 @@ Zi::IOBufPlugin *Stack::allocator(
   if (bytes > m_mtu + Ethernet) bytes = m_mtu + Ethernet;
   auto p = new Allocator{count, unsigned(bytes), head};
   if (p->pool.size < align) p->pool.size = align; // physical alignment padding only
+  p->stack = this;
   addProvider(p);
   return p;
 }
@@ -762,6 +798,11 @@ bool Stack::configure(const StackConfig &config, ZtString<> &error)
   }
   if (!positiveTimeout(config.userTimeout) && config.userTimeout != ZuTime{0}) {
     error = "invalid user timeout";
+    return false;
+  }
+  if (config.ackHoldTimeout < ZuTime{0} ||
+      config.ackHoldTimeout >= ZuTime{0, 500000000}) {
+    error = "invalid TCP ACK hold timeout";
     return false;
   }
   if (!config.maxCxns || !config.maxPendingCxns || config.maxPendingCxns > config.maxCxns) {
@@ -966,7 +1007,7 @@ bool Stack::resolvePath(IPPath path, RouteFn done)
     auto id = mx()->workerID(i);
     if (id != mx()->rxThread() && id != mx()->txThread()) { worker = id; break; }
   }
-  if (!worker) return false;
+  if (!worker) worker = m_txSid;
   ++m_routePending;
   mx()->run([this, path = ZuMv(path), done = ZuMv(done)]() mutable {
     ZmAssert_(!mx()->invoked(mx()->rxThread()) && !mx()->invoked(mx()->txThread()));
@@ -1001,7 +1042,7 @@ void Stack::start_()
   m_ingress->rxFrames->reconcile();
   m_error = {};
   bool busy = m_ingress->pool.used();
-  for (auto p = m_providers; p; p = p->next) busy |= p->pool.used();
+  for (auto p = m_providers; p; p = p->nextProvider) busy |= p->pool.used();
   if (busy) {
     m_state = Stopped;
     mx()->pluginStarted(ZeEXCEPT(Error, "Zutcp", "retained packet pools are busy"));
@@ -1010,7 +1051,10 @@ void Stack::start_()
   m_backend = Zxdp::Instance::create({.interface = m_interface, .netmask = m_netmask,
     .txPools = &m_providers->pool, .rxPool = &m_ingress->pool,
     .rx = [this](uint8_t *p, unsigned n) { received(p, n); },
-    .spin = m_spin}, m_error);
+    .spin = m_spin, .scheduler = mx(), .txSid = m_txSid,
+    .txStopped = [this] {
+      mx()->push([this] { senderStopped(); }, mx()->txThread());
+    }}, m_error);
   if (m_backend && m_backend->ready() && m_backend->mtu() == m_mtu) {
     m_current = m_backend.ptr();
     m_state = Running;
@@ -1054,7 +1098,31 @@ void Stack::stopEndpoints()
 void Stack::stopTx()
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
-  mx()->del(&m_txTimer);
+  if (m_senderStopping) return;
+  // A return publishes Posted before queuing its task. Clearing the Waiting
+  // gate cannot lose a notifier paused between that publication and its post.
+  // Endpoint teardown has already cancelled/drained its allocation requests.
+  ZmAssert_(m_waitProviders.empty_());
+  for (auto p = m_providers; p; p = p->nextProvider) {
+    if (unsigned(p->notify) & Allocator::Posted) {
+      m_allocDraining = true;
+      return;
+    }
+  }
+  m_allocDraining = false;
+  if (m_backend && m_backend->ready() && m_txPending) {
+    // Owner barriers have stopped admission. Keep sender and CQ service alive
+    // until every accepted descriptor completes, including the last FIN ACK.
+    m_txDraining = true;
+    txService(true);
+    return;
+  }
+  m_txDraining = false;
+  txService(false);
+  if (m_backend && !m_backend->stopSender()) {
+    m_senderStopping = true;
+    return;
+  }
   ZtString<> error;
   if (!unsigned(m_wakeUsers) && (!m_backend || m_backend->close(error))) {
     m_txPending = 0; // successful close has retired and recycled every submission
@@ -1072,6 +1140,14 @@ void Stack::stopTx()
   // loop cannot drive these retries. Yield each bounded retirement step back
   // to the Tx queue instead of waiting or spinning inside one callback.
   mx()->push([this] { stopTx(); }, mx()->txThread());
+}
+
+void Stack::senderStopped()
+{
+  ZmAssert_(mx()->invoked(mx()->txThread()));
+  if (!m_senderStopping) return; // stopTx may already have observed sender exit
+  m_senderStopping = false;
+  stopTx();
 }
 
 void Stack::wake()
@@ -1296,22 +1372,22 @@ ZmRef<PacketBuf> Stack::allocPacket(void *owner, ZiIPType::T family, bool contro
   return buf;
 }
 
-bool Stack::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease)
+bool Stack::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease,
+    const Zxdp::CommitFn &commit)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (!ready() || !buf || !buf->registered() || !buf->length ||
       buf->skip > buf->size || buf->length > buf->size - buf->skip) return false;
-  // Keep bounded CQ service abreast of continuous producers. A queued poll
-  // alone can fall behind the work that needs its returned physical slots.
-  enum { batch = 64 };
-  if (m_txPending && !(m_txPending % batch)) reconcileTx();
   bool control = buf->allocator_ == &m_controlAllocator;
   uint64_t limit = control ? m_txCapacity : m_txCapacity - m_controlCredits;
+  // Eligible application DATA is published first. Reconcile before submission
+  // only when completion credit is required to admit this packet.
+  if (m_txPending >= limit) reconcileTx();
   if (m_txPending >= limit) {
     if (control) ++m_controlStalls; else ++m_dataStalls;
     return false;
   }
-  if (!m_backend->send(buf->data(), buf->length)) return false;
+  if (!m_backend->send(buf->data(), buf->length, commit)) return false;
   // Transfer the caller lease to recovery when requested. The independent
   // kernel lease ends at CQ; neither lease retains submitted Zi metadata.
   auto backing = buf->data_();
@@ -1325,32 +1401,116 @@ bool Stack::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease)
   if (!lease && provider) lease = static_cast<PacketBuf *>(buf.ptr())->retained;
   if (lease) lease->adopt(buf->allocator(), backing, size);
   else allocator->free(backing, size, true);
-  if (!m_txPending++) mx()->txRun([this] { pollTx(); });
+  // The dedicated sender was notified by publication. Completion work follows
+  // the accepted packet on this owner; idle service keeps the last CQ live.
+  if (!m_txPending++) txService(true);
+  enum { Batch = 64 }; // bounded CQ service during continuous submission
+  if (!(m_txPending % Batch)) reconcileTx();
   return true;
 }
 
 void Stack::reconcileTx()
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
-  if (!ready()) return;
+  if (!m_backend || !m_backend->ready()) return;
   auto n = m_backend->pollTx();
   ZmAssert_(n <= m_txPending);
   m_txPending -= n;
+  if (n && !m_waitProviders.empty_()) {
+    // A CQ can release the final lease without passing through Allocator::free.
+    // Visit only blocked providers, once per batch, rotating before service may
+    // remove the current provider. Each service grants a bounded number.
+    auto remaining = m_waitProviders.count_();
+    while (remaining--) {
+      auto p = static_cast<Allocator *>(m_waitProviders.rshift());
+      serviceWaits(p);
+    }
+  }
+  if (!m_txPending) txService(false);
+}
+
+void Stack::waitTx(Allocator *p, Zi::IOBufWait &request)
+{
+  ZmAssert_(mx()->invoked(mx()->txThread()));
+  if (!ready() || !p->pool.ready()) { request.fail(); return; }
+  if (p->waits.empty_()) {
+    m_waitProviders.pushNode(p);
+    p->notify |= Allocator::Waiting;
+  }
+  request.queued = true;
+  p->waits.pushNode(&request);
+  // Probe after arming the return gate, including a return before registration.
+  serviceWaits(p);
+}
+
+void Stack::cancelTx(Allocator *p, Zi::IOBufWait &request)
+{
+  ZmAssert_(mx()->invoked(mx()->txThread()));
+  if (!request.queued) return;
+  p->waits.delNode(&request);
+  request.queued = false;
+  if (p->waits.empty_()) {
+    m_waitProviders.delNode(p);
+    p->notify &= ~unsigned(Allocator::Waiting);
+  }
+}
+
+void Stack::returnedTx(Allocator *p)
+{
+  mx()->txRun([this, p] {
+    p->notify &= ~unsigned(Allocator::Posted);
+    serviceWaits(p);
+    if (m_allocDraining) stopTx();
+  });
+}
+
+void Stack::serviceWaits(Allocator *p)
+{
+  ZmAssert_(mx()->invoked(mx()->txThread()));
+  // Match the existing packet-service quantum: yield a long grant burst to
+  // queued connection work. A failed allocation never queues its own retry.
+  enum { Batch = 64 };
+  unsigned granted = 0;
+  while (!p->waits.empty_() && granted < Batch) {
+    auto data = p->pool.alloc();
+    if (!data) break;
+    auto request = static_cast<Zi::IOBufWait *>(p->waits.shift());
+    request->queued = false;
+    ++granted;
+    request->grant(data); // no request access after cross-shard publication
+  }
+  if (p->waits.empty_()) {
+    if (unsigned(p->notify) & Allocator::Waiting) {
+      m_waitProviders.delNode(p);
+      p->notify &= ~unsigned(Allocator::Waiting);
+    }
+  } else if (granted == Batch) {
+    // Continue only after actual progress, not merely because waits remain.
+    p->notifyReturn();
+  }
+}
+
+void Stack::txService(bool active)
+{
+  ZmAssert_(mx()->invoked(mx()->txThread()));
+  if (m_txServicing == active) return;
+  m_txServicing = active;
+  mx()->serviceFn(mx()->txThread(), active ?
+    ZmScheduler::ServiceFn{this, ZmFnPtr<&Stack::pollTx>{}} :
+    ZmScheduler::ServiceFn{});
 }
 
 void Stack::pollTx()
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
-  if (!ready()) return;
-  unsigned before = m_txPending;
+  if (!ready() && !m_txDraining) { txService(false); return; }
   reconcileTx();
-  unsigned n = before - m_txPending;
-  if (!m_txPending) return;
-  if (n) { mx()->push([this] { pollTx(); }, mx()->txThread()); return; }
-  // CQ retry only; application transmission never waits for a batching timer.
-  mx()->add(&m_txTimer, Zm::now() + ZuTime{0, 1000000},
-    ZmScheduler::Update,
-    [this](auto &&arm) { return arm([this] { pollTx(); }); }, mx()->txThread());
+  if (m_txDraining && (!m_txPending || !m_backend->ready())) {
+    m_txDraining = false;
+    stopTx();
+    return;
+  }
+  if (!m_txPending || !m_backend->ready()) txService(false);
 }
 
 void Stack::listen(
@@ -1474,23 +1634,30 @@ unsigned Stack::allCxns(AllCxnsFn fn) const
 
 unsigned Stack::allQueues(Ztc::QueueMgr::AllFn fn) const
 {
-  struct Snapshot final : public Ztc::Queue {
-    Ztc::QueueTelemetry data;
-    TelKey telKey() const override { return {data.ownerID, data.id, data.type}; }
-    void telemetry(Ztc::QueueTelemetry &out) const override { out = data; }
-  };
-  ZtArray<Snapshot, ZtArrayHeapID<"Zutcp.Mx.QueueSnapshots">> snapshots;
+  ZtArray<ZmRef<Zutcp_::EndpointLink>,
+    ZtArrayHeapID<"Zutcp.Mx.QueueOwners">> owners;
   {
     ZmReadGuard guard(m_observeLock);
-    snapshots.size(m_observedCount<<1);
+    owners.size(m_observedCount);
     for (auto cxn = m_observed; cxn; cxn = cxn->observedNext)
-      dynamic_cast<Ztc::Link *>(cxn)->allQueues([&snapshots](Ztc::Queue *queue) {
-        auto snapshot = new (snapshots.push()) Snapshot;
-        queue->telemetry(snapshot->data);
-      });
+      new (owners.push()) ZmRef<Zutcp_::EndpointLink>{cxn};
   }
-  for (auto &snapshot : snapshots) fn(&snapshot);
-  return snapshots.length();
+  unsigned count = 0;
+  for (auto &cxn : owners)
+    count += dynamic_cast<Ztc::Link *>(cxn.ptr())->allQueues(fn);
+  fn(const_cast<ClosedTuples *>(&m_closed));
+  fn(const_cast<TFOCache *>(&m_tfoCookies));
+  fn(m_ingress->rxFrames.ptr());
+  fn(const_cast<decltype(m_waitProviders) *>(&m_waitProviders));
+  count += 4;
+  for (auto p = m_providers; p; p = p->nextProvider) {
+    fn(&p->waits);
+    ++count;
+  }
+  if (m_cxns) count += m_cxns->allQueues(fn);
+  if (m_backend) count += m_backend->allQueues(fn);
+  count += ZutcpLogger::allQueues(fn);
+  return count;
 }
 
 void Stack::watch(AddCxnFn add, DelCxnFn del)

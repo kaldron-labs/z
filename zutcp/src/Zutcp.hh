@@ -173,7 +173,9 @@ public:
   HubParams &&maxRto(ZuTime v) { m_rtoParams.max = v; return ZuMv(*this); }
   HubParams &&rtoGranularity(ZuTime v) { m_rtoParams.granularity = v; return ZuMv(*this); }
   HubParams &&tlpPeerAckDelay(ZuTime v) { m_tlpPeerAckDelay = v; return ZuMv(*this); }
+  HubParams &&ackHoldTimeout(ZuTime v) { m_ackHoldTimeout = v; return ZuMv(*this); }
   HubParams &&ecn(bool v) { m_ecn = v; return ZuMv(*this); }
+  HubParams &&congestionControl(bool v) { m_congestionControl = v; return ZuMv(*this); }
   HubParams &&controlBufCount(unsigned v) { m_controlBufCount = v; return ZuMv(*this); }
   HubParams &&txControlCredits(unsigned v) { m_txControlCredits = v; return ZuMv(*this); }
   HubParams &&rxRetainFrames(unsigned v) { m_rxRetainFrames = v; return ZuMv(*this); }
@@ -216,10 +218,12 @@ public:
   ZuTime heartBeat() const { return m_heartBeat; }
   unsigned maxPayload() const { return m_maxPayload; }
   bool ecn() const { return m_ecn; }
+  bool congestionControl() const { return m_congestionControl; }
   unsigned controlBufCount() const { return m_controlBufCount; }
   unsigned txControlCredits() const { return m_txControlCredits; }
   const RtoParams &rtoParams() const { return m_rtoParams; }
   ZuTime tlpPeerAckDelay() const { return m_tlpPeerAckDelay; }
+  ZuTime ackHoldTimeout() const { return m_ackHoldTimeout; }
   unsigned rxRetainFrames() const { return m_rxRetainFrames; }
   unsigned rxRetainFramesPerCxn() const { return m_rxRetainPerCxn; }
   unsigned rxReserveFrames() const { return m_rxReserveFrames; }
@@ -259,11 +263,12 @@ private:
   unsigned		m_txControlCredits = DefaultTxControlCredits;
   RtoParams		m_rtoParams;
   ZuTime		m_tlpPeerAckDelay{0, 200000000};
+  ZuTime		m_ackHoldTimeout{0, 25000000};
   unsigned		m_rxRetainFrames = DefaultRxRetainFrames;
   unsigned		m_rxRetainPerCxn = DefaultRxRetainPerCxn;
   unsigned		m_rxReserveFrames = DefaultRxReserveFrames;
   bool			m_sackPermitted = true, m_windowScale = true, m_timestamps = true;
-  bool			m_ecn = false;
+  bool			m_ecn = false, m_congestionControl = true;
   ErrorFn		m_errorFn;
 };
 
@@ -363,11 +368,13 @@ public:
       m_txControlCredits = DefaultTxControlCredits;
       m_rtoParams = {};
       m_tlpPeerAckDelay = ZuTime{0, 200000000};
+      m_ackHoldTimeout = ZuTime{0, 25000000};
       m_rxRetainFrames = DefaultRxRetainFrames;
       m_rxRetainPerCxn = DefaultRxRetainPerCxn;
       m_rxReserveFrames = DefaultRxReserveFrames;
       m_stack = nullptr;
       m_ecn = false;
+      m_congestionControl = true;
       return true;
     });
     ZiAssert(ok, "Zutcp", (),
@@ -429,10 +436,12 @@ public:
   ZuTime heartBeat() const { return m_heartBeat; }
   unsigned maxPayload() const { return m_maxPayload; }
   bool ecn() const { return m_ecn; }
+  bool congestionControl() const { return m_congestionControl; }
   unsigned controlBufCount() const { return m_controlBufCount; }
   unsigned txControlCredits() const { return m_txControlCredits; }
   const RtoParams &rtoParams() const { return m_rtoParams; }
   ZuTime tlpPeerAckDelay() const { return m_tlpPeerAckDelay; }
+  ZuTime ackHoldTimeout() const { return m_ackHoldTimeout; }
   unsigned rxRetainFrames() const { return m_rxRetainFrames; }
   unsigned rxRetainFramesPerCxn() const { return m_rxRetainPerCxn; }
   unsigned rxReserveFrames() const { return m_rxReserveFrames; }
@@ -455,6 +464,13 @@ public:
   template <typename ...Args>
   void txRun(Args &&...args) {
     m_mx->run(ZuFwd<Args>(args)..., m_txThread);
+  }
+  // Called only on the Tx owner when work must run after the current turn.
+  // The owner is active, so publishing to its queue needs no futex wake.
+  template <typename L>
+  void txPost(L &&l) {
+    ZmAssert_(txInvoked());
+    m_mx->push(ZuFwd<L>(l), m_txThread);
   }
   template <typename ...Args>
   void txInvoke(Args &&...args) {
@@ -517,7 +533,8 @@ protected:
 	      .connectTimeout = params.connectTimeout(),
 	      .userTimeout = params.userTimeout(),
 	      .closeDrainTimeout = params.closeDrainTimeout(),
-	      .finWaitTimeout = params.finWaitTimeout()}, error)) {
+	      .finWaitTimeout = params.finWaitTimeout(),
+	      .congestionControl = params.congestionControl()}, error)) {
 	  reportError(ZeEXCEPT(Error, "Zutcp", error));
 	  return false;
 	}
@@ -547,10 +564,12 @@ protected:
       m_txControlCredits = params.txControlCredits();
       m_rtoParams = params.rtoParams();
       m_tlpPeerAckDelay = params.tlpPeerAckDelay();
+      m_ackHoldTimeout = params.ackHoldTimeout();
       m_rxRetainFrames = params.rxRetainFrames();
       m_rxRetainPerCxn = params.rxRetainFramesPerCxn();
       m_rxReserveFrames = params.rxReserveFrames();
-      m_ecn = params.ecn();
+      m_congestionControl = params.congestionControl();
+      m_ecn = params.ecn() && m_congestionControl;
       if (m_qlogParams.enabled() &&
 	  !ZutcpLogger::init(m_qlogTrace, m_qlogParams, vantage))
 	return false;
@@ -690,6 +709,11 @@ private:
       reportError(ZeEXCEPT(Error, "Zutcp", "negative peer ACK allowance"));
       return false;
     }
+    if (params.ackHoldTimeout() < ZuTime{0} ||
+	params.ackHoldTimeout() >= ZuTime{0, 500000000}) {
+      reportError(ZeEXCEPT(Error, "Zutcp", "invalid TCP ACK hold timeout"));
+      return false;
+    }
     if (!params.controlBufCount() || !params.txControlCredits()) {
       reportError(ZeEXCEPT(Error, "Zutcp", "control buffer count and credits must be positive"));
       return false;
@@ -729,7 +753,6 @@ private:
   unsigned		m_txThread = 0;
   ErrorFn		m_errorFn;
   ZutcpLogParams	m_qlogParams;
-  ZutcpLogger::Trace	m_qlogTrace;
   uint64_t		m_maxData = DefaultMaxData;
   unsigned		m_maxCxns = DefaultMaxCxns, m_maxPendingCxns = DefaultMaxPendingCxns;
   unsigned		m_closedTupleRingSize = DefaultClosedTupleRingSize;
@@ -745,12 +768,15 @@ private:
   unsigned		m_txControlCredits = DefaultTxControlCredits;
   RtoParams		m_rtoParams;
   ZuTime		m_tlpPeerAckDelay{0, 200000000};
+  ZuTime		m_ackHoldTimeout{0, 25000000};
   unsigned		m_rxRetainFrames = DefaultRxRetainFrames;
   unsigned		m_rxRetainPerCxn = DefaultRxRetainPerCxn;
   unsigned		m_rxReserveFrames = DefaultRxReserveFrames;
   bool			m_sackPermitted = true, m_windowScale = true, m_timestamps = true;
-  bool			m_ecn = false;
+  bool			m_ecn = false, m_congestionControl = true;
   bool			m_registered = false;
+  // The debug logger owns mutable trace/sink state on its writer thread.
+  ZutcpLogger::Trace	m_qlogTrace;
 
 };
 
@@ -904,8 +930,9 @@ friend ZmEngine<App>;
 
   bool sendPktRaw(
       ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
-      EcnMark::T ecn, bool priority, const IPPath &path) {
-    return Endpoint::send(ZuMv(buf), ZuMv(addr), ecn, priority, &path);
+      EcnMark::T ecn, bool priority, const IPPath &path,
+      const Zxdp::CommitFn &commit = {}) {
+    return Endpoint::send(ZuMv(buf), ZuMv(addr), ecn, priority, &path, commit);
   }
 
   void refreshLinkRoutes(Link *link) {
@@ -1116,7 +1143,7 @@ private:
   void start_() {
     if (!m_links)
       m_links = new LinkTable{
-	ZmHashParams().bits(5).loadFactor(1).cBits(3)};
+	ZmHashParams().bits(5).loadFactor(1).cBits(3).init("Zutcp.ServerLinks")};
     m_routes.init();
     m_stopCount = 0;
     Base::startQLog([this]() { start_1(); });
@@ -1165,7 +1192,7 @@ private:
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   ZmRef<LinkTable>	m_links = new LinkTable{
-    ZmHashParams().bits(5).loadFactor(1).cBits(3)};
+    ZmHashParams().bits(5).loadFactor(1).cBits(3).init("Zutcp.ServerLinks")};
   TupleRouter<Link>	m_routes;
   using Pending = ZmHashKV<ClosedTupleKey, Zutcp_::PendingInitial, ZmHashHeapID<"Zutcp.Pending">>;
   ZmRef<Pending>	m_pending = new Pending;

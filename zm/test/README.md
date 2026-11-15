@@ -12,6 +12,17 @@ make -C zm/test -j8
 make -C zm/test test
 ```
 
+`ZmSchedProgressTest` gates overflow publication after the worker's last queue
+check and before its empty-ring read. It verifies LL1 progress without a future
+submission, FIFO execution, and final drain. It compiles a separate copy of Zm
+with `ZmSchedProgress_TEST`; its gates are absent from the library.
+
+`ZmRingWaitTest` covers LL0 spin, waiter registration, publication and EOF before
+sleep, full writers, timeouts, and shared reader/writer wake obligations across
+all four ring modes. Existing `ZmRing_FUNCTEST` gates coordinate the races.
+Its counters measure blocker entries and wake calls, not time actually asleep.
+The ordinary `ZmRingTest2` suite also exercises zero-spin, indefinite blocking.
+
 `ZmHeapTest` covers late arena publication, null ownership bounds, singleton
 lookup avoidance, configuration prefix counts and key order, duplicate rejection,
 zero-capacity no-ops, allocation failure, unequal arena sizes, lookup rebuilding,

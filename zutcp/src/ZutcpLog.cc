@@ -53,6 +53,8 @@ bool ZutcpLogSink::write(ZuCSpan s)
 
 ZutcpLogger::ZutcpLogger()
 {
+  m_ring.queueOwner(m_queueID);
+  m_queue.queueOwner(m_queueID);
 }
 
 ZutcpLogger::~ZutcpLogger()

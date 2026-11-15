@@ -17,3 +17,4 @@ EXTRA_DIST = README.md run-compare.sh run-matrix.sh private-veth.sh \
 	analyze-wire.py analyze-wire-selftest.py
 
 EXTRA_DIST += bench-recovery.py bench-recovery-selftest.py
+EXTRA_DIST += MILESTONE.md results/2026-11-15-milestone.json

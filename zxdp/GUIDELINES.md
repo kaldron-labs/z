@@ -13,6 +13,11 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
   The Tx-owner writable query requires a caller-held allocation and reads only
   existing direct-slot lease state. It authorizes header changes after kernel
   retirement, with no new callback, tracking allocation or packet search.
+* The optional borrowed send commit hook runs synchronously after successful
+  ring reservation, before slot/lease mutation and descriptor publication. False
+  cancels the reservation; true permits no later refusal. It is not a completion
+  callback and must not retain context, throw, reenter Tx service or queue work.
+  Use raw-context `ZmFn` binding without callback allocation on the packet path.
 * Application and transport adaptation belongs to the caller. This library owns
   arena provisioning, raw packet allocation/return and kernel ring service.
 * Preallocate arenas and all packet bookkeeping at setup. Recycle each pool with
@@ -22,6 +27,21 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
 * Query kernel ring mapping offsets and preserve SWSR ownership. The caller
   provides one Rx service owner and one Tx service owner; final pool return may
   run on any thread. Keep thread-exclusive mutable state on separate cache lines.
+* The application assigns a sender `txSid` in its `ZmScheduler` and configures
+  that slot with `Params::txThread` (`ZmSchedTParams`, isolated by default).
+  The scheduler owns thread startup, waiting and teardown. Zxdp owns no sender
+  thread or semaphore. Publish initialized descriptors immediately: increment
+  the pending-descriptor counter before commit and use scheduler `run()` after
+  commit only on a zero-to-one transition. The dedicated sender calls nonblocking
+  `sendto()`, observes the kernel consumer delta, spins for `Params::spin` when
+  pending work is exhausted, then atomically subtracts that delta. Use the
+  returned pending count to continue or return without losing racing publication.
+  Keep a persistent consumer cursor; never count the same consumption twice.
+  Tx service has no custom wake function, epoll/eventfd or wait timeout. Rx keeps
+  its epoll/eventfd wake protocol. The caller remains the sole descriptor
+  producer and CQ owner; consumption accounting does not release kernel leases.
+  Check exit during service and idle spin, then drain sender callbacks with a
+  FIFO continuation before socket retirement.
 * Construct payload directly in registered backing. No payload staging or copy.
 * Quiesce service before close. Retire kernel access before returning submitted
   backing. A caller-owned pool retains its arena through the last packet return.
@@ -29,8 +49,9 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
 * Own the required `rx()`/`wake()` pair: spin for a configurable count before
   blocking with the most efficient suitable kernel mechanism; receive packets
   until explicitly woken, then return. With epoll, post wakeups through an
-  internal `eventfd`, following ZiEventLoop/ZiMultiplex, with no per-wakeup
-  allocation. Own these descriptors and their lifecycle. Wake
+  internal `eventfd` when Rx has published a wait attempt, following
+  ZiEventLoop/ZiMultiplex, with no per-wakeup allocation. Active and preposted
+  wake pulses remain in userspace. Own these descriptors and their lifecycle. Wake
   must interrupt spinning and blocking promptly, including under continuous
   traffic and at the transition into the wait. Internal batches do not cause
   `rx()` to return on their own. The caller owns scheduling and lifecycle retries.

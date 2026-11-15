@@ -156,7 +156,8 @@ static bool selftest()
 }
 
 struct Config {
-  bool server = false, native = false;
+  bool server = false, native = false, ll = false;
+  int xdpTxCPU = -1;
   unsigned interface = 0, messages = 10000, warmup = 1000, pipeline = 1;
   unsigned connections = 1, reserve = 4096, spin = 1000, timeout = 1;
   unsigned workload = Workload::Order, burstSize = 0, burstUS = 1000;
@@ -222,7 +223,8 @@ public:
     ZiMultiplex{ZuMv(params)}, m_config{config} {
     if (config.native) {
       m_stack = new Zutcp::Stack{this,
-	{.interface = config.interface, .spin = config.spin, .packetCount = config.reserve}};
+	{.interface = config.interface, .spin = config.spin, .packetCount = config.reserve,
+	 .txSid = 3}};
       plugin(m_stack);
       Zutcp::StackConfig settings;
       ZtString<> error;
@@ -635,7 +637,7 @@ static void usage()
   std::cerr << "zutcpbench server|client kernel|native INTERFACE ADDRESS MESSAGES WARMUP "
     "PIPELINE CONNECTIONS RESERVE RX_CPU TX_CPU SPIN [SAMPLES.csv]\n"
     "Environment: BENCH_WORKLOAD=order|marketdata|updates BENCH_BURST_SIZE=0 "
-    "BENCH_BURST_US=1000\n"
+    "BENCH_BURST_US=1000 BENCH_LL=0|1\n"
     "zutcpbench --selftest\n";
   exit(2);
 }
@@ -661,6 +663,18 @@ int main(int argc, char **argv)
   config.txCPU = unsigned(ZuBox<unsigned>{argv[11]});
   // Last positional argument is the explicit scheduler spin count for BOTH modes.
   config.spin = unsigned(ZuBox<unsigned>{argv[12]});
+  if (auto value = getenv("BENCH_LL")) {
+    if (strcmp(value, "0") && strcmp(value, "1")) usage();
+    config.ll = *value == '1';
+  }
+  if (auto value = getenv(
+      config.server ? "BENCH_SERVER_XDP_TX_CPU" : "BENCH_CLIENT_XDP_TX_CPU")) {
+    config.xdpTxCPU = int(ZuBox<int>{value});
+    cpu_set_t allowed;
+    if (config.xdpTxCPU < 0 || config.xdpTxCPU >= CPU_SETSIZE ||
+	sched_getaffinity(0, sizeof(allowed), &allowed) ||
+	!CPU_ISSET(config.xdpTxCPU, &allowed)) usage();
+  }
   if (argc == 14) config.samples = argv[13];
   if (auto value = getenv("BENCH_WORKLOAD")) {
     if (!strcmp(value, "order")) config.workload = Workload::Order;
@@ -685,17 +699,22 @@ int main(int argc, char **argv)
   params.rxBufSize(config.native ? config.reserve : config.socketBytes)
     .txBufSize(config.socketBytes).rxQuantum(8)
     .rxThread(1).txThread(2).scheduler([&config](auto &s) {
-      ZmBitmap rx, tx;
+      ZmBitmap rx, tx, sender;
       rx.set(config.rxCPU); tx.set(config.txCPU);
-      s.nThreads(3).queueSize(1<<16).ll(false).quantum(ZuTime{ZuTime::Nano{1000}})
+      sender.set(config.xdpTxCPU < 0 ? config.rxCPU : unsigned(config.xdpTxCPU));
+      s.nThreads(3).queueSize(1<<16).ll(config.ll).quantum(ZuTime{ZuTime::Nano{1000}})
 	.spin(config.spin).timeout(config.timeout)
 	.thread(1, [&rx](auto &t) { t.isolated(true).cpuset(rx); })
-	.thread(2, [&tx](auto &t) { t.isolated(true).cpuset(tx); });
+	.thread(2, [&tx](auto &t) { t.isolated(true).cpuset(tx); })
+	.thread(3, [&sender](auto &t) { t.isolated(true).cpuset(sender); });
     });
   std::cout << "config backend=" << (config.native ? "native" : "kernel") << " rx_cpu="
     << config.rxCPU << " tx_cpu=" << config.txCPU
-    << " threads=3 rx_thread=1 tx_thread=2 spin=" << config.spin << " timeout_ms="
-    << config.timeout << " quantum_ns=1000 ll=0 queue=65536 kernel_socket_bytes_requested="
+    << " xdp_tx_cpu=" << (config.xdpTxCPU < 0 ? int(config.rxCPU) : config.xdpTxCPU)
+    << " scheduler_threads=3 rx_thread=1 tx_thread=2 xdp_tx_sid=3 native_xdp_sender_threads="
+    << unsigned(config.native) << " spin=" << config.spin << " timeout_ms="
+    << config.timeout << " quantum_ns=1000 ll=" << unsigned(config.ll)
+    << " queue=65536 kernel_socket_bytes_requested="
     << (config.native ? 0 : config.socketBytes) << " native_rx_frames_requested="
     << (config.native ? config.reserve : 0) << " reserve_requested=" << config.reserve
     << " kernel_allocator_count_is_not_a_pool_limit=1\n";

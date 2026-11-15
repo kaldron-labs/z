@@ -19,6 +19,12 @@ using namespace ZuTestUtil;
 
 namespace Zutcp {
 struct TCPStateTest {
+  template <typename T> static void queueOverflow(T &link) {
+    auto &c = static_cast<typename T::Base &>(link);
+    c.txQueueMax(1);
+    ZUTCP_CHECK_RT(c.admitTx() && !c.admitTx(), "admission capacity refusal");
+    --c.m_txQueueCount;
+  }
   template <typename T> static void pathBase(T &link) {
     auto &c = static_cast<typename T::Base &>(link);
     c.m_path.configuredMaxPayload(1200);
@@ -136,87 +142,49 @@ template <typename Link>
 void queueTelemetry(
   Link &link, Ztc::QueueTelemetry &rx, Ztc::QueueTelemetry &tx)
 {
-  auto linkKey = link.telKey();
+  Ztc::Queue *queues[8] = {};
   unsigned count = 0;
-  unsigned allQueues = link.allQueues(
-      [&linkKey, &rx, &tx, &count](Ztc::Queue *queue) {
+  auto linkKey = link.telKey();
+  unsigned n = link.allQueues([&queues, &count, &linkKey, &rx, &tx](Ztc::Queue *queue) {
     auto key = queue->telKey();
-    ZUTCP_CHECK_RT(key.template p<0>() == linkKey.template p<0>(),
-      "telemetry queue owner ID mismatch");
-    ZUTCP_CHECK_RT(key.template p<1>() == linkKey.template p<1>(),
-      "telemetry queue ID mismatch");
-    ZUTCP_CHECK_RT(key.template p<2>() ==
-	(count ? Ztc::QueueType::Tx : Ztc::QueueType::Rx),
-      "telemetry queue iteration order mismatch");
-
+    ZUTCP_CHECK_RT(key.template p<0>() == linkKey.template p<1>(),
+      "actual queue owner is the containing connection");
     Ztc::QueueTelemetry data;
-    data.ownerID = ZuID{} << "dirtyOwner";
-    data.id = ZuID{} << "dirty";
-    data.inBytes = data.outBytes = data.inCount = data.outCount = 1;
-    data.count = data.size = data.full = 1;
-    data.type = Ztc::QueueType::Thread;
+    data.count = data.size = data.full = 999;
+    data.inBytes = data.outBytes = data.inCount = data.outCount = 999;
     queue->telemetry(data);
-    ZUTCP_CHECK_RT(data.ownerID == key.template p<0>(),
-      "queue telemetry owner ID mismatch");
-    ZUTCP_CHECK_RT(data.id == key.template p<1>(),
-      "queue telemetry ID mismatch");
-    ZUTCP_CHECK_RT(data.type == key.template p<2>(),
-      "queue telemetry type mismatch");
-    ZUTCP_CHECK_RT(!data.size && !data.full,
-      "queue telemetry fields were not overwritten");
-    if (data.type == Ztc::QueueType::Rx) {
-      ZUTCP_CHECK_RT(!data.outBytes && !data.outCount,
-	"Rx telemetry output fields were not overwritten");
-      rx = data;
-    } else {
-      ZUTCP_CHECK_RT(!data.inBytes && !data.inCount,
-	"Tx telemetry input fields were not overwritten");
-      tx = data;
-    }
+    ZUTCP_CHECK_RT(data.ownerID == key.template p<0>() &&
+      data.id == key.template p<1>() && data.type == key.template p<2>(),
+      "actual queue key and normalized telemetry agree");
+    ZUTCP_CHECK_RT(data.full != 999 && data.inCount != 999 && data.outCount != 999,
+      "optional unsupported metrics overwrite caller storage");
+    if (data.id == "reassembly") rx = data;
+    if (data.id == "sent") tx = data;
+    if (count < 8) queues[count] = queue;
     ++count;
   });
-  ZUTCP_CHECK_RT(allQueues == 2, "allQueues returned incorrect count");
-  ZUTCP_CHECK_RT(count == allQueues,
-    "allQueues did not enumerate returned count");
-  unsigned repeat = 0;
-  link.allQueues([&repeat](Ztc::Queue *queue) {
-    auto key = queue->telKey();
-    ZUTCP_CHECK_RT(key.template p<2>() ==
-	(repeat++ ? Ztc::QueueType::Tx : Ztc::QueueType::Rx),
-      "allQueues queue order is not stable");
+  ZUTCP_CHECK_RT(n == 8 && count == n, "all eight actual core queues enumerated");
+  count = 0;
+  link.allQueues([&queues, &count](Ztc::Queue *queue) {
+    ZUTCP_CHECK_RT(count < 8 && queues[count] == queue,
+      "enumeration returns persistent actual queue objects, not temporary adapters");
+    ++count;
   });
-  ZUTCP_CHECK_RT(rx.ownerID == linkKey.template p<0>() &&
-      tx.ownerID == linkKey.template p<0>(),
-    "queue owner ID mismatch");
-  ZUTCP_CHECK_RT(rx.id == linkKey.template p<1>() &&
-      tx.id == linkKey.template p<1>(),
-    "queue ID mismatch");
-  ZUTCP_CHECK_RT(rx.type != tx.type,
-    "Rx and Tx queue types do not discriminate the keys");
 }
 
-template <typename Link>
-void checkQueues(Link &link)
+template <typename Link> void checkQueues(Link &link)
 {
-  Ztc::QueueTelemetry rx;
-  Ztc::QueueTelemetry tx;
+  Ztc::QueueTelemetry rx, tx;
   queueTelemetry(link, rx, tx);
 }
 
 void checkTrafficTelemetry(TestLink &link)
 {
-  Ztc::QueueTelemetry rx;
-  Ztc::QueueTelemetry tx;
-  Ztc::LinkTelemetry data;
+  Ztc::QueueTelemetry rx, tx;
   queueTelemetry(link, rx, tx);
-  link.telemetry(data);
-  ZUTCP_CHECK_RT(data.rxCalls == rx.inCount && data.rxBytes == rx.inBytes,
-    "TCP Rx link and queue telemetry differ");
-  ZUTCP_CHECK_RT(data.txCalls == tx.outCount && data.txBytes == tx.outBytes,
-    "TCP Tx link and queue telemetry differ");
-  ZUTCP_CHECK_RT(!rx.count, "TCP Rx queue depth is non-zero");
+  ZUTCP_CHECK_RT(!rx.count, "contiguous traffic leaves no reassembly backlog");
   ZUTCP_CHECK_RT(tx.count == link.txQueueCount(),
-    "TCP Tx queue depth differs from queued original count");
+    "sent recovery queue reports actual packet occupancy");
 }
 
 ZuBSpan bytes_(const uint8_t *data, unsigned len)
@@ -498,11 +466,31 @@ void testDatagramPayloadHeadroom(unsigned headroom)
     buf->length == 3 && (!headroom || !buf->data_()[0]));
 }
 
+void testQueueFullTelemetry()
+{
+  ZuTestScopeRT(testQueueFullTelemetry);
+  App app;
+  TestLink link{&app};
+  Zutcp::TCPStateTest::queueOverflow(link);
+  unsigned found = 0;
+  link.allQueues([&found](Ztc::Queue *queue) {
+    Ztc::QueueTelemetry data;
+    queue->telemetry(data);
+    if (data.id == "admission") {
+      ZUTCP_CHECK_RT(data.full == 1 && !data.count && data.size,
+        "real capacity refusal survives queue drain without counting other errors");
+      ++found;
+    }
+  });
+  ZuCheckRT(found == 1);
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testLinkStateAndTelemetry);
+  ZuTestCall(testQueueFullTelemetry);
   ZuTestCall(splitReorderedData);
   ZuTestCall(testRecoveryFlowAndPMTUD);
   ZuTestCall(testDatagramPayloadHeadroom, 0);
