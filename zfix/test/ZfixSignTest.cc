@@ -424,7 +424,8 @@ friend ZuStringT<"Zfix.SignRaw"> ZmNHeapID(RawEndpoint *);
     HmacSign::signMsg(out, body, c, message);
   }
   WireGeometry fixGeometryTx() const { return {}; }
-  ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
+  ZmRef<ZiIOBuf> fixAllocTx(unsigned head, Zi::IOBufAllocator **wait = nullptr) {
+    if (wait) *wait = nullptr;
     ZmRef<ZiIOBuf> b = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
       ZiTxBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
     b->skip += head; return b;

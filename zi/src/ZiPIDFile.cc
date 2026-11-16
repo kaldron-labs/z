@@ -27,7 +27,7 @@ using PIDText = ZuCArray<sizeof(int) * 3 + 2>;
 // Another process can hold the unpublished file at mode 0 while writing it.
 // This blocking filesystem API has no scheduler event for that transition;
 // bound the cross-process retry to seven one-second waits.
-static constexpr unsigned Retries = 8;
+enum { Retries = 8 };
 
 static bool dot(const Zi::Path &s)
 {

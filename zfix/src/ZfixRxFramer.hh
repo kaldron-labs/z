@@ -27,8 +27,9 @@ namespace Zfix {
 // Alloc supplies a queue-compatible pooled buffer. The caller retains a
 // completed frame across admission pauses and must not call next_ until that
 // frame is consumed. Reset only after abandoning the old stream on disconnect.
-// Complete input uses RxStream::extract's detach/smaller-side-copy policy;
-// fragmented input is gathered once directly into its final pooled buffer.
+// Complete input uses RxStream::extract's detach/smaller-side-copy policy,
+// or its explicit shared-view path when the caller budgets slice descriptors.
+// Fragmented input is gathered once directly into its final pooled buffer.
 // An optional view borrows that output buffer and reuses the validated offsets.
 class RxFramer {
 public:
@@ -44,6 +45,20 @@ public:
   template <typename Stream, typename Alloc>
   int next_(Stream &stream, Alloc &&alloc, ZmRef<ZiIOBuf> &out,
       Fmt::FrameView *view = nullptr) {
+    return next_0(stream, ZuFwd<Alloc>(alloc), nullptr, out, view);
+  }
+
+  template <typename Stream, typename Alloc, typename SliceAlloc>
+  int nextShared_(Stream &stream, Alloc &&alloc, SliceAlloc &&sliceAlloc,
+      ZmRef<ZiIOBuf> &out, Fmt::FrameView *view = nullptr) {
+    return next_0(stream, ZuFwd<Alloc>(alloc),
+      ZuFwd<SliceAlloc>(sliceAlloc), out, view);
+  }
+
+private:
+  template <typename Stream, typename Alloc, typename SliceAlloc>
+  int next_0(Stream &stream, Alloc &&alloc, SliceAlloc &&sliceAlloc,
+      ZmRef<ZiIOBuf> &out, Fmt::FrameView *view) {
     out = nullptr;
     if (view) *view = {};
     Fmt::FrameView parsed;
@@ -108,10 +123,16 @@ public:
       out = ZuMv(m_prefix);
     } else {
       unsigned remaining = m_expected;
-      auto n = stream.extract([&remaining](auto span) -> int64_t {
+      auto frameEnd = [&remaining](auto span) -> int64_t {
 	if (span.length() >= remaining) return remaining;
 	remaining -= span.length(); return 0;
-      }, ZuFwd<Alloc>(alloc), out);
+      };
+      int64_t n;
+      if constexpr (ZuIsSame<ZuDecay<SliceAlloc>, decltype(nullptr)>{})
+	n = stream.extract(frameEnd, ZuFwd<Alloc>(alloc), out);
+      else
+	n = stream.extractShared(frameEnd, ZuFwd<Alloc>(alloc),
+	  ZuFwd<SliceAlloc>(sliceAlloc), out);
       if (n < 0) return fail({Fmt::ErrorCode::Output});
       if (!n) return 0;
     }
@@ -121,7 +142,7 @@ public:
       parsed = r.view;
     }
     if (view) {
-      // extract may have copied a coalesced prefix into a different buffer.
+      // Extraction may have copied or sliced the validated head buffer.
       // Rebase validated offsets without repeating the checksum traversal.
       auto bytes = ZuCSpan{out->cspan()};
       auto rebase = [old = parsed.wire.data(), data = bytes.data()](ZuCSpan span) {

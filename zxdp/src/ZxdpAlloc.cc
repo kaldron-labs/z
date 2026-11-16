@@ -16,7 +16,8 @@ BufPool::BufPool(unsigned n, unsigned bytes) {
 }
 BufPool::~BufPool() { ZmAssert_(!unsigned(m_used)); }
 
-void BufPool::init(ZmRef<UMem> arena, uint64_t offset, unsigned stride, unsigned prefix, unsigned first)
+void BufPool::init(
+  ZmRef<UMem> arena, uint64_t offset, unsigned stride, unsigned prefix, unsigned first)
 {
   ZmAssert_(!unsigned(m_used));
   m_active = 0;

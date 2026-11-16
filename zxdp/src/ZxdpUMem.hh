@@ -35,7 +35,8 @@ struct ArenaLayout {
   unsigned chunk = 0, prefix = 0, rxCount = 0, txCount = 0;
 };
 
-struct TxSlot {
+// Final allocation returns can race producer/CQ work on neighboring slots.
+struct alignas(Zm::CacheLineSize) TxSlot {
   ZmAtomic<unsigned> refs{0}; // one allocation lease plus any kernel submission
   unsigned wire, active;
   bool pending = false;

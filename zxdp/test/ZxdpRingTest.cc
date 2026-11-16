@@ -119,6 +119,36 @@ static void testWrap()
   exercise<uint64_t>();
 }
 
+static void testProgress()
+{
+  ZuTestScope(testProgress);
+  Mapping map;
+  map.seed(UINT32_MAX - 1);
+  Zxdp::TxRing prod;
+  Zxdp::RxRing cons;
+  ZuCHECK(prod.init(map.bytes, sizeof(map.bytes), map.off, 8) &&
+      cons.init(map.bytes, sizeof(map.bytes), map.off, 8), "progress fixture attached");
+  ZuCHECK(prod.reserve(2) == 2, "initial descriptors reserved");
+  prod.entry(0) = {}; prod.entry(1) = {};
+  prod.commit();
+  auto consumed = prod.consumed();
+  auto pending = prod.published();
+  ZuCHECK(cons.reserve(2) == 2, "kernel consumes initial batch");
+  cons.commit();
+  ZuCHECK(prod.reserve(2) == 2, "producer replaces consumed batch");
+  prod.entry(0) = {}; prod.entry(1) = {};
+  prod.commit();
+  ZuCHECK(prod.published() == pending && prod.consumed() != consumed &&
+      prod.consumed() == 0,
+    "consumption advances across wrap despite unchanged ring occupancy");
+  consumed = prod.consumed();
+  ZuCHECK(prod.reserve(1) == 1, "producer can grow pending batch");
+  prod.entry(0) = {};
+  prod.commit();
+  ZuCHECK(prod.consumed() == consumed && prod.published() == pending + 1,
+    "publication alone is not kernel progress");
+}
+
 static void testPublication()
 {
   ZuTestScope(testPublication);
@@ -132,8 +162,17 @@ static void testPublication()
   Zxdp::RxRing cons;
   ZuCHECK(prod.init(mem, length, off, 64) && cons.init(mem, length, off, 64),
     "both peers attached to mapped fixture");
+  ZuCHECK(!prod.published(), "sender sees an initially empty mapped Tx ring");
   bool valid = true;
   enum { N = 200000 };
+  ZmAtomic<unsigned> done{0}, implausible{0};
+  ZmThread observer{[&prod, &done, &implausible] {
+    // A producer-first snapshot can underflow if the consumer overtakes it.
+    // With only N publications, a valid snapshot cannot report more than N.
+    while (!unsigned(done))
+      if (prod.published() > N) ++implausible;
+    if (prod.published() > N) ++implausible;
+  }};
   ZmThread writer{[&prod] {
     for (unsigned i = 0; i < N;) {
       unsigned n = ((N - i) < 7 ? (N - i) : 7);
@@ -144,7 +183,7 @@ static void testPublication()
       i += n;
     }
   }};
-  ZmThread reader{[&cons, &valid] {
+  ZmThread reader{[&cons, &valid, &done] {
     for (unsigned i = 0; i < N;) {
       unsigned n = cons.reserve(11);
       if (!n) { Zm::yield(); continue; }
@@ -155,14 +194,60 @@ static void testPublication()
       cons.commit();
       i += n;
     }
+    done = 1;
   }};
   writer.join();
   reader.join();
-  ZuCHECK(valid && prod.available() == 64 && !cons.available(),
-    "release/acquire publishes intact descriptors and protects slots until release");
+  observer.join();
+  ZuCHECK(valid && !unsigned(implausible) && !prod.published() &&
+      prod.available() == 64 && !cons.available(),
+    "release/acquire publishes intact descriptors and bounds concurrent Tx snapshots");
   prod.reset();
   cons.reset();
   munmap(mem, length);
+}
+
+static void testTelemetry()
+{
+  ZuTestScope(testTelemetry);
+  Mapping offsets;
+  void *mapping = mmap(nullptr, 4096, PROT_READ | PROT_WRITE,
+    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  ZuCHECK(mapping != MAP_FAILED, "telemetry fixture mapping");
+  if (mapping == MAP_FAILED) return;
+  Zxdp::TxRing producer;
+  Zxdp::RxRing consumer;
+  producer.identify("test", "xdp.1.0.tx", Ztc::QueueType::Tx);
+  consumer.identify("test", "xdp.1.0.rx", Ztc::QueueType::Rx);
+  bool attached = producer.init(mapping, 4096, offsets.off, 8) &&
+    consumer.init(mapping, 4096, offsets.off, 8);
+  ZuCHECK(attached, "both telemetry views attach to the real mapped positions");
+  if (!attached) { producer.reset(); consumer.reset(); munmap(mapping, 4096); return; }
+  ZuCheck(producer.reserve(8) == 8);
+  for (unsigned i = 0; i < 8; ++i) producer.entry(i) = {i, 64, 0};
+  producer.commit();
+  ZuCheck(!producer.reserve(1) && !producer.reserve(9) && !producer.reserve(0));
+  ZuCheck(consumer.reserve(3) == 3);
+  consumer.commit();
+  ZuCheck(producer.reserve(2) == 2);
+  producer.cancel();
+  Ztc::Queue *queue = &producer;
+  Ztc::QueueTelemetry data;
+  queue->telemetry(data);
+  ZuCHECK(data.ownerID == "test" && data.id == "xdp.1.0.tx" &&
+      data.type == Ztc::QueueType::Tx && data.size == 8 && data.count == 5 &&
+      data.inCount == 8 && data.outCount == 3 && data.full == 2,
+    "actual Queue telemetry counts capacity refusals without counting cancellation or zero work");
+  consumer.telemetry(data);
+  ZuCHECK(data.type == Ztc::QueueType::Rx && data.size == 8 && data.count == 5 &&
+      data.inCount == 8 && data.outCount == 3,
+    "consumer telemetry uses mapped peer progress rather than its cached reserve state");
+  producer.reset(); consumer.reset();
+  munmap(mapping, 4096);
+  queue->telemetry(data);
+  ZuCHECK(data.size == 8 && data.count == 5 && data.full == 2 &&
+      data.inCount == 8 && data.outCount == 3,
+    "closed ring retains its final telemetry after the descriptor mapping is gone");
 }
 
 int main(int argc, char **argv)
@@ -171,5 +256,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testLayout);
   ZuTestCall(testWrap);
+  ZuTestCall(testProgress);
   ZuTestCall(testPublication);
+  ZuTestCall(testTelemetry);
 }

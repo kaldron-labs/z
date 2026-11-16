@@ -52,6 +52,54 @@ ZmListDerive(ZiRxQueue, ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
 
 namespace Zi {
 
+// A queue-compatible view retains the original buffer rather than owning its
+// bytes. Growth detaches only this view; the other views keep the source alive.
+// The embedded allocator must be released before the IOBuf base destructor.
+template <typename Node> struct RxSlice : ZmNHeap<RxSlice<Node>>, Node {
+friend inline ZuStringT<"Zi.RxSlice"> ZmNHeapID(RxSlice *);
+  struct Allocator : IOBufAllocator {
+    mutable ZmRef<ZiIOBuf> source;
+    IOBufAllocator *heap;
+
+    Allocator(ZmRef<ZiIOBuf> source_, IOBufAllocator *heap_) :
+      IOBufAllocator{nullptr, IOBufType::App, 0},
+      source{ZuMv(source_)}, heap{heap_} { }
+
+    uint8_t *alloc(unsigned size) const override { return heap->alloc(size); }
+    void free(uint8_t *ptr, unsigned size, bool registered) const override {
+      if (source) source = nullptr;
+      else heap->free(ptr, size, registered);
+    }
+    ZmRef<IOBuf> allocBuf(
+      void *owner = nullptr, uint32_t length = 0,
+      uint32_t mps = ~uint32_t(0)) override {
+      return heap->allocBuf(owner, length, mps);
+    }
+  };
+
+  Allocator slice;
+
+  // heap must outlive this view and its detached storage; a source's embedded
+  // allocator (such as a transport receive slice) is not necessarily stable.
+  RxSlice(Node *source, uint8_t *data, unsigned length, IOBufAllocator *heap) :
+    Node{data, length, &slice, source->owner, length, false, source->registered()},
+    slice{root(source), heap} { }
+
+  ~RxSlice() {
+    this->free_();
+    this->data__ = 0;
+  }
+
+private:
+  // Repeated splits of one packet share its root instead of building a chain
+  // of view descriptors. A grown view has its own heap backing and is a root.
+  static ZmRef<ZiIOBuf> root(Node *source) {
+    if (auto view = dynamic_cast<RxSlice *>(source))
+      if (view->slice.source) return view->slice.source;
+    return ZmRef<ZiIOBuf>{source};
+  }
+};
+
 struct RxPass {
   template <typename Span>
   void operator ()(Span) const { }
@@ -287,6 +335,23 @@ public:
   // one final pooled buffer.
   template <typename Frame, typename Alloc>
   int64_t extract(Frame &&frame, Alloc &&alloc, ZmRef<ZiIOBuf> &out) {
+    return extract_<false>(ZuFwd<Frame>(frame), ZuFwd<Alloc>(alloc), nullptr, out);
+  }
+
+  // Explicit shared-view path. sliceAlloc(source, data, length) must authorize
+  // each descriptor and return a queue-compatible node or null. Both views are
+  // prepared before the source is removed, preserving refusal atomicity.
+  template <typename Frame, typename Alloc, typename SliceAlloc>
+  int64_t extractShared(Frame &&frame, Alloc &&alloc, SliceAlloc &&sliceAlloc,
+      ZmRef<ZiIOBuf> &out) {
+    return extract_<true>(ZuFwd<Frame>(frame), ZuFwd<Alloc>(alloc),
+      ZuFwd<SliceAlloc>(sliceAlloc), out);
+  }
+
+private:
+  template <bool Shared, typename Frame, typename Alloc, typename SliceAlloc>
+  int64_t extract_(Frame &&frame, Alloc &&alloc, SliceAlloc &&sliceAlloc,
+      ZmRef<ZiIOBuf> &out) {
     out = nullptr;
     RxFramePos pos;
     int64_t framed = scan_(ZuFwd<Frame>(frame), pos);
@@ -300,7 +365,18 @@ public:
       NodeRef node = head();
       if (ZuUnlikely(consumed < node->length)) {
 	unsigned right = node->length - consumed;
-	if (consumed <= right) {
+	if constexpr (Shared) {
+	  typename Queue::Node *source;
+	  if constexpr (Locked) source = node.ptr();
+	  else source = node;
+	  auto frame = sliceAlloc(source, node->span().data(), consumed);
+	  if (ZuUnlikely(!frame)) return -1;
+	  auto tail = sliceAlloc(source, node->span().data() + consumed, right);
+	  if (ZuUnlikely(!tail)) return -1;
+	  out = ZuMv(frame);
+	  m_queue.shift();
+	  m_queue.unshiftNode(ZuMv(tail));
+	} else if (consumed <= right) {
 	  auto frame = alloc();
 	  if (ZuUnlikely(!frame)) return -1;
 	  frame->alloc(consumed);
@@ -347,6 +423,8 @@ public:
     m_length -= length;
     return length;
   }
+
+public:
 
   // Atomically consume one complete wire frame and append its decoded payload
   // to dst.  head/tail bytes are framing.  srcAlloc/dstAlloc provision a

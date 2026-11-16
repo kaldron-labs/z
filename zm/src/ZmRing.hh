@@ -183,7 +183,8 @@ public:
   bool open(bool head, const Params &);
   void close();
 
-  // block until woken or timeout while addr == val
+  // park until woken or timeout while addr == val; caller spins and registers
+  // Waiting first, then this expected-value check closes the wake-before-park race
   int wait(
       ZmAtomic<uint32_t> &addr, uint32_t val,
       const Params &params);
@@ -877,6 +878,16 @@ private:
     return size;
   }
 
+  template <typename T>
+  bool waitSpin(const ZmAtomic<T> &addr, T value) {
+    unsigned n = params().spin;
+    for (unsigned i = 0; i < n; ++i) {
+      /**/ZmRing_bp(this, waitSpin);
+      if (addr != value) return false; // acquire before rechecking ring state
+    }
+    return true;
+  }
+
 #define ZmRing_push_get_head_tail_swsr() \
     uint32_t head = this->head().load_(); \
     if (ZuUnlikely(head &EndOfFile32())) return nullptr; \
@@ -898,9 +909,12 @@ private:
       if (gc() > 0) goto retry; \
       if constexpr (!Wait) return nullptr; \
       if (ZuUnlikely(!params().ll)) { \
+	if (!waitSpin(this->tail(), tail)) goto retry; \
+	/**/ZmRing_bp(this, waitCAS); \
 	if (this->tail().cmpXch(tail | Waiting32(), tail) != tail) \
           goto retry; \
 	tail |= Waiting32(); \
+	/**/ZmRing_bp(this, waitPark); \
 	if (m_tailBlocker.wait( \
 	      this->tail(), tail, params()) != Zu::OK) return nullptr; \
       } \
@@ -1243,9 +1257,12 @@ private:
       if (ZuUnlikely(head &EndOfFile32())) return nullptr; \
       if constexpr (!Wait) return nullptr; \
       if (ZuUnlikely(!params().ll)) { \
+	if (!waitSpin(this->head(), head)) goto retry; \
+	/**/ZmRing_bp(this, waitCAS); \
 	if (this->head().cmpXch(head | Waiting32(), head) != head) \
           goto retry; \
 	head |= Waiting32(); \
+	/**/ZmRing_bp(this, waitPark); \
 	if (m_headBlocker.wait( \
 	      this->head(), head, params()) != Zu::OK) return nullptr; \
       } \
@@ -1256,8 +1273,11 @@ private:
       if (ZuUnlikely(hdr &EndOfFile())) return nullptr; \
       if constexpr (!Wait) return nullptr; \
       if (ZuUnlikely(!params().ll)) { \
+	if (!waitSpin(*hdrPtr, hdr)) goto retry; \
+	/**/ZmRing_bp(this, waitCAS); \
 	if (hdrPtr->cmpXch(hdr | Waiting(), hdr) != hdr) goto retry; \
 	hdr |= Waiting(); \
+	/**/ZmRing_bp(this, waitPark); \
 	auto &hdr32 = \
 	  reinterpret_cast<ZmAtomic<uint32_t> *>(hdrPtr)[Flags32Offset]; \
 	if (m_headBlocker.wait( \
@@ -1474,6 +1494,9 @@ public:
   ZmRing_Breakpoint	bp_detach2;
   ZmRing_Breakpoint	bp_detach3;
   ZmRing_Breakpoint	bp_shift1;
+  ZmRing_Breakpoint	bp_waitSpin;
+  ZmRing_Breakpoint	bp_waitCAS;
+  ZmRing_Breakpoint	bp_waitPark;
 #endif
 };
 

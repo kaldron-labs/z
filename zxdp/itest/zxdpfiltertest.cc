@@ -11,6 +11,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmScheduler.hh>
 #include <zlib/Zxdp.hh>
 #include <zlib/ZxdpBPF.hh>
 
@@ -83,12 +84,25 @@ static void testForeign()
   ZuCheckRT(attached, log_("fixture attaches an independent owner: ", error));
   if (!attached) return;
   Zxdp::BufPool rx{8, 1514};
-  auto instance = Zxdp::Instance::create({.interface = ifindex, .rxPool = &rx,
-    .rx = [](uint8_t *, unsigned) { }}, error);
+  Zxdp::Params params{.interface = ifindex, .rxPool = &rx,
+    .rx = [](uint8_t *, unsigned) { }};
+  ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,
+    [&params](auto &thread) { thread = params.txThread; })};
+  params.scheduler = &scheduler;
+  params.txSid = 1;
+  bool started = scheduler.start();
+  ZuCheckRT(started);
+  if (!started) { attachment.detach(error); return; }
+  auto instance = Zxdp::Instance::create(ZuMv(params), error);
   Zxdp::LinkState link;
   ZuCheckRT(!instance && !rx.ready() && Zxdp::queryLink(ifindex, link, error) &&
       (link.drvID == foreign.id() || link.skbID == foreign.id()),
     log_("creation refuses an occupied interface and preserves its program"));
+  if (instance) {
+    while (instance->close().is<ZeException>()) { }
+    instance = nullptr;
+  }
+  ZuCheckRT(scheduler.stop());
   ZuCheckRT(attachment.detach(error), log_("foreign owner retires its own attachment: ", error));
 }
 

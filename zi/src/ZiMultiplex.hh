@@ -518,6 +518,7 @@ class ZiAPI ZiConnection :
   ZiConnection &operator =(const ZiConnection &) = delete;
 
 friend ZiMultiplex;
+friend struct ZiTxContext;
 
 public:
   using Socket = Zi::Socket;
@@ -541,7 +542,7 @@ public:
   void send(ZiTxFn fn);
   void send_(ZiTxFn fn);	// direct call from within tx thread
 
-  // Control-thread blocking sync - drains Tx thread
+  // Blocking local-Tx drain; call only outside both mx I/O owners.
   void sync();
 
   // graceful disconnect (socket shutdown); then socket close
@@ -598,6 +599,7 @@ private:
   bool allocatorOK();
   void errorSend(int status, ZeError e);
   void executedSend(unsigned n);
+  void syncDone();
 
   void disconnect(bool peer);
   void disconnect_1(bool peer);
@@ -645,6 +647,8 @@ private:
   ZiTxContext		m_txContext;
   uint64_t		m_txCalls;
   uint64_t		m_txBytes;
+  using SyncFn = ZmFn<void(), ZmFnHeapID<"Zi.Sync">>;
+  SyncFn		m_sync;
 };
 
 // named parameter list for configuring ZiMultiplex
@@ -841,6 +845,7 @@ friend ZiConnection;
 	m_info{ZuFwd<Args>(args)...}, m_up(1) { }
 
   private:
+    ZiMultiplex *mx() const { return m_mx; }
     const ZiConnectFn &acceptFn() const { return m_acceptFn; }
     bool up() const { return m_up; }
     void down() { m_up = 0; }
@@ -869,7 +874,7 @@ friend Accept;
 
     Accept(Listener *listener) :
       m_listener(listener), m_info{
-	ZiCxnType::TCPIn, Zi::nullSocket(), listener->m_info.options}
+	ZiCxnType::TCPIn, Zi::nullSocket(), listener->info().options}
     {
       m_overlapped.init(
 	Zi_Overlapped::Executed::Member<&Accept::executed>::fn(this));
@@ -881,7 +886,7 @@ friend Accept;
     void *buf() { return (void *)&m_buf[0]; }
 
     void executed(int status, unsigned n, ZeError e) {
-      m_listener->m_mx->overlappedAccept(this, status, n, e);
+      m_listener->mx()->overlappedAccept(this, status, n, e);
       delete this;
     }
 

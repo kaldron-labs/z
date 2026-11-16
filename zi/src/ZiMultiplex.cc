@@ -2148,12 +2148,36 @@ void ZiConnection::send_(ZiTxFn fn)
   if (fn(m_txContext)) send();
 }
 
+void ZiTxContext::complete()
+{
+  fn = {};
+  buf = nullptr;
+  if (cxn && this == &cxn->txContext()) cxn->syncDone();
+}
+
+void ZiConnection::syncDone()
+{
+  if (!m_sync) return;
+  ZiAssert(m_mx->invoked(m_mx->txThread()), "ZiMultiplex", (), "Tx owner", return);
+  // Clear before waking: a caller may immediately post another owner operation.
+  auto done = ZuMv(m_sync);
+  if (done) done();
+}
+
 void ZiConnection::sync()
 {
+  ZiAssert(!m_mx->invoked(m_mx->rxThread()) && !m_mx->invoked(m_mx->txThread()),
+    "ZiMultiplex", (), "sync() requires a non-I/O caller", return);
   ZmBlock<>{}([this](auto wake) {
     m_mx->txInvoke([this, wake = ZuMv(wake)]() mutable {
-      while (!m_txContext.completed()) send();
-      wake();
+      if (m_txContext.completed()) { wake(); return; }
+      m_sync = [previous = ZuMv(m_sync), wake = ZuMv(wake)]() mutable {
+	if (previous) previous();
+	wake();
+      };
+      // EAGAIN or plugin backpressure returns to the owner queue. The central
+      // context completion path releases waiters after success, error or close.
+      send();
     });
   });
 }

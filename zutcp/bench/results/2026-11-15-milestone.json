@@ -1,0 +1,1999 @@
+{
+  "milestone": "Native TCP small-message performance, 2026-11-15",
+  "source_base_commit": "fec7a2c4f5b2d8fe70e7e116340f995a9b7fed05",
+  "scope": "One paired discovery per family, workload and backend. Candidate is the milestone implementation; baseline is the retained local precommit/readiness build, not the source-base commit. Combined timer and peer-ACK changes are not separately attributed.",
+  "conditions": {
+    "application": "zfix/bench/zfixbench, managed plain FIX order exchanges",
+    "transport": "direct private veth; separate network namespaces; MTU1500; offloads disabled",
+    "families": [
+      4,
+      6
+    ],
+    "backends": [
+      "kernel",
+      "native-client",
+      "native-server",
+      "native"
+    ],
+    "shapes": [
+      {
+        "connections": 1,
+        "pipeline": 1
+      },
+      {
+        "connections": 4,
+        "pipeline": 32
+      },
+      {
+        "connections": 128,
+        "pipeline": 32
+      }
+    ],
+    "warmup_per_connection": 256,
+    "measured_per_connection": 2000,
+    "scheduler_sids": {
+      "rx": 1,
+      "tx": 2,
+      "xdp_tx": 3
+    },
+    "scheduler_threads": 3,
+    "client_cpus": [
+      0,
+      1,
+      4
+    ],
+    "server_cpus": [
+      2,
+      3,
+      6
+    ],
+    "scheduler_ll": 0,
+    "spin_count": 20000,
+    "ring_bytes": 65536,
+    "native_ack_hold_ms": 25,
+    "reserve": 4096,
+    "native_congestion_control": false,
+    "kernel_congestion_control": true,
+    "allocation_tuning": true,
+    "build": "Linux x86-64 Clang -O3 -g -DNDEBUG; no ASan/LSan or -pg"
+  },
+  "verification": {
+    "cases": 48,
+    "measured_replies": 4256000,
+    "endpoint_drains": 96,
+    "empty_scheduler_queues": 288,
+    "telemetry_csvs": 480,
+    "failed": 0,
+    "invalid": 0,
+    "unrun": 0,
+    "hash_resize_rows": 0,
+    "non_scheduler_full": 0,
+    "zutcp_unit_tests": 311,
+    "zxdp_unit_tests": 11,
+    "native_integration_tests": 117,
+    "linux_peer_tests": 36,
+    "benchmark_selftest": true
+  },
+  "archive": {
+    "local_path": "review_context/zutcp-stack-audit/timer-reservation",
+    "strict_results_sha256": "3d0b8e2afa3ea2adf7af921bec9c85a983a34f8250b5796a4c1b9439754870af",
+    "summary_sha256": "8c9d09efb0f5826546cc44ec99f97c39c9b56c4394ef0f8d4c1029478049dbde",
+    "baseline_manifest_sha256": "74a51a4a9c38e9bef9362e80f2ff6c25ea711facaddd1d62ba9eef14414ad3b3",
+    "candidate_manifest_sha256": "4d5bf7c67664ada873b0b2359230a5f82cdc64544d5218030708ecda3ca9e4a6",
+    "harness_sha256": "fcc40c63026a3396bfcd9a7195ced4d1f2351f34c06edf7c55e6dbfc525da2bd"
+  },
+  "elf_sha256": {
+    "baseline": {
+      "libZdbus-10.0.0.so": "6c3fea3ab44a6b3ff2fce57c422e1f32adcd8386ba59cc96858df48da3351d8e",
+      "libZe-10.0.0.so": "327bb6be32093038e2ccfc222438539117e206f3b73a6ae7427242148cfb3716",
+      "libZf-10.0.0.so": "4aac54da0b82387819cc1fbdcfef5575aa75b6fff5f02d0db366f640fd44e5d2",
+      "libZfix-10.0.0.so": "ee13f4c81564655afe790d6af71b452eca50307210fd7d8b1906a6f549f108b6",
+      "libZfixFmt-10.0.0.so": "cda0947a8c6a6ca7d467e9b005580561587468338a13fa4f1914b9364d98ad86",
+      "libZi-10.0.0.so": "7e9eddd780fbbe25aeec98ef1bdc15c0c58e57b3e57670374803b68fc437acac",
+      "libZm-10.0.0.so": "678fba3f367bb6c2a3ec86fcc9f34a7d4cb87bca7a674ba26e87a82a5c376378",
+      "libZt-10.0.0.so": "8beb8886115452a08e91b6c7563b11db98a5ac98e980ba86b59cb3a5a64df2b2",
+      "libZtcp-10.0.0.so": "3aa4cb778632410248eae7f0693ee0ec869034a1fb7ae68a99542786e0691e8e",
+      "libZtls-10.0.0.so": "d363fbfa366c26d8a4a1dbf92071d870ad0240787df7637009f7fff60bd89db0",
+      "libZu-10.0.0.so": "67e00a6565fe3e7cea22c67010a2887319901851865917530fcc5945c041d083",
+      "libZutcp-10.0.0.so": "20ede4bb4b341bd4bd65b75e759f10bd2c76f8cc7ce7f39beb14fa3803e26dd8",
+      "libZxdp-10.0.0.so": "29dd9abb873ea37640e5d3aae49938a4e79370253c91559d18da697bb7c1cdd8",
+      "zfixbench.bin": "f9e1d34c2ea6696fc0003730710723e6abe93cfc71cd3d0ca33de54581815130"
+    },
+    "candidate": {
+      "libZdbus-10.0.0.so": "6c3fea3ab44a6b3ff2fce57c422e1f32adcd8386ba59cc96858df48da3351d8e",
+      "libZe-10.0.0.so": "327bb6be32093038e2ccfc222438539117e206f3b73a6ae7427242148cfb3716",
+      "libZf-10.0.0.so": "4aac54da0b82387819cc1fbdcfef5575aa75b6fff5f02d0db366f640fd44e5d2",
+      "libZfix-10.0.0.so": "ee13f4c81564655afe790d6af71b452eca50307210fd7d8b1906a6f549f108b6",
+      "libZfixFmt-10.0.0.so": "cda0947a8c6a6ca7d467e9b005580561587468338a13fa4f1914b9364d98ad86",
+      "libZi-10.0.0.so": "7e9eddd780fbbe25aeec98ef1bdc15c0c58e57b3e57670374803b68fc437acac",
+      "libZm-10.0.0.so": "678fba3f367bb6c2a3ec86fcc9f34a7d4cb87bca7a674ba26e87a82a5c376378",
+      "libZt-10.0.0.so": "8beb8886115452a08e91b6c7563b11db98a5ac98e980ba86b59cb3a5a64df2b2",
+      "libZtcp-10.0.0.so": "3aa4cb778632410248eae7f0693ee0ec869034a1fb7ae68a99542786e0691e8e",
+      "libZtls-10.0.0.so": "d363fbfa366c26d8a4a1dbf92071d870ad0240787df7637009f7fff60bd89db0",
+      "libZu-10.0.0.so": "67e00a6565fe3e7cea22c67010a2887319901851865917530fcc5945c041d083",
+      "libZutcp-10.0.0.so": "e7119c9321ac53465851cb4f2b4d6092866b8f2de029fe37d3b51126b28f2559",
+      "libZxdp-10.0.0.so": "29dd9abb873ea37640e5d3aae49938a4e79370253c91559d18da697bb7c1cdd8",
+      "zfixbench.bin": "f9e1d34c2ea6696fc0003730710723e6abe93cfc71cd3d0ca33de54581815130"
+    }
+  },
+  "measured_cpp_source_sha256": {
+    "zfix/bench/zfixbench.cc": "179736508a2c1d281a1e037da2b50c3dd0574b991f24b6b34388ee0ec04c6e9a",
+    "zfix/src/ZfixClient.hh": "d9705d52e693d2965e090dd5cdaf78bf39ed5b9a0293d4ea1fa78a5d09289556",
+    "zfix/src/ZfixLink.hh": "ebdd2c0e027318fa692b179cca616aaea4c03f044770f265de06873a2a8155fe",
+    "zfix/src/ZfixLinkTx.hh": "23bdb51ecd9de557f9bf778bc2c2a3e951630b3dd695a44e1067480e69a4b2e3",
+    "zfix/src/ZfixNet.hh": "4c1a306aa7ee076dd21d9ad902396cdd19b4a93021c369c1472fe43ec812b159",
+    "zfix/src/ZfixRxFramer.hh": "726191a556ab5c9287cc93852e973a74f5969048ddf855e53c1b11245cdcc874",
+    "zfix/src/ZfixServer.hh": "15e1a92d8f601c03c5781b2f3b5352f23a518223d4041a7dd4006750cd59032b",
+    "zfix/src/ZfixTx.hh": "676755d3119937c9f0103058afbcdc5e810a96eb5e1ebf90a7a47a9133b037b4",
+    "zfix/test/ZfixLinkTxTest.cc": "48fa3c4ab0634d6898afb1fbe923762e130eaf02ba295ec6eeb3be6b74c097cc",
+    "zfix/test/ZfixRxFramerTest.cc": "b08be8c4caf040dd1f0c8ccbd0aaa8bb02c2d5469ecd4d998c9a71dee3477301",
+    "zfix/test/ZfixSignTest.cc": "e22f819bc5793ef51cdc683563ea5c65951a7c40710a3f202090628092209a5a",
+    "zfix/test/ZfixTxTest.cc": "6b8f593e60ec6bf152f2cb3cbe8120b68c2ab46d4ae49b16a39d9b57f3c60693",
+    "zfix/test/ZfixWireTest.cc": "a78b699e0be130408bcabbe92f5cd643f3895537cae7e99706a52d9b75042825",
+    "zi/src/ZiEventLoop.cc": "5b3b56140980eae1ee65a98a405dac98e531aa73343503a18a27c34aa61ffa81",
+    "zi/src/ZiEventLoop.hh": "f130af74b5e65802c5dd88b7b79bffcbe0048fdf48c32e14887bae33172e42ec",
+    "zi/src/ZiIOBuf.cc": "d71ed788187d4dfb04f47c518c162613f845ca09ee8bc9679b48060c77e4f861",
+    "zi/src/ZiIOBuf.hh": "a5bdb2f414c4a2517f26676e10fba43950fc6e647087d681733ae7796a498238",
+    "zi/src/ZiRing.cc": "692d03cf46dc6ac07cf842741eb0a1f1e6220ec5cadc3a2d3ed4ac3e88698e9f",
+    "zi/src/ZiRxStream.hh": "0819472330e9141e6bb26db1f8ca637ef26fbc6bbbea60eedc4242c241544dc3",
+    "zi/test/ZiIOBufTest.cc": "c7a93d3b4f08598e336dc771f8eed97b6673e7f978c32e699239f84fe7a6889b",
+    "zi/test/ZiRxStreamTest.cc": "862536e7fbda4a60f8f7274a76e424e26ba17dfec7f2038911565ce32f01fca7",
+    "zm/src/ZmRing.cc": "0ea282432dde4847a0cbe2a72ed5999d34b32254084e759d0dd1c54a0320bcc0",
+    "zm/src/ZmRing.hh": "a1b9971520547fc4c01c6f7bde4462dc3c1b1672e5ec7892d1283d66ea0a0a7c",
+    "zm/src/ZmScheduler.cc": "4a4204471480e12fa4d8b4e8111ca26354c24fec4d72ae88cc27019e9ff17c6d",
+    "zm/src/ZmScheduler.hh": "10f555aa7c5d55f4ac9f4435cc64611a6a5bd4d0084403bffa9aad55725e8a86",
+    "zm/src/ZmThread.cc": "5fc045e8580c1a1856ffdab78a9ca0b83ec9bbb0fdf344957f0e9f7b63de7bae",
+    "zm/test/ZmRingWaitTest.cc": "efd5012c05ffa595176e280f9a953ef6bbbc44b2b10282863303b8f009e72622",
+    "zm/test/ZmRingWaitTest.hh": "fc7721c9df2a75c619e4c5cb3f246a031fefe89363c1a68be50306b0d7cb2bfd",
+    "zm/test/ZmSchedProgressTest.cc": "cb08cdbf78651db9e5316cb63fd548c2e276048559eac9bca7b4323e8d6cabe4",
+    "zm/test/ZmSchedProgressTest.hh": "ef6105d86060b57049f311ac6f9c493bb98cd7d5fda69af37871f53bad432a18",
+    "zm/test/ZmSchedServiceTest.cc": "964fe3e952baa90f7a26b326ca27389e5c5440bf8f96181b8e30e4a9a4cf35a3",
+    "ztcp/src/Ztcp.hh": "059f78c339173b0da226ee2b6326987fd29dfe431238d3de9a455ec22d340ad0",
+    "ztcp/test/ZtcpLoopTest.cc": "16244996180f919d26e8f17d561c663b60ff5c5db1558934bf59c33b194afc2a",
+    "zutcp/bench/zutcpbench.cc": "10550768b5277354414abdadc96dc8ad6d25a18034b1336053caff7e40e49bf9",
+    "zutcp/example/zutcpclient.cc": "0c475d84d0df45e9be01625503c6a290519e85d8bd8c0580e0d7b6650313c6d3",
+    "zutcp/example/zutcpserver.cc": "13ddc3446aaf8a673a3c200adb8fba3d761c0f89a5f9fd4c8d0d8604d8dc29d4",
+    "zutcp/itest/zutcpapptest.cc": "6ce9664db44c8ccfd17b919e0bb10039830ee587c75692fbbf6aa0819df530f7",
+    "zutcp/itest/zutcpiptest.cc": "4c1e5c2d6ae9b0bc6d61d12a294448c0560bf1f45f81282e2f2a03b777eae2ca",
+    "zutcp/itest/zutcpmxtest.cc": "0b108d6f63c2a9bbe40430604e2bdd5ad091096bf363dc6fe6703e3b7a2cf483",
+    "zutcp/itest/zutcppooltest.cc": "9bc55b5c879fb12d3a0ebcb876a9025116069f9dc4a75bec57e0bb3dae8ecce8",
+    "zutcp/itest/zutcpstacktest.cc": "0786d2582fdba177f21742b8b27a9aca78530b6aa7495616fce3ab7a834c1c0b",
+    "zutcp/src/Zutcp.hh": "3a278a85d8276f97a9574dbf1efe9a4af96d0da791930846769429343bf94765",
+    "zutcp/src/ZutcpAlloc.cc": "a69cf9fa34bff0961855b7b10a3132259ad30a7838d8b0dda1fa9bc236fffc1d",
+    "zutcp/src/ZutcpAlloc.hh": "785a801ba8778d8c4c7612a328d9c1ce739d92dc5fc2cfa7546907d484c4f64d",
+    "zutcp/src/ZutcpBuf.hh": "6d50ff2aaca86276bb0c455b0c47d83c3411bcb93747b430123d6e4a0d1dfec8",
+    "zutcp/src/ZutcpCliCxn.hh": "236347905b100c10056882bd59af743bd60e04e7da7928e2de8100726f0b401f",
+    "zutcp/src/ZutcpConnection.hh": "ee25601844bc9c0f322097ed7f8c2f88cf7b7a7dda6d85a42d046951fbb6ad7d",
+    "zutcp/src/ZutcpLog.cc": "f16f30bc6cc176f394ce251af4102a99b7ccb9d0c71737d31ff031b25e75f876",
+    "zutcp/src/ZutcpLog.hh": "edd0fc3391873578d1c4099bcf898f70a6f4d9c8fa4c9db5d9c37912a573f847",
+    "zutcp/src/ZutcpMx.cc": "34dee00e38745ad892178e098907c23b0bf995e473588feb9560b87761c66738",
+    "zutcp/src/ZutcpMx.hh": "da27919997b02f0abfbd76728440657d03fde3d7c632af50e6dc8fef0eb5a740",
+    "zutcp/src/ZutcpPQueue.hh": "e17779edf1e558cd1e81121cdf1a748268234b1fb46fd684337c2ef94b31f9f4",
+    "zutcp/src/ZutcpQueue.hh": "ed6507eea632fc9285e3485fac636f2789517c2ce29585ec63e49ff3c0a7f578",
+    "zutcp/src/ZutcpRecovery.hh": "72d62f4c46a6097db078324ef4525fab0fad96f14051e0055971f457a44c1ccc",
+    "zutcp/src/ZutcpSrvCxn.hh": "1e4825188f98f6be38d77bce781adce36d1bb5cb0b02ae2cd95c7b96c020f214",
+    "zutcp/src/ZutcpTFO.cc": "24f3038be77251d179161362534f9b10a664163eb705ab37f85bbc1f2ca6badb",
+    "zutcp/src/ZutcpTFO.hh": "9cecd9f3fcf509d317a0de1818e00d30a6b702052f70157b86db5c81e82b01e9",
+    "zutcp/src/Zutcp_.hh": "0a4270c5e33cc6c34841bedc844c86cc8d4103a2e14dd73d789aa005233ebd1c",
+    "zutcp/test/ZutcpAPITest.cc": "27d860b951c5295496bd313a4b99d61718b050f732f07f41d1504aa57e0881b9",
+    "zutcp/test/ZutcpConnectionStateTest.cc": "c9edd3d3b26d76174f172a257d2f96fedaab2844be0e1d27a169221a7ef273ea",
+    "zutcp/test/ZutcpDataTest.cc": "44bc09264320972c3ea1254cd8e1bb9a6a8c197a3dd561a761e18d516eadbea5",
+    "zutcp/test/ZutcpHandshakeTest.cc": "9a1632359706ca8e6f6ef3e5b72b3e09e0f5cb6a943a81618fe0da21fb580137",
+    "zutcp/test/ZutcpLoopTest.cc": "881014babe6b3540fa6e2dafd25e83d491af4097a7e8831462a87cc24d8c6a7b",
+    "zutcp/test/ZutcpRxAccountingTest.cc": "3c9f4805ddd2d24dbc3016fed845cac654cd979a31e517dcbefcf6ee4ce18ea1",
+    "zutcp/test/ZutcpTFOTest.cc": "f6efcde402f5f8e4e68c23beab738b72d21a30b4374d1d84d4b541c068c87fb9",
+    "zutcp/test/ZutcpTimerTest.cc": "f24417e901bfc391c1b56c9693531f57d553c6305f78fd5c73d6080adc269f2d",
+    "zutcp/util/zutcppair.cc": "09071e2d89acf5c3cb184f85ae03c2132b09066804475e4c9f0fa6d7bd0bc49a",
+    "zxdp/itest/zxdpfiltertest.cc": "26480a8604414bcf4c3bf1d63079109751f6527ffe1e9eedf08b432fee72c0ac",
+    "zxdp/itest/zxdppackettest.cc": "63d0ea5210ccf8361dd96689e5ace81df739b292bf38020aa76ec56e2a3966ec",
+    "zxdp/itest/zxdpwaketest.cc": "d0f3d3d38dd6977eedcdd6b607096a52709950aa6a4f164919e3beee088f2686",
+    "zxdp/src/Zxdp.cc": "ef432728826302bb0390fef1f2003f6f6dc660f0be4457bda5b1c068b2069541",
+    "zxdp/src/Zxdp.hh": "de79ec8be1345988da21c366332ad9578c7c1b35dc0e8ad074122fb81ad10d68",
+    "zxdp/src/ZxdpRing.hh": "0fc0b40b4409ee11ace274f2e41988f685c9b2d177eddc385b101ad7dd39d933",
+    "zxdp/src/ZxdpUMem.cc": "72944fee336cc0e1ecf0c078435210e50dab9a860a936d41120d983cf273720f",
+    "zxdp/src/ZxdpUMem.hh": "c0d3374dc3313711285f5e1765f3cdd42fa113e14c7f6340fe21ca24522f976f",
+    "zxdp/test/ZxdpPoolTest.cc": "559399965eb7bce0151c9232a0af1e661419a1d2b827555fad6c96a8de801266",
+    "zxdp/test/ZxdpRingTest.cc": "8ba9f015d9bcab7c154247c8f56fa166866388776909520efd8443bcbaaa4150",
+    "zxdp/util/zxdppacket.cc": "6c5e141b7ebcf3dff5430d424a2959d4bccda76edbbbf6b5573454025d2880ea"
+  },
+  "observations": [
+    {
+      "group": 1,
+      "pair": 1,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 6,
+      "backend": "native-client",
+      "variant": "candidate",
+      "samples": 2000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 28845.227,
+        "p50_ns": 33534,
+        "p99_ns": 53565,
+        "p999_ns": 72084,
+        "max_ns": 84683
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.2317178449339004,
+        "p50_ns": 0.7982955221748756,
+        "p99_ns": 0.9603765127745406,
+        "p999_ns": 1.1528459705407264,
+        "max_ns": 1.315893339963328
+      }
+    },
+    {
+      "group": 1,
+      "pair": 1,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 6,
+      "backend": "native-server",
+      "variant": "candidate",
+      "samples": 2000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 27314.722,
+        "p50_ns": 34565,
+        "p99_ns": 54112,
+        "p999_ns": 77063,
+        "max_ns": 805367
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.166363867297997,
+        "p50_ns": 0.8228390506344181,
+        "p99_ns": 0.9701837740923352,
+        "p999_ns": 1.2324755705535209,
+        "max_ns": 12.514637784753084
+      }
+    },
+    {
+      "group": 1,
+      "pair": 1,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 6,
+      "backend": "native",
+      "variant": "candidate",
+      "samples": 2000,
+      "over_1ms": 1,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 36233.57,
+        "p50_ns": 25375,
+        "p99_ns": 54928,
+        "p999_ns": 397010,
+        "max_ns": 1692314
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.547206917618004,
+        "p50_ns": 0.6040659890018331,
+        "p99_ns": 0.9848139847601972,
+        "p999_ns": 6.3494170518336075,
+        "max_ns": 26.296951238462256
+      }
+    },
+    {
+      "group": 1,
+      "pair": 1,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 6,
+      "backend": "kernel",
+      "variant": "candidate",
+      "samples": 2000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 23418.697,
+        "p50_ns": 42007,
+        "p99_ns": 55775,
+        "p999_ns": 62527,
+        "max_ns": 64354
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0,
+        "p50_ns": 1.0,
+        "p99_ns": 1.0,
+        "p999_ns": 1.0,
+        "max_ns": 1.0
+      }
+    },
+    {
+      "group": 2,
+      "pair": 1,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 6,
+      "backend": "kernel",
+      "variant": "baseline",
+      "samples": 2000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 23947.835,
+        "p50_ns": 40890,
+        "p99_ns": 56966,
+        "p999_ns": 70975,
+        "max_ns": 81372
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0,
+        "p50_ns": 1.0,
+        "p99_ns": 1.0,
+        "p999_ns": 1.0,
+        "max_ns": 1.0
+      }
+    },
+    {
+      "group": 2,
+      "pair": 1,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 6,
+      "backend": "native",
+      "variant": "baseline",
+      "samples": 2000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 36438.62,
+        "p50_ns": 26588,
+        "p99_ns": 43324,
+        "p999_ns": 56148,
+        "max_ns": 62247
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.5215830575081215,
+        "p50_ns": 0.6502323306431891,
+        "p99_ns": 0.7605238212266966,
+        "p999_ns": 0.7910954561465304,
+        "max_ns": 0.764968293761982
+      }
+    },
+    {
+      "group": 2,
+      "pair": 1,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 6,
+      "backend": "native-client",
+      "variant": "baseline",
+      "samples": 2000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 28219.185,
+        "p50_ns": 34376,
+        "p99_ns": 51283,
+        "p999_ns": 64490,
+        "max_ns": 74944
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1783605908425543,
+        "p50_ns": 0.8406945463438493,
+        "p99_ns": 0.9002387388968859,
+        "p999_ns": 0.9086297992250792,
+        "max_ns": 0.9210047682249423
+      }
+    },
+    {
+      "group": 2,
+      "pair": 1,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 6,
+      "backend": "native-server",
+      "variant": "baseline",
+      "samples": 2000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 27616.929,
+        "p50_ns": 34945,
+        "p99_ns": 53839,
+        "p999_ns": 70454,
+        "max_ns": 81065
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1532119291785667,
+        "p50_ns": 0.8546099290780141,
+        "p99_ns": 0.9451076080469052,
+        "p999_ns": 0.9926593871081366,
+        "max_ns": 0.9962272034606499
+      }
+    },
+    {
+      "group": 3,
+      "pair": 2,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 4,
+      "backend": "native-server",
+      "variant": "baseline",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 254912,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 171602.632,
+        "p50_ns": 23521020,
+        "p99_ns": 28672962,
+        "p999_ns": 30009260,
+        "max_ns": 30297182
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.153272582204308,
+        "p50_ns": 0.8654278657969444,
+        "p99_ns": 1.033379354269135,
+        "p999_ns": 1.0771965507179506,
+        "max_ns": 1.000432801728301
+      }
+    },
+    {
+      "group": 3,
+      "pair": 2,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 4,
+      "backend": "native-client",
+      "variant": "baseline",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 254621,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 164839.735,
+        "p50_ns": 24118756,
+        "p99_ns": 28255875,
+        "p999_ns": 28298576,
+        "max_ns": 28359164
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1078218592435332,
+        "p50_ns": 0.887420848702873,
+        "p99_ns": 1.018347454365175,
+        "p999_ns": 1.0157907411722176,
+        "max_ns": 0.936438177490975
+      }
+    },
+    {
+      "group": 3,
+      "pair": 2,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 4,
+      "backend": "native",
+      "variant": "baseline",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 254564,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 156503.351,
+        "p50_ns": 25405527,
+        "p99_ns": 44522600,
+        "p999_ns": 46635450,
+        "max_ns": 46824420
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0517963601595408,
+        "p50_ns": 0.9347660522824541,
+        "p99_ns": 1.6046035159668188,
+        "p999_ns": 1.6740014875801488,
+        "max_ns": 1.5461730298845184
+      }
+    },
+    {
+      "group": 3,
+      "pair": 2,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 4,
+      "backend": "kernel",
+      "variant": "baseline",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 254882,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 148796.247,
+        "p50_ns": 27178487,
+        "p99_ns": 27746792,
+        "p999_ns": 27858667,
+        "max_ns": 30284075
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0,
+        "p50_ns": 1.0,
+        "p99_ns": 1.0,
+        "p999_ns": 1.0,
+        "max_ns": 1.0
+      }
+    },
+    {
+      "group": 4,
+      "pair": 2,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 4,
+      "backend": "kernel",
+      "variant": "candidate",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 254808,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 152909.268,
+        "p50_ns": 26265328,
+        "p99_ns": 27122018,
+        "p999_ns": 27242881,
+        "max_ns": 28731968
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0,
+        "p50_ns": 1.0,
+        "p99_ns": 1.0,
+        "p999_ns": 1.0,
+        "max_ns": 1.0
+      }
+    },
+    {
+      "group": 4,
+      "pair": 2,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 4,
+      "backend": "native-server",
+      "variant": "candidate",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 254716,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 175919.985,
+        "p50_ns": 23115192,
+        "p99_ns": 24003789,
+        "p999_ns": 27954567,
+        "max_ns": 31109499
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1504860843359734,
+        "p50_ns": 0.880064852036114,
+        "p99_ns": 0.8850296095224183,
+        "p999_ns": 1.0261237421989253,
+        "max_ns": 1.0827486303757543
+      }
+    },
+    {
+      "group": 4,
+      "pair": 2,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 4,
+      "backend": "native",
+      "variant": "candidate",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 254412,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 187829.114,
+        "p50_ns": 21521885,
+        "p99_ns": 26062545,
+        "p999_ns": 28069247,
+        "max_ns": 28337961
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.22836971530071,
+        "p50_ns": 0.819402864491165,
+        "p99_ns": 0.9609367931250543,
+        "p999_ns": 1.030333282298594,
+        "max_ns": 0.9862868077814927
+      }
+    },
+    {
+      "group": 4,
+      "pair": 2,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 4,
+      "backend": "native-client",
+      "variant": "candidate",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 254734,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 174413.791,
+        "p50_ns": 23300064,
+        "p99_ns": 29893524,
+        "p999_ns": 30624640,
+        "max_ns": 30728037
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1406358377178287,
+        "p50_ns": 0.8871034848679598,
+        "p99_ns": 1.1021865703355849,
+        "p999_ns": 1.1241336773449182,
+        "max_ns": 1.0694720598324488
+      }
+    },
+    {
+      "group": 5,
+      "pair": 3,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 4,
+      "backend": "native-client",
+      "variant": "candidate",
+      "samples": 8000,
+      "over_1ms": 1,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 183187.395,
+        "p50_ns": 689541,
+        "p99_ns": 828956,
+        "p999_ns": 932843,
+        "max_ns": 1006447
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1474738676007294,
+        "p50_ns": 0.8603432184780004,
+        "p99_ns": 0.9122458726661663,
+        "p999_ns": 0.9616511845351186,
+        "max_ns": 0.9995659877403951
+      }
+    },
+    {
+      "group": 5,
+      "pair": 3,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 4,
+      "backend": "native-server",
+      "variant": "candidate",
+      "samples": 8000,
+      "over_1ms": 5,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 177601.889,
+        "p50_ns": 711224,
+        "p99_ns": 921986,
+        "p999_ns": 973912,
+        "max_ns": 1116476
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1124866231326966,
+        "p50_ns": 0.8873971891719237,
+        "p99_ns": 1.0146231201125127,
+        "p999_ns": 1.003988482984775,
+        "max_ns": 1.1088427266696064
+      }
+    },
+    {
+      "group": 5,
+      "pair": 3,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 4,
+      "backend": "kernel",
+      "variant": "candidate",
+      "samples": 8000,
+      "over_1ms": 2,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 159644.067,
+        "p50_ns": 801472,
+        "p99_ns": 908698,
+        "p999_ns": 970043,
+        "max_ns": 1006884
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0,
+        "p50_ns": 1.0,
+        "p99_ns": 1.0,
+        "p999_ns": 1.0,
+        "max_ns": 1.0
+      }
+    },
+    {
+      "group": 5,
+      "pair": 3,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 4,
+      "backend": "native",
+      "variant": "candidate",
+      "samples": 8000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 187316.412,
+        "p50_ns": 684176,
+        "p99_ns": 776672,
+        "p999_ns": 796965,
+        "max_ns": 801036
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.173337760181216,
+        "p50_ns": 0.8536492853150204,
+        "p99_ns": 0.8547086050591065,
+        "p999_ns": 0.8215769816389583,
+        "max_ns": 0.7955593693017269
+      }
+    },
+    {
+      "group": 6,
+      "pair": 3,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 4,
+      "backend": "native-server",
+      "variant": "baseline",
+      "samples": 8000,
+      "over_1ms": 3,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 168789.807,
+        "p50_ns": 750436,
+        "p99_ns": 929611,
+        "p999_ns": 980738,
+        "max_ns": 1087664
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.062766538409402,
+        "p50_ns": 0.9280039967551097,
+        "p99_ns": 1.0213215938405016,
+        "p999_ns": 1.0326264463001356,
+        "max_ns": 1.1206976849619381
+      }
+    },
+    {
+      "group": 6,
+      "pair": 3,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 4,
+      "backend": "native-client",
+      "variant": "baseline",
+      "samples": 8000,
+      "over_1ms": 98,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 168158.502,
+        "p50_ns": 753676,
+        "p99_ns": 1064607,
+        "p999_ns": 1104347,
+        "max_ns": 1110266
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0587915956006189,
+        "p50_ns": 0.932010644823015,
+        "p99_ns": 1.1696355981735962,
+        "p999_ns": 1.1627752958406994,
+        "max_ns": 1.1439861353248348
+      }
+    },
+    {
+      "group": 6,
+      "pair": 3,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 4,
+      "backend": "kernel",
+      "variant": "baseline",
+      "samples": 8000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 158821.153,
+        "p50_ns": 808656,
+        "p99_ns": 910204,
+        "p999_ns": 949751,
+        "max_ns": 970524
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0,
+        "p50_ns": 1.0,
+        "p99_ns": 1.0,
+        "p999_ns": 1.0,
+        "max_ns": 1.0
+      }
+    },
+    {
+      "group": 6,
+      "pair": 3,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 4,
+      "backend": "native",
+      "variant": "baseline",
+      "samples": 8000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 171231.136,
+        "p50_ns": 742397,
+        "p99_ns": 952915,
+        "p999_ns": 983835,
+        "max_ns": 994106
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0781380991485436,
+        "p50_ns": 0.9180628103915632,
+        "p99_ns": 1.0469246454640937,
+        "p999_ns": 1.0358873009873115,
+        "max_ns": 1.0242982141605979
+      }
+    },
+    {
+      "group": 7,
+      "pair": 4,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 6,
+      "backend": "kernel",
+      "variant": "baseline",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 254922,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 156028.492,
+        "p50_ns": 25817561,
+        "p99_ns": 26421148,
+        "p999_ns": 26469096,
+        "max_ns": 28870743
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0,
+        "p50_ns": 1.0,
+        "p99_ns": 1.0,
+        "p999_ns": 1.0,
+        "max_ns": 1.0
+      }
+    },
+    {
+      "group": 7,
+      "pair": 4,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 6,
+      "backend": "native-client",
+      "variant": "baseline",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 254457,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 171754.903,
+        "p50_ns": 23620661,
+        "p99_ns": 24172840,
+        "p999_ns": 24211743,
+        "max_ns": 24585706
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1007919181837635,
+        "p50_ns": 0.9149067566839486,
+        "p99_ns": 0.9149049844465502,
+        "p999_ns": 0.9147174123362581,
+        "max_ns": 0.8515785686568579
+      }
+    },
+    {
+      "group": 7,
+      "pair": 4,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 6,
+      "backend": "native-server",
+      "variant": "baseline",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 255077,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 171925.955,
+        "p50_ns": 23565910,
+        "p99_ns": 27249990,
+        "p999_ns": 30698040,
+        "max_ns": 33920711
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1018882051362773,
+        "p50_ns": 0.9127860683664115,
+        "p99_ns": 1.0313704007108244,
+        "p999_ns": 1.159769113384152,
+        "max_ns": 1.1749164543496509
+      }
+    },
+    {
+      "group": 7,
+      "pair": 4,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 6,
+      "backend": "native",
+      "variant": "baseline",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 254667,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 152423.604,
+        "p50_ns": 25561502,
+        "p99_ns": 34752674,
+        "p999_ns": 35777513,
+        "max_ns": 35960538
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 0.9768959633346965,
+        "p50_ns": 0.9900819833445925,
+        "p99_ns": 1.3153355032112912,
+        "p999_ns": 1.3516711337629361,
+        "max_ns": 1.2455702300422264
+      }
+    },
+    {
+      "group": 8,
+      "pair": 4,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 6,
+      "backend": "kernel",
+      "variant": "candidate",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 254695,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 155158.753,
+        "p50_ns": 26027664,
+        "p99_ns": 27259875,
+        "p999_ns": 27527825,
+        "max_ns": 28335149
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0,
+        "p50_ns": 1.0,
+        "p99_ns": 1.0,
+        "p999_ns": 1.0,
+        "max_ns": 1.0
+      }
+    },
+    {
+      "group": 8,
+      "pair": 4,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 6,
+      "backend": "native-server",
+      "variant": "candidate",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 255313,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 171261.234,
+        "p50_ns": 23816318,
+        "p99_ns": 24497134,
+        "p999_ns": 31999854,
+        "max_ns": 34953482
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.103780680681289,
+        "p50_ns": 0.9150386296672648,
+        "p99_ns": 0.8986517362973968,
+        "p999_ns": 1.162454861580964,
+        "max_ns": 1.2335732556056085
+      }
+    },
+    {
+      "group": 8,
+      "pair": 4,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 6,
+      "backend": "native-client",
+      "variant": "candidate",
+      "samples": 256000,
+      "over_1ms": 256000,
+      "over_10ms": 254455,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 173322.808,
+        "p50_ns": 23564287,
+        "p99_ns": 27965238,
+        "p999_ns": 28118180,
+        "max_ns": 29746066
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1170675495181377,
+        "p50_ns": 0.9053554325889561,
+        "p99_ns": 1.0258755038311804,
+        "p999_ns": 1.0214457553402785,
+        "max_ns": 1.0497938796792634
+      }
+    },
+    {
+      "group": 8,
+      "pair": 4,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "shape": "concurrent128",
+      "family": 6,
+      "backend": "native",
+      "variant": "candidate",
+      "samples": 256000,
+      "over_1ms": 255987,
+      "over_10ms": 254316,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 184847.08,
+        "p50_ns": 22000127,
+        "p99_ns": 23532736,
+        "p999_ns": 23928897,
+        "max_ns": 25490685
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.19134161899329,
+        "p50_ns": 0.8452593747944495,
+        "p99_ns": 0.8632738044470123,
+        "p999_ns": 0.8692621738186725,
+        "max_ns": 0.8996135859387928
+      }
+    },
+    {
+      "group": 9,
+      "pair": 5,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 6,
+      "backend": "native",
+      "variant": "candidate",
+      "samples": 8000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 189531.592,
+        "p50_ns": 677619,
+        "p99_ns": 728903,
+        "p999_ns": 744613,
+        "max_ns": 745703
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1858111780018203,
+        "p50_ns": 0.8466660336008036,
+        "p99_ns": 0.6858288342369162,
+        "p999_ns": 0.6634936079931495,
+        "max_ns": 0.6564165627219919
+      }
+    },
+    {
+      "group": 9,
+      "pair": 5,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 6,
+      "backend": "kernel",
+      "variant": "candidate",
+      "samples": 8000,
+      "over_1ms": 227,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 159832.86,
+        "p50_ns": 800338,
+        "p99_ns": 1062806,
+        "p999_ns": 1122261,
+        "max_ns": 1136021
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0,
+        "p50_ns": 1.0,
+        "p99_ns": 1.0,
+        "p999_ns": 1.0,
+        "max_ns": 1.0
+      }
+    },
+    {
+      "group": 9,
+      "pair": 5,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 6,
+      "backend": "native-client",
+      "variant": "candidate",
+      "samples": 8000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 177534.477,
+        "p50_ns": 713260,
+        "p99_ns": 846229,
+        "p999_ns": 878791,
+        "max_ns": 956683
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.110750799303723,
+        "p50_ns": 0.8911984686469966,
+        "p99_ns": 0.7962215117340323,
+        "p999_ns": 0.7830540311032816,
+        "max_ns": 0.8421349605333
+      }
+    },
+    {
+      "group": 9,
+      "pair": 5,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 6,
+      "backend": "native-server",
+      "variant": "candidate",
+      "samples": 8000,
+      "over_1ms": 8,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 177040.107,
+        "p50_ns": 718606,
+        "p99_ns": 826130,
+        "p999_ns": 996914,
+        "max_ns": 1095266
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1076577557330827,
+        "p50_ns": 0.8978781464831109,
+        "p99_ns": 0.777310252294398,
+        "p999_ns": 0.888308512903861,
+        "max_ns": 0.9641247829045414
+      }
+    },
+    {
+      "group": 10,
+      "pair": 5,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 6,
+      "backend": "native",
+      "variant": "baseline",
+      "samples": 8000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 172609.452,
+        "p50_ns": 733377,
+        "p99_ns": 838456,
+        "p999_ns": 913341,
+        "max_ns": 974460
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1931265490052554,
+        "p50_ns": 0.8557031944609741,
+        "p99_ns": 0.5993920694516329,
+        "p999_ns": 0.480073355994708,
+        "max_ns": 0.4832650518818355
+      }
+    },
+    {
+      "group": 10,
+      "pair": 5,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 6,
+      "backend": "kernel",
+      "variant": "baseline",
+      "samples": 8000,
+      "over_1ms": 1787,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 144669.861,
+        "p50_ns": 857046,
+        "p99_ns": 1398844,
+        "p999_ns": 1902503,
+        "max_ns": 2016409
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0,
+        "p50_ns": 1.0,
+        "p99_ns": 1.0,
+        "p999_ns": 1.0,
+        "max_ns": 1.0
+      }
+    },
+    {
+      "group": 10,
+      "pair": 5,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 6,
+      "backend": "native-client",
+      "variant": "baseline",
+      "samples": 8000,
+      "over_1ms": 98,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 171445.231,
+        "p50_ns": 739220,
+        "p99_ns": 1024922,
+        "p999_ns": 1049716,
+        "max_ns": 1052093
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1850791160986875,
+        "p50_ns": 0.8625207981835281,
+        "p99_ns": 0.7326921372218775,
+        "p999_ns": 0.5517552403333924,
+        "max_ns": 0.5217656735315107
+      }
+    },
+    {
+      "group": 10,
+      "pair": 5,
+      "repetition": 1,
+      "connections": 4,
+      "pipeline": 32,
+      "shape": "concurrent4",
+      "family": 6,
+      "backend": "native-server",
+      "variant": "baseline",
+      "samples": 8000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 159111.227,
+        "p50_ns": 799928,
+        "p99_ns": 904114,
+        "p999_ns": 975734,
+        "max_ns": 988492
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0998229064449023,
+        "p50_ns": 0.9333548024260074,
+        "p99_ns": 0.6463293977026745,
+        "p999_ns": 0.5128685736632216,
+        "max_ns": 0.49022395754036013
+      }
+    },
+    {
+      "group": 11,
+      "pair": 6,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 4,
+      "backend": "native",
+      "variant": "baseline",
+      "samples": 2000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 35988.911,
+        "p50_ns": 26626,
+        "p99_ns": 44299,
+        "p999_ns": 74636,
+        "max_ns": 150643
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.5196275613297425,
+        "p50_ns": 0.6446661178635417,
+        "p99_ns": 0.7887998575498576,
+        "p999_ns": 1.0448831023379532,
+        "max_ns": 0.825359690551069
+      }
+    },
+    {
+      "group": 11,
+      "pair": 6,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 4,
+      "backend": "native-server",
+      "variant": "baseline",
+      "samples": 2000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 28355.367,
+        "p50_ns": 34277,
+        "p99_ns": 52847,
+        "p999_ns": 62110,
+        "max_ns": 77086
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1973020579816893,
+        "p50_ns": 0.8299113844365891,
+        "p99_ns": 0.9410078347578348,
+        "p999_ns": 0.869522609547809,
+        "max_ns": 0.42234738491546037
+      }
+    },
+    {
+      "group": 11,
+      "pair": 6,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 4,
+      "backend": "kernel",
+      "variant": "baseline",
+      "samples": 2000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 23682.718,
+        "p50_ns": 41302,
+        "p99_ns": 56160,
+        "p999_ns": 71430,
+        "max_ns": 182518
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0,
+        "p50_ns": 1.0,
+        "p99_ns": 1.0,
+        "p999_ns": 1.0,
+        "max_ns": 1.0
+      }
+    },
+    {
+      "group": 11,
+      "pair": 6,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 4,
+      "backend": "native-client",
+      "variant": "baseline",
+      "samples": 2000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 28292.813,
+        "p50_ns": 34349,
+        "p99_ns": 49150,
+        "p999_ns": 59210,
+        "max_ns": 64144
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.194660722641717,
+        "p50_ns": 0.831654641421723,
+        "p99_ns": 0.8751780626780626,
+        "p999_ns": 0.8289234215315694,
+        "max_ns": 0.35143931009544266
+      }
+    },
+    {
+      "group": 12,
+      "pair": 6,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 4,
+      "backend": "native-client",
+      "variant": "candidate",
+      "samples": 2000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 28853.219,
+        "p50_ns": 33663,
+        "p99_ns": 50881,
+        "p999_ns": 64974,
+        "max_ns": 101438
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.2200793694656704,
+        "p50_ns": 0.8115868653261971,
+        "p99_ns": 0.9164445244956773,
+        "p999_ns": 0.845696286558461,
+        "max_ns": 1.290691164495114
+      }
+    },
+    {
+      "group": 12,
+      "pair": 6,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 4,
+      "backend": "native-server",
+      "variant": "candidate",
+      "samples": 2000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 28015.918,
+        "p50_ns": 34490,
+        "p99_ns": 52827,
+        "p999_ns": 69434,
+        "max_ns": 86769
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.1846734871572537,
+        "p50_ns": 0.8315251458604561,
+        "p99_ns": 0.9514949567723343,
+        "p999_ns": 0.9037472829270198,
+        "max_ns": 1.1040436685667752
+      }
+    },
+    {
+      "group": 12,
+      "pair": 6,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 4,
+      "backend": "native",
+      "variant": "candidate",
+      "samples": 2000,
+      "over_1ms": 1,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 35753.709,
+        "p50_ns": 25946,
+        "p99_ns": 45362,
+        "p999_ns": 59975,
+        "max_ns": 2078790
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.5118716124110474,
+        "p50_ns": 0.6255364289502869,
+        "p99_ns": 0.8170389048991354,
+        "p999_ns": 0.7806297101354958,
+        "max_ns": 26.45040207654723
+      }
+    },
+    {
+      "group": 12,
+      "pair": 6,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "shape": "serial1",
+      "family": 4,
+      "backend": "kernel",
+      "variant": "candidate",
+      "samples": 2000,
+      "over_1ms": 0,
+      "over_10ms": 0,
+      "over_100ms": 0,
+      "metrics": {
+        "requests_per_second": 23648.641,
+        "p50_ns": 41478,
+        "p99_ns": 55520,
+        "p999_ns": 76829,
+        "max_ns": 78592
+      },
+      "ratios_to_same_group_kernel": {
+        "requests_per_second": 1.0,
+        "p50_ns": 1.0,
+        "p99_ns": 1.0,
+        "p999_ns": 1.0,
+        "max_ns": 1.0
+      }
+    }
+  ],
+  "paired_ratios": [
+    {
+      "pair": 1,
+      "backend": "kernel",
+      "connections": 1,
+      "pipeline": 1,
+      "family": 6,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 0.9779045579694365,
+        "p50_ns": 1.027317192467596,
+        "p99_ns": 0.9790927921918338,
+        "p999_ns": 0.880972173300458,
+        "max_ns": 0.790861721476675
+      }
+    },
+    {
+      "pair": 1,
+      "backend": "native-client",
+      "connections": 1,
+      "pipeline": 1,
+      "family": 6,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.022184978056595,
+        "p50_ns": 0.9755061670933209,
+        "p99_ns": 1.0444981767837296,
+        "p999_ns": 1.1177546906497131,
+        "max_ns": 1.1299503629376602
+      }
+    },
+    {
+      "pair": 1,
+      "backend": "native-server",
+      "connections": 1,
+      "pipeline": 1,
+      "family": 6,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 0.989057183005395,
+        "p50_ns": 0.9891257690656746,
+        "p99_ns": 1.0050706736752169,
+        "p999_ns": 1.0938058875294518,
+        "max_ns": 9.934830074631469
+      }
+    },
+    {
+      "pair": 1,
+      "backend": "native",
+      "connections": 1,
+      "pipeline": 1,
+      "family": 6,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 0.9943727287147537,
+        "p50_ns": 0.954377914848804,
+        "p99_ns": 1.2678423044963532,
+        "p999_ns": 7.070777231602194,
+        "max_ns": 27.18707728886533
+      }
+    },
+    {
+      "pair": 2,
+      "backend": "kernel",
+      "connections": 128,
+      "pipeline": 32,
+      "family": 4,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.0276419673407489,
+        "p50_ns": 0.966401404169408,
+        "p99_ns": 0.9774830185774269,
+        "p999_ns": 0.9778960709067667,
+        "max_ns": 0.9487484098490708
+      }
+    },
+    {
+      "pair": 2,
+      "backend": "native-client",
+      "connections": 128,
+      "pipeline": 32,
+      "family": 4,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.0580809960656634,
+        "p50_ns": 0.9660557949174493,
+        "p99_ns": 1.0579578229306295,
+        "p999_ns": 1.0821972102059128,
+        "max_ns": 1.083531129478993
+      }
+    },
+    {
+      "pair": 2,
+      "backend": "native-server",
+      "connections": 128,
+      "pipeline": 32,
+      "family": 4,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.025159013878062,
+        "p50_ns": 0.9827461564166861,
+        "p99_ns": 0.8371576330342153,
+        "p999_ns": 0.9315313673179545,
+        "max_ns": 1.0268116354847787
+      }
+    },
+    {
+      "pair": 2,
+      "backend": "native",
+      "connections": 128,
+      "pipeline": 32,
+      "family": 4,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.2001603339470988,
+        "p50_ns": 0.8471339720683614,
+        "p99_ns": 0.5853778755059228,
+        "p999_ns": 0.6018864833511846,
+        "max_ns": 0.605196198906468
+      }
+    },
+    {
+      "pair": 3,
+      "backend": "kernel",
+      "connections": 4,
+      "pipeline": 32,
+      "family": 4,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.0051813878973666,
+        "p50_ns": 0.991116123543262,
+        "p99_ns": 0.9983454258605763,
+        "p999_ns": 1.0213656000362201,
+        "max_ns": 1.0374642976371526
+      }
+    },
+    {
+      "pair": 3,
+      "backend": "native-client",
+      "connections": 4,
+      "pipeline": 32,
+      "family": 4,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.0893733758403723,
+        "p50_ns": 0.9149037517447816,
+        "p99_ns": 0.778649774048076,
+        "p999_ns": 0.8447009861936511,
+        "max_ns": 0.9064917776460776
+      }
+    },
+    {
+      "pair": 3,
+      "backend": "native-server",
+      "connections": 4,
+      "pipeline": 32,
+      "family": 4,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.0522074298005448,
+        "p50_ns": 0.9477477093316419,
+        "p99_ns": 0.991797644391041,
+        "p999_ns": 0.9930399352324474,
+        "max_ns": 1.0264897983200694
+      }
+    },
+    {
+      "pair": 3,
+      "backend": "native",
+      "connections": 4,
+      "pipeline": 32,
+      "family": 4,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.0939389668009911,
+        "p50_ns": 0.9215769999070578,
+        "p99_ns": 0.8150485615191282,
+        "p999_ns": 0.8100596136547287,
+        "max_ns": 0.8057852985496516
+      }
+    },
+    {
+      "pair": 4,
+      "backend": "kernel",
+      "connections": 128,
+      "pipeline": 32,
+      "family": 6,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 0.9944257680834344,
+        "p50_ns": 1.0081379879377452,
+        "p99_ns": 1.031744532826507,
+        "p999_ns": 1.0399986837480206,
+        "max_ns": 0.9814485550302602
+      }
+    },
+    {
+      "pair": 4,
+      "backend": "native-client",
+      "connections": 128,
+      "pipeline": 32,
+      "family": 6,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.009128735032385,
+        "p50_ns": 0.9976133606083251,
+        "p99_ns": 1.1568867373465426,
+        "p999_ns": 1.161344724334799,
+        "max_ns": 1.2098926913060783
+      }
+    },
+    {
+      "pair": 4,
+      "backend": "native-server",
+      "connections": 128,
+      "pipeline": 32,
+      "family": 6,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 0.9961336785943694,
+        "p50_ns": 1.0106258574355924,
+        "p99_ns": 0.8989777243954952,
+        "p999_ns": 1.0424070722430487,
+        "max_ns": 1.030446620060529
+      }
+    },
+    {
+      "pair": 4,
+      "backend": "native",
+      "connections": 128,
+      "pipeline": 32,
+      "family": 6,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.2127195207902315,
+        "p50_ns": 0.860674267106839,
+        "p99_ns": 0.6771489296046687,
+        "p999_ns": 0.6688250522052777,
+        "max_ns": 0.708851602831971
+      }
+    },
+    {
+      "pair": 5,
+      "backend": "kernel",
+      "connections": 4,
+      "pipeline": 32,
+      "family": 6,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.104811042847411,
+        "p50_ns": 0.933833189817116,
+        "p99_ns": 0.7597744995153141,
+        "p999_ns": 0.5898865862497983,
+        "max_ns": 0.5633881816635414
+      }
+    },
+    {
+      "pair": 5,
+      "backend": "native-client",
+      "connections": 4,
+      "pipeline": 32,
+      "family": 6,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.0355171500804243,
+        "p50_ns": 0.9648819025459268,
+        "p99_ns": 0.8256520984035859,
+        "p999_ns": 0.8371702441422252,
+        "max_ns": 0.9093141005595513
+      }
+    },
+    {
+      "pair": 5,
+      "backend": "native-server",
+      "connections": 4,
+      "pipeline": 32,
+      "family": 6,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.112681426308151,
+        "p50_ns": 0.8983383504515406,
+        "p99_ns": 0.913745390514913,
+        "p999_ns": 1.0217067356472154,
+        "max_ns": 1.1080170603302808
+      }
+    },
+    {
+      "pair": 5,
+      "backend": "native",
+      "connections": 4,
+      "pipeline": 32,
+      "family": 6,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.098037157316275,
+        "p50_ns": 0.9239708908242282,
+        "p99_ns": 0.8693395956376959,
+        "p999_ns": 0.8152628645817936,
+        "max_ns": 0.7652474190833898
+      }
+    },
+    {
+      "pair": 6,
+      "backend": "kernel",
+      "connections": 1,
+      "pipeline": 1,
+      "family": 4,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 0.9985611026572203,
+        "p50_ns": 1.0042612948525496,
+        "p99_ns": 0.9886039886039886,
+        "p999_ns": 1.075584488310234,
+        "max_ns": 0.4305986258889534
+      }
+    },
+    {
+      "pair": 6,
+      "backend": "native-client",
+      "connections": 1,
+      "pipeline": 1,
+      "family": 4,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 1.019807362385635,
+        "p50_ns": 0.9800285306704708,
+        "p99_ns": 1.0352187182095625,
+        "p999_ns": 1.0973484208748523,
+        "max_ns": 1.581410576203542
+      }
+    },
+    {
+      "pair": 6,
+      "backend": "native-server",
+      "connections": 1,
+      "pipeline": 1,
+      "family": 4,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 0.9880287566018808,
+        "p50_ns": 1.0062140794118506,
+        "p99_ns": 0.9996215489999433,
+        "p999_ns": 1.1179198196747706,
+        "max_ns": 1.125612951768155
+      }
+    },
+    {
+      "pair": 6,
+      "backend": "native",
+      "connections": 1,
+      "pipeline": 1,
+      "family": 4,
+      "ratios_candidate_over_baseline": {
+        "requests_per_second": 0.9934645980257641,
+        "p50_ns": 0.9744610531059866,
+        "p99_ns": 1.0239960269983521,
+        "p999_ns": 0.8035666434428426,
+        "max_ns": 13.799446373213492
+      }
+    }
+  ],
+  "native_endpoint_totals": {
+    "baseline": {
+      "native_endpoints": 24,
+      "scheduler_fn_allocs": 1304395,
+      "native_scheduler_full": 2583,
+      "all_scheduler_full": 2766,
+      "other_full": 0,
+      "native_slots": {
+        "1": {
+          "out_count": 9678331,
+          "out_bytes": 310630832,
+          "full": 0,
+          "overflow_in": 0
+        },
+        "2": {
+          "out_count": 16383387,
+          "out_bytes": 1019790736,
+          "full": 2583,
+          "overflow_in": 1230907
+        },
+        "3": {
+          "out_count": 20598,
+          "out_bytes": 761664,
+          "full": 0,
+          "overflow_in": 0
+        }
+      },
+      "traffic_usage": {
+        "user_us": 38821193,
+        "system_us": 6853072,
+        "voluntary": 99771,
+        "involuntary": 184
+      }
+    },
+    "candidate": {
+      "native_endpoints": 24,
+      "scheduler_fn_allocs": 694753,
+      "native_scheduler_full": 1876,
+      "all_scheduler_full": 2099,
+      "other_full": 0,
+      "native_slots": {
+        "1": {
+          "out_count": 9678129,
+          "out_bytes": 310633264,
+          "full": 2,
+          "overflow_in": 1168
+        },
+        "2": {
+          "out_count": 16680460,
+          "out_bytes": 814228880,
+          "full": 1874,
+          "overflow_in": 285754
+        },
+        "3": {
+          "out_count": 21117,
+          "out_bytes": 778272,
+          "full": 0,
+          "overflow_in": 0
+        }
+      },
+      "traffic_usage": {
+        "user_us": 34467177,
+        "system_us": 6982044,
+        "voluntary": 116056,
+        "involuntary": 257
+      }
+    }
+  }
+}

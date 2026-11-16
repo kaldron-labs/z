@@ -89,7 +89,7 @@ public:
   using Path = Zi::Path;
   using Offset = Zi::Offset;
 
-  enum Flags {
+  enum {
     ReadOnly	= 0x00001,
     WriteOnly	= 0x00002,
     Create	= 0x00004,

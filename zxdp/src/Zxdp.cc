@@ -11,7 +11,10 @@
 #include <sys/eventfd.h>
 #include <unistd.h>
 #include <poll.h>
+#include <zlib/ZuBox.hh>
 #include <zlib/ZmAssert.hh>
+#include <zlib/ZmLock.hh>
+#include <zlib/ZmGuard.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/Zxdp.hh>
 #include <zlib/ZxdpBPF.hh>
@@ -23,8 +26,9 @@ namespace Zxdp {
 // One kernel ring set per hardware Rx queue, sharing one UMEM registration.
 struct Queue : public ZmNHeap<Queue> {
 friend inline ZuStringT<"Zxdp.Queue"> ZmNHeapID(Queue *);
+  using Retirement = KernelRetirement;
   Xsk		socket;
-  KernelRetirement retirement;
+  Retirement	retirement;
   unsigned	rxHeld = 0, quota = 0;
   bool		published = false;
 
@@ -42,34 +46,47 @@ friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
   using Queues = ZtArray<Queue *, ZtArrayHeapID<"Zxdp.Queues">>;
   BufPool	*txPools, *rxPool;
   RecvFn	receive;
+  StopFn	txStopped;
   LinkState	link;
   unsigned	interface, spin;
+  ZmScheduler *scheduler;
+  unsigned txSid;
   ZmRef<UMem>	arena;
   BPFProgram	program;
   BPFAttach	attachment;
   Queues	queues;
-  ZmAtomic<unsigned> state{Cold};
+  mutable ZmLock queueLock; // cold enumeration versus mapping retirement only
   int		events = -1, wakeFD = -1;
+  ZmAtomic<unsigned> state{Cold}, txExit{1}, txExited{1};
   ZmAtomic<int> ioError{0};
-  alignas(Zm::CacheLineSize) ZmAtomic<uint64_t> wakes{0};
   unsigned	closeQueue = 0;
+  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> txPending{0};
+  alignas(Zm::CacheLineSize) ZmAtomic<uint64_t> wakes{0};
+  ZmAtomic<unsigned> parking{0};
   alignas(Zm::CacheLineSize) Indices rxSlots;
   Indices	rxActive;
   unsigned	rxHeld = 0, nextQueue = 0;
   alignas(Zm::CacheLineSize) Packets txActive;
   unsigned	txHeld = 0;
+  // Sender-only accounting must not invalidate shared immutable packet views.
+  alignas(Zm::CacheLineSize) uint32_t txConsumed = 0;
 
   InstanceData(Params params) : Instance{this}, txPools{params.txPools}, rxPool{params.rxPool},
-    receive{ZuMv(params.rx)},
-    interface{params.interface}, spin{params.spin} { }
+    receive{ZuMv(params.rx)}, txStopped{ZuMv(params.txStopped)},
+    interface{params.interface}, spin{params.spin},
+    scheduler{params.scheduler}, txSid{params.txSid} { }
   ~InstanceData() override {
     ZmAssert_(state == Closed);
-    ZmAssert_(!queues.length());
+    for (auto queue : queues) delete queue;
   }
 
   bool init(ZuCSpan mask, ZtString<> &error) {
     if (!interface || !rxPool || !receive) {
       error = "interface, Rx pool and receive callback are required";
+      return false;
+    }
+    if (!scheduler || !txSid || txSid > scheduler->params().nThreads()) {
+      error = "AF_XDP requires a scheduler and assigned Tx slot";
       return false;
     }
     Filter filter;
@@ -114,8 +131,15 @@ friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
       auto queue = queues[i] = new Queue;
       queue->quota = layout.rxCount/link.rxQueues + (i < layout.rxCount%link.rxQueues);
       if (!queue->socket.open(arena, interface, i, r, i ? 2 : t, error,
-          i ? queues[0]->socket.fd() : -1) ||
-          !program.publish(i, queue->socket.fd(), error)) return false;
+          i ? queues[0]->socket.fd() : -1)) return false;
+      auto id = ZuID{} << "xdp." << ZuBoxed(interface) << '.' << ZuBoxed(i) << '.';
+      auto owner = ZuID{scheduler->id()};
+      queue->socket.rx().identify(owner, ZuID{id} << "rx", Ztc::QueueType::Rx,
+        queue->socket.fd());
+      queue->socket.fill().identify(owner, ZuID{id} << "fill", Ztc::QueueType::Tx);
+      queue->socket.tx().identify(owner, ZuID{id} << "tx", Ztc::QueueType::Tx);
+      queue->socket.comp().identify(owner, ZuID{id} << "cq", Ztc::QueueType::Rx);
+      if (!program.publish(i, queue->socket.fd(), error)) return false;
       epoll_event event{};
       event.events = EPOLLIN;
       event.data.u32 = i;
@@ -124,7 +148,9 @@ friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
         return false;
       }
     }
+    txConsumed = queues[0]->socket.tx().consumed();
     state = Active;
+    txExit = txExited = 0;
     for (unsigned i = 0; i < link.rxQueues; ++i)
       replenish(*queues[i], queues[i]->quota);
     return true;
@@ -151,22 +177,40 @@ friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
     }
   }
 
-  void kick() {
+  void serveTx() {
+    if (unsigned(txExit) || unsigned(state) != Active) return;
     auto &socket = queues[0]->socket;
-    if (!socket.tx().needWakeup()) return;
-    if (sendto(socket.fd(), nullptr, 0, MSG_DONTWAIT, nullptr, 0) < 0 &&
-        errno != EAGAIN && errno != EBUSY && errno != ENOBUFS && errno != EINTR) {
-      ioError = errno;
-      state = Closing;
-      notify();
+    auto &ring = socket.tx();
+    while (!unsigned(txExit)) {
+      if (sendto(socket.fd(), nullptr, 0, MSG_DONTWAIT, nullptr, 0) < 0 &&
+	  errno != EINTR && errno != EAGAIN && errno != EBUSY && errno != ENOBUFS) {
+	ioError = errno;
+	state = Closing;
+	notify();
+	return;
+      }
+      auto consumed = ring.consumed();
+      unsigned n = uint32_t(consumed - txConsumed);
+      // Keep ownership during a short idle spin. The producer counts each
+      // descriptor before publishing it, including work not yet consumed.
+      for (unsigned i = 0; i < spin && txPending.load_() <= n; ++i)
+	if (unsigned(txExit)) return;
+      if (unsigned(txExit)) return;
+      if (!n) continue;
+      txConsumed = consumed;
+      // The RMW closes the last-drain race: an earlier increment keeps this
+      // invocation active; a later zero-to-one increment queues its successor.
+      if (!(txPending -= n)) return;
     }
   }
 
   void notify() {
     if (wakeFD < 0) return;
-    // The count preserves distinct scheduler wake pulses while the eventfd
-    // coalesces readiness. Publish it before interrupting a blocked receiver.
+    // Count every scheduler pulse, but interrupt the kernel only when Rx has
+    // published a wait attempt. The ordered increment pairs with parking.xch
+    // and the receiver's final pulse check; neither side can miss the other.
     ++wakes;
+    if (!unsigned(parking)) return;
     uint64_t one = 1;
     while (::write(wakeFD, &one, sizeof(one)) < 0) {
       if (errno == EINTR) continue;
@@ -187,7 +231,6 @@ friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
   bool woken() {
     if (!uint64_t(wakes)) return false;
     --wakes; // only the single Rx owner consumes pulses
-    drainWake();
     return true;
   }
 
@@ -197,10 +240,12 @@ friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
     error = {};
     if (state == Closed) return true;
     state = Closing;
+    if (!stopSender()) return false;
     if (arena && rxPool->ready()) arena->retire(txPools, rxPool);
     // Retire one queue per call. No packet backing returns before every queue
     // has independently proved the end of kernel access.
     if (closeQueue < queues.length()) {
+      ZmGuard guard(queueLock);
       auto queue = queues[closeQueue];
       if (queue) {
         if (program.fd() >= 0 && !program.quiesce(closeQueue, error)) return false;
@@ -212,12 +257,9 @@ friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
           if (result != KernelRetirement::Done) return false;
           retirement.reset();
         } else queue->socket.close();
-        delete queue;
-        queues[closeQueue] = nullptr;
       }
       if (++closeQueue < queues.length()) return false;
     }
-    queues = {};
     if (events >= 0) { ::close(events); events = -1; }
     if (wakeFD >= 0) { ::close(wakeFD); wakeFD = -1; }
     unsigned budget = Quantum;
@@ -248,6 +290,29 @@ friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
     }
     return detached;
   }
+
+  bool stopSender() {
+    if (unsigned(txExited)) return true;
+    if (scheduler->state() == ZmEngineState::Stopped) {
+      txPending = 0;
+      txExit = txExited = 1;
+      return true;
+    }
+    // The Tx producer is quiescent. This FIFO barrier drains queued sends;
+    // callbacks never enqueue successors, so none can overtake the barrier.
+    if (!txExit.xch(1)) {
+      scheduler->run([this, stopped = txStopped] {
+        // Descriptor accounting ends here; CQ or safe socket retirement still
+        // owns every submitted backing lease.
+        txPending = 0;
+        txExited = 1;
+        if (stopped) stopped();
+      }, txSid);
+      return false;
+    }
+    return unsigned(txExited);
+  }
+
 };
 
 ZmRef<Instance> Instance::create(Params params, ZtString<> &error)
@@ -266,10 +331,25 @@ ZmRef<Instance> Instance::create(Params params, ZtString<> &error)
   return nullptr;
 }
 Instance::~Instance() = default;
+unsigned Instance::allQueues(Ztc::QueueMgr::AllFn fn) const
+{
+  ZmGuard guard(m_data->queueLock);
+  unsigned count = 0;
+  for (auto queue : m_data->queues) {
+    if (!queue) continue;
+    auto &socket = queue->socket;
+    fn(&socket.rx()); fn(&socket.fill()); fn(&socket.tx()); fn(&socket.comp());
+    count += 4;
+  }
+  return count;
+}
 bool Instance::ready() const { return m_data->state == InstanceData::Active; }
 unsigned Instance::ifindex() const { return m_data->interface; }
 unsigned Instance::mtu() const { return m_data->link.mtu; }
-bool Instance::zeroCopy() const { return (m_data->queues.length() && m_data->queues[0] && m_data->queues[0]->socket.zeroCopy()); }
+bool Instance::zeroCopy() const {
+  auto queue = m_data->queues.length() ? m_data->queues[0] : nullptr;
+  return queue && queue->socket.zeroCopy();
+}
 ZuBSpan Instance::mac() const { return m_data->link.mac; }
 ZuUnion<void, ZeException> Instance::close()
 {
@@ -280,8 +360,12 @@ ZuUnion<void, ZeException> Instance::close()
     s << error;
   }));
 }
+bool Instance::stopSender() { return m_data->stopSender(); }
 
-bool Instance::send(uint8_t *packet, unsigned length)
+bool Instance::send(uint8_t *packet, unsigned length, const CommitFn &commit)
+  { return send_(packet, length, commit); }
+
+bool Instance::send_(uint8_t *packet, unsigned length, const CommitFn &commit)
 {
   if (!ready() || !packet || !length) return false;
   auto pool = m_data->arena->pool(packet);
@@ -295,6 +379,9 @@ bool Instance::send(uint8_t *packet, unsigned length)
   if (slot.pending) return false;
   auto &ring = m_data->queues[0]->socket.tx();
   if (m_data->txHeld == ring.count() || !ring.reserve(1)) return false;
+  // No callback may retain this borrowed context or reenter Tx service.
+  // Its accepted publication precedes the descriptor release store below.
+  if (commit && !commit()) { ring.cancel(); return false; }
   slot.wire = wire;
   slot.active = m_data->txHeld;
   m_data->txActive[m_data->txHeld++] = canonical;
@@ -302,8 +389,9 @@ bool Instance::send(uint8_t *packet, unsigned length)
   ++slot.refs;
   auto address = uint64_t(packet - m_data->arena->data());
   ring.entry(0) = {address, length, 0};
+  bool idle = !m_data->txPending++;
   ring.commit();
-  m_data->kick();
+  if (idle) m_data->scheduler->run([data = m_data] { data->serveTx(); }, m_data->txSid);
   return true;
 }
 
@@ -312,24 +400,32 @@ void Instance::wake() { m_data->notify(); }
 void Instance::rx()
 {
   unsigned idle = 0, empty = 0;
+  auto queues = m_data->queues.length(); // frozen until the caller quiesces Rx for close
   while (ready()) {
     if (m_data->woken()) return;
     auto q = m_data->nextQueue++;
-    if (m_data->nextQueue == m_data->queues.length()) m_data->nextQueue = 0;
+    if (m_data->nextQueue == queues) m_data->nextQueue = 0;
     if (m_data->receiveQueue(q)) { idle = empty = 0; continue; }
     // Check/replenish each hardware queue before parking. This visits queues,
     // never searches packets or buffers, and is independent of arena capacity.
-    if (++empty < m_data->queues.length()) continue;
+    if (++empty < queues) continue;
     empty = 0;
     if (idle < m_data->spin) { ++idle; continue; }
+    // Publish before rechecking pulses. A producer either sees this wait and
+    // writes eventfd, or its already-published pulse prevents the wait entirely.
+    m_data->parking.xch(1);
+    if (uint64_t(m_data->wakes)) { m_data->parking = 0; continue; }
     epoll_event event;
     auto n = epoll_wait(m_data->events, &event, 1, -1);
+    m_data->parking = 0;
     if (n < 0) {
       if (errno == EINTR) continue;
       m_data->ioError = errno;
       m_data->state = InstanceData::Closing;
       return;
     }
+    // A delayed writer can leave stale readiness after its pulse was consumed.
+    // Draining readiness never creates a pulse; only woken() permits a return.
     if (event.data.u32 == InstanceData::End) m_data->drainWake();
     else m_data->nextQueue = event.data.u32;
     idle = 0;
@@ -338,15 +434,19 @@ void Instance::rx()
 
 unsigned InstanceData::receiveQueue(unsigned q)
 {
-  replenish(*queues[q], Quantum);
   auto &queue = *queues[q];
   auto &socket = queue.socket;
+  auto &ring = socket.rx();
+  // Empty probes need no service work unless FILL can accept returned backing
+  // or the driver requests a wake. Keep both checks live even during long spins.
+  if (!ring.available() && !socket.fill().needWakeup() &&
+      (queue.rxHeld == queue.quota || rxPool->used() >= rxPool->count)) return 0;
+  replenish(queue, Quantum);
   if (socket.fill().needWakeup()) {
     pollfd wake{socket.fd(), POLLIN, 0};
     poll(&wake, 1, 0);
   }
   const auto &layout = arena->layout();
-  auto &ring = socket.rx();
   unsigned n = 0;
   while (n < Quantum && !wakes.load_() && ring.reserve(1)) {
     auto desc = ring.entry(0);
@@ -376,14 +476,13 @@ unsigned InstanceData::receiveQueue(unsigned q)
     }
     receive(p, desc.len);
   }
-  replenish(queue, Quantum);
+  if (n) replenish(queue, Quantum);
   return n;
 }
 
 unsigned Instance::pollTx()
 {
   if (!ready()) return 0;
-  m_data->kick();
   unsigned count = 0;
   auto &ring = m_data->queues[0]->socket.comp();
   auto n = ring.reserve(InstanceData::Quantum);

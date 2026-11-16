@@ -146,9 +146,9 @@ void testFilteredColumns()
   ZuCheck(!contains(text, ",2"));
 }
 
-void testOverflowAndMissingFileErrors()
+void testOverflowMissingFile()
 {
-  ZuTestScope(testOverflowAndMissingFileErrors);
+  ZuTestScope(testOverflowMissingFile);
 
   unsigned i = 0;
   auto w = ZiCSV::writeFile<CSVRow, ZuFacet::ShortCSV>(
@@ -234,7 +234,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testRoundTrip);
   ZuTestCall(testFilteredColumns);
-  ZuTestCall(testOverflowAndMissingFileErrors);
+  ZuTestCall(testOverflowMissingFile);
   ZuTestCall(testAppend);
   return 0;
 }

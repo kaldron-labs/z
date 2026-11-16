@@ -39,6 +39,8 @@ public:
   using Hooks::fixCloseRx;
   using Hooks::fixTraceField;
   using Hooks::fixTraceSecret;
+  using Hooks::fixSharedRx;
+  using Hooks::fixAllocSliceRx;
   using typename NetBase::Cxn;
   using typename NetBase::RxBufAlloc;
   using typename NetBase::TxBufAlloc;
@@ -47,7 +49,9 @@ public:
     CliLink{app, ZuMv(config), app->fixLinkLimits(), epoch} { }
 
   CliLink(App *app, SessionConfig config, LinkLimits limits, uint64_t epoch = 1) :
-    NetBase{app}, EngineBase{Hooks::role(ZuMv(config), true), limits, epoch} { }
+    NetBase{app}, EngineBase{Hooks::role(ZuMv(config), true), limits, epoch} {
+    if constexpr (!Net::Encrypted) NetBase::rxCap_(Hooks::fixRxCap(limits));
+  }
 
   CliLink(App *app, ZuID id, SessionConfig config, uint64_t epoch = 1) :
     CliLink{app, ZuMv(id), ZuMv(config), app->fixLinkLimits(), epoch} { }
@@ -55,7 +59,9 @@ public:
   CliLink(App *app, ZuID id, SessionConfig config,
       LinkLimits limits, uint64_t epoch = 1) :
     NetBase{app, ZuMv(id)},
-    EngineBase{Hooks::role(ZuMv(config), true), limits, epoch} { }
+    EngineBase{Hooks::role(ZuMv(config), true), limits, epoch} {
+    if constexpr (!Net::Encrypted) NetBase::rxCap_(Hooks::fixRxCap(limits));
+  }
 
   using EngineBase::connectAllowed_;
 

@@ -57,15 +57,18 @@ bool parseFilter(ZuCSpan text, Filter &out, ZtString<> &error)
   if (slash) {
     auto length = unsigned(text.length()) - n - 1;
     unsigned prefix;
-    if (!length || length > 3 || Zu_nscan<ZuFmt::Default>::atou(prefix, slash + 1, length) != length ||
-	prefix > bits) { error = "invalid network mask prefix"; return false; }
+    if (!length || length > 3 ||
+	Zu_nscan<ZuFmt::Default>::atou(prefix, slash + 1, length) != length || prefix > bits) {
+      error = "invalid network mask prefix"; return false;
+    }
     bits = prefix;
   }
   auto words = result.family == 4 ? 1U : 4U;
   for (unsigned i = 0; i < words; ++i) {
     auto width = bits > 32 ? 32 : bits;
-    result.mask[i] = htonl(!width ? 0 : width == 32 ? UINT32_MAX : UINT32_MAX<<(32 - width));
-    result.address[i] &= result.mask[i];
+    auto mask = htonl(!width ? 0 : width == 32 ? UINT32_MAX : UINT32_MAX<<(32 - width));
+    result.mask[i] = mask;
+    result.address[i] &= mask;
     bits -= width;
   }
   out = result;
@@ -81,11 +84,11 @@ public:
   }
   void mark(unsigned label) {
     if (!m_valid) return;
-    if (label >= m_labels.length() || m_labels[label] == Marked) {
+    auto index = label < m_labels.length() ? m_labels[label] : Marked;
+    if (index == Marked) {
       m_valid = false;
       return;
     }
-    auto index = m_labels[label];
     auto end = m_code.length();
     while (index >= 0) {
       auto &insn = m_code[index];
@@ -106,11 +109,11 @@ public:
     m_code.push(insn);
   }
   void jump(uint8_t op, unsigned dst, unsigned src, int imm, unsigned label) {
-    if (label >= m_labels.length() || m_labels[label] == Marked) {
+    auto prev = label < m_labels.length() ? m_labels[label] : Marked;
+    if (prev == Marked) {
       m_valid = false;
       return;
     }
-    auto prev = m_labels[label];
     m_labels[label] = m_code.length();
     emit(BPF_JMP | op, dst, src, prev, imm);
   }
@@ -180,9 +183,10 @@ bool classifierCode(int xsk, const Filter &filter, BPFCode &out, ZtString<> &err
     b.bound(8, filter.family == 4 ? 20 : 40, pass);
     auto words = filter.family == 4 ? 1U : 4U;
     for (unsigned i = 0; i < words; ++i) {
-      if (!filter.mask[i]) continue;
+      auto mask = filter.mask[i];
+      if (!mask) continue;
       b.load(BPF_W, 2, 8, (filter.family == 4 ? 16 : 24) + (i<<2));
-      b.emit(BPF_ALU | BPF_AND | BPF_K, 2, 0, 0, filter.mask[i]);
+      b.emit(BPF_ALU | BPF_AND | BPF_K, 2, 0, 0, mask);
       b.emit(BPF_ALU | BPF_MOV | BPF_K, 3, 0, 0, filter.address[i]);
       b.jump(BPF_JNE | BPF_X, 2, 3, 0, pass);
     }

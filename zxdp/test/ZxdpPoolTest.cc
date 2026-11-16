@@ -4,9 +4,11 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <stdint.h>
 #include <string.h>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmThread.hh>
+#include <zlib/ZmPlatform.hh>
 #include <zlib/ZxdpUMem.hh>
 
 using namespace ZuTestUtil;
@@ -21,6 +23,22 @@ static void testPools()
   auto arena = Zxdp::UMem::create({.txPools = &tx, .rxPool = &rx}, 1500, error);
   ZuCHECK(!!arena, "intrusive caller-owned pool list provisions the arena");
   if (!arena) return;
+  auto heapPool = new Zxdp::BufPool;
+  ZuCHECK(!(uintptr_t(heapPool) % Zm::CacheLineSize),
+    "framework heap preserves pool cacheline alignment");
+  delete heapPool;
+  bool isolated = true;
+  uintptr_t previous = 0;
+  for (unsigned i = 0; i < tx.count; ++i) {
+    auto address = uintptr_t(&arena->txSlot(tx, i));
+    isolated &= !(address % Zm::CacheLineSize) &&
+      (!i || address - previous >= Zm::CacheLineSize);
+    previous = address;
+  }
+  auto address = uintptr_t(&arena->txSlot(control, 0));
+  isolated &= !(address % Zm::CacheLineSize) && address - previous >= Zm::CacheLineSize;
+  ZuCHECK(isolated,
+    "actual arena slot array isolates adjacent metadata, including the pool boundary");
   const auto &layout = arena->layout();
   ZuCHECK(layout.rxCount == 3 && layout.txCount == 6 && layout.chunk == 2048 &&
       layout.rxLength == 8192 && layout.txLength == 16384,

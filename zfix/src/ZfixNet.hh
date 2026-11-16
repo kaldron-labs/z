@@ -21,20 +21,24 @@
 namespace Zfix {
 
 // Borrow the transport-owned stream while the link is alive. Application
-// continuations reuse its existing extraction operations; no transport resume
-// entry point or additional receive queue is needed.
+// continuations reuse its existing extraction operations and return plain-TCP
+// ingress credit when bytes leave the stream.
 template <typename Impl, typename Stream> class NetInput {
 public:
   void resumeRx() {
     auto impl = static_cast<Impl *>(this);
     ZmAssert(impl->app()->rxInvoked());
-    auto &input = impl->nativeRx().input;
-    auto stream = input;
-    if (!stream) return;
-    while (input == stream && *stream) {
-      int n = impl->process_(*stream);
-      if (!n) return;
-      if (n < 0) { impl->fixCloseRx(true); return; }
+    if constexpr (ZuIsSame<Stream, Ztcp::RxStream>{}) {
+      impl->drainRx_();
+    } else {
+      auto &input = impl->nativeRx().input;
+      auto stream = input;
+      if (!stream) return;
+      while (input == stream && *stream) {
+	int n = impl->process_(*stream);
+	if (!n) return;
+	if (n < 0) { impl->fixCloseRx(true); return; }
+      }
     }
   }
 
@@ -119,6 +123,14 @@ template <typename Net> struct NativeRx {
 // Stateless native hooks for managed and raw links.
 template <typename Impl, typename Net> class LinkHooks {
 public:
+  static constexpr bool fixSharedRx() { return !Net::Encrypted; }
+
+  static uint64_t fixRxCap(const LinkLimits &limits) {
+    uint64_t cap = limits.rx.readAheadBytes;
+    if (cap < limits.rx.codec.frameBytes) cap = limits.rx.codec.frameBytes;
+    return cap;
+  }
+
   void fixCloseRx(bool notify) {
     // A queued protocol notice may arrive after native Rx has discharged the
     // physical close, while the FIX owner drain is still pending.
@@ -195,19 +207,30 @@ public:
     error = {}; return W::alloc_(impl(), input, bytes);
   }
 
-  ZmRef<ZiRxQueue::Node> fixAllocRx() {
-    if constexpr (Net::Encrypted) return impl()->app()->rxAllocator()->allocBuf(impl());
-    else {
-      // FIX framing may need writable storage while gathering TCP fragments.
-      static auto allocator = []<
+  static auto fixRxAllocator_() {
+    // FIX framing needs stable writable storage while gathering TCP fragments.
+    // A slice cannot borrow a source's embedded transport allocator.
+    static auto allocator = []<
         Zi::IOBufType::T Type, typename Buf, unsigned Size, unsigned Align,
         typename HeapID, unsigned VHMaxSize, auto Grow
       >(Zi::IOBufBuiltinAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow> *) {
         static ZiMultiplex mx;
         return mx.allocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>();
       }(static_cast<typename Impl::RxBufAlloc *>(nullptr));
-      return allocator->allocBuf(impl());
-    }
+    return allocator;
+  }
+
+  ZmRef<ZiRxQueue::Node> fixAllocRx() {
+    if constexpr (Net::Encrypted) return impl()->app()->rxAllocator()->allocBuf(impl());
+    else return fixRxAllocator_()->allocBuf(impl());
+  }
+
+  ZmRef<ZiRxQueue::Node> fixAllocSliceRx(
+      ZiRxQueue::Node *source, uint8_t *data, unsigned length) {
+    if constexpr (!Net::Encrypted)
+      return new Zi::RxSlice<ZiRxQueue::Node>{
+	source, data, length, fixRxAllocator_()};
+    else return nullptr;
   }
 
   WireGeometry fixGeometryTx() {
@@ -224,10 +247,15 @@ public:
     return g;
   }
 
-  ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
+  ZmRef<ZiIOBuf> fixAllocTx(unsigned head, Zi::IOBufAllocator **wait = nullptr) {
+    if (wait) *wait = nullptr;
     auto allocator = impl()->txAllocator();
     auto b = allocator->allocBuf(impl());
-    if (ZuUnlikely(!b)) return nullptr;
+    if (ZuUnlikely(!b)) {
+      if constexpr (!Net::Encrypted)
+	if (wait && allocator->provider()) *wait = allocator;
+      return nullptr;
+    }
     if (head < b->skip) head = b->skip;
     if (head > b->size || allocator->tailRoom > b->size - head) return nullptr;
     b->skip = head;

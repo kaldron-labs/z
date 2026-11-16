@@ -21,6 +21,7 @@
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZiAssert.hh>
+#include <zlib/ZiIOBuf.hh>
 #include <zlib/ZfixContext.hh>
 #include <zlib/ZfixIOBuf.hh>
 #include <zlib/ZfixLinkTx.hh>
@@ -92,7 +93,8 @@ struct NoLinkRx {
 
 // Impl is a reference-counted physical transport link. Its app() supplies the
 // existing hub's isolated Rx/Tx dispatch and mx(). Transport hooks are:
-// fixGeometryTx(), fixAllocTx(head), fixSendTx(buffer), resumeRx_(), and
+// fixGeometryTx(), fixAllocTx(head, optional wait allocator), fixSendTx(buffer),
+// resumeRx_(), and
 // fixCloseRx(notify), defaulting to disconnect_(). Socket callbacks retain their buffer until
 // transportSent() runs on the Tx owner.
 //
@@ -194,12 +196,18 @@ private:
     uint64_t	stopConnection = 0; // requested drain; Ctl may never have opened
     bool	stopping = false;
     bool	stopPosted = false;
+    Zi::IOBufWait	allocWait;
+    Zi::IOBufAllocator	*allocOwner = nullptr;
+    ZmRef<ZiIOBuf>	allocBuffer;
+    uint64_t	allocEpoch = 0, allocConnection = 0;
+    bool	allocCancel = false;
 
     TxSide(Link *l, SessionConfig c, const LinkLimits &limits, uint64_t epoch) :
       Ctl{ZuMv(c), limits.tx, limits.control, epoch}, Wire{limits.wire}, link{l} { }
 
     void bind(SessionEvent e) {
       auto old = Ctl::connection_();
+      cancelAlloc();
       idleCancelTx();
       auto result = Ctl::bind_(e);
       Wire::close_(old);
@@ -210,6 +218,8 @@ private:
 
     void applyEvent(SessionEvent e, TxBody::Ref body) {
       if (e.connection < Ctl::connection_()) return;
+      if (e.connection > Ctl::connection_() || (e.actions & SessionAction::Close) ||
+	  e.state == State::Disconnected) cancelAlloc();
 
       if (e.connection > Wire::connection_() &&
 	  e.state != State::Closing && e.state != State::Disconnected) {
@@ -271,6 +281,7 @@ private:
     }
 
     void epochTx(TxContext c, uint64_t epoch, TxProgress p, uint64_t request) {
+      cancelAlloc();
       link->impl()->fixEpochTx(c, epoch, p, request);
     }
 
@@ -295,7 +306,50 @@ private:
       link->app()->rxRun([link = link, c] { link->outputFailed(c); });
     }
 
-    ZmRef<ZiIOBuf> allocTx() { return link->impl()->fixAllocTx(0); }
+    ZmRef<ZiIOBuf> allocTx() {
+      if (stopping || allocOwner) return nullptr;
+      if (allocBuffer) return ZuMv(allocBuffer);
+      Zi::IOBufAllocator *allocator = nullptr;
+      auto buffer = link->impl()->fixAllocTx(0, &allocator);
+      if (buffer || !allocator) return buffer;
+      allocOwner = allocator;
+      allocEpoch = Ctl::epoch_(); allocConnection = Ctl::connection_();
+      allocator->waitBuf(allocWait, link->app()->txThread(), link->impl(),
+	0, ~uint32_t(0), [this](auto result, ZmRef<ZiIOBuf> buffer) {
+	  allocated(result, ZuMv(buffer));
+	});
+      return nullptr;
+    }
+
+    bool waitFrameTx() { return stopping || allocOwner; }
+
+    void allocated(Zi::IOBufWaitResult::T result, ZmRef<ZiIOBuf> buffer) {
+      ZmAssert(link->app()->txInvoked());
+      if (allocCancel) return; // cancellation acknowledgement drains this result
+      allocOwner = nullptr;
+      if (!stopping && allocEpoch == Ctl::epoch_() &&
+	  allocConnection == Ctl::connection_()) {
+	if (result == Zi::IOBufWaitResult::Ready) {
+	  allocBuffer = ZuMv(buffer);
+	  Ctl::writable_(allocConnection);
+	} else if (result == Zi::IOBufWaitResult::Failed) {
+	  faultTx({allocEpoch, allocConnection, 0}, {Fmt::ErrorCode::Output});
+	}
+      }
+      checkStop();
+    }
+
+    void cancelAlloc() {
+      allocBuffer = nullptr;
+      if (!allocOwner || allocCancel) return;
+      allocCancel = true;
+      allocOwner->cancelBuf(allocWait, [this] {
+	allocCancel = false; allocOwner = nullptr;
+	// A replacement may already be attached, held behind this old request.
+	if (!stopping) Ctl::writable_(Ctl::connection_());
+	checkStop();
+      });
+    }
 
     bool admitFrameTx(TxBody::Ref b, TxContext c, ZmRef<ZiIOBuf> f, ZuDateTime) {
       return Wire::admit_(ZuMv(b), c, ZuMv(f));
@@ -333,13 +387,15 @@ private:
       if (connection < Ctl::connection_()) return;
       stopConnection = connection;
       stopping = true; stopPosted = false; idleCancelTx();
+      cancelAlloc();
       Ctl::close_(Ctl::connection_());
       Wire::close_(Ctl::connection_()); Wire::close_(connection);
       link->impl()->fixStopTx(connection); checkStop();
     }
 
     void checkStop() {
-      if (!stopping || stopPosted || Ctl::inFlight_() || Wire::count_() ||
+      if (!stopping || stopPosted || allocOwner || allocWait.busy() ||
+	  Ctl::inFlight_() || Wire::count_() ||
 	  Ctl::loading() || Ctl::waiting_()) return;
       stopPosted = true;
       link->app()->txRun([link = link, connection = stopConnection] {
@@ -419,7 +475,13 @@ public:
     if (!m_live || m_adminFailed) return -1;
     if (m_pending) return 0;
     ZmRef<ZiIOBuf> bytes; Fmt::FrameView frame;
-    int n = m_framer.next_(stream, [this] { return impl()->fixAllocRx(); }, bytes, &frame);
+    auto alloc = [this] { return impl()->fixAllocRx(); };
+    int n = impl()->fixSharedRx() ?
+      m_framer.nextShared_(stream, alloc,
+        [this](auto *source, uint8_t *data, unsigned length) {
+          return impl()->fixAllocSliceRx(source, data, length);
+        }, bytes, &frame) :
+      m_framer.next_(stream, alloc, bytes, &frame);
     if (n < 0) {
       m_rx.framingError(); fault_(SessionError::Protocol, m_framer.error_().tag);
       return -1;
@@ -582,7 +644,11 @@ public:
     ZmAssert(app()->txInvoked()); return m_tx.abortTx(epoch, seqNo);
   }
 
-  void queued() { app()->txRun([this] { m_tx.queued_(); }); }
+  void queued() {
+    // Publish queue presence before a newer on-owner submission can pass it.
+    if (app()->txInvoked()) m_tx.queued_();
+    else app()->txRun([this] { m_tx.queued_(); });
+  }
 
   void probe() { app()->rxInvoke([this] { probe_(); }); }
 
@@ -673,6 +739,13 @@ public:
   void fixStoppedRx(bool) { }
 
   void fixBlockedRx(TxContext) { }
+
+  // Standalone links retain the ordinary copy policy; native hooks opt in to
+  // budgeted shared descriptors for coalesced plain-TCP frames.
+  bool fixSharedRx() const { return false; }
+  ZmRef<ZiRxQueue::Node> fixAllocSliceRx(ZiRxQueue::Node *, uint8_t *, unsigned) {
+    return {};
+  }
 
   void fixStateRx(SessionEvent) { }
 

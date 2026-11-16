@@ -165,7 +165,7 @@ private:
 
 #ifndef _WIN32
   int			m_epollFD = -1;
-  int			m_wakeFD = -1, m_wakeFD2 = -1;
+  int			m_wakeFD = -1;
 #else
   int			m_wakeSemIndex = -1;
   ZtArray<HANDLE>	m_wfmoHandles;

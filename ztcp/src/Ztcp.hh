@@ -134,9 +134,20 @@ public:
     if (Link *link = link_)
       link->disconnected_0(this, ZuMvPtr(link_), peer);
   }
+  uint64_t rxAdd(unsigned n) { return m_rxQueued.xchAdd(n) + n; }
+  uint64_t rxRelease(uint64_t n) { return m_rxQueued.xchAdd(-n) - n; }
+  uint64_t rxQueued() const { return m_rxQueued.load_(); }
+  bool rxPark() { return !m_rxParked.xch(1); }
+  bool rxUnpark() { return m_rxParked.xch(0); }
+  bool rxParked() const { return m_rxParked.load_(); }
+  void rxCurrent(bool v) { m_rxCurrent = unsigned(v); }
+  bool rxCurrent() const { return m_rxCurrent.load_(); }
 private:
   // immutable
   LinkRef	m_link = nullptr;
+  alignas(Zm::CacheLineSize) ZmAtomic<uint64_t> m_rxQueued{0};
+  ZmAtomic<unsigned>	m_rxParked{0};
+  ZmAtomic<unsigned>	m_rxCurrent{0};
 };
 
 template <typename Link> using CliCxn = Cxn<Link, Link *>;
@@ -275,29 +286,68 @@ private:
     recvRaw_(io);
   }
 
+  static bool recvFn_(Impl *link, ZiRxContext &io) {
+    auto cxn = static_cast<Cxn *>(io.cxn);
+    if (!io.buf) {
+      const auto &ci = cxn->info();
+      io.buf = static_cast<RxAllocator *>(ci.rxAllocator)->allocBuf(link, 0, ci.mps);
+      if (ZuUnlikely(!io.buf)) io.disconnect();
+      return true;
+    }
+    auto buf = ZuMv(io.buf);
+    if (buf->length) {
+      auto n = buf->length;
+      if (link->m_rxCap) cxn->rxAdd(n);
+      link->app()->rxRun([
+	cxn = ZmRef(cxn), buf = ZuMv(buf)
+      ]() mutable {
+	auto link = static_cast<Impl *>(buf->owner);
+	link->rcvd_(cxn.ptr(), ZuMv(buf));
+      });
+      if (link->m_rxCap && cxn->rxQueued() >= link->rxHigh_(cxn)) {
+	io.complete();
+	cxn->rxPark();
+	// A concurrent application drain may have crossed the low watermark
+	// before the park was published. Recheck after the exchange.
+	link->rxWake_(cxn);
+	return true;
+      }
+    }
+    const auto &ci = cxn->info();
+    io.buf = static_cast<RxAllocator *>(ci.rxAllocator)->allocBuf(link, 0, ci.mps);
+    if (ZuUnlikely(!io.buf)) io.disconnect();
+    return true;
+  }
+
   void recvRaw_(ZiRxContext &io) {
     const auto &ci = io.cxn->info();
     auto buf = static_cast<RxAllocator *>(ci.rxAllocator)->allocBuf(
       impl(), 0, ci.mps);
     if (ZuUnlikely(!buf)) { io.disconnect(); return; }
     io.init(ZiRxFn{impl(), [](Impl *link, ZiRxContext &io) {
-      auto buf = ZuMv(io.buf);
-      if (buf->length) {
-	auto cxn = static_cast<Cxn *>(io.cxn);
-	link->app()->rxRun([
-	  cxn = ZmRef(cxn), buf = ZuMv(buf)
-	]() mutable {
-	  auto link = static_cast<Impl *>(buf->owner);
-	  link->rcvd_(cxn.ptr(), ZuMv(buf));
-	});
-	const auto &ci = io.cxn->info();
-	buf = static_cast<RxAllocator *>(ci.rxAllocator)->allocBuf(
-	  link, 0, ci.mps);
-      }
-      if (ZuUnlikely(!buf)) { io.disconnect(); return true; }
-      io.buf = ZuMv(buf);
-      return true;
+      return recvFn_(link, io);
     }}, ZuMv(buf));
+  }
+
+  uint64_t rxHigh_(Cxn *cxn) const {
+    const auto &ci = cxn->info();
+    unsigned size = ci.rxAllocator->capacity();
+    if (size > ci.mps) size = ci.mps;
+    return m_rxCap > UINT64_MAX - size ? UINT64_MAX : m_rxCap + size;
+  }
+
+  void rxWake_(Cxn *cxn) {
+    if (cxn->rxQueued() >= m_rxCap || !cxn->rxUnpark()) return;
+    auto impl_ = ZmRef<Impl>{impl()};
+    auto cxn_ = ZmRef<Cxn>{cxn};
+    app()->mx()->rxRun([
+      impl = ZuMv(impl_), cxn = ZuMv(cxn_)
+    ] {
+      if (!cxn->rxCurrent() || !cxn->rxUp().load_()) return;
+      cxn->recv_(ZiRxFn{impl.ptr(), [](Impl *link, ZiRxContext &io) {
+	return recvFn_(link, io);
+      }});
+    });
   }
 
   void connected_1(ZmRef<Cxn> cxn) {
@@ -310,6 +360,7 @@ private:
     bool replacing = bool(old);
     m_closing = nullptr;
     if (ZuUnlikely(old)) {
+      old->rxCurrent(false);
       old->close();
       // Retire the old physical output on I/O Tx before publishing B. This
       // neither flushes A nor waits for its disconnect callbacks. Delayed A
@@ -325,6 +376,7 @@ private:
       }});
     }
     m_cxn = ZuMv(cxn);
+    m_cxn->rxCurrent(true);
     m_disconnecting = 0;
     stateChanged_(oldState);
     m_rxStream.clean();
@@ -376,6 +428,7 @@ private:
       "TCP disconnected dispatch outside Rx thread", return);
     if (m_cxn != cxn && m_closing.load_() != cxn) return;
     auto oldState = state_();
+    cxn->rxCurrent(false);
     m_cxn = nullptr;
     m_closing = cxn;
     m_disconnecting = 0;
@@ -393,19 +446,44 @@ private:
   void rcvd_(Cxn *cxn, ZmRef<ZiIOBuf> buf) {
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
       "TCP receive dispatch outside Rx thread", return);
-    if (ZuUnlikely(m_cxn != cxn)) return;
-    m_rxStream.push(ZuMv(buf));
-    while (m_rxStream) {
-      int n = impl()->process(m_rxStream);
-      if (!n) return;
-      if (ZuUnlikely(n < 0)) {
-	disconnect_(true);
-	return;
-      }
+    if (ZuUnlikely(m_cxn != cxn)) {
+      if (m_rxCap) cxn->rxRelease(buf->length);
+      return;
     }
+    m_rxStream.push(ZuMv(buf));
+    drainRx_();
   }
 
 public:
+  void drainRx_() {
+    ZiAssert(app()->rxInvoked(), "Ztcp", (),
+      "TCP receive drain outside Rx thread", return);
+    if (m_rxAccounting || !m_cxn) return;
+    auto cxn = ZmRef<Cxn>{m_cxn};
+    uint64_t before = m_rxStream.length();
+    m_rxAccounting = true;
+    while (m_rxStream) {
+      int n = impl()->process(m_rxStream);
+      if (!n) break;
+      if (ZuUnlikely(n < 0)) {
+	disconnect_(true);
+	break;
+      }
+    }
+    m_rxAccounting = false;
+    rxProgress_(cxn.ptr(), before - m_rxStream.length());
+  }
+
+  void rxCap_(uint64_t cap) { m_rxCap = cap; }
+
+  void rxProgress_(Cxn *cxn, uint64_t n) {
+    ZiAssert(app()->rxInvoked(), "Ztcp", (),
+      "TCP receive credit outside Rx thread", return);
+    if (!m_rxCap || !n || m_rxAccounting) return;
+    cxn->rxRelease(n);
+    if (m_cxn == cxn && !m_disconnecting.load_()) rxWake_(cxn);
+  }
+
   unsigned txMPS_() const {
     Cxn *cxn = m_cxn;
     return cxn ? cxn->info().mps : ~uint32_t(0);
@@ -548,6 +626,7 @@ public:
     impl()->stopConnect_();
     auto cxn = ZmRef<Cxn>{ZuMvPtr(m_cxn)};
     if (cxn) {
+      cxn->rxCurrent(false);
       m_closing = cxn.ptr();
       auto mx = cxn->mx();
       if (notify)
@@ -628,6 +707,8 @@ private:
   ZmAtomic<unsigned>	m_disconnecting = 0;
   // Configured before the link is used, then stable.
   ZiTxErrorFn		m_txErrorFn;
+  // Set by the enclosing FIX link before connection setup, then immutable.
+  uint64_t		m_rxCap = 0;
   // Read-mostly connection reference; mutation remains Rx-owned.
   CxnRef		m_cxn = nullptr;
   // A pending close owns cleanup only until a new association invalidates it.
@@ -638,6 +719,7 @@ private:
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   RxStream		m_rxStream;
+  bool			m_rxAccounting = false;
 
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)

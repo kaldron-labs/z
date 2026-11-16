@@ -25,6 +25,7 @@
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmVHeap.hh>
+#include <zlib/ZmFn.hh>
 
 #include <zlib/ZtEnum.hh>
 
@@ -412,8 +413,8 @@ friend inline HeapID ZmNHeapID(IOBufBuiltin *);
   using Buf = Buf_;
   using Buf::data;
 
-  static constexpr unsigned Size = Size_;
-  static constexpr unsigned Align = Align_;
+  enum { Size = Size_ };
+  enum { Align = Align_ };
 
   alignas(Align) uint8_t	data_[Size];
 
@@ -449,12 +450,82 @@ ZuAssert(!((sizeof(IOBufBuiltin<
 	ZiIOBuf_HeapID>)) & (Zm::CacheLineSize - 1)));
 
 struct IOBufPlugin;
+class IOBufWait;
 
-struct IOBufAllocator : public IOBufAllocator_ {
+ZtEnumNS(ZiAPI, IOBufWaitResult, int8_t, Ready, Cancelled, Failed);
+
+struct IOBufWaitData {
+  bool queued = false; // provider Tx only; intrusive FIFO membership
+};
+using IOBufWaitList = ZmList<IOBufWaitData,
+  ZmListNode<IOBufWaitData, ZmListShadow<>>>;
+
+// One caller-owned request per producer. The caller and provider serialize on
+// their own scheduler slots; a cancellation acknowledgment drains earlier grants.
+class ZiAPI IOBufWait : public IOBufWaitList::Node {
+public:
+  using AllocFn = ZmFn<void(IOBufWaitResult::T, ZmRef<IOBuf>),
+    ZmFnHeapID<"Zi.IOBufWait">>;
+  using DoneFn = ZmFn<void(), ZmFnHeapID<"Zi.IOBufWait">>;
+  using GrantFn = ZmRef<IOBuf> (*)(
+    IOBufAllocator *, uint8_t *, void *, uint32_t, uint32_t);
+
+  IOBufWait() = default;
+  IOBufWait(const IOBufWait &) = delete;
+  IOBufWait &operator =(const IOBufWait &) = delete;
+  IOBufWait(IOBufWait &&) = delete;
+  IOBufWait &operator =(IOBufWait &&) = delete;
+  ~IOBufWait();
+
+  // Caller slot only. Reuse/destruction requires !busy().
+  bool busy() const { return m_active || m_cancelling; }
+  void start(IOBufAllocator *, unsigned sid, void *owner,
+    uint32_t length, uint32_t mps, AllocFn);
+  void cancel(DoneFn);
+
+  // Immutable request geometry, read by the typed adapter on provider Tx.
+  void *owner() const { return m_owner; }
+  uint32_t length() const { return m_length; }
+  uint32_t mps() const { return m_mps; }
+
+  // Provider Tx only. Unlink before completing; do not access the request
+  // after completion, since the caller may immediately reuse or destroy it.
+  void wait(IOBufPlugin *, GrantFn);
+  void grant(uint8_t *);
+  void ready(ZmRef<IOBuf>);
+  void fail();
+
+private:
+  void start_();
+  void complete(IOBufWaitResult::T);
+  void completed();
+
+  IOBufAllocator *m_allocator = nullptr;
+  IOBufPlugin *m_provider = nullptr;
+  void *m_owner = nullptr;
+  unsigned m_sid = 0;
+  uint32_t m_length = 0, m_mps = 0;
+  AllocFn m_fn;
+  GrantFn m_grant = nullptr;
+  uint8_t *m_raw = nullptr;
+  ZmRef<IOBuf> m_buf;
+  IOBufWaitResult::T m_result = IOBufWaitResult::Failed;
+  bool m_active = false, m_cancelling = false; // caller slot
+  bool m_pending = false; // provider Tx
+};
+
+struct ZiAPI IOBufAllocator : public IOBufAllocator_ {
   using IOBufAllocator_::IOBufAllocator_;
   virtual IOBufPlugin *provider() const { return nullptr; }
   virtual ZmRef<IOBuf> allocBuf(
     void *owner = nullptr, uint32_t length = 0, uint32_t mps = ~uint32_t(0)) = 0;
+
+  // Both completion and cancellation acknowledgment are posted to sid. The
+  // allocator/multiplexer and waiter must outlive those callbacks.
+  void waitBuf(IOBufWait &, unsigned sid, void *owner,
+    uint32_t length, uint32_t mps, IOBufWait::AllocFn);
+  void cancelBuf(IOBufWait &, IOBufWait::DoneFn);
+  virtual void waitBuf_(IOBufWait &);
 };
 
 inline IOBufAllocator *IOBuf::allocator() const {
@@ -469,11 +540,17 @@ template <
   typename HeapID = ZiIOBuf_HeapID,
   unsigned VHMaxSize_ = ZiIOBuf_DefltVHMaxSize,
   auto Grow = ZmGrow>
-struct IOBufBuiltinAllocator : public IOBufAllocator {
+struct IOBufBuiltinAllocator :
+  public ZmNHeap<IOBufBuiltinAllocator<Type, Buf_, Size_, Align, HeapID, VHMaxSize_, Grow>>,
+  public IOBufAllocator {
+friend inline ZuStringT<"Zi.IOBufBuiltinAllocator"> ZmNHeapID(IOBufBuiltinAllocator *);
+  using Heap = ZmNHeap<IOBufBuiltinAllocator<Type, Buf_, Size_, Align, HeapID, VHMaxSize_, Grow>>;
+  using Heap::operator new;
+  using Heap::operator delete;
   enum { BufType = Type };
   using Buf = Buf_;
-  static constexpr unsigned Size = BuiltinSize<Buf, Align>(Size_);
-  static constexpr unsigned VHMaxSize = BuiltinSize<Buf, Align>(VHMaxSize_);
+  enum { Size = BuiltinSize<Buf, Align>(Size_) };
+  enum { VHMaxSize = BuiltinSize<Buf, Align>(VHMaxSize_) };
   using VHeap = ZmVHeap_<HeapID, Size, VHMaxSize, Align>;
 
   IOBufBuiltinAllocator(ZiMultiplex *mx = nullptr) :
@@ -503,13 +580,17 @@ struct IOBufBuiltinAllocator : public IOBufAllocator {
   }
 };
 
-struct IOBufPlugin : public ZmPolymorph {
+struct ZiAPI IOBufPlugin : public ZmPolymorph {
   uint32_t	size = 0;	// - overall size of each buffer
   uint32_t	headRoom = 0;	// - how much space is reserved for a frame header
   uint32_t	tailRoom = 0;	// - how much space is reserved for a frame trailer
 
   virtual uint8_t *alloc() = 0;
   virtual void free(uint8_t *) = 0;
+  // Called by Zi on mx Tx. Waiting providers override both. cancel() only
+  // unlinks: Zi emits the terminal cancellation and subsequent drain callback.
+  virtual void wait(IOBufWait &);
+  virtual void cancel(IOBufWait &) { }
 };
 
 // plugin allocators can use registered plugin backing storage
@@ -521,7 +602,11 @@ template <
   typename HeapID = ZiIOBuf_HeapID,
   unsigned VHMaxSize_ = ZiIOBuf_DefltVHMaxSize,
   auto Grow = ZmGrow>
-struct IOBufPluginAllocator : public IOBufAllocator {
+struct IOBufPluginAllocator :
+  public ZmNHeap<IOBufPluginAllocator<Type, Buf_, Size_, Align, HeapID, VHMaxSize_, Grow>>,
+  public IOBufAllocator {
+friend inline ZuStringT<"Zi.IOBufPluginAllocator"> ZmNHeapID(IOBufPluginAllocator *);
+  using Heap = ZmNHeap<IOBufPluginAllocator<Type, Buf_, Size_, Align, HeapID, VHMaxSize_, Grow>>;
   ZuAssert(
     Type == IOBufType::RxUDP || 
     Type == IOBufType::TxUDP || 
@@ -529,11 +614,14 @@ struct IOBufPluginAllocator : public IOBufAllocator {
     Type == IOBufType::TxTCP);
 
   using Buf = Buf_;
-  static constexpr unsigned Size = BuiltinSize<Buf, Align>(Size_);
-  static constexpr unsigned VHMaxSize = BuiltinSize<Buf, Align>(VHMaxSize_);
+  enum { Size = BuiltinSize<Buf, Align>(Size_) };
+  enum { VHMaxSize = BuiltinSize<Buf, Align>(VHMaxSize_) };
   using VHeap = ZmVHeap_<HeapID, Size, VHMaxSize, Align>;
 
   ZmRef<IOBufPlugin>	plugin;
+
+  using Heap::operator new;
+  using Heap::operator delete;
 
   IOBufPluginAllocator(ZiMultiplex *mx, IOBufPlugin *plugin_) :
     IOBufAllocator(mx, Type,
@@ -541,6 +629,33 @@ struct IOBufPluginAllocator : public IOBufAllocator {
     plugin(plugin_) { }
 
   IOBufPlugin *provider() const override { return plugin; }
+
+  void waitBuf_(IOBufWait &request) override {
+    if constexpr (Type == IOBufType::TxUDP || Type == IOBufType::TxTCP) {
+      if (request.length() > capacity() || request.length() > request.mps()) {
+	request.fail();
+	return;
+      }
+      request.wait(plugin, [](IOBufAllocator *allocator, uint8_t *data,
+	  void *owner, uint32_t length, uint32_t mps) -> ZmRef<IOBuf> {
+	return static_cast<IOBufPluginAllocator *>(allocator)->grantBuf(
+	  data, owner, length, mps);
+      });
+    } else {
+      IOBufAllocator::waitBuf_(request);
+    }
+  }
+
+  ZmRef<IOBuf> grantBuf(
+    uint8_t *data, void *owner, uint32_t length, uint32_t mps)
+  {
+    uint32_t ps = capacity();
+    if (ps > mps) ps = mps;
+    ZmRef<IOBuf> buf = new IOBufStub<Buf, HeapID>(
+      data, ps + headRoom + tailRoom, this, owner, length, false, true);
+    buf->skip = headRoom;
+    return buf;
+  }
 
   ZmRef<IOBuf> allocBuf(
     void *owner = nullptr, uint32_t length = 0, uint32_t mps = ~uint32_t(0)) override
@@ -552,13 +667,9 @@ struct IOBufPluginAllocator : public IOBufAllocator {
       uint32_t ps = capacity();
       if (ps > mps) ps = mps;
       if (length > ps) return nullptr;
-      uint32_t size_ = ps + headRoom + tailRoom; // clamped size
       auto data = plugin->alloc();
       if (ZuUnlikely(!data)) return nullptr;
-      ZmRef<IOBuf> buf = new IOBufStub<Buf, HeapID>(
-	data, size_, this, owner, length, false, true);
-      buf->skip = headRoom;
-      return buf;
+      return grantBuf(data, owner, length, mps);
     } else {
       // registered rx buffer - stub only
       if (length) return nullptr;

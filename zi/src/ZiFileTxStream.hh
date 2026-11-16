@@ -49,7 +49,7 @@ class FileTxStream {
   FileTxStream &operator =(const FileTxStream &) = delete;
 
 public:
-  static constexpr unsigned maxSize = NTP::BufSize;
+  enum { maxSize = NTP::BufSize };
   using Buf = FileTxBuf<maxSize>;
 
   FileTxStream(ZiFile &file) : m_file{file} { }
@@ -60,10 +60,10 @@ public:
   ZuOpBool
 
 private:
-  ZuRef<Buf> allocBuf_() { return new Buf; }
+  ZuRef<Buf> allocBuf() { return new Buf; }
   void fail() { m_buf = {}; m_failed = true; }
   void ensureBuf() {
-    if (!m_buf) m_buf = allocBuf_();
+    if (!m_buf) m_buf = allocBuf();
   }
   bool sendBuf() {
     if (ZuUnlikely(!flush())) return false;

@@ -216,6 +216,7 @@ friend ZmEngine<ZmScheduler>;
 public:
   using ID = ZmSchedParams::ID;
   using WakeFn = ZmFn<void(), ZmFnHeapID<"ZmScheduler.WakeFn">>;
+  using ServiceFn = ZmFn<void(), ZmFnHeapID<"ZmScheduler.ServiceFn">>;
   using ThreadFn = ZmFn<void(), ZmFnHeapID<"ZmScheduler.ThreadFn">>;
 
 private:
@@ -301,6 +302,15 @@ public:
   bool reset(); // reset while stopped - true if ok, false if running
 
   void wakeFn(unsigned tid, WakeFn fn);
+
+  // Owner-only while running; stopped configuration is also allowed. An armed
+  // service prevents parking and must perform bounded nonblocking work. It runs
+  // on idle turns and after at most ServiceQuantum queued callbacks. Passing an
+  // empty delegate unregisters it, including from inside the service itself.
+  // Remove the service before its context dies; scheduler EOF still stops it.
+  // Match the existing I/O completion quantum without batching queued work.
+  enum { ServiceQuantum = 64 };
+  void serviceFn(unsigned sid, ServiceFn fn);
 
   enum { Update = 0, Advance, Defer }; // mode
 
@@ -573,6 +583,7 @@ private:
     ZuID		id;
     Ring		ring;
     WakeFn		wakeFn;
+    ServiceFn		serviceFn;
     ZmThreadID		tid = 0;
     ZmThread		thread;
     ZmAtomic<unsigned>	queueCount;

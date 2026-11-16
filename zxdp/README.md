@@ -4,7 +4,9 @@ Zxdp supplies raw AF_XDP packet arenas, intrusive pools and kernel ring service.
 The [interface contract](INTERFACE.md) defines its boundary. The caller supplies
 transport state, application adaptation and scheduling.
 Include `<zlib/Zxdp.hh>` and link `libZxdp` and its framework dependencies.
-For Zi provider and transport integration see [Zutcp](../zutcp/README.md).
+For Zi provider and transport integration see [Zutcp](../zutcp/README.md) and its
+[kernel/native quickstart](../zutcp/util/README.md), including sudo, interface
+ownership, routes and static neighbors.
 Both modules are Linux-only and are excluded from Windows builds.
 
 ## Interface
@@ -19,7 +21,11 @@ Include `Zxdp.hh`. Create an `Instance` with named `Params` members:
   supplies `count` and maximum packet `size`.
 * `rxPool`: one nonempty caller-owned pool with a dedicated Rx region.
 * `rx`: callback receiving the raw packet address and length.
-* `spin`: idle probe rounds before the receive loop blocks (default 1000).
+* `spin`: idle probe rounds before Rx blocks or the Tx sender returns to its
+  scheduler (default 1000).
+* `scheduler` and `txSid`: caller-owned scheduler and explicitly assigned sender slot.
+* `txThread`: `ZmSchedTParams`, isolated by default; apply this configuration to
+  the assigned slot before scheduler startup. The scheduler owns sender teardown.
 
 Allocate with `txPool.alloc()`, construct the complete Ethernet packet directly
 in that backing and call `instance->send(packet, length)`. A false return leaves
@@ -28,6 +34,14 @@ lease; keep bytes immutable until kernel retirement. Explicitly return the calle
 allocation lease with `pool.free(packet)`. Recycling waits for both leases to end,
 so return may precede CQ. Kernel completion does not prove successful wire delivery.
 Exhaustion returns null and never allocates a replacement.
+A shared pending-descriptor counter coalesces sender work. The producer increments
+it before descriptor commit and schedules the assigned slot with `run()` after
+commit on a zero-to-one transition. That slot calls nonblocking `sendto()`, tracks
+kernel consumer progress, and spins for `spin` idle rounds before returning to
+the scheduler. Atomic subtraction of consumed descriptors preserves a concurrent
+publication. No Tx epoll, eventfd or wait timeout is used; Rx retains its separate
+epoll/eventfd service. CQ retirement and backing release remain on the Tx owner.
+
 Rx callbacks likewise own their packet until they return it to the Rx pool.
 An advanced Rx wire pointer can be passed directly to `rxPool.free()`.
 
@@ -37,6 +51,31 @@ permits. `pollTx()` returns the number of kernel submissions retired and release
 their kernel leases; there is no completion callback or application packet object.
 
 ## Arenas and service
+
+`Instance::allQueues()` enumerates the actual RX, FILL, TX and completion ring
+objects as `Ztc::Queue`. The installed Zutcp plugin forwards these through the
+multiplexer's existing queue manager. Keys use the scheduler ID and
+`xdp.<ifindex>.<hardware-queue>.rx`, `.fill`, `.tx` or `.cq`. Queue type describes
+the userspace direction: RX/completion are `Rx`, TX/FILL are `Tx`.
+
+Capacity and occupancy use descriptor slots. Input/output counts expose the
+kernel's wrapping 32-bit producer/consumer positions; byte counts are unavailable.
+Live occupancy is advisory and bounded to capacity when cursor reads race.
+`full` counts failed capacity reservations for TX/FILL and reports the kernel's
+`rx_ring_full` statistic for RX, queried only during telemetry collection. The
+normalized 32-bit RX counter saturates at its maximum. Completion `full` remains
+zero by Zxdp's admission invariant: queue zero's CQ capacity is at least the sum
+of all physical Tx pool slots, including control pools, and each slot permits
+only one descriptor until its CQ entry is consumed. Other hardware queues have
+no Tx submissions. Linux exposes no separate CQ reservation-refusal counter;
+the zero is a structural bound, not a measured kernel refusal total. A zero RX
+value also applies when the statistics query is unsupported or fails.
+
+Enumeration and mapping retirement share a cold lifetime lock; packet service
+does not acquire it. Read telemetry synchronously inside the enumeration callback.
+Closed instances retain the ring objects and their final telemetry until instance
+destruction. FILL descriptors can remain queued at close; they are not live packet
+leases after the kernel registration has retired.
 
 Setup reserves one contiguous registered UMEM mapping containing disjoint,
 page-aligned Rx and Tx arena regions. Rx has one pool; Tx pools partition its
@@ -52,8 +91,9 @@ readiness and an internal eventfd. A round probes the configured Rx queues;
 zero spin goes directly to the wait after checking available work. Packet
 arrival resumes processing inside the same call, rather than returning it.
 
-`wake()` may run on any thread, including the receive callback. It posts to the
-internal eventfd and interrupts spinning, blocking or active processing so
+`wake()` may run on any thread, including the receive callback. It records a
+counted pulse and posts to the internal eventfd only when Rx is entering or
+inside epoll, interrupting spinning, blocking or active processing so
 `rx()` returns. Each posted wake permits one return, including wakes before
 entry; concurrent posts are preserved. Kernel wait descriptors remain private.
 `pollTx()` services bounded completion turns on the caller's Tx owner.

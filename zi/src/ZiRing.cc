@@ -34,33 +34,20 @@ int Blocker::wait(
     ZmAtomic<uint32_t> &addr, uint32_t val,
     const Params &params)
 {
-  if (addr.cmpXch(val | Waiting32(), val) != val) return Zu::OK;
-  val |= Waiting32();
+  // The ring spins before registering Waiting with its full-width CAS.
   if (ZuUnlikely(params.timeout)) {
     ZuTime out{ZuTime::Nano{int128_t(params.timeout) * 1000000}};
-    unsigned i = 0;
-    do {
-      if (ZuUnlikely(i >= params.spin)) {
-	if (syscall(SYS_futex, reinterpret_cast<volatile int *>(&addr),
-	      FUTEX_WAIT,
-	      static_cast<int>(val), &out, 0, 0) < 0) {
-	  if (errno == ETIMEDOUT) return Zu::NotReady;
-	  if (errno == EAGAIN) return Zu::OK;
-	}
-	i = 0;
-      } else
-	++i;
-    } while (addr == val);
+    while (addr == val) {
+      if (syscall(SYS_futex, reinterpret_cast<volatile int *>(&addr),
+	    FUTEX_WAIT, int(val), &out, 0, 0) < 0) {
+	if (errno == ETIMEDOUT) return Zu::NotReady;
+	if (errno == EAGAIN) return Zu::OK;
+      }
+    }
   } else {
-    unsigned i = 0;
-    do {
-      if (ZuUnlikely(i >= params.spin)) {
-	syscall(SYS_futex, reinterpret_cast<volatile int *>(&addr),
-	    FUTEX_WAIT, static_cast<int>(val), 0, 0, 0);
-	i = 0;
-      } else
-	++i;
-    } while (addr == val);
+    while (addr == val)
+      syscall(SYS_futex, reinterpret_cast<volatile int *>(&addr),
+	  FUTEX_WAIT, int(val), 0, 0, 0);
   }
   return Zu::OK;
 }
@@ -123,14 +110,8 @@ int Blocker::wait(
     ZmAtomic<uint32_t> &addr, uint32_t val,
     const Params &params)
 {
-  if (addr.cmpXch(val | Waiting32(), val) != val) return Zu::OK;
-  val |= Waiting32();
+  // The ring has already registered Waiting after its configured spin.
   DWORD timeout = params.timeout ? params.timeout : INFINITE;
-  unsigned i = 0;
-  while (i < params.spin) {
-    if (addr != val) return Zu::OK;
-    ++i;
-  }
   while (addr == val) {
     if (ZuUnlikely(!m_sem)) return Zu::IOError;
     DWORD r = WaitForSingleObject(m_sem, timeout);

@@ -11,6 +11,7 @@
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZmList.hh>
+#include <zlib/ZmThread.hh>
 
 #include <zlib/ZtString.hh>
 
@@ -27,7 +28,8 @@ ZmRef<RxQueue::Node> allocBuf()
 {
   static ZiMultiplex mx;
   static auto allocator =
-    mx.allocator<Zi::IOBufType::App, RxQueue::Node, 64, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 256>();
+    mx.allocator<Zi::IOBufType::App, RxQueue::Node, 64,
+      ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 256>();
   return ZmRef<RxQueue::Node>{allocator->allocBuf().ptr<RxQueue::Node>()};
 }
 
@@ -75,9 +77,9 @@ bool consumeExact(Stream &stream, unsigned n, const char *expected)
   return consumed == n && called && ok;
 }
 
-void testConsumeAcrossQueuedBuffers()
+void testConsumeQueuedBufs()
 {
-  ZuTestScope(testConsumeAcrossQueuedBuffers);
+  ZuTestScope(testConsumeQueuedBufs);
 
   ZiRxStream<RxQueue> stream;
 
@@ -101,9 +103,9 @@ void testConsumeAcrossQueuedBuffers()
   ZuCheck(!consumeExact(stream, 2, ""));
 }
 
-void testPushFiltersZeroLengthNodes()
+void testPushEmptyNodes()
 {
-  ZuTestScope(testPushFiltersZeroLengthNodes);
+  ZuTestScope(testPushEmptyNodes);
 
   ZiRxStream<RxQueue> stream;
 
@@ -122,9 +124,9 @@ void testPushFiltersZeroLengthNodes()
   ZuCheck(stream.count_() == 0);
 }
 
-void testConsumeStepsThroughQueuedBuffers()
+void testConsumeQueuedSteps()
 {
-  ZuTestScope(testConsumeStepsThroughQueuedBuffers);
+  ZuTestScope(testConsumeQueuedSteps);
 
   ZiRxStream<RxQueue> stream;
   stream.push(mkBuf("abcd"));
@@ -138,9 +140,9 @@ void testConsumeStepsThroughQueuedBuffers()
   ZuCheck(!stream);
 }
 
-void testConsumeGathersFragmentedFrame()
+void testConsumeFragmentedFrame()
 {
-  ZuTestScope(testConsumeGathersFragmentedFrame);
+  ZuTestScope(testConsumeFragmentedFrame);
 
   ZiRxStream<RxQueue> stream;
   stream.push(mkBuf("abc"));
@@ -173,9 +175,9 @@ void testConsumeGathersFragmentedFrame()
   ZuCheck(!stream.length());
 }
 
-void testConsumePaddingAcrossQueuedBuffers()
+void testConsumeQueuedPadding()
 {
-  ZuTestScope(testConsumePaddingAcrossQueuedBuffers);
+  ZuTestScope(testConsumeQueuedPadding);
 
   ZiRxStream<RxQueue> stream;
   stream.push(mkBuf("abc\r"));
@@ -243,6 +245,114 @@ int64_t extractN(
       return allocBuf();
     },
     out);
+}
+
+struct SliceHeap : Zi::IOBufAllocator {
+  using Heap = ZmVHeap<"ZiRxStreamTest.Slice", 64, 256, ZiIOBuf_DefltAlign>;
+  unsigned sourceReturns = 0, heapReturns = 0;
+
+  SliceHeap() : IOBufAllocator{nullptr, Zi::IOBufType::RxTCP, 64} { }
+
+  uint8_t *alloc(unsigned n) const override {
+    return static_cast<uint8_t *>(Heap::alloc(n));
+  }
+  void free(uint8_t *p, unsigned n, bool registered) const override {
+    auto self = const_cast<SliceHeap *>(this);
+    if (registered) ++self->sourceReturns;
+    else ++self->heapReturns;
+    Heap::free(p, n);
+  }
+  ZmRef<ZiIOBuf> allocBuf(void *, uint32_t, uint32_t) override { return {}; }
+};
+
+static ZmRef<RxQueue::Node> sliceBuf(
+    RxQueue::Node *source, uint8_t *data, unsigned n) {
+  auto heap = source->allocator();
+  if (auto view = dynamic_cast<Zi::RxSlice<RxQueue::Node> *>(source))
+    heap = view->slice.heap;
+  return new Zi::RxSlice<RxQueue::Node>{source, data, n, heap};
+}
+
+void testExtractShared()
+{
+  ZuTestScope(testExtractShared);
+  for (unsigned firstSize : {3U, 5U}) {
+    SliceHeap heap;
+    auto data = heap.alloc(64);
+    memcpy(data, "abcdeFGH", 8);
+    ZmRef<RxQueue::Node> input = new Zi::IOBufStub<RxQueue::Node>{
+      data, 64, &heap, nullptr, 8, false, true};
+    ZiRxStream<RxQueue> stream;
+    stream.push(ZuMv(input));
+    unsigned slices = 0, copies = 0;
+    auto shared = [&slices](auto source, uint8_t *p, unsigned n) {
+      ++slices; return sliceBuf(source, p, n);
+    };
+    auto copied = [&copies]() -> ZmRef<RxQueue::Node> {
+      ++copies; return allocBuf();
+    };
+    auto extract = [&stream, &shared, &copied](unsigned n, ZmRef<ZiIOBuf> &out) {
+      unsigned remaining = n;
+      return stream.extractShared([&remaining](ZuBSpan span) -> int64_t {
+        if (remaining > span.length()) { remaining -= span.length(); return 0; }
+        return remaining;
+      }, copied, shared, out);
+    };
+    ZmRef<ZiIOBuf> first, second;
+    ZuCheck(extract(firstSize, first) == firstSize && slices == 2 && !copies);
+    ZuCheck(first && first->registered() && first->data() == data &&
+      first->length == firstSize && stream.span().data() == data + firstSize);
+    ZuCheck(extract(8 - firstSize, second) == 8 - firstSize && !stream && !copies);
+    ZuCheck(second && second->registered() && second->data() == data + firstSize);
+    ZuCheck(first->ensure(first->size + 4) && !first->registered() &&
+      second->registered() && second->data() == data + firstSize &&
+      !memcmp(second->data(), data + firstSize, 8 - firstSize));
+    ZuCheck(!heap.sourceReturns);
+    ZuCheck(second->ensure(second->size + 4) && !second->registered() &&
+      heap.sourceReturns == 1);
+    first = second = nullptr;
+    ZuCheck(heap.heapReturns == 2);
+  }
+  {
+    SliceHeap heap;
+    auto data = heap.alloc(64);
+    memcpy(data, "abcdef", 6);
+    ZiRxStream<RxQueue> stream;
+    stream.push(ZmRef<RxQueue::Node>{new Zi::IOBufStub<RxQueue::Node>{
+      data, 64, &heap, nullptr, 6, false, true}});
+    unsigned calls = 0;
+    auto refuse = [&calls](auto source, uint8_t *p, unsigned n) -> ZmRef<RxQueue::Node> {
+      if (++calls == 2) return {};
+      return sliceBuf(source, p, n);
+    };
+    ZmRef<ZiIOBuf> out;
+    auto n = stream.extractShared([](ZuBSpan) -> int64_t { return 2; }, allocBuf,
+      refuse, out);
+    ZuCheck(n == -1 && !out && stream.length() == 6 && stream.span().data() == data &&
+      !heap.sourceReturns);
+    stream.clean();
+    ZuCheck(heap.sourceReturns == 1);
+  }
+  {
+    SliceHeap heap;
+    auto data = heap.alloc(64);
+    memcpy(data, "aabbcc", 6);
+    ZiRxStream<RxQueue> stream;
+    stream.push(ZmRef<RxQueue::Node>{new Zi::IOBufStub<RxQueue::Node>{
+      data, 64, &heap, nullptr, 6, false, true}});
+    auto extract = [&stream](ZmRef<ZiIOBuf> &out) {
+      return stream.extractShared([](ZuBSpan) -> int64_t { return 2; }, allocBuf,
+        sliceBuf, out);
+    };
+    ZmRef<ZiIOBuf> a, b, c;
+    ZuCheck(extract(a) == 2 && extract(b) == 2 && extract(c) == 2 && !stream);
+    ZuCheck(a->data() == data && b->data() == data + 2 && c->data() == data + 4);
+    a = b = nullptr;
+    ZuCheck(!heap.sourceReturns);
+    ZmThread release{[c = ZuMv(c)]() mutable { c = nullptr; }};
+    release.join();
+    ZuCheck(heap.sourceReturns == 1);
+  }
 }
 
 void testExtractCompleteFrames()
@@ -603,13 +713,14 @@ int main(int argc, char **argv)
 
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testConsumeAcrossQueuedBuffers);
-  ZuTestCall(testPushFiltersZeroLengthNodes);
-  ZuTestCall(testConsumeStepsThroughQueuedBuffers);
-  ZuTestCall(testConsumeGathersFragmentedFrame);
-  ZuTestCall(testConsumePaddingAcrossQueuedBuffers);
+  ZuTestCall(testConsumeQueuedBufs);
+  ZuTestCall(testPushEmptyNodes);
+  ZuTestCall(testConsumeQueuedSteps);
+  ZuTestCall(testConsumeFragmentedFrame);
+  ZuTestCall(testConsumeQueuedPadding);
   ZuTestCall(testCleanResetsState);
   ZuTestCall(testExtractCompleteFrames);
+  ZuTestCall(testExtractShared);
   ZuTestCall(testExtractWaitAndError);
   ZuTestCall(testSpliceWaitAndFullNode);
   ZuTestCall(testSpliceBoundaryCopies);

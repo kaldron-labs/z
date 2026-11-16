@@ -10,6 +10,10 @@
 
 #include <zlib/ZmScheduler.hh>
 
+#ifdef ZmSchedProgress_TEST
+#include "ZmSchedProgressTest.hh"
+#endif
+
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable:4800)
@@ -209,6 +213,13 @@ void ZmScheduler::wakeFn(unsigned sid, WakeFn fn)
   m_threads[sid - 1].wakeFn = ZuMv(fn);
 }
 
+void ZmScheduler::serviceFn(unsigned sid, ServiceFn fn)
+{
+  ZmAssert(sid && sid <= m_params.nThreads());
+  ZmAssert(state() == ZmEngineState::Stopped || invoked(sid));
+  m_threads[sid - 1].serviceFn = ZuMv(fn);
+}
+
 void ZmScheduler::timer()
 {
   for (;;) {
@@ -318,6 +329,9 @@ bool ZmScheduler::tryRun_(Thread *thread, Fn &fn)
 bool ZmScheduler::push_(Thread *thread, Fn &fn)
 {
   if (ZuLikely(tryPush_(thread, fn))) return true;
+#ifdef ZmSchedProgress_TEST
+  ZmSchedProgressTest::hook(ZmSchedProgressTest::Overflow, this);
+#endif
   thread->queue.push(ZuMv(fn));
   ++thread->queueCount;
   return true;
@@ -347,6 +361,7 @@ void ZmScheduler::work()
 
   m_threadInitFn();
 
+  unsigned serviceLeft = ServiceQuantum;
   for (;;) { // Note: this is single-threaded, but queueCount is SWMR
     if (ZuLikely(!thread->queueCount.load_())) goto shift;
     if (Fn fn = thread->queue.shift()) {
@@ -361,11 +376,24 @@ void ZmScheduler::work()
       }
     }
 shift:
-    if (void *ptr = thread->ring.shift()) {
+#ifdef ZmSchedProgress_TEST
+    ZmSchedProgressTest::hook(
+      ZmSchedProgressTest::Shift, this, !thread->ring.count_());
+#endif
+    // Continuous polling must revisit overflow work as well as the ring.
+    // A service retains idle progress without adding callbacks to either queue.
+    if (void *ptr = m_params.ll() || thread->serviceFn ?
+	thread->ring.tryShift() : thread->ring.shift()) {
       thread->ring.shift2(Fn::invoke(ptr));
+      if (!thread->serviceFn) { serviceLeft = ServiceQuantum; continue; }
+      if (--serviceLeft) continue;
     } else {
       if (thread->ring.readStatus() == Zu::EndOfFile) break;
     }
+    serviceLeft = ServiceQuantum;
+    // Keep the delegate alive when the service unregisters or replaces itself.
+    // A raw context binding copies two words without allocation/refcount churn.
+    if (auto service = thread->serviceFn) service();
   }
 
   m_threadFinalFn();

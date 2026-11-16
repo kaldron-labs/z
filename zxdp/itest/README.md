@@ -9,10 +9,14 @@ traffic you need to retain: an absent mask selects all its traffic.
   transmitted bytes and injects unmasked Ethernet reception. The test requires
   actual CQ completion, small Tx-pool transmission, kernel retirement during
   close, late Rx return and removal of the owned XDP program.
+  Sender checks cover pending-descriptor accounting and publication ordering,
+  including concurrent submission during kernel drain and shutdown while the sender
+  callback is active. Tx uses scheduler `run()` and nonblocking `sendto()`; CQ completion remains
+  distinct from descriptor consumption.
 * `zxdpfiltertest` uses `ZXDP_TEST_IFINDEX`. Kernel program test runs verify
   IPv4/IPv6 masks, high-bit addresses, truncated headers, zero/one/two VLAN tags
   and absent-mask behavior. A separate attachment checks foreign-owner protection.
-* `zxdpwaketest` uses the same pair. Real epoll/eventfd observation verifies
+* `zxdpwaketest` uses the same pair. Real Rx epoll/eventfd observation verifies
   zero-spin blocking, queued/concurrent wake pulses, repeated check-to-wait races,
   packet processing without returning, and interruption during active processing
   with a large spin count. It can also run with a single-queue fixture pair.

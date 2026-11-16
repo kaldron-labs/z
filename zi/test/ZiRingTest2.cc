@@ -16,6 +16,7 @@
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmHashMgr.hh>
+#include <zlib/ZtArray.hh>
 
 using namespace ZuTestUtil;
 
@@ -53,12 +54,10 @@ private:
 
 #include "ZiTestResidue.hh"
 
-namespace {
-Zi::Name g_ringName;
-} // namespace
+static Zi::Name g_ringName;
 
-#define ensure(x) check_(x, __LINE__, #x)
-void check_(bool ok, unsigned line, const char *exp)
+#define ensure(x) check(x, __LINE__, #x)
+static void check(bool ok, unsigned line, const char *exp)
 {
   if (ok) return;
   log_("line ", line, ' ', exp);
@@ -129,10 +128,11 @@ class Thread;
 template <typename Ring, typename Msg>
 class App {
   using Thread = ::Thread<Ring, Msg>;
+  using Threads = ZtArray<ZmRef<Thread>, ZtArrayHeapID<"ZiRingTest2.Threads">>;
 
 public:
-  App() : m_nThreads{0}, m_threads{nullptr} { }
-  ~App() { if (m_threads) delete [] m_threads; }
+  App() = default;
+  ~App() { ZmAssert_(!m_threads.length()); }
 
   const Thread *thread(unsigned i) const { return m_threads[i]; }
   Thread *thread(unsigned i) { return m_threads[i]; }
@@ -144,15 +144,15 @@ public:
   const Ring &ring() const { return m_ring; }
 
 private:
-  unsigned	m_nThreads;
-  ZmRef<Thread>	*m_threads;
+  Threads	m_threads;
   Ring		m_ring;
 };
 
 template <typename Ring, typename Msg> class Work;
 
 template <typename Ring, typename Msg>
-class Thread : public ZmObject {
+class Thread : public ZmNHeap<Thread<Ring, Msg>>, public ZmObject {
+friend inline ZuStringT<"ZiRingTest2.Thread"> ZmNHeapID(Thread *);
 public:
   using App = ::App<Ring, Msg>;
   using Work = ::Work<Ring, Msg>;
@@ -169,7 +169,7 @@ public:
   Ring &ring() { return m_ring; }
 
   void start() {
-    m_thread = ZmThread{[this_ = ZmRef(this)]() { (*this_)(); }};
+    m_thread = ZmThread{[this]() { (*this)(); }};
   }
   int synchronous(Work *work) {
     m_work = work;
@@ -209,7 +209,7 @@ bool App<Ring, Msg>::start(unsigned nThreads, ZiRingParams params)
   m_ring.init(ZuMv(params));
   if (m_ring.open(0) != OK) return false;
   m_ring.reset();
-  m_threads = new ZmRef<Thread>[m_nThreads = nThreads];
+  m_threads.length(nThreads);
   for (unsigned i = 0; i < nThreads; i++)
     (m_threads[i] = new Thread(this, i))->start();
   return true;
@@ -218,22 +218,16 @@ bool App<Ring, Msg>::start(unsigned nThreads, ZiRingParams params)
 template <typename Ring, typename Msg>
 void App<Ring, Msg>::stop()
 {
-  for (unsigned i = 0; i < m_nThreads; i++) {
+  for (unsigned i = 0, n = m_threads.length(); i < n; i++) {
     m_threads[i]->stop();
     m_threads[i] = 0;
   }
-  delete [] m_threads;
-  m_threads = 0;
-  m_nThreads = 0;
+  m_threads.null();
   m_ring.close();
 }
 
-template <typename Ring, typename Msg>
-class Work : public ZmObject {
-public:
-  using Thread = ::Thread<Ring, Msg>;
-
-  enum Insn {
+struct WorkInsn {
+  enum {
     Open = 0,
     Close,
     Push,
@@ -247,6 +241,13 @@ public:
     ReadStatus,
     WriteStatus
   };
+};
+
+template <typename Ring, typename Msg>
+class Work : public ZmNHeap<Work<Ring, Msg>>, public ZmObject, public WorkInsn {
+friend inline ZuStringT<"ZiRingTest2.Work"> ZmNHeapID(Work *);
+public:
+  using Thread = ::Thread<Ring, Msg>;
 
   template <bool V = Ring::V, typename = void>
   void *push(Ring &ring, unsigned param) {
@@ -336,12 +337,12 @@ public:
     }
   }
 
-  Work(Insn insn, unsigned param = 0) : m_insn{insn}, m_param{param} { }
+  Work(int insn, unsigned param = 0) : m_insn{insn}, m_param{param} { }
 
   int operator ()(Thread *);
 
 private:
-  Insn		m_insn;
+  int		m_insn;
   unsigned	m_param = 0;
 };
 
@@ -608,7 +609,7 @@ struct Test {
   }
 };
 
-void usage_()
+static void usage()
 {
   std::cerr <<
     "Usage: ZiRingTest2 [OPTION]... [SIZE]\n"
@@ -630,19 +631,19 @@ int main(int argc, char **argv)
   ZuTestUtil::parse(1, argv);
   for (int i = 1; i < argc; i++)
     if (argv[i][0] == '-') {
-      if (argv[i][2]) usage_();
+      if (argv[i][2]) usage();
       switch (argv[i][1]) {
 	case 'q':
 	  verbose = false;
 	  break;
 	default:
-	  usage_();
+	  usage();
 	  break;
       }
     } else {
-      if (++nargs > 1) usage_();
+      if (++nargs > 1) usage();
 	      size = atoi(argv[i]);
-	      if (size <= 0) usage_();
+	      if (size <= 0) usage();
 	    }
 
   ZiLog::init("ZiRingTest2");

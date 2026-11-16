@@ -14,6 +14,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmPlatform.hh>
 
@@ -47,14 +48,20 @@ constexpr ZuString Pong{"pong\r\n"};
 struct State {
   ZmSemaphore		done;
   ZmSemaphore		listening;
+  ZmSemaphore		creditParked;
   ZmAtomic<unsigned>	errors{0};
   ZmAtomic<unsigned>	doneCount{0};
   ZmAtomic<unsigned>	clientConnected{0};
   ZmAtomic<unsigned>	serverConnected{0};
+  ZmAtomic<unsigned>	creditHold{0}, creditSeen{0}, creditReplies{0};
+  ZmAtomic<void *>	serverLink{nullptr};
+  ZmAtomic<ZiConnection *>	serverCxn{nullptr};
   Ztc::QueueTelemetry	clientRx;
   Ztc::QueueTelemetry	clientTx;
   ZiIP			ip;
   unsigned		port = 0;
+  unsigned		creditMessages = 0;
+  unsigned		creditCap = 128;
 
   void fail() {
     errors = 1;
@@ -134,9 +141,9 @@ void checkQueues(Link &link)
   queueTelemetry(link, rx, tx);
 }
 
-ZiMxParams mxParams()
+ZiMxParams mxParams(bool credit = false)
 {
-  return ZiMxParams()
+  auto params = ZiMxParams()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -144,6 +151,8 @@ ZiMxParams mxParams()
 	.thread(3, [](auto &t) { t.isolated(1); })
 	.thread(4, [](auto &t) { t.isolated(1); }); })
     .rxThread(1).txThread(2);
+  if (credit) params.rxBufSize(128);
+  return params;
 }
 
 template <typename Link>
@@ -208,7 +217,9 @@ struct ClientApp::Link : public Ztcp::CliLink<ClientApp, Link> {
     auto tx = stream->txStream();
     (void)tx;
     app()->state->clientConnected = 1;
-    sendBytes(*this, Ping);
+    unsigned count = app()->state->creditMessages;
+    if (!count) count = 1;
+    for (unsigned i = 0; i < count; ++i) sendBytes(*this, Ping);
   }
   void disconnected(bool) {
     ZTCP_CHECK_RT(this->txQueue.empty_(),
@@ -217,6 +228,9 @@ struct ClientApp::Link : public Ztcp::CliLink<ClientApp, Link> {
 
   int process(Ztcp::RxStream &rx) {
     if (!consume(rx, Pong)) return 0;
+    if (app()->state->creditMessages &&
+	app()->state->creditReplies.xchAdd(1) + 1 < app()->state->creditMessages)
+      return 1;
     queueTelemetry(
       *this, app()->state->clientRx, app()->state->clientTx);
     app()->state->doneOne();
@@ -245,10 +259,14 @@ struct ServerApp : public Ztcp::Server<ServerApp> {
   State *state = nullptr;
 };
 
-struct ServerApp::Link : public Ztcp::SrvLink<ServerApp, Link> {
-  using Base = Ztcp::SrvLink<ServerApp, Link>;
+// Small receive backing makes the credit boundary deterministic with a bounded
+// 100-message offer; the kernel TCP MPS itself may be much larger.
+struct ServerApp::Link : public Ztcp::SrvLink<ServerApp, Link, Ztcp::RxBufAlloc<128>> {
+  using Base = Ztcp::SrvLink<ServerApp, Link, Ztcp::RxBufAlloc<128>>;
 
-  Link(ServerApp *app) : Base(app) { }
+  Link(ServerApp *app) : Base(app) {
+    if (app->state->creditMessages) rxCap_(app->state->creditCap);
+  }
 
   void connected(Ztcp::Connected) {
     ZTCP_CHECK_RT(this->stream() == this, "server bidi stream is not link");
@@ -264,6 +282,13 @@ struct ServerApp::Link : public Ztcp::SrvLink<ServerApp, Link> {
   }
 
   int process(Ztcp::RxStream &rx) {
+    if (app()->state->creditMessages && app()->state->creditHold.load_()) {
+      ZTCP_CHECK_RT(!!cxn(), "credit input arrived before connection publication");
+      if (cxn() && rx.length() >= app()->state->creditCap +
+	  cxn()->info().rxAllocator->capacity() &&
+	  !app()->state->creditSeen.xch(1)) app()->state->creditParked.post();
+      return 0;
+    }
     if (!consume(rx, Ping)) return 0;
     sendBytes(*this, Pong);
     return 1;
@@ -272,11 +297,16 @@ struct ServerApp::Link : public Ztcp::SrvLink<ServerApp, Link> {
 
 ZiConnection *ServerApp::accepted(const ZiCxnInfo &ci)
 {
-  return new Link::Cxn(new Link(this), ci);
+  auto link = new Link(this);
+  auto cxn = new Link::Cxn(link, ci);
+  state->serverLink = link;
+  state->serverCxn = cxn;
+  return cxn;
 }
 
 void testLoop(
-  const char *testName, ZiIP ip, const char *connectIP, unsigned port)
+  const char *testName, ZiIP ip, const char *connectIP, unsigned port,
+  unsigned creditMessages = 0)
 {
   ZuTestScopeRT(testName);
   cbErrors = 0; auto priorChecks = cbChecks.load_();
@@ -284,10 +314,12 @@ void testLoop(
   State state;
   state.ip = ip;
   state.port = port;
+  state.creditMessages = creditMessages;
+  state.creditHold = !!creditMessages;
 
   ServerApp server(&state);
   ClientApp client(&state);
-  ZiMultiplex mx(mxParams());
+  ZiMultiplex mx(mxParams(!!creditMessages));
   Zi::IOBufAllocator *serverRx = ServerApp::Link::rxAllocator(&mx);
   Zi::IOBufAllocator *serverTx = ServerApp::Link::txAllocator(&mx);
   Ztcp::ServerParams serverParams(&mx, "3", "4");
@@ -325,6 +357,21 @@ void testLoop(
   checkQueues(*link);
   link->connect(connectIP, state.port);
 
+  if (creditMessages) {
+    ZTCP_CHECK_RT(state.creditParked.timedwait(Zm::now(5)) == 0,
+      "bounded receive did not park");
+    ZmBlock{}([&mx](auto wake) { mx.rxRun([wake = ZuMv(wake)]() mutable { wake(); }); });
+    auto cxn = static_cast<ServerApp::Link::Cxn *>(state.serverCxn.load_());
+    ZTCP_CHECK_RT(cxn && cxn->rxParked(), "bounded receive did not disarm ingress");
+    ZTCP_CHECK_RT(cxn && cxn->rxQueued() <=
+	state.creditCap + (uint64_t(cxn->info().rxAllocator->capacity())<<1),
+      "queued ingress exceeded credit plus two receive buffers");
+    state.creditHold = 0;
+    auto serverLink = static_cast<ServerApp::Link *>(state.serverLink.load_());
+    if (serverLink) server.rxRun([link = ZmRef<ServerApp::Link>{serverLink}] {
+      link->drainRx_();
+    });
+  }
   ZTCP_CHECK_RT(state.done.timedwait(Zm::now(5)) == 0, "loopback timed out");
   ZTCP_CHECK_RT(!state.errors.load_(), "loopback error");
   ZTCP_CHECK_RT(state.doneCount.load_() == 1, "client did not receive response");
@@ -368,6 +415,8 @@ int main(int argc, char **argv)
     ZtcpTestPort::Loop4);
   ZuTestCall(ZtcpLoopTest::testLoop, "testLoopIPv6", ZiIP{"::1"}, "::1",
     ZtcpTestPort::Loop6);
+  ZuTestCall(ZtcpLoopTest::testLoop, "testCreditIPv4", ZiIP{"127.0.0.1"}, "127.0.0.1",
+    ZtcpTestPort::Loop4, 100);
   ZiLog::stop();
   return 0;
 }

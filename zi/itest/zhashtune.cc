@@ -445,7 +445,8 @@ static void cases(const Zi::Path &exe) {
   test({"zero-headroom", "chained", 4, 3, "0", "id,bits,loadFactor,cBits\nHS.table,2,1,3\n"});
   test({"threshold-below", "chained", 3, 3, "0", "id,bits,loadFactor,cBits\nHS.table,2,1,3\n"});
   test({"threshold-above", "chained", 5, 3, "0", "id,bits,loadFactor,cBits\nHS.table,2,1,3\n"});
-  test({"fractional-threshold", "chained", 6, 3, "0", "id,bits,loadFactor,cBits\nHS.table,2,1.3125,3\n"});
+  test({"fractional-threshold", "chained", 6, 3, "0",
+    "id,bits,loadFactor,cBits\nHS.table,2,1.3125,3\n"});
   test({"maximum-bits", "arithmetic", 1U << 28, 1, "0"});
   test({"linear-wide-bits", "arithmetic-linear", 1U << 28, 1, "0",
     "id,bits,loadFactor,cBits\nHS.table,8,0.5,3\n"});
@@ -458,16 +459,19 @@ static void cases(const Zi::Path &exe) {
   test({"same-id-overlap", "overlap"});
   test({"same-id-reverse", "reverse"});
   test({"mixed", "mixed", 100, 3, nullptr, "id,bits,loadFactor,cBits\nHS.table,8,0.75,6\n"});
-  test({"linear-load", "linear", 100, 3, nullptr, "id,bits,loadFactor,cBits\nHS.table,8,0.5,3\n"});
+  test({"linear-load", "linear", 100, 3, nullptr,
+    "id,bits,loadFactor,cBits\nHS.table,8,0.5,3\n"});
   test({"policy", "chained", 3, 3, nullptr, "id,bits,loadFactor,cBits\nHS.table,8,1.25,8\n"});
   test({"policy-precision", "chained", 3, 3, nullptr,
     "id,bits,loadFactor,cBits\nHS.table,8,1.2345678912345,8\n"});
-  test({"lock-policy", "striped", 3, 3, nullptr, "id,bits,loadFactor,cBits\nHS.table,8,1.25,8\n"});
+  test({"lock-policy", "striped", 3, 3, nullptr,
+    "id,bits,loadFactor,cBits\nHS.table,8,1.25,8\n"});
   test({"concurrent", "concurrent", 100, 1});
   test({"shadow", "shadow", 100, 1});
   test({"excluded", "excluded", 100, 1});
   test({"unused", "chained", 0});
-  test({"late", "late", 100, 1, nullptr, "id,bits,loadFactor,cBits\nHS.table,10,1.25,4\n", 1, true});
+  test({"late", "late", 100, 1, nullptr,
+    "id,bits,loadFactor,cBits\nHS.table,10,1.25,4\n", 1, true});
   test({"utility", "utility"});
   ZtString<> replacement{header};
   for (unsigned i = 0; i < 100; ++i)

@@ -191,13 +191,25 @@ bool Xsk::prepare(
   reg.headroom = layout.prefix - XDP_PACKET_HEADROOM;
   if (shared < 0 && setsockopt(m_fd, SOL_XDP, XDP_UMEM_REG, &reg, sizeof(reg)))
     return fail("AF_XDP UMEM registration");
+  // Keep the copy-mode drain budget independent of physical packet-pool size.
+  // Linux limits this budget to Tx ring capacity; CQ and pool credits still
+  // bound outstanding backing. 32K permits sustained concurrent publication.
+  enum { MinTxRing = 1<<15 };
+  unsigned txRingCount = txCount < MinTxRing ? MinTxRing : txCount;
   struct { unsigned option, count; } rings[] = {
     {XDP_UMEM_FILL_RING, rxCount}, {XDP_UMEM_COMPLETION_RING, txCount},
-    {XDP_RX_RING, rxCount}, {XDP_TX_RING, txCount}
+    {XDP_RX_RING, rxCount}, {XDP_TX_RING, txRingCount}
   };
   for (auto ring : rings)
     if (setsockopt(m_fd, SOL_XDP, ring.option, &ring.count, sizeof(ring.count)))
       return fail("AF_XDP ring configuration");
+  // Drain already-published copy-mode descriptors up to one ring per kernel
+  // entry. The kernel stops immediately on empty; this never waits for a batch.
+  // Older kernels retain their default budget when the tuning option is absent.
+  if (setsockopt(m_fd, SOL_XDP, XDP_MAX_TX_SKB_BUDGET,
+	&txRingCount, sizeof(txRingCount)) &&
+      errno != ENOPROTOOPT)
+    return fail("AF_XDP Tx budget configuration");
   xdp_mmap_offsets offsets{};
   socklen_t length = sizeof(offsets);
   if (getsockopt(m_fd, SOL_XDP, XDP_MMAP_OFFSETS, &offsets, &length))
@@ -210,7 +222,7 @@ bool Xsk::prepare(
   if (!map(0, m_fill, offsets.fr, rxCount, XDP_UMEM_PGOFF_FILL_RING, error) ||
       !map(1, m_comp, offsets.cr, txCount, XDP_UMEM_PGOFF_COMPLETION_RING, error) ||
       !map(2, m_rx, offsets.rx, rxCount, XDP_PGOFF_RX_RING, error) ||
-      !map(3, m_tx, offsets.tx, txCount, XDP_PGOFF_TX_RING, error)) {
+      !map(3, m_tx, offsets.tx, txRingCount, XDP_PGOFF_TX_RING, error)) {
     close();
     return false;
   }
@@ -268,6 +280,7 @@ bool Xsk::bind_(unsigned ifindex, unsigned queue, ZtString<> &error, bool queryO
 
 void Xsk::close()
 {
+  m_rx.freeze(); m_fill.freeze(); m_tx.freeze(); m_comp.freeze();
   if (m_fd >= 0) { ::close(m_fd); m_fd = -1; }
   m_rx.reset();
   m_fill.reset();

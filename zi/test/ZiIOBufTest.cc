@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZtString.hh>
 
@@ -16,9 +17,9 @@
 
 using namespace ZuTestUtil;
 
-void testSliceAndEnsurePreserveSpan()
+void testSliceEnsureSpan()
 {
-  ZuTestScope(testSliceAndEnsurePreserveSpan);
+  ZuTestScope(testSliceEnsureSpan);
 
   ZiMultiplex allocatorMx;
   auto allocator = allocatorMx.allocator<>();
@@ -187,7 +188,9 @@ void testAllocatorPolicy()
   ZuCheck(!allocator->allocBuf(&owner, mps + 1, mps));
 }
 
-struct BufPlugin : Zi::IOBufPlugin {
+struct BufPlugin : ZmNHeap<BufPlugin>, Zi::IOBufPlugin {
+friend inline ZuStringT<"ZiIOBufTest.Plugin"> ZmNHeapID(BufPlugin *);
+  using Heap = ZmVHeap<"ZiIOBufTest.Backing", 32, 64, ZiIOBuf_DefltAlign>;
   uint8_t *registeredPtr = nullptr;
   unsigned registeredAllocs = 0, registeredFrees = 0;
   bool exhausted = false, valid = true;
@@ -201,26 +204,29 @@ struct BufPlugin : Zi::IOBufPlugin {
   uint8_t *alloc() override {
     if (exhausted) return nullptr;
     ++registeredAllocs;
-    registeredPtr = static_cast<uint8_t *>(malloc(size));
+    registeredPtr = static_cast<uint8_t *>(Heap::alloc(size));
     return registeredPtr;
   }
   void free(uint8_t *ptr) override {
     ++registeredFrees;
     valid &= ptr == registeredPtr;
-    ::free(ptr);
+    Heap::free(ptr, size);
   }
 };
 
-struct MxPlugin : ZiMxPlugin {
+struct MxPlugin : ZmNHeap<MxPlugin>, ZiMxPlugin {
+friend inline ZuStringT<"ZiIOBufTest.MxPlugin"> ZmNHeapID(MxPlugin *);
   ZmRef<BufPlugin> backing = new BufPlugin;
+  unsigned syncMode = 0, sends = 0, completions = 0;
+  bool progressed = false, spun = false, error = false, closed = false;
 
   explicit MxPlugin(ZiMultiplex *mx) : ZiMxPlugin(mx) { }
 
   Zi::IOBufPlugin *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override {
     return backing;
   }
-  void start() override { }
-  void stop() override { }
+  void start() override { mx()->pluginStarted({}); }
+  void stop() override { mx()->pluginStopped({}); }
   void rx() override { }
   void listen(ZiListenFn, ZiFailFn, ZiConnectFn, ZiIP, uint16_t, unsigned,
     Zi::IOBufAllocator *, ZiCxnOptions) override { }
@@ -230,9 +236,31 @@ struct MxPlugin : ZiMxPlugin {
   void udp(ZiConnectFn, ZiFailFn, ZiIPType::T, ZiIP, uint16_t, ZiIP, uint16_t,
     Zi::IOBufAllocator *, ZiCxnOptions) override { }
   void recv(ZiConnection *) override { }
-  void send(ZiConnection *) override { }
+  void send(ZiConnection *cxn) override {
+    if (!syncMode) return;
+    if (++sends > 1) {
+      // The old sync loop would repeat before its queued completion could run.
+      // Terminate that bad path deterministically rather than hang the suite.
+      spun = true;
+      cxn->txContext().complete();
+      return;
+    }
+    auto saved = cxn->txContext();
+    saved.complete(); // completing a copy must not notify the active context's waiters
+    mx()->txRun([this, cxn] {
+      progressed = true;
+      if (syncMode == 3) { cxn->close(); return; }
+      auto &context = cxn->txContext();
+      if (context.completed()) return;
+      context.length = syncMode == 2 ? -1 : 1;
+      context();
+    });
+  }
   void disconnect(ZiConnection *, bool) override { }
-  void close(ZiConnection *, bool) override { }
+  void close(ZiConnection *cxn, bool) override {
+    closed = true;
+    cxn->txContext().complete();
+  }
   void wake() override { }
   TelKey telKey() const override { return {}; }
   void telemetry(Ztc::MxTelemetry &) const override { }
@@ -241,6 +269,51 @@ struct MxPlugin : ZiMxPlugin {
   void watch(AddCxnFn, DelCxnFn) override { }
   void unwatch() override { }
 };
+
+
+class SyncCxn : public ZmNHeap<SyncCxn>, public ZiConnection {
+friend inline ZuStringT<"ZiIOBufTest.SyncCxn"> ZmNHeapID(SyncCxn *);
+public:
+  explicit SyncCxn(ZiMultiplex *mx) : ZiConnection{mx,
+    {.type = ZiCxnType::TCPOut, .socket = Zi::nullSocket()}} { }
+  void connected(ZiRxContext &) override { }
+  void disconnected(bool) override { }
+};
+
+void testSyncOwnerProgress()
+{
+  ZuTestScope(testSyncOwnerProgress);
+  for (unsigned mode = 1; mode <= 3; ++mode) {
+    ZiMultiplex mx;
+    ZmRef<MxPlugin> transport = new MxPlugin{&mx};
+    transport->syncMode = mode;
+    mx.plugin(transport);
+    auto allocator = mx.allocator<>();
+    auto buf = allocator->allocBuf(nullptr, 1);
+    ZuCheck(bool(buf));
+    if (!buf) return;
+    ZmRef<SyncCxn> cxn = new SyncCxn{&mx};
+    bool started = mx.start();
+    ZuCheck(started);
+    if (!started) return;
+    mx.txRun([cxn = cxn.ptr(), state = transport.ptr(), buf = ZuMv(buf)]() mutable {
+      cxn->txContext().init(ZiTxFn{[state](ZiTxContext &context) {
+	++state->completions;
+	state->error = context.length < 0;
+	context.complete();
+	return true;
+      }}, ZuMv(buf));
+    });
+    cxn->sync(); // must yield Tx until the already-posted owner progress completes
+    cxn->sync(); // an already-completed context needs no further send or waiter
+    ZuCheck(mx.stop());
+    ZuCheck(!transport->spun && transport->sends == 1 && transport->progressed);
+    ZuCheck(transport->closed == (mode == 3));
+    ZuCheck(transport->completions == unsigned(mode != 3));
+    ZuCheck(transport->error == (mode == 2));
+    ZuCheck(cxn->txContext().completed() && !cxn->txContext().buf);
+  }
+}
 
 void testPluginBacking(bool grow)
 {
@@ -315,6 +388,74 @@ void testPluginAllocation()
   ZuCheck(plugin->valid && plugin->registeredAllocs == 2 && plugin->registeredFrees == 2);
 }
 
+void testAsyncAllocation(bool native, unsigned mode)
+{
+  ZuTestScopeRT(testAsyncAllocation);
+  ZiMultiplex mx;
+  ZmRef<MxPlugin> transport;
+  if (native) {
+    transport = new MxPlugin{&mx};
+    transport->backing->exhausted = mode == 2;
+    mx.plugin(transport);
+  }
+  auto allocator = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 32>();
+  struct State {
+    ZiMultiplex *mx;
+    Zi::IOBufAllocator *allocator;
+    Zi::IOBufWait request;
+    ZmSemaphore done;
+    unsigned mode, callbacks = 0, cancelled = 0;
+    bool native, submitted = false, valid = true;
+  } state{&mx, allocator, {}, {}, mode, 0, 0, native};
+  auto started = mx.start();
+  ZuCheckRT(started);
+  if (!started) return;
+  mx.run([state = &state] {
+    auto fn = [state](Zi::IOBufWaitResult::T result, ZmRef<ZiIOBuf> buf) {
+      ++state->callbacks;
+      state->valid &= state->submitted && state->mx->invoked(3);
+      state->valid &= state->request.busy() == (state->mode == 3);
+      if (state->mode == 1 || state->mode == 2) {
+	state->valid &= result == Zi::IOBufWaitResult::Failed && !buf;
+      } else {
+	state->valid &= result == Zi::IOBufWaitResult::Ready && bool(buf);
+	if (buf) {
+	  state->valid &= buf->allocator() == state->allocator && buf->owner == state;
+	  state->valid &= buf->length == 7 && buf->registered() == state->native;
+	  state->valid &= buf->size == 11 + state->allocator->headRoom +
+	    state->allocator->tailRoom && buf->skip == state->allocator->headRoom;
+	}
+      }
+      buf = nullptr;
+      if (state->mode != 3) state->done.post();
+    };
+    state->allocator->waitBuf(state->request, 3, state,
+      state->mode == 1 ? 12 : 7, 11, ZuMv(fn));
+    if (state->mode == 3) {
+      // Start and cancel are FIFO on mx Tx. The provider has already posted its
+      // exact grant when cancellation reaches it; completion must precede ack.
+      state->allocator->cancelBuf(state->request, [state] {
+	++state->cancelled;
+	state->valid &= state->callbacks == 1 && !state->request.busy();
+	state->valid &= state->mx->invoked(3);
+	state->done.post();
+      });
+    }
+    state->submitted = true;
+  }, 3);
+  auto completed = state.done.timedwait(Zm::now(5)) == 0;
+  ZuCheckRT(completed);
+  ZuCheckRT(mx.stop());
+  ZuCheckRT(state.valid && state.callbacks == 1 && !state.request.busy());
+  ZuCheckRT(state.cancelled == unsigned(mode == 3));
+  if (native) {
+    auto provider = transport->backing.ptr();
+    auto expected = unsigned(mode == 0 || mode == 3);
+    ZuCheckRT(provider->valid && provider->registeredAllocs == expected &&
+      provider->registeredFrees == expected);
+  }
+}
+
 struct HugePrint;
 struct HugePrintFn : ZuPrintBuffer {
   static unsigned length(const HugePrint &) { return UINT_MAX; }
@@ -386,7 +527,7 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testSliceAndEnsurePreserveSpan);
+  ZuTestCall(testSliceEnsureSpan);
   ZuTestCall(testAdvanceRewind);
   ZuTestCall(testPrependAndGrow);
   ZuTestCall(testPrependTailRoom);
@@ -394,7 +535,14 @@ int main(int argc, char **argv)
   ZuTestCall(testOutputFailure);
   ZuTestCall(testPluginAllocation);
   ZuTestCall(testAllocatorPolicy);
+  ZuTestCall(testSyncOwnerProgress);
   ZuTestCall(testPluginBacking, false);
   ZuTestCall(testPluginBacking, true);
+  ZuTestCall(testAsyncAllocation, false, 0);
+  ZuTestCall(testAsyncAllocation, false, 1);
+  ZuTestCall(testAsyncAllocation, true, 0);
+  ZuTestCall(testAsyncAllocation, true, 1);
+  ZuTestCall(testAsyncAllocation, true, 2);
+  ZuTestCall(testAsyncAllocation, true, 3);
   return 0;
 }

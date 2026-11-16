@@ -29,7 +29,7 @@ struct RxBuf : public ZiIOBuf {
 };
 
 struct RxHarness : public ZiRx<RxHarness, 64> {
-  enum BodyMode {
+  enum {
     Normal,
     DropRemainder,
     Fail
@@ -38,7 +38,7 @@ struct RxHarness : public ZiRx<RxHarness, 64> {
   ZiMultiplex mx;
   Zi::IOBufAllocator *allocator = mx.allocator<
     Zi::IOBufType::App, RxBuf, 32, ZiIOBuf_DefltAlign, ZuStringT<"ZiRxTest.Buf">, 64>();
-  BodyMode	mode = Normal;
+  int		mode = Normal;
 
   unsigned	hdrCalls = 0;
   unsigned	hdrInsufficient = 0;
@@ -53,7 +53,7 @@ struct RxHarness : public ZiRx<RxHarness, 64> {
 
   auto rxAllocator() { return allocator; }
 
-  void reset(BodyMode mode_ = Normal)
+  void reset(int mode_ = Normal)
   {
     mode = mode_;
     hdrCalls = 0;
@@ -112,9 +112,9 @@ struct RxHarness : public ZiRx<RxHarness, 64> {
   }
 };
 
-void testRecvMemFragmentedAndIntMax()
+void testRecvMemFragmented()
 {
-  ZuTestScope(testRecvMemFragmentedAndIntMax);
+  ZuTestScope(testRecvMemFragmented);
 
   RxHarness rx;
   rx.reset();
@@ -145,9 +145,9 @@ void testRecvMemFragmentedAndIntMax()
   }
 }
 
-void testRecvMemOversizeAndBodyModes()
+void testRecvMemOversize()
 {
-  ZuTestScope(testRecvMemOversizeAndBodyModes);
+  ZuTestScope(testRecvMemOversize);
 
   RxHarness rx;
   ZmRef<ZiIOBuf> buf;
@@ -186,9 +186,9 @@ void testRecvMemOversizeAndBodyModes()
   }
 }
 
-void testRecvMemSyncTrailingAndErrors()
+void testRecvMemSyncErrors()
 {
-  ZuTestScope(testRecvMemSyncTrailingAndErrors);
+  ZuTestScope(testRecvMemSyncErrors);
 
   RxHarness rx;
   rx.reset();
@@ -239,7 +239,8 @@ void testRecvMemSyncTrailingAndErrors()
 
 // Synthetic transport: all deliveries and rearming execute on the real mx Rx
 // dispatcher, through the connection's actual context and owner-directed API.
-struct RxPlugin : ZiMxPlugin {
+struct RxPlugin : ZmNHeap<RxPlugin>, ZiMxPlugin {
+friend inline ZuStringT<"ZiRxTest.Plugin"> ZmNHeapID(RxPlugin *);
   unsigned rearms = 0;
   explicit RxPlugin(ZiMultiplex *mx) : ZiMxPlugin(mx) { }
   Zi::IOBufPlugin *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override {
@@ -301,14 +302,14 @@ struct NetworkAllocator : Zi::IOBufBuiltinAllocator<
   void attach(ZiIOBuf *buf) {
     if (!stubs) return;
     valid &= !buf->data_() && !buf->size && buf->skip == headRoom;
-    buf->data__ = uintptr_t(malloc(size)) | ZiIOBuf::Registered;
+    buf->data__ = uintptr_t(VHeap::alloc(size)) | ZiIOBuf::Registered;
     buf->size = size;
     ++attached;
   }
   void free(uint8_t *ptr, unsigned n, bool registered) const override {
     if (registered) {
       ++const_cast<NetworkAllocator *>(this)->retired;
-      ::free(ptr);
+      VHeap::free(ptr, n);
     } else {
       IOBufBuiltinAllocator::free(ptr, n, false);
     }
@@ -545,9 +546,9 @@ int main(int argc, char **argv)
 
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testRecvMemFragmentedAndIntMax);
-  ZuTestCall(testRecvMemOversizeAndBodyModes);
-  ZuTestCall(testRecvMemSyncTrailingAndErrors);
+  ZuTestCall(testRecvMemFragmented);
+  ZuTestCall(testRecvMemOversize);
+  ZuTestCall(testRecvMemSyncErrors);
   ZuTestCall(testConnectionFrames, false, false, false);
   ZuTestCall(testConnectionFrames, false, false, true);
   ZuTestCall(testConnectionFrames, false, true, false);

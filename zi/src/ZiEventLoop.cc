@@ -7,6 +7,7 @@
 #ifndef _WIN32
 
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <linux/unistd.h>
 
@@ -86,20 +87,11 @@ bool Loop::start_()
     ::close(m_epollFD); m_epollFD = -1;
     return false;
   }
-  if (pipe(&m_wakeFD) < 0) {
+  if ((m_wakeFD = eventfd(0, EFD_NONBLOCK | EFD_SEMAPHORE)) < 0) {
     failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = errno](auto &s) {
-      s << "pipe() failed: " << e;
+      s << "eventfd() failed: " << e;
     })));
     ::close(m_epollFD); m_epollFD = -1;
-    return false;
-  }
-  if (fcntl(m_wakeFD, F_SETFL, O_NONBLOCK) < 0) {
-    failed(ZeEXCEPT(Fatal, "ZiEventLoop", ([e = errno](auto &s) {
-      s << "fcntl(F_SETFL, O_NONBLOCK) failed: " << e;
-    })));
-    ::close(m_epollFD); m_epollFD = -1;
-    ::close(m_wakeFD); m_wakeFD = -1;
-    ::close(m_wakeFD2); m_wakeFD2 = -1;
     return false;
   }
   {
@@ -113,7 +105,6 @@ bool Loop::start_()
       })));
       ::close(m_epollFD); m_epollFD = -1;
       ::close(m_wakeFD); m_wakeFD = -1;
-      ::close(m_wakeFD2); m_wakeFD2 = -1;
       return false;
     }
   }
@@ -178,7 +169,6 @@ void Loop::stop_0()
     m_epollFD = -1;
   }
   if (m_wakeFD >= 0) { ::close(m_wakeFD); m_wakeFD = -1; }
-  if (m_wakeFD2 >= 0) { ::close(m_wakeFD2); m_wakeFD2 = -1; }
 
 #else /* !_WIN32 */
 
@@ -211,8 +201,8 @@ void Loop::wake_()
 
 #ifndef _WIN32
 
-  char c = 0;
-  while (::write(m_wakeFD2, &c, 1) < 0) {
+  uint64_t count = 1;
+  while (::write(m_wakeFD, &count, sizeof(count)) < 0) {
     ZeError e{errno};
     if (e.errNo() == EINTR) continue;
     if (e.errNo() != EAGAIN) {
@@ -541,9 +531,9 @@ again:
 	    handle->read)
 	  handle->read(handle->handle);
       } else { // u64_is_wake(u64)
-	char c;
-	int r = ::read(m_wakeFD, &c, 1);
-	if (r >= 1) { woken = true; continue; }
+	uint64_t count;
+	int r = ::read(m_wakeFD, &count, sizeof(count));
+	if (r == sizeof(count)) { woken = true; continue; }
 	if (r < 0) {
 	  ZeError e{errno};
 	  if (e.errNo() != EINTR && e.errNo() != EAGAIN) return;

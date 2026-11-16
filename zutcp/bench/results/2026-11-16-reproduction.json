@@ -1,0 +1,518 @@
+{
+  "date": "2026-11-16",
+  "status": "complete",
+  "comparison": "Kernel/kernel versus Zutcp/Zutcp; current production libraries; published milestone settings.",
+  "conditions": {
+    "BENCH_LL": "0",
+    "BENCH_APP_COLOCATE": "1",
+    "BENCH_SPIN": "20000",
+    "BENCH_ACK_HOLD_US": "25000",
+    "BENCH_CLIENT_RX_CPU": "0",
+    "BENCH_CLIENT_TX_CPU": "1",
+    "BENCH_CLIENT_XDP_TX_CPU": "4",
+    "BENCH_SERVER_RX_CPU": "2",
+    "BENCH_SERVER_TX_CPU": "3",
+    "BENCH_SERVER_XDP_TX_CPU": "6",
+    "BENCH_RESERVE": "4096",
+    "BENCH_BURST_SIZE": "0",
+    "BENCH_BURST_US": "1000",
+    "BENCH_TOPOLOGY": "direct",
+    "BENCH_CAPTURE": "0",
+    "BENCH_OFFER_RATE": "0",
+    "BENCH_PENDING_CAP": "0",
+    "BENCH_WORKLOAD": "order",
+    "BENCH_MESSAGES": "2000",
+    "BENCH_WARMUP": "256",
+    "BENCH_QUEUE_SIZE": "65536",
+    "BENCH_CONGESTION_CONTROL": "0",
+    "BENCH_ALLOC_TUNE": "1"
+  },
+  "repetitions": 2,
+  "backend_order": [
+    "kernel then native",
+    "native then kernel"
+  ],
+  "summary_method": "Report ranges of matched per-repetition native/kernel changes. No averaging or pooling of percentiles.",
+  "percentile_method": "Existing sorted in-memory RTT samples; index floor((n-1)*p). p99.99 uses floor((n-1)*9999/10000).",
+  "limitations": [
+    "One-connection cases have 2000 samples each, so p99.99 is a near-maximum observation, not a well-resolved tail estimate.",
+    "Short local veth comparison; native congestion control disabled and kernel congestion control enabled.",
+    "Two repetitions; throughput and tail variability remain visible in every observation."
+  ],
+  "validation": {
+    "runs": 16,
+    "measured_replies": 2064000,
+    "exact_delivery": true,
+    "endpoint_drains": 32,
+    "runtime_unchanged": true,
+    "remaining_processes_or_namespaces": false,
+    "raw_sample_files": 0,
+    "packet_captures": 0
+  },
+  "elapsed_seconds": 26.16627955902368,
+  "observations": [
+    {
+      "case": 1,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "family": 4,
+      "backend": "kernel",
+      "status": "complete",
+      "requests_per_second": 24002.224,
+      "envelope_seconds": 0.083325611,
+      "latency": {
+        "samples": 2000,
+        "p50_ns": 40766,
+        "p99_ns": 55442,
+        "p999_ns": 60681,
+        "p9999_ns": 65345,
+        "max_ns": 67111
+      }
+    },
+    {
+      "case": 2,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "family": 4,
+      "backend": "native",
+      "status": "complete",
+      "requests_per_second": 37663.276,
+      "envelope_seconds": 0.053102125,
+      "latency": {
+        "samples": 2000,
+        "p50_ns": 25760,
+        "p99_ns": 42532,
+        "p999_ns": 58050,
+        "p9999_ns": 69688,
+        "max_ns": 110919
+      }
+    },
+    {
+      "case": 3,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "family": 6,
+      "backend": "kernel",
+      "status": "complete",
+      "requests_per_second": 23390.188,
+      "envelope_seconds": 0.08550594,
+      "latency": {
+        "samples": 2000,
+        "p50_ns": 41651,
+        "p99_ns": 59568,
+        "p999_ns": 68298,
+        "p9999_ns": 73557,
+        "max_ns": 85964
+      }
+    },
+    {
+      "case": 4,
+      "repetition": 1,
+      "connections": 1,
+      "pipeline": 1,
+      "family": 6,
+      "backend": "native",
+      "status": "complete",
+      "requests_per_second": 37469.997,
+      "envelope_seconds": 0.053376038,
+      "latency": {
+        "samples": 2000,
+        "p50_ns": 25957,
+        "p99_ns": 42031,
+        "p999_ns": 50170,
+        "p9999_ns": 58886,
+        "max_ns": 186437
+      }
+    },
+    {
+      "case": 5,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "family": 4,
+      "backend": "kernel",
+      "status": "complete",
+      "requests_per_second": 149856.095,
+      "envelope_seconds": 1.708305555,
+      "latency": {
+        "samples": 256000,
+        "p50_ns": 26805499,
+        "p99_ns": 27972317,
+        "p999_ns": 28072234,
+        "p9999_ns": 28815994,
+        "max_ns": 28991985
+      }
+    },
+    {
+      "case": 6,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "family": 4,
+      "backend": "native",
+      "status": "complete",
+      "requests_per_second": 172679.261,
+      "envelope_seconds": 1.482517348,
+      "latency": {
+        "samples": 256000,
+        "p50_ns": 23296976,
+        "p99_ns": 27942371,
+        "p999_ns": 29278186,
+        "p9999_ns": 29524316,
+        "max_ns": 29543711
+      }
+    },
+    {
+      "case": 7,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "family": 6,
+      "backend": "kernel",
+      "status": "complete",
+      "requests_per_second": 148937.555,
+      "envelope_seconds": 1.718841164,
+      "latency": {
+        "samples": 256000,
+        "p50_ns": 26968676,
+        "p99_ns": 28785265,
+        "p999_ns": 28881316,
+        "p9999_ns": 30308279,
+        "max_ns": 30535009
+      }
+    },
+    {
+      "case": 8,
+      "repetition": 1,
+      "connections": 128,
+      "pipeline": 32,
+      "family": 6,
+      "backend": "native",
+      "status": "complete",
+      "requests_per_second": 164814.902,
+      "envelope_seconds": 1.553257609,
+      "latency": {
+        "samples": 256000,
+        "p50_ns": 24743579,
+        "p99_ns": 28069514,
+        "p999_ns": 28660337,
+        "p9999_ns": 28696846,
+        "max_ns": 28700368
+      }
+    },
+    {
+      "case": 9,
+      "repetition": 2,
+      "connections": 1,
+      "pipeline": 1,
+      "family": 4,
+      "backend": "native",
+      "status": "complete",
+      "requests_per_second": 37518.259,
+      "envelope_seconds": 0.053307378,
+      "latency": {
+        "samples": 2000,
+        "p50_ns": 25998,
+        "p99_ns": 42212,
+        "p999_ns": 60695,
+        "p9999_ns": 61377,
+        "max_ns": 65281
+      }
+    },
+    {
+      "case": 10,
+      "repetition": 2,
+      "connections": 1,
+      "pipeline": 1,
+      "family": 4,
+      "backend": "kernel",
+      "status": "complete",
+      "requests_per_second": 24047.568,
+      "envelope_seconds": 0.083168492,
+      "latency": {
+        "samples": 2000,
+        "p50_ns": 40791,
+        "p99_ns": 54918,
+        "p999_ns": 61309,
+        "p9999_ns": 61408,
+        "max_ns": 61537
+      }
+    },
+    {
+      "case": 11,
+      "repetition": 2,
+      "connections": 1,
+      "pipeline": 1,
+      "family": 6,
+      "backend": "native",
+      "status": "complete",
+      "requests_per_second": 37648.899,
+      "envelope_seconds": 0.053122403,
+      "latency": {
+        "samples": 2000,
+        "p50_ns": 25858,
+        "p99_ns": 41688,
+        "p999_ns": 57424,
+        "p9999_ns": 63565,
+        "max_ns": 70038
+      }
+    },
+    {
+      "case": 12,
+      "repetition": 2,
+      "connections": 1,
+      "pipeline": 1,
+      "family": 6,
+      "backend": "kernel",
+      "status": "complete",
+      "requests_per_second": 23566.01,
+      "envelope_seconds": 0.084867996,
+      "latency": {
+        "samples": 2000,
+        "p50_ns": 41431,
+        "p99_ns": 56765,
+        "p999_ns": 67414,
+        "p9999_ns": 80547,
+        "max_ns": 88692
+      }
+    },
+    {
+      "case": 13,
+      "repetition": 2,
+      "connections": 128,
+      "pipeline": 32,
+      "family": 4,
+      "backend": "native",
+      "status": "complete",
+      "requests_per_second": 174069.82,
+      "envelope_seconds": 1.470674235,
+      "latency": {
+        "samples": 256000,
+        "p50_ns": 22597382,
+        "p99_ns": 28671169,
+        "p999_ns": 29069133,
+        "p9999_ns": 29110523,
+        "max_ns": 29124533
+      }
+    },
+    {
+      "case": 14,
+      "repetition": 2,
+      "connections": 128,
+      "pipeline": 32,
+      "family": 4,
+      "backend": "kernel",
+      "status": "complete",
+      "requests_per_second": 148299.176,
+      "envelope_seconds": 1.7262402,
+      "latency": {
+        "samples": 256000,
+        "p50_ns": 26718039,
+        "p99_ns": 36960828,
+        "p999_ns": 47132628,
+        "p9999_ns": 48610199,
+        "max_ns": 49554465
+      }
+    },
+    {
+      "case": 15,
+      "repetition": 2,
+      "connections": 128,
+      "pipeline": 32,
+      "family": 6,
+      "backend": "native",
+      "status": "complete",
+      "requests_per_second": 181191.33,
+      "envelope_seconds": 1.412871134,
+      "latency": {
+        "samples": 256000,
+        "p50_ns": 21564493,
+        "p99_ns": 26652724,
+        "p999_ns": 26984160,
+        "p9999_ns": 27086627,
+        "max_ns": 27099313
+      }
+    },
+    {
+      "case": 16,
+      "repetition": 2,
+      "connections": 128,
+      "pipeline": 32,
+      "family": 6,
+      "backend": "kernel",
+      "status": "complete",
+      "requests_per_second": 144985.709,
+      "envelope_seconds": 1.765691268,
+      "latency": {
+        "samples": 256000,
+        "p50_ns": 27351673,
+        "p99_ns": 30090123,
+        "p999_ns": 32030210,
+        "p9999_ns": 34636497,
+        "max_ns": 34811626
+      }
+    }
+  ],
+  "paired_changes": [
+    {
+      "connections": 1,
+      "pipeline": 1,
+      "family": 4,
+      "repetition": 1,
+      "kernel_case": 1,
+      "native_case": 2,
+      "throughput_gain_percent": 56.91577580477543,
+      "latency_change_percent": {
+        "p50_ns": -36.81008683707011,
+        "p99_ns": -23.285595757728792,
+        "p999_ns": -4.335788797152318,
+        "p9999_ns": 6.646262147065585,
+        "max_ns": 65.27692926643918
+      }
+    },
+    {
+      "connections": 1,
+      "pipeline": 1,
+      "family": 4,
+      "repetition": 2,
+      "kernel_case": 10,
+      "native_case": 9,
+      "throughput_gain_percent": 56.01685376250938,
+      "latency_change_percent": {
+        "p50_ns": -36.26535265132015,
+        "p99_ns": -23.13631232018646,
+        "p999_ns": -1.001484284525922,
+        "p9999_ns": -0.05048202188639994,
+        "max_ns": 6.084144498431843
+      }
+    },
+    {
+      "connections": 1,
+      "pipeline": 1,
+      "family": 6,
+      "repetition": 1,
+      "kernel_case": 3,
+      "native_case": 4,
+      "throughput_gain_percent": 60.19536482562691,
+      "latency_change_percent": {
+        "p50_ns": -37.67976759261482,
+        "p99_ns": -29.440303518667744,
+        "p999_ns": -26.54250490497525,
+        "p9999_ns": -19.94507660725696,
+        "max_ns": 116.8779954399516
+      }
+    },
+    {
+      "connections": 1,
+      "pipeline": 1,
+      "family": 6,
+      "repetition": 2,
+      "kernel_case": 12,
+      "native_case": 11,
+      "throughput_gain_percent": 59.759327098647596,
+      "latency_change_percent": {
+        "p50_ns": -37.58779657744201,
+        "p99_ns": -26.56038051616313,
+        "p999_ns": -14.818880351262354,
+        "p9999_ns": -21.08334264466709,
+        "max_ns": -21.03233662562576
+      }
+    },
+    {
+      "connections": 128,
+      "pipeline": 32,
+      "family": 4,
+      "repetition": 1,
+      "kernel_case": 5,
+      "native_case": 6,
+      "throughput_gain_percent": 15.230055207297365,
+      "latency_change_percent": {
+        "p50_ns": -13.088818081692866,
+        "p99_ns": -0.10705584381872635,
+        "p999_ns": 4.295888955613569,
+        "p9999_ns": 2.458086297491602,
+        "max_ns": 1.9030294062307274
+      }
+    },
+    {
+      "connections": 128,
+      "pipeline": 32,
+      "family": 4,
+      "repetition": 2,
+      "kernel_case": 14,
+      "native_case": 13,
+      "throughput_gain_percent": 17.377469447301586,
+      "latency_change_percent": {
+        "p50_ns": -15.422752395862583,
+        "p99_ns": -22.428228610030054,
+        "p999_ns": -38.32482033465225,
+        "p9999_ns": -40.11437188315151,
+        "max_ns": -41.22722745568941
+      }
+    },
+    {
+      "connections": 128,
+      "pipeline": 32,
+      "family": 6,
+      "repetition": 1,
+      "kernel_case": 7,
+      "native_case": 8,
+      "throughput_gain_percent": 10.66040529536021,
+      "latency_change_percent": {
+        "p50_ns": -8.250672001843917,
+        "p99_ns": -2.486518710180363,
+        "p999_ns": -0.7651278771368952,
+        "p9999_ns": -5.3168079916381945,
+        "max_ns": -6.008319827251407
+      }
+    },
+    {
+      "connections": 128,
+      "pipeline": 32,
+      "family": 6,
+      "repetition": 2,
+      "kernel_case": 16,
+      "native_case": 15,
+      "throughput_gain_percent": 24.971854984686793,
+      "latency_change_percent": {
+        "p50_ns": -21.158413234905225,
+        "p99_ns": -11.423678793204006,
+        "p999_ns": -15.754033457788752,
+        "p9999_ns": -21.79744100565366,
+        "max_ns": -22.15441760749699
+      }
+    }
+  ],
+  "runtime_identity": {
+    "binary": "/home/ubuntu/src/z/zfix/bench/.libs/zfixbench",
+    "closure": "/home/ubuntu/src/z/review_context/zutcp-stack-audit/correctness-only-comparison/candidate/elf",
+    "sha256": {
+      "libZdbus-10.0.0.so": "6c3fea3ab44a6b3ff2fce57c422e1f32adcd8386ba59cc96858df48da3351d8e",
+      "libZe-10.0.0.so": "327bb6be32093038e2ccfc222438539117e206f3b73a6ae7427242148cfb3716",
+      "libZf-10.0.0.so": "4aac54da0b82387819cc1fbdcfef5575aa75b6fff5f02d0db366f640fd44e5d2",
+      "libZfix-10.0.0.so": "ee13f4c81564655afe790d6af71b452eca50307210fd7d8b1906a6f549f108b6",
+      "libZfixFmt-10.0.0.so": "cda0947a8c6a6ca7d467e9b005580561587468338a13fa4f1914b9364d98ad86",
+      "libZi-10.0.0.so": "7e9eddd780fbbe25aeec98ef1bdc15c0c58e57b3e57670374803b68fc437acac",
+      "libZm-10.0.0.so": "678fba3f367bb6c2a3ec86fcc9f34a7d4cb87bca7a674ba26e87a82a5c376378",
+      "libZt-10.0.0.so": "8beb8886115452a08e91b6c7563b11db98a5ac98e980ba86b59cb3a5a64df2b2",
+      "libZtcp-10.0.0.so": "3aa4cb778632410248eae7f0693ee0ec869034a1fb7ae68a99542786e0691e8e",
+      "libZtls-10.0.0.so": "d363fbfa366c26d8a4a1dbf92071d870ad0240787df7637009f7fff60bd89db0",
+      "libZu-10.0.0.so": "67e00a6565fe3e7cea22c67010a2887319901851865917530fcc5945c041d083",
+      "libZutcp-10.0.0.so": "c0be580c032f43c7a356399f8d5f5a796822266b341da4b0bf025a9146396e67",
+      "libZxdp-10.0.0.so": "29dd9abb873ea37640e5d3aae49938a4e79370253c91559d18da697bb7c1cdd8",
+      "zfixbench.bin": "df65a5dd5d8ebafff07ce7fad59a66c99a540b0ea5d8871fba65c2a25f799a4f"
+    },
+    "benchmark_source_sha256": "4cddfb7f74dbdd566f647c32fc13926a8ff1742faf362f5be0d63fc4c6fbfd60",
+    "reporting_change": "Add p9999_ns to the existing final aggregate summary; no measured-path or transport changes."
+  },
+  "evidence_directory": "review_context/zutcp-performance-reproduction",
+  "excluded_attempt": "attempt-1: exchanges completed, but optional FIFO sample output was unsupported and no latency summary was produced. Retained separately; no performance-based exclusions or retries.",
+  "scope_removed": [
+    "full-pilot-readiness/",
+    "next-after-frontier.md",
+    "acceptance-readiness.md"
+  ]
+}

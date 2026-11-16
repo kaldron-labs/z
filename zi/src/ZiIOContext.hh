@@ -107,7 +107,7 @@ struct ZiTxContext {
   }
 
   bool initialized() const { return bool(buf); }
-  void complete() { fn = {}; buf = nullptr; }
+  ZiAPI void complete();
   bool completed() const { return !fn; }
   void disconnect() { complete(); state |= ZiIOState::Disconnect(); }
   bool disconnected() const { return state & ZiIOState::Disconnect(); }

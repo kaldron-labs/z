@@ -21,12 +21,19 @@
 
 #include <zlib/ZuMatcher.hh>
 #include <zlib/ZmAssert.hh>
+#include <zlib/ZmScheduler.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZmThread.hh>
+#include <zlib/ZmPlatform.hh>
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZePlatform.hh>
 #include <zlib/ZiFile.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZxdpBPF.hh>
 #include <zlib/Zxdp.hh>
+
+// Stop-and-wait can prepare the next packet while the previous kernel lease retires.
+enum { TxSlots = 2 };
 
 struct Options {
   const char *interface = nullptr, *readyFile = nullptr;
@@ -119,11 +126,13 @@ struct Endpoint {
   Zxdp::BufPool rx, tx;
   ZmRef<Zxdp::Instance> instance;
   ZtString<> error;
-  ZmAtomic<unsigned> received{0}, completed{0}, failed{0}, nextSeq{0};
-  unsigned sent = 0, sequence = 0;
+  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> failed{0}, nextSeq{0};
+  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> received{0}; // Rx publication
+  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> completed{0}; // Tx publication
+  alignas(Zm::CacheLineSize) unsigned sent = 0, sequence = 0; // Tx-exclusive
   uint8_t *pending = nullptr;
 
-  explicit Endpoint(Options options) : config{options}, rx{options.frames, 0}, tx{2, 0} { }
+  explicit Endpoint(Options options) : config{options}, rx{options.frames, 0}, tx{TxSlots, 0} { }
 
   uint8_t pattern(unsigned seq, unsigned i, bool reply) const {
     auto value = i < 4 ? uint8_t(seq >> ((3 - i)<<3)) : uint8_t(seq + i * 13);
@@ -193,18 +202,32 @@ struct Endpoint {
     Zxdp::LinkState link;
     if (!index || !Zxdp::queryLink(index, link, error) || link.mtu < 28 ||
         config.payload > link.mtu - 28 || config.frames < link.rxQueues) {
-      std::cerr << "invalid interface/payload geometry: " << error << '\n';
+      ZiLOG(Error, "Zxdp.Packet", ([text = ZeString{error}](auto &s) {
+	s << "invalid interface/payload geometry: " << text;
+      }));
       return false;
     }
     rx.size = tx.size = link.mtu + 14;
-    instance = Zxdp::Instance::create({.interface = index, .txPools = &tx, .rxPool = &rx,
+    Zxdp::Params params{.interface = index, .txPools = &tx, .rxPool = &rx,
       .rx = [this](uint8_t *p, unsigned n) { receive(p, n); },
-      .spin = config.spin}, error);
+      .spin = config.spin};
+    ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).spin(config.spin).
+      timeout(config.timeout).thread(1,
+        [&params](auto &thread) { thread = params.txThread; })};
+    params.scheduler = &scheduler;
+    params.txSid = 1;
+    if (!scheduler.start()) {
+      ZiLOG(Error, "Zxdp.Packet", "sender scheduler startup failed");
+      return false;
+    }
+    instance = Zxdp::Instance::create(ZuMv(params), error);
     if (!instance || !instance->ready()) failed = true;
     if (!failed && config.readyFile) {
       ZiFile file;
       if (file.open(config.readyFile, ZiFile::Write | ZiFile::Exclusive, 0600) != Zi::OK ||
-          file.write("ready\n", 6) != Zi::OK) { error = "ready-file creation failed"; failed = true; }
+          file.write("ready\n", 6) != Zi::OK) {
+        error = "ready-file creation failed"; failed = true;
+      }
     }
     if (!failed) {
       if (!config.server) nextSeq = 1;
@@ -246,12 +269,15 @@ struct Endpoint {
       ZmAssert_(closed); // unresolved kernel DMA never authorizes backing release
       instance = nullptr;
     }
+    if (!scheduler.stop()) failed = true;
     if (pending) { tx.free(pending); pending = nullptr; }
     auto ok = !failed && received == config.count && completed == config.count;
     std::cout << (ok ? "PASS" : "FAIL") << " role=" << (config.server ? "server" : "client")
       << " packets=" << unsigned(received) << " completions=" << unsigned(completed)
       << " payload=" << config.payload << " frames=" << config.frames << '\n';
-    if (!!error) std::cerr << error << '\n';
+    if (!!error) ZiLOG(Error, "Zxdp.Packet", ([text = ZeString{error}](auto &s) {
+      s << text;
+    }));
     return ok;
   }
 };
@@ -266,6 +292,12 @@ int main(int argc, char **argv)
       "  [--deadline SECONDS --ready-file PATH]\n";
     return 2;
   }
+  ZiLog::init("zxdppacket");
+  ZiLog::level(0);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
   Endpoint endpoint{config};
-  return endpoint.run() ? 0 : 1;
+  bool ok = endpoint.run();
+  ZiLog::stop();
+  return ok ? 0 : 1;
 }

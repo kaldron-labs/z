@@ -14,13 +14,12 @@
 
 using namespace ZuTestUtil;
 
-namespace {
-Zi::Path g_root;
-Zi::Path g_subdir;
-Zi::Path g_alpha;
-Zi::Path g_beta;
+static Zi::Path g_root;
+static Zi::Path g_subdir;
+static Zi::Path g_alpha;
+static Zi::Path g_beta;
 
-void initPaths()
+static void initPaths()
 {
   g_root = ZiTestResidue::dir("glob");
   g_subdir = ZiFile::append(g_root, "subdir");
@@ -29,7 +28,7 @@ void initPaths()
 
 }
 
-void cleanupTmpDir()
+static void cleanupTmpDir()
 {
   ZiFile::remove(g_alpha);
   ZiFile::remove(g_beta);
@@ -37,7 +36,7 @@ void cleanupTmpDir()
   ZiFile::rmdir(g_root);
 }
 
-bool makeFile(const Zi::Path &path, ZuCSpan contents)
+static bool makeFile(const Zi::Path &path, ZuCSpan contents)
 {
   ZiFile f;
   if (f.open(path, ZiFile::Write | ZiFile::GC) != Zi::OK) {
@@ -52,7 +51,7 @@ bool makeFile(const Zi::Path &path, ZuCSpan contents)
   return true;
 }
 
-void setupFixtures()
+static void setupFixtures()
 {
   cleanupTmpDir();
   if (ZiFile::mkdir(g_root) != Zi::OK) {
@@ -67,7 +66,7 @@ void setupFixtures()
     Zm::exit(1);
 }
 
-void testGlobIterate()
+static void testGlobIterate()
 {
   ZuTestScope(testGlobIterate);
 
@@ -97,9 +96,9 @@ void testGlobIterate()
   ZuCheck(count >= 3);
 }
 
-void testPrefixResetWrapAndReverse()
+static void testPrefixWrapReverse()
 {
-  ZuTestScope(testPrefixResetWrapAndReverse);
+  ZuTestScope(testPrefixWrapReverse);
 
   setupFixtures();
 
@@ -136,7 +135,6 @@ void testPrefixResetWrapAndReverse()
   }
 }
 
-} // namespace
 
 int main(int argc, char **argv)
 {
@@ -148,6 +146,6 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testGlobIterate);
-  ZuTestCall(testPrefixResetWrapAndReverse);
+  ZuTestCall(testPrefixWrapReverse);
   return 0;
 }

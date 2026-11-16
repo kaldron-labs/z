@@ -424,7 +424,7 @@ int ZmThread::run_(ZmThreadContext *c)
     if (c->stackSize())
       pthread_attr_setstacksize(&attr, c->stackSize());
     // pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM);
-    if (pthread_create(&c->m_pthread, &attr, &ZmThread_start, c) < 0) {
+    if (pthread_create(&c->m_pthread, &attr, &ZmThread_start, c)) {
       pthread_attr_destroy(&attr);
       ZmDEREF(c);
       m_context = nullptr;
