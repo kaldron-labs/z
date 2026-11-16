@@ -138,8 +138,7 @@ struct GateApp : Zutcp::Hub<GateApp> {
     return ZmRef<Zutcp::PacketBuf>{static_cast<Zutcp::PacketBuf *>(buf.ptr())};
   }
   bool sendPktRaw(ZmRef<ZiIOBuf> buf, ZiSockAddr, Zutcp::EcnMark::T, bool,
-      const Zutcp::IPPath &, const Zxdp::CommitFn &commit) {
-    if (commit && !commit()) return false;
+      const Zutcp::IPPath &) {
     auto tcp = static_cast<Zutcp::PacketBuf *>(buf.ptr())->tcp;
     if (tcp.flags & 0x02) { ++longSent; responseTCP = tcp; response = ZuMv(buf); }
     else ++shortSent;
@@ -199,8 +198,7 @@ friend ZuStringT<"Zutcp.Handshake.AbortCli"> ZmNHeapID(AbortCli *);
   void idleTickForTest() { State::cxnTimer(Zutcp::CxnTimer::Idle); }
   bool sendTCPReset() {
     return State::sendTCP({}, false, 0x14, [this] { return app()->allocTxPkt_(); },
-      [this](auto buf, auto, const Zxdp::CommitFn &commit) {
-	if (!commit()) return false;
+      [this](auto buf, auto) {
 	++resetPackets;
 	lastReset = buf->tcp;
 	return app()->txInvoked();
@@ -251,8 +249,7 @@ friend inline ZuStringT<"Zutcp.Handshake.CloseSrv"> ZmNHeapID(CloseSrv *);
   bool appCloseTxForTest() const { return Zutcp::TCPStateTest::application(*this); }
   bool sendTCPReset() {
     return State::sendTCP({}, false, 0x14, [this] { return app()->allocTxPkt_(); },
-      [this](auto buf, auto, const Zxdp::CommitFn &commit) {
-	if (!commit()) return false;
+      [this](auto buf, auto) {
 	++resetPackets;
 	lastReset = buf->tcp;
 	return app()->txInvoked();

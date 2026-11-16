@@ -191,14 +191,17 @@ if [[ $mode == tfo ]]; then
   if [[ $tfo_profile == stale ]]; then server_options=(1); fi
 fi
 startServer() {
+  # Each restart must publish its own listener, beyond backend attachment.
+  local previous current
+  previous=$(grep -c '^listening$' "$out/server.err") || :
   ip netns exec "$srv" env ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 timeout 35 \
   "$root/zutcp/example/zutcpserver" zutcpb "$server" 18181 "${server_options[@]}" \
     >> "$out/server.out" 2>> "$out/server.err" &
   server_pid=$!
   local ready=0
   for ((i=0;i<300;i++)); do
-    state=$(ip -n "$srv" -o link show zutcpb)
-    if [[ $state == *xdp* ]]; then ready=1; break; fi
+    current=$(grep -c '^listening$' "$out/server.err") || :
+    if ((current > previous)); then ready=1; break; fi
     if ! kill -0 "$server_pid" 2>/dev/null; then cat "$out/server.err" >&2; exit 1; fi
     sleep .01
   done

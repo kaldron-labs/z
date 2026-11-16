@@ -275,8 +275,7 @@ public:
 
   // Native phase-1 entry: complete contiguous Ethernet packet on mx Tx.
   // Acceptance detaches backing; refusal leaves the buffer unchanged.
-  bool sendPacket(const ZmRef<Zi::IOBuf> &, PacketLease * = nullptr,
-    const Zxdp::CommitFn &commit = {});
+  bool sendPacket(const ZmRef<Zi::IOBuf> &, PacketLease * = nullptr);
   void reconcileTx(); // Tx owner: retire kernel leases before retained header changes
   void waitTx(Allocator *, Zi::IOBufWait &); // allocator callbacks on mx Tx
   void cancelTx(Allocator *, Zi::IOBufWait &);

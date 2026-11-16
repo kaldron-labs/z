@@ -32,17 +32,11 @@ The packet operations are allocation from a Tx pool, return to an Rx or Tx pool,
 and submission of a Tx packet. Application and transport object ownership is
 outside this module. The caller owns adapter composition.
 
-`send(packet, length, commit)` optionally accepts a borrowed synchronous
-`CommitFn` (`ZmFn<bool()>`). After every ordinary admission check and a successful
-Tx-ring reservation, the sole producer invokes it before changing slot ownership,
-adding the kernel lease, or publishing the descriptor. False cancels the reservation
-and returns false with no lease or descriptor. True commits the initialized
-descriptor with no further refusal. This is a publication hook, not a completion
-callback. It must not throw, retain its borrowed context, reenter Tx service, or
-perform asynchronous work. Bind a raw context pointer and `ZmFnPtr` to avoid
-allocation; a context on the caller's stack remains live through the synchronous
-call. Release-publish any caller state before returning true so a peer response
-cannot precede that state after kernel consumption. Empty hooks preserve raw send.
+`bool send(uint8_t *packet, unsigned length)` returns true for accepted
+submission. False acquires no kernel lease, publishes no descriptor and leaves
+backing with the caller. After true the packet must remain immutable until
+kernel retirement; the independent caller lease may be returned before or after
+that retirement.
 
 `send()` submits and coalesces sender service on the application-assigned
 `Params::txSid`. Before scheduler startup the application configures that slot

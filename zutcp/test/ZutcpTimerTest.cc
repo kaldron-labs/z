@@ -240,7 +240,6 @@ friend inline ZuStringT<"Zutcp.TimerTest.Link"> ZmNHeapID(TimerLink *);
   void armData() {
     Zutcp::TxRange range{nullptr, 0, 1, 0};
     auto ref = Zutcp::SentFrameRef::data(range, false);
-    Base::publishTxCommit(ref, false);
     Base::acceptTxData(ref);
   }
   bool flushTx() { return false; }
@@ -296,7 +295,6 @@ friend inline ZuStringT<"Zutcp.TimerTest.Link"> ZmNHeapID(TimerLink *);
   void deliverPersist() { Base::cxnTimer(Zutcp::CxnTimer::Persist); }
   void sentRange(uint64_t offset, unsigned length, bool fin = false) {
     auto ref = Zutcp::SentFrameRef::data(Zutcp::TxRange{nullptr, 0, length, offset}, fin);
-    Base::publishTxCommit(ref, false);
     Base::acceptTxData(ref);
   }
   void byteAck(uint64_t next) { Zutcp::TCPStateTest::byteAck(*this, next); }

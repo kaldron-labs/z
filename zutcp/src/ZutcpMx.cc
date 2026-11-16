@@ -1381,8 +1381,7 @@ ZmRef<PacketBuf> Stack::allocPacket(void *owner, ZiIPType::T family, bool contro
   return buf;
 }
 
-bool Stack::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease,
-    const Zxdp::CommitFn &commit)
+bool Stack::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (!ready() || !buf || !buf->registered() || !buf->length ||
@@ -1396,7 +1395,7 @@ bool Stack::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease,
     if (control) ++m_controlStalls; else ++m_dataStalls;
     return false;
   }
-  if (!m_backend->send(buf->data(), buf->length, commit)) return false;
+  if (!m_backend->send(buf->data(), buf->length)) return false;
   // Transfer the caller lease to recovery when requested. The independent
   // kernel lease ends at CQ; neither lease retains submitted Zi metadata.
   auto backing = buf->data_();

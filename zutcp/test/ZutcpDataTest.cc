@@ -49,7 +49,6 @@ struct TCPStateTest {
     if (!c.recordTxPkt(id, unsigned(ref.length) + unsigned(ref.fin), ref, {}, EcnMark::NotECT))
       return false;
     c.m_txPkts.acceptedData(id, c.transportNow());
-    c.publishTxCommit(ref, false);
     c.acceptTxData(ref);
     if (c.m_txBytes < ref.offset + ref.length) c.m_txBytes = ref.offset + ref.length;
     c.m_txDataCredit.consumeTo(c.m_txBytes);
@@ -99,7 +98,6 @@ struct TCPStateTest {
   template <typename T> static void peerWrap(T &link, uint64_t next) {
     auto &c = core(link);
     c.m_txAckd = c.m_txNext = c.m_txBytes = c.m_rxPeerAck = next;
-    c.m_txRead.next = c.m_txRead.ack = next;
     c.txCredit(next + 65535);
   }
   template <typename T> static unsigned dsackReports(T &link) {
@@ -156,6 +154,12 @@ struct TCPStateTest {
   }
   template <typename T> static bool failedBudget(T &link) { return core(link).m_tcpBudgetFailed; }
   template <typename T> static void reset(T &link) { core(link).resetLink(); }
+  template <typename T> static void resetTx(T &link) { core(link).resetTx_(); }
+  template <typename T> static void staleTxRead(T &link, bool stale) {
+    auto &c = core(link);
+    c.m_txRead.gen = c.m_rxDataGen + unsigned(stale);
+  }
+
   template <typename T> static void peerTimers(T &link) {
     auto &c = core(link);
     c.startIdleTimerTx(ZuTime{20});
@@ -203,14 +207,14 @@ struct TCPStateTest {
   template <typename T> static ZuTime handshakeRTT(T &link) { return core(link).m_rtt.latest(); }
   template <typename T> static bool confirmed(T &link) { return core(link).m_txSynAcked; }
   template <typename T> static bool rxConfirmed(T &link) { return core(link).m_rxSynAcked; }
+  template <typename T> static bool tfoAccepted(T &link) { return core(link).m_txTFOAccepted; }
   template <typename T> static bool handshakeACK(T &link, uint32_t ack, bool reset = false) {
     auto &c = core(link);
     return c.qualifyHandshake(uint32_t(c.m_rxOrigins.local + 1 + ack), reset);
   }
-  template <typename T> static uint64_t synEnd(T &link) {
-    return core(link).m_txRead.synEnd.load_();
+  template <typename T> static void synCandidate(T &link, unsigned length) {
+    core(link).m_rxTFOEnd = length;
   }
-
   template <typename T> static void synTimeout(T &link) { core(link).synTimeout(); }
   template <typename T> static void fallback(T &link) { core(link).fallbackTFO(); }
   template <typename T> static bool retry(T &link, SentFrameRef &ref) {
@@ -236,9 +240,9 @@ struct TCPStateTest {
     return core(link).pathDiag_().bytesRx;
   }
   template <typename T> static uint32_t recent(T &link) { return core(link).m_rxTSRecent; }
-  template <typename T> static bool frontiers(T &link,
-      uint64_t &next, uint64_t &ack, uint64_t &sent) {
-    return core(link).readTxView(next, ack, sent);
+  template <typename T> static bool sentACK(T &link, uint64_t &sent) {
+    auto &c = core(link);
+    return c.readSentAck(sent);
   }
   template <typename T> static bool learnTimestamp(T &link, unsigned seq, unsigned value) {
     auto &c = core(link);
@@ -343,7 +347,6 @@ struct TCPStateTest {
       c.m_txPkts.acceptedData(id, c.transportNow());
       c.sentTCPTx(header);
     }
-    c.publishTxCommit(ref, false);
     c.acceptTxData(ref);
     c.m_txBytes = ref.offset + ref.length;
     c.m_txDataCredit.consumeTo(c.m_txBytes);
@@ -538,8 +541,8 @@ friend inline ZuStringT<"Zutcp.DataTest.Link"> ZmNHeapID(Link *);
       [this]() -> ZmRef<Zutcp::PacketBuf> {
 	auto buf = app()->control->allocBuf();
 	return ZmRef<Zutcp::PacketBuf>{static_cast<Zutcp::PacketBuf *>(buf.ptr())};
-      }, [send = ZuMv(send)](auto buf, auto, const Zxdp::CommitFn &commit) mutable {
-	return send(ZuMv(buf), commit);
+      }, [send = ZuMv(send)](auto buf, auto) mutable {
+	return send(ZuMv(buf));
       });
   }
   template <typename Send>
@@ -655,11 +658,11 @@ static void wholeOriginal(bool accept, bool syn)
   unsigned attempts = 0;
   bool geometry = true;
   bool sent = link->output(ref, [&a, &attempts, &geometry, accept, syn](
-      auto buf, const Zxdp::CommitFn &commit) {
+      auto buf) {
     ++attempts;
     geometry &= buf->data() == a.bytes + 256 && buf->length == 64 &&
       bool(buf->tcp.flags & 0x02) == syn && buf->retained;
-    if (!accept || !commit()) return false;
+    if (!accept) return false;
     buf->retained->adopt(&a, a.bytes, sizeof(a.bytes));
     buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
     return true;
@@ -699,7 +702,7 @@ static void originalTxOrder(unsigned scenario)
   bool before = true, nested = false;
   bool sent = link->output(ref, [
     link, &a, &ref, &attempts, &before, &nested, scenario](
-	auto buf, const Zxdp::CommitFn &commit) {
+	auto buf) {
     ++attempts;
     before &= !Zutcp::TCPStateTest::records(*link) &&
       !Zutcp::TCPStateTest::flight(*link) && !link->txNext() &&
@@ -707,15 +710,13 @@ static void originalTxOrder(unsigned scenario)
       buf->data() == a.bytes + 256 && buf->length == 64;
     if (scenario == 3) {
       nested = link->output(ref, [&attempts](
-	  auto, const Zxdp::CommitFn &commit) {
-	if (!commit()) return false;
+	  auto) {
 	++attempts;
 	return true;
       });
     }
     if (scenario == 1) return false;
-    if (scenario == 2) { Zutcp::TCPStateTest::reset(*link); return commit(); }
-    if (!commit()) return false;
+    if (scenario == 2) { Zutcp::TCPStateTest::reset(*link); return false; }
     buf->retained->adopt(&a, a.bytes, sizeof(a.bytes));
     buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
     return true;
@@ -725,15 +726,11 @@ static void originalTxOrder(unsigned scenario)
     "ordinary DATA reaches the backend with its retained backing before new recovery "
     "accounting; nested DATA cannot publish an uncommitted original twice");
   if (scenario == 1) {
-    uint64_t next = 0, ack = 0, sentAck = 0;
-    ZuCHECK(Zutcp::TCPStateTest::frontiers(*link, next, ack, sentAck) && !next,
-      "refused output does not publish an ACK-admissible frontier");
     ZuCHECK(!Zutcp::TCPStateTest::records(*link) && !Zutcp::TCPStateTest::flight(*link) &&
 	!link->txNext() && !link->txUnackdBytes() && link->txRangeCount() == 1 &&
 	original->data() == a.bytes + 256 && original->length == 64,
       "refusal creates no recovery debt and preserves the original application view");
-    sent = link->output(ref, [&a, &attempts](auto buf, const Zxdp::CommitFn &commit) {
-      if (!commit()) return false;
+    sent = link->output(ref, [&a, &attempts](auto buf) {
       ++attempts;
       buf->retained->adopt(&a, a.bytes, sizeof(a.bytes));
       buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
@@ -741,12 +738,9 @@ static void originalTxOrder(unsigned scenario)
     });
   }
   if (scenario == 2) {
-    uint64_t next = 0, ack = 0, sentAck = 0;
-    ZuCHECK(Zutcp::TCPStateTest::frontiers(*link, next, ack, sentAck) && !next,
-      "reset before commit leaves the replacement generation frontier empty");
     ZuCHECK(!sent && !Zutcp::TCPStateTest::records(*link) &&
 	!Zutcp::TCPStateTest::flight(*link) && !link->txNext() && !link->txUnackdBytes(),
-      "stale commit refuses publication without losing the original backing");
+      "generation reset during refusal leaves no recovery debt");
   } else {
     ZuCHECK(sent && Zutcp::TCPStateTest::records(*link) == 1 &&
 	Zutcp::TCPStateTest::flight(*link) == 64 && link->txNext() == 64 &&
@@ -762,9 +756,9 @@ static void originalTxOrder(unsigned scenario)
     "refusal retry, ACK retirement and generation reset each return the physical original once");
 }
 
-static void acceptedFrontierBurst()
+static void immediateACKBurst()
 {
-  ZuTestScope(acceptedFrontierBurst);
+  ZuTestScope(immediateACKBurst);
   App app;
   ZmRef<Link> link = new Link{&app};
   Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
@@ -779,17 +773,13 @@ static void acceptedFrontierBurst()
   uint8_t expected[32];
   for (unsigned i = 0; i < sizeof(expected); ++i) expected[i] = uint8_t(i + 1);
   app.holdTx = app.holdRx = true;
-  bool unpublished = false, beforeRecovery = false, received = true, immediate = false;
-  bool sent = link->output(ref, [link, &app, &a, &expected, &unpublished,
-      &beforeRecovery, &received, &immediate](auto buf, const Zxdp::CommitFn &commit) {
-    uint64_t next = 0, ack = 0, sentAck = 0;
-    unpublished = Zutcp::TCPStateTest::frontiers(*link, next, ack, sentAck) && !next;
-    if (!commit()) return false;
+  bool beforeRecovery = false, received = true, immediate = false;
+  bool sent = link->output(ref, [link, &app, &a, &expected,
+      &beforeRecovery, &received, &immediate](auto buf) {
     buf->retained->adopt(&a, a.bytes, sizeof(a.bytes));
     buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
     // Model immediate peer traffic after descriptor publication, before return.
-    beforeRecovery = Zutcp::TCPStateTest::frontiers(*link, next, ack, sentAck) &&
-      next == 64 && !ack && !link->txNext() &&
+    beforeRecovery = !link->txNext() &&
       !Zutcp::TCPStateTest::records(*link) && !a.returned;
     for (unsigned i = 0; i < sizeof(expected); ++i)
       received &= link->receive(input(app, {expected + i, 1}, i, 64));
@@ -799,8 +789,8 @@ static void acceptedFrontierBurst()
       !app.rxJobs.count_() && !Zutcp::TCPStateTest::records(*link) && !a.returned;
     return true;
   });
-  ZuCHECK(admitted && selected && sent && unpublished && beforeRecovery && received && immediate,
-    "pre-publication commit admits an exact 32-packet burst before the backend returns");
+  ZuCHECK(admitted && selected && sent && beforeRecovery && received && immediate,
+    "peer ACKs admit an exact 32-packet burst before successful backend return");
   ZuCHECK(Zutcp::TCPStateTest::records(*link) == 1 && link->txNext() == 64 &&
       !link->txAckd() && !a.returned,
     "queued peer ACKs cannot retire the original before its recovery bookkeeping commits");
@@ -815,43 +805,45 @@ static void acceptedFrontierBurst()
   ZuCheck(a.valid && a.returned == 1);
 }
 
-static void committedACKTimestamp()
+static void sentACKTimestamp()
 {
-  ZuTestScope(committedACKTimestamp);
+  ZuTestScope(sentACKTimestamp);
   App app;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::timestamps(*link, 100);
   Zutcp::TCPStateTest::advanceRx(*link, 5);
   bool unchanged = false;
-  bool refused = !link->output({}, [link, &unchanged](auto buf, const Zxdp::CommitFn &) {
-    uint64_t next = 0, ack = 0, sent = 0;
+  auto beforeReturn = [link, &unchanged](auto buf) {
+    uint64_t sent = 99;
     unchanged = buf->tcp.ack == 2006 &&
-      Zutcp::TCPStateTest::frontiers(*link, next, ack, sent) && !sent &&
+      Zutcp::TCPStateTest::sentACK(*link, sent) && !sent &&
       !Zutcp::TCPStateTest::learnTimestamp(*link, 5, 101) &&
       Zutcp::TCPStateTest::recent(*link) == 100;
+  };
+  bool refused = !link->output({}, [&beforeReturn](auto buf) {
+    beforeReturn(buf);
     return false;
   });
-  bool exact = false, learned = false, bounded = false;
-  bool accepted = link->output({}, [link, &exact, &learned, &bounded](
-      auto buf, const Zxdp::CommitFn &commit) {
+  uint64_t sent = 99;
+  bool withheld = Zutcp::TCPStateTest::sentACK(*link, sent) && !sent;
+  bool exact = false;
+  bool accepted = link->output({}, [link, &beforeReturn, &exact](auto buf) {
+    beforeReturn(buf);
     // A later Rx publication/header read must not alter this packet's evidence.
     Zutcp::TCPStateTest::advanceRx(*link, 9);
-    auto later = Zutcp::TCPStateTest::header(*link);
-    if (!commit()) return false;
-    uint64_t next = 0, ack = 0, sent = 0;
-    exact = buf->tcp.ack == 2006 && later.ack == 2010 &&
-      Zutcp::TCPStateTest::frontiers(*link, next, ack, sent) && sent == 5;
-    learned = Zutcp::TCPStateTest::learnTimestamp(*link, 5, 101) &&
-      Zutcp::TCPStateTest::recent(*link) == 101;
-    bounded = !Zutcp::TCPStateTest::learnTimestamp(*link, 6, 102) &&
-      Zutcp::TCPStateTest::recent(*link) == 101 &&
-      Zutcp::TCPStateTest::learnTimestamp(*link, 4, 103) &&
-      Zutcp::TCPStateTest::recent(*link) == 103;
+    exact = buf->tcp.ack == 2006 && Zutcp::TCPStateTest::header(*link).ack == 2010;
     return true;
   });
-  ZuCHECK(refused && unchanged && accepted && exact && learned && bounded,
-    "only the committed packet's exact ACK advances Last.ACK.sent before backend return; "
-    "TS.Recent accepts covered sequence and excludes later sequence");
+  bool published = Zutcp::TCPStateTest::sentACK(*link, sent) && sent == 5;
+  bool learned = Zutcp::TCPStateTest::learnTimestamp(*link, 5, 101) &&
+    Zutcp::TCPStateTest::recent(*link) == 101;
+  bool bounded = !Zutcp::TCPStateTest::learnTimestamp(*link, 6, 102) &&
+    Zutcp::TCPStateTest::recent(*link) == 101 &&
+    Zutcp::TCPStateTest::learnTimestamp(*link, 4, 103) &&
+    Zutcp::TCPStateTest::recent(*link) == 103;
+  ZuCHECK(refused && unchanged && withheld && accepted && exact && published && learned && bounded,
+    "successful return publishes the packet's exact ACK; refusal leaves Last.ACK.sent "
+    "unchanged and TS.Recent excludes uncovered sequence");
   link->finish();
 }
 
@@ -868,15 +860,15 @@ static void probeQuota(bool accept)
   Zutcp::TCPStateTest::probe(*link, [
     link, &ref, &first, &reentry, &second, &attempts, accept] {
     first = link->output(ref, [link, &ref, &attempts, &reentry, accept](
-	auto buf, const Zxdp::CommitFn &commit) {
+	auto buf) {
       ++attempts;
-      reentry = link->output(ref, [](auto, const Zxdp::CommitFn &commit) { return commit(); });
-      if (!accept || !commit()) return false;
+      reentry = link->output(ref, [](auto) { return true; });
+      if (!accept) return false;
       buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
       return true;
     });
     if (accept) second = link->output(ref, [](
-	auto, const Zxdp::CommitFn &commit) { return commit(); });
+	auto) { return true; });
   });
   ZuCHECK(setup && first == accept && !reentry && (!accept || !second) && attempts == 1 &&
       Zutcp::TCPStateTest::latest(*link, ref) == unsigned(accept) && !a.returned,
@@ -907,24 +899,6 @@ static void admissionAndACK()
   ZuCHECK(a.valid && a.returned == 1, "independent ACK retirement retains no extra owner");
 }
 
-static void invalidACKInput(bool stale)
-{
-  ZuTestScopeRT(invalidACKInput);
-  App app;
-  ZmRef<Link> link = new Link{&app};
-  app.holdTx = app.holdRx = true;
-  bool first = link->receive(input(app, "bad", 0, 1));
-  bool duplicate = link->receive(input(app, "bad", 0, 1));
-  ZuCHECK(first && duplicate && !app.demands && !app.rxJobs.count_() &&
-      !link->processed && !link->rxAdmitted(),
-    "future ACKs are rejected directly without retaining packets or scheduling replay");
-  if (stale) Zutcp::TCPStateTest::reset(*link);
-  app.holdTx = false; app.runTx(); app.holdRx = false; app.runRx();
-  ZuCHECK(!link->processed && !link->rxAdmitted() && !link->disconnecting(),
-    "future ACK and replaced-generation input cannot deliver payload or corrupt the live owner");
-  link->finish();
-}
-
 static void directACKAdmission(unsigned scenario)
 {
   ZuTestScopeRT(directACKAdmission);
@@ -934,11 +908,6 @@ static void directACKAdmission(unsigned scenario)
   app.holdTx = app.holdRx = true;
   auto ref = retained(a, pool, 4);
   bool received = true;
-  unsigned attempts = scenario == 4 ? 32 : 1;
-  for (unsigned i = 0; i < attempts; ++i)
-    received &= link->receive(input(app, scenario ? ZuBSpan{"bad"} : ZuBSpan{}, 0, 4));
-  ZuCHECK(received && !app.demands && !link->rxAdmitted() && !app.rxJobs.count_(),
-    "uncommitted ACK targets retain no ingress, even during a burst");
   bool setup = Zutcp::TCPStateTest::record(*link, ref);
   if (scenario == 3) {
     bool reset = link->receive(input(app, {}, 0, 4, 0x14));
@@ -959,7 +928,7 @@ static void directACKAdmission(unsigned scenario)
       received &= link->receive(input(app, "x", i, 4));
     ZuCHECK(setup && received && link->reader().length() == n && app.demands == n &&
 	!app.rxJobs.count_(),
-      "committed ACK targets admit every contiguous packet immediately with Tx work held");
+      "ACK-bearing input admits every contiguous packet immediately with Tx work held");
   }
   app.holdTx = false; app.runTx(); app.holdRx = false; app.runRx(); app.runTx();
   if (scenario == 3)
@@ -992,7 +961,7 @@ static void ackHoldTimer(bool disabled)
 	Zutcp::TCPStateTest::ackDeadline(*link) == deadline &&
 	Zutcp::TCPStateTest::pendingACK(*link),
       "urgent ACK overrides a held ACK");
-    bool sent = link->output({}, [](auto, const Zxdp::CommitFn &commit) { return commit(); });
+    bool sent = link->output({}, [](auto) { return true; });
     ZuCHECK(sent && !Zutcp::TCPStateTest::pendingACK(*link) &&
 	Zutcp::TCPStateTest::ackDeadline(*link) == deadline,
       "accepted ACK clears pending state while retaining the timer epoch");
@@ -1000,7 +969,7 @@ static void ackHoldTimer(bool disabled)
     ZuCHECK(Zutcp::TCPStateTest::heldACK(*link) &&
 	Zutcp::TCPStateTest::ackDeadline(*link) == deadline,
       "next cumulative ACK reuses the earlier timer epoch");
-    link->output({}, [](auto, const Zxdp::CommitFn &commit) { return commit(); });
+    link->output({}, [](auto) { return true; });
     app.clock = deadline;
     Zutcp::TCPStateTest::expireACK(*link);
     ZuCHECK(!Zutcp::TCPStateTest::pendingACK(*link) &&
@@ -1032,8 +1001,7 @@ static void ackHoldCoalesce()
   app.holdTx = false; app.runTx();
   Zutcp::TCPHeader header;
   bool sent = link->output({}, [&header](
-      auto buf, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+      auto buf) {
     header = buf->tcp;
     return true;
   });
@@ -1069,7 +1037,7 @@ static void ackHoldByteBound()
   link->finish();
 }
 
-// Exercise committed SYN publication and its one-way handshake owner event.
+// Exercise accepted SYN recovery and its one-way handshake owner event.
 // A setup retransmission includes an accepted duplicate-triggered SYNACK, not
 // only timeout retries; either kind must make its RTT ambiguous under Karn.
 static void handshakeRTT(bool server, unsigned scenario)
@@ -1080,14 +1048,13 @@ static void handshakeRTT(bool server, unsigned scenario)
   Zutcp::TCPStateTest::handshake(*link, server);
   unsigned attempts = 0;
   Zutcp::TCPHeader wire;
-  auto send = [&attempts, &wire](auto buf, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+  auto send = [&attempts, &wire](auto buf) {
     ++attempts; wire = buf->tcp; return true;
   };
   bool firstRefused = true;
   if (scenario == 1) {
     firstRefused = !link->output({}, [&attempts](
-	auto, const Zxdp::CommitFn &) { ++attempts; return false; }, true);
+	auto) { ++attempts; return false; }, true);
     app.clock += Zutcp::timeUS(30000);
   }
   bool accepted = link->output({}, send, true);
@@ -1102,15 +1069,6 @@ static void handshakeRTT(bool server, unsigned scenario)
     accepted &= link->output({}, send, true);
   }
   app.clock += Zutcp::timeUS(20000);
-  bool invalid = true;
-  if (scenario == 4) {
-    auto d = input(app, {}, 0, 1, server ? 0x10 : 0x12);
-    if (!server) d.tcp.seq = 2000;
-    invalid = (server ? link->receive(ZuMv(d)) :
-      !Zutcp::TCPStateTest::handshakeACK(*link, 1)) &&
-      !Zutcp::TCPStateTest::confirmed(*link) &&
-      !*Zutcp::TCPStateTest::handshakeRTT(*link);
-  }
   app.holdTx = app.holdRx = scenario == 5;
   auto d = input(app, {}, 0, 0, server ? 0x10 : 0x12);
   if (!server) d.tcp.seq = 2000;
@@ -1123,55 +1081,83 @@ static void handshakeRTT(bool server, unsigned scenario)
   app.holdTx = app.holdRx = false; app.runTx(); app.runRx(); app.runTx();
   auto sample = Zutcp::TCPStateTest::handshakeRTT(*link);
   bool measured = scenario != 2 && scenario != 3 && scenario != 5;
-  ZuCHECK(firstRefused && accepted && header && invalid && received && delayed &&
+  ZuCHECK(firstRefused && accepted && header && received && delayed &&
       (*sample == measured) && (!measured || sample == Zutcp::timeUS(20000)) &&
       (Zutcp::TCPStateTest::confirmed(*link) == (scenario != 5)),
     "only a valid current ACK of one accepted SYN/SYNACK produces one exact RTT sample");
   link->finish();
 }
 
-static void synCommitAdmission(unsigned scenario)
+static void synACKHandoff(unsigned scenario)
 {
-  ZuTestScopeRT(synCommitAdmission);
+  ZuTestScopeRT(synACKHandoff);
   App app;
   ZmRef<Link> link = new Link{&app};
-  Zutcp::TCPStateTest::handshake(*link, false);
+  Zutcp::TCPStateTest::syn(*link);
   Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
-  app.nativeAllocator = &a; app.nativePool = &pool;
   Zutcp::SentFrameRef ref;
   if (scenario) ref = retained(a, pool);
-  unsigned end = scenario ? 64 : 0, ack = scenario == 1 ? 64 : 0;
-  bool unsent = !Zutcp::TCPStateTest::handshakeACK(*link, ack) &&
-    !Zutcp::TCPStateTest::handshakeACK(*link, ack, true);
   app.holdTx = app.holdRx = true;
-  bool qualified = false, exposed = false, resetBound = false;
-  bool sent = link->output(ref, [link, &exposed, &qualified, &resetBound, end, ack](
-      auto buf, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
-    exposed = Zutcp::TCPStateTest::synEnd(*link) == end;
-    resetBound = !Zutcp::TCPStateTest::handshakeACK(*link, end + 1, true) &&
-      Zutcp::TCPStateTest::handshakeACK(*link, end, true);
-    qualified = Zutcp::TCPStateTest::handshakeACK(*link, ack);
+  bool sent = link->output(ref, [scenario](auto buf) {
+    if (scenario) { buf->data__ = 0; buf->size = buf->skip = buf->length = 0; }
+    return true;
+  }, true);
+  unsigned ack = scenario == 1 ? 64 : 0;
+  bool qualified = Zutcp::TCPStateTest::handshakeACK(*link, ack);
+  ZuCHECK(sent && qualified && Zutcp::TCPStateTest::rxConfirmed(*link) &&
+      !Zutcp::TCPStateTest::confirmed(*link) && !app.rxJobs.count_(),
+    "empty and Fast Open SYN responses confirm Rx immediately while Tx work is held");
+  app.holdTx = false; app.runTx();
+  ZuCHECK(Zutcp::TCPStateTest::confirmed(*link) && !app.rxJobs.count_() &&
+      (!scenario || Zutcp::TCPStateTest::tfoAccepted(*link) == (scenario == 1)),
+    "the queued handshake event confirms Tx and records accepted or rejected Fast Open data "
+    "without an Rx completion");
+  link->finish(); link = nullptr; ref = {};
+  ZuCHECK(a.valid && a.returned == unsigned(bool(scenario)),
+    "accepted and rejected Fast Open responses preserve exact backing retirement");
+}
+
+static void synRSTQualification(bool tfo)
+{
+  ZuTestScopeRT(synRSTQualification);
+  App app;
+  ZmRef<Link> link = new Link{&app};
+  Zutcp::TCPStateTest::syn(*link);
+  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
+  Zutcp::SentFrameRef ref;
+  unsigned end = tfo ? 64 : 0;
+  if (tfo) ref = retained(a, pool);
+  Zutcp::TCPStateTest::synCandidate(*link, end);
+  bool unsent = !Zutcp::TCPStateTest::handshakeACK(*link, end, true);
+  bool refused = !link->output(ref, [](auto) { return false; }, true);
+  bool withheld = !Zutcp::TCPStateTest::handshakeACK(*link, end, true);
+  bool beforeReturn = false;
+  bool accepted = link->output(ref, [link, &beforeReturn, end](auto buf) {
+    beforeReturn = !Zutcp::TCPStateTest::handshakeACK(*link, end, true);
     if (end) { buf->data__ = 0; buf->size = buf->skip = buf->length = 0; }
     return true;
   }, true);
-  ZuCHECK(unsent && sent && exposed && resetBound && qualified &&
-      Zutcp::TCPStateTest::rxConfirmed(*link) &&
-      !Zutcp::TCPStateTest::confirmed(*link) && !app.rxJobs.count_(),
-    "committed empty/TFO SYN qualifies the peer immediately; unsent or excess RST ACK does not");
-  if (scenario == 2) {
-    bool fallback = link->output({}, [](auto, const Zxdp::CommitFn &commit) {
-      if (!commit()) return false;
-      return true;
-    }, true);
-    ZuCHECK(fallback && Zutcp::TCPStateTest::synEnd(*link) == 64,
-      "an empty fallback SYN preserves the original committed Fast Open extent");
+  bool exact = Zutcp::TCPStateTest::handshakeACK(*link, end, true) &&
+    !Zutcp::TCPStateTest::handshakeACK(*link, end + 1, true) &&
+    !Zutcp::TCPStateTest::handshakeACK(*link, end ? end - 1 : uint32_t(-1), true);
+  ZuCHECK(unsent && refused && withheld && accepted && beforeReturn && exact,
+    "pre-establishment RST matches the normalized end of a successfully submitted SYN; "
+    "candidate data, refusal and backend entry provide no reset evidence");
+  if (tfo) {
+    bool fallback = link->output({}, [](auto) { return true; }, true);
+    ZuCHECK(fallback && Zutcp::TCPStateTest::handshakeACK(*link, end, true) &&
+        !Zutcp::TCPStateTest::handshakeACK(*link, 0, true),
+      "an accepted empty fallback SYN preserves the submitted Fast Open reset extent");
   }
+  app.holdTx = true;
+  Zutcp::TCPStateTest::reset(*link);
+  bool invalidated = !Zutcp::TCPStateTest::handshakeACK(*link, end, true);
   app.holdTx = false; app.runTx();
-  ZuCHECK(Zutcp::TCPStateTest::confirmed(*link) && !app.rxJobs.count_(),
-    "one-way handshake bookkeeping requires no retained packet or Rx completion");
+  ZuCHECK(invalidated && !Zutcp::TCPStateTest::handshakeACK(*link, end, true),
+    "generation reset invalidates accepted SYN reset evidence before and after owner reset");
   link->finish(); link = nullptr; ref = {};
-  ZuCheck(a.valid && a.returned == unsigned(bool(scenario)));
+  ZuCHECK(a.valid && a.returned == unsigned(tfo),
+    "SYN refusal, acceptance and generation teardown return Fast Open backing once");
 }
 
 static void selectiveRecovery()
@@ -1403,24 +1389,17 @@ static void pawsAdmission(unsigned scenario)
   Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
   app.holdTx = app.holdRx = true;
   auto ref = retained(a, pool, 4);
-  auto d = input(app, "tail", 0, 4);
-  d.tcp.options = {.flags = Zutcp::TCPOptions::TS, .tsval = 101};
-  bool received = link->receive(ZuMv(d));
   bool setup = Zutcp::TCPStateTest::record(*link, ref);
-  ZuCHECK(setup && received && !app.demands && !app.rxJobs.count_() &&
-      !link->rxAdmitted() && !link->txAckd() &&
-      Zutcp::TCPStateTest::recent(*link) == 100,
-    "uncommitted ACK rejects DATA without updating recent TS or retaining ingress");
   // A fresh retransmission must use current PAWS evidence and arrival time.
   app.clock += ZuTime{1};
   if (scenario) Zutcp::TCPStateTest::timestamps(*link, 102);
   if (scenario == 2) app.clock += ZuTime{24*24*60*60} + ZuTime{0, 1};
-  d = input(app, "tail", 0, 4);
+  auto d = input(app, "tail", 0, 4);
   d.tcp.options = {.flags = Zutcp::TCPOptions::TS, .tsval = 101};
-  received &= link->receive(ZuMv(d));
+  bool received = link->receive(ZuMv(d));
   app.holdTx = false; app.runTx();
   app.holdRx = false; app.runRx(); app.runTx(); app.runRx();
-  ZuCHECK(received && !link->disconnecting() &&
+  ZuCHECK(setup && received && !link->disconnecting() &&
       link->rxAdmitted() == unsigned(stale ? 0 : 4) &&
       link->rxBytes() == unsigned(stale ? 0 : 4) &&
       link->txAckd() == unsigned(stale ? 0 : 4) &&
@@ -1466,8 +1445,7 @@ static void positiveWindow(unsigned window)
   auto ref = retained(a, pool);
   Zutcp::TCPStateTest::window(*link, window);
   unsigned attempts = 0;
-  bool sent = link->output(ref, [&attempts](auto buf, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+  bool sent = link->output(ref, [&attempts](auto buf) {
     ++attempts;
     buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
     return true;
@@ -1479,8 +1457,7 @@ static void positiveWindow(unsigned window)
     Zutcp::TCPStateTest::window(*link, 0);
     unsigned before = attempts;
     bool blocked = !link->output(ref, [&attempts](
-	auto, const Zxdp::CommitFn &commit) {
-      if (!commit()) return false;
+	auto) {
       ++attempts;
       return true;
     });
@@ -1502,8 +1479,7 @@ static void pacedECN()
   Zutcp::TCPStateTest::pacingRTT(*link);
   Zutcp::TCPStateTest::ecn(*link);
   unsigned attempts = 0;
-  auto accept = [&attempts](auto buf, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+  auto accept = [&attempts](auto buf) {
     ++attempts;
     buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
     return true;
@@ -1512,8 +1488,7 @@ static void pacedECN()
   uint64_t deadline = Zutcp::TCPStateTest::paced(*link);
   bool blocked = !link->output(second, accept);
   bool ack = link->output({}, [&attempts](
-      auto, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+      auto) {
     ++attempts;
     return true;
   });
@@ -1527,12 +1502,11 @@ static void pacedECN()
     "accepted DATA charges pacing; pure ACK bypasses it; same-flight ECE reduces once and "
     "queues CWR");
   Zutcp::TCPStateTest::pacingDue(*link);
-  bool refused = !link->output(second, [](auto, const Zxdp::CommitFn &) { return false; });
+  bool refused = !link->output(second, [](auto) { return false; });
   bool retained = Zutcp::TCPStateTest::cwr(*link);
   Zutcp::TCPHeader header;
   bool accepted = link->output(second, [&attempts, &header](
-      auto buf, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+      auto buf) {
     ++attempts; header = buf->tcp;
     buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
     return true;
@@ -1942,13 +1916,12 @@ static void repeatDataACKIntent()
   bool recorded = Zutcp::TCPStateTest::record(*link, ref);
   Zutcp::TCPStateTest::ack(*link, 64);
   Zutcp::TCPStateTest::requestACK(*link, false);
-  bool refused = !link->output({}, [](auto, const Zxdp::CommitFn &) { return false; });
+  bool refused = !link->output({}, [](auto) { return false; });
   unsigned outputs = 0;
   Zutcp::TCPHeader sent;
   link->flushFn = [link = link.ptr(), &outputs, &sent] {
     return Zutcp::TCPStateTest::flush(*link, [&outputs, &sent](
-        auto buf, const Zxdp::CommitFn &commit) {
-      if (!commit()) return false;
+        auto buf) {
       ++outputs; sent = buf->tcp; return true;
     });
   };
@@ -1985,14 +1958,13 @@ static void noCCAdmission()
   ZuCHECK(ready && !app.clockCalls && !app.ecn(),
     "disabled congestion control bypasses pacing without reading time and disables ECN");
   unsigned attempts = 0;
-  auto accept = [&attempts](auto buf, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+  auto accept = [&attempts](auto buf) {
     ++attempts;
     buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
     return true;
   };
   bool refused = !link->output(refs[0], [&attempts](
-      auto, const Zxdp::CommitFn &) { ++attempts; return false; });
+      auto) { ++attempts; return false; });
   app.writable = false;
   bool busy = !link->output(refs[0], accept);
   app.writable = true;
@@ -2053,8 +2025,7 @@ static void noCCRecovery(bool rto)
   bool setup = true;
   for (unsigned i = 0; i < 8; ++i) {
     refs[i] = retained(sources[i], pool, 200, i * 200);
-    setup &= link->output(refs[i], [](auto buf, const Zxdp::CommitFn &commit) {
-      if (!commit()) return false;
+    setup &= link->output(refs[i], [](auto buf) {
       buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
       return true;
     });
@@ -2067,8 +2038,7 @@ static void noCCRecovery(bool rto)
     bool next = native->next(ref);
     selected &= next && !ref.offset && ref.length == 200;
     return next && native->recoveryOutput(ref, [&attempts](
-	auto buf, const Zxdp::CommitFn &commit) {
-      if (!commit()) return false;
+	auto buf) {
       ++attempts;
       buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
       return true;
@@ -2147,24 +2117,23 @@ static void rtoQuota(unsigned scenario)
   Zutcp::TCPStateTest::exhaustCwnd(*link);
   unsigned attempts = 0;
   bool normal = link->output(refs[0], [&attempts](
-      auto, const Zxdp::CommitFn &) { ++attempts; return false; });
+      auto) { ++attempts; return false; });
   bool first = false, reentry = true, second = true, other = true;
   Zutcp::TCPStateTest::rtoAttempt(*link, [
     link, &refs, &attempts, &first, &reentry, &second, &other, scenario] {
     other = link->output(refs[1], [&attempts](
-	auto, const Zxdp::CommitFn &) { ++attempts; return false; });
+	auto) { ++attempts; return false; });
     first = link->output(refs[0], [link, &refs, &attempts, &reentry, scenario](
-	auto buf, const Zxdp::CommitFn &commit) {
-      if (!commit()) return false;
+	auto buf) {
       ++attempts;
       reentry = link->output(refs[0], [&attempts](
-	  auto, const Zxdp::CommitFn &) { ++attempts; return false; });
+	  auto) { ++attempts; return false; });
       if (scenario == 0) return false;
       buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
       if (scenario == 2) Zutcp::TCPStateTest::reset(*link);
       return true;
     });
-    if (scenario != 0) second = link->output(refs[0], [&attempts](auto, const Zxdp::CommitFn &) {
+    if (scenario != 0) second = link->output(refs[0], [&attempts](auto) {
       ++attempts; return false;
     });
   });
@@ -2175,7 +2144,7 @@ static void rtoQuota(unsigned scenario)
     "quota");
   if (scenario == 2) {
     ZuCHECK(!Zutcp::TCPStateTest::records(*link) && !link->txNext() && !link->txAckd(),
-      "accepted old-generation output cannot publish history or frontiers into replacement "
+      "accepted old-generation output cannot publish recovery history into replacement "
       "state");
   } else {
     ZuCHECK(link->txNext() == 1600 && link->txAckd() == unsigned(scenario == 3 ? 100 : 0) &&
@@ -2672,7 +2641,7 @@ static void mappedTxActive(unsigned scenario)
   cxn->flushFn = [native = cxn.ptr(), &a, &b, &accept, &attempts, &bytes,
       &exact, &observed] {
     return Zutcp::TCPStateTest::flush(*native, [&a, &b, &accept, &attempts,
-        &bytes, &exact, &observed](auto buf, const Zxdp::CommitFn &commit) {
+        &bytes, &exact, &observed](auto buf) {
       ++attempts;
       auto source = bytes ? &b : &a;
       exact &= buf->data() == source->bytes + (bytes ? 257 : 256) &&
@@ -2680,7 +2649,7 @@ static void mappedTxActive(unsigned scenario)
       if (buf->length != 3 || bytes > 3 || !buf->retained) {
         exact = false; return false;
       }
-      if (!accept || !commit()) return false;
+      if (!accept) return false;
       memcpy(observed + bytes, buf->data(), 3);
       bytes += 3;
       buf->retained->adopt(source, source->bytes, sizeof(source->bytes));
@@ -2751,24 +2720,6 @@ static void mappedTxActive(unsigned scenario)
     "mapped and generic producer cleanup cannot return accepted backing twice");
 }
 
-static void oldIncarnationACK()
-{
-  ZuTestScope(oldIncarnationACK);
-  App app;
-  ZmRef<Link> link = new Link{&app};
-  Zutcp::TCPStateTest::timestamps(*link, 100);
-  auto d = input(app, "old");
-  d.tcp.ack = 1000; // Before this owner's accepted local SYN sequence space.
-  d.tcp.options = {.flags = Zutcp::TCPOptions::TS, .tsval = 101};
-  bool live = link->acceptsLiveTCP(d);
-  bool received = link->receive(ZuMv(d));
-  ZuCHECK(live && received && !link->rxAdmitted() && !link->rxBytes() &&
-      !app.demands &&
-      !link->disconnecting() && Zutcp::TCPStateTest::recent(*link) == 100,
-    "overlapping live SEQ/new TS cannot admit stale-incarnation DATA with an invalid pre-SYN "
-    "ACK");
-  link->finish();
-}
 
 static void sequenceCycle(bool timestamps)
 {
@@ -2795,29 +2746,25 @@ static void receiveCE()
   bool first = link->receive(ZuMv(ce));
   Zutcp::TCPHeader firstACK, secondACK, clearedACK, renewedACK;
   bool ack1 = link->output({}, [&firstACK](
-      auto buf, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+      auto buf) {
     firstACK = buf->tcp;
     return true;
   });
   bool ack2 = link->output({}, [&secondACK](
-      auto buf, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+      auto buf) {
     secondACK = buf->tcp;
     return true;
   });
   bool cwr = link->receive(input(app, {}, 3, 0, 0x90));
   bool ack3 = link->output({}, [&clearedACK](
-      auto buf, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+      auto buf) {
     clearedACK = buf->tcp;
     return true;
   });
   auto renewed = input(app, "two", 3, 0, 0x90); renewed.ecn = Zutcp::EcnMark::CE;
   bool both = link->receive(ZuMv(renewed));
   bool ack4 = link->output({}, [&renewedACK](
-      auto buf, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+      auto buf) {
     renewedACK = buf->tcp;
     return true;
   });
@@ -2931,18 +2878,17 @@ static void fastRecovery(unsigned scenario)
   setup &= link->next(candidate) && candidate.offset == 0 && candidate.length == 200;
   unsigned attempts = 0;
   bool ordinary = link->output(candidate, [&attempts](
-      auto, const Zxdp::CommitFn &) { ++attempts; return false; });
+      auto) { ++attempts; return false; });
   bool newAllowed = link->recoveryOutput(newData,
-    [&attempts](auto, const Zxdp::CommitFn &) { ++attempts; return false; });
+    [&attempts](auto) { ++attempts; return false; });
   bool reentry = true, direct = true, accepted = false;
   auto accept = [native = link.ptr(), &candidate, &attempts, &reentry, &direct, scenario](
-      auto buf, const Zxdp::CommitFn &commit) {
+      auto buf) {
     ++attempts;
     reentry = native->recoveryOutput(candidate,
-      [&attempts](auto, const Zxdp::CommitFn &) { ++attempts; return false; });
+      [&attempts](auto) { ++attempts; return false; });
     direct = native->output(candidate, [&attempts](
-	auto, const Zxdp::CommitFn &) { ++attempts; return false; });
-    if (!commit()) return false;
+	auto) { ++attempts; return false; });
     buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
     if (scenario == 3) Zutcp::TCPStateTest::reset(*native);
     return true;
@@ -2952,7 +2898,7 @@ static void fastRecovery(unsigned scenario)
     if (scenario == 2) Zutcp::TCPStateTest::delayRecovery(*link);
     else Zutcp::TCPStateTest::window(*link, 0);
     refused = !link->recoveryOutput(candidate,
-      [&attempts](auto, const Zxdp::CommitFn &) { ++attempts; return false; });
+      [&attempts](auto) { ++attempts; return false; });
     retainedPermission = Zutcp::TCPStateTest::fastReady(*link) && !attempts;
     setup &= Zutcp::TCPStateTest::requeue(*link, candidate);
     if (scenario == 2) {
@@ -2971,7 +2917,7 @@ static void fastRecovery(unsigned scenario)
   } else {
     if (scenario == 1 || scenario >= 4) {
       refused = !link->recoveryOutput(candidate,
-	[&attempts](auto, const Zxdp::CommitFn &) { ++attempts; return false; });
+	[&attempts](auto) { ++attempts; return false; });
       retainedPermission = Zutcp::TCPStateTest::fastReady(*link) &&
 	Zutcp::TCPStateTest::latest(*link, candidate) == 0;
     }
@@ -3032,8 +2978,7 @@ static void finACKBeforeDequeue()
   app.holdRx = false;
   unsigned attempts = 0;
   bool accepted = link->output({}, [&attempts](
-      auto, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+      auto) {
     ++attempts;
     return true;
   });
@@ -3062,13 +3007,12 @@ static void finACK(bool heldReader, bool stale)
   if (!heldReader) { unsigned n = consume(*link); setup &= n == 3 && link->retireRx(n); }
   unsigned attempts = 0;
   bool refused = link->output({}, [&attempts](
-      auto, const Zxdp::CommitFn &) { ++attempts; return false; });
+      auto) { ++attempts; return false; });
   ZuCHECK(setup && peer && !refused && !link->finishes && !link->completions,
     "refused final ACK cannot finish native retirement or queued disconnect callbacks");
   app.holdRx = stale;
   bool accepted = link->output({}, [&attempts](
-      auto, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+      auto) {
     ++attempts;
     return true;
   });
@@ -3149,9 +3093,9 @@ static void finACKCovered(bool accepted)
   app.holdTx = app.holdRx = true;
   bool received = link->receive(input(app, "end", 0, 0, 0x11));
   unsigned attempts = 0, sent = 0;
-  bool early = link->output({}, [&attempts, &sent, accepted](auto, const Zxdp::CommitFn &commit) {
+  bool early = link->output({}, [&attempts, &sent, accepted](auto) {
     ++attempts;
-    if (!accepted || !commit()) return false;
+    if (!accepted) return false;
     ++sent;
     return true;
   });
@@ -3159,8 +3103,7 @@ static void finACKCovered(bool accepted)
   bool pending = Zutcp::TCPStateTest::pendingACK(*link);
   bool held = Zutcp::TCPStateTest::heldACK(*link);
   bool later = Zutcp::TCPStateTest::flush(*link, [&attempts, &sent](
-      auto, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+      auto) {
     ++attempts; ++sent; return true;
   });
   ZuCHECK(received && early == accepted && pending == !accepted && !held &&
@@ -3170,8 +3113,7 @@ static void finACKCovered(bool accepted)
   bool duplicate = link->receive(input(app, {}, 3, 0, 0x11));
   pending = Zutcp::TCPStateTest::pendingACK(*link);
   bool repeated = Zutcp::TCPStateTest::flush(*link, [&attempts, &sent](
-      auto, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+      auto) {
     ++attempts; ++sent; return true;
   });
   ZuCHECK(duplicate && pending && repeated && sent == 2,
@@ -3191,8 +3133,7 @@ static void finACKBeforeNotice()
   bool peer = link->receive(input(app, "end", 0, 1, 0x11));
   Zutcp::TCPHeader header;
   bool sent = link->output({}, [&header](
-      auto buf, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+      auto buf) {
     header = buf->tcp;
     return true;
   });
@@ -3220,15 +3161,14 @@ static void finACKRetransmit()
   app.holdTx = app.holdRx = true;
   bool peer = link->receive(input(app, "end", 0, 1, 0x11));
   Zutcp::TCPHeader repeated;
-  bool sent = link->output(local, [&repeated](auto buf, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+  bool sent = link->output(local, [&repeated](auto buf) {
     repeated = buf->tcp;
     return true;
   });
-  uint64_t next = 0, ack = 0, sentAck = 0;
-  bool visible = Zutcp::TCPStateTest::frontiers(*link, next, ack, sentAck);
+  uint64_t sentAck = 0;
+  bool visible = Zutcp::TCPStateTest::sentACK(*link, sentAck);
   ZuCHECK(setup && peer && sent && repeated.seq == 1001 && repeated.ack == 2005 &&
-      repeated.flags == 0x11 && visible && next == 1 && !ack && sentAck < 4 &&
+      repeated.flags == 0x11 && visible && sentAck < 4 &&
       !app.rxJobs.count_(),
     "old-sequence FIN retransmission cannot publish final-ACK coverage before peer-FIN notice");
   app.holdTx = false; app.runTx();
@@ -3241,7 +3181,7 @@ static void finACKRetransmit()
   bool retired = n == 3 && link->retireRx(n);
   unsigned attempts = 0;
   Zutcp::TCPHeader final;
-  bool refused = link->output({}, [&attempts, &final](auto buf, const Zxdp::CommitFn &) {
+  bool refused = link->output({}, [&attempts, &final](auto buf) {
     ++attempts;
     final = buf->tcp;
     return false;
@@ -3250,8 +3190,7 @@ static void finACKRetransmit()
       final.ack == 2005 && final.flags == 0x10 && !link->finishes && !link->completions &&
       Zutcp::TCPStateTest::pendingACK(*link) && !Zutcp::TCPStateTest::heldACK(*link),
     "reader retirement and refused current-sequence final ACK cannot finish native close");
-  bool accepted = link->output({}, [&attempts, &final](auto buf, const Zxdp::CommitFn &commit) {
-    if (!commit()) return false;
+  bool accepted = link->output({}, [&attempts, &final](auto buf) {
     ++attempts;
     final = buf->tcp;
     return true;
@@ -3284,11 +3223,11 @@ static void txReadFresh()
   ZuTestScope(txReadFresh);
   App app;
   ZmRef<Link> link = new Link{&app, true};
-  uint64_t next = 99, ack = 99, sent = 99;
+  uint64_t sent = 99;
   ZuCHECK(link->isServer() && !link->dataGen() &&
-      Zutcp::TCPStateTest::frontiers(*link, next, ack, sent) &&
-      !next && !ack && !sent,
-    "fresh passive connection publishes its empty generation-zero Tx view");
+      Zutcp::TCPStateTest::sentACK(*link, sent) &&
+      !sent,
+    "fresh passive connection publishes its empty generation-zero sent ACK");
   // Hold owner work so a broken replay path cannot recurse during this test.
   app.holdTx = true;
   bool received = link->receive(input(app, "abc"));
@@ -3297,47 +3236,72 @@ static void txReadFresh()
     "generation-zero ACK-bearing DATA is admitted directly");
   Zutcp::TCPStateTest::reset(*link);
   ZuCHECK(link->dataGen() == 1 &&
-      !Zutcp::TCPStateTest::frontiers(*link, next, ack, sent),
-    "first Rx reset rejects generation-zero Tx evidence before its owner reset");
+      !Zutcp::TCPStateTest::sentACK(*link, sent),
+    "first Rx reset rejects generation-zero sent ACK evidence before its owner reset");
   app.holdTx = false; app.runTx();
-  ZuCHECK(Zutcp::TCPStateTest::frontiers(*link, next, ack, sent) &&
-      !next && !ack && !sent,
-    "first Tx reset publishes the empty generation-one view");
+  ZuCHECK(Zutcp::TCPStateTest::sentACK(*link, sent) &&
+      !sent,
+    "first Tx reset publishes the empty generation-one sent ACK");
   link->finish();
 }
 
-static void txReadFrontiers()
+static void sentACKRead()
 {
-  ZuTestScope(txReadFrontiers);
+  ZuTestScope(sentACKRead);
   App app;
   ZmRef<Link> link = new Link{&app};
   Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
   auto ref = retained(a, pool, 4);
   app.holdRx = true;
   bool recorded = Zutcp::TCPStateTest::record(*link, ref);
-  uint64_t next = 0, ack = 0, sent = 0;
-  bool visible = Zutcp::TCPStateTest::frontiers(*link, next, ack, sent);
-  ZuCHECK(recorded && visible && next == 4 && !ack && !sent && !app.rxJobs.count_(),
-    "accepted DATA is visible to Rx immediately without an owner mirror callback");
+  uint64_t sent = 0;
+  bool visible = Zutcp::TCPStateTest::sentACK(*link, sent);
+  ZuCHECK(recorded && visible && !sent && !app.rxJobs.count_(),
+    "accepted DATA preserves the sent ACK without an owner mirror callback");
   Zutcp::TCPStateTest::ack(*link, 4);
   Zutcp::TCPStateTest::ack(*link, 4);
-  visible = Zutcp::TCPStateTest::frontiers(*link, next, ack, sent);
-  ZuCHECK(visible && next == 4 && ack == 4 && !app.rxJobs.count_() && a.returned == 1,
-    "ACK retirement and duplicate ACK expose monotonic frontiers without Rx jobs");
+  visible = Zutcp::TCPStateTest::sentACK(*link, sent);
+  ZuCHECK(visible && link->txAckd() == 4 && !app.rxJobs.count_() && a.returned == 1,
+    "ACK retirement and duplicate ACK preserve the sent ACK without Rx jobs");
   Zutcp::TCPStateTest::timestamps(*link, 100);
   bool premature = Zutcp::TCPStateTest::learnTimestamp(*link, 1, 101);
   Zutcp::TCPStateTest::advanceRx(*link, 4);
-  bool refused = link->output({}, [](auto, const Zxdp::CommitFn &) { return false; });
-  visible = Zutcp::TCPStateTest::frontiers(*link, next, ack, sent);
+  bool refused = link->output({}, [](auto) { return false; });
+  visible = Zutcp::TCPStateTest::sentACK(*link, sent);
   bool withheld = visible && !sent && !Zutcp::TCPStateTest::learnTimestamp(*link, 1, 101);
-  bool accepted = link->output({}, [](auto, const Zxdp::CommitFn &commit) { return commit(); });
-  visible = Zutcp::TCPStateTest::frontiers(*link, next, ack, sent);
+  bool accepted = link->output({}, [](auto) { return true; });
+  visible = Zutcp::TCPStateTest::sentACK(*link, sent);
   bool learned = Zutcp::TCPStateTest::learnTimestamp(*link, 1, 101);
   ZuCHECK(!premature && !refused && withheld && accepted && visible && sent == 4 &&
       learned && Zutcp::TCPStateTest::recent(*link) == 101 && !app.rxJobs.count_(),
     "only accepted ACK publication permits TS.Recent advancement, with no ordinary Rx post");
   link->finish(); link = nullptr; ref = {};
   ZuCHECK(a.valid && a.returned == 1, "view publication preserves exact backing retirement");
+}
+
+static void ackGeneration(bool txReset)
+{
+  ZuTestScopeRT(ackGeneration);
+  App app;
+  ZmRef<Link> link = new Link{&app};
+  Zutcp::TCPStateTest::timestamps(*link, 100);
+  auto recentTime = Zutcp::TCPStateTest::recentTime(*link);
+  if (txReset) Zutcp::TCPStateTest::resetTx(*link);
+  else Zutcp::TCPStateTest::staleTxRead(*link, true);
+  app.holdTx = app.holdRx = true;
+  app.clock += ZuTime{1};
+  auto d = input(app, "old");
+  d.tcp.options = {.flags = Zutcp::TCPOptions::TS, .tsval = 101};
+  bool received = link->receive(ZuMv(d));
+  ZuCHECK(received && !link->rxAdmitted() && !link->rxBytes() &&
+      !link->reader().length() && !link->processed && !app.demands &&
+      !app.rxJobs.count_() && !app.txJobs.count_() &&
+      Zutcp::TCPStateTest::recent(*link) == 100 &&
+      Zutcp::TCPStateTest::recentTime(*link) == recentTime,
+    "ACK-bearing DATA from a replaced Tx epoch cannot mutate established Rx data or "
+    "timestamp state or enqueue owner work");
+  if (!txReset) Zutcp::TCPStateTest::staleTxRead(*link, false);
+  link->finish();
 }
 
 static void txReadReset()
@@ -3350,12 +3314,12 @@ static void txReadReset()
   bool recorded = Zutcp::TCPStateTest::record(*link, ref);
   app.holdTx = true;
   Zutcp::TCPStateTest::reset(*link);
-  uint64_t next = 99, ack = 99, sent = 99;
-  ZuCHECK(recorded && !Zutcp::TCPStateTest::frontiers(*link, next, ack, sent),
+  uint64_t sent = 99;
+  ZuCHECK(recorded && !Zutcp::TCPStateTest::sentACK(*link, sent),
     "Rx reset rejects the previous Tx generation before its owner reset runs");
   app.holdTx = false; app.runTx();
-  ZuCHECK(Zutcp::TCPStateTest::frontiers(*link, next, ack, sent) &&
-      !next && !ack && !sent,
+  ZuCHECK(Zutcp::TCPStateTest::sentACK(*link, sent) &&
+      !sent,
     "completed Tx reset publishes one fresh empty generation");
   link->finish(); link = nullptr; ref = {};
   ZuCHECK(a.valid && a.returned == 1, "reset view retains no old physical backing");
@@ -3368,13 +3332,13 @@ static void txReadDSACK()
   ZmRef<Link> link = new Link{&app};
   bool received = link->receive(input(app, "abcd"));
   app.holdRx = true;
-  bool ordinary = link->output({}, [](auto, const Zxdp::CommitFn &commit) { return commit(); });
+  bool ordinary = link->output({}, [](auto) { return true; });
   ZuCHECK(received && ordinary && !app.rxJobs.count_(),
     "ordinary accepted cumulative ACK does not schedule SACK bookkeeping");
   bool duplicate = link->receive(input(app, "abcd"));
   // Drain ACK-intent work; only the accepted DSACK below is held.
   app.runRx();
-  bool first = link->output({}, [](auto, const Zxdp::CommitFn &commit) { return commit(); });
+  bool first = link->output({}, [](auto) { return true; });
   bool notified = app.rxJobs.count_() == 1;
   duplicate &= link->receive(input(app, "abcd"));
   if (auto job = app.rxJobs.shift()) job();
@@ -3382,7 +3346,7 @@ static void txReadDSACK()
   ZuCHECK(duplicate && first && notified && options.dsack(4),
     "old accepted DSACK event cannot clear a newer duplicate report");
   app.runRx();
-  bool second = link->output({}, [](auto, const Zxdp::CommitFn &commit) { return commit(); });
+  bool second = link->output({}, [](auto) { return true; });
   app.runRx();
   options = Zutcp::TCPStateTest::rxOptions(*link);
   ZuCHECK(second && !options.sackCount,
@@ -3403,8 +3367,10 @@ int main(int argc, char **argv)
   ZuTestCall(finACKCovered, true);
   ZuTestCall(pathRxLocal);
   ZuTestCall(txReadFresh);
-  ZuTestCall(txReadFrontiers);
+  ZuTestCall(sentACKRead);
   ZuTestCall(txReadReset);
+  ZuTestCall(ackGeneration, false);
+  ZuTestCall(ackGeneration, true);
   ZuTestCall(txReadDSACK);
   ZuTestCall(peerEcho, 0);
   ZuTestCall(peerEcho, 1);
@@ -3417,21 +3383,15 @@ int main(int argc, char **argv)
   ZuTestCall(originalTxOrder, 1);
   ZuTestCall(originalTxOrder, 2);
   ZuTestCall(originalTxOrder, 3);
-  ZuTestCall(acceptedFrontierBurst);
-  ZuTestCall(committedACKTimestamp);
-  ZuTestCall(synCommitAdmission, 0);
-  ZuTestCall(synCommitAdmission, 1);
-  ZuTestCall(synCommitAdmission, 2);
+  ZuTestCall(immediateACKBurst);
+  ZuTestCall(sentACKTimestamp);
   ZuTestCall(probeQuota, false);
   ZuTestCall(probeQuota, true);
   ZuTestCall(admissionAndACK);
-  ZuTestCall(invalidACKInput, false);
-  ZuTestCall(invalidACKInput, true);
   ZuTestCall(directACKAdmission, 0);
   ZuTestCall(directACKAdmission, 1);
   ZuTestCall(directACKAdmission, 2);
   ZuTestCall(directACKAdmission, 3);
-  ZuTestCall(directACKAdmission, 4);
   ZuTestCall(ackHoldTimer, false);
   ZuTestCall(ackHoldTimer, true);
   ZuTestCall(ackHoldCoalesce);
@@ -3440,14 +3400,17 @@ int main(int argc, char **argv)
   ZuTestCall(handshakeRTT, false, 1);
   ZuTestCall(handshakeRTT, false, 2);
   ZuTestCall(handshakeRTT, false, 3);
-  ZuTestCall(handshakeRTT, false, 4);
   ZuTestCall(handshakeRTT, false, 5);
   ZuTestCall(handshakeRTT, true, 0);
   ZuTestCall(handshakeRTT, true, 1);
   ZuTestCall(handshakeRTT, true, 2);
   ZuTestCall(handshakeRTT, true, 3);
-  ZuTestCall(handshakeRTT, true, 4);
   ZuTestCall(handshakeRTT, true, 5);
+  ZuTestCall(synACKHandoff, 0);
+  ZuTestCall(synACKHandoff, 1);
+  ZuTestCall(synACKHandoff, 2);
+  ZuTestCall(synRSTQualification, false);
+  ZuTestCall(synRSTQualification, true);
   ZuTestCall(selectiveRecovery);
   ZuTestCall(cumulativeFallback);
   ZuTestCall(receiveSACK);
@@ -3533,7 +3496,6 @@ int main(int argc, char **argv)
   ZuTestCall(mappedTxActive, 1);
   ZuTestCall(mappedTxActive, 2);
   ZuTestCall(mappedTxActive, 3);
-  ZuTestCall(oldIncarnationACK);
   ZuTestCall(sequenceCycle, false);
   ZuTestCall(sequenceCycle, true);
   ZuTestCall(receiveCE);

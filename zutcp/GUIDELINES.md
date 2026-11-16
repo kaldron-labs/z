@@ -11,6 +11,12 @@ Keep the accepted whole-original send/recovery policy, including positive peer
 windows smaller than an original. RST receive policy is window-qualified, with
 silent out-of-window rejection and no reflection of accepted peer resets.
 
+Raw send returns accepted/refused without a commit callback. Tx publishes the
+packet's ACK monotonically through the atomic `sentAck` only after successful
+return, then finishes recovery bookkeeping before queued peer-ACK work runs.
+Rx admits peer ACKs without consulting a transmitted byte frontier. Keep
+generation checks and the independent receive-window and RST qualification.
+
 Build/test Zutcp and its dependency closure in explicit directory/target order.
 Use the five native drivers and separate independent-kernel interop runner while
 finishing TCP. Selected Ztcp/Ztls application checks follow TCP completion; they

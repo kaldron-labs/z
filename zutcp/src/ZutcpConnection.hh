@@ -83,22 +83,20 @@ struct TimerState {
   ZuTime *deadline;
 };
 
-// Tx publishes monotonic frontiers; Rx reads without scheduling mirror updates.
+// Tx publishes the monotonic sent ACK; Rx reads without scheduling mirror updates.
 // Reset invalidates the epoch before publishing any replacement values.
 struct alignas(Zm::CacheLineSize) TxReadView {
-  ZmAtomic<uint64_t> gen{U64Null}, next{0}, ack{0}, sentAck{0}, synEnd{U64Null};
+  ZmAtomic<uint64_t> gen{U64Null}, sentAck{0}, synEnd{U64Null};
 
   void reset(uint64_t generation) {
     gen = U64Null;
-    next = 0; ack = 0; sentAck = 0; synEnd = U64Null;
+    sentAck = 0; synEnd = U64Null;
     gen = generation;
   }
-  bool read(uint64_t generation, uint64_t &next_, uint64_t &ack_, uint64_t &sent_) const {
+  bool read(uint64_t generation, uint64_t &sent_) const {
     if (uint64_t(gen) != generation) return false;
-    ack_ = ack;
-    next_ = next;
     sent_ = sentAck;
-    return uint64_t(gen) == generation && ack_ <= next_;
+    return uint64_t(gen) == generation;
   }
 };
 
@@ -566,8 +564,8 @@ protected:
     if (!(m_rxTCPState.flags & TCPOptions::TS) ||
 	!(header.options.flags & TCPOptions::TS) || (header.flags & 0x04)) return false;
     // The receive path has already accepted this timestamp on the Rx owner.
-    uint64_t next, ack, sent;
-    if (!readTxView(next, ack, sent)) return false;
+    uint64_t sent;
+    if (!readSentAck(sent)) return false;
     if (int32_t(header.seq - uint32_t(sent)) <= 0 || !tcpRecentValid(now)) {
       bool changed = !m_rxTSKnown || header.options.tsval != m_rxTSRecent;
       m_rxTSRecent = header.options.tsval;
@@ -577,9 +575,9 @@ protected:
     }
     return false;
   }
-  bool readTxView(uint64_t &next, uint64_t &ack, uint64_t &sent) const {
+  bool readSentAck(uint64_t &sent) const {
     auto gen = m_rxDataGen;
-    return gen == dataGen() && m_txRead.read(gen, next, ack, sent) && gen == dataGen();
+    return gen == dataGen() && m_txRead.read(gen, sent) && gen == dataGen();
   }
   void installTCPOptionsRx(const TCPHeader &header) {
     if (m_rxOptionsSet) return;
@@ -2708,7 +2706,6 @@ protected:
       ZutcpLog_::AckEvt event{.linkInfo = linkInfo, .byteNext = next};
       out.logPktsAcked(event, time);
     }));
-    if (m_txAckd > m_txRead.ack.load_()) m_txRead.ack = m_txAckd;
     if (work.byteProgress) armTLP();
     schedulePTO_();
     scheduleLossTimer();
@@ -4089,16 +4086,9 @@ public:
     }
     if (!m_rxSynAcked && (flags & 0x10)) {
       if (!qualifyHandshake(d.tcp.ack, false)) return true;
-    } else if (flags & 0x10) {
-      uint64_t next, ackd, sent;
-      bool known = readTxView(next, ackd, sent);
-      uint64_t ack = known ?
-	tcpPosition(uint32_t(d.tcp.ack - m_rxOrigins.local - 1), ackd) : U64Null;
-      if (ZuNull(ack) || ack > next) {
-	auto stack = app()->nativeStack();
-	if (!stack || !stack->recoverClosed(d)) requestTCPAck();
-	return true;
-      }
+    } else if ((flags & 0x10) &&
+	(gen != dataGen() || uint64_t(m_txRead.gen) != gen)) {
+      return true;
     }
     if (syn && !m_rxOrigins.peerKnown) {
       auto origins = m_rxOrigins;
@@ -4183,14 +4173,15 @@ protected:
   bool qualifyHandshake(uint32_t wireAck, bool reset) {
     uint64_t gen = m_rxDataGen;
     if (gen != dataGen() || uint64_t(m_txRead.gen) != gen) return false;
-    uint64_t end = m_txRead.synEnd;
-    uint64_t next = m_txRead.next;
     uint32_t ack = wireAck - m_rxOrigins.local - 1;
-    if (ZuNull(end) || end > next || ack > next || (reset && ack != next) ||
-	uint64_t(m_txRead.gen) != gen || gen != dataGen()) return false;
-    if (reset) return true;
+    if (reset) {
+      // A pre-establishment reset must match an actually submitted SYN.
+      uint64_t end = m_txRead.synEnd;
+      return !ZuNull(end) && ack == end &&
+	uint64_t(m_txRead.gen) == gen && gen == dataGen();
+    }
+    if (uint64_t(m_txRead.gen) != gen || gen != dataGen()) return false;
     m_rxSynAcked = true;
-    m_rxTFOEnd = end;
     // This scalar event precedes peer ACK and application Tx work. The sending
     // owner finishes its committed SYN recovery before processing the event.
     app()->txRun([link = impl(), gen, ack] {
@@ -4296,17 +4287,6 @@ protected:
     unsigned head = tcpHead(m_path.local().type(), header);
     return options >= 0 && head && range.storage->payloadOffset >= head &&
       range.length <= tcpPayloadLimit(unsigned(options), true);
-  }
-  void publishTxCommit(const SentFrameRef &ref, bool syn, uint64_t sentAck = U64Null) {
-    if (ref.kind == SentFrameKind::Data && (ref.length || ref.fin)) {
-      uint64_t end = ref.offset + ref.length + unsigned(ref.fin);
-      if (end > m_txRead.next.load_()) m_txRead.next = end;
-    }
-    if (!ZuNull(sentAck) && sentAck > m_txRead.sentAck.load_()) m_txRead.sentAck = sentAck;
-    if (syn) {
-      uint64_t end = m_txRead.synEnd.load_();
-      if (ZuNull(end) || ref.length > end) m_txRead.synEnd = ref.length;
-    }
   }
   void acceptTxData(const SentFrameRef &ref) {
     if (ref.kind != SentFrameKind::Data || (!ref.length && !ref.fin)) return;
@@ -4418,22 +4398,16 @@ protected:
     if (fast) m_fastReserved = true;
     if (tlp) m_tlpReserved = true;
     if (rto) m_rtoReserved = true;
-    struct Commit {
-      Self *link;
-      const SentFrameRef *ref;
-      uint64_t runtime, gen, sentAck;
-      bool syn;
-    } context{this, &ref, runtime, m_txDataGen, sentAck, syn};
-    // Borrowed only for synchronous submission. Successful reservation calls
-    // this immediately before the backend's irreversible descriptor publication.
-    Zxdp::CommitFn commit{&context, [](Commit *c) {
-      auto link = c->link;
-      if (c->runtime != link->m_txRuntimeGen || c->gen != link->m_txDataGen ||
-	  c->gen != link->dataGen() || link->disconnecting()) return false;
-      link->publishTxCommit(*c->ref, c->syn, c->sentAck);
-      return true;
-    }};
-    bool sent = send(buf, ecn, commit);
+    uint64_t gen = m_txDataGen;
+    bool sent = send(buf, ecn);
+    if (sent && runtime == m_txRuntimeGen && gen == m_txDataGen &&
+	gen == dataGen() && !disconnecting()) {
+      if (!ZuNull(sentAck) && sentAck > m_txRead.sentAck.load_()) m_txRead.sentAck = sentAck;
+      if (syn) {
+	uint64_t end = m_txRead.synEnd.load_();
+	if (ZuNull(end) || ref.length > end) m_txRead.synEnd = ref.length;
+      }
+    }
     if (runtime == m_txRuntimeGen) {
       if (fast) {
         m_fastReserved = false;

@@ -84,8 +84,8 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
     if (offerAck) {
       bool sent = Base::sendTCP({}, false, 0x10,
 	[this, stack]() { return stack->allocPacket(this, ZiIPType::V4, true); },
-	[this, stack](auto packet, auto, const Zxdp::CommitFn &commit) {
-	  return submit(stack, ZuMv(packet), commit, true);
+	[this, stack](auto packet, auto) {
+	  return submit(stack, ZuMv(packet), true);
 	});
       if (!sent) return false;
       offerAck = false;
@@ -97,20 +97,20 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
     auto payload = range.storage->data + range.offset;
     return Base::sendTCP(ref, false, 0,
       [this, stack]() { ++extraAlloc; return stack->allocPacket(this, ZiIPType::V4); },
-      [this, stack, payload](auto packet, auto, const Zxdp::CommitFn &commit) {
+      [this, stack, payload](auto packet, auto) {
 	original &= packet->data() == payload;
 	bounded &= packet->length == 8;
-	return submit(stack, ZuMv(packet), commit);
+	return submit(stack, ZuMv(packet));
       });
   }
   bool submit(Zutcp::Stack *stack, ZmRef<ZiIOBuf> packet,
-      const Zxdp::CommitFn &commit, bool control = false) {
+      bool control = false) {
     memset(packet->data_(), 0, packet->skip);
     memset(packet->data_(), 0xff, 6);
     packet->data_()[6] = 2;
     packet->data_()[12] = 0x88; packet->data_()[13] = 0xb5;
     packet->rewind(packet->skip);
-    bool sent = stack->sendPacket(packet, nullptr, commit);
+    bool sent = stack->sendPacket(packet, nullptr);
     detached &= sent && !packet->data_() && !packet->size;
     if (sent) { if (control) ++controls; else ++submitted; }
     return sent;
@@ -125,11 +125,11 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
   bool replay(Zutcp::Stack *stack) {
     return Base::sendTCP(retry, false, 0,
       [this, stack]() { ++extraAlloc; return stack->allocPacket(this, ZiIPType::V4); },
-      [this, stack](auto packet, auto, const Zxdp::CommitFn &commit) {
+      [this, stack](auto packet, auto) {
 	auto payload = packet->data();
 	reused &= payload == retry.range.storage->data + retry.range.offset &&
 	  packet->length == 8 && !memcmp(payload, "second--", 8);
-	return submit(stack, ZuMv(packet), commit);
+	return submit(stack, ZuMv(packet));
       });
   }
   bool finControl(Zutcp::Stack *stack) {
@@ -141,9 +141,9 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
     ref.fin = true;
     return Base::sendTCP(ref, false, 0,
       [this, stack]() { return stack->allocPacket(this, ZiIPType::V4, true); },
-      [this, stack](auto packet, auto, const Zxdp::CommitFn &commit) {
+      [this, stack](auto packet, auto) {
 	bounded &= !packet->length;
-	return submit(stack, ZuMv(packet), commit, true);
+	return submit(stack, ZuMv(packet), true);
       });
   }
 

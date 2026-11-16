@@ -930,9 +930,8 @@ friend ZmEngine<App>;
 
   bool sendPktRaw(
       ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
-      EcnMark::T ecn, bool priority, const IPPath &path,
-      const Zxdp::CommitFn &commit = {}) {
-    return Endpoint::send(ZuMv(buf), ZuMv(addr), ecn, priority, &path, commit);
+      EcnMark::T ecn, bool priority, const IPPath &path) {
+    return Endpoint::send(ZuMv(buf), ZuMv(addr), ecn, priority, &path);
   }
 
   void refreshLinkRoutes(Link *link) {

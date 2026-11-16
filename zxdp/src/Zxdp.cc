@@ -362,10 +362,7 @@ ZuUnion<void, ZeException> Instance::close()
 }
 bool Instance::stopSender() { return m_data->stopSender(); }
 
-bool Instance::send(uint8_t *packet, unsigned length, const CommitFn &commit)
-  { return send_(packet, length, commit); }
-
-bool Instance::send_(uint8_t *packet, unsigned length, const CommitFn &commit)
+bool Instance::send(uint8_t *packet, unsigned length)
 {
   if (!ready() || !packet || !length) return false;
   auto pool = m_data->arena->pool(packet);
@@ -379,9 +376,6 @@ bool Instance::send_(uint8_t *packet, unsigned length, const CommitFn &commit)
   if (slot.pending) return false;
   auto &ring = m_data->queues[0]->socket.tx();
   if (m_data->txHeld == ring.count() || !ring.reserve(1)) return false;
-  // No callback may retain this borrowed context or reenter Tx service.
-  // Its accepted publication precedes the descriptor release store below.
-  if (commit && !commit()) { ring.cancel(); return false; }
   slot.wire = wire;
   slot.active = m_data->txHeld;
   m_data->txActive[m_data->txHeld++] = canonical;

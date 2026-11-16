@@ -203,14 +203,12 @@ public:
   bool send(
     ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
     EcnMark::T ecn = EcnMark::NotECT, bool priority = false,
-    const IPPath *path = nullptr, const Zxdp::CommitFn &commit = {})
+    const IPPath *path = nullptr)
   {
     if (!buf || !m_mx || unsigned(m_gate)) return false;
     unsigned generation = m_generation;
     if (endpointTxInvoked())
-      return send_(ZuMv(buf), ZuMv(addr), ecn, generation, path, true, commit);
-    // A commit hook borrows its caller's stack; only direct owner sends may use it.
-    if (commit) return false;
+      return send_(ZuMv(buf), ZuMv(addr), ecn, generation, path, true);
     // Path metadata is bounded. This post retains the submitted buffer only
     // until admission; accepted Stack output detaches its backing immediately.
     IPPath route = path ? *path : IPPath{};
@@ -274,8 +272,7 @@ private:
   }
 
   bool send_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, EcnMark::T ecn,
-    unsigned generation, const IPPath *supplied, bool direct,
-    const Zxdp::CommitFn &commit = {})
+    unsigned generation, const IPPath *supplied, bool direct)
   {
     ZiAssert(endpointTxInvoked(), "Zutcp", (), "native send outside Tx", return false);
     ++m_txDiag.sendCalls;
@@ -298,7 +295,7 @@ private:
     buf->length = wire;
     // Native endpoint output is built with PacketBuf metadata, including the
     // retained source node's borrowed wire view.
-    if (!m_stack->sendPacket(buf, static_cast<PacketBuf *>(buf.ptr())->retained, commit)) {
+    if (!m_stack->sendPacket(buf, static_cast<PacketBuf *>(buf.ptr())->retained)) {
       buf->skip = head;
       buf->length = bytes;
       ++m_txDiag.txBackPressure;

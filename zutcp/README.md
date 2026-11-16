@@ -52,14 +52,11 @@ updates it to the latest cumulative position. Outgoing DATA can carry that ACK
 before the deadline. A second full-size segment, FIN, receive gap, duplicate,
 ECN exception or receive-window reopening requests an immediate reply.
 
-Native submission publishes its cumulative sent frontier after descriptor
-reservation and before the AF_XDP producer index becomes visible. A borrowed
-synchronous commit callback rejects a stale generation before publication;
-refused reservations leave the frontier unchanged. Recovery bookkeeping then
-finishes on the same Tx owner before queued peer ACK work runs. Rx validates
-ACKs directly against that committed frontier, including an explicit committed
-SYN/TFO extent, without retaining packets for a validation roundtrip. A future
-ACK is rejected immediately; subsequent valid traffic remains admissible.
+After successful native submission, the Tx owner publishes the packet's cumulative
+ACK atomically, preserving its coordinate conversion and monotonic progress.
+Refused sends leave that ACK unchanged. Recovery bookkeeping finishes on the same
+Tx owner before queued peer ACK work runs. Incoming peer ACKs pass directly to
+ACK processing without validation against a published transmitted frontier.
 
 Without timestamps, an exact full sequence-cycle alias can be indistinguishable
 from current data. PAWS adds timestamp checks under its ordinary clock and

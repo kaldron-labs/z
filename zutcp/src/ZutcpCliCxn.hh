@@ -382,9 +382,9 @@ public:
       bool persist = false) {
     return Base::sendTCP(ref, syn, control,
       [this, &ref] { return Endpoint::allocTxPkt(!bool(ref.length)); },
-      [this](auto buf, EcnMark::T ecn, const Zxdp::CommitFn &commit) {
+      [this](auto buf, EcnMark::T ecn) {
 	if (!app()->sendPkt(buf)) return false;
-	return Endpoint::send(ZuMv(buf), Endpoint::remote(), ecn, true, nullptr, commit);
+	return Endpoint::send(ZuMv(buf), Endpoint::remote(), ecn, true, nullptr);
       }, persist);
   }
   bool sendSyn() {

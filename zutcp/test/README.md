@@ -172,12 +172,12 @@ ZutcpBufferTest without requesting an mx allocator. Native backing separation,
 reserved admission, CQ-only credit release, held-control resize refusal, stopped
 reconfiguration and large-ACK scheduling are covered by zutcpstacktest.
 
-Phase 3 cumulative byte ACKs are exercised by ZutcpCodecTest and ZutcpDataTest.
-The codec checks the intermediate byte frontier envelope, truncation and legacy
-bootstrap ACK separation. Connection tests reject ACKs beyond accepted sends,
-preserve DATA on packet-only ACKs, and retire partial prefixes and the remaining
-suffix through cumulative ACKs. RTO and covering retransmission acceptance is
-recorded in the final Phase 3 checkpoint linked from zutcp_plan.md.
+ZutcpDataTest exercises immediate Rx handling of ACK-bearing segments without
+transmitted-frontier validation, followed by queued Tx recovery ACK processing.
+It checks partial-prefix and final cumulative retirement, post-success atomic
+ACK publication, refused sends, generation changes and independent backing
+ownership. SYN response handoffs and exact pre-establishment RST qualification
+have separate coverage.
 
 DATA recovery now uses a separate cumulative-progress RTO. ZutcpRttLossTest
 checks its injected-time boundaries, adaptive floor/granularity, backoff cap,

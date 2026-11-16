@@ -85,34 +85,6 @@ static bool shutdown(ZmRef<Zxdp::Instance> &instance, ZtString<> &error)
   return false;
 }
 
-// Borrowed delegates exercise the same allocation-free callback representation
-// used by transport publication. Inspect only the idle Tx queue in this fixture.
-struct CommitProbe {
-  Zxdp::Instance *instance;
-  Zxdp::BufPool *pool;
-  uint8_t *packet;
-  ZuID txID;
-  bool accept = false, writable = true, unpublished = true, found = false;
-  unsigned calls = 0;
-  ZmAtomic<unsigned> published = 0;
-
-  void queue(Ztc::Queue *queue) {
-    if (queue->telKey().p<1>() != txID) return;
-    Ztc::QueueTelemetry data;
-    queue->telemetry(data);
-    found = true;
-    unpublished &= !data.count;
-  }
-  bool commit() {
-    ++calls;
-    writable &= pool->writable(packet);
-    instance->allQueues({this, ZmFnPtr<&CommitProbe::queue>{}});
-    if (!accept) return false;
-    published = 1;
-    return true;
-  }
-};
-
 static void testPackets()
 {
   ZuTestScopeRT(testPackets);
@@ -193,25 +165,16 @@ static void testPackets()
   for (unsigned i = 14; i < Bytes; ++i) output[i] = (i * 37) ^ 0xa5;
   uint8_t expected[Bytes];
   memcpy(expected, output, Bytes);
-  CommitProbe commit{.instance = instance.ptr(), .pool = &tx, .packet = output,
-    .txID = ZuID{} << "xdp." << ZuBoxed(ifindex) << ".0.tx"};
-  Zxdp::CommitFn commitFn{&commit, ZmFnPtr<&CommitProbe::commit>{}};
-  ZuCheckRT(!instance->send(nullptr, Bytes, commitFn) &&
-      !instance->send(packet, tx.size + 1, commitFn) &&
-      !instance->send(packet + 1, tx.size, commitFn) && !commit.calls,
-    log_("invalid submissions neither invoke the commit hook nor publish a descriptor"));
-  bool refused = !instance->send(output, Bytes, commitFn);
-  ZuCheckRT(refused && commit.calls == 1 && commit.found && commit.writable &&
-      commit.unpublished && !unsigned(commit.published) && tx.writable(output) &&
+  ZuCheckRT(!instance->send(nullptr, Bytes) &&
+      !instance->send(packet, tx.size + 1) &&
+      !instance->send(packet + 1, tx.size) && tx.writable(output) &&
       tx.used() == 1 && !instance->pollTx() && unsigned(xdpKicks) == kicks,
-    log_("commit refusal cancels the ring reservation without a kernel lease or sender kick"));
-  commit.accept = true;
+    log_("invalid submissions leave caller backing writable without a kernel lease or sender kick"));
   gateSender = 1;
-  bool submitted = instance->send(output, Bytes, commitFn);
-  ZuCheckRT(submitted && commit.calls == 2 && commit.writable && commit.unpublished &&
-      unsigned(commit.published) == 1 && !tx.writable(output) &&
-      !instance->send(output, Bytes, commitFn) && commit.calls == 2 && tx.used() == 1,
-    log_("commit hook precedes descriptor and lease publication; accepted backing cannot resubmit"));
+  bool submitted = instance->send(output, Bytes);
+  ZuCheckRT(submitted && !tx.writable(output) &&
+      !instance->send(output, Bytes) && tx.used() == 1,
+    log_("accepted submission holds a kernel lease and cannot resubmit before retirement"));
   if (submitted) tx.free(packet);
   ZuCheckRT(tx.used() == 1, log_("early pool return cannot recycle live kernel backing"));
   bool entered = submitted && !senderEntered.timedwait(Zm::now() + ZuTime{10});

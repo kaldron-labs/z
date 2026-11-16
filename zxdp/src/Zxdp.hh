@@ -27,8 +27,6 @@
 
 namespace Zxdp {
 
-using CommitFn = ZmFn<bool()>;
-
 using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zxdp.Receive">>;
 using StopFn = ZmFn<void(), ZmFnHeapID<"Zxdp.TxStopped">>;
 
@@ -67,9 +65,7 @@ public:
   // False acquires no kernel lease. After true, keep bytes immutable until
   // kernel retirement. Pool return may precede retirement; recycling waits for
   // both the allocation lease and kernel lease to end. One descriptor per slot.
-  // Borrowed synchronous commit hook: false cancels admission without a lease;
-  // true promises immediate descriptor publication with no further refusal.
-  bool send(uint8_t *packet, unsigned length, const CommitFn &commit = {});
+  bool send(uint8_t *packet, unsigned length);
   // Process packets on the Rx owner until woken (or the device fails).
   // Idle service spins Params::spin rounds, then blocks internally in epoll.
   void rx();
@@ -89,7 +85,6 @@ public:
   ZuUnion<void, ZeException> close();
 
 private:
-  bool send_(uint8_t *packet, unsigned length, const CommitFn &commit);
   explicit Instance(InstanceData *data) : m_data{data} { }
   InstanceData *m_data;
 };

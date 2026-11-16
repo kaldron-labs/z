@@ -192,9 +192,9 @@ public:
       bool persist = false) {
     return Base::sendTCP(ref, syn, control,
       [this, &ref] { return app()->allocTxPkt_(!bool(ref.length)); },
-      [this](auto buf, EcnMark::T ecn, const Zxdp::CommitFn &commit) {
+      [this](auto buf, EcnMark::T ecn) {
 	if (!app()->sendPkt(buf)) return false;
-	return app()->sendPktRaw(ZuMv(buf), m_peerAddr, ecn, true, m_txIP, commit);
+	return app()->sendPktRaw(ZuMv(buf), m_peerAddr, ecn, true, m_txIP);
       }, persist);
   }
   bool sendSyn() {

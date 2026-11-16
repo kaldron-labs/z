@@ -23,6 +23,7 @@ public:
   bool tfo() const { return m_tfo; }
   uint32_t maxEarlyData(AppCxn *) { return m_tfo && m_service ? 400 : 0; }
   bool allowEarlyStream(AppCxn *, uint64_t, bool) { return m_tfo && m_allowEarly; }
+  void listening() { std::cerr << "listening\n" << std::flush; }
   App(ZiIP ip, unsigned port, unsigned target, bool waitEOF) :
     m_localIP{ip}, m_localPort{port}, m_target{target}, m_waitEOF{waitEOF} {
     if (m_tfo)

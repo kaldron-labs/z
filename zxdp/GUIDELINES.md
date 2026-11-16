@@ -13,11 +13,6 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
   The Tx-owner writable query requires a caller-held allocation and reads only
   existing direct-slot lease state. It authorizes header changes after kernel
   retirement, with no new callback, tracking allocation or packet search.
-* The optional borrowed send commit hook runs synchronously after successful
-  ring reservation, before slot/lease mutation and descriptor publication. False
-  cancels the reservation; true permits no later refusal. It is not a completion
-  callback and must not retain context, throw, reenter Tx service or queue work.
-  Use raw-context `ZmFn` binding without callback allocation on the packet path.
 * Application and transport adaptation belongs to the caller. This library owns
   arena provisioning, raw packet allocation/return and kernel ring service.
 * Preallocate arenas and all packet bookkeeping at setup. Recycle each pool with
