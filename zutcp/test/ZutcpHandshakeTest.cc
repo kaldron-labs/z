@@ -52,6 +52,13 @@ struct TCPStateTest {
 };
 }
 
+struct GateMx : ZiMultiplex {
+  ZmQueue<ZmFn<>> tx;
+  template <typename L> void txRun(L l) {
+    tx.push([l = ZuMv(l)]() mutable { (void)l(); });
+  }
+};
+
 struct GateApp : Zutcp::Hub<GateApp> {
   using Fn = ZmFn<>;
   ZmQueue<Fn> rx, tx;
@@ -60,9 +67,12 @@ struct GateApp : Zutcp::Hub<GateApp> {
   ZmFn<> onInvoke;
   unsigned owner = 1, shortSent = 0, longSent = 0, errors = 0;
   Zutcp::TCPHeader responseTCP;
-  bool native = false, inlineRx = false;
+  bool native = false, inlineRx = false, active = false;
+  Zutcp_::TupleRouter<void> routes;
+  unsigned retirements = 0, disconnects = 0;
+  bool retiredBeforeDisconnect = false;
   ZuTime clock;
-  ZiMultiplex multiplex;
+  GateMx multiplex;
   Zi::IOBufAllocator *testTx = nullptr;
   Zxdp::BufPool *testPool = nullptr;
 
@@ -73,6 +83,9 @@ struct GateApp : Zutcp::Hub<GateApp> {
     return allocator && allocator == testTx ? testPool : nullptr;
   }
   bool nativeTx() const { return native; }
+  bool ioActive() const { return active; }
+  unsigned txThread() const { return active ? 2 : Zutcp::Hub<GateApp>::txThread(); }
+  GateMx *mx() const { return static_cast<GateMx *>(Zutcp::Hub<GateApp>::mx()); }
   ZuTime transportNow() const { return *clock ? clock : Zutcp::Hub<GateApp>::transportNow(); }
 
   GateApp(bool scale = false, bool ts = false, uint64_t maxData = 8192, bool ecn = false) {
@@ -103,11 +116,22 @@ struct GateApp : Zutcp::Hub<GateApp> {
   template <typename T, typename L> void rxInvoke(T *, L l) { rxInvoke(ZuMv(l)); }
   void runRx() { owner = 1; while (auto fn = rx.shift()) fn(); }
   void runTx() { owner = 2; while (auto fn = tx.shift()) fn(); owner = 1; }
-  void drain() { do { runTx(); runRx(); } while (tx.count_() || rx.count_()); }
+  void runBarrier() {
+    owner = 2; while (auto fn = multiplex.tx.shift()) fn(); owner = 1;
+  }
+  void drain() {
+    do { runTx(); runBarrier(); runRx(); }
+    while (tx.count_() || multiplex.tx.count_() || rx.count_());
+  }
   void stepTx() { owner = 2; if (auto fn = tx.shift()) fn(); owner = 1; }
   void refreshLinkRoutes(void *) { }
-  void retireLinkRoutes(void *) { }
-  void disconnected(void *, bool) { }
+  template <typename T> void retireLinkRoutes(T *link) {
+    if (routes.retire(link->closedKeyRx(), link)) ++retirements;
+  }
+  void disconnected(void *, bool) {
+    ++disconnects;
+    retiredBeforeDisconnect = !routes.count();
+  }
   bool sendPkt(const ZmRef<ZiIOBuf> &) { return true; }
   ZmRef<Zutcp::PacketBuf> allocTxPkt_(bool = false) {
     auto buf = packets.allocBuf();
@@ -202,6 +226,8 @@ friend inline ZuStringT<"Zutcp.Handshake.CloseSrv"> ZmNHeapID(CloseSrv *);
   using State = Base::Base;
   unsigned resetPackets = 0;
   Zutcp::TCPHeader lastReset;
+  using State::initServerPath;
+  using State::disconnected;
   explicit CloseSrv(GateApp *app) : Base{app} { State::configLocalParams(app); }
   int process(Zutcp::Reader &) { return 0; }
   void connected(Zutcp::Connected) { }
@@ -233,6 +259,46 @@ friend inline ZuStringT<"Zutcp.Handshake.CloseSrv"> ZmNHeapID(CloseSrv *);
       });
   }
 };
+
+static void testCloseRouteDrain()
+{
+  ZuTestScope(testCloseRouteDrain);
+  GateApp app;
+  app.native = true;
+  ZmRef<CloseSrv> link = new CloseSrv{&app};
+  link->prepare();
+  link->initServerPath({ZiIP{"198.18.0.1"}, 18191}, {ZiIP{"198.18.0.2"}, 18192}, 1200);
+  app.drain();
+  auto key = link->closedKeyRx();
+  bool routed = app.routes.add(key, link.ptr());
+  app.active = true;
+  link->disconnecting(true);
+  link->disconnected(false);
+  app.runRx();
+  bool awaitingTx = app.tx.count_() && !app.multiplex.tx.count_();
+  auto route = static_cast<CloseSrv *>(app.routes.find(key));
+  Zutcp::Datagram late;
+  late.tcp.flags = 0x10;
+  bool absorbed = route && route->receiveSegment(ZuMv(late));
+  ZuCHECK(routed && awaitingTx && absorbed && route == link.ptr() &&
+      !app.retirements && !app.disconnects,
+    "a closing route must absorb late packets while its Tx snapshot is pending");
+  app.runTx();
+  ZuCHECK(app.multiplex.tx.count_() == 1 && !app.rx.count_() &&
+      app.routes.find(key) == link.ptr() && !app.retirements && !app.disconnects,
+    "route membership must survive the multiplexer Tx drain barrier");
+  app.runBarrier();
+  ZuCHECK(app.rx.count_() == 1 && app.routes.find(key) == link.ptr() &&
+      !app.retirements && !app.disconnects,
+    "route retirement must wait for the final Rx owner continuation");
+  app.runRx();
+  ZuCHECK(!app.routes.find(key) && app.retirements == 1 && app.disconnects == 1 &&
+      app.retiredBeforeDisconnect && !app.tx.count_() && !app.multiplex.tx.count_(),
+    "final Rx must retire the route before publishing disconnected completion");
+  app.active = false;
+  link = nullptr;
+  app.drain();
+}
 
 static void testNativeZeroDisconnect()
 {
@@ -1108,6 +1174,7 @@ int main(int argc, char **argv)
   ZuTestCall(testAbortReentrantConnect);
   ZuTestCall(testCoalescedNativeConnect);
   ZuTestCall(testNativeSetupFailureDrain);
+  ZuTestCall(testCloseRouteDrain);
   ZuTestCall(testRejectedOwnerDrain);
   ZuTestCall(testEarlyWriterReadiness, 0);
   ZuTestCall(testEarlyWriterReadiness, 1);

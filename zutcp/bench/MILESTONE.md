@@ -77,11 +77,12 @@ are byte-identical. Shared ACK state and owner boundaries passed compiled layout
 inspection. Both concrete connection types grew by 128 bytes in the latest
 combined change.
 
-## Remaining work
+## Historical follow-up observations
 
-This is an accepted development milestone, with further tail-latency and
-scheduling work remaining. One observation per configuration does not establish
-repeatability or complete the broader workload/capacity acceptance plan.
+The original milestone proposed further tail-latency and scheduling work.
+On 2026-11-16 the user replaced that expanded scope with the focused reproduction
+and close-out below. These historical observations do not create remaining
+acceptance obligations.
 
 Both serial all-native candidate cases contain one sample above 1 ms. IPv6
 serial p99.9 rises from 56.15 µs to 397.01 µs versus the retained build.
@@ -112,3 +113,52 @@ instructions, then `make -C zfix/bench -j8 zfixbench` and
 describes the application and generic veth invocation. The measured campaign additionally uses
 its archived three-read stable link-snapshot fixture. Generic smoke commands do
 not reproduce that strict snapshot gate or reconstruct the retained baseline.
+
+## Reproduction and close-out — 2026-11-16
+
+The focused reproduction confirms higher throughput and lower median RTT for
+Zutcp in every matched pair. Two repetitions reverse backend order; all 16 runs
+pass exact delivery and clean shutdown, covering 2,064,000 measured replies and
+32 endpoint drains. The run sequence completed in 26.2 seconds.
+
+| Connections/pipeline | Family | Throughput gain | Median RTT reduction | P99 RTT reduction | P99.99 RTT change |
+|---:|---|---:|---:|---:|---:|
+| 1/1 | IPv4 | 56.0–56.9% | 36.3–36.8% | 23.1–23.3% | −0.1% to +6.6% |
+| 1/1 | IPv6 | 59.8–60.2% | 37.6–37.7% | 26.6–29.4% | −21.1% to −19.9% |
+| 128/32 | IPv4 | 15.2–17.4% | 13.1–15.4% | 0.1–22.4% | −40.1% to +2.5% |
+| 128/32 | IPv6 | 10.7–25.0% | 8.3–21.2% | 2.5–11.4% | −21.8% to −5.3% |
+
+Each range contains the two matched native/kernel percentage changes; negative
+P99.99 change means lower latency. Percentiles are not pooled or averaged.
+Single-connection native median RTT was 25.76–26.00 µs versus kernel's
+40.77–41.65 µs. The measured single-connection latency is about 62–64% of kernel,
+so this reproduction supports a 36–38% reduction rather than latency below 60%
+of kernel. At 128 connections, throughput gains varied more than in the original
+milestone; every observation is retained in the results record.
+
+P99.9 changed by −38.3% to +4.3% across the eight pairs. P99.99 was lower or
+within 6.7% above kernel in every pair. The original milestone reported P99.9;
+this reproduction additionally reports P99.99. With 2000 samples in each
+single-connection run, P99.99 is a near-maximum observation, not a precise tail
+estimate. Maximum RTT did not improve in every run; all maxima are retained.
+
+The comparison uses the published order corpus and settings described above,
+with current production libraries, 256 warmup and 2000 measured exchanges per
+connection. Native congestion control remains disabled and kernel congestion
+control enabled. The only benchmark code change adds `p9999_ns` to the existing
+final aggregate summary after measurement. No transport optimization was made
+for this reproduction, and the gains above are relative to kernel TCP.
+
+No packet capture or raw sample files were retained. An initial reporting-only
+attempt completed exchanges but could not emit samples through a FIFO; it
+produced no latency summary and is retained separately. The completed sequence
+omits sample export entirely. No performance-based retries or exclusions were
+made. All fixture processes and namespaces were cleaned up.
+
+[Complete aggregate results](results/2026-11-16-reproduction.json) include every
+observation, p50/p99/p99.9/p99.99/max, matched changes, settings and binary hashes.
+Local logs and the reproducible fixture are in
+`review_context/zutcp-performance-reproduction/`.
+
+The expanded pilot, archive/restore and compression plans were deleted. The
+requested performance reproduction and report are complete; this task is closed.

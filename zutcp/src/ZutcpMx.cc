@@ -1657,6 +1657,9 @@ unsigned Stack::allQueues(Ztc::QueueMgr::AllFn fn) const
   if (m_cxns) count += m_cxns->allQueues(fn);
   if (m_backend) count += m_backend->allQueues(fn);
   count += ZutcpLogger::allQueues(fn);
+  // Final release must finish the connection's destructor chain on an I/O
+  // owner before its posted object-retirement callback can release the app.
+  if (owners.length()) mx()->rxInvoke([owners = ZuMv(owners)] { });
   return count;
 }
 

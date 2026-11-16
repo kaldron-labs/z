@@ -66,6 +66,15 @@ struct TCPStateTest {
     core(link).receiveTCP(TCPHeader{.seq = seq, .ack = ack,
       .window = window, .flags = flags, .options = options});
   }
+  template <typename T> static void peerData(T &link, const TCPHeader &header) {
+    core(link).receiveTCP(header, true);
+  }
+  template <typename T> static uint32_t peerSequence(T &link) {
+    return core(link).m_txWindowSeq;
+  }
+  template <typename T> static ZuTime rackDeadline(T &link) {
+    return core(link).m_rack.deadline;
+  }
   template <typename T> static bool peerPending(T &link) {
     return core(link).m_peerAckRequest.load_() & 1;
   }
@@ -322,12 +331,12 @@ struct TCPStateTest {
 	c.m_dataRto.timeout(c.m_rtt, c.app()->rtoParams());
   }
   template <typename T> static bool timestampRecord(T &link, const SentFrameRef &ref,
-      bool timestamp, bool repeated, bool karn) {
+      bool timestamp, bool repeated, bool karn, uint32_t value = 7) {
     auto &c = core(link);
     c.m_txTCPState.flags = timestamp ? TCPOptions::TS : 0;
     c.m_txRttFence = karn ? ref.offset + ref.length : 0;
     TCPHeader header;
-    if (timestamp) header.options = {.flags = TCPOptions::TS, .tsval = 7};
+    if (timestamp) header.options = {.flags = TCPOptions::TS, .tsval = value};
     for (unsigned i = 0; i <= unsigned(repeated); ++i) {
       auto id = c.m_txID++;
       if (!c.recordTxPkt(id, unsigned(ref.length), ref, header, EcnMark::NotECT)) return false;
@@ -492,7 +501,7 @@ friend inline ZuStringT<"Zutcp.DataTest.Link"> ZmNHeapID(Link *);
   unsigned processed = 0, finishes = 0, completions = 0, resets = 0, queued = 0;
   bool ready = true;
   ZmFn<> dequeued;
-  ZmFn<bool()> recovery;
+  ZmFn<bool()> recovery, flushFn;
   unsigned synCalls = 0, newCalls = 0, retxCalls = 0;
   uint64_t selectedOffset = Zutcp::U64Null;
   void txDequeued() { if (dequeued) dequeued(); }
@@ -501,7 +510,7 @@ friend inline ZuStringT<"Zutcp.DataTest.Link"> ZmNHeapID(Link *);
   }
   int process(Zutcp::Reader &) { ++processed; return 0; }
   bool applicationReadyRx(bool early = false) const { return early || ready; }
-  bool flushTx() { return false; }
+  bool flushTx() { return flushFn ? flushFn() : false; }
   bool flushTx(ZiSockAddr) { return false; }
   void queueTxFlush() { }
   void queueTxFlush(ZiSockAddr) { }
@@ -1768,6 +1777,196 @@ static void peerAckBatch()
   link->finish(); link = nullptr;
 }
 
+static void repeatDataIdle(bool cc)
+{
+  ZuTestScopeRT(repeatDataIdle);
+  App app{ZuTime{0}, {}, cc};
+  ZmRef<Link> link = new Link{&app};
+  Native source{app.mx()}; Zxdp::BufPool pool{1, sizeof(source.bytes)};
+  auto ref = retained(source, pool, 128);
+  bool recorded = Zutcp::TCPStateTest::record(*link, ref);
+  Zutcp::TCPStateTest::peer(*link, 128, 4096);
+  auto rtt = Zutcp::TCPStateTest::handshakeRTT(*link);
+  app.holdTx = true;
+  Zutcp::TCPHeader header{.seq = 10, .ack = 128, .window = 4096, .flags = 0x18};
+  Zutcp::TCPStateTest::peerData(*link, header);
+  bool queued = app.txJobs.count_() == 1;
+  header.seq = 0; header.window = 1; // Must not mutate the queued snapshot.
+  app.runTx();
+  bool latest = Zutcp::TCPStateTest::peerSequence(*link) == 10 &&
+    Zutcp::TCPStateTest::peerLimit(*link) == 128 + 4096;
+  Zutcp::TCPStateTest::peer(*link, 128, 8192, 9);
+  app.runTx();
+  bool older = Zutcp::TCPStateTest::peerLimit(*link) == 128 + 4096;
+  Zutcp::TCPStateTest::peer(*link, 128, 2048, 11);
+  app.runTx();
+  ZuCHECK(recorded && queued && latest && older &&
+      Zutcp::TCPStateTest::peerLimit(*link) == 128 + 2048 &&
+      Zutcp::TCPStateTest::handshakeRTT(*link) == rtt &&
+      !Zutcp::TCPStateTest::records(*link) && !Zutcp::TCPStateTest::duplicates(*link),
+    "retired repeat DATA preserves window ordering and RTT with either CC policy");
+  link->finish(); link = nullptr; ref = {};
+  ZuCHECK(source.valid && source.returned == 1, "repeat DATA never retires backing twice");
+}
+
+static void repeatDataSnapshot(unsigned scenario)
+{
+  ZuTestScopeRT(repeatDataSnapshot);
+  App app{ZuTime{0}, {}, false};
+  ZmRef<Link> link = new Link{&app};
+  Native source{app.mx()}; Zxdp::BufPool pool{1, sizeof(source.bytes)};
+  uint64_t base = scenario == 2 ? (uint64_t(1) << 32) - 32 : 0;
+  if (base) Zutcp::TCPStateTest::peerWrap(*link, base);
+  auto ref = retained(source, pool, 64, base);
+  bool recorded = Zutcp::TCPStateTest::timestampRecord(*link, ref, bool(scenario), false, true, 0);
+  app.clock += Zutcp::timeUS(20000);
+  app.holdTx = true;
+  Zutcp::TCPHeader header{.seq = 7, .ack = uint32_t(base + 64), .window = 4096,
+    .flags = 0x18, .options = {.flags = scenario ? unsigned(Zutcp::TCPOptions::TS) : 0U,
+      .tsecr = 0}};
+  Zutcp::TCPStateTest::peerData(*link, header);
+  header = {}; // Caller/Rx mutation must not replace the captured evidence.
+  app.runTx();
+  auto rtt = Zutcp::TCPStateTest::handshakeRTT(*link);
+  Zutcp::TCPStateTest::peerData(*link, {.seq = 8, .ack = uint32_t(base + 64),
+    .window = 4096, .flags = 0x58});
+  app.runTx();
+  ZuCHECK(recorded && link->txAckd() == base + 64 && !Zutcp::TCPStateTest::records(*link) &&
+      Zutcp::TCPStateTest::peerLimit(*link) == base + 64 + 4096 &&
+      bool(*rtt) == bool(scenario) && (!scenario || rtt == Zutcp::timeUS(20000)),
+    "DATA snapshots preserve absent/zero timestamp echo, Karn evidence, wrapped ACK and window");
+  link->finish(); link = nullptr; ref = {};
+  ZuCHECK(source.valid && source.returned == 1, "snapshot retirement preserves one backing return");
+}
+
+static void repeatDataReset()
+{
+  ZuTestScope(repeatDataReset);
+  App app{ZuTime{0}, {}, false};
+  ZmRef<Link> link = new Link{&app};
+  Native source{app.mx()}, replacement{app.mx()}; Zxdp::BufPool pool{2, sizeof(source.bytes)};
+  auto ref = retained(source, pool, 64);
+  bool recorded = Zutcp::TCPStateTest::record(*link, ref);
+  app.holdTx = true;
+  Zutcp::TCPStateTest::peerData(*link, {.seq = 7, .ack = 64, .window = 4096, .flags = 0x18});
+  auto old = app.txJobs.shift();
+  app.holdTx = false;
+  Zutcp::TCPStateTest::stage(*link);
+  auto fresh = retained(replacement, pool, 8);
+  recorded &= Zutcp::TCPStateTest::record(*link, fresh);
+  old();
+  ZuCHECK(recorded && !link->txAckd() && link->txNext() == 8 &&
+      Zutcp::TCPStateTest::records(*link) == 1 && !replacement.returned,
+    "old-generation DATA event cannot acknowledge the replacement connection");
+  Zutcp::TCPStateTest::ack(*link, 8);
+  link->finish(); link = nullptr; ref = {}; fresh = {};
+  ZuCHECK(source.valid && replacement.valid && source.returned == 1 && replacement.returned == 1,
+    "reset and real replacement ACK release each backing once");
+}
+
+static void repeatDataRecovery(bool sack)
+{
+  ZuTestScopeRT(repeatDataRecovery);
+  App app{ZuTime{0}, {}, false};
+  ZmRef<Link> link = new Link{&app};
+  Zutcp::TCPStateTest::stage(*link, sack);
+  Native a{app.mx()}, b{app.mx()}; Zxdp::BufPool pool{2, sizeof(a.bytes)};
+  auto first = retained(a, pool, 64), second = retained(b, pool, 64, 64);
+  bool recorded = Zutcp::TCPStateTest::record(*link, first) &&
+    Zutcp::TCPStateTest::record(*link, second);
+  app.clock += Zutcp::timeUS(20000);
+  Zutcp::TCPOptions options;
+  if (sack) { options.sackCount = 1; options.sack[0] = {64, 128}; }
+  Zutcp::TCPStateTest::ack(*link, 0, options);
+  Zutcp::TCPStateTest::ack(*link, 0, options);
+  unsigned before = Zutcp::TCPStateTest::duplicates(*link);
+  app.clockCalls = 0;
+  Zutcp::TCPStateTest::peerData(*link, {.seq = 0, .ack = 0, .window = 65535, .flags = 0x18});
+  unsigned after = Zutcp::TCPStateTest::duplicates(*link);
+  bool serviced = bool(app.clockCalls);
+  if (sack) {
+    auto due = Zutcp::TCPStateTest::rackDeadline(*link);
+    ZuCHECK(*due, "outstanding SACK hole retains its actual RACK deadline");
+    app.clock = due + ZuTime{ZuTime::Nano{1}};
+    Zutcp::TCPStateTest::peerData(*link, {.seq = 0, .ack = 0, .window = 65535, .flags = 0x18});
+  } else Zutcp::TCPStateTest::ack(*link, 0);
+  Zutcp::SentFrameRef retry;
+  bool loss = link->next(retry);
+  ZuCHECK(recorded && before == 2 && after == (sack ? 0U : 2U) && serviced == sack &&
+      loss && retry.offset == 0 && retry.length == 64 && link->queued,
+    "live recovery retains DATA duplicate-reset/RACK service and non-SACK keeps its existing counting");
+  Zutcp::TCPStateTest::ack(*link, 128);
+  link->finish(); link = nullptr; first = {}; second = {}; retry = {};
+  ZuCHECK(a.valid && b.valid && a.returned == 1 && b.returned == 1,
+    "recovery and final ACK keep exact original backing retirement");
+}
+
+static void repeatDataBatch()
+{
+  ZuTestScope(repeatDataBatch);
+  App app{ZuTime{0}, {}, false};
+  ZmRef<Link> link = new Link{&app};
+  constexpr unsigned n = Zutcp::RecoveryScanBatch + 8;
+  Zxdp::BufPool pool{n, 512};
+  ZtArray<ZuPtr<Native>> sources;
+  bool recorded = true;
+  for (unsigned i = 0; i < n; ++i) {
+    sources.push(ZuPtr<Native>{new Native{app.mx()}});
+    auto ref = retained(*sources[i], pool, 1, i);
+    recorded &= Zutcp::TCPStateTest::record(*link, ref);
+  }
+  app.holdTx = true;
+  Zutcp::TCPStateTest::ack(*link, n);
+  auto continuation = app.txJobs.shift();
+  bool partial = link->txAckd() == n && Zutcp::TCPStateTest::records(*link) && continuation;
+  Zutcp::TCPStateTest::peerData(*link, {.seq = 0, .ack = n, .window = 65535, .flags = 0x18});
+  app.clockCalls = 0;
+  if (auto job = app.txJobs.shift()) job();
+  bool retained = Zutcp::TCPStateTest::records(*link) && app.clockCalls;
+  if (continuation) continuation();
+  app.runTx();
+  bool returned = true;
+  for (const auto &source : sources) returned &= source->valid && source->returned == 1;
+  ZuCHECK(recorded && partial && retained && returned && !Zutcp::TCPStateTest::records(*link),
+    "frontier equality during bounded ACK retirement cannot bypass remaining live records");
+  link->finish(); link = nullptr;
+}
+
+static void repeatDataACKIntent()
+{
+  ZuTestScope(repeatDataACKIntent);
+  App app{ZuTime{0, 25000000}, {}, false};
+  ZmRef<Link> link = new Link{&app};
+  Native source{app.mx()}; Zxdp::BufPool pool{1, sizeof(source.bytes)};
+  auto ref = retained(source, pool, 64);
+  bool recorded = Zutcp::TCPStateTest::record(*link, ref);
+  Zutcp::TCPStateTest::ack(*link, 64);
+  Zutcp::TCPStateTest::requestACK(*link, false);
+  bool refused = !link->output({}, [](auto, const Zxdp::CommitFn &) { return false; });
+  unsigned outputs = 0;
+  Zutcp::TCPHeader sent;
+  link->flushFn = [link = link.ptr(), &outputs, &sent] {
+    return Zutcp::TCPStateTest::flush(*link, [&outputs, &sent](
+        auto buf, const Zxdp::CommitFn &commit) {
+      if (!commit()) return false;
+      ++outputs; sent = buf->tcp; return true;
+    });
+  };
+  app.holdTx = true;
+  bool received = link->receive(input(app, "z", 0, 64, 0x18));
+  bool two = app.txJobs.count_() == 2;
+  if (auto job = app.txJobs.shift()) job();
+  bool retained = outputs ? outputs == 1 && sent.ack == 2002 :
+    Zutcp::TCPStateTest::pendingACK(*link);
+  app.runTx();
+  ZuCHECK(recorded && refused && received && two && retained && outputs == 1 &&
+      sent.ack == 2002 && !Zutcp::TCPStateTest::pendingACK(*link),
+    "peer-ACK work and queued DATA ACK intent satisfy the refused local ACK exactly once");
+  link->flushFn = {};
+  link->finish(); link = nullptr; ref = {};
+  ZuCHECK(source.valid && source.returned == 1, "ACK-only retry cannot reacquire retired DATA backing");
+}
+
 static void noCCAdmission()
 {
   ZuTestScope(noCCAdmission);
@@ -2441,6 +2640,117 @@ static void mappedTxQueue()
     "registered mapped producer originals survive metadata replacement and drain once");
 }
 
+static void mappedTxActive(unsigned scenario)
+{
+  ZuTestScopeRT(mappedTxActive);
+  App app{ZuTime{0}, {}, false};
+  ZmRef<Link> cxn = new Link{&app};
+  ZmRef<MxRxCxn> mx = new MxRxCxn{app.mx()};
+  Native a{app.mx()}, b{app.mx()}; Zxdp::BufPool pool{2, sizeof(a.bytes)};
+  app.nativeAllocator = &a; app.nativeAllocator2 = &b; app.nativePool = &pool;
+  auto make = [](Native &a, ZuBSpan bytes) -> ZmRef<ZiIOBuf> {
+    memcpy(a.bytes + 256, bytes.data(), bytes.length());
+    auto buf = ZmRef<ZiIOBuf>{new Zi::IOBufStub<ZiIOBuf>{
+      a.bytes, sizeof(a.bytes), &a, nullptr, unsigned(bytes.length()), false, true}};
+    buf->skip = 256;
+    return buf;
+  };
+  auto first = make(a, "one"), second = make(b, "xtwo");
+  bool mapped = scenario != 3, accept = scenario != 2;
+  if (mapped) {
+    cxn->mxCxn = mx;
+    mx->plugin(static_cast<Link::Base *>(cxn.ptr()));
+  }
+  cxn->txQueueMax(1);
+  unsigned calls = 0, notices = 0, attempts = 0, bytes = 0;
+  bool exact = true, admitted = true;
+  char observed[6];
+  cxn->dequeued = [native = cxn.ptr(), &notices, mapped] {
+    ++notices;
+    if (mapped) native->sendMx();
+  };
+  cxn->flushFn = [native = cxn.ptr(), &a, &b, &accept, &attempts, &bytes,
+      &exact, &observed] {
+    return Zutcp::TCPStateTest::flush(*native, [&a, &b, &accept, &attempts,
+        &bytes, &exact, &observed](auto buf, const Zxdp::CommitFn &commit) {
+      ++attempts;
+      auto source = bytes ? &b : &a;
+      exact &= buf->data() == source->bytes + (bytes ? 257 : 256) &&
+        buf->length == 3 && buf->tcp.seq == 1001 + bytes && buf->retained;
+      if (buf->length != 3 || bytes > 3 || !buf->retained) {
+        exact = false; return false;
+      }
+      if (!accept || !commit()) return false;
+      memcpy(observed + bytes, buf->data(), 3);
+      bytes += 3;
+      buf->retained->adopt(source, source->bytes, sizeof(source->bytes));
+      buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
+      return true;
+    });
+  };
+  auto &context = mx->txContext();
+  if (mapped) {
+    context.init(ZiTxFn{[native = cxn.ptr(), second, &calls, &exact,
+        reentrant = scenario == 1](ZiTxContext &context) {
+      auto target = native;
+      bool repeat = reentrant;
+      ++calls;
+      exact &= context.length == 3 && !context.offset;
+      ZiTxFn complete{[&calls, &exact](ZiTxContext &context) {
+        ++calls;
+        exact &= context.length == 3 && context.offset == 1;
+        context.complete();
+        return true;
+      }};
+      auto next = second;
+      context.init(ZuMv(complete), ZuMv(next)); context.offset = 1;
+      if (repeat) target->sendMx();
+      return true;
+    }}, first);
+    cxn->sendMx();
+  } else {
+    admitted = cxn->enqueue_(first) && cxn->enqueue_(second, 1);
+  }
+  if (scenario == 2) {
+    ZuCHECK(attempts == 1 && !bytes && !cxn->txNext() &&
+        !Zutcp::TCPStateTest::records(*cxn) && cxn->txQueueCount() == 1 &&
+        calls == 1 && !context.completed() && context.buf == second &&
+        first->data_() == a.bytes && first->skip == 256 && first->length == 3 &&
+        !a.returned && !b.returned && !app.txJobs.count_(),
+      "refused active mapped output retains its original and blocked next context");
+    accept = true;
+    bool sent = cxn->flushTx();
+    ZuCHECK(sent && bytes == 3 && cxn->txNext() == 3 &&
+        !cxn->txQueueCount() && calls == 1 && app.txJobs.count_() == 1,
+      "inactive accepted retirement queues the producer wake needed for blocked output");
+  } else {
+    ZuCHECK(admitted && bytes == 6 && (mapped || app.txJobs.count_() == 2),
+      "active mapped output progresses while reentrant and generic work stays queued");
+  }
+  unsigned pendingJobs = app.txJobs.count_();
+  app.runTx();
+  bool notified = mapped ? scenario != 2 || notices : notices == 2;
+  ZuCHECK(admitted && exact && bytes == 6 && !memcmp(observed, "onetwo", 6) &&
+      attempts == (scenario == 2 ? 3u : 2u) && notified &&
+      (scenario != 1 || pendingJobs == notices + 1) &&
+      !app.txJobs.count_() && !cxn->txQueueCount() && !cxn->txRangeCount() &&
+      cxn->txNext() == 6 && Zutcp::TCPStateTest::records(*cxn) == 2 &&
+      !a.returned && !b.returned &&
+      (!mapped || (calls == 2 && context.completed() &&
+        mx->txBytes() == 6 && mx->txCalls() == 2)),
+    "mapped continuations and generic notices preserve exact bytes and accepted frontier");
+  Zutcp::TCPStateTest::ack(*cxn, 6);
+  ZuCHECK(cxn->txAckd() == 6 && !cxn->txUnackdBytes() &&
+      !Zutcp::TCPStateTest::records(*cxn) && a.valid && b.valid &&
+      a.returned == 1 && b.returned == 1,
+    "accepted originals remain retained until the real cumulative ACK returns each once");
+  cxn->flushFn = {}; cxn->dequeued = {};
+  cxn->mxCxn = nullptr; mx->plugin(nullptr); context.complete();
+  cxn->finish(); cxn = nullptr; first = second = {};
+  ZuCHECK(a.valid && b.valid && a.returned == 1 && b.returned == 1,
+    "mapped and generic producer cleanup cannot return accepted backing twice");
+}
+
 static void oldIncarnationACK()
 {
   ZuTestScope(oldIncarnationACK);
@@ -2899,6 +3209,62 @@ static void finACKBeforeNotice()
   link->finish();
 }
 
+static void finACKRetransmit()
+{
+  ZuTestScope(finACKRetransmit);
+  App app;
+  ZmRef<Link> link = new Link{&app};
+  Zutcp::SentFrameRef local;
+  local.kind = Zutcp::SentFrameKind::Data; local.fin = true;
+  bool setup = Zutcp::TCPStateTest::record(*link, local);
+  app.holdTx = app.holdRx = true;
+  bool peer = link->receive(input(app, "end", 0, 1, 0x11));
+  Zutcp::TCPHeader repeated;
+  bool sent = link->output(local, [&repeated](auto buf, const Zxdp::CommitFn &commit) {
+    if (!commit()) return false;
+    repeated = buf->tcp;
+    return true;
+  });
+  uint64_t next = 0, ack = 0, sentAck = 0;
+  bool visible = Zutcp::TCPStateTest::frontiers(*link, next, ack, sentAck);
+  ZuCHECK(setup && peer && sent && repeated.seq == 1001 && repeated.ack == 2005 &&
+      repeated.flags == 0x11 && visible && next == 1 && !ack && sentAck < 4 &&
+      !app.rxJobs.count_(),
+    "old-sequence FIN retransmission cannot publish final-ACK coverage before peer-FIN notice");
+  app.holdTx = false; app.runTx();
+  ZuCHECK(Zutcp::TCPStateTest::pendingACK(*link) &&
+      !Zutcp::TCPStateTest::heldACK(*link) && !app.rxJobs.count_() &&
+      link->txAckd() == 1 && link->txDrained() && !Zutcp::TCPStateTest::records(*link),
+    "queued first peer-FIN keeps its ACK urgent after old FIN history retires");
+  app.holdRx = false; app.runRx();
+  unsigned n = consume(*link);
+  bool retired = n == 3 && link->retireRx(n);
+  unsigned attempts = 0;
+  Zutcp::TCPHeader final;
+  bool refused = link->output({}, [&attempts, &final](auto buf, const Zxdp::CommitFn &) {
+    ++attempts;
+    final = buf->tcp;
+    return false;
+  });
+  ZuCHECK(retired && !refused && attempts == 1 && final.seq == 1002 &&
+      final.ack == 2005 && final.flags == 0x10 && !link->finishes && !link->completions &&
+      Zutcp::TCPStateTest::pendingACK(*link) && !Zutcp::TCPStateTest::heldACK(*link),
+    "reader retirement and refused current-sequence final ACK cannot finish native close");
+  bool accepted = link->output({}, [&attempts, &final](auto buf, const Zxdp::CommitFn &commit) {
+    if (!commit()) return false;
+    ++attempts;
+    final = buf->tcp;
+    return true;
+  });
+  app.runRx(); app.runTx();
+  ZuCHECK(accepted && attempts == 2 && final.seq == 1002 && final.ack == 2005 &&
+      final.flags == 0x10 && link->finishes == 1 && link->completions == 1 &&
+      !Zutcp::TCPStateTest::pendingACK(*link) && link->txDrained() &&
+      !Zutcp::TCPStateTest::records(*link) && !app.rxJobs.count_() && !app.txJobs.count_(),
+    "accepted current-sequence pure ACK finishes once with empty owner queues and history");
+  link->finish();
+}
+
 static void pathRxLocal()
 {
   ZuTestScope(pathRxLocal);
@@ -3032,6 +3398,7 @@ int main(int argc, char **argv)
   ZuTestCall(rxReadSACK, false);
   ZuTestCall(rxReadSACK, true);
   ZuTestCall(finACKBeforeNotice);
+  ZuTestCall(finACKRetransmit);
   ZuTestCall(finACKCovered, false);
   ZuTestCall(finACKCovered, true);
   ZuTestCall(pathRxLocal);
@@ -3121,6 +3488,16 @@ int main(int argc, char **argv)
   ZuTestCall(peerAckWrap);
   ZuTestCall(peerAckBatch);
   ZuTestCall(peerAckExceptions);
+  ZuTestCall(repeatDataIdle, false);
+  ZuTestCall(repeatDataIdle, true);
+  ZuTestCall(repeatDataSnapshot, 0);
+  ZuTestCall(repeatDataSnapshot, 1);
+  ZuTestCall(repeatDataSnapshot, 2);
+  ZuTestCall(repeatDataReset);
+  ZuTestCall(repeatDataRecovery, false);
+  ZuTestCall(repeatDataRecovery, true);
+  ZuTestCall(repeatDataBatch);
+  ZuTestCall(repeatDataACKIntent);
   ZuTestCall(noCCAdmission);
   ZuTestCall(noCCRecovery, false);
   ZuTestCall(noCCRecovery, true);
@@ -3152,6 +3529,10 @@ int main(int argc, char **argv)
   ZuTestCall(contiguousQueued, false);
   ZuTestCall(contiguousQueued, true);
   ZuTestCall(mappedTxQueue);
+  ZuTestCall(mappedTxActive, 0);
+  ZuTestCall(mappedTxActive, 1);
+  ZuTestCall(mappedTxActive, 2);
+  ZuTestCall(mappedTxActive, 3);
   ZuTestCall(oldIncarnationACK);
   ZuTestCall(sequenceCycle, false);
   ZuTestCall(sequenceCycle, true);

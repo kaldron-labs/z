@@ -1488,7 +1488,6 @@ protected:
       }
       closeDataRx();
       closedLinkStateRx();
-      app()->retireLinkRoutes(impl());
       LinkStateSnapshot snapshot = linkSnapshotRx();
       app()->txRun([
 	link = impl(), peer, snapshot, stack, record, remember, l = ZuFwd<L>(l)
@@ -1502,6 +1501,8 @@ protected:
 	    link, peer, stack, record, remember, l = ZuMv(l)
 	  ]() mutable {
 	    if (remember) stack->rememberClosed(record);
+	    // Keep late packets routed until closed history can absorb them.
+	    link->app()->retireLinkRoutes(link);
 	    link->Self::disconnected_(peer);
 	    l();
 	  });
@@ -4361,7 +4362,11 @@ protected:
     }
     const uint64_t sentRxNext = m_txRxNext, sentRxSerial = m_txRxSerial,
       sentRxLimit = m_txRxLimit;
-    const uint64_t sentAck = app()->nativeTx() && (header.flags & 0x10) &&
+    // Old sequence space can be rejected before the peer processes its ACK.
+    // Keep that piggyback header, but retain the current-sequence ACK obligation.
+    const bool ackCurrent = (header.flags & 0x10) && !persist &&
+      (!data || ref.offset >= m_txNext);
+    const uint64_t sentAck = app()->nativeTx() && ackCurrent &&
       m_txOrigins.peerKnown ?
       tcpPosition(uint32_t(header.ack - m_txOrigins.peer - 1), sentRxNext) : U64Null;
     int options = header.options.encodedLength(syn);
@@ -4490,7 +4495,7 @@ protected:
       if (delay > limit) delay = limit;
       m_synDeadline = transportNow() + delay;
       schedulePTO_();
-    } else if (header.flags & 0x10) m_txTFOFinalAckSent = true;
+    } else if (ackCurrent) m_txTFOFinalAckSent = true;
     if (data) {
       m_txPkts.acceptedData(id, transportNow());
       if (syn) m_txTFOEnd = ref.length;
@@ -4514,7 +4519,7 @@ protected:
       m_txDiag.dataBytesTx += ref.length;
     }
     if (header.flags & 0x04) m_tcpResetSent = true;
-    if (header.flags & 0x10) {
+    if (ackCurrent) {
       if (sentRxNext > m_txLastAckSentNext) m_txLastAckSentNext = sentRxNext;
       if (sentRxLimit > m_txLastAckSentLimit) m_txLastAckSentLimit = sentRxLimit;
       m_ackPending = m_windowDirty = m_ackHoldPending = false;
