@@ -49,6 +49,13 @@ paths, not substitutes for verification. Verification checks wire structure,
 native narrowing, required fields and nesting; application domain checks remain
 separate. Unknown fields are skipped without retention.
 
+Construction, `load` and `update` apply metadata/type defaults to missing
+selected writable fields, following Zfb. `update` selects mutable and primary
+key fields; other fields and read-only fields remain untouched. `Reset` is not
+required to default an absent selected field. Internal protobuf `merge`
+preserves absent fields when combining message fragments; repeated-field
+append behavior for present values is unchanged.
+
 The example's `ZuCSpan text` borrows from the wire buffer. Use an owning string
 field when the decoded object must outlive it. `save<Facet, Filter>` chooses
 an operation facet/filter; generic streams and transmit streams support the
@@ -137,7 +144,7 @@ It does not validate application value domains or reject native null sentinels.
 value-domain checks or return a partial-load error result. Wire parsing failures
 stop the current scan without throwing or aborting. Constructor arguments not
 read use their field defaults; existing objects retain changes made before
-failure, and missing-pointer `Reset` processing is skipped after an incomplete
+failure, and missing-field default assignment is skipped after an incomplete
 scan. An invalid size prefix supplies an empty payload to the handler.
 
 `verify` is the nonthrowing input-validity result: callers must check it before
@@ -234,9 +241,13 @@ vectors. Repeated fixed-width values emit unpacked unless `PB::Packed` is
 selected, and accept either packed or unpacked input; a packed payload must
 contain whole elements.
 
-For a writable `Reset` pointer field, an absent update resets the field to its native
-default and deletes the previous raw pointee. Unselected or non-`Reset`
-fields retain their values.
+Following Zfb, construction initializes absent fields from their metadata/type
+defaults, and `load`/`update` default every absent selected writable field.
+`Reset` is not required. `update` selects mutable and primary-key fields;
+unselected and read-only fields retain their values. Owned raw pointees and
+C strings are released before replacement; repeated containers use their
+existing cleanup mechanisms. Message-fragment `merge` preserves absent fields,
+and present repeated values retain their protobuf append behavior.
 
 `verify<Type>(bytes, VerifyLimits{maxDepth})` bounds nested typed messages and
 unknown groups. The default permits 64 nested levels. A limit of zero still

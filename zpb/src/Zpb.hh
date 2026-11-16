@@ -1672,7 +1672,7 @@ private:
 	  return true;
 	}
 	using Alt = decltype(alt);
-	return readField<false, F>(bytes, pos, type,
+	bool valid = readField<false, F>(bytes, pos, type,
 	  [&](const auto &value) {
 	  (void)seen;
 	  if constexpr (F::ReadOnly) return true;
@@ -1723,18 +1723,43 @@ private:
 	  } else F::set(o, value);
 	  return true;
 	});
+	if (valid) seen[ZuTypeIndex<F, Fields>{}] = 1;
+	return valid;
       });
     if (!ok) return;
+    // Load/init/update materialize absent selected fields just like Zfb.
+    // Wire-level merging preserves absent members of an existing message.
     using Active = ZuTypeGrep<Filter, Fields>;
     ZuUnroll::all<Active>([&]<typename F>() {
-      if constexpr (ZfFieldWritable<F>{} && PointerField<F>{} &&
-	ZuTypeIn<ZuFieldProp::Reset, typename F::Props>{}) {
+      if constexpr (ZfFieldWritable<F>{} && !Merge) {
 	if (!seen[ZuTypeIndex<F, Fields>{}]) {
-	  if constexpr (ZuTraits<typename F::T>::IsPrimitive) delete F::get(o);
-	  F::set(o, F::deflt());
+	  loadMissing<F>(o);
 	}
       }
     });
+  }
+
+  template <typename F>
+  static void loadMissing(O &o) {
+    if constexpr (F::Code == ZfFieldTC::UDT && !PointerField<F>{}) {
+      using T = F::T;
+      using H = As<T>::template Handler<T, Facet>;
+      if constexpr (As<T>::Repeated &&
+	!ZuFieldProp::HasDeflt<typename F::Props>{}) {
+	H::reset(F::get(o));
+      } else F::set(o, CtorArg<F>::initial());
+    } else {
+      if constexpr (PointerField<F>{} && ZuTraits<typename F::T>::IsPrimitive)
+	delete F::get(o);
+      else if constexpr (F::Code == ZfFieldTC::CString)
+	CStringArg::free(F::get(o));
+      else if constexpr (F::Code == ZfFieldTC::CStringVec)
+	for (auto value : F::get(o)) CStringArg::free(value);
+      auto value = CtorArg<F>::initial();
+      if constexpr (F::Code == ZfFieldTC::CString)
+	F::set(o, ZuMv(value).release());
+      else F::set(o, CtorArg<F>::pass(value));
+    }
   }
 
   ZuBSpan m_bytes;

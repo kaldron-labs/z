@@ -279,6 +279,17 @@ ZfStruct(, (AdapterRow, PB),
   (key, (Keys<0>), UInt32));
 Zpb::AsMessage<"test.AdapterRow"> Zpb_Fmt(AdapterRow *);
 
+struct MissingRow {
+  int reset = 99, deflt = 99, plain = 99, init = 99, ro = 99;
+};
+ZfStruct(, (MissingRow, PB),
+  (reset,	(Mutable, Reset, Deflt<7>),	Int32),
+  (deflt,	(Mutable, Deflt<8>),		Int32),
+  (plain,	(Mutable),			Int32),
+  (init,	(Deflt<9>),			Int32),
+  ((ro, Rd),,				Int32));
+Zpb::AsMessage<"test.MissingRow"> Zpb_Fmt(MissingRow *);
+
 struct MoveChild {
   unsigned id;
   explicit MoveChild(unsigned id_) : id{id_} { }
@@ -315,8 +326,8 @@ Zpb::AsMessage<"test.BytesRow"> Zpb_Fmt(BytesRow *);
 
 struct Child { uint32_t a = 0, b = 0; };
 ZfStruct(, (Child, PB),
-  (a, (PB::FieldID<1>),	UInt32),
-  (b, (PB::FieldID<2>),	UInt32));
+  (a, (PB::FieldID<1>, Deflt<0>),	UInt32),
+  (b, (PB::FieldID<2>, Deflt<0>),	UInt32));
 Zpb::AsMessage<"test.Child"> Zpb_Fmt(Child *);
 
 struct Parent { Child child; };
@@ -405,8 +416,8 @@ struct PtrChild {
   ~PtrChild() { ++ptrDeletes; }
 };
 ZfStruct(, (PtrChild, PB),
-  (a, (PB::FieldID<1>),	UInt32),
-  (b, (PB::FieldID<2>),	UInt32));
+  (a, (PB::FieldID<1>, Deflt<0>),	UInt32),
+  (b, (PB::FieldID<2>, Deflt<0>),	UInt32));
 Zpb::AsMessage<"test.PtrChild"> Zpb_Fmt(PtrChild *);
 
 struct PtrValTree : ZmRBTreeKV<int32_t, PtrChild *,
@@ -471,8 +482,8 @@ Zpb::AsMessage<"test.SmartParent"> Zpb_Fmt(SmartParent *);
 
 struct RefChild : ZmObject { uint32_t a = 0, b = 0; };
 ZfStruct(, (RefChild, PB),
-  (a, (PB::FieldID<1>),	UInt32),
-  (b, (PB::FieldID<2>),	UInt32));
+  (a, (PB::FieldID<1>, Deflt<0>),	UInt32),
+  (b, (PB::FieldID<2>, Deflt<0>),	UInt32));
 Zpb::AsMessage<"test.RefChild"> Zpb_Fmt(RefChild *);
 
 struct RefParent { ZmRef<RefChild> child; };
@@ -951,7 +962,7 @@ static void testImplicitIDs()
   const uint8_t oldField[] = {0x10, 5, 0x18, 9};
   ZuCheck(Zpb::verify<ImplicitRow>({oldField, sizeof(oldField)}));
   auto afterOld = Zpb::load<ImplicitRow>({oldField, sizeof(oldField)});
-  ZuCheck(afterOld.first == 0 && afterOld.last == 9);
+  ZuCheck(afterOld.first == ZfField(ImplicitRow, first)::deflt() && afterOld.last == 9);
 
   const uint8_t explicitWire[] = {0x20, 7, 0x48, 9};
   ExplicitSkipRow explicitRow{7, 9};
@@ -965,7 +976,8 @@ static void testImplicitIDs()
   ZuCheck(Zpb::verify<ExplicitSkipRow>({retiredWire, sizeof(retiredWire)}));
   auto explicitCopy = Zpb::load<ExplicitSkipRow>(
     {retiredWire, sizeof(retiredWire)});
-  ZuCheck(explicitCopy.first == 0 && explicitCopy.last == 9);
+  ZuCheck(explicitCopy.first == ZfField(ExplicitSkipRow, first)::deflt() &&
+    explicitCopy.last == 9);
 }
 
 static void testVarint()
@@ -1289,6 +1301,33 @@ static void testFloat32()
 static void testAdapterRules()
 {
   ZuTestScope(testAdapterRules);
+  auto missing = Zpb::handler<MissingRow>({});
+  auto checkMissing = [](const MissingRow &r, int init) {
+    ZuCheck(r.reset == 7 && r.deflt == 8 &&
+      r.plain == ZfField(MissingRow, plain)::deflt() &&
+      r.init == init && r.ro == 99);
+  };
+  checkMissing(missing.ctor(), 9);
+  auto missingAlloc = missing.alloc();
+  checkMissing(*missingAlloc, 9);
+  delete missingAlloc;
+  alignas(MissingRow) unsigned char missingMemory[sizeof(MissingRow)];
+  missing.new_(missingMemory);
+  auto missingPlaced = ZuLaunder(reinterpret_cast<MissingRow *>(missingMemory));
+  checkMissing(*missingPlaced, 9);
+  missingPlaced->~MissingRow();
+  MissingRow missingLoad, missingUpdate, missingMerge;
+  missing.load(missingLoad);
+  checkMissing(missingLoad, 9);
+  missing.update(missingUpdate);
+  checkMissing(missingUpdate, 99);
+  missing.merge(missingMerge);
+  ZuCheck(missingMerge.reset == 99 && missingMerge.deflt == 99 &&
+    missingMerge.plain == 99 && missingMerge.init == 99);
+  const uint8_t partial[] = {0x08, 42};
+  Zpb::handler<MissingRow>({partial, sizeof(partial)}).update(missingUpdate);
+  ZuCheck(missingUpdate.reset == 42 && missingUpdate.deflt == 8 &&
+    missingUpdate.plain == ZfField(MissingRow, plain)::deflt());
   const uint8_t wire[] = {0x08, 1, 0x10, 2, 0x18, 3, 0x20, 4, 0x28, 5};
   auto h = Zpb::handler<AdapterRow>({wire, sizeof(wire)});
   auto row = h.ctor();
@@ -1342,7 +1381,8 @@ static void testCtor()
   const uint8_t duplicate[] = {0x08, 0x01, 0x08, 0x2a, 0x12, 0x03,
     'a', 'b', 'c'};
   auto last = Zpb::load<CtorRow>({duplicate, sizeof(duplicate)});
-  ZuCheck(last.id == 42 && last.name == "abc" && !last.version);
+  ZuCheck(last.id == 42 && last.name == "abc" &&
+    last.version == ZfField(CtorRow, version)::deflt());
 
   alignas(CtorRow) unsigned char place[sizeof(CtorRow)];
   Zpb::handler<CtorRow>({wire, sizeof(wire)}).new_(place);
@@ -1584,6 +1624,8 @@ static void testCString()
 
   const uint8_t empty[] = {0x0a, 0x00};
   ZuCheck(Zpb::verify<CStringRow>({empty, sizeof(empty)}));
+  Zpb::handler<CStringRow>({}).update(row);
+  ZuCheck(!row.text);
 }
 
 static void testCStringVec()
@@ -1621,6 +1663,8 @@ static void testCStringVec()
   Zpb::Builder nullBuilder{nullStorage};
   auto failed = Zpb::save(nullBuilder, nullInput);
   ZuCheck(!nullBuilder.failed() && failed.length() == 2);
+  Zpb::handler<CStringVecRow>({}).update(row);
+  ZuCheck(!row.values.length());
 }
 
 static void testPointer()
@@ -1698,9 +1742,9 @@ static void testPointer()
   ZuCheck(localRef.child && localRef.child->a == 3 && localRef.child->b == 0);
   Zpb::handler<ForeignParent>({replace, sizeof(replace)}).update(foreign);
   ZuCheck(foreign.child && foreign.child->a == 3 && foreign.child->b == 0);
-  auto retained = row.child;
+  before = ptrDeletes;
   Zpb::handler<PtrParent>({}).update(row);
-  ZuCheck(row.child == retained && row.child->a == 3);
+  ZuCheck(!row.child && ptrDeletes == before + 1);
 
   PtrParent absent;
   Output emptyOutput;
@@ -1863,6 +1907,9 @@ static void testArrays()
   ZuCheck(row.children.length() == 1 && row.children[0].a == 3);
   Zpb::handler<RawArrayParent>({append, sizeof(append)}).load(raw);
   ZuCheck(raw.children.length() == 1 && raw.children[0]->a == 3);
+  Zpb::handler<ArrayParent>({}).update(row);
+  Zpb::handler<RawArrayParent>({}).update(raw);
+  ZuCheck(!row.children.length() && !raw.children.length());
 }
 
 static void testMap()
@@ -1998,6 +2045,8 @@ static void testMap()
     Zpb::handler<PtrValRow>({child, sizeof(child)}).load(ptrRow);
     ZuCheck(ptrRow.entries.count_() == 1 &&
       ptrRow.entries.findVal(5)->a == 7 && ptrDeletes == beforePtrVal + 2);
+    Zpb::handler<PtrValRow>({}).update(ptrRow);
+    ZuCheck(!ptrRow.entries.count_() && ptrDeletes == beforePtrVal + 3);
   }
   ZuCheck(ptrDeletes == beforePtrVal + 3);
 
@@ -2471,7 +2520,7 @@ static void testUnion()
     0x4a, 0x02, 0x08, 0x09, 0x22, 0x02, 0x10, 0x04};
   ZuCheck(Zpb::verify<ChoiceRow>({switched, sizeof(switched)}));
   auto last = Zpb::load<ChoiceRow>({switched, sizeof(switched)});
-  ZuCheck(last.choice.type() == 1 && last.choice.p<1>().a == 0 &&
+  ZuCheck(last.choice.type() == 1 && last.choice.p<1>().a == ZfField(ChoiceA, a)::deflt() &&
     last.choice.p<1>().b == 4);
   const uint8_t pointerMerge[] = {
     0x22, 0x06, 0x0a, 0x02, 0x08, 0x01, 0x10, 0x03,
@@ -2560,7 +2609,7 @@ static void testUnion()
     {ctorSwitch, sizeof(ctorSwitch)});
   ZuCheck(switchedCtor.choice.type() == 1 &&
     switchedCtor.choice.p<1>().id == 2 &&
-    switchedCtor.choice.p<1>().value == 0);
+    switchedCtor.choice.p<1>().value == ZfField(CtorChoiceAlt, value)::deflt());
   const uint8_t malformedDiscarded[] = {
     0x22, 0x02, 0x08, 0x80, 0x4a, 0x02, 0x08, 0x09};
   ZuCheck(!Zpb::verify<ChoiceRow>(
@@ -2848,7 +2897,7 @@ static void testLoadErrors()
   auto wrong = Zpb::load<CtorRow>(wrongWire);
   ZuCheck(wrong.id == ZuCmp<int32_t>::null() && !wrong.name.length());
   auto framed = Zpb::load<Row, ZuFacet::PrefixedPB>(badPrefix);
-  ZuCheck(!framed.id &&
+  ZuCheck(framed.id == ZfField(Row, id)::deflt() &&
     !framed.name.length() && !framed.enabled);
   auto nested = Zpb::load<Parent>(badNested);
   ZuCheck(!nested.child.a && !nested.child.b);
