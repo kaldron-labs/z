@@ -138,7 +138,7 @@ struct Endpoint {
       auto p = pending;
       memset(p, 0, 42);
       memcpy(p, config.mac, 6);
-      memcpy(p + 6, instance->mac(), 6);
+      memcpy(p + 6, instance->mac().data(), 6);
       put16(p + 12, 0x0800);
       p[14] = 0x45;
       put16(p + 16, config.payload + 28);
@@ -157,6 +157,7 @@ struct Endpoint {
       put16(p + 40, check ? check : 65535);
     }
     if (instance->send(pending, config.payload + 42)) {
+      tx.free(pending); // allocation lease ends; kernel retirement permits reuse
       pending = nullptr;
       sequence = 0;
       ++sent;
@@ -198,11 +199,7 @@ struct Endpoint {
     rx.size = tx.size = link.mtu + 14;
     instance = Zxdp::Instance::create({.interface = index, .txPools = &tx, .rxPool = &rx,
       .rx = [this](uint8_t *p, unsigned n) { receive(p, n); },
-      .txCompleted = [this](uint8_t *p, unsigned n) {
-        completed += n;
-        tx.free(p);
-        if (received == config.count && completed == config.count) instance->wake();
-      }, .spin = config.spin}, error);
+      .spin = config.spin}, error);
     if (!instance || !instance->ready()) failed = true;
     if (!failed && config.readyFile) {
       ZiFile file;
@@ -215,6 +212,8 @@ struct Endpoint {
       ZmThread service{[this, deadline] {
         while (!failed && (received != config.count || completed != config.count)) {
           auto work = instance->pollTx();
+          completed += work;
+          if (received == config.count && completed == config.count) instance->wake();
           auto seq = nextSeq.xch(0);
           if (seq) transmit(seq);
           else if (sequence) transmit(sequence);
@@ -238,9 +237,10 @@ struct Endpoint {
       bool closed = false;
       auto limit = Zm::now() + ZuTime{10};
       do {
-        ZtString<> cleanup;
-        if (instance->close(cleanup)) { closed = true; break; }
-        if (!!cleanup) { error = ZuMv(cleanup); failed = true; }
+        auto result = instance->close();
+        if (result.is<void>()) { closed = true; break; }
+        const auto &cleanup = result.p<ZeException>();
+        if (!!cleanup) { error = {}; error << cleanup; failed = true; }
         poll(nullptr, 0, 1);
       } while (Zm::now() < limit);
       ZmAssert_(closed); // unresolved kernel DMA never authorizes backing release

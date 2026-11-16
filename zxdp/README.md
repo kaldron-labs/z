@@ -67,7 +67,8 @@ buffer searches. Wake/join the receiver and quiesce Tx and wake callers before
 close.
 
 Creation and close are control-path operations. Quiesce both service owners before
-calling `close(error)`. False with an empty error means retry is pending; an error
+calling `close()`. Its `ZuUnion<void, ZeException>` result holds `void` on success;
+an empty exception means retry is pending. A populated exception
 retains the handle for explicit recovery/retry. Submitted backing is returned only
 after kernel queue retirement has been observed. Continue close until successful,
 then release the instance. Caller-owned pools outlive the instance and all

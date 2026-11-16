@@ -17,6 +17,7 @@
 #include <stdint.h>
 
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmPlatform.hh>
@@ -35,7 +36,9 @@ struct ArenaLayout {
 };
 
 struct TxSlot {
-  unsigned pending = 0, wire, active;
+  ZmAtomic<unsigned> refs{0}; // one allocation lease plus any kernel submission
+  unsigned wire, active;
+  bool pending = false;
 };
 
 class ZxdpAPI UMem : public ZmNHeap<UMem>, public ZmObject {

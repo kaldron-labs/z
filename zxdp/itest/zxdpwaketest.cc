@@ -41,8 +41,7 @@ int epoll_wait(int fd, epoll_event *events, int count, int timeout)
 
 static void closeInstance(ZmRef<Zxdp::Instance> &instance)
 {
-  ZtString<> error;
-  while (!instance->close(error)) { }
+  while (instance->close().is<ZeException>()) { }
   instance = nullptr;
 }
 
@@ -105,7 +104,7 @@ static void testWake()
   address.sll_protocol = htons(ETH_P_ALL);
   address.sll_ifindex = strtoul(getenv("ZXDP_TEST_PEER_IFINDEX"), nullptr, 10);
   uint8_t bytes[64]{}; // minimum Ethernet fixture frame
-  memcpy(bytes, instance->mac(), 6);
+  memcpy(bytes, instance->mac().data(), 6);
   bytes[6] = 2;
   bytes[12] = 0x88; bytes[13] = 0xb5;
   unsigned before = waits;
@@ -156,7 +155,7 @@ static void testActiveWake()
   address.sll_protocol = htons(ETH_P_ALL);
   address.sll_ifindex = strtoul(getenv("ZXDP_TEST_PEER_IFINDEX"), nullptr, 10);
   uint8_t bytes[64]{};
-  memcpy(bytes, instance->mac(), 6);
+  memcpy(bytes, instance->mac().data(), 6);
   bytes[6] = 2; bytes[12] = 0x88; bytes[13] = 0xb5;
   ZmSemaphore parked;
   entered = &parked;

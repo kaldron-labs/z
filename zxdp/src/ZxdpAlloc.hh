@@ -52,6 +52,9 @@ public:
   bool owns(const void *) const;
   unsigned slot(const void *) const;
   uint8_t *backing(unsigned slot) const;
+  // Tx owner, with the caller allocation lease held. True only after all
+  // kernel use retires; permits header changes before a subsequent send.
+  bool writable(const void *) const;
 
 private:
   void init(ZmRef<UMem>, uint64_t offset, unsigned stride, unsigned prefix, unsigned first);
@@ -66,6 +69,7 @@ private:
   ZmRef<UMem>	m_arena;
   uint64_t	m_offset = 0;
   unsigned	m_shift = 0, m_prefix = 0, m_first = 0;
+  bool		m_tx = false;
   alignas(Zm::CacheLineSize) Head m_head{0};
   Count		m_used{0}, m_active{0};
 };
