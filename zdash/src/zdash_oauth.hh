@@ -73,18 +73,18 @@ ZuDerive(String, ZtString<ZtStringHeapID<"Zum.Native.String">>);
 ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"Zum.Native.Bytes">>));
 
 struct TokenWire {
-  ZumVaultClient::SecretText accessToken;
-  ZumVaultClient::SecretText refreshToken;
-  ZumVaultClient::Text scope;
-  String tokenType;
-  uint32_t expiresIn = 0;
+  ZumVaultClient::SecretText	accessToken;
+  ZumVaultClient::SecretText	refreshToken;
+  ZumVaultClient::Text		scope;
+  String			tokenType;
+  uint32_t			expiresIn = 0;
 };
 ZfStruct(, (TokenWire, JSON),
-  (accessToken,	(JSON::ID<"access_token">, Required),			String),
-  (refreshToken,	(JSON::ID<"refresh_token">, JSON::Opt),		String),
-  (scope,		(JSON::Opt),					String),
-  (tokenType,	(JSON::ID<"token_type">, Required),			String),
-  (expiresIn,	(JSON::ID<"expires_in">, Required),			UInt32));
+  (accessToken,	(JSON::ID<"access_token">, Required),		String),
+  (refreshToken,(JSON::ID<"refresh_token">, JSON::Opt),		String),
+  (scope,	(JSON::Opt),					String),
+  (tokenType,	(JSON::ID<"token_type">, Required),		String),
+  (expiresIn,	(JSON::ID<"expires_in">, Required),		UInt32));
 
 static void clearTokens(ZumVaultClient::Credential &tokens)
 {
