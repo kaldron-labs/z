@@ -4732,6 +4732,11 @@ Sources: [module guide](../zutcp/README.md), [execution plan](../zutcp_plan.md).
 These comparisons describe the planned TCP goal-state; implementation is in
 progress. Linux-only; excluded from Windows builds.
 
+Here, **user-mode stack** means TCP/IP protocol processing that substitutes for
+the kernel TCP/IP stack on selected traffic. It may still use OS packet I/O.
+Socket wrappers, event loops and buffer pools alone do not provide that stack.
+BDE supplies general utilities; the NTF socket APIs below use OS networking.
+
 <table>
 <thead>
 <tr>
@@ -4739,26 +4744,26 @@ progress. Linux-only; excluded from Windows builds.
   <th scope="col" width="240" align="left">STL&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
   <th scope="col" width="240" align="left">Boost&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
   <th scope="col" width="240" align="left">Folly&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
-  <th scope="col" width="240" align="left">NTF&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
+  <th scope="col" width="240" align="left">BDE/NTF&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
   <th scope="col" width="280" align="left">Rust&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
 </tr>
 </thead>
 <tbody>
 <tr valign="top">
-  <td><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh"><code>Zutcp::Stack</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh"><code>StackParams</code></a><br>➕ user-mode TCP/IP stack over <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh">Zxdp</a>, integrated with <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh">ZiMultiplex</a> and ordinary <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh">Zi</a> application interfaces<br>➕ protocol Rx/Tx work runs on the mx owners<br>➖ requires a configured interface and raw packet privileges</td>
-  <td>N/A</td>
-  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a></td>
-  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSocket.h"><code>folly::AsyncSocket / EventBase</code></a></td>
-  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_interface.h"><code>ntci::Interface</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>StreamSocket</code></a></td>
-  <td>Partial: <a href="https://docs.rs/smoltcp/latest/smoltcp/iface/struct.Interface.html"><code>smoltcp::iface::Interface</code></a>, <a href="https://docs.rs/smoltcp/latest/smoltcp/phy/trait.Device.html"><code>Device</code></a></td>
+  <td>Planned user-mode stack:<br><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh"><code>Zutcp::Stack</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh"><code>StackParams</code></a><br>➕ user-mode TCP/IP stack over <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh">Zxdp</a>, integrated with <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh">ZiMultiplex</a> and ordinary <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh">Zi</a> application interfaces<br>➕ protocol Rx/Tx work runs on the mx owners<br>➖ requires a configured interface and raw packet privileges</td>
+  <td>No TCP/IP stack.</td>
+  <td>No user-mode stack; <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/overview/basics.html"><code>Boost.Asio</code></a> wraps OS sockets.</td>
+  <td>No user-mode stack; <a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSocket.h"><code>folly::AsyncSocket</code></a> wraps OS sockets.</td>
+  <td>No user-mode stack; <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>ntci::StreamSocket</code></a> wraps OS sockets.</td>
+  <td>User-mode TCP/IP: <a href="https://docs.rs/smoltcp/latest/smoltcp/"><code>smoltcp</code></a>; device integration required.</td>
 </tr>
 <tr valign="top">
-  <td><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpAlloc.hh"><code>Zutcp::Allocator</code></a> and packet geometry<br>➕ <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh">Zi</a> providers over caller-owned <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh">Zxdp</a> pools, with in-place wire construction<br>➕ separate control capacity and bounded ingress retention</td>
-  <td>N/A</td>
-  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a></td>
-  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/IOBuf.h"><code>folly::IOBuf</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh">Zxdp</a></td>
-  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_datapool.h"><code>ntci::DataPool</code></a></td>
-  <td>Partial: <a href="https://docs.rs/smoltcp/latest/smoltcp/phy/trait.Device.html"><code>smoltcp::phy::Device</code></a></td>
+  <td>Planned user-mode packet storage:<br><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpAlloc.hh"><code>Zutcp::Allocator</code></a> and packet geometry<br>➕ <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh">Zi</a> providers over caller-owned <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh">Zxdp</a> pools, with in-place wire construction<br>➕ separate control capacity and bounded ingress retention</td>
+  <td>No TCP/IP stack.</td>
+  <td>Buffer utilities only; <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/overview/basics.html"><code>Boost.Asio</code></a> supplies no user-mode stack.</td>
+  <td>Buffer utility only: <a href="https://github.com/facebook/folly/blob/main/folly/io/IOBuf.h"><code>folly::IOBuf</code></a>; no TCP/IP stack.</td>
+  <td>Buffer pool only: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_datapool.h"><code>ntci::DataPool</code></a>; no TCP/IP stack.</td>
+  <td>User-mode stack packet I/O: <a href="https://docs.rs/smoltcp/latest/smoltcp/phy/trait.Device.html"><code>smoltcp::phy::Device</code></a>; pool policy differs.</td>
 </tr>
 </tbody>
 </table>
@@ -4771,31 +4776,35 @@ progress. Linux-only; excluded from Windows builds.
   <th scope="col" width="340" align="left">Z&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
   <th scope="col" width="240" align="left">STL&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
   <th scope="col" width="240" align="left">Boost&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
-  <th scope="col" width="240" align="left">NTF&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
+  <th scope="col" width="240" align="left">Folly&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
+  <th scope="col" width="240" align="left">BDE/NTF&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
   <th scope="col" width="280" align="left">Rust&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
 </tr>
 </thead>
 <tbody>
 <tr valign="top">
-  <td><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpConnection.hh"><code>Zutcp::Connection</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpCliConnection.hh"><code>CliConnection</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpSrvConnection.hh"><code>SrvConnection</code></a><br>➕ one connection owns ordered bytes, reassembly, credit, retained Tx data and close<br>➕ bounded pending/live admission and closed-tuple history</td>
-  <td>N/A</td>
-  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a></td>
-  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>ntci::StreamSocket</code></a></td>
-  <td>Partial: <a href="https://docs.rs/smoltcp/latest/smoltcp/socket/tcp/struct.Socket.html"><code>smoltcp::socket::tcp::Socket</code></a></td>
+  <td>Planned user-mode TCP state:<br><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpConnection.hh"><code>Zutcp::Connection</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpCliConnection.hh"><code>CliConnection</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpSrvConnection.hh"><code>SrvConnection</code></a><br>➕ one connection owns ordered bytes, reassembly, credit, retained Tx data and close<br>➕ bounded pending/live admission and closed-tuple history</td>
+  <td>No TCP/IP stack.</td>
+  <td>OS TCP connection API: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/overview/basics.html"><code>Boost.Asio</code></a>; protocol state lives in the kernel.</td>
+  <td>OS TCP connection API: <a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSocket.h"><code>folly::AsyncSocket</code></a>; protocol state lives in the kernel.</td>
+  <td>OS TCP connection API: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>ntci::StreamSocket</code></a>; protocol state lives in the kernel.</td>
+  <td>User-mode TCP state: <a href="https://docs.rs/smoltcp/latest/smoltcp/socket/tcp/struct.Socket.html"><code>smoltcp::socket::tcp::Socket</code></a>; admission/retention policy differs.</td>
 </tr>
 <tr valign="top">
-  <td><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh">TCP ACK/window/recovery facilities</a><br>➕ cumulative ACKs, optional SACK/DSACK, scaling and timestamps/PAWS<br>➕ RACK-TLP, RTO/persist and ECN/NewReno on explicit owners</td>
-  <td>N/A</td>
-  <td>None: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
-  <td>N/A</td>
-  <td>Partial: <a href="https://docs.rs/smoltcp/latest/smoltcp/socket/tcp/index.html"><code>smoltcp TCP</code></a> (not full TCP feature parity)</td>
+  <td>Planned user-mode TCP recovery:<br><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh">TCP ACK/window/recovery facilities</a><br>➕ cumulative ACKs, optional SACK/DSACK, scaling and timestamps/PAWS<br>➕ RACK-TLP, RTO/persist and ECN/NewReno on explicit owners</td>
+  <td>No TCP/IP stack.</td>
+  <td>Kernel-provided TCP; <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/overview/basics.html"><code>Boost.Asio</code></a> does not implement recovery.</td>
+  <td>Kernel-provided TCP; <a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSocket.h"><code>folly::AsyncSocket</code></a> does not implement recovery.</td>
+  <td>Kernel-provided TCP; <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>ntci::StreamSocket</code></a> does not implement recovery.</td>
+  <td>User-mode TCP recovery: <a href="https://docs.rs/smoltcp/latest/smoltcp/socket/tcp/struct.Socket.html"><code>smoltcp::socket::tcp::Socket</code></a>; partial feature match.</td>
 </tr>
 <tr valign="top">
-  <td><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh">TCP initial sequences and Fast Open</a><br>➕ secure keyed ISNs and bounded cookie state independent of TLS<br>➕ default-off, application-authorized early data with ordinary fallback</td>
-  <td>N/A</td>
-  <td>Partial: platform-specific socket options around kernel TCP<br>➖ no portable user-mode ISN/cookie or early-delivery policy</td>
-  <td>N/A</td>
-  <td>Partial: <a href="https://docs.rs/smoltcp/latest/smoltcp/socket/tcp/index.html"><code>smoltcp TCP</code></a> (no matching Fast Open contract)</td>
+  <td>Planned user-mode ISN/Fast Open:<br><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh">TCP initial sequences and Fast Open</a><br>➕ secure keyed ISNs and bounded cookie state independent of TLS<br>➕ default-off, application-authorized early data with ordinary fallback</td>
+  <td>No TCP/IP stack.</td>
+  <td>Kernel TCP policy via OS-specific options; <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/overview/basics.html"><code>Boost.Asio</code></a> supplies no user-mode implementation.</td>
+  <td>Kernel TCP policy via OS socket options; <a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSocket.h"><code>folly::AsyncSocket</code></a> supplies no user-mode implementation.</td>
+  <td>Kernel TCP policy; <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>ntci::StreamSocket</code></a> supplies no user-mode implementation.</td>
+  <td>User-mode TCP: <a href="https://docs.rs/smoltcp/latest/smoltcp/socket/tcp/struct.Socket.html"><code>smoltcp::socket::tcp::Socket</code></a>; no matching Fast Open contract.</td>
 </tr>
 </tbody>
 </table>
