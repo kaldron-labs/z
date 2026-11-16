@@ -7,7 +7,7 @@ formatting, time, encoding and ownership. Include individual headers as
 runtime and dynamically growing containers live in [Zm](../zm/README.md)
 and [Zt](../zt/README.md).
 
-See [Z, STL, Boost, Folly, BDE and NTF equivalents](../docs/Z_STL_BOOST_FOLLY_BDE.md#zu---framework-underlying-foundation)
+See [Z, STL, Boost, Folly, BDE/NTF and Rust equivalents](../docs/Z_STL_BOOST_FOLLY_BDE_RUST.md#zu---framework-underlying-foundation)
 for feature comparisons, and the [container verb Rosetta stone](../docs/ROSETTA.md)
 for insertion, lookup, iteration and removal idioms.
 

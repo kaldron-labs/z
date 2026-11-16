@@ -1,4 +1,4 @@
-# Z, STL, Boost, Folly, BDE, NTF and Rust equivalents
+# Z, STL, Boost, Folly, BDE/NTF and Rust equivalents
 
 See the [container verb Rosetta stone](ROSETTA.md) for Z and STL insertion,
 lookup, iteration and removal idioms.

@@ -17,8 +17,7 @@ limitations.
 [Build dependencies](docs/DEPENDENCIES.md) · [Testing and environment setup](docs/TESTING.md) ·
 [Repository guidance map](AGENTS.md)
 
-See [Z, STL, Boost, Folly, BDE and NTF equivalents](docs/Z_STL_BOOST_FOLLY_BDE.md) for feature comparisons
-and the benefits and tradeoffs of Z facilities.
+See [Z, STL, Boost, Folly, BDE/NTF and Rust equivalents](docs/Z_STL_BOOST_FOLLY_BDE_RUST.md) for feature comparisons and the benefits and tradeoffs of Z facilities.
 
 Agentic software engineering is a game changer: Z reinvents multiple wheels, intentionally, for efficient vertical integration. Built with Codex, Elephant/Goldfish Model and Devlayer.
 
