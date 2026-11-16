@@ -3,15 +3,14 @@
 See the [container verb Rosetta stone](ROSETTA.md) for Z and STL insertion,
 lookup, iteration and removal idioms.
 
-The Rust column prefers language facilities and `core`/`alloc`/`std` APIs, then
-Cargo crates from established ecosystems. Links point to the Rust Reference,
-standard-library rustdoc, or crate-maintained rustdoc on docs.rs (whose crate
-pages also link Cargo metadata and source). Rust entries describe stable APIs
-unless explicitly qualified; `latest` crate documentation follows releases.
-“Partial” and “Composition” identify differences or building blocks rather than
-feature parity. Where Rust has no direct equivalent, the linked language rule
-or nearest facility explains the boundary; a crate reference does not imply
-matching Z wire formats, allocation, shard ownership or lifecycle guarantees.
+The Rust column prefers language and standard-library APIs, then Cargo crates.
+Links lead to canonical reference or crate documentation; `latest` follows releases.
+
+**Partial** names the nearest facility or building blocks; custom integration may
+be needed. **None** / **N/A** means no direct equivalent; any links provide
+related language rules or alternatives. These entries do not imply matching wire
+formats, allocation, ownership or lifecycle guarantees. Scroll wide tables
+horizontally to compare columns.
 
 ## Contents
 
@@ -178,252 +177,1472 @@ matching Z wire formats, allocation, shard ownership or lifecycle guarantees.
 
 ## Abbreviated forwarding and move operations
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuFwd`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L334) | [`std::forward`](https://en.cppreference.com/cpp/utility/forward) | [`boost::forward`](https://github.com/boostorg/move/blob/master/include/boost/move/utility_core.hpp) ([Move](https://www.boost.org/doc/libs/latest/doc/html/move.html)) | N/A | [`bslmf::Util::forward`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_util.h) | Partial: [moves and borrows](https://doc.rust-lang.org/reference/expressions.html#place-expressions-and-value-expressions); no forwarding-reference deduction |
-| [`ZuMv`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L343) | [`std::move`](https://en.cppreference.com/cpp/utility/move) | [`boost::move`](https://github.com/boostorg/move/blob/master/include/boost/move/utility_core.hpp) | N/A | [`bslmf::MovableRefUtil::move`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_movableref.h) | [implicit moves](https://doc.rust-lang.org/reference/expressions.html#moved-and-copied-types); [`move` captures](https://doc.rust-lang.org/reference/types/closure.html#capture-modes) move captured ownership |
-| [`ZuMvPtr`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)<br>➕ nulls a moved raw pointer as well as moving smart pointers | Partial: [`std::exchange`](https://en.cppreference.com/cpp/utility/exchange)`(p, nullptr)` for raw pointers, [`std::move`](https://en.cppreference.com/cpp/utility/move) for smart pointers | Partial: [`boost::exchange`](https://github.com/boostorg/core/blob/master/include/boost/core/exchange.hpp), [`boost::move`](https://github.com/boostorg/move/blob/master/include/boost/move/utility_core.hpp) | N/A | Partial: [`bsl::exchange`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_utility.h)`(p, nullptr)` | [`Option::take`](https://doc.rust-lang.org/std/option/enum.Option.html#method.take); [`mem::replace`](https://doc.rust-lang.org/std/mem/fn.replace.html) for raw pointers |
-| [`ZuFwdLike`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L365)<br>➕ optional target-type conversion | [`std::forward_like`](https://en.cppreference.com/cpp/utility/forward_like) (C++23) | Partial: [Boost.Move](https://www.boost.org/doc/libs/latest/doc/html/move.html) forwarding + [TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html) qualifier propagation | [`folly::forward_like`](https://github.com/facebook/folly/blob/main/folly/Utility.h)<br>➖ no separate target-type conversion overload | Partial: [`bslmf::Util::forward_like`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_util.h) | No cv/ref propagation equivalent; use [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) and [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L334"><code>ZuFwd</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/forward"><code>std::forward</code></a></td>
+  <td><a href="https://github.com/boostorg/move/blob/master/include/boost/move/utility_core.hpp"><code>boost::forward</code></a> (<a href="https://www.boost.org/doc/libs/latest/doc/html/move.html">Move</a>)</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_util.h"><code>bslmf::Util::forward</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/expressions.html#place-expressions-and-value-expressions">moves and borrows</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L343"><code>ZuMv</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/move"><code>std::move</code></a></td>
+  <td><a href="https://github.com/boostorg/move/blob/master/include/boost/move/utility_core.hpp"><code>boost::move</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_movableref.h"><code>bslmf::MovableRefUtil::move</code></a></td>
+  <td><a href="https://doc.rust-lang.org/reference/expressions.html#moved-and-copied-types">implicit moves</a>; <a href="https://doc.rust-lang.org/reference/types/closure.html#capture-modes"><code>move</code> captures</a> move captured ownership</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuMvPtr</code></a><br>➕ nulls a moved raw pointer as well as moving smart pointers</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/exchange"><code>std::exchange</code></a>, <a href="https://en.cppreference.com/cpp/utility/move"><code>std::move</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/exchange.hpp"><code>boost::exchange</code></a>, <a href="https://github.com/boostorg/move/blob/master/include/boost/move/utility_core.hpp"><code>boost::move</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_utility.h"><code>bsl::exchange</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/option/enum.Option.html#method.take"><code>Option::take</code></a>; <a href="https://doc.rust-lang.org/std/mem/fn.replace.html"><code>mem::replace</code></a> for raw pointers</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L365"><code>ZuFwdLike</code></a><br>➕ optional target-type conversion</td>
+  <td><a href="https://en.cppreference.com/cpp/utility/forward_like"><code>std::forward_like</code></a> (C++23)</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/move.html">Boost.Move</a>, <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">TypeTraits</a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Utility.h"><code>folly::forward_like</code></a><br>➖ no separate target-type conversion overload</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_util.h"><code>bslmf::Util::forward_like</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Compile-time constants
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuConstant`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)`<T, V>` — typed compile-time value, including non-integral and structural class values such as [`ZuString`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuString.hh)<br>➕ conversion and call return const references | [`std::integral_constant`](https://en.cppreference.com/cpp/types/integral_constant)`<T, V>` — also accepts permitted non-integral template values<br>➖ conversion and call return by value | [`boost::integral_constant`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/integral_constant.hpp) | Partial: [`folly::vtag_t<V>`](https://github.com/facebook/folly/blob/main/folly/Traits.h)<br>➖ value-list tag rather than a typed reference-returning constant wrapper | [`bsl::integral_constant`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<T, V>`<br>➖ conversion and call return by value rather than const reference | [`const` items](https://doc.rust-lang.org/reference/items/constant-items.html) / [associated constants](https://doc.rust-lang.org/reference/items/associated-items.html#associated-constants); [const generics](https://doc.rust-lang.org/reference/items/generics.html#const-generics) have a restricted set of parameter types |
-| [`ZuInt`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::integral_constant`](https://en.cppreference.com/cpp/types/integral_constant)`<int, I>` | [`boost::mp11::mp_int`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html)`<I>` | N/A | [`bsl::integral_constant`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<int, I>` | [`const` items](https://doc.rust-lang.org/reference/items/constant-items.html) (`const V: i32 = N`); [const generics](https://doc.rust-lang.org/reference/items/generics.html#const-generics) for type-indexed values |
-| [`ZuUnsigned`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::integral_constant`](https://en.cppreference.com/cpp/types/integral_constant)`<unsigned, I>` | [`boost::integral_constant`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/integral_constant.hpp)`<unsigned, I>` | Partial: [`folly::index_constant<I>`](https://github.com/facebook/folly/blob/main/folly/Traits.h)<br>➖ size_t-valued rather than unsigned-valued | [`bsl::integral_constant`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<unsigned, I>` | [`const` items](https://doc.rust-lang.org/reference/items/constant-items.html) (`const V: u32 = N`); [const generics](https://doc.rust-lang.org/reference/items/generics.html#const-generics) for type-indexed values |
-| [`ZuBool`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::bool_constant`](https://en.cppreference.com/cpp/types/integral_constant) | [`boost::mp11::mp_bool`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | N/A | [`bsl::integral_constant`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<bool, B>` | [`const` items](https://doc.rust-lang.org/reference/items/constant-items.html) (`const V: bool = B`); [const generics](https://doc.rust-lang.org/reference/items/generics.html#const-generics) for type-indexed values |
-| [`ZuTrue`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::true_type`](https://en.cppreference.com/cpp/types/integral_constant) | [`boost::true_type`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/integral_constant.hpp) | N/A | [`bsl::true_type`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | [`const` items](https://doc.rust-lang.org/reference/items/constant-items.html) (`const V: bool = true`); [const generics](https://doc.rust-lang.org/reference/items/generics.html#const-generics) for type-indexed values |
-| [`ZuFalse`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::false_type`](https://en.cppreference.com/cpp/types/integral_constant) | [`boost::false_type`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/integral_constant.hpp) | N/A | [`bsl::false_type`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | [`const` items](https://doc.rust-lang.org/reference/items/constant-items.html) (`const V: bool = false`); [const generics](https://doc.rust-lang.org/reference/items/generics.html#const-generics) for type-indexed values |
-| [`ZuAlwaysTrue`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Partial: dependent [`std::true_type`](https://en.cppreference.com/cpp/types/integral_constant) wrapper | Partial: [`boost::mp11::mp_true`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) wrapper | N/A | Composition: [`bsl::true_type`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)` via a dependent alias` | Partial: [associated constants](https://doc.rust-lang.org/reference/items/associated-items.html#associated-constants) on a generic trait implementation; no dependent Boolean trait alias |
-| [`ZuAlwaysFalse`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Partial: dependent [`std::false_type`](https://en.cppreference.com/cpp/types/integral_constant) wrapper | Partial: [`boost::mp11::mp_false`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) wrapper | N/A | Composition: [`bsl::false_type`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)` via a dependent alias` | Partial: [associated constants](https://doc.rust-lang.org/reference/items/associated-items.html#associated-constants) on a generic trait implementation; no dependent Boolean trait alias |
-| [`ZuInt128`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuInt.hh) | Partial: [`std::integral_constant`](https://en.cppreference.com/cpp/types/integral_constant) over compiler 128-bit integer | Partial: constant wrapper over a supported 128-bit type | N/A | Partial: [`bsl::integral_constant`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)` with compiler 128-`[`bit`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_bit.h)` type` | [`const` items](https://doc.rust-lang.org/reference/items/constant-items.html) (`const V: i128 = N`); [const generics](https://doc.rust-lang.org/reference/items/generics.html#const-generics) for type-indexed values |
-| [`ZuUInt128`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuInt.hh) | Partial: [`std::integral_constant`](https://en.cppreference.com/cpp/types/integral_constant) over compiler unsigned 128-bit integer | Partial: constant wrapper over a supported 128-bit type | N/A | Partial: [`bsl::integral_constant`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)` with compiler 128-`[`bit`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_bit.h)` type` | [`const` items](https://doc.rust-lang.org/reference/items/constant-items.html) (`const V: u128 = N`); [const generics](https://doc.rust-lang.org/reference/items/generics.html#const-generics) for type-indexed values |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuConstant</code></a><code>&lt;T, V&gt;</code> — typed compile-time value, including non-integral and structural class values such as <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuString.hh"><code>ZuString</code></a><br>➕ conversion and call return const references</td>
+  <td><a href="https://en.cppreference.com/cpp/types/integral_constant"><code>std::integral_constant</code></a><code>&lt;T, V&gt;</code> — also accepts permitted non-integral template values<br>➖ conversion and call return by value</td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/integral_constant.hpp"><code>boost::integral_constant</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Traits.h"><code>folly::vtag_t&lt;V&gt;</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::integral_constant</code></a><code>&lt;T, V&gt;</code><br>➖ conversion and call return by value rather than const reference</td>
+  <td><a href="https://doc.rust-lang.org/reference/items/constant-items.html"><code>const</code> items</a> / <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-constants">associated constants</a>; <a href="https://doc.rust-lang.org/reference/items/generics.html#const-generics">const generics</a> have a restricted set of parameter types</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuInt</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/integral_constant"><code>std::integral_constant</code></a><code>&lt;int, I&gt;</code></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_int</code></a><code>&lt;I&gt;</code></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::integral_constant</code></a><code>&lt;int, I&gt;</code></td>
+  <td><a href="https://doc.rust-lang.org/reference/items/constant-items.html"><code>const</code> items</a> (<code>const V: i32 = N</code>); <a href="https://doc.rust-lang.org/reference/items/generics.html#const-generics">const generics</a> for type-indexed values</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuUnsigned</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/integral_constant"><code>std::integral_constant</code></a><code>&lt;unsigned, I&gt;</code></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/integral_constant.hpp"><code>boost::integral_constant</code></a><code>&lt;unsigned, I&gt;</code></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Traits.h"><code>folly::index_constant&lt;I&gt;</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::integral_constant</code></a><code>&lt;unsigned, I&gt;</code></td>
+  <td><a href="https://doc.rust-lang.org/reference/items/constant-items.html"><code>const</code> items</a> (<code>const V: u32 = N</code>); <a href="https://doc.rust-lang.org/reference/items/generics.html#const-generics">const generics</a> for type-indexed values</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuBool</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/integral_constant"><code>std::bool_constant</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_bool</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::integral_constant</code></a><code>&lt;bool, B&gt;</code></td>
+  <td><a href="https://doc.rust-lang.org/reference/items/constant-items.html"><code>const</code> items</a> (<code>const V: bool = B</code>); <a href="https://doc.rust-lang.org/reference/items/generics.html#const-generics">const generics</a> for type-indexed values</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuTrue</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/integral_constant"><code>std::true_type</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/integral_constant.hpp"><code>boost::true_type</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::true_type</code></a></td>
+  <td><a href="https://doc.rust-lang.org/reference/items/constant-items.html"><code>const</code> items</a> (<code>const V: bool = true</code>); <a href="https://doc.rust-lang.org/reference/items/generics.html#const-generics">const generics</a> for type-indexed values</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuFalse</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/integral_constant"><code>std::false_type</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/integral_constant.hpp"><code>boost::false_type</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::false_type</code></a></td>
+  <td><a href="https://doc.rust-lang.org/reference/items/constant-items.html"><code>const</code> items</a> (<code>const V: bool = false</code>); <a href="https://doc.rust-lang.org/reference/items/generics.html#const-generics">const generics</a> for type-indexed values</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuAlwaysTrue</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/integral_constant"><code>std::true_type</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_true</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::true_type</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-constants">associated constants</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuAlwaysFalse</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/integral_constant"><code>std::false_type</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_false</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::false_type</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-constants">associated constants</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuInt.hh"><code>ZuInt128</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/integral_constant"><code>std::integral_constant</code></a></td>
+  <td>Partial: constant wrapper over a supported 128-bit type</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::integral_constant</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_bit.h"><code>bit</code></a></td>
+  <td><a href="https://doc.rust-lang.org/reference/items/constant-items.html"><code>const</code> items</a> (<code>const V: i128 = N</code>); <a href="https://doc.rust-lang.org/reference/items/generics.html#const-generics">const generics</a> for type-indexed values</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuInt.hh"><code>ZuUInt128</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/integral_constant"><code>std::integral_constant</code></a></td>
+  <td>Partial: constant wrapper over a supported 128-bit type</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::integral_constant</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_bit.h"><code>bit</code></a></td>
+  <td><a href="https://doc.rust-lang.org/reference/items/constant-items.html"><code>const</code> items</a> (<code>const V: u128 = N</code>); <a href="https://doc.rust-lang.org/reference/items/generics.html#const-generics">const generics</a> for type-indexed values</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Abbreviated type transformations and normalizations
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuDeref`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::remove_reference_t`](https://en.cppreference.com/cpp/types/remove_reference) | [`boost::remove_reference_t`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/remove_reference.hpp) | N/A | [`bsl::remove_reference`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | Partial: [type aliases](https://doc.rust-lang.org/reference/items/type-aliases.html) / [associated types](https://doc.rust-lang.org/reference/items/associated-items.html#associated-types); references are explicit, with no general remove-reference or decay trait |
-| [`ZuStrip`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::remove_cv_t`](https://en.cppreference.com/cpp/types/remove_cv) | [`boost::remove_cv_t`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/remove_cv.hpp) | N/A | [`bsl::remove_cv`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) (`&T`, `&mut T`); no C++ cv qualifiers or rvalue-reference category |
-| [`ZuDecay`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)<br>➖ does not decay arrays/functions to pointers | [`std::remove_cvref_t`](https://en.cppreference.com/cpp/types/remove_cvref)<br>➕ matches the actual operation; [`std::decay_t`](https://en.cppreference.com/cpp/types/decay) has different semantics | [`boost::remove_cv_ref_t`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/remove_cv_ref.hpp) | N/A | [`bsl::remove_cvref`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | Partial: [type aliases](https://doc.rust-lang.org/reference/items/type-aliases.html) / [associated types](https://doc.rust-lang.org/reference/items/associated-items.html#associated-types); references are explicit, with no general remove-reference or decay trait |
-| [`ZuAsIs`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::type_identity_t`](https://en.cppreference.com/cpp/types/type_identity) | [`boost::type_identity_t`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/type_identity.hpp) | N/A | [`bsl::type_identity`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | [type alias](https://doc.rust-lang.org/reference/items/type-aliases.html) (`type Id<T> = T`); no C++ non-deduced-context semantics |
-| [`ZuMkConst`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Partial: [`std::add_const_t`](https://en.cppreference.com/cpp/types/add_cv)<br>➕ handles reference inputs through trait rules | [`boost::add_const_t`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/add_const.hpp) | N/A | [`bsl::add_const`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) (`&T`, `&mut T`); no C++ cv qualifiers or rvalue-reference category |
-| [`ZuMkVolatile`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Partial: [`std::add_volatile_t`](https://en.cppreference.com/cpp/types/add_cv) | [`boost::add_volatile_t`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/add_volatile.hpp) | N/A | [`bsl::add_volatile`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | No volatile-qualified types; [`ptr::read_volatile`](https://doc.rust-lang.org/std/ptr/fn.read_volatile.html) / [`ptr::write_volatile`](https://doc.rust-lang.org/std/ptr/fn.write_volatile.html) apply to accesses |
-| [`ZuMkRRef`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Partial: [`std::add_rvalue_reference_t`](https://en.cppreference.com/cpp/types/add_reference)<br>➕ also handles non-referenceable types | [`boost::add_rvalue_reference_t`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/add_rvalue_reference.hpp) | N/A | [`bsl::add_rvalue_reference`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) (`&T`, `&mut T`); no C++ cv qualifiers or rvalue-reference category |
-| [`ZuMkLRef`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Partial: [`std::add_lvalue_reference_t`](https://en.cppreference.com/cpp/types/add_reference) | [`boost::add_lvalue_reference_t`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/add_lvalue_reference.hpp) | N/A | [`bsl::add_lvalue_reference`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) (`&T`, `&mut T`); no C++ cv qualifiers or rvalue-reference category |
-| [`ZuMkCRef`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Composition: [`std::add_lvalue_reference_t`](https://en.cppreference.com/cpp/types/add_reference)`<`[`std::add_const_t`](https://en.cppreference.com/cpp/types/add_cv)`<T>>` | Composition: [`boost::add_lvalue_reference_t`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/add_lvalue_reference.hpp)`<`[`boost::add_const_t`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/add_const.hpp)`<T>>` | N/A | Composition: [`bsl::add_lvalue_reference_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<`[`bsl::add_const_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<T>>` | [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) (`&T`, `&mut T`); no C++ cv qualifiers or rvalue-reference category |
-| [`ZuRDecay`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)<br>➕ ADL-customizable recursive decay of composites | N/A; [`std::remove_cvref_t`](https://en.cppreference.com/cpp/types/remove_cvref) is shallow | Partial: recursive [Boost.Mp11](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) / [Hana](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html) transformation | N/A | Partial: [`bsl::remove_cvref`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)<br>➖ no ADL-customizable recursive decay of composite types | Partial: custom traits with [associated types](https://doc.rust-lang.org/reference/items/associated-items.html#associated-types) can recursively normalize participating composites |
-| [`ZuNorm`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuNorm.hh)<br>➕ customizable normalization of representation-equivalent character types | Partial: [`std::remove_cvref_t`](https://en.cppreference.com/cpp/types/remove_cvref)<br>➖ does not normalize character representations | Partial: [Boost.TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html); custom mapping | N/A | Partial: [`bsl::remove_cvref`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)<br>➖ no built-in normalization of representation-equivalent character types | Partial: custom [associated types](https://doc.rust-lang.org/reference/items/associated-items.html#associated-types) for representation normalization; no built-in character normalization trait |
-| [`ZuEquiv`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuEquiv.hh) | Composition: [`std::is_same`](https://en.cppreference.com/cpp/types/is_same) with a custom normalization | Composition: [`boost::is_same`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_same.hpp) with a custom normalization | N/A | Partial: [`bsl::is_same`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`  +  `[`remove_cvref`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)<br>➖ distinct character types remain distinct without a normalization trait | Partial: [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) with associated-type equality after custom normalization; no general Boolean equivalence probe |
-| [`ZuAlt`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuAlt.hh)<br>➕ char/wchar_t alternate-type mapping | N/A | N/A | N/A | N/A | No built-in char/wchar alternate type; [`char`](https://doc.rust-lang.org/std/primitive.char.html) is a Unicode scalar, while UTF-8/UTF-16 use byte/code-unit sequences |
-| [`ZuUnder`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)<br>➕ customizable for wrappers as well as enums | Partial: [`std::underlying_type_t`](https://en.cppreference.com/cpp/types/underlying_type)<br>➖ enums only | Partial: [`boost::underlying_type`](https://github.com/boostorg/core/blob/master/include/boost/core/underlying_type.hpp)`<T>::type` | N/A | Partial: [`bsl::underlying_type`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)<br>➖ enums only; no ADL unwrapping of participating wrapper types | Partial: [associated types](https://doc.rust-lang.org/reference/items/associated-items.html#associated-types) on wrapper traits; enum integer representation is set with [`repr`](https://doc.rust-lang.org/reference/type-layout.html#primitive-representations), not queried by a generic underlying-type trait |
-| [`ZuUnderlying`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L747)<br>➕ unwraps participating wrapper types as well as enums | Partial: [`std::to_underlying`](https://en.cppreference.com/cpp/utility/to_underlying) (C++23)<br>➖ enums only | Partial: [`boost::underlying_cast`](https://github.com/boostorg/core/blob/master/include/boost/core/scoped_enum.hpp) | Partial: [`folly::to_underlying`](https://github.com/facebook/folly/blob/main/folly/Utility.h)<br>➖ enums only | Partial: [`bsl::to_underlying`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_utility.h)<br>➖ enums only; no ADL unwrapping of participating wrapper types | Partial: [`as` casts](https://doc.rust-lang.org/reference/expressions/operator-expr.html#type-cast-expressions) for fieldless enums; [`From`](https://doc.rust-lang.org/std/convert/trait.From.html) for wrappers |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuDeref</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/remove_reference"><code>std::remove_reference_t</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/remove_reference.hpp"><code>boost::remove_reference_t</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::remove_reference</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/type-aliases.html">type aliases</a>, <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-types">associated types</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuStrip</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/remove_cv"><code>std::remove_cv_t</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/remove_cv.hpp"><code>boost::remove_cv_t</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::remove_cv</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuDecay</code></a><br>➖ does not decay arrays/functions to pointers</td>
+  <td><a href="https://en.cppreference.com/cpp/types/remove_cvref"><code>std::remove_cvref_t</code></a><br>➕ matches the actual operation; <a href="https://en.cppreference.com/cpp/types/decay"><code>std::decay_t</code></a> has different semantics</td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/remove_cv_ref.hpp"><code>boost::remove_cv_ref_t</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::remove_cvref</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/type-aliases.html">type aliases</a>, <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-types">associated types</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuAsIs</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/type_identity"><code>std::type_identity_t</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/type_identity.hpp"><code>boost::type_identity_t</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::type_identity</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/type-aliases.html">type alias</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuMkConst</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/add_cv"><code>std::add_const_t</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/add_const.hpp"><code>boost::add_const_t</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::add_const</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuMkVolatile</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/add_cv"><code>std::add_volatile_t</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/add_volatile.hpp"><code>boost::add_volatile_t</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::add_volatile</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/std/ptr/fn.read_volatile.html"><code>ptr::read_volatile</code></a>, <a href="https://doc.rust-lang.org/std/ptr/fn.write_volatile.html"><code>ptr::write_volatile</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuMkRRef</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/add_reference"><code>std::add_rvalue_reference_t</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/add_rvalue_reference.hpp"><code>boost::add_rvalue_reference_t</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::add_rvalue_reference</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuMkLRef</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/add_reference"><code>std::add_lvalue_reference_t</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/add_lvalue_reference.hpp"><code>boost::add_lvalue_reference_t</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::add_lvalue_reference</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuMkCRef</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/add_reference"><code>std::add_lvalue_reference_t</code></a>, <a href="https://en.cppreference.com/cpp/types/add_cv"><code>std::add_const_t</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/add_lvalue_reference.hpp"><code>boost::add_lvalue_reference_t</code></a>, <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/add_const.hpp"><code>boost::add_const_t</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::add_lvalue_reference_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::add_const_t</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuRDecay</code></a><br>➕ ADL-customizable recursive decay of composites</td>
+  <td>None: <a href="https://en.cppreference.com/cpp/types/remove_cvref"><code>std::remove_cvref_t</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html">Boost.Mp11</a>, <a href="https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html">Hana</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::remove_cvref</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-types">associated types</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuNorm.hh"><code>ZuNorm</code></a><br>➕ customizable normalization of representation-equivalent character types</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/remove_cvref"><code>std::remove_cvref_t</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">Boost.TypeTraits</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::remove_cvref</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-types">associated types</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuEquiv.hh"><code>ZuEquiv</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_same"><code>std::is_same</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_same.hpp"><code>boost::is_same</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_same</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>remove_cvref</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuAlt.hh"><code>ZuAlt</code></a><br>➕ char/wchar_t alternate-type mapping</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>None: <a href="https://doc.rust-lang.org/std/primitive.char.html"><code>char</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuUnder</code></a><br>➕ customizable for wrappers as well as enums</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/underlying_type"><code>std::underlying_type_t</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/underlying_type.hpp"><code>boost::underlying_type</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::underlying_type</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-types">associated types</a>, <a href="https://doc.rust-lang.org/reference/type-layout.html#primitive-representations"><code>repr</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L747"><code>ZuUnderlying</code></a><br>➕ unwraps participating wrapper types as well as enums</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/to_underlying"><code>std::to_underlying</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/scoped_enum.hpp"><code>boost::underlying_cast</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Utility.h"><code>folly::to_underlying</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_utility.h"><code>bsl::to_underlying</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/expressions/operator-expr.html#type-cast-expressions"><code>as</code> casts</a>, <a href="https://doc.rust-lang.org/std/convert/trait.From.html"><code>From</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Qualifier and reference constraints
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZuIsConst`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::is_const`](https://en.cppreference.com/cpp/types/is_const) | [`boost::is_const`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_const.hpp) | [`bsl::is_const`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | No qualifier/reference-category predicates; encode [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) in signatures and use [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) |
-| [`ZuIsVolatile`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::is_volatile`](https://en.cppreference.com/cpp/types/is_volatile) | [`boost::is_volatile`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_volatile.hpp) | [`bsl::is_volatile`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | No volatile type constraint; [`volatile reads`](https://doc.rust-lang.org/std/ptr/fn.read_volatile.html) are operations rather than qualifiers |
-| [`ZuConst`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::enable_if_t`](https://en.cppreference.com/cpp/types/enable_if)`<`[`std::is_const_v`](https://en.cppreference.com/cpp/types/is_const)`<U>, R>` | [`boost::enable_if`](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp)`<`[`boost::is_const`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_const.hpp)`<U>, R>::type` | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<`[`bsl::is_const_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<U>, R>` | No qualifier/reference-category predicates; encode [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) in signatures and use [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) |
-| [`ZuMutable`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::enable_if_t`](https://en.cppreference.com/cpp/types/enable_if)`<!`[`std::is_const_v`](https://en.cppreference.com/cpp/types/is_const)`<U>, R>` | [`boost::disable_if`](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp)`<`[`boost::is_const`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_const.hpp)`<U>, R>::type` | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<!`[`bsl::is_const_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<U>, R>` | No qualifier/reference-category predicates; encode [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) in signatures and use [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) |
-| [`ZuVolatile`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::enable_if_t`](https://en.cppreference.com/cpp/types/enable_if)`<`[`std::is_volatile_v`](https://en.cppreference.com/cpp/types/is_volatile)`<U>, R>` | [`boost::enable_if`](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp)`<`[`boost::is_volatile`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_volatile.hpp)`<U>, R>::type` | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<`[`bsl::is_volatile_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<U>, R>` | No volatile type constraint; [`volatile reads`](https://doc.rust-lang.org/std/ptr/fn.read_volatile.html) are operations rather than qualifiers |
-| [`ZuNonVolatile`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::enable_if_t`](https://en.cppreference.com/cpp/types/enable_if)`<!`[`std::is_volatile_v`](https://en.cppreference.com/cpp/types/is_volatile)`<U>, R>` | [`boost::disable_if`](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp)`<`[`boost::is_volatile`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_volatile.hpp)`<U>, R>::type` | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<!`[`bsl::is_volatile_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<U>, R>` | No volatile type constraint; [`volatile reads`](https://doc.rust-lang.org/std/ptr/fn.read_volatile.html) are operations rather than qualifiers |
-| [`ZuIsLRef`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::is_lvalue_reference`](https://en.cppreference.com/cpp/types/is_lvalue_reference) | [`boost::is_lvalue_reference`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_lvalue_reference.hpp) | [`bsl::is_lvalue_reference`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | No qualifier/reference-category predicates; encode [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) in signatures and use [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) |
-| [`ZuIsCRef`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Composition: lvalue-reference test and const-referent test | Composition of [Boost.TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html) | Composition: [`bsl::conjunction`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<`[`bsl::is_lvalue_reference`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<U>, `[`bsl::is_const`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<`[`bsl::remove_reference_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<U>>>` | No qualifier/reference-category predicates; encode [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) in signatures and use [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) |
-| [`ZuIsRRef`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::is_rvalue_reference`](https://en.cppreference.com/cpp/types/is_rvalue_reference) | [`boost::is_rvalue_reference`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_rvalue_reference.hpp) | [`bsl::is_rvalue_reference`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | No qualifier/reference-category predicates; encode [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) in signatures and use [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) |
-| [`ZuLRef`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::enable_if_t`](https://en.cppreference.com/cpp/types/enable_if)`<`[`std::is_lvalue_reference_v`](https://en.cppreference.com/cpp/types/is_lvalue_reference)`<U>, R>` | [Boost.EnableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + [`boost::is_lvalue_reference`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_lvalue_reference.hpp) | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<`[`bsl::is_lvalue_reference_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<U>, R>` | No qualifier/reference-category predicates; encode [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) in signatures and use [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) |
-| [`ZuNotLRef`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Negated [`std::is_lvalue_reference`](https://en.cppreference.com/cpp/types/is_lvalue_reference) constraint | [Boost.DisableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + [`boost::is_lvalue_reference`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_lvalue_reference.hpp) | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<!`[`bsl::is_lvalue_reference_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<U>, R>` | No qualifier/reference-category predicates; encode [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) in signatures and use [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) |
-| [`ZuCRef`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Constraint on const lvalue references | Composition of [Boost.EnableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) and [TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html) | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<`[`bsl::is_lvalue_reference_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<U> && `[`bsl::is_const_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<`[`bsl::remove_reference_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<U>>, R>` | No qualifier/reference-category predicates; encode [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) in signatures and use [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) |
-| [`ZuNotCRef`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Negated const-lvalue-reference constraint | Composition of [Boost.DisableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) and [TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html) | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<!(`[`bsl::is_lvalue_reference_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<U> && `[`bsl::is_const_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<`[`bsl::remove_reference_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<U>>), R>` | No qualifier/reference-category predicates; encode [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) in signatures and use [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) |
-| [`ZuRRef`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::enable_if_t`](https://en.cppreference.com/cpp/types/enable_if)`<`[`std::is_rvalue_reference_v`](https://en.cppreference.com/cpp/types/is_rvalue_reference)`<U>, R>` | [Boost.EnableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + [`boost::is_rvalue_reference`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_rvalue_reference.hpp) | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<`[`bsl::is_rvalue_reference_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<U>, R>` | No qualifier/reference-category predicates; encode [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) in signatures and use [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) |
-| [`ZuNotRRef`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Negated [`std::is_rvalue_reference`](https://en.cppreference.com/cpp/types/is_rvalue_reference) constraint | [Boost.DisableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + [`boost::is_rvalue_reference`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_rvalue_reference.hpp) | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<!`[`bsl::is_rvalue_reference_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<U>, R>` | No qualifier/reference-category predicates; encode [references and raw pointers](https://doc.rust-lang.org/reference/types/pointer.html) in signatures and use [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuIsConst</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/is_const"><code>std::is_const</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_const.hpp"><code>boost::is_const</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_const</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuIsVolatile</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/is_volatile"><code>std::is_volatile</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_volatile.hpp"><code>boost::is_volatile</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_volatile</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/std/ptr/fn.read_volatile.html"><code>volatile reads</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuConst</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/enable_if"><code>std::enable_if_t</code></a><code>&lt;</code><a href="https://en.cppreference.com/cpp/types/is_const"><code>std::is_const_v</code></a><code>&lt;U&gt;, R&gt;</code></td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp"><code>boost::enable_if</code></a><code>&lt;</code><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_const.hpp"><code>boost::is_const</code></a><code>&lt;U&gt;, R&gt;::type</code></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_const_v</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuMutable</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/enable_if"><code>std::enable_if_t</code></a><code>&lt;!</code><a href="https://en.cppreference.com/cpp/types/is_const"><code>std::is_const_v</code></a><code>&lt;U&gt;, R&gt;</code></td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp"><code>boost::disable_if</code></a><code>&lt;</code><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_const.hpp"><code>boost::is_const</code></a><code>&lt;U&gt;, R&gt;::type</code></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_const_v</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuVolatile</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/enable_if"><code>std::enable_if_t</code></a><code>&lt;</code><a href="https://en.cppreference.com/cpp/types/is_volatile"><code>std::is_volatile_v</code></a><code>&lt;U&gt;, R&gt;</code></td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp"><code>boost::enable_if</code></a><code>&lt;</code><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_volatile.hpp"><code>boost::is_volatile</code></a><code>&lt;U&gt;, R&gt;::type</code></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_volatile_v</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/std/ptr/fn.read_volatile.html"><code>volatile reads</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuNonVolatile</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/enable_if"><code>std::enable_if_t</code></a><code>&lt;!</code><a href="https://en.cppreference.com/cpp/types/is_volatile"><code>std::is_volatile_v</code></a><code>&lt;U&gt;, R&gt;</code></td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp"><code>boost::disable_if</code></a><code>&lt;</code><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_volatile.hpp"><code>boost::is_volatile</code></a><code>&lt;U&gt;, R&gt;::type</code></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_volatile_v</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/std/ptr/fn.read_volatile.html"><code>volatile reads</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuIsLRef</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/is_lvalue_reference"><code>std::is_lvalue_reference</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_lvalue_reference.hpp"><code>boost::is_lvalue_reference</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_lvalue_reference</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuIsCRef</code></a></td>
+  <td>Composition: lvalue-reference test and const-referent test</td>
+  <td>Composition of <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">Boost.TypeTraits</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::conjunction</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_lvalue_reference</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_const</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::remove_reference_t</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuIsRRef</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/is_rvalue_reference"><code>std::is_rvalue_reference</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_rvalue_reference.hpp"><code>boost::is_rvalue_reference</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_rvalue_reference</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuLRef</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/enable_if"><code>std::enable_if_t</code></a><code>&lt;</code><a href="https://en.cppreference.com/cpp/types/is_lvalue_reference"><code>std::is_lvalue_reference_v</code></a><code>&lt;U&gt;, R&gt;</code></td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.EnableIf</a> + <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_lvalue_reference.hpp"><code>boost::is_lvalue_reference</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_lvalue_reference_v</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuNotLRef</code></a></td>
+  <td>Negated <a href="https://en.cppreference.com/cpp/types/is_lvalue_reference"><code>std::is_lvalue_reference</code></a> constraint</td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.DisableIf</a> + <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_lvalue_reference.hpp"><code>boost::is_lvalue_reference</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_lvalue_reference_v</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuCRef</code></a></td>
+  <td>Constraint on const lvalue references</td>
+  <td>Composition of <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.EnableIf</a> and <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">TypeTraits</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_lvalue_reference_v</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_const_v</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::remove_reference_t</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuNotCRef</code></a></td>
+  <td>Negated const-lvalue-reference constraint</td>
+  <td>Composition of <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.DisableIf</a> and <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">TypeTraits</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_lvalue_reference_v</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_const_v</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::remove_reference_t</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuRRef</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/enable_if"><code>std::enable_if_t</code></a><code>&lt;</code><a href="https://en.cppreference.com/cpp/types/is_rvalue_reference"><code>std::is_rvalue_reference_v</code></a><code>&lt;U&gt;, R&gt;</code></td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.EnableIf</a> + <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_rvalue_reference.hpp"><code>boost::is_rvalue_reference</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_rvalue_reference_v</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuNotRRef</code></a></td>
+  <td>Negated <a href="https://en.cppreference.com/cpp/types/is_rvalue_reference"><code>std::is_rvalue_reference</code></a> constraint</td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.DisableIf</a> + <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_rvalue_reference.hpp"><code>boost::is_rvalue_reference</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_rvalue_reference_v</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/types/pointer.html">references and raw pointers</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Type identity and inheritance constraints
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZuIsSame`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::is_same`](https://en.cppreference.com/cpp/types/is_same) | [`boost::is_same`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_same.hpp) | [`bsl::is_same`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | Partial: [`TypeId`](https://doc.rust-lang.org/std/any/struct.TypeId.html) for runtime identity of static types; [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) for compile-time equality requirements |
-| [`ZuSame`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::enable_if_t`](https://en.cppreference.com/cpp/types/enable_if)`<`[`std::is_same_v`](https://en.cppreference.com/cpp/types/is_same)`<A, B>, R>` | [Boost.EnableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + [`boost::is_same`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_same.hpp) | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<`[`bsl::is_same_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<A, B>, R>` | [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) with [associated-type equality](https://doc.rust-lang.org/reference/items/associated-items.html#associated-types); no general SFINAE predicate |
-| [`ZuNotSame`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Negated [`std::is_same`](https://en.cppreference.com/cpp/types/is_same) constraint | [Boost.DisableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + [`boost::is_same`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_same.hpp) | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<!`[`bsl::is_same_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<A, B>, R>` | No general stable negative type-equality bound; [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) can encode explicitly supported cases |
-| [`ZuIs`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)<br>➕ decays types and accepts identity or accessible pointer base conversion | Partial: [`std::same_as`](https://en.cppreference.com/cpp/concepts/same_as) / [`std::derived_from`](https://en.cppreference.com/cpp/concepts/derived_from) constraint | Partial: [Boost.TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html) + [EnableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) | Composition: [`bsl::enable_if`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`  +  `[`remove_cvref`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)` + identity/accessible pointer-conversion tests` | No class inheritance; [supertraits](https://doc.rust-lang.org/reference/items/traits.html#supertraits) express trait requirements, not base-class conversion tests |
-| [`ZuIsNot`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Negation of the identity/base-conversion constraint | Partial: [Boost.TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html) + [DisableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) | Composition: [`bsl::enable_if`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)` + negated normalized identity/accessible pointer-conversion tests` | No class inheritance; [supertraits](https://doc.rust-lang.org/reference/items/traits.html#supertraits) express trait requirements, not base-class conversion tests |
-| [`ZuIsBase`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)`<`[`From`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)`, `[`To`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)`>` — derived-to-base argument order; Z identity/access rules | Partial: [`std::is_base_of`](https://en.cppreference.com/cpp/types/is_base_of) / [`std::derived_from`](https://en.cppreference.com/cpp/concepts/derived_from) | Partial: [`boost::is_base_of`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_base_of.hpp) | Partial: [`bsl::is_base_of`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`  /  `[`is_convertible`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | No class inheritance; [supertraits](https://doc.rust-lang.org/reference/items/traits.html#supertraits) express trait requirements, not base-class conversion tests |
-| [`ZuBase`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Constraint on strict accessible base conversion | Partial: [Boost.EnableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + [TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html) | Composition: [`bsl::enable_if`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)` + normalized identity/pointer-conversion tests + original-type inequality` | No class inheritance; [supertraits](https://doc.rust-lang.org/reference/items/traits.html#supertraits) express trait requirements, not base-class conversion tests |
-| [`ZuNotBase`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Negated strict accessible base-conversion constraint | Partial: [Boost.DisableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + [TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html) | Composition: [`bsl::enable_if`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)` + negation of the strict identity/pointer-conversion test` | No class inheritance; [supertraits](https://doc.rust-lang.org/reference/items/traits.html#supertraits) express trait requirements, not base-class conversion tests |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuIsSame</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/is_same"><code>std::is_same</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_same.hpp"><code>boost::is_same</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_same</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/any/struct.TypeId.html"><code>TypeId</code></a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuSame</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/enable_if"><code>std::enable_if_t</code></a><code>&lt;</code><a href="https://en.cppreference.com/cpp/types/is_same"><code>std::is_same_v</code></a><code>&lt;A, B&gt;, R&gt;</code></td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.EnableIf</a> + <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_same.hpp"><code>boost::is_same</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_same_v</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a>, <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-types">associated-type equality</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuNotSame</code></a></td>
+  <td>Negated <a href="https://en.cppreference.com/cpp/types/is_same"><code>std::is_same</code></a> constraint</td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.DisableIf</a> + <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_same.hpp"><code>boost::is_same</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_same_v</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuIs</code></a><br>➕ decays types and accepts identity or accessible pointer base conversion</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/concepts/same_as"><code>std::same_as</code></a>, <a href="https://en.cppreference.com/cpp/concepts/derived_from"><code>std::derived_from</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">Boost.TypeTraits</a>, <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">EnableIf</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>remove_cvref</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/items/traits.html#supertraits">supertraits</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuIsNot</code></a></td>
+  <td>Negation of the identity/base-conversion constraint</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">Boost.TypeTraits</a>, <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">DisableIf</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/items/traits.html#supertraits">supertraits</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuIsBase</code></a><code>&lt;</code><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>From</code></a><code>, </code><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>To</code></a><code>&gt;</code> — derived-to-base argument order; Z identity/access rules</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_base_of"><code>std::is_base_of</code></a>, <a href="https://en.cppreference.com/cpp/concepts/derived_from"><code>std::derived_from</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_base_of.hpp"><code>boost::is_base_of</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_base_of</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>is_convertible</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/items/traits.html#supertraits">supertraits</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuBase</code></a></td>
+  <td>Constraint on strict accessible base conversion</td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.EnableIf</a>, <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">TypeTraits</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/items/traits.html#supertraits">supertraits</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuNotBase</code></a></td>
+  <td>Negated strict accessible base-conversion constraint</td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.DisableIf</a>, <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">TypeTraits</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/items/traits.html#supertraits">supertraits</a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Conversion, construction and exception traits
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZuIsConvertible`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) — reference-normalized probe semantics | Partial: [`std::is_convertible`](https://en.cppreference.com/cpp/types/is_convertible) | Partial: [`boost::is_convertible`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_convertible.hpp) | [`bsl::is_convertible`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | Partial: [`From`](https://doc.rust-lang.org/std/convert/trait.From.html) / [`TryFrom`](https://doc.rust-lang.org/std/convert/trait.TryFrom.html) bounds; no universal implicit-conversion probe |
-| [`ZuConvertible`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Partial: [`std::enable_if_t`](https://en.cppreference.com/cpp/types/enable_if)`<`[`std::is_convertible_v`](https://en.cppreference.com/cpp/types/is_convertible)`<From, To>, R>` | Partial: [Boost.EnableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + [`boost::is_convertible`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_convertible.hpp) | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<`[`bsl::is_convertible_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<From, To>, R>` | [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) on [`Into`](https://doc.rust-lang.org/std/convert/trait.Into.html) / [`TryInto`](https://doc.rust-lang.org/std/convert/trait.TryInto.html) |
-| [`ZuNotConvertible`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Partial: negated [`std::is_convertible`](https://en.cppreference.com/cpp/types/is_convertible) constraint | Partial: [Boost.DisableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + [`boost::is_convertible`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_convertible.hpp) | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<!`[`bsl::is_convertible_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<From, To>, R>` | No general negative conversion bound; [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) describe positive conversion contracts |
-| [`ZuIsConstructible`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)<br>➖ source/destination API and cast probing differ | Partial: [`std::is_constructible`](https://en.cppreference.com/cpp/types/is_constructible)<br>➕ variadic constructor-argument API | Partial: [`boost::is_constructible`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_constructible.hpp) | [`bsl::is_constructible`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | Partial: [`Default`](https://doc.rust-lang.org/std/default/trait.Default.html) / [`From`](https://doc.rust-lang.org/std/convert/trait.From.html) bounds and explicit constructors; no arbitrary constructibility probe or negative bound |
-| [`ZuConstructible`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Partial: [`std::enable_if_t`](https://en.cppreference.com/cpp/types/enable_if)`<`[`std::is_constructible_v`](https://en.cppreference.com/cpp/types/is_constructible)`<To, From>, R>` | Partial: [Boost.EnableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + [`boost::is_constructible`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_constructible.hpp) | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<`[`bsl::is_constructible_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<To, From>, R>` | Partial: [`Default`](https://doc.rust-lang.org/std/default/trait.Default.html) / [`From`](https://doc.rust-lang.org/std/convert/trait.From.html) bounds and explicit constructors; no arbitrary constructibility probe or negative bound |
-| [`ZuNotConstructible`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Partial: negated constructibility constraint | Partial: [Boost.DisableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + [`boost::is_constructible`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_constructible.hpp) | Composition: [`bsl::enable_if_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<!`[`bsl::is_constructible_v`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`<To, From>, R>` | Partial: [`Default`](https://doc.rust-lang.org/std/default/trait.Default.html) / [`From`](https://doc.rust-lang.org/std/convert/trait.From.html) bounds and explicit constructors; no arbitrary constructibility probe or negative bound |
-| [`ZuNXConstruct`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Partial: [`std::is_nothrow_default_constructible`](https://en.cppreference.com/cpp/types/is_default_constructible) | Partial: [`boost::has_nothrow_constructor`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/has_nothrow_constructor.hpp) | [`bsl::is_nothrow_constructible`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | No `noexcept` trait; [panics](https://doc.rust-lang.org/reference/panic.html) are separate from [`Result`](https://doc.rust-lang.org/std/result/enum.Result.html) error returns; moves do not invoke move constructors |
-| [`ZuNXMove`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Partial: [`std::is_nothrow_move_constructible`](https://en.cppreference.com/cpp/types/is_move_constructible) | Partial: [`boost::is_nothrow_move_constructible`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_nothrow_move_constructible.hpp) | [`bsl::is_nothrow_move_constructible`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | No `noexcept` trait; [panics](https://doc.rust-lang.org/reference/panic.html) are separate from [`Result`](https://doc.rust-lang.org/std/result/enum.Result.html) error returns; moves do not invoke move constructors |
-| [`ZuNXCopy`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Partial: [`std::is_nothrow_copy_constructible`](https://en.cppreference.com/cpp/types/is_copy_constructible) | Partial: [`boost::has_nothrow_copy`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/has_nothrow_copy.hpp) | [`bsl::is_nothrow_copy_constructible`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | No `noexcept` trait; [panics](https://doc.rust-lang.org/reference/panic.html) are separate from [`Result`](https://doc.rust-lang.org/std/result/enum.Result.html) error returns; moves do not invoke move constructors |
-| [`ZuNXDestroy`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | Partial: [`std::is_nothrow_destructible`](https://en.cppreference.com/cpp/types/is_destructible) | Partial: [`boost::has_nothrow_destructor`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/has_nothrow_destructor.hpp) | [`bsl::is_nothrow_destructible`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | No `noexcept` trait; [panics](https://doc.rust-lang.org/reference/panic.html) are separate from [`Result`](https://doc.rust-lang.org/std/result/enum.Result.html) error returns; moves do not invoke move constructors |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuIsConvertible</code></a> — reference-normalized probe semantics</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_convertible"><code>std::is_convertible</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_convertible.hpp"><code>boost::is_convertible</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_convertible</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/convert/trait.From.html"><code>From</code></a>, <a href="https://doc.rust-lang.org/std/convert/trait.TryFrom.html"><code>TryFrom</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuConvertible</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/enable_if"><code>std::enable_if_t</code></a>, <a href="https://en.cppreference.com/cpp/types/is_convertible"><code>std::is_convertible_v</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.EnableIf</a>, <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_convertible.hpp"><code>boost::is_convertible</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_convertible_v</code></a></td>
+  <td><a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a> on <a href="https://doc.rust-lang.org/std/convert/trait.Into.html"><code>Into</code></a> / <a href="https://doc.rust-lang.org/std/convert/trait.TryInto.html"><code>TryInto</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuNotConvertible</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_convertible"><code>std::is_convertible</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.DisableIf</a>, <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_convertible.hpp"><code>boost::is_convertible</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_convertible_v</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuIsConstructible</code></a><br>➖ source/destination API and cast probing differ</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_constructible"><code>std::is_constructible</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_constructible.hpp"><code>boost::is_constructible</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_constructible</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/default/trait.Default.html"><code>Default</code></a>, <a href="https://doc.rust-lang.org/std/convert/trait.From.html"><code>From</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuConstructible</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/enable_if"><code>std::enable_if_t</code></a>, <a href="https://en.cppreference.com/cpp/types/is_constructible"><code>std::is_constructible_v</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.EnableIf</a>, <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_constructible.hpp"><code>boost::is_constructible</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_constructible_v</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/default/trait.Default.html"><code>Default</code></a>, <a href="https://doc.rust-lang.org/std/convert/trait.From.html"><code>From</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuNotConstructible</code></a></td>
+  <td>Partial: negated constructibility constraint</td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.DisableIf</a>, <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_constructible.hpp"><code>boost::is_constructible</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_constructible_v</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/default/trait.Default.html"><code>Default</code></a>, <a href="https://doc.rust-lang.org/std/convert/trait.From.html"><code>From</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuNXConstruct</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_default_constructible"><code>std::is_nothrow_default_constructible</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/has_nothrow_constructor.hpp"><code>boost::has_nothrow_constructor</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_nothrow_constructible</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/panic.html">panics</a>, <a href="https://doc.rust-lang.org/std/result/enum.Result.html"><code>Result</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuNXMove</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_move_constructible"><code>std::is_nothrow_move_constructible</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_nothrow_move_constructible.hpp"><code>boost::is_nothrow_move_constructible</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_nothrow_move_constructible</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/panic.html">panics</a>, <a href="https://doc.rust-lang.org/std/result/enum.Result.html"><code>Result</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuNXCopy</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_copy_constructible"><code>std::is_nothrow_copy_constructible</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/has_nothrow_copy.hpp"><code>boost::has_nothrow_copy</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_nothrow_copy_constructible</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/panic.html">panics</a>, <a href="https://doc.rust-lang.org/std/result/enum.Result.html"><code>Result</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuNXDestroy</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_destructible"><code>std::is_nothrow_destructible</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/has_nothrow_destructor.hpp"><code>boost::has_nothrow_destructor</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_nothrow_destructible</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/panic.html">panics</a>, <a href="https://doc.rust-lang.org/std/result/enum.Result.html"><code>Result</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Conditional types and compile-time queries
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuIf`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::conditional_t`](https://en.cppreference.com/cpp/types/conditional) | [`boost::mp11::mp_if_c`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | [`folly::conditional_t`](https://github.com/facebook/folly/blob/main/folly/Traits.h) | [`bsl::conditional`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | Partial: [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) and [associated types](https://doc.rust-lang.org/reference/items/associated-items.html#associated-types) select implementations/types; no general stable SFINAE or conditional type operator |
-| [`ZuIfT`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::enable_if_t`](https://en.cppreference.com/cpp/types/enable_if) | [`boost::enable_if_c`](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp)`<...>::type` | N/A | [`bsl::enable_if`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | Partial: [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) and [associated types](https://doc.rust-lang.org/reference/items/associated-items.html#associated-types) select implementations/types; no general stable SFINAE or conditional type operator |
-| [`ZuDeclVal`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::declval`](https://en.cppreference.com/cpp/utility/declval) | [`boost::declval`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/declval.hpp) | Partial: [`FOLLY_DECLVAL`](https://github.com/facebook/folly/blob/main/folly/Utility.h)<br>➕ avoids function-template instantiation<br>➖ value-category/completeness rules differ | [`bslmf::Util::declval`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_util.h) | No unevaluated `declval`; [associated items](https://doc.rust-lang.org/reference/items/associated-items.html) name result types through traits |
-| [`ZuConstEval`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L753) | [`std::is_constant_evaluated`](https://en.cppreference.com/cpp/types/is_constant_evaluated) | N/A; use the standard facility or compiler intrinsic | N/A | [`bsl::is_constant_evaluated`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | Partial: [constant evaluation](https://doc.rust-lang.org/reference/const_eval.html); no stable query for whether the current evaluation is constant |
-| [`ZuSize`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)<br>➕ zero logical size for void/empty types; ordinary sizeof otherwise | Partial: [`std::is_empty`](https://en.cppreference.com/cpp/types/is_empty) with custom logical-size calculation | Partial: [Boost.TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html) + `sizeof` | N/A | Partial: [`bsl::is_empty`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | [`mem::size_of`](https://doc.rust-lang.org/std/mem/fn.size_of.html); zero-sized types have size zero, including `()` |
-| [`ZuLargest`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLargest.hh)<br>➕ selects a type from a pack or [ZuTypeList](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh); first wins ties; handles void | N/A; size measurement alone does not select a type | Partial: [Boost.Mp11](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) reduction by `sizeof` | N/A | N/A | Partial: [`size_of`](https://doc.rust-lang.org/std/mem/fn.size_of.html) / [`align_of`](https://doc.rust-lang.org/std/mem/fn.align_of.html) in constants; selecting an arbitrary type pack requires custom [`macro_rules!`](https://doc.rust-lang.org/reference/macros-by-example.html) or traits |
-| [`ZuMostAligned`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuMostAligned.hh)<br>➕ selects the most-aligned type from a pack or [ZuTypeList](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh); first wins ties | N/A; alignment measurement alone does not select a type | Partial: [Boost.Mp11](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) reduction by `alignof` | N/A | N/A | Partial: [`size_of`](https://doc.rust-lang.org/std/mem/fn.size_of.html) / [`align_of`](https://doc.rust-lang.org/std/mem/fn.align_of.html) in constants; selecting an arbitrary type pack requires custom [`macro_rules!`](https://doc.rust-lang.org/reference/macros-by-example.html) or traits |
-| [`ZuTraits`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTraits.hh)<br>➕ common ADL vocabulary for strings, containers and numerics | Partial: [`<type_traits>`](https://en.cppreference.com/cpp/header/type_traits), [`std::ranges`](https://en.cppreference.com/cpp/ranges) concepts, [`std::numeric_limits`](https://en.cppreference.com/cpp/types/numeric_limits) | Partial: [Boost.TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html), [Range](https://github.com/boostorg/range/blob/master/include/boost/range.hpp), NumericConversion | Partial: [`folly::IsRelocatable / detection traits`](https://github.com/facebook/folly/blob/main/folly/Traits.h)<br>➖ no unified Z-style string/container/numeric trait vocabulary | Partial: `BSL type `[`traits`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntccfg/ntccfg_traits.h)`  +  `[`bdlat_TypeCategory`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlat/bdlat_typecategory.h) | Partial: [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) / [associated types](https://doc.rust-lang.org/reference/items/associated-items.html#associated-types) define per-domain contracts; no single universal traits registry |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuIf</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/conditional"><code>std::conditional_t</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_if_c</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Traits.h"><code>folly::conditional_t</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::conditional</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a>, <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-types">associated types</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuIfT</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/enable_if"><code>std::enable_if_t</code></a></td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp"><code>boost::enable_if_c</code></a><code>&lt;...&gt;::type</code></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::enable_if</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a>, <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-types">associated types</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuDeclVal</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/declval"><code>std::declval</code></a></td>
+  <td><a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/declval.hpp"><code>boost::declval</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Utility.h"><code>FOLLY_DECLVAL</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_util.h"><code>bslmf::Util::declval</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/items/associated-items.html">associated items</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L753"><code>ZuConstEval</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/is_constant_evaluated"><code>std::is_constant_evaluated</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_constant_evaluated</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/const_eval.html">constant evaluation</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuSize</code></a><br>➕ zero logical size for void/empty types; ordinary sizeof otherwise</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_empty"><code>std::is_empty</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">Boost.TypeTraits</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::is_empty</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/mem/fn.size_of.html"><code>mem::size_of</code></a>; zero-sized types have size zero, including <code>()</code></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLargest.hh"><code>ZuLargest</code></a><br>➕ selects a type from a pack or <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh">ZuTypeList</a>; first wins ties; handles void</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html">Boost.Mp11</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/mem/fn.size_of.html"><code>size_of</code></a>, <a href="https://doc.rust-lang.org/std/mem/fn.align_of.html"><code>align_of</code></a>, <a href="https://doc.rust-lang.org/reference/macros-by-example.html"><code>macro_rules!</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuMostAligned.hh"><code>ZuMostAligned</code></a><br>➕ selects the most-aligned type from a pack or <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh">ZuTypeList</a>; first wins ties</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html">Boost.Mp11</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/mem/fn.size_of.html"><code>size_of</code></a>, <a href="https://doc.rust-lang.org/std/mem/fn.align_of.html"><code>align_of</code></a>, <a href="https://doc.rust-lang.org/reference/macros-by-example.html"><code>macro_rules!</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTraits.hh"><code>ZuTraits</code></a><br>➕ common ADL vocabulary for strings, containers and numerics</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/header/type_traits"><code>&lt;type_traits&gt;</code></a>, <a href="https://en.cppreference.com/cpp/ranges"><code>std::ranges</code></a>, <a href="https://en.cppreference.com/cpp/types/numeric_limits"><code>std::numeric_limits</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">Boost.TypeTraits</a>, <a href="https://github.com/boostorg/range/blob/master/include/boost/range.hpp">Range</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Traits.h"><code>folly::IsRelocatable / detection traits</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntccfg/ntccfg_traits.h"><code>traits</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlat/bdlat_typecategory.h"><code>bdlat_TypeCategory</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a>, <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-types">associated types</a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Compiler hints
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuLikely`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L138)<br>➕ expression-level branch hint, usable inside compound conditions | N/A; C++23 likelihood attributes apply to statements/labels | [`BOOST_LIKELY`](https://github.com/boostorg/config/blob/master/include/boost/config/detail/suffix.hpp) | [`FOLLY_LIKELY`](https://github.com/facebook/folly/blob/main/folly/Likely.h) | [`BSLS_PERFORMANCEHINT_PREDICT_LIKELY`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_performancehint.h) | Partial: [`hint::cold_path`](https://doc.rust-lang.org/std/hint/fn.cold_path.html) for unlikely paths; no matching expression-level probability API |
-| [`ZuUnlikely`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L139)<br>➕ expression-level branch hint, usable inside compound conditions | N/A; C++23 likelihood attributes apply to statements/labels | [`BOOST_UNLIKELY`](https://github.com/boostorg/config/blob/master/include/boost/config/detail/suffix.hpp) | [`FOLLY_UNLIKELY`](https://github.com/facebook/folly/blob/main/folly/Likely.h) | [`BSLS_PERFORMANCEHINT_PREDICT_UNLIKELY`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_performancehint.h) | Partial: [`hint::cold_path`](https://doc.rust-lang.org/std/hint/fn.cold_path.html) for unlikely paths; no matching expression-level probability API |
-| [`ZuInline`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)<br>➕ requests always_inline on supported compilers | N/A; the inline keyword does not request forced optimizer inlining | [`BOOST_FORCEINLINE`](https://github.com/boostorg/config/blob/master/include/boost/config/detail/suffix.hpp) | [`FOLLY_ALWAYS_INLINE`](https://github.com/facebook/folly/blob/main/folly/CPortability.h) | N/A | [`#[inline(always)]`](https://doc.rust-lang.org/reference/attributes/codegen.html#the-inline-attribute) |
-| [`ZuNoInline`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | N/A; compiler attributes | [`BOOST_NOINLINE`](https://github.com/boostorg/config/blob/master/include/boost/config/detail/suffix.hpp) | [`FOLLY_NOINLINE`](https://github.com/facebook/folly/blob/main/folly/CPortability.h) | N/A | [`#[inline(never)]`](https://doc.rust-lang.org/reference/attributes/codegen.html#the-inline-attribute) |
-| [`ZuUnreachable`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L145)<br>➕ debug build aborts at the failed assumption | [`std::unreachable`](https://en.cppreference.com/cpp/utility/unreachable) (C++23) | [`BOOST_UNREACHABLE_RETURN`](https://github.com/boostorg/config/blob/master/include/boost/config/detail/suffix.hpp) (partial return-site idiom) | [`FOLLY_ASSUME_UNREACHABLE`](https://github.com/facebook/folly/blob/main/folly/lang/Assume.h) | N/A | [`unreachable!`](https://doc.rust-lang.org/std/macro.unreachable.html) (panics); [`unreachable_unchecked`](https://doc.rust-lang.org/std/hint/fn.unreachable_unchecked.html) (unsafe optimizer assumption) |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L138"><code>ZuLikely</code></a><br>➕ expression-level branch hint, usable inside compound conditions</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/config/blob/master/include/boost/config/detail/suffix.hpp"><code>BOOST_LIKELY</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Likely.h"><code>FOLLY_LIKELY</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_performancehint.h"><code>BSLS_PERFORMANCEHINT_PREDICT_LIKELY</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/hint/fn.cold_path.html"><code>hint::cold_path</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L139"><code>ZuUnlikely</code></a><br>➕ expression-level branch hint, usable inside compound conditions</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/config/blob/master/include/boost/config/detail/suffix.hpp"><code>BOOST_UNLIKELY</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Likely.h"><code>FOLLY_UNLIKELY</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_performancehint.h"><code>BSLS_PERFORMANCEHINT_PREDICT_UNLIKELY</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/hint/fn.cold_path.html"><code>hint::cold_path</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuInline</code></a><br>➕ requests always_inline on supported compilers</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/config/blob/master/include/boost/config/detail/suffix.hpp"><code>BOOST_FORCEINLINE</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/CPortability.h"><code>FOLLY_ALWAYS_INLINE</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/reference/attributes/codegen.html#the-inline-attribute"><code>#[inline(always)]</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuNoInline</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/config/blob/master/include/boost/config/detail/suffix.hpp"><code>BOOST_NOINLINE</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/CPortability.h"><code>FOLLY_NOINLINE</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/reference/attributes/codegen.html#the-inline-attribute"><code>#[inline(never)]</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L145"><code>ZuUnreachable</code></a><br>➕ debug build aborts at the failed assumption</td>
+  <td><a href="https://en.cppreference.com/cpp/utility/unreachable"><code>std::unreachable</code></a> (C++23)</td>
+  <td><a href="https://github.com/boostorg/config/blob/master/include/boost/config/detail/suffix.hpp"><code>BOOST_UNREACHABLE_RETURN</code></a> (partial return-site idiom)</td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/lang/Assume.h"><code>FOLLY_ASSUME_UNREACHABLE</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/std/macro.unreachable.html"><code>unreachable!</code></a> (panics); <a href="https://doc.rust-lang.org/std/hint/fn.unreachable_unchecked.html"><code>unreachable_unchecked</code></a> (unsafe optimizer assumption)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Assertions, declarations and preprocessor utilities
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuAssert`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuAssert.hh#L28)<br>➕ deferred [ZuPP](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuPP.hh) expansion and optional expression-text diagnostics | N/A; wraps core static_assert with macro-expansion support | [`BOOST_STATIC_ASSERT`](https://github.com/boostorg/config/blob/master/include/boost/static_assert.hpp), [`BOOST_STATIC_ASSERT_MSG`](https://github.com/boostorg/config/blob/master/include/boost/static_assert.hpp) | N/A | Partial: [`BSLMF_ASSERT`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_assert.h) | [`assert!`](https://doc.rust-lang.org/std/macro.assert.html) in a [`const` block](https://doc.rust-lang.org/reference/expressions/block-expr.html#const-blocks) |
-| [`ZuCAssert`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuAssert.hh#L32)<br>➕ shorter spelling for a nonzero compile-time assertion<br>➖ older switch/case idiom; no semantic advantage over static_assert | N/A; core static_assert supplies the assertion itself | [`BOOST_STATIC_ASSERT`](https://github.com/boostorg/config/blob/master/include/boost/static_assert.hpp) | N/A | Partial: [`BSLMF_ASSERT`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_assert.h) | [`assert!`](https://doc.rust-lang.org/std/macro.assert.html) in a [`const` block](https://doc.rust-lang.org/reference/expressions/block-expr.html#const-blocks) |
-| [`ZuOpBool`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)<br>➕ emits a truth conversion from the existing operator! without repeating its logic<br>➖ pointer conversion permits more conversions than explicit bool | N/A; a conversion operator still needs a user-provided body | Partial: [`BOOST_EXPLICIT_OPERATOR_BOOL`](https://github.com/boostorg/core/blob/master/include/boost/core/explicit_operator_bool.hpp) | N/A | Partial: [`bsls::UnspecifiedBool`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_unspecifiedbool.h) | No implicit truth conversion; [`if`](https://doc.rust-lang.org/reference/expressions/if-expr.html) requires `bool`; expose an explicit predicate |
-| [`ZuDerive`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuDerive.hh#L61)<br>➕ short distinct type ID reduces complex template names in symbols<br>➕ generates constrained forwarding construction and derived-returning assignment | N/A; inheritance alone does not generate this forwarding interface | Partial: [Boost.StrongTypedef](https://github.com/boostorg/serialization/blob/master/include/boost/serialization/strong_typedef.hpp)<br>➖ different wrapper/conversion semantics | N/A | N/A | [newtype struct](https://doc.rust-lang.org/reference/types/struct.html); implement conversions and forwarding explicitly or with derives |
-| [`ZuPP`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuPP.hh) macro family<br>➕ deferred recursive expansion, tuple manipulation and argument mapping | N/A; the preprocessor supplies primitives, not these macro algorithms | [Boost.Preprocessor](https://www.boost.org/doc/libs/latest/libs/preprocessor/doc/index.html)<br>➕ broader documented macro algorithms | Partial: [`FOLLY_PP_*`](https://github.com/facebook/folly/blob/main/folly/Preprocessor.h)<br>➖ different macro vocabulary | Partial: [`BSLS_MACROREPEAT`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_macrorepeat.h)<br>➖ repetition macros do not provide [ZuPP](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuPP.hh)-style deferred recursive expansion | [`macro_rules!`](https://doc.rust-lang.org/reference/macros-by-example.html) / [procedural macros](https://doc.rust-lang.org/reference/procedural-macros.html) |
-| [`ZuIfReserved`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuReserved.hh#L117)<br>➕ branches on C++23 keyword tokens | N/A | Partial: [Boost.Preprocessor](https://www.boost.org/doc/libs/latest/libs/preprocessor/doc/index.html) token dispatch; custom keyword table | N/A | N/A | Partial: [`cfg`](https://doc.rust-lang.org/reference/conditional-compilation.html) controls target/features; no C++ keyword-token classification |
-| [`ZuFnName`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuFnName.hh) | [`std::source_location::function_name`](https://en.cppreference.com/cpp/utility/source_location/function_name)`()` | [`BOOST_CURRENT_FUNCTION`](https://github.com/boostorg/assert/blob/master/include/boost/current_function.hpp) | N/A | N/A | Partial: [`module_path!`](https://doc.rust-lang.org/std/macro.module_path.html) / [`Location`](https://doc.rust-lang.org/std/panic/struct.Location.html); no standard current-function-name macro |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuAssert.hh#L28"><code>ZuAssert</code></a><br>➕ deferred <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuPP.hh">ZuPP</a> expansion and optional expression-text diagnostics</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/config/blob/master/include/boost/static_assert.hpp"><code>BOOST_STATIC_ASSERT</code></a>, <a href="https://github.com/boostorg/config/blob/master/include/boost/static_assert.hpp"><code>BOOST_STATIC_ASSERT_MSG</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_assert.h"><code>BSLMF_ASSERT</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/macro.assert.html"><code>assert!</code></a> in a <a href="https://doc.rust-lang.org/reference/expressions/block-expr.html#const-blocks"><code>const</code> block</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuAssert.hh#L32"><code>ZuCAssert</code></a><br>➕ shorter spelling for a nonzero compile-time assertion<br>➖ older switch/case idiom; no semantic advantage over static_assert</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/config/blob/master/include/boost/static_assert.hpp"><code>BOOST_STATIC_ASSERT</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_assert.h"><code>BSLMF_ASSERT</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/macro.assert.html"><code>assert!</code></a> in a <a href="https://doc.rust-lang.org/reference/expressions/block-expr.html#const-blocks"><code>const</code> block</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuOpBool</code></a><br>➕ emits a truth conversion from the existing operator! without repeating its logic<br>➖ pointer conversion permits more conversions than explicit bool</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/explicit_operator_bool.hpp"><code>BOOST_EXPLICIT_OPERATOR_BOOL</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_unspecifiedbool.h"><code>bsls::UnspecifiedBool</code></a></td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/expressions/if-expr.html"><code>if</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuDerive.hh#L61"><code>ZuDerive</code></a><br>➕ short distinct type ID reduces complex template names in symbols<br>➕ generates constrained forwarding construction and derived-returning assignment</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/serialization/blob/master/include/boost/serialization/strong_typedef.hpp">Boost.StrongTypedef</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/reference/types/struct.html">newtype struct</a>; implement conversions and forwarding explicitly or with derives</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuPP.hh"><code>ZuPP</code></a> macro family<br>➕ deferred recursive expansion, tuple manipulation and argument mapping</td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/preprocessor/doc/index.html">Boost.Preprocessor</a><br>➕ broader documented macro algorithms</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Preprocessor.h"><code>FOLLY_PP_*</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_macrorepeat.h"><code>BSLS_MACROREPEAT</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuPP.hh">ZuPP</a></td>
+  <td><a href="https://doc.rust-lang.org/reference/macros-by-example.html"><code>macro_rules!</code></a> / <a href="https://doc.rust-lang.org/reference/procedural-macros.html">procedural macros</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuReserved.hh#L117"><code>ZuIfReserved</code></a><br>➕ branches on C++23 keyword tokens</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/preprocessor/doc/index.html">Boost.Preprocessor</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/conditional-compilation.html"><code>cfg</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuFnName.hh"><code>ZuFnName</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/source_location/function_name"><code>std::source_location::function_name</code></a><code>()</code></td>
+  <td><a href="https://github.com/boostorg/assert/blob/master/include/boost/current_function.hpp"><code>BOOST_CURRENT_FUNCTION</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/macro.module_path.html"><code>module_path!</code></a>, <a href="https://doc.rust-lang.org/std/panic/struct.Location.html"><code>Location</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Object storage and lifetime operations
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZuLaunder`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L183) | [`std::launder`](https://en.cppreference.com/cpp/utility/launder) | [`boost::core::launder`](https://github.com/boostorg/core/blob/master/include/boost/core/launder.hpp) | N/A | No `launder` equivalent; [`MaybeUninit`](https://doc.rust-lang.org/std/mem/union.MaybeUninit.html) and [`raw-pointer APIs`](https://doc.rust-lang.org/std/ptr/index.html) manage storage under Rust aliasing rules |
-| [`ZuAddr`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L758) | [`std::addressof`](https://en.cppreference.com/cpp/memory/addressof) | [`boost::addressof`](https://github.com/boostorg/core/blob/master/include/boost/core/addressof.hpp) | [`bsl::addressof`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_memory.h) | [`ptr::from_ref`](https://doc.rust-lang.org/std/ptr/fn.from_ref.html) / [`ptr::from_mut`](https://doc.rust-lang.org/std/ptr/fn.from_mut.html) |
-| [`ZuNew`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L776) | [`std::construct_at`](https://en.cppreference.com/cpp/memory/construct_at) | Partial: placement `new`; [Boost.Container](https://www.boost.org/doc/libs/latest/doc/html/container.html) allocator construction | Partial: [`bslma::ConstructionUtil::construct`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslma/bslma_constructionutil.h)<br>➕ allocator-aware construction | [`ptr::write`](https://doc.rust-lang.org/std/ptr/fn.write.html) / [`MaybeUninit::write`](https://doc.rust-lang.org/std/mem/union.MaybeUninit.html#method.write) |
-| [`ZuCast`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L783) | [`std::bit_cast`](https://en.cppreference.com/cpp/numeric/bit_cast) | [`boost::core::bit_cast`](https://github.com/boostorg/core/blob/master/include/boost/core/bit.hpp) | N/A | [`mem::transmute`](https://doc.rust-lang.org/std/mem/fn.transmute.html) (unsafe bit reinterpretation); [`bytemuck::cast`](https://docs.rs/bytemuck/latest/bytemuck/fn.cast.html) with bit-pattern trait bounds |
-| [`ZuPun`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)<br>➕ reusable union with forwarding input construction and suppressed member destruction<br>➖ caller manages active-member lifetime and aliasing | Partial: [`std::bit_cast`](https://en.cppreference.com/cpp/numeric/bit_cast)<br>➕ defined value conversion for eligible types<br>➖ does not provide shared storage or lifetime control | Partial: [`boost::core::bit_cast`](https://github.com/boostorg/core/blob/master/include/boost/core/bit.hpp) | N/A | [`union`](https://doc.rust-lang.org/reference/items/unions.html) with [`ManuallyDrop`](https://doc.rust-lang.org/std/mem/struct.ManuallyDrop.html); unsafe access and explicit lifetime management |
-| [`ZuAlloca`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L642)<br>➕ concise aligned stack allocation with runtime size<br>➖ no stack-capacity fallback | N/A; runtime-sized stack arrays are not a core C++23 facility | N/A; platform `alloca` remains nonstandard | N/A | No standard runtime-sized stack allocation; [`smallvec`](https://docs.rs/smallvec/latest/smallvec/) provides inline capacity with heap spill, not dynamic `alloca` |
-| [`ZuClear`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L127)<br>➕ OS-backed clearing resistant to dead-store elimination | N/A in C++23; [`std::memset`](https://en.cppreference.com/cpp/string/byte/memset) does not guarantee secure erasure | N/A; ordinary fill algorithms do not guarantee secure erasure | N/A | [`zeroize`](https://docs.rs/zeroize/latest/zeroize/); explicit zeroing resistant to dead-store elimination |
-| [`ZuCanOverlap`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)<br>➕ shorter framework spelling of the standard attribute<br>➖ naming alias only; identical attribute semantics | N/A; exact alias of core [[no_unique_address]] | [`BOOST_ATTRIBUTE_NO_UNIQUE_ADDRESS`](https://github.com/boostorg/config/blob/master/include/boost/config/detail/suffix.hpp) | N/A | Partial: [zero-sized field layout](https://doc.rust-lang.org/reference/type-layout.html); no `no_unique_address` attribute |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L183"><code>ZuLaunder</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/launder"><code>std::launder</code></a></td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/launder.hpp"><code>boost::core::launder</code></a></td>
+  <td>N/A</td>
+  <td>None: <a href="https://doc.rust-lang.org/std/mem/union.MaybeUninit.html"><code>MaybeUninit</code></a>, <a href="https://doc.rust-lang.org/std/ptr/index.html"><code>raw-pointer APIs</code></a> (unsafe storage APIs)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L758"><code>ZuAddr</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/memory/addressof"><code>std::addressof</code></a></td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/addressof.hpp"><code>boost::addressof</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_memory.h"><code>bsl::addressof</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/ptr/fn.from_ref.html"><code>ptr::from_ref</code></a> / <a href="https://doc.rust-lang.org/std/ptr/fn.from_mut.html"><code>ptr::from_mut</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L776"><code>ZuNew</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/memory/construct_at"><code>std::construct_at</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/container.html">Boost.Container</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslma/bslma_constructionutil.h"><code>bslma::ConstructionUtil::construct</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/ptr/fn.write.html"><code>ptr::write</code></a> / <a href="https://doc.rust-lang.org/std/mem/union.MaybeUninit.html#method.write"><code>MaybeUninit::write</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L783"><code>ZuCast</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/numeric/bit_cast"><code>std::bit_cast</code></a></td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/bit.hpp"><code>boost::core::bit_cast</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/std/mem/fn.transmute.html"><code>mem::transmute</code></a> (unsafe bit reinterpretation); <a href="https://docs.rs/bytemuck/latest/bytemuck/fn.cast.html"><code>bytemuck::cast</code></a> with bit-pattern trait bounds</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuPun</code></a><br>➕ reusable union with forwarding input construction and suppressed member destruction<br>➖ caller manages active-member lifetime and aliasing</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/numeric/bit_cast"><code>std::bit_cast</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/bit.hpp"><code>boost::core::bit_cast</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/reference/items/unions.html"><code>union</code></a> with <a href="https://doc.rust-lang.org/std/mem/struct.ManuallyDrop.html"><code>ManuallyDrop</code></a>; unsafe access and explicit lifetime management</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L642"><code>ZuAlloca</code></a><br>➕ concise aligned stack allocation with runtime size<br>➖ no stack-capacity fallback</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>None: <a href="https://docs.rs/smallvec/latest/smallvec/"><code>smallvec</code></a> (inline capacity, then heap)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L127"><code>ZuClear</code></a><br>➕ OS-backed clearing resistant to dead-store elimination</td>
+  <td>None: <a href="https://en.cppreference.com/cpp/string/byte/memset"><code>std::memset</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/zeroize/latest/zeroize/"><code>zeroize</code></a>; explicit zeroing resistant to dead-store elimination</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuCanOverlap</code></a><br>➕ shorter framework spelling of the standard attribute<br>➖ naming alias only; identical attribute semantics</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/config/blob/master/include/boost/config/detail/suffix.hpp"><code>BOOST_ATTRIBUTE_NO_UNIQUE_ADDRESS</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/type-layout.html">zero-sized field layout</a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Array element storage and access
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZuElem`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuElem.hh)<br>➕ aligned structural union with no initial active element and explicit lifetime control<br>➕ short underlying type ID limits symbol/debug-name expansion | Partial: [`std::construct_at`](https://en.cppreference.com/cpp/memory/construct_at)<br>➖ caller must supply suitable storage and lifetime management | Partial: [Boost.Optional](https://github.com/boostorg/optional/blob/master/include/boost/optional.hpp) storage machinery; no matching public wrapper | Partial: [`bsls::ObjectBuffer`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_objectbuffer.h) | [`MaybeUninit<T>`](https://doc.rust-lang.org/std/mem/union.MaybeUninit.html) |
-| [`ZuIsElem`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuElem.hh) | N/A; custom-wrapper type trait | N/A; custom-wrapper type trait | N/A | Partial: [associated types](https://doc.rust-lang.org/reference/items/associated-items.html#associated-types) / [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) on a custom storage wrapper; no generic MaybeUninit detection trait |
-| [`ZuElemType`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuElem.hh) | N/A; custom-wrapper unwrapping trait | N/A; custom-wrapper unwrapping trait | N/A | Partial: [associated types](https://doc.rust-lang.org/reference/items/associated-items.html#associated-types) / [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) on a custom storage wrapper; no generic MaybeUninit detection trait |
-| [`ZuElemVal`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuElem.hh) | N/A; conditional wrapper-value access | N/A; custom wrapper accessor | N/A | [`MaybeUninit::assume_init_ref`](https://doc.rust-lang.org/std/mem/union.MaybeUninit.html#method.assume_init_ref) / [`assume_init_mut`](https://doc.rust-lang.org/std/mem/union.MaybeUninit.html#method.assume_init_mut) (unsafe) |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuElem.hh"><code>ZuElem</code></a><br>➕ aligned structural union with no initial active element and explicit lifetime control<br>➕ short underlying type ID limits symbol/debug-name expansion</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/memory/construct_at"><code>std::construct_at</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/optional/blob/master/include/boost/optional.hpp">Boost.Optional</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_objectbuffer.h"><code>bsls::ObjectBuffer</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/mem/union.MaybeUninit.html"><code>MaybeUninit&lt;T&gt;</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuElem.hh"><code>ZuIsElem</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-types">associated types</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuElem.hh"><code>ZuElemType</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-types">associated types</a>, <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuElem.hh"><code>ZuElemVal</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/std/mem/union.MaybeUninit.html#method.assume_init_ref"><code>MaybeUninit::assume_init_ref</code></a> / <a href="https://doc.rust-lang.org/std/mem/union.MaybeUninit.html#method.assume_init_mut"><code>assume_init_mut</code></a> (unsafe)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Primitive numeric types and traits
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`int128_t`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuInt.hh), [`uint128_t`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuInt.hh) ([`ZuInt`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)`.hh`)<br>➕ native compiler integer operations on supported targets<br>➖ compiler-extension types | N/A; no required standard 128-bit integer | [`boost::multiprecision::int128_t`](https://github.com/boostorg/multiprecision/blob/master/include/boost/multiprecision/cpp_int.hpp), [`uint128_t`](https://github.com/boostorg/multiprecision/blob/master/include/boost/multiprecision/cpp_int.hpp)<br>➕ portable fixed-width backends | [`folly::int128_t / uint128_t`](https://github.com/facebook/folly/blob/main/folly/Traits.h) | N/A | [`i128`](https://doc.rust-lang.org/std/primitive.i128.html) / [`u128`](https://doc.rust-lang.org/std/primitive.u128.html) |
-| [`ZuFP`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuFP_.hh)<br>➕ IEEE representation and precision helpers | [`std::numeric_limits`](https://en.cppreference.com/cpp/types/numeric_limits), [`<cmath>`](https://en.cppreference.com/cpp/header/cmath) | [Boost.Math](https://github.com/boostorg/math/blob/master/include/boost/math/special_functions.hpp) floating-point utilities | N/A | Partial: [`bsl::numeric_limits`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_limits.h)`  +  `[`bdlb::Float`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_float.h) | [`f32`](https://doc.rust-lang.org/std/primitive.f32.html) / [`f64`](https://doc.rust-lang.org/std/primitive.f64.html) constants and bit conversions |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuInt.hh"><code>int128_t</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuInt.hh"><code>uint128_t</code></a> (<a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuInt</code></a><code>.hh</code>)<br>➕ native compiler integer operations on supported targets<br>➖ compiler-extension types</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/multiprecision/blob/master/include/boost/multiprecision/cpp_int.hpp"><code>boost::multiprecision::int128_t</code></a>, <a href="https://github.com/boostorg/multiprecision/blob/master/include/boost/multiprecision/cpp_int.hpp"><code>uint128_t</code></a><br>➕ portable fixed-width backends</td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Traits.h"><code>folly::int128_t / uint128_t</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.i128.html"><code>i128</code></a> / <a href="https://doc.rust-lang.org/std/primitive.u128.html"><code>u128</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuFP_.hh"><code>ZuFP</code></a><br>➕ IEEE representation and precision helpers</td>
+  <td><a href="https://en.cppreference.com/cpp/types/numeric_limits"><code>std::numeric_limits</code></a>, <a href="https://en.cppreference.com/cpp/header/cmath"><code>&lt;cmath&gt;</code></a></td>
+  <td><a href="https://github.com/boostorg/math/blob/master/include/boost/math/special_functions.hpp">Boost.Math</a> floating-point utilities</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_limits.h"><code>bsl::numeric_limits</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_float.h"><code>bdlb::Float</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.f32.html"><code>f32</code></a> / <a href="https://doc.rust-lang.org/std/primitive.f64.html"><code>f64</code></a> constants and bit conversions</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Checked arithmetic and floating-point intrinsics
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`Zu_add`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L179) / [`ZuIntrin::add`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L242) | N/A in C++23; checked-addition composition | Partial: [Boost.SafeNumerics](https://www.boost.org/doc/libs/latest/libs/safe_numerics/doc/html/index.html)<br>➕ broader checked-number policies | Partial: [`folly::checked_add`](https://github.com/facebook/folly/blob/main/folly/lang/CheckedMath.h)<br>➖ reports success rather than Z overflow-flag semantics | N/A | [`overflowing_add`](https://doc.rust-lang.org/std/primitive.u64.html#method.overflowing_add) / [`checked_add`](https://doc.rust-lang.org/std/primitive.u64.html#method.checked_add) on integer primitives |
-| [`Zu_sub`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L180) / [`ZuIntrin::sub`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L244) | N/A in C++23; checked-subtraction composition | Partial: [Boost.SafeNumerics](https://www.boost.org/doc/libs/latest/libs/safe_numerics/doc/html/index.html) | N/A | N/A | [`overflowing_sub`](https://doc.rust-lang.org/std/primitive.u64.html#method.overflowing_sub) / [`checked_sub`](https://doc.rust-lang.org/std/primitive.u64.html#method.checked_sub) on integer primitives |
-| [`Zu_mul`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L181) / [`ZuIntrin::mul`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L246) | N/A in C++23; checked-multiplication composition | Partial: [Boost.SafeNumerics](https://www.boost.org/doc/libs/latest/libs/safe_numerics/doc/html/index.html) | Partial: [`folly::checked_mul`](https://github.com/facebook/folly/blob/main/folly/lang/CheckedMath.h)<br>➖ reports success rather than Z overflow-flag semantics | N/A | [`overflowing_mul`](https://doc.rust-lang.org/std/primitive.u64.html#method.overflowing_mul) / [`checked_mul`](https://doc.rust-lang.org/std/primitive.u64.html#method.checked_mul) on integer primitives |
-| [`Zu_nan*`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh) / [`ZuIntrin::nan`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L250) | [`std::numeric_limits<T>::quiet_NaN`](https://en.cppreference.com/cpp/types/numeric_limits/quiet_NaN), [`std::nan`](https://en.cppreference.com/cpp/numeric/math/nan) | [Boost.Math](https://github.com/boostorg/math/blob/master/include/boost/math/special_functions.hpp) floating-point utilities | N/A | N/A | [`f64::NAN`](https://doc.rust-lang.org/std/primitive.f64.html#associatedconstant.NAN) / [`f32::NAN`](https://doc.rust-lang.org/std/primitive.f32.html#associatedconstant.NAN) |
-| [`Zu_isnan`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L197) / [`ZuIntrin::isnan`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L258) | [`std::isnan`](https://en.cppreference.com/cpp/numeric/math/isnan) | [`boost::math::isnan`](https://github.com/boostorg/math/blob/master/include/boost/math/special_functions/fpclassify.hpp) | N/A | [`bdlb::Float::isNan`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_float.h) | [`f64::is_nan`](https://doc.rust-lang.org/std/primitive.f64.html#method.is_nan) / [`f32::is_nan`](https://doc.rust-lang.org/std/primitive.f32.html#method.is_nan) |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L179"><code>Zu_add</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L242"><code>ZuIntrin::add</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/safe_numerics/doc/html/index.html">Boost.SafeNumerics</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/lang/CheckedMath.h"><code>folly::checked_add</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.u64.html#method.overflowing_add"><code>overflowing_add</code></a> / <a href="https://doc.rust-lang.org/std/primitive.u64.html#method.checked_add"><code>checked_add</code></a> on integer primitives</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L180"><code>Zu_sub</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L244"><code>ZuIntrin::sub</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/safe_numerics/doc/html/index.html">Boost.SafeNumerics</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.u64.html#method.overflowing_sub"><code>overflowing_sub</code></a> / <a href="https://doc.rust-lang.org/std/primitive.u64.html#method.checked_sub"><code>checked_sub</code></a> on integer primitives</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L181"><code>Zu_mul</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L246"><code>ZuIntrin::mul</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/safe_numerics/doc/html/index.html">Boost.SafeNumerics</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/lang/CheckedMath.h"><code>folly::checked_mul</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.u64.html#method.overflowing_mul"><code>overflowing_mul</code></a> / <a href="https://doc.rust-lang.org/std/primitive.u64.html#method.checked_mul"><code>checked_mul</code></a> on integer primitives</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh"><code>Zu_nan*</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L250"><code>ZuIntrin::nan</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/numeric_limits/quiet_NaN"><code>std::numeric_limits&lt;T&gt;::quiet_NaN</code></a>, <a href="https://en.cppreference.com/cpp/numeric/math/nan"><code>std::nan</code></a></td>
+  <td><a href="https://github.com/boostorg/math/blob/master/include/boost/math/special_functions.hpp">Boost.Math</a> floating-point utilities</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.f64.html#associatedconstant.NAN"><code>f64::NAN</code></a> / <a href="https://doc.rust-lang.org/std/primitive.f32.html#associatedconstant.NAN"><code>f32::NAN</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L197"><code>Zu_isnan</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh#L258"><code>ZuIntrin::isnan</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/numeric/math/isnan"><code>std::isnan</code></a></td>
+  <td><a href="https://github.com/boostorg/math/blob/master/include/boost/math/special_functions/fpclassify.hpp"><code>boost::math::isnan</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_float.h"><code>bdlb::Float::isNan</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.f64.html#method.is_nan"><code>f64::is_nan</code></a> / <a href="https://doc.rust-lang.org/std/primitive.f32.html#method.is_nan"><code>f32::is_nan</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Byte order and byte swapping
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuByteSwap`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuByteSwap.hh)<br>➕ swapped-storage wrapper | Partial: [`std::byteswap`](https://en.cppreference.com/cpp/numeric/byteswap) (C++23)<br>➖ operation rather than storage wrapper | [Boost.Endian](https://www.boost.org/doc/libs/latest/libs/endian/doc/html/endian.html) arithmetic/buffer types | Partial: [`folly::Endian::swap`](https://github.com/facebook/folly/blob/main/folly/lang/Bits.h)<br>➖ conversion operation, not endian-storage wrapper | [`bsls::ByteOrderUtil::swapBytes`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_byteorderutil.h) | Partial: [`swap_bytes`](https://doc.rust-lang.org/std/primitive.u64.html#method.swap_bytes); [`zerocopy::byteorder`](https://docs.rs/zerocopy/latest/zerocopy/byteorder/index.html) provides endian storage wrappers |
-| [`ZuBigEndian`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuByteSwap.hh) | Partial: [`std::endian`](https://en.cppreference.com/cpp/types/endian) + [`std::byteswap`](https://en.cppreference.com/cpp/numeric/byteswap) | [Boost.Endian](https://www.boost.org/doc/libs/latest/libs/endian/doc/html/endian.html) big-endian types | Partial: [`folly::Endian::big`](https://github.com/facebook/folly/blob/main/folly/lang/Bits.h)<br>➖ conversion operation, not endian-storage wrapper | Partial: [`bdlb::BigEndianInt16`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_bigendian.h)`  / Int32 /  `[`Int64`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_int64.h)<br>➖ integer storage wrappers stop at 64 bits; Z also supports 128-bit values | [`to_be_bytes`](https://doc.rust-lang.org/std/primitive.u64.html#method.to_be_bytes) / [`from_be_bytes`](https://doc.rust-lang.org/std/primitive.u64.html#method.from_be_bytes); [`big-endian storage`](https://docs.rs/zerocopy/latest/zerocopy/byteorder/index.html) |
-| [`ZuLittleEndian`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuByteSwap.hh) | Partial: [`std::endian`](https://en.cppreference.com/cpp/types/endian) + [`std::byteswap`](https://en.cppreference.com/cpp/numeric/byteswap) | [Boost.Endian](https://www.boost.org/doc/libs/latest/libs/endian/doc/html/endian.html) little-endian types | Partial: [`folly::Endian::little`](https://github.com/facebook/folly/blob/main/folly/lang/Bits.h)<br>➖ conversion operation, not endian-storage wrapper | Partial: [`BSLS_BYTEORDER_LE_*`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_byteorder.h)` conversion macros`<br>➖ byte-order conversions only; no corresponding little-endian storage wrapper | [`to_le_bytes`](https://doc.rust-lang.org/std/primitive.u64.html#method.to_le_bytes) / [`from_le_bytes`](https://doc.rust-lang.org/std/primitive.u64.html#method.from_le_bytes); [`little-endian storage`](https://docs.rs/zerocopy/latest/zerocopy/byteorder/index.html) |
-| [`Zu_bswap*`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh) ([`ZuIntrin`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh)`.hh`) | [`std::byteswap`](https://en.cppreference.com/cpp/numeric/byteswap) (C++23) | [`boost::endian::endian_reverse`](https://github.com/boostorg/endian/blob/master/include/boost/endian/conversion.hpp) | [`folly::Endian::swap`](https://github.com/facebook/folly/blob/main/folly/lang/Bits.h) | [`bsls::ByteOrderUtil::swapBytes`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_byteorderutil.h) | [`integer::swap_bytes`](https://doc.rust-lang.org/std/primitive.u64.html#method.swap_bytes) |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuByteSwap.hh"><code>ZuByteSwap</code></a><br>➕ swapped-storage wrapper</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/numeric/byteswap"><code>std::byteswap</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/endian/doc/html/endian.html">Boost.Endian</a> arithmetic/buffer types</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/lang/Bits.h"><code>folly::Endian::swap</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_byteorderutil.h"><code>bsls::ByteOrderUtil::swapBytes</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/primitive.u64.html#method.swap_bytes"><code>swap_bytes</code></a>, <a href="https://docs.rs/zerocopy/latest/zerocopy/byteorder/index.html"><code>zerocopy::byteorder</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuByteSwap.hh"><code>ZuBigEndian</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/endian"><code>std::endian</code></a>, <a href="https://en.cppreference.com/cpp/numeric/byteswap"><code>std::byteswap</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/endian/doc/html/endian.html">Boost.Endian</a> big-endian types</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/lang/Bits.h"><code>folly::Endian::big</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_bigendian.h"><code>bdlb::BigEndianInt16</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_int64.h"><code>Int64</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.u64.html#method.to_be_bytes"><code>to_be_bytes</code></a> / <a href="https://doc.rust-lang.org/std/primitive.u64.html#method.from_be_bytes"><code>from_be_bytes</code></a>; <a href="https://docs.rs/zerocopy/latest/zerocopy/byteorder/index.html"><code>big-endian storage</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuByteSwap.hh"><code>ZuLittleEndian</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/endian"><code>std::endian</code></a>, <a href="https://en.cppreference.com/cpp/numeric/byteswap"><code>std::byteswap</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/endian/doc/html/endian.html">Boost.Endian</a> little-endian types</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/lang/Bits.h"><code>folly::Endian::little</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_byteorder.h"><code>BSLS_BYTEORDER_LE_*</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.u64.html#method.to_le_bytes"><code>to_le_bytes</code></a> / <a href="https://doc.rust-lang.org/std/primitive.u64.html#method.from_le_bytes"><code>from_le_bytes</code></a>; <a href="https://docs.rs/zerocopy/latest/zerocopy/byteorder/index.html"><code>little-endian storage</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh"><code>Zu_bswap*</code></a> (<a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh"><code>ZuIntrin</code></a><code>.hh</code>)</td>
+  <td><a href="https://en.cppreference.com/cpp/numeric/byteswap"><code>std::byteswap</code></a> (C++23)</td>
+  <td><a href="https://github.com/boostorg/endian/blob/master/include/boost/endian/conversion.hpp"><code>boost::endian::endian_reverse</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/lang/Bits.h"><code>folly::Endian::swap</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_byteorderutil.h"><code>bsls::ByteOrderUtil::swapBytes</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.u64.html#method.swap_bytes"><code>integer::swap_bytes</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## I/O status and demangling
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`Zu::IOResult`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIOResult.hh)<br>➕ small normalized I/O status vocabulary | Partial: [`std::error_code`](https://en.cppreference.com/cpp/error/error_code), stream state flags | Partial: [Boost.System](https://www.boost.org/doc/libs/latest/libs/system/doc/html/system.html) / [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) error codes | N/A | N/A | [`io::Result`](https://doc.rust-lang.org/std/io/type.Result.html) / [`io::ErrorKind`](https://doc.rust-lang.org/std/io/enum.ErrorKind.html); different status representation |
-| [`ZuDemangle`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuDemangle.hh) | N/A; [`typeid(T).name()`](https://en.cppreference.com/cpp/types/type_info/name) does not guarantee readable text | [`boost::core::demangle`](https://github.com/boostorg/core/blob/master/include/boost/core/demangle.hpp), [Boost.TypeIndex](https://www.boost.org/doc/libs/latest/doc/html/boost_typeindex.html) | [`folly::demangle`](https://github.com/facebook/folly/blob/main/folly/Demangle.h) | Partial: [`bsls::NameOf`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_nameof.h)` / nameOfType` | [`cpp_demangle`](https://docs.rs/cpp_demangle/latest/cpp_demangle/) for C++; [`rustc-demangle`](https://docs.rs/rustc-demangle/latest/rustc_demangle/) for Rust symbols |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIOResult.hh"><code>Zu::IOResult</code></a><br>➕ small normalized I/O status vocabulary</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/error/error_code"><code>std::error_code</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/system/doc/html/system.html">Boost.System</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/io/type.Result.html"><code>io::Result</code></a>, <a href="https://doc.rust-lang.org/std/io/enum.ErrorKind.html"><code>io::ErrorKind</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuDemangle.hh"><code>ZuDemangle</code></a></td>
+  <td>None: <a href="https://en.cppreference.com/cpp/types/type_info/name"><code>typeid(T).name()</code></a></td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/demangle.hpp"><code>boost::core::demangle</code></a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_typeindex.html">Boost.TypeIndex</a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Demangle.h"><code>folly::demangle</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_nameof.h"><code>bsls::NameOf</code></a></td>
+  <td><a href="https://docs.rs/cpp_demangle/latest/cpp_demangle/"><code>cpp_demangle</code></a> for C++; <a href="https://docs.rs/rustc-demangle/latest/rustc_demangle/"><code>rustc-demangle</code></a> for Rust symbols</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## C interfaces
 
-| Z facility | STL | Boost | Rust |
-| --- | --- | --- | --- |
-| [`zu_bitmap.h`](https://github.com/kaldron-labs/z/blob/main/zu/src/zu_bitmap.h) C API | N/A; [`std::bitset`](https://en.cppreference.com/cpp/utility/bitset) is C++ only | N/A; Boost bitsets are C++ only | Partial: [`bitvec`](https://docs.rs/bitvec/latest/bitvec/) + [C FFI](https://doc.rust-lang.org/reference/items/external-blocks.html) wrappers; no identical exported C API |
-| [`zu_decimal.h`](https://github.com/kaldron-labs/z/blob/main/zu/src/zu_decimal.h) C API | N/A | N/A; [Boost.Multiprecision](https://github.com/boostorg/multiprecision/blob/master/include/boost/multiprecision/cpp_int.hpp) is C++ only | Partial: [`rust_decimal`](https://docs.rs/rust_decimal/latest/rust_decimal/) + [C FFI](https://doc.rust-lang.org/reference/items/external-blocks.html) wrappers; different decimal representation |
-| [`zu_time.h`](https://github.com/kaldron-labs/z/blob/main/zu/src/zu_time.h) C API | Partial: C [`<time.h>`](https://en.cppreference.com/cpp/header/ctime) | N/A; Boost time libraries are C++ only | Partial: [`std::time`](https://doc.rust-lang.org/std/time/index.html) + [C FFI](https://doc.rust-lang.org/reference/items/external-blocks.html) wrappers; no identical C ABI |
+<div style="overflow-x: auto;">
+<table width="1100" style="width: 1100px; min-width: 1100px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/zu_bitmap.h"><code>zu_bitmap.h</code></a> C API</td>
+  <td>None: <a href="https://en.cppreference.com/cpp/utility/bitset"><code>std::bitset</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/bitvec/latest/bitvec/"><code>bitvec</code></a>, <a href="https://doc.rust-lang.org/reference/items/external-blocks.html">C FFI</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/zu_decimal.h"><code>zu_decimal.h</code></a> C API</td>
+  <td>N/A</td>
+  <td>None: <a href="https://github.com/boostorg/multiprecision/blob/master/include/boost/multiprecision/cpp_int.hpp">Boost.Multiprecision</a></td>
+  <td>Partial: <a href="https://docs.rs/rust_decimal/latest/rust_decimal/"><code>rust_decimal</code></a>, <a href="https://doc.rust-lang.org/reference/items/external-blocks.html">C FFI</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/zu_time.h"><code>zu_time.h</code></a> C API</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/header/ctime"><code>&lt;time.h&gt;</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/time/index.html"><code>std::time</code></a>, <a href="https://doc.rust-lang.org/reference/items/external-blocks.html">C FFI</a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Callable construction and invocation
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuDefaultAxor`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L652) | [`std::identity`](https://en.cppreference.com/cpp/utility/functional/identity) | [`boost::hana::id`](https://github.com/boostorg/hana/blob/master/include/boost/hana/functional/id.hpp) | N/A | N/A | [`convert::identity`](https://doc.rust-lang.org/std/convert/fn.identity.html) / an identity closure |
-| [`ZuLambda`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)<br>➕ recursive callable wrapper with cv/ref-sensitive SFINAE overloads<br>➕ documented workaround for GCC explicit-object-parameter issue 113563 | N/A; explicit-object lambda syntax supplies recursion, not this wrapper interface | [`boost::hof::fix`](https://github.com/boostorg/hof/blob/master/include/boost/hof/fix.hpp) | N/A | N/A | Partial: named [functions](https://doc.rust-lang.org/reference/items/functions.html) or explicit self-parameter closure patterns; no direct recursive-closure wrapper in std |
-| [`ZuDeduce`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuDeduce.hh)<br>➕ extracts object, return type and argument typelist | Partial: [`std::invoke_result_t`](https://en.cppreference.com/cpp/types/result_of)<br>➖ requires supplied argument types; no full signature decomposition | [Boost.CallableTraits](https://www.boost.org/doc/libs/latest/libs/callable_traits/doc/html/callable_traits/reference.html)<br>➕ broader callable-type transformations | N/A | N/A | Partial: [`FnOnce::Output`](https://doc.rust-lang.org/std/ops/trait.FnOnce.html) through `FnOnce(A) -> R` bounds; no general callable argument-list reflection |
-| [`ZuInvoke`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuInvoke.hh#L35)<br>➕ accepts member, bound and unbound function shapes with optional context | Partial: [`std::invoke`](https://en.cppreference.com/cpp/utility/functional/invoke)<br>➖ does not discard an extra context argument automatically | Partial: [`boost::compat::invoke`](https://github.com/boostorg/compat/blob/master/include/boost/compat/invoke.hpp) | Partial: [`folly::invoke`](https://github.com/facebook/folly/blob/main/folly/functional/Invoke.h)<br>➖ does not automatically discard an extra context argument | Partial: [`bsl::invoke`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_functional.h)<br>➖ does not automatically discard an unused context argument | [function calls](https://doc.rust-lang.org/reference/expressions/call-expr.html) / [method calls](https://doc.rust-lang.org/reference/expressions/method-call-expr.html); [closure types and call traits](https://doc.rust-lang.org/reference/types/closure.html) for generic invocation |
-| [`ZuInvokeFnT`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh) | N/A; construct a function-pointer type from a callable signature | Partial: [Boost.CallableTraits](https://www.boost.org/doc/libs/latest/libs/callable_traits/doc/html/callable_traits/reference.html) function-type transformation | N/A | N/A | [function pointers](https://doc.rust-lang.org/reference/types/function-pointer.html); noncapturing closures coerce to `fn` pointers |
-| [`ZuInvokeFn`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh#L175)<br>➕ concise named function-pointer conversion with signature deduction from lambda traits<br>➖ conversion semantics are already supplied by captureless lambdas | N/A; core lambda conversion supplies the underlying operation | Partial: [Boost.TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html)-selected function-pointer conversion | N/A | N/A | [function pointers](https://doc.rust-lang.org/reference/types/function-pointer.html); noncapturing closures coerce to `fn` pointers |
-| [`ZuInvokeLambda`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh#L201)<br>➕ type-only invocation with an explicit statelessness check and argument-list traits<br>➖ core construction/call already covers captureless lambdas<br>➖ placeholder-this implementation relies on supported compiler behavior | N/A; core captureless-lambda construction/call lacks the explicit statelessness check | Partial: [`boost::hof::static_`](https://github.com/boostorg/hof/blob/master/include/boost/hof/static.hpp) | N/A | N/A | Partial: [noncapturing closure coercion](https://doc.rust-lang.org/reference/types/function-pointer.html) and explicit calls; no general type-only closure construction |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh#L652"><code>ZuDefaultAxor</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/functional/identity"><code>std::identity</code></a></td>
+  <td><a href="https://github.com/boostorg/hana/blob/master/include/boost/hana/functional/id.hpp"><code>boost::hana::id</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/std/convert/fn.identity.html"><code>convert::identity</code></a> / an identity closure</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuLambda</code></a><br>➕ recursive callable wrapper with cv/ref-sensitive SFINAE overloads<br>➕ documented workaround for GCC explicit-object-parameter issue 113563</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/hof/blob/master/include/boost/hof/fix.hpp"><code>boost::hof::fix</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/functions.html">functions</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuDeduce.hh"><code>ZuDeduce</code></a><br>➕ extracts object, return type and argument typelist</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/result_of"><code>std::invoke_result_t</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/callable_traits/doc/html/callable_traits/reference.html">Boost.CallableTraits</a><br>➕ broader callable-type transformations</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/ops/trait.FnOnce.html"><code>FnOnce::Output</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuInvoke.hh#L35"><code>ZuInvoke</code></a><br>➕ accepts member, bound and unbound function shapes with optional context</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/functional/invoke"><code>std::invoke</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/compat/blob/master/include/boost/compat/invoke.hpp"><code>boost::compat::invoke</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/functional/Invoke.h"><code>folly::invoke</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_functional.h"><code>bsl::invoke</code></a></td>
+  <td><a href="https://doc.rust-lang.org/reference/expressions/call-expr.html">function calls</a> / <a href="https://doc.rust-lang.org/reference/expressions/method-call-expr.html">method calls</a>; <a href="https://doc.rust-lang.org/reference/types/closure.html">closure types and call traits</a> for generic invocation</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh"><code>ZuInvokeFnT</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/callable_traits/doc/html/callable_traits/reference.html">Boost.CallableTraits</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/reference/types/function-pointer.html">function pointers</a>; noncapturing closures coerce to <code>fn</code> pointers</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh#L175"><code>ZuInvokeFn</code></a><br>➕ concise named function-pointer conversion with signature deduction from lambda traits<br>➖ conversion semantics are already supplied by captureless lambdas</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">Boost.TypeTraits</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/reference/types/function-pointer.html">function pointers</a>; noncapturing closures coerce to <code>fn</code> pointers</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh#L201"><code>ZuInvokeLambda</code></a><br>➕ type-only invocation with an explicit statelessness check and argument-list traits<br>➖ core construction/call already covers captureless lambdas<br>➖ placeholder-this implementation relies on supported compiler behavior</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/hof/blob/master/include/boost/hof/static.hpp"><code>boost::hof::static_</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/types/function-pointer.html">noncapturing closure coercion</a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Lambda traits and constraints
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuLambdaTraits`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh)<br>➕ generic-lambda invocation and capture-oriented traits | Partial: [`std::is_invocable`](https://en.cppreference.com/cpp/types/is_invocable), [`std::invoke_result`](https://en.cppreference.com/cpp/types/result_of), type traits | Partial: [Boost.CallableTraits](https://www.boost.org/doc/libs/latest/libs/callable_traits/doc/html/callable_traits/reference.html), [TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html) | Partial: [`folly::invoke_traits`](https://github.com/facebook/folly/blob/main/folly/functional/Invoke.h)<br>➖ invocation traits rather than full lambda argument/capture decomposition | Partial: [`bslmf::MemberFunctionPointerTraits`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_memberfunctionpointertraits.h) | Partial: [`FnOnce::Output`](https://doc.rust-lang.org/std/ops/trait.FnOnce.html) through `FnOnce(A) -> R` bounds; no general callable argument-list reflection |
-| [`ZuArgList`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh) | N/A; signature decomposition requires custom traits | [`boost::callable_traits::args_t`](https://github.com/boostorg/callable_traits/blob/master/include/boost/callable_traits/args.hpp) (partial for generic lambdas) | N/A | Partial: [`bslmf::MemberFunctionPointerTraits`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_memberfunctionpointertraits.h) | Partial: [`FnOnce::Output`](https://doc.rust-lang.org/std/ops/trait.FnOnce.html) through `FnOnce(A) -> R` bounds; no general callable argument-list reflection |
-| [`ZuLambdaReturn`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh) | [`std::invoke_result_t`](https://en.cppreference.com/cpp/types/result_of) with supplied argument types | [`boost::callable_traits::return_type_t`](https://github.com/boostorg/callable_traits/blob/master/include/boost/callable_traits/return_type.hpp) (partial for generic lambdas) | Partial: [`folly::invoke_result_t`](https://github.com/facebook/folly/blob/main/folly/functional/Invoke.h) | [`bsl::invoke_result`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | Partial: [`FnOnce::Output`](https://doc.rust-lang.org/std/ops/trait.FnOnce.html) through `FnOnce(A) -> R` bounds; no general callable argument-list reflection |
-| [`ZuIsMutableLambda`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh) | Partial: test invocability through a const callable reference | Partial: [Boost.TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html) / [CallableTraits](https://www.boost.org/doc/libs/latest/libs/callable_traits/doc/html/callable_traits/reference.html) composition | N/A | N/A | [`FnMut`](https://doc.rust-lang.org/std/ops/trait.FnMut.html) / [`Fn`](https://doc.rust-lang.org/std/ops/trait.Fn.html) bounds; call capability differs from C++ mutable-lambda detection |
-| [`ZuIsVoidRetLambda`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh) | [`std::is_void`](https://en.cppreference.com/cpp/types/is_void)`<`[`std::invoke_result_t`](https://en.cppreference.com/cpp/types/result_of)`<...>>` | Partial: [Boost.TypeTraits](https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html) + [CallableTraits](https://www.boost.org/doc/libs/latest/libs/callable_traits/doc/html/callable_traits/reference.html) | Partial: [`folly::invoke_result_t`](https://github.com/facebook/folly/blob/main/folly/functional/Invoke.h)<br>➖ needs a separate void-type test | Partial: [`bsl::invoke_result`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`  +  `[`is_void`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h) | [`FnOnce`](https://doc.rust-lang.org/std/ops/trait.FnOnce.html) bound with `Output = ()` |
-| [`ZuIsStatelessLambda`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh)<br>➕ tests function-pointer conversion for the selected signature | Partial: [`std::is_convertible`](https://en.cppreference.com/cpp/types/is_convertible) to the selected function pointer<br>➖ [`std::is_empty`](https://en.cppreference.com/cpp/types/is_empty) alone is not an equivalent test | Partial: [`boost::is_convertible`](https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_convertible.hpp) to the selected function pointer | N/A | N/A | Partial: [coercion of noncapturing closures to fn pointers](https://doc.rust-lang.org/reference/types/function-pointer.html); no general positive/negative statelessness trait |
-| [`ZuMutableLambda`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh) | Constraint on const-callability test | Partial: [Boost.EnableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + callable traits | N/A | N/A | [`FnMut`](https://doc.rust-lang.org/std/ops/trait.FnMut.html) / [`Fn`](https://doc.rust-lang.org/std/ops/trait.Fn.html) bounds; call capability differs from C++ mutable-lambda detection |
-| [`ZuNotMutableLambda`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh) | Negated const-callability constraint | Partial: [Boost.DisableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + callable traits | N/A | N/A | [`FnMut`](https://doc.rust-lang.org/std/ops/trait.FnMut.html) / [`Fn`](https://doc.rust-lang.org/std/ops/trait.Fn.html) bounds; call capability differs from C++ mutable-lambda detection |
-| [`ZuVoidRetLambda`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh) | Constraint on void invocation result | Partial: [Boost.EnableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + result-type traits | N/A | N/A | [`FnOnce`](https://doc.rust-lang.org/std/ops/trait.FnOnce.html) bound with `Output = ()` |
-| [`ZuNotVoidRetLambda`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh) | Constraint on non-void invocation result | Partial: [Boost.DisableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + result-type traits | N/A | N/A | No general negative return-type bound; [`FnOnce::Output`](https://doc.rust-lang.org/std/ops/trait.FnOnce.html) exposes the return type |
-| [`ZuStatelessLambda`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh) | Constraint on function-pointer convertibility | Partial: [Boost.EnableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + conversion traits | N/A | N/A | Partial: [coercion of noncapturing closures to fn pointers](https://doc.rust-lang.org/reference/types/function-pointer.html); no general positive/negative statelessness trait |
-| [`ZuNotStatelessLambda`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh) | Negated function-pointer-conversion constraint | Partial: [Boost.DisableIf](https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp) + conversion traits | N/A | N/A | Partial: [coercion of noncapturing closures to fn pointers](https://doc.rust-lang.org/reference/types/function-pointer.html); no general positive/negative statelessness trait |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh"><code>ZuLambdaTraits</code></a><br>➕ generic-lambda invocation and capture-oriented traits</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_invocable"><code>std::is_invocable</code></a>, <a href="https://en.cppreference.com/cpp/types/result_of"><code>std::invoke_result</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/callable_traits/doc/html/callable_traits/reference.html">Boost.CallableTraits</a>, <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">TypeTraits</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/functional/Invoke.h"><code>folly::invoke_traits</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_memberfunctionpointertraits.h"><code>bslmf::MemberFunctionPointerTraits</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/ops/trait.FnOnce.html"><code>FnOnce::Output</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh"><code>ZuArgList</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/callable_traits/blob/master/include/boost/callable_traits/args.hpp"><code>boost::callable_traits::args_t</code></a> (partial for generic lambdas)</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_memberfunctionpointertraits.h"><code>bslmf::MemberFunctionPointerTraits</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/ops/trait.FnOnce.html"><code>FnOnce::Output</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh"><code>ZuLambdaReturn</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/result_of"><code>std::invoke_result_t</code></a> with supplied argument types</td>
+  <td><a href="https://github.com/boostorg/callable_traits/blob/master/include/boost/callable_traits/return_type.hpp"><code>boost::callable_traits::return_type_t</code></a> (partial for generic lambdas)</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/functional/Invoke.h"><code>folly::invoke_result_t</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::invoke_result</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/ops/trait.FnOnce.html"><code>FnOnce::Output</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh"><code>ZuIsMutableLambda</code></a></td>
+  <td>Partial: test invocability through a const callable reference</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">Boost.TypeTraits</a>, <a href="https://www.boost.org/doc/libs/latest/libs/callable_traits/doc/html/callable_traits/reference.html">CallableTraits</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/ops/trait.FnMut.html"><code>FnMut</code></a>, <a href="https://doc.rust-lang.org/std/ops/trait.Fn.html"><code>Fn</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh"><code>ZuIsVoidRetLambda</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/types/is_void"><code>std::is_void</code></a><code>&lt;</code><a href="https://en.cppreference.com/cpp/types/result_of"><code>std::invoke_result_t</code></a><code>&lt;...&gt;&gt;</code></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/type_traits/doc/html/boost_typetraits/reference.html">Boost.TypeTraits</a>, <a href="https://www.boost.org/doc/libs/latest/libs/callable_traits/doc/html/callable_traits/reference.html">CallableTraits</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/functional/Invoke.h"><code>folly::invoke_result_t</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>bsl::invoke_result</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>is_void</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/ops/trait.FnOnce.html"><code>FnOnce</code></a> bound with <code>Output = ()</code></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh"><code>ZuIsStatelessLambda</code></a><br>➕ tests function-pointer conversion for the selected signature</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_convertible"><code>std::is_convertible</code></a>, <a href="https://en.cppreference.com/cpp/types/is_empty"><code>std::is_empty</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/type_traits/blob/master/include/boost/type_traits/is_convertible.hpp"><code>boost::is_convertible</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/types/function-pointer.html">coercion of noncapturing closures to fn pointers</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh"><code>ZuMutableLambda</code></a></td>
+  <td>Constraint on const-callability test</td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.EnableIf</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/ops/trait.FnMut.html"><code>FnMut</code></a>, <a href="https://doc.rust-lang.org/std/ops/trait.Fn.html"><code>Fn</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh"><code>ZuNotMutableLambda</code></a></td>
+  <td>Negated const-callability constraint</td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.DisableIf</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/ops/trait.FnMut.html"><code>FnMut</code></a>, <a href="https://doc.rust-lang.org/std/ops/trait.Fn.html"><code>Fn</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh"><code>ZuVoidRetLambda</code></a></td>
+  <td>Constraint on void invocation result</td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.EnableIf</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/std/ops/trait.FnOnce.html"><code>FnOnce</code></a> bound with <code>Output = ()</code></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh"><code>ZuNotVoidRetLambda</code></a></td>
+  <td>Constraint on non-void invocation result</td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.DisableIf</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>None: <a href="https://doc.rust-lang.org/std/ops/trait.FnOnce.html"><code>FnOnce::Output</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh"><code>ZuStatelessLambda</code></a></td>
+  <td>Constraint on function-pointer convertibility</td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.EnableIf</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/types/function-pointer.html">coercion of noncapturing closures to fn pointers</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLambdaTraits.hh"><code>ZuNotStatelessLambda</code></a></td>
+  <td>Negated function-pointer-conversion constraint</td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/enable_if.hpp">Boost.DisableIf</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/types/function-pointer.html">coercion of noncapturing closures to fn pointers</a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Compile-time switch and unroll
 
-| Z facility | STL | Boost | Rust |
-| --- | --- | --- | --- |
-| [`ZuSwitch`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSwitch.hh)<br>➕ generates dispatch cases from a count or sequence, passing a compile-time index<br>➕ supports result collection and a caller-supplied default value | N/A; a switch statement does not generate its own cases | [`boost::mp11::mp_with_index`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | [`match`](https://doc.rust-lang.org/reference/expressions/match-expr.html); [`macro_rules!`](https://doc.rust-lang.org/reference/macros-by-example.html) can generate a complete dispatch expression, without a variadic const-index callback API |
-| [`ZuUnroll`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUnroll.hh)<br>➕ generates ordered calls from a count, sequence or type list<br>➕ shared API supports result collection and seeded reduction | N/A; pack expansion requires pack extraction/generation and call adaptation | [`boost::mp11::mp_for_each`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html), [`boost::hana::for_each`](https://github.com/boostorg/hana/blob/master/include/boost/hana/for_each.hpp) | Partial: [`array::from_fn`](https://doc.rust-lang.org/std/array/fn.from_fn.html) / [`Iterator::fold`](https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.fold); [`seq-macro`](https://docs.rs/seq-macro/latest/seq_macro/) for source-level unrolling |
+<div style="overflow-x: auto;">
+<table width="1100" style="width: 1100px; min-width: 1100px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSwitch.hh"><code>ZuSwitch</code></a><br>➕ generates dispatch cases from a count or sequence, passing a compile-time index<br>➕ supports result collection and a caller-supplied default value</td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_with_index</code></a></td>
+  <td><a href="https://doc.rust-lang.org/reference/expressions/match-expr.html"><code>match</code></a>; <a href="https://doc.rust-lang.org/reference/macros-by-example.html"><code>macro_rules!</code></a> can generate a complete dispatch expression, without a variadic const-index callback API</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUnroll.hh"><code>ZuUnroll</code></a><br>➕ generates ordered calls from a count, sequence or type list<br>➕ shared API supports result collection and seeded reduction</td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_for_each</code></a>, <a href="https://github.com/boostorg/hana/blob/master/include/boost/hana/for_each.hpp"><code>boost::hana::for_each</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/array/fn.from_fn.html"><code>array::from_fn</code></a>, <a href="https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.fold"><code>Iterator::fold</code></a>, <a href="https://docs.rs/seq-macro/latest/seq_macro/"><code>seq-macro</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Constant sequences and dispatch
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuSeq`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh) | [`std::integer_sequence`](https://en.cppreference.com/cpp/utility/integer_sequence)`<unsigned, ...>` | [`boost::mp11::mp_list_c`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html)`<unsigned, ...>` | Partial: [`folly::vtag_t<I...>`](https://github.com/facebook/folly/blob/main/folly/Traits.h)<br>➖ value-list tag with different operations | [`bslmf::IntegerSequence`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_integersequence.h)`<unsigned, ...>` | [const generics](https://doc.rust-lang.org/reference/items/generics.html#const-generics) and arrays; [`typenum`](https://docs.rs/typenum/latest/typenum/) for type-level numeric representations |
-| [`ZuMkSeq`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh) | [`std::make_integer_sequence`](https://en.cppreference.com/cpp/utility/integer_sequence)`<unsigned, N>` | [`boost::mp11::mp_iota_c`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) with value-type adapter | N/A | [`bslmf::MakeIntegerSequence`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_makeintegersequence.h)`<unsigned, N>` | [`array::from_fn`](https://doc.rust-lang.org/std/array/fn.from_fn.html); [`seq-macro`](https://docs.rs/seq-macro/latest/seq_macro/) for generated index repetitions |
-| [`ZuMin`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh) | Partial: constexpr [`std::min`](https://en.cppreference.com/cpp/algorithm/min) over constant values | [`boost::mp11::mp_min`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | Partial: [`folly::constexpr_min`](https://github.com/facebook/folly/blob/main/folly/ConstexprMath.h)<br>➖ value reduction rather than [ZuSeq](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh) metafunction | Partial: [`bsl::min`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h) | [`cmp::min`](https://doc.rust-lang.org/std/cmp/fn.min.html) |
-| [`ZuMax`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh) | Partial: constexpr [`std::max`](https://en.cppreference.com/cpp/algorithm/max) over constant values | [`boost::mp11::mp_max`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | Partial: [`folly::constexpr_max`](https://github.com/facebook/folly/blob/main/folly/ConstexprMath.h)<br>➖ value reduction rather than [ZuSeq](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh) metafunction | Partial: [`bsl::max`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h) | [`cmp::max`](https://doc.rust-lang.org/std/cmp/fn.max.html) |
-| [`ZuSeqCall`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh) | Partial: [`std::apply`](https://en.cppreference.com/cpp/utility/apply) with index/element adaptation | Partial: [`boost::hana::unpack`](https://github.com/boostorg/hana/blob/master/include/boost/hana/unpack.hpp) | Partial: [`folly::apply`](https://github.com/facebook/folly/blob/main/folly/functional/ApplyTuple.h)<br>➖ no Z accessor/index adaptation | Partial: [`bsl::apply`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_tuple.h) | Partial: [`array::from_fn`](https://doc.rust-lang.org/std/array/fn.from_fn.html) / [`macro_rules!`](https://doc.rust-lang.org/reference/macros-by-example.html); no argument-pack expansion |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh"><code>ZuSeq</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/integer_sequence"><code>std::integer_sequence</code></a><code>&lt;unsigned, ...&gt;</code></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_list_c</code></a><code>&lt;unsigned, ...&gt;</code></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Traits.h"><code>folly::vtag_t&lt;I...&gt;</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_integersequence.h"><code>bslmf::IntegerSequence</code></a><code>&lt;unsigned, ...&gt;</code></td>
+  <td><a href="https://doc.rust-lang.org/reference/items/generics.html#const-generics">const generics</a> and arrays; <a href="https://docs.rs/typenum/latest/typenum/"><code>typenum</code></a> for type-level numeric representations</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh"><code>ZuMkSeq</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/integer_sequence"><code>std::make_integer_sequence</code></a><code>&lt;unsigned, N&gt;</code></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_iota_c</code></a> with value-type adapter</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_makeintegersequence.h"><code>bslmf::MakeIntegerSequence</code></a><code>&lt;unsigned, N&gt;</code></td>
+  <td><a href="https://doc.rust-lang.org/std/array/fn.from_fn.html"><code>array::from_fn</code></a>; <a href="https://docs.rs/seq-macro/latest/seq_macro/"><code>seq-macro</code></a> for generated index repetitions</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh"><code>ZuMin</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/algorithm/min"><code>std::min</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_min</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/ConstexprMath.h"><code>folly::constexpr_min</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh">ZuSeq</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h"><code>bsl::min</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/cmp/fn.min.html"><code>cmp::min</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh"><code>ZuMax</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/algorithm/max"><code>std::max</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_max</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/ConstexprMath.h"><code>folly::constexpr_max</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh">ZuSeq</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h"><code>bsl::max</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/cmp/fn.max.html"><code>cmp::max</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh"><code>ZuSeqCall</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/apply"><code>std::apply</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/hana/blob/master/include/boost/hana/unpack.hpp"><code>boost::hana::unpack</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/functional/ApplyTuple.h"><code>folly::apply</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_tuple.h"><code>bsl::apply</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/array/fn.from_fn.html"><code>array::from_fn</code></a>, <a href="https://doc.rust-lang.org/reference/macros-by-example.html"><code>macro_rules!</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Constant-sequence conversions
 
-| Z facility | STL | Boost | Rust |
-| --- | --- | --- | --- |
-| [`ZuSeqBitmap`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh#L61)<br>➕ extracts sequence indices and combines their bits into a constexpr uint64_t mask | N/A; a fold expression requires a separately unpacked index pack | Partial: [Boost.Mp11](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) fold | Partial: [const evaluation](https://doc.rust-lang.org/reference/const_eval.html) over integer masks and arrays; [`typenum`](https://docs.rs/typenum/latest/typenum/) for type-level arithmetic, no direct mask/sequence converter |
-| [`ZuBitmapSeq`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh)<br>➕ generates an index-sequence type from the set bits of a constant mask | N/A; integer bit operations do not generate a sequence type | Partial: [Boost.Mp11](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) filtering of bit indices | Partial: [const evaluation](https://doc.rust-lang.org/reference/const_eval.html) over integer masks and arrays; [`typenum`](https://docs.rs/typenum/latest/typenum/) for type-level arithmetic, no direct mask/sequence converter |
-| [`ZuSeqTL`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh) | N/A; convert an integer sequence into constant types | [`boost::mp11::mp_from_sequence`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | Partial: [`frunk::hlist`](https://docs.rs/frunk/latest/frunk/hlist/index.html) + [`typenum`](https://docs.rs/typenum/latest/typenum/); custom numeric/type-list correspondence |
-| [`ZuTLSeq`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh) | N/A; unpack constant types into an integer sequence | Partial: [Boost.Mp11](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) pack adapter | Partial: [`frunk::hlist`](https://docs.rs/frunk/latest/frunk/hlist/index.html) + [`typenum`](https://docs.rs/typenum/latest/typenum/); custom numeric/type-list correspondence |
-| [`ZuSeqString`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh#L107)<br>➕ extracts sequence values and builds a structural [ZuString](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuString.hh) with a trailing terminator | Partial: [`std::array`](https://en.cppreference.com/cpp/container/array)`<char, N>` with a custom sequence-to-string adapter | Partial: [`boost::hana::string`](https://github.com/boostorg/hana/blob/master/include/boost/hana/string.hpp) | Partial: [constant strings/arrays](https://doc.rust-lang.org/reference/items/constant-items.html); no string-valued stable const generic or built-in character-pack conversion |
-| [`ZuStringSeq`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh) | N/A; string-to-integer-pack adapter | Partial: [`boost::hana::unpack`](https://github.com/boostorg/hana/blob/master/include/boost/hana/unpack.hpp) on a [Hana](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html) string | Partial: [constant strings/arrays](https://doc.rust-lang.org/reference/items/constant-items.html); no string-valued stable const generic or built-in character-pack conversion |
-| [`ZuSeqArray`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh#L128)<br>➕ extracts sequence values into a structural array of the selected element type | Partial: [`std::array`](https://en.cppreference.com/cpp/container/array) with a custom sequence-conversion adapter | Partial: [`boost::hana::unpack`](https://github.com/boostorg/hana/blob/master/include/boost/hana/unpack.hpp) into an array | [`array::from_fn`](https://doc.rust-lang.org/std/array/fn.from_fn.html) / [array literals](https://doc.rust-lang.org/reference/expressions/array-expr.html); no template argument-pack expansion |
-| [`ZuArraySeq`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh) | N/A; structural-array-to-integer-pack adapter | Partial: [Boost.Hana](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html) sequence conversion | Partial: [const generics](https://doc.rust-lang.org/reference/items/generics.html#const-generics) / [`typenum`](https://docs.rs/typenum/latest/typenum/); no array-valued stable const generic |
+<div style="overflow-x: auto;">
+<table width="1100" style="width: 1100px; min-width: 1100px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh#L61"><code>ZuSeqBitmap</code></a><br>➕ extracts sequence indices and combines their bits into a constexpr uint64_t mask</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html">Boost.Mp11</a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/const_eval.html">const evaluation</a>, <a href="https://docs.rs/typenum/latest/typenum/"><code>typenum</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh"><code>ZuBitmapSeq</code></a><br>➕ generates an index-sequence type from the set bits of a constant mask</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html">Boost.Mp11</a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/const_eval.html">const evaluation</a>, <a href="https://docs.rs/typenum/latest/typenum/"><code>typenum</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh"><code>ZuSeqTL</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_from_sequence</code></a></td>
+  <td>Partial: <a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>frunk::hlist</code></a>, <a href="https://docs.rs/typenum/latest/typenum/"><code>typenum</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh"><code>ZuTLSeq</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html">Boost.Mp11</a></td>
+  <td>Partial: <a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>frunk::hlist</code></a>, <a href="https://docs.rs/typenum/latest/typenum/"><code>typenum</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh#L107"><code>ZuSeqString</code></a><br>➕ extracts sequence values and builds a structural <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuString.hh">ZuString</a> with a trailing terminator</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/array"><code>std::array</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/hana/blob/master/include/boost/hana/string.hpp"><code>boost::hana::string</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/constant-items.html">constant strings/arrays</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh"><code>ZuStringSeq</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/hana/blob/master/include/boost/hana/unpack.hpp"><code>boost::hana::unpack</code></a>, <a href="https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html">Hana</a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/constant-items.html">constant strings/arrays</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh#L128"><code>ZuSeqArray</code></a><br>➕ extracts sequence values into a structural array of the selected element type</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/array"><code>std::array</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/hana/blob/master/include/boost/hana/unpack.hpp"><code>boost::hana::unpack</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/array/fn.from_fn.html"><code>array::from_fn</code></a>, <a href="https://doc.rust-lang.org/reference/expressions/array-expr.html">array literals</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSeq.hh"><code>ZuArraySeq</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html">Boost.Hana</a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/generics.html#const-generics">const generics</a>, <a href="https://docs.rs/typenum/latest/typenum/"><code>typenum</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Type-list construction, access and slicing
 
@@ -432,85 +1651,497 @@ Sources: [ZuTL.hh](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh), 
 Boost counterparts: [Mp11 reference](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html).
 Composed operations below require a small adapter where the list/value representation differs.
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuTypeList`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)<br>➕ type-only list with nested operations | Partial: [`std::tuple`](https://en.cppreference.com/cpp/utility/tuple) as a type carrier | [`boost::mp11::mp_list`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | Partial: [`folly::tag_t<T...>`](https://github.com/facebook/folly/blob/main/folly/Traits.h)<br>➖ lacks [ZuTypeList](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) nested push/unshift interface | Partial: [`bslmf::TypeList`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_typelist.h)`  (up to 20  `[`types`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_types.h)`)`; [`bsl::tuple`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_tuple.h)`<T...> (variadic type-pack representation)` | Partial: [tuples](https://doc.rust-lang.org/reference/types/tuple.html); [`frunk::hlist`](https://docs.rs/frunk/latest/frunk/hlist/index.html) provides heterogeneous list operations |
-| [`ZuTypeRepeat`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh)<br>➕ generates an N-element type list from one type, including an empty result | N/A; parameter-pack syntax does not synthesize repeated types by itself | [`boost::mp11::mp_repeat_c`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) on a singleton list | N/A | N/A | Partial: [`[T; N]`](https://doc.rust-lang.org/reference/types/array.html) for homogeneous values; [`macro_rules!`](https://doc.rust-lang.org/reference/macros-by-example.html) for repeated tuple types |
-| [`ZuType`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh) | [`std::tuple_element_t`](https://en.cppreference.com/cpp/utility/tuple/tuple_element) on a tuple | [`boost::mp11::mp_at_c`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | [`folly::type_pack_element_t / type_list_element_t`](https://github.com/facebook/folly/blob/main/folly/Traits.h) | Partial: [`bsl::tuple_element_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_tuple.h) | Partial: [tuple indexing](https://doc.rust-lang.org/reference/expressions/tuple-expr.html#tuple-indexing-expressions); [`frunk::hlist`](https://docs.rs/frunk/latest/frunk/hlist/index.html) supports type-directed selection |
-| [`ZuTypeIndex`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh) | N/A; compile-time type search | [`boost::mp11::mp_find`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | N/A | N/A | Partial: [`frunk::hlist`](https://docs.rs/frunk/latest/frunk/hlist/index.html) typed selection; no general stable type-equality predicate over arbitrary lists |
-| [`ZuTypeIn`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh)<br>➕ membership test accepts a packed list or raw type arguments and handles empty input | Composition: [`std::is_same`](https://en.cppreference.com/cpp/types/is_same) with custom list unpacking and reduction | [`boost::mp11::mp_contains`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | Partial: [`folly::is_one_of_v`](https://github.com/facebook/folly/blob/main/folly/Traits.h)<br>➖ packed-list input needs adaptation | N/A | Partial: [`frunk::hlist`](https://docs.rs/frunk/latest/frunk/hlist/index.html) typed selection; no general stable type-equality predicate over arbitrary lists |
-| [`ZuTypeHead`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh) | N/A; prefix index-sequence adapter | [`boost::mp11::mp_take_c`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | N/A | N/A | Partial: [`frunk::hlist`](https://docs.rs/frunk/latest/frunk/hlist/index.html) head/tail and sculpting; N-type prefix selection requires an explicit index/type shape |
-| [`ZuTypeTail`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh) | N/A; suffix index-sequence adapter | [`boost::mp11::mp_drop_c`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | N/A | N/A | Partial: [`frunk::hlist`](https://docs.rs/frunk/latest/frunk/hlist/index.html) tail/sculpting; N-type suffix selection requires an explicit index/type shape |
-| [`ZuTypeSlice`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh)<br>➕ stride/offset selection | N/A; index-sequence selection | Partial: [`boost::mp11::mp_transform`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) over selected indices | N/A | N/A | Partial: [`frunk::hlist`](https://docs.rs/frunk/latest/frunk/hlist/index.html) sculpting; arbitrary stride selection needs custom traits/macros |
-| [`ZuTypeApply`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh)<br>➕ applies an existing packed type list or raw type arguments to a target template | N/A; pack expansion does not unpack a type-list object/type by itself | [`boost::mp11::mp_rename`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) / [`mp_apply`](https://github.com/boostorg/mp11/blob/master/include/boost/mp11/list.hpp) | N/A | N/A | No variadic type-template application; [`macro_rules!`](https://doc.rust-lang.org/reference/macros-by-example.html) or custom [associated types](https://doc.rust-lang.org/reference/items/associated-items.html#associated-types) encode fixed-arity applications |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuTypeList</code></a><br>➕ type-only list with nested operations</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/tuple"><code>std::tuple</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_list</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Traits.h"><code>folly::tag_t&lt;T...&gt;</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh">ZuTypeList</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmf/bslmf_typelist.h"><code>bslmf::TypeList</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_types.h"><code>types</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_tuple.h"><code>bsl::tuple</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/types/tuple.html">tuples</a>, <a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>frunk::hlist</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeRepeat</code></a><br>➕ generates an N-element type list from one type, including an empty result</td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_repeat_c</code></a> on a singleton list</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/types/array.html"><code>[T; N]</code></a>, <a href="https://doc.rust-lang.org/reference/macros-by-example.html"><code>macro_rules!</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuType</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/tuple/tuple_element"><code>std::tuple_element_t</code></a> on a tuple</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_at_c</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Traits.h"><code>folly::type_pack_element_t / type_list_element_t</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_tuple.h"><code>bsl::tuple_element_t</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/expressions/tuple-expr.html#tuple-indexing-expressions">tuple indexing</a>, <a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>frunk::hlist</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeIndex</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_find</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>frunk::hlist</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeIn</code></a><br>➕ membership test accepts a packed list or raw type arguments and handles empty input</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_same"><code>std::is_same</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_contains</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Traits.h"><code>folly::is_one_of_v</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>frunk::hlist</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeHead</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_take_c</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>frunk::hlist</code></a> (custom prefix selection)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeTail</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_drop_c</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>frunk::hlist</code></a> (custom suffix selection)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeSlice</code></a><br>➕ stride/offset selection</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_transform</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>frunk::hlist</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeApply</code></a><br>➕ applies an existing packed type list or raw type arguments to a target template</td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_rename</code></a> / <a href="https://github.com/boostorg/mp11/blob/master/include/boost/mp11/list.hpp"><code>mp_apply</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/macros-by-example.html"><code>macro_rules!</code></a>, <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-types">associated types</a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Type-list algorithms
 
-| Z facility | STL | Boost | Folly | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZuTypeRev`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh) | N/A; reversed index-sequence adapter | [`boost::mp11::mp_reverse`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | N/A | [`frunk::hlist`](https://docs.rs/frunk/latest/frunk/hlist/index.html) reversal (value-level heterogeneous list) |
-| [`ZuTypeMap`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh)<br>➕ transforms a packed type list or raw type arguments and rebuilds the resulting list | N/A; requires a custom list-unpacking and transformation adapter | [`boost::mp11::mp_transform`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | N/A | [`frunk::hlist`](https://docs.rs/frunk/latest/frunk/hlist/index.html) heterogeneous mapping; result types inferred through traits |
-| [`ZuTypeGrep`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh) | N/A; compile-time type filtering | [`boost::mp11::mp_copy_if`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | N/A | Partial: [`frunk::hlist`](https://docs.rs/frunk/latest/frunk/hlist/index.html) sculpting; arbitrary type-predicate filtering requires custom traits |
-| [`ZuTypeReduce`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh)<br>➕ recursive pairwise type reduction with empty/singleton cases and packed-list input | N/A; ordinary fold expressions do not directly reduce type metafunctions | Partial: [`boost::mp11::mp_fold`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | N/A | [`frunk::hlist`](https://docs.rs/frunk/latest/frunk/hlist/index.html) folds; value-level heterogeneous reduction |
-| [`ZuTypeMerge`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh) | N/A; compile-time merge | Partial: [`boost::mp11::mp_append`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) + [`mp_sort`](https://github.com/boostorg/mp11/blob/master/include/boost/mp11/algorithm.hpp) | N/A | No direct general type-list merge/sort/dedup; custom [`macro_rules!`](https://doc.rust-lang.org/reference/macros-by-example.html) / [`HList`](https://docs.rs/frunk/latest/frunk/hlist/index.html) traits |
-| [`ZuTypeSort`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh) | N/A; compile-time type sorting | [`boost::mp11::mp_sort`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) with comparator adapter | N/A | No direct general type-list merge/sort/dedup; custom [`macro_rules!`](https://doc.rust-lang.org/reference/macros-by-example.html) / [`HList`](https://docs.rs/frunk/latest/frunk/hlist/index.html) traits |
-| [`ZuTypeConcat`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh) | Partial: result type of [`std::tuple_cat`](https://en.cppreference.com/cpp/utility/tuple/tuple_cat) | [`boost::mp11::mp_append`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | [`folly::type_list_concat_t`](https://github.com/facebook/folly/blob/main/folly/Traits.h) | [`frunk::hlist`](https://docs.rs/frunk/latest/frunk/hlist/index.html) concatenation |
-| [`ZuTypeUnique`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh) | N/A; compile-time type deduplication | [`boost::mp11::mp_unique`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) | N/A | No direct general type-list merge/sort/dedup; custom [`macro_rules!`](https://doc.rust-lang.org/reference/macros-by-example.html) / [`HList`](https://docs.rs/frunk/latest/frunk/hlist/index.html) traits |
-| [`ZuTLConverts`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh) | Composition: zipped [`std::is_convertible`](https://en.cppreference.com/cpp/types/is_convertible) tests | Composition: [`boost::mp11::mp_transform`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) + [`mp_all`](https://github.com/boostorg/mp11/blob/master/include/boost/mp11/algorithm.hpp) | N/A | Partial: [`frunk::labelled`](https://docs.rs/frunk/latest/frunk/labelled/index.html) generic conversions; not a universal elementwise convertibility predicate |
-| [`ZuTLConstructs`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh) | Composition: zipped [`std::is_constructible`](https://en.cppreference.com/cpp/types/is_constructible) tests | Composition: [`boost::mp11::mp_transform`](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) + [`mp_all`](https://github.com/boostorg/mp11/blob/master/include/boost/mp11/algorithm.hpp) | N/A | Partial: [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) with [`From`](https://doc.rust-lang.org/std/convert/trait.From.html) implementations over tuples/HLists; no arbitrary pack constructibility probe |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeRev</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_reverse</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>frunk::hlist</code></a> reversal (value-level heterogeneous list)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeMap</code></a><br>➕ transforms a packed type list or raw type arguments and rebuilds the resulting list</td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_transform</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>frunk::hlist</code></a> heterogeneous mapping; result types inferred through traits</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeGrep</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_copy_if</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>frunk::hlist</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeReduce</code></a><br>➕ recursive pairwise type reduction with empty/singleton cases and packed-list input</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_fold</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>frunk::hlist</code></a> folds; value-level heterogeneous reduction</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeMerge</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_append</code></a>, <a href="https://github.com/boostorg/mp11/blob/master/include/boost/mp11/algorithm.hpp"><code>mp_sort</code></a></td>
+  <td>N/A</td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/macros-by-example.html"><code>macro_rules!</code></a>, <a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>HList</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeSort</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_sort</code></a> with comparator adapter</td>
+  <td>N/A</td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/macros-by-example.html"><code>macro_rules!</code></a>, <a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>HList</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeConcat</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/tuple/tuple_cat"><code>std::tuple_cat</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_append</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Traits.h"><code>folly::type_list_concat_t</code></a></td>
+  <td><a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>frunk::hlist</code></a> concatenation</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTypeUnique</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_unique</code></a></td>
+  <td>N/A</td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/macros-by-example.html"><code>macro_rules!</code></a>, <a href="https://docs.rs/frunk/latest/frunk/hlist/index.html"><code>HList</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTLConverts</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_convertible"><code>std::is_convertible</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_transform</code></a>, <a href="https://github.com/boostorg/mp11/blob/master/include/boost/mp11/algorithm.hpp"><code>mp_all</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/frunk/latest/frunk/labelled/index.html"><code>frunk::labelled</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTL.hh"><code>ZuTLConstructs</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/is_constructible"><code>std::is_constructible</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html"><code>boost::mp11::mp_transform</code></a>, <a href="https://github.com/boostorg/mp11/blob/master/include/boost/mp11/algorithm.hpp"><code>mp_all</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a>, <a href="https://doc.rust-lang.org/std/convert/trait.From.html"><code>From</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Compile-time strings
 
-| Z facility | STL | Boost | Folly | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZuString`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuString.hh)<br>➕ structural string for non-type template arguments | Partial: [`std::array`](https://en.cppreference.com/cpp/container/array)`<char, N>`<br>➖ no dedicated structural string class | Partial: [`boost::hana::string`](https://github.com/boostorg/hana/blob/master/include/boost/hana/string.hpp)<br>➖ different template representation | Partial: [`folly::FixedString`](https://github.com/facebook/folly/blob/main/folly/FixedString.h)<br>➖ different template-argument/structural-type contract | [`const &str`](https://doc.rust-lang.org/reference/items/constant-items.html); strings are not stable const-generic parameter types |
-| [`ZuStringT`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuString.hh) | Partial: [`std::integral_constant`](https://en.cppreference.com/cpp/types/integral_constant) of a structural string | Partial: [`boost::hana::string`](https://github.com/boostorg/hana/blob/master/include/boost/hana/string.hpp) as a type-level string | Partial: [`folly::FixedString`](https://github.com/facebook/folly/blob/main/folly/FixedString.h)<br>➖ value container rather than [ZuStringT](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuString.hh) type-level wrapper | Partial: [associated string constants](https://doc.rust-lang.org/reference/items/associated-items.html#associated-constants) on marker types; no string-valued const generic |
-| [`ZuStringTL`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuString.hh) | N/A; type list of structural-string constants | Partial: [Boost.Mp11](https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html) list of [Hana](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html) strings | N/A | Partial: [procedural macros](https://doc.rust-lang.org/reference/procedural-macros.html) can generate type lists from literals; no standard string-to-type-list conversion |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuString.hh"><code>ZuString</code></a><br>➕ structural string for non-type template arguments</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/array"><code>std::array</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/hana/blob/master/include/boost/hana/string.hpp"><code>boost::hana::string</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/FixedString.h"><code>folly::FixedString</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/constant-items.html"><code>const &amp;str</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuString.hh"><code>ZuStringT</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/integral_constant"><code>std::integral_constant</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/hana/blob/master/include/boost/hana/string.hpp"><code>boost::hana::string</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/FixedString.h"><code>folly::FixedString</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuString.hh">ZuStringT</a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/items/associated-items.html#associated-constants">associated string constants</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuString.hh"><code>ZuStringTL</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/mp11/doc/html/mp11.html">Boost.Mp11</a>, <a href="https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html">Hana</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/procedural-macros.html">procedural macros</a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Ownership and scope cleanup
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuObject`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuObject.hh)<br>➕ embedded non-atomic count<br>➖ participating base class required | Partial: [`std::enable_shared_from_this`](https://en.cppreference.com/cpp/memory/enable_shared_from_this) + shared ownership<br>➕ supports weak observers | [`boost::intrusive_ref_counter`](https://github.com/boostorg/smart_ptr/blob/master/include/boost/smart_ptr/intrusive_ref_counter.hpp)`<T, `[`boost::thread_unsafe_counter`](https://github.com/boostorg/smart_ptr/blob/master/include/boost/smart_ptr/intrusive_ref_counter.hpp)`>` | N/A | N/A | Partial: [`Rc`](https://doc.rust-lang.org/std/rc/struct.Rc.html); non-atomic shared ownership with an external allocation header, not an intrusive object base |
-| [`ZuObjectTraits`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuObjectTraits.hh)<br>➕ detects Z intrusive-object participation | N/A; custom type traits | Partial: detection of intrusive pointer hooks | N/A | N/A | No built-in intrusive-object participation test; [trait bounds](https://doc.rust-lang.org/reference/trait-bounds.html) encode explicit ownership participation |
-| [`ZuRef`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuRef.hh)<br>➕ intrusive ownership without separate control block<br>➖ non-atomic; no weak observers | [`std::shared_ptr`](https://en.cppreference.com/cpp/memory/shared_ptr)<br>➕ arbitrary pointees and weak observers | [`boost::intrusive_ptr`](https://github.com/boostorg/smart_ptr/blob/master/include/boost/smart_ptr/intrusive_ptr.hpp) with non-atomic hooks | N/A | N/A | Partial: [`Rc`](https://doc.rust-lang.org/std/rc/struct.Rc.html); non-atomic shared ownership with an external allocation header, not an intrusive object base |
-| [`ZuPolymorph`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuPolymorph.hh) | Partial: polymorphic base with [`std::shared_ptr`](https://en.cppreference.com/cpp/memory/shared_ptr) | Partial: polymorphic base with Boost intrusive hooks | N/A | N/A | [`dyn Trait`](https://doc.rust-lang.org/reference/types/trait-object.html) / [`Box`](https://doc.rust-lang.org/std/boxed/struct.Box.html); no virtual base class |
-| [`ZuPtr`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuPtr.hh)<br>➖ no configurable deleter | [`std::unique_ptr`](https://en.cppreference.com/cpp/memory/unique_ptr)<br>➕ custom deleters and array specialization | [`boost::movelib::unique_ptr`](https://github.com/boostorg/move/blob/master/include/boost/move/unique_ptr.hpp) | Partial: [`folly::static_function_deleter`](https://github.com/facebook/folly/blob/main/folly/Memory.h)<br>➖ a deleter policy used with unique_ptr, not an owning pointer by itself | Partial: [`bslma::ManagedPtr`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslma/bslma_managedptr.h)<br>➕ type-erased deleter and allocator-aware factories | [`Box<T>`](https://doc.rust-lang.org/std/boxed/struct.Box.html) |
-| [`ZuGuard`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh)<br>➕ cancellable lambda cleanup | N/A in C++23; [`std::experimental::scope_exit`](https://en.cppreference.com/cpp/experimental/scope_exit) (Library Fundamentals TS) | [`boost::scope::scope_exit`](https://github.com/boostorg/scope/blob/master/include/boost/scope/scope_exit.hpp)<br>➕ related success/failure guards | [`folly::ScopeGuard / makeGuard`](https://github.com/facebook/folly/blob/main/folly/ScopeGuard.h)<br>➕ also supplies success/failure scope guards | [`bdlb::ScopeExit`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_scopeexit.h)`  /  `[`ScopeExitUtil`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_scopeexit.h) | [`scopeguard`](https://docs.rs/scopeguard/latest/scopeguard/); dismissible scope cleanup |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuObject.hh"><code>ZuObject</code></a><br>➕ embedded non-atomic count<br>➖ participating base class required</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/memory/enable_shared_from_this"><code>std::enable_shared_from_this</code></a></td>
+  <td><a href="https://github.com/boostorg/smart_ptr/blob/master/include/boost/smart_ptr/intrusive_ref_counter.hpp"><code>boost::intrusive_ref_counter</code></a><code>&lt;T, </code><a href="https://github.com/boostorg/smart_ptr/blob/master/include/boost/smart_ptr/intrusive_ref_counter.hpp"><code>boost::thread_unsafe_counter</code></a><code>&gt;</code></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/rc/struct.Rc.html"><code>Rc</code></a> (non-intrusive)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuObjectTraits.hh"><code>ZuObjectTraits</code></a><br>➕ detects Z intrusive-object participation</td>
+  <td>N/A</td>
+  <td>Partial: detection of intrusive pointer hooks</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/trait-bounds.html">trait bounds</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuRef.hh"><code>ZuRef</code></a><br>➕ intrusive ownership without separate control block<br>➖ non-atomic; no weak observers</td>
+  <td><a href="https://en.cppreference.com/cpp/memory/shared_ptr"><code>std::shared_ptr</code></a><br>➕ arbitrary pointees and weak observers</td>
+  <td><a href="https://github.com/boostorg/smart_ptr/blob/master/include/boost/smart_ptr/intrusive_ptr.hpp"><code>boost::intrusive_ptr</code></a> with non-atomic hooks</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/rc/struct.Rc.html"><code>Rc</code></a> (non-intrusive)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuPolymorph.hh"><code>ZuPolymorph</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/memory/shared_ptr"><code>std::shared_ptr</code></a></td>
+  <td>Partial: polymorphic base with Boost intrusive hooks</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/types/trait-object.html"><code>dyn Trait</code></a>, <a href="https://doc.rust-lang.org/std/boxed/struct.Box.html"><code>Box</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuPtr.hh"><code>ZuPtr</code></a><br>➖ no configurable deleter</td>
+  <td><a href="https://en.cppreference.com/cpp/memory/unique_ptr"><code>std::unique_ptr</code></a><br>➕ custom deleters and array specialization</td>
+  <td><a href="https://github.com/boostorg/move/blob/master/include/boost/move/unique_ptr.hpp"><code>boost::movelib::unique_ptr</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Memory.h"><code>folly::static_function_deleter</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslma/bslma_managedptr.h"><code>bslma::ManagedPtr</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/boxed/struct.Box.html"><code>Box&lt;T&gt;</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuGuard</code></a><br>➕ cancellable lambda cleanup</td>
+  <td>None: <a href="https://en.cppreference.com/cpp/experimental/scope_exit"><code>std::experimental::scope_exit</code></a></td>
+  <td><a href="https://github.com/boostorg/scope/blob/master/include/boost/scope/scope_exit.hpp"><code>boost::scope::scope_exit</code></a><br>➕ related success/failure guards</td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/ScopeGuard.h"><code>folly::ScopeGuard / makeGuard</code></a><br>➕ also supplies success/failure scope guards</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_scopeexit.h"><code>bdlb::ScopeExit</code></a><code> / </code><a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_scopeexit.h"><code>ScopeExitUtil</code></a></td>
+  <td><a href="https://docs.rs/scopeguard/latest/scopeguard/"><code>scopeguard</code></a>; dismissible scope cleanup</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Comparison, hashing and null sentinels
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuCmp`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuCmp.hh)<br>➕ comparison, null sentinel and numeric bounds in one customization | Partial: [`std::compare_three_way`](https://en.cppreference.com/cpp/utility/compare/compare_three_way), [`std::numeric_limits`](https://en.cppreference.com/cpp/types/numeric_limits), [`std::optional`](https://en.cppreference.com/cpp/utility/optional) | Partial: [Boost.Operators](https://www.boost.org/doc/libs/latest/libs/utility/operators.htm), NumericConversion, [Optional](https://github.com/boostorg/optional/blob/master/include/boost/optional.hpp) | N/A | N/A | Composition: [`Ord`](https://doc.rust-lang.org/std/cmp/trait.Ord.html), [`Option`](https://doc.rust-lang.org/std/option/enum.Option.html) and primitive numeric bounds; no shared sentinel policy |
-| [`ZuCmp0`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuCmp.hh)<br>➕ zero-sentinel comparison policy | Partial: comparison functions + zero test | Partial: [Boost.Operators](https://www.boost.org/doc/libs/latest/libs/utility/operators.htm) + custom sentinel policy | N/A | N/A | Partial: [`Option`](https://doc.rust-lang.org/std/option/enum.Option.html) / [`NonZero integer types`](https://doc.rust-lang.org/std/num/index.html); arbitrary sentinel policies need a custom wrapper |
-| [`ZuCmp_1`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuCmp.hh)<br>➕ negative-value null policy | N/A; custom negative-sentinel comparison policy | N/A; custom sentinel policy | N/A | N/A | Partial: [`Option`](https://doc.rust-lang.org/std/option/enum.Option.html) / [`NonZero integer types`](https://doc.rust-lang.org/std/num/index.html); arbitrary sentinel policies need a custom wrapper |
-| [`ZuCmpN`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuCmp.hh)<br>➕ compile-time chosen null sentinel | N/A; custom sentinel comparison policy | N/A; custom sentinel policy | N/A | N/A | Partial: [`Option`](https://doc.rust-lang.org/std/option/enum.Option.html) / [`NonZero integer types`](https://doc.rust-lang.org/std/num/index.html); arbitrary sentinel policies need a custom wrapper |
-| [`ZuCompare`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSemVer.hh) | Partial: [`std::compare_three_way`](https://en.cppreference.com/cpp/utility/compare/compare_three_way)<br>➖ returns an ordering category rather than an integer | Partial: Boost comparison utilities with integer-result adapter | N/A | Partial: [`bsl::compare_three_way`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_compare.h) | [`Ord::cmp`](https://doc.rust-lang.org/std/cmp/trait.Ord.html#tymethod.cmp) / [`PartialOrd::partial_cmp`](https://doc.rust-lang.org/std/cmp/trait.PartialOrd.html#tymethod.partial_cmp) |
-| [`ZuEquals`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUnion.hh) | [`std::equal_to`](https://en.cppreference.com/cpp/utility/functional/equal_to) | [`boost::equal_to`](https://github.com/boostorg/functional/blob/master/include/boost/functional.hpp) (Functional) | N/A | [`bsl::equal_to`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_functional.h) | [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html) |
-| [`ZuNull`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuHash.hh)<br>➕ tests a type's configured sentinel | Partial: [`std::optional::has_value`](https://en.cppreference.com/cpp/utility/optional/operator_bool)<br>➕ does not consume a payload value as a sentinel | Partial: [`boost::optional`](https://github.com/boostorg/optional/blob/master/include/boost/optional.hpp) engagement test | N/A | N/A | [`Option::is_none`](https://doc.rust-lang.org/std/option/enum.Option.html#method.is_none); explicit absence rather than configurable value sentinel |
-| [`ZuNullRef`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuCmp.hh#L747)<br>➕ reusable const-reference sentinel accessor honoring the type-specific comparator | N/A; a static variable alone does not select the configured sentinel | N/A; application static sentinel | N/A | N/A | Partial: [`Option<&T>`](https://doc.rust-lang.org/std/option/enum.Option.html) or [`Default`](https://doc.rust-lang.org/std/default/trait.Default.html); no universal sentinel-reference accessor |
-| [`ZuICmp`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuICmp.hh) | Partial: character folding + comparison algorithms | [`boost::algorithm::iequals`](https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/string/predicate.hpp) / [`ilexicographical_compare`](https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/string/compare.hpp) | Partial: [`folly::AsciiCaseInsensitive`](https://github.com/facebook/folly/blob/main/folly/Range.h)<br>➖ comparator used with range search; not the full [ZuCmp](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuCmp.hh) interface | Partial: [`bdlb::String::areEqualCaseless`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_string.h)` / lowerCaseCmp` | Partial: [`str::eq_ignore_ascii_case`](https://doc.rust-lang.org/std/primitive.str.html#method.eq_ignore_ascii_case); custom ordering for case-insensitive comparisons |
-| [`ZuHash`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuHash.hh)<br>➕ consistent text hashing across supported representations | [`std::hash`](https://en.cppreference.com/cpp/utility/hash) | [`boost::hash`](https://github.com/boostorg/container_hash/blob/master/include/boost/container_hash/hash.hpp) (ContainerHash) | [`folly::hasher / folly::hash`](https://github.com/facebook/folly/blob/main/folly/hash/Hash.h)<br>➕ multiple hash families and combination helpers | [`bslh::Hash`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslh/bslh_hash.h)` / hashAppend`; [`bdlb::TransparentStringHash`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_transparentstringhash.h)<br>➕ extensible hashing and heterogeneous string lookup | [`Hash`](https://doc.rust-lang.org/std/hash/trait.Hash.html) / [`Hasher`](https://doc.rust-lang.org/std/hash/trait.Hasher.html) |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuCmp.hh"><code>ZuCmp</code></a><br>➕ comparison, null sentinel and numeric bounds in one customization</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/compare/compare_three_way"><code>std::compare_three_way</code></a>, <a href="https://en.cppreference.com/cpp/types/numeric_limits"><code>std::numeric_limits</code></a>, <a href="https://en.cppreference.com/cpp/utility/optional"><code>std::optional</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/utility/operators.htm">Boost.Operators</a>, <a href="https://github.com/boostorg/optional/blob/master/include/boost/optional.hpp">Optional</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/cmp/trait.Ord.html"><code>Ord</code></a>, <a href="https://doc.rust-lang.org/std/option/enum.Option.html"><code>Option</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuCmp.hh"><code>ZuCmp0</code></a><br>➕ zero-sentinel comparison policy</td>
+  <td>Partial: comparison functions + zero test</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/utility/operators.htm">Boost.Operators</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/option/enum.Option.html"><code>Option</code></a>, <a href="https://doc.rust-lang.org/std/num/index.html"><code>NonZero integer types</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuCmp.hh"><code>ZuCmp_1</code></a><br>➕ negative-value null policy</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/option/enum.Option.html"><code>Option</code></a>, <a href="https://doc.rust-lang.org/std/num/index.html"><code>NonZero integer types</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuCmp.hh"><code>ZuCmpN</code></a><br>➕ compile-time chosen null sentinel</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/option/enum.Option.html"><code>Option</code></a>, <a href="https://doc.rust-lang.org/std/num/index.html"><code>NonZero integer types</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSemVer.hh"><code>ZuCompare</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/compare/compare_three_way"><code>std::compare_three_way</code></a></td>
+  <td>Partial: Boost comparison utilities with integer-result adapter</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_compare.h"><code>bsl::compare_three_way</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/cmp/trait.Ord.html#tymethod.cmp"><code>Ord::cmp</code></a> / <a href="https://doc.rust-lang.org/std/cmp/trait.PartialOrd.html#tymethod.partial_cmp"><code>PartialOrd::partial_cmp</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUnion.hh"><code>ZuEquals</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/functional/equal_to"><code>std::equal_to</code></a></td>
+  <td><a href="https://github.com/boostorg/functional/blob/master/include/boost/functional.hpp"><code>boost::equal_to</code></a> (Functional)</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_functional.h"><code>bsl::equal_to</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/cmp/trait.PartialEq.html"><code>PartialEq</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuHash.hh"><code>ZuNull</code></a><br>➕ tests a type's configured sentinel</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/optional/operator_bool"><code>std::optional::has_value</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/optional/blob/master/include/boost/optional.hpp"><code>boost::optional</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/option/enum.Option.html#method.is_none"><code>Option::is_none</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuCmp.hh#L747"><code>ZuNullRef</code></a><br>➕ reusable const-reference sentinel accessor honoring the type-specific comparator</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/option/enum.Option.html"><code>Option&lt;&amp;T&gt;</code></a>, <a href="https://doc.rust-lang.org/std/default/trait.Default.html"><code>Default</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuICmp.hh"><code>ZuICmp</code></a></td>
+  <td>Partial: character folding + comparison algorithms</td>
+  <td><a href="https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/string/predicate.hpp"><code>boost::algorithm::iequals</code></a> / <a href="https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/string/compare.hpp"><code>ilexicographical_compare</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Range.h"><code>folly::AsciiCaseInsensitive</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuCmp.hh">ZuCmp</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_string.h"><code>bdlb::String::areEqualCaseless</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/primitive.str.html#method.eq_ignore_ascii_case"><code>str::eq_ignore_ascii_case</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuHash.hh"><code>ZuHash</code></a><br>➕ consistent text hashing across supported representations</td>
+  <td><a href="https://en.cppreference.com/cpp/utility/hash"><code>std::hash</code></a></td>
+  <td><a href="https://github.com/boostorg/container_hash/blob/master/include/boost/container_hash/hash.hpp"><code>boost::hash</code></a> (ContainerHash)</td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/hash/Hash.h"><code>folly::hasher / folly::hash</code></a><br>➕ multiple hash families and combination helpers</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslh/bslh_hash.h"><code>bslh::Hash</code></a><code> / hashAppend</code>; <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_transparentstringhash.h"><code>bdlb::TransparentStringHash</code></a><br>➕ extensible hashing and heterogeneous string lookup</td>
+  <td><a href="https://doc.rust-lang.org/std/hash/trait.Hash.html"><code>Hash</code></a> / <a href="https://doc.rust-lang.org/std/hash/trait.Hasher.html"><code>Hasher</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Bitmaps, bitfields and bit streams
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuBitmap`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBitmap.hh) | [`std::bitset`](https://en.cppreference.com/cpp/utility/bitset) | Partial: [`boost::dynamic_bitset`](https://github.com/boostorg/dynamic_bitset/blob/master/include/boost/dynamic_bitset.hpp)<br>➕ runtime size<br>➖ dynamic allocation | N/A | [`bsl::bitset`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_bitset.h)`<N>` | [`bitvec`](https://docs.rs/bitvec/latest/bitvec/) |
-| [`ZuBitfield`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBitfield.hh)<br>➕ runtime-indexed packed fields with explicit word/mask operations and assignment proxies | N/A; native named bitfields do not supply indexed packed-array access | Partial: [Boost.Endian](https://www.boost.org/doc/libs/latest/libs/endian/doc/html/endian.html) buffers with masks | N/A | N/A | [`bitvec::field::BitField`](https://docs.rs/bitvec/latest/bitvec/field/trait.BitField.html) |
-| [`ZuBitStream`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBitStream.hh)<br>➕ successive non-byte-aligned symbols | N/A; custom bit packing | Partial: [Boost.DynamicBitset](https://github.com/boostorg/dynamic_bitset/blob/master/include/boost/dynamic_bitset.hpp) with custom cursor | N/A | N/A | [`bitstream-io`](https://docs.rs/bitstream-io/latest/bitstream_io/) |
-| [`Zu_clz*`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh) ([`ZuIntrin`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh)`.hh`) | [`std::countl_zero`](https://en.cppreference.com/cpp/numeric/countl_zero) | Partial: [Boost.Core](https://github.com/boostorg/core/blob/master/include/boost/core/bit.hpp) bit utilities | Partial: [`folly::findLastSet`](https://github.com/facebook/folly/blob/main/folly/lang/Bits.h)<br>➖ convert its one-based result to a leading-zero count | [`bdlb::BitUtil::numLeadingUnsetBits`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_bitutil.h) | [`integer::leading_zeros`](https://doc.rust-lang.org/std/primitive.u64.html#method.leading_zeros) |
-| [`Zu_ctz*`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh) ([`ZuIntrin`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh)`.hh`) | [`std::countr_zero`](https://en.cppreference.com/cpp/numeric/countr_zero) | Partial: [Boost.Core](https://github.com/boostorg/core/blob/master/include/boost/core/bit.hpp) bit utilities | Partial: [`folly::findFirstSet`](https://github.com/facebook/folly/blob/main/folly/lang/Bits.h)<br>➖ one-based position; zero-input convention differs | [`bdlb::BitUtil::numTrailingUnsetBits`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_bitutil.h) | [`integer::trailing_zeros`](https://doc.rust-lang.org/std/primitive.u64.html#method.trailing_zeros) |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBitmap.hh"><code>ZuBitmap</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/bitset"><code>std::bitset</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/dynamic_bitset/blob/master/include/boost/dynamic_bitset.hpp"><code>boost::dynamic_bitset</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_bitset.h"><code>bsl::bitset</code></a><code>&lt;N&gt;</code></td>
+  <td><a href="https://docs.rs/bitvec/latest/bitvec/"><code>bitvec</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBitfield.hh"><code>ZuBitfield</code></a><br>➕ runtime-indexed packed fields with explicit word/mask operations and assignment proxies</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/endian/doc/html/endian.html">Boost.Endian</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/bitvec/latest/bitvec/field/trait.BitField.html"><code>bitvec::field::BitField</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBitStream.hh"><code>ZuBitStream</code></a><br>➕ successive non-byte-aligned symbols</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/dynamic_bitset/blob/master/include/boost/dynamic_bitset.hpp">Boost.DynamicBitset</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/bitstream-io/latest/bitstream_io/"><code>bitstream-io</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh"><code>Zu_clz*</code></a> (<a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh"><code>ZuIntrin</code></a><code>.hh</code>)</td>
+  <td><a href="https://en.cppreference.com/cpp/numeric/countl_zero"><code>std::countl_zero</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/bit.hpp">Boost.Core</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/lang/Bits.h"><code>folly::findLastSet</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_bitutil.h"><code>bdlb::BitUtil::numLeadingUnsetBits</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.u64.html#method.leading_zeros"><code>integer::leading_zeros</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh"><code>Zu_ctz*</code></a> (<a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIntrin.hh"><code>ZuIntrin</code></a><code>.hh</code>)</td>
+  <td><a href="https://en.cppreference.com/cpp/numeric/countr_zero"><code>std::countr_zero</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/bit.hpp">Boost.Core</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/lang/Bits.h"><code>folly::findFirstSet</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_bitutil.h"><code>bdlb::BitUtil::numTrailingUnsetBits</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.u64.html#method.trailing_zeros"><code>integer::trailing_zeros</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Boxed scalars and formatting adapters
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuBox`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBox.hh)<br>➕ scalar null policy with integrated scanning/formatting | Partial: scalar + [`std::optional`](https://en.cppreference.com/cpp/utility/optional) + character conversion | Partial: [Boost.Optional](https://github.com/boostorg/optional/blob/master/include/boost/optional.hpp) + [Charconv](https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html) / LexicalCast | Partial: [`folly::Optional`](https://github.com/facebook/folly/blob/main/folly/Optional.h)<br>➖ separate engagement state; no integrated numeric formatting policy | Partial: [`bdlb::NullableValue`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_nullablevalue.h) | Partial: [`Option<T>`](https://doc.rust-lang.org/std/option/enum.Option.html) + [`Display`](https://doc.rust-lang.org/std/fmt/trait.Display.html) / [`FromStr`](https://doc.rust-lang.org/std/str/trait.FromStr.html) on a newtype; no integrated sentinel scalar |
-| [`ZuBoxed`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBox.hh#L730)<br>➕ scalar-reference formatting adapter | Partial: [`std::format`](https://en.cppreference.com/cpp/utility/format/format) argument / stream insertion | Partial: [Boost.Format](https://www.boost.org/doc/libs/latest/libs/format/doc/format.html) argument | N/A | Partial: [`bdlb::NullableValue`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_nullablevalue.h) | Partial: [`fmt::Arguments`](https://doc.rust-lang.org/std/fmt/struct.Arguments.html) / custom [`Display`](https://doc.rust-lang.org/std/fmt/trait.Display.html) wrapper borrowing a scalar |
-| [`ZuNBox`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBox.hh)<br>➕ boxed scalar with null-string formatting policy | Partial: [`std::optional`](https://en.cppreference.com/cpp/utility/optional) + custom formatter | Partial: [Boost.Optional](https://github.com/boostorg/optional/blob/master/include/boost/optional.hpp) + custom formatter | Partial: [`folly::Optional`](https://github.com/facebook/folly/blob/main/folly/Optional.h)<br>➖ separate engagement state; no integrated numeric formatting policy | Partial: [`bdlb::NullableValue`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_nullablevalue.h) | Partial: [`Option<T>`](https://doc.rust-lang.org/std/option/enum.Option.html) + [`Display`](https://doc.rust-lang.org/std/fmt/trait.Display.html) / [`FromStr`](https://doc.rust-lang.org/std/str/trait.FromStr.html) on a newtype; no integrated sentinel scalar |
-| [`ZuNBoxed`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBox.hh#L757) | Partial: scalar-reference adapter with custom null formatting | Partial: [Boost.Format](https://www.boost.org/doc/libs/latest/libs/format/doc/format.html) argument adapter | N/A | Partial: [`bdlb::NullableValue`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_nullablevalue.h) | Partial: [`fmt::Arguments`](https://doc.rust-lang.org/std/fmt/struct.Arguments.html) / custom [`Display`](https://doc.rust-lang.org/std/fmt/trait.Display.html) wrapper borrowing a scalar |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBox.hh"><code>ZuBox</code></a><br>➕ scalar null policy with integrated scanning/formatting</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/optional"><code>std::optional</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/optional/blob/master/include/boost/optional.hpp">Boost.Optional</a>, <a href="https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html">Charconv</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Optional.h"><code>folly::Optional</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_nullablevalue.h"><code>bdlb::NullableValue</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/option/enum.Option.html"><code>Option&lt;T&gt;</code></a>, <a href="https://doc.rust-lang.org/std/fmt/trait.Display.html"><code>Display</code></a>, <a href="https://doc.rust-lang.org/std/str/trait.FromStr.html"><code>FromStr</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBox.hh#L730"><code>ZuBoxed</code></a><br>➕ scalar-reference formatting adapter</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/format/format"><code>std::format</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/format/doc/format.html">Boost.Format</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_nullablevalue.h"><code>bdlb::NullableValue</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/fmt/struct.Arguments.html"><code>fmt::Arguments</code></a>, <a href="https://doc.rust-lang.org/std/fmt/trait.Display.html"><code>Display</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBox.hh"><code>ZuNBox</code></a><br>➕ boxed scalar with null-string formatting policy</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/optional"><code>std::optional</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/optional/blob/master/include/boost/optional.hpp">Boost.Optional</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Optional.h"><code>folly::Optional</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_nullablevalue.h"><code>bdlb::NullableValue</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/option/enum.Option.html"><code>Option&lt;T&gt;</code></a>, <a href="https://doc.rust-lang.org/std/fmt/trait.Display.html"><code>Display</code></a>, <a href="https://doc.rust-lang.org/std/str/trait.FromStr.html"><code>FromStr</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBox.hh#L757"><code>ZuNBoxed</code></a></td>
+  <td>Partial: scalar-reference adapter with custom null formatting</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/format/doc/format.html">Boost.Format</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_nullablevalue.h"><code>bdlb::NullableValue</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/fmt/struct.Arguments.html"><code>fmt::Arguments</code></a>, <a href="https://doc.rust-lang.org/std/fmt/trait.Display.html"><code>Display</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Arrays, spans and string interoperability
 
@@ -519,134 +2150,736 @@ Relevant counterparts: [standard containers](https://eel.is/c++draft/containers)
 [Boost.SmartPtr](https://www.boost.org/doc/libs/latest/libs/smart_ptr/doc/html/smart_ptr.html),
 [Boost.Hana](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html).
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuSpan`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSpan.hh)<br>➕ integrated compare/hash, slicing and text searching | [`std::span`](https://en.cppreference.com/cpp/container/span)<br>➕ standard ranges interoperability and static extent | [`boost::span`](https://github.com/boostorg/core/blob/master/include/boost/core/span.hpp) | [`folly::Range`](https://github.com/facebook/folly/blob/main/folly/Range.h) | [`bsl::span`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_span.h) | [`&[T] / &mut [T]`](https://doc.rust-lang.org/std/primitive.slice.html) |
-| [`ZuCSpan`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSpan.hh) | [`std::string_view`](https://en.cppreference.com/cpp/string/basic_string_view) | [`boost::string_view`](https://github.com/boostorg/utility/blob/master/include/boost/utility/string_view.hpp) | [`folly::StringPiece`](https://github.com/facebook/folly/blob/main/folly/Range.h) | [`bsl::string_view`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_string_view.h) | [`&str`](https://doc.rust-lang.org/std/primitive.str.html) (validated UTF-8); [`&[u8]`](https://doc.rust-lang.org/std/primitive.slice.html) for arbitrary bytes |
-| [`ZuWSpan`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSpan.hh) | [`std::wstring_view`](https://en.cppreference.com/cpp/string/basic_string_view) | [`boost::wstring_view`](https://github.com/boostorg/utility/blob/master/include/boost/utility/string_view.hpp) | [`folly::Range<const wchar_t*>`](https://github.com/facebook/folly/blob/main/folly/Range.h) | [`bsl::wstring_view`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_string_view.h) | Partial: [`&[u16] / &[u32]`](https://doc.rust-lang.org/std/primitive.slice.html); [`OsStr`](https://doc.rust-lang.org/std/ffi/struct.OsStr.html) for native OS strings, not a portable wchar span |
-| [`ZuBSpan`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSpan.hh) | [`std::span`](https://en.cppreference.com/cpp/container/span)`<const uint8_t>` / [`std::span`](https://en.cppreference.com/cpp/container/span)`<const `[`std::byte`](https://en.cppreference.com/cpp/types/byte)`>` | [`boost::span`](https://github.com/boostorg/core/blob/master/include/boost/core/span.hpp)`<const unsigned char>` | [`folly::ByteRange`](https://github.com/facebook/folly/blob/main/folly/Range.h) | [`bsl::span`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_span.h) | [`&[u8]`](https://doc.rust-lang.org/std/primitive.slice.html) |
-| [`ZuArray`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuArray.hh)<br>➕ inline capacity with logical length; structural representation | Partial: [`std::array`](https://en.cppreference.com/cpp/container/array)<br>➖ no logical length; [`std::inplace_vector`](https://en.cppreference.com/cpp/container/inplace_vector) is C++26 | [`boost::container::static_vector`](https://github.com/boostorg/container/blob/master/include/boost/container/static_vector.hpp)<br>➖ different structural/NTTP contract | Partial: [`folly::small_vector`](https://github.com/facebook/folly/blob/main/folly/small_vector.h)<br>➖ different capacity/growth and structural-type contract | Partial: [`bsl::array`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_array.h)<br>➖ fixed size; no separate logical length within the inline capacity | [`ArrayVec`](https://docs.rs/arrayvec/latest/arrayvec/struct.ArrayVec.html); inline fixed capacity with logical length |
-| [`ZuCArray`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuArray.hh) | Partial: [`std::array`](https://en.cppreference.com/cpp/container/array)`<char, N>` with length | [`boost::static_string`](https://github.com/boostorg/static_string/blob/master/include/boost/static_string.hpp) | Partial: [`folly::FixedString`](https://github.com/facebook/folly/blob/main/folly/FixedString.h) | Partial: [`bsl::array`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_array.h)`<char, N>` + logical length; [`bsl::basic_string`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_string.h)`<char>` | [`ArrayString`](https://docs.rs/arrayvec/latest/arrayvec/struct.ArrayString.html); UTF-8 inline string, no required NUL terminator |
-| [`ZuWArray`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuArray.hh) | Partial: [`std::array`](https://en.cppreference.com/cpp/container/array)`<wchar_t, N>` with length | [`boost::static_strings::basic_static_string`](https://github.com/boostorg/static_string/blob/master/include/boost/static_string/static_string.hpp)`<N, wchar_t>` | Partial: [`folly::BasicFixedString<wchar_t, N>`](https://github.com/facebook/folly/blob/main/folly/FixedString.h) | Partial: [`bsl::array`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_array.h)`<`[`wchar_t`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h)`, N>` + logical length; [`bsl::basic_string`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_string.h)`<wchar_t>` | Partial: [`ArrayVec<u16, N>`](https://docs.rs/arrayvec/latest/arrayvec/struct.ArrayVec.html) / `u32`; no native wide-string facade |
-| [`ZuMArray`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuMArray.hh)<br>➕ writable transformed-element proxies | Partial: [`std::views::transform`](https://en.cppreference.com/cpp/ranges/transform_view)<br>➖ inverse assignment needs custom proxy support | Partial: [Boost.Iterator](https://www.boost.org/doc/libs/latest/libs/iterator/doc/index.html) transform iterator | N/A | Partial: [`bdlb::TransformIterator`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_transformiterator.h) | Partial: [`Iterator::map`](https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.map); transformed writable proxies require a custom view |
-| [`ZuVArray`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuVArray.hh)<br>➕ type-erased array interface across compiled boundaries | N/A; [`std::span`](https://en.cppreference.com/cpp/container/span) only covers contiguous homogeneous storage | Partial: [Boost.Range](https://github.com/boostorg/range/blob/master/include/boost/range.hpp) any-range | N/A | Partial: [`bdlar::ArrayRef`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlar/bdlar_arrayref.h) | Partial: [trait objects](https://doc.rust-lang.org/reference/types/trait-object.html) for a custom array interface; no stable Rust ABI across independent compiler versions |
-| [`ZuStdString`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuStdString.hh) integration | [`std::basic_string`](https://en.cppreference.com/cpp/string/basic_string) used directly | Partial: Boost string/range interoperability | N/A | Partial: [`bsl::basic_string`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_string.h) | [`String`](https://doc.rust-lang.org/std/string/struct.String.html) / [`Cow<str>`](https://doc.rust-lang.org/std/borrow/enum.Cow.html) / [`AsRef<str>`](https://doc.rust-lang.org/std/convert/trait.AsRef.html) |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSpan.hh"><code>ZuSpan</code></a><br>➕ integrated compare/hash, slicing and text searching</td>
+  <td><a href="https://en.cppreference.com/cpp/container/span"><code>std::span</code></a><br>➕ standard ranges interoperability and static extent</td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/span.hpp"><code>boost::span</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Range.h"><code>folly::Range</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_span.h"><code>bsl::span</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.slice.html"><code>&amp;[T] / &amp;mut [T]</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSpan.hh"><code>ZuCSpan</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/string/basic_string_view"><code>std::string_view</code></a></td>
+  <td><a href="https://github.com/boostorg/utility/blob/master/include/boost/utility/string_view.hpp"><code>boost::string_view</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Range.h"><code>folly::StringPiece</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_string_view.h"><code>bsl::string_view</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.str.html"><code>&amp;str</code></a> (validated UTF-8); <a href="https://doc.rust-lang.org/std/primitive.slice.html"><code>&amp;[u8]</code></a> for arbitrary bytes</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSpan.hh"><code>ZuWSpan</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/string/basic_string_view"><code>std::wstring_view</code></a></td>
+  <td><a href="https://github.com/boostorg/utility/blob/master/include/boost/utility/string_view.hpp"><code>boost::wstring_view</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Range.h"><code>folly::Range&lt;const wchar_t*&gt;</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_string_view.h"><code>bsl::wstring_view</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/primitive.slice.html"><code>&amp;[u16] / &amp;[u32]</code></a>, <a href="https://doc.rust-lang.org/std/ffi/struct.OsStr.html"><code>OsStr</code></a> (code units / OS strings)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSpan.hh"><code>ZuBSpan</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/container/span"><code>std::span</code></a><code>&lt;const uint8_t&gt;</code> / <a href="https://en.cppreference.com/cpp/container/span"><code>std::span</code></a><code>&lt;const </code><a href="https://en.cppreference.com/cpp/types/byte"><code>std::byte</code></a><code>&gt;</code></td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/span.hpp"><code>boost::span</code></a><code>&lt;const unsigned char&gt;</code></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Range.h"><code>folly::ByteRange</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_span.h"><code>bsl::span</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.slice.html"><code>&amp;[u8]</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuArray.hh"><code>ZuArray</code></a><br>➕ inline capacity with logical length; structural representation</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/array"><code>std::array</code></a>, <a href="https://en.cppreference.com/cpp/container/inplace_vector"><code>std::inplace_vector</code></a></td>
+  <td><a href="https://github.com/boostorg/container/blob/master/include/boost/container/static_vector.hpp"><code>boost::container::static_vector</code></a><br>➖ different structural/NTTP contract</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/small_vector.h"><code>folly::small_vector</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_array.h"><code>bsl::array</code></a></td>
+  <td><a href="https://docs.rs/arrayvec/latest/arrayvec/struct.ArrayVec.html"><code>ArrayVec</code></a>; inline fixed capacity with logical length</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuArray.hh"><code>ZuCArray</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/array"><code>std::array</code></a></td>
+  <td><a href="https://github.com/boostorg/static_string/blob/master/include/boost/static_string.hpp"><code>boost::static_string</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/FixedString.h"><code>folly::FixedString</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_array.h"><code>bsl::array</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_string.h"><code>bsl::basic_string</code></a></td>
+  <td>Partial: <a href="https://docs.rs/arrayvec/latest/arrayvec/struct.ArrayString.html"><code>ArrayString</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuArray.hh"><code>ZuWArray</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/array"><code>std::array</code></a></td>
+  <td><a href="https://github.com/boostorg/static_string/blob/master/include/boost/static_string/static_string.hpp"><code>boost::static_strings::basic_static_string</code></a><code>&lt;N, wchar_t&gt;</code></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/FixedString.h"><code>folly::BasicFixedString&lt;wchar_t, N&gt;</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_array.h"><code>bsl::array</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_type_traits.h"><code>wchar_t</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_string.h"><code>bsl::basic_string</code></a></td>
+  <td>Partial: <a href="https://docs.rs/arrayvec/latest/arrayvec/struct.ArrayVec.html"><code>ArrayVec&lt;u16, N&gt;</code></a> (code units)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuMArray.hh"><code>ZuMArray</code></a><br>➕ writable transformed-element proxies</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/ranges/transform_view"><code>std::views::transform</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/iterator/doc/index.html">Boost.Iterator</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_transformiterator.h"><code>bdlb::TransformIterator</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.map"><code>Iterator::map</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuVArray.hh"><code>ZuVArray</code></a><br>➕ type-erased array interface across compiled boundaries</td>
+  <td>None: <a href="https://en.cppreference.com/cpp/container/span"><code>std::span</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/range/blob/master/include/boost/range.hpp">Boost.Range</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlar/bdlar_arrayref.h"><code>bdlar::ArrayRef</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/types/trait-object.html">trait objects</a> (no stable Rust ABI)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuStdString.hh"><code>ZuStdString</code></a> integration</td>
+  <td><a href="https://en.cppreference.com/cpp/string/basic_string"><code>std::basic_string</code></a> used directly</td>
+  <td>Partial: Boost string/range interoperability</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_string.h"><code>bsl::basic_string</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/string/struct.String.html"><code>String</code></a> / <a href="https://doc.rust-lang.org/std/borrow/enum.Cow.html"><code>Cow&lt;str&gt;</code></a> / <a href="https://doc.rust-lang.org/std/convert/trait.AsRef.html"><code>AsRef&lt;str&gt;</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Tuples, unions and empty values
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuTuple`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTuple.hh)<br>➕ size-ordered flat storage and positional mutation<br>➖ incomplete [`std::tuple`](https://en.cppreference.com/cpp/utility/tuple) algorithm interoperability | [`std::tuple`](https://en.cppreference.com/cpp/utility/tuple), [`std::pair`](https://en.cppreference.com/cpp/utility/pair) | [`boost::tuple`](https://github.com/boostorg/tuple/blob/master/include/boost/tuple/tuple.hpp), [`boost::hana::tuple`](https://github.com/boostorg/hana/blob/master/include/boost/hana/tuple.hpp) | N/A | Partial: [`bsl::tuple`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_tuple.h) | [tuples](https://doc.rust-lang.org/reference/types/tuple.html); no size-sorted storage contract |
-| [`ZuUnion`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUnion.hh)<br>➕ void alternatives and explicit nonthrowing dispatch<br>➖ callers must respect active-alternative access contract | [`std::variant`](https://en.cppreference.com/cpp/utility/variant)<br>➕ checked [`get`](https://en.cppreference.com/cpp/utility/variant/get)/[`get_if`](https://en.cppreference.com/cpp/utility/variant/get_if) and standard visitation | [`boost::variant2::variant`](https://github.com/boostorg/variant2/blob/master/include/boost/variant2/variant.hpp)<br>➕ never-valueless value semantics | Partial: [`folly::Expected<T, E>`](https://github.com/facebook/folly/blob/main/folly/Expected.h)<br>➖ value/error pair, not an arbitrary multi-alternative union | [`bsl::variant`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_variant.h)<br>➕ allocator-aware alternatives and checked access | [`enum`](https://doc.rust-lang.org/reference/items/enumerations.html) + [`match`](https://doc.rust-lang.org/reference/expressions/match-expr.html) |
-| [`ZuVoid`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh) | [`std::monostate`](https://en.cppreference.com/cpp/utility/variant/monostate) | [`boost::blank`](https://www.boost.org/doc/libs/latest/doc/html/variant/reference.html) | N/A | Partial: [`bsl::monostate`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_variant.h) / [`bdlf::NoOp`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlf/bdlf_noop.h) | [`()`](https://doc.rust-lang.org/std/primitive.unit.html) |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTuple.hh"><code>ZuTuple</code></a><br>➕ size-ordered flat storage and positional mutation<br>➖ incomplete <a href="https://en.cppreference.com/cpp/utility/tuple"><code>std::tuple</code></a> algorithm interoperability</td>
+  <td><a href="https://en.cppreference.com/cpp/utility/tuple"><code>std::tuple</code></a>, <a href="https://en.cppreference.com/cpp/utility/pair"><code>std::pair</code></a></td>
+  <td><a href="https://github.com/boostorg/tuple/blob/master/include/boost/tuple/tuple.hpp"><code>boost::tuple</code></a>, <a href="https://github.com/boostorg/hana/blob/master/include/boost/hana/tuple.hpp"><code>boost::hana::tuple</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_tuple.h"><code>bsl::tuple</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/types/tuple.html">tuples</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUnion.hh"><code>ZuUnion</code></a><br>➕ void alternatives and explicit nonthrowing dispatch<br>➖ callers must respect active-alternative access contract</td>
+  <td><a href="https://en.cppreference.com/cpp/utility/variant"><code>std::variant</code></a><br>➕ checked <a href="https://en.cppreference.com/cpp/utility/variant/get"><code>get</code></a>/<a href="https://en.cppreference.com/cpp/utility/variant/get_if"><code>get_if</code></a> and standard visitation</td>
+  <td><a href="https://github.com/boostorg/variant2/blob/master/include/boost/variant2/variant.hpp"><code>boost::variant2::variant</code></a><br>➕ never-valueless value semantics</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Expected.h"><code>folly::Expected&lt;T, E&gt;</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_variant.h"><code>bsl::variant</code></a><br>➕ allocator-aware alternatives and checked access</td>
+  <td><a href="https://doc.rust-lang.org/reference/items/enumerations.html"><code>enum</code></a> + <a href="https://doc.rust-lang.org/reference/expressions/match-expr.html"><code>match</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuLib.hh"><code>ZuVoid</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/variant/monostate"><code>std::monostate</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/variant/reference.html"><code>boost::blank</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_variant.h"><code>bsl::monostate</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlf/bdlf_noop.h"><code>bdlf::NoOp</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.unit.html"><code>()</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Array algorithms, iterators, sorting and searching
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZuArrayFn`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuArrayFn.hh)<br>➕ trait-selected bulk initialization, movement and comparison | [`<algorithm>`](https://en.cppreference.com/cpp/header/algorithm), uninitialized-memory algorithms | Partial: [Boost.Container](https://www.boost.org/doc/libs/latest/doc/html/container.html) / [Move](https://www.boost.org/doc/libs/latest/doc/html/move.html) algorithms | N/A | [`slice methods`](https://doc.rust-lang.org/std/primitive.slice.html) / [`ptr`](https://doc.rust-lang.org/std/ptr/index.html) bulk operations |
-| [`ZuStringFn`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuStringFn.hh) | [`std::char_traits`](https://en.cppreference.com/cpp/string/char_traits), C string functions | Partial: [Boost.StringAlgo](https://www.boost.org/doc/libs/latest/doc/html/string_algo/reference.html) | N/A | [`str`](https://doc.rust-lang.org/std/primitive.str.html) / [`[u8]`](https://doc.rust-lang.org/std/primitive.slice.html) operations |
-| [`ZuIter`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIter.hh)<br>➕ reusable random-access iterator boilerplate | Partial: iterator concepts and custom iterator implementation | [`boost::iterator_facade`](https://github.com/boostorg/iterator/blob/master/include/boost/iterator/iterator_facade.hpp) | N/A | [`Iterator`](https://doc.rust-lang.org/std/iter/trait.Iterator.html) / [`DoubleEndedIterator`](https://doc.rust-lang.org/std/iter/trait.DoubleEndedIterator.html); no standard random-access iterator trait |
-| [`ZuSort`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSort.hh#L139)<br>➕ three-way comparison and Z bulk-element operations<br>➖ custom quicksort lacks [`std::sort`](https://en.cppreference.com/cpp/algorithm/sort)'s mandated worst-case bound | [`std::sort`](https://en.cppreference.com/cpp/algorithm/sort) | [Boost.Sort](https://github.com/boostorg/sort/blob/master/include/boost/sort/sort.hpp) | [`bsl::sort`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h) | [`slice::sort_unstable_by`](https://doc.rust-lang.org/std/primitive.slice.html#method.sort_unstable_by) / [`sort_by`](https://doc.rust-lang.org/std/primitive.slice.html#method.sort_by) |
-| [`ZuSearch`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSearch.hh#L23)<br>➕ packs found flag and insertion position into one result | [`std::lower_bound`](https://en.cppreference.com/cpp/algorithm/lower_bound) plus equality test | [Boost.Range](https://github.com/boostorg/range/blob/master/include/boost/range.hpp) [`lower_bound`](https://github.com/boostorg/range/blob/master/include/boost/range/algorithm/lower_bound.hpp) plus equality test | Partial: [`bsl::lower_bound`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h)`  /  `[`binary_search`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h) | [`slice::binary_search`](https://doc.rust-lang.org/std/primitive.slice.html#method.binary_search) returns `Result<found, insertion>` |
-| [`ZuSearchFound`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSearch.hh#L12) | Partial: equality test after [`std::lower_bound`](https://en.cppreference.com/cpp/algorithm/lower_bound) | Partial: equality test after [Boost.Range](https://github.com/boostorg/range/blob/master/include/boost/range.hpp) [`lower_bound`](https://github.com/boostorg/range/blob/master/include/boost/range/algorithm/lower_bound.hpp) | Partial: [`bsl::lower_bound`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h)`  /  `[`binary_search`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h) | [`Result::is_ok`](https://doc.rust-lang.org/std/result/enum.Result.html#method.is_ok) on the binary-search result |
-| [`ZuSearchPos`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSearch.hh#L13) | Partial: iterator distance from [`std::lower_bound`](https://en.cppreference.com/cpp/algorithm/lower_bound) | Partial: iterator distance from [Boost.Range](https://github.com/boostorg/range/blob/master/include/boost/range.hpp) [`lower_bound`](https://github.com/boostorg/range/blob/master/include/boost/range/algorithm/lower_bound.hpp) | Partial: [`bsl::lower_bound`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h)`  /  `[`binary_search`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h) | [`Result<usize, usize>`](https://doc.rust-lang.org/std/result/enum.Result.html); extract either index with `match` |
-| [`ZuInterSearch`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSearch.hh#L66)<br>➕ interpolation search for suitably distributed keys<br>➖ behavior depends on key distribution | Partial: [`std::lower_bound`](https://en.cppreference.com/cpp/algorithm/lower_bound)<br>➕ logarithmic comparisons independent of distribution | Partial: [Boost.Range](https://github.com/boostorg/range/blob/master/include/boost/range.hpp) [`lower_bound`](https://github.com/boostorg/range/blob/master/include/boost/range/algorithm/lower_bound.hpp) | N/A | No std interpolation search; [`slice::binary_search_by`](https://doc.rust-lang.org/std/primitive.slice.html#method.binary_search_by) is a binary-search alternative |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuArrayFn.hh"><code>ZuArrayFn</code></a><br>➕ trait-selected bulk initialization, movement and comparison</td>
+  <td><a href="https://en.cppreference.com/cpp/header/algorithm"><code>&lt;algorithm&gt;</code></a>, uninitialized-memory algorithms</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/container.html">Boost.Container</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/move.html">Move</a></td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.slice.html"><code>slice methods</code></a> / <a href="https://doc.rust-lang.org/std/ptr/index.html"><code>ptr</code></a> bulk operations</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuStringFn.hh"><code>ZuStringFn</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/string/char_traits"><code>std::char_traits</code></a>, C string functions</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/string_algo/reference.html">Boost.StringAlgo</a></td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.str.html"><code>str</code></a> / <a href="https://doc.rust-lang.org/std/primitive.slice.html"><code>[u8]</code></a> operations</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuIter.hh"><code>ZuIter</code></a><br>➕ reusable random-access iterator boilerplate</td>
+  <td>Partial: iterator concepts and custom iterator implementation</td>
+  <td><a href="https://github.com/boostorg/iterator/blob/master/include/boost/iterator/iterator_facade.hpp"><code>boost::iterator_facade</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/iter/trait.Iterator.html"><code>Iterator</code></a>, <a href="https://doc.rust-lang.org/std/iter/trait.DoubleEndedIterator.html"><code>DoubleEndedIterator</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSort.hh#L139"><code>ZuSort</code></a><br>➕ three-way comparison and Z bulk-element operations<br>➖ custom quicksort lacks <a href="https://en.cppreference.com/cpp/algorithm/sort"><code>std::sort</code></a>'s mandated worst-case bound</td>
+  <td><a href="https://en.cppreference.com/cpp/algorithm/sort"><code>std::sort</code></a></td>
+  <td><a href="https://github.com/boostorg/sort/blob/master/include/boost/sort/sort.hpp">Boost.Sort</a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h"><code>bsl::sort</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.slice.html#method.sort_unstable_by"><code>slice::sort_unstable_by</code></a> / <a href="https://doc.rust-lang.org/std/primitive.slice.html#method.sort_by"><code>sort_by</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSearch.hh#L23"><code>ZuSearch</code></a><br>➕ packs found flag and insertion position into one result</td>
+  <td><a href="https://en.cppreference.com/cpp/algorithm/lower_bound"><code>std::lower_bound</code></a> plus equality test</td>
+  <td><a href="https://github.com/boostorg/range/blob/master/include/boost/range.hpp">Boost.Range</a> <a href="https://github.com/boostorg/range/blob/master/include/boost/range/algorithm/lower_bound.hpp"><code>lower_bound</code></a> plus equality test</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h"><code>bsl::lower_bound</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h"><code>binary_search</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.slice.html#method.binary_search"><code>slice::binary_search</code></a> returns <code>Result&lt;found, insertion&gt;</code></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSearch.hh#L12"><code>ZuSearchFound</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/algorithm/lower_bound"><code>std::lower_bound</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/range/blob/master/include/boost/range.hpp">Boost.Range</a>, <a href="https://github.com/boostorg/range/blob/master/include/boost/range/algorithm/lower_bound.hpp"><code>lower_bound</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h"><code>bsl::lower_bound</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h"><code>binary_search</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/result/enum.Result.html#method.is_ok"><code>Result::is_ok</code></a> on the binary-search result</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSearch.hh#L13"><code>ZuSearchPos</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/algorithm/lower_bound"><code>std::lower_bound</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/range/blob/master/include/boost/range.hpp">Boost.Range</a>, <a href="https://github.com/boostorg/range/blob/master/include/boost/range/algorithm/lower_bound.hpp"><code>lower_bound</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h"><code>bsl::lower_bound</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_algorithm.h"><code>binary_search</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/result/enum.Result.html"><code>Result&lt;usize, usize&gt;</code></a>; extract either index with <code>match</code></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSearch.hh#L66"><code>ZuInterSearch</code></a><br>➕ interpolation search for suitably distributed keys<br>➖ behavior depends on key distribution</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/algorithm/lower_bound"><code>std::lower_bound</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/range/blob/master/include/boost/range.hpp">Boost.Range</a>, <a href="https://github.com/boostorg/range/blob/master/include/boost/range/algorithm/lower_bound.hpp"><code>lower_bound</code></a></td>
+  <td>N/A</td>
+  <td>None: <a href="https://doc.rust-lang.org/std/primitive.slice.html#method.binary_search_by"><code>slice::binary_search_by</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Text tokenization
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuTokenizer::Delimited`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTokenizer.hh)<br>➕ borrowed tokens without allocation | [`std::views::split`](https://en.cppreference.com/cpp/ranges/split_view) | [`boost::tokenizer`](https://github.com/boostorg/tokenizer/blob/master/include/boost/tokenizer.hpp), [`boost::split_iterator`](https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/string/find_iterator.hpp) | [`folly::splitStep / splitTo`](https://github.com/facebook/folly/blob/main/folly/String.h) | Partial: [`bdlb::Tokenizer`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_tokenizer.h) | [`str::split`](https://doc.rust-lang.org/std/primitive.str.html#method.split) |
-| [`ZuTokenizer::WhiteSpace`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTokenizer.hh)<br>➕ simple ASCII whitespace scanning | Partial: [`std::views::split`](https://en.cppreference.com/cpp/ranges/split_view) / custom delimiter predicate | [`boost::tokenizer`](https://github.com/boostorg/tokenizer/blob/master/include/boost/tokenizer.hpp) with character separator | Partial: [`folly::splitTo`](https://github.com/facebook/folly/blob/main/folly/String.h)<br>➖ whitespace-token policy needs adaptation | Partial: [`bdlb::Tokenizer`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_tokenizer.h) | [`str::split_ascii_whitespace`](https://doc.rust-lang.org/std/primitive.str.html#method.split_ascii_whitespace) |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTokenizer.hh"><code>ZuTokenizer::Delimited</code></a><br>➕ borrowed tokens without allocation</td>
+  <td><a href="https://en.cppreference.com/cpp/ranges/split_view"><code>std::views::split</code></a></td>
+  <td><a href="https://github.com/boostorg/tokenizer/blob/master/include/boost/tokenizer.hpp"><code>boost::tokenizer</code></a>, <a href="https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/string/find_iterator.hpp"><code>boost::split_iterator</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/String.h"><code>folly::splitStep / splitTo</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_tokenizer.h"><code>bdlb::Tokenizer</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.str.html#method.split"><code>str::split</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTokenizer.hh"><code>ZuTokenizer::WhiteSpace</code></a><br>➕ simple ASCII whitespace scanning</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/ranges/split_view"><code>std::views::split</code></a></td>
+  <td><a href="https://github.com/boostorg/tokenizer/blob/master/include/boost/tokenizer.hpp"><code>boost::tokenizer</code></a> with character separator</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/String.h"><code>folly::splitTo</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_tokenizer.h"><code>bdlb::Tokenizer</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.str.html#method.split_ascii_whitespace"><code>str::split_ascii_whitespace</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Numeric input
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`Zu_nscan`](https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_aton.hh) / numeric input ([`Zu_aton`](https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_aton.hh)`.hh`)<br>➕ numeric scanning with Z-format policies | [`std::from_chars`](https://en.cppreference.com/cpp/utility/from_chars) | [Boost.Charconv](https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html) [`from_chars`](https://github.com/boostorg/charconv/blob/master/include/boost/charconv/from_chars.hpp) | Partial: [`folly::to / tryTo`](https://github.com/facebook/folly/blob/main/folly/Conv.h)<br>➖ different formatting/error contract | Partial: [`bdlb::NumericParseUtil`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_numericparseutil.h) | [`FromStr`](https://doc.rust-lang.org/std/str/trait.FromStr.html) / [`str::parse`](https://doc.rust-lang.org/std/primitive.str.html#method.parse); [`lexical-core`](https://docs.rs/lexical-core/latest/lexical_core/) for caller-selected numeric parsing policies |
-| [`Zu_atou`](https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_aton.hh#L332) | [`std::from_chars`](https://en.cppreference.com/cpp/utility/from_chars) for unsigned integers | [Boost.Charconv](https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html) [`from_chars`](https://github.com/boostorg/charconv/blob/master/include/boost/charconv/from_chars.hpp) | Partial: [`folly::tryTo<unsigned>`](https://github.com/facebook/folly/blob/main/folly/Conv.h)<br>➖ different formatting/error contract | Partial: [`bdlb::NumericParseUtil`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_numericparseutil.h) | [`u64::from_str_radix`](https://doc.rust-lang.org/std/primitive.u64.html#method.from_str_radix) / [`str::parse`](https://doc.rust-lang.org/std/primitive.str.html#method.parse) |
-| [`Zu_atoi`](https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_aton.hh#L336) | [`std::from_chars`](https://en.cppreference.com/cpp/utility/from_chars) for signed integers | [Boost.Charconv](https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html) [`from_chars`](https://github.com/boostorg/charconv/blob/master/include/boost/charconv/from_chars.hpp) | Partial: [`folly::tryTo<signed integer>`](https://github.com/facebook/folly/blob/main/folly/Conv.h)<br>➖ different formatting/error contract | Partial: [`bdlb::NumericParseUtil`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_numericparseutil.h) | [`i64::from_str_radix`](https://doc.rust-lang.org/std/primitive.i64.html#method.from_str_radix) / [`str::parse`](https://doc.rust-lang.org/std/primitive.str.html#method.parse) |
-| [`Zu_atof`](https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_aton.hh#L340) | [`std::from_chars`](https://en.cppreference.com/cpp/utility/from_chars) for floating point | [Boost.Charconv](https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html) [`from_chars`](https://github.com/boostorg/charconv/blob/master/include/boost/charconv/from_chars.hpp) | Partial: [`folly::tryTo<floating point>`](https://github.com/facebook/folly/blob/main/folly/Conv.h)<br>➖ different formatting/error contract | Partial: [`bdlb::NumericParseUtil`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_numericparseutil.h) | [`str::parse::<f64>`](https://doc.rust-lang.org/std/primitive.str.html#method.parse); [`lexical-core`](https://docs.rs/lexical-core/latest/lexical_core/) for prefix parsing/configuration |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_aton.hh"><code>Zu_nscan</code></a> / numeric input (<a href="https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_aton.hh"><code>Zu_aton</code></a><code>.hh</code>)<br>➕ numeric scanning with Z-format policies</td>
+  <td><a href="https://en.cppreference.com/cpp/utility/from_chars"><code>std::from_chars</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html">Boost.Charconv</a> <a href="https://github.com/boostorg/charconv/blob/master/include/boost/charconv/from_chars.hpp"><code>from_chars</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Conv.h"><code>folly::to / tryTo</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_numericparseutil.h"><code>bdlb::NumericParseUtil</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/str/trait.FromStr.html"><code>FromStr</code></a> / <a href="https://doc.rust-lang.org/std/primitive.str.html#method.parse"><code>str::parse</code></a>; <a href="https://docs.rs/lexical-core/latest/lexical_core/"><code>lexical-core</code></a> for caller-selected numeric parsing policies</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_aton.hh#L332"><code>Zu_atou</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/from_chars"><code>std::from_chars</code></a> for unsigned integers</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html">Boost.Charconv</a> <a href="https://github.com/boostorg/charconv/blob/master/include/boost/charconv/from_chars.hpp"><code>from_chars</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Conv.h"><code>folly::tryTo&lt;unsigned&gt;</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_numericparseutil.h"><code>bdlb::NumericParseUtil</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.u64.html#method.from_str_radix"><code>u64::from_str_radix</code></a> / <a href="https://doc.rust-lang.org/std/primitive.str.html#method.parse"><code>str::parse</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_aton.hh#L336"><code>Zu_atoi</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/from_chars"><code>std::from_chars</code></a> for signed integers</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html">Boost.Charconv</a> <a href="https://github.com/boostorg/charconv/blob/master/include/boost/charconv/from_chars.hpp"><code>from_chars</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Conv.h"><code>folly::tryTo&lt;signed integer&gt;</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_numericparseutil.h"><code>bdlb::NumericParseUtil</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.i64.html#method.from_str_radix"><code>i64::from_str_radix</code></a> / <a href="https://doc.rust-lang.org/std/primitive.str.html#method.parse"><code>str::parse</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_aton.hh#L340"><code>Zu_atof</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/from_chars"><code>std::from_chars</code></a> for floating point</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html">Boost.Charconv</a> <a href="https://github.com/boostorg/charconv/blob/master/include/boost/charconv/from_chars.hpp"><code>from_chars</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Conv.h"><code>folly::tryTo&lt;floating point&gt;</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_numericparseutil.h"><code>bdlb::NumericParseUtil</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.str.html#method.parse"><code>str::parse::&lt;f64&gt;</code></a>; <a href="https://docs.rs/lexical-core/latest/lexical_core/"><code>lexical-core</code></a> for prefix parsing/configuration</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Numeric output and buffer sizing
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`Zu_nprint`](https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh) / numeric output ([`Zu_ntoa`](https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh)`.hh`)<br>➕ compile-time numeric-format policies | [`std::to_chars`](https://en.cppreference.com/cpp/utility/to_chars) | [Boost.Charconv](https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html) [`to_chars`](https://github.com/boostorg/charconv/blob/master/include/boost/charconv/to_chars.hpp) | Partial: [`folly::toAppend`](https://github.com/facebook/folly/blob/main/folly/Conv.h)<br>➖ string-appending API rather than Z numeric buffer/format policy | Partial: [`bsl::to_chars`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_charconv.h) | [`write!`](https://doc.rust-lang.org/std/macro.write.html) / [`fmt`](https://doc.rust-lang.org/std/fmt/index.html); [`lexical-core`](https://docs.rs/lexical-core/latest/lexical_core/) for numeric output to byte buffers |
-| [`Zu_utoa`](https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh#L915) | [`std::to_chars`](https://en.cppreference.com/cpp/utility/to_chars) for unsigned integers | [Boost.Charconv](https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html) [`to_chars`](https://github.com/boostorg/charconv/blob/master/include/boost/charconv/to_chars.hpp) | Partial: [`folly::toAppend`](https://github.com/facebook/folly/blob/main/folly/Conv.h)<br>➖ string-appending API rather than Z numeric buffer/format policy | Partial: [`bsl::to_chars`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_charconv.h) | [`write!`](https://doc.rust-lang.org/std/macro.write.html); [`itoa::Buffer`](https://docs.rs/itoa/latest/itoa/struct.Buffer.html) for integer formatting |
-| [`Zu_itoa`](https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh#L922) | [`std::to_chars`](https://en.cppreference.com/cpp/utility/to_chars) for signed integers | [Boost.Charconv](https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html) [`to_chars`](https://github.com/boostorg/charconv/blob/master/include/boost/charconv/to_chars.hpp) | Partial: [`folly::toAppend`](https://github.com/facebook/folly/blob/main/folly/Conv.h)<br>➖ string-appending API rather than Z numeric buffer/format policy | Partial: [`bsl::to_chars`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_charconv.h) | [`write!`](https://doc.rust-lang.org/std/macro.write.html); [`itoa::Buffer`](https://docs.rs/itoa/latest/itoa/struct.Buffer.html) for integer formatting |
-| [`Zu_ftoa`](https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh#L929)<br>➖ no automatic scientific-notation fallback | [`std::to_chars`](https://en.cppreference.com/cpp/utility/to_chars) for floating point<br>➕ general, fixed, scientific and hexadecimal modes | [Boost.Charconv](https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html) [`to_chars`](https://github.com/boostorg/charconv/blob/master/include/boost/charconv/to_chars.hpp) | Partial: [`folly::toAppend`](https://github.com/facebook/folly/blob/main/folly/Conv.h)<br>➖ string-appending API rather than Z numeric buffer/format policy | Partial: [`bsl::to_chars`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_charconv.h) | [`write!`](https://doc.rust-lang.org/std/macro.write.html); [`ryu::Buffer`](https://docs.rs/ryu/latest/ryu/struct.Buffer.html) for float formatting |
-| [`Zu_ulen`](https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh#L911)<br>➕ constexpr unsigned-output buffer sizing | Partial: [`std::numeric_limits`](https://en.cppreference.com/cpp/types/numeric_limits) and digit-count calculation | Partial: [Boost.Integer](https://github.com/boostorg/integer/blob/master/include/boost/integer.hpp) / [Charconv](https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html) sizing composition | N/A | Partial: [`bsl::formatted_size`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_format.h) | Partial: [`lexical-core`](https://docs.rs/lexical-core/latest/lexical_core/) formatted-size constants; exact policy-dependent lengths require calculation |
-| [`Zu_ilen`](https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh#L918)<br>➕ constexpr signed-output buffer sizing | Partial: [`std::numeric_limits`](https://en.cppreference.com/cpp/types/numeric_limits) and digit-count calculation | Partial: [Boost.Integer](https://github.com/boostorg/integer/blob/master/include/boost/integer.hpp) / [Charconv](https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html) sizing composition | N/A | Partial: [`bsl::formatted_size`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_format.h) | Partial: [`lexical-core`](https://docs.rs/lexical-core/latest/lexical_core/) formatted-size constants; exact policy-dependent lengths require calculation |
-| [`Zu_flen`](https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh#L925)<br>➕ format-aware floating-output buffer sizing | N/A; size according to selected conversion format | Partial: [Boost.Charconv](https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html) with caller-selected capacity | N/A | Partial: [`bsl::formatted_size`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_format.h) | Partial: [`lexical-core`](https://docs.rs/lexical-core/latest/lexical_core/) formatted-size constants; exact policy-dependent lengths require calculation |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh"><code>Zu_nprint</code></a> / numeric output (<a href="https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh"><code>Zu_ntoa</code></a><code>.hh</code>)<br>➕ compile-time numeric-format policies</td>
+  <td><a href="https://en.cppreference.com/cpp/utility/to_chars"><code>std::to_chars</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html">Boost.Charconv</a> <a href="https://github.com/boostorg/charconv/blob/master/include/boost/charconv/to_chars.hpp"><code>to_chars</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Conv.h"><code>folly::toAppend</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_charconv.h"><code>bsl::to_chars</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/macro.write.html"><code>write!</code></a> / <a href="https://doc.rust-lang.org/std/fmt/index.html"><code>fmt</code></a>; <a href="https://docs.rs/lexical-core/latest/lexical_core/"><code>lexical-core</code></a> for numeric output to byte buffers</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh#L915"><code>Zu_utoa</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/to_chars"><code>std::to_chars</code></a> for unsigned integers</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html">Boost.Charconv</a> <a href="https://github.com/boostorg/charconv/blob/master/include/boost/charconv/to_chars.hpp"><code>to_chars</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Conv.h"><code>folly::toAppend</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_charconv.h"><code>bsl::to_chars</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/macro.write.html"><code>write!</code></a>; <a href="https://docs.rs/itoa/latest/itoa/struct.Buffer.html"><code>itoa::Buffer</code></a> for integer formatting</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh#L922"><code>Zu_itoa</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/to_chars"><code>std::to_chars</code></a> for signed integers</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html">Boost.Charconv</a> <a href="https://github.com/boostorg/charconv/blob/master/include/boost/charconv/to_chars.hpp"><code>to_chars</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Conv.h"><code>folly::toAppend</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_charconv.h"><code>bsl::to_chars</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/macro.write.html"><code>write!</code></a>; <a href="https://docs.rs/itoa/latest/itoa/struct.Buffer.html"><code>itoa::Buffer</code></a> for integer formatting</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh#L929"><code>Zu_ftoa</code></a><br>➖ no automatic scientific-notation fallback</td>
+  <td><a href="https://en.cppreference.com/cpp/utility/to_chars"><code>std::to_chars</code></a> for floating point<br>➕ general, fixed, scientific and hexadecimal modes</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html">Boost.Charconv</a> <a href="https://github.com/boostorg/charconv/blob/master/include/boost/charconv/to_chars.hpp"><code>to_chars</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Conv.h"><code>folly::toAppend</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_charconv.h"><code>bsl::to_chars</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/macro.write.html"><code>write!</code></a>; <a href="https://docs.rs/ryu/latest/ryu/struct.Buffer.html"><code>ryu::Buffer</code></a> for float formatting</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh#L911"><code>Zu_ulen</code></a><br>➕ constexpr unsigned-output buffer sizing</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/numeric_limits"><code>std::numeric_limits</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/integer/blob/master/include/boost/integer.hpp">Boost.Integer</a>, <a href="https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html">Charconv</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_format.h"><code>bsl::formatted_size</code></a></td>
+  <td>Partial: <a href="https://docs.rs/lexical-core/latest/lexical_core/"><code>lexical-core</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh#L918"><code>Zu_ilen</code></a><br>➕ constexpr signed-output buffer sizing</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/types/numeric_limits"><code>std::numeric_limits</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/integer/blob/master/include/boost/integer.hpp">Boost.Integer</a>, <a href="https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html">Charconv</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_format.h"><code>bsl::formatted_size</code></a></td>
+  <td>Partial: <a href="https://docs.rs/lexical-core/latest/lexical_core/"><code>lexical-core</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/Zu_ntoa.hh#L925"><code>Zu_flen</code></a><br>➕ format-aware floating-output buffer sizing</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/charconv/doc/html/charconv.html">Boost.Charconv</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_format.h"><code>bsl::formatted_size</code></a></td>
+  <td>Partial: <a href="https://docs.rs/lexical-core/latest/lexical_core/"><code>lexical-core</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Formatting, streams and joining
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuFmt`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuFmt.hh)<br>➕ formatting policies encoded in types | [`std::format`](https://en.cppreference.com/cpp/utility/format/format), stream manipulators | [Boost.Format](https://www.boost.org/doc/libs/latest/libs/format/doc/format.html) / [Convert](https://github.com/boostorg/convert/blob/master/include/boost/convert.hpp) | N/A | Partial: [`bsl::format`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_format.h) | [`std::fmt`](https://doc.rust-lang.org/std/fmt/index.html) formatting traits and format specifiers |
-| [`ZuPrint`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuPrint.hh)<br>➕ ADL print customization shared by Z streams | Partial: [`std::formatter`](https://en.cppreference.com/cpp/utility/format/formatter), [`operator<<`](https://en.cppreference.com/cpp/io/basic_ostream/operator_ltlt) | Partial: [Boost.Format](https://www.boost.org/doc/libs/latest/libs/format/doc/format.html) streamable types | Partial: [`folly::toAppend customization`](https://github.com/facebook/folly/blob/main/folly/Conv.h)<br>➖ string-conversion customization rather than Z stream ADL | Partial: [`bslim::Printer`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslim/bslim_printer.h) | [`Display`](https://doc.rust-lang.org/std/fmt/trait.Display.html) / [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html) |
-| [`ZuStream`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuStream.hh)<br>➕ direct output into caller-supplied bounded text storage | [`std::ospanstream`](https://en.cppreference.com/cpp/io/basic_ospanstream) (C++23) | [Boost.Iostreams](https://www.boost.org/doc/libs/latest/libs/iostreams/doc/index.html) array sink | Partial: [`folly::io::Appender`](https://github.com/facebook/folly/blob/main/folly/io/Cursor.h)<br>➖ IOBuf-chain output, not a bounded character-span stream | Partial: [`bdlsb::FixedMemOutput`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlsb/bdlsb_fixedmemoutput.h) | [`fmt::Write`](https://doc.rust-lang.org/std/fmt/trait.Write.html) on a custom bounded writer; [`io::Write`](https://doc.rust-lang.org/std/io/trait.Write.html) for byte output |
-| [`ZuVStream`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuVStream.hh)<br>➕ type-erased stream interface with function pointers | Partial: [`std::ostream`](https://en.cppreference.com/cpp/io/basic_ostream) / [`std::streambuf`](https://en.cppreference.com/cpp/io/basic_streambuf) | Partial: [Boost.Iostreams](https://www.boost.org/doc/libs/latest/libs/iostreams/doc/index.html) [`stream`](https://github.com/boostorg/iostreams/blob/master/include/boost/iostreams/stream.hpp) / filtering stream | N/A | Partial: [`bsl::ostream`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_ostream.h) | [`dyn`](https://doc.rust-lang.org/reference/types/trait-object.html) [`fmt::Write`](https://doc.rust-lang.org/std/fmt/trait.Write.html) / [`io::Write`](https://doc.rust-lang.org/std/io/trait.Write.html) |
-| [`ZuJoin`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuJoin.hh)<br>➕ streams elements directly with a delimiter | Partial: [`std::views::join_with`](https://en.cppreference.com/cpp/ranges/join_with_view) (C++23)<br>➖ range joining is not a formatting adapter | [`boost::algorithm::join`](https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/string/join.hpp)<br>➖ normally builds a result string | Partial: [`folly::join`](https://github.com/facebook/folly/blob/main/folly/String.h)<br>➖ normally appends to an owning string rather than an arbitrary Z stream | N/A | Partial: [`slice::join`](https://doc.rust-lang.org/std/primitive.slice.html#method.join) allocates; [`Itertools::format`](https://docs.rs/itertools/latest/itertools/trait.Itertools.html#method.format) formats directly |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuFmt.hh"><code>ZuFmt</code></a><br>➕ formatting policies encoded in types</td>
+  <td><a href="https://en.cppreference.com/cpp/utility/format/format"><code>std::format</code></a>, stream manipulators</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/format/doc/format.html">Boost.Format</a> / <a href="https://github.com/boostorg/convert/blob/master/include/boost/convert.hpp">Convert</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_format.h"><code>bsl::format</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/fmt/index.html"><code>std::fmt</code></a> formatting traits and format specifiers</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuPrint.hh"><code>ZuPrint</code></a><br>➕ ADL print customization shared by Z streams</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/format/formatter"><code>std::formatter</code></a>, <a href="https://en.cppreference.com/cpp/io/basic_ostream/operator_ltlt"><code>operator&lt;&lt;</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/format/doc/format.html">Boost.Format</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Conv.h"><code>folly::toAppend customization</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslim/bslim_printer.h"><code>bslim::Printer</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/fmt/trait.Display.html"><code>Display</code></a> / <a href="https://doc.rust-lang.org/std/fmt/trait.Debug.html"><code>Debug</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuStream.hh"><code>ZuStream</code></a><br>➕ direct output into caller-supplied bounded text storage</td>
+  <td><a href="https://en.cppreference.com/cpp/io/basic_ospanstream"><code>std::ospanstream</code></a> (C++23)</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/iostreams/doc/index.html">Boost.Iostreams</a> array sink</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/Cursor.h"><code>folly::io::Appender</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlsb/bdlsb_fixedmemoutput.h"><code>bdlsb::FixedMemOutput</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/fmt/trait.Write.html"><code>fmt::Write</code></a>, <a href="https://doc.rust-lang.org/std/io/trait.Write.html"><code>io::Write</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuVStream.hh"><code>ZuVStream</code></a><br>➕ type-erased stream interface with function pointers</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/io/basic_ostream"><code>std::ostream</code></a>, <a href="https://en.cppreference.com/cpp/io/basic_streambuf"><code>std::streambuf</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/iostreams/doc/index.html">Boost.Iostreams</a>, <a href="https://github.com/boostorg/iostreams/blob/master/include/boost/iostreams/stream.hpp"><code>stream</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_ostream.h"><code>bsl::ostream</code></a></td>
+  <td><a href="https://doc.rust-lang.org/reference/types/trait-object.html"><code>dyn</code></a> <a href="https://doc.rust-lang.org/std/fmt/trait.Write.html"><code>fmt::Write</code></a> / <a href="https://doc.rust-lang.org/std/io/trait.Write.html"><code>io::Write</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuJoin.hh"><code>ZuJoin</code></a><br>➕ streams elements directly with a delimiter</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/ranges/join_with_view"><code>std::views::join_with</code></a></td>
+  <td><a href="https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/string/join.hpp"><code>boost::algorithm::join</code></a><br>➖ normally builds a result string</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/String.h"><code>folly::join</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/primitive.slice.html#method.join"><code>slice::join</code></a>, <a href="https://docs.rs/itertools/latest/itertools/trait.Itertools.html#method.format"><code>Itertools::format</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Time, identifiers and versions
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuTime`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTime.hh)<br>➕ compact seconds/nanoseconds with null sentinel<br>➖ same type represents instants and intervals | [`std::chrono::duration`](https://en.cppreference.com/cpp/chrono/duration), [`std::chrono::time_point`](https://en.cppreference.com/cpp/chrono/time_point)<br>➕ distinct clock and duration types | [Boost.Chrono](https://www.boost.org/doc/libs/latest/doc/html/chrono.html) / [DateTime](https://www.boost.org/doc/libs/latest/doc/html/date_time.html) | Partial: [`folly::to<chrono duration> / timespec conversions`](https://github.com/facebook/folly/blob/main/folly/chrono/Conv.h)<br>➖ no unified Z instant/interval/sentinel type | Partial: [`bsls::TimeInterval`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_timeinterval.h) / [`bdlb::NullableValue`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_nullablevalue.h) | [`Duration`](https://doc.rust-lang.org/std/time/struct.Duration.html) / [`SystemTime`](https://doc.rust-lang.org/std/time/struct.SystemTime.html); distinct interval/instant types |
-| [`ZuDateTime`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuDateTime.hh)<br>➕ wide Julian-calendar date range | [`std::chrono`](https://en.cppreference.com/cpp/chrono) calendar types and formatting (C++20) | [Boost.DateTime](https://www.boost.org/doc/libs/latest/doc/html/date_time.html) | N/A | Partial: [`bdlt::Datetime`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlt/bdlt_datetime.h)<br>➕ broad calendar/date utilities | [`time::OffsetDateTime`](https://docs.rs/time/latest/time/struct.OffsetDateTime.html) / [`chrono::DateTime`](https://docs.rs/chrono/latest/chrono/struct.DateTime.html); different range/representation |
-| [`ZuID`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuID.hh)<br>➕ by-value bounded name with [ZuArray](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuArray.hh) length, comparison, hashing and printing<br>➖ fixed framework capacity | Partial: [`std::string`](https://en.cppreference.com/cpp/string/basic_string)<br>➖ different storage/capacity contract | [`boost::static_string`](https://github.com/boostorg/static_string/blob/master/include/boost/static_string.hpp) | Partial: [`folly::FixedString`](https://github.com/facebook/folly/blob/main/folly/FixedString.h) | N/A | Partial: [`ArrayString`](https://docs.rs/arrayvec/latest/arrayvec/struct.ArrayString.html) newtype for bounded names |
-| [`ZuSemVer`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSemVer.hh)<br>➕ packed compact version value<br>➖ minor ≤ 99, patch ≤ 999; no prerelease/build metadata | N/A | N/A; [`BOOST_VERSION`](https://github.com/boostorg/config/blob/master/include/boost/version.hpp) is a library version macro, not a SemVer value type | N/A | N/A | [`semver::Version`](https://docs.rs/semver/latest/semver/struct.Version.html); includes prerelease/build metadata, different representation |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTime.hh"><code>ZuTime</code></a><br>➕ compact seconds/nanoseconds with null sentinel<br>➖ same type represents instants and intervals</td>
+  <td><a href="https://en.cppreference.com/cpp/chrono/duration"><code>std::chrono::duration</code></a>, <a href="https://en.cppreference.com/cpp/chrono/time_point"><code>std::chrono::time_point</code></a><br>➕ distinct clock and duration types</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/chrono.html">Boost.Chrono</a> / <a href="https://www.boost.org/doc/libs/latest/doc/html/date_time.html">DateTime</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/chrono/Conv.h"><code>folly::to&lt;chrono duration&gt; / timespec conversions</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_timeinterval.h"><code>bsls::TimeInterval</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_nullablevalue.h"><code>bdlb::NullableValue</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/time/struct.Duration.html"><code>Duration</code></a> / <a href="https://doc.rust-lang.org/std/time/struct.SystemTime.html"><code>SystemTime</code></a>; distinct interval/instant types</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuDateTime.hh"><code>ZuDateTime</code></a><br>➕ wide Julian-calendar date range</td>
+  <td><a href="https://en.cppreference.com/cpp/chrono"><code>std::chrono</code></a> calendar types and formatting (C++20)</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/date_time.html">Boost.DateTime</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlt/bdlt_datetime.h"><code>bdlt::Datetime</code></a></td>
+  <td>Partial: <a href="https://docs.rs/time/latest/time/struct.OffsetDateTime.html"><code>time::OffsetDateTime</code></a>, <a href="https://docs.rs/chrono/latest/chrono/struct.DateTime.html"><code>chrono::DateTime</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuID.hh"><code>ZuID</code></a><br>➕ by-value bounded name with <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuArray.hh">ZuArray</a> length, comparison, hashing and printing<br>➖ fixed framework capacity</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/string/basic_string"><code>std::string</code></a></td>
+  <td><a href="https://github.com/boostorg/static_string/blob/master/include/boost/static_string.hpp"><code>boost::static_string</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/FixedString.h"><code>folly::FixedString</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/arrayvec/latest/arrayvec/struct.ArrayString.html"><code>ArrayString</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuSemVer.hh"><code>ZuSemVer</code></a><br>➕ packed compact version value<br>➖ minor ≤ 99, patch ≤ 999; no prerelease/build metadata</td>
+  <td>N/A</td>
+  <td>None: <a href="https://github.com/boostorg/config/blob/master/include/boost/version.hpp"><code>BOOST_VERSION</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/semver/latest/semver/struct.Version.html"><code>semver::Version</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Fixed-point and decimal arithmetic
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZuFixed`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuFixed.hh)<br>➕ mantissa plus runtime decimal scale, null/reset sentinels and scan/format conversions<br>➖ constrained precision/range | N/A; integer arithmetic alone supplies none of these decimal-value policies | Partial: [Boost.Multiprecision](https://github.com/boostorg/multiprecision/blob/master/include/boost/multiprecision/cpp_int.hpp) scaled integer composition | Partial: [`bdldfp::Decimal64`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdldfp/bdldfp_decimal.h)`  /  `[`Decimal128`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdldfp/bdldfp_decimal.h)<br>➕ IEEE decimal floating-point arithmetic | Partial: [`rust_decimal::Decimal`](https://docs.rs/rust_decimal/latest/rust_decimal/struct.Decimal.html); mantissa/scale with different precision and sentinels |
-| [`ZuDecimal`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuDecimal.hh)<br>➕ decimal arithmetic with 18 integer and 18 fractional digits<br>➖ fixed precision/range | N/A in C++23 | Partial: [`boost::multiprecision::cpp_dec_float`](https://github.com/boostorg/multiprecision/blob/master/include/boost/multiprecision/cpp_dec_float.hpp)<br>➕ configurable precision<br>➖ decimal floating point has different rounding/storage semantics | Partial: [`bdldfp::Decimal128`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdldfp/bdldfp_decimal.h)<br>➕ IEEE decimal arithmetic and rounding<br>➖ 34 significant decimal digits; [ZuDecimal](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuDecimal.hh) can retain 18 integer plus 18 fractional digits | [`rust_decimal::Decimal`](https://docs.rs/rust_decimal/latest/rust_decimal/struct.Decimal.html); different fixed precision/range |
-| [`ZuDecimalFn`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuDecimalFn.hh) | N/A; decimal representation helpers | Partial: [Boost.Multiprecision](https://github.com/boostorg/multiprecision/blob/master/include/boost/multiprecision/cpp_int.hpp) arithmetic and conversions | Partial: [`bdldfp::DecimalUtil`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdldfp/bdldfp_decimalutil.h) | [`rust_decimal`](https://docs.rs/rust_decimal/latest/rust_decimal/) arithmetic, rounding, parsing and formatting |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuFixed.hh"><code>ZuFixed</code></a><br>➕ mantissa plus runtime decimal scale, null/reset sentinels and scan/format conversions<br>➖ constrained precision/range</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/multiprecision/blob/master/include/boost/multiprecision/cpp_int.hpp">Boost.Multiprecision</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdldfp/bdldfp_decimal.h"><code>bdldfp::Decimal64</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdldfp/bdldfp_decimal.h"><code>Decimal128</code></a></td>
+  <td>Partial: <a href="https://docs.rs/rust_decimal/latest/rust_decimal/struct.Decimal.html"><code>rust_decimal::Decimal</code></a> (different precision)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuDecimal.hh"><code>ZuDecimal</code></a><br>➕ decimal arithmetic with 18 integer and 18 fractional digits<br>➖ fixed precision/range</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/multiprecision/blob/master/include/boost/multiprecision/cpp_dec_float.hpp"><code>boost::multiprecision::cpp_dec_float</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdldfp/bdldfp_decimal.h"><code>bdldfp::Decimal128</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuDecimal.hh">ZuDecimal</a></td>
+  <td>Partial: <a href="https://docs.rs/rust_decimal/latest/rust_decimal/struct.Decimal.html"><code>rust_decimal::Decimal</code></a> (different precision)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuDecimalFn.hh"><code>ZuDecimalFn</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/multiprecision/blob/master/include/boost/multiprecision/cpp_int.hpp">Boost.Multiprecision</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdldfp/bdldfp_decimalutil.h"><code>bdldfp::DecimalUtil</code></a></td>
+  <td><a href="https://docs.rs/rust_decimal/latest/rust_decimal/"><code>rust_decimal</code></a> arithmetic, rounding, parsing and formatting</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Unicode conversion and measurement
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuUTF`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUTF.hh)<br>➕ conversion into caller-owned storage | Partial: locale/codecvt facilities<br>➖ legacy Unicode conversion APIs are deprecated in C++23 | [Boost.Locale](https://www.boost.org/doc/libs/latest/libs/locale/doc/html/index.html) / Nowide | Partial: [`folly::utf8ToCodePoint / codePointToUtf8`](https://github.com/facebook/folly/blob/main/folly/Unicode.h)<br>➖ lower-level conversion subset rather than the full UTF-8/16/32 adapter | Partial: [`bdlde::CharConvertUtf16`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_charconvertutf16.h) | [`char`](https://doc.rust-lang.org/std/primitive.char.html) encoding APIs; [`encoding_rs`](https://docs.rs/encoding_rs/latest/encoding_rs/) for buffer-oriented encoding conversion |
-| [`ZuUTF8`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUTF.hh)<br>➕ code-point decoding/encoding and input/output length operations for caller buffers | Partial: legacy [`std::codecvt_utf8`](https://en.cppreference.com/cpp/locale/codecvt_utf8)<br>➖ different stateful facet interface; deprecated in C++23 | Partial: [Boost.Locale](https://www.boost.org/doc/libs/latest/libs/locale/doc/html/index.html) UTF conversion primitives | [`folly::utf8ToCodePoint / codePointToUtf8`](https://github.com/facebook/folly/blob/main/folly/Unicode.h) | Partial: [`bdlde::Utf8Util`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_utf8util.h) | [`str::from_utf8`](https://doc.rust-lang.org/std/str/fn.from_utf8.html) / [`char::encode_utf8`](https://doc.rust-lang.org/std/primitive.char.html#method.encode_utf8) |
-| [`ZuUTF16`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUTF.hh)<br>➕ surrogate-aware code-point decoding/encoding with caller-buffer length checks | Partial: legacy [`std::codecvt_utf16`](https://en.cppreference.com/cpp/locale/codecvt_utf16)<br>➖ different stateful facet interface; deprecated in C++23 | Partial: [Boost.Locale](https://www.boost.org/doc/libs/latest/libs/locale/doc/html/index.html) UTF conversion primitives | Partial: [`folly::unicode_code_point_from_utf16_surrogate_pair`](https://github.com/facebook/folly/blob/main/folly/Unicode.h)<br>➖ code-point helper, not complete buffer codec | Partial: [`bdlde::CharConvertUtf16`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_charconvertutf16.h) | [`char::decode_utf16`](https://doc.rust-lang.org/std/char/fn.decode_utf16.html) / [`char::encode_utf16`](https://doc.rust-lang.org/std/primitive.char.html#method.encode_utf16) |
-| [`ZuUTF32`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUTF.hh)<br>➕ bounded code-point input/output and Unicode display-width lookup | N/A; char32_t stores a code unit but supplies no width lookup or buffer operations | Partial: [Boost.Locale](https://www.boost.org/doc/libs/latest/libs/locale/doc/html/index.html) UTF conversion primitives | N/A | [`bdlde::CharConvertUtf32`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_charconvertutf32.h) | [`char::from_u32`](https://doc.rust-lang.org/std/char/fn.from_u32.html) / [`unicode-width`](https://docs.rs/unicode-width/latest/unicode_width/) for display width |
-| [`ZuUTFSpan`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUTF.hh)<br>➕ packs input length, output length and display width | N/A; custom encoding measurement record | Partial: [Boost.Locale](https://www.boost.org/doc/libs/latest/libs/locale/doc/html/index.html) conversion + custom measurement record | N/A | N/A | Composition: [`str::len`](https://doc.rust-lang.org/std/primitive.str.html#method.len), [`str::chars`](https://doc.rust-lang.org/std/primitive.str.html#method.chars) and [`unicode-width`](https://docs.rs/unicode-width/latest/unicode_width/); no packed aggregate API |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUTF.hh"><code>ZuUTF</code></a><br>➕ conversion into caller-owned storage</td>
+  <td>Partial: locale/codecvt facilities<br>➖ legacy Unicode conversion APIs are deprecated in C++23</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/locale/doc/html/index.html">Boost.Locale</a> / Nowide</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Unicode.h"><code>folly::utf8ToCodePoint / codePointToUtf8</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_charconvertutf16.h"><code>bdlde::CharConvertUtf16</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.char.html"><code>char</code></a> encoding APIs; <a href="https://docs.rs/encoding_rs/latest/encoding_rs/"><code>encoding_rs</code></a> for buffer-oriented encoding conversion</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUTF.hh"><code>ZuUTF8</code></a><br>➕ code-point decoding/encoding and input/output length operations for caller buffers</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/locale/codecvt_utf8"><code>std::codecvt_utf8</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/locale/doc/html/index.html">Boost.Locale</a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Unicode.h"><code>folly::utf8ToCodePoint / codePointToUtf8</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_utf8util.h"><code>bdlde::Utf8Util</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/str/fn.from_utf8.html"><code>str::from_utf8</code></a> / <a href="https://doc.rust-lang.org/std/primitive.char.html#method.encode_utf8"><code>char::encode_utf8</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUTF.hh"><code>ZuUTF16</code></a><br>➕ surrogate-aware code-point decoding/encoding with caller-buffer length checks</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/locale/codecvt_utf16"><code>std::codecvt_utf16</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/locale/doc/html/index.html">Boost.Locale</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Unicode.h"><code>folly::unicode_code_point_from_utf16_surrogate_pair</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_charconvertutf16.h"><code>bdlde::CharConvertUtf16</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/char/fn.decode_utf16.html"><code>char::decode_utf16</code></a> / <a href="https://doc.rust-lang.org/std/primitive.char.html#method.encode_utf16"><code>char::encode_utf16</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUTF.hh"><code>ZuUTF32</code></a><br>➕ bounded code-point input/output and Unicode display-width lookup</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/locale/doc/html/index.html">Boost.Locale</a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_charconvertutf32.h"><code>bdlde::CharConvertUtf32</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/char/fn.from_u32.html"><code>char::from_u32</code></a> / <a href="https://docs.rs/unicode-width/latest/unicode_width/"><code>unicode-width</code></a> for display width</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuUTF.hh"><code>ZuUTFSpan</code></a><br>➕ packs input length, output length and display width</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/locale/doc/html/index.html">Boost.Locale</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/primitive.str.html#method.len"><code>str::len</code></a>, <a href="https://doc.rust-lang.org/std/primitive.str.html#method.chars"><code>str::chars</code></a>, <a href="https://docs.rs/unicode-width/latest/unicode_width/"><code>unicode-width</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Binary-text and percent encoding
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZuHex`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuHex.hh)<br>➕ caller-buffer output and in-place decoding | N/A; custom digit conversion | [`boost::algorithm::hex`](https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/hex.hpp) / [`unhex`](https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/hex.hpp) | Partial: [`folly::hexlify / unhexlify`](https://github.com/facebook/folly/blob/main/folly/String.h)<br>➖ different destination/policy interfaces | [`bdlde::HexEncoder`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_hexencoder.h)`  /  `[`HexDecoder`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_hexdecoder.h)<br>➕ incremental conversion state | [`hex`](https://docs.rs/hex/latest/hex/) (`encode_to_slice`, `decode_to_slice`); exact in-place behavior differs |
-| [`ZuBase32`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBase32.hh)<br>➕ caller-buffer codec | N/A | Partial: [Boost.Archive](https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html) iterator composition | N/A | N/A | [`data-encoding`](https://docs.rs/data-encoding/latest/data_encoding/) (Base32 with slice-oriented codecs) |
-| [`ZuBase64`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBase64.hh)<br>➕ caller-buffer codec | N/A | Partial: [Boost.Archive](https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html) [`base64_from_binary`](https://github.com/boostorg/serialization/blob/master/include/boost/archive/iterators/base64_from_binary.hpp) / [`binary_from_base64`](https://github.com/boostorg/serialization/blob/master/include/boost/archive/iterators/binary_from_base64.hpp) | [`folly::base64Encode / base64Decode`](https://github.com/facebook/folly/blob/main/folly/base64.h) | [`bdlde::Base64Encoder`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_base64encoder.h)`  /  `[`Base64Decoder`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_base64decoder.h)<br>➕ incremental codec with configurable options | [`base64`](https://docs.rs/base64/latest/base64/) (`Engine` slice-oriented encoding/decoding) |
-| [`ZuBase64URL`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBase64URL.hh)<br>➕ URL-safe alphabet | N/A | Partial: Base64 iterator composition with alphabet adaptation | [`folly::base64URLEncode / base64URLDecode`](https://github.com/facebook/folly/blob/main/folly/base64.h) | Partial: [`bdlde::Base64EncoderOptions::urlSafe`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_base64encoderoptions.h)`  +  `[`Base64DecoderOptions`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_base64decoderoptions.h) | [`base64 URL-safe engines`](https://docs.rs/base64/latest/base64/engine/general_purpose/index.html) |
-| [`ZuPercent`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuPercent.hh)<br>➕ policy-driven percent encoding, plus/space handling and in-place decoding | N/A | [Boost.URL](https://github.com/boostorg/url/blob/master/include/boost/url.hpp) encoding/decoding<br>➕ [URL](https://github.com/boostorg/url/blob/master/include/boost/url.hpp) component and grammar vocabulary | Partial: [`folly::uriEscape / uriUnescape`](https://github.com/facebook/folly/blob/main/folly/String.h)<br>➖ different destination/policy interfaces | N/A | [`percent-encoding`](https://docs.rs/percent-encoding/latest/percent_encoding/); [`form_urlencoded`](https://docs.rs/form_urlencoded/latest/form_urlencoded/) for form plus/space handling; no equivalent in-place contract |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuHex.hh"><code>ZuHex</code></a><br>➕ caller-buffer output and in-place decoding</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/hex.hpp"><code>boost::algorithm::hex</code></a> / <a href="https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/hex.hpp"><code>unhex</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/String.h"><code>folly::hexlify / unhexlify</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_hexencoder.h"><code>bdlde::HexEncoder</code></a><code> / </code><a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_hexdecoder.h"><code>HexDecoder</code></a><br>➕ incremental conversion state</td>
+  <td>Partial: <a href="https://docs.rs/hex/latest/hex/"><code>hex</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBase32.hh"><code>ZuBase32</code></a><br>➕ caller-buffer codec</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html">Boost.Archive</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/data-encoding/latest/data_encoding/"><code>data-encoding</code></a> (Base32 with slice-oriented codecs)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBase64.hh"><code>ZuBase64</code></a><br>➕ caller-buffer codec</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html">Boost.Archive</a>, <a href="https://github.com/boostorg/serialization/blob/master/include/boost/archive/iterators/base64_from_binary.hpp"><code>base64_from_binary</code></a>, <a href="https://github.com/boostorg/serialization/blob/master/include/boost/archive/iterators/binary_from_base64.hpp"><code>binary_from_base64</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/base64.h"><code>folly::base64Encode / base64Decode</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_base64encoder.h"><code>bdlde::Base64Encoder</code></a><code> / </code><a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_base64decoder.h"><code>Base64Decoder</code></a><br>➕ incremental codec with configurable options</td>
+  <td><a href="https://docs.rs/base64/latest/base64/"><code>base64</code></a> (<code>Engine</code> slice-oriented encoding/decoding)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuBase64URL.hh"><code>ZuBase64URL</code></a><br>➕ URL-safe alphabet</td>
+  <td>N/A</td>
+  <td>Partial: Base64 iterator composition with alphabet adaptation</td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/base64.h"><code>folly::base64URLEncode / base64URLDecode</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_base64encoderoptions.h"><code>bdlde::Base64EncoderOptions::urlSafe</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_base64decoderoptions.h"><code>Base64DecoderOptions</code></a></td>
+  <td><a href="https://docs.rs/base64/latest/base64/engine/general_purpose/index.html"><code>base64 URL-safe engines</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuPercent.hh"><code>ZuPercent</code></a><br>➕ policy-driven percent encoding, plus/space handling and in-place decoding</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/url/blob/master/include/boost/url.hpp">Boost.URL</a> encoding/decoding<br>➕ <a href="https://github.com/boostorg/url/blob/master/include/boost/url.hpp">URL</a> component and grammar vocabulary</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/String.h"><code>folly::uriEscape / uriUnescape</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/percent-encoding/latest/percent_encoding/"><code>percent-encoding</code></a>, <a href="https://docs.rs/form_urlencoded/latest/form_urlencoded/"><code>form_urlencoded</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Testing
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZuTest`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTest.hh#L255)<br>➕ TAP output and static nested test counts | N/A | [Boost.Test](https://github.com/boostorg/test/blob/master/include/boost/test/unit_test.hpp)<br>➕ broader test framework and reporting options | Partial: [`bslim::TestUtil`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslim/bslim_testutil.h)`  /  `[`BSLIM_TESTUTIL_*`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslim/bslim_testutil.h)<br>➖ assertion helpers do not include a TAP subtest runner | [`#[test]` / test harness](https://doc.rust-lang.org/reference/attributes/testing.html); TAP output requires a separate reporter |
-| [`ZuTestUtil`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTestUtil.hh) | N/A | Partial: [Boost.Test](https://github.com/boostorg/test/blob/master/include/boost/test/unit_test.hpp) helpers and execution utilities | Partial: [`bslim::TestUtil`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslim/bslim_testutil.h)`  /  `[`BSLIM_TESTUTIL_*`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslim/bslim_testutil.h)<br>➖ assertion helpers do not include a TAP subtest runner | [test harness](https://doc.rust-lang.org/reference/attributes/testing.html); [`proptest`](https://docs.rs/proptest/latest/proptest/) / [`rstest`](https://docs.rs/rstest/latest/rstest/) for additional test utilities |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTest.hh#L255"><code>ZuTest</code></a><br>➕ TAP output and static nested test counts</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/test/blob/master/include/boost/test/unit_test.hpp">Boost.Test</a><br>➕ broader test framework and reporting options</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslim/bslim_testutil.h"><code>bslim::TestUtil</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslim/bslim_testutil.h"><code>BSLIM_TESTUTIL_*</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/attributes/testing.html"><code>#[test]</code> / test harness</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuTestUtil.hh"><code>ZuTestUtil</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/test/blob/master/include/boost/test/unit_test.hpp">Boost.Test</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslim/bslim_testutil.h"><code>bslim::TestUtil</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslim/bslim_testutil.h"><code>BSLIM_TESTUTIL_*</code></a></td>
+  <td><a href="https://doc.rust-lang.org/reference/attributes/testing.html">test harness</a>; <a href="https://docs.rs/proptest/latest/proptest/"><code>proptest</code></a> / <a href="https://docs.rs/rstest/latest/rstest/"><code>rstest</code></a> for additional test utilities</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Structure reflection and facets
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZuStruct`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuStruct.hh#L460)<br>➕ field/accessor metadata, facets and composite keys in C++23<br>➕ supports members, methods and lambda-derived fields | N/A in C++23; core C++23 has no structure reflection | [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) / [Hana](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html).Struct<br>➕ [Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) also describes bases and member functions | Partial: [`bdlat_SequenceFunctions`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlat/bdlat_sequencefunctions.h)`  /  `[`bdlat`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlat/bdlat_typecategory.h)`  type  `[`traits`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntccfg/ntccfg_traits.h) | Partial: [derive macros](https://doc.rust-lang.org/reference/procedural-macros.html) / [`LabelledGeneric`](https://docs.rs/frunk/latest/frunk/labelled/index.html); no built-in field reflection |
-| [`ZuStructFacet`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuStruct.hh#L768)<br>➕ alternate reflected field views of one type | N/A in C++23 | Partial: separate [Hana](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html)/Fusion adaptations or metadata types | Partial: [`bdlat_SequenceFunctions`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlat/bdlat_sequencefunctions.h)`  /  `[`bdlat`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlat/bdlat_typecategory.h)`  type  `[`traits`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntccfg/ntccfg_traits.h) | Partial: [`Serde attributes`](https://serde.rs/attributes.html) / wrapper types define alternate serialization views; no shared reflected facet system |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuStruct.hh#L460"><code>ZuStruct</code></a><br>➕ field/accessor metadata, facets and composite keys in C++23<br>➕ supports members, methods and lambda-derived fields</td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Boost.Describe</a> / <a href="https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html">Hana</a>.Struct<br>➕ <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Describe</a> also describes bases and member functions</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlat/bdlat_sequencefunctions.h"><code>bdlat_SequenceFunctions</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlat/bdlat_typecategory.h"><code>bdlat</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntccfg/ntccfg_traits.h"><code>traits</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/procedural-macros.html">derive macros</a>, <a href="https://docs.rs/frunk/latest/frunk/labelled/index.html"><code>LabelledGeneric</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuStruct.hh#L768"><code>ZuStructFacet</code></a><br>➕ alternate reflected field views of one type</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html">Hana</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlat/bdlat_sequencefunctions.h"><code>bdlat_SequenceFunctions</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlat/bdlat_typecategory.h"><code>bdlat</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntccfg/ntccfg_traits.h"><code>traits</code></a></td>
+  <td>Partial: <a href="https://serde.rs/attributes.html"><code>Serde attributes</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## ZuMatcher — compile-time multi-string matching
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZuMatcher`](https://github.com/kaldron-labs/z/blob/main/zu/src/ZuMatcher.hh#L447)<br>➕ compile-time Aho–Corasick for fixed multiple keys<br>➖ large instantiations increase compile cost | Partial: [`std::search`](https://en.cppreference.com/cpp/algorithm/search), Boyer–Moore searchers<br>➖ single-pattern facilities | Partial: [Boost.Algorithm](https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/string.hpp) searching / [Boost.Spirit](https://github.com/boostorg/spirit/blob/master/include/boost/spirit.hpp) symbols | Partial: [`bsl::boyer_moore_horspool_searcher`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_functional.h)<br>➖ single-pattern search rather than a compiled multi-key automaton | [`aho-corasick`](https://docs.rs/aho-corasick/latest/aho_corasick/); automata built at runtime rather than a const-generic fixed-string matcher |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zu/src/ZuMatcher.hh#L447"><code>ZuMatcher</code></a><br>➕ compile-time Aho–Corasick for fixed multiple keys<br>➖ large instantiations increase compile cost</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/algorithm/search"><code>std::search</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/algorithm/blob/master/include/boost/algorithm/string.hpp">Boost.Algorithm</a>, <a href="https://github.com/boostorg/spirit/blob/master/include/boost/spirit.hpp">Boost.Spirit</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_functional.h"><code>bsl::boyer_moore_horspool_searcher</code></a></td>
+  <td>Partial: <a href="https://docs.rs/aho-corasick/latest/aho_corasick/"><code>aho-corasick</code></a> (runtime construction)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zm - Multithreading foundation
 
@@ -655,55 +2888,293 @@ Relevant counterparts: [standard containers](https://eel.is/c++draft/containers)
 Sources: [public headers](https://github.com/kaldron-labs/z/blob/main/zm/src/), [module guide](../zm/README.md).
 Standard counterparts: [concurrency library](https://eel.is/c++draft/thread).
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZmPlatform`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPlatform.hh) primitives<br>➕ OS IDs, aligned allocation and runtime platform helpers | Partial: [`std::thread::id`](https://en.cppreference.com/cpp/thread/thread/id), aligned [`operator new`](https://en.cppreference.com/cpp/memory/new/operator_new) | Partial: [Boost.Thread](https://www.boost.org/doc/libs/latest/doc/html/thread.html), [Align](https://www.boost.org/doc/libs/latest/doc/html/align.html), WinAPI | N/A | Partial: [`BSLS_PLATFORM_*`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_platform.h)`  /  `[`bsls::Platform`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_platform.h) | Composition: [`std::alloc`](https://doc.rust-lang.org/std/alloc/index.html), [`process::id`](https://doc.rust-lang.org/std/process/fn.id.html) and [`rustix`](https://docs.rs/rustix/latest/rustix/) platform APIs |
-| [`ZmCacheLineSize`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPlatform.hh) / [`ZmCacheAlign`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPlatform.hh)<br>➕ shared target-specific cache-separation policy and matching alignment annotation | Partial: [`std::hardware_destructive_interference_size`](https://en.cppreference.com/cpp/thread/hardware_destructive_interference_size)<br>➖ does not supply Z's selected 128-byte ARM64 / 64-byte other-target policy | Partial: [Boost.Align](https://www.boost.org/doc/libs/latest/doc/html/align.html) / alignment macros | Partial: [`folly::hardware_destructive_interference_size`](https://github.com/facebook/folly/blob/main/folly/lang/Align.h)<br>➖ uses Folly's own separation policy | Partial: [`bslmt::Platform::e_CACHE_LINE_SIZE`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_platform.h) | Partial: [`#[repr(align(N))]`](https://doc.rust-lang.org/reference/type-layout.html#the-alignment-modifiers); [`CachePadded`](https://docs.rs/crossbeam-utils/latest/crossbeam_utils/struct.CachePadded.html) applies a target-aware cache padding policy |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPlatform.hh"><code>ZmPlatform</code></a> primitives<br>➕ OS IDs, aligned allocation and runtime platform helpers</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/thread/thread/id"><code>std::thread::id</code></a>, <a href="https://en.cppreference.com/cpp/memory/new/operator_new"><code>operator new</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/thread.html">Boost.Thread</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/align.html">Align</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_platform.h"><code>BSLS_PLATFORM_*</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_platform.h"><code>bsls::Platform</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/alloc/index.html"><code>std::alloc</code></a>, <a href="https://doc.rust-lang.org/std/process/fn.id.html"><code>process::id</code></a>, <a href="https://docs.rs/rustix/latest/rustix/"><code>rustix</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPlatform.hh"><code>ZmCacheLineSize</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPlatform.hh"><code>ZmCacheAlign</code></a><br>➕ shared target-specific cache-separation policy and matching alignment annotation</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/thread/hardware_destructive_interference_size"><code>std::hardware_destructive_interference_size</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/align.html">Boost.Align</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/lang/Align.h"><code>folly::hardware_destructive_interference_size</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_platform.h"><code>bslmt::Platform::e_CACHE_LINE_SIZE</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/reference/type-layout.html#the-alignment-modifiers"><code>#[repr(align(N))]</code></a>, <a href="https://docs.rs/crossbeam-utils/latest/crossbeam_utils/struct.CachePadded.html"><code>CachePadded</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Atomic operations and locks
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZmAtomic`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmAtomic.hh) | [`std::atomic`](https://en.cppreference.com/cpp/atomic/atomic), atomic fences | [Boost.Atomic](https://github.com/boostorg/atomic/blob/master/include/boost/atomic.hpp) | Partial: [`folly::relaxed_atomic`](https://github.com/facebook/folly/blob/main/folly/synchronization/RelaxedAtomic.h)<br>➖ relaxed default ordering; not the same complete operation contract | Partial: [`bsls::AtomicInt`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_atomic.h)`  /  `[`AtomicInt64`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_atomic.h)`  /  `[`AtomicPointer`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_atomic.h) | [`std::sync::atomic`](https://doc.rust-lang.org/std/sync/atomic/index.html) |
-| [`ZmNoLock`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmNoLock.hh)<br>➕ compile-time no-op locking policy | N/A; custom null mutex | Partial: [Boost.Interprocess](https://www.boost.org/doc/libs/latest/doc/html/interprocess.html) [`null_mutex`](https://github.com/boostorg/interprocess/blob/master/include/boost/interprocess/sync/null_mutex.hpp) | N/A | N/A | No lock required for ordinary [exclusive `&mut T` access](https://doc.rust-lang.org/reference/types/pointer.html); a generic no-op raw-lock policy needs a custom [`lock_api`](https://docs.rs/lock_api/latest/lock_api/) implementation |
-| [`ZmLockTraits`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmLockTraits.hh) | Partial: Lockable concepts/requirements | Partial: [Boost.Thread](https://www.boost.org/doc/libs/latest/doc/html/thread.html) lockable traits | N/A | N/A | Partial: [`lock_api`](https://docs.rs/lock_api/latest/lock_api/) raw-lock and guard traits |
-| [`ZmSpinLock`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmSpinLock.hh)<br>➕ wraps Concurrency Kit FAS spinlock | Partial: [`std::atomic_flag`](https://en.cppreference.com/cpp/atomic/atomic_flag) spin loop | Partial: [Boost.Atomic](https://github.com/boostorg/atomic/blob/master/include/boost/atomic.hpp) spinlock composition | [`folly::MicroSpinLock`](https://github.com/facebook/folly/blob/main/folly/synchronization/MicroSpinLock.h) | [`bsls::SpinLock`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_spinlock.h) | [`spin::Mutex`](https://docs.rs/spin/latest/spin/type.Mutex.html); different spinlock implementation |
-| [`ZmPLock`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPLock.hh)<br>➕ platform-tuned primitive mutex<br>➖ cannot be used with [`ZmCondition`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCondition.hh) | Partial: [`std::mutex`](https://en.cppreference.com/cpp/thread/mutex) | Partial: [`boost::mutex`](https://github.com/boostorg/thread/blob/master/include/boost/thread/mutex.hpp) | Partial: [`folly::DistributedMutex`](https://github.com/facebook/folly/blob/main/folly/synchronization/DistributedMutex.h)<br>➖ different contention/locking implementation | Partial: [`bslmt::QLock`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_qlock.h) | [`Mutex`](https://doc.rust-lang.org/std/sync/struct.Mutex.html); [`parking_lot::Mutex`](https://docs.rs/parking_lot/latest/parking_lot/type.Mutex.html) for an alternative implementation |
-| [`ZmLock`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmLock.hh) | [`std::recursive_mutex`](https://en.cppreference.com/cpp/thread/recursive_mutex) | [`boost::recursive_mutex`](https://github.com/boostorg/thread/blob/master/include/boost/thread/recursive_mutex.hpp) | N/A | [`bslmt::Mutex`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_mutex.h) | [`Mutex`](https://doc.rust-lang.org/std/sync/struct.Mutex.html); [`parking_lot::Mutex`](https://docs.rs/parking_lot/latest/parking_lot/type.Mutex.html) for an alternative implementation |
-| [`ZmRWLock`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRWLock.hh) | [`std::shared_mutex`](https://en.cppreference.com/cpp/thread/shared_mutex) | [`boost::shared_mutex`](https://github.com/boostorg/thread/blob/master/include/boost/thread/shared_mutex.hpp) | [`folly::SharedMutex / SharedMutexReadPriority`](https://github.com/facebook/folly/blob/main/folly/SharedMutex.h) | [`bslmt::ReaderWriterMutex`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_readerwritermutex.h) | [`RwLock`](https://doc.rust-lang.org/std/sync/struct.RwLock.html) |
-| [`ZmGuard`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmGuard.hh) / [`ZmReadGuard`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmNoLock.hh) | [`std::unique_lock`](https://en.cppreference.com/cpp/thread/unique_lock), [`std::shared_lock`](https://en.cppreference.com/cpp/thread/shared_lock) | [`boost::unique_lock`](https://github.com/boostorg/thread/blob/master/include/boost/thread/lock_types.hpp), [`boost::shared_lock`](https://github.com/boostorg/thread/blob/master/include/boost/thread/lock_types.hpp) | Partial: [`folly::Synchronized locking proxies`](https://github.com/facebook/folly/blob/main/folly/Synchronized.h)<br>➕ ties protected data to its lock<br>➖ different guard/data ownership interface | Partial: [`bslmt::LockGuard`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_lockguard.h)`  +  `[`ReadLockGuard`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_readlockguard.h) | [`MutexGuard`](https://doc.rust-lang.org/std/sync/struct.MutexGuard.html) / [`RwLockReadGuard`](https://doc.rust-lang.org/std/sync/struct.RwLockReadGuard.html) |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmAtomic.hh"><code>ZmAtomic</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/atomic/atomic"><code>std::atomic</code></a>, atomic fences</td>
+  <td><a href="https://github.com/boostorg/atomic/blob/master/include/boost/atomic.hpp">Boost.Atomic</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/synchronization/RelaxedAtomic.h"><code>folly::relaxed_atomic</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_atomic.h"><code>bsls::AtomicInt</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_atomic.h"><code>AtomicInt64</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_atomic.h"><code>AtomicPointer</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/sync/atomic/index.html"><code>std::sync::atomic</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmNoLock.hh"><code>ZmNoLock</code></a><br>➕ compile-time no-op locking policy</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/interprocess.html">Boost.Interprocess</a>, <a href="https://github.com/boostorg/interprocess/blob/master/include/boost/interprocess/sync/null_mutex.hpp"><code>null_mutex</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>None: <a href="https://doc.rust-lang.org/reference/types/pointer.html">exclusive <code>&amp;mut T</code> access</a>, <a href="https://docs.rs/lock_api/latest/lock_api/"><code>lock_api</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmLockTraits.hh"><code>ZmLockTraits</code></a></td>
+  <td>Partial: Lockable concepts/requirements</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/thread.html">Boost.Thread</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/lock_api/latest/lock_api/"><code>lock_api</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmSpinLock.hh"><code>ZmSpinLock</code></a><br>➕ wraps Concurrency Kit FAS spinlock</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/atomic/atomic_flag"><code>std::atomic_flag</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/atomic/blob/master/include/boost/atomic.hpp">Boost.Atomic</a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/synchronization/MicroSpinLock.h"><code>folly::MicroSpinLock</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_spinlock.h"><code>bsls::SpinLock</code></a></td>
+  <td>Partial: <a href="https://docs.rs/spin/latest/spin/type.Mutex.html"><code>spin::Mutex</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPLock.hh"><code>ZmPLock</code></a><br>➕ platform-tuned primitive mutex<br>➖ cannot be used with <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCondition.hh"><code>ZmCondition</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/thread/mutex"><code>std::mutex</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/thread/blob/master/include/boost/thread/mutex.hpp"><code>boost::mutex</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/synchronization/DistributedMutex.h"><code>folly::DistributedMutex</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_qlock.h"><code>bslmt::QLock</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/sync/struct.Mutex.html"><code>Mutex</code></a>; <a href="https://docs.rs/parking_lot/latest/parking_lot/type.Mutex.html"><code>parking_lot::Mutex</code></a> for an alternative implementation</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmLock.hh"><code>ZmLock</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/thread/recursive_mutex"><code>std::recursive_mutex</code></a></td>
+  <td><a href="https://github.com/boostorg/thread/blob/master/include/boost/thread/recursive_mutex.hpp"><code>boost::recursive_mutex</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_mutex.h"><code>bslmt::Mutex</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/sync/struct.Mutex.html"><code>Mutex</code></a>; <a href="https://docs.rs/parking_lot/latest/parking_lot/type.Mutex.html"><code>parking_lot::Mutex</code></a> for an alternative implementation</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRWLock.hh"><code>ZmRWLock</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/thread/shared_mutex"><code>std::shared_mutex</code></a></td>
+  <td><a href="https://github.com/boostorg/thread/blob/master/include/boost/thread/shared_mutex.hpp"><code>boost::shared_mutex</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/SharedMutex.h"><code>folly::SharedMutex / SharedMutexReadPriority</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_readerwritermutex.h"><code>bslmt::ReaderWriterMutex</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/sync/struct.RwLock.html"><code>RwLock</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmGuard.hh"><code>ZmGuard</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmNoLock.hh"><code>ZmReadGuard</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/thread/unique_lock"><code>std::unique_lock</code></a>, <a href="https://en.cppreference.com/cpp/thread/shared_lock"><code>std::shared_lock</code></a></td>
+  <td><a href="https://github.com/boostorg/thread/blob/master/include/boost/thread/lock_types.hpp"><code>boost::unique_lock</code></a>, <a href="https://github.com/boostorg/thread/blob/master/include/boost/thread/lock_types.hpp"><code>boost::shared_lock</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Synchronized.h"><code>folly::Synchronized locking proxies</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_lockguard.h"><code>bslmt::LockGuard</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_readlockguard.h"><code>ReadLockGuard</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/sync/struct.MutexGuard.html"><code>MutexGuard</code></a> / <a href="https://doc.rust-lang.org/std/sync/struct.RwLockReadGuard.html"><code>RwLockReadGuard</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Conditions, semaphores and blocking adapters
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZmCondition`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCondition.hh) | [`std::condition_variable_any`](https://en.cppreference.com/cpp/thread/condition_variable_any) | [`boost::condition_variable_any`](https://github.com/boostorg/thread/blob/master/include/boost/thread/condition_variable.hpp) | N/A | [`bslmt::Condition`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_condition.h) | [`Condvar`](https://doc.rust-lang.org/std/sync/struct.Condvar.html) |
-| [`ZmSemaphore`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmSemaphore.hh) | [`std::counting_semaphore`](https://en.cppreference.com/cpp/thread/counting_semaphore) (C++20) | [Boost.Interprocess](https://www.boost.org/doc/libs/latest/doc/html/interprocess.html) [`interprocess_semaphore`](https://github.com/boostorg/interprocess/blob/master/include/boost/interprocess/sync/interprocess_semaphore.hpp) (partial sharing model) | Partial: [`folly::LifoSem / NativeSemaphore`](https://github.com/facebook/folly/blob/main/folly/synchronization/LifoSem.h) | [`bslmt::Semaphore`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_semaphore.h) | [`tokio::sync::Semaphore`](https://docs.rs/tokio/latest/tokio/sync/struct.Semaphore.html) (async); [`parking_lot`](https://docs.rs/parking_lot/latest/parking_lot/) offers blocking lock primitives, no std semaphore |
-| [`ZmBlock`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmBlock.hh)<br>➕ continuation-to-blocking bridge reusing a thread-local semaphore | Partial: [`std::promise`](https://en.cppreference.com/cpp/thread/promise) / [`std::future`](https://en.cppreference.com/cpp/thread/future)<br>➖ shared-state machinery differs | Partial: [Boost.Thread](https://www.boost.org/doc/libs/latest/doc/html/thread.html) futures / [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) [`use_future`](https://github.com/boostorg/asio/blob/master/include/boost/asio/use_future.hpp) | Partial: [`folly::Baton`](https://github.com/facebook/folly/blob/main/folly/synchronization/Baton.h)<br>➖ one-shot handoff primitive; async-to-blocking wrapper is additional work | Partial: [`bslmt::Latch`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_latch.h) | Partial: [`sync_channel`](https://doc.rust-lang.org/std/sync/mpsc/fn.sync_channel.html) / [`futures::executor::block_on`](https://docs.rs/futures/latest/futures/executor/fn.block_on.html); different callback/runtime contract |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCondition.hh"><code>ZmCondition</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/thread/condition_variable_any"><code>std::condition_variable_any</code></a></td>
+  <td><a href="https://github.com/boostorg/thread/blob/master/include/boost/thread/condition_variable.hpp"><code>boost::condition_variable_any</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_condition.h"><code>bslmt::Condition</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/sync/struct.Condvar.html"><code>Condvar</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmSemaphore.hh"><code>ZmSemaphore</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/thread/counting_semaphore"><code>std::counting_semaphore</code></a> (C++20)</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/interprocess.html">Boost.Interprocess</a> <a href="https://github.com/boostorg/interprocess/blob/master/include/boost/interprocess/sync/interprocess_semaphore.hpp"><code>interprocess_semaphore</code></a> (partial sharing model)</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/synchronization/LifoSem.h"><code>folly::LifoSem / NativeSemaphore</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_semaphore.h"><code>bslmt::Semaphore</code></a></td>
+  <td>Partial: <a href="https://docs.rs/tokio/latest/tokio/sync/struct.Semaphore.html"><code>tokio::sync::Semaphore</code></a>, <a href="https://docs.rs/parking_lot/latest/parking_lot/"><code>parking_lot</code></a> (async semaphore)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmBlock.hh"><code>ZmBlock</code></a><br>➕ continuation-to-blocking bridge reusing a thread-local semaphore</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/thread/promise"><code>std::promise</code></a>, <a href="https://en.cppreference.com/cpp/thread/future"><code>std::future</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/thread.html">Boost.Thread</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a>, <a href="https://github.com/boostorg/asio/blob/master/include/boost/asio/use_future.hpp"><code>use_future</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/synchronization/Baton.h"><code>folly::Baton</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_latch.h"><code>bslmt::Latch</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/sync/mpsc/fn.sync_channel.html"><code>sync_channel</code></a>, <a href="https://docs.rs/futures/latest/futures/executor/fn.block_on.html"><code>futures::executor::block_on</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Random number generation
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZmRandom`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRandom.hh)<br>➕ framework Mersenne Twister wrapper<br>➖ not cryptographic | [`std::mt19937`](https://en.cppreference.com/cpp/numeric/random/mersenne_twister_engine)<br>➕ standard distribution family | [Boost.Random](https://www.boost.org/doc/libs/latest/doc/html/boost_random.html) Mersenne Twister and distributions | Partial: [`folly::Random / ThreadLocalPRNG`](https://github.com/facebook/folly/blob/main/folly/Random.h)<br>➖ current default generator is not Mersenne Twister | Partial: [`bsl::mt19937`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_random.h)`  /  `[`random_device`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_random.h) | [`rand`](https://docs.rs/rand/latest/rand/); [`rand_mt`](https://docs.rs/rand_mt/latest/rand_mt/) if the Mersenne Twister algorithm is required |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRandom.hh"><code>ZmRandom</code></a><br>➕ framework Mersenne Twister wrapper<br>➖ not cryptographic</td>
+  <td><a href="https://en.cppreference.com/cpp/numeric/random/mersenne_twister_engine"><code>std::mt19937</code></a><br>➕ standard distribution family</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/boost_random.html">Boost.Random</a> Mersenne Twister and distributions</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Random.h"><code>folly::Random / ThreadLocalPRNG</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_random.h"><code>bsl::mt19937</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_random.h"><code>random_device</code></a></td>
+  <td><a href="https://docs.rs/rand/latest/rand/"><code>rand</code></a>; <a href="https://docs.rs/rand_mt/latest/rand_mt/"><code>rand_mt</code></a> if the Mersenne Twister algorithm is required</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Clocks, timing statistics and retry policies
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZmTime`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmTime.hh) | [`std::chrono`](https://en.cppreference.com/cpp/chrono) clocks | [Boost.Chrono](https://www.boost.org/doc/libs/latest/doc/html/chrono.html) | Partial: [`folly::chrono::coarse_steady_clock / coarse_system_clock`](https://github.com/facebook/folly/blob/main/folly/Chrono.h) | [`bsls::SystemTime`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_systemtime.h) | [`Instant`](https://doc.rust-lang.org/std/time/struct.Instant.html) / [`SystemTime`](https://doc.rust-lang.org/std/time/struct.SystemTime.html) |
-| [`ZmTimeInterval`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmTimeInterval.hh)<br>➕ locked min/max/total/mean/count aggregation | Partial: chrono values + custom aggregation | [Boost.Accumulators](https://www.boost.org/doc/libs/latest/doc/html/accumulators.html) with timing values | Partial: [`folly::Histogram`](https://github.com/facebook/folly/blob/main/folly/stats/Histogram.h)<br>➕ distribution buckets in addition to aggregate statistics<br>➖ different time-value/locking contract | Partial: [`balm::Collector`](https://github.com/bloomberg/bde/blob/main/groups/bal/balm/balm_collector.h) | Composition: [`Duration`](https://doc.rust-lang.org/std/time/struct.Duration.html) and [`Mutex`](https://doc.rust-lang.org/std/sync/struct.Mutex.html); [`hdrhistogram`](https://docs.rs/hdrhistogram/latest/hdrhistogram/) for latency statistics, different aggregate model |
-| [`ZmBackoff`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmBackoff.hh)<br>➕ configurable exponential backoff with jitter | Partial: chrono + [`<random>`](https://en.cppreference.com/cpp/header/random) composition | Partial: [Boost.Random](https://www.boost.org/doc/libs/latest/doc/html/boost_random.html) + [Chrono](https://www.boost.org/doc/libs/latest/doc/html/chrono.html) composition | Partial: [`folly::futures::retryingPolicyCappedJitteredExponentialBackoff`](https://github.com/facebook/folly/blob/main/folly/futures/Retrying.h)<br>➖ future retry policy rather than standalone backoff state | N/A | [`backoff`](https://docs.rs/backoff/latest/backoff/); exponential retry policy with randomization |
-| [`ZmTimeout`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmTimeout.hh)<br>➕ timeout state with exponential backoff | Partial: chrono deadlines + custom retry policy | Partial: [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) timer + retry policy | Partial: [`folly::HHWheelTimer`](https://github.com/facebook/folly/blob/main/folly/io/async/HHWheelTimer.h)<br>➖ timer scheduling does not include Z exponential-backoff state | Partial: [`bdlmt::EventScheduler`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlmt/bdlmt_eventscheduler.h)<br>➖ no built-in exponential-backoff retry state or final-attempt callback | Partial: [`backoff`](https://docs.rs/backoff/latest/backoff/) + [`Instant`](https://doc.rust-lang.org/std/time/struct.Instant.html); timeout and retry state need composition |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmTime.hh"><code>ZmTime</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/chrono"><code>std::chrono</code></a> clocks</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/chrono.html">Boost.Chrono</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Chrono.h"><code>folly::chrono::coarse_steady_clock / coarse_system_clock</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_systemtime.h"><code>bsls::SystemTime</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/time/struct.Instant.html"><code>Instant</code></a> / <a href="https://doc.rust-lang.org/std/time/struct.SystemTime.html"><code>SystemTime</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmTimeInterval.hh"><code>ZmTimeInterval</code></a><br>➕ locked min/max/total/mean/count aggregation</td>
+  <td>Partial: chrono values + custom aggregation</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/accumulators.html">Boost.Accumulators</a> with timing values</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/stats/Histogram.h"><code>folly::Histogram</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/balm/balm_collector.h"><code>balm::Collector</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/time/struct.Duration.html"><code>Duration</code></a>, <a href="https://doc.rust-lang.org/std/sync/struct.Mutex.html"><code>Mutex</code></a>, <a href="https://docs.rs/hdrhistogram/latest/hdrhistogram/"><code>hdrhistogram</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmBackoff.hh"><code>ZmBackoff</code></a><br>➕ configurable exponential backoff with jitter</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/header/random"><code>&lt;random&gt;</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_random.html">Boost.Random</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/chrono.html">Chrono</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/futures/Retrying.h"><code>folly::futures::retryingPolicyCappedJitteredExponentialBackoff</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/backoff/latest/backoff/"><code>backoff</code></a>; exponential retry policy with randomization</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmTimeout.hh"><code>ZmTimeout</code></a><br>➕ timeout state with exponential backoff</td>
+  <td>Partial: chrono deadlines + custom retry policy</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/async/HHWheelTimer.h"><code>folly::HHWheelTimer</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlmt/bdlmt_eventscheduler.h"><code>bdlmt::EventScheduler</code></a></td>
+  <td>Partial: <a href="https://docs.rs/backoff/latest/backoff/"><code>backoff</code></a>, <a href="https://doc.rust-lang.org/std/time/struct.Instant.html"><code>Instant</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Stack and scratch allocation
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZmStackAvail`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmStackAvail.hh#L20)<br>➕ queries remaining stack for scratch policies | N/A | N/A | N/A | N/A | No standard remaining-stack query; [`stacker`](https://docs.rs/stacker/latest/stacker/) offers stack probing/growth, without the same scratch policy |
-| [`ZmAlloc`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmAlloc.hh#L79)<br>➕ checks remaining stack space and selects aligned stack storage or RAII heap fallback<br>➖ macro evaluates size more than once | N/A; automatic storage does not provide runtime stack-capacity checks or heap fallback | Partial: [Boost.Container](https://www.boost.org/doc/libs/latest/doc/html/container.html) [`small_vector`](https://github.com/boostorg/container/blob/master/include/boost/container/small_vector.hpp)<br>➖ fixed inline capacity rather than remaining-stack check | N/A | N/A | Partial: [`smallvec`](https://docs.rs/smallvec/latest/smallvec/) / [`smallbox`](https://docs.rs/smallbox/latest/smallbox/) inline storage with heap fallback; capacity-based, not remaining-stack based |
-| [`ZmLocal`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmLocal.hh#L60)<br>➕ selects stack/heap storage from available stack space and runs construction/destruction | Partial: [`std::unique_ptr`](https://en.cppreference.com/cpp/memory/unique_ptr)<br>➖ does not automatically select stack storage | Partial: scoped/unique pointer with explicit storage selection | N/A | Partial: [`bdlma::LocalSequentialAllocator`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlma/bdlma_localsequentialallocator.h)<br>➖ local buffer capacity is fixed; no runtime available-stack check | Partial: [`smallvec`](https://docs.rs/smallvec/latest/smallvec/) / [`smallbox`](https://docs.rs/smallbox/latest/smallbox/) inline storage with heap fallback; capacity-based, not remaining-stack based |
-| [`ZmScratch`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmScratch.hh#L593)<br>➕ runtime-sized scratch array with stack-space checks, heap fallback and element cleanup | Partial: [`std::vector`](https://en.cppreference.com/cpp/container/vector)<br>➖ no automatic stack-backed allocation path | Partial: [`boost::container::small_vector`](https://github.com/boostorg/container/blob/master/include/boost/container/small_vector.hpp) | Partial: [`folly::small_vector`](https://github.com/facebook/folly/blob/main/folly/small_vector.h)<br>➖ fixed inline capacity rather than remaining-stack-space selection | Partial: [`bdlma::LocalSequentialAllocator`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlma/bdlma_localsequentialallocator.h)<br>➖ local buffer capacity is fixed; no runtime available-stack check | Partial: [`smallvec`](https://docs.rs/smallvec/latest/smallvec/) / [`smallbox`](https://docs.rs/smallbox/latest/smallbox/) inline storage with heap fallback; capacity-based, not remaining-stack based |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmStackAvail.hh#L20"><code>ZmStackAvail</code></a><br>➕ queries remaining stack for scratch policies</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>None: <a href="https://docs.rs/stacker/latest/stacker/"><code>stacker</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmAlloc.hh#L79"><code>ZmAlloc</code></a><br>➕ checks remaining stack space and selects aligned stack storage or RAII heap fallback<br>➖ macro evaluates size more than once</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/container.html">Boost.Container</a>, <a href="https://github.com/boostorg/container/blob/master/include/boost/container/small_vector.hpp"><code>small_vector</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/smallvec/latest/smallvec/"><code>smallvec</code></a>, <a href="https://docs.rs/smallbox/latest/smallbox/"><code>smallbox</code></a> (capacity-based fallback)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmLocal.hh#L60"><code>ZmLocal</code></a><br>➕ selects stack/heap storage from available stack space and runs construction/destruction</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/memory/unique_ptr"><code>std::unique_ptr</code></a></td>
+  <td>Partial: scoped/unique pointer with explicit storage selection</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlma/bdlma_localsequentialallocator.h"><code>bdlma::LocalSequentialAllocator</code></a></td>
+  <td>Partial: <a href="https://docs.rs/smallvec/latest/smallvec/"><code>smallvec</code></a>, <a href="https://docs.rs/smallbox/latest/smallbox/"><code>smallbox</code></a> (capacity-based fallback)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmScratch.hh#L593"><code>ZmScratch</code></a><br>➕ runtime-sized scratch array with stack-space checks, heap fallback and element cleanup</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/vector"><code>std::vector</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/container/blob/master/include/boost/container/small_vector.hpp"><code>boost::container::small_vector</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/small_vector.h"><code>folly::small_vector</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlma/bdlma_localsequentialallocator.h"><code>bdlma::LocalSequentialAllocator</code></a></td>
+  <td>Partial: <a href="https://docs.rs/smallvec/latest/smallvec/"><code>smallvec</code></a>, <a href="https://docs.rs/smallbox/latest/smallbox/"><code>smallbox</code></a> (capacity-based fallback)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Heaps and allocator integration
 
@@ -711,65 +3182,371 @@ Sources: [public headers](https://github.com/kaldron-labs/z/blob/main/zm/src/), 
 Relevant counterparts: [Boost.Container](https://www.boost.org/doc/libs/latest/doc/html/container.html),
 [Boost.Intrusive](https://www.boost.org/doc/libs/latest/doc/html/intrusive.html).
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZmHeap`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmHeap.hh) / [`ZmNHeap`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmHeap.hh)<br>➕ named fixed-block arenas, partitions and telemetry<br>➕ CPU/NUMA-aware reserves<br>➖ reserves can fall back to ordinary allocation | Partial: [`std::allocator`](https://en.cppreference.com/cpp/memory/allocator), [`std::pmr::synchronized_pool_resource`](https://en.cppreference.com/cpp/memory/synchronized_pool_resource)<br>➕ standard allocator/resource interfaces<br>➖ no named tuning/telemetry layer | [Boost.Pool](https://github.com/boostorg/pool/blob/master/include/boost/pool/pool.hpp)<br>➕ reusable pool allocator vocabulary<br>➖ no equivalent integrated naming/NUMA/telemetry layer | Partial: [`folly::Arena / ThreadCachedArena`](https://github.com/facebook/folly/blob/main/folly/memory/Arena.h)<br>➖ bulk arena lifetime rather than named individually recycled block heaps | Partial: [`bdlma::ConcurrentPool`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlma/bdlma_concurrentpool.h)<br>➕ thread-safe configurable block pooling<br>➖ no named heap registry with shard and tuning-file integration | Partial: [`slab`](https://docs.rs/slab/latest/slab/) fixed-slot reuse / [`bumpalo`](https://docs.rs/bumpalo/latest/bumpalo/) arenas; named CPU/NUMA partitions and telemetry require custom integration |
-| [`ZmVHeap`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmVHeap.hh)<br>➕ named variable-size recycling classes and instrumentation | [`std::pmr`](https://en.cppreference.com/cpp/memory/memory_resource) pool resources | [Boost.Pool](https://github.com/boostorg/pool/blob/master/include/boost/pool/pool.hpp) / [Container](https://www.boost.org/doc/libs/latest/doc/html/container.html) PMR | Partial: [`folly::Arena`](https://github.com/facebook/folly/blob/main/folly/memory/Arena.h)<br>➖ bulk allocation/release model rather than per-block recycling classes | Partial: [`bdlma::ConcurrentMultipool`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlma/bdlma_concurrentmultipool.h) | Partial: [`bumpalo`](https://docs.rs/bumpalo/latest/bumpalo/) / [`tikv-jemallocator`](https://docs.rs/tikv-jemallocator/latest/tikv_jemallocator/); no equivalent named variable-size recycling policy |
-| [`ZmAllocator`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmAllocator.hh)<br>➕ connects Z heaps to standard allocator-aware containers | [`std::allocator`](https://en.cppreference.com/cpp/memory/allocator), [`std::pmr::polymorphic_allocator`](https://en.cppreference.com/cpp/memory/polymorphic_allocator) | [`boost::pool_allocator`](https://github.com/boostorg/pool/blob/master/include/boost/pool/pool_alloc.hpp) / [Container](https://www.boost.org/doc/libs/latest/doc/html/container.html) PMR allocator | Partial: [`folly::reentrant_allocator`](https://github.com/facebook/folly/blob/main/folly/memory/ReentrantAllocator.h)<br>➖ different allocator policy; no Z named-heap integration | Partial: [`bslma::Allocator`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslma/bslma_allocator.h)`  /  `[`bsl::allocator`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_memory.h)<br>➕ pervasive allocator propagation in BSL containers | [`GlobalAlloc`](https://doc.rust-lang.org/std/alloc/trait.GlobalAlloc.html); [`allocator-api2`](https://docs.rs/allocator-api2/latest/allocator_api2/) for allocator-parameterized collections on stable Rust |
-| [`ZmHeapMgr`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmHeap.hh)<br>➕ global named arena configuration and statistics | N/A; custom PMR resource registry | Partial: pool management with application registry | N/A | N/A | Partial: [`tikv-jemalloc-ctl`](https://docs.rs/tikv-jemalloc-ctl/latest/tikv_jemalloc_ctl/) allocator configuration/statistics; no Z-style named arena registry |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmHeap.hh"><code>ZmHeap</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmHeap.hh"><code>ZmNHeap</code></a><br>➕ named fixed-block arenas, partitions and telemetry<br>➕ CPU/NUMA-aware reserves<br>➖ reserves can fall back to ordinary allocation</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/memory/allocator"><code>std::allocator</code></a>, <a href="https://en.cppreference.com/cpp/memory/synchronized_pool_resource"><code>std::pmr::synchronized_pool_resource</code></a></td>
+  <td><a href="https://github.com/boostorg/pool/blob/master/include/boost/pool/pool.hpp">Boost.Pool</a><br>➕ reusable pool allocator vocabulary<br>➖ no equivalent integrated naming/NUMA/telemetry layer</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/memory/Arena.h"><code>folly::Arena / ThreadCachedArena</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlma/bdlma_concurrentpool.h"><code>bdlma::ConcurrentPool</code></a></td>
+  <td>Partial: <a href="https://docs.rs/slab/latest/slab/"><code>slab</code></a>, <a href="https://docs.rs/bumpalo/latest/bumpalo/"><code>bumpalo</code></a> (custom NUMA/tuning)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmVHeap.hh"><code>ZmVHeap</code></a><br>➕ named variable-size recycling classes and instrumentation</td>
+  <td><a href="https://en.cppreference.com/cpp/memory/memory_resource"><code>std::pmr</code></a> pool resources</td>
+  <td><a href="https://github.com/boostorg/pool/blob/master/include/boost/pool/pool.hpp">Boost.Pool</a> / <a href="https://www.boost.org/doc/libs/latest/doc/html/container.html">Container</a> PMR</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/memory/Arena.h"><code>folly::Arena</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlma/bdlma_concurrentmultipool.h"><code>bdlma::ConcurrentMultipool</code></a></td>
+  <td>Partial: <a href="https://docs.rs/bumpalo/latest/bumpalo/"><code>bumpalo</code></a>, <a href="https://docs.rs/tikv-jemallocator/latest/tikv_jemallocator/"><code>tikv-jemallocator</code></a> (different recycling policy)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmAllocator.hh"><code>ZmAllocator</code></a><br>➕ connects Z heaps to standard allocator-aware containers</td>
+  <td><a href="https://en.cppreference.com/cpp/memory/allocator"><code>std::allocator</code></a>, <a href="https://en.cppreference.com/cpp/memory/polymorphic_allocator"><code>std::pmr::polymorphic_allocator</code></a></td>
+  <td><a href="https://github.com/boostorg/pool/blob/master/include/boost/pool/pool_alloc.hpp"><code>boost::pool_allocator</code></a> / <a href="https://www.boost.org/doc/libs/latest/doc/html/container.html">Container</a> PMR allocator</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/memory/ReentrantAllocator.h"><code>folly::reentrant_allocator</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslma/bslma_allocator.h"><code>bslma::Allocator</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_memory.h"><code>bsl::allocator</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/alloc/trait.GlobalAlloc.html"><code>GlobalAlloc</code></a>; <a href="https://docs.rs/allocator-api2/latest/allocator_api2/"><code>allocator-api2</code></a> for allocator-parameterized collections on stable Rust</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmHeap.hh"><code>ZmHeapMgr</code></a><br>➕ global named arena configuration and statistics</td>
+  <td>N/A</td>
+  <td>Partial: pool management with application registry</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/tikv-jemalloc-ctl/latest/tikv_jemalloc_ctl/"><code>tikv-jemalloc-ctl</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Scratch-buffer codecs
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZmCodec`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCodec.hh) ([`ZmBase64`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCodec.hh), [`ZmBase32`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCodec.hh), [`ZmHex`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCodec.hh))<br>➕ scratch-buffer codecs delivered through callbacks | N/A | Partial: Boost encoding iterators + scratch storage | Partial: [`bdlde::Base64Encoder`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_base64encoder.h)`  /  `[`HexEncoder`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_hexencoder.h)<br>➖ no Base32 codec in bdlde | Composition: [`base64`](https://docs.rs/base64/latest/base64/), [`data-encoding`](https://docs.rs/data-encoding/latest/data_encoding/) and [`hex`](https://docs.rs/hex/latest/hex/) with caller-owned buffers; callback scratch policy is custom |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCodec.hh"><code>ZmCodec</code></a> (<a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCodec.hh"><code>ZmBase64</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCodec.hh"><code>ZmBase32</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCodec.hh"><code>ZmHex</code></a>)<br>➕ scratch-buffer codecs delivered through callbacks</td>
+  <td>N/A</td>
+  <td>Partial: Boost encoding iterators + scratch storage</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_base64encoder.h"><code>bdlde::Base64Encoder</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_hexencoder.h"><code>HexEncoder</code></a></td>
+  <td>Partial: <a href="https://docs.rs/base64/latest/base64/"><code>base64</code></a>, <a href="https://docs.rs/data-encoding/latest/data_encoding/"><code>data-encoding</code></a>, <a href="https://docs.rs/hex/latest/hex/"><code>hex</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Intrusive ownership and callbacks
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZmObject`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmObject.hh)<br>➕ embedded atomic reference count | Partial: [`std::enable_shared_from_this`](https://en.cppreference.com/cpp/memory/enable_shared_from_this) | [`boost::intrusive_ref_counter`](https://github.com/boostorg/smart_ptr/blob/master/include/boost/smart_ptr/intrusive_ref_counter.hpp)`<T, `[`boost::thread_safe_counter`](https://github.com/boostorg/smart_ptr/blob/master/include/boost/smart_ptr/intrusive_ref_counter.hpp)`>` | N/A | N/A | Partial: [`Arc`](https://doc.rust-lang.org/std/sync/struct.Arc.html); atomic shared ownership with an allocation header, not an intrusive base |
-| [`ZmRef`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRef.hh)<br>➕ intrusive shared ownership<br>➖ no weak observers | [`std::shared_ptr`](https://en.cppreference.com/cpp/memory/shared_ptr)<br>➕ arbitrary pointees and [`std::weak_ptr`](https://en.cppreference.com/cpp/memory/weak_ptr) | [`boost::intrusive_ptr`](https://github.com/boostorg/smart_ptr/blob/master/include/boost/smart_ptr/intrusive_ptr.hpp) with atomic hooks | N/A | N/A | Partial: [`Arc`](https://doc.rust-lang.org/std/sync/struct.Arc.html); atomic shared ownership with an allocation header, not an intrusive base |
-| [`ZmPolymorph`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPolymorph.hh) | Partial: shared ownership of a virtual-destructor base | Partial: intrusive ownership of a virtual-destructor base | N/A | N/A | [`dyn Trait`](https://doc.rust-lang.org/reference/types/trait-object.html) with [`Arc`](https://doc.rust-lang.org/std/sync/struct.Arc.html) for shared ownership |
-| [`ZmContext`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmContext.hh)<br>➕ compact raw-or-owning erased context<br>➖ pointer-tag representation assumes supported architectures | Partial: [`std::variant`](https://en.cppreference.com/cpp/utility/variant)`<void*, `[`std::shared_ptr`](https://en.cppreference.com/cpp/memory/shared_ptr)`<Base>>` | Partial: [`boost::variant2::variant`](https://github.com/boostorg/variant2/blob/master/include/boost/variant2/variant.hpp) + [`boost::intrusive_ptr`](https://github.com/boostorg/smart_ptr/blob/master/include/boost/smart_ptr/intrusive_ptr.hpp) | Partial: [`folly::DiscriminatedPtr`](https://github.com/facebook/folly/blob/main/folly/DiscriminatedPtr.h)<br>➖ tagged pointers do not retain pointees | N/A | Partial: [`Any`](https://doc.rust-lang.org/std/any/trait.Any.html) / [trait objects](https://doc.rust-lang.org/reference/types/trait-object.html); no matching raw-or-owning tagged context representation |
-| [`ZmFn`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmFn_.hh)<br>➕ optimized function/context representation<br>➖ larger captures can allocate | [`std::function`](https://en.cppreference.com/cpp/utility/functional/function), [`std::move_only_function`](https://en.cppreference.com/cpp/utility/functional/move_only_function) (C++23) | [`boost::function`](https://github.com/boostorg/function/blob/master/include/boost/function.hpp) | [`folly::Function`](https://github.com/facebook/folly/blob/main/folly/Function.h)<br>➕ move-only captures and cv-qualified signatures<br>➖ move-only wrapper rather than [ZmFn](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmFn_.hh)'s copyable delegate | [`bsl::function`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_functional.h)<br>➕ allocator-aware type erasure | [closure types and call traits](https://doc.rust-lang.org/reference/types/closure.html) / [fn pointers](https://doc.rust-lang.org/reference/types/function-pointer.html); [`Box<dyn FnOnce()>`](https://doc.rust-lang.org/std/boxed/struct.Box.html) for owned type erasure |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmObject.hh"><code>ZmObject</code></a><br>➕ embedded atomic reference count</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/memory/enable_shared_from_this"><code>std::enable_shared_from_this</code></a></td>
+  <td><a href="https://github.com/boostorg/smart_ptr/blob/master/include/boost/smart_ptr/intrusive_ref_counter.hpp"><code>boost::intrusive_ref_counter</code></a><code>&lt;T, </code><a href="https://github.com/boostorg/smart_ptr/blob/master/include/boost/smart_ptr/intrusive_ref_counter.hpp"><code>boost::thread_safe_counter</code></a><code>&gt;</code></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/sync/struct.Arc.html"><code>Arc</code></a> (non-intrusive)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRef.hh"><code>ZmRef</code></a><br>➕ intrusive shared ownership<br>➖ no weak observers</td>
+  <td><a href="https://en.cppreference.com/cpp/memory/shared_ptr"><code>std::shared_ptr</code></a><br>➕ arbitrary pointees and <a href="https://en.cppreference.com/cpp/memory/weak_ptr"><code>std::weak_ptr</code></a></td>
+  <td><a href="https://github.com/boostorg/smart_ptr/blob/master/include/boost/smart_ptr/intrusive_ptr.hpp"><code>boost::intrusive_ptr</code></a> with atomic hooks</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/sync/struct.Arc.html"><code>Arc</code></a> (non-intrusive)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPolymorph.hh"><code>ZmPolymorph</code></a></td>
+  <td>Partial: shared ownership of a virtual-destructor base</td>
+  <td>Partial: intrusive ownership of a virtual-destructor base</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/reference/types/trait-object.html"><code>dyn Trait</code></a> with <a href="https://doc.rust-lang.org/std/sync/struct.Arc.html"><code>Arc</code></a> for shared ownership</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmContext.hh"><code>ZmContext</code></a><br>➕ compact raw-or-owning erased context<br>➖ pointer-tag representation assumes supported architectures</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/variant"><code>std::variant</code></a>, <a href="https://en.cppreference.com/cpp/memory/shared_ptr"><code>std::shared_ptr</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/variant2/blob/master/include/boost/variant2/variant.hpp"><code>boost::variant2::variant</code></a>, <a href="https://github.com/boostorg/smart_ptr/blob/master/include/boost/smart_ptr/intrusive_ptr.hpp"><code>boost::intrusive_ptr</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/DiscriminatedPtr.h"><code>folly::DiscriminatedPtr</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/any/trait.Any.html"><code>Any</code></a>, <a href="https://doc.rust-lang.org/reference/types/trait-object.html">trait objects</a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmFn_.hh"><code>ZmFn</code></a><br>➕ optimized function/context representation<br>➖ larger captures can allocate</td>
+  <td><a href="https://en.cppreference.com/cpp/utility/functional/function"><code>std::function</code></a>, <a href="https://en.cppreference.com/cpp/utility/functional/move_only_function"><code>std::move_only_function</code></a> (C++23)</td>
+  <td><a href="https://github.com/boostorg/function/blob/master/include/boost/function.hpp"><code>boost::function</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Function.h"><code>folly::Function</code></a><br>➕ move-only captures and cv-qualified signatures<br>➖ move-only wrapper rather than <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmFn_.hh">ZmFn</a>'s copyable delegate</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_functional.h"><code>bsl::function</code></a><br>➕ allocator-aware type erasure</td>
+  <td><a href="https://doc.rust-lang.org/reference/types/closure.html">closure types and call traits</a> / <a href="https://doc.rust-lang.org/reference/types/function-pointer.html">fn pointers</a>; <a href="https://doc.rust-lang.org/std/boxed/struct.Box.html"><code>Box&lt;dyn FnOnce()&gt;</code></a> for owned type erasure</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Thread-local state and cleanup
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZmSpecific`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmSpecific.hh)<br>➕ explicit scope, cleanup levels and enumeration of all thread instances<br>➕ consolidates per-type TLS across Windows modules | N/A; thread_local does not provide this registry and cleanup policy | [`boost::thread_specific_ptr`](https://github.com/boostorg/thread/blob/master/include/boost/thread/tss.hpp)<br>➖ no equivalent global instance-enumeration contract | [`folly::ThreadLocal / ThreadLocalPtr`](https://github.com/facebook/folly/blob/main/folly/ThreadLocal.h)<br>➕ supports cross-thread instance access<br>➖ different teardown/order and Windows module contracts | Partial: [`bslmt::ThreadUtil`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_threadutil.h)` TLS keys`<br>➖ no built-in cross-thread instance enumeration or cleanup-priority registry | Partial: [`thread_local!`](https://doc.rust-lang.org/std/macro.thread_local.html); [`thread_local`](https://docs.rs/thread_local/latest/thread_local/) provides enumerable per-object thread locals, no Z cleanup levels |
-| [`ZmSingleton`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmSingleton.hh)<br>➕ configurable lazy construction, optional final() hook and cleanup-level registration | Partial: [`std::call_once`](https://en.cppreference.com/cpp/thread/call_once)<br>➖ no singleton ownership or cleanup sequencing | Partial: [Boost.Serialization](https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html) singleton | [`folly::Singleton / SingletonVault`](https://github.com/facebook/folly/blob/main/folly/Singleton.h)<br>➕ managed singleton lifecycle and dependency handling | N/A | [`LazyLock`](https://doc.rust-lang.org/std/sync/struct.LazyLock.html) / [`OnceLock`](https://doc.rust-lang.org/std/sync/struct.OnceLock.html); static items do not receive ordered destruction |
-| [`ZmCleanup`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCleanup.hh) / [`ZmGlobal`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmGlobal.hh)<br>➕ ordered cleanup levels and a shared registry for singleton/TLS teardown | N/A; static destruction order alone does not implement this registry/policy | Partial: Boost singleton/TLS primitives with custom coordination | Partial: [`folly::SingletonVault`](https://github.com/facebook/folly/blob/main/folly/Singleton.h)<br>➖ does not implement Z's shared singleton/TLS cleanup-level registry | N/A | No built-in cleanup registry; [`Drop`](https://doc.rust-lang.org/std/ops/trait.Drop.html) supplies scoped destruction, static teardown ordering needs explicit ownership |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmSpecific.hh"><code>ZmSpecific</code></a><br>➕ explicit scope, cleanup levels and enumeration of all thread instances<br>➕ consolidates per-type TLS across Windows modules</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/thread/blob/master/include/boost/thread/tss.hpp"><code>boost::thread_specific_ptr</code></a><br>➖ no equivalent global instance-enumeration contract</td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/ThreadLocal.h"><code>folly::ThreadLocal / ThreadLocalPtr</code></a><br>➕ supports cross-thread instance access<br>➖ different teardown/order and Windows module contracts</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_threadutil.h"><code>bslmt::ThreadUtil</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/macro.thread_local.html"><code>thread_local!</code></a>, <a href="https://docs.rs/thread_local/latest/thread_local/"><code>thread_local</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmSingleton.hh"><code>ZmSingleton</code></a><br>➕ configurable lazy construction, optional final() hook and cleanup-level registration</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/thread/call_once"><code>std::call_once</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html">Boost.Serialization</a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Singleton.h"><code>folly::Singleton / SingletonVault</code></a><br>➕ managed singleton lifecycle and dependency handling</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/sync/struct.LazyLock.html"><code>LazyLock</code></a>, <a href="https://doc.rust-lang.org/std/sync/struct.OnceLock.html"><code>OnceLock</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCleanup.hh"><code>ZmCleanup</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmGlobal.hh"><code>ZmGlobal</code></a><br>➕ ordered cleanup levels and a shared registry for singleton/TLS teardown</td>
+  <td>N/A</td>
+  <td>Partial: Boost singleton/TLS primitives with custom coordination</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Singleton.h"><code>folly::SingletonVault</code></a></td>
+  <td>N/A</td>
+  <td>None: <a href="https://doc.rust-lang.org/std/ops/trait.Drop.html"><code>Drop</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Assertions and diagnostic utilities
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZmAssert`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmAssert.hh#L38) / [`ZmAssert_`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmAssert.hh#L35)<br>➕ debug, always-on and release-fallback forms | [`assert`](https://en.cppreference.com/cpp/error/assert), custom always-on check | [Boost.Assert](https://www.boost.org/doc/libs/latest/libs/assert/doc/html/assert.html)<br>➕ configurable assertion handlers | Partial: [`FOLLY_SAFE_CHECK / FOLLY_SAFE_DCHECK`](https://github.com/facebook/folly/blob/main/folly/lang/SafeAssert.h)<br>➖ no matching release-fallback expression form | Partial: [`BSLS_ASSERT`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_assert.h)`  /  `[`BSLS_ASSERT_SAFE`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_assert.h)<br>➕ configurable assertion handling and build levels | [`debug_assert!`](https://doc.rust-lang.org/std/macro.debug_assert.html) / [`assert!`](https://doc.rust-lang.org/std/macro.assert.html); fallback behavior is explicit application code |
-| [`ZmObjectDebug`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmObjectDebug.hh)<br>➕ intrusive object lifetime diagnostics | N/A | Partial: [Boost.SmartPtr](https://www.boost.org/doc/libs/latest/libs/smart_ptr/doc/html/smart_ptr.html) debugging hooks | N/A | N/A | Partial: [`Arc::strong_count`](https://doc.rust-lang.org/std/sync/struct.Arc.html#method.strong_count) and [`tracing`](https://docs.rs/tracing/latest/tracing/) instrumentation; no intrusive lifetime debugger |
-| [`ZmDemangle`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmDemangle.hh)<br>➕ binutils demangling for difficult compiler names<br>➖ additional binutils dependency | N/A; [`type_info::name()`](https://en.cppreference.com/cpp/types/type_info/name) is implementation-defined | [`boost::core::demangle`](https://github.com/boostorg/core/blob/master/include/boost/core/demangle.hpp), [Boost.TypeIndex](https://www.boost.org/doc/libs/latest/doc/html/boost_typeindex.html) | Partial: [`folly::demangle`](https://github.com/facebook/folly/blob/main/folly/Demangle.h)<br>➖ different demangler/backend contract | N/A | [`cpp_demangle`](https://docs.rs/cpp_demangle/latest/cpp_demangle/) for C++ / [`rustc-demangle`](https://docs.rs/rustc-demangle/latest/rustc_demangle/) for Rust; no Z-specific template-name rewriting |
-| [`ZmBackTrace`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmBackTrace_.hh) | [`std::stacktrace`](https://en.cppreference.com/cpp/utility/basic_stacktrace) (C++23) | [Boost.Stacktrace](https://www.boost.org/doc/libs/latest/doc/html/stacktrace.html) | [`folly::symbolizer stack traces`](https://github.com/facebook/folly/blob/main/folly/debugging/symbolizer/Symbolizer.h) | [`balst::StackTraceUtil`](https://github.com/bloomberg/bde/blob/main/groups/bal/balst/balst_stacktraceutil.h)`  /  `[`StackTrace`](https://github.com/bloomberg/bde/blob/main/groups/bal/balst/balst_stacktrace.h) | [`Backtrace`](https://doc.rust-lang.org/std/backtrace/struct.Backtrace.html) |
-| [`ZmBackTracer`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmBackTracer.hh)<br>➕ keeps a bounded ring of captured traces | Partial: [`std::stacktrace`](https://en.cppreference.com/cpp/utility/basic_stacktrace) + bounded storage | Partial: [Boost.Stacktrace](https://www.boost.org/doc/libs/latest/doc/html/stacktrace.html) + [CircularBuffer](https://github.com/boostorg/circular_buffer/blob/master/include/boost/circular_buffer.hpp) | Partial: [`folly::symbolizer stack traces`](https://github.com/facebook/folly/blob/main/folly/debugging/symbolizer/Symbolizer.h)<br>➖ bounded trace-history ring is application work | Partial: [`balst::StackTrace`](https://github.com/bloomberg/bde/blob/main/groups/bal/balst/balst_stacktrace.h)<br>➖ captures individual traces; no built-in bounded trace-history ring | Composition: [`Backtrace`](https://doc.rust-lang.org/std/backtrace/struct.Backtrace.html) + bounded [`VecDeque`](https://doc.rust-lang.org/std/collections/struct.VecDeque.html); no packaged trace ring |
-| [`ZmTrap`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmTrap.hh)<br>➕ last-ditch diagnostics and signal trapping | Partial: [`std::signal`](https://en.cppreference.com/cpp/utility/program/signal), [`std::set_terminate`](https://en.cppreference.com/cpp/error/set_terminate) | Partial: [Boost.Stacktrace](https://www.boost.org/doc/libs/latest/doc/html/stacktrace.html) signal-handler integration | Partial: [`folly symbolizer fatal-signal handlers`](https://github.com/facebook/folly/blob/main/folly/debugging/symbolizer/SignalHandler.h) | N/A | Partial: [`panic::set_hook`](https://doc.rust-lang.org/std/panic/fn.set_hook.html) / [`signal-hook`](https://docs.rs/signal-hook/latest/signal_hook/); signals and panics require distinct handling |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmAssert.hh#L38"><code>ZmAssert</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmAssert.hh#L35"><code>ZmAssert_</code></a><br>➕ debug, always-on and release-fallback forms</td>
+  <td><a href="https://en.cppreference.com/cpp/error/assert"><code>assert</code></a>, custom always-on check</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/assert/doc/html/assert.html">Boost.Assert</a><br>➕ configurable assertion handlers</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/lang/SafeAssert.h"><code>FOLLY_SAFE_CHECK / FOLLY_SAFE_DCHECK</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_assert.h"><code>BSLS_ASSERT</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_assert.h"><code>BSLS_ASSERT_SAFE</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/macro.debug_assert.html"><code>debug_assert!</code></a> / <a href="https://doc.rust-lang.org/std/macro.assert.html"><code>assert!</code></a>; fallback behavior is explicit application code</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmObjectDebug.hh"><code>ZmObjectDebug</code></a><br>➕ intrusive object lifetime diagnostics</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/smart_ptr/doc/html/smart_ptr.html">Boost.SmartPtr</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/sync/struct.Arc.html#method.strong_count"><code>Arc::strong_count</code></a>, <a href="https://docs.rs/tracing/latest/tracing/"><code>tracing</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmDemangle.hh"><code>ZmDemangle</code></a><br>➕ binutils demangling for difficult compiler names<br>➖ additional binutils dependency</td>
+  <td>None: <a href="https://en.cppreference.com/cpp/types/type_info/name"><code>type_info::name()</code></a></td>
+  <td><a href="https://github.com/boostorg/core/blob/master/include/boost/core/demangle.hpp"><code>boost::core::demangle</code></a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_typeindex.html">Boost.TypeIndex</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Demangle.h"><code>folly::demangle</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/cpp_demangle/latest/cpp_demangle/"><code>cpp_demangle</code></a>, <a href="https://docs.rs/rustc-demangle/latest/rustc_demangle/"><code>rustc-demangle</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmBackTrace_.hh"><code>ZmBackTrace</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/utility/basic_stacktrace"><code>std::stacktrace</code></a> (C++23)</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/stacktrace.html">Boost.Stacktrace</a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/debugging/symbolizer/Symbolizer.h"><code>folly::symbolizer stack traces</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bal/balst/balst_stacktraceutil.h"><code>balst::StackTraceUtil</code></a><code> / </code><a href="https://github.com/bloomberg/bde/blob/main/groups/bal/balst/balst_stacktrace.h"><code>StackTrace</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/backtrace/struct.Backtrace.html"><code>Backtrace</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmBackTracer.hh"><code>ZmBackTracer</code></a><br>➕ keeps a bounded ring of captured traces</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/basic_stacktrace"><code>std::stacktrace</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/stacktrace.html">Boost.Stacktrace</a>, <a href="https://github.com/boostorg/circular_buffer/blob/master/include/boost/circular_buffer.hpp">CircularBuffer</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/debugging/symbolizer/Symbolizer.h"><code>folly::symbolizer stack traces</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/balst/balst_stacktrace.h"><code>balst::StackTrace</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/backtrace/struct.Backtrace.html"><code>Backtrace</code></a>, <a href="https://doc.rust-lang.org/std/collections/struct.VecDeque.html"><code>VecDeque</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmTrap.hh"><code>ZmTrap</code></a><br>➕ last-ditch diagnostics and signal trapping</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/program/signal"><code>std::signal</code></a>, <a href="https://en.cppreference.com/cpp/error/set_terminate"><code>std::set_terminate</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/stacktrace.html">Boost.Stacktrace</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/debugging/symbolizer/SignalHandler.h"><code>folly symbolizer fatal-signal handlers</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/panic/fn.set_hook.html"><code>panic::set_hook</code></a>, <a href="https://docs.rs/signal-hook/latest/signal_hook/"><code>signal-hook</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Containers, indices and caches
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZmNode`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmNode.hh) / [`ZmNodeFn`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmNodeFn.hh)<br>➕ explicit intrusive node ownership policies | Partial: container node handles<br>➖ no general intrusive-node framework | [Boost.Intrusive](https://www.boost.org/doc/libs/latest/doc/html/intrusive.html) hooks and value traits | Partial: [`folly::IntrusiveListHook`](https://github.com/facebook/folly/blob/main/folly/container/IntrusiveList.h)<br>➖ list linkage rather than Z's generic node ownership policy | N/A | [`intrusive_collections::Adapter`](https://docs.rs/intrusive-collections/latest/intrusive_collections/trait.Adapter.html) / [`PointerOps`](https://docs.rs/intrusive-collections/latest/intrusive_collections/trait.PointerOps.html) |
-| [`ZmList`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmList.hh)<br>➕ intrusive ownership, heap and locking policies | [`std::list`](https://en.cppreference.com/cpp/container/list)<br>➕ standard iterators and algorithms | [`boost::intrusive::list`](https://github.com/boostorg/intrusive/blob/master/include/boost/intrusive/list.hpp) | [`folly::IntrusiveList / CountedIntrusiveList`](https://github.com/facebook/folly/blob/main/folly/container/IntrusiveList.h)<br>➖ different locking/allocation/ownership policies | Partial: [`bslalg::BidirectionalLink`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslalg/bslalg_bidirectionallink.h)`  /  `[`BidirectionalLinkListUtil`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslalg/bslalg_bidirectionallinklistutil.h) | [`intrusive_collections::LinkedList`](https://docs.rs/intrusive-collections/latest/intrusive_collections/linked_list/struct.LinkedList.html) |
-| [`ZmStack`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmStack.hh)<br>➕ deletion inside stack for queued cancellation<br>➖ requires sentinel-null value semantics | [`std::stack`](https://en.cppreference.com/cpp/container/stack) / [`std::vector`](https://en.cppreference.com/cpp/container/vector) composition | [`boost::container::vector`](https://github.com/boostorg/container/blob/master/include/boost/container/vector.hpp) with stack operations | Partial: [`folly::AtomicLinkedList`](https://github.com/facebook/folly/blob/main/folly/AtomicLinkedList.h)<br>➖ bulk-sweep atomic stack rather than Z's indexed/removable stack | Partial: [`bdlcc::Deque`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_deque.h) | Partial: [`Vec`](https://doc.rust-lang.org/std/vec/struct.Vec.html) as a stack; cancellation/removal policy differs |
-| [`ZmQueue`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmQueue.hh)<br>➕ FIFO/LIFO operations without shifting remaining items<br>➖ sentinel-null value contract | [`std::deque`](https://en.cppreference.com/cpp/container/deque), [`std::queue`](https://en.cppreference.com/cpp/container/queue) | [Boost.CircularBuffer](https://github.com/boostorg/circular_buffer/blob/master/include/boost/circular_buffer.hpp) / [Container](https://www.boost.org/doc/libs/latest/doc/html/container.html) deque | Partial: [`folly::MPMCQueue`](https://github.com/facebook/folly/blob/main/folly/MPMCQueue.h)<br>➕ bounded concurrent producer/consumer queue<br>➖ different sizing and FIFO/LIFO contract | Partial: [`bdlcc::Deque`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_deque.h) | [`VecDeque`](https://doc.rust-lang.org/std/collections/struct.VecDeque.html) |
-| [`ZmRBTree`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRBTree.hh)<br>➕ intrusive nodes and configurable locking/ownership | [`std::map`](https://en.cppreference.com/cpp/container/map), [`std::set`](https://en.cppreference.com/cpp/container/set), multi variants | [`boost::intrusive::rbtree`](https://github.com/boostorg/intrusive/blob/master/include/boost/intrusive/rbtree.hpp) / set | Partial: [`folly::ConcurrentSkipList`](https://github.com/facebook/folly/blob/main/folly/ConcurrentSkipList.h)<br>➖ ordered skip-list set rather than intrusive red/black tree | Partial: [`bslalg::RbTreeNode`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslalg/bslalg_rbtreenode.h)`  /  `[`RbTreeUtil`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslalg/bslalg_rbtreeutil.h) | [`intrusive_collections::RBTree`](https://docs.rs/intrusive-collections/latest/intrusive_collections/rbtree/struct.RBTree.html) |
-| [`ZmLHash`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmLHash.hh)<br>➕ by-value linear probing with Z policies | [`std::unordered_map`](https://en.cppreference.com/cpp/container/unordered_map) / [`std::unordered_set`](https://en.cppreference.com/cpp/container/unordered_set)<br>➖ standard node-oriented contracts differ | [`boost::unordered_flat_map`](https://github.com/boostorg/unordered/blob/master/include/boost/unordered/unordered_flat_map.hpp) / [`unordered_flat_set`](https://github.com/boostorg/unordered/blob/master/include/boost/unordered/unordered_flat_set.hpp) | Partial: [`folly::F14ValueMap / F14FastMap`](https://github.com/facebook/folly/blob/main/folly/container/F14Map.h)<br>➕ optimized value/node/vector storage choices<br>➖ different probing, locking and ownership policies | Partial: [`bdlc::FlatHashMap`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlc/bdlc_flathashmap.h)`  /  `[`FlatHashSet`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlc/bdlc_flathashset.h)<br>➕ allocator-aware flat storage | [`HashMap`](https://doc.rust-lang.org/std/collections/struct.HashMap.html) / [`hashbrown`](https://docs.rs/hashbrown/latest/hashbrown/); SwissTable-style probing, not identical linear probing |
-| [`ZmHash`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmHash.hh)<br>➕ intrusive chaining, lock striping and named tuning | [`std::unordered_map`](https://en.cppreference.com/cpp/container/unordered_map) / [`std::unordered_set`](https://en.cppreference.com/cpp/container/unordered_set)<br>➖ caller supplies synchronization | [`boost::intrusive::unordered_set`](https://github.com/boostorg/intrusive/blob/master/include/boost/intrusive/unordered_set.hpp); partial: [Boost.Unordered](https://www.boost.org/doc/libs/latest/libs/unordered/doc/html/unordered.html) concurrent containers | Partial: [`folly::ConcurrentHashMap`](https://github.com/facebook/folly/blob/main/folly/concurrency/ConcurrentHashMap.h)<br>➕ concurrent lookup/update and reclamation<br>➖ not Z intrusive nodes or named hash/heap tuning | Partial: [`bdlcc::StripedUnorderedMap`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_stripedunorderedmap.h)<br>➕ concurrent operations with striped locking<br>➖ no named hash/heap tuning registry | Partial: [`dashmap`](https://docs.rs/dashmap/latest/dashmap/) for sharded concurrent hashing; non-intrusive, different allocation/tuning |
-| [`ZmHashMgr`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmHashMgr.hh)<br>➕ named sizing, striping and telemetry | N/A; per-container load-factor/rehash controls only | Partial: [Boost.Unordered](https://www.boost.org/doc/libs/latest/libs/unordered/doc/html/unordered.html) controls with custom registry | N/A | N/A | No named hash manager; [`HashMap`](https://doc.rust-lang.org/std/collections/struct.HashMap.html) capacity/hasher configuration plus custom telemetry |
-| [`ZmPolyHash`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPolyHash.hh)<br>➕ reflected multiple intrusive hash indices in one allocation | N/A; multiple containers with manual index maintenance | [Boost.MultiIndex](https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html)<br>➕ also supports ordered, sequenced and other index kinds | N/A | N/A | Partial: [`multi_index_map`](https://docs.rs/multi_index_map/latest/multi_index_map/) for derived multiple indices; no matching intrusive one-allocation policy |
-| [`ZmCacheStats`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCacheStats.hh) | N/A; application counters | Partial: [Boost.Accumulators](https://www.boost.org/doc/libs/latest/doc/html/accumulators.html) or custom counters | N/A | N/A | Partial: [`moka::Cache`](https://docs.rs/moka/latest/moka/sync/struct.Cache.html) cache metrics; no shared Z cache-statistics type |
-| [`ZmCache`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCache.hh)<br>➕ integrated hash lookup and LRU eviction | Partial: [`std::list`](https://en.cppreference.com/cpp/container/list) + [`std::unordered_map`](https://en.cppreference.com/cpp/container/unordered_map) | Partial: [Boost.MultiIndex](https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html) hashed + sequenced indices | [`folly::EvictingCacheMap`](https://github.com/facebook/folly/blob/main/folly/container/EvictingCacheMap.h)<br>➖ different locking/node/heap policy | Partial: [`bdlcc::Cache`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_cache.h)<br>➕ LRU/FIFO eviction and allocator support | [`LruCache`](https://docs.rs/lru/latest/lru/struct.LruCache.html); hash lookup with LRU eviction, non-intrusive |
-| [`ZmPolyCache`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPolyCache.hh)<br>➕ reflected multiple keys with LRU eviction | N/A; custom multi-index cache | Partial: [Boost.MultiIndex](https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html) + eviction policy | Partial: [`folly::EvictingCacheMap`](https://github.com/facebook/folly/blob/main/folly/container/EvictingCacheMap.h)<br>➖ no reflected multiple-key indices | Partial: [`bdlcc::Cache`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_cache.h)<br>➖ no built-in reflected multiple-key indices | Composition: [`multi_index_map`](https://docs.rs/multi_index_map/latest/multi_index_map/) + [`lru`](https://docs.rs/lru/latest/lru/); integrated multi-key intrusive LRU requires custom work |
-| [`ZmPQueue`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPQueue.hh), [`ZmPQRx`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPQueue.hh), [`ZmPQTx`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPQueue.hh)<br>➕ deterministic skip-list sequence reassembly; gaps and overlaps | Partial: [`std::map`](https://en.cppreference.com/cpp/container/map) plus interval/reassembly logic | Partial: [Boost.ICL](https://github.com/boostorg/icl/blob/master/include/boost/icl/interval_set.hpp) + ordered index | Partial: [`folly::ConcurrentSkipList`](https://github.com/facebook/folly/blob/main/folly/ConcurrentSkipList.h) + application sequence/reassembly logic | Partial: [`bdlcc::SkipList`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_skiplist.h) + application sequence/reassembly logic | Partial: [`BTreeMap`](https://doc.rust-lang.org/std/collections/struct.BTreeMap.html) for ordered segments; gap/overlap reassembly and directional retirement are custom |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmNode.hh"><code>ZmNode</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmNodeFn.hh"><code>ZmNodeFn</code></a><br>➕ explicit intrusive node ownership policies</td>
+  <td>Partial: container node handles<br>➖ no general intrusive-node framework</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/intrusive.html">Boost.Intrusive</a> hooks and value traits</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/container/IntrusiveList.h"><code>folly::IntrusiveListHook</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/intrusive-collections/latest/intrusive_collections/trait.Adapter.html"><code>intrusive_collections::Adapter</code></a> / <a href="https://docs.rs/intrusive-collections/latest/intrusive_collections/trait.PointerOps.html"><code>PointerOps</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmList.hh"><code>ZmList</code></a><br>➕ intrusive ownership, heap and locking policies</td>
+  <td><a href="https://en.cppreference.com/cpp/container/list"><code>std::list</code></a><br>➕ standard iterators and algorithms</td>
+  <td><a href="https://github.com/boostorg/intrusive/blob/master/include/boost/intrusive/list.hpp"><code>boost::intrusive::list</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/container/IntrusiveList.h"><code>folly::IntrusiveList / CountedIntrusiveList</code></a><br>➖ different locking/allocation/ownership policies</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslalg/bslalg_bidirectionallink.h"><code>bslalg::BidirectionalLink</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslalg/bslalg_bidirectionallinklistutil.h"><code>BidirectionalLinkListUtil</code></a></td>
+  <td><a href="https://docs.rs/intrusive-collections/latest/intrusive_collections/linked_list/struct.LinkedList.html"><code>intrusive_collections::LinkedList</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmStack.hh"><code>ZmStack</code></a><br>➕ deletion inside stack for queued cancellation<br>➖ requires sentinel-null value semantics</td>
+  <td><a href="https://en.cppreference.com/cpp/container/stack"><code>std::stack</code></a> / <a href="https://en.cppreference.com/cpp/container/vector"><code>std::vector</code></a> composition</td>
+  <td><a href="https://github.com/boostorg/container/blob/master/include/boost/container/vector.hpp"><code>boost::container::vector</code></a> with stack operations</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/AtomicLinkedList.h"><code>folly::AtomicLinkedList</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_deque.h"><code>bdlcc::Deque</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/vec/struct.Vec.html"><code>Vec</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmQueue.hh"><code>ZmQueue</code></a><br>➕ FIFO/LIFO operations without shifting remaining items<br>➖ sentinel-null value contract</td>
+  <td><a href="https://en.cppreference.com/cpp/container/deque"><code>std::deque</code></a>, <a href="https://en.cppreference.com/cpp/container/queue"><code>std::queue</code></a></td>
+  <td><a href="https://github.com/boostorg/circular_buffer/blob/master/include/boost/circular_buffer.hpp">Boost.CircularBuffer</a> / <a href="https://www.boost.org/doc/libs/latest/doc/html/container.html">Container</a> deque</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/MPMCQueue.h"><code>folly::MPMCQueue</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_deque.h"><code>bdlcc::Deque</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/collections/struct.VecDeque.html"><code>VecDeque</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRBTree.hh"><code>ZmRBTree</code></a><br>➕ intrusive nodes and configurable locking/ownership</td>
+  <td><a href="https://en.cppreference.com/cpp/container/map"><code>std::map</code></a>, <a href="https://en.cppreference.com/cpp/container/set"><code>std::set</code></a>, multi variants</td>
+  <td><a href="https://github.com/boostorg/intrusive/blob/master/include/boost/intrusive/rbtree.hpp"><code>boost::intrusive::rbtree</code></a> / set</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/ConcurrentSkipList.h"><code>folly::ConcurrentSkipList</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslalg/bslalg_rbtreenode.h"><code>bslalg::RbTreeNode</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslalg/bslalg_rbtreeutil.h"><code>RbTreeUtil</code></a></td>
+  <td><a href="https://docs.rs/intrusive-collections/latest/intrusive_collections/rbtree/struct.RBTree.html"><code>intrusive_collections::RBTree</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmLHash.hh"><code>ZmLHash</code></a><br>➕ by-value linear probing with Z policies</td>
+  <td><a href="https://en.cppreference.com/cpp/container/unordered_map"><code>std::unordered_map</code></a> / <a href="https://en.cppreference.com/cpp/container/unordered_set"><code>std::unordered_set</code></a><br>➖ standard node-oriented contracts differ</td>
+  <td><a href="https://github.com/boostorg/unordered/blob/master/include/boost/unordered/unordered_flat_map.hpp"><code>boost::unordered_flat_map</code></a> / <a href="https://github.com/boostorg/unordered/blob/master/include/boost/unordered/unordered_flat_set.hpp"><code>unordered_flat_set</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/container/F14Map.h"><code>folly::F14ValueMap / F14FastMap</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlc/bdlc_flathashmap.h"><code>bdlc::FlatHashMap</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlc/bdlc_flathashset.h"><code>FlatHashSet</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/collections/struct.HashMap.html"><code>HashMap</code></a>, <a href="https://docs.rs/hashbrown/latest/hashbrown/"><code>hashbrown</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmHash.hh"><code>ZmHash</code></a><br>➕ intrusive chaining, lock striping and named tuning</td>
+  <td><a href="https://en.cppreference.com/cpp/container/unordered_map"><code>std::unordered_map</code></a> / <a href="https://en.cppreference.com/cpp/container/unordered_set"><code>std::unordered_set</code></a><br>➖ caller supplies synchronization</td>
+  <td><a href="https://github.com/boostorg/intrusive/blob/master/include/boost/intrusive/unordered_set.hpp"><code>boost::intrusive::unordered_set</code></a>; partial: <a href="https://www.boost.org/doc/libs/latest/libs/unordered/doc/html/unordered.html">Boost.Unordered</a> concurrent containers</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/concurrency/ConcurrentHashMap.h"><code>folly::ConcurrentHashMap</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_stripedunorderedmap.h"><code>bdlcc::StripedUnorderedMap</code></a></td>
+  <td>Partial: <a href="https://docs.rs/dashmap/latest/dashmap/"><code>dashmap</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmHashMgr.hh"><code>ZmHashMgr</code></a><br>➕ named sizing, striping and telemetry</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/unordered/doc/html/unordered.html">Boost.Unordered</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>None: <a href="https://doc.rust-lang.org/std/collections/struct.HashMap.html"><code>HashMap</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPolyHash.hh"><code>ZmPolyHash</code></a><br>➕ reflected multiple intrusive hash indices in one allocation</td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html">Boost.MultiIndex</a><br>➕ also supports ordered, sequenced and other index kinds</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/multi_index_map/latest/multi_index_map/"><code>multi_index_map</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCacheStats.hh"><code>ZmCacheStats</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/accumulators.html">Boost.Accumulators</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/moka/latest/moka/sync/struct.Cache.html"><code>moka::Cache</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmCache.hh"><code>ZmCache</code></a><br>➕ integrated hash lookup and LRU eviction</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/list"><code>std::list</code></a>, <a href="https://en.cppreference.com/cpp/container/unordered_map"><code>std::unordered_map</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html">Boost.MultiIndex</a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/container/EvictingCacheMap.h"><code>folly::EvictingCacheMap</code></a><br>➖ different locking/node/heap policy</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_cache.h"><code>bdlcc::Cache</code></a></td>
+  <td><a href="https://docs.rs/lru/latest/lru/struct.LruCache.html"><code>LruCache</code></a>; hash lookup with LRU eviction, non-intrusive</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPolyCache.hh"><code>ZmPolyCache</code></a><br>➕ reflected multiple keys with LRU eviction</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html">Boost.MultiIndex</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/container/EvictingCacheMap.h"><code>folly::EvictingCacheMap</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_cache.h"><code>bdlcc::Cache</code></a></td>
+  <td>Partial: <a href="https://docs.rs/multi_index_map/latest/multi_index_map/"><code>multi_index_map</code></a>, <a href="https://docs.rs/lru/latest/lru/"><code>lru</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPQueue.hh"><code>ZmPQueue</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPQueue.hh"><code>ZmPQRx</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmPQueue.hh"><code>ZmPQTx</code></a><br>➕ deterministic skip-list sequence reassembly; gaps and overlaps</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/map"><code>std::map</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/icl/blob/master/include/boost/icl/interval_set.hpp">Boost.ICL</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/ConcurrentSkipList.h"><code>folly::ConcurrentSkipList</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_skiplist.h"><code>bdlcc::SkipList</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/collections/struct.BTreeMap.html"><code>BTreeMap</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## ZmRing — inter-thread communication
 
@@ -777,32 +3554,149 @@ Relevant counterparts: [Boost.Container](https://www.boost.org/doc/libs/latest/d
 dispatch. Folly provides related fixed-record ring facilities: its FIFO
 `ProducerConsumerQueue` and cursor-based overwrite-history `LockFreeRingBuffer`.
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZmRingMirror`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRingMirror.hh)<br>➕ double-mapped storage simplifies wraparound records | N/A | Partial: [Boost.Interprocess](https://www.boost.org/doc/libs/latest/doc/html/interprocess.html) mapping primitives<br>➖ mirror arrangement is application work | N/A | N/A | [`slice-deque`](https://docs.rs/slice-deque/latest/slice_deque/) mirrored-memory deque; platform support and record model differ |
-| [`ZmRing`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRing.hh)<br>➕ fixed/variable records, producer policies and broadcast readers | N/A; custom bounded queue | Partial: [Boost.Lockfree](https://www.boost.org/doc/libs/latest/doc/html/lockfree.html) queues<br>➖ different record/broadcast contracts | Partial: [`folly::ProducerConsumerQueue`](https://github.com/facebook/folly/blob/main/folly/ProducerConsumerQueue.h) (SPSC FIFO ring); [`folly::LockFreeRingBuffer`](https://github.com/facebook/folly/blob/main/folly/concurrency/container/LockFreeRingBuffer.h) (concurrent cursor-based overwrite ring) | Partial: [`bdlcc::SingleProducerSingleConsumerBoundedQueue`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_singleproducersingleconsumerboundedqueue.h) (typed SPSC communication) | Partial: [`crossbeam-channel`](https://docs.rs/crossbeam-channel/latest/crossbeam_channel/) / [`ringbuf`](https://docs.rs/ringbuf/latest/ringbuf/) / [`broadcast`](https://docs.rs/tokio/latest/tokio/sync/broadcast/index.html); fixed/variable-record broadcast contract differs |
-| [`ZmRingFn`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRingFn.hh)<br>➕ captured callable payloads stored in variable-record rings | Partial: callable wrapper queued in a container | Partial: [Boost.Function](https://www.boost.org/doc/libs/latest/doc/html/function.html) + [Lockfree](https://www.boost.org/doc/libs/latest/doc/html/lockfree.html) queue composition | Partial: [`folly::Function with a Folly queue`](https://github.com/facebook/folly/blob/main/folly/Function.h) (callable queueing) | Partial: [`bdlcc::BoundedQueue`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_boundedqueue.h)`<`[`bsl::function`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_functional.h)`<...>>` (callable queueing) | Composition: [`crossbeam-channel`](https://docs.rs/crossbeam-channel/latest/crossbeam_channel/) carrying [`Box<dyn FnOnce() + Send>`](https://doc.rust-lang.org/std/boxed/struct.Box.html); captures are not stored inline in a variable-record ring |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRingMirror.hh"><code>ZmRingMirror</code></a><br>➕ double-mapped storage simplifies wraparound records</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/interprocess.html">Boost.Interprocess</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/slice-deque/latest/slice_deque/"><code>slice-deque</code></a> mirrored-memory deque; platform support and record model differ</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRing.hh"><code>ZmRing</code></a><br>➕ fixed/variable records, producer policies and broadcast readers</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/lockfree.html">Boost.Lockfree</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/ProducerConsumerQueue.h"><code>folly::ProducerConsumerQueue</code></a>, <a href="https://github.com/facebook/folly/blob/main/folly/concurrency/container/LockFreeRingBuffer.h"><code>folly::LockFreeRingBuffer</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_singleproducersingleconsumerboundedqueue.h"><code>bdlcc::SingleProducerSingleConsumerBoundedQueue</code></a></td>
+  <td>Partial: <a href="https://docs.rs/crossbeam-channel/latest/crossbeam_channel/"><code>crossbeam-channel</code></a>, <a href="https://docs.rs/ringbuf/latest/ringbuf/"><code>ringbuf</code></a>, <a href="https://docs.rs/tokio/latest/tokio/sync/broadcast/index.html"><code>broadcast</code></a> (different record/broadcast models)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmRingFn.hh"><code>ZmRingFn</code></a><br>➕ captured callable payloads stored in variable-record rings</td>
+  <td>Partial: callable wrapper queued in a container</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/function.html">Boost.Function</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/lockfree.html">Lockfree</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Function.h"><code>folly::Function with a Folly queue</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_boundedqueue.h"><code>bdlcc::BoundedQueue</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_functional.h"><code>bsl::function</code></a></td>
+  <td>Partial: <a href="https://docs.rs/crossbeam-channel/latest/crossbeam_channel/"><code>crossbeam-channel</code></a>, <a href="https://doc.rust-lang.org/std/boxed/struct.Box.html"><code>Box&lt;dyn FnOnce() + Send&gt;</code></a> (boxed captures)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Topology and threads
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZmBitmap`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmBitmap.hh)<br>➕ hwloc CPU/resource bitmap operations | Partial: [`std::vector`](https://en.cppreference.com/cpp/container/vector)`<bool>`<br>➖ no CPU-set semantics | [`boost::dynamic_bitset`](https://github.com/boostorg/dynamic_bitset/blob/master/include/boost/dynamic_bitset.hpp)<br>➖ no topology integration | N/A | Partial: [`bdlc::BitArray`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlc/bdlc_bitarray.h)<br>➖ no hwloc CPU-set/topology integration | [`hwlocality`](https://docs.rs/hwlocality/latest/hwlocality/) CPU/node bitmap sets |
-| [`ZmTopology`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmTopology.hh)<br>➕ hwloc CPU/NUMA discovery and binding | Partial: [`std::thread::hardware_concurrency`](https://en.cppreference.com/cpp/thread/thread/hardware_concurrency)<br>➖ only a concurrency hint | N/A; platform/hwloc integration required | Partial: [`folly::CacheLocality / AccessSpreader`](https://github.com/facebook/folly/blob/main/folly/concurrency/CacheLocality.h)<br>➖ not the full hwloc topology/binding surface | N/A | [`hwlocality`](https://docs.rs/hwlocality/latest/hwlocality/) topology, CPU binding and NUMA facilities |
-| [`ZmThread`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmThread.hh) / [`ZmThreadParams`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmThread.hh)<br>➕ named affinity, stack, priority and partition configuration | [`std::thread`](https://en.cppreference.com/cpp/thread/thread), [`std::jthread`](https://en.cppreference.com/cpp/thread/jthread)<br>➕ [`jthread`](https://en.cppreference.com/cpp/thread/jthread) joins automatically and supplies stop tokens<br>➖ native tuning needs platform code | [`boost::thread`](https://github.com/boostorg/thread/blob/master/include/boost/thread/thread.hpp) / thread attributes | Partial: [`folly::NamedThreadFactory / InitThreadFactory`](https://github.com/facebook/folly/blob/main/folly/executors/thread_factory/NamedThreadFactory.h)<br>➖ full stack/priority/partition setup needs composition | Partial: [`bslmt::ThreadUtil`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_threadutil.h)`  +  `[`ThreadAttributes`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_threadattributes.h)<br>➖ no built-in hwloc partition/affinity policy | [`thread::Builder`](https://doc.rust-lang.org/std/thread/struct.Builder.html) + [`core_affinity`](https://docs.rs/core_affinity/latest/core_affinity/) / [`thread-priority`](https://docs.rs/thread-priority/latest/thread_priority/); no unified named partition policy |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmBitmap.hh"><code>ZmBitmap</code></a><br>➕ hwloc CPU/resource bitmap operations</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/vector"><code>std::vector</code></a></td>
+  <td><a href="https://github.com/boostorg/dynamic_bitset/blob/master/include/boost/dynamic_bitset.hpp"><code>boost::dynamic_bitset</code></a><br>➖ no topology integration</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlc/bdlc_bitarray.h"><code>bdlc::BitArray</code></a></td>
+  <td><a href="https://docs.rs/hwlocality/latest/hwlocality/"><code>hwlocality</code></a> CPU/node bitmap sets</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmTopology.hh"><code>ZmTopology</code></a><br>➕ hwloc CPU/NUMA discovery and binding</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/thread/thread/hardware_concurrency"><code>std::thread::hardware_concurrency</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/concurrency/CacheLocality.h"><code>folly::CacheLocality / AccessSpreader</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/hwlocality/latest/hwlocality/"><code>hwlocality</code></a> topology, CPU binding and NUMA facilities</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmThread.hh"><code>ZmThread</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmThread.hh"><code>ZmThreadParams</code></a><br>➕ named affinity, stack, priority and partition configuration</td>
+  <td><a href="https://en.cppreference.com/cpp/thread/thread"><code>std::thread</code></a>, <a href="https://en.cppreference.com/cpp/thread/jthread"><code>std::jthread</code></a><br>➕ <a href="https://en.cppreference.com/cpp/thread/jthread"><code>jthread</code></a> joins automatically and supplies stop tokens<br>➖ native tuning needs platform code</td>
+  <td><a href="https://github.com/boostorg/thread/blob/master/include/boost/thread/thread.hpp"><code>boost::thread</code></a> / thread attributes</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/executors/thread_factory/NamedThreadFactory.h"><code>folly::NamedThreadFactory / InitThreadFactory</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_threadutil.h"><code>bslmt::ThreadUtil</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_threadattributes.h"><code>ThreadAttributes</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/thread/struct.Builder.html"><code>thread::Builder</code></a>, <a href="https://docs.rs/core_affinity/latest/core_affinity/"><code>core_affinity</code></a>, <a href="https://docs.rs/thread-priority/latest/thread_priority/"><code>thread-priority</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Scheduling and engine lifecycle
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZmScheduler`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmScheduler.hh) / [`ZmSchedParams`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmScheduler.hh)<br>➕ named destinations, dedicated threads, timers and ring dispatch<br>➕ affinity/partition/queue configuration | N/A in C++23; C++26 [`std::execution`](https://en.cppreference.com/cpp/execution) is a partial asynchronous-execution counterpart | [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) [`io_context`](https://github.com/boostorg/asio/blob/master/include/boost/asio/io_context.hpp), thread pool, timers and strands<br>➕ executor/completion-token ecosystem<br>➖ matching Z destination/affinity policies needs composition | Partial: [`folly::IOThreadPoolExecutor / CPUThreadPoolExecutor`](https://github.com/facebook/folly/blob/main/folly/executors/IOThreadPoolExecutor.h)<br>➕ EventBase/future/coroutine executor ecosystem<br>➖ matching named destinations, timers and affinity needs composition | Partial: [`bdlmt::MultiQueueThreadPool`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlmt/bdlmt_multiqueuethreadpool.h)`  +  `[`EventScheduler`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlmt/bdlmt_eventscheduler.h)<br>➕ serialized job queues and recurring/one-shot scheduling<br>➖ serialized queues are not bound to fixed worker threads | Partial: [`Tokio runtime builder`](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html) / [`Rayon ThreadPoolBuilder`](https://docs.rs/rayon/latest/rayon/struct.ThreadPoolBuilder.html); named shard/ring dispatch requires custom scheduling |
-| [`ZmEngine`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZmEngine.hh)<br>➕ reusable asynchronous start/stop lifecycle and pending operations | N/A | Partial: [Boost.Statechart](https://www.boost.org/doc/libs/latest/libs/statechart/doc/reference.html) / MSM plus [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) | N/A | Partial: [`bdlmt::ThreadPool`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlmt/bdlmt_threadpool.h)` (worker-`[`pool`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlma/bdlma_pool.h)` lifecycle only)` | Partial: [`TaskTracker`](https://docs.rs/tokio-util/latest/tokio_util/task/struct.TaskTracker.html) + [`CancellationToken`](https://docs.rs/tokio-util/latest/tokio_util/sync/struct.CancellationToken.html); restartable engine state machine is custom |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmScheduler.hh"><code>ZmScheduler</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmScheduler.hh"><code>ZmSchedParams</code></a><br>➕ named destinations, dedicated threads, timers and ring dispatch<br>➕ affinity/partition/queue configuration</td>
+  <td>None: <a href="https://en.cppreference.com/cpp/execution"><code>std::execution</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a> <a href="https://github.com/boostorg/asio/blob/master/include/boost/asio/io_context.hpp"><code>io_context</code></a>, thread pool, timers and strands<br>➕ executor/completion-token ecosystem<br>➖ matching Z destination/affinity policies needs composition</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/executors/IOThreadPoolExecutor.h"><code>folly::IOThreadPoolExecutor / CPUThreadPoolExecutor</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlmt/bdlmt_multiqueuethreadpool.h"><code>bdlmt::MultiQueueThreadPool</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlmt/bdlmt_eventscheduler.h"><code>EventScheduler</code></a></td>
+  <td>Partial: <a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html"><code>Tokio runtime builder</code></a>, <a href="https://docs.rs/rayon/latest/rayon/struct.ThreadPoolBuilder.html"><code>Rayon ThreadPoolBuilder</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZmEngine.hh"><code>ZmEngine</code></a><br>➕ reusable asynchronous start/stop lifecycle and pending operations</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/statechart/doc/reference.html">Boost.Statechart</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlmt/bdlmt_threadpool.h"><code>bdlmt::ThreadPool</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlma/bdlma_pool.h"><code>pool</code></a></td>
+  <td>Partial: <a href="https://docs.rs/tokio-util/latest/tokio_util/task/struct.TaskTracker.html"><code>TaskTracker</code></a>, <a href="https://docs.rs/tokio-util/latest/tokio_util/sync/struct.CancellationToken.html"><code>CancellationToken</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Runtime telemetry
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZtcHeap`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcHeap.hh), [`ZtcHash`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcHash.hh), [`ZtcQueue`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcQueue.hh), [`ZtcThread`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcThread.hh), [`ZtcTypes`](https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcTypes.hh) (in `zm`)<br>➕ reflected runtime telemetry vocabulary | N/A | Partial: application-defined [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) / [Serialization](https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html) records | Partial: [`balm::MetricsManager`](https://github.com/bloomberg/bde/blob/main/groups/bal/balm/balm_metricsmanager.h)`  /  `[`bdlm::MetricsRegistry`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlm/bdlm_metricsregistry.h) | Partial: [`metrics`](https://docs.rs/metrics/latest/metrics/) / [`tracing`](https://docs.rs/tracing/latest/tracing/); reflected Z heap/hash/queue/thread records have no shared Rust schema |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcHeap.hh"><code>ZtcHeap</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcHash.hh"><code>ZtcHash</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcQueue.hh"><code>ZtcQueue</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcThread.hh"><code>ZtcThread</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zm/src/ZtcTypes.hh"><code>ZtcTypes</code></a> (in <code>zm</code>)<br>➕ reflected runtime telemetry vocabulary</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Boost.Describe</a>, <a href="https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html">Serialization</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/balm/balm_metricsmanager.h"><code>balm::MetricsManager</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlm/bdlm_metricsregistry.h"><code>bdlm::MetricsRegistry</code></a></td>
+  <td>Partial: <a href="https://docs.rs/metrics/latest/metrics/"><code>metrics</code></a>, <a href="https://docs.rs/tracing/latest/tracing/"><code>tracing</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zt - Framework types
 
@@ -811,68 +3705,317 @@ dispatch. Folly provides related fixed-record ring facilities: its FIFO
 Sources: [public headers](https://github.com/kaldron-labs/z/blob/main/zt/src/), [module guide](../zt/README.md).
 Container comparisons use [Boost.Container](https://www.boost.org/doc/libs/latest/doc/html/container.html).
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZtPlatform`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtPlatform.hh) environment helpers | Partial: [`std::getenv`](https://en.cppreference.com/cpp/utility/program/getenv)<br>➖ no standard environment setter | [Boost.Process](https://github.com/boostorg/process/blob/master/include/boost/process.hpp) environment facilities | Partial: [`bsl::getenv`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_cstdlib.h)`  +  `[`bdls::OsUtil`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_osutil.h) | [`std::env`](https://doc.rust-lang.org/std/env/index.html) |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtPlatform.hh"><code>ZtPlatform</code></a> environment helpers</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/program/getenv"><code>std::getenv</code></a></td>
+  <td><a href="https://github.com/boostorg/process/blob/master/include/boost/process.hpp">Boost.Process</a> environment facilities</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_cstdlib.h"><code>bsl::getenv</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_osutil.h"><code>bdls::OsUtil</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/env/index.html"><code>std::env</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Boolean and enum vocabulary
 
-| Z facility | STL | Boost | Folly | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZtScanBool`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtScanBool.hh#L22)<br>➕ accepts case-insensitive yes/no, y/n, true/false and 1/0 | Partial: [`std::boolalpha`](https://en.cppreference.com/cpp/io/manip/boolalpha) input | Partial: [Boost.Convert](https://github.com/boostorg/convert/blob/master/include/boost/convert.hpp) / LexicalCast | Partial: [`folly::to<bool> / tryTo<bool>`](https://github.com/facebook/folly/blob/main/folly/Conv.h)<br>➖ accepted boolean spellings/error behavior differ | Partial: [`str::parse::<bool>`](https://doc.rust-lang.org/std/primitive.str.html#method.parse) accepts true/false only; broaden using [`eq_ignore_ascii_case`](https://doc.rust-lang.org/std/primitive.str.html#method.eq_ignore_ascii_case) |
-| [`ZtBytesFmt`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtBytesFmt.hh)<br>➕ shared binary-text encoding vocabulary | N/A | N/A; codec-specific options | N/A | Composition: [`hex`](https://docs.rs/hex/latest/hex/) / [`base64`](https://docs.rs/base64/latest/base64/) / [`data-encoding`](https://docs.rs/data-encoding/latest/data_encoding/); no shared encoding-format vocabulary |
-| [`ZtcRAGMap`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtcRAGMap.hh) (in `zt`)<br>➕ common telemetry vocabulary with generated name lookup, conversion and iteration | N/A; an enum declaration alone does not generate the name map | Partial: enum + [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) | N/A | Partial: [`strum`](https://docs.rs/strum/latest/strum/) enum names/parsing/iteration; application defines the telemetry vocabulary |
-| [`ZtEnum`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtEnum.hh#L106) macro family<br>➕ integer enum vocabulary with generated name/ordinal matching and iteration | N/A; native enums have no generated runtime name mapping in C++23 | [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) enum descriptors<br>➕ metadata can support other generic algorithms | N/A | [`strum`](https://docs.rs/strum/latest/strum/) (`EnumString`, `Display`, `EnumIter`) |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtScanBool.hh#L22"><code>ZtScanBool</code></a><br>➕ accepts case-insensitive yes/no, y/n, true/false and 1/0</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/io/manip/boolalpha"><code>std::boolalpha</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/convert/blob/master/include/boost/convert.hpp">Boost.Convert</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Conv.h"><code>folly::to&lt;bool&gt; / tryTo&lt;bool&gt;</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/primitive.str.html#method.parse"><code>str::parse::&lt;bool&gt;</code></a>, <a href="https://doc.rust-lang.org/std/primitive.str.html#method.eq_ignore_ascii_case"><code>eq_ignore_ascii_case</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtBytesFmt.hh"><code>ZtBytesFmt</code></a><br>➕ shared binary-text encoding vocabulary</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/hex/latest/hex/"><code>hex</code></a>, <a href="https://docs.rs/base64/latest/base64/"><code>base64</code></a>, <a href="https://docs.rs/data-encoding/latest/data_encoding/"><code>data-encoding</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtcRAGMap.hh"><code>ZtcRAGMap</code></a> (in <code>zt</code>)<br>➕ common telemetry vocabulary with generated name lookup, conversion and iteration</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Boost.Describe</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/strum/latest/strum/"><code>strum</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtEnum.hh#L106"><code>ZtEnum</code></a> macro family<br>➕ integer enum vocabulary with generated name/ordinal matching and iteration</td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Boost.Describe</a> enum descriptors<br>➕ metadata can support other generic algorithms</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/strum/latest/strum/"><code>strum</code></a> (<code>EnumString</code>, <code>Display</code>, <code>EnumIter</code>)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Text formatting
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZtQuote`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtQuote.hh)<br>➕ quoting and binary-text formatting adapters | Partial: [`std::quoted`](https://en.cppreference.com/cpp/io/manip/quoted) | Partial: [Boost.IO](https://www.boost.org/doc/libs/latest/libs/io/doc/html/io.html) quoted manipulators | N/A | Partial: [`bdlb::LiteralUtil::createQuotedEscapedCString`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_literalutil.h) | [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html) for Rust escaping; [`serde_json`](https://docs.rs/serde_json/latest/serde_json/) for JSON quoting, different policies |
-| [`ZtHexDump`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtHexDump.hh) | N/A; composed formatting loop | Partial: [Boost.Log](https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp) [`dump`](https://github.com/boostorg/json/blob/master/include/boost/json/serialize.hpp) manipulator | [`folly::hexDump`](https://github.com/facebook/folly/blob/main/folly/String.h) | [`bdlb::Print::hexDump`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_print.h) | Partial: [`LowerHex`](https://doc.rust-lang.org/std/fmt/trait.LowerHex.html) on custom output; [`pretty-hex`](https://docs.rs/pretty-hex/latest/pretty_hex/) for complete hex dumps |
-| [`ZtFmt`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtFmt.hh)<br>➕ reflected-field printing/scanning policies | Partial: [`std::format`](https://en.cppreference.com/cpp/utility/format/format), [`std::from_chars`](https://en.cppreference.com/cpp/utility/from_chars) | Partial: [Boost.Format](https://www.boost.org/doc/libs/latest/libs/format/doc/format.html) / [Convert](https://github.com/boostorg/convert/blob/master/include/boost/convert.hpp) | N/A | Partial: [`bsl::format`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_format.h) | Partial: [`Display`](https://doc.rust-lang.org/std/fmt/trait.Display.html) / [`serde`](https://docs.rs/serde/latest/serde/) derives; no common field-level print/scan metadata |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtQuote.hh"><code>ZtQuote</code></a><br>➕ quoting and binary-text formatting adapters</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/io/manip/quoted"><code>std::quoted</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/io/doc/html/io.html">Boost.IO</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_literalutil.h"><code>bdlb::LiteralUtil::createQuotedEscapedCString</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/fmt/trait.Debug.html"><code>Debug</code></a>, <a href="https://docs.rs/serde_json/latest/serde_json/"><code>serde_json</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtHexDump.hh"><code>ZtHexDump</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp">Boost.Log</a>, <a href="https://github.com/boostorg/json/blob/master/include/boost/json/serialize.hpp"><code>dump</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/String.h"><code>folly::hexDump</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_print.h"><code>bdlb::Print::hexDump</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/fmt/trait.LowerHex.html"><code>LowerHex</code></a>, <a href="https://docs.rs/pretty-hex/latest/pretty_hex/"><code>pretty-hex</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtFmt.hh"><code>ZtFmt</code></a><br>➕ reflected-field printing/scanning policies</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/format/format"><code>std::format</code></a>, <a href="https://en.cppreference.com/cpp/utility/from_chars"><code>std::from_chars</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/format/doc/format.html">Boost.Format</a>, <a href="https://github.com/boostorg/convert/blob/master/include/boost/convert.hpp">Convert</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_format.h"><code>bsl::format</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/fmt/trait.Display.html"><code>Display</code></a>, <a href="https://docs.rs/serde/latest/serde/"><code>serde</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Character case and encoding conversion
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZtCase`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtCase.hh) | Partial: [`<cctype>`](https://en.cppreference.com/cpp/header/cctype), [`<cwctype>`](https://en.cppreference.com/cpp/header/cwctype), locale facets | [Boost.StringAlgo](https://www.boost.org/doc/libs/latest/doc/html/string_algo/reference.html) / [Locale](https://www.boost.org/doc/libs/latest/libs/locale/doc/html/index.html) case conversion | Partial: [`folly::toLowerAscii / toUpperAscii`](https://github.com/facebook/folly/blob/main/folly/String.h)<br>➖ ASCII transformations rather than general locale/encoding handling | Partial: [`bdlb::String::toLower`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_string.h)` / toUpper`<br>➖ case folding only; no snake_case/camelCase conversion | [`str::to_lowercase`](https://doc.rust-lang.org/std/primitive.str.html#method.to_lowercase) / [`to_uppercase`](https://doc.rust-lang.org/std/primitive.str.html#method.to_uppercase); ASCII in-place methods also available |
-| [`ZtIconv`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtIconv.hh)<br>➕ iconv conversions into adapted output buffers | Partial: legacy locale conversion facilities | [Boost.Locale](https://www.boost.org/doc/libs/latest/libs/locale/doc/html/index.html) encoding conversion | N/A | Partial: [`bdlde::CharConvertUtf16`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_charconvertutf16.h)`  /  `[`CharConvertUtf32`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_charconvertutf32.h)<br>➖ UTF conversion only; no arbitrary iconv encoding pairs | [`encoding_rs`](https://docs.rs/encoding_rs/latest/encoding_rs/) (buffer-oriented encoding conversion); [`iconv`](https://docs.rs/iconv/latest/iconv/) for native iconv bindings |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtCase.hh"><code>ZtCase</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/header/cctype"><code>&lt;cctype&gt;</code></a>, <a href="https://en.cppreference.com/cpp/header/cwctype"><code>&lt;cwctype&gt;</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/string_algo/reference.html">Boost.StringAlgo</a> / <a href="https://www.boost.org/doc/libs/latest/libs/locale/doc/html/index.html">Locale</a> case conversion</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/String.h"><code>folly::toLowerAscii / toUpperAscii</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_string.h"><code>bdlb::String::toLower</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/primitive.str.html#method.to_lowercase"><code>str::to_lowercase</code></a> / <a href="https://doc.rust-lang.org/std/primitive.str.html#method.to_uppercase"><code>to_uppercase</code></a>; ASCII in-place methods also available</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtIconv.hh"><code>ZtIconv</code></a><br>➕ iconv conversions into adapted output buffers</td>
+  <td>Partial: legacy locale conversion facilities</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/locale/doc/html/index.html">Boost.Locale</a> encoding conversion</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_charconvertutf16.h"><code>bdlde::CharConvertUtf16</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_charconvertutf32.h"><code>CharConvertUtf32</code></a></td>
+  <td><a href="https://docs.rs/encoding_rs/latest/encoding_rs/"><code>encoding_rs</code></a> (buffer-oriented encoding conversion); <a href="https://docs.rs/iconv/latest/iconv/"><code>iconv</code></a> for native iconv bindings</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Owning arrays, strings and scratch buffers
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZtArray`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh)<br>➕ owning or shadowing storage and direct capacity control<br>➖ ownership mode and initialization require care | [`std::vector`](https://en.cppreference.com/cpp/container/vector)<br>➕ uniform owning semantics and standard iterators | [`boost::container::vector`](https://github.com/boostorg/container/blob/master/include/boost/container/vector.hpp) | [`folly::fbvector`](https://github.com/facebook/folly/blob/main/folly/container/FBVector.h)<br>➖ owning storage; no Z shadowing mode | [`bsl::vector`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_vector.h)<br>➕ allocator propagation<br>➖ owning container; no non-owning shadow mode | [`Vec<T>`](https://doc.rust-lang.org/std/vec/struct.Vec.html) / [`Cow<[T]>`](https://doc.rust-lang.org/std/borrow/enum.Cow.html); owned and borrowed modes are explicit |
-| [`ZtString`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtString.hh) / [`ZtWString`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtString.hh)<br>➕ inline storage, named heaps and stream-style appending | [`std::string`](https://en.cppreference.com/cpp/string/basic_string), [`std::wstring`](https://en.cppreference.com/cpp/string/basic_string)<br>➕ standard string/range integration | [`boost::container::basic_string`](https://github.com/boostorg/container/blob/master/include/boost/container/string.hpp) | Partial: [`folly::fbstring`](https://github.com/facebook/folly/blob/main/folly/FBString.h)<br>➖ different allocator/shadowing and wide-string interface | [`bsl::basic_string`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_string.h)<br>➕ allocator-aware strings<br>➖ owning container; no non-owning shadow mode | [`String`](https://doc.rust-lang.org/std/string/struct.String.html); [`compact_str`](https://docs.rs/compact_str/latest/compact_str/) for inline strings / [`widestring`](https://docs.rs/widestring/latest/widestring/) for wide strings; named heap policy differs |
-| [`ZtBuiltin`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtBuiltin.hh)<br>➕ adds an initial inline buffer to array storage | N/A; [`std::inplace_vector`](https://en.cppreference.com/cpp/container/inplace_vector) (C++26) cannot spill to heap | [`boost::container::small_vector`](https://github.com/boostorg/container/blob/master/include/boost/container/small_vector.hpp) | [`folly::small_vector`](https://github.com/facebook/folly/blob/main/folly/small_vector.h) | Partial: [`bdlma::LocalBufferedObject`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlma/bdlma_localbufferedobject.h)` with a BSL container` | [`SmallVec`](https://docs.rs/smallvec/latest/smallvec/struct.SmallVec.html) |
-| [`ZtScratch`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtScratch.hh#L83)<br>➕ [ZtArray](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh)/[ZtString](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtString.hh) operations over runtime stack backing with heap fallback and cleanup | Partial: [`std::vector`](https://en.cppreference.com/cpp/container/vector)<br>➖ no automatic stack-backed allocation path | Partial: [`boost::container::small_vector`](https://github.com/boostorg/container/blob/master/include/boost/container/small_vector.hpp)<br>➖ inline capacity is compile-time fixed | Partial: [`folly::small_vector`](https://github.com/facebook/folly/blob/main/folly/small_vector.h)<br>➖ fixed inline size rather than stack-availability-based selection | Partial: [`bdlma::LocalSequentialAllocator`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlma/bdlma_localsequentialallocator.h)` + BSL containers`<br>➖ local buffer capacity is fixed; no runtime available-stack check | Partial: [`smallvec`](https://docs.rs/smallvec/latest/smallvec/) / [`bumpalo`](https://docs.rs/bumpalo/latest/bumpalo/); no standard dynamically sized stack-backed array/string with automatic fallback |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh"><code>ZtArray</code></a><br>➕ owning or shadowing storage and direct capacity control<br>➖ ownership mode and initialization require care</td>
+  <td><a href="https://en.cppreference.com/cpp/container/vector"><code>std::vector</code></a><br>➕ uniform owning semantics and standard iterators</td>
+  <td><a href="https://github.com/boostorg/container/blob/master/include/boost/container/vector.hpp"><code>boost::container::vector</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/container/FBVector.h"><code>folly::fbvector</code></a><br>➖ owning storage; no Z shadowing mode</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_vector.h"><code>bsl::vector</code></a><br>➕ allocator propagation<br>➖ owning container; no non-owning shadow mode</td>
+  <td><a href="https://doc.rust-lang.org/std/vec/struct.Vec.html"><code>Vec&lt;T&gt;</code></a> / <a href="https://doc.rust-lang.org/std/borrow/enum.Cow.html"><code>Cow&lt;[T]&gt;</code></a>; owned and borrowed modes are explicit</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtString.hh"><code>ZtString</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtString.hh"><code>ZtWString</code></a><br>➕ inline storage, named heaps and stream-style appending</td>
+  <td><a href="https://en.cppreference.com/cpp/string/basic_string"><code>std::string</code></a>, <a href="https://en.cppreference.com/cpp/string/basic_string"><code>std::wstring</code></a><br>➕ standard string/range integration</td>
+  <td><a href="https://github.com/boostorg/container/blob/master/include/boost/container/string.hpp"><code>boost::container::basic_string</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/FBString.h"><code>folly::fbstring</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_string.h"><code>bsl::basic_string</code></a><br>➕ allocator-aware strings<br>➖ owning container; no non-owning shadow mode</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/string/struct.String.html"><code>String</code></a>, <a href="https://docs.rs/compact_str/latest/compact_str/"><code>compact_str</code></a>, <a href="https://docs.rs/widestring/latest/widestring/"><code>widestring</code></a> (different heap policy)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtBuiltin.hh"><code>ZtBuiltin</code></a><br>➕ adds an initial inline buffer to array storage</td>
+  <td>None: <a href="https://en.cppreference.com/cpp/container/inplace_vector"><code>std::inplace_vector</code></a></td>
+  <td><a href="https://github.com/boostorg/container/blob/master/include/boost/container/small_vector.hpp"><code>boost::container::small_vector</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/small_vector.h"><code>folly::small_vector</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlma/bdlma_localbufferedobject.h"><code>bdlma::LocalBufferedObject</code></a></td>
+  <td><a href="https://docs.rs/smallvec/latest/smallvec/struct.SmallVec.html"><code>SmallVec</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtScratch.hh#L83"><code>ZtScratch</code></a><br>➕ <a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtArray.hh">ZtArray</a>/<a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtString.hh">ZtString</a> operations over runtime stack backing with heap fallback and cleanup</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/vector"><code>std::vector</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/container/blob/master/include/boost/container/small_vector.hpp"><code>boost::container::small_vector</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/small_vector.h"><code>folly::small_vector</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlma/bdlma_localsequentialallocator.h"><code>bdlma::LocalSequentialAllocator</code></a></td>
+  <td>Partial: <a href="https://docs.rs/smallvec/latest/smallvec/"><code>smallvec</code></a>, <a href="https://docs.rs/bumpalo/latest/bumpalo/"><code>bumpalo</code></a> (no dynamic stack backing)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Bitmaps and sliding windows
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZtBitmap`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtBitmap.hh) | Partial: [`std::vector`](https://en.cppreference.com/cpp/container/vector)`<bool>` | [`boost::dynamic_bitset`](https://github.com/boostorg/dynamic_bitset/blob/master/include/boost/dynamic_bitset.hpp) | [`bdlc::BitArray`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlc/bdlc_bitarray.h) | [`BitVec`](https://docs.rs/bitvec/latest/bitvec/vec/struct.BitVec.html) |
-| [`ZtWindow`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtWindow.hh)<br>➕ indexed sliding window with assignment-driven extension | Partial: [`std::deque`](https://en.cppreference.com/cpp/container/deque) with sequence-index bookkeeping | Partial: [Boost.CircularBuffer](https://github.com/boostorg/circular_buffer/blob/master/include/boost/circular_buffer.hpp) | N/A | Partial: [`VecDeque`](https://doc.rust-lang.org/std/collections/struct.VecDeque.html); sequence-indexed automatic window extension requires a wrapper |
-| [`ZtBitWindow`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtBitWindow.hh)<br>➕ sliding packed values in selected bit widths | N/A; custom packed circular storage | Partial: [Boost.DynamicBitset](https://github.com/boostorg/dynamic_bitset/blob/master/include/boost/dynamic_bitset.hpp) + [CircularBuffer](https://github.com/boostorg/circular_buffer/blob/master/include/boost/circular_buffer.hpp) concepts | N/A | Composition: [`bitvec`](https://docs.rs/bitvec/latest/bitvec/) + custom sequence/window indexing; no direct packed sliding-window type |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtBitmap.hh"><code>ZtBitmap</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/vector"><code>std::vector</code></a></td>
+  <td><a href="https://github.com/boostorg/dynamic_bitset/blob/master/include/boost/dynamic_bitset.hpp"><code>boost::dynamic_bitset</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlc/bdlc_bitarray.h"><code>bdlc::BitArray</code></a></td>
+  <td><a href="https://docs.rs/bitvec/latest/bitvec/vec/struct.BitVec.html"><code>BitVec</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtWindow.hh"><code>ZtWindow</code></a><br>➕ indexed sliding window with assignment-driven extension</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/deque"><code>std::deque</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/circular_buffer/blob/master/include/boost/circular_buffer.hpp">Boost.CircularBuffer</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/collections/struct.VecDeque.html"><code>VecDeque</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtBitWindow.hh"><code>ZtBitWindow</code></a><br>➕ sliding packed values in selected bit widths</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/dynamic_bitset/blob/master/include/boost/dynamic_bitset.hpp">Boost.DynamicBitset</a>, <a href="https://github.com/boostorg/circular_buffer/blob/master/include/boost/circular_buffer.hpp">CircularBuffer</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/bitvec/latest/bitvec/"><code>bitvec</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Timezone conversion
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`Zt::tzOffset`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtTimeZone.hh#L37) ([`ZtTimeZone`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtTimeZone.hh)`.hh`)<br>➖ explicit zones temporarily change [`TZ`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtTimeZone.hh) under a global lock | [`std::chrono::time_zone`](https://en.cppreference.com/cpp/chrono/time_zone), [`zoned_time`](https://en.cppreference.com/cpp/chrono/zoned_time) (C++20)<br>➕ independent zone objects and timezone database | [Boost.DateTime](https://www.boost.org/doc/libs/latest/doc/html/date_time.html) timezone facilities | [`baltzo::TimeZoneUtil`](https://github.com/bloomberg/bde/blob/main/groups/bal/baltzo/baltzo_timezoneutil.h)<br>➕ explicit zone-info loading/cache and DST handling | [`chrono-tz`](https://docs.rs/chrono-tz/latest/chrono_tz/) / [`jiff`](https://docs.rs/jiff/latest/jiff/) timezone lookup without changing process `TZ` |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtTimeZone.hh#L37"><code>Zt::tzOffset</code></a> (<a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtTimeZone.hh"><code>ZtTimeZone</code></a><code>.hh</code>)<br>➖ explicit zones temporarily change <a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtTimeZone.hh"><code>TZ</code></a> under a global lock</td>
+  <td><a href="https://en.cppreference.com/cpp/chrono/time_zone"><code>std::chrono::time_zone</code></a>, <a href="https://en.cppreference.com/cpp/chrono/zoned_time"><code>zoned_time</code></a> (C++20)<br>➕ independent zone objects and timezone database</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/date_time.html">Boost.DateTime</a> timezone facilities</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bal/baltzo/baltzo_timezoneutil.h"><code>baltzo::TimeZoneUtil</code></a><br>➕ explicit zone-info loading/cache and DST handling</td>
+  <td><a href="https://docs.rs/chrono-tz/latest/chrono_tz/"><code>chrono-tz</code></a> / <a href="https://docs.rs/jiff/latest/jiff/"><code>jiff</code></a> timezone lookup without changing process <code>TZ</code></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Demangling
 
-| Z facility | STL | Boost | Folly | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZtDemangle`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtDemangle.hh)<br>➕ rewrites Z structural-string/template names for readability | N/A | Partial: [Boost.Core](https://github.com/boostorg/core/blob/master/include/boost/core/bit.hpp) demangle + custom postprocessing | Partial: [`folly::demangle`](https://github.com/facebook/folly/blob/main/folly/Demangle.h)<br>➖ no Z-specific template-name rewriting | [`cpp_demangle`](https://docs.rs/cpp_demangle/latest/cpp_demangle/) for C++ / [`rustc-demangle`](https://docs.rs/rustc-demangle/latest/rustc_demangle/) for Rust; no Z-specific template-name rewriting |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtDemangle.hh"><code>ZtDemangle</code></a><br>➕ rewrites Z structural-string/template names for readability</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/core/blob/master/include/boost/core/bit.hpp">Boost.Core</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Demangle.h"><code>folly::demangle</code></a></td>
+  <td>Partial: <a href="https://docs.rs/cpp_demangle/latest/cpp_demangle/"><code>cpp_demangle</code></a>, <a href="https://docs.rs/rustc-demangle/latest/rustc_demangle/"><code>rustc-demangle</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Regular expressions
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZtRegex`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtRegex.hh) / [`ZtREGEX`](https://github.com/kaldron-labs/z/blob/main/zt/src/ZtRegex.hh#L290)<br>➕ PCRE syntax, captures and substitutions<br>➖ external PCRE dependency | [`std::regex`](https://en.cppreference.com/cpp/regex/basic_regex)<br>➖ different syntax/feature contract | [Boost.Regex](https://www.boost.org/doc/libs/latest/libs/regex/doc/html/boost_regex/ref.html) | [`bdlpcre::RegEx`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlpcre/bdlpcre_regex.h)<br>➕ compiled PCRE expression wrapper | [`regex`](https://docs.rs/regex/latest/regex/); [`pcre2`](https://docs.rs/pcre2/latest/pcre2/) for PCRE2 syntax/features |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtRegex.hh"><code>ZtRegex</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zt/src/ZtRegex.hh#L290"><code>ZtREGEX</code></a><br>➕ PCRE syntax, captures and substitutions<br>➖ external PCRE dependency</td>
+  <td><a href="https://en.cppreference.com/cpp/regex/basic_regex"><code>std::regex</code></a><br>➖ different syntax/feature contract</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/regex/doc/html/boost_regex/ref.html">Boost.Regex</a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlpcre/bdlpcre_regex.h"><code>bdlpcre::RegEx</code></a><br>➕ compiled PCRE expression wrapper</td>
+  <td><a href="https://docs.rs/regex/latest/regex/"><code>regex</code></a>; <a href="https://docs.rs/pcre2/latest/pcre2/"><code>pcre2</code></a> for PCRE2 syntax/features</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Ze - Framework error handling
 
@@ -881,28 +4024,140 @@ Container comparisons use [Boost.Container](https://www.boost.org/doc/libs/lates
 Sources: [ZePlatform.hh](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh), [module guide](../ze/README.md).
 [Ze](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh) constructs diagnostics; the asynchronous sink runtime is [`ZiLog`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiLog.hh) below.
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZeOK`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh) | Default-constructed success [`std::error_code`](https://en.cppreference.com/cpp/error/error_code) | Default-constructed success [Boost.System](https://www.boost.org/doc/libs/latest/libs/system/doc/html/system.html) [`error_code`](https://github.com/boostorg/system/blob/master/include/boost/system/error_code.hpp) | N/A | N/A | [`Result::Ok(())`](https://doc.rust-lang.org/std/result/enum.Result.html) |
-| [`ZeError`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh)<br>➕ native OS-error wrapper and message formatting | [`std::error_code`](https://en.cppreference.com/cpp/error/error_code)<br>➕ extensible error categories and conditions | [Boost.System](https://www.boost.org/doc/libs/latest/libs/system/doc/html/system.html) [`error_code`](https://github.com/boostorg/system/blob/master/include/boost/system/error_code.hpp) | Partial: [`folly::makeSystemErrorExplicit`](https://github.com/facebook/folly/blob/main/folly/Exception.h)<br>➖ creates system_error rather than Z's numeric wrapper | Partial: [`bsl::error_code`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h)`  /  `[`system_error`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h) | [`io::Error`](https://doc.rust-lang.org/std/io/struct.Error.html) |
-| [`ZeLastError`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh)<br>➕ captures native last-error state at the call site | Partial: capture [`errno`](https://en.cppreference.com/cpp/error/errno) / native error into [`std::error_code`](https://en.cppreference.com/cpp/error/error_code) | Partial: native error capture + [Boost.System](https://www.boost.org/doc/libs/latest/libs/system/doc/html/system.html) | Partial: [`folly::makeSystemError`](https://github.com/facebook/folly/blob/main/folly/Exception.h)<br>➖ errno-based helper rather than Z's separate Windows OS/socket capture | Partial: [`bsl::error_code`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h)`  /  `[`system_error`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h) | [`io::Error::last_os_error`](https://doc.rust-lang.org/std/io/struct.Error.html#method.last_os_error); [`WinSock APIs`](https://docs.rs/windows-sys/latest/windows_sys/Win32/Networking/WinSock/index.html) for explicit Windows socket last-error handling |
-| [`ZeLastSockError`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh)<br>➕ distinguishes Windows socket errors from ordinary OS errors | N/A; native call + [`std::error_code`](https://en.cppreference.com/cpp/error/error_code) | Partial: [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) socket operation error reporting | N/A | Partial: [`bsl::error_code`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h)`  /  `[`system_error`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h) | [`io::Error::last_os_error`](https://doc.rust-lang.org/std/io/struct.Error.html#method.last_os_error); [`WinSock APIs`](https://docs.rs/windows-sys/latest/windows_sys/Win32/Networking/WinSock/index.html) for explicit Windows socket last-error handling |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh"><code>ZeOK</code></a></td>
+  <td>Default-constructed success <a href="https://en.cppreference.com/cpp/error/error_code"><code>std::error_code</code></a></td>
+  <td>Default-constructed success <a href="https://www.boost.org/doc/libs/latest/libs/system/doc/html/system.html">Boost.System</a> <a href="https://github.com/boostorg/system/blob/master/include/boost/system/error_code.hpp"><code>error_code</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/std/result/enum.Result.html"><code>Result::Ok(())</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh"><code>ZeError</code></a><br>➕ native OS-error wrapper and message formatting</td>
+  <td><a href="https://en.cppreference.com/cpp/error/error_code"><code>std::error_code</code></a><br>➕ extensible error categories and conditions</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/system/doc/html/system.html">Boost.System</a> <a href="https://github.com/boostorg/system/blob/master/include/boost/system/error_code.hpp"><code>error_code</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Exception.h"><code>folly::makeSystemErrorExplicit</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h"><code>bsl::error_code</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h"><code>system_error</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/io/struct.Error.html"><code>io::Error</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh"><code>ZeLastError</code></a><br>➕ captures native last-error state at the call site</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/error/errno"><code>errno</code></a>, <a href="https://en.cppreference.com/cpp/error/error_code"><code>std::error_code</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/system/doc/html/system.html">Boost.System</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Exception.h"><code>folly::makeSystemError</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h"><code>bsl::error_code</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h"><code>system_error</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/io/struct.Error.html#method.last_os_error"><code>io::Error::last_os_error</code></a>; <a href="https://docs.rs/windows-sys/latest/windows_sys/Win32/Networking/WinSock/index.html"><code>WinSock APIs</code></a> for explicit Windows socket last-error handling</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh"><code>ZeLastSockError</code></a><br>➕ distinguishes Windows socket errors from ordinary OS errors</td>
+  <td>None: <a href="https://en.cppreference.com/cpp/error/error_code"><code>std::error_code</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h"><code>bsl::error_code</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h"><code>system_error</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/io/struct.Error.html#method.last_os_error"><code>io::Error::last_os_error</code></a>; <a href="https://docs.rs/windows-sys/latest/windows_sys/Win32/Networking/WinSock/index.html"><code>WinSock APIs</code></a> for explicit Windows socket last-error handling</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Diagnostic metadata and events
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`Ze::Debug`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh) / [`Info`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh) / [`Warning`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh) / [`Error`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZeLib.hh) / [`Fatal`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh)<br>➕ shared severity vocabulary with generated name lookup and event/log integration | N/A; a plain enum alone does not provide the generated mapping or integration | [Boost.Log](https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp) [`trivial::severity_level`](https://github.com/boostorg/log/blob/master/include/boost/log/trivial.hpp) | [`folly::LogLevel`](https://github.com/facebook/folly/blob/main/folly/logging/LogLevel.h) | [`ball::Severity`](https://github.com/bloomberg/bde/blob/main/groups/bal/ball/ball_severity.h) | [`log::Level`](https://docs.rs/log/latest/log/enum.Level.html) / [`tracing::Level`](https://docs.rs/tracing/latest/tracing/struct.Level.html); no separate Fatal level |
-| [`ZeEventInfo`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh)<br>➕ timestamp, source, severity and component identity | Partial: [`std::source_location`](https://en.cppreference.com/cpp/utility/source_location) + custom event record | [Boost.Log](https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp) attributes / record metadata | Partial: [`folly::LogMessage metadata`](https://github.com/facebook/folly/blob/main/folly/logging/LogMessage.h) | [`ball::RecordAttributes`](https://github.com/bloomberg/bde/blob/main/groups/bal/ball/ball_recordattributes.h) | [`tracing::Metadata`](https://docs.rs/tracing/latest/tracing/struct.Metadata.html); timestamps are supplied by the subscriber |
-| [`ZeEvent`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh) / [`ZeAnyEvent`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh) / [`ZeMsgFn`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh)<br>➕ structured events with deferred or type-erased formatting | N/A; custom event type and callable | Partial: [Boost.Log](https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp) record and message attributes | Partial: [`folly::LogMessage`](https://github.com/facebook/folly/blob/main/folly/logging/LogMessage.h)<br>➖ different message ownership/formatting contract | Partial: [`ball::Record`](https://github.com/bloomberg/bde/blob/main/groups/bal/ball/ball_record.h) | [`tracing::Event`](https://docs.rs/tracing/latest/tracing/struct.Event.html) / [`log::Record`](https://docs.rs/log/latest/log/struct.Record.html) |
-| [`ZeEVENT`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh#L375) / [`ZeMkEvent`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh#L364)<br>➕ call-site metadata or explicit metadata construction | Partial: [`std::source_location::current`](https://en.cppreference.com/cpp/utility/source_location/current)`()` + custom factory | Partial: [Boost.Log](https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp) source macros and attributes | Partial: [`XLOG / XLOGF`](https://github.com/facebook/folly/blob/main/folly/logging/xlog.h)<br>➖ constructs and emits a log record, not a standalone [Ze](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh) event | Partial: [`BALL_LOG_*`](https://github.com/bloomberg/bde/blob/main/groups/bal/ball/ball_log.h) | [`tracing::event!`](https://docs.rs/tracing/latest/tracing/macro.event.html) / [`Location`](https://doc.rust-lang.org/std/panic/struct.Location.html) |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh"><code>Ze::Debug</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh"><code>Info</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh"><code>Warning</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZeLib.hh"><code>Error</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh"><code>Fatal</code></a><br>➕ shared severity vocabulary with generated name lookup and event/log integration</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp">Boost.Log</a> <a href="https://github.com/boostorg/log/blob/master/include/boost/log/trivial.hpp"><code>trivial::severity_level</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/logging/LogLevel.h"><code>folly::LogLevel</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bal/ball/ball_severity.h"><code>ball::Severity</code></a></td>
+  <td>Partial: <a href="https://docs.rs/log/latest/log/enum.Level.html"><code>log::Level</code></a>, <a href="https://docs.rs/tracing/latest/tracing/struct.Level.html"><code>tracing::Level</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh"><code>ZeEventInfo</code></a><br>➕ timestamp, source, severity and component identity</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/source_location"><code>std::source_location</code></a></td>
+  <td><a href="https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp">Boost.Log</a> attributes / record metadata</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/logging/LogMessage.h"><code>folly::LogMessage metadata</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bal/ball/ball_recordattributes.h"><code>ball::RecordAttributes</code></a></td>
+  <td><a href="https://docs.rs/tracing/latest/tracing/struct.Metadata.html"><code>tracing::Metadata</code></a>; timestamps are supplied by the subscriber</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh"><code>ZeEvent</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh"><code>ZeAnyEvent</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh"><code>ZeMsgFn</code></a><br>➕ structured events with deferred or type-erased formatting</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp">Boost.Log</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/logging/LogMessage.h"><code>folly::LogMessage</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/ball/ball_record.h"><code>ball::Record</code></a></td>
+  <td><a href="https://docs.rs/tracing/latest/tracing/struct.Event.html"><code>tracing::Event</code></a> / <a href="https://docs.rs/log/latest/log/struct.Record.html"><code>log::Record</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh#L375"><code>ZeEVENT</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh#L364"><code>ZeMkEvent</code></a><br>➕ call-site metadata or explicit metadata construction</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/source_location/current"><code>std::source_location::current</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp">Boost.Log</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/logging/xlog.h"><code>XLOG / XLOGF</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh">Ze</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/ball/ball_log.h"><code>BALL_LOG_*</code></a></td>
+  <td><a href="https://docs.rs/tracing/latest/tracing/macro.event.html"><code>tracing::event!</code></a> / <a href="https://doc.rust-lang.org/std/panic/struct.Location.html"><code>Location</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Exceptions
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZeException`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh)<br>➕ same diagnostic vocabulary as logging events<br>➖ not the [`std::exception::what`](https://en.cppreference.com/cpp/error/exception/what)`()` interface | [`std::exception`](https://en.cppreference.com/cpp/error/exception), [`std::system_error`](https://en.cppreference.com/cpp/error/system_error)<br>➕ standard catch and message interface | [Boost.Exception](https://www.boost.org/doc/libs/latest/libs/exception/doc/boost-exception.html)<br>➕ extensible attached diagnostic information | Partial: [`folly::exception_wrapper`](https://github.com/facebook/folly/blob/main/folly/ExceptionWrapper.h)<br>➖ type-erased existing exception, not a structured [Ze](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh) diagnostic event | Partial: [`bsl::system_error`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h) | [`Error`](https://doc.rust-lang.org/std/error/trait.Error.html) / [`thiserror`](https://docs.rs/thiserror/latest/thiserror/); [`Result`](https://doc.rust-lang.org/std/result/enum.Result.html) rather than C++ exceptions |
-| [`ZeEXCEPT`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh#L391) / [`ZeMkException`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh#L380) | Partial: construct exception with [`std::source_location`](https://en.cppreference.com/cpp/utility/source_location) metadata | Partial: [`BOOST_THROW_EXCEPTION`](https://github.com/boostorg/throw_exception/blob/master/include/boost/throw_exception.hpp) / [`boost::enable_error_info`](https://github.com/boostorg/exception/blob/master/include/boost/exception/enable_error_info.hpp)<br>➖ throw macro throws; [`ZeEXCEPT`](https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh#L391) only constructs | Partial: [`folly::makeSystemErrorExplicit`](https://github.com/facebook/folly/blob/main/folly/Exception.h)<br>➖ system-error construction, not arbitrary severity/component event construction | Partial: [`bsl::system_error`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h) | [`thiserror`](https://docs.rs/thiserror/latest/thiserror/) / [`anyhow`](https://docs.rs/anyhow/latest/anyhow/) for error construction and context; no throwing event macro |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh"><code>ZeException</code></a><br>➕ same diagnostic vocabulary as logging events<br>➖ not the <a href="https://en.cppreference.com/cpp/error/exception/what"><code>std::exception::what</code></a><code>()</code> interface</td>
+  <td><a href="https://en.cppreference.com/cpp/error/exception"><code>std::exception</code></a>, <a href="https://en.cppreference.com/cpp/error/system_error"><code>std::system_error</code></a><br>➕ standard catch and message interface</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/exception/doc/boost-exception.html">Boost.Exception</a><br>➕ extensible attached diagnostic information</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/ExceptionWrapper.h"><code>folly::exception_wrapper</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh">Ze</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h"><code>bsl::system_error</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/error/trait.Error.html"><code>Error</code></a>, <a href="https://docs.rs/thiserror/latest/thiserror/"><code>thiserror</code></a>, <a href="https://doc.rust-lang.org/std/result/enum.Result.html"><code>Result</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh#L391"><code>ZeEXCEPT</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh#L380"><code>ZeMkException</code></a></td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/source_location"><code>std::source_location</code></a></td>
+  <td>Partial: <a href="https://github.com/boostorg/throw_exception/blob/master/include/boost/throw_exception.hpp"><code>BOOST_THROW_EXCEPTION</code></a>, <a href="https://github.com/boostorg/exception/blob/master/include/boost/exception/enable_error_info.hpp"><code>boost::enable_error_info</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ze/src/ZePlatform.hh#L391"><code>ZeEXCEPT</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Exception.h"><code>folly::makeSystemErrorExplicit</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_system_error.h"><code>bsl::system_error</code></a></td>
+  <td>Partial: <a href="https://docs.rs/thiserror/latest/thiserror/"><code>thiserror</code></a>, <a href="https://docs.rs/anyhow/latest/anyhow/"><code>anyhow</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zf - Structured metadata and format adapters
 
@@ -914,46 +4169,207 @@ Closest reflection counterparts: [Hana](https://www.boost.org/doc/libs/latest/li
 JSON counterpart: [Boost.JSON](https://www.boost.org/doc/libs/latest/libs/json/doc/html/index.html).
 Format parsers assembled with Spirit are **partial** equivalents, not supplied codecs.
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZfTree`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfTree.hh)<br>➕ owned typed configuration nodes and diagnostic paths | Partial: recursive [`std::variant`](https://en.cppreference.com/cpp/utility/variant) / containers | Partial: [Boost.PropertyTree](https://www.boost.org/doc/libs/latest/doc/html/property_tree.html)<br>➖ scalar typing and structural contracts differ | Partial: [`folly::dynamic`](https://github.com/facebook/folly/blob/main/folly/json/dynamic.h)<br>➖ JSON value model, not the shared Z configuration tree contract | Partial: [`bdld::Datum`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdld/bdld_datum.h)`  /  `[`ManagedDatum`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdld/bdld_manageddatum.h) | [`config`](https://docs.rs/config/latest/config/) / [`serde_json::Value`](https://docs.rs/serde_json/latest/serde_json/enum.Value.html); different configuration syntax/path diagnostics |
-| [`ZfTreeLoad`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfTreeLoad.hh)<br>➕ shared construction/load/update and validation policies | N/A | Partial: [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) + custom tree conversion | Partial: [`folly::DynamicParser / DynamicConverter`](https://github.com/facebook/folly/blob/main/folly/json/DynamicParser.h)<br>➖ typed conversion requires application bindings; no Z field/update policies | Partial: [`bdlat_SymbolicConverter`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlat/bdlat_symbolicconverter.h) | Partial: [`Serde deserialization`](https://docs.rs/serde/latest/serde/de/index.html) / [`config`](https://docs.rs/config/latest/config/); constructor/load/update semantics require custom policy |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfTree.hh"><code>ZfTree</code></a><br>➕ owned typed configuration nodes and diagnostic paths</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/utility/variant"><code>std::variant</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/property_tree.html">Boost.PropertyTree</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/json/dynamic.h"><code>folly::dynamic</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdld/bdld_datum.h"><code>bdld::Datum</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdld/bdld_manageddatum.h"><code>ManagedDatum</code></a></td>
+  <td>Partial: <a href="https://docs.rs/config/latest/config/"><code>config</code></a>, <a href="https://docs.rs/serde_json/latest/serde_json/enum.Value.html"><code>serde_json::Value</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfTreeLoad.hh"><code>ZfTreeLoad</code></a><br>➕ shared construction/load/update and validation policies</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Boost.Describe</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/json/DynamicParser.h"><code>folly::DynamicParser / DynamicConverter</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlat/bdlat_symbolicconverter.h"><code>bdlat_SymbolicConverter</code></a></td>
+  <td>Partial: <a href="https://docs.rs/serde/latest/serde/de/index.html"><code>Serde deserialization</code></a>, <a href="https://docs.rs/config/latest/config/"><code>config</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Structure reflection and serialization metadata
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZfStruct`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfStruct.hh#L3438)<br>➕ typed/runtime field metadata, facets and serialization properties in C++23<br>➕ constructor/load/update/key policies shared across formats<br>➖ substantial template/macro machinery | N/A in C++23; core C++23 has no matching reflection/serialization framework | Partial: [Boost.Hana](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html) / [Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) + [Serialization](https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html)<br>➕ [Hana](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html) supplies a broader heterogeneous metaprogramming library<br>➖ matching Z's format/facet/update policies requires additional code | Partial: [`bdlat`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlat/bdlat_typecategory.h)`  adaptation protocols +  `[`baljsn`](https://github.com/bloomberg/bde/blob/main/groups/bal/baljsn/baljsn_encoder.h)`/`[`balxml`](https://github.com/bloomberg/bde/blob/main/groups/bal/balxml/balxml_encoder.h)`/`[`balber`](https://github.com/bloomberg/bde/blob/main/groups/bal/balber/balber_berencoder.h)` codecs`<br>➕ shared model for sequence/choice/enum/array/nullable types | [`serde`](https://docs.rs/serde/latest/serde/) derives and attributes; [`schemars`](https://docs.rs/schemars/latest/schemars/) for schemas; no universal runtime field/facet/key reflection |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfStruct.hh#L3438"><code>ZfStruct</code></a><br>➕ typed/runtime field metadata, facets and serialization properties in C++23<br>➕ constructor/load/update/key policies shared across formats<br>➖ substantial template/macro machinery</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html">Boost.Hana</a>, <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Describe</a>, <a href="https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html">Serialization</a>, <a href="https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html">Hana</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlat/bdlat_typecategory.h"><code>bdlat</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/baljsn/baljsn_encoder.h"><code>baljsn</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/balxml/balxml_encoder.h"><code>balxml</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/balber/balber_berencoder.h"><code>balber</code></a></td>
+  <td>Partial: <a href="https://docs.rs/serde/latest/serde/"><code>serde</code></a>, <a href="https://docs.rs/schemars/latest/schemars/"><code>schemars</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Text and web formats
 
-| Z facility | STL | Boost | Folly | BDE / NTF | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZfCSV`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfCSV.hh)<br>➕ streaming rows with reflected header/column binding | N/A | Partial: [Boost.Tokenizer](https://www.boost.org/doc/libs/latest/libs/tokenizer/doc/tokenizer.htm) or [Spirit](https://github.com/boostorg/spirit/blob/master/include/boost/spirit.hpp)<br>➖ row construction, quoting and field binding require composition | N/A | N/A | [`csv`](https://docs.rs/csv/latest/csv/) with Serde record/header binding |
-| [`ZfURI`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfURI.hh)<br>➕ typed path/query/form binding and direct path loading | N/A | [Boost.URL](https://github.com/boostorg/url/blob/master/include/boost/url.hpp)<br>➕ URI parsing, components and normalization<br>➖ no matching reflected field/facet loader | Partial: [`folly::Uri`](https://github.com/facebook/folly/blob/main/folly/Uri.h)<br>➖ URI component model rather than reflected path/query/form binding | Partial: [`ntsa::Uri`](https://github.com/bloomberg/ntf-core/blob/main/groups/nts/ntsa/ntsa_uri.h) | [`serde_urlencoded`](https://docs.rs/serde_urlencoded/latest/serde_urlencoded/) for query/form binding; [`axum extractors`](https://docs.rs/axum/latest/axum/extract/index.html) for typed paths |
-| [`ZfJSON`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfJSON.hh)<br>➕ reflected load/save, fixed-field matching and in-place decoding<br>➖ borrowed text requires mutable input and retained backing | N/A | [Boost.JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp)<br>➕ general [JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp) values, streaming and type conversion<br>➖ different metadata/update contract | Partial: [`folly::parseJson / toJson + dynamic conversion`](https://github.com/facebook/folly/blob/main/folly/json/json.h)<br>➖ no Z reflected facets, constructor/update policy or fixed-field automaton | Partial: [`baljsn::Encoder`](https://github.com/bloomberg/bde/blob/main/groups/bal/baljsn/baljsn_encoder.h)`  /  `[`Decoder`](https://github.com/bloomberg/bde/blob/main/groups/bal/baljsn/baljsn_decoder.h)<br>➕ codecs over bdlat-adapted types | [`serde_json`](https://docs.rs/serde_json/latest/serde_json/); [`simd-json`](https://docs.rs/simd-json/latest/simd_json/) for in-place borrowed decoding |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE / NTF</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfCSV.hh"><code>ZfCSV</code></a><br>➕ streaming rows with reflected header/column binding</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/tokenizer/doc/tokenizer.htm">Boost.Tokenizer</a>, <a href="https://github.com/boostorg/spirit/blob/master/include/boost/spirit.hpp">Spirit</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/csv/latest/csv/"><code>csv</code></a> with Serde record/header binding</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfURI.hh"><code>ZfURI</code></a><br>➕ typed path/query/form binding and direct path loading</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/url/blob/master/include/boost/url.hpp">Boost.URL</a><br>➕ URI parsing, components and normalization<br>➖ no matching reflected field/facet loader</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Uri.h"><code>folly::Uri</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/nts/ntsa/ntsa_uri.h"><code>ntsa::Uri</code></a></td>
+  <td><a href="https://docs.rs/serde_urlencoded/latest/serde_urlencoded/"><code>serde_urlencoded</code></a> for query/form binding; <a href="https://docs.rs/axum/latest/axum/extract/index.html"><code>axum extractors</code></a> for typed paths</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfJSON.hh"><code>ZfJSON</code></a><br>➕ reflected load/save, fixed-field matching and in-place decoding<br>➖ borrowed text requires mutable input and retained backing</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">Boost.JSON</a><br>➕ general <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">JSON</a> values, streaming and type conversion<br>➖ different metadata/update contract</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/json/json.h"><code>folly::parseJson / toJson + dynamic conversion</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/baljsn/baljsn_encoder.h"><code>baljsn::Encoder</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/baljsn/baljsn_decoder.h"><code>Decoder</code></a></td>
+  <td><a href="https://docs.rs/serde_json/latest/serde_json/"><code>serde_json</code></a>; <a href="https://docs.rs/simd-json/latest/simd_json/"><code>simd-json</code></a> for in-place borrowed decoding</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Configuration formats
 
-| Z facility | STL | Boost | Rust |
-| --- | --- | --- | --- |
-| [`ZfCf`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfCf.hh)<br>➕ native configuration syntax, substitutions and typed updates | N/A | Partial: [Boost.ProgramOptions](https://www.boost.org/doc/libs/latest/doc/html/program_options.html) / [PropertyTree](https://www.boost.org/doc/libs/latest/doc/html/property_tree.html)<br>➖ different syntax and binding model | Partial: [`config`](https://docs.rs/config/latest/config/) layered sources and typed deserialization; no Z configuration-syntax compatibility |
-| [`ZfTOML`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfTOML.hh)<br>➕ owned typed tree, field binding, formatting and parser limits | N/A | N/A; [Boost.PropertyTree](https://www.boost.org/doc/libs/latest/doc/html/property_tree.html) has no built-in TOML parser | [`toml`](https://docs.rs/toml/latest/toml/) / [`toml_edit`](https://docs.rs/toml_edit/latest/toml_edit/) with Serde |
-| [`ZfYAML`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfYAML.hh)<br>➕ owned typed tree, field binding and bounded parsing<br>➖ restricted single-document subset; rejects tags and cyclic/shared graphs | N/A | N/A; [Boost.PropertyTree](https://www.boost.org/doc/libs/latest/doc/html/property_tree.html) has no built-in YAML parser | [`serde-saphyr`](https://docs.rs/serde-saphyr/latest/serde_saphyr/) with Serde and parser budgets; YAML profile/tree representation differs; [`serde_yaml`](https://docs.rs/serde_yaml/latest/serde_yaml/) is a legacy, unmaintained alternative |
+<div style="overflow-x: auto;">
+<table width="1100" style="width: 1100px; min-width: 1100px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfCf.hh"><code>ZfCf</code></a><br>➕ native configuration syntax, substitutions and typed updates</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/program_options.html">Boost.ProgramOptions</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/property_tree.html">PropertyTree</a></td>
+  <td>Partial: <a href="https://docs.rs/config/latest/config/"><code>config</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfTOML.hh"><code>ZfTOML</code></a><br>➕ owned typed tree, field binding, formatting and parser limits</td>
+  <td>N/A</td>
+  <td>None: <a href="https://www.boost.org/doc/libs/latest/doc/html/property_tree.html">Boost.PropertyTree</a></td>
+  <td><a href="https://docs.rs/toml/latest/toml/"><code>toml</code></a> / <a href="https://docs.rs/toml_edit/latest/toml_edit/"><code>toml_edit</code></a> with Serde</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfYAML.hh"><code>ZfYAML</code></a><br>➕ owned typed tree, field binding and bounded parsing<br>➖ restricted single-document subset; rejects tags and cyclic/shared graphs</td>
+  <td>N/A</td>
+  <td>None: <a href="https://www.boost.org/doc/libs/latest/doc/html/property_tree.html">Boost.PropertyTree</a></td>
+  <td>Partial: <a href="https://docs.rs/serde-saphyr/latest/serde_saphyr/"><code>serde-saphyr</code></a>, <a href="https://docs.rs/serde_yaml/latest/serde_yaml/"><code>serde_yaml</code></a> (serde_yaml unmaintained)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Command-line binding
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZfCLI`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfCLI.hh)<br>➕ metadata-bound options/positionals, command text and argv output | N/A | [Boost.ProgramOptions](https://www.boost.org/doc/libs/latest/doc/html/program_options.html)<br>➕ established option descriptions, parsing and notification<br>➖ reflected facets and reverse serialization need custom work | Partial: [`folly::NestedCommandLineApp`](https://github.com/facebook/folly/blob/main/folly/cli/NestedCommandLineApp.h)<br>➕ nested command structure<br>➖ no matching reflected argv/command reverse serialization | Partial: [`balcl::CommandLine`](https://github.com/bloomberg/bde/blob/main/groups/bal/balcl/balcl_commandline.h)<br>➕ typed option specifications and validation<br>➖ no argv/command-line serialization from the bound object | [`clap`](https://docs.rs/clap/latest/clap/) derive-based argument parsing; command/argv output needs separate policy |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfCLI.hh"><code>ZfCLI</code></a><br>➕ metadata-bound options/positionals, command text and argv output</td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/program_options.html">Boost.ProgramOptions</a><br>➕ established option descriptions, parsing and notification<br>➖ reflected facets and reverse serialization need custom work</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/cli/NestedCommandLineApp.h"><code>folly::NestedCommandLineApp</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/balcl/balcl_commandline.h"><code>balcl::CommandLine</code></a></td>
+  <td>Partial: <a href="https://docs.rs/clap/latest/clap/"><code>clap</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Binary wire formats
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZfCBOR`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfCBOR.hh)<br>➕ reflected binary object/array mapping | N/A | Partial: [Boost.JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp) CBOR example<br>➖ example-level codec, not matching reflected API | N/A | [`ciborium`](https://docs.rs/ciborium/latest/ciborium/) with Serde |
-| [`ZfASN1`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfASN1.hh)<br>➕ schema properties bind C++ fields to tags and wire encodings | N/A | N/A; [Spirit](https://github.com/boostorg/spirit/blob/master/include/boost/spirit.hpp)-based ASN.1 implementation would be custom work | Partial: [`balber::BerEncoder`](https://github.com/bloomberg/bde/blob/main/groups/bal/balber/balber_berencoder.h)`  /  `[`BerDecoder`](https://github.com/bloomberg/bde/blob/main/groups/bal/balber/balber_berdecoder.h) | [`rasn`](https://docs.rs/rasn/latest/rasn/) ASN.1 types/derive codecs |
-| [`ZfDBUS`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfDBUS.hh)<br>➕ reflected signatures, alignment and message-body serialization | N/A | N/A; no dedicated Boost D-Bus structural codec | N/A | [`zvariant`](https://docs.rs/zvariant/latest/zvariant/) D-Bus signatures and serialization derives |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfCBOR.hh"><code>ZfCBOR</code></a><br>➕ reflected binary object/array mapping</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">Boost.JSON</a></td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/ciborium/latest/ciborium/"><code>ciborium</code></a> with Serde</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfASN1.hh"><code>ZfASN1</code></a><br>➕ schema properties bind C++ fields to tags and wire encodings</td>
+  <td>N/A</td>
+  <td>None: <a href="https://github.com/boostorg/spirit/blob/master/include/boost/spirit.hpp">Spirit</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/balber/balber_berencoder.h"><code>balber::BerEncoder</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/balber/balber_berdecoder.h"><code>BerDecoder</code></a></td>
+  <td><a href="https://docs.rs/rasn/latest/rasn/"><code>rasn</code></a> ASN.1 types/derive codecs</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfDBUS.hh"><code>ZfDBUS</code></a><br>➕ reflected signatures, alignment and message-body serialization</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/zvariant/latest/zvariant/"><code>zvariant</code></a> D-Bus signatures and serialization derives</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zi - Framework I/O
 
@@ -963,98 +4379,467 @@ Sources: [public headers](https://github.com/kaldron-labs/z/blob/main/zi/src/), 
 Networking counterparts are in [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio.html).
 The STL has no C++23 socket/event-loop API.
 
-| Z facility | STL | Boost | Folly | BDE / NTF | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZiPlatform`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiPlatform.hh) / [`Zi::Path`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiDir.hh) and native I/O types | Partial: [`std::filesystem::path`](https://en.cppreference.com/cpp/filesystem/path)<br>➖ no standard socket/native-handle abstraction | Partial: [Boost.Filesystem](https://www.boost.org/doc/libs/latest/libs/filesystem/doc/reference.html), [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html), WinAPI | N/A | Partial: [`bdls::PathUtil`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_pathutil.h)`  /  `[`FilesystemUtil`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_filesystemutil.h) | [`std::path`](https://doc.rust-lang.org/std/path/index.html) / [`std::os`](https://doc.rust-lang.org/std/os/index.html) |
-| [`ZiVec`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiPlatform.hh) / [`ZiVec_ptr`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiPlatform.hh#L104) / [`ZiVec_len`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiPlatform.hh#L105)<br>➕ portable native scatter/gather descriptors | Partial: [`std::span`](https://en.cppreference.com/cpp/container/span)<br>➖ no native scatter/gather syscall adapter | [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) mutable/const buffer sequences | Partial: [`folly::IOBuf iovec conversion`](https://github.com/facebook/folly/blob/main/folly/io/IOBuf.h)<br>➖ chained-buffer adapter rather than portable native descriptor aliases | Partial: [`ntsa::ConstBuffer`](https://github.com/bloomberg/ntf-core/blob/main/groups/nts/ntsa/ntsa_buffer.h)`  /  `[`MutableBuffer`](https://github.com/bloomberg/ntf-core/blob/main/groups/nts/ntsa/ntsa_buffer.h) | [`IoSlice`](https://doc.rust-lang.org/std/io/struct.IoSlice.html) / [`IoSliceMut`](https://doc.rust-lang.org/std/io/struct.IoSliceMut.html) |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE / NTF</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiPlatform.hh"><code>ZiPlatform</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiDir.hh"><code>Zi::Path</code></a> and native I/O types</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/filesystem/path"><code>std::filesystem::path</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/filesystem/doc/reference.html">Boost.Filesystem</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_pathutil.h"><code>bdls::PathUtil</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_filesystemutil.h"><code>FilesystemUtil</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/path/index.html"><code>std::path</code></a> / <a href="https://doc.rust-lang.org/std/os/index.html"><code>std::os</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiPlatform.hh"><code>ZiVec</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiPlatform.hh#L104"><code>ZiVec_ptr</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiPlatform.hh#L105"><code>ZiVec_len</code></a><br>➕ portable native scatter/gather descriptors</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/span"><code>std::span</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a> mutable/const buffer sequences</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/IOBuf.h"><code>folly::IOBuf iovec conversion</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/nts/ntsa/ntsa_buffer.h"><code>ntsa::ConstBuffer</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/nts/ntsa/ntsa_buffer.h"><code>MutableBuffer</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/io/struct.IoSlice.html"><code>IoSlice</code></a> / <a href="https://doc.rust-lang.org/std/io/struct.IoSliceMut.html"><code>IoSliceMut</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Process and module utilities
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZiProgram`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiProgram.hh)<br>➕ current executable/process information | N/A | Partial: [Boost.DLL](https://www.boost.org/doc/libs/latest/doc/html/boost_dll/reference.html) program location + [Process](https://github.com/boostorg/process/blob/master/include/boost/process.hpp) | Partial: [`bdls::ProcessUtil`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_processutil.h) | [`env::current_exe`](https://doc.rust-lang.org/std/env/fn.current_exe.html) / [`process::id`](https://doc.rust-lang.org/std/process/fn.id.html) |
-| [`ZiModule`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiModule.hh) | N/A; OS loader calls | [Boost.DLL](https://www.boost.org/doc/libs/latest/doc/html/boost_dll/reference.html) | N/A | [`libloading`](https://docs.rs/libloading/latest/libloading/) |
-| [`ZiPIDFile`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiPIDFile.hh)<br>➕ PID file ownership and cleanup | N/A | Partial: [Boost.Interprocess](https://www.boost.org/doc/libs/latest/doc/html/interprocess.html) file lock + custom PID file | N/A | [`daemonize`](https://docs.rs/daemonize/latest/daemonize/) PID-file support; separate RAII ownership/locking policy may be needed |
-| [`ZiDaemon`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiDaemon.hh) | N/A | Partial: [Boost.Process](https://github.com/boostorg/process/blob/master/include/boost/process.hpp) plus platform daemon setup | N/A | [`daemonize`](https://docs.rs/daemonize/latest/daemonize/) (Unix) |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiProgram.hh"><code>ZiProgram</code></a><br>➕ current executable/process information</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_dll/reference.html">Boost.DLL</a>, <a href="https://github.com/boostorg/process/blob/master/include/boost/process.hpp">Process</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_processutil.h"><code>bdls::ProcessUtil</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/env/fn.current_exe.html"><code>env::current_exe</code></a> / <a href="https://doc.rust-lang.org/std/process/fn.id.html"><code>process::id</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiModule.hh"><code>ZiModule</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/boost_dll/reference.html">Boost.DLL</a></td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/libloading/latest/libloading/"><code>libloading</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiPIDFile.hh"><code>ZiPIDFile</code></a><br>➕ PID file ownership and cleanup</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/interprocess.html">Boost.Interprocess</a></td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/daemonize/latest/daemonize/"><code>daemonize</code></a> PID-file support; separate RAII ownership/locking policy may be needed</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiDaemon.hh"><code>ZiDaemon</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/process/blob/master/include/boost/process.hpp">Boost.Process</a></td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/daemonize/latest/daemonize/"><code>daemonize</code></a> (Unix)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Directories and path completion
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZiDir`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiDir.hh) | [`std::filesystem::directory_iterator`](https://en.cppreference.com/cpp/filesystem/directory_iterator) | [Boost.Filesystem](https://www.boost.org/doc/libs/latest/libs/filesystem/doc/reference.html) directory iterator | Partial: [`bdls::FilesystemUtil`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_filesystemutil.h)` path matching/visitation` | [`fs::read_dir`](https://doc.rust-lang.org/std/fs/fn.read_dir.html) |
-| [`ZiGlob`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiGlob.hh)<br>➕ directory/path completion for interactive CLIs<br>➖ not a full glob-expression engine | Partial: [`std::filesystem`](https://en.cppreference.com/cpp/filesystem) iteration + prefix matching | Partial: [Boost.Filesystem](https://www.boost.org/doc/libs/latest/libs/filesystem/doc/reference.html) + [StringAlgo](https://www.boost.org/doc/libs/latest/doc/html/string_algo/reference.html) | Partial: [`bdls::FilesystemUtil`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_filesystemutil.h)` path matching/visitation` | [`fs::read_dir`](https://doc.rust-lang.org/std/fs/fn.read_dir.html) for prefix completion; [`glob`](https://docs.rs/glob/latest/glob/) / [`rustyline`](https://docs.rs/rustyline/latest/rustyline/) for patterns/interactive completion |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiDir.hh"><code>ZiDir</code></a></td>
+  <td><a href="https://en.cppreference.com/cpp/filesystem/directory_iterator"><code>std::filesystem::directory_iterator</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/filesystem/doc/reference.html">Boost.Filesystem</a> directory iterator</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_filesystemutil.h"><code>bdls::FilesystemUtil</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/fs/fn.read_dir.html"><code>fs::read_dir</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiGlob.hh"><code>ZiGlob</code></a><br>➕ directory/path completion for interactive CLIs<br>➖ not a full glob-expression engine</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/filesystem"><code>std::filesystem</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/filesystem/doc/reference.html">Boost.Filesystem</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/string_algo/reference.html">StringAlgo</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_filesystemutil.h"><code>bdls::FilesystemUtil</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/fs/fn.read_dir.html"><code>fs::read_dir</code></a> for prefix completion; <a href="https://docs.rs/glob/latest/glob/"><code>glob</code></a> / <a href="https://docs.rs/rustyline/latest/rustyline/"><code>rustyline</code></a> for patterns/interactive completion</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## File operations and structured output
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZiFile`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiFile.hh)<br>➕ direct native unbuffered file operations | Partial: [`std::fstream`](https://en.cppreference.com/cpp/io/basic_fstream), [`std::filesystem`](https://en.cppreference.com/cpp/filesystem)<br>➖ stream buffering and native-operation APIs differ | Partial: [Boost.Filesystem](https://www.boost.org/doc/libs/latest/libs/filesystem/doc/reference.html) / [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) file APIs / [Iostreams](https://www.boost.org/doc/libs/latest/libs/iostreams/doc/index.html) file descriptors | [`folly::File + FileUtil operations`](https://github.com/facebook/folly/blob/main/folly/File.h)<br>➕ RAII descriptor ownership and file locking | Partial: [`bdls::FilesystemUtil`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_filesystemutil.h)`  +  `[`FdStreamBuf`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_fdstreambuf.h)<br>➕ allocator-aware stream buffering and filesystem utilities | [`File`](https://doc.rust-lang.org/std/fs/struct.File.html) / [`OpenOptions`](https://doc.rust-lang.org/std/fs/struct.OpenOptions.html) |
-| [`ZiFileTxStream`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiFileTxStream.hh)<br>➕ file-backed buffered Z transmit stream | [`std::ofstream`](https://en.cppreference.com/cpp/io/basic_ofstream) | [Boost.Iostreams](https://www.boost.org/doc/libs/latest/libs/iostreams/doc/index.html) file sink / stream | Partial: [`folly::writeFull`](https://github.com/facebook/folly/blob/main/folly/FileUtil.h)<br>➖ full-write helper, not a buffered Z transmit stream | Partial: [`bdls::FdStreamBuf`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_fdstreambuf.h) | [`BufWriter<File>`](https://doc.rust-lang.org/std/io/struct.BufWriter.html) |
-| [`ZiCSV`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiCSV.hh)<br>➕ file/stream integration for reflected CSV records | N/A; fstreams + custom CSV binding | Partial: [Boost.Iostreams](https://www.boost.org/doc/libs/latest/libs/iostreams/doc/index.html) + [Tokenizer](https://www.boost.org/doc/libs/latest/libs/tokenizer/doc/tokenizer.htm)/[Spirit](https://github.com/boostorg/spirit/blob/master/include/boost/spirit.hpp) | N/A | N/A | [`csv::Reader`](https://docs.rs/csv/latest/csv/struct.Reader.html) / [`Writer`](https://docs.rs/csv/latest/csv/struct.Writer.html) with Serde |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiFile.hh"><code>ZiFile</code></a><br>➕ direct native unbuffered file operations</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/io/basic_fstream"><code>std::fstream</code></a>, <a href="https://en.cppreference.com/cpp/filesystem"><code>std::filesystem</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/filesystem/doc/reference.html">Boost.Filesystem</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a>, <a href="https://www.boost.org/doc/libs/latest/libs/iostreams/doc/index.html">Iostreams</a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/File.h"><code>folly::File + FileUtil operations</code></a><br>➕ RAII descriptor ownership and file locking</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_filesystemutil.h"><code>bdls::FilesystemUtil</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_fdstreambuf.h"><code>FdStreamBuf</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/fs/struct.File.html"><code>File</code></a> / <a href="https://doc.rust-lang.org/std/fs/struct.OpenOptions.html"><code>OpenOptions</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiFileTxStream.hh"><code>ZiFileTxStream</code></a><br>➕ file-backed buffered Z transmit stream</td>
+  <td><a href="https://en.cppreference.com/cpp/io/basic_ofstream"><code>std::ofstream</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/iostreams/doc/index.html">Boost.Iostreams</a> file sink / stream</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/FileUtil.h"><code>folly::writeFull</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdls/bdls_fdstreambuf.h"><code>bdls::FdStreamBuf</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/io/struct.BufWriter.html"><code>BufWriter&lt;File&gt;</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiCSV.hh"><code>ZiCSV</code></a><br>➕ file/stream integration for reflected CSV records</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/iostreams/doc/index.html">Boost.Iostreams</a>, <a href="https://www.boost.org/doc/libs/latest/libs/tokenizer/doc/tokenizer.htm">Tokenizer</a>, <a href="https://github.com/boostorg/spirit/blob/master/include/boost/spirit.hpp">Spirit</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/csv/latest/csv/struct.Reader.html"><code>csv::Reader</code></a> / <a href="https://docs.rs/csv/latest/csv/struct.Writer.html"><code>Writer</code></a> with Serde</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Addresses and name resolution
 
-| Z facility | STL | Boost | Folly | NTF | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZiIP`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiIP.hh) | N/A | [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) [`ip::address`](https://github.com/boostorg/asio/blob/master/include/boost/asio/ip/address.hpp) / endpoint types | [`folly::SocketAddress / IPAddress`](https://github.com/facebook/folly/blob/main/folly/SocketAddress.h) | [`ntsa::IpAddress`](https://github.com/bloomberg/ntf-core/blob/main/groups/nts/ntsa/ntsa_ipaddress.h)`  /  `[`Endpoint`](https://github.com/bloomberg/ntf-core/blob/main/groups/nts/ntsa/ntsa_endpoint.h) | [`IpAddr`](https://doc.rust-lang.org/std/net/enum.IpAddr.html) / [`SocketAddr`](https://doc.rust-lang.org/std/net/enum.SocketAddr.html) |
-| [`ZiResolver`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiResolver.hh)<br>➕ c-ares-backed asynchronous DNS with controlled runtime lifecycle | N/A | [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) [`ip::tcp::resolver`](https://github.com/boostorg/asio/blob/master/include/boost/asio/ip/tcp.hpp) / [`ip::udp::resolver`](https://github.com/boostorg/asio/blob/master/include/boost/asio/ip/udp.hpp)<br>➖ DNS configuration/lifecycle surface differs | N/A | [`ntci::Resolver`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_resolver.h)<br>➕ asynchronous name/service resolution and cache configuration | [`ToSocketAddrs`](https://doc.rust-lang.org/std/net/trait.ToSocketAddrs.html) (blocking); [`hickory-resolver`](https://docs.rs/hickory-resolver/latest/hickory_resolver/) for async DNS |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">NTF</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiIP.hh"><code>ZiIP</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a> <a href="https://github.com/boostorg/asio/blob/master/include/boost/asio/ip/address.hpp"><code>ip::address</code></a> / endpoint types</td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/SocketAddress.h"><code>folly::SocketAddress / IPAddress</code></a></td>
+  <td><a href="https://github.com/bloomberg/ntf-core/blob/main/groups/nts/ntsa/ntsa_ipaddress.h"><code>ntsa::IpAddress</code></a><code> / </code><a href="https://github.com/bloomberg/ntf-core/blob/main/groups/nts/ntsa/ntsa_endpoint.h"><code>Endpoint</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/net/enum.IpAddr.html"><code>IpAddr</code></a> / <a href="https://doc.rust-lang.org/std/net/enum.SocketAddr.html"><code>SocketAddr</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiResolver.hh"><code>ZiResolver</code></a><br>➕ c-ares-backed asynchronous DNS with controlled runtime lifecycle</td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a> <a href="https://github.com/boostorg/asio/blob/master/include/boost/asio/ip/tcp.hpp"><code>ip::tcp::resolver</code></a> / <a href="https://github.com/boostorg/asio/blob/master/include/boost/asio/ip/udp.hpp"><code>ip::udp::resolver</code></a><br>➖ DNS configuration/lifecycle surface differs</td>
+  <td>N/A</td>
+  <td><a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_resolver.h"><code>ntci::Resolver</code></a><br>➕ asynchronous name/service resolution and cache configuration</td>
+  <td><a href="https://doc.rust-lang.org/std/net/trait.ToSocketAddrs.html"><code>ToSocketAddrs</code></a> (blocking); <a href="https://docs.rs/hickory-resolver/latest/hickory_resolver/"><code>hickory-resolver</code></a> for async DNS</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## I/O buffers, allocation and contexts
 
-| Z facility | STL | Boost | Folly | BDE / NTF | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZiIOBuf`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiIOBuf.hh)<br>➕ reference-owned packet backing and allocator integration | Partial: [`std::span`](https://en.cppreference.com/cpp/container/span) + owning storage<br>➖ span alone carries no ownership | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) buffers + application-owned storage<br>➖ buffer descriptors alone carry no ownership | [`folly::IOBuf`](https://github.com/facebook/folly/blob/main/folly/io/IOBuf.h)<br>➕ chainable buffers with shared storage, headroom and tailroom | Partial: [`bdlbb::Blob`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_blob.h)`  /  `[`BlobBuffer`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_blob.h)<br>➕ shared segmented backing<br>➖ no integrated headroom/tailroom geometry for layered packet I/O | [`Bytes`](https://docs.rs/bytes/latest/bytes/struct.Bytes.html) / [`BytesMut`](https://docs.rs/bytes/latest/bytes/struct.BytesMut.html); pool and packet ownership policy differ |
-| [`Zi::IOBufAllocator`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiIOBuf.hh), builtin/plugin allocators and allocation roles<br>➕ explicit App/Rx/Tx storage provenance and transport integration | Partial: [`std::pmr::memory_resource`](https://en.cppreference.com/cpp/memory/memory_resource)<br>➖ no packet-backing/provenance contract | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) associated allocators + custom packet pool | Partial: [`folly::memory::makeIOBufArenaFactory`](https://github.com/facebook/folly/blob/main/folly/memory/IOBufArenaFactory.h)<br>➖ no Z App/Rx/Tx role/provenance contract | Partial: [`bdlbb::PooledBlobBufferFactory`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_pooledblobbufferfactory.h)<br>➖ no per-layer headroom/tailroom provisioning contract | Partial: [`bytes`](https://docs.rs/bytes/latest/bytes/) / [`object-pool`](https://docs.rs/object-pool/latest/object_pool/); explicit App/Rx/Tx allocator provenance needs custom types |
-| [`ZiRxContext`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiIOContext.hh) / [`ZiTxContext`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiIOContext.hh) ([`ZiIOContext`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiIOContext.hh)`.hh`)<br>➕ buffer, progress and continuation state for transport I/O | N/A | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) composed-operation state / completion handlers | Partial: [`folly::AsyncTransport ReadCallback / WriteCallback`](https://github.com/facebook/folly/blob/main/folly/io/async/AsyncTransport.h)<br>➖ different callback state and lifetime interface | Partial: [`ntca::ReceiveContext`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntca/ntca_receivecontext.h)`  /  `[`SendContext`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntca/ntca_sendcontext.h) | Partial: [`task::Context`](https://doc.rust-lang.org/std/task/struct.Context.html) / [`ReadBuf`](https://docs.rs/tokio/latest/tokio/io/struct.ReadBuf.html); transport progress is represented by futures, no identical context |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE / NTF</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiIOBuf.hh"><code>ZiIOBuf</code></a><br>➕ reference-owned packet backing and allocator integration</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/container/span"><code>std::span</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/io/IOBuf.h"><code>folly::IOBuf</code></a><br>➕ chainable buffers with shared storage, headroom and tailroom</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_blob.h"><code>bdlbb::Blob</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_blob.h"><code>BlobBuffer</code></a></td>
+  <td><a href="https://docs.rs/bytes/latest/bytes/struct.Bytes.html"><code>Bytes</code></a> / <a href="https://docs.rs/bytes/latest/bytes/struct.BytesMut.html"><code>BytesMut</code></a>; pool and packet ownership policy differ</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiIOBuf.hh"><code>Zi::IOBufAllocator</code></a>, builtin/plugin allocators and allocation roles<br>➕ explicit App/Rx/Tx storage provenance and transport integration</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/memory/memory_resource"><code>std::pmr::memory_resource</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/memory/IOBufArenaFactory.h"><code>folly::memory::makeIOBufArenaFactory</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_pooledblobbufferfactory.h"><code>bdlbb::PooledBlobBufferFactory</code></a></td>
+  <td>Partial: <a href="https://docs.rs/bytes/latest/bytes/"><code>bytes</code></a>, <a href="https://docs.rs/object-pool/latest/object_pool/"><code>object-pool</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiIOContext.hh"><code>ZiRxContext</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiIOContext.hh"><code>ZiTxContext</code></a> (<a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiIOContext.hh"><code>ZiIOContext</code></a><code>.hh</code>)<br>➕ buffer, progress and continuation state for transport I/O</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncTransport.h"><code>folly::AsyncTransport ReadCallback / WriteCallback</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntca/ntca_receivecontext.h"><code>ntca::ReceiveContext</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntca/ntca_sendcontext.h"><code>SendContext</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/task/struct.Context.html"><code>task::Context</code></a>, <a href="https://docs.rs/tokio/latest/tokio/io/struct.ReadBuf.html"><code>ReadBuf</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Receive and transmit streams
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZiRxStream`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiRxStream.hh)<br>➕ consumable view over queued receive buffers | Partial: [`std::istream`](https://en.cppreference.com/cpp/io/basic_istream) over a custom stream buffer | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) DynamicBuffer / [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) [`multi_buffer`](https://github.com/boostorg/beast/blob/master/include/boost/beast/core/multi_buffer.hpp) | Partial: [`folly::io::Cursor + IOBufQueue`](https://github.com/facebook/folly/blob/main/folly/io/Cursor.h) | Partial: [`bdlbb::InBlobStreamBuf`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_blobstreambuf.h)`  /  `[`OutBlobStreamBuf`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_blobstreambuf.h)<br>➖ no built-in protocol-frame recognition or extraction | [`bytes::Buf`](https://docs.rs/bytes/latest/bytes/buf/trait.Buf.html) / [`AsyncBufRead`](https://docs.rs/tokio/latest/tokio/io/trait.AsyncBufRead.html) |
-| [`ZiTxStream`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiTxStream.hh)<br>➕ streamed output into packet/frame-sized buffer sequences | Partial: [`std::ostream`](https://en.cppreference.com/cpp/io/basic_ostream) over custom segmented storage | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) buffer sequences / [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) buffers | Partial: [`folly::io::QueueAppender + IOBufQueue`](https://github.com/facebook/folly/blob/main/folly/io/Cursor.h)<br>➖ frame-size/flush policy needs adaptation | Partial: [`bdlbb::InBlobStreamBuf`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_blobstreambuf.h)`  /  `[`OutBlobStreamBuf`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_blobstreambuf.h)<br>➖ no frame-admission or reserved-header/trailer policy | [`bytes::BufMut`](https://docs.rs/bytes/latest/bytes/buf/trait.BufMut.html) / [`AsyncWrite`](https://docs.rs/tokio/latest/tokio/io/trait.AsyncWrite.html); packet sequence ownership is custom |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiRxStream.hh"><code>ZiRxStream</code></a><br>➕ consumable view over queued receive buffers</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/io/basic_istream"><code>std::istream</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a>, <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a>, <a href="https://github.com/boostorg/beast/blob/master/include/boost/beast/core/multi_buffer.hpp"><code>multi_buffer</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/Cursor.h"><code>folly::io::Cursor + IOBufQueue</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_blobstreambuf.h"><code>bdlbb::InBlobStreamBuf</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_blobstreambuf.h"><code>OutBlobStreamBuf</code></a></td>
+  <td><a href="https://docs.rs/bytes/latest/bytes/buf/trait.Buf.html"><code>bytes::Buf</code></a> / <a href="https://docs.rs/tokio/latest/tokio/io/trait.AsyncBufRead.html"><code>AsyncBufRead</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiTxStream.hh"><code>ZiTxStream</code></a><br>➕ streamed output into packet/frame-sized buffer sequences</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/io/basic_ostream"><code>std::ostream</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a>, <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/Cursor.h"><code>folly::io::QueueAppender + IOBufQueue</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_blobstreambuf.h"><code>bdlbb::InBlobStreamBuf</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_blobstreambuf.h"><code>OutBlobStreamBuf</code></a></td>
+  <td>Partial: <a href="https://docs.rs/bytes/latest/bytes/buf/trait.BufMut.html"><code>bytes::BufMut</code></a>, <a href="https://docs.rs/tokio/latest/tokio/io/trait.AsyncWrite.html"><code>AsyncWrite</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Message framing and transmission
 
-| Z facility | STL | Boost | NTF | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZiRx`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiRx.hh)<br>➕ CRTP header/body framing and fragmented-message accumulation | N/A | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) [`async_read`](https://github.com/boostorg/asio/blob/master/include/boost/asio/read.hpp) / [`async_read_until`](https://github.com/boostorg/asio/blob/master/include/boost/asio/read_until.hpp) + framing state | Partial: [`ntci::StreamSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h)` `[`send`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntcq/ntcq_send.h)`/`[`receive`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntcq/ntcq_receive.h)` queues`<br>➕ asynchronous operations with flow-control watermarks | [`Decoder`](https://docs.rs/tokio-util/latest/tokio_util/codec/trait.Decoder.html) / [`FramedRead`](https://docs.rs/tokio-util/latest/tokio_util/codec/struct.FramedRead.html) |
-| [`ZiTx`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiTx.hh)<br>➕ CRTP sender and queued completion handling | N/A | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) [`async_write`](https://github.com/boostorg/asio/blob/master/include/boost/asio/write.hpp) + queued write state | Partial: [`ntci::StreamSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h)` `[`send`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntcq/ntcq_send.h)`/`[`receive`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntcq/ntcq_receive.h)` queues`<br>➕ asynchronous operations with flow-control watermarks | [`FramedWrite`](https://docs.rs/tokio-util/latest/tokio_util/codec/struct.FramedWrite.html) / [`Sink`](https://docs.rs/futures-sink/latest/futures_sink/trait.Sink.html) |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">NTF</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiRx.hh"><code>ZiRx</code></a><br>➕ CRTP header/body framing and fragmented-message accumulation</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a>, <a href="https://github.com/boostorg/asio/blob/master/include/boost/asio/read.hpp"><code>async_read</code></a>, <a href="https://github.com/boostorg/asio/blob/master/include/boost/asio/read_until.hpp"><code>async_read_until</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>ntci::StreamSocket</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntcq/ntcq_send.h"><code>send</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntcq/ntcq_receive.h"><code>receive</code></a></td>
+  <td><a href="https://docs.rs/tokio-util/latest/tokio_util/codec/trait.Decoder.html"><code>Decoder</code></a> / <a href="https://docs.rs/tokio-util/latest/tokio_util/codec/struct.FramedRead.html"><code>FramedRead</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiTx.hh"><code>ZiTx</code></a><br>➕ CRTP sender and queued completion handling</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a>, <a href="https://github.com/boostorg/asio/blob/master/include/boost/asio/write.hpp"><code>async_write</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>ntci::StreamSocket</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntcq/ntcq_send.h"><code>send</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntcq/ntcq_receive.h"><code>receive</code></a></td>
+  <td><a href="https://docs.rs/tokio-util/latest/tokio_util/codec/struct.FramedWrite.html"><code>FramedWrite</code></a> / <a href="https://docs.rs/futures-sink/latest/futures_sink/trait.Sink.html"><code>Sink</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Event loops and connection multiplexing
 
-| Z facility | STL | Boost | Folly | NTF | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZiEventLoop`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiEventLoop.hh)<br>➕ external socket/handle readiness integration | N/A | [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) descriptors / handles and async waits | [`folly::EventBase / EventHandler`](https://github.com/facebook/folly/blob/main/folly/io/async/EventBase.h) | [`ntci::Reactor`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_reactor.h)`  /  `[`Proactor`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_proactor.h)<br>➕ readiness and completion driver interfaces | [`mio::Poll`](https://docs.rs/mio/latest/mio/struct.Poll.html) |
-| [`ZiConnection`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiIOContext.hh) / [`ZiCxnInfo`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh) / [`ZiCxnOptions`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh)<br>➕ transport callbacks, connection state and explicit I/O allocation roles | N/A | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) socket, endpoint and socket options | Partial: [`folly::AsyncSocket`](https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSocket.h)<br>➖ different connection callbacks and allocation contract | Partial: [`ntci::StreamSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h)`  /  `[`StreamSocketSession`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocketsession.h) | [`TcpStream`](https://docs.rs/tokio/latest/tokio/net/struct.TcpStream.html) / [`socket2::Socket`](https://docs.rs/socket2/latest/socket2/struct.Socket.html); no matching callback/allocator-role model |
-| [`ZiMxPlugin`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh)<br>➕ transport-plugin lifecycle integrated with the multiplexer | N/A | Partial: custom [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) service/executor/stream implementation | N/A | N/A | Partial: [`mio::event::Source`](https://docs.rs/mio/latest/mio/event/trait.Source.html) readiness registration; transport-plugin lifecycle needs custom integration |
-| [`ZiMultiplex`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh) / [`ZiMxParams`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh)<br>➕ shard-directed I/O with scheduler and allocator integration | N/A | [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) sockets, [`io_context`](https://github.com/boostorg/asio/blob/master/include/boost/asio/io_context.hpp), executors and strands<br>➕ completion tokens and coroutine integration<br>➖ Z shard/buffer ownership contracts need application composition | Partial: [`folly::IOThreadPoolExecutor + EventBase`](https://github.com/facebook/folly/blob/main/folly/executors/IOThreadPoolExecutor.h)<br>➖ matching Z Rx/Tx destinations and buffer ownership needs composition | Partial: [`ntci::Interface`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_interface.h)<br>➕ socket/timer factories, thread management and executor/strand integration | Partial: [`Tokio runtime`](https://docs.rs/tokio/latest/tokio/runtime/index.html) + [`mio`](https://docs.rs/mio/latest/mio/); named Rx/Tx shards and allocator roles are custom |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">NTF</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiEventLoop.hh"><code>ZiEventLoop</code></a><br>➕ external socket/handle readiness integration</td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a> descriptors / handles and async waits</td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/io/async/EventBase.h"><code>folly::EventBase / EventHandler</code></a></td>
+  <td><a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_reactor.h"><code>ntci::Reactor</code></a><code> / </code><a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_proactor.h"><code>Proactor</code></a><br>➕ readiness and completion driver interfaces</td>
+  <td><a href="https://docs.rs/mio/latest/mio/struct.Poll.html"><code>mio::Poll</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiIOContext.hh"><code>ZiConnection</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh"><code>ZiCxnInfo</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh"><code>ZiCxnOptions</code></a><br>➕ transport callbacks, connection state and explicit I/O allocation roles</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSocket.h"><code>folly::AsyncSocket</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>ntci::StreamSocket</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocketsession.h"><code>StreamSocketSession</code></a></td>
+  <td>Partial: <a href="https://docs.rs/tokio/latest/tokio/net/struct.TcpStream.html"><code>TcpStream</code></a>, <a href="https://docs.rs/socket2/latest/socket2/struct.Socket.html"><code>socket2::Socket</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh"><code>ZiMxPlugin</code></a><br>➕ transport-plugin lifecycle integrated with the multiplexer</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/mio/latest/mio/event/trait.Source.html"><code>mio::event::Source</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh"><code>ZiMultiplex</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh"><code>ZiMxParams</code></a><br>➕ shard-directed I/O with scheduler and allocator integration</td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a> sockets, <a href="https://github.com/boostorg/asio/blob/master/include/boost/asio/io_context.hpp"><code>io_context</code></a>, executors and strands<br>➕ completion tokens and coroutine integration<br>➖ Z shard/buffer ownership contracts need application composition</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/executors/IOThreadPoolExecutor.h"><code>folly::IOThreadPoolExecutor + EventBase</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_interface.h"><code>ntci::Interface</code></a></td>
+  <td>Partial: <a href="https://docs.rs/tokio/latest/tokio/runtime/index.html"><code>Tokio runtime</code></a>, <a href="https://docs.rs/mio/latest/mio/"><code>mio</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## ZiRing — inter-process communication using shared memory
 
-| Z facility | STL | Boost | Rust |
-| --- | --- | --- | --- |
-| [`ZiRing`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiRing.hh)<br>➕ named cross-process variable-record broadcast ring<br>➖ processes must agree on layout and payload protocol | N/A | Partial: [Boost.Interprocess](https://www.boost.org/doc/libs/latest/doc/html/interprocess.html) shared memory / message queue<br>➖ message queue consumption is not broadcast | Partial: [`shared_memory`](https://docs.rs/shared_memory/latest/shared_memory/) / [`raw_sync`](https://docs.rs/raw_sync/latest/raw_sync/) primitives; cross-process variable-record broadcast ring requires a shared-layout protocol |
+<div style="overflow-x: auto;">
+<table width="1100" style="width: 1100px; min-width: 1100px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiRing.hh"><code>ZiRing</code></a><br>➕ named cross-process variable-record broadcast ring<br>➖ processes must agree on layout and payload protocol</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/interprocess.html">Boost.Interprocess</a></td>
+  <td>Partial: <a href="https://docs.rs/shared_memory/latest/shared_memory/"><code>shared_memory</code></a>, <a href="https://docs.rs/raw_sync/latest/raw_sync/"><code>raw_sync</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Logging and assertions
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZiAssert`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiAssert.hh#L40)<br>➕ release fallback with logging/backtrace | Partial: [`assert`](https://en.cppreference.com/cpp/error/assert) + explicit release handling | Partial: [Boost.Assert](https://www.boost.org/doc/libs/latest/libs/assert/doc/html/assert.html) + [Log](https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp) + [Stacktrace](https://www.boost.org/doc/libs/latest/doc/html/stacktrace.html) | Partial: [`FOLLY_SAFE_CHECK / FOLLY_SAFE_DCHECK`](https://github.com/facebook/folly/blob/main/folly/lang/SafeAssert.h)<br>➖ no matching release-fallback logging contract | Partial: [`BSLS_ASSERT`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_assert.h)`  +  `[`balst`](https://github.com/bloomberg/bde/blob/main/groups/bal/balst/balst_stacktraceutil.h)` stack traces` | [`debug_assert!`](https://doc.rust-lang.org/std/macro.debug_assert.html) / [`assert!`](https://doc.rust-lang.org/std/macro.assert.html) + [`tracing`](https://docs.rs/tracing/latest/tracing/); release fallback is explicit |
-| [`ZiLog`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiLog.hh) / [`ZiLOG`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiLog.hh#L400) / [`ZiLogEvent`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiLog.hh#L360)<br>➕ asynchronous [Ze](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiModule.hh)-event fanout to multiple sinks | Partial: [`std::clog`](https://en.cppreference.com/cpp/io/clog), [`std::osyncstream`](https://en.cppreference.com/cpp/io/basic_osyncstream)<br>➖ no severity, sink routing or async log runtime | [Boost.Log](https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp)<br>➕ configurable attributes, filters and sinks | [`Folly logging: XLOG, handlers and AsyncFileWriter`](https://github.com/facebook/folly/blob/main/folly/logging/xlog.h)<br>➕ category hierarchy and configurable handler factories | [`ball::LoggerManager`](https://github.com/bloomberg/bde/blob/main/groups/bal/ball/ball_loggermanager.h)`  /  `[`AsyncFileObserver`](https://github.com/bloomberg/bde/blob/main/groups/bal/ball/ball_asyncfileobserver.h)<br>➕ categories, rules, observers and asynchronous file output | [`tracing`](https://docs.rs/tracing/latest/tracing/) + [`tracing-subscriber`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/) / [`tracing-appender`](https://docs.rs/tracing-appender/latest/tracing_appender/) for asynchronous multi-sink logging |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiAssert.hh#L40"><code>ZiAssert</code></a><br>➕ release fallback with logging/backtrace</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/error/assert"><code>assert</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/assert/doc/html/assert.html">Boost.Assert</a>, <a href="https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp">Log</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/stacktrace.html">Stacktrace</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/lang/SafeAssert.h"><code>FOLLY_SAFE_CHECK / FOLLY_SAFE_DCHECK</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsls/bsls_assert.h"><code>BSLS_ASSERT</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/balst/balst_stacktraceutil.h"><code>balst</code></a></td>
+  <td><a href="https://doc.rust-lang.org/std/macro.debug_assert.html"><code>debug_assert!</code></a> / <a href="https://doc.rust-lang.org/std/macro.assert.html"><code>assert!</code></a> + <a href="https://docs.rs/tracing/latest/tracing/"><code>tracing</code></a>; release fallback is explicit</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiLog.hh"><code>ZiLog</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiLog.hh#L400"><code>ZiLOG</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiLog.hh#L360"><code>ZiLogEvent</code></a><br>➕ asynchronous <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiModule.hh">Ze</a>-event fanout to multiple sinks</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/io/clog"><code>std::clog</code></a>, <a href="https://en.cppreference.com/cpp/io/basic_osyncstream"><code>std::osyncstream</code></a></td>
+  <td><a href="https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp">Boost.Log</a><br>➕ configurable attributes, filters and sinks</td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/logging/xlog.h"><code>Folly logging: XLOG, handlers and AsyncFileWriter</code></a><br>➕ category hierarchy and configurable handler factories</td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bal/ball/ball_loggermanager.h"><code>ball::LoggerManager</code></a><code> / </code><a href="https://github.com/bloomberg/bde/blob/main/groups/bal/ball/ball_asyncfileobserver.h"><code>AsyncFileObserver</code></a><br>➕ categories, rules, observers and asynchronous file output</td>
+  <td><a href="https://docs.rs/tracing/latest/tracing/"><code>tracing</code></a> + <a href="https://docs.rs/tracing-subscriber/latest/tracing_subscriber/"><code>tracing-subscriber</code></a> / <a href="https://docs.rs/tracing-appender/latest/tracing_appender/"><code>tracing-appender</code></a> for asynchronous multi-sink logging</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Resource tuning
 
-| Z facility | STL | Boost | Rust |
-| --- | --- | --- | --- |
-| [`ZiHeapTune`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiHeapTune.hh)<br>➕ file-based named heap tuning and measurements | N/A | N/A; custom configuration around [Boost.Pool](https://github.com/boostorg/pool/blob/master/include/boost/pool/pool.hpp) | Partial: [`tikv-jemalloc-ctl`](https://docs.rs/tikv-jemalloc-ctl/latest/tikv_jemalloc_ctl/) plus [`config`](https://docs.rs/config/latest/config/); no Z named-heap tuning-file compatibility |
-| [`ZiHashTune`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiHashTune.hh)<br>➕ file-based hash configuration and measurements | N/A; per-container controls only | N/A; custom configuration around [Boost.Unordered](https://www.boost.org/doc/libs/latest/libs/unordered/doc/html/unordered.html) | Partial: [`HashMap`](https://doc.rust-lang.org/std/collections/struct.HashMap.html) configuration plus [`config`](https://docs.rs/config/latest/config/) / [`metrics`](https://docs.rs/metrics/latest/metrics/); named hash tuning is custom |
+<div style="overflow-x: auto;">
+<table width="1100" style="width: 1100px; min-width: 1100px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiHeapTune.hh"><code>ZiHeapTune</code></a><br>➕ file-based named heap tuning and measurements</td>
+  <td>N/A</td>
+  <td>None: <a href="https://github.com/boostorg/pool/blob/master/include/boost/pool/pool.hpp">Boost.Pool</a></td>
+  <td>Partial: <a href="https://docs.rs/tikv-jemalloc-ctl/latest/tikv_jemalloc_ctl/"><code>tikv-jemalloc-ctl</code></a>, <a href="https://docs.rs/config/latest/config/"><code>config</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiHashTune.hh"><code>ZiHashTune</code></a><br>➕ file-based hash configuration and measurements</td>
+  <td>N/A</td>
+  <td>None: <a href="https://www.boost.org/doc/libs/latest/libs/unordered/doc/html/unordered.html">Boost.Unordered</a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/collections/struct.HashMap.html"><code>HashMap</code></a>, <a href="https://docs.rs/config/latest/config/"><code>config</code></a>, <a href="https://docs.rs/metrics/latest/metrics/"><code>metrics</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## I/O telemetry
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZtcMx`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZtcMx.hh), [`ZtcLink`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZtcLink.hh), [`ZtcPool`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZtcPool.hh), [`ZtcHub`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZtcHub.hh) (in `zi`)<br>➕ reflected I/O telemetry records | N/A | Partial: application-defined [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) / [Serialization](https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html) records | Partial: [`balm::MetricsManager`](https://github.com/bloomberg/bde/blob/main/groups/bal/balm/balm_metricsmanager.h) | [`metrics`](https://docs.rs/metrics/latest/metrics/) / [`tracing`](https://docs.rs/tracing/latest/tracing/); application defines equivalent I/O telemetry records |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZtcMx.hh"><code>ZtcMx</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZtcLink.hh"><code>ZtcLink</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZtcPool.hh"><code>ZtcPool</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZtcHub.hh"><code>ZtcHub</code></a> (in <code>zi</code>)<br>➕ reflected I/O telemetry records</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Boost.Describe</a>, <a href="https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html">Serialization</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/balm/balm_metricsmanager.h"><code>balm::MetricsManager</code></a></td>
+  <td><a href="https://docs.rs/metrics/latest/metrics/"><code>metrics</code></a> / <a href="https://docs.rs/tracing/latest/tracing/"><code>tracing</code></a>; application defines equivalent I/O telemetry records</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zxdp - Linux AF_XDP packet I/O
 
@@ -1063,16 +4848,55 @@ The STL has no C++23 socket/event-loop API.
 Sources: [module guide](../zxdp/README.md), [public headers](https://github.com/kaldron-labs/z/blob/main/zxdp/src/).
 Linux-only; excluded from Windows builds.
 
-| Z facility | STL | Boost | Rust |
-| --- | --- | --- | --- |
-| [`Zxdp::PoolParams`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/ZxdpAlloc.hh), [`BufPool`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/ZxdpAlloc.hh)<br>➕ caller-owned intrusive pools over registered Rx/Tx arenas<br>➕ exhaustion returns null without replacement allocation<br>➕ allocation and kernel leases independently protect backing | N/A | Partial: [Boost.Pool](https://github.com/boostorg/pool/blob/master/include/boost/pool/pool.hpp)<br>➖ no registered UMEM or kernel submission lifetime | Partial: [`xsk_rs::Umem`](https://docs.rs/xsk-rs/latest/xsk_rs/umem/struct.Umem.html) / [`xdp`](https://docs.rs/xdp/latest/xdp/) registered UMEM; lease and pool exhaustion policies differ |
+<div style="overflow-x: auto;">
+<table width="1100" style="width: 1100px; min-width: 1100px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/ZxdpAlloc.hh"><code>Zxdp::PoolParams</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/ZxdpAlloc.hh"><code>BufPool</code></a><br>➕ caller-owned intrusive pools over registered Rx/Tx arenas<br>➕ exhaustion returns null without replacement allocation<br>➕ allocation and kernel leases independently protect backing</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/boostorg/pool/blob/master/include/boost/pool/pool.hpp">Boost.Pool</a></td>
+  <td>Partial: <a href="https://docs.rs/xsk-rs/latest/xsk_rs/umem/struct.Umem.html"><code>xsk_rs::Umem</code></a>, <a href="https://docs.rs/xdp/latest/xdp/"><code>xdp</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Raw packet I/O and service
 
-| Z facility | STL | Boost | Rust |
-| --- | --- | --- | --- |
-| [`Zxdp::Params`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh), [`Instance`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh)<br>➕ direct AF_XDP packet submission and receive over one interface<br>➕ optional destination-mask steering with host-stack coexistence<br>➖ Linux AF_XDP and suitable kernel/driver support required | N/A | Partial: [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) generic raw sockets<br>➖ kernel socket path rather than AF_XDP rings and registered backing | [`xsk_rs::Socket`](https://docs.rs/xsk-rs/latest/xsk_rs/socket/struct.Socket.html) / [`xdp`](https://docs.rs/xdp/latest/xdp/) for AF_XDP; steering/coexistence policy needs BPF configuration |
-| [`Zxdp::Instance::rx`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L62), [`wake`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L65), [`pollTx`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L66), [`close`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L70)<br>➕ configurable spin-before-epoll receive service and explicit wake<br>➕ bounded Tx retirement with retryable kernel-safe close | N/A | Partial: [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) event/cancellation machinery<br>➖ no matching raw-ring ownership, lease retirement or close contract | Partial: [`xsk-rs`](https://docs.rs/xsk-rs/latest/xsk_rs/) Rx/Tx queues and polling; exact wake, retirement and close guarantees require integration |
+<div style="overflow-x: auto;">
+<table width="1100" style="width: 1100px; min-width: 1100px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh"><code>Zxdp::Params</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh"><code>Instance</code></a><br>➕ direct AF_XDP packet submission and receive over one interface<br>➕ optional destination-mask steering with host-stack coexistence<br>➖ Linux AF_XDP and suitable kernel/driver support required</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a></td>
+  <td>Partial: <a href="https://docs.rs/xsk-rs/latest/xsk_rs/socket/struct.Socket.html"><code>xsk_rs::Socket</code></a>, <a href="https://docs.rs/xdp/latest/xdp/"><code>xdp</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L62"><code>Zxdp::Instance::rx</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L65"><code>wake</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L66"><code>pollTx</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L70"><code>close</code></a><br>➕ configurable spin-before-epoll receive service and explicit wake<br>➕ bounded Tx retirement with retryable kernel-safe close</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a></td>
+  <td>Partial: <a href="https://docs.rs/xsk-rs/latest/xsk_rs/"><code>xsk-rs</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zutcp - User-mode TCP/IP stack
 
@@ -1082,18 +4906,77 @@ Sources: [module guide](../zutcp/README.md), [execution plan](../zutcp_plan.md).
 These comparisons describe the planned TCP goal-state; implementation is in
 progress. Linux-only; excluded from Windows builds.
 
-| Z facility | STL | Boost | Folly | NTF | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`Zutcp::Stack`](https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh), [`StackParams`](https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh)<br>➕ user-mode TCP/IP stack over [Zxdp](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh), integrated with [ZiMultiplex](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh) and ordinary [Zi](https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh) application interfaces<br>➕ protocol Rx/Tx work runs on the mx owners<br>➖ requires a configured interface and raw packet privileges | N/A | Partial: [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) TCP sockets/executors<br>➖ kernel TCP rather than a user-mode TCP implementation | Partial: [`folly::AsyncSocket / EventBase`](https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSocket.h)<br>➖ kernel TCP rather than an AF_XDP transport backend | Partial: [`ntci::Interface`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_interface.h)`  +  `[`StreamSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h)<br>➖ no AF_XDP/user-mode TCP backend | [`smoltcp::iface::Interface`](https://docs.rs/smoltcp/latest/smoltcp/iface/struct.Interface.html) + custom [`Device`](https://docs.rs/smoltcp/latest/smoltcp/phy/trait.Device.html); no native Zi/AF_XDP shard integration |
-| [`Zutcp::Allocator`](https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpAlloc.hh) and packet geometry<br>➕ [Zi](https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh) providers over caller-owned [Zxdp](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh) pools, with in-place wire construction<br>➕ separate control capacity and bounded ingress retention | N/A | Partial: [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) buffer sequences + custom allocation<br>➖ no registered-packet provider or retention/control reserve contract | Partial: [`folly::IOBuf`](https://github.com/facebook/folly/blob/main/folly/io/IOBuf.h)<br>➖ buffer ownership only; no [Zxdp](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh) registration or protocol admission policy | Partial: [`ntci::DataPool`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_datapool.h)<br>➖ no registered AF_XDP packet backing | [`smoltcp::phy::Device`](https://docs.rs/smoltcp/latest/smoltcp/phy/trait.Device.html) Rx/Tx token buffers; reserved control capacity is custom |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">NTF</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh"><code>Zutcp::Stack</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh"><code>StackParams</code></a><br>➕ user-mode TCP/IP stack over <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh">Zxdp</a>, integrated with <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh">ZiMultiplex</a> and ordinary <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh">Zi</a> application interfaces<br>➕ protocol Rx/Tx work runs on the mx owners<br>➖ requires a configured interface and raw packet privileges</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSocket.h"><code>folly::AsyncSocket / EventBase</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_interface.h"><code>ntci::Interface</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>StreamSocket</code></a></td>
+  <td>Partial: <a href="https://docs.rs/smoltcp/latest/smoltcp/iface/struct.Interface.html"><code>smoltcp::iface::Interface</code></a>, <a href="https://docs.rs/smoltcp/latest/smoltcp/phy/trait.Device.html"><code>Device</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpAlloc.hh"><code>Zutcp::Allocator</code></a> and packet geometry<br>➕ <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh">Zi</a> providers over caller-owned <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh">Zxdp</a> pools, with in-place wire construction<br>➕ separate control capacity and bounded ingress retention</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/IOBuf.h"><code>folly::IOBuf</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh">Zxdp</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_datapool.h"><code>ntci::DataPool</code></a></td>
+  <td>Partial: <a href="https://docs.rs/smoltcp/latest/smoltcp/phy/trait.Device.html"><code>smoltcp::phy::Device</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## TCP connection and recovery
 
-| Z facility | STL | Boost | NTF | Rust |
-| --- | --- | --- | --- | --- |
-| [`Zutcp::Connection`](https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpConnection.hh), [`CliConnection`](https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpCliConnection.hh), [`SrvConnection`](https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpSrvConnection.hh)<br>➕ one connection owns ordered bytes, reassembly, credit, retained Tx data and close<br>➕ bounded pending/live admission and closed-tuple history | N/A | Partial: [Boost.Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) TCP sockets<br>➖ corresponding TCP state and recovery live in the OS | Partial: [`ntci::StreamSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h) | [`smoltcp::socket::tcp::Socket`](https://docs.rs/smoltcp/latest/smoltcp/socket/tcp/struct.Socket.html); admission/closed-tuple retention policy differs |
-| [TCP ACK/window/recovery facilities](https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh)<br>➕ cumulative ACKs, optional SACK/DSACK, scaling and timestamps/PAWS<br>➕ RACK-TLP, RTO/persist and ECN/NewReno on explicit owners | N/A | N/A; [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) delegates these mechanisms to kernel TCP | N/A | Partial: [`smoltcp TCP`](https://docs.rs/smoltcp/latest/smoltcp/socket/tcp/index.html) retransmission, SACK and congestion control; not a claim of RACK-TLP/DSACK/ECN feature parity |
-| [TCP initial sequences and Fast Open](https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh)<br>➕ secure keyed ISNs and bounded cookie state independent of TLS<br>➕ default-off, application-authorized early data with ordinary fallback | N/A | Partial: platform-specific socket options around kernel TCP<br>➖ no portable user-mode ISN/cookie or early-delivery policy | N/A | Partial: [`smoltcp TCP`](https://docs.rs/smoltcp/latest/smoltcp/socket/tcp/index.html) sequence handling; no matching documented Fast Open/cookie contract |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">NTF</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpConnection.hh"><code>Zutcp::Connection</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpCliConnection.hh"><code>CliConnection</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpSrvConnection.hh"><code>SrvConnection</code></a><br>➕ one connection owns ordered bytes, reassembly, credit, retained Tx data and close<br>➕ bounded pending/live admission and closed-tuple history</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>ntci::StreamSocket</code></a></td>
+  <td>Partial: <a href="https://docs.rs/smoltcp/latest/smoltcp/socket/tcp/struct.Socket.html"><code>smoltcp::socket::tcp::Socket</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh">TCP ACK/window/recovery facilities</a><br>➕ cumulative ACKs, optional SACK/DSACK, scaling and timestamps/PAWS<br>➕ RACK-TLP, RTO/persist and ECN/NewReno on explicit owners</td>
+  <td>N/A</td>
+  <td>None: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/smoltcp/latest/smoltcp/socket/tcp/index.html"><code>smoltcp TCP</code></a> (not full TCP feature parity)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh">TCP initial sequences and Fast Open</a><br>➕ secure keyed ISNs and bounded cookie state independent of TLS<br>➕ default-off, application-authorized early data with ordinary fallback</td>
+  <td>N/A</td>
+  <td>Partial: platform-specific socket options around kernel TCP<br>➖ no portable user-mode ISN/cookie or early-delivery policy</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/smoltcp/latest/smoltcp/socket/tcp/index.html"><code>smoltcp TCP</code></a> (no matching Fast Open contract)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zv - Framework server-side utilities
 
@@ -1105,26 +4988,106 @@ storage/binding roles, not syntax-compatible parsers. Boost's
 [library index](https://www.boost.org/doc/libs/latest/libs/libraries.htm)
 lists those facilities and the other Boost components referenced above.
 
-| Z facility | STL | Boost | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`ZvThreadParams`](https://github.com/kaldron-labs/z/blob/main/zv/src/ZvThreadParams.hh#L35)<br>➕ validated tree-to-thread settings with default preservation | N/A | Partial: [Boost.ProgramOptions](https://www.boost.org/doc/libs/latest/doc/html/program_options.html) + [Thread](https://www.boost.org/doc/libs/latest/doc/html/thread.html) attributes | Partial: [`bslmt::ThreadAttributes`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_threadattributes.h) | Composition: [`serde`](https://docs.rs/serde/latest/serde/) + [`thread::Builder`](https://doc.rust-lang.org/std/thread/struct.Builder.html) / affinity crates; custom default-preserving thread binding |
-| [`ZvStackParams`](https://github.com/kaldron-labs/z/blob/main/zv/src/ZvStackParams.hh#L25)<br>➕ binds stack sizing/configuration while retaining defaults | N/A | Partial: [Boost.ProgramOptions](https://www.boost.org/doc/libs/latest/doc/html/program_options.html) + container configuration | N/A | Composition: [`serde`](https://docs.rs/serde/latest/serde/) + [`Builder::stack_size`](https://doc.rust-lang.org/std/thread/struct.Builder.html#method.stack_size); custom configuration type |
-| [`ZvRingParams`](https://github.com/kaldron-labs/z/blob/main/zv/src/ZvRingParams.hh#L35)<br>➕ binds configuration to shared-memory ring settings | N/A | Partial: [Boost.ProgramOptions](https://www.boost.org/doc/libs/latest/doc/html/program_options.html) + [Interprocess](https://www.boost.org/doc/libs/latest/doc/html/interprocess.html) setup | N/A | Partial: [`serde`](https://docs.rs/serde/latest/serde/) + [`ringbuf`](https://docs.rs/ringbuf/latest/ringbuf/) / [`shared_memory`](https://docs.rs/shared_memory/latest/shared_memory/); shared-ring parameter binding is custom |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zv/src/ZvThreadParams.hh#L35"><code>ZvThreadParams</code></a><br>➕ validated tree-to-thread settings with default preservation</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/program_options.html">Boost.ProgramOptions</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/thread.html">Thread</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bslmt/bslmt_threadattributes.h"><code>bslmt::ThreadAttributes</code></a></td>
+  <td>Partial: <a href="https://docs.rs/serde/latest/serde/"><code>serde</code></a>, <a href="https://doc.rust-lang.org/std/thread/struct.Builder.html"><code>thread::Builder</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zv/src/ZvStackParams.hh#L25"><code>ZvStackParams</code></a><br>➕ binds stack sizing/configuration while retaining defaults</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/program_options.html">Boost.ProgramOptions</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/serde/latest/serde/"><code>serde</code></a>, <a href="https://doc.rust-lang.org/std/thread/struct.Builder.html#method.stack_size"><code>Builder::stack_size</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zv/src/ZvRingParams.hh#L35"><code>ZvRingParams</code></a><br>➕ binds configuration to shared-memory ring settings</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/program_options.html">Boost.ProgramOptions</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/interprocess.html">Interprocess</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/serde/latest/serde/"><code>serde</code></a>, <a href="https://docs.rs/ringbuf/latest/ringbuf/"><code>ringbuf</code></a>, <a href="https://docs.rs/shared_memory/latest/shared_memory/"><code>shared_memory</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Connection and multiplexer parameter binding
 
-| Z facility | STL | Boost | Rust |
-| --- | --- | --- | --- |
-| [`ZvCxnOptions`](https://github.com/kaldron-labs/z/blob/main/zv/src/ZvMxParams.hh#L77)<br>➕ connection flags, TTL and multicast binding | N/A | Partial: [Boost.ProgramOptions](https://www.boost.org/doc/libs/latest/doc/html/program_options.html) + [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) socket options | Composition: [`serde`](https://docs.rs/serde/latest/serde/) + [`socket2`](https://docs.rs/socket2/latest/socket2/) socket options; no unified reflected connection-options adapter |
-| [`ZvMxParams`](https://github.com/kaldron-labs/z/blob/main/zv/src/ZvMxParams.hh#L112)<br>➕ binds scheduler threads, destinations and multiplexer settings | N/A | Partial: [Boost.ProgramOptions](https://www.boost.org/doc/libs/latest/doc/html/program_options.html) + custom [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) runtime settings | Composition: [`serde`](https://docs.rs/serde/latest/serde/) + [`runtime::Builder`](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html); named shard bindings are custom |
+<div style="overflow-x: auto;">
+<table width="1100" style="width: 1100px; min-width: 1100px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zv/src/ZvMxParams.hh#L77"><code>ZvCxnOptions</code></a><br>➕ connection flags, TTL and multicast binding</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/program_options.html">Boost.ProgramOptions</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://docs.rs/serde/latest/serde/"><code>serde</code></a>, <a href="https://docs.rs/socket2/latest/socket2/"><code>socket2</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zv/src/ZvMxParams.hh#L112"><code>ZvMxParams</code></a><br>➕ binds scheduler threads, destinations and multiplexer settings</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/program_options.html">Boost.ProgramOptions</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://docs.rs/serde/latest/serde/"><code>serde</code></a>, <a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html"><code>runtime::Builder</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Configuration file loading and saving
 
-| Z facility | STL | Boost | Rust |
-| --- | --- | --- | --- |
-| [`ZvCf`](https://github.com/kaldron-labs/z/blob/main/zv/src/ZvCf.hh)<br>➕ native configuration files with includes, environment expansion and typed binding<br>➖ save/update/delete outputs are not transactional in-place file edits | N/A; fstreams + custom parser/binder | Partial: [Boost.ProgramOptions](https://www.boost.org/doc/libs/latest/doc/html/program_options.html) / [PropertyTree](https://www.boost.org/doc/libs/latest/doc/html/property_tree.html) + [Filesystem](https://www.boost.org/doc/libs/latest/libs/filesystem/doc/reference.html)<br>➖ different syntax; includes/expansion require custom policy | [`config`](https://docs.rs/config/latest/config/) layered files/environment with typed deserialization; syntax and save/update semantics differ |
-| [`ZvTOML`](https://github.com/kaldron-labs/z/blob/main/zv/src/ZvTOML.hh)<br>➕ file I/O for reflected TOML and its owned tree | N/A | N/A; no built-in Boost TOML loader | [`fs::read_to_string`](https://doc.rust-lang.org/std/fs/fn.read_to_string.html) / [`fs::write`](https://doc.rust-lang.org/std/fs/fn.write.html) + [`toml`](https://docs.rs/toml/latest/toml/) |
-| [`ZvYAML`](https://github.com/kaldron-labs/z/blob/main/zv/src/ZvYAML.hh)<br>➕ file I/O for [Zf](https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh)'s reflected YAML subset | N/A | N/A; no built-in Boost YAML loader | [`fs::read_to_string`](https://doc.rust-lang.org/std/fs/fn.read_to_string.html) / [`fs::write`](https://doc.rust-lang.org/std/fs/fn.write.html) + [`serde-saphyr`](https://docs.rs/serde-saphyr/latest/serde_saphyr/); YAML profile differs |
+<div style="overflow-x: auto;">
+<table width="1100" style="width: 1100px; min-width: 1100px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zv/src/ZvCf.hh"><code>ZvCf</code></a><br>➕ native configuration files with includes, environment expansion and typed binding<br>➖ save/update/delete outputs are not transactional in-place file edits</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/program_options.html">Boost.ProgramOptions</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/property_tree.html">PropertyTree</a>, <a href="https://www.boost.org/doc/libs/latest/libs/filesystem/doc/reference.html">Filesystem</a></td>
+  <td><a href="https://docs.rs/config/latest/config/"><code>config</code></a> layered files/environment with typed deserialization; syntax and save/update semantics differ</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zv/src/ZvTOML.hh"><code>ZvTOML</code></a><br>➕ file I/O for reflected TOML and its owned tree</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://doc.rust-lang.org/std/fs/fn.read_to_string.html"><code>fs::read_to_string</code></a> / <a href="https://doc.rust-lang.org/std/fs/fn.write.html"><code>fs::write</code></a> + <a href="https://docs.rs/toml/latest/toml/"><code>toml</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zv/src/ZvYAML.hh"><code>ZvYAML</code></a><br>➕ file I/O for <a href="https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh">Zf</a>'s reflected YAML subset</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/fs/fn.read_to_string.html"><code>fs::read_to_string</code></a>, <a href="https://doc.rust-lang.org/std/fs/fn.write.html"><code>fs::write</code></a>, <a href="https://docs.rs/serde-saphyr/latest/serde_saphyr/"><code>serde-saphyr</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zpb - Protobuf implementation
 
@@ -1132,18 +5095,60 @@ lists those facilities and the other Boost components referenced above.
 
 [Public API](https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh) · [Module guide](../zpb/README.md)
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Zpb`](https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh) / [`PB`](https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh) facet<br>➕ protobuf wire mapping from [ZfStruct](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfStruct.hh) metadata without canonical generated C++ headers<br>➖ unknown fields are skipped rather than retained | Partial: [Boost.Serialization](https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html)<br>➖ its archives are not protobuf wire format | [`prost::Message`](https://docs.rs/prost/latest/prost/trait.Message.html) derives; different metadata and unknown-field policy |
-| [`Zpb::Builder`](https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh), [`Zpb::IOBuilder`](https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh)<br>➕ bounded output into caller storage or pooled I/O buffers | Partial: [Boost.Serialization](https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html) archive over an [Iostreams](https://www.boost.org/doc/libs/latest/libs/iostreams/doc/index.html) device<br>➖ custom protobuf encoding still required | [`Message::encode`](https://docs.rs/prost/latest/prost/trait.Message.html#method.encode) into [`BufMut`](https://docs.rs/bytes/latest/bytes/buf/trait.BufMut.html); hard bounds/pooling require destination policy |
-| [`Zpb::verify`](https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh#L1824), [`handler`](https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh#L1834), [`load`](https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh#L1844)<br>➕ separate wire verification, borrowed access and typed construction<br>➖ borrowed results require retained backing | N/A; no dedicated Boost protobuf verifier/view API | [`prost::Message decoding`](https://docs.rs/prost/latest/prost/trait.Message.html#method.decode); validation/materialization are combined, no equivalent generic borrowed verified view |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh"><code>Zpb</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh"><code>PB</code></a> facet<br>➕ protobuf wire mapping from <a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfStruct.hh">ZfStruct</a> metadata without canonical generated C++ headers<br>➖ unknown fields are skipped rather than retained</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html">Boost.Serialization</a></td>
+  <td>Partial: <a href="https://docs.rs/prost/latest/prost/trait.Message.html"><code>prost::Message</code></a> (derive-based mapping)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh"><code>Zpb::Builder</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh"><code>Zpb::IOBuilder</code></a><br>➕ bounded output into caller storage or pooled I/O buffers</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html">Boost.Serialization</a>, <a href="https://www.boost.org/doc/libs/latest/libs/iostreams/doc/index.html">Iostreams</a></td>
+  <td>Partial: <a href="https://docs.rs/prost/latest/prost/trait.Message.html#method.encode"><code>Message::encode</code></a>, <a href="https://docs.rs/bytes/latest/bytes/buf/trait.BufMut.html"><code>BufMut</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh#L1824"><code>Zpb::verify</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh#L1834"><code>handler</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh#L1844"><code>load</code></a><br>➕ separate wire verification, borrowed access and typed construction<br>➖ borrowed results require retained backing</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/prost/latest/prost/trait.Message.html#method.decode"><code>prost::Message decoding</code></a> (decode validates; no borrowed-view API)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Schema reflection and compiler
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Zpb::Reflect`](https://github.com/kaldron-labs/z/blob/main/zpb/src/ZpbReflect.hh) ([`ZpbReflect`](https://github.com/kaldron-labs/z/blob/main/zpb/src/ZpbReflect.hh)`.hh`)<br>➕ protobuf schema/descriptor representation integrated with Z metadata | Partial: [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) / [Hana](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html)<br>➖ no protobuf descriptor model | [`prost-reflect`](https://docs.rs/prost-reflect/latest/prost_reflect/) descriptors and dynamic messages |
-| [`zprotoc`](https://github.com/kaldron-labs/z/blob/main/zpb/src/zprotoc.cc)<br>➕ compiles supported protobuf declarations into Z metadata<br>➖ supported declaration profile is narrower than the complete protobuf ecosystem | N/A | [`prost-build`](https://docs.rs/prost-build/latest/prost_build/) / [`protobuf-codegen`](https://docs.rs/protobuf-codegen/latest/protobuf_codegen/); schema-to-Rust generation, different supported profiles |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zpb/src/ZpbReflect.hh"><code>Zpb::Reflect</code></a> (<a href="https://github.com/kaldron-labs/z/blob/main/zpb/src/ZpbReflect.hh"><code>ZpbReflect</code></a><code>.hh</code>)<br>➕ protobuf schema/descriptor representation integrated with Z metadata</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Boost.Describe</a>, <a href="https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html">Hana</a></td>
+  <td><a href="https://docs.rs/prost-reflect/latest/prost_reflect/"><code>prost-reflect</code></a> descriptors and dynamic messages</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zpb/src/zprotoc.cc"><code>zprotoc</code></a><br>➕ compiles supported protobuf declarations into Z metadata<br>➖ supported declaration profile is narrower than the complete protobuf ecosystem</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/prost-build/latest/prost_build/"><code>prost-build</code></a>, <a href="https://docs.rs/protobuf-codegen/latest/protobuf_codegen/"><code>protobuf-codegen</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zfb - Flatbuffers
 
@@ -1151,18 +5156,60 @@ lists those facilities and the other Boost components referenced above.
 
 [Public API](https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh) · [Module guide](../zfb/README.md)
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Zfb`](https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh) / [`FB`](https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh) facet<br>➕ canonical FlatBuffers mapping from reflected C++ types without canonical generated headers | Partial: [Boost.Serialization](https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html)<br>➖ archive formats do not supply FlatBuffers layout | [`flatbuffers`](https://docs.rs/flatbuffers/latest/flatbuffers/) canonical generated Rust bindings; no Z-style reflection-driven native mapping |
-| [`Zfb::Builder`](https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh), [`Zfb::IOBuilder`](https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh)<br>➕ downward arena construction and direct pooled I/O output | Partial: [Boost.Container](https://www.boost.org/doc/libs/latest/doc/html/container.html) storage + custom builder | [`FlatBufferBuilder`](https://docs.rs/flatbuffers/latest/flatbuffers/struct.FlatBufferBuilder.html); different allocator/I/O integration |
-| [`Zfb::view`](https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh#L1667), [`handler`](https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh#L2738), [`load`](https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh#L2799), [`verify`](https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh#L2730)<br>➕ borrowed table/vector access, typed construction and structural verification<br>➖ views depend on wire-buffer lifetime | N/A; no dedicated Boost FlatBuffers access/verifier API | [`flatbuffers::root`](https://docs.rs/flatbuffers/latest/flatbuffers/fn.root.html) verifies and returns borrowed accessors; native-object unpacking is generated |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh"><code>Zfb</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh"><code>FB</code></a> facet<br>➕ canonical FlatBuffers mapping from reflected C++ types without canonical generated headers</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html">Boost.Serialization</a></td>
+  <td>Partial: <a href="https://docs.rs/flatbuffers/latest/flatbuffers/"><code>flatbuffers</code></a> (generated bindings)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh"><code>Zfb::Builder</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh"><code>Zfb::IOBuilder</code></a><br>➕ downward arena construction and direct pooled I/O output</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/container.html">Boost.Container</a></td>
+  <td>Partial: <a href="https://docs.rs/flatbuffers/latest/flatbuffers/struct.FlatBufferBuilder.html"><code>FlatBufferBuilder</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh#L1667"><code>Zfb::view</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh#L2738"><code>handler</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh#L2799"><code>load</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh#L2730"><code>verify</code></a><br>➕ borrowed table/vector access, typed construction and structural verification<br>➖ views depend on wire-buffer lifetime</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/flatbuffers/latest/flatbuffers/fn.root.html"><code>flatbuffers::root</code></a> verifies and returns borrowed accessors; native-object unpacking is generated</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Schema reflection and compiler
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Zfb::Reflect`](https://github.com/kaldron-labs/z/blob/main/zfb/src/ZfbReflect.hh) ([`ZfbReflect`](https://github.com/kaldron-labs/z/blob/main/zfb/src/ZfbReflect.hh)`.hh`)<br>➕ emits and consumes BFBS/FBS schema metadata from reflected types | Partial: [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) / [Hana](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html)<br>➖ no FlatBuffers schema emission | [`flatbuffers-reflection`](https://docs.rs/flatbuffers-reflection/latest/flatbuffers_reflection/) BFBS schema reflection |
-| [`zflatc`](https://github.com/kaldron-labs/z/blob/main/zfb/src/zflatc.cc)<br>➕ FlatBuffers schema tooling for Z types | N/A | [`flatc` Rust code generation](https://flatbuffers.dev/languages/rust/); schema compiler is external to Cargo |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zfb/src/ZfbReflect.hh"><code>Zfb::Reflect</code></a> (<a href="https://github.com/kaldron-labs/z/blob/main/zfb/src/ZfbReflect.hh"><code>ZfbReflect</code></a><code>.hh</code>)<br>➕ emits and consumes BFBS/FBS schema metadata from reflected types</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Boost.Describe</a>, <a href="https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html">Hana</a></td>
+  <td><a href="https://docs.rs/flatbuffers-reflection/latest/flatbuffers_reflection/"><code>flatbuffers-reflection</code></a> BFBS schema reflection</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zfb/src/zflatc.cc"><code>zflatc</code></a><br>➕ FlatBuffers schema tooling for Z types</td>
+  <td>N/A</td>
+  <td><a href="https://flatbuffers.dev/languages/rust/"><code>flatc</code> Rust code generation</a>; schema compiler is external to Cargo</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zdbus - D-Bus clients, servers and typed message routing
 
@@ -1171,19 +5218,65 @@ lists those facilities and the other Boost components referenced above.
 [Public headers](https://github.com/kaldron-labs/z/blob/main/zdbus/src/) · [Module guide](../zdbus/README.md).
 Used by the Linux [Ztls](https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh) credential Vault; native message bodies use [`ZfDBUS`](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfDBUS.hh).
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`ZdbusAddress`](https://github.com/kaldron-labs/z/blob/main/zdbus/src/ZdbusAddress.hh)<br>➕ decodes D-Bus unix addresses into filesystem/abstract socket endpoints | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) local stream endpoints<br>➖ D-Bus address parsing is additional work | [`zbus::address`](https://docs.rs/zbus/latest/zbus/address/index.html) |
-| D-Bus EXTERNAL authentication ([`ZdbusAuth`](https://github.com/kaldron-labs/z/blob/main/zdbus/src/ZdbusAuth.hh)`.hh`)<br>➕ incremental client authentication integrated with connection setup | N/A | [`zbus::connection::Builder`](https://docs.rs/zbus/latest/zbus/connection/struct.Builder.html) authentication configuration; different connection lifecycle |
-| D-Bus envelopes and pooled messages ([`ZdbusEnvelope`](https://github.com/kaldron-labs/z/blob/main/zdbus/src/ZdbusEnvelope.hh)`.hh`, [`ZdbusMessage`](https://github.com/kaldron-labs/z/blob/main/zdbus/src/ZdbusMessage.hh)`.hh`)<br>➕ bounded framing, header validation and direct pooled construction | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) buffers + custom D-Bus codec | [`zbus::message`](https://docs.rs/zbus/latest/zbus/message/index.html) / [`zvariant`](https://docs.rs/zvariant/latest/zvariant/); no matching pooled framing contract |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdbus/src/ZdbusAddress.hh"><code>ZdbusAddress</code></a><br>➕ decodes D-Bus unix addresses into filesystem/abstract socket endpoints</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td><a href="https://docs.rs/zbus/latest/zbus/address/index.html"><code>zbus::address</code></a></td>
+</tr>
+<tr valign="top">
+  <td>D-Bus EXTERNAL authentication (<a href="https://github.com/kaldron-labs/z/blob/main/zdbus/src/ZdbusAuth.hh"><code>ZdbusAuth</code></a><code>.hh</code>)<br>➕ incremental client authentication integrated with connection setup</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/zbus/latest/zbus/connection/struct.Builder.html"><code>zbus::connection::Builder</code></a></td>
+</tr>
+<tr valign="top">
+  <td>D-Bus envelopes and pooled messages (<a href="https://github.com/kaldron-labs/z/blob/main/zdbus/src/ZdbusEnvelope.hh"><code>ZdbusEnvelope</code></a><code>.hh</code>, <a href="https://github.com/kaldron-labs/z/blob/main/zdbus/src/ZdbusMessage.hh"><code>ZdbusMessage</code></a><code>.hh</code>)<br>➕ bounded framing, header validation and direct pooled construction</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://docs.rs/zbus/latest/zbus/message/index.html"><code>zbus::message</code></a>, <a href="https://docs.rs/zvariant/latest/zvariant/"><code>zvariant</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Typed message adapters and runtime
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| Request/return/error/signal adapters and catalogs<br>➕ routing headers and typed [ZfDBUS](https://github.com/kaldron-labs/z/blob/main/zf/src/ZfDBUS.hh) bodies share application declarations | Partial: [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) + custom dispatch | [`zbus::interface`](https://docs.rs/zbus/latest/zbus/attr.interface.html) / [`proxy`](https://docs.rs/zbus/latest/zbus/attr.proxy.html) + [`zvariant`](https://docs.rs/zvariant/latest/zvariant/) |
-| [`ZdbusClient`](https://github.com/kaldron-labs/z/blob/main/zdbus/src/ZdbusClient.hh)<br>➕ asynchronous calls, serial correlation, named errors and signal subscriptions<br>➖ Linux-only module | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) local sockets, timers and pending-call map<br>➖ no complete Boost D-Bus client | [`zbus::Connection`](https://docs.rs/zbus/latest/zbus/connection/struct.Connection.html) / [`Proxy`](https://docs.rs/zbus/latest/zbus/proxy/struct.Proxy.html) |
-| [`ZdbusServer`](https://github.com/kaldron-labs/z/blob/main/zdbus/src/ZdbusServer.hh)<br>➕ service-side method routes and typed returns/errors over the shared bus client<br>➖ Linux-only module | N/A; service routing would be application code over [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) | [`zbus::ObjectServer`](https://docs.rs/zbus/latest/zbus/object_server/struct.ObjectServer.html) / [`interface`](https://docs.rs/zbus/latest/zbus/attr.interface.html) |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td>Request/return/error/signal adapters and catalogs<br>➕ routing headers and typed <a href="https://github.com/kaldron-labs/z/blob/main/zf/src/ZfDBUS.hh">ZfDBUS</a> bodies share application declarations</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Boost.Describe</a></td>
+  <td><a href="https://docs.rs/zbus/latest/zbus/attr.interface.html"><code>zbus::interface</code></a> / <a href="https://docs.rs/zbus/latest/zbus/attr.proxy.html"><code>proxy</code></a> + <a href="https://docs.rs/zvariant/latest/zvariant/"><code>zvariant</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdbus/src/ZdbusClient.hh"><code>ZdbusClient</code></a><br>➕ asynchronous calls, serial correlation, named errors and signal subscriptions<br>➖ Linux-only module</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td><a href="https://docs.rs/zbus/latest/zbus/connection/struct.Connection.html"><code>zbus::Connection</code></a> / <a href="https://docs.rs/zbus/latest/zbus/proxy/struct.Proxy.html"><code>Proxy</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdbus/src/ZdbusServer.hh"><code>ZdbusServer</code></a><br>➕ service-side method routes and typed returns/errors over the shared bus client<br>➖ Linux-only module</td>
+  <td>None: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td><a href="https://docs.rs/zbus/latest/zbus/object_server/struct.ObjectServer.html"><code>zbus::ObjectServer</code></a> / <a href="https://docs.rs/zbus/latest/zbus/attr.interface.html"><code>interface</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Ztcp - Asynchronous TCP links
 
@@ -1191,17 +5284,67 @@ Used by the Linux [Ztls](https://github.com/kaldron-labs/z/blob/main/ztls/src/Zt
 
 [Public API](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh) · [Module guide](../ztcp/README.md)
 
-| Z facility | Boost | Folly | NTF | Rust |
-| --- | --- | --- | --- | --- |
-| [`Ztcp::RxBufAlloc`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh), [`TxBufAlloc`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh), [`RxStream`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh), [`TxStream`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh)<br>➕ pooled, reference-owned input/output with explicit allocator roles<br>➖ applications supply message framing | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) buffer sequences and DynamicBuffer<br>➖ matching pool ownership and framing require composition | Partial: [`folly::IOBuf / IOBufQueue`](https://github.com/facebook/folly/blob/main/folly/io/IOBufQueue.h)<br>➖ no matching transport allocator-role or Z stream interface | Partial: [`ntci::DataPool`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_datapool.h)`  +  `[`StreamSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h) | [`TcpStream`](https://docs.rs/tokio/latest/tokio/net/struct.TcpStream.html) + [`bytes`](https://docs.rs/bytes/latest/bytes/) / [`codec`](https://docs.rs/tokio-util/latest/tokio_util/codec/index.html); custom allocator roles |
-| [`Ztcp::HubParams`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh), [`ClientParams`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh), [`ServerParams`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh)<br>➕ named Rx/Tx destinations and allocator configuration shared by links | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) executors, socket options and application configuration | Partial: [`folly::EventBase + AsyncSocket options`](https://github.com/facebook/folly/blob/main/folly/io/async/EventBase.h)<br>➖ hub/allocator configuration requires application composition | Partial: [`ntca::StreamSocketOptions`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntca/ntca_streamsocketoptions.h)`  /  `[`ListenerSocketOptions`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntca/ntca_listenersocketoptions.h) | [`runtime::Builder`](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html) / [`socket2`](https://docs.rs/socket2/latest/socket2/); named Rx/Tx destinations require custom configuration |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">NTF</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh"><code>Ztcp::RxBufAlloc</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh"><code>TxBufAlloc</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh"><code>RxStream</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh"><code>TxStream</code></a><br>➕ pooled, reference-owned input/output with explicit allocator roles<br>➖ applications supply message framing</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/IOBufQueue.h"><code>folly::IOBuf / IOBufQueue</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_datapool.h"><code>ntci::DataPool</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>StreamSocket</code></a></td>
+  <td>Partial: <a href="https://docs.rs/tokio/latest/tokio/net/struct.TcpStream.html"><code>TcpStream</code></a>, <a href="https://docs.rs/bytes/latest/bytes/"><code>bytes</code></a>, <a href="https://docs.rs/tokio-util/latest/tokio_util/codec/index.html"><code>codec</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh"><code>Ztcp::HubParams</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh"><code>ClientParams</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh"><code>ServerParams</code></a><br>➕ named Rx/Tx destinations and allocator configuration shared by links</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/async/EventBase.h"><code>folly::EventBase + AsyncSocket options</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntca/ntca_streamsocketoptions.h"><code>ntca::StreamSocketOptions</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntca/ntca_listenersocketoptions.h"><code>ListenerSocketOptions</code></a></td>
+  <td>Partial: <a href="https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html"><code>runtime::Builder</code></a>, <a href="https://docs.rs/socket2/latest/socket2/"><code>socket2</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## TCP links and endpoints
 
-| Z facility | Boost | Folly | NTF | Rust |
-| --- | --- | --- | --- | --- |
-| [`Ztcp::CliLink`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh), [`SrvLink`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh)<br>➕ CRTP connection callbacks, queued writes and reconnect integration | [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) [`ip::tcp::socket`](https://github.com/boostorg/asio/blob/master/include/boost/asio/ip/tcp.hpp) with composed connection/read/write operations | Partial: [`folly::AsyncSocket`](https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSocket.h)<br>➖ reconnect/hub behavior remains application policy | Partial: [`ntci::StreamSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h)`  /  `[`StreamSocketSession`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocketsession.h) | [`TcpStream`](https://docs.rs/tokio/latest/tokio/net/struct.TcpStream.html) + [`Framed`](https://docs.rs/tokio-util/latest/tokio_util/codec/struct.Framed.html); reconnect/callback policy is application-owned |
-| [`Ztcp::Client`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh), [`Server`](https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh)<br>➕ hub-managed link/listener lifecycle and restart after drain | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) resolver, sockets and acceptor<br>➖ hub lifecycle and reconnect policy remain application work | Partial: [`folly::AsyncSocket / AsyncServerSocket`](https://github.com/facebook/folly/blob/main/folly/io/async/AsyncServerSocket.h)<br>➖ endpoint startup/drain/restart orchestration is additional work | Partial: [`ntci::ListenerSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_listenersocket.h)`  +  `[`StreamSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h) | [`TcpListener`](https://docs.rs/tokio/latest/tokio/net/struct.TcpListener.html) / [`TcpStream`](https://docs.rs/tokio/latest/tokio/net/struct.TcpStream.html); hub-managed restart/drain requires an owner runtime |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">NTF</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh"><code>Ztcp::CliLink</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh"><code>SrvLink</code></a><br>➕ CRTP connection callbacks, queued writes and reconnect integration</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a> <a href="https://github.com/boostorg/asio/blob/master/include/boost/asio/ip/tcp.hpp"><code>ip::tcp::socket</code></a> with composed connection/read/write operations</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSocket.h"><code>folly::AsyncSocket</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>ntci::StreamSocket</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocketsession.h"><code>StreamSocketSession</code></a></td>
+  <td><a href="https://docs.rs/tokio/latest/tokio/net/struct.TcpStream.html"><code>TcpStream</code></a> + <a href="https://docs.rs/tokio-util/latest/tokio_util/codec/struct.Framed.html"><code>Framed</code></a>; reconnect/callback policy is application-owned</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh"><code>Ztcp::Client</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztcp/src/Ztcp.hh"><code>Server</code></a><br>➕ hub-managed link/listener lifecycle and restart after drain</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncServerSocket.h"><code>folly::AsyncSocket / AsyncServerSocket</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_listenersocket.h"><code>ntci::ListenerSocket</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>StreamSocket</code></a></td>
+  <td>Partial: <a href="https://docs.rs/tokio/latest/tokio/net/struct.TcpListener.html"><code>TcpListener</code></a>, <a href="https://docs.rs/tokio/latest/tokio/net/struct.TcpStream.html"><code>TcpStream</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Ztls - TLS transport, cryptography and credential storage
 
@@ -1212,41 +5355,192 @@ TLS and crypto use zpicotls/OpenSSL; backend requirements are in
 [dependencies](DEPENDENCIES.md). Hash/MAC comparisons use
 [Boost.Hash2](https://www.boost.org/doc/libs/latest/libs/hash2/doc/html/hash2.html).
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`Ztls::Random`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsRandom.hh)<br>➕ crypto-provider random bytes directly into a caller span | Partial: [`std::random_device`](https://en.cppreference.com/cpp/numeric/random/random_device)<br>➖ implementation may use a pseudorandom engine; no universal cryptographic guarantee | Partial: [Boost.Random](https://www.boost.org/doc/libs/latest/doc/html/boost_random.html) [`random_device`](https://github.com/boostorg/random/blob/master/include/boost/random/random_device.hpp)<br>➖ different device/word-generation interface | [`folly::Random::secureRandom`](https://github.com/facebook/folly/blob/main/folly/Random.h) | [`bdlb::RandomDevice::getRandomBytes`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_randomdevice.h) | [`getrandom`](https://docs.rs/getrandom/latest/getrandom/) / [`CryptoRng`](https://docs.rs/rand_core/latest/rand_core/trait.CryptoRng.html) sources |
-| [`Ztls::ctEqual`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsSec.hh#L23)<br>➕ security-oriented constant-time byte comparison | N/A; ordinary equality algorithms provide no constant-time guarantee | N/A; ordinary range equality provides no constant-time guarantee | N/A | N/A | [`ConstantTimeEq`](https://docs.rs/subtle/latest/subtle/trait.ConstantTimeEq.html) |
-| [`Ztls::secretHash`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsSec.hh#L34), [`secretVerify`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsSec.hh#L35)<br>➕ versioned salted secret-hash representation and verification | N/A | Partial: [Boost.Hash2](https://www.boost.org/doc/libs/latest/libs/hash2/doc/html/hash2.html) + custom salt/format/verification policy | N/A | N/A | [`argon2`](https://docs.rs/argon2/latest/argon2/) / [`password-hash`](https://docs.rs/password-hash/latest/password_hash/) versioned salted password hashes; algorithm/wire representation differs |
-| [`Ztls::MD`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsMD.hh)<br>➕ incremental SHA digests through the configured crypto backend | N/A; [`std::hash`](https://en.cppreference.com/cpp/utility/hash) is not a cryptographic digest API | [Boost.Hash2](https://www.boost.org/doc/libs/latest/libs/hash2/doc/html/hash2.html) SHA algorithms<br>➕ also offers other hash families | [`folly::ssl::OpenSSLHash::Digest`](https://github.com/facebook/folly/blob/main/folly/ssl/OpenSSLHash.h) | Partial: [`bdlde::Sha256`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_sha2.h)`  /  `[`Sha512`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_sha2.h)`  /  `[`Sha1`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_sha1.h)`  /  `[`Md5`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_md5.h) | [`sha2`](https://docs.rs/sha2/latest/sha2/) / [`Digest`](https://docs.rs/digest/latest/digest/trait.Digest.html) |
-| [`Ztls::HMAC`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsHMAC.hh)<br>➕ backend MAC state with span input/output and reset | N/A | [Boost.Hash2](https://www.boost.org/doc/libs/latest/libs/hash2/doc/html/hash2.html) [`hmac`](https://github.com/boostorg/hash2/blob/master/include/boost/hash2/hmac.hpp) | [`folly::ssl::OpenSSLHash::Hmac`](https://github.com/facebook/folly/blob/main/folly/ssl/OpenSSLHash.h) | N/A | [`hmac`](https://docs.rs/hmac/latest/hmac/) |
-| [`Ztls::TOTP`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsTOTP.hh)<br>➕ time-based code calculation and bounded-window verification | N/A | Partial: [Boost.Hash2](https://www.boost.org/doc/libs/latest/libs/hash2/doc/html/hash2.html) HMAC + custom TOTP construction | N/A | N/A | [`totp-rs`](https://docs.rs/totp-rs/latest/totp_rs/) |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsRandom.hh"><code>Ztls::Random</code></a><br>➕ crypto-provider random bytes directly into a caller span</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/numeric/random/random_device"><code>std::random_device</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_random.html">Boost.Random</a>, <a href="https://github.com/boostorg/random/blob/master/include/boost/random/random_device.hpp"><code>random_device</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/Random.h"><code>folly::Random::secureRandom</code></a></td>
+  <td><a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlb/bdlb_randomdevice.h"><code>bdlb::RandomDevice::getRandomBytes</code></a></td>
+  <td><a href="https://docs.rs/getrandom/latest/getrandom/"><code>getrandom</code></a> / <a href="https://docs.rs/rand_core/latest/rand_core/trait.CryptoRng.html"><code>CryptoRng</code></a> sources</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsSec.hh#L23"><code>Ztls::ctEqual</code></a><br>➕ security-oriented constant-time byte comparison</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/subtle/latest/subtle/trait.ConstantTimeEq.html"><code>ConstantTimeEq</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsSec.hh#L34"><code>Ztls::secretHash</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsSec.hh#L35"><code>secretVerify</code></a><br>➕ versioned salted secret-hash representation and verification</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/hash2/doc/html/hash2.html">Boost.Hash2</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/argon2/latest/argon2/"><code>argon2</code></a>, <a href="https://docs.rs/password-hash/latest/password_hash/"><code>password-hash</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsMD.hh"><code>Ztls::MD</code></a><br>➕ incremental SHA digests through the configured crypto backend</td>
+  <td>None: <a href="https://en.cppreference.com/cpp/utility/hash"><code>std::hash</code></a></td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/hash2/doc/html/hash2.html">Boost.Hash2</a> SHA algorithms<br>➕ also offers other hash families</td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/ssl/OpenSSLHash.h"><code>folly::ssl::OpenSSLHash::Digest</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_sha2.h"><code>bdlde::Sha256</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_sha2.h"><code>Sha512</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_sha1.h"><code>Sha1</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlde/bdlde_md5.h"><code>Md5</code></a></td>
+  <td><a href="https://docs.rs/sha2/latest/sha2/"><code>sha2</code></a> / <a href="https://docs.rs/digest/latest/digest/trait.Digest.html"><code>Digest</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsHMAC.hh"><code>Ztls::HMAC</code></a><br>➕ backend MAC state with span input/output and reset</td>
+  <td>N/A</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/hash2/doc/html/hash2.html">Boost.Hash2</a> <a href="https://github.com/boostorg/hash2/blob/master/include/boost/hash2/hmac.hpp"><code>hmac</code></a></td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/ssl/OpenSSLHash.h"><code>folly::ssl::OpenSSLHash::Hmac</code></a></td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/hmac/latest/hmac/"><code>hmac</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsTOTP.hh"><code>Ztls::TOTP</code></a><br>➕ time-based code calculation and bounded-window verification</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/hash2/doc/html/hash2.html">Boost.Hash2</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/totp-rs/latest/totp_rs/"><code>totp-rs</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Keys, encapsulation and encrypted files
 
-| Z facility | Boost | Folly | NTF | Rust |
-| --- | --- | --- | --- | --- |
-| [`Ztls::PK`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsPK.hh)<br>➕ RSA/EC/Ed25519/X25519 key loading, generation and applicable signing/verification operations | N/A; [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) SSL's native handle is not a public-key wrapper library | Partial: [`folly::ssl::OpenSSLKeyUtils`](https://github.com/facebook/folly/blob/main/folly/ssl/OpenSSLKeyUtils.h)<br>➖ private-key parsing helpers, not the full typed key/signature API | Partial: [`ntci::EncryptionKey`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_encryptionkey.h)`  +  `[`EncryptionDriver`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_encryptiondriver.h) | [`openssl::pkey::PKey`](https://docs.rs/openssl/latest/openssl/pkey/struct.PKey.html); [`rsa`](https://docs.rs/rsa/latest/rsa/) / [`p256`](https://docs.rs/p256/latest/p256/) / [`ed25519-dalek`](https://docs.rs/ed25519-dalek/latest/ed25519_dalek/) / [`x25519-dalek`](https://docs.rs/x25519-dalek/latest/x25519_dalek/) for algorithm-specific native crates |
-| [`Ztls::PK`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsPK.hh) ML-KEM-768 and ML-KEM-768–X25519 keys<br>➕ encapsulation/decapsulation and key serialization integrated with Z buffers | N/A | N/A | N/A | Partial: [`ml-kem`](https://docs.rs/ml-kem/latest/ml_kem/) / [`x-wing`](https://docs.rs/x-wing/latest/x_wing/); hybrid construction and key-serialization compatibility must be checked separately |
-| [`Ztls::COSE`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsCOSE.hh)<br>➕ COSE key representations bound to native public/private key types | N/A | N/A | N/A | [`coset`](https://docs.rs/coset/latest/coset/) COSE key structures; native crypto-key conversion requires integration |
-| [`Ztls::HPKE`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsHPKE.hh)<br>➕ base-mode hybrid ML-KEM-768–X25519 encryption with caller buffers | N/A | N/A | N/A | Partial: [`hpke`](https://docs.rs/hpke/latest/hpke/) / [`hpke-rs`](https://docs.rs/hpke-rs/latest/hpke_rs/); exact ML-KEM-768–X25519 suite/provider and wire compatibility must be checked |
-| [`ZtlsAge`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsAge.hh)<br>➕ age-format file encryption/decryption and recipient/identity parsing | N/A; file streams alone supply no age encryption | N/A | N/A | [`age`](https://docs.rs/age/latest/age/) age-format encryption/decryption |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">NTF</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsPK.hh"><code>Ztls::PK</code></a><br>➕ RSA/EC/Ed25519/X25519 key loading, generation and applicable signing/verification operations</td>
+  <td>None: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/ssl/OpenSSLKeyUtils.h"><code>folly::ssl::OpenSSLKeyUtils</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_encryptionkey.h"><code>ntci::EncryptionKey</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_encryptiondriver.h"><code>EncryptionDriver</code></a></td>
+  <td><a href="https://docs.rs/openssl/latest/openssl/pkey/struct.PKey.html"><code>openssl::pkey::PKey</code></a>; <a href="https://docs.rs/rsa/latest/rsa/"><code>rsa</code></a> / <a href="https://docs.rs/p256/latest/p256/"><code>p256</code></a> / <a href="https://docs.rs/ed25519-dalek/latest/ed25519_dalek/"><code>ed25519-dalek</code></a> / <a href="https://docs.rs/x25519-dalek/latest/x25519_dalek/"><code>x25519-dalek</code></a> for algorithm-specific native crates</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsPK.hh"><code>Ztls::PK</code></a> ML-KEM-768 and ML-KEM-768–X25519 keys<br>➕ encapsulation/decapsulation and key serialization integrated with Z buffers</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/ml-kem/latest/ml_kem/"><code>ml-kem</code></a>, <a href="https://docs.rs/x-wing/latest/x_wing/"><code>x-wing</code></a> (check hybrid suite compatibility)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsCOSE.hh"><code>Ztls::COSE</code></a><br>➕ COSE key representations bound to native public/private key types</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/coset/latest/coset/"><code>coset</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsHPKE.hh"><code>Ztls::HPKE</code></a><br>➕ base-mode hybrid ML-KEM-768–X25519 encryption with caller buffers</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/hpke/latest/hpke/"><code>hpke</code></a>, <a href="https://docs.rs/hpke-rs/latest/hpke_rs/"><code>hpke-rs</code></a> (check hybrid suite compatibility)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsAge.hh"><code>ZtlsAge</code></a><br>➕ age-format file encryption/decryption and recipient/identity parsing</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/age/latest/age/"><code>age</code></a> age-format encryption/decryption</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Credential storage
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Ztls::Vault`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsVault.hh), [`VaultConfig`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsVault.hh), [`VaultStore`](https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsVaultStore.hh)<br>➕ scoped credential names with ephemeral/file/keyring/module stores<br>➕ Linux Secret Service and Windows platform integration | N/A; no matching Boost credential vault | Partial: [`keyring`](https://docs.rs/keyring/latest/keyring/) platform credentials / [`secrecy`](https://docs.rs/secrecy/latest/secrecy/) secret wrappers; scoped file/module vault contracts are custom |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsVault.hh"><code>Ztls::Vault</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsVault.hh"><code>VaultConfig</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/ZtlsVaultStore.hh"><code>VaultStore</code></a><br>➕ scoped credential names with ephemeral/file/keyring/module stores<br>➕ Linux Secret Service and Windows platform integration</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/keyring/latest/keyring/"><code>keyring</code></a>, <a href="https://docs.rs/secrecy/latest/secrecy/"><code>secrecy</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## TLS byte streams and endpoints
 
 TLS counterpart: [Boost.Asio SSL](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/overview/ssl.html).
 
-| Z facility | Boost | Folly | NTF | Rust |
-| --- | --- | --- | --- | --- |
-| [`Ztls::RxBufAlloc`](https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh), [`TxBufAlloc`](https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh) and TLS packet allocation<br>➕ separate plaintext/ciphertext ownership and serial record encryption into packet spans | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) SSL buffers and associated allocators<br>➖ different packet-backing integration | Partial: [`folly::AsyncSSLSocket with IOBuf output`](https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSSLSocket.h)<br>➖ no Z plaintext/ciphertext packet-allocation contract | Partial: [`ntci::Encryption`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_encryption.h)`  +  `[`DataPool`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_datapool.h) | Partial: [`rustls`](https://docs.rs/rustls/latest/rustls/) record buffering / [`tokio-rustls`](https://docs.rs/tokio-rustls/latest/tokio_rustls/) async I/O; plaintext/ciphertext pool roles and shards differ |
-| [`Ztls::HubParams`](https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh), [`ClientParams`](https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh), [`ServerParams`](https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh)<br>➕ trust, keys, ALPN, allocator roles and Rx/Tx destinations in one setup contract | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) [`ssl::context`](https://github.com/boostorg/asio/blob/master/include/boost/asio/ssl/context.hpp) + executors and application parameters | Partial: [`folly::SSLContext + EventBase`](https://github.com/facebook/folly/blob/main/folly/io/async/SSLContext.h)<br>➖ different allocator and endpoint configuration model | Partial: [`ntca::EncryptionClientOptions`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntca/ntca_encryptionclientoptions.h)`  /  `[`EncryptionServerOptions`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntca/ntca_encryptionserveroptions.h) | [`ClientConfig`](https://docs.rs/rustls/latest/rustls/client/struct.ClientConfig.html) / [`ServerConfig`](https://docs.rs/rustls/latest/rustls/server/struct.ServerConfig.html); transport allocation/sharding configuration is separate |
-| [`Ztls::CliLink`](https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh), [`SrvLink`](https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh)<br>➕ handshake/session callbacks integrated with pooled transport and shard ownership | [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) [`ssl::stream`](https://github.com/boostorg/asio/blob/master/include/boost/asio/ssl/stream.hpp)`<`[`ip::tcp::socket`](https://github.com/boostorg/asio/blob/master/include/boost/asio/ip/tcp.hpp)`>`<br>➕ standard [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) asynchronous-stream composition | [`folly::AsyncSSLSocket`](https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSSLSocket.h) | Partial: [`ntci::StreamSocket::upgrade`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h)` / downgrade`<br>➕ TLS upgrade/downgrade of an existing stream socket | [`tokio-rustls`](https://docs.rs/tokio-rustls/latest/tokio_rustls/) async TLS streams; handshake/lifetime represented by futures rather than CRTP callbacks |
-| [`Ztls::Client`](https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh), [`Server`](https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh)<br>➕ managed TLS link/listener startup, drain and restart | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) SSL streams, acceptors and application lifecycle | Partial: [`folly::AsyncSSLSocket / AsyncServerSocket`](https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSSLSocket.h)<br>➖ listener acceptance and lifecycle require composition | Partial: [`ntci::EncryptionDriver`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_encryptiondriver.h)`  +  `[`StreamSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h)`  /  `[`ListenerSocket`](https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_listenersocket.h) | [`TlsConnector`](https://docs.rs/tokio-rustls/latest/tokio_rustls/client/struct.TlsConnector.html) / [`TlsAcceptor`](https://docs.rs/tokio-rustls/latest/tokio_rustls/server/struct.TlsAcceptor.html); listener restart/drain is application-owned |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">NTF</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh"><code>Ztls::RxBufAlloc</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh"><code>TxBufAlloc</code></a> and TLS packet allocation<br>➕ separate plaintext/ciphertext ownership and serial record encryption into packet spans</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSSLSocket.h"><code>folly::AsyncSSLSocket with IOBuf output</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_encryption.h"><code>ntci::Encryption</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_datapool.h"><code>DataPool</code></a></td>
+  <td>Partial: <a href="https://docs.rs/rustls/latest/rustls/"><code>rustls</code></a>, <a href="https://docs.rs/tokio-rustls/latest/tokio_rustls/"><code>tokio-rustls</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh"><code>Ztls::HubParams</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh"><code>ClientParams</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh"><code>ServerParams</code></a><br>➕ trust, keys, ALPN, allocator roles and Rx/Tx destinations in one setup contract</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a>, <a href="https://github.com/boostorg/asio/blob/master/include/boost/asio/ssl/context.hpp"><code>ssl::context</code></a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/async/SSLContext.h"><code>folly::SSLContext + EventBase</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntca/ntca_encryptionclientoptions.h"><code>ntca::EncryptionClientOptions</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntca/ntca_encryptionserveroptions.h"><code>EncryptionServerOptions</code></a></td>
+  <td><a href="https://docs.rs/rustls/latest/rustls/client/struct.ClientConfig.html"><code>ClientConfig</code></a> / <a href="https://docs.rs/rustls/latest/rustls/server/struct.ServerConfig.html"><code>ServerConfig</code></a>; transport allocation/sharding configuration is separate</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh"><code>Ztls::CliLink</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh"><code>SrvLink</code></a><br>➕ handshake/session callbacks integrated with pooled transport and shard ownership</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a> <a href="https://github.com/boostorg/asio/blob/master/include/boost/asio/ssl/stream.hpp"><code>ssl::stream</code></a><code>&lt;</code><a href="https://github.com/boostorg/asio/blob/master/include/boost/asio/ip/tcp.hpp"><code>ip::tcp::socket</code></a><code>&gt;</code><br>➕ standard <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a> asynchronous-stream composition</td>
+  <td><a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSSLSocket.h"><code>folly::AsyncSSLSocket</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>ntci::StreamSocket::upgrade</code></a></td>
+  <td>Partial: <a href="https://docs.rs/tokio-rustls/latest/tokio_rustls/"><code>tokio-rustls</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh"><code>Ztls::Client</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/ztls/src/Ztls.hh"><code>Server</code></a><br>➕ managed TLS link/listener startup, drain and restart</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSSLSocket.h"><code>folly::AsyncSSLSocket / AsyncServerSocket</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_encryptiondriver.h"><code>ntci::EncryptionDriver</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_streamsocket.h"><code>StreamSocket</code></a>, <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/ntc/ntci/ntci_listenersocket.h"><code>ListenerSocket</code></a></td>
+  <td><a href="https://docs.rs/tokio-rustls/latest/tokio_rustls/client/struct.TlsConnector.html"><code>TlsConnector</code></a> / <a href="https://docs.rs/tokio-rustls/latest/tokio_rustls/server/struct.TlsAcceptor.html"><code>TlsAcceptor</code></a>; listener restart/drain is application-owned</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zquic - QUIC transport
 
@@ -1258,29 +5552,106 @@ QUIC v1 is the mainstream deployment baseline; quic-go still prefers it as the
 V2 adds no application capabilities and does not deprecate v1
 ([RFC 9369](https://www.rfc-editor.org/rfc/rfc9369.html)).
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [QUIC packet/frame/transport-parameter codecs](https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh)<br>➕ native wire parsing and output integrated with Z buffer ownership | N/A; [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) UDP does not implement QUIC wire formats | [`quinn-proto`](https://docs.rs/quinn-proto/latest/quinn_proto/) / [`quiche`](https://docs.rs/quiche/latest/quiche/) low-level QUIC protocol facilities |
-| [`Zquic::AddressToken`](https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh), [`StatelessReset`](https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh), connection-ID/bootstrap facilities<br>➕ Retry/address-validation and connection routing machinery | N/A | [`quinn-proto`](https://docs.rs/quinn-proto/latest/quinn_proto/) token, reset and connection-ID handling; storage/bootstrap policies differ |
-| QUIC crypto ([`ZquicCrypto`](https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicCrypto.hh)`.hh`)<br>➕ zpicotls handshake state, packet protection and key retirement | N/A; [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) SSL streams are TLS byte streams, not QUIC packet protection | [`quinn_proto::crypto`](https://docs.rs/quinn-proto/latest/quinn_proto/crypto/index.html) with rustls; different TLS backend and buffer ownership |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh">QUIC packet/frame/transport-parameter codecs</a><br>➕ native wire parsing and output integrated with Z buffer ownership</td>
+  <td>None: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td><a href="https://docs.rs/quinn-proto/latest/quinn_proto/"><code>quinn-proto</code></a> / <a href="https://docs.rs/quiche/latest/quiche/"><code>quiche</code></a> low-level QUIC protocol facilities</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh"><code>Zquic::AddressToken</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh"><code>StatelessReset</code></a>, connection-ID/bootstrap facilities<br>➕ Retry/address-validation and connection routing machinery</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/quinn-proto/latest/quinn_proto/"><code>quinn-proto</code></a> token, reset and connection-ID handling; storage/bootstrap policies differ</td>
+</tr>
+<tr valign="top">
+  <td>QUIC crypto (<a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicCrypto.hh"><code>ZquicCrypto</code></a><code>.hh</code>)<br>➕ zpicotls handshake state, packet protection and key retirement</td>
+  <td>None: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://docs.rs/quinn-proto/latest/quinn_proto/crypto/index.html"><code>quinn_proto::crypto</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Recovery, paths and stream ownership
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| ACK/loss recovery, [`RttEstimator`](https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicRecovery.hh), [`NewReno`](https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicRecovery.hh), PTO and retransmission queues<br>➕ packet-number-space recovery with retained frame ownership | N/A; [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) timers provide scheduling primitives only | [`quinn_proto::congestion`](https://docs.rs/quinn-proto/latest/quinn_proto/congestion/index.html) / [`quiche`](https://docs.rs/quiche/latest/quiche/) recovery; exact algorithms and queue policy differ |
-| [`Zquic::Path`](https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicPath.hh) and link migration<br>➕ path validation, anti-amplification, PMTU/ECN and single-active-path migration | N/A | [`quinn_proto::Connection`](https://docs.rs/quinn-proto/latest/quinn_proto/struct.Connection.html) path/migration/MTU handling; configuration differs |
-| [QUIC buffer/sequence-queue policies](https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh)<br>➕ separate packet, CRYPTO and stream retention/reassembly contracts | Partial: [Boost.Intrusive](https://www.boost.org/doc/libs/latest/doc/html/intrusive.html) / [ICL](https://github.com/boostorg/icl/blob/master/include/boost/icl/interval_set.hpp) containers<br>➖ custom QUIC ownership/recovery logic required | [`quinn-proto`](https://docs.rs/quinn-proto/latest/quinn_proto/) stream/crypto buffering; not the same pooled directional sequence-queue contract |
-| [`Zquic::CliStream`](https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicStream.hh), [`SrvStream`](https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicStream.hh)<br>➕ multiplexed streams with independent directional retirement, FIN/reset/stop and flow control | N/A; no complete Boost QUIC stream facility | [`quinn::SendStream`](https://docs.rs/quinn/latest/quinn/struct.SendStream.html) / [`RecvStream`](https://docs.rs/quinn/latest/quinn/struct.RecvStream.html) |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td>ACK/loss recovery, <a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicRecovery.hh"><code>RttEstimator</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicRecovery.hh"><code>NewReno</code></a>, PTO and retransmission queues<br>➕ packet-number-space recovery with retained frame ownership</td>
+  <td>None: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td><a href="https://docs.rs/quinn-proto/latest/quinn_proto/congestion/index.html"><code>quinn_proto::congestion</code></a> / <a href="https://docs.rs/quiche/latest/quiche/"><code>quiche</code></a> recovery; exact algorithms and queue policy differ</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicPath.hh"><code>Zquic::Path</code></a> and link migration<br>➕ path validation, anti-amplification, PMTU/ECN and single-active-path migration</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/quinn-proto/latest/quinn_proto/struct.Connection.html"><code>quinn_proto::Connection</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh">QUIC buffer/sequence-queue policies</a><br>➕ separate packet, CRYPTO and stream retention/reassembly contracts</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/intrusive.html">Boost.Intrusive</a>, <a href="https://github.com/boostorg/icl/blob/master/include/boost/icl/interval_set.hpp">ICL</a></td>
+  <td>Partial: <a href="https://docs.rs/quinn-proto/latest/quinn_proto/"><code>quinn-proto</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicStream.hh"><code>Zquic::CliStream</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicStream.hh"><code>SrvStream</code></a><br>➕ multiplexed streams with independent directional retirement, FIN/reset/stop and flow control</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/quinn/latest/quinn/struct.SendStream.html"><code>quinn::SendStream</code></a> / <a href="https://docs.rs/quinn/latest/quinn/struct.RecvStream.html"><code>RecvStream</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Transport endpoints and diagnostics
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Zquic::HubParams`](https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh)<br>➕ unified TLS, ALPN, transport, migration and instrumentation configuration | N/A | [`TransportConfig`](https://docs.rs/quinn/latest/quinn/struct.TransportConfig.html) / [`ClientConfig`](https://docs.rs/quinn/latest/quinn/struct.ClientConfig.html) / [`ServerConfig`](https://docs.rs/quinn/latest/quinn/struct.ServerConfig.html) |
-| [`Zquic::CliLink`](https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicCliLink.hh), [`SrvLink`](https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicSrvLink.hh)<br>➕ shared connection runtime, stream scheduling and migration callbacks | N/A | [`quinn::Connection`](https://docs.rs/quinn/latest/quinn/struct.Connection.html) |
-| [`Zquic::Client`](https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh), [`Server`](https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh)<br>➕ QUIC connection bootstrap and UDP listener lifecycle over [Zi](https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh) | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) UDP sockets and timers<br>➖ no QUIC transport implementation | [`quinn::Endpoint`](https://docs.rs/quinn/latest/quinn/struct.Endpoint.html) |
-| [`ZquicLogger`](https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicLog.hh), [`ZquicLogSink`](https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicLog.hh), transport diagnostics<br>➕ qlog JSON-SEQ events with bounded queues and controlled drain/restart | Partial: [Boost.Log](https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp) + [JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp)<br>➖ QUIC/qlog event model and instrumentation are custom work | [`qlog`](https://docs.rs/qlog/latest/qlog/) / [`quiche`](https://docs.rs/quiche/latest/quiche/) qlog output; bounded queue/drain integration is custom |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh"><code>Zquic::HubParams</code></a><br>➕ unified TLS, ALPN, transport, migration and instrumentation configuration</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/quinn/latest/quinn/struct.TransportConfig.html"><code>TransportConfig</code></a> / <a href="https://docs.rs/quinn/latest/quinn/struct.ClientConfig.html"><code>ClientConfig</code></a> / <a href="https://docs.rs/quinn/latest/quinn/struct.ServerConfig.html"><code>ServerConfig</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicCliLink.hh"><code>Zquic::CliLink</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicSrvLink.hh"><code>SrvLink</code></a><br>➕ shared connection runtime, stream scheduling and migration callbacks</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html"><code>quinn::Connection</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh"><code>Zquic::Client</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh"><code>Server</code></a><br>➕ QUIC connection bootstrap and UDP listener lifecycle over <a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/Zquic.hh">Zi</a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td><a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html"><code>quinn::Endpoint</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicLog.hh"><code>ZquicLogger</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicLog.hh"><code>ZquicLogSink</code></a>, transport diagnostics<br>➕ qlog JSON-SEQ events with bounded queues and controlled drain/restart</td>
+  <td>Partial: <a href="https://github.com/boostorg/log/blob/master/include/boost/log/core.hpp">Boost.Log</a>, <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">JSON</a></td>
+  <td>Partial: <a href="https://docs.rs/qlog/latest/qlog/"><code>qlog</code></a>, <a href="https://docs.rs/quiche/latest/quiche/"><code>quiche</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zhttp - HTTP/1.1, HTTP/2 and HTTP/3
 
@@ -1290,37 +5661,147 @@ V2 adds no application capabilities and does not deprecate v1
 [Boost.Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/introduction.html)
 supplies HTTP/1 and WebSocket facilities; [Zhttp](https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh) also owns HTTP/2 and HTTP/3.
 
-| Z facility | Boost | Folly | NTF | Rust |
-| --- | --- | --- | --- | --- |
-| [`Zhttp::URLView`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpURL.hh), [`URL`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpURL.hh), [`Target`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpURL.hh)<br>➕ explicit borrowed/owning HTTP URL and request-target representations<br>➖ borrowed parsing normalizes mutable input | [Boost.URL](https://github.com/boostorg/url/blob/master/include/boost/url.hpp) [`url_view`](https://github.com/boostorg/url/blob/master/include/boost/url/url_view.hpp) / [`url`](https://github.com/boostorg/url/blob/master/include/boost/url/url.hpp)<br>➕ general URI component model | Partial: [`folly::Uri`](https://github.com/facebook/folly/blob/main/folly/Uri.h)<br>➖ no matching mutable borrowed HTTP-target view | Partial: [`ntsa::Uri`](https://github.com/bloomberg/ntf-core/blob/main/groups/nts/ntsa/ntsa_uri.h)<br>➖ no borrowed mutable HTTP request-target view | [`url::Url`](https://docs.rs/url/latest/url/struct.Url.html) / [`http::Uri`](https://docs.rs/http/latest/http/uri/struct.Uri.html); different borrowed/normalizing representation |
-| [`ZhttpHeaders`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpCore.hh#L58), field catalogs and matchers<br>➕ compile-time name/value dispatch and shared header semantics across wire versions | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) HTTP fields<br>➖ matching typed catalogs require application machinery | N/A | N/A | [`http::header`](https://docs.rs/http/latest/http/header/index.html) / [`headers`](https://docs.rs/headers/latest/headers/) typed headers; fixed catalog matching needs macros/custom tables |
-| [`Zhttp::Profiles`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpProfiles.hh), [`H1TCP`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpProfiles.hh), [`H1TLS`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpProfiles.hh), [`H2TLS`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpProfiles.hh), [`H3QUIC`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpProfiles.hh)<br>➕ explicit compile-time selection of supported transport/protocol combinations | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) stream types with [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) SSL<br>➖ no corresponding H2/H3 profiles | N/A | N/A | Partial: [`hyper`](https://docs.rs/hyper/latest/hyper/) / [`h3`](https://docs.rs/h3/latest/h3/) over [`quinn`](https://docs.rs/quinn/latest/quinn/); protocol/transport selection is separate from typed Z profiles |
-| [`Zhttp::HubConfig`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpConfig.hh), [`Config`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpConfig.hh), [`ServerConfig`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpConfig.hh) and transport configs<br>➕ shared connection, body, queue, protocol and allocator policy | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html)/[Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) stream options + application configuration | N/A | N/A | [`reqwest::ClientBuilder`](https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html) / [`hyper-util`](https://docs.rs/hyper-util/latest/hyper_util/) / [`quinn`](https://docs.rs/quinn/latest/quinn/); no shared allocator/shard policy |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">NTF</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpURL.hh"><code>Zhttp::URLView</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpURL.hh"><code>URL</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpURL.hh"><code>Target</code></a><br>➕ explicit borrowed/owning HTTP URL and request-target representations<br>➖ borrowed parsing normalizes mutable input</td>
+  <td><a href="https://github.com/boostorg/url/blob/master/include/boost/url.hpp">Boost.URL</a> <a href="https://github.com/boostorg/url/blob/master/include/boost/url/url_view.hpp"><code>url_view</code></a> / <a href="https://github.com/boostorg/url/blob/master/include/boost/url/url.hpp"><code>url</code></a><br>➕ general URI component model</td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Uri.h"><code>folly::Uri</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/nts/ntsa/ntsa_uri.h"><code>ntsa::Uri</code></a></td>
+  <td>Partial: <a href="https://docs.rs/url/latest/url/struct.Url.html"><code>url::Url</code></a>, <a href="https://docs.rs/http/latest/http/uri/struct.Uri.html"><code>http::Uri</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpCore.hh#L58"><code>ZhttpHeaders</code></a>, field catalogs and matchers<br>➕ compile-time name/value dispatch and shared header semantics across wire versions</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/http/latest/http/header/index.html"><code>http::header</code></a>, <a href="https://docs.rs/headers/latest/headers/"><code>headers</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpProfiles.hh"><code>Zhttp::Profiles</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpProfiles.hh"><code>H1TCP</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpProfiles.hh"><code>H1TLS</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpProfiles.hh"><code>H2TLS</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpProfiles.hh"><code>H3QUIC</code></a><br>➕ explicit compile-time selection of supported transport/protocol combinations</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/hyper/latest/hyper/"><code>hyper</code></a>, <a href="https://docs.rs/h3/latest/h3/"><code>h3</code></a>, <a href="https://docs.rs/quinn/latest/quinn/"><code>quinn</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpConfig.hh"><code>Zhttp::HubConfig</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpConfig.hh"><code>Config</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpConfig.hh"><code>ServerConfig</code></a> and transport configs<br>➕ shared connection, body, queue, protocol and allocator policy</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html"><code>reqwest::ClientBuilder</code></a>, <a href="https://docs.rs/hyper-util/latest/hyper_util/"><code>hyper-util</code></a>, <a href="https://docs.rs/quinn/latest/quinn/"><code>quinn</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Discovery and event framing
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Zhttp::DiscoveryRequest`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpDiscovery.hh), endpoint selection and [`AltSvcCache`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpDiscovery.hh)<br>➕ HTTPS/SVCB and Alt-Svc routing integrated with client protocol selection | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) resolver + custom discovery/cache logic | Partial: [`hickory-resolver`](https://docs.rs/hickory-resolver/latest/hickory_resolver/) HTTPS/SVCB DNS + [`reqwest`](https://docs.rs/reqwest/latest/reqwest/); no equivalent integrated discovery/Alt-Svc/fallback contract |
-| [`Zhttp::SSEDecoder`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpSSE.hh), [`SSEEvent`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpSSE.hh)<br>➕ incremental server-sent event framing and bounded event storage | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) streaming HTTP bodies + custom SSE parser | [`eventsource-stream`](https://docs.rs/eventsource-stream/latest/eventsource_stream/) incremental SSE parsing |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpDiscovery.hh"><code>Zhttp::DiscoveryRequest</code></a>, endpoint selection and <a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpDiscovery.hh"><code>AltSvcCache</code></a><br>➕ HTTPS/SVCB and Alt-Svc routing integrated with client protocol selection</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://docs.rs/hickory-resolver/latest/hickory_resolver/"><code>hickory-resolver</code></a>, <a href="https://docs.rs/reqwest/latest/reqwest/"><code>reqwest</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpSSE.hh"><code>Zhttp::SSEDecoder</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpSSE.hh"><code>SSEEvent</code></a><br>➕ incremental server-sent event framing and bounded event storage</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a></td>
+  <td><a href="https://docs.rs/eventsource-stream/latest/eventsource_stream/"><code>eventsource-stream</code></a> incremental SSE parsing</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Messages, body streams and response routes
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Zhttp::Parser`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh), request/response Builders and header catalogs<br>➕ one typed application interface for H1/H2/H3 parsing and production | [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) HTTP parsers, serializers and Body models<br>➖ HTTP/1 vocabulary rather than a shared H1/H2/H3 interface | [`Request`](https://docs.rs/http/latest/http/request/struct.Request.html) / [`Response`](https://docs.rs/http/latest/http/response/struct.Response.html) + [`hyper`](https://docs.rs/hyper/latest/hyper/) / [`h3`](https://docs.rs/h3/latest/h3/); typed catalogs are separate |
-| [`Zhttp::BodyEmitter`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpCore.hh) and body policies<br>➕ bounded fixed/streaming production, cancellation and H2/H3 trailers<br>➖ application owns body decompression | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) serializers and custom Body implementations | [`http_body::Body`](https://docs.rs/http-body/latest/http_body/trait.Body.html) / [`http-body-util`](https://docs.rs/http-body-util/latest/http_body_util/); byte budgets/cancellation are application policy |
-| [`Zhttp::Channel`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpFields.hh), [`Route`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpServer.hh), response queues<br>➕ owning deferred replies with H1 ordering and logical-stream cancellation | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) stream plus application response-ordering/lifetime state | Partial: [`IntoResponse`](https://docs.rs/axum/latest/axum/response/trait.IntoResponse.html) / [`hyper services`](https://docs.rs/hyper/latest/hyper/service/index.html); reply route invalidation/ordering ownership differs |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh"><code>Zhttp::Parser</code></a>, request/response Builders and header catalogs<br>➕ one typed application interface for H1/H2/H3 parsing and production</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a> HTTP parsers, serializers and Body models<br>➖ HTTP/1 vocabulary rather than a shared H1/H2/H3 interface</td>
+  <td><a href="https://docs.rs/http/latest/http/request/struct.Request.html"><code>Request</code></a> / <a href="https://docs.rs/http/latest/http/response/struct.Response.html"><code>Response</code></a> + <a href="https://docs.rs/hyper/latest/hyper/"><code>hyper</code></a> / <a href="https://docs.rs/h3/latest/h3/"><code>h3</code></a>; typed catalogs are separate</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpCore.hh"><code>Zhttp::BodyEmitter</code></a> and body policies<br>➕ bounded fixed/streaming production, cancellation and H2/H3 trailers<br>➖ application owns body decompression</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a></td>
+  <td><a href="https://docs.rs/http-body/latest/http_body/trait.Body.html"><code>http_body::Body</code></a> / <a href="https://docs.rs/http-body-util/latest/http_body_util/"><code>http-body-util</code></a>; byte budgets/cancellation are application policy</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpFields.hh"><code>Zhttp::Channel</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpServer.hh"><code>Route</code></a>, response queues<br>➕ owning deferred replies with H1 ordering and logical-stream cancellation</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a></td>
+  <td>Partial: <a href="https://docs.rs/axum/latest/axum/response/trait.IntoResponse.html"><code>IntoResponse</code></a>, <a href="https://docs.rs/hyper/latest/hyper/service/index.html"><code>hyper services</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## HTTP wire protocols and endpoints
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| HTTP/1.1 framing ([`Zhttp`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh))<br>➕ integrated request/response streaming and pooled transport | [Boost.Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) HTTP/1 | [`hyper HTTP/1`](https://docs.rs/hyper/latest/hyper/client/conn/http1/index.html) / [`httparse`](https://docs.rs/httparse/latest/httparse/) for standalone parsing |
-| HTTP/2 and HPACK ([`Zhttp`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh))<br>➕ multiplexed streams, flow control and header compression over TLS | N/A; [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) does not provide HTTP/2 | [`h2`](https://docs.rs/h2/latest/h2/) / [`hyper HTTP/2`](https://docs.rs/hyper/latest/hyper/client/conn/http2/index.html) |
-| HTTP/3 and QPACK ([`Zhttp`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh))<br>➕ HTTP messages, control streams and compression over [Zquic](https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicSrvLink.hh)<br>➖ nonzero blocked-stream buffering is outside the current QPACK profile | N/A; [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) does not provide HTTP/3 | [`h3`](https://docs.rs/h3/latest/h3/) + [`h3-quinn`](https://docs.rs/h3-quinn/latest/h3_quinn/) / [`quiche`](https://docs.rs/quiche/latest/quiche/); QPACK buffering profile differs |
-| [`Zhttp::Pool`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpProfiles.hh), [`Client`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpClient.hh)<br>➕ pooled destinations with independent link/request concurrency, retry and protocol fallback | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) client examples + custom pooling/request coordinator | [`reqwest::Client`](https://docs.rs/reqwest/latest/reqwest/struct.Client.html) / [`hyper_util::client::legacy::Client`](https://docs.rs/hyper-util/latest/hyper_util/client/legacy/struct.Client.html); retry/protocol fallback policy differs |
-| [`Zhttp::Server`](https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpServer.hh)<br>➕ typed admission, listeners, sessions and graceful drain across selected HTTP profiles | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) server examples + custom runtime<br>➖ no native H2/H3 endpoints | [`axum::Router`](https://docs.rs/axum/latest/axum/struct.Router.html) + [`hyper`](https://docs.rs/hyper/latest/hyper/); HTTP/3 serving needs separate [`h3`](https://docs.rs/h3/latest/h3/) integration |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td>HTTP/1.1 framing (<a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh"><code>Zhttp</code></a>)<br>➕ integrated request/response streaming and pooled transport</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Boost.Beast</a> HTTP/1</td>
+  <td><a href="https://docs.rs/hyper/latest/hyper/client/conn/http1/index.html"><code>hyper HTTP/1</code></a> / <a href="https://docs.rs/httparse/latest/httparse/"><code>httparse</code></a> for standalone parsing</td>
+</tr>
+<tr valign="top">
+  <td>HTTP/2 and HPACK (<a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh"><code>Zhttp</code></a>)<br>➕ multiplexed streams, flow control and header compression over TLS</td>
+  <td>None: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a></td>
+  <td><a href="https://docs.rs/h2/latest/h2/"><code>h2</code></a> / <a href="https://docs.rs/hyper/latest/hyper/client/conn/http2/index.html"><code>hyper HTTP/2</code></a></td>
+</tr>
+<tr valign="top">
+  <td>HTTP/3 and QPACK (<a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh"><code>Zhttp</code></a>)<br>➕ HTTP messages, control streams and compression over <a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicSrvLink.hh">Zquic</a><br>➖ nonzero blocked-stream buffering is outside the current QPACK profile</td>
+  <td>None: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a></td>
+  <td>Partial: <a href="https://docs.rs/h3/latest/h3/"><code>h3</code></a>, <a href="https://docs.rs/h3-quinn/latest/h3_quinn/"><code>h3-quinn</code></a>, <a href="https://docs.rs/quiche/latest/quiche/"><code>quiche</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpProfiles.hh"><code>Zhttp::Pool</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpClient.hh"><code>Client</code></a><br>➕ pooled destinations with independent link/request concurrency, retry and protocol fallback</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a></td>
+  <td>Partial: <a href="https://docs.rs/reqwest/latest/reqwest/struct.Client.html"><code>reqwest::Client</code></a>, <a href="https://docs.rs/hyper-util/latest/hyper_util/client/legacy/struct.Client.html"><code>hyper_util::client::legacy::Client</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/ZhttpServer.hh"><code>Zhttp::Server</code></a><br>➕ typed admission, listeners, sessions and graceful drain across selected HTTP profiles</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a></td>
+  <td>Partial: <a href="https://docs.rs/axum/latest/axum/struct.Router.html"><code>axum::Router</code></a>, <a href="https://docs.rs/hyper/latest/hyper/"><code>hyper</code></a>, <a href="https://docs.rs/h3/latest/h3/"><code>h3</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zws - Websockets
 
@@ -1330,19 +5811,75 @@ supplies HTTP/1 and WebSocket facilities; [Zhttp](https://github.com/kaldron-lab
 WebSocket counterpart: [Boost.Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/using_websocket.html).
 [Zws](https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsH1.hh) supplies the WebSocket dependency of [Zjrpc](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/Zjrpc.hh) and [Zmcp](https://github.com/kaldron-labs/z/blob/main/zmcp/src/Zmcp.hh).
 
-| Z facility | Boost | Folly | NTF | Rust |
-| --- | --- | --- | --- | --- |
-| [`Zws::URI`](https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsURI.hh)<br>➕ ws/wss URI interpretation for native profile setup | Partial: [Boost.URL](https://github.com/boostorg/url/blob/master/include/boost/url.hpp) URI parsing + WebSocket-specific checks | Partial: [`folly::Uri`](https://github.com/facebook/folly/blob/main/folly/Uri.h)<br>➖ WebSocket scheme/profile validation is additional work | Partial: [`ntsa::Uri`](https://github.com/bloomberg/ntf-core/blob/main/groups/nts/ntsa/ntsa_uri.h) | [`http::Uri`](https://docs.rs/http/latest/http/uri/struct.Uri.html) / [`url::Url`](https://docs.rs/url/latest/url/struct.Url.html) with WebSocket client configuration |
-| [Opening handshake, H1 Upgrade and H2/H3 Extended CONNECT](https://github.com/kaldron-labs/z/blob/main/zws/src/Zws.hh)<br>➕ binds the same WebSocket application to concrete HTTP profiles | [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) WebSocket handshake<br>➖ H2/H3 Extended CONNECT requires another HTTP stack | N/A | N/A | Partial: [`tungstenite::handshake`](https://docs.rs/tungstenite/latest/tungstenite/handshake/index.html) for H1; H2/H3 Extended CONNECT needs separate transport integration |
-| [`Zws::Codec`](https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsCodec.hh), protocol frame/header utilities<br>➕ transport-independent masking, fragmentation and control-frame processing | [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) WebSocket frame/message operations | N/A | N/A | [`tungstenite::protocol`](https://docs.rs/tungstenite/latest/tungstenite/protocol/index.html) |
-| [`Zws::TxLayer`](https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsTx.hh)<br>➕ reference-buffer output and explicit fragment/message boundaries | [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) WebSocket write/partial-write operations | N/A | N/A | [`WebSocket`](https://docs.rs/tungstenite/latest/tungstenite/protocol/struct.WebSocket.html) / [`WebSocketStream`](https://docs.rs/tokio-tungstenite/latest/tokio_tungstenite/struct.WebSocketStream.html); frame ownership/fragmentation APIs differ |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">NTF</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsURI.hh"><code>Zws::URI</code></a><br>➕ ws/wss URI interpretation for native profile setup</td>
+  <td>Partial: <a href="https://github.com/boostorg/url/blob/master/include/boost/url.hpp">Boost.URL</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/Uri.h"><code>folly::Uri</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/ntf-core/blob/main/groups/nts/ntsa/ntsa_uri.h"><code>ntsa::Uri</code></a></td>
+  <td><a href="https://docs.rs/http/latest/http/uri/struct.Uri.html"><code>http::Uri</code></a> / <a href="https://docs.rs/url/latest/url/struct.Url.html"><code>url::Url</code></a> with WebSocket client configuration</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zws/src/Zws.hh">Opening handshake, H1 Upgrade and H2/H3 Extended CONNECT</a><br>➕ binds the same WebSocket application to concrete HTTP profiles</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a> WebSocket handshake<br>➖ H2/H3 Extended CONNECT requires another HTTP stack</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/tungstenite/latest/tungstenite/handshake/index.html"><code>tungstenite::handshake</code></a> (H1; custom H2/H3 integration)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsCodec.hh"><code>Zws::Codec</code></a>, protocol frame/header utilities<br>➕ transport-independent masking, fragmentation and control-frame processing</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a> WebSocket frame/message operations</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/tungstenite/latest/tungstenite/protocol/index.html"><code>tungstenite::protocol</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsTx.hh"><code>Zws::TxLayer</code></a><br>➕ reference-buffer output and explicit fragment/message boundaries</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a> WebSocket write/partial-write operations</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/tungstenite/latest/tungstenite/protocol/struct.WebSocket.html"><code>WebSocket</code></a> / <a href="https://docs.rs/tokio-tungstenite/latest/tokio_tungstenite/struct.WebSocketStream.html"><code>WebSocketStream</code></a>; frame ownership/fragmentation APIs differ</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## WebSocket endpoints
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Zws::Config`](https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsProtocol.hh) and link state<br>➕ bounded messages with handshake/close/heartbeat policy and per-link state | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) WebSocket options + application state | [`WebSocketConfig`](https://docs.rs/tungstenite/latest/tungstenite/protocol/struct.WebSocketConfig.html); heartbeat and close timing require application policy |
-| [`Zws::Client`](https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsHub.hh), [`Server`](https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsHub.hh) and native links<br>➕ CRTP message callbacks and streaming output over H1/H2/H3 bindings | [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) [`websocket::stream`](https://github.com/boostorg/beast/blob/master/include/boost/beast/websocket/stream.hpp) + application accept/connect lifecycle | [`tokio-tungstenite`](https://docs.rs/tokio-tungstenite/latest/tokio_tungstenite/) async H1 WebSocket client/server streams; no unified H1/H2/H3 endpoint lifecycle |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsProtocol.hh"><code>Zws::Config</code></a> and link state<br>➕ bounded messages with handshake/close/heartbeat policy and per-link state</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a></td>
+  <td>Partial: <a href="https://docs.rs/tungstenite/latest/tungstenite/protocol/struct.WebSocketConfig.html"><code>WebSocketConfig</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsHub.hh"><code>Zws::Client</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsHub.hh"><code>Server</code></a> and native links<br>➕ CRTP message callbacks and streaming output over H1/H2/H3 bindings</td>
+  <td><a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a> <a href="https://github.com/boostorg/beast/blob/master/include/boost/beast/websocket/stream.hpp"><code>websocket::stream</code></a> + application accept/connect lifecycle</td>
+  <td>Partial: <a href="https://docs.rs/tokio-tungstenite/latest/tokio_tungstenite/"><code>tokio-tungstenite</code></a> (H1; custom H2/H3 integration)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zrest - REST APIs
 
@@ -1350,25 +5887,94 @@ WebSocket counterpart: [Boost.Beast](https://www.boost.org/doc/libs/latest/libs/
 
 [Public headers](https://github.com/kaldron-labs/z/blob/main/zrest/src/) · [Module guide](../zrest/README.md)
 
-| Z facility | Boost | Folly | Rust |
-| --- | --- | --- | --- |
-| [`Zrest::Request`](https://github.com/kaldron-labs/z/blob/main/zrest/src/Zrest.hh), [`Response`](https://github.com/kaldron-labs/z/blob/main/zrest/src/Zrest.hh), [`Reply`](https://github.com/kaldron-labs/z/blob/main/zrest/src/Zrest.hh) and catalog macros<br>➕ compile-time methods, paths, body policies and allowed typed replies | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) + [Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html)/[JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp)<br>➖ typed REST contracts and routing require application code | N/A | Partial: [`axum`](https://docs.rs/axum/latest/axum/) typed handlers + [`serde`](https://docs.rs/serde/latest/serde/); [`utoipa`](https://docs.rs/utoipa/latest/utoipa/) / [`aide`](https://docs.rs/aide/latest/aide/) for declarations/schemas, no identical shared catalog |
-| [`Zrest::Input`](https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestInput.hh), [`BorrowedData`](https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestInput.hh), [`RequestContext`](https://github.com/kaldron-labs/z/blob/main/zrest/src/Zrest.hh)<br>➕ bounded entity assembly with explicit owned/borrowed decoding policy | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) Body storage + [Boost.JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp) conversion | Partial: [`folly::IOBufQueue + dynamic JSON conversion`](https://github.com/facebook/folly/blob/main/folly/io/IOBufQueue.h)<br>➖ no REST request-context or reflected ownership/binding policy | [`axum::extract`](https://docs.rs/axum/latest/axum/extract/index.html) / [`serde`](https://docs.rs/serde/latest/serde/) borrowed deserialization; bounds and backing retention need explicit policy |
-| REST query/body signing hooks and [`REST::Signature`](https://github.com/kaldron-labs/z/blob/main/zrest/src/Zrest.hh)<br>➕ filters the signature field and exposes the serialized bytes to the signer<br>➖ algorithm, verification and wire-coverage policy are application-owned | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html)/[JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp) serialization + application signing logic | N/A | Composition: [`reqwest::Request`](https://docs.rs/reqwest/latest/reqwest/struct.Request.html) / [`http`](https://docs.rs/http/latest/http/) and [`hmac`](https://docs.rs/hmac/latest/hmac/); signature field filtering/wire coverage remain application-owned |
+<div style="overflow-x: auto;">
+<table width="1100" style="width: 1100px; min-width: 1100px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/Zrest.hh"><code>Zrest::Request</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/Zrest.hh"><code>Response</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/Zrest.hh"><code>Reply</code></a> and catalog macros<br>➕ compile-time methods, paths, body policies and allowed typed replies</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a>, <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Describe</a>, <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">JSON</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/axum/latest/axum/"><code>axum</code></a>, <a href="https://docs.rs/serde/latest/serde/"><code>serde</code></a>, <a href="https://docs.rs/utoipa/latest/utoipa/"><code>utoipa</code></a>, <a href="https://docs.rs/aide/latest/aide/"><code>aide</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestInput.hh"><code>Zrest::Input</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestInput.hh"><code>BorrowedData</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/Zrest.hh"><code>RequestContext</code></a><br>➕ bounded entity assembly with explicit owned/borrowed decoding policy</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a>, <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">Boost.JSON</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/IOBufQueue.h"><code>folly::IOBufQueue + dynamic JSON conversion</code></a></td>
+  <td>Partial: <a href="https://docs.rs/axum/latest/axum/extract/index.html"><code>axum::extract</code></a>, <a href="https://docs.rs/serde/latest/serde/"><code>serde</code></a></td>
+</tr>
+<tr valign="top">
+  <td>REST query/body signing hooks and <a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/Zrest.hh"><code>REST::Signature</code></a><br>➕ filters the signature field and exposes the serialized bytes to the signer<br>➖ algorithm, verification and wire-coverage policy are application-owned</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a>, <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">JSON</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/reqwest/latest/reqwest/struct.Request.html"><code>reqwest::Request</code></a>, <a href="https://docs.rs/http/latest/http/"><code>http</code></a>, <a href="https://docs.rs/hmac/latest/hmac/"><code>hmac</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Adapters, completion and server-sent events
 
-| Z facility | Boost | Folly | Rust |
-| --- | --- | --- | --- |
-| [`MReqBuilder`](https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestClient.hh), [`MResParser`](https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestClient.hh), [`MReqParser`](https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestServer.hh), [`MResBuilder`](https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestServer.hh)<br>➕ shared catalog adapters for typed operations over [Zhttp](https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh) profiles | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) HTTP parser/serializer + [Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html)/[JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp) binding | N/A | Composition: [`reqwest`](https://docs.rs/reqwest/latest/reqwest/) + [`axum`](https://docs.rs/axum/latest/axum/) / [`serde`](https://docs.rs/serde/latest/serde/); shared client/server reflected catalogs require code generation |
-| [`Zrest::Completion`](https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestServer.hh)<br>➕ one-shot asynchronous typed completion with route invalidation | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) completion handlers + application token/lifetime state | Partial: [`folly::Promise / Future`](https://github.com/facebook/folly/blob/main/folly/futures/Future.h)<br>➖ no REST route invalidation or allowed-reply catalog | Partial: [`Future`](https://doc.rust-lang.org/std/future/trait.Future.html) / [`oneshot`](https://docs.rs/tokio/latest/tokio/sync/oneshot/index.html) typed completion; route invalidation is custom |
-| [`Zrest::SSEProducer`](https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestSSE.hh), [`SSEBuilder`](https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestServer.hh), SSE reply metadata<br>➕ bounded producer queues and incremental typed SSE delivery<br>➖ no automatic replay or reconnection | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) streaming bodies + custom SSE/lifecycle state | N/A | [`axum::response::sse`](https://docs.rs/axum/latest/axum/response/sse/index.html) + bounded [`mpsc`](https://docs.rs/tokio/latest/tokio/sync/mpsc/index.html) queues |
+<div style="overflow-x: auto;">
+<table width="1100" style="width: 1100px; min-width: 1100px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestClient.hh"><code>MReqBuilder</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestClient.hh"><code>MResParser</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestServer.hh"><code>MReqParser</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestServer.hh"><code>MResBuilder</code></a><br>➕ shared catalog adapters for typed operations over <a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh">Zhttp</a> profiles</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a>, <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Describe</a>, <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">JSON</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/reqwest/latest/reqwest/"><code>reqwest</code></a>, <a href="https://docs.rs/axum/latest/axum/"><code>axum</code></a>, <a href="https://docs.rs/serde/latest/serde/"><code>serde</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestServer.hh"><code>Zrest::Completion</code></a><br>➕ one-shot asynchronous typed completion with route invalidation</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/futures/Future.h"><code>folly::Promise / Future</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/future/trait.Future.html"><code>Future</code></a>, <a href="https://docs.rs/tokio/latest/tokio/sync/oneshot/index.html"><code>oneshot</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestSSE.hh"><code>Zrest::SSEProducer</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestServer.hh"><code>SSEBuilder</code></a>, SSE reply metadata<br>➕ bounded producer queues and incremental typed SSE delivery<br>➖ no automatic replay or reconnection</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a></td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/axum/latest/axum/response/sse/index.html"><code>axum::response::sse</code></a> + bounded <a href="https://docs.rs/tokio/latest/tokio/sync/mpsc/index.html"><code>mpsc</code></a> queues</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## REST endpoints
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Zrest::Client`](https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestClient.hh), [`Server`](https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestServer.hh), endpoint configs and limits<br>➕ typed calls/routes, admission limits and full REST/HTTP drain boundary | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) + [JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp)/[Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) + [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html)<br>➖ no complete matching Boost REST endpoint framework | [`reqwest`](https://docs.rs/reqwest/latest/reqwest/) client + [`axum`](https://docs.rs/axum/latest/axum/) server; shared contracts, admission and coordinated drain need integration |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestClient.hh"><code>Zrest::Client</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zrest/src/ZrestServer.hh"><code>Server</code></a>, endpoint configs and limits<br>➕ typed calls/routes, admission limits and full REST/HTTP drain boundary</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a>, <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">JSON</a>, <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Describe</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://docs.rs/reqwest/latest/reqwest/"><code>reqwest</code></a>, <a href="https://docs.rs/axum/latest/axum/"><code>axum</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zgrpc - GRPC
 
@@ -1377,26 +5983,96 @@ WebSocket counterpart: [Boost.Beast](https://www.boost.org/doc/libs/latest/libs/
 [Public headers](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/) · [Module guide](../zgrpc/README.md).
 [Zpb](https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh) supplies native protobuf payloads; [Zhttp](https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh) supplies H2/H3 transport.
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Zgrpc::Method`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/Zgrpc.hh), [`Message`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/Zgrpc.hh), [`Reply`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/Zgrpc.hh) and catalog macros<br>➕ typed method paths, RPC cardinality and response contracts | Partial: [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) / [Hana](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html)<br>➖ no gRPC method/catalog runtime | [`tonic`](https://docs.rs/tonic/latest/tonic/) typed service/method/message contracts; [`tonic-prost-build`](https://docs.rs/tonic-prost-build/latest/tonic_prost_build/) generates protobuf service code |
-| [`Zgrpc::Metadata`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/Zgrpc.hh), [`Status`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/Zgrpc.hh), timeout and binary-value codecs<br>➕ bounded initial/trailing metadata and gRPC status/deadline interpretation | N/A; generic HTTP fields do not implement these gRPC rules | [`tonic::metadata`](https://docs.rs/tonic/latest/tonic/metadata/index.html) / [`Status`](https://docs.rs/tonic/latest/tonic/struct.Status.html) / [`Request`](https://docs.rs/tonic/latest/tonic/struct.Request.html) timeout metadata |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/Zgrpc.hh"><code>Zgrpc::Method</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/Zgrpc.hh"><code>Message</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/Zgrpc.hh"><code>Reply</code></a> and catalog macros<br>➕ typed method paths, RPC cardinality and response contracts</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Boost.Describe</a>, <a href="https://www.boost.org/doc/libs/latest/libs/hana/doc/html/index.html">Hana</a></td>
+  <td><a href="https://docs.rs/tonic/latest/tonic/"><code>tonic</code></a> typed service/method/message contracts; <a href="https://docs.rs/tonic-prost-build/latest/tonic_prost_build/"><code>tonic-prost-build</code></a> generates protobuf service code</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/Zgrpc.hh"><code>Zgrpc::Metadata</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/Zgrpc.hh"><code>Status</code></a>, timeout and binary-value codecs<br>➕ bounded initial/trailing metadata and gRPC status/deadline interpretation</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/tonic/latest/tonic/metadata/index.html"><code>tonic::metadata</code></a> / <a href="https://docs.rs/tonic/latest/tonic/struct.Status.html"><code>Status</code></a> / <a href="https://docs.rs/tonic/latest/tonic/struct.Request.html"><code>Request</code></a> timeout metadata</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Envelope, protobuf and HTTP adapters
 
-| Z facility | Boost | Folly | Rust |
-| --- | --- | --- | --- |
-| [`Zgrpc::FrameRx`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcFrame.hh) and pooled frame output<br>➕ incremental five-byte envelopes with byte budgets and retained payload backing | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) buffers + custom envelope codec | N/A | [`tonic::codec`](https://docs.rs/tonic/latest/tonic/codec/index.html) gRPC framing; byte budgets/backing ownership differ |
-| [`Zgrpc::PBMessage`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/Zgrpc.hh) and typed payload adapters<br>➕ [Zpb](https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh) verification before typed construction and explicit borrowed-data policy | N/A; no native Boost protobuf/gRPC payload binding | N/A | [`tonic_prost::ProstCodec`](https://docs.rs/tonic-prost/latest/tonic_prost/struct.ProstCodec.html) + [`prost`](https://docs.rs/prost/latest/prost/); decoding is not a separate borrowed-view verification pass |
-| [`Zgrpc::RxInput`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcIO.hh), [`TxFrames`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcIO.hh), [`TxBody`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcIO.hh)<br>➕ bounded receive turns and retained frame queues for HTTP production | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) queues/composed operations + custom stream state | Partial: [`folly::IOBufQueue`](https://github.com/facebook/folly/blob/main/folly/io/IOBufQueue.h)<br>➖ no protobuf verification, gRPC envelope or bounded RPC turn policy | [`tonic::Streaming`](https://docs.rs/tonic/latest/tonic/struct.Streaming.html) / [`codec`](https://docs.rs/tonic/latest/tonic/codec/index.html); bounded Rx-turn/Tx-frame policy differs |
-| [Request/response HTTP and multi-method adapters](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/Zgrpc.hh)<br>➕ method-specific metadata, streaming bodies and terminal trailers over H2/H3 | N/A; [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) lacks H2/H3 and gRPC adapters | N/A | [`tonic::server`](https://docs.rs/tonic/latest/tonic/server/index.html) / [`client`](https://docs.rs/tonic/latest/tonic/client/index.html) HTTP/2 adapters; no equivalent native HTTP/3 profile |
+<div style="overflow-x: auto;">
+<table width="1100" style="width: 1100px; min-width: 1100px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcFrame.hh"><code>Zgrpc::FrameRx</code></a> and pooled frame output<br>➕ incremental five-byte envelopes with byte budgets and retained payload backing</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/tonic/latest/tonic/codec/index.html"><code>tonic::codec</code></a> gRPC framing; byte budgets/backing ownership differ</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/Zgrpc.hh"><code>Zgrpc::PBMessage</code></a> and typed payload adapters<br>➕ <a href="https://github.com/kaldron-labs/z/blob/main/zpb/src/Zpb.hh">Zpb</a> verification before typed construction and explicit borrowed-data policy</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/tonic-prost/latest/tonic_prost/struct.ProstCodec.html"><code>tonic_prost::ProstCodec</code></a>, <a href="https://docs.rs/prost/latest/prost/"><code>prost</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcIO.hh"><code>Zgrpc::RxInput</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcIO.hh"><code>TxFrames</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcIO.hh"><code>TxBody</code></a><br>➕ bounded receive turns and retained frame queues for HTTP production</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/IOBufQueue.h"><code>folly::IOBufQueue</code></a></td>
+  <td>Partial: <a href="https://docs.rs/tonic/latest/tonic/struct.Streaming.html"><code>tonic::Streaming</code></a>, <a href="https://docs.rs/tonic/latest/tonic/codec/index.html"><code>codec</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/Zgrpc.hh">Request/response HTTP and multi-method adapters</a><br>➕ method-specific metadata, streaming bodies and terminal trailers over H2/H3</td>
+  <td>None: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/tonic/latest/tonic/server/index.html"><code>tonic::server</code></a>, <a href="https://docs.rs/tonic/latest/tonic/client/index.html"><code>client</code></a> (HTTP/2)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Call ownership and endpoints
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Zgrpc::ClientCall`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcCall.hh), [`ServerCall`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcCall.hh), call tokens and directional state<br>➕ invalidatable Rx/Tx routes, cardinality and one-shot finish/cancel admission | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) cancellation and completion primitives<br>➖ gRPC call semantics remain custom work | [`Request`](https://docs.rs/tonic/latest/tonic/struct.Request.html) / [`Response`](https://docs.rs/tonic/latest/tonic/struct.Response.html) / [`Streaming`](https://docs.rs/tonic/latest/tonic/struct.Streaming.html); no matching Rx/Tx invalidatable token ownership |
-| [`Zgrpc::Client`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcClient.hh), [`Server`](https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcServer.hh), endpoint configs and limits<br>➕ unary/client-streaming/server-streaming/duplex RPCs, deadlines and bounded shutdown | N/A; no complete Boost gRPC endpoint library | [`tonic::transport`](https://docs.rs/tonic/latest/tonic/transport/index.html) HTTP/2 client/server with four RPC cardinalities; shutdown/limits configured separately |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcCall.hh"><code>Zgrpc::ClientCall</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcCall.hh"><code>ServerCall</code></a>, call tokens and directional state<br>➕ invalidatable Rx/Tx routes, cardinality and one-shot finish/cancel admission</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://docs.rs/tonic/latest/tonic/struct.Request.html"><code>Request</code></a>, <a href="https://docs.rs/tonic/latest/tonic/struct.Response.html"><code>Response</code></a>, <a href="https://docs.rs/tonic/latest/tonic/struct.Streaming.html"><code>Streaming</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcClient.hh"><code>Zgrpc::Client</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zgrpc/src/ZgrpcServer.hh"><code>Server</code></a>, endpoint configs and limits<br>➕ unary/client-streaming/server-streaming/duplex RPCs, deadlines and bounded shutdown</td>
+  <td>N/A</td>
+  <td><a href="https://docs.rs/tonic/latest/tonic/transport/index.html"><code>tonic::transport</code></a> HTTP/2 client/server with four RPC cardinalities; shutdown/limits configured separately</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zjrpc - JSON RPC
 
@@ -1406,27 +6082,106 @@ WebSocket counterpart: [Boost.Beast](https://www.boost.org/doc/libs/latest/libs/
 JSON counterparts use [Boost.JSON](https://www.boost.org/doc/libs/latest/libs/json/doc/html/index.html);
 JSON parsing alone does not supply JSON-RPC dispatch or correlation.
 
-| Z facility | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`Zjrpc::Request`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/Zjrpc.hh), [`Response`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/Zjrpc.hh), IDs, [`Envelope`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/Zjrpc.hh), [`Parsed`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/Zjrpc.hh) and wire views<br>➕ typed parameters/results and distinct missing/null IDs with retained JSON views<br>➖ numeric IDs use signed 64-bit integers; no fractional/exponent forms | Partial: [Boost.JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp) values/conversion + custom [JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp)-RPC schema | Partial: [`folly::dynamic / parseJson / toJson`](https://github.com/facebook/folly/blob/main/folly/json/json.h)<br>➖ no JSON-RPC envelope declarations or typed RPC dispatch | N/A | [`jsonrpsee-types`](https://docs.rs/jsonrpsee-types/latest/jsonrpsee_types/) typed JSON-RPC request/response/error objects; exact ID acceptance differs |
-| [`Zjrpc::Input`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcIO.hh), [`Output`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcIO.hh), [`BufOutput`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcIO.hh)<br>➕ bounded pooled JSON assembly and serialization | Partial: [Boost.JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp) parser/serializer with custom pooled storage | Partial: [`folly::IOBufQueue + JSON parser/serializer`](https://github.com/facebook/folly/blob/main/folly/io/IOBufQueue.h) | Partial: [`baljsn::DatumUtil`](https://github.com/bloomberg/bde/blob/main/groups/bal/baljsn/baljsn_datumutil.h)`  +  `[`bdlbb::Blob`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_blob.h) | [`serde_json`](https://docs.rs/serde_json/latest/serde_json/) / [`bytes`](https://docs.rs/bytes/latest/bytes/); bounded pooled JSON assembly is a custom destination policy |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/Zjrpc.hh"><code>Zjrpc::Request</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/Zjrpc.hh"><code>Response</code></a>, IDs, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/Zjrpc.hh"><code>Envelope</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/Zjrpc.hh"><code>Parsed</code></a> and wire views<br>➕ typed parameters/results and distinct missing/null IDs with retained JSON views<br>➖ numeric IDs use signed 64-bit integers; no fractional/exponent forms</td>
+  <td>Partial: <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">Boost.JSON</a>, <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">JSON</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/json/json.h"><code>folly::dynamic / parseJson / toJson</code></a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/jsonrpsee-types/latest/jsonrpsee_types/"><code>jsonrpsee-types</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcIO.hh"><code>Zjrpc::Input</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcIO.hh"><code>Output</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcIO.hh"><code>BufOutput</code></a><br>➕ bounded pooled JSON assembly and serialization</td>
+  <td>Partial: <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">Boost.JSON</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/IOBufQueue.h"><code>folly::IOBufQueue + JSON parser/serializer</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bal/baljsn/baljsn_datumutil.h"><code>baljsn::DatumUtil</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_blob.h"><code>bdlbb::Blob</code></a></td>
+  <td>Partial: <a href="https://docs.rs/serde_json/latest/serde_json/"><code>serde_json</code></a>, <a href="https://docs.rs/bytes/latest/bytes/"><code>bytes</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Correlation, completion and batches
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Zjrpc::PendingCalls`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcPending.hh), [`Caller`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcPending.hh)<br>➕ outbound ID correlation removed before typed terminal callbacks | Partial: [Boost.Unordered](https://www.boost.org/doc/libs/latest/libs/unordered/doc/html/unordered.html) + [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) completion state | [`jsonrpsee_core::client`](https://docs.rs/jsonrpsee-core/latest/jsonrpsee_core/client/index.html) request correlation; different terminal-state ownership |
-| [`Zjrpc::InboundCalls`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcInbound.hh)<br>➕ separate live requests and bounded recent-ID history<br>➖ history contains IDs, not replayable replies | Partial: [Boost.MultiIndex](https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html) + custom admission/history policy | [`jsonrpsee-server`](https://docs.rs/jsonrpsee-server/latest/jsonrpsee_server/) admission/subscription state; bounded recent inbound-ID history needs custom policy |
-| [`Zjrpc::Completion`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcCompletion.hh) and completion slots<br>➕ one-shot claims before reply posting and invalidation before cancellation callbacks | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) completion tokens + custom one-shot ownership | [`PendingSubscriptionSink`](https://docs.rs/jsonrpsee-core/latest/jsonrpsee_core/server/struct.PendingSubscriptionSink.html) / [`oneshot`](https://docs.rs/tokio/latest/tokio/sync/oneshot/index.html); subscription acceptance is only a partial analogue to general one-shot RPC completion |
-| [`Zjrpc::Dispatcher`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcDispatch.hh), [`Batch`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcPending.hh), [`BatchReply`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcPending.hh)<br>➕ shared typed dispatch, notifications and bounded batch aggregation | Partial: [Boost.JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp) + custom RPC dispatcher | [`RpcModule`](https://docs.rs/jsonrpsee/latest/jsonrpsee/struct.RpcModule.html) / [`BatchRequestBuilder`](https://docs.rs/jsonrpsee-core/latest/jsonrpsee_core/params/struct.BatchRequestBuilder.html); bounded batch policy differs |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcPending.hh"><code>Zjrpc::PendingCalls</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcPending.hh"><code>Caller</code></a><br>➕ outbound ID correlation removed before typed terminal callbacks</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/unordered/doc/html/unordered.html">Boost.Unordered</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://docs.rs/jsonrpsee-core/latest/jsonrpsee_core/client/index.html"><code>jsonrpsee_core::client</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcInbound.hh"><code>Zjrpc::InboundCalls</code></a><br>➕ separate live requests and bounded recent-ID history<br>➖ history contains IDs, not replayable replies</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html">Boost.MultiIndex</a></td>
+  <td>Partial: <a href="https://docs.rs/jsonrpsee-server/latest/jsonrpsee_server/"><code>jsonrpsee-server</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcCompletion.hh"><code>Zjrpc::Completion</code></a> and completion slots<br>➕ one-shot claims before reply posting and invalidation before cancellation callbacks</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td><a href="https://docs.rs/jsonrpsee-core/latest/jsonrpsee_core/server/struct.PendingSubscriptionSink.html"><code>PendingSubscriptionSink</code></a> / <a href="https://docs.rs/tokio/latest/tokio/sync/oneshot/index.html"><code>oneshot</code></a>; subscription acceptance is only a partial analogue to general one-shot RPC completion</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcDispatch.hh"><code>Zjrpc::Dispatcher</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcPending.hh"><code>Batch</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcPending.hh"><code>BatchReply</code></a><br>➕ shared typed dispatch, notifications and bounded batch aggregation</td>
+  <td>Partial: <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">Boost.JSON</a></td>
+  <td>Partial: <a href="https://docs.rs/jsonrpsee/latest/jsonrpsee/struct.RpcModule.html"><code>RpcModule</code></a>, <a href="https://docs.rs/jsonrpsee-core/latest/jsonrpsee_core/params/struct.BatchRequestBuilder.html"><code>BatchRequestBuilder</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Transport bindings and endpoints
 
-| Z facility | Boost | Folly | Rust |
-| --- | --- | --- | --- |
-| [`Zjrpc::StdioConfig`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcStdio.hh), [`StdioFramer`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcStdio.hh), [`IOEndpoint`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcStdio.hh)<br>➕ line framing and isolated blocking workers over owned per-run handle duplicates | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) descriptors/handles or [Iostreams](https://www.boost.org/doc/libs/latest/libs/iostreams/doc/index.html) + custom line/RPC runtime | Partial: [`folly::AsyncPipeReader / AsyncPipeWriter`](https://github.com/facebook/folly/blob/main/folly/io/async/AsyncPipe.h)<br>➖ no newline JSON-RPC framing or complete stdio endpoint lifecycle | Composition: [`LinesCodec`](https://docs.rs/tokio-util/latest/tokio_util/codec/struct.LinesCodec.html) + [`serde_json`](https://docs.rs/serde_json/latest/serde_json/) / [`jsonrpsee-core`](https://docs.rs/jsonrpsee-core/latest/jsonrpsee_core/); stdio handle ownership/runtime is custom |
-| JSON-RPC HTTP/SSE and WebSocket bindings<br>➕ shared RPC work/correlation over [Zhttp](https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh)/[Zws](https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsH1.hh) channels | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html) HTTP/WebSocket + [JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp)<br>➖ RPC/SSE work and lifecycle remain application code | N/A | [`jsonrpsee-http-client`](https://docs.rs/jsonrpsee-http-client/latest/jsonrpsee_http_client/) / [`jsonrpsee-ws-client`](https://docs.rs/jsonrpsee-ws-client/latest/jsonrpsee_ws_client/) / [`jsonrpsee-server`](https://docs.rs/jsonrpsee-server/latest/jsonrpsee_server/); SSE binding requires separate work |
-| [`Zjrpc::IOClient`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcClient.hh), [`IOServer`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcServer.hh), [`HTTPClient`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcClient.hh), [`HTTPServer`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcServer.hh), [`WSClient`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcClient.hh), [`WSServer`](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcServer.hh)<br>➕ typed calls/notifications/batches and coordinated restart after drain | N/A; no complete matching Boost [JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp)-RPC endpoint library | N/A | [`jsonrpsee`](https://docs.rs/jsonrpsee/latest/jsonrpsee/) HTTP/WebSocket clients/server; no shared stdio/SSE/restart boundary |
+<div style="overflow-x: auto;">
+<table width="1100" style="width: 1100px; min-width: 1100px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcStdio.hh"><code>Zjrpc::StdioConfig</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcStdio.hh"><code>StdioFramer</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcStdio.hh"><code>IOEndpoint</code></a><br>➕ line framing and isolated blocking workers over owned per-run handle duplicates</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a>, <a href="https://www.boost.org/doc/libs/latest/libs/iostreams/doc/index.html">Iostreams</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncPipe.h"><code>folly::AsyncPipeReader / AsyncPipeWriter</code></a></td>
+  <td>Partial: <a href="https://docs.rs/tokio-util/latest/tokio_util/codec/struct.LinesCodec.html"><code>LinesCodec</code></a>, <a href="https://docs.rs/serde_json/latest/serde_json/"><code>serde_json</code></a>, <a href="https://docs.rs/jsonrpsee-core/latest/jsonrpsee_core/"><code>jsonrpsee-core</code></a></td>
+</tr>
+<tr valign="top">
+  <td>JSON-RPC HTTP/SSE and WebSocket bindings<br>➕ shared RPC work/correlation over <a href="https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh">Zhttp</a>/<a href="https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsH1.hh">Zws</a> channels</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a>, <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">JSON</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/jsonrpsee-http-client/latest/jsonrpsee_http_client/"><code>jsonrpsee-http-client</code></a>, <a href="https://docs.rs/jsonrpsee-ws-client/latest/jsonrpsee_ws_client/"><code>jsonrpsee-ws-client</code></a>, <a href="https://docs.rs/jsonrpsee-server/latest/jsonrpsee_server/"><code>jsonrpsee-server</code></a> (custom SSE)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcClient.hh"><code>Zjrpc::IOClient</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcServer.hh"><code>IOServer</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcClient.hh"><code>HTTPClient</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcServer.hh"><code>HTTPServer</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcClient.hh"><code>WSClient</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zjrpc/src/ZjrpcServer.hh"><code>WSServer</code></a><br>➕ typed calls/notifications/batches and coordinated restart after drain</td>
+  <td>None: <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">JSON</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/jsonrpsee/latest/jsonrpsee/"><code>jsonrpsee</code></a> (HTTP/WebSocket)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zmcp - Model Context Protocol
 
@@ -1435,20 +6190,70 @@ JSON parsing alone does not supply JSON-RPC dispatch or correlation.
 [Public headers](https://github.com/kaldron-labs/z/blob/main/zmcp/src/) · [Module guide](../zmcp/README.md).
 Uses [Zjrpc](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/Zjrpc.hh), [Zws](https://github.com/kaldron-labs/z/blob/main/zws/src/ZwsH1.hh) and [Zhttp](https://github.com/kaldron-labs/z/blob/main/zhttp/src/Zhttp.hh); it has no dependency on [Zrest](https://github.com/kaldron-labs/z/blob/main/zrest/src/Zrest.hh) despite shared metadata conventions.
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Zmcp::Request`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/Zmcp.hh), [`Response`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/Zmcp.hh), tool catalogs and generated schemas<br>➕ reflected tools/list/tools/call with typed input/output schemas<br>➖ current scope is tool providers/callers; prompts/resources and other MCP subsystems are deferred | Partial: [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) + [JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp)<br>➖ MCP schema/catalog policy is additional work | [`rmcp`](https://docs.rs/rmcp/latest/rmcp/) typed tool handlers + [`schemars`](https://docs.rs/schemars/latest/schemars/) input/output schemas |
-| [`Zmcp::ToolAnnotations`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/Zmcp.hh), [`MCP::Header`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/Zmcp.hh)<br>➕ compile-time tool semantics drive schema/header output and trusted retry policy | N/A | [`rmcp::model::ToolAnnotations`](https://docs.rs/rmcp/latest/rmcp/model/struct.ToolAnnotations.html); trusted retry/header policy requires application integration |
-| [MCP peer negotiation and catalog cache](https://github.com/kaldron-labs/z/blob/main/zmcp/src/Zmcp.hh)<br>➕ discovery/legacy handshake and explicit catalog invalidation | N/A | [`rmcp::service`](https://docs.rs/rmcp/latest/rmcp/service/index.html) / [`model`](https://docs.rs/rmcp/latest/rmcp/model/index.html) negotiation and tool discovery; cache invalidation policy differs |
-| [`Zmcp::Context`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/Zmcp.hh) and extended completion policy<br>➕ transport/session/stream context with cancellation, progress and logging<br>➖ context pointers are callback-scoped | Partial: [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) handlers/cancellation + custom MCP policy | [`RequestContext`](https://docs.rs/rmcp/latest/rmcp/service/struct.RequestContext.html) / [`model`](https://docs.rs/rmcp/latest/rmcp/model/index.html) progress/logging; context lifetime model differs |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zmcp/src/Zmcp.hh"><code>Zmcp::Request</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zmcp/src/Zmcp.hh"><code>Response</code></a>, tool catalogs and generated schemas<br>➕ reflected tools/list/tools/call with typed input/output schemas<br>➖ current scope is tool providers/callers; prompts/resources and other MCP subsystems are deferred</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Boost.Describe</a>, <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">JSON</a></td>
+  <td><a href="https://docs.rs/rmcp/latest/rmcp/"><code>rmcp</code></a> typed tool handlers + <a href="https://docs.rs/schemars/latest/schemars/"><code>schemars</code></a> input/output schemas</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zmcp/src/Zmcp.hh"><code>Zmcp::ToolAnnotations</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zmcp/src/Zmcp.hh"><code>MCP::Header</code></a><br>➕ compile-time tool semantics drive schema/header output and trusted retry policy</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/rmcp/latest/rmcp/model/struct.ToolAnnotations.html"><code>rmcp::model::ToolAnnotations</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zmcp/src/Zmcp.hh">MCP peer negotiation and catalog cache</a><br>➕ discovery/legacy handshake and explicit catalog invalidation</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/rmcp/latest/rmcp/service/index.html"><code>rmcp::service</code></a>, <a href="https://docs.rs/rmcp/latest/rmcp/model/index.html"><code>model</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zmcp/src/Zmcp.hh"><code>Zmcp::Context</code></a> and extended completion policy<br>➕ transport/session/stream context with cancellation, progress and logging<br>➖ context pointers are callback-scoped</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
+  <td>Partial: <a href="https://docs.rs/rmcp/latest/rmcp/service/struct.RequestContext.html"><code>RequestContext</code></a>, <a href="https://docs.rs/rmcp/latest/rmcp/model/index.html"><code>model</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## MCP endpoints
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`Zmcp::Batch`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpClient.hh) and shared JSON-RPC aggregation<br>➕ typed aggregate tool calls reuse the ordinary pending-call table | Partial: [Boost.JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp) + custom MCP/RPC aggregation | Partial: [`rmcp service requests`](https://docs.rs/rmcp/latest/rmcp/service/index.html) + [`join_all`](https://docs.rs/futures/latest/futures/future/fn.join_all.html); no matching typed batch aggregation contract |
-| [`Zmcp::IOClient`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpClient.hh), [`IOServer`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpServer.hh)<br>➕ newline-delimited MCP over inherited stdio with bounded work and lifecycle<br>➖ peer process creation/supervision is application-owned | Partial: [Boost.Process](https://github.com/boostorg/process/blob/master/include/boost/process.hpp) + custom MCP protocol/runtime | [`rmcp::transport`](https://docs.rs/rmcp/latest/rmcp/transport/index.html) stdio / child-process transports; process lifecycle policy differs |
-| [`Zmcp::HTTPClient`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpClient.hh), [`HTTPServer`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpServer.hh), [`WSClient`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpClient.hh), [`WSServer`](https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpServer.hh)<br>➕ shared typed tool handlers over Streamable HTTP and WebSockets with full drain<br>➖ authentication/authorization remain application-owned | Partial: [Beast](https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html)/[Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html) + [JSON](https://github.com/boostorg/json/blob/master/include/boost/json.hpp)<br>➖ no complete Boost MCP endpoint library | [`rmcp::transport`](https://docs.rs/rmcp/latest/rmcp/transport/index.html) Streamable HTTP; WebSocket transport and shared drain boundary need custom integration |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpClient.hh"><code>Zmcp::Batch</code></a> and shared JSON-RPC aggregation<br>➕ typed aggregate tool calls reuse the ordinary pending-call table</td>
+  <td>Partial: <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">Boost.JSON</a></td>
+  <td>Partial: <a href="https://docs.rs/rmcp/latest/rmcp/service/index.html"><code>rmcp service requests</code></a>, <a href="https://docs.rs/futures/latest/futures/future/fn.join_all.html"><code>join_all</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpClient.hh"><code>Zmcp::IOClient</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpServer.hh"><code>IOServer</code></a><br>➕ newline-delimited MCP over inherited stdio with bounded work and lifecycle<br>➖ peer process creation/supervision is application-owned</td>
+  <td>Partial: <a href="https://github.com/boostorg/process/blob/master/include/boost/process.hpp">Boost.Process</a></td>
+  <td>Partial: <a href="https://docs.rs/rmcp/latest/rmcp/transport/index.html"><code>rmcp::transport</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpClient.hh"><code>Zmcp::HTTPClient</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpServer.hh"><code>HTTPServer</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpClient.hh"><code>WSClient</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zmcp/src/ZmcpServer.hh"><code>WSServer</code></a><br>➕ shared typed tool handlers over Streamable HTTP and WebSockets with full drain<br>➖ authentication/authorization remain application-owned</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/beast/doc/html/beast/ref.html">Beast</a>, <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a>, <a href="https://github.com/boostorg/json/blob/master/include/boost/json.hpp">JSON</a></td>
+  <td>Partial: <a href="https://docs.rs/rmcp/latest/rmcp/transport/index.html"><code>rmcp::transport</code></a> (HTTP; custom WebSockets)</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # Zdb - Typed, sharded, replicated database
 
@@ -1457,27 +6262,116 @@ Uses [Zjrpc](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/Zjrpc.hh), [Z
 [Public headers](https://github.com/kaldron-labs/z/blob/main/zdb/src/) · [Module guide](../zdb/README.md).
 [Zfb](https://github.com/kaldron-labs/z/blob/main/zfb/src/Zfb.hh) supplies wire/schema reflection and [Zv](https://github.com/kaldron-labs/z/blob/main/zv/src/ZvLib.hh) supplies runtime configuration.
 
-| Z facility | STL | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- | --- |
-| [`ZdbTable`](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh)`<T>`, [`ZdbTableDerive`](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh#L88) and reflected key/schema metadata<br>➕ typed primary/secondary indices, grouped queries and generated BFBS schema<br>➖ immutable application schema is selected before startup | N/A | Partial: [Boost.MultiIndex](https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html) + [Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html)<br>➖ no persistence/schema-store integration | N/A | N/A | Partial: [`diesel`](https://docs.rs/diesel/latest/diesel/) / [`sea-orm`](https://docs.rs/sea-orm/latest/sea_orm/) typed schema/entities and [`multi_index_map`](https://docs.rs/multi_index_map/latest/multi_index_map/) in-memory indices; no shared sharded BFBS database schema |
-| [`ZdbRow`](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh), [`ZdbRowRef`](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh), [`ZdbTblRef`](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh)<br>➕ intrusive row/table lifetime and shard-owned mutation callbacks | Partial: [`std::shared_ptr`](https://en.cppreference.com/cpp/memory/shared_ptr)<br>➖ no database row state or shard ownership contract | Partial: [Boost.Intrusive](https://www.boost.org/doc/libs/latest/doc/html/intrusive.html) / [SmartPtr](https://www.boost.org/doc/libs/latest/libs/smart_ptr/doc/html/smart_ptr.html) | N/A | Partial: [`bsl::shared_ptr`](https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_memory.h)<br>➕ allocator-aware shared ownership | Partial: [`Arc`](https://doc.rust-lang.org/std/sync/struct.Arc.html) / [`Tokio synchronization`](https://docs.rs/tokio/latest/tokio/sync/index.html); intrusive row state and shard-owned mutation are custom |
-| [Zdb](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh) buffer and message formats ([`ZdbBuf`](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh)`.hh`, [`ZdbMsg`](https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbMsg.hh)`.hh`)<br>➕ reflected replication/store records share reference-owned I/O backing | N/A | Partial: [Boost.Serialization](https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html)<br>➖ different wire layout and ownership model | Partial: [`folly::IOBuf`](https://github.com/facebook/folly/blob/main/folly/io/IOBuf.h)<br>➖ backing ownership only; no [Zdb](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh) wire/schema codec | N/A | Composition: [`flatbuffers`](https://docs.rs/flatbuffers/latest/flatbuffers/) + [`bytes`](https://docs.rs/bytes/latest/bytes/); replication/store record schema and backing policy are custom |
+<div style="overflow-x: auto;">
+<table width="1580" style="width: 1580px; min-width: 1580px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">STL</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh"><code>ZdbTable</code></a><code>&lt;T&gt;</code>, <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh#L88"><code>ZdbTableDerive</code></a> and reflected key/schema metadata<br>➕ typed primary/secondary indices, grouped queries and generated BFBS schema<br>➖ immutable application schema is selected before startup</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html">Boost.MultiIndex</a>, <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Describe</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/diesel/latest/diesel/"><code>diesel</code></a>, <a href="https://docs.rs/sea-orm/latest/sea_orm/"><code>sea-orm</code></a>, <a href="https://docs.rs/multi_index_map/latest/multi_index_map/"><code>multi_index_map</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh"><code>ZdbRow</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh"><code>ZdbRowRef</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh"><code>ZdbTblRef</code></a><br>➕ intrusive row/table lifetime and shard-owned mutation callbacks</td>
+  <td>Partial: <a href="https://en.cppreference.com/cpp/memory/shared_ptr"><code>std::shared_ptr</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/intrusive.html">Boost.Intrusive</a>, <a href="https://www.boost.org/doc/libs/latest/libs/smart_ptr/doc/html/smart_ptr.html">SmartPtr</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bsl/bsl+bslhdrs/bsl_memory.h"><code>bsl::shared_ptr</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/sync/struct.Arc.html"><code>Arc</code></a>, <a href="https://docs.rs/tokio/latest/tokio/sync/index.html"><code>Tokio synchronization</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh">Zdb</a> buffer and message formats (<a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh"><code>ZdbBuf</code></a><code>.hh</code>, <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbMsg.hh"><code>ZdbMsg</code></a><code>.hh</code>)<br>➕ reflected replication/store records share reference-owned I/O backing</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html">Boost.Serialization</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/io/IOBuf.h"><code>folly::IOBuf</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh">Zdb</a></td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/flatbuffers/latest/flatbuffers/"><code>flatbuffers</code></a>, <a href="https://docs.rs/bytes/latest/bytes/"><code>bytes</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Database operations and lifecycle
 
-| Z facility | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [Zdb](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh) find/insert/update/delete and row caches<br>➕ typed asynchronous operations with write-through caching and index maintenance<br>➖ local commit acceptance is not synchronous persistence/replication confirmation | Partial: [Boost.MultiIndex](https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html) cache + custom store/transaction runtime | Partial: [`folly::EvictingCacheMap`](https://github.com/facebook/folly/blob/main/folly/container/EvictingCacheMap.h)<br>➖ cache only; no typed database writes, persistence or index coordination | Partial: [`bdlcc::Cache`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_cache.h)` (row-`[`cache`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_cache.h)` building block only)` | Partial: [`sea-orm`](https://docs.rs/sea-orm/latest/sea_orm/) / [`sqlx`](https://docs.rs/sqlx/latest/sqlx/) async CRUD + [`moka`](https://docs.rs/moka/latest/moka/) caching; write-through index/cache coordination requires a runtime |
-| [Zdb](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh) select/count and queue barriers<br>➕ index-based backing-store queries ordered with writes | Partial: database client + custom cache/store queue coordination | N/A | N/A | Partial: [`sqlx`](https://docs.rs/sqlx/latest/sqlx/) / [`diesel`](https://docs.rs/diesel/latest/diesel/) queries; ordering with cache/store queue barriers is custom |
-| [`Zdb`](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh), [`ZdbCf`](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh), [`ZdbHandler`](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh)<br>➕ DB-wide shards, configured workers, activation callbacks and orderly drain | N/A; [Asio](https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html)/[Statechart](https://www.boost.org/doc/libs/latest/libs/statechart/doc/reference.html) primitives do not form a database runtime | N/A | N/A | Partial: [`tokio`](https://docs.rs/tokio/latest/tokio/) database tasks + [`sqlx`](https://docs.rs/sqlx/latest/sqlx/) pools; Zdb activation, shards and orderly drain require custom orchestration |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh">Zdb</a> find/insert/update/delete and row caches<br>➕ typed asynchronous operations with write-through caching and index maintenance<br>➖ local commit acceptance is not synchronous persistence/replication confirmation</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html">Boost.MultiIndex</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/container/EvictingCacheMap.h"><code>folly::EvictingCacheMap</code></a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_cache.h"><code>bdlcc::Cache</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_cache.h"><code>cache</code></a></td>
+  <td>Partial: <a href="https://docs.rs/sea-orm/latest/sea_orm/"><code>sea-orm</code></a>, <a href="https://docs.rs/sqlx/latest/sqlx/"><code>sqlx</code></a>, <a href="https://docs.rs/moka/latest/moka/"><code>moka</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh">Zdb</a> select/count and queue barriers<br>➕ index-based backing-store queries ordered with writes</td>
+  <td>Partial: database client + custom cache/store queue coordination</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/sqlx/latest/sqlx/"><code>sqlx</code></a>, <a href="https://docs.rs/diesel/latest/diesel/"><code>diesel</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh"><code>Zdb</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh"><code>ZdbCf</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh"><code>ZdbHandler</code></a><br>➕ DB-wide shards, configured workers, activation callbacks and orderly drain</td>
+  <td>None: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a>, <a href="https://www.boost.org/doc/libs/latest/libs/statechart/doc/reference.html">Statechart</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/tokio/latest/tokio/"><code>tokio</code></a>, <a href="https://docs.rs/sqlx/latest/sqlx/"><code>sqlx</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Replication and recoverable workflows
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`ZdbHost`](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh) and replication/activation<br>➕ leader election, asynchronous chain replication and failover recovery<br>➖ asynchronous replication is not a synchronous consensus commit guarantee | N/A | Partial: [`openraft`](https://docs.rs/openraft/latest/openraft/) leader election/replication, but consensus differs from asynchronous chain replication; no drop-in Zdb host runtime |
-| [`ZdbSaga`](https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbSaga.hh), [`ZdbSagaDB`](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh), [`ZdbSagaPhase`](https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbSaga.hh#L701), [`ZdbSagaRepeatPhase`](https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbSaga.hh#L707)<br>➕ journaled workflow steps, recovery and application compensation<br>➖ arbitrary external effects are not automatically journaled or exactly-once | Partial: [Boost.Statechart](https://www.boost.org/doc/libs/latest/libs/statechart/doc/reference.html) / MSM<br>➖ no durable saga journal, database mutation protocol or recovery | Partial: [`sqlx`](https://docs.rs/sqlx/latest/sqlx/) transactions + custom journal/state machine; no matching durable Zdb saga/compensation protocol |
-| [`Ztc::DB`](https://github.com/kaldron-labs/z/blob/main/zdb/src/ZtcDB.hh), [`DBHost`](https://github.com/kaldron-labs/z/blob/main/zdb/src/ZtcDBHost.hh), [`DBTable`](https://github.com/kaldron-labs/z/blob/main/zdb/src/ZtcDBTable.hh) telemetry<br>➕ reflected database, host and table statistics | Partial: application records + [Boost.Describe](https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html) / [Serialization](https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html) | [`metrics`](https://docs.rs/metrics/latest/metrics/) / [`tracing`](https://docs.rs/tracing/latest/tracing/); database/host/table schemas are application-defined |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh"><code>ZdbHost</code></a> and replication/activation<br>➕ leader election, asynchronous chain replication and failover recovery<br>➖ asynchronous replication is not a synchronous consensus commit guarantee</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/openraft/latest/openraft/"><code>openraft</code></a> (Raft, not chain replication)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbSaga.hh"><code>ZdbSaga</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh"><code>ZdbSagaDB</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbSaga.hh#L701"><code>ZdbSagaPhase</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbSaga.hh#L707"><code>ZdbSagaRepeatPhase</code></a><br>➕ journaled workflow steps, recovery and application compensation<br>➖ arbitrary external effects are not automatically journaled or exactly-once</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/statechart/doc/reference.html">Boost.Statechart</a></td>
+  <td>Partial: <a href="https://docs.rs/sqlx/latest/sqlx/"><code>sqlx</code></a> (custom saga journal)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/ZtcDB.hh"><code>Ztc::DB</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/ZtcDBHost.hh"><code>DBHost</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/ZtcDBTable.hh"><code>DBTable</code></a> telemetry<br>➕ reflected database, host and table statistics</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/describe/doc/html/describe.html">Boost.Describe</a>, <a href="https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html">Serialization</a></td>
+  <td><a href="https://docs.rs/metrics/latest/metrics/"><code>metrics</code></a> / <a href="https://docs.rs/tracing/latest/tracing/"><code>tracing</code></a>; database/host/table schemas are application-defined</td>
+</tr>
+</tbody>
+</table>
+</div>
 
 ## Pluggable backing stores
 
@@ -1485,10 +6379,35 @@ Uses [Zjrpc](https://github.com/kaldron-labs/z/blob/main/zjrpc/src/Zjrpc.hh), [Z
 [Boost.MultiIndex](https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html) supplies in-memory indices; [Boost.MySQL](https://www.boost.org/doc/libs/latest/libs/mysql/doc/html/index.html)
 is a database client, not an equivalent of [Zdb](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh)'s database/store framework.
 
-| Z facility | Boost | Folly | BDE | Rust |
-| --- | --- | --- | --- | --- |
-| [`Zdb_::Store`](https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbStore.hh), [`StoreTbl`](https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbStore.hh) and store-module loading<br>➕ asynchronous store contract with reflected schemas and query/write callbacks | Partial: [Boost.DLL](https://www.boost.org/doc/libs/latest/doc/html/boost_dll/reference.html) + custom database adapter<br>➖ no matching Boost backing-store interface | N/A | N/A | Partial: [`DatabaseConnection`](https://docs.rs/sea-orm/latest/sea_orm/struct.DatabaseConnection.html) / [`Any`](https://docs.rs/sqlx/latest/sqlx/struct.Any.html) database backends; no matching dynamically loaded reflected store contract |
-| [`ZdbMem::Store`](https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbMemStore.hh) / [`libZdbMem`](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh)<br>➕ in-memory implementation of the same store contract<br>➖ process loss loses locally stored data | Partial: [Boost.MultiIndex](https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html)<br>➖ persistence/replication/store contracts require custom code | Partial: [`folly::F14FastMap / ConcurrentHashMap`](https://github.com/facebook/folly/blob/main/folly/container/F14Map.h)<br>➖ in-memory indices only; no [Zdb](https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh) store/query contract | Partial: [`bdlc::FlatHashMap`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlc/bdlc_flathashmap.h)`  /  `[`bdlcc::StripedUnorderedMap`](https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_stripedunorderedmap.h)` (index building blocks only)` | Partial: [`BTreeMap`](https://doc.rust-lang.org/std/collections/struct.BTreeMap.html) / [`redb::backends::InMemoryBackend`](https://docs.rs/redb/latest/redb/backends/struct.InMemoryBackend.html); Zdb store/replication contracts require custom adapters |
+<div style="overflow-x: auto;">
+<table width="1340" style="width: 1340px; min-width: 1340px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Folly</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">BDE</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbStore.hh"><code>Zdb_::Store</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbStore.hh"><code>StoreTbl</code></a> and store-module loading<br>➕ asynchronous store contract with reflected schemas and query/write callbacks</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_dll/reference.html">Boost.DLL</a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/sea-orm/latest/sea_orm/struct.DatabaseConnection.html"><code>DatabaseConnection</code></a>, <a href="https://docs.rs/sqlx/latest/sqlx/struct.Any.html"><code>Any</code></a> (backend adapters; no dynamic store ABI)</td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/ZdbMemStore.hh"><code>ZdbMem::Store</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh"><code>libZdbMem</code></a><br>➕ in-memory implementation of the same store contract<br>➖ process loss loses locally stored data</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/multi_index/doc/reference/index.html">Boost.MultiIndex</a></td>
+  <td>Partial: <a href="https://github.com/facebook/folly/blob/main/folly/container/F14Map.h"><code>folly::F14FastMap / ConcurrentHashMap</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zdb/src/Zdb.hh">Zdb</a></td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlc/bdlc_flathashmap.h"><code>bdlc::FlatHashMap</code></a>, <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlcc/bdlcc_stripedunorderedmap.h"><code>bdlcc::StripedUnorderedMap</code></a></td>
+  <td>Partial: <a href="https://doc.rust-lang.org/std/collections/struct.BTreeMap.html"><code>BTreeMap</code></a>, <a href="https://docs.rs/redb/latest/redb/backends/struct.InMemoryBackend.html"><code>redb::backends::InMemoryBackend</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # ZdbPQ - PostgreSQL backing store and native types
 
@@ -1496,10 +6415,29 @@ is a database client, not an equivalent of [Zdb](https://github.com/kaldron-labs
 
 [Public API](https://github.com/kaldron-labs/z/blob/main/zdb_pq/src/ZdbPQ.hh) · [Module guide](../zdb_pq/README.md)
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`ZdbPQ`](https://github.com/kaldron-labs/z/blob/main/zdb_pq/src/ZdbPQ.hh) / [`libZdbPQ`](https://github.com/kaldron-labs/z/blob/main/zdb_pq/src/ZdbPQ.hh)<br>➕ asynchronous libpq store with reflected prepared SQL and binary I/O<br>➖ requires PostgreSQL/libpq and configured server-side types | N/A; [Boost.MySQL](https://www.boost.org/doc/libs/latest/libs/mysql/doc/html/mysql/ref.html) speaks a different database protocol | [`tokio-postgres`](https://docs.rs/tokio-postgres/latest/tokio_postgres/) / [`sqlx::postgres`](https://docs.rs/sqlx/latest/sqlx/postgres/index.html) typed async PostgreSQL clients; no libZdbPQ store integration |
-| PostgreSQL [`libz`](https://github.com/kaldron-labs/z/blob/main/zdb_pq/src/ZdbPQ.hh) type extension<br>➕ native database representations for Z decimal, time and bitmap values | N/A | Partial: [`pgrx`](https://docs.rs/pgrx/latest/pgrx/) for Rust PostgreSQL extensions; Z decimal/time/bitmap types and binary representation require custom implementation |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdb_pq/src/ZdbPQ.hh"><code>ZdbPQ</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zdb_pq/src/ZdbPQ.hh"><code>libZdbPQ</code></a><br>➕ asynchronous libpq store with reflected prepared SQL and binary I/O<br>➖ requires PostgreSQL/libpq and configured server-side types</td>
+  <td>None: <a href="https://www.boost.org/doc/libs/latest/libs/mysql/doc/html/mysql/ref.html">Boost.MySQL</a></td>
+  <td>Partial: <a href="https://docs.rs/tokio-postgres/latest/tokio_postgres/"><code>tokio-postgres</code></a>, <a href="https://docs.rs/sqlx/latest/sqlx/postgres/index.html"><code>sqlx::postgres</code></a></td>
+</tr>
+<tr valign="top">
+  <td>PostgreSQL <a href="https://github.com/kaldron-labs/z/blob/main/zdb_pq/src/ZdbPQ.hh"><code>libz</code></a> type extension<br>➕ native database representations for Z decimal, time and bitmap values</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/pgrx/latest/pgrx/"><code>pgrx</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
 
 # ZdbSL - SQLite backing store
 
@@ -1507,7 +6445,26 @@ is a database client, not an equivalent of [Zdb](https://github.com/kaldron-labs
 
 [Public headers](https://github.com/kaldron-labs/z/blob/main/zdb_sqlite/src/) · [Module guide](../zdb_sqlite/README.md)
 
-| Z facility | Boost | Rust |
-| --- | --- | --- |
-| [`ZdbSL::Store`](https://github.com/kaldron-labs/z/blob/main/zdb_sqlite/src/ZdbSL.hh) / [`libZdbSL`](https://github.com/kaldron-labs/z/blob/main/zdb_sqlite/src/ZdbSL.hh)<br>➕ reflected persistent store with WAL and one isolated worker per connection<br>➖ local filesystem and one writer connection per store | N/A; no matching Boost SQLite backing-store implementation | [`rusqlite`](https://docs.rs/rusqlite/latest/rusqlite/) / [`tokio-rusqlite`](https://docs.rs/tokio-rusqlite/latest/tokio_rusqlite/) / [`sqlx::sqlite`](https://docs.rs/sqlx/latest/sqlx/sqlite/index.html); reflected store/WAL/worker ownership policy differs |
-| [`ZdbSL`](https://github.com/kaldron-labs/z/blob/main/zdb_sqlite/src/ZdbSL.hh) storage codecs and inspection extension<br>➕ canonical sortable Z scalar encodings and readable SQLite inspection helpers | Partial: [Boost.Endian](https://www.boost.org/doc/libs/latest/libs/endian/doc/html/endian.html) / [Serialization](https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html)<br>➖ Z logical encodings and SQLite extension require custom work | Partial: [`rusqlite scalar functions`](https://docs.rs/rusqlite/latest/rusqlite/functions/index.html) / [`virtual tables`](https://docs.rs/rusqlite/latest/rusqlite/vtab/index.html); canonical sortable Z encodings and inspection codecs are custom |
+<div style="overflow-x: auto;">
+<table width="860" style="width: 860px; min-width: 860px; table-layout: fixed; overflow-wrap: anywhere;">
+<thead>
+<tr>
+  <th scope="col" width="340" align="left" style="min-width: 340px;">Z facility</th>
+  <th scope="col" width="240" align="left" style="min-width: 240px;">Boost</th>
+  <th scope="col" width="280" align="left" style="min-width: 280px;">Rust</th>
+</tr>
+</thead>
+<tbody>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdb_sqlite/src/ZdbSL.hh"><code>ZdbSL::Store</code></a> / <a href="https://github.com/kaldron-labs/z/blob/main/zdb_sqlite/src/ZdbSL.hh"><code>libZdbSL</code></a><br>➕ reflected persistent store with WAL and one isolated worker per connection<br>➖ local filesystem and one writer connection per store</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/rusqlite/latest/rusqlite/"><code>rusqlite</code></a>, <a href="https://docs.rs/tokio-rusqlite/latest/tokio_rusqlite/"><code>tokio-rusqlite</code></a>, <a href="https://docs.rs/sqlx/latest/sqlx/sqlite/index.html"><code>sqlx::sqlite</code></a></td>
+</tr>
+<tr valign="top">
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zdb_sqlite/src/ZdbSL.hh"><code>ZdbSL</code></a> storage codecs and inspection extension<br>➕ canonical sortable Z scalar encodings and readable SQLite inspection helpers</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/endian/doc/html/endian.html">Boost.Endian</a>, <a href="https://www.boost.org/doc/libs/latest/libs/serialization/doc/index.html">Serialization</a></td>
+  <td>Partial: <a href="https://docs.rs/rusqlite/latest/rusqlite/functions/index.html"><code>rusqlite scalar functions</code></a>, <a href="https://docs.rs/rusqlite/latest/rusqlite/vtab/index.html"><code>virtual tables</code></a></td>
+</tr>
+</tbody>
+</table>
+</div>
