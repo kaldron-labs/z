@@ -297,9 +297,6 @@ public:
   // Acceptance detaches backing; refusal leaves the buffer unchanged.
   bool sendPacket(const ZmRef<Zi::IOBuf> &, PacketLease * = nullptr);
   void reconcileTx(); // Tx owner: retire kernel leases before retained header changes
-  void waitTx(Allocator *, Zi::IOBufWait &); // allocator callbacks on mx Tx
-  void cancelTx(Allocator *, Zi::IOBufWait &);
-  void returnedTx(Allocator *); // post a provider's claimed service obligation
   ZmRef<PacketBuf> allocPacket(void *owner, ZiIPType::T, bool control = false);
   ZuUnion<void, ZeException> configureControl(unsigned count, unsigned credits);
   ZuUnion<void, ZeException> configure(const StackConfig &);
@@ -380,7 +377,6 @@ private:
   void replyControl(TCPHeader, IPPath);
   void pollTx();
   void txService(bool);
-  void serviceWaits(Allocator *);
   void observed(Zutcp_::EndpointLink *);
   void unobserved(Zutcp_::EndpointLink *);
 
@@ -438,12 +434,11 @@ private:
   unsigned m_rxPackets = 0;
   bool m_endpointDrain = false;
 
-  // Tx-owned timestamp, completion and allocation-wait service.
+  // Tx-owned timestamp and completion service.
   alignas(Zm::CacheLineSize) TCPClock m_tcpClock;
-  Queue<AllocatorList, "waiting-providers", Ztc::QueueType::Tx> m_waitProviders;
   unsigned m_txPending = 0;
   bool m_senderStopping = false;
-  bool m_txServicing = false, m_txDraining = false, m_allocDraining = false;
+  bool m_txServicing = false, m_txDraining = false;
   uint64_t m_dataStalls = 0, m_controlStalls = 0;
 };
 

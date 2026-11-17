@@ -51,7 +51,7 @@ struct TxHarness : public FakeConnection, public ZiTx<TxHarness> {
 
   FakeConnection *cxn() { return this; }
 
-  void sent(ZmRef<ZiTxBuf> buf, bool ok)
+  void sent(ZmRef<ZiIOBuf> buf, bool ok)
   {
     if (sentCount < 16) {
       sentOrder[sentCount] = char(buf->ptr<const uint8_t>()[0]);
@@ -60,7 +60,7 @@ struct TxHarness : public FakeConnection, public ZiTx<TxHarness> {
     ++sentCount;
   }
 
-  void aborted(ZmRef<ZiTxBuf> buf, bool ok)
+  void aborted(ZmRef<ZiIOBuf> buf, bool ok)
   {
     if (abortedCount < 16) {
       abortedOrder[abortedCount] = char(buf->ptr<const uint8_t>()[0]);
@@ -75,18 +75,18 @@ struct TxHarness : public FakeConnection, public ZiTx<TxHarness> {
     io();
   }
 
-  void queue(ZmRef<ZiTxBuf> buf)
+  void queue(ZmRef<ZiIOBuf> buf)
   {
     ZiTx<TxHarness>::send(ZuMv(buf));
   }
 };
 
-static ZmRef<ZiTxBuf> mkBuf(char c, unsigned n)
+static ZmRef<ZiIOBuf> mkBuf(char c, unsigned n)
 {
   static ZiMultiplex mx;
   static auto allocator =
-    mx.allocator<Zi::IOBufType::App, ZiTxBuf, 32, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 128>();
-  ZmRef<ZiTxBuf> buf{allocator->allocBuf().ptr<ZiTxBuf>()};
+    mx.allocator<Zi::IOBufType::App, ZiIOBuf, 32, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, 128>();
+  ZmRef<ZiIOBuf> buf{allocator->allocBuf().ptr<ZiIOBuf>()};
   for (unsigned i = 0; i < n; ++i)
     buf->append(ZuSpan{&c, 1});
   return buf;

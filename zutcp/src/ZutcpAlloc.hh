@@ -92,22 +92,14 @@ private:
 // Zi adapters retain this provider through final registered returns. Its pool
 // therefore outlives the packet instance and all application/DMA-held buffers.
 // Freeze geometry and intrusive links while the raw instance is active.
-class Stack;
 struct Allocator;
 
 struct AllocatorData : public Zi::IOBufPool {
   using ReturnedFn = ZmFn<void(), ZmFnHeapID<"Zutcp.Returned">>;
-  enum { Waiting = 1, Posted = 2 };
   ZmRef<Zi::IOBufPool> pool;
   Allocator	*nextProvider = nullptr;
   ReturnedFn	returned;
   ZmRef<RxFrames> rxFrames; // physical ingress only; absent for Tx providers
-  Stack		*stack = nullptr; // fixed before start, cleared after drain
-  ZmAtomic<unsigned> notify{0}; // return gate and outstanding service obligation
-  // The inherited provider-list links follow this Tx-owned group, not notify.
-  ZuID queueID; // immutable provider identity, set before registration
-  using Waits = Queue<Zi::IOBufWaitList, "allocation-waits", Ztc::QueueType::Tx>;
-  alignas(Zm::CacheLineSize) Waits waits;
 
   explicit AllocatorData(ZmRef<Zi::IOBufPool> pool_) : pool{ZuMv(pool_)} {
     ZmAssert_(pool);
@@ -120,21 +112,14 @@ struct AllocatorData : public Zi::IOBufPool {
   }
 };
 
-using AllocatorList = ZmList<AllocatorData,
-  ZmListNode<AllocatorData, ZmListShadow<>>>;
-
-struct ZutcpAPI Allocator : public ZmNHeap<Allocator>, public AllocatorList::Node {
+struct ZutcpAPI Allocator : public ZmNHeap<Allocator>, public AllocatorData {
 friend inline ZuStringT<"Zutcp.Allocator"> ZmNHeapID(Allocator *);
   using ZmNHeap<Allocator>::operator new;
   using ZmNHeap<Allocator>::operator delete;
 
-  using AllocatorList::Node::Node;
-  ~Allocator();
+  using AllocatorData::AllocatorData;
   uint8_t *alloc() override;
   void free(uint8_t *) override;
-  void wait(Zi::IOBufWait &) override;
-  void cancel(Zi::IOBufWait &) override;
-  void notifyReturn();
 };
 
 // The caller allocation lease lives in an existing recovery/source node,

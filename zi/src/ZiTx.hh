@@ -19,31 +19,20 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZmList.hh>
 
-ZmListDerive(ZiTxQueue, ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
-
-using ZiTxBuf = ZiTxQueue::Node;
-
-template <
-  unsigned Size = ZiIOBuf_DefltSize,
-  unsigned VHMaxSize = ZiIOBuf_DefltVHMaxSize,
-  ZuString HeapID = ZiIOBuf_HeapID{}()>
-using ZiTxBufAlloc = Zi::IOBufBuiltinAllocator<
-  Zi::IOBufType::App, ZiTxBuf, Size, ZiIOBuf_DefltAlign, ZuStringT<HeapID>, VHMaxSize>;
-
 // CRTP - implementation must conform to the following interface:
 #if 0
 struct Impl : public ZiTx<Impl> {
   ZiConnection *cxn();				// optional
   unsigned maxQueueLen();			// ''
-  void sent(ZmRef<ZiTxBuf>, bool ok);		// ''
+  void sent(ZmRef<ZiIOBuf>, bool ok);		// ''
   void sending(ZiTxContext &);			// '' - per-buffer address/TOS
-  void aborted(ZmRef<ZiTxBuf> buf, bool ok);	// ''
+  void aborted(ZmRef<ZiIOBuf> buf, bool ok);	// ''
 };
 #endif
 template <typename Impl_>
 class ZiTx {
 public:
-  ZiTxQueue	txQueue;
+  Zi::IOQueue	txQueue;
 
   using Impl = Impl_;
 
@@ -56,13 +45,13 @@ public:
 
   ZiConnection *cxn() { return static_cast<ZiConnection *>(impl()); }
 
-  void send(ZmRef<ZiTxBuf> buf) {
+  void send(ZmRef<ZiIOBuf> buf) {
     send(impl()->cxn(), ZuMv(buf));
   }
 
   // Bind an already prepared wire representation to its physical connection.
   template <typename Cxn>
-  void send(Cxn *cxn, ZmRef<ZiTxBuf> buf) {
+  void send(Cxn *cxn, ZmRef<ZiIOBuf> buf) {
     if (ZuUnlikely(!buf || !buf->length || !cxn)) return;
     buf->owner = impl();
     cxn->send(ZiTxFn::mvFn(ZuMv(buf), [](ZmRef<ZiIOBuf> buf, ZiTxContext &io) {
@@ -79,7 +68,7 @@ public:
       }
       auto buf_ = buf.ptr();
       queue.pushNode(ZuMv(buf));
-      io.init(ZiTxFn{queue.headPtr(),
+      io.init(ZiTxFn{buf_,
 	[](ZiIOBuf *buf, ZiTxContext &io) {
 	  auto impl_ = impl(buf);
 	  auto &queue = impl_->ZiTx::txQueue;
@@ -92,9 +81,8 @@ public:
 	  if (ZuUnlikely((io.offset += io.length) < io.buf->length)) return true;
 	  impl_->sent(queue.shift(), true);
 	  if (queue.count_()) {
-	    buf = queue.headPtr();
-	    io.fn.object(buf);
-	    io.buf = ZmRef<ZiIOBuf>{buf};
+	    io.buf = queue.headNode();
+	    io.fn.object(io.buf.ptr());
 	    io.offset = 0;
 	    impl_->sending(io);
 	  } else {
@@ -109,10 +97,10 @@ public:
 
   unsigned maxQueueLen() { return 1<<10; } // can be overridden
 
-  void sent(ZmRef<ZiTxBuf>, bool ok) { } // can be overridden
+  void sent(ZmRef<ZiIOBuf>, bool ok) { } // can be overridden
   void sending(ZiTxContext &) { } // optional per-buffer address/TOS setup
 
-  void abort(ZmRef<ZiTxBuf> buf) {
+  void abort(ZmRef<ZiIOBuf> buf) {
     auto cxn = impl()->cxn();
     if constexpr (!ZuIsSame<decltype(&Impl::cxn), decltype(&ZiTx::cxn)>{})
       if (ZuUnlikely(!cxn)) return;
@@ -128,7 +116,7 @@ public:
     });
   }
 
-  void aborted(ZmRef<ZiTxBuf> buf, bool ok) { } // can be overridden
+  void aborted(ZmRef<ZiIOBuf> buf, bool ok) { } // can be overridden
 };
 
 #endif /* ZiTx_HH */

@@ -58,7 +58,7 @@ enum {
 };
 
 using RxQueue = ZiRxQueue;
-using TxQueue = ZiTxQueue;
+using TxQueue = Zi::IOQueue;
 using RxStream = ZiRxStream<RxQueue>;
 
 template <
@@ -75,7 +75,7 @@ template <
   ZuString HeapID = ZiIOBuf_HeapID{}()>
 using TxBufAlloc =
   Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTLS,
-    TxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
+    ZiIOBuf, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
 } // namespace Ztls_
 
@@ -325,7 +325,7 @@ class Link :
   public Ztc::Link
 {
   ZuAssert((ZuIs_<typename RxBufAlloc_::Buf, Ztls_::RxQueue::Node>{}));
-  ZuAssert((ZuIs_<typename TxBufAlloc_::Buf, Ztls_::TxQueue::Node>{}));
+  ZuAssert((ZuIs_<typename TxBufAlloc_::Buf, ZiIOBuf>{}));
 
   class TelQueue final : public Ztc::Queue {
   public:
@@ -1072,7 +1072,7 @@ private:
 public:
   void txPacketized(const ZiIOBuf *, ZmRef<ZiIOBuf>) { }
 
-  void sent(ZmRef<ZiTxBuf>, bool ok) {
+  void sent(ZmRef<ZiIOBuf>, bool ok) {
     // The underlying connection closes its own failed socket after this
     // diagnostic. It may already have been displaced by another TLS session.
     if (ZuUnlikely(!ok))

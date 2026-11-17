@@ -182,28 +182,9 @@ Fixed pools expose `ready()`/`used()` and stable `slot()`/`backing()` identity.
 backing only when the provider allows it. Providers without indexed backing
 return `NoSlot`/null and grant no writable permission by default.
 
-`allocBuf()` remains an immediate allocation. Producers that must wait for a
-bounded pool embed one noncopyable `Zi::IOBufWait` and call
-`allocator->waitBuf(request, sid, owner, length, mps, callback)` on their scheduler
-slot. The callback is always posted to that slot, including immediate success or
-failure. `IOBufWaitResult::Ready` carries an ordinary typed buffer owning the exact
-reserved slot; `Failed` reports invalid geometry or a provider that cannot serve
-the request. Builtin/default providers complete immediately through the same
-asynchronous callback rather than retaining an unsupported wait. A waiting native
-provider reserves returned backing for queued producers; readiness is not a hint
-to race a second allocation.
-
-To stop a producer with an outstanding request, call
-`allocator->cancelBuf(request, done)` on that same slot. There is exactly one
-allocation callback (`Ready`, `Failed`, or `Cancelled`) and a later cancellation
-acknowledgment. A grant already posted before cancellation still arrives and must
-be released by the stopped producer. `request.busy()` remains true until both
-callbacks have drained when cancellation was requested. The caller must retain
-the request, allocator, owner and running multiplexer through that barrier;
-only then may it reuse the request or complete teardown. A completed request with
-no cancellation outstanding is reusable from its allocation callback. Providers
-register, unlink and grant waits on multiplexer Tx; application callback slots
-may differ from multiplexer Tx.
+`allocBuf()` returns immediately. Tx buffer allocation failure means
+backpressure exceeded the Tx buffer pool capacity; drop the connection rather
+than waiting for a buffer.
 
 Payload slot counts belong to allocator constructors, for example
 `ZiRxTCPBufAllocator<>{256}` or `ZiTxTCPBufAllocator<>{512}` on Linux. The

@@ -197,7 +197,7 @@ public:
   Zi::IOBufAllocator *rxAllocator() const;
   int frame(const ZiRxContext &, ZiIOBuf *);
   int received(const ZiRxContext &, ZmRef<ZiIOBuf>);
-  void sent(ZmRef<ZiTxBuf>, bool);
+  void sent(ZmRef<ZiIOBuf>, bool);
   void sending(ZiTxContext &);
   unsigned maxQueueLen() const;
 private:
@@ -247,7 +247,7 @@ public:
     }
     m_network = allocator<Zi::IOBufType::RxTCP, ZiRxBuf, 2048>(config.reserve);
     m_frames = allocator<Zi::IOBufType::App, ZiRxBuf, MaxFrame>(config.reserve);
-    m_output = allocator<Zi::IOBufType::TxTCP, ZiTxBuf, 1024>(config.reserve);
+    m_output = allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 1024>(config.reserve);
     std::cout << "allocator_geometry network_size=" << m_network->size << " network_head="
       << m_network->headRoom << " network_tail=" << m_network->tailRoom << " tx_size="
       << m_output->size << " tx_head=" << m_output->headRoom << " tx_tail="
@@ -414,7 +414,7 @@ void Cxn::offer(unsigned sequence)
   }
   memcpy(buf->data(), bytes, length);
   buf->length = length;
-  Tx::send(ZmRef<ZiTxBuf>::acquire(static_cast<ZiTxBuf *>(ZuMv(buf).release())));
+  Tx::send(ZmRef<ZiIOBuf>::acquire(static_cast<ZiIOBuf *>(ZuMv(buf).release())));
 }
 
 void Cxn::cancelBurst()
@@ -524,7 +524,7 @@ void Cxn::sending(ZiTxContext &)
   if (result.txCPU == ~0U) result.txCPU = unsigned(sched_getcpu());
 }
 
-void Cxn::sent(ZmRef<ZiTxBuf>, bool ok)
+void Cxn::sent(ZmRef<ZiIOBuf>, bool ok)
 {
   if (!ok) { m_app->failure("tx-completion", m_id, m_accepted + 1, m_accepted); return; }
   ++m_accepted;

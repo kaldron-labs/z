@@ -25,7 +25,7 @@ template <typename App, typename Impl, typename MTList, typename Net = TCP,
 class SrvLink : public Net::template SrvLink<App, Impl, RxAlloc, TxAlloc>,
     public Engine<Impl, NativeRx<Net>>, public LinkHooks<Impl, Net>,
     public NetInput<Impl, typename Net::RxStream> {
-  ZuAssert((ZuIs_<typename TxAlloc::Buf, ZiTxBuf>{}));
+  ZuAssert((ZuIs_<typename TxAlloc::Buf, ZiIOBuf>{}));
   using NetBase = Net::template SrvLink<App, Impl, RxAlloc, TxAlloc>;
   using EngineBase = Engine<Impl, NativeRx<Net>>;
   using Hooks = LinkHooks<Impl, Net>;
@@ -81,7 +81,7 @@ public:
     if constexpr (Net::Encrypted) this->transportPacketized(plain, ZuMv(packet));
   }
 
-  void sent(ZmRef<ZiTxBuf> b, bool ok) {
+  void sent(ZmRef<ZiIOBuf> b, bool ok) {
     this->transportSent(b, ok);
     NetBase::sent(ZuMv(b), ok);
   }

@@ -99,8 +99,8 @@ friend inline ZuStringT<"zimxudpclient.Connection"> ZmNHeapID(Connection *);
       return buf;
     }
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
-      m_cxn->Tx::send(ZmRef<ZiTxBuf>::acquire(
-        static_cast<ZiTxBuf *>(ZuMv(buf).release())));
+      m_cxn->Tx::send(ZmRef<ZiIOBuf>::acquire(
+        static_cast<ZiIOBuf *>(ZuMv(buf).release())));
       return true;
     }
   private:
@@ -193,7 +193,7 @@ public:
 private:
   RxAllocator *m_rx = allocator<Zi::IOBufType::RxUDP, ZiRxBuf, ZiIOBuf_DefltSize>();
   RxAllocator *m_frameAllocator = allocator<Zi::IOBufType::App, ZiRxBuf, ZiIOBuf_DefltSize>();
-  TxAllocator *m_allocator = allocator<Zi::IOBufType::TxUDP, ZiTxBuf, ZiIOBuf_DefltSize>();
+  TxAllocator *m_allocator = allocator<Zi::IOBufType::TxUDP, ZiIOBuf, ZiIOBuf_DefltSize>();
   ZiIP		m_localIP;
   unsigned	m_localPort;
   ZiIP		m_remoteIP;

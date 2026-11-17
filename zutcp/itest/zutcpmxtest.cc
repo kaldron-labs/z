@@ -311,10 +311,10 @@ static bool queueCoverage(
     "reader", "reassembly", "admission", "pending",
     "unacknowledged", "sent", "retransmit", "lost"};
   static constexpr const char *stack[] = {
-    "closed-tuples", "tfo-cookies", "rx-returns", "waiting-providers"};
+    "closed-tuples", "tfo-cookies", "rx-returns"};
   static constexpr const char *rings[] = {".rx", ".fill", ".tx", ".cq"};
-  unsigned seen[8] = {}, stackSeen[4] = {}, ringSeen[4] = {};
-  unsigned closeWaiters = 0, endpoints = 0, allocations = 0;
+  unsigned seen[8] = {}, stackSeen[3] = {}, ringSeen[4] = {};
+  unsigned closeWaiters = 0, endpoints = 0;
   ZuID owner;
   auto prefix = [](ZuCSpan s, const char *text) {
     unsigned n = strlen(text);
@@ -353,11 +353,10 @@ static bool queueCoverage(
 #endif
       return false;
     }
-    for (unsigned i = 0; i < 4; ++i) {
+    for (unsigned i = 0; i < 3; ++i) {
       if (row.id != stack[i]) continue;
       ++stackSeen[i];
-      if (row.type != (i == 3 ? Ztc::QueueType::Tx : Ztc::QueueType::Rx)) return false;
-      if (i < 3 ? !row.size : (row.size || row.full)) return false;
+      if (row.type != Ztc::QueueType::Rx || !row.size) return false;
       found = true;
       break;
     }
@@ -365,9 +364,7 @@ static bool queueCoverage(
     if (prefix(row.id, "endpoint-close:")) {
       if (row.type != Ztc::QueueType::Rx || row.size || row.full) return false;
       ++endpoints;
-    } else if (prefix(row.id, "allocation-waits:")) {
-      if (row.type != Ztc::QueueType::Tx || row.size || row.full) return false;
-      ++allocations;
+
     } else if (prefix(row.id, "xdp.")) {
       for (unsigned i = 0; i < 4; ++i) {
         unsigned len = strlen(rings[i]);
@@ -383,10 +380,10 @@ static bool queueCoverage(
     } else return false;
   }
   for (unsigned i = 0; i < 8; ++i) if (seen[i] != 1) return false;
+  for (unsigned i = 0; i < 3; ++i) if (stackSeen[i] != 1) return false;
   for (unsigned i = 0; i < 4; ++i)
-    if (stackSeen[i] != 1 || !ringSeen[i] || ringSeen[i] != ringSeen[0]) return false;
-  // This fixture creates the packet/control providers and one application Tx provider.
-  return closeWaiters == unsigned(client) && endpoints == 1 + listeners && allocations == 3;
+    if (!ringSeen[i] || ringSeen[i] != ringSeen[0]) return false;
+  return closeWaiters == unsigned(client) && endpoints == 1 + listeners;
 }
 
 enum { PassiveTotal = 1, PassivePending = 2 };

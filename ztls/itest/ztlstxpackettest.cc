@@ -56,11 +56,11 @@ struct FaultControl {
 static FaultControl *faultControl = nullptr;
 
 struct PacketFailure { };
-struct TrackedPacket : ZiTxBuf {
+struct TrackedPacket : ZiIOBuf {
   TrackedPacket(uint8_t *data, uint32_t size, Zi::IOBufAllocator_ *allocator,
     void *owner = nullptr, uint32_t length = 0, bool builtin = false,
     bool registered = false)
-  : ZiTxBuf{data, size, allocator, owner, length, builtin, registered} {
+  : ZiIOBuf{data, size, allocator, owner, length, builtin, registered} {
     auto ctl = faultControl;
     if (ctl->live.xchAdd(1) >= ctl->limit) {
       --ctl->live; ++ctl->depleted;
@@ -131,7 +131,7 @@ int receivePayload(Link &link, Ztls::RxStream &rx, ZmAtomic<unsigned> &offset)
 template <typename Base> struct PacketHooks : Base {
   using Base::Base;
   void txProtected() { ++this->app()->state.protectedRecords; }
-  void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+  void sent(ZmRef<ZiIOBuf> buf, bool ok) {
     Base::sent(buf, ok);
     auto &state = this->app()->state;
     if (!ok && (state.mode == Overflow || state.mode == Limited)) { ++state.rejected; return; }

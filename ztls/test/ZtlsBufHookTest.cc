@@ -503,7 +503,7 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
       }
       app->state.client_tx_protected.xchAdd(1);
     }
-    void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+    void sent(ZmRef<ZiIOBuf> buf, bool ok) {
       auto &state = this->app()->state;
       BaseLink::sent(buf, ok);
       if (buf->allocator() != this->txPacketAllocator() ||
@@ -609,7 +609,7 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
       }
       app->state.server_tx_protected.xchAdd(1);
     }
-    void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+    void sent(ZmRef<ZiIOBuf> buf, bool ok) {
       auto &state = this->app()->state;
       BaseLink::sent(buf, ok);
       if (buf->allocator() != this->txPacketAllocator() ||
@@ -1336,7 +1336,7 @@ bool tls12_roundtrip(
   constexpr unsigned TxRecordCapacity = 16 * 1024;
   unsigned headroom = 5 + suite->aead->tls12.record_iv_size;
   ZiMultiplex mx;
-  auto allocator = mx.allocator<Zi::IOBufType::TxTLS, ZiTxBuf,
+  auto allocator = mx.allocator<Zi::IOBufType::TxTLS, ZiIOBuf,
     BufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, MaxSize>();
   auto buf = allocator->allocBuf();
   if (!buf || !buf->ensure(TxRecordCapacity)) return false;

@@ -358,7 +358,7 @@ public:
     }
     if (!app()->rxInvoked() || !m_live) return false;
     uint64_t bytes = sizeof(RawOutput) + out->body()->memory() +
-      sizeof(ZiTxBuf) + uint64_t(out->frame()->size);
+      sizeof(ZiIOBuf) + uint64_t(out->frame()->size);
     if (!impl()->txPost_(bytes)) return false;
     app()->txRun([this, out, bytes] {
       unsigned result = sendRaw_(out); impl()->fixRawSubmittedTx(out, result);

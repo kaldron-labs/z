@@ -115,7 +115,7 @@ private:
   bool admit(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> frame) {
     if (!m_live || m_staged || !body || !frame || !frame->length || frame->failed() ||
 	context.connection != m_connection) return refuse();
-    uint64_t memory = sizeof(ZiTxBuf) + uint64_t(frame->size);
+    uint64_t memory = sizeof(ZiIOBuf) + uint64_t(frame->size);
     unsigned parts = 1;
     if (m_geometry.size) {
       unsigned capacity = m_geometry.size - m_geometry.head - m_geometry.tail;

@@ -40,7 +40,7 @@ namespace Net = Ztcp;
 #include <zlib/ZfixWire.hh>
 
 static ZmRef<ZiIOBuf> frameBuf() {
-  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize>;
   return ZfixTest::Allocator<Allocator>::get()->allocBuf();
 }
 
@@ -233,7 +233,7 @@ struct Output : public Zfix::WireTx<Output<Link>> {
     });
   }
 
-  void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+  void sent(ZmRef<ZiIOBuf> buf, bool ok) {
     buf->owner = this;
     link->app()->txRun([buf = ZuMv(buf), ok] {
       auto output = static_cast<Output *>(buf->owner);
@@ -337,7 +337,7 @@ friend inline ZuStringT<"Zfix.transport_test.Link"> ZmNHeapID(Link *);
     output.packetized_(plain, ZuMv(packet));
   }
 
-  void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+  void sent(ZmRef<ZiIOBuf> buf, bool ok) {
     output.sent(buf, ok);
     Base::sent(ZuMv(buf), ok);
   }
@@ -440,7 +440,7 @@ friend inline ZuStringT<"Zfix.transport_test.Link"> ZmNHeapID(Link *);
     output.packetized_(plain, ZuMv(packet));
   }
 
-  void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+  void sent(ZmRef<ZiIOBuf> buf, bool ok) {
     output.sent(buf, ok);
     Base::sent(ZuMv(buf), ok);
   }
@@ -871,8 +871,8 @@ void SwapSrv::checkClosed(ZmRef<ZiConnection> cxn) {
   auto io = this->mx();
   io->txRun([s = state, cxn = ZuMv(cxn)] {
     if (cxn->up()) { s->fail(); return; }
-    using Policy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf>;
-    ZmRef<ZiTxBuf> buf = ZfixTest::Allocator<Policy>::get()->allocBuf();
+    using Policy = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf>;
+    ZmRef<ZiIOBuf> buf = ZfixTest::Allocator<Policy>::get()->allocBuf();
     if (!buf->append(Wire)) { s->fail(); return; }
     // ZiConnection::send invokes its real I/O-context starter inline on this
     // socket's I/O Tx owner. A down socket must not repopulate any Tx queue.

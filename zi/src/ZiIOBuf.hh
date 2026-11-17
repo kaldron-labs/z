@@ -25,7 +25,6 @@
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmVHeap.hh>
-#include <zlib/ZmFn.hh>
 
 #include <zlib/ZtEnum.hh>
 
@@ -94,7 +93,7 @@ using IOBufAllocator_ = IOBufAllocatorList::Node;
 
 struct IOBufAllocator;
 
-struct IOBuf : public ZmPolymorph {
+struct IOBuf_ : public ZmPolymorph {
   uint32_t		size = 0;
   mutable void		*owner = nullptr;
   IOBufAllocator_	*allocator_;
@@ -115,7 +114,7 @@ protected:
   }
 
 public:
-  IOBuf(uint8_t *data_, uint32_t size_,
+  IOBuf_(uint8_t *data_, uint32_t size_,
     IOBufAllocator_ *allocator__, void *owner_ = nullptr,
     uint32_t length_ = 0, bool builtin_ = false,
     bool registered_ = false)
@@ -129,12 +128,12 @@ public:
     if (length > size) alloc(length);
   }
 
-  virtual ~IOBuf() { free_(); }
+  virtual ~IOBuf_() { free_(); }
 
-  IOBuf(const IOBuf &buf) = delete;
-  IOBuf &operator =(const IOBuf &buf) = delete;
-  IOBuf(IOBuf &&buf) = delete;
-  IOBuf &operator =(IOBuf &&buf) = delete;
+  IOBuf_(const IOBuf_ &buf) = delete;
+  IOBuf_ &operator =(const IOBuf_ &buf) = delete;
+  IOBuf_(IOBuf_ &&buf) = delete;
+  IOBuf_ &operator =(IOBuf_ &&buf) = delete;
 
   IOBufAllocator *allocator() const;
 
@@ -142,7 +141,7 @@ public:
     return reinterpret_cast<uint8_t *>(data__ & ~(Builtin | Registered | Failed));
   }
   const uint8_t *data_() const {
-    return const_cast<IOBuf *>(this)->data_();
+    return const_cast<IOBuf_ *>(this)->data_();
   }
 
   bool builtin() const { return data__ & Builtin; }
@@ -345,12 +344,12 @@ private:
 
 public:
   // ZuBSpan will match any string/span type
-  IOBuf &operator <<(ZuBSpan buf) {
+  IOBuf_ &operator <<(ZuBSpan buf) {
     append(buf);
     return *this;
   }
   template <typename C, typename = MatchChar<C>>
-  IOBuf & operator <<(C c) {
+  IOBuf_ & operator <<(C c) {
     return *this << ZuSpan{&c, 1};
   }
 
@@ -358,7 +357,7 @@ public:
     typename = ZuIfT<
       (ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal && !ZuIsSame<R, char>{}) ||
       (ZuPrint<R>::OK && !ZuPrint<R>::String)>>
-  IOBuf & operator <<(const R &r) {
+  IOBuf_ & operator <<(const R &r) {
     if constexpr (ZuTraits<R>::IsPrimitive && ZuTraits<R>::IsReal && !ZuIsSame<R, char>{}) {
       append(ZuBoxed(r));
       return *this;
@@ -368,20 +367,27 @@ public:
     }
   }
 
-  struct Traits : public ZuBaseTraits<IOBuf> {
+  struct Traits : public ZuBaseTraits<IOBuf_> {
     using Elem = char;
     enum { IsCString = 0, IsString = 1, IsWString = 0 };
-    static char *data(IOBuf &buf) {
+    static char *data(IOBuf_ &buf) {
       return reinterpret_cast<char *>(buf.data());
     }
-    static const char *data(const IOBuf &buf) {
+    static const char *data(const IOBuf_ &buf) {
       return reinterpret_cast<const char *>(buf.data());
     }
-    static unsigned length(const IOBuf &buf) {
+    static unsigned length(const IOBuf_ &buf) {
       return buf.length;
     }
   };
-  friend Traits ZuTraitsType(IOBuf *);
+  friend Traits ZuTraitsType(IOBuf_ *);
+};
+
+ZmListDerive(IOQueue, IOBuf_, ZmListNode<IOBuf_, ZmListHeapID<"">>);
+
+struct IOBuf : public IOQueue::Node {
+  using IOQueue::Node::Node;
+  using IOBuf_::data;
 };
 
 // the Buf parameter permits Ztls, Zdb, etc. to inject their own
@@ -450,85 +456,15 @@ ZuAssert(!((sizeof(IOBufBuiltin<
 	ZiIOBuf_HeapID>)) & (Zm::CacheLineSize - 1)));
 
 struct IOBufPool;
-class IOBufWait;
-
-ZtEnumNS(ZiAPI, IOBufWaitResult, int8_t, Ready, Cancelled, Failed);
-
-struct IOBufWaitData {
-  bool queued = false; // provider Tx only; intrusive FIFO membership
-};
-using IOBufWaitList = ZmList<IOBufWaitData,
-  ZmListNode<IOBufWaitData, ZmListShadow<>>>;
-
-// One caller-owned request per producer. The caller and provider serialize on
-// their own scheduler slots; a cancellation acknowledgment drains earlier grants.
-class ZiAPI IOBufWait : public IOBufWaitList::Node {
-public:
-  using AllocFn = ZmFn<void(IOBufWaitResult::T, ZmRef<IOBuf>),
-    ZmFnHeapID<"Zi.IOBufWait">>;
-  using DoneFn = ZmFn<void(), ZmFnHeapID<"Zi.IOBufWait">>;
-  using GrantFn = ZmRef<IOBuf> (*)(
-    IOBufAllocator *, uint8_t *, void *, uint32_t, uint32_t);
-
-  IOBufWait() = default;
-  IOBufWait(const IOBufWait &) = delete;
-  IOBufWait &operator =(const IOBufWait &) = delete;
-  IOBufWait(IOBufWait &&) = delete;
-  IOBufWait &operator =(IOBufWait &&) = delete;
-  ~IOBufWait();
-
-  // Caller slot only. Reuse/destruction requires !busy().
-  bool busy() const { return m_active || m_cancelling; }
-  void start(IOBufAllocator *, unsigned sid, void *owner,
-    uint32_t length, uint32_t mps, AllocFn);
-  void cancel(DoneFn);
-
-  // Immutable request geometry, read by the typed adapter on provider Tx.
-  void *owner() const { return m_owner; }
-  uint32_t length() const { return m_length; }
-  uint32_t mps() const { return m_mps; }
-
-  // Provider Tx only. Unlink before completing; do not access the request
-  // after completion, since the caller may immediately reuse or destroy it.
-  void wait(IOBufPool *, GrantFn);
-  void grant(uint8_t *);
-  void ready(ZmRef<IOBuf>);
-  void fail();
-
-private:
-  void start_();
-  void complete(IOBufWaitResult::T);
-  void completed();
-
-  IOBufAllocator *m_allocator = nullptr;
-  IOBufPool *m_provider = nullptr;
-  void *m_owner = nullptr;
-  unsigned m_sid = 0;
-  uint32_t m_length = 0, m_mps = 0;
-  AllocFn m_fn;
-  GrantFn m_grant = nullptr;
-  uint8_t *m_raw = nullptr;
-  ZmRef<IOBuf> m_buf;
-  IOBufWaitResult::T m_result = IOBufWaitResult::Failed;
-  bool m_active = false, m_cancelling = false; // caller slot
-  bool m_pending = false; // provider Tx
-};
-
 struct ZiAPI IOBufAllocator : public IOBufAllocator_ {
   using IOBufAllocator_::IOBufAllocator_;
   virtual IOBufPool *provider() const { return nullptr; }
   virtual ZmRef<IOBuf> allocBuf(
     void *owner = nullptr, uint32_t length = 0, uint32_t mps = ~uint32_t(0)) = 0;
 
-  // Both completion and cancellation acknowledgment are posted to sid. The
-  // allocator/multiplexer and waiter must outlive those callbacks.
-  void waitBuf(IOBufWait &, unsigned sid, void *owner,
-    uint32_t length, uint32_t mps, IOBufWait::AllocFn);
-  void cancelBuf(IOBufWait &, IOBufWait::DoneFn);
-  virtual void waitBuf_(IOBufWait &);
 };
 
-inline IOBufAllocator *IOBuf::allocator() const {
+inline IOBufAllocator *IOBuf_::allocator() const {
   return static_cast<IOBufAllocator *>(allocator_);
 }
 
@@ -591,6 +527,7 @@ struct ZiAPI IOBufPool_ : public ZmPolymorph {
 
   virtual uint8_t *alloc() = 0;
   virtual void free(uint8_t *) = 0;
+
   // Fixed pools expose stable slot identity and allocation availability.
   // Metadata-only providers need no backing table or mutable-use permission.
   virtual unsigned used() const { return 0; }
@@ -599,10 +536,6 @@ struct ZiAPI IOBufPool_ : public ZmPolymorph {
   virtual uint8_t *backing(unsigned) const { return nullptr; }
   virtual bool owns(const void *ptr) const { return slot(ptr) != NoSlot; }
   virtual bool writable(const void *) const { return false; }
-  // Called by Zi on mx Tx. Waiting providers override both. cancel() only
-  // unlinks: Zi emits the terminal cancellation and subsequent drain callback.
-  virtual void wait(IOBufWait &);
-  virtual void cancel(IOBufWait &) { }
 };
 
 using IOBufPoolList = ZmList<IOBufPool_,
@@ -645,22 +578,6 @@ friend inline ZuStringT<"Zi.IOBufPoolAllocator"> ZmNHeapID(IOBufPoolAllocator *)
     pool(pool_) { }
 
   IOBufPool *provider() const override { return pool; }
-
-  void waitBuf_(IOBufWait &request) override {
-    if constexpr (Type == IOBufType::TxUDP || Type == IOBufType::TxTCP) {
-      if (request.length() > capacity() || request.length() > request.mps()) {
-	request.fail();
-	return;
-      }
-      request.wait(pool, [](IOBufAllocator *allocator, uint8_t *data,
-	  void *owner, uint32_t length, uint32_t mps) -> ZmRef<IOBuf> {
-	return static_cast<IOBufPoolAllocator *>(allocator)->grantBuf(
-	  data, owner, length, mps);
-      });
-    } else {
-      IOBufAllocator::waitBuf_(request);
-    }
-  }
 
   ZmRef<IOBuf> grantBuf(
     uint8_t *data, void *owner, uint32_t length, uint32_t mps)

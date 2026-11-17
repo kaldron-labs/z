@@ -67,8 +67,8 @@ friend inline ZuStringT<"zimxserver.Connection"> ZmNHeapID(Connection *);
       return buf;
     }
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
-      m_cxn->Tx::send(ZmRef<ZiTxBuf>::acquire(
-        static_cast<ZiTxBuf *>(ZuMv(buf).release())));
+      m_cxn->Tx::send(ZmRef<ZiIOBuf>::acquire(
+        static_cast<ZiIOBuf *>(ZuMv(buf).release())));
       return true;
     }
   private:
@@ -153,7 +153,7 @@ public:
     if (!out.flush()) disconnect();
     return true;
   }
-  void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+  void sent(ZmRef<ZiIOBuf> buf, bool ok) {
     if (!ok) { disconnect(); return; }
     // Output may split a response at the physical connection's MPS. The
     // producer sets the full byte count before its first synchronous send.
@@ -231,7 +231,7 @@ public:
 private:
   RxAllocator *m_rx = allocator<Zi::IOBufType::RxTCP, ZiRxBuf, 4096>();
   RxAllocator *m_frameAllocator = allocator<Zi::IOBufType::App, ZiRxBuf, 4096>();
-  TxAllocator *m_allocator = allocator<Zi::IOBufType::TxTCP, ZiTxBuf, 64<<10>();
+  TxAllocator *m_allocator = allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 64<<10>();
   ZiIP			m_ip;
   unsigned		m_port;
   unsigned		m_nAccepts;

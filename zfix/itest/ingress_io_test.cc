@@ -326,7 +326,7 @@ static void submitBudget(bool local) {
   bool first = false, second = false, tuned = false;
   PostedState charged, link;
   const uint64_t bytes = sizeof(RawOutput) + output->body()->memory() +
-    sizeof(ZiTxBuf) + uint64_t(output->frame()->size);
+    sizeof(ZiIOBuf) + uint64_t(output->frame()->size);
   ZmBlock<>{}([&h, &output, &first, &second, &tuned, &charged, &link, bytes](auto wake) {
     h.client.rxRun([&h, &output, &first, &second, &tuned, &charged, &link,
 	bytes, wake = ZuMv(wake)]() mutable {

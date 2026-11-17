@@ -38,7 +38,7 @@
 namespace Ztcp_ {
 
 using RxQueue = ZiRxQueue;
-using TxQueue = ZiTxQueue;
+using TxQueue = Zi::IOQueue;
 using RxStream = ZiRxStream<RxQueue>;
 
 template <
@@ -55,7 +55,7 @@ template <
   ZuString HeapID = ZiIOBuf_HeapID{}()>
 using TxBufAlloc =
   Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTCP,
-    TxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
+    ZiIOBuf, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
 } // namespace Ztcp_
 
@@ -176,7 +176,7 @@ class Link :
   public Ztc::Link
 {
   ZuAssert((ZuIs_<typename RxBufAlloc_::Buf, Ztcp_::RxQueue::Node>{}));
-  ZuAssert((ZuIs_<typename TxBufAlloc_::Buf, Ztcp_::TxQueue::Node>{}));
+  ZuAssert((ZuIs_<typename TxBufAlloc_::Buf, ZiIOBuf>{}));
 
   class TelQueue final : public Ztc::Queue {
   public:
@@ -600,7 +600,7 @@ protected:
   }
 
 public:
-  void sent(ZmRef<ZiTxBuf>, bool ok) {
+  void sent(ZmRef<ZiIOBuf>, bool ok) {
     // ZiConnection::errorSend already closes the failed physical socket.
     // A diagnostic callback cannot authorize closing a different successor.
     if (ZuUnlikely(!ok))

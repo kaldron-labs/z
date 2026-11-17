@@ -68,8 +68,8 @@ void error(ZiConnection *, const char *op, int result, ZeError e)
 
 class Mx;
 
-struct Packet : public ZiTxBuf {
-  using ZiTxBuf::ZiTxBuf;
+struct Packet : public ZiIOBuf {
+  using ZiIOBuf::ZiIOBuf;
   ZiSockAddr addr;
   ZiTOS tos;
 };
@@ -110,7 +110,7 @@ public:
     io.addr = pkt->addr;
     io.tos = pkt->tos;
   }
-  void sent(ZmRef<ZiTxBuf>, bool);
+  void sent(ZmRef<ZiIOBuf>, bool);
 
 private:
   unsigned	m_counter;
@@ -187,7 +187,7 @@ bool Connection::recvComplete(ZiRxContext &io)
   return true;
 }
 
-void Connection::sent(ZmRef<ZiTxBuf>, bool ok)
+void Connection::sent(ZmRef<ZiIOBuf>, bool ok)
 {
   int nMessages = mx()->nMessages();
   if (!ok || (nMessages >= 0 && ++m_counter >= unsigned(nMessages)))

@@ -691,7 +691,6 @@ Stack::Stack(ZiMultiplex *mx, StackParams params)
   m_ingress->rxFrames->queueOwner(mx->id());
   m_tfoCookies.queueOwner(mx->id());
   m_closed.queueOwner(mx->id());
-  m_waitProviders.queueOwner(mx->id());
   // A standalone packet shell has no connection-retention policy. Hub applies
   // its explicit transport limits before publishing any connection owner.
   m_config.rxRetainFrames = m_config.rxRetainFramesPerCxn = m_ingress->pool->count;
@@ -704,7 +703,6 @@ Stack::Stack(ZiMultiplex *mx, StackParams params)
 Stack::~Stack()
 {
   ZmAssert_(m_state == Stopped && !m_current && !unsigned(m_wakeUsers));
-  ZmAssert_(m_waitProviders.empty_() && !m_allocDraining);
   ZmAssert_(!m_txServicing && !m_txPending &&
     !m_ingress->pool->used() && !m_packets->pool->used());
   ZmAssert_(!m_control->pool->used());
@@ -718,17 +716,13 @@ Stack::~Stack()
     auto p = m_providers;
     m_providers = p->nextProvider;
     p->nextProvider = nullptr;
-    ZmAssert_(!p->pool->used() && p->waits.empty_() && !unsigned(p->notify));
-    p->stack = nullptr;
+    ZmAssert_(!p->pool->used());
     ZmDEREF(p); // stopped, long-lived configuration ownership
   }
 }
 
 void Stack::addProvider(Allocator *p)
 {
-  p->queueID = ZuID{} << "allocation-waits:" << ZuBoxPtr(p).hex<false>();
-  p->waits.queueOwner(mx()->id());
-  p->waits.queueName(p->queueID);
   ZmREF(p);
   m_txCapacity += p->pool->count;
   p->nextProvider = m_providers;
@@ -755,7 +749,6 @@ Zi::IOBufPool *Stack::allocator(
   uint64_t bytes = uint64_t(size) + head;
   if (bytes > m_mtu + Ethernet) bytes = m_mtu + Ethernet;
   auto p = new Allocator{m_backend->bufPool(count, unsigned(bytes), head, 0, align)};
-  p->stack = this;
   addProvider(p);
   return p;
 }
@@ -1108,17 +1101,6 @@ void Stack::stopTx()
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (m_senderStopping) return;
-  // A return publishes Posted before queuing its task. Clearing the Waiting
-  // gate cannot lose a notifier paused between that publication and its post.
-  // Endpoint teardown has already cancelled/drained its allocation requests.
-  ZmAssert_(m_waitProviders.empty_());
-  for (auto p = m_providers; p; p = p->nextProvider) {
-    if (unsigned(p->notify) & Allocator::Posted) {
-      m_allocDraining = true;
-      return;
-    }
-  }
-  m_allocDraining = false;
   if (m_backend && m_backend->ready() && m_txPending) {
     // Owner barriers have stopped admission. Keep sender and CQ service alive
     // until every accepted descriptor completes, including the last FIN ACK.
@@ -1430,78 +1412,7 @@ void Stack::reconcileTx()
   auto n = m_backend->pollTx();
   ZmAssert_(n <= m_txPending);
   m_txPending -= n;
-  if (n && !m_waitProviders.empty_()) {
-    // A CQ can release the final lease without passing through Allocator::free.
-    // Visit only blocked providers, once per batch, rotating before service may
-    // remove the current provider. Each service grants a bounded number.
-    auto remaining = m_waitProviders.count_();
-    while (remaining--) {
-      auto p = static_cast<Allocator *>(m_waitProviders.rshift());
-      serviceWaits(p);
-    }
-  }
   if (!m_txPending) txService(false);
-}
-
-void Stack::waitTx(Allocator *p, Zi::IOBufWait &request)
-{
-  ZmAssert_(mx()->invoked(mx()->txThread()));
-  if (!ready() || !p->pool->ready()) { request.fail(); return; }
-  if (p->waits.empty_()) {
-    m_waitProviders.pushNode(p);
-    p->notify |= Allocator::Waiting;
-  }
-  request.queued = true;
-  p->waits.pushNode(&request);
-  // Probe after arming the return gate, including a return before registration.
-  serviceWaits(p);
-}
-
-void Stack::cancelTx(Allocator *p, Zi::IOBufWait &request)
-{
-  ZmAssert_(mx()->invoked(mx()->txThread()));
-  if (!request.queued) return;
-  p->waits.delNode(&request);
-  request.queued = false;
-  if (p->waits.empty_()) {
-    m_waitProviders.delNode(p);
-    p->notify &= ~unsigned(Allocator::Waiting);
-  }
-}
-
-void Stack::returnedTx(Allocator *p)
-{
-  mx()->txRun([this, p] {
-    p->notify &= ~unsigned(Allocator::Posted);
-    serviceWaits(p);
-    if (m_allocDraining) stopTx();
-  });
-}
-
-void Stack::serviceWaits(Allocator *p)
-{
-  ZmAssert_(mx()->invoked(mx()->txThread()));
-  // Match the existing packet-service quantum: yield a long grant burst to
-  // queued connection work. A failed allocation never queues its own retry.
-  enum { Batch = 64 };
-  unsigned granted = 0;
-  while (!p->waits.empty_() && granted < Batch) {
-    auto data = p->pool->alloc();
-    if (!data) break;
-    auto request = static_cast<Zi::IOBufWait *>(p->waits.shift());
-    request->queued = false;
-    ++granted;
-    request->grant(data); // no request access after cross-shard publication
-  }
-  if (p->waits.empty_()) {
-    if (unsigned(p->notify) & Allocator::Waiting) {
-      m_waitProviders.delNode(p);
-      p->notify &= ~unsigned(Allocator::Waiting);
-    }
-  } else if (granted == Batch) {
-    // Continue only after actual progress, not merely because waits remain.
-    p->notifyReturn();
-  }
 }
 
 void Stack::txService(bool active)
@@ -1662,12 +1573,7 @@ unsigned Stack::allQueues(Ztc::QueueMgr::AllFn fn) const
   fn(const_cast<ClosedTuples *>(&m_closed));
   fn(const_cast<TFOCache *>(&m_tfoCookies));
   fn(m_ingress->rxFrames.ptr());
-  fn(const_cast<decltype(m_waitProviders) *>(&m_waitProviders));
-  count += 4;
-  for (auto p = m_providers; p; p = p->nextProvider) {
-    fn(&p->waits);
-    ++count;
-  }
+  count += 3;
   if (m_cxns) count += m_cxns->allQueues(fn);
   if (m_backend) count += m_backend->allQueues(fn);
   count += ZutcpLogger::allQueues(fn);

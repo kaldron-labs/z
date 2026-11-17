@@ -15,7 +15,7 @@
 #include <zlib/ZfixLinkState.hh>
 
 static ZmRef<ZiIOBuf> frameBuf() {
-  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize>;
   return ZfixTest::Allocator<Allocator>::get()->allocBuf();
 }
 

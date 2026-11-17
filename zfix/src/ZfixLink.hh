@@ -93,7 +93,7 @@ struct NoLinkRx {
 
 // Impl is a reference-counted physical transport link. Its app() supplies the
 // existing hub's isolated Rx/Tx dispatch and mx(). Transport hooks are:
-// fixGeometryTx(), fixAllocTx(head, optional wait allocator), fixSendTx(buffer),
+// fixGeometryTx(), fixAllocTx(head), fixSendTx(buffer),
 // resumeRx_(), and
 // fixCloseRx(notify), defaulting to disconnect_(). Socket callbacks retain their buffer until
 // transportSent() runs on the Tx owner.
@@ -196,18 +196,12 @@ private:
     uint64_t	stopConnection = 0; // requested drain; Ctl may never have opened
     bool	stopping = false;
     bool	stopPosted = false;
-    Zi::IOBufWait	allocWait;
-    Zi::IOBufAllocator	*allocOwner = nullptr;
-    ZmRef<ZiIOBuf>	allocBuffer;
-    uint64_t	allocEpoch = 0, allocConnection = 0;
-    bool	allocCancel = false;
 
     TxSide(Link *l, SessionConfig c, const LinkLimits &limits, uint64_t epoch) :
       Ctl{ZuMv(c), limits.tx, limits.control, epoch}, Wire{limits.wire}, link{l} { }
 
     void bind(SessionEvent e) {
       auto old = Ctl::connection_();
-      cancelAlloc();
       idleCancelTx();
       auto result = Ctl::bind_(e);
       Wire::close_(old);
@@ -218,8 +212,6 @@ private:
 
     void applyEvent(SessionEvent e, TxBody::Ref body) {
       if (e.connection < Ctl::connection_()) return;
-      if (e.connection > Ctl::connection_() || (e.actions & SessionAction::Close) ||
-	  e.state == State::Disconnected) cancelAlloc();
 
       if (e.connection > Wire::connection_() &&
 	  e.state != State::Closing && e.state != State::Disconnected) {
@@ -281,7 +273,6 @@ private:
     }
 
     void epochTx(TxContext c, uint64_t epoch, TxProgress p, uint64_t request) {
-      cancelAlloc();
       link->impl()->fixEpochTx(c, epoch, p, request);
     }
 
@@ -306,50 +297,7 @@ private:
       link->app()->rxRun([link = link, c] { link->outputFailed(c); });
     }
 
-    ZmRef<ZiIOBuf> allocTx() {
-      if (stopping || allocOwner) return nullptr;
-      if (allocBuffer) return ZuMv(allocBuffer);
-      Zi::IOBufAllocator *allocator = nullptr;
-      auto buffer = link->impl()->fixAllocTx(0, &allocator);
-      if (buffer || !allocator) return buffer;
-      allocOwner = allocator;
-      allocEpoch = Ctl::epoch_(); allocConnection = Ctl::connection_();
-      allocator->waitBuf(allocWait, link->app()->txThread(), link->impl(),
-	0, ~uint32_t(0), [this](auto result, ZmRef<ZiIOBuf> buffer) {
-	  allocated(result, ZuMv(buffer));
-	});
-      return nullptr;
-    }
-
-    bool waitFrameTx() { return stopping || allocOwner; }
-
-    void allocated(Zi::IOBufWaitResult::T result, ZmRef<ZiIOBuf> buffer) {
-      ZmAssert(link->app()->txInvoked());
-      if (allocCancel) return; // cancellation acknowledgement drains this result
-      allocOwner = nullptr;
-      if (!stopping && allocEpoch == Ctl::epoch_() &&
-	  allocConnection == Ctl::connection_()) {
-	if (result == Zi::IOBufWaitResult::Ready) {
-	  allocBuffer = ZuMv(buffer);
-	  Ctl::writable_(allocConnection);
-	} else if (result == Zi::IOBufWaitResult::Failed) {
-	  faultTx({allocEpoch, allocConnection, 0}, {Fmt::ErrorCode::Output});
-	}
-      }
-      checkStop();
-    }
-
-    void cancelAlloc() {
-      allocBuffer = nullptr;
-      if (!allocOwner || allocCancel) return;
-      allocCancel = true;
-      allocOwner->cancelBuf(allocWait, [this] {
-	allocCancel = false; allocOwner = nullptr;
-	// A replacement may already be attached, held behind this old request.
-	if (!stopping) Ctl::writable_(Ctl::connection_());
-	checkStop();
-      });
-    }
+    ZmRef<ZiIOBuf> allocTx() { return link->impl()->fixAllocTx(0); }
 
     bool admitFrameTx(TxBody::Ref b, TxContext c, ZmRef<ZiIOBuf> f, ZuDateTime) {
       return Wire::admit_(ZuMv(b), c, ZuMv(f));
@@ -387,15 +335,13 @@ private:
       if (connection < Ctl::connection_()) return;
       stopConnection = connection;
       stopping = true; stopPosted = false; idleCancelTx();
-      cancelAlloc();
       Ctl::close_(Ctl::connection_());
       Wire::close_(Ctl::connection_()); Wire::close_(connection);
       link->impl()->fixStopTx(connection); checkStop();
     }
 
     void checkStop() {
-      if (!stopping || stopPosted || allocOwner || allocWait.busy() ||
-	  Ctl::inFlight_() || Wire::count_() ||
+      if (!stopping || stopPosted || Ctl::inFlight_() || Wire::count_() ||
 	  Ctl::loading() || Ctl::waiting_()) return;
       stopPosted = true;
       link->app()->txRun([link = link, connection = stopConnection] {

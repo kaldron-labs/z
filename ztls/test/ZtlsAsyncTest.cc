@@ -112,7 +112,7 @@ struct HubApp : public Ztls::Hub<HubApp> {
       params.rxAllocator(rxBufAllocator);
     }
     if (!params.txAllocator()) {
-      txBufAllocator = params.multiplex()->template allocator<Zi::IOBufType::TxTLS, ZiTxBuf,
+      txBufAllocator = params.multiplex()->template allocator<Zi::IOBufType::TxTLS, ZiIOBuf,
 	Ztls_::TxRecordCapacity, ZiIOBuf_Align, ZuStringT<"Ztls.TxBuf">>();
       params.txAllocator(txBufAllocator);
     }
@@ -201,7 +201,7 @@ void testInitValidation()
     bool initialized = hub.init(app.buffers(Ztls::HubParams(&mx, "3", "4").alpn(alpn)));
     ZuCHECK(initialized, "client stream fixture hub init failed");
     if (initialized) {
-      Zi::IOBufAllocator *output = mx.allocator<Zi::IOBufType::TxTLS, ZiTxBuf, ZiIOBuf_DefltSize * 2>();
+      Zi::IOBufAllocator *output = mx.allocator<Zi::IOBufType::TxTLS, ZiIOBuf, ZiIOBuf_DefltSize * 2>();
       bool prepared = hub.allocator(output);
       ZuCHECK(prepared, "client stream fixture allocator registration failed");
       ZuCHECK(!hub.allocator(app.rxBufAllocator), "RxTLS allocator accepted for Tx");
@@ -308,7 +308,7 @@ void testPreparedAllocators()
   ZuTestScope(testPreparedAllocators);
   ZiMultiplex mx, other;
   auto rx = mx.allocator<Zi::IOBufType::RxTLS, ZiRxQueue::Node, Ztls_::RxRecordCapacity>();
-  auto tx = mx.allocator<Zi::IOBufType::TxTLS, ZiTxBuf, Ztls_::TxRecordCapacity>();
+  auto tx = mx.allocator<Zi::IOBufType::TxTLS, ZiIOBuf, Ztls_::TxRecordCapacity>();
   auto txPacket = mx.allocator<Zi::IOBufType::TxTCP, Ztls::TxPacket, 1514>();
   auto socket = mx.allocator<Zi::IOBufType::RxTCP, ZiRxQueue::Node, Ztls_::RxPacketCapacity>();
   auto wrong = mx.allocator<Zi::IOBufType::App, ZiRxQueue::Node>();

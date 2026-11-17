@@ -259,7 +259,7 @@ static bool partialLogon(int fd)
   Session::Msg msg; msg.p<Session::Logon>(Session::Logon{});
   Fmt::Error error;
   auto body = TxBody::control(msg, error);
-  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize>;
   auto frame = body ? txFrame(ZfixTest::Allocator<Allocator>::get()->allocBuf(),
     *body, txConfig(config(true,
     Transport::FIX4, Version::V4_4)), TxContext{.seqNo = 1,

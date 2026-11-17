@@ -438,7 +438,7 @@ struct SwapPeer : Base {
   RawStopFn		rxStop;
   alignas(Zm::CacheLineSize)
   RawStopFn		txStop;
-  ZmRef<ZiTxBuf>	oldOutput;
+  ZmRef<ZiIOBuf>	oldOutput;
   ZmRef<ZiIOBuf>	firstOutput;
   bool		holdFirst = true;
 
@@ -511,7 +511,7 @@ struct SwapPeer : Base {
     Base::txPacketized(plain, ZuMv(packet));
   }
 
-  void sent(ZmRef<ZiTxBuf> b, bool ok) {
+  void sent(ZmRef<ZiIOBuf> b, bool ok) {
     if constexpr (Client) Base::sent(ZuMv(b), ok);
     else {
       // Keep native socket accounting intact. Hold only this real buffer's Raw

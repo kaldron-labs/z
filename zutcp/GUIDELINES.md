@@ -21,8 +21,8 @@ Native providers implement `Zi::IOBufPool` over storage injected from a selected
 `Zxdp::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
 to Zxdp. Configuration owns its pool list; initialization retains independent
 backend references so configuration-list membership can expire after `init()`.
-Transport-provider and allocation-wait ownership remain separate. Alignment
-changes physical stride without inflating logical buffer capacity.
+Tx buffer allocation failure drops the connection; producers do not wait for
+pool grants. Alignment changes physical stride without inflating logical buffer capacity.
 
 Build/test Zutcp and its dependency closure in explicit directory/target order.
 Use the five native drivers and separate independent-kernel interop runner while

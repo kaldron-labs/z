@@ -83,7 +83,7 @@ void testValidation()
   {
     App app;
     Zi::IOBufAllocator *rx = mx.allocator<Zi::IOBufType::RxTCP, ZiRxQueue::Node>();
-    Zi::IOBufAllocator *tx = mx.allocator<Zi::IOBufType::TxTCP, ZiTxQueue::Node>();
+    Zi::IOBufAllocator *tx = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf>();
     ZTCP_CHECK_RT(app.init(Ztcp::HubParams(&mx, "3", "4").
 	rxAllocator(rx).txAllocator(tx).errorFn(countErrors(errors))),
       "valid TCP hub initialization failed");

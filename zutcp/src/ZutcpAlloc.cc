@@ -92,16 +92,8 @@ void RxFrames::limit(unsigned value)
   m_limit = value;
 }
 
-Allocator::~Allocator()
-{
-  ZmAssert_(waits.empty_() && !unsigned(notify));
-}
-
 uint8_t *Allocator::alloc()
 {
-  // Once queued, producers receive reserved grants in FIFO order. An already
-  // racing allocation may finish, but fresh traffic cannot starve the queue.
-  if (ZuUnlikely(unsigned(notify) & Waiting)) return nullptr;
   return pool->alloc();
 }
 void Allocator::free(uint8_t *packet)
@@ -112,30 +104,6 @@ void Allocator::free(uint8_t *packet)
   if (rxFrames) rxFrames->returned(pool->slot(packet));
   pool->free(packet);
   if (returned) returned();
-  notifyReturn();
-}
-
-void Allocator::notifyReturn()
-{
-  unsigned state;
-  do {
-    state = notify;
-    if (!(state & Waiting) || (state & Posted)) return;
-  } while (notify.cmpXch(state | Posted, state) != state);
-  // Claim the stop obligation before touching Stack. An empty/drained provider
-  // can outlive Stack and must not read its pointer on ordinary final returns.
-  stack->returnedTx(this);
-}
-
-void Allocator::wait(Zi::IOBufWait &request)
-{
-  if (stack) stack->waitTx(this, request);
-  else IOBufPool::wait(request);
-}
-
-void Allocator::cancel(Zi::IOBufWait &request)
-{
-  if (stack) stack->cancelTx(this, request);
 }
 
 PacketLease::~PacketLease() { reset(); }

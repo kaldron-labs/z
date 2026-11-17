@@ -21,7 +21,7 @@
 #include <zlib/ZfixTx.hh>
 
 static ZmRef<ZiIOBuf> frameBuf() {
-  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize>;
   return ZfixTest::Allocator<Allocator>::get()->allocBuf();
 }
 
@@ -427,7 +427,7 @@ friend ZuStringT<"Zfix.SignRaw"> ZmNHeapID(RawEndpoint *);
   ZmRef<ZiIOBuf> fixAllocTx(unsigned head, Zi::IOBufAllocator **wait = nullptr) {
     if (wait) *wait = nullptr;
     ZmRef<ZiIOBuf> b = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-      ZiTxBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
+      ZiIOBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
     b->skip += head; return b;
   }
   bool fixSendTx(ZmRef<ZiIOBuf> b) {

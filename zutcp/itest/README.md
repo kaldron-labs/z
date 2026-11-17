@@ -46,11 +46,8 @@ Ztls application drivers below. Use explicit native targets while developing TCP
   as a native fallback.
 - `zutcppooltest` checks the Zutcp-owned Zi provider against real Zxdp arenas:
   factory geometry, registered backing, borrowed/native views, allocation versus
-  kernel leases, exhaustion, retirement and safe return/reuse. A one-slot native
-  application pool exercises asynchronous FIFO grants on a separate application
-  Tx slot, exact backing/geometry, cancellation drain, reserved-slot ownership and
-  both caller-first and CQ-first retirement. Final return must resume a waiting
-  producer without subsequent traffic; pool counts remain unchanged.
+  kernel leases, exhaustion, retirement and safe return/reuse. Allocation is
+  immediate; producers do not queue for grants from a depleted pool.
 - `zutcpstacktest` exercises actual raw Rx/Tx service, independent peer bytes,
   native first-send backing identity, replay/recovery lifetime, control admission
   under DATA pressure, close/restart and owner/kernel retirement. Dedicated test

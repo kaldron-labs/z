@@ -45,7 +45,7 @@ struct ZuTraits<ptls_iovec_t> : public ZuBaseTraits<ptls_iovec_t> {
 
 namespace Ztls::Pico {
 
-using TxPacket = ZiTxBuf;
+using TxPacket = ZiIOBuf;
 
 // Holds provisional plaintext privately until the receive operation authenticates it.
 // The C sink never invokes application code; the owner takes output after return.
@@ -237,9 +237,10 @@ private:
   void		*m_ctx;
   PublishFn	m_publish;
   ReadyFn	m_ready;
-  ZiTxQueue	m_packets;
-  ZiTxQueue	m_written;
-  ZiTxBuf	*m_current = nullptr;
+  Zi::IOQueue	m_packets;
+  Zi::IOQueue	m_written;
+  using Node = Zi::IOQueue::Node;
+  Node		*m_current = nullptr;
   size_t	m_size = 0;
   size_t	m_committed = 0;
   size_t	m_exposed = 0;

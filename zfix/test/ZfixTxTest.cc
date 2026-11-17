@@ -15,7 +15,7 @@
 #include <zlib/ZfixRxMsg.hh>
 
 static ZmRef<ZiIOBuf> frameBuf() {
-  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize>;
   return ZfixTest::Allocator<Allocator>::get()->allocBuf();
 }
 
@@ -128,7 +128,7 @@ struct Engine : Zfix::Tx<Engine> {
   uint64_t		unloadTicket = 0;
   uint64_t		historyTicket = 0;
   bool			refuseOutput = false;
-  bool			allocBlocked = false, allocPending = false;
+  bool			allocBlocked = false;
   bool			holdOnLogon = false, detachOnLogon = false;
   bool			delayUnload = false;
   bool			delayHistory = false;
@@ -156,7 +156,6 @@ struct Engine : Zfix::Tx<Engine> {
   }
 
   ZmRef<ZiIOBuf> allocTx() { return allocBlocked ? nullptr : frameBuf(); }
-  bool waitAllocTx() { return allocPending; }
 
   bool frameTx(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> wire, ZuDateTime original) {
     if (refuseOutput || (outputLimit && output.length() >= outputLimit)) return false;
@@ -398,32 +397,6 @@ static void failedOutput()
 static void allocationPressure()
 {
   ZuTestScope(allocationPressure);
-  Engine tx;
-  tx.start(); tx.allocBlocked = tx.allocPending = true;
-  ZuCheck(tx.send(17, "held") == TxSelect::Accepted); tx.drain();
-  ZuCheck(!tx.error && !tx.stats_().encodeErrors && !tx.output.length() &&
-    tx.next_() == 2 && tx.published_() == 1 && tx.associations.length() == 1);
-  tx.now = ZuDateTime{ZuDateTimeScan::FIX{}, "20261027-16:00:00"};
-  tx.allocBlocked = tx.allocPending = false;
-  ZuCheck(tx.resume_()); tx.drain();
-  ZuCheck(tx.output.length() == 1 && tx.output[0].body->id() == 17 &&
-    tx.output[0].context.seqNo == 1 && tx.output[0].original == tx.now &&
-    tx.associations.length() == 1 && tx.published_() == 2);
-
-  Session::Msg heartbeat;
-  heartbeat.p<Session::HeartBt>(Session::HeartBt{});
-  ZuCheck(tx.control(heartbeat) == TxSelect::Accepted); tx.drain();
-  tx.allocBlocked = tx.allocPending = true;
-  ZuCheck(tx.replay_(1, 2, 2)); tx.drain();
-  ZuCheck(!tx.error && !tx.stats_().encodeErrors && tx.output.length() == 2);
-  tx.allocBlocked = tx.allocPending = false;
-  ZuCheck(tx.resume_()); tx.drain();
-  Session::Msg fill;
-  RxMsg input;
-  ZuCheck(tx.output.length() == 3 && !readControl(view(tx.output[2]), fill, input) &&
-    fill.is<Session::SeqReset>() && fill.p<Session::SeqReset>().gapFill &&
-    fill.p<Session::SeqReset>().newSeqNo == 3 && input.seqNo == 2);
-
   Engine failed;
   failed.start(); failed.allocBlocked = true;
   ZuCheck(failed.send(18) == TxSelect::Accepted); failed.drain();

@@ -57,7 +57,7 @@ struct PacketPool : Zi::IOBufAllocator {
 };
 
 struct Published {
-  ZiTxQueue packets;
+  Zi::IOQueue packets;
   unsigned calls = 0, failAt = unsigned(-1);
   static int publish(void *ctx, ZmRef<ZiIOBuf> buf) {
     auto self = static_cast<Published *>(ctx);

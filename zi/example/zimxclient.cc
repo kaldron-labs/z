@@ -64,8 +64,8 @@ friend inline ZuStringT<"zimxclient.Connection"> ZmNHeapID(Connection *);
       return buf;
     }
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
-      m_cxn->Tx::send(ZmRef<ZiTxBuf>::acquire(
-        static_cast<ZiTxBuf *>(ZuMv(buf).release())));
+      m_cxn->Tx::send(ZmRef<ZiIOBuf>::acquire(
+        static_cast<ZiIOBuf *>(ZuMv(buf).release())));
       return true;
     }
   private:
@@ -100,7 +100,7 @@ public:
     Global::timeInterval(0).add(m_sendTime - m_connectTime);
   }
 
-  void sent(ZmRef<ZiTxBuf>, bool ok) {
+  void sent(ZmRef<ZiIOBuf>, bool ok) {
     if (!ok) { disconnect(); return; }
     Global::sent(sizeof(Request) - 1);
     Global::timeInterval(1).add(Zm::now() - m_sendTime);
@@ -214,7 +214,7 @@ public:
 private:
   RxAllocator *m_rx = allocator<Zi::IOBufType::RxTCP, ZiRxBuf, 4096>();
   RxAllocator *m_frameAllocator = allocator<Zi::IOBufType::App, ZiRxBuf, 4096>();
-  TxAllocator *m_allocator = allocator<Zi::IOBufType::TxTCP, ZiTxBuf, ZiIOBuf_DefltSize>();
+  TxAllocator *m_allocator = allocator<Zi::IOBufType::TxTCP, ZiIOBuf, ZiIOBuf_DefltSize>();
   ZiIP			m_ip;
   unsigned		m_port;
   ZiCxnOptions		m_options;

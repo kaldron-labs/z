@@ -247,15 +247,10 @@ public:
     return g;
   }
 
-  ZmRef<ZiIOBuf> fixAllocTx(unsigned head, Zi::IOBufAllocator **wait = nullptr) {
-    if (wait) *wait = nullptr;
+  ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
     auto allocator = impl()->txAllocator();
     auto b = allocator->allocBuf(impl());
-    if (ZuUnlikely(!b)) {
-      if constexpr (!Net::Encrypted)
-	if (wait && allocator->provider()) *wait = allocator;
-      return nullptr;
-    }
+    if (ZuUnlikely(!b)) return nullptr;
     if (head < b->skip) head = b->skip;
     if (head > b->size || allocator->tailRoom > b->size - head) return nullptr;
     b->skip = head;

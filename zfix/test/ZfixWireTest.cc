@@ -8,21 +8,18 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSingleton.hh>
-#include <zlib/ZmSemaphore.hh>
-#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZiTx.hh>
-#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZfixLinkTx.hh>
 #include <zlib/ZfixLink.hh>
 #include <zlib/ZfixWire.hh>
 
 static ZmRef<ZiIOBuf> frameBuf() {
-  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, ZiIOBuf_DefltSize>;
+  using Allocator = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize>;
   return ZfixTest::Allocator<Allocator>::get()->allocBuf();
 }
 
@@ -55,7 +52,7 @@ struct Completion {
 };
 
 struct Harness : public WireTx<Harness> {
-  using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf, 64, ZiIOBuf_Align,
+  using Alloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf, 64, ZiIOBuf_Align,
     ZiIOBuf_HeapID, ZiIOBuf_DefltVHMaxSize>;
   using Base = WireTx<Harness>;
   Items<ZmRef<ZiIOBuf>>	records;
@@ -68,7 +65,7 @@ struct Harness : public WireTx<Harness> {
 
   ZmRef<ZiIOBuf> recordAlloc(unsigned head) {
     if (refuseAlloc) return {};
-    ZmRef<ZiIOBuf> buf = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiTxBuf,
+    ZmRef<ZiIOBuf> buf = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiIOBuf,
       64>>::get()->allocBuf();
     buf->skip += head; return buf;
   }
@@ -94,7 +91,7 @@ struct Harness : public WireTx<Harness> {
 
   WireGeometry geometry() const {
     // Five plaintext bytes per record exercise every partial completion.
-    return {7, 1, 1, sizeof(Zi::IOBufBuiltin<ZiTxBuf, Alloc::Size, ZiIOBuf_Align>) + Alloc::Size};
+    return {7, 1, 1, sizeof(Zi::IOBufBuiltin<ZiIOBuf, Alloc::Size, ZiIOBuf_Align>) + Alloc::Size};
   }
 
   void finish(unsigned i, bool ok = true) {
@@ -292,7 +289,7 @@ struct SessionOutput : public WireTx<SessionOutput> {
 
   ZmRef<ZiIOBuf> recordAlloc(unsigned) {
     return ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-      ZiTxBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
+      ZiIOBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
   }
   bool recordSend(ZmRef<ZiIOBuf>);
 
@@ -565,7 +562,7 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
   unsigned		stopped = 0, stops = 0, closes = 0;
   unsigned		pureTimers = 0, faults = 0, geometries = 0, epochs = 0;
   bool			refuseLogon = false, native = false, holdOutput = false;
-  bool			bindOnEpoch = false;
+  bool			bindOnEpoch = false, failAlloc = false;
 
   static SessionConfig config() {
     auto c = SessionOwner::config(); c.initiator = false; return c;
@@ -587,10 +584,10 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
       ZiRxQueue::Node, ZiIOBuf_DefltSize>>::get()->allocBuf();
   }
 
-  ZmRef<ZiIOBuf> fixAllocTx(unsigned head, Zi::IOBufAllocator **wait = nullptr) {
-    if (wait) *wait = nullptr;
+  ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
+    if (failAlloc) return nullptr;
     ZmRef<ZiIOBuf> buf = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
-      ZiTxBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
+      ZiIOBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
     buf->skip += head; return buf;
   }
 
@@ -1042,128 +1039,22 @@ static void overlapAdmission()
   }
 }
 
-// One registered slot, with the provider on mx Tx (sid 2) and FIX Tx on sid 3.
-// The real allocator handoff and Link teardown need no socket in this fixture.
-struct PressurePool : ZmNHeap<PressurePool>, Zi::IOBufPool {
-friend inline ZuStringT<"Zfix.WireTest.PressurePool"> ZmNHeapID(PressurePool *);
-  alignas(ZiIOBuf_Align) uint8_t bytes[ZiIOBuf_DefltSize];
-  Zi::IOBufWait	*request = nullptr;
-  ZmSemaphore	blocked;
-  ZmAtomic<unsigned> returns{0};
-  unsigned	waits = 0, cancels = 0;
-
-  PressurePool() { count = 1; size = sizeof(bytes); }
-  uint8_t *alloc() override { return nullptr; }
-  void free(uint8_t *p) override { ZmAssert_(p == bytes); ++returns; }
-  void wait(Zi::IOBufWait &r) override {
-    ZmAssert_(!request); request = &r; r.queued = true; ++waits; blocked.post();
-  }
-  void cancel(Zi::IOBufWait &r) override {
-    ZmAssert_(request == &r); request = nullptr; r.queued = false; ++cancels;
-  }
-  void grant() {
-    auto r = request; ZmAssert_(r); request = nullptr; r->queued = false;
-    r->grant(bytes);
-  }
-};
-
-struct PressureApp {
-  ZiMultiplex	mux{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
-    s.nThreads(3)
-      .thread(1, [](auto &t) { t.isolated(true); })
-      .thread(2, [](auto &t) { t.isolated(true); })
-      .thread(3, [](auto &t) { t.isolated(true); });
-  })};
-  PostedIngress	admin;
-
-  ZiMultiplex *mx() { return &mux; }
-  unsigned rxThread() const { return 1; }
-  unsigned txThread() const { return 3; }
-  bool rxInvoked() const { return mux.invoked(rxThread()); }
-  bool txInvoked() const { return mux.invoked(txThread()); }
-  PostedIngress &fixAdminRx() { return admin; }
-  template <typename Fn> void rxRun(Fn &&fn) { mux.run(ZuFwd<Fn>(fn), rxThread()); }
-  template <typename Fn> void txRun(Fn &&fn) { mux.run(ZuFwd<Fn>(fn), txThread()); }
-};
-
-struct PressureLink : ZmNHeap<PressureLink>, ZmObject, Link<PressureLink> {
-friend inline ZuStringT<"Zfix.WireTest.PressureLink"> ZmNHeapID(PressureLink *);
-  using MessageCatalog = MTList<Entry>;
-  using RxBufAlloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, ZiRxQueue::Node,
-    ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zfix.WireTest.Rx">, ZiIOBuf_DefltVHMaxSize>;
-  PressureApp	*const owner;
-  Zi::IOBufAllocator *const allocator;
-  ZmSemaphore	published, stopped;
-  unsigned	faults = 0, outputs = 0;
-  bool		native = false;
-
-  PressureLink(PressureApp *p, Zi::IOBufAllocator *a) :
-    Link{[] { auto c = SessionOwner::config(); c.initiator = true; return c; }()},
-    owner{p}, allocator{a} { }
-
-  PressureApp *app() const { return owner; }
-  WorkState workState() const { return {}; }
-  PostedState txPosted() const { return {}; }
-  WireGeometry fixGeometryTx() { return {}; }
-  ZmRef<ZiRxQueue::Node> fixAllocRx() {
-    return ZfixTest::Allocator<RxBufAlloc>::get()->allocBuf();
-  }
-  ZmRef<ZiIOBuf> fixAllocTx(unsigned head, Zi::IOBufAllocator **wait = nullptr) {
-    if (wait) *wait = nullptr;
-    auto buf = allocator->allocBuf(this);
-    if (!buf) { if (wait) *wait = allocator; return {}; }
-    buf->skip += head; return buf;
-  }
-  bool fixSendTx(ZmRef<ZiIOBuf> buf) { transportSent(ZuMv(buf), true); return true; }
-  void fixPublishedTx(TxBody::Ref, TxContext, ZuDateTime) { ++outputs; published.post(); }
-  void fixFaultTx(TxContext, Fmt::Error) { ++faults; }
-  void fixStoppedRx(bool) { stopped.post(); }
-  PressureLink *cxn() { return native ? this : nullptr; }
-  void resumeRx() { }
-  void disconnect_(bool = true) { down(); }
-  void up() {
-    bool replacing = native; native = true;
-    ZmAssert_(transportBind(replacing)); transportUp_0();
-  }
-  void down() { native = false; transportDown_0(true); }
-};
-
-static void managedAllocPressure(unsigned mode)
+static void allocationFailure()
 {
-  ZuTestScopeRT(managedAllocPressure);
-  PressureApp app;
-  ZmRef<PressurePool> pool = new PressurePool;
-  using Allocator = Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP, ZiTxBuf>;
-  Allocator allocator{app.mx(), pool};
-  ZmRef<PressureLink> link = new PressureLink{&app, &allocator};
-  ZuCheckRT(app.mux.start());
-  app.rxRun([link = link.ptr()] { link->up(); });
-  ZuCheckRT(!pool->blocked.timedwait(Zm::now() + ZuTime{5}));
-  if (mode == 2) {
-    // The successor cannot reuse its embedded request until cancellation of
-    // the earlier physical connection has drained on both scheduler slots.
-    app.rxRun([link = link.ptr()] { link->up(); });
-    ZuCheckRT(!pool->blocked.timedwait(Zm::now() + ZuTime{5}));
-  }
-  if (!mode) {
-    app.mux.txRun([pool = pool.ptr()] { pool->grant(); });
-    ZuCheckRT(!link->published.timedwait(Zm::now() + ZuTime{5}));
-  }
-  app.rxRun([link = link.ptr()] { link->down(); });
-  ZuCheckRT(!link->stopped.timedwait(Zm::now() + ZuTime{5}));
-  ZuCheckRT(app.mux.stop());
-  ZuCheckRT(!link->faults && link->outputs == unsigned(!mode));
-  ZuCheckRT(pool->waits == (mode == 2 ? 2U : 1U) &&
-    pool->cancels == (mode == 2 ? 2U : unsigned(bool(mode))) &&
-    unsigned(pool->returns) == unsigned(!mode) && !pool->request);
+  ZuTestScope(allocationFailure);
+  AdmitApp app;
+  ZmRef<AdmitLink> link = new AdmitLink{&app, {}, true};
+  link->failAlloc = true;
+  link->up(); app.drain();
+  ZuCheck(link->faults == 1 && link->closes == 1 && !link->records.length());
+  link->down(true); app.drain();
+  ZuCheck(link->stopped == 1);
   link = nullptr;
+  ZuCheck(app.destroyed == 1);
 }
 
 int main(int argc, char **argv) {
   parse(argc, argv); ZuTestMain();
-  ZuTestCall(managedAllocPressure, 0);
-  ZuTestCall(managedAllocPressure, 1);
-  ZuTestCall(managedAllocPressure, 2);
   ZuTestCall(tcpFrame);
   ZuTestCall(records);
   ZuTestCall(packetCompletion);
@@ -1188,6 +1079,7 @@ int main(int argc, char **argv) {
   ZuTestCall(resetCloseOutcome, true, 0);
   ZuTestCall(resetCloseOutcome, true, 1);
   ZuTestCall(resetCloseOutcome, true, 2);
+  ZuTestCall(allocationFailure);
   ZuTestCall(initialRefusal);
   ZuTestCall(setupRetirement);
   ZuTestCall(overlapAdmission);
