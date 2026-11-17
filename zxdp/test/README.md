@@ -7,8 +7,10 @@ These four TAP programs need no network privileges:
   cancellation and release/acquire publication between concurrent kernel peers.
 * `ZxdpPoolTest`: intrusive configuration, count/size layout, independent
   reserves, exhaustion, advanced pointer return, retained mapping lifetime,
-  malformed configuration and contended payload-overlay recycling.
-* `ZxdpInstanceTest`: creation failure leaves caller-owned pools unbound.
+  malformed configuration, direct Zi metadata allocation/return over native slots,
+  and contended payload-overlay recycling.
+* `ZxdpInstanceTest`: cold selection, tagged-union init, one-shot lifecycle,
+  independent pool factory lifetime and unchanged caller configuration.
 * `ZxdpClassifierTest`: mask normalization, instruction relocation and branches,
   and guarded attachment preconditions.
 

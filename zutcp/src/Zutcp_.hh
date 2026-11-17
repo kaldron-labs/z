@@ -10,6 +10,12 @@
 #error "include zlib/Zutcp.hh before this header"
 #endif
 
+#include <zlib/ZuUnion.hh>
+
+#include <zlib/ZmHeap.hh>
+
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZutcpMx.hh>
 #include <zlib/ZutcpQueue.hh>
 
@@ -60,7 +66,13 @@ public:
   void clear() { m_routes->clean(); }
 
 private:
-  using Routes = TupleRoutes<Link_>;
+  using RoutesBase = TupleRoutes<Link_>;
+  struct Routes : public ZmNHeap<Routes>, public RoutesBase {
+  friend inline ZuStringT<"Zutcp.TupleRoutes"> ZmNHeapID(Routes *);
+    using ZmNHeap<Routes>::operator new;
+    using ZmNHeap<Routes>::operator delete;
+    using RoutesBase::RoutesBase;
+  };
   ZmRef<Routes> m_routes;
 };
 
@@ -81,6 +93,13 @@ ZmHashDerive(ServerLinks, EndpointLink,
   (ZmHashNode<EndpointLink,
     ZmHashKey<EndpointLinkKey,
       ZmHashID<"Zutcp.ServerLinks", ZmHashHeapID<"">>>>));
+
+struct ServerLinkTable : public ZmNHeap<ServerLinkTable>, public ServerLinks {
+friend inline ZuStringT<"Zutcp.ServerLinkTable"> ZmNHeapID(ServerLinkTable *);
+  using ServerLinks::ServerLinks;
+  using ZmNHeap<ServerLinkTable>::operator new;
+  using ZmNHeap<ServerLinkTable>::operator delete;
+};
 
 using EndpointDiscFn = ZmFn<void(), ZmFnHeapID<"Zutcp.Endpoint.DiscFn">>;
 using EndpointDiscFns = Zutcp::Queue<
@@ -140,11 +159,15 @@ public:
     if (mode == PathMode::ClientConnected) {
       IPPath path{localIP, remoteIP, {}, {}, 0};
       if (!m_stack->resolvePath(path,
-	  [this, generation](IPPath resolved, ZtString<> error) mutable {
+	  [this, generation](ZuUnion<IPPath, ZeException> result) mutable {
 	    if (!m_open || generation != unsigned(m_generation)) {
 	      setupDone(); return;
 	    }
-	    if (!!error || !tcpPayload(resolved.mtu, resolved.local.type())) {
+	    if (result.template is<ZeException>()) {
+	      setupDone(); setupFailed(); return;
+	    }
+	    auto resolved = ZuMv(result.p<IPPath>());
+	    if (!tcpPayload(resolved.mtu, resolved.local.type())) {
 	      setupDone(); setupFailed(); return;
 	    }
 	    m_payloadLimit = tcpPayload(resolved.mtu, resolved.local.type());
@@ -221,10 +244,12 @@ public:
 
 private:
   void install(unsigned generation, IPPath path) {
-    ZtString<> error;
     ZiSockAddr remote = m_mode == PathMode::ClientConnected ? m_remote : ZiSockAddr{};
-    if (!m_stack->bind(m_local, this, &Endpoint_::receivePacket, remote, &error)) {
-      ZiLOG(Error, "Zutcp", ([text = ZeString{error}](auto &out) { out << text; }));
+    auto result = m_stack->bind(m_local, this, &Endpoint_::receivePacket, remote);
+    if (result.template is<ZeException>()) {
+      ZiLOG(Error, "Zutcp", ([error = ZuMv(result.template p<ZeException>())](auto &out) {
+	out << error;
+      }));
       setupDone(); setupFailed(); return;
     }
     m_bound = m_tupleBound = true;

@@ -13,12 +13,13 @@
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
-
 #include <iostream>
 
-#include <zlib/ZiFile.hh>
 #include <zlib/ZuLib.hh>
+
 #include <zlib/ZtString.hh>
+
+#include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 
 ZuDerive(PeerBytes, (ZtString<ZtStringHeapID<"Zutcp.KernelPeer.Bytes">>));

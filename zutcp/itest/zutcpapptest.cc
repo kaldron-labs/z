@@ -13,13 +13,18 @@
 #include <unistd.h>
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZmSemaphore.hh>
+
+#include <zlib/ZePlatform.hh>
 #ifdef ZUTCP_APP_TLS
 #include <zlib/Ztls.hh>
 #else
 #include <zlib/Ztcp.hh>
 #endif
+
 #include <zlib/Zutcp.hh>
+
 #include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
@@ -151,9 +156,9 @@ static bool service(
   if (native) {
     stack = new Zutcp::Stack{&mx, {.interface = interface, .txSid = 6}};
     mx.plugin(stack);
-    ZtString<> error;
-    if (!stack->configure({.rxRetainFrames = 96, .rxRetainFramesPerCxn = 64,
-        .rxReserveFrames = 16}, error)) return false;
+    auto configured = stack->configure({.rxRetainFrames = 96, .rxRetainFramesPerCxn = 64,
+      .rxReserveFrames = 16});
+    if (configured.is<ZeException>()) return false;
   }
 #ifdef ZUTCP_APP_TLS
   ZuCSpan alpn[] = {"zutcp-test"};

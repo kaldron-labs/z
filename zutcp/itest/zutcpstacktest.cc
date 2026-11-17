@@ -15,11 +15,18 @@
 #include <linux/if_packet.h>
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmTime.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmRef.hh>
+
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZiLog.hh>
+
 #include <zlib/Zutcp.hh>
 #include <zlib/ZutcpMx.hh>
 
@@ -45,7 +52,11 @@ struct Probe {
   }
 };
 
-struct WriterApp : Zutcp::Hub<WriterApp> { };
+struct WriterApp : public ZmNHeap<WriterApp>, public Zutcp::Hub<WriterApp> {
+friend inline ZuStringT<"Zutcp.StackTest.WriterApp"> ZmNHeapID(WriterApp *);
+  using ZmNHeap<WriterApp>::operator new;
+  using ZmNHeap<WriterApp>::operator delete;
+};
 
 struct WriterCxn : public ZmNHeap<WriterCxn>,
   public Zutcp::Connection<WriterApp, WriterCxn, Zutcp::TxBufAlloc<>> {
@@ -328,22 +339,21 @@ static void testStack()
       received.post();
     }, .spin = 0, .packetCount = 2, .txSid = 3}};
   mx.plugin(stack);
-  ZtString<> configError;
-  bool invalidCount = !stack->configureControl(0, 1, configError);
-  bool invalidCredits = !stack->configureControl(2, 4, configError);
-  bool invalidRx = !stack->configure({.controlBufCount = 3, .txControlCredits = 3,
-    .rxReserveFrames = RxCount}, configError);
+  bool invalidCount = stack->configureControl(0, 1).is<ZeException>();
+  bool invalidCredits = stack->configureControl(2, 4).is<ZeException>();
+  bool invalidRx = stack->configure({.controlBufCount = 3, .txControlCredits = 3,
+    .rxReserveFrames = RxCount}).is<ZeException>();
   ZuCheckRT(invalidCount && invalidCredits &&
-      invalidRx && strstr(configError.data(), "physical frames=4") &&
+      invalidRx &&
       stack->txAdmission().controlCount == Zutcp::DefaultControlBufCount,
     log_("invalid control configuration preserves provisioned pool counts"));
   for (unsigned i = 0; i < 3; ++i) {
     Zutcp::StackConfig config;
     config.maxCxns = i ? 2 : 0;
     config.maxPendingCxns = i == 1 ? 0 : 3;
-    bool rejected = !stack->configure(config, configError);
+    bool rejected = stack->configure(config).is<ZeException>();
     auto slots = stack->cxnAdmission();
-    ZuCheckRT(rejected && strstr(configError.data(), "connection admission") &&
+    ZuCheckRT(rejected &&
 	!slots.total && !slots.pending && slots.maxCxns == Zutcp::DefaultMaxCxns &&
 	slots.maxPendingCxns == Zutcp::DefaultMaxPendingCxns,
       log_("invalid connection caps must preserve stopped admission configuration"));
@@ -351,16 +361,16 @@ static void testStack()
   for (auto timeout : {ZuTime{}, ZuTime{0}, ZuTime{-1}}) {
     Zutcp::StackConfig config;
     config.connectTimeout = timeout;
-    bool rejected = !stack->configure(config, configError);
-    ZuCheckRT(rejected && strstr(configError.data(), "connect timeout") &&
+    bool rejected = stack->configure(config).is<ZeException>();
+    ZuCheckRT(rejected &&
 	stack->txAdmission().controlCount == Zutcp::DefaultControlBufCount,
       log_("invalid connect deadlines must preserve stopped configuration"));
   }
   for (auto timeout : {ZuTime{}, ZuTime{-1}}) {
     Zutcp::StackConfig config;
     config.userTimeout = timeout;
-    bool rejected = !stack->configure(config, configError);
-    ZuCheckRT(rejected && strstr(configError.data(), "user timeout") &&
+    bool rejected = stack->configure(config).is<ZeException>();
+    ZuCheckRT(rejected &&
 	stack->txAdmission().controlCount == Zutcp::DefaultControlBufCount,
       log_("invalid user deadlines must preserve stopped configuration"));
   }
@@ -368,20 +378,21 @@ static void testStack()
     Zutcp::StackConfig config;
     if (finWait) config.finWaitTimeout = timeout;
     else config.closeDrainTimeout = timeout;
-    bool rejected = !stack->configure(config, configError);
-    ZuCheckRT(rejected && strstr(configError.data(), "close timeout") &&
+    bool rejected = stack->configure(config).is<ZeException>();
+    ZuCheckRT(rejected &&
 	stack->txAdmission().controlCount == Zutcp::DefaultControlBufCount,
       log_("invalid close deadlines must preserve stopped configuration"));
   }
   {
     Zutcp::StackConfig config;
     config.closedTupleRingSize = 0;
-    bool rejected = !stack->configure(config, configError);
-    ZuCheckRT(rejected && strstr(configError.data(), "closed tuple") &&
+    bool rejected = stack->configure(config).is<ZeException>();
+    ZuCheckRT(rejected &&
 	stack->closedTupleStats().capacity == Zutcp::DefaultClosedTupleRingSize,
       log_("zero closed tuple capacity must preserve stopped configuration"));
   }
-  WriterApp app;
+  ZmRef<WriterApp> appRef = new WriterApp;
+  auto &app = *appRef;
   unsigned configErrors = 0;
   auto badHub = Zutcp::HubParams{&mx}.controlBufCount(2).txControlCredits(4)
     .rxReserveFrames(1)
@@ -544,9 +555,9 @@ static void testStack()
     reserves[0] = tx->allocBuf(&mx, Payload);
     reserves[1] = tx->allocBuf(&mx, Payload);
     // Acquire the control provider through its native raw pool, independently.
-    auto ctl = stack->control()->pool.alloc();
+    auto ctl = stack->control()->pool->alloc();
     isolated = packet && reserves[0] && reserves[1] && !tx->allocBuf(&mx, 1) && ctl;
-    if (ctl) stack->control()->pool.free(ctl);
+    if (ctl) stack->control()->pool->free(ctl);
     if (packet) {
       sentOrigin = packet->data_();
       memset(sentOrigin, 0, packet->skip + packet->length);
@@ -806,9 +817,10 @@ static void testStack()
   }
   ZuCheckRT(shutdownSubmitted && shutdownDelivered,
     log_("shutdown sends an accepted frame before stopping the gated kernel-service owner"));
-  ZtString<> controlError;
-  bool busyControl = !stack->configureControl(3, 3, controlError);
-  ZuCheckRT(busyControl && !!controlError && stack->txAdmission().controlCount == 2 &&
+  auto controlResult = stack->configureControl(3, 3);
+  bool busyControl = controlResult.is<ZeException>();
+  ZuCheckRT(busyControl && !!controlResult.p<ZeException>() &&
+      stack->txAdmission().controlCount == 2 &&
       pressure.lease && **pressure.lease && pressure.lease->data()[14] == 0x66,
     log_("stopped reconfiguration preserves retained control backing and reports busy"));
   pressure.retained.clear();

@@ -11,7 +11,9 @@
 #endif
 
 #include <zlib/ZuSpan.hh>
+
 #include <zlib/ZmAtomic.hh>
+
 #include <zlib/ZutcpTFO.hh>
 
 namespace Zutcp {
@@ -181,11 +183,11 @@ friend struct TCPStateTest;
       queueTelemetry(data);
       data.count = load_() & TxQueueState::CountMask;
       data.size = m_limit ? *m_limit : 0;
-      data.full = m_full.load_();
+      data.full = m_full;
     }
   private:
     const unsigned *m_limit = nullptr;
-    ZmAtomic<unsigned> m_full{0};
+    unsigned m_full = 0;
   };
 
 
@@ -233,10 +235,10 @@ public:
   void telemetry(Ztc::LinkTelemetry &data) const override {
     data.hubID = app()->telKey().template p<1>();
     data.id = m_id;
-    data.rxCalls = m_rxDiag.datagramsRx.load_();
-    data.txCalls = m_txDiag.packetsTx.load_();
-    data.rxBytes = m_rxDiag.bytesRx.load_();
-    data.txBytes = m_txDiag.bytesTx.load_();
+    data.rxCalls = m_rxDiag.datagramsRx;
+    data.txCalls = m_txDiag.packetsTx;
+    data.rxBytes = m_rxDiag.bytesRx;
+    data.txBytes = m_txDiag.bytesTx;
     data.reconnects = 0;
     data.type = Ztc::LinkType::TCP;
     data.state = telState(publicLinkState());
@@ -2433,7 +2435,7 @@ protected:
     return done;
   }
 
-  uint64_t txPackets() const { return m_txDiag.packetsTx.load_(); }
+  uint64_t txPackets() const { return m_txDiag.packetsTx; }
 
   bool nextRetransmit(SentFrameRef &ref) {
     while (m_txPkts.nextRetransmit(ref)) {

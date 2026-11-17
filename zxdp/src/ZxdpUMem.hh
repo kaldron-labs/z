@@ -17,18 +17,22 @@
 #include <stdint.h>
 
 #include <zlib/ZuSpan.hh>
+
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmRef.hh>
+
 #include <zlib/ZtArray.hh>
-#include <zlib/ZtString.hh>
+
+#include <zlib/ZePlatform.hh>
 
 #include <zlib/Zxdp.hh>
 #include <zlib/ZxdpRing.hh>
+#include <zlib/ZxdpPool.hh>
 
-namespace Zxdp {
+namespace Zxdp::Xdp {
 
 struct ArenaLayout {
   size_t length = 0, rxLength = 0, txLength = 0;
@@ -47,12 +51,13 @@ friend inline ZuStringT<"Zxdp.UMem"> ZmNHeapID(UMem *);
 
 public:
   ~UMem();
-  static ZmRef<UMem> create(const Params &, unsigned mtu, ZtString<> &error);
+  static ZuUnion<ZmRef<UMem>, ZeException> create(
+    const Zi::IOBufPoolList &, Zi::IOBufPool *rx, unsigned mtu);
   uint8_t *data() const { return m_data; }
   const ArenaLayout &layout() const { return m_layout; }
   BufPool *pool(const void *) const;
   TxSlot &txSlot(const BufPool &, unsigned slot);
-  void retire(BufPool *, BufPool *rx);
+  void retire(const Zi::IOBufPoolList &, BufPool *rx);
 
 private:
   UMem() = default;
@@ -77,13 +82,13 @@ public:
   Xsk(const Xsk &) = delete;
   Xsk &operator =(const Xsk &) = delete;
 
-  bool open(
+  ZuUnion<void, ZeException> open(
     ZmRef<UMem>, unsigned ifindex, unsigned queue, unsigned rxCount, unsigned txCount,
-    ZtString<> &error, int shared = -1);
-  bool prepare(
-    ZmRef<UMem>, unsigned rxCount, unsigned txCount, ZtString<> &error, int shared = -1);
+    int shared = -1);
+  ZuUnion<void, ZeException> prepare(
+    ZmRef<UMem>, unsigned rxCount, unsigned txCount, int shared = -1);
   // EBUSY preserves this prepared registration for owner-directed bind retry.
-  bool bind(unsigned ifindex, unsigned queue, ZtString<> &error);
+  ZuUnion<void, ZeException> bind(unsigned ifindex, unsigned queue);
   bool retryBind() const { return m_retryBind; }
   void close();
   int fd() const { return m_fd; }
@@ -100,11 +105,10 @@ private:
   uint64_t namespaceID() const { return m_namespace; }
   unsigned ifindex() const { return m_ifindex; }
   unsigned queue() const { return m_queue; }
-  bool bind_(unsigned ifindex, unsigned queue, ZtString<> &error, bool queryOptions);
+  ZuUnion<void, ZeException> bind_(unsigned ifindex, unsigned queue, bool queryOptions);
   struct Mapping { void *addr = nullptr; size_t length = 0; };
-  template <typename R> bool map(
-    unsigned i, R &, const xdp_ring_offset &, unsigned count, uint64_t offset,
-    ZtString<> &error);
+  template <typename R> ZuUnion<void, ZeException> map(
+    unsigned i, R &, const xdp_ring_offset &, unsigned count, uint64_t offset);
 
   int		m_fd = -1;
   int		m_shared = -1;
@@ -122,6 +126,6 @@ private:
   CompRing		m_comp;
 };
 
-} // namespace Zxdp
+} // namespace Zxdp::Xdp
 
 #endif /* ZxdpUMem_HH */

@@ -5,8 +5,11 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZtArray.hh>
+
 #include <zlib/Zutcp.hh>
+
 #include "ZutcpTestAlloc.hh"
 
 using namespace ZuTestUtil;

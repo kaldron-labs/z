@@ -5,51 +5,52 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZmAssert.hh>
+
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZxdpRetire.hh>
 
-namespace Zxdp {
+namespace Zxdp::Xdp {
 
 KernelRetirement::~KernelRetirement() { ZmAssert_(!waiting()); }
 
-int KernelRetirement::begin(Xsk &socket, ZtString<> &error)
+ZuUnion<int, ZeException> KernelRetirement::begin(Xsk &socket)
 {
-  error = {};
-  if (m_socket || !socket.bound()) {
-    error = "kernel retirement requires a live bound socket and unused observer";
-    return Error;
-  }
+  if (m_socket || !socket.bound())
+    return ZeEXCEPT(Error, "Zxdp",
+      "kernel retirement requires a live bound socket and unused observer");
   // Same arena, no parallel payload allocation. The observer's small private
   // rings remain empty for its entire lifetime, even after a successful bind.
-  if (!m_probe.prepare(socket.arena(), 2, 2, error)) return Error;
+  auto prepared = m_probe.prepare(socket.arena(), 2, 2);
+  if (prepared.is<ZeException>()) return ZuMv(prepared).p<ZeException>();
   if (m_probe.namespaceID() != socket.namespaceID()) {
     m_probe.close();
-    error = "kernel retirement observer belongs to a different network namespace";
-    return Error;
+    return ZeEXCEPT(Error, "Zxdp",
+      "kernel retirement observer belongs to a different network namespace");
   }
   m_socket = &socket;
   m_ifindex = socket.ifindex();
   m_queue = socket.queue();
   socket.close();
-  return retry(error);
+  return retry();
 }
 
-int KernelRetirement::retry(ZtString<> &error)
+ZuUnion<int, ZeException> KernelRetirement::retry()
 {
-  error = {};
-  if (!m_socket) { error = "kernel retirement has not begun"; return Error; }
-  if (done()) return Done;
+  if (!m_socket) return ZeEXCEPT(Error, "Zxdp", "kernel retirement has not begun");
+  if (done()) return int(Done);
   // Linux assigns pools under RTNL and refuses an occupied queue. Its deferred
   // pool release disables driver zero-copy before clearing that queue identity.
   // A successful independent bind therefore observes the old pool's retirement,
   // rather than assuming fd closure or TX cursor progress is sufficient.
-  if (!m_probe.bind_(m_ifindex, m_queue, error, false)) {
-    if (!m_probe.retryBind()) return Error;
-    error = {};
-    return Pending;
+  auto bound = m_probe.bind_(m_ifindex, m_queue, false);
+  if (bound.is<ZeException>()) {
+    if (!m_probe.retryBind()) return ZuMv(bound).p<ZeException>();
+    return int(Pending);
   }
   m_probe.close(); // no FILL/TX was ever published by this observer
   m_ifindex = 0; // the observer no longer needs a target after successful bind
-  return Done;
+  return int(Done);
 }
 
 void KernelRetirement::reset()
@@ -60,4 +61,4 @@ void KernelRetirement::reset()
   m_ifindex = m_queue = 0;
 }
 
-} // namespace Zxdp
+} // namespace Zxdp::Xdp

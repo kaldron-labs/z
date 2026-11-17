@@ -50,7 +50,7 @@ friend inline ZuStringT<"Zquic.HeldUDP"> ZmNHeapID(HeldUDP *);
   ZiConnection *closing = nullptr;
   ZmFn<> beforeBind;
   explicit HeldUDP(ZiMultiplex *mx) : ZiMxPlugin{mx} { }
-  Zi::IOBufPlugin *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override {
+  Zi::IOBufPool *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override {
     return nullptr;
   }
   void start() override { mx()->pluginStarted({}); }

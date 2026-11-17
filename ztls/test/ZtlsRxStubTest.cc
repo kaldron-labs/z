@@ -17,12 +17,12 @@ namespace ZtlsRxStubTest_ {
 
 enum { Head = 13, Tail = 7, Capacity = 31, Slots = 8, Payload = 257, Timeout = 10 };
 
-struct Backing : Zi::IOBufPlugin, ZmNHeap<Backing> {
+struct Backing : Zi::IOBufPool, ZmNHeap<Backing> {
 friend inline ZuStringT<"Ztls.RxStub.Backing"> ZmNHeapID(Backing *);
   uint8_t bytes[Slots][Head + Capacity + Tail];
   bool used[Slots]{};
   ZmAtomic<unsigned> acquired{0}, released{0}, errors{0};
-  Backing() { size = sizeof(bytes[0]); headRoom = Head; tailRoom = Tail; }
+  Backing() { count = Slots; size = sizeof(bytes[0]); headRoom = Head; tailRoom = Tail; }
   uint8_t *alloc() override {
     for (unsigned i = 0; i < Slots; ++i) if (!used[i]) {
       used[i] = true; ++acquired;
@@ -55,7 +55,7 @@ friend inline ZuStringT<"Ztls.RxStub.Provider"> ZmNHeapID(Provider *);
   unsigned length = 0, offset = 0;
   ZmAtomic<unsigned> emptyInitial{0}, deliveries{0}, errors{0};
   Provider(ZiMultiplex *mx, bool stub_) : ZiMxPlugin{mx}, stub{stub_} { }
-  Zi::IOBufPlugin *allocator(Zi::IOBufType::T type, unsigned, unsigned, unsigned) override {
+  Zi::IOBufPool *allocator(Zi::IOBufType::T type, unsigned, unsigned, unsigned) override {
     return stub && type == Zi::IOBufType::RxTCP ? backing.ptr() : nullptr;
   }
   void start() override { mx()->pluginStarted({}); }

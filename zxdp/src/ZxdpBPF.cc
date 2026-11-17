@@ -16,11 +16,17 @@
 #include <linux/if_link.h>
 #include <linux/if_arp.h>
 #include <linux/rtnetlink.h>
+
 #include <zlib/Zu_aton.hh>
+#include <zlib/ZuString.hh>
+
 #include <zlib/ZmAssert.hh>
+
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZxdpBPF.hh>
 
-namespace Zxdp {
+namespace Zxdp::Xdp {
 
 static int bpfCall(unsigned command, bpf_attr &attr)
 {
@@ -30,37 +36,36 @@ static int bpfCall(unsigned command, bpf_attr &attr)
   return result;
 }
 
-static bool failed(ZtString<> &error, const char *operation)
+template <ZuString Operation>
+static ZeException failed(ZeError error)
 {
-  auto errorNo = errno;
-  error = operation;
-  error << ": " << strerror(errorNo);
-  return false;
+  return ZeEXCEPT(Error, "Zxdp", ([error](auto &out) {
+    out << Operation << ": " << error;
+  }));
 }
 
-bool parseFilter(ZuCSpan text, Filter &out, ZtString<> &error)
+ZuUnion<Filter, ZeException> parseFilter(ZuCSpan text)
 {
-  error = {};
-  if (!text.length()) { out = {}; return true; }
+  if (!text.length()) return Filter{};
   auto slash = static_cast<const char *>(memchr(text.data(), '/', text.length()));
   auto n = slash ? unsigned(slash - text.data()) : unsigned(text.length());
   // inet_pton needs a terminated address; its protocol bounds this scratch.
   char address[INET6_ADDRSTRLEN];
-  if (!n || n >= sizeof(address)) { error = "invalid network mask address"; return false; }
+  if (!n || n >= sizeof(address))
+    return ZeEXCEPT(Error, "Zxdp", "invalid network mask address");
   memcpy(address, text.data(), n);
   address[n] = 0;
   Filter result;
   if (inet_pton(AF_INET, address, result.address) == 1) result.family = 4;
   else if (inet_pton(AF_INET6, address, result.address) == 1) result.family = 6;
-  else { error = "invalid network mask address"; return false; }
+  else return ZeEXCEPT(Error, "Zxdp", "invalid network mask address");
   unsigned bits = result.family == 4 ? 32 : 128;
   if (slash) {
     auto length = unsigned(text.length()) - n - 1;
     unsigned prefix;
     if (!length || length > 3 ||
-	Zu_nscan<ZuFmt::Default>::atou(prefix, slash + 1, length) != length || prefix > bits) {
-      error = "invalid network mask prefix"; return false;
-    }
+	Zu_nscan<ZuFmt::Default>::atou(prefix, slash + 1, length) != length || prefix > bits)
+      return ZeEXCEPT(Error, "Zxdp", "invalid network mask prefix");
     bits = prefix;
   }
   auto words = result.family == 4 ? 1U : 4U;
@@ -71,8 +76,7 @@ bool parseFilter(ZuCSpan text, Filter &out, ZtString<> &error)
     result.address[i] &= mask;
     bits -= width;
   }
-  out = result;
-  return true;
+  return result;
 }
 
 class Builder {
@@ -135,11 +139,11 @@ public:
     add(1, bytes);
     jump(BPF_JGT | BPF_X, 1, 7, 0, pass);
   }
-  bool finish(BPFCode &out, ZtString<> &error) {
+  ZuUnion<BPFCode, ZeException> finish() {
     for (auto label : m_labels) if (label != Marked) { m_valid = false; break; }
-    if (!m_valid) { error = "invalid or overflowing XDP instruction program"; return false; }
-    out = ZuMv(m_code);
-    return true;
+    if (!m_valid)
+      return ZeEXCEPT(Error, "Zxdp", "invalid or overflowing XDP instruction program");
+    return ZuMv(m_code);
   }
 
 private:
@@ -152,10 +156,9 @@ private:
   bool		m_valid = true;
 };
 
-bool classifierCode(int xsk, const Filter &filter, BPFCode &out, ZtString<> &error)
+ZuUnion<BPFCode, ZeException> classifierCode(int xsk, const Filter &filter)
 {
-  error = {};
-  if (xsk < 0) { error = "invalid XSK map descriptor"; return false; }
+  if (xsk < 0) return ZeEXCEPT(Error, "Zxdp", "invalid XSK map descriptor");
   Builder b;
   auto pass = b.label();
   b.mov(9, 1);
@@ -198,7 +201,7 @@ bool classifierCode(int xsk, const Filter &filter, BPFCode &out, ZtString<> &err
   b.exit();
   b.mark(pass);
   if (filter.family) { b.imm(0, XDP_PASS); b.exit(); }
-  return b.finish(out, error);
+  return b.finish();
 }
 
 BPFProgram::~BPFProgram() { reset(); }
@@ -209,23 +212,20 @@ void BPFProgram::reset()
   m_id = 0;
 }
 
-bool BPFProgram::load(unsigned queues, const Filter &filter, ZtString<> &error)
+ZuUnion<void, ZeException> BPFProgram::load(unsigned queues, const Filter &filter)
 {
-  error = {};
-  if (m_fd >= 0 || !queues) { error = "invalid XDP program configuration"; return false; }
-  auto fail = [this, &error](const char *operation) {
-    failed(error, operation);
-    reset();
-    return false;
-  };
+  if (m_fd >= 0 || !queues)
+    return ZeEXCEPT(Error, "Zxdp", "invalid XDP program configuration");
+  auto fail = [this](ZeException error) { reset(); return error; };
   bpf_attr attr{};
   attr.map_type = BPF_MAP_TYPE_XSKMAP;
   attr.key_size = attr.value_size = sizeof(uint32_t);
   attr.max_entries = queues;
   m_xsk = bpfCall(BPF_MAP_CREATE, attr);
-  if (m_xsk < 0) return fail("XSK map create");
-  BPFCode code;
-  if (!classifierCode(m_xsk, filter, code, error)) { reset(); return false; }
+  if (m_xsk < 0) return fail(failed<"XSK map create">(ZeLastError));
+  auto built = classifierCode(m_xsk, filter);
+  if (built.is<ZeException>()) return fail(ZuMv(built).p<ZeException>());
+  const auto &code = built.p<BPFCode>();
   // Bounded cold-load diagnostics, independent of packet service storage.
   enum { VerifierLogSize = 128<<10 };
   ZtArray<char, ZtArrayHeapID<"Zxdp.Verifier">> log;
@@ -243,42 +243,44 @@ bool BPFProgram::load(unsigned queues, const Filter &filter, ZtString<> &error)
   memcpy(attr.prog_name, "zxdp_mask", sizeof("zxdp_mask"));
   m_fd = bpfCall(BPF_PROG_LOAD, attr);
   if (m_fd < 0) {
-    failed(error, "XDP program load");
-    error << '\n' << ZuCSpan{log.data(), strnlen(log.data(), log.length())};
+    auto error = ZeLastError;
+    ZeString verifier{ZuCSpan{log.data(), strnlen(log.data(), log.length())}};
     reset();
-    return false;
+    return ZeEXCEPT(Error, "Zxdp", ([error, verifier = ZuMv(verifier)](auto &out) {
+      out << "XDP program load: " << error << '\n' << verifier;
+    }));
   }
   bpf_prog_info info{};
   attr = {};
   attr.info.bpf_fd = m_fd;
   attr.info.info_len = sizeof(info);
   attr.info.info = uintptr_t(&info);
-  if (bpfCall(BPF_OBJ_GET_INFO_BY_FD, attr) < 0) return fail("XDP program identity");
+  if (bpfCall(BPF_OBJ_GET_INFO_BY_FD, attr) < 0)
+    return fail(failed<"XDP program identity">(ZeLastError));
   m_id = info.id;
-  return true;
+  return {};
 }
 
-bool BPFProgram::publish(unsigned queue, int socket, ZtString<> &error)
+ZuUnion<void, ZeException> BPFProgram::publish(unsigned queue, int socket)
 {
   bpf_attr attr{};
   attr.map_fd = m_xsk;
   attr.key = uintptr_t(&queue);
   attr.value = uintptr_t(&socket);
   attr.flags = BPF_NOEXIST;
-  if (bpfCall(BPF_MAP_UPDATE_ELEM, attr) < 0) return failed(error, "publish XSK destination");
-  error = {};
-  return true;
+  if (bpfCall(BPF_MAP_UPDATE_ELEM, attr) < 0)
+    return failed<"publish XSK destination">(ZeLastError);
+  return {};
 }
 
-bool BPFProgram::quiesce(unsigned queue, ZtString<> &error)
+ZuUnion<void, ZeException> BPFProgram::quiesce(unsigned queue)
 {
   bpf_attr attr{};
   attr.map_fd = m_xsk;
   attr.key = uintptr_t(&queue);
   if (bpfCall(BPF_MAP_DELETE_ELEM, attr) < 0 && errno != ENOENT)
-    return failed(error, "remove XSK destination");
-  error = {};
-  return true;
+    return failed<"remove XSK destination">(ZeLastError);
+  return {};
 }
 
 // Each transaction has its own unicast socket/sequence. No global event socket
@@ -302,21 +304,21 @@ struct LinkRequest {
   }
 };
 
-static bool malformed(ZtString<> &error)
+static ZeException malformed(ZeError *native)
 {
-  error = "malformed or incomplete rtnetlink link response";
-  errno = EPROTO;
-  return false;
+  ZeError error{EPROTO};
+  if (native) *native = error;
+  return failed<"malformed or incomplete rtnetlink link response">(error);
 }
 
-static bool parseLink(const nlmsghdr *header, LinkState &out, ZtString<> &error)
+static ZuUnion<LinkState, ZeException> parseLink(const nlmsghdr *header, ZeError *native)
 {
-  if (header->nlmsg_len < NLMSG_LENGTH(sizeof(ifinfomsg))) return malformed(error);
+  if (header->nlmsg_len < NLMSG_LENGTH(sizeof(ifinfomsg))) return malformed(native);
   auto info = static_cast<const ifinfomsg *>(NLMSG_DATA(header));
   if (info->ifi_type != ARPHRD_ETHER) {
-    error = "XDP packet interface must provide Ethernet framing";
-    errno = EAFNOSUPPORT;
-    return false;
+    ZeError error{EAFNOSUPPORT};
+    if (native) *native = error;
+    return failed<"XDP packet interface must provide Ethernet framing">(error);
   }
   LinkState state;
   state.ifindex = info->ifi_index;
@@ -330,11 +332,11 @@ static bool parseLink(const nlmsghdr *header, LinkState &out, ZtString<> &error)
     switch (type) {
       case IFLA_MTU:
       case IFLA_NUM_RX_QUEUES:
-	if (size != 4) return malformed(error);
+	if (size != 4) return malformed(native);
 	memcpy(type == IFLA_MTU ? &state.mtu : &state.rxQueues, value, 4);
 	break;
       case IFLA_ADDRESS:
-	if (size != 6) return malformed(error);
+	if (size != 6) return malformed(native);
 	memcpy(state.mac, value, 6);
 	mac = true;
 	break;
@@ -350,42 +352,48 @@ static bool parseLink(const nlmsghdr *header, LinkState &out, ZtString<> &error)
 	    case IFLA_XDP_PROG_ID: id = &state.progID; break;
 	  }
 	  if (id) {
-	    if (RTA_PAYLOAD(xdp) != 4) return malformed(error);
+	    if (RTA_PAYLOAD(xdp) != 4) return malformed(native);
 	    memcpy(id, RTA_DATA(xdp), 4);
 	  }
 	}
-	if (remaining) return malformed(error);
+	if (remaining) return malformed(native);
       } break;
     }
   }
-  if (length || !mac || !state.mtu || !state.rxQueues) return malformed(error);
-  out = state;
-  return true;
+  if (length || !mac || !state.mtu || !state.rxQueues) return malformed(native);
+  return state;
 }
 
-static bool transact(
-  LinkRequest &request, LinkState *state, ZtString<> &error, bool *rejected = nullptr)
+static ZuUnion<void, ZeException> transact(
+  LinkRequest &request, LinkState *state, bool *rejected = nullptr, ZeError *native = nullptr)
 {
   if (rejected) *rejected = false;
+  if (native) *native = ZeOK;
   int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
-  if (fd < 0) return failed(error, "rtnetlink socket");
-  auto fail = [fd, &error](const char *operation) {
-    auto errorNo = errno;
-    failed(error, operation);
+  if (fd < 0) {
+    auto error = ZeLastError;
+    if (native) *native = error;
+    return failed<"rtnetlink socket">(error);
+  }
+  auto fail = [fd, native](ZeException exception, ZeError error = ZeOK) {
+    if (native && error) *native = error;
     close(fd);
-    errno = errorNo;
-    return false;
+    return exception;
   };
   // Setup is a control-path transaction, never a packet-service wait. Bound a
   // missing kernel response so failed startup remains diagnosable.
   timeval timeout{2, 0};
-  if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
-    return fail("rtnetlink receive timeout");
+  if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+    auto error = ZeLastError;
+    return fail(failed<"rtnetlink receive timeout">(error), error);
+  }
   sockaddr_nl peer{};
   peer.nl_family = AF_NETLINK;
   if (sendto(fd, &request, request.header.nlmsg_len, 0,
-      reinterpret_cast<sockaddr *>(&peer), sizeof(peer)) != request.header.nlmsg_len)
-    return fail("rtnetlink request");
+      reinterpret_cast<sockaddr *>(&peer), sizeof(peer)) != request.header.nlmsg_len) {
+    auto error = ZeLastError;
+    return fail(failed<"rtnetlink request">(error), error);
+  }
   ZtArray<uint8_t, ZtArrayHeapID<"Zxdp.Netlink">> buffer;
   for (;;) {
     // Query the next datagram's exact extent. Link attributes have no fixed
@@ -393,9 +401,10 @@ static bool transact(
     auto extent = recv(fd, nullptr, 0, MSG_PEEK | MSG_TRUNC);
     if (extent < 0) {
       if (errno == EINTR) continue;
-      return fail("rtnetlink response length");
+      auto error = ZeLastError;
+      return fail(failed<"rtnetlink response length">(error), error);
     }
-    if (!extent) { close(fd); return malformed(error); }
+    if (!extent) return fail(malformed(native));
     buffer.length(extent);
     iovec iov{buffer.data(), size_t(buffer.length())};
     msghdr message{};
@@ -406,44 +415,42 @@ static bool transact(
     auto n = recvmsg(fd, &message, 0);
     if (n < 0) {
       if (errno == EINTR) continue;
-      return fail("rtnetlink response");
+      auto error = ZeLastError;
+      return fail(failed<"rtnetlink response">(error), error);
     }
-    if (!n || (message.msg_flags & MSG_TRUNC) || peer.nl_pid) {
-      close(fd);
-      return malformed(error);
-    }
+    if (!n || (message.msg_flags & MSG_TRUNC) || peer.nl_pid)
+      return fail(malformed(native));
     int remaining = n;
     auto header = reinterpret_cast<const nlmsghdr *>(buffer.data());
     for (; NLMSG_OK(header, remaining); header = NLMSG_NEXT(header, remaining)) {
       if (header->nlmsg_seq != request.header.nlmsg_seq) continue;
       if (header->nlmsg_type == NLMSG_ERROR) {
-	if (header->nlmsg_len < NLMSG_LENGTH(sizeof(nlmsgerr))) {
-	  close(fd);
-	  return malformed(error);
-	}
+	if (header->nlmsg_len < NLMSG_LENGTH(sizeof(nlmsgerr))) return fail(malformed(native));
 	auto result = static_cast<const nlmsgerr *>(NLMSG_DATA(header))->error;
 	if (result) {
 	  if (rejected) *rejected = true;
-	  errno = -result;
-	  return fail("rtnetlink link operation");
+	  ZeError error{-result};
+	  return fail(failed<"rtnetlink link operation">(error), error);
 	}
-	if (!state) { close(fd); error = {}; return true; }
+	if (!state) { close(fd); return {}; }
       } else if (state && header->nlmsg_type == RTM_NEWLINK) {
-	bool result = parseLink(header, *state, error);
+	auto parsed = parseLink(header, native);
+	if (parsed.is<ZeException>()) return fail(ZuMv(parsed).p<ZeException>());
+	*state = parsed.p<LinkState>();
 	close(fd);
-	return result;
+	return {};
       }
     }
-    if (remaining) { close(fd); return malformed(error); }
+    if (remaining) return fail(malformed(native));
   }
 }
 
-bool queryLink(unsigned ifindex, LinkState &out, ZtString<> &error)
+static ZuUnion<LinkState, ZeException> queryLink_(unsigned ifindex, ZeError *native)
 {
   if (!ifindex || ifindex > INT_MAX) {
-    error = "invalid packet interface index";
-    errno = EINVAL;
-    return false;
+    ZeError error{EINVAL};
+    if (native) *native = error;
+    return failed<"invalid packet interface index">(error);
   }
   LinkRequest request;
   request.header.nlmsg_len = NLMSG_LENGTH(sizeof(ifinfomsg));
@@ -452,22 +459,27 @@ bool queryLink(unsigned ifindex, LinkState &out, ZtString<> &error)
   request.header.nlmsg_seq = 1;
   request.info.ifi_family = AF_UNSPEC;
   request.info.ifi_index = ifindex;
-  return transact(request, &out, error);
+  LinkState state;
+  auto result = transact(request, &state, nullptr, native);
+  if (result.is<ZeException>()) return ZuMv(result).p<ZeException>();
+  return state;
 }
 
-bool setXDP(
-  unsigned ifindex, int fd, unsigned flags, int expected, ZtString<> &error,
-  bool *unsupported)
+ZuUnion<LinkState, ZeException> queryLink(unsigned ifindex)
+{
+  return queryLink_(ifindex, nullptr);
+}
+
+ZuUnion<void, ZeException> setXDP(
+  unsigned ifindex, int fd, unsigned flags, int expected, bool *unsupported)
 {
   if (unsupported) *unsupported = false;
   bool initial = flags & XDP_FLAGS_UPDATE_IF_NOEXIST;
   bool replace = flags & XDP_FLAGS_REPLACE;
   if (!ifindex || ifindex > INT_MAX ||
-      (expected < 0 ? (!initial || replace || fd < 0) : (!replace || initial))) {
-    error = "XDP attachment requires no-replace or expected program ownership";
-    errno = EINVAL;
-    return false;
-  }
+      (expected < 0 ? (!initial || replace || fd < 0) : (!replace || initial)))
+    return ZeEXCEPT(Error, "Zxdp",
+      "XDP attachment requires no-replace or expected program ownership");
   LinkRequest request;
   request.header.nlmsg_len = NLMSG_LENGTH(sizeof(ifinfomsg));
   request.header.nlmsg_type = RTM_SETLINK;
@@ -483,8 +495,10 @@ bool setXDP(
   auto outer = reinterpret_cast<rtattr *>(reinterpret_cast<uint8_t *>(&request) + offset);
   outer->rta_len = request.header.nlmsg_len - offset;
   bool rejected = false;
-  bool result = transact(request, nullptr, error, &rejected);
-  if (unsupported) *unsupported = !result && rejected && errno == EOPNOTSUPP;
+  ZeError native;
+  auto result = transact(request, nullptr, &rejected, &native);
+  if (unsupported) *unsupported = result.is<ZeException>() && rejected &&
+    native.errNo() == EOPNOTSUPP;
   return result;
 }
 
@@ -497,75 +511,78 @@ void BPFAttach::reset()
   m_ifindex = m_mode = m_id = 0;
 }
 
-bool BPFAttach::attach(unsigned ifindex, const BPFProgram &program, ZtString<> &error)
+ZuUnion<void, ZeException> BPFAttach::attach(unsigned ifindex, const BPFProgram &program)
 {
-  if (m_ifindex || program.fd() < 0 || !program.id()) {
-    error = "invalid or already active XDP attachment";
-    return false;
-  }
-  LinkState state;
-  if (!queryLink(ifindex, state, error)) return false;
-  if (state.occupied()) {
-    error = "packet interface already has an unrelated XDP program";
-    return false;
-  }
+  if (m_ifindex || program.fd() < 0 || !program.id())
+    return ZeEXCEPT(Error, "Zxdp", "invalid or already active XDP attachment");
+  auto queried = queryLink(ifindex);
+  if (queried.is<ZeException>()) return ZuMv(queried).p<ZeException>();
+  auto state = queried.p<LinkState>();
+  if (state.occupied())
+    return ZeEXCEPT(Error, "Zxdp", "packet interface already has an unrelated XDP program");
   m_fd = fcntl(program.fd(), F_DUPFD_CLOEXEC, 0);
-  if (m_fd < 0) return failed(error, "retain XDP program FD");
+  if (m_fd < 0) return failed<"retain XDP program FD">(ZeLastError);
   // Record identity before sending: a lost acknowledgment does not establish
   // that the kernel failed to attach. Resolve every uncertain outcome using
   // identity checks and expected-FD retirement before releasing the program FD.
   m_ifindex = ifindex;
   m_mode = XDP_FLAGS_DRV_MODE;
   m_id = program.id();
-  auto rollback = [this, &error] {
-    auto cause = ZuMv(error);
-    ZtString<> cleanup;
-    if (!detach(cleanup) && m_ifindex) cause << "; XDP rollback pending: " << cleanup;
-    error = ZuMv(cause);
-    return false;
+  auto rollback = [this](ZeException cause) -> ZuUnion<void, ZeException> {
+    auto cleanup = detach();
+    if (cleanup.is<ZeException>() && m_ifindex)
+      return ZeEXCEPT(Error, "Zxdp", ([cause = ZuMv(cause),
+	cleanup = ZuMv(cleanup).p<ZeException>()](auto &out) {
+	out << cause << "; XDP rollback pending: " << cleanup;
+      }));
+    return cause;
   };
   bool unsupported = false;
-  if (!setXDP(ifindex, m_fd, m_mode | XDP_FLAGS_UPDATE_IF_NOEXIST, -1, error, &unsupported)) {
-    if (!unsupported) return rollback();
+  auto attached = setXDP(ifindex, m_fd, m_mode | XDP_FLAGS_UPDATE_IF_NOEXIST, -1, &unsupported);
+  if (attached.is<ZeException>()) {
+    if (!unsupported) return rollback(ZuMv(attached).p<ZeException>());
     m_mode = XDP_FLAGS_SKB_MODE;
-    if (!setXDP(ifindex, m_fd, m_mode | XDP_FLAGS_UPDATE_IF_NOEXIST, -1, error))
-      return rollback();
+    attached = setXDP(ifindex, m_fd, m_mode | XDP_FLAGS_UPDATE_IF_NOEXIST, -1);
+    if (attached.is<ZeException>()) return rollback(ZuMv(attached).p<ZeException>());
   }
-  if (!queryLink(ifindex, state, error)) return rollback();
+  queried = queryLink(ifindex);
+  if (queried.is<ZeException>()) return rollback(ZuMv(queried).p<ZeException>());
+  state = queried.p<LinkState>();
   auto id = m_mode == XDP_FLAGS_DRV_MODE ? state.drvID : state.skbID;
   if (id != m_id) {
-    error = "XDP attachment identity changed during setup";
     reset();
-    return false;
+    return ZeEXCEPT(Error, "Zxdp", "XDP attachment identity changed during setup");
   }
-  return true;
+  return {};
 }
 
-bool BPFAttach::detach(ZtString<> &error)
+ZuUnion<void, ZeException> BPFAttach::detach()
 {
-  if (!m_ifindex) { error = {}; return true; }
-  LinkState state;
-  if (!queryLink(m_ifindex, state, error)) {
-    if (errno == ENODEV) { reset(); error = {}; return true; }
-    return false;
+  if (!m_ifindex) return {};
+  ZeError native;
+  auto queried = queryLink_(m_ifindex, &native);
+  if (queried.is<ZeException>()) {
+    if (native.errNo() == ENODEV) { reset(); return {}; }
+    return ZuMv(queried).p<ZeException>();
   }
+  auto state = queried.p<LinkState>();
   auto id = m_mode == XDP_FLAGS_DRV_MODE ? state.drvID : state.skbID;
   if (id != m_id) {
-    error = "XDP attachment ownership lost; foreign program preserved";
     reset();
-    return false;
+    return ZeEXCEPT(Error, "Zxdp", "XDP attachment ownership lost; foreign program preserved");
   }
-  if (!setXDP(m_ifindex, -1, m_mode | XDP_FLAGS_REPLACE, m_fd, error)) {
-    auto saved = ZuMv(error);
-    if (queryLink(m_ifindex, state, error)) {
+  auto detached = setXDP(m_ifindex, -1, m_mode | XDP_FLAGS_REPLACE, m_fd);
+  if (detached.is<ZeException>()) {
+    queried = queryLink_(m_ifindex, &native);
+    if (!queried.is<ZeException>()) {
+      state = queried.p<LinkState>();
       id = m_mode == XDP_FLAGS_DRV_MODE ? state.drvID : state.skbID;
       if (id != m_id) reset();
-    } else if (errno == ENODEV) reset();
-    error = ZuMv(saved);
-    return false;
+    } else if (native.errNo() == ENODEV) reset();
+    return ZuMv(detached).p<ZeException>();
   }
   reset();
-  return true;
+  return {};
 }
 
-} // namespace Zxdp
+} // namespace Zxdp::Xdp

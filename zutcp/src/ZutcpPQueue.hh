@@ -13,6 +13,7 @@
 #include <zlib/ZuPtr.hh>
 
 #include <zlib/ZmPQueue.hh>
+#include <zlib/ZmHeap.hh>
 
 #include <zlib/ZtArray.hh>
 
@@ -174,14 +175,22 @@ public:
     ZtArray<TxUnackdRange,
       ZtArrayHeapID<"Zutcp.Connection.TxUnackdRanges">>,
     BuiltinRanges>;
-  using Indexed =
+  using IndexedBase =
     ZmPQueue<TxUnackdRange,
       ZmPQueueNode<ZuObject,
 	ZmPQueueHeapID<"Zutcp.Connection.TxUnackdIndex",
 	  ZmPQueueBits<2,
 	    ZmPQueueLevels<3>>>>>;
 
-  class Node : public ZuObject {
+  struct Indexed : public ZmNHeap<Indexed>, public IndexedBase {
+  friend inline ZuStringT<"Zutcp.TxUnackdIndex"> ZmNHeapID(Indexed *);
+    using ZmNHeap<Indexed>::operator new;
+    using ZmNHeap<Indexed>::operator delete;
+    using IndexedBase::IndexedBase;
+  };
+
+  class Node : public ZmNHeap<Node>, public ZuObject {
+  friend inline ZuStringT<"Zutcp.TxUnackdRange"> ZmNHeapID(Node *);
   public:
     Node() = default;
     explicit Node(const TxUnackdRange &range) : m_range{range} { }

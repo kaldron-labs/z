@@ -33,8 +33,10 @@ ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
 auto stack = new Zutcp::Stack{&mx, {.interface = if_nametoindex("OWNED_INTERFACE")}};
 mx.plugin(stack);
 Zutcp::StackConfig config;
-ZtString<> error;
-if (!stack->configure(config, error)) { /* report error and stop setup */ }
+auto configured = stack->configure(config);
+if (configured.is<ZeException>()) {
+  /* report configured.p<ZeException>() and stop setup */
+}
 
 // Factory calls follow plugin registration while mx is still stopped.
 auto rx = mx.allocator<Zi::IOBufType::RxTCP, ZiRxBuf, 2048>(4096);

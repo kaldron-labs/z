@@ -7,8 +7,13 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZmThread.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmRef.hh>
+
 #include <zlib/Zutcp.hh>
+
 #include "ZutcpTestAlloc.hh"
 
 using namespace ZuTestUtil;
@@ -16,7 +21,7 @@ using namespace ZuTestUtil;
 #define ZUTCP_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 
-struct PacketBacking : ZmNHeap<PacketBacking>, Zi::IOBufPlugin {
+struct PacketBacking : ZmNHeap<PacketBacking>, Zi::IOBufPool {
 friend inline ZuStringT<"Zutcp.Test.PacketBacking"> ZmNHeapID(PacketBacking *);
   using ZmNHeap<PacketBacking>::operator new;
   using ZmNHeap<PacketBacking>::operator delete;
@@ -26,6 +31,7 @@ friend inline ZuStringT<"Zutcp.Test.PacketBacking"> ZmNHeapID(PacketBacking *);
   bool intact = true;
 
   PacketBacking() {
+    count = 1;
     size = Size;
     headRoom = Head;
     tailRoom = Tail;
@@ -54,7 +60,7 @@ friend inline ZuStringT<"Zutcp.Test.PacketPlugin"> ZmNHeapID(PacketPlugin *);
   unsigned requestedSize = 0, requestedAlign = 0, requestedCount = 0, requests = 0;
 
   explicit PacketPlugin(ZiMultiplex *mx) : ZiMxPlugin{mx} { }
-  Zi::IOBufPlugin *allocator(
+  Zi::IOBufPool *allocator(
       Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count) override {
     ++requests;
     requestedType = type;
@@ -86,14 +92,27 @@ friend inline ZuStringT<"Zutcp.Test.PacketPlugin"> ZmNHeapID(PacketPlugin *);
   void unwatch() override { }
 };
 
+struct TestDataRx : ZmNHeap<TestDataRx>, Zutcp::DataRx {
+friend inline ZuStringT<"Zutcp.Test.DataRx"> ZmNHeapID(TestDataRx *);
+  using ZmNHeap<TestDataRx>::operator new;
+  using ZmNHeap<TestDataRx>::operator delete;
+  using Zutcp::DataRx::DataRx;
+};
+
+struct App : public ZmNHeap<App>, public Zutcp::Hub<App> {
+friend inline ZuStringT<"Zutcp.BufferTest.App"> ZmNHeapID(App *);
+  using ZmNHeap<App>::operator new;
+  using ZmNHeap<App>::operator delete;
+};
+
 static void testAllocatorDirection()
 {
   ZuTestScope(testAllocatorDirection);
   ZiMultiplex mx;
   ZmRef<PacketPlugin> provider = new PacketPlugin{&mx};
   mx.plugin(provider);
-  struct App : Zutcp::Hub<App> { };
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   Zutcp::HubParams defaults{&mx};
   ZuCHECK(defaults.controlBufCount() == 256 && defaults.txControlCredits() == 64,
     "control reserve defaults mismatch");
@@ -156,7 +175,7 @@ void testTxPacketGeometry(bool registered)
   auto allocator = ZutcpTest::pktTxAllocator<1536, 4096, "Zutcp.Test.Pkt.Tx">(&mx);
   using Heap = ZuStringT<"Zutcp.Test.Pkt.Tx">;
   if (registered) {
-    ZUTCP_CHECK_RT((dynamic_cast<Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP,
+    ZUTCP_CHECK_RT((dynamic_cast<Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP,
       Zutcp_::BufNode, 1536, ZiIOBuf_Align, Heap, 4096> *>(allocator)),
       "plugin allocator must preserve Tx node, geometry and heap policy");
     ZUTCP_CHECK_RT(plugin->requestedType == Zi::IOBufType::TxTCP &&
@@ -306,20 +325,21 @@ void testPacketAllocRoles()
   ZmRef<ZiIOBuf> observer = packet;
   auto backing = packet.ptr();
   {
-    Zutcp::DataRx first{packet, packet->data(), 1, streamRx, nullptr, 0};
-    Zutcp::DataRx second{packet, packet->data() + 1, 1, streamRx, nullptr, 1};
+    ZmRef<TestDataRx> first = new TestDataRx{packet, packet->data(), 1, streamRx, nullptr, 0};
+    ZmRef<TestDataRx> second = new TestDataRx{
+      packet, packet->data() + 1, 1, streamRx, nullptr, 1};
     packet = nullptr;
-    ZuCHECK(first.slice.packet.ptr() == backing && second.slice.packet.ptr() == backing &&
-	first.span()[0] == 0x5a && second.span()[0] == 0xa5 && backing->refCount() == 3,
+    ZuCHECK(first->slice.packet.ptr() == backing && second->slice.packet.ptr() == backing &&
+	first->span()[0] == 0x5a && second->span()[0] == 0xa5 && backing->refCount() == 3,
       "byte slices must retain original packet backing");
-    ZuCHECK(first.ensure(first.size + 1) && !first.slice.packet &&
-	first.span()[0] == 0x5a,
+    ZuCHECK(first->ensure(first->size + 1) && !first->slice.packet &&
+	first->span()[0] == 0x5a,
       "heap replacement must release the first slice's packet reference");
-    ZuCHECK(second.slice.packet.ptr() == backing && second.span()[0] == 0xa5 &&
+    ZuCHECK(second->slice.packet.ptr() == backing && second->span()[0] == 0xa5 &&
 	backing->refCount() == 2,
       "one byte release must not recycle another byte's packet");
-    ZuCHECK(second.ensure(second.size + 1) && !second.builtin() &&
-	!second.slice.packet && second.span()[0] == 0xa5 &&
+    ZuCHECK(second->ensure(second->size + 1) && !second->builtin() &&
+	!second->slice.packet && second->span()[0] == 0xa5 &&
 	backing->refCount() == 1,
       "grown receive descriptor must preserve bytes and release packet backing");
   }
@@ -345,23 +365,23 @@ static void testRxSliceReturn()
   if (!packet) return;
   memset(packet->data(), 0x6d, PacketBacking::Payload);
   {
-    Zutcp::DataRx first{packet, packet->data(), 32, heap, nullptr, 0};
-    Zutcp::DataRx second{packet, packet->data() + 32, 32, heap, nullptr, 32};
+    ZmRef<TestDataRx> first = new TestDataRx{packet, packet->data(), 32, heap, nullptr, 0};
+    ZmRef<TestDataRx> second = new TestDataRx{packet, packet->data() + 32, 32, heap, nullptr, 32};
     packet = nullptr;
-    ++first.skip;
-    --first.length;
-    ZUTCP_CHECK_RT(first.ensure(64) && !first.registered() &&
-	first.length == 31 && first.span()[0] == 0x6d && !plugin->backing->released,
+    ++first->skip;
+    --first->length;
+    ZUTCP_CHECK_RT(first->ensure(64) && !first->registered() &&
+	first->length == 31 && first->span()[0] == 0x6d && !plugin->backing->released,
       "replacing one alias must preserve its view and keep the other alias alive");
     bool copied = false;
     ZmThread worker{[&second, &copied]() {
-      copied = second.ensure(64) && !second.registered() &&
-	second.length == 32 && second.span()[31] == 0x6d;
+      copied = second->ensure(64) && !second->registered() &&
+	second->length == 32 && second->span()[31] == 0x6d;
     }};
     worker.join();
     ZUTCP_CHECK_RT(copied && plugin->backing->released == 1 && plugin->backing->intact,
       "off-owner replacement of the final alias must return backing immediately once");
-    ZUTCP_CHECK_RT(first.ensure(128) && second.ensure(128),
+    ZUTCP_CHECK_RT(first->ensure(128) && second->ensure(128),
       "already heap-backed slices must support subsequent growth");
   }
   ZUTCP_CHECK_RT(plugin->backing->released == 1,
@@ -372,7 +392,7 @@ static void testRxSliceReturn()
   if (!packet) return;
   memset(packet->data(), 0x6d, PacketBacking::Payload);
   {
-    Zutcp::DataRx slice{packet, packet->data(), 32, heap, nullptr, 0};
+    ZmRef<TestDataRx> slice = new TestDataRx{packet, packet->data(), 32, heap, nullptr, 0};
     packet = nullptr;
   }
   ZUTCP_CHECK_RT(plugin->backing->released == 2 && plugin->backing->intact,

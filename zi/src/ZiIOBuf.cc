@@ -40,7 +40,7 @@ void IOBufWait::start_()
   m_allocator->waitBuf_(*this);
 }
 
-void IOBufWait::wait(IOBufPlugin *provider, GrantFn grant)
+void IOBufWait::wait(IOBufPool *provider, GrantFn grant)
 {
   m_provider = provider;
   m_grant = grant;
@@ -119,7 +119,7 @@ void IOBufAllocator::waitBuf_(IOBufWait &request)
   else request.fail();
 }
 
-void IOBufPlugin::wait(IOBufWait &request)
+void IOBufPool_::wait(IOBufWait &request)
 {
   auto data = alloc();
   if (data) request.grant(data);

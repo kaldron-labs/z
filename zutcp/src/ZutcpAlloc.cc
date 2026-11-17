@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZmAssert.hh>
+
 #include <zlib/ZutcpAlloc.hh>
 #include <zlib/ZutcpMx.hh>
 
@@ -91,15 +92,6 @@ void RxFrames::limit(unsigned value)
   m_limit = value;
 }
 
-Allocator::Allocator(unsigned count, unsigned bytes, unsigned head, unsigned tail)
-: AllocatorList::Node{count, bytes}
-{
-  ZmAssert_(head <= bytes && tail <= bytes - head);
-  size = bytes;
-  headRoom = head;
-  tailRoom = tail;
-}
-
 Allocator::~Allocator()
 {
   ZmAssert_(waits.empty_() && !unsigned(notify));
@@ -110,15 +102,15 @@ uint8_t *Allocator::alloc()
   // Once queued, producers receive reserved grants in FIFO order. An already
   // racing allocation may finish, but fresh traffic cannot starve the queue.
   if (ZuUnlikely(unsigned(notify) & Waiting)) return nullptr;
-  return pool.alloc();
+  return pool->alloc();
 }
 void Allocator::free(uint8_t *packet)
 {
   // Publish before raw free makes this slot eligible for FILL again. Rx must
   // reconcile before dispatching its next incarnation. No account is touched
   // by an off-owner producer and no access to packet bytes follows raw free.
-  if (rxFrames) rxFrames->returned(pool.slot(packet));
-  pool.free(packet);
+  if (rxFrames) rxFrames->returned(pool->slot(packet));
+  pool->free(packet);
   if (returned) returned();
   notifyReturn();
 }
@@ -138,7 +130,7 @@ void Allocator::notifyReturn()
 void Allocator::wait(Zi::IOBufWait &request)
 {
   if (stack) stack->waitTx(this, request);
-  else IOBufPlugin::wait(request);
+  else IOBufPool::wait(request);
 }
 
 void Allocator::cancel(Zi::IOBufWait &request)
@@ -170,9 +162,11 @@ void PacketLease::reset()
 }
 
 RxAllocator::RxAllocator(Allocator *source, unsigned head, unsigned n, unsigned alignment)
-: ingress{source}, count{n}, align{alignment}
+: ingress{source}
 {
   ZmAssert_(head <= source->size);
+  count = n;
+  align = alignment;
   size = source->size;
   headRoom = head;
   tailRoom = 0;

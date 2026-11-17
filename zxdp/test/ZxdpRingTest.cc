@@ -8,8 +8,13 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmThread.hh>
+#include <zlib/ZmAtomic.hh>
+
+#include <zlib/ZtcQueue.hh>
+
 #include <zlib/ZxdpRing.hh>
 
 using namespace ZuTestUtil;
@@ -31,21 +36,21 @@ static void testLayout()
   ZuTestScope(testLayout);
   Mapping map;
   size_t length = 0;
-  ZuCHECK(Zxdp::TxRing::mapLength(map.off, 8, length) && length == 384,
+  ZuCHECK(Zxdp::Xdp::TxRing::mapLength(map.off, 8, length) && length == 384,
     "mapping length includes descriptors at queried offset");
-  ZuCHECK(!Zxdp::TxRing::mapLength(map.off, 0, length) &&
-      !Zxdp::TxRing::mapLength(map.off, 3, length),
+  ZuCHECK(!Zxdp::Xdp::TxRing::mapLength(map.off, 0, length) &&
+      !Zxdp::Xdp::TxRing::mapLength(map.off, 3, length),
     "zero and non-power-of-two capacities rejected");
   auto bad = map.off;
   bad.desc = UINT64_MAX - 7;
-  ZuCHECK(!Zxdp::TxRing::mapLength(bad, 8, length), "mapping overflow rejected");
+  ZuCHECK(!Zxdp::Xdp::TxRing::mapLength(bad, 8, length), "mapping overflow rejected");
   bad = map.off;
   bad.consumer = bad.producer;
-  ZuCHECK(!Zxdp::TxRing::mapLength(bad, 8, length), "overlapping fields rejected");
+  ZuCHECK(!Zxdp::Xdp::TxRing::mapLength(bad, 8, length), "overlapping fields rejected");
   bad = map.off;
   ++bad.desc;
-  ZuCHECK(!Zxdp::TxRing::mapLength(bad, 8, length), "unaligned descriptor rejected");
-  Zxdp::TxRing tx;
+  ZuCHECK(!Zxdp::Xdp::TxRing::mapLength(bad, 8, length), "unaligned descriptor rejected");
+  Zxdp::Xdp::TxRing tx;
   ZuCHECK(!tx.init(map.bytes, 383, map.off, 8) &&
       !tx.init(nullptr, sizeof(map.bytes), map.off, 8) &&
       !tx.init(map.bytes + 1, sizeof(map.bytes) - 1, map.off, 8),
@@ -71,8 +76,8 @@ template <typename Entry> static void exercise()
   Mapping map;
   // Both the logical cursor and descriptor-array index wrap in this exercise.
   map.seed(UINT32_MAX - 2);
-  Zxdp::Ring<Entry, true> prod;
-  Zxdp::Ring<Entry, false> cons;
+  Zxdp::Xdp::Ring<Entry, true> prod;
+  Zxdp::Xdp::Ring<Entry, false> cons;
   ZuCheckRT(prod.init(map.bytes, sizeof(map.bytes), map.off, 8), log_("producer attached"));
   ZuCheckRT(cons.init(map.bytes, sizeof(map.bytes), map.off, 8), log_("consumer attached"));
   ZuCheckRT(prod.available() == 8 && !cons.available(), log_("initial empty ring"));
@@ -124,8 +129,8 @@ static void testProgress()
   ZuTestScope(testProgress);
   Mapping map;
   map.seed(UINT32_MAX - 1);
-  Zxdp::TxRing prod;
-  Zxdp::RxRing cons;
+  Zxdp::Xdp::TxRing prod;
+  Zxdp::Xdp::RxRing cons;
   ZuCHECK(prod.init(map.bytes, sizeof(map.bytes), map.off, 8) &&
       cons.init(map.bytes, sizeof(map.bytes), map.off, 8), "progress fixture attached");
   ZuCHECK(prod.reserve(2) == 2, "initial descriptors reserved");
@@ -154,12 +159,12 @@ static void testPublication()
   ZuTestScope(testPublication);
   xdp_ring_offset off{0, 64, 192, 128};
   size_t length;
-  ZuCHECK(Zxdp::TxRing::mapLength(off, 64, length), "mapped fixture length");
+  ZuCHECK(Zxdp::Xdp::TxRing::mapLength(off, 64, length), "mapped fixture length");
   auto mem = mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
   ZuCHECK(mem != MAP_FAILED, "shared ring fixture mapped");
   if (mem == MAP_FAILED) return;
-  Zxdp::TxRing prod;
-  Zxdp::RxRing cons;
+  Zxdp::Xdp::TxRing prod;
+  Zxdp::Xdp::RxRing cons;
   ZuCHECK(prod.init(mem, length, off, 64) && cons.init(mem, length, off, 64),
     "both peers attached to mapped fixture");
   ZuCHECK(!prod.published(), "sender sees an initially empty mapped Tx ring");
@@ -215,8 +220,8 @@ static void testTelemetry()
     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   ZuCHECK(mapping != MAP_FAILED, "telemetry fixture mapping");
   if (mapping == MAP_FAILED) return;
-  Zxdp::TxRing producer;
-  Zxdp::RxRing consumer;
+  Zxdp::Xdp::TxRing producer;
+  Zxdp::Xdp::RxRing consumer;
   producer.identify("test", "xdp.1.0.tx", Ztc::QueueType::Tx);
   consumer.identify("test", "xdp.1.0.rx", Ztc::QueueType::Rx);
   bool attached = producer.init(mapping, 4096, offsets.off, 8) &&

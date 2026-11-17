@@ -15,6 +15,8 @@
 
 #include <string.h>
 
+#include <zlib/ZePlatform.hh>
+
 #ifndef _WIN32
 #include <sys/socket.h>
 #endif
@@ -37,16 +39,16 @@
 #include <zlib/ZmQueue.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmTime.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtArray.hh>
-#include <zlib/ZmScratch.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZtcHub.hh>
-#include <zlib/ZxdpAlloc.hh>
 
+#include <zlib/Zxdp.hh>
 
 #if defined(ZDEBUG) && !defined(Zutcp_DEBUG)
 #define Zutcp_DEBUG	// enable testing / debugging
@@ -78,6 +80,14 @@ struct PendingInitial {
   ClosedTupleKey tuple;
   uint64_t evidenceID = 0; // Nonzero also marks a chosen ISN; zero ISN is valid.
   uint32_t localISN = 0;
+};
+
+using PendingIndex = ZmHashKV<ClosedTupleKey, PendingInitial, ZmHashHeapID<"Zutcp.Pending">>;
+struct PendingTable : public ZmNHeap<PendingTable>, public PendingIndex {
+friend inline ZuStringT<"Zutcp.PendingTable"> ZmNHeapID(PendingTable *);
+  using PendingIndex::PendingIndex;
+  using ZmNHeap<PendingTable>::operator new;
+  using ZmNHeap<PendingTable>::operator delete;
 };
 
 } // namespace Zutcp_
@@ -395,11 +405,11 @@ public:
   Zi::IOBufAllocator *dataTxAllocator() const { return m_dataTxAllocator; }
   bool nativeTx() const { return m_stack; }
   Stack *nativeStack() const { return m_stack; }
-  Zxdp::BufPool *txPool(Zi::IOBufAllocator *allocator) const {
+  Zi::IOBufPool *txPool(Zi::IOBufAllocator *allocator) const {
     if (!m_stack || !allocator || allocator->mx != m_mx ||
 	allocator->type != Zi::IOBufType::TxTCP) return nullptr;
     auto provider = static_cast<Allocator *>(allocator->provider());
-    return provider ? &provider->pool : nullptr;
+    return provider ? provider->pool.ptr() : nullptr;
   }
   bool txWritable(const TxBacking &source) {
     if (!m_stack || !source.pool) return false;
@@ -518,8 +528,7 @@ protected:
       auto mx = params.mx();
       auto stack = native ? native : dynamic_cast<Stack *>(mx->plugin());
       if (stack && !native) {
-	ZtString<> error;
-	if (!stack->configure({
+	auto result = stack->configure({
 	      .controlBufCount = params.controlBufCount(),
 	      .txControlCredits = params.txControlCredits(),
 	      .rxRetainFrames = params.rxRetainFrames(),
@@ -534,8 +543,9 @@ protected:
 	      .userTimeout = params.userTimeout(),
 	      .closeDrainTimeout = params.closeDrainTimeout(),
 	      .finWaitTimeout = params.finWaitTimeout(),
-	      .congestionControl = params.congestionControl()}, error)) {
-	  reportError(ZeEXCEPT(Error, "Zutcp", error));
+	      .congestionControl = params.congestionControl()});
+	if (result.template is<ZeException>()) {
+	  reportError(ZuMv(result.template p<ZeException>()));
 	  return false;
 	}
       }
@@ -839,7 +849,7 @@ public:
   using App = App_;
   using Link = Link_;
   using LinkRef = ZmRef<Link>;
-  using LinkTable = ServerLinks;
+  using LinkTable = Zutcp_::ServerLinkTable;
   using LinkRefs =
     ZtArray<LinkRef, ZtArrayHeapID<"Zutcp.Server.LinkRefs">>;
   using Base = Hub<App>;
@@ -1056,13 +1066,14 @@ private:
     unsigned generation = Endpoint::generation();
     if (!stack->resolvePath(path,
 	[this, stack, d = ZuMv(d), tuple, generation](
-	    IPPath resolved, ZtString<> error) mutable {
+	    ZuUnion<IPPath, ZeException> result) mutable {
 	  auto node = m_pending->findPtr(tuple);
 	  ZmAssert_(node);
 	  auto &pending = node->val();
 	  CxnSlot slot = ZuMv(pending.slot);
+	  auto resolved = result.is<IPPath>() ? result.p<IPPath>() : IPPath{};
 	  if (this->state() == ZmEngineState::Running &&
-	      generation == Endpoint::generation() && !error &&
+	      generation == Endpoint::generation() && result.is<IPPath>() &&
 	      tcpPayload(resolved.mtu, resolved.local.type()) &&
 	      !tupleClaimed(tuple, false) && qualifyReuse(d, pending)) {
 	    InitialInfo info{d.tcp, d.addr, d.buf ? d.buf->length : 0, resolved, d.local};
@@ -1193,8 +1204,7 @@ private:
   ZmRef<LinkTable>	m_links = new LinkTable{
     ZmHashParams().bits(5).loadFactor(1).cBits(3).init("Zutcp.ServerLinks")};
   TupleRouter<Link>	m_routes;
-  using Pending = ZmHashKV<ClosedTupleKey, Zutcp_::PendingInitial, ZmHashHeapID<"Zutcp.Pending">>;
-  ZmRef<Pending>	m_pending = new Pending;
+  ZmRef<Zutcp_::PendingTable> m_pending = new Zutcp_::PendingTable;
   unsigned		m_stopCount = 0;
   bool			m_waitSetup = false;
 };

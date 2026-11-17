@@ -5,13 +5,13 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <string.h>
-
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
 
 #include <zlib/ZmAssert.hh>
+
 #include <zlib/ZutcpTFO.hh>
 
 namespace Zutcp {

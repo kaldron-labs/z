@@ -5,11 +5,13 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmScratch.hh>
-#include <zlib/Zutcp.hh>
+#include <zlib/ZmRef.hh>
 
+#include <zlib/Zutcp.hh>
 
 using namespace ZuTestUtil;
 
@@ -41,7 +43,7 @@ struct TCPStateTest {
     c.scheduleDataRto();
     c.app()->clock += timeUS(20000);
     bool fired = c.app()->mx()->holdCallback(&c.m_rtoTimer,
-      [&](auto &callback) { callback(); });
+      [](auto &callback) { callback(); });
     return c.m_txPkts.lost() == 1 && c.m_txPkts.bytesInFlight() == 1 &&
       fired &&
       c.m_rack.deadline == start + timeUS(45000) && c.m_lossTimer &&
@@ -122,7 +124,10 @@ static ZuBSpan span_(const uint8_t *data, unsigned len)
 
 
 
-struct TimerApp : public Zutcp::Hub<TimerApp> {
+struct TimerApp : public ZmNHeap<TimerApp>, public Zutcp::Hub<TimerApp> {
+friend inline ZuStringT<"Zutcp.TimerTest.TimerApp"> ZmNHeapID(TimerApp *);
+  using ZmNHeap<TimerApp>::operator new;
+  using ZmNHeap<TimerApp>::operator delete;
   using Base = Zutcp::Hub<TimerApp>;
   struct TimerMx : ZiMultiplex {
     using ZiMultiplex::ZiMultiplex;
@@ -148,7 +153,8 @@ struct TimerApp : public Zutcp::Hub<TimerApp> {
       if (!callback) return false;
       auto fire = [&callback] {
 	auto size = callback.pushSize();
-	auto storage = ZmScratch(uint64_t, unsigned((size + sizeof(uint64_t) - 1) / sizeof(uint64_t)));
+	auto storage = ZmScratch(
+	  uint64_t, unsigned((size + sizeof(uint64_t) - 1) / sizeof(uint64_t)));
 	callback.push(storage.data());
 	decltype(callback)::invoke(storage.data());
       };
@@ -341,7 +347,8 @@ friend inline ZuStringT<"Zutcp.TimerTest.Link"> ZmNHeapID(TimerLink *);
 void testConnectDeadline()
 {
   ZuTestScope(testConnectDeadline);
-  TimerApp app;
+  ZmRef<TimerApp> appRef = new TimerApp;
+  auto &app = *appRef;
   app.clock = Zm::now() + ZuTime{1000};
   ZmRef<TimerLink> link = new TimerLink{&app};
   ZuCHECK(link->startSetup() && link->pendingTimers(),
@@ -376,7 +383,8 @@ void testUserDeadline()
 {
   ZuTestScope(testUserDeadline);
   {
-    TimerApp app;
+    ZmRef<TimerApp> appRef = new TimerApp;
+    auto &app = *appRef;
     app.clock = Zm::now() + ZuTime{1000};
     ZmRef<TimerLink> link = new TimerLink{&app};
     ZuCHECK(link->startSetup(), "user policy setup must begin");
@@ -403,7 +411,8 @@ void testUserDeadline()
     link->disconnect();
   }
   {
-    TimerApp app;
+    ZmRef<TimerApp> appRef = new TimerApp;
+    auto &app = *appRef;
     app.clock = Zm::now() + ZuTime{1000};
     ZmRef<TimerLink> link = new TimerLink{&app};
     ZuCHECK(link->startSetup(), "queued zero-window setup must begin");
@@ -423,7 +432,8 @@ void testUserDeadline()
     link->disconnect();
   }
   for (bool fin : {false, true}) {
-    TimerApp app;
+    ZmRef<TimerApp> appRef = new TimerApp;
+    auto &app = *appRef;
     app.clock = Zm::now() + ZuTime{1000};
     ZmRef<TimerLink> link = new TimerLink{&app};
     ZuCHECK(link->startSetup(), "quiescence policy setup must begin");
@@ -460,7 +470,8 @@ void testUserDeadline()
     link->disconnect();
   }
   {
-    TimerApp app{ZuTime{0}};
+    ZmRef<TimerApp> appRef = new TimerApp{ZuTime{0}};
+    auto &app = *appRef;
     app.clock = Zm::now() + ZuTime{1000};
     ZmRef<TimerLink> link = new TimerLink{&app};
     ZuCHECK(link->startSetup(), "disabled user policy setup must begin");
@@ -478,7 +489,8 @@ void testCloseDeadlines()
   ZuTestScope(testCloseDeadlines);
   using State = Zutcp::TcpCloseState;
   {
-    TimerApp app{ZuTime{0}};
+    ZmRef<TimerApp> appRef = new TimerApp{ZuTime{0}};
+    auto &app = *appRef;
     app.clock = Zm::now() + ZuTime{1000};
     ZmRef<TimerLink> link = new TimerLink{&app};
     ZuCHECK(link->startSetup(), "active close setup must begin");
@@ -502,7 +514,8 @@ void testCloseDeadlines()
     link->disconnect();
   }
   for (unsigned order = 0; order < 3; ++order) {
-    TimerApp app{ZuTime{0}};
+    ZmRef<TimerApp> appRef = new TimerApp{ZuTime{0}};
+    auto &app = *appRef;
     app.clock = Zm::now() + ZuTime{1000};
     ZmRef<TimerLink> link = new TimerLink{&app};
     ZuCHECK(link->startSetup(), "FIN transition setup must begin");
@@ -549,7 +562,8 @@ void testCloseDeadlines()
     ZuCHECK(!link->pendingTimers(), "disconnect must remove every retained timer node");
   }
   for (unsigned order = 0; order < 3; ++order) {
-    TimerApp app{ZuTime{0}};
+    ZmRef<TimerApp> appRef = new TimerApp{ZuTime{0}};
+    auto &app = *appRef;
     app.clock = Zm::now() + ZuTime{1000};
     ZmRef<TimerLink> link = new TimerLink{&app};
     ZuCHECK(link->startSetup(), "completed close setup must begin");
@@ -579,7 +593,8 @@ void testTimerInventory()
 {
   ZuTestScope(testTimerInventory);
 
-  TimerApp app;
+  ZmRef<TimerApp> appRef = new TimerApp;
+  auto &app = *appRef;
   ZmRef<TimerLink> link = new TimerLink{&app};
   Ztc::HubTelemetry hubData;
 
@@ -616,7 +631,8 @@ void testTimerCancel()
 {
   ZuTestScope(testTimerCancel);
 
-  TimerApp app;
+  ZmRef<TimerApp> appRef = new TimerApp;
+  auto &app = *appRef;
   ZmRef<TimerLink> link = new TimerLink{&app};
 
   ZuCHECK(link->establish(),
@@ -638,7 +654,8 @@ void testTimerPriority()
 {
   ZuTestScope(testTimerPriority);
 
-  TimerApp app;
+  ZmRef<TimerApp> appRef = new TimerApp;
+  auto &app = *appRef;
   ZmRef<TimerLink> link = new TimerLink{&app};
 
   ZuTime now = app.transportNow();
@@ -654,7 +671,8 @@ void testTimerDisconnect()
 {
   ZuTestScope(testTimerDisconnect);
 
-  TimerApp app;
+  ZmRef<TimerApp> appRef = new TimerApp;
+  auto &app = *appRef;
   ZmRef<TimerLink> link = new TimerLink{&app};
   ZmRef<TimerLink> sentinel = new TimerLink{&app};
 
@@ -673,7 +691,8 @@ void testTimerDisconnect()
 void testDataRtoTimer()
 {
   ZuTestScope(testDataRtoTimer);
-  TimerApp app;
+  ZmRef<TimerApp> appRef = new TimerApp;
+  auto &app = *appRef;
   ZmRef<TimerLink> link = new TimerLink{&app};
   ZuCHECK(link->establish(), "DATA RTO timer setup failed");
   link->armData();
@@ -685,7 +704,8 @@ void testDataRtoTimer()
 void testPersistTimer()
 {
   ZuTestScope(testPersistTimer);
-  TimerApp app;
+  ZmRef<TimerApp> appRef = new TimerApp;
+  auto &app = *appRef;
   ZmRef<TimerLink> link = new TimerLink{&app};
   ZuCHECK(link->establish() && link->armPersist(), "persist timer setup failed");
   ZuCHECK(link->wait() && link->persist == 1 && !link->ptoCount && !link->rto,
@@ -705,7 +725,8 @@ void testPersistTimer()
 void testTimerGuard()
 {
   ZuTestScope(testTimerGuard);
-  TimerApp app;
+  ZmRef<TimerApp> appRef = new TimerApp;
+  auto &app = *appRef;
   app.clock = Zm::now();
   ZmRef<TimerLink> link = new TimerLink{&app};
   ZuCHECK(link->establish(), "timer guard setup failed");
@@ -739,7 +760,8 @@ void testTimerReservation()
   ZuTestScope(testTimerReservation);
   for (auto action : {Zutcp::CxnTimer::RTO, Zutcp::CxnTimer::PTO,
       Zutcp::CxnTimer::User}) {
-    TimerApp app;
+    ZmRef<TimerApp> appRef = new TimerApp;
+    auto &app = *appRef;
     app.clock = Zm::now() + ZuTime{1000};
     ZmRef<TimerLink> link = new TimerLink{&app};
     ZuCHECK(link->establish(), "reservation test requires an established owner");
@@ -765,7 +787,8 @@ void testTimerReservation()
     ZuCHECK(app.multiplex.adds == adds + 1 &&
 	link->deadline(action) == start + ZuTime{200},
 	"new episode before stale wake must reuse its physical reservation");
-    bool held = app.multiplex.holdCallback(link->timerNode(action), [&](auto &old) {
+    bool held = app.multiplex.holdCallback(link->timerNode(action),
+      [&link, &app, action, start, adds](auto &old) {
       link->armReserved(action, start + ZuTime{50});
       ZuCHECK(app.multiplex.adds == adds + 2 &&
 	  link->reservation(action) == start + ZuTime{50},
@@ -793,7 +816,8 @@ void testTimerReservation()
 	"hard cancel must remove all physical nodes and reservations");
     unsigned prior = link->ptoCount;
     link->armReserved(action, app.clock + ZuTime{100});
-    held = app.multiplex.holdCallback(link->timerNode(action), [&](auto &old) {
+    held = app.multiplex.holdCallback(link->timerNode(action),
+      [&link, &app, action, &adds, prior](auto &old) {
       link->resetSetup();
       ZuCHECK(link->startSetup(), "reset must start a new timer generation");
       link->finishSetup();
@@ -811,7 +835,8 @@ void testTimerReservation()
     link->disconnect();
   }
   {
-    TimerApp app;
+    ZmRef<TimerApp> appRef = new TimerApp;
+    auto &app = *appRef;
     app.clock = Zm::now() + ZuTime{1000};
     ZmRef<TimerLink> link = new TimerLink{&app};
     ZuCHECK(link->establish(), "active recovery test requires an established owner");
@@ -823,12 +848,12 @@ void testTimerReservation()
 	"accepted original must arm independent RTO and User obligations");
     app.clock = rto;
     bool rtoHeld = app.multiplex.holdCallback(link->timerNode(Zutcp::CxnTimer::RTO),
-      [&](auto &fire) { fire(); });
+      [](auto &fire) { fire(); });
     ZuCHECK(rtoHeld && link->rto == 1,
 	"stored RTO callback must service a due original exactly once");
     app.clock = user;
     bool userHeld = app.multiplex.holdCallback(link->timerNode(Zutcp::CxnTimer::User),
-      [&](auto &fire) { fire(); });
+      [](auto &fire) { fire(); });
     ZuCHECK(userHeld && link->user == 1 && link->closed(),
 	"stored User callback must expire one active unacknowledged episode");
     link->disconnect();
@@ -838,7 +863,8 @@ void testTimerReservation()
 void testRtoLossTimerHandoff()
 {
   ZuTestScope(testRtoLossTimerHandoff);
-  TimerApp app;
+  ZmRef<TimerApp> appRef = new TimerApp;
+  auto &app = *appRef;
   app.native = true;
   app.clock = Zm::now() + ZuTime{1000};
   ZmRef<TimerLink> link = new TimerLink{&app};

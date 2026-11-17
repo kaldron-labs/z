@@ -16,13 +16,14 @@ using namespace ZuTestUtil;
 ZuAssert((ZuIsBase<Zquic_::TxPkt, ZiTxBuf>{}));
 ZuAssert((!ZuIsBase<Zquic_::BufNode, ZiTxBuf>{}));
 
-struct PacketBacking : Zi::IOBufPlugin {
+struct PacketBacking : Zi::IOBufPool {
   enum { Size = 1600, Head = 17, Tail = 11, Payload = 64 };
   alignas(ZiIOBuf_Align) uint8_t bytes[Size];
   unsigned acquired = 0, released = 0;
   bool intact = true;
 
   PacketBacking() {
+    count = 1;
     size = Size;
     headRoom = Head;
     tailRoom = Tail;
@@ -48,7 +49,7 @@ struct PacketPlugin : ZiMxPlugin {
   unsigned requestedSize = 0, requestedAlign = 0, requestedCount = 0;
 
   explicit PacketPlugin(ZiMultiplex *mx) : ZiMxPlugin{mx} { }
-  Zi::IOBufPlugin *allocator(
+  Zi::IOBufPool *allocator(
       Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count) override {
     requestedType = type;
     requestedSize = size;
@@ -92,7 +93,7 @@ void testTxPacketGeometry(bool registered)
   auto allocator = Zquic::pktTxAllocator<1536, 4096, "Zquic.Test.Pkt.Tx">(&mx);
   using Heap = ZuStringT<"Zquic.Test.Pkt.Tx">;
   if (registered) {
-    ZQUIC_CHECK_RT((dynamic_cast<Zi::IOBufPluginAllocator<Zi::IOBufType::TxUDP,
+    ZQUIC_CHECK_RT((dynamic_cast<Zi::IOBufPoolAllocator<Zi::IOBufType::TxUDP,
       Zquic_::TxPkt, 1536, ZiIOBuf_Align, Heap, 4096> *>(allocator)),
       "plugin allocator must preserve Tx node, geometry and heap policy");
     ZQUIC_CHECK_RT(plugin->requestedType == Zi::IOBufType::TxUDP &&

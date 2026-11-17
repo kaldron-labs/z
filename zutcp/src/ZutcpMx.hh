@@ -18,6 +18,8 @@
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZuTime.hh>
+#include <zlib/ZuUnion.hh>
+
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmHeap.hh>
@@ -25,14 +27,19 @@
 #include <zlib/ZmList.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmRWLock.hh>
+
 #include <zlib/ZtArray.hh>
-#include <zlib/ZtString.hh>
+
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZiMultiplex.hh>
+
+#include <zlib/Zxdp.hh>
+
 #include <zlib/ZutcpAlloc.hh>
 #include <zlib/ZutcpIP.hh>
 #include <zlib/ZutcpTFO.hh>
 #include <zlib/ZutcpISN.hh>
-#include <zlib/Zxdp.hh>
 
 namespace Zutcp_ { struct EndpointLink; }
 
@@ -41,7 +48,7 @@ namespace Zutcp {
 struct Datagram;
 
 using PacketFn = ZmFn<void(ZmRef<Zi::IOBuf>), ZmFnHeapID<"Zutcp.Packet">>;
-using RouteFn = ZmFn<void(IPPath, ZtString<>), ZmFnHeapID<"Zutcp.Route">>;
+using RouteFn = ZmFn<void(ZuUnion<IPPath, ZeException>), ZmFnHeapID<"Zutcp.Route">>;
 
 // Endpoint membership is control state. Packet dispatch holds no owner ref.
 using EndpointFn = void (*)(
@@ -54,9 +61,16 @@ struct EndpointBinding {
 inline const ZiSockAddr &bindingKey(const EndpointBinding &binding) {
   return binding.local;
 }
-ZmHashDerive(EndpointBindings, EndpointBinding,
+ZmHashDerive(EndpointBindingsBase, EndpointBinding,
   (ZmHashNode<EndpointBinding,
     ZmHashKey<bindingKey, ZmHashHeapID<"Zutcp.Endpoints">>>));
+
+struct EndpointBindings : public ZmNHeap<EndpointBindings>, public EndpointBindingsBase {
+friend inline ZuStringT<"Zutcp.EndpointBindings"> ZmNHeapID(EndpointBindings *);
+  using ZmNHeap<EndpointBindings>::operator new;
+  using ZmNHeap<EndpointBindings>::operator delete;
+  using EndpointBindingsBase::EndpointBindingsBase;
+};
 
 struct StackParams {
   unsigned interface = 0;
@@ -180,10 +194,16 @@ struct ClosedTupleStats {
 // Rx-owned fixed slot ring. The intrusive FIFO preserves closure order while
 // the hash indexes those same slots. Evidence updates never refresh FIFO order.
 class ZutcpAPI ClosedTuples : public QueueTelemetry<"closed-tuples", Ztc::QueueType::Rx> {
-  ZmHashDerive(Index, ClosedTuple,
+  ZmHashDerive(IndexBase, ClosedTuple,
     (ZmHashNode<ClosedTuple,
       ZmHashKey<closedTupleKey,
 	ZmHashShadow<ZmHashLock<ZmNoLock, ZmHashHeapID<"">>>>>));
+  struct Index : public ZmNHeap<Index>, public IndexBase {
+  friend inline ZuStringT<"Zutcp.Closed.Index"> ZmNHeapID(Index *);
+    using ZmNHeap<Index>::operator new;
+    using ZmNHeap<Index>::operator delete;
+    using IndexBase::IndexBase;
+  };
   ZmListDerive(Order, Index::Node,
     ZmListNode<Index::Node, ZmListKey<closedTupleKey, ZmListShadow<>>>);
   using Slots = ZtArray<Order::Node, ZtArrayHeapID<"Zutcp.Closed.Slots">>;
@@ -267,7 +287,7 @@ friend inline ZuStringT<"Zutcp.Stack"> ZmNHeapID(Stack *);
 public:
   Stack(ZiMultiplex *, StackParams);
   ~Stack() override;
-  Zi::IOBufPlugin *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override;
+  Zi::IOBufPool *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override;
   void start() override;
   void stop() override;
   void rx() override;
@@ -281,8 +301,8 @@ public:
   void cancelTx(Allocator *, Zi::IOBufWait &);
   void returnedTx(Allocator *); // post a provider's claimed service obligation
   ZmRef<PacketBuf> allocPacket(void *owner, ZiIPType::T, bool control = false);
-  bool configureControl(unsigned count, unsigned credits, ZtString<> &error);
-  bool configure(const StackConfig &, ZtString<> &error);
+  ZuUnion<void, ZeException> configureControl(unsigned count, unsigned credits);
+  ZuUnion<void, ZeException> configure(const StackConfig &);
   const StackConfig &config() const { return m_config; }
   CxnAdmission cxnAdmission() const;
   CxnSlot reserveCxn();
@@ -315,8 +335,8 @@ public:
 
   // Rx-owned native endpoint registry. Port zero selects an unused local port.
   // Exact local addresses take precedence over a same-family wildcard.
-  bool bind(ZiSockAddr &local, void *owner, EndpointFn,
-    const ZiSockAddr &remote = {}, ZtString<> *error = nullptr);
+  ZuUnion<void, ZeException> bind(
+    ZiSockAddr &local, void *owner, EndpointFn, const ZiSockAddr &remote = {});
   bool unbind(const ZiSockAddr &local, void *owner);
   // Cold kernel lookup on an existing mx worker outside Rx/Tx. Completion is
   // always posted to Rx, including failure/cancellation. False posts nothing.
@@ -364,12 +384,12 @@ private:
   void observed(Zutcp_::EndpointLink *);
   void unobserved(Zutcp_::EndpointLink *);
 
-  using PacketAllocator = Zi::IOBufPluginAllocator<Zi::IOBufType::RxTCP>;
-  using NativeTxAllocator = Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP,
+  using PacketAllocator = Zi::IOBufPoolAllocator<Zi::IOBufType::RxTCP>;
+  using NativeTxAllocator = Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP,
     PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Pkt.Tx">>;
-  using NativeDataAllocator = Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP,
+  using NativeDataAllocator = Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP,
     PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Data.Tx">>;
-  using NativeControlAllocator = Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP,
+  using NativeControlAllocator = Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP,
     PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Control.Tx">>;
 
   // Fixed configuration and handles while running. Secrets initialize before
@@ -377,8 +397,10 @@ private:
   ISN		m_isn;
   TFOKey	m_tfoKey;
   unsigned	m_interface, m_mtu, m_spin, m_txSid;
-  ZtString<>	m_netmask;
+  Zi::Name	m_netmask;
   PacketFn	m_packet;
+  alignas(Zm::CacheLineSize) ZmRef<Zxdp::Instance> m_backend;
+  bool m_backendInit = false;
   ZmRef<Allocator> m_ingress;
   StackConfig m_config;
   PacketAllocator m_rxAllocator;
@@ -391,11 +413,10 @@ private:
   unsigned m_controlCredits = DefaultTxControlCredits;
 
   // Shared publication and ordered lifecycle handoffs.
-  alignas(Zm::CacheLineSize) ZmRef<Zxdp::Instance> m_backend;
-  ZmAtomic<Zxdp::Instance *> m_current{nullptr};
+  alignas(Zm::CacheLineSize) ZmAtomic<Zxdp::Instance *> m_current{nullptr};
   ZmAtomic<unsigned> m_state{Stopped};
   bool m_startFailure = false;
-  ZtString<> m_error;
+  ZeException m_error;
   alignas(Zm::CacheLineSize) ZmAtomic<unsigned> m_wakeUsers{0};
   alignas(Zm::CacheLineSize) ZmAtomic<unsigned> m_returnQueued{0};
 

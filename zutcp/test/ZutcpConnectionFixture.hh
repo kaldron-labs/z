@@ -7,11 +7,18 @@
 #ifndef ZutcpConnectionFixture_HH
 #define ZutcpConnectionFixture_HH
 
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmRef.hh>
+
 #include <zlib/Zutcp.hh>
+
 #include "ZutcpTestAlloc.hh"
 
-class TestApp : public Zutcp::Hub<TestApp> {
+class TestApp : public ZmNHeap<TestApp>, public Zutcp::Hub<TestApp> {
+friend inline ZuStringT<"Zutcp.ConnectionFixture.TestApp"> ZmNHeapID(TestApp *);
 public:
+  using ZmNHeap<TestApp>::operator new;
+  using ZmNHeap<TestApp>::operator delete;
   Zi::IOBufAllocator *dataTxAllocator() const { return Zutcp::inlineAllocator(); }
   TestApp() {
     ZiAssert(init(Zutcp::HubParams{&m_mx}.maxData(16)), "Zutcp", (),

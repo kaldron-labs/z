@@ -10,8 +10,17 @@
 #include <string.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZuLib.hh>
+
 #include <zlib/ZmScheduler.hh>
+#include <zlib/ZmRef.hh>
+
+#include <zlib/ZePlatform.hh>
+
+#include <zlib/ZiIOBuf.hh>
+
 #include <zlib/Zxdp.hh>
 #include <zlib/ZxdpBPF.hh>
 
@@ -31,7 +40,7 @@ static unsigned action(int fd, const void *bytes, unsigned length)
 static void testKernelMasks()
 {
   ZuTestScopeRT(testKernelMasks);
-  ZtString<> error;
+  ZeException error;
   // Empty XSK map returns DROP for a selected packet and PASS for unmatched
   // traffic. Real socket redirection is exercised separately by packet tests.
   struct Case { const char *mask, *match, *other; unsigned family; } cases[] = {
@@ -40,9 +49,15 @@ static void testKernelMasks()
     {"128.0.0.1/1", "192.0.2.1", "127.0.0.1", 4}
   };
   for (auto test : cases) {
-    Zxdp::Filter filter;
-    Zxdp::BPFProgram program;
-    bool loaded = Zxdp::parseFilter(test.mask, filter, error) && program.load(2, filter, error);
+    auto parsed = Zxdp::Xdp::parseFilter(test.mask);
+    Zxdp::Xdp::BPFProgram program;
+    bool loaded = false;
+    if (parsed.is<ZeException>()) error = parsed.p<ZeException>();
+    else {
+      auto result = program.load(2, parsed.p<Zxdp::Xdp::Filter>());
+      loaded = result.is<void>();
+      if (!loaded) error = result.p<ZeException>();
+    }
     ZuCheckRT(loaded, log_("kernel verifier accepts network mask ", test.mask, ": ", error));
     if (!loaded) continue;
     uint8_t bytes[96]{}; // Ethernet plus either IP header, including two VLAN tags
@@ -64,8 +79,10 @@ static void testKernelMasks()
         log_("kernel mask distinguishes destination and bounds with VLAN depth ", tags));
     }
   }
-  Zxdp::BPFProgram program;
-  ZuCheckRT(program.load(2, {}, error), log_("kernel accepts unmasked classifier: ", error));
+  Zxdp::Xdp::BPFProgram program;
+  auto unmasked = program.load(2, {});
+  if (unmasked.is<ZeException>()) error = unmasked.p<ZeException>();
+  ZuCheckRT(unmasked.is<void>(), log_("kernel accepts unmasked classifier: ", error));
   uint8_t frame[64]{};
   frame[12] = 0x88;
   frame[13] = 0xb5;
@@ -77,33 +94,50 @@ static void testForeign()
 {
   ZuTestScopeRT(testForeign);
   auto ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
-  Zxdp::BPFProgram foreign;
-  Zxdp::BPFAttach attachment;
-  ZtString<> error;
-  bool attached = foreign.load(2, {}, error) && attachment.attach(ifindex, foreign, error);
+  Zxdp::Xdp::BPFProgram foreign;
+  Zxdp::Xdp::BPFAttach attachment;
+  ZeException error;
+  auto attachedResult = foreign.load(2, {});
+  if (attachedResult.is<void>()) attachedResult = attachment.attach(ifindex, foreign);
+  bool attached = attachedResult.is<void>();
+  if (!attached) error = attachedResult.p<ZeException>();
   ZuCheckRT(attached, log_("fixture attaches an independent owner: ", error));
   if (!attached) return;
-  Zxdp::BufPool rx{8, 1514};
-  Zxdp::Params params{.interface = ifindex, .rxPool = &rx,
-    .rx = [](uint8_t *, unsigned) { }};
+  auto instance = Zxdp::instance(Zxdp::Type::Xdp);
+  auto rx = instance->bufPool(8, 1514);
+  Zxdp::Params config(
+    Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
+  auto &params = config.p<Zxdp::Xdp::Params>();
+  params.ifindex = ifindex;
+  params.rxPool = rx;
+  params.rx = [](uint8_t *, unsigned) { };
   ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,
     [&params](auto &thread) { thread = params.txThread; })};
   params.scheduler = &scheduler;
   params.txSid = 1;
   bool started = scheduler.start();
   ZuCheckRT(started);
-  if (!started) { attachment.detach(error); return; }
-  auto instance = Zxdp::Instance::create(ZuMv(params), error);
-  Zxdp::LinkState link;
-  ZuCheckRT(!instance && !rx.ready() && Zxdp::queryLink(ifindex, link, error) &&
-      (link.drvID == foreign.id() || link.skbID == foreign.id()),
+  if (!started) { attachment.detach(); return; }
+  auto initialized = instance->init(config);
+  if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
+  auto link = Zxdp::Xdp::queryLink(ifindex);
+  if (link.is<ZeException>()) error = link.p<ZeException>();
+  ZuCheckRT(initialized.is<ZeException>() && !instance->ready() && !rx->ready() &&
+      link.is<Zxdp::Xdp::LinkState>() &&
+      (link.p<Zxdp::Xdp::LinkState>().drvID == foreign.id() ||
+	link.p<Zxdp::Xdp::LinkState>().skbID == foreign.id()),
     log_("creation refuses an occupied interface and preserves its program"));
   if (instance) {
-    while (instance->close().is<ZeException>()) { }
+    for (;;) {
+      auto result = instance->close();
+      if (result.is<bool>() && result.p<bool>()) break;
+    }
     instance = nullptr;
   }
   ZuCheckRT(scheduler.stop());
-  ZuCheckRT(attachment.detach(error), log_("foreign owner retires its own attachment: ", error));
+  auto detached = attachment.detach();
+  if (detached.is<ZeException>()) error = detached.p<ZeException>();
+  ZuCheckRT(detached.is<void>(), log_("foreign owner retires its own attachment: ", error));
 }
 
 int main(int argc, char **argv)

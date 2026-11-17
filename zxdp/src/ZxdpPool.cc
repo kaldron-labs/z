@@ -5,10 +5,11 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZmAssert.hh>
-#include <zlib/ZxdpAlloc.hh>
+
+#include <zlib/ZxdpPool.hh>
 #include <zlib/ZxdpUMem.hh>
 
-namespace Zxdp {
+namespace Zxdp::Xdp {
 
 BufPool::BufPool(unsigned n, unsigned bytes) {
   count = n;
@@ -52,7 +53,7 @@ loop:
   return reinterpret_cast<uint8_t *>(p);
 }
 
-void BufPool::free(void *packet)
+void BufPool::free(uint8_t *packet)
 {
   auto id = slot(packet);
   ZmAssert_(id != NoSlot);
@@ -90,4 +91,4 @@ uint8_t *BufPool::backing(unsigned id) const {
   return m_arena->data() + m_offset + (uint64_t(id)<<m_shift) + m_prefix;
 }
 
-} // namespace Zxdp
+} // namespace Zxdp::Xdp

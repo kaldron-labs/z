@@ -3,16 +3,48 @@
 This is the implementation contract supplied by the caller. It supersedes the
 earlier expanded interface in this module.
 
-Instance creation takes named parameters:
+Select the cold backend with `Zxdp::instance(Zxdp::Type::Xdp)`. `Instance` is
+a polymorphic interface; its virtual `init(const Params &)` dispatches a tagged
+union of backend configurations. Construct its payload in place:
 
-* Network interface.
+```cpp
+Zxdp::Params config(
+  Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
+auto &params = config.p<Zxdp::Xdp::Params>();
+```
+
+`Xdp::Params` inherits common `Params_` fields
+and adds `ifindex`, `netmask`, `txSid` and `txThread`. Assign fields directly.
+Initialization takes:
+
+* Network interface index (`Xdp::Params::ifindex`).
 * Optional network mask for packet selection. Without a mask, XDP takes over
   all traffic on the interface.
-* Head of an intrusive list of Tx pools. Each pool supplies count and packet
-  size. Provision the Tx arena from that list and initialize one recycling
-  free list per pool.
-* One Rx pool, with its own dedicated Rx arena.
+* An owning `Zi::IOBufPoolList` of Tx pools. Each pool supplies
+  count, packet size and alignment. Provision the Tx arena from that list and
+  initialize one recycling free list per pool.
+* One unlinked `ZmRef<Zi::IOBufPool>` Rx pool, with its own dedicated Rx arena.
 * Raw packet receive callback.
+
+Zxdp depends on Zi. `instance->bufPool(count, size, headRoom, tailRoom, align)`
+returns `ZmRef<Zi::IOBufPool>` implementing allocation/return over registered
+arena slots. The concrete implementation is internal; generic Zi pools cannot
+provide the required arena bookkeeping. Headroom and tailroom default to zero,
+alignment to 64 bytes. Use the same pool directly with Zi's typed metadata
+allocator. Add nodes to `Params_::txPools` with `pushNode()`, or move in an existing
+list. A node belongs to one owning list at a time. Populate `Xdp::Params` in the
+generic `Params` union and pass that union by const reference to init. The backend
+retains one reference per pool through close; intrusive membership remains only
+in the caller configuration list.
+Freeze pool geometry through active service. Retain a pool reference for packets
+that outlive the instance.
+
+`instance->init(config)` returns `ZuUnion<void, ZeException>`. An exception
+reports the setup cause without discarding the instance. Always retain that
+instance until close finishes, including rollback after failed initialization.
+`close()` returns `ZuUnion<bool, ZeException>`: `true` means fully closed,
+`false` means retirement is pending, and the exception branch reports an actual
+failure. Pending retirement is not an empty exception.
 
 There is no transmit-completion callback. Allocation holds one caller lease;
 accepted submission holds a separate kernel lease. Explicit pool return releases
@@ -21,7 +53,7 @@ only when both are gone. Return may precede CQ; a caller can also retain backing
 past CQ for retransmission and return it later. Rejected send adds no kernel lease.
 One descriptor may be outstanding for an allocated slot at a time.
 
-`BufPool::writable(packet)` is a Tx-owner query with the caller allocation
+`Zi::IOBufPool::writable(packet)` is a Tx-owner query with the caller allocation
 lease held. It reads the existing direct-slot lease state and becomes true
 only after kernel use retires. Use it before changing retained packet headers
 for another submission. It acquires no lease and supplies no callback, object
@@ -39,8 +71,8 @@ kernel retirement; the independent caller lease may be returned before or after
 that retirement.
 
 `send()` submits and coalesces sender service on the application-assigned
-`Params::txSid`. Before scheduler startup the application configures that slot
-with `Params::txThread`, a `ZmSchedTParams` defaulting to `isolated(true)`.
+`Xdp::Params::txSid`. Before scheduler startup the application configures that slot
+with `Xdp::Params::txThread`, a `ZmSchedTParams` defaulting to `isolated(true)`.
 The dedicated sender calls nonblocking `sendto()` to drive kernel Tx processing.
 The caller remains the only descriptor producer and CQ owner. Descriptor
 consumption is separate from CQ retirement and never authorizes backing reuse.
@@ -49,7 +81,7 @@ Submission increments a shared pending-descriptor counter before committing the
 initialized descriptor. A zero-to-one transition schedules sender service with
 `scheduler->run()` after commit. The active sender observes the kernel consumer
 cursor and tracks its unsigned delta from a persistent cursor. While no additional
-pending descriptors are visible beyond that delta, it spins for `Params::spin`
+pending descriptors are visible beyond that delta, it spins for `Params_::spin`
 rounds and checks shutdown. It then subtracts the observed delta atomically and
 uses the returned count to decide whether to continue. A racing publication is
 therefore retained in the count or starts a new scheduled invocation. There is

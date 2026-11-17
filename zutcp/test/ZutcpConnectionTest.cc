@@ -5,7 +5,9 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/Zutcp.hh>
+
 #include "ZutcpTestAlloc.hh"
 
 using namespace ZuTestUtil;
@@ -15,7 +17,8 @@ using namespace ZuTestUtil;
 void testReorderedRx()
 {
   ZuTestScope(testReorderedRx);
-  TestApp app;
+  ZmRef<TestApp> appRef = new TestApp;
+  auto &app = *appRef;
   ZmRef<TestConnection> cxn = new TestConnection{&app};
   auto tail = packet(app, "def");
   auto frame = dataFrame(tail, 3, true);
@@ -41,7 +44,8 @@ void testReorderedRx()
 void testRetainedTx()
 {
   ZuTestScope(testRetainedTx);
-  TestApp app;
+  ZmRef<TestApp> appRef = new TestApp;
+  auto &app = *appRef;
   ZmRef<TestConnection> cxn = new TestConnection{&app};
   cxn->txCredit(4);
   cxn->txQueueMax(1);
@@ -77,7 +81,8 @@ void testRetainedTx()
 void testRuntimeReset()
 {
   ZuTestScope(testRuntimeReset);
-  TestApp app;
+  ZmRef<TestApp> appRef = new TestApp;
+  auto &app = *appRef;
   ZmRef<TestConnection> cxn = new TestConnection{&app};
   auto first = packet(app, "abc");
   auto frame = dataFrame(first, 0);

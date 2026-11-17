@@ -449,7 +449,7 @@ ZuAssert(!((sizeof(IOBufBuiltin<
 	ZiIOBuf_DefltAlign,
 	ZiIOBuf_HeapID>)) & (Zm::CacheLineSize - 1)));
 
-struct IOBufPlugin;
+struct IOBufPool;
 class IOBufWait;
 
 ZtEnumNS(ZiAPI, IOBufWaitResult, int8_t, Ready, Cancelled, Failed);
@@ -490,7 +490,7 @@ public:
 
   // Provider Tx only. Unlink before completing; do not access the request
   // after completion, since the caller may immediately reuse or destroy it.
-  void wait(IOBufPlugin *, GrantFn);
+  void wait(IOBufPool *, GrantFn);
   void grant(uint8_t *);
   void ready(ZmRef<IOBuf>);
   void fail();
@@ -501,7 +501,7 @@ private:
   void completed();
 
   IOBufAllocator *m_allocator = nullptr;
-  IOBufPlugin *m_provider = nullptr;
+  IOBufPool *m_provider = nullptr;
   void *m_owner = nullptr;
   unsigned m_sid = 0;
   uint32_t m_length = 0, m_mps = 0;
@@ -516,7 +516,7 @@ private:
 
 struct ZiAPI IOBufAllocator : public IOBufAllocator_ {
   using IOBufAllocator_::IOBufAllocator_;
-  virtual IOBufPlugin *provider() const { return nullptr; }
+  virtual IOBufPool *provider() const { return nullptr; }
   virtual ZmRef<IOBuf> allocBuf(
     void *owner = nullptr, uint32_t length = 0, uint32_t mps = ~uint32_t(0)) = 0;
 
@@ -580,20 +580,36 @@ friend inline ZuStringT<"Zi.IOBufBuiltinAllocator"> ZmNHeapID(IOBufBuiltinAlloca
   }
 };
 
-struct ZiAPI IOBufPlugin : public ZmPolymorph {
+struct ZiAPI IOBufPool_ : public ZmPolymorph {
+  enum { NoSlot = unsigned(-1) };
+
+  uint32_t	count = 0;	// - configured buffer count
   uint32_t	size = 0;	// - overall size of each buffer
+  uint32_t	align = ZiIOBuf_DefltAlign; // - physical buffer alignment
   uint32_t	headRoom = 0;	// - how much space is reserved for a frame header
   uint32_t	tailRoom = 0;	// - how much space is reserved for a frame trailer
 
   virtual uint8_t *alloc() = 0;
   virtual void free(uint8_t *) = 0;
+  // Fixed pools expose stable slot identity and allocation availability.
+  // Metadata-only providers need no backing table or mutable-use permission.
+  virtual unsigned used() const { return 0; }
+  virtual bool ready() const { return true; }
+  virtual unsigned slot(const void *) const { return NoSlot; }
+  virtual uint8_t *backing(unsigned) const { return nullptr; }
+  virtual bool owns(const void *ptr) const { return slot(ptr) != NoSlot; }
+  virtual bool writable(const void *) const { return false; }
   // Called by Zi on mx Tx. Waiting providers override both. cancel() only
   // unlinks: Zi emits the terminal cancellation and subsequent drain callback.
   virtual void wait(IOBufWait &);
   virtual void cancel(IOBufWait &) { }
 };
 
-// plugin allocators can use registered plugin backing storage
+using IOBufPoolList = ZmList<IOBufPool_,
+  ZmListNode<IOBufPool_, ZmListHeapID<"">>>;
+ZuDerive(IOBufPool, (IOBufPoolList::Node));
+
+// Pool allocators can use registered backing storage.
 template <
   IOBufType::T Type,
   typename Buf_ = IOBuf,
@@ -602,11 +618,11 @@ template <
   typename HeapID = ZiIOBuf_HeapID,
   unsigned VHMaxSize_ = ZiIOBuf_DefltVHMaxSize,
   auto Grow = ZmGrow>
-struct IOBufPluginAllocator :
-  public ZmNHeap<IOBufPluginAllocator<Type, Buf_, Size_, Align, HeapID, VHMaxSize_, Grow>>,
+struct IOBufPoolAllocator :
+  public ZmNHeap<IOBufPoolAllocator<Type, Buf_, Size_, Align, HeapID, VHMaxSize_, Grow>>,
   public IOBufAllocator {
-friend inline ZuStringT<"Zi.IOBufPluginAllocator"> ZmNHeapID(IOBufPluginAllocator *);
-  using Heap = ZmNHeap<IOBufPluginAllocator<Type, Buf_, Size_, Align, HeapID, VHMaxSize_, Grow>>;
+friend inline ZuStringT<"Zi.IOBufPoolAllocator"> ZmNHeapID(IOBufPoolAllocator *);
+  using Heap = ZmNHeap<IOBufPoolAllocator<Type, Buf_, Size_, Align, HeapID, VHMaxSize_, Grow>>;
   ZuAssert(
     Type == IOBufType::RxUDP || 
     Type == IOBufType::TxUDP || 
@@ -618,17 +634,17 @@ friend inline ZuStringT<"Zi.IOBufPluginAllocator"> ZmNHeapID(IOBufPluginAllocato
   enum { VHMaxSize = BuiltinSize<Buf, Align>(VHMaxSize_) };
   using VHeap = ZmVHeap_<HeapID, Size, VHMaxSize, Align>;
 
-  ZmRef<IOBufPlugin>	plugin;
+  ZmRef<IOBufPool>	pool;
 
   using Heap::operator new;
   using Heap::operator delete;
 
-  IOBufPluginAllocator(ZiMultiplex *mx, IOBufPlugin *plugin_) :
+  IOBufPoolAllocator(ZiMultiplex *mx, IOBufPool *pool_) :
     IOBufAllocator(mx, Type,
-      plugin_->size, plugin_->headRoom, plugin_->tailRoom),
-    plugin(plugin_) { }
+      pool_->size, pool_->headRoom, pool_->tailRoom),
+    pool(pool_) { }
 
-  IOBufPlugin *provider() const override { return plugin; }
+  IOBufPool *provider() const override { return pool; }
 
   void waitBuf_(IOBufWait &request) override {
     if constexpr (Type == IOBufType::TxUDP || Type == IOBufType::TxTCP) {
@@ -636,9 +652,9 @@ friend inline ZuStringT<"Zi.IOBufPluginAllocator"> ZmNHeapID(IOBufPluginAllocato
 	request.fail();
 	return;
       }
-      request.wait(plugin, [](IOBufAllocator *allocator, uint8_t *data,
+      request.wait(pool, [](IOBufAllocator *allocator, uint8_t *data,
 	  void *owner, uint32_t length, uint32_t mps) -> ZmRef<IOBuf> {
-	return static_cast<IOBufPluginAllocator *>(allocator)->grantBuf(
+	return static_cast<IOBufPoolAllocator *>(allocator)->grantBuf(
 	  data, owner, length, mps);
       });
     } else {
@@ -667,7 +683,7 @@ friend inline ZuStringT<"Zi.IOBufPluginAllocator"> ZmNHeapID(IOBufPluginAllocato
       uint32_t ps = capacity();
       if (ps > mps) ps = mps;
       if (length > ps) return nullptr;
-      auto data = plugin->alloc();
+      auto data = pool->alloc();
       if (ZuUnlikely(!data)) return nullptr;
       return grantBuf(data, owner, length, mps);
     } else {
@@ -685,7 +701,7 @@ friend inline ZuStringT<"Zi.IOBufPluginAllocator"> ZmNHeapID(IOBufPluginAllocato
   }
   void free(uint8_t *ptr, uint32_t size, bool registered) const override {
     if (registered)
-      return plugin->free(ptr);
+      return pool->free(ptr);
     else
       VHeap::free(ptr, size);
   }

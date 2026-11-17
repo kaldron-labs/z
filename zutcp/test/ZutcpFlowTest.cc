@@ -5,12 +5,12 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/Zutcp.hh>
 
 using namespace ZuTestUtil;
 
 #include "ZutcpConnectionFixture.hh"
-
 
 void testFlowCredit()
 {
@@ -29,7 +29,8 @@ void testFlowCredit()
 void testConnectionCredit()
 {
   ZuTestScope(testConnectionCredit);
-  TestApp app;
+  ZmRef<TestApp> appRef = new TestApp;
+  auto &app = *appRef;
   ZmRef<TestConnection> cxn = new TestConnection{&app};
   auto buf = packet(app, "abcdefghijkl");
   auto data = dataFrame(buf, 0);

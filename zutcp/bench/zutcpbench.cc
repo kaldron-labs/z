@@ -15,14 +15,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
-
 #include <iostream>
 
-#include <zlib/ZiFile.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuStream.hh>
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuTime.hh>
+
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmBitmap.hh>
 #include <zlib/ZmBlock.hh>
@@ -31,11 +30,17 @@
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTime.hh>
+
 #include <zlib/ZtArray.hh>
+
+#include <zlib/ZePlatform.hh>
+
+#include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiRx.hh>
 #include <zlib/ZiTx.hh>
+
 #include <zlib/ZutcpMx.hh>
 
 namespace FixBench {
@@ -227,9 +232,9 @@ public:
 	 .txSid = 3}};
       plugin(m_stack);
       Zutcp::StackConfig settings;
-      ZtString<> error;
-      if (!m_stack->configure(settings, error)) {
-	ZiLOG(Error, "zutcpbench", ([error = ZeString{error}](auto &out) {
+      auto configured = m_stack->configure(settings);
+      if (configured.is<ZeException>()) {
+	ZiLOG(Error, "zutcpbench", ([error = ZuMv(configured.p<ZeException>())](auto &out) {
 	  out << "native configure: " << error;
 	}));
 	m_failed = 1;
@@ -271,8 +276,8 @@ public:
     }));
     if (m_stack) {
       auto provider = static_cast<Zutcp::Allocator *>(m_output->provider());
-      ZiLOG(Error, "zutcpbench", ([used = provider->pool.used(), count = provider->pool.count,
-	ready = unsigned(provider->pool.ready()), capacity = m_output->capacity()](auto &out) {
+      ZiLOG(Error, "zutcpbench", ([used = provider->pool->used(), count = provider->pool->count,
+	ready = unsigned(provider->pool->ready()), capacity = m_output->capacity()](auto &out) {
 	out << "failure_pool used=" << used << " count=" << count
 	  << " ready=" << ready << " capacity=" << capacity;
       }));

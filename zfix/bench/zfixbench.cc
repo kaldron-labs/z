@@ -1325,9 +1325,10 @@ static bool run(const Config &c) {
     Zutcp::StackConfig settings;
     settings.ackHoldTimeout = ZuTime{0, int32_t(c.ackHoldUS * 1000)};
     settings.congestionControl = c.congestionControl;
-    ZtString<> error;
-    if (!stack->configure(settings, error)) {
-      std::cerr << "native_configuration error=" << error << '\n'; return false;
+    auto configured = stack->configure(settings);
+    if (configured.is<ZeException>()) {
+      std::cerr << "native_configuration error=" << configured.p<ZeException>() << '\n';
+      return false;
     }
   }
   Zfix::HubLimits limits;

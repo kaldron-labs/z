@@ -1044,7 +1044,7 @@ static void overlapAdmission()
 
 // One registered slot, with the provider on mx Tx (sid 2) and FIX Tx on sid 3.
 // The real allocator handoff and Link teardown need no socket in this fixture.
-struct PressurePool : ZmNHeap<PressurePool>, Zi::IOBufPlugin {
+struct PressurePool : ZmNHeap<PressurePool>, Zi::IOBufPool {
 friend inline ZuStringT<"Zfix.WireTest.PressurePool"> ZmNHeapID(PressurePool *);
   alignas(ZiIOBuf_Align) uint8_t bytes[ZiIOBuf_DefltSize];
   Zi::IOBufWait	*request = nullptr;
@@ -1052,7 +1052,7 @@ friend inline ZuStringT<"Zfix.WireTest.PressurePool"> ZmNHeapID(PressurePool *);
   ZmAtomic<unsigned> returns{0};
   unsigned	waits = 0, cancels = 0;
 
-  PressurePool() { size = sizeof(bytes); }
+  PressurePool() { count = 1; size = sizeof(bytes); }
   uint8_t *alloc() override { return nullptr; }
   void free(uint8_t *p) override { ZmAssert_(p == bytes); ++returns; }
   void wait(Zi::IOBufWait &r) override {
@@ -1133,7 +1133,7 @@ static void managedAllocPressure(unsigned mode)
   ZuTestScopeRT(managedAllocPressure);
   PressureApp app;
   ZmRef<PressurePool> pool = new PressurePool;
-  using Allocator = Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP, ZiTxBuf>;
+  using Allocator = Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP, ZiTxBuf>;
   Allocator allocator{app.mx(), pool};
   ZmRef<PressureLink> link = new PressureLink{&app, &allocator};
   ZuCheckRT(app.mux.start());

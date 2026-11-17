@@ -14,80 +14,86 @@
 #endif
 
 #include <stdint.h>
+
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuUnion.hh>
+
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmPolymorph.hh>
-#include <zlib/ZtcQueue.hh>
-#include <zlib/ZtString.hh>
+
+#include <zlib/ZtEnum.hh>
+
 #include <zlib/ZePlatform.hh>
-#include <zlib/ZxdpAlloc.hh>
+
+#include <zlib/ZtcQueue.hh>
+#include <zlib/ZiIOBuf.hh>
 
 namespace Zxdp {
 
 using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zxdp.Receive">>;
 using StopFn = ZmFn<void(), ZmFnHeapID<"Zxdp.TxStopped">>;
 
-struct Params {
-  unsigned interface = 0; // network-interface index in the current namespace
-  ZuCSpan netmask;       // optional destination CIDR; empty takes all traffic
-  BufPool *txPools = nullptr;
-  BufPool *rxPool = nullptr;
+ZtEnumNS(ZxdpAPI, Type, uint8_t, Xdp);
+
+struct Params_ {
+  Zi::IOBufPoolList txPools;
+  ZmRef<Zi::IOBufPool> rxPool;
   RecvFn rx;
   unsigned spin = 1000; // idle probes before Rx blocks or Tx service returns
   ZmScheduler *scheduler = nullptr; // caller-owned scheduler
-  unsigned txSid = 0; // application-assigned sender slot
-  ZmSchedTParams txThread = ZmSchedTParams().isolated(true); // apply to slot before start
   StopFn txStopped; // optional owner continuation after sender callbacks drain
 };
+
+namespace Xdp {
+  struct Params : public Params_ {
+    unsigned ifindex = 0; // network-interface index in the current network namespace
+    ZuCSpan netmask; // optional destination CIDR; empty takes all traffic
+    unsigned txSid = 0; // application-assigned sender slot
+    ZmSchedTParams txThread = ZmSchedTParams().isolated(true);
+  };
+}
+ZuDerive(Params, (ZuUnion<Xdp::Params>));
 
 // The caller drives Rx/Tx on their respective single owners. Allocation/free
 // may run on other threads. Allocation holds backing until explicit pool return;
 // an accepted send also holds it until kernel completion or safe close.
 class ZxdpAPI Instance : public ZmPolymorph {
-friend struct InstanceData;
-
 public:
-  // Normally null on failure. A non-ready handle with an error retains any
-  // pending kernel rollback; keep it and retry close until it completes.
-  static ZmRef<Instance> create(Params, ZtString<> &error);
-  ~Instance() override;
+  ~Instance() override = default;
   Instance(const Instance &) = delete;
   Instance &operator =(const Instance &) = delete;
 
-  bool ready() const;
-  unsigned ifindex() const;
-  unsigned mtu() const;
-  bool zeroCopy() const;
-  ZuBSpan mac() const;
+  // Pools are independent of the factory instance and can precede init().
+  virtual ZmRef<Zi::IOBufPool> bufPool(unsigned count, unsigned size,
+    unsigned headRoom = 0, unsigned tailRoom = 0,
+    unsigned align = ZiIOBuf_DefltAlign) = 0;
+  // Initialize once. Retain the handle after failure and close it to finish
+  // rollback. Configuration may expire on return; pool references are retained.
+  virtual ZuUnion<void, ZeException> init(const Params &) = 0;
+  virtual bool ready() const = 0;
+  virtual unsigned ifindex() const = 0;
+  virtual unsigned mtu() const = 0;
+  virtual bool zeroCopy() const = 0;
+  virtual ZuBSpan mac() const = 0;
   // False acquires no kernel lease. After true, keep bytes immutable until
-  // kernel retirement. Pool return may precede retirement; recycling waits for
-  // both the allocation lease and kernel lease to end. One descriptor per slot.
-  bool send(uint8_t *packet, unsigned length);
-  // Process packets on the Rx owner until woken (or the device fails).
-  // Idle service spins Params::spin rounds, then blocks internally in epoll.
-  void rx();
-  // Any thread, including the receive callback. Each posted wake returns one
-  // rx() call; a wake before entry remains pending. No per-wake allocation.
-  void wake();
-  unsigned pollTx(); // number of kernel submissions retired this turn
-  // Synchronous enumeration; consume telemetry inside the callback. Closed
-  // instances retain final ring views until destruction, without live mappings.
-  unsigned allQueues(Ztc::QueueMgr::AllFn) const;
-  bool stopSender(); // quiesce sender slot; completion arrives through txStopped
+  // kernel retirement. One descriptor may be outstanding for each slot.
+  virtual bool send(uint8_t *packet, unsigned length) = 0;
+  virtual void rx() = 0; // Rx owner, until wake() or device failure
+  virtual void wake() = 0;
+  virtual unsigned pollTx() = 0;
+  virtual unsigned allQueues(Ztc::QueueMgr::AllFn) const = 0;
+  virtual bool stopSender() = 0;
+  // Quiesce Rx, Tx and wake callers first. True means closed, false means
+  // retirement is pending; an error never authorizes releasing kernel backing.
+  virtual ZuUnion<bool, ZeException> close() = 0;
 
-  // Wake/join Rx and quiesce Tx and all wake callers first. An exception result
-  // preserves the handle for retry; only successful kernel retirement permits
-  // pending backing to return.
-  // Void means success; an empty exception means retirement is pending.
-  ZuUnion<void, ZeException> close();
-
-private:
-  explicit Instance(InstanceData *data) : m_data{data} { }
-  InstanceData *m_data;
+protected:
+  Instance() = default;
 };
+
+ZxdpExtern ZmRef<Instance> instance(Type::T);
 
 } // namespace Zxdp
 #endif /* Zxdp_HH */

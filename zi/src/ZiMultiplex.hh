@@ -767,7 +767,7 @@ public:
   ZiMultiplex *mx() const { return m_mx; }
 
   // type will be one of RxUDP, TxUDP, RxTCP, TxTCP, RxTLS, TxTLS
-  virtual Zi::IOBufPlugin *allocator(
+  virtual Zi::IOBufPool *allocator(
     Zi::IOBufType::T type,
     unsigned size, unsigned align, unsigned count) = 0;
 
@@ -1037,7 +1037,7 @@ public:
 	Type == Zi::IOBufType::RxTCP || 
 	Type == Zi::IOBufType::TxTCP) {
       if (m_plugin)
-	a = new Zi::IOBufPluginAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>(
+	a = new Zi::IOBufPoolAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>(
 	  this, m_plugin->allocator(Type, Size, Align, count));
     }
     if (!a)

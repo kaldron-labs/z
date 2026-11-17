@@ -13,10 +13,9 @@
 #include <string.h>
 
 #include <zlib/ZuTime.hh>
+
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmPolymorph.hh>
-#include <zlib/ZutcpAlloc.hh>
-#include <zlib/ZutcpQueue.hh>
 #include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZiAssert.hh>
@@ -24,6 +23,9 @@
 #include <zlib/ZiIP.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTxStream.hh>
+
+#include <zlib/ZutcpAlloc.hh>
+#include <zlib/ZutcpQueue.hh>
 
 namespace Zutcp_ {
 
@@ -83,7 +85,7 @@ struct TxBacking : public PacketBuf {
   ZmRef<ZiIOBuf> pending;
   PacketLease backing;
   Zi::IOBufAllocator *native = nullptr;
-  Zxdp::BufPool *pool = nullptr;
+  Zi::IOBufPool *pool = nullptr;
   uint8_t *data = nullptr;
   uint32_t size = 0;
   uint32_t payloadOffset = 0, payloadLength = 0;

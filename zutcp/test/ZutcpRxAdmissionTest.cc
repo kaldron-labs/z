@@ -5,13 +5,21 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmRef.hh>
+
 #include <zlib/Zutcp.hh>
+
 #include "ZutcpTestAlloc.hh"
 
 using namespace ZuTestUtil;
 using namespace Zutcp;
 
-struct AdmissionApp : Hub<AdmissionApp> {
+struct AdmissionApp : public ZmNHeap<AdmissionApp>, public Hub<AdmissionApp> {
+friend inline ZuStringT<"Zutcp.RxAdmissionTest.AdmissionApp"> ZmNHeapID(AdmissionApp *);
+  using ZmNHeap<AdmissionApp>::operator new;
+  using ZmNHeap<AdmissionApp>::operator delete;
   ZiMultiplex multiplex;
   bool allow = true;
   unsigned demands = 0;
@@ -77,7 +85,8 @@ static ByteData dataFrame(ZiIOBuf *buf, uint64_t offset)
 static void testRefusedData()
 {
   ZuTestScope(testRefusedData);
-  AdmissionApp app;
+  ZmRef<AdmissionApp> appRef = new AdmissionApp;
+  auto &app = *appRef;
   ZmRef<AdmissionCxn> cxn = new AdmissionCxn{&app};
   auto source = bytes(app, "tail");
   app.allow = false;
@@ -99,7 +108,8 @@ static void testRefusedData()
 static void testGapService()
 {
   ZuTestScope(testGapService);
-  AdmissionApp app;
+  ZmRef<AdmissionApp> appRef = new AdmissionApp;
+  auto &app = *appRef;
   ZmRef<AdmissionCxn> cxn = new AdmissionCxn{&app};
   auto tail = bytes(app, "tail");
   auto head = bytes(app, "head");
@@ -127,7 +137,8 @@ static void testGapService()
 static void testServiceWindow()
 {
   ZuTestScope(testServiceWindow);
-  AdmissionApp app;
+  ZmRef<AdmissionApp> appRef = new AdmissionApp;
+  auto &app = *appRef;
   app.allow = false;
   ZmRef<AdmissionCxn> cxn = new AdmissionCxn{&app};
   auto part = bytes(app, "data");

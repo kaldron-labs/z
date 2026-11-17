@@ -5,12 +5,19 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <string.h>
+
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuPtr.hh>
+
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmQueue.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmRef.hh>
+
 #include <zlib/ZtArray.hh>
+
 #include <zlib/Zutcp.hh>
+
 #include "ZutcpTestAlloc.hh"
 
 using namespace ZuTestUtil;
@@ -288,8 +295,12 @@ struct TCPStateTest {
   template <typename T> static uint64_t cwnd(T &link) { return core(link).m_congestion.cwnd(); }
   template <typename T> static bool pacingReady(T &link) { return core(link).pacingReady(); }
   template <typename T> static auto diag(T &link) { return core(link).txDiag(); }
-  template <typename T> static unsigned backoff(T &link) { return core(link).m_dataRto.backoff(); }
-  template <typename T> static ZuTime rtoDeadline(T &link) { return core(link).m_dataRto.deadline(); }
+  template <typename T> static unsigned backoff(T &link) {
+    return core(link).m_dataRto.backoff();
+  }
+  template <typename T> static ZuTime rtoDeadline(T &link) {
+    return core(link).m_dataRto.deadline();
+  }
   template <typename T> static uint64_t paced(T &link) {
     return core(link).m_pacer.nextSendTime();
   }
@@ -428,13 +439,17 @@ struct TCPStateTest {
 };
 }
 
-struct App : Zutcp::Hub<App> {
+struct App : public ZmNHeap<App>, public Zutcp::Hub<App> {
+friend inline ZuStringT<"Zutcp.DataTest.App"> ZmNHeapID(App *);
+  using ZmNHeap<App>::operator new;
+  using ZmNHeap<App>::operator delete;
   using Base = Zutcp::Hub<App>;
   ZiMultiplex multiplex{ZiMxParams().scheduler([](auto &s) { s.nThreads(4); })
     .rxThread(1).txThread(2)};
   Zi::IOBufAllocator *rx = nullptr, *control = nullptr, *nativeAllocator = nullptr,
     *nativeAllocator2 = nullptr;
-  Zxdp::BufPool *nativePool = nullptr;
+  Zi::IOBufPool *nativePool = nullptr;
+  ZmRef<Zxdp::Instance> nativeFactory = Zxdp::instance(Zxdp::Type::Xdp);
   ZmQueue<ZmFn<>> txJobs, rxJobs;
   bool holdTx = false, holdRx = false, allowRx = true, writable = true;
   unsigned demands = 0;
@@ -475,7 +490,7 @@ struct App : Zutcp::Hub<App> {
   }
   Zi::IOBufAllocator *dataTxAllocator() const { return Zutcp::inlineAllocator(); }
   bool txWritable(const Zutcp::TxBacking &) const { return writable; }
-  Zxdp::BufPool *txPool(Zi::IOBufAllocator *a) const {
+  Zi::IOBufPool *txPool(Zi::IOBufAllocator *a) const {
     return a && (a == nativeAllocator || a == nativeAllocator2) ? nativePool : nullptr;
   }
   bool retainRx(ZiIOBuf *, ZmRef<Zutcp::RxAccount> &, uint64_t) { ++demands; return allowRx; }
@@ -577,7 +592,7 @@ friend inline ZuStringT<"Zutcp.DataTest.Native"> ZmNHeapID(Native *);
   ZmRef<ZiIOBuf> allocBuf(void *, uint32_t, uint32_t) override { return {}; }
 };
 
-static Zutcp::SentFrameRef retained(Native &a, Zxdp::BufPool &pool,
+static Zutcp::SentFrameRef retained(Native &a, Zi::IOBufPool &pool,
     unsigned length = 64, uint64_t offset = 0)
 {
   ZmRef<Zutcp::TxBacking> source = new Zutcp::TxRanges::Node{};
@@ -616,7 +631,8 @@ static unsigned consume(Link &link)
 static void peerEcho(unsigned scenario)
 {
   ZuTestScopeRT(peerEcho);
-  App app{ZuTime{0, 25000000}, ZuTime{10}};
+  ZmRef<App> appRef = new App{ZuTime{0, 25000000}, ZuTime{10}};
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::peerTimers(*link);
   auto before = app.clock;
@@ -643,11 +659,12 @@ static void peerEcho(unsigned scenario)
 static void wholeOriginal(bool accept, bool syn)
 {
   ZuTestScopeRT(wholeOriginal);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   if (syn) Zutcp::TCPStateTest::syn(*link);
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
-  app.nativeAllocator = &a; app.nativePool = &pool;
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
+  app.nativeAllocator = &a; app.nativePool = pool;
   ZmRef<ZiIOBuf> original = new Zi::IOBufStub<ZiIOBuf>{
     a.bytes, sizeof(a.bytes), &a, nullptr, 64, false, true};
   original->skip = 256;
@@ -687,10 +704,11 @@ static void wholeOriginal(bool accept, bool syn)
 static void originalTxOrder(unsigned scenario)
 {
   ZuTestScopeRT(originalTxOrder);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
-  app.nativeAllocator = &a; app.nativePool = &pool;
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
+  app.nativeAllocator = &a; app.nativePool = pool;
   ZmRef<ZiIOBuf> original = new Zi::IOBufStub<ZiIOBuf>{
     a.bytes, sizeof(a.bytes), &a, nullptr, 64, false, true};
   original->skip = 256;
@@ -759,10 +777,11 @@ static void originalTxOrder(unsigned scenario)
 static void immediateACKBurst()
 {
   ZuTestScope(immediateACKBurst);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
-  app.nativeAllocator = &a; app.nativePool = &pool;
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
+  app.nativeAllocator = &a; app.nativePool = pool;
   ZmRef<ZiIOBuf> original = new Zi::IOBufStub<ZiIOBuf>{
     a.bytes, sizeof(a.bytes), &a, nullptr, 64, false, true};
   original->skip = 256;
@@ -808,7 +827,8 @@ static void immediateACKBurst()
 static void sentACKTimestamp()
 {
   ZuTestScope(sentACKTimestamp);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::timestamps(*link, 100);
   Zutcp::TCPStateTest::advanceRx(*link, 5);
@@ -841,7 +861,8 @@ static void sentACKTimestamp()
     Zutcp::TCPStateTest::recent(*link) == 101 &&
     Zutcp::TCPStateTest::learnTimestamp(*link, 4, 103) &&
     Zutcp::TCPStateTest::recent(*link) == 103;
-  ZuCHECK(refused && unchanged && withheld && accepted && exact && published && learned && bounded,
+  ZuCHECK(refused && unchanged && withheld && accepted && exact &&
+      published && learned && bounded,
     "successful return publishes the packet's exact ACK; refusal leaves Last.ACK.sent "
     "unchanged and TS.Recent excludes uncovered sequence");
   link->finish();
@@ -850,10 +871,11 @@ static void sentACKTimestamp()
 static void probeQuota(bool accept)
 {
   ZuTestScopeRT(probeQuota);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
-  auto ref = retained(a, pool);
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
+  auto ref = retained(a, *pool);
   bool setup = Zutcp::TCPStateTest::record(*link, ref);
   bool first = false, reentry = true, second = true;
   unsigned attempts = 0;
@@ -880,10 +902,11 @@ static void probeQuota(bool accept)
 static void admissionAndACK()
 {
   ZuTestScope(admissionAndACK);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
-  auto ref = retained(a, pool, 4);
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
+  auto ref = retained(a, *pool, 4);
   bool setup = Zutcp::TCPStateTest::record(*link, ref);
   app.allowRx = false;
   bool refused = link->receive(input(app, "tail", 4, 4));
@@ -902,11 +925,12 @@ static void admissionAndACK()
 static void directACKAdmission(unsigned scenario)
 {
   ZuTestScopeRT(directACKAdmission);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
   app.holdTx = app.holdRx = true;
-  auto ref = retained(a, pool, 4);
+  auto ref = retained(a, *pool, 4);
   bool received = true;
   bool setup = Zutcp::TCPStateTest::record(*link, ref);
   if (scenario == 3) {
@@ -942,7 +966,8 @@ static void directACKAdmission(unsigned scenario)
 static void ackHoldTimer(bool disabled)
 {
   ZuTestScopeRT(ackHoldTimer);
-  App app{disabled ? ZuTime{0} : ZuTime{0, 50000}};
+  ZmRef<App> appRef = new App{disabled ? ZuTime{0} : ZuTime{0, 50000}};
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::requestACK(*link, true);
   auto deadline = Zutcp::TCPStateTest::ackDeadline(*link);
@@ -990,7 +1015,8 @@ static void ackHoldTimer(bool disabled)
 static void ackHoldCoalesce()
 {
   ZuTestScopeRT(ackHoldCoalesce);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   app.holdTx = app.holdRx = true;
   Zutcp::TCPStateTest::requestACK(*link, false);
@@ -1026,7 +1052,8 @@ static void ackHoldCoalesce()
 static void ackHoldByteBound()
 {
   ZuTestScopeRT(ackHoldByteBound);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::rxMSS(*link, 100);
   Zutcp::TCPStateTest::advanceRx(*link, 200);
@@ -1043,7 +1070,8 @@ static void ackHoldByteBound()
 static void handshakeRTT(bool server, unsigned scenario)
 {
   ZuTestScopeRT(handshakeRTT);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::handshake(*link, server);
   unsigned attempts = 0;
@@ -1091,12 +1119,13 @@ static void handshakeRTT(bool server, unsigned scenario)
 static void synACKHandoff(unsigned scenario)
 {
   ZuTestScopeRT(synACKHandoff);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::syn(*link);
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
   Zutcp::SentFrameRef ref;
-  if (scenario) ref = retained(a, pool);
+  if (scenario) ref = retained(a, *pool);
   app.holdTx = app.holdRx = true;
   bool sent = link->output(ref, [scenario](auto buf) {
     if (scenario) { buf->data__ = 0; buf->size = buf->skip = buf->length = 0; }
@@ -1120,13 +1149,14 @@ static void synACKHandoff(unsigned scenario)
 static void synRSTQualification(bool tfo)
 {
   ZuTestScopeRT(synRSTQualification);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::syn(*link);
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
   Zutcp::SentFrameRef ref;
   unsigned end = tfo ? 64 : 0;
-  if (tfo) ref = retained(a, pool);
+  if (tfo) ref = retained(a, *pool);
   Zutcp::TCPStateTest::synCandidate(*link, end);
   bool unsent = !Zutcp::TCPStateTest::handshakeACK(*link, end, true);
   bool refused = !link->output(ref, [](auto) { return false; }, true);
@@ -1163,12 +1193,13 @@ static void synRSTQualification(bool tfo)
 static void selectiveRecovery()
 {
   ZuTestScope(selectiveRecovery);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Native a{app.mx()}, b{app.mx()}, c{app.mx()}, d{app.mx()};
-  Zxdp::BufPool pool{4, sizeof(a.bytes)};
-  auto first = retained(a, pool, 64, 0), second = retained(b, pool, 64, 64);
-  auto third = retained(c, pool, 64, 128), fourth = retained(d, pool, 64, 192);
+  auto pool = app.nativeFactory->bufPool(4, sizeof(a.bytes));
+  auto first = retained(a, *pool, 64, 0), second = retained(b, *pool, 64, 64);
+  auto third = retained(c, *pool, 64, 128), fourth = retained(d, *pool, 64, 192);
   bool setup = Zutcp::TCPStateTest::record(*link, first) &&
     Zutcp::TCPStateTest::record(*link, second) &&
     Zutcp::TCPStateTest::record(*link, third) && Zutcp::TCPStateTest::record(*link, fourth);
@@ -1203,11 +1234,12 @@ static void selectiveRecovery()
 static void cumulativeFallback()
 {
   ZuTestScope(cumulativeFallback);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::disableSACK(*link);
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
-  auto ref = retained(a, pool);
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
+  auto ref = retained(a, *pool);
   bool setup = Zutcp::TCPStateTest::record(*link, ref);
   Zutcp::TCPStateTest::ack(*link, 0);
   Zutcp::TCPStateTest::ack(*link, 0);
@@ -1226,7 +1258,8 @@ static void cumulativeFallback()
 static void receiveSACK()
 {
   ZuTestScope(receiveSACK);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   bool received = link->receive(input(app, "efgh", 4)) &&
     link->receive(input(app, "ijkl", 12));
@@ -1244,7 +1277,8 @@ static void receiveSACK()
 static void emptySACK()
 {
   ZuTestScope(emptySACK);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   Zutcp::DataRxPQueue queue{0};
   Zutcp::RxSACK state;
   auto add = [&app, &queue](uint64_t offset) {
@@ -1294,7 +1328,8 @@ static void emptyDSACK()
 static void paws(bool wrap)
 {
   ZuTestScopeRT(paws);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   uint32_t recent = wrap ? uint32_t(-8) : 100;
   Zutcp::TCPStateTest::timestamps(*link, recent);
@@ -1319,7 +1354,8 @@ static void paws(bool wrap)
 static void pawsBoundary(unsigned scenario)
 {
   ZuTestScopeRT(pawsBoundary);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::timestamps(*link, 100);
   auto since = app.clock;
@@ -1351,7 +1387,8 @@ static void pawsBoundary(unsigned scenario)
 static void pawsClock(unsigned scenario)
 {
   ZuTestScopeRT(pawsClock);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   if (scenario != 2)
     Zutcp::TCPStateTest::timestamps(*link, scenario == 3 ? uint32_t(-1) : 100);
@@ -1383,12 +1420,13 @@ static void pawsAdmission(unsigned scenario)
 {
   ZuTestScopeRT(pawsAdmission);
   bool stale = scenario == 1;
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::timestamps(*link, 100);
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
   app.holdTx = app.holdRx = true;
-  auto ref = retained(a, pool, 4);
+  auto ref = retained(a, *pool, 4);
   bool setup = Zutcp::TCPStateTest::record(*link, ref);
   // A fresh retransmission must use current PAWS evidence and arrival time.
   app.clock += ZuTime{1};
@@ -1418,7 +1456,8 @@ static void pawsAdmission(unsigned scenario)
 static void mssBudget(bool v6, unsigned peer, bool sack)
 {
   ZuTestScopeRT(mssBudget);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   unsigned expected = peer ? peer : unsigned(v6 ? 1220 : 536);
   if (expected > 1200) expected = 1200;
@@ -1439,10 +1478,11 @@ static void mssBudget(bool v6, unsigned peer, bool sack)
 static void positiveWindow(unsigned window)
 {
   ZuTestScopeRT(positiveWindow);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
-  auto ref = retained(a, pool);
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
+  auto ref = retained(a, *pool);
   Zutcp::TCPStateTest::window(*link, window);
   unsigned attempts = 0;
   bool sent = link->output(ref, [&attempts](auto buf) {
@@ -1472,10 +1512,11 @@ static void positiveWindow(unsigned window)
 static void pacedECN()
 {
   ZuTestScope(pacedECN);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native a{app.mx()}, b{app.mx()}; Zxdp::BufPool pool{2, sizeof(a.bytes)};
-  auto first = retained(a, pool), second = retained(b, pool, 64, 64);
+  Native a{app.mx()}, b{app.mx()}; auto pool = app.nativeFactory->bufPool(2, sizeof(a.bytes));
+  auto first = retained(a, *pool), second = retained(b, *pool, 64, 64);
   Zutcp::TCPStateTest::pacingRTT(*link);
   Zutcp::TCPStateTest::ecn(*link);
   unsigned attempts = 0;
@@ -1523,12 +1564,13 @@ static void pacedECN()
 static void peerAckMerge(unsigned scenario)
 {
   ZuTestScopeRT(peerAckMerge);
-  App app{ZuTime{0}, {}, false};
+  ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::stage(*link, false);
   Native source{app.mx()}, replacement{app.mx()};
-  Zxdp::BufPool pool{2, sizeof(source.bytes)};
-  auto ref = retained(source, pool, 128);
+  auto pool = app.nativeFactory->bufPool(2, sizeof(source.bytes));
+  auto ref = retained(source, *pool, 128);
   bool recorded = Zutcp::TCPStateTest::record(*link, ref);
   Zutcp::TCPStateTest::peer(*link, 0);
   app.holdTx = true;
@@ -1556,7 +1598,7 @@ static void peerAckMerge(unsigned scenario)
     auto old = app.txJobs.shift();
     app.holdTx = false;
     Zutcp::TCPStateTest::stage(*link, false);
-    auto fresh = retained(replacement, pool, 128);
+    auto fresh = retained(replacement, *pool, 128);
     recorded &= Zutcp::TCPStateTest::record(*link, fresh);
     Zutcp::TCPStateTest::peer(*link, 0);
     app.holdTx = true;
@@ -1576,7 +1618,8 @@ static void peerAckMerge(unsigned scenario)
     bool queued = app.txJobs.count_() == 3;
     app.runTx();
     ZuCHECK(once && queued && Zutcp::TCPStateTest::duplicates(*link) == 3 && link->queued,
-      "snapshot deduplication invents no duplicate ACK; three wire duplicates still trigger recovery");
+      "snapshot deduplication invents no duplicate ACK; three wire duplicates still trigger "
+      "recovery");
     Zutcp::TCPStateTest::peer(*link, 128);
   }
   app.runTx();
@@ -1593,10 +1636,11 @@ static void peerAckMerge(unsigned scenario)
 static void peerAckWindow(unsigned scenario)
 {
   ZuTestScopeRT(peerAckWindow);
-  App app{ZuTime{0}, {}, false};
+  ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native source{app.mx()}; Zxdp::BufPool pool{1, sizeof(source.bytes)};
-  auto ref = retained(source, pool, 128);
+  Native source{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(source.bytes));
+  auto ref = retained(source, *pool, 128);
   bool recorded = Zutcp::TCPStateTest::record(*link, ref);
   Zutcp::TCPStateTest::peer(*link, 0);
   app.holdTx = true;
@@ -1616,7 +1660,8 @@ static void peerAckWindow(unsigned scenario)
   Zutcp::TCPStateTest::peer(*link, uint32_t(ack), 65535, 0);
   app.runTx();
   ZuCHECK(recorded && latest && Zutcp::TCPStateTest::peerLimit(*link) == ack + window,
-    "shrink, zero and reopen survive newer cumulative snapshots; older sequence cannot expand credit");
+    "shrink, zero and reopen survive newer cumulative snapshots; older sequence cannot expand "
+    "credit");
   Zutcp::TCPStateTest::peer(*link, 128, window, 2);
   app.runTx();
   link->finish(); link = nullptr; ref = {};
@@ -1627,12 +1672,13 @@ static void peerAckWindow(unsigned scenario)
 static void peerAckWrap()
 {
   ZuTestScope(peerAckWrap);
-  App app{ZuTime{0}, {}, false};
+  ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native source{app.mx()}; Zxdp::BufPool pool{1, sizeof(source.bytes)};
+  Native source{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(source.bytes));
   constexpr uint64_t base = (uint64_t(1) << 32) - 4;
   Zutcp::TCPStateTest::peerWrap(*link, base);
-  auto ref = retained(source, pool, 8, base);
+  auto ref = retained(source, *pool, 8, base);
   bool recorded = Zutcp::TCPStateTest::record(*link, ref);
   Zutcp::TCPStateTest::peer(*link, uint32_t(base));
   app.holdTx = true;
@@ -1657,12 +1703,13 @@ static void peerAckExceptions()
 {
   ZuTestScope(peerAckExceptions);
   {
-    App app{ZuTime{0}, {}, false};
+    ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+    auto &app = *appRef;
     ZmRef<Link> link = new Link{&app};
     Native a{app.mx()}, b{app.mx()}, c{app.mx()};
-    Zxdp::BufPool pool{3, sizeof(a.bytes)};
-    auto first = retained(a, pool, 1), middle = retained(b, pool, 2, 1),
-      last = retained(c, pool, 1, 3);
+    auto pool = app.nativeFactory->bufPool(3, sizeof(a.bytes));
+    auto first = retained(a, *pool, 1), middle = retained(b, *pool, 2, 1),
+      last = retained(c, *pool, 1, 3);
     bool recorded = Zutcp::TCPStateTest::record(*link, first) &&
       Zutcp::TCPStateTest::record(*link, middle) && Zutcp::TCPStateTest::record(*link, last);
     Zutcp::TCPStateTest::peer(*link, 0);
@@ -1677,18 +1724,21 @@ static void peerAckExceptions()
     app.runTx();
     ZuCHECK(recorded && two && latest && Zutcp::TCPStateTest::discounted(*link) == 1 &&
         Zutcp::TCPStateTest::dsackReports(*link) == 1,
-      "new cumulative progress may precede an older report, whose higher SACK and DSACK remain effective");
+      "new cumulative progress may precede an older report, whose higher SACK and DSACK remain "
+      "effective");
     Zutcp::TCPStateTest::peer(*link, 4);
     app.runTx(); link->finish(); link = nullptr;
     first = {}; middle = {}; last = {};
-    ZuCHECK(a.valid && b.valid && c.valid && a.returned == 1 && b.returned == 1 && c.returned == 1,
+    ZuCHECK(a.valid && b.valid && c.valid &&
+	a.returned == 1 && b.returned == 1 && c.returned == 1,
       "exceptional SACK processing and final cumulative progress retire backing once");
   }
   {
-    App app{ZuTime{0}, {}, false};
+    ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+    auto &app = *appRef;
     ZmRef<Link> link = new Link{&app};
-    Native source{app.mx()}; Zxdp::BufPool pool{1, sizeof(source.bytes)};
-    auto ref = retained(source, pool, 6);
+    Native source{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(source.bytes));
+    auto ref = retained(source, *pool, 6);
     bool recorded = Zutcp::TCPStateTest::record(*link, ref);
     Zutcp::TCPStateTest::peer(*link, 0);
     app.holdTx = true;
@@ -1700,13 +1750,15 @@ static void peerAckExceptions()
     app.runTx();
     Zutcp::TCPStateTest::peer(*link, 6); app.runTx();
     link->finish(); link = nullptr; ref = {};
-    ZuCHECK(source.valid && source.returned == 1, "full header exceptions preserve final retirement");
+    ZuCHECK(source.valid && source.returned == 1,
+      "full header exceptions preserve final retirement");
   }
   {
-    App app{ZuTime{0}, {}, false};
+    ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+    auto &app = *appRef;
     ZmRef<Link> link = new Link{&app};
-    Native source{app.mx()}; Zxdp::BufPool pool{1, sizeof(source.bytes)};
-    auto ref = retained(source, pool, 4); ref.fin = true;
+    Native source{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(source.bytes));
+    auto ref = retained(source, *pool, 4); ref.fin = true;
     bool recorded = Zutcp::TCPStateTest::record(*link, ref);
     Zutcp::TCPStateTest::peer(*link, 0);
     app.holdTx = true;
@@ -1723,15 +1775,16 @@ static void peerAckExceptions()
 static void peerAckBatch()
 {
   ZuTestScope(peerAckBatch);
-  App app{ZuTime{0}, {}, false};
+  ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   constexpr unsigned n = Zutcp::RecoveryScanBatch + 8;
-  Zxdp::BufPool pool{n, 512};
+  auto pool = app.nativeFactory->bufPool(n, 512);
   ZtArray<ZuPtr<Native>> sources;
   bool recorded = true;
   for (unsigned i = 0; i < n; ++i) {
     sources.push(ZuPtr<Native>{new Native{app.mx()}});
-    auto ref = retained(*sources[i], pool, 1, i);
+    auto ref = retained(*sources[i], *pool, 1, i);
     recorded &= Zutcp::TCPStateTest::record(*link, ref);
   }
   Zutcp::TCPStateTest::peer(*link, 0);
@@ -1741,7 +1794,8 @@ static void peerAckBatch()
   if (auto job = app.txJobs.shift()) job();
   ZuCHECK(recorded && link->txAckd() == n - 2 && Zutcp::TCPStateTest::records(*link) &&
       app.txJobs.count_() == 2,
-    "one cumulative ACK retains bounded retirement continuation while newer progress is notified");
+    "one cumulative ACK retains bounded retirement continuation while newer progress is "
+    "notified");
   app.runTx();
   bool returned = true;
   for (const auto &source : sources) returned &= source->valid && source->returned == 1;
@@ -1754,10 +1808,11 @@ static void peerAckBatch()
 static void repeatDataIdle(bool cc)
 {
   ZuTestScopeRT(repeatDataIdle);
-  App app{ZuTime{0}, {}, cc};
+  ZmRef<App> appRef = new App{ZuTime{0}, {}, cc};
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native source{app.mx()}; Zxdp::BufPool pool{1, sizeof(source.bytes)};
-  auto ref = retained(source, pool, 128);
+  Native source{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(source.bytes));
+  auto ref = retained(source, *pool, 128);
   bool recorded = Zutcp::TCPStateTest::record(*link, ref);
   Zutcp::TCPStateTest::peer(*link, 128, 4096);
   auto rtt = Zutcp::TCPStateTest::handshakeRTT(*link);
@@ -1786,13 +1841,15 @@ static void repeatDataIdle(bool cc)
 static void repeatDataSnapshot(unsigned scenario)
 {
   ZuTestScopeRT(repeatDataSnapshot);
-  App app{ZuTime{0}, {}, false};
+  ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native source{app.mx()}; Zxdp::BufPool pool{1, sizeof(source.bytes)};
+  Native source{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(source.bytes));
   uint64_t base = scenario == 2 ? (uint64_t(1) << 32) - 32 : 0;
   if (base) Zutcp::TCPStateTest::peerWrap(*link, base);
-  auto ref = retained(source, pool, 64, base);
-  bool recorded = Zutcp::TCPStateTest::timestampRecord(*link, ref, bool(scenario), false, true, 0);
+  auto ref = retained(source, *pool, 64, base);
+  bool recorded = Zutcp::TCPStateTest::timestampRecord(
+    *link, ref, bool(scenario), false, true, 0);
   app.clock += Zutcp::timeUS(20000);
   app.holdTx = true;
   Zutcp::TCPHeader header{.seq = 7, .ack = uint32_t(base + 64), .window = 4096,
@@ -1810,23 +1867,26 @@ static void repeatDataSnapshot(unsigned scenario)
       bool(*rtt) == bool(scenario) && (!scenario || rtt == Zutcp::timeUS(20000)),
     "DATA snapshots preserve absent/zero timestamp echo, Karn evidence, wrapped ACK and window");
   link->finish(); link = nullptr; ref = {};
-  ZuCHECK(source.valid && source.returned == 1, "snapshot retirement preserves one backing return");
+  ZuCHECK(source.valid && source.returned == 1,
+    "snapshot retirement preserves one backing return");
 }
 
 static void repeatDataReset()
 {
   ZuTestScope(repeatDataReset);
-  App app{ZuTime{0}, {}, false};
+  ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native source{app.mx()}, replacement{app.mx()}; Zxdp::BufPool pool{2, sizeof(source.bytes)};
-  auto ref = retained(source, pool, 64);
+  Native source{app.mx()}, replacement{app.mx()};
+  auto pool = app.nativeFactory->bufPool(2, sizeof(source.bytes));
+  auto ref = retained(source, *pool, 64);
   bool recorded = Zutcp::TCPStateTest::record(*link, ref);
   app.holdTx = true;
   Zutcp::TCPStateTest::peerData(*link, {.seq = 7, .ack = 64, .window = 4096, .flags = 0x18});
   auto old = app.txJobs.shift();
   app.holdTx = false;
   Zutcp::TCPStateTest::stage(*link);
-  auto fresh = retained(replacement, pool, 8);
+  auto fresh = retained(replacement, *pool, 8);
   recorded &= Zutcp::TCPStateTest::record(*link, fresh);
   old();
   ZuCHECK(recorded && !link->txAckd() && link->txNext() == 8 &&
@@ -1841,11 +1901,12 @@ static void repeatDataReset()
 static void repeatDataRecovery(bool sack)
 {
   ZuTestScopeRT(repeatDataRecovery);
-  App app{ZuTime{0}, {}, false};
+  ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::stage(*link, sack);
-  Native a{app.mx()}, b{app.mx()}; Zxdp::BufPool pool{2, sizeof(a.bytes)};
-  auto first = retained(a, pool, 64), second = retained(b, pool, 64, 64);
+  Native a{app.mx()}, b{app.mx()}; auto pool = app.nativeFactory->bufPool(2, sizeof(a.bytes));
+  auto first = retained(a, *pool, 64), second = retained(b, *pool, 64, 64);
   bool recorded = Zutcp::TCPStateTest::record(*link, first) &&
     Zutcp::TCPStateTest::record(*link, second);
   app.clock += Zutcp::timeUS(20000);
@@ -1868,7 +1929,8 @@ static void repeatDataRecovery(bool sack)
   bool loss = link->next(retry);
   ZuCHECK(recorded && before == 2 && after == (sack ? 0U : 2U) && serviced == sack &&
       loss && retry.offset == 0 && retry.length == 64 && link->queued,
-    "live recovery retains DATA duplicate-reset/RACK service and non-SACK keeps its existing counting");
+    "live recovery retains DATA duplicate-reset/RACK service and non-SACK keeps its existing "
+    "counting");
   Zutcp::TCPStateTest::ack(*link, 128);
   link->finish(); link = nullptr; first = {}; second = {}; retry = {};
   ZuCHECK(a.valid && b.valid && a.returned == 1 && b.returned == 1,
@@ -1878,15 +1940,16 @@ static void repeatDataRecovery(bool sack)
 static void repeatDataBatch()
 {
   ZuTestScope(repeatDataBatch);
-  App app{ZuTime{0}, {}, false};
+  ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   constexpr unsigned n = Zutcp::RecoveryScanBatch + 8;
-  Zxdp::BufPool pool{n, 512};
+  auto pool = app.nativeFactory->bufPool(n, 512);
   ZtArray<ZuPtr<Native>> sources;
   bool recorded = true;
   for (unsigned i = 0; i < n; ++i) {
     sources.push(ZuPtr<Native>{new Native{app.mx()}});
-    auto ref = retained(*sources[i], pool, 1, i);
+    auto ref = retained(*sources[i], *pool, 1, i);
     recorded &= Zutcp::TCPStateTest::record(*link, ref);
   }
   app.holdTx = true;
@@ -1909,10 +1972,11 @@ static void repeatDataBatch()
 static void repeatDataACKIntent()
 {
   ZuTestScope(repeatDataACKIntent);
-  App app{ZuTime{0, 25000000}, {}, false};
+  ZmRef<App> appRef = new App{ZuTime{0, 25000000}, {}, false};
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native source{app.mx()}; Zxdp::BufPool pool{1, sizeof(source.bytes)};
-  auto ref = retained(source, pool, 64);
+  Native source{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(source.bytes));
+  auto ref = retained(source, *pool, 64);
   bool recorded = Zutcp::TCPStateTest::record(*link, ref);
   Zutcp::TCPStateTest::ack(*link, 64);
   Zutcp::TCPStateTest::requestACK(*link, false);
@@ -1937,20 +2001,22 @@ static void repeatDataACKIntent()
     "peer-ACK work and queued DATA ACK intent satisfy the refused local ACK exactly once");
   link->flushFn = {};
   link->finish(); link = nullptr; ref = {};
-  ZuCHECK(source.valid && source.returned == 1, "ACK-only retry cannot reacquire retired DATA backing");
+  ZuCHECK(source.valid && source.returned == 1,
+    "ACK-only retry cannot reacquire retired DATA backing");
 }
 
 static void noCCAdmission()
 {
   ZuTestScope(noCCAdmission);
-  App app{ZuTime{0}, {}, false};
+  ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Native sources[12]{{app.mx()}, {app.mx()}, {app.mx()}, {app.mx()},
     {app.mx()}, {app.mx()}, {app.mx()}, {app.mx()},
     {app.mx()}, {app.mx()}, {app.mx()}, {app.mx()}};
-  Zxdp::BufPool pool{16, sizeof(sources[0].bytes)};
+  auto pool = app.nativeFactory->bufPool(16, sizeof(sources[0].bytes));
   Zutcp::SentFrameRef refs[12];
-  for (unsigned i = 0; i < 12; ++i) refs[i] = retained(sources[i], pool, 200, i * 200);
+  for (unsigned i = 0; i < 12; ++i) refs[i] = retained(sources[i], *pool, 200, i * 200);
   Zutcp::TCPStateTest::fastSetup(*link);
   Zutcp::TCPStateTest::pacingRTT(*link);
   app.clockCalls = 0;
@@ -2015,16 +2081,17 @@ static void noCCAdmission()
 static void noCCRecovery(bool rto)
 {
   ZuTestScopeRT(noCCRecovery);
-  App app{ZuTime{0}, {}, false};
+  ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Native sources[8]{{app.mx()}, {app.mx()}, {app.mx()}, {app.mx()},
     {app.mx()}, {app.mx()}, {app.mx()}, {app.mx()}};
-  Zxdp::BufPool pool{8, sizeof(sources[0].bytes)};
+  auto pool = app.nativeFactory->bufPool(8, sizeof(sources[0].bytes));
   Zutcp::SentFrameRef refs[8];
   Zutcp::TCPStateTest::fastSetup(*link);
   bool setup = true;
   for (unsigned i = 0; i < 8; ++i) {
-    refs[i] = retained(sources[i], pool, 200, i * 200);
+    refs[i] = retained(sources[i], *pool, 200, i * 200);
     setup &= link->output(refs[i], [](auto buf) {
       buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
       return true;
@@ -2079,13 +2146,15 @@ static void noCCRecovery(bool rto)
     refs[i] = {};
     returned &= sources[i].valid && sources[i].returned == 1;
   }
-  ZuCHECK(returned, "loss recovery without congestion control preserves and drains exact backing");
+  ZuCHECK(returned,
+    "loss recovery without congestion control preserves and drains exact backing");
 }
 
 static void earlyPolicy(unsigned policy)
 {
   ZuTestScopeRT(earlyPolicy);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::syn(*link);
   app.policy = policy;
@@ -2102,15 +2171,16 @@ static void earlyPolicy(unsigned policy)
 static void rtoQuota(unsigned scenario)
 {
   ZuTestScopeRT(rtoQuota);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Native sources[8]{{app.mx()}, {app.mx()}, {app.mx()}, {app.mx()},
     {app.mx()}, {app.mx()}, {app.mx()}, {app.mx()}};
-  Zxdp::BufPool pool{8, sizeof(sources[0].bytes)};
+  auto pool = app.nativeFactory->bufPool(8, sizeof(sources[0].bytes));
   Zutcp::SentFrameRef refs[8];
   bool setup = true;
   for (unsigned i = 0; i < 8; ++i) {
-    refs[i] = retained(sources[i], pool, 200, i * 200);
+    refs[i] = retained(sources[i], *pool, 200, i * 200);
     setup &= Zutcp::TCPStateTest::record(*link, refs[i]);
   }
   if (scenario == 3) Zutcp::TCPStateTest::ack(*link, 100);
@@ -2164,15 +2234,16 @@ static void rtoQuota(unsigned scenario)
 static void tlpChoice(unsigned scenario)
 {
   ZuTestScopeRT(tlpChoice);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Native a{app.mx()}, b{app.mx()}, c{app.mx()};
-  Zxdp::BufPool pool{3, sizeof(a.bytes)};
-  auto first = retained(a, pool), second = retained(b, pool, 64, 64);
+  auto pool = app.nativeFactory->bufPool(3, sizeof(a.bytes));
+  auto first = retained(a, *pool), second = retained(b, *pool, 64, 64);
   bool setup = Zutcp::TCPStateTest::record(*link, first) &&
     Zutcp::TCPStateTest::record(*link, second);
   if (scenario) {
-    app.nativeAllocator = &c; app.nativePool = &pool;
+    app.nativeAllocator = &c; app.nativePool = pool;
     ZmRef<ZiIOBuf> queued = new Zi::IOBufStub<ZiIOBuf>{
       c.bytes, sizeof(c.bytes), &c, nullptr, 32, false, true};
     queued->skip = 256;
@@ -2195,10 +2266,11 @@ static void tlpChoice(unsigned scenario)
 static void timestampRTT(unsigned scenario)
 {
   ZuTestScopeRT(timestampRTT);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
-  auto ref = retained(a, pool);
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
+  auto ref = retained(a, *pool);
   bool timestamp = scenario < 3;
   bool repeated = scenario == 1;
   bool karn = scenario != 4;
@@ -2219,15 +2291,16 @@ static void timestampRTT(unsigned scenario)
 static void boundedSACK(bool stale)
 {
   ZuTestScopeRT(boundedSACK);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   enum { Count = 260 };
   Native *sources[Count] = {};
-  Zxdp::BufPool pool{512, 512};
+  auto pool = app.nativeFactory->bufPool(512, 512);
   bool setup = true;
   for (unsigned i = 0; i < Count; ++i) {
     sources[i] = new Native{app.mx()};
-    auto ref = retained(*sources[i], pool, 1, i);
+    auto ref = retained(*sources[i], *pool, 1, i);
     setup &= Zutcp::TCPStateTest::record(*link, ref);
   }
   bool probe = Zutcp::TCPStateTest::selectProbe(*link);
@@ -2344,7 +2417,8 @@ public:
 void testMxRxDelivery(bool reentrant)
 {
   ZuTestScope(testMxRxDelivery);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> cxn = new Link{&app};
   ZmRef<MxRxCxn> mx = new MxRxCxn{app.mx()};
   RxAttachAlloc allocator;
@@ -2414,7 +2488,8 @@ void testMxRxDelivery(bool reentrant)
 static void testMxRxRegistered()
 {
   ZuTestScope(testMxRxRegistered);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> cxn = new Link{&app};
   ZmRef<MxRxCxn> mx = new MxRxCxn{app.mx()};
   RxAttachAlloc allocator;
@@ -2448,7 +2523,8 @@ static void testMxRxRegistered()
 static void contiguousHeldBacking(bool refuse)
 {
   ZuTestScope(contiguousHeldBacking);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   RxAttachAlloc allocator;
   alignas(64) uint8_t first[64], second[64];
   memcpy(first + 8, "abc", 3);
@@ -2500,7 +2576,8 @@ static void contiguousHeldBacking(bool refuse)
 static void contiguousQueued(bool prefix)
 {
   ZuTestScope(contiguousQueued);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   link->ready = false;
   app.holdRx = true;
@@ -2545,11 +2622,12 @@ static void contiguousQueued(bool prefix)
 static void mappedTxQueue()
 {
   ZuTestScope(mappedTxQueue);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> cxn = new Link{&app};
   ZmRef<MxRxCxn> mx = new MxRxCxn{app.mx()};
-  Native a{app.mx()}, b{app.mx()}; Zxdp::BufPool pool{2, sizeof(a.bytes)};
-  app.nativeAllocator = &a; app.nativeAllocator2 = &b; app.nativePool = &pool;
+  Native a{app.mx()}, b{app.mx()}; auto pool = app.nativeFactory->bufPool(2, sizeof(a.bytes));
+  app.nativeAllocator = &a; app.nativeAllocator2 = &b; app.nativePool = pool;
   auto make = [](Native &a, ZuBSpan bytes) -> ZmRef<ZiIOBuf> {
     memcpy(a.bytes + 256, bytes.data(), bytes.length());
     auto buf = ZmRef<ZiIOBuf>{new Zi::IOBufStub<ZiIOBuf>{
@@ -2612,11 +2690,12 @@ static void mappedTxQueue()
 static void mappedTxActive(unsigned scenario)
 {
   ZuTestScopeRT(mappedTxActive);
-  App app{ZuTime{0}, {}, false};
+  ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+  auto &app = *appRef;
   ZmRef<Link> cxn = new Link{&app};
   ZmRef<MxRxCxn> mx = new MxRxCxn{app.mx()};
-  Native a{app.mx()}, b{app.mx()}; Zxdp::BufPool pool{2, sizeof(a.bytes)};
-  app.nativeAllocator = &a; app.nativeAllocator2 = &b; app.nativePool = &pool;
+  Native a{app.mx()}, b{app.mx()}; auto pool = app.nativeFactory->bufPool(2, sizeof(a.bytes));
+  app.nativeAllocator = &a; app.nativeAllocator2 = &b; app.nativePool = pool;
   auto make = [](Native &a, ZuBSpan bytes) -> ZmRef<ZiIOBuf> {
     memcpy(a.bytes + 256, bytes.data(), bytes.length());
     auto buf = ZmRef<ZiIOBuf>{new Zi::IOBufStub<ZiIOBuf>{
@@ -2724,7 +2803,8 @@ static void mappedTxActive(unsigned scenario)
 static void sequenceCycle(bool timestamps)
 {
   ZuTestScopeRT(sequenceCycle);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::receiveCycle(*link);
   if (timestamps) Zutcp::TCPStateTest::timestamps(*link, 100);
@@ -2739,7 +2819,8 @@ static void sequenceCycle(bool timestamps)
 static void receiveCE()
 {
   ZuTestScope(receiveCE);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::ecn(*link);
   auto ce = input(app, "one"); ce.ecn = Zutcp::EcnMark::CE;
@@ -2782,14 +2863,15 @@ static void receiveCE()
 static void originalCap(unsigned kind)
 {
   ZuTestScopeRT(originalCap);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
-  app.nativeAllocator = &a; app.nativePool = &pool;
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
+  app.nativeAllocator = &a; app.nativePool = pool;
   Zutcp::SentFrameRef retainedRef;
   bool setup = true;
   if (kind == 2) {
-    retainedRef = retained(a, pool, 200);
+    retainedRef = retained(a, *pool, 200);
     setup = Zutcp::TCPStateTest::record(*link, retainedRef);
   } else if (kind) {
     auto buf = ZmRef<ZiIOBuf>{new Zi::IOBufStub<ZiIOBuf>{
@@ -2831,7 +2913,8 @@ static void resetQualification()
 {
   ZuTestScope(resetQualification);
   for (unsigned scenario = 0; scenario < 2; ++scenario) {
-    App app;
+    ZmRef<App> appRef = new App;
+    auto &app = *appRef;
     ZmRef<Link> link = new Link{&app};
     Zutcp::TCPStateTest::timestamps(*link, 100);
     auto d = input(app, {}, scenario ? 3 : 0, 0, 0x04);
@@ -2851,20 +2934,21 @@ static void resetQualification()
 static void fastRecovery(unsigned scenario)
 {
   ZuTestScopeRT(fastRecovery);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Native sources[9]{{app.mx()}, {app.mx()}, {app.mx()}, {app.mx()}, {app.mx()},
     {app.mx()}, {app.mx()}, {app.mx()}, {app.mx()}};
-  Zxdp::BufPool pool{16, sizeof(sources[0].bytes)};
+  auto pool = app.nativeFactory->bufPool(16, sizeof(sources[0].bytes));
   Zutcp::SentFrameRef refs[8];
   Zutcp::TCPStateTest::fastSetup(*link);
   bool setup = true;
   for (unsigned i = 0; i < 8; ++i) {
-    refs[i] = retained(sources[i], pool, 200, i * 200);
+    refs[i] = retained(sources[i], *pool, 200, i * 200);
     setup &= Zutcp::TCPStateTest::record(*link, refs[i]);
     app.clock += Zutcp::timeUS(1000);
   }
-  app.nativeAllocator = &sources[8]; app.nativePool = &pool;
+  app.nativeAllocator = &sources[8]; app.nativePool = pool;
   auto queued = ZmRef<ZiIOBuf>{new Zi::IOBufStub<ZiIOBuf>{
     sources[8].bytes, sizeof(sources[8].bytes), &sources[8], nullptr, 200, false, true}};
   queued->skip = 256;
@@ -2948,7 +3032,8 @@ static void fastRecovery(unsigned scenario)
 static void readiness()
 {
   ZuTestScope(readiness);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   link->ready = false;
   bool received = link->receive(input(app, "ready"));
@@ -2963,7 +3048,8 @@ static void readiness()
 static void finACKBeforeDequeue()
 {
   ZuTestScope(finACKBeforeDequeue);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::SentFrameRef local;
   local.kind = Zutcp::SentFrameKind::Data; local.fin = true;
@@ -2998,7 +3084,8 @@ static void finACKBeforeDequeue()
 static void finACK(bool heldReader, bool stale)
 {
   ZuTestScopeRT(finACK);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::SentFrameRef local;
   local.kind = Zutcp::SentFrameKind::Data; local.fin = true;
@@ -3038,7 +3125,8 @@ static void finACK(bool heldReader, bool stale)
 static void rxReadCommon()
 {
   ZuTestScope(rxReadCommon);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   app.holdTx = true;
   Zutcp::TCPStateTest::timestamps(*link, 0);
@@ -3063,7 +3151,8 @@ static void rxReadCommon()
 static void rxReadSACK(bool fill)
 {
   ZuTestScopeRT(rxReadSACK);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   app.holdTx = true;
   bool tail = link->receive(input(app, "efgh", 4));
@@ -3088,7 +3177,8 @@ static void rxReadSACK(bool fill)
 static void finACKCovered(bool accepted)
 {
   ZuTestScopeRT(finACKCovered);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   app.holdTx = app.holdRx = true;
   bool received = link->receive(input(app, "end", 0, 0, 0x11));
@@ -3124,7 +3214,8 @@ static void finACKCovered(bool accepted)
 static void finACKBeforeNotice()
 {
   ZuTestScope(finACKBeforeNotice);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::SentFrameRef local;
   local.kind = Zutcp::SentFrameKind::Data; local.fin = true;
@@ -3153,7 +3244,8 @@ static void finACKBeforeNotice()
 static void finACKRetransmit()
 {
   ZuTestScope(finACKRetransmit);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::SentFrameRef local;
   local.kind = Zutcp::SentFrameKind::Data; local.fin = true;
@@ -3207,7 +3299,8 @@ static void finACKRetransmit()
 static void pathRxLocal()
 {
   ZuTestScope(pathRxLocal);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   app.holdTx = true;
   Zutcp::TCPStateTest::pathReceived(*link, {ZiIP{"198.18.0.2"}, 18192}, 17);
@@ -3221,7 +3314,8 @@ static void pathRxLocal()
 static void txReadFresh()
 {
   ZuTestScope(txReadFresh);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app, true};
   uint64_t sent = 99;
   ZuCHECK(link->isServer() && !link->dataGen() &&
@@ -3248,10 +3342,11 @@ static void txReadFresh()
 static void sentACKRead()
 {
   ZuTestScope(sentACKRead);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
-  auto ref = retained(a, pool, 4);
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
+  auto ref = retained(a, *pool, 4);
   app.holdRx = true;
   bool recorded = Zutcp::TCPStateTest::record(*link, ref);
   uint64_t sent = 0;
@@ -3282,7 +3377,8 @@ static void sentACKRead()
 static void ackGeneration(bool txReset)
 {
   ZuTestScopeRT(ackGeneration);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   Zutcp::TCPStateTest::timestamps(*link, 100);
   auto recentTime = Zutcp::TCPStateTest::recentTime(*link);
@@ -3307,10 +3403,11 @@ static void ackGeneration(bool txReset)
 static void txReadReset()
 {
   ZuTestScope(txReadReset);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
-  Native a{app.mx()}; Zxdp::BufPool pool{1, sizeof(a.bytes)};
-  auto ref = retained(a, pool, 4);
+  Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(1, sizeof(a.bytes));
+  auto ref = retained(a, *pool, 4);
   bool recorded = Zutcp::TCPStateTest::record(*link, ref);
   app.holdTx = true;
   Zutcp::TCPStateTest::reset(*link);
@@ -3328,7 +3425,8 @@ static void txReadReset()
 static void txReadDSACK()
 {
   ZuTestScope(txReadDSACK);
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
   bool received = link->receive(input(app, "abcd"));
   app.holdRx = true;

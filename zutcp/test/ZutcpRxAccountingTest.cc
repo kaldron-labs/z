@@ -5,9 +5,12 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdint.h>
+
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmThread.hh>
+
 #include <zlib/ZutcpAlloc.hh>
 
 using namespace ZuTestUtil;

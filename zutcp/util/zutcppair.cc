@@ -8,13 +8,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <net/if.h>
-
 #include <iostream>
 
 #include <zlib/ZmPlatform.hh>
-#include <zlib/ZiFile.hh>
-#include <zlib/Zutcp.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmRef.hh>
+
 #include <zlib/ZtString.hh>
+
+#include <zlib/ZiFile.hh>
+
+#include <zlib/Zutcp.hh>
 
 ZuDerive(PeerBytes, (ZtString<ZtStringHeapID<"Zutcp.NativePeer.Bytes">>));
 // The fixture's bounded request/prefix and cold file-read chunk.
@@ -55,8 +59,11 @@ private:
   ZmSemaphore	m_done, m_connected;
 };
 
-class ClientApp : public Zutcp::Client<ClientApp> {
+class ClientApp : public ZmNHeap<ClientApp>, public Zutcp::Client<ClientApp> {
+friend inline ZuStringT<"Zutcp.NativePeer.ClientApp"> ZmNHeapID(ClientApp *);
 public:
+  using ZmNHeap<ClientApp>::operator new;
+  using ZmNHeap<ClientApp>::operator delete;
   class Cxn;
   ClientApp(Result &result, const PeerBytes &request, unsigned windowChunk = 0) :
     m_result{result}, m_request{request}, m_windowChunk{windowChunk} { }
@@ -196,9 +203,12 @@ void ClientApp::earlyDataRejected(Cxn *link)
 }
 
 class ServerCxn;
-class ServerApp : public Zutcp::Server<ServerApp, ServerCxn> {
+class ServerApp : public ZmNHeap<ServerApp>, public Zutcp::Server<ServerApp, ServerCxn> {
+friend inline ZuStringT<"Zutcp.NativePeer.ServerApp"> ZmNHeapID(ServerApp *);
   using Base = Zutcp::Server<ServerApp, ServerCxn>;
 public:
+  using ZmNHeap<ServerApp>::operator new;
+  using ZmNHeap<ServerApp>::operator delete;
   ServerApp(Result &result, ZiIP address, unsigned port, unsigned count) :
     m_result{result}, m_address{address}, m_port{port}, m_target{count} { }
   ZiIP localIP() const { return m_address; }
@@ -434,7 +444,8 @@ int main(int argc, char **argv)
   auto stack = new Zutcp::Stack{&mx, {.interface = interface, .txSid = 4}};
   mx.plugin(stack);
   if (server) {
-    ServerApp app{result, address, port, count};
+    ZmRef<ServerApp> appRef = new ServerApp{result, address, port, count};
+    auto &app = *appRef;
     auto params = Zutcp::ServerParams{&mx};
     options(params);
     if (getenv("ZUTCP_KERNEL_READ_GATE")) params.maxData(4096);
@@ -454,7 +465,8 @@ int main(int argc, char **argv)
   } else {
     unsigned windowChunk = getenv("ZUTCP_KERNEL_WINDOW_CLIENT") ?
       (Zutcp::tcpPayload(stack->mtu(), address.type()) - 12)>>1 : 0;
-    ClientApp app{result, request, windowChunk};
+    ZmRef<ClientApp> appRef = new ClientApp{result, request, windowChunk};
+    auto &app = *appRef;
     auto params = Zutcp::ClientParams{&mx};
     options(params);
     if (getenv("ZUTCP_KERNEL_WINDOW_CLIENT"))

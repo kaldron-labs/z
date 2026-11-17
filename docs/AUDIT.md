@@ -28,6 +28,27 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
   does not justify scope expansion. When reverting, remove the named change
   and its direct dependents without disturbing other work.
 
+### Error representation
+
+- Red Flag: at `ze` and above, an error is returned, stored, or propagated as a
+  plain string, including string return values, mutable string-reference or
+  pointer output parameters, error-string members, and string error results in
+  callbacks. `ZeString` and named string heaps do not exempt this pattern.
+  Problem: formatting discards structured error identity and provenance, and
+  callers cannot propagate or inspect the original error.
+  Fix: follow [Errors and events](FRAMEWORK.md#errors-and-events). Higher-level
+  fallible functions normally return `ZuUnion<T, ZeException>` (or
+  `ZuUnion<void, ZeException>`); low-level OS wrappers may use a `ZeError`
+  output parameter. Preserve typed `ZeEvent`-derived events or type-erased
+  `ZeException` through callbacks and retained state. Capture original OS
+  errors as `ZeError` instead of transporting `strerror()` output.
+- Permitted use: `ZeString` captures owned message text inside a structured
+  event or logging lambda, such as
+  `ZeLOG(..., ([text = ZeString(message)](auto &s) { s << text; }));`.
+  Final logging/presentation may format a structured error. Such text is a
+  payload or rendered presentation, not an error contract; do not flag it
+  merely because it contains an error message.
+
 ### Code structure
 - Red Flag: long names that violate [STYLE.md's length and abbreviation guidelines](STYLE.md#length-and-abbreviations), including the 28-byte hard upper limit.
   Problem: verbose names obscure meaning and make declarations and uses harder to scan.

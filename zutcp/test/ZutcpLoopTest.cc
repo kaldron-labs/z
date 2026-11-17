@@ -8,9 +8,14 @@
 #include <errno.h>
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmRef.hh>
+
 #include <zlib/ZiLog.hh>
+
 #include <zlib/Zutcp.hh>
+
 #include "ZutcpTestAlloc.hh"
 
 using namespace ZuTestUtil;
@@ -37,7 +42,10 @@ namespace LoopTest {
 
 using TxBufAlloc = Zutcp::TxBufAlloc<>;
 
-struct App : public Zutcp::Hub<App> {
+struct App : public ZmNHeap<App>, public Zutcp::Hub<App> {
+friend inline ZuStringT<"Zutcp.LoopTest.App"> ZmNHeapID(App *);
+  using ZmNHeap<App>::operator new;
+  using ZmNHeap<App>::operator delete;
   using Base = Zutcp::Hub<App>;
   ZiMultiplex multiplex;
   Zi::IOBufAllocator *dataTxAllocator() const { return Zutcp::inlineAllocator(); }
@@ -218,7 +226,8 @@ void testLinkStateAndTelemetry()
 {
   ZuTestScopeRT(testLinkStateAndTelemetry);
 
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<TestLink> client = new TestLink{&app};
   ZmRef<TestLink> server = new TestLink{&app, true};
   checkQueues(*client);
@@ -249,7 +258,8 @@ void splitReorderedData()
   memset(p2, 'c', sizeof(p2));
   Zutcp::ByteData f;
   unsigned used = 0;
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<TestLink> client = new TestLink{&app};
 
   auto packet = dataPkt(
@@ -394,7 +404,8 @@ void testRecoveryFlowAndPMTUD()
     "loop PMTUD active-size blackhole fallback failed");
 
 #ifdef Zutcp_DEBUG
-  App app;
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
   ZmRef<TestLink> link = new TestLink{&app};
   link->initPath(
     ZiSockAddr{ZiIP("127.0.0.1"), 10006},
@@ -416,31 +427,31 @@ void testRecoveryFlowAndPMTUD()
       link->pathDiag().probesLost == 1,
     "runtime PMTUD loss handling failed");
 
-  TestLink expiryLink{&app};
-  expiryLink.initPath(
+  ZmRef<TestLink> expiryLink = new TestLink{&app};
+  expiryLink->initPath(
     ZiSockAddr{ZiIP("127.0.0.1"), 10008},
     ZiSockAddr{ZiIP("127.0.0.1"), 10009});
-  ZuCHECK(expiryLink.startPMTUDProbe(1400),
+  ZuCHECK(expiryLink->startPMTUDProbe(1400),
     "runtime PMTUD expiry probe start failed");
-  expiryLink.expirePMTUDProbe();
-  ZuCHECK(expiryLink.pathProbeRetryPending() &&
-      expiryLink.pathDiag().probesExpired == 1,
+  expiryLink->expirePMTUDProbe();
+  ZuCHECK(expiryLink->pathProbeRetryPending() &&
+      expiryLink->pathDiag().probesExpired == 1,
     "runtime PMTUD expiry did not schedule retry");
 
-  TestLink hintLink{&app};
-  hintLink.initPath(
+  ZmRef<TestLink> hintLink = new TestLink{&app};
+  hintLink->initPath(
     ZiSockAddr{ZiIP("127.0.0.1"), 10010},
     ZiSockAddr{ZiIP("127.0.0.1"), 10011});
-  hintLink.growActivePath(1500);
-  hintLink.applyPathHint(
+  hintLink->growActivePath(1500);
+  hintLink->applyPathHint(
     {Zutcp::PathHintKind::SendTooBig, 1300, EMSGSIZE});
-  ZuCHECK(hintLink.activePathMaxPayload() == 1300 &&
-      hintLink.sendBudget().pmtu == 1300 &&
-      hintLink.pathDiag().sendTooBigHints == 1,
+  ZuCHECK(hintLink->activePathMaxPayload() == 1300 &&
+      hintLink->sendBudget().pmtu == 1300 &&
+      hintLink->pathDiag().sendTooBigHints == 1,
     "runtime PMTUD send-too-big hint handling failed");
-  hintLink.applyPathHint({Zutcp::PathHintKind::KernelMTU, 1250, 0});
-  ZuCHECK(hintLink.activePathMaxPayload() == 1250 &&
-      hintLink.pathDiag().kernelHints == 1,
+  hintLink->applyPathHint({Zutcp::PathHintKind::KernelMTU, 1250, 0});
+  ZuCHECK(hintLink->activePathMaxPayload() == 1250 &&
+      hintLink->pathDiag().kernelHints == 1,
     "runtime PMTUD kernel hint handling failed");
 #endif
 }
@@ -448,8 +459,9 @@ void testRecoveryFlowAndPMTUD()
 void testDatagramPayloadHeadroom(unsigned headroom)
 {
   ZuTestScopeRT(testDatagramPayloadHeadroom);
-  App app;
-  TestLink link{&app};
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
+  ZmRef<TestLink> link = new TestLink{&app};
   Zi::IOBufAllocator *allocator = ([] {
     static ZiMultiplex mx;
     return ZutcpTest::pktRxAllocator(&mx);
@@ -461,7 +473,7 @@ void testDatagramPayloadHeadroom(unsigned headroom)
   buf->skip = headroom;
   memcpy(buf->data(), "abc", 3);
   buf->length = 3;
-  ZuCheckRT(link.receivePayload(buf));
+  ZuCheckRT(link->receivePayload(buf));
   ZuCheckRT(buf->skip == headroom && buf->data() == buf->data_() + headroom &&
     buf->length == 3 && (!headroom || !buf->data_()[0]));
 }
@@ -469,11 +481,12 @@ void testDatagramPayloadHeadroom(unsigned headroom)
 void testQueueFullTelemetry()
 {
   ZuTestScopeRT(testQueueFullTelemetry);
-  App app;
-  TestLink link{&app};
-  Zutcp::TCPStateTest::queueOverflow(link);
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
+  ZmRef<TestLink> link = new TestLink{&app};
+  Zutcp::TCPStateTest::queueOverflow(*link);
   unsigned found = 0;
-  link.allQueues([&found](Ztc::Queue *queue) {
+  link->allQueues([&found](Ztc::Queue *queue) {
     Ztc::QueueTelemetry data;
     queue->telemetry(data);
     if (data.id == "admission") {

@@ -117,8 +117,8 @@ struct ZutcpAPI Diag {
 
 struct LinkRxDiag {
   [[no_unique_address]] DiagCounter endpointReady = 0;
-  ZmAtomic<uint64_t>	datagramsRx = 0;
-  ZmAtomic<uint64_t>	bytesRx = 0;
+  uint64_t	datagramsRx = 0;
+  uint64_t	bytesRx = 0;
   [[no_unique_address]] DiagCounter packetsRx = 0;
   [[no_unique_address]] DiagCounter ackCommitsRx = 0;
   [[no_unique_address]] DiagCounter ackElicitingRx = 0;
@@ -135,8 +135,8 @@ struct LinkRxDiag {
 struct LinkTxDiag {
   bool		lossTimerActive = false;
 
-  ZmAtomic<uint64_t>	packetsTx = 0;
-  ZmAtomic<uint64_t>	bytesTx = 0;
+  uint64_t	packetsTx = 0;
+  uint64_t	bytesTx = 0;
   [[no_unique_address]] DiagCounter dataBytesTx = 0;
   [[no_unique_address]] DiagCounter ackOnlyPacketsTx = 0;
   [[no_unique_address]] DiagCounter dataOnlyPacketsTx = 0;

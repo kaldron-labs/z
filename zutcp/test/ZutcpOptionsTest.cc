@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZutcpOptions.hh>
 #include <zlib/ZutcpMx.hh>
 

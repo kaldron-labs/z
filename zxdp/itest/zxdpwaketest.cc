@@ -18,12 +18,20 @@
 #include <linux/if_packet.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZuTime.hh>
+
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmTime.hh>
+#include <zlib/ZmRef.hh>
+
+#include <zlib/ZePlatform.hh>
+
+#include <zlib/ZiIOBuf.hh>
+
 #include <zlib/Zxdp.hh>
 
 using namespace ZuTestUtil;
@@ -75,14 +83,17 @@ int epoll_wait(int fd, epoll_event *events, int count, int timeout)
 
 static void closeInstance(ZmRef<Zxdp::Instance> &instance)
 {
-  while (instance->close().is<ZeException>()) { }
+  for (;;) {
+    auto result = instance->close();
+    if (result.is<bool>() && result.p<bool>()) break;
+  }
   instance = nullptr;
 }
 
 // Kernel queue release can outlast a completed close. Retry from this test's
 // control caller with the same drained pool, never from packet service.
 static ZmRef<Zxdp::Instance> createInstance(
-  const Zxdp::Params &params, ZtString<> &error)
+  const Zxdp::Params &params, ZeException &error)
 {
   auto deadline = Zm::now() + ZuTime{2};
   unsigned attempts = 0;
@@ -90,7 +101,10 @@ static ZmRef<Zxdp::Instance> createInstance(
     ++attempts;
     wakeFD = -1;
     captureWake = true;
-    auto instance = Zxdp::Instance::create(params, error);
+    auto instance = Zxdp::instance(Zxdp::Type::Xdp);
+    auto initialized = instance->init(params);
+    if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
+    else error = {};
     captureWake = false;
     if (instance && instance->ready()) {
       std::cout << "# raw wake startup attempts=" << attempts << '\n';
@@ -106,15 +120,20 @@ static void testWake()
 {
   ZuTestScopeRT(testWake);
   alarm(20); // a missing wake fails the fixture; time does not establish success
-  Zxdp::BufPool pool{8, 1514}; // two queues, four receive slots each
-  ZtString<> error;
+  auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+  auto pool = backend->bufPool(8, 1514); // two queues, four receive slots each
+  ZeException error;
   ZmSemaphore packet;
-  Zxdp::Params params{
-    .interface = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10)),
-    .rxPool = &pool, .rx = [&pool, &packet](uint8_t *p, unsigned) {
-      pool.free(p);
-      packet.post();
-    }, .spin = 0};
+  Zxdp::Params config(
+    Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
+  auto &params = config.p<Zxdp::Xdp::Params>();
+  params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
+  params.rxPool = pool;
+  params.rx = [&pool, &packet](uint8_t *p, unsigned) {
+    pool->free(p);
+    packet.post();
+  };
+  params.spin = 0;
   ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,
     [&params](auto &thread) { thread = params.txThread; })};
   params.scheduler = &scheduler;
@@ -122,7 +141,7 @@ static void testWake()
   bool started = scheduler.start();
   ZuCheckRT(started);
   if (!started) { alarm(0); return; }
-  auto instance = createInstance(params, error);
+  auto instance = createInstance(config, error);
   bool ready = instance && instance->ready();
   ZuCheckRT(ready, log_("zero-spin receive instance starts: ", error));
   if (!ready) {
@@ -222,7 +241,7 @@ static void testWake()
   entered = nullptr;
   closeInstance(instance);
   ZuCheckRT(scheduler.stop());
-  ZuCheckRT(!pool.used(), log_("receive/wake resources retire with all kernel-held packets"));
+  ZuCheckRT(!pool->used(), log_("receive/wake resources retire with all kernel-held packets"));
   alarm(0);
 }
 
@@ -230,19 +249,24 @@ static void testActiveWake()
 {
   ZuTestScopeRT(testActiveWake);
   alarm(20);
-  Zxdp::BufPool pool{8, 1514};
-  ZtString<> error;
+  auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+  auto pool = backend->bufPool(8, 1514);
+  ZeException error;
   ZmSemaphore active, release;
   Zxdp::Instance *current = nullptr;
   unsigned packets = 0;
-  Zxdp::Params params{
-    .interface = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10)),
-    .rxPool = &pool, .rx = [&pool, &packets, &active, &release](uint8_t *p, unsigned) {
-      ++packets;
-      active.post();
-      release.wait();
-      pool.free(p);
-    }, .spin = unsigned(-1)};
+  Zxdp::Params config(
+    Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
+  auto &params = config.p<Zxdp::Xdp::Params>();
+  params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
+  params.rxPool = pool;
+  params.rx = [&pool, &packets, &active, &release](uint8_t *p, unsigned) {
+    ++packets;
+    active.post();
+    release.wait();
+    pool->free(p);
+  };
+  params.spin = unsigned(-1);
   ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,
     [&params](auto &thread) { thread = params.txThread; })};
   params.scheduler = &scheduler;
@@ -250,7 +274,7 @@ static void testActiveWake()
   bool started = scheduler.start();
   ZuCheckRT(started);
   if (!started) { alarm(0); return; }
-  auto instance = createInstance(params, error);
+  auto instance = createInstance(config, error);
   bool ready = instance && instance->ready();
   ZuCheckRT(ready, log_("long-spin receive instance starts: ", error));
   if (!ready) {

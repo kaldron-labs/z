@@ -3,7 +3,7 @@
 Zxdp supplies raw AF_XDP packet arenas, intrusive pools and kernel ring service.
 The [interface contract](INTERFACE.md) defines its boundary. The caller supplies
 transport state, application adaptation and scheduling.
-Include `<zlib/Zxdp.hh>` and link `libZxdp` and its framework dependencies.
+Include `<zlib/Zxdp.hh>` and link `libZxdp`, `libZi` and their framework dependencies.
 For Zi provider and transport integration see [Zutcp](../zutcp/README.md) and its
 [kernel/native quickstart](../zutcp/util/README.md), including sudo, interface
 ownership, routes and static neighbors.
@@ -11,21 +11,45 @@ Both modules are Linux-only and are excluded from Windows builds.
 
 ## Interface
 
-Include `Zxdp.hh`. Create an `Instance` with named `Params` members:
+Include `Zxdp.hh`. Select a backend with `auto instance = Zxdp::instance(Zxdp::Type::Xdp)`.
+It starts cold. Construct the backend parameters in the generic `Params`
+tagged union, populate them, and call `instance->init(config)`:
 
-* `interface`: network-interface index in the current network namespace.
+```cpp
+Zxdp::Params config(
+  Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
+auto &params = config.p<Zxdp::Xdp::Params>();
+```
+
+AF_XDP-specific types and operations live in `Zxdp::Xdp`.
+`Xdp::Params` inherits the common `Params_` fields; assign fields directly:
+
+* `ifindex`: network-interface index in the current network namespace.
 * `netmask`: optional destination IPv4/IPv6 CIDR. An empty mask selects all
   interface traffic, including non-IP frames. Unmatched traffic passes to the
   kernel. The classifier handles Ethernet and up to two VLAN tags.
-* `txPools`: head of the caller-owned intrusive `BufPool::next` list. Each pool
-  supplies `count` and maximum packet `size`.
-* `rxPool`: one nonempty caller-owned pool with a dedicated Rx region.
+* `txPools`: an owning `Zi::IOBufPoolList` in the caller configuration.
+  Each pool supplies `count`, maximum packet `size` and `align`.
+* `rxPool`: one nonempty `ZmRef<Zi::IOBufPool>` with a dedicated Rx region.
 * `rx`: callback receiving the raw packet address and length.
 * `spin`: idle probe rounds before Rx blocks or the Tx sender returns to its
   scheduler (default 1000).
 * `scheduler` and `txSid`: caller-owned scheduler and explicitly assigned sender slot.
 * `txThread`: `ZmSchedTParams`, isolated by default; apply this configuration to
   the assigned slot before scheduler startup. The scheduler owns sender teardown.
+
+Create pools with `instance->bufPool(count, size, headRoom, tailRoom, align)`.
+It returns `ZmRef<Zi::IOBufPool>`; the registered arena implementation stays
+internal. The same pool supplies backing through `Zi::IOBufPoolAllocator`
+without a separate raw-pool adapter. Headroom and tailroom default to zero and
+alignment defaults to 64 bytes. Add nodes with `params.txPools.pushNode(pool.ptr())`,
+or move an existing list into `params.txPools`. The parameters are constructed
+in place in the union before initialization.
+Initialization reads this union by const reference without consuming it and
+retains one reference per pool through close. Intrusive list membership remains
+with the caller configuration; a node belongs to one
+list at a time. Freeze pool geometry while bound, and retain a pool reference
+for any packet that outlives the instance. Generic Zi pools cannot supply XDP arena slots; use the factory.
 
 Allocate with `txPool.alloc()`, construct the complete Ethernet packet directly
 in that backing and call `instance->send(packet, length)`. A false return leaves
@@ -43,7 +67,7 @@ publication. No Tx epoll, eventfd or wait timeout is used; Rx retains its separa
 epoll/eventfd service. CQ retirement and backing release remain on the Tx owner.
 
 Rx callbacks likewise own their packet until they return it to the Rx pool.
-An advanced Rx wire pointer can be passed directly to `rxPool.free()`.
+An advanced Rx wire pointer can be passed directly to `rxPool->free()`.
 
 One descriptor may be outstanding for a slot. A caller can retain its allocation
 lease past CQ and resubmit the same backing, then return it when transport recovery
@@ -86,7 +110,7 @@ ownership lookup and active slot arrays are allocated during setup.
 
 `rx()` runs on the caller's Rx owner. It processes packets and invokes the
 receive callback until explicitly woken. On idle input it probes the mapped
-rings for `Params::spin` rounds (default 1000), then blocks in epoll on packet
+rings for `Params_::spin` rounds (default 1000), then blocks in epoll on packet
 readiness and an internal eventfd. A round probes the configured Rx queues;
 zero spin goes directly to the wait after checking available work. Packet
 arrival resumes processing inside the same call, rather than returning it.
@@ -106,16 +130,18 @@ operations use preallocated state; they perform no heap allocation or packet/
 buffer searches. Wake/join the receiver and quiesce Tx and wake callers before
 close.
 
-Creation and close are control-path operations. Quiesce both service owners before
-calling `close()`. Its `ZuUnion<void, ZeException>` result holds `void` on success;
-an empty exception means retry is pending. A populated exception
+Initialization and close are control-path operations. Quiesce both service owners before
+calling `close()`. Its `ZuUnion<bool, ZeException>` result holds `true` when closed
+and `false` while kernel retirement is pending. An exception
 retains the handle for explicit recovery/retry. Submitted backing is returned only
 after kernel queue retirement has been observed. Continue close until successful,
-then release the instance. Caller-owned pools outlive the instance and all
-outstanding raw packets. Freeze their configuration while bound.
+then release the instance. Pools with outstanding raw packets must outlive those
+packets. Freeze their configuration while bound.
 
-Creation normally returns null on failure. If kernel rollback is still pending,
-it returns a non-ready handle with an error; retain that handle and finish close.
+`instance->init(config)` returns `ZuUnion<void, ZeException>`. The exception
+branch preserves the setup cause. Keep the original instance on either branch
+and complete close, including any pending kernel rollback after failed init.
+Backend selection and the virtual pool factory perform no interface activation.
 The interface must have no unrelated XDP attachment. Guarded attach/detach protects
 other owners, including changes concurrent with control operations.
 

@@ -23,12 +23,11 @@
 #include <zlib/ZmRingFn.hh>
 #include <zlib/ZmThread.hh>
 
-#include <zlib/ZtString.hh>
-
 #include <zlib/ZePlatform.hh>
 
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiIP.hh>
+
 #include <zlib/ZutcpQueue.hh>
 
 namespace ZutcpLog_ {
@@ -442,20 +441,20 @@ private:
   Queue			m_queue;
   mutable Lock		m_lock;
 
-  // Producers share admission counters; the writer also drains queueCount.
+  // Producers publish queueCount for writer draining; diagnostics permit approximate reads.
   alignas(Zm::CacheLineSize)
   ZmAtomic<unsigned>	m_queueCount = 0;
-  ZmAtomic<uint64_t>	m_recordsEnqueued = 0;
-  ZmAtomic<uint64_t>	m_recordsDropped = 0;
-  ZmAtomic<uint64_t>	m_ringBackPressure = 0;
+  uint64_t	m_recordsEnqueued = 0;
+  uint64_t	m_recordsDropped = 0;
+  uint64_t	m_ringBackPressure = 0;
 
-  // Writer-exclusive work and publication counters.
+  // Writer-exclusive work and diagnostic counters.
   alignas(Zm::CacheLineSize)
   Trace			*m_activeTrace = nullptr;
   ZeLogBuf		m_buf;
-  ZmAtomic<uint64_t>	m_recordsWritten = 0;
-  ZmAtomic<uint64_t>	m_writerFailures = 0;
-  ZmAtomic<uint64_t>	m_bytesWritten = 0;
+  uint64_t	m_recordsWritten = 0;
+  uint64_t	m_writerFailures = 0;
+  uint64_t	m_bytesWritten = 0;
 };
 
 #else /* Zutcp_DEBUG */

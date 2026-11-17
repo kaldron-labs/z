@@ -6,7 +6,8 @@ Linux AF_XDP raw packet service and packet validation utilities. Application pro
 
 ## Subdirectories & Boundaries
 
-- [Packet library](./src/EGM.md): `Zxdp::Instance`, `Params`, and caller-owned `BufPool`.
+- [Packet library](./src/EGM.md): abstract `Zxdp::Instance`, tagged `Params`, and
+  `Zi::IOBufPool` references supplied by the selected backend.
 - [Packet utility and fixture](./util/EGM.md): direct packet exchange plus isolated namespace or physical-interface execution.
 
 ## Interface
@@ -19,7 +20,10 @@ Linux AF_XDP raw packet service and packet validation utilities. Application pro
 
 ## Side Effects
 
-`InstanceData::init` provisions mapped backing, sockets, BPF programs/maps, and event descriptors; packet service submits and receives raw frames. Utility fixture mode creates namespace-local links and writes run artifacts. See the child contracts for resource and teardown details.
+The `Zxdp::Xdp` implementation of `Instance::init` provisions mapped backing,
+sockets, BPF programs/maps, and event descriptors; packet service submits and
+receives raw frames. Utility fixture mode creates namespace-local links and
+writes run artifacts. See the child contracts for resource and teardown details.
 
 ## Verification
 

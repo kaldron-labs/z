@@ -14,9 +14,13 @@
 #include <unistd.h>
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTime.hh>
+
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZutcpIP.hh>
 #include <zlib/ZutcpMx.hh>
 
@@ -45,42 +49,43 @@ static void testRoute(bool v6)
   Zutcp::IPPath path{wildcard, destination, {}, {}, 0};
   uint8_t localMAC[6], remoteMAC[6];
   bool addresses = mac(index, localMAC) && mac(other, remoteMAC);
-  ZtString<> error;
-  bool found = Zutcp::resolveIPPath(index, path, error);
+  auto result = Zutcp::resolveIPPath(index, path);
+  bool found = result.is<Zutcp::IPPath>();
+  if (found) path = result.p<Zutcp::IPPath>();
   ZuCheckRT(addresses && found && path.local == source &&
       path.remote == destination && path.mtu == 1500 &&
       !memcmp(path.localMAC, localMAC, 6) && !memcmp(path.remoteMAC, remoteMAC, 6),
-    log_("kernel selects source/interface and static next-hop MAC, IPv", v6 ? 6 : 4,
-      ": ", error));
+    log_("kernel selects source/interface and static next-hop MAC, IPv", v6 ? 6 : 4));
   if (!found) return;
   auto explicitPath = path;
   explicitPath.local = ZiIP{v6 ? "2001:db8::99" : "198.18.0.99"};
   auto originalLocal = explicitPath.local;
-  ZuCheckRT(Zutcp::resolveIPPath(index, explicitPath, error) &&
-      explicitPath.local == originalLocal,
-    log_("explicit userspace source is preserved without a kernel socket bind: ", error));
+  result = Zutcp::resolveIPPath(index, explicitPath);
+  ZuCheckRT(result.is<Zutcp::IPPath>() && result.p<Zutcp::IPPath>().local == originalLocal,
+    log_("explicit userspace source is preserved without a kernel socket bind"));
   auto gateway = path;
   gateway.remote = ZiIP{v6 ? "2001:db8::5" : "198.18.0.5"};
-  ZuCheckRT(Zutcp::resolveIPPath(index, gateway, error) && gateway.mtu == 1400 &&
-      !memcmp(gateway.remoteMAC, remoteMAC, 6),
-    log_("gateway route uses next-hop neighbor and its route MTU: ", error));
+  result = Zutcp::resolveIPPath(index, gateway);
+  ZuCheckRT(result.is<Zutcp::IPPath>() && result.p<Zutcp::IPPath>().mtu == 1400 &&
+      !memcmp(result.p<Zutcp::IPPath>().remoteMAC, remoteMAC, 6),
+    log_("gateway route uses next-hop neighbor and its route MTU"));
   auto missing = path;
   missing.remote = ZiIP{v6 ? "2001:db8::3" : "198.18.0.3"};
-  auto before = missing;
-  ZuCheckRT(!Zutcp::resolveIPPath(index, missing, error) && !!error &&
-      missing.local == before.local && missing.remote == before.remote &&
-      missing.mtu == before.mtu && !memcmp(missing.remoteMAC, before.remoteMAC, 6),
-    log_("missing static neighbor fails without publishing partial path state"));
+  result = Zutcp::resolveIPPath(index, missing);
+  ZuCheckRT(result.is<ZeException>() && !!result.p<ZeException>(),
+    log_("missing static neighbor returns an error instead of a partial path"));
   auto dynamic = path;
   dynamic.remote = ZiIP{v6 ? "2001:db8::4" : "198.18.0.4"};
-  ZuCheckRT(!Zutcp::resolveIPPath(index, dynamic, error) && !!error,
+  result = Zutcp::resolveIPPath(index, dynamic);
+  ZuCheckRT(result.is<ZeException>() && !!result.p<ZeException>(),
     log_("dynamic neighbor does not satisfy configured static-neighbor policy"));
-  auto wrong = path;
-  ZuCheckRT(!Zutcp::resolveIPPath(other, wrong, error) && !!error,
+  result = Zutcp::resolveIPPath(other, path);
+  ZuCheckRT(result.is<ZeException>() && !!result.p<ZeException>(),
     log_("lookup cannot select an interface outside the configured scope"));
   auto noRoute = path;
   noRoute.remote = ZiIP{v6 ? "2001:db8:ffff::1" : "203.0.113.1"};
-  ZuCheckRT(!Zutcp::resolveIPPath(index, noRoute, error) && !!error,
+  result = Zutcp::resolveIPPath(index, noRoute);
+  ZuCheckRT(result.is<ZeException>() && !!result.p<ZeException>(),
     log_("absent kernel route fails setup explicitly"));
 }
 
@@ -225,12 +230,12 @@ static void testCarriage(bool v6, bool tcp = false)
     ] {
       auto duplicate = boundLocal;
       ZiSockAddr ephemeral{boundLocal.ip(), 0}, next{boundLocal.ip(), 0};
-      boundEndpoint = stack->bind(boundLocal, &endpoint, &EndpointInput::receive) &&
-        !stack->bind(duplicate, &wildcard, &EndpointInput::receive) &&
+      boundEndpoint = stack->bind(boundLocal, &endpoint, &EndpointInput::receive).is<void>() &&
+        stack->bind(duplicate, &wildcard, &EndpointInput::receive).is<ZeException>() &&
         !stack->unbind(boundLocal, &wildcard) &&
-        stack->bind(boundWildcard, &wildcard, &EndpointInput::receive) &&
-        stack->bind(ephemeral, &endpoint, &EndpointInput::receive) &&
-        stack->bind(next, &endpoint, &EndpointInput::receive) &&
+        stack->bind(boundWildcard, &wildcard, &EndpointInput::receive).is<void>() &&
+        stack->bind(ephemeral, &endpoint, &EndpointInput::receive).is<void>() &&
+        stack->bind(next, &endpoint, &EndpointInput::receive).is<void>() &&
         ephemeral.port() >= 49152 && next.port() != ephemeral.port() &&
         stack->unbind(ephemeral, &endpoint) && stack->unbind(next, &endpoint);
       controlDone.post();
@@ -242,8 +247,8 @@ static void testCarriage(bool v6, bool tcp = false)
     coldPath.remote = ZiIP{v6 ? "2001:db8::6" : "198.18.0.6"};
     mx.rxRun([&stack, coldPath, &routeDone, &controlDone, &mx] {
       bool posted = stack->resolvePath(coldPath,
-        [&routeDone, &controlDone, &mx](Zutcp::IPPath resolved, ZtString<> error) {
-          routeDone = !error && resolved.mtu == 1500 &&
+        [&routeDone, &controlDone, &mx](ZuUnion<Zutcp::IPPath, ZeException> result) {
+          routeDone = result.is<Zutcp::IPPath>() && result.p<Zutcp::IPPath>().mtu == 1500 &&
             mx.invoked(mx.rxThread());
           controlDone.post();
         });
@@ -255,8 +260,9 @@ static void testCarriage(bool v6, bool tcp = false)
     coldPath.remote = ZiIP{v6 ? "2001:db8:ffff::1" : "203.0.113.1"};
     mx.rxRun([&stack, coldPath, &routeFailed, &controlDone, &mx] {
       bool posted = stack->resolvePath(coldPath,
-        [&routeFailed, &controlDone, &mx](Zutcp::IPPath, ZtString<> error) {
-          routeFailed = !!error && mx.invoked(mx.rxThread());
+        [&routeFailed, &controlDone, &mx](ZuUnion<Zutcp::IPPath, ZeException> result) {
+          routeFailed = result.is<ZeException>() && !!result.p<ZeException>() &&
+	    mx.invoked(mx.rxThread());
           controlDone.post();
         });
       if (!posted) controlDone.post();
@@ -360,8 +366,9 @@ static void testCarriage(bool v6, bool tcp = false)
     coldPath.remote = ZiIP{v6 ? "2001:db8::6" : "198.18.0.6"};
     mx.rxRun([&stack, coldPath, &posted, &cancelled, &controlDone, &rxDone, &mx] {
       posted = stack->resolvePath(coldPath,
-        [&cancelled, &controlDone, &mx](Zutcp::IPPath, ZtString<> error) {
-          cancelled = !!error && mx.invoked(mx.rxThread());
+        [&cancelled, &controlDone, &mx](ZuUnion<Zutcp::IPPath, ZeException> result) {
+          cancelled = result.is<ZeException>() && !!result.p<ZeException>() &&
+	    mx.invoked(mx.rxThread());
           controlDone.post();
         });
       rxDone.post();

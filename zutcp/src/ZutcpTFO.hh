@@ -17,11 +17,16 @@
 
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuTuple.hh>
+
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmRef.hh>
+#include <zlib/ZmHeap.hh>
+
 #include <zlib/ZtArray.hh>
+
 #include <zlib/ZiIP.hh>
+
 #include <zlib/ZutcpQueue.hh>
 
 namespace Zutcp {
@@ -76,10 +81,16 @@ inline const TFOCookieKey &tfoCacheKey(const TFOCacheEntry &entry) { return entr
 // Rx-owned, including stopped-state resize. Hash and FIFO share preallocated slots.
 // No cookie/connection references or timers are retained; find copies a Tx snapshot.
 class ZutcpAPI TFOCache : public QueueTelemetry<"tfo-cookies", Ztc::QueueType::Rx> {
-  ZmHashDerive(Index, TFOCacheEntry,
+  ZmHashDerive(IndexBase, TFOCacheEntry,
     (ZmHashNode<TFOCacheEntry,
       ZmHashKey<tfoCacheKey,
 	ZmHashShadow<ZmHashLock<ZmNoLock, ZmHashHeapID<"">>>>>));
+  struct Index : public ZmNHeap<Index>, public IndexBase {
+  friend inline ZuStringT<"Zutcp.TFO.Index"> ZmNHeapID(Index *);
+    using ZmNHeap<Index>::operator new;
+    using ZmNHeap<Index>::operator delete;
+    using IndexBase::IndexBase;
+  };
   ZmListDerive(Order, Index::Node,
     ZmListNode<Index::Node, ZmListKey<tfoCacheKey, ZmListShadow<>>>);
   using Slots = ZtArray<Order::Node, ZtArrayHeapID<"Zutcp.TFO.Slots">>;

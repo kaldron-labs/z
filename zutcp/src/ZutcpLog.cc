@@ -8,7 +8,6 @@
 
 #include <zlib/ZmSingleton.hh>
 
-
 #include <zlib/Zutcp.hh>
 
 #ifdef Zutcp_DEBUG
@@ -83,12 +82,12 @@ bool ZutcpLogger::init_(
   if (!params.enabled()) return true;
   if (!m_configured) {
     m_params = params;
-    m_recordsEnqueued.store_(0);
-    m_recordsWritten.store_(0);
-    m_recordsDropped.store_(0);
-    m_ringBackPressure.store_(0);
-    m_writerFailures.store_(0);
-    m_bytesWritten.store_(0);
+    m_recordsEnqueued = 0;
+    m_recordsWritten = 0;
+    m_recordsDropped = 0;
+    m_ringBackPressure = 0;
+    m_writerFailures = 0;
+    m_bytesWritten = 0;
   }
   if (!trace.configured) ++m_configured;
   trace.sink.final();
@@ -155,12 +154,12 @@ void ZutcpLogger::final_(Trace &trace)
 ZutcpLogDiag ZutcpLogger::diag_() const
 {
   return {
-    m_recordsEnqueued.load_(),
-    m_recordsWritten.load_(),
-    m_recordsDropped.load_(),
-    m_ringBackPressure.load_(),
-    m_writerFailures.load_(),
-    m_bytesWritten.load_()
+    m_recordsEnqueued,
+    m_recordsWritten,
+    m_recordsDropped,
+    m_ringBackPressure,
+    m_writerFailures,
+    m_bytesWritten
   };
 }
 
@@ -419,7 +418,7 @@ bool ZutcpLogger::writeHeader(Trace *trace)
   if (!trace->sink.write(header)) { ++m_writerFailures; return false; }
   trace->headerWritten = true;
   ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + header.length());
+  m_bytesWritten += header.length();
   return true;
 }
 
@@ -455,7 +454,7 @@ bool ZutcpLogger::writeEvent(ZuCSpan name, const PktEvt &event, ZuTime time)
   buf << "}\n";
   if (!writeTrace(m_activeTrace, buf.cspan())) return false;
   ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + buf.length());
+  m_bytesWritten += buf.length();
   return true;
 }
 
@@ -468,7 +467,7 @@ bool ZutcpLogger::writeEvent(ZuCSpan name, const AckEvt &event, ZuTime time)
   buf << "}\n";
   if (!writeTrace(m_activeTrace, buf.cspan())) return false;
   ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + buf.length());
+  m_bytesWritten += buf.length();
   return true;
 }
 
@@ -486,7 +485,7 @@ bool ZutcpLogger::writeEvent(ZuCSpan name, const RecLogEvt &event, ZuTime time)
   buf << "}\n";
   if (!writeTrace(m_activeTrace, buf.cspan())) return false;
   ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + buf.length());
+  m_bytesWritten += buf.length();
   return true;
 }
 
@@ -500,7 +499,7 @@ bool ZutcpLogger::writeEvent(ZuCSpan name, const PathEvt &event, ZuTime time)
   buf << "}\n";
   if (!writeTrace(m_activeTrace, buf.cspan())) return false;
   ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + buf.length());
+  m_bytesWritten += buf.length();
   return true;
 }
 
@@ -514,7 +513,7 @@ bool ZutcpLogger::writeEvent(ZuCSpan name, const CloseEvt &event, ZuTime time)
   buf << "}\n";
   if (!writeTrace(m_activeTrace, buf.cspan())) return false;
   ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + buf.length());
+  m_bytesWritten += buf.length();
   return true;
 }
 
@@ -526,7 +525,7 @@ bool ZutcpLogger::writeEvent(ZuCSpan name, const CxnStateEvt &event, ZuTime time
   buf << "}\n";
   if (!writeTrace(m_activeTrace, buf.cspan())) return false;
   ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + buf.length());
+  m_bytesWritten += buf.length();
   return true;
 }
 
@@ -541,7 +540,7 @@ bool ZutcpLogger::writeEvent(ZuCSpan name, const CxnStartedEvt &event, ZuTime ti
   buf << "}\n";
   if (!writeTrace(m_activeTrace, buf.cspan())) return false;
   ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + buf.length());
+  m_bytesWritten += buf.length();
   return true;
 }
 

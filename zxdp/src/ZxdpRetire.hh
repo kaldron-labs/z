@@ -13,19 +13,19 @@
 #include <zlib/ZxdpLib.hh>
 #endif
 
-#include <stdint.h>
+#include <zlib/ZuUnion.hh>
 
-#include <zlib/ZtString.hh>
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZxdpUMem.hh>
 
-
-namespace Zxdp {
+namespace Zxdp::Xdp {
 
 class ZxdpAPI KernelRetirement {
-friend struct InstanceData;
+friend class Instance;
 
 public:
-  enum { Error = -1, Pending = 0, Done = 1 };
+  enum { Pending = 0, Done = 1 };
   KernelRetirement() = default;
   ~KernelRetirement();
   KernelRetirement(const KernelRetirement &) = delete;
@@ -33,10 +33,10 @@ public:
 
   // Tx only, after Rx work/publication is quiescent. Prepare the empty observer
   // before touching the original binding. Caller retains both objects and all
-  // packet holds through Done; Error never authorizes their release.
-  int begin(Xsk &, ZtString<> &error);
+  // packet holds through Done; an error never authorizes their release.
+  ZuUnion<int, ZeException> begin(Xsk &);
   // A caller continuation/timer retries Pending; this never spins or waits.
-  int retry(ZtString<> &error);
+  ZuUnion<int, ZeException> retry();
   void reset(); // Tx only, after both queue owners released their retired holds
   bool waiting() const { return m_socket && m_ifindex; }
   bool done() const { return m_socket && !m_ifindex; }
@@ -48,6 +48,6 @@ private:
   Xsk		m_probe;
 };
 
-} // namespace Zxdp
+} // namespace Zxdp::Xdp
 
 #endif /* ZxdpRetire_HH */

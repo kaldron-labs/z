@@ -46,6 +46,31 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
     - certain types with specific heap IDs are re-used throughout the framework:
       - `ZeString`: `ZtString` with heap ID for error messages, logs and diagnostics
 
+### Errors and events
+
+- At `ze` and above, errors must be represented by low-level OS `ZeError`
+  values or structured `ZeEvent`-derived events, including typed events and
+  the type-erased `ZeException`.
+- Higher-level functions that can fail normally return
+  `ZuUnion<T, ZeException>`, where `T` is the normal result type. Use
+  `ZuUnion<void, ZeException>` when successful completion has no value.
+  Low-level OS wrappers may instead report a `ZeError` through an output
+  parameter.
+- Never return, store, or propagate an error as a plain string. This includes
+  returning strings by value, writing errors through mutable string references
+  or pointers, retaining error-string members, and passing strings as the error
+  result of a callback. Changing the string type or assigning it a named heap
+  does not make such an error contract valid.
+- Preserve OS error identity in `ZeError` and retain structured events through
+  propagation. Do not stringify an error for transport and reconstruct an
+  event at the receiving end.
+- `ZeString` is appropriate for capturing owned message text in an event or
+  logging lambda, for example
+  `ZeLOG(..., ([text = ZeString(message)](auto &s) { s << text; }));`.
+  The captured text will eventually form part of a logged error message;
+  `ZeString` itself is not an error representation. Formatting a structured
+  error at its final logging or presentation boundary is permitted.
+
 ### Fixed and floating point
 - use CPU/GPU device-native types for quantitative analysis
 - use `ZuDecimal` for precise decimal calculations of financial values

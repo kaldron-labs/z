@@ -10,15 +10,16 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmHashMgr.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmList.hh>
-#include <zlib/ZtString.hh>
+#include <zlib/ZmRef.hh>
+
 #include <zlib/Zutcp.hh>
+
 #include "ZutcpTestAlloc.hh"
-
-
 
 using namespace ZuTestUtil;
 
@@ -28,7 +29,10 @@ using namespace ZuTestUtil;
 using TxBufAlloc = Zutcp::TxBufAlloc<>;
 
 struct TestLink;
-struct HubApp : public Zutcp::Hub<HubApp> {
+struct HubApp : public ZmNHeap<HubApp>, public Zutcp::Hub<HubApp> {
+friend inline ZuStringT<"Zutcp.APITest.HubApp"> ZmNHeapID(HubApp *);
+  using ZmNHeap<HubApp>::operator new;
+  using ZmNHeap<HubApp>::operator delete;
   enum { Rx, Tx };
   using PendingQueue =
     ZmList<ZmFn<>, ZmListHeapID<"Zutcp.APITest.Pending">>;
@@ -80,9 +84,17 @@ struct HubApp : public Zutcp::Hub<HubApp> {
   }
 
 };
-struct ClientApp : public Zutcp::Client<ClientApp> { };
+struct ClientApp : public ZmNHeap<ClientApp>, public Zutcp::Client<ClientApp> {
+friend inline ZuStringT<"Zutcp.APITest.ClientApp"> ZmNHeapID(ClientApp *);
+  using ZmNHeap<ClientApp>::operator new;
+  using ZmNHeap<ClientApp>::operator delete;
+};
 struct ServerAppLink;
-struct ServerApp : public Zutcp::Server<ServerApp, ServerAppLink> { };
+struct ServerApp : public ZmNHeap<ServerApp>, public Zutcp::Server<ServerApp, ServerAppLink> {
+friend inline ZuStringT<"Zutcp.APITest.ServerApp"> ZmNHeapID(ServerApp *);
+  using ZmNHeap<ServerApp>::operator new;
+  using ZmNHeap<ServerApp>::operator delete;
+};
 struct ServerAppLink :
   public ZmNHeap<ServerAppLink>,
     public Zutcp::SrvCxn<
@@ -100,7 +112,11 @@ struct ServerAppLink :
   void connected(Zutcp::Connected) { }
 };
 
-struct ClientShapeApp : public Zutcp::Client<ClientShapeApp> { };
+struct ClientShapeApp : public ZmNHeap<ClientShapeApp>, public Zutcp::Client<ClientShapeApp> {
+friend inline ZuStringT<"Zutcp.APITest.ClientShapeApp"> ZmNHeapID(ClientShapeApp *);
+  using ZmNHeap<ClientShapeApp>::operator new;
+  using ZmNHeap<ClientShapeApp>::operator delete;
+};
 struct ClientShapeLink;
 struct ClientShapeLink :
     public ZmNHeap<ClientShapeLink>,
@@ -129,8 +145,12 @@ friend inline ZuStringT<"Zutcp.APITest.CliCxn"> ZmNHeapID(ClientShapeLink *);
 };
 
 struct ServerShapeLink;
-struct ServerShapeApp :
-    public Zutcp::Server<ServerShapeApp, ServerShapeLink> { };
+struct ServerShapeApp : public ZmNHeap<ServerShapeApp>,
+  public Zutcp::Server<ServerShapeApp, ServerShapeLink> {
+friend inline ZuStringT<"Zutcp.APITest.ServerShapeApp"> ZmNHeapID(ServerShapeApp *);
+  using ZmNHeap<ServerShapeApp>::operator new;
+  using ZmNHeap<ServerShapeApp>::operator delete;
+};
 struct ServerShapeLink :
     public ZmNHeap<ServerShapeLink>,
     public Zutcp::SrvCxn<
@@ -196,7 +216,8 @@ friend inline ZuStringT<"Zutcp.APITest.Link"> ZmNHeapID(TestLink *);
 };
 struct HubFixture {
   ZiMultiplex	mx;
-  HubApp	app;
+  ZmRef<HubApp> appRef = new HubApp;
+  HubApp &app = *appRef;
   Zi::IOBufAllocator *rx = nullptr;
 
   HubFixture() : mx{mxParams()} {
@@ -238,7 +259,8 @@ void testParams()
   ZuCHECK(params.tfoCookieCacheSize() == 1024 &&
       params.tfoCookieCacheSize(7).tfoCookieCacheSize() == 7,
     "Fast Open cache has a bounded default and explicit stopped size override");
-  HubApp policy;
+  ZmRef<HubApp> policyRef = new HubApp;
+  auto &policy = *policyRef;
   ZuCHECK(!policy.earlyData(static_cast<TestLink *>(nullptr)) &&
       !policy.maxEarlyData(static_cast<TestLink *>(nullptr)) &&
       !policy.allowEarlyStream(static_cast<TestLink *>(nullptr), 0, true),
@@ -301,7 +323,8 @@ void testAlignedSurfaceShape()
   ZuTestScope(testAlignedSurfaceShape);
 
   ZiMultiplex mx{HubFixture::mxParams()};
-  ClientShapeApp clientApp;
+  ZmRef<ClientShapeApp> clientAppRef = new ClientShapeApp;
+  auto &clientApp = *clientAppRef;
   bool clientOK = clientApp.init(
     Zutcp::ClientParams(&mx));
   ZuCHECK(clientOK, "aligned client app init failed");
@@ -309,7 +332,8 @@ void testAlignedSurfaceShape()
     mx.stop();
     return;
   }
-  ServerShapeApp serverApp;
+  ZmRef<ServerShapeApp> serverAppRef = new ServerShapeApp;
+  auto &serverApp = *serverAppRef;
   bool serverOK = serverApp.init(
     Zutcp::ServerParams(&mx)
       
@@ -510,7 +534,8 @@ void testInitValidate()
 
   {
     unsigned errors = 0;
-    HubApp hub;
+    ZmRef<HubApp> hubRef = new HubApp;
+    auto &hub = *hubRef;
     ZuCHECK(!hub.init(
 	Zutcp::HubParams(nullptr)
 	  .errorFn(Zutcp::ErrorFn{[&errors](ZeException) { ++errors; }})),
@@ -530,7 +555,8 @@ void testInitValidate()
 	.rxThread(1).txThread(2));
 
   {
-    HubApp app;
+    ZmRef<HubApp> appRef = new HubApp;
+    auto &app = *appRef;
     bool ok = app.init(Zutcp::HubParams(&mx).maxCxns(7).maxPendingCxns(3));
     ZuCHECK(ok && app.rxThread() == mx.rxThread() && app.txThread() == mx.txThread(),
       "transport owners must be the multiplexer I/O owners");
@@ -539,7 +565,8 @@ void testInitValidate()
     if (ok) app.final();
   }
   for (unsigned i = 0; i < 3; ++i) {
-    HubApp app;
+    ZmRef<HubApp> appRef = new HubApp;
+    auto &app = *appRef;
     unsigned errors = 0;
     auto params = Zutcp::HubParams(&mx).maxCxns(i ? 2 : 0)
       .maxPendingCxns(i == 1 ? 0 : 3)
@@ -548,7 +575,8 @@ void testInitValidate()
       "zero limits and a pending cap larger than the total cap must fail before initialization");
   }
   {
-    HubApp app;
+    ZmRef<HubApp> appRef = new HubApp;
+    auto &app = *appRef;
     unsigned errors = 0;
     auto params = Zutcp::HubParams(&mx).closedTupleRingSize(0)
       .errorFn(Zutcp::ErrorFn{[&errors](ZeException) { ++errors; }});
@@ -556,7 +584,8 @@ void testInitValidate()
       "zero closed tuple capacity must fail before initialization");
   }
   {
-    HubApp app;
+    ZmRef<HubApp> appRef = new HubApp;
+    auto &app = *appRef;
     unsigned errors = 0;
     auto params = Zutcp::HubParams(&mx).tfoCookieCacheSize(0)
       .errorFn(Zutcp::ErrorFn{[&errors](ZeException) { ++errors; }});
@@ -564,7 +593,8 @@ void testInitValidate()
       "zero Fast Open cookie capacity must fail before initialization");
   }
   for (auto timeout : {ZuTime{}, ZuTime{0}, ZuTime{-1}}) {
-    HubApp app;
+    ZmRef<HubApp> appRef = new HubApp;
+    auto &app = *appRef;
     unsigned errors = 0;
     auto params = Zutcp::HubParams(&mx).connectTimeout(timeout)
       .errorFn(Zutcp::ErrorFn{[&errors](ZeException) { ++errors; }});
@@ -572,7 +602,8 @@ void testInitValidate()
       "unset, zero and negative connect deadlines must fail before initialization");
   }
   for (bool finWait : {false, true}) for (auto timeout : {ZuTime{}, ZuTime{0}, ZuTime{-1}}) {
-    HubApp app;
+    ZmRef<HubApp> appRef = new HubApp;
+    auto &app = *appRef;
     unsigned errors = 0;
     auto params = Zutcp::HubParams(&mx)
       .errorFn(Zutcp::ErrorFn{[&errors](ZeException) { ++errors; }});
@@ -582,7 +613,8 @@ void testInitValidate()
       "unset, zero and negative close deadlines must fail before initialization");
   }
   for (auto timeout : {ZuTime{}, ZuTime{-1}}) {
-    HubApp app;
+    ZmRef<HubApp> appRef = new HubApp;
+    auto &app = *appRef;
     unsigned errors = 0;
     auto params = Zutcp::HubParams(&mx).userTimeout(timeout)
       .errorFn(Zutcp::ErrorFn{[&errors](ZeException) { ++errors; }});
@@ -590,21 +622,24 @@ void testInitValidate()
       "unset and negative user deadlines must fail before initialization");
   }
   {
-    HubApp app;
+    ZmRef<HubApp> appRef = new HubApp;
+    auto &app = *appRef;
     bool ok = app.init(Zutcp::HubParams(&mx).userTimeout(ZuTime{0}));
     ZuCHECK(ok && app.userTimeout() == ZuTime{0},
       "disabled user policy must survive initialization");
     if (ok) app.final();
   }
   {
-    ClientApp app;
+    ZmRef<ClientApp> appRef = new ClientApp;
+    auto &app = *appRef;
     bool ok = app.init(
       Zutcp::ClientParams(&mx));
     ZuCHECK(ok, "valid client init failed");
     if (ok) app.final();
   }
   {
-    ServerApp app;
+    ZmRef<ServerApp> appRef = new ServerApp;
+    auto &app = *appRef;
     bool ok = app.init(
       Zutcp::ServerParams(&mx)
 	
@@ -621,7 +656,8 @@ void testCongestionControl()
 {
   ZuTestScope(testCongestionControl);
   ZiMultiplex mx{HubFixture::mxParams()};
-  HubApp app;
+  ZmRef<HubApp> appRef = new HubApp;
+  auto &app = *appRef;
   ZuCHECK(Zutcp::HubParams{}.congestionControl() &&
       Zutcp::StackConfig{}.congestionControl && app.congestionControl(),
     "congestion control must remain enabled by default for both configuration paths");
@@ -662,7 +698,7 @@ void testHashSizing(bool tuned)
     // Cold construction only: no AF_XDP socket, endpoint bind or network traffic.
     ZmRef<Zutcp::Stack> stack = new Zutcp::Stack{&mx,
       {.interface = if_nametoindex("lo"), .packetCount = 8}};
-    ServerApp app;
+    ZmRef<ServerApp> appRef = new ServerApp;
     using Routes = Zutcp_::TupleRoutes<ServerAppLink>;
     ZmRef<Zutcp::EndpointBindings> endpoints;
     ZmRef<Routes> routes;

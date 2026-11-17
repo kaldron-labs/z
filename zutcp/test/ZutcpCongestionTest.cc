@@ -4,11 +4,13 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuTestUtil.hh>
-#include <zlib/Zutcp.hh>
-#include "ZutcpTestAlloc.hh"
-
 #include <string.h>
+
+#include <zlib/ZuTestUtil.hh>
+
+#include <zlib/Zutcp.hh>
+
+#include "ZutcpTestAlloc.hh"
 
 using namespace ZuTestUtil;
 

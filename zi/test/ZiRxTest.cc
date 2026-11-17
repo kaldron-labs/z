@@ -243,7 +243,7 @@ struct RxPlugin : ZmNHeap<RxPlugin>, ZiMxPlugin {
 friend inline ZuStringT<"ZiRxTest.Plugin"> ZmNHeapID(RxPlugin *);
   unsigned rearms = 0;
   explicit RxPlugin(ZiMultiplex *mx) : ZiMxPlugin(mx) { }
-  Zi::IOBufPlugin *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override {
+  Zi::IOBufPool *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override {
     return nullptr;
   }
   void start() override { mx()->pluginStarted({}); }

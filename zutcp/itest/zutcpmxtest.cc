@@ -11,12 +11,20 @@
 #include <unistd.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZiFile.hh>
+
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmRef.hh>
+
 #include <zlib/ZtArray.hh>
+
+#include <zlib/ZePlatform.hh>
+
+#include <zlib/ZiFile.hh>
+
 #include <zlib/Zutcp.hh>
+
 #include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
@@ -82,7 +90,7 @@ static bool wireFaultGate()
 {
   const char *directory = getenv("ZUTCP_WIRE_GATE_DIR");
   if (!directory) return true;
-  ZtString<> path;
+  Zi::Path path;
   path << directory << "/wire-release";
   return readGate(path);
 }
@@ -258,17 +266,18 @@ static Zutcp::CxnAdmission admission(ZiMultiplex &mx, Zutcp::Stack *stack)
   });
 }
 
-static Zutcp::IPPath route(
+static ZuUnion<Zutcp::IPPath, ZeException> route(
   ZiMultiplex &mx, Zutcp::Stack *stack, ZiIP local, ZiIP remote)
 {
-  return ZmBlock<Zutcp::IPPath>{}([&mx, stack, local, remote](auto done) {
-    mx.rxRun([stack, local, remote, done]() mutable {
-      if (!stack->resolvePath({local, remote, {}, {}, 0},
-	  [done](Zutcp::IPPath path, ZtString<> error) mutable {
-	    done(error ? Zutcp::IPPath{} : ZuMv(path));
-	  })) done(Zutcp::IPPath{});
+  return ZmBlock<ZuUnion<Zutcp::IPPath, ZeException>>{}(
+    [&mx, stack, local, remote](auto done) {
+      mx.rxRun([stack, local, remote, done]() mutable {
+	if (!stack->resolvePath({local, remote, {}, {}, 0},
+	    [done](ZuUnion<Zutcp::IPPath, ZeException> result) mutable {
+	      done(ZuMv(result));
+	    })) done(ZeEXCEPT(Error, "Zutcp", "route request refused"));
+      });
     });
-  });
 }
 
 static bool extraInitial(
@@ -444,7 +453,6 @@ static void testMxConnections(
     .interface = b, .packet = pendingPeer, .txSid = 4}};
   client.plugin(clientStack);
   server.plugin(serverStack);
-  ZtString<> error;
   Zutcp::StackConfig config{.rxRetainFrames = 96, .rxRetainFramesPerCxn = 64,
     .rxReserveFrames = 16};
   auto clientRx = client.allocator<Zi::IOBufType::RxTCP>();
@@ -468,8 +476,8 @@ static void testMxConnections(
       config.maxCxns = passiveLimit == PassivePending ? 3 : 1;
       config.maxPendingCxns = 1;
     }
-    bool configured = clientStack->configure(config, error) &&
-      serverStack->configure(config, error);
+    bool configured = clientStack->configure(config).is<void>() &&
+      serverStack->configure(config).is<void>();
     bool started = configured && start(client) && start(server);
     ZuCHECK(started, "both native plugin instances must start");
     if (!started) { client.stop(); server.stop(); Message = message; return; }
@@ -531,9 +539,9 @@ static void testMxConnections(
       auto cliPool = static_cast<Zutcp::Allocator *>(clientTx->provider());
       auto srvPool = static_cast<Zutcp::Allocator *>(serverTx->provider());
       auto deadline = Zm::now() + ZuTime{2};
-      while ((cliPool->pool.used() || srvPool->pool.used()) && Zm::now() < deadline)
+      while ((cliPool->pool->used() || srvPool->pool->used()) && Zm::now() < deadline)
 	usleep(1000); // fixture control caller; ACK and CQ processing stay on their owners
-      bool returned = !cliPool->pool.used() && !srvPool->pool.used();
+      bool returned = !cliPool->pool->used() && !srvPool->pool->used();
       ZuCHECK(returned && cliCxn->up() && srvCxn->up(),
 	"byte ACK and independent kernel retirement must return one-slot pools while connected");
       if (returned && window) {
@@ -545,7 +553,7 @@ static void testMxConnections(
 	  return ZmBlock<bool>{}([&mx, &events, pool](auto done) {
 	    mx.txRun([&events, pool, done = ZuMv(done)]() mutable {
 	      done(events.txValid && events.destroyed == 1 && events.txCalls == 2 &&
-		pool->pool.used() == 1);
+		pool->pool->used() == 1);
 	    });
 	  });
 	};
@@ -558,9 +566,9 @@ static void testMxConnections(
 	    cli.bytes == (Message.length()<<1) && srv.bytes == (Message.length()<<1),
 	  "reopening both receive contexts must resume exact queued DATA without another send");
 	deadline = Zm::now() + ZuTime{2};
-	while ((cliPool->pool.used() || srvPool->pool.used()) && Zm::now() < deadline)
+	while ((cliPool->pool->used() || srvPool->pool->used()) && Zm::now() < deadline)
 	  usleep(1000);
-	ZuCHECK(!cliPool->pool.used() && !srvPool->pool.used() &&
+	ZuCHECK(!cliPool->pool->used() && !srvPool->pool->used() &&
 	    cli.destroyed == 2 && srv.destroyed == 2 && cli.detached && srv.detached,
 	  "reopened sends must detach metadata and return original one-slot backing once");
       }
@@ -589,8 +597,14 @@ static void testMxConnections(
 	  server.listen(boundExtra, fail, noAccept, remote, 18196, 4, serverRx, {});
 	  client.listen(boundExtra, fail, noAccept, local, 18197, 4, clientRx, {});
 	  bool bound = wait(extraBound) && wait(extraBound);
-	  auto forward = route(client, clientStack.ptr(), local, remote);
-	  auto backward = route(server, serverStack.ptr(), remote, local);
+	  auto forwardResult = route(client, clientStack.ptr(), local, remote);
+	  ZuCHECK(forwardResult.is<Zutcp::IPPath>(), "native route setup must succeed");
+	  auto forward = forwardResult.is<Zutcp::IPPath>() ?
+	    forwardResult.p<Zutcp::IPPath>() : Zutcp::IPPath{};
+	  auto backwardResult = route(server, serverStack.ptr(), remote, local);
+	  ZuCHECK(backwardResult.is<Zutcp::IPPath>(), "native route setup must succeed");
+	  auto backward = backwardResult.is<Zutcp::IPPath>() ?
+	    backwardResult.p<Zutcp::IPPath>() : Zutcp::IPPath{};
 	  bool injected = forward.mtu && backward.mtu &&
 	    extraInitial(client, clientStack.ptr(), forward, 18196, false) &&
 	    extraInitial(server, serverStack.ptr(), backward, 18197, true);
@@ -611,8 +625,14 @@ static void testMxConnections(
 	  // DATA orders receive processing after the extra Initial. A further
 	  // resolve on the same cold worker orders its asynchronous admission
 	  // completion before taking the snapshot; no polling or sleep.
-	  auto forward = route(client, clientStack.ptr(), local, remote);
-	  auto backward = route(server, serverStack.ptr(), remote, local);
+	  auto forwardResult = route(client, clientStack.ptr(), local, remote);
+	  ZuCHECK(forwardResult.is<Zutcp::IPPath>(), "native route setup must succeed");
+	  auto forward = forwardResult.is<Zutcp::IPPath>() ?
+	    forwardResult.p<Zutcp::IPPath>() : Zutcp::IPPath{};
+	  auto backwardResult = route(server, serverStack.ptr(), remote, local);
+	  ZuCHECK(backwardResult.is<Zutcp::IPPath>(), "native route setup must succeed");
+	  auto backward = backwardResult.is<Zutcp::IPPath>() ?
+	    backwardResult.p<Zutcp::IPPath>() : Zutcp::IPPath{};
 	  unsigned pending = passiveLimit == PassivePending;
 	  bool attempted = !pending || (wait(unansweredWire) && wait(unansweredWire));
 	  bool refused = !pending || (wait(refusedWire) && wait(refusedWire));
@@ -664,7 +684,8 @@ static void testMxConnections(
       });
       ZuCHECK(count == 1 && connections == 1 && n == queues && queueKeys && onTx &&
           queueCoverage(samples, true, client.id(), unsigned(bool(passiveLimit))),
-	"cold enumeration exposes each actual native, Stack, provider and XDP queue with unique keys");
+	"cold enumeration exposes each actual native, Stack, provider and XDP queue with "
+	"unique keys");
     }
     if (connected && !stopActive) {
       // Fresh-stub notifications exercise the plugin-to-native pointer dispatch.
@@ -708,7 +729,8 @@ static void testMxConnections(
 	"close must drain native work and clear both pointers before Zi notification");
       ZuCHECK(acceptedClosed && serverStopped && srv.valid && srv.disconnected == 1 &&
 	  count == visited && queueValid && queueCoverage(retiredQueues, false, server.id()),
-	"actual queues survive retirement during observation; releasing their pins permits full stop");
+	"actual queues survive retirement during observation; releasing their pins permits "
+	"full stop");
     }
     if (connected && stopActive && !passiveLimit) {
       client.connect(ZiConnectFn{[&unexpected](const ZiCxnInfo &) -> ZiConnection * {
@@ -826,9 +848,8 @@ static void testConnectTimeout(bool v6)
     .rxReserveFrames = 16, .maxCxns = 1, .maxPendingCxns = 1, .connectTimeout = ZuTime{3}};
   auto serverConfig = config;
   serverConfig.connectTimeout = ZuTime{1};
-  ZtString<> error;
-  bool started = clientStack->configure(config, error) &&
-    serverStack->configure(serverConfig, error) && start(client) && start(server);
+  bool started = clientStack->configure(config).is<void>() &&
+    serverStack->configure(serverConfig).is<void>() && start(client) && start(server);
   ZuCHECK(started, "connect policy fixture must start both constrained instances");
   if (!started) { client.stop(); server.stop(); alarm(0); return; }
   MxEvents cli, srv;
@@ -849,12 +870,18 @@ static void testConnectTimeout(bool v6)
       return srvCxn.ptr();
     }}, remote, 18191, 4, serverRx, {});
   bool bound = wait(listening);
-  auto path = route(client, clientStack.ptr(), local, remote);
+  auto pathResult = route(client, clientStack.ptr(), local, remote);
+  ZuCHECK(pathResult.is<Zutcp::IPPath>(), "native route setup must succeed");
+  auto path = pathResult.is<Zutcp::IPPath>() ?
+    pathResult.p<Zutcp::IPPath>() : Zutcp::IPPath{};
   bool injected = bound && path.mtu &&
     extraInitial(client, clientStack.ptr(), path, 18191, false) &&
     extraInitial(client, clientStack.ptr(), path, 18199, true);
   bool seen = injected && wait(marker);
-  auto barrier = route(server, serverStack.ptr(), remote, local);
+  auto barrierResult = route(server, serverStack.ptr(), remote, local);
+  ZuCHECK(barrierResult.is<Zutcp::IPPath>(), "native route setup must succeed");
+  auto barrier = barrierResult.is<Zutcp::IPPath>() ?
+    barrierResult.p<Zutcp::IPPath>() : Zutcp::IPPath{};
   auto pending = admission(server, serverStack.ptr());
   ZuCHECK(seen && barrier.mtu && pending.total == 1 && pending.pending == 1 &&
       !srv.connected && !unsigned(listenFailures),
@@ -934,9 +961,8 @@ static void testUserTimeout(bool v6)
   auto serverConfig = config;
   serverConfig.maxData = 0;
   serverConfig.userTimeout = ZuTime{0};
-  ZtString<> error;
-  bool started = clientStack->configure(config, error) &&
-    serverStack->configure(serverConfig, error) && start(client) && start(server);
+  bool started = clientStack->configure(config).is<void>() &&
+    serverStack->configure(serverConfig).is<void>() && start(client) && start(server);
   ZuCHECK(started, "user timeout fixture must start a sender and zero-window receiver");
   if (!started) { client.stop(); server.stop(); alarm(0); return; }
   MxEvents cli, srv;
@@ -976,7 +1002,7 @@ static void testUserTimeout(bool v6)
   auto aSlots = clientStack->cxnAdmission(), bSlots = serverStack->cxnAdmission();
   auto pool = static_cast<Zutcp::Allocator *>(clientTx->provider());
   ZuCHECK(stopped && !aSlots.total && !aSlots.pending && !bSlots.total && !bSlots.pending &&
-      !pool->pool.used() && (!connected || (cli.destroyed == 1 && !cli.detached &&
+      !pool->pool->used() && (!connected || (cli.destroyed == 1 && !cli.detached &&
 	cli.disconnected == 1 && srv.disconnected == 1 && !srv.bytes)) && !unsigned(failures),
     "owner teardown must return the unsent original slot with no repeated notifications");
   client.unwatch();
@@ -1051,9 +1077,8 @@ static void testGracefulFin(
   Zutcp::StackConfig config{.rxRetainFrames = 96, .rxRetainFramesPerCxn = 64,
     .rxReserveFrames = 16, .maxCxns = 1, .maxPendingCxns = 1, .closedTupleRingSize = 1};
   if (finWindow) config.maxData = Message.length();
-  ZtString<> error;
-  bool started = clientStack->configure(config, error) &&
-    serverStack->configure(config, error) && start(client) && start(server);
+  bool started = clientStack->configure(config).is<void>() &&
+    serverStack->configure(config).is<void>() && start(client) && start(server);
   ZuCHECK(started, "graceful FIN fixture must start both native packet services");
   if (!started) { client.stop(); server.stop(); alarm(0); return; }
   MxEvents cli, srv;
@@ -1102,7 +1127,7 @@ static void testGracefulFin(
 	!cli.disconnected && !srv.disconnected,
       "local FIN must retain admitted DATA and preserve an armed reverse reader");
     if (finWindow) {
-      ZtString<> gate;
+      Zi::Path gate;
       gate << getenv("ZUTCP_FIN_DIR") << "/reopen";
       bool probed = readGate(gate);
       ZuCHECK(probed && !outEvents.disconnected && !inEvents.disconnected,
@@ -1123,7 +1148,7 @@ static void testGracefulFin(
       bool bounded = first && before.id && before.fin && !admission(mx, stack).total;
       ZuCHECK(bounded && !inEvents.disconnected,
 	"final ACK sender must retire while the peer still awaits its FIN acknowledgment");
-      ZtString<> marker;
+      Zi::Path marker;
       marker << getenv("ZUTCP_FIN_DIR") << "/retired";
       bool marked = bounded && writeFile(marker);
       ZuCHECK(marked, "fixture must release ACK loss only after native owner retirement");
@@ -1164,7 +1189,10 @@ static void testGracefulFin(
 	  done();
 	});
       });
-      auto path = route(client, clientStack.ptr(), local, remote);
+      auto pathResult = route(client, clientStack.ptr(), local, remote);
+      ZuCHECK(pathResult.is<Zutcp::IPPath>(), "native route setup must succeed");
+      auto path = pathResult.is<Zutcp::IPPath>() ?
+        pathResult.p<Zutcp::IPPath>() : Zutcp::IPPath{};
       auto replay = [&client, clientStack, path, c, s](bool data, bool pureAck) {
 	return ZmBlock<bool>{}([&client, clientStack, path, c, s, data, pureAck](auto done) {
 	  client.txRun([clientStack, path, c, s, data, pureAck, done]() mutable {
@@ -1321,9 +1349,8 @@ static void testResetPair(bool v6, bool serverFirst)
   auto serverTx = server.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
   Zutcp::StackConfig config{.rxRetainFrames = 96, .rxRetainFramesPerCxn = 64,
     .rxReserveFrames = 16, .maxCxns = 1, .maxPendingCxns = 1};
-  ZtString<> error;
-  bool started = clientStack->configure(config, error) &&
-    serverStack->configure(config, error) && start(client) && start(server);
+  bool started = clientStack->configure(config).is<void>() &&
+    serverStack->configure(config).is<void>() && start(client) && start(server);
   ZuCHECK(started, "RST fixture must start both raw packet services");
   if (!started) { client.stop(); server.stop(); alarm(0); return; }
   MxEvents cli[2], srv[2];
@@ -1356,13 +1383,13 @@ static void testResetPair(bool v6, bool serverFirst)
       auto pool = static_cast<Zutcp::Allocator *>(allocator->provider());
       out->sendData(allocator, 0);
       bool sent = wait(events.sent);
-      ZtString<> gate;
+      Zi::Path gate;
       gate << getenv("ZUTCP_RST_DIR") << "/close";
       bool dropped = readGate(gate);
       bool retained = ZmBlock<bool>{}([out, pool, &events](auto done) {
 	out->mx()->txRun([pool, &events, done]() mutable {
 	  done(events.txValid && events.detached && events.destroyed == 1 &&
-	    events.txCalls == 1 && pool->pool.used() == 1);
+	    events.txCalls == 1 && pool->pool->used() == 1);
 	});
       });
       ZuCHECK(sent && dropped && retained && !cli[i].received && !srv[i].received,
@@ -1395,7 +1422,7 @@ static void testResetPair(bool v6, bool serverFirst)
   bool stopped = client.stop() && server.stop();
   auto cp = static_cast<Zutcp::Allocator *>(clientTx->provider());
   auto sp = static_cast<Zutcp::Allocator *>(serverTx->provider());
-  ZuCHECK(stopped && retired && !unsigned(failures) && !cp->pool.used() && !sp->pool.used() &&
+  ZuCHECK(stopped && retired && !unsigned(failures) && !cp->pool->used() && !sp->pool->used() &&
       cli[0].disconnected == 1 && srv[0].disconnected == 1 &&
       cli[1].disconnected == 1 && srv[1].disconnected == 1,
     "reset then reconnect must preserve listener, once-only notifications "
@@ -1445,9 +1472,8 @@ static void testAbortPair(bool v6, bool reject, bool serverTarget)
   auto serverTx = server.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
   Zutcp::StackConfig config{.rxRetainFrames = 96, .rxRetainFramesPerCxn = 64,
     .rxReserveFrames = 16, .maxCxns = 2, .maxPendingCxns = 1};
-  ZtString<> error;
-  bool started = clientStack->configure(config, error) &&
-    serverStack->configure(config, error) && start(client) && start(server);
+  bool started = clientStack->configure(config).is<void>() &&
+    serverStack->configure(config).is<void>() && start(client) && start(server);
   ZuCHECK(started, "abort entrypoint fixture must start both raw packet services");
   if (!started) { client.stop(); server.stop(); alarm(0); return; }
   MxEvents cli[2], srv[2];
@@ -1505,13 +1531,13 @@ static void testAbortPair(bool v6, bool reject, bool serverTarget)
 	bool retained = ZmBlock<bool>{}([out, pool, &sentEvents](auto done) {
 	  out->mx()->txRun([pool, &sentEvents, done]() mutable {
 	    done(sentEvents.txValid && sentEvents.detached && sentEvents.destroyed == 1 &&
-	      sentEvents.txCalls == 1 && pool->pool.used() == 1);
+	      sentEvents.txCalls == 1 && pool->pool->used() == 1);
 	  });
 	});
-	ZtString<> path;
+	Zi::Path path;
 	path << getenv("ZUTCP_ABORT_DIR") << "/ready";
 	bool ready = delivered && writeFile(path, "R", ZiFile::WriteOnly);
-	path = ZtString<>{} << getenv("ZUTCP_ABORT_DIR") << "/injected";
+	path = Zi::Path{} << getenv("ZUTCP_ABORT_DIR") << "/injected";
 	bool injected = ready && readGate(path);
 	ZuCHECK(delivered && retained && ready && injected &&
 	    inputEvents.bytes == Message.length(),
@@ -1546,7 +1572,7 @@ static void testAbortPair(bool v6, bool reject, bool serverTarget)
   bool stopped = client.stop() && server.stop();
   auto cp = static_cast<Zutcp::Allocator *>(clientTx->provider());
   auto sp = static_cast<Zutcp::Allocator *>(serverTx->provider());
-  ZuCHECK(stopped && retired && !unsigned(failures) && !cp->pool.used() && !sp->pool.used() &&
+  ZuCHECK(stopped && retired && !unsigned(failures) && !cp->pool->used() && !sp->pool->used() &&
       cli[1].disconnected == 1 && srv[1].disconnected == 1 &&
       !unsigned(setupFailed[1]) && (!reject || rejected == 1),
     "meaningful abort then reconnect must drain original pools without late callbacks");
@@ -1656,9 +1682,17 @@ template <typename C> static int historyInput(
   return length ? 1 : 0;
 }
 
-struct HistoryClient : Zutcp::Client<HistoryClient> { };
+struct HistoryClient : public ZmNHeap<HistoryClient>, public Zutcp::Client<HistoryClient> {
+friend inline ZuStringT<"Zutcp.MxTest.HistoryClient"> ZmNHeapID(HistoryClient *);
+  using ZmNHeap<HistoryClient>::operator new;
+  using ZmNHeap<HistoryClient>::operator delete;
+};
 class HistorySrv;
-struct HistoryServer : Zutcp::Server<HistoryServer, HistorySrv> {
+struct HistoryServer : public ZmNHeap<HistoryServer>,
+  public Zutcp::Server<HistoryServer, HistorySrv> {
+friend inline ZuStringT<"Zutcp.MxTest.HistoryServer"> ZmNHeapID(HistoryServer *);
+  using ZmNHeap<HistoryServer>::operator new;
+  using ZmNHeap<HistoryServer>::operator delete;
   using Base = Zutcp::Server<HistoryServer, HistorySrv>;
   ZiIP bindIP;
   uint16_t bindPort;
@@ -1865,9 +1899,9 @@ static unsigned historyLinks(HistoryServer &app)
 }
 static bool historyMarker(const char *name, const Zutcp::ClosedTuple &record)
 {
-  ZtString<> path;
+  Zi::Path path;
   path << getenv("ZUTCP_NATIVE_HISTORY_DIR") << '/' << name;
-  ZtString<> text;
+  ZtString<ZtStringHeapID<"Zutcp.Test.Data">> text;
   text << record.id << ' ' << record.txNext << ' ' << record.rxNext << '\n';
   return writeFile(path, text);
 }
@@ -1886,8 +1920,10 @@ static void testNativeHistoryPair(bool v6, bool serverFirst)
   client.plugin(clientStack);
   server.plugin(serverStack);
   HistoryEvents cli[2];
-  HistoryClient clientApp;
-  HistoryServer serverApp{v6};
+  ZmRef<HistoryClient> clientAppRef = new HistoryClient;
+  auto &clientApp = *clientAppRef;
+  ZmRef<HistoryServer> serverAppRef = new HistoryServer{v6};
+  auto &serverApp = *serverAppRef;
   serverApp.events[1].hold = true;
   ZmRef<HistoryCli> cxn[2];
   bool clientInitialized = clientApp.init(Zutcp::ClientParams{&client}
@@ -1958,7 +1994,7 @@ static void testNativeHistoryPair(bool v6, bool serverFirst)
       ZuCHECK(retired,
 	"the entire active native owner must be destroyed before final ACK loss is released");
       if (retired) {
-	ZtString<> path;
+	Zi::Path path;
 	path << getenv("ZUTCP_NATIVE_HISTORY_DIR") << "/retired-gate";
 	retired &= writeFile(path, "R", ZiFile::WriteOnly);
       }
@@ -2079,8 +2115,14 @@ static void testSharedAdmissionPair(bool v6, bool passive)
   client.plugin(cs);
   server.plugin(ss);
   auto mappedRx = client.allocator<Zi::IOBufType::RxTCP>();
-  HistoryClient firstHub, nextHub;
-  HistoryServer firstListener{v6}, nextListener{v6, 18195};
+  ZmRef<HistoryClient> firstHubRef = new HistoryClient;
+  auto &firstHub = *firstHubRef;
+  ZmRef<HistoryClient> nextHubRef = new HistoryClient;
+  auto &nextHub = *nextHubRef;
+  ZmRef<HistoryServer> firstListenerRef = new HistoryServer{v6};
+  auto &firstListener = *firstListenerRef;
+  ZmRef<HistoryServer> nextListenerRef = new HistoryServer{v6, 18195};
+  auto &nextListener = *nextListenerRef;
   unsigned cc = 2, sc = passive ? 1 : 2;
   auto cp = [&client, cc, passive] {
     auto params = Zutcp::ClientParams{&client}.maxCxns(cc).maxPendingCxns(1);
@@ -2298,8 +2340,10 @@ static void testConservativeTuplePair(bool v6)
   ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(cs);
   server.plugin(ss);
-  HistoryClient app;
-  HistoryServer listener{v6};
+  ZmRef<HistoryClient> appRef = new HistoryClient;
+  auto &app = *appRef;
+  ZmRef<HistoryServer> listenerRef = new HistoryServer{v6};
+  auto &listener = *listenerRef;
   bool initialized = app.init(Zutcp::ClientParams{&client}.maxCxns(1).maxPendingCxns(1)) &&
     listener.init(Zutcp::ServerParams{&server}.maxCxns(1).maxPendingCxns(1));
   bool started = initialized && start(client) && start(server) && listener.start();
@@ -2428,8 +2472,10 @@ static void testPositiveWindowPair(bool v6)
   ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(cs);
   server.plugin(ss);
-  HistoryClient app;
-  HistoryServer listener{v6};
+  ZmRef<HistoryClient> appRef = new HistoryClient;
+  auto &app = *appRef;
+  ZmRef<HistoryServer> listenerRef = new HistoryServer{v6};
+  auto &listener = *listenerRef;
   listener.events[0].windowRead = 0;
   bool initialized = app.init(Zutcp::ClientParams{&client}.maxData(2000)) &&
     listener.init(Zutcp::ServerParams{&server}.maxData(400));
@@ -2477,13 +2523,13 @@ static void testPositiveWindowPair(bool v6)
   auto sender = [&client, cxn = cxn.ptr(), provider, origin](unsigned ack) {
     return ZmBlock<bool>{}([&client, cxn, provider, origin, ack](auto done) {
       client.txRun([cxn, provider, origin, ack, done]() mutable {
-	done(cxn->windowTx(ack) && provider->pool.used() == 1 &&
+	done(cxn->windowTx(ack) && provider->pool->used() == 1 &&
 	  !memcmp(origin, Message.data(), 1000));
       });
     });
   };
   bool first = admitted && wait(peer.held) && held(400);
-  ZtString<> gate;
+  Zi::Path gate;
   gate << getenv("ZUTCP_POSITIVE_WINDOW_DIR") << "/reopen";
   bool probed = first && readGate(gate);
   bool retained = probed && sender(400);
@@ -2493,7 +2539,7 @@ static void testPositiveWindowPair(bool v6)
   bool second = retained && wait(peer.held) && held(800);
   // The monitor releases the second gate after ACK800/window0 and its real
   // persist probe too, so Tx evidence has reached its owner before inspection.
-  gate = ZtString<>{} << getenv("ZUTCP_POSITIVE_WINDOW_DIR") << "/reopen-second";
+  gate = Zi::Path{} << getenv("ZUTCP_POSITIVE_WINDOW_DIR") << "/reopen-second";
   bool probedSecond = second && readGate(gate);
   bool retainedSecond = probedSecond && sender(800);
   ZuCHECK(second && retainedSecond && peer.bytes == 400,
@@ -2555,8 +2601,12 @@ static void testNativeLifecyclePair(
   ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(cs);
   server.plugin(ss);
-  HistoryClient app;
-  HistoryServer firstListener{v6}, otherListener{v6, 18195};
+  ZmRef<HistoryClient> appRef = new HistoryClient;
+  auto &app = *appRef;
+  ZmRef<HistoryServer> firstListenerRef = new HistoryServer{v6};
+  auto &firstListener = *firstListenerRef;
+  ZmRef<HistoryServer> otherListenerRef = new HistoryServer{v6, 18195};
+  auto &otherListener = *otherListenerRef;
   bool initialized = app.init(Zutcp::ClientParams{&client}.maxCxns(2).maxPendingCxns(2)) &&
     firstListener.init(Zutcp::ServerParams{&server}.maxCxns(2).maxPendingCxns(2)) &&
     otherListener.init(Zutcp::ServerParams{&server}.maxCxns(2).maxPendingCxns(2));
@@ -2619,7 +2669,7 @@ static void testNativeLifecyclePair(
       lifecycleBacking(client, cs.ptr(), local.type());
     bool admitted = connected && (serverInitiator ? firstListener.kept[0]->send(Message, false) :
       cxn->send(Message, false));
-    ZtString<> path;
+    Zi::Path path;
     path << getenv("ZUTCP_NATIVE_LIFECYCLE_DIR") << "/stop";
     bool dropped = readGate(path);
     bool outstanding = ZmBlock<bool>{}([
@@ -2872,13 +2922,17 @@ static void testPAWSPair(bool v6)
     }, .txSid = 4}};
   ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(cs); server.plugin(ss);
-  HistoryServer listener{v6};
+  ZmRef<HistoryServer> listenerRef = new HistoryServer{v6};
+  auto &listener = *listenerRef;
   listener.events[0].expected = Accepted;
   bool started = listener.init(Zutcp::ServerParams{&server}) &&
     start(client) && start(server) && listener.start();
   ZuCHECK(started, "PAWS raw peer must use a real public listener and AF_XDP Stacks");
   if (!started) { client.stop(); server.stop(); alarm(0); return; }
-  auto forward = route(client, cs.ptr(), local, remote);
+  auto forwardResult = route(client, cs.ptr(), local, remote);
+  ZuCHECK(forwardResult.is<Zutcp::IPPath>(), "native route setup must succeed");
+  auto forward = forwardResult.is<Zutcp::IPPath>() ?
+    forwardResult.p<Zutcp::IPPath>() : Zutcp::IPPath{};
   constexpr uint32_t Base = 0x12345671, InitialTS = 0xfffffff0;
   auto syn = passiveInitial({remote,18191}, {local,49152});
   syn.tcp.seq = Base - 1;
@@ -3079,8 +3133,12 @@ static void testPassiveTuplePair(bool v6)
   ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
   client.plugin(cs);
   server.plugin(ss);
-  HistoryClient app;
-  HistoryServer listener{v6}, other{v6, 18195};
+  ZmRef<HistoryClient> appRef = new HistoryClient;
+  auto &app = *appRef;
+  ZmRef<HistoryServer> listenerRef = new HistoryServer{v6};
+  auto &listener = *listenerRef;
+  ZmRef<HistoryServer> otherRef = new HistoryServer{v6, 18195};
+  auto &other = *otherRef;
   bool initialized = app.init(Zutcp::ClientParams{&client}.maxCxns(2).maxPendingCxns(1)
       .closedTupleRingSize(2)) &&
     listener.init(Zutcp::ServerParams{&server}.maxCxns(2).maxPendingCxns(1)
@@ -3120,7 +3178,10 @@ static void testPassiveTuplePair(bool v6)
   bool fresh = establish(1, 18191) && wait(listener.events[1].established);
   PassiveRouteGate gate{&server};
   bool held = gate.hold();
-  auto forward = route(client, cs.ptr(), local, remote);
+  auto forwardResult = route(client, cs.ptr(), local, remote);
+  ZuCHECK(forwardResult.is<Zutcp::IPPath>(), "native route setup must succeed");
+  auto forward = forwardResult.is<Zutcp::IPPath>() ?
+    forwardResult.p<Zutcp::IPPath>() : Zutcp::IPPath{};
   auto insufficient = passiveInitial(
     oldKey.p<0>(), oldKey.p<1>());
   insufficient.tcp.seq = old.rxNext - 1;
@@ -3375,9 +3436,9 @@ static void testPassiveTuplePair(bool v6)
       !unsigned(cli[3].errors) && !unsigned(other.events[0].errors) && other.listening() &&
       !admission(client, cs.ptr()).total && !admission(server, ss.ptr()).total,
     "a surviving listener on the same Stack must exchange fresh exact bytes after pending stop");
-  ZtString<> controlPath;
+  Zi::Path controlPath;
   controlPath << getenv("ZUTCP_PASSIVE_TUPLE_DIR") << "/passive-controls.json";
-  ZtString<> controls;
+  ZtString<ZtStringHeapID<"Zutcp.Test.Data">> controls;
   controls << "{\"guarded_total\":" << guarded.total << ",\"guarded_pending\":" << guarded.pending
     << ",\"race_pending\":" << pending.pending << ",\"duplicate_pending\":" << duplicate.pending
     << ",\"released_total\":" << released.total << ",\"factory_calls\":"

@@ -4,22 +4,25 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
 #include <stdlib.h>
 #include <string.h>
 #include <net/if.h>
-
 #include <iostream>
+
+#include <zlib/ZuLib.hh>
 
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmPlatform.hh>
-#include <zlib/ZtString.hh>
+#include <zlib/ZmRef.hh>
+
 #include <zlib/Zutcp.hh>
 
 class AppCxn;
-class App : public Zutcp::Server<App, AppCxn> {
+class App : public ZmNHeap<App>, public Zutcp::Server<App, AppCxn> {
+friend inline ZuStringT<"Zutcp.Example.ServerApp"> ZmNHeapID(App *);
 public:
+  using ZmNHeap<App>::operator new;
+  using ZmNHeap<App>::operator delete;
   bool tfo() const { return m_tfo; }
   uint32_t maxEarlyData(AppCxn *) { return m_tfo && m_service ? 400 : 0; }
   bool allowEarlyStream(AppCxn *, uint64_t, bool) { return m_tfo && m_allowEarly; }
@@ -167,7 +170,8 @@ int main(int argc, char **argv)
   mx.plugin(new Zutcp::Stack{&mx, {.interface = interface, .txSid = 4}});
 
 
-  App app{server, port, count, waitEOF};
+  ZmRef<App> appRef = new App{server, port, count, waitEOF};
+  auto &app = *appRef;
 
   auto params = Zutcp::ServerParams(&mx);
   if (const char *profile = getenv("ZUTCP_TEST_SERVER_OPTIONS")) {

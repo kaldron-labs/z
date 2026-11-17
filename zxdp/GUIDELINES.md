@@ -3,9 +3,17 @@
 Follow the repository guidance in ../AGENTS.md and the caller-supplied
 [interface contract](INTERFACE.md). The contract supersedes earlier plans.
 
-* Creation takes named parameters: interface, optional destination network mask,
-  intrusive Tx pool list with count and size, one dedicated Rx pool, receive
-  callback. No transmit-completion callback. Without a mask all traffic is selected.
+* Select a cold backend with `instance(Type::Xdp)`, then call virtual
+  `init(const Params &)` with backend `Xdp::Params` constructed in place using
+  `Params::New<Params::Index<Xdp::Params>{}>{}`. Configuration: interface index,
+  optional destination network mask,
+  owning intrusive `Zi::IOBufPoolList` Tx list with count, size and alignment,
+  one dedicated unlinked `ZmRef<Zi::IOBufPool>` Rx pool, receive callback.
+  Create pool objects with the selected instance's virtual `bufPool`.
+  Init retains one reference per pool through close, while node membership
+  remains in the caller configuration list. A node belongs to one
+  list at a time; retain pool references for packets that outlive the instance.
+  The concrete arena pool is internal. No transmit-completion callback. Without a mask all traffic is selected.
 * Keep allocation and kernel leases distinct in preallocated slot bookkeeping.
   Explicit pool return may run before or after CQ. Recycle only after both leases
   end; safe close releases kernel leases while caller-held backing stays valid.
@@ -23,12 +31,12 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
   provides one Rx service owner and one Tx service owner; final pool return may
   run on any thread. Keep thread-exclusive mutable state on separate cache lines.
 * The application assigns a sender `txSid` in its `ZmScheduler` and configures
-  that slot with `Params::txThread` (`ZmSchedTParams`, isolated by default).
+  that slot with `Xdp::Params::txThread` (`ZmSchedTParams`, isolated by default).
   The scheduler owns thread startup, waiting and teardown. Zxdp owns no sender
   thread or semaphore. Publish initialized descriptors immediately: increment
   the pending-descriptor counter before commit and use scheduler `run()` after
   commit only on a zero-to-one transition. The dedicated sender calls nonblocking
-  `sendto()`, observes the kernel consumer delta, spins for `Params::spin` when
+  `sendto()`, observes the kernel consumer delta, spins for `Params_::spin` when
   pending work is exhausted, then atomically subtracts that delta. Use the
   returned pending count to continue or return without losing racing publication.
   Keep a persistent consumer cursor; never count the same consumption twice.

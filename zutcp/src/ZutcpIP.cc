@@ -14,38 +14,46 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZutcpIP.hh>
 
 namespace Zutcp {
 
-unsigned interfaceMTU(unsigned interface, ZtString<> &error)
+// Operation labels below are static literals; preserve the native error in the event.
+static ZeException osError(const char *operation, int code)
 {
-  error = {};
+  return ZeEXCEPT(Error, "Zutcp", ([operation, error = ZeError{code}](auto &out) {
+    out << operation << ": " << error;
+  }));
+}
+
+ZuUnion<unsigned, ZeException> interfaceMTU(unsigned interface)
+{
   ifreq request{};
-  if (!if_indextoname(interface, request.ifr_name)) {
-    error = "interface name query: "; error << strerror(errno); return 0;
-  }
+  if (!if_indextoname(interface, request.ifr_name))
+    return osError("interface name query", errno);
   int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
-  if (fd < 0) { error = "interface query socket: "; error << strerror(errno); return 0; }
+  if (fd < 0) return osError("interface query socket", errno);
   auto result = ioctl(fd, SIOCGIFMTU, &request);
   auto saved = errno;
   close(fd);
-  if (result < 0) { error = "interface MTU query: "; error << strerror(saved); return 0; }
-  if (request.ifr_mtu <= 0) { error = "interface has no usable MTU"; return 0; }
+  if (result < 0) return osError("interface MTU query", saved);
+  if (request.ifr_mtu <= 0)
+    return ZeEXCEPT(Error, "Zutcp", "interface has no usable MTU");
   return unsigned(request.ifr_mtu);
 }
 
 // Targeted request/reply only: no multicast subscription or routing-table copy.
 // Called during cold control setup; a missing kernel reply has a bounded wait.
-static int queryRoute(int fd, nlmsghdr *request, uint8_t *reply, unsigned size,
-  ZtString<> &error)
+static ZuUnion<int, ZeException> queryRoute(
+  int fd, nlmsghdr *request, uint8_t *reply, unsigned size)
 {
   sockaddr_nl kernel{};
   kernel.nl_family = AF_NETLINK;
-  if (sendto(fd, request, request->nlmsg_len, 0,
-      reinterpret_cast<sockaddr *>(&kernel), sizeof(kernel)) != int(request->nlmsg_len)) {
-    error = "route request: "; error << strerror(errno); return -1;
-  }
+  auto sent = sendto(fd, request, request->nlmsg_len, 0,
+    reinterpret_cast<sockaddr *>(&kernel), sizeof(kernel));
+  if (sent != int(request->nlmsg_len)) return osError("route request", sent < 0 ? errno : EIO);
   iovec vector{reply, size};
   msghdr message{};
   message.msg_name = &kernel;
@@ -54,18 +62,18 @@ static int queryRoute(int fd, nlmsghdr *request, uint8_t *reply, unsigned size,
   message.msg_iovlen = 1;
   int n;
   do { n = recvmsg(fd, &message, MSG_TRUNC); } while (n < 0 && errno == EINTR);
-  if (n < 0) { error = "route reply: "; error << strerror(errno); return -1; }
+  if (n < 0) return osError("route reply", errno);
   auto header = reinterpret_cast<nlmsghdr *>(reply);
   if (unsigned(n) > size || !NLMSG_OK(header, n) || kernel.nl_pid ||
       header->nlmsg_seq != request->nlmsg_seq) {
-    error = "invalid route reply"; return -1;
+    return ZeEXCEPT(Error, "Zutcp", "invalid route reply");
   }
   if (header->nlmsg_type == NLMSG_ERROR) {
     if (header->nlmsg_len < NLMSG_LENGTH(sizeof(nlmsgerr))) {
-      error = "truncated route error"; return -1;
+      return ZeEXCEPT(Error, "Zutcp", "truncated route error");
     }
     auto result = reinterpret_cast<nlmsgerr *>(NLMSG_DATA(header));
-    error = "kernel route/neighbor lookup: "; error << strerror(-result->error); return -1;
+    return osError("kernel route/neighbor lookup", -result->error);
   }
   return n;
 }
@@ -80,7 +88,7 @@ static void routeAttr(nlmsghdr *request, unsigned type, const void *data, unsign
   request->nlmsg_len = NLMSG_ALIGN(request->nlmsg_len) + RTA_SPACE(size);
 }
 
-static bool resolvePath(int fd, unsigned interface, IPPath &path, ZtString<> &error)
+static ZuUnion<IPPath, ZeException> resolvePath(int fd, unsigned interface, IPPath path)
 {
   auto family = path.remote.type() == ZiIPType::V4 ? AF_INET : AF_INET6;
   unsigned bytes = family == AF_INET ? sizeof(in_addr) : sizeof(in6_addr);
@@ -99,14 +107,15 @@ static bool resolvePath(int fd, unsigned interface, IPPath &path, ZtString<> &er
   route->rtm_dst_len = bytes<<3;
   routeAttr(header, RTA_DST, destination, bytes);
   routeAttr(header, RTA_OIF, &interface, sizeof(interface));
-  if (queryRoute(fd, header, reply, sizeof(reply), error) < 0) return false;
+  auto result = queryRoute(fd, header, reply, sizeof(reply));
+  if (result.is<ZeException>()) return ZuMv(result.p<ZeException>());
   auto answer = reinterpret_cast<nlmsghdr *>(reply);
   if (answer->nlmsg_type != RTM_NEWROUTE || answer->nlmsg_len < NLMSG_LENGTH(sizeof(rtmsg))) {
-    error = "missing route result"; return false;
+    return ZeEXCEPT(Error, "Zutcp", "missing route result");
   }
   route = reinterpret_cast<rtmsg *>(NLMSG_DATA(answer));
   if (route->rtm_family != family || route->rtm_type != RTN_UNICAST) {
-    error = "route is not unicast on the configured interface"; return false;
+    return ZeEXCEPT(Error, "Zutcp", "route is not unicast on the configured interface");
   }
   uint8_t nextHop[16];
   memcpy(nextHop, destination, bytes);
@@ -144,10 +153,11 @@ static bool resolvePath(int fd, unsigned interface, IPPath &path, ZtString<> &er
       } break;
     }
   }
-  if (output != interface) { error = "route selected a different interface"; return false; }
+  if (output != interface)
+    return ZeEXCEPT(Error, "Zutcp", "route selected a different interface");
   if (path.local.type() == ZiIPType::Null || path.local.wildcard()) {
     if (!source || source.wildcard()) {
-      error = "route has no usable source address"; return false;
+      return ZeEXCEPT(Error, "Zutcp", "route has no usable source address");
     }
     path.local = source;
   }
@@ -160,15 +170,16 @@ static bool resolvePath(int fd, unsigned interface, IPPath &path, ZtString<> &er
   neighbor->ndm_family = family;
   neighbor->ndm_ifindex = interface;
   routeAttr(header, NDA_DST, nextHop, bytes);
-  if (queryRoute(fd, header, reply, sizeof(reply), error) < 0) return false;
+  result = queryRoute(fd, header, reply, sizeof(reply));
+  if (result.is<ZeException>()) return ZuMv(result.p<ZeException>());
   answer = reinterpret_cast<nlmsghdr *>(reply);
   if (answer->nlmsg_type != RTM_NEWNEIGH || answer->nlmsg_len < NLMSG_LENGTH(sizeof(ndmsg))) {
-    error = "missing neighbor result"; return false;
+    return ZeEXCEPT(Error, "Zutcp", "missing neighbor result");
   }
   neighbor = reinterpret_cast<ndmsg *>(NLMSG_DATA(answer));
   if (neighbor->ndm_family != family || neighbor->ndm_ifindex != int(interface) ||
       !(neighbor->ndm_state & (NUD_PERMANENT | NUD_NOARP))) {
-    error = "next hop has no static neighbor"; return false;
+    return ZeEXCEPT(Error, "Zutcp", "next hop has no static neighbor");
   }
   bool found = false;
   remaining = NLMSG_PAYLOAD(answer, sizeof(ndmsg));
@@ -179,41 +190,41 @@ static bool resolvePath(int fd, unsigned interface, IPPath &path, ZtString<> &er
       memcpy(path.remoteMAC, RTA_DATA(attr), sizeof(path.remoteMAC));
       found = true;
     }
-  if (!found) error = "static neighbor has no Ethernet address";
-  return found;
+  if (!found) return ZeEXCEPT(Error, "Zutcp", "static neighbor has no Ethernet address");
+  return path;
 }
 
-bool resolveIPPath(unsigned interface, IPPath &path, ZtString<> &error)
+ZuUnion<IPPath, ZeException> resolveIPPath(unsigned interface, IPPath path)
 {
-  error = {};
   if ((path.remote.type() != ZiIPType::V4 && path.remote.type() != ZiIPType::V6) ||
       path.remote.wildcard() ||
-      (path.local.type() != ZiIPType::Null && path.local.type() != path.remote.type())) {
-    error = "invalid route address family"; return false;
-  }
-  IPPath found = path;
-  found.mtu = interfaceMTU(interface, error);
-  if (!found.mtu) return false;
+      (path.local.type() != ZiIPType::Null && path.local.type() != path.remote.type()))
+    return ZeEXCEPT(Error, "Zutcp", "invalid route address family");
+  auto mtu = interfaceMTU(interface);
+  if (mtu.is<ZeException>()) return ZuMv(mtu.p<ZeException>());
+  path.mtu = mtu.p<unsigned>();
   ifreq link{};
-  if (!if_indextoname(interface, link.ifr_name)) {
-    error = "interface name query: "; error << strerror(errno); return false;
-  }
+  if (!if_indextoname(interface, link.ifr_name))
+    return osError("interface name query", errno);
   int query = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
-  if (query < 0) { error = "interface query socket: "; error << strerror(errno); return false; }
-  bool ethernet = !ioctl(query, SIOCGIFHWADDR, &link) &&
-    link.ifr_hwaddr.sa_family == ARPHRD_ETHER;
+  if (query < 0) return osError("interface query socket", errno);
+  auto hardware = ioctl(query, SIOCGIFHWADDR, &link);
+  auto saved = errno;
   close(query);
-  if (!ethernet) { error = "interface has no Ethernet address"; return false; }
-  memcpy(found.localMAC, link.ifr_hwaddr.sa_data, sizeof(found.localMAC));
+  if (hardware < 0) return osError("interface MAC query", saved);
+  if (link.ifr_hwaddr.sa_family != ARPHRD_ETHER)
+    return ZeEXCEPT(Error, "Zutcp", "interface has no Ethernet address");
+  memcpy(path.localMAC, link.ifr_hwaddr.sa_data, sizeof(path.localMAC));
   int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
-  if (fd < 0) { error = "route query socket: "; error << strerror(errno); return false; }
+  if (fd < 0) return osError("route query socket", errno);
   timeval timeout{1, 0};
-  bool ok = !setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-  if (!ok) { error = "route query timeout: "; error << strerror(errno); }
-  if (ok) ok = resolvePath(fd, interface, found, error);
+  ZuUnion<IPPath, ZeException> result;
+  if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)))
+    result = osError("route query timeout", errno);
+  else
+    result = resolvePath(fd, interface, ZuMv(path));
   close(fd);
-  if (ok) path = found;
-  return ok;
+  return result;
 }
 
 static unsigned get16(const uint8_t *p) { return (unsigned(p[0])<<8) | p[1]; }

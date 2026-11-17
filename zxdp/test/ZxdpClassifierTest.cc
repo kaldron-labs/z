@@ -6,7 +6,11 @@
 
 #include <arpa/inet.h>
 #include <linux/if_link.h>
+
 #include <zlib/ZuTestUtil.hh>
+
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZxdpBPF.hh>
 
 using namespace ZuTestUtil;
@@ -14,33 +18,45 @@ using namespace ZuTestUtil;
 static void testMasks()
 {
   ZuTestScope(testMasks);
-  Zxdp::Filter filter;
-  ZtString<> error;
-  ZuCHECK(Zxdp::parseFilter({}, filter, error) && !filter.family,
+  auto absent = Zxdp::Xdp::parseFilter({});
+  ZuCHECK(absent.is<Zxdp::Xdp::Filter>() && !absent.p<Zxdp::Xdp::Filter>().family,
     "absent mask selects all interface traffic");
-  ZuCHECK(Zxdp::parseFilter("192.0.2.7/24", filter, error) && filter.family == 4 &&
-      filter.address[0] == htonl(0xc0000200) && filter.mask[0] == htonl(0xffffff00),
+  auto v4 = Zxdp::Xdp::parseFilter("192.0.2.7/24");
+  ZuCHECK(v4.is<Zxdp::Xdp::Filter>() && v4.p<Zxdp::Xdp::Filter>().family == 4 &&
+      v4.p<Zxdp::Xdp::Filter>().address[0] == htonl(0xc0000200) &&
+      v4.p<Zxdp::Xdp::Filter>().mask[0] == htonl(0xffffff00),
     "IPv4 address is normalized once to its network");
-  ZuCHECK(Zxdp::parseFilter("2001:db8:1234::7/48", filter, error) && filter.family == 6 &&
-      filter.address[0] == htonl(0x20010db8) && filter.address[1] == htonl(0x12340000) &&
-      filter.mask[1] == htonl(0xffff0000) && !filter.mask[2], "IPv6 partial-word mask");
-  ZuCHECK(!Zxdp::parseFilter("192.0.2.1/33", filter, error) &&
-      !Zxdp::parseFilter("::1/129", filter, error) &&
-      !Zxdp::parseFilter("192.0.2.1/", filter, error), "invalid mask fails during setup");
+  auto v6 = Zxdp::Xdp::parseFilter("2001:db8:1234::7/48");
+  ZuCHECK(v6.is<Zxdp::Xdp::Filter>() && v6.p<Zxdp::Xdp::Filter>().family == 6 &&
+      v6.p<Zxdp::Xdp::Filter>().address[0] == htonl(0x20010db8) &&
+      v6.p<Zxdp::Xdp::Filter>().address[1] == htonl(0x12340000) &&
+      v6.p<Zxdp::Xdp::Filter>().mask[1] == htonl(0xffff0000) &&
+      !v6.p<Zxdp::Xdp::Filter>().mask[2], "IPv6 partial-word mask");
+  ZuCHECK(Zxdp::Xdp::parseFilter("192.0.2.1/33").is<ZeException>() &&
+      Zxdp::Xdp::parseFilter("::1/129").is<ZeException>() &&
+      Zxdp::Xdp::parseFilter("192.0.2.1/").is<ZeException>(),
+    "invalid mask fails during setup");
 }
 
 static void testEmission()
 {
   ZuTestScope(testEmission);
-  Zxdp::BPFCode code;
-  Zxdp::Filter filter;
-  ZtString<> error;
-  ZuCHECK(!Zxdp::classifierCode(-1, filter, code, error) && !code.length(),
+  ZuCHECK(Zxdp::Xdp::classifierCode(-1, {}).is<ZeException>(),
     "invalid map FD cannot publish partial instructions");
   const char *masks[] = {"", "192.0.2.7/24", "2001:db8::/32"};
   for (auto mask : masks) {
-    bool valid = Zxdp::parseFilter(mask, filter, error) &&
-      Zxdp::classifierCode(37, filter, code, error);
+    auto parsed = Zxdp::Xdp::parseFilter(mask);
+    if (parsed.is<ZeException>()) {
+      ZuCHECK(false, "valid mask parses before instruction emission");
+      continue;
+    }
+    auto emitted = Zxdp::Xdp::classifierCode(37, parsed.p<Zxdp::Xdp::Filter>());
+    if (emitted.is<ZeException>()) {
+      ZuCHECK(false, "valid classifier emits complete instructions");
+      continue;
+    }
+    const auto &code = emitted.p<Zxdp::Xdp::BPFCode>();
+    bool valid = true;
     unsigned maps = 0;
     auto n = code.length();
     for (unsigned i = 0; i < n; ++i) {
@@ -56,8 +72,8 @@ static void testEmission()
     }
     ZuCHECK(valid && maps == 1, "one XSK map and bounded forward branches");
   }
-  ZuCHECK(!Zxdp::setXDP(1, 37, XDP_FLAGS_DRV_MODE, -1, error) &&
-      !Zxdp::setXDP(1, -1, XDP_FLAGS_DRV_MODE | XDP_FLAGS_REPLACE, -1, error),
+  ZuCHECK(Zxdp::Xdp::setXDP(1, 37, XDP_FLAGS_DRV_MODE, -1).is<ZeException>() &&
+      Zxdp::Xdp::setXDP(1, -1, XDP_FLAGS_DRV_MODE | XDP_FLAGS_REPLACE, -1).is<ZeException>(),
     "unprotected attachment changes rejected before kernel mutation");
 }
 

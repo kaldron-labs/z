@@ -21,11 +21,13 @@
 #include <zlib/ZmList.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRef.hh>
+
 #include <zlib/ZtArray.hh>
+
 #include <zlib/ZiIOBuf.hh>
+
 #include <zlib/ZutcpIP.hh>
 #include <zlib/ZutcpQueue.hh>
-#include <zlib/ZxdpAlloc.hh>
 
 namespace Zutcp {
 
@@ -93,10 +95,10 @@ private:
 class Stack;
 struct Allocator;
 
-struct AllocatorData : public Zi::IOBufPlugin {
+struct AllocatorData : public Zi::IOBufPool {
   using ReturnedFn = ZmFn<void(), ZmFnHeapID<"Zutcp.Returned">>;
   enum { Waiting = 1, Posted = 2 };
-  Zxdp::BufPool	pool;
+  ZmRef<Zi::IOBufPool> pool;
   Allocator	*nextProvider = nullptr;
   ReturnedFn	returned;
   ZmRef<RxFrames> rxFrames; // physical ingress only; absent for Tx providers
@@ -107,7 +109,15 @@ struct AllocatorData : public Zi::IOBufPlugin {
   using Waits = Queue<Zi::IOBufWaitList, "allocation-waits", Ztc::QueueType::Tx>;
   alignas(Zm::CacheLineSize) Waits waits;
 
-  AllocatorData(unsigned count, unsigned bytes) : pool{count, bytes} { }
+  explicit AllocatorData(ZmRef<Zi::IOBufPool> pool_) : pool{ZuMv(pool_)} {
+    ZmAssert_(pool);
+    count = pool->count;
+    size = pool->size;
+    align = pool->align;
+    headRoom = pool->headRoom;
+    tailRoom = pool->tailRoom;
+    ZmAssert_(headRoom <= size && tailRoom <= size - headRoom);
+  }
 };
 
 using AllocatorList = ZmList<AllocatorData,
@@ -118,7 +128,7 @@ friend inline ZuStringT<"Zutcp.Allocator"> ZmNHeapID(Allocator *);
   using ZmNHeap<Allocator>::operator new;
   using ZmNHeap<Allocator>::operator delete;
 
-  Allocator(unsigned count, unsigned bytes, unsigned head = 0, unsigned tail = 0);
+  using AllocatorList::Node::Node;
   ~Allocator();
   uint8_t *alloc() override;
   void free(uint8_t *) override;
@@ -165,10 +175,11 @@ inline void bindPacketLease(PacketBuf *buf, PacketLease *lease) {
 
 // Logical Rx context providers own metadata only and retain the single physical
 // ingress provider. Final returns reach that original pool after stub attachment.
-struct ZutcpAPI RxAllocator : public ZmNHeap<RxAllocator>, public Zi::IOBufPlugin {
+struct ZutcpAPI RxAllocator : public ZmNHeap<RxAllocator>, public Zi::IOBufPool {
 friend inline ZuStringT<"Zutcp.RxAllocator"> ZmNHeapID(RxAllocator *);
+  using ZmNHeap<RxAllocator>::operator new;
+  using ZmNHeap<RxAllocator>::operator delete;
   ZmRef<Allocator> ingress;
-  unsigned count, align; // logical request only; no additional physical Rx region
 
   RxAllocator(Allocator *, unsigned head, unsigned count, unsigned align);
   uint8_t *alloc() override { return nullptr; } // Zi Rx creates backingless stubs

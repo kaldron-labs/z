@@ -12,27 +12,31 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuTime.hh>
+
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTime.hh>
+
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZiMultiplex.hh>
+
+#include <zlib/Zxdp.hh>
+
 #include <zlib/ZutcpAlloc.hh>
 #include <zlib/ZutcpMx.hh>
-#include <zlib/Zxdp.hh>
 
 using namespace ZuTestUtil;
 
-static bool closeInstance(ZmRef<Zxdp::Instance> &instance, ZtString<> &error)
+static ZuUnion<bool, ZeException> closeInstance(ZmRef<Zxdp::Instance> &instance)
 {
   auto limit = Zm::now() + ZuTime{10};
   do {
     auto result = instance->close();
-    error = {};
-    if (result.is<void>()) { instance = nullptr; return true; }
-    const auto &exception = result.p<ZeException>();
-    if (!!exception) error << exception;
+    if (result.is<ZeException>()) return result;
+    if (result.p<bool>()) { instance = nullptr; return true; }
     // Fixture main only; expiry never authorizes retirement of live backing.
     poll(nullptr, 0, 1);
   } while (Zm::now() < limit);
@@ -46,22 +50,26 @@ static void testProvider()
   // Provider ownership is deliberately independent of backend ownership. Zi's
   // adapter owns the provider; the raw receive callback exchanges addresses only.
   ZiMultiplex mx;
-  ZmRef<Zutcp::Allocator> provider = new Zutcp::Allocator{2, PacketSize, Head, Tail};
-  ZmRef<Zutcp::Allocator> control = new Zutcp::Allocator{1, 128};
-  provider->pool.next = &control->pool;
-  Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP> allocator{&mx, provider};
-  Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP> ctlAllocator{&mx, control};
+  auto instance = Zxdp::instance(Zxdp::Type::Xdp);
+  ZmRef<Zutcp::Allocator> provider = new Zutcp::Allocator{
+    instance->bufPool(2, PacketSize, Head, Tail)};
+  ZmRef<Zutcp::Allocator> control = new Zutcp::Allocator{instance->bufPool(1, 128)};
+  Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP> allocator{&mx, provider};
+  Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP> ctlAllocator{&mx, control};
   ZuCheckRT(allocator.size == PacketSize && allocator.headRoom == Head &&
       allocator.tailRoom == Tail && !allocator.allocBuf(nullptr, Payload),
     log_("provider publishes fixed geometry before backing is activated"));
-  Zxdp::BufPool rx{RxCount, PacketSize};
+  auto rx = instance->bufPool(RxCount, PacketSize);
   unsigned completed = 0;
   uint8_t *canonical = nullptr;
-  ZtString<> error;
-  Zxdp::Params params{
-    .interface = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10)),
-    .txPools = &provider->pool, .rxPool = &rx,
-    .rx = [&rx](uint8_t *p, unsigned) { rx.free(p); }};
+  Zxdp::Params config(
+    Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
+  auto &params = config.p<Zxdp::Xdp::Params>();
+  params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
+  params.rxPool = rx;
+  params.rx = [&rx](uint8_t *p, unsigned) { rx->free(p); };
+  params.txPools.pushNode(provider->pool.ptr());
+  params.txPools.pushNode(control->pool.ptr());
   ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,
     [&params](auto &thread) { thread = params.txThread; })};
   params.scheduler = &scheduler;
@@ -69,8 +77,10 @@ static void testProvider()
   bool started = scheduler.start();
   ZuCheckRT(started);
   if (!started) return;
-  auto instance = Zxdp::Instance::create(ZuMv(params), error);
-  bool ready = instance && instance->ready();
+  auto initialized = instance->init(config);
+  bool ready = initialized.is<void>() && instance->ready();
+  ZeException error = initialized.is<ZeException>() ?
+    initialized.p<ZeException>() : ZeException{};
   ZuCheckRT(ready, log_("raw instance activates caller-owned Zutcp provider pools: ", error));
   if (ready) {
     auto buf = allocator.allocBuf(&mx, Payload);
@@ -84,7 +94,7 @@ static void testProvider()
       auto payload = buf->data();
       bool geometry = buf->registered() && buf->owner == &mx && buf->skip == Head &&
         buf->length == Payload && payload == canonical + Head &&
-        provider->pool.owns(canonical) && provider->pool.used() == 2;
+        provider->pool->owns(canonical) && provider->pool->used() == 2;
       memset(canonical, 0, Head + Payload);
       memset(canonical, 0xff, 6);
       memcpy(canonical + 6, instance->mac().data(), 6);
@@ -99,7 +109,7 @@ static void testProvider()
       memcpy(ctl->data(), retainedBytes, sizeof(retainedBytes));
       auto heldOrigin = ctl->data_();
       bool held = instance->send(ctl->data(), ctl->length);
-      ZuCheckRT(held && !control->pool.writable(heldOrigin),
+      ZuCheckRT(held && !control->pool->writable(heldOrigin),
         log_("a caller allocation remains unwritable through its kernel submission"));
       bool accepted = instance->send(buf->data(), buf->length);
       if (accepted) {
@@ -110,7 +120,7 @@ static void testProvider()
       ZuCheckRT(accepted && !buf->data_() && !buf->registered(),
         log_("accepted raw submission permits metadata to detach backing"));
       buf = nullptr;
-      ZuCheckRT(provider->pool.used() == 2 && !allocator.allocBuf(&mx, Payload),
+      ZuCheckRT(provider->pool->used() == 2 && !allocator.allocBuf(&mx, Payload),
         log_("metadata destruction does not recycle kernel-owned backing"));
       auto deadline = Zm::now() + ZuTime{10};
       while (accepted && completed < 2 && Zm::now() < deadline) {
@@ -119,8 +129,8 @@ static void testProvider()
       }
       auto recycled = allocator.allocBuf(&mx, Payload);
       ZuCheckRT(completed == 2 && recycled && recycled->data_() == canonical &&
-          provider->pool.used() == 2 && control->pool.used() == 1 &&
-          ctl->data_() == heldOrigin && control->pool.writable(heldOrigin) &&
+          provider->pool->used() == 2 && control->pool->used() == 1 &&
+          ctl->data_() == heldOrigin && control->pool->writable(heldOrigin) &&
           !memcmp(ctl->data(), retainedBytes, 64),
         log_("CQ recycles the originating pool slot without a metadata callback"));
       ZuCheckRT(instance->send(ctl->data(), ctl->length),
@@ -128,21 +138,25 @@ static void testProvider()
       other = nullptr;
       // Close below while recycled remains application-owned, then release it through
       // the still-live Zi provider. No connection object is needed for that free.
-      bool closed = closeInstance(instance, error);
-      ZuCheckRT(closed,
-	log_("kernel retirement completes independently of the application: ", error));
-      ZmAssert_(closed);
-      ZuCheckRT(provider->pool.used() == 1 && recycled && recycled->data_() == canonical &&
-          control->pool.used() == 1 && ctl->data_() == heldOrigin &&
+      auto closed = closeInstance(instance);
+      bool retired = closed.is<bool>() && closed.p<bool>();
+      ZuCheckRT(retired, log_("kernel retirement completes independently of the application: ",
+	closed.is<ZeException>() ? closed.p<ZeException>() : ZeException{}));
+      ZmAssert_(retired);
+      ZuCheckRT(provider->pool->used() == 1 && recycled && recycled->data_() == canonical &&
+          control->pool->used() == 1 && ctl->data_() == heldOrigin &&
           !memcmp(ctl->data(), retainedBytes, 64),
         log_("kernel close preserves caller-retained original backing and bytes"));
       recycled = nullptr;
       ctl = nullptr;
-      ZuCheckRT(!provider->pool.used() && !control->pool.used() && !provider->alloc(),
+      ZuCheckRT(!provider->pool->used() && !control->pool->used() && !provider->alloc(),
         log_("final Zi release returns exactly once to the retired originating pool"));
     }
   }
-  if (instance) ZmAssert_(closeInstance(instance, error));
+  if (instance) {
+    auto closed = closeInstance(instance);
+    ZmAssert_(closed.is<bool>() && closed.p<bool>());
+  }
   ZuCheckRT(scheduler.stop());
 }
 
@@ -222,7 +236,7 @@ static void testProviderWait()
 
   auto held = allocator->allocBuf(nullptr, 32);
   auto canonical = held ? held->data_() : nullptr;
-  ZuCheckRT(held && provider->pool.count == 1 && provider->pool.used() == 1);
+  ZuCheckRT(held && provider->pool->count == 1 && provider->pool->used() == 1);
   ZmAssert_(held);
   WaitProbe first{mx, allocator}, second{mx, allocator};
   ownerRun(mx, 3, [&first, &second] { first.start(); second.start(); });
@@ -240,7 +254,7 @@ static void testProviderWait()
     log_("return grants the exact original slot and requested geometry to the first producer"));
   ZmAssert_(firstDone);
   ownerRun(mx, 3, [] {});
-  ZuCheckRT(!second.calls && provider->pool.used() == 1,
+  ZuCheckRT(!second.calls && provider->pool->used() == 1,
     log_("the reserved grant cannot be stolen and does not wake the second producer"));
   first.granted = nullptr;
   bool secondDone = second.wait();
@@ -256,7 +270,7 @@ static void testProviderWait()
   bool cancelDone = cancelled.waitCancel();
   ZuCheckRT(cancelDone && cancelled.calls == 1 && cancelled.acknowledgments == 1 &&
       cancelled.ackOrder == 2 && cancelled.result == Zi::IOBufWaitResult::Cancelled &&
-      !cancelled.granted && cancelled.onOwner && provider->pool.used() == 1,
+      !cancelled.granted && cancelled.onOwner && provider->pool->used() == 1,
     log_("cancellation unlinks a blocked producer before acknowledging its callback drain"));
   ZmAssert_(cancelDone);
   second.granted = nullptr;
@@ -276,7 +290,7 @@ static void testProviderWait()
   ownerRun(mx, 3, [&invalid] { invalid.start(97, 96); });
   bool invalidDone = invalid.wait();
   ZuCheckRT(invalidDone && invalid.result == Zi::IOBufWaitResult::Failed &&
-      !invalid.granted && !provider->pool.used(),
+      !invalid.granted && !provider->pool->used(),
     log_("impossible geometry fails without acquiring or waiting for a raw slot"));
   ZmAssert_(invalidDone);
 
@@ -294,7 +308,7 @@ static void testProviderWait()
   bool sent = false, kernelHeld = false;
   ownerRun(mx, 2, [&stack, &held, provider, &sent, &kernelHeld] {
     sent = stack->sendPacket(held);
-    kernelHeld = provider->pool.used() == 1;
+    kernelHeld = provider->pool->used() == 1;
   });
   bool cqDone = cqLast.wait();
   ZuCheckRT(sent && kernelHeld && cqDone && cqLast.onOwner &&
@@ -327,13 +341,13 @@ static void testProviderWait()
   while (sent && !writable && Zm::now() < deadline) {
     ownerRun(mx, 2, [&stack, provider, canonical, &writable] {
       stack->reconcileTx();
-      writable = provider->pool.writable(canonical);
+      writable = provider->pool->writable(canonical);
     });
     if (!writable) poll(nullptr, 0, 1);
   }
   ownerRun(mx, 3, [] {});
   ZuCheckRT(sent && writable && !callerLast.calls && !allocator->allocBuf() &&
-      provider->pool.used() == 1,
+      provider->pool->used() == 1,
     log_("CQ-first retirement alone cannot grant caller-retained backing"));
   retained.reset();
   bool callerDone = callerLast.wait();
@@ -346,7 +360,7 @@ static void testProviderWait()
   callerLast.granted = nullptr;
   ownerRun(mx, 2, [] {});
   ownerRun(mx, 3, [] {});
-  bool empty = !provider->pool.used();
+  bool empty = !provider->pool->used();
   bool stopped = mx.stop();
   ZuCheckRT(empty && stopped && !stack->ready(),
     log_("all waiters, reserved grants and raw submissions drain before native shutdown"));

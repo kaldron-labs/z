@@ -18,6 +18,8 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmQueue.hh>
 #include <zlib/ZmRBTree.hh>
+#include <zlib/ZmHeap.hh>
+
 #include <zlib/ZutcpAlloc.hh>
 #include <zlib/ZutcpQueue.hh>
 
@@ -487,10 +489,17 @@ inline const SentFrameKey &SentFrameKey_IDAxor(const SentFrameKey &key)
   return key;
 }
 
-ZmHashDerive(SentFrameAckHash, SentFrameKey,
+ZmHashDerive(SentFrameAckHashBase, SentFrameKey,
   (ZmHashNode<SentFrameKey,
     ZmHashKey<SentFrameKey_IDAxor,
 	ZmHashHeapID<"Zutcp.Pkt.AckdFrame">>>));
+
+struct SentFrameAckHash : public ZmNHeap<SentFrameAckHash>, public SentFrameAckHashBase {
+friend inline ZuStringT<"Zutcp.AckdFrameHash"> ZmNHeapID(SentFrameAckHash *);
+  using ZmNHeap<SentFrameAckHash>::operator new;
+  using ZmNHeap<SentFrameAckHash>::operator delete;
+  using SentFrameAckHashBase::SentFrameAckHashBase;
+};
 
 struct SentFrameUpdate {
   SentFrameRef	ref;
@@ -502,6 +511,20 @@ struct SentPkt {
   uint64_t	sackEpoch = 0; // advisory evidence; never retires original backing
   uint32_t	tsval = 0;
   bool		tsKnown = false, sackCounted = false;
+
+  uint64_t	pn = 0;
+  uint64_t	byteAck = 0; // cumulative byte frontier already reported for this packet
+  ZuTime	sentTime;
+  unsigned	bytes = 0;
+  EcnMark::T	ecn = EcnMark::NotECT;
+  bool		ackEliciting = false;
+  bool		inFlight = false;
+  bool		pmtudProbe = false;
+  unsigned	pmtudSize = 0;
+  bool		ackd = false;
+  bool		lost = false;
+  void		*byteNode = nullptr;
+  ZuArray<SentFrameUpdate, MaxFrames> frames;
 
   uint64_t key() const { return pn; }
   uint64_t length() const { return 1; }
@@ -522,19 +545,6 @@ struct SentPkt {
       "sent-packet frame index out of bounds", return frames[0].ref);
     return frames[i].ref;
   }
-  uint64_t	pn = 0;
-  uint64_t	byteAck = 0; // cumulative byte frontier already reported for this packet
-  ZuTime	sentTime;
-  unsigned	bytes = 0;
-  EcnMark::T	ecn = EcnMark::NotECT;
-  bool		ackEliciting = false;
-  bool		inFlight = false;
-  bool		pmtudProbe = false;
-  unsigned	pmtudSize = 0;
-  bool		ackd = false;
-  bool		lost = false;
-  void		*byteNode = nullptr;
-  ZuArray<SentFrameUpdate, MaxFrames> frames;
 };
 
 class OutstandingFrames {
@@ -555,13 +565,26 @@ class OutstandingFrames {
   static const OutstandingFlowKey &flowID(const FlowData &flow) {
     return flow.id;
   }
-  using Flows = ZmHash<FlowData,
+  using FlowsBase = ZmHash<FlowData,
     ZmHashNode<FlowData,
       ZmHashKey<flowID, ZmHashHeapID<"Zutcp.Pkt.OutstandingFlow">>>>;
+  struct Flows : public ZmNHeap<Flows>, public FlowsBase {
+  friend inline ZuStringT<"Zutcp.OutstandingFlows"> ZmNHeapID(Flows *);
+    using ZmNHeap<Flows>::operator new;
+    using ZmNHeap<Flows>::operator delete;
+    using FlowsBase::FlowsBase;
+  };
   using Flow = Flows::Node;
-  using Exact = ZmHashKV<
+  using ExactBase = ZmHashKV<
     SentFrameKey, unsigned,
     ZmHashHeapID<"Zutcp.Pkt.OutstandingExact">>;
+
+  struct Exact : public ZmNHeap<Exact>, public ExactBase {
+  friend inline ZuStringT<"Zutcp.OutstandingExact"> ZmNHeapID(Exact *);
+    using ZmNHeap<Exact>::operator new;
+    using ZmNHeap<Exact>::operator delete;
+    using ExactBase::ExactBase;
+  };
 
 public:
   void add(const SentPkt &p) {

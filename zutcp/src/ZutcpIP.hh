@@ -16,7 +16,10 @@
 #include <stdint.h>
 
 #include <zlib/ZuSpan.hh>
-#include <zlib/ZtString.hh>
+#include <zlib/ZuUnion.hh>
+
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZiIP.hh>
 
 #include <zlib/ZutcpOptions.hh>
@@ -25,7 +28,7 @@ namespace Zutcp {
 
 // Linux owns interface configuration. Query before creating Zi adapters so
 // their framing geometry is stable; validate again against the running backend.
-ZutcpAPI unsigned interfaceMTU(unsigned interface, ZtString<> &error);
+ZutcpAPI ZuUnion<unsigned, ZeException> interfaceMTU(unsigned interface);
 
 struct IPPath {
   ZiIP		local, remote;
@@ -36,7 +39,7 @@ struct IPPath {
 // Cold setup on the control caller: read the kernel's route constrained to this
 // interface and its static next-hop neighbor. Preserve an explicit local IP;
 // otherwise use the kernel-selected source. Publish only on success. No ARP/ND.
-ZutcpAPI bool resolveIPPath(unsigned interface, IPPath &, ZtString<> &error);
+ZutcpAPI ZuUnion<IPPath, ZeException> resolveIPPath(unsigned interface, IPPath);
 
 struct IPView {
   ZiIP		local, remote;

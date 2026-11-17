@@ -4,16 +4,21 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
 #include <stdlib.h>
-#include <zlib/ZiFile.hh>
 #include <net/if.h>
-
 #include <iostream>
 
+#include <zlib/ZuLib.hh>
+
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmRef.hh>
+
 #include <zlib/ZtString.hh>
+
+#include <zlib/ZePlatform.hh>
+
+#include <zlib/ZiFile.hh>
+
 #include <zlib/Zutcp.hh>
 
 ZuDerive(AppRequest,
@@ -21,8 +26,11 @@ ZuDerive(AppRequest,
 
 
 
-class App : public Zutcp::Client<App> {
+class App : public ZmNHeap<App>, public Zutcp::Client<App> {
+friend inline ZuStringT<"Zutcp.Example.ClientApp"> ZmNHeapID(App *);
 public:
+  using ZmNHeap<App>::operator new;
+  using ZmNHeap<App>::operator delete;
   class Cxn;
   bool tfo() const { return m_tfo; }
   bool earlyData(Cxn *);
@@ -184,7 +192,8 @@ int main(int argc, char **argv)
   mx.plugin(new Zutcp::Stack{&mx, {.interface = interface, .txSid = 4}});
 
 
-  App app{request};
+  ZmRef<App> appRef = new App{request};
+  auto &app = *appRef;
 
   auto params = Zutcp::ClientParams(&mx);
   if (const char *profile = getenv("ZUTCP_TEST_CLIENT_OPTIONS")) {
@@ -215,7 +224,7 @@ int main(int argc, char **argv)
     if (const char *directory = getenv("ZUTCP_WIRE_GATE_DIR")) {
       app.waitReady();
       if (!app.error()) {
-	ZtString<> path;
+	Zi::Path path;
 	path << directory << "/wire-release";
 	ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC}; // Fixture main waits before output.
 	char value;
@@ -231,13 +240,13 @@ int main(int argc, char **argv)
     if (app.tfo() && !i && count > 1) {
       if (const char *directory = getenv("ZUTCP_TEST_TFO_GATE_DIR")) {
 	link = nullptr;
-	ZtString<> path;
+	Zi::Path path;
 	path << directory << "/tfo-first-complete";
 	ZiFile marker{path, ZiFile::Write | ZiFile::GC};
 	constexpr auto ready = "ready\n"_z;
 	if (!marker || marker.write(ready.data(), ready.length()) != Zi::OK ||
 	    marker.close() != Zi::OK) { app.setError("TFO fixture marker failed"); break; }
-	ZtString<> next;
+	Zi::Path next;
 	next << directory << "/tfo-next";
 	ZiFile gate{next, ZiFile::ReadOnly | ZiFile::GC}; // Fixture main waits for peer/fault.
 	char value;

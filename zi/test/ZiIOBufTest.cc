@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZuPtr.hh>
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZtString.hh>
@@ -188,18 +189,22 @@ void testAllocatorPolicy()
   ZuCheck(!allocator->allocBuf(&owner, mps + 1, mps));
 }
 
-struct BufPlugin : ZmNHeap<BufPlugin>, Zi::IOBufPlugin {
-friend inline ZuStringT<"ZiIOBufTest.Plugin"> ZmNHeapID(BufPlugin *);
+struct BufPool : ZmNHeap<BufPool>, Zi::IOBufPool {
+friend inline ZuStringT<"ZiIOBufTest.Pool"> ZmNHeapID(BufPool *);
   using Heap = ZmVHeap<"ZiIOBufTest.Backing", 32, 64, ZiIOBuf_DefltAlign>;
   uint8_t *registeredPtr = nullptr;
   unsigned registeredAllocs = 0, registeredFrees = 0;
+  unsigned *destroyed = nullptr;
   bool exhausted = false, valid = true;
 
-  BufPlugin() {
+  BufPool() {
+    count = 1;
     size = 32;
     headRoom = 3;
     tailRoom = 4;
   }
+
+  ~BufPool() override { if (destroyed) ++*destroyed; }
 
   uint8_t *alloc() override {
     if (exhausted) return nullptr;
@@ -214,15 +219,41 @@ friend inline ZuStringT<"ZiIOBufTest.Plugin"> ZmNHeapID(BufPlugin *);
   }
 };
 
+void testPoolList()
+{
+  ZuTestScope(testPoolList);
+  unsigned destroyed = 0;
+  Zi::IOBufPoolList pools;
+  ZmRef<BufPool> first = new BufPool, second = new BufPool;
+  first->destroyed = second->destroyed = &destroyed;
+  auto backing = first.ptr();
+  pools.pushNode(first.ptr());
+  pools.pushNode(second.ptr());
+  ZuCheck(pools.headPtr() == first.ptr() && pools.tailPtr() == second.ptr());
+  ZuCheck(first->next == second.ptr() && second->prev == first.ptr());
+  ZuPtr<Zi::IOBufAllocator> allocator =
+    new Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP, ZiIOBuf, 32>{nullptr, first};
+  first = second = nullptr;
+  ZuCheck(!destroyed && pools.count_() == 2);
+  auto buf = allocator->allocBuf(nullptr, allocator->capacity());
+  ZuCheck(buf && buf->registered() && buf->length == allocator->capacity());
+  pools.clean();
+  ZuCheck(destroyed == 1 && !pools.count_() && backing->registeredAllocs == 1);
+  buf = nullptr;
+  ZuCheck(backing->valid && backing->registeredFrees == 1);
+  allocator = nullptr;
+  ZuCheck(destroyed == 2);
+}
+
 struct MxPlugin : ZmNHeap<MxPlugin>, ZiMxPlugin {
 friend inline ZuStringT<"ZiIOBufTest.MxPlugin"> ZmNHeapID(MxPlugin *);
-  ZmRef<BufPlugin> backing = new BufPlugin;
+  ZmRef<BufPool> backing = new BufPool;
   unsigned syncMode = 0, sends = 0, completions = 0;
   bool progressed = false, spun = false, error = false, closed = false;
 
   explicit MxPlugin(ZiMultiplex *mx) : ZiMxPlugin(mx) { }
 
-  Zi::IOBufPlugin *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override {
+  Zi::IOBufPool *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override {
     return backing;
   }
   void start() override { mx()->pluginStarted({}); }
@@ -315,9 +346,9 @@ void testSyncOwnerProgress()
   }
 }
 
-void testPluginBacking(bool grow)
+void testPoolBacking(bool grow)
 {
-  ZuTestScopeRT(testPluginBacking);
+  ZuTestScopeRT(testPoolBacking);
   ZiMultiplex mx;
   ZmRef<MxPlugin> transport = new MxPlugin{&mx};
   mx.plugin(transport);
@@ -341,9 +372,9 @@ void testPluginBacking(bool grow)
   ZuCheckRT(plugin->valid && plugin->registeredAllocs == 1 && plugin->registeredFrees == 1);
 }
 
-void testPluginAllocation()
+void testPoolAllocation()
 {
-  ZuTestScope(testPluginAllocation);
+  ZuTestScope(testPoolAllocation);
   ZiMultiplex mx;
   ZmRef<MxPlugin> transport = new MxPlugin{&mx};
   mx.plugin(transport);
@@ -533,11 +564,12 @@ int main(int argc, char **argv)
   ZuTestCall(testPrependTailRoom);
   ZuTestCall(testSpanOffsetAndLargeEnsure);
   ZuTestCall(testOutputFailure);
-  ZuTestCall(testPluginAllocation);
+  ZuTestCall(testPoolList);
+  ZuTestCall(testPoolAllocation);
   ZuTestCall(testAllocatorPolicy);
   ZuTestCall(testSyncOwnerProgress);
-  ZuTestCall(testPluginBacking, false);
-  ZuTestCall(testPluginBacking, true);
+  ZuTestCall(testPoolBacking, false);
+  ZuTestCall(testPoolBacking, true);
   ZuTestCall(testAsyncAllocation, false, 0);
   ZuTestCall(testAsyncAllocation, false, 1);
   ZuTestCall(testAsyncAllocation, true, 0);

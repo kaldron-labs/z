@@ -14,7 +14,8 @@
 #include <unistd.h>
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZtString.hh>
+
+#include <zlib/ZiPlatform.hh>
 
 #include "zxdplog.hh"
 
@@ -33,7 +34,7 @@ static int fixture(const char *output, const char *mode, const char *payload,
   auto pid = fork();
   if (pid < 0) return -1;
   if (!pid) {
-    ZtString<> log;
+    Zi::Path log;
     log << output << ".log";
     int fd = open(log, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     if (fd < 0 || dup2(fd, STDOUT_FILENO) < 0 || dup2(fd, STDERR_FILENO) < 0) _exit(126);
@@ -59,11 +60,11 @@ static void testProcesses()
   const char *modes[] = {"wait", "spin", "ll"};
   const char *payloads[] = {"1472", "129", "128"};
   for (unsigned i = 0; i < 3; ++i) {
-    ZtString<> output;
+    Zi::Path output;
     output << parent << '/' << modes[i];
     int result = fixture(output, modes[i], payloads[i]);
     ZuCheckRT(result == 0, log_(modes[i], " standalone pair exits successfully: ", output));
-    ZtString<> client, server, state;
+    Zi::Path client, server, state;
     client << output << "/client.log";
     server << output << "/server.log";
     state << output << "/state.txt";
@@ -74,7 +75,7 @@ static void testProcesses()
     ZuCheckRT(if_nametoindex("zxdpp0") == beforeA && if_nametoindex("zxdpp1") == beforeB,
 	log_(modes[i], " namespace cleanup preserves the caller's interfaces"));
   }
-  ZtString<> output, server;
+  Zi::Path output, server;
   output << parent << "/oversize";
   server << output << "/server.log";
   ZuCheckRT(fixture(output, "wait", "1473") != 0 &&

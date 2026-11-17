@@ -20,12 +20,17 @@
 #include <linux/if_xdp.h>
 
 #include <zlib/ZuID.hh>
+#include <zlib/ZuLib.hh>
+
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmPlatform.hh>
+
 #include <zlib/ZtcQueue.hh>
 
-namespace Zxdp {
+namespace Zxdp::Xdp {
+
+using RingQueueType = Ztc::QueueType::T;
 
 // A reservation is bounded and atomic as a vector: commit publishes all entries,
 // cancel publishes none. Descriptor publication never retires packet backing.
@@ -200,14 +205,14 @@ private:
     return stats.rx_ring_full > UINT32_MAX ? UINT32_MAX : uint32_t(stats.rx_ring_full);
   }
   ZuID		m_ownerID, m_id;
-  Ztc::QueueType::T m_type = -1;
+  RingQueueType	m_type = -1;
   int		m_fd = -1;
   unsigned	m_size = 0;
   uint32_t	m_finalProd = 0, m_finalCons = 0, m_kernelFull = 0;
   bool		m_frozen = false;
-  Atomic	*m_prod = nullptr;
-  Atomic	*m_cons = nullptr;
-  Atomic	*m_flags = nullptr;
+  Atomic		*m_prod = nullptr;
+  Atomic		*m_cons = nullptr;
+  Atomic		*m_flags = nullptr;
   Entry		*m_entries = nullptr;
   unsigned	m_count = 0;
   // The dedicated sender reads the Tx mapping while its producer advances.
@@ -224,6 +229,6 @@ using TxRing = Ring<xdp_desc, true>;
 using FillRing = Ring<uint64_t, true>;
 using CompRing = Ring<uint64_t, false>;
 
-} // namespace Zxdp
+} // namespace Zxdp::Xdp
 
 #endif /* ZxdpRing_HH */

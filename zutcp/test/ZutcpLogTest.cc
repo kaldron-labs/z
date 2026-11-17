@@ -17,6 +17,8 @@
 #include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
+
+using LogText = ZtString<ZtStringHeapID<"Zutcp.LogTest">>;
 using namespace Zutcp;
 using namespace ZutcpLog_;
 
@@ -28,9 +30,9 @@ static Zi::Path testPath(ZuCSpan name)
   return ZiFile::append(g_residue, name);
 }
 
-static ZtString<> readFile_(const Zi::Path &path)
+static LogText readFile_(const Zi::Path &path)
 {
-  ZtString<> data;
+  LogText data;
   ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
   if (!file) return data;
   auto size = file.size();
@@ -55,7 +57,7 @@ static unsigned parseJSONSeq(ZuCSpan data)
     unsigned start = i;
     while (i < l && data[i] != '\n') ++i;
     if (i >= l) return 0;
-    ZtString<> json;
+    LogText json;
     json << ZuCSpan{data.data() + start, i - start};
     auto scan = ZfJSON::scan(json);
     if (scan.p<0>() != int(json.length())) return 0;
@@ -284,7 +286,7 @@ void testLogAppTrace()
   ZuCHECK(diag.recordsWritten >= 2, "app trace qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "app trace qlog writer failure");
 
-  ZtString<> data = readFile_(path);
+  LogText data = readFile_(path);
   ZuCHECK(data, "app trace qlog output was not written");
   ZuCHECK(parseJSONSeq(data) >= 2, "app trace qlog JSON-SEQ parse failed");
   if (!data) return;

@@ -169,8 +169,21 @@ Registration does not change compatibility: Rx cannot serve Tx, UDP cannot serve
 streams or vice versa, and App allocators cannot serve Mx I/O. Zi distinguishes
 direction and stream/datagram transport; Ztls owns TCP/TLS-specific checks.
 
+`Zi::IOBufPool` supplies registered backing through `alloc()` and `free()`.
+Its shared geometry is `count`, `size`, `align`, `headRoom` and `tailRoom`;
+metadata-only providers can leave `count` zero. Pools are intrusive nodes of
+`Zi::IOBufPoolList`, which retains them through list membership.
+`Zi::IOBufPoolAllocator` adapts a pool to typed I/O buffer metadata and retains
+that pool through the final registered return. Pool-list membership and allocator
+ownership are independent references.
+
+Fixed pools expose `ready()`/`used()` and stable `slot()`/`backing()` identity.
+`owns()` checks slot membership; `writable()` permits mutation of allocated
+backing only when the provider allows it. Providers without indexed backing
+return `NoSlot`/null and grant no writable permission by default.
+
 `allocBuf()` remains an immediate allocation. Producers that must wait for a
-bounded plugin pool embed one noncopyable `Zi::IOBufWait` and call
+bounded pool embed one noncopyable `Zi::IOBufWait` and call
 `allocator->waitBuf(request, sid, owner, length, mps, callback)` on their scheduler
 slot. The callback is always posted to that slot, including immediate success or
 failure. `IOBufWaitResult::Ready` carries an ordinary typed buffer owning the exact

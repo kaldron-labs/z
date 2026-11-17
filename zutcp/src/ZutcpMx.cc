@@ -4,12 +4,17 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <new>
 #include <stdint.h>
 #include <unistd.h>
 
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmTime.hh>
+
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZiLog.hh>
+
 #include <zlib/ZutcpIP.hh>
 #include <zlib/Zutcp.hh>
 
@@ -196,7 +201,7 @@ public:
 private:
   template <typename P> P params() const;
   Stack *m_stack;
-  Client *m_client = nullptr;
+  ZmRef<Client> m_client;
   Cli *m_clients = nullptr;
   Listener *m_listeners = nullptr;
   unsigned m_retiring = 0, m_objects = 0;
@@ -381,7 +386,7 @@ template <typename P> P Stack::Connections::params() const
 Stack::Connections::~Connections()
 {
   ZmAssert_(!m_clients && !m_listeners && !m_retiring && !m_objects);
-  if (m_client) { m_client->final(); delete m_client; }
+  if (m_client) m_client->final();
 }
 
 void Stack::Connections::connect(
@@ -393,7 +398,6 @@ void Stack::Connections::connect(
   if (!m_client) {
     m_client = new Client;
     if (!m_client->init(params<ClientParams>(), m_stack)) {
-      delete m_client;
       m_client = nullptr;
       m_stack->releaseCxn(slot);
       if (fail) fail(false);
@@ -567,7 +571,7 @@ void Stack::Connections::drained()
   if (!m_stopping || m_clients || m_listeners || m_retiring || m_objects) return;
   // Retired associations can still have endpoint-close references. Wait for
   // actual connection destruction before releasing their application state.
-  if (m_client) { m_client->final(); delete m_client; m_client = nullptr; }
+  if (m_client) { m_client->final(); m_client = nullptr; }
   m_stopping = false;
   auto done = ZuMv(m_done);
   if (done) done();
@@ -641,12 +645,10 @@ template <typename L> void Stack::Connections::visit(ZiConnection *mx, L &&fn)
 
 static unsigned requireMTU(ZiMultiplex *mx, unsigned interface)
 {
-  ZtString<> error;
-  auto mtu = mx ? interfaceMTU(interface, error) : 0;
-  if (!mtu) throw ZeEXCEPT(Error, "Zutcp", ([error](auto &s) {
-    s << "packet interface configuration: " << error;
-  }));
-  return mtu;
+  if (!mx) throw ZeEXCEPT(Error, "Zutcp", "packet interface requires a multiplexer");
+  auto result = interfaceMTU(interface);
+  if (result.is<ZeException>()) throw ZuMv(result.p<ZeException>());
+  return result.p<unsigned>();
 }
 
 static unsigned requirePackets(unsigned count)
@@ -670,10 +672,14 @@ Stack::Stack(ZiMultiplex *mx, StackParams params)
   m_spin{params.spin},
   m_txSid{params.txSid},
   m_netmask{params.netmask}, m_packet{ZuMv(params.packet)},
-  m_ingress{new Allocator{mx->rxBufSize() ? mx->rxBufSize() : ZiIOBuf_DefltCount,
-    m_mtu + 14}}, m_rxAllocator{mx, m_ingress},
-  m_packets{new Allocator{requirePackets(params.packetCount), m_mtu + 14, 14 + 40 + 60}},
-  m_control{new Allocator{DefaultControlBufCount, m_mtu + 14, 14 + 40 + 60}},
+  m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+  m_ingress{new Allocator{m_backend->bufPool(
+    mx->rxBufSize() ? mx->rxBufSize() : ZiIOBuf_DefltCount, m_mtu + 14)}},
+  m_rxAllocator{mx, m_ingress},
+  m_packets{new Allocator{m_backend->bufPool(
+    requirePackets(params.packetCount), m_mtu + 14, 14 + 40 + 60)}},
+  m_control{new Allocator{m_backend->bufPool(
+    DefaultControlBufCount, m_mtu + 14, 14 + 40 + 60)}},
   m_packetAllocator{mx, m_packets}, m_dataAllocator{mx, m_packets},
   m_controlAllocator{mx, m_control},
   m_endpoints{new EndpointBindings{ZmHashParams{}.bits(5).loadFactor(1).cBits(3)
@@ -681,14 +687,14 @@ Stack::Stack(ZiMultiplex *mx, StackParams params)
 {
   ZmAssert_(mx->state() == ZmEngineState::Stopped);
   // TCP controls use separate native backing and never borrow application slots.
-  m_ingress->rxFrames = new RxFrames{m_ingress->pool.count, m_ingress->pool.count};
+  m_ingress->rxFrames = new RxFrames{m_ingress->pool->count, m_ingress->pool->count};
   m_ingress->rxFrames->queueOwner(mx->id());
   m_tfoCookies.queueOwner(mx->id());
   m_closed.queueOwner(mx->id());
   m_waitProviders.queueOwner(mx->id());
   // A standalone packet shell has no connection-retention policy. Hub applies
   // its explicit transport limits before publishing any connection owner.
-  m_config.rxRetainFrames = m_config.rxRetainFramesPerCxn = m_ingress->pool.count;
+  m_config.rxRetainFrames = m_config.rxRetainFramesPerCxn = m_ingress->pool->count;
   m_config.rxReserveFrames = 0;
   m_ingress->returned = [this] { returned(); };
   addProvider(m_packets);
@@ -700,8 +706,8 @@ Stack::~Stack()
   ZmAssert_(m_state == Stopped && !m_current && !unsigned(m_wakeUsers));
   ZmAssert_(m_waitProviders.empty_() && !m_allocDraining);
   ZmAssert_(!m_txServicing && !m_txPending &&
-    !m_ingress->pool.used() && !m_packets->pool.used());
-  ZmAssert_(!m_control->pool.used());
+    !m_ingress->pool->used() && !m_packets->pool->used());
+  ZmAssert_(!m_control->pool->used());
   ZmAssert_(!m_routePending && !m_endpoints->count_());
   ZmAssert_(!m_observed && !m_observedCount);
   delete m_cxns;
@@ -712,7 +718,7 @@ Stack::~Stack()
     auto p = m_providers;
     m_providers = p->nextProvider;
     p->nextProvider = nullptr;
-    ZmAssert_(!p->pool.used() && p->waits.empty_() && !unsigned(p->notify));
+    ZmAssert_(!p->pool->used() && p->waits.empty_() && !unsigned(p->notify));
     p->stack = nullptr;
     ZmDEREF(p); // stopped, long-lived configuration ownership
   }
@@ -724,13 +730,12 @@ void Stack::addProvider(Allocator *p)
   p->waits.queueOwner(mx()->id());
   p->waits.queueName(p->queueID);
   ZmREF(p);
-  m_txCapacity += p->pool.count;
+  m_txCapacity += p->pool->count;
   p->nextProvider = m_providers;
-  p->pool.next = m_providers ? &m_providers->pool : nullptr;
   m_providers = p;
 }
 
-Zi::IOBufPlugin *Stack::allocator(
+Zi::IOBufPool *Stack::allocator(
   Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count)
 {
   ZmAssert_(mx()->state() == ZmEngineState::Stopped);
@@ -749,91 +754,84 @@ Zi::IOBufPlugin *Stack::allocator(
     return new RxAllocator{m_ingress, head, count, align};
   uint64_t bytes = uint64_t(size) + head;
   if (bytes > m_mtu + Ethernet) bytes = m_mtu + Ethernet;
-  auto p = new Allocator{count, unsigned(bytes), head};
-  if (p->pool.size < align) p->pool.size = align; // physical alignment padding only
+  auto p = new Allocator{m_backend->bufPool(count, unsigned(bytes), head, 0, align)};
   p->stack = this;
   addProvider(p);
   return p;
 }
 
-bool Stack::configureControl(unsigned count, unsigned credits, ZtString<> &error)
+ZuUnion<void, ZeException> Stack::configureControl(unsigned count, unsigned credits)
 {
   ZmAssert_(mx()->state() == ZmEngineState::Stopped && m_state == Stopped);
-  error = {};
-  uint64_t capacity = m_txCapacity - m_control->pool.count + count;
+  uint64_t capacity = m_txCapacity - m_control->pool->count + count;
   if (!count || !credits || credits >= capacity || capacity > UINT_MAX ||
-      m_txPending || m_control->pool.used()) {
-    error = ZtString<>{} << "invalid or busy control reserve count=" << count
-      << " credits=" << credits << " Tx capacity=" << capacity
-      << " held control=" << m_control->pool.used();
-    return false;
+      m_txPending || m_control->pool->used()) {
+    return ZeEXCEPT(Error, "Zutcp", ([count, credits, capacity,
+      held = m_control->pool->used()](auto &out) {
+      out << "invalid or busy control reserve count=" << count
+	<< " credits=" << credits << " Tx capacity=" << capacity
+	<< " held control=" << held;
+    }));
   }
-  m_control->pool.count = count;
+  m_control->count = m_control->pool->count = count;
   m_controlCredits = credits;
   m_txCapacity = capacity;
-  return true;
+  return {};
 }
 
 TxAdmission Stack::txAdmission() const
 {
   ZmAssert_(m_state == Stopped || mx()->invoked(mx()->txThread()));
-  unsigned count = m_control->pool.count, used = m_control->pool.used();
+  unsigned count = m_control->pool->count, used = m_control->pool->used();
   return {.capacity = m_txCapacity, .dataStalls = m_dataStalls,
     .controlStalls = m_controlStalls, .reserved = m_controlCredits,
     .outstanding = m_txPending, .controlCount = count,
     .controlFree = used < count ? count - used : 0};
 }
 
-bool Stack::configure(const StackConfig &config, ZtString<> &error)
+ZuUnion<void, ZeException> Stack::configure(const StackConfig &config)
 {
   ZmAssert_(mx()->state() == ZmEngineState::Stopped && m_state == Stopped);
-  error = {};
   if (!positiveTimeout(config.connectTimeout)) {
-    error = "invalid connect timeout";
-    return false;
+    return ZeEXCEPT(Error, "Zutcp", "invalid connect timeout");
   }
   if (!positiveTimeout(config.closeDrainTimeout) || !positiveTimeout(config.finWaitTimeout)) {
-    error = "invalid close timeout";
-    return false;
+    return ZeEXCEPT(Error, "Zutcp", "invalid close timeout");
   }
   if (!positiveTimeout(config.userTimeout) && config.userTimeout != ZuTime{0}) {
-    error = "invalid user timeout";
-    return false;
+    return ZeEXCEPT(Error, "Zutcp", "invalid user timeout");
   }
   if (config.ackHoldTimeout < ZuTime{0} ||
       config.ackHoldTimeout >= ZuTime{0, 500000000}) {
-    error = "invalid TCP ACK hold timeout";
-    return false;
+    return ZeEXCEPT(Error, "Zutcp", "invalid TCP ACK hold timeout");
   }
   if (!config.maxCxns || !config.maxPendingCxns || config.maxPendingCxns > config.maxCxns) {
-    error = "invalid connection admission limits";
-    return false;
+    return ZeEXCEPT(Error, "Zutcp", "invalid connection admission limits");
   }
   if (!config.tfoCookieCacheSize) {
-    error = "invalid Fast Open cookie cache size";
-    return false;
+    return ZeEXCEPT(Error, "Zutcp", "invalid Fast Open cookie cache size");
   }
   if (!config.closedTupleRingSize) {
-    error = "invalid closed tuple ring size";
-    return false;
+    return ZeEXCEPT(Error, "Zutcp", "invalid closed tuple ring size");
   }
-  unsigned count = m_ingress->pool.count;
+  unsigned count = m_ingress->pool->count;
   if (!config.rxRetainFrames || !config.rxRetainFramesPerCxn ||
       !config.rxReserveFrames || count <= config.rxReserveFrames) {
-    error = ZtString<>{} << "invalid Rx retention=" << config.rxRetainFrames
-      << " per connection=" << config.rxRetainFramesPerCxn
-      << " physical frames=" << count << " reserve=" << config.rxReserveFrames;
-    return false;
+    return ZeEXCEPT(Error, "Zutcp", ([retained = config.rxRetainFrames,
+      perCxn = config.rxRetainFramesPerCxn, count, reserve = config.rxReserveFrames](auto &out) {
+      out << "invalid Rx retention=" << retained << " per connection=" << perCxn
+	<< " physical frames=" << count << " reserve=" << reserve;
+    }));
   }
-  if (!configureControl(config.controlBufCount, config.txControlCredits, error))
-    return false;
+  auto control = configureControl(config.controlBufCount, config.txControlCredits);
+  if (control.is<ZeException>()) return control;
   unsigned limit = count - config.rxReserveFrames;
   if (limit > config.rxRetainFrames) limit = config.rxRetainFrames;
   m_ingress->rxFrames->limit(limit); // no revocation if old charges exceed new cap
   m_closed.resize(config.closedTupleRingSize);
   m_tfoCookies.resize(config.tfoCookieCacheSize);
   m_config = config;
-  return true;
+  return {};
 }
 
 CxnAdmission Stack::cxnAdmission() const
@@ -964,29 +962,26 @@ CxnBindError::T bindCxnTuple(
   return CxnBindError::None;
 }
 
-bool Stack::bind(
-  ZiSockAddr &local, void *owner, EndpointFn receive,
-  const ZiSockAddr &remote, ZtString<> *error)
+ZuUnion<void, ZeException> Stack::bind(
+  ZiSockAddr &local, void *owner, EndpointFn receive, const ZiSockAddr &remote)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
-  if (!ready()) {
-    if (error) *error = "packet service unavailable during endpoint binding";
-    return false;
+  if (!ready())
+    return ZeEXCEPT(Error, "Zutcp", "packet service unavailable during endpoint binding");
+  switch (bindCxnTuple(local, remote, m_nextPort, *m_endpoints, m_closed, owner, receive)) {
+    case CxnBindError::None: return {};
+    case CxnBindError::Invalid:
+      return ZeEXCEPT(Error, "Zutcp", "invalid endpoint binding");
+    case CxnBindError::InUse:
+      return ZeEXCEPT(Error, "Zutcp", "local endpoint is already bound");
+    case CxnBindError::Retained:
+      return ZeEXCEPT(Error, "Zutcp", "client tuple remains in closed history");
+    case CxnBindError::Exhausted:
+      return ZeEXCEPT(Error, "Zutcp",
+	"client port range 49152..65535 exhausted by live endpoints or closed tuples");
+    default:
+      return ZeEXCEPT(Error, "Zutcp", "invalid endpoint binding result");
   }
-  auto result = bindCxnTuple(local, remote, m_nextPort, *m_endpoints, m_closed, owner, receive);
-  if (error) {
-    switch (result) {
-      case CxnBindError::None: *error = {}; break;
-      case CxnBindError::Invalid: *error = "invalid endpoint binding"; break;
-      case CxnBindError::InUse: *error = "local endpoint is already bound"; break;
-      case CxnBindError::Retained: *error = "client tuple remains in closed history"; break;
-      case CxnBindError::Exhausted:
-	*error = "client port range 49152..65535 exhausted by live endpoints or closed tuples";
-	break;
-      default: break;
-    }
-  }
-  return result == CxnBindError::None;
 }
 
 bool Stack::unbind(const ZiSockAddr &local, void *owner)
@@ -1011,13 +1006,13 @@ bool Stack::resolvePath(IPPath path, RouteFn done)
   ++m_routePending;
   mx()->run([this, path = ZuMv(path), done = ZuMv(done)]() mutable {
     ZmAssert_(!mx()->invoked(mx()->rxThread()) && !mx()->invoked(mx()->txThread()));
-    ZtString<> error;
-    resolveIPPath(m_interface, path, error);
-    mx()->rxRun([this, path = ZuMv(path), error = ZuMv(error), done = ZuMv(done)]() mutable {
+    auto result = resolveIPPath(m_interface, ZuMv(path));
+    mx()->rxRun([this, result = ZuMv(result), done = ZuMv(done)]() mutable {
       ZmAssert_(m_routePending);
       --m_routePending;
-      if (!ready()) error = "packet service stopped during route setup";
-      done(ZuMv(path), ZuMv(error));
+      if (!ready())
+	result = ZeEXCEPT(Error, "Zutcp", "packet service stopped during route setup");
+      done(ZuMv(result));
       if (m_state == Stopping && !m_endpointDrain && !m_routePending) {
 	ZmAssert_(!cxnAdmission().total);
 	mx()->txRun([this] { stopTx(); });
@@ -1041,27 +1036,41 @@ void Stack::start_()
   m_returnQueued = 0;
   m_ingress->rxFrames->reconcile();
   m_error = {};
-  bool busy = m_ingress->pool.used();
-  for (auto p = m_providers; p; p = p->nextProvider) busy |= p->pool.used();
+  bool busy = m_ingress->pool->used();
+  for (auto p = m_providers; p; p = p->nextProvider) busy |= p->pool->used();
   if (busy) {
     m_state = Stopped;
     mx()->pluginStarted(ZeEXCEPT(Error, "Zutcp", "retained packet pools are busy"));
     return;
   }
-  m_backend = Zxdp::Instance::create({.interface = m_interface, .netmask = m_netmask,
-    .txPools = &m_providers->pool, .rxPool = &m_ingress->pool,
-    .rx = [this](uint8_t *p, unsigned n) { received(p, n); },
-    .spin = m_spin, .scheduler = mx(), .txSid = m_txSid,
-    .txStopped = [this] {
-      mx()->push([this] { senderStopped(); }, mx()->txThread());
-    }}, m_error);
+  // A backend initializes once. Retain closed telemetry until this next start.
+  if (m_backendInit) m_backend = Zxdp::instance(Zxdp::Type::Xdp);
+  m_backendInit = true;
+  Zxdp::Params config(
+    Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
+  auto &params = config.p<Zxdp::Xdp::Params>();
+  params.ifindex = m_interface;
+  params.netmask = m_netmask;
+  params.rxPool = m_ingress->pool;
+  params.rx = [this](uint8_t *p, unsigned n) { received(p, n); };
+  params.spin = m_spin;
+  params.scheduler = mx();
+  params.txSid = m_txSid;
+  params.txStopped = [this] {
+    mx()->push([this] { senderStopped(); }, mx()->txThread());
+  };
+  for (auto p = m_providers; p; p = p->nextProvider)
+    params.txPools.pushNode(p->pool.ptr());
+  auto initialized = m_backend->init(config);
+  if (initialized.is<ZeException>()) m_error = ZuMv(initialized.p<ZeException>());
   if (m_backend && m_backend->ready() && m_backend->mtu() == m_mtu) {
     m_current = m_backend.ptr();
     m_state = Running;
     mx()->pluginStarted({});
     return;
   }
-  if (!m_error) m_error = "interface geometry changed before packet startup";
+  if (!m_error)
+    m_error = ZeEXCEPT(Error, "Zutcp", "interface geometry changed before packet startup");
   m_startFailure = true;
   m_state = Stopping;
   mx()->txRun([this] { stopTx(); });
@@ -1123,24 +1132,21 @@ void Stack::stopTx()
     m_senderStopping = true;
     return;
   }
-  ZtString<> error;
+  ZeException error;
   bool closed = !m_backend;
   if (!unsigned(m_wakeUsers) && m_backend) {
     auto result = m_backend->close();
-    closed = result.is<void>();
-    if (!closed) {
-      const auto &exception = result.p<ZeException>();
-      if (!!exception) error << exception;
-    }
+    closed = result.is<bool>() && result.p<bool>();
+    if (result.is<ZeException>()) error = ZuMv(result.p<ZeException>());
   }
   if (!unsigned(m_wakeUsers) && closed) {
     m_txPending = 0; // successful close has retired and recycled every submission
     m_state = Stopped;
     if (m_startFailure) {
       m_startFailure = false;
-      mx()->pluginStarted(ZeEXCEPT(Error, "Zutcp", ([text = m_error](auto &s) { s << text; })));
+      mx()->pluginStarted(ZuMv(m_error));
     } else if (!!m_error) {
-      mx()->pluginStopped(ZeEXCEPT(Error, "Zutcp", ([text = m_error](auto &s) { s << text; })));
+      mx()->pluginStopped(ZuMv(m_error));
     } else mx()->pluginStopped({});
     return;
   }
@@ -1197,7 +1203,7 @@ bool Stack::retainRx(Zi::IOBuf *buf, RxAccount *account)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (!buf->registered() || buf->allocator() != &m_rxAllocator) return true;
-  return m_ingress->rxFrames->retain(m_ingress->pool.slot(buf->data_()), account);
+  return m_ingress->rxFrames->retain(m_ingress->pool->slot(buf->data_()), account);
 }
 
 RxFrameStats Stack::rxAdmission()
@@ -1440,7 +1446,7 @@ void Stack::reconcileTx()
 void Stack::waitTx(Allocator *p, Zi::IOBufWait &request)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
-  if (!ready() || !p->pool.ready()) { request.fail(); return; }
+  if (!ready() || !p->pool->ready()) { request.fail(); return; }
   if (p->waits.empty_()) {
     m_waitProviders.pushNode(p);
     p->notify |= Allocator::Waiting;
@@ -1480,7 +1486,7 @@ void Stack::serviceWaits(Allocator *p)
   enum { Batch = 64 };
   unsigned granted = 0;
   while (!p->waits.empty_() && granted < Batch) {
-    auto data = p->pool.alloc();
+    auto data = p->pool->alloc();
     if (!data) break;
     auto request = static_cast<Zi::IOBufWait *>(p->waits.shift());
     request->queued = false;

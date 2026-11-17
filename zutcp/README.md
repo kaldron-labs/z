@@ -129,8 +129,24 @@ and Fast Open cookies use secure keyed primitives independently of TLS.
 
 ## Buffers and ownership
 
-`Zutcp::Allocator` composes Zi buffer providers over caller-owned Zxdp pools.
-Providers publish fixed headroom, payload and tailroom geometry before start.
+`Zutcp::Allocator` implements `Zi::IOBufPool` with transport allocation waiters
+and return notification, forwarding storage operations to an injected common
+pool obtained from the selected `Zxdp::Instance` backend's `bufPool()` factory.
+Concrete registered pools remain internal to Zxdp. Stack selects that backend
+before creating pools, then constructs the typed configuration in place:
+
+```c++
+Zxdp::Params config(
+  Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
+auto &params = config.p<Zxdp::Xdp::Params>();
+// Populate params, then call backend->init(config).
+```
+
+Configuration owns the Tx pool list and Rx reference; the initialized backend retains its own
+pool references independently of configuration-list membership. Stack retains
+raw pools through its transport providers between starts. Allocation-wait
+membership remains separate. Pools publish fixed count, size, alignment,
+headroom and tailroom geometry before start.
 Zutcp writes complete Ethernet/IP/TCP packets directly into registered backing;
 there is no intermediate payload staging buffer. Hardware zero-copy depends on
 the kernel and NIC driver and requires physical-NIC validation.

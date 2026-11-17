@@ -9,7 +9,11 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZmQueue.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmRef.hh>
+
 #include <zlib/Zutcp.hh>
 
 using namespace ZuTestUtil;
@@ -59,7 +63,10 @@ struct GateMx : ZiMultiplex {
   }
 };
 
-struct GateApp : Zutcp::Hub<GateApp> {
+struct GateApp : public ZmNHeap<GateApp>, public Zutcp::Hub<GateApp> {
+friend inline ZuStringT<"Zutcp.HandshakeTest.GateApp"> ZmNHeapID(GateApp *);
+  using ZmNHeap<GateApp>::operator new;
+  using ZmNHeap<GateApp>::operator delete;
   using Fn = ZmFn<>;
   ZmQueue<Fn> rx, tx;
   Zi::IOBufBuiltinAllocator<Zi::IOBufType::App, Zutcp::PacketBuf, Zutcp::BufSize> packets;
@@ -74,12 +81,12 @@ struct GateApp : Zutcp::Hub<GateApp> {
   ZuTime clock;
   GateMx multiplex;
   Zi::IOBufAllocator *testTx = nullptr;
-  Zxdp::BufPool *testPool = nullptr;
+  Zi::IOBufPool *testPool = nullptr;
 
   Zi::IOBufAllocator *dataTxAllocator() const {
     return testTx ? testTx : Zutcp::inlineAllocator();
   }
-  Zxdp::BufPool *txPool(Zi::IOBufAllocator *allocator) const {
+  Zi::IOBufPool *txPool(Zi::IOBufAllocator *allocator) const {
     return allocator && allocator == testTx ? testPool : nullptr;
   }
   bool nativeTx() const { return native; }
@@ -260,7 +267,8 @@ friend inline ZuStringT<"Zutcp.Handshake.CloseSrv"> ZmNHeapID(CloseSrv *);
 static void testCloseRouteDrain()
 {
   ZuTestScope(testCloseRouteDrain);
-  GateApp app;
+  ZmRef<GateApp> appRef = new GateApp;
+  auto &app = *appRef;
   app.native = true;
   ZmRef<CloseSrv> link = new CloseSrv{&app};
   link->prepare();
@@ -302,7 +310,8 @@ static void testNativeZeroDisconnect()
   ZuTestScope(testNativeZeroDisconnect);
   using NumericResult = decltype(ZuDeclVal<AbortCli &>().disconnect(0));
   ZuCHECK((ZuIsSame<NumericResult, bool>{}), "literal zero must select numeric acceptance");
-  GateApp app;
+  ZmRef<GateApp> appRef = new GateApp;
+  auto &app = *appRef;
   app.native = true;
   ZmRef<AbortCli> client = new AbortCli{&app};
   client->prepare();
@@ -347,7 +356,8 @@ static void testNativeErrorDisconnect()
 {
   ZuTestScope(testNativeErrorDisconnect);
   for (unsigned wide = 0; wide < 2; ++wide) {
-    GateApp app;
+    ZmRef<GateApp> appRef = new GateApp;
+    auto &app = *appRef;
     app.native = true;
     ZmRef<AbortCli> client = new AbortCli{&app};
     client->prepare();
@@ -396,7 +406,8 @@ static void testNativeErrorDisconnect()
 static void testPendingErrorDisconnect()
 {
   ZuTestScope(testPendingErrorDisconnect);
-  GateApp app;
+  ZmRef<GateApp> appRef = new GateApp;
+  auto &app = *appRef;
   app.native = true;
   ZmRef<AbortCli> client = new AbortCli{&app};
   client->prepare(false); // Keep the current generation's Tx reset queued.
@@ -442,7 +453,8 @@ struct ErrorTxAllocator : Zi::IOBufAllocator {
 static void testNativeQueueError()
 {
   ZuTestScope(testNativeQueueError);
-  GateApp app;
+  ZmRef<GateApp> appRef = new GateApp;
+  auto &app = *appRef;
   app.native = true;
   ZmRef<AbortCli> client = new AbortCli{&app};
   client->prepare();
@@ -491,7 +503,8 @@ static void testNativeBackingError()
 {
   ZuTestScope(testNativeBackingError);
   for (unsigned serverRole = 0; serverRole < 2; ++serverRole) {
-    GateApp app;
+    ZmRef<GateApp> appRef = new GateApp;
+    auto &app = *appRef;
     app.native = true;
     ZmRef<AbortCli> client = new AbortCli{&app};
     client->prepare();
@@ -547,7 +560,8 @@ static void testNativeErrorReplacement()
 {
   ZuTestScope(testNativeErrorReplacement);
   for (unsigned queued = 0; queued < 2; ++queued) {
-    GateApp app;
+    ZmRef<GateApp> appRef = new GateApp;
+    auto &app = *appRef;
     app.native = true;
     ZmRef<AbortCli> client = new AbortCli{&app};
     client->prepare();
@@ -592,7 +606,8 @@ static void testNativeErrorPolicy()
 {
   ZuTestScope(testNativeErrorPolicy);
   for (unsigned policy = 0; policy < 2; ++policy) {
-    GateApp app;
+    ZmRef<GateApp> appRef = new GateApp;
+    auto &app = *appRef;
     app.native = true;
     ZmRef<AbortCli> client = new AbortCli{&app};
     client->prepare();
@@ -630,7 +645,8 @@ static void testNativeErrorPolicy()
 static void testTCPOriginOwners()
 {
   ZuTestScope(testTCPOriginOwners);
-  GateApp app;
+  ZmRef<GateApp> appRef = new GateApp;
+  auto &app = *appRef;
   app.native = true;
   ZmRef<AbortCli> link = new AbortCli{&app};
   // Constructor has no known origin: zero is a valid selected ISN.
@@ -661,7 +677,8 @@ static void testTCPOriginOwners()
 static void testNativeIdleReset()
 {
   ZuTestScope(testNativeIdleReset);
-  GateApp app;
+  ZmRef<GateApp> appRef = new GateApp;
+  auto &app = *appRef;
   app.native = true;
   app.clock = Zm::now() + ZuTime{1000};
   ZmRef<AbortCli> client = new AbortCli{&app};
@@ -698,7 +715,8 @@ static void testFinRequestReplacement()
 {
   ZuTestScope(testFinRequestReplacement);
   for (unsigned retained = 0; retained < 2; ++retained) {
-    GateApp app;
+    ZmRef<GateApp> appRef = new GateApp;
+    auto &app = *appRef;
     app.native = true;
     ZmRef<AbortCli> client = new AbortCli{&app};
     client->prepare();
@@ -735,7 +753,8 @@ static void testFinRequestReplacement()
 static void testPendingCloseCallbacks()
 {
   ZuTestScope(testPendingCloseCallbacks);
-  GateApp app;
+  ZmRef<GateApp> appRef = new GateApp;
+  auto &app = *appRef;
   app.native = true;
   ZmRef<AbortCli> client = new AbortCli{&app};
   client->prepare(false); // Deliberately hold the new generation's queued Tx reset.
@@ -762,7 +781,8 @@ static void testPendingCloseCallbacks()
 static void testRetainedAdmissionFinWake()
 {
   ZuTestScope(testRetainedAdmissionFinWake);
-  GateApp app;
+  ZmRef<GateApp> appRef = new GateApp;
+  auto &app = *appRef;
   app.native = true;
   ZmRef<AbortCli> client = new AbortCli{&app};
   client->prepare();
@@ -799,7 +819,8 @@ static void testRetainedAdmissionFinWake()
 static void testPeerResetCloseSnapshot()
 {
   ZuTestScope(testPeerResetCloseSnapshot);
-  GateApp app;
+  ZmRef<GateApp> appRef = new GateApp;
+  auto &app = *appRef;
   app.native = true;
   for (unsigned established = 0; established < 2; ++established) {
     ZmRef<AbortCli> link = new AbortCli{&app};
@@ -828,7 +849,8 @@ static void testPeerResetCloseSnapshot()
 static void testAbortBeforeReady()
 {
   ZuTestScope(testAbortBeforeReady);
-  GateApp app;
+  ZmRef<GateApp> appRef = new GateApp;
+  auto &app = *appRef;
   app.native = true;
   ZmRef<AbortCli> link = new AbortCli{&app};
   link->prepare();
@@ -861,7 +883,8 @@ static void testNativeGracefulCallbacks()
 {
   ZuTestScope(testNativeGracefulCallbacks);
   for (unsigned finishFirst = 0; finishFirst < 2; ++finishFirst) {
-    GateApp app;
+    ZmRef<GateApp> appRef = new GateApp;
+    auto &app = *appRef;
     app.native = true;
     ZmRef<AbortCli> link = new AbortCli{&app};
     link->prepare();
@@ -920,7 +943,8 @@ static void testNativeGracefulCallbacks()
 static void testAbortReentrantConnect()
 {
   ZuTestScope(testAbortReentrantConnect);
-  GateApp app;
+  ZmRef<GateApp> appRef = new GateApp;
+  auto &app = *appRef;
   app.native = app.inlineRx = true;
   ZmRef<AbortCli> link = new AbortCli{&app};
   link->prepare();
@@ -955,7 +979,8 @@ static void testCoalescedNativeConnect()
 {
   ZuTestScope(testCoalescedNativeConnect);
   for (unsigned invalid = 0; invalid < 2; ++invalid) {
-    GateApp app;
+    ZmRef<GateApp> appRef = new GateApp;
+    auto &app = *appRef;
     app.native = true;
     ZmRef<AbortCli> link = new AbortCli{&app};
     link->prepare();
@@ -981,7 +1006,8 @@ static void testCoalescedNativeConnect()
 static void testNativeSetupFailureDrain()
 {
   ZuTestScope(testNativeSetupFailureDrain);
-  GateApp app;
+  ZmRef<GateApp> appRef = new GateApp;
+  auto &app = *appRef;
   app.native = true;
   ZmRef<AbortCli> link = new AbortCli{&app};
   link->prepare();
@@ -1053,14 +1079,14 @@ friend ZuStringT<"Zutcp.Handshake.Gate"> ZmNHeapID(GateCxn *);
   }
 };
 
-struct EarlyBacking : ZmNHeap<EarlyBacking>, Zi::IOBufPlugin {
+struct EarlyBacking : ZmNHeap<EarlyBacking>, Zi::IOBufPool {
 friend inline ZuStringT<"Zutcp.Handshake.EarlyBacking"> ZmNHeapID(EarlyBacking *);
   using ZmNHeap<EarlyBacking>::operator new;
   using ZmNHeap<EarlyBacking>::operator delete;
   alignas(ZiIOBuf_Align) uint8_t bytes[512];
   unsigned acquired = 0, returned = 0;
   bool valid = true;
-  EarlyBacking() { size = sizeof(bytes); headRoom = 128; }
+  EarlyBacking() { count = 1; size = sizeof(bytes); headRoom = 128; }
   uint8_t *alloc() override {
     if (acquired != returned) return nullptr;
     ++acquired;
@@ -1075,13 +1101,15 @@ friend inline ZuStringT<"Zutcp.Handshake.EarlyBacking"> ZmNHeapID(EarlyBacking *
 static void testEarlyWriterReadiness(unsigned scenario)
 {
   ZuTestScopeRT(testEarlyWriterReadiness);
-  GateApp app;
+  ZmRef<GateApp> appRef = new GateApp;
+  auto &app = *appRef;
   app.native = true;
   ZmRef<EarlyBacking> backing = new EarlyBacking;
-  Zi::IOBufPluginAllocator<Zi::IOBufType::TxTCP, ZiIOBuf, 512> allocator{
+  Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP, ZiIOBuf, 512> allocator{
     app.mx(), backing};
-  Zxdp::BufPool pool{1, sizeof(backing->bytes)};
-  app.testTx = &allocator; app.testPool = &pool;
+  auto factory = Zxdp::instance(Zxdp::Type::Xdp);
+  auto pool = factory->bufPool(1, sizeof(backing->bytes));
+  app.testTx = &allocator; app.testPool = pool;
   ZmRef<GateCxn> link = new GateCxn{&app};
   Zutcp::TCPStateTest::stageEarly(*link);
   bool cold = !link->dataMPS();
@@ -1124,7 +1152,8 @@ static void testEarlyWriterReadiness(unsigned scenario)
 static void testRejectedOwnerDrain()
 {
   ZuTestScope(testRejectedOwnerDrain);
-  GateApp app;
+  ZmRef<GateApp> appRef = new GateApp;
+  auto &app = *appRef;
   app.native = true;
   unsigned destroyed = 0;
   auto factory = [&app, &destroyed]() -> ZmRef<GateCxn> {
