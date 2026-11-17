@@ -62,12 +62,12 @@ enum {
   H1BufMax = 100<<20		// maximum configured HTTP body/buffer growth
 };
 
-using TxBufNode = ZiTxQueue::Node;
+using TxBufNode = ZiIOBuf;
 
 struct TCPHeader;
 struct TCPState {
-  ZiTxQueue active;
-  ZiTxQueue pending;
+  Zi::IOQueue active;
+  Zi::IOQueue pending;
   ZmAtomic<unsigned> count{0}; // one pending/active count per header, independent of body buffers
 };
 
@@ -119,7 +119,7 @@ struct TCPHeader : public TxBufNode {
 
 struct TCPTxOps {
   using State = TCPState;
-  using Queue = ZiTxQueue;
+  using Queue = Zi::IOQueue;
   using Node = Queue::Node;
   using Ref = Queue::NodeRef;
 
@@ -222,7 +222,7 @@ private:
 	auto impl = owner<Impl>(head);
 	auto state = head->state;
 	io.complete();
-	impl->sent(ZmRef<ZiTxBuf>{head}, false);
+	impl->sent(ZmRef<ZiIOBuf>{head}, false);
 	cleanup(impl, *state, head->connection.ptr());
 	return true;
       }
@@ -1507,7 +1507,7 @@ public:
       link->streamEnd_0();
     });
   }
-  void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+  void sent(ZmRef<ZiIOBuf> buf, bool ok) {
     Base::sent(ZuMv(buf), ok);
     if constexpr (Traits::ID != Transport::TCP &&
 	Traits::ID != Transport::TLS) {
@@ -1760,7 +1760,7 @@ public:
       link->streamEnd_0();
     });
   }
-  void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+  void sent(ZmRef<ZiIOBuf> buf, bool ok) {
     Base::sent(ZuMv(buf), ok);
     if constexpr (Traits::ID == Transport::TCP) return;
     if constexpr (Traits::ID == Transport::TLS) this->sentTLS(ok);

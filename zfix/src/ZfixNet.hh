@@ -23,12 +23,14 @@ namespace Zfix {
 // Borrow the transport-owned stream while the link is alive. Application
 // continuations reuse its existing extraction operations and return plain-TCP
 // ingress credit when bytes leave the stream.
-template <typename Impl, typename Stream> class NetInput {
+template <typename Impl, typename Net> class NetInput {
+  using Stream = typename Net::RxStream;
+
 public:
   void resumeRx() {
     auto impl = static_cast<Impl *>(this);
     ZmAssert(impl->app()->rxInvoked());
-    if constexpr (ZuIsSame<Stream, Ztcp::RxStream>{}) {
+    if constexpr (!Net::Encrypted) {
       impl->drainRx_();
     } else {
       auto &input = impl->nativeRx().input;

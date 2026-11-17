@@ -292,7 +292,7 @@ public:
     io.tos = ecnTOS(pkt->ecn);
   }
 
-  void sent(ZmRef<ZiTxBuf> buf, bool ok) {
+  void sent(ZmRef<ZiIOBuf> buf, bool ok) {
     if (ok) m_endpoint->sent_(buf->length);
     else m_endpoint->ioError_();
   }
@@ -318,11 +318,11 @@ public:
     m_endpoint->txSubmitted(pkt->length);
     if (priority && txQueue.count_()) {
       // Insert after the active head; repeated priorities precede pending work.
-      ZiTxQueue::Iter i{txQueue};
+      Zi::IOQueue::Iter i{txQueue};
       i();
       i.pushNode(pkt);
     } else {
-      Tx::send(ZmRef<ZiTxBuf>{pkt});
+      Tx::send(ZmRef<ZiIOBuf>{pkt});
     }
     return true;
   }

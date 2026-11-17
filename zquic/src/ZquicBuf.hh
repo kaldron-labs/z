@@ -23,17 +23,17 @@
 
 namespace Zquic_ {
 
-// Receive packets and retained plaintext remain independent of the Tx queue.
+// Receive packets and retained plaintext keep metadata separate from final Tx packets.
 struct BufNode : public ZiIOBuf {
   using ZiIOBuf::ZiIOBuf;
 };
 
 // Final UDP output owns its queue links and immutable destination metadata.
-struct TxPkt : public ZiTxBuf {
+struct TxPkt : public ZiIOBuf {
   ZiSockAddr	addr;
   EcnMark::T	ecn = EcnMark::NotECT;
 
-  using ZiTxBuf::ZiTxBuf;
+  using ZiIOBuf::ZiIOBuf;
 };
 
 using RxStream = ZiRxStream<ZiRxQueue>;

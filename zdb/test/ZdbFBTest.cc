@@ -84,7 +84,7 @@ static void run()
   ZmRef<IOBuf> frame = saveHdr(builder);
   ZuCheck(frame && frame->data_() + Zfb::Wire::MaxAlign == ptr);
   ZuCheck(frame->hdr()->length == frame->length - sizeof(Hdr));
-  auto txAllocator = mx.allocator<Zi::IOBufType::TxTCP, ZiTxBuf,
+  auto txAllocator = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf,
     Zdb_::HBBufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, Zdb_::MaxBufSize>();
   auto firstSend = ZmRef<TxBuf>{new TxBuf{txAllocator, frame}};
   auto secondSend = ZmRef<TxBuf>{new TxBuf{txAllocator, frame}};
@@ -132,7 +132,7 @@ static void frameOrigin()
   auto span = packet->frameSpan();
   auto length = packet->length;
   ZmRef<RepBuf<SchemaTest::Row>> cached = new RepBuf<SchemaTest::Row>{packet};
-  auto txAllocator = mx.allocator<Zi::IOBufType::TxTCP, ZiTxBuf,
+  auto txAllocator = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf,
     Zdb_::HBBufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, Zdb_::MaxBufSize>();
   auto sending = ZmRef<TxBuf>{new TxBuf{txAllocator, packet}};
   sending->advance(length >> 1);

@@ -13,8 +13,8 @@ using namespace ZuTestUtil;
 
 #define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
-ZuAssert((ZuIsBase<Zquic_::TxPkt, ZiTxBuf>{}));
-ZuAssert((!ZuIsBase<Zquic_::BufNode, ZiTxBuf>{}));
+ZuAssert((ZuIsBase<Zquic_::TxPkt, ZiIOBuf>{}));
+ZuAssert((ZuIsBase<Zquic_::BufNode, ZiIOBuf>{}));
 
 struct PacketBacking : Zi::IOBufPool {
   enum { Size = 1600, Head = 17, Tail = 11, Payload = 64 };
@@ -140,7 +140,7 @@ void testTxPacketGeometry(bool registered)
   memcpy(ciphertext, data, sizeof(ciphertext));
   buf->length = PacketBacking::Payload;
   auto packet = buf.ptr();
-  ZiTxQueue queue;
+  Zi::IOQueue queue;
   queue.pushNode(ZuMv(buf));
   ZQUIC_CHECK_RT(queue.count_() == 1 && queue.headPtr() == packet,
     "Tx queue must retain the packet node directly");

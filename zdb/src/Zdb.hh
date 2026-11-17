@@ -191,7 +191,7 @@ private:
 
   Zi::IOBufAllocator *rxAllocator() const;
   void send(ZmRef<IOBuf>);
-  void sent(ZmRef<ZiTxBuf>, bool ok);
+  void sent(ZmRef<ZiIOBuf>, bool ok);
   void msgRead(ZiRxContext &);
   int msgRead2(ZmRef<IOBuf>);
   void msgRead3(ZmRef<IOBuf>);

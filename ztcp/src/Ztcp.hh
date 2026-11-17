@@ -499,7 +499,10 @@ public:
 
   ZmRef<ZiIOBuf> allocTxBuf_() {
     auto buf = txAllocator()->allocBuf(impl(), 0, txMPS_());
-    if (ZuUnlikely(!buf)) return nullptr;
+    if (ZuUnlikely(!buf)) {
+      if (Cxn *cxn = m_cxn) cxn->close();
+      return nullptr;
+    }
     return buf;
   }
 

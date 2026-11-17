@@ -1103,7 +1103,7 @@ public:
     const auto &user = *this->app()->user();
     return AppHPackSeedPlans<ZuDecay<decltype(user)>>::get(user);
   }
-  void sent(ZmRef<ZiTxBuf> buffer, bool ok) {
+  void sent(ZmRef<ZiIOBuf> buffer, bool ok) {
     Base::sent(ZuMv(buffer), ok);
     this->sentTLS(ok);
   }

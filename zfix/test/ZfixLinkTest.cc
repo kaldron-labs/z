@@ -39,7 +39,7 @@ struct LayoutLink;
 template <typename Net> static void layout() {
   ZuTestScope(layout);
   using Hooks = Zfix::LinkHooks<LayoutLink, Net>;
-  using Input = Zfix::NetInput<LayoutLink, typename Net::RxStream>;
+  using Input = Zfix::NetInput<LayoutLink, Net>;
   ZuCheck(ZuTraits<Hooks>::IsEmpty);
   ZuCheck(ZuTraits<Input>::IsEmpty);
 }

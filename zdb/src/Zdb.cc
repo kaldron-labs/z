@@ -209,7 +209,7 @@ void DB::init(
     m_frameAllocator = mx->allocator<Zi::IOBufType::App,
       ZiRxQueue::Node, DefltBufSize, ZiIOBuf_Align, ZiIOBuf_HeapID, MaxBufSize>();
     m_hbAllocator = mx->allocator<Zi::IOBufType::TxTCP,
-      ZiTxBuf, HBBufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, MaxBufSize>();
+      ZiIOBuf, HBBufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, MaxBufSize>();
     m_handler = ZuMv(handler);
     {
       if (!m_cf.storeCf)
@@ -1720,7 +1720,7 @@ void Cxn_::send(ZmRef<IOBuf> buf)
   Tx::send(new TxBuf{m_db->m_hbAllocator, ZuMv(buf)});
 }
 
-void Cxn_::sent(ZmRef<ZiTxBuf>, bool ok)
+void Cxn_::sent(ZmRef<ZiIOBuf>, bool ok)
 {
   // ZiConnection closes the socket after a failed write. A rejected queue
   // submission also needs to close this connection to recover the record gap.
@@ -1941,7 +1941,7 @@ void Cxn_::hbSend()
   Host *self = m_db->self();
   auto allocator = m_db->m_hbAllocator;
   auto buf = allocator->allocBuf(this, 0, info().mps);
-  if (ZuUnlikely(!buf)) return;
+  if (ZuUnlikely(!buf)) { close(); return; }
   constexpr uint64_t align = Zfb::Wire::Align;
   uint64_t head = (uint64_t(buf->skip) + sizeof(Hdr) + align - 1) & ~(align - 1);
   unsigned tail = allocator->tailRoom;
@@ -1951,7 +1951,7 @@ void Cxn_::hbSend()
     self->id(), uint32_t(m_db->state()), m_db->nShards(), &self->dbState()});
   fbb.finish(saveMsg(fbb, heartbeat, Msg::Tag::Heartbeat));
 
-  Tx::send(ZmRef<ZiTxBuf>{saveHdr(fbb, this)});
+  Tx::send(ZmRef<ZiIOBuf>{saveHdr(fbb, this)});
 
   ZdbDEBUG(m_db, ZeString{}
     << "hbSend() self{id=" << self->id()

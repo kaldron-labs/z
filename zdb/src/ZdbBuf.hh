@@ -65,10 +65,10 @@ class DB;
 
 // --- I/O buffer
 
-struct IOBuf_ : public ZiTxBuf {
+struct IOBuf_ : public ZiIOBuf {
   mutable void	*rep = nullptr;	// typed replication buffer RepBuf<T>
 
-  using ZiTxBuf::ZiTxBuf;
+  using ZiIOBuf::ZiIOBuf;
 
   auto hdr() const { return reinterpret_cast<const Hdr *>(ZiIOBuf::data()); }
   auto hdr() { return reinterpret_cast<Hdr *>(ZiIOBuf::data()); }
@@ -124,13 +124,13 @@ struct RxBuf : public ZmNHeap<RxBuf>, public IOBuf {
 };
 
 // Each connection queues its own descriptor while retaining the source frame.
-struct TxBuf : public ZmNHeap<TxBuf>, public ZiTxBuf {
+struct TxBuf : public ZmNHeap<TxBuf>, public ZiIOBuf {
   using ZiIOBuf::data;
   ZmRef<Zdb_::IOBuf> backing;
 
   friend inline ZuStringT<"Zdb.TxBuf"> ZmNHeapID(TxBuf *);
   TxBuf(Zi::IOBufAllocator *allocator, ZmRef<Zdb_::IOBuf> buf) :
-    ZiTxBuf{nullptr, 0, allocator}, backing{ZuMv(buf)}
+    ZiIOBuf{nullptr, 0, allocator}, backing{ZuMv(buf)}
   {
     auto span = backing->frameSpan();
     data__ = reinterpret_cast<uintptr_t>(span.data()) | Builtin;

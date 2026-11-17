@@ -24,7 +24,7 @@ template <typename App, typename Impl, typename MTList, typename Net = TCP,
   template <typename, typename> class Engine = Link>
 class CliLink : public Net::template CliLink<App, Impl, RxAlloc, TxAlloc>,
     public Engine<Impl, NativeRx<Net>>, public LinkHooks<Impl, Net>,
-    public NetInput<Impl, typename Net::RxStream> {
+    public NetInput<Impl, Net> {
   ZuAssert((ZuIs_<typename TxAlloc::Buf, ZiIOBuf>{}));
   using NetBase = Net::template CliLink<App, Impl, RxAlloc, TxAlloc>;
   using EngineBase = Engine<Impl, NativeRx<Net>>;

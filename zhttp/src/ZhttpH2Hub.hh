@@ -2405,8 +2405,7 @@ private:
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
       "H2 control queue outside Tx thread", return);
     if (m_txStopping) { m_controlAdmission.pop(); return; }
-    m_controlFrames.pushNode(ZmRef<ZiTxBuf>::acquire(
-      static_cast<ZiTxBuf *>(ZuMv(buf).release())));
+    m_controlFrames.pushNode(ZuMv(buf));
     frameDrain_0();
   }
   bool emitControlTx(ZmRef<ZiIOBuf> buf) {
@@ -2517,7 +2516,7 @@ private:
   TxWindowList		m_readyFrames;
   TxWindowList		m_connectionFrames;
   TxWindowList		m_streamFrames;
-  ZiTxQueue		m_controlFrames;
+  Zi::IOQueue		m_controlFrames;
   uint32_t		m_txInitialWindow = DefltWindow;
   uint32_t		m_txFrameSize = DefltFrameSize;
   uint32_t		m_headerStream = 0;

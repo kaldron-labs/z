@@ -38,7 +38,7 @@ in `README.md`.
 - `CryptoTxBufAlloc` defaults to the `"Zquic.Crypto.TxBuf"` heap for TLS
   output staged for QUIC CRYPTO frame packetization.
 
-Completed transmit datagrams use `Zquic_::TxPkt`, an intrinsic `ZiTxBuf`
+Completed transmit datagrams use `Zquic_::TxPkt`, an intrinsic `ZiIOBuf`
 node with destination address and ECN metadata. Rx and retained plaintext buffers
 remain separate metadata types. The mx factory selects TxUDP backing; no builtin
 backing assumption is permitted. Packet protection writes directly into the
