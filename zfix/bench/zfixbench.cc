@@ -1057,7 +1057,8 @@ static bool report(const Config &c, State &state, auto &links) {
     << ZuBoxed(double(n)/seconds).fp<3>() << " p50_ns="
     << state.samples[(n - 1)/2] << " p99_ns="
     << state.samples[((n - 1) * 99)/100] << " p999_ns="
-    << state.samples[((n - 1) * 999)/1000] << " max_ns=" << state.samples[n - 1]
+    << state.samples[((n - 1) * 999)/1000] << " p9999_ns="
+    << state.samples[((n - 1) * 9999)/10000] << " max_ns=" << state.samples[n - 1]
     << '\n';
   return true;
 }
