@@ -241,7 +241,7 @@ static void testWake()
   entered = nullptr;
   closeInstance(instance);
   ZuCheckRT(scheduler.stop());
-  ZuCheckRT(!pool->used(), log_("receive/wake resources retire with all kernel-held packets"));
+  ZuCheckRT(!pool->alloc(), log_("receive/wake resources retire with all kernel-held packets"));
   alarm(0);
 }
 

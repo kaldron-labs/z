@@ -45,16 +45,14 @@ public:
 
   uint8_t *alloc() override;
   void free(uint8_t *packet) override;
-  unsigned used() const override { return unsigned(m_used); }
-  bool ready() const override { return unsigned(m_active); }
-  bool owns(const void *) const override;
-  unsigned slot(const void *) const override;
-  uint8_t *backing(unsigned slot) const override;
-  // Tx owner, with the caller allocation lease held. True only after all
-  // kernel use retires; permits header changes before a subsequent send.
-  bool writable(const void *) const override;
-
 private:
+  enum { NoSlot = unsigned(-1) };
+
+  unsigned used() const { return unsigned(m_used); }
+  bool ready() const { return unsigned(m_active); }
+  unsigned slot(const void *) const;
+  uint8_t *backing(unsigned slot) const;
+
   void init(ZmRef<UMem>, uint64_t offset, unsigned stride, unsigned prefix, unsigned first);
   void retire() { m_active = 0; }
   unsigned first() const { return m_first; }

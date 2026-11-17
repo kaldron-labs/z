@@ -507,10 +507,10 @@ int main(int argc, char **argv)
   auto admission = stack->cxnAdmission();
   auto tx = stack->txAdmission();
   bool drained = !stack->ready() && !admission.total && !admission.pending &&
-    !tx.outstanding && tx.controlFree == tx.controlCount;
+    !tx.outstanding;
   std::cerr << "backend=AF_XDP stopped=" << unsigned(!stack->ready()) << " cxns="
     << admission.total << " pending=" << admission.pending << " tx=" << tx.outstanding
-    << " control=" << tx.controlFree << "/" << tx.controlCount << "\n";
+    << " control_count=" << tx.controlCount << "\n";
   if (!drained) result.fail("native owner/provider drain incomplete");
   return result.failed() ? 1 : 0;
 }

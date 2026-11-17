@@ -451,7 +451,7 @@ friend inline ZuStringT<"Zutcp.DataTest.App"> ZmNHeapID(App *);
   Zi::IOBufPool *nativePool = nullptr;
   ZmRef<Zxdp::Instance> nativeFactory = Zxdp::instance(Zxdp::Type::Xdp);
   ZmQueue<ZmFn<>> txJobs, rxJobs;
-  bool holdTx = false, holdRx = false, allowRx = true, writable = true;
+  bool holdTx = false, holdRx = false, allowRx = true;
   unsigned demands = 0;
   mutable unsigned clockCalls = 0;
   mutable ZmFn<> clockFn;
@@ -489,11 +489,10 @@ friend inline ZuStringT<"Zutcp.DataTest.App"> ZmNHeapID(App *);
     return clock;
   }
   Zi::IOBufAllocator *dataTxAllocator() const { return Zutcp::inlineAllocator(); }
-  bool txWritable(const Zutcp::TxBacking &) const { return writable; }
   Zi::IOBufPool *txPool(Zi::IOBufAllocator *a) const {
     return a && (a == nativeAllocator || a == nativeAllocator2) ? nativePool : nullptr;
   }
-  bool retainRx(ZiIOBuf *, ZmRef<Zutcp::RxAccount> &, uint64_t) { ++demands; return allowRx; }
+  bool retainRx(ZiIOBuf *, Zi::IOQueue &) { ++demands; return allowRx; }
   template <typename F> void txRun(F f) {
     if (holdTx) txJobs.push([f = ZuMv(f)]() mutable { f(); }); else f();
   }
@@ -2031,12 +2030,9 @@ static void noCCAdmission()
   };
   bool refused = !link->output(refs[0], [&attempts](
       auto) { ++attempts; return false; });
-  app.writable = false;
-  bool busy = !link->output(refs[0], accept);
-  app.writable = true;
   Zutcp::TCPStateTest::window(*link, 0);
   bool zero = !link->output(refs[0], accept);
-  ZuCHECK(refused && busy && zero && attempts == 1 && !link->txNext() &&
+  ZuCHECK(refused && zero && attempts == 1 && !link->txNext() &&
       !Zutcp::TCPStateTest::records(*link),
     "disabled congestion control retains backend refusal, local credit and zero-window gates");
   Zutcp::TCPStateTest::window(*link, 1);

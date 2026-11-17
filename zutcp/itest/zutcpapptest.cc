@@ -156,8 +156,7 @@ static bool service(
   if (native) {
     stack = new Zutcp::Stack{&mx, {.interface = interface, .txSid = 6}};
     mx.plugin(stack);
-    auto configured = stack->configure({.rxRetainFrames = 96, .rxRetainFramesPerCxn = 64,
-      .rxReserveFrames = 16});
+    auto configured = stack->configure({.rxRetainFramesPerCxn = 64});
     if (configured.is<ZeException>()) return false;
   }
 #ifdef ZUTCP_APP_TLS

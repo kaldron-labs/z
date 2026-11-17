@@ -32,9 +32,8 @@ friend inline ZuStringT<"Zutcp.RxAdmissionTest.AdmissionApp"> ZmNHeapID(Admissio
   template <typename L> void txRun(L l) { l(); }
   template <typename L> void txInvoke(L l) { l(); }
   template <typename O, typename L> void txInvoke(O *, L l) { l(); }
-  // The native pool/account bounds are separately exercised by RxAccounting
-  // and the real Stack fixture. This seam drives connection resource refusal.
-  bool retainRx(ZiIOBuf *, ZmRef<RxAccount> &, uint64_t) {
+  // Exercise resource refusal independently of native buffer retention.
+  bool retainRx(ZiIOBuf *, Zi::IOQueue &) {
     ++demands;
     return allow;
   }

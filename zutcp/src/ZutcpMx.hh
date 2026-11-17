@@ -85,7 +85,7 @@ struct StackParams {
 // Tx-owned runtime snapshot, or cold control access while stopped.
 struct TxAdmission {
   uint64_t capacity = 0, dataStalls = 0, controlStalls = 0;
-  unsigned reserved = 0, outstanding = 0, controlCount = 0, controlFree = 0;
+  unsigned reserved = 0, outstanding = 0, controlCount = 0;
 };
 
 inline constexpr uint64_t DefaultMaxData = (16<<20); // 16M
@@ -267,9 +267,7 @@ private:
 struct StackConfig {
   unsigned controlBufCount = DefaultControlBufCount;
   unsigned txControlCredits = DefaultTxControlCredits;
-  unsigned rxRetainFrames = DefaultRxRetainFrames;
   unsigned rxRetainFramesPerCxn = DefaultRxRetainPerCxn;
-  unsigned rxReserveFrames = DefaultRxReserveFrames;
   uint64_t maxData = DefaultMaxData;
   unsigned maxCxns = DefaultMaxCxns, maxPendingCxns = DefaultMaxPendingCxns;
   unsigned closedTupleRingSize = DefaultClosedTupleRingSize;
@@ -319,12 +317,7 @@ public:
   bool closedTuple(const ClosedTupleKey &, ClosedTuple &) const;
   bool updateClosed(const ClosedTuple &);
   ClosedTupleStats closedTupleStats() const;
-  unsigned rxCxnLimit() const;
   TxAdmission txAdmission() const;
-  // Rx-owned physical retention. Aliases of the original packet charge once.
-  // Heap-backed logical fixtures have no physical ingress charge.
-  bool retainRx(Zi::IOBuf *, RxAccount *);
-  RxFrameStats rxAdmission();
   bool ready() const;
   unsigned mtu() const { return m_mtu; }
   Allocator *control() const { return m_control; }
@@ -369,7 +362,6 @@ private:
   void stopTx();
   void senderStopped();
   void stopEndpoints();
-  void returned();
   void received(uint8_t *, unsigned);
   bool closedPacket(const uint8_t *, const IPView &, const TCPView &);
   void replyClosed(ClosedTuple, IPPath);
@@ -413,8 +405,8 @@ private:
   ZmAtomic<unsigned> m_state{Stopped};
   bool m_startFailure = false;
   ZeException m_error;
+  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> m_rxWakeQueued{0};
   alignas(Zm::CacheLineSize) ZmAtomic<unsigned> m_wakeUsers{0};
-  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> m_returnQueued{0};
 
   // Independently locked observation and watch state.
   alignas(Zm::CacheLineSize) mutable ZmRWLock m_observeLock;

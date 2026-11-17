@@ -16,78 +16,20 @@
 #include <stdint.h>
 
 #include <zlib/ZmHeap.hh>
-#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRef.hh>
 
-#include <zlib/ZtArray.hh>
-
 #include <zlib/ZiIOBuf.hh>
 
 #include <zlib/ZutcpIP.hh>
-#include <zlib/ZutcpQueue.hh>
 
 namespace Zutcp {
 
 enum { DefaultControlBufCount = 256 };
 enum { DefaultTxControlCredits = 64 };
-enum { DefaultRxRetainFrames = 1024 };
 enum { DefaultRxRetainPerCxn = 256 };
-enum { DefaultRxReserveFrames = 64 };
-
-// Rx-owned identity, independent of Connection lifetime. A slot retains this
-// account while application aliases hold its original registered packet.
-struct ZutcpAPI RxAccount : public ZmNHeap<RxAccount>, public ZmObject {
-friend inline ZuStringT<"Zutcp.RxAccount"> ZmNHeapID(RxAccount *);
-  uint64_t generation;
-  unsigned limit, frames = 0;
-
-  RxAccount(unsigned limit_, uint64_t generation_) :
-    generation{generation_}, limit{limit_} { }
-  ~RxAccount();
-};
-
-struct RxFrameStats {
-  uint64_t admitted = 0, refused = 0, retired = 0;
-  unsigned capacity = 0, limit = 0, retained = 0;
-  unsigned configured = 0, configuredPerCxn = 0, perCxnLimit = 0, reserve = 0;
-};
-
-// One preallocated entry per physical ingress slot, not per packet/slice.
-// All operations except returned() run on Rx (or serialized stopped control).
-class ZutcpAPI RxFrames final : public ZmNHeap<RxFrames>, public ZmObject,
-  public QueueTelemetry<"rx-returns", Ztc::QueueType::Rx> {
-friend inline ZuStringT<"Zutcp.RxFrames"> ZmNHeapID(RxFrames *);
-public:
-  RxFrames(unsigned count, unsigned limit);
-  ~RxFrames();
-  bool retain(unsigned slot, RxAccount *);
-  void returned(unsigned slot); // final provider return, on any thread
-  unsigned reconcile();
-  RxFrameStats stats() const;
-  void telemetry(Ztc::QueueTelemetry &data) const override {
-    queueTelemetry(data);
-    // The intrusive MPSC return chain cannot overflow: each physical slot
-    // publishes once before reuse. Do not traverse concurrently or add hot RMW
-    // counters solely for telemetry. Its finite slot capacity is available.
-    data.size = m_slots.length();
-  }
-  void limit(unsigned); // serialized stopped configuration; preserves old charges
-
-private:
-  enum { NoSlot = unsigned(-1) };
-  struct alignas(Zm::CacheLineSize) Slot {
-    ZmRef<RxAccount> account;
-    unsigned next = NoSlot;
-  };
-  ZtArray<Slot, ZtArrayHeapID<"Zutcp.RxSlots">> m_slots;
-  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> m_returns{NoSlot};
-  alignas(Zm::CacheLineSize) unsigned m_limit;
-  unsigned m_retained = 0;
-  uint64_t m_admitted = 0, m_refused = 0, m_retired = 0;
-};
 
 // Zi adapters retain this provider through final registered returns. Its pool
 // therefore outlives the packet instance and all application/DMA-held buffers.
@@ -96,10 +38,9 @@ struct Allocator;
 
 struct AllocatorData : public Zi::IOBufPool {
   using ReturnedFn = ZmFn<void(), ZmFnHeapID<"Zutcp.Returned">>;
+  ReturnedFn returned;
   ZmRef<Zi::IOBufPool> pool;
   Allocator	*nextProvider = nullptr;
-  ReturnedFn	returned;
-  ZmRef<RxFrames> rxFrames; // physical ingress only; absent for Tx providers
 
   explicit AllocatorData(ZmRef<Zi::IOBufPool> pool_) : pool{ZuMv(pool_)} {
     ZmAssert_(pool);

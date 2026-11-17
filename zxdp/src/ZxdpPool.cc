@@ -80,12 +80,6 @@ unsigned BufPool::slot(const void *packet) const
   auto within = offset & (stride() - 1);
   return id < count && within < size ? unsigned(id) : NoSlot;
 }
-bool BufPool::owns(const void *packet) const { return slot(packet) != NoSlot; }
-bool BufPool::writable(const void *packet) const
-{
-  auto id = slot(packet);
-  return m_tx && id != NoSlot && unsigned(m_arena->txSlot(*this, id).refs) == 1;
-}
 uint8_t *BufPool::backing(unsigned id) const {
   ZmAssert_(m_arena && id < count);
   return m_arena->data() + m_offset + (uint64_t(id)<<m_shift) + m_prefix;

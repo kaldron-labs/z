@@ -517,8 +517,6 @@ friend inline ZuStringT<"Zi.IOBufBuiltinAllocator"> ZmNHeapID(IOBufBuiltinAlloca
 };
 
 struct ZiAPI IOBufPool_ : public ZmPolymorph {
-  enum { NoSlot = unsigned(-1) };
-
   uint32_t	count = 0;	// - configured buffer count
   uint32_t	size = 0;	// - overall size of each buffer
   uint32_t	align = ZiIOBuf_DefltAlign; // - physical buffer alignment
@@ -528,14 +526,6 @@ struct ZiAPI IOBufPool_ : public ZmPolymorph {
   virtual uint8_t *alloc() = 0;
   virtual void free(uint8_t *) = 0;
 
-  // Fixed pools expose stable slot identity and allocation availability.
-  // Metadata-only providers need no backing table or mutable-use permission.
-  virtual unsigned used() const { return 0; }
-  virtual bool ready() const { return true; }
-  virtual unsigned slot(const void *) const { return NoSlot; }
-  virtual uint8_t *backing(unsigned) const { return nullptr; }
-  virtual bool owns(const void *ptr) const { return slot(ptr) != NoSlot; }
-  virtual bool writable(const void *) const { return false; }
 };
 
 using IOBufPoolList = ZmList<IOBufPool_,

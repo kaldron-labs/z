@@ -116,8 +116,7 @@ static void testAllocatorDirection()
   Zutcp::HubParams defaults{&mx};
   ZuCHECK(defaults.controlBufCount() == 256 && defaults.txControlCredits() == 64,
     "control reserve defaults mismatch");
-  ZuCHECK(defaults.rxRetainFrames() == 1024 && defaults.rxRetainFramesPerCxn() == 256 &&
-      defaults.rxReserveFrames() == 64, "Rx retention defaults mismatch");
+  ZuCHECK(defaults.rxRetainFramesPerCxn() == 256, "Rx retention defaults mismatch");
   ZuCHECK(defaults.rtoParams().initial == ZuTime{1} &&
       defaults.rtoParams().min == Zutcp::timeUS(200000) &&
       defaults.rtoParams().max == ZuTime{60} &&
@@ -128,17 +127,13 @@ static void testAllocatorDirection()
     .errorFn([&errors](ZeException) { ++errors; });
   auto noCredits = Zutcp::HubParams{&mx}.txControlCredits(0)
     .errorFn([&errors](ZeException) { ++errors; });
-  auto noRx = Zutcp::HubParams{&mx}.rxRetainFrames(0)
-    .errorFn([&errors](ZeException) { ++errors; });
   auto noCxn = Zutcp::HubParams{&mx}.rxRetainFramesPerCxn(0)
-    .errorFn([&errors](ZeException) { ++errors; });
-  auto noReserve = Zutcp::HubParams{&mx}.rxReserveFrames(0)
     .errorFn([&errors](ZeException) { ++errors; });
   auto noRto = Zutcp::HubParams{&mx}.minRto(ZuTime{0})
     .errorFn([&errors](ZeException) { ++errors; });
   ZuCHECK(!app.init(ZuMv(invalid)) && !app.init(ZuMv(noCredits)) &&
-      !app.init(ZuMv(noRx)) && !app.init(ZuMv(noCxn)) && !app.init(ZuMv(noReserve)) &&
-      !app.init(ZuMv(noRto)) && errors == 6 &&
+      !app.init(ZuMv(noCxn)) &&
+      !app.init(ZuMv(noRto)) && errors == 4 &&
       !provider->requests,
     "invalid control reserves must fail before requesting a provider");
   defaults.initialRto(ZuTime{2}).minRto(Zutcp::timeUS(100000))

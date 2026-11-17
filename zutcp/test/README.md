@@ -15,10 +15,10 @@ credit resumes it, callbacks retain control of the send offset, and zero-byte
 completion adds no progress counts. The context replacement includes same-owner
 reentry. The live registered-buffer counterpart is `../itest/zutcpmxtest`.
 
-`ZutcpRxAccountingTest` covers distinct physical slot charges, independent shared
-and per-account bounds, retired account lifetime, concurrent off-owner returns
-and repeated slot reuse. It tests the Zutcp-only accounting primitive; connection
-admission and gap/control pressure are covered separately below.
+`ZutcpRxAccountingTest` covers the bounded retained-buffer lists: newest-head /
+oldest-tail order, eviction, independent per-connection counts, application alias
+lifetime and draining retained references. No physical-slot account or return
+ledger is involved.
 
 `ZutcpRxAdmissionTest` drives connection resource refusal/retry without byte-state
 commitment, duplicate demand, gap service using heap replacement, service under

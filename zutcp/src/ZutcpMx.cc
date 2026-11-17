@@ -15,6 +15,8 @@
 
 #include <zlib/ZiLog.hh>
 
+#include <zlib/ZxdpBPF.hh>
+
 #include <zlib/ZutcpIP.hh>
 #include <zlib/Zutcp.hh>
 
@@ -372,8 +374,7 @@ template <typename P> P Stack::Connections::params() const
   const auto &config = m_stack->config();
   P params{m_stack->mx()};
   params.controlBufCount(config.controlBufCount).txControlCredits(config.txControlCredits)
-    .rxRetainFrames(config.rxRetainFrames).rxRetainFramesPerCxn(config.rxRetainFramesPerCxn)
-    .rxReserveFrames(config.rxReserveFrames ? config.rxReserveFrames : 1)
+    .rxRetainFramesPerCxn(config.rxRetainFramesPerCxn)
     .maxData(config.maxData).maxCxns(config.maxCxns).maxPendingCxns(config.maxPendingCxns)
     .closedTupleRingSize(config.closedTupleRingSize)
     .tfoCookieCacheSize(config.tfoCookieCacheSize)
@@ -651,6 +652,19 @@ static unsigned requireMTU(ZiMultiplex *mx, unsigned interface)
   return result.p<unsigned>();
 }
 
+static unsigned ingressCount(ZiMultiplex *mx, unsigned interface)
+{
+  if (mx->rxBufSize()) return mx->rxBufSize();
+  auto result = Zxdp::Xdp::queryLink(interface);
+  if (result.is<ZeException>()) throw ZuMv(result.p<ZeException>());
+  // Idle queues retain their FILL allocations. Each active queue needs room
+  // beyond one connection's default retained list before its oldest can return.
+  uint64_t count = uint64_t(result.p<Zxdp::Xdp::LinkState>().rxQueues) *
+    (uint64_t(DefaultRxRetainPerCxn) + mx->rxQuantum());
+  if (count > UINT_MAX) throw ZeEXCEPT(Error, "Zutcp", "Rx pool count overflow");
+  return count > ZiIOBuf_DefltCount ? unsigned(count) : ZiIOBuf_DefltCount;
+}
+
 static unsigned requirePackets(unsigned count)
 {
   if (!count) throw ZeEXCEPT(Error, "Zutcp", "empty native packet pool");
@@ -674,7 +688,7 @@ Stack::Stack(ZiMultiplex *mx, StackParams params)
   m_netmask{params.netmask}, m_packet{ZuMv(params.packet)},
   m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
   m_ingress{new Allocator{m_backend->bufPool(
-    mx->rxBufSize() ? mx->rxBufSize() : ZiIOBuf_DefltCount, m_mtu + 14)}},
+    ingressCount(mx, m_interface), m_mtu + 14)}},
   m_rxAllocator{mx, m_ingress},
   m_packets{new Allocator{m_backend->bufPool(
     requirePackets(params.packetCount), m_mtu + 14, 14 + 40 + 60)}},
@@ -687,15 +701,15 @@ Stack::Stack(ZiMultiplex *mx, StackParams params)
 {
   ZmAssert_(mx->state() == ZmEngineState::Stopped);
   // TCP controls use separate native backing and never borrow application slots.
-  m_ingress->rxFrames = new RxFrames{m_ingress->pool->count, m_ingress->pool->count};
-  m_ingress->rxFrames->queueOwner(mx->id());
   m_tfoCookies.queueOwner(mx->id());
   m_closed.queueOwner(mx->id());
-  // A standalone packet shell has no connection-retention policy. Hub applies
-  // its explicit transport limits before publishing any connection owner.
-  m_config.rxRetainFrames = m_config.rxRetainFramesPerCxn = m_ingress->pool->count;
-  m_config.rxReserveFrames = 0;
-  m_ingress->returned = [this] { returned(); };
+  m_ingress->returned = [this] {
+    if (!ready() || this->mx()->invoked(this->mx()->rxThread()) ||
+	m_rxWakeQueued.xch(1)) return;
+    // Replenish an empty FILL ring even when no packet can make it readable.
+    // Queueing through mx supplies both scheduler re-entry and backend wake.
+    this->mx()->rxRun([this] { m_rxWakeQueued = 0; });
+  };
   addProvider(m_packets);
   addProvider(m_control);
 }
@@ -703,20 +717,16 @@ Stack::Stack(ZiMultiplex *mx, StackParams params)
 Stack::~Stack()
 {
   ZmAssert_(m_state == Stopped && !m_current && !unsigned(m_wakeUsers));
-  ZmAssert_(!m_txServicing && !m_txPending &&
-    !m_ingress->pool->used() && !m_packets->pool->used());
-  ZmAssert_(!m_control->pool->used());
+  ZmAssert_(!m_txServicing && !m_txPending);
   ZmAssert_(!m_routePending && !m_endpoints->count_());
   ZmAssert_(!m_observed && !m_observedCount);
   delete m_cxns;
-  m_ingress->rxFrames->reconcile();
   m_ingress->returned = {};
   m_backend = nullptr;
   while (m_providers) {
     auto p = m_providers;
     m_providers = p->nextProvider;
     p->nextProvider = nullptr;
-    ZmAssert_(!p->pool->used());
     ZmDEREF(p); // stopped, long-lived configuration ownership
   }
 }
@@ -758,12 +768,10 @@ ZuUnion<void, ZeException> Stack::configureControl(unsigned count, unsigned cred
   ZmAssert_(mx()->state() == ZmEngineState::Stopped && m_state == Stopped);
   uint64_t capacity = m_txCapacity - m_control->pool->count + count;
   if (!count || !credits || credits >= capacity || capacity > UINT_MAX ||
-      m_txPending || m_control->pool->used()) {
-    return ZeEXCEPT(Error, "Zutcp", ([count, credits, capacity,
-      held = m_control->pool->used()](auto &out) {
+      m_txPending) {
+    return ZeEXCEPT(Error, "Zutcp", ([count, credits, capacity](auto &out) {
       out << "invalid or busy control reserve count=" << count
-	<< " credits=" << credits << " Tx capacity=" << capacity
-	<< " held control=" << held;
+	<< " credits=" << credits << " Tx capacity=" << capacity;
     }));
   }
   m_control->count = m_control->pool->count = count;
@@ -775,11 +783,10 @@ ZuUnion<void, ZeException> Stack::configureControl(unsigned count, unsigned cred
 TxAdmission Stack::txAdmission() const
 {
   ZmAssert_(m_state == Stopped || mx()->invoked(mx()->txThread()));
-  unsigned count = m_control->pool->count, used = m_control->pool->used();
+  unsigned count = m_control->pool->count;
   return {.capacity = m_txCapacity, .dataStalls = m_dataStalls,
     .controlStalls = m_controlStalls, .reserved = m_controlCredits,
-    .outstanding = m_txPending, .controlCount = count,
-    .controlFree = used < count ? count - used : 0};
+    .outstanding = m_txPending, .controlCount = count};
 }
 
 ZuUnion<void, ZeException> Stack::configure(const StackConfig &config)
@@ -807,20 +814,10 @@ ZuUnion<void, ZeException> Stack::configure(const StackConfig &config)
   if (!config.closedTupleRingSize) {
     return ZeEXCEPT(Error, "Zutcp", "invalid closed tuple ring size");
   }
-  unsigned count = m_ingress->pool->count;
-  if (!config.rxRetainFrames || !config.rxRetainFramesPerCxn ||
-      !config.rxReserveFrames || count <= config.rxReserveFrames) {
-    return ZeEXCEPT(Error, "Zutcp", ([retained = config.rxRetainFrames,
-      perCxn = config.rxRetainFramesPerCxn, count, reserve = config.rxReserveFrames](auto &out) {
-      out << "invalid Rx retention=" << retained << " per connection=" << perCxn
-	<< " physical frames=" << count << " reserve=" << reserve;
-    }));
-  }
+  if (!config.rxRetainFramesPerCxn)
+    return ZeEXCEPT(Error, "Zutcp", "invalid per-connection Rx retention limit");
   auto control = configureControl(config.controlBufCount, config.txControlCredits);
   if (control.is<ZeException>()) return control;
-  unsigned limit = count - config.rxReserveFrames;
-  if (limit > config.rxRetainFrames) limit = config.rxRetainFrames;
-  m_ingress->rxFrames->limit(limit); // no revocation if old charges exceed new cap
   m_closed.resize(config.closedTupleRingSize);
   m_tfoCookies.resize(config.tfoCookieCacheSize);
   m_config = config;
@@ -918,12 +915,6 @@ ClosedTupleStats Stack::closedTupleStats() const
 {
   ZmAssert_(m_state == Stopped || mx()->invoked(mx()->rxThread()));
   return m_closed.stats();
-}
-
-unsigned Stack::rxCxnLimit() const
-{
-  unsigned limit = m_ingress->rxFrames->stats().limit;
-  return limit < m_config.rxRetainFramesPerCxn ? limit : m_config.rxRetainFramesPerCxn;
 }
 
 bool Stack::ready() const { return m_state == Running; }
@@ -1026,16 +1017,8 @@ void Stack::start_()
   if (ready()) { mx()->pluginStarted({}); return; }
   ZmAssert_(m_state == Stopped);
   m_state = Starting;
-  m_returnQueued = 0;
-  m_ingress->rxFrames->reconcile();
+  m_rxWakeQueued = 0;
   m_error = {};
-  bool busy = m_ingress->pool->used();
-  for (auto p = m_providers; p; p = p->nextProvider) busy |= p->pool->used();
-  if (busy) {
-    m_state = Stopped;
-    mx()->pluginStarted(ZeEXCEPT(Error, "Zutcp", "retained packet pools are busy"));
-    return;
-  }
   // A backend initializes once. Retain closed telemetry until this next start.
   if (m_backendInit) m_backend = Zxdp::instance(Zxdp::Type::Xdp);
   m_backendInit = true;
@@ -1159,52 +1142,13 @@ void Stack::rx()
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (!ready()) return;
-  m_ingress->rxFrames->reconcile();
   m_rxPackets = 0;
   m_backend->rx();
-  m_ingress->rxFrames->reconcile();
-}
-
-void Stack::returned()
-{
-  if (!ready()) return; // stopped returns drain on next start or destruction
-  if (mx()->invoked(mx()->rxThread())) {
-    m_ingress->rxFrames->reconcile();
-    return;
-  }
-  if (m_returnQueued.xch(1)) return;
-  // Existing mx wakeFn queues receive re-entry and interrupts the plugin wait.
-  // Coalesce a burst of off-owner returns into one ordinary scheduler task.
-  mx()->rxRun([this] {
-    m_returnQueued = 0;
-    m_ingress->rxFrames->reconcile();
-  });
-}
-
-bool Stack::retainRx(Zi::IOBuf *buf, RxAccount *account)
-{
-  ZmAssert_(mx()->invoked(mx()->rxThread()));
-  if (!buf->registered() || buf->allocator() != &m_rxAllocator) return true;
-  return m_ingress->rxFrames->retain(m_ingress->pool->slot(buf->data_()), account);
-}
-
-RxFrameStats Stack::rxAdmission()
-{
-  ZmAssert_(mx()->invoked(mx()->rxThread()) ||
-    (m_state == Stopped && mx()->state() == ZmEngineState::Stopped));
-  m_ingress->rxFrames->reconcile();
-  auto stats = m_ingress->rxFrames->stats();
-  stats.configured = m_config.rxRetainFrames;
-  stats.configuredPerCxn = m_config.rxRetainFramesPerCxn;
-  stats.perCxnLimit = rxCxnLimit();
-  stats.reserve = m_config.rxReserveFrames;
-  return stats;
 }
 
 void Stack::received(uint8_t *p, unsigned n)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
-  m_ingress->rxFrames->reconcile();
   IPView ip;
   TCPView tcp;
   EndpointBindings::Node *binding = nullptr;
@@ -1572,8 +1516,7 @@ unsigned Stack::allQueues(Ztc::QueueMgr::AllFn fn) const
     count += dynamic_cast<Ztc::Link *>(cxn.ptr())->allQueues(fn);
   fn(const_cast<ClosedTuples *>(&m_closed));
   fn(const_cast<TFOCache *>(&m_tfoCookies));
-  fn(m_ingress->rxFrames.ptr());
-  count += 3;
+  count += 2;
   if (m_cxns) count += m_cxns->allQueues(fn);
   if (m_backend) count += m_backend->allQueues(fn);
   count += ZutcpLogger::allQueues(fn);

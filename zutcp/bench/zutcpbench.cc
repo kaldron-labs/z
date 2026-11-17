@@ -241,8 +241,7 @@ public:
       }
       std::cout << "native_configuration control_count=" << settings.controlBufCount
 	<< " control_credits=" << settings.txControlCredits << " rx_retain="
-	<< settings.rxRetainFrames << " rx_per_cxn=" << settings.rxRetainFramesPerCxn
-	<< " rx_reserve=" << settings.rxReserveFrames << " max_data="
+	<< settings.rxRetainFramesPerCxn << " max_data="
 	<< settings.maxData << "\n";
     }
     m_network = allocator<Zi::IOBufType::RxTCP, ZiRxBuf, 2048>(config.reserve);
@@ -275,17 +274,10 @@ public:
 	<< " sequence=" << sequence << " detail=" << detail;
     }));
     if (m_stack) {
-      auto provider = static_cast<Zutcp::Allocator *>(m_output->provider());
-      ZiLOG(Error, "zutcpbench", ([used = provider->pool->used(), count = provider->pool->count,
-	ready = unsigned(provider->pool->ready()), capacity = m_output->capacity()](auto &out) {
-	out << "failure_pool used=" << used << " count=" << count
-	  << " ready=" << ready << " capacity=" << capacity;
-      }));
       txRun([this] {
 	auto state = m_stack->txAdmission();
 	ZiLOG(Error, "zutcpbench", ([state](auto &out) {
-	  out << "failure_tx outstanding=" << state.outstanding << " capacity=" << state.capacity
-	    << " control_free=" << state.controlFree;
+	  out << "failure_tx outstanding=" << state.outstanding << " capacity=" << state.capacity;
 	}));
 	m_done.post();
       });
@@ -619,19 +611,11 @@ bool App::report()
   if (m_stack) {
     auto c = m_stack->cxnAdmission();
     auto tx = m_stack->txAdmission();
-    auto rx = m_stack->rxAdmission();
     std::cout << "native_stopped ready=" << unsigned(m_stack->ready()) << " cxns=" << c.total
-      << " pending=" << c.pending << " tx_outstanding=" << tx.outstanding << " control_free="
-      << tx.controlFree << " control_count=" << tx.controlCount << " data_stalls="
-      << tx.dataStalls << " control_stalls="
-      << tx.controlStalls << "\n";
-    std::cout << "native_rx admitted=" << rx.admitted << " refused="
-      << rx.refused << " retired=" << rx.retired
-      << " retained=" << rx.retained << " capacity=" << rx.capacity << " limit=" << rx.limit
-      << " configured=" << rx.configured << " per_cxn=" << rx.configuredPerCxn << " reserve="
-      << rx.reserve << "\n";
-    ok &= !rx.retained && !m_stack->ready() && !c.total && !c.pending && !tx.outstanding &&
-      tx.controlFree == tx.controlCount;
+      << " pending=" << c.pending << " tx_outstanding=" << tx.outstanding
+      << " control_count=" << tx.controlCount << " data_stalls=" << tx.dataStalls
+      << " control_stalls=" << tx.controlStalls << "\n";
+    ok &= !m_stack->ready() && !c.total && !c.pending && !tx.outstanding;
   }
   return ok;
 }

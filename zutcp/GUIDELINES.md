@@ -121,28 +121,25 @@ before its embedded allocator is destroyed, and leave the base destructor no
 storage to free. Do not restore a borrowed builtin view that pins the original
 packet after heap replacement or add another backing reference count.
 
-Physical ingress owns a preallocated RxFrames table. Final provider return
-publishes its slot ID before raw pool free; only Rx reconciles the account.
-Drain pending returns before dispatching a reused physical slot. Use the
-existing coalesced mx return task/wake and Rx service boundaries, with no scans
-or pre-FILL backend callback. Stopped returns drain on serialized inspection,
-next start or destruction. Each slot holds a stable small RxAccount identity,
-never a Connection reference; retire/recreate accounts with connection generations
-rather than repurposing an account while its frames remain held.
+Each connection owns a `Zi::IOQueue` of retained receive buffers on
+its Rx owner. Add novel DATA's original buffer at the head. While the list count
+exceeds `rxRetainFramesPerCxn` (default 256), pop the tail and release that list
+reference. Drain the list during Rx teardown. Connections have independent
+counts and limits; application aliases retain their normal buffer references.
+Default ingress provisioning leaves each hardware queue more buffers than one
+connection's default retained-list bound. Idle queues keep their FILL buffers;
+provisioning only a smaller per-queue share can starve an active flow before it
+can evict its oldest retained buffer. Explicit mx receive-buffer counts remain
+caller-specified.
 
-HubParams configures rxRetainFrames/rxRetainFramesPerCxn/rxReserveFrames, default
-1024/256/64. Validate against actual ingress geometry, preserving old charges
-and pool counts. Reject R <= reserve; never enlarge small pools silently.
-The effective shared cap is min(requested, R - reserve), with the per-connection
-cap further bounded by it. Connection acquires a charge only for novel DATA,
-before byte/state/ACK commitment. Resource refusal is not a peer protocol error.
-Continue later controls but withhold the packet ACK when any DATA is refused.
+There is no physical-slot charge ledger, generation account, shared retention
+cap or final-release accounting service. Final ingress return still wakes receive
+service so an empty FILL ring can be replenished.
 
-At a cap, refuse new out-of-order retention. Contiguous/gap service copies only
-its bounded novel packet slices through existing ensure heap replacement before
-handoff, so application backpressure cannot pin the ingress reserve. Keep byte
-credit checks on that path; do not add a new fallback pool, retry queue or raw
-backend policy. Ordinary admitted slices retain original backing.
+Pool clients use only allocation/return and geometry. Keep slot/address
+calculations and allocation/completion bookkeeping internal to Zxdp. Retained
+transmit backing needs no writable query; preserve kernel/caller leases through
+completion and teardown.
 
 The re-audit found `migCloseOnFail` configuration residue and unused
 `asyncThread` settings, which are now removed. Server establishment now waits for retained response ACK evidence, completed Tx

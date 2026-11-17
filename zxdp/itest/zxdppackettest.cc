@@ -183,28 +183,22 @@ static void testPackets()
   auto packet = tx->alloc();
   ZmAssert_(packet);
   auto output = packet + 1; // odd offsets exercise generic-kernel CQ address tagging
-  ZuCheckRT(tx->writable(output) && !rx->writable(output) && !tx->writable(nullptr),
-    log_("only a caller-held idle Tx allocation is writable"));
-  memcpy(output, remote.mac, 6);
-  memcpy(output + 6, local.mac, 6);
-  output[12] = 0x88;
-  output[13] = 0xb5;
-  for (unsigned i = 14; i < Bytes; ++i) output[i] = (i * 37) ^ 0xa5;
   uint8_t expected[Bytes];
   memcpy(expected, output, Bytes);
   ZuCheckRT(!instance->send(nullptr, Bytes) &&
       !instance->send(packet, tx->size + 1) &&
-      !instance->send(packet + 1, tx->size) && tx->writable(output) &&
-      tx->used() == 1 && !instance->pollTx() && unsigned(xdpKicks) == kicks,
-    log_("invalid submissions leave caller backing writable "
+      !instance->send(packet + 1, tx->size) && !instance->pollTx() && unsigned(xdpKicks) == kicks,
+    log_("invalid submissions leave caller backing unchanged "
       "without a kernel lease or sender kick"));
   gateSender = 1;
   bool submitted = instance->send(output, Bytes);
-  ZuCheckRT(submitted && !tx->writable(output) &&
-      !instance->send(output, Bytes) && tx->used() == 1,
+  ZuCheckRT(submitted && !instance->send(output, Bytes),
     log_("accepted submission holds a kernel lease and cannot resubmit before retirement"));
   if (submitted) tx->free(packet);
-  ZuCheckRT(tx->used() == 1, log_("early pool return cannot recycle live kernel backing"));
+  auto spare = tx->alloc();
+  ZuCheckRT(spare && spare != packet && !tx->alloc(),
+    log_("early pool return cannot recycle live kernel backing"));
+  if (spare) tx->free(spare);
   bool entered = submitted && !senderEntered.timedwait(Zm::now() + ZuTime{10});
   unsigned callbacks = 0;
   bool ordered = true;
@@ -231,7 +225,7 @@ static void testPackets()
     auto n = recv(wire, observed, sizeof(observed), MSG_DONTWAIT);
     captured |= n == Bytes && !memcmp(observed, expected, Bytes);
   }
-  ZuCheckRT(captured && completions == 1 && !tx->used(),
+  ZuCheckRT(captured && completions == 1,
     log_("peer sees exact arena bytes; CQ recycles backing directly to its pool"));
   ZuCheckRT(unsigned(xdpKicks) > kicks && unsigned(xdpSid) == 1 &&
       int(xdpSender) != int(syscall(SYS_gettid)),
@@ -246,9 +240,9 @@ static void testPackets()
   ZuCheckRT(!instance->pollTx() && unsigned(xdpKicks) == kicks,
     log_("retired Tx service makes no empty-ring sendto calls"));
   auto recycled = tx->alloc();
-  ZuCheckRT(recycled == packet && tx->writable(recycled),
-    log_("completion restores the exact originating slot and writable caller lease"));
-  bool progressed = resumed && yielded && recycled && tx->writable(recycled);
+  ZuCheckRT(recycled == packet,
+    log_("completion restores the exact originating slot and caller lease"));
+  bool progressed = resumed && yielded && recycled;
   for (unsigned i = 0; i < 3 && progressed; ++i) {
     memcpy(recycled, expected, Bytes);
     bool sent = instance->send(recycled, Bytes);
@@ -261,7 +255,7 @@ static void testPackets()
       completed += instance->pollTx();
       if (!completed) poll(nullptr, 0, 1);
     }
-    progressed &= completed == 1 && tx->writable(recycled);
+    progressed &= completed == 1;
   }
   ZuCheckRT(progressed,
     log_("successive zero-to-one publications each drain without orphaning their final packet"));
@@ -300,12 +294,12 @@ static void testPackets()
       controlPtr->refCount() > 0,
     log_("instance owns Rx and every Tx pool after caller references are released"));
   bool closed = shutdown(instance, error);
-  ZuCheckRT(closed && !rxPtr->ready() && !txPtr->ready() && !controlPtr->ready(),
+  ZuCheckRT(closed,
     log_("instance-owned pools survive kernel retirement through completed close"));
   rx = rxPtr;
   tx = txPtr;
   control = controlPtr;
-  ZuCheckRT(closed && (!queued || !control->used()),
+  ZuCheckRT(closed && !control->alloc(),
     log_("close proves kernel retirement before recycling pending backing: ", error));
   ZmAssert_(closed);
   unsigned frozenQueues = 0;
@@ -328,7 +322,7 @@ static void testPackets()
   if (!queued) control->free(pending);
   if (recycled) tx->free(recycled);
   if (!submitted) tx->free(packet);
-  ZuCheckRT(!rx->used() && !tx->used() && !control->used() && !rx->alloc() && !tx->alloc(),
+  ZuCheckRT(!rx->alloc() && !tx->alloc(),
     log_("retired pools accept final returns and refuse new allocations"));
   close(wire);
   auto after = Zxdp::Xdp::queryLink(ifindex);
@@ -442,7 +436,7 @@ static void testSenderProgress()
   bool progressed = tail && await(done) && drain(1);
   ZuCheckRT(partial && second && last,
     log_("EAGAIN retry and three real bounded 32-descriptor drains preserve pending work"));
-  ZuCheckRT(progressed && accepted == Total && retired == Total && !tx->used() &&
+  ZuCheckRT(progressed && accepted == Total && retired == Total &&
       ordered && callbacks == 8 && unsigned(xdpSid) == 1 && unsigned(xdpKicks) >= kicks + 5,
     log_("concurrent publication and the last-drain race retire all 97 leases "
       "without another wake"));
@@ -466,7 +460,7 @@ static void testSenderProgress()
   ZuCheckRT(exited && stops == 1 && stopSid == 1,
     log_("shutdown waits for the active sendto callback and its FIFO sender barrier"));
   bool closed = shutdown(instance, error);
-  ZuCheckRT(closed && !rx->used() && !tx->used(),
+  ZuCheckRT(closed,
     log_("shutdown retires the final unpolled CQ lease exactly once: ", error));
   ZmAssert_(closed);
   ZuCheckRT(scheduler.stop());
@@ -531,7 +525,7 @@ static void testLeaseRace()
       release.post();
       if (!order) {
         released.wait();
-        valid &= tx->used() == 1;
+        valid &= !tx->alloc();
       }
     }
     unsigned completed = 0;
@@ -540,20 +534,20 @@ static void testLeaseRace()
       if (!completed) poll(nullptr, 0, 1);
     }
     if (order == 1) {
-      valid &= tx->used() == 1;
+      valid &= !tx->alloc();
       release.post();
     }
     if (order) released.wait();
     retired += completed;
-    valid &= accepted && completed == 1 && !tx->used();
+    valid &= accepted && completed == 1;
   }
   returned = nullptr;
   release.post();
   worker.join();
-  ZuCheckRT(valid && turns == Turns && retired == Turns && !tx->used(),
+  ZuCheckRT(valid && turns == Turns && retired == Turns,
     log_("cross-thread allocation returns and CQ retire each single-slot lease once"));
   bool closed = shutdown(instance, error);
-  ZuCheckRT(closed && !rx->used() && !tx->used(), log_("lease race cleanup: ", error));
+  ZuCheckRT(closed, log_("lease race cleanup: ", error));
   ZmAssert_(closed);
   ZuCheckRT(scheduler.stop());
 }

@@ -311,9 +311,9 @@ static bool queueCoverage(
     "reader", "reassembly", "admission", "pending",
     "unacknowledged", "sent", "retransmit", "lost"};
   static constexpr const char *stack[] = {
-    "closed-tuples", "tfo-cookies", "rx-returns"};
+    "closed-tuples", "tfo-cookies"};
   static constexpr const char *rings[] = {".rx", ".fill", ".tx", ".cq"};
-  unsigned seen[8] = {}, stackSeen[3] = {}, ringSeen[4] = {};
+  unsigned seen[8] = {}, stackSeen[2] = {}, ringSeen[4] = {};
   unsigned closeWaiters = 0, endpoints = 0;
   ZuID owner;
   auto prefix = [](ZuCSpan s, const char *text) {
@@ -353,7 +353,7 @@ static bool queueCoverage(
 #endif
       return false;
     }
-    for (unsigned i = 0; i < 3; ++i) {
+    for (unsigned i = 0; i < 2; ++i) {
       if (row.id != stack[i]) continue;
       ++stackSeen[i];
       if (row.type != Ztc::QueueType::Rx || !row.size) return false;
@@ -380,7 +380,7 @@ static bool queueCoverage(
     } else return false;
   }
   for (unsigned i = 0; i < 8; ++i) if (seen[i] != 1) return false;
-  for (unsigned i = 0; i < 3; ++i) if (stackSeen[i] != 1) return false;
+  for (unsigned i = 0; i < 2; ++i) if (stackSeen[i] != 1) return false;
   for (unsigned i = 0; i < 4; ++i)
     if (!ringSeen[i] || ringSeen[i] != ringSeen[0]) return false;
   return closeWaiters == unsigned(client) && endpoints == 1 + listeners;
@@ -450,8 +450,7 @@ static void testMxConnections(
     .interface = b, .packet = pendingPeer, .txSid = 4}};
   client.plugin(clientStack);
   server.plugin(serverStack);
-  Zutcp::StackConfig config{.rxRetainFrames = 96, .rxRetainFramesPerCxn = 64,
-    .rxReserveFrames = 16};
+  Zutcp::StackConfig config{.rxRetainFramesPerCxn = 64};
   auto clientRx = client.allocator<Zi::IOBufType::RxTCP>();
   auto serverRx = server.allocator<Zi::IOBufType::RxTCP>();
   auto clientTx = loss || window ? client.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 1400>(1) :
@@ -533,12 +532,17 @@ static void testMxConnections(
 	"Tx/Rx contexts must exchange exact bytes and release detached metadata before CQ");
     }
     if (connected) {
-      auto cliPool = static_cast<Zutcp::Allocator *>(clientTx->provider());
-      auto srvPool = static_cast<Zutcp::Allocator *>(serverTx->provider());
       auto deadline = Zm::now() + ZuTime{2};
-      while ((cliPool->pool->used() || srvPool->pool->used()) && Zm::now() < deadline)
-	usleep(1000); // fixture control caller; ACK and CQ processing stay on their owners
-      bool returned = !cliPool->pool->used() && !srvPool->pool->used();
+      uint8_t *cliReuse = nullptr, *srvReuse = nullptr;
+      while ((!cliReuse || !srvReuse) && Zm::now() < deadline) {
+	if (!cliReuse) cliReuse = clientTx->provider()->alloc();
+	if (!srvReuse) srvReuse = serverTx->provider()->alloc();
+	if (!cliReuse || !srvReuse) usleep(1000);
+      }
+      bool returned = cliReuse && srvReuse;
+      if (cliReuse) clientTx->provider()->free(cliReuse);
+      if (srvReuse) serverTx->provider()->free(srvReuse);
+      cliReuse = srvReuse = nullptr;
       ZuCHECK(returned && cliCxn->up() && srvCxn->up(),
 	"byte ACK and independent kernel retirement must return one-slot pools while connected");
       if (returned && window) {
@@ -546,15 +550,16 @@ static void testMxConnections(
 	srvCxn->sendData(serverTx, 4, false);
 	bool sent = wait(cli.sent) && wait(srv.sent);
 	usleep(3300000); // fixture control caller; capture must witness 1s/2s persist intervals
-	auto held = [](ZiMultiplex &mx, MxEvents &events, Zutcp::Allocator *pool) {
-	  return ZmBlock<bool>{}([&mx, &events, pool](auto done) {
-	    mx.txRun([&events, pool, done = ZuMv(done)]() mutable {
-	      done(events.txValid && events.destroyed == 1 && events.txCalls == 2 &&
-		pool->pool->used() == 1);
+	auto held = [](ZiMultiplex &mx, MxEvents &events, Zi::IOBufAllocator *allocator) {
+	  return ZmBlock<bool>{}([&mx, &events, allocator](auto done) {
+	    mx.txRun([&events, allocator, done = ZuMv(done)]() mutable {
+	      auto reuse = allocator->provider()->alloc();
+	      if (reuse) allocator->provider()->free(reuse);
+	      done(!reuse && events.txValid && events.destroyed == 1 && events.txCalls == 2);
 	    });
 	  });
 	};
-	ZuCHECK(sent && held(client, cli, cliPool) && held(server, srv, srvPool),
+	ZuCHECK(sent && held(client, cli, clientTx) && held(server, srv, serverTx),
 	  "zero-window admission must retain unsent metadata/backing through actual persist");
 	cliCxn->resumeRx();
 	srvCxn->resumeRx();
@@ -563,10 +568,17 @@ static void testMxConnections(
 	    cli.bytes == (Message.length()<<1) && srv.bytes == (Message.length()<<1),
 	  "reopening both receive contexts must resume exact queued DATA without another send");
 	deadline = Zm::now() + ZuTime{2};
-	while ((cliPool->pool->used() || srvPool->pool->used()) && Zm::now() < deadline)
-	  usleep(1000);
-	ZuCHECK(!cliPool->pool->used() && !srvPool->pool->used() &&
-	    cli.destroyed == 2 && srv.destroyed == 2 && cli.detached && srv.detached,
+	while ((!cliReuse || !srvReuse) && Zm::now() < deadline) {
+	  if (!cliReuse) cliReuse = clientTx->provider()->alloc();
+	  if (!srvReuse) srvReuse = serverTx->provider()->alloc();
+	  if (!cliReuse || !srvReuse) usleep(1000);
+	}
+	bool reused = cliReuse && srvReuse;
+	if (cliReuse) clientTx->provider()->free(cliReuse);
+	if (srvReuse) serverTx->provider()->free(srvReuse);
+	cliReuse = srvReuse = nullptr;
+	ZuCHECK(reused && cli.destroyed == 2 && srv.destroyed == 2 &&
+	    cli.detached && srv.detached,
 	  "reopened sends must detach metadata and return original one-slot backing once");
       }
       if (returned && !window) {
@@ -841,8 +853,8 @@ static void testConnectTimeout(bool v6)
   auto serverRx = server.allocator<Zi::IOBufType::RxTCP>();
   auto clientTx = client.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
   auto serverTx = server.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
-  Zutcp::StackConfig config{.rxRetainFrames = 96, .rxRetainFramesPerCxn = 64,
-    .rxReserveFrames = 16, .maxCxns = 1, .maxPendingCxns = 1, .connectTimeout = ZuTime{3}};
+  Zutcp::StackConfig config{.rxRetainFramesPerCxn = 64, .maxCxns = 1, .maxPendingCxns = 1,
+    .connectTimeout = ZuTime{3}};
   auto serverConfig = config;
   serverConfig.connectTimeout = ZuTime{1};
   bool started = clientStack->configure(config).is<void>() &&
@@ -953,8 +965,8 @@ static void testUserTimeout(bool v6)
   auto clientRx = client.allocator<Zi::IOBufType::RxTCP>();
   auto serverRx = server.allocator<Zi::IOBufType::RxTCP>();
   auto clientTx = client.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
-  Zutcp::StackConfig config{.rxRetainFrames = 96, .rxRetainFramesPerCxn = 64,
-    .rxReserveFrames = 16, .maxCxns = 1, .maxPendingCxns = 1, .userTimeout = ZuTime{2}};
+  Zutcp::StackConfig config{.rxRetainFramesPerCxn = 64, .maxCxns = 1, .maxPendingCxns = 1,
+    .userTimeout = ZuTime{2}};
   auto serverConfig = config;
   serverConfig.maxData = 0;
   serverConfig.userTimeout = ZuTime{0};
@@ -997,9 +1009,8 @@ static void testUserTimeout(bool v6)
   }
   bool stopped = client.stop() && server.stop();
   auto aSlots = clientStack->cxnAdmission(), bSlots = serverStack->cxnAdmission();
-  auto pool = static_cast<Zutcp::Allocator *>(clientTx->provider());
   ZuCHECK(stopped && !aSlots.total && !aSlots.pending && !bSlots.total && !bSlots.pending &&
-      !pool->pool->used() && (!connected || (cli.destroyed == 1 && !cli.detached &&
+      (!connected || (cli.destroyed == 1 && !cli.detached &&
 	cli.disconnected == 1 && srv.disconnected == 1 && !srv.bytes)) && !unsigned(failures),
     "owner teardown must return the unsent original slot with no repeated notifications");
   client.unwatch();
@@ -1071,8 +1082,8 @@ static void testGracefulFin(
   auto serverRx = server.allocator<Zi::IOBufType::RxTCP>();
   auto clientTx = client.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
   auto serverTx = server.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
-  Zutcp::StackConfig config{.rxRetainFrames = 96, .rxRetainFramesPerCxn = 64,
-    .rxReserveFrames = 16, .maxCxns = 1, .maxPendingCxns = 1, .closedTupleRingSize = 1};
+  Zutcp::StackConfig config{.rxRetainFramesPerCxn = 64, .maxCxns = 1, .maxPendingCxns = 1,
+    .closedTupleRingSize = 1};
   if (finWindow) config.maxData = Message.length();
   bool started = clientStack->configure(config).is<void>() &&
     serverStack->configure(config).is<void>() && start(client) && start(server);
@@ -1344,8 +1355,7 @@ static void testResetPair(bool v6, bool serverFirst)
   auto serverRx = server.allocator<Zi::IOBufType::RxTCP>();
   auto clientTx = client.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
   auto serverTx = server.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
-  Zutcp::StackConfig config{.rxRetainFrames = 96, .rxRetainFramesPerCxn = 64,
-    .rxReserveFrames = 16, .maxCxns = 1, .maxPendingCxns = 1};
+  Zutcp::StackConfig config{.rxRetainFramesPerCxn = 64, .maxCxns = 1, .maxPendingCxns = 1};
   bool started = clientStack->configure(config).is<void>() &&
     serverStack->configure(config).is<void>() && start(client) && start(server);
   ZuCHECK(started, "RST fixture must start both raw packet services");
@@ -1377,16 +1387,17 @@ static void testResetPair(bool v6, bool serverFirst)
       auto out = serverFirst ? srvCxn[i].ptr() : cliCxn[i].ptr();
       auto &events = serverFirst ? srv[i] : cli[i];
       auto allocator = serverFirst ? serverTx : clientTx;
-      auto pool = static_cast<Zutcp::Allocator *>(allocator->provider());
       out->sendData(allocator, 0);
       bool sent = wait(events.sent);
       Zi::Path gate;
       gate << getenv("ZUTCP_RST_DIR") << "/close";
       bool dropped = readGate(gate);
-      bool retained = ZmBlock<bool>{}([out, pool, &events](auto done) {
-	out->mx()->txRun([pool, &events, done]() mutable {
-	  done(events.txValid && events.detached && events.destroyed == 1 &&
-	    events.txCalls == 1 && pool->pool->used() == 1);
+      bool retained = ZmBlock<bool>{}([out, allocator, &events](auto done) {
+	out->mx()->txRun([allocator, &events, done]() mutable {
+	  auto reuse = allocator->provider()->alloc();
+	      if (reuse) allocator->provider()->free(reuse);
+	  done(!reuse && events.txValid && events.detached && events.destroyed == 1 &&
+	    events.txCalls == 1);
 	});
       });
       ZuCHECK(sent && dropped && retained && !cli[i].received && !srv[i].received,
@@ -1417,9 +1428,7 @@ static void testResetPair(bool v6, bool serverFirst)
     if (!retired) break;
   }
   bool stopped = client.stop() && server.stop();
-  auto cp = static_cast<Zutcp::Allocator *>(clientTx->provider());
-  auto sp = static_cast<Zutcp::Allocator *>(serverTx->provider());
-  ZuCHECK(stopped && retired && !unsigned(failures) && !cp->pool->used() && !sp->pool->used() &&
+  ZuCHECK(stopped && retired && !unsigned(failures) &&
       cli[0].disconnected == 1 && srv[0].disconnected == 1 &&
       cli[1].disconnected == 1 && srv[1].disconnected == 1,
     "reset then reconnect must preserve listener, once-only notifications "
@@ -1467,8 +1476,7 @@ static void testAbortPair(bool v6, bool reject, bool serverTarget)
   auto serverRx = server.allocator<Zi::IOBufType::RxTCP>();
   auto clientTx = client.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
   auto serverTx = server.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
-  Zutcp::StackConfig config{.rxRetainFrames = 96, .rxRetainFramesPerCxn = 64,
-    .rxReserveFrames = 16, .maxCxns = 2, .maxPendingCxns = 1};
+  Zutcp::StackConfig config{.rxRetainFramesPerCxn = 64, .maxCxns = 2, .maxPendingCxns = 1};
   bool started = clientStack->configure(config).is<void>() &&
     serverStack->configure(config).is<void>() && start(client) && start(server);
   ZuCHECK(started, "abort entrypoint fixture must start both raw packet services");
@@ -1524,11 +1532,13 @@ static void testAbortPair(bool v6, bool reject, bool serverTarget)
 	out->sendData(serverTarget ? clientTx : serverTx, 0);
 	bool delivered = wait(sentEvents.sent) && wait(inputEvents.input);
 	auto allocator = serverTarget ? clientTx : serverTx;
-	auto pool = static_cast<Zutcp::Allocator *>(allocator->provider());
-	bool retained = ZmBlock<bool>{}([out, pool, &sentEvents](auto done) {
-	  out->mx()->txRun([pool, &sentEvents, done]() mutable {
-	    done(sentEvents.txValid && sentEvents.detached && sentEvents.destroyed == 1 &&
-	      sentEvents.txCalls == 1 && pool->pool->used() == 1);
+	bool retained = ZmBlock<bool>{}([out, allocator, &sentEvents](auto done) {
+	  out->mx()->txRun([allocator, &sentEvents, done]() mutable {
+	    auto reuse = allocator->provider()->alloc();
+	      if (reuse) allocator->provider()->free(reuse);
+	    done(!reuse && sentEvents.txValid && sentEvents.detached &&
+	      sentEvents.destroyed == 1 &&
+	      sentEvents.txCalls == 1);
 	  });
 	});
 	Zi::Path path;
@@ -1567,9 +1577,7 @@ static void testAbortPair(bool v6, bool reject, bool serverTarget)
     if (!retired) break;
   }
   bool stopped = client.stop() && server.stop();
-  auto cp = static_cast<Zutcp::Allocator *>(clientTx->provider());
-  auto sp = static_cast<Zutcp::Allocator *>(serverTx->provider());
-  ZuCHECK(stopped && retired && !unsigned(failures) && !cp->pool->used() && !sp->pool->used() &&
+  ZuCHECK(stopped && retired && !unsigned(failures) &&
       cli[1].disconnected == 1 && srv[1].disconnected == 1 &&
       !unsigned(setupFailed[1]) && (!reject || rejected == 1),
     "meaningful abort then reconnect must drain original pools without late callbacks");
@@ -1924,9 +1932,9 @@ static void testNativeHistoryPair(bool v6, bool serverFirst)
   serverApp.events[1].hold = true;
   ZmRef<HistoryCli> cxn[2];
   bool clientInitialized = clientApp.init(Zutcp::ClientParams{&client}
-    .rxRetainFrames(96).rxRetainFramesPerCxn(64).rxReserveFrames(16));
+    .rxRetainFramesPerCxn(64));
   bool serverInitialized = clientInitialized && serverApp.init(Zutcp::ServerParams{&server}
-    .rxRetainFrames(96).rxRetainFramesPerCxn(64).rxReserveFrames(16));
+    .rxRetainFramesPerCxn(64));
   bool started = serverInitialized && start(client) && start(server) && serverApp.start();
   ZuCHECK(started, "direct native hubs must start on two live Stacks and a wildcard listener");
   if (!started) {
@@ -2497,10 +2505,8 @@ static void testPositiveWindowPair(bool v6)
     });
   });
   auto origin = packet ? packet->data() : nullptr;
-  auto provider = packet ?
-    static_cast<Zutcp::Allocator *>(packet->allocator()->provider()) : nullptr;
   bool original = packet && packet->registered() && packet->length == 1000 &&
-    packet->size - packet->skip >= 1000 && provider;
+    packet->size - packet->skip >= 1000;
   bool admitted = connected && original && cxn->send(ZuMv(packet), true);
   auto held = [&server, &listener](unsigned next) {
     return ZmBlock<bool>{}([&server, &listener, next](auto done) {
@@ -2517,11 +2523,10 @@ static void testPositiveWindowPair(bool v6)
       });
     });
   };
-  auto sender = [&client, cxn = cxn.ptr(), provider, origin](unsigned ack) {
-    return ZmBlock<bool>{}([&client, cxn, provider, origin, ack](auto done) {
-      client.txRun([cxn, provider, origin, ack, done]() mutable {
-	done(cxn->windowTx(ack) && provider->pool->used() == 1 &&
-	  !memcmp(origin, Message.data(), 1000));
+  auto sender = [&client, cxn = cxn.ptr(), origin](unsigned ack) {
+    return ZmBlock<bool>{}([&client, cxn, origin, ack](auto done) {
+      client.txRun([cxn, origin, ack, done]() mutable {
+	done(cxn->windowTx(ack) && !memcmp(origin, Message.data(), 1000));
       });
     });
   };

@@ -188,9 +188,7 @@ public:
   HubParams &&congestionControl(bool v) { m_congestionControl = v; return ZuMv(*this); }
   HubParams &&controlBufCount(unsigned v) { m_controlBufCount = v; return ZuMv(*this); }
   HubParams &&txControlCredits(unsigned v) { m_txControlCredits = v; return ZuMv(*this); }
-  HubParams &&rxRetainFrames(unsigned v) { m_rxRetainFrames = v; return ZuMv(*this); }
   HubParams &&rxRetainFramesPerCxn(unsigned v) { m_rxRetainPerCxn = v; return ZuMv(*this); }
-  HubParams &&rxReserveFrames(unsigned v) { m_rxReserveFrames = v; return ZuMv(*this); }
 
 
 
@@ -234,9 +232,7 @@ public:
   const RtoParams &rtoParams() const { return m_rtoParams; }
   ZuTime tlpPeerAckDelay() const { return m_tlpPeerAckDelay; }
   ZuTime ackHoldTimeout() const { return m_ackHoldTimeout; }
-  unsigned rxRetainFrames() const { return m_rxRetainFrames; }
   unsigned rxRetainFramesPerCxn() const { return m_rxRetainPerCxn; }
-  unsigned rxReserveFrames() const { return m_rxReserveFrames; }
 
 
 
@@ -274,9 +270,7 @@ private:
   RtoParams		m_rtoParams;
   ZuTime		m_tlpPeerAckDelay{0, 200000000};
   ZuTime		m_ackHoldTimeout{0, 25000000};
-  unsigned		m_rxRetainFrames = DefaultRxRetainFrames;
   unsigned		m_rxRetainPerCxn = DefaultRxRetainPerCxn;
-  unsigned		m_rxReserveFrames = DefaultRxReserveFrames;
   bool			m_sackPermitted = true, m_windowScale = true, m_timestamps = true;
   bool			m_ecn = false, m_congestionControl = true;
   ErrorFn		m_errorFn;
@@ -379,9 +373,7 @@ public:
       m_rtoParams = {};
       m_tlpPeerAckDelay = ZuTime{0, 200000000};
       m_ackHoldTimeout = ZuTime{0, 25000000};
-      m_rxRetainFrames = DefaultRxRetainFrames;
       m_rxRetainPerCxn = DefaultRxRetainPerCxn;
-      m_rxReserveFrames = DefaultRxReserveFrames;
       m_stack = nullptr;
       m_ecn = false;
       m_congestionControl = true;
@@ -397,10 +389,11 @@ public:
 
 
   Zi::IOBufAllocator *dataRxAllocator() const { return inlineAllocator(); }
-  bool retainRx(ZiIOBuf *packet, ZmRef<RxAccount> &account, uint64_t generation) {
-    if (!m_stack || !packet->registered()) return true;
-    if (!account) account = new RxAccount{m_stack->rxCxnLimit(), generation};
-    return m_stack->retainRx(packet, account);
+  bool retainRx(ZiIOBuf *packet, Zi::IOQueue &retained) {
+    if (retained.headPtr() == packet) return true;
+    retained.unshiftNode(packet);
+    while (retained.count_() > m_rxRetainPerCxn) retained.pop();
+    return true;
   }
   Zi::IOBufAllocator *dataTxAllocator() const { return m_dataTxAllocator; }
   bool nativeTx() const { return m_stack; }
@@ -410,12 +403,6 @@ public:
 	allocator->type != Zi::IOBufType::TxTCP) return nullptr;
     auto provider = static_cast<Allocator *>(allocator->provider());
     return provider ? provider->pool.ptr() : nullptr;
-  }
-  bool txWritable(const TxBacking &source) {
-    if (!m_stack || !source.pool) return false;
-    if (source.pool->writable(source.data)) return true;
-    m_stack->reconcileTx();
-    return source.pool->writable(source.data);
   }
   unsigned rxThread() const { return m_rxThread; }
   unsigned txThread() const { return m_txThread; }
@@ -452,9 +439,7 @@ public:
   const RtoParams &rtoParams() const { return m_rtoParams; }
   ZuTime tlpPeerAckDelay() const { return m_tlpPeerAckDelay; }
   ZuTime ackHoldTimeout() const { return m_ackHoldTimeout; }
-  unsigned rxRetainFrames() const { return m_rxRetainFrames; }
   unsigned rxRetainFramesPerCxn() const { return m_rxRetainPerCxn; }
-  unsigned rxReserveFrames() const { return m_rxReserveFrames; }
 
 
 
@@ -531,9 +516,7 @@ protected:
 	auto result = stack->configure({
 	      .controlBufCount = params.controlBufCount(),
 	      .txControlCredits = params.txControlCredits(),
-	      .rxRetainFrames = params.rxRetainFrames(),
 	      .rxRetainFramesPerCxn = params.rxRetainFramesPerCxn(),
-	      .rxReserveFrames = params.rxReserveFrames(),
 	      .maxData = params.maxData(),
 	      .maxCxns = params.maxCxns(),
 	      .maxPendingCxns = params.maxPendingCxns(),
@@ -575,9 +558,7 @@ protected:
       m_rtoParams = params.rtoParams();
       m_tlpPeerAckDelay = params.tlpPeerAckDelay();
       m_ackHoldTimeout = params.ackHoldTimeout();
-      m_rxRetainFrames = params.rxRetainFrames();
       m_rxRetainPerCxn = params.rxRetainFramesPerCxn();
-      m_rxReserveFrames = params.rxReserveFrames();
       m_congestionControl = params.congestionControl();
       m_ecn = params.ecn() && m_congestionControl;
       if (m_qlogParams.enabled() &&
@@ -728,9 +709,8 @@ private:
       reportError(ZeEXCEPT(Error, "Zutcp", "control buffer count and credits must be positive"));
       return false;
     }
-    if (!params.rxRetainFrames() || !params.rxRetainFramesPerCxn() ||
-	!params.rxReserveFrames()) {
-      reportError(ZeEXCEPT(Error, "Zutcp", "Rx retention limits and reserve must be positive"));
+    if (!params.rxRetainFramesPerCxn()) {
+      reportError(ZeEXCEPT(Error, "Zutcp", "per-connection Rx retention limit must be positive"));
       return false;
     }
     unsigned rxThread = params.mx()->rxThread();
@@ -779,9 +759,7 @@ private:
   RtoParams		m_rtoParams;
   ZuTime		m_tlpPeerAckDelay{0, 200000000};
   ZuTime		m_ackHoldTimeout{0, 25000000};
-  unsigned		m_rxRetainFrames = DefaultRxRetainFrames;
   unsigned		m_rxRetainPerCxn = DefaultRxRetainPerCxn;
-  unsigned		m_rxReserveFrames = DefaultRxReserveFrames;
   bool			m_sackPermitted = true, m_windowScale = true, m_timestamps = true;
   bool			m_ecn = false, m_congestionControl = true;
   bool			m_registered = false;

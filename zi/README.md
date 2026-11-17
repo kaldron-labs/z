@@ -177,10 +177,9 @@ metadata-only providers can leave `count` zero. Pools are intrusive nodes of
 that pool through the final registered return. Pool-list membership and allocator
 ownership are independent references.
 
-Fixed pools expose `ready()`/`used()` and stable `slot()`/`backing()` identity.
-`owns()` checks slot membership; `writable()` permits mutation of allocated
-backing only when the provider allows it. Providers without indexed backing
-return `NoSlot`/null and grant no writable permission by default.
+Pool clients use only `alloc()`/`free()` and geometry. Slot identity, allocation
+state and completion bookkeeping stay inside the backend. Kernel-held references
+preserve backing until completion independently of caller references.
 
 `allocBuf()` returns immediately. Tx buffer allocation failure means
 backpressure exceeded the Tx buffer pool capacity; drop the connection rather

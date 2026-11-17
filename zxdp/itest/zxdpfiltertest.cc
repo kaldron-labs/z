@@ -122,7 +122,7 @@ static void testForeign()
   if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
   auto link = Zxdp::Xdp::queryLink(ifindex);
   if (link.is<ZeException>()) error = link.p<ZeException>();
-  ZuCheckRT(initialized.is<ZeException>() && !instance->ready() && !rx->ready() &&
+  ZuCheckRT(initialized.is<ZeException>() && !instance->ready() &&
       link.is<Zxdp::Xdp::LinkState>() &&
       (link.p<Zxdp::Xdp::LinkState>().drvID == foreign.id() ||
 	link.p<Zxdp::Xdp::LinkState>().skbID == foreign.id()),

@@ -47,8 +47,7 @@ static void testPoolFactory()
     Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
   ZuCHECK(factory->init(empty).is<ZeException>(), "cold close prevents later initialization");
   factory = nullptr;
-  ZuCHECK(rx && tx && control && rx->count == 2 && tx->size == 128 &&
-      !rx->ready() && !tx->ready() && !control->ready(),
+  ZuCHECK(rx && tx && control && rx->count == 2 && tx->size == 128,
     "unbound pools survive their factory instance independently");
 
   auto instance = Zxdp::instance(Zxdp::Type::Xdp);
@@ -61,7 +60,7 @@ static void testPoolFactory()
   params.rx = [](uint8_t *, unsigned) { };
   auto unbound = instance->init(config); // zero interface fails without privileges
   const auto &configured = config.p<Zxdp::Xdp::Params>();
-  ZuCHECK(unbound.is<ZeException>() && !instance->ready() && !rx->ready(),
+  ZuCHECK(unbound.is<ZeException>() && !instance->ready(),
     "a different backend accepts factory pools but rejects incomplete configuration");
   auto pools = configured.txPools.citer();
   ZuCHECK(configured.rxPool.ptr() == rx.ptr() && configured.txPools.count_() == 2 &&

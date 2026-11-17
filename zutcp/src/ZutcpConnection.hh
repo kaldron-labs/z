@@ -1592,7 +1592,6 @@ protected:
     ZiAssert(rxInvoked(), "Zutcp", (),
       "TCP connection data Rx close outside Rx thread", return);
     closeRx();
-    m_rxAccount = nullptr; // held slots keep their retired generation account
   }
 
   bool txPending() const { return !resetSent() && (txRangeCount() || finReady()); }
@@ -3227,6 +3226,7 @@ public:
 	"TCP connection Rx close outside Rx thread", return);
     while (m_rxQueue.shift());
     m_rx.clean();
+    m_rxRetained.clean();
   }
   TxUnackdQueue *txUnackdQueue() { return &m_txUnackd; }
 
@@ -3797,11 +3797,7 @@ private:
       if (end > m_rxDataCredit.limit()) return false;
       bool heap = false;
       if (spans && !packet) return false;
-      if (spans && !app()->retainRx(packet, m_rxAccount, m_rxDataGen)) {
-	// Contiguous service must remain possible even when application-held
-	// frames fill both admission caps. Copy only this bounded packet's novel
-	// slices to the existing Rx heap; byte credit still bounds queued data.
-	// Out-of-order input consumes no service reserve and commits no ACK.
+      if (spans && !app()->retainRx(packet, m_rxRetained)) {
 	if (spans[0].first != m_rxDelivered) {
 	  if (refused) *refused = true;
 	  return false;
@@ -3878,8 +3874,6 @@ private:
       ZmRef<RxMsg> node = new RxMsg{
 	packet, data, unsigned(length64), app()->dataRxAllocator(),
 	this, spans[i].first};
-      // Force the existing ensure replacement path before handing off a
-      // service slice. Application retention can then pin only heap storage.
       if (heap && !node->ensure(unsigned(length64) + 1)) return false;
       Rx::rcvd(ZuMv(node));
     }
@@ -4360,7 +4354,6 @@ protected:
     if (positive) {
       if (!source || !source->native || !source->data ||
 	  (!source->pending && !*source->backing) ||
-	  (*source->backing && !app()->txWritable(*source)) ||
 	  ref.range.offset != source->payloadOffset ||
 	  ref.range.length != source->payloadLength || source->payloadOffset < head) return false;
       buf = static_cast<PacketBuf *>(source);
@@ -4669,7 +4662,7 @@ protected:
   RxState		m_rxState;
   Reader		m_rx;
   DataRxPQueue	m_rxQueue{0};
-  ZmRef<RxAccount>	m_rxAccount;
+  Zi::IOQueue		m_rxRetained;
   uint64_t		m_rxAppError = 0;
   DataError::T	m_rxError = DataError::None;
 

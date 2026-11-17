@@ -11,97 +11,12 @@
 
 namespace Zutcp {
 
-RxAccount::~RxAccount() { ZmAssert_(!frames); }
-
-RxFrames::RxFrames(unsigned count, unsigned limit) : m_limit{limit}
-{
-  ZmAssert_(count && limit && limit <= count);
-  m_slots.length(count);
-}
-
-RxFrames::~RxFrames()
-{
-  ZmAssert_(!m_retained && unsigned(m_returns) == NoSlot);
-}
-
-bool RxFrames::retain(unsigned id, RxAccount *account)
-{
-  reconcile();
-  ZmAssert_(id < m_slots.length() && account);
-  auto &slot = m_slots[id];
-  if (slot.account) {
-    if (slot.account == account) return true; // aliases charge once
-    ++m_refused;
-    return false;
-  }
-  if (m_retained >= m_limit || account->frames >= account->limit) {
-    ++m_refused;
-    return false;
-  }
-  slot.account = account;
-  ++account->frames;
-  ++m_retained;
-  ++m_admitted;
-  return true;
-}
-
-void RxFrames::returned(unsigned id)
-{
-  ZmAssert_(id < m_slots.length());
-  auto &slot = m_slots[id];
-  unsigned head;
-  do {
-    head = m_returns;
-    slot.next = head;
-  } while (m_returns.cmpXch(id, head) != head);
-}
-
-unsigned RxFrames::reconcile()
-{
-  // Final return publishes here before making the physical slot reusable.
-  // An empty acquire avoids exchanging a cache line on every ingress probe.
-  if (unsigned(m_returns) == NoSlot) return 0;
-  unsigned retired = 0;
-  auto id = m_returns.xch(NoSlot);
-  while (id != NoSlot) {
-    auto &slot = m_slots[id];
-    auto next = slot.next;
-    if (slot.account) {
-      ZmAssert_(slot.account->frames && m_retained);
-      --slot.account->frames;
-      --m_retained;
-      slot.account = nullptr;
-      ++retired;
-    }
-    id = next;
-  }
-  m_retired += retired;
-  return retired;
-}
-
-RxFrameStats RxFrames::stats() const
-{
-  return {m_admitted, m_refused, m_retired, unsigned(m_slots.length()),
-    m_limit, m_retained};
-}
-
-void RxFrames::limit(unsigned value)
-{
-  ZmAssert_(value && value <= m_slots.length());
-  reconcile();
-  m_limit = value;
-}
-
 uint8_t *Allocator::alloc()
 {
   return pool->alloc();
 }
 void Allocator::free(uint8_t *packet)
 {
-  // Publish before raw free makes this slot eligible for FILL again. Rx must
-  // reconcile before dispatching its next incarnation. No account is touched
-  // by an off-owner producer and no access to packet bytes follows raw free.
-  if (rxFrames) rxFrames->returned(pool->slot(packet));
   pool->free(packet);
   if (returned) returned();
 }

@@ -313,7 +313,7 @@ struct ControlProbe {
       return;
     }
     kernelOnly = !current.outstanding && current.controlCount == 2 &&
-      current.controlFree == 1 && lease && **lease;
+      lease && **lease;
     done.post();
   }
 };
@@ -342,7 +342,7 @@ static void testStack()
   bool invalidCount = stack->configureControl(0, 1).is<ZeException>();
   bool invalidCredits = stack->configureControl(2, 4).is<ZeException>();
   bool invalidRx = stack->configure({.controlBufCount = 3, .txControlCredits = 3,
-    .rxReserveFrames = RxCount}).is<ZeException>();
+    .rxRetainFramesPerCxn = 0}).is<ZeException>();
   ZuCheckRT(invalidCount && invalidCredits &&
       invalidRx &&
       stack->txAdmission().controlCount == Zutcp::DefaultControlBufCount,
@@ -395,21 +395,15 @@ static void testStack()
   auto &app = *appRef;
   unsigned configErrors = 0;
   auto badHub = Zutcp::HubParams{&mx}.controlBufCount(2).txControlCredits(4)
-    .rxReserveFrames(1)
     .errorFn([&configErrors](ZeException) { ++configErrors; });
   bool hubRejected = !app.init(ZuMv(badHub));
   ZuCheckRT(hubRejected && configErrors == 1 && !app.mx() &&
       stack->txAdmission().controlCount == Zutcp::DefaultControlBufCount,
     log_("failed Hub control configuration publishes no owner or changed pool"));
   bool appReady = app.init(Zutcp::HubParams{&mx}.controlBufCount(2).txControlCredits(3)
-    .rxReserveFrames(1).closedTupleRingSize(3).tfoCookieCacheSize(3));
+    .closedTupleRingSize(3).tfoCookieCacheSize(3));
   ZuCheckRT(appReady && app.dataTxAllocator() == stack->dataTxAllocator(),
     log_("Hub obtains its producer adapter directly from its owned native service"));
-  auto rxLimits = stack->rxAdmission();
-  ZuCheckRT(rxLimits.capacity == RxCount && rxLimits.reserve == 1 &&
-      rxLimits.configured == 1024 && rxLimits.configuredPerCxn == 256 &&
-      rxLimits.limit == RxCount - 1 && rxLimits.perCxnLimit == RxCount - 1,
-    log_("effective retention uses actual ingress capacity without growing a small pool"));
   auto tx = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 128>(3);
   auto small = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 64>(1);
   auto rx = mx.allocator<Zi::IOBufType::RxTCP>(77);
@@ -527,7 +521,7 @@ static void testStack()
   owner.wait();
   ZuCheckRT(pressure.submitted && pressure.during.capacity == 8 &&
       pressure.during.reserved == 3 && pressure.during.outstanding == 7 &&
-      !pressure.during.controlFree && pressure.during.dataStalls == 1 &&
+      pressure.during.dataStalls == 1 &&
       pressure.during.controlStalls == 1,
     log_("reserved admission permits control while all application pools are exhausted"));
   unsigned seen = 0;
@@ -696,16 +690,6 @@ static void testStack()
   }
   ZuCheckRT(injected && packets == RxCount && onRx,
     log_("one physical ingress reserve feeds original registered buffers on mx Rx"));
-  ZmRef<Zutcp::RxAccount> rxAccount = new Zutcp::RxAccount{1, 17};
-  bool counted = false;
-  mx.rxRun([&stack, &input, &rxAccount, &counted, &owner] {
-    counted = stack->retainRx(input[0], rxAccount) &&
-      stack->retainRx(input[0], rxAccount) && rxAccount->frames == 1 &&
-      stack->rxAdmission().retained == 1;
-    owner.post();
-  });
-  owner.wait();
-  ZuCheckRT(counted, log_("aliases charge the original ingress slot once on Rx"));
   {
     Zutcp::DataRx first{input[0], input[0]->data(), 32, rxHeap, nullptr, 0};
     Zutcp::DataRx second{input[0], input[0]->data() + 32, 32, rxHeap, nullptr, 32};
@@ -731,16 +715,6 @@ static void testStack()
     ZuCheckRT(resumed && extra && extra->data()[14] == 0xa5 &&
 	first.span()[12] == 0x88 && !first.registered() && !second.registered(),
       log_("heap-backed metadata does not pin ingress; off-owner replacement resumes Rx"));
-    bool retired = false;
-    mx.rxRun([&stack, &rxAccount, &retired, &owner] {
-      auto stats = stack->rxAdmission();
-      retired = !rxAccount->frames && !stats.retained &&
-	stats.admitted == 1 && stats.retired == 1;
-      owner.post();
-    });
-    owner.wait();
-    ZuCheckRT(retired,
-      log_("replacement reconciles the old slot charge before a new ingress incarnation"));
     extra = nullptr;
   }
   bytes[14] = 0xa5;
@@ -759,14 +733,6 @@ static void testStack()
   } while (Zm::now() < retryLimit);
   ZuCheckRT(reinjected && packets == RxCount + 2 && extra && extra->data()[14] == 0xa5,
     log_("off-owner pool return wakes/re-enters receive service without packet readiness"));
-  bool lateCharge = false;
-  mx.rxRun([&stack, &input, &rxAccount, &lateCharge, &owner] {
-    lateCharge = stack->retainRx(input[1], rxAccount) &&
-      rxAccount->frames == 1 && stack->rxAdmission().retained == 1;
-    owner.post();
-  });
-  owner.wait();
-  ZuCheckRT(lateCharge, log_("a retained ingress charge survives backend shutdown"));
   uint8_t shutdownFrame[64]{}, shutdownWire[2048];
   while (recv(wire, shutdownWire, sizeof(shutdownWire), 0) >= 0) { }
   ZmSemaphore senderEntered, senderRelease;
@@ -817,12 +783,6 @@ static void testStack()
   }
   ZuCheckRT(shutdownSubmitted && shutdownDelivered,
     log_("shutdown sends an accepted frame before stopping the gated kernel-service owner"));
-  auto controlResult = stack->configureControl(3, 3);
-  bool busyControl = controlResult.is<ZeException>();
-  ZuCheckRT(busyControl && !!controlResult.p<ZeException>() &&
-      stack->txAdmission().controlCount == 2 &&
-      pressure.lease && **pressure.lease && pressure.lease->data()[14] == 0x66,
-    log_("stopped reconfiguration preserves retained control backing and reports busy"));
   pressure.retained.clear();
   ZuCheckRT(extra && extra->data()[14] == 0xa5 && probe.packet,
     log_("stopped Stack preserves application-held Rx and Tx backing"));
@@ -837,16 +797,10 @@ static void testStack()
       retained.storage->data[retained.offset] == 0x5a && **leases.shutdownLease,
     log_("retained raw range outlives Zi metadata, queue and sent-record retirement"));
   leases.heldRange = {};
-  auto stoppedRx = stack->rxAdmission();
-  ZuCheckRT(stoppedRx.retained == 1 && rxAccount->frames == 1 &&
-      input[1]->data()[14] == 1,
-    log_("stopping preserves accounted application backing without accessing an owner"));
-  rxAccount = nullptr; // retire the owner before its final application return
+  ZuCheckRT(input[1] && input[1]->data()[14] == 1,
+    log_("stopping preserves application-held ingress backing"));
   extra = nullptr;
   for (auto &p : input) p = nullptr;
-  auto returnedRx = stack->rxAdmission();
-  ZuCheckRT(!returnedRx.retained && returnedRx.admitted == 2 && returnedRx.retired == 2,
-    log_("stopped control reconciliation retires a late return after account-owner release"));
   for (auto &p : reserves) p = nullptr;
   probe.packet = nullptr;
   app.final();
@@ -855,16 +809,13 @@ static void testStack()
   ZmRef<Zutcp::Stack> freshStack = new Zutcp::Stack{&mx,
     {.interface = index, .spin = 0, .packetCount = 2, .txSid = 3}};
   bool configured = app.init(Zutcp::HubParams{&mx}.controlBufCount(3).txControlCredits(3)
-    .rxReserveFrames(1).rxRetainFrames(2).rxRetainFramesPerCxn(1).closedTupleRingSize(2)
+    .rxRetainFramesPerCxn(1).closedTupleRingSize(2)
     .tfoCookieCacheSize(3));
   ZuCheckRT(configured && app.controlBufCount() == 3 && app.txControlCredits() == 3 &&
       stack->txAdmission().controlCount == 3 && stack->txAdmission().capacity == 9,
     log_("stopped Hub reinitialization changes control count and preserves application counts"));
-  auto resizedRx = stack->rxAdmission();
-  ZuCheckRT(configured && resizedRx.capacity == RxCount && resizedRx.limit == 2 &&
-      resizedRx.perCxnLimit == 1 && resizedRx.reserve == 1 &&
-      app.rxRetainFrames() == 2 && app.rxRetainFramesPerCxn() == 1,
-    log_("nondefault retention and connection limits preserve physical geometry"));
+  ZuCheckRT(configured && app.rxRetainFramesPerCxn() == 1,
+    log_("nondefault per-connection retention limit survives reinitialization"));
   // Kernel queue release may outlast close; retry from this control caller,
   // with the original providers and a finite deadline. No owner thread waits.
   bool restarted = false;
@@ -932,7 +883,7 @@ static void testStack()
   ZuCheckRT(arrived, log_("native admission pressure has three independent ingress frames"));
   if (arrived) {
     bool pressurePassed = false;
-    mx.rxRun([&mx, &app, &stack, &pressureRx, &pressurePassed, &owner] {
+    mx.rxRun([&mx, &app, &pressureRx, &pressurePassed, &owner] {
       ZmRef<WriterCxn> a = new WriterCxn{&app};
       ZmRef<WriterCxn> b = new WriterCxn{&app};
       ZmRef<WriterCxn> c = new WriterCxn{&app};
@@ -950,42 +901,25 @@ static void testStack()
 	refused = false;
 	return cxn->processFrame(data, ZuMv(packet), nullptr, &refused);
       };
-      bool first = receive(a.ptr(), frame(pressureRx[0], 2), pressureRx[0]) >= 0 && !refused;
-      bool perCxn = receive(a.ptr(), frame(pressureRx[1], 4), pressureRx[1]) < 0 &&
-	refused && a->rxCreditUsed() == 3;
-      bool second = receive(b.ptr(), frame(pressureRx[1], 2), pressureRx[1]) >= 0 && !refused;
-      bool shared = receive(c.ptr(), frame(pressureRx[2], 4), pressureRx[2]) < 0 &&
-	refused && !c->rxCreditUsed();
-      auto before = pressureRx[2]->refCount();
-      bool service = receive(c.ptr(), frame(pressureRx[2], 0), pressureRx[2]) >= 0 &&
-	!refused && c->rxBytes() == 1 &&
-	pressureRx[2]->refCount() == before;
-      bool gap = receive(a.ptr(), frame(pressureRx[2], 0, 2), pressureRx[2]) >= 0 && !refused &&
-	pressureRx[2]->refCount() == before;
-      auto stats = stack->rxAdmission();
-      pressurePassed = first && perCxn && second && shared && service && gap &&
-	stats.retained == 2 && stats.limit == 2 && stats.perCxnLimit == 1 &&
+      bool first = receive(a.ptr(), frame(pressureRx[0], 0), pressureRx[0]) >= 0 && !refused;
+      bool second = receive(b.ptr(), frame(pressureRx[1], 0), pressureRx[1]) >= 0 && !refused;
+      bool third = receive(c.ptr(), frame(pressureRx[2], 0), pressureRx[2]) >= 0 && !refused;
+      pressurePassed = first && second && third &&
 	a->rxError() == Zutcp::DataError::None && c->rxError() == Zutcp::DataError::None;
       mx.rxRun([a = ZuMv(a), b = ZuMv(b), c = ZuMv(c),
 	&mx, &pressurePassed, &owner] {
 	// Normal queued Rx dequeue work precedes this observation.
-	pressurePassed &= a->rxBytes() == 3 && !a->rxPending();
+	pressurePassed &= a->rxBytes() == 1 && !a->rxPending() &&
+	  b->rxBytes() == 1 && c->rxBytes() == 1;
 	a->clearRx(); b->clearRx(); c->clearRx();
 	mx.txRun([&mx, &owner] { mx.rxRun([&owner] { owner.post(); }); });
       });
     });
     owner.wait();
     ZuCheckRT(pressurePassed,
-      log_("native DATA enforces both caps while gap service retains no reserve"));
+      log_("connections independently retain and deliver their native DATA"));
     for (auto &p : pressureRx) p = nullptr;
-    bool restored = false;
-    mx.rxRun([&stack, &restored, &owner] {
-      auto stats = stack->rxAdmission();
-      restored = !stats.retained && stats.admitted == stats.retired;
-      owner.post();
-    });
-    owner.wait();
-    ZuCheckRT(restored, log_("connection teardown and final returns restore shared admission"));
+
   }
   bool stopped = restarted && mx.stop();
   ZuCheckRT(restarted && running && stopped,

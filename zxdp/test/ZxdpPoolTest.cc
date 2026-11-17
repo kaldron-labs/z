@@ -74,27 +74,27 @@ static void testPools()
   bool geometry = true;
   for (unsigned i = 0; i < 5; ++i) {
     auto p = held[i] = tx->alloc();
-    geometry &= p && tx->slot(p) == i && tx->slot(p + 54) == i &&
-      !rx->owns(p) && arena->pool(p) == tx.ptr();
+    geometry &= p && !(uintptr_t(p) & (tx->align - 1)) &&
+      (!i || p - held[i - 1] == 2048) && arena->pool(p) == tx.ptr();
     if (p) memset(p, i + 1, tx->size);
   }
-  ZuCHECK(geometry && tx->used() == 5 && !tx->alloc() && !empty->alloc(),
+  ZuCHECK(geometry && !tx->alloc() && !empty->alloc(),
     "exact reserve exhausts without fallback; address identity is direct");
   auto ctl = control->alloc(), input = rx->alloc();
   ZuCHECK(ctl && input && !control->alloc() && arena->pool(ctl) == control.ptr(),
     "small Tx reserve and Rx reserve remain independent under saturation");
   ZmThread releaser{[&tx, &held] { for (auto p : held) tx->free(p + 54); }};
   releaser.join();
-  ZuCHECK(!tx->used(), "off-owner return normalizes advanced raw packet pointers");
   auto late = tx->alloc();
   arena->retire(pools, static_cast<Zxdp::Xdp::BufPool *>(rx.ptr()));
   arena = nullptr;
-  ZuCHECK(late && !tx->alloc() && late[54] && tx->owns(late),
+  ZuCHECK(late && !tx->alloc() && late[54],
     "retired pools retain mappings through application-held packets");
   tx->free(late);
   control->free(ctl);
   rx->free(input);
-  ZuCHECK(!tx->used() && !control->used() && !rx->used(), "all slots return exactly once");
+  ZuCHECK(!tx->alloc() && !control->alloc() && !rx->alloc(),
+    "retired pools refuse allocations after all final returns");
 }
 
 static void testInvalid()
@@ -147,10 +147,9 @@ static void testZiAllocator()
   auto buf = allocator.allocBuf(nullptr, 32);
   auto second = allocator.allocBuf(nullptr, 32);
   ZuCHECK(buf && second && buf->registered() && buf->allocator() == &allocator &&
-      buf->data_() == tx->backing(0) && buf->skip == 17 && buf->length == 32 &&
-      buf->size == 128 && second->data_() == tx->backing(1) &&
-      second->data_() - buf->data_() == 256 &&
-      !(uintptr_t(second->data_()) & 255) && tx->used() == 2 &&
+      buf->skip == 17 && buf->length == 32 &&
+      buf->size == 128 && second->data_() - buf->data_() == 256 &&
+      !(uintptr_t(second->data_()) & 255) &&
       !allocator.allocBuf(nullptr, 1),
     "Zi metadata preserves native slot alignment, exact headroom and bounded admission");
   if (buf) memset(buf->data(), 0x5a, buf->length);
@@ -160,7 +159,12 @@ static void testZiAllocator()
     "registered metadata retains its original backing after arena retirement");
   second = nullptr;
   buf = nullptr;
-  ZuCHECK(!tx->used(), "Zi final return reaches the native pool once");
+  auto reprovisioned = Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500);
+  ZuCHECK(reprovisioned.is<ZmRef<Zxdp::Xdp::UMem>>(),
+    "Zi final return permits reprovisioning the original pools");
+  if (reprovisioned.is<ZmRef<Zxdp::Xdp::UMem>>())
+    reprovisioned.p<ZmRef<Zxdp::Xdp::UMem>>()->retire(
+      pools, static_cast<Zxdp::Xdp::BufPool *>(rx.ptr()));
 }
 
 static void testPoolGeometry()
@@ -200,7 +204,7 @@ static void testPoolGeometry()
     tx->headRoom = geometry.txHead;
     tx->tailRoom = geometry.txTail;
     auto result = Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500);
-    ZuCHECK(result.is<ZeException>() && !rx->ready() && !tx->ready(),
+    ZuCHECK(result.is<ZeException>() && !rx->alloc() && !tx->alloc(),
       "bad alignment or header/trailer reserves fail before either pool activates");
     if (result.is<ZmRef<Zxdp::Xdp::UMem>>()) {
       result.p<ZmRef<Zxdp::Xdp::UMem>>()->retire(
@@ -223,14 +227,20 @@ static void testContention()
   ZuCHECK(created.is<ZmRef<Zxdp::Xdp::UMem>>(), "contention fixture provisioned");
   if (created.is<ZeException>()) return;
   auto arena = ZuMv(created.p<ZmRef<Zxdp::Xdp::UMem>>());
+  auto origin = tx->alloc();
+  uintptr_t begin = uintptr_t(origin);
+  tx->free(origin);
   ZmAtomic<unsigned> owners[Slots]{};
   ZmAtomic<unsigned> failures{0};
   ZmThread workers[Threads];
-  for (unsigned t = 0; t < Threads; ++t) workers[t] = ZmThread{[&tx, &owners, &failures, t] {
+  for (unsigned t = 0; t < Threads; ++t) workers[t] = ZmThread{[
+    &tx, &owners, &failures, begin, t
+  ] {
     for (unsigned i = 0; i < Turns; ++i) {
       auto p = tx->alloc();
       if (!p) { ++failures; continue; }
-      auto id = tx->slot(p);
+      auto id = (uintptr_t(p) - begin)/128;
+      if (id >= Slots) { ++failures; tx->free(p); continue; }
       if (owners[id].cmpXch(t + 1, 0)) { ++failures; continue; }
       memset(p, t + 1, tx->size);
       for (unsigned j = 0; j < tx->size; ++j)
@@ -240,7 +250,7 @@ static void testContention()
     }
   }};
   for (auto &worker : workers) worker.join();
-  ZuCHECK(!unsigned(failures) && !tx->used(), "contended slist preserves ownership and payload");
+  ZuCHECK(!unsigned(failures), "contended slist preserves ownership and payload");
   uint8_t *held[Slots];
   bool full = true;
   for (auto &p : held) full &= !!(p = tx->alloc());
