@@ -37,6 +37,21 @@ friend inline ZuStringT<""> ZmNHeapID(EmptyID *);
   int	value;
 };
 
+struct alignas(Zm::CacheLineSize) Aligned : public ZmNHeap<Aligned> {
+friend inline ZuStringT<"ZmNHeapTest.Aligned"> ZmNHeapID(Aligned *);
+  uint64_t value = 0;
+};
+struct alignas(Zm::CacheLineSize) AlignedPlain : public ZmNHeap<AlignedPlain> {
+  uint64_t value = 0;
+};
+struct alignas(Zm::CacheLineSize) AlignedEmpty : public ZmNHeap<AlignedEmpty> {
+friend inline ZuStringT<""> ZmNHeapID(AlignedEmpty *);
+  uint64_t value = 0;
+};
+struct alignas(Zm::CacheLineSize) AlignedOff : public ZmNHeap<AlignedOff, false> {
+  uint64_t value = 0;
+};
+
 ZuAssert((ZuIsSame<ZmNHeapID_<Foo<int>>, ZuStringT<"Foo">>{}));
 ZuAssert((ZuIsSame<ZmNHeapID_<Plain>, ZmNHeapDisable>{}));
 ZuAssert((ZuIsSame<ZmNHeapID_<EmptyID>, ZmNHeapDisable>{}));
@@ -74,8 +89,41 @@ void heapTest()
   ZuCheck(ext->other == 42);
 }
 
+template <typename T>
+void alignedHeap()
+{
+  ZuTestScope(alignedHeap);
+  T *objects[8];
+  for (unsigned i = 0; i < 8; ++i) {
+    objects[i] = new T;
+    ZuCheck(!(uintptr_t(objects[i]) % alignof(T)));
+    objects[i]->value = i + 1;
+  }
+  for (unsigned i = 0; i < 8; ++i) {
+    ZuCheck(objects[i]->value == i + 1);
+    for (unsigned j = 0; j < i; ++j)
+      ZuCheck(objects[i] != objects[j]);
+  }
+  for (auto object : objects) delete object;
+}
+
+void alignedPlacement()
+{
+  ZuTestScope(alignedPlacement);
+  alignas(AlignedPlain) unsigned char storage[sizeof(AlignedPlain)];
+  auto object = new (storage) AlignedPlain;
+  ZuCheck(static_cast<void *>(object) == storage);
+  object->~AlignedPlain();
+}
+
 int main()
 {
   ZuTestMain();
   ZuTestCall(heapTest);
+  ZmHeapMgr::init("ZmNHeapTest.Aligned", 0, 0, ZmHeapConfig{8, {}});
+  ZuTestCall(alignedHeap<Aligned>);
+  ZuTestCall(alignedHeap<AlignedPlain>);
+  ZuTestCall(alignedHeap<AlignedEmpty>);
+  ZuTestCall(alignedHeap<AlignedOff>);
+  ZuTestCall(alignedPlacement);
 }

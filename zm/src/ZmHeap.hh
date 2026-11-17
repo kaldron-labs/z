@@ -388,7 +388,9 @@ ZuInline void *ZmNHeap<T, Enabled>::operator new(size_t size) {
     using Cache = ZmHeapCacheT<
       ID, ZmHeapAllocSize<sizeof(T)>{}, alignof(T), Sharded{}>;
     return Cache::alloc();
-  } else
+  } else if constexpr (alignof(T) > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+    return ::operator new(size, std::align_val_t{alignof(T)});
+  else
     return ::operator new(size);
 }
 template <typename T, bool Enabled>
@@ -404,7 +406,9 @@ ZuInline void ZmNHeap<T, Enabled>::operator delete(void *p) noexcept {
     using Cache = ZmHeapCacheT<
       ID, ZmHeapAllocSize<sizeof(T)>{}, alignof(T), Sharded{}>;
     Cache::free(p);
-  } else
+  } else if constexpr (alignof(T) > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+    return ::operator delete(p, std::align_val_t{alignof(T)});
+  else
     return ::operator delete(p);
 }
 

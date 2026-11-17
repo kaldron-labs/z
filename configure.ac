@@ -187,7 +187,7 @@ AS_CASE([$CC],
   [*clang*], [
     Z_WFLAGS="-Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function" # C and C++
     Z_CFLAGS="$Z_CFLAGS $Z_WFLAGS"
-    Z_CXXFLAGS="-std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function $Z_CXXFLAGS $Z_WFLAGS"
+    Z_CXXFLAGS="-std=gnu++2b -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function $Z_CXXFLAGS $Z_WFLAGS"
   ],
   [*gcc*], [
     Z_WFLAGS="-Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-class-memaccess -Wno-unused-function" # C and C++
