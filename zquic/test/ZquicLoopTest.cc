@@ -16,14 +16,14 @@ using namespace ZuTestUtil;
 
 #define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
-namespace {
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
-struct App : public Zquic::Hub<App> {
+class App : public Zquic::Hub<App> {
+public:
   using Base = Zquic::Hub<App>;
 
-  App() : m_mx{mxParams_()} {
+  App() : m_mx{mxParams()} {
     bool ok = Base::init(
       Zquic::HubParams(&m_mx, "3", "4").maxUDP(Zquic::BufSize));
     ZiAssert(ok, "Zquic", (), "loop test app init failed", return);
@@ -44,7 +44,7 @@ struct App : public Zquic::Hub<App> {
   template <typename O, typename L> void txInvoke(O *, L l) { l(); }
 
 private:
-  static ZiMxParams mxParams_() {
+  static ZiMxParams mxParams() {
     return ZiMxParams()
       .scheduler([](auto &s) {
 	s.nThreads(4);
@@ -60,8 +60,9 @@ struct TestStream :
 {
   using Base = Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc>;
   using Base::Base;
-  int process(Zquic::RxStream &) { ++processed; return 0; }
   unsigned processed = 0;
+
+  int process(Zquic::RxStream &) { ++processed; return 0; }
 };
 struct TestLink :
   public ZmNHeap<TestLink>,
@@ -73,16 +74,16 @@ struct TestLink :
   friend inline ZuStringT<"Zquic.Loop.Link"> ZmNHeapID(TestLink *);
   using ZmNHeap<TestLink>::operator new;
   using ZmNHeap<TestLink>::operator delete;
-  TestLink(App *app) : Base{app, false, ZuID{"client"}} { }
+  TestLink(App *app) : Base{app} { }
   TestLink(App *app, bool isServer) : Base{app, isServer} { }
   void flushTx_() { }
   void queueTxFlush() { }
-  void pto_() { }
+  void ptoTimer() { }
   void queueRetransmit() { }
   bool retransmit_(bool = false, unsigned = 2,
     Zquic::PktNumSpace::T = Zquic::PktNumSpace::N) { return false; }
   void initPath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::initClientPathTx_(ZuMv(local), ZuMv(remote));
+    Base::initClientPathTx(ZuMv(local), ZuMv(remote));
   }
   void closeForTest(uint64_t errorCode = 0) {
     Base::closeState(errorCode);
@@ -156,104 +157,63 @@ struct TestLink :
   Zquic::PathDiag pathDiag() const {
     return Base::pathDiag_();
   }
-  Zquic::PktBudget sendBudget() const { return Base::sendBudget_(); }
+  Zquic::PktBudget sendBudget() { return Base::sendBudget_(); }
 #endif
 };
 
 template <typename Link>
-void queueTelemetry(
-  Link &link, Ztc::QueueTelemetry &rx, Ztc::QueueTelemetry &tx)
+static uint64_t checkQueues(Link &link)
 {
   auto linkKey = link.telKey();
-  unsigned count = 0;
-  unsigned allQueues = link.allQueues(
-      [&linkKey, &rx, &tx, &count](Ztc::Queue *queue) {
+  ZtArray<ZuTuple<ZuID, Ztc::QueueType::T>> ids;
+  uint64_t packets = 0;
+  unsigned count = link.allQueues([&linkKey, &ids, &packets](Ztc::Queue *queue) {
     auto key = queue->telKey();
     ZQUIC_CHECK_RT(key.template p<0>() == linkKey.template p<0>(),
-      "telemetry queue owner ID mismatch");
-    ZQUIC_CHECK_RT(key.template p<1>() == linkKey.template p<1>(),
-      "telemetry queue ID mismatch");
-    ZQUIC_CHECK_RT(key.template p<2>() ==
-	(count ? Ztc::QueueType::Tx : Ztc::QueueType::Rx),
-      "telemetry queue iteration order mismatch");
-
+      "queue identity does not name its owning hub");
+    for (const auto &id : ids)
+      ZQUIC_CHECK_RT(id.p<0>() != key.template p<1>() || id.p<1>() != key.template p<2>(),
+	"queue role ID is not unique");
+    ids.push(ZuTuple<ZuID, Ztc::QueueType::T>{
+      ZuID{key.template p<1>()}, key.template p<2>()});
     Ztc::QueueTelemetry data;
-    data.ownerID = ZuID{} << "dirtyOwner";
-    data.id = ZuID{} << "dirty";
+    data.ownerID = "dirtyOwner";
+    data.id = "dirty";
     data.inBytes = data.outBytes = data.inCount = data.outCount = 1;
     data.count = data.size = data.full = 1;
     data.type = Ztc::QueueType::Thread;
     queue->telemetry(data);
-    ZQUIC_CHECK_RT(data.ownerID == key.template p<0>(),
-      "queue telemetry owner ID mismatch");
-    ZQUIC_CHECK_RT(data.id == key.template p<1>(),
-      "queue telemetry ID mismatch");
-    ZQUIC_CHECK_RT(data.type == key.template p<2>(),
-      "queue telemetry type mismatch");
-    ZQUIC_CHECK_RT(!data.size && !data.full,
-      "queue telemetry fields were not overwritten");
-    if (data.type == Ztc::QueueType::Rx) {
-      ZQUIC_CHECK_RT(!data.outBytes && !data.outCount,
-	"Rx telemetry output fields were not overwritten");
-      rx = data;
-    } else {
-      ZQUIC_CHECK_RT(!data.inBytes && !data.inCount,
-	"Tx telemetry input fields were not overwritten");
-      tx = data;
-    }
-    ++count;
+    ZQUIC_CHECK_RT(data.ownerID == key.template p<0>() &&
+	data.id == key.template p<1>() && data.type == key.template p<2>(),
+      "queue snapshot identity differs from queue identity");
+    ZQUIC_CHECK_RT(data.id == linkKey.template p<1>() || (!data.inBytes && !data.outBytes),
+      "unsupported byte fields were not overwritten");
+    auto id = key.template p<1>();
+    if (id.length() >= 5 && !memcmp(id.data() + id.length() - 5, ":sent", 5))
+      packets += data.count;
   });
-  ZQUIC_CHECK_RT(allQueues == 2, "allQueues returned incorrect count");
-  ZQUIC_CHECK_RT(count == allQueues,
-    "allQueues did not enumerate returned count");
+  ZQUIC_CHECK_RT(count >= 3 + 4*Zquic::PktNumSpace::N && count == ids.length(),
+    "link did not enumerate its actual control, writable and recovery queues");
   unsigned repeat = 0;
-  link.allQueues([&repeat](Ztc::Queue *queue) {
-    auto key = queue->telKey();
-    ZQUIC_CHECK_RT(key.template p<2>() ==
-	(repeat++ ? Ztc::QueueType::Tx : Ztc::QueueType::Rx),
-      "allQueues queue order is not stable");
+  link.allQueues([&ids, &repeat](Ztc::Queue *queue) {
+    ZQUIC_CHECK_RT(repeat < ids.length() &&
+	queue->telKey().template p<1>() == ids[repeat].p<0>() &&
+	queue->telKey().template p<2>() == ids[repeat].p<1>(),
+      "queue enumeration order is not stable");
+    ++repeat;
   });
-  ZQUIC_CHECK_RT(rx.ownerID == linkKey.template p<0>() &&
-      tx.ownerID == linkKey.template p<0>(),
-    "queue owner ID mismatch");
-  ZQUIC_CHECK_RT(rx.id == linkKey.template p<1>() &&
-      tx.id == linkKey.template p<1>(),
-    "queue ID mismatch");
-  ZQUIC_CHECK_RT(rx.type != tx.type,
-    "Rx and Tx queue types do not discriminate the keys");
+  return packets;
 }
 
-template <typename Link>
-void checkQueues(Link &link)
+static void checkTrafficTelemetry(TestLink &link)
 {
-  Ztc::QueueTelemetry rx;
-  Ztc::QueueTelemetry tx;
-  queueTelemetry(link, rx, tx);
-}
-
-void checkTrafficTelemetry(TestLink &link)
-{
-  Ztc::QueueTelemetry rx;
-  Ztc::QueueTelemetry tx;
   Ztc::LinkTelemetry data;
-  queueTelemetry(link, rx, tx);
+  auto packets = checkQueues(link);
   link.telemetry(data);
-  ZQUIC_CHECK_RT(rx.inCount && rx.inBytes,
-    "QUIC Rx queue activity is zero");
-  ZQUIC_CHECK_RT(tx.outCount && tx.outBytes,
-    "QUIC Tx queue activity is zero");
-  ZQUIC_CHECK_RT(data.rxCalls == rx.inCount && data.rxBytes == rx.inBytes,
-    "QUIC Rx link and queue telemetry differ");
-  ZQUIC_CHECK_RT(data.txCalls == tx.outCount && data.txBytes == tx.outBytes,
-    "QUIC Tx link and queue telemetry differ");
-  ZQUIC_CHECK_RT(!rx.count, "QUIC Rx queue depth is non-zero");
-  ZQUIC_CHECK_RT(tx.count == link.txQueueCount(),
-    "QUIC Tx queue depth differs from packet-space count");
-}
-
-ZuBSpan bytes_(const uint8_t *data, unsigned len)
-{
-  return ZuBSpan{data, len};
+  ZQUIC_CHECK_RT(data.rxCalls && data.rxBytes && data.txCalls && data.txBytes,
+    "QUIC link traffic telemetry is zero");
+  ZQUIC_CHECK_RT(packets == link.txQueueCount(),
+    "registered sent queues differ from packet-space occupancy");
 }
 
 static ZmRef<ZiIOBuf> streamPkt(
@@ -278,7 +238,7 @@ static ZmRef<ZiIOBuf> streamPkt(
   return packet;
 }
 
-} // namespace
+
 
 void testHandshakeStreamsAndClose()
 {
@@ -343,7 +303,7 @@ void splitReorderedStreamFrames()
   auto stream = client->stream(Zquic::StreamType::Duplex);
 
   auto packet = streamPkt(
-    stream->id(), sizeof(p0), bytes_(p1, sizeof(p1)), false, f, used);
+    stream->id(), sizeof(p0), Zquic::byteSpan(p1, sizeof(p1)), false, f, used);
   ZuCHECK(packet &&
       f.offset == sizeof(p0) && f.length == sizeof(p1),
     "loop second STREAM frame parse failed");
@@ -353,7 +313,7 @@ void splitReorderedStreamFrames()
     "loop out-of-order stream receive failed");
 
   packet = streamPkt(
-    stream->id(), 0, bytes_(p0, sizeof(p0)), false, f, used);
+    stream->id(), 0, Zquic::byteSpan(p0, sizeof(p0)), false, f, used);
   ZuCHECK(packet &&
       f.offset == 0 && f.length == sizeof(p0),
     "loop first STREAM frame parse failed");
@@ -363,7 +323,7 @@ void splitReorderedStreamFrames()
     "loop stream gap fill failed");
 
   packet = streamPkt(
-    stream->id(), sizeof(p0) + sizeof(p1), bytes_(p2, sizeof(p2)), true,
+    stream->id(), sizeof(p0) + sizeof(p1), Zquic::byteSpan(p2, sizeof(p2)), true,
     f, used);
   ZuCHECK(packet &&
       f.offset == sizeof(p0) + sizeof(p1) && f.length == sizeof(p2) && f.fin,
@@ -564,7 +524,10 @@ void testDatagramPayloadHeadroom(unsigned headroom)
   ZuTestScopeRT(testDatagramPayloadHeadroom);
   App app;
   TestLink link{&app};
-  Zi::IOBufAllocator *allocator = ([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
+  auto allocator = ([] {
+    static ZiMultiplex mx;
+    return Zquic::pktRxAllocator(&mx);
+  })();
   auto buf = allocator->allocBuf();
   ZuCheckRT(bool(buf));
   if (!buf) return;

@@ -175,11 +175,11 @@ struct TxUnackdRange {
 
 class TxUnackdRanges {
 public:
-  static constexpr unsigned Max = 128; // preserved former public capacity
+  enum { Max = 128 }; // preserved former public capacity
   // Ordinary focused cases had a 95th percentile of two retained ranges;
   // eight leaves one allocation-free growth class.  The adversarial case
   // reached 256 ranges and deliberately exercises named heap fallback.
-  static constexpr unsigned BuiltinRanges = 8;
+  enum { BuiltinRanges = 8 };
   using Ranges = ZtBuiltin<
     ZtArray<TxUnackdRange,
       ZtArrayHeapID<"Zquic.Stream.TxUnackdRanges">>,
@@ -204,6 +204,25 @@ public:
   };
 
   explicit TxUnackdRanges(uint64_t = 0) { }
+  TxUnackdRanges(TxUnackdRanges &&other) :
+    m_ranges{ZuMv(other.m_ranges)}, m_index{ZuMv(other.m_index)},
+    m_count{other.m_count}, m_length{other.m_length}
+  {
+    other.m_ranges.clear();
+    other.m_count = 0;
+    other.m_length = 0;
+  }
+  TxUnackdRanges &operator =(TxUnackdRanges &&other) {
+    if (this == &other) return *this;
+    m_ranges = ZuMv(other.m_ranges);
+    m_index = ZuMv(other.m_index);
+    m_count = other.m_count;
+    m_length = other.m_length;
+    other.m_ranges.clear();
+    other.m_count = 0;
+    other.m_length = 0;
+    return *this;
+  }
 
   ZmPQResult::T add(Node *node) {
     ZmRef<Node> node_{node};
@@ -247,6 +266,7 @@ public:
     }
     m_ranges.splice(
       begin, i - begin, ZuSpan<const TxUnackdRange>{&merged, 1});
+    m_count = m_ranges.length();
     m_length = m_length - removed + merged.length();
     ZmAssert(verify());
     return ZmPQResult::Inserted;
@@ -278,6 +298,7 @@ public:
     for (unsigned j = 0, n = survivors.length(); j < n; ++j)
       retained += survivors[j].length();
     m_ranges.splice(begin, i - begin, survivors.cspan());
+    m_count = m_ranges.length();
     m_length = m_length - removed + retained;
     ZmAssert(verify());
     return true;
@@ -317,24 +338,42 @@ public:
       return new Node{m_ranges[i]};
     return nullptr;
   }
+  bool drain(unsigned &budget) {
+    if (m_index) {
+      while (budget && m_count) {
+	auto node = m_index->shift();
+	m_length -= node->data().length();
+	--m_count;
+	--budget;
+      }
+      if (!m_count) m_index = nullptr;
+    } else {
+      unsigned n = budget < m_count ? budget : m_count;
+      for (unsigned i = 0; i < n; ++i) m_length -= m_ranges[i].length();
+      m_ranges.shift(n);
+      m_count -= n;
+      budget -= n;
+    }
+    return !m_count;
+  }
   void clear() {
     m_ranges.clear();
     m_index = nullptr;
+    m_count = 0;
     m_length = 0;
   }
   void clean() { clear(); }
-  unsigned count_() const {
-    return m_index ? m_index->count_() : m_ranges.length();
-  }
-  uint64_t length_() const {
-    return m_index ? m_index->length_() : m_length;
-  }
+  unsigned count_() const { return m_count; }
+  uint64_t length_() const { return m_length; }
 #ifdef ZDEBUG
   unsigned promotions() const { return m_promotions; }
   bool indexed() const { return m_index; }
 #endif
   bool verify() const {
-    if (m_index) return m_index->verify();
+    if (m_index)
+      return m_count == m_index->count_() && m_length == m_index->length_() &&
+	m_index->verify();
+    if (m_count != m_ranges.length()) return false;
     uint64_t length = 0;
     for (unsigned i = 0, n = m_ranges.length(); i < n; ++i) {
       if (!m_ranges[i]) return false;
@@ -390,6 +429,8 @@ private:
       (void)iter.del();
     }
     m_index->add(new Indexed::Node{makeRange(first, end, fin)});
+    m_count = m_index->count_();
+    m_length = m_index->length_();
     return ZmPQResult::Inserted;
   }
   bool clearIndexed(uint64_t offset, uint64_t end) {
@@ -411,6 +452,8 @@ private:
     }
     for (unsigned i = 0, n = survivors.length(); i < n; ++i)
       addIndexed(survivors[i]);
+    m_count = m_index->count_();
+    m_length = m_index->length_();
     return changed;
   }
   static uint64_t end_(const TxUnackdRange &range) {
@@ -445,6 +488,8 @@ private:
   }
   Ranges	m_ranges;
   ZuPtr<Indexed>	m_index;
+  // Owner-updated scalars remain readable while the optional index is retired.
+  unsigned	m_count = 0;
   uint64_t	m_length = 0;
 #ifdef ZDEBUG
   unsigned	m_promotions = 0;
@@ -461,7 +506,7 @@ using StreamRxPQueue =
 	      ZmPQueueLevels<2>>>>>>>;
 
 
-using CryptoRxPQueue =
+using CryptoRxPQueue_ =
   ZmPQueue<CryptoRxData,
     ZmPQueueNode<CryptoRxData,
       ZmPQueueHeapID<"",
@@ -470,6 +515,7 @@ using CryptoRxPQueue =
 	  ZmPQueueOverwrite<false,
 	    ZmPQueueBits<2,
 	      ZmPQueueLevels<2>>>>>>>;
+using CryptoRxPQueue = Zquic_::Queue<CryptoRxPQueue_, Zquic_::PQueueCount>;
 
 template <
   unsigned Size = BufSize,
@@ -478,13 +524,14 @@ template <
 using CryptoRxBufAlloc = Zi::IOBufBuiltinAllocator<
   Zi::IOBufType::RxTLS, CryptoRxPQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
-using TxDataPQueue =
+using TxDataPQueue_ =
   ZmPQueue<StreamTxData,
     ZmPQueueNode<StreamTxData,
       ZmPQueueHeapID<"Zquic.Stream.TxQueue",
 	ZmPQueueFn<StreamTxPQueueFn,
 	  ZmPQueueBits<2,
 	    ZmPQueueLevels<3>>>>>>;
+using TxDataPQueue = Zquic_::Queue<TxDataPQueue_, Zquic_::PQueueCount>;
 
 // Each queued application buffer transfers its active skip/length to Tx.
 // Packet and recovery records separately track logical STREAM positions.
@@ -515,16 +562,21 @@ using StreamTxRanges = ZmPQueue<StreamTxRange,
       ZmPQueueFn<ZmPQueueDefaultFn<StreamTxRange>,
 	ZmPQueueBits<2, ZmPQueueLevels<3>>>>>>;
 
-using StreamTxPQueue = TxUnackdRanges;
-using CryptoTxPQueue = TxUnackdRanges;
+using StreamTxPQueue = Zquic_::Queue<TxUnackdRanges>;
+class CryptoTxPQueue final : public Zquic_::Queue<TxUnackdRanges> {
+public:
+  using Base = Zquic_::Queue<TxUnackdRanges>;
+  using Base::Base;
+};
 
-using PktRxPQueue =
+using PktRxPQueue_ =
   ZmPQueue<RxPktMark,
     ZmPQueueNode<ZuObject,
       ZmPQueueHeapID<"Zquic.Pkt.RxQueue",
 	ZmPQueueOverwrite<false,
 	  ZmPQueueBits<4,
 	    ZmPQueueLevels<4>>>>>>;
+using PktRxPQueue = Zquic_::Queue<PktRxPQueue_, Zquic_::PQueueCount>;
 
 struct RxSpan {
   uint64_t	first = 0;

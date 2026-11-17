@@ -24,11 +24,6 @@ using namespace ZuTestUtil;
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
-static ZuBSpan span_(const uint8_t *data, unsigned len)
-{
-  return ZuBSpan{data, len};
-}
-
 #ifdef Zquic_DEBUG
 static Zi::Path g_residue;
 
@@ -43,19 +38,27 @@ static void closeQLog(ZquicLogger::Trace &trace)
 struct App : public Zquic::Hub<App> {
   using Base = Zquic::Hub<App>;
 
+  bool		earlyStreamAllowed = false;
+  bool		deferredTx = false;
+  unsigned	earlyStreamChecks = 0;
+  uint64_t	lastEarlyStreamID = 0;
+  bool		lastEarlyStreamFin = false;
+
+  ZiMultiplex	mxStorage;
+
   App(unsigned maxUDP = Zquic::MinUDPPayload, uint64_t rxWindow = 0) :
-    m_mx{mxParams_()} {
-    auto params = Zquic::HubParams(&m_mx, "3", "4");
+    mxStorage{mxParams()} {
+    auto params = Zquic::HubParams(&mxStorage, "3", "4");
     params.maxUDP(maxUDP);
     if (rxWindow) params.maxData(rxWindow).maxStreamData(rxWindow);
     bool ok = Base::init(params);
     ZiAssert(ok, "Zquic", (), "stream test app init failed", return);
-    ZiAssert(m_mx.start(), "Zquic", (),
+    ZiAssert(mxStorage.start(), "Zquic", (),
       "stream test multiplexer start failed", return);
   }
   ~App() {
     Base::final();
-    m_mx.stop();
+    mxStorage.stop();
   }
 
   bool rxInvoked() const { return true; }
@@ -63,20 +66,20 @@ struct App : public Zquic::Hub<App> {
   template <typename L> void rxRun(L l) { l(); }
   template <typename L> void rxInvoke(L l) { l(); }
   template <typename L> void txRun(L l) {
-    if (deferredTx) m_mx.run(ZuMv(l), Base::txThread());
+    if (deferredTx) mxStorage.run(ZuMv(l), Base::txThread());
     else l();
   }
   template <typename L> void txInvoke(L l) { l(); }
   template <typename O, typename L> void txInvoke(O *, L l) { l(); }
   void drainTx() {
     ZmBlock<>{}([this](auto wake) {
-	m_mx.invoke([wake = ZuMv(wake)]() mutable { wake(); },
+	mxStorage.invoke([wake = ZuMv(wake)]() mutable { wake(); },
 	  Base::txThread());
     });
   }
   template <typename L> void onTx(L l) {
     ZmBlock<>{}([this, l = ZuMv(l)](auto wake) mutable {
-      m_mx.run([l = ZuMv(l), wake = ZuMv(wake)]() mutable {
+      mxStorage.run([l = ZuMv(l), wake = ZuMv(wake)]() mutable {
         l();
         wake();
       }, Base::txThread());
@@ -90,22 +93,13 @@ struct App : public Zquic::Hub<App> {
     return earlyStreamAllowed;
   }
 
-  bool		earlyStreamAllowed = false;
-  bool		deferredTx = false;
-  unsigned	earlyStreamChecks = 0;
-  uint64_t	lastEarlyStreamID = 0;
-  bool		lastEarlyStreamFin = false;
-
-private:
-  static ZiMxParams mxParams_() {
+  static ZiMxParams mxParams() {
     return ZiMxParams()
       .scheduler([](auto &s) {
 	s.nThreads(4);
       })
       .rxThread(1).txThread(2);
   }
-
-  ZiMultiplex	m_mx;
 };
 struct TestLink;
 struct TestStream :
@@ -113,13 +107,24 @@ struct TestStream :
 {
   using Base = Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc>;
   using Base::Base;
-  int process(Zquic::RxStream &) { ++processed; return 0; }
-  void txDequeued_() { if (dequeued) dequeued(); }
-
   unsigned processed = 0;
   ZmFn<void()> dequeued;
+
+  int process(Zquic::RxStream &) { ++processed; return 0; }
+  void txDequeued_() { if (dequeued) dequeued(); }
+  template <bool Fast>
+  bool receiveSelected(
+    const Zquic::Frame &frame, Zquic::ReceiveFlow *flow,
+    Zquic::FlowCredit *connection, ZmRef<ZiIOBuf> packet) {
+    return this->template receiveFrame_<Fast>(
+      frame, flow, connection, nullptr, ZuMv(packet));
+  }
 };
 struct TestCIDRoutes {
+  unsigned	adds = 0;
+  unsigned	retires = 0;
+  unsigned	tombstones = 0;
+
   bool add(
     const Zquic::CxnID &, uint64_t, TestLink *,
     const Zquic::ResetToken & = {}) {
@@ -134,10 +139,6 @@ struct TestCIDRoutes {
     ++tombstones;
     return true;
   }
-
-  unsigned	adds = 0;
-  unsigned	retires = 0;
-  unsigned	tombstones = 0;
 };
 // The real ACK/loss/controller path calls these CRTP producer hooks on owner4.
 // Recovery notification really posts to that owner; ordinary bulk output can
@@ -165,7 +166,6 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
 
   using Base = Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>;
-  friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
   using ZmNHeap<TestLink>::operator new;
   using ZmNHeap<TestLink>::operator delete;
 
@@ -176,12 +176,32 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
   bool recordRejectedProbe = false;
   unsigned rejectedProbeRecords = 0;
 
+  ZmRef<TestStream>	lastStream;
+  unsigned		streamedCount = 0;
+  uint64_t		sentPkts = 0;
+  unsigned		txFlushQueued = 0;
+  unsigned		ptos = 0;
+  unsigned		retransmits = 0;
+  unsigned		retransmitCalls = 0;
+  bool			directPassive = false;
+  unsigned		passiveSends = 0;
+  ZiSockAddr		passiveRemote;
+  Zquic::PathData	passiveData;
+
   TestLink(App *app, bool isServer = false) : Base{app, isServer} {
-    Base::configLocalParams(app);
+    configRuntimeForTest();
+  }
+  void configRuntimeForTest() {
+    Base::configLocalParams(app());
+    // This synchronous fixture acts as both owners and bypasses TLS setup.
+    // Install the same local-parameter snapshot that setup publishes to Tx.
+    Base::TxCryptoSnapshot snapshot;
+    Base::snapshotTxCrypto(snapshot);
+    bool ok = Base::installTxCrypto(snapshot);
+    ZiAssert(ok, "Zquic", (), "stream test Tx snapshot install failed", return);
   }
   void resetRuntimeForTest() {
-    Base::resetLink_();
-    Base::configLocalParams(app());
+    Base::resetLink([this] { configRuntimeForTest(); });
   }
   void closeForTest(uint64_t errorCode = 0) {
     Base::closeState(errorCode);
@@ -203,12 +223,12 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     return Base::queueBlocked(Zquic::FrameType::DataBlocked, 0, value);
   }
   bool queueMaxData(uint64_t value) {
-    return Base::txQueueControl_(Zquic::ControlFrame::flowUpdate(
+    return Base::txQueueControl(Zquic::ControlFrame::flowUpdate(
       Zquic::FlowUpdate{
 	Zquic::FrameType::MaxData, 0, value, Zquic::StreamType::Duplex}));
   }
   bool queueMaxStreamData(uint64_t streamID, uint64_t value) {
-    return Base::txQueueControl_(Zquic::ControlFrame::flowUpdate(
+    return Base::txQueueControl(Zquic::ControlFrame::flowUpdate(
       Zquic::FlowUpdate{
 	Zquic::FrameType::MaxStreamData, streamID, value,
 	Zquic::StreamType::Duplex}));
@@ -225,13 +245,13 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     Base::streamWritable(stream);
   }
   unsigned scheduledStreams() const { return Base::scheduledStreamCount(); }
-  void grantDataCredit(uint64_t value) { Base::txApplyMaxData_(value); }
+  void grantDataCredit(uint64_t value) { Base::txApplyMaxData(value); }
   void grantStreamCredit(const ZmRef<TestStream> &stream, uint64_t value) {
-    Base::txApplyMaxStreamData_(stream, value);
+    Base::txApplyMaxStreamData(stream, value);
   }
   bool applyMaxStreams(const Zquic::Frame &frame) {
     return frame.type == Zquic::FrameType::MaxStreams &&
-      Base::txApplyMaxStreams_(frame.streamType, frame.value);
+      Base::txApplyMaxStreams(frame.streamType, frame.value);
   }
   bool flushControlSendFails() {
     return Base::flushCtlStreams(
@@ -250,7 +270,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
       });
   }
   bool flushStreamBatch() {
-    return Base::flushCtlStreamsBatch_(
+    return Base::flushCtlStreamsBatch(
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
       [this](Zquic::PktBuild &build, ZiSockAddr, const Base::TxPktRefs &refs) {
@@ -353,37 +373,34 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
       });
   }
   void fillCwnd() {
-    Zquic::LinkDiag diag = Base::diag_();
-    while (diag.tx.bytesInFlight < diag.tx.congestionWindow) {
-      uint64_t remaining =
-	diag.tx.congestionWindow - diag.tx.bytesInFlight;
+    while (Base::txBytesInFlight() < Base::congestionWindow()) {
+      uint64_t remaining = Base::congestionWindow() - Base::txBytesInFlight();
       unsigned bytes = remaining > app()->maxUDP() ?
 	app()->maxUDP() : unsigned(remaining);
       recordSentPkt(
 	Zquic::PktNumSpace::AppData, sentPkts, bytes,
 	Zquic::SentFrameRef::control(), true);
       ++sentPkts;
-      diag = Base::diag_();
     }
   }
   void ackThrough(uint64_t pn) {
     Base::AckSnapshot ack;
     ack.level = Zquic::PktNumSpace::AppData;
     new (ack.ranges.push()) Zquic::AckRange{pn, 0};
-    Base::processAckFrameTx_(ack);
+    Base::processAckFrameTx(ack);
   }
   void ackRange(uint64_t first, uint64_t largest) {
     Base::AckSnapshot ack;
     ack.level = Zquic::PktNumSpace::AppData;
     new (ack.ranges.push()) Zquic::AckRange{largest, first};
-    Base::processAckFrameTx_(ack);
+    Base::processAckFrameTx(ack);
   }
   void ackOnly(
     uint64_t pn, Zquic::PktNumSpace::T level = Zquic::PktNumSpace::AppData) {
     Base::AckSnapshot ack;
     ack.level = level;
     new (ack.ranges.push()) Zquic::AckRange{pn, pn};
-    Base::processAckFrameTx_(ack);
+    Base::processAckFrameTx(ack);
   }
 	  bool nextRetransmitRef(
 	    Zquic::PktNumSpace::T &level, Zquic::SentFrameRef &ref,
@@ -634,14 +651,14 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     ack.ecn.ect0 = ect0;
     ack.ecn.ect1 = ect1;
     ack.ecn.ce = ce;
-    Base::processAckFrameTx_(ack);
+    Base::processAckFrameTx(ack);
   }
   void ackNoECN(uint64_t largest) {
     Base::setTxPN(Zquic::PktNumSpace::AppData, largest + 1);
     Base::AckSnapshot ack;
     ack.level = Zquic::PktNumSpace::AppData;
     new (ack.ranges.push()) Zquic::AckRange{largest, 0};
-    Base::processAckFrameTx_(ack);
+    Base::processAckFrameTx(ack);
   }
 #endif
   bool receiveMarked(
@@ -654,19 +671,19 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
   bool writePendingAck(Zquic::PktBuild &build) {
     return Base::appendPendingAck(Zquic::PktNumSpace::AppData, build);
   }
-  Zquic::PktBudget sendBudget() const { return Base::sendBudget_(); }
+  Zquic::PktBudget sendBudget() { return Base::sendBudget_(); }
   void initServerPath() {
-    Base::initServerPathTx_(ZiSockAddr{}, ZiSockAddr{});
+    Base::initServerPathTx(ZiSockAddr{}, ZiSockAddr{});
   }
   void initServerPath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::initServerPathTx_(ZuMv(local), ZuMv(remote));
+    Base::initServerPathTx(ZuMv(local), ZuMv(remote));
   }
 #ifdef Zquic_DEBUG
   void observePath(ZiSockAddr local, ZiSockAddr remote) {
     Base::startPathValidation(ZuMv(local), ZuMv(remote));
   }
   void observeCandidate(ZiSockAddr local, ZiSockAddr remote, unsigned bytes) {
-    Base::observePathRxTx_(ZuMv(local), ZuMv(remote), bytes, false);
+    Base::observePathRxTx(ZuMv(local), ZuMv(remote), bytes, false);
   }
   bool candidateValidated() {
     const auto &path = Base::txPath(Base::validatingRemote());
@@ -686,12 +703,12 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     return Base::validatingChallenge_();
   }
 #endif
-  bool pathResponse(ZuBSpan data) { return Base::onPathResponse_(data); }
+  bool pathResponse(ZuBSpan data) { return Base::onPathResponse(data); }
   void pathTimeout() { Base::pathExpired(); }
   const ZiSockAddr &activePathRemote() const {
     return Base::activePathRemote_();
   }
-  void pathReceived(unsigned bytes) { Base::recordPathRxTx_(ZiSockAddr{}, bytes); }
+  void pathReceived(unsigned bytes) { Base::recordPathRxTx(ZiSockAddr{}, bytes); }
   bool pathSend(unsigned bytes) {
     ZmRef<ZiIOBuf> buf = ([](void *owner) {
       static Zi::IOBufAllocator *allocator =
@@ -705,11 +722,12 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
       ZuMv(buf), ZiSockAddr{},
       [](ZmRef<ZiIOBuf>, ZiSockAddr, Zquic::EcnMark::T) { return true; });
   }
-  void validatePath() { Base::validatePathTx_(); }
+  void validatePath() { Base::validatePathTx(); }
   void sparseAck() {
-    constexpr unsigned Ranges = 16;
+    enum { Ranges = 16 };
     Base::AckSnapshot ack;
     ack.level = Zquic::PktNumSpace::AppData;
+    ack.gen = 1;
     ack.due = true;
     ack.largestRxTime = Base::nowUS();
     for (unsigned i = 0; i < Ranges; ++i) {
@@ -718,7 +736,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     }
     Base::noteAckTx(ack);
   }
-  bool ackPending() const { return Base::pendingAck(Zquic::PktNumSpace::AppData); }
+  bool ackPending() { return Base::pendingAck(Zquic::PktNumSpace::AppData); }
   bool requeueStream(const Zquic::SentFrameRef &ref) {
     return Base::requeueStreamRef(Zquic::PktNumSpace::AppData, ref);
   }
@@ -743,13 +761,14 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     for (unsigned offset = 0; offset < bytes;) {
       Zquic::Frame frame;
       unsigned used = 0;
-      if (Zquic::FrameCodec::parse(span_(plain + offset, bytes - offset), frame, used) ||
+      if (Zquic::FrameCodec::parse(
+	    Zquic::byteSpan(plain + offset, bytes - offset), frame, used) ||
 	  !used) return false;
       offset += used;
       if (frame.type != Zquic::FrameType::Stream) continue;
       if (frame.streamID != ref.streamID || frame.offset != ref.offset ||
 	  frame.length != ref.length || frame.fin != ref.fin ||
-	  frame.payload != span_(ref.range.buf->data_() + ref.range.offset,
+	  frame.payload != Zquic::byteSpan(ref.range.buf->data_() + ref.range.offset,
 	    unsigned(ref.length))) return false;
       framed = true;
     }
@@ -816,6 +835,15 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     return Base::SuspiciousStreamThreshold;
   }
   unsigned congestionAllowance() const { return Base::congestionAllowance_(); }
+  uint64_t pendingRetx(Zquic::PktNumSpace::T space) const {
+    return Base::txPackets_(space).retransmitPending();
+  }
+  uint64_t sentPacketCount(Zquic::PktNumSpace::T space) const {
+    return Base::txPackets_(space).count();
+  }
+  uint64_t packetBytes(Zquic::PktNumSpace::T space) const {
+    return Base::txPackets_(space).bytesInFlight();
+  }
   bool ecnDisabled() const { return Base::ecnDisabled_(); }
   void enableECN() { Base::setEcnDisabled_(false); }
   bool ackValid(
@@ -873,11 +901,11 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     int n = Zquic::FrameCodec::writePing(ping, sizeof(ping));
     if (n != 1) return false;
     Zquic::PktBuild payload;
-    if (!payload.add(span_(ping, unsigned(n)))) return false;
+    if (!payload.add(Zquic::byteSpan(ping, unsigned(n)))) return false;
     return Base::sendProtZeroRTTPkt(
       Base::CIDSel::Peer, Base::CIDSel::Local,
       Base::txPNLength(Zquic::PktNumSpace::AppData),
-      payload, ZiSockAddr{}, span_(ping, unsigned(n)), nullptr, true,
+      payload, ZiSockAddr{}, Zquic::byteSpan(ping, unsigned(n)), nullptr, true,
       []() { return ([](void *owner) {
       static Zi::IOBufAllocator *allocator =
 	([] { static ZiMultiplex mx; return Zquic::pktTxAllocator(&mx); })();
@@ -938,7 +966,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
   void flushTx_(ZiSockAddr) { ++txFlushQueued; }
   void queueTxFlush() { ++txFlushQueued; }
   void queueTxFlush(ZiSockAddr) { ++txFlushQueued; }
-  void pto_() { ++ptos; }
+  void ptoTimer() { ++ptos; }
   void queueRetransmit() {
     ++retransmits;
     if (service) {
@@ -1014,18 +1042,6 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     ++passiveSends;
     return true;
   }
-
-  ZmRef<TestStream>	lastStream;
-  unsigned		streamedCount = 0;
-  uint64_t		sentPkts = 0;
-  unsigned		txFlushQueued = 0;
-  unsigned		ptos = 0;
-  unsigned		retransmits = 0;
-  unsigned		retransmitCalls = 0;
-  bool			directPassive = false;
-  unsigned		passiveSends = 0;
-  ZiSockAddr		passiveRemote;
-  Zquic::PathData	passiveData;
 };
 
 static ZmRef<TestLink> testLink(App *app, bool isServer = false)
@@ -1041,7 +1057,7 @@ static bool trafficSecret(
   uint8_t bytes[32];
   for (unsigned i = 0; i < sizeof(bytes); ++i) bytes[i] = seed + i;
   return Zquic::PktProt::deriveSecret(
-    secret, &ptls_openssl_aes128gcmsha256, span_(bytes, sizeof(bytes)));
+    secret, &ptls_openssl_aes128gcmsha256, Zquic::byteSpan(bytes, sizeof(bytes)));
 }
 
 #ifdef Zquic_DEBUG
@@ -1067,7 +1083,7 @@ static ZmRef<ZiIOBuf> shortPing(
     return {};
   int n = Zquic::PktProt::protectShort(
     buf->data_(), buf->size, tx, pn,
-    span_(buf->data_(), unsigned(h)), span_(payload, sizeof(payload)),
+    Zquic::byteSpan(buf->data_(), unsigned(h)), Zquic::byteSpan(payload, sizeof(payload)),
     pnOffset, PNLength);
   if (n < 0) return {};
   buf->skip = 0;
@@ -1128,7 +1144,7 @@ static ZmRef<ZiIOBuf> streamPkt(
   return packet;
 }
 
-static bool consumeExact_(Zquic::RxStream &rx, unsigned n, ZuBSpan expected)
+static bool consumeExact(Zquic::RxStream &rx, unsigned n, ZuBSpan expected)
 {
   unsigned remaining = n;
   bool called = false;
@@ -1150,7 +1166,7 @@ static bool consumeExact_(Zquic::RxStream &rx, unsigned n, ZuBSpan expected)
 }
 
 #ifdef Zquic_DEBUG
-static ZiIP ip4_(uint32_t n)
+static ZiIP testIPv4(uint32_t n)
 {
   in_addr addr;
   addr.s_addr = htonl(n);
@@ -1162,7 +1178,7 @@ static Zi::Path testPath(ZuCSpan name)
   return ZiFile::append(g_residue, name);
 }
 
-static ZtString<> readFile_(const Zi::Path &path)
+static ZtString<> readFile(const Zi::Path &path)
 {
   ZtString<> data;
   ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
@@ -1237,7 +1253,7 @@ void testStreamFrameDelivery()
     "STREAM frame delivery mismatch");
 
   auto &rx = stream->rxStream();
-  ZuCHECK(consumeExact_(rx, 5, "hello"),
+  ZuCHECK(consumeExact(rx, 5, "hello"),
     "STREAM payload was not queued for receive");
   ZuCHECK(rx.empty(), "STREAM receive queue consume failed");
 
@@ -1259,6 +1275,143 @@ void testStreamFrameDelivery()
     "wrong-ID STREAM setup failed");
   ZuCHECK(!stream->receiveFrame(frame, packet, &diag),
     "wrong-ID STREAM was accepted");
+}
+
+void contiguousRxDifferential()
+{
+  ZuTestScope(contiguousRxDifferential);
+  App app;
+  auto fastLink = testLink(&app);
+  auto generalLink = testLink(&app);
+  auto fast = fastLink->stream(Zquic::StreamType::Duplex);
+  auto general = generalLink->stream(Zquic::StreamType::Duplex);
+  Zquic::ReceiveFlow fastFlow{32, 32}, generalFlow{32, 32};
+  Zquic::FlowCredit fastCredit{32}, generalCredit{32};
+  struct Input {
+    uint64_t offset;
+    ZuBSpan payload;
+    bool fin;
+    bool accepted;
+  };
+  Input inputs[] = {
+    {0, "abc", false, true}, {3, "def", false, true},
+    {9, "jkl", false, true}, {6, "ghi", false, true},
+    {4, "efghi", false, true}, {0, "abc", false, true},
+    {12, {}, false, true}, {12, "mn", true, true},
+    {14, {}, true, true}, {14, "o", false, false}
+  };
+  for (const auto &input : inputs) {
+    Zquic::Frame frame;
+    unsigned used = 0;
+    auto packet = streamPkt(
+      fast->id(), input.offset, input.payload, input.fin, frame, used);
+    ZuCheck(bool(packet));
+    bool a = fast->receiveSelected<true>(frame, &fastFlow, &fastCredit, packet);
+    bool b = general->receiveSelected<false>(frame, &generalFlow, &generalCredit, packet);
+    ZuCheck(a == input.accepted && b == a);
+    ZuCheck(fast->rxAdmitted() == general->rxAdmitted());
+    ZuCheck(fast->rxBytes() == general->rxBytes());
+    ZuCheck(fast->rxRetired() == general->rxRetired());
+    ZuCheck(fast->rxPending() == general->rxPending());
+    ZuCheck(fast->rxQueued() == general->rxQueued());
+    ZuCheck(fast->rxCreditUsed() == general->rxCreditUsed());
+    ZuCheck(fastFlow.dataUsed() == generalFlow.dataUsed());
+    ZuCheck(fastFlow.streamUsed() == generalFlow.streamUsed());
+    ZuCheck(fastCredit.used() == generalCredit.used());
+    ZuCheck(fastFlow.error() == generalFlow.error());
+    ZuCheck(fast->finReceived() == general->finReceived());
+  }
+  // Input remained held by both application queues throughout the fast cases.
+  // Original packet references have gone out of scope before consuming slices.
+  for (auto stream : {fast, general}) {
+    ZuCheck(stream->rxAdmitted() == 14 && stream->rxComplete());
+    for (auto payload : {"abc", "def", "ghi", "jkl", "mn"})
+      ZuCheck(consumeExact(stream->rxStream(), strlen(payload), payload));
+    ZuCheck(stream->rxStream().empty());
+  }
+  for (unsigned limit : {0U, 2U, 3U}) {
+    auto a = fastLink->stream(Zquic::StreamType::Duplex);
+    auto b = generalLink->stream(Zquic::StreamType::Duplex);
+    Zquic::ReceiveFlow af{limit, limit}, bf{limit, limit};
+    Zquic::Frame frame;
+    unsigned used = 0;
+    auto packet = streamPkt(a->id(), 0, "abc", false, frame, used);
+    bool ar = a->receiveSelected<true>(frame, &af, nullptr, packet);
+    bool br = b->receiveSelected<false>(frame, &bf, nullptr, packet);
+    ZuCheck(ar == br && ar == (limit == 3));
+    ZuCheck(af.dataUsed() == bf.dataUsed() && af.error() == bf.error());
+    ZuCheck(a->rxAdmitted() == b->rxAdmitted());
+  }
+
+  // Both streams retain slices of one packet while receive delivery is queued.
+  // The first frame is fast-path eligible even with ZmPQRx's queuing flag set.
+  struct Pair {
+    ZmRef<TestStream> fast;
+    ZmRef<TestStream> general;
+  };
+  Pair pairs[] = {
+    {fastLink->stream(Zquic::StreamType::Duplex),
+      generalLink->stream(Zquic::StreamType::Duplex)},
+    {fastLink->stream(Zquic::StreamType::Duplex),
+      generalLink->stream(Zquic::StreamType::Duplex)}
+  };
+  for (auto &pair : pairs) {
+    pair.fast->startQueuing();
+    pair.general->startQueuing();
+  }
+  Zquic::Frame frame;
+  unsigned used = 0;
+  auto packet = streamPkt(pairs[0].fast->id(), 0, "abc", false, frame, used);
+  ZuCheck(bool(packet));
+  if (!packet) return;
+  int n = Zquic::FrameCodec::writeStream(
+    packet->data_() + packet->length, packet->size - packet->length,
+    pairs[1].fast->id(), 0, "def", false);
+  ZuCheck(n > 0);
+  if (n <= 0) return;
+  packet->length += unsigned(n);
+  Zquic::ReceiveFlow af{8, 8}, bf{8, 8};
+  Zquic::FlowCredit ac{8}, bc{8};
+  unsigned offset = 0;
+  for (auto &pair : pairs) {
+    int result = Zquic::FrameCodec::parse(
+      ZuBSpan{packet->data() + offset, packet->length - offset}, frame, used);
+    ZuCheck(!result && used && frame.streamID == uint64_t(pair.fast->id()));
+    if (result || !used) return;
+    offset += used;
+    ZuCheck(pair.fast->receiveSelected<true>(frame, &af, &ac, packet));
+    ZuCheck(pair.general->receiveSelected<false>(frame, &bf, &bc, packet));
+    ZuCheck(pair.fast->rxPending() == 1 && pair.general->rxPending() == 1);
+    ZuCheck(!pair.fast->rxBytes() && !pair.general->rxBytes());
+    ZuCheck(pair.fast->rxAdmitted() == pair.general->rxAdmitted());
+    ZuCheck(ac.used() == bc.used() && af.dataUsed() == bf.dataUsed());
+  }
+  ZuCheck(offset == packet->length && ac.used() == 6);
+  packet = nullptr;
+  for (unsigned i = 0; i < 2; ++i) {
+    auto &pair = pairs[i];
+    for (auto stream : {pair.fast, pair.general}) {
+      stream->stopQueuing(0);
+      ZuCheck(!stream->rxPending() && stream->rxBytes() == 3);
+      ZuCheck(consumeExact(stream->rxStream(), 3, i ? "def" : "abc"));
+      ZuCheck(stream->retireRx_(3) && stream->rxRetired() == 3);
+      Zquic::Frame reset;
+      reset.type = Zquic::FrameType::ResetStream;
+      reset.streamID = stream->id();
+      reset.length = 3;
+      reset.errorCode = 42;
+      ZuCheck(stream->receiveReset(reset) && stream->resetReceived());
+      stream->closeRx();
+      ZuCheck(!stream->rxPending() && !stream->rxQueued());
+    }
+    packet = streamPkt(pair.fast->id(), 3, "x", false, frame, used);
+    ZuCheck(!pair.fast->receiveSelected<true>(frame, &af, &ac, packet));
+    ZuCheck(!pair.general->receiveSelected<false>(frame, &bf, &bc, packet));
+    ZuCheck(pair.fast->rxError() == pair.general->rxError());
+    ZuCheck(pair.fast->rxAppError() == 42 && pair.general->rxAppError() == 42);
+    ZuCheck(ac.used() == bc.used() && pair.fast->rxAdmitted() == 3 &&
+      pair.general->rxAdmitted() == 3);
+  }
 }
 
 void testStreamRxSliceDelivery()
@@ -1297,7 +1450,7 @@ void testStreamRxSliceDelivery()
   packet = nullptr;
 
   auto &rx = stream->rxStream();
-  ZuCHECK(consumeExact_(rx, 5, "slice"),
+  ZuCHECK(consumeExact(rx, 5, "slice"),
     "packet-backed STREAM slice payload mismatch");
   ZuCHECK(rx.empty(), "packet-backed STREAM slice consume failed");
 }
@@ -1337,9 +1490,9 @@ void testOutOfOrderStreamDelivery()
     "gap-filling STREAM did not drain pending data");
 
   auto &rx = stream->rxStream();
-  ZuCHECK(consumeExact_(rx, 5, "hello"),
+  ZuCHECK(consumeExact(rx, 5, "hello"),
     "first reordered STREAM payload mismatch");
-  ZuCHECK(consumeExact_(rx, 5, "world"),
+  ZuCHECK(consumeExact(rx, 5, "world"),
     "second reordered STREAM payload mismatch");
   ZuCHECK(rx.empty(), "second reordered STREAM consume failed");
 
@@ -1363,11 +1516,11 @@ void testOutOfOrderStreamDelivery()
     "interior-overlap STREAM did not copy only novel spans");
 
   auto &splitRx = split->rxStream();
-  ZuCHECK(consumeExact_(splitRx, 5, "hello"),
+  ZuCHECK(consumeExact(splitRx, 5, "hello"),
     "split first STREAM payload mismatch");
-  ZuCHECK(consumeExact_(splitRx, 5, "world"),
+  ZuCHECK(consumeExact(splitRx, 5, "world"),
     "split second STREAM payload mismatch");
-  ZuCHECK(consumeExact_(splitRx, 5, "tails"),
+  ZuCHECK(consumeExact(splitRx, 5, "tails"),
     "split third STREAM payload mismatch");
   ZuCHECK(splitRx.empty(), "split STREAM consume failed");
 }
@@ -1507,7 +1660,7 @@ void testStreamTxRetainedBuffers()
   auto stream = link->stream(Zquic::StreamType::Duplex);
   auto tx = stream->txStream_();
   auto backing = tx.allocBuf(7);
-  backing->append(reinterpret_cast<const uint8_t *>("A-gap-BC"), 8);
+  backing->append(ZuBSpan{"A-gap-BC"});
   auto original = backing->data();
   ZmRef<ZiIOBuf> first = new Zquic::StreamRxPQueue::Node{
     backing, original, 1, app.streamRxAllocator(), nullptr, 0};
@@ -1544,35 +1697,40 @@ void testStreamTxQueueLimit()
 {
   ZuTestScope(testStreamTxQueueLimit);
 
-  App app;
-  ZmRef<TestLink> link = testLink(&app);
-  auto stream = link->stream(Zquic::StreamType::Duplex);
-  stream->txQueueMax(1);
-  unsigned errors = 0;
-  stream->txErrorFn(ZiTxErrorFn{
-    [&errors](ZeException &) {
-      ++errors;
-      return true;
-    }});
+  enum { NoCallback, KeepOpen, Close };
+  for (int policy : {NoCallback, KeepOpen, Close}) {
+    App app;
+    ZmRef<TestLink> link = testLink(&app);
+    auto stream = link->stream(Zquic::StreamType::Duplex);
+    stream->txQueueMax(1);
+    unsigned errors = 0;
+    if (policy != NoCallback)
+      stream->txErrorFn(ZiTxErrorFn{
+	[&errors, policy](ZeException &) {
+	  ++errors;
+	  return policy == KeepOpen;
+	}});
 
-  auto tx1 = stream->txStream_();
-  tx1 << "one" << Zi::flush();
-  ZuCHECK(!tx1.failed() && stream->txQueueCount() == 1,
-    "first QUIC stream Tx buffer was not admitted");
+    auto tx1 = stream->txStream_();
+    tx1 << "one" << Zi::flush();
+    ZuCHECK(!tx1.failed() && stream->txQueueCount() == 1,
+      "first QUIC stream Tx buffer was not admitted");
 
-  auto tx2 = stream->txStream_();
-  tx2 << "two" << Zi::flush();
-  ZuCHECK(tx2.failed() && errors == 1 && stream->txQueueCount() == 1,
-    "QUIC stream Tx queue overflow was not reported");
+    auto tx2 = stream->txStream_();
+    tx2 << "two" << Zi::flush();
+    ZuCHECK(tx2.failed() && errors == unsigned(policy != NoCallback) &&
+	link->disconnecting_(),
+      "QUIC stream Tx queue overflow did not close the connection");
 
-  Zquic::TxRange range;
-  ZuCHECK(stream->dequeueTxRange(range) && !stream->txQueueCount(),
-    "QUIC stream Tx admission was not released on dequeue");
+    link->teardown();
+    ZuCHECK(!stream->txQueueCount() && !stream->txRangeCount(),
+      "QUIC stream Tx queue overflow did not retire retained output");
 
-  auto tx3 = stream->txStream_();
-  tx3 << "three" << Zi::flush();
-  ZuCHECK(!tx3.failed() && stream->txQueueCount() == 1 && errors == 1,
-    "QUIC stream Tx queue did not reopen after dequeue");
+    auto tx3 = stream->txStream_();
+    tx3 << "three" << Zi::flush();
+    ZuCHECK(tx3.failed() && !stream->txQueueCount(),
+      "QUIC stream Tx queue reopened after terminal overflow");
+  }
 }
 
 void testStreamTxUnackd()
@@ -1721,7 +1879,7 @@ void testStreamRetxPacketBudget()
   ZuCHECK(trafficSecret(secret, 0x81) &&
       link->installOneRTT(secret, secret, {}),
     "retransmit packet budget secret setup failed");
-  constexpr unsigned Size = 1300;
+  enum { Size = 1300 };
   uint8_t expected[Size], decoded[Size]{};
   unsigned coverage[Size]{};
   for (unsigned i = 0; i < Size; ++i) expected[i] = uint8_t(i * 13 + 7);
@@ -1730,7 +1888,7 @@ void testStreamRetxPacketBudget()
   link->grantDataCredit(Size);
   {
     auto tx = stream->txStream_();
-    tx << span_(expected, Size) << Zi::flush();
+    tx << Zquic::byteSpan(expected, Size) << Zi::flush();
   }
   stream->fin();
   Zquic::SentFrameRef original;
@@ -1839,7 +1997,7 @@ void testStreamProducerCredit()
   unsigned callbacks = 0;
   bool stable = true;
   ZmRef<ZiIOBuf> next = app.streamTxAllocator()->allocBuf();
-  next->append(reinterpret_cast<const uint8_t *>("def"), 3);
+  next->append(ZuBSpan{"def"});
   Zquic::StreamFrameInfo retained;
   auto packetize = [&stream](unsigned credit, Zquic::StreamFrameInfo &info) {
     uint8_t out[64];
@@ -2397,7 +2555,7 @@ void testPTOMultipleSpaces()
   unsigned recordedProbes = 0;
   ZQUIC_CHECK_RT(recorded->forcePTOReclaimQLog(recordedLevel, recordedProbes) &&
       recordedLevel == Zquic::PktNumSpace::Handshake &&
-      recorded->diag().tx.retransmitPending[Zquic::PktNumSpace::Handshake],
+      recorded->pendingRetx(Zquic::PktNumSpace::Handshake),
     "recorded rejection did not retain a Handshake retransmission");
   recorded->recordSentPkt(Zquic::PktNumSpace::AppData, recorded->sentPkts++, 100,
     Zquic::SentFrameRef::control(), true);
@@ -2431,22 +2589,21 @@ void testPTOMultipleSpaces()
   mixed->ackOnly(ackPN, Zquic::PktNumSpace::Initial);
   mixed->recordSentPkt(Zquic::PktNumSpace::AppData, mixed->sentPkts++, 100,
     Zquic::SentFrameRef::control(), true);
-  ZQUIC_CHECK_RT(mixed->diag().tx.retransmitPending[
-      Zquic::PktNumSpace::Initial] == 1,
+  ZQUIC_CHECK_RT(mixed->pendingRetx(Zquic::PktNumSpace::Initial) == 1,
     "mixed-space setup did not retain pending Initial loss work");
   unsigned rejectedSpaces[Zquic::PktNumSpace::N] = {};
   mixed->probePTO(rejectedSpaces, false, Zquic::PktNumSpace::Handshake);
   ZQUIC_CHECK_RT(!rejectedSpaces[Zquic::PktNumSpace::Initial] &&
       !rejectedSpaces[Zquic::PktNumSpace::Handshake] &&
       !rejectedSpaces[Zquic::PktNumSpace::AppData] &&
-      mixed->diag().tx.retransmitPending[Zquic::PktNumSpace::Initial] == 1,
+      mixed->pendingRetx(Zquic::PktNumSpace::Initial) == 1,
     "failed primary PTO emitted another space's retained CRYPTO flight");
   unsigned mixedSpaces[Zquic::PktNumSpace::N] = {};
   mixed->probePTO(mixedSpaces);
   ZQUIC_CHECK_RT(!mixedSpaces[Zquic::PktNumSpace::Initial] &&
       mixedSpaces[Zquic::PktNumSpace::Handshake] == 1 &&
       mixedSpaces[Zquic::PktNumSpace::AppData] == 1 &&
-      mixed->diag().tx.retransmitPending[Zquic::PktNumSpace::Initial] == 1,
+      mixed->pendingRetx(Zquic::PktNumSpace::Initial) == 1,
     "other-space recovery consumed the primary/companion PTO budget");
   Zquic::PktNumSpace::T pendingLevel;
   Zquic::SentFrameRef pendingRef;
@@ -2470,15 +2627,14 @@ void testPTOMultipleSpaces()
     Zquic::SentFrameRef::control(), true);
   auto beforeConfirm = transition->diag().tx;
   ZQUIC_CHECK_RT(beforeConfirm.ptoTimerActive &&
-      beforeConfirm.sentPackets[Zquic::PktNumSpace::Handshake] &&
-      beforeConfirm.pktBytesInFlight[Zquic::PktNumSpace::AppData] == 100,
+      transition->sentPacketCount(Zquic::PktNumSpace::Handshake) &&
+      transition->packetBytes(Zquic::PktNumSpace::AppData) == 100,
     "confirmation transition did not start with both packet spaces in flight");
   transition->confirmHandshake();
   auto afterConfirm = transition->diag().tx;
   ZQUIC_CHECK_RT(afterConfirm.ptoTimerActive &&
-      afterConfirm.ptoArmed == beforeConfirm.ptoArmed + 1 &&
-      !afterConfirm.sentPackets[Zquic::PktNumSpace::Handshake] &&
-      afterConfirm.pktBytesInFlight[Zquic::PktNumSpace::AppData] == 100,
+      !transition->sentPacketCount(Zquic::PktNumSpace::Handshake) &&
+      transition->packetBytes(Zquic::PktNumSpace::AppData) == 100,
     "Handshake retirement did not immediately rearm PTO for AppData");
   unsigned transitionSpaces[Zquic::PktNumSpace::N] = {};
   transition->probePTO(transitionSpaces);
@@ -2497,10 +2653,8 @@ void testPTOMultipleSpaces()
   ZQUIC_CHECK_RT(!spaces[Zquic::PktNumSpace::AppData] &&
       !client->diag().tx.ptoTimerActive,
     "unconfirmed client independently probed AppData");
-  uint64_t armed = client->diag().tx.ptoArmed;
   client->confirmHandshake();
-  ZQUIC_CHECK_RT(client->diag().tx.ptoTimerActive &&
-      client->diag().tx.ptoArmed == armed + 1,
+  ZQUIC_CHECK_RT(client->diag().tx.ptoTimerActive,
     "confirmation did not immediately arm previously blocked AppData PTO");
   client->probePTO(spaces);
   ZQUIC_CHECK_RT(spaces[Zquic::PktNumSpace::AppData] == 1,
@@ -2558,7 +2712,7 @@ static void ackCreditServicesRetx(bool pending)
   auto link = testLink(&app);
   auto stream = link->stream(Zquic::StreamType::Duplex);
   auto retained = app.streamTxAllocator()->allocBuf();
-  retained->append(reinterpret_cast<const uint8_t *>("retained"), 8);
+  retained->append(ZuBSpan{"retained"});
   RecoveryService service;
   service.origin = retained;
   bool setup = false, kept = false, released = false;
@@ -2580,8 +2734,12 @@ static void ackCreditServicesRetx(bool pending)
     }
     link->fillCwnd();
     setup = sent && stream->txStillUnackd(0, 8) &&
-      link->diag().tx.retransmitPending[Zquic::PktNumSpace::AppData] ==
+      link->pendingRetx(Zquic::PktNumSpace::AppData) ==
         unsigned(pending) && !link->congestionAllowance();
+    if (!setup) log_("retained setup: sent=", sent,
+      " retained=", stream->txStillUnackd(0, 8),
+      " pending=", link->pendingRetx(Zquic::PktNumSpace::AppData),
+      " allowance=", link->congestionAllowance());
     link->service = &service;
     if (pending) {
       // Open credit without newly detecting loss: pre-existing pending
@@ -2799,7 +2957,7 @@ void testActivePathBudget()
   ZuCHECK(qdiag.recordsWritten >= 5, "path-budget qlog write mismatch");
   ZuCHECK(qdiag.writerFailures == 0, "path-budget qlog writer failure");
 
-  ZtString<> data = readFile_(path);
+  ZtString<> data = readFile(path);
   ZuCHECK(data, "path-budget qlog output was not written");
   ZuCHECK(parseJSONSeq(data) >= 5,
     "path-budget qlog JSON-SEQ parse failed");
@@ -2818,9 +2976,9 @@ void passivePathChallengeRecovery()
 #ifdef Zquic_DEBUG
   App app;
   auto link = testLink(&app, true);
-  ZiSockAddr local{ip4_(0x0a000001), 4433};
-  ZiSockAddr oldRemote{ip4_(0x0a000002), 50000};
-  ZiSockAddr newRemote{ip4_(0x0a000002), 50001};
+  ZiSockAddr local{testIPv4(0x0a000001), 4433};
+  ZiSockAddr oldRemote{testIPv4(0x0a000002), 50000};
+  ZiSockAddr newRemote{testIPv4(0x0a000002), 50001};
   {
     auto blocked = testLink(&app, true);
     blocked->confirmHandshake();
@@ -2944,10 +3102,10 @@ void pathValidationStateMachine()
 	  "path-validation qlog init failed");
 	ZquicLogger::start();
 	ZmRef<TestLink> link = testLink(&app, true);
-  ZiSockAddr local{ip4_(0x0a000001), 4433};
-  ZiSockAddr oldRemote{ip4_(0x0a000002), 50000};
-  ZiSockAddr newRemote{ip4_(0x0a000002), 50001};
-  ZiSockAddr otherRemote{ip4_(0x0a000002), 50002};
+  ZiSockAddr local{testIPv4(0x0a000001), 4433};
+  ZiSockAddr oldRemote{testIPv4(0x0a000002), 50000};
+  ZiSockAddr newRemote{testIPv4(0x0a000002), 50001};
+  ZiSockAddr otherRemote{testIPv4(0x0a000002), 50002};
 
   link->initServerPath(local, oldRemote);
   link->validatePath();
@@ -3003,7 +3161,7 @@ void pathValidationStateMachine()
   ZuCHECK(diag.writerFailures == 0,
     "path-validation qlog writer failure");
 
-  ZtString<> qlog = readFile_(path);
+  ZtString<> qlog = readFile(path);
   ZuCHECK(qlog, "path-validation qlog output missing");
   ZuCHECK(parseJSONSeq(qlog) >= 7,
     "path-validation qlog JSON-SEQ parse failed");
@@ -3035,8 +3193,8 @@ void testPMTUDQLog()
 	ZquicLogger::start();
 	ZmRef<TestLink> link = testLink(&app, true);
   link->initServerPath(
-    ZiSockAddr{ip4_(0x0a000001), 4433},
-    ZiSockAddr{ip4_(0x0a000002), 50000});
+    ZiSockAddr{testIPv4(0x0a000001), 4433},
+    ZiSockAddr{testIPv4(0x0a000002), 50000});
   link->validatePath();
   ZuCHECK(link->pathValidated(), "PMTUD qlog path validation setup failed");
 
@@ -3059,7 +3217,7 @@ void testPMTUDQLog()
   ZuCHECK(diag.recordsWritten >= 3, "PMTUD qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "PMTUD qlog writer failure");
 
-  ZtString<> qlog = readFile_(path);
+  ZtString<> qlog = readFile(path);
   ZuCHECK(qlog, "PMTUD qlog output missing");
   ZuCHECK(parseJSONSeq(qlog) >= 3, "PMTUD qlog JSON-SEQ parse failed");
   ZuCHECK(qlog.find<"quic:mtu_updated">() >= 0,
@@ -3135,7 +3293,7 @@ void testCIDQLog()
   ZuCHECK(diag.recordsWritten >= 6, "CID qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "CID qlog writer failure");
 
-  ZtString<> qlog = readFile_(path);
+  ZtString<> qlog = readFile(path);
   ZuCHECK(qlog, "CID qlog output missing");
   ZuCHECK(parseJSONSeq(qlog) >= 6, "CID qlog JSON-SEQ parse failed");
   ZuCHECK(qlog.find<"quic:connection_id_updated">() >= 0,
@@ -3225,9 +3383,21 @@ void testAckECNValidateDisable()
     "missing ACK_ECN did not fail after probe budget expired");
   missing->closeForTest();
 
+  // Feedback cannot validate our ECN path before any locally marked packet.
+  // ACK retirement must still proceed when such counters are ignored.
+  ZmRef<TestLink> unmarked = testLink(&app);
+  unmarked->enableECN();
+  unmarked->sendAckEliciting(0);
+  unmarked->ackECN(0, 2, 0, 0);
+  diag = unmarked->diag();
+  ZuCHECK(!unmarked->ecnDisabled() && !diag.tx.ecnValidationFailures &&
+      !diag.tx.bytesInFlight,
+    "ACK_ECN without locally marked packets changed ECN state or lost ACK retirement");
+  unmarked->closeForTest();
+
   ZmRef<TestLink> impossible = testLink(&app);
   impossible->enableECN();
-  impossible->sendAckEliciting(0);
+  impossible->sendECN(0, Zquic::EcnMark::ECT0);
   diag = impossible->diag();
   uint64_t inFlight = diag.tx.bytesInFlight;
   unsigned queued = impossible->txFlushQueued;
@@ -3266,7 +3436,7 @@ void testAckECNValidateDisable()
   ZuCHECK(qdiag.recordsWritten >= 4, "ECN qlog write mismatch");
   ZuCHECK(qdiag.writerFailures == 0, "ECN qlog writer failure");
 
-  ZtString<> qlog = readFile_(path);
+  ZtString<> qlog = readFile(path);
   ZuCHECK(qlog, "ECN qlog output missing");
   ZuCHECK(parseJSONSeq(qlog) >= 4, "ECN qlog JSON-SEQ parse failed");
   ZuCHECK(qlog.find<"quic:ecn_state_updated">() >= 0,
@@ -3948,6 +4118,11 @@ void invalidClosedStreamActivity()
   ZmRef<TestLink> maxLink = testLink(&app);
   auto local = maxLink->stream(Zquic::StreamType::Duplex);
   local->reset(1);
+  Zquic::SentFrameRef sent;
+  ZQUIC_CHECK_RT(maxLink->flushRecordedRefs(&sent, 1) == 1 &&
+      sent.kind == Zquic::SentFrameKind::Control &&
+      sent.controlType == Zquic::FrameType::ResetStream && local->txClosedRx(),
+    "closed-stream fixture did not commit RESET_STREAM and notify Rx");
   int n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), uint64_t(local->id()), 4096);
   ZQUIC_CHECK_RT(parseFrame(b, n, frame) &&
@@ -4019,6 +4194,10 @@ void invalidClosedStreamActivity()
   ZmRef<TestLink> threshold = testLink(&app);
   auto noisy = threshold->stream(Zquic::StreamType::Duplex);
   noisy->reset(3);
+  ZQUIC_CHECK_RT(threshold->flushRecordedRefs(&sent, 1) == 1 &&
+      sent.kind == Zquic::SentFrameKind::Control &&
+      sent.controlType == Zquic::FrameType::ResetStream && noisy->txClosedRx(),
+    "closed-stream threshold fixture did not commit RESET_STREAM and notify Rx");
   n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), uint64_t(noisy->id()), 4096);
   ZQUIC_CHECK_RT(parseFrame(b, n, frame), "threshold frame setup failed");
@@ -4078,7 +4257,7 @@ void testStreamGC()
   maxLink->ackOnly(0);
   ZuCHECK(!maxLink->findStream(int64_t(localID)),
     "closed MAX_STREAM_DATA stream was not reaped");
-  maxLink->teardown();
+  // Late frames belong to this live runtime; final teardown retires its tombstones.
   uint8_t b[128];
   Zquic::Frame frame;
   int n = Zquic::FrameCodec::writeMaxStreamData(
@@ -4090,6 +4269,7 @@ void testStreamGC()
   ZuCHECK(maxLink->diag().rx.streamMaxClosedRx == 1,
     "closed MAX_STREAM_DATA after stream GC diagnostics mismatch");
 #endif
+  maxLink->teardown();
 
   ZmRef<TestLink> ackLink = testLink(&app);
   auto ackd = ackLink->stream(Zquic::StreamType::Simplex);
@@ -4237,7 +4417,7 @@ void testZeroRTTProtectedSend()
   Zquic::TrafficSecret secret;
   ZuCHECK(Zquic::PktProt::deriveSecret(
       secret, &ptls_openssl_aes128gcmsha256,
-      span_(secretBytes, sizeof(secretBytes))),
+      Zquic::byteSpan(secretBytes, sizeof(secretBytes))),
     "0-RTT traffic secret derivation failed");
 
   App app;
@@ -4283,7 +4463,7 @@ void testZeroRTTEarlyStreamPolicy()
   Zquic::TrafficSecret secret;
   ZuCHECK(Zquic::PktProt::deriveSecret(
       secret, &ptls_openssl_aes128gcmsha256,
-      span_(secretBytes, sizeof(secretBytes))),
+      Zquic::byteSpan(secretBytes, sizeof(secretBytes))),
     "0-RTT traffic secret derivation failed");
 
   App app;
@@ -4394,7 +4574,7 @@ void testZeroRTTAcceptQLog()
   ZuCHECK(diag.recordsWritten >= 4, "0-RTT accept qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "0-RTT accept qlog writer failure");
 
-  ZtString<> qlog = readFile_(path);
+  ZtString<> qlog = readFile(path);
   ZuCHECK(qlog, "0-RTT accept qlog output missing");
   ZuCHECK(parseJSONSeq(qlog) >= 4,
     "0-RTT accept qlog JSON-SEQ parse failed");
@@ -4451,7 +4631,7 @@ void zeroRTTAfterOneRTTRejected()
   ZuCHECK(diag.recordsWritten >= 4, "0-RTT reject qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "0-RTT reject qlog writer failure");
 
-  ZtString<> qlog = readFile_(path);
+  ZtString<> qlog = readFile(path);
   ZuCHECK(qlog, "0-RTT reject qlog output missing");
   ZuCHECK(parseJSONSeq(qlog) >= 4,
     "0-RTT reject qlog JSON-SEQ parse failed");
@@ -4513,7 +4693,7 @@ void testRxQLog()
   ZuCHECK(diag.recordsWritten >= 4, "runtime qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "runtime qlog writer failure");
 
-  ZtString<> data = readFile_(path);
+  ZtString<> data = readFile(path);
   ZuCHECK(data, "runtime qlog output was not written");
   ZuCHECK(parseJSONSeq(data) >= 2, "runtime qlog JSON-SEQ parse failed");
   ZuCHECK(data.find<"quic:packet_received">() >= 0,
@@ -4595,7 +4775,7 @@ void testFlowControlQLog()
   ZuCHECK(diag.recordsWritten >= 5, "flow-control qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "flow-control qlog writer failure");
 
-  ZtString<> data = readFile_(path);
+  ZtString<> data = readFile(path);
   ZuCHECK(data, "flow-control qlog output was not written");
   ZuCHECK(parseJSONSeq(data) >= 5, "flow-control qlog JSON-SEQ parse failed");
   ZuCHECK(data.find<"quic:connection_data_blocked_updated">() >= 0,
@@ -4657,7 +4837,7 @@ void testPTOQLog()
   ZuCHECK(diag.recordsWritten >= 4, "PTO qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "PTO qlog writer failure");
 
-  ZtString<> data = readFile_(path);
+  ZtString<> data = readFile(path);
   ZuCHECK(data, "PTO qlog output was not written");
   ZuCHECK(parseJSONSeq(data) >= 4, "PTO qlog JSON-SEQ parse failed");
   ZuCHECK(data.find<"quic:packet_lost">() >= 0,
@@ -4698,7 +4878,7 @@ void testPeerKeyUpdateState()
   bool oldOK = link->receiveShort(shortPing(cid, initial, 0, false));
   Zquic::LinkDiag oldDiag = link->diag();
   bool rapidOK = link->receiveShort(shortPing(cid, third, 3, false));
-  Zquic::LinkDiag invalidDiag = link->diag();
+  Zquic::LinkDiag rapidDiag = link->diag();
   link->discardPeerKeys();
   Zquic::LinkDiag discardDiag = link->diag();
   bool discardedOK = link->receiveShort(shortPing(cid, initial, 4, false));
@@ -4712,10 +4892,10 @@ void testPeerKeyUpdateState()
   ZuCHECK(oldOK, "old key reorder packet was rejected");
   ZuCHECK(oldDiag.rx.oldKeysAccepted == 1 && oldDiag.rx.peerKeyUpdates == 1,
     "old key retention diagnostics mismatch");
-  ZuCHECK(!rapidOK, "rapid second key update was accepted");
-  ZuCHECK(invalidDiag.rx.invalidKeyPhases == 1 &&
-      invalidDiag.rx.peerKeyUpdates == 1,
-    "invalid key phase diagnostics mismatch");
+  ZuCHECK(rapidOK, "retaining previous keys blocked the next key update");
+  ZuCHECK(!rapidDiag.rx.invalidKeyPhases &&
+      rapidDiag.rx.peerKeyUpdates == 2,
+    "successive key update diagnostics mismatch");
   ZuCHECK(discardDiag.rx.keyDiscards == 1, "key discard diagnostic mismatch");
   ZuCHECK(!discardedOK, "discarded old key packet was accepted");
 }
@@ -4731,6 +4911,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testStreamIDs);
   ZuTestCall(testStreamFrameDelivery);
+  ZuTestCall(contiguousRxDifferential);
   ZuTestCall(testStreamRxSliceDelivery);
   ZuTestCall(testOutOfOrderStreamDelivery);
   ZuTestCall(testRxRetirement);

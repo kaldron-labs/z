@@ -21,7 +21,7 @@ namespace Zquic {
 // runtime-discovered UDP MTU: short header (~13), AEAD tag (16), STREAM prefix
 // (~8), and room for a coalesced ACK/control frame.  Sub-8-byte precision is
 // intentionally not a hot-path goal here.
-inline constexpr unsigned TxStreamPktReserve = 64;
+enum { TxStreamPktReserve = 64 };
 
 struct PktBudget {
   unsigned	pmtu = MinUDPPayload;
@@ -341,12 +341,12 @@ private:
 };
 
 struct StreamScheduleEntry {
-  StreamScheduleEntry() = default;
-  StreamScheduleEntry(uint64_t id_) : id{id_} { }
-
   uint64_t	id = 0;
   StreamScheduleEntry *rrPrev = nullptr;
   StreamScheduleEntry *rrNext = nullptr;
+
+  StreamScheduleEntry() = default;
+  StreamScheduleEntry(uint64_t id_) : id{id_} { }
 };
 
 inline uint64_t StreamScheduleEntry_IDAxor(const StreamScheduleEntry &entry)
@@ -360,11 +360,16 @@ ZmHashDerive(StreamScheduleHash, StreamScheduleEntry,
       ZmHashLock<ZmNoLock,
 	ZmHashHeapID<"Zquic.StreamScheduler">>>>));
 
-class StreamScheduler {
+class StreamScheduler final : public Zquic_::QueueInfo {
 public:
   StreamScheduler() : m_hash{new StreamScheduleHash} { }
-  StreamScheduler(const ZmHashParams &params) :
-    m_hash{new StreamScheduleHash{params}} { }
+  StreamScheduler(ZmHashParams params) :
+    m_hash{new StreamScheduleHash{params.init(StreamScheduleHash::ID{}())}} { }
+
+  void telemetry(Ztc::QueueTelemetry &data) const override {
+    queueTelemetry(data);
+    data.count = m_hash->count_();
+  }
 
   bool add(uint64_t id) {
     if (m_hash->findPtr(id)) return true;
@@ -378,7 +383,7 @@ public:
   uint64_t next() {
     if (!m_next) return uint64_t(-1);
     auto node = m_next;
-    m_next = node_(node->rrNext);
+    m_next = entryNode(node->rrNext);
     return node->id;
   }
 
@@ -396,7 +401,7 @@ public:
 private:
   using Node = StreamScheduleHash::Node;
 
-  static Node *node_(StreamScheduleEntry *entry) {
+  static Node *entryNode(StreamScheduleEntry *entry) {
     return static_cast<Node *>(entry);
   }
 
@@ -406,7 +411,7 @@ private:
       m_next = node;
       return;
     }
-    auto tail = node_(m_next->rrPrev);
+    auto tail = entryNode(m_next->rrPrev);
     node->rrPrev = tail;
     node->rrNext = m_next;
     tail->rrNext = node;
@@ -418,7 +423,7 @@ private:
       m_next = nullptr;
       return;
     }
-    if (m_next == node) m_next = node_(node->rrNext);
+    if (m_next == node) m_next = entryNode(node->rrNext);
     node->rrPrev->rrNext = node->rrNext;
     node->rrNext->rrPrev = node->rrPrev;
     node->rrPrev = node->rrNext = nullptr;
@@ -430,6 +435,17 @@ private:
 
 class TxScheduler {
 public:
+  void initQueues(Ztc::Hub *hub, ZuCSpan prefix) {
+    m_control.initQueue(hub, prefix, "control", Ztc::QueueType::Tx, 0);
+    m_stream.initQueue(hub, prefix, "stream", Ztc::QueueType::Tx, 0);
+  }
+
+  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const {
+    fn(const_cast<StreamScheduler *>(&m_control));
+    fn(const_cast<StreamScheduler *>(&m_stream));
+    return 2;
+  }
+
   bool addControl(uint64_t id) { return m_control.add(id); }
   bool addStream(uint64_t id) { return m_stream.add(id); }
 

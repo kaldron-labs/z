@@ -93,7 +93,7 @@ private:
   bool		m_ok = true;
 };
 
-inline constexpr unsigned CxnIDMax = 20;
+enum { CxnIDMax = 20 };
 using CxnID = ZuBArray<CxnIDMax>;
 
 struct Vantage {
@@ -205,10 +205,9 @@ inline const ZuBArray<BufSize> PktBuildZeroPad =
   fixedArray<uint8_t, BufSize>();
 // Scratch holds locally encoded ACK/control and frame prefixes only. It is
 // sized for the current ACK_ECN encoder cap of 64 ranges plus one STREAM prefix.
-inline constexpr unsigned PktBuildMaxAckRanges = 64;
-inline constexpr unsigned PktBuildScratchSize =
-  1 + (7 * 8) + ((PktBuildMaxAckRanges - 1) * 2 * 8) +
-  1 + (3 * 8);
+enum { PktBuildMaxAckRanges = 64 };
+enum { PktBuildScratchSize = 1 + (7 * 8) + ((PktBuildMaxAckRanges - 1) * 2 * 8) +
+  1 + (3 * 8) };
 
 inline ZuBSpan pktBuildSpan(const uint8_t *data, unsigned len)
 {
@@ -261,7 +260,13 @@ public:
   bool ack(unsigned level) const {
     return m_ackLevel == level && m_ackLevel < PktNumSpace::N;
   }
-  void markAck(unsigned level) { m_ackLevel = level; }
+  void markAck(unsigned level, uint64_t gen, uint64_t largest) {
+    m_ackLevel = level;
+    m_ackGen = gen;
+    m_ackLargest = largest;
+  }
+  uint64_t ackGen() const { return m_ackGen; }
+  uint64_t ackLargest() const { return m_ackLargest; }
   bool pathValidation() const { return m_pathValidation; }
   void markPathValidation() { m_pathValidation = true; }
 
@@ -313,6 +318,8 @@ private:
 			    PktBuildScratchSize, false);
   unsigned		m_scratchLen = 0;
   unsigned		m_ackLevel = PktNumSpace::N;
+  uint64_t		m_ackGen = 0;
+  uint64_t		m_ackLargest = 0;
   bool			m_pathValidation = false;
 };
 

@@ -13,11 +13,10 @@ using namespace ZuTestUtil;
 
 #define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
-namespace {
 
 struct TestRouteLink { };
 
-} // namespace
+
 
 void testFixedProtocolValues()
 {

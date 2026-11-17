@@ -33,7 +33,7 @@ static constexpr ZuBArray<20> InitialSaltV1_ = {
   0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a
 };
 
-static bool hmacSHA256_(
+static bool hmacSHA256(
   const uint8_t *key, unsigned keyLen, const uint8_t *data, unsigned dataLen,
   uint8_t *out, unsigned outLen)
 {
@@ -46,11 +46,11 @@ static bool hmacSHA256_(
 static bool hkdfExtract(
   uint8_t *out, const uint8_t *salt, unsigned saltLen, ZuBSpan ikm)
 {
-  return hmacSHA256_(
+  return hmacSHA256(
     salt, saltLen, ikm.data(), ikm.length(), out, InitialSecret::SecretLen);
 }
 
-static char hexDigit_(unsigned v)
+static char hexDigit(unsigned v)
 {
   return v < 10 ? char('0' + v) : char('a' + v - 10);
 }
@@ -59,7 +59,7 @@ static void hexAppend(ZtString<> &s, ZuBSpan data)
 {
   for (unsigned i = 0, n = data.length(); i < n; ++i) {
     unsigned c = data[i];
-    s << hexDigit_(c >> 4) << hexDigit_(c & 0x0f);
+    s << hexDigit(c >> 4) << hexDigit(c & 0x0f);
   }
 }
 
@@ -77,7 +77,7 @@ static bool hkdfExpand(
     memcpy(msg.data(), t.data(), tLen);
     memcpy(msg.data() + tLen, info, infoLen);
     msg[tLen + infoLen] = block;
-    if (!hmacSHA256_(
+    if (!hmacSHA256(
 	  secret, secretLen, msg.data(), tLen + infoLen + 1,
 	  t.data(), t.length()))
       return false;
@@ -110,7 +110,7 @@ static bool hkdfExpandLabel(
   return hkdfExpand(out, outLen, secret, secretLen, info.data(), o);
 }
 
-static bool deriveSecret_(InitialSecret &out, const uint8_t *initial,
+static bool deriveInitialSecret(InitialSecret &out, const uint8_t *initial,
     ZuCSpan label)
 {
   return hkdfExpandLabel(
@@ -127,7 +127,7 @@ static bool deriveSecret_(InitialSecret &out, const uint8_t *initial,
       out.secret.data(), out.secret.length(), "quic hp");
 }
 
-static void nonce_(uint8_t *out, const InitialSecret &secret, uint64_t pn)
+static void makeNonce(uint8_t *out, const InitialSecret &secret, uint64_t pn)
 {
   memcpy(out, secret.iv.data(), InitialSecret::IVLen);
   for (unsigned i = 0; i < 8; ++i)
@@ -341,8 +341,8 @@ bool InitialCrypto::derive(InitialKeyMaterial &out, const CxnID &dcid)
   if (!hkdfExtract(
 	out.initial.data(), InitialSaltV1_.data(), InitialSaltV1_.length(), dcid))
     return false;
-  return deriveSecret_(out.client, out.initial.data(), "client in") &&
-    deriveSecret_(out.server, out.initial.data(), "server in");
+  return deriveInitialSecret(out.client, out.initial.data(), "client in") &&
+    deriveInitialSecret(out.server, out.initial.data(), "server in");
 }
 
 int InitialCrypto::encrypt(
@@ -367,7 +367,7 @@ int InitialCrypto::encryptV(
   }
   if (len < plainLen + InitialSecret::TagLen) return -1;
   ZuBArray<InitialSecret::IVLen> nonce(InitialSecret::IVLen, false);
-  nonce_(nonce.data(), secret, pn);
+  makeNonce(nonce.data(), secret, pn);
 
   EVP_CIPHER_CTX *ctx = opensslCipherCtx();
   if (!ctx) return -1;
@@ -401,7 +401,7 @@ int InitialCrypto::decrypt(
   unsigned plainLen = ciphertext.length() - InitialSecret::TagLen;
   if (len < plainLen) return -1;
   ZuBArray<InitialSecret::IVLen> nonce(InitialSecret::IVLen, false);
-  nonce_(nonce.data(), secret, pn);
+  makeNonce(nonce.data(), secret, pn);
 
   EVP_CIPHER_CTX *ctx = opensslCipherCtx();
   if (!ctx) return -1;
@@ -1157,7 +1157,7 @@ int Crypto::saveSessionTicketCB(
   return crypto ? crypto->saveSessionTicket_(input) : 0;
 }
 
-void Crypto::keyLog_(int isEnc, PktKeyLevel::T level, ZuBSpan secret)
+void Crypto::keyLog(int isEnc, PktKeyLevel::T level, ZuBSpan secret)
 {
   if (!m_keyLogPath || !m_tls || !secret) return;
   if (level != PktKeyLevel::ZeroRTT &&
@@ -1224,7 +1224,7 @@ int Crypto::updateTrafficKey_(int isEnc, size_t epoch, const void *secret)
     traffic.clear();
     return -1;
   }
-  keyLog_(isEnc, keyLevel, secretSpan);
+  keyLog(isEnc, keyLevel, secretSpan);
   if (keyLevel == PktKeyLevel::ZeroRTT) {
     m_earlyDataEnabled = true;
     if (m_isServer)
@@ -1279,11 +1279,11 @@ int Crypto::collectedExtensionsCB(
   ptls_t *tls, ptls_handshake_properties_t *, ptls_raw_extension_t *extensions)
 {
   auto crypto = static_cast<Crypto *>(*ptls_get_data_ptr(tls));
-  return crypto ? crypto->collectedExtensions_(extensions) :
+  return crypto ? crypto->collectedExtensions(extensions) :
     PTLS_ALERT_TO_PEER_ERROR(PTLS_ALERT_INTERNAL_ERROR);
 }
 
-int Crypto::collectedExtensions_(ptls_raw_extension_t *extensions)
+int Crypto::collectedExtensions(ptls_raw_extension_t *extensions)
 {
   if (!extensions)
     return PTLS_ALERT_TO_PEER_ERROR(PTLS_ALERT_MISSING_EXTENSION);
@@ -1400,7 +1400,8 @@ bool Crypto::discardSecret(PktNumSpace::T level)
 {
   ZiAssert(level >= PktNumSpace::Initial && level <= PktNumSpace::AppData,
     "Zquic", (), "invalid packet space", return false);
-  if (!m_secretInstalled[level]) return false;
+  bool installed = m_secretInstalled[level] ||
+    m_txTrafficSecrets[level].valid() || m_rxTrafficSecrets[level].valid();
   m_secretInstalled[level] = false;
   if (level == PktNumSpace::Initial)
     m_initialKeys.clear();
@@ -1408,8 +1409,8 @@ bool Crypto::discardSecret(PktNumSpace::T level)
   m_rxTrafficSecrets[level].clear();
   m_txProt[level].clear();
   m_rxProt[level].clear();
-  ++m_diag.secretsDiscarded;
-  return true;
+  if (installed) ++m_diag.secretsDiscarded;
+  return installed;
 }
 
 bool Crypto::deriveInitial(const CxnID &dcid)

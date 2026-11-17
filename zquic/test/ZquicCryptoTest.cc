@@ -20,11 +20,6 @@ static Zi::IOBufAllocator *allocator()
   return allocator;
 }
 
-static ZuBSpan bytes_(const uint8_t *data, unsigned len)
-{
-  return ZuBSpan{data, len};
-}
-
 void testCryptoPosture()
 {
   ZuTestScope(testCryptoPosture);
@@ -91,7 +86,7 @@ void testEarlyTrafficSecretState()
   Zquic::TrafficSecret secret;
   ZuCHECK(Zquic::PktProt::deriveSecret(
       secret, &ptls_openssl_aes128gcmsha256,
-      bytes_(secretBytes, sizeof(secretBytes))),
+      Zquic::byteSpan(secretBytes, sizeof(secretBytes))),
     "0-RTT traffic secret derivation failed");
 
   Zquic::Crypto crypto;
@@ -176,7 +171,7 @@ void testCryptoFlightOffsets()
 
   size_t one[5] = {0, 3, 3, 3, 3};
   ZuCHECK(Zquic::sendCryptoFlights(
-      txCrypto, diag, reinterpret_cast<const uint8_t *>("abc"), 3,
+      txCrypto, diag, ZuBSpan{"abc"}.data(), 3,
       one, 16, {}, send) &&
       sends == 1 && diag.cryptoBytesTx == Zquic::DiagCounter{3},
     "single-epoch crypto flights failed");
@@ -189,7 +184,7 @@ void testCryptoFlightOffsets()
   size_t multi[5] = {0, 2, 2, 4, 6};
   ZuCHECK(Zquic::sendCryptoFlights(
       multiCrypto, multiDiag,
-      reinterpret_cast<const uint8_t *>("abcdef"), 6,
+      ZuBSpan{"abcdef"}.data(), 6,
       multi, 16, {}, send) &&
       sends == 4 && multiDiag.cryptoBytesTx == Zquic::DiagCounter{6},
     "multi-epoch crypto flights failed");
@@ -198,11 +193,11 @@ void testCryptoFlightOffsets()
   size_t beyond[5] = {0, 0, 0, 0, 4};
   ZuCHECK(!Zquic::sendCryptoFlights(
       multiCrypto, multiDiag,
-      reinterpret_cast<const uint8_t *>("abc"), 3,
+      ZuBSpan{"abc"}.data(), 3,
       descending, 16, {}, send) &&
       !Zquic::sendCryptoFlights(
 	multiCrypto, multiDiag,
-	reinterpret_cast<const uint8_t *>("abc"), 3,
+	ZuBSpan{"abc"}.data(), 3,
 	beyond, 16, {}, send) &&
       multiDiag.failures == Zquic::DiagCounter{2},
     "invalid crypto offsets diagnostics mismatch");
@@ -257,8 +252,10 @@ void testCryptoOwnedBuffers()
 
   ZmRef<ZiIOBuf> first = allocator<Zquic::CryptoTxBufAlloc<>>()->allocBuf();
   ZmRef<ZiIOBuf> second = allocator<Zquic::CryptoTxBufAlloc<>>()->allocBuf();
-  first->append(bytes_(reinterpret_cast<const uint8_t *>("prefixabcdef"), 12)); first->advance(6);
-  second->append(bytes_(reinterpret_cast<const uint8_t *>("padghij"), 7)); second->advance(3);
+  first->append(ZuBSpan{"prefixabcdef"});
+  first->advance(6);
+  second->append(ZuBSpan{"padghij"});
+  second->advance(3);
   const uint8_t *a = first->data(), *b = second->data();
   Zquic::CryptoStream stream{nullptr, allocator<Zquic::CryptoTxBufAlloc<>>()};
   ZuCHECK(stream.sent(0, ZuMv(first)) &&
@@ -273,15 +270,16 @@ void testCryptoOwnedBuffers()
       payload == "ef" && stream.txPayload(6, 4, payload) &&
       payload.data() == b && payload == "ghij",
     "cross-buffer CRYPTO retry did not clip and continue original ranges");
-  ZuCHECK(stream.sent(4, bytes_(reinterpret_cast<const uint8_t *>("efgh"), 4)) &&
-      !stream.sent(4, bytes_(reinterpret_cast<const uint8_t *>("efxh"), 4)),
+  ZuCHECK(stream.sent(4, ZuBSpan{"efgh"}) &&
+      !stream.sent(4, ZuBSpan{"efxh"}),
     "duplicate CRYPTO comparison did not traverse retained backing boundaries");
   ZuCHECK(!stream.sent(11, ZuBSpan{}) && stream.sent(10, ZuBSpan{}) &&
       !stream.txPayload(9, 2, payload),
     "CRYPTO gap, empty tail or invalid retained range handling changed");
 
   ZmRef<ZiIOBuf> shifted = allocator<Zquic::CryptoTxBufAlloc<>>()->allocBuf();
-  shifted->append(bytes_(reinterpret_cast<const uint8_t *>("skipklmnop"), 10)); shifted->advance(4);
+  shifted->append(ZuBSpan{"skipklmnop"});
+  shifted->advance(4);
   const uint8_t *c = shifted->data();
   Zquic::CryptoOffsets offsets(Zquic::TLSEpochCount + 1, false);
   offsets[0] = 0;

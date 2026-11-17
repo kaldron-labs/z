@@ -32,8 +32,7 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
-#include <zlib/ZmLock.hh>
-#include <zlib/ZmPLock.hh>
+#include <zlib/ZmObject.hh>
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmQueue.hh>
 
@@ -57,6 +56,7 @@ namespace Zquic {
 namespace Zquic_ { using namespace Zquic; }
 
 #include <zlib/ZquicTypes.hh>
+#include <zlib/ZquicQueue.hh>
 #include <zlib/ZquicBuf.hh>
 #include <zlib/ZquicPacket.hh>
 #include <zlib/ZquicFrame.hh>
@@ -103,8 +103,8 @@ inline constexpr uint64_t DefaultMaxStreamsDuplex = 128;
 inline constexpr uint64_t DefaultMaxStreamsSimplex = 16;
 inline constexpr uint64_t MaxStreamCount = uint64_t(INT64_MAX) >> 2;
 inline constexpr uint64_t DefaultTokenLifetime = 600;
-inline constexpr unsigned LocalCIDLimit = 8;
-inline constexpr unsigned DefaultMigCIDRes = 1;
+enum { LocalCIDLimit = 8 };
+enum { DefaultMigCIDRes = 1 };
 
 ZtEnumStruct(ZquicAPI, TokenKind, int8_t, Retry = 1, NewToken = 2);
 
@@ -246,8 +246,8 @@ struct AddrValidationDiag {
 };
 
 struct ZquicAPI StatelessReset {
-  static constexpr unsigned TokenLength = ResetToken::Length;
-  static constexpr unsigned MinLength = 21;
+  enum { TokenLength = ResetToken::Length };
+  enum { MinLength = 21 };
 
   static int decode(ResetToken &, ZuBSpan datagram);
   static bool verify(ZuBSpan datagram, const ResetToken &);
@@ -268,7 +268,7 @@ using Zquic_::ServerLinks;
 
 // Connection bootstrap
 struct ZquicAPI CxnIDGen {
-  static constexpr unsigned InitialLength = MinCIDLength;
+  enum { InitialLength = MinCIDLength };
 
   static bool random(CxnID &, unsigned length = InitialLength);
   static bool randomPair(
@@ -383,13 +383,18 @@ inline bool validCryptoOffsets(
   return true;
 }
 
-template <typename CryptoStreams, typename Send>
+struct NoCryptoDefer {
+  bool operator ()(PktNumSpace::T, const SentFrameRef &) const { return false; }
+};
+
+template <typename CryptoStreams, typename Send, typename Defer = NoCryptoDefer>
 inline bool sendCryptoFlights_(
   CryptoStreams &txCrypto, LinkTxDiag &diag,
   ZmRef<ZiIOBuf> data, const CryptoOffsets &offsets,
-  unsigned chunkMax, ZiSockAddr addr, Send send)
+  unsigned chunkMax, ZiSockAddr addr, Send send, Defer defer = {})
 {
   if (!data || !chunkMax || !validCryptoOffsets(offsets, data->length)) return false;
+  bool complete = true;
   for (unsigned epoch = 0; epoch < TLSEpochCount; ++epoch) {
     if (offsets[epoch + 1] <= offsets[epoch]) continue;
     PktNumSpace::T space;
@@ -413,18 +418,23 @@ inline bool sendCryptoFlights_(
       }
       SentFrameRef ref = SentFrameRef::crypto(cryptoOffset, chunk);
       diag.cryptoBytesTx += chunk;
-      if (!send(space, byteSpan(frame.data(), unsigned(n)),
-	    byteSpan(data->data() + off, chunk), ref, addr))
-	return false;
-      if (space == PktNumSpace::Handshake &&
+      bool sent = send(space, byteSpan(frame.data(), unsigned(n)),
+	byteSpan(data->data() + off, chunk), ref, addr);
+      if (!sent) {
+	if (!defer(space, ref)) return false;
+	complete = false;
+      }
+      if (sent && space == PktNumSpace::Handshake &&
 	  !send(space, byteSpan(frame.data(), unsigned(n)),
-	    byteSpan(data->data() + off, chunk), ref, addr))
-	return false;
+	    byteSpan(data->data() + off, chunk), ref, addr)) {
+	if (!defer(space, ref)) return false;
+	complete = false;
+      }
       off += chunk;
       remaining -= chunk;
     }
   }
-  return true;
+  return complete;
 }
 
 // Raw array-reference ingress preserves the public picotls-style callback
@@ -516,6 +526,7 @@ public:
     return ZuMv(*this);
   }
   HubParams &&maxUDP(unsigned v) { m_maxUDP = v; return ZuMv(*this); }
+  HubParams &&congestionControl(bool v) { m_congestionControl = v; return ZuMv(*this); }
   HubParams &&ecn(bool v) { m_ecn = v; return ZuMv(*this); }
   HubParams &&migrationMode(MigrationMode::T v) {
     m_migrationMode = v;
@@ -585,6 +596,7 @@ public:
   uint64_t maxIdleTimeout() const { return m_maxIdleTimeout; }
   ZuTime heartBeat() const { return m_heartBeat; }
   unsigned maxUDP() const { return m_maxUDP; }
+  bool congestionControl() const { return m_congestionControl; }
   bool ecn() const { return m_ecn; }
   MigrationMode::T migrationMode() const { return m_migrationMode; }
   bool activeMigration() const {
@@ -634,6 +646,7 @@ private:
   uint64_t		m_maxIdleTimeout = 0;
   ZuTime		m_heartBeat;
   unsigned		m_maxUDP = MinUDPPayload;
+  bool			m_congestionControl = true;
   bool			m_ecn = false;
   MigrationMode::T	m_migrationMode = MigrationMode::Passive;
   unsigned		m_migCIDRes = DefaultMigCIDRes;
@@ -652,7 +665,8 @@ using ServerParams = HubParams;
 template <typename App_> class Hub :
   public ZmPolymorph,
   public ZmEngine<App_>,
-  public Ztc::Hub {
+  public Ztc::Hub,
+  public Ztc::QueueMgr {
 friend ZmEngine<App_>;
 template <typename, typename, typename, typename>
 friend class Link;
@@ -710,6 +724,13 @@ public:
     return app()->allPools_(ZuMv(fn));
   }
 
+  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
+    unsigned n = 0;
+    allLinks([&fn, &n](Ztc::Link *link) { n += link->allQueues(fn); });
+    allPools([&fn, &n](Ztc::Pool *pool) { n += pool->allQueues(fn); });
+    return n;
+  }
+
   void final() {
     bool ok = HubCtl::lock(ZmEngineState::Stopped, [this]() {
       if (m_registered) {
@@ -736,6 +757,7 @@ public:
       m_maxIdleTimeout = 0;
       m_heartBeat = {};
       m_maxUDP = MinUDPPayload;
+      m_congestionControl = true;
       m_ecn = false;
       m_migrationMode = MigrationMode::Passive;
       m_migCIDRes = DefaultMigCIDRes;
@@ -783,6 +805,7 @@ public:
   uint64_t maxIdleTimeout() const { return m_maxIdleTimeout; }
   ZuTime heartBeat() const { return m_heartBeat; }
   unsigned maxUDP() const { return m_maxUDP; }
+  bool congestionControl() const { return m_congestionControl; }
   bool ecn() const { return m_ecn; }
   MigrationMode::T migrationMode() const { return m_migrationMode; }
   bool activeMigration() const {
@@ -820,9 +843,7 @@ public:
   bool txInvoked() { return m_mx && m_txThread && m_mx->invoked(m_txThread); }
 
 private:
-  void linkAdded_(Ztc::Link *link) {
-    Ztc::Hub::linkAdded_(link);
-  }
+  using Ztc::Hub::linkAdded_;
   void linkDeleted_(Ztc::Link *link, Ztc::LinkState::T state) {
     switch (state) {
       case Ztc::LinkState::Down: Ztc::Hub::linkDownDec_(); break;
@@ -833,7 +854,9 @@ private:
   }
 
 public:
-  void linkState_(
+  uint64_t queueOrdinal() { return ++m_queueOrdinal; } // cold object identity only
+
+  void linkState(
       Ztc::LinkState::T oldState, Ztc::LinkState::T newState) {
     switch (oldState) {
       case Ztc::LinkState::Down: Ztc::Hub::linkDownDec_(); break;
@@ -881,6 +904,7 @@ protected:
       m_maxIdleTimeout = params.maxIdleTimeout();
       m_heartBeat = params.heartBeat();
       m_maxUDP = params.maxUDP();
+      m_congestionControl = params.congestionControl();
       m_ecn = params.ecn();
       m_migrationMode = params.migrationMode();
       m_migCIDRes = params.migCIDRes();
@@ -1130,6 +1154,7 @@ private:
   uint64_t		m_maxIdleTimeout = 0;
   ZuTime		m_heartBeat;
   unsigned		m_maxUDP = MinUDPPayload;
+  bool			m_congestionControl = true;
   bool			m_ecn = false;
   MigrationMode::T	m_migrationMode = MigrationMode::Passive;
   unsigned		m_migCIDRes = DefaultMigCIDRes;
@@ -1140,6 +1165,7 @@ private:
   bool			m_newTokenAddrValidate = false;
   bool			m_addrValidatePeerPort = false;
   bool			m_registered = false;
+  ZmAtomic<uint64_t>	m_queueOrdinal = 0;
 
 };
 
@@ -1173,9 +1199,9 @@ template <typename App_> class Client : public Hub<App_> {
 public:
   using App = App_;
   using Base = Hub<App>;
-  static constexpr unsigned TLSBufSize = (64<<10); // 64K
-  static constexpr unsigned PNLength = 2;
-  static constexpr unsigned CryptoChunk = 900;
+  enum { TLSBufSize = (64<<10) }; // 64K
+  enum { PNLength = 2 };
+  enum { CryptoChunk = 900 };
 
   bool init(ClientParams params) {
     if (bool(params.certPath()) != bool(params.keyPath())) {
@@ -1235,10 +1261,10 @@ public:
   using Endpoint = Endpoint_<Server>;
   using Base::app;
   using Base::allLinks;
-  static constexpr bool EndpointRef = false;
-  static constexpr unsigned TLSBufSize = Client<App>::TLSBufSize;
-  static constexpr unsigned PNLength = Client<App>::PNLength;
-  static constexpr unsigned CryptoChunk = Client<App>::CryptoChunk;
+  enum { EndpointRef = false };
+  enum { TLSBufSize = Client<App>::TLSBufSize };
+  enum { PNLength = Client<App>::PNLength };
+  enum { CryptoChunk = Client<App>::CryptoChunk };
 
 template <typename, typename, typename, typename>
 friend class SrvLink;
@@ -1253,11 +1279,13 @@ friend ZmEngine<App>;
 	"server certPath and keyPath are required"));
       return false;
     }
-    return this->init_(ZuMv(params), Zquic::Vantage::Server,
+    bool ok = this->init_(ZuMv(params), Zquic::Vantage::Server,
       [this](const ServerParams &) {
 	if (!m_ticketKey) m_ticketKey = Ztls::Pico::ticket_key_new();
 	return m_ticketKey;
       });
+    if (ok) m_routes.initQueue(this);
+    return ok;
   }
 
   void final() {
@@ -1267,9 +1295,13 @@ friend ZmEngine<App>;
     finalTicketKey();
   }
 
-  bool listening() const { return Endpoint::listening(); }
-  bool connected() const { return Endpoint::connected(); }
-  const ZiSockAddr &local() const { return Endpoint::local(); }
+  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
+    return Base::allQueues(fn) + Endpoint::allQueues(fn) + m_routes.allQueues(fn);
+  }
+
+  using Endpoint::listening;
+  using Endpoint::connected;
+  const ZiSockAddr &local() const { return m_localAddr; }
   template <typename L>
   void endpointDiag(L &&l) const {
     auto mx = this->mx();
@@ -1297,7 +1329,7 @@ friend ZmEngine<App>;
       l(server->m_addrValidationDiag);
       return;
     }
-    mx->rxRun([server, l = ZuFwd<L>(l)]() mutable {
+    server->rxRun([server, l = ZuFwd<L>(l)]() mutable {
       l(server->m_addrValidationDiag);
     });
   }
@@ -1329,6 +1361,9 @@ friend ZmEngine<App>;
   uint16_t localPort() const { return 0; }
   bool sendPkt(const ZmRef<ZiIOBuf> &) { return true; }
   bool sendFrame(const SentFrameRef &) { return true; }
+  // Rx notification after an unroutable datagram is discarded. No packet or
+  // owner is retained; the default is erased by static dispatch.
+  void datagramDropped() { }
 
   void listenFailed(bool transient) {
     this->error_(ZeEXCEPT(Error, "Zquic",
@@ -1345,6 +1380,8 @@ friend ZmEngine<App>;
   ZmRef<ZiIOBuf> allocTxPkt_() {
     return Endpoint::allocTxPkt();
   }
+  using Endpoint::pktAllocTarget;
+  using Endpoint::waitTx;
   ptls_encrypt_ticket_t *ticketEncryptCB() {
     return Ztls::Pico::ticket_encrypt_cb(m_ticketKey);
   }
@@ -1354,25 +1391,27 @@ friend ZmEngine<App>;
   }
   bool sendPktRaw(
       ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
-      EcnMark::T ecn = EcnMark::NotECT, bool priority = false) {
-    return Endpoint::send(ZuMv(buf), ZuMv(addr), ecn, priority);
+      EcnMark::T ecn = EcnMark::NotECT, bool priority = false,
+      Zquic_::EndpointTxToken token = {}, bool *blocked = nullptr) {
+    return Endpoint::send(ZuMv(buf), ZuMv(addr), ecn, priority, token, blocked);
   }
   void tombstoneRoute(const CxnID &id) {
     m_routes.tombstone(id);
   }
   void refreshLinkRoutes(Link *link) {
     if (this->state() == ZmEngineState::Running && link)
-      link->installRoutes_(m_routes);
+      link->installRoutes(m_routes);
   }
 
 public:
   void endpointDatagram(Datagram d) {
-    this->rxRun([this, d = ZuMv(d)]() mutable {
+    this->rxInvoke([this, d = ZuMv(d)]() mutable {
       received_(ZuMv(d));
     });
   }
-  void endpointReady_(Endpoint *) {
-    this->rxRun([this]() {
+  void endpointReady(Endpoint *ep) {
+    this->rxRun([this, local = ep->local()]() mutable {
+      m_localAddr = ZuMv(local);
       switch (this->state()) {
 	case ZmEngineState::Starting:
 	case ZmEngineState::StopPending:
@@ -1421,23 +1460,25 @@ private:
   void received_(Datagram d) {
     if (this->state() != ZmEngineState::Running) {
       Endpoint::failure();
+      this->app()->datagramDropped();
       return;
     }
     CxnID routedDCID;
     ResetToken resetToken;
-    Link *link = route_(d, &routedDCID, &resetToken);
+    Link *link = routePacket(d, &routedDCID, &resetToken);
     if (!link) {
       sendStatelessReset(d, resetToken);
       Endpoint::failure();
+      this->app()->datagramDropped();
       return;
     }
     if (link->receivedRouted(ZuMv(d), routedDCID))
-      link->installRoutes_(m_routes);
+      link->installRoutes(m_routes);
     else
       link->disconnect();
   }
 
-  Link *route_(
+  Link *routePacket(
       const Datagram &d, CxnID *routedDCID = nullptr,
       ResetToken *resetToken = nullptr) {
     if (!d.buf || !d.buf->length) return nullptr;
@@ -1547,14 +1588,14 @@ public:
 
   void retireLinkRoutes(Link *link) {
     if (this->state() == ZmEngineState::Running && link)
-      link->retireRoutes_(m_routes);
+      link->retireRoutes(m_routes);
   }
 
 private:
   void start_() {
     if (!m_links)
       m_links = new LinkTable{
-	ZmHashParams().bits(5).loadFactor(1).cBits(3)};
+	ZmHashParams().bits(5).loadFactor(1).cBits(3).init(LinkTable::ID{}())};
     m_routes.init();
     m_stopCount = 0;
     Base::startQLog([this]() { start_1(); });
@@ -1564,7 +1605,8 @@ private:
     Base::warmup_();
     ZiIP localIP = this->app()->localIP();
     uint16_t localPort = this->app()->localPort();
-    if (!Endpoint::init(this->mx(), this->rxPktAllocator(), this->txPktAllocator()) ||
+    if (!Endpoint::init(this->mx(), this->rxPktAllocator(), this->txPktAllocator(),
+	this, this->queueOrdinal()) ||
 	!Endpoint::openUDP(PathMode::ServerUnconnected, localIP, localPort)) {
       Base::stopQLog([this]() { this->started(false); });
     }
@@ -1618,14 +1660,14 @@ private:
     return sent;
   }
 
-  ZuBSpan initialToken_(ZuBSpan packet, const LongHdr &h) const {
+  ZuBSpan extractInitialToken(ZuBSpan packet, const LongHdr &h) const {
     if (!h.tokenLength) return {};
     return ZuBSpan{packet.data() + h.tokenOffset, unsigned(h.tokenLength)};
   }
 
   bool validateInitial(InitialInfo &info, ZuBSpan packet) {
     if (!app()->retryAddrValidate()) return true;
-    ZuBSpan token = initialToken_(packet, info.header);
+    ZuBSpan token = extractInitialToken(packet, info.header);
     if (!token) {
       ++m_addrValidationDiag.retryRejected;
       ZquicLOG(app()->qlogTrace(), ([
@@ -1834,8 +1876,9 @@ private:
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   ZmRef<LinkTable>	m_links = new LinkTable{
-    ZmHashParams().bits(5).loadFactor(1).cBits(3)};
+    ZmHashParams().bits(5).loadFactor(1).cBits(3).init(LinkTable::ID{}())};
   CxnRouter<Link>	m_routes;
+  ZiSockAddr		m_localAddr;
   AddrValidationDiag	m_addrValidationDiag;
   Ztls::Pico::TicketKey *m_ticketKey	= nullptr;
   unsigned		m_stopCount = 0;

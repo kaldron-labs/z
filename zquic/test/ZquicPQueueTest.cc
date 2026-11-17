@@ -12,7 +12,7 @@ using namespace ZuTestUtil;
 
 #define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
-void fill_(ZiIOBuf *buf, ZuBSpan data)
+void fillBuffer(ZiIOBuf *buf, ZuBSpan data)
 {
   memcpy(buf->data_(), data.data(), data.length());
   buf->skip = 0;
@@ -27,7 +27,7 @@ ZmRef<ZiIOBuf> packet_(ZuBSpan data)
       return allocator->allocBuf(owner, 0);
     })(nullptr);
   if (ZuUnlikely(!packet)) return nullptr;
-  fill_(packet, data);
+  fillBuffer(packet, data);
   return packet;
 }
 
@@ -38,7 +38,7 @@ void testCryptoRxClipping()
   ZiMultiplex mx;
   ZmRef<Zquic::CryptoRxPQueue::Node> buf =
     Zquic::plaintextAllocator<Zquic::CryptoRxBufAlloc<>>(&mx)->allocBuf();
-  fill_(buf, "abcdef");
+  fillBuffer(buf, "abcdef");
   auto &data = buf->data();
   data.skip = 1;
   data.length = 4;
@@ -405,7 +405,7 @@ void testTxUnackdFragmentation()
   ZuTestScopeRT(testTxUnackdFragmentation);
 
   Zquic::StreamTxPQueue q{0};
-  constexpr unsigned Ranges = Zquic::StreamTxPQueue::Max << 1;
+  enum { Ranges = Zquic::StreamTxPQueue::Max << 1 };
   for (unsigned i = 0; i < Ranges; ++i)
     ZQUIC_CHECK_RT(q.add(Zquic::TxUnackdRange{uint64_t(i) << 1, 1}) ==
 	ZmPQResult::Inserted,
@@ -466,6 +466,47 @@ void testTxUnackdBoundaries()
   ZQUIC_CHECK_RT(!q.indexed(),
     "full stream-range clear retained indexed representation");
 #endif
+}
+
+void testTxUnackdDrain()
+{
+  ZuTestScopeRT(testTxUnackdDrain);
+
+  unsigned counts[] = {4, Zquic::StreamTxPQueue::BuiltinRanges + 3};
+  for (unsigned count : counts) {
+    Zquic::StreamTxPQueue q{0};
+    uint64_t length = 0;
+    for (unsigned i = 0; i < count; ++i) {
+      unsigned bytes = i % 3 + 1;
+      bool fin = i == count - 1;
+      length += bytes + unsigned(fin);
+      ZQUIC_CHECK_RT(q.add(Zquic::TxUnackdRange{uint64_t(i) << 3, bytes, fin}) ==
+	  ZmPQResult::Inserted, "bounded drain setup failed");
+    }
+    unsigned budget = 0;
+    ZQUIC_CHECK_RT(!q.drain(budget) && !budget && q.count_() == count &&
+	q.length_() == length && q.verify(),
+      "zero-budget drain changed retained ranges");
+    budget = 2;
+    ZQUIC_CHECK_RT(!q.drain(budget) && !budget && q.count_() == count - 2 &&
+	q.length_() == length - 3 && !q.find(0) && !q.find(8) && q.find(16) &&
+	q.verify(), "partial drain exceeded its budget or lost remaining ranges");
+#ifdef ZDEBUG
+    ZQUIC_CHECK_RT(q.indexed() == (count > Zquic::StreamTxPQueue::BuiltinRanges),
+      "partial drain changed the retained representation");
+#endif
+    budget = count + 5;
+    ZQUIC_CHECK_RT(q.drain(budget) && budget == 7 && !q.count_() &&
+	!q.length_() && q.verify(),
+      "completed drain lost FIN accounting or consumed excess budget");
+#ifdef ZDEBUG
+    ZQUIC_CHECK_RT(!q.indexed(), "completed drain retained the empty index");
+#endif
+    ZQUIC_CHECK_RT(q.drain(budget) && budget == 7 &&
+	q.add(Zquic::TxUnackdRange{0, 1}) == ZmPQResult::Inserted &&
+	q.find(0) && q.count_() == 1 && q.length_() == 1 && q.verify(),
+      "drained queue did not accept a fresh runtime at offset zero");
+  }
 }
 
 void testTxUnackdRandomized()
@@ -538,5 +579,6 @@ int main(int argc, char **argv)
   ZuTestCall(testTxUnackdFinSentinel);
   ZuTestCall(testTxUnackdFragmentation);
   ZuTestCall(testTxUnackdBoundaries);
+  ZuTestCall(testTxUnackdDrain);
   ZuTestCall(testTxUnackdRandomized);
 }

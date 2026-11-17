@@ -10,15 +10,98 @@
 #error "include zlib/Zquic.hh before this header"
 #endif
 
+namespace Zquic_ {
+
+// Match the ordinary writable-stream turn budget for terminal cleanup work.
+enum { StreamCloseBatch = 64 };
+
+struct PendingControl {
+  Zquic::ControlFrame frame;
+  bool queued = false;
+};
+
+struct alignas(Zm::CacheLineSize) StreamAdmission {
+  ZmAtomic<unsigned> count = 0;
+};
+
+struct alignas(Zm::CacheLineSize) StreamCreditPub {
+  ZmAtomic<uint64_t> limit = 0;
+  ZmAtomic<unsigned> closed = 0; // Rx terminal publication; Tx only reads
+  uint64_t initial = 0; // fixed before publication to the Tx registry
+};
+
+struct alignas(Zm::CacheLineSize) StreamFramePub {
+  ZmAtomic<uint64_t> maximum = 0; // Tx publishes; off-thread writers read
+};
+
+struct alignas(Zm::CacheLineSize) StreamRxStorage {
+  using RxQueue = Queue<StreamRxPQueue, PQueueCount>;
+
+  FlowCredit		rxCredit;
+  uint64_t		rxDelivered = 0;
+  uint64_t		rxAdmitted = 0;
+  uint64_t		rxRetired = 0;
+  bool			resetReceived = false;
+  bool			closedPublished = false;
+  bool			stopReceived = false;
+  bool			creditReturned = false;
+  bool			txClosedForCredit = false;
+  bool			earlyData = false;
+  bool			retired = false;
+  StreamRxState		rxState;
+  RxStream		rx;
+  RxQueue		rxQueue{0};
+  uint64_t		rxAppError = 0;
+  StreamError::T	rxError = StreamError::None;
+};
+
+struct alignas(Zm::CacheLineSize) StreamTxStorage {
+  using TxRanges = Queue<StreamTxRanges, PQueueCount>;
+
+  uint64_t		rxAdvertised = 0;
+  uint64_t		controlRuntime = 0;
+  uint64_t		lastBlocked = U64Null;
+  PendingControl	maxStreamDataControl;
+  PendingControl	dataBlockedCtl;
+  TxRanges		txRanges{0};
+  uint64_t		txBytes = 0;
+  uint64_t		txBufferedBytes = 0;
+  FlowCredit		txCredit;
+  bool			fin = false;
+  bool			finDequeued = false;
+  bool			finAckd = false;
+  bool			txCompleted = false;
+  bool			retired = false;
+  bool			resetSent = false;
+  bool			resetAckd = false;
+  bool			stopSent = false;
+  bool			stopAckd = false;
+  bool			reapPending = false;
+  uint64_t		txAppError = 0;
+  StreamError::T	txError = StreamError::None;
+  PendingControl	resetStreamControl;
+  PendingControl	stopSendingControl;
+  bool			txQueued = false;
+  StreamTxPQueue	txUnackd{0};
+};
+
+struct alignas(Zm::CacheLineSize) StreamRxBoundary {
+  char padding[Zm::CacheLineSize];
+};
+
+} // Zquic_
+
 namespace Zquic {
 
-class StreamData : public ZmPolymorph {
+class alignas(Zm::CacheLineSize) StreamData : public ZmPolymorph {
 public:
   explicit StreamData(int64_t id) : m_id{id} { }
   int64_t id() const { return m_id; }
 
 private:
   const int64_t m_id;
+  // Keep the shared reference count out of the following Tx node links.
+  [[maybe_unused]] char m_padding[Zm::CacheLineSize - sizeof(ZmPolymorph) - sizeof(int64_t)];
 };
 
 inline int64_t StreamIDKey(const StreamData &stream) {
@@ -28,20 +111,27 @@ inline int64_t StreamIDKey(const StreamData &stream) {
 // Rx and Tx retire independently; both registries retain the same object.
 ZmHashDerive(TxStreams, StreamData,
   (ZmHashNode<StreamData,
-    ZmHashKey<StreamIDKey, ZmHashHeapID<"">>>));
+    ZmHashKey<StreamIDKey,
+      ZmHashID<"Zquic.Stream.TxHash", ZmHashHeapID<"">>>>));
 
 // Writable notifications can outlive Tx registry retirement. Retain the
 // queued object independently until dequeue, as the former reference queue did.
-ZmListDerive(StreamQueue, TxStreams::Node,
-  ZmListNode<TxStreams::Node, ZmListHeapID<"">>);
+ZmListDerive(CreditStreams, TxStreams::Node,
+  ZmListNode<TxStreams::Node, ZmListShadow<>>);
+ZmListDerive(StreamQueue_, CreditStreams::Node,
+  ZmListNode<CreditStreams::Node, ZmListHeapID<"">>);
+using StreamQueue = Zquic_::Queue<StreamQueue_>;
+
+// Alignment applies to the Rx base subobject, independently of Tx node size.
+template <typename Impl>
+struct alignas(Zm::CacheLineSize) StreamRxBase :
+  ZmPQRx<Impl, StreamRxPQueue, ZmPQRxGapIgnore<>> { };
 
 template <typename Link_, typename Impl, typename TxBufAlloc_>
 class Stream :
   public StreamQueue::Node,
   // Rx thread exclusive base. Only the Rx thread may use ZmPQRx APIs/state.
-  public ZmPQRx<
-    Stream<Link_, Impl, TxBufAlloc_>,
-    StreamRxPQueue, ZmPQRxGapIgnore<>> {
+  public StreamRxBase<Stream<Link_, Impl, TxBufAlloc_>> {
 template <typename, typename, typename, typename>
 friend class CliLink;
 template <typename, typename, typename, typename>
@@ -54,7 +144,7 @@ public:
   using Link = Link_;
   using Impl_ = Impl;
   using TxBufAlloc = TxBufAlloc_;
-  using Rx = ZmPQRx<Self, StreamRxPQueue, ZmPQRxGapIgnore<>>;
+  using Rx = StreamRxBase<Self>;
   using RxMsg = StreamRxPQueue::Node;
   using RxQueueSpan = StreamRxPQueue::Span;
   using TxMsg = TxDataPQueue::Node;
@@ -63,174 +153,254 @@ public:
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
-  Stream(Link *link, int64_t id) : StreamQueue::Node{id}, m_link{link} { }
+  Stream(Link *link, int64_t id) : StreamQueue::Node{id}, m_config{.link = link} { }
 
-  Link *link() const { return m_link; }
-  uint64_t txBytes() const { return m_txBytes; }
-  uint64_t txBufferedBytes() const { return m_txBufferedBytes; }
-  uint64_t txCreditLimit() const { return m_txCredit.limit(); }
-  uint64_t txCreditAvailable() const { return m_txCredit.available(); }
+  void initRxQueues(Ztc::Hub *hub, ZuCSpan prefix, Zquic_::QueueCatalog &queues) {
+    m_streamRx.rx.initQueue(hub, prefix, "input", Ztc::QueueType::Rx, 0);
+    m_streamRx.rxQueue.initQueue(hub, prefix, "reasm", Ztc::QueueType::Rx, 0);
+    m_streamRx.rx.joinQueue(queues);
+    m_streamRx.rxQueue.joinQueue(queues);
+  }
+  void initTxQueues(Ztc::Hub *hub, ZuCSpan prefix, Zquic_::QueueCatalog &queues) {
+    m_streamTx.txRanges.initQueue(hub, prefix, "unsent", Ztc::QueueType::Tx, 0);
+    m_streamTx.txUnackd.initQueue(hub, prefix, "unackd", Ztc::QueueType::Tx, 0);
+    m_streamTx.txRanges.joinQueue(queues);
+    m_streamTx.txUnackd.joinQueue(queues);
+  }
+  void finalRxQueues() {
+    m_streamRx.retired = true;
+    m_streamRx.rx.finalQueue();
+    m_streamRx.rxQueue.finalQueue();
+  }
+  void finalTxQueues() {
+    m_streamTx.retired = true;
+    m_streamTx.txRanges.finalQueue();
+    m_streamTx.txUnackd.finalQueue();
+  }
+
+  Link *link() const { return m_config.link; }
+  uint64_t txBytes() const { return m_streamTx.txBytes; }
+  uint64_t txBufferedBytes() const { return m_streamTx.txBufferedBytes; }
+  uint64_t txCreditLimit() const { return m_streamTx.txCredit.limit(); }
+  uint64_t txCreditAvailable() const { return m_streamTx.txCredit.available(); }
   // Initial peer stream window; upper framed protocols use it to avoid
   // declaring a frame which cannot cross a batched-credit boundary.
-  uint64_t txFrameMax() const { return m_txFrameMax; }
-  uint64_t rxCreditUsed() const { return m_rxCredit.used(); }
-  uint64_t rxCreditLimit() const { return m_rxCredit.limit(); }
-  uint64_t rxCreditAvailable() const { return m_rxCredit.available(); }
-  uint64_t rxAdmitted() const { return m_rxAdmitted; }
-  uint64_t rxRetired() const { return m_rxRetired; }
+  uint64_t txFrameMax() const { return m_framePub.maximum; }
+  uint64_t rxCreditUsed() const { return m_streamRx.rxCredit.used(); }
+  uint64_t rxCreditLimit() const { return m_streamRx.rxCredit.limit(); }
+  uint64_t rxCreditAvailable() const { return m_streamRx.rxCredit.available(); }
+  uint64_t rxAdmitted() const { return m_streamRx.rxAdmitted; }
+  uint64_t rxRetired() const { return m_streamRx.rxRetired; }
   uint64_t rxRetirable() const {
-    uint64_t limit = m_resetReceived ? finalSize() : m_rxDelivered;
-    return m_rxRetired < limit ? limit - m_rxRetired : 0;
+    uint64_t limit = m_streamRx.resetReceived ? finalSize() : m_streamRx.rxDelivered;
+    return m_streamRx.rxRetired < limit ? limit - m_streamRx.rxRetired : 0;
   }
-  unsigned txRangeCount() const { return m_txRanges.count_(); }
-  unsigned txQueueCount() const { return m_txQueueCount.load_(); }
-  unsigned txQueueMax() const { return m_txQueueMax; }
-  void txQueueMax(unsigned v) { m_txQueueMax = v; }
-  void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }
-  unsigned txUnackdCount() const { return m_txUnackd.count_(); }
-  uint64_t txUnackdBytes() const { return m_txUnackd.length_(); }
-  uint64_t rxBytes() const { return m_rxDelivered; }
-  uint64_t finalSize() const { return m_rxState.finalSize(); }
-  unsigned rxPending() const { return m_rxQueue.count_(); }
+  unsigned txRangeCount() const { return m_streamTx.txRanges.count_(); }
+  unsigned txQueueCount() const { return m_admission.count.load_(); }
+  unsigned txQueueMax() const { return m_config.txQueueMax; }
+  void txQueueMax(unsigned v) { m_config.txQueueMax = v; }
+  void txErrorFn(ZiTxErrorFn fn) { m_config.txErrorFn = ZuMv(fn); }
+  unsigned txUnackdCount() const { return m_streamTx.txUnackd.count_(); }
+  uint64_t txUnackdBytes() const { return m_streamTx.txUnackd.length_(); }
+  uint64_t rxBytes() const { return m_streamRx.rxDelivered; }
+  uint64_t finalSize() const { return m_streamRx.rxState.finalSize(); }
+  unsigned rxPending() const { return m_streamRx.rxQueue.count_(); }
   uint64_t rxAppError() const {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream Rx error access outside Rx thread", return 0);
-    return m_rxAppError;
+    return m_streamRx.rxAppError;
   }
   StreamError::T rxError() const {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream Rx error access outside Rx thread",
       return StreamError::None);
-    return m_rxError;
+    return m_streamRx.rxError;
   }
   uint64_t txAppError() const {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream Tx error access outside Tx thread", return 0);
-    return m_txAppError;
+    return m_streamTx.txAppError;
   }
   StreamError::T txError() const {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream Tx error access outside Tx thread",
       return StreamError::None);
-    return m_txError;
+    return m_streamTx.txError;
   }
-  bool finSent() const { return m_fin; }
-  bool finDequeued() const { return m_finDequeued; }
-  bool txCompleted() const { return m_txCompleted; }
+  bool finSent() const { return m_streamTx.fin; }
+  bool finDequeued() const { return m_streamTx.finDequeued; }
+  bool txCompleted() const { return m_streamTx.txCompleted; }
+  bool retiredRx() const { return m_streamRx.retired; }
+  bool retiredTx() const { return m_streamTx.retired; }
   bool txDrained() const {
-    return !m_txQueueCount.load_() && !m_txUnackd.count_();
+    return !m_admission.count.load_() && !m_streamTx.txUnackd.count_();
   }
   bool finReady() const {
-    return !m_resetSent && m_fin && !m_finDequeued && !txRangeCount();
+    return !m_streamTx.resetSent && m_streamTx.fin && !m_streamTx.finDequeued && !txRangeCount();
   }
-  bool finReceived() const { return m_rxState.finSeen(); }
-  bool resetSent() const { return m_resetSent; }
-  bool resetReceived() const { return m_resetReceived; }
-  bool stopSent() const { return m_stopSent; }
-  bool resetAckd() const { return m_resetAckd; }
-  bool stopAckd() const { return m_stopAckd; }
-  bool stopReceived() const { return m_stopReceived; }
-  bool readOpen() const { return !m_resetReceived && !rxComplete(); }
+  bool finReceived() const { return m_streamRx.rxState.finSeen(); }
+  bool resetSent() const { return m_streamTx.resetSent; }
+  bool resetReceived() const { return m_streamRx.resetReceived; }
+  bool stopSent() const { return m_streamTx.stopSent; }
+  bool resetAckd() const { return m_streamTx.resetAckd; }
+  bool stopAckd() const { return m_streamTx.stopAckd; }
+  bool stopReceived() const { return m_streamRx.stopReceived; }
+  bool readOpen() const { return !m_streamRx.resetReceived && !rxComplete(); }
+  bool txClosedRx() const { return m_streamRx.txClosedForCredit; }
   bool closedForStreamCredit() const {
-    return (rxComplete() || m_resetReceived) && m_txClosedForCredit;
+    return (rxComplete() || m_streamRx.resetReceived) && m_streamRx.txClosedForCredit;
   }
-  bool creditReturned() const { return m_creditReturned; }
-  bool earlyData() const { return m_earlyData; }
-  void earlyData(bool v) { m_earlyData = v; }
-  bool txQueued() const { return m_txQueued; }
-  void txQueued(bool v) { m_txQueued = v; }
-  bool reapPending() const { return m_reapPending; }
-  void reapPending(bool v) { m_reapPending = v; }
+  bool creditReturned() const { return m_streamRx.creditReturned; }
+  bool earlyData() const { return m_streamRx.earlyData; }
+  void earlyData(bool v) { m_streamRx.earlyData = v; }
+  bool txQueued() const { return m_streamTx.txQueued; }
+  void txQueued(bool v) { m_streamTx.txQueued = v; }
+  bool reapPending() const { return m_streamTx.reapPending; }
+  void reapPending(bool v) { m_streamTx.reapPending = v; }
   bool rxComplete() const {
-    return m_rxState.complete() && m_rxDelivered == m_rxState.finalSize();
+    return m_streamRx.rxState.complete() &&
+      m_streamRx.rxDelivered == m_streamRx.rxState.finalSize();
   }
-  unsigned rxQueued() const { return m_rx.count_(); }
+  unsigned rxQueued() const { return m_streamRx.rx.count_(); }
 
-  RxStream &rxStream() { return m_rx; }
+  RxStream &rxStream() { return m_streamRx.rx; }
 
   bool retireRx(uint64_t n) {
-    return m_link &&
-      m_link->streamRxRetired_(ZmRef<Impl>{impl()}, n);
+    return m_config.link &&
+      m_config.link->streamRxRetired(ZmRef<Impl>{impl()}, n);
   }
   bool retireRx_(uint64_t n) {
     if (n > rxRetirable()) return false;
-    m_rxRetired += n;
+    m_streamRx.rxRetired += n;
     return true;
   }
 
-  StreamRxPQueue *rxQueue() { return &m_rxQueue; }
+  StreamRxPQueue *rxQueue() { return &m_streamRx.rxQueue; }
   void closeRx() {
-    if (m_link && m_link->app() && m_link->app()->mx())
-      ZiAssert(rxInvoked_(), "Zquic", (),
-	"QUIC stream Rx close outside Rx thread", return);
-    while (m_rxQueue.shift());
-    m_rx.clean();
+    for (;;) {
+      unsigned budget = Zquic_::StreamCloseBatch;
+      if (closeRx(budget)) return;
+    }
   }
-  TxUnackdQueue *txUnackdQueue() { return &m_txUnackd; }
+  bool closeRx(unsigned &budget) {
+    if (m_config.link && m_config.link->app() && m_config.link->app()->mx() &&
+	m_config.link->app()->mx()->running())
+      ZiAssert(rxInvoked_(), "Zquic", (),
+	"QUIC stream Rx close outside Rx thread", return false);
+    m_creditPub.limit = uint64_t{0};
+    while (budget && m_streamRx.rxQueue.shift()) --budget;
+    while (budget) {
+      auto span = m_streamRx.rx.span();
+      if (!span) break;
+      m_streamRx.rx.advance(span.length());
+      --budget;
+    }
+    return !m_streamRx.rxQueue.count_() && !m_streamRx.rx.count_();
+  }
+  bool closeTx(unsigned &budget) {
+    if (m_config.link && m_config.link->app() && m_config.link->app()->mx() &&
+	m_config.link->app()->mx()->running())
+      ZiAssert(txInvoked_(), "Zquic", (),
+	"QUIC stream Tx close outside Tx thread", return false);
+    m_streamTx.retired = true;
+    while (budget) {
+      auto range = m_streamTx.txRanges.shift();
+      if (!range) break;
+      m_streamTx.txBufferedBytes -= range->data().length();
+      --m_admission.count;
+      --budget;
+    }
+    bool drained = m_streamTx.txUnackd.drain(budget);
+    if (txRangeCount() || !drained) return false;
+    clearControls();
+    if (!m_streamTx.txCompleted) {
+      m_streamTx.txCompleted = true;
+      impl()->txComplete(false);
+    }
+    return true;
+  }
+  TxUnackdQueue *txUnackdQueue() { return &m_streamTx.txUnackd; }
 
   void txCredit(uint64_t limit) {
-    m_txCredit.set(limit);
-    if (!m_txFrameMax) m_txFrameMax = limit;
+    m_streamTx.txCredit.set(limit);
+    if (limit && !uint64_t(m_framePub.maximum)) m_framePub.maximum = limit;
   }
   void extendTxCredit(uint64_t limit) {
-    m_txCredit.extend(limit);
-    if (!m_txFrameMax) m_txFrameMax = limit;
+    m_streamTx.txCredit.extend(limit);
+    if (limit && !uint64_t(m_framePub.maximum)) m_framePub.maximum = limit;
   }
-  bool consumeTxCredit(uint64_t n) { return m_txCredit.consume(n); }
-  void rxCredit(uint64_t limit) { m_rxCredit.set(limit); }
-  void extendRxCredit(uint64_t limit) { m_rxCredit.extend(limit); }
-  bool consumeRxCreditTo(uint64_t n) { return m_rxCredit.consumeTo(n); }
-  uint64_t lastBlocked() const { return m_lastBlocked; }
-  void lastBlocked(uint64_t n) { m_lastBlocked = n; }
-  void markCreditReturned() { m_creditReturned = true; }
-  void markTxClosedForCredit() { m_txClosedForCredit = true; }
+  bool consumeTxCredit(uint64_t n) { return m_streamTx.txCredit.consume(n); }
+  void rxCredit(uint64_t limit) {
+    m_streamRx.rxCredit.set(limit);
+    m_creditPub.initial = limit;
+    m_creditPub.limit = limit;
+  }
+  void extendRxCredit(uint64_t limit) {
+    m_streamRx.rxCredit.extend(limit);
+    m_creditPub.limit = m_streamRx.rxState.finalSizeKnown() || m_streamRx.resetReceived ?
+      uint64_t{0} : m_streamRx.rxCredit.limit();
+  }
+  bool refreshCreditTx(uint64_t blocked = U64Null) {
+    if (m_streamTx.retired) return false;
+    if (m_config.link) resetControls(m_config.link->txRuntime());
+    uint64_t limit = m_creditPub.limit;
+    if ((limit <= m_streamTx.rxAdvertised || limit <= m_creditPub.initial) &&
+	limit <= blocked) return false;
+    m_streamTx.rxAdvertised = limit;
+    return queueMaxStreamData(limit);
+  }
+  bool consumeRxCreditTo(uint64_t n) { return m_streamRx.rxCredit.consumeTo(n); }
+  uint64_t lastBlocked() const { return m_streamTx.lastBlocked; }
+  void lastBlocked(uint64_t n) { m_streamTx.lastBlocked = n; }
+  void markCreditReturned() { m_streamRx.creditReturned = true; }
+  void markTxClosedForCredit() { m_streamRx.txClosedForCredit = true; }
   unsigned queuedControlFrames() const {
     unsigned n = 0;
-    if (m_maxStreamDataControl.queued) ++n;
-    if (m_dataBlockedCtl.queued) ++n;
-    if (m_resetStreamControl.queued) ++n;
-    if (m_stopSendingControl.queued) ++n;
+    if (m_streamTx.maxStreamDataControl.queued) ++n;
+    if (m_streamTx.dataBlockedCtl.queued) ++n;
+    if (m_streamTx.resetStreamControl.queued) ++n;
+    if (m_streamTx.stopSendingControl.queued) ++n;
     return n;
   }
   bool controlQueued() const { return queuedControlFrames(); }
   bool queueMaxStreamData(uint64_t value) {
     return queueControl(
-      m_maxStreamDataControl,
+      m_streamTx.maxStreamDataControl,
       ControlFrame::flowUpdate(FlowUpdate{
 	FrameType::MaxStreamData, uint64_t(id()), value,
 	Zquic::StreamType::Duplex}));
   }
   bool queueDataBlocked(uint64_t value) {
     return queueControl(
-      m_dataBlockedCtl,
+      m_streamTx.dataBlockedCtl,
       ControlFrame::blocked(
 	FrameType::StreamDataBlocked, uint64_t(id()), value));
   }
   bool queueResetStream(uint64_t appError, uint64_t finalSize) {
     return queueControl(
-      m_resetStreamControl,
+      m_streamTx.resetStreamControl,
       ControlFrame::resetStream(uint64_t(id()), appError, finalSize));
   }
   bool queueStopSending(uint64_t appError) {
     return queueControl(
-      m_stopSendingControl,
+      m_streamTx.stopSendingControl,
       ControlFrame::stopSending(uint64_t(id()), appError));
   }
   bool nextQueuedControl(ControlFrame &frame) const {
-    if (m_maxStreamDataControl.queued) {
-      frame = m_maxStreamDataControl.frame;
+    if (m_streamTx.maxStreamDataControl.queued) {
+      frame = m_streamTx.maxStreamDataControl.frame;
       return true;
     }
-    if (m_dataBlockedCtl.queued) {
-      frame = m_dataBlockedCtl.frame;
+    if (m_streamTx.dataBlockedCtl.queued) {
+      frame = m_streamTx.dataBlockedCtl.frame;
       return true;
     }
-    if (m_resetStreamControl.queued) {
-      frame = m_resetStreamControl.frame;
+    if (m_streamTx.resetStreamControl.queued) {
+      frame = m_streamTx.resetStreamControl.frame;
       return true;
     }
-    if (m_stopSendingControl.queued) {
-      frame = m_stopSendingControl.frame;
+    if (m_streamTx.stopSendingControl.queued) {
+      frame = m_streamTx.stopSendingControl.frame;
       return true;
     }
     return false;
@@ -242,27 +412,34 @@ public:
   void clearControl(const SentFrameRef &ref) {
     PendingControl *slot = controlSlot(ref.controlType);
     if (!slot) return;
-    ControlFrame frame = controlFrame_(ref);
+    ControlFrame frame = controlFrame(ref);
     if (slot->frame == frame) *slot = {};
   }
   void clearControls() {
-    m_maxStreamDataControl = {};
-    m_dataBlockedCtl = {};
-    m_resetStreamControl = {};
-    m_stopSendingControl = {};
+    m_streamTx.maxStreamDataControl = {};
+    m_streamTx.dataBlockedCtl = {};
+    m_streamTx.resetStreamControl = {};
+    m_streamTx.stopSendingControl = {};
+  }
+  void resetControls(uint64_t runtime) {
+    if (m_streamTx.controlRuntime == runtime) return;
+    clearControls();
+    m_streamTx.rxAdvertised = 0;
+    m_streamTx.lastBlocked = U64Null;
+    m_streamTx.controlRuntime = runtime;
   }
   bool controlStillValid(const ControlFrame &frame) const {
     const PendingControl *slot = controlSlot(frame.type);
     if (!slot || !(slot->frame == frame)) return false;
     switch (frame.type) {
       case FrameType::MaxStreamData:
-	return readOpen() && frame.value == rxCreditLimit();
+	return frame.value == uint64_t(m_creditPub.limit);
       case FrameType::StreamDataBlocked:
 	return !txCreditAvailable() && frame.value == txCreditLimit();
       case FrameType::ResetStream:
-	return resetSent() && !resetAckd() && frame.value == m_txCredit.used();
+	return resetSent() && !resetAckd() && frame.value == m_streamTx.txCredit.used();
       case FrameType::StopSending:
-	return stopSent() && !stopAckd() && !resetReceived() && !rxComplete();
+	return stopSent() && !stopAckd() && !unsigned(m_creditPub.closed);
       default:
 	return false;
     }
@@ -276,22 +453,22 @@ public:
     if (!data.length) return;
     ZiAssert(data.skip + data.length <= data.size, "Zquic", (),
       "stream Rx queued slice exceeds packet-backed range", return);
-    m_rxDelivered += data.length;
-    m_rxState.delivered(m_rxDelivered);
+    m_streamRx.rxDelivered += data.length;
+    m_streamRx.rxState.delivered(m_streamRx.rxDelivered);
+    publishRxClosed();
     ZmRef<ZiRxQueue::Node> buf =
       static_cast<ZiRxQueue::Node *>(msg);
-    m_rx.push(ZuMv(buf));
-    if (m_link)
-      ZquicLOG(m_link->app()->qlogTrace(), ([
+    m_streamRx.rx.push(ZuMv(buf));
+    if (m_config.link)
+      ZquicLOG(m_config.link->app()->qlogTrace(), ([
 	streamID = id() >= 0 ? uint64_t(id()) : U64Null,
 	streamOffset = data.offset,
 	length = uint64_t(data.length),
-	linkInfo = m_link->linkInfo()
+	linkInfo = m_config.link->linkInfo()
       ](auto &o, ZuTime time) mutable {
 	if (streamID == U64Null) return;
 	StreamDataEvt event{
-	  .linkInfo = linkInfo
-	,
+	  .linkInfo = linkInfo,
 	  .streamID = streamID,
 	  .offset = streamOffset,
 	  .length = length,
@@ -302,18 +479,20 @@ public:
   }
   void request(const RxQueueSpan &, const RxQueueSpan &) { }
   void scheduleDequeue() { rxRun_([stream = ZmRef<Self>{impl()}]() {
-    stream->dequeueRx_();
+    stream->dequeueRx();
   }); }
   void rescheduleDequeue() { scheduleDequeue(); }
   void idleDequeue() { }
-  void dequeueRx_() {
+  void dequeueRx() {
+    if (m_streamRx.retired || m_streamRx.resetReceived || (m_config.link &&
+	(m_config.link->disconnecting_() || m_config.link->linkClosedRx_()))) return;
     Rx::dequeue();
-    if (m_link && !m_rx.empty())
-      m_link->streamRxDequeued(ZmRef<Impl>{impl()});
+    if (m_config.link && !m_streamRx.rx.empty())
+      m_config.link->streamRxDequeued(ZmRef<Impl>{impl()});
   }
 
   bool txRange(unsigned i, TxRange &range) const {
-    auto iter = m_txRanges.citer();
+    auto iter = m_streamTx.txRanges.citer();
     while (auto node = iter()) {
       if (i--) continue;
       const auto &data = node->data();
@@ -328,7 +507,7 @@ public:
     if (txRange(0, range)) return true;
     if (!finReady()) return false;
     range = {};
-    range.streamOffset = m_txBytes;
+    range.streamOffset = m_streamTx.txBytes;
     fin = true;
     return true;
   }
@@ -353,28 +532,28 @@ public:
     if (!length) return false;
     if (!selected.buf) return false;
     uint64_t key = selected.streamOffset;
-    auto part = m_txRanges.find(key);
+    auto part = m_streamTx.txRanges.find(key);
     if (!part) return false;
     const auto &stored = part->data();
     if (stored.buf != selected.buf || stored.buf->skip != selected.offset ||
 	stored.buf->length != selected.length || length > stored.length()) return false;
-    auto node = m_txRanges.del(key);
+    auto node = m_streamTx.txRanges.del(key);
     range = selected;
     range.length = length;
-    m_txBufferedBytes -= length;
+    m_streamTx.txBufferedBytes -= length;
     if (length < node->data().length()) {
       node->data().clipHead(length);
-      m_txRanges.add(ZuMv(node).release());
+      m_streamTx.txRanges.add(ZuMv(node).release());
     } else {
-      --m_txQueueCount;
+      --m_admission.count;
       // Return producer credit after this packetizer turn has committed flow
       // credit, FIN and recovery metadata. Recovery retains the plaintext until
       // ACK independently of the now-empty application queue.
       if constexpr (!ZuIsSame<decltype(&Impl::txDequeued_), void (Self::*)()>{}) {
-	if (m_link) m_link->app()->txRun([
-	  link = ZmRef<Link>{m_link}, stream = ZmRef<Impl>{impl()}
+	if (m_config.link) m_config.link->app()->txRun([
+	  link = ZmRef<Link>{m_config.link}, stream = ZmRef<Impl>{impl()}
 	]() mutable {
-	  if (!link->disconnecting_() && !stream->resetSent() &&
+	  if (!link->disconnecting_() && !stream->retiredTx() && !stream->resetSent() &&
 	      stream->txError() == StreamError::None)
 	    stream->txDequeued_();
 	});
@@ -385,26 +564,26 @@ public:
 
   bool dequeueFin(uint64_t &offset) {
     if (!finReady()) return false;
-    offset = m_txBytes;
-    m_finDequeued = true;
+    offset = m_streamTx.txBytes;
+    m_streamTx.finDequeued = true;
     return true;
   }
   bool recordTxUnackd(uint64_t offset, uint64_t length, bool fin) {
     if (!length && !fin) return false;
-    return m_txUnackd.add(new TxUnackdQueue::Node{
+    return m_streamTx.txUnackd.add(new TxUnackdQueue::Node{
       TxUnackdRange{offset, length, fin}}) != ZmPQResult::Invalid;
   }
   bool discardTxUnackd(uint64_t offset, uint64_t length, bool fin = false) {
     uint64_t n = length + (fin ? 1 : 0);
-    return n && m_txUnackd.clear(offset, n);
+    return n && m_streamTx.txUnackd.clear(offset, n);
   }
   bool ackTxUnackd(uint64_t offset, uint64_t length, bool fin = false) {
     uint64_t n = length + (fin ? 1 : 0);
-    if (!n || !m_txUnackd.clear(offset, n)) return false;
-    if (fin) m_finAckd = true;
+    if (!n || !m_streamTx.txUnackd.clear(offset, n)) return false;
+    if (fin) m_streamTx.finAckd = true;
     if (txDrained()) impl()->txDrained_();
-    if (m_finAckd && !m_txUnackd.count_() && !m_txCompleted) {
-      m_txCompleted = true;
+    if (m_streamTx.finAckd && !m_streamTx.txUnackd.count_() && !m_streamTx.txCompleted) {
+      m_streamTx.txCompleted = true;
       impl()->txComplete(true);
     }
     return true;
@@ -413,20 +592,20 @@ public:
     uint64_t n = length + (fin ? 1 : 0);
     if (!n) return false;
     bool found = false;
-    (void)m_txUnackd.spans(offset, n, [&found](const auto &) {
+    (void)m_streamTx.txUnackd.spans(offset, n, [&found](const auto &) {
       found = true;
       return false;
     });
     return found;
   }
   bool ackReset(uint64_t appError, uint64_t finalSize) {
-    if (!m_resetSent || m_txCredit.used() != finalSize) return false;
-    m_resetAckd = true;
+    if (!m_streamTx.resetSent || m_streamTx.txCredit.used() != finalSize) return false;
+    m_streamTx.resetAckd = true;
     return true;
   }
   bool ackStop(uint64_t appError) {
-    if (!m_stopSent) return false;
-    m_stopAckd = true;
+    if (!m_streamTx.stopSent) return false;
+    m_streamTx.stopAckd = true;
     return true;
   }
 
@@ -487,51 +666,51 @@ public:
   }
 
   void fin() {
-    if (m_fin || m_resetSent) return;
-    m_fin = true;
-    notifyTx_();
+    if (m_streamTx.retired || m_streamTx.fin || m_streamTx.resetSent) return;
+    m_streamTx.fin = true;
+    notifyTx();
   }
   void reset(uint64_t appError) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream reset outside Tx thread", return);
-    if (m_resetSent) return;
-    m_resetSent = true;
+    if (m_streamTx.retired || m_streamTx.resetSent) return;
+    m_streamTx.resetSent = true;
     setTxError(StreamError::Reset, appError);
     // Queued application bytes may exceed peer credit. Final size covers only
     // the extent committed to STREAM frames, including any lost packets.
-    auto finalSize = m_txCredit.used();
+    auto finalSize = m_streamTx.txCredit.used();
     // Packet recovery retains its own references. A reset forbids further
     // STREAM retransmission and releases all stream-owned queued ranges now.
     unsigned queued = txRangeCount();
-    m_txRanges.clean();
-    m_txQueueCount -= queued; // Pending off-shard admissions still retire once.
-    m_txBufferedBytes = 0;
-    m_txUnackd.clean();
-    m_dataBlockedCtl = {};
-    if (m_link && id() >= 0)
-      m_link->localResetStream(uint64_t(id()), appError, finalSize);
-    if (m_link && id() >= 0)
-      m_link->streamResetSent_(
+    m_streamTx.txRanges.clean();
+    m_admission.count -= queued; // Pending off-shard admissions still retire once.
+    m_streamTx.txBufferedBytes = 0;
+    m_streamTx.txUnackd.clean();
+    m_streamTx.dataBlockedCtl = {};
+    if (m_config.link && id() >= 0)
+      m_config.link->localResetStream(uint64_t(id()), appError, finalSize);
+    if (m_config.link && id() >= 0)
+      m_config.link->streamResetSent_(
 	uint64_t(id()), appError, finalSize);
-    if (!m_txCompleted) {
-      m_txCompleted = true;
+    if (!m_streamTx.txCompleted) {
+      m_streamTx.txCompleted = true;
       impl()->txComplete(false);
     }
-    notifyTx_();
+    notifyTx();
   }
   void stop(uint64_t appError) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream stop outside Tx thread", return);
-    if (m_stopSent) return;
-    m_stopSent = true;
+    if (m_streamTx.retired || m_streamTx.stopSent) return;
+    m_streamTx.stopSent = true;
     rxRun_([stream = ZmRef<Impl>{impl()}, appError]() mutable {
       stream->applyStopRx(appError);
     });
-    if (m_link && id() >= 0)
-      m_link->localStopSending(uint64_t(id()), appError);
-    if (m_link && id() >= 0)
-      m_link->streamStopSendingSent_(uint64_t(id()), appError);
-    notifyTx_();
+    if (m_config.link && id() >= 0)
+      m_config.link->localStopSending(uint64_t(id()), appError);
+    if (m_config.link && id() >= 0)
+      m_config.link->streamStopSendingSent_(uint64_t(id()), appError);
+    notifyTx();
   }
 
   bool receiveFrame(
@@ -546,42 +725,44 @@ public:
 
   int processFrame(
     const Frame &frame, ZmRef<ZiIOBuf> packet, BufDiag *diag = nullptr) {
-    uint64_t delivered = m_rxState.delivered();
-    bool finSeen = m_rxState.finSeen();
-    unsigned pending = m_rxQueue.count_();
+    uint64_t delivered = m_streamRx.rxState.delivered();
+    bool finSeen = m_streamRx.rxState.finSeen();
+    unsigned pending = m_streamRx.rxQueue.count_();
     if (!receiveFrame(frame, ZuMv(packet), diag)) return -1;
-    if (m_rxState.delivered() == delivered && m_rxState.finSeen() == finSeen &&
-	m_rxQueue.count_() == pending)
+    if (m_streamRx.rxState.delivered() == delivered && m_streamRx.rxState.finSeen() == finSeen &&
+	m_streamRx.rxQueue.count_() == pending)
       return 0;
-    return processRx_();
+    return processRx();
   }
   int processFrame(
     const Frame &frame, FlowCredit &connection,
     ZmRef<ZiIOBuf> packet, BufDiag *diag = nullptr) {
-    uint64_t delivered = m_rxState.delivered();
-    bool finSeen = m_rxState.finSeen();
-    unsigned pending = m_rxQueue.count_();
+    uint64_t delivered = m_streamRx.rxState.delivered();
+    bool finSeen = m_streamRx.rxState.finSeen();
+    unsigned pending = m_streamRx.rxQueue.count_();
     if (!receiveFrame_(frame, nullptr, &connection, diag, ZuMv(packet)))
       return -1;
-    if (m_rxState.delivered() == delivered && m_rxState.finSeen() == finSeen &&
-	m_rxQueue.count_() == pending)
+    if (m_streamRx.rxState.delivered() == delivered && m_streamRx.rxState.finSeen() == finSeen &&
+	m_streamRx.rxQueue.count_() == pending)
       return 0;
-    return processRx_();
+    return processRx();
   }
-  int processRx_() { return impl()->process(m_rx); }
+  int processRx() { return impl()->process(m_streamRx.rx); }
 
   bool receiveReset(const Frame &frame) {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC RESET_STREAM receive outside Rx thread", return false);
     if (frame.type != FrameType::ResetStream || id() < 0 ||
 	frame.streamID != uint64_t(id()) ||
-	m_rxDelivered > frame.length ||
+	m_streamRx.rxDelivered > frame.length ||
 	rxPendingBeyond(frame.length))
       return false;
-    StreamRxState next = m_rxState;
+    StreamRxState next = m_streamRx.rxState;
     if (!next.receive(frame.length, 0, true)) return false;
-    m_rxState = next;
-    m_resetReceived = true;
+    m_streamRx.rxState = next;
+    m_streamRx.resetReceived = true;
+    publishRxClosed();
+    m_creditPub.limit = uint64_t{0};
     setRxError(StreamError::Reset, frame.errorCode);
     return true;
   }
@@ -590,9 +771,9 @@ public:
     if (frame.type != FrameType::StreamDataBlocked || id() < 0 ||
 	frame.streamID != uint64_t(id()))
       return false;
-    if (m_rxState.finalSizeKnown() && frame.value > m_rxState.finalSize())
+    if (m_streamRx.rxState.finalSizeKnown() && frame.value > m_streamRx.rxState.finalSize())
       return false;
-    return frame.value <= m_rxCredit.limit();
+    return frame.value <= m_streamRx.rxCredit.limit();
   }
 
   bool receiveStop(const Frame &frame) {
@@ -601,7 +782,7 @@ public:
     if (frame.type != FrameType::StopSending || id() < 0 ||
 	frame.streamID != uint64_t(id()))
       return false;
-    m_stopReceived = true;
+    m_streamRx.stopReceived = true;
     uint64_t appError = frame.errorCode;
     txInvoke_([stream = ZmRef<Impl>{impl()}, appError]() mutable {
       stream->completeStopTx(appError);
@@ -613,8 +794,8 @@ public:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC STOP_SENDING completion outside Tx thread", return);
     setTxError(StreamError::Stop, appError);
-    if (!m_txCompleted) {
-      m_txCompleted = true;
+    if (!m_streamTx.txCompleted) {
+      m_streamTx.txCompleted = true;
       impl()->txComplete(false);
     }
   }
@@ -637,12 +818,12 @@ private:
   void setRxError(StreamError::T error, uint64_t appError) {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream Rx error update outside Rx thread", return);
-    setError_(m_rxAppError, m_rxError, error, appError);
+    setError_(m_streamRx.rxAppError, m_streamRx.rxError, error, appError);
   }
   void setTxError(StreamError::T error, uint64_t appError) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream Tx error update outside Tx thread", return);
-    setError_(m_txAppError, m_txError, error, appError);
+    setError_(m_streamTx.txAppError, m_streamTx.txError, error, appError);
   }
   void applyStopRx(uint64_t appError) {
     setRxError(StreamError::Stop, appError);
@@ -654,6 +835,18 @@ private:
     return receiveFrame_(frame, flow, nullptr, diag, ZuMv(packet));
   }
 
+protected:
+  template <typename L> void ownerLayout(L l) const {
+    l(static_cast<const Rx *>(this), sizeof(Rx));
+    l(&m_config, sizeof(m_config));
+    l(&m_admission, sizeof(m_admission));
+    l(&m_creditPub, sizeof(m_creditPub));
+    l(&m_framePub, sizeof(m_framePub));
+    l(&m_streamRx, sizeof(m_streamRx));
+    l(&m_streamTx, sizeof(m_streamTx));
+  }
+  // Explicit compile-time selection also permits differential receive fixtures.
+  template <bool Fast = true>
   bool receiveFrame_(
     const Frame &frame, ReceiveFlow *flow, FlowCredit *connection,
     BufDiag *diag, ZmRef<ZiIOBuf> packet) {
@@ -667,28 +860,63 @@ private:
     uint64_t end = frame.offset + frame.length;
     if (end < frame.offset) return false;
 
-    if (!m_rxState.validate(frame.offset, frame.length, frame.fin))
+    if (!m_streamRx.rxState.validate(frame.offset, frame.length, frame.fin))
       return false;
     if (frame.fin && rxPendingBeyond(end)) return false;
 
+    if constexpr (Fast) {
+      if (ZuLikely(frame.length && !frame.fin &&
+	  frame.offset == m_streamRx.rxDelivered && !m_streamRx.rxQueue.count_() && packet)) {
+	if (!receiveCredit(end, frame.length, flow, connection)) return false;
+	queueRxSlice(frame, frame.offset, frame.length, ZuMv(packet));
+	if (!m_streamRx.rxState.receive(frame.offset, frame.length, frame.fin)) return false;
+	publishRxClosed();
+	m_streamRx.rxAdmitted += frame.length;
+	return true;
+      }
+    }
+
     auto spans = ZmScratch(
-      RxSpan, m_rxQueue.count_() + 1, RxSpans::VHeap);
+      RxSpan, m_streamRx.rxQueue.count_() + 1, RxSpans::VHeap);
     if (frame.length && !newRxSpans(frame, spans)) return false;
     uint64_t newBytes = rxSpanBytes(spans);
-    if (flow && !flow->receive(end, newBytes)) return false;
-    if (connection) {
-      if (end > m_rxCredit.limit() || newBytes > connection->available())
-	return false;
-      if (!m_rxCredit.consumeTo(end) || !connection->consume(newBytes))
-	return false;
-    }
+    if (!receiveCredit(end, newBytes, flow, connection)) return false;
 
     if (spans)
       if (!queueRxSlices(frame, spans, ZuMv(packet), diag)) return false;
 
-    if (!m_rxState.receive(frame.offset, frame.length, frame.fin)) return false;
-    m_rxAdmitted += newBytes;
+    if (!m_streamRx.rxState.receive(frame.offset, frame.length, frame.fin)) return false;
+    if (frame.fin) m_creditPub.limit = uint64_t{0};
+    publishRxClosed();
+    m_streamRx.rxAdmitted += newBytes;
     return true;
+  }
+
+private:
+  void publishRxClosed() {
+    if (m_streamRx.closedPublished ||
+	(!m_streamRx.resetReceived && !rxComplete())) return;
+    m_streamRx.closedPublished = true;
+    m_creditPub.closed = 1;
+  }
+
+  bool receiveCredit(
+    uint64_t end, uint64_t newBytes, ReceiveFlow *flow, FlowCredit *connection) {
+    if (flow && !flow->receive(end, newBytes)) return false;
+    if (connection) {
+      if (end > m_streamRx.rxCredit.limit() || newBytes > connection->available())
+	return false;
+      if (!m_streamRx.rxCredit.consumeTo(end) || !connection->consume(newBytes))
+	return false;
+    }
+    return true;
+  }
+
+  void queueRxSlice(
+    const Frame &frame, uint64_t first, unsigned length, ZmRef<ZiIOBuf> packet) {
+    Rx::rcvd(new StreamRxPQueue::Node{
+      ZuMv(packet), frame.payload.data() + (first - frame.offset), length,
+      link()->app()->streamRxAllocator(), this, first});
   }
 
   template <typename Spans>
@@ -697,10 +925,11 @@ private:
       "QUIC stream Rx span check outside Rx thread", return false);
     uint64_t end = frame.offset + frame.length;
     if (end < frame.offset) return false;
-    if (end <= m_rxDelivered) return true;
+    if (end <= m_streamRx.rxDelivered) return true;
 
-    uint64_t first = frame.offset < m_rxDelivered ? m_rxDelivered : frame.offset;
-    return rxNovelSpans(m_rxQueue, first, end, spans);
+    uint64_t first = frame.offset < m_streamRx.rxDelivered ?
+      m_streamRx.rxDelivered : frame.offset;
+    return rxNovelSpans(m_streamRx.rxQueue, first, end, spans);
   }
 
   template <typename Spans>
@@ -716,10 +945,7 @@ private:
       if (payloadOffset > frame.payload.length() ||
 	  length64 > frame.payload.length() - payloadOffset)
 	return false;
-      auto data = frame.payload.data() + payloadOffset;
-      Rx::rcvd(new StreamRxPQueue::Node{
-	packet, data, unsigned(length64), link()->app()->streamRxAllocator(),
-	this, spans[i].first});
+      queueRxSlice(frame, spans[i].first, unsigned(length64), packet);
     }
     return true;
   }
@@ -727,7 +953,7 @@ private:
   bool rxPendingBeyond(uint64_t finalSize) const {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream Rx pending check outside Rx thread", return false);
-    auto iter = m_rxQueue.citer();
+    auto iter = m_streamRx.rxQueue.citer();
     while (auto node = iter()) {
       const StreamRxData &data = node->data();
       if (data.offset > finalSize || data.length > finalSize - data.offset)
@@ -738,51 +964,60 @@ private:
 
   bool send(ZmRef<ZiIOBuf> buf) {
     if (!buf || buf->failed() || !buf->length) return false;
-    if (!admitTx()) return sendError("QUIC stream transmit queue limit exceeded");
+    if (!admitTx()) return txOverflow();
     // Stream retirement can precede this admission's Tx dispatch. Keep the
     // stream alive until sendAdmitted_ installs the retained range.
     txInvoke_([stream = ZmRef<Impl>{impl()}, buf = ZuMv(buf)]() mutable {
-      stream->sendAdmitted_(ZuMv(buf));
+      stream->sendAdmitted(ZuMv(buf));
     });
     return true;
   }
   bool send_(ZmRef<ZiIOBuf> buf) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream send outside Tx thread", return false);
-    if (!admitTx()) return sendError("QUIC stream transmit queue limit exceeded");
-    return sendAdmitted_(ZuMv(buf));
+    if (!admitTx()) return txOverflow();
+    return sendAdmitted(ZuMv(buf));
   }
 
 private:
-  bool admitTx() {
-    if (++m_txQueueCount <= m_txQueueMax) return true;
-    --m_txQueueCount;
+  bool txOverflow() {
+    auto fn = m_config.txErrorFn;
+    if (m_config.link) m_config.link->disconnect();
+    if (fn) {
+      auto e = ZeEXCEPT(Error, "Zquic", "QUIC stream transmit queue limit exceeded");
+      (void)fn(e);
+    }
     return false;
   }
-  bool sendAdmitted_(ZmRef<ZiIOBuf> buf) {
+  bool admitTx() {
+    if (++m_admission.count <= m_config.txQueueMax) return true;
+    --m_admission.count;
+    return false;
+  }
+  bool sendAdmitted(ZmRef<ZiIOBuf> buf) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream send_ outside Tx thread",
-      --m_txQueueCount; return false);
-    if (ZuUnlikely(!buf || buf->failed() || m_resetSent || !buf->length)) {
-      --m_txQueueCount;
+      --m_admission.count; return false);
+    if (ZuUnlikely(!buf || buf->failed() || m_streamTx.retired ||
+	m_streamTx.resetSent || !buf->length)) {
+      --m_admission.count;
       return sendError("QUIC stream is closed for transmission");
     }
     ZiAssert(buf->skip + buf->length <= buf->size, "Zquic", (),
       "stream Tx buffer range violation",
-      --m_txQueueCount; return false);
+      --m_admission.count; return false);
     uint32_t length = buf->length;
-    m_txRanges.add(new StreamTxRanges::Node{ZuMv(buf), m_txBytes});
-    if (m_link)
-      ZquicLOG(m_link->app()->qlogTrace(), ([
+    m_streamTx.txRanges.add(new StreamTxRanges::Node{ZuMv(buf), m_streamTx.txBytes});
+    if (m_config.link)
+      ZquicLOG(m_config.link->app()->qlogTrace(), ([
 	streamID = id() >= 0 ? uint64_t(id()) : U64Null,
-	streamOffset = m_txBytes,
+	streamOffset = m_streamTx.txBytes,
 	length = uint64_t(length),
-	linkInfo = m_link->linkInfo()
+	linkInfo = m_config.link->linkInfo()
       ](auto &o, ZuTime time) {
 	if (streamID == U64Null) return;
 	StreamDataEvt event{
-	  .linkInfo = linkInfo
-	,
+	  .linkInfo = linkInfo,
 	  .streamID = streamID,
 	  .offset = streamOffset,
 	  .length = length,
@@ -790,61 +1025,59 @@ private:
 	  .to = StreamDataLoc::Transport};
 	o.logStreamDataMoved(event, time);
       }));
-    m_txBytes += length;
-    m_txBufferedBytes += length;
-    notifyTx_();
+    m_streamTx.txBytes += length;
+    m_streamTx.txBufferedBytes += length;
+    notifyTx();
     return true;
   }
 
   bool sendError(ZuCSpan message) {
     auto e = ZeEXCEPT(Error, "Zquic", message);
-    if (m_txErrorFn && !m_txErrorFn(e) && m_link)
-      m_link->disconnect();
+    if (m_config.txErrorFn && !m_config.txErrorFn(e) && m_config.link)
+      m_config.link->disconnect();
     return false;
   }
 
 public:
 
   bool txInvoked_() const {
-    ZiAssert(m_link && m_link->app() && m_link->app()->mx(),
+    ZiAssert(m_config.link && m_config.link->app() && m_config.link->app()->mx(),
       "Zquic", (), "QUIC stream Tx access before app initialization",
       return false);
-    return m_link->app()->txInvoked();
+    return m_config.link->app()->txInvoked();
   }
   bool rxInvoked_() const {
-    ZiAssert(m_link && m_link->app() && m_link->app()->mx(),
+    ZiAssert(m_config.link && m_config.link->app() && m_config.link->app()->mx(),
       "Zquic", (), "QUIC stream Rx access before app initialization",
       return false);
-    return m_link->app()->rxInvoked();
+    return m_config.link->app()->rxInvoked();
   }
 
   template <typename L>
   void txInvoke_(L &&l) {
-    ZiAssert(m_link && m_link->app() && m_link->app()->mx(),
+    ZiAssert(m_config.link && m_config.link->app() && m_config.link->app()->mx(),
       "Zquic", (), "QUIC stream Tx invoke before app initialization",
       return);
-    m_link->app()->txInvoke(ZuFwd<L>(l));
+    m_config.link->app()->txInvoke(ZuFwd<L>(l));
   }
   template <typename L>
   void rxRun_(L &&l) {
-    ZiAssert(m_link && m_link->app() && m_link->app()->mx(),
+    ZiAssert(m_config.link && m_config.link->app() && m_config.link->app()->mx(),
       "Zquic", (), "QUIC stream Rx run before app initialization",
       return);
-    m_link->app()->rxRun(ZuFwd<L>(l));
+    m_config.link->app()->rxRun(ZuFwd<L>(l));
   }
 
-  void notifyTx_() {
-    if (m_link && id() >= 0) {
-      m_link->streamWritable(ZmRef<Impl>{impl()});
-      m_link->flushTx_();
+  void notifyTx() {
+    if (m_config.link && id() >= 0) {
+      m_config.link->streamWritable(ZmRef<Impl>{impl()});
+      m_config.link->flushTx_();
     }
   }
-  struct PendingControl {
-    ControlFrame	frame;
-    bool		queued = false;
-  };
+  using PendingControl = Zquic_::PendingControl;
   bool queueControl(PendingControl &slot, const ControlFrame &frame) {
-    if (id() < 0 || !frame) return false;
+    if (m_streamTx.retired || id() < 0 || !frame) return false;
+    if (m_config.link) resetControls(m_config.link->txRuntime());
     if (slot.frame == frame) {
       if (slot.queued) return false;
       slot.queued = true;
@@ -861,17 +1094,17 @@ public:
   }
   PendingControl *controlSlot(FrameType::T type) {
     switch (type) {
-      case FrameType::MaxStreamData: return &m_maxStreamDataControl;
-      case FrameType::StreamDataBlocked: return &m_dataBlockedCtl;
-      case FrameType::ResetStream: return &m_resetStreamControl;
-      case FrameType::StopSending: return &m_stopSendingControl;
+      case FrameType::MaxStreamData: return &m_streamTx.maxStreamDataControl;
+      case FrameType::StreamDataBlocked: return &m_streamTx.dataBlockedCtl;
+      case FrameType::ResetStream: return &m_streamTx.resetStreamControl;
+      case FrameType::StopSending: return &m_streamTx.stopSendingControl;
       default: return nullptr;
     }
   }
   const PendingControl *controlSlot(FrameType::T type) const {
     return const_cast<Stream *>(this)->controlSlot(type);
   }
-  static ControlFrame controlFrame_(const SentFrameRef &ref) {
+  static ControlFrame controlFrame(const SentFrameRef &ref) {
     ControlFrame frame;
     frame.type = ref.controlType;
     frame.streamID = ref.streamID;
@@ -888,56 +1121,26 @@ public:
   }
 
 private:
-  // immutable
-  Link			*m_link = nullptr;
+  // Immutable/published configuration, separate from the Rx base tail and
+  // producer admission writes.
+  struct alignas(Zm::CacheLineSize) Config {
+    Link		*link = nullptr;
+    unsigned		txQueueMax = DefltTxQueueMax;
+    ZiTxErrorFn		txErrorFn;
+  } m_config;
 
   // shared admission state and published configuration
-  ZmAtomic<unsigned>	m_txQueueCount = 0;
-  unsigned		m_txQueueMax = DefltTxQueueMax;
-  ZiTxErrorFn		m_txErrorFn;
+  Zquic_::StreamAdmission m_admission;
+  Zquic_::StreamCreditPub m_creditPub;
+  Zquic_::StreamFramePub m_framePub;
 
   // Rx thread exclusive
-  alignas(Zm::CacheLineSize)
-  FlowCredit		m_rxCredit;
-  uint64_t		m_rxDelivered = 0;
-  uint64_t		m_rxAdmitted = 0;
-  uint64_t		m_rxRetired = 0;
-  bool			m_resetReceived = false;
-  bool			m_stopReceived = false;
-  bool			m_creditReturned = false;
-  bool			m_txClosedForCredit = false;
-  bool			m_earlyData = false;
-  StreamRxState		m_rxState;
-  RxStream		m_rx;
-  StreamRxPQueue	m_rxQueue{0};
-  uint64_t		m_lastBlocked = U64Null;
-  PendingControl	m_maxStreamDataControl;
-  PendingControl	m_dataBlockedCtl;
-  uint64_t		m_rxAppError = 0;
-  StreamError::T	m_rxError = StreamError::None;
+  Zquic_::StreamRxStorage m_streamRx;
 
   // Tx thread exclusive
-  alignas(Zm::CacheLineSize)
-  StreamTxRanges	m_txRanges{0};
-  uint64_t		m_txBytes = 0;
-  uint64_t		m_txBufferedBytes = 0;
-  FlowCredit		m_txCredit;
-  uint64_t		m_txFrameMax = 0;
-  bool			m_fin = false;
-  bool			m_finDequeued = false;
-  bool			m_finAckd = false;
-  bool			m_txCompleted = false;
-  bool			m_resetSent = false;
-  bool			m_resetAckd = false;
-  bool			m_stopSent = false;
-  bool			m_stopAckd = false;
-  bool			m_reapPending = false;
-  uint64_t		m_txAppError = 0;
-  StreamError::T	m_txError = StreamError::None;
-  PendingControl	m_resetStreamControl;
-  PendingControl	m_stopSendingControl;
-  bool			m_txQueued = false;
-  StreamTxPQueue	m_txUnackd{0};
+  Zquic_::StreamTxStorage m_streamTx;
+
+
 };
 
 template <typename Link, typename Impl, typename TxBufAlloc_ = StreamTxBufAlloc<>>
@@ -957,8 +1160,22 @@ public:
 template <typename Stream_>
 inline int64_t Stream_IDAxor(const Stream_ &s) { return s.id(); }
 
-ZmHashDeriveT((Stream_), Streams_, Stream_,
-  (ZmHashNode<Stream_,
+// The application-derived tail has unknown ownership. Do not append the Rx
+// registry link into its final cache line. This is storage only; the concrete
+// ZmHash node remains the allocator and reference-counted object.
+template <typename Stream_>
+class StreamRxNode : public Stream_ {
+public:
+  using Stream_::Stream_;
+
+private:
+  Zquic_::StreamRxBoundary m_boundary;
+};
+
+ZmListDeriveT((Stream_), StreamRxList, StreamRxNode<Stream_>,
+  (ZmListNode<StreamRxNode<Stream_>, ZmListShadow<>>));
+ZmHashDeriveT((Stream_), Streams_, (typename StreamRxList<Stream_>::Node),
+  (ZmHashNode<typename StreamRxList<Stream_>::Node,
     ZmHashKey<Stream_IDAxor<Stream_>,
 	ZmHashHeapID<"Zquic.Stream.ObjectHash">>>));
 

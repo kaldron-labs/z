@@ -22,8 +22,9 @@ noinst_PROGRAMS = ZquicAPITest ZquicSockTest \
 	ZquicStreamStateTest ZquicPMTUDTest ZquicVersionTest ZquicCIDTest \
 	ZquicStreamTest ZquicFlowTest ZquicBufferTest \
 	ZquicCongestionTest ZquicPQueueTest ZquicLoopTest ZquicRuntimeTest \
-	ZquicTimerTest ZquicLogTest
-noinst_HEADERS = ZquicInteropTest.hh ZquicTestPorts.hh
+	ZquicTimerTest ZquicLogTest ZquicLayoutTest ZquicPressureTest ZquicQueueTest \
+	ZquicAckPublishTest
+noinst_HEADERS = ZquicInteropTest.hh ZquicTestPorts.hh ZquicFiniteProvider.hh
 ZquicAPITest_SOURCES = ZquicAPITest.cc
 ZquicSockTest_SOURCES = ZquicSockTest.cc
 ZquicCodecTest_SOURCES = ZquicCodecTest.cc
@@ -45,6 +46,10 @@ ZquicLoopTest_SOURCES = ZquicLoopTest.cc
 ZquicRuntimeTest_SOURCES = ZquicRuntimeTest.cc
 ZquicTimerTest_SOURCES = ZquicTimerTest.cc
 ZquicLogTest_SOURCES = ZquicLogTest.cc
+ZquicLayoutTest_SOURCES = ZquicLayoutTest.cc
+ZquicPressureTest_SOURCES = ZquicPressureTest.cc
+ZquicQueueTest_SOURCES = ZquicQueueTest.cc
+ZquicAckPublishTest_SOURCES = ZquicAckPublishTest.cc
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs

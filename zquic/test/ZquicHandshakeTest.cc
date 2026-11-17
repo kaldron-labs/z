@@ -23,12 +23,11 @@
 
 using namespace ZuTestUtil;
 
-namespace {
 
-constexpr unsigned TLSBufSize = Zquic::CryptoStream::MaxBufSize;
+enum { TLSBufSize = Zquic::CryptoStream::MaxBufSize };
 
 #ifdef Zquic_DEBUG
-static ZtString<> readFile_(const Zi::Path &path)
+static ZtString<> readFile(const Zi::Path &path)
 {
   ZtString<> data;
   ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
@@ -51,11 +50,6 @@ static void closeQLog(ZquicLogger::Trace &trace)
   });
 }
 #endif
-
-ZuBSpan bytes_(const uint8_t *data, unsigned len)
-{
-  return ZuBSpan{data, len};
-}
 
 struct TempDir {
   Zi::Path	path;
@@ -124,7 +118,7 @@ friend inline ZuStringT<"Zquic.Test.TLSPeer"> ZmNHeapID(TLSPeer *);
   }
 };
 
-bool enqueueFlight(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
+static bool enqueueFlight(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
     size_t offsets[5])
 {
   for (size_t epoch = 0; epoch < 4; ++epoch) {
@@ -136,7 +130,7 @@ bool enqueueFlight(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
       Zquic::VarInt::length(len) + len;
     if (size > TLSBufSize) return false;
     ZmRef<TLSQueue::Node> msg = allocator<TLSBufAlloc>()->allocBuf();
-    int n = tx.writeFrame(msg->alloc(size), size, bytes_(data + off, len));
+    int n = tx.writeFrame(msg->alloc(size), size, Zquic::byteSpan(data + off, len));
     if (n < 0) return false;
     msg->epoch = epoch;
     msg->length = unsigned(n);
@@ -145,7 +139,7 @@ bool enqueueFlight(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
   return true;
 }
 
-bool handleTLS(
+static bool handleTLS(
   TLSPeer &dst, TLSQueue &out, const TLSMessage *msg)
 {
   ZmRef<ZiIOBuf> buf =
@@ -167,7 +161,7 @@ bool handleTLS(
   return n >= 0 && enqueueFlight(dst, out, buf->data(), offsets);
 }
 
-bool drainTLS(TLSPeer &dst, TLSQueue &in, TLSQueue &out)
+static bool drainTLS(TLSPeer &dst, TLSQueue &in, TLSQueue &out)
 {
   while (auto msg = in.shift()) {
     if (dst.crypto->tlsReadEpoch() != msg->epoch) return false;
@@ -176,7 +170,7 @@ bool drainTLS(TLSPeer &dst, TLSQueue &in, TLSQueue &out)
   return true;
 }
 
-bool exchangeTLS(Zquic::Crypto &client, Zquic::Crypto &server)
+static bool exchangeTLS(Zquic::Crypto &client, Zquic::Crypto &server)
 {
   ZuPtr<TLSPeer> c = new TLSPeer{&client};
   ZuPtr<TLSPeer> s = new TLSPeer{&server};
@@ -192,7 +186,7 @@ bool exchangeTLS(Zquic::Crypto &client, Zquic::Crypto &server)
   return client.oneRTTReady() && server.oneRTTReady();
 }
 
-} // namespace
+
 
 void testDeterministicHSProfile()
 {
@@ -250,7 +244,7 @@ void testCryptoStreamFrames()
   Zquic::Frame parsed;
   unsigned used = 0;
   ZuCHECK(!Zquic::FrameCodec::parse(
-      bytes_(frame, unsigned(n)), parsed, used) &&
+      Zquic::byteSpan(frame, unsigned(n)), parsed, used) &&
       used == unsigned(n) &&
       parsed.type == Zquic::FrameType::Crypto &&
       parsed.offset == 0 && parsed.payload == "abc",
@@ -282,12 +276,12 @@ void testCryptoStreamFrames()
 
   Zquic::CryptoStream rx{allocator<Zquic::CryptoRxBufAlloc<>>()};
   ZuBSpan contiguous;
-  ZuCHECK(!Zquic::FrameCodec::parse(bytes_(second, unsigned(f2)),
+  ZuCHECK(!Zquic::FrameCodec::parse(Zquic::byteSpan(second, unsigned(f2)),
       parsed, used) &&
       !rx.receiveFrame(parsed, contiguous, &diag) &&
       !contiguous && rx.rxOffset() == 0 && rx.rangeCount() == 1,
     "out-of-order CRYPTO frame was delivered");
-  ZuCHECK(!Zquic::FrameCodec::parse(bytes_(first, unsigned(f1)),
+  ZuCHECK(!Zquic::FrameCodec::parse(Zquic::byteSpan(first, unsigned(f1)),
       parsed, used) &&
       !rx.receiveFrame(parsed, contiguous, &diag) &&
       contiguous == "helloworld" && rx.rxOffset() == 10 &&
@@ -385,7 +379,7 @@ void testMessageLevelTLSHandshake()
   ptls_iovec_t plain = ptls_iovec_init(payload, sizeof(payload));
   int n = Zquic::PktProt::protectShortV(
     packet, sizeof(packet), client.txProtState(Zquic::PktNumSpace::AppData),
-    3, bytes_(header, unsigned(h)), &plain, 1, pnOffset, 2);
+    3, Zquic::byteSpan(header, unsigned(h)), &plain, 1, pnOffset, 2);
   ZuCHECK(n == int(unsigned(h) + sizeof(payload) + 16),
     "1-RTT traffic probe protection failed");
   uint64_t pn = 0;
@@ -475,7 +469,7 @@ void testZeroRTTPktDrop()
 	closeQLog(trace);
 	ZquicLogger::stop();
 	ZquicLogger::final(trace);
-	ZtString<> qlog = readFile_(qlogPath);
+	ZtString<> qlog = readFile(qlogPath);
   ZuCHECK(qlog.find<"zquic:zero_rtt_rejected">() >= 0 &&
       qlog.find<"\"reason\":\"0rtt\"">() >= 0 &&
       qlog.find<"\"success\":false">() >= 0,

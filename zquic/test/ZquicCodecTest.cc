@@ -13,16 +13,6 @@ using namespace ZuTestUtil;
 
 #define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
-static ZuBSpan bytes_(const uint8_t *p, unsigned n)
-{
-  return ZuBSpan{p, n};
-}
-
-static ZuBSpan bspan_(const uint8_t *p, unsigned n)
-{
-  return ZuBSpan{p, n};
-}
-
 static int putParam(uint8_t *out, unsigned len, uint64_t id, ZuBSpan value)
 {
   unsigned o = 0;
@@ -40,7 +30,7 @@ static int putParamVar(
   uint8_t v[8];
   int n = Zquic::VarInt::encode(v, sizeof(v), value);
   if (n < 0) return -1;
-  return putParam(out, len, id, bytes_(v, unsigned(n)));
+  return putParam(out, len, id, Zquic::byteSpan(v, unsigned(n)));
 }
 
 void testVarIntAndPkt()
@@ -74,13 +64,13 @@ void testVarIntAndPkt()
   ZuCHECK(h.dcid == dcid && h.scid == scid, "CID parse mismatch");
   uint8_t token[] = {'t', 'o', 'k', 'e', 'n'};
   l = Zquic::Pkt::writeInitial(
-    b, sizeof(b), dcid, scid, bspan_(token, sizeof(token)), 16, 2);
+    b, sizeof(b), dcid, scid, Zquic::byteSpan(token, sizeof(token)), 16, 2);
   ZuCHECK(l > 0, "Initial token header write failed");
   ZuCHECK(Zquic::Pkt::parseLong(
     ZuBSpan{b, unsigned(l + 2)}, h) > 0 &&
     h.tokenLength == sizeof(token) &&
-    bytes_(b + h.tokenOffset, unsigned(h.tokenLength)) ==
-      bytes_(token, sizeof(token)),
+    Zquic::byteSpan(b + h.tokenOffset, unsigned(h.tokenLength)) ==
+      Zquic::byteSpan(token, sizeof(token)),
     "Initial token parse mismatch");
 
   uint32_t versions[] = { Zquic::Version1 };
@@ -177,11 +167,11 @@ void testVarIntAndPktNumBounds()
     ZQUIC_CHECK_RT(n == int(c.length), "varint boundary encode length mismatch");
     uint64_t v = 0;
     unsigned used = 0;
-    ZQUIC_CHECK_RT(!Zquic::VarInt::decode(bytes_(b, c.length), v, used) &&
+    ZQUIC_CHECK_RT(!Zquic::VarInt::decode(Zquic::byteSpan(b, c.length), v, used) &&
 	v == c.value && used == c.length,
       "varint boundary decode mismatch");
     if (c.length > 1)
-      ZQUIC_CHECK_RT(Zquic::VarInt::decode(bytes_(b, c.length - 1), v, used) < 0,
+      ZQUIC_CHECK_RT(Zquic::VarInt::decode(Zquic::byteSpan(b, c.length - 1), v, used) < 0,
 	"truncated varint was accepted");
   }
   uint64_t v = 0;
@@ -227,13 +217,13 @@ void testPktParserRejections()
   ZuCHECK(Zquic::Pkt::parseLong({}, h) < 0,
     "empty long header was accepted");
   b[0] = 0x40;
-  ZuCHECK(Zquic::Pkt::parseLong(bytes_(b, 8), h) < 0,
+  ZuCHECK(Zquic::Pkt::parseLong(Zquic::byteSpan(b, 8), h) < 0,
     "short-header packet parsed as long");
 
   b[0] = 0xc0;
   b[4] = 1;
   b[5] = Zquic::CxnIDMax + 1;
-  ZuCHECK(Zquic::Pkt::parseLong(bytes_(b, 7), h) < 0,
+  ZuCHECK(Zquic::Pkt::parseLong(Zquic::byteSpan(b, 7), h) < 0,
     "overlong DCID length was accepted");
 
   Zquic::CxnID dcid{"abcdefgh"};
@@ -247,12 +237,12 @@ void testPktParserRejections()
   unsigned o = tokenOff;
   ZuCHECK(Zquic::VarInt::put(b, sizeof(b), 16, o) == 0,
     "Initial token overrun token length setup failed");
-  ZuCHECK(Zquic::Pkt::parseLong(bytes_(b, o + 1), h) < 0,
+  ZuCHECK(Zquic::Pkt::parseLong(Zquic::byteSpan(b, o + 1), h) < 0,
     "Initial token length beyond packet was accepted");
   o = tokenOff;
   ZuCHECK(Zquic::VarInt::put(b, sizeof(b), (1ULL<<62) - 1, o) == 0,
     "Initial token max length setup failed");
-  ZuCHECK(Zquic::Pkt::parseLong(bytes_(b, o), h) < 0,
+  ZuCHECK(Zquic::Pkt::parseLong(Zquic::byteSpan(b, o), h) < 0,
     "Initial max token length beyond packet was accepted");
 
   uint32_t versions[] = { Zquic::Version1 };
@@ -262,21 +252,21 @@ void testPktParserRejections()
   unsigned nVersions = 0;
   uint32_t parsed[1];
   ZuCHECK(Zquic::Pkt::parseVerNeg(
-      bytes_(b, unsigned(n - 1)), parsed, 1, nVersions) < 0,
+      Zquic::byteSpan(b, unsigned(n - 1)), parsed, 1, nVersions) < 0,
     "malformed VN version list was accepted");
   ZuCHECK(Zquic::Pkt::parseVerNeg(
-      bytes_(b, unsigned(n)), parsed, 0, nVersions) < 0,
+      Zquic::byteSpan(b, unsigned(n)), parsed, 0, nVersions) < 0,
     "VN parse ignored version capacity");
 
   Zquic::ShortHdr sh;
-  ZuCHECK(Zquic::Pkt::parseShort(bytes_(b, 4), dcid.length(), sh) < 0,
+  ZuCHECK(Zquic::Pkt::parseShort(Zquic::byteSpan(b, 4), dcid.length(), sh) < 0,
     "too-short short header was accepted");
   b[0] = 0xc0;
-  ZuCHECK(Zquic::Pkt::parseShort(bytes_(b, sizeof(b)), dcid.length(), sh) < 0,
+  ZuCHECK(Zquic::Pkt::parseShort(Zquic::byteSpan(b, sizeof(b)), dcid.length(), sh) < 0,
     "long-header packet parsed as short");
   b[0] = 0x40;
   ZuCHECK(Zquic::Pkt::parseShort(
-      bytes_(b, sizeof(b)), Zquic::CxnIDMax + 1, sh) < 0,
+      Zquic::byteSpan(b, sizeof(b)), Zquic::CxnIDMax + 1, sh) < 0,
     "overlong short-header CID length was accepted");
 }
 
@@ -454,28 +444,28 @@ void testControlFrameCoverage()
 
   int n = Zquic::FrameCodec::writePadding(b, sizeof(b), 3);
   ZuCHECK(n == 3 &&
-      !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+      !Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::Padding && used == 3 &&
       !Zquic::FrameCodec::ackEliciting(f.type),
     "PADDING coverage mismatch");
 
   n = Zquic::FrameCodec::writePing(b, sizeof(b));
   ZuCHECK(n == 1 &&
-      !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+      !Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::Ping &&
       Zquic::FrameCodec::ackEliciting(f.type),
     "PING coverage mismatch");
 
   n = Zquic::FrameCodec::writeCrypto(b, sizeof(b), 7, "crypto-data");
   ZuCHECK(n > 0 &&
-      !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+      !Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::Crypto &&
       f.offset == 7 && f.length == 11 && f.payload == "crypto-data",
     "CRYPTO coverage mismatch");
 
   n = Zquic::FrameCodec::writeNewToken(b, sizeof(b), ZuBSpan{"token"});
   ZuCHECK(n > 0 &&
-      !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+      !Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::NewToken &&
       f.length == 5 && f.payload == "token",
     "NEW_TOKEN write/parse mismatch");
@@ -485,47 +475,47 @@ void testControlFrameCoverage()
   ZuCHECK(!Zquic::VarInt::put(b, sizeof(b), 3, o),
     "STREAM no-length ID setup");
   memcpy(b + o, "abc", 3); o += 3;
-  ZuCHECK(!Zquic::FrameCodec::parse(bytes_(b, o), f, used) &&
+  ZuCHECK(!Zquic::FrameCodec::parse(Zquic::byteSpan(b, o), f, used) &&
       f.type == Zquic::FrameType::Stream &&
       f.streamID == 3 && f.length == 3 && f.payload == "abc" && !f.fin,
     "STREAM no-length parse mismatch");
 
   n = Zquic::FrameCodec::writeStopSending(b, sizeof(b), 8, 99);
   ZuCHECK(n > 0 &&
-      !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+      !Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::StopSending &&
       f.streamID == 8 && f.errorCode == 99,
     "STOP_SENDING coverage mismatch");
 
   n = Zquic::FrameCodec::writeMaxData(b, sizeof(b), 1ULL<<30);
   ZuCHECK(n > 0 &&
-      !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+      !Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::MaxData && f.value == (1ULL<<30),
     "MAX_DATA coverage mismatch");
 
   n = Zquic::FrameCodec::writeMaxStreams(
     b, sizeof(b), Zquic::StreamType::Duplex, 17);
   ZuCHECK(n > 0 &&
-      !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+      !Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::MaxStreams &&
       f.streamType == Zquic::StreamType::Duplex && f.value == 17,
     "MAX_STREAMS bidi coverage mismatch");
   n = Zquic::FrameCodec::writeMaxStreams(
     b, sizeof(b), Zquic::StreamType::Simplex, 19);
   ZuCHECK(n > 0 &&
-      !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+      !Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::MaxStreams &&
       f.streamType == Zquic::StreamType::Simplex && f.value == 19,
     "MAX_STREAMS uni coverage mismatch");
 
   n = Zquic::FrameCodec::writeDataBlocked(b, sizeof(b), 4096);
   ZuCHECK(n > 0 &&
-      !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+      !Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::DataBlocked && f.value == 4096,
     "DATA_BLOCKED coverage mismatch");
   n = Zquic::FrameCodec::writeStreamDataBlocked(b, sizeof(b), 8, 2048);
   ZuCHECK(n > 0 &&
-      !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+      !Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::StreamDataBlocked &&
       f.streamID == 8 && f.value == 2048,
     "STREAM_DATA_BLOCKED coverage mismatch");
@@ -535,7 +525,7 @@ void testControlFrameCoverage()
   };
   n = Zquic::FrameCodec::writeAckRanges(b, sizeof(b), ranges, 3, 4);
   ZuCHECK(n > 0 &&
-      !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+      !Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::Ack && f.value == 4 &&
       f.ackRanges.length() == 3 &&
       f.ackRanges[0].first == 5 && f.ackRanges[0].largest == 7 &&
@@ -545,7 +535,7 @@ void testControlFrameCoverage()
 
   n = Zquic::FrameCodec::writePathResponse(b, sizeof(b), "87654321");
   ZuCHECK(n == 9 &&
-      !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+      !Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::PathResponse && f.payload == "87654321",
     "PATH_RESPONSE coverage mismatch");
 
@@ -554,7 +544,7 @@ void testControlFrameCoverage()
   n = Zquic::FrameCodec::writeNewCxnID(
     b, sizeof(b), 7, 2, ncid, ncidToken);
   ZuCHECK(n > 0, "NEW_CONNECTION_ID setup failed");
-  ZuCHECK(!Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+  ZuCHECK(!Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::NewCxnID &&
       f.value == 7 && f.offset == 2 &&
       f.length == 8 && f.payload == "server01" &&
@@ -564,24 +554,24 @@ void testControlFrameCoverage()
   n = Zquic::FrameCodec::writeRetireCxnID(b, sizeof(b), 7);
   ZuCHECK(n > 0,
     "RETIRE_CONNECTION_ID setup failed");
-  ZuCHECK(!Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+  ZuCHECK(!Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::RetireCxnID && f.value == 7,
     "RETIRE_CONNECTION_ID parse mismatch");
 
   n = Zquic::FrameCodec::writeApplicationClose(b, sizeof(b), 42, "fail");
   ZuCHECK(n > 0 &&
-      !Zquic::FrameCodec::parse(bytes_(b, unsigned(n)), f, used) &&
+      !Zquic::FrameCodec::parse(Zquic::byteSpan(b, unsigned(n)), f, used) &&
       f.type == Zquic::FrameType::ApplicationClose &&
       f.errorCode == 42 && f.length == 4 && f.payload == "fail",
     "application CONNECTION_CLOSE parse mismatch");
 
   b[0] = 0x30;
-  ZuCHECK(!Zquic::FrameCodec::parse(bytes_(b, 1), f, used) &&
+  ZuCHECK(!Zquic::FrameCodec::parse(Zquic::byteSpan(b, 1), f, used) &&
       f.type == Zquic::FrameType::Unknown && used == 1,
     "unsupported DATAGRAM frame parse mismatch");
 
   b[0] = 0x40;
-  ZuCHECK(!Zquic::FrameCodec::parse(bytes_(b, 1), f, used) &&
+  ZuCHECK(!Zquic::FrameCodec::parse(Zquic::byteSpan(b, 1), f, used) &&
       f.type == Zquic::FrameType::Unknown && used == 1,
     "unknown frame parse mismatch");
 }
@@ -638,7 +628,7 @@ void testMalformedFrameCoverage()
       !Zquic::VarInt::put(b, sizeof(b), 0, o) &&
       !Zquic::VarInt::put(b, sizeof(b), 4, o),
     "invalid ACK setup failed");
-  ZuCHECK(Zquic::FrameCodec::parse(bytes_(b, o), f, used) < 0,
+  ZuCHECK(Zquic::FrameCodec::parse(Zquic::byteSpan(b, o), f, used) < 0,
     "ACK with first range larger than largest accepted");
 
   o = 0;
@@ -647,7 +637,7 @@ void testMalformedFrameCoverage()
       !Zquic::VarInt::put(b, sizeof(b), 3, o),
     "truncated CRYPTO setup failed");
   b[o++] = 'x';
-  ZuCHECK(Zquic::FrameCodec::parse(bytes_(b, o), f, used) < 0,
+  ZuCHECK(Zquic::FrameCodec::parse(Zquic::byteSpan(b, o), f, used) < 0,
     "truncated CRYPTO payload accepted");
 
   o = 0;
@@ -656,12 +646,12 @@ void testMalformedFrameCoverage()
       !Zquic::VarInt::put(b, sizeof(b), 5, o),
     "truncated STREAM setup failed");
   memcpy(b + o, "abc", 3); o += 3;
-  ZuCHECK(Zquic::FrameCodec::parse(bytes_(b, o), f, used) < 0,
+  ZuCHECK(Zquic::FrameCodec::parse(Zquic::byteSpan(b, o), f, used) < 0,
     "truncated STREAM payload accepted");
 
   b[0] = 0x1a;
   memcpy(b + 1, "short", 5);
-  ZuCHECK(Zquic::FrameCodec::parse(bytes_(b, 6), f, used) < 0,
+  ZuCHECK(Zquic::FrameCodec::parse(Zquic::byteSpan(b, 6), f, used) < 0,
     "truncated PATH_CHALLENGE accepted");
 
   o = 0;
@@ -672,7 +662,7 @@ void testMalformedFrameCoverage()
   b[o++] = Zquic::CxnIDMax + 1;
   memset(b + o, 0, Zquic::CxnIDMax + 1 + 16);
   o += Zquic::CxnIDMax + 1 + 16;
-  ZuCHECK(Zquic::FrameCodec::parse(bytes_(b, o), f, used) < 0,
+  ZuCHECK(Zquic::FrameCodec::parse(Zquic::byteSpan(b, o), f, used) < 0,
     "overlong NEW_CONNECTION_ID CID accepted");
 }
 
@@ -703,7 +693,7 @@ void testTransportParamCoverage()
   ZuCHECK(n > 0, "full transport parameter encode failed");
 
   Zquic::TransportParams q;
-  ZuCHECK(!q.decode(bytes_(b, unsigned(n))),
+  ZuCHECK(!q.decode(Zquic::byteSpan(b, unsigned(n))),
     "full transport parameter decode failed");
   ZuCHECK(q.origDCID == p.origDCID &&
       q.initialSCID == p.initialSCID &&
@@ -730,52 +720,52 @@ void testTransportParamCoverage()
   n = p.encode(b, sizeof(b));
   q.disableActiveMigration = true;
   ZuCHECK(n > 0 &&
-      !q.decode(bytes_(b, unsigned(n))) &&
+      !q.decode(Zquic::byteSpan(b, unsigned(n))) &&
       !q.disableActiveMigration,
     "absent disable_active_migration decoded as disabled");
 
   n = putParam(b, sizeof(b), 0x3f, "abc");
   ZuCHECK(n > 0 &&
-      !q.decode(bytes_(b, unsigned(n))),
+      !q.decode(Zquic::byteSpan(b, unsigned(n))),
     "unknown transport parameter was not ignored");
 
   n = putParam(b, sizeof(b), 0x0c, "x");
   ZuCHECK(n > 0 &&
-      q.decode(bytes_(b, unsigned(n))) < 0,
+      q.decode(Zquic::byteSpan(b, unsigned(n))) < 0,
     "non-empty disable_active_migration accepted");
   n = putParamVar(b, sizeof(b), 0x03, Zquic::MinUDPPayload - 1);
   ZuCHECK(n > 0 &&
-      q.decode(bytes_(b, unsigned(n))) < 0,
+      q.decode(Zquic::byteSpan(b, unsigned(n))) < 0,
     "undersized max_udp_payload_size accepted");
   n = putParamVar(b, sizeof(b), 0x0a, 21);
   ZuCHECK(n > 0 &&
-      q.decode(bytes_(b, unsigned(n))) < 0,
+      q.decode(Zquic::byteSpan(b, unsigned(n))) < 0,
     "oversized ack_delay_exponent accepted");
   n = putParamVar(b, sizeof(b), 0x0b, 1ULL<<14);
   ZuCHECK(n > 0 &&
-      q.decode(bytes_(b, unsigned(n))) < 0,
+      q.decode(Zquic::byteSpan(b, unsigned(n))) < 0,
     "oversized max_ack_delay accepted");
   n = putParamVar(b, sizeof(b), 0x0e, 1);
   ZuCHECK(n > 0 &&
-      q.decode(bytes_(b, unsigned(n))) < 0,
+      q.decode(Zquic::byteSpan(b, unsigned(n))) < 0,
     "undersized active_connection_id_limit accepted");
   n = putParam(b, sizeof(b), 0x02, "short-token");
   ZuCHECK(n > 0 &&
-      q.decode(bytes_(b, unsigned(n))) < 0,
+      q.decode(Zquic::byteSpan(b, unsigned(n))) < 0,
     "short stateless_reset_token accepted");
 
   uint8_t value[32];
   memset(value, 'a', sizeof(value));
   n = putParam(b, sizeof(b), 0x0f,
-    bytes_(value, Zquic::MinCIDLength - 1));
+    Zquic::byteSpan(value, Zquic::MinCIDLength - 1));
   ZuCHECK(n > 0 &&
-      !q.decode(bytes_(b, unsigned(n))) &&
+      !q.decode(Zquic::byteSpan(b, unsigned(n))) &&
       q.initialSCID.length() == Zquic::MinCIDLength - 1,
     "short peer initial_source_connection_id was rejected");
   n = putParam(b, sizeof(b), 0x0f,
-    bytes_(value, Zquic::CxnIDMax + 1));
+    Zquic::byteSpan(value, Zquic::CxnIDMax + 1));
   ZuCHECK(n > 0 &&
-      q.decode(bytes_(b, unsigned(n))) < 0,
+      q.decode(Zquic::byteSpan(b, unsigned(n))) < 0,
     "overlong initial_source_connection_id accepted");
 
   unsigned o = 0;
@@ -784,13 +774,75 @@ void testTransportParamCoverage()
     "malformed transport varint setup failed");
   b[o++] = Zquic::MinUDPPayload & 0x3fU;
   b[o++] = 0;
-  ZuCHECK(q.decode(bytes_(b, o)) < 0,
+  ZuCHECK(q.decode(Zquic::byteSpan(b, o)) < 0,
     "transport parameter varint with trailing byte accepted");
 
   n = p.encode(b, sizeof(b));
   ZuCHECK(n > 1 &&
-      q.decode(bytes_(b, unsigned(n - 1))) < 0,
+      q.decode(Zquic::byteSpan(b, unsigned(n - 1))) < 0,
     "truncated transport parameter accepted");
+}
+
+void testPreferredAddress()
+{
+  ZuTestScope(testPreferredAddress);
+
+  Zquic::TransportParams params;
+  auto &p = params.preferredAddress;
+  p.ipv4 = {ZiIP{"192.0.2.1"}, 4433};
+  p.ipv6 = {ZiIP{"2001:db8::1"}, 4434};
+  p.cid = "preferred";
+  p.resetToken = Zquic::ResetToken{"0123456789abcdef"};
+  uint8_t bytes[512];
+  int n = params.encode(bytes, sizeof(bytes));
+  Zquic::TransportParams decoded;
+  ZuCHECK(n == int(params.encodedLength()) && n > 0 &&
+      !decoded.decode(Zquic::byteSpan(bytes, unsigned(n))) &&
+      decoded.preferredAddress.ipv4 == p.ipv4 &&
+      decoded.preferredAddress.ipv6 == p.ipv6 &&
+      decoded.preferredAddress.cid == p.cid &&
+      decoded.preferredAddress.resetToken == p.resetToken,
+    "preferred address transport parameter round trip failed");
+  ZuCHECK(p.select(ZiIP{"192.0.2.2"}) == p.ipv4 &&
+      p.select(ZiIP{"2001:db8::2"}) == p.ipv6,
+    "preferred address family selection failed");
+
+  n = p.encode(bytes, sizeof(bytes));
+  Zquic::PreferredAddress q;
+  for (int i = 0; i < n; ++i) {
+    ZuCHECK(q.decode(Zquic::byteSpan(bytes, unsigned(i))) < 0,
+      "truncated preferred address accepted");
+    ZuCHECK(p.encode(bytes, unsigned(i)) < 0,
+      "short preferred address output accepted");
+  }
+  n = p.encode(bytes, sizeof(bytes));
+  bytes[24] = 0;
+  ZuCHECK(q.decode(Zquic::byteSpan(bytes, unsigned(n))) < 0,
+    "zero-length preferred connection ID accepted");
+  bytes[24] = Zquic::CxnIDMax + 1;
+  ZuCHECK(q.decode(Zquic::byteSpan(bytes, unsigned(n))) < 0,
+    "overlong preferred connection ID accepted");
+  n = p.encode(bytes, sizeof(bytes));
+  bytes[4] = bytes[5] = 0;
+  ZuCHECK(q.decode(Zquic::byteSpan(bytes, unsigned(n))) < 0,
+    "preferred IPv4 address without a port accepted");
+  p.ipv4 = {};
+  n = p.encode(bytes, sizeof(bytes));
+  ZuCHECK(n > 0 && !q.decode(Zquic::byteSpan(bytes, unsigned(n))) && !q.ipv4 &&
+      q.ipv6 == p.ipv6 && !q.select(ZiIP{"192.0.2.2"}),
+    "absent preferred address family was not preserved");
+
+  // Duplicate transport parameters must not replace the advertised CID.
+  unsigned o = 0;
+  for (unsigned i = 0; i < 2; ++i) {
+    bytes[o++] = 0x0d;
+    bytes[o++] = uint8_t(p.encodedLength());
+    int used = p.encode(bytes + o, sizeof(bytes) - o);
+    if (used < 0) return;
+    o += unsigned(used);
+  }
+  ZuCHECK(decoded.decode(Zquic::byteSpan(bytes, o)) < 0,
+    "duplicate preferred address accepted");
 }
 
 void testZeroRTTTransportParams()
@@ -937,6 +989,7 @@ int main(int argc, char **argv)
   ZuTestCall(testPathControlValues);
   ZuTestCall(testMalformedFrameCoverage);
   ZuTestCall(testTransportParamCoverage);
+  ZuTestCall(testPreferredAddress);
   ZuTestCall(testZeroRTTTransportParams);
   ZuTestCall(testAddressTokenCodec);
 }

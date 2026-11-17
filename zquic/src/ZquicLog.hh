@@ -29,6 +29,8 @@
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiIP.hh>
 
+#include <zlib/ZquicQueue.hh>
+
 namespace ZquicLog_ {
 
 using namespace Zquic_;
@@ -96,7 +98,6 @@ struct StreamType {
 struct FrameEvt {
   QAckRanges		ackRanges;
   CxnID			cxnID;
-  ResetToken		resetToken;
   uint64_t		streamID = 0;
   uint64_t		offset = 0;
   uint64_t		length = 0;
@@ -347,7 +348,6 @@ struct ParamsEvt {
   CxnID			origDCID;
   CxnID			initialSCID;
   CxnID			retrySCID;
-  ResetToken		statelessResetToken;
   LinkInfo		linkInfo;
   uint64_t		maxIdleTimeout = 0;
   uint64_t		maxUDPPayloadSize = 0;
@@ -667,13 +667,23 @@ friend ZmEngine<ZquicLogger>;
   using Engine = ZmEngine<ZquicLogger>;
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
-  ZuDerive(Ring, (ZmRing<ZmRingMW<true>>));
+  class Ring final : public Zquic_::QueueInfo, public ZmRing<ZmRingMW<true>> {
+    using Storage = ZmRing<ZmRingMW<true>>;
+  public:
+    void telemetry(Ztc::QueueTelemetry &data) const override {
+      queueTelemetry(data);
+      data.count = Storage::count_(); // bytes, including native ring alignment
+      Storage::stats(data.inCount, data.inBytes, data.outCount, data.outBytes);
+      data.full = Storage::full();
+    }
+  };
   using Fn = ZmRingFn<ZquicLogger *>;
   ZmQueueDerive(Queue_, Fn, ZmQueueHeapID<"Zquic.Log.Queue">);
-  struct Queue : public Queue_ {
+  class Queue final : public Zquic_::Queue<Queue_> {
     using Lock = ZmPLock;
     using Guard = ZmGuard<Lock>;
 
+  public:
     void push(Fn fn) {
       Guard guard(m_lock);
       Queue_::push(ZuMv(fn));
@@ -687,6 +697,7 @@ friend ZmEngine<ZquicLogger>;
       return Queue_::shift();
     }
 
+  private:
     Lock	m_lock;
   };
 
@@ -706,6 +717,14 @@ public:
 
   ZquicLogger(const ZquicLogger &) = delete;
   ZquicLogger &operator =(const ZquicLogger &) = delete;
+
+  unsigned allQueues(Ztc::QueueMgr::AllFn fn) {
+    Guard guard(m_lifecycle.lock);
+    if (!m_coordination.ring.ctrl()) return 0;
+    fn(&m_coordination.ring);
+    fn(&m_coordination.queue);
+    return 2;
+  }
 
   static ZquicLogger *instance();
 
@@ -731,6 +750,14 @@ public:
   }
   static void final(Trace &trace) { instance()->final_(trace); }
   static ZquicLogDiag diag() { return instance()->diag_(); }
+
+  template <typename L> void ownerLayout(L l) const {
+    l(&m_lifecycle, sizeof(m_lifecycle));
+    l(&m_coordination, sizeof(m_coordination));
+    l(&m_producerStats, sizeof(m_producerStats));
+    l(&m_writerStats, sizeof(m_writerStats));
+    l(&m_writer, sizeof(m_writer));
+  }
 
   static void cxnStarted(
     Trace &trace, ZquicLog_::CxnStartedEvt event) {
@@ -845,119 +872,119 @@ public:
 
   void logCxnStarted(
     const ZquicLog_::CxnStartedEvt &event, ZuTime time) {
-    writeCxnStarted_(event, time);
+    writeCxnStarted(event, time);
   }
   void logDgramSent(const ZquicLog_::DgramEvt &event, ZuTime time) {
-    writeDatagramEvt_(ZquicLog_::EvtName::UDPTx, event, time);
+    writeDatagramEvt(ZquicLog_::EvtName::UDPTx, event, time);
   }
   void logDgramRecv(const ZquicLog_::DgramEvt &event, ZuTime time) {
-    writeDatagramEvt_(ZquicLog_::EvtName::UDPRx, event, time);
+    writeDatagramEvt(ZquicLog_::EvtName::UDPRx, event, time);
   }
   void logPktSent(const ZquicLog_::PktEvt &event, ZuTime time) {
-    writePktEvt_(ZquicLog_::EvtName::PktSent, event, time);
+    writePktEvt(ZquicLog_::EvtName::PktSent, event, time);
   }
   void logPktRecv(const ZquicLog_::PktEvt &event, ZuTime time) {
-    writePktEvt_(ZquicLog_::EvtName::PktRecv, event, time);
+    writePktEvt(ZquicLog_::EvtName::PktRecv, event, time);
   }
   void logPktBuf(const ZquicLog_::PktEvt &event, ZuTime time) {
-    writePktEvt_(ZquicLog_::EvtName::PktBuf, event, time);
+    writePktEvt(ZquicLog_::EvtName::PktBuf, event, time);
   }
   void logPktDrop(const ZquicLog_::PktEvt &event, ZuTime time) {
-    writePktEvt_(ZquicLog_::EvtName::PktDrop, event, time);
+    writePktEvt(ZquicLog_::EvtName::PktDrop, event, time);
   }
   void logPktsAcked(const ZquicLog_::AckEvt &event, ZuTime time) {
-    writeAckEvt_(ZquicLog_::EvtName::PktsAcked, event, time);
+    writeAckEvt(ZquicLog_::EvtName::PktsAcked, event, time);
   }
   void logPktLost(const ZquicLog_::RecLogEvt &event, ZuTime time) {
-    writePktLost_(event, time);
+    writePktLost(event, time);
   }
   void logRecPktLost(const ZquicLog_::RecLogEvt &event, ZuTime time) {
-    writePktLost_(event, time);
+    writePktLost(event, time);
   }
   void logMarkRetrans(
     const ZquicLog_::RecLogEvt &event, ZuTime time) {
-    writeMarkRetrans_(event, time);
+    writeMarkRetrans(event, time);
   }
   void logMetricsUpd(const ZquicLog_::RecLogEvt &event, ZuTime time) {
-    writeRecMetrics_(event, time);
+    writeRecMetrics(event, time);
   }
   void logLossTimerUpd(const ZquicLog_::RecLogEvt &event, ZuTime time) {
-    writeTimerEvt_(event, time);
+    writeTimerEvt(event, time);
   }
   void logCongStateUpd(
     const ZquicLog_::RecLogEvt &event, ZuTime time) {
-    writeCongState_(event, time);
+    writeCongState(event, time);
   }
   void logECNStateUpd(const ZquicLog_::ECNEvt &event, ZuTime time) {
-    writeECNEvt_(event, time);
+    writeECNEvt(event, time);
   }
   void logKeyUpdated(const ZquicLog_::SecEvt &event, ZuTime time) {
-    writeKeyEvt_(ZquicLog_::EvtName::KeyUpd, event, time);
+    writeKeyEvt(ZquicLog_::EvtName::KeyUpd, event, time);
   }
   void logKeyRetired(const ZquicLog_::SecEvt &event, ZuTime time) {
-    writeKeyEvt_(ZquicLog_::EvtName::KeyDiscarded, event, time);
+    writeKeyEvt(ZquicLog_::EvtName::KeyDiscarded, event, time);
   }
   void logParamsSet(
     const ZquicLog_::ParamsEvt &event, ZuTime time) {
-    writeParams_(event, time);
+    writeParams(event, time);
   }
   void logALPNInfo(const ZquicLog_::SecEvt &event, ZuTime time) {
-    writeALPNEvt_(event, time);
+    writeALPNEvt(event, time);
   }
   void logVersionInfo(
     const ZquicLog_::VersionEvt &event, ZuTime time) {
-    writeVersion_(event, time);
+    writeVersion(event, time);
   }
   void logTLSAlert(const ZquicLog_::SecEvt &event, ZuTime time) {
-    writeSecEvt_(ZquicLog_::EvtName::TLSAlert, event, time);
+    writeSecEvt(ZquicLog_::EvtName::TLSAlert, event, time);
   }
   void logSecEvt(
     ZquicLog_::EvtName::T name,
     const ZquicLog_::SecEvt &event, ZuTime time) {
-    writeSecEvt_(name, event, time);
+    writeSecEvt(name, event, time);
   }
   void logPathUpdated(const ZquicLog_::PathEvt &event, ZuTime time) {
-    writePathEvt_(ZquicLog_::EvtName::TupleAssigned, event, time);
+    writePathEvt(ZquicLog_::EvtName::TupleAssigned, event, time);
   }
   void logPathValid(
     const ZquicLog_::PathEvt &event, ZuTime time) {
-    writePathValid_(event, time);
+    writePathValid(event, time);
   }
   void logPMTUDUpdated(const ZquicLog_::PathEvt &event, ZuTime time) {
-    writeMTUEvt_(event, time);
+    writeMTUEvt(event, time);
   }
   void logCIDUpdated(const ZquicLog_::CIDEvt &event, ZuTime time) {
-    writeCIDEvt_(ZquicLog_::EvtName::CIDUpd, event, time);
+    writeCIDEvt(ZquicLog_::EvtName::CIDUpd, event, time);
   }
   void logMigrationUpdated(
     const ZquicLog_::MigrationEvt &event, ZuTime time) {
-    writeMigrationEvt_(event, time);
+    writeMigrationEvt(event, time);
   }
   void logStreamStateUpd(
     const ZquicLog_::StreamEvt &event, ZuTime time) {
-    writeStreamEvt_(ZquicLog_::EvtName::StreamStateUpd, event, time);
+    writeStreamEvt(ZquicLog_::EvtName::StreamStateUpd, event, time);
   }
   void logStreamDataMoved(
     const ZquicLog_::StreamDataEvt &event, ZuTime time) {
-    writeStreamData_(ZquicLog_::EvtName::StreamDataMoved, event, time);
+    writeStreamData(ZquicLog_::EvtName::StreamDataMoved, event, time);
   }
   void logCxnDataBlockedUpd(
     const ZquicLog_::BlockedEvt &event, ZuTime time) {
-    writeCxnBlocked_(
+    writeCxnBlocked(
       ZquicLog_::EvtName::CxnDataBlockedUpd, event, time);
   }
   void logStreamDataBlockedUpd(
     const ZquicLog_::BlockedEvt &event, ZuTime time) {
-    writeStreamBlocked_(
+    writeStreamBlocked(
       ZquicLog_::EvtName::StreamDataBlockedUpd, event, time);
   }
   void logCxnClosed(
     const ZquicLog_::CloseEvt &event, ZuTime time) {
-    writeCloseEvt_(ZquicLog_::EvtName::CxnClosed, event, time);
+    writeCloseEvt(ZquicLog_::EvtName::CxnClosed, event, time);
   }
   void logCxnStateUpd(
     const ZquicLog_::CxnStateEvt &event, ZuTime time) {
-    writeCxnState_(ZquicLog_::EvtName::CxnStateUpd, event, time);
+    writeCxnState(ZquicLog_::EvtName::CxnStateUpd, event, time);
   }
 
 private:
@@ -971,27 +998,27 @@ private:
   void wake();
   template <typename L>
   bool spawn(L &&l) {
-    Guard guard(m_lock);
+    Guard guard(m_lifecycle.lock);
     // A completion callback may start the successor before this thread exits.
-    auto previous = ZuMv(m_thread);
-    m_thread = ZmThread{
+    auto previous = ZuMv(m_lifecycle.thread);
+    m_lifecycle.thread = ZmThread{
       [l = ZuFwd<L>(l), previous]() mutable {
 	l();
 	if (previous) previous.join();
       }, ZmThreadParams().name("zquic-qlog").priority(ZmThreadPriority::Low)};
-    if (!m_thread) {
-      m_thread = ZuMv(previous);
+    if (!m_lifecycle.thread) {
+      m_lifecycle.thread = ZuMv(previous);
       return false;
     }
     return true;
   }
   template <typename L>
   void close_(Trace &trace, L &&l) {
-    Guard guard(m_lock);
+    Guard guard(m_lifecycle.lock);
     if (!trace.configured) { guard.unlock(); l(); return; }
     if (enabled_()) {
       auto fn_ = [trace = &trace, l = ZuFwd<L>(l)](ZquicLogger *this_) mutable {
-	this_->closeTrace_(*trace);
+	this_->closeTrace(*trace);
 	l();
       };
       Fn fn{fn_};
@@ -1000,7 +1027,7 @@ private:
       log__(fn);
     } else {
       guard.unlock();
-      closeTrace_(trace);
+      closeTrace(trace);
       l();
     }
   }
@@ -1041,12 +1068,12 @@ private:
   void cxnStateUpd_(Trace &, ZquicLog_::CxnStateEvt);
   void log__(Fn &fn) {
     if (tryPush_(fn)) {
-      ++m_recordsEnqueued;
+      ++m_producerStats.recordsEnqueued;
     } else {
-      ++m_ringBackPressure;
-      m_queue.push(ZuMv(fn));
-      ++m_queueCount;
-      ++m_recordsEnqueued;
+      ++m_producerStats.ringBackPressure;
+      m_coordination.queue.push(ZuMv(fn));
+      ++m_coordination.queueCount;
+      ++m_producerStats.recordsEnqueued;
     }
   }
   template <typename L>
@@ -1061,70 +1088,80 @@ private:
     log__(fn);
   }
 
-  void work_();
+  void workLoop();
 
   bool tryPush_(Fn &);
   bool useTrace(Trace *);
-  void closeTrace_(Trace &);
+  void closeTrace(Trace &);
   bool write_(Trace *, ZuCSpan);
-  bool writeHeader_(Trace *);
-  bool writeCxnStarted_(
+  bool writeHeader(Trace *);
+  bool writeCxnStarted(
     const ZquicLog_::CxnStartedEvt &, ZuTime);
-  bool writeDatagramEvt_(
+  bool writeDatagramEvt(
     ZquicLog_::EvtName::T, const ZquicLog_::DgramEvt &, ZuTime);
-  bool writePktEvt_(
+  bool writePktEvt(
     ZquicLog_::EvtName::T, const ZquicLog_::PktEvt &, ZuTime);
-  bool writeAckEvt_(
+  bool writeAckEvt(
     ZquicLog_::EvtName::T, const ZquicLog_::AckEvt &, ZuTime);
-  bool writePktLost_(const ZquicLog_::RecLogEvt &, ZuTime);
-  bool writeMarkRetrans_(const ZquicLog_::RecLogEvt &, ZuTime);
-  bool writeRecMetrics_(const ZquicLog_::RecLogEvt &, ZuTime);
-  bool writeCongState_(const ZquicLog_::RecLogEvt &, ZuTime);
-  bool writeTimerEvt_(const ZquicLog_::RecLogEvt &, ZuTime);
-  bool writeECNEvt_(const ZquicLog_::ECNEvt &, ZuTime);
-  bool writeKeyEvt_(
+  bool writePktLost(const ZquicLog_::RecLogEvt &, ZuTime);
+  bool writeMarkRetrans(const ZquicLog_::RecLogEvt &, ZuTime);
+  bool writeRecMetrics(const ZquicLog_::RecLogEvt &, ZuTime);
+  bool writeCongState(const ZquicLog_::RecLogEvt &, ZuTime);
+  bool writeTimerEvt(const ZquicLog_::RecLogEvt &, ZuTime);
+  bool writeECNEvt(const ZquicLog_::ECNEvt &, ZuTime);
+  bool writeKeyEvt(
     ZquicLog_::EvtName::T, const ZquicLog_::SecEvt &, ZuTime);
-  bool writeParams_(
+  bool writeParams(
     const ZquicLog_::ParamsEvt &, ZuTime);
-  bool writeALPNEvt_(const ZquicLog_::SecEvt &, ZuTime);
-  bool writeVersion_(const ZquicLog_::VersionEvt &, ZuTime);
-  bool writeSecEvt_(
+  bool writeALPNEvt(const ZquicLog_::SecEvt &, ZuTime);
+  bool writeVersion(const ZquicLog_::VersionEvt &, ZuTime);
+  bool writeSecEvt(
     ZquicLog_::EvtName::T, const ZquicLog_::SecEvt &, ZuTime);
-  bool writePathEvt_(
+  bool writePathEvt(
     ZquicLog_::EvtName::T, const ZquicLog_::PathEvt &, ZuTime);
-  bool writeMTUEvt_(const ZquicLog_::PathEvt &, ZuTime);
-  bool writePathValid_(const ZquicLog_::PathEvt &, ZuTime);
-  bool writeCIDEvt_(ZquicLog_::EvtName::T, const ZquicLog_::CIDEvt &, ZuTime);
-  bool writeMigrationEvt_(const ZquicLog_::MigrationEvt &, ZuTime);
-  bool writeStreamEvt_(
+  bool writeMTUEvt(const ZquicLog_::PathEvt &, ZuTime);
+  bool writePathValid(const ZquicLog_::PathEvt &, ZuTime);
+  bool writeCIDEvt(ZquicLog_::EvtName::T, const ZquicLog_::CIDEvt &, ZuTime);
+  bool writeMigrationEvt(const ZquicLog_::MigrationEvt &, ZuTime);
+  bool writeStreamEvt(
     ZquicLog_::EvtName::T, const ZquicLog_::StreamEvt &, ZuTime);
-  bool writeStreamData_(
+  bool writeStreamData(
     ZquicLog_::EvtName::T, const ZquicLog_::StreamDataEvt &, ZuTime);
-  bool writeCxnBlocked_(
+  bool writeCxnBlocked(
     ZquicLog_::EvtName::T, const ZquicLog_::BlockedEvt &, ZuTime);
-  bool writeStreamBlocked_(
+  bool writeStreamBlocked(
     ZquicLog_::EvtName::T, const ZquicLog_::BlockedEvt &, ZuTime);
-  bool writeCloseEvt_(
+  bool writeCloseEvt(
     ZquicLog_::EvtName::T, const ZquicLog_::CloseEvt &, ZuTime);
-  bool writeCxnState_(
+  bool writeCxnState(
     ZquicLog_::EvtName::T, const ZquicLog_::CxnStateEvt &, ZuTime);
 
 private:
-  unsigned		m_configured = 0;
-  ZquicLogParams	m_params;
-  ZmThread		m_thread;
-  Ring			m_ring;
-  Queue			m_queue;
-  ZmAtomic<unsigned>	m_queueCount = 0;
-  Trace			*m_activeTrace = nullptr;
-  ZeLogBuf		m_buf;
-  ZmAtomic<uint64_t>	m_recordsEnqueued = 0;
-  ZmAtomic<uint64_t>	m_recordsWritten = 0;
-  ZmAtomic<uint64_t>	m_recordsDropped = 0;
-  ZmAtomic<uint64_t>	m_ringBackPressure = 0;
-  ZmAtomic<uint64_t>	m_writerFailures = 0;
-  ZmAtomic<uint64_t>	m_bytesWritten = 0;
-  mutable Lock		m_lock;
+  struct alignas(Zm::CacheLineSize) Lifecycle {
+    unsigned		configured = 0;
+    ZquicLogParams	params;
+    ZmThread		thread;
+    mutable Lock	lock;
+  } m_lifecycle;
+  struct alignas(Zm::CacheLineSize) Coordination {
+    Ring			ring;
+    Queue		queue;
+    ZmAtomic<unsigned>	queueCount = 0;
+  } m_coordination;
+  struct alignas(Zm::CacheLineSize) ProducerStats {
+    ZmAtomic<uint64_t>	recordsEnqueued = 0;
+    ZmAtomic<uint64_t>	recordsDropped = 0;
+    ZmAtomic<uint64_t>	ringBackPressure = 0;
+  } m_producerStats;
+  struct alignas(Zm::CacheLineSize) WriterStats {
+    ZmAtomic<uint64_t>	recordsWritten = 0;
+    ZmAtomic<uint64_t>	writerFailures = 0;
+    ZmAtomic<uint64_t>	bytesWritten = 0;
+  } m_writerStats;
+  struct alignas(Zm::CacheLineSize) Writer {
+    Trace		*activeTrace = nullptr;
+    ZeLogBuf		buf;
+  } m_writer;
 };
 
 #else /* Zquic_DEBUG */

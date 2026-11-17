@@ -14,34 +14,36 @@
 #include <zlib/ZtString.hh>
 #include <zlib/Zquic.hh>
 
-namespace {
 
 ZuDerive(AppRequest,
   (ZtString<ZtStringHeapID<"Zquic.Example.Request">>));
 
-bool isNumber(const char *s)
+static bool isNumber(const char *s)
 {
   if (!s || !*s) return false;
   for (; *s; ++s) if (*s < '0' || *s > '9') return false;
   return true;
 }
 
-struct App : public Zquic::Client<App> {
-  struct Link;
+class App : public Zquic::Client<App> {
+public:
+  class Link;
   struct Stream;
 
   App(ZuCSpan request) { m_request << request; }
 
   ZuCSpan request() const { return m_request; }
   void done() { m_done.post(); }
+  void wait() { m_done.wait(); }
   void setError(const char *msg) {
     if (!m_error.xch(1))
       std::cerr << "error: " << msg << '\n' << std::flush;
   }
   bool error() const { return m_error.load_(); }
 
+private:
   ZmSemaphore		m_done;
-  AppRequest	m_request;
+  AppRequest		m_request;
   ZmAtomic<unsigned>	m_error{0};
 };
 
@@ -58,10 +60,11 @@ struct App::Stream :
   }
 };
 
-struct App::Link :
+class App::Link :
   public ZmNHeap<App::Link>,
   public Zquic::CliLink<App, App::Link, App::Stream> {
 friend inline ZuStringT<"Zquic.Example.CliLink"> ZmNHeapID(Link *);
+public:
   using ZmNHeap<Link>::operator new;
   using ZmNHeap<Link>::operator delete;
 
@@ -110,17 +113,18 @@ friend inline ZuStringT<"Zquic.Example.CliLink"> ZmNHeapID(Link *);
     }
   }
 
+private:
   ZmAtomic<unsigned>	m_responseSeen = 0;
 };
 
-void usage()
+static void usage()
 {
   std::cerr << "Usage: zquicclient SERVER PORT [CA] [REQUEST]\n"
     << std::flush;
   ::exit(1);
 }
 
-} // namespace
+
 
 int main(int argc, char **argv)
 {
@@ -180,7 +184,7 @@ int main(int argc, char **argv)
   {
     ZmRef<App::Link> link = new App::Link{&app};
     link->connect(Zquic::Host{server}, port);
-    app.m_done.wait();
+    app.wait();
     ZmBlock<>{}([&link](auto wake) {
       link->disconnect([wake = ZuMv(wake)]() mutable { wake(); });
     });

@@ -58,11 +58,17 @@ private:
 };
 
 struct InitialSecret {
-  static constexpr unsigned SecretLen = 32;
-  static constexpr unsigned KeyLen = 16;
-  static constexpr unsigned IVLen = 12;
-  static constexpr unsigned TagLen = 16;
-  static constexpr unsigned HPMaskLen = 5;
+  enum { SecretLen = 32 };
+  enum { KeyLen = 16 };
+  enum { IVLen = 12 };
+  enum { TagLen = 16 };
+  enum { HPMaskLen = 5 };
+
+
+  ZuBArray<SecretLen>	secret = ZuBArray<SecretLen>(SecretLen, true);
+  ZuBArray<KeyLen>	key = ZuBArray<KeyLen>(KeyLen, true);
+  ZuBArray<IVLen>	iv = ZuBArray<IVLen>(IVLen, true);
+  ZuBArray<KeyLen>	hp = ZuBArray<KeyLen>(KeyLen, true);
 
   void clear() {
     memset(secret.data(), 0, secret.length());
@@ -70,26 +76,21 @@ struct InitialSecret {
     memset(iv.data(), 0, iv.length());
     memset(hp.data(), 0, hp.length());
   }
-
-  ZuBArray<SecretLen>	secret = ZuBArray<SecretLen>(SecretLen, true);
-  ZuBArray<KeyLen>	key = ZuBArray<KeyLen>(KeyLen, true);
-  ZuBArray<IVLen>	iv = ZuBArray<IVLen>(IVLen, true);
-  ZuBArray<KeyLen>	hp = ZuBArray<KeyLen>(KeyLen, true);
 };
 
 struct InitialKeyMaterial {
-  void clear() {
-    memset(initial.data(), 0, initial.length());
-    client.clear();
-    server.clear();
-  }
-
   ZuBArray<InitialSecret::SecretLen>
 		initial =
 		  ZuBArray<InitialSecret::SecretLen>(
 		    InitialSecret::SecretLen, true);
   InitialSecret	client;
   InitialSecret	server;
+
+  void clear() {
+    memset(initial.data(), 0, initial.length());
+    client.clear();
+    server.clear();
+  }
 };
 
 struct ZquicAPI InitialCrypto {
@@ -118,10 +119,10 @@ struct ZquicAPI InitialPktProt {
 };
 
 struct ZquicAPI TrafficSecret {
-  static constexpr unsigned MaxSecretLen = 64;
-  static constexpr unsigned MaxKeyLen = 32;
-  static constexpr unsigned MaxIVLen = 16;
-  static constexpr unsigned MaxHPLen = 32;
+  enum { MaxSecretLen = 64 };
+  enum { MaxKeyLen = 32 };
+  enum { MaxIVLen = 16 };
+  enum { MaxHPLen = 32 };
 
   TrafficSecret() { clear(); }
 
@@ -213,6 +214,8 @@ using CryptoStreamRxNTP = ZmPQRxGapIgnore<>;
 // The active skip/length identify exactly this epoch's CRYPTO bytes.
 struct CryptoFlight : public ZmNHeap<CryptoFlight>, public ZiIOBuf {
 friend inline ZuStringT<"Zquic.Crypto.Flight"> ZmNHeapID(CryptoFlight *);
+  ZmRef<ZiIOBuf> tlsOutput;
+
   CryptoFlight(ZmRef<ZiIOBuf> output, const CryptoOffsets &offsets, unsigned epoch) :
     ZiIOBuf{output->data_(), output->size, output->allocator(), nullptr, 0, true},
     tlsOutput{ZuMv(output)} {
@@ -220,16 +223,15 @@ friend inline ZuStringT<"Zquic.Crypto.Flight"> ZmNHeapID(CryptoFlight *);
     length = unsigned(offsets[epoch + 1] - offsets[epoch]);
   }
 
-  ZmRef<ZiIOBuf> tlsOutput;
 };
 
 class ZquicAPI CryptoStream :
   public ZmPQRx<CryptoStream, CryptoRxPQueue, CryptoStreamRxNTP> {
 public:
-  static constexpr unsigned MaxBufSize = (64<<10); // 64K
+  enum { MaxBufSize = (64<<10) }; // 64K
   // Covers mainstream TLS 1.3 handshakes without packet loss while avoiding
   // heap allocation on the common path; larger certificate chains fall back.
-  static constexpr unsigned BuiltinBufSize = (8<<10); // 8K
+  enum { BuiltinBufSize = (8<<10) }; // 8K
   using Queue = CryptoRxPQueue;
   using Rx = ZmPQRx<CryptoStream, Queue, CryptoStreamRxNTP>;
   using Msg = Queue::Node;
@@ -240,7 +242,7 @@ public:
 
   CryptoStream(Zi::IOBufAllocator *rx = nullptr, Zi::IOBufAllocator *tx = nullptr) :
     m_rxAllocator{rx}, m_txAllocator{tx},
-    m_dequeueFn{this, [](CryptoStream *s) { s->dequeueRx_(); }} { }
+    m_dequeueFn{this, [](CryptoStream *s) { s->dequeue(); }} { }
 
   void allocators(Zi::IOBufAllocator *rx, Zi::IOBufAllocator *tx) {
     m_rxAllocator = rx;
@@ -248,8 +250,35 @@ public:
   }
   Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
 
+  void initRxQueue(Ztc::Hub *hub, ZuCSpan prefix) {
+    m_rxQueue.initQueue(hub, prefix, "reasm", Ztc::QueueType::Rx, 0);
+  }
+  void initTxQueue(Ztc::Hub *hub, ZuCSpan prefix) {
+    m_txRanges.initQueue(hub, prefix, "retained", Ztc::QueueType::Tx, 0);
+  }
+
+  Ztc::Queue *rxQueue() const { return const_cast<decltype(m_rxQueue) *>(&m_rxQueue); }
+  Ztc::Queue *txQueue() const { return const_cast<decltype(m_txRanges) *>(&m_txRanges); }
+
   uint64_t txOffset() const { return m_txOffset; }
+  bool drainTx(unsigned &budget) {
+    while (budget && m_txRanges.length()) {
+      (void)m_txRanges.pop();
+      --budget;
+    }
+    if (m_txRanges.length()) return false;
+    m_txOffset = m_txBytes = 0;
+    return true;
+  }
   uint64_t rxOffset() const { return m_rxOffset; }
+  bool drainRx(unsigned &budget) {
+    while (budget && m_rxQueue.shift()) --budget;
+    if (m_rxQueue.count_()) return false;
+    Rx::rxReset(0);
+    m_rxOffset = 0;
+    m_delivery.length(0);
+    return true;
+  }
   unsigned rangeCount() const { return m_rxQueue.count_(); }
 
   void reset();
@@ -272,7 +301,7 @@ public:
     m_deliveryFn = ZuMv(fn);
     m_asyncDelivery = true;
   }
-  void dequeueRx_() { Rx::dequeue(); }
+  using Rx::dequeue;
 
 private:
 ZuDerive(Delivery,
@@ -285,7 +314,8 @@ ZuDerive(Delivery,
     ZmRef<ZiIOBuf> data;
     uint64_t offset;
   };
-  using TxRanges = ZtArray<TxRange, ZtArrayHeapID<"Zquic.CryptoTx.Ranges">>;
+  using TxRanges = Zquic_::Queue<
+    ZtArray<TxRange, ZtArrayHeapID<"Zquic.CryptoTx.Ranges">>, Zquic_::ArrayCount>;
 
   bool matches_(uint64_t, ZuBSpan) const;
   void appendDelivery(const uint8_t *, uint64_t);
@@ -326,11 +356,11 @@ ZuDerive(TLSTransportParams,
 
 class ZquicAPI Crypto {
 public:
-  static constexpr unsigned TLSOutputMax = (64<<10); // 64K
+  enum { TLSOutputMax = (64<<10) }; // 64K
   // QUIC uses TLS 1.3 cipher suites with defined header protection. TLS 1.3
   // currently has a small suite set; keep one extra slot for picotls' null
   // terminator.
-  static constexpr unsigned TLSMaxCiphers = 15;
+  enum { TLSMaxCiphers = 15 };
 
   ~Crypto();
 
@@ -443,11 +473,11 @@ private:
   bool initTLSContext(const CryptoConfig &);
   bool initTLSProperties(const CryptoConfig &);
   int updateTrafficKey_(int, size_t, const void *);
-  void keyLog_(int, PktKeyLevel::T, ZuBSpan);
+  void keyLog(int, PktKeyLevel::T, ZuBSpan);
   void syncEarlyDataState();
   int onClientHello_(ptls_on_client_hello_parameters_t *);
   int saveSessionTicket_(ptls_iovec_t);
-  int collectedExtensions_(ptls_raw_extension_t *);
+  int collectedExtensions(ptls_raw_extension_t *);
   static int updateTrafficKeyCB(
     ptls_update_traffic_key_t *, ptls_t *, int, size_t, const void *);
   static int onClientHelloCB(

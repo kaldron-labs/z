@@ -14,11 +14,11 @@
 #include <zlib/ZtString.hh>
 #include <zlib/Zquic.hh>
 
-namespace {
 
 struct AppLink;
 struct AppStream;
-struct App : public Zquic::Server<App, AppLink> {
+class App : public Zquic::Server<App, AppLink> {
+public:
   using Link = AppLink;
   using Stream = AppStream;
 
@@ -43,6 +43,7 @@ struct App : public Zquic::Server<App, AppLink> {
   }
   bool error() const { return m_error.load_(); }
 
+private:
   ZmSemaphore		m_done;
   ZiIP			m_localIP;
   unsigned		m_localPort = 0;
@@ -115,14 +116,14 @@ ZmRef<App::Link> App::accepted(const Zquic::InitialInfo &)
   return new Link{this};
 }
 
-void usage()
+static void usage()
 {
   std::cerr << "Usage: zquicserver SERVER PORT CERT KEY [COUNT]\n"
     << std::flush;
   ::exit(1);
 }
 
-} // namespace
+
 
 int main(int argc, char **argv)
 {

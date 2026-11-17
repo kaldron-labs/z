@@ -38,12 +38,30 @@ Applications use the CRTP API:
 `Zquic::Server::start()` opens the UDP listener. `Zquic::CliLink::connect()`
 opens the client UDP socket. `ClientParams` and `ServerParams` are aliases of
 `HubParams`, which configures the multiplexer, Rx/Tx threads, TLS paths,
-ALPN, qlog, transport limits, idle timeout, maximum UDP payload, ECN, and
+ALPN, qlog, transport limits, idle timeout, maximum UDP payload, congestion control, ECN, and
 address validation policy.  It also configures single-active-path migration:
 `migrationMode()` defaults to `MigrationMode::Passive`, `activeMigration(true)`
 advertises active migration support, `migrationCIDReserve()` reserves spare
 connection IDs for migration, and `migrationCloseOnFailure()` selects whether
 local-rebind failures close active migration attempts.
+
+`HubParams::congestionControl()` defaults to enabled. Set it to `false` during
+stopped-state initialization for a controlled-network policy that bypasses
+NewReno. The setting is fixed while the hub runs. Flow credit, anti-amplification,
+PMTU limits, retained packet accounting, ACK retirement, RTT, loss detection,
+and PTO remain active. Disabled-mode cwnd and ssthresh diagnostics are zero;
+bytes in flight still come from the packet-number spaces. Local packets use
+Not-ECT with congestion control disabled, regardless of `ecn()`. Received
+ECT/CE counters continue to produce ACK_ECN feedback in every configuration.
+
+Named hash settings are applied after local defaults. Load them through
+`ZmHashMgr` before constructing hubs and links. The route and server tables use
+`Zquic.Endpoint.CxnRouter` and `Zquic.Server.Links`; stream registries use
+`Zquic.Stream.ObjectHash`, `Zquic.Stream.TxHash`, and `Zquic.Stream.ClosedHash`.
+Recovery indexes use `Zquic.Pkt.OutstandingFlow`, `Zquic.Pkt.OutstandingExact`,
+and `Zquic.Pkt.AckdFrame`, including indexes created lazily after startup.
+`Zquic.StreamScheduler` also honors named settings when given explicit local
+defaults. These owner-local tables retain their existing lock policy.
 
 Path migration is exposed through the link API.  `CliLink::migrate()`,
 `migrateLocal()`, and `migrateRemote()` request client active migration; the
@@ -55,6 +73,13 @@ transport rejects active requests when the peer sent
 `migrationFailed(const MigrationResult &)`.  This is QUIC v1 path migration,
 not multipath: normal STREAM/control traffic uses one active path while at most
 one candidate path is being validated.
+
+Clients process the server's `preferred_address` after HANDSHAKE_DONE. A
+same-family address is probed with the advertised connection ID on a staged UDP
+socket, even when the server disables active migration. The original socket
+continues carrying ordinary traffic until a matching PATH_RESPONSE validates
+the candidate. Failed probes retain the original path. `MigrationMode::Disabled`
+disables this automatic migration.
 
 `zquic/example` contains small noinst transport examples:
 `ZquicServer` listens on one UDP socket and accepts routed `SrvLink`s, while
@@ -131,10 +156,19 @@ server's stream response.
 - HTTP/3, QPACK, WebTransport, DATAGRAM, multipath, and QUIC v2 are not
   exposed by this module.
 
+Queue telemetry follows existing ownership: the hub visits links and pools,
+links visit their packet spaces and Rx/Tx stream tables, and endpoints visit
+their current and candidate connections. Queue identities remain local to those
+objects; there is no global queue registry. Enumeration borrows queue views for
+the callback only. The existing link-keyed Rx/Tx summaries remain available to
+`Ztc`; detailed role IDs are available through direct `allQueues` enumeration.
+
 ## Tests
 
 Tests are standalone binaries under `zquic/test`.  Useful entry points:
 
+- `ZquicQueueTest`: owner enumeration, queue identity, stream retirement, and
+  router, scheduler, and crypto queue counters.
 - `ZquicCodecTest`: packet/frame/transport-parameter codec coverage.
 - `ZquicPacketProtectionTest`: RFC 9001 packet protection vectors and traffic
   secret protection.
@@ -142,12 +176,20 @@ Tests are standalone binaries under `zquic/test`.  Useful entry points:
   runtime behavior.
 - `ZquicRttLossTest`: falling/rising/constant RTT thresholds, initial fallback,
   granularity floor, and packet-loss deadline edges at full time precision.
+- `ZquicAckPublishTest`: concurrent Rx/Tx ACK metadata and completion,
+  ordinary publication without owner posts, sender parking, ring pressure,
+  ordered bounded peer-ACK retirement, reset with deferred ACKs, and recovery
+  callbacks already handed off when an ACK arrives. Serialized ACK_ECN feedback
+  and protected output marking cover all four congestion-control/ECN policies.
+- `ZquicTimerTest`: actual scheduler handoffs, reservation reuse, full ACK
+  suppression followed by a new flight, packet-space retirement, idle activity
+  publication, and explicit zero deadlines.
 - `ZquicStreamTest`: stream delivery, retransmission, control queues, PMTUD,
   ECN, 0-RTT, qlog, and key-update state. Reset cases cover unsent and
   flow-stalled output: final size, control retransmission and ACK matching use
   the transmitted extent, and reset releases queued data and recovery ranges.
 - `ZquicRecoveryTest`, `ZquicFlowTest`, `ZquicCIDTest`, `ZquicSockTest`,
-  `ZquicTimerTest`, `ZquicLogTest`, and `ZquicPQueueTest`: focused subsystem
+  `ZquicLogTest` and `ZquicPQueueTest`: focused subsystem
   coverage. The logger regression holds its old writer during shutdown and
   requires a concurrent restart to wait for ring drain before reopening it.
   Earlier validation results do not establish results for the transferred
@@ -184,6 +226,10 @@ TxUDP allocator factory, with destination and ECN stored alongside their queue
 links. Each physical endpoint uses `ZiTx`; no separately allocated packet wrapper
 or private completion pump is used. Retained stream and CRYPTO plaintext stays
 under QUIC ACK/loss recovery ownership.
+
+Packet-provider exhaustion closes the affected link through the local
+resource-failure path. Allocation uses the selected provider's original
+headroom, tailroom and MPS; it does not wait for returned buffers.
 
 The endpoint capacity is 4096 datagrams including the active head. Full admission
 returns false to direct callers and records backpressure/drop; posted calls can

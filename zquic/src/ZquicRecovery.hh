@@ -59,15 +59,14 @@ inline unsigned ackRangeLowerBound(
 
 class AckTracker {
 public:
-  static constexpr unsigned Max = 64;
-  static constexpr unsigned MaxRetained = Max + 1;
-  static constexpr unsigned BuiltinRetained = 32;
+  enum { Max = 64 };
+  enum { MaxRetained = Max + 1 };
+  enum { BuiltinRetained = 32 };
   using RetainedRanges = ZtBuiltin<
     ZtArray<AckRange,
       ZtArrayHeapMax<MaxRetained,
 	ZtArrayHeapID<"Zquic.Ack.RetainedRanges">>>,
     BuiltinRetained>;
-  using DequeueFn = ZmFn<void(), ZmFnHeapID<"Zquic.Ack.DequeueFn">>;
 
   bool add(uint64_t pn) {
     if (contains(pn)) return true;
@@ -87,13 +86,13 @@ public:
 
   unsigned count() const {
     unsigned n = 0;
-    ranges_([&n](const AckRange &) { ++n; return true; });
+    visitRanges([&n](const AckRange &) { ++n; return true; });
     return n;
   }
   bool multipleRanges() const {
     unsigned n = 0;
     bool stop = false;
-    bool ok = ranges_([&n, &stop](const AckRange &) {
+    bool ok = visitRanges([&n, &stop](const AckRange &) {
       if (++n < 2) return true;
       stop = true;
       return false;
@@ -105,7 +104,7 @@ public:
   uint64_t first(unsigned i) const {
     uint64_t v = 0;
     unsigned n = 0;
-    ranges_([i, &n, &v](const AckRange &range) {
+    visitRanges([i, &n, &v](const AckRange &range) {
       if (n++ == i) { v = range.first; return false; }
       return true;
     });
@@ -114,7 +113,7 @@ public:
   uint64_t last(unsigned i) const {
     uint64_t v = 0;
     unsigned n = 0;
-    ranges_([i, &n, &v](const AckRange &range) {
+    visitRanges([i, &n, &v](const AckRange &range) {
       if (n++ == i) { v = range.largest; return false; }
       return true;
     });
@@ -123,7 +122,7 @@ public:
   bool range(unsigned i, AckRange &range) const {
     bool found = false;
     unsigned n = 0;
-    ranges_([i, &n, &found, &range](const AckRange &range_) {
+    visitRanges([i, &n, &found, &range](const AckRange &range_) {
       if (n++ != i) return true;
       range = range_;
       found = true;
@@ -187,8 +186,6 @@ public:
     }
   }
 
-  void dequeueFn(DequeueFn fn) { m_dequeueFn = ZuMv(fn); }
-  void dequeueRx() { }
   uint64_t retiredRanges() const { return m_retiredRanges; }
 
 private:
@@ -252,7 +249,7 @@ private:
     Frame::AckRanges ranges;
     unsigned total = m_sparse.length() + (m_ackHead > m_ackBase);
     unsigned skip = total > max ? total - max : 0;
-    ranges_([&ranges, &skip](const AckRange &range) {
+    visitRanges([&ranges, &skip](const AckRange &range) {
       if (skip) {
 	--skip;
 	return true;
@@ -264,7 +261,7 @@ private:
   }
 
   template <typename L>
-  bool ranges_(L &&l) const {
+  bool visitRanges(L &&l) const {
     if (m_ackHead > m_ackBase)
       if (!l(AckRange{m_ackHead - 1, m_ackBase})) return false;
     for (unsigned i = 0, n = m_sparse.length(); i < n; ++i)
@@ -276,7 +273,6 @@ private:
   uint64_t	m_ackBase = 0;
   RetainedRanges m_sparse;
   uint64_t	m_retiredRanges = 0;
-  DequeueFn	m_dequeueFn;
 };
 
 class AckManager {
@@ -366,7 +362,18 @@ public:
   }
   void sent(PktNumSpace::T space, uint64_t gen = U64Null) {
     unsigned i = space;
-    if (!ZuNull(gen) && gen != m_gen[i]) return;
+    if (ZuNull(gen)) gen = m_gen[i];
+    if (gen <= m_sentGen[i] || gen > m_gen[i]) return;
+    m_sentGen[i] = gen;
+    uint64_t remaining = m_gen[i] - gen;
+    if (remaining) {
+      m_activeAck[i] = remaining >= ActiveAckThreshold ?
+	ActiveAckThreshold : unsigned(remaining);
+      m_immediate[i] = remaining >= ActiveAckThreshold || m_forceGen[i] > gen;
+      m_deadlineSet[i] = !m_immediate[i];
+      m_deadline[i] = m_immediate[i] ? 0 : m_lastAckDeadline[i];
+      return;
+    }
     m_pending[i] = false;
     m_ackEliciting[i] = false;
     m_activeAck[i] = 0;
@@ -384,8 +391,11 @@ public:
       m_deadlineSet[i] = false;
       m_deadline[i] = 0;
       m_largestRxTime[i] = 0;
-      m_gen[i] = 0;
-      m_postedGen[i] = 0;
+      // Completion publications may still contain the previous runtime's
+      // generation. Never reuse an obligation identity across a reset.
+      m_sentGen[i] = m_postedGen[i] = m_gen[i];
+      m_forceGen[i] = 0;
+      m_lastAckDeadline[i] = 0;
       m_ecn[i].reset();
     }
   }
@@ -394,6 +404,9 @@ private:
   void noteAckEliciting(
     unsigned i, uint64_t now, uint64_t maxAckDelay, bool immediate)
   {
+    m_lastAckDeadline[i] =
+      maxAckDelay > uint64_t(-1) - now ? uint64_t(-1) : now + maxAckDelay;
+    if (immediate) m_forceGen[i] = m_gen[i];
     m_ackEliciting[i] = true;
     if (m_activeAck[i] < ActiveAckThreshold) ++m_activeAck[i];
     immediate = immediate || m_activeAck[i] >= ActiveAckThreshold;
@@ -440,12 +453,18 @@ private:
     fixedArray<uint64_t, PktNumSpace::N>();
   ZuArray<uint64_t, PktNumSpace::N> m_postedGen =
     fixedArray<uint64_t, PktNumSpace::N>();
+  ZuArray<uint64_t, PktNumSpace::N> m_sentGen =
+    fixedArray<uint64_t, PktNumSpace::N>();
+  ZuArray<uint64_t, PktNumSpace::N> m_forceGen =
+    fixedArray<uint64_t, PktNumSpace::N>();
+  ZuArray<uint64_t, PktNumSpace::N> m_lastAckDeadline =
+    fixedArray<uint64_t, PktNumSpace::N>();
 };
 
 class RttEstimator {
 public:
-  static constexpr unsigned InitialRTTMS = 333;
-  static constexpr unsigned GranularityMS = 1;
+  enum { InitialRTTMS = 333 };
+  enum { GranularityMS = 1 };
   static constexpr ZuTime InitialRTT{
     0, int32_t(InitialRTTMS * TimeNSPerMS)};
   static constexpr ZuTime Granularity{
@@ -867,7 +886,25 @@ struct SentFrameUpdate {
 };
 
 struct SentPkt {
-  static constexpr unsigned MaxFrames = 8;
+  enum { MaxFrames = 8 };
+
+  uint64_t	pn = 0;
+  ZuTime	sentTime;
+  unsigned	bytes = 0;
+  PktNumSpace::T space = PktNumSpace::AppData;
+  PktType::T	packetType = PktType::N;
+  EcnMark::T	ecn = EcnMark::NotECT;
+  bool		ackEliciting = false;
+  bool		inFlight = false;
+  bool		pmtudProbe = false;
+  unsigned	pmtudSize = 0;
+  bool		ackd = false;
+  bool		lost = false;
+  bool		ptoReclaimed = false;
+  void		*recoveryNode = nullptr;
+  uint8_t	ackLevel = PktNumSpace::N;
+  uint64_t	ackLargest = 0;
+  ZuArray<SentFrameUpdate, MaxFrames> frames;
 
   uint64_t key() const { return pn; }
   uint64_t length() const { return 1; }
@@ -893,24 +930,6 @@ struct SentPkt {
       "sent-packet frame-owner index out of bounds", return nullptr);
     return frames[i].owner;
   }
-
-  uint64_t	pn = 0;
-  ZuTime	sentTime;
-  unsigned	bytes = 0;
-  PktNumSpace::T space = PktNumSpace::AppData;
-  PktType::T	packetType = PktType::N;
-  EcnMark::T	ecn = EcnMark::NotECT;
-  bool		ackEliciting = false;
-  bool		inFlight = false;
-  bool		pmtudProbe = false;
-  unsigned	pmtudSize = 0;
-  bool		ackd = false;
-  bool		lost = false;
-  bool		ptoReclaimed = false;
-  void		*recoveryNode = nullptr;
-  uint8_t	ackLevel = PktNumSpace::N;
-  uint64_t	ackLargest = 0;
-  ZuArray<SentFrameUpdate, MaxFrames> frames;
 };
 
 class OutstandingFrames {
@@ -953,13 +972,13 @@ public:
   bool outstanding(const SentFrameRef &frame) const {
     if (!SentFrameKey::retransmittable(frame)) return false;
     if (frame.kind == SentFrameKind::Control)
-      return exact_(SentFrameKey{frame});
+      return containsExact(SentFrameKey{frame});
     uint64_t end;
-    if (!rangeEnd_(frame, end)) return false;
-    if (frame.length && covered_(flowKey(frame), frame.offset, end))
+    if (!rangeEnd(frame, end)) return false;
+    if (frame.length && coversRange(flowKey(frame), frame.offset, end))
       return true;
     return frame.kind == SentFrameKind::Stream && frame.fin &&
-      exact_(finKey(frame, end));
+      containsExact(finKey(frame, end));
   }
   template <typename Queue>
   bool clip(SentFrameRef &frame, Queue &queue) const {
@@ -967,9 +986,9 @@ public:
 	frame.kind != SentFrameKind::Crypto)
       return !outstanding(frame);
     uint64_t end;
-    if (!rangeEnd_(frame, end)) return false;
+    if (!rangeEnd(frame, end)) return false;
     bool sendFin = frame.kind == SentFrameKind::Stream && frame.fin &&
-      !exact_(finKey(frame, end));
+      !containsExact(finKey(frame, end));
     const Flow *flow = findFlow(flowKey(frame));
     uint64_t pos = frame.offset;
     bool have = false, finQueued = false;
@@ -1048,7 +1067,7 @@ public:
 #endif
 
 private:
-  static bool rangeEnd_(const SentFrameRef &frame, uint64_t &end) {
+  static bool rangeEnd(const SentFrameRef &frame, uint64_t &end) {
     end = frame.offset + frame.length;
     return end >= frame.offset;
   }
@@ -1082,18 +1101,19 @@ private:
     frame.length = length;
     return length || frame.fin;
   }
-  Flow *flow_(const OutstandingFlowKey &key) {
+  Flow *ensureFlow(const OutstandingFlowKey &key) {
     if (m_flows)
       if (auto node = m_flows->findPtr(key)) return node;
     if (!m_flows)
-      m_flows = new Flows{ZmHashParams().bits(3).loadFactor(1).cBits(2)};
+      m_flows = new Flows{ZmHashParams().bits(3).loadFactor(1).cBits(2)
+	.init(Flows::ID{}())};
     return m_flows->add(key);
   }
   const Flow *findFlow(const OutstandingFlowKey &key) const {
     if (!m_flows) return nullptr;
     return m_flows->findPtr(key);
   }
-  void split_(Flow &flow, uint64_t offset) {
+  void splitRange(Flow &flow, uint64_t offset) {
     auto node = flow.ranges.template findPtr<ZmRBTreeLessEqual>(offset);
     if (!node || node->key() >= offset || node->val().end <= offset) return;
     uint64_t end = node->val().end;
@@ -1101,7 +1121,7 @@ private:
     node->val().end = offset;
     flow.ranges.add(offset, RangeVal{end, count});
   }
-  void merge_(Flow &flow, uint64_t offset) {
+  void merge(Flow &flow, uint64_t offset) {
     auto right = flow.ranges.findPtr(offset);
     if (!right) return;
     auto left = flow.ranges.template findPtr<ZmRBTreeLess>(offset);
@@ -1113,9 +1133,9 @@ private:
   }
   void addRange(const OutstandingFlowKey &key, uint64_t first, uint64_t end) {
     if (first >= end) return;
-    Flow &flow = *flow_(key);
-    split_(flow, first);
-    split_(flow, end);
+    Flow &flow = *ensureFlow(key);
+    splitRange(flow, first);
+    splitRange(flow, end);
     uint64_t pos = first;
     while (pos < end) {
       uint64_t boundary = pos;
@@ -1128,17 +1148,17 @@ private:
 	++node->val().count;
 	pos = node->val().end;
       }
-      merge_(flow, boundary);
+      merge(flow, boundary);
     }
-    merge_(flow, end);
+    merge(flow, end);
   }
   void delRange(const OutstandingFlowKey &key, uint64_t first, uint64_t end) {
     if (first >= end || !m_flows) return;
     auto flowNode = m_flows->findPtr(key);
     if (!flowNode) return;
     Flow &flow = *flowNode;
-    split_(flow, first);
-    split_(flow, end);
+    splitRange(flow, first);
+    splitRange(flow, end);
     uint64_t pos = first;
     while (pos < end) {
       uint64_t boundary = pos;
@@ -1147,12 +1167,12 @@ private:
       uint64_t next = node->val().end;
       if (!--node->val().count) (void)flow.ranges.del(pos);
       pos = next;
-      merge_(flow, boundary);
+      merge(flow, boundary);
     }
-    merge_(flow, end);
+    merge(flow, end);
     if (!flow.ranges.count_()) (void)m_flows->del(key);
   }
-  bool covered_(
+  bool coversRange(
       const OutstandingFlowKey &key, uint64_t first, uint64_t end) const {
     const Flow *flow = findFlow(key);
     if (!flow) return false;
@@ -1164,7 +1184,8 @@ private:
   }
   void addExact(const SentFrameKey &key) {
     if (!m_exact)
-      m_exact = new Exact{ZmHashParams().bits(4).loadFactor(1).cBits(2)};
+      m_exact = new Exact{ZmHashParams().bits(4).loadFactor(1).cBits(2)
+	.init(Exact::ID{}())};
     if (auto node = m_exact->findPtr(key)) ++node->val();
     else m_exact->add(key, 1U);
   }
@@ -1175,7 +1196,7 @@ private:
     if (--node->val()) return;
     (void)m_exact->del(key);
   }
-  bool exact_(const SentFrameKey &key) const {
+  bool containsExact(const SentFrameKey &key) const {
 #ifdef ZDEBUG
     ++m_visits;
 #endif
@@ -1188,7 +1209,7 @@ private:
       return;
     }
     uint64_t end;
-    if (!rangeEnd_(frame, end)) return;
+    if (!rangeEnd(frame, end)) return;
     addRange(flowKey(frame), frame.offset, end);
     if (frame.kind == SentFrameKind::Stream && frame.fin)
       addExact(finKey(frame, end));
@@ -1200,7 +1221,7 @@ private:
       return;
     }
     uint64_t end;
-    if (!rangeEnd_(frame, end)) return;
+    if (!rangeEnd(frame, end)) return;
     delRange(flowKey(frame), frame.offset, end);
     if (frame.kind == SentFrameKind::Stream && frame.fin)
       delExact(finKey(frame, end));
@@ -1213,8 +1234,9 @@ private:
 #endif
 };
 
-ZmListDerive(RecoveryPktList, SentPkt *,
+ZmListDerive(RecoveryPktList_, SentPkt *,
   ZmListHeapID<"Zquic.Pkt.Recovery">);
+using RecoveryPktList = Zquic_::Queue<RecoveryPktList_>;
 
 using TxPkt = SentPkt;
 
@@ -1225,9 +1247,9 @@ using SentFrameUpdates = ZtBuiltin<
   64>;
 
 struct PktTxUpdate {
-  static constexpr unsigned MaxFrames = 64; // preserved qlog sample policy
-  static constexpr unsigned AckedPNSampleMax = 64;
-  static constexpr unsigned MaxAckedPNs = AckedPNSampleMax;
+  enum { MaxFrames = 64 }; // preserved qlog sample policy
+  enum { AckedPNSampleMax = 64 };
+  enum { MaxAckedPNs = AckedPNSampleMax };
 
   using PNSample = ZuArray<uint64_t, AckedPNSampleMax>;
   using AckFlags = ZuArray<bool, PktNumSpace::N>;
@@ -1264,8 +1286,8 @@ struct PktTxUpdate {
       ackedPNs[nAckedPNs++] = p.pn;
     else
       ackedPNsTruncated = true;
-    ackdAck_(p);
-    ackdFrames_(p);
+    noteAckdAck(p);
+    addAckdFrames(p);
     if (p.lost) return;
     ackdBytes += p.bytes;
     switch (p.ecn) {
@@ -1291,7 +1313,7 @@ struct PktTxUpdate {
     }
   }
   void lost(const SentPkt &p) {
-    lostFrames_(p);
+    addLostFrames(p);
     lostBytes += p.bytes;
     if (p.pmtudProbe) {
       pmtudLostBytes += p.bytes;
@@ -1305,21 +1327,21 @@ struct PktTxUpdate {
 	normalLostSentTime = p.sentTime;
     }
   }
-  void ackdAck_(const SentPkt &p) {
+  void noteAckdAck(const SentPkt &p) {
     if (p.ackLevel >= PktNumSpace::N) return;
     if (!ackdAck[p.ackLevel] || p.ackLargest > ackLargest[p.ackLevel]) {
       ackdAck[p.ackLevel] = true;
       ackLargest[p.ackLevel] = p.ackLargest;
     }
   }
-  void ackdFrames_(const SentPkt &p) {
+  void addAckdFrames(const SentPkt &p) {
     unsigned n = ackdFrames.length();
     for (unsigned i = 0, l = p.framesUsed(); i < l; ++i)
       ackdFrames.push(SentFrameUpdate{p.frame(i), p.frameOwner(i)});
     ZiAssert(ackdFrames.length() - n == p.framesUsed(), "Zquic", (),
       "ACK frame update truncation", return);
   }
-  void lostFrames_(const SentPkt &p) {
+  void addLostFrames(const SentPkt &p) {
     unsigned n = lostFrames.length();
     for (unsigned i = 0, l = p.framesUsed(); i < l; ++i)
       lostFrames.push(SentFrameUpdate{p.frame(i), p.frameOwner(i)});
@@ -1348,17 +1370,17 @@ struct PktLossBatch {
 };
 
 using TxPktQueue =
-  ZmPQueue<TxPkt,
+  Zquic_::Queue<ZmPQueue<TxPkt,
     ZmPQueueNode<ZuObject,
       ZmPQueueHeapID<"Zquic.Pkt.TxSentNode",
 	ZmPQueueBits<3,
-	  ZmPQueueLevels<4>>>>>;
+	  ZmPQueueLevels<4>>>>>, Zquic_::PQueueCount>;
 
 class RetransmitQueue {
 public:
   using Queue =
-    ZmQueue<SentFrameRef,
-      ZmQueueHeapID<"Zquic.Pkt.RetransmitQueue">>;
+    Zquic_::Queue<ZmQueue<SentFrameRef,
+      ZmQueueHeapID<"Zquic.Pkt.RetransmitQueue">>>;
 
   bool push(const SentFrameRef &frame) {
     if (frame.kind == SentFrameKind::None) return false;
@@ -1382,6 +1404,7 @@ public:
     return true;
   }
 
+  Queue *queue() const { return const_cast<Queue *>(&m_frames); }
   unsigned count() const { return m_frames.count_(); }
   unsigned dropped() const { return m_dropped; }
   bool empty() const { return !m_frames.count_(); }
@@ -1395,7 +1418,7 @@ private:
   SentFrameAckHash *pending_() {
     if (!m_pending)
       m_pending = new SentFrameAckHash{
-	ZmHashParams().bits(8).loadFactor(1).cBits(3)};
+	ZmHashParams().bits(8).loadFactor(1).cBits(3).init(SentFrameAckHash::ID{}())};
     return m_pending.ptr();
   }
 
@@ -1407,11 +1430,11 @@ private:
 class PktTxSpace :
   public ZmPQTx<PktTxSpace, TxPktQueue> {
 public:
-  static constexpr unsigned RetainedLostMax = 1024;
+  enum { RetainedLostMax = 1024 };
   using Queue = TxPktQueue;
   using LostPNs =
-    ZmQueue<uint64_t,
-      ZmQueueHeapID<"Zquic.Pkt.TxLostPNs">>;
+    Zquic_::Queue<ZmQueue<uint64_t,
+      ZmQueueHeapID<"Zquic.Pkt.TxLostPNs">>>;
   using Tx = ZmPQTx<PktTxSpace, Queue>;
   using Msg = Queue::Node;
   using Span = Queue::Span;
@@ -1419,11 +1442,24 @@ public:
 
   PktTxSpace() { Tx::start(); }
 
+  void initQueues(Ztc::Hub *hub, ZuCSpan prefix) {
+    m_packets.initQueue(hub, prefix, "sent", Ztc::QueueType::Tx, 0);
+    m_retransmit.queue()->initQueue(hub, prefix, "retx", Ztc::QueueType::Tx, 0);
+    m_lostPNs.initQueue(hub, prefix, "lost", Ztc::QueueType::Tx, RetainedLostMax);
+    m_recovery.initQueue(hub, prefix, "recovery", Ztc::QueueType::Tx, 0);
+  }
+  template <typename L> void allQueues(L fn) const {
+    fn(const_cast<Queue *>(&m_packets));
+    fn(m_retransmit.queue());
+    fn(const_cast<LostPNs *>(&m_lostPNs));
+    fn(const_cast<RecoveryPktList *>(&m_recovery));
+  }
+
   Queue *txQueue() { return &m_packets; }
 
   bool send_(Msg *, bool) { return true; }
   bool resend_(Msg *msg, bool) {
-    if (msg) enqueueRetransmit_(msg->data());
+    if (msg) enqueueRetransmit(msg->data());
     return true;
   }
   bool sendGap_(const Span &, bool) { return true; }
@@ -1736,14 +1772,16 @@ public:
   }
   ZuTime nextLossTime(
     uint64_t largestAckd, ZuTime threshold, unsigned = 256) const {
+    // The scheduler tests whether a deadline is set; zero is a valid time.
+    // Empty spaces must not mask another space's live loss deadline.
     if (ZuNull(largestAckd) || !*threshold)
-      return ZuTime{0};
+      return ZuTime{};
     const auto *head = m_recovery.headPtr();
 #ifdef ZDEBUG
     if (head) ++m_recoveryVisits;
 #endif
     const SentPkt *p = head ? head->data() : nullptr;
-    if (!p || p->pn >= largestAckd || !*p->sentTime) return ZuTime{0};
+    if (!p || p->pn >= largestAckd || !*p->sentTime) return ZuTime{};
     return p->sentTime + threshold;
   }
   bool ackElicitingInFlight() const {
@@ -1834,6 +1872,31 @@ public:
     return m_outstanding.equals(expected);
   }
 #endif
+  // The caller has stopped packet production and recovery before draining.
+  // Preserve the index invariants between turns while retiring retained data.
+  bool drain(unsigned &budget) {
+    while (budget) {
+      auto node = m_packets.shift();
+      if (!node) break;
+      auto &packet = node->data();
+      if (!packet.ackd && !packet.lost && !packet.ptoReclaimed)
+	m_outstanding.del(packet);
+      if (packet.inFlight) release_(packet);
+      --budget;
+    }
+    if (m_packets.count_()) return false;
+    SentFrameRef frame;
+    while (budget && m_retransmit.pop(frame)) --budget;
+    if (!m_retransmit.empty()) return false;
+    while (budget && m_lostPNs.count_()) {
+      (void)m_lostPNs.shift();
+      --budget;
+    }
+    if (m_lostPNs.count_()) return false;
+    clear();
+    return true;
+  }
+
   void clear() {
     m_recovery.clean();
     m_outstanding.clear();
@@ -1901,7 +1964,7 @@ private:
     if (p.inFlight) release_(p, unlink);
     if (p.ackEliciting && !p.pmtudProbe) {
       ++m_retransmittable;
-      enqueueRetransmit_(p);
+      enqueueRetransmit(p);
     }
     trimLost();
     ++m_lost;
@@ -1930,7 +1993,7 @@ private:
     p.recoveryNode = nullptr;
   }
 
-  void enqueueRetransmit_(const SentPkt &p) {
+  void enqueueRetransmit(const SentPkt &p) {
     for (unsigned i = 0, n = p.framesUsed(); i < n; ++i) {
       const SentFrameRef &frame = p.frame(i);
       if (m_outstanding.outstanding(frame)) continue;
@@ -1942,6 +2005,7 @@ private:
     return m_outstanding.clip(frame, m_retransmit);
   }
   void trimLost() {
+    if (m_retainedLost > RetainedLostMax) m_lostPNs.queueFull();
     while (m_retainedLost > RetainedLostMax) {
       uint64_t pn = m_lostPNs.shift();
       auto node = m_packets.find(pn);

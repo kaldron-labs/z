@@ -11,10 +11,11 @@ using namespace ZuTestUtil;
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
-struct FlowApp : public Zquic::Hub<FlowApp> {
+class FlowApp : public Zquic::Hub<FlowApp> {
+public:
   using Base = Zquic::Hub<FlowApp>;
 
-  FlowApp() : m_mx{mxParams_()} {
+  FlowApp() : m_mx{mxParams()} {
     ZiAssert(Base::init(Zquic::HubParams(&m_mx, "3", "4")),
       "Zquic", (), "flow test app init failed", return);
     ZiAssert(m_mx.start(), "Zquic", (),
@@ -34,7 +35,7 @@ struct FlowApp : public Zquic::Hub<FlowApp> {
   template <typename O, typename L> void txInvoke(O *, L l) { l(); }
 
 private:
-  static ZiMxParams mxParams_() {
+  static ZiMxParams mxParams() {
     return ZiMxParams()
       .scheduler([](auto &s) {
 	s.nThreads(4);

@@ -17,6 +17,7 @@ namespace Zquic {
 struct Datagram {
   ZmRef<ZiIOBuf>	buf;
   ZiSockAddr		addr;
+  ZiSockAddr		local;
   EcnMark::T		ecn = EcnMark::NotECT;
 
   Datagram() = default;
@@ -73,12 +74,12 @@ struct EndpointTxDiag {
 };
 
 struct EndpointDiag {
-  uint64_t failures() const { return rx.failures + tx.failures; }
-
   EndpointRxDiag	rx;
   EndpointTxDiag	tx;
   uint64_t	txPending = 0;
   uint64_t	txQueued = 0;
+
+  uint64_t failures() const { return rx.failures + tx.failures; }
 };
 
 struct SockConfig {

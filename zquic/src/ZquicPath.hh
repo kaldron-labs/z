@@ -43,8 +43,8 @@ struct PathDiag {
 
 class Path {
 public:
-  static constexpr unsigned MaxProbeAttempts = 3;
-  static constexpr unsigned ECNProbeThreshold = 10;
+  enum { MaxProbeAttempts = 3 };
+  enum { ECNProbeThreshold = 10 };
 
   Path() = default;
   Path(PathMode::T mode, ZiSockAddr local, ZiSockAddr remote) :
@@ -257,6 +257,10 @@ public:
   void sent(unsigned bytes) {
     m_bytesTx += bytes;
     m_diag.bytesTx += bytes;
+  }
+  void unreserveSend(unsigned bytes) {
+    m_bytesTx -= bytes;
+    m_diag.bytesTx -= bytes;
   }
 
   void startProbe(unsigned size) {

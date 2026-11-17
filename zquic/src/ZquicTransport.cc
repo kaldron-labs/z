@@ -21,9 +21,64 @@ static constexpr uint64_t TPInitialMaxStreamsUni = 0x09;
 static constexpr uint64_t TPAckDelayExponent = 0x0a;
 static constexpr uint64_t TPMaxAckDelay = 0x0b;
 static constexpr uint64_t TPDisableMig = 0x0c;
+static constexpr uint64_t TPPreferredAddress = 0x0d;
 static constexpr uint64_t TPActiveCxnIDLimit = 0x0e;
 static constexpr uint64_t TPInitialSCID = 0x0f;
 static constexpr uint64_t TPRetrySCID = 0x10;
+
+bool PreferredAddress::validate() const
+{
+  if (!cid) return !ipv4 && !ipv6 && !resetToken.valid();
+  return resetToken.valid() &&
+    (!ipv4 || (ipv4.ip().v4() && !ipv4.ip().wildcard() && ipv4.port())) &&
+    (!ipv6 || (ipv6.ip().v6() && !ipv6.ip().wildcard() && ipv6.port()));
+}
+
+int PreferredAddress::encode(uint8_t *out, unsigned len) const
+{
+  if (!cid || !validate()) return -1;
+  in_addr a4{};
+  in6_addr a6{};
+  if (ipv4) a4 = ipv4.ip().inAddr();
+  if (ipv6) a6 = ipv6.ip().in6Addr();
+  PktWriter w{out, len};
+  w.put(ZuBSpan{reinterpret_cast<const uint8_t *>(&a4), 4});
+  w.put16(ipv4 ? ipv4.port() : 0);
+  w.put(ZuBSpan{reinterpret_cast<const uint8_t *>(&a6), 16});
+  w.put16(ipv6 ? ipv6.port() : 0);
+  w.put(uint8_t(cid.length()));
+  w.put(cid);
+  w.put(resetToken.bspan());
+  return w.finish();
+}
+
+int PreferredAddress::decode(ZuBSpan in)
+{
+  *this = {};
+  if (in.length() < FixedLength + 1) return -1;
+  const auto p = in.data();
+  unsigned n = p[24];
+  if (!n || n > CxnIDMax || in.length() != FixedLength + n) return -1;
+  in_addr a4;
+  in6_addr a6;
+  memcpy(&a4, p, 4);
+  memcpy(&a6, p + 6, 16);
+  ZiIP ip4{a4}, ip6{a6};
+  unsigned port4 = (unsigned(p[4]) << 8) | p[5];
+  unsigned port6 = (unsigned(p[22]) << 8) | p[23];
+  if (!ip4.wildcard() || port4) ipv4.init(ip4, port4);
+  if (!ip6.wildcard() || port6) ipv6.init(ip6, port6);
+  cid = ZuBSpan{p + 25, n};
+  resetToken = ResetToken{ZuBSpan{p + 25 + n, ResetToken::Length}};
+  return validate() ? 0 : -1;
+}
+
+ZiSockAddr PreferredAddress::select(const ZiIP &peer) const
+{
+  // Keep the existing local address family; cross-family probing requires
+  // a separately selected local interface.
+  return peer.v6() ? ipv6 : ipv4;
+}
 
 bool TransportParams::validate() const
 {
@@ -31,7 +86,7 @@ bool TransportParams::validate() const
     maxUDPPayloadSize <= BufSize &&
     ackDelayExponent <= 20 &&
     maxAckDelay < (1ULL<<14) &&
-    activeCxnIDLimit >= 2;
+    activeCxnIDLimit >= 2 && preferredAddress.validate();
 }
 
 ZeroRTTReason::T validateZeroRTTParams(
@@ -103,6 +158,10 @@ static unsigned paramBytesLen(uint64_t id, ZuBSpan v)
 unsigned TransportParams::encodedLength() const
 {
   unsigned n = 0;
+  if (preferredAddress) {
+    unsigned len = preferredAddress.encodedLength();
+    n += VarInt::length(TPPreferredAddress) + VarInt::length(len) + len;
+  }
   if (origDCID)
     n += paramBytesLen(TPOrigDCID, origDCID);
   if (statelessResetTokenPresent)
@@ -135,6 +194,12 @@ unsigned TransportParams::encodedLength() const
 int TransportParams::encode(uint8_t *out, unsigned len) const
 {
   unsigned o = 0;
+  if (preferredAddress) {
+    uint8_t bytes[PreferredAddress::FixedLength + CxnIDMax];
+    int n = preferredAddress.encode(bytes, sizeof(bytes));
+    if (n < 0 || putParamBytes(out, len, TPPreferredAddress,
+      ZuBSpan{bytes, unsigned(n)}, o) < 0) return -1;
+  }
   if (origDCID &&
       putParamBytes(out, len, TPOrigDCID, origDCID, o) < 0)
     return -1;
@@ -201,6 +266,9 @@ int TransportParams::decode(ZuBSpan in)
     o += len;
 
     switch (id) {
+      case TPPreferredAddress:
+	if (preferredAddress || preferredAddress.decode(value) < 0) return -1;
+	break;
       case TPOrigDCID:
 	if (value.length() > CxnIDMax) return -1;
 	origDCID = value;

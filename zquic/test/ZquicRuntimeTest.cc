@@ -30,10 +30,9 @@ using namespace ZuTestUtil;
 
 #define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
-namespace {
 
-static constexpr unsigned TestSrvLinkCap = 20;
-static constexpr unsigned TestSrvCxnCount = 17;
+enum { TestSrvLinkCap = 20 };
+enum { TestSrvCxnCount = 17 };
 
 // Durable fixture-owned notifications: a timeout never leaves a callback
 // referring to a stack waiter. Pending producers are drained with the fixture.
@@ -44,41 +43,41 @@ struct TestEvent {
   template <typename L>
   bool wait(L ready, ZuTime deadline) {
     while (!ready())
-      if (sem.timedwait(deadline)) return ready();
+      if (Zm::now() >= deadline || sem.timedwait(deadline)) return ready();
     return true;
   }
 };
 
 template <typename Link>
-Zquic::LinkDiag diag(const Link &link)
+static Zquic::LinkDiag diag(const Link &link)
 {
   return ZmBlock<Zquic::LinkDiag>{}(
     [&link](auto wake) { link->diag(ZuMv(wake)); });
 }
 
 template <typename Link>
-Zquic::EndpointDiag cxnDiag(const Link &link)
+static Zquic::EndpointDiag cxnDiag(const Link &link)
 {
   return ZmBlock<Zquic::EndpointDiag>{}(
     [&link](auto wake) { link->cxnDiag(ZuMv(wake)); });
 }
 
 template <typename Server>
-Zquic::EndpointDiag endpointDiag(Server &server)
+static Zquic::EndpointDiag endpointDiag(Server &server)
 {
   return ZmBlock<Zquic::EndpointDiag>{}(
     [&server](auto wake) { server.endpointDiag(ZuMv(wake)); });
 }
 
 template <typename Server>
-Zquic::AddrValidationDiag addrValidationDiag(Server &server)
+static Zquic::AddrValidationDiag addrValidationDiag(Server &server)
 {
   return ZmBlock<Zquic::AddrValidationDiag>{}(
     [&server](auto wake) { server.addrValidationDiag(ZuMv(wake)); });
 }
 
 template <typename Link>
-auto openStream(
+static auto openStream(
   const Link &link,
   Zquic::StreamType::T type = Zquic::StreamType::Duplex)
 {
@@ -96,7 +95,7 @@ auto openStream(
 }
 
 template <typename Link>
-auto findStream(const Link &link, int64_t id)
+static auto findStream(const Link &link, int64_t id)
 {
   using StreamRef = decltype(link->findStream(id));
   StreamRef stream;
@@ -112,8 +111,10 @@ auto findStream(const Link &link, int64_t id)
 struct TestClient : public Zquic::Client<TestClient> {
   struct Link;
   struct Stream;
+  using Base = Zquic::Client<TestClient>;
+  using Base::rxInvoke;
 
-  enum TokenRewrite {
+  enum {
     TokenNone,
     TokenMalformed,
     TokenAuth,
@@ -122,6 +123,29 @@ struct TestClient : public Zquic::Client<TestClient> {
     TokenPolicy,
     TokenKind
   };
+
+  TestEvent rxEvent;
+
+  bool dropMigChallenge = false; // immutable after init
+  unsigned pendingMigDrop = 0; // Tx thread
+  ZmAtomic<unsigned> migChallengeDrops = 0;
+  Zquic::TokenSecret tokenSecret;
+  uint64_t tokenNow = 0;
+  ZmAtomic<unsigned> tokenRewrite = TokenNone;
+  ZmAtomic<unsigned> tokenRewritesApplied = 0;
+  ZmAtomic<unsigned> tokenRewriteLengthMismatch = 0;
+
+  // Endpoint readiness and packet delivery enter through the object-bearing
+  // Rx dispatcher. Notify only after that work completes. Predicate queries
+  // use rxRun, so inspecting state cannot generate its own wakeup.
+  template <typename O, typename L>
+  void rxInvoke(O *owner, L l) {
+    Base::rxInvoke(owner, [this, l = ZuMv(l)]() mutable {
+      auto result = l();
+      rxEvent.post();
+      return result;
+    });
+  }
 
   bool sendPkt(const ZmRef<ZiIOBuf> &buf) {
     if (pendingMigDrop && buf && buf->length &&
@@ -164,15 +188,6 @@ struct TestClient : public Zquic::Client<TestClient> {
     ++tokenRewritesApplied;
     return true;
   }
-
-  bool dropMigChallenge = false; // immutable after init
-  unsigned pendingMigDrop = 0; // Tx thread
-  ZmAtomic<unsigned> migChallengeDrops = 0;
-  Zquic::TokenSecret tokenSecret;
-  uint64_t tokenNow = 0;
-  ZmAtomic<unsigned> tokenRewrite = TokenNone;
-  ZmAtomic<unsigned> tokenRewritesApplied = 0;
-  ZmAtomic<unsigned> tokenRewriteLengthMismatch = 0;
 };
 struct TestServerLink;
 struct TestServerStream;
@@ -183,6 +198,30 @@ struct TestServer :
 
   ZmAtomic<unsigned> holdHandshakeDone = 0;
   ZmAtomic<unsigned> heldHandshakeDone = 0;
+  TestEvent handshakeDoneEvent;
+  TestEvent dropEvent;
+
+  bool stopOnDisconnect = false; // Rx thread - one-shot stop race
+  ZmAtomic<unsigned> disconnectStops = 0;
+  ZmRef<Link> link_;
+  ZmRef<Link> links_[TestSrvLinkCap];
+  TestEvent acceptedEvent;
+  ZmAtomic<unsigned> acceptedCount = 0;
+  ZmAtomic<unsigned> retryPkts = 0;
+  ZmAtomic<unsigned> initialPkts = 0;
+  ZmAtomic<unsigned> handshakePkts = 0;
+  ZmAtomic<unsigned> dropNextInitial = 0;
+  ZmAtomic<unsigned> droppedInitial = 0;
+  ZmAtomic<unsigned> dropNextHandshake = 0;
+  ZmAtomic<unsigned> droppedHandshake = 0;
+  ZmAtomic<unsigned> dropNextShort = 0;
+  ZmAtomic<unsigned> droppedShort = 0;
+  ZmAtomic<unsigned> shortPkts = 0;
+  ZmAtomic<int64_t> dropStreamID = -1;
+  ZmAtomic<unsigned> droppedStream = 0;
+  ZmAtomic<unsigned> streamFrames = 0;
+
+  void datagramDropped() { dropEvent.post(); }
 
   ZmRef<Link> link(unsigned i = unsigned(-1));
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
@@ -226,6 +265,7 @@ struct TestServer :
 	ref.kind == Zquic::SentFrameKind::Control &&
 	ref.controlType == Zquic::FrameType::HandshakeDone) {
       ++heldHandshakeDone;
+      handshakeDoneEvent.post();
       return false;
     }
     if (ref.kind != Zquic::SentFrameKind::Stream) return true;
@@ -236,26 +276,6 @@ struct TestServer :
     ++droppedStream;
     return false;
   }
-
-  bool stopOnDisconnect = false; // Rx thread - one-shot stop race
-  ZmAtomic<unsigned> disconnectStops = 0;
-  ZmRef<Link> link_;
-  ZmRef<Link> links_[TestSrvLinkCap];
-  TestEvent acceptedEvent;
-  ZmAtomic<unsigned> acceptedCount = 0;
-  ZmAtomic<unsigned> retryPkts = 0;
-  ZmAtomic<unsigned> initialPkts = 0;
-  ZmAtomic<unsigned> handshakePkts = 0;
-  ZmAtomic<unsigned> dropNextInitial = 0;
-  ZmAtomic<unsigned> droppedInitial = 0;
-  ZmAtomic<unsigned> dropNextHandshake = 0;
-  ZmAtomic<unsigned> droppedHandshake = 0;
-  ZmAtomic<unsigned> dropNextShort = 0;
-  ZmAtomic<unsigned> droppedShort = 0;
-  ZmAtomic<unsigned> shortPkts = 0;
-  ZmAtomic<int64_t> dropStreamID = -1;
-  ZmAtomic<unsigned> droppedStream = 0;
-  ZmAtomic<unsigned> streamFrames = 0;
 };
 
 struct TestClient::Stream :
@@ -264,9 +284,12 @@ struct TestClient::Stream :
     Zquic::CliStream<TestClient::Link, TestClient::Stream>;
   using Base::Base;
 
-  int process(Zquic::RxStream &);
-
+  TestEvent txEvent;
   unsigned processed = 0;
+
+  int process(Zquic::RxStream &);
+  void txDrained_() { txEvent.post(); }
+  void txComplete(bool) { txEvent.post(); }
 };
 
 struct TestClient::Link :
@@ -282,9 +305,37 @@ friend inline ZuStringT<"Zquic.Runtime.CliLink"> ZmNHeapID(Link *);
   using Base::Base;
   using CryptoSnapshot = typename Base::TxCryptoSnapshot;
 
+  using Base::ownerLayout;
+
   CryptoSnapshot handshakeKeys;
 
+  Zquic::MigrationResult promotion; // Tx thread
+  TestEvent migrationEvent;
+  TestEvent connectedEvent;
+  TestEvent disconnectedEvent;
+  TestEvent streamEvent;
+  TestEvent closeEvent;
+  unsigned connectTarget = 0;
+  unsigned failureBase = 0;
+  unsigned disconnectTarget = 0;
+  unsigned closeTarget = 0;
+  ZmAtomic<unsigned> closeCount = 0;
+  ZmAtomic<unsigned> processedStreams = 0;
+  ZmAtomic<unsigned> connectedCount = 0;
+  ZmAtomic<unsigned> disconnectedCount = 0;
+  ZmAtomic<unsigned> earlyDisconnects = 0;
+  ZmAtomic<unsigned> connectFailures = 0;
+  ZmAtomic<unsigned> streamedCount = 0;
+
   Link(TestClient *app) : Base{app} { }
+
+  bool receivedNewToken() {
+    return ZmBlock<bool>{}([this](auto wake) {
+      app()->rxRun([this, wake = ZuMv(wake)]() mutable {
+        wake(Base::cachedNewToken());
+      });
+    });
+  }
 
   void connected(Zquic::Connected) {
     Base::snapshotTxCrypto(handshakeKeys);
@@ -380,6 +431,7 @@ friend inline ZuStringT<"Zquic.Runtime.CliLink"> ZmNHeapID(Link *);
   }
   void migrationPromoted(const Zquic::MigrationResult &result) {
     promotion = result;
+    migrationEvent.post();
   }
   bool spareCID() {
     return ZmBlock<bool>{}([this](auto wake) {
@@ -392,27 +444,10 @@ friend inline ZuStringT<"Zquic.Runtime.CliLink"> ZmNHeapID(Link *);
   }
   void forceCloseTimeout() {
     app()->txInvoke(this, [link = ZmRef<Link>{this}]() mutable {
-      link->Base::closeTimeout_();
+      link->Base::closeTimeout();
       return link.ptr();
     });
   }
-
-  Zquic::MigrationResult promotion; // Tx thread
-  TestEvent connectedEvent;
-  TestEvent disconnectedEvent;
-  TestEvent streamEvent;
-  TestEvent closeEvent;
-  unsigned connectTarget = 0;
-  unsigned failureBase = 0;
-  unsigned disconnectTarget = 0;
-  unsigned closeTarget = 0;
-  ZmAtomic<unsigned> closeCount = 0;
-  ZmAtomic<unsigned> processedStreams = 0;
-  ZmAtomic<unsigned> connectedCount = 0;
-  ZmAtomic<unsigned> disconnectedCount = 0;
-  ZmAtomic<unsigned> earlyDisconnects = 0;
-  ZmAtomic<unsigned> connectFailures = 0;
-  ZmAtomic<unsigned> streamedCount = 0;
 };
 
 struct TestServerStream :
@@ -421,9 +456,12 @@ struct TestServerStream :
     Zquic::SrvStream<TestServerLink, TestServerStream>;
   using Base::Base;
 
-  int process(Zquic::RxStream &);
-
+  TestEvent txEvent;
   unsigned processed = 0;
+
+  int process(Zquic::RxStream &);
+  void txDrained_() { txEvent.post(); }
+  void txComplete(bool) { txEvent.post(); }
 };
 
 struct TestServerLink :
@@ -439,7 +477,19 @@ friend inline ZuStringT<"Zquic.Runtime.SrvLink"> ZmNHeapID(TestServerLink *);
   using Base::Base;
   using CryptoSnapshot = typename Base::TxCryptoSnapshot;
 
+  using Base::ownerLayout;
+
   CryptoSnapshot handshakeKeys;
+
+  TestEvent peerCloseEvent;
+  TestEvent migrationEvent;
+  TestEvent connectedEvent;
+  TestEvent disconnectedEvent;
+  TestEvent streamEvent;
+  ZmAtomic<unsigned> processedStreams = 0;
+  ZmAtomic<unsigned> connectedCount = 0;
+  ZmAtomic<unsigned> disconnectedCount = 0;
+  ZmAtomic<unsigned> streamedCount = 0;
 
   TestServerLink(TestServer *app) : Base{app} { }
 
@@ -489,19 +539,22 @@ friend inline ZuStringT<"Zquic.Runtime.SrvLink"> ZmNHeapID(TestServerLink *);
       app()->txRun([
 	link = ZmRef<TestServerLink>{this}, wake = ZuMv(wake)
       ]() mutable {
-	link->Base::closeTimeout_();
+	link->Base::closeTimeout();
 	wake();
       });
     });
   }
 
-  TestEvent connectedEvent;
-  TestEvent disconnectedEvent;
-  TestEvent streamEvent;
-  ZmAtomic<unsigned> processedStreams = 0;
-  ZmAtomic<unsigned> connectedCount = 0;
-  ZmAtomic<unsigned> disconnectedCount = 0;
-  ZmAtomic<unsigned> streamedCount = 0;
+  void transportClose(Zquic::FrameType::T type, uint64_t error) {
+    Base::transportClose(type, error);
+    // The callback precedes enterPeerDraining_0 in the current receive turn.
+    app()->rxRun([this] { peerCloseEvent.post(); });
+  }
+
+  void migrationPromoted(const Zquic::MigrationResult &result) {
+    Base::migrationPromoted(result);
+    migrationEvent.post();
+  }
 };
 
 void TestServer::disconnected(Link *link, bool peer)
@@ -539,12 +592,14 @@ ZmRef<TestServer::Link> TestServer::accepted(const Zquic::InitialInfo &)
 int TestClient::Stream::process(Zquic::RxStream &)
 {
   if (!processed++) link()->processedStream();
+  else link()->streamEvent.post();
   return 0;
 }
 
 int TestServerStream::process(Zquic::RxStream &)
 {
   if (!processed++) link()->processedStream();
+  else link()->streamEvent.post();
   return 0;
 }
 
@@ -555,14 +610,28 @@ ZmRef<TestServer::Link> TestServer::waitLink(unsigned i, ZuTime deadline)
   return link(i);
 }
 
-bool waitEstablished(
+template <typename Link> static bool ownerStorage(const Link &link)
+{
+  using Base = typename Link::Base;
+  bool valid = !(uintptr_t(&link) % Zm::CacheLineSize);
+  link.ownerLayout([&valid](const void *address, size_t size) {
+    valid &= !(uintptr_t(address) % Zm::CacheLineSize) && !(size % Zm::CacheLineSize);
+  });
+  valid &= uintptr_t(&link.handshakeKeys) >=
+    uintptr_t(static_cast<const Base *>(&link)) + sizeof(Base);
+  if (!valid) log_("concrete QUIC link owner storage overlaps a cache line or derived tail");
+  return valid;
+}
+
+static bool waitEstablished(
   const ZmRef<TestClient::Link> &client, TestServer &server,
   ZmRef<TestServer::Link> &peer, unsigned i = 0)
 {
   ZuTime deadline = Zm::now(10);
-  if (!client->waitConnected(deadline)) return false;
+  bool connected = client->waitConnected(deadline);
   peer = server.waitLink(i, deadline);
-  return peer && peer->waitConnected(deadline);
+  return connected && peer && peer->waitConnected(deadline) &&
+    ownerStorage(*client) && ownerStorage(*peer);
 }
 
 void TestServer::clearLinks()
@@ -572,19 +641,7 @@ void TestServer::clearLinks()
     links_[i] = nullptr;
 }
 
-// Accepted harness polling for UDP readiness and intermediate/diagnostic
-// states lacking an equivalent fixture completion callback at this base.
-template <typename L>
-bool waitUntil(L l)
-{
-  for (unsigned i = 0; i < 10000; ++i) {
-    if (l()) return true;
-    usleep(1000);
-  }
-  return false;
-}
-
-void waitThread(ZiMultiplex &mx, unsigned thread)
+static void waitThread(ZiMultiplex &mx, unsigned thread)
 {
 	ZmBlock<>{}([&mx, thread](auto wake) {
 	  mx.invoke([wake = ZuMv(wake)]() mutable { wake(); }, thread);
@@ -592,7 +649,7 @@ void waitThread(ZiMultiplex &mx, unsigned thread)
 }
 
 template <typename App>
-void waitDisconnect(App &app)
+static void waitDisconnect(App &app)
 {
   auto &mx = *app.mx();
   waitThread(mx, app.txThread());
@@ -606,7 +663,7 @@ void waitDisconnect(App &app)
 }
 
 #ifdef Zquic_DEBUG
-ZtString<> readFile_(ZuCSpan path)
+static ZtString<> readFile(ZuCSpan path)
 {
   ZtString<> data;
   ZiFile file{Zi::Path{path}, ZiFile::ReadOnly | ZiFile::GC};
@@ -622,7 +679,7 @@ ZtString<> readFile_(ZuCSpan path)
   return data;
 }
 
-ZuTuple<unsigned, bool> challengeSizes_(ZuCSpan sequence)
+ZuTuple<unsigned, bool> challengeSizes(ZuCSpan sequence)
 {
   using Node = ZfJSON::AnyNode;
   auto field = [](const Node *object, ZuCSpan key) -> const Node * {
@@ -676,7 +733,7 @@ ZuTuple<unsigned, bool> challengeSizes_(ZuCSpan sequence)
 }
 #endif
 
-void dumpDiag(
+static void dumpDiag(
   const char *name, const Zquic::LinkDiag &d, const Zquic::CryptoDiag &c)
 {
   std::cout <<
@@ -746,7 +803,7 @@ struct TempDir {
 
 };
 
-} // namespace
+
 
 template <typename Link>
 static void closeClient(const Link &link)
@@ -773,7 +830,7 @@ void testOwnedStreamAPI(const Sender &sender, const Receiver &receiver,
     Zquic::StreamTxBufAlloc<8192, 8192>>(&mx);
   auto backing = allocator->allocBuf();
   backing->skip = 9;
-  backing->append(reinterpret_cast<const uint8_t *>("prefix!"), 7);
+  backing->append(ZuBSpan{"prefix!"});
   backing->append(expected, N);
   backing->advance(7);
   bool accepted;
@@ -793,7 +850,7 @@ void testOwnedStreamAPI(const Sender &sender, const Receiver &receiver,
   ZQUIC_CHECK_RT(accepted && !backing, "owned buffer API admission/caller release failed");
   auto checkInput = [receiver](const auto &stream, const uint8_t *bytes, unsigned size) {
     auto id = stream->id();
-    return waitUntil([receiver, id, bytes, size]() {
+    return receiver->streamEvent.wait([receiver, id, bytes, size]() {
       auto incoming = findStream(receiver, id);
       if (!incoming) return false;
       return ZmBlock<bool>{}([receiver, incoming, bytes, size](auto wake) {
@@ -810,16 +867,16 @@ void testOwnedStreamAPI(const Sender &sender, const Receiver &receiver,
           wake(ok);
         });
       });
-    });
+    }, Zm::now(10));
   };
   ZQUIC_CHECK_RT(checkInput(output, expected, N), "owned protected bytes changed");
-  bool completed = waitUntil([sender, output]() {
+  bool completed = output->txEvent.wait([sender, output]() {
     return ZmBlock<bool>{}([sender, output](auto wake) {
       sender->app()->txRun([output, wake = ZuMv(wake)]() mutable {
         wake(output->finSent() && output->txDrained());
       });
     });
-  });
+  }, Zm::now(10));
   ZQUIC_CHECK_RT(completed, "owned buffer FIN/ACK did not drain");
   auto borrowedStream = openStream(sender);
   ZQUIC_CHECK_RT(borrowedStream, "borrowed stream did not open");
@@ -904,7 +961,8 @@ void testEndpointOpen()
   ZmRef<TestClient::Link> clientLink = new TestClient::Link{&client};
   clientLink->connect(
     Zquic::Host{"localhost"}, server.local().port(), ZiIP{"127.0.0.1"});
-  ZuCHECK(waitUntil([&clientLink]() { return clientLink->ready(); }),
+  ZuCHECK(client.rxEvent.wait(
+    [&clientLink]() { return clientLink->ready(); }, Zm::now(10)),
     "runtime client link did not become ready");
 #ifdef Zquic_DEBUG
   ZuCHECK(diag(clientLink).rx.endpointReady == 1 &&
@@ -1035,7 +1093,8 @@ void testEndpointOpen()
 
 	ZuCHECK(clientLink->close(), "runtime client disconnect did not complete");
 	waitDisconnect(server);
-	ZuCHECK(waitUntil([&serverLink]() { return serverLink->closed(); }),
+	ZuCHECK(serverLink->peerCloseEvent.wait(
+	  [&serverLink]() { return serverLink->closed(); }, Zm::now(10)),
 	  "runtime server did not observe client close");
 	// The endpoint shards are 3/4, not the multiplexer's default 1/2.
 	// Complete expiry before stop can cancel the pending close work.
@@ -1063,7 +1122,7 @@ void testEndpointOpen()
   server.final();
 
 #ifdef Zquic_DEBUG
-  ZtString<> qlog = readFile_(qlogPath.cspan());
+  ZtString<> qlog = readFile(qlogPath.cspan());
   ZuCHECK(qlog, "endpoint runtime qlog output missing");
   ZuCHECK(qlog.find<"\"type\":\"server\"">() >= 0,
     "endpoint runtime qlog missing server vantage point");
@@ -1305,11 +1364,12 @@ void testHandshakeKeyRetirement()
   bool established = waitEstablished(clientLink, server, serverLink);
   ZQUIC_CHECK_RT(established, "key retirement handshake failed");
   if (established) {
-    ZQUIC_CHECK_RT(waitUntil([&server]() { return bool(server.heldHandshakeDone); }),
+    ZQUIC_CHECK_RT(server.handshakeDoneEvent.wait(
+      [&server]() { return bool(server.heldHandshakeDone); }, Zm::now(10)),
       "key retirement did not hold HANDSHAKE_DONE");
-    ZQUIC_CHECK_RT(waitUntil([&serverLink]() {
-      return !handshakeKeysLive(serverLink);
-    }), "server retained Handshake keys pending HANDSHAKE_DONE acknowledgment");
+    waitThread(mx, server.rxThread());
+    ZQUIC_CHECK_RT(!handshakeKeysLive(serverLink),
+      "server retained Handshake keys pending HANDSHAKE_DONE acknowledgment");
     ZQUIC_CHECK_RT(handshakeKeysLive(clientLink) == 3,
       "client discarded Handshake keys before confirmation");
     ZQUIC_CHECK_RT(staleKeysStayRetired(serverLink),
@@ -1321,9 +1381,9 @@ void testHandshakeKeyRetirement()
       "key retirement confirmation flush failed");
     ZQUIC_CHECK_RT(clientLink->waitStreams(1, Zm::now(10)),
       "key retirement protected response did not arrive");
-    ZQUIC_CHECK_RT(waitUntil([&clientLink]() {
+    ZQUIC_CHECK_RT(client.rxEvent.wait([&clientLink] {
       return !handshakeKeysLive(clientLink);
-    }), "client retained Handshake keys after HANDSHAKE_DONE");
+    }, Zm::now(10)), "client retained Handshake keys after HANDSHAKE_DONE");
     ZQUIC_CHECK_RT(staleKeysStayRetired(clientLink),
       "stale TLS snapshot restored retired client Handshake keys");
   }
@@ -1385,20 +1445,13 @@ void testMigrationLoss()
 
   ZmRef<TestClient::Link> clientLink;
   ZmRef<TestServer::Link> serverLink;
-  auto exercise = [&]() {
+  auto exercise = [&client, &server, &clientLink, &serverLink, serverStart, clientInit]() {
     if (!serverStart || !clientInit) return;
-    bool listening = waitUntil([&server]() { return server.listening(); });
+    bool listening = server.listening(); // start() completed the engine startup
     ZQUIC_CHECK_RT(listening, "migration loss server did not listen");
     if (!listening) return;
     clientLink = new TestClient::Link{&client};
     clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
-    auto ready = [](const auto &link) {
-      return link && ZmBlock<bool>{}([&link](auto wake) {
-	link->app()->rxRun([link, wake = ZuMv(wake)]() mutable {
-	  wake(link->crypto().oneRTTReady());
-	});
-      });
-    };
     auto accepted = [&server]() {
       return ZmBlock<ZmRef<TestServer::Link>>{}([&server](auto wake) {
 	server.rxRun([&server, wake = ZuMv(wake)]() mutable {
@@ -1406,13 +1459,11 @@ void testMigrationLoss()
 	});
       });
     };
-    bool established = waitUntil([&]() {
-      if (!serverLink) serverLink = accepted();
-      return ready(clientLink) && ready(serverLink);
-    });
+    bool established = waitEstablished(clientLink, server, serverLink);
     ZQUIC_CHECK_RT(established, "migration loss UDP handshake failed");
     if (!established) return;
-    bool spare = waitUntil([&clientLink]() { return clientLink->spareCID(); });
+    bool spare = client.rxEvent.wait(
+      [&clientLink]() { return clientLink->spareCID(); }, Zm::now(10));
     ZQUIC_CHECK_RT(spare, "migration loss peer did not supply a spare CID");
     if (!spare) return;
     auto state = [&clientLink]() {
@@ -1423,21 +1474,21 @@ void testMigrationLoss()
     auto before = state();
     ZQUIC_CHECK_RT(before.active.local.port(),
       "migration loss initial UDP port is empty");
-    bool requested = ZmBlock<bool>{}([&](auto wake) {
+    bool requested = ZmBlock<bool>{}([&client, &clientLink](auto wake) {
       client.txRun([clientLink, wake = ZuMv(wake)]() mutable {
 	wake(clientLink->migrateLocal(ZiIP{"127.0.0.1"}));
       });
     });
     ZQUIC_CHECK_RT(requested, "migration loss local rebind was rejected");
     Zquic::MigrationResult after;
-    bool promoted = waitUntil([&]() {
+    bool promoted = clientLink->migrationEvent.wait([&after, &clientLink]() {
       after = ZmBlock<Zquic::MigrationResult>{}([&clientLink](auto wake) {
 	clientLink->app()->txRun([clientLink, wake = ZuMv(wake)]() mutable {
 	  wake(clientLink->promotion);
 	});
       });
       return after.state == Zquic::MigrationState::Promoted;
-    });
+    }, Zm::now(10));
     ZQUIC_CHECK_RT(client.migChallengeDrops == 1,
       "migration loss did not withhold exactly one candidate challenge");
     ZQUIC_CHECK_RT(promoted && after.success && after.active.validated &&
@@ -1449,9 +1500,13 @@ void testMigrationLoss()
 	clientLink->connectedCount == 1 && accepted() == serverLink,
       "migration loss replaced the established QUIC connection");
     if (!promoted) return;
-    bool serverPromoted = waitUntil([&serverLink]() {
-      return diag(serverLink).tx.pathValidationPromoted != 0;
-    });
+    bool serverPromoted = serverLink->migrationEvent.wait([&serverLink, &after]() {
+      auto state = ZmBlock<Zquic::MigrationResult>{}([&serverLink](auto wake) {
+	serverLink->migrationState(ZuMv(wake));
+      });
+      return state.active.validated &&
+	state.active.remote.port() == after.active.local.port();
+    }, Zm::now(10));
     ZQUIC_CHECK_RT(serverPromoted,
       "migration loss server did not validate its own candidate challenge");
     if (!serverPromoted) return;
@@ -1459,8 +1514,8 @@ void testMigrationLoss()
     auto stream = openStream(serverLink);
     ZQUIC_CHECK_RT(stream, "migration loss stream open failed");
     if (!stream) return;
-    constexpr ZuCSpan payload{"migration-loss-recovered"};
-    bool sent = ZmBlock<bool>{}([&](auto wake) {
+    constexpr auto payload = "migration-loss-recovered"_z;
+    bool sent = ZmBlock<bool>{}([&server, stream, payload](auto wake) {
       server.txRun([&server, stream, payload, wake = ZuMv(wake)]() mutable {
 	server.dropNextShort = 1;
 	auto tx = stream->txStream_();
@@ -1472,16 +1527,16 @@ void testMigrationLoss()
     });
     ZQUIC_CHECK_RT(sent, "migration loss direct stream serialization failed");
     auto id = stream->id();
-    bool received = waitUntil([&]() {
+    bool received = clientLink->streamEvent.wait([&client, &clientLink, id, payload]() {
       auto incoming = findStream(clientLink, id);
       if (!incoming) return false;
-      return ZmBlock<bool>{}([&](auto wake) {
+      return ZmBlock<bool>{}([&client, incoming, payload](auto wake) {
 	client.rxRun([incoming, payload, wake = ZuMv(wake)]() mutable {
 	  auto &rx = incoming->rxStream();
 	  unsigned offset = 0;
 	  bool ok = rx.length() == payload.length();
 	  if (ok) {
-	    auto n = rx.each(payload.length(), [&](auto part) -> int64_t {
+	    auto n = rx.each(payload.length(), [&offset, payload](auto part) -> int64_t {
 	      if (memcmp(part.data(), payload.data() + offset, part.length()))
 		return -1;
 	      offset += part.length();
@@ -1492,7 +1547,7 @@ void testMigrationLoss()
 	  wake(ok);
 	});
       });
-    });
+    }, Zm::now(10));
     ZQUIC_CHECK_RT(received,
       "migration loss changed or failed to deliver protected stream bytes");
     ZQUIC_CHECK_RT(server.droppedShort == 1,
@@ -1514,7 +1569,7 @@ void testMigrationLoss()
   if (clientInit) client.final();
   server.final();
 #ifdef Zquic_DEBUG
-  auto sizes = challengeSizes_(readFile_(clientQLog.cspan()));
+  auto sizes = challengeSizes(readFile(clientQLog.cspan()));
   ZQUIC_CHECK_RT(sizes.p<0>() >= 2 && sizes.p<1>(),
     "initial and recovered active PATH_CHALLENGE packets must each reach 1200 bytes; "
     "count=", sizes.p<0>(), " valid=", sizes.p<1>());
@@ -1645,19 +1700,24 @@ void testSrvMultiCxn()
 #endif
   unsigned errors = serverErrors;
   s0->disconnect();
-  ZuCHECK(waitUntil([&s0]() {
-      return s0->closed() && !s0->established();
-    }), "multi runtime server link did not close logically");
+  waitThread(mx, server.rxThread());
+  ZuCHECK(s0->closed() && !s0->established(),
+    "multi runtime server link did not close logically");
 
   auto c0Stale = openStream(c0, Zquic::StreamType::Duplex);
   auto c1Live = openStream(c1, Zquic::StreamType::Duplex);
   ZuCHECK(c0->send(c0Stale, "drop") && c1->send(c1Live, "alive"),
     "multi runtime post-close client stream sends failed");
 #ifdef Zquic_DEBUG
-  ZuCHECK(waitUntil([&server, &s1, failures, s1Bytes]() {
-      return endpointDiag(server).failures() > failures &&
-	diag(s1).rx.streamBytesRx >= s1Bytes + 5;
-    }), "multi runtime stale route drop or sibling delivery did not happen");
+  ZuTime deliveryDeadline = Zm::now(10);
+  bool dropped = server.dropEvent.wait([&server, failures]() {
+    return endpointDiag(server).failures() > failures;
+  }, deliveryDeadline);
+  bool delivered = s1->streamEvent.wait([&s1, s1Bytes]() {
+    return diag(s1).rx.streamBytesRx >= s1Bytes + 5;
+  }, deliveryDeadline);
+  ZuCHECK(dropped && delivered,
+    "multi runtime stale route drop or sibling delivery did not happen");
   ZuCHECK(diag(s0).rx.streamBytesRx == s0Bytes,
     "closed server link received stale routed data");
 #else
@@ -1677,9 +1737,9 @@ void testSrvMultiCxn()
       wake();
     });
   });
-  ZuCHECK(waitUntil([&server, &s1]() {
-      return server.disconnectStops == 1 && s1->disconnectedCount == 1;
-    }), "multi runtime disconnect did not initiate server stop");
+  ZuCHECK(s1->waitDisconnected(Zm::now(10)) && server.disconnectStops == 1 &&
+      s1->disconnectedCount == 1,
+    "multi runtime disconnect did not initiate server stop");
   for (unsigned i = 0; i < TestSrvCxnCount; ++i)
     clients[i]->closeAsync();
   server.stop();
@@ -1807,12 +1867,9 @@ void testRetryAddrValidate()
   ZuCHECK(!diag(clientLink).failures() &&
       !diag(serverLink).failures(),
     "retry runtime failure diagnostics mismatch");
-#ifdef Zquic_DEBUG
-  ZuCHECK(waitUntil([&clientLink, &serverLink]() {
-      return diag(clientLink).rx.newTokenRx >= 1 &&
-	diag(serverLink).tx.newTokenTx >= 1;
-    }), "retry runtime NEW_TOKEN was not exchanged");
-#endif
+  ZuCHECK(client.rxEvent.wait([&clientLink]() {
+      return clientLink->receivedNewToken();
+    }, Zm::now(10)), "retry runtime NEW_TOKEN was not exchanged");
 
   unsigned retryPkts = server.retryPkts;
   bool clientClosed = clientLink->close();
@@ -1866,7 +1923,7 @@ void testRetryAddrValidate()
   server.final();
 
 #ifdef Zquic_DEBUG
-  ZtString<> qlog = readFile_(qlogPath.cspan());
+  ZtString<> qlog = readFile(qlogPath.cspan());
   ZuCHECK(qlog, "retry runtime qlog output missing");
   ZuCHECK(qlog.find<"zquic:retry_sent">() >= 0,
     "retry runtime qlog missing retry_sent");
@@ -1987,12 +2044,9 @@ void testRejectedTokenQLog()
 	    mx.stop();
 	    return;
 	  }
-#ifdef Zquic_DEBUG
-  ZQUIC_CHECK_RT(waitUntil([&clientLink, &serverLink]() {
-      return diag(clientLink).rx.newTokenRx >= 1 &&
-	diag(serverLink).tx.newTokenTx >= 1;
-    }), "rejected-token runtime NEW_TOKEN was not exchanged");
-#endif
+  ZQUIC_CHECK_RT(client.rxEvent.wait([&clientLink]() {
+      return clientLink->receivedNewToken();
+    }, Zm::now(10)), "rejected-token runtime NEW_TOKEN was not exchanged");
   bool clientClosed = clientLink->close();
   ZQUIC_CHECK_RT(clientClosed && !clientLink->cxn(),
     "rejected-token runtime initial connection did not close");
@@ -2082,8 +2136,8 @@ void testRejectedTokenQLog()
   client.final();
 
 #ifdef Zquic_DEBUG
-  ZtString<> qlog = readFile_(qlogPath.cspan());
-  ZtString<> policyQlog = readFile_(policyQlogPath.cspan());
+  ZtString<> qlog = readFile(qlogPath.cspan());
+  ZtString<> policyQlog = readFile(policyQlogPath.cspan());
   ZQUIC_CHECK_RT(qlog, "rejected-token runtime qlog output missing");
   ZQUIC_CHECK_RT(policyQlog, "rejected-token policy qlog output missing");
   ZQUIC_CHECK_RT(qlog.find<"zquic:token_rejected">() >= 0,
@@ -2201,7 +2255,7 @@ void testIdleTimeoutQLog()
   server.final();
 
 #ifdef Zquic_DEBUG
-  ZtString<> qlog = readFile_(qlogPath.cspan());
+  ZtString<> qlog = readFile(qlogPath.cspan());
   ZuCHECK(qlog, "idle runtime qlog output missing");
   ZuCHECK(qlog.find<"quic:connection_closed">() >= 0,
     "idle runtime qlog missing connection_closed");

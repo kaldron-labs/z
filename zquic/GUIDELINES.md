@@ -118,12 +118,22 @@ Data does not independently select PTO before handshake confirmation.
 Candidate path proof retains priority over ordinary recovery for both active
 client migration and passive server rebinding.
 
+Preferred-server-address migration starts after client handshake confirmation.
+Keep the original endpoint active while probing the advertised address with
+its sequence-1 CID. Promote only after PATH_RESPONSE matches the challenge. RFC 9000 section
+8.2.3 permits that response to arrive on any network path. A failed probe closes only the candidate;
+endpoint teardown drains both sockets on their existing Rx/Tx owners.
+
 Server confirmation occurs at TLS completion; client confirmation occurs on
 HANDSHAKE_DONE. Retire the actual Handshake secrets on Rx and the independent
 Tx protector/recovery state on Tx. Defer server Rx retirement until its current
 CRYPTO delivery callback unwinds. Late crypto and ACK snapshots must not
-repopulate a retired packet-number space. Initial-key storage has a separate
-existing cross-owner read and is not changed by the Handshake retirement repair.
+repopulate a retired packet-number space. Initial packet construction uses the
+Tx-owned Initial secret published during setup/Retry; packetization must not read
+Rx crypto storage. Normal ACK metadata and completion use shared atomic
+publication in both directions, including incoming peer ACKs. Do not accompany
+ordinary publication with a cross-thread scheduler notification; posts are
+reserved for exceptional handoffs and wakeups.
 
 # qlog
 

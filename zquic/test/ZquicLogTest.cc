@@ -26,7 +26,25 @@ static Zi::Path testPath(ZuCSpan name)
   return ZiFile::append(g_residue, name);
 }
 
-static ZtString<> readFile_(const Zi::Path &path)
+struct LogQueues {
+  unsigned count = 0;
+  Ztc::QueueTelemetry ring, fallback;
+};
+
+static LogQueues logQueues()
+{
+  LogQueues result;
+  ZquicLogger::instance()->allQueues([&result](Ztc::Queue *queue) {
+    Ztc::QueueTelemetry row;
+    queue->telemetry(row);
+    ++result.count;
+    if (row.id == "quic:qlog:ring") result.ring = row;
+    if (row.id == "quic:qlog:fallback") result.fallback = row;
+  });
+  return result;
+}
+
+static ZtString<> readFile(const Zi::Path &path)
 {
   ZtString<> data;
   ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
@@ -385,7 +403,7 @@ void testQLogFileOutput()
   ZuCHECK(diag.recordsWritten >= 3, "qlog write diagnostics mismatch");
   ZuCHECK(diag.writerFailures == 0, "qlog writer failure");
 
-  ZtString<> data = readFile_(path);
+  ZtString<> data = readFile(path);
   ZuCHECK(data, "qlog output was not written");
   ZuCHECK(parseJSONSeq(data) >= 3, "qlog JSON-SEQ parse failed");
   ZuCHECK(hasQLogFileSchema(data), "qlog header missing file schema");
@@ -406,13 +424,14 @@ void testQLogFileOutput()
   ZuCHECK(hasPacketSent(data), "qlog event missing packet_sent");
   ZuCHECK(!hasZiLogPrefix(data), "qlog contains ZiLog text prefix");
 
-  ZtString<> aged = readFile_(agedPath);
+  ZtString<> aged = readFile(agedPath);
   ZuCHECK(aged.find<"old-qlog">() >= 0, "qlog output was not aged");
 #else
   ZquicLogParams params;
   params.enabled(true).path("ZquicLogTest.sqlog");
   ZquicLogger::Trace trace;
-  ZuCHECK(ZquicLogger::init(trace, params, Zquic::Vantage::Unknown), "compiled-out qlog init failed");
+  ZuCHECK(ZquicLogger::init(trace, params, Zquic::Vantage::Unknown),
+    "compiled-out qlog init failed");
   ZquicLogger::start();
   ZuCHECK(!ZquicLogger::enabled(), "compiled-out qlog enabled");
   PktEvt packet;
@@ -487,7 +506,7 @@ void testQLogAppTrace()
   ZuCHECK(diag.recordsWritten >= 2, "app trace qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "app trace qlog writer failure");
 
-  ZtString<> data = readFile_(path);
+  ZtString<> data = readFile(path);
   ZuCHECK(data, "app trace qlog output was not written");
   ZuCHECK(parseJSONSeq(data) >= 2, "app trace qlog JSON-SEQ parse failed");
   ZuCHECK(hasQLogVantage(data, "client"),
@@ -561,8 +580,8 @@ void testQLogMultiTraceGroups()
   ZuCHECK(diag.recordsWritten >= 5, "multi trace qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "multi trace qlog writer failure");
 
-  ZtString<> data1 = readFile_(path1);
-  ZtString<> data2 = readFile_(path2);
+  ZtString<> data1 = readFile(path1);
+  ZtString<> data2 = readFile(path2);
   ZuCHECK(data1, "multi trace 1 output was not written");
   ZuCHECK(data2, "multi trace 2 output was not written");
   ZuCHECK(parseJSONSeq(data1) >= 3,
@@ -712,7 +731,6 @@ void testQLogTypedTransportEvents()
   newCID.value = 4;
   newCID.length = 8;
   newCID.cxnID = CxnID{"qlogcid1"};
-  newCID.resetToken = ResetToken{"0123456789abcdef"};
   rxControl.frames.push(newCID);
 
   FrameEvt retireCID;
@@ -763,7 +781,7 @@ void testQLogTypedTransportEvents()
   ZuCHECK(diag.recordsWritten >= 8, "typed qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "typed qlog writer failure");
 
-  ZtString<> data = readFile_(path);
+  ZtString<> data = readFile(path);
   ZuCHECK(data, "typed qlog output was not written");
   ZuCHECK(parseJSONSeq(data) >= 8, "typed qlog JSON-SEQ parse failed");
   ZuCHECK(hasDatagramReceived(data), "datagram event missing");
@@ -789,8 +807,8 @@ void testQLogTypedTransportEvents()
   ZuCHECK(data.find<"\"connection_id\":\"716C6F6763696431\"">() >= 0,
     "NEW_CONNECTION_ID connection ID missing");
   ZuCHECK(data.find<
-    "\"stateless_reset_token\":\"30313233343536373839616263646566\"">() >= 0,
-    "NEW_CONNECTION_ID reset token missing");
+    "\"stateless_reset_token\"">() < 0,
+    "NEW_CONNECTION_ID reset token leaked");
   ZuCHECK(data.find<"\"connection_id\":\"\"">() < 0,
     "empty frame connection ID leaked");
   ZuCHECK(data.find<"\"stateless_reset_token\":\"\"">() < 0,
@@ -994,7 +1012,7 @@ void testQLogTypedRecoveryEvents()
 	  ZuCHECK(diag.recordsWritten >= 13, "recovery qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "recovery qlog writer failure");
 
-  ZtString<> data = readFile_(path);
+  ZtString<> data = readFile(path);
   ZuCHECK(data, "recovery qlog output was not written");
 	  ZuCHECK(parseJSONSeq(data) >= 13, "recovery qlog JSON-SEQ parse failed");
 	  ZuCHECK(hasRecoveryEvents(data), "recovery event coverage missing");
@@ -1208,7 +1226,7 @@ void testQLogTypedSecEvents()
   ZuCHECK(diag.recordsWritten >= 17, "security qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "security qlog writer failure");
 
-  ZtString<> data = readFile_(path);
+  ZtString<> data = readFile(path);
   ZuCHECK(data, "security qlog output was not written");
   ZuCHECK(parseJSONSeq(data) >= 17, "security qlog JSON-SEQ parse failed");
   ZuCHECK(hasSecEvents(data), "security event coverage missing");
@@ -1384,7 +1402,7 @@ void testQLogTypedPathCIDEvents()
   ZuCHECK(diag.recordsWritten >= 7, "path qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "path qlog writer failure");
 
-  ZtString<> data = readFile_(path);
+  ZtString<> data = readFile(path);
   ZuCHECK(data, "path qlog output was not written");
   ZuCHECK(parseJSONSeq(data) >= 5, "path qlog JSON-SEQ parse failed");
   ZuCHECK(hasPathCIDEvents(data), "path/CID event coverage missing");
@@ -1503,7 +1521,7 @@ void testQLogTypedStreamEvents()
   ZuCHECK(diag.recordsWritten >= 7, "stream qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "stream qlog writer failure");
 
-  ZtString<> data = readFile_(path);
+  ZtString<> data = readFile(path);
   ZuCHECK(data, "stream qlog output was not written");
   ZuCHECK(parseJSONSeq(data) >= 7, "stream qlog JSON-SEQ parse failed");
   ZuCHECK(hasStreamEvents(data), "stream event coverage missing");
@@ -1661,7 +1679,7 @@ void testQLogTypedMigrationEvents()
   ZuCHECK(diag.recordsWritten >= 16, "migration qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "migration qlog writer failure");
 
-  ZtString<> data = readFile_(path);
+  ZtString<> data = readFile(path);
   ZuCHECK(data, "migration qlog output was not written");
   ZuCHECK(parseJSONSeq(data) >= 20,
     "migration qlog JSON-SEQ parse failed");
@@ -1834,7 +1852,7 @@ void testQLogTypedCloseEvents()
   ZuCHECK(diag.recordsWritten >= 4, "close qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0, "close qlog writer failure");
 
-  ZtString<> data = readFile_(path);
+  ZtString<> data = readFile(path);
   ZuCHECK(data, "close qlog output was not written");
   ZuCHECK(parseJSONSeq(data) >= 4, "close qlog JSON-SEQ parse failed");
   ZuCHECK(hasCloseEvents(data), "close event coverage missing");
@@ -1934,9 +1952,13 @@ void testQLogStopDrain()
   ZquicLogParams params;
   params.enabled(true).path(testPath("ZquicLogDrain.sqlog")).ringSize(4096);
   ZquicLogger::Trace trace;
+  ZuCheck(!logQueues().count);
   ZuCheck(ZquicLogger::init(trace, params, Zquic::Vantage::Client));
   ZuCheck(ZquicLogger::start());
   ZuCheck(ZquicLogger::start());
+  auto queues = logQueues();
+  ZuCheck(queues.count == 2 && queues.ring.size >= 4096 && !queues.fallback.size &&
+    queues.ring.type == Ztc::QueueType::Tx && queues.fallback.type == Ztc::QueueType::Tx);
   ZmSemaphore held, release, stopped;
   ZmAtomic<unsigned> written = 0;
   ZmAtomic<unsigned> done = 0;
@@ -1948,6 +1970,10 @@ void testQLogStopDrain()
   for (unsigned i = 0; i < 10000; ++i)
     ZquicLogger::log(trace, [&written](auto &, ZuTime) { ++written; });
   ZuCheck(ZquicLogger::diag().ringBackPressure > 0);
+  queues = logQueues();
+  ZuCheck(queues.count == 2 && queues.ring.count && queues.ring.count <= queues.ring.size &&
+    queues.ring.full && queues.fallback.count && !queues.fallback.full);
+  unsigned full = queues.ring.full;
   ZquicLogger::stop([&done, &stopped](bool ok) {
     done = ok;
     stopped.post();
@@ -1957,6 +1983,14 @@ void testQLogStopDrain()
   ZuCheck(stopped.timedwait(Zm::now(10)) == 0);
   ZuCheck(done);
   ZuCheck(written == 10000);
+  ZuCheck(!logQueues().count);
+  // The same configured trace can reopen the singleton's queues after drain.
+  ZuCheck(ZquicLogger::start());
+  queues = logQueues();
+  ZuCheck(queues.count == 2 && !queues.ring.count && !queues.fallback.count &&
+    queues.ring.full >= full);
+  ZuCheck(ZquicLogger::stop());
+  ZuCheck(!logQueues().count);
   ZquicLogger::final(trace);
 #endif
 }

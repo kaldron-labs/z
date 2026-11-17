@@ -405,7 +405,7 @@ void testLossThresholds()
   ZuCHECK(tx.add(txPkt(1)) && tx.add(txPkt(2)) &&
       tx.add(txPkt(3)), "sent packet setup failed");
   ZuTime threshold = Zquic::timeUS(150);
-  ZuCHECK(!tx.nextLossTime(ZuCmp<uint64_t>::null(), threshold),
+  ZuCHECK(!*tx.nextLossTime(ZuCmp<uint64_t>::null(), threshold),
     "loss deadline was scheduled before any largest ACKed packet");
   ZuCHECK(tx.nextLossTime(4, threshold) == Zquic::timeUS(250),
     "next loss-deadline computation mismatch");
@@ -419,17 +419,17 @@ void testLossThresholds()
     "next loss-deadline after two oldest losses mismatch");
   ZuCHECK(tx.markTimeThreshLoss(4, Zquic::timeUS(450), threshold) == 1,
     "time-threshold loss missed final eligible packet");
-  ZuCHECK(!tx.nextLossTime(4, threshold),
+  ZuCHECK(!*tx.nextLossTime(4, threshold),
     "loss deadline remained after all eligible packets were lost");
 
   Zquic::PktTxSpace ackOnly;
   Zquic::SentPkt pkt = txPkt(5, 100, false);
-  ZuCHECK(ackOnly.add(pkt) && !ackOnly.nextLossTime(6, threshold),
+  ZuCHECK(ackOnly.add(pkt) && !*ackOnly.nextLossTime(6, threshold),
     "non-ack-eliciting packet scheduled a loss deadline");
 
   Zquic::PktTxSpace sameLargest;
   ZuCHECK(sameLargest.add(txPkt(4)) &&
-      !sameLargest.nextLossTime(4, threshold),
+      !*sameLargest.nextLossTime(4, threshold),
     "largest ACKed packet scheduled a loss deadline");
   ZuCHECK(!sameLargest.markTimeThreshLoss(
       4, Zquic::timeUS(1000), threshold),
@@ -973,6 +973,44 @@ void testAckManager()
       active.deadlineSet(Zquic::PktNumSpace::AppData) &&
       !active.immediate(Zquic::PktNumSpace::AppData),
     "ACK manager active ACK threshold did not reset after send");
+
+}
+
+void testAckCompletion()
+{
+  ZuTestScopeRT(testAckCompletion);
+
+  Zquic::AckManager partial;
+  constexpr auto space = Zquic::PktNumSpace::AppData;
+  ZQUIC_CHECK_RT(partial.received(space, 0, 1000, 50) &&
+      partial.received(space, 1, 1010, 50) && partial.immediate(space),
+    "partial completion setup failed");
+  partial.sent(space, 1);
+  ZQUIC_CHECK_RT(partial.pending(space) && !partial.immediate(space) &&
+      partial.deadline(space) == 1060 && !partial.due(space, 1050),
+    "partial completion retained the covered packet's threshold/deadline");
+  partial.sent(space, 1);
+  ZQUIC_CHECK_RT(partial.deadline(space) == 1060,
+    "duplicate completion changed a newer deadline");
+  ZQUIC_CHECK_RT(partial.received(space, 2, 1020, 50) && partial.immediate(space),
+    "remaining obligation did not count toward the two-packet threshold");
+  partial.sent(space, 3);
+  ZQUIC_CHECK_RT(!partial.pending(space), "latest completion did not clear the obligation");
+  partial.clear();
+  ZQUIC_CHECK_RT(partial.received(space, 0, 2000, 50) && partial.gen(space) == 4,
+    "reset reused an ACK obligation identity");
+  partial.sent(space, 3);
+  ZQUIC_CHECK_RT(partial.pending(space) && partial.deadline(space) == 2050,
+    "old-runtime completion cleared fresh ACK work");
+
+  Zquic::PktBuild encoded;
+  encoded.markAck(unsigned(space), 4, 12);
+  partial.received(space, 1, 2010, 50);
+  ZQUIC_CHECK_RT(encoded.ack(space) && encoded.ackGen() == 4 &&
+      encoded.ackLargest() == 12,
+    "encoded ACK identity changed with a newer receive obligation");
+  encoded.reset();
+  ZQUIC_CHECK_RT(!encoded.ack(space), "packet reset retained an encoded ACK identity");
 }
 
 void testLosslessFrameUpdates()
@@ -1037,5 +1075,6 @@ int main(int argc, char **argv)
   ZuTestCall(testFlowControlRetransmit);
   ZuTestCall(testPktNumSpaceBatchCursors);
   ZuTestCall(testAckManager);
+  ZuTestCall(testAckCompletion);
   ZuTestCall(testLosslessFrameUpdates);
 }

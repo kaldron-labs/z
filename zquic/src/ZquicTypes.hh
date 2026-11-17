@@ -41,7 +41,7 @@ ZuDerive(ParamString, ZtString<ZtStringHeapID<"Zquic.Param">>);
 
 class ZquicAPI ResetToken {
 public:
-  static constexpr unsigned Length = 16;
+  enum { Length = 16 };
 
   ResetToken() = default;
   explicit ResetToken(ZuBSpan token) { set(token); }
@@ -52,7 +52,7 @@ public:
   unsigned length() const { return m_valid ? Length : 0; }
   const uint8_t *data() const { return m_data.data(); }
   ZuBSpan bspan() const {
-    return ZuBSpan{m_data.data(), m_valid ? Length : 0};
+    return ZuBSpan{m_data.data(), length()};
   }
 
   bool equals(const ResetToken &) const;
@@ -69,7 +69,7 @@ private:
 
 class ZquicAPI PathChallenge {
 public:
-  static constexpr unsigned Length = 8;
+  enum { Length = 8 };
 
   PathChallenge() = default;
   explicit PathChallenge(ZuBSpan data) { set(data); }
@@ -80,7 +80,7 @@ public:
   unsigned length() const { return m_valid ? Length : 0; }
   const uint8_t *data() const { return m_data.data(); }
   ZuBSpan bspan() const {
-    return ZuBSpan{m_data.data(), m_valid ? Length : 0};
+    return ZuBSpan{m_data.data(), length()};
   }
 
   bool equals(ZuBSpan) const;
@@ -102,10 +102,10 @@ using PathData = ZuBArray<PathChallenge::Length>;
 enum { TLSEpochCount = 4 };
 using CryptoOffsets = ZuArray<size_t, TLSEpochCount + 1>;
 
-inline constexpr uint32_t Version1 = 0x00000001U;
-inline constexpr unsigned MinUDPPayload = 1200;
-inline constexpr unsigned BufSize = 1472;
-inline constexpr unsigned MinCIDLength = 8;
+enum { Version1 = 0x00000001U };
+enum { MinUDPPayload = 1200 };
+enum { BufSize = 1472 };
+enum { MinCIDLength = 8 };
 
 ZtEnumStruct(ZquicAPI, StreamError, int8_t, None, Reset, Stop);
 

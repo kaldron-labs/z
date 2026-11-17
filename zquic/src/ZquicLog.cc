@@ -315,7 +315,6 @@ struct QLogFrameData {
   uint64_t	retirePriorTo = 0;
   uint64_t	cxnIDLength = 0;
   ZuBSpan	cxnID;
-  ZuBSpan	statelessResetToken;
   uint64_t	ect0 = 0;
   uint64_t	ect1 = 0;
   uint64_t	ce = 0;
@@ -634,7 +633,6 @@ struct QLogParamsData {
   ZuBSpan	origDCID;
   ZuBSpan	initialSCID;
   ZuBSpan	retrySCID;
-  ZuBSpan	statelessResetToken;
   uint64_t	maxIdleTimeout = 0;
   uint64_t	maxUDPPayloadSize = 0;
   uint64_t	ackDelayExponent = 0;
@@ -995,11 +993,11 @@ ZquicLogger::ZquicLogger()
 ZquicLogger::~ZquicLogger()
 {
   // Do not use ZmSelf(): TLS may already be in teardown.
-  if (m_thread && m_thread.tid() != Zm::getTID()) {
+  if (m_lifecycle.thread && m_lifecycle.thread.tid() != Zm::getTID()) {
     Engine::stop();
-    m_thread.join();
+    m_lifecycle.thread.join();
   }
-  if (!m_ring.closed()) m_ring.close();
+  if (!m_coordination.ring.closed()) m_coordination.ring.close();
 }
 
 ZquicLogger *ZquicLogger::instance()
@@ -1014,18 +1012,18 @@ ZquicLogger *ZquicLogger::instance()
 bool ZquicLogger::init_(
   Trace &trace, const ZquicLogParams &params, Zquic::Vantage::T vantage)
 {
-  Guard guard(m_lock);
+  Guard guard(m_lifecycle.lock);
   if (!params.enabled()) return true;
-  if (!m_configured) {
-    m_params = params;
-    m_recordsEnqueued.store_(0);
-    m_recordsWritten.store_(0);
-    m_recordsDropped.store_(0);
-    m_ringBackPressure.store_(0);
-    m_writerFailures.store_(0);
-    m_bytesWritten.store_(0);
+  if (!m_lifecycle.configured) {
+    m_lifecycle.params = params;
+    m_producerStats.recordsEnqueued.store_(0);
+    m_writerStats.recordsWritten.store_(0);
+    m_producerStats.recordsDropped.store_(0);
+    m_producerStats.ringBackPressure.store_(0);
+    m_writerStats.writerFailures.store_(0);
+    m_writerStats.bytesWritten.store_(0);
   }
-  if (!trace.configured) ++m_configured;
+  if (!trace.configured) ++m_lifecycle.configured;
   trace.sink.final();
   trace.configured = true;
   trace.sinkOpened = false;
@@ -1039,32 +1037,39 @@ void ZquicLogger::start_()
 {
   bool ok = false;
   {
-    Guard guard(m_lock);
-    if (m_configured) {
-      m_ring.init(ZmRingParams{m_params.ringSize()});
-      ok = m_ring.open(Ring::Read | Ring::Write) == Zu::OK;
-      if (!ok) ++m_writerFailures;
+    Guard guard(m_lifecycle.lock);
+    if (m_lifecycle.configured) {
+      m_coordination.ring.init(ZmRingParams{m_lifecycle.params.ringSize()});
+      ok = m_coordination.ring.open(Ring::Read | Ring::Write) == Zu::OK;
+      if (ok) {
+	m_coordination.ring.initQueue(nullptr, "quic:qlog", "ring",
+	  Ztc::QueueType::Tx, m_coordination.ring.size());
+	m_coordination.queue.initQueue(nullptr, "quic:qlog", "fallback",
+	  Ztc::QueueType::Tx);
+      } else {
+	++m_writerStats.writerFailures;
+      }
     }
   }
   started(ok);
   if (ok) {
-    work_();
+    workLoop();
     Engine::stopped();
   }
 }
 
 void ZquicLogger::wake()
 {
-  Guard guard(m_lock);
-  m_ring.eof(true);
+  Guard guard(m_lifecycle.lock);
+  m_coordination.ring.eof(true);
 }
 
 void ZquicLogger::stop_()
 {
   {
-    Guard guard(m_lock);
-    m_ring.close();
-    m_activeTrace = nullptr;
+    Guard guard(m_lifecycle.lock);
+    m_coordination.ring.close();
+    m_writer.activeTrace = nullptr;
   }
   Engine::stopped(true);
 }
@@ -1072,8 +1077,8 @@ void ZquicLogger::stop_()
 void ZquicLogger::stopIdle_(CtrlFn fn)
 {
   {
-    Guard guard(m_lock);
-    if (m_configured) {
+    Guard guard(m_lifecycle.lock);
+    if (m_lifecycle.configured) {
       guard.unlock();
       fn(true);
       return;
@@ -1084,18 +1089,18 @@ void ZquicLogger::stopIdle_(CtrlFn fn)
 
 void ZquicLogger::final_(Trace &trace)
 {
-  closeTrace_(trace);
+  closeTrace(trace);
 }
 
 ZquicLogDiag ZquicLogger::diag_() const
 {
   return {
-    m_recordsEnqueued.load_(),
-    m_recordsWritten.load_(),
-    m_recordsDropped.load_(),
-    m_ringBackPressure.load_(),
-    m_writerFailures.load_(),
-    m_bytesWritten.load_()
+    m_producerStats.recordsEnqueued.load_(),
+    m_writerStats.recordsWritten.load_(),
+    m_producerStats.recordsDropped.load_(),
+    m_producerStats.ringBackPressure.load_(),
+    m_writerStats.writerFailures.load_(),
+    m_writerStats.bytesWritten.load_()
   };
 }
 
@@ -1105,7 +1110,7 @@ void ZquicLogger::cxnStarted_(Trace &trace, CxnStartedEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeCxnStarted_(event_, time);
+    this_->writeCxnStarted(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1117,7 +1122,7 @@ void ZquicLogger::dgramSent_(Trace &trace, DgramEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeDatagramEvt_(EvtName::UDPTx, event_, time);
+    this_->writeDatagramEvt(EvtName::UDPTx, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1129,7 +1134,7 @@ void ZquicLogger::dgramRecv_(Trace &trace, DgramEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeDatagramEvt_(EvtName::UDPRx, event_, time);
+    this_->writeDatagramEvt(EvtName::UDPRx, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1141,7 +1146,7 @@ void ZquicLogger::pktSent_(Trace &trace, PktEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writePktEvt_(EvtName::PktSent, event_, time);
+    this_->writePktEvt(EvtName::PktSent, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1153,7 +1158,7 @@ void ZquicLogger::pktRecv_(Trace &trace, PktEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writePktEvt_(EvtName::PktRecv, event_, time);
+    this_->writePktEvt(EvtName::PktRecv, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1165,7 +1170,7 @@ void ZquicLogger::pktBuf_(Trace &trace, PktEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writePktEvt_(EvtName::PktBuf, event_, time);
+    this_->writePktEvt(EvtName::PktBuf, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1177,7 +1182,7 @@ void ZquicLogger::pktDrop_(Trace &trace, PktEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writePktEvt_(EvtName::PktDrop, event_, time);
+    this_->writePktEvt(EvtName::PktDrop, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1189,7 +1194,7 @@ void ZquicLogger::pktsAcked_(Trace &trace, AckEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeAckEvt_(EvtName::PktsAcked, event_, time);
+    this_->writeAckEvt(EvtName::PktsAcked, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1201,7 +1206,7 @@ void ZquicLogger::pktLost_(Trace &trace, RecLogEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writePktLost_(event_, time);
+    this_->writePktLost(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1213,7 +1218,7 @@ void ZquicLogger::recPktLost_(Trace &trace, RecLogEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writePktLost_(event_, time);
+    this_->writePktLost(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1225,7 +1230,7 @@ void ZquicLogger::markRetrans_(Trace &trace, RecLogEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeMarkRetrans_(event_, time);
+    this_->writeMarkRetrans(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1237,7 +1242,7 @@ void ZquicLogger::metricsUpd_(Trace &trace, RecLogEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeRecMetrics_(event_, time);
+    this_->writeRecMetrics(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1249,7 +1254,7 @@ void ZquicLogger::lossTimerUpd_(Trace &trace, RecLogEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeTimerEvt_(event_, time);
+    this_->writeTimerEvt(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1261,7 +1266,7 @@ void ZquicLogger::congStateUpd_(Trace &trace, RecLogEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeCongState_(event_, time);
+    this_->writeCongState(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1273,7 +1278,7 @@ void ZquicLogger::ecnStateUpd_(Trace &trace, ECNEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeECNEvt_(event_, time);
+    this_->writeECNEvt(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1285,7 +1290,7 @@ void ZquicLogger::keyUpdated_(Trace &trace, SecEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeKeyEvt_(EvtName::KeyUpd, event_, time);
+    this_->writeKeyEvt(EvtName::KeyUpd, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1297,7 +1302,7 @@ void ZquicLogger::keyRetired_(Trace &trace, SecEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeKeyEvt_(EvtName::KeyDiscarded, event_, time);
+    this_->writeKeyEvt(EvtName::KeyDiscarded, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1309,7 +1314,7 @@ void ZquicLogger::paramsSet_(Trace &trace, ParamsEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeParams_(event_, time);
+    this_->writeParams(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1321,7 +1326,7 @@ void ZquicLogger::alpnInfo_(Trace &trace, SecEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeALPNEvt_(event_, time);
+    this_->writeALPNEvt(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1333,7 +1338,7 @@ void ZquicLogger::versionInfo_(Trace &trace, VersionEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeVersion_(event_, time);
+    this_->writeVersion(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1345,7 +1350,7 @@ void ZquicLogger::tlsAlert_(Trace &trace, SecEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeSecEvt_(EvtName::TLSAlert, event_, time);
+    this_->writeSecEvt(EvtName::TLSAlert, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1359,7 +1364,7 @@ void ZquicLogger::secEvt_(
   auto fn_ = [trace = &trace, name_ = name, event_ = ZuMv(event), time](
     ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeSecEvt_(name_, event_, time);
+    this_->writeSecEvt(name_, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1371,7 +1376,7 @@ void ZquicLogger::pathUpdated_(Trace &trace, PathEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writePathEvt_(EvtName::TupleAssigned, event_, time);
+    this_->writePathEvt(EvtName::TupleAssigned, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1383,7 +1388,7 @@ void ZquicLogger::pathValidUpd_(Trace &trace, PathEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writePathValid_(event_, time);
+    this_->writePathValid(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1395,7 +1400,7 @@ void ZquicLogger::pmtudUpdated_(Trace &trace, PathEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeMTUEvt_(event_, time);
+    this_->writeMTUEvt(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1407,7 +1412,7 @@ void ZquicLogger::cidUpdated_(Trace &trace, CIDEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeCIDEvt_(EvtName::CIDUpd, event_, time);
+    this_->writeCIDEvt(EvtName::CIDUpd, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1420,7 +1425,7 @@ void ZquicLogger::migrationUpdated_(Trace &trace, MigrationEvt event)
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](
     ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeMigrationEvt_(event_, time);
+    this_->writeMigrationEvt(event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1432,7 +1437,7 @@ void ZquicLogger::streamStateUpd_(Trace &trace, StreamEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeStreamEvt_(
+    this_->writeStreamEvt(
       EvtName::StreamStateUpd, event_, time);
   };
   Fn fn{fn_};
@@ -1445,7 +1450,7 @@ void ZquicLogger::streamDataMoved_(Trace &trace, StreamDataEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeStreamData_(
+    this_->writeStreamData(
       EvtName::StreamDataMoved, event_, time);
   };
   Fn fn{fn_};
@@ -1459,7 +1464,7 @@ void ZquicLogger::cxnDataBlockedUpd_(Trace &trace,
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeCxnBlocked_(
+    this_->writeCxnBlocked(
       EvtName::CxnDataBlockedUpd, event_, time);
   };
   Fn fn{fn_};
@@ -1473,7 +1478,7 @@ void ZquicLogger::streamDataBlockedUpd_(Trace &trace,
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeStreamBlocked_(
+    this_->writeStreamBlocked(
       EvtName::StreamDataBlockedUpd, event_, time);
   };
   Fn fn{fn_};
@@ -1486,7 +1491,7 @@ void ZquicLogger::cxnClosed_(Trace &trace, CloseEvt event)
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeCloseEvt_(EvtName::CxnClosed, event_, time);
+    this_->writeCloseEvt(EvtName::CxnClosed, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
@@ -1499,47 +1504,47 @@ void ZquicLogger::cxnStateUpd_(Trace &trace,
   ZuTime time = Zm::now();
   auto fn_ = [trace = &trace, event_ = ZuMv(event), time](ZquicLogger *this_) mutable {
     if (!this_->useTrace(trace)) return;
-    this_->writeCxnState_(
+    this_->writeCxnState(
       EvtName::CxnStateUpd, event_, time);
   };
   Fn fn{fn_};
   log__(fn);
 }
 
-void ZquicLogger::work_()
+void ZquicLogger::workLoop()
 {
   bool draining = false;
   for (;;) {
-    if (ZuLikely(!m_queueCount.load_())) goto shift;
-    if (Fn fn = m_queue.shift()) {
+    if (ZuLikely(!m_coordination.queueCount.load_())) goto shift;
+    if (Fn fn = m_coordination.queue.shift()) {
       if (ZuLikely(tryPush_(fn)))
-	--m_queueCount;
+	--m_coordination.queueCount;
       else
-	m_queue.unshift(ZuMv(fn));
+	m_coordination.queue.unshift(ZuMv(fn));
     }
 shift:
-    if (draining && !m_queueCount.load_()) m_ring.eof(true);
-    if (void *ptr = m_ring.shift()) {
-      m_activeTrace = nullptr;
-      m_ring.shift2(Fn::invoke(ptr, this));
+    if (draining && !m_coordination.queueCount.load_()) m_coordination.ring.eof(true);
+    if (void *ptr = m_coordination.ring.shift()) {
+      m_writer.activeTrace = nullptr;
+      m_coordination.ring.shift2(Fn::invoke(ptr, this));
     } else {
-      if (m_ring.readStatus() == Zu::EndOfFile) {
-	if (!m_queueCount.load_()) break;
+      if (m_coordination.ring.readStatus() == Zu::EndOfFile) {
+	if (!m_coordination.queueCount.load_()) break;
 	// Reopen admission only for the writer's overflow drain.
 	draining = true;
-	m_ring.eof(false);
+	m_coordination.ring.eof(false);
       }
     }
   }
-  m_activeTrace = nullptr;
+  m_writer.activeTrace = nullptr;
 }
 
 bool ZquicLogger::tryPush_(Fn &fn)
 {
   unsigned size = fn.pushSize();
-  if (void *ptr = m_ring.tryPush(size)) {
+  if (void *ptr = m_coordination.ring.tryPush(size)) {
     fn.push(ptr);
-    m_ring.push2(ptr, size);
+    m_coordination.ring.push2(ptr, size);
     return true;
   }
   return false;
@@ -1550,43 +1555,43 @@ bool ZquicLogger::useTrace(Trace *trace)
   if (!trace || !trace->configured) return false;
   if (!trace->sinkOpened) {
     if (!trace->sink.init(trace->params.path(), trace->params.age())) {
-      ++m_writerFailures;
+      ++m_writerStats.writerFailures;
       return false;
     }
     trace->sinkOpened = true;
   }
-  m_activeTrace = trace;
+  m_writer.activeTrace = trace;
   return true;
 }
 
-void ZquicLogger::closeTrace_(Trace &trace)
+void ZquicLogger::closeTrace(Trace &trace)
 {
   if (trace.sinkOpened)
     trace.sink.final();
-  Guard guard(m_lock);
-  if (trace.configured && m_configured) --m_configured;
+  Guard guard(m_lifecycle.lock);
+  if (trace.configured && m_lifecycle.configured) --m_lifecycle.configured;
   trace.configured = false;
   trace.sinkOpened = false;
   trace.headerWritten = false;
   trace.vantage = Zquic::Vantage::Unknown;
   trace.params = {};
-  if (!m_configured) {
-    m_params = {};
+  if (!m_lifecycle.configured) {
+    m_lifecycle.params = {};
   }
 }
 
 bool ZquicLogger::write_(Trace *trace, ZuCSpan data)
 {
   if (!useTrace(trace)) return false;
-  if (!writeHeader_(trace)) return false;
+  if (!writeHeader(trace)) return false;
   if (!trace->sink.write(data)) {
-    ++m_writerFailures;
+    ++m_writerStats.writerFailures;
     return false;
   }
   return true;
 }
 
-bool ZquicLogger::writeHeader_(Trace *trace)
+bool ZquicLogger::writeHeader(Trace *trace)
 {
   if (!trace || trace->headerWritten) return true;
   trace->headerWritten = true;
@@ -1615,11 +1620,11 @@ bool ZquicLogger::writeHeader_(Trace *trace)
   ZfJSON::save<ZuFacet::JSON>(buf, header);
   buf << '\n';
   if (!trace->sink.write(buf.cspan())) {
-    ++m_writerFailures;
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + buf.length());
   return true;
 }
 
@@ -1642,7 +1647,7 @@ struct QLogCxnStartedDataJSON {
   };
 };
 
-bool ZquicLogger::writeCxnStarted_(
+bool ZquicLogger::writeCxnStarted(
   const CxnStartedEvt &event, ZuTime time)
 {
   QLogCxnStartedEvt qevent{
@@ -1658,20 +1663,20 @@ bool ZquicLogger::writeCxnStarted_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeDatagramEvt_(
+bool ZquicLogger::writeDatagramEvt(
   EvtName::T name, const DgramEvt &event, ZuTime time)
 {
   QLogRawInfoArray raw;
@@ -1684,16 +1689,16 @@ bool ZquicLogger::writeDatagramEvt_(
     QLogDatagramData{1, ZuMv(raw), ZuMv(ecn)},
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
@@ -1867,9 +1872,6 @@ struct QLogFrameDataJSON {
 	  if (frame.cxnID)
 	    qlogJSONField<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
 	      s, comma, "connection_id", frame.cxnID);
-	  if (frame.statelessResetToken)
-	    qlogJSONField<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
-	      s, comma, "stateless_reset_token", frame.statelessResetToken);
 	  break;
 	case Zquic::FrameType::RetireCxnID:
 	  qlogJSONField<Facet, Filter, ZfFieldTC::UInt64>(
@@ -1947,9 +1949,6 @@ struct QLogParamsDataJSON {
       if (params.retrySCID)
 	qlogJSONField<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
 	  s, comma, "retry_source_connection_id", params.retrySCID);
-      if (params.statelessResetToken)
-	qlogJSONField<Facet, Filter, ZfFieldTC::Bytes, BytesHexProps>(
-	  s, comma, "stateless_reset_token", params.statelessResetToken);
       qlogJSONField<Facet, Filter, ZfFieldTC::Bool>(
 	s, comma, "disable_active_migration", params.disableActiveMigration);
       qlogJSONField<Facet, Filter, ZfFieldTC::UInt64>(
@@ -2189,7 +2188,6 @@ static QLogFrameArray qlogFrames(
 	qframe.retirePriorTo = frame.value;
 	qframe.cxnIDLength = frame.length;
 	qframe.cxnID = frame.cxnID;
-	qframe.statelessResetToken = frame.resetToken.bspan();
 	break;
       case Zquic::FrameType::RetireCxnID:
 	qframe.sequenceNumber = frame.value;
@@ -2255,7 +2253,7 @@ static PktTrigger::T qlogPktTrigger(
   }
 }
 
-bool ZquicLogger::writePktEvt_(
+bool ZquicLogger::writePktEvt(
   EvtName::T name, const PktEvt &event, ZuTime time)
 {
   QLogPacketEvt qevent{
@@ -2275,20 +2273,20 @@ bool ZquicLogger::writePktEvt_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeAckEvt_(
+bool ZquicLogger::writeAckEvt(
   EvtName::T name, const AckEvt &event, ZuTime time)
 {
   QLogPktNumArray packetNumbers;
@@ -2305,16 +2303,16 @@ bool ZquicLogger::writeAckEvt_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
@@ -2331,7 +2329,7 @@ static PktLostTrigger::T qlogLossTrigger(
   }
 }
 
-bool ZquicLogger::writePktLost_(
+bool ZquicLogger::writePktLost(
   const RecLogEvt &event, ZuTime time)
 {
   QLogPktLostEvt qevent{
@@ -2346,20 +2344,20 @@ bool ZquicLogger::writePktLost_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeMarkRetrans_(
+bool ZquicLogger::writeMarkRetrans(
   const RecLogEvt &event, ZuTime time)
 {
   if (!event.frames) return true;
@@ -2371,20 +2369,20 @@ bool ZquicLogger::writeMarkRetrans_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeRecMetrics_(
+bool ZquicLogger::writeRecMetrics(
   const RecLogEvt &event, ZuTime time)
 {
   QLogRecMetricsEvt qevent{
@@ -2401,16 +2399,16 @@ bool ZquicLogger::writeRecMetrics_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
@@ -2443,7 +2441,7 @@ static CongTrigger::T qlogCongTrigger(
   }
 }
 
-bool ZquicLogger::writeCongState_(
+bool ZquicLogger::writeCongState(
   const RecLogEvt &event, ZuTime time)
 {
   QLogCongStateEvt qevent{
@@ -2455,16 +2453,16 @@ bool ZquicLogger::writeCongState_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
@@ -2503,7 +2501,7 @@ static double qlogTimerDelta(
   return qlogMS(event.deadlineUS - now);
 }
 
-bool ZquicLogger::writeTimerEvt_(
+bool ZquicLogger::writeTimerEvt(
   const RecLogEvt &event, ZuTime time)
 {
   QLogTimerEvt qevent{
@@ -2517,20 +2515,20 @@ bool ZquicLogger::writeTimerEvt_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeECNEvt_(
+bool ZquicLogger::writeECNEvt(
   const ECNEvt &event, ZuTime time)
 {
   QLogECNEvt qevent{
@@ -2542,16 +2540,16 @@ bool ZquicLogger::writeECNEvt_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
@@ -2599,7 +2597,7 @@ static KeyTrigger::T qlogKeyTrigger(
   }
 }
 
-bool ZquicLogger::writeKeyEvt_(
+bool ZquicLogger::writeKeyEvt(
   EvtName::T name, const SecEvt &event, ZuTime time)
 {
   QLogKeyEvt qevent{
@@ -2614,20 +2612,20 @@ bool ZquicLogger::writeKeyEvt_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeParams_(
+bool ZquicLogger::writeParams(
   const ParamsEvt &event, ZuTime time)
 {
   QLogParamsEvt qevent{
@@ -2638,8 +2636,6 @@ bool ZquicLogger::writeParams_(
       event.origDCID,
       event.initialSCID,
       event.retrySCID,
-      event.statelessResetTokenPresent ?
-	event.statelessResetToken.bspan() : ZuBSpan{},
       event.maxIdleTimeout,
       event.maxUDPPayloadSize,
       event.ackDelayExponent,
@@ -2655,20 +2651,20 @@ bool ZquicLogger::writeParams_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeALPNEvt_(
+bool ZquicLogger::writeALPNEvt(
   const SecEvt &event, ZuTime time)
 {
   QLogALPNEvt qevent{
@@ -2677,20 +2673,20 @@ bool ZquicLogger::writeALPNEvt_(
     QLogALPNData{QLogALPNID{event.alpn}},
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeVersion_(
+bool ZquicLogger::writeVersion(
   const VersionEvt &event, ZuTime time)
 {
   QLogVersionEvt qevent{
@@ -2704,20 +2700,20 @@ bool ZquicLogger::writeVersion_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeSecEvt_(
+bool ZquicLogger::writeSecEvt(
   EvtName::T name, const SecEvt &event, ZuTime time)
 {
   QLogSecEvt qevent{
@@ -2735,20 +2731,20 @@ bool ZquicLogger::writeSecEvt_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writePathEvt_(
+bool ZquicLogger::writePathEvt(
   EvtName::T name, const PathEvt &event, ZuTime time)
 {
   QLogPathEvt qevent{
@@ -2757,20 +2753,20 @@ bool ZquicLogger::writePathEvt_(
     QLogTupleAssignedData{event.tupleID, event.attemptID},
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeMTUEvt_(
+bool ZquicLogger::writeMTUEvt(
   const PathEvt &event, ZuTime time)
 {
   QLogMTUEvt qevent{
@@ -2783,20 +2779,20 @@ bool ZquicLogger::writeMTUEvt_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writePathValid_(
+bool ZquicLogger::writePathValid(
   const PathEvt &event, ZuTime time)
 {
   bool success = event.validated &&
@@ -2812,20 +2808,20 @@ bool ZquicLogger::writePathValid_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeCIDEvt_(
+bool ZquicLogger::writeCIDEvt(
   EvtName::T name, const CIDEvt &event, ZuTime time)
 {
   bool retired =
@@ -2844,20 +2840,20 @@ bool ZquicLogger::writeCIDEvt_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeMigrationEvt_(
+bool ZquicLogger::writeMigrationEvt(
   const MigrationEvt &event, ZuTime time)
 {
   QLogMigrationEvt qevent{
@@ -2894,20 +2890,20 @@ bool ZquicLogger::writeMigrationEvt_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeStreamEvt_(
+bool ZquicLogger::writeStreamEvt(
   EvtName::T name, const StreamEvt &event, ZuTime time)
 {
   QLogStreamEvt qevent{
@@ -2927,20 +2923,20 @@ bool ZquicLogger::writeStreamEvt_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeStreamData_(
+bool ZquicLogger::writeStreamData(
   EvtName::T name, const StreamDataEvt &event, ZuTime time)
 {
   QLogStreamMovedEvt qevent{
@@ -2956,20 +2952,20 @@ bool ZquicLogger::writeStreamData_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeCxnBlocked_(
+bool ZquicLogger::writeCxnBlocked(
   EvtName::T name, const BlockedEvt &event, ZuTime time)
 {
   QLogCxnBlockedEvt qevent{
@@ -2982,20 +2978,20 @@ bool ZquicLogger::writeCxnBlocked_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeStreamBlocked_(
+bool ZquicLogger::writeStreamBlocked(
   EvtName::T name, const BlockedEvt &event, ZuTime time)
 {
   QLogStreamBlockedEvt qevent{
@@ -3009,20 +3005,20 @@ bool ZquicLogger::writeStreamBlocked_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeCloseEvt_(
+bool ZquicLogger::writeCloseEvt(
   EvtName::T name, const CloseEvt &event, ZuTime time)
 {
   QLogCloseEvt qevent{
@@ -3038,20 +3034,20 @@ bool ZquicLogger::writeCloseEvt_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 
-bool ZquicLogger::writeCxnState_(
+bool ZquicLogger::writeCxnState(
   EvtName::T name,
   const CxnStateEvt &event, ZuTime time)
 {
@@ -3064,16 +3060,16 @@ bool ZquicLogger::writeCxnState_(
     },
     event.linkInfo
   };
-  m_buf.length(0);
-  m_buf << char(0x1e);
-  ZfJSON::save<ZuFacet::JSON>(m_buf, qevent);
-  m_buf << '\n';
-  if (!write_(m_activeTrace, m_buf.cspan())) {
-    ++m_writerFailures;
+  m_writer.buf.length(0);
+  m_writer.buf << char(0x1e);
+  ZfJSON::save<ZuFacet::JSON>(m_writer.buf, qevent);
+  m_writer.buf << '\n';
+  if (!write_(m_writer.activeTrace, m_writer.buf.cspan())) {
+    ++m_writerStats.writerFailures;
     return false;
   }
-  ++m_recordsWritten;
-  m_bytesWritten.store_(m_bytesWritten.load_() + m_buf.length());
+  ++m_writerStats.recordsWritten;
+  m_writerStats.bytesWritten.store_(m_writerStats.bytesWritten.load_() + m_writer.buf.length());
   return true;
 }
 

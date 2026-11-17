@@ -36,7 +36,7 @@ struct TxPkt : public ZiIOBuf {
   using ZiIOBuf::ZiIOBuf;
 };
 
-using RxStream = ZiRxStream<ZiRxQueue>;
+using RxStream = Queue<ZiRxStream<ZiRxQueue>>;
 
 template <
   unsigned Size = BufSize,

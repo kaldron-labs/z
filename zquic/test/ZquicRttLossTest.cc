@@ -44,7 +44,7 @@ static void deadline(const Zquic::RttEstimator &rtt, ZuTime expected)
   ZuCheckRT(tx.markTimeThreshLoss(
       2, due, rtt.timeThreshold(), &bytes, &lostSent) == 1 &&
       bytes == 1200 && lostSent == sent && !tx.bytesInFlight() &&
-      !tx.nextLossTime(2, rtt.timeThreshold()),
+      !*tx.nextLossTime(2, rtt.timeThreshold()),
     log_("packet must become lost exactly at deadline and retire once"));
   ZuCheckRT(!tx.markTimeThreshLoss(2, due, rtt.timeThreshold(), &bytes) && !bytes,
     log_("repeated time loss scan must not retire bytes twice"));
@@ -87,10 +87,24 @@ void testOtherRTT()
   ZuTestCall(deadline, floor, Zquic::RttEstimator::Granularity);
 }
 
+void testDeadlineSentinels()
+{
+  ZuTestScope(testDeadlineSentinels);
+  Zquic::PktTxSpace tx;
+  ZuCHECK(!*tx.nextLossTime(2, ZuTime{0}), "empty space returned a set deadline");
+  ZuCHECK(tx.add(packet(1, ZuTime{0})), "zero-time packet setup failed");
+  ZuTime due = tx.nextLossTime(2, ZuTime{0});
+  ZuCHECK(*due && due == ZuTime{0}, "valid zero deadline became unset");
+  ZuCHECK(!*tx.nextLossTime(2, ZuTime{}), "unset threshold produced a deadline");
+  ZuCHECK(tx.ack(1) && !*tx.nextLossTime(2, ZuTime{0}),
+    "fully acknowledged space retained a deadline");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testFallingRTT);
   ZuTestCall(testOtherRTT);
+  ZuTestCall(testDeadlineSentinels);
 }

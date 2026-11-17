@@ -24,6 +24,7 @@ struct SendProbe {
   bool shortResult = false, suffix = false;
   const uint8_t *original = nullptr;
   size_t originalLength = 0, suffixLength = 0;
+  unsigned allowance = 0;
 };
 static SendProbe sendProbe;
 
@@ -38,9 +39,12 @@ ssize_t sendmsg(int socket, const struct msghdr *msg, int flags)
       sendProbe.socket = socket;
   }
   if (sendProbe.socket == socket && sendProbe.hold) {
-    ++sendProbe.blocked;
-    errno = EAGAIN;
-    return -1;
+    if (sendProbe.allowance) --sendProbe.allowance;
+    else {
+      ++sendProbe.blocked;
+      errno = EAGAIN;
+      return -1;
+    }
   }
   if (sendProbe.socket == socket && sendProbe.shortResult && msg->msg_iovlen == 1) {
     auto &iov = msg->msg_iov[0];
@@ -68,12 +72,42 @@ static uint64_t nanosecs(clockid_t clock = CLOCK_MONOTONIC)
 
 using namespace ZuTestUtil;
 
+struct QueueHub : Ztc::Hub {
+  QueueHub() { Ztc::HubMgr::add(this); }
+  ~QueueHub() { Ztc::HubMgr::del(this); }
+  TelKey telKey() const override { return {Ztc::LinkType::QUIC, "endpoint-queues"}; }
+  void telemetry(Ztc::HubTelemetry &data) const override {
+    data.id = "endpoint-queues";
+    data.linkType = Ztc::LinkType::QUIC;
+  }
+  bool start() override { return true; }
+  bool stop() override { return true; }
+  unsigned allLinks(AllLinksFn) const override { return 0; }
+  unsigned allPools(AllPoolsFn) const override { return 0; }
+};
+
+template <typename Owner>
+static Ztc::QueueTelemetry queueSnapshot(Owner &owner, ZuCSpan id)
+{
+  Ztc::QueueTelemetry result;
+  owner.allQueues([&result, id](Ztc::Queue *queue) {
+    if (queue->telKey().p<1>() == id) queue->telemetry(result);
+  });
+  return result;
+}
+
+template <typename Owner> static unsigned queueCount(Owner &owner)
+{
+  return owner.allQueues([](Ztc::Queue *) {});
+}
+
 struct Endpoint : public Zquic_::Endpoint_<Endpoint> {
   using Base = Zquic_::Endpoint_<Endpoint>;
   using ReadyFn = ZmFn<void(bool), ZmFnHeapID<"Zquic.TxQueue.Ready">>;
   enum { EndpointRef = false };
 
   ReadyFn readyFn;
+  ZmFn<> downFn;
   ZmSemaphore done;
   unsigned received = 0, target = 3, last = 0;
   unsigned length = 0;
@@ -82,9 +116,9 @@ struct Endpoint : public Zquic_::Endpoint_<Endpoint> {
   bool ordered = true, gaps = false;
   ZiConnection *physical = nullptr; // valid until endpoint close/rebind
 
-  void endpointReady_(Base *) { auto fn = ZuMv(readyFn); fn(true); }
+  void endpointReady(Base *) { auto fn = ZuMv(readyFn); fn(true); }
   void endpointFailed(bool) { auto fn = ZuMv(readyFn); fn(false); }
-  void endpointDown_(Base *) { }
+  void endpointDown_(Base *) { auto fn = ZuMv(downFn); if (fn) fn(); }
   void endpointDatagram(Zquic::Datagram d) {
     unsigned value = 0;
     length = d.buf ? d.buf->length : 0;
@@ -107,14 +141,15 @@ struct Endpoint : public Zquic_::Endpoint_<Endpoint> {
       }
     });
   }
-  bool packet(unsigned value, ZiSockAddr addr) {
+  bool packet(unsigned value, ZiSockAddr addr,
+      Zquic_::EndpointTxToken token = {}, bool *blocked = nullptr) {
     auto buf = allocTxPkt();
     if (!buf) return false;
     memcpy(buf->end(), &value, sizeof(value));
     buf->length = sizeof(value);
     // Retain only for inspection of ZiTx's final physical owner handoff.
     auto observer = buf;
-    bool ok = send(ZuMv(buf), ZuMv(addr));
+    bool ok = send(ZuMv(buf), ZuMv(addr), Zquic::EcnMark::NotECT, false, token, blocked);
     if (ok && observer->owner != static_cast<Base *>(this))
       physical = static_cast<Zquic_::EndpointCxn<Base> *>(observer->owner);
     return ok;
@@ -123,6 +158,21 @@ struct Endpoint : public Zquic_::Endpoint_<Endpoint> {
     ZmBlock<>{}([this](auto wake) {
       disconnect([wake = ZuMv(wake)]() mutable { wake(); });
     });
+  }
+  bool queueIsolated() const {
+    using Cxn = Zquic_::EndpointCxn<Base>;
+    auto cxn = static_cast<Cxn *>(physical);
+    if (!cxn) return false;
+    bool owners = true;
+    auto check = [&owners](const void *address, size_t size) {
+      owners &= !(uintptr_t(address) % Zm::CacheLineSize) && !(size % Zm::CacheLineSize);
+    };
+    Base::ownerLayout(check);
+    cxn->ownerLayout(check);
+    auto queue = &cxn->txQueue;
+    return owners && !(uintptr_t(cxn) % Zm::CacheLineSize) &&
+      !(uintptr_t(queue) % Zm::CacheLineSize) &&
+      uintptr_t(queue) >= uintptr_t(static_cast<ZiConnection *>(cxn)) + sizeof(ZiConnection);
   }
 
 };
@@ -133,6 +183,36 @@ static ZiMxParams params()
     s.nThreads(2).thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2);
+}
+
+static void testReopenFromDown()
+{
+  ZuTestScope(testReopenFromDown);
+  ZiMultiplex mx{params()};
+  auto rxAllocator = Zquic::pktRxAllocator(&mx);
+  auto txAllocator = Zquic::pktTxAllocator(&mx);
+  QueueHub hub;
+  Endpoint endpoint;
+  ZuCheck(mx.start(), (return));
+  bool opened = endpoint.init(&mx, rxAllocator, txAllocator, &hub, 1) && endpoint.open();
+  ZuCheck(opened);
+  if (opened) {
+    bool reopened = false, started = false;
+    ZmSemaphore ready;
+    endpoint.downFn = [&endpoint, &reopened, &started, &ready] {
+      endpoint.readyFn = [&reopened, &ready](bool ok) { reopened = ok; ready.post(); };
+      started = endpoint.openUDP(
+	Zquic::PathMode::ServerUnconnected, ZiIP{"127.0.0.1"}, 0);
+    };
+    endpoint.close();
+    ZuCheck(ready.timedwait(Zm::now(3)) == 0 && started && reopened);
+    ZuCheck(queueCount(endpoint) == 4 &&
+      queueSnapshot(endpoint, "quic:endpoint:1:disconnect").type == Ztc::QueueType::Rx &&
+      queueSnapshot(endpoint, "quic:endpoint:1:2:udp").size == 4096);
+  }
+  endpoint.close();
+  ZuCheck(queueCount(endpoint) == 1);
+  ZuCheck(mx.stop());
 }
 
 static void testDrain()
@@ -248,6 +328,155 @@ static void testSustainedDrain()
     " maxTurnUS=", maxDrain/1000, " maxThreadCPUUS=", maxCPU/1000,
     " maxScheduledDelayUS=", maxDelay/1000,
     " observedRx=", rx.received);
+}
+
+// Exercise reservations against the actual ZiTx queue, with one kernel
+// completion permitted at a time. No traffic after the return drives a grant.
+static void testCapacityReturn()
+{
+  ZuTestScope(testCapacityReturn);
+  ZiMultiplex mx{params()};
+  auto rxAllocator = Zquic::pktRxAllocator(&mx);
+  auto txAllocator = Zquic::pktTxAllocator(&mx);
+  QueueHub hub;
+  Endpoint rx, tx;
+  rx.gaps = true;
+  rx.target = unsigned(-1);
+  Zquic_::EndpointTxWait first, second;
+  Zquic_::EndpointTxToken tokens[2];
+  unsigned ready[2]{}, retired[2]{}, cancelled[2]{};
+  ZmSemaphore terminal;
+  auto onTx = [&mx](auto fn) {
+    ZmBlock<>{}([&mx, fn = ZuMv(fn)](auto wake) mutable {
+      mx.txRun([fn = ZuMv(fn), wake = ZuMv(wake)]() mutable {
+	fn(); wake();
+      });
+    });
+  };
+  auto drain = [&onTx] {
+    // Registration -> grant -> caller terminal -> physical drain acknowledgment.
+    for (unsigned i = 0; i < 4; ++i) onTx([] {});
+  };
+  auto subscribe = [&tx, &tokens, &ready, &retired, &cancelled, &terminal](
+      Zquic_::EndpointTxWait &wait, unsigned i) {
+    tx.waitTx(wait, 2, 1,
+      [&tokens, &ready, &retired, &cancelled, &terminal, i](int result, auto token) {
+	if (result == Zquic_::EndpointTxResult::Ready) {
+	  tokens[i] = token;
+	  ++ready[i];
+	} else if (result == Zquic_::EndpointTxResult::Retired) ++retired[i];
+	else { ++cancelled[i]; terminal.post(); }
+      });
+  };
+  ZuCheck(mx.start(), (return));
+  bool opened = rx.init(&mx, rxAllocator, txAllocator, &hub, 1) &&
+    tx.init(&mx, rxAllocator, txAllocator, &hub, 2) && rx.open() && tx.open();
+  ZuCheck(opened);
+  if (opened) {
+    ZuCheck(queueCount(rx) + queueCount(tx) == 8);
+    bool filled = true;
+    onTx([&rx, &tx, &first, &second, &subscribe, &filled] {
+      sendProbe = {tx.local().port(), -1, true};
+      for (unsigned i = 0; i < 4096; ++i) filled &= tx.packet(i + 1, rx.local());
+      bool blocked = false;
+      filled &= !tx.packet(4097, rx.local(), {}, &blocked) && blocked;
+      auto diag = tx.diag();
+      filled &= diag.txPending == 1 && diag.txQueued == 4095;
+      subscribe(first, 0);
+      subscribe(second, 1);
+    });
+    drain();
+    ZuCheck(filled && !ready[0] && !ready[1]);
+    ZuCheck(tx.queueIsolated());
+    auto udp = queueSnapshot(tx, "quic:endpoint:2:1:udp");
+    auto pending = queueSnapshot(tx, "quic:endpoint:2:1:wait");
+    auto slots = queueSnapshot(tx, "quic:endpoint:2:1:reserved");
+    ZuCheck(udp.type == Ztc::QueueType::Tx && udp.count == 4096 &&
+      udp.size == 4096 && udp.full == 1 && pending.count == 2 &&
+      !slots.count && slots.size == 4096);
+    bool reserved = false;
+    onTx([&rx, &tx, &reserved] {
+      sendProbe.allowance = 1;
+      tx.physical->send(ZiTxFn{[](ZiTxContext &) { return true; }});
+      bool blocked = false;
+      reserved = !tx.packet(4097, rx.local(), {}, &blocked) && blocked;
+      auto diag = tx.diag();
+      reserved &= sendProbe.sent == 1 && diag.txPending == 1 && diag.txQueued == 4094;
+    });
+    drain();
+    ZuCheck(reserved && ready[0] == 1 && !ready[1]);
+    udp = queueSnapshot(tx, "quic:endpoint:2:1:udp");
+    pending = queueSnapshot(tx, "quic:endpoint:2:1:wait");
+    slots = queueSnapshot(tx, "quic:endpoint:2:1:reserved");
+    ZuCheck(udp.count == 4095 && udp.full == 2 && pending.count == 1 && slots.count == 1);
+    auto stale = tokens[0];
+    bool consumed = false;
+    onTx([&rx, &tx, &tokens, &consumed] {
+      consumed = tx.packet(4097, rx.local(), tokens[0]) &&
+	!tx.packet(4098, rx.local(), tokens[0]);
+    });
+    drain();
+    ZuCheck(consumed && retired[0] == 1 && !first.busy() && !ready[1]);
+    onTx([&tx] {
+      sendProbe.allowance = 1;
+      tx.physical->send(ZiTxFn{[](ZiTxContext &) { return true; }});
+    });
+    drain();
+    ZuCheck(ready[1] == 1 && second.busy());
+    bool released = false;
+    onTx([&tx, &second, &released] {
+      tx.cancelTx(second, [&released] { released = true; });
+    });
+    drain();
+    ZuCheck(terminal.timedwait(Zm::now(3)) == 0 &&
+      released && cancelled[1] == 1 && !second.busy());
+    // Reusing a caller epoch still issues a new, single-use request serial.
+    onTx([&first, &subscribe] { subscribe(first, 0); });
+    drain();
+    bool reused = false;
+    onTx([&rx, &tx, &tokens, &reused, stale] {
+      reused = tokens[0].serial != stale.serial && !tx.packet(4098, rx.local(), stale);
+      bool blocked = false;
+      reused &= !tx.packet(4098, rx.local(), {}, &blocked) && blocked;
+    });
+    ZuCheck(reused && ready[0] == 2);
+    onTx([&second, &subscribe] { subscribe(second, 1); });
+    drain();
+    // Rebinding retires the old capacity requests and exposes the replacement
+    // through the endpoint's existing physical connection references.
+    bool rebound = ZmBlock<bool>{}([&tx](auto wake) {
+      tx.rebindUDP(ZiIP{"127.0.0.1"}, 0, {}, 0,
+	[wake = ZuMv(wake)](bool ok, ZiSockAddr, bool) mutable { wake(ok); });
+    });
+    bool drained = terminal.timedwait(Zm::now(3)) == 0 &&
+      terminal.timedwait(Zm::now(3)) == 0;
+    ZuCheck(rebound && drained && cancelled[0] == 1 && cancelled[1] == 2 &&
+      !first.busy() && !second.busy());
+    ZuCheck(queueCount(rx) + queueCount(tx) == 8 &&
+      queueSnapshot(tx, "quic:endpoint:2:1:udp").type == -1 &&
+      queueSnapshot(tx, "quic:endpoint:2:1:wait").type == -1 &&
+      queueSnapshot(tx, "quic:endpoint:2:1:reserved").type == -1 &&
+      queueSnapshot(tx, "quic:endpoint:2:2:udp").size == 4096 &&
+      queueSnapshot(tx, "quic:endpoint:2:disconnect").type == Ztc::QueueType::Rx);
+    bool replacement = false;
+    onTx([&rx, &tx, &tokens, &replacement] {
+      sendProbe = {};
+      replacement = !tx.packet(4098, rx.local(), tokens[0]) && tx.packet(4098, rx.local());
+    });
+    ZuCheck(replacement);
+    ZuCheck(tx.queueIsolated());
+    // Closing an idle queue with a reserved slot drains its caller too.
+    onTx([&first, &subscribe] { subscribe(first, 0); });
+    drain();
+    ZuCheck(ready[0] == 3 && first.busy());
+    tx.close();
+    ZuCheck(cancelled[0] == 2 && !first.busy());
+    ZuCheck(queueCount(rx) + queueCount(tx) == 5);
+  }
+  tx.close(); rx.close();
+  ZuCheck(queueCount(rx) + queueCount(tx) == 2);
+  ZuCheck(mx.stop());
+  sendProbe = {};
 }
 
 static void testRebindQueued()
@@ -377,8 +606,10 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testDrain);
+  ZuTestCall(testReopenFromDown);
 #ifdef linux
   ZuTestCall(testSustainedDrain);
+  ZuTestCall(testCapacityReturn);
   ZuTestCall(testRebindQueued);
   ZuTestCall(testBadUDPBackend);
 #endif

@@ -7,7 +7,9 @@
 #ifndef ZquicInteropTest_HH
 #define ZquicInteropTest_HH
 
+#include <errno.h>
 #include <limits.h>
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -15,6 +17,8 @@
 
 #ifndef _WIN32
 #include <arpa/inet.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -27,6 +31,8 @@
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmThread.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiFile.hh>
@@ -230,6 +236,72 @@ inline bool writeCaddyfile(
 }
 
 #ifndef _WIN32
+// Caddy's run --pingback protocol echoes stdin after loading its configuration.
+// This is a startup event, independent of request timing or HTTP retry policy.
+struct CaddyStartup {
+  enum { NonceSize = 32 }; // Caddy's own start command uses a 32-byte nonce
+  ZtString<> address;
+  uint8_t nonce[NonceSize];
+  int listener = -1;
+  int input = -1;
+  int peer = -1;
+
+  ~CaddyStartup() {
+    if (peer >= 0) ::close(peer);
+    if (input >= 0) ::close(input);
+    if (listener >= 0) ::close(listener);
+  }
+  bool init() {
+    ZiFile random{Zi::Path{"/dev/urandom"}, ZiFile::ReadOnly | ZiFile::GC};
+    if (!random || random.read(nonce, NonceSize) != NonceSize) return false;
+    listener = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (listener < 0 || ::fcntl(listener, F_SETFL, O_NONBLOCK)) return false;
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (::bind(listener, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) ||
+	::listen(listener, 1)) return false;
+    socklen_t n = sizeof(addr);
+    if (::getsockname(listener, reinterpret_cast<sockaddr *>(&addr), &n)) return false;
+    address << "127.0.0.1:" << ntohs(addr.sin_port);
+    int pipeFD[2]; // POSIX pipe's read and write endpoints
+    if (::pipe(pipeFD)) return false;
+    input = pipeFD[0];
+    // The nonce fits in PIPE_BUF; preload it before any child can exit/close.
+    int written;
+    do { written = ::write(pipeFD[1], nonce, NonceSize); }
+    while (written < 0 && errno == EINTR);
+    ::close(pipeFD[1]);
+    return written == NonceSize;
+  }
+  static bool readable(int fd, ZuTime deadline) {
+    pollfd event{fd, POLLIN, 0};
+    for (;;) {
+      int remaining = (deadline - Zm::now()).millisecs();
+      if (remaining <= 0) return false;
+      int n = ::poll(&event, 1, remaining);
+      if (n < 0 && errno == EINTR) continue;
+      return n > 0 && (event.revents & POLLIN);
+    }
+  }
+  bool wait() {
+    ZuTime deadline = Zm::now(10);
+    if (!readable(listener, deadline)) return false;
+    peer = ::accept(listener, nullptr, nullptr);
+    if (peer < 0) return false;
+    uint8_t echoed[NonceSize];
+    unsigned offset = 0;
+    while (offset < NonceSize) {
+      if (!readable(peer, deadline)) return false;
+      int n = ::recv(peer, echoed + offset, NonceSize - offset, MSG_DONTWAIT);
+      if (n < 0 && errno == EINTR) continue;
+      if (n <= 0) return false;
+      offset += unsigned(n);
+    }
+    return !memcmp(echoed, nonce, NonceSize);
+  }
+};
+
 struct CaddyProcess {
   pid_t		pid = -1;
   ZtString<>	dataHome;
@@ -254,54 +326,65 @@ struct CaddyProcess {
       " caddy validate --config " << caddyfile << " >/dev/null 2>&1";
     if (!systemOK(::system(cmd.data()))) return false;
 
+    CaddyStartup startup;
+    if (!startup.init()) return false;
     pid = fork();
     if (pid < 0) {
       pid = -1;
       return false;
     }
     if (!pid) {
+      ::close(startup.listener);
+      if (startup.input != STDIN_FILENO) {
+	if (::dup2(startup.input, STDIN_FILENO) < 0) _exit(127);
+	::close(startup.input);
+      }
       setenv("XDG_DATA_HOME", dataHome.data(), 1);
       setenv("XDG_CONFIG_HOME", configHome.data(), 1);
       freopen(logPath.data(), "w", stdout);
       freopen(logPath.data(), "a", stderr);
       execlp("caddy", "caddy", "run", "--config", caddyfile.data(),
-	(char *)nullptr);
+	"--pingback", startup.address.data(), (char *)nullptr);
       _exit(127);
     }
-    return true;
+    ::close(startup.input);
+    startup.input = -1;
+    if (startup.wait()) return true;
+    stop();
+    return false;
   }
 
   void stop()
   {
     if (pid <= 0) return;
+    ZmSemaphore exited;
+    ZmThread waiter;
+    // Leave the child waitable until this thread sends any final signal, so
+    // a timeout/exit race cannot signal a PID already reused by another process.
+    bool waiting = !waiter.run([child = pid, &exited] {
+      siginfo_t status{};
+      while (::waitid(P_PID, child, &status, WEXITED | WNOWAIT) < 0 &&
+	  errno == EINTR) { }
+      exited.post();
+    }, ZmThreadParams{}.name("CaddyExit"));
     kill(pid, SIGTERM);
-    for (unsigned i = 0; i < 20; ++i) {
-      int status = 0;
-      pid_t r = waitpid(pid, &status, WNOHANG);
-      if (r == pid) {
-	pid = -1;
-	return;
-      }
-      sleepMS(50);
-    }
-    kill(pid, SIGKILL);
-    waitpid(pid, nullptr, 0);
+    if (!waiting || exited.timedwait(Zm::now(1))) kill(pid, SIGKILL);
+    if (waiting) waiter.join();
+    while (waitpid(pid, nullptr, 0) < 0 && errno == EINTR) { }
     pid = -1;
   }
 };
 
 inline bool waitCaddyReady(unsigned port, ZuCSpan route)
 {
-  for (unsigned i = 0; i < 80; ++i) {
-    ZtString<> cmd;
-    cmd <<
-      "curl --http1.1 -k --fail -sS --connect-timeout 1 --max-time 2 "
-      "--resolve localhost:" << port << ":127.0.0.1 "
-      "https://localhost:" << port << route << " >/dev/null 2>&1";
-    if (systemOK(::system(cmd.data()))) return true;
-    sleepMS(100);
-  }
-  return false;
+  // CaddyProcess::start has already received startup confirmation. Keep the
+  // public helper as one route check; elapsed time never establishes readiness.
+  ZtString<> cmd;
+  cmd <<
+    "curl --http1.1 -k --fail -sS --connect-timeout 1 --max-time 2 "
+    "--resolve localhost:" << port << ":127.0.0.1 "
+    "https://localhost:" << port << route << " >/dev/null 2>&1";
+  return systemOK(::system(cmd.data()));
 }
 #else
 struct CaddyProcess {

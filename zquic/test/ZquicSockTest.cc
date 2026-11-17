@@ -12,14 +12,21 @@
 
 using namespace ZuTestUtil;
 
-namespace {
 
 struct TestEndpoint : public Zquic_::Endpoint_<TestEndpoint> {
   using Endpoint = Zquic_::Endpoint_<TestEndpoint>;
   using ReadyFn = ZmFn<void(bool), ZmFnHeapID<"Zquic.Endpoint.TestReady">>;
-  static constexpr bool EndpointRef = false;
+  enum { EndpointRef = false };
 
-  void endpointReady_(Endpoint *) {
+  ZmFn<void(Zquic::Datagram)> recvFn;
+
+  ReadyFn readyFn;
+  unsigned ready = 0;
+  unsigned down = 0;
+  unsigned failed = 0;
+  unsigned datagrams = 0;
+
+  void endpointReady(Endpoint *) {
     ++ready;
     ReadyFn fn = ZuMv(readyFn);
     if (fn) fn(true);
@@ -30,16 +37,14 @@ struct TestEndpoint : public Zquic_::Endpoint_<TestEndpoint> {
     ReadyFn fn = ZuMv(readyFn);
     if (fn) fn(false);
   }
-  void endpointDatagram(Zquic::Datagram) { ++datagrams; }
-
-  ReadyFn readyFn;
-  unsigned ready = 0;
-  unsigned down = 0;
-  unsigned failed = 0;
-  unsigned datagrams = 0;
+  void endpointDatagram(Zquic::Datagram d) {
+    ++datagrams;
+    auto fn = ZuMv(recvFn);
+    if (fn) fn(ZuMv(d));
+  }
 };
 
-} // namespace
+
 
 // Hold physical output while exercising the real ZiTx admission/completion path.
 struct HeldUDP : ZmNHeap<HeldUDP>, ZiMxPlugin {
@@ -103,6 +108,7 @@ struct QueuedEndpoint {
   enum { EndpointRef = false };
 
   ZiMultiplex *mxPtr = nullptr;
+  Zquic_::QueueCatalog queues;
   unsigned submitted = 0;
   unsigned submittedBytes = 0;
   unsigned sent = 0;
@@ -113,16 +119,19 @@ struct QueuedEndpoint {
   unsigned wakeups = 0;
 
   ZiMultiplex *mx_() const { return mxPtr; }
+  Ztc::Hub *queueHub() const { return nullptr; }
+  Zquic_::QueueCatalog &queueCatalog() { return queues; }
+  ZuCSpan queueID() const { return {}; }
   QueuedEndpoint *impl() { return this; }
   bool endpointTxInvoked() const { return mxPtr->invoked(mxPtr->txThread()); }
   void cxnAdded() { }
   void connected_(Cxn *, ZiRxContext &) { }
   void disconnected_0(Cxn *, QueuedEndpoint *) { }
   void txSubmitted(unsigned n) { ++submitted; submittedBytes += n; }
-  void txBackPressure_() { ++pressure; }
-  void txDropped_() { ++drops; }
+  void noteTxBackPressure() { ++pressure; }
+  void noteTxDrop() { ++drops; }
   void sent_(unsigned n) { ++sent; sentBytes += n; }
-  void ioError_() { ++errors; }
+  void ioError() { ++errors; }
   void txDrained_() { ++wakeups; }
 
   void exercise(bool fail)
@@ -143,7 +152,9 @@ struct QueuedEndpoint {
       bool admitted = true, order = true, metadata = true, bounded = true;
       bool retired = true, held = true, shortResult = true, isolated = true;
     };
-    auto result = ZmBlock<Result>{}([this, &mx, cxn, fail, allocator, provider](auto wake) mutable {
+    auto result = ZmBlock<Result>{}([
+      this, &mx, cxn, fail, allocator, provider
+    ](auto wake) mutable {
       // Posting here also verifies setup/admission executes on the Tx owner.
       mx.txRun([this, cxn = ZuMv(cxn), fail, allocator, provider,
 	wake = ZuMv(wake)]() mutable {
@@ -466,6 +477,72 @@ void testEndpointRebind()
   ZuCHECK(endpoint.connected() && endpoint.generation() == oldGeneration + 1 &&
       endpoint.local().port() && endpoint.local().port() != oldPort,
     "endpoint UDP rebind did not refresh local endpoint");
+
+  ZiSockAddr original = endpoint.local();
+  auto originalTarget = endpoint.pktAllocTarget();
+  auto probe = [&endpoint, localIP]() {
+    return ZmBlock<ZiSockAddr>{}([&endpoint, localIP](auto wake) {
+      endpoint.rebindUDP(localIP, 0, {}, 0,
+	[wake = ZuMv(wake)](bool ok, ZiSockAddr local, bool) mutable {
+	  wake(ok ? local : ZiSockAddr{});
+	}, true);
+    });
+  };
+  ZiSockAddr candidate = probe();
+  auto candidateTarget = endpoint.probeTarget();
+  ZuCHECK(candidate && candidate != original &&
+      endpoint.local() == original &&
+      endpoint.generation() == originalTarget.generation && endpoint.ready == 2,
+    "probing replaced the active UDP endpoint before validation");
+  auto transfer = [&endpoint, &mx](Zquic_::PktAllocTarget target, ZiSockAddr src,
+      ZiSockAddr dst) {
+    return ZmBlock<bool>{}([&endpoint, &mx, target, src, dst](auto wake) {
+      mx.rxRun([&endpoint, &mx, target, src, dst, wake = ZuMv(wake)]() mutable {
+	endpoint.recvFn = [wake, src, dst](Zquic::Datagram d) mutable {
+	  wake(d.local == dst && d.addr == src && d.buf->length == 1 &&
+	    d.buf->data()[0] == 0x42);
+	};
+	mx.txRun([&endpoint, target, dst, wake = ZuMv(wake)]() mutable {
+	  auto buf = endpoint.allocTxPkt();
+	  buf->data()[0] = 0x42;
+	  buf->length = 1;
+	  if (!endpoint.send(ZuMv(buf), dst, Zquic::EcnMark::NotECT,
+	      false, {}, nullptr, target)) wake(false);
+	});
+      });
+    });
+  };
+  ZuCHECK(transfer(originalTarget, original, candidate) &&
+      transfer(candidateTarget, candidate, original),
+    "active and probing sockets could not receive concurrently");
+  ZmBlock<>{}([&endpoint](auto wake) {
+    endpoint.finishProbe(false, [wake = ZuMv(wake)](bool) mutable { wake(); });
+  });
+  ZuCHECK(endpoint.local() == original &&
+      endpoint.generation() == originalTarget.generation &&
+      transfer(originalTarget, original, original),
+    "discarding a probe did not preserve the original endpoint");
+  bool staleAccepted = ZmBlock<bool>{}([&endpoint, &mx, original, candidateTarget](auto wake) {
+    mx.txRun([&endpoint, original, candidateTarget, wake = ZuMv(wake)]() mutable {
+      auto buf = endpoint.allocTxPkt();
+      buf->length = 1;
+      wake(endpoint.send(ZuMv(buf), original, Zquic::EcnMark::NotECT,
+	false, {}, nullptr, candidateTarget));
+    });
+  });
+  ZuCHECK(!staleAccepted, "discarded probe accepted stale output");
+  candidate = probe();
+  auto promotedTarget = endpoint.probeTarget();
+  ZuCHECK(promotedTarget.generation > candidateTarget.generation,
+    "new probe reused a discarded generation");
+  bool promoted = ZmBlock<bool>{}([&endpoint](auto wake) {
+    endpoint.finishProbe(true, [wake = ZuMv(wake)](bool ok) mutable { wake(ok); });
+  });
+  ZuCHECK(promoted && endpoint.local() == candidate &&
+      endpoint.generation() == promotedTarget.generation &&
+      transfer(promotedTarget, candidate, candidate),
+    "validated probe did not become the active endpoint");
+  ZuCHECK(probe(), "probe before endpoint shutdown failed");
 
   ZmBlock<>{}([&endpoint](auto wake) {
     endpoint.disconnect([wake = ZuMv(wake)]() mutable { wake(); });

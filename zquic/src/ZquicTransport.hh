@@ -12,12 +12,30 @@
 
 namespace Zquic {
 
-static constexpr uint16_t TLSExtQUICParamsV1 = 0x39;
+enum { TLSExtQUICParamsV1 = 0x39 };
+
+struct ZquicAPI PreferredAddress {
+  ZiSockAddr ipv4;
+  ZiSockAddr ipv6;
+  CxnID cid;
+  ResetToken resetToken;
+
+  bool operator !() const { return !cid; }
+  ZuOpBool
+  bool validate() const;
+  // RFC 9000 section 18.2: two addresses and ports, CID length, reset token.
+  enum { FixedLength = 41 };
+  unsigned encodedLength() const { return FixedLength + cid.length(); }
+  int encode(uint8_t *, unsigned) const;
+  int decode(ZuBSpan);
+  ZiSockAddr select(const ZiIP &) const;
+};
 
 struct ZquicAPI TransportParams {
   CxnID		origDCID;
   CxnID		initialSCID;
   CxnID		retrySCID;
+  PreferredAddress preferredAddress;
   uint64_t	maxIdleTimeout = 0;
   uint64_t	maxUDPPayloadSize = MinUDPPayload;
   uint64_t	initialMaxData = 0;

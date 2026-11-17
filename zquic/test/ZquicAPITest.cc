@@ -25,7 +25,6 @@ using namespace ZuTestUtil;
 
 #define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
-namespace {
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
@@ -37,7 +36,7 @@ static Zi::Path testPath(ZuCSpan name)
   return ZiFile::append(g_residue, name);
 }
 
-static ZtString<> readFile_(const Zi::Path &path)
+static ZtString<> readFile(const Zi::Path &path)
 {
   ZtString<> data;
   ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
@@ -88,16 +87,23 @@ struct TestStream :
   using Base = Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc>;
   using Base::Base;
 
+  unsigned txCompleteCount = 0;
+
   int process(Zquic::RxStream &) { return 0; }
   void txComplete(bool) { ++txCompleteCount; }
-
-  unsigned txCompleteCount = 0;
 };
 
 struct HubApp : public Zquic::Hub<HubApp> {
-  enum Shard { Rx, Tx };
+  using Shard = int8_t;
+  enum { Rx, Tx };
   using PendingQueue =
     ZmList<ZmFn<>, ZmListHeapID<"Zquic.APITest.Pending">>;
+
+  PendingQueue rxPendingQ;
+  PendingQueue txPendingQ;
+  Zquic::MigrationMode::T migration = Zquic::MigrationMode::Passive;
+  Shard shard = Rx;
+  bool deferMode = false;
 
   void activeMigration(bool v) {
     migration = v ?
@@ -147,12 +153,6 @@ struct HubApp : public Zquic::Hub<HubApp> {
     auto fn = txPendingQ.shiftVal();
     fn();
   }
-
-  PendingQueue rxPendingQ;
-  PendingQueue txPendingQ;
-  Zquic::MigrationMode::T migration = Zquic::MigrationMode::Passive;
-  Shard shard = Rx;
-  bool deferMode = false;
 };
 struct ClientApp : public Zquic::Client<ClientApp> { };
 struct ServerAppLink;
@@ -208,6 +208,9 @@ friend inline ZuStringT<"Zquic.APITest.CliLink"> ZmNHeapID(ClientShapeLink *);
     ClientShapeApp, ClientShapeLink, ClientShapeStream,
     StreamTxBufAlloc>;
 
+  ZmAtomic<unsigned> failures = 0;
+  ZmAtomic<unsigned> disconnects = 0;
+
   ClientShapeLink(ClientShapeApp *app) : Base{app} { }
 
   void connected(Zquic::Connected) { }
@@ -215,9 +218,6 @@ friend inline ZuStringT<"Zquic.APITest.CliLink"> ZmNHeapID(ClientShapeLink *);
   void connectFailed(bool) { ++failures; }
   void disconnected(bool) { ++disconnects; }
   Zquic::LinkDiag diag() const { return Base::diag_(); }
-
-  ZmAtomic<unsigned> failures = 0;
-  ZmAtomic<unsigned> disconnects = 0;
 };
 
 struct ServerShapeLink;
@@ -246,6 +246,9 @@ friend inline ZuStringT<"Zquic.APITest.SrvLink"> ZmNHeapID(ServerShapeLink *);
     ServerShapeApp, ServerShapeLink, ServerShapeStream,
     StreamTxBufAlloc>;
 
+  ZmFn<void()> startedFn;
+  ZmFn<void()> promotedFn;
+
   ServerShapeLink(ServerShapeApp *app) : Base{app} { }
 
   void connected(Zquic::Connected) { }
@@ -259,23 +262,20 @@ friend inline ZuStringT<"Zquic.APITest.SrvLink"> ZmNHeapID(ServerShapeLink *);
   void onStarted(ZmFn<void()> fn) { startedFn = ZuMv(fn); }
   void onPromoted(ZmFn<void()> fn) { promotedFn = ZuMv(fn); }
   void initSrvPath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::initServerPathTx_(ZuMv(local), ZuMv(remote));
+    Base::initServerPathTx(ZuMv(local), ZuMv(remote));
   }
 #ifdef Zquic_DEBUG
   void observePath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::observePathRxTx_(ZuMv(local), ZuMv(remote));
+    Base::observePathRxTx(ZuMv(local), ZuMv(remote));
   }
   bool promoteObservedPath() {
     ZuBSpan challenge = Base::validatingChallenge_();
     if (challenge.length() != Zquic::PathChallenge::Length) return false;
     uint8_t response[Zquic::PathChallenge::Length];
     memcpy(response, challenge.data(), sizeof(response));
-    return Base::onPathResponse_(ZuBSpan{response, sizeof(response)});
+    return Base::onPathResponse(ZuBSpan{response, sizeof(response)});
   }
 #endif
-
-  ZmFn<void()> startedFn;
-  ZmFn<void()> promotedFn;
 };
 
 struct TestLink :
@@ -290,11 +290,131 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
   using Base = Zquic::Link<
     HubApp, TestLink, StreamTxBufAlloc,
     TestStream>;
+  ZmRef<TestStream> lastOpened;
+  ZmRef<TestStream> lastDataStream;
+  ZmRef<TestStream> lastResetStream;
+  ZmRef<TestStream> lastStopStream;
+  ZiSockAddr lastPathLocal;
+  ZiSockAddr lastPathRemote;
+  ZiSockAddr lastMigrationLocal;
+  ZiSockAddr lastMigrationRemote;
+  Zquic::PathInfo lastPath;
+  Zquic::MigrationResult lastMigration;
+  ZtString<> migrationCallbackOrder;
+  uint64_t retiredSeq = 0;
+  uint64_t lastDataOffset = 0;
+  uint64_t lastResetAppError = 0;
+  uint64_t lastResetFinalSize = 0;
+  uint64_t lastResetSentID = 0;
+  uint64_t lastResetSentAppError = 0;
+  uint64_t lastResetSentFinalSize = 0;
+  uint64_t lastStopAppError = 0;
+  uint64_t lastStopSentID = 0;
+  uint64_t lastStopSentAppError = 0;
+  uint64_t lastFlowStreamID = 0;
+  uint64_t lastFlowMaximum = 0;
+  uint64_t lastCloseError = 0;
+  Zquic::CxnID retiredCID;
+  Zquic::FrameType::T lastFlowType = Zquic::FrameType::Unknown;
+  Zquic::FrameType::T lastCloseType = Zquic::FrameType::Unknown;
+  Zquic::StreamType::T lastFlowStreamType = Zquic::StreamType::Duplex;
+  unsigned lastDataLength = 0;
+  unsigned lastPathMaxUDP = 0;
+  unsigned retiredCount = 0;
+  unsigned streamOpenCount = 0;
+  unsigned localStreamOpens = 0;
+  unsigned peerStreamOpens = 0;
+  unsigned streamDataCount = 0;
+  unsigned resetReceivedCount = 0;
+  unsigned resetSentCount = 0;
+  unsigned stopReceivedCount = 0;
+  unsigned stopSentCount = 0;
+  unsigned flowBlockedCount = 0;
+  unsigned transportCloseCount = 0;
+  unsigned statelessResetCount = 0;
+  unsigned migrationStartedCount = 0;
+  unsigned migrationPromotedCount = 0;
+  unsigned pathUpdateCount = 0;
+  unsigned migrationFailureCount = 0;
+  unsigned txFlushQueued = 0;
+  bool lastDataFin = false;
+  bool lastPathValidated = false;
+
   TestLink(HubApp *app, bool isServer = false) : Base{app, isServer} {
     Base::configLocalParams(app);
+    Base::TxCryptoSnapshot snapshot;
+    Base::snapshotTxCrypto(snapshot);
+    Base::installTxCrypto(snapshot);
   }
 
-  static constexpr unsigned RecBatch = Base::RecoveryScanBatch;
+  enum { RecBatch = Base::RecoveryScanBatch };
+  using Base::congestionAllowance_;
+  using Base::noteAck;
+  using Base::appendPendingAck;
+  using Base::ackSentTx;
+  using Base::consumeAckSentRx;
+  using Base::serviceAckRx;
+  using Base::cancelAckRx;
+  using Base::recordPathRx;
+  using Base::observePathRx_;
+  using Base::refreshPathRxTx;
+  using Base::notePeerPkt;
+  using Base::processAckFrame;
+  using Base::drainPeerAcksTx;
+  using Base::awaitPeerAckTx;
+  using Base::publishStreamTx;
+  using Base::requestCreditTx;
+  using Base::resetLink;
+  using Base::AckSnapshot;
+  using Base::noteAckTx;
+  using Base::ackFrameValidTx;
+  using Base::pendingAck;
+  using Base::txPackets;
+  using Base::deferTxFlush;
+  using Base::timersActive;
+  using Base::resetPath;
+
+  template <typename Send>
+  bool shortCommit(Send send, bool allocate = true, bool resetOnAlloc = false) {
+    Zquic::PktBuild build;
+    if (!Base::buildPingProbe(build)) return false;
+    Base::TxPktRefs refs;
+    return Base::sendProtShortPkt(
+      Zquic::CxnID{"commit"}, 1, build, ZiSockAddr{}, {}, &refs, true,
+      [this, allocate, resetOnAlloc]() {
+	if (resetOnAlloc) (void)resetCommit();
+	return allocate ? app()->txPktAllocator()->allocBuf(nullptr, 0) : ZmRef<ZiIOBuf>{};
+      },
+      [this, &send](auto packet, ZiSockAddr addr, Zquic::EcnMark::T ecn) {
+	return this->Base::sendPathPkt(ZuMv(packet), ZuMv(addr),
+	  [&send](auto buf, ZiSockAddr, Zquic::EcnMark::T) { return send(ZuMv(buf)); }, ecn);
+      });
+  }
+  bool resetCommit() {
+    Base::resetTx();
+    Base::setTxPN(Zquic::PktNumSpace::AppData, 1);
+    return Base::recordTxPkt(Zquic::PktNumSpace::AppData, 0, 99,
+      Zquic::SentFrameRef{}, true);
+  }
+
+  bool ackEstablished() {
+    uint8_t bytes[32] = {};
+    Zquic::TrafficSecret secret;
+    return Zquic::PktProt::deriveSecret(secret,
+      &ptls_openssl_aes128gcmsha256, ZuBSpan{bytes, sizeof(bytes)}) &&
+      Base::installAppDataKeys_(secret, secret, Zquic::CxnID{"ack-test"});
+  }
+  bool appPackets(unsigned count) {
+    constexpr auto space = Zquic::PktNumSpace::AppData;
+    Base::setTxPN(space, count + 1);
+    for (unsigned pn = 1; pn <= count; ++pn)
+      if (!Base::recordTxPkt(space, pn, 100,
+	  Zquic::SentFrameRef{}, true)) return false;
+    return true;
+  }
+  unsigned appPacketCount() const {
+    return Base::txPackets_(Zquic::PktNumSpace::AppData).count();
+  }
 
   bool recoveryPackets(unsigned count, bool ecn = false) {
     if (ecn) Base::setEcnDisabled_(false);
@@ -315,17 +435,21 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
       ack.ecn.ect0 = largest - first;
       ack.ecn.ce = 1;
     }
-    Base::processAckFrameTx_(ack);
+    Base::processAckFrameTx(ack);
   }
   auto recoveryDiag() {
-    // Continuation assertions inspect the controller after partial retirement,
-    // before production publishes its end-of-ACK diagnostic update.
-    Base::updateCongestionDiag();
-    return Base::txDiag_();
+    // Inspect live owner state, including builds which erase diagnostics.
+    struct State {
+      uint64_t congestionWindow;
+      uint64_t congestionSSThresh;
+      uint64_t bytesInFlight;
+    };
+    return State{
+      Base::congestionWindow(), Base::congestionSSThresh(), Base::txBytesInFlight()};
   }
   auto recoveryPathDiag() const { return Base::pathDiag_(); }
   void recoveryStop() { Base::cancelTimers_(); }
-  void recoveryReset() { Base::resetTx_(); }
+  void recoveryReset() { Base::resetTx(); }
   void recoveryDiscard() {
     Base::discardPktNumSpace_1(Zquic::PktNumSpace::Handshake);
   }
@@ -417,7 +541,7 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
     lastCloseError = errorCode;
     ++transportCloseCount;
   }
-  void pto_() { }
+  void ptoTimer() { }
   void queueRetransmit() { }
   bool retransmit_(bool = false, unsigned = 2,
     Zquic::PktNumSpace::T = Zquic::PktNumSpace::N) { return false; }
@@ -475,11 +599,16 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
 	  }
 	  void setPeerTransportParams(const Zquic::TransportParams &params) {
 	    Base::crypto_().peerParams(params);
+	    Base::TxCryptoSnapshot snapshot;
+	    Base::snapshotTxCrypto(snapshot);
+	    app()->txRun([this, snapshot = ZuMv(snapshot)] {
+	      Base::installTxCrypto(snapshot);
+	    });
 	  }
 	  bool prepareActiveMigration(
 	    const Zquic::MigrationParams &params,
-	    Zquic::MigrationReason::T &reason) {
-	    return Base::prepareMig(params, reason);
+	    Zquic::MigrationReason::T &reason, bool preferred = false) {
+	    return Base::prepareMig(params, reason, preferred);
 	  }
 	  bool activateActiveMigration() {
 	    return Base::activateMig(false);
@@ -528,10 +657,10 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
     return cid && cid->state == Zquic::CxnState::Active;
   }
   Zquic::CxnID activeTxPeerCID() const {
-    return Base::cid_(Base::CIDSel::Peer);
+    return Base::headerCID(Base::CIDSel::Peer);
   }
   bool localCIDRetired(uint64_t sequence) const {
-    auto cid = Base::localCID_(sequence);
+    auto cid = Base::findLocalCID(sequence);
     return cid && cid->state == Zquic::CxnState::Retired;
   }
   void retiredLocalCID(uint64_t sequence, const Zquic::CxnID &id) {
@@ -579,7 +708,7 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
   }
   bool queueMaxStreams(
     Zquic::StreamType::T type, uint64_t maximum) {
-    return Base::txQueueControl_(Zquic::ControlFrame::flowUpdate(
+    return Base::txQueueControl(Zquic::ControlFrame::flowUpdate(
       Zquic::FlowUpdate{
 	Zquic::FrameType::MaxStreams, 0, maximum, type}));
   }
@@ -608,16 +737,16 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
 	    Base::closeState(errorCode);
 	  }
   void initServerPath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::initServerPathTx_(ZuMv(local), ZuMv(remote));
+    Base::initServerPathTx(ZuMv(local), ZuMv(remote));
   }
   void initClientPath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::initClientPathTx_(ZuMv(local), ZuMv(remote));
+    Base::initClientPathTx(ZuMv(local), ZuMv(remote));
   }
   void observePath(ZiSockAddr local, ZiSockAddr remote) {
     Base::startPathValidation(ZuMv(local), ZuMv(remote));
   }
   void observePathRx(ZiSockAddr local, ZiSockAddr remote) {
-    Base::observePathRxTx_(ZuMv(local), ZuMv(remote), false);
+    Base::observePathRxTx(ZuMv(local), ZuMv(remote), false);
   }
   bool migrationActive() const { return Base::migrationActive_(); }
   Zquic::PathInfo candidatePathInfo() const {
@@ -626,70 +755,24 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
   ZuBSpan validatingChallenge() const {
     return Base::validatingChallenge_();
   }
-  bool pathResponse(ZuBSpan data) { return Base::onPathResponse_(data); }
+  bool pathResponse(ZuBSpan data) { return Base::onPathResponse(data); }
+  void pathResponseRx(ZuBSpan data) { Base::rxPathResponse(data); }
   void pathTimeout() { Base::pathExpired(); }
   void flushTx_() { ++txFlushQueued; }
   void flushTx_(ZiSockAddr) { ++txFlushQueued; }
   void queueTxFlush() { ++txFlushQueued; }
   void queueTxFlush(ZiSockAddr) { ++txFlushQueued; }
   Zquic::LinkDiag diag() const { return Base::diag_(); }
-
-  ZmRef<TestStream> lastOpened;
-  ZmRef<TestStream> lastDataStream;
-  ZmRef<TestStream> lastResetStream;
-  ZmRef<TestStream> lastStopStream;
-  ZiSockAddr lastPathLocal;
-  ZiSockAddr lastPathRemote;
-  ZiSockAddr lastMigrationLocal;
-  ZiSockAddr lastMigrationRemote;
-  Zquic::PathInfo lastPath;
-  Zquic::MigrationResult lastMigration;
-  ZtString<> migrationCallbackOrder;
-  uint64_t retiredSeq = 0;
-  uint64_t lastDataOffset = 0;
-  uint64_t lastResetAppError = 0;
-  uint64_t lastResetFinalSize = 0;
-  uint64_t lastResetSentID = 0;
-  uint64_t lastResetSentAppError = 0;
-  uint64_t lastResetSentFinalSize = 0;
-  uint64_t lastStopAppError = 0;
-  uint64_t lastStopSentID = 0;
-  uint64_t lastStopSentAppError = 0;
-  uint64_t lastFlowStreamID = 0;
-  uint64_t lastFlowMaximum = 0;
-  uint64_t lastCloseError = 0;
-  Zquic::CxnID retiredCID;
-  Zquic::FrameType::T lastFlowType = Zquic::FrameType::Unknown;
-  Zquic::FrameType::T lastCloseType = Zquic::FrameType::Unknown;
-  Zquic::StreamType::T lastFlowStreamType = Zquic::StreamType::Duplex;
-  unsigned lastDataLength = 0;
-  unsigned lastPathMaxUDP = 0;
-  unsigned retiredCount = 0;
-  unsigned streamOpenCount = 0;
-  unsigned localStreamOpens = 0;
-  unsigned peerStreamOpens = 0;
-  unsigned streamDataCount = 0;
-  unsigned resetReceivedCount = 0;
-  unsigned resetSentCount = 0;
-  unsigned stopReceivedCount = 0;
-  unsigned stopSentCount = 0;
-  unsigned flowBlockedCount = 0;
-  unsigned transportCloseCount = 0;
-  unsigned statelessResetCount = 0;
-  unsigned migrationStartedCount = 0;
-  unsigned migrationPromotedCount = 0;
-  unsigned pathUpdateCount = 0;
-  unsigned migrationFailureCount = 0;
-  unsigned txFlushQueued = 0;
-  bool lastDataFin = false;
-  bool lastPathValidated = false;
-	};
+};
 
 struct HubFixture {
-  HubFixture() : mx{mxParams_()} {
-    ZiAssert(app.init(Zquic::HubParams(&mx, "3", "4")),
+  ZiMultiplex	mx;
+  HubApp	app;
+
+  HubFixture(bool cc = true, bool ecn = false, bool start = true) : mx{mxParams()} {
+    ZiAssert(app.init(Zquic::HubParams(&mx, "3", "4").congestionControl(cc).ecn(ecn)),
       "Zquic", (), "API test hub init failed", return);
-    ZiAssert(mx.start(), "Zquic", (),
+    ZiAssert(!start || mx.start(), "Zquic", (),
       "API test multiplexer start failed", return);
   }
   ~HubFixture() {
@@ -697,16 +780,13 @@ struct HubFixture {
     mx.stop();
   }
 
-  static ZiMxParams mxParams_() {
+  static ZiMxParams mxParams() {
     return ZiMxParams()
       .scheduler([](auto &s) {
 	s.nThreads(4);
       })
       .rxThread(1).txThread(2);
   }
-
-  ZiMultiplex	mx;
-  HubApp	app;
 };
 
 static bool parseFrame(const uint8_t *b, int n, Zquic::Frame &frame)
@@ -739,7 +819,7 @@ static ZmRef<ZiIOBuf> streamPkt(
   return packet;
 }
 
-} // namespace
+
 
 void testLongProbePadding()
 {
@@ -933,7 +1013,7 @@ void testAlignedSurfaceShape()
 {
   ZuTestScope(testAlignedSurfaceShape);
 
-  ZiMultiplex mx{HubFixture::mxParams_()};
+  ZiMultiplex mx{HubFixture::mxParams()};
   ClientShapeApp clientApp;
   bool clientOK = clientApp.init(
     Zquic::ClientParams(&mx, "3", "4").alpn(ZuSpan<ZuCSpan>{"h3"}));
@@ -1285,7 +1365,7 @@ void testStatelessResetDetection()
     "stateless reset qlog write mismatch");
   ZuCHECK(diag.writerFailures == 0,
     "stateless reset qlog writer failure");
-  ZtString<> qlog = readFile_(qlogPath);
+  ZtString<> qlog = readFile(qlogPath);
   ZuCHECK(qlog, "stateless reset qlog output missing");
   ZuCHECK(qlog.find<"zquic:stateless_reset">() >= 0,
     "stateless reset qlog event missing");
@@ -1294,6 +1374,413 @@ void testStatelessResetDetection()
   ZuCHECK(qlog.find<"\"reason\":\"token_match\"">() >= 0,
     "stateless reset qlog reason missing");
 #endif
+}
+
+static Ztc::QueueTelemetry ackQueue(TestLink &link, ZuCSpan role)
+{
+  Ztc::QueueTelemetry result;
+  link.allQueues([&result, role](Ztc::Queue *queue) {
+    auto key = queue->telKey();
+    ZtString<> id{key.p<1>()};
+    auto offset = id.rfind(role);
+    if (offset >= 0 && unsigned(offset) + role.length() == id.length())
+      queue->telemetry(result);
+  });
+  return result;
+}
+
+void testAckPublications()
+{
+  ZuTestScopeRT(testAckPublications);
+  // Owner turns are controlled explicitly. The stopped scheduler retains
+  // timer reservations without racing the deterministic handoff fixture.
+  HubFixture fixture{true, false, false};
+  auto &app = fixture.app;
+  ZmRef<TestLink> link = new TestLink{&app};
+  ZQUIC_CHECK_RT(link->ackEstablished(), "ACK fixture keys did not install");
+  app.defer();
+  constexpr auto space = Zquic::PktNumSpace::AppData;
+  link->noteAck(space, 1, true, {}, false, Zquic::EcnMark::ECT0);
+  ZQUIC_CHECK_RT(app.txPending(), "initial ACK epoch did not use its setup handoff");
+  while (app.txPending()) app.runTx();
+  Zquic::PktBuild first;
+  ZQUIC_CHECK_RT(link->appendPendingAck(space, first) && first.ack(space) &&
+      first.ackGen() == 1 && first.ackLargest() == 1,
+    "initial ACK snapshot was not installed");
+  link->ackSentTx(space, first.ackGen());
+  ZQUIC_CHECK_RT(!app.rxPending(), "ACK completion posted to Rx");
+
+  app.enterRx();
+  link->noteAck(space, 2, true, {}, false, Zquic::EcnMark::CE);
+  ZQUIC_CHECK_RT(!app.txPending(), "ordinary receive posted an ACK state copy");
+  app.enterTx();
+  Zquic::PktBuild second;
+  ZQUIC_CHECK_RT(link->appendPendingAck(space, second) && second.ack(space) &&
+      second.ackGen() == 2 && second.ackLargest() == 2,
+    "atomic ACK publication was not visible to packetization");
+  Zquic::Frame frame;
+  unsigned used = 0;
+  ZQUIC_CHECK_RT(!Zquic::FrameCodec::parse(
+      ZuBSpan{second.data()[0].base, unsigned(second.data()[0].len)}, frame, used) &&
+      frame.type == Zquic::FrameType::Ack && second.data()[0].base[0] == 0x03 &&
+      frame.ackECN.ect0 == 1 && frame.ackECN.ce == 1,
+    "published ACK range and ECN counters were incoherent");
+
+  app.enterRx();
+  link->noteAck(space, 3, true, {});
+  app.enterTx();
+  Zquic::PktBuild third;
+  ZQUIC_CHECK_RT(link->appendPendingAck(space, third) && third.ackGen() == 3,
+    "newer ACK snapshot was not copied");
+  link->ackSentTx(space, second.ackGen());
+  Zquic::PktBuild stillPending;
+  ZQUIC_CHECK_RT(link->appendPendingAck(space, stillPending) &&
+      stillPending.ack(space) && stillPending.ackGen() == 3,
+    "submission cleared an ACK newer than the encoded generation");
+  ZQUIC_CHECK_RT(!app.rxPending(), "stale ACK completion posted to Rx");
+  link->ackSentTx(space, third.ackGen());
+  while (app.txPending()) app.runTx();
+
+  // Do not allow a stalled consumer's slot to be overwritten. Pressure
+  // enters the owned exceptional handoff and then resumes publication.
+  app.enterRx();
+  for (unsigned pn = 4; pn <= 68; ++pn) link->noteAck(space, pn, true, {});
+  ZQUIC_CHECK_RT(app.txPending(), "ACK publication pressure did not request service");
+  auto ring = ackQueue(*link, ":ack:publication");
+  auto mailbox = ackQueue(*link, ":ack:AppData:mailbox");
+  ZQUIC_CHECK_RT(ring.count == 64 && ring.size == 64 && ring.full == 1 &&
+      ring.type == Ztc::QueueType::Rx && mailbox.count == 1 && !mailbox.size &&
+      !mailbox.full, "ACK queue pressure telemetry mismatch");
+  while (app.txPending()) app.runTx();
+  ring = ackQueue(*link, ":ack:publication");
+  mailbox = ackQueue(*link, ":ack:AppData:mailbox");
+  ZQUIC_CHECK_RT(!ring.count && ring.full == 1 && !mailbox.count && !mailbox.full,
+    "exceptional ACK consumption did not retire queue occupancy");
+  Zquic::PktBuild pressure;
+  ZQUIC_CHECK_RT(link->appendPendingAck(space, pressure) &&
+      pressure.ackGen() == 68 && pressure.ackLargest() == 68,
+    "publication pressure lost the newest coherent ACK snapshot");
+  link->ackSentTx(space, pressure.ackGen());
+  app.enterRx();
+  link->noteAck(space, 69, true, {});
+  ZQUIC_CHECK_RT(!app.txPending(), "drained ACK epoch did not resume atomic publication");
+  app.enterTx();
+  Zquic::PktBuild resumed;
+  ZQUIC_CHECK_RT(link->appendPendingAck(space, resumed) && resumed.ackLargest() == 69,
+    "resumed publication lost accepted packet coverage");
+  link->ackSentTx(space, resumed.ackGen());
+  app.enterRx();
+  link->consumeAckSentRx();
+  link->cancelAckRx();
+  app.enterTx();
+  link->recoveryStop();
+  ZQUIC_CHECK_RT(!app.rxPending() && !app.txPending(),
+    "normal ACK exchange left a cross-owner state-copy callback");
+}
+
+void testPeerAckPublications()
+{
+  ZuTestScopeRT(testPeerAckPublications);
+  HubFixture fixture{false, false, false};
+  auto &app = fixture.app;
+  ZmRef<TestLink> link = new TestLink{&app};
+  ZQUIC_CHECK_RT(link->ackEstablished(), "peer ACK fixture keys did not install");
+  ZQUIC_CHECK_RT(link->appPackets(70), "peer ACK fixture packets not retained");
+  app.defer();
+  constexpr auto space = Zquic::PktNumSpace::AppData;
+  Zquic::Frame ack;
+  ack.type = Zquic::FrameType::Ack;
+  ack.ackRanges.push(Zquic::AckRange{1, 1});
+  link->processAckFrame(space, ack);
+  ZQUIC_CHECK_RT(!app.txPending(), "ordinary peer ACK posted to Tx");
+  app.enterTx();
+  link->drainPeerAcksTx();
+  ZQUIC_CHECK_RT(link->appPacketCount() == 69,
+    "Tx did not retire the atomically published peer ACK");
+  app.enterRx();
+  for (unsigned pn = 2; pn <= 65; ++pn) {
+    ack.ackRanges[0].largest = pn;
+    link->processAckFrame(space, ack);
+  }
+  ZQUIC_CHECK_RT(!app.txPending(), "ordinary peer ACK ring posted before pressure");
+  auto ring = ackQueue(*link, ":peer-ack:publication");
+  ZQUIC_CHECK_RT(ring.count == 64 && ring.size == 64 && !ring.full &&
+      ring.type == Ztc::QueueType::Rx, "peer ACK ring occupancy mismatch");
+  ack.ackRanges[0].largest = 66;
+  link->processAckFrame(space, ack);
+  ZQUIC_CHECK_RT(app.txPending(), "full peer ACK ring did not use exceptional handoff");
+  ring = ackQueue(*link, ":peer-ack:publication");
+  ZQUIC_CHECK_RT(ring.count == 64 && ring.full == 1,
+    "peer ACK capacity refusal was not counted exactly once");
+  while (app.txPending()) app.runTx();
+  ring = ackQueue(*link, ":peer-ack:publication");
+  ZQUIC_CHECK_RT(!ring.count && ring.full == 1,
+    "peer ACK fallback reclamation underflowed queue occupancy");
+  ZQUIC_CHECK_RT(link->appPacketCount() == 4,
+    "peer ACK pressure lost ACK coverage or reordered fallback");
+  app.enterRx();
+  ack.ackRanges[0] = Zquic::AckRange{67, 67};
+  link->processAckFrame(space, ack);
+  ZQUIC_CHECK_RT(!app.txPending(), "advancing trimmed peer ACK did not resume publication");
+  app.enterTx();
+  ZQUIC_CHECK_RT(link->awaitPeerAckTx() && link->appPacketCount() == 3,
+    "blocked sender did not recheck already published ACK");
+  ZQUIC_CHECK_RT(!link->awaitPeerAckTx(), "empty peer ACK ring reported progress");
+  app.enterRx();
+  ack.ackRanges[0] = Zquic::AckRange{68, 68};
+  link->processAckFrame(space, ack);
+  ZQUIC_CHECK_RT(app.txPending(), "peer ACK did not wake a blocked sender");
+  while (app.txPending()) app.runTx();
+  ZQUIC_CHECK_RT(link->appPacketCount() == 2,
+    "blocked-sender service lost the peer ACK");
+  app.enterRx();
+  ack.ackRanges[0] = Zquic::AckRange{70, 70};
+  ack.ackRanges.push(Zquic::AckRange{69, 69});
+  link->processAckFrame(space, ack);
+  ZQUIC_CHECK_RT(app.txPending(), "sparse peer ACK skipped exceptional handoff");
+  while (app.txPending()) app.runTx();
+  ZQUIC_CHECK_RT(!link->appPacketCount(), "sparse peer ACK lost retained packet coverage");
+  ring = ackQueue(*link, ":peer-ack:publication");
+  ZQUIC_CHECK_RT(!ring.count && ring.full == 1,
+    "sparse peer ACK was incorrectly counted as a capacity refusal");
+  app.enterRx();
+  link->cancelAckRx();
+  app.enterTx();
+  link->recoveryStop();
+}
+
+void testCreditPublications()
+{
+  ZuTestScopeRT(testCreditPublications);
+  HubFixture fixture{false, false, false};
+  auto &app = fixture.app;
+  ZmRef<TestLink> link = new TestLink{&app};
+  // Exceed one control-service turn while keeping every stream idle on Tx.
+  enum { Streams = 70 };
+  ZuArray<ZmRef<TestStream>, Streams> streams;
+  for (unsigned i = 0; i < Streams; ++i) {
+    ZmRef<TestStream> stream = new TestLink::Streams::Node{link.ptr(), int64_t(i << 2)};
+    stream->rxCredit(32);
+    link->publishStreamTx(stream);
+    streams.push(ZuMv(stream));
+  }
+  app.defer();
+  for (auto &stream : streams) {
+    stream->extendRxCredit(64);
+    link->requestCreditTx();
+  }
+  ZQUIC_CHECK_RT(app.txPendingQ.count_() == 1,
+    "credit extensions did not coalesce their control-send notification");
+  app.runTx();
+  ZQUIC_CHECK_RT(streams[63]->controlQueued() && !streams[64]->controlQueued() &&
+      app.txPendingQ.count_() == 1,
+    "credit service did not yield after its bounded stream batch");
+  // Publish again after this stream was visited but before the scan completes.
+  app.enterRx();
+  streams[0]->extendRxCredit(96);
+  link->requestCreditTx();
+  ZQUIC_CHECK_RT(app.txPendingQ.count_() == 1,
+    "in-flight credit service posted a redundant control turn");
+  while (app.txPending()) app.runTx();
+  bool valid = true;
+  for (unsigned i = 0; i < Streams; ++i) {
+    Zquic::ControlFrame frame;
+    valid &= streams[i]->nextQueuedControl(frame) &&
+      frame.type == Zquic::FrameType::MaxStreamData &&
+      frame.value == (i ? 64 : 96);
+  }
+  ZQUIC_CHECK_RT(valid, "idle-stream credit service lost a published frontier");
+  app.enterRx();
+  streams[0]->extendRxCredit(128);
+  link->requestCreditTx();
+  ZQUIC_CHECK_RT(app.txPendingQ.count_() == 1,
+    "completed credit scan suppressed the next required notification");
+  while (app.txPending()) app.runTx();
+  Zquic::ControlFrame latest;
+  ZQUIC_CHECK_RT(streams[0]->nextQueuedControl(latest) && latest.value == 128,
+    "next credit publication was not consumed");
+  streams[0]->controlSent(latest);
+  // Hold the Tx reset while Rx publishes a new frontier. These fixture streams
+  // are registered only on Tx, isolating credit service from Rx stream close.
+  app.enterRx();
+  bool resetDone = false;
+  link->resetLink([&resetDone] { resetDone = true; });
+  streams[0]->extendRxCredit(160);
+  link->requestCreditTx();
+  app.runTx();
+  ZQUIC_CHECK_RT(!resetDone && app.txPending(),
+    "runtime reset did not yield while retiring stream controls");
+  // A new control on a stream beyond the first reset batch must survive its
+  // later visit, independently of the published credit frontier above.
+  streams[64]->queueStopSending(23);
+  while (app.txPending()) app.runTx();
+  ZQUIC_CHECK_RT(streams[0]->nextQueuedControl(latest) && latest.value == 160,
+    "queued Tx reset swallowed credit published after the Rx reset boundary");
+  while (app.rxPending()) app.runRx();
+  app.enterTx();
+  bool stopQueued = false;
+  while (streams[64]->nextQueuedControl(latest)) {
+    stopQueued |= latest.type == Zquic::FrameType::StopSending && latest.errorCode == 23;
+    streams[64]->controlSent(latest);
+  }
+  ZQUIC_CHECK_RT(resetDone && stopQueued,
+    "runtime reset completion lost a new-runtime stream control");
+  link->recoveryStop();
+}
+
+void testShortSendCommit()
+{
+  ZuTestScopeRT(testShortSendCommit);
+  constexpr auto space = Zquic::PktNumSpace::AppData;
+  for (bool cc : {false, true})
+  for (bool reset : {false, true}) for (bool accept : {false, true}) {
+    HubFixture fixture{cc, false, false};
+    auto &app = fixture.app;
+    ZmRef<TestLink> link = new TestLink{&app};
+    ZQUIC_CHECK_RT(link->ackEstablished(), "short send keys failed");
+    link->resetPath();
+    TestLink::AckSnapshot outgoing;
+    outgoing.level = space;
+    outgoing.gen = 1;
+    outgoing.due = true;
+    outgoing.ranges.push(Zquic::AckRange{7, 7});
+    link->noteAckTx(outgoing);
+    app.defer();
+    app.enterTx();
+    bool submitted = false;
+    ZQUIC_CHECK_RT(!link->shortCommit([&submitted](ZmRef<ZiIOBuf>) {
+      submitted = true;
+      return true;
+    }, false) && !submitted && !link->appPacketCount() && !link->timersActive(),
+      "packet allocation failure installed recovery or reached submission");
+    bool installed = false, nested = false, replaced = !reset;
+    unsigned bytes = 0;
+    bool sent = link->shortCommit([
+      &bytes, &installed, &nested, &replaced, &link, &app, &outgoing, reset, accept
+    ](ZmRef<ZiIOBuf> packet) {
+      bytes = packet->length;
+      TestLink::AckSnapshot peer;
+      peer.level = space;
+      peer.ranges.push(Zquic::AckRange{0, 0});
+      installed = link->appPacketCount() == 1 && link->ackFrameValidTx(peer) &&
+	!link->txPackets() && !link->timersActive() &&
+	link->recoveryPathDiag().bytesTx == bytes;
+      peer.ranges[0] = Zquic::AckRange{1, 1};
+      installed &= !link->ackFrameValidTx(peer);
+      nested = link->deferTxFlush() && link->deferTxFlush() && !app.txPending();
+      if (reset) replaced = link->resetCommit();
+      else {
+	outgoing.gen = 2;
+	outgoing.ranges[0] = Zquic::AckRange{8, 8};
+	link->noteAckTx(outgoing);
+      }
+      return accept;
+    });
+    ZQUIC_CHECK_RT(installed,
+      "wire visibility preceded recovery/PN/path state or followed timer/diagnostic work");
+    ZQUIC_CHECK_RT(sent == accept && nested && replaced,
+      "short send changed acceptance or did not defer nested flushes");
+    if (reset) {
+      ZQUIC_CHECK_RT(link->appPacketCount() == 1 &&
+	  link->recoveryDiag().bytesInFlight == 99 && !link->txPackets() &&
+	  !link->recoveryPathDiag().bytesTx && !app.txPending(),
+	"old short send modified the reset runtime or retained a stale nested flush");
+    } else {
+      ZQUIC_CHECK_RT(link->appPacketCount() == unsigned(accept) &&
+	  link->txPackets() == unsigned(accept) &&
+	  link->recoveryPathDiag().bytesTx == (accept ? bytes : 0) &&
+	  link->pendingAck(space) && app.txPendingQ.count_() == 1,
+	"short send refusal/commit lost ACK work, path accounting or flush coalescing");
+      outgoing.gen = 1;
+      ZQUIC_CHECK_RT(link->noteAckTx(outgoing) != accept,
+	"outgoing ACK completion did not follow endpoint acceptance");
+      outgoing.gen = 2;
+      link->noteAckTx(outgoing);
+      auto before = link->txFlushQueued;
+      app.runTx();
+      ZQUIC_CHECK_RT(link->txFlushQueued == before + 1 && !app.txPending(),
+	"nested short send did not resume exactly once after finish");
+      bool unique = false;
+      (void)link->shortCommit([&link, &unique](ZmRef<ZiIOBuf>) {
+	TestLink::AckSnapshot peer;
+	peer.level = space;
+	peer.ranges.push(Zquic::AckRange{1, 1});
+	unique = link->ackFrameValidTx(peer);
+	return false;
+      });
+      ZQUIC_CHECK_RT(unique && link->appPacketCount() == unsigned(accept),
+	"refused packet number was reused or refusal discarded an earlier record");
+    }
+    link->recoveryStop();
+  }
+  {
+    HubFixture fixture{false, false, false};
+    auto &app = fixture.app;
+    ZmRef<TestLink> link = new TestLink{&app};
+    ZQUIC_CHECK_RT(link->ackEstablished(), "immediate peer response keys failed");
+    link->resetPath();
+    app.defer();
+    app.enterTx();
+    bool retained = false;
+    ZQUIC_CHECK_RT(link->shortCommit([&app, &link, &retained](ZmRef<ZiIOBuf>) {
+      app.enterRx();
+      Zquic::Frame ack;
+      ack.type = Zquic::FrameType::Ack;
+      ack.ackRanges.push(Zquic::AckRange{0, 0});
+      link->processAckFrame(space, ack);
+      app.enterTx();
+      retained = link->appPacketCount() == 1 && !app.txPending();
+      return true;
+    }) && retained && link->txPackets() == 1,
+      "immediate peer ACK ran recovery inside submission or posted ordinary ACK state");
+    link->drainPeerAcksTx();
+    ZQUIC_CHECK_RT(!link->appPacketCount(),
+      "peer response published during submission did not retire the prepared record");
+    while (app.rxPending()) app.runRx();
+    while (app.txPending()) app.runTx();
+    app.enterTx();
+    bool submitted = false;
+    ZQUIC_CHECK_RT(!link->shortCommit([&submitted](ZmRef<ZiIOBuf>) {
+      submitted = true;
+      return true;
+    }, true, true) && !submitted && link->appPacketCount() == 1 &&
+      link->recoveryDiag().bytesInFlight == 99,
+      "allocation callback reset allowed an old-runtime packet to reach submission");
+    link->recoveryStop();
+  }
+}
+
+void disabledCongestionRecovery()
+{
+  ZuTestScope(disabledCongestionRecovery);
+  ZuCheck(Zquic::HubParams{}.congestionControl());
+  for (bool ecn : {false, true}) {
+    HubFixture fixture{false, ecn};
+    ZuCheck(!fixture.app.congestionControl());
+    ZuCheck(fixture.app.ecn() == ecn);
+    ZmRef<TestLink> link = new TestLink{&fixture.app};
+    // Exercise constructor-only state as well as reset and space discard.
+    auto diag = link->recoveryDiag();
+    ZuCheck(!diag.congestionWindow && !diag.congestionSSThresh);
+    ZuCheck(link->congestionAllowance_() == unsigned(-1));
+    ZuCheck(link->recoveryPackets(32));
+    diag = link->recoveryDiag();
+    ZuCheck(diag.bytesInFlight == 32 * 1200);
+    ZuCheck(!diag.congestionWindow && !diag.congestionSSThresh);
+    link->recoveryAck(32, 32, true);
+    diag = link->recoveryDiag();
+    ZuCheck(diag.bytesInFlight == 2400);
+    ZuCheck(!diag.congestionWindow && !diag.congestionSSThresh);
+    ZuCheck(!link->recoveryPathDiag().ecnCEEvents);
+    ZuCheck(!link->recoveryPathDiag().ecnValidationFailures);
+    link->recoveryDiscard();
+    ZuCheck(!link->recoveryDiag().bytesInFlight);
+    link->recoveryReset();
+    ZuCheck(link->recoveryPackets(1));
+    link->recoveryAck(1, 1);
+    ZuCheck(!link->recoveryDiag().bytesInFlight);
+    link->recoveryStop();
+  }
 }
 
 void testRecoveryRuntimeOrdering()
@@ -1854,6 +2341,55 @@ void testActiveMigrationAPI()
 #endif
 }
 
+void testPreferredMigration()
+{
+  ZuTestScope(testPreferredMigration);
+
+  HubFixture fixture;
+  ZiSockAddr local{ZiIP{"127.0.0.1"}, 4433};
+  ZiSockAddr original{ZiIP{"127.0.0.1"}, 50000};
+  ZiSockAddr preferred{ZiIP{"127.0.0.1"}, 50001};
+  Zquic::TrafficSecret rx, tx;
+  ZmRef<TestLink> link = new TestLink{&fixture.app};
+  link->initClientPath(local, original);
+  link->setRuntimeCIDs(Zquic::CxnID{"localP00"}, Zquic::CxnID{"peerP000"});
+  link->installAppDataKeys(rx, tx, Zquic::CxnID{"localP00"});
+  Zquic::TransportParams peerParams;
+  peerParams.disableActiveMigration = true;
+  link->setPeerTransportParams(peerParams);
+  ZuCHECK(link->addPeerCID(Zquic::CxnID{"peerP002"}, 2,
+      Zquic::ResetToken{"2123456789abcdef"}) &&
+      link->addPeerCID(Zquic::CxnID{"peerP001"}, 1,
+      Zquic::ResetToken{"1123456789abcdef"}),
+    "preferred migration CID setup failed");
+  Zquic::MigrationParams params;
+  params.local = local;
+  params.remote = preferred;
+  Zquic::MigrationReason::T reason;
+  ZuCHECK(link->prepareActiveMigration(params, reason, true) &&
+      link->candidatePathInfo().peerCIDSequence == 1 &&
+      link->activateActiveMigration(),
+    "preferred migration did not select sequence 1 with active migration disabled");
+  Zquic::PathData response{link->validatingChallenge()};
+  response[0] ^= 1;
+  link->pathResponseRx(response);
+  ZuCHECK(link->migrationActive() && !link->migrationPromotedCount,
+    "mismatched response promoted the preferred path");
+  link->pathTimeout();
+  ZuCHECK(!link->migrationActive() && link->migrationFailureCount == 1 &&
+      link->lastMigration.active.remote == original,
+    "preferred validation failure did not retain the original path");
+  ZuCHECK(link->prepareActiveMigration(params, reason, true) &&
+      link->candidatePathInfo().peerCIDSequence == 1 &&
+      link->activateActiveMigration(),
+    "preferred CID reservation leaked after validation timeout");
+  response = Zquic::PathData{link->validatingChallenge()};
+  link->pathResponseRx(response);
+  ZuCHECK(!link->migrationActive() && link->migrationPromotedCount == 1 &&
+      link->lastPathRemote == preferred,
+    "preferred path was not promoted after a matching response");
+}
+
 void testCxnIDMigrationOverlap()
 {
   ZuTestScope(testCxnIDMigrationOverlap);
@@ -2053,6 +2589,10 @@ void testMigrationQLogEvents()
     "qlog rebind migration setup failed");
   rebind->activeRebindStart();
   rebind->activeRebindFail(Zquic::MigrationReason::Endpoint);
+  // This fixture does not run the normal link disconnect sequence. Its
+  // close-on-failure timer must be cancelled before the link is released.
+  rebind->recoveryStop();
+  ZuCHECK(!rebind->timersActive(), "migration log fixture retained a timer");
 
   closeQLog(fixture.app.qlogTrace());
   ZquicLogger::stop();
@@ -2066,7 +2606,7 @@ void testMigrationQLogEvents()
   ZuCHECK(diag.writerFailures == 0,
     "migration runtime qlog writer failure");
 
-  ZtString<> qlog = readFile_(qlogPath);
+  ZtString<> qlog = readFile(qlogPath);
   ZuCHECK(qlog, "migration runtime qlog output missing");
   ZuCHECK(parseJSONSeq(qlog) >= 25,
     "migration runtime qlog JSON-SEQ parse failed");
@@ -2236,8 +2776,94 @@ void testInitValidate()
     if (ok) app.final();
   }
 
-  mx.stop();
   ZiLog::stop();
+}
+
+static bool hashConfig(
+  ZuCSpan id, unsigned tables, unsigned bits, double loadFactor)
+{
+  bool ok = false;
+  Ztc::HashMgr::capture(
+    [id](Ztc::Hash *hash) { return hash->telKey().p<0>() == id; },
+    [tables, bits, loadFactor, &ok](const auto &rows) {
+      ok = rows.length() == tables;
+      for (const auto &row : rows)
+	ok &= row.bits == bits && row.loadFactor == loadFactor &&
+	  !row.cBits && !row.resized; // owner-local tables retain ZmNoLock
+    });
+  return ok;
+}
+
+void testHashConfig()
+{
+  ZuTestScopeRT(testHashConfig);
+  struct Config {
+    const char *id;
+    unsigned tables, bits, tunedBits, tunedCBits;
+  };
+  const Config configs[] = {
+    {"Zquic.Server.Links", 1, 5, 7, 2},
+    {"Zquic.Endpoint.CxnRouter", 1, 5, 6, 1},
+    {"Zquic.Stream.ObjectHash", 2, 8, 6, 2},
+    {"Zquic.Stream.TxHash", 2, 8, 5, 1},
+    {"Zquic.Pkt.OutstandingFlow", 1, 3, 5, 1},
+    {"Zquic.Pkt.OutstandingExact", 1, 4, 6, 2},
+    {"Zquic.Pkt.AckdFrame", 1, 8, 7, 1},
+    {"Zquic.StreamScheduler", 1, 4, 6, 0}
+  };
+  for (bool tuned : {false, true}) {
+    // Construct the recovery owners before configuration: their hashes are lazy.
+    Zquic::OutstandingFrames outstanding;
+    Zquic::RetransmitQueue pending;
+    ZQUIC_CHECK_RT(hashConfig("Zquic.Pkt.OutstandingFlow", 0, 0, 0) &&
+	hashConfig("Zquic.Pkt.OutstandingExact", 0, 0, 0) &&
+	hashConfig("Zquic.Pkt.AckdFrame", 0, 0, 0),
+      "recovery indexes allocated before use");
+    if (tuned)
+      for (const auto &config : configs)
+	ZmHashMgr::init(config.id, ZmHashParams{}.bits(config.tunedBits)
+	  .loadFactor(2).cBits(config.tunedCBits));
+
+    ZiMultiplex mx{HubFixture::mxParams()};
+    ClientShapeApp clientApp;
+    ServerShapeApp serverApp;
+    bool clientOK = clientApp.init(
+      Zquic::ClientParams(&mx, "3", "4").alpn(ZuSpan<ZuCSpan>{"h3"}));
+    bool serverOK = serverApp.init(Zquic::ServerParams(&mx, "3", "4")
+      .certPath("server.pem").keyPath("server.key")
+      .alpn(ZuSpan<ZuCSpan>{"h3"}));
+    ZQUIC_CHECK_RT(clientOK && serverOK, "hash fixture initialization failed");
+    {
+      ZmRef<ClientShapeLink> client = new ClientShapeLink{&clientApp};
+      ZmRef<ServerShapeLink> server = new ServerShapeLink{&serverApp};
+      Zquic::StreamScheduler scheduler{ZmHashParams{}.bits(4)};
+      bool populated = true;
+      for (unsigned i = 0; i < 4; ++i) {
+	Zquic::SentPkt packet;
+	Zquic::TxRange range;
+	range.length = 1;
+	populated &= packet.addFrame(Zquic::SentFrameRef::stream(i * 4, range, true));
+	outstanding.add(packet);
+	populated &= pending.push(Zquic::SentFrameRef::crypto(i, 1));
+	populated &= scheduler.add(i);
+      }
+      ZQUIC_CHECK_RT(populated, "hash fixture population failed");
+      for (const auto &config : configs)
+	ZQUIC_CHECK_RT(hashConfig(config.id, config.tables,
+	    tuned ? config.tunedBits : config.bits, tuned ? 2 : 1),
+	  "hash readback mismatch: ", config.id, " tuned=", tuned);
+      outstanding.clear();
+      pending.clear();
+      scheduler.clear();
+      ZQUIC_CHECK_RT(hashConfig("Zquic.Pkt.AckdFrame", 0, 0, 0),
+	"retransmit index retained after clear");
+      ZQUIC_CHECK_RT(pending.push(Zquic::SentFrameRef::crypto(9, 1)) &&
+	  hashConfig("Zquic.Pkt.AckdFrame", 1, tuned ? 7 : 8, tuned ? 2 : 1),
+	"recreated retransmit index lost named configuration");
+    }
+    if (clientOK) clientApp.final();
+    if (serverOK) serverApp.final();
+  }
 }
 
 int main(int argc, char **argv)
@@ -2259,12 +2885,19 @@ int main(int argc, char **argv)
   ZuTestCall(testStreamLimitOwnership);
   ZuTestCall(testStatelessResetDetection);
   ZuTestCall(testRecoveryRuntimeOrdering);
+  ZuTestCall(disabledCongestionRecovery);
+  ZuTestCall(testAckPublications);
+  ZuTestCall(testPeerAckPublications);
+  ZuTestCall(testCreditPublications);
+  ZuTestCall(testShortSendCommit);
   ZuTestCall(testApplicationCallbacks);
   ZuTestCall(testStopSendingOwnership);
   ZuTestCall(testStreamRegistryOwnership);
   ZuTestCall(testCxnIDFrameLifecycle);
   ZuTestCall(testActiveMigrationAPI);
+  ZuTestCall(testPreferredMigration);
   ZuTestCall(testCxnIDMigrationOverlap);
   ZuTestCall(testMigrationQLogEvents);
   ZuTestCall(testInitValidate);
+  ZuTestCall(testHashConfig);
 }

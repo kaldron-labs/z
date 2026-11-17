@@ -33,8 +33,8 @@ struct AckECN {
 };
 
 struct Frame {
-  static constexpr unsigned MaxAckRanges = 64;
-  static constexpr unsigned BuiltinAckRanges = 32;
+  enum { MaxAckRanges = 64 };
+  enum { BuiltinAckRanges = 32 };
   using AckRanges = ZtBuiltin<
     ZtArray<AckRange,
       ZtArrayHeapMax<MaxAckRanges,
