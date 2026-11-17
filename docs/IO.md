@@ -124,3 +124,6 @@ Sharded I/O teardown requires a 3-phase asynchronous process:
     - risks ownership cycles
   - such back-pointers should be raw pointers (example: `ZiIOBuf::owner`)
   - owners are responsible for draining all activity using orderly teardown as described above, ensuring that objects with stale backpointers cannot outlive their owners
+
+### Slow Receivers
+If a slow receiver causes backpressure on a sender that sustains faster sending, the sender's tx buffer capacity will eventually be exceeded. With the kernel TCP stack, the limit is the usual socket buffer size. With `zutcp`, the limit is the tx buffer pool size. In either case, exceeding tx buffer capacity should close the connection. Do NOT implement blocking/waiting/propagating backpressure onwards - a slow receiver should NOT disrupt tx to other receivers.
