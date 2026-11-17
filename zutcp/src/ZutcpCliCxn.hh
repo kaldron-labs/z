@@ -319,7 +319,7 @@ public:
       connectFailed_0(true);
       return;
     }
-    if (auto stack = app()->nativeStack()) {
+    if (auto stack = app()->nativeInstance()) {
       if (!slot) slot = stack->reserveCxn();
       if (!slot) { connectFailed_0(false, false); return; }
     }
@@ -616,7 +616,7 @@ private:
   void received_(Datagram d) {
     if (d.addr != Endpoint::remote() || d.local != Endpoint::local()) return;
     if (!Base::acceptsLiveTCP(d))
-      if (auto stack = app()->nativeStack())
+      if (auto stack = app()->nativeInstance())
 	if (stack->recoverClosed(d)) return;
     if (Base::receiveSegment(ZuMv(d))) markEstablished();
     else Base::packetParseFailure();

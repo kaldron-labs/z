@@ -279,7 +279,7 @@ private:
       });
     }
     if (!Base::acceptsLiveTCP(d))
-      if (auto stack = app()->nativeStack())
+      if (auto stack = app()->nativeInstance())
 	if (stack->recoverClosed(d)) return true;
     bool received = Base::receiveSegment(ZuMv(d));
     if (received) markEstablished();

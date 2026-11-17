@@ -184,7 +184,7 @@ static void testCarriage(bool v6, bool tcp = false)
   Zutcp::IPView seen;
   ZuBSpan seenPayload;
   bool onRx = false;
-  Zutcp::StackParams params{.interface = index,
+  Zutcp::InstanceParams params{.interface = index,
     .packet = [
       &mx, &input, &seen, &seenPayload, &onRx, &rxDone, &path, protocol, tcp
     ](ZmRef<Zi::IOBuf> buf) {
@@ -202,7 +202,7 @@ static void testCarriage(bool v6, bool tcp = false)
       rxDone.post();
     }, .spin = 0, .txSid = 4};
   if (tcp) params.packet = {};
-  ZmRef<Zutcp::Stack> stack = new Zutcp::Stack{&mx, ZuMv(params)};
+  ZmRef<Zutcp::Instance> stack = new Zutcp::Instance{&mx, ZuMv(params)};
   mx.plugin(stack);
   auto tx = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 2048>(4);
   // AF_XDP queue release can remain pending in the kernel after close. The
@@ -215,8 +215,8 @@ static void testCarriage(bool v6, bool tcp = false)
     if ((started = mx.start())) break;
     usleep(1000); // fixture control caller only
   } while (Zm::now() < startDeadline);
-  std::cout << "# raw Stack startup attempts=" << attempts << '\n';
-  ZuCheckRT(started, log_("raw packet Stack starts without a kernel Zutcp socket"));
+  std::cout << "# raw Instance startup attempts=" << attempts << '\n';
+  ZuCheckRT(started, log_("raw packet Instance starts without a kernel Zutcp socket"));
   if (!started) { close(fd); alarm(0); return; }
   EndpointInput endpoint{&mx, &input, &seen, &seenPayload, &onRx, &rxDone};
   EndpointInput wildcard{&mx, &input, &seen, &seenPayload, &onRx, &rxDone};

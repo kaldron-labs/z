@@ -38,14 +38,14 @@ pure ACK/window traffic can proceed.
 
 `HubParams::congestionControl(false)` disables congestion-window limits,
 congestion accounting and pacing for controlled low-latency networks. For the
-ZiMultiplex plugin, set `StackConfig::congestionControl = false` before starting
+ZiMultiplex plugin, set `InstanceConfig::congestionControl = false` before starting
 the multiplexer. The default is enabled; the setting is cached at initialization.
 Disabled mode suppresses ECN negotiation while retaining receiver flow control,
 bounded local buffer credits, ACK/SACK retirement, loss recovery and RTO backoff.
 Nagle remains disabled in both modes.
 
 `HubParams::ackHoldTimeout` configures the cumulative ACK hold; the
-`ZiMultiplex` plugin uses `StackConfig::ackHoldTimeout`. Both default to 25
+`ZiMultiplex` plugin uses `InstanceConfig::ackHoldTimeout`. Both default to 25
 milliseconds, accept zero to disable holding, and require a value below 500
 milliseconds. Eligible in-order DATA may hold one pending ACK; each receive
 updates it to the latest cumulative position. Outgoing DATA can carry that ACK
@@ -67,7 +67,7 @@ segment-lifetime assumptions; it does not create an unlimited wire epoch.
 See the [kernel/native quickstart](util/README.md) for the stopped-multiplexer
 setup, actual command-line tools, sudo fixture commands and deployment prerequisites.
 
-`Zutcp::Stack` implements `ZiMxPlugin`. Register it on a stopped multiplexer
+`Zutcp::Instance` implements `ZiMxPlugin`. Register it on a stopped multiplexer
 before creating application allocators or starting I/O. Select the interface and
 optional destination network mask at setup; backend selection stays fixed while
 the multiplexer runs. An mx without this plugin uses its normal kernel backend.
@@ -132,7 +132,7 @@ and Fast Open cookies use secure keyed primitives independently of TLS.
 `Zutcp::Allocator` implements `Zi::IOBufPool`, forwarding storage operations
 and receive-return notification to an injected common
 pool obtained from the selected `Zxdp::Instance` backend's `bufPool()` factory.
-Concrete registered pools remain internal to Zxdp. Stack selects that backend
+Concrete registered pools remain internal to Zxdp. Instance selects that backend
 before creating pools, then constructs the typed configuration in place:
 
 ```c++
@@ -143,7 +143,7 @@ auto &params = config.p<Zxdp::Xdp::Params>();
 ```
 
 Configuration owns the Tx pool list and Rx reference; the initialized backend retains its own
-pool references independently of configuration-list membership. Stack retains
+pool references independently of configuration-list membership. Instance retains
 raw pools through its transport providers between starts. Tx buffer allocation
 failure drops the connection rather than waiting for a pool grant. Pools publish
 fixed count, size, alignment,
@@ -170,7 +170,7 @@ application-held or recovery-held packet.
 
 ## Connection hash sizing
 
-Before constructing the Stack or server, applications can configure the existing
+Before constructing the Instance or server, applications can configure the existing
 `ZmHashMgr` IDs `Zutcp.Endpoints`, `Zutcp.Endpoint.TupleRouter`, and
 `Zutcp.ServerLinks`. These constructors retain their default 32 buckets and load
 factor 1 when no named override is installed. The tables are owner-local and use

@@ -2,7 +2,7 @@
 
 `zutcpkerneltest` runs nine private-veth profiles in both native client/kernel
 server and kernel client/native server roles over IPv4 and IPv6 (36 cases). The kernel utility uses
-ordinary TCP sockets. The native utility installs an actual `Zutcp::Stack` and
+ordinary TCP sockets. The native utility installs an actual `Zutcp::Instance` and
 uses public client/server roles over AF_XDP; there is no kernel socket fallback.
 
 Build `zutcp/util` and `zutcp/interop` after the required lower modules. Run
@@ -21,7 +21,7 @@ kernel SACK/WS/TS/ECN/TFO settings, offload settings, two directional captures a
 `tcp-evidence.json` in its test residue directory. The standalone Python checker
 verifies checksums, standard TCP options, raw application payload, sequence
 positions, EOF framing and final FIN acknowledgments. Native stderr additionally
-reports the stopped Stack's empty connection/Tx admissions and returned controls.
+reports the stopped Instance's empty connection/Tx admissions and returned controls.
 This veth evidence does not establish physical-NIC zero-copy capability or
 independently prove canonical backing-pointer identity.
 
@@ -56,7 +56,7 @@ These profiles complement the controlled backing-lifetime assertions. Repeated
 sessions, reset and opt-in kernel TFO have the separate profiles below.
 
 The `repeat` profile performs two complete exchanges using the same utility
-processes, native App/Stack and server listener. Each flow has independent tuple
+processes, native App/Instance and server listener. Each flow has independent tuple
 and SYN-origin decoding, exact bytes and both eventual FIN acknowledgments. Native
 clients report completion of each public disconnect callback before opening the
 next connection. Kernel clients open after the prior response EOF and local close;
@@ -69,7 +69,7 @@ observer waits for actual peer cumulative acknowledgment before releasing the
 client main thread. The native client uses public numeric disconnect with a full
 64-bit local error; the kernel client uses `SO_LINGER{1,0}` and ordinary close.
 The first connection must carry RST without FIN or reflection. The same listener
-and App/Stack then perform a fresh complete binary request/echo/FIN exchange.
+and App/Instance then perform a fresh complete binary request/echo/FIN exchange.
 
 For the kernel-client reset case only, the native server explicitly seeds a
 same-key closed-history record after actual establishment while its live owner

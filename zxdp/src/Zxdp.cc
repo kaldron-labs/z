@@ -91,8 +91,9 @@ public:
       unsigned i = 0;
       while (auto pool = pools()) m_txPools[i++] = static_cast<Zi::IOBufPool *>(pool);
     }
-    if (!m_ifindex || !m_rxPool || !m_receive) {
-      return ZeEXCEPT(Error, "Zxdp", "interface, Rx pool and receive callback are required");
+    if (!m_ifindex || !m_txPools.length() || !m_rxPool || !m_receive) {
+      return ZeEXCEPT(Error, "Zxdp",
+	"interface, Tx pools, Rx pool and receive callback are required");
     }
     if (!m_scheduler || !m_txSid || m_txSid > m_scheduler->params().nThreads()) {
       return ZeEXCEPT(Error, "Zxdp", "AF_XDP requires a scheduler and assigned Tx slot");

@@ -164,7 +164,7 @@ CxnAdmission CxnSlots::admission(unsigned maxCxns, unsigned maxPendingCxns) cons
 
 // This owns native application lifetimes. Association callbacks navigate the
 // existing Connection pointer; the lists are cold ownership/iteration state.
-class Stack::Connections : public ZmNHeap<Connections> {
+class Instance::Connections : public ZmNHeap<Connections> {
 friend inline ZuStringT<"Zutcp.Mx.Connections"> ZmNHeapID(Connections *);
 public:
   class Client;
@@ -181,9 +181,9 @@ public:
   };
   using Done = ZmFn<void(), ZmFnHeapID<"Zutcp.Mx.Drain">>;
 
-  Connections(Stack *stack) : m_stack{stack} { }
+  Connections(Instance *stack) : m_instance{stack} { }
   ~Connections();
-  Stack *stack() const { return m_stack; }
+  Instance *stack() const { return m_instance; }
   Client *client() const { return m_client; }
   void connect(ZiConnectFn, ZiFailFn, ZiIP, uint16_t, ZiIP, uint16_t,
     Zi::IOBufAllocator *, ZiCxnOptions);
@@ -202,7 +202,7 @@ public:
 
 private:
   template <typename P> P params() const;
-  Stack *m_stack;
+  Instance *m_instance;
   ZmRef<Client> m_client;
   Cli *m_clients = nullptr;
   Listener *m_listeners = nullptr;
@@ -211,19 +211,19 @@ private:
   Done m_done;
 };
 
-class Stack::Connections::Client : public ZmNHeap<Client>, public Zutcp::Client<Client> {
+class Instance::Connections::Client : public ZmNHeap<Client>, public Zutcp::Client<Client> {
 friend inline ZuStringT<"Zutcp.Mx.Client"> ZmNHeapID(Client *);
 public:
   using ZmNHeap<Client>::operator new;
   using ZmNHeap<Client>::operator delete;
   bool ioActive() const { return mx(); }
-  bool init(ClientParams params, Stack *stack) {
+  bool init(ClientParams params, Instance *stack) {
     return init_(ZuMv(params), Vantage::Client,
       [](const ClientParams &) { return true; }, stack);
   }
 };
 
-class Stack::Connections::Cli :
+class Instance::Connections::Cli :
   public ZmNHeap<Cli>, public CliLinks, public CliCxn<Client, Cli> {
 friend inline ZuStringT<"Zutcp.Mx.CliCxn"> ZmNHeapID(Cli *);
 friend class Connections;
@@ -283,7 +283,7 @@ private:
   bool m_transient = false, m_finishing = false, m_peer = false;
 };
 
-class Stack::Connections::Listener : public ZmNHeap<Listener>,
+class Instance::Connections::Listener : public ZmNHeap<Listener>,
   public ListenerLinks, public Server<Listener, Srv> {
 friend inline ZuStringT<"Zutcp.Mx.Listener"> ZmNHeapID(Listener *);
 friend class Connections;
@@ -298,7 +298,7 @@ public:
     m_allocator{allocator}, m_options{ZuMv(options)} { }
   bool ioActive() const { return mx(); }
   void wake() { rxRun([this] { this->stopped(); }); }
-  bool init(ServerParams params, Stack *stack) {
+  bool init(ServerParams params, Instance *stack) {
     return init_(ZuMv(params), Vantage::Server,
       [](const ServerParams &) { return true; }, stack);
   }
@@ -339,7 +339,7 @@ private:
   bool m_closing = false, m_stopping = false, m_stopped = false, m_finalQueued = false;
 };
 
-class Stack::Connections::Srv : public ZmNHeap<Srv>, public SrvCxn<Listener, Srv> {
+class Instance::Connections::Srv : public ZmNHeap<Srv>, public SrvCxn<Listener, Srv> {
 friend inline ZuStringT<"Zutcp.Mx.SrvCxn"> ZmNHeapID(Srv *);
   using Base = SrvCxn<Listener, Srv>;
 public:
@@ -369,10 +369,10 @@ private:
   ZiCxnInfo m_info;
 };
 
-template <typename P> P Stack::Connections::params() const
+template <typename P> P Instance::Connections::params() const
 {
-  const auto &config = m_stack->config();
-  P params{m_stack->mx()};
+  const auto &config = m_instance->config();
+  P params{m_instance->mx()};
   params.controlBufCount(config.controlBufCount).txControlCredits(config.txControlCredits)
     .rxRetainFramesPerCxn(config.rxRetainFramesPerCxn)
     .maxData(config.maxData).maxCxns(config.maxCxns).maxPendingCxns(config.maxPendingCxns)
@@ -384,23 +384,23 @@ template <typename P> P Stack::Connections::params() const
   return params;
 }
 
-Stack::Connections::~Connections()
+Instance::Connections::~Connections()
 {
   ZmAssert_(!m_clients && !m_listeners && !m_retiring && !m_objects);
   if (m_client) m_client->final();
 }
 
-void Stack::Connections::connect(
+void Instance::Connections::connect(
   ZiConnectFn connected, ZiFailFn fail, ZiIP local, uint16_t localPort,
   ZiIP remote, uint16_t remotePort, Zi::IOBufAllocator *allocator, ZiCxnOptions options)
 {
-  auto slot = m_stack->reserveCxn();
+  auto slot = m_instance->reserveCxn();
   if (!slot) { if (fail) fail(false); return; }
   if (!m_client) {
     m_client = new Client;
-    if (!m_client->init(params<ClientParams>(), m_stack)) {
+    if (!m_client->init(params<ClientParams>(), m_instance)) {
       m_client = nullptr;
-      m_stack->releaseCxn(slot);
+      m_instance->releaseCxn(slot);
       if (fail) fail(false);
       return;
     }
@@ -416,7 +416,7 @@ void Stack::Connections::connect(
   cxn->connectReserved(remote, remotePort, ZuMv(slot));
 }
 
-void Stack::Connections::listen(
+void Instance::Connections::listen(
   ZiListenFn listening, ZiFailFn fail, ZiConnectFn accept, ZiIP local, uint16_t port,
   unsigned count, Zi::IOBufAllocator *allocator, ZiCxnOptions options)
 {
@@ -428,13 +428,13 @@ void Stack::Connections::listen(
   }
   ZmRef<Listener> listener = new Listener{this, ZuMv(listening), ZuMv(fail),
     ZuMv(accept), ZiSockAddr{local, port}, count, allocator, ZuMv(options)};
-  if (!listener->init(params<ServerParams>(), m_stack)) {
+  if (!listener->init(params<ServerParams>(), m_instance)) {
     auto failed = listener->takeFailure();
     if (failed) failed(false);
     return;
   }
   {
-    ZmGuard guard(m_stack->m_observeLock);
+    ZmGuard guard(m_instance->m_observeLock);
     listener->ownerPrev = &m_listeners;
     listener->ownerNext = m_listeners;
     if (m_listeners) m_listeners->ownerPrev = &listener->ownerNext;
@@ -444,12 +444,12 @@ void Stack::Connections::listen(
   listener->begin();
 }
 
-bool Stack::Connections::Listener::publish(Srv *cxn, ZiCxnInfo info)
+bool Instance::Connections::Listener::publish(Srv *cxn, ZiCxnInfo info)
 {
   return !m_closing && m_owner->publish(cxn, m_accept, ZuMv(info));
 }
 
-void Stack::Connections::Listener::begin()
+void Instance::Connections::Listener::begin()
 {
   HubCtl::start([this](bool ok) {
     if (ok && !m_closing) {
@@ -467,7 +467,7 @@ void Stack::Connections::Listener::begin()
   });
 }
 
-ZmRef<Stack::Connections::Srv> Stack::Connections::Listener::accepted(const InitialInfo &info)
+ZmRef<Instance::Connections::Srv> Instance::Connections::Listener::accepted(const InitialInfo &info)
 {
   if (m_closing) return {};
   ++m_active;
@@ -476,14 +476,14 @@ ZmRef<Stack::Connections::Srv> Stack::Connections::Listener::accepted(const Init
     .rxAllocator = m_allocator}};
 }
 
-void Stack::Connections::Listener::disconnected(Srv *cxn, bool peer)
+void Instance::Connections::Listener::disconnected(Srv *cxn, bool peer)
 {
   ZmRef<Srv> hold{cxn};
   Base::disconnected(cxn, peer);
   m_owner->retire(cxn, peer, [this] { retired(); });
 }
 
-void Stack::Connections::Listener::end(bool all)
+void Instance::Connections::Listener::end(bool all)
 {
   m_closing = true;
   if (m_stopping) return;
@@ -496,7 +496,7 @@ void Stack::Connections::Listener::end(bool all)
   HubCtl::stop([this](bool) { m_stopped = true; drained(); });
 }
 
-void Stack::Connections::Listener::retired()
+void Instance::Connections::Listener::retired()
 {
   ZmAssert_(m_active);
   --m_active;
@@ -504,7 +504,7 @@ void Stack::Connections::Listener::retired()
   else drained();
 }
 
-void Stack::Connections::Listener::drained()
+void Instance::Connections::Listener::drained()
 {
   if (!m_stopped || m_active || m_objects || m_finalQueued) return;
   m_finalQueued = true;
@@ -516,14 +516,14 @@ void Stack::Connections::Listener::drained()
   });
 }
 
-void Stack::Connections::stopListening(ZiIP ip, uint16_t port)
+void Instance::Connections::stopListening(ZiIP ip, uint16_t port)
 {
   for (auto listener = m_listeners; listener; listener = listener->ownerNext)
     if (listener->local().ip() == ip && listener->local().port() == port)
       listener->end();
 }
 
-void Stack::Connections::stop(Done done)
+void Instance::Connections::stop(Done done)
 {
   m_stopping = true;
   m_done = ZuMv(done);
@@ -532,7 +532,7 @@ void Stack::Connections::stop(Done done)
   drained();
 }
 
-void Stack::Connections::remove(Cli *cxn)
+void Instance::Connections::remove(Cli *cxn)
 {
   if (cxn->ownerNext) cxn->ownerNext->ownerPrev = cxn->ownerPrev;
   *cxn->ownerPrev = cxn->ownerNext;
@@ -541,10 +541,10 @@ void Stack::Connections::remove(Cli *cxn)
   ZmDEREF(cxn);
 }
 
-void Stack::Connections::remove(Listener *listener)
+void Instance::Connections::remove(Listener *listener)
 {
   {
-    ZmGuard guard(m_stack->m_observeLock);
+    ZmGuard guard(m_instance->m_observeLock);
     if (listener->ownerNext) listener->ownerNext->ownerPrev = listener->ownerPrev;
     *listener->ownerPrev = listener->ownerNext;
     listener->ownerNext = nullptr;
@@ -554,11 +554,11 @@ void Stack::Connections::remove(Listener *listener)
   drained();
 }
 
-unsigned Stack::Connections::allQueues(Ztc::QueueMgr::AllFn fn) const
+unsigned Instance::Connections::allQueues(Ztc::QueueMgr::AllFn fn) const
 {
   ZtArray<ZmRef<Listener>, ZtArrayHeapID<"Zutcp.Mx.ListenerQueueOwners">> owners;
   {
-    ZmReadGuard guard(m_stack->m_observeLock);
+    ZmReadGuard guard(m_instance->m_observeLock);
     for (auto listener = m_listeners; listener; listener = listener->ownerNext)
       new (owners.push()) ZmRef<Listener>{listener};
   }
@@ -567,7 +567,7 @@ unsigned Stack::Connections::allQueues(Ztc::QueueMgr::AllFn fn) const
   return count;
 }
 
-void Stack::Connections::drained()
+void Instance::Connections::drained()
 {
   if (!m_stopping || m_clients || m_listeners || m_retiring || m_objects) return;
   // Retired associations can still have endpoint-close references. Wait for
@@ -578,7 +578,7 @@ void Stack::Connections::drained()
   if (done) done();
 }
 
-void Stack::Connections::objectRetired(ZiFailFn fail, bool transient)
+void Instance::Connections::objectRetired(ZiFailFn fail, bool transient)
 {
   ZmAssert_(m_objects);
   --m_objects;
@@ -586,7 +586,7 @@ void Stack::Connections::objectRetired(ZiFailFn fail, bool transient)
   drained();
 }
 
-template <typename C> bool Stack::Connections::publish(C *cxn, ZiConnectFn &fn, ZiCxnInfo info)
+template <typename C> bool Instance::Connections::publish(C *cxn, ZiConnectFn &fn, ZiCxnInfo info)
 {
   if (m_stopping || !fn) return false;
   auto mx = fn(info);
@@ -594,18 +594,18 @@ template <typename C> bool Stack::Connections::publish(C *cxn, ZiConnectFn &fn, 
   ZmREF(mx);
   cxn->mxCxn = mx;
   mx->plugin(static_cast<typename C::State *>(cxn));
-  m_stack->observed(cxn);
+  m_instance->observed(cxn);
   mx->connected(mx->rxContext());
   if (mx->rxContext().disconnected()) mx->disconnect();
   else cxn->recvMx();
   return true;
 }
 
-template <typename C, typename L> void Stack::Connections::retire(C *cxn, bool peer, L &&done)
+template <typename C, typename L> void Instance::Connections::retire(C *cxn, bool peer, L &&done)
 {
   ++m_retiring;
   auto mx = ZmRef<ZiConnection>::acquire(cxn->mxCxn);
-  m_stack->mx()->txRun([
+  m_instance->mx()->txRun([
     this, cxn = ZmRef<C>{cxn}, mx = ZuMv(mx), peer, done = ZuFwd<L>(done)
   ]() mutable {
     if (mx) {
@@ -613,13 +613,13 @@ template <typename C, typename L> void Stack::Connections::retire(C *cxn, bool p
       mx->txContext().complete();
       mx->plugin(nullptr);
     }
-    m_stack->mx()->rxRun([
+    m_instance->mx()->rxRun([
       this, cxn = ZuMv(cxn), mx = ZuMv(mx), peer, done = ZuMv(done)
     ]() mutable {
       if (mx) {
 	mx->rxUp() = 0;
 	mx->rxContext().complete();
-        m_stack->unobserved(cxn);
+        m_instance->unobserved(cxn);
       }
       done(); // Remove cold ownership while the drain reference still protects Cxn.
       cxn->releaseCxnSlotRx();
@@ -631,7 +631,7 @@ template <typename C, typename L> void Stack::Connections::retire(C *cxn, bool p
   });
 }
 
-template <typename L> void Stack::Connections::visit(ZiConnection *mx, L &&fn)
+template <typename L> void Instance::Connections::visit(ZiConnection *mx, L &&fn)
 {
   if (!mx->plugin()) return;
   switch (mx->info().type) {
@@ -680,7 +680,7 @@ static unsigned requireTCPSecrets(ISN &isn, TFOKey &tfo, unsigned interface)
   return interface;
 }
 
-Stack::Stack(ZiMultiplex *mx, StackParams params)
+Instance::Instance(ZiMultiplex *mx, InstanceParams params)
 : ZiMxPlugin{mx}, m_interface{requireTCPSecrets(m_isn, m_tfoKey, params.interface)},
   m_mtu{requireMTU(mx, params.interface)},
   m_spin{params.spin},
@@ -714,7 +714,7 @@ Stack::Stack(ZiMultiplex *mx, StackParams params)
   addProvider(m_control);
 }
 
-Stack::~Stack()
+Instance::~Instance()
 {
   ZmAssert_(m_state == Stopped && !m_current && !unsigned(m_wakeUsers));
   ZmAssert_(!m_txServicing && !m_txPending);
@@ -731,7 +731,7 @@ Stack::~Stack()
   }
 }
 
-void Stack::addProvider(Allocator *p)
+void Instance::addProvider(Allocator *p)
 {
   ZmREF(p);
   m_txCapacity += p->pool->count;
@@ -739,7 +739,7 @@ void Stack::addProvider(Allocator *p)
   m_providers = p;
 }
 
-Zi::IOBufPool *Stack::allocator(
+Zi::IOBufPool *Instance::allocator(
   Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count)
 {
   ZmAssert_(mx()->state() == ZmEngineState::Stopped);
@@ -763,7 +763,7 @@ Zi::IOBufPool *Stack::allocator(
   return p;
 }
 
-ZuUnion<void, ZeException> Stack::configureControl(unsigned count, unsigned credits)
+ZuUnion<void, ZeException> Instance::configureControl(unsigned count, unsigned credits)
 {
   ZmAssert_(mx()->state() == ZmEngineState::Stopped && m_state == Stopped);
   uint64_t capacity = m_txCapacity - m_control->pool->count + count;
@@ -780,7 +780,7 @@ ZuUnion<void, ZeException> Stack::configureControl(unsigned count, unsigned cred
   return {};
 }
 
-TxAdmission Stack::txAdmission() const
+TxAdmission Instance::txAdmission() const
 {
   ZmAssert_(m_state == Stopped || mx()->invoked(mx()->txThread()));
   unsigned count = m_control->pool->count;
@@ -789,7 +789,7 @@ TxAdmission Stack::txAdmission() const
     .outstanding = m_txPending, .controlCount = count};
 }
 
-ZuUnion<void, ZeException> Stack::configure(const StackConfig &config)
+ZuUnion<void, ZeException> Instance::configure(const InstanceConfig &config)
 {
   ZmAssert_(mx()->state() == ZmEngineState::Stopped && m_state == Stopped);
   if (!positiveTimeout(config.connectTimeout)) {
@@ -824,50 +824,50 @@ ZuUnion<void, ZeException> Stack::configure(const StackConfig &config)
   return {};
 }
 
-CxnAdmission Stack::cxnAdmission() const
+CxnAdmission Instance::cxnAdmission() const
 {
   ZmAssert_(m_state == Stopped || mx()->invoked(mx()->rxThread()));
   return m_cxnSlots.admission(m_config.maxCxns, m_config.maxPendingCxns);
 }
 
-CxnSlot Stack::reserveCxn()
+CxnSlot Instance::reserveCxn()
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (!ready()) return {};
   return m_cxnSlots.reserve(m_config.maxCxns, m_config.maxPendingCxns);
 }
-void Stack::establishedCxn(CxnSlot &slot)
+void Instance::establishedCxn(CxnSlot &slot)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   ZmAssert_(!slot || slot.owner() == &m_cxnSlots);
   slot.established();
 }
-void Stack::closingCxn(CxnSlot &slot)
+void Instance::closingCxn(CxnSlot &slot)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   ZmAssert_(!slot || slot.owner() == &m_cxnSlots);
   slot.closing();
 }
-void Stack::releaseCxn(CxnSlot &slot)
+void Instance::releaseCxn(CxnSlot &slot)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   ZmAssert_(!slot || slot.owner() == &m_cxnSlots);
   slot.release();
 }
 
-bool Stack::chooseISN(const ZiSockAddr &local, const ZiSockAddr &remote, uint32_t &isn) const
+bool Instance::chooseISN(const ZiSockAddr &local, const ZiSockAddr &remote, uint32_t &isn) const
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   return m_isn.generate(local, remote, isn);
 }
 
-bool Stack::tfoCookie(const ZiIP &client, const ZiSockAddr &server, TFOCookie &cookie) const
+bool Instance::tfoCookie(const ZiIP &client, const ZiSockAddr &server, TFOCookie &cookie) const
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   return m_tfoCookies.find({client, server}, cookie);
 }
 
-void Stack::saveTFOCookie(
+void Instance::saveTFOCookie(
   const ZiIP &client, const ZiSockAddr &server, const TFOCookie &cookie)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
@@ -875,49 +875,49 @@ void Stack::saveTFOCookie(
   else m_tfoCookies.erase({client, server});
 }
 
-bool Stack::issueTFO(const ZiSockAddr &local, const ZiIP &client, TFOCookie &cookie) const
+bool Instance::issueTFO(const ZiSockAddr &local, const ZiIP &client, TFOCookie &cookie) const
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   return m_tfoKey.issue({client, local}, cookie);
 }
 
-bool Stack::validTFO(const ZiSockAddr &local, const ZiIP &client, const TFOCookie &cookie) const
+bool Instance::validTFO(const ZiSockAddr &local, const ZiIP &client, const TFOCookie &cookie) const
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   return m_tfoKey.validate({client, local}, cookie.span());
 }
 
-bool Stack::tcpTimestamp(ZuTime now, uint32_t &out)
+bool Instance::tcpTimestamp(ZuTime now, uint32_t &out)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   return m_tcpClock.sample(now, out);
 }
 
-ClosedTuple Stack::rememberClosed(ClosedTuple record)
+ClosedTuple Instance::rememberClosed(ClosedTuple record)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   return m_closed.remember(ZuMv(record));
 }
 
-bool Stack::closedTuple(const ClosedTupleKey &key, ClosedTuple &record) const
+bool Instance::closedTuple(const ClosedTupleKey &key, ClosedTuple &record) const
 {
   ZmAssert_(m_state == Stopped || mx()->invoked(mx()->rxThread()));
   return m_closed.find(key, record);
 }
 
-bool Stack::updateClosed(const ClosedTuple &record)
+bool Instance::updateClosed(const ClosedTuple &record)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   return m_closed.update(record);
 }
 
-ClosedTupleStats Stack::closedTupleStats() const
+ClosedTupleStats Instance::closedTupleStats() const
 {
   ZmAssert_(m_state == Stopped || mx()->invoked(mx()->rxThread()));
   return m_closed.stats();
 }
 
-bool Stack::ready() const { return m_state == Running; }
+bool Instance::ready() const { return m_state == Running; }
 
 CxnBindError::T bindCxnTuple(
   ZiSockAddr &local, const ZiSockAddr &remote, unsigned &nextPort,
@@ -946,7 +946,7 @@ CxnBindError::T bindCxnTuple(
   return CxnBindError::None;
 }
 
-ZuUnion<void, ZeException> Stack::bind(
+ZuUnion<void, ZeException> Instance::bind(
   ZiSockAddr &local, void *owner, EndpointFn receive, const ZiSockAddr &remote)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
@@ -968,7 +968,7 @@ ZuUnion<void, ZeException> Stack::bind(
   }
 }
 
-bool Stack::unbind(const ZiSockAddr &local, void *owner)
+bool Instance::unbind(const ZiSockAddr &local, void *owner)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   auto binding = m_endpoints->findPtr(local);
@@ -977,7 +977,7 @@ bool Stack::unbind(const ZiSockAddr &local, void *owner)
   return true;
 }
 
-bool Stack::resolvePath(IPPath path, RouteFn done)
+bool Instance::resolvePath(IPPath path, RouteFn done)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (!ready() || !done) return false;
@@ -1006,12 +1006,12 @@ bool Stack::resolvePath(IPPath path, RouteFn done)
   return true;
 }
 
-void Stack::start()
+void Instance::start()
 {
   mx()->rxRun([this] { start_(); });
 }
 
-void Stack::start_()
+void Instance::start_()
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (ready()) { mx()->pluginStarted({}); return; }
@@ -1052,12 +1052,12 @@ void Stack::start_()
   mx()->txRun([this] { stopTx(); });
 }
 
-void Stack::stop()
+void Instance::stop()
 {
   mx()->rxRun([this] { stopRx(); });
 }
 
-void Stack::stopRx()
+void Instance::stopRx()
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (m_state == Stopped) { mx()->pluginStopped({}); return; }
@@ -1068,7 +1068,7 @@ void Stack::stopRx()
   } else stopEndpoints();
 }
 
-void Stack::stopEndpoints()
+void Instance::stopEndpoints()
 {
   // Existing wake calls finish before Tx closes the backend's wait descriptor.
   // The closed instance itself stays retained until the stopped lifecycle ends.
@@ -1080,7 +1080,7 @@ void Stack::stopEndpoints()
   }
 }
 
-void Stack::stopTx()
+void Instance::stopTx()
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (m_senderStopping) return;
@@ -1122,7 +1122,7 @@ void Stack::stopTx()
   mx()->push([this] { stopTx(); }, mx()->txThread());
 }
 
-void Stack::senderStopped()
+void Instance::senderStopped()
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (!m_senderStopping) return; // stopTx may already have observed sender exit
@@ -1130,7 +1130,7 @@ void Stack::senderStopped()
   stopTx();
 }
 
-void Stack::wake()
+void Instance::wake()
 {
   ++m_wakeUsers;
   Zxdp::Instance *p = m_current;
@@ -1138,7 +1138,7 @@ void Stack::wake()
   --m_wakeUsers;
 }
 
-void Stack::rx()
+void Instance::rx()
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (!ready()) return;
@@ -1146,7 +1146,7 @@ void Stack::rx()
   m_backend->rx();
 }
 
-void Stack::received(uint8_t *p, unsigned n)
+void Instance::received(uint8_t *p, unsigned n)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   IPView ip;
@@ -1192,7 +1192,7 @@ void Stack::received(uint8_t *p, unsigned n)
   }
 }
 
-bool Stack::recoverClosed(const Datagram &d)
+bool Instance::recoverClosed(const Datagram &d)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (!d.buf || d.buf->skip < 14) return false;
@@ -1201,7 +1201,7 @@ bool Stack::recoverClosed(const Datagram &d)
   return closedPacket(d.buf->data_(), ip, tcp);
 }
 
-void Stack::resetUnmatched(const Datagram &d)
+void Instance::resetUnmatched(const Datagram &d)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (!d.buf || d.buf->skip < 14 || (d.tcp.flags & 0x04)) return;
@@ -1211,7 +1211,7 @@ void Stack::resetUnmatched(const Datagram &d)
   resetReply(d.tcp, d.buf->length, path);
 }
 
-void Stack::resetReply(const TCPHeader &incoming, unsigned payload, IPPath path)
+void Instance::resetReply(const TCPHeader &incoming, unsigned payload, IPPath path)
 {
   TCPHeader tcp{.srcPort = incoming.dstPort, .dstPort = incoming.srcPort, .flags = 0x04};
   if (incoming.flags & 0x10) tcp.seq = incoming.ack;
@@ -1223,7 +1223,7 @@ void Stack::resetReply(const TCPHeader &incoming, unsigned payload, IPPath path)
   mx()->txRun([this, tcp, path] { replyControl(tcp, path); });
 }
 
-void Stack::replyControl(TCPHeader tcp, IPPath path)
+void Instance::replyControl(TCPHeader tcp, IPPath path)
 {
   auto packet = allocPacket(this, path.local.type(), true);
   if (!packet) return;
@@ -1234,7 +1234,7 @@ void Stack::replyControl(TCPHeader tcp, IPPath path)
   sendPacket(packet);
 }
 
-bool Stack::closedPacket(const uint8_t *frame, const IPView &ip, const TCPView &tcp)
+bool Instance::closedPacket(const uint8_t *frame, const IPView &ip, const TCPView &tcp)
 {
   ClosedTuple record;
   ClosedTupleKey key{ZiSockAddr{ip.local, tcp.header.dstPort},
@@ -1273,7 +1273,7 @@ bool Stack::closedPacket(const uint8_t *frame, const IPView &ip, const TCPView &
   return true;
 }
 
-void Stack::replyClosed(ClosedTuple record, IPPath path)
+void Instance::replyClosed(ClosedTuple record, IPPath path)
 {
   auto packet = allocPacket(this, path.local.type(), true);
   if (!packet) return;
@@ -1301,7 +1301,7 @@ void Stack::replyClosed(ClosedTuple record, IPPath path)
     });
 }
 
-ZmRef<PacketBuf> Stack::allocPacket(void *owner, ZiIPType::T family, bool control)
+ZmRef<PacketBuf> Instance::allocPacket(void *owner, ZiIPType::T family, bool control)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   auto head = tcpHead(family);
@@ -1313,7 +1313,7 @@ ZmRef<PacketBuf> Stack::allocPacket(void *owner, ZiIPType::T family, bool contro
   return buf;
 }
 
-bool Stack::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease)
+bool Instance::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (!ready() || !buf || !buf->registered() || !buf->length ||
@@ -1349,7 +1349,7 @@ bool Stack::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease)
   return true;
 }
 
-void Stack::reconcileTx()
+void Instance::reconcileTx()
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (!m_backend || !m_backend->ready()) return;
@@ -1359,17 +1359,17 @@ void Stack::reconcileTx()
   if (!m_txPending) txService(false);
 }
 
-void Stack::txService(bool active)
+void Instance::txService(bool active)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (m_txServicing == active) return;
   m_txServicing = active;
   mx()->serviceFn(mx()->txThread(), active ?
-    ZmScheduler::ServiceFn{this, ZmFnPtr<&Stack::pollTx>{}} :
+    ZmScheduler::ServiceFn{this, ZmFnPtr<&Instance::pollTx>{}} :
     ZmScheduler::ServiceFn{});
 }
 
-void Stack::pollTx()
+void Instance::pollTx()
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (!ready() && !m_txDraining) { txService(false); return; }
@@ -1382,7 +1382,7 @@ void Stack::pollTx()
   if (!m_txPending || !m_backend->ready()) txService(false);
 }
 
-void Stack::listen(
+void Instance::listen(
   ZiListenFn listening, ZiFailFn fail, ZiConnectFn accept, ZiIP local, uint16_t port,
   unsigned count, Zi::IOBufAllocator *allocator, ZiCxnOptions options)
 {
@@ -1393,13 +1393,13 @@ void Stack::listen(
     allocator, ZuMv(options));
 }
 
-void Stack::stopListening(ZiIP local, uint16_t port)
+void Instance::stopListening(ZiIP local, uint16_t port)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (m_cxns) m_cxns->stopListening(local, port);
 }
 
-void Stack::connect(
+void Instance::connect(
   ZiConnectFn connected, ZiFailFn fail, ZiIPType::T family, ZiIP local, uint16_t localPort,
   ZiIP remote, uint16_t remotePort, Zi::IOBufAllocator *allocator, ZiCxnOptions options)
 {
@@ -1411,10 +1411,10 @@ void Stack::connect(
     allocator, ZuMv(options));
 }
 
-void Stack::udp(ZiConnectFn, ZiFailFn fail, ZiIPType::T, ZiIP, uint16_t, ZiIP,
+void Instance::udp(ZiConnectFn, ZiFailFn fail, ZiIPType::T, ZiIP, uint16_t, ZiIP,
   uint16_t, Zi::IOBufAllocator *, ZiCxnOptions) { if (fail) fail(false); }
 
-void Stack::recv(ZiConnection *cxn)
+void Instance::recv(ZiConnection *cxn)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (!cxn->plugin()) { cxn->rxContext().complete(); return; }
@@ -1422,13 +1422,13 @@ void Stack::recv(ZiConnection *cxn)
     if (!native->disconnecting()) native->recvMx();
   });
 }
-void Stack::send(ZiConnection *cxn)
+void Instance::send(ZiConnection *cxn)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (!cxn->plugin()) { cxn->txContext().complete(); return; }
   Connections::visit(cxn, [](auto native) { native->sendMx(); });
 }
-void Stack::disconnect(ZiConnection *cxn, bool peer)
+void Instance::disconnect(ZiConnection *cxn, bool peer)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (peer) { close(cxn, true); return; }
@@ -1443,7 +1443,7 @@ void Stack::disconnect(ZiConnection *cxn, bool peer)
   });
 }
 
-void Stack::close(ZiConnection *cxn, bool peer)
+void Instance::close(ZiConnection *cxn, bool peer)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   cxn->txUp() = 0;
@@ -1457,8 +1457,8 @@ void Stack::close(ZiConnection *cxn, bool peer)
     });
   });
 }
-void Stack::telemetry(Ztc::MxTelemetry &data) const { mx()->telemetry(data); }
-void Stack::observed(Zutcp_::EndpointLink *cxn)
+void Instance::telemetry(Ztc::MxTelemetry &data) const { mx()->telemetry(data); }
+void Instance::observed(Zutcp_::EndpointLink *cxn)
 {
   {
     ZmGuard guard(m_observeLock);
@@ -1472,7 +1472,7 @@ void Stack::observed(Zutcp_::EndpointLink *cxn)
   if (m_addCxn) m_addCxn(cxn->mxCxn);
 }
 
-void Stack::unobserved(Zutcp_::EndpointLink *cxn)
+void Instance::unobserved(Zutcp_::EndpointLink *cxn)
 {
   auto mx = cxn->mxCxn;
   {
@@ -1488,7 +1488,7 @@ void Stack::unobserved(Zutcp_::EndpointLink *cxn)
   if (m_delCxn) m_delCxn(mx);
 }
 
-unsigned Stack::allCxns(AllCxnsFn fn) const
+unsigned Instance::allCxns(AllCxnsFn fn) const
 {
   ZtArray<ZmRef<ZiConnection>, ZtArrayHeapID<"Zutcp.Mx.CxnRefs">> refs;
   {
@@ -1501,7 +1501,7 @@ unsigned Stack::allCxns(AllCxnsFn fn) const
   return refs.length();
 }
 
-unsigned Stack::allQueues(Ztc::QueueMgr::AllFn fn) const
+unsigned Instance::allQueues(Ztc::QueueMgr::AllFn fn) const
 {
   ZtArray<ZmRef<Zutcp_::EndpointLink>,
     ZtArrayHeapID<"Zutcp.Mx.QueueOwners">> owners;
@@ -1526,7 +1526,7 @@ unsigned Stack::allQueues(Ztc::QueueMgr::AllFn fn) const
   return count;
 }
 
-void Stack::watch(AddCxnFn add, DelCxnFn del)
+void Instance::watch(AddCxnFn add, DelCxnFn del)
 {
   ZmGuard guard(m_watchLock);
   ZmAssert_(!m_addCxn && !m_delCxn);
@@ -1534,7 +1534,7 @@ void Stack::watch(AddCxnFn add, DelCxnFn del)
   m_delCxn = ZuMv(del);
 }
 
-void Stack::unwatch()
+void Instance::unwatch()
 {
   ZmGuard guard(m_watchLock);
   m_addCxn = {};

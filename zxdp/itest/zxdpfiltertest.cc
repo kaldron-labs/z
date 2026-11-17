@@ -105,10 +105,12 @@ static void testForeign()
   if (!attached) return;
   auto instance = Zxdp::instance(Zxdp::Type::Xdp);
   auto rx = instance->bufPool(8, 1514);
+  auto tx = instance->bufPool(1, 128);
   Zxdp::Params config(
     Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
   auto &params = config.p<Zxdp::Xdp::Params>();
   params.ifindex = ifindex;
+  params.txPools.pushNode(tx.ptr());
   params.rxPool = rx;
   params.rx = [](uint8_t *, unsigned) { };
   ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,

@@ -33,7 +33,7 @@ views, off-thread final replacement, repeated heap growth, immediate backing reu
 and exactly one provider return. `testPacketAllocRoles` checks the same transition
 with ordinary heap-backed source packets.
 
-Live client/server coverage now runs through Stack/Zxdp in `../itest/zutcppairtest`.
+Live client/server coverage now runs through Instance/Zxdp in `../itest/zutcppairtest`.
 The former kernel-loopback runtime and completed-socket-queue cases were retired
 and archived with the native-endpoint checkpoint. Native multi-connection, idle,
 pressure and stale owner-work equivalents remain open; current green tests do not
@@ -157,7 +157,7 @@ Tx retained ranges now reference shared queued-node storage, independently of it
 mutable queue position and pending Zi descriptor. The data tests check original
 descriptor coordinates through partial consumption, retained byte identity after
 queue reset, and the same storage identity through loss/retransmission splitting.
-Production writers now allocate registered backing through Stack and first
+Production writers now allocate registered backing through Instance and first
 submission reuses it. Logical unit apps explicitly use local builtin storage.
 ZutcpBufferTest verifies Hub does not request an mx allocator and refuses to
 supply native producer storage through a non-native plugin. Packetization and

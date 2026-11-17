@@ -91,7 +91,7 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
       ZiSockAddr{ZiIP{"198.18.0.2"}, 18181});
   }
   void clearRx() { Base::resetLink(); }
-  bool sendNext(Zutcp::Stack *stack) {
+  bool sendNext(Zutcp::Instance *stack) {
     if (offerAck) {
       bool sent = Base::sendTCP({}, false, 0x10,
 	[this, stack]() { return stack->allocPacket(this, ZiIPType::V4, true); },
@@ -114,7 +114,7 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
 	return submit(stack, ZuMv(packet));
       });
   }
-  bool submit(Zutcp::Stack *stack, ZmRef<ZiIOBuf> packet,
+  bool submit(Zutcp::Instance *stack, ZmRef<ZiIOBuf> packet,
       bool control = false) {
     memset(packet->data_(), 0, packet->skip);
     memset(packet->data_(), 0xff, 6);
@@ -133,7 +133,7 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
     header.window = 4; // retain the original right edge at byte 12
     Base::applyTCP(header);
   }
-  bool replay(Zutcp::Stack *stack) {
+  bool replay(Zutcp::Instance *stack) {
     return Base::sendTCP(retry, false, 0,
       [this, stack]() { ++extraAlloc; return stack->allocPacket(this, ZiIPType::V4); },
       [this, stack](auto packet, auto) {
@@ -143,7 +143,7 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
 	return submit(stack, ZuMv(packet));
       });
   }
-  bool finControl(Zutcp::Stack *stack) {
+  bool finControl(Zutcp::Instance *stack) {
     Base::extendTxCredit(17);
     Base::fin();
     Zutcp::SentFrameRef ref;
@@ -163,7 +163,7 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
 struct RetxProbe {
   ZiMultiplex *mx;
   WriterCxn *cxn;
-  Zutcp::Stack *stack;
+  Zutcp::Instance *stack;
   ZmSemaphore done;
   ZmScheduler::Timer timer;
   ZuTime deadline;
@@ -180,7 +180,7 @@ struct RetxProbe {
 // progress before ACK. All queue/pool operations run on the same Tx owner.
 struct LeaseProbe {
   ZiMultiplex *mx;
-  Zutcp::Stack *stack;
+  Zutcp::Instance *stack;
   Zutcp::PktTxSpace recovery;
   ZmSemaphore done;
   ZmScheduler::Timer timer;
@@ -287,7 +287,7 @@ struct LeaseProbe {
 
 struct ControlProbe {
   ZiMultiplex *mx;
-  Zutcp::Stack *stack;
+  Zutcp::Instance *stack;
   Zutcp::PktTxSpace retained;
   Zutcp::PacketLease *lease = nullptr;
   Zutcp::TxAdmission during;
@@ -330,7 +330,7 @@ static void testStack()
   ZmRef<Zi::IOBuf> input[RxCount], extra;
   unsigned packets = 0;
   bool onRx = true;
-  ZmRef<Zutcp::Stack> stack = new Zutcp::Stack{&mx, {.interface = index,
+  ZmRef<Zutcp::Instance> stack = new Zutcp::Instance{&mx, {.interface = index,
     .packet = [&mx, &input, &extra, &packets, &onRx, &received](ZmRef<Zi::IOBuf> buf) {
       if (buf->length < 14 || buf->data()[12] != 0x88 || buf->data()[13] != 0xb5) return;
       onRx &= mx.invoked(mx.rxThread()) && buf->registered();
@@ -348,7 +348,7 @@ static void testStack()
       stack->txAdmission().controlCount == Zutcp::DefaultControlBufCount,
     log_("invalid control configuration preserves provisioned pool counts"));
   for (unsigned i = 0; i < 3; ++i) {
-    Zutcp::StackConfig config;
+    Zutcp::InstanceConfig config;
     config.maxCxns = i ? 2 : 0;
     config.maxPendingCxns = i == 1 ? 0 : 3;
     bool rejected = stack->configure(config).is<ZeException>();
@@ -359,7 +359,7 @@ static void testStack()
       log_("invalid connection caps must preserve stopped admission configuration"));
   }
   for (auto timeout : {ZuTime{}, ZuTime{0}, ZuTime{-1}}) {
-    Zutcp::StackConfig config;
+    Zutcp::InstanceConfig config;
     config.connectTimeout = timeout;
     bool rejected = stack->configure(config).is<ZeException>();
     ZuCheckRT(rejected &&
@@ -367,7 +367,7 @@ static void testStack()
       log_("invalid connect deadlines must preserve stopped configuration"));
   }
   for (auto timeout : {ZuTime{}, ZuTime{-1}}) {
-    Zutcp::StackConfig config;
+    Zutcp::InstanceConfig config;
     config.userTimeout = timeout;
     bool rejected = stack->configure(config).is<ZeException>();
     ZuCheckRT(rejected &&
@@ -375,7 +375,7 @@ static void testStack()
       log_("invalid user deadlines must preserve stopped configuration"));
   }
   for (bool finWait : {false, true}) for (auto timeout : {ZuTime{}, ZuTime{0}, ZuTime{-1}}) {
-    Zutcp::StackConfig config;
+    Zutcp::InstanceConfig config;
     if (finWait) config.finWaitTimeout = timeout;
     else config.closeDrainTimeout = timeout;
     bool rejected = stack->configure(config).is<ZeException>();
@@ -384,7 +384,7 @@ static void testStack()
       log_("invalid close deadlines must preserve stopped configuration"));
   }
   {
-    Zutcp::StackConfig config;
+    Zutcp::InstanceConfig config;
     config.closedTupleRingSize = 0;
     bool rejected = stack->configure(config).is<ZeException>();
     ZuCheckRT(rejected &&
@@ -416,7 +416,7 @@ static void testStack()
     log_("stopped factory publishes stable Tx geometry and backingless Rx stubs"));
   stub = otherStub = nullptr;
   bool started = mx.start();
-  ZuCheckRT(started && stack->ready(), log_("registered packet Stack starts on mx owners"));
+  ZuCheckRT(started && stack->ready(), log_("registered packet Instance starts on mx owners"));
   if (!started) { app.final(); alarm(0); return; }
   ZmSemaphore owner;
   bool scheduler = false;
@@ -465,7 +465,7 @@ static void testStack()
   });
   owner.wait();
   ZuCheckRT(tfoStored,
-    log_("actual Stack Rx owns TFO keys/cache and copies both input cookies "
+    log_("actual Instance Rx owns TFO keys/cache and copies both input cookies "
       "and output snapshots"));
 
 
@@ -785,7 +785,7 @@ static void testStack()
     log_("shutdown sends an accepted frame before stopping the gated kernel-service owner"));
   pressure.retained.clear();
   ZuCheckRT(extra && extra->data()[14] == 0xa5 && probe.packet,
-    log_("stopped Stack preserves application-held Rx and Tx backing"));
+    log_("stopped Instance preserves application-held Rx and Tx backing"));
   ZuCheckRT(leases.shutdownLease && **leases.shutdownLease &&
       leases.shutdownLease->data() == leases.origin && leases.origin[14] == 0x5a,
     log_("backend close preserves recovery's caller lease after Zi metadata destruction"));
@@ -806,7 +806,7 @@ static void testStack()
   app.final();
   // Construct only while stopped. This instance is never installed as the mx
   // plugin or started, so it binds no backend and shares no provider leases.
-  ZmRef<Zutcp::Stack> freshStack = new Zutcp::Stack{&mx,
+  ZmRef<Zutcp::Instance> freshStack = new Zutcp::Instance{&mx,
     {.interface = index, .spin = 0, .packetCount = 2, .txSid = 3}};
   bool configured = app.init(Zutcp::HubParams{&mx}.controlBufCount(3).txControlCredits(3)
     .rxRetainFramesPerCxn(1).closedTupleRingSize(2)
@@ -826,7 +826,7 @@ static void testStack()
     if ((restarted = mx.start())) break;
     usleep(1000);
   } while (Zm::now() < restartDeadline);
-  std::cout << "# raw Stack restart attempts=" << attempts << '\n';
+  std::cout << "# raw Instance restart attempts=" << attempts << '\n';
   bool running = stack->ready();
   bool historyKept = false;
   mx.rxRun([&stack, &history, &historyKept, &owner] {
@@ -866,7 +866,7 @@ static void testStack()
     log_("same-size stopped configuration and actual restart retain TFO key "
       "and cookie evidence"));
   ZuCheckRT(tfoNewInstance && mx.plugin() == stack.ptr() && !freshStack->ready(),
-    log_("a new unstarted Stack has an independent key/cache "
+    log_("a new unstarted Instance has an independent key/cache "
       "without replacing the active backend"));
 
   ZmRef<ZiIOBuf> pressureRx[3];

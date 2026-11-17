@@ -167,7 +167,7 @@ int main(int argc, char **argv)
 	  .thread(2, [](auto &t) { t.isolated(1); })
 	  .thread(4, [](auto &t) { t.isolated(true); }); })
 	.rxThread(1).txThread(2));
-  mx.plugin(new Zutcp::Stack{&mx, {.interface = interface, .txSid = 4}});
+  mx.plugin(new Zutcp::Instance{&mx, {.interface = interface, .txSid = 4}});
 
 
   ZmRef<App> appRef = new App{server, port, count, waitEOF};

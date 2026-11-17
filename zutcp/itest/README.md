@@ -1,6 +1,6 @@
 # Native TCP integration tests
 
-These Linux tests exercise actual Stack/Zxdp packet I/O, standard TCP headers
+These Linux tests exercise actual Instance/Zxdp packet I/O, standard TCP headers
 and raw application bytes. They require usable AF_XDP/BPF, sudo/root, network
 namespaces, iproute2, ethtool, tcpdump, Python3 and Perl/prove. Missing privileges
 or fixture variables produce visible skips; a skip is not native acceptance.
@@ -61,7 +61,7 @@ Ztls application drivers below. Use explicit native targets while developing TCP
   owner-checked unbind and port selection. Generic framing uses fixture-only IP
   protocol 253; TCP uses protocol 6. Cold route/static-neighbor lookups run outside
   Rx/Tx; a held worker tests cancellation and shutdown drain.
-- `zutcpmxtest` installs real Stack plugins on two Zi multiplexers and checks
+- `zutcpmxtest` installs real Instance plugins on two Zi multiplexers and checks
   mapped connection callbacks, association/watch lifecycle, exact bidirectional
   contexts, nonzero offsets, detached metadata before CQ, one-slot pool reuse,
   stopped acceptors and active stop. Further cases cover DATA/control loss,

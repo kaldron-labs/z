@@ -29,7 +29,7 @@ static void testNativeRequired()
   auto rx = ZutcpTest::pktRxAllocator(&mx);
   auto tx = ZutcpTest::pktTxAllocator(&mx);
   Endpoint endpoint;
-  ZuCHECK(!endpoint.init(&mx), "no native Stack refuses endpoint initialization");
+  ZuCHECK(!endpoint.init(&mx), "no native Instance refuses endpoint initialization");
   ZuCHECK(!endpoint.connected() && !endpoint.listening(), "no kernel endpoint is created");
   ZuCHECK(rx->type == Zi::IOBufType::RxTCP && tx->type == Zi::IOBufType::TxTCP,
     "native protocol requests TCP network provider roles");

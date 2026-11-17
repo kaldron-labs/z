@@ -72,7 +72,7 @@ friend inline ZuStringT<"Zutcp.EndpointBindings"> ZmNHeapID(EndpointBindings *);
   using EndpointBindingsBase::EndpointBindingsBase;
 };
 
-struct StackParams {
+struct InstanceParams {
   unsigned interface = 0;
   ZuCSpan netmask;
   PacketFn packet;
@@ -106,7 +106,7 @@ struct CxnAdmission {
   unsigned maxCxns = DefaultMaxCxns, maxPendingCxns = DefaultMaxPendingCxns;
 };
 
-// One embedded ledger per Stack. Tokens move from cold setup into a full owner;
+// One embedded ledger per Instance. Tokens move from cold setup into a full owner;
 // neither token nor ledger allocates or owns a connection. Mutation is Rx-only.
 class CxnSlots;
 class ZutcpAPI CxnSlot {
@@ -146,7 +146,7 @@ private:
   unsigned m_total = 0, m_pending = 0, m_closing = 0;
 };
 
-// Interface/routing scope belongs to the containing Stack. No packet or
+// Interface/routing scope belongs to the containing Instance. No packet or
 // connection reference survives in a closed record. Copies cross owners.
 using ClosedTupleKey = ZuTuple<ZiSockAddr, ZiSockAddr>; // local, remote
 struct ClosedTuple {
@@ -240,13 +240,13 @@ struct ClientPorts {
 };
 ZtEnumStruct(ZutcpAPI, CxnBindError, int8_t, None, Invalid, InUse, Retained, Exhausted);
 
-// Cold binding policy shared by Stack and deterministic storage tests. Mutation
-// in production is confined to Stack's Rx boundary; this owns no extra registry.
+// Cold binding policy shared by Instance and deterministic storage tests. Mutation
+// in production is confined to Instance's Rx boundary; this owns no extra registry.
 ZutcpAPI CxnBindError::T bindCxnTuple(
   ZiSockAddr &local, const ZiSockAddr &remote, unsigned &nextPort,
   EndpointBindings &bindings, const ClosedTuples &history, void *owner, EndpointFn);
 
-// Scalar timestamp clock; Stack samples it only on Tx using the existing clock.
+// Scalar timestamp clock; Instance samples it only on Tx using the existing clock.
 // A backward wall step adjusts the logical offset without freezing later ticks.
 class TCPClock {
 public:
@@ -264,7 +264,7 @@ private:
   bool		m_known = false;
 };
 
-struct StackConfig {
+struct InstanceConfig {
   unsigned controlBufCount = DefaultControlBufCount;
   unsigned txControlCredits = DefaultTxControlCredits;
   unsigned rxRetainFramesPerCxn = DefaultRxRetainPerCxn;
@@ -279,12 +279,12 @@ struct StackConfig {
   bool congestionControl = true;
 };
 
-class ZutcpAPI Stack : public ZmNHeap<Stack>, public ZiMxPlugin {
-friend inline ZuStringT<"Zutcp.Stack"> ZmNHeapID(Stack *);
+class ZutcpAPI Instance : public ZmNHeap<Instance>, public ZiMxPlugin {
+friend inline ZuStringT<"Zutcp.Instance"> ZmNHeapID(Instance *);
 
 public:
-  Stack(ZiMultiplex *, StackParams);
-  ~Stack() override;
+  Instance(ZiMultiplex *, InstanceParams);
+  ~Instance() override;
   Zi::IOBufPool *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override;
   void start() override;
   void stop() override;
@@ -297,8 +297,8 @@ public:
   void reconcileTx(); // Tx owner: retire kernel leases before retained header changes
   ZmRef<PacketBuf> allocPacket(void *owner, ZiIPType::T, bool control = false);
   ZuUnion<void, ZeException> configureControl(unsigned count, unsigned credits);
-  ZuUnion<void, ZeException> configure(const StackConfig &);
-  const StackConfig &config() const { return m_config; }
+  ZuUnion<void, ZeException> configure(const InstanceConfig &);
+  const InstanceConfig &config() const { return m_config; }
   CxnAdmission cxnAdmission() const;
   CxnSlot reserveCxn();
   void establishedCxn(CxnSlot &);
@@ -390,7 +390,7 @@ private:
   alignas(Zm::CacheLineSize) ZmRef<Zxdp::Instance> m_backend;
   bool m_backendInit = false;
   ZmRef<Allocator> m_ingress;
-  StackConfig m_config;
+  InstanceConfig m_config;
   PacketAllocator m_rxAllocator;
   ZmRef<Allocator> m_packets;
   Allocator *m_providers = nullptr, *m_control;

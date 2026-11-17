@@ -38,7 +38,7 @@ using StopFn = ZmFn<void(), ZmFnHeapID<"Zxdp.TxStopped">>;
 ZtEnumNS(ZxdpAPI, Type, uint8_t, Xdp);
 
 struct Params_ {
-  Zi::IOBufPoolList txPools;
+  Zi::IOBufPoolList txPools; // at least one nonempty Tx pool is required
   ZmRef<Zi::IOBufPool> rxPool;
   RecvFn rx;
   unsigned spin = 1000; // idle probes before Rx blocks or Tx service returns

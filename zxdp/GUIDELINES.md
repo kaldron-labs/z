@@ -7,7 +7,8 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
   `init(const Params &)` with backend `Xdp::Params` constructed in place using
   `Params::New<Params::Index<Xdp::Params>{}>{}`. Configuration: interface index,
   optional destination network mask,
-  owning intrusive `Zi::IOBufPoolList` Tx list with count, size and alignment,
+  owning intrusive `Zi::IOBufPoolList` with at least one nonempty Tx pool
+  supplying count, size and alignment,
   one dedicated unlinked `ZmRef<Zi::IOBufPool>` Rx pool, receive callback.
   Create pool objects with the selected instance's virtual `bufPool`.
   Init retains one reference per pool through close, while node membership

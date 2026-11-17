@@ -1,7 +1,7 @@
 # Current Phase 8 execution boundary
 
 The live protocol uses standard
-TCP headers/options and raw application bytes over Stack/Zxdp. Endpoint ownership
+TCP headers/options and raw application bytes over Instance/Zxdp. Endpoint ownership
 uses TCP tuples; accepted byte history, canonical backing and owner handoffs
 remain authoritative. Intermediate packet/frame codecs and peer packet-number
 acknowledgments are deleted. Providers reserve the maximum standard Ethernet,
@@ -34,21 +34,21 @@ Phase 8 wire changes supersede their references to intermediate framing.
 
 # Historical Phase 1 execution boundary
 
-The live transport now uses Stack/Zxdp with TCP-aligned IP carriage. The native
+The live transport now uses Instance/Zxdp with TCP-aligned IP carriage. The native
 endpoint tests exercise the client/server cutover and working pairs. Do not restore a kernel UDP mode,
 fallback or separate backend. Cold interface/route/static-neighbor queries remain
 control work outside Rx/Tx.
 
 Allocator dependency is strictly one way: Zutcp supplies lower-level pool
 providers through the ZiMxPlugin allocator hook. Do not call
-`ZiMultiplex::allocator` from Zutcp, directly or through a helper. Stack owns its
+`ZiMultiplex::allocator` from Zutcp, directly or through a helper. Instance owns its
 internal native packet pool and metadata adapters independently of that factory.
 Queued Tx ranges now retain their existing node through `TxBacking`. Keep stable
 base/extent and raw lease ownership there, separately from the queue's mutable
 offset/length. Retained frames must survive queue removal and submitted Zi
 metadata destruction without owning a connection. Before raw handoff the node's
 pending descriptor owns source storage; clear that descriptor after accepted
-detachment. Native writers now allocate through Stack's local producer adapter
+detachment. Native writers now allocate through Instance's local producer adapter
 and first submission reuses the same registered slot. The inline TxData type and
 queue are removed. Preserve whole-buffer credit admission, bounded piggyback
 prefix space and unchanged application payload addresses. Restore producer view
@@ -96,9 +96,9 @@ belongs in this context mapping.
 Control output now uses a dedicated protocol-sized pool, including Initial,
 ACK, window, probe, close and version-negotiation output. Positive DATA remains
 on data backing; FIN-only/control packets may use the control pool. HubParams
-owns controlBufCount (256) and txControlCredits (64), applied to Stack under the
-serialized stopped lifecycle. The old StackParams::controlCount is removed.
-Callers sharing Stack use matching instance settings. Do not mutate control count
+owns controlBufCount (256) and txControlCredits (64), applied to Instance under the
+serialized stopped lifecycle. The old InstanceParams::controlCount is removed.
+Callers sharing Instance use matching instance settings. Do not mutate control count
 while old control backing remains held or resize a live arena.
 
 Data admission uses total accepted outstanding < capacity - reserved; control
@@ -199,7 +199,7 @@ own reserved credit once when dispatched. Generation checks protect reuse, while
 owner lifetime still requires the independent teardown/drain contract.
 
 Keep all Zi provider/object composition in Zutcp. `ZutcpAlloc` supplies the first
-Tx/control provider over a common pool injected from the backend factory. `ZutcpMx::Stack`
+Tx/control provider over a common pool injected from the backend factory. `ZutcpMx::Instance`
 composes those providers with one physical Rx reserve, accepted-output metadata
 detachment and mx owner lifecycle; see the current checkpoint in
 `../zutcp_plan.md`. The stripped transport remains subsequent work.
@@ -268,13 +268,13 @@ Keep Zi types, adapter state and mx scheduler integration in Zutcp. Zxdp owns
 its required configurable spin-before-epoll `rx()` and interrupting `wake()`.
 Delegate the plugin hooks to that pair; use the raw named-parameter pool/callback
 interface in the updated plan.
-Stack owns native local address/port membership on Rx. Bind/unbind there; dispatch
+Instance owns native local address/port membership on Rx. Bind/unbind there; dispatch
 validates TCP integrity and advances the original registered Rx view without
 copying payload or taking an endpoint reference. Remove membership before draining
-the endpoint's raw callbacks. `Stack::resolvePath` uses an existing mx worker
+the endpoint's raw callbacks. `Instance::resolvePath` uses an existing mx worker
 outside Rx/Tx and posts completion to Rx. Native setup must provide that worker,
 drain every accepted setup callback and fence its generation before owner release.
-Stack stop waits for pending setup before the Tx/backend drain. No blocking route
+Instance stop waits for pending setup before the Tx/backend drain. No blocking route
 lookup or independent protocol owner thread belongs on the packet path.
 
 Reuse Clang/debug/ASan for development and acceptance with leak detection enabled.

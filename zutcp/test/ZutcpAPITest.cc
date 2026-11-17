@@ -659,7 +659,7 @@ void testCongestionControl()
   ZmRef<HubApp> appRef = new HubApp;
   auto &app = *appRef;
   ZuCHECK(Zutcp::HubParams{}.congestionControl() &&
-      Zutcp::StackConfig{}.congestionControl && app.congestionControl(),
+      Zutcp::InstanceConfig{}.congestionControl && app.congestionControl(),
     "congestion control must remain enabled by default for both configuration paths");
   for (bool enabled : {true, false}) for (bool ecn : {true, false}) {
     auto params = Zutcp::HubParams{&mx}.congestionControl(enabled).ecn(ecn);
@@ -696,7 +696,7 @@ void testHashSizing(bool tuned)
   {
     ZiMultiplex mx{ZiMxParams{}.rxBufSize(8)};
     // Cold construction only: no AF_XDP socket, endpoint bind or network traffic.
-    ZmRef<Zutcp::Stack> stack = new Zutcp::Stack{&mx,
+    ZmRef<Zutcp::Instance> stack = new Zutcp::Instance{&mx,
       {.interface = if_nametoindex("lo"), .packetCount = 8}};
     ZmRef<ServerApp> appRef = new ServerApp;
     using Routes = Zutcp_::TupleRoutes<ServerAppLink>;

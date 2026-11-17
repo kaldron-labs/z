@@ -1319,11 +1319,11 @@ static bool run(const Config &c) {
     << " congestion_control=" << unsigned(!c.native || c.congestionControl)
     << " offer_rate=" << c.offers.rate << " pending_cap=" << c.offers.cap << '\n';
   if (c.native) {
-    auto stack = new Zutcp::Stack{&mx,
+    auto stack = new Zutcp::Instance{&mx,
       {.interface = c.interface, .spin = c.spin, .packetCount = c.reserve,
        .txThread = sender, .txSid = senderSid}};
     mx.plugin(stack);
-    Zutcp::StackConfig settings;
+    Zutcp::InstanceConfig settings;
     settings.ackHoldTimeout = ZuTime{0, int32_t(c.ackHoldUS * 1000)};
     settings.congestionControl = c.congestionControl;
     auto configured = stack->configure(settings);
