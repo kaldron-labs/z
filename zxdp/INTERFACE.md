@@ -91,7 +91,7 @@ Tx service uses no custom scheduler wake function, epoll set or eventfd. The
 scheduler owns idle waiting after the sender returns. Rx retains its independent
 epoll/eventfd implementation described below.
 Start the scheduler before submitting packets and drain the instance before
-stopping the scheduler. After Tx production is quiescent, `stopSender()` publishes
+stopping the scheduler. After Tx production is quiescent, `stopTx()` publishes
 exit and queues a FIFO sender-slot barrier. The active loop checks exit, including
 during idle spin; the barrier clears pending state and marks sender exit before
 calling `txStopped`. Socket retirement follows that barrier. The scheduler owns

@@ -72,22 +72,24 @@ public:
   // Initialize once. Retain the handle after failure and close it to finish
   // rollback. Configuration may expire on return; pool references are retained.
   virtual ZuUnion<void, ZeException> init(const Params &) = 0;
+
   virtual bool ready() const = 0;
-  virtual unsigned ifindex() const = 0;
   virtual unsigned mtu() const = 0;
   virtual bool zeroCopy() const = 0;
   virtual ZuBSpan mac() const = 0;
+
   // False acquires no kernel lease. After true, keep bytes immutable until
   // kernel retirement. One descriptor may be outstanding for each slot.
   virtual bool send(uint8_t *packet, unsigned length) = 0;
   virtual void rx() = 0; // Rx owner, until wake() or device failure
   virtual void wake() = 0;
   virtual unsigned pollTx() = 0;
-  virtual unsigned allQueues(Ztc::QueueMgr::AllFn) const = 0;
-  virtual bool stopSender() = 0;
+  virtual bool stopTx() = 0;
   // Quiesce Rx, Tx and wake callers first. True means closed, false means
   // retirement is pending; an error never authorizes releasing kernel backing.
   virtual ZuUnion<bool, ZeException> close() = 0;
+
+  virtual unsigned allQueues(Ztc::QueueMgr::AllFn) const = 0;
 
 protected:
   Instance() = default;

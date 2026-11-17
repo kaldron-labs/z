@@ -60,7 +60,6 @@ public:
   ZmRef<Zi::IOBufPool> bufPool(
     unsigned count, unsigned size, unsigned headRoom, unsigned tailRoom, unsigned align) override;
   bool ready() const override { return m_state == Active; }
-  unsigned ifindex() const override { return m_ifindex; }
   unsigned mtu() const override { return m_link.mtu; }
   bool zeroCopy() const override {
     auto queue = m_queues.length() ? m_queues[0] : nullptr;
@@ -181,7 +180,7 @@ public:
   ZuUnion<bool, ZeException> close() override {
     if (m_state == Closed) return true;
     m_state = Closing;
-    if (!stopSender()) return false;
+    if (!stopTx()) return false;
     if (m_arena && m_rxPool->ready()) {
       m_rxPool->retire();
       for (const auto &pool : m_txPools) static_cast<BufPool *>(pool.ptr())->retire();
@@ -243,7 +242,7 @@ public:
     return true;
   }
 
-  bool stopSender() override {
+  bool stopTx() override {
     if (unsigned(m_txExited)) return true;
     if (m_scheduler->state() == ZmEngineState::Stopped) {
       m_txPending = 0;

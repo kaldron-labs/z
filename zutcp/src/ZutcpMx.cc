@@ -1128,7 +1128,7 @@ void Stack::stopTx()
   }
   m_txDraining = false;
   txService(false);
-  if (m_backend && !m_backend->stopSender()) {
+  if (m_backend && !m_backend->stopTx()) {
     m_senderStopping = true;
     return;
   }

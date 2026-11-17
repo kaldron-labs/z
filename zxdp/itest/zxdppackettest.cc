@@ -456,7 +456,7 @@ static void testSenderProgress()
 
   gateSender = 1;
   bool final = progressed && publish(1) && await(senderEntered);
-  bool deferred = final && !instance->stopSender();
+  bool deferred = final && !instance->stopTx();
   bool earlyStop = !stopped.timedwait(Zm::now());
   gateSender = 0;
   retryError = budgetOnce = gateAfter = 0;
