@@ -525,7 +525,6 @@ struct ZiAPI IOBufPool_ : public ZmPolymorph {
 
   virtual uint8_t *alloc() = 0;
   virtual void free(uint8_t *) = 0;
-
 };
 
 using IOBufPoolList = ZmList<IOBufPool_,
