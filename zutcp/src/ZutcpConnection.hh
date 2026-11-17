@@ -455,7 +455,7 @@ protected:
     TCPOrigins origins = m_rxOrigins;
     origins.server = server;
     if (!origins.localKnown) {
-      auto stack = app()->nativeStack();
+      auto stack = app()->nativeInstance();
       if (!stack || !stack->chooseISN(local, remote, origins.local)) return false;
       origins.localKnown = true;
     }
@@ -474,7 +474,7 @@ protected:
     header.window = uint16_t(window > 65535 ? 65535 : window);
     header.options = m_tcpSynSent ? m_txSYNOptions : m_txLocalTCPOptions;
     if (header.options.flags & TCPOptions::TS) {
-      auto stack = app()->nativeStack();
+      auto stack = app()->nativeInstance();
       if (!stack || !stack->tcpTimestamp(transportNow(), header.options.tsval)) return false;
       header.options.tsecr = m_txOrigins.server ? m_txRxOptions.tsecr : 0;
     }
@@ -675,7 +675,7 @@ protected:
     if (ref && ref->offset >= m_txNext && m_txECN && m_txCWR) header.flags |= 0x80;
     header.options = m_txRxOptions;
     if (header.options.flags & TCPOptions::TS) {
-      auto stack = app()->nativeStack();
+      auto stack = app()->nativeInstance();
       if (!stack || !stack->tcpTimestamp(transportNow(), header.options.tsval))
 	header.options.flags &= ~TCPOptions::TS;
     }
@@ -1476,7 +1476,7 @@ protected:
       ZiAssert(rxInvoked(), "Zutcp", (),
 	"TCP link disconnect completion outside Rx thread", return);
       closingCxnRx();
-      auto stack = app()->nativeStack();
+      auto stack = app()->nativeInstance();
       ClosedTupleKey key = impl()->closedKeyRx();
       bool remember = stack && !m_closedSavedRx && !reusePendingRx() &&
 	key.p<0>().ip() && key.p<0>().port() &&
@@ -1561,7 +1561,7 @@ protected:
 
   void establish() {
     if (!establishState()) return;
-    if (auto stack = app()->nativeStack()) stack->establishedCxn(m_cxnSlot);
+    if (auto stack = app()->nativeInstance()) stack->establishedCxn(m_cxnSlot);
     startIdleTimer();
     startHeartBeatTimer();
     ++m_rxDiag.handshakeComplete;
@@ -3144,7 +3144,7 @@ public:
   }
   void releaseCxnSlotRx() {
     ZiAssert(rxInvoked(), "Zutcp", (), "connection admission release outside Rx", return);
-    if (auto stack = app()->nativeStack()) stack->releaseCxn(m_cxnSlot);
+    if (auto stack = app()->nativeInstance()) stack->releaseCxn(m_cxnSlot);
   }
   bool hasCxnSlotRx() const {
     ZiAssert(rxInvoked(), "Zutcp", (), "connection slot inspection outside Rx", return false);
@@ -3153,7 +3153,7 @@ public:
   bool deferCxnRelease() const { return false; }
   void closingCxnRx() {
     ZiAssert(rxInvoked(), "Zutcp", (), "connection close admission outside Rx", return);
-    if (auto stack = app()->nativeStack()) stack->closingCxn(m_cxnSlot);
+    if (auto stack = app()->nativeInstance()) stack->closingCxn(m_cxnSlot);
   }
   ClosedTupleKey closedKeyRx() const {
     ZiAssert(rxInvoked(), "Zutcp", (), "closed tuple outside Rx", return {});
@@ -3485,7 +3485,7 @@ public:
     if (m_fin || m_resetSent) return;
     if (app()->nativeTx()) closeTxAdmission();
     m_fin = true;
-    if (app()->nativeStack())
+    if (app()->nativeInstance())
       app()->rxRun([link = impl(), gen = m_txDataGen] {
 	if (gen == link->m_rxDataGen && !link->disconnecting()) link->closingCxnRx();
       });
@@ -4051,7 +4051,7 @@ public:
       if (!origins.localKnown) {
 	if (m_reuseEvidenceRx) origins.local = m_reuseISNRx;
 	else {
-	  auto stack = app()->nativeStack();
+	  auto stack = app()->nativeInstance();
 	  if (!stack || !stack->chooseISN(d.local, d.addr, origins.local)) return false;
 	}
 	origins.localKnown = true;
@@ -4201,7 +4201,7 @@ protected:
     unsigned payload = d.buf ? d.buf->length : 0;
     m_rxTFOAllow = false;
     uint64_t gen = m_rxDataGen;
-    auto stack = app()->nativeStack();
+    auto stack = app()->nativeInstance();
     if (!stack) return false;
     TFOCookie cookie;
     if (d.tcp.options.flags & TCPOptions::TFO)
@@ -4551,7 +4551,7 @@ protected:
 	if (gen != link->m_rxDataGen || link->disconnecting() || link->m_rxAborting) return;
 	TFOCookie cookie;
 	if (enabled)
-	  if (auto stack = link->app()->nativeStack())
+	  if (auto stack = link->app()->nativeInstance())
 	    stack->tfoCookie(link->m_closedKeyRx.template p<0>().ip(),
 	      link->m_closedKeyRx.template p<1>(), cookie);
 	link->app()->txRun([link, gen, enabled, cookie, send = ZuMv(send)]() mutable {

@@ -152,9 +152,9 @@ static bool service(
       s.nThreads(6).thread(6, [](auto &t) { t.isolated(true); });
       for (unsigned i = 1; i <= 4; ++i) s.thread(i, [](auto &t) { t.isolated(1); });
     })};
-  ZmRef<Zutcp::Stack> stack;
+  ZmRef<Zutcp::Instance> stack;
   if (native) {
-    stack = new Zutcp::Stack{&mx, {.interface = interface, .txSid = 6}};
+    stack = new Zutcp::Instance{&mx, {.interface = interface, .txSid = 6}};
     mx.plugin(stack);
     auto configured = stack->configure({.rxRetainFramesPerCxn = 64});
     if (configured.is<ZeException>()) return false;

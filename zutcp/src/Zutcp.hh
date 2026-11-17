@@ -374,7 +374,7 @@ public:
       m_tlpPeerAckDelay = ZuTime{0, 200000000};
       m_ackHoldTimeout = ZuTime{0, 25000000};
       m_rxRetainPerCxn = DefaultRxRetainPerCxn;
-      m_stack = nullptr;
+      m_instance = nullptr;
       m_ecn = false;
       m_congestionControl = true;
       return true;
@@ -396,10 +396,10 @@ public:
     return true;
   }
   Zi::IOBufAllocator *dataTxAllocator() const { return m_dataTxAllocator; }
-  bool nativeTx() const { return m_stack; }
-  Stack *nativeStack() const { return m_stack; }
+  bool nativeTx() const { return m_instance; }
+  Instance *nativeInstance() const { return m_instance; }
   Zi::IOBufPool *txPool(Zi::IOBufAllocator *allocator) const {
-    if (!m_stack || !allocator || allocator->mx != m_mx ||
+    if (!m_instance || !allocator || allocator->mx != m_mx ||
 	allocator->type != Zi::IOBufType::TxTCP) return nullptr;
     auto provider = static_cast<Allocator *>(allocator->provider());
     return provider ? provider->pool.ptr() : nullptr;
@@ -503,7 +503,7 @@ public:
 
 protected:
   template <typename Params, typename L>
-  bool init_(Params params, Zutcp::Vantage::T vantage, L &&l, Stack *native = nullptr) {
+  bool init_(Params params, Zutcp::Vantage::T vantage, L &&l, Instance *native = nullptr) {
     bool ok = HubCtl::lock(
 	ZmEngineState::Stopped,
 	[this, params = ZuMv(params), vantage, native, l = ZuFwd<L>(l)]() mutable -> bool {
@@ -511,7 +511,7 @@ protected:
       if (!m_errorFn) m_errorFn = defaultErrorFn();
       if (!validateParams(params)) return false;
       auto mx = params.mx();
-      auto stack = native ? native : dynamic_cast<Stack *>(mx->plugin());
+      auto stack = native ? native : dynamic_cast<Instance *>(mx->plugin());
       if (stack && !native) {
 	auto result = stack->configure({
 	      .controlBufCount = params.controlBufCount(),
@@ -533,7 +533,7 @@ protected:
 	}
       }
       m_mx = mx;
-      m_stack = stack;
+      m_instance = stack;
       m_dataTxAllocator = stack ? stack->dataTxAllocator() : nullptr;
       m_rxThread = m_mx->rxThread();
       m_txThread = m_mx->txThread();
@@ -738,7 +738,7 @@ private:
   const ZuID		m_id;
   ZiMultiplex		*m_mx = nullptr;
   Zi::IOBufAllocator	*m_dataTxAllocator = nullptr;
-  Stack		*m_stack = nullptr;
+  Instance		*m_instance = nullptr;
   unsigned		m_rxThread = 0;
   unsigned		m_txThread = 0;
   ErrorFn		m_errorFn;
@@ -986,7 +986,7 @@ private:
       deliver(link, ZuMv(d));
       return;
     }
-    auto stack = this->nativeStack();
+    auto stack = this->nativeInstance();
     if (stack->recoverClosed(d)) return;
     if ((d.tcp.flags & 0x17) != 0x02) {
       stack->resetUnmatched(d);
@@ -997,7 +997,7 @@ private:
 
   void deliver(Link *link, Datagram d) {
     if (!link) return;
-    if (!link->acceptsLiveTCP(d) && this->nativeStack()->recoverClosed(d)) return;
+    if (!link->acceptsLiveTCP(d) && this->nativeInstance()->recoverClosed(d)) return;
     (void)link->receivedRouted(ZuMv(d));
   }
 
@@ -1010,7 +1010,7 @@ private:
   }
 
   bool qualifyReuse(const Datagram &d, Zutcp_::PendingInitial &pending) {
-    auto stack = this->nativeStack();
+    auto stack = this->nativeInstance();
     ClosedTuple current;
     if (!stack->closedTuple(pending.tuple, current)) return true;
     if (!reusePeerTuple(current, d.tcp, this->timestamps(), this->transportNow())) return false;
@@ -1023,7 +1023,7 @@ private:
   }
 
   void prepareSYN(Datagram d) {
-    auto stack = this->nativeStack();
+    auto stack = this->nativeInstance();
     ClosedTupleKey tuple{d.local, d.addr};
     if (tupleClaimed(tuple)) return;
     ClosedTuple current;

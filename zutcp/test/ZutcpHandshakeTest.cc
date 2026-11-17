@@ -961,7 +961,7 @@ static void testAbortReentrantConnect()
     ordered &= link->endpointDownCount == 1;
   });
   app.drain();
-  // No native Stack is installed: the public reentrant connect reaches its
+  // No native Instance is installed: the public reentrant connect reaches its
   // normal setup failure cleanup after the old drain and all completions.
   ZuCHECK(ordered && completed[0] == 1 && completed[1] == 1 &&
       link->disconnectedCount == 2 && link->endpointDownCount == 2 &&

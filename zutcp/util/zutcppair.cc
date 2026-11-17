@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details).
 
-// Native Stack peer for independent kernel interoperability. No kernel TCP socket.
+// Native Instance peer for independent kernel interoperability. No kernel TCP socket.
 #include <stdlib.h>
 #include <string.h>
 #include <net/if.h>
@@ -221,7 +221,7 @@ public:
   void holdReader(ServerCxn *);
   void releaseReader();
   void listening() {
-    auto stack = nativeStack();
+    auto stack = nativeInstance();
     std::cerr << "backend=AF_XDP role=server ready=" << unsigned(stack && stack->ready()) << "\n";
     std::cerr << std::flush;
   }
@@ -256,7 +256,7 @@ public:
     std::cerr << "backend=AF_XDP role=server connected=1\n";
     std::cerr << std::flush;
     if (m_reset) {
-      auto stack = app()->nativeStack();
+      auto stack = app()->nativeInstance();
       auto record = Base::closedSnapshotRx(Base::closedKeyRx());
       if (!record.timestamps || !Base::hasCxnSlotRx()) { complete(false); return; }
 		m_fixtureHistory = stack->rememberClosed(record);
@@ -309,7 +309,7 @@ public:
       std::cerr << "reset native_server peer=" << unsigned(peer) << " bytes="
 	<< unsigned(m_request.length()) << "\n";
       Zutcp::ClosedTuple current;
-      bool found = app()->nativeStack()->closedTuple(m_fixtureHistory.key, current);
+      bool found = app()->nativeInstance()->closedTuple(m_fixtureHistory.key, current);
       bool slot = Base::hasCxnSlotRx();
       std::cerr << "reset fixture_history_retired seed="
 	<< m_fixtureHistory.id << " current="
@@ -441,7 +441,7 @@ int main(int argc, char **argv)
       .thread(2, [](auto &t) { t.isolated(1); })
       .thread(4, [](auto &t) { t.isolated(true); });
   }).rxThread(1).txThread(2)};
-  auto stack = new Zutcp::Stack{&mx, {.interface = interface, .txSid = 4}};
+  auto stack = new Zutcp::Instance{&mx, {.interface = interface, .txSid = 4}};
   mx.plugin(stack);
   if (server) {
     ZmRef<ServerApp> appRef = new ServerApp{result, address, port, count};

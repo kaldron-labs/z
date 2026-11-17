@@ -77,6 +77,7 @@ ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
       txBytes += length;
     }
   }
+  if (!layout.txCount) return fail("at least one nonempty Tx pool is required");
   if (layout.chunk > unsigned(page)) return fail("packet exceeds AF_XDP chunk size");
   auto rxBytes = uint64_t(rx->count) * layout.chunk;
   rxBytes = (rxBytes + page - 1) & ~(uint64_t(page) - 1);

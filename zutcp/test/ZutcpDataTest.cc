@@ -480,7 +480,7 @@ friend inline ZuStringT<"Zutcp.DataTest.App"> ZmNHeapID(App *);
   }
   ~App() { Base::final(); multiplex.stop(); }
   bool nativeTx() const { return true; }
-  bool ioActive() const { return false; } // Controlled owners have no raw Stack/endpoint.
+  bool ioActive() const { return false; } // Controlled owners have no raw Instance/endpoint.
   bool rxInvoked() const { return true; }
   bool txInvoked() const { return true; }
   ZuTime transportNow() const {

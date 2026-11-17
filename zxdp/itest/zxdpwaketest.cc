@@ -122,6 +122,7 @@ static void testWake()
   alarm(20); // a missing wake fails the fixture; time does not establish success
   auto backend = Zxdp::instance(Zxdp::Type::Xdp);
   auto pool = backend->bufPool(8, 1514); // two queues, four receive slots each
+  auto tx = backend->bufPool(1, 128);
   ZeException error;
   ZmSemaphore packet;
   Zxdp::Params config(
@@ -129,6 +130,7 @@ static void testWake()
   auto &params = config.p<Zxdp::Xdp::Params>();
   params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
   params.rxPool = pool;
+  params.txPools.pushNode(tx.ptr());
   params.rx = [&pool, &packet](uint8_t *p, unsigned) {
     pool->free(p);
     packet.post();
@@ -251,6 +253,7 @@ static void testActiveWake()
   alarm(20);
   auto backend = Zxdp::instance(Zxdp::Type::Xdp);
   auto pool = backend->bufPool(8, 1514);
+  auto tx = backend->bufPool(1, 128);
   ZeException error;
   ZmSemaphore active, release;
   Zxdp::Instance *current = nullptr;
@@ -260,6 +263,7 @@ static void testActiveWake()
   auto &params = config.p<Zxdp::Xdp::Params>();
   params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
   params.rxPool = pool;
+  params.txPools.pushNode(tx.ptr());
   params.rx = [&pool, &packets, &active, &release](uint8_t *p, unsigned) {
     ++packets;
     active.post();

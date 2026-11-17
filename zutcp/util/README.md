@@ -1,7 +1,7 @@
 # Select Zutcp or the regular kernel TCP backend
 
 Zutcp implements TCP for applications using this repository's `ZiMultiplex`
-connection and allocator interfaces. Install `Zutcp::Stack` on the multiplexer to
+connection and allocator interfaces. Install `Zutcp::Instance` on the multiplexer to
 select AF_XDP; leave the plugin unset to use regular kernel TCP. Existing Zi/Ztcp
 application framing and callbacks remain in use. Ztls can run above either TCP
 backend; it is not a dependency of libZutcp.
@@ -10,7 +10,7 @@ This is an application integration choice, not an `LD_PRELOAD` library or a
 replacement implementation of arbitrary POSIX `socket()` calls. Applications
 using raw kernel sockets continue to use the kernel until adapted to Zi or the
 native Zutcp roles. `zutcpkernelpeer` deliberately uses ordinary kernel sockets;
-`zutcppair` deliberately uses the actual native Stack, without socket fallback.
+`zutcppair` deliberately uses the actual native Instance, without socket fallback.
 
 ## Select the backend before allocating or starting
 
@@ -29,10 +29,10 @@ ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
     .thread(2, [](auto &t) { t.isolated(1); });
 })};
 
-// Native branch only. Check if_nametoindex() before constructing Stack.
-auto stack = new Zutcp::Stack{&mx, {.interface = if_nametoindex("OWNED_INTERFACE")}};
+// Native branch only. Check if_nametoindex() before constructing Instance.
+auto stack = new Zutcp::Instance{&mx, {.interface = if_nametoindex("OWNED_INTERFACE")}};
 mx.plugin(stack);
-Zutcp::StackConfig config;
+Zutcp::InstanceConfig config;
 auto configured = stack->configure(config);
 if (configured.is<ZeException>()) {
   /* report configured.p<ZeException>() and stop setup */
@@ -45,13 +45,13 @@ auto tx = mx.allocator<Zi::IOBufType::TxTCP, ZiTxBuf, 1024>(4096);
 // Start mx, then use ordinary listen/connect entry points.
 ```
 
-For the kernel branch, omit Stack construction, `plugin()` and Stack configuration;
+For the kernel branch, omit Instance construction, `plugin()` and Instance configuration;
 use the same Zi connection/framing interfaces. Backend selection is fixed for the
 multiplexer lifetime. Do not attach the plugin after allocator factories: native
 providers must publish and register their geometry before start. For native Tx,
 use those registered Tx buffers and their published payload budget; do not substitute
 heap/network buffers. `rxBufSize` is kernel socket bytes in kernel mode and native
-ingress frame count with Stack, so do not pass a byte count as a native frame count.
+ingress frame count with Instance, so do not pass a byte count as a native frame count.
 The factory count requests pool backing; kernel allocation does not emulate a
 fixed native pool. Log effective settings when comparing backends.
 
@@ -63,8 +63,8 @@ by [zutcppair.cc](zutcppair.cc). The
 [FIX benchmark](../bench/README.md) uses the mapped ZiConnection application path.
 Stop accepting/creating work, finish or abort the connections through their public
 APIs, stop/finalize native Hub owners, then stop mx and release providers after
-owner/kernel retirement. Preserve the Hub-before-Stack-stop contract; do not free
-Stack, owner objects or registered backing while queued I/O can still reference them.
+owner/kernel retirement. Preserve the Hub-before-Instance-stop contract; do not free
+Instance, owner objects or registered backing while queued I/O can still reference them.
 
 ## Run a self-contained privileged interoperability check
 
@@ -173,7 +173,7 @@ route/neighbor queries; it does not implement ARP/ND or a parallel routing servi
 Provision these resources deliberately or use the private fixture instead of a
 control/management NIC. Interface/queue and XDP attachment ownership must be
 exclusive: existing foreign XDP users or UMEM reservations are not overridden.
-Use the optional `StackParams::netmask` only for the intended destination scope;
+Use the optional `InstanceParams::netmask` only for the intended destination scope;
 without a mask, raw classification selects the whole interface. Keep unrelated
 kernel services outside that selected traffic scope. Check backend/mode and
 teardown diagnostics rather than assuming hardware zero-copy. The recorded veth

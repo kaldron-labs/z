@@ -488,9 +488,21 @@ static void testLeaseRace()
   bool started = scheduler.start();
   ZuCheckRT(started);
   if (!started) return;
-  auto initialized = instance->init(config);
-  if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
-  bool ready = instance && instance->ready();
+  // The preceding test's retirement probe can release its binding
+  // asynchronously. Retry setup on this main-thread fixture, as in wake tests.
+  auto setupDeadline = Zm::now() + ZuTime{2};
+  bool ready = false;
+  for (;;) {
+    auto initialized = instance->init(config);
+    if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
+    else error = {};
+    if ((ready = instance->ready())) break;
+    ZeException cleanup;
+    if (!shutdown(instance, cleanup)) { error = ZuMv(cleanup); break; }
+    if (Zm::now() >= setupDeadline) break;
+    poll(nullptr, 0, 1);
+    instance = Zxdp::instance(Zxdp::Type::Xdp);
+  }
   ZuCheckRT(ready, log_("single-slot lease race setup: ", error));
   if (!ready) {
     if (instance) ZmAssert_(shutdown(instance, error));

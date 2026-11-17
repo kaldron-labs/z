@@ -21,7 +21,7 @@ ip -6 route add 2001:db8::3/128 dev zxdprxb src 2001:db8::2
 ip -6 route add 2001:db8::4/128 dev zxdprxb src 2001:db8::2
 ip -6 neighbor replace 2001:db8::4 lladdr "$zutcp_test_mac" nud reachable dev zxdprxb
 ip -6 route add 2001:db8::5/128 via 2001:db8::1 dev zxdprxb onlink src 2001:db8::2 mtu 1400
-# Nonlocal next hop for asynchronous setup on the raw Stack's own interface.
+# Nonlocal next hop for asynchronous setup on the raw Instance's own interface.
 # No kernel address is added to the raw side: peer traffic must traverse veth.
 zutcp_peer_mac=$(ip -o link show dev zxdprxb | sed -n 's/.*link\/ether \([^ ]*\).*/\1/p')
 ip route add 198.18.0.6/32 dev zxdprxa

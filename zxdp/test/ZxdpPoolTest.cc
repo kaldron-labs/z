@@ -105,12 +105,14 @@ static void testInvalid()
   auto tx = backend->bufPool(1, 128);
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
-  rx->count = 0;
   ZuCHECK(Zxdp::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
+    "an Rx pool without a Tx pool is rejected");
+  rx->count = 0;
+  ZuCHECK(Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
     "empty Rx reserve rejected");
   rx->count = 2;
   rx->size = 1500;
-  ZuCHECK(Zxdp::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
+  ZuCHECK(Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
     "Rx fits complete Ethernet frame");
   rx->size = 1514;
   auto extra = backend->bufPool(1, 128);

@@ -123,11 +123,11 @@ public:
 
   bool init(ZiMultiplex *mx) {
     if (!mx) return false;
-    auto stack = dynamic_cast<Stack *>(mx->plugin());
+    auto stack = dynamic_cast<Instance *>(mx->plugin());
     if (!stack) return false;
-    if (m_mx) return m_mx == mx && m_stack == stack;
+    if (m_mx) return m_mx == mx && m_instance == stack;
     m_mx = mx;
-    m_stack = stack;
+    m_instance = stack;
     m_queueID = ZuID{} << "endpoint-close:" << ZuBoxPtr(this).hex<false>();
     m_discFns.queueOwner(mx->id());
     m_discFns.queueName(m_queueID);
@@ -141,14 +141,14 @@ public:
     ZiIP remoteIP = {}, uint16_t remotePort = 0)
   {
     ZiAssert(endpointRxInvoked(), "Zutcp", (), "endpoint open outside Rx", return false);
-    if (!m_stack->ready() || m_open || m_draining || m_setupPending) return false;
+    if (!m_instance->ready() || m_open || m_draining || m_setupPending) return false;
     if (mode == PathMode::ClientConnected && (!remoteIP || !remotePort)) return false;
     if (!localIP) localIP = remoteIP.v6() ? ZiIP{in6addr_any} : ZiIP{in_addr{}};
     if (remoteIP && localIP.type() != remoteIP.type()) return false;
     m_mode = mode;
     m_tupleBound = false;
     m_family = localIP.type();
-    m_payloadLimit = tcpPayload(m_stack->mtu(), m_family);
+    m_payloadLimit = tcpPayload(m_instance->mtu(), m_family);
     m_local.init(localIP, localPort);
     if (remoteIP) m_remote.init(remoteIP, remotePort); else m_remote.null();
     m_rxDiag = {};
@@ -158,7 +158,7 @@ public:
     ++m_setupPending;
     if (mode == PathMode::ClientConnected) {
       IPPath path{localIP, remoteIP, {}, {}, 0};
-      if (!m_stack->resolvePath(path,
+      if (!m_instance->resolvePath(path,
 	  [this, generation](ZuUnion<IPPath, ZeException> result) mutable {
 	    if (!m_open || generation != unsigned(m_generation)) {
 	      setupDone(); return;
@@ -196,7 +196,7 @@ public:
       m_open = m_listening = m_connected = false;
       ++m_generation;
       if (m_bound) {
-	m_stack->unbind(m_local, this);
+	m_instance->unbind(m_local, this);
 	m_bound = false;
       }
       if (!m_setupPending) drainTx();
@@ -220,7 +220,7 @@ public:
   void failure() { ++m_rxDiag.failures; }
 
   ZmRef<PacketBuf> allocTxPkt(bool control = false) {
-    return m_stack->allocPacket(this, m_family, control);
+    return m_instance->allocPacket(this, m_family, control);
   }
 
   bool send(
@@ -233,7 +233,7 @@ public:
     if (endpointTxInvoked())
       return send_(ZuMv(buf), ZuMv(addr), ecn, generation, path, true);
     // Path metadata is bounded. This post retains the submitted buffer only
-    // until admission; accepted Stack output detaches its backing immediately.
+    // until admission; accepted Instance output detaches its backing immediately.
     IPPath route = path ? *path : IPPath{};
     m_mx->txRun([this, buf = ZuMv(buf), addr = ZuMv(addr), route,
 	supplied = bool(path), ecn, generation]() mutable {
@@ -245,7 +245,7 @@ public:
 private:
   void install(unsigned generation, IPPath path) {
     ZiSockAddr remote = m_mode == PathMode::ClientConnected ? m_remote : ZiSockAddr{};
-    auto result = m_stack->bind(m_local, this, &Endpoint_::receivePacket, remote);
+    auto result = m_instance->bind(m_local, this, &Endpoint_::receivePacket, remote);
     if (result.template is<ZeException>()) {
       ZiLOG(Error, "Zutcp", ([error = ZuMv(result.template p<ZeException>())](auto &out) {
 	out << error;
@@ -320,7 +320,7 @@ private:
     buf->length = wire;
     // Native endpoint output is built with PacketBuf metadata, including the
     // retained source node's borrowed wire view.
-    if (!m_stack->sendPacket(buf, static_cast<PacketBuf *>(buf.ptr())->retained)) {
+    if (!m_instance->sendPacket(buf, static_cast<PacketBuf *>(buf.ptr())->retained)) {
       buf->skip = head;
       buf->length = bytes;
       ++m_txDiag.txBackPressure;
@@ -370,7 +370,7 @@ private:
 
   // Stable configuration; publish before setup/packet servicing.
   ZiMultiplex *m_mx = nullptr;
-  Stack *m_stack = nullptr;
+  Instance *m_instance = nullptr;
   ZuID m_queueID;
   ZiIPType::T m_family = ZiIPType::Null;
   unsigned m_payloadLimit = 0;

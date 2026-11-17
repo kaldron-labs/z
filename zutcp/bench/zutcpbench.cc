@@ -227,12 +227,12 @@ public:
   explicit App(const Config &config, ZiMxParams params) :
     ZiMultiplex{ZuMv(params)}, m_config{config} {
     if (config.native) {
-      m_stack = new Zutcp::Stack{this,
+      m_instance = new Zutcp::Instance{this,
 	{.interface = config.interface, .spin = config.spin, .packetCount = config.reserve,
 	 .txSid = 3}};
-      plugin(m_stack);
-      Zutcp::StackConfig settings;
-      auto configured = m_stack->configure(settings);
+      plugin(m_instance);
+      Zutcp::InstanceConfig settings;
+      auto configured = m_instance->configure(settings);
       if (configured.is<ZeException>()) {
 	ZiLOG(Error, "zutcpbench", ([error = ZuMv(configured.p<ZeException>())](auto &out) {
 	  out << "native configure: " << error;
@@ -273,9 +273,9 @@ public:
       out << "first_failure reason=" << reason << " id=" << id
 	<< " sequence=" << sequence << " detail=" << detail;
     }));
-    if (m_stack) {
+    if (m_instance) {
       txRun([this] {
-	auto state = m_stack->txAdmission();
+	auto state = m_instance->txAdmission();
 	ZiLOG(Error, "zutcpbench", ([state](auto &out) {
 	  out << "failure_tx outstanding=" << state.outstanding << " capacity=" << state.capacity;
 	}));
@@ -338,7 +338,7 @@ private:
   using Alloc = Zi::IOBufAllocator;
   using Flag = ZmAtomic<unsigned>;
   Config		m_config;
-  Zutcp::Stack	*m_stack = nullptr; // owned by the existing plugin binding
+  Zutcp::Instance	*m_instance = nullptr; // owned by the existing plugin binding
   Alloc		*m_network = nullptr, *m_frames = nullptr, *m_output = nullptr;
   Results		m_results;
   Owners		m_owners; // bounded App ownership through mx stop
@@ -608,14 +608,14 @@ bool App::report()
       << ZuBoxed(double(n * request)/seconds).fp<3>() << " response_bytes_per_second="
       << ZuBoxed(double(n * response)/seconds).fp<3>() << "\n";
   }
-  if (m_stack) {
-    auto c = m_stack->cxnAdmission();
-    auto tx = m_stack->txAdmission();
-    std::cout << "native_stopped ready=" << unsigned(m_stack->ready()) << " cxns=" << c.total
+  if (m_instance) {
+    auto c = m_instance->cxnAdmission();
+    auto tx = m_instance->txAdmission();
+    std::cout << "native_stopped ready=" << unsigned(m_instance->ready()) << " cxns=" << c.total
       << " pending=" << c.pending << " tx_outstanding=" << tx.outstanding
       << " control_count=" << tx.controlCount << " data_stalls=" << tx.dataStalls
       << " control_stalls=" << tx.controlStalls << "\n";
-    ok &= !m_stack->ready() && !c.total && !c.pending && !tx.outstanding;
+    ok &= !m_instance->ready() && !c.total && !c.pending && !tx.outstanding;
   }
   return ok;
 }

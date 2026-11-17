@@ -20,7 +20,7 @@ Initialization takes:
 * Network interface index (`Xdp::Params::ifindex`).
 * Optional network mask for packet selection. Without a mask, XDP takes over
   all traffic on the interface.
-* An owning `Zi::IOBufPoolList` of Tx pools. Each pool supplies
+* An owning `Zi::IOBufPoolList` containing at least one nonempty Tx pool. Each pool supplies
   count, packet size and alignment. Provision the Tx arena from that list and
   initialize one recycling free list per pool.
 * One unlinked `ZmRef<Zi::IOBufPool>` Rx pool, with its own dedicated Rx arena.

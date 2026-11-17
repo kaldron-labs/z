@@ -146,7 +146,7 @@ void testClosedTupleRing()
 void testSharedAdmissionTokens()
 {
   ZuTestScope(testSharedAdmissionTokens);
-  // The one Stack-owned primitive is deliberately independent of any backend.
+  // The one Instance-owned primitive is deliberately independent of any backend.
   // Every native/mapped role transfers tokens from this same ledger.
   Zutcp::CxnSlots slots;
   auto native = slots.reserve(2, 1);
