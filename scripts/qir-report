@@ -197,7 +197,13 @@ tmp=$out_file.tmp
     [ -d "$d" ] || continue
     [ -f "$d/status" ] || continue
     status=$(cat "$d/status")
-    [ "$status" != 0 ] || continue
+    run_failed=0
+    [ "$status" = 0 ] || run_failed=1
+    for testcase in $(csv_words "$(run_tests "$d")"); do
+      result=$(case_result "$d" "$testcase" "$status")
+      case "$result" in fail|unknown) run_failed=1 ;; esac
+    done
+    [ "$run_failed" -eq 1 ] || continue
     failed=1
     name=$(basename "$d")
     echo "### $name"

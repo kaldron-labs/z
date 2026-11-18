@@ -32,6 +32,47 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# Validate the preferred-address rule without Docker or a packet capture.
+python3 - "$srcdir/zhttp/interop/qir-run.py" <<'PYTEST'
+import runpy
+import sys
+from types import SimpleNamespace
+
+rules = runpy.run_path(sys.argv[1])
+probes = rules["server_probes"]
+matched = rules["matched_responses"]
+def field(values):
+    return SimpleNamespace(all_fields=[SimpleNamespace(show=v) for v in values])
+def packet(path, frames, challenge=None, response=None):
+    quic = SimpleNamespace(frame_type=field([hex(f) for f in frames]))
+    if challenge is not None:
+        setattr(quic, "path_challenge.data", field([challenge]))
+    if response is not None:
+        setattr(quic, "path_response.data", field([response]))
+    return {"path": path, "quic": quic}
+def path_of(p):
+    return p["path"]
+
+original = packet("original", [6])
+response = packet("preferred", [0x1b, 0], response="client-probe")
+challenge = packet("preferred", [0x1a, 0], challenge="server-probe")
+data = packet("preferred", [8])
+assert probes([original, response, challenge, data], path_of) == {"server-probe"}
+assert probes([original, challenge, data], path_of) == {"server-probe"}
+assert probes([original, response], path_of) is None
+assert probes([original, response, data, challenge], path_of) is None
+assert probes([original], path_of) is None
+assert probes([original, challenge, packet("other", [0x1b], response="x")],
+              path_of) is None
+assert matched({"server-probe"}, [packet("preferred", [0x1b],
+                                       response="server-probe")])
+# RFC 9000 section 8.2.3 permits the response to arrive on another path.
+assert matched({"server-probe"}, [packet("original", [0x1b],
+                                       response="server-probe")])
+assert not matched({"server-probe"}, [])
+assert not matched({"server-probe"}, [response])
+PYTEST
+
 mkdir -p "$tmp/runner/logs/a" "$tmp/runner/logs_extra/c" \
   "$tmp/runner/results/b" "$tmp/runner/results_extra/d" "$tmp/out"
 : >"$tmp/runner/run.py"
@@ -236,6 +277,21 @@ grep -q -- '-t rebind-port,rebind-addr' \
 grep -q -- '-t rebind-port,rebind-addr' \
   "$tmp/rebind-run/msquic-server_zquic-client/command"
 
+"$srcdir/scripts/qir-run-local" \
+  --runner "$tmp/runner" --image zhttp-qir:test \
+  --peers ngtcp2,quiche,quic-go,msquic --out "$tmp/full" \
+  --dry-run >/dev/null 2>&1
+python3 - "$tmp/full" <<'PY'
+from pathlib import Path
+import sys
+runs = list(Path(sys.argv[1]).glob("*/tests"))
+assert len(runs) == 8
+for run in runs:
+    tests = run.read_text().strip().split(",")
+    assert len(tests) == len(set(tests)) == 22
+    assert {"multiplexing", "connectionmigration", "rebind-port", "rebind-addr"} <= set(tests)
+PY
+
 cat >"$tmp/runner/run.py" <<'PY'
 import argparse
 import json
@@ -267,6 +323,19 @@ grep -q '| `zquic` | `msquic` | `http3` | 0 | unsupported |' \
   "$tmp/json-run/report.md"
 grep -q '| `msquic` | `zquic` | `http3` | 0 | unsupported |' \
   "$tmp/json-run/report.md"
+
+sed -i 's/"transfer", "result": "succeeded"/"transfer", "result": "failed"/' "$tmp/runner/run.py"
+if "$srcdir/scripts/qir-run-local" \
+    --runner "$tmp/runner" --image zhttp-qir:test --peers msquic \
+    --tests handshake,transfer,http3 --out "$tmp/json-failed" >/dev/null 2>&1; then
+  echo "qir-run-local accepted a failed JSON cell with a zero runner exit" >&2
+  exit 1
+fi
+test "$(cat "$tmp/json-failed/zquic-server_msquic-client/status")" = 1
+# Older output may contain zero status despite a failed cell.
+printf '0\n' >"$tmp/json-failed/zquic-server_msquic-client/status"
+"$srcdir/scripts/qir-report" --in "$tmp/json-failed" --out "$tmp/json-failed/report.md"
+grep -q '^### zquic-server_msquic-client' "$tmp/json-failed/report.md"
 
 if "$srcdir/scripts/qir-run-local" \
     --runner "$tmp/runner" \

@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
+#include <netdb.h>
 
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuMatcher.hh>
@@ -320,7 +321,7 @@ struct HQServer : public Zquic::Server<HQServer, HQServerLink> {
   HQServer(const Env &env_) : env{env_} { }
 
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
-  ZiIP localIP() const { return ZiIP("0.0.0.0"); }
+  ZiIP localIP() const { return ZiIP("::"); }
   unsigned localPort() const { return env.port; }
   void listenFailed(bool) {
     errors = 1;
@@ -497,6 +498,8 @@ struct HQClient::Link :
   using Base = Zquic::CliLink<HQClient, HQClient::Link, HQClient::Stream>;
   using Base::Base;
 
+  unsigned nextRequest = 0; // Tx owns stream admission and request ordering.
+
   HQClient::Stream *streamFor(uint64_t streamID) {
     return findStream(int64_t(streamID));
   }
@@ -512,7 +515,10 @@ struct HQClient::Link :
     });
   }
   void connected_() {
-    for (unsigned i = 0, n = app()->requests.length(); i < n; ++i) {
+    while (nextRequest < app()->requests.length() &&
+	localStreamsOpened(Zquic::StreamType::Duplex) <
+	  peerStreamLimit(Zquic::StreamType::Duplex)) {
+      unsigned i = nextRequest++;
       auto stream = this->stream(Zquic::StreamType::Duplex);
       if (!stream) {
 	app()->fail();
@@ -532,6 +538,9 @@ struct HQClient::Link :
 	return;
       }
     }
+  }
+  void streamCredit(Zquic::StreamType::T type) {
+    if (type == Zquic::StreamType::Duplex) connected_();
   }
   void disconnected(bool) {
     if (app()->doneCount < app()->requests.length()) app()->fail();
@@ -1094,9 +1103,36 @@ static int runHQServer(const Env &env)
   return rc;
 }
 
+static ZiIP resolvePeer(const ZtString<> &host)
+{
+  // QIR's hosts file shares server46 across two families. Use the OS
+  // lookup so aliases restricted to one family keep that restriction;
+  // c-ares merges the entries through their shared alias.
+  addrinfo hints{};
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_DGRAM;
+  addrinfo *result = nullptr;
+  if (getaddrinfo(host.ndata(), nullptr, &hints, &result)) return {};
+  ZiIP ip;
+  for (auto p = result; p; p = p->ai_next) {
+    if (p->ai_family == AF_INET) {
+      ip = reinterpret_cast<const sockaddr_in *>(p->ai_addr)->sin_addr;
+      break;
+    }
+    if (p->ai_family == AF_INET6) {
+      ip = reinterpret_cast<const sockaddr_in6 *>(p->ai_addr)->sin6_addr;
+      break;
+    }
+  }
+  freeaddrinfo(result);
+  return ip;
+}
+
 static int runHQClient(const Env &env, Requests requests)
 {
   if (!requests.length()) return Usage;
+  ZiIP remote = resolvePeer(requests[0].host);
+  if (!remote) return Error;
 
   ZiLog::init("zhttpqir");
   ZiLog::level(0);
@@ -1115,7 +1151,8 @@ static int runHQClient(const Env &env, Requests requests)
 	  .qlog(bool(env.qlogPath))
 	  .qlogPath(env.qlogPath), env)) && mx.start()) {
     ZmRef<HQClient::Link> link = new HQClient::Link{&client};
-    link->connect(Zquic::Host{client.requests[0].host}, client.requests[0].port);
+    link->connect(
+      Zquic::Host{client.requests[0].host}, client.requests[0].port, remote);
     if (client.done.timedwait(Zm::now(timeouts().total)) != 0)
       client.errors = 1;
     ZmBlock<>{}([link = ZuMv(link)](auto wake) mutable {
@@ -1143,6 +1180,8 @@ static bool sameAuthority(const Requests &requests)
 static int runH3Client(const Env &env, Requests requests)
 {
   if (!sameAuthority(requests)) return Usage;
+  ZiIP remote = resolvePeer(requests[0].host);
+  if (!remote) return Error;
 
   ZiLog::init("zhttpqir");
   ZiLog::level(0);
@@ -1165,7 +1204,8 @@ static int runH3Client(const Env &env, Requests requests)
 	  .maxStreamsDuplex(client.maxStreamsDuplex())
 	  .maxStreamsSimplex(H3UniMax), env)) && mx.start()) {
     ZmRef<H3Client::Link> link = new H3Client::Link{&client};
-    link->connect(Zquic::Host{client.requests[0].host}, client.requests[0].port);
+    link->connect(
+      Zquic::Host{client.requests[0].host}, client.requests[0].port, remote);
     if (client.done.timedwait(Zm::now(timeouts().total)) != 0)
       client.errors = 1;
     ZmBlock<>{}([link = ZuMv(link)](auto wake) mutable {

@@ -95,7 +95,7 @@ Supported and unsupported testcase behavior:
 | `http3` | `0` on successful transfer | HTTP/3 |
 | `rebind-port` | `0` on successful transfer | `hq-interop` |
 | `rebind-addr` | `0` on successful transfer | `hq-interop` |
-| `connectionmigration` | `127` | unsupported until preferred-address behavior is verified |
+| `connectionmigration` | `127` | server preferred-address advertisement is unsupported; the client follows advertised preferred addresses during `transfer` |
 | `versionnegotiation` | `127` | unsupported |
 | `chacha20` | `127` | unsupported |
 | `keyupdate` | `127` | unsupported |
@@ -276,10 +276,16 @@ Run the local lifecycle wrapper:
 scripts/qir-run-local --runner /path/to/quic-interop-runner \
   --image zhttp-qir:local \
   --url https://github.com/<final-upstream>/z \
-  --peers ngtcp2 \
-  --tests handshake,transfer,http3 \
+  --peers ngtcp2,quiche,quic-go,msquic \
   --build-type release
 ```
+
+The default matrix has 22 cases in both roles: handshake, transfer, longrtt,
+chacha20, multiplexing, retry, resumption, zerortt, http3, blackhole, keyupdate,
+ecn, amplificationlimit, handshakeloss, transferloss, handshakecorruption,
+transfercorruption, ipv6, v2, rebind-port, rebind-addr and connectionmigration.
+With four peers this runs 176 cells. Use `--tests` to select a focused subset;
+a three-case smoke test does not cover the full interoperability matrix.
 
 If `--url` is omitted, the wrapper derives a GitHub HTTPS URL from
 `remote.origin.url` when possible and otherwise uses the repository's expected
@@ -301,3 +307,10 @@ summary, and do not commit credentials or local paths.
 QIR endpoints use dedicated UDP receive and transmit allocators registered with
 the multiplexer. Stream and CRYPTO buffers retain application bytes independently
 of packet I/O.
+
+The local QIR launcher uses `qir-run.py` to correct the preferred-address
+probe-order check: RFC 9000 section 9.6.2 allows a server PATH_RESPONSE before
+its own PATH_CHALLENGE. The check still requires a challenge on every new
+server path before non-probing output, matching client responses, successful
+file transfer, and the upstream client CID-change checks. Ordinary rebinding
+checks and the external runner checkout are unchanged.

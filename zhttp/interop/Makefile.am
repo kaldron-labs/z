@@ -35,7 +35,7 @@ zhttpdarkhttpdcompattest_SOURCES = zhttpdarkhttpdcompattest.cc
 zhttpfallbacktest_SOURCES = zhttpfallbacktest.cc
 noinst_HEADERS = zhttpqir.hh zhttpinteropports.hh
 dist_noinst_SCRIPTS = qir_endpoint.sh zhttph2interoptest.sh
-EXTRA_DIST = Dockerfile.interop README.md qir-script-test.sh \
+EXTRA_DIST = Dockerfile.interop README.md qir-script-test.sh qir-run.py \
 	testdata/qir-results/fixture/metadata.env \
 	testdata/qir-results/fixture/zquic-server_ngtcp2-client/client \
 	testdata/qir-results/fixture/zquic-server_ngtcp2-client/collected_at \
