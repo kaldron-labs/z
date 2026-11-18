@@ -45,6 +45,104 @@ struct Large {
   friend ZuStringT<"Zdb.Test.Large"> ZdbBufHeapID(Large *);
 };
 
+struct Pool : ZmNHeap<Pool>, Zi::IOBufPool {
+friend inline ZuStringT<"ZdbFBTest.Pool"> ZmNHeapID(Pool *);
+  using ZmNHeap<Pool>::operator new;
+  using ZmNHeap<Pool>::operator delete;
+
+  alignas(ZiIOBuf_Align) uint8_t bytes[ZdbBuf_Size<Small>{}];
+  uint8_t *available = bytes;
+
+  Pool() {
+    count = 1;
+    size = sizeof(bytes);
+    align = ZiIOBuf_Align;
+  }
+  uint8_t *alloc() override {
+    auto ptr = available;
+    available = nullptr;
+    return ptr;
+  }
+  void free(uint8_t *ptr) override { available = ptr; }
+};
+
+struct Plugin : ZmNHeap<Plugin>, ZiMxPlugin {
+friend inline ZuStringT<"ZdbFBTest.Plugin"> ZmNHeapID(Plugin *);
+  using ZmNHeap<Plugin>::operator new;
+  using ZmNHeap<Plugin>::operator delete;
+
+  ZmRef<Pool> pool = new Pool;
+  Zi::IOBufType::T reqType = Zi::IOBufType::App;
+  unsigned reqSize = 0, reqAlign = 0, reqCount = 0;
+
+  explicit Plugin(ZiMultiplex *mx) : ZiMxPlugin{mx} { }
+
+  Zi::IOBufPool *allocator(
+    Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count) override
+  {
+    reqType = type;
+    reqSize = size;
+    reqAlign = align;
+    reqCount = count;
+    return pool;
+  }
+  void start() override { }
+  void stop() override { }
+  void rx() override { }
+  void listen(ZiListenFn, ZiFailFn, ZiConnectFn, ZiIP, uint16_t, unsigned,
+    Zi::IOBufAllocator *, ZiCxnOptions) override { }
+  void stopListening(ZiIP, uint16_t) override { }
+  void connect(ZiConnectFn, ZiFailFn, ZiIPType::T, ZiIP, uint16_t, ZiIP, uint16_t,
+    Zi::IOBufAllocator *, ZiCxnOptions) override { }
+  void udp(ZiConnectFn, ZiFailFn, ZiIPType::T, ZiIP, uint16_t, ZiIP, uint16_t,
+    Zi::IOBufAllocator *, ZiCxnOptions) override { }
+  void recv(ZiConnection *) override { }
+  void send(ZiConnection *) override { }
+  void disconnect(ZiConnection *, bool) override { }
+  void close(ZiConnection *, bool) override { }
+  void wake() override { }
+  TelKey telKey() const override { return {}; }
+  void telemetry(Ztc::MxTelemetry &) const override { }
+  unsigned allCxns(AllCxnsFn) const override { return 0; }
+  unsigned allQueues(Ztc::QueueMgr::AllFn) const override { return 0; }
+  void watch(AddCxnFn, DelCxnFn) override { }
+  void unwatch() override { }
+};
+
+static void poolAllocation()
+{
+  ZuTestScope(poolAllocation);
+  ZiMultiplex mx;
+  ZmRef<Plugin> plugin = new Plugin{&mx};
+  mx.plugin(plugin);
+  auto alloc = tableBufAllocFn<Small>(&mx);
+  ZuCheck(plugin->reqType == Zi::IOBufType::TxTCP);
+  ZuCheck(plugin->reqSize == ZdbBuf_Size<Small>{});
+  ZuCheck(plugin->reqAlign == ZiIOBuf_Align);
+  ZuCheck(plugin->reqCount == ZiIOBuf_DefltCount);
+  ZuCheck(alloc.allocator() && alloc.allocator()->provider() == plugin->pool.ptr());
+  auto buf = alloc();
+  using Stub = Zi::IOBufStub<IOBuf, ZdbBuf_HeapID<Small>>;
+  ZuCheck(bool(dynamic_cast<Stub *>(buf.ptr())));
+  ZuCheck(buf && buf->registered() && buf->size == plugin->pool->size &&
+    buf->data_() == plugin->pool->bytes && buf->skip == Zfb::Wire::MaxAlign);
+  ZuCheck(!alloc());
+  buf = {};
+  auto reused = alloc();
+  ZuCheck(reused && reused->data_() == plugin->pool->bytes &&
+    reused->skip == Zfb::Wire::MaxAlign);
+}
+
+static void localAllocation()
+{
+  ZuTestScope(localAllocation);
+  auto alloc = localBufAllocFn<Small>();
+  ZuCheck(alloc && !alloc.allocator());
+  auto buf = alloc();
+  ZuCheck(buf && buf->builtin() && buf->allocator()->type == Zi::IOBufType::App &&
+    buf->size >= ZdbBuf_Size<Small>{} && buf->skip == Zfb::Wire::MaxAlign);
+}
+
 static void run()
 {
   ZuTestScope(buffers);
@@ -67,8 +165,6 @@ static void run()
   ZuCheck(assigned.allocator() == first.allocator());
   assigned = IOBufAllocFn{};
   ZuCheck(!assigned && !assigned.allocator());
-  auto local = localBufAllocFn<Small>();
-  ZuCheck(local && !local.allocator());
   auto a = first();
   auto b = second();
   auto c = large();
@@ -276,6 +372,8 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(SchemaTest::run);
+  ZuTestCall(BufTest::poolAllocation);
+  ZuTestCall(BufTest::localAllocation);
   ZuTestCall(BufTest::run);
   ZuTestCall(BufTest::frameOrigin);
   ZuTestCall(heartbeat);

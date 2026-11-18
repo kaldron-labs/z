@@ -176,10 +176,11 @@ using IOBufAllocFactory = ZmFn<IOBufAllocFn(ZiMultiplex *)>;
 
 template <typename T>
 IOBufAllocFn tableBufAllocFn(ZiMultiplex *mx) {
-  auto allocator = mx->allocator<Zi::IOBufType::App, IOBuf,
+  auto allocator = mx->allocator<Zi::IOBufType::TxTCP, IOBuf,
     ZdbBuf_Size<T>{}, ZiIOBuf_Align, ZdbBuf_HeapID<T>, MaxBufSize>();
   IOBufAllocFn fn{[allocator]() {
     ZmRef<IOBuf> buf = allocator->allocBuf();
+    if (!buf) return buf;
     // Reserve the envelope before the backwards-growing row arena starts.
     buf->skip = Zfb::Wire::MaxAlign;
     return buf;
