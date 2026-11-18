@@ -6,9 +6,16 @@
 
 // TCP byte recovery and local transmission history
 
-#ifndef Zutcp_HH
-#error "include zlib/Zutcp.hh before this header"
+#ifndef ZutcpRecovery_HH
+#define ZutcpRecovery_HH
+
+#ifndef ZutcpLib_HH
+#include <zlib/ZutcpLib.hh>
 #endif
+
+#include <zlib/ZutcpTypes.hh>
+#include <zlib/ZutcpPQueue.hh>
+#include <zlib/ZutcpSched.hh>
 
 #include <string.h>
 
@@ -145,18 +152,6 @@ private:
   ZuTime	m_min;
   ZuTime	m_smoothed;
   ZuTime	m_variance;
-};
-
-struct RtoParams {
-  ZuTime initial{1};
-  ZuTime min{0, 200000000};
-  ZuTime max{60};
-  ZuTime granularity{0, 1000000};
-
-  bool valid() const {
-    return initial > ZuTime{0} && min > ZuTime{0} && max >= min &&
-      initial >= min && initial <= max && granularity > ZuTime{0};
-  }
 };
 
 // Tx-owned cumulative-progress timer. Caller supplies the monotonic clock and
@@ -1677,3 +1672,5 @@ private:
 using SentPktTracker = PktTxSpace;
 
 } // namespace Zutcp
+
+#endif /* ZutcpRecovery_HH */

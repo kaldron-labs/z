@@ -320,9 +320,18 @@ def check_flow(directory, direction, family, profile, packets, request, tfo=Fals
     native = (directory / (native_side + '.err')).read_text()
     kernel = (directory / (kernel_side + '.err')).read_text()
     assert 'backend=AF_XDP role=' + native_side + ' ready=1' in native
-    drained = re.search(
-        r'backend=AF_XDP stopped=1 cxns=0 pending=0 tx=0 control=(\d+)/(\d+)', native)
-    assert drained and drained[1] == drained[2]
+    roles = dict(line.split('=', 1) for line in
+                 (directory / 'roles').read_text().splitlines() if '=' in line)
+    native_driver = roles.get('native_driver')
+    assert native_driver in ('application', 'protocol'), 'fixture must identify native driver'
+    if native_driver == 'protocol':
+        drained = re.search(
+            r'^backend=AF_XDP stopped=1 cxns=0 pending=0 tx=0 control_count=(\d+)$',
+            native, re.MULTILINE)
+        assert drained and int(drained[1]) > 0, 'native owner/Tx drain or control configuration'
+    else:
+        assert re.search(r'^backend=AF_XDP stopped=1$', native, re.MULTILINE), (
+            'application must report successful multiplexer stop')
     assert 'backend=kernel-tcp role=' + kernel_side in kernel
     selected = {}
     if profile == 'loss':
@@ -426,7 +435,8 @@ def check_flow(directory, direction, family, profile, packets, request, tfo=Fals
               'direction': direction, 'family': family, 'selected': selected,
               'request_sha256': hashlib.sha256(request).hexdigest(),
               'client_syn_options': first['options'], 'server_syn_options': reply['options'],
-              'streams': streams, 'native_backend': 'AF_XDP', 'peer_backend': 'kernel-tcp'}
+              'streams': streams, 'native_backend': 'AF_XDP', 'peer_backend': 'kernel-tcp',
+              'native_driver': native_driver}
     return report
 
 

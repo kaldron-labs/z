@@ -26,21 +26,18 @@
 #include <zlib/Zxdp.hh>
 
 #include <zlib/ZutcpAlloc.hh>
-#include <zlib/ZutcpMx.hh>
+#include <zlib/Zutcp.hh>
 
 using namespace ZuTestUtil;
 
 static ZuUnion<bool, ZeException> closeInstance(ZmRef<Zxdp::Instance> &instance)
 {
-  auto limit = Zm::now() + ZuTime{10};
-  do {
-    auto result = instance->close();
-    if (result.is<ZeException>()) return result;
-    if (result.p<bool>()) { instance = nullptr; return true; }
-    // Fixture main only; expiry never authorizes retirement of live backing.
-    poll(nullptr, 0, 1);
-  } while (Zm::now() < limit);
-  return false;
+  bool ok = instance->stop();
+  auto error = instance->error();
+  instance->final();
+  instance = nullptr;
+  if (!ok) return error;
+  return true;
 }
 
 static void testProvider()
@@ -78,9 +75,9 @@ static void testProvider()
   ZuCheckRT(started);
   if (!started) return;
   auto initialized = instance->init(config);
-  bool ready = initialized.is<void>() && instance->ready();
+  bool ready = initialized.is<void>() && instance->start() && instance->ready();
   ZeException error = initialized.is<ZeException>() ?
-    initialized.p<ZeException>() : ZeException{};
+    initialized.p<ZeException>() : instance->error();
   ZuCheckRT(ready, log_("raw instance activates caller-owned Zutcp provider pools: ", error));
   if (ready) {
     auto buf = allocator.allocBuf(&mx, Payload);

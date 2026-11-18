@@ -15,6 +15,7 @@
 #include <zlib/Zutcp.hh>
 
 #include "ZutcpTestAlloc.hh"
+#include "ZutcpTestInstance.hh"
 
 using namespace ZuTestUtil;
 
@@ -99,10 +100,11 @@ friend inline ZuStringT<"Zutcp.Test.DataRx"> ZmNHeapID(TestDataRx *);
   using Zutcp::DataRx::DataRx;
 };
 
-struct App : public ZmNHeap<App>, public Zutcp::Hub<App> {
+struct App : public ZmNHeap<App>, public ZutcpTest::Instance {
 friend inline ZuStringT<"Zutcp.BufferTest.App"> ZmNHeapID(App *);
   using ZmNHeap<App>::operator new;
   using ZmNHeap<App>::operator delete;
+  using ZutcpTest::Instance::Instance;
 };
 
 static void testAllocatorDirection()
@@ -111,9 +113,9 @@ static void testAllocatorDirection()
   ZiMultiplex mx;
   ZmRef<PacketPlugin> provider = new PacketPlugin{&mx};
   mx.plugin(provider);
-  ZmRef<App> appRef = new App;
+  ZmRef<App> appRef = new App{&mx};
   auto &app = *appRef;
-  Zutcp::HubParams defaults{&mx};
+  ZutcpTest::Params defaults{&mx};
   ZuCHECK(defaults.controlBufCount() == 256 && defaults.txControlCredits() == 64,
     "control reserve defaults mismatch");
   ZuCHECK(defaults.rxRetainFramesPerCxn() == 256, "Rx retention defaults mismatch");
@@ -123,13 +125,13 @@ static void testAllocatorDirection()
       defaults.rtoParams().granularity == Zutcp::timeUS(1000),
     "DATA RTO defaults mismatch");
   unsigned errors = 0;
-  auto invalid = Zutcp::HubParams{&mx}.controlBufCount(0)
+  auto invalid = ZutcpTest::Params{&mx}.controlBufCount(0)
     .errorFn([&errors](ZeException) { ++errors; });
-  auto noCredits = Zutcp::HubParams{&mx}.txControlCredits(0)
+  auto noCredits = ZutcpTest::Params{&mx}.txControlCredits(0)
     .errorFn([&errors](ZeException) { ++errors; });
-  auto noCxn = Zutcp::HubParams{&mx}.rxRetainFramesPerCxn(0)
+  auto noCxn = ZutcpTest::Params{&mx}.rxRetainFramesPerCxn(0)
     .errorFn([&errors](ZeException) { ++errors; });
-  auto noRto = Zutcp::HubParams{&mx}.minRto(ZuTime{0})
+  auto noRto = ZutcpTest::Params{&mx}.minRto(ZuTime{0})
     .errorFn([&errors](ZeException) { ++errors; });
   ZuCHECK(!app.init(ZuMv(invalid)) && !app.init(ZuMv(noCredits)) &&
       !app.init(ZuMv(noCxn)) &&
@@ -143,18 +145,17 @@ static void testAllocatorDirection()
       app.rtoParams().min == Zutcp::timeUS(100000) &&
       app.rtoParams().max == ZuTime{30} &&
       app.rtoParams().granularity == Zutcp::timeUS(2000),
-    "Hub must forward configured RTO policy");
+    "Instance must retain configured RTO policy");
   ZuCHECK(initialized && !provider->requests,
     "transport initialization makes no request to the mx allocator factory");
   if (!initialized) return;
-  ZuCHECK(!app.dataTxAllocator() && !provider->requests,
-    "a non-native plugin cannot supply transport producer storage");
+  ZuCHECK(app.dataTxAllocator() && !provider->requests,
+    "Instance owns producer storage independently of the mx factory");
   auto application = mx.allocator<Zi::IOBufType::TxTCP>();
   ZuCHECK(application && provider->requests == 1 &&
       provider->requestedType == Zi::IOBufType::TxTCP &&
       application->provider() == provider->backing.ptr(),
     "an application allocator exposes its original provider without another factory request");
-  app.final();
 }
 
 void testTxPacketGeometry(bool registered)

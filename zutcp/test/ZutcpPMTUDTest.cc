@@ -7,6 +7,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/Zutcp.hh>
+#include <zlib/ZutcpPath.hh>
 
 using namespace ZuTestUtil;
 

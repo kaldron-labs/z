@@ -6,9 +6,15 @@
 
 // TCP packet budgets and congestion pacing
 
-#ifndef Zutcp_HH
-#error "include zlib/Zutcp.hh before this header"
+#ifndef ZutcpSched_HH
+#define ZutcpSched_HH
+
+#ifndef ZutcpLib_HH
+#include <zlib/ZutcpLib.hh>
 #endif
+
+#include <zlib/ZutcpTypes.hh>
+#include <zlib/ZutcpPQueue.hh>
 
 #include <string.h>
 
@@ -110,3 +116,5 @@ struct DataFrameInfo {
 };
 
 } // namespace Zutcp
+
+#endif /* ZutcpSched_HH */

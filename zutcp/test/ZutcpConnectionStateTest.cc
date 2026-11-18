@@ -7,6 +7,9 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/Zutcp.hh>
+#include <zlib/ZutcpConnectionUtil.hh>
+
+#include "ZutcpTestInstance.hh"
 
 using namespace ZuTestUtil;
 
@@ -143,94 +146,118 @@ void testClosedTupleRing()
     "one-slot capacity obeys the same overwrite and stale-snapshot boundary");
 }
 
-void testSharedAdmissionTokens()
+struct AdmissionCxn : public Zutcp::Cxn {
+  void abortRx() override { }
+  Zutcp::ClosedTupleKey closedKeyRx() const override { return {}; }
+  bool established() const override { return false; }
+};
+
+void testSharedAdmission()
 {
-  ZuTestScope(testSharedAdmissionTokens);
-  // The one Instance-owned primitive is deliberately independent of any backend.
-  // Every native/mapped role transfers tokens from this same ledger.
-  Zutcp::CxnSlots slots;
-  auto native = slots.reserve(2, 1);
-  auto deniedPending = slots.reserve(2, 1);
-  auto a = slots.admission(2, 1);
-  ZuCHECK(native && !deniedPending && a.total == 1 && a.pending == 1 && a.refused == 1,
-    "an active cold attempt must occupy both total and shared pending capacity");
-  Zutcp::CxnSlot established = ZuMv(native);
-  established.established();
-  established.established();
-  auto mapped = slots.reserve(2, 1);
-  auto deniedTotal = slots.reserve(2, 1);
-  a = slots.admission(2, 1);
-  ZuCHECK(!native && established && mapped && !deniedTotal &&
+  ZuTestScope(testSharedAdmission);
+  ZutcpTest::Context<> stack;
+  bool initialized = stack.init(ZutcpTest::Params{stack.mx()}.maxCxns(2).maxPendingCxns(1));
+  ZuCHECK(initialized, "configure shared admission limits on the actual Instance");
+  if (!initialized) return;
+  bool reserved = stack.reserveCxn();
+  bool deniedPending = stack.reserveCxn();
+  auto a = stack.cxnAdmission();
+  ZuCHECK(reserved && !deniedPending && a.total == 1 && a.pending == 1 && a.refused == 1,
+    "a cold attempt occupies total and shared pending capacity before constructing its owner");
+  AdmissionCxn active;
+  stack.admitCxn(active);
+  stack.establishedCxn(active);
+  stack.establishedCxn(active);
+  reserved = stack.reserveCxn();
+  AdmissionCxn mapped;
+  stack.admitCxn(mapped);
+  bool deniedTotal = stack.reserveCxn();
+  a = stack.cxnAdmission();
+  ZuCHECK(active.admission && mapped.admission && reserved && !deniedTotal &&
       a.total == 2 && a.pending == 1 && a.refused == 2,
-    "transfer and duplicate establishment must not double-charge or release total capacity");
-  mapped.closing();
-  mapped.closing();
-  a = slots.admission(2, 1);
+    "attaching a reservation and duplicate establishment do not double-charge total capacity");
+  stack.closingCxn(mapped);
+  stack.closingCxn(mapped);
+  a = stack.cxnAdmission();
   ZuCHECK(a.total == 2 && a.pending == 1 && a.closing == 1,
     "a failed pending handshake remains pending and total-charged during its close drain");
-  mapped.release();
-  mapped.release();
-  auto otherActive = slots.reserve(2, 1);
-  otherActive.established();
-  established.closing();
-  auto deniedClosing = slots.reserve(2, 1);
-  a = slots.admission(2, 1);
-  ZuCHECK(!mapped && !deniedClosing && a.total == 2 && !a.pending && a.closing == 1,
-    "closing full transports must retain total capacity independently of pending");
-  established.release();
+  stack.releaseCxn(mapped);
+  stack.releaseCxn(mapped);
+  reserved = stack.reserveCxn();
+  AdmissionCxn otherActive;
+  stack.admitCxn(otherActive);
+  stack.establishedCxn(otherActive);
+  stack.closingCxn(active);
+  bool deniedClosing = stack.reserveCxn();
+  a = stack.cxnAdmission();
+  ZuCHECK(reserved && !mapped.admission && !deniedClosing &&
+      a.total == 2 && !a.pending && a.closing == 1,
+    "closing full transports retain total capacity independently of pending");
+  stack.releaseCxn(active);
   bool callbackRetry = false;
-  auto complete = [&slots, &callbackRetry] {
-    auto retry = slots.reserve(2, 1);
-    callbackRetry = bool(retry);
-    retry.release();
+  auto complete = [&stack, &callbackRetry] {
+    callbackRetry = stack.reserveCxn();
+    if (callbackRetry) stack.cancelCxn();
   };
   complete();
-  otherActive.release();
-  a = slots.admission(2, 1);
+  stack.releaseCxn(otherActive);
+  a = stack.cxnAdmission();
   ZuCHECK(callbackRetry && !a.total && !a.pending && !a.closing && a.refused == 3,
-    "owner retirement must free capacity before a completion callback retries");
+    "owner retirement frees capacity before a completion callback retries");
 }
 
 void testPendingAdmissionTransfer()
 {
   ZuTestScope(testPendingAdmissionTransfer);
-  Zutcp::CxnSlots slots;
-  using Pending = ZmHashKV<Zutcp::ClosedTupleKey, Zutcp::CxnSlot,
-    ZmHashHeapID<"Zutcp.Test.PendingAdmission">>;
-  ZmRef<Pending> pending = new Pending;
+  ZutcpTest::Context<> stack;
+  bool initialized = stack.init(ZutcpTest::Params{stack.mx()}.maxCxns(2).maxPendingCxns(1));
+  ZuCHECK(initialized, "configure passive admission limits on the actual Instance");
+  if (!initialized) return;
+  ZmRef<Zutcp_::PendingTable> pending = new Zutcp_::PendingTable;
   Zutcp::ClosedTupleKey tuple{ZiSockAddr{ZiIP{"198.18.0.1"}, 18191},
     ZiSockAddr{ZiIP{"198.18.0.2"}, 18192}};
-  auto route = slots.reserve(2, 1);
-  pending->add(tuple, ZuMv(route));
+  bool reserved = stack.reserveCxn();
+  pending->add(tuple, Zutcp_::PendingInitial{tuple});
   auto found = pending->findPtr(tuple);
-  auto a = slots.admission(2, 1);
-  ZuCHECK(found && !route && a.total == 1 && a.pending == 1 && !a.refused,
-    "cold route preparation must transfer one reservation to existing tuple dedup state");
-  // A retransmitted SYN only finds existing state. A distinct tuple
-  // competes for the same pending capacity, before any factory is invoked.
+  auto a = stack.cxnAdmission();
+  ZuCHECK(reserved && found && a.total == 1 && a.pending == 1 && !a.refused,
+    "cold route preparation holds capacity while the existing table deduplicates its tuple");
   auto duplicate = pending->findPtr(tuple);
-  auto other = slots.reserve(2, 1);
-  ZuCHECK(duplicate == found && !other && slots.admission(2, 1).refused == 1,
-    "SYN retransmission must reuse pending state while distinct candidates share its cap");
-  found->val().release();
+  bool other = stack.reserveCxn();
+  ZuCHECK(duplicate == found && !other && stack.cxnAdmission().refused == 1,
+    "SYN retransmission reuses pending state while distinct candidates share its cap");
+  stack.cancelCxn();
   pending->del(tuple);
-  auto retried = slots.reserve(2, 1);
-  pending->add(tuple, ZuMv(retried));
-  found = pending->findPtr(tuple);
-  Zutcp::CxnSlot full = ZuMv(found->val());
+  reserved = stack.reserveCxn();
+  pending->add(tuple, Zutcp_::PendingInitial{tuple});
+  AdmissionCxn full;
+  stack.admitCxn(full);
+  stack.establishedCxn(full);
+  a = stack.cxnAdmission();
+  ZuCHECK(reserved && pending->findPtr(tuple) && a.total == 1 && !a.pending,
+    "acceptance attaches one reservation while retaining tuple deduplication for first delivery");
+  stack.releaseCxn(full);
+  other = stack.reserveCxn();
+  a = stack.cxnAdmission();
+  ZuCHECK(other && pending->findPtr(tuple) && a.total == 1 && a.pending == 1,
+    "first-delivery closure can release capacity while the pending tuple remains protected");
+  if (other) stack.cancelCxn();
   pending->del(tuple);
-  full.established();
-  a = slots.admission(2, 1);
-  ZuCHECK(!retried && !pending->count_() && a.total == 1 && !a.pending,
-    "failed route must free its slot; acceptance must transfer one slot into a full owner");
-  full.release();
-  a = slots.admission(2, 1);
-  ZuCHECK(!a.total && !a.pending && !a.closing,
-    "setup rejection and full connection retirement must consume each charge once");
+  a = stack.cxnAdmission();
+  ZuCHECK(!pending->count_() && !a.total && !a.pending && !a.closing,
+    "setup rejection and full connection retirement consume each charge once");
 }
 
 static void bindInput(
-  void *, ZmRef<ZiIOBuf>, ZiSockAddr, ZiSockAddr, unsigned, const Zutcp::TCPHeader &) { }
+  Zutcp::Endpoint *, ZmRef<ZiIOBuf>, ZiSockAddr, ZiSockAddr, unsigned,
+  const Zutcp::TCPHeader &) { }
+
+struct BindEndpoint : public Zutcp::EndpointIndex::Node {
+  explicit BindEndpoint(ZiSockAddr local) {
+    bindAddr = ZuMv(local);
+    receive = &bindInput;
+  }
+};
 
 void testConservativeClientTuple(bool v6)
 {
@@ -243,48 +270,44 @@ void testConservativeClientTuple(bool v6)
   auto first = history.remember({.key = {old, peer}, .txNext = 20, .rxNext = 30,
     .tsRecent = 77, .fin = true});
   auto stats = history.stats();
-  ZmRef<Zutcp::EndpointBindings> bindings = new Zutcp::EndpointBindings;
-  unsigned next = Zutcp::ClientPorts::First;
-  int owner = 0, other = 0;
-  auto fixed = old;
-  ZuCHECK(Zutcp::bindCxnTuple(fixed, peer, next, *bindings, history, &owner, &bindInput) ==
-      Error::Retained && fixed == old && !bindings->findPtr(old),
-    "retained fixed tuple must fail without binding a new owner or changing the requested tuple");
-  ZiSockAddr occupied{ip, uint16_t(Zutcp::ClientPorts::First + 1)};
-  bindings->add(Zutcp::EndpointBinding{occupied, &other, &bindInput});
-  ZiSockAddr automatic{ip, 0};
-  ZuCHECK(Zutcp::bindCxnTuple(automatic, peer, next, *bindings, history, &owner, &bindInput) ==
-      Error::None && automatic.port() == Zutcp::ClientPorts::First + 2 &&
-      bindings->findPtr(automatic)->owner == &owner,
-    "automatic client selection must skip both retained tuples and live endpoint membership");
-  auto duplicate = automatic;
-  ZuCHECK(Zutcp::bindCxnTuple(duplicate, peer, next, *bindings, history, &other, &bindInput) ==
-      Error::InUse && bindings->findPtr(automatic)->owner == &owner,
-    "failed duplicate binding must not steal existing owner membership");
-  ZiSockAddr otherPeer{peer.ip(), 18192};
-  auto unrelated = old;
-  ZuCHECK(Zutcp::bindCxnTuple(unrelated, otherPeer, next, *bindings, history,
-      &owner, &bindInput) == Error::None,
-    "a retained record for another remote tuple must not guard an unrelated connection");
   ZiIP any;
   if (v6) any = in6addr_any; else any = in_addr{};
-  ZiSockAddr listener{any, old.port()};
-  ZuCHECK(Zutcp::bindCxnTuple(listener, {}, next, *bindings, history,
-      &owner, &bindInput) == Error::None,
-    "wildcard listeners must bind independently of peer-specific closed history");
+  BindEndpoint fixed{old}, occupied{{ip, uint16_t(Zutcp::ClientPorts::First + 1)}},
+    automatic{{ip, 0}}, duplicate{{ip, 0}}, unrelated{old}, listener{{any, old.port()}};
+  // The shadow index is destroyed before the endpoint objects owning its nodes.
+  Zutcp::EndpointIndex bindings;
+  unsigned next = Zutcp::ClientPorts::First;
+  ZuCHECK(Zutcp::bindCxnTuple(fixed, peer, next, bindings, history) == Error::Retained &&
+      fixed.bindAddr == old && !bindings.findPtr(old),
+    "retained fixed tuple fails without binding an endpoint or changing its requested tuple");
+  bindings.addNode(&occupied);
+  ZuCHECK(Zutcp::bindCxnTuple(automatic, peer, next, bindings, history) == Error::None &&
+      automatic.bindAddr.port() == Zutcp::ClientPorts::First + 2 &&
+      bindings.findPtr(automatic.bindAddr) == &automatic,
+    "automatic selection skips retained tuples and indexes the endpoint's own node");
+  duplicate.bindAddr = automatic.bindAddr;
+  ZuCHECK(Zutcp::bindCxnTuple(duplicate, peer, next, bindings, history) == Error::InUse &&
+      bindings.findPtr(automatic.bindAddr) == &automatic,
+    "failed duplicate binding cannot replace another endpoint's embedded node");
+  ZiSockAddr otherPeer{peer.ip(), 18192};
+  ZuCHECK(Zutcp::bindCxnTuple(unrelated, otherPeer, next, bindings, history) == Error::None,
+    "a retained record for another remote tuple does not guard an unrelated connection");
+  ZuCHECK(Zutcp::bindCxnTuple(listener, {}, next, bindings, history) == Error::None,
+    "wildcard listeners bind independently of peer-specific closed history");
   Zutcp::ClosedTuple after;
   auto unchanged = history.stats();
   ZuCHECK(history.find(first.key, after) && after.id == first.id && after.tsRecent == 77 &&
       after.txNext == 20 && after.rxNext == 30 && unchanged.inserted == stats.inserted &&
       unchanged.evicted == stats.evicted,
-    "all selection and refusal paths must preserve old record identity, evidence and FIFO order");
+    "selection and refusal preserve old record identity, evidence and FIFO order");
   history.remember({.key = {ZiSockAddr{ip, 1}, peer}});
   history.remember({.key = {ZiSockAddr{ip, 2}, peer}});
-  bindings->del(old);
-  fixed = old;
-  ZuCHECK(!history.find(first.key, after) && Zutcp::bindCxnTuple(fixed, peer, next,
-      *bindings, history, &owner, &bindInput) == Error::None,
-    "actual capacity eviction removes the history guard without any time-based expiry");
+  ZuCHECK(bindings.delNode(&unrelated) == &unrelated,
+    "unbinding returns the endpoint's node without deleting its owner");
+  ZuCHECK(!history.find(first.key, after) &&
+      Zutcp::bindCxnTuple(fixed, peer, next, bindings, history) == Error::None &&
+      bindings.findPtr(old) == &fixed,
+    "capacity eviction permits rebinding through the endpoint's existing intrusive storage");
 }
 
 void testClientPortExhaustion(bool v6)
@@ -295,19 +318,18 @@ void testClientPortExhaustion(bool v6)
   Zutcp::ClosedTuples history{Zutcp::ClientPorts::Count};
   for (unsigned port = Zutcp::ClientPorts::First; port < Zutcp::ClientPorts::End; ++port)
     history.remember({.key = {ZiSockAddr{ip, uint16_t(port)}, peer}});
-  ZmRef<Zutcp::EndpointBindings> bindings = new Zutcp::EndpointBindings;
+  BindEndpoint automatic{{ip, 0}};
+  Zutcp::EndpointIndex bindings;
   unsigned next = Zutcp::ClientPorts::First;
-  int owner = 0;
-  ZiSockAddr automatic{ip, 0};
   auto stats = history.stats();
-  ZuCHECK(Zutcp::bindCxnTuple(automatic, peer, next, *bindings, history,
-      &owner, &bindInput) == Zutcp::CxnBindError::Exhausted && !automatic.port() &&
-      !bindings->count_() && next == Zutcp::ClientPorts::First,
-    "one bounded full-range search must report exhaustion without claiming an endpoint");
+  ZuCHECK(Zutcp::bindCxnTuple(automatic, peer, next, bindings, history) ==
+      Zutcp::CxnBindError::Exhausted && !automatic.bindAddr.port() &&
+      !bindings.count_() && next == Zutcp::ClientPorts::First,
+    "one bounded full-range search reports exhaustion without claiming an endpoint");
   auto after = history.stats();
   ZuCHECK(after.inserted == stats.inserted && after.evicted == stats.evicted &&
       after.count == stats.count,
-    "exhaustion must preserve every retained tuple rather than evicting history to retry");
+    "exhaustion preserves every retained tuple without evicting history to retry");
 }
 
 int main(int argc, char **argv)
@@ -317,7 +339,7 @@ int main(int argc, char **argv)
   ZuTestCall(testConnectionUtilities);
   ZuTestCall(testClosedTupleRing);
   ZuTestCall(testSequenceTupleReuse);
-  ZuTestCall(testSharedAdmissionTokens);
+  ZuTestCall(testSharedAdmission);
   ZuTestCall(testPendingAdmissionTransfer);
   ZuTestCall(testConservativeClientTuple, false);
   ZuTestCall(testConservativeClientTuple, true);

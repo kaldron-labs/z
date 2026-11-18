@@ -2,8 +2,10 @@
 
 `zutcpkerneltest` runs nine private-veth profiles in both native client/kernel
 server and kernel client/native server roles over IPv4 and IPv6 (36 cases). The kernel utility uses
-ordinary TCP sockets. The native utility installs an actual `Zutcp::Instance` and
-uses public client/server roles over AF_XDP; there is no kernel socket fallback.
+ordinary TCP sockets. The native application statically installs a configured
+`Zutcp::Instance` plugin and transfers through Ztcp/ZiMultiplex over AF_XDP.
+Protocol-private scenarios use the native test driver's probe roles, sharing the
+same Instance-owned protocol/pool state; there is no kernel socket fallback.
 
 Build `zutcp/util` and `zutcp/interop` after the required lower modules. Run
 `make -C zutcp/interop test` under the repository's privileged private-network
@@ -20,16 +22,20 @@ Each case retains request/output/error files, role identities, kernel version,
 kernel SACK/WS/TS/ECN/TFO settings, offload settings, two directional captures and
 `tcp-evidence.json` in its test residue directory. The standalone Python checker
 verifies checksums, standard TCP options, raw application payload, sequence
-positions, EOF framing and final FIN acknowledgments. Native stderr additionally
-reports the stopped Instance's empty connection/Tx admissions and returned controls.
+positions, EOF framing and final FIN acknowledgments. `roles` identifies the
+native driver as `application` or `protocol`. The application reports successful
+multiplexer stop. Private protocol roles additionally report the stopped
+Instance's empty connection/Tx admissions and configured control count; these
+internal assertions remain backend coverage rather than application APIs.
 This veth evidence does not establish physical-NIC zero-copy capability or
 independently prove canonical backing-pointer identity.
 
 The baseline leaves kernel options at recorded namespace defaults. Native offers
-also use transport defaults; `ZUTCP_PEER_OPTIONS` selects SACK/WS/TS/ECN bits
-1/2/4/8. The fixture profile argument selects `baseline`, `absent`, `loss`,
-`window`, `repeat`, `reset`, `tfo`, `tfo-fallback` or `reorder`. No Ztcp or Ztls
-application fixture is invoked by these tools.
+also use transport defaults; private protocol probes use `ZUTCP_PEER_OPTIONS`
+to select SACK/WS/TS/ECN bits 1/2/4/8. The fixture profile argument selects `baseline`, `absent`, `loss`,
+`window`, `repeat`, `reset`, `tfo`, `tfo-fallback` or `reorder`. Ordinary baseline
+and repeat transfers exercise Ztcp; selected protocol cases use private probe
+roles. The separate Ztls consumer fixture is not invoked by these tools.
 
 * `absent` disables native SACK/WS/TS/ECN offers and the corresponding kernel
   namespace policies. Captures require actual SYN/runtime absence, including
@@ -66,7 +72,7 @@ serialization. The final native provider/connection drain remains mandatory.
 
 The `reset` profile first sends a 260-byte request prefix without FIN. A read-only
 observer waits for actual peer cumulative acknowledgment before releasing the
-client main thread. The native client uses public numeric disconnect with a full
+client main thread. The private native client probe uses protocol numeric disconnect with a full
 64-bit local error; the kernel client uses `SO_LINGER{1,0}` and ordinary close.
 The first connection must carry RST without FIN or reflection. The same listener
 and App/Instance then perform a fresh complete binary request/echo/FIN exchange.

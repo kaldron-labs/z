@@ -81,17 +81,11 @@ ssize_t sendto(int fd, const void *data, size_t size, int flags,
 static bool shutdown(ZmRef<Zxdp::Instance> &instance, ZeException &error)
 {
   if (!instance) return true;
-  auto deadline = Zm::now() + ZuTime{10};
-  do {
-    auto result = instance->close();
-    error = {};
-    if (result.is<bool>() && result.p<bool>()) { instance = nullptr; return true; }
-    if (result.is<ZeException>()) error = result.p<ZeException>();
-    // Main-thread fixture loop; retry only deferred kernel retirement. No
-    // concurrent application service remains, and no timeout authorizes free.
-    poll(nullptr, 0, 1);
-  } while (Zm::now() < deadline);
-  return false;
+  bool ok = instance->stop();
+  error = instance->error();
+  ZmAssert_(instance->state() == ZmEngineState::Stopped);
+  instance = nullptr; // last owner finalizes; other owners may inspect stopped rings
+  return ok;
 }
 
 static void testPackets()
@@ -148,6 +142,7 @@ static void testPackets()
   if (!started) { close(wire); return; }
   auto initialized = instance->init(config);
   if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
+  else if (!instance->start()) error = instance->error();
   bool ready = instance && instance->ready();
   ZuCheckRT(ready, log_("named parameters bind all interface queues: ", error));
   if (!ready) {
@@ -156,6 +151,9 @@ static void testPackets()
     close(wire);
     return;
   }
+  auto repeated = instance->init(config);
+  ZuCheckRT(repeated.is<ZeException>() && instance->ready() && instance->start(),
+    log_("running init is rejected while repeated start preserves the active interface"));
   std::cout << "# AF_XDP mode=" << (instance->zeroCopy() ? "zero-copy" : "copy") << '\n';
   unsigned liveQueues = 0, completionCapacity = 0;
   auto completionID = ZuID{} << "xdp." << ZuBoxed(ifindex) << ".0.cq";
@@ -362,6 +360,7 @@ static void testSenderProgress()
   if (!started) return;
   auto initialized = instance->init(config);
   if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
+  else if (!instance->start()) error = instance->error();
   bool ready = instance && instance->ready();
   ZuCheckRT(ready, log_("coalesced sender fixture: ", error));
   if (!ready) {
@@ -450,13 +449,18 @@ static void testSenderProgress()
 
   gateSender = 1;
   bool final = progressed && publish(1) && await(senderEntered);
-  bool deferred = final && !instance->stopTx();
+  ZmSemaphore stopComplete;
+  ZmAtomic<unsigned> stopResult{0};
+  if (final) instance->stop([&stopComplete, &stopResult](bool ok) {
+    stopResult = ok ? 2 : 1;
+    stopComplete.post();
+  });
   bool earlyStop = !stopped.timedwait(Zm::now());
   gateSender = 0;
   retryError = budgetOnce = gateAfter = 0;
   senderRelease.post();
   afterRelease.post();
-  bool exited = deferred && !earlyStop && await(stopped);
+  bool exited = final && !earlyStop && await(stopped) && await(stopComplete) && stopResult == 2;
   ZuCheckRT(exited && stops == 1 && stopSid == 1,
     log_("shutdown waits for the active sendto callback and its FIFO sender barrier"));
   bool closed = shutdown(instance, error);
@@ -495,6 +499,7 @@ static void testLeaseRace()
   for (;;) {
     auto initialized = instance->init(config);
     if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
+    else if (!instance->start()) error = instance->error();
     else error = {};
     if ((ready = instance->ready())) break;
     ZeException cleanup;
@@ -558,9 +563,42 @@ static void testLeaseRace()
   worker.join();
   ZuCheckRT(valid && turns == Turns && retired == Turns,
     log_("cross-thread allocation returns and CQ retire each single-slot lease once"));
+  auto reusable = instance;
   bool closed = shutdown(instance, error);
   ZuCheckRT(closed, log_("lease race cleanup: ", error));
   ZmAssert_(closed);
+  // Reuse this exact handle and its drained pools. Kernel binding release can
+  // lag completed retirement; retry initialization only after each full close.
+  bool reopened = false;
+  auto reopenDeadline = Zm::now() + ZuTime{2};
+  do {
+    auto result = reusable->init(config);
+    if (result.is<void>() && reusable->start()) { reopened = reusable->ready(); break; }
+    auto rollback = reusable;
+    ZmAssert_(shutdown(rollback, error));
+    poll(nullptr, 0, 1);
+  } while (Zm::now() < reopenDeadline);
+  ZuCheckRT(reopened, log_("same XDP instance reopens with its original drained pools"));
+  bool sent = false;
+  unsigned completed = 0;
+  if (reopened) {
+    if (auto p = tx->alloc()) {
+      memset(p, 0, 64);
+      memset(p, 0xff, 6);
+      memcpy(p + 6, reusable->mac().data(), 6);
+      p[12] = 0x88; p[13] = 0xb5;
+      sent = reusable->send(p, 64);
+      tx->free(p);
+    }
+    auto completionDeadline = Zm::now() + ZuTime{10};
+    while (sent && !completed && Zm::now() < completionDeadline) {
+      completed += reusable->pollTx();
+      if (!completed) poll(nullptr, 0, 1);
+    }
+  }
+  ZuCheckRT(sent && completed == 1,
+    log_("reopened instance restarts sender accounting and retires its first submission once"));
+  ZmAssert_(shutdown(reusable, error));
   ZuCheckRT(scheduler.stop());
 }
 

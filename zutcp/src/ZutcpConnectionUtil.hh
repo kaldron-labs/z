@@ -6,9 +6,14 @@
 
 // TCP byte credit and receive final-size state
 
-#ifndef Zutcp_HH
-#error "include zlib/Zutcp.hh before this header"
+#ifndef ZutcpConnectionUtil_HH
+#define ZutcpConnectionUtil_HH
+
+#ifndef ZutcpLib_HH
+#include <zlib/ZutcpLib.hh>
 #endif
+
+#include <zlib/ZutcpTypes.hh>
 
 #include <zlib/ZuTime.hh>
 
@@ -114,3 +119,5 @@ private:
 
 
 } // namespace Zutcp
+
+#endif /* ZutcpConnectionUtil_HH */

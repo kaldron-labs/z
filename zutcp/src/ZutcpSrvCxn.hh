@@ -6,9 +6,10 @@
 
 // Server connection API implementation
 
-#ifndef Zutcp_HH
-#error "include zlib/Zutcp.hh before this header"
-#endif
+#ifndef ZutcpSrvCxn_HH
+#define ZutcpSrvCxn_HH
+
+#include <zlib/ZutcpCxn.hh>
 
 namespace Zutcp {
 
@@ -16,9 +17,9 @@ template <
   typename App, typename Impl,
   typename TxBufAlloc_ = TxBufAlloc<>>
 class SrvCxn :
-  public Connection<App, Impl, TxBufAlloc_> {
+  public Cxn_<App, Impl, TxBufAlloc_> {
 public:
-  using Base = Connection<App, Impl, TxBufAlloc_>;
+  using Base = Cxn_<App, Impl, TxBufAlloc_>;
   using Base::Base;
   using Base::app;
   using Base::impl;
@@ -27,7 +28,6 @@ public:
   }
   friend Base;
 
-  template <typename, typename> friend class Server;
 
   SrvCxn(App *app) : Base{app, true} { }
 
@@ -38,7 +38,7 @@ public:
     app()->txRun([link = impl(), path] { link->m_txIP = path; });
   }
 
-  bool established() const { return Base::established(); }
+  using Base::established;
   template <typename L>
   void diag(L &&l) const { Base::diag(ZuFwd<L>(l)); }
   template <typename L>
@@ -69,24 +69,16 @@ public:
   bool send(ZmRef<ZiIOBuf> payload, bool fin = true) {
     if (Base::disconnecting() || Base::txAdmissionClosed() || (!payload && !fin)) return false;
     if (app()->txInvoked()) return send_(ZuMv(payload), fin);
-    if (app()->nativeTx()) {
-      auto gen = this->dataGen();
-      if (payload && payload->length && !this->enqueue(ZuMv(payload), gen)) return false;
-      app()->txInvoke([cxn = impl(), fin, gen] {
-	if (gen != cxn->dataGen() || cxn->disconnecting()) return;
-	if (fin) cxn->fin();
-	cxn->queueTxFlush();
-      });
-      return true;
-    }
-    app()->txInvoke([
-      cxn = impl(), payload = ZuMv(payload), fin, gen = this->dataGen()
-    ]() mutable {
-      if (gen == cxn->dataGen() && !cxn->disconnecting())
-	cxn->send_(ZuMv(payload), fin);
+    auto gen = this->dataGen();
+    if (payload && payload->length && !this->enqueue(ZuMv(payload), gen)) return false;
+    app()->txInvoke([cxn = impl(), fin, gen] {
+      if (gen != cxn->dataGen() || cxn->disconnecting()) return;
+      if (fin) cxn->fin();
+      cxn->queueTxFlush();
     });
     return true;
   }
+
   bool send_(ZmRef<ZiIOBuf> payload, bool fin = true) {
     ZiAssert(app()->txInvoked(), "Zutcp", (),
       "retained send outside Tx thread", return false);
@@ -110,6 +102,8 @@ public:
     return true;
   }
 
+  bool sendPkt(const ZmRef<ZiIOBuf> &) { return true; }
+
   bool sendTCPReset() { return sendTCPRange({}, false, Base::tcpResetFlags()); }
   void tcpResetAbort(bool peer, bool = true) {
     app()->rxRun([link = ZmRef(impl()), peer] {
@@ -128,9 +122,7 @@ public:
     app()->rxRun([link = ZmRef(impl()), gen = Base::dataGen()] {
       if (gen != link->dataGen() || link->disconnecting() ||
 	  link->establishedRx() || link->linkClosedRx()) return;
-      if (link->app()->nativeTx())
-	link->abortLocalRx(0, [link = link.ptr()] { link->tcpResetAbort(false); });
-      else link->disconnect(false);
+      link->abortLocalRx(0, [link = link.ptr()] { link->tcpResetAbort(false); });
     });
   }
 
@@ -191,10 +183,10 @@ public:
   bool sendTCPRange(const SentFrameRef &ref, bool syn = false, uint8_t control = 0,
       bool persist = false) {
     return Base::sendTCP(ref, syn, control,
-      [this, &ref] { return app()->allocTxPkt_(!bool(ref.length)); },
+      [this, &ref] { return impl()->allocTxPkt_(!bool(ref.length)); },
       [this](auto buf, EcnMark::T ecn) {
-	if (!app()->sendPkt(buf)) return false;
-	return app()->sendPktRaw(ZuMv(buf), m_peerAddr, ecn, true, m_txIP);
+	if (!impl()->sendPkt(buf)) return false;
+	return impl()->sendPktRaw(ZuMv(buf), m_peerAddr, ecn, true, m_txIP);
       }, persist);
   }
   bool sendSyn() {
@@ -278,9 +270,7 @@ private:
 	if (gen == link->dataGen() && !link->disconnecting()) link->m_peerAddr = peer;
       });
     }
-    if (!Base::acceptsLiveTCP(d))
-      if (auto stack = app()->nativeInstance())
-	if (stack->recoverClosed(d)) return true;
+    if (!Base::acceptsLiveTCP(d) && app()->recoverClosed(d)) return true;
     bool received = Base::receiveSegment(ZuMv(d));
     if (received) markEstablished();
     return received;
@@ -306,3 +296,5 @@ private:
 };
 
 } // namespace Zutcp
+
+#endif /* ZutcpSrvCxn_HH */

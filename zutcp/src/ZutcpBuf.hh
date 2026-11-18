@@ -6,9 +6,14 @@
 
 // Transport byte storage and native buffer metadata
 
-#ifndef Zutcp_HH
-#error "include zlib/Zutcp.hh before this header"
+#ifndef ZutcpBuf_HH
+#define ZutcpBuf_HH
+
+#ifndef ZutcpLib_HH
+#include <zlib/ZutcpLib.hh>
 #endif
+
+#include <zlib/ZutcpTypes.hh>
 
 #include <string.h>
 
@@ -28,6 +33,8 @@
 #include <zlib/ZutcpQueue.hh>
 
 namespace Zutcp_ {
+
+using namespace Zutcp;
 
 // Receive packets and retained plaintext remain independent of the Tx queue.
 struct BufNode : public ZiIOBuf {
@@ -160,3 +167,5 @@ inline void assertPktCapacity(const ZiIOBuf *buf, unsigned required)
 
 
 } // namespace Zutcp
+
+#endif /* ZutcpBuf_HH */

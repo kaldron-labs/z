@@ -184,6 +184,12 @@ ip -n "$cli" -j link show dev zutcpa > "$out/capture-client-link.json"
 ip -n "$srv" -j link show dev zutcpb > "$out/capture-server-link.json"
 server=198.18.1.2
 if [[ $family == 6 ]]; then server=2001:db8:1::2; fi
+server_program=("$root/zutcp/example/zutcpserver")
+client_program=("$root/zutcp/example/zutcpclient")
+if [[ $mode != plain && $mode != wait-eof ]]; then
+  server_program=("$root/zutcp/itest/zutcppairtest" --protocol-server)
+  client_program=("$root/zutcp/itest/zutcppairtest" --protocol-client)
+fi
 server_options=()
 if [[ $mode == wait-eof ]]; then server_options=(--wait-eof); fi
 if [[ $mode == tfo ]]; then
@@ -195,7 +201,7 @@ startServer() {
   local previous current
   previous=$(grep -c '^listening$' "$out/server.err") || :
   ip netns exec "$srv" env ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 timeout 35 \
-  "$root/zutcp/example/zutcpserver" zutcpb "$server" 18181 "${server_options[@]}" \
+  "${server_program[@]}" zutcpb "$server" 18181 "${server_options[@]}" \
     >> "$out/server.out" 2>> "$out/server.err" &
   server_pid=$!
   local ready=0
@@ -451,7 +457,7 @@ if [[ $mode == tail ]]; then
   [[ -f "$out/tail-monitor-ready" ]]
 fi
 ip netns exec "$cli" env ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 "${gate_env[@]}" timeout 30 \
-  "$root/zutcp/example/zutcpclient" zutcpa "$server" 18181 "$request" \
+  "${client_program[@]}" zutcpa "$server" 18181 "$request" \
   > "$out/client.out" 2> "$out/client.err" &
 client_pid=$!
 if [[ $mode == tfo && ($tfo_profile == stale || $tfo_profile == setup-* ||

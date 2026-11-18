@@ -121,19 +121,18 @@ static void testForeign()
   ZuCheckRT(started);
   if (!started) { attachment.detach(); return; }
   auto initialized = instance->init(config);
-  if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
+  bool activated = initialized.is<void>() && instance->start();
+  error = initialized.is<ZeException>() ? initialized.p<ZeException>() : instance->error();
   auto link = Zxdp::Xdp::queryLink(ifindex);
   if (link.is<ZeException>()) error = link.p<ZeException>();
-  ZuCheckRT(initialized.is<ZeException>() && !instance->ready() &&
+  ZuCheckRT(!activated && !instance->ready() &&
       link.is<Zxdp::Xdp::LinkState>() &&
       (link.p<Zxdp::Xdp::LinkState>().drvID == foreign.id() ||
 	link.p<Zxdp::Xdp::LinkState>().skbID == foreign.id()),
     log_("creation refuses an occupied interface and preserves its program"));
   if (instance) {
-    for (;;) {
-      auto result = instance->close();
-      if (result.is<bool>() && result.p<bool>()) break;
-    }
+    ZuCheckRT(instance->stop());
+    instance->final();
     instance = nullptr;
   }
   ZuCheckRT(scheduler.stop());

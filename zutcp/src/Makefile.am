@@ -5,18 +5,17 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
-pkginclude_HEADERS = ZutcpQueue.hh ZutcpLib.hh ZutcpTypes.hh ZutcpBuf.hh ZutcpAlloc.hh ZutcpMx.hh ZutcpIP.hh ZutcpPQueue.hh Zutcp.hh \
-	ZutcpISN.hh ZutcpOptions.hh ZutcpTFO.hh Zutcp_.hh \
-	ZutcpConnection.hh ZutcpCliCxn.hh ZutcpSrvCxn.hh \
-	ZutcpPath.hh ZutcpSock.hh \
-	ZutcpConnectionUtil.hh ZutcpSched.hh ZutcpLog.hh \
-	ZutcpRecovery.hh ZutcpDiag.hh
+pkginclude_HEADERS = ZutcpLib.hh Zutcp.hh ZutcpAlloc.hh ZutcpIP.hh \
+	ZutcpISN.hh ZutcpOptions.hh ZutcpTFO.hh ZutcpQueue.hh
+noinst_HEADERS = ZutcpTypes.hh ZutcpBuf.hh ZutcpPQueue.hh Zutcp_.hh \
+	ZutcpCxn.hh ZutcpCliCxn.hh ZutcpSrvCxn.hh ZutcpPath.hh ZutcpSock.hh \
+	ZutcpConnectionUtil.hh ZutcpSched.hh ZutcpRecovery.hh ZutcpDiag.hh
 lib_LTLIBRARIES = libZutcp.la
 libZutcp_la_CPPFLAGS = $(AM_CPPFLAGS) @CRYPTO_CFLAGS@ -DZUTCP_EXPORTS
 libZutcp_la_CFLAGS = $(AM_CFLAGS)
-libZutcp_la_SOURCES = ZutcpISN.cc ZutcpOptions.cc ZutcpTFO.cc ZutcpLib.cc ZutcpTypes.cc ZutcpConnection.cc \
-	ZutcpAlloc.cc ZutcpMx.cc ZutcpIP.cc \
-	ZutcpDiag.cc ZutcpLog.cc
+libZutcp_la_SOURCES = ZutcpISN.cc ZutcpOptions.cc ZutcpTFO.cc ZutcpLib.cc ZutcpTypes.cc ZutcpCxn.cc \
+	ZutcpAlloc.cc Zutcp.cc ZutcpIP.cc \
+	ZutcpDiag.cc
 libZutcp_la_LIBADD = \
 	$(top_builddir)/zxdp/src/libZxdp.la \
 	$(top_builddir)/zi/src/libZi.la \

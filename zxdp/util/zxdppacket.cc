@@ -245,6 +245,7 @@ struct Endpoint {
     }
     auto initialized = instance->init(setup);
     if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
+    else if (!instance->start()) error = instance->error();
     if (!instance || !instance->ready()) failed = true;
     if (!failed && config.readyFile) {
       ZiFile file;
@@ -280,17 +281,10 @@ struct Endpoint {
       if (failed && !error)
 	error = ZeEXCEPT(Error, "Zxdp.Packet", "packet endpoint deadline or device failure");
     }
-    // Quiescent main-thread owner retries only deferred kernel retirement.
+    // Application service is quiescent; engine stop drains sender and DMA.
     if (instance) {
-      bool closed = false;
-      auto limit = Zm::now() + ZuTime{10};
-      do {
-        auto result = instance->close();
-        if (result.is<bool>() && result.p<bool>()) { closed = true; break; }
-        if (result.is<ZeException>()) { error = result.p<ZeException>(); failed = true; }
-        poll(nullptr, 0, 1);
-      } while (Zm::now() < limit);
-      ZmAssert_(closed); // unresolved kernel DMA never authorizes backing release
+      if (!instance->stop()) { error = instance->error(); failed = true; }
+      instance->final();
       instance = nullptr;
     }
     if (!scheduler.stop()) failed = true;

@@ -19,7 +19,7 @@ Internal byte positions remain wide offsets relative to the chosen origins.
 Endpoint routing uses the TCP four-tuple. Intermediate packet/frame codecs,
 bootstrap IDs and packet-number acknowledgment formats have been removed.
 
-`HubParams::sackPermitted`, `windowScale` and `timestamps` default to enabled.
+`InstanceParams::sackPermitted`, `windowScale` and `timestamps` default to enabled.
 Configure them before starting the multiplexer. SACK permission is directional;
 scaling and timestamps require both peers' offers. The receive scale derives
 from `maxData`. Without a peer MSS option, the send cap is 536 bytes for IPv4 or
@@ -36,16 +36,14 @@ only after negotiation; retransmissions and control packets remain Not-ECT.
 With congestion control enabled, accepted DATA sends create pacing debt;
 pure ACK/window traffic can proceed.
 
-`HubParams::congestionControl(false)` disables congestion-window limits,
-congestion accounting and pacing for controlled low-latency networks. For the
-ZiMultiplex plugin, set `InstanceConfig::congestionControl = false` before starting
+`InstanceParams::congestionControl = false` disables congestion-window limits,
+congestion accounting and pacing for controlled low-latency networks. Set it before starting
 the multiplexer. The default is enabled; the setting is cached at initialization.
 Disabled mode suppresses ECN negotiation while retaining receiver flow control,
 bounded local buffer credits, ACK/SACK retirement, loss recovery and RTO backoff.
 Nagle remains disabled in both modes.
 
-`HubParams::ackHoldTimeout` configures the cumulative ACK hold; the
-`ZiMultiplex` plugin uses `InstanceConfig::ackHoldTimeout`. Both default to 25
+`InstanceParams::ackHoldTimeout` configures the cumulative ACK hold. It defaults to 25
 milliseconds, accept zero to disable holding, and require a value below 500
 milliseconds. Eligible in-order DATA may hold one pending ACK; each receive
 updates it to the latest cumulative position. Outgoing DATA can carry that ACK
@@ -68,16 +66,50 @@ See the [kernel/native quickstart](util/README.md) for the stopped-multiplexer
 setup, actual command-line tools, sudo fixture commands and deployment prerequisites.
 
 `Zutcp::Instance` implements `ZiMxPlugin`. Register it on a stopped multiplexer
-before creating application allocators or starting I/O. Select the interface and
+before creating application allocators or starting I/O. One Instance owns both
+outgoing and accepted connections and all listeners for its multiplexer. The app
+constructs and configures it statically; no module loader or factory is involved.
+Instance implements the inherited `Ztc::Mx` telemetry interface, not `Ztc::Hub`.
+Select the interface and
 optional destination network mask at setup; backend selection stays fixed while
 the multiplexer runs. An mx without this plugin uses its normal kernel backend.
 
 Applications continue to use [Ztcp](../ztcp/README.md) and, for encryption above
 TCP, [Ztls](../ztls/README.md). Zutcp itself supplies TCP transport and has no
 Ztls dependency. Ordinary `ZiIP` addresses and `ZiResolver` remain available.
-Zutcp uses cold kernel route and static-neighbor queries constrained to the
-configured interface. With a destination mask, unmatched traffic stays with the
+Zutcp resolves routes and static neighbors synchronously on mx Rx during
+connection setup, constrained to the configured interface. This bounded blocking
+netlink setup work finishes before the first SYN or SYNACK; there is no resolver
+worker. With a destination mask, unmatched traffic stays with the
 host stack; without a mask Zxdp selects the whole interface.
+
+Call `Instance::init()` before starting the multiplexer. Init is idempotent
+while stopped and returns an error during starting, running or stopping. The
+plugin uses ZmEngine's control FSM, including queued opposite operations, while
+preserving ZiMxPlugin's existing completion callbacks. Stop retains configuration
+and history, and restart reuses the same Zxdp instance. After stop, `final()`
+releases stopped resources, secrets and history; it is idempotent and the
+destructor also calls it. Release dependent application buffers before final.
+
+In the application bootstrap, initialize Instance before installing the plugin.
+Handle its structured initialization result before registering allocators or
+starting mx; this example returns false from a boolean bootstrap function:
+
+```c++
+// mx already has distinct Rx/Tx owners and an assigned AF_XDP sender slot.
+ZmRef<Zutcp::Instance> plugin = new Zutcp::Instance{&mx};
+auto initialized = plugin->init({.interface = ifindex, .txSid = senderSid,
+  .ackHoldTimeout = ZuTime{0, 25000000}});
+if (initialized.is<ZeException>()) {
+  ZiLogEvent(ZuMv(initialized.p<ZeException>()));
+  return false;
+}
+mx.plugin(plugin);
+```
+
+Connection and transfer code uses Ztcp/Ztls or the existing generic Zi callbacks.
+The former Zutcp Hub, Client and Server application transport hierarchy is removed.
+Private protocol headers are available only in the source tree for backend tests.
 
 Each connection owns one ordered bidirectional byte flow: reassembly, delivery,
 receive-credit retirement, retained transmit backing, recovery and close state.
@@ -95,7 +127,7 @@ process replacement provides that separation:
    running, and wait for every initiated connection's terminal notification.
 2. Stop and finalize the application. Stop the native multiplexer and await its
    plugin completion: accepted Tx submissions must retire before sender shutdown
-   and backend close. Socket closure alone does not establish kernel retirement.
+   and the XDP engine stop completes. Socket closure alone does not establish kernel retirement.
 3. Destroy remaining application owners before the native multiplexer. Allocator
    registrations remain valid through this teardown, and providers/pools outlive
    every packet lease. Check the normal process exit and teardown errors, not
@@ -121,10 +153,10 @@ persist handling, ECN and NewReno congestion response. Peer extensions are
 negotiated optionally, with fallback when absent. Connection establishment,
 half-close, reset and bounded closed-tuple history follow TCP sequence semantics.
 
-TCP Fast Open is disabled by default and requires application authorization.
-Cookie rejection falls back to ordinary establishment while preserving queued
-data. Accepted early data can arrive before the established callback; application
-replay policy remains an application responsibility. Initial sequence numbers
+TCP Fast Open is disabled in ordinary plugin application use. Private backend
+fixtures exercise explicit early-data authorization, cookie fallback and data
+arriving before establishment; these are protocol tests, not replacement
+application hooks. Initial sequence numbers
 and Fast Open cookies use secure keyed primitives independently of TLS.
 
 ## Buffers and ownership
@@ -139,7 +171,7 @@ before creating pools, then constructs the typed configuration in place:
 Zxdp::Params config(
   Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
 auto &params = config.p<Zxdp::Xdp::Params>();
-// Populate params, then call backend->init(config).
+// Populate params, then call backend->init(config) before backend->start().
 ```
 
 Configuration owns the Tx pool list and Rx reference; the initialized backend retains its own
@@ -170,7 +202,7 @@ application-held or recovery-held packet.
 
 ## Connection hash sizing
 
-Before constructing the Instance or server, applications can configure the existing
+Before constructing the Instance, bootstrap code can configure the existing
 `ZmHashMgr` IDs `Zutcp.Endpoints`, `Zutcp.Endpoint.TupleRouter`, and
 `Zutcp.ServerLinks`. These constructors retain their default 32 buckets and load
 factor 1 when no named override is installed. The tables are owner-local and use
@@ -181,21 +213,40 @@ without resizing these indexes. This configures initial geometry, not a capacity
 limit. Server membership still uses the concrete connection's heap; naming its
 hash does not enable allocation of the inner intrusive node.
 
-## Queue telemetry lifetime
+## Connection ownership and queue telemetry
 
-`ZiMultiplex::allQueues` includes the plugin's actual transport queues through
-`ZiMxPlugin::allQueues`. Callbacks borrow those queue objects; native owners stay
-alive until enumeration returns, even if a callback requests connection closure
-and observes disconnection. Complete a synchronous full multiplexer shutdown
-after returning from enumeration: shutdown waits for those same native owners to
-retire. Queue pointers must not escape the callback. Fields are advisory cold
-reads, and unsupported optional normalized metrics remain zero.
+`Cxn` is the common connection identity and lifecycle interface. `CliCxn` and
+`SrvCxn` share TCP behavior through the internal `Cxn_` implementation.
+`Instance` owns one intrusive list containing pending, published and retiring
+connections. `allCxns()` filters pending and retiring entries, takes temporary
+application connection references under `m_cxnsLock`, then invokes callbacks
+without holding the lock. No separate observation list or manager is maintained.
+
+Instance also owns admission counters and checks limits before connection
+construction. Cxn carries admitted, pending and closing flags directly. Failed
+setup cancels its reservation; successful setup attaches it to Cxn before first
+packet delivery. Capacity remains charged through owner drain, independently of
+ownership-list membership. No separate admission token or ledger is maintained.
+
+Clients and listeners embed their local binding nodes. Instance holds the
+non-owning endpoint hash directly, with no separate binding-record allocations.
+Packet dispatch finds the exact local address first, then the family wildcard;
+accepted connections share their listener's binding and use its tuple routing.
+Unbinding removes the endpoint's own node before owner teardown. Embedded hash
+telemetry is available through the framework's `HashMgr::capture()` operation.
+
+`Instance::allQueues()` delegates to `Zxdp::Instance::allQueues()`, exposing its
+Rx, fill, Tx and completion rings. It does not traverse connections or listeners.
+Callbacks borrow the rings; finish enumeration before shutting down their owning
+XDP instance. Queue pointers must not escape the callback. Fields are advisory
+cold reads, and unsupported optional normalized metrics remain zero.
 
 ## Source and verification
 
-Include `<zlib/ZutcpMx.hh>` for the stack and `<zlib/ZutcpAlloc.hh>` for provider
-composition. Native connection facilities are under `Zutcp.hh`; IP framing and
-route helpers live in `ZutcpIP.hh`. Link `libZutcp`, `libZxdp` and their framework
+Include `<zlib/Zutcp.hh>` for the stack and `<zlib/ZutcpAlloc.hh>` for provider
+composition. `Zutcp.hh` is a small backend umbrella; connection/endpoint
+implementations remain private source-tree headers. IP framing and route helpers
+live in `ZutcpIP.hh`. Link `libZutcp`, `libZxdp` and their framework
 dependencies. Both modules are Linux-only and are excluded from Windows builds.
 
 The module uses `src`, `test`, `util`, `itest`, `example`, `interop` and `bench`.

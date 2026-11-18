@@ -25,6 +25,8 @@
 
 #include <zlib/Zutcp.hh>
 
+#include "../test/ZutcpTestInstance.hh"
+
 #include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
@@ -154,9 +156,9 @@ static bool service(
     })};
   ZmRef<Zutcp::Instance> stack;
   if (native) {
-    stack = new Zutcp::Instance{&mx, {.interface = interface, .txSid = 6}};
+    stack = ZutcpTest::makeInstance(&mx, {.interface = interface, .txSid = 6});
     mx.plugin(stack);
-    auto configured = stack->configure({.rxRetainFramesPerCxn = 64});
+    auto configured = ZutcpTest::Instance::apply(*stack, {.rxRetainFramesPerCxn = 64});
     if (configured.is<ZeException>()) return false;
   }
 #ifdef ZUTCP_APP_TLS

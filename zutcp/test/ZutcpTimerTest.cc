@@ -13,6 +13,8 @@
 
 #include <zlib/Zutcp.hh>
 
+#include "ZutcpTestInstance.hh"
+
 using namespace ZuTestUtil;
 
 using TxBufAlloc = Zutcp::TxBufAlloc<>;
@@ -72,10 +74,17 @@ struct TCPStateTest {
     auto &c = static_cast<typename T::Base &>(link);
     c.m_heartBeatBase = out - c.app()->heartBeat();
   }
+  template <typename T> static void sent(T &link, const SentFrameRef &ref) {
+    auto &c = static_cast<typename T::Base &>(link);
+    ZmAssert_(c.recordTxPkt(++c.m_txID, unsigned(ref.length + unsigned(ref.fin)),
+      ref, TCPHeader{}, EcnMark::NotECT));
+    c.acceptTxData(ref);
+  }
   template <typename T> static void byteAck(T &link, uint64_t next) {
     auto &c = static_cast<typename T::Base &>(link);
     Zutcp::TxAckWork work;
     work.ack.byteNext = next;
+    work.ackTime = c.transportNow();
     work.gen = c.m_txRuntimeGen;
     c.processAckTx(ZuMv(work));
   }
@@ -107,6 +116,10 @@ struct TCPStateTest {
       default: break;
     }
   }
+  template <typename T> static void zeroWindow(T &link) {
+    auto &c = static_cast<typename T::Base &>(link);
+    c.m_txWindowSet = c.m_peerWindowZero = true;
+  }
   template <typename T> static bool closePolicyDisarmed(T &link) {
     auto &c = static_cast<typename T::Base &>(link);
     return !*c.m_closeDrainTimerOut && !c.m_closeDrainTimer &&
@@ -124,54 +137,52 @@ static ZuBSpan span_(const uint8_t *data, unsigned len)
 
 
 
-struct TimerApp : public ZmNHeap<TimerApp>, public Zutcp::Hub<TimerApp> {
-friend inline ZuStringT<"Zutcp.TimerTest.TimerApp"> ZmNHeapID(TimerApp *);
-  using ZmNHeap<TimerApp>::operator new;
-  using ZmNHeap<TimerApp>::operator delete;
-  using Base = Zutcp::Hub<TimerApp>;
-  struct TimerMx : ZiMultiplex {
-    using ZiMultiplex::ZiMultiplex;
-    ZmAtomic<unsigned> adds{0}, cancels{0};
-    ZmScheduler::Timer *watched = nullptr;
-    ZmAtomic<unsigned> watchedAdds{0};
-    template <typename ArmFn>
-    void add(ZmScheduler::Timer *timer, ZuTime out, int mode,
-      ArmFn &&armFn, unsigned sid = 0) {
-      ++adds;
-      if (timer == watched) ++watchedAdds;
-      ZiMultiplex::add(timer, out, mode, ZuFwd<ArmFn>(armFn), sid);
-    }
-    bool cancel(ZmScheduler::Timer *timer) {
-      ++cancels;
-      return ZiMultiplex::cancel(timer);
-    }
-    template <typename F>
-    bool holdCallback(ZmScheduler::Timer *timer, F &&f) {
-      cancel(timer);
-      auto callback = ZuMv(timer->fn);
-      timer->fn = {};
-      if (!callback) return false;
-      auto fire = [&callback] {
+struct TimerMx : ZiMultiplex {
+  using ZiMultiplex::ZiMultiplex;
+  ZmAtomic<unsigned> adds{0}, cancels{0};
+  ZmScheduler::Timer *watched = nullptr;
+  ZmAtomic<unsigned> watchedAdds{0};
+  template <typename ArmFn>
+  void add(ZmScheduler::Timer *timer, ZuTime out, int mode,
+    ArmFn &&armFn, unsigned sid = 0) {
+    ++adds;
+    if (timer == watched) ++watchedAdds;
+    ZiMultiplex::add(timer, out, mode, ZuFwd<ArmFn>(armFn), sid);
+  }
+  bool cancel(ZmScheduler::Timer *timer) {
+    ++cancels;
+    return ZiMultiplex::cancel(timer);
+  }
+  template <typename F>
+  bool holdCallback(ZmScheduler::Timer *timer, F &&f) {
+    cancel(timer);
+    auto callback = ZuMv(timer->fn);
+    timer->fn = {};
+    if (!callback) return false;
+    auto fire = [&callback] {
 	auto size = callback.pushSize();
 	auto storage = ZmScratch(
 	  uint64_t, unsigned((size + sizeof(uint64_t) - 1) / sizeof(uint64_t)));
 	callback.push(storage.data());
 	decltype(callback)::invoke(storage.data());
-      };
-      f(fire);
-      return true;
-    }
-    void watchTimer(ZmScheduler::Timer *timer) { watched = timer; watchedAdds = 0; }
-  };
-  TimerMx multiplex;
-  ZuTime clock;
-  bool native = false;
-  Zi::IOBufAllocator *dataTxAllocator() const { return Zutcp::inlineAllocator(); }
-  bool nativeTx() const { return native; }
+    };
+    f(fire);
+    return true;
+  }
+  void watchTimer(ZmScheduler::Timer *timer) { watched = timer; watchedAdds = 0; }
+};
 
-  TimerApp(ZuTime user = ZuTime{120}) : multiplex{mxParams()} {
+
+struct TimerApp : public ZmNHeap<TimerApp>, public ZutcpTest::Context<TimerMx> {
+friend inline ZuStringT<"Zutcp.TimerTest.TimerApp"> ZmNHeapID(TimerApp *);
+  using ZmNHeap<TimerApp>::operator new;
+  using ZmNHeap<TimerApp>::operator delete;
+  using Base = ZutcpTest::Context<TimerMx>;
+  ZuTime clock;
+
+  TimerApp(ZuTime user = ZuTime{120}) : Base{mxParams()} {
     ZiAssert(Base::init(
-	Zutcp::HubParams(&multiplex)
+	ZutcpTest::Params(&multiplex)
 	  .heartBeat(ZuTime{10})
 	  .userTimeout(user)
 	  .initialRto(Zutcp::timeUS(20000)).minRto(Zutcp::timeUS(10000))),
@@ -180,7 +191,6 @@ friend inline ZuStringT<"Zutcp.TimerTest.TimerApp"> ZmNHeapID(TimerApp *);
       "timer test multiplexer start failed", return);
   }
   ~TimerApp() {
-    Base::final();
     multiplex.stop();
   }
 
@@ -210,12 +220,12 @@ friend inline ZuStringT<"Zutcp.TimerTest.TimerApp"> ZmNHeapID(TimerApp *);
 struct TimerLink;
 struct TimerLink :
   public ZmNHeap<TimerLink>,
-  public Zutcp::Connection<TimerApp, TimerLink, TxBufAlloc> {
+  public Zutcp::Cxn_<TimerApp, TimerLink, TxBufAlloc> {
 friend inline ZuStringT<"Zutcp.TimerTest.Link"> ZmNHeapID(TimerLink *);
   using ZmNHeap<TimerLink>::operator new;
   using ZmNHeap<TimerLink>::operator delete;
 
-  using Base = Zutcp::Connection<TimerApp, TimerLink, TxBufAlloc>;
+  using Base = Zutcp::Cxn_<TimerApp, TimerLink, TxBufAlloc>;
   ZmSemaphore		event;
   ZmAtomic<unsigned>	connect = 0;
   ZmAtomic<unsigned>	user = 0;
@@ -231,7 +241,10 @@ friend inline ZuStringT<"Zutcp.TimerTest.Link"> ZmNHeapID(TimerLink *);
 
   using Base::txNext;
   int process(Zutcp::Reader &) { return 0; }
-  using Base::Base;
+  TimerLink(TimerApp *app) : Base{app} {
+    Base::resetPath();
+    Base::configLocalParams(app);
+  }
 
   void armAll(ZuTime out, bool data = false) {
     Base::scheduleAckDelayTimer(out);
@@ -243,15 +256,12 @@ friend inline ZuStringT<"Zutcp.TimerTest.Link"> ZmNHeapID(TimerLink *);
     Base::schedulePMTUDTimer(out);
     if (data) armData();
   }
-  void armData() {
-    Zutcp::TxRange range{nullptr, 0, 1, 0};
-    auto ref = Zutcp::SentFrameRef::data(range, false);
-    Base::acceptTxData(ref);
-  }
+  void armData() { sentRange(0, 1); }
   bool flushTx() { return false; }
   bool armPersist() {
     Base::txCredit(0);
-    return Base::enqueue_(Zutcp::inlineAllocator()->allocBuf(nullptr, 1));
+    Zutcp::TCPStateTest::zeroWindow(*this);
+    return Base::enqueue_(app()->dataTxAllocator()->allocBuf(nullptr, 1));
   }
   bool sendPersistProbe() { recordFire(persist); return true; }
   bool establish() {
@@ -291,7 +301,7 @@ friend inline ZuStringT<"Zutcp.TimerTest.Link"> ZmNHeapID(TimerLink *);
   void deliverFinWait() { Base::cxnTimer(Zutcp::CxnTimer::FinWait); }
   bool peerData(unsigned offset, unsigned length, bool fin) {
     Base::rxCredit(128);
-    auto packet = Zutcp::inlineAllocator()->allocBuf(nullptr, length);
+    auto packet = app()->dataTxAllocator()->allocBuf(nullptr, length);
     if (!packet) return false;
     memset(packet->data(), 0x6b, length);
     Zutcp::ByteData frame{.offset = offset, .length = length,
@@ -301,7 +311,7 @@ friend inline ZuStringT<"Zutcp.TimerTest.Link"> ZmNHeapID(TimerLink *);
   void deliverPersist() { Base::cxnTimer(Zutcp::CxnTimer::Persist); }
   void sentRange(uint64_t offset, unsigned length, bool fin = false) {
     auto ref = Zutcp::SentFrameRef::data(Zutcp::TxRange{nullptr, 0, length, offset}, fin);
-    Base::acceptTxData(ref);
+    Zutcp::TCPStateTest::sent(*this, ref);
   }
   void byteAck(uint64_t next) { Zutcp::TCPStateTest::byteAck(*this, next); }
   void armAckPTO(ZuTime ack, ZuTime pto) {
@@ -596,19 +606,18 @@ void testTimerInventory()
   ZmRef<TimerApp> appRef = new TimerApp;
   auto &app = *appRef;
   ZmRef<TimerLink> link = new TimerLink{&app};
-  Ztc::HubTelemetry hubData;
+  Ztc::LinkTelemetry linkData;
 
-  app.telemetry(hubData);
-  ZuCHECK(hubData.nLinks == 1 && hubData.transient == 1 &&
-      !hubData.down && !hubData.up,
-    "new TCP link was not reflected in hub telemetry");
+  link->telemetry(linkData);
+  ZuCHECK(linkData.state == Ztc::LinkState::Connecting &&
+      linkData.type == Ztc::LinkType::TCP && linkData.hubID == app.mx()->id(),
+    "new connection telemetry reports its state and owning multiplexer");
 
   ZuCHECK(link->establish(),
     "timer test link establish failed");
-  app.telemetry(hubData);
-  ZuCHECK(hubData.nLinks == 1 && hubData.up == 1 &&
-      !hubData.down && !hubData.transient,
-    "established TCP link was not reflected in hub telemetry");
+  link->telemetry(linkData);
+  ZuCHECK(linkData.state == Ztc::LinkState::Up && link->established(),
+    "established connection telemetry follows protocol state");
   link->armAll(app.transportNow() + Zutcp::timeUS(10000));
   bool fired = true;
   for (unsigned i = 0; i < 6; ++i) fired &= link->wait();
@@ -620,11 +629,12 @@ void testTimerInventory()
   ZuCHECK(link->idle == 1, "idle timer did not fire once");
   ZuCHECK(link->heartBeat == 1, "heartBeat timer did not fire once");
   ZuCHECK(link->pmtud == 1, "PMTUD timer did not fire once");
-  link->disconnect();
-  app.telemetry(hubData);
-  ZuCHECK(hubData.nLinks == 1 && hubData.down == 1 &&
-      !hubData.transient && !hubData.up,
-    "closed TCP link was not reflected in hub telemetry");
+  ZmBlock<>{}([link](auto done) {
+    link->disconnect_(false, [done = ZuMv(done)]() mutable { done(); });
+  });
+  link->telemetry(linkData);
+  ZuCHECK(linkData.state == Ztc::LinkState::Down && link->closed(),
+    "drained connection telemetry reports the closed protocol state");
 }
 
 void testTimerCancel()
@@ -865,7 +875,6 @@ void testRtoLossTimerHandoff()
   ZuTestScope(testRtoLossTimerHandoff);
   ZmRef<TimerApp> appRef = new TimerApp;
   auto &app = *appRef;
-  app.native = true;
   app.clock = Zm::now() + ZuTime{1000};
   ZmRef<TimerLink> link = new TimerLink{&app};
   ZuCHECK(link->establish(), "RTO/RACK handoff requires an established native timer owner");

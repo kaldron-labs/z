@@ -19,6 +19,7 @@
 #include <zlib/Zutcp.hh>
 
 #include "ZutcpTestAlloc.hh"
+#include "ZutcpTestInstance.hh"
 
 using namespace ZuTestUtil;
 
@@ -439,13 +440,11 @@ struct TCPStateTest {
 };
 }
 
-struct App : public ZmNHeap<App>, public Zutcp::Hub<App> {
+struct App : public ZmNHeap<App>, public ZutcpTest::Context<> {
 friend inline ZuStringT<"Zutcp.DataTest.App"> ZmNHeapID(App *);
   using ZmNHeap<App>::operator new;
   using ZmNHeap<App>::operator delete;
-  using Base = Zutcp::Hub<App>;
-  ZiMultiplex multiplex{ZiMxParams().scheduler([](auto &s) { s.nThreads(4); })
-    .rxThread(1).txThread(2)};
+  using Base = ZutcpTest::Context<>;
   Zi::IOBufAllocator *rx = nullptr, *control = nullptr, *nativeAllocator = nullptr,
     *nativeAllocator2 = nullptr;
   Zi::IOBufPool *nativePool = nullptr;
@@ -473,13 +472,12 @@ friend inline ZuStringT<"Zutcp.DataTest.App"> ZmNHeapID(App *);
       bool congestionControl = true) {
     rx = ZutcpTest::pktRxAllocator(&multiplex);
     control = multiplex.allocator<Zi::IOBufType::TxTCP, Zutcp::PacketBuf, Zutcp::BufSize>();
-    ZmAssert_(Base::init(Zutcp::HubParams{&multiplex}.maxData(4096)
+    ZmAssert_(Base::init(ZutcpTest::Params{&multiplex}.maxData(4096)
       .timestamps(false).ackHoldTimeout(ackHold).heartBeat(heartBeat)
       .congestionControl(congestionControl)));
     ZmAssert_(multiplex.start());
   }
-  ~App() { Base::final(); multiplex.stop(); }
-  bool nativeTx() const { return true; }
+  ~App() { multiplex.stop(); }
   bool ioActive() const { return false; } // Controlled owners have no raw Instance/endpoint.
   bool rxInvoked() const { return true; }
   bool txInvoked() const { return true; }
@@ -488,9 +486,9 @@ friend inline ZuStringT<"Zutcp.DataTest.App"> ZmNHeapID(App *);
     if (auto fn = ZuMv(clockFn)) fn();
     return clock;
   }
-  Zi::IOBufAllocator *dataTxAllocator() const { return Zutcp::inlineAllocator(); }
   Zi::IOBufPool *txPool(Zi::IOBufAllocator *a) const {
-    return a && (a == nativeAllocator || a == nativeAllocator2) ? nativePool : nullptr;
+    if (a && (a == nativeAllocator || a == nativeAllocator2)) return nativePool;
+    return Base::txPool(a);
   }
   bool retainRx(ZiIOBuf *, Zi::IOQueue &) { ++demands; return allowRx; }
   template <typename F> void txRun(F f) {
@@ -508,9 +506,9 @@ friend inline ZuStringT<"Zutcp.DataTest.App"> ZmNHeapID(App *);
   void runRx() { while (auto f = rxJobs.shift()) f(); }
 };
 
-struct Link : ZmNHeap<Link>, Zutcp::Connection<App, Link, Zutcp::TxBufAlloc<>> {
+struct Link : ZmNHeap<Link>, Zutcp::Cxn_<App, Link, Zutcp::TxBufAlloc<>> {
 friend inline ZuStringT<"Zutcp.DataTest.Link"> ZmNHeapID(Link *);
-  using Base = Zutcp::Connection<App, Link, Zutcp::TxBufAlloc<>>;
+  using Base = Zutcp::Cxn_<App, Link, Zutcp::TxBufAlloc<>>;
   using ZmNHeap<Link>::operator new;
   using ZmNHeap<Link>::operator delete;
   using Base::txNext;
@@ -522,6 +520,10 @@ friend inline ZuStringT<"Zutcp.DataTest.Link"> ZmNHeapID(Link *);
   unsigned synCalls = 0, newCalls = 0, retxCalls = 0;
   uint64_t selectedOffset = Zutcp::U64Null;
   void txDequeued() { if (dequeued) dequeued(); }
+  bool earlyData() { return app()->earlyData(this); }
+  bool allowEarlyStream(uint64_t id, bool replaySafe) {
+    return app()->allowEarlyStream(this, id, replaySafe);
+  }
   Link(App *app, bool fresh = false) : Base{app, fresh} {
     Zutcp::TCPStateTest::stage(*this, true, !fresh);
   }

@@ -16,6 +16,8 @@
 
 #include <zlib/Zutcp.hh>
 
+#include "ZutcpTestInstance.hh"
+
 using namespace ZuTestUtil;
 
 namespace Zutcp {
@@ -57,13 +59,14 @@ struct TCPStateTest {
 }
 
 struct GateMx : ZiMultiplex {
+  using ZiMultiplex::ZiMultiplex;
   ZmQueue<ZmFn<>> tx;
   template <typename L> void txRun(L l) {
     tx.push([l = ZuMv(l)]() mutable { (void)l(); });
   }
 };
 
-struct GateApp : public ZmNHeap<GateApp>, public Zutcp::Hub<GateApp> {
+struct GateApp : public ZmNHeap<GateApp>, public ZutcpTest::Context<GateMx> {
 friend inline ZuStringT<"Zutcp.HandshakeTest.GateApp"> ZmNHeapID(GateApp *);
   using ZmNHeap<GateApp>::operator new;
   using ZmNHeap<GateApp>::operator delete;
@@ -74,34 +77,33 @@ friend inline ZuStringT<"Zutcp.HandshakeTest.GateApp"> ZmNHeapID(GateApp *);
   ZmFn<> onInvoke;
   unsigned owner = 1, shortSent = 0, longSent = 0, errors = 0;
   Zutcp::TCPHeader responseTCP;
-  bool native = false, inlineRx = false, active = false;
+  bool inlineRx = false, active = false;
   Zutcp_::TupleRouter<void> routes;
   unsigned retirements = 0, disconnects = 0;
   bool retiredBeforeDisconnect = false;
   ZuTime clock;
-  GateMx multiplex;
   Zi::IOBufAllocator *testTx = nullptr;
   Zi::IOBufPool *testPool = nullptr;
 
-  Zi::IOBufAllocator *dataTxAllocator() const {
-    return testTx ? testTx : Zutcp::inlineAllocator();
+  Zi::IOBufAllocator *dataTxAllocator() {
+    return testTx ? testTx : ZutcpTest::Context<GateMx>::dataTxAllocator();
   }
   Zi::IOBufPool *txPool(Zi::IOBufAllocator *allocator) const {
-    return allocator && allocator == testTx ? testPool : nullptr;
+    if (allocator && allocator == testTx) return testPool;
+    return ZutcpTest::Context<GateMx>::txPool(allocator);
   }
-  bool nativeTx() const { return native; }
   bool ioActive() const { return active; }
-  unsigned txThread() const { return active ? 2 : Zutcp::Hub<GateApp>::txThread(); }
-  GateMx *mx() const { return static_cast<GateMx *>(Zutcp::Hub<GateApp>::mx()); }
-  ZuTime transportNow() const { return *clock ? clock : Zutcp::Hub<GateApp>::transportNow(); }
+  unsigned txThread() const { return active ? 2 : ZutcpTest::Context<GateMx>::txThread(); }
+  GateMx *mx() const { return static_cast<GateMx *>(ZutcpTest::Context<GateMx>::mx()); }
+  ZuTime transportNow() const { return *clock ? clock : ZutcpTest::Context<GateMx>::transportNow(); }
 
   GateApp(bool scale = false, bool ts = false, uint64_t maxData = 8192, bool ecn = false) {
-    ZiAssert(init(Zutcp::HubParams{&multiplex}.maxData(maxData)
+    ZiAssert(init(ZutcpTest::Params{&multiplex}.maxData(maxData)
       .sackPermitted(false).windowScale(scale).timestamps(ts).ecn(ecn)
-      .errorFn(Zutcp::ErrorFn{[this](ZeException) { ++errors; }})), "Zutcp", (),
+      .errorFn(ZutcpTest::Params::ErrorFn{[this](ZeException) { ++errors; }})), "Zutcp", (),
       "setup gate fixture initialization failed", abort());
   }
-  ~GateApp() { response = nullptr; final(); }
+  ~GateApp() { response = nullptr; }
   bool rxInvoked() const { return owner == 1; }
   bool txInvoked() const { return owner == 2; }
   template <typename L> void rxRun(L l) {
@@ -233,6 +235,16 @@ friend inline ZuStringT<"Zutcp.Handshake.CloseSrv"> ZmNHeapID(CloseSrv *);
   Zutcp::TCPHeader lastReset;
   using State::initServerPath;
   using State::disconnected;
+  ZmRef<Zutcp::PacketBuf> allocTxPkt_(bool control = false) {
+    return app()->allocTxPkt_(control);
+  }
+  bool sendPkt(const ZmRef<ZiIOBuf> &packet) { return app()->sendPkt(packet); }
+  bool sendPktRaw(ZmRef<ZiIOBuf> packet, ZiSockAddr addr, Zutcp::EcnMark::T ecn,
+      bool priority, const Zutcp::IPPath &path) {
+    return app()->sendPktRaw(ZuMv(packet), addr, ecn, priority, path);
+  }
+  void retireLinkRoutes() { app()->retireLinkRoutes(this); }
+  void closedRx(bool peer) { app()->disconnected(this, peer); }
   explicit CloseSrv(GateApp *app) : Base{app} { State::configLocalParams(app); }
   int process(Zutcp::Reader &) { return 0; }
   void connected(Zutcp::Connected) { }
@@ -269,7 +281,6 @@ static void testCloseRouteDrain()
   ZuTestScope(testCloseRouteDrain);
   ZmRef<GateApp> appRef = new GateApp;
   auto &app = *appRef;
-  app.native = true;
   ZmRef<CloseSrv> link = new CloseSrv{&app};
   link->prepare();
   link->initServerPath({ZiIP{"198.18.0.1"}, 18191}, {ZiIP{"198.18.0.2"}, 18192}, 1200);
@@ -312,7 +323,6 @@ static void testNativeZeroDisconnect()
   ZuCHECK((ZuIsSame<NumericResult, bool>{}), "literal zero must select numeric acceptance");
   ZmRef<GateApp> appRef = new GateApp;
   auto &app = *appRef;
-  app.native = true;
   ZmRef<AbortCli> client = new AbortCli{&app};
   client->prepare();
   client->establishForTest();
@@ -358,7 +368,6 @@ static void testNativeErrorDisconnect()
   for (unsigned wide = 0; wide < 2; ++wide) {
     ZmRef<GateApp> appRef = new GateApp;
     auto &app = *appRef;
-    app.native = true;
     ZmRef<AbortCli> client = new AbortCli{&app};
     client->prepare();
     client->establishForTest();
@@ -408,7 +417,6 @@ static void testPendingErrorDisconnect()
   ZuTestScope(testPendingErrorDisconnect);
   ZmRef<GateApp> appRef = new GateApp;
   auto &app = *appRef;
-  app.native = true;
   ZmRef<AbortCli> client = new AbortCli{&app};
   client->prepare(false); // Keep the current generation's Tx reset queued.
   uint64_t error = (uint64_t(1)<<40) | 0x42;
@@ -455,7 +463,6 @@ static void testNativeQueueError()
   ZuTestScope(testNativeQueueError);
   ZmRef<GateApp> appRef = new GateApp;
   auto &app = *appRef;
-  app.native = true;
   ZmRef<AbortCli> client = new AbortCli{&app};
   client->prepare();
   client->establishForTest();
@@ -505,7 +512,6 @@ static void testNativeBackingError()
   for (unsigned serverRole = 0; serverRole < 2; ++serverRole) {
     ZmRef<GateApp> appRef = new GateApp;
     auto &app = *appRef;
-    app.native = true;
     ZmRef<AbortCli> client = new AbortCli{&app};
     client->prepare();
     client->establishForTest();
@@ -562,7 +568,6 @@ static void testNativeErrorReplacement()
   for (unsigned queued = 0; queued < 2; ++queued) {
     ZmRef<GateApp> appRef = new GateApp;
     auto &app = *appRef;
-    app.native = true;
     ZmRef<AbortCli> client = new AbortCli{&app};
     client->prepare();
     client->establishForTest();
@@ -608,7 +613,6 @@ static void testNativeErrorPolicy()
   for (unsigned policy = 0; policy < 2; ++policy) {
     ZmRef<GateApp> appRef = new GateApp;
     auto &app = *appRef;
-    app.native = true;
     ZmRef<AbortCli> client = new AbortCli{&app};
     client->prepare();
     app.drain();
@@ -647,7 +651,6 @@ static void testTCPOriginOwners()
   ZuTestScope(testTCPOriginOwners);
   ZmRef<GateApp> appRef = new GateApp;
   auto &app = *appRef;
-  app.native = true;
   ZmRef<AbortCli> link = new AbortCli{&app};
   // Constructor has no known origin: zero is a valid selected ISN.
   Zutcp::TCPOrigins first{0, 0xffffffff, true, true, false};
@@ -679,7 +682,6 @@ static void testNativeIdleReset()
   ZuTestScope(testNativeIdleReset);
   ZmRef<GateApp> appRef = new GateApp;
   auto &app = *appRef;
-  app.native = true;
   app.clock = Zm::now() + ZuTime{1000};
   ZmRef<AbortCli> client = new AbortCli{&app};
   client->prepare();
@@ -717,7 +719,6 @@ static void testFinRequestReplacement()
   for (unsigned retained = 0; retained < 2; ++retained) {
     ZmRef<GateApp> appRef = new GateApp;
     auto &app = *appRef;
-    app.native = true;
     ZmRef<AbortCli> client = new AbortCli{&app};
     client->prepare();
     app.drain();
@@ -755,7 +756,6 @@ static void testPendingCloseCallbacks()
   ZuTestScope(testPendingCloseCallbacks);
   ZmRef<GateApp> appRef = new GateApp;
   auto &app = *appRef;
-  app.native = true;
   ZmRef<AbortCli> client = new AbortCli{&app};
   client->prepare(false); // Deliberately hold the new generation's queued Tx reset.
   unsigned completed[3] = {};
@@ -783,7 +783,6 @@ static void testRetainedAdmissionFinWake()
   ZuTestScope(testRetainedAdmissionFinWake);
   ZmRef<GateApp> appRef = new GateApp;
   auto &app = *appRef;
-  app.native = true;
   ZmRef<AbortCli> client = new AbortCli{&app};
   client->prepare();
   app.drain();
@@ -821,7 +820,6 @@ static void testPeerResetCloseSnapshot()
   ZuTestScope(testPeerResetCloseSnapshot);
   ZmRef<GateApp> appRef = new GateApp;
   auto &app = *appRef;
-  app.native = true;
   for (unsigned established = 0; established < 2; ++established) {
     ZmRef<AbortCli> link = new AbortCli{&app};
     link->prepare();
@@ -851,7 +849,6 @@ static void testAbortBeforeReady()
   ZuTestScope(testAbortBeforeReady);
   ZmRef<GateApp> appRef = new GateApp;
   auto &app = *appRef;
-  app.native = true;
   ZmRef<AbortCli> link = new AbortCli{&app};
   link->prepare();
   app.drain();
@@ -885,7 +882,6 @@ static void testNativeGracefulCallbacks()
   for (unsigned finishFirst = 0; finishFirst < 2; ++finishFirst) {
     ZmRef<GateApp> appRef = new GateApp;
     auto &app = *appRef;
-    app.native = true;
     ZmRef<AbortCli> link = new AbortCli{&app};
     link->prepare();
     app.drain();
@@ -945,7 +941,7 @@ static void testAbortReentrantConnect()
   ZuTestScope(testAbortReentrantConnect);
   ZmRef<GateApp> appRef = new GateApp;
   auto &app = *appRef;
-  app.native = app.inlineRx = true;
+  app.inlineRx = true;
   ZmRef<AbortCli> link = new AbortCli{&app};
   link->prepare();
   app.drain();
@@ -961,8 +957,8 @@ static void testAbortReentrantConnect()
     ordered &= link->endpointDownCount == 1;
   });
   app.drain();
-  // No native Instance is installed: the public reentrant connect reaches its
-  // normal setup failure cleanup after the old drain and all completions.
+  // The real fixture Instance is cold: reentrant connect reaches stopped-owner
+  // setup failure cleanup after the old drain and all completions.
   ZuCHECK(ordered && completed[0] == 1 && completed[1] == 1 &&
       link->disconnectedCount == 2 && link->endpointDownCount == 2 &&
       link->connectFailures == 1,
@@ -981,7 +977,6 @@ static void testCoalescedNativeConnect()
   for (unsigned invalid = 0; invalid < 2; ++invalid) {
     ZmRef<GateApp> appRef = new GateApp;
     auto &app = *appRef;
-    app.native = true;
     ZmRef<AbortCli> link = new AbortCli{&app};
     link->prepare();
     app.drain();
@@ -990,7 +985,7 @@ static void testCoalescedNativeConnect()
     link->connect(Zutcp::Host{"198.18.0.88"}, 18192);
     if (invalid) link->connect(Zutcp::Host{"198.18.0.99"}, 0);
     app.drain();
-    // No backend is installed, so the one adopted attempt fails Endpoint::init.
+    // The cold Instance rejects the one adopted attempt before raw endpoint I/O.
     // A second continuation must neither reset its token nor mix target fields.
     ZiSockAddr expected{ZiIP{"198.18.0.77"}, 18191};
     ZuCHECK(link->dataGen() == generation + 1 && link->setups == 1 &&
@@ -1008,7 +1003,6 @@ static void testNativeSetupFailureDrain()
   ZuTestScope(testNativeSetupFailureDrain);
   ZmRef<GateApp> appRef = new GateApp;
   auto &app = *appRef;
-  app.native = true;
   ZmRef<AbortCli> link = new AbortCli{&app};
   link->prepare();
   app.drain();
@@ -1046,6 +1040,14 @@ friend ZuStringT<"Zutcp.Handshake.Gate"> ZmNHeapID(GateCxn *);
 
   using Base::receivedRouted;
   enum { RecoveryScanBatch = Zutcp::RecoveryScanBatch };
+  ZmRef<Zutcp::PacketBuf> allocTxPkt_(bool control = false) {
+    return app()->allocTxPkt_(control);
+  }
+  bool sendPkt(const ZmRef<ZiIOBuf> &packet) { return app()->sendPkt(packet); }
+  bool sendPktRaw(ZmRef<ZiIOBuf> packet, ZiSockAddr addr, Zutcp::EcnMark::T ecn,
+      bool priority, const Zutcp::IPPath &path) {
+    return app()->sendPktRaw(ZuMv(packet), addr, ecn, priority, path);
+  }
   GateCxn(GateApp *app) : Base{app} { Base::configLocalParams(app); }
   ~GateCxn() { if (destroyed) ++*destroyed; }
   void connected(Zutcp::Connected) { ++connections; }
@@ -1103,7 +1105,6 @@ static void testEarlyWriterReadiness(unsigned scenario)
   ZuTestScopeRT(testEarlyWriterReadiness);
   ZmRef<GateApp> appRef = new GateApp;
   auto &app = *appRef;
-  app.native = true;
   ZmRef<EarlyBacking> backing = new EarlyBacking;
   Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP, ZiIOBuf, 512> allocator{
     app.mx(), backing};
@@ -1154,7 +1155,6 @@ static void testRejectedOwnerDrain()
   ZuTestScope(testRejectedOwnerDrain);
   ZmRef<GateApp> appRef = new GateApp;
   auto &app = *appRef;
-  app.native = true;
   unsigned destroyed = 0;
   auto factory = [&app, &destroyed]() -> ZmRef<GateCxn> {
     ZmRef<GateCxn> link = new GateCxn{&app};

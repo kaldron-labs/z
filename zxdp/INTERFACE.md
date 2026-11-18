@@ -34,21 +34,45 @@ alignment to 64 bytes. Use the same pool directly with Zi's typed metadata
 allocator. Add nodes to `Params_::txPools` with `pushNode()`, or move in an existing
 list. A node belongs to one owning list at a time. Populate `Xdp::Params` in the
 generic `Params` union and pass that union by const reference to init. The backend
-retains one reference per pool through close; intrusive membership remains only
+retains one reference per pool through final; intrusive membership remains only
 in the caller configuration list.
 Freeze pool geometry through active service. Retain a pool reference for packets
 that outlive the instance.
 
-`instance->init(config)` returns `ZuUnion<void, ZeException>`. An exception
-reports the setup cause without discarding the instance. Always retain that
-instance until close finishes, including rollback after failed initialization.
-`close()` returns `ZuUnion<bool, ZeException>`: `true` means fully closed,
-`false` means retirement is pending, and the exception branch reports an actual
-failure. Pending retirement is not an empty exception.
+The lifecycle follows `ZmEngine`: call `init(config)` before `start()`, use
+`start()`/`stop()` for I/O control, then call `final()` after stop. Init and final
+are idempotent while stopped. Calling init while starting, running or stopping
+returns a structured error. Init stores configuration and pool references; it
+does not activate the interface or allocate a registered arena.
+
+`start()` opens the arena, rings and guarded XDP attachment. It requires the
+assigned scheduler to be running. Both synchronous and callback start/stop forms
+and `state()` come from `ZmEngine`, including StartPending/StopPending handling.
+Use callback operations from a service thread; synchronous calls belong to an
+external control caller. `error()` preserves a failed start/stop's structured
+cause after completion. Failed start completes only after rollback is safe.
+
+Quiesce receive, descriptor production, completion service and external wake
+callers before stop. Stop drains the dedicated sender and proves kernel
+retirement before reporting Stopped. Pending retirement runs in bounded
+continuations on the assigned sender slot; it never authorizes early backing
+release. Keep the scheduler running until stop completes.
+
+Stop retains configuration and final ring telemetry. A subsequent start reuses
+the same handle and configuration, requiring unused pools; retained caller
+backing must be returned before its pool can bind another arena. Final releases
+stopped storage, callbacks and configuration, and may run from the destructor.
+Final does not implicitly stop a running instance. Retain pool references for
+raw backing that outlives final or destruction, and serialize init/final against
+start/stop requests.
+
+`init(config)` returns `ZuUnion<void, ZeException>`; start/stop return bool or
+deliver their result through the standard engine callbacks. There is no public
+close/retry loop.
 
 There is no transmit-completion callback. Allocation holds one caller lease;
 accepted submission holds a separate kernel lease. Explicit pool return releases
-the caller lease, and kernel CQ or safe close releases the kernel lease. Recycle
+the caller lease, and kernel CQ or safe stop releases the kernel lease. Recycle
 only when both are gone. Return may precede CQ; a caller can also retain backing
 past CQ for retransmission and return it later. Rejected send adds no kernel lease.
 One descriptor may be outstanding for an allocated slot at a time.
@@ -84,7 +108,7 @@ Tx service uses no custom scheduler wake function, epoll set or eventfd. The
 scheduler owns idle waiting after the sender returns. Rx retains its independent
 epoll/eventfd implementation described below.
 Start the scheduler before submitting packets and drain the instance before
-stopping the scheduler. After Tx production is quiescent, `stopTx()` publishes
+stopping the scheduler. After Tx production is quiescent, the internal sender barrier publishes
 exit and queues a FIFO sender-slot barrier. The active loop checks exit, including
 during idle spin; the barrier clears pending state and marks sender exit before
 calling `txStopped`. Socket retirement follows that barrier. The scheduler owns

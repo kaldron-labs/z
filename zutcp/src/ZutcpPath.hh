@@ -6,11 +6,17 @@
 
 // TCP route, MTU and congestion-mark observations
 
-#ifndef Zutcp_HH
-#error "include zlib/Zutcp.hh before this header"
+#ifndef ZutcpPath_HH
+#define ZutcpPath_HH
+
+#ifndef ZutcpLib_HH
+#include <zlib/ZutcpLib.hh>
 #endif
 
+#include <zlib/ZutcpTypes.hh>
+
 #include <zlib/ZiIP.hh>
+#include <zlib/ZiAssert.hh>
 
 namespace Zutcp {
 
@@ -311,3 +317,5 @@ private:
 };
 
 } // namespace Zutcp
+
+#endif /* ZutcpPath_HH */

@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/Zutcp.hh>
+#include <zlib/ZutcpDiag.hh>
 
 namespace Zutcp {
 

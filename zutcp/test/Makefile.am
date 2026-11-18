@@ -20,8 +20,8 @@ noinst_PROGRAMS = ZutcpTFOTest ZutcpISNTest ZutcpOptionsTest ZutcpConnectionTest
 	ZutcpConnectionStateTest ZutcpPMTUDTest \
 	ZutcpDataTest ZutcpFlowTest ZutcpBufferTest \
 	ZutcpCongestionTest ZutcpPQueueTest ZutcpLoopTest ZutcpRuntimeTest \
-	ZutcpTimerTest ZutcpLogTest ZutcpRxAccountingTest ZutcpRxAdmissionTest
-noinst_HEADERS = ZutcpTestAlloc.hh ZutcpConnectionFixture.hh ZutcpTestPorts.hh
+	ZutcpTimerTest ZutcpRxAccountingTest ZutcpRxAdmissionTest
+noinst_HEADERS = ZutcpTestInstance.hh ZutcpTestAlloc.hh ZutcpConnectionFixture.hh ZutcpTestPorts.hh
 ZutcpTFOTest_SOURCES = ZutcpTFOTest.cc
 ZutcpISNTest_SOURCES = ZutcpISNTest.cc
 ZutcpOptionsTest_SOURCES = ZutcpOptionsTest.cc
@@ -42,7 +42,6 @@ ZutcpPQueueTest_SOURCES = ZutcpPQueueTest.cc
 ZutcpLoopTest_SOURCES = ZutcpLoopTest.cc
 ZutcpRuntimeTest_SOURCES = ZutcpRuntimeTest.cc
 ZutcpTimerTest_SOURCES = ZutcpTimerTest.cc
-ZutcpLogTest_SOURCES = ZutcpLogTest.cc
 ZutcpRxAccountingTest_SOURCES = ZutcpRxAccountingTest.cc
 ZutcpRxAdmissionTest_SOURCES = ZutcpRxAdmissionTest.cc
 EXTRA_DIST = README.md

@@ -7,6 +7,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/Zutcp.hh>
+#include <zlib/ZutcpRecovery.hh>
 
 using namespace ZuTestUtil;
 

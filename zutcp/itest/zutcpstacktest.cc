@@ -28,7 +28,9 @@
 #include <zlib/ZiLog.hh>
 
 #include <zlib/Zutcp.hh>
-#include <zlib/ZutcpMx.hh>
+
+#include "../test/ZutcpTestInstance.hh"
+#include <zlib/ZutcpCxn.hh>
 
 using namespace ZuTestUtil;
 
@@ -52,16 +54,12 @@ struct Probe {
   }
 };
 
-struct WriterApp : public ZmNHeap<WriterApp>, public Zutcp::Hub<WriterApp> {
-friend inline ZuStringT<"Zutcp.StackTest.WriterApp"> ZmNHeapID(WriterApp *);
-  using ZmNHeap<WriterApp>::operator new;
-  using ZmNHeap<WriterApp>::operator delete;
-};
+using WriterApp = Zutcp::Instance;
 
 struct WriterCxn : public ZmNHeap<WriterCxn>,
-  public Zutcp::Connection<WriterApp, WriterCxn, Zutcp::TxBufAlloc<>> {
+  public Zutcp::Cxn_<WriterApp, WriterCxn, Zutcp::TxBufAlloc<>> {
 friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
-  using Base = Zutcp::Connection<WriterApp, WriterCxn, Zutcp::TxBufAlloc<>>;
+  using Base = Zutcp::Cxn_<WriterApp, WriterCxn, Zutcp::TxBufAlloc<>>;
   using Base::txNext;
   using ZmNHeap<WriterCxn>::operator new;
   using ZmNHeap<WriterCxn>::operator delete;
@@ -330,28 +328,38 @@ static void testStack()
   ZmRef<Zi::IOBuf> input[RxCount], extra;
   unsigned packets = 0;
   bool onRx = true;
-  ZmRef<Zutcp::Instance> stack = new Zutcp::Instance{&mx, {.interface = index,
+  ZmRef<Zutcp::Instance> stack = ZutcpTest::makeInstance(&mx, {.interface = index,
     .packet = [&mx, &input, &extra, &packets, &onRx, &received](ZmRef<Zi::IOBuf> buf) {
       if (buf->length < 14 || buf->data()[12] != 0x88 || buf->data()[13] != 0xb5) return;
       onRx &= mx.invoked(mx.rxThread()) && buf->registered();
       if (packets < RxCount) input[packets] = ZuMv(buf); else extra = ZuMv(buf);
       ++packets;
       received.post();
-    }, .spin = 0, .packetCount = 2, .txSid = 3}};
+    }, .spin = 0, .packetCount = 2, .txSid = 3,
+    .controlBufCount = 3, .txControlCredits = 3, .maxData = 8192});
   mx.plugin(stack);
-  bool invalidCount = stack->configureControl(0, 1).is<ZeException>();
-  bool invalidCredits = stack->configureControl(2, 4).is<ZeException>();
-  bool invalidRx = stack->configure({.controlBufCount = 3, .txControlCredits = 3,
+  const auto initializedParams = ZutcpTest::Instance::parameters(*stack);
+  ZuCHECK(initializedParams.interface == index && initializedParams.packetCount == 2 &&
+      stack->txAdmission().controlCount == 3 && stack->txAdmission().reserved == 3 &&
+      stack->maxData() == 8192,
+    "initialization parameters must apply native setup and transport policy together");
+  const auto provisioned = stack->txAdmission();
+  bool invalidCount = ZutcpTest::Instance::apply(*stack,
+    {.controlBufCount = 0, .txControlCredits = 1}).is<ZeException>();
+  bool invalidCredits = ZutcpTest::Instance::apply(*stack,
+    {.controlBufCount = 2, .txControlCredits = 4}).is<ZeException>();
+  bool invalidRx = ZutcpTest::Instance::apply(*stack,
+    {.controlBufCount = 3, .txControlCredits = 3,
     .rxRetainFramesPerCxn = 0}).is<ZeException>();
   ZuCheckRT(invalidCount && invalidCredits &&
       invalidRx &&
-      stack->txAdmission().controlCount == Zutcp::DefaultControlBufCount,
+      stack->txAdmission().controlCount == provisioned.controlCount,
     log_("invalid control configuration preserves provisioned pool counts"));
   for (unsigned i = 0; i < 3; ++i) {
-    Zutcp::InstanceConfig config;
+    Zutcp::InstanceParams config;
     config.maxCxns = i ? 2 : 0;
     config.maxPendingCxns = i == 1 ? 0 : 3;
-    bool rejected = stack->configure(config).is<ZeException>();
+    bool rejected = ZutcpTest::Instance::apply(*stack, config).is<ZeException>();
     auto slots = stack->cxnAdmission();
     ZuCheckRT(rejected &&
 	!slots.total && !slots.pending && slots.maxCxns == Zutcp::DefaultMaxCxns &&
@@ -359,51 +367,54 @@ static void testStack()
       log_("invalid connection caps must preserve stopped admission configuration"));
   }
   for (auto timeout : {ZuTime{}, ZuTime{0}, ZuTime{-1}}) {
-    Zutcp::InstanceConfig config;
+    Zutcp::InstanceParams config;
     config.connectTimeout = timeout;
-    bool rejected = stack->configure(config).is<ZeException>();
+    bool rejected = ZutcpTest::Instance::apply(*stack, config).is<ZeException>();
     ZuCheckRT(rejected &&
-	stack->txAdmission().controlCount == Zutcp::DefaultControlBufCount,
+	stack->txAdmission().controlCount == provisioned.controlCount,
       log_("invalid connect deadlines must preserve stopped configuration"));
   }
   for (auto timeout : {ZuTime{}, ZuTime{-1}}) {
-    Zutcp::InstanceConfig config;
+    Zutcp::InstanceParams config;
     config.userTimeout = timeout;
-    bool rejected = stack->configure(config).is<ZeException>();
+    bool rejected = ZutcpTest::Instance::apply(*stack, config).is<ZeException>();
     ZuCheckRT(rejected &&
-	stack->txAdmission().controlCount == Zutcp::DefaultControlBufCount,
+	stack->txAdmission().controlCount == provisioned.controlCount,
       log_("invalid user deadlines must preserve stopped configuration"));
   }
   for (bool finWait : {false, true}) for (auto timeout : {ZuTime{}, ZuTime{0}, ZuTime{-1}}) {
-    Zutcp::InstanceConfig config;
+    Zutcp::InstanceParams config;
     if (finWait) config.finWaitTimeout = timeout;
     else config.closeDrainTimeout = timeout;
-    bool rejected = stack->configure(config).is<ZeException>();
+    bool rejected = ZutcpTest::Instance::apply(*stack, config).is<ZeException>();
     ZuCheckRT(rejected &&
-	stack->txAdmission().controlCount == Zutcp::DefaultControlBufCount,
+	stack->txAdmission().controlCount == provisioned.controlCount,
       log_("invalid close deadlines must preserve stopped configuration"));
   }
   {
-    Zutcp::InstanceConfig config;
+    Zutcp::InstanceParams config;
     config.closedTupleRingSize = 0;
-    bool rejected = stack->configure(config).is<ZeException>();
+    bool rejected = ZutcpTest::Instance::apply(*stack, config).is<ZeException>();
     ZuCheckRT(rejected &&
 	stack->closedTupleStats().capacity == Zutcp::DefaultClosedTupleRingSize,
       log_("zero closed tuple capacity must preserve stopped configuration"));
   }
-  ZmRef<WriterApp> appRef = new WriterApp;
-  auto &app = *appRef;
-  unsigned configErrors = 0;
-  auto badHub = Zutcp::HubParams{&mx}.controlBufCount(2).txControlCredits(4)
-    .errorFn([&configErrors](ZeException) { ++configErrors; });
-  bool hubRejected = !app.init(ZuMv(badHub));
-  ZuCheckRT(hubRejected && configErrors == 1 && !app.mx() &&
-      stack->txAdmission().controlCount == Zutcp::DefaultControlBufCount,
-    log_("failed Hub control configuration publishes no owner or changed pool"));
-  bool appReady = app.init(Zutcp::HubParams{&mx}.controlBufCount(2).txControlCredits(3)
-    .closedTupleRingSize(3).tfoCookieCacheSize(3));
+  auto &app = *stack;
+  Zutcp::InstanceParams badConfig;
+  badConfig.controlBufCount = 2;
+  badConfig.txControlCredits = 4;
+  bool rejected = ZutcpTest::Instance::apply(app, badConfig).is<ZeException>();
+  ZuCheckRT(rejected &&
+      stack->txAdmission().controlCount == provisioned.controlCount,
+    log_("failed Instance control configuration preserves the original pool"));
+  Zutcp::InstanceParams initialConfig;
+  initialConfig.controlBufCount = 2;
+  initialConfig.txControlCredits = 3;
+  initialConfig.closedTupleRingSize = 3;
+  initialConfig.tfoCookieCacheSize = 3;
+  bool appReady = ZutcpTest::Instance::apply(app, initialConfig).is<void>();
   ZuCheckRT(appReady && app.dataTxAllocator() == stack->dataTxAllocator(),
-    log_("Hub obtains its producer adapter directly from its owned native service"));
+    log_("protocol owners use their Instance's native producer adapter"));
   auto tx = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 128>(3);
   auto small = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 64>(1);
   auto rx = mx.allocator<Zi::IOBufType::RxTCP>(77);
@@ -417,7 +428,7 @@ static void testStack()
   stub = otherStub = nullptr;
   bool started = mx.start();
   ZuCheckRT(started && stack->ready(), log_("registered packet Instance starts on mx owners"));
-  if (!started) { app.final(); alarm(0); return; }
+  if (!started) { alarm(0); return; }
   ZmSemaphore owner;
   bool scheduler = false;
   mx.rxRun([&mx, &scheduler, &owner] {
@@ -476,7 +487,7 @@ static void testStack()
   address.sll_ifindex = peer;
   bool bound = wire >= 0 && !bind(wire, reinterpret_cast<sockaddr *>(&address), sizeof(address));
   ZuCheckRT(bound, log_("independent packet peer bound"));
-  if (!bound) { if (wire >= 0) close(wire); ZmAssert_(mx.stop()); app.final(); alarm(0); return; }
+  if (!bound) { if (wire >= 0) close(wire); ZmAssert_(mx.stop()); alarm(0); return; }
 
   ControlProbe pressure{&mx, stack};
   mx.txRun([&mx, &tx, &small, &stack, &pressure, &owner] {
@@ -803,17 +814,20 @@ static void testStack()
   for (auto &p : input) p = nullptr;
   for (auto &p : reserves) p = nullptr;
   probe.packet = nullptr;
-  app.final();
   // Construct only while stopped. This instance is never installed as the mx
   // plugin or started, so it binds no backend and shares no provider leases.
-  ZmRef<Zutcp::Instance> freshStack = new Zutcp::Instance{&mx,
-    {.interface = index, .spin = 0, .packetCount = 2, .txSid = 3}};
-  bool configured = app.init(Zutcp::HubParams{&mx}.controlBufCount(3).txControlCredits(3)
-    .rxRetainFramesPerCxn(1).closedTupleRingSize(2)
-    .tfoCookieCacheSize(3));
+  ZmRef<Zutcp::Instance> freshStack = ZutcpTest::makeInstance(&mx,
+    {.interface = index, .spin = 0, .packetCount = 2, .txSid = 3});
+  Zutcp::InstanceParams restartedConfig;
+  restartedConfig.controlBufCount = 3;
+  restartedConfig.txControlCredits = 3;
+  restartedConfig.rxRetainFramesPerCxn = 1;
+  restartedConfig.closedTupleRingSize = 2;
+  restartedConfig.tfoCookieCacheSize = 3;
+  bool configured = ZutcpTest::Instance::apply(app, restartedConfig).is<void>();
   ZuCheckRT(configured && app.controlBufCount() == 3 && app.txControlCredits() == 3 &&
       stack->txAdmission().controlCount == 3 && stack->txAdmission().capacity == 9,
-    log_("stopped Hub reinitialization changes control count and preserves application counts"));
+    log_("stopped Instance configuration changes control count and preserves application counts"));
   ZuCheckRT(configured && app.rxRetainFramesPerCxn() == 1,
     log_("nondefault per-connection retention limit survives reinitialization"));
   // Kernel queue release may outlast close; retry from this control caller,
@@ -927,7 +941,6 @@ static void testStack()
 	" ready ", running, " stop ", stopped));
   freshStack = nullptr;
   close(wire);
-  app.final();
   alarm(0);
 }
 

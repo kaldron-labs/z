@@ -6,9 +6,10 @@
 
 // Client connection API implementation
 
-#ifndef Zutcp_HH
-#error "include zlib/Zutcp.hh before this header"
-#endif
+#ifndef ZutcpCliCxn_HH
+#define ZutcpCliCxn_HH
+
+#include <zlib/ZutcpCxn.hh>
 
 namespace Zutcp {
 
@@ -16,11 +17,12 @@ template <
   typename App, typename Impl,
   typename TxBufAlloc_ = TxBufAlloc<>>
 class CliCxn :
-  public Connection<App, Impl, TxBufAlloc_>,
-  public Endpoint_<CliCxn<App, Impl, TxBufAlloc_>> {
+  public Cxn_<App, Impl, TxBufAlloc_>,
+  public Zutcp_::Endpoint_<CliCxn<App, Impl, TxBufAlloc_>> {
+friend inline ZuFalse ZmNHeapSharded(CliCxn *);
 public:
-  using Base = Connection<App, Impl, TxBufAlloc_>;
-  using Endpoint = Endpoint_<CliCxn>;
+  using Base = Cxn_<App, Impl, TxBufAlloc_>;
+  using Endpoint = Zutcp_::Endpoint_<CliCxn>;
   using CloseFn = ZmFn<void(), ZmFnHeapID<"Zutcp.CliCxn.CloseFn">>;
   enum { EndpointRef = true };
   using Base::Base;
@@ -157,29 +159,24 @@ public:
   }
   template <typename L>
   void abort_(L &&l) {
-    if (app()->nativeTx()) {
-      if (m_closeDrainPending || m_closeDrainedGen == Base::dataGen() || Base::disconnecting()) {
-	closeEndpointDrained(true, ZuFwd<L>(l));
-	return;
-      }
-      Base::abortLocalRx(0, [link = impl(), l = ZuFwd<L>(l)]() mutable {
-	link->closeEndpointDrained(true, ZuMv(l));
-      });
-    } else {
-      Base::closeState();
+    if (m_closeDrainPending || m_closeDrainedGen == Base::dataGen() || Base::disconnecting()) {
       closeEndpointDrained(true, ZuFwd<L>(l));
+      return;
     }
+    Base::abortLocalRx(0, [link = impl(), l = ZuFwd<L>(l)]() mutable {
+      link->closeEndpointDrained(true, ZuMv(l));
+    });
   }
 
   const Host &server() const { return m_server; }
   uint16_t port() const { return m_port; }
   uint64_t readyCount() const { return m_readyCount; }
   bool ready() const { return m_ready; }
-  bool established() const { return Base::established(); }
+  using Base::established;
   bool cxn() const { return Endpoint::connected(); }
   const ZiSockAddr &local() const { return Endpoint::local(); }
   const ZiSockAddr &remote() const { return Endpoint::remote(); }
-  ClosedTupleKey closedKeyRx() const {
+  ClosedTupleKey closedKeyRx() const override {
     ZiAssert(app()->rxInvoked(), "Zutcp", (), "client closed tuple outside Rx", return {});
     return m_endpointAttemptRx && Endpoint::tupleBound() ?
       ClosedTupleKey{local(), remote()} : ClosedTupleKey{};
@@ -225,24 +222,16 @@ public:
   bool send(ZmRef<ZiIOBuf> payload, bool fin = true) {
     if (Base::disconnecting() || Base::txAdmissionClosed() || (!payload && !fin)) return false;
     if (app()->txInvoked()) return send_(ZuMv(payload), fin);
-    if (app()->nativeTx()) {
-      auto gen = this->dataGen();
-      if (payload && payload->length && !this->enqueue(ZuMv(payload), gen)) return false;
-      app()->txInvoke([cxn = impl(), fin, gen] {
-	if (gen != cxn->dataGen() || cxn->disconnecting()) return;
-	if (fin) cxn->fin();
-	cxn->queueTxFlush();
-      });
-      return true;
-    }
-    app()->txInvoke([
-      cxn = impl(), payload = ZuMv(payload), fin, gen = this->dataGen()
-    ]() mutable {
-      if (gen == cxn->dataGen() && !cxn->disconnecting())
-	cxn->send_(ZuMv(payload), fin);
+    auto gen = this->dataGen();
+    if (payload && payload->length && !this->enqueue(ZuMv(payload), gen)) return false;
+    app()->txInvoke([cxn = impl(), fin, gen] {
+      if (gen != cxn->dataGen() || cxn->disconnecting()) return;
+      if (fin) cxn->fin();
+      cxn->queueTxFlush();
     });
     return true;
   }
+
   bool send_(ZmRef<ZiIOBuf> payload, bool fin = true) {
     ZiAssert(app()->txInvoked(), "Zutcp", (),
       "retained send outside Tx thread", return false);
@@ -285,7 +274,7 @@ public:
     ZiIP ip = m_remote ? m_remote : ZiIP{m_server};
     if (!ip || !m_port) {
       app()->reportError(ZeEXCEPT(Error, "Zutcp",
-	([server = LogMsg{m_server}, port = m_port](auto &s) {
+	([server = ZeString{m_server}, port = m_port](auto &s) {
 	  s << '"' << server << "\": invalid TCP/IP peer port=" << port;
 	})));
       connectFailed_0(true, false);
@@ -304,27 +293,28 @@ public:
 
 protected:
   // Internal active creation has already reserved before constructing its wrapper.
-  void connectReserved(ZiIP ip, uint16_t port, CxnSlot slot) {
+  void connectReserved(ZiIP ip, uint16_t port) {
     m_remote = ip;
     m_port = port;
-    connect_1(ZuMv(ip), port, ZuMv(slot));
+    connect_1(ZuMv(ip), port, true);
   }
 
 public:
-  void connect_1(ZiIP ip, uint16_t port, CxnSlot slot = {}) {
+  void connect_1(ZiIP ip, uint16_t port, bool reserved = false) {
     resetRuntimeState();
     Base::resetDiag();
     if (!ip || !port) {
-      Base::adoptCxnSlotRx(ZuMv(slot));
+      if (reserved) app()->admitCxn(*this);
       connectFailed_0(true);
       return;
     }
-    if (auto stack = app()->nativeInstance()) {
-      if (!slot) slot = stack->reserveCxn();
-      if (!slot) { connectFailed_0(false, false); return; }
+    if (!reserved && !app()->reserveCxn()) { connectFailed_0(false, false); return; }
+    app()->admitCxn(*this);
+    if (!app()->ready()) {
+      connectFailed_0(false);
+      return;
     }
-    Base::adoptCxnSlotRx(ZuMv(slot));
-    if (!Endpoint::init(app()->mx())) {
+    if (!Endpoint::init(app())) {
       connectFailed_0(false);
       return;
     }
@@ -337,6 +327,8 @@ public:
     m_endpointAttemptRx = Endpoint::generation() != generation;
     if (!opened) connectFailed_0(false);
   }
+
+  bool sendPkt(const ZmRef<ZiIOBuf> &) { return true; }
 
   bool sendTCPReset() { return sendTCPRange({}, false, Base::tcpResetFlags()); }
   void tcpResetAbort(bool peer, bool established = true) {
@@ -383,7 +375,7 @@ public:
     return Base::sendTCP(ref, syn, control,
       [this, &ref] { return Endpoint::allocTxPkt(!bool(ref.length)); },
       [this](auto buf, EcnMark::T ecn) {
-	if (!app()->sendPkt(buf)) return false;
+	if (!impl()->sendPkt(buf)) return false;
 	return Endpoint::send(ZuMv(buf), Endpoint::remote(), ecn, true, nullptr);
       }, persist);
   }
@@ -487,10 +479,6 @@ private:
   template <typename L>
   void closeEndpointDrained(bool notify, bool peer, L &&l) {
     ZiAssert(app()->rxInvoked(), "Zutcp", (), "native close drain outside Rx", return);
-    if (!app()->nativeTx()) {
-      closeEndpointDrainedOnce(notify, peer, ZuFwd<L>(l));
-      return;
-    }
     m_closeWaiters.push(CloseFn{ZuFwd<L>(l)});
     m_closeDrainNotify |= notify;
     if (m_closeDrainPending) return;
@@ -505,7 +493,7 @@ private:
       link->app()->rxRun([link, peer, gen] {
         bool notify = link->m_closeDrainNotify && gen == link->dataGen();
         link->m_closeDrainedGen = gen;
-	if (!link->deferCxnRelease()) link->releaseCxnSlotRx();
+	if (!link->deferCxnRelease()) link->releaseCxnRx();
 	if (link->m_connectFailureRx) {
 	  link->m_connectFailureRx = false;
 	  link->connectFailed(link->m_connectTransientRx);
@@ -615,9 +603,7 @@ private:
 
   void received_(Datagram d) {
     if (d.addr != Endpoint::remote() || d.local != Endpoint::local()) return;
-    if (!Base::acceptsLiveTCP(d))
-      if (auto stack = app()->nativeInstance())
-	if (stack->recoverClosed(d)) return;
+    if (!Base::acceptsLiveTCP(d) && app()->recoverClosed(d)) return;
     if (Base::receiveSegment(ZuMv(d))) markEstablished();
     else Base::packetParseFailure();
   }
@@ -654,7 +640,7 @@ public:
   }
 private:
   void endpointReadyRx(Endpoint *ep) {
-    if (ep != this || (app()->nativeTx() && Base::abortingRx())) return;
+    if (ep != this || Base::abortingRx()) return;
     m_notifyEndpointDown = true;
     ++m_readyCount;
     Base::endpointReady();
@@ -678,7 +664,7 @@ private:
       "TCP client connect failure before app initialization", return);
     app()->rxInvoke(impl(), [link = impl(), transient, attempt]() {
       if (link->disconnecting()) return link;
-      if (!attempt || !link->app()->nativeTx()) {
+      if (!attempt) {
 	link->connectFailed(transient);
 	return link;
       }
@@ -717,3 +703,5 @@ private:
 };
 
 } // namespace Zutcp
+
+#endif /* ZutcpCliCxn_HH */

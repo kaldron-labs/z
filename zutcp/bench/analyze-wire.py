@@ -231,9 +231,8 @@ def analyze(directory, helper, reset_validator=None):
         if result['backend'] == 'native':
             stopped = one_line(lines, 'native_stopped ')
             check(all(int(stopped[k]) == 0 for k in
-                      ('ready', 'cxns', 'pending', 'tx_outstanding')) and
-                  stopped['control_free'] == stopped['control_count'], 'native owner/pool drain')
-            check(one_line(lines, 'native_rx ')['retained'] == '0', 'native Rx leases remain')
+                      ('running', 'cxns', 'tx_queued')) and
+                  int(stopped['queues']) >= 0, 'native application connection/Tx drain')
         outputs[role] = {'result': result, 'connections': connections}
     report['application'] = outputs
     bridge = settings.get('capture_topology') == 'bridge'

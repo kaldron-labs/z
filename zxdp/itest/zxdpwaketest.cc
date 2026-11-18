@@ -83,10 +83,8 @@ int epoll_wait(int fd, epoll_event *events, int count, int timeout)
 
 static void closeInstance(ZmRef<Zxdp::Instance> &instance)
 {
-  for (;;) {
-    auto result = instance->close();
-    if (result.is<bool>() && result.p<bool>()) break;
-  }
+  ZmAssert_(instance->stop());
+  instance->final();
   instance = nullptr;
 }
 
@@ -104,6 +102,7 @@ static ZmRef<Zxdp::Instance> createInstance(
     auto instance = Zxdp::instance(Zxdp::Type::Xdp);
     auto initialized = instance->init(params);
     if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
+    else if (!instance->start()) error = instance->error();
     else error = {};
     captureWake = false;
     if (instance && instance->ready()) {

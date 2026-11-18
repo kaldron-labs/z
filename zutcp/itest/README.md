@@ -10,9 +10,12 @@ Physical Ethernet operation remains unverified in the current environment.
 
 ## Build and run
 
-Build the configured Zi/Zxdp/Zutcp dependency closure first, then `zutcp/src`,
-`zutcp/util` and `zutcp/example`, using `make -C DIRECTORY -j8`. Build the five
-native drivers explicitly to avoid building optional application consumers:
+Use [the repair plan](../../zutcp_repair3.md)'s scoped clang-debug rebuild and
+freeze restrictions. Rebuild the listed dependency libraries before `zutcp/src`
+and its consumers, sharing one make jobserver with total concurrency 8. The
+commands below illustrate directory targets; when run concurrently they must
+inherit that jobserver rather than create independent -j8 pools. Build the five
+native drivers explicitly to avoid requiring optional application consumers:
 
 ```sh
 make -C zi/test -j8 libZiTest.la
@@ -20,7 +23,6 @@ make -C zutcp/itest -j8 zutcppairtest zutcppooltest zutcpstacktest zutcpiptest z
 sudo -n unshare --net bash zutcp/util/zutcpfixture.sh \
   bash zutcp/itest/zutcpmxfixture.sh \
   bash zutcp/itest/zutcpipfixture.sh \
-  env ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 \
   bash -c 'cd zutcp/itest && prove \
     zutcppairtest zutcppooltest zutcpstacktest zutcpiptest zutcpmxtest'
 ```
@@ -37,8 +39,10 @@ Ztls application drivers below. Use explicit native targets while developing TCP
 
 ## Driver coverage
 
-- `zutcppairtest` launches the actual native client/server examples over both IP
-  families. It checks exact 7200-byte request/echo, half-close, SYN/setup loss,
+- `zutcppairtest` launches the Ztcp client/server examples with statically
+  configured Instance plugins for ordinary transfer and half-close over both IP
+  families. Protocol-private modes run backend probe roles in the test driver;
+  they do not expose test controls through application APIs. It checks exact 7200-byte request/echo, half-close, SYN/setup loss,
   established DATA loss, duplication, reordering, ACK loss, partial ACK, SACK holes
   and reneging, option negotiation/absence, ECN, TLP and Fast Open. Middle-bridge
   filters affect actual packets; capture/checker evidence establishes the intended
@@ -59,8 +63,9 @@ Ztls application drivers below. Use explicit native targets while developing TCP
   zero/odd/full-MTU TCP payloads, pseudo-header checksums, protocol/ECN fields,
   borrowed ingress, exact/wildcard endpoint routing, duplicate binding refusal,
   owner-checked unbind and port selection. Generic framing uses fixture-only IP
-  protocol 253; TCP uses protocol 6. Cold route/static-neighbor lookups run outside
-  Rx/Tx; a held worker tests cancellation and shutdown drain.
+  protocol 253; TCP uses protocol 6. Route/static-neighbor lookup runs directly
+  on Rx and returns a structured result. Ordered lookup/stop coverage checks
+  completion before plugin teardown; no route worker or cancellation API remains.
 - `zutcpmxtest` installs real Instance plugins on two Zi multiplexers and checks
   mapped connection callbacks, association/watch lifecycle, exact bidirectional
   contexts, nonzero offsets, detached metadata before CQ, one-slot pool reuse,
@@ -87,13 +92,14 @@ kernel interoperability.
 `zutcpapptest` and `zutcptlsapptest` compile the same application fixture against
 Ztcp and Ztls respectively. They exercise selected kernel/native backend pairs
 after TCP functional completion. Neither library is a Zutcp dependency. Build
-only those explicit drivers when these optional consumer checks are intended and
-their libraries match the Zi build; do not rebuild a broad dependent closure.
+only those explicit drivers when their libraries already match the Zi build.
+Ztcp belongs to the allowed rebuild set; do not rebuild Ztls, Zdbus or another
+unlisted module to enable optional coverage. Record missing optional prerequisites
+separately from passed native/Ztcp checks.
 
 ```sh
 make -C zutcp/itest -j8 zutcpapptest zutcptlsapptest
 sudo -n unshare --net bash zutcp/util/zutcpfixture.sh \
-  env ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 \
   bash -c 'cd zutcp/itest && prove zutcpapptest zutcptlsapptest'
 ```
 

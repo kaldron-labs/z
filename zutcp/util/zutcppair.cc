@@ -4,401 +4,200 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details).
 
-// Native Instance peer for independent kernel interoperability. No kernel TCP socket.
+// Ztcp application peer for independent kernel interoperability.
 #include <stdlib.h>
 #include <string.h>
 #include <net/if.h>
 #include <iostream>
 
-#include <zlib/ZmPlatform.hh>
+#include <zlib/ZmBlock.hh>
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmQueue.hh>
 #include <zlib/ZmRef.hh>
-
 #include <zlib/ZtString.hh>
-
 #include <zlib/ZiFile.hh>
-
+#include <zlib/Ztcp.hh>
 #include <zlib/Zutcp.hh>
 
 ZuDerive(PeerBytes, (ZtString<ZtStringHeapID<"Zutcp.NativePeer.Bytes">>));
-// The fixture's bounded request/prefix and cold file-read chunk.
-enum { MaxRequest = 1<<20, PrefixBytes = 260, ReadSize = 4096 };
-static constexpr uint64_t ResetError = 0x123456789abcdef0ULL;
-
-static bool waitGate(const char *name)
-{
-  const char *path = getenv(name);
-  if (!path) return true;
-  ZiFile gate{path, ZiFile::ReadOnly | ZiFile::GC};
-  if (!gate) {
-    ZiLOG(Error, "zutcppair", ([error = gate.error()](auto &out) {
-      out << "fixture gate: " << error;
-    }));
-    return false;
-  }
-  char value;
-  return gate.read(&value, 1) == 1 && value == 'R';
-}
+enum { MaxRequest = 1<<20, ReadSize = 4096, AppTx = 4, Sender = 5 };
 
 class Result {
 public:
+  Result(ZiMultiplex *mx) : m_mx{mx} { }
   void fail(const char *message) {
     if (!m_failed.xch(1))
       ZiLOG(Error, "zutcppair", ([message = ZeString{message}](auto &out) {
 	out << "error: " << message;
       }));
+    m_event.post();
   }
   bool failed() const { return m_failed.load_(); }
-  void done() { m_done.post(); }
-  void wait() { m_done.wait(); }
-  void connected() { m_connected.post(); }
-  void waitConnected() { m_connected.wait(); }
+  void closeTx(ZmRef<ZiConnection> cxn) { m_closeTx.push(ZuMv(cxn)); m_event.post(); }
+  void done() { ++m_done; m_event.post(); }
+  void wait(unsigned count) {
+    while (m_done.load_() < count && !failed()) {
+      m_event.wait();
+      while (auto cxn = m_closeTx.shift()) {
+	ZmBlock<>{}([this](auto wake) {
+	  m_mx->run([wake = ZuMv(wake)]() mutable { wake(); }, AppTx);
+	});
+	cxn->sync();
+	cxn->disconnect();
+      }
+    }
+  }
 private:
-  using Flag = ZmAtomic<unsigned>;
-  Flag		m_failed = 0;
-  ZmSemaphore	m_done, m_connected;
+  // Existing frozen ZiConnection objects cannot embed application event links.
+  using Closes = ZmQueue<ZmRef<ZiConnection>, ZmQueueLock<ZmLock,
+    ZmQueueHeapID<"Zutcp.Peer.Closes">>>;
+  ZiMultiplex *m_mx;
+  Closes m_closeTx;
+  ZmSemaphore m_event;
+  ZmAtomic<unsigned> m_failed = 0, m_done = 0;
 };
 
-class ClientApp : public ZmNHeap<ClientApp>, public Zutcp::Client<ClientApp> {
-friend inline ZuStringT<"Zutcp.NativePeer.ClientApp"> ZmNHeapID(ClientApp *);
-public:
-  using ZmNHeap<ClientApp>::operator new;
-  using ZmNHeap<ClientApp>::operator delete;
+struct ClientApp : public Ztcp::Client<ClientApp> {
   class Cxn;
-  ClientApp(Result &result, const PeerBytes &request, unsigned windowChunk = 0) :
-    m_result{result}, m_request{request}, m_windowChunk{windowChunk} { }
-  Result &result() { return m_result; }
-  ZuCSpan request() const { return {m_request.data(), m_request.length()}; }
-  unsigned windowChunk() const { return m_windowChunk; }
-  bool tfo() const { return m_tfo; }
-  bool earlyData(Cxn *);
-  bool allowEarlyStream(Cxn *, uint64_t, bool);
-  void earlyDataAccepted(Cxn *);
-  void earlyDataRejected(Cxn *);
-private:
-  Result		&m_result;
-  const PeerBytes	&m_request;
-  const unsigned	m_windowChunk;
-  const bool	m_tfo = getenv("ZUTCP_KERNEL_TFO");
-  const bool	m_denyEarly = getenv("ZUTCP_KERNEL_TFO_DENY");
+  using Link = Cxn;
+  Result *result;
+  const PeerBytes *request;
+  ClientApp(Result *result_, const PeerBytes *request_) : result{result_}, request{request_} { }
 };
 
-class ClientApp::Cxn : public ZmNHeap<ClientApp::Cxn>,
-  public Zutcp::CliCxn<ClientApp, ClientApp::Cxn> {
+class ClientApp::Cxn : public ZmNHeap<Cxn>, public Ztcp::CliLink<ClientApp, Cxn> {
 friend inline ZuStringT<"Zutcp.KernelInterop.Client"> ZmNHeapID(Cxn *);
-  using Base = Zutcp::CliCxn<ClientApp, Cxn>;
+  using Base = Ztcp::CliLink<ClientApp, Cxn>;
 public:
   using ZmNHeap<Cxn>::operator new;
   using ZmNHeap<Cxn>::operator delete;
-  explicit Cxn(ClientApp *app, bool reset, unsigned id) :
-    Base{app}, m_reset{reset}, m_id{id} { }
-  void connected(Zutcp::Connected) {
-    std::cerr << "backend=AF_XDP role=client connected=1\n";
-    std::cerr << std::flush;
-    if (app()->tfo()) std::cerr << "tfo native_client connected=" << m_id << "\n";
-    if (m_reset) { startRequest(); app()->result().connected(); }
-    else if (getenv("ZUTCP_KERNEL_START_GATE")) app()->result().connected();
-    else startRequest();
+  Cxn(ClientApp *app) : Base{app} { }
+  void connected(Ztcp::Connected) {
+    std::cerr << "backend=AF_XDP role=client connected=1\n" << std::flush;
+    auto tx = txStream();
+    tx << *app()->request;
+    if (!tx.flush()) app()->result->fail("native client send failed");
+    app()->result->closeTx(ZmRef<ZiConnection>{cxn()});
   }
-  void startRequest() {
-    auto request = app()->request();
-    if (m_reset) {
-      if (!send(ZuCSpan{request.data(), PrefixBytes}, false)) complete(false);
-      return;
-    }
-    if (app()->tfo()) {
-      if (!queueEarly()) return;
-      if (!send(ZuCSpan{request.data() + PrefixBytes, request.length() - PrefixBytes}, true))
-	complete(false);
-      return;
-    }
-    unsigned chunk = app()->windowChunk();
-    if (!chunk) { if (!send(request, true)) complete(false); return; }
-    {
-      auto tx = writer();
-      std::cerr << "window writer max=" << tx.maxSize() << " head=" << tx.headRoom() << " tail="
-	<< tx.tailRoom() << " capacity=" << tx.maxSize() - tx.headRoom() - tx.tailRoom()
-	<< " chunk=" << chunk << "\n";
-    }
-    unsigned total = request.length();
-    for (unsigned offset = 0; offset < total;) {
-      unsigned length = total - offset;
-      if (length > chunk) length = chunk;
-      if (!send(ZuCSpan{request.data() + offset, length},
-	  offset + length == total)) { complete(false); return; }
-      offset += length;
-    }
-  }
-  unsigned id() const { return m_id; }
-  bool queueEarly() {
-    if (m_earlyQueued) return true;
-		m_earlyQueued = true;
-    std::cerr << "tfo native_client queued=" <<	m_id << "\n";
-    if (send(ZuCSpan{app()->request().data(), PrefixBytes}, false)) return true;
-    complete(false);
-    return false;
-  }
-  void resetRequest() {
-    if (!disconnect(ResetError)) complete(false);
-  }
-  int process(Zutcp::Reader &reader) {
-    auto length = reader.length();
-    if (length) {
-      auto n = reader.each(length, [](auto part) -> int64_t {
-	std::cout << ZuCSpan{part.data(), part.length()};
-	return std::cout ? int64_t(part.length()) : 0;
-      });
-      if (n != int64_t(length)) { complete(false); return -1; }
-      reader.clean();
-      if (!retireRx(length)) { complete(false); return -1; }
-    }
-    if (finReceived() && rxComplete()) {
-      std::cout << std::flush;
-      complete(bool(std::cout));
+  int process(Ztcp::RxStream &rx) {
+    auto length = rx.length();
+    while (rx) {
+      auto part = rx.span();
+      std::cout << ZuCSpan{part.data(), part.length()};
+      m_received += part.length();
+      rx.advance(part.length());
     }
     return length ? 1 : 0;
   }
-  void connectFailed(bool) { complete(false); }
-  void disconnected(bool peer) {
-    if (m_reset) {
-      std::cerr << "reset native_client peer=" << unsigned(peer) << " local_error="
-	<< closeError() << "\n";
-      complete(!peer && closeError() == ResetError);
-    } else if (!m_completed) complete(false);
+  void connectFailed(bool) { app()->result->fail("native client connect failed"); }
+  void disconnected(bool) {
+    std::cout << std::flush;
+    if (!std::cout || m_received != app()->request->length() + 6)
+      app()->result->fail("native client did not complete exact EOF exchange");
+    app()->result->done();
   }
 private:
-  void complete(bool ok) {
-    if (m_completed) return;
-		m_completed = true;
-    if (!ok) {
-      app()->result().fail("native client did not complete the exact EOF exchange");
-      app()->result().connected();
-    }
-    app()->result().done();
-  }
-  bool		m_completed = false; // Rx
-  const bool	m_reset;
-  const unsigned	m_id;
-  bool		m_earlyQueued = false; // Rx
+  uint64_t m_received = 0;
 };
-
-bool ClientApp::earlyData(Cxn *link)
-{
-  return m_tfo && link->queueEarly() && allowEarlyStream(link, 0, true);
-}
-
-bool ClientApp::allowEarlyStream(Cxn *link, uint64_t, bool)
-{
-  return m_tfo && (!m_denyEarly || link->id() == 1);
-}
-
-void ClientApp::earlyDataAccepted(Cxn *link)
-{
-  if (m_tfo) std::cerr << "tfo native_client accepted=" << link->id() << "\n";
-}
-
-void ClientApp::earlyDataRejected(Cxn *link)
-{
-  if (m_tfo) std::cerr << "tfo native_client rejected=" << link->id() << "\n";
-}
 
 class ServerCxn;
-class ServerApp : public ZmNHeap<ServerApp>, public Zutcp::Server<ServerApp, ServerCxn> {
-friend inline ZuStringT<"Zutcp.NativePeer.ServerApp"> ZmNHeapID(ServerApp *);
-  using Base = Zutcp::Server<ServerApp, ServerCxn>;
+class ServerApp : public Ztcp::Server<ServerApp> {
 public:
-  using ZmNHeap<ServerApp>::operator new;
-  using ZmNHeap<ServerApp>::operator delete;
-  ServerApp(Result &result, ZiIP address, unsigned port, unsigned count) :
-    m_result{result}, m_address{address}, m_port{port}, m_target{count} { }
+  using Link = ServerCxn;
+  ServerApp(Result *result, ZiIP address, uint16_t port, unsigned count) :
+    m_result{result}, m_address{address}, m_port{port}, m_count{count} { }
+  Result *result() const { return m_result; }
   ZiIP localIP() const { return m_address; }
-  unsigned localPort() const { return m_port; }
-  ZmRef<ServerCxn> accepted(const Zutcp::InitialInfo &);
-  void disconnected(ServerCxn *, bool);
-  bool tfo() const { return m_tfo; }
-  uint32_t maxEarlyData(ServerCxn *) { return m_tfo ? 400 : 0; }
-  bool allowEarlyStream(ServerCxn *, uint64_t, bool);
-  void holdReader(ServerCxn *);
-  void releaseReader();
-  void listening() {
-    auto stack = nativeInstance();
-    std::cerr << "backend=AF_XDP role=server ready=" << unsigned(stack && stack->ready()) << "\n";
-    std::cerr << std::flush;
+  uint16_t localPort() const { return m_port; }
+  unsigned nAccepts() const { return m_count; }
+  ZiConnection *accepted(const ZiCxnInfo &);
+  void listening(const ZiListenInfo &) {
+    std::cerr << "backend=AF_XDP role=server ready=1\n" << std::flush;
   }
-  void listenFailed(bool) { m_result.fail("native listen failed"); m_result.done(); }
-  void completed(bool ok) {
-    if (!ok) m_result.fail("native server did not complete the exact EOF exchange");
-    if (++m_completed >= m_target || !ok) m_result.done();
-  }
+  void listenFailed(bool) { m_result->fail("native listen failed"); }
 private:
-  using Flag = ZmAtomic<unsigned>;
-  Result		&m_result;
-  ZiIP		m_address;
-  unsigned	m_port = 0, m_target = 1;
-  const bool	m_tfo = getenv("ZUTCP_KERNEL_TFO");
-  const bool	m_denyEarly = getenv("ZUTCP_KERNEL_TFO_DENY");
-  alignas(Zm::CacheLineSize) Flag m_completed = 0;
-  alignas(Zm::CacheLineSize) unsigned m_accepted = 0; // Rx accepted count
-  ZmRef<ServerCxn>	m_held; // Rx, fixture hold through the existing Reader only
+  Result *m_result;
+  ZiIP m_address;
+  uint16_t m_port;
+  unsigned m_count;
 };
 
-class ServerCxn : public ZmNHeap<ServerCxn>, public Zutcp::SrvCxn<ServerApp, ServerCxn> {
+class ServerCxn : public ZmNHeap<ServerCxn>, public Ztcp::SrvLink<ServerApp, ServerCxn> {
 friend inline ZuStringT<"Zutcp.KernelInterop.Server"> ZmNHeapID(ServerCxn *);
-  using Base = Zutcp::SrvCxn<ServerApp, ServerCxn>;
+  using Base = Ztcp::SrvLink<ServerApp, ServerCxn>;
 public:
   using ZmNHeap<ServerCxn>::operator new;
   using ZmNHeap<ServerCxn>::operator delete;
-  explicit ServerCxn(ServerApp *app, bool reset, unsigned id) :
-    Base{app}, m_reset{reset}, m_id{id} { }
-  void connected(Zutcp::Connected) {
-		m_connected = true;
-    if (app()->tfo()) std::cerr << "tfo native_server connected=" << m_id << "\n";
-    std::cerr << "backend=AF_XDP role=server connected=1\n";
-    std::cerr << std::flush;
-    if (m_reset) {
-      auto stack = app()->nativeInstance();
-      auto record = Base::closedSnapshotRx(Base::closedKeyRx());
-      if (!record.timestamps || !Base::hasCxnSlotRx()) { complete(false); return; }
-		m_fixtureHistory = stack->rememberClosed(record);
-      Zutcp::ClosedTuple indexed;
-      bool seeded = m_fixtureHistory.id && stack->closedTuple(record.key, indexed) &&
-	indexed.id ==	m_fixtureHistory.id;
-      std::cerr << "reset fixture_history_seed id="
-	<< m_fixtureHistory.id << " timestamps="
-	<< unsigned(record.timestamps) << " live_slot=" << unsigned(Base::hasCxnSlotRx())
-	<< "\n";
-      if (!seeded) complete(false);
+  ServerCxn(ServerApp *app) : Base{app} { }
+  class Wire : public ZmNHeap<Wire>, public Ztcp::SrvCxn<ServerCxn> {
+  friend inline ZuStringT<"Zutcp.Peer.Wire"> ZmNHeapID(Wire *);
+    using Base = Ztcp::SrvCxn<ServerCxn>;
+  public:
+    using ZmNHeap<Wire>::operator new;
+    using ZmNHeap<Wire>::operator delete;
+    Wire(ServerCxn *link, const ZiCxnInfo &info) : Base{link, info}, m_link{link} { }
+    void connected(ZiRxContext &io) override {
+      Base::connected(io);
+      io.fn = ZiRxFn{[link = m_link, data = ZuMv(io.fn)](ZiRxContext &io) mutable {
+	if (io.buf && !io.buf->length) {
+	  auto owner = ZmRef<ServerCxn>{link};
+	  io.complete();
+	  owner->app()->rxRun([owner = ZuMv(owner)] { owner->eof(); });
+	  return true;
+	}
+	return data.as<ZiRxFn>()(io);
+      }};
     }
+  private:
+    ServerCxn *m_link;
+  };
+  void connected(Ztcp::Connected) {
+    std::cerr << "backend=AF_XDP role=server connected=1\n" << std::flush;
   }
-  unsigned id() const { return m_id; }
-  int process(Zutcp::Reader &reader) {
-    if (m_replied) return 0;
-    auto length = reader.length();
-    if (length && app()->tfo())
-      std::cerr << "tfo native_server process=" << m_id << " bytes=" << unsigned(length)
-	<< " connected=" << unsigned(m_connected) << "\n";
-    if (length && m_holdReader) { app()->holdReader(this); return 0; }
-    if (m_request.length() + length > MaxRequest) { complete(false); return -1; }
-    if (length) {
-      auto n = reader.each(length, [this](auto part) -> int64_t {
-	m_request << ZuCSpan{part.data(), part.length()};
-	return part.length();
-      });
-      if (n != int64_t(length)) { complete(false); return -1; }
-      reader.clean();
-      if (!retireRx(length)) { complete(false); return -1; }
+  int process(Ztcp::RxStream &rx) {
+    auto length = rx.length();
+    if (length > MaxRequest - m_request.length()) {
+      app()->result()->fail("native request too long");
+      return -1;
     }
-    if (finReceived() && rxComplete()) {
-		m_replied = true;
-      if (!send("echo: ", false) || !send(ZuCSpan{m_request.data(), m_request.length()}, true)) {
-	complete(false);
-	return -1;
-      }
+    while (rx) {
+      auto part = rx.span();
+      m_request << ZuCSpan{part.data(), part.length()};
+      rx.advance(part.length());
     }
     return length ? 1 : 0;
   }
-  void releaseReader() {
-		m_holdReader = false;
-    std::cerr << "window reader=released\n";
-    std::cerr << std::flush;
-    Base::resumeApplicationRx(Base::dataGen());
+  void eof() {
+    m_eof = true;
+    auto tx = txStream();
+    tx << "echo: " << m_request;
+    if (!tx.flush()) app()->result()->fail("native server send failed");
+    app()->result()->closeTx(ZmRef<ZiConnection>{cxn()});
   }
-  void txComplete(bool ok) { if (!m_reset) complete(ok); }
-  void disconnected(bool peer) {
-    if (m_reset) {
-      std::cerr << "reset native_server peer=" << unsigned(peer) << " bytes="
-	<< unsigned(m_request.length()) << "\n";
-      Zutcp::ClosedTuple current;
-      bool found = app()->nativeInstance()->closedTuple(m_fixtureHistory.key, current);
-      bool slot = Base::hasCxnSlotRx();
-      std::cerr << "reset fixture_history_retired seed="
-	<< m_fixtureHistory.id << " current="
-	<< current.id << " fin=" << unsigned(current.fin)
-	<< " slot=" << unsigned(slot) << "\n";
-      bool retired = found && m_fixtureHistory.id && current.id != m_fixtureHistory.id &&
-	!current.fin && current.timestamps && !slot;
-      complete(peer && m_request.length() == PrefixBytes && !m_replied && retired);
-    } else complete(false);
+  void disconnected(bool) {
+    if (!m_eof) app()->result()->fail("native server disconnected before request EOF");
+    app()->result()->done();
   }
 private:
-  void complete(bool ok) {
-    if (m_completed.xch(1)) return;
-    app()->completed(ok);
-  }
-  using Closed = Zutcp::ClosedTuple;
-  using Flag = ZmAtomic<unsigned>;
-  alignas(Zm::CacheLineSize) const bool m_reset;
-  const unsigned	m_id;
-  alignas(Zm::CacheLineSize) PeerBytes m_request; // Rx request bytes
-  bool		m_connected = false; // Rx
-  Closed		m_fixtureHistory; // Rx, explicitly seeded while this owner is live
-  bool		m_replied = false; // Rx
-  bool		m_holdReader = getenv("ZUTCP_KERNEL_READ_GATE"); // Rx
-  alignas(Zm::CacheLineSize) Flag m_completed = 0; // Rx/Tx final publication
+  PeerBytes m_request;
+  bool m_eof = false;
 };
 
-void ServerApp::disconnected(ServerCxn *link, bool peer)
+ZiConnection *ServerApp::accepted(const ZiCxnInfo &info)
 {
-  ZmRef<ServerCxn> keep{link};
-  Base::disconnected(link, peer);
-  keep->disconnected(peer);
-}
-
-void ServerApp::holdReader(ServerCxn *link)
-{
-  if (m_held) return;
-  m_held = link;
-  std::cerr << "window reader=held\n";
-  std::cerr << std::flush;
-}
-
-void ServerApp::releaseReader()
-{
-  rxRun([this] {
-    auto link = ZuMv(m_held);
-    if (!link) {
-		m_result.fail("fixture released a Reader that was never held");
-		m_result.done();
-    }
-    else link->releaseReader();
-  });
-}
-
-ZmRef<ServerCxn> ServerApp::accepted(const Zutcp::InitialInfo &)
-{
-  unsigned id = ++m_accepted;
-  return new ServerCxn{this, id == 1 && getenv("ZUTCP_KERNEL_EXPECT_RESET"), id};
-}
-
-bool ServerApp::allowEarlyStream(ServerCxn *link, uint64_t, bool)
-{
-  return m_tfo && (!m_denyEarly || link->id() == 1);
+  return new ServerCxn::Wire{new ServerCxn{this}, info};
 }
 
 static bool readFile(const char *name, PeerBytes &bytes)
 {
   ZiFile file{name, ZiFile::ReadOnly | ZiFile::GC};
-  if (!file) {
-    ZiLOG(Error, "zutcppair", ([error = file.error()](auto &out) {
-      out << "request file: " << error;
-    }));
-    return false;
-  }
-  char buf[ReadSize]; // Cold bounded utility input in4K chunks.
+  if (!file) return false;
+  char buf[ReadSize];
   while (true) {
     int n = file.read(buf, sizeof(buf), false);
     if (n == Zi::EndOfFile) return true;
     if (n < 0 || bytes.length() + unsigned(n) > MaxRequest) return false;
     bytes << ZuCSpan{buf, unsigned(n)};
-  }
-}
-
-template <typename Params>
-static void options(Params &params)
-{
-  if (const char *value = getenv("ZUTCP_PEER_OPTIONS")) {
-    unsigned mask = unsigned(ZuBox<unsigned>(value));
-    params.sackPermitted(mask & 1).windowScale(mask & 2).timestamps(mask & 4).ecn(mask & 8);
   }
 }
 
@@ -413,104 +212,65 @@ int main(int argc, char **argv)
 {
   if (argc != 6 && argc != 7) usage();
   bool server = !strcmp(argv[1], "server");
-  if (!server && strcmp(argv[1], "client")) usage();
-  if (server && argc != 6) usage();
+  if ((!server && strcmp(argv[1], "client")) || (server && argc != 6)) usage();
   unsigned interface = if_nametoindex(argv[2]);
   ZiIP address{argv[3]};
-  unsigned port = unsigned(ZuBox<unsigned>(argv[4]));
+  unsigned port = ZuBox<unsigned>(argv[4]);
   unsigned count = server ? unsigned(ZuBox<unsigned>(argv[5])) :
     (argc == 7 ? unsigned(ZuBox<unsigned>(argv[6])) : 1);
   if (!interface || !port || port > 65535 || !count) usage();
+  PeerBytes request;
+  if (!server && !readFile(argv[5], request)) return 1;
   ZiLog::init("zutcppair");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
-  ZuGuard logStop{[] { ZiLog::stop(); }};
-  PeerBytes request;
-  if (!server && !readFile(argv[5], request)) return 1;
-  if (!server && (getenv("ZUTCP_KERNEL_TFO") || getenv("ZUTCP_KERNEL_RESET_GATE")) &&
-      request.length() < PrefixBytes) {
-    ZiLOG(Error, "zutcppair", ([](auto &out) {
-      out << "fixture request is shorter than its bounded prefix";
+  ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
+    s.nThreads(Sender);
+    for (unsigned i = 1; i <= Sender; ++i) s.thread(i, [](auto &t) { t.isolated(true); });
+  })};
+  ZmRef<Zutcp::Instance> instance = new Zutcp::Instance{&mx};
+  auto initializedBackend = instance->init({.interface = interface, .txSid = Sender});
+  if (initializedBackend.is<ZeException>()) {
+    ZiLOG(Error, "zutcppair", ([error = ZuMv(initializedBackend.p<ZeException>())](auto &out) {
+      out << "backend initialization: " << error;
     }));
+    ZiLog::stop();
     return 1;
   }
-  Result result;
-  ZiMultiplex mx{ZiMxParams().scheduler([](auto &s) {
-    s.nThreads(4).thread(1, [](auto &t) { t.isolated(1); })
-      .thread(2, [](auto &t) { t.isolated(1); })
-      .thread(4, [](auto &t) { t.isolated(true); });
-  }).rxThread(1).txThread(2)};
-  auto stack = new Zutcp::Instance{&mx, {.interface = interface, .txSid = 4}};
-  mx.plugin(stack);
+  mx.plugin(instance);
+  Result result{&mx};
   if (server) {
-    ZmRef<ServerApp> appRef = new ServerApp{result, address, port, count};
-    auto &app = *appRef;
-    auto params = Zutcp::ServerParams{&mx};
-    options(params);
-    if (getenv("ZUTCP_KERNEL_READ_GATE")) params.maxData(4096);
-    bool initialized = app.init(params);
-    bool listening = initialized && mx.start() && app.start();
-    if (!listening) result.fail("native server start");
-    else {
-      if (getenv("ZUTCP_KERNEL_READ_GATE")) {
-	if (!waitGate("ZUTCP_KERNEL_READ_GATE")) result.fail("native Reader release gate");
-	else app.releaseReader();
-      }
-      if (!result.failed()) result.wait();
-    }
-    if (listening) app.stop();
+    ServerApp app{&result, address, uint16_t(port), count};
+    Ztcp::ServerParams params{&mx, "3", "4"};
+    params.rxAllocator(ServerCxn::rxAllocator(&mx)).txAllocator(ServerCxn::txAllocator(&mx));
+    bool initialized = app.init(ZuMv(params));
+    bool started = initialized && mx.start() && app.start();
+    if (!started) result.fail("native server start");
+    else { app.listen(); result.wait(count); }
+    if (started) app.stop();
     if (initialized) app.final();
     mx.stop();
   } else {
-    unsigned windowChunk = getenv("ZUTCP_KERNEL_WINDOW_CLIENT") ?
-      (Zutcp::tcpPayload(stack->mtu(), address.type()) - 12)>>1 : 0;
-    ZmRef<ClientApp> appRef = new ClientApp{result, request, windowChunk};
-    auto &app = *appRef;
-    auto params = Zutcp::ClientParams{&mx};
-    options(params);
-    if (getenv("ZUTCP_KERNEL_WINDOW_CLIENT"))
-      params.maxPayload(Zutcp::tcpPayload(stack->mtu(), address.type()))
-	.sackPermitted(false).timestamps(true);
-    bool initialized = app.init(params);
+    ClientApp app{&result, &request};
+    Ztcp::ClientParams params{&mx, "3", "4"};
+    params.rxAllocator(ClientApp::Cxn::rxAllocator(&mx))
+      .txAllocator(ClientApp::Cxn::txAllocator(&mx));
+    bool initialized = app.init(ZuMv(params));
     if (!initialized || !mx.start()) result.fail("native client start");
     else {
-      std::cerr << "backend=AF_XDP role=client ready=" << unsigned(stack->ready()) << "\n";
+      std::cerr << "backend=AF_XDP role=client ready=1\n" << std::flush;
       for (unsigned i = 0; i < count && !result.failed(); ++i) {
-	bool reset = !i && getenv("ZUTCP_KERNEL_RESET_GATE");
-	ZmRef<ClientApp::Cxn> link = new ClientApp::Cxn{&app, reset, i + 1};
-	link->connect(Zutcp::Host{argv[3]}, port);
-	if (reset) {
-	  result.waitConnected();
-	  if (!result.failed()) {
-	    if (!waitGate("ZUTCP_KERNEL_RESET_GATE")) result.fail("native reset gate");
-	    else app.rxRun([link] { link->resetRequest(); });
-	  }
-	}
-	if (getenv("ZUTCP_KERNEL_START_GATE")) {
-	  result.waitConnected();
-	  if (!result.failed()) {
-	    if (!waitGate("ZUTCP_KERNEL_START_GATE")) result.fail("native request start gate");
-	    else app.rxRun([link] { link->startRequest(); });
-	  }
-	}
-	if (!result.failed()) result.wait();
-	ZmBlock<>{}([&link](auto wake) {
-	  link->disconnect([wake = ZuMv(wake)]() mutable { wake(); });
-	});
-	std::cerr << "native disconnect_complete=" << i + 1 << "\n";
+	ZmRef<ClientApp::Cxn> link = new ClientApp::Cxn{&app};
+	link->connect(Ztcp::Host{argv[3]}, uint16_t(port));
+	result.wait(i + 1);
+	std::cerr << "native disconnect_complete=" << i + 1 << '\n';
       }
     }
     if (initialized) app.final();
     mx.stop();
   }
-  auto admission = stack->cxnAdmission();
-  auto tx = stack->txAdmission();
-  bool drained = !stack->ready() && !admission.total && !admission.pending &&
-    !tx.outstanding;
-  std::cerr << "backend=AF_XDP stopped=" << unsigned(!stack->ready()) << " cxns="
-    << admission.total << " pending=" << admission.pending << " tx=" << tx.outstanding
-    << " control_count=" << tx.controlCount << "\n";
-  if (!drained) result.fail("native owner/provider drain incomplete");
+  std::cerr << "backend=AF_XDP stopped=1\n" << std::flush;
+  ZiLog::stop();
   return result.failed() ? 1 : 0;
 }

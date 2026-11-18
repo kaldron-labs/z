@@ -17,6 +17,7 @@
 #include <zlib/Zutcp.hh>
 
 #include "ZutcpTestAlloc.hh"
+#include "ZutcpTestInstance.hh"
 
 using namespace ZuTestUtil;
 
@@ -42,23 +43,20 @@ namespace LoopTest {
 
 using TxBufAlloc = Zutcp::TxBufAlloc<>;
 
-struct App : public ZmNHeap<App>, public Zutcp::Hub<App> {
+struct App : public ZmNHeap<App>, public ZutcpTest::Context<> {
 friend inline ZuStringT<"Zutcp.LoopTest.App"> ZmNHeapID(App *);
   using ZmNHeap<App>::operator new;
   using ZmNHeap<App>::operator delete;
-  using Base = Zutcp::Hub<App>;
-  ZiMultiplex multiplex;
-  Zi::IOBufAllocator *dataTxAllocator() const { return Zutcp::inlineAllocator(); }
+  using Base = ZutcpTest::Context<>;
 
-  App() : multiplex{mxParams()} {
+  App() : Base{mxParams()} {
     bool ok = Base::init(
-      Zutcp::HubParams(&multiplex).maxPayload(Zutcp::BufSize));
+      ZutcpTest::Params(&multiplex).maxPayload(Zutcp::BufSize));
     ZiAssert(ok, "Zutcp", (), "loop test app init failed", return);
     ZiAssert(multiplex.start(), "Zutcp", (),
       "loop test multiplexer start failed", return);
   }
   ~App() {
-    Base::final();
     multiplex.stop();
   }
 
@@ -82,17 +80,17 @@ friend inline ZuStringT<"Zutcp.LoopTest.App"> ZmNHeapID(App *);
 struct TestLink;
 struct TestLink :
   public ZmNHeap<TestLink>,
-  public Zutcp::Connection<App, TestLink,
+  public Zutcp::Cxn_<App, TestLink,
     TxBufAlloc>
 {
-  using Base = Zutcp::Connection<App, TestLink,
+  using Base = Zutcp::Cxn_<App, TestLink,
     TxBufAlloc>;
   int process(Zutcp::Reader &) { return 0; }
   friend inline ZuStringT<"Zutcp.Loop.Link"> ZmNHeapID(TestLink *);
   using ZmNHeap<TestLink>::operator new;
   using ZmNHeap<TestLink>::operator delete;
-  TestLink(App *app) : Base{app, false, ZuID{"client"}} { configLocalParams(app); }
-  TestLink(App *app, bool isServer) : Base{app, isServer} { configLocalParams(app); }
+  TestLink(App *app) : Base{app, false, ZuID{"client"}} { configLocalParams(app); Base::resetPath(); }
+  TestLink(App *app, bool isServer) : Base{app, isServer} { configLocalParams(app); Base::resetPath(); }
   void flushTx() { }
   void queueTxFlush() { }
   void pto() { }

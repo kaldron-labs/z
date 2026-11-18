@@ -6,9 +6,15 @@
 
 // Native packet metadata and owner-separated endpoint diagnostics
 
-#ifndef Zutcp_HH
-#error "include zlib/Zutcp.hh before this header"
+#ifndef ZutcpSock_HH
+#define ZutcpSock_HH
+
+#ifndef ZutcpLib_HH
+#include <zlib/ZutcpLib.hh>
 #endif
+
+#include <zlib/ZutcpTypes.hh>
+#include <zlib/ZutcpIP.hh>
 
 #include <zlib/ZiMultiplex.hh>
 
@@ -81,3 +87,5 @@ struct EndpointDiag {
 };
 
 } // namespace Zutcp
+
+#endif /* ZutcpSock_HH */

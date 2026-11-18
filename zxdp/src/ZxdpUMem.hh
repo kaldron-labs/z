@@ -52,7 +52,7 @@ friend inline ZuStringT<"Zxdp.UMem"> ZmNHeapID(UMem *);
 public:
   ~UMem();
   static ZuUnion<ZmRef<UMem>, ZeException> create(
-    const Zi::IOBufPoolList &, Zi::IOBufPool *rx, unsigned mtu);
+    ZuSpan<const ZmRef<Zi::IOBufPool>>, Zi::IOBufPool *rx, unsigned mtu);
   uint8_t *data() const { return m_data; }
   const ArenaLayout &layout() const { return m_layout; }
   BufPool *pool(const void *) const;

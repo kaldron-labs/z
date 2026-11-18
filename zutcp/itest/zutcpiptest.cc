@@ -22,7 +22,9 @@
 #include <zlib/ZePlatform.hh>
 
 #include <zlib/ZutcpIP.hh>
-#include <zlib/ZutcpMx.hh>
+#include <zlib/Zutcp.hh>
+
+#include "../test/ZutcpTestInstance.hh"
 
 using namespace ZuTestUtil;
 
@@ -127,7 +129,7 @@ static void peerTCP(uint8_t *bytes, const Zutcp::IPPath &path, unsigned n)
   bytes[16] = check>>8; bytes[17] = check;
 }
 
-struct EndpointInput {
+struct EndpointInput : Zutcp::EndpointIndex::Node {
   ZiMultiplex *mx;
   ZmRef<Zi::IOBuf> *input;
   Zutcp::IPView *seen;
@@ -136,7 +138,13 @@ struct EndpointInput {
   ZmSemaphore *done;
   unsigned packets = 0;
 
-  static void receive(void *owner, ZmRef<Zi::IOBuf> buf,
+  EndpointInput(ZiMultiplex *mx_, ZmRef<Zi::IOBuf> *input_, Zutcp::IPView *seen_,
+    ZuBSpan *payload_, bool *onRx_, ZmSemaphore *done_)
+  : mx{mx_}, input{input_}, seen{seen_}, payload{payload_}, onRx{onRx_}, done{done_} {
+    receive = received;
+  }
+
+  static void received(Zutcp::Endpoint *owner, ZmRef<Zi::IOBuf> buf,
     ZiSockAddr local, ZiSockAddr peer, unsigned ecn, const Zutcp::TCPHeader &) {
     auto self = static_cast<EndpointInput *>(owner);
     Zutcp::IPView ip;
@@ -202,7 +210,7 @@ static void testCarriage(bool v6, bool tcp = false)
       rxDone.post();
     }, .spin = 0, .txSid = 4};
   if (tcp) params.packet = {};
-  ZmRef<Zutcp::Instance> stack = new Zutcp::Instance{&mx, ZuMv(params)};
+  ZmRef<Zutcp::Instance> stack = ZutcpTest::makeInstance(&mx, ZuMv(params));
   mx.plugin(stack);
   auto tx = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 2048>(4);
   // AF_XDP queue release can remain pending in the kernel after close. The
@@ -223,21 +231,25 @@ static void testCarriage(bool v6, bool tcp = false)
   ZiIP any;
   if (v6) any = in6addr_any; else any = in_addr{};
   ZiSockAddr boundLocal{path.local, 5555}, boundWildcard{any, 5555};
+  endpoint.bindAddr = boundLocal;
+  wildcard.bindAddr = boundWildcard;
   if (tcp) {
     bool boundEndpoint = false;
     mx.rxRun([
-      &stack, &boundLocal, &boundWildcard, &endpoint, &wildcard, &boundEndpoint, &controlDone
+      &stack, &boundLocal, &endpoint, &wildcard, &boundEndpoint, &controlDone
     ] {
-      auto duplicate = boundLocal;
-      ZiSockAddr ephemeral{boundLocal.ip(), 0}, next{boundLocal.ip(), 0};
-      boundEndpoint = stack->bind(boundLocal, &endpoint, &EndpointInput::receive).is<void>() &&
-        stack->bind(duplicate, &wildcard, &EndpointInput::receive).is<ZeException>() &&
-        !stack->unbind(boundLocal, &wildcard) &&
-        stack->bind(boundWildcard, &wildcard, &EndpointInput::receive).is<void>() &&
-        stack->bind(ephemeral, &endpoint, &EndpointInput::receive).is<void>() &&
-        stack->bind(next, &endpoint, &EndpointInput::receive).is<void>() &&
-        ephemeral.port() >= 49152 && next.port() != ephemeral.port() &&
-        stack->unbind(ephemeral, &endpoint) && stack->unbind(next, &endpoint);
+      Zutcp::EndpointIndex::Node duplicate, ephemeral, next;
+      duplicate.bindAddr = boundLocal;
+      duplicate.receive = endpoint.receive;
+      ephemeral.bindAddr = next.bindAddr = ZiSockAddr{boundLocal.ip(), 0};
+      ephemeral.receive = next.receive = [](Zutcp::Endpoint *, ZmRef<Zi::IOBuf>,
+	ZiSockAddr, ZiSockAddr, unsigned, const Zutcp::TCPHeader &) { };
+      boundEndpoint = stack->bind(endpoint).is<void>() &&
+	stack->bind(duplicate).is<ZeException>() && !stack->unbind(duplicate) &&
+	stack->bind(wildcard).is<void>() && stack->bind(ephemeral).is<void>() &&
+	stack->bind(next).is<void>() && ephemeral.bindAddr.port() >= 49152 &&
+	next.bindAddr.port() != ephemeral.bindAddr.port() &&
+	stack->unbind(ephemeral) && stack->unbind(next);
       controlDone.post();
     });
     controlDone.wait();
@@ -246,26 +258,20 @@ static void testCarriage(bool v6, bool tcp = false)
     auto coldPath = path;
     coldPath.remote = ZiIP{v6 ? "2001:db8::6" : "198.18.0.6"};
     mx.rxRun([&stack, coldPath, &routeDone, &controlDone, &mx] {
-      bool posted = stack->resolvePath(coldPath,
-        [&routeDone, &controlDone, &mx](ZuUnion<Zutcp::IPPath, ZeException> result) {
-          routeDone = result.is<Zutcp::IPPath>() && result.p<Zutcp::IPPath>().mtu == 1500 &&
-            mx.invoked(mx.rxThread());
-          controlDone.post();
-        });
-      if (!posted) controlDone.post();
+      auto result = stack->resolve(coldPath.remote, coldPath.local);
+      routeDone = result.is<Zutcp::IPPath>() && result.p<Zutcp::IPPath>().mtu == 1500 &&
+        mx.invoked(mx.rxThread());
+      controlDone.post();
     });
     controlDone.wait();
-    ZuCheckRT(routeDone, log_("cold route result returns to Rx from a non-I/O worker"));
+    ZuCheckRT(routeDone, log_("cold route lookup completes directly on Rx"));
     bool routeFailed = false;
     coldPath.remote = ZiIP{v6 ? "2001:db8:ffff::1" : "203.0.113.1"};
     mx.rxRun([&stack, coldPath, &routeFailed, &controlDone, &mx] {
-      bool posted = stack->resolvePath(coldPath,
-        [&routeFailed, &controlDone, &mx](ZuUnion<Zutcp::IPPath, ZeException> result) {
-          routeFailed = result.is<ZeException>() && !!result.p<ZeException>() &&
-	    mx.invoked(mx.rxThread());
-          controlDone.post();
-        });
-      if (!posted) controlDone.post();
+      auto result = stack->resolve(coldPath.remote, coldPath.local);
+      routeFailed = result.is<ZeException>() && !!result.p<ZeException>() &&
+        mx.invoked(mx.rxThread());
+      controlDone.post();
     });
     controlDone.wait();
     ZuCheckRT(routeFailed, log_("cold lookup failure returns once on Rx"));
@@ -326,8 +332,8 @@ static void testCarriage(bool v6, bool tcp = false)
   input = nullptr;
   if (tcp) {
     bool removed = false;
-    mx.rxRun([&stack, &boundLocal, &endpoint, &removed, &controlDone] {
-      removed = stack->unbind(boundLocal, &endpoint);
+    mx.rxRun([&stack, &endpoint, &removed, &controlDone] {
+      removed = stack->unbind(endpoint);
       controlDone.post();
     });
     controlDone.wait();
@@ -341,52 +347,33 @@ static void testCarriage(bool v6, bool tcp = false)
         !memcmp(seenPayload.data(), bytes + 20, 5),
       log_("same-family wildcard handles unmatched local IP"));
     input = nullptr;
-    mx.rxRun([&stack, &boundWildcard, &wildcard, &removed, &controlDone] {
-      removed = stack->unbind(boundWildcard, &wildcard);
+    mx.rxRun([&stack, &wildcard, &removed, &controlDone] {
+      removed = stack->unbind(wildcard);
       controlDone.post();
     });
     controlDone.wait();
     ZuCheckRT(removed, log_("wildcard membership removed before owner retirement"));
   }
   if (tcp) {
-    // Hold cold work on its own worker, then stop through the real mx control
-    // engine. Rx/Tx must keep running while the route completion is drained.
-    ZmSemaphore workerHeld, releaseWorker, stopDone;
-    unsigned worker = 0;
-    for (unsigned i = 0; i < mx.nWorkers(); ++i) {
-      auto id = mx.workerID(i);
-      if (id != mx.rxThread() && id != mx.txThread()) { worker = id; break; }
-    }
-    bool posted = false, cancelled = false, stopped = false;
-    mx.run([&workerHeld, &releaseWorker] {
-      workerHeld.post(); releaseWorker.wait();
-    }, worker);
-    workerHeld.wait();
+    // Lookup runs to completion on Rx before the queued stop turn can drain it.
+    ZmSemaphore stopDone;
+    bool resolved = false, stopped = false, ordered = false;
     auto coldPath = path;
     coldPath.remote = ZiIP{v6 ? "2001:db8::6" : "198.18.0.6"};
-    mx.rxRun([&stack, coldPath, &posted, &cancelled, &controlDone, &rxDone, &mx] {
-      posted = stack->resolvePath(coldPath,
-        [&cancelled, &controlDone, &mx](ZuUnion<Zutcp::IPPath, ZeException> result) {
-          cancelled = result.is<ZeException>() && !!result.p<ZeException>() &&
-	    mx.invoked(mx.rxThread());
-          controlDone.post();
-        });
-      rxDone.post();
+    mx.rxRun([&stack, coldPath, &resolved, &controlDone, &mx] {
+      auto result = stack->resolve(coldPath.remote, coldPath.local);
+      resolved = result.is<Zutcp::IPPath>() && mx.invoked(mx.rxThread());
+      controlDone.post();
     });
-    rxDone.wait();
-    mx.ZmEngine<ZmScheduler>::stop([&stopped, &stopDone](bool ok) {
-      stopped = ok; stopDone.post();
+    mx.ZmEngine<ZmScheduler>::stop([&resolved, &ordered, &stopped, &stopDone](bool ok) {
+      ordered = resolved;
+      stopped = ok;
+      stopDone.post();
     });
-    auto deadline = Zm::now() + ZuTime{2};
-    while (stack->ready() && Zm::now() < deadline) usleep(1000);
-    bool gated = !stack->ready();
-    // The blocked worker and its pending route must still prevent completion.
-    bool premature = !stopDone.trywait();
-    releaseWorker.post();
-    if (posted) controlDone.wait();
-    if (!premature) stopDone.wait();
-    ZuCheckRT(posted && gated && !premature && cancelled && stopped,
-      log_("shutdown drains a pending cold lookup before plugin completion"));
+    controlDone.wait();
+    stopDone.wait();
+    ZuCheckRT(resolved && ordered && stopped && !stack->ready(),
+      log_("Rx lookup completes before plugin shutdown and native drain"));
   } else {
     ZuCheckRT(mx.stop(), log_("raw service retires all submitted descriptors"));
   }

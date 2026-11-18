@@ -29,8 +29,8 @@ sudo -n env ZXDP_RUN_FIXTURE=1 ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 \
   ./zxdp/itest/zxdplooptest
 ```
 
-The tests drive the raw `rx()`/`wake()` pair and Tx completion service. Close retries
-observe deferred kernel retirement with an absolute deadline; expiry never
-permits backing release. Kernel ring tests use actual queues, not a synthetic
+The tests drive the raw `rx()`/`wake()` pair and Tx completion service.
+`ZmEngine` stop completes after deferred kernel retirement; asynchronous callers
+wait for that completion before finalization or backing reuse. Kernel ring tests use actual queues, not a synthetic
 completion as evidence of retirement. Veth establishes software-copy behavior;
 physical NIC DMA requires a hardware run.

@@ -6,9 +6,17 @@
 
 // Native TCP endpoint and tuple routing helpers
 
-#ifndef Zutcp_HH
-#error "include zlib/Zutcp.hh before this header"
-#endif
+#ifndef Zutcp__HH
+#define Zutcp__HH
+
+#include <zlib/ZutcpLib.hh>
+#include <zlib/ZutcpBuf.hh>
+#include <zlib/ZutcpSock.hh>
+#include <zlib/ZutcpRecovery.hh>
+
+#include <zlib/ZutcpTypes.hh>
+#include <zlib/ZutcpDiag.hh>
+#include <zlib/ZutcpPath.hh>
 
 #include <zlib/ZuUnion.hh>
 
@@ -16,10 +24,37 @@
 
 #include <zlib/ZePlatform.hh>
 
-#include <zlib/ZutcpMx.hh>
+#include <zlib/Zutcp.hh>
 #include <zlib/ZutcpQueue.hh>
 
+namespace Zutcp {
+
+struct InitialInfo {
+  TCPHeader header;
+  ZiSockAddr peer;
+  unsigned datagramLength = 0;
+  IPPath path{};
+  ZiSockAddr local;
+};
+
+} // namespace Zutcp
+
 namespace Zutcp_ {
+
+using namespace Zutcp;
+
+struct PendingInitial {
+  ClosedTupleKey tuple;
+  uint64_t evidenceID = 0;
+  uint32_t localISN = 0;
+};
+using PendingIndex = ZmHashKV<ClosedTupleKey, PendingInitial, ZmHashHeapID<"Zutcp.Pending">>;
+struct PendingTable : public ZmNHeap<PendingTable>, public PendingIndex {
+friend inline ZuStringT<"Zutcp.PendingTable"> ZmNHeapID(PendingTable *);
+  using PendingIndex::PendingIndex;
+  using ZmNHeap<PendingTable>::operator new;
+  using ZmNHeap<PendingTable>::operator delete;
+};
 
 template <typename Link_>
 struct TupleRoute {
@@ -76,22 +111,13 @@ private:
   ZmRef<Routes> m_routes;
 };
 
-struct EndpointLink : public ZmPolymorph {
-  ZiConnection *mxCxn = nullptr;
-  // Cold observation links; the native transport retains ownership.
-  EndpointLink *observedNext = nullptr;
-  EndpointLink **observedPrev = nullptr;
-};
-
-inline const EndpointLink *EndpointLinkKey(const EndpointLink &link) {
-  return &link;
-}
+inline const Cxn *cxnKey(const Cxn &cxn) { return &cxn; }
 
 // Endpoint membership owns the link alongside outstanding callbacks. Concrete
 // application links provide the allocator; this inner node only adds the link.
-ZmHashDerive(ServerLinks, EndpointLink,
-  (ZmHashNode<EndpointLink,
-    ZmHashKey<EndpointLinkKey,
+ZmHashDerive(ServerLinks, Cxn,
+  (ZmHashNode<Cxn,
+    ZmHashKey<cxnKey,
       ZmHashID<"Zutcp.ServerLinks", ZmHashHeapID<"">>>>));
 
 struct ServerLinkTable : public ZmNHeap<ServerLinkTable>, public ServerLinks {
@@ -109,11 +135,11 @@ using EndpointDiscFns = Zutcp::Queue<
 // Native endpoint membership and submission. This owns no kernel socket or
 // ZiConnection. The endpoint owner drains setup and posted Tx work before release.
 template <typename Impl_>
-class Endpoint_ {
+class Endpoint_ : public EndpointIndex::Node {
 public:
   using Impl = Impl_;
 
-  Endpoint_() = default;
+  Endpoint_() { receive = &Endpoint_::receivePacket; }
   ~Endpoint_() {
     ZiAssert(!m_open && !m_bound && !m_setupPending && !m_draining,
       "Zutcp", (), "endpoint destroyed before native drain", return);
@@ -121,10 +147,9 @@ public:
   Endpoint_(const Endpoint_ &) = delete;
   Endpoint_ &operator =(const Endpoint_ &) = delete;
 
-  bool init(ZiMultiplex *mx) {
-    if (!mx) return false;
-    auto stack = dynamic_cast<Instance *>(mx->plugin());
+  bool init(Instance *stack) {
     if (!stack) return false;
+    auto mx = stack->mx();
     if (m_mx) return m_mx == mx && m_instance == stack;
     m_mx = mx;
     m_instance = stack;
@@ -149,7 +174,7 @@ public:
     m_tupleBound = false;
     m_family = localIP.type();
     m_payloadLimit = tcpPayload(m_instance->mtu(), m_family);
-    m_local.init(localIP, localPort);
+    bindAddr.init(localIP, localPort);
     if (remoteIP) m_remote.init(remoteIP, remotePort); else m_remote.null();
     m_rxDiag = {};
     m_gate = 0;
@@ -157,28 +182,17 @@ public:
     unsigned generation = ++m_generation;
     ++m_setupPending;
     if (mode == PathMode::ClientConnected) {
-      IPPath path{localIP, remoteIP, {}, {}, 0};
-      if (!m_instance->resolvePath(path,
-	  [this, generation](ZuUnion<IPPath, ZeException> result) mutable {
-	    if (!m_open || generation != unsigned(m_generation)) {
-	      setupDone(); return;
-	    }
-	    if (result.template is<ZeException>()) {
-	      setupDone(); setupFailed(); return;
-	    }
-	    auto resolved = ZuMv(result.p<IPPath>());
-	    if (!tcpPayload(resolved.mtu, resolved.local.type())) {
-	      setupDone(); setupFailed(); return;
-	    }
-	    m_payloadLimit = tcpPayload(resolved.mtu, resolved.local.type());
-	    m_local.init(resolved.local, m_local.port());
-	    install(generation, resolved);
-	  })) {
-	--m_setupPending;
-	m_open = false;
-	m_gate = 1;
-	return false;
+      auto result = m_instance->resolve(remoteIP, localIP);
+      if (result.template is<ZeException>()) {
+        setupDone(); setupFailed(); return true;
       }
+      auto resolved = ZuMv(result.template p<IPPath>());
+      if (!tcpPayload(resolved.mtu, resolved.local.type())) {
+        setupDone(); setupFailed(); return true;
+      }
+      m_payloadLimit = tcpPayload(resolved.mtu, resolved.local.type());
+      bindAddr.init(resolved.local, bindAddr.port());
+      install(generation, resolved);
     } else install(generation, {});
     return true;
   }
@@ -196,7 +210,7 @@ public:
       m_open = m_listening = m_connected = false;
       ++m_generation;
       if (m_bound) {
-	m_instance->unbind(m_local, this);
+	m_instance->unbind(*this);
 	m_bound = false;
       }
       if (!m_setupPending) drainTx();
@@ -210,7 +224,7 @@ public:
   }
   bool listening() const { return m_listening; }
   bool connected() const { return m_connected; }
-  const ZiSockAddr &local() const { return m_local; }
+  const ZiSockAddr &local() const { return bindAddr; }
   const ZiSockAddr &remote() const { return m_remote; }
   bool tupleBound() const { return m_tupleBound; }
   PathMode::T mode() const { return m_mode; }
@@ -245,7 +259,7 @@ public:
 private:
   void install(unsigned generation, IPPath path) {
     ZiSockAddr remote = m_mode == PathMode::ClientConnected ? m_remote : ZiSockAddr{};
-    auto result = m_instance->bind(m_local, this, &Endpoint_::receivePacket, remote);
+    auto result = m_instance->bind(*this, remote);
     if (result.template is<ZeException>()) {
       ZiLOG(Error, "Zutcp", ([error = ZuMv(result.template p<ZeException>())](auto &out) {
 	out << error;
@@ -282,7 +296,7 @@ private:
   }
 
   static void receivePacket(
-    void *owner, ZmRef<ZiIOBuf> buf, ZiSockAddr local, ZiSockAddr peer, unsigned ecn,
+    Zutcp::Endpoint *owner, ZmRef<ZiIOBuf> buf, ZiSockAddr local, ZiSockAddr peer, unsigned ecn,
     const TCPHeader &tcp)
   {
     auto self = static_cast<Endpoint_ *>(owner);
@@ -312,7 +326,7 @@ private:
       return false;
     }
     unsigned bytes = buf->length;
-    header.srcPort = m_local.port();
+    header.srcPort = bindAddr.port();
     header.dstPort = addr.port();
     unsigned wire = writeTCP(buf->data_(), buf->size, path, header, bytes, ecnBits(ecn));
     if (!wire) { ++m_txDiag.txDropped; return false; }
@@ -375,7 +389,7 @@ private:
   ZiIPType::T m_family = ZiIPType::Null;
   unsigned m_payloadLimit = 0;
   PathMode::T m_mode = PathMode::ServerUnconnected;
-  ZiSockAddr m_local, m_remote;
+  ZiSockAddr m_remote;
   ZmAtomic<unsigned> m_generation{0}, m_gate{1};
   ZmAtomic<unsigned> m_connected{0}, m_listening{0};
 
@@ -395,4 +409,101 @@ private:
   bool m_txOpen = false;
 };
 
+// Passive endpoint protocol shared by the actual backend record and private
+// protocol fixtures. The Instance remains the sole transport/configuration owner.
+template <typename Impl, typename Link>
+class Listener_ : public Endpoint_<Impl> {
+  using Endpoint = Endpoint_<Impl>;
+public:
+  void endpointDatagram(Datagram d) {
+    if (!d.buf || !impl()->inputActive()) return;
+    ClosedTupleKey tuple{d.local, d.addr};
+    if (auto link = m_routes.find(tuple)) { deliver(link, ZuMv(d)); return; }
+    if (impl()->stack()->recoverClosed(d)) return;
+    if ((d.tcp.flags & 0x17) != 0x02) { impl()->stack()->resetUnmatched(d); return; }
+    if (impl()->accepting()) prepareSYN(ZuMv(d));
+  }
+  void retireLinkRoutes(Link *link) { m_routes.retire(link->closedKeyRx(), link); }
+  void clearLinkRoutes() { m_routes.clear(); }
+  bool initialPending() const { return m_pending->count_(); }
+  void initialDone() { }
+
+private:
+  Impl *impl() { return static_cast<Impl *>(this); }
+  bool tupleClaimed(const ClosedTupleKey &tuple, bool pending = true) const {
+    return (pending && m_pending->findPtr(tuple)) ||
+      static_cast<const Impl *>(this)->tupleClaimedLive(tuple);
+  }
+  void deliver(Link *link, Datagram d) {
+    if (!link->acceptsLiveTCP(d) && impl()->stack()->recoverClosed(d)) return;
+    (void)link->receivedRouted(ZuMv(d));
+  }
+  bool qualifyReuse(const Datagram &d, PendingInitial &pending) {
+    auto stack = impl()->stack();
+    ClosedTuple current;
+    if (!stack->closedTuple(pending.tuple, current)) return true;
+    if (!reusePeerTuple(current, d.tcp, stack->timestamps(), stack->transportNow())) return false;
+    if (!pending.evidenceID) {
+      if (!stack->chooseISN(d.local, d.addr, pending.localISN)) return false;
+      pending.evidenceID = current.id;
+    }
+    return reuseSequence(pending.localISN, uint32_t(current.txNext - 1)) &&
+      reusePeerTuple(current, d.tcp, stack->timestamps(), stack->transportNow());
+  }
+  void prepareSYN(Datagram d) {
+    auto stack = impl()->stack();
+    ClosedTupleKey tuple{d.local, d.addr};
+    if (tupleClaimed(tuple)) return;
+    ClosedTuple current;
+    if (stack->closedTuple(tuple, current) &&
+        !reusePeerTuple(current, d.tcp, stack->timestamps(), stack->transportNow())) return;
+    if (!stack->reserveCxn()) { stack->resetUnmatched(d); return; }
+    PendingInitial pending{tuple};
+    if (!qualifyReuse(d, pending)) { stack->cancelCxn(); return; }
+    try {
+      m_pending->add(tuple, ZuMv(pending));
+    } catch (...) {
+      stack->cancelCxn();
+      throw;
+    }
+    bool reserved = true;
+    auto complete = [this, stack, &reserved, &tuple] {
+      if (reserved) { stack->cancelCxn(); reserved = false; }
+      m_pending->del(tuple);
+      impl()->initialDone();
+    };
+    try {
+      if (!d.buf->length) d.buf = nullptr;
+      unsigned generation = Endpoint::generation();
+      auto result = stack->resolve(d.addr.ip(), d.local.ip());
+      auto node = m_pending->findPtr(tuple);
+      auto &claim = node->val();
+      if (impl()->accepting() && generation == Endpoint::generation() &&
+	  result.template is<IPPath>() &&
+	  tcpPayload(result.template p<IPPath>().mtu, result.template p<IPPath>().local.type()) &&
+	  !tupleClaimed(tuple, false) && qualifyReuse(d, claim)) {
+	auto path = result.template p<IPPath>();
+	InitialInfo info{d.tcp, d.addr, d.buf ? d.buf->length : 0, path, d.local};
+	if (auto link = impl()->acceptInitial(info, claim)) {
+	  stack->admitCxn(*link);
+	  reserved = false;
+	  link->initIPPath(path);
+	  deliver(link, ZuMv(d));
+	  if (!link->abortingRx() && link->closedKeyRx() == tuple) m_routes.add(tuple, link);
+	}
+      }
+    } catch (...) {
+      complete();
+      throw;
+    }
+    // Keep tuple deduplication through acceptance and first-delivery reentrancy.
+    complete();
+  }
+
+  TupleRouter<Link> m_routes;
+  ZmRef<PendingTable> m_pending = new PendingTable;
+};
+
 } // namespace Zutcp_
+
+#endif /* Zutcp__HH */

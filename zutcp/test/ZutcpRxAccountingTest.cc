@@ -7,6 +7,8 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zutcp.hh>
 
+#include "ZutcpTestInstance.hh"
+
 using namespace ZuTestUtil;
 
 struct RetainedBuf : Zi::IOBuf {
@@ -18,9 +20,10 @@ static void testConnectionRetention()
 {
   ZuTestScope(testConnectionRetention);
   ZiMultiplex mx;
-  struct App : Zutcp::Hub<App> { };
-  App hub;
-  ZuCHECK(hub.init(Zutcp::HubParams{&mx}.rxRetainFramesPerCxn(2)),
+  ZutcpTest::Instance hub{&mx};
+  Zutcp::InstanceParams config;
+  config.rxRetainFramesPerCxn = 2;
+  ZuCHECK(ZutcpTest::Instance::apply(hub, config).is<void>(),
     "initialize the configured per-connection retention bound");
   unsigned retired = 0;
   auto allocator = mx.allocator<Zi::IOBufType::App, RetainedBuf, 64>();
@@ -53,7 +56,6 @@ static void testConnectionRetention()
     "draining one connection releases its retained buffers without draining another");
   second.clean();
   ZuCHECK(retired == 4, "teardown releases the last connection's retained buffer");
-  hub.final();
 }
 
 int main(int argc, char **argv)

@@ -4,11 +4,33 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Connection API implementation
+// Common TCP connection implementation
 
-#ifndef Zutcp_HH
-#error "include zlib/Zutcp.hh before this header"
+#ifndef ZutcpCxn_HH
+#define ZutcpCxn_HH
+
+#ifndef ZutcpLib_HH
+#include <zlib/ZutcpLib.hh>
 #endif
+
+#include <zlib/ZuObject.hh>
+#include <zlib/ZuUnroll.hh>
+#include <zlib/ZmGuard.hh>
+#include <zlib/ZmList.hh>
+#include <zlib/ZmScratch.hh>
+#include <zlib/ZtString.hh>
+#include <zlib/ZiLog.hh>
+#include <zlib/ZtcHub.hh>
+#include <zlib/ZutcpTypes.hh>
+#include <zlib/ZutcpBuf.hh>
+#include <zlib/ZutcpPQueue.hh>
+#include <zlib/ZutcpConnectionUtil.hh>
+#include <zlib/ZutcpSched.hh>
+#include <zlib/ZutcpRecovery.hh>
+#include <zlib/ZutcpPath.hh>
+#include <zlib/ZutcpSock.hh>
+#include <zlib/ZutcpDiag.hh>
+#include <zlib/Zutcp_.hh>
 
 #include <zlib/ZuSpan.hh>
 
@@ -163,13 +185,11 @@ enum { DefaultTxQueueMax = 4096 };
 enum { MxEOF = 1, MxFINAck = 2, MxFinishPosted = 4 };
 
 template <typename App, typename Impl, typename TxBufAlloc_>
-class Connection :
+class Cxn_ :
   public Zutcp_::ServerLinks::Node,
   public Ztc::Link,
-  public ZmPQRx<Connection<App, Impl, TxBufAlloc_>,
+  public ZmPQRx<Cxn_<App, Impl, TxBufAlloc_>,
     DataRxPQueue, ZmPQRxGapIgnore<>> {
-template <typename, typename>
-friend class Server;
 friend struct TCPStateTest;
 
   class TxAdmissions : public ZmAtomic<uint64_t>,
@@ -190,21 +210,20 @@ friend struct TCPStateTest;
     unsigned m_full = 0;
   };
 
-
 public:
-  using Zutcp_::EndpointLink::mxCxn;
+  using Cxn::mxCxn;
 
-  using Self = Connection<App, Impl, TxBufAlloc_>;
+  using Self = Cxn_<App, Impl, TxBufAlloc_>;
   using TxBufAlloc = TxBufAlloc_;
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
   unsigned txQueueMax() const { return m_txQueueMax; }
   unsigned dataMPS() const { return unsigned(m_writeMPS); }
 
-  Connection(App *app, bool isServer = false) :
-    Connection{app, isServer, ZuID{} << "tcp:" <<
+  Cxn_(App *app, bool isServer = false) :
+    Cxn_{app, isServer, ZuID{} << "tcp:" <<
       ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>()} { }
-  Connection(App *app, bool isServer, ZuID id) :
+  Cxn_(App *app, bool isServer, ZuID id) :
     m_app{app}, m_id{ZuMv(id)}, m_isServer{isServer} {
     m_txRead.reset(m_txDataGen);
     m_rxRead.reset(m_rxDataGen);
@@ -216,24 +235,28 @@ public:
     m_txRanges.queueOwner(m_id);
     m_txUnackd.queueOwner(m_id);
     m_txPkts.queueOwner(m_id);
-    app->linkAdded_(this);
     initLinkState(LinkState::Starting);
   }
-  ~Connection() {
-    ZmAssert_(!m_cxnSlot);
+  ~Cxn_() {
     clearCallbacks();
     assert(!timersActive());
-    app()->linkDeleted_(this, telState(publicLinkState()));
   }
 
   void clearCallbacks() { }
+  void closedRx(bool) { }
+  void retireLinkRoutes() { }
+  bool earlyData() const { return false; }
+  uint32_t maxEarlyData() const { return 0; }
+  bool allowEarlyStream(uint64_t, bool) const { return false; }
+  void earlyDataAccepted() { }
+  void earlyDataRejected() { }
 
   App *app() const { return m_app; }
   TelKey telKey() const override {
-    return {app()->telKey().template p<1>(), m_id};
+    return {app()->mx()->id(), m_id};
   }
   void telemetry(Ztc::LinkTelemetry &data) const override {
-    data.hubID = app()->telKey().template p<1>();
+    data.hubID = app()->mx()->id();
     data.id = m_id;
     data.rxCalls = m_rxDiag.datagramsRx;
     data.txCalls = m_txDiag.packetsTx;
@@ -265,7 +288,8 @@ public:
 	return false;
     }
   }
-  bool established() const {
+  void abortRx() override { disconnect(false); }
+  bool established() const override {
     return publicLinkState() == LinkState::Established;
   }
   uint64_t closeError() const { return m_publicCloseError.load_(); }
@@ -273,7 +297,6 @@ public:
   uint64_t rxDataCreditLimit() const { return m_rxDataCredit.limit(); }
   uint64_t rxDataCreditAvailable() const { return m_rxDataCredit.available(); }
   uint64_t rxDataRetired() const { return m_rxRetired; }
-
 
 public:
   void rxReset(uint64_t, uint64_t) { }
@@ -300,7 +323,6 @@ protected:
     });
   }
   void clearWritableData() { m_txReady = false; }
-
 
 protected:
 public:
@@ -369,7 +391,7 @@ public:
   }
   template <typename L>
   void disconnect_(bool peer, L &&l) {
-    if (app()->nativeTx()) closeTxAdmission();
+    closeTxAdmission();
     m_disconnecting = 1;
     app()->txRun([link = impl(), peer, l = ZuFwd<L>(l)]() mutable {
       link->delTimers();
@@ -384,9 +406,7 @@ public:
     ++m_rxDiag.suspectDataCloses;
     m_suspiciousDataClosed = true;
     if (!m_rxAppClose.closed) {
-      if (app()->nativeTx())
-	abortLocalRx(error, [link = impl()] { link->tcpResetAbort(false); });
-      else closeState(error);
+      abortLocalRx(error, [link = impl()] { link->tcpResetAbort(false); });
     }
   }
   void noteInvalidData(
@@ -414,7 +434,7 @@ protected:
   }
   void discardUnadoptedRx() {
     ZiAssert(rxInvoked(), "Zutcp", (), "unadopted owner release outside Rx", return);
-    ZmAssert_(!m_cxnSlot);
+    ZmAssert_(!admission);
     app()->txRun([link = ZmRef{impl()}]() mutable {
       link->app()->rxRun([link = ZuMv(link)]() mutable { link = nullptr; });
     });
@@ -451,11 +471,11 @@ protected:
     m_txOrigins = origins;
   }
   bool initTCPOriginsRx(bool server, const ZiSockAddr &local, const ZiSockAddr &remote) {
-    if (!app()->nativeTx()) return true;
+
     TCPOrigins origins = m_rxOrigins;
     origins.server = server;
     if (!origins.localKnown) {
-      auto stack = app()->nativeInstance();
+      auto stack = app();
       if (!stack || !stack->chooseISN(local, remote, origins.local)) return false;
       origins.localKnown = true;
     }
@@ -474,7 +494,7 @@ protected:
     header.window = uint16_t(window > 65535 ? 65535 : window);
     header.options = m_tcpSynSent ? m_txSYNOptions : m_txLocalTCPOptions;
     if (header.options.flags & TCPOptions::TS) {
-      auto stack = app()->nativeInstance();
+      auto stack = app();
       if (!stack || !stack->tcpTimestamp(transportNow(), header.options.tsval)) return false;
       header.options.tsecr = m_txOrigins.server ? m_txRxOptions.tsecr : 0;
     }
@@ -536,7 +556,7 @@ protected:
       auto epoch = m_congestion.epoch();
       if (m_txECNEpoch == epoch) return;
       m_txECNEpoch = epoch;
-      if (!app()->nativeTx() || !m_txECN) return;
+      if (!m_txECN) return;
       m_txCWR = m_txECNResponse = true;
       m_txECNEnd = m_txNext;
     }
@@ -544,7 +564,7 @@ protected:
   bool pacingReady() {
     if (ZuUnlikely(app()->congestionControl())) {
       if (*m_txECNHold && transportNow() < m_txECNHold) { scheduleDataRto(); return false; }
-      if (!app()->nativeTx() || !establishedTx() || m_pacer.canSend(nowUS())) return true;
+      if (!establishedTx() || m_pacer.canSend(nowUS())) return true;
       scheduleCxnTimer("pacing", CxnTimer::Pace, intervalUS(m_pacer.nextSendTime()),
 	ZmScheduler::Advance, &m_paceTimer);
       return false;
@@ -607,7 +627,7 @@ protected:
   }
   void sentTCPTx(const TCPHeader &header, uint64_t next = U64Null,
       uint64_t sentSerial = U64Null) {
-    if (!app()->nativeTx()) return;
+
     if ((header.flags & 0x02) && !m_tcpSynSent) {
       m_txSYNOptions = header.options;
       m_txSYNOptions.tsval = m_txSYNOptions.tsecr = 0;
@@ -648,7 +668,7 @@ protected:
   bool normalizeTCPRx(const TCPHeader &wire, TCPHeader &header) const {
     ZiAssert(rxInvoked(), "Zutcp", (), "TCP normalization outside Rx", return false);
     header = wire;
-    if (!app()->nativeTx()) return true;
+
     if (!m_rxOrigins.localKnown || !m_rxOrigins.peerKnown || (wire.flags & 0x02)) return false;
     header.seq -= uint32_t(m_rxOrigins.peer + 1);
     if (wire.flags & 0x10) header.ack -= uint32_t(m_rxOrigins.local + 1);
@@ -675,7 +695,7 @@ protected:
     if (ref && ref->offset >= m_txNext && m_txECN && m_txCWR) header.flags |= 0x80;
     header.options = m_txRxOptions;
     if (header.options.flags & TCPOptions::TS) {
-      auto stack = app()->nativeInstance();
+      auto stack = app();
       if (!stack || !stack->tcpTimestamp(transportNow(), header.options.tsval))
 	header.options.flags &= ~TCPOptions::TS;
     }
@@ -754,7 +774,7 @@ protected:
       });
   }
   void receiveTCP(const TCPHeader &header, bool incomingData = false) {
-    if (!app()->nativeTx()) return;
+
     publishTCPEcho();
     if (ZuLikely(publishPeerAck(header))) return;
     app()->txRun([link = impl(), header, incomingData, gen = dataGen()] {
@@ -938,7 +958,7 @@ protected:
   }
   template <typename L>
   void diag(L &&l) const {
-    auto link = const_cast<Connection *>(this)->impl();
+    auto link = const_cast<Cxn_ *>(this)->impl();
     if (rxInvoked()) {
       diagRx(ZuFwd<L>(l));
       return;
@@ -951,7 +971,7 @@ protected:
   void diagRx(L &&l) const {
     ZiAssert(rxInvoked(), "Zutcp", (),
       "TCP Rx diagnostic snapshot outside Rx thread", return);
-    auto link = const_cast<Connection *>(this)->impl();
+    auto link = const_cast<Cxn_ *>(this)->impl();
     LinkRxDiag rx = m_rxDiag;
     app()->txRun([link, rx, l = ZuFwd<L>(l)]() mutable {
       LinkDiag diag{rx, link->txDiagSnap()};
@@ -968,7 +988,7 @@ protected:
       l(diag);
       return;
     }
-    auto link = const_cast<Connection *>(this)->impl();
+    auto link = const_cast<Cxn_ *>(this)->impl();
     app()->txRun([link, l = ZuFwd<L>(l)]() mutable {
       PathDiag diag = link->pathDiag_();
       l(diag);
@@ -1084,7 +1104,7 @@ protected:
     if (ZuUnlikely(app()->congestionControl())) {
       uint64_t cwnd = m_congestion.cwnd();
       uint64_t inFlight = m_congestion.bytesInFlight();
-      if (app()->nativeTx()) {
+      {
 	uint64_t sacked = m_txPkts.sackedFlightBytes();
 	inFlight = sacked < inFlight ? inFlight - sacked : 0;
       }
@@ -1105,7 +1125,7 @@ protected:
   }
   unsigned tcpPayloadLimit(unsigned options, bool syn = false, bool probe = false) const {
     unsigned limit = probe ? m_path.ceiling() : m_path.activeMaxPayload();
-    if (!app()->nativeTx()) return limit;
+
     unsigned peer = limit;
     if (m_txOptionsSet)
       peer = m_txTCPState.flags & TCPOptions::MSS ? m_txTCPState.peerMSS : defaultPeerMSS();
@@ -1114,7 +1134,7 @@ protected:
     return options < limit ? limit - options : 0;
   }
   unsigned tcpRuntimeOptions() const {
-    if (!app()->nativeTx() || !m_txOptionsSet) return 0;
+    if (!m_txOptionsSet) return 0;
     if (m_txTCPState.flags & TCPOptionState::SACKSend) return 36;
     return m_txTCPState.flags & TCPOptions::TS ? 12 : 0;
   }
@@ -1154,20 +1174,20 @@ protected:
   bool publishWriteMPS() {
     ZiAssert(txInvoked(), "Zutcp", (), "MPS publication outside Tx", return false);
     unsigned limit = tcpAppPayload();
-    if (app()->nativeTx() && (m_tcpBudgetFailed || !limit || limit == unsigned(-1) ||
+    if ((m_tcpBudgetFailed || !limit || limit == unsigned(-1) ||
 	(m_txPublishedMPS && limit < m_txPublishedMPS) ||
 	(limit < unsigned(m_writeMPS) && !tcpOriginalsFit(limit)))) {
       failTCPBudget();
       return false;
     }
     m_writeMPS = limit;
-    if (app()->nativeTx() && establishedTx() && limit > m_txPublishedMPS)
+    if (establishedTx() && limit > m_txPublishedMPS)
       m_txPublishedMPS = limit;
     return true;
   }
   bool prepareMPSRx(bool early = false) {
     ZiAssert(rxInvoked(), "Zutcp", (), "MSS establishment check outside Rx", return false);
-    if (!app()->nativeTx() || m_mpsReadyRx) return true;
+    if (m_mpsReadyRx) return true;
     if (m_mpsPendingRx) return false;
     m_mpsPendingRx = true;
     app()->txRun([link = impl(), gen = m_rxDataGen, early] {
@@ -1196,7 +1216,7 @@ protected:
     return false;
   }
   bool tcpPacketFits(const TCPHeader &header, unsigned bytes, bool probe = false) {
-    if (!app()->nativeTx()) return true;
+
     int options = header.options.encodedLength(header.flags & 0x02);
     if (options >= 0 && bytes <= tcpPayloadLimit(unsigned(options), header.flags & 0x02, probe) &&
 	(!m_tcpBudgetFailed || (header.flags & 0x04))) return true;
@@ -1245,7 +1265,7 @@ protected:
   void initServerPath(ZiSockAddr local, ZiSockAddr remote, unsigned limit = BufSize) {
     m_closedKeyRx = {local, remote};
     m_rxRoutePayload = limit;
-    if (app()->nativeTx()) m_rxOrigins.server = true;
+    m_rxOrigins.server = true;
     app()->txRun([
       link = impl(),
       local = ZuMv(local),
@@ -1262,7 +1282,7 @@ protected:
     m_path.configuredMaxPayload(app()->maxPayload());
     m_path.routePayload(limit);
     m_path.peerMaxPayload(app()->maxPayload());
-    if (app()->nativeTx()) m_path.useRoutePayload();
+    m_path.useRoutePayload();
     publishWriteMPS();
     m_path.validated();
 
@@ -1274,7 +1294,7 @@ protected:
     m_path.configuredMaxPayload(app()->maxPayload());
     m_path.routePayload(limit);
     m_path.peerMaxPayload(app()->maxPayload());
-    if (app()->nativeTx()) m_path.useRoutePayload();
+    m_path.useRoutePayload();
     publishWriteMPS();
 
   }
@@ -1313,11 +1333,10 @@ protected:
 
 #endif
 
-
   void resetLink() {
     ZiAssert(rxInvoked(), "Zutcp", (),
       "TCP runtime reset outside Rx thread", return);
-    ZmAssert_(!m_cxnSlot);
+    ZmAssert_(!admission);
     disconnecting(false);
     uint64_t gen = ++m_dataGen;
     ++m_rxDataGen;
@@ -1476,7 +1495,7 @@ protected:
       ZiAssert(rxInvoked(), "Zutcp", (),
 	"TCP link disconnect completion outside Rx thread", return);
       closingCxnRx();
-      auto stack = app()->nativeInstance();
+      auto stack = app();
       ClosedTupleKey key = impl()->closedKeyRx();
       bool remember = stack && !m_closedSavedRx && !reusePendingRx() &&
 	key.p<0>().ip() && key.p<0>().port() &&
@@ -1502,7 +1521,7 @@ protected:
 	  ]() mutable {
 	    if (remember) stack->rememberClosed(record);
 	    // Keep late packets routed until closed history can absorb them.
-	    link->app()->retireLinkRoutes(link);
+	    link->retireLinkRoutes();
 	    link->Self::disconnected_(peer);
 	    l();
 	  });
@@ -1511,17 +1530,13 @@ protected:
       return;
     }
     // No shard remains after multiplexer finalization.
-    auto oldState = telState(m_rxLinkState);
-    auto newState = telState(LinkState::Closed);
-    if (oldState != newState)
-      app()->linkState(oldState, newState);
     m_rxLinkState = LinkState::Closed;
     m_txLinkState = LinkState::Closed;
     m_publicLinkState = unsigned(LinkState::Closed);
     l();
   }
   void disconnected_(bool peer) {
-    app()->disconnected(impl(), peer);
+    impl()->closedRx(peer);
   }
 
   Zutcp::LinkInfo linkInfo_() const {
@@ -1536,7 +1551,6 @@ protected:
     }
     return info;
   }
-
 
   template <typename AppLike>
   void configLocalParams(AppLike *app) {
@@ -1561,7 +1575,7 @@ protected:
 
   void establish() {
     if (!establishState()) return;
-    if (auto stack = app()->nativeInstance()) stack->establishedCxn(m_cxnSlot);
+    if (auto stack = app()) stack->establishedCxn(*this);
     startIdleTimer();
     startHeartBeatTimer();
     ++m_rxDiag.handshakeComplete;
@@ -1596,11 +1610,9 @@ protected:
 
   bool txPending() const { return !resetSent() && (txRangeCount() || finReady()); }
 
-
   uint64_t nowUS() const {
     return uint64_t(transportNow().microsecs());
   }
-
 
   uint64_t rxByteNext() const {
     uint64_t next = m_rxState.delivered();
@@ -1623,7 +1635,6 @@ protected:
       unsigned(frame.length)};
     return frame.length || frame.fin;
   }
-
 
   bool tcpSequenceAllowed(uint32_t seq, uint64_t length) const {
     uint64_t next = rxByteNext();
@@ -2018,7 +2029,6 @@ protected:
     if (!linkClosedTx()) impl()->pmtudExpired();
   }
 
-
   void ackDelay() { impl()->ackDelayExpired(); }
   void ackDelayExpired() {
     if (!m_ackHoldPending) return;
@@ -2058,7 +2068,6 @@ protected:
   }
   void dispatchHBExpired(...) { heartBeatExpired(); }
 
-
   void pmtudExpired() {
     ZiAssert(txInvoked(), "Zutcp", (),
       "TCP PMTUD expiry outside Tx thread", return);
@@ -2097,7 +2106,7 @@ protected:
     schedulePMTUD_();
   }
   bool tlpEligible() const {
-    return app()->nativeTx() && establishedTx() && !linkClosedTx() && !m_resetSent &&
+    return establishedTx() && !linkClosedTx() && !m_resetSent &&
       (m_txTCPState.flags & TCPOptionState::SACKReceive) && !m_peerWindowZero &&
       !m_rack.recovering && !*m_rack.deadline && !*m_txECNHold && m_txAckd < m_txNext &&
       !m_txPkts.sackedFlightBytes();
@@ -2209,12 +2218,10 @@ protected:
     highestTLP(m_tlp.generation(), m_txRuntimeGen, m_txNext, m_txAckd, {});
   }
 
-
   bool persistNeeded() const {
     return establishedTx() && !linkClosedTx() && !m_resetSent &&
-      (app()->nativeTx() ? m_peerWindowZero &&
-	(txRangeCount() || m_txAckd < m_txNext || (m_fin && !m_finDequeued)) :
-	txRangeCount() && m_txDataCredit.blocked());
+      m_peerWindowZero &&
+      (txRangeCount() || m_txAckd < m_txNext || (m_fin && !m_finDequeued));
   }
   void cancelPersist() {
     m_persistInterval = ZuTime{};
@@ -2265,7 +2272,7 @@ protected:
   }
 
   void expirePolicy(CxnTimer::T action) {
-    if (app()->nativeTx()) {
+    {
       closeTxAdmission();
       impl()->sendTCPReset();
     }
@@ -2325,7 +2332,7 @@ protected:
     ZuTime out = m_dataRto.deadline();
     if (*m_txECNHold && transportNow() < m_txECNHold) out = m_txECNHold;
     else {
-      if (app()->nativeTx() && *m_rack.deadline && *out && m_rack.deadline < out) {
+      if (*m_rack.deadline && *out && m_rack.deadline < out) {
 	disarmDataRto();
 	return;
       }
@@ -2333,7 +2340,7 @@ protected:
 	disarmDataRto();
 	return;
       }
-      if (!*out || m_txAckd == m_txNext || (app()->nativeTx() && m_peerWindowZero)) {
+      if (!*out || m_txAckd == m_txNext || (m_peerWindowZero)) {
 	disarmDataRto();
 	return;
       }
@@ -2349,7 +2356,7 @@ protected:
       if (m_txAckd == m_txNext) { impl()->flushTx(); return; }
     }
     if (linkClosedTx() || m_txAckd == m_txNext ||
-	(app()->nativeTx() && m_peerWindowZero)) return;
+	(m_peerWindowZero)) return;
     if (!m_dataRto.expire(transportNow(), m_rtt, app()->rtoParams())) {
       scheduleDataRto();
       return;
@@ -2372,13 +2379,13 @@ protected:
     uint64_t next, uint64_t gen, PktAckBatch batch,
     PktRetxBatch priority = {}, RackLossBatch rack = {}) {
     if (gen != m_txRuntimeGen || next != m_txAckd || disconnecting()) return;
-    if (app()->nativeTx()) {
+    {
       uint64_t epoch = m_txPkts.sackEpoch();
       if (!priority.epoch) priority.epoch = epoch;
       if (priority.epoch != epoch) { scheduleDataRto(); return; }
     }
     bool done;
-    if (app()->nativeTx() && (m_txTCPState.flags & TCPOptionState::SACKReceive)) {
+    if ((m_txTCPState.flags & TCPOptionState::SACKReceive)) {
       PktTxUpdate update;
       done = m_txPkts.rackLossBatch(
         m_rack, transportNow(), rack, RecoveryScanBatch, update, true, next);
@@ -2397,7 +2404,7 @@ protected:
       });
       return;
     }
-    if (app()->nativeTx()) {
+    {
       auto &space = m_txPkts;
       bool ready = space.prioritizeRetransmit(next, priority, RecoveryScanBatch,
 	[this, next](const SentFrameRef &ref) {
@@ -2414,7 +2421,7 @@ protected:
       }
     }
     updateCongestionDiag();
-    if (!app()->nativeTx() || priority.found)
+    if (priority.found)
       attemptRTO([link = impl()] { return link->retransmit(true, 1); });
     scheduleLossTimer();
     scheduleDataRto();
@@ -2702,11 +2709,6 @@ protected:
 	m_dataRto.deadline() == work.rtoDeadline)
       m_dataRto.ack(work.ackTime, m_txAckd < m_txNext, m_rtt, app()->rtoParams());
     updateCongestionDiag();
-    ZutcpLOG(app()->qlogTrace(), ([linkInfo = linkInfo_(), next = ack.byteNext](
-	auto &out, ZuTime time) {
-      ZutcpLog_::AckEvt event{.linkInfo = linkInfo, .byteNext = next};
-      out.logPktsAcked(event, time);
-    }));
     if (work.byteProgress) armTLP();
     schedulePTO_();
     scheduleLossTimer();
@@ -2752,7 +2754,7 @@ protected:
     }
   }
   void fallbackTFO() {
-    if (!app()->nativeTx() || establishedTx() || m_txTFOFallback)
+    if (establishedTx() || m_txTFOFallback)
       return;
     m_txTFOFallback = true;
     m_txLocalTCPOptions.flags &= ~TCPOptions::TFO;
@@ -2766,7 +2768,6 @@ protected:
   uint8_t tcpResetFlags() const { return m_txOrigins.peerKnown ? 0x14 : 0x04; }
   bool sendPersistProbe() { return false; }
   void tcpResetAbort(bool peer, bool = true) { disconnect(peer); }
-
 
 private:
 
@@ -2941,10 +2942,6 @@ private:
     return LinkState::T(m_publicLinkState.load_());
   }
   void initLinkState(LinkState::T state) {
-    auto oldState = telState(m_rxLinkState);
-    auto newState = telState(state);
-    if (oldState != newState)
-      app()->linkState(oldState, newState);
     m_rxLinkState = state;
     m_txLinkState = state;
     m_publicLinkState = unsigned(state);
@@ -2952,10 +2949,6 @@ private:
   void linkStateRx(LinkState::T state) {
     ZiAssert(rxInvoked(), "Zutcp", (),
       "TCP lifecycle transition outside Rx thread", return);
-    auto oldState = telState(m_rxLinkState);
-    auto newState = telState(state);
-    if (oldState != newState)
-      app()->linkState(oldState, newState);
     m_rxLinkState = state;
     m_publicLinkState = unsigned(state);
   }
@@ -3003,18 +2996,6 @@ private:
       link->applyLinkSnapshotTx(snapshot);
     });
   }
-  void logLinkStateRx(LinkState::T state) {
-    ZiAssert(rxInvoked(), "Zutcp", (),
-      "TCP lifecycle log outside Rx thread", return);
-    auto old = m_rxLinkState;
-    if (old == state) return;
-    ZutcpLOG(app()->qlogTrace(), ([linkInfo = linkInfo_(), old, state](
-	auto &out, ZuTime time) {
-      ZutcpLog_::CxnStateEvt event{
-	.linkInfo = linkInfo, .oldState = old, .newState = state};
-      out.logCxnStateUpd(event, time);
-    }));
-  }
   void resetLinkStateRx() {
     ZiAssert(rxInvoked(), "Zutcp", (),
       "TCP lifecycle reset outside Rx thread", return);
@@ -3030,7 +3011,6 @@ protected:
     ZiAssert(rxInvoked(), "Zutcp", (),
       "TCP handshake transition outside Rx thread", return false);
     if (m_rxLinkState != LinkState::Starting) return false;
-    logLinkStateRx(LinkState::Handshaking);
     linkStateRx(LinkState::Handshaking);
     publishLinkSnapshotTx();
     return true;
@@ -3041,7 +3021,6 @@ private:
     ZiAssert(rxInvoked(), "Zutcp", (),
       "TCP establish transition outside Rx thread", return false);
     if (m_rxLinkState != LinkState::Handshaking) return false;
-    logLinkStateRx(LinkState::Established);
     linkStateRx(LinkState::Established);
     publishLinkSnapshotTx();
     return true;
@@ -3051,7 +3030,6 @@ private:
     ZiAssert(rxInvoked(), "Zutcp", (),
       "TCP close transition outside Rx thread", return false);
     if (m_rxLinkState >= LinkState::Closing) return false;
-    logLinkStateRx(LinkState::Closing);
     linkStateRx(LinkState::Closing);
     return true;
   }
@@ -3059,7 +3037,6 @@ private:
     ZiAssert(rxInvoked(), "Zutcp", (),
       "TCP drain transition outside Rx thread", return false);
     if (m_rxLinkState >= LinkState::Draining) return false;
-    logLinkStateRx(LinkState::Draining);
     linkStateRx(LinkState::Draining);
     return true;
   }
@@ -3067,7 +3044,6 @@ private:
     ZiAssert(rxInvoked(), "Zutcp", (),
       "TCP closed transition outside Rx thread", return);
     if (m_rxLinkState == LinkState::Closed) return;
-    logLinkStateRx(LinkState::Closed);
     linkStateRx(LinkState::Closed);
   }
 
@@ -3075,14 +3051,12 @@ protected:
   const ZuID &queueOwnerID() const { return m_id; }
   uint64_t sentPktCount() const { return m_txPkts.count(); }
 
-
 public:
 
   using Rx = ZmPQRx<Self, DataRxPQueue, ZmPQRxGapIgnore<>>;
   using RxMsg = DataRxPQueue::Node;
   using RxQueueSpan = DataRxPQueue::Span;
   using TxUnackdQueue = DataTxPQueue;
-
 
   uint64_t txBytes() const { return m_txBytes; }
   uint64_t txBufferedBytes() const { return m_txBufferedBytes; }
@@ -3137,32 +3111,27 @@ public:
     return m_txError;
   }
   TcpCloseState::T tcpCloseState() const { return m_tcpCloseState; }
-  void adoptCxnSlotRx(CxnSlot slot) {
-    ZiAssert(rxInvoked(), "Zutcp", (), "connection admission outside Rx", return);
-    ZmAssert_(!m_cxnSlot);
-    m_cxnSlot = ZuMv(slot);
-  }
-  void releaseCxnSlotRx() {
+  void releaseCxnRx() {
     ZiAssert(rxInvoked(), "Zutcp", (), "connection admission release outside Rx", return);
-    if (auto stack = app()->nativeInstance()) stack->releaseCxn(m_cxnSlot);
+    if (auto stack = app()) stack->releaseCxn(*this);
   }
-  bool hasCxnSlotRx() const {
-    ZiAssert(rxInvoked(), "Zutcp", (), "connection slot inspection outside Rx", return false);
-    return bool(m_cxnSlot);
+  bool admittedRx() const {
+    ZiAssert(rxInvoked(), "Zutcp", (), "admission inspection outside Rx", return false);
+    return admission & Cxn::Admitted;
   }
   bool deferCxnRelease() const { return false; }
   void closingCxnRx() {
     ZiAssert(rxInvoked(), "Zutcp", (), "connection close admission outside Rx", return);
-    if (auto stack = app()->nativeInstance()) stack->closingCxn(m_cxnSlot);
+    if (auto stack = app()) stack->closingCxn(*this);
   }
-  ClosedTupleKey closedKeyRx() const {
+  ClosedTupleKey closedKeyRx() const override {
     ZiAssert(rxInvoked(), "Zutcp", (), "closed tuple outside Rx", return {});
     return m_closedKeyRx;
   }
   ClosedTuple closedSnapshotRx(const ClosedTupleKey &key) const {
     ZiAssert(rxInvoked(), "Zutcp", (), "closed snapshot outside Rx", return {});
     uint32_t next = uint32_t(rxByteNext());
-    if (app()->nativeTx() && m_rxOrigins.peerKnown) next += uint32_t(m_rxOrigins.peer + 1);
+    if (m_rxOrigins.peerKnown) next += uint32_t(m_rxOrigins.peer + 1);
     return {.key = key, .tsRecentTime = m_rxTSRecentTime, .rxNext = next,
       .tsRecent = m_rxTSRecent, .timestamps = bool(m_rxTCPState.flags & TCPOptions::TS) &&
 	m_rxTSKnown,
@@ -3173,9 +3142,8 @@ public:
     record.timestamps &= m_txTSKnown;
     record.lastSentTS = m_txLastTS;
     record.txNext = uint32_t(m_txNext);
-    if (app()->nativeTx() && m_txOrigins.localKnown)
+    if (m_txOrigins.localKnown)
       record.txNext += uint32_t(m_txOrigins.local + 1);
-
 
   }
   bool finSent() const { return m_fin; }
@@ -3185,7 +3153,7 @@ public:
     return !txQueueCount() && !m_txUnackd.count_();
   }
   bool finCredit() const {
-    return !app()->nativeTx() || m_txBytes < m_txDataCredit.limit();
+    return m_txBytes < m_txDataCredit.limit();
   }
   bool finReady() const {
     return !m_resetSent && m_fin && !m_finDequeued && !txQueueCount() && finCredit();
@@ -3198,7 +3166,6 @@ public:
   bool stopAckd() const { return m_stopAckd; }
   bool stopReceived() const { return m_stopReceived; }
   bool readOpen() const { return !m_resetReceived && !rxComplete(); }
-
 
   bool rxComplete() const {
     return m_rxState.complete() && m_rxDelivered == m_rxState.finalSize();
@@ -3245,7 +3212,7 @@ public:
     }
   }
   bool consumeTxCredit(uint64_t n, bool wholePacket = false) {
-    bool consumed = wholePacket && app()->nativeTx() ?
+    bool consumed = wholePacket ?
       m_txDataCredit.consumePacket(n) : m_txDataCredit.consume(n);
     if (!consumed) return false;
     updatePersist();
@@ -3413,7 +3380,7 @@ public:
     using Base = Zi::TxStream<Writer<AppThread>>;
 
   public:
-    Writer(Connection &cxn) : Writer{cxn, cxn.app()->dataTxAllocator()} { }
+    Writer(Cxn_ &cxn) : Writer{cxn, cxn.app()->dataTxAllocator()} { }
 
     uint64_t frameMax() const { return m_cxn->txFrameMax(); }
     uint64_t gen() const { return m_gen; }
@@ -3451,7 +3418,7 @@ public:
     }
 
   private:
-    static unsigned capacity(Connection &cxn, Zi::IOBufAllocator *a) {
+    static unsigned capacity(Cxn_ &cxn, Zi::IOBufAllocator *a) {
       if (!a) return 0;
       if (a->type != Zi::IOBufType::TxTCP) return a->size;
       unsigned mps = unsigned(cxn.m_writeMPS);
@@ -3460,14 +3427,14 @@ public:
       if (mps > a->capacity()) mps = a->capacity();
       return mps ? a->headRoom + mps + a->tailRoom : 0;
     }
-    Writer(Connection &cxn, Zi::IOBufAllocator *a) :
+    Writer(Cxn_ &cxn, Zi::IOBufAllocator *a) :
       Base(capacity(cxn, a), a ? a->headRoom : 0, a ? a->tailRoom : 0),
       m_cxn{&cxn}, m_gen{cxn.dataGen()}, m_allocator{a}
     {
       if (!a || this->maxSize() <= this->headRoom() + this->tailRoom()) this->fail();
     }
     // immutable
-    Connection	*m_cxn;
+    Cxn_		*m_cxn;
     uint64_t	m_gen;
     Zi::IOBufAllocator *m_allocator;
   };
@@ -3483,9 +3450,9 @@ public:
 
   void fin() {
     if (m_fin || m_resetSent) return;
-    if (app()->nativeTx()) closeTxAdmission();
+    closeTxAdmission();
     m_fin = true;
-    if (app()->nativeInstance())
+    if (app())
       app()->rxRun([link = impl(), gen = m_txDataGen] {
 	if (gen == link->m_rxDataGen && !link->disconnecting()) link->closingCxnRx();
       });
@@ -3514,8 +3481,7 @@ public:
     unsigned pending = m_rxQueue.count_();
     if (!receiveDataFrame_(frame, diag, ZuMv(packet), refused)) return -1;
     // Publish accepted bytes before application delivery can queue a response.
-    if (app()->nativeTx() &&
-	(m_rxState.delivered() != delivered || m_rxState.finSeen() != finSeen))
+    if ((m_rxState.delivered() != delivered || m_rxState.finSeen() != finSeen))
       publishTCPEcho();
     if (m_rxState.delivered() == delivered && m_rxState.finSeen() == finSeen &&
 	m_rxQueue.count_() == pending)
@@ -3524,7 +3490,7 @@ public:
   }
   bool applicationReadyRx(bool = false) const { return true; }
   void resumeApplicationRx(uint64_t gen) {
-    if (!app()->nativeTx() || mxCxn || gen != m_rxDataGen ||
+    if (mxCxn || gen != m_rxDataGen ||
 	disconnecting() || m_rxAborting || (m_rx.empty() && !finReceived())) return;
     if (processRx() < 0 && gen == m_rxDataGen && !m_rxAborting)
       noteInvalidData(TransportError::FinalSize, false, true);
@@ -3532,8 +3498,8 @@ public:
   int processRx(bool early = false) {
     early |= m_rxTFOAllow;
     // Native handshake owners gate early delivery on writer readiness; bare
-    // Connection users retain their existing application-readiness policy.
-    if (app()->nativeTx() && !impl()->applicationReadyRx(early)) return 0;
+    // Cxn_ users retain their existing application-readiness policy.
+    if (!impl()->applicationReadyRx(early)) return 0;
     if (mxCxn) return recvMx();
     uint64_t gen = m_rxDataGen;
     m_mxRxActive = true;
@@ -3545,7 +3511,7 @@ public:
 
   void abortTCPMx() {
     ZiAssert(txInvoked(), "Zutcp", (), "TCP abrupt close outside Tx", return);
-    if (!app()->nativeTx() || m_mxFinishing) return;
+    if (m_mxFinishing) return;
     impl()->sendTCPReset();
     closeStateTx();
   }
@@ -3602,13 +3568,13 @@ public:
 private:
   // Shared native/plugin graceful retirement checkpoints.
   void finishNativeRx() {
-    if (!app()->nativeTx() || disconnecting() || m_rxAborting ||
+    if (disconnecting() || m_rxAborting ||
 	!finReceived() || !rxComplete() || !m_rx.empty()) return;
     m_mxRxFinish |= MxEOF;
     finishMxRx();
   }
   void finishMxRx() {
-    if ((!mxCxn && !app()->nativeTx()) ||
+    if (
 	m_mxRxFinish != (MxEOF | MxFINAck)) return;
     m_mxRxFinish |= MxFinishPosted;
     app()->txRun([cxn = impl(), gen = m_rxDataGen] {
@@ -3618,7 +3584,7 @@ private:
     });
   }
   void finishMxTx() {
-    if ((!mxCxn && !app()->nativeTx()) || disconnecting() || m_mxFinishing ||
+    if ( disconnecting() || m_mxFinishing ||
 	!m_finAckd || m_txUnackd.count_() || !m_mxPeerFinished) return;
     m_mxFinishing = true;
     // Both byte directions are complete; the last peer-FIN ACK was accepted.
@@ -3677,11 +3643,24 @@ public:
     m_mxRxActive = false;
     if (mxCxn && rxComplete() && m_rx.empty() && !(m_mxRxFinish & MxEOF)) {
       m_mxRxFinish |= MxEOF;
-      mxCxn->rxUp() = 0;
-      mxCxn->rxContext().complete();
-      app()->txRun([cxn = impl(), gen = m_rxDataGen] {
-	if (gen == cxn->m_txDataGen && !cxn->disconnecting()) cxn->shutdownMx(true);
-      });
+      auto cxn = mxCxn;
+      auto &context = cxn->rxContext();
+      bool handled = false;
+      if (!context.completed() && context.buf && !context.buf->length) {
+	// The existing generic receive context can observe EOF without a new
+	// plugin API. An application that completes it keeps Tx open to reply.
+	context();
+	if (mxCxn != cxn) return result;
+	if (context.disconnected()) cxn->disconnect();
+	else handled = context.completed();
+      }
+      context.complete();
+      if (!handled) {
+	cxn->rxUp() = 0;
+	app()->txRun([cxn = impl(), gen = m_rxDataGen] {
+	  if (gen == cxn->m_txDataGen && !cxn->disconnecting()) cxn->shutdownMx(true);
+	});
+      }
       finishMxRx();
     }
     bool pending = m_mxRxPending;
@@ -3823,7 +3802,7 @@ private:
 	}
       }
       m_rxState.delivered(next);
-      if (app()->nativeTx() && newBytes && frame.offset > next) m_rxSACK.accepted(frame.offset);
+      if (newBytes && frame.offset > next) m_rxSACK.accepted(frame.offset);
       if (!complete && m_rxState.complete()) {
 	closingCxnRx();
 	app()->txRun([cxn = impl(), gen = m_rxDataGen, end = m_rxState.finalSize() + 1] {
@@ -3961,12 +3940,12 @@ private:
     auto native = buf->registered() && allocator->mx == app()->mx() &&
       allocator->type == Zi::IOBufType::TxTCP ? allocator : nullptr;
     auto pool = app()->txPool(native);
-    if (app()->nativeTx() && !pool) {
+    if (!pool) {
       retireTxAdmission();
       return sendError("native transport requires registered Tx backing from this mx");
     }
     unsigned mps = dataMPS();
-    if (app()->nativeTx() && (!mps || mps == unsigned(-1) || length > mps)) {
+    if ((!mps || mps == unsigned(-1) || length > mps)) {
       retireTxAdmission();
       failTCPBudget();
       return false;
@@ -3985,12 +3964,10 @@ private:
     auto gen = dataGen(); // The error callback may replace this incarnation.
     auto e = ZeEXCEPT(Error, "Zutcp", message);
     if (m_txErrorFn && !m_txErrorFn(e) && impl()) {
-      if (app()->nativeTx())
-	rxRun([link = ZmRef<Impl>{impl()}, gen] {
+      rxRun([link = ZmRef<Impl>{impl()}, gen] {
 	  if (gen != link->dataGen() || link->disconnecting()) return;
 	  link->abortLocalRx(0, [link = link.ptr()] { link->tcpResetAbort(false); });
 	});
-      else this->disconnect();
     }
     return false;
   }
@@ -4051,7 +4028,7 @@ public:
       if (!origins.localKnown) {
 	if (m_reuseEvidenceRx) origins.local = m_reuseISNRx;
 	else {
-	  auto stack = app()->nativeInstance();
+	  auto stack = app();
 	  if (!stack || !stack->chooseISN(d.local, d.addr, origins.local)) return false;
 	}
 	origins.localKnown = true;
@@ -4142,13 +4119,6 @@ public:
     if (!syn) receiveECN(tcp, d.ecn, payload.length());
     ++m_rxDiag.packetsRx;
     m_rxDiag.dataBytesRx += payload.length();
-    ZutcpLOG(app()->qlogTrace(), ([linkInfo = linkInfo_(), header = d.tcp,
-      payload = unsigned(payload.length()), family = d.local.ip().type()](
-	auto &out, ZuTime time) {
-      ZutcpLog_::PktEvt event{.linkInfo = linkInfo, .header = header,
-	.packetSize = tcpHead(family, header) + payload, .payloadSize = payload};
-      out.logPktRecv(event, time);
-    }));
     publishTCPEcho(true);
     if (syn && m_rxOrigins.server) {
       app()->txRun([link = impl(), gen = m_rxDataGen] {
@@ -4201,7 +4171,7 @@ protected:
     unsigned payload = d.buf ? d.buf->length : 0;
     m_rxTFOAllow = false;
     uint64_t gen = m_rxDataGen;
-    auto stack = app()->nativeInstance();
+    auto stack = app();
     if (!stack) return false;
     TFOCookie cookie;
     if (d.tcp.options.flags & TCPOptions::TFO)
@@ -4212,17 +4182,17 @@ protected:
 	stack->saveTFOCookie(d.local.ip(), d.addr, cookie);
       if (m_rxTFOEnd && !m_rxTFONotified) {
 	m_rxTFONotified = true;
-	if (ack == m_rxTFOEnd) app()->earlyDataAccepted(impl());
-	else app()->earlyDataRejected(impl());
+	if (ack == m_rxTFOEnd) impl()->earlyDataAccepted();
+	else impl()->earlyDataRejected();
       }
       return gen == m_rxDataGen && !disconnecting() && !m_rxAborting;
     }
     uint32_t cap = payload || (d.tcp.options.flags & TCPOptions::TFO) ?
-      app()->maxEarlyData(impl()) : 0;
+      impl()->maxEarlyData() : 0;
     if (gen != m_rxDataGen || disconnecting() || m_rxAborting) return false;
     bool allowed = payload && cookie.length && !(d.tcp.flags & 0x01) &&
       stack->validTFO(d.local, d.addr.ip(), cookie) && payload <= cap &&
-      payload <= m_rxDataCredit.limit() && app()->allowEarlyStream(impl(), 0, false);
+      payload <= m_rxDataCredit.limit() && impl()->allowEarlyStream(0, false);
     if (gen != m_rxDataGen || disconnecting() || m_rxAborting) return false;
     m_rxTFOAllow = allowed;
     if ((d.tcp.options.flags & TCPOptions::TFO) && cap) {
@@ -4342,7 +4312,7 @@ protected:
     // Keep that piggyback header, but retain the current-sequence ACK obligation.
     const bool ackCurrent = (header.flags & 0x10) && !persist &&
       (!data || ref.offset >= m_txNext);
-    const uint64_t sentAck = app()->nativeTx() && ackCurrent &&
+    const uint64_t sentAck = ackCurrent &&
       m_txOrigins.peerKnown ?
       tcpPosition(uint32_t(header.ack - m_txOrigins.peer - 1), sentRxNext) : U64Null;
     int options = header.options.encodedLength(syn);
@@ -4379,7 +4349,7 @@ protected:
     unsigned charged = unsigned(ref.length) + unsigned(ref.fin);
     auto ecn = !syn && positive && m_txECN && ref.offset >= m_txNext ?
       EcnMark::ECT0 : EcnMark::NotECT;
-    bool original = app()->nativeTx() && positive && !syn && !ref.fin &&
+    bool original = positive && !syn && !ref.fin &&
       !control && !persist && !tlp && !rto && !fast && ref.offset == m_txNext;
     if (ZuLikely(original)) {
       // The held source and its lease retain recovery bytes across submission.
@@ -4447,13 +4417,6 @@ protected:
     if (persist) noteHBTx();
     ++m_txDiag.packetsTx;
     m_txDiag.bytesTx += ref.length;
-    ZutcpLOG(app()->qlogTrace(), ([linkInfo = linkInfo_(), header, head,
-      payload = ref.length, flight = ZuUnlikely(app()->congestionControl()) ?
-	m_congestion.bytesInFlight() : m_txPkts.bytesInFlight()](auto &out, ZuTime time) {
-      ZutcpLog_::PktEvt event{.linkInfo = linkInfo, .header = header,
-	.packetSize = head + payload, .payloadSize = payload, .bytesInFlight = flight};
-      out.logPktSent(event, time);
-    }));
     if (syn) {
       m_synSent = m_tcpSynSent ? ZuTime{} : transportNow();
       m_tcpSynSent = true;
@@ -4545,13 +4508,13 @@ protected:
       link->m_txFrameMax = link->app()->maxPayload();
       link->app()->rxRun([link, gen, send = ZuMv(send)]() mutable {
 	if (gen != link->m_rxDataGen || link->disconnecting() || link->m_rxAborting) return;
-	bool enabled = link->app()->earlyData(link);
+	bool enabled = link->earlyData();
 	if (gen != link->m_rxDataGen || link->disconnecting() || link->m_rxAborting) return;
-	enabled &= link->app()->allowEarlyStream(link, 0, true);
+	enabled &= link->allowEarlyStream(0, true);
 	if (gen != link->m_rxDataGen || link->disconnecting() || link->m_rxAborting) return;
 	TFOCookie cookie;
 	if (enabled)
-	  if (auto stack = link->app()->nativeInstance())
+	  if (auto stack = link->app())
 	    stack->tfoCookie(link->m_closedKeyRx.template p<0>().ip(),
 	      link->m_closedKeyRx.template p<1>(), cookie);
 	link->app()->txRun([link, gen, enabled, cookie, send = ZuMv(send)]() mutable {
@@ -4653,7 +4616,6 @@ protected:
   bool			m_mxRxActive = false, m_mxRxPending = false;
   uint8_t		m_mxRxFinish = 0;
   bool			m_mxRxClosing = false;
-  CxnSlot		m_cxnSlot;
   ClosedTupleKey	m_closedKeyRx;
   bool			m_closedSavedRx = false;
   bool			m_rxAborting = false;
@@ -4762,7 +4724,7 @@ protected:
   ZmScheduler::Timer	m_paceTimer;
   ZmScheduler::Timer	m_idleTimer;
   ZmScheduler::Timer	m_heartBeatTimer;
-  // Active-path timers owned by this Connection; callbacks run on Tx.
+  // Active-path timers owned by this Cxn_; callbacks run on Tx.
   ZmScheduler::Timer	m_pmtudTimer;
 
   // Tx-owned logical deadlines and packet state, separate from timer nodes.
@@ -4800,3 +4762,5 @@ protected:
 };
 
 } // namespace Zutcp
+
+#endif /* ZutcpCxn_HH */

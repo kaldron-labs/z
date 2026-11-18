@@ -111,6 +111,7 @@ public:
   bool find(const TFOCookieKey &, TFOCookie &) const;
   bool erase(const TFOCookieKey &);
   bool resize(unsigned); // stopped; retain newest entries without changing order
+  void final();
 
 private:
   Slots m_slots;

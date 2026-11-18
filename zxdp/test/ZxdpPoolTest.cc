@@ -17,6 +17,8 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmRef.hh>
 
+#include <zlib/ZtArray.hh>
+
 #include <zlib/ZePlatform.hh>
 
 #include <zlib/ZiIOBuf.hh>
@@ -33,6 +35,16 @@ friend inline ZuStringT<"Zxdp.Test.PlainPool"> ZmNHeapID(PlainPool *);
   void free(uint8_t *) override { }
 };
 
+static auto createArena(
+  const Zi::IOBufPoolList &pools, Zi::IOBufPool *rx, unsigned mtu)
+{
+  ZtArray<ZmRef<Zi::IOBufPool>> refs;
+  refs.size(pools.count_());
+  auto iter = pools.citer();
+  while (auto pool = iter()) new (refs.push()) ZmRef<Zi::IOBufPool>{pool};
+  return Zxdp::Xdp::UMem::create(refs.cspan(), rx, mtu);
+}
+
 static void testPools()
 {
   ZuTestScope(testPools);
@@ -45,7 +57,7 @@ static void testPools()
   pools.pushNode(tx.ptr());
   pools.pushNode(control.ptr());
   pools.pushNode(empty.ptr());
-  auto created = Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500);
+  auto created = createArena(pools, rx.ptr(), 1500);
   ZuCHECK(created.is<ZmRef<Zxdp::Xdp::UMem>>(),
     "intrusive caller-owned pool list provisions the arena");
   if (created.is<ZeException>()) return;
@@ -105,28 +117,28 @@ static void testInvalid()
   auto tx = backend->bufPool(1, 128);
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
-  ZuCHECK(Zxdp::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
+  ZuCHECK(createArena({}, rx.ptr(), 1500).is<ZeException>(),
     "an Rx pool without a Tx pool is rejected");
   rx->count = 0;
-  ZuCHECK(Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
+  ZuCHECK(createArena(pools, rx.ptr(), 1500).is<ZeException>(),
     "empty Rx reserve rejected");
   rx->count = 2;
   rx->size = 1500;
-  ZuCHECK(Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
+  ZuCHECK(createArena(pools, rx.ptr(), 1500).is<ZeException>(),
     "Rx fits complete Ethernet frame");
   rx->size = 1514;
   auto extra = backend->bufPool(1, 128);
   pools.pushNode(extra.ptr());
   tx->count = unsigned(-1);
-  ZuCHECK(Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
+  ZuCHECK(createArena(pools, rx.ptr(), 1500).is<ZeException>(),
     "kernel arena count overflow rejected before mapping");
   pools.clean();
   ZmRef<PlainPool> plain = new PlainPool;
   plain->count = 2;
   plain->size = 1514;
   pools.pushNode(plain.ptr());
-  ZuCHECK(Zxdp::Xdp::UMem::create({}, plain.ptr(), 1500).is<ZeException>() &&
-      Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
+  ZuCHECK(createArena({}, plain.ptr(), 1500).is<ZeException>() &&
+      createArena(pools, rx.ptr(), 1500).is<ZeException>(),
     "generic Zi pools cannot supply raw registered arena slots");
 }
 
@@ -141,7 +153,7 @@ static void testZiAllocator()
   tx->tailRoom = 11;
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
-  auto created = Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500);
+  auto created = createArena(pools, rx.ptr(), 1500);
   ZuCHECK(created.is<ZmRef<Zxdp::Xdp::UMem>>(), "Zi pool geometry provisions registered backing");
   if (created.is<ZeException>()) return;
   auto arena = ZuMv(created.p<ZmRef<Zxdp::Xdp::UMem>>());
@@ -161,7 +173,7 @@ static void testZiAllocator()
     "registered metadata retains its original backing after arena retirement");
   second = nullptr;
   buf = nullptr;
-  auto reprovisioned = Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500);
+  auto reprovisioned = createArena(pools, rx.ptr(), 1500);
   ZuCHECK(reprovisioned.is<ZmRef<Zxdp::Xdp::UMem>>(),
     "Zi final return permits reprovisioning the original pools");
   if (reprovisioned.is<ZmRef<Zxdp::Xdp::UMem>>())
@@ -178,7 +190,7 @@ static void testPoolGeometry()
   auto tx = backend->bufPool(1, TxSize);
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
-  auto created = Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500);
+  auto created = createArena(pools, rx.ptr(), 1500);
   ZuCHECK(created.is<ZmRef<Zxdp::Xdp::UMem>>(), "requested Rx alignment fits registered chunks");
   if (created.is<ZeException>()) return;
   auto arena = ZuMv(created.p<ZmRef<Zxdp::Xdp::UMem>>());
@@ -205,7 +217,7 @@ static void testPoolGeometry()
     rx->tailRoom = geometry.rxTail;
     tx->headRoom = geometry.txHead;
     tx->tailRoom = geometry.txTail;
-    auto result = Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500);
+    auto result = createArena(pools, rx.ptr(), 1500);
     ZuCHECK(result.is<ZeException>() && !rx->alloc() && !tx->alloc(),
       "bad alignment or header/trailer reserves fail before either pool activates");
     if (result.is<ZmRef<Zxdp::Xdp::UMem>>()) {
@@ -225,7 +237,7 @@ static void testContention()
   auto tx = backend->bufPool(Slots, 128);
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
-  auto created = Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500);
+  auto created = createArena(pools, rx.ptr(), 1500);
   ZuCHECK(created.is<ZmRef<Zxdp::Xdp::UMem>>(), "contention fixture provisioned");
   if (created.is<ZeException>()) return;
   auto arena = ZuMv(created.p<ZmRef<Zxdp::Xdp::UMem>>());

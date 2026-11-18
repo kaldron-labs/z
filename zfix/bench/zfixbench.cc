@@ -38,7 +38,7 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZfixClient.hh>
 #include <zlib/ZfixServer.hh>
-#include <zlib/ZutcpMx.hh>
+#include <zlib/Zutcp.hh>
 
 namespace FixBench {
 
@@ -1319,18 +1319,17 @@ static bool run(const Config &c) {
     << " congestion_control=" << unsigned(!c.native || c.congestionControl)
     << " offer_rate=" << c.offers.rate << " pending_cap=" << c.offers.cap << '\n';
   if (c.native) {
-    auto stack = new Zutcp::Instance{&mx,
-      {.interface = c.interface, .spin = c.spin, .packetCount = c.reserve,
-       .txThread = sender, .txSid = senderSid}};
-    mx.plugin(stack);
-    Zutcp::InstanceConfig settings;
-    settings.ackHoldTimeout = ZuTime{0, int32_t(c.ackHoldUS * 1000)};
-    settings.congestionControl = c.congestionControl;
-    auto configured = stack->configure(settings);
-    if (configured.is<ZeException>()) {
-      std::cerr << "native_configuration error=" << configured.p<ZeException>() << '\n';
+    Zutcp::Instance::Params settings{.interface = c.interface, .spin = c.spin,
+      .packetCount = c.reserve, .txThread = sender, .txSid = senderSid,
+      .ackHoldTimeout = ZuTime{0, int32_t(c.ackHoldUS * 1000)},
+      .congestionControl = c.congestionControl};
+    ZmRef<Zutcp::Instance> stack = new Zutcp::Instance{&mx};
+    auto initialized = stack->init(ZuMv(settings));
+    if (initialized.is<ZeException>()) {
+      std::cerr << "native_configuration error=" << initialized.p<ZeException>() << '\n';
       return false;
     }
+    mx.plugin(stack);
   }
   Zfix::HubLimits limits;
   uint64_t budget = uint64_t(c.pipeline) * 1024 + 65536;

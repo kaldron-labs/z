@@ -6,11 +6,23 @@
 
 // TCP byte transport diagnostics
 
-#ifndef Zutcp_HH
-#error "include zlib/Zutcp.hh before this header"
+#ifndef ZutcpDiag_HH
+#define ZutcpDiag_HH
+
+#ifndef ZutcpLib_HH
+#include <zlib/ZutcpLib.hh>
 #endif
 
+#include <stdint.h>
+
 #include <zlib/ZtString.hh>
+
+#include <zlib/ZutcpRecovery.hh>
+#include <zlib/ZutcpPath.hh>
+
+#if defined(ZDEBUG) && !defined(Zutcp_DEBUG)
+#define Zutcp_DEBUG
+#endif
 
 namespace Zutcp {
 
@@ -177,3 +189,5 @@ struct LinkDiag {
 };
 
 } // namespace Zutcp
+
+#endif /* ZutcpDiag_HH */

@@ -93,10 +93,16 @@ request = bytes(range(256)) * (128 if sys.argv[2] == 'window' else 32)
 copies = 2 if sys.argv[2] in ('repeat', 'tfo', 'tfo-fallback') else 1
 (out / 'expected').write_bytes((b'echo: ' + request) * copies)
 PY
+native_driver=application
+native_program=("$root/zutcp/util/zutcppair")
+if [[ $profile != baseline && $profile != repeat ]]; then
+  native_driver=protocol
+  native_program=("$root/zutcp/itest/zutcppairtest" --protocol-pair)
+fi
 server_command=("$root/zutcp/util/zutcpkernelpeer" server "$server" 18181 1)
-client_command=("$root/zutcp/util/zutcppair" client ztcpkc "$server" 18181 "$out/request")
+client_command=("${native_program[@]}" client ztcpkc "$server" 18181 "$out/request")
 if [[ $direction == kernel-client ]]; then
-  server_command=("$root/zutcp/util/zutcppair" server ztcpks "$server" 18181 1)
+  server_command=("${native_program[@]}" server ztcpks "$server" 18181 1)
   client_command=("$root/zutcp/util/zutcpkernelpeer" client "$server" 18181 "$out/request")
 fi
 if [[ $profile == repeat || $profile == reset || $profile == tfo || \
@@ -104,7 +110,7 @@ if [[ $profile == repeat || $profile == reset || $profile == tfo || \
   server_command[${#server_command[@]}-1]=2
   client_command+=(2)
 fi
-printf '%s\n' "direction=$direction" "family=$family" "profile=$profile" > "$out/roles"
+printf '%s\n' "direction=$direction" "family=$family" "profile=$profile" "native_driver=$native_driver" > "$out/roles"
 uname -a > "$out/kernel.version"
 kernel_namespace=$srv
 if [[ $direction == kernel-client ]]; then kernel_namespace=$cli; fi

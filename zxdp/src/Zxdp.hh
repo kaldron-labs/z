@@ -18,6 +18,7 @@
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuUnion.hh>
 
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmScheduler.hh>
@@ -59,7 +60,12 @@ ZuDerive(Params, (ZuUnion<Xdp::Params>));
 // The caller drives Rx/Tx on their respective single owners. Allocation/free
 // may run on other threads. Allocation holds backing until explicit pool return;
 // an accepted send also holds it until kernel completion or safe close.
-class ZxdpAPI Instance : public ZmPolymorph {
+class ZxdpAPI Instance : public ZmPolymorph, public ZmEngine<Instance> {
+friend class ZmEngine<Instance>;
+
+protected:
+  using Engine = ZmEngine<Instance>;
+
 public:
   ~Instance() override = default;
   Instance(const Instance &) = delete;
@@ -69,9 +75,15 @@ public:
   virtual ZmRef<Zi::IOBufPool> bufPool(unsigned count, unsigned size,
     unsigned headRoom = 0, unsigned tailRoom = 0,
     unsigned align = ZiIOBuf_DefltAlign) = 0;
-  // Initialize once. Retain the handle after failure and close it to finish
-  // rollback. Configuration may expire on return; pool references are retained.
+  // Configure before start. Repeated stopped init is idempotent;
+  // init during any start/stop operation or while running returns an error.
+  // Lifecycle calls are serialized by the caller. Pool nodes stay in the
+  // caller's list; the instance retains pool references independently.
   virtual ZuUnion<void, ZeException> init(const Params &) = 0;
+  // Stop drains service and kernel access. Only Stopped permits final, which
+  // releases retained configuration/storage and may be called by the destructor.
+  virtual void final() = 0;
+  virtual ZeException error() const = 0; // inspect after start/stop completion
 
   virtual bool ready() const = 0;
   virtual unsigned mtu() const = 0;
@@ -84,15 +96,14 @@ public:
   virtual void rx() = 0; // Rx owner, until wake() or device failure
   virtual void wake() = 0;
   virtual unsigned pollTx() = 0;
-  virtual bool stopTx() = 0;
-  // Quiesce Rx, Tx and wake callers first. True means closed, false means
-  // retirement is pending; an error never authorizes releasing kernel backing.
-  virtual ZuUnion<bool, ZeException> close() = 0;
-
   virtual unsigned allQueues(Ztc::QueueMgr::AllFn) const = 0;
 
 protected:
   Instance() = default;
+
+private:
+  virtual void start_() = 0;
+  virtual void stop_() = 0;
 };
 
 ZxdpExtern ZmRef<Instance> instance(Type::T);

@@ -1,3 +1,58 @@
+# Instance ownership boundary
+
+Applications statically construct one Instance, configure it through
+init(Params params), and install it through ZiMultiplex::plugin() before allocator
+registration. Init is idempotent while stopped and fails in every other engine
+state. Start requires initialization. Start/stop use ZmEngine, including queued
+opposite requests, and report completion through ZiMxPlugin's existing callbacks.
+Stop retains configuration and history; final is idempotent, runs only after
+stop and releases configuration, pools, secrets and retained history. Destruction
+also calls final. Keep one Zxdp instance across stop/start; its own engine drains
+sender and kernel access before reporting stopped. There is no initialized flag
+or restart-time replacement.
+There is no configure() method or public params() accessor. Transfer code uses Ztcp/Ztls
+or the generic Zi callback interface. There is no Zutcp Hub/Client/Server
+application transport hierarchy or nativeInstance() bridge. Instance directly
+owns outgoing/accepted protocol records, listener endpoints, admission, secrets,
+history and native pools. Internal listeners own only local bind/options,
+pending/live membership and listener drain state.
+
+Instance implements ZiMxPlugin and its inherited Ztc::Mx interface, not Ztc::Hub.
+One Cxn base supplies connection identity, application association and intrusive
+ownership membership; CliCxn and SrvCxn share the Cxn_ protocol implementation.
+Instance owns one m_cxns list, m_cxnCount and m_cxnsLock. allCxns() snapshots
+published application connections from that list, filtering pending and retiring
+entries, then invokes callbacks without holding the membership lock. There is no
+separate observation list or connection-manager object.
+
+Connection admission counters and limit checks belong directly to Instance.
+Cxn carries its admitted/pending/closing flags; there are no separate admission
+token or ledger classes. Reserve before constructing a connection, cancel failed
+setup reservations, and attach successful reservations before first delivery.
+Keep passive tuple deduplication through acceptance and first-packet reentrancy.
+Release admitted capacity only after the connection's Rx/Tx drain. Admission
+totals are distinct from ownership-list counts because reservation precedes
+construction.
+
+Client and listener endpoints embed their binding hash nodes. Instance contains
+the non-owning EndpointIndex directly; no separately allocated binding records,
+opaque owner pointers or duplicate bound-local-address fields are maintained.
+Dispatch preserves exact-local then wildcard lookup, and unbind removes only
+the requesting endpoint's own node before its owner drains. Accepted connections
+share their listener's binding and retain the existing TCP tuple routing.
+
+allQueues() delegates directly to Zxdp's existing ring enumeration. It does not
+traverse connections or listeners, or expose protocol bookkeeping as transport
+queues. Do not add queue containers, indexes, registries or tracking caches.
+Queue callbacks borrow the XDP rings; finish enumeration before closing their
+owning XDP instance.
+
+Destination route/static-neighbor lookup runs synchronously on mx Rx during
+outbound and passive setup. It is intentional bounded blocking netlink work,
+with no route-worker selection or round trip. This supersedes historical notes
+below that place lookup outside Rx/Tx. Preserve real Rx/Tx ownership and ordered
+teardown; test contexts cannot reintroduce a second production owner or mode.
+
 # Current Phase 8 execution boundary
 
 The live protocol uses standard
@@ -74,8 +129,7 @@ fallback. Shared source nodes own native data leases through their frame ranges;
 existing sent-record nodes own copied/control packet leases. Both are independent
 of kernel CQ. Keep temporary Zi handoff scoped to synchronous submission and
 clear it before refusal can discard its record. Provider owners drain all these
-references before provider destruction. Qlog captures scalar summaries only and
-must not retain a source-storage reference.
+references before provider destruction.
 
 Zi Tx submission uses the same retained source node as native writers. Its
 PacketBuf base is a borrowed wire view; stable payload coordinates and the caller
@@ -242,11 +296,8 @@ payload buffer. Short packets also carry ordinary frames. Neither output path
 reserves protection tags or samples. Pure ACK Initials omit parameters to avoid
 a parameter-response ACK loop.
 
-Preserve bounded packet/frame, ACK, connection, parameter and recovery logging
-while removing feature-specific TLS/key/crypto events. Construct event records on
-the logger thread and keep metadata capture inside `ZutcpLOG`. Unknown/removed
-frame types fail admission and produce a packet-drop event. Close output may
-piggyback a pending ACK without waiting for its delay timer.
+Unknown/removed frame types fail admission. Close output may piggyback a pending
+ACK without waiting for its delay timer.
 
 Initial token framing, Retry bootstrap/parameter state and the `NEW_TOKEN` and
 `HANDSHAKE_DONE` facilities are removed. Payload length follows the CIDs directly
@@ -299,8 +350,7 @@ in `README.md`.
 - Use existing `Zutcp` protocol enums, fixed-size protocol values, Z socket
   address types, and module-local helpers before adding ad hoc string or STL
   representations.
-- Debug text logging is unrelated to qlog.  Use `ZiLOG(Debug, ...)` for debug
-  text and keep qlog instrumentation behind `ZutcpLOG`.
+- Use `ZiLOG(Debug, ...)` for debug text logging.
 
 # Buffers
 
@@ -408,343 +458,6 @@ Tx protector/recovery state on Tx. Defer server Rx retirement until its current
 CRYPTO delivery callback unwinds. Late crypto and ACK snapshots must not
 repopulate a retired packet-number space. Initial-key storage has a separate
 existing cross-owner read and is not changed by the Handshake retirement repair.
-
-# qlog
-
-## Contract
-
-`ZutcpLOG` is the source marker for qlog-only runtime instrumentation.  It must
-make qlog work obvious during review and erase qlog-only work from release
-builds.
-
-Use the same split as `ZiLog` / `ZiLOG`:
-
-- `ZutcpLOG(...)` is the macro used at call sites.
-- `ZutcpLog(...)` is the function called by the macro in debug builds.
-- `ZutcpLogger` owns the qlog writer thread, ring, diagnostics, JSON helpers,
-  and file output.
-
-Do not add `Zutcp_LOG*`, `Zutcp_DEBUG_LOG*`, or additional `ZutcpLOG*` macros.
-
-`Zutcp_DEBUG` is the controlling conditional compile for qlog code.  Release
-build verification must use `z.config`, then top-level `make clean`, then
-top-level `make -j8`; do not validate release behavior with partial
-subdirectory rebuilds.
-
-Qlog file output should follow the `ZiLog` file-sink precedent: when a qlog
-path already exists, age it through the configured archive depth before opening
-the new log file.  Automated tests must place qlogs in a `ZiTestResidue`-owned
-directory family so successful runs remove them and failed runs retain them.
-
-## Lifecycle and gating
-
-`ZutcpLogger` is a `ZmSingleton` process-wide singleton.  The owning app
-initializes it under main-thread control, early and once, from qlog parameters
-during application `init`; it finalizes the logger after protocol app machinery
-is drained and all activity has ceased during application `final`.
-
-After initialization, `ZutcpLogger::enabled()` is the single runtime
-availability check for qlog.  Call sites and helpers should not separately
-consult the owning app's qlog params.
-
-No qlog-only expression may be evaluated in release builds.  No qlog-only
-expression may be evaluated in debug builds when qlog is disabled by
-configuration.  `ZutcpLOG` must check the runtime enabled flag before
-evaluating its argument, just as `ZiLOG` filters severity before posting to the
-logger thread.
-
-## Call-site shape
-
-All qlog-only work belongs inside the `ZutcpLOG` argument, usually in lambda
-capture initializers or in the lambda body.  This includes:
-
-- reading runtime counters only used for qlog;
-- reading congestion, recovery, path, CID, stream, TLS, or packet metadata only
-  used for qlog;
-- converting enums or times into qlog strings/units;
-- building qlog event structs;
-- counting qlog frames or ACK ranges;
-- copying qlog-only strings, owned `ZeString` values, or arrays;
-- calling qlog JSON helper functions.
-
-Correct pattern:
-
-```c++
-ZutcpLOG(([
-  space,
-  pn,
-  bytes,
-  bytesInFlight = m_congestion.bytesInFlight(),
-  latestRTT = m_rtt.latest()
-](auto &o, ZuTime time) mutable {
-  PktEvent event{
-    .packetSpace = space,
-    .packetNumber = pn,
-    .packetSize = bytes,
-    .bytesInFlight = bytesInFlight,
-    .latestRTTUS = uint64_t(latestRTT.microsecs())
-  };
-  o.logPktSent(event, time);
-}));
-```
-
-Incorrect pattern:
-
-```c++
-uint64_t bytesInFlight = m_congestion.bytesInFlight();
-PktEvent event;
-event.packetSpace = space;
-ZutcpLOG(([event, bytesInFlight](auto &o, ZuTime time) mutable {
-  o.logPktSent(event, time);
-}));
-```
-
-The incorrect form leaves qlog-only reads and event construction in the hot
-path even when qlog compiles out.
-
-Do not add qlog-specific branches outside `ZutcpLOG` unless they also affect
-normal protocol behavior.  If an event should be skipped because it is empty,
-put the skip inside the macro when the skip is qlog-only:
-
-```c++
-ZutcpLOG(([
-  ackedBytes = update.ackdBytes,
-  ...
-](auto &o, ZuTime time) {
-  if (!ackedBytes) return;
-  ...
-}));
-```
-
-If the branch is protocol logic already needed without qlog, keep it outside:
-
-```c++
-if (!update.ackdBytes) return;   // protocol/recovery path already needs this
-ZutcpLOG(([...](auto &o, ZuTime time) { ... }));
-```
-
-## Captures and threading
-
-Capture by value only.  The lambda is moved through the inter-thread ring and
-executes later on the qlog thread.
-
-Allowed captures:
-
-- scalar IDs, packet numbers, sizes, timestamps, enum values, flags, counters;
-- small fixed-size or bounded qlog snapshots;
-- Z value types whose copy cost and lifetime are explicitly acceptable;
-- qlog frame summaries after they have been reduced to bounded metadata;
-- `ZeString` values only for genuinely arbitrary string data that must cross
-  the async boundary.
-
-Do not capture:
-
-- references;
-- raw packet or stream payload buffers;
-- mutable runtime state;
-- `this`, `impl()`, `app()`, stream objects, path objects, congestion objects,
-  or crypto objects;
-- secrets, plaintext, key material, tokens, or unbounded application data.
-
-The hot-path thread should only:
-
-- evaluate capture initializers in debug builds after `ZutcpLOG` has confirmed
-  qlog is enabled;
-- move the lambda by value into the qlog ring;
-- update qlog enqueue/drop diagnostics.
-
-The qlog thread should do as much as possible:
-
-- construct qlog-specific structs from captured values;
-- map enum names through `ZtEnumMap` and qlog field names through `ZfStruct`
-  metadata;
-- use `ZfJSON` / `ZfStruct` mappings;
-- write JSON-SEQ records;
-- perform bounded formatting.
-
-Do not format JSON, allocate scratch JSON strings, or walk runtime-owned
-containers on Rx/Tx I/O threads.
-
-## Data modeling and JSON
-
-Most qlog fields are not arbitrary strings.  QUIC protocol data is normally
-fixed-size scalar data, IP address/port data, protocol IDs, error codes,
-enumerations, or other closed vocabularies.  Short string literals used in the
-code for qlog reasons, triggers, actions, states, packet labels, or frame
-labels should be modeled as enum values, aligning with system error-code style
-classification.  Do not capture those literals as strings.
-
-If a value is an enumeration or closed vocabulary, keep it as an enum and use a
-`ZtEnumMap` with `ZfStruct` / `ZfJSON`.  The JSON string conversion belongs on
-the logger thread, during `ZfJSON` serialization:
-
-```c++
-ZtEnum(TheEnum, int8_t, Value0, Value1);
-ZtEnumMap(TheEnum, JSON, "value_0", "value_1");
-ZfStruct(, (TheStruct, JSON),
-  (enum_, (Ctor<...>, Enum<TheEnum::JSON>),	Int8));
-```
-
-Do not translate enums to strings in helper functions just to feed those
-strings back into `ZfJSON`.
-
-Use existing Z framework printing and JSON facilities for Z network value
-types.  `ZiIP` already knows how to print itself, and qlog endpoint/address
-JSON should be expressed as `ZfJSON` / `ZfStruct` mappings over `ZiIP`,
-`ZiSockAddr`, ports, and enum/scalar fields.  Do not add qlog-local IP address
-formatters, byte shifting, `{data(), length()}` span reconstruction, or string
-parsing helpers for functionality the Z types already provide.
-
-Do not capture `ZuCSpan` for arbitrary string data unless it points at static
-storage that will outlive the logger thread.  If the data is genuinely
-arbitrary or detailed at run time, capture it as an owning `ZeString` and move
-it into the event on the qlog thread:
-
-```c++
-ZutcpLOG(([
-  foo = ZeString{fooSpan},
-  bar = int64_t(value)
-](auto &o, ZuTime time) mutable {
-  QLogBaz event{
-    .foo = ZuMv(foo),
-    .bar = bar
-  };
-  o.logBaz(ZuMv(event), time);
-}));
-```
-
-## Event construction and schema
-
-Build qlog event structs inside the lambda body from captured values:
-
-```c++
-ZutcpLOG(([
-  action,
-  reason,
-  mtu = m_path.activeMaxUDP(),
-  antiAmplification = m_path.antiAmplificationRemaining(),
-  validated = pathValidated_()
-](auto &o, ZuTime time) {
-  PathEvent event{
-    .action = action,
-    .reason = reason,
-    .mtu = mtu,
-    .antiAmplification = antiAmplification,
-    .validated = validated
-  };
-  o.logPathUpdated(event, time);
-}));
-```
-
-Qlog event types should be plain data structs with fields that can be
-initialized directly from captured values.  Prefer aggregate/member
-initialization over default construction followed by assignment:
-
-```c++
-PathEvent event{
-  .action = action,
-  .reason = reason,
-  .mtu = mtu,
-  .validated = validated
-};
-```
-
-Avoid this pattern unless there is a real dependency between assignments:
-
-```c++
-PathEvent event;
-event.action = action;
-event.reason = reason;
-event.mtu = mtu;
-event.validated = validated;
-```
-
-Default construction can needlessly zero-initialize or default-construct fields
-that are immediately overwritten.  Keep the data structs simple enough that
-call sites and writer helpers can initialize only the emitted fields.
-
-Prefer typed event fields over string fields.  If a value is derived at run
-time, first model it as a scalar, fixed-size value, error code, or enum with
-`ZtEnumMap`.  Qlog event names are closed vocabulary values: model them as a
-`ZtEnumMap`-backed enum and serialize them through `ZfJSON`; do not pass qlog
-event names around as `ZuCSpan`, `ZeString`, or string literals outside the
-enum map.  Event string fields must own their data only when the string is
-genuinely arbitrary free-form text; in that rare case use `ZeString`, move it
-into the event with `ZuMv`, and let the logger thread serialize from owned
-data.  Use borrowed `ZuCSpan` only for static non-event literals with process
-lifetime.
-
-Event names and field shapes must track the current qlog draft schema for
-`quic:*` events.  When an event or field extends beyond that schema, align it
-with mainstream reference implementation precedent where one exists, such as
-mvfst's `quic:path_validated` extension event and its `success` / `vantage`
-payload shape.  Reference precedent covers both the event name and the data
-fields; do not add zutcp-specific detail fields to a reference-backed `quic:*`
-extension event unless the reference implementation does the same.  If no
-clear reference precedent exists, keep the event or field under the private
-zutcp schema instead of presenting it as standard QUIC qlog output.
-
-For packet/frame summaries, reduce payload data to bounded metadata only:
-
-- frame type;
-- stream id, offset, length, FIN;
-- ACK largest/ranges/counts/delay;
-- crypto offset and length;
-- close error code and redacted/length-limited reason metadata;
-- CID sequence/length/reset-token presence;
-- path challenge/response presence and length, not challenge bytes.
-
-Do not log payload bytes or key material.
-
-## Helpers and exceptions
-
-Helpers are encouraged, but they must preserve the compile-out rule.
-
-Good helpers:
-
-- logger-thread helpers called from inside the `ZutcpLOG` lambda;
-- pure qlog conversion helpers used only inside `ZutcpLOG`;
-- bounded event writers that take already-captured scalar metadata;
-- JSON serialization helpers using `ZfJSON` / `ZfStruct`.
-
-Bad helpers:
-
-- hot-path wrappers such as `qlogFoo_()` that hide qlog work behind a normal
-  function call;
-- helpers that read runtime state before entering `ZutcpLOG`;
-- helpers that build qlog event structs before entering `ZutcpLOG`;
-- helpers that use `ZutcpLogger::enabled()` to guard qlog work in normal code.
-
-`ZutcpLogger::enabled()` is acceptable for lifecycle checks and tests, but it
-is not the hot-path instrumentation pattern.  Hot-path instrumentation should
-use `ZutcpLOG`.
-
-Use `ZutcpLogger::enabled()` only for qlog state that must be accumulated
-synchronously on the protocol thread before a later `ZutcpLOG` writer-thread
-post.  The main case is packet receive frame summaries: frame metadata is only
-available while parsing frames, but the final packet event is posted after the
-packet is accepted.  `ZutcpLogger::enabled()` must be conditionally compiled:
-in `Zutcp_DEBUG` builds it performs the qlog runtime-enabled check, and in
-non-debug builds it is a `constexpr false` stub.  In this narrow case,
-construct the accumulator only inside the enabled branch, use
-`ZuUnion<void, T>` so disabled qlog does not default-construct qlog state and
-the union manages destruction, and keep the accumulated data bounded and
-payload-free.
-
-## Review checklist
-
-For every qlog call site, verify:
-
-- the visible marker is `ZutcpLOG`;
-- qlog-only reads and temporaries are inside capture initializers;
-- qlog-only conversions and struct construction are inside the lambda body;
-- qlog event structs use direct aggregate/member initialization where possible;
-- captures are by value and bounded;
-- no references, runtime owner pointers, packet payloads, or secrets escape to
-  the qlog thread;
-- JSON output uses `ZfJSON` / `ZfStruct`;
-- release builds erase the qlog-only code at preprocessing time;
-- the hot path does not do qlog formatting or JSON serialization.
 
 Short-header key trials preserve ciphertext in scratch until authentication
 succeeds, then copy authenticated plaintext back into the original packet. This

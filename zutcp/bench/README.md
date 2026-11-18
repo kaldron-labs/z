@@ -65,8 +65,11 @@ on the complete validated response on Rx. It is RTT, not one-way latency. Local
 `ZiTx` completion is never called a peer acknowledgment. The client requests
 ordinary FIN after the last exact response. The server waits for that EOF and
 uses the ordinary peer-close drain. Both await normal disconnect
-before stopping. Native stopped snapshots also verify connection-slot,
-retained-Rx and physical-Tx/control-credit drains.
+before stopping. The application stopped record uses the existing generic mx
+connection enumeration and normalized queue telemetry: running state, actual
+connection count, queue count and queued Tx work. Private native integration
+fixtures separately verify admission, retained backing and physical pool drains;
+the application benchmark does not inspect Zutcp protocol state.
 
 ## Scheduler placement
 
@@ -81,8 +84,8 @@ slots, excluding the scheduler's control/timer thread.
 The direct Zi benchmark pins Rx/Tx using its positional CPU arguments. Both
 benchmarks accept `BENCH_CLIENT_XDP_TX_CPU` and `BENCH_SERVER_XDP_TX_CPU` for
 sid 3, defaulting to the endpoint's Rx CPU. With all three slots
-isolated there is no general worker; native cold route setup dispatches to
-sid 3 and returns completion to Rx.
+isolated there is no general worker. Native route/static-neighbor lookup runs
+synchronously on mx Rx during setup; sid 3 remains the XDP sender slot.
 
 ## Registration and build scope
 
@@ -168,11 +171,12 @@ bytes for kernel TCP and ingress frame count for Instance: kernel runs request 1
 socket buffers; native runs request `BENCH_RESERVE` ingress frames. These units
 are reported explicitly rather than passing a byte count as a native frame count.
 Actual kernel socket buffers and
-native default retention/control/reserve settings, stopped counters and pressure
-are reported separately. Do not add a dummy kernel pool or label unlike backing
+native default retention/control/reserve settings and normalized stopped queue
+telemetry are reported separately. Do not add a dummy kernel pool or label unlike backing
 mechanisms equal. Larger pipelines must retain all refusal/stall observations.
 
-Owners are released after stop and before reporting native pool drain.
+Owners are released after stop and before reporting generic connection/Tx-queue
+drain. No additional queue registry or telemetry cache is maintained.
 Client `samples.csv` contains preallocated bounded raw RTT samples (at most two
 million across connections). Sorting/reporting/files occur after owner shutdown.
 Summaries include p50/p99/max, throughput and separate request/response FIX bytes,

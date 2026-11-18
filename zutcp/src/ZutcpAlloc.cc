@@ -7,7 +7,7 @@
 #include <zlib/ZmAssert.hh>
 
 #include <zlib/ZutcpAlloc.hh>
-#include <zlib/ZutcpMx.hh>
+#include <zlib/Zutcp.hh>
 
 namespace Zutcp {
 

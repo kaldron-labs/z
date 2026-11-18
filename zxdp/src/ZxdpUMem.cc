@@ -35,7 +35,7 @@ static unsigned poolStride(const Zi::IOBufPool &pool)
 }
 
 ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
-  const Zi::IOBufPoolList &txPools, Zi::IOBufPool *rxPool, unsigned mtu)
+  ZuSpan<const ZmRef<Zi::IOBufPool>> txPools, Zi::IOBufPool *rxPool, unsigned mtu)
 {
   auto fail = [](const char *text) { return ZeEXCEPT(Error, "Zxdp", text); };
   // Linux copy-mode Rx adds NET_IP_ALIGN before the Ethernet header.
@@ -59,9 +59,8 @@ ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
   layout.rxCount = rx->count;
   uint64_t txBytes = 0;
   {
-    auto pools = txPools.citer();
-    while (auto node = pools()) {
-      auto pool = dynamic_cast<BufPool *>(node);
+    for (const auto &node : txPools) {
+      auto pool = dynamic_cast<BufPool *>(node.ptr());
       if (!pool || pool == rx || pool->ready() || pool->used() || !pool->size ||
 	pool->size > unsigned(page) || pool->headRoom > pool->size ||
 	pool->tailRoom > pool->size - pool->headRoom || !pool->align ||
@@ -104,9 +103,8 @@ ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
   for (size_t i = 0; i < layout.rxLength>>arena->m_pageShift; ++i) arena->m_pages[i] = rx;
   uint64_t offset = rxBytes;
   unsigned first = 0;
-  auto pools = txPools.citer();
-  while (auto node = pools()) {
-    auto pool = static_cast<BufPool *>(node);
+  for (const auto &node : txPools) {
+    auto pool = static_cast<BufPool *>(node.ptr());
     auto stride = poolStride(*pool);
     auto bytes = (uint64_t(pool->count) * stride + page - 1) & ~(uint64_t(page) - 1);
     pool->init(arena, offset, stride, 0, first);

@@ -53,13 +53,38 @@ public:
   using ZmNHeap<Instance>::operator new;
   using ZmNHeap<Instance>::operator delete;
   Instance() = default;
-  ~Instance() override {
-    ZmAssert_(m_state == Cold || m_state == Closed);
+  ~Instance() override { final(); }
+  void final() override {
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(m_ioState == Cold || m_ioState == Closed);
+    ZmGuard guard(m_queueLock);
     for (auto queue : m_queues) delete queue;
+    m_queues.null();
+    m_rxSlots.null(); m_rxActive.null(); m_txActive.null();
+    m_txPools.null();
+    m_rxPool = nullptr;
+    m_arena = nullptr;
+    m_receive = {}; m_txStopped = {};
+    m_scheduler = nullptr;
+    m_ifindex = m_txSid = 0;
+    m_link = {};
+    m_filter = {};
+    m_closeQueue = m_nextQueue = 0;
+    m_wakes = m_parking = 0;
+    m_ioError = 0;
+    m_txConsumed = 0;
+    m_txExit = m_txExited = 1;
+    m_error = {};
+    m_startFailed = false;
+    m_stopQueued = StopIdle;
+    m_ioState = Cold;
   }
+  ZeException error() const override { return m_error; }
   ZmRef<Zi::IOBufPool> bufPool(
     unsigned count, unsigned size, unsigned headRoom, unsigned tailRoom, unsigned align) override;
-  bool ready() const override { return m_state == Active; }
+  bool ready() const override {
+    return Engine::state() == ZmEngineState::Running && m_ioState == Active;
+  }
   unsigned mtu() const override { return m_link.mtu; }
   bool zeroCopy() const override {
     auto queue = m_queues.length() ? m_queues[0] : nullptr;
@@ -68,39 +93,102 @@ public:
   ZuBSpan mac() const override { return m_link.mac; }
   bool send(uint8_t *, unsigned) override;
   void rx() override;
-  void wake() override { notify(); }
+  void wake() override {
+    notify();
+    if (Engine::stopping() &&
+	!m_stopQueued.cmpXch(StopRequested, StopIdle)) Engine::stopped();
+  }
   unsigned pollTx() override;
   unsigned allQueues(Ztc::QueueMgr::AllFn) const override;
   ZuUnion<void, ZeException> init(const Zxdp::Params &params) override {
-    if (m_state != Cold)
-      return ZeEXCEPT(Error, "Zxdp", "AF_XDP instance has already been initialized");
-    m_state = Closing;
+    if (Engine::state() != ZmEngineState::Stopped)
+      return ZeEXCEPT(Error, "Zxdp", "stop AF_XDP before initialization");
     if (!params.is<Params>())
       return ZeEXCEPT(Error, "Zxdp", "AF_XDP instance requires XDP parameters");
     const auto &config = params.p<Params>();
+    auto rxPool = dynamic_cast<BufPool *>(config.rxPool.ptr());
+    if (!config.ifindex || !config.txPools.count_() || !rxPool || !config.rx)
+      return ZeEXCEPT(Error, "Zxdp",
+	"interface, Tx pools, Rx pool and receive callback are required");
+    if (!config.scheduler || !config.txSid ||
+	config.txSid > config.scheduler->params().nThreads())
+      return ZeEXCEPT(Error, "Zxdp", "AF_XDP requires a scheduler and assigned Tx slot");
+    auto parsed = parseFilter(config.netmask);
+    if (parsed.is<ZeException>()) return ZuMv(parsed).p<ZeException>();
+    {
+      auto pools = config.txPools.citer();
+      while (auto pool = pools())
+	if (!dynamic_cast<BufPool *>(pool))
+	  return ZeEXCEPT(Error, "Zxdp", "Tx pools must be native AF_XDP pools");
+    }
     m_ifindex = config.ifindex;
-    m_rxPool = dynamic_cast<BufPool *>(config.rxPool.ptr());
     m_receive = config.rx;
     m_txStopped = config.txStopped;
     m_spin = config.spin;
     m_scheduler = config.scheduler;
     m_txSid = config.txSid;
+    m_filter = ZuMv(parsed).p<Filter>();
     m_txPools.length(config.txPools.count_());
     {
       auto pools = config.txPools.citer();
       unsigned i = 0;
       while (auto pool = pools()) m_txPools[i++] = static_cast<Zi::IOBufPool *>(pool);
     }
-    if (!m_ifindex || !m_txPools.length() || !m_rxPool || !m_receive) {
-      return ZeEXCEPT(Error, "Zxdp",
-	"interface, Tx pools, Rx pool and receive callback are required");
+    m_rxPool = rxPool;
+    return {};
+  }
+
+private:
+  void start_() override {
+    m_stopQueued = StopIdle;
+    m_error = {};
+    if (!m_rxPool || !m_scheduler->running()) {
+      m_error = ZeEXCEPT(Error, "Zxdp", "initialize AF_XDP and start its scheduler before start");
+      Engine::started(false);
+      return;
     }
-    if (!m_scheduler || !m_txSid || m_txSid > m_scheduler->params().nThreads()) {
-      return ZeEXCEPT(Error, "Zxdp", "AF_XDP requires a scheduler and assigned Tx slot");
+    auto result = open();
+    if (result.is<void>()) { Engine::started(true); return; }
+    m_error = ZuMv(result).p<ZeException>();
+    m_startFailed = true;
+    m_stopQueued = StopRequested;
+    beginStop();
+  }
+  void stop_() override { beginStop(); }
+  void beginStop() {
+    m_ioState = Closing;
+    notify();
+    if (stopTx() && m_stopQueued.cmpXch(StopRetiring, StopRequested) == StopRequested) {
+      if (m_scheduler->running())
+	m_scheduler->push([this] { retire(); }, m_txSid);
+      else retire();
     }
-    auto parsed = parseFilter(config.netmask);
-    if (parsed.is<ZeException>()) return ZuMv(parsed).p<ZeException>();
-    auto filter = ZuMv(parsed).p<Filter>();
+  }
+  void retire() {
+    auto result = close();
+    if (result.is<ZeException>() && !m_error) m_error = ZuMv(result).p<ZeException>();
+    if (m_ioState != Closed) {
+      m_scheduler->push([this] { retire(); }, m_txSid);
+      return;
+    }
+    if (m_startFailed) {
+      m_startFailed = false;
+      Engine::started(false);
+    } else Engine::stopped(!m_error);
+  }
+
+  ZuUnion<void, ZeException> open() {
+    ZmGuard guard(m_queueLock);
+    if (m_ioState == Closed) {
+      ZmAssert_(!m_rxHeld && !m_txHeld && !unsigned(m_txPending) && unsigned(m_txExited));
+      for (auto queue : m_queues) delete queue;
+      m_queues.length(0);
+      m_arena = nullptr;
+      m_closeQueue = m_nextQueue = 0;
+      m_wakes = m_parking = 0;
+      m_ioError = 0;
+    }
+    m_ioState = Closing;
     auto queried = queryLink(m_ifindex);
     if (queried.is<ZeException>()) return ZuMv(queried).p<ZeException>();
     m_link = ZuMv(queried).p<LinkState>();
@@ -109,7 +197,7 @@ public:
     if (!m_link.rxQueues || m_rxPool->count < m_link.rxQueues) {
       return ZeEXCEPT(Error, "Zxdp", "Rx pool must provision every interface queue");
     }
-    auto created = UMem::create(config.txPools, m_rxPool.ptr(), m_link.mtu);
+    auto created = UMem::create(m_txPools.cspan(), m_rxPool.ptr(), m_link.mtu);
     if (created.is<ZeException>()) return ZuMv(created).p<ZeException>();
     m_arena = ZuMv(created).p<ZmRef<UMem>>();
     const auto &layout = m_arena->layout();
@@ -143,7 +231,7 @@ public:
 	out << "AF_XDP wake registration failed: " << error;
       }));
     }
-    auto loaded = m_program.load(m_link.rxQueues, filter);
+    auto loaded = m_program.load(m_link.rxQueues, m_filter);
     if (loaded.is<ZeException>()) return loaded;
     auto attached = m_attachment.attach(m_ifindex, m_program);
     if (attached.is<ZeException>()) return attached;
@@ -172,15 +260,15 @@ public:
       }
     }
     m_txConsumed = m_queues[0]->socket.tx().consumed();
-    m_state = Active;
+    m_ioState = Active;
     m_txExit = m_txExited = 0;
     for (unsigned i = 0; i < m_link.rxQueues; ++i)
       replenish(*m_queues[i], m_queues[i]->quota);
     return {};
   }
-  ZuUnion<bool, ZeException> close() override {
-    if (m_state == Closed) return true;
-    m_state = Closing;
+  ZuUnion<bool, ZeException> close() {
+    if (m_ioState == Closed) return true;
+    m_ioState = Closing;
     if (!stopTx()) return false;
     if (m_arena && m_rxPool->ready()) {
       m_rxPool->retire();
@@ -233,7 +321,7 @@ public:
       return false;
     }
     m_program.reset();
-    m_state = Closed;
+    m_ioState = Closed;
     if (m_ioError) {
       return ZeEXCEPT(Error, "Zxdp", ([error = ZeError{int(m_ioError)}](auto &out) {
 	out << "AF_XDP I/O failed: " << error;
@@ -243,7 +331,7 @@ public:
     return true;
   }
 
-  bool stopTx() override {
+  bool stopTx() {
     if (unsigned(m_txExited)) return true;
     if (m_scheduler->state() == ZmEngineState::Stopped) {
       m_txPending = 0;
@@ -259,6 +347,7 @@ public:
 	m_txPending = 0;
 	m_txExited = 1;
 	if (stopped) stopped();
+	if (m_stopQueued.cmpXch(StopRetiring, StopRequested) == StopRequested) retire();
       }, m_txSid);
       return false;
     }
@@ -289,14 +378,14 @@ private:
   }
 
   void serveTx() {
-    if (unsigned(m_txExit) || unsigned(m_state) != Active) return;
+    if (unsigned(m_txExit) || unsigned(m_ioState) != Active) return;
     auto &socket = m_queues[0]->socket;
     auto &ring = socket.tx();
     while (!unsigned(m_txExit)) {
       if (sendto(socket.fd(), nullptr, 0, MSG_DONTWAIT, nullptr, 0) < 0 &&
 	  errno != EINTR && errno != EAGAIN && errno != EBUSY && errno != ENOBUFS) {
 	m_ioError = errno;
-	m_state = Closing;
+	m_ioState = Closing;
 	notify();
 	return;
       }
@@ -350,6 +439,7 @@ private:
 
   enum { Quantum = 64, End = unsigned(-1) };
   enum { Cold, Active, Closing, Closed };
+  enum { StopIdle, StopRequested, StopRetiring }; // one sender-side retirement chain
   using Indices = ZtArray<unsigned, ZtArrayHeapID<"Zxdp.RxSlots">>;
   using Packets = ZtArray<uint8_t *, ZtArrayHeapID<"Zxdp.TxActive">>;
   using Queues = ZtArray<Queue *, ZtArrayHeapID<"Zxdp.Queues">>;
@@ -360,6 +450,10 @@ private:
   RecvFn	m_receive;
   StopFn	m_txStopped;
   LinkState	m_link;
+  Filter	m_filter;
+  ZeException	m_error;
+  bool		m_startFailed = false;
+  ZmAtomic<unsigned> m_stopQueued{StopIdle};
   unsigned	m_ifindex = 0, m_spin = 1000;
   ZmScheduler	*m_scheduler = nullptr;
   unsigned	m_txSid = 0;
@@ -367,9 +461,9 @@ private:
   BPFProgram	m_program;
   BPFAttach	m_attachment;
   Queues	m_queues;
-  mutable ZmLock m_queueLock; // cold enumeration versus mapping retirement only
+  mutable ZmLock m_queueLock; // enumeration versus initialization and mapping retirement
   int		m_events = -1, m_wakeFD = -1;
-  ZmAtomic<unsigned> m_state{Cold}, m_txExit{1}, m_txExited{1};
+  ZmAtomic<unsigned> m_ioState{Cold}, m_txExit{1}, m_txExited{1};
   ZmAtomic<int> m_ioError{0};
   unsigned	m_closeQueue = 0;
   alignas(Zm::CacheLineSize) ZmAtomic<unsigned> m_txPending{0};
@@ -457,7 +551,7 @@ void Instance::rx()
     if (n < 0) {
       if (errno == EINTR) continue;
       m_ioError = errno;
-      m_state = Closing;
+      m_ioState = Closing;
       return;
     }
     // A delayed writer can leave stale readiness after its pulse was consumed.

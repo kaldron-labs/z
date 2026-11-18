@@ -41,7 +41,7 @@
 #include <zlib/ZiRx.hh>
 #include <zlib/ZiTx.hh>
 
-#include <zlib/ZutcpMx.hh>
+#include <zlib/Zutcp.hh>
 
 namespace FixBench {
 // Existing fixture bounds: short FIX records and capped cold sample/config storage.
@@ -227,18 +227,18 @@ public:
   explicit App(const Config &config, ZiMxParams params) :
     ZiMultiplex{ZuMv(params)}, m_config{config} {
     if (config.native) {
-      m_instance = new Zutcp::Instance{this,
-	{.interface = config.interface, .spin = config.spin, .packetCount = config.reserve,
-	 .txSid = 3}};
-      plugin(m_instance);
-      Zutcp::InstanceConfig settings;
-      auto configured = m_instance->configure(settings);
-      if (configured.is<ZeException>()) {
-	ZiLOG(Error, "zutcpbench", ([error = ZuMv(configured.p<ZeException>())](auto &out) {
-	  out << "native configure: " << error;
-	}));
-	m_failed = 1;
+      Zutcp::Instance::Params settings{.interface = config.interface,
+        .spin = config.spin, .packetCount = config.reserve, .txSid = 3};
+      ZmRef<Zutcp::Instance> instance = new Zutcp::Instance{this};
+      auto initialized = instance->init(settings);
+      if (initialized.is<ZeException>()) {
+        ZiLOG(Error, "zutcpbench", ([error = ZuMv(initialized.p<ZeException>())](auto &out) {
+          out << "backend initialization: " << error;
+        }));
+        m_failed = 1;
+        return;
       }
+      plugin(instance);
       std::cout << "native_configuration control_count=" << settings.controlBufCount
 	<< " control_credits=" << settings.txControlCredits << " rx_retain="
 	<< settings.rxRetainFramesPerCxn << " max_data="
@@ -273,16 +273,6 @@ public:
       out << "first_failure reason=" << reason << " id=" << id
 	<< " sequence=" << sequence << " detail=" << detail;
     }));
-    if (m_instance) {
-      txRun([this] {
-	auto state = m_instance->txAdmission();
-	ZiLOG(Error, "zutcpbench", ([state](auto &out) {
-	  out << "failure_tx outstanding=" << state.outstanding << " capacity=" << state.capacity;
-	}));
-	m_done.post();
-      });
-      return;
-    }
     m_done.post();
   }
   bool failed() const { return m_failed.load_(); }
@@ -338,7 +328,6 @@ private:
   using Alloc = Zi::IOBufAllocator;
   using Flag = ZmAtomic<unsigned>;
   Config		m_config;
-  Zutcp::Instance	*m_instance = nullptr; // owned by the existing plugin binding
   Alloc		*m_network = nullptr, *m_frames = nullptr, *m_output = nullptr;
   Results		m_results;
   Owners		m_owners; // bounded App ownership through mx stop
@@ -608,14 +597,18 @@ bool App::report()
       << ZuBoxed(double(n * request)/seconds).fp<3>() << " response_bytes_per_second="
       << ZuBoxed(double(n * response)/seconds).fp<3>() << "\n";
   }
-  if (m_instance) {
-    auto c = m_instance->cxnAdmission();
-    auto tx = m_instance->txAdmission();
-    std::cout << "native_stopped ready=" << unsigned(m_instance->ready()) << " cxns=" << c.total
-      << " pending=" << c.pending << " tx_outstanding=" << tx.outstanding
-      << " control_count=" << tx.controlCount << " data_stalls=" << tx.dataStalls
-      << " control_stalls=" << tx.controlStalls << "\n";
-    ok &= !m_instance->ready() && !c.total && !c.pending && !tx.outstanding;
+  if (m_config.native) {
+    unsigned cxns = 0;
+    allCxns([&cxns](Ztc::Connection *) { ++cxns; });
+    uint64_t queued = 0;
+    unsigned queues = allQueues([&queued](Ztc::Queue *queue) {
+      Ztc::QueueTelemetry data;
+      queue->telemetry(data);
+      if (data.type == Ztc::QueueType::Tx) queued += data.count;
+    });
+    std::cout << "native_stopped running=" << unsigned(running()) << " cxns=" << cxns
+      << " queues=" << queues << " tx_queued=" << queued << "\n";
+    ok &= !running() && !cxns && !queued;
   }
   return ok;
 }

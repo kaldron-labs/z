@@ -13,18 +13,17 @@
 #include <zlib/Zutcp.hh>
 
 #include "ZutcpTestAlloc.hh"
+#include "ZutcpTestInstance.hh"
 
-class TestApp : public ZmNHeap<TestApp>, public Zutcp::Hub<TestApp> {
+class TestApp : public ZmNHeap<TestApp>, public ZutcpTest::Context<> {
 friend inline ZuStringT<"Zutcp.ConnectionFixture.TestApp"> ZmNHeapID(TestApp *);
 public:
   using ZmNHeap<TestApp>::operator new;
   using ZmNHeap<TestApp>::operator delete;
-  Zi::IOBufAllocator *dataTxAllocator() const { return Zutcp::inlineAllocator(); }
   TestApp() {
-    ZiAssert(init(Zutcp::HubParams{&m_mx}.maxData(16)), "Zutcp", (),
+    ZiAssert(init(ZutcpTest::Params{mx()}.maxData(16)), "Zutcp", (),
       "connection test app init failed", abort());
   }
-  ~TestApp() { final(); }
   bool rxInvoked() const { return true; }
   bool txInvoked() const { return true; }
   template <typename L> void rxRun(L l) { l(); }
@@ -32,18 +31,16 @@ public:
   template <typename L> void txInvoke(L l) { l(); }
   template <typename O, typename L> void txInvoke(O *, L l) { l(); }
 
-private:
-  ZiMultiplex m_mx;
 };
 
 class TestConnection : public ZmNHeap<TestConnection>,
-  public Zutcp::Connection<TestApp, TestConnection, Zutcp::TxBufAlloc<>> {
+  public Zutcp::Cxn_<TestApp, TestConnection, Zutcp::TxBufAlloc<>> {
 friend ZuStringT<"Zutcp.ConnectionTest"> ZmNHeapID(TestConnection *);
-  using Base = Zutcp::Connection<TestApp, TestConnection, Zutcp::TxBufAlloc<>>;
+  using Base = Zutcp::Cxn_<TestApp, TestConnection, Zutcp::TxBufAlloc<>>;
 public:
   using ZmNHeap<TestConnection>::operator new;
   using ZmNHeap<TestConnection>::operator delete;
-  TestConnection(TestApp *app) : Base{app} { configLocalParams(app); }
+  TestConnection(TestApp *app) : Base{app} { configLocalParams(app); Base::resetPath(); }
   int process(Zutcp::Reader &) { return 0; }
   bool flushTx() { return false; }
   void pto() { }

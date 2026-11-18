@@ -161,6 +161,15 @@ bool TFOCache::erase(const TFOCookieKey &key)
   return true;
 }
 
+void TFOCache::final()
+{
+  m_order.clean();
+  m_index = nullptr;
+  m_slots.null();
+  m_free = unsigned(-1);
+  m_full = 0;
+}
+
 bool TFOCache::resize(unsigned capacity)
 {
   if (!capacity) return false;
@@ -175,7 +184,7 @@ bool TFOCache::resize(unsigned capacity)
     next.store(entry.key, entry.cookie.span());
   }
   m_order.clean();
-  m_index->clean();
+  if (m_index) m_index->clean();
   m_order = ZuMv(next.m_order);
   m_index = ZuMv(next.m_index);
   m_slots = ZuMv(next.m_slots);

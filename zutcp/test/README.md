@@ -1,5 +1,29 @@
 # Zutcp unit tests
 
+## Repair verification — 2026-11-18
+
+Verified the single-Instance repair and subsequent connection/endpoint/lifecycle
+consolidation on Linux x86-64 with the configured Clang debug build, without
+sanitizers or a clean build. Rebuilt the scoped libraries, unit binaries, native
+drivers, examples, benchmark and Zfix benchmark under one eight-job make jobserver.
+
+- All unit suites passed for zu, zm, zt, ze, zf, zi, zv, zxdp, ztcp, zutcp and
+  zfix, including Zfix schema checks. Zutcp: 315 checks; Zxdp: 14 checks.
+- Privileged private-network runs passed: 110 Zutcp native cases, eight Zxdp
+  native cases, eight Ztcp/Ztls application cases and 36 independent kernel-peer
+  interoperability cases. Native tests cover both IP families, simultaneous
+  client/listener roles, setup failure, listener isolation, restart, retained
+  backing, ring telemetry and teardown.
+- The wire-analyzer self-test passed its positive and negative evidence cases.
+  An application bootstrap compiled using staged installed headers alone.
+  Source/link scans confirmed the removed application hierarchy is absent and
+  Zi/Ztcp/Zutcp library dependencies remain one-way. Whitespace checks passed.
+
+Build diagnostics were clean after repairing the inherited heap-tag ambiguity
+and migrating the IP fixture to embedded endpoint nodes. Required native checks
+were executed without skips. This veth verification does not establish physical
+NIC DMA/zero-copy behavior. See the native and interop READMEs for fixture commands.
+
 `ZutcpRecoveryTest::cumulativeByteHistory` and `byteHistoryBatchAndFin` cover the
 Phase 3 cumulative byte-history operation: partial and duplicate ACKs, stable
 covering coordinates, repeated sends of identical bytes, bounded byte-ordered
@@ -39,18 +63,26 @@ and archived with the native-endpoint checkpoint. Native multi-connection, idle,
 pressure and stale owner-work equivalents remain open; current green tests do not
 extend the completed Phase 1 regression gate or establish TCP interoperability.
 
-`ZutcpBufferTest::testAllocatorDirection` verifies Hub initialization and retained
+`ZutcpBufferTest::testAllocatorDirection` verifies Instance configuration and retained
 byte adaptation make zero mx allocator requests. An external application-side
 factory request calls the plugin provider hook once. `ZutcpTestAlloc.hh` contains
 only test/application factory exercises; production Zutcp owns its internal pools
 and adapters, and makes no request to `ZiMultiplex::allocator`.
 
-Reuse the configured Clang/debug/ASan tree. Build from the top level with
-`make -j8`, then run:
+For repair 3 use the scoped clang-debug procedure in
+[the repair plan](../../zutcp_repair3.md), which adopts `REBUILD.md` with the
+listed modules frozen. Reuse compatible builds and one shared make jobserver;
+do not run a full-tree build or add sanitizer configurations for this repair.
+After rebuilding the dependency libraries and unit binaries, run
+`make -C zutcp/test test`.
 
-```sh
-ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 make -C zutcp/test test
-```
+`ZutcpTestInstance.hh` constructs a real Instance over private heap-backed packet
+pools, with no Linux interface query or AF_XDP socket. The actual Instance owns
+policy, admission and retained-tuple state. Concrete test contexts provide only
+deterministic clock/dispatch and selected allocation/packet hooks. They do not
+recreate Hub/Client/Server transport owners or a production no-instance mode.
+The same header's private listener fixture reuses the production passive endpoint
+primitive and holds only its local membership and drain state.
 
 `ZutcpIPTest` covers direct Ethernet/IP framing using independent IPv4/IPv6
 wire vectors, borrowed payload identity, IPv4 header checksum corruption, every
@@ -90,14 +122,13 @@ sample bound. Native end-to-end coverage remains in `../itest/zutcppairtest`.
 
 The live client/server setup uses this plaintext codec through Zxdp. Current
 runtime acceptance lives in `../itest/zutcppairtest`. The archived loopback
-runtime covered additional multi-client, idle-qlog and ownership regressions;
+runtime covered additional multi-client and ownership regressions;
 those cases still need native equivalents. Certificate provisioning and
 TLS/protection/early-data/Retry-specific cases are removed.
 
 Connection-only setup credit replaces per-stream byte/count negotiation.
 `ZutcpCodecTest::testTransportParamCoverage` checks an independent exact parameter
-vector containing the connection byte limit and no stream limits. Parameter qlog
-coverage requires obsolete stream negotiation fields to be absent. Reset-token
+vector containing the connection byte limit and no stream limits. Reset-token
 transport parameters are removed; the former parameter code follows ordinary
 unknown-parameter handling. Bootstrap tests retain CID identity checks.
 
@@ -158,9 +189,11 @@ mutable queue position and pending Zi descriptor. The data tests check original
 descriptor coordinates through partial consumption, retained byte identity after
 queue reset, and the same storage identity through loss/retransmission splitting.
 Production writers now allocate registered backing through Instance and first
-submission reuses it. Logical unit apps explicitly use local builtin storage.
-ZutcpBufferTest verifies Hub does not request an mx allocator and refuses to
-supply native producer storage through a non-native plugin. Packetization and
+submission reuses it. Deterministic connection producers use the real Instance's
+registered adapter over private heap-backed packet pools. Isolated codec inputs
+and explicit control-packet hooks may still use builtin test storage.
+ZutcpBufferTest verifies Instance makes no request to the mx allocator factory
+and retains its own producer adapter independently of application factory calls. Packetization and
 recovery fixtures still cover heap-backed application input and fragmentation.
 Native same-slot production and whole-buffer credit are exercised by
 zutcpstacktest. The copied recovery and packetization path is retained in Phase 1.
@@ -186,7 +219,7 @@ selection across repeated transmissions and exclusion from control packet loss.
 The timeout congestion check preserves ssthresh on repeated loss of the same
 covering range. ZutcpTimerTest exercises the actual connection RTO separately
 from control PTO and includes it in cancellation and disconnect draining.
-ZutcpBufferTest verifies Hub defaults, bounds and configuration forwarding.
+ZutcpBufferTest verifies Instance defaults, bounds and stopped configuration.
 Connection timestamps and timer deadlines use the inherited Zm::now() clock
 and existing mx add() API. ZutcpTimerTest injects time to check early callbacks,
 replacement deadlines, Advance ordering, rearming and cancellation. No scheduler

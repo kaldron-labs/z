@@ -49,8 +49,8 @@ void testRetainedTx()
   ZmRef<TestConnection> cxn = new TestConnection{&app};
   cxn->txCredit(4);
   cxn->txQueueMax(1);
-  auto buf = ZutcpTest::plaintextAllocator<Zutcp::TxBufAlloc<>>(app.mx())->allocBuf();
-  memcpy(buf->data_(), "abcdef", 6);
+  auto buf = app.dataTxAllocator()->allocBuf();
+  memcpy(buf->data(), "abcdef", 6);
   buf->length = 6;
   ZuCHECK(cxn->enqueue_(buf) && !cxn->enqueue_(buf) && cxn->txQueueCount() == 1,
     "queue pressure must reject without duplicating retained ownership");
@@ -70,9 +70,12 @@ void testRetainedTx()
       !cxn->txCreditAvailable() && cxn->txUnackdBytes() == 6,
     "recovery retains original bytes without consuming credit again");
   uint64_t fin = 0;
+  ZuCHECK(!cxn->dequeueFin(fin),
+    "FIN must wait for its TCP sequence position in the peer window");
+  cxn->extendTxCredit(7);
   ZuCHECK(cxn->dequeueFin(fin) && fin == 6 && cxn->recordTxUnackd(fin, 0, true) &&
       cxn->txUnackdBytes() == 7,
-    "FIN consumes its own sequence position independently of application byte credit");
+    "FIN consumes its own peer-window sequence position after all data bytes");
   ZuCHECK(cxn->ackTxUnackd(0, 4) && !cxn->txCompleted() &&
       cxn->ackTxUnackd(4, 2, true) && cxn->txCompleted() && cxn->txDrained(),
     "partial and final acknowledgments retire exactly their byte/FIN ranges");
@@ -92,7 +95,9 @@ void testRuntimeReset()
     cxn->rxBytes() == 3 && cxn->rxPending() == 1,
     "reset setup must retain delivered bytes and an out-of-order final range");
   cxn->txCredit(16);
-  auto tx = packet(app, "old");
+  auto tx = app.dataTxAllocator()->allocBuf();
+  memcpy(tx->data(), "old", 3);
+  tx->length = 3;
   ZuCHECK(cxn->enqueue_(tx) && cxn->recordTxUnackd(0, 2, false),
     "reset setup must retain both producer and unacknowledged ranges");
   cxn->fin();
@@ -114,12 +119,15 @@ void testRuntimeReset()
     consume(cxn->reader(), "new") && cxn->retireRx(3),
     "reused Rx must accept offset zero after the previous queue advanced");
   cxn->txCredit(16);
-  ZuCHECK(cxn->enqueue_(fresh), "reused Tx must accept a new source range");
+  auto freshTx = app.dataTxAllocator()->allocBuf();
+  memcpy(freshTx->data(), "new", 3);
+  freshTx->length = 3;
+  ZuCHECK(cxn->enqueue_(freshTx), "reused Tx must accept a new source range");
   Zutcp::TxRange range;
   bool fin = false;
   Zutcp::PktBudget budget;
   ZuCHECK(cxn->nextTxRange(budget, range, fin) && !range.dataOffset &&
-    range.storage->pending == fresh && range.length == 3 && !fin,
+    range.storage->pending == freshTx && range.length == 3 && !fin,
     "reused Tx must restart at zero with the new backing");
   cxn->reset(17);
   cxn->stop(23);

@@ -6,9 +6,15 @@
 
 // TCP transport vocabulary
 
-#ifndef Zutcp_HH
-#error "include zlib/Zutcp.hh before this header"
+#ifndef ZutcpTypes_HH
+#define ZutcpTypes_HH
+
+#ifndef ZutcpLib_HH
+#include <zlib/ZutcpLib.hh>
 #endif
+
+#include <zlib/ZuCmp.hh>
+#include <zlib/Zutcp.hh>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -23,6 +29,8 @@
 #include <zlib/ZiIP.hh>
 
 namespace Zutcp {
+
+inline constexpr uint64_t U64Null = ZuCmp<uint64_t>::null();
 
 template <typename T, unsigned N>
 inline ZuArray<T, N> fixedArray(const T &value = T{}) {
@@ -54,8 +62,6 @@ struct ByteData {
 ZuDerive(Host, ZtString<ZtStringHeapID<"Zutcp.Host">>);
 ZuDerive(ParamString, ZtString<ZtStringHeapID<"Zutcp.Param">>);
 
-enum { DefaultMaxPayload = 1200 }; // configured cap, not a wire floor
-enum { BufSize = 1472 };
 
 ZtEnumStruct(ZutcpAPI, DataError, int8_t, None, Reset, Stop);
 
@@ -91,3 +97,5 @@ ZtEnumStruct(ZutcpAPI, RecEvt, int8_t, Ackd, Lost, RTO, PersistCong);
 ZtEnumStruct(ZutcpAPI, SentFrameKind, int8_t, None, Data);
 
 } // namespace Zutcp
+
+#endif /* ZutcpTypes_HH */

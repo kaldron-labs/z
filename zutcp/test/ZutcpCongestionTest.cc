@@ -9,6 +9,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/Zutcp.hh>
+#include <zlib/ZutcpRecovery.hh>
 
 #include "ZutcpTestAlloc.hh"
 

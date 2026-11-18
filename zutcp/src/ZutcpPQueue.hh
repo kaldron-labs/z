@@ -6,9 +6,14 @@
 
 // TCP byte receive queues and SACK metadata
 
-#ifndef Zutcp_HH
-#error "include zlib/Zutcp.hh before this header"
+#ifndef ZutcpPQueue_HH
+#define ZutcpPQueue_HH
+
+#ifndef ZutcpLib_HH
+#include <zlib/ZutcpLib.hh>
 #endif
+
+#include <zlib/ZutcpBuf.hh>
 
 #include <zlib/ZuPtr.hh>
 
@@ -654,3 +659,5 @@ inline bool queueRxSpans(
 }
 
 } // namespace Zutcp
+
+#endif /* ZutcpPQueue_HH */

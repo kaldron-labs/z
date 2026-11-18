@@ -9,6 +9,8 @@
 #include <zlib/ZtArray.hh>
 
 #include <zlib/Zutcp.hh>
+#include <zlib/ZutcpPQueue.hh>
+#include <zlib/ZutcpRecovery.hh>
 
 #include "ZutcpTestAlloc.hh"
 

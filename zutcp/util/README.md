@@ -8,17 +8,19 @@ backend; it is not a dependency of libZutcp.
 
 This is an application integration choice, not an `LD_PRELOAD` library or a
 replacement implementation of arbitrary POSIX `socket()` calls. Applications
-using raw kernel sockets continue to use the kernel until adapted to Zi or the
-native Zutcp roles. `zutcpkernelpeer` deliberately uses ordinary kernel sockets;
+using raw kernel sockets continue to use the kernel until adapted to Zi/Ztcp. `zutcpkernelpeer` deliberately uses ordinary kernel sockets;
 `zutcppair` deliberately uses the actual native Instance, without socket fallback.
 
 ## Select the backend before allocating or starting
 
-The following setup illustrates the existing public API; handle configuration
-and startup failures in the application's normal error path:
+The following boolean application-bootstrap fragment uses the existing plugin
+setter and the single init(Params) configuration entry. Handle its structured
+error before installing the plugin or registering application allocators:
 
 ```cpp
 #include <net/if.h>
+#include <zlib/ZmRef.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZiRx.hh>
 #include <zlib/ZiTx.hh>
 #include <zlib/Zutcp.hh>
@@ -26,22 +28,23 @@ and startup failures in the application's normal error path:
 ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
   s.nThreads(3)
     .thread(1, [](auto &t) { t.isolated(1); })
-    .thread(2, [](auto &t) { t.isolated(1); });
+    .thread(2, [](auto &t) { t.isolated(1); })
+    .thread(3, [](auto &t) { t.isolated(true); });
 })};
 
 // Native branch only. Check if_nametoindex() before constructing Instance.
-auto stack = new Zutcp::Instance{&mx, {.interface = if_nametoindex("OWNED_INTERFACE")}};
-mx.plugin(stack);
-Zutcp::InstanceConfig config;
-auto configured = stack->configure(config);
-if (configured.is<ZeException>()) {
-  /* report configured.p<ZeException>() and stop setup */
+ZmRef<Zutcp::Instance> stack = new Zutcp::Instance{&mx};
+auto initialized = stack->init({.interface = if_nametoindex("OWNED_INTERFACE"), .txSid = 3});
+if (initialized.is<ZeException>()) {
+  ZiLogEvent(ZuMv(initialized.p<ZeException>()));
+  return false;
 }
+mx.plugin(stack);
 
 // Factory calls follow plugin registration while mx is still stopped.
 auto rx = mx.allocator<Zi::IOBufType::RxTCP, ZiRxBuf, 2048>(4096);
-auto tx = mx.allocator<Zi::IOBufType::TxTCP, ZiTxBuf, 1024>(4096);
-// Initialize application/Hub owners while stopped.
+auto tx = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 1024>(4096);
+// Initialize the Ztcp application while stopped.
 // Start mx, then use ordinary listen/connect entry points.
 ```
 
@@ -56,15 +59,24 @@ The factory count requests pool backing; kernel allocation does not emulate a
 fixed native pool. Log effective settings when comparing backends.
 
 Protocol Rx and Tx run on the selected mx owners. Keep application dispatch and
-buffer lifetime rules intact. Public native `Client`/`CliCxn` and `Server`/`SrvCxn`
-examples are in [zutcpclient.cc](../example/zutcpclient.cc) and
-[zutcpserver.cc](../example/zutcpserver.cc). Native role setup is also exercised
-by [zutcppair.cc](zutcppair.cc). The
-[FIX benchmark](../bench/README.md) uses the mapped ZiConnection application path.
-Stop accepting/creating work, finish or abort the connections through their public
-APIs, stop/finalize native Hub owners, then stop mx and release providers after
-owner/kernel retirement. Preserve the Hub-before-Instance-stop contract; do not free
-Instance, owner objects or registered backing while queued I/O can still reference them.
+buffer lifetime rules intact. The client/server examples use Ztcp streams and
+callbacks with static Instance bootstrap; they do not construct Zutcp connection
+classes. The binary [zutcppair.cc](zutcppair.cc) uses the same Ztcp path. Its
+server observes EOF through the existing generic Zi receive context, forwards
+data to Ztcp, and queues its reply on application Tx. Only the control caller
+waits for the Tx barrier and ZiConnection::sync() before requesting physical
+graceful disconnect. The Ztcp link remains attached while the peer finishes.
+
+Protocol-specific TFO authorization, tuple history, fault controls and native
+pool/drain checks are private roles of [zutcppairtest.cc](../itest/zutcppairtest.cc),
+not alternate application transport APIs. Fixtures select those roles when a case
+requires private protocol access. Ordinary application runs retain the Ztcp path.
+The [FIX benchmark](../bench/README.md) uses the mapped ZiConnection application path.
+
+Stop application work and listeners, drain callbacks, then stop mx. Instance is
+the single plugin transport owner. Do not free it or registered backing while
+queued I/O or kernel retirement can still reference them. No separate native
+Hub lifecycle exists.
 
 ## Run a self-contained privileged interoperability check
 
@@ -73,12 +85,13 @@ release tree, configure and build this explicit closure unprivileged:
 
 ```sh
 ./z.config -c -L /chosen/install/prefix
-for module in zu zm zt ze zf zi zxdp zutcp; do
+for module in zu zm zt ze zf zi zv zxdp ztcp zutcp; do
   make -C "$module/src" -j8 || exit
 done
 make -C zi/test -j8 libZiTest.la
 make -C zutcp/util -j8
 make -C zutcp/example -j8
+make -C zutcp/itest -j8
 make -C zutcp/interop -j8
 ```
 
@@ -137,7 +150,8 @@ zutcpclient INTERFACE SERVER_ADDRESS PORT [REQUEST]
 
 The first four tools exchange a binary file: client sends request then FIN;
 server reads EOF, echoes `echo: ` plus the exact request, then FIN. Client stdout
-contains the response; stderr reports role/backend and native stopped admissions.
+contains the response; stderr reports role/backend and completed mx stop. Private
+protocol roles additionally verify and report native admission/provider drain.
 `zutcpclient`/`zutcpserver` are the smaller application examples; their request is
 a command-line string rather than the binary utility's file. They also use actual
 native transport. These are ordinary TCP application protocols, not wire envelopes.

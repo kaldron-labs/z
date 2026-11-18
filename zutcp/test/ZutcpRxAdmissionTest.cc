@@ -12,20 +12,19 @@
 #include <zlib/Zutcp.hh>
 
 #include "ZutcpTestAlloc.hh"
+#include "ZutcpTestInstance.hh"
 
 using namespace ZuTestUtil;
 using namespace Zutcp;
 
-struct AdmissionApp : public ZmNHeap<AdmissionApp>, public Hub<AdmissionApp> {
+struct AdmissionApp : public ZmNHeap<AdmissionApp>, public ZutcpTest::Context<> {
 friend inline ZuStringT<"Zutcp.RxAdmissionTest.AdmissionApp"> ZmNHeapID(AdmissionApp *);
   using ZmNHeap<AdmissionApp>::operator new;
   using ZmNHeap<AdmissionApp>::operator delete;
-  ZiMultiplex multiplex;
   bool allow = true;
   unsigned demands = 0;
 
-  AdmissionApp() { ZmAssert_(init(HubParams{&multiplex}.maxData(16))); }
-  ~AdmissionApp() { final(); }
+  AdmissionApp() { ZmAssert_(init(ZutcpTest::Params{&multiplex}.maxData(16))); }
   bool rxInvoked() const { return true; }
   bool txInvoked() const { return true; }
   template <typename L> void rxRun(L l) { l(); }
@@ -40,9 +39,9 @@ friend inline ZuStringT<"Zutcp.RxAdmissionTest.AdmissionApp"> ZmNHeapID(Admissio
 };
 
 struct AdmissionCxn : ZmNHeap<AdmissionCxn>,
-  Connection<AdmissionApp, AdmissionCxn, TxBufAlloc<>> {
+  Cxn_<AdmissionApp, AdmissionCxn, TxBufAlloc<>> {
 friend inline ZuStringT<"Zutcp.Test.RxAdmission"> ZmNHeapID(AdmissionCxn *);
-  using Base = Zutcp::Connection<AdmissionApp, AdmissionCxn, Zutcp::TxBufAlloc<>>;
+  using Base = Zutcp::Cxn_<AdmissionApp, AdmissionCxn, Zutcp::TxBufAlloc<>>;
   using ZmNHeap<AdmissionCxn>::operator new;
   using ZmNHeap<AdmissionCxn>::operator delete;
   unsigned controls = 0;

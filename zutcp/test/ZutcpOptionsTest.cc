@@ -9,7 +9,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZutcpOptions.hh>
-#include <zlib/ZutcpMx.hh>
+#include <zlib/Zutcp.hh>
 
 using namespace ZuTestUtil;
 using Zutcp::TCPOptions;

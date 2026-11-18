@@ -21,6 +21,13 @@ Zxdp::Params config(
 auto &params = config.p<Zxdp::Xdp::Params>();
 ```
 
+Call `init(config)` before `start()`. Init is idempotent while stopped and
+returns an error while starting, running or stopping. It retains configuration
+without activating I/O. `start()`/`stop()` use the standard `ZmEngine` synchronous
+or callback control forms and state transitions. Call `final()` after stop;
+final is idempotent and the destructor also calls it. Keep the assigned scheduler
+running through stop completion, and use callback control from service threads.
+
 AF_XDP-specific types and operations live in `Zxdp::Xdp`.
 `Xdp::Params` inherits the common `Params_` fields; assign fields directly:
 
@@ -46,7 +53,7 @@ alignment defaults to 64 bytes. Add nodes with `params.txPools.pushNode(pool.ptr
 or move an existing list into `params.txPools`. The parameters are constructed
 in place in the union before initialization.
 Initialization reads this union by const reference without consuming it and
-retains one reference per pool through close. Intrusive list membership remains
+retains one reference per pool through final. Intrusive list membership remains
 with the caller configuration; a node belongs to one
 list at a time. Freeze pool geometry while bound, and retain a pool reference
 for any packet that outlives the instance. Generic Zi pools cannot supply XDP arena slots; use the factory.
@@ -97,8 +104,8 @@ value also applies when the statistics query is unsupported or fails.
 
 Enumeration and mapping retirement share a cold lifetime lock; packet service
 does not acquire it. Read telemetry synchronously inside the enumeration callback.
-Closed instances retain the ring objects and their final telemetry until instance
-destruction. FILL descriptors can remain queued at close; they are not live packet
+Stopped instances retain ring objects and their final telemetry until the next
+start or final. FILL descriptors can remain queued at stop; they are not live packet
 leases after the kernel registration has retired.
 
 Setup reserves one contiguous registered UMEM mapping containing disjoint,
@@ -128,20 +135,20 @@ zero. After an off-owner return to a depleted pool, wake the receive owner and
 arrange another `rx()` entry to replenish input. All packet service and wake
 operations use preallocated state; they perform no heap allocation or packet/
 buffer searches. Wake/join the receiver and quiesce Tx and wake callers before
-close.
+stop.
 
-Initialization and close are control-path operations. Quiesce both service owners before
-calling `close()`. Its `ZuUnion<bool, ZeException>` result holds `true` when closed
-and `false` while kernel retirement is pending. An exception
-retains the handle for explicit recovery/retry. Submitted backing is returned only
-after kernel queue retirement has been observed. Continue close until successful,
-then release the instance. Pools with outstanding raw packets must outlive those
-packets. Freeze their configuration while bound.
+Stop drains sender callbacks and completes kernel queue retirement through
+bounded continuations on the sender slot. Completion means the engine is Stopped,
+including after an I/O error; inspect `error()` for a failed operation's cause.
+Start failure also completes its rollback before reporting failure. There is no
+public close/retry loop. Stop retains pool references and final ring telemetry;
+final releases stopped storage and configuration without implicitly stopping.
 
-`instance->init(config)` returns `ZuUnion<void, ZeException>`. The exception
-branch preserves the setup cause. Keep the original instance on either branch
-and complete close, including any pending kernel rollback after failed init.
-Backend selection and the virtual pool factory perform no interface activation.
+The same initialized instance may stop/start repeatedly. Return any retained
+caller backing before restarting with its pool, because arena creation requires
+unused pools. A pool retained by the caller may outlive instance finalization.
+Serialize init/final against control requests and keep pool geometry fixed while
+bound. Backend selection, the pool factory and init perform no interface activation.
 The interface must have no unrelated XDP attachment. Guarded attach/detach protects
 other owners, including changes concurrent with control operations.
 

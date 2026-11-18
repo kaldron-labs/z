@@ -1453,7 +1453,7 @@ def passive_tuple(directory):
     controls = json.loads((out / 'passive-controls.json').read_text())
     assert controls == {'guarded_total': 1, 'guarded_pending': 0, 'race_pending': 1,
                         'duplicate_pending': 1, 'released_total': 0,
-                        'factory_calls': 3, 'stop_callbacks': 1}
+                        'factory_calls': 4, 'stop_callbacks': 1}
     evidence = {'controlled_server_paths': controls}
     for side in ('client', 'server'):
         path = out / (side + '-side.pcap')

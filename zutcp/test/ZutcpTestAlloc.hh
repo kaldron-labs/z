@@ -8,6 +8,7 @@
 #define ZutcpTestAlloc_HH
 
 #include <zlib/Zutcp.hh>
+#include <zlib/ZutcpBuf.hh>
 
 // Test/application-side requests exercise the public mx factory. Zutcp itself
 // supplies lower-level providers to that factory and must never call it.

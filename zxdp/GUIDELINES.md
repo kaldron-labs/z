@@ -11,13 +11,23 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
   supplying count, size and alignment,
   one dedicated unlinked `ZmRef<Zi::IOBufPool>` Rx pool, receive callback.
   Create pool objects with the selected instance's virtual `bufPool`.
-  Init retains one reference per pool through close, while node membership
+  Init retains one reference per pool through final, while node membership
   remains in the caller configuration list. A node belongs to one
   list at a time; retain pool references for packets that outlive the instance.
   The concrete arena pool is internal. No transmit-completion callback. Without a mask all traffic is selected.
+* Follow ZmEngine's control FSM, including queued opposite requests. Init must
+  precede start and is idempotent while stopped; init in any other state is an
+  error. Init retains configuration; start activates I/O. Stop drains sender and
+  kernel access before completion. Final is stopped-only and idempotent, and is
+  also called by the destructor. Retain one instance across stop/start.
+  Clear retired ring state before restart under the existing queue lock. Pool
+  checks still reject reuse while caller backing remains held. Caller Rx/Tx/wake
+  service is quiescent before stop; the final sender barrier hands retirement to
+  bounded continuations on that scheduler slot. Keep the scheduler running until
+  stop completes. Final releases configuration and stopped storage without I/O.
 * Keep allocation and kernel leases distinct in preallocated slot bookkeeping.
   Explicit pool return may run before or after CQ. Recycle only after both leases
-  end; safe close releases kernel leases while caller-held backing stays valid.
+  end; safe stop releases kernel leases while caller-held backing stays valid.
   One descriptor may be outstanding for a slot. Rejected send acquires no lease.
 
 * Application and transport adaptation belongs to the caller. This library owns
@@ -43,9 +53,9 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
   its epoll/eventfd wake protocol. The caller remains the sole descriptor
   producer and CQ owner; consumption accounting does not release kernel leases.
   Check exit during service and idle spin, then drain sender callbacks with a
-  FIFO continuation before socket retirement.
+  FIFO continuation before engine stop retires sockets.
 * Construct payload directly in registered backing. No payload staging or copy.
-* Quiesce service before close. Retire kernel access before returning submitted
+* Quiesce service before stop. Retire kernel access before returning submitted
   backing. A caller-owned pool retains its arena through the last packet return.
 * Queue configuration and mask compilation are cold-path operations.
 * Own the required `rx()`/`wake()` pair: spin for a configurable count before
