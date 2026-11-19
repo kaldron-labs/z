@@ -1,8 +1,10 @@
 # Goal
 
-Execute Phases 1-18 (see below), exploiting concurrency (see below).
+Execute Phases 1-20 (see below), exploiting concurrency (see below).
 
-IMPORTANT use clang debug only; asan, lsan, gcc, mingw, arm are all out of scope
+IMPORTANT use current build configuration only; other build configurations are out of scope
+- skip modules that would be skipped by top-level `Makefile.am`
+  - example: if postgres is not enabled, skip `zdb_pq`
 
 IMPORTANT re-use builds, don't `make clean` unnecessarily
 
@@ -165,6 +167,25 @@ IMPORTANT: Phase 15 is frozen once it has completed
 1. build and run test suites for `zdash`
   - root cause diagnose and repair any defects
 
+# Phase 19 - depends on Phase 1 (Linux only)
+
+1. build `zxdp` and run its unit tests (`make -C zxdp/test test`)
+2. run the [Zxdp integration tests](zxdp/itest/README.md) with the documented
+   private network fixtures and include DPDK coverage when enabled
+   - root cause diagnose and repair any defects
+
+IMPORTANT: Phase 19 is frozen once it has completed
+- subsequent phases should NOT modify `zxdp`
+
+# Phase 20 - depends on Phases 2, 3, 19 (Linux only)
+
+1. build `zutcp` and run its unit tests (`make -C zutcp/test test`)
+2. run the [Zutcp integration tests](zutcp/itest/README.md) with the documented
+   private network fixtures, including the Ztcp and Ztls application drivers
+   and DPDK coverage when enabled
+3. run the [independent kernel TCP interoperability suite](zutcp/interop/README.md)
+   - root cause diagnose and repair any defects
+
 # Phase Concurrency
 
 - Phases 2, 3 can be concurrent
@@ -173,3 +194,5 @@ IMPORTANT: Phase 15 is frozen once it has completed
 - Phases 10, 11 can be concurrent
 - Phase 12, 14, 17 can be concurrent with any phases that follow 2 and 3
 - Phase 13 can build its modules concurrently
+- Phase 19 can run alongside Phases 2 and 3 or their dependents
+- Phase 20 can run alongside other work once Phases 2, 3, and 19 are complete
