@@ -386,16 +386,20 @@ using GetTimeFmt = GetTimeFmt_<Props>::T;
 template <ZuString ID> struct Long { };
 
 // CLI parameter specification
-template <int8_t I> struct Arg {	// fixed argument position
+// fixed positional argument
+template <int8_t I> struct Arg {
   ZuAssert(I >= 0 && I < 32);
 };
-template <int8_t I> struct Args {	// fixed argument pack position
+// fixed posititional argument pack
+template <int8_t I> struct Args {
   ZuAssert(I >= 0 && I < 32);
 };
-template <int8_t C> struct Opt {	// option "-x value"
+// short option (with value): "-l value", "--long value" or "--long=value"
+template <int8_t C> struct Opt {
   ZuAssert(C > 0);
 };
-template <int8_t C = 0> struct Flag {	// flag "--long", optionally "-x"
+// flag (without value): "--long", optionally "-l"; accepts "--long=value"
+template <int8_t C = 0> struct Flag {
   ZuAssert(C >= 0);
 };
 
