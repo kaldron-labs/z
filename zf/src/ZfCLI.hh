@@ -392,8 +392,12 @@ template <int8_t I> struct Arg {	// fixed argument position
 template <int8_t I> struct Args {	// fixed argument pack position
   ZuAssert(I >= 0 && I < 32);
 };
-template <int8_t C> struct Opt { };	// option "-x value"
-template <int8_t C> struct Flag { };	// flag "-x"
+template <int8_t C> struct Opt {	// option "-x value"
+  ZuAssert(C > 0);
+};
+template <int8_t C = 0> struct Flag {	// flag "--long", optionally "-x"
+  ZuAssert(C >= 0);
+};
 
 // GetLong<Field> - ZuStringT
 // - gets the long option name for the field
@@ -424,6 +428,7 @@ template <
   typename Props>
 struct GetParam<Prop, Props, true> {
   using T = GetValue<Props, Prop>;
+  ZuAssert(sizeof(Prop<T::V>) > 0); // instantiate the property to check its bounds
 };
 template <typename Props> using GetOpt = GetParam<Opt, Props>::T;
 template <typename Props> using GetFlag = GetParam<Flag, Props>::T;
@@ -545,6 +550,12 @@ template <typename Data, typename ...Args>
 inline auto newNode(ZuCSpan source, Args &&...args) {
   using T = Node<Data>;
   return ZuPtr<T>{new T(source, ZuFwd<Args>(args)...)};
+}
+
+// A bare long flag retains its string representation for parser callers.
+inline ZuSpan<char> implicitTrue() {
+  static char value[] = "true";
+  return {value, 4};
 }
 
 inline bool string(
@@ -1087,7 +1098,7 @@ struct AsObject {
 	s << "argument " << ZuBoxed(Args);
       else if constexpr (Opt >= 0)
 	s << "option '-" << char(Opt) << '\'';
-      else if constexpr (Flag >= 0)
+      else if constexpr (Flag > 0)
 	s << "option '-" << char(Flag) << '\'';
       else {
 	s << "option '--";
@@ -1501,7 +1512,7 @@ inline void saveValue(S &s, const T_ &v, ZuCSpan prefix)
       if constexpr (Flag >= 0) {
 	if (bool(v)) {
 	  s.delimit();
-	  s << '-' << char(Flag);
+	  s << "--" << prefix;
 	}
       } else {
 	saveValue_<Facet, Filter, Quote, TypeCode, Props>(s, v,
@@ -1872,10 +1883,11 @@ inline auto AsObject::Handler<O, Facet>::loadField() const
       auto &child = node_->val();
       constexpr int8_t Flag = ZuFieldProp::CLI::GetFlag<Props>{};
       if constexpr (Flag >= 0) {
-	if (ZuUnlikely(child->has<AnyNode::Array>()))
-	  throw ZfCLI_EXCEPT(
-	    ZfCLIError::multipleValues(child->source));
-	return R(true);
+	if (child->has<AnyNode::String>()) {
+	  auto data = child->data<AnyNode::String>().data();
+	  if (!data || data == implicitTrue().data()) return R(true);
+	}
+	return loadValue_<Facet, Filter, ZfFieldTC::Bool, Props, R>(child);
       } else if constexpr (TypeCode == ZfFieldTC::UDT) {
 	using Format_ = Format<T, Facet>;
 	if constexpr (ZuIsSame<Format_, AsObject>{}) {
@@ -2000,7 +2012,7 @@ ZtEnumNS(ZfAPI, OptType, int8_t,
   Arg = 0,	// value
   Args,		// value...
   Option,	// -x value
-  Flag);	// -x
+  Flag);	// --long or -x
 struct Option {
   OptType::T type = -1;
   ZuCSpan expansion;
@@ -2019,6 +2031,7 @@ template <typename Field, ZuString Prefix>
 struct LongEntry {
   using Key = ZuStringT<longName<Field, Prefix>()>;
   static constexpr OptType::T Type =
+    ZuFieldProp::CLI::GetFlag<typename Field::Props>{}() >= 0 ||
     Field::Type::Code == ZfFieldTC::Bool ||
     ZuIsSame<ZuDecay<typename Field::T>, bool>{} ?
       OptType::Flag : OptType::Option;
@@ -2067,8 +2080,9 @@ struct OptEntry {
   static constexpr int Args = ZuFieldProp::CLI::GetArgs<Props>{};
   static constexpr int Opt = ZuFieldProp::CLI::GetOpt<Props>{};
   static constexpr int Flag = ZuFieldProp::CLI::GetFlag<Props>{};
-  static constexpr int Code = Arg >= 0 ? Arg : Args >= 0 ? Args : Opt >= 0 ? Opt : Flag;
-  static constexpr bool Short = Opt >= 0 || Flag >= 0;
+  static constexpr int Code =
+    Arg >= 0 ? Arg : Args >= 0 ? Args : Opt >= 0 ? Opt : Flag > 0 ? Flag : -1;
+  static constexpr bool Short = Opt >= 0 || Flag > 0;
   static constexpr OptType::T Type = Arg >= 0 ? OptType::Arg :
     Args >= 0 ? OptType::Args : Opt >= 0 ? OptType::Option : OptType::Flag;
   static constexpr auto Expansion = longName<Field, Prefix>();
@@ -2314,7 +2328,7 @@ public:
 	  markLong_(longOpt.id);
 	  source << "option '--" << key << '\'';
 	  ++p;
-	  val = {&arg[p], uint64_t(n - p)};
+	  val = {arg.data() + p, uint64_t(n - p)};
 	} else {
 	  // --x
 	  auto longOpt = longOpt_(arg);
@@ -2334,8 +2348,7 @@ public:
 	      key = arg;
 	      markLong_(longOpt.id);
 	      source << "option '--" << key << '\'';
-	      static char true_[] = "true";
-	      val = {true_, 4};
+	      val = implicitTrue();
 	      break;
 	  }
 	}

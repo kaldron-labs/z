@@ -150,6 +150,15 @@ ZfStruct(, (LongOnly, CLI),
   (port,    (CLI::Long<"port">),	UInt32),
   (verbose, (CLI::Long<"verbose">),	Bool));
 
+struct FlagOptions {
+  bool		verbose = false;
+  bool		dryRun = false;
+};
+
+ZfStruct(, (FlagOptions, CLI),
+  (verbose, (CLI::Flag<>),				Bool),
+  (dryRun,  (CLI::Flag<'d'>, CLI::Long<"dry-run">, CLI::Bool_0_1),	Bool));
+
 struct DelimitedArgs {
   ZtArray<ZuCSpan> values;
 
@@ -433,6 +442,55 @@ void longOnlyOptions()
   ZuCheck(message.find("unrecognized option '--unknown'") >= 0);
 }
 
+void flagOptions()
+{
+  ZuTestScope(flagOptions);
+
+  FlagOptions options;
+  ZtString<> saved;
+  ZfCLI::save(saved, options);
+  ZuCheck(!saved.length());
+
+  char cli[] = "x --verbose -d tail";
+  ZfCLI::InCLI in(cli);
+  ZuCheck(ZfCLI::load(options, in.argv) == 2);
+  ZuCheck(options.verbose);
+  ZuCheck(options.dryRun);
+
+  ZfCLI::save(saved, options);
+  ZuCheck(saved == "--verbose --dry-run");
+
+  ZfCLI::OutArgv out;
+  out.argv.push("x");
+  ZfCLI::saveArgv(out, options);
+  ZuCheck(out.argc() == 3);
+  ZuCheck(out.argv[1] == "--verbose");
+  ZuCheck(out.argv[2] == "--dry-run");
+
+  FlagOptions loaded;
+  ZuCheck(ZfCLI::load(loaded, out.argc(), out.argv_c()) == 1);
+  ZuCheck(loaded.verbose);
+  ZuCheck(loaded.dryRun);
+
+  char off[] = "x --verbose=false --dry-run=0";
+  ZfCLI::InCLI offArgs(off);
+  ZfCLI::load(loaded, offArgs.argv);
+  ZuCheck(!loaded.verbose);
+  ZuCheck(!loaded.dryRun);
+
+  char on[] = "x --verbose=true --dry-run=1";
+  ZfCLI::InCLI onArgs(on);
+  ZfCLI::load(loaded, onArgs.argv);
+  ZuCheck(loaded.verbose);
+  ZuCheck(loaded.dryRun);
+
+  char empty[] = "x --verbose=";
+  ZfCLI::InCLI emptyArgs(empty);
+  auto message = cliError([&loaded, &emptyArgs] { ZfCLI::load(loaded, emptyArgs.argv); });
+  ZuCheck(message.find("invalid boolean ''") >= 0);
+  ZuCheck(message.find("option '--verbose'") >= 0);
+}
+
 void integerRange()
 {
   ZuTestScope(integerRange);
@@ -667,6 +725,7 @@ int main(int argc, char **argv)
   ZuTestCall(parseCLIEscapedAndEmpty);
   ZuTestCall(parseCLIRedirect);
   ZuTestCall(longOnlyOptions);
+  ZuTestCall(flagOptions);
   ZuTestCall(integerRange);
   ZuTestCall(realRange);
   ZuTestCall(diagnostics);
