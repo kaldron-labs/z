@@ -226,7 +226,8 @@ struct ZuCmp_Can_cmp<P1, P2, typename ZuCmp_Can_cmp_<
 // test for operator !
 template <typename T, typename = void>
 struct ZuCmp_NullFn_ {
-  template <typename P> static bool null(const P &p) { return false; }
+  template <typename P>
+  ZuInline static constexpr bool null(const P &) { return false; }
 };
 template <typename T>
 struct ZuCmp_NullFn_<T, decltype((!ZuDeclVal<const T &>()), void())> {
