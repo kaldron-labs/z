@@ -125,24 +125,18 @@ private:
   struct HasFinal<U, decltype(&U::final, void())> :
     public ZuBool<__is_member_function_pointer(decltype(&U::final))> { };
 
-  template <typename U, typename = decltype(void(bool(HasFinal<U>{})))>
+  template <typename U>
   static void final(U *u) {
-    if constexpr (!HasFinal<U>{}) {
-
-    } else {
+    if constexpr (HasFinal<U>{})
       u->final();
-    }
   }
 
-  template <bool Construct_ = Construct,
-    typename = void>
+  template <bool Construct_ = Construct>
   void ctor() {
     if constexpr (Construct_) {
       T *ptr = CtorFn();
       this->ref(ptr);
       m_instance = ptr;
-    } else {
-
     }
   }
 
