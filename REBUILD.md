@@ -63,121 +63,17 @@ IMPORTANT: Phase 3 is frozen once it has completed
 IMPORTANT: Phase 4 is frozen once it has completed
 - subsequent phases should NOT modify `zquic`
 
-# Phase 5 - depends on Phases 2, 3
-
-1. build and run test suites for `zfix` (`make -C .../test test`)
-  - root cause diagnose and repair any defects
-
-# Phase 6 - depends on Phase 4
-
-1. build and run test suites for `zhttp` (`make -C .../test test`)
-  - root cause diagnose and repair any defects
-
-2. build and run the QIR interoperability suite
-  - root cause diagnose and repair any defects
-
-IMPORTANT: Phase 6 is frozen once it has completed
-- subsequent phases should NOT modify `zhttp`
-
-# Phase 7 - depends on Phase 6
-
-1. build and run test suites for `zws` (`make -C .../test test`)
-  - root cause diagnose and repair any defects
-
-IMPORTANT: Phase 7 is frozen once it has completed
-- subsequent phases should NOT modify `zws`
-
-# Phase 8 - depends on Phase 6
-
-1. build and run test suites for `zfb` (`make -C .../test test`)
-  - root cause diagnose and repair any defects
-
-IMPORTANT: Phase 8 is frozen once it has completed
-- subsequent phases should NOT modify `zfb`
-
-# Phase 9 - depends on Phase 6
-
-1. build and run test suites for `zpb` (`make -C .../test test`)
-  - root cause diagnose and repair any defects
-
-2. build and run test suites for `zgrpc` (`make -C .../test test`)
-  - root cause diagnose and repair any defects
-
-IMPORTANT: Phase 9 is frozen once it has completed
-- subsequent phases should NOT modify `zpb`, `zgrpc`
-
-# Phase 10 - depends on Phase 7
-
-1. build and run test suites for `zrest` (`make -C .../test test`)
-  - root cause diagnose and repair any defects
-
-IMPORTANT: Phase 10 is frozen once it has completed
-- subsequent phases should NOT modify `zrest`
-
-# Phase 11 - depends on Phase 7
-
-1. build and run test suites for `zjrpc` (`make -C .../test test`)
-  - root cause diagnose and repair any defects
-
-2. build and run test suites for `zmcp` (`make -C .../test test`)
-  - root cause diagnose and repair any defects
-
-IMPORTANT: Phase 11 is frozen once it has completed
-- subsequent phases should NOT modify `zjrpc`, `zmcp`
-
-# Phase 12 - depends on Phases 2, 3
-
-1. build and run test suites for `zdb` (`make -C .../test test`)
-  - root cause diagnose and repair any defects
-
-# Phase 13 - depends on Phase 12
-
-1. build and run test suites for `zdb_pq`, `zdb_sqlite`, `zdf`
-  - root cause diagnose and repair any defects
-  - **these modules can be built/tested concurrently**
-
-IMPORTANT: Phase 12, 13 is frozen once they have completed
-- subsequent phases should NOT modify `zdb`, `zdb_pq`, `zdb_sqlite`, `zdf`
-
-# Phase 14 - depends on Phases 2, 3
-
-1. build and run test suites for `zrl`,
-  - root cause diagnose and repair any defects
-
-# Phase 15 - depends on Phase 13
-
-1. build and run test suites for `ztc`
-  - root cause diagnose and repair any defects
-
-IMPORTANT: Phase 15 is frozen once it has completed
-- subsequent phases should NOT modify `ztc`
-
-# Phase 16 - depends on Phase 15
-
-1. build and run test suites for `zum`
-  - root cause diagnose and repair any defects
-
-# Phase 17 - depends on phases 2, 3
-
-1. build and run test suites for `zgtk`
-  - root cause diagnose and repair any defects
-
-# Phase 18 - depends on phases 16, 17
-
-1. build and run test suites for `zdash`
-  - root cause diagnose and repair any defects
-
-# Phase 19 - depends on Phase 1 (Linux only)
+# Phase 5 - depends on Phase 1 (Linux only)
 
 1. build `zxdp` and run its unit tests (`make -C zxdp/test test`)
 2. run the [Zxdp integration tests](zxdp/itest/README.md) with the documented
    private network fixtures and include DPDK coverage when enabled
    - root cause diagnose and repair any defects
 
-IMPORTANT: Phase 19 is frozen once it has completed
+IMPORTANT: Phase 5 is frozen once it has completed
 - subsequent phases should NOT modify `zxdp`
 
-# Phase 20 - depends on Phases 2, 3, 19 (Linux only)
+# Phase 6 - depends on Phases 2, 3, 5 (Linux only)
 
 1. build `zutcp` and run its unit tests (`make -C zutcp/test test`)
 2. run the [Zutcp integration tests](zutcp/itest/README.md) with the documented
@@ -186,13 +82,119 @@ IMPORTANT: Phase 19 is frozen once it has completed
 3. run the [independent kernel TCP interoperability suite](zutcp/interop/README.md)
    - root cause diagnose and repair any defects
 
+# Phase 7 - depends on Phases 2, 3, and Phase 6 when enabled
+
+1. build and run test suites for `zfix` (`make -C .../test test`)
+  - root cause diagnose and repair any defects
+
+2. on Linux, build `zfixbench` (`make -C zfix/bench zfixbench`) and compare
+   kernel TCP and AF_XDP, plus DPDK when enabled in the current build
+   configuration. Use the [Zfix benchmark instructions](zfix/bench/README.md#managed-plain-fix-over-tcp).
+
+# Phase 8 - depends on Phase 4
+
+1. build and run test suites for `zhttp` (`make -C .../test test`)
+  - root cause diagnose and repair any defects
+
+2. build and run the QIR interoperability suite
+  - root cause diagnose and repair any defects
+
+IMPORTANT: Phase 8 is frozen once it has completed
+- subsequent phases should NOT modify `zhttp`
+
+# Phase 9 - depends on Phase 8
+
+1. build and run test suites for `zws` (`make -C .../test test`)
+  - root cause diagnose and repair any defects
+
+IMPORTANT: Phase 9 is frozen once it has completed
+- subsequent phases should NOT modify `zws`
+
+# Phase 10 - depends on Phase 8
+
+1. build and run test suites for `zfb` (`make -C .../test test`)
+  - root cause diagnose and repair any defects
+
+IMPORTANT: Phase 10 is frozen once it has completed
+- subsequent phases should NOT modify `zfb`
+
+# Phase 11 - depends on Phase 8
+
+1. build and run test suites for `zpb` (`make -C .../test test`)
+  - root cause diagnose and repair any defects
+
+2. build and run test suites for `zgrpc` (`make -C .../test test`)
+  - root cause diagnose and repair any defects
+
+IMPORTANT: Phase 11 is frozen once it has completed
+- subsequent phases should NOT modify `zpb`, `zgrpc`
+
+# Phase 12 - depends on Phase 9
+
+1. build and run test suites for `zrest` (`make -C .../test test`)
+  - root cause diagnose and repair any defects
+
+IMPORTANT: Phase 12 is frozen once it has completed
+- subsequent phases should NOT modify `zrest`
+
+# Phase 13 - depends on Phase 9
+
+1. build and run test suites for `zjrpc` (`make -C .../test test`)
+  - root cause diagnose and repair any defects
+
+2. build and run test suites for `zmcp` (`make -C .../test test`)
+  - root cause diagnose and repair any defects
+
+IMPORTANT: Phase 13 is frozen once it has completed
+- subsequent phases should NOT modify `zjrpc`, `zmcp`
+
+# Phase 14 - depends on Phases 2, 3
+
+1. build and run test suites for `zdb` (`make -C .../test test`)
+  - root cause diagnose and repair any defects
+
+# Phase 15 - depends on Phase 14
+
+1. build and run test suites for `zdb_pq`, `zdb_sqlite`, `zdf`
+  - root cause diagnose and repair any defects
+  - **these modules can be built/tested concurrently**
+
+IMPORTANT: Phase 14, 15 is frozen once they have completed
+- subsequent phases should NOT modify `zdb`, `zdb_pq`, `zdb_sqlite`, `zdf`
+
+# Phase 16 - depends on Phases 2, 3
+
+1. build and run test suites for `zrl`,
+  - root cause diagnose and repair any defects
+
+# Phase 17 - depends on Phase 15
+
+1. build and run test suites for `ztc`
+  - root cause diagnose and repair any defects
+
+IMPORTANT: Phase 17 is frozen once it has completed
+- subsequent phases should NOT modify `ztc`
+
+# Phase 18 - depends on Phase 17
+
+1. build and run test suites for `zum`
+  - root cause diagnose and repair any defects
+
+# Phase 19 - depends on phases 2, 3
+
+1. build and run test suites for `zgtk`
+  - root cause diagnose and repair any defects
+
+# Phase 20 - depends on phases 18, 19
+
+1. build and run test suites for `zdash`
+  - root cause diagnose and repair any defects
+
 # Phase Concurrency
 
-- Phases 2, 3 can be concurrent
-- Phases 4, 5 can be concurrent
-- Phases 7, 8, 9 can be concurrent
-- Phases 10, 11 can be concurrent
-- Phase 12, 14, 17 can be concurrent with any phases that follow 2 and 3
-- Phase 13 can build its modules concurrently
-- Phase 19 can run alongside Phases 2 and 3 or their dependents
-- Phase 20 can run alongside other work once Phases 2, 3, and 19 are complete
+- Phases 2, 3, and 5 can run concurrently after Phase 1
+- Phase 4 can run alongside Phases 6 and 7 once each phase's dependencies are met
+- Phases 9, 10, 11 can be concurrent
+- Phases 12, 13 can be concurrent
+- Phases 14, 16, 19 can be concurrent with any phases that follow 2 and 3
+- Phase 15 can build its modules concurrently
