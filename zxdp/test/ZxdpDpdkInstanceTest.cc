@@ -22,6 +22,8 @@
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmSemaphore.hh>
+
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/Zxdp.hh>
 #include <zlib/ZxdpDpdk.hh>
@@ -353,6 +355,40 @@ static void runDevice()
     ZuCheckRT(restarted && device->ready() && intact(),
     log_(  "restart reuses all native pool backing, including a retained small slot"));
     ZuCheckRT(device->stop() && stops == 2, log_("stop restarted DPDK device"));
+
+    ZmSemaphore retiring, release, settled, canceled;
+    ZmAtomic<unsigned> stopResults{0}, startResult{0}, canceledRuns{0};
+    bool began = device->start(receive, [&retiring, &release] {
+      retiring.post();
+      release.wait();
+    });
+    ZuCheckRT(began, log_("start a run for the queued-start cancellation case"));
+    if (began) {
+      auto refs = rx->refCount();
+      device->stop([&stopResults, &rx, refs](bool ok) {
+	stopResults += ok && rx->refCount() == refs;
+      });
+      bool retiringRun = !retiring.timedwait(Zm::now(5));
+      ZuCheckRT(retiringRun, log_("wait for native stop to enter retirement"));
+      if (retiringRun) {
+	device->start(receive, [pool = rx, &canceledRuns] { if (pool) ++canceledRuns; },
+	  [&startResult, &canceled](bool ok) {
+	    startResult = ok ? 2 : 1;
+	    canceled.post();
+	  });
+	ZuCheckRT(device->state() == ZmEngineState::StartPending && rx->refCount() == refs + 1);
+	device->stop([&stopResults](bool ok) { stopResults += ok; });
+	ZuCheckRT(device->state() == ZmEngineState::Stopping && !stopResults && !startResult);
+      }
+      release.post();
+      device->stop([&settled](bool) { settled.post(); });
+      ZuCheckRT(!settled.timedwait(Zm::now(5)));
+      if (retiringRun) {
+	ZuCheckRT(!canceled.timedwait(Zm::now(5)));
+	ZuCheckRT(stopResults == 2 && startResult == 1 && !canceledRuns &&
+	  device->state() == ZmEngineState::Stopped);
+      }
+    }
     ZuCheckRT(mx.stop(), log_("stop direct-device scheduler after the device quiesces"));
   }
   if (retained) small->free(retained);

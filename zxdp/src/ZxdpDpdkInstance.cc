@@ -458,7 +458,7 @@ void Instance::finishStop(unsigned left)
   auto txStopped = ZuMv(m_txStopped);
   m_receive = {};
   if (txStopped) txStopped();
-  stoppedRun(!m_error);
+  Engine::stopped(!m_error);
 }
 
 void Instance::wake()

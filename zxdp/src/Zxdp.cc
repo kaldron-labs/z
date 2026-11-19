@@ -47,6 +47,78 @@ namespace Zxdp {
 
 ZtEnumImplNS(Type);
 
+template <typename Fn>
+void DeviceEngine::control(Fn fn)
+{
+  // Bind per-run callbacks to the engine transition, then run backend work
+  // and application completions after releasing the device control lock.
+  Work work;
+  {
+    ZmGuard guard(m_controlLock);
+    m_work = &work;
+    fn(work);
+    m_work = nullptr;
+  }
+  work.retired = {};
+  while (work.completions.length()) {
+    auto done = work.completions.shift();
+    done.fn(done.ok);
+  }
+  if (work.start) work.start();
+  if (work.wake) static_cast<Instance *>(this)->wake();
+}
+
+auto DeviceEngine::completion(StartFn fn)
+{
+  return [this, fn = ZuMv(fn)](bool ok) mutable {
+    if (fn) m_work->completions.push(Completion{ZuMv(fn), ok});
+  };
+}
+
+void DeviceEngine::start(RunFns run, StartFn done)
+{
+  control([this, &run, &done](Work &work) {
+    int state_ = state();
+    if (state_ == ZmEngineState::Stopped || state_ == ZmEngineState::Stopping) {
+      work.retired = ZuMv(m_nextRun);
+      m_nextRun = ZuMv(run);
+    }
+    Base::start(completion(ZuMv(done)));
+  });
+}
+
+bool DeviceEngine::stop()
+{
+  return ZmBlock<bool>{}([this](auto done) { stop(ZuMv(done)); });
+}
+
+void DeviceEngine::stop(StartFn done)
+{
+  control([this, &done](Work &) { Base::stop(completion(ZuMv(done))); });
+}
+
+void DeviceEngine::started(bool ok)
+{
+  control([this, ok](Work &) { Base::started(ok); });
+}
+
+void DeviceEngine::stopped(bool ok)
+{
+  control([this, ok](Work &work) {
+    if (state() == ZmEngineState::Stopping) work.retired = ZuMv(m_nextRun);
+    Base::stopped(ok);
+  });
+}
+
+DeviceEngine::RunFns DeviceEngine::takeRunFns()
+{
+  ZmGuard guard(m_controlLock);
+  return ZuMv(m_nextRun);
+}
+
+void DeviceEngine::start_() { static_cast<Instance *>(this)->start_(); }
+void DeviceEngine::stop_() { static_cast<Instance *>(this)->stop_(); }
+
 bool Instance::start(RecvFn receive, StopFn txStopped)
 {
   return ZmBlock<bool>{}([this, &receive, &txStopped](auto wake) {
@@ -57,13 +129,7 @@ bool Instance::start(RecvFn receive, StopFn txStopped)
 void Instance::start(RecvFn receive, StopFn txStopped, StartFn completion)
 {
   m_everStarted = 1;
-  RunFns superseded;
-  Engine::start([completion = ZuMv(completion)](bool ok) {
-    if (completion) completion(ok);
-  }, [this, &receive, &txStopped, &superseded] {
-    superseded = takeRunFns();
-    m_nextRun = {ZuMv(receive), ZuMv(txStopped)};
-  });
+  Engine::start({ZuMv(receive), ZuMv(txStopped)}, ZuMv(completion));
 }
 
 ZuTime Instance::monotonicNow()
@@ -375,7 +441,7 @@ private:
     if (m_startFailed) {
       m_startFailed = false;
       Engine::started(false);
-    } else stoppedRun(!m_error);
+    } else Engine::stopped(!m_error);
   }
 
   ZuUnion<void, ZeException> open() {

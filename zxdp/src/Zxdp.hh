@@ -23,6 +23,8 @@
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmEngine.hh>
 #include <zlib/ZmFn.hh>
+#include <zlib/ZmPLock.hh>
+#include <zlib/ZmQueue.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmPolymorph.hh>
 
@@ -64,14 +66,73 @@ namespace Dpdk {
 }
 ZuDerive(Params, (ZuUnion<Xdp::Params, Dpdk::Params>));
 
+class Instance;
+
+class ZxdpAPI DeviceEngine : private ZmEngine<DeviceEngine> {
+  using Base = ZmEngine<DeviceEngine>;
+  friend Base;
+  friend class Instance;
+
+public:
+  using Base::state;
+  using Base::running;
+  using Base::stopping;
+  using Base::lock;
+  bool stop();
+  void stop(StartFn);
+  bool stopped() { return Base::stopped(); }
+
+protected:
+  struct RunFns {
+    RecvFn receive;
+    StopFn txStopped;
+  };
+
+  void start(StartFn completion) { start({}, ZuMv(completion)); }
+  void start(RunFns, StartFn);
+  void started(bool ok);
+  void stopped(bool ok);
+  RunFns takeRunFns();
+
+private:
+  DeviceEngine() = default;
+
+  struct Completion {
+    StartFn	fn;
+    bool	ok = false;
+  };
+  ZmQueueDerive(Completions, Completion, ZmQueueHeapID<"Zxdp.Control">);
+  using SpawnFn = ZmFn<void(), ZmFnHeapID<"Zxdp.Control">>;
+  struct Work {
+    Completions	completions;
+    RunFns	retired;
+    SpawnFn	start;
+    bool	wake = false;
+  };
+
+  template <typename Fn> void control(Fn);
+  auto completion(StartFn);
+  template <typename Fn> bool spawn(Fn &&fn) {
+    m_work->start = ZuFwd<Fn>(fn);
+    return true;
+  }
+  void wake() { m_work->wake = true; }
+  void start_();
+  void stop_();
+
+  ZmPLock	m_controlLock;
+  Work		*m_work = nullptr;
+  RunFns	m_nextRun;
+};
+
 // The caller drives Rx/Tx on their respective single owners. Allocation/free
 // may run on other threads. Allocation holds backing until explicit pool return;
 // an accepted send also holds it until kernel completion or safe close.
-class ZxdpAPI Instance : public ZmPolymorph, public ZmEngine<Instance> {
-friend class ZmEngine<Instance>;
+class ZxdpAPI Instance : public ZmPolymorph, public DeviceEngine {
+friend class DeviceEngine;
 
 protected:
-  using Engine = ZmEngine<Instance>;
+  using Engine = DeviceEngine;
 
 public:
   ~Instance() override = default;
@@ -117,15 +178,8 @@ public:
   virtual unsigned allQueues(Ztc::QueueMgr::AllFn) const = 0;
 
 protected:
-  struct RunFns {
-    RecvFn receive;
-    StopFn txStopped;
-  };
-
   Instance() = default;
-  RunFns takeRunFns() { return ZuMv(m_nextRun); }
-  void stoppedRun(bool ok) { Engine::stopped(ok, [this] { return takeRunFns(); }); }
-  void resetRun() { m_everStarted = 0; }
+  void resetRun() { takeRunFns(); m_everStarted = 0; }
 
   static ZuTime monotonicNow();
   static void signalWake(int fd, const ZmAtomic<unsigned> &parking);
@@ -136,7 +190,6 @@ private:
   virtual void start_() = 0;
   virtual void stop_() = 0;
 
-  RunFns m_nextRun;
   ZmAtomic<unsigned> m_everStarted{0};
 
 public:
