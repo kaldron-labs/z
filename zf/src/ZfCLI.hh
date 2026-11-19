@@ -1623,6 +1623,10 @@ inline void saveField(S &s, const O &o, ZuCSpan prefix)
       auto &&v = Field::get(o);
       if (ZuNull(v)) return;
       save(v);
+    } else if constexpr (ZfFieldTC::IsVec<TypeCode>{}) {
+      auto &&v = Field::get(o);
+      if (!v) return;
+      save(v);
     } else
       save(Field::get(o));
   } else
