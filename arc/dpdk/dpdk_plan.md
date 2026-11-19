@@ -2,6 +2,8 @@
 
 This plan assumes the initialization and ownership changes in [Zutcp repair 3](../zutcp/zutcp_repair3.md) have landed. DPDK extends that interface. The repair owns the coordinated AF_XDP, TCP, multiplexer and example migrations.
 
+The rebuild and verification sequence below incorporates the [Zutcp rebuild plan](../zutcp/REBUILD_zutcp.md).
+
 ## Baseline and fixed boundaries
 
 Follow the [Zutcp allocation skeleton](../zutcp/zutcp_skeleton.md) on the frozen
@@ -40,8 +42,7 @@ PCI/vdev discovery, memory/NUMA/hugepages, IOVA, process isolation, diagnostics,
 VFIO and extra native argv tokens. Keep all strings/lists owned. No environment
 variable configuration is required.
 
-EAL is discovered through
-ZmSingleton<Dpdk::EAL, ZmSingletonCleanup<ZmCleanup::Platform>>. Its constructor
+EAL is discovered through Dpdk::EAL::instance(). Its constructor
 does not initialize DPDK. Expose init(const EALParams &) returning
 ZuUnion<void, ZeException> and ready() const. The application must explicitly
 initialize it before requesting DPDK instances/pools. A second init attempt is
@@ -291,7 +292,7 @@ simulated wire, not a production backend copy. Stop peer producers before
 draining queues and releasing remaining mbufs/rings.
 
 Provide private shared ring/pcap setup, independent peer progress and cleanup in
-zxdp/itest/zxdpdpdkfixture.hh/.cc. Set fixed software device names/MACs and build
+zxdp/itest/zxdpdkfixture.hh/.cc. Set fixed software device names/MACs and build
 pcap input/output for byte verification. Run EAL initialization variants in fresh
 subprocesses; do not rely on reinitializing process-global EAL between test cases.
 No physical NIC/VFIO binding is required for software acceptance.
@@ -300,9 +301,9 @@ No physical NIC/VFIO binding is required for software acceptance.
 | --- | --- | --- |
 | Pool allocation/lifetime | ZxdpDpdkPoolTest | mbuf identity, geometry, exhaustion/return, retained backing |
 | Device open/alloc/start/stop/final | ZxdpDpdkInstanceTest | explicit EAL, open without pools, typed pool set at alloc, structured failures, reuse after final |
-| Native packet I/O | zxdpdpdkpackettest | direct submission, Rx pool provenance, exact bytes, independent retirement |
-| Wake/service | zxdpdpdkwaketest | counted wakes, sustained Rx and configurable bounded idle; no Xdp sender assertion |
-| Loopback transfer | zxdpdpdklooptest | independent software peer, normal send/receive and teardown |
+| Native packet I/O | zxdpdkpackettest | direct submission, Rx pool provenance, exact bytes, independent retirement |
+| Wake/service | zxdpdkwaketest | counted wakes, sustained Rx and configurable bounded idle; no Xdp sender assertion |
+| Loopback transfer | zxdpdklooptest | independent software peer, normal send/receive and teardown |
 | BPF classifier/filter | no DPDK copy | remains Xdp-specific |
 
 In Zutcp add zutcpdpdktest.cc with its private fixture helper
@@ -334,10 +335,10 @@ following boundaries using the DPDK instance and normal multiplexer entry points
   ingress backing return. Stop an idle receiver without injecting a packet.
 
 Keep AF_XDP drivers unchanged except existing regression expectations legitimately
-shared by status/selection. Software acceptance does not prove NIC DMA or wire
-performance; no new benchmark or physical-NIC acceptance project belongs here.
+shared by status/selection. DPDK acceptance uses software fixtures. Phase 5
+benchmarks cover the kernel TCP and Zutcp/AF_XDP paths.
 
-## Exact file boundary
+## DPDK implementation file boundary
 
 Create:
 
@@ -345,9 +346,9 @@ Create:
 * zxdp/src/ZxdpDpdkInstance.hh, zxdp/src/ZxdpDpdkInstance.cc
 * zxdp/src/ZxdpDpdkPool.hh, zxdp/src/ZxdpDpdkPool.cc
 * zxdp/test/ZxdpDpdkPoolTest.cc, zxdp/test/ZxdpDpdkInstanceTest.cc
-* zxdp/itest/zxdpdpdkfixture.hh, zxdp/itest/zxdpdpdkfixture.cc
-* zxdp/itest/zxdpdpdkpackettest.cc, zxdp/itest/zxdpdpdkwaketest.cc,
-  zxdp/itest/zxdpdpdklooptest.cc
+* zxdp/itest/zxdpdkfixture.hh, zxdp/itest/zxdpdkfixture.cc
+* zxdp/itest/zxdpdkpackettest.cc, zxdp/itest/zxdpdkwaketest.cc,
+  zxdp/itest/zxdpdklooptest.cc
 * zutcp/itest/zutcpdpdktest.cc, zutcp/itest/zutcpdpdkfixture.hh,
   zutcp/itest/zutcpdpdkfixture.cc
 
@@ -372,7 +373,7 @@ repaired protocol algorithms for this backend addition. Existing static AF_XDP
 bootstrap remains valid; DPDK-specific bootstrap belongs in its new fixture and
 documented example configuration. No additional public pool APIs are authorized.
 
-## Buildable phases and verification
+## Buildable DPDK checkpoints
 
 1. Add optional dependency wiring, EAL declarations/implementation and explicit
    EAL tests in the new instance driver, without exposing an instantiable DPDK
@@ -388,13 +389,55 @@ documented example configuration. No additional public pool APIs are authorized.
    DPDK device in the Zutcp integration fixture.
    Run affected suites and update docs.
 
-Use z.config for configuration; do not mix build modes. At each checkpoint use
-top-level make -j8 to refresh dependency closure. Validate --with-dpdk=no,
---with-dpdk=yes with supported libdpdk, and explicit yes with libdpdk absent.
-In enabled builds run make -C zxdp/test test and make -C zutcp/test test after their targets are built. Run the new DPDK itest
-programs through their documented namespace fixture; also rerun applicable
-existing AF_XDP native fixtures from zutcp/itest/README.md. Keep optional
-Ztcp/Ztls consumer verification scoped to the affected tests.
+## Rebuild and verification sequence
+
+Use Clang release builds configured through `z.config`. Reuse compatible build
+products and batch rebuilds. Follow the [build guidance](../../docs/BUILD.md)
+for a clean rebuild when establishing the release configuration or changing
+build mode. At each DPDK checkpoint refresh the dependency closure with a
+top-level build. Build changed libraries before their consumers and build each
+test directory's default target before `make -C <module>/test test`.
+
+Delegate independent work to subagents under one shared GNU make jobserver with
+eight slots total. Start the jobserver with `make -j8` and have recursive make
+calls inherit its slots. ASan, LSan, GCC,
+MinGW and ARM are outside this rebuild matrix. Run listeners, native fixtures
+and debugging tools outside the sandbox with the required access. Use Valgrind
+through `libtool exec` for memory corruption diagnosis. Work autonomously with
+the available authorization. At each phase exit remove temporary test and crash
+residue from `/tmp` and the worktree.
+
+Diagnose each failure to its root cause, repair it in the owning phase and rerun
+the affected checks before closing that phase. The DPDK implementation file
+boundary applies to the backend addition. Baseline repairs belong to their
+rebuild phase, and completed Phases 1–3 freeze their modules for later work.
+
+### Phase 1 — Foundation
+
+Build `zu`, `zm`, `zt`, `ze`, `zf`, `zi` and `zv`, then run each module's
+`make -C <module>/test test`. Freeze these modules when the phase passes.
+
+### Phase 2 — Ztcp
+
+After Phase 1 passes, build `ztcp` and run `make -C ztcp/test test`. Freeze
+`ztcp` when the phase passes.
+
+### Phase 3 — Zdbus and Ztls
+
+After Phase 1 passes, build `zdbus` and `ztls`. Run `make -C zdbus/test test`
+and `make -C ztls/test test`. Phase 3 can run alongside Phase 2. Freeze both
+modules when Phase 3 passes.
+
+### Phase 4 — Zxdp and Zutcp
+
+After Phases 2 and 3 pass, build `zxdp` and `zutcp` and run their unit suites.
+Apply the DPDK checkpoints in order. Validate `--with-dpdk=no`,
+`--with-dpdk=yes` with supported `libdpdk`, and configuration failure for
+explicit `yes` when `libdpdk` is absent. In the final enabled build, run
+`make -C zxdp/test test` and `make -C zutcp/test test` and run the new DPDK
+integration programs through their documented software and namespace fixtures.
+Rerun the applicable AF_XDP drivers from the
+[Zutcp integration README](../../zutcp/itest/README.md).
 
 Required evidence: structured missing-EAL/unsupported-build/port-busy/init failure,
 correct default Xdp selection, direct mbuf submission and caller/device lifetime,
@@ -402,6 +445,27 @@ false-send ownership, receiver pool provenance, counted wakes and idle interval,
 open rollback, frozen pool-set retry after allocation failure, activation retry,
 stable native backing across restart, per-operation typed Rx delivery,
 exclusive binding through stop and same-port reuse after finalization, and the
-registration-time MTU bound including smaller Tx requests. Mirror existing behavioral scope rather than adding a new
-protocol validation matrix. Record actual TAP/build results separately from
-these planned checks. Finish with git diff --check and warning-free builds.
+registration-time MTU bound including smaller Tx requests. Mirror the existing
+behavioral scope.
+
+### Phase 5 — Zfix transport comparison
+
+Once Phases 2 and 3 pass, build `zfix` and run its kernel-TCP suite with
+`make -C zfix/test test`. This kernel-only work may overlap Phase 4 when the
+build outputs it uses are stable. Serialize reconfiguration and rebuilds that
+write to the same build tree. Start the Zutcp/AF_XDP runs and transport
+comparisons after Phase 4 passes.
+
+1. Build and run the equivalent Zfix suite using `zutcp` through the `zxdp`
+   AF_XDP backend.
+2. Build and run the Zfix interoperability and benchmark fixtures for kernel
+   TCP and Zutcp/AF_XDP. Report latency and throughput for one connection and
+   for multiple connections under comparable workloads. See the
+   [Zfix interop README](../../zfix/interop/README.md) and the
+   [Zfix benchmark README](../../zfix/bench/README.md).
+3. Report latency and throughput for all four client/server pairings:
+   Zfix/Zfix, Zfix/QuickFIX, QuickFIX/Zfix and QuickFIX/QuickFIX. Record the
+   transport, workload and connection count for each result.
+
+Record actual TAP, integration, build and benchmark results as the phases
+finish. Require warning-free builds and finish with `git diff --check`.
