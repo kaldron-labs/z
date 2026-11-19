@@ -4,7 +4,7 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// zpicotls/OpenSSL wrapper - main TLS component
+// TLS connection integration
 
 #ifndef Ztls_HH
 #define Ztls_HH
@@ -37,7 +37,13 @@
 #include <zlib/ZtcHub.hh>
 
 #include <zlib/ZtlsRandom.hh>
-#include <zlib/ZtlsPico.hh>
+#include <zlib/ZtlsCxn.hh>
+#include <zlib/ZtlsCredentials.hh>
+#include <zlib/ZtlsEngineOpenSSL.hh>
+
+#if Ztls_Fusion
+#include <zlib/ZtlsFusion.hh>
+#endif
 #include <zlib/ZtlsPK.hh>
 
 #include <stdlib.h>
@@ -51,8 +57,8 @@ namespace Ztls_ {
 // Plaintext buffers hold one complete TLS application record.
 enum {
   TxRecordCapacity = 16 << 10,
-  // Includes TLS 1.3 inner type/padding within zpicotls' supported bound.
-  RxRecordCapacity = PTLS_RECEIVE_RECORD_CAPACITY,
+  // Includes TLS 1.3 inner type/padding within the TLS record bound.
+  RxRecordCapacity = Ztls_RECEIVE_RECORD_CAPACITY,
   // Local packet payload geometry; independent of the peer/outbound MPS.
   RxPacketCapacity = 1460
 };
@@ -81,7 +87,6 @@ using TxBufAlloc =
 
 namespace Ztls {
 
-using TxPacket = Pico::TxPacket;
 
 ZuDerive(CertSpansScratch, (ZtArray<ZuBSpan,
   ZtArrayHeapID<"Ztls.CertSpans", ZtArraySharded<true>>>));
@@ -101,7 +106,7 @@ ZuDerive(LogMsg, ZtString<ZtStringHeapID<"Ztls.Log">>);
 ZuDerive(Host, ZtString<ZtStringHeapID<"Ztls.Host">>);
 ZuDerive(Ticket, (ZtArray<uint8_t, ZtArrayHeapID<"Ztls.Ticket">>));
 ZuDerive(ALPNData, (ZtArray<uint8_t, ZtArrayHeapID<"Ztls.ALPNData">>));
-ZuDerive(ALPN, (ZtArray<ptls_iovec_t, ZtArrayHeapID<"Ztls.ALPN">>));
+ZuDerive(ALPN, (ZtArray<Ztls_::Bytes, ZtArrayHeapID<"Ztls.ALPN">>));
 using ErrorFn = ZmFn<void(ZeException), ZmFnHeapID<"Ztls.ErrorFn">>;
 ZuDerive(ParamString, ZtString<ZtStringHeapID<"Ztls.Param">>);
 ZuDerive(ParamStrings,
@@ -254,8 +259,8 @@ struct TlsInfo {
   bool		psk = false;
 };
 
-// The zpicotls handshake and record receive state is Rx-owned.  Established
-// record transmission is detached into a Tx-owned ptls_tx_t.
+// The TLS handshake and record receive state is Rx-owned.  Established
+// record transmission uses the connection's Tx-owned members.
 
 // API functions: listen, connect, disconnect/disconnect_, txStream/txStream_ (Tx)
 // API callbacks: accepted, connected, disconnected, process (Rx)
@@ -278,12 +283,17 @@ struct TlsInfo {
 // ------------|-------------------------------------------------|------------
 
 template <typename Link_, typename LinkRef_>
-class Cxn : public ZiConnection {
+class LinkCxn :
+  public ZmNHeap<LinkCxn<Link_, LinkRef_>>,
+  public ZiConnection,
+  public Ztls::Cxn
+{
+friend inline ZuStringT<"Ztls.Cxn"> ZmNHeapID(LinkCxn *);
 public:
   using Link = Link_;
   using LinkRef = LinkRef_;
 
-  Cxn(LinkRef link, const ZiCxnInfo &ci) :
+  LinkCxn(LinkRef link, const ZiCxnInfo &ci) :
     ZiConnection(link->app()->mx(), ci), m_link(ZuMvPtr(link)) { }
 
   void connected(ZiRxContext &io) override { m_link->connected_0(this, io); }
@@ -298,9 +308,9 @@ private:
 };
 
 // client links are persistent, own the (transient) connection
-template <typename Link> using CliCxn = Cxn<Link, Link *>;
+template <typename Link> using CliCxn = LinkCxn<Link, Link *>;
 // server links are transient, are owned by the connection
-template <typename Link> using SrvCxn = Cxn<Link, ZmRef<Link>>;
+template <typename Link> using SrvCxn = LinkCxn<Link, ZmRef<Link>>;
 
 using RxStream = Ztls_::RxStream;
 
@@ -366,8 +376,8 @@ protected:
   using Tx::send;
 
 private:
-  struct AsyncJob;
-  using AsyncJobRef = ZmRef<AsyncJob>;
+  struct SignatureWatch;
+  using SignatureWatchRef = ZmRef<SignatureWatch>;
 
 public:
   auto impl() const { return static_cast<const Impl *>(this); }
@@ -381,16 +391,9 @@ public:
     app->linkAdded_(this);
   }
   ~Link() {
-    ZmAssert(!m_txTLS);
     ZmAssert(!m_txCxn);
     app()->linkDeleted_(this, state_());
-    if (m_tls) {
-      if (ZuUnlikely(asyncPending_()))
-	app()->error_(ZeEXCEPT(Error, "Ztls",
-	  "TLS link destroyed with async job pending"));
-      else
-	ptls_free(m_tls);
-    }
+    ZmAssert(!m_asyncJob);
   }
 
   App *app() const { return m_app; }
@@ -460,23 +463,22 @@ public:
   void down() override { disconnect(); }
   TlsInfo tlsInfo() const {
     if (!m_tls || !m_handshook) return {};
-    auto tls = const_cast<ptls_t *>(m_tls);
-    auto cipher = ptls_get_cipher(tls);
-    auto tlsver = ptls_get_protocol_version(tls);
+    auto tls = m_tls;
+    auto cipher = Ztls_::get_cipher(tls);
+    auto tlsver = Ztls_::get_protocol_version(tls);
     return TlsInfo{
       .tlsver = tlsver_(tlsver),
       .protocolVersion = tlsver,
       .cipherID = cipher ? cipher->id : uint16_t{0},
-      .alpn = ptls_get_negotiated_protocol(tls),
-      .psk = bool(ptls_is_psk_handshake(tls))
+      .alpn = Ztls_::get_negotiated_protocol(tls),
+      .psk = bool(Ztls_::is_psk_handshake(tls))
     };
   }
 
 protected:
-  ptls_t *tls() { return m_tls; }
-  void tls(ptls_t *tls_) { m_tls = tls_; }
-  ptls_handshake_properties_t *handshake_props() { return &m_props; }
-  void reset_handshake_props() { memset(&m_props, 0, sizeof(m_props)); }
+  Ztls::Cxn *tls() { return m_tls; }
+  Ztls_::handshake_properties_t *handshake_props() { return &m_tls->handshake_props; }
+  void reset_handshake_props() { if (m_tls) m_tls->handshake_props = {}; }
 
 private:
   static constexpr unsigned TxRecordCapacity = Ztls_::TxRecordCapacity;
@@ -504,6 +506,10 @@ private:
     if (!old) old = m_closing.load_();
     bool replacing = bool(old);
     m_closing = nullptr;
+    if (m_isServer)
+      reset_tls();
+    else
+      retireTLS();
     if (ZuUnlikely(old)) {
       old->close();
       // Retire the old physical output on I/O Tx before publishing B. This
@@ -524,6 +530,14 @@ private:
     stateChanged_(oldState);
     app()->linkConnected_();
     if (!impl()->connectSocket_(replacing)) { impl()->disconnect_(false); return; }
+    m_tls = m_cxn;
+    m_tls->initialize(app()->ctx(), m_isServer, impl());
+    m_tls->plaintext.reset(app()->rxAllocator(), impl());
+    if (Ztls_::receive_stream_check(m_tls)) {
+      app()->error_(ZeEXCEPT(Error, "Ztls", "selected TLS backend lacks serial decryption"));
+      disconnect_(false);
+      return;
+    }
     impl()->connected_(); // client initiates handshake
     // Install the first admission with the initialized TLS generation.
     rearmInput_();
@@ -542,10 +556,10 @@ private:
 	auto buf = ZuMv(io.buf);
 	io.complete();
 	link->app()->rxRun([link, generation, cxn = ZmRef(cxn), buf = ZuMv(buf)]() mutable {
-	  if (link->m_cxn != cxn.ptr() || link->m_disconnecting.load_() ||
-	      generation != link->m_tlsGen.load_()) return;
-	  link->m_rxPaused = true;
-	  link->m_rxInput = ZuMv(buf);
+	  if (link->m_cxn != cxn.ptr() || link->m_tls != cxn.ptr() ||
+	      link->m_disconnecting.load_() || generation != link->m_tlsGen.load_()) return;
+	  cxn->rx_paused = true;
+	  cxn->rx_input = ZuMv(buf);
 	  link->receiveInput_();
 	});
 	return true;
@@ -561,7 +575,7 @@ private:
 
 protected:
   bool handshake_(ZmRef<ZiIOBuf> buf) {
-    if (buf) m_rxInput = ZuMv(buf);
+    if (buf && m_tls) m_tls->rx_input = ZuMv(buf);
     return receiveInput_();
   }
 
@@ -577,46 +591,46 @@ private:
       ZmRef<Cxn> target{m_cxn};
       PacketTarget output{this, target.ptr(), gen};
       auto reservation = packetSink(output);
-      auto sink = reservation.sink();
-      auto plaintext = m_plaintext.sink();
-      size_t consumed = m_rxInput ? m_rxInput->length : 0;
-      int n = ptls_receive_stream(m_tls, &plaintext, &sink,
-	m_rxInput ? m_rxInput->data() : nullptr, &consumed, &m_props);
-      if (m_rxInput) {
-	m_rxInput->advance(unsigned(consumed));
-	if (!m_rxInput->length) m_rxInput = nullptr;
+
+
+      size_t consumed = m_tls->rx_input ? m_tls->rx_input->length : 0;
+      int n = Ztls_::receive_stream(m_tls, &reservation,
+	m_tls->rx_input ? m_tls->rx_input->data() : nullptr, &consumed, &m_tls->handshake_props);
+      if (m_tls->rx_input) {
+	m_tls->rx_input->advance(unsigned(consumed));
+	if (!m_tls->rx_input->length) m_tls->rx_input = nullptr;
       }
-      if (n != 0 && n != PTLS_ERROR_IN_PROGRESS && n != PTLS_ERROR_ASYNC_OPERATION) {
-	m_plaintext.clear();
-	m_rxInput = nullptr;
-	if (PTLS_ERROR_GET_CLASS(n) == PTLS_ERROR_CLASS_PEER_ALERT &&
-	    PTLS_ERROR_TO_ALERT(n) == PTLS_ALERT_CLOSE_NOTIFY) {
+      if (n != 0 && n != Ztls_ERROR_IN_PROGRESS && n != Ztls_ERROR_ASYNC_OPERATION) {
+	m_tls->plaintext.clear();
+	m_tls->rx_input = nullptr;
+	if (Ztls_ERROR_GET_CLASS(n) == Ztls_ERROR_CLASS_PEER_ALERT &&
+	    Ztls_ERROR_TO_ALERT(n) == Ztls_ALERT_CLOSE_NOTIFY) {
 	  m_peerClosed = true;
 	  disconnect_(true);
 	} else {
 	  app()->error_(ZeEXCEPT(Error, "Ztls", ([n](auto &s) {
-	    s << "ptls_receive_stream(): " << strerror_(n);
+	    s << "Ztls_::receive_stream(): " << strerror_(n);
 	  })));
 	  disconnect_(false);
 	}
 	return false;
       }
-      if (n == PTLS_ERROR_ASYNC_OPERATION) return asyncHandshake_0();
-      if (ptls_handshake_is_complete(m_tls) && !m_handshook && !m_txPending)
+      if (n == Ztls_ERROR_ASYNC_OPERATION) return asyncHandshake_0();
+      if (Ztls_::handshake_is_complete(m_tls) && !m_handshook && !m_txPending)
 	if (!finishHandshake_0()) return false;
-      if (auto buf = m_plaintext.take()) {
+      if (auto buf = m_tls->plaintext.take()) {
 	if (buf->length) {
 	  ++m_rxInCount;
 	  m_rxInBytes += buf->length;
 	  m_rxStream.push(ZuMv(buf));
 	}
       }
-      while (ptls_take_key_update_request(m_tls))
+      while (Ztls_::take_key_update_request(m_tls))
 	if (!updateKey_0()) return false;
       if (m_handshook) processRx_();
       if (gen != m_tlsGen.load_() || m_cxn != target.ptr() ||
 	  m_disconnecting.load_()) return false;
-      if (!m_rxInput) break;
+      if (!m_tls->rx_input) break;
       if (++records == 32) {
 	app()->rxRun([this, gen, target = ZuMv(target)]() {
 	  if (gen == m_tlsGen.load_() && m_cxn == target.ptr()) receiveInput_();
@@ -624,15 +638,15 @@ private:
 	return true;
       }
     } while (true);
-    if (m_rxPaused) {
-      m_rxPaused = false;
+    if (m_tls->rx_paused) {
+      m_tls->rx_paused = false;
       rearmInput_();
     }
     return true;
   }
 
   void rearmInput_() {
-    if (!m_cxn || m_disconnecting.load_()) return;
+    if (!m_tls || !m_cxn || m_disconnecting.load_()) return;
     auto gen = m_tlsGen.load_();
     m_cxn->recv(ZiRxFn{[this, gen](ZiRxContext &io) {
       armInput(io, gen);
@@ -643,46 +657,38 @@ private:
 private:
   bool finishHandshake_0() {
     if (m_handshook || m_txPending) return true;
-    asyncCleanup();
-    auto tlsver = ptls_get_protocol_version(m_tls);
-    auto cipher = ptls_get_cipher(m_tls);
+    ZmAssert(!m_asyncJob);
+    auto cipher = Ztls_::get_cipher(m_tls);
     if (ZuUnlikely(!cipher)) {
-      app()->error_(ZeEXCEPT(Error, "Ztls", "ptls_get_cipher() failed"));
+      app()->error_(ZeEXCEPT(Error, "Ztls", "Ztls_::get_cipher() failed"));
       disconnect_(false);
       return false;
     }
     if (ZuUnlikely(!cipher->aead)) {
       app()->error_(ZeEXCEPT(Error, "Ztls",
-	"ptls_get_cipher()->aead is null"));
+	"Ztls_::get_cipher()->aead is null"));
       disconnect_(false);
       return false;
     }
-    unsigned recOverhead = ptls_get_record_overhead(m_tls);
-    unsigned recIVLen =
-      (tlsver == PTLS_PROTOCOL_VERSION_TLS12) ?
-	cipher->aead->tls12.record_iv_size : 0;
-    m_headroom = 5 + recIVLen;
+    unsigned recOverhead = Ztls_::get_record_overhead(m_tls);
     // Tx buffers are pre-sized; negotiated overhead must fit the budget.
-    if (ZuUnlikely(
-	m_headroom > TxMaxOverhead ||
-	recOverhead > TxMaxOverhead)) {
+    if (ZuUnlikely(recOverhead > TxMaxOverhead)) {
       app()->error_(ZeEXCEPT(Error, "Ztls",
 	"TLS record overhead exceeds worst-case limit"));
       disconnect_(false);
       return false;
     }
-    ptls_tx_t *txTLS = nullptr;
-    int n = ptls_detach_tx(m_tls, &txTLS);
+    int n = Ztls_::handoff_tx(m_tls);
     // A server can finish producing its handshake flight before it has
     // consumed the client's Finished.  Its outbound application keys exist,
-    // but detachment becomes valid only after that record is received.
-    if (n == PTLS_ERROR_NOT_AVAILABLE && m_isServer && !m_txDeferred) {
+    // but Tx handoff becomes valid only after that record is received.
+    if (n == Ztls_ERROR_NOT_AVAILABLE && m_isServer && !m_txDeferred) {
       m_txDeferred = true;
       return true;
     }
     if (ZuUnlikely(n)) {
       app()->error_(ZeEXCEPT(Error, "Ztls", ([n](auto &s) {
-	s << "ptls_detach_tx(): " << strerror_(n);
+	s << "Ztls_::handoff_tx(): " << strerror_(n);
       })));
       disconnect_(false);
       return false;
@@ -691,50 +697,42 @@ private:
     m_txDeferred = false;
     m_txPending = true;
     app()->txRun([
-      impl = ZmRef(impl()), txTLS, gen,
-      cxn = ZmRef<Cxn>{m_cxn}
+      impl = ZmRef(impl()), gen, cxn = ZmRef<Cxn>{m_cxn}
     ]() mutable {
-      impl->finishHandshake_1(txTLS, gen, ZuMv(cxn));
+      impl->finishHandshake_1(gen, ZuMv(cxn));
     });
     return true;
   }
 
-  void finishHandshake_1(ptls_tx_t *txTLS, uint64_t gen, ZmRef<Cxn> cxn) {
+  void finishHandshake_1(uint64_t gen, ZmRef<Cxn> cxn) {
     ZiAssert(app()->txInvoked(), "Ztls", (),
-      "TLS Tx install outside Tx thread", ptls_tx_free(txTLS); return);
+      "TLS Tx install outside Tx thread", return);
     bool installed = false;
     if (ZuLikely(gen == m_tlsGen.load_() && !m_disconnecting.load_() &&
 	cxn && cxn->up())) {
-      if (m_txTLSGen != gen) {
-	ptls_tx_free(m_txTLS);
-	m_txTLS = nullptr;
-	m_txCxn = nullptr;
-      }
-      if (!m_txTLS) {
-	// Providers are active now and the physical payload cap is known. Check
-	// the complete supported record budget before exposing application Tx.
-	auto mps = cxn->info().mps;
-	Pico::RecordSink probe{txPacketAllocator(), impl(), mps, nullptr,
+      if (m_txCxn && m_txCxn->tx_generation != gen)
+	retireTx(gen);
+      if (!m_txCxn) {
+	// Probe the entire record budget before publishing application Tx.
+	RecordSink probe{txPacketAllocator(), impl(), cxn->info().mps, nullptr,
 	  [](void *, ZmRef<ZiIOBuf>) -> int { return 0; }};
-	auto sink = probe.sink();
-	auto overhead = ptls_tx_get_record_overhead(txTLS);
-	size_t maxWire = TxRecordCapacity + overhead;
-	if (ptls_tx_get_protocol_version(txTLS) == PTLS_PROTOCOL_VERSION_TLS13)
-	  maxWire += 5 + overhead; // KeyUpdate handshake header and request byte
-	int n = sink.reserve(sink.ctx, maxWire);
-	sink.discard(sink.ctx);
+
+	auto overhead = Ztls_::tx_get_record_overhead(cxn.ptr());
+	size_t maxWire = TxRecordCapacity + overhead + 5 + overhead; // includes KeyUpdate
+	int n = probe.reserve(maxWire);
+	probe.discard();
 	if (n) {
 	  cxn->close();
 	} else {
-	  m_txTLS = txTLS;
+	  cxn->tx_generation = gen;
 	  m_txCxn = cxn;
-	  m_txTLSGen = gen;
-	  txTLS = nullptr;
 	  installed = true;
 	}
+      } else {
+	installed = m_txCxn == cxn;
       }
     }
-    ptls_tx_free(txTLS);
+    if (!installed && cxn && m_txCxn != cxn) cxn->retireTx();
     app()->rxRun([impl = ZmRef(impl()), cxn = ZuMv(cxn), gen, installed]() mutable {
       impl->finishHandshake_2(cxn.ptr(), gen, installed);
     });
@@ -758,8 +756,8 @@ private:
     auto oldState = state_();
     m_handshook = true;
     stateChanged_(oldState);
-    auto tlsver = ptls_get_protocol_version(m_tls);
-    const char *alpn = ptls_get_negotiated_protocol(m_tls);
+    auto tlsver = Ztls_::get_protocol_version(m_tls);
+    const char *alpn = Ztls_::get_negotiated_protocol(m_tls);
     if (!impl()->connectReady_()) { disconnect_(false); return; }
     impl()->connected(Connected{
       .alpn = alpn ? ZuCSpan{alpn, unsigned(strlen(alpn))} : ZuCSpan{},
@@ -768,8 +766,8 @@ private:
     if (ZuLikely(!m_disconnecting.load_())) processRx_();
   }
 
-  ptls_cipher_suite_t *rxCipher() const {
-    return m_tls ? ptls_get_cipher(const_cast<ptls_t *>(m_tls)) : nullptr;
+  Ztls_::cipher_suite_t *rxCipher() const {
+    return m_tls ? Ztls_::get_cipher(m_tls) : nullptr;
   }
 
   struct PacketTarget {
@@ -779,18 +777,18 @@ private:
     const ZiIOBuf *plaintext = nullptr;
   };
 
-  Pico::RecordSink packetSink(PacketTarget &target) {
+  RecordSink packetSink(PacketTarget &target) {
     auto cxn = target.cxn;
     auto mps = cxn ? cxn->info().mps : 0;
-    return Pico::RecordSink{
+    return RecordSink{
       txPacketAllocator(), impl(), mps, &target,
       [](void *ctx, ZmRef<ZiIOBuf> buf) -> int {
 	auto target = static_cast<PacketTarget *>(ctx);
 	if (!target->cxn || !target->cxn->up() ||
 	    target->gen != target->link->m_tlsGen.load_())
-	  return PTLS_ERROR_LIBRARY;
+	  return Ztls_ERROR_LIBRARY;
 	return target->link->finalizeTxBuf(ZuMv(buf), target->cxn) ?
-	  0 : PTLS_ERROR_LIBRARY;
+	  0 : Ztls_ERROR_LIBRARY;
       }, target.plaintext ? +[](void *ctx, ZmRef<ZiIOBuf> last) {
 	auto target = static_cast<PacketTarget *>(ctx);
 	++target->link->m_txInCount;
@@ -1001,7 +999,7 @@ protected:
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS KeyUpdate outside Rx thread", return false);
     if (ZuUnlikely(!m_tls || !rxCipher())) return false;
-    ZiAssert(ptls_get_protocol_version(m_tls) == PTLS_PROTOCOL_VERSION_TLS13,
+    ZiAssert(Ztls_::get_protocol_version(m_tls) == Ztls_PROTOCOL_VERSION_TLS13,
       "Ztls", (),
       "TLS KeyUpdate requires TLS 1.3", return false);
     uint64_t gen = m_tlsGen.load_();
@@ -1046,10 +1044,10 @@ private:
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS send_ outside Tx thread", return false);
     if (ZuUnlikely(!buf || buf->failed() || !buf->length || gen != m_tlsGen.load_() ||
-	!m_txTLS || m_txTLSGen != gen || m_txClosing ||
-	!m_txCxn || !m_txCxn->up())) {
+	!m_txCxn || m_txCxn->tx_generation != gen || m_txCxn->tx_closing ||
+	!m_txCxn->up())) {
       txError(gen, "TLS session is closed for transmission",
-	bool(m_txCxn) && m_txTLSGen == gen);
+	m_txCxn && m_txCxn->tx_generation == gen);
       return false;
     }
 
@@ -1060,10 +1058,10 @@ private:
     ZmRef<Cxn> target{m_txCxn};
     PacketTarget output{this, target.ptr(), gen, buf.ptr()};
     auto reservation = packetSink(output);
-    auto sink = reservation.sink();
-    int n = ptls_tx_send_chunks(m_txTLS, &sink, buf->data(), buf->length);
+
+    int n = Ztls_::tx_send_chunks(target.ptr(), &reservation, buf->data(), buf->length);
     if (n) {
-      txError(gen, "ptls_tx_send_chunks()", n);
+      txError(gen, "Ztls_::tx_send_chunks()", n);
       return false;
     }
     return true;
@@ -1084,27 +1082,27 @@ private:
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS KeyUpdate outside Tx thread", return);
     if (ZuUnlikely(gen != m_tlsGen.load_() ||
-	!m_txTLS || m_txTLSGen != gen || m_txClosing)) return;
+	!m_txCxn || m_txCxn->tx_generation != gen || m_txCxn->tx_closing)) return;
     ZmRef<Cxn> target{m_txCxn};
     PacketTarget output{this, target.ptr(), gen};
     auto reservation = packetSink(output);
-    auto sink = reservation.sink();
-    int n = ptls_tx_key_chunks(m_txTLS, &sink, requestUpdate ? 1 : 0);
-    if (ZuUnlikely(n)) txError(gen, "ptls_tx_key_chunks()", n);
+
+    int n = Ztls_::tx_key_chunks(target.ptr(), &reservation, requestUpdate ? 1 : 0);
+    if (ZuUnlikely(n)) txError(gen, "Ztls_::tx_key_chunks()", n);
   }
 
   void closeTx_(ZmRef<Cxn> cxn, uint64_t gen) {
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS close outside Tx thread", return);
-    if (gen == m_tlsGen.load_() && m_txTLS &&
-	m_txTLSGen == gen && !m_txClosing) {
+    if (gen == m_tlsGen.load_() && m_txCxn &&
+	m_txCxn->tx_generation == gen && !m_txCxn->tx_closing) {
       PacketTarget output{this, cxn.ptr(), gen};
       auto reservation = packetSink(output);
-      auto sink = reservation.sink();
-      int n = ptls_tx_alert_chunks(m_txTLS, &sink,
-	PTLS_ALERT_LEVEL_WARNING, PTLS_ALERT_CLOSE_NOTIFY);
-      if (ZuUnlikely(n)) txError(gen, "ptls_tx_alert_chunks()", n);
-      m_txClosing = true;
+
+      int n = Ztls_::tx_alert_chunks(m_txCxn.ptr(), &reservation,
+	Ztls_ALERT_LEVEL_WARNING, Ztls_ALERT_CLOSE_NOTIFY);
+      if (ZuUnlikely(n)) txError(gen, "Ztls_::tx_alert_chunks()", n);
+      m_txCxn->tx_closing = true;
     }
     auto mx = cxn->mx();
     mx->txRun([cxn = ZuMv(cxn)]() { cxn->disconnect(); });
@@ -1112,8 +1110,8 @@ private:
 
   void txError(uint64_t gen, const char *message, bool origin = true) {
     ZmRef<Cxn> cxn;
-    if (app()->txInvoked() && gen == m_txTLSGen) {
-      m_txClosing = true;
+    if (app()->txInvoked() && m_txCxn && gen == m_txCxn->tx_generation) {
+      m_txCxn->tx_closing = true;
       if (origin) cxn = m_txCxn;
     }
     app()->rxRun([impl = ZmRef(impl()), cxn = ZuMv(cxn), gen, message, origin]() {
@@ -1127,8 +1125,8 @@ private:
 
   void txError(uint64_t gen, const char *function, int n) {
     ZmRef<Cxn> cxn;
-    if (app()->txInvoked() && gen == m_txTLSGen) {
-      m_txClosing = true;
+    if (app()->txInvoked() && m_txCxn && gen == m_txCxn->tx_generation) {
+      m_txCxn->tx_closing = true;
       cxn = m_txCxn;
     }
     app()->rxRun([impl = ZmRef(impl()), cxn = ZuMv(cxn), gen, function, n]() {
@@ -1145,24 +1143,18 @@ private:
   void retireTx(uint64_t gen) {
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS Tx retirement outside Tx thread", return);
-    if (m_txTLSGen != gen) {
-      ptls_tx_free(m_txTLS);
-      m_txTLS = nullptr;
+    if (m_txCxn && m_txCxn->tx_generation != gen) {
+      m_txCxn->retireTx();
       m_txCxn = nullptr;
-      m_txTLSGen = 0;
-      m_txClosing = false;
     }
   }
 
   void clearTx(uint64_t gen) {
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS Tx cleanup outside Tx thread", return);
-    if (gen != m_tlsGen.load_() || (m_txTLS && m_txTLSGen != gen)) return;
-    ptls_tx_free(m_txTLS);
-    m_txTLS = nullptr;
+    if (!m_txCxn || gen != m_tlsGen.load_() || m_txCxn->tx_generation != gen) return;
+    m_txCxn->retireTx();
     m_txCxn = nullptr;
-    m_txTLSGen = 0;
-    m_txClosing = false;
   }
 
 private:
@@ -1173,7 +1165,7 @@ private:
   }
 
   bool asyncPending_() const {
-    return m_asyncJob && m_asyncJob->tls == m_tls;
+    return m_asyncJob && m_asyncJob->cxn.ptr() == m_tls;
   }
 
   void clearAsync() {
@@ -1183,97 +1175,79 @@ private:
   bool asyncHandshake_0() {
     if (ZuUnlikely(!app()->asyncConfigured())) {
       app()->error_(ZeEXCEPT(Error, "Ztls", ([](auto &s) {
-	s << "ptls_handshake() returned PTLS_ERROR_ASYNC_OPERATION "
+	s << "Ztls_::handshake() returned Ztls_ERROR_ASYNC_OPERATION "
 	  << "but asyncThread is not configured";
       })));
       disconnect_(false);
       return false;
     }
 
-    auto job = ptls_get_async_job(tls());
-    if (ZuUnlikely(!job)) {
-      app()->error_(ZeEXCEPT(Error, "Ztls",
-	"ptls_get_async_job() returned null"));
-      disconnect_(false);
-      return false;
-    }
-    if (ZuUnlikely(!job->get_fd)) {
-      app()->error_(ZeEXCEPT(Error, "Ztls",
-	"callback-only zpicotls async jobs are unsupported"));
-      disconnect_(false);
-      return false;
-    }
-    auto fd = job->get_fd(job);
+#ifdef _WIN32
+    app()->error_(ZeEXCEPT(Error, "Ztls", "TLS async signing is unsupported on Windows"));
+    disconnect_(false);
+    return false;
+#else
+    auto fd = tls()->signature_fd;
     Zi::Handle handle = static_cast<Zi::Handle>(fd);
     if (ZuUnlikely(Zi::nullHandle(handle))) {
       app()->error_(ZeEXCEPT(Error, "Ztls",
-	"zpicotls async job returned an invalid fd"));
+	"TLS async job returned an invalid fd"));
       disconnect_(false);
       return false;
     }
-#ifndef _WIN32
     if (ZuUnlikely(fcntl(fd, F_GETFD) < 0)) {
       app()->error_(ZeEXCEPT(Error, "Ztls", ([e = ZeError{errno}](auto &s) {
-	s << "zpicotls async job fd is invalid: " << e;
+	s << "TLS async job fd is invalid: " << e;
       })));
       disconnect_(false);
       return false;
     }
-#endif
 
-    asyncCleanup();
+    ZmAssert(!m_asyncJob);
 
-    AsyncJobRef async = new AsyncJob{
-      ZmRef(impl()), tls(), job, handle, m_tlsGen.load_()};
+    SignatureWatchRef async = new SignatureWatch{
+      ZmRef(impl()), ZmRef<Cxn>{m_tls}, handle, m_tlsGen.load_()};
     m_asyncJob = async.ptr();
 
     if (ZuUnlikely(!app()->asyncAddHandle(
 	  handle,
 	  ZiEvent::HandleWriteFn{[](Zi::Handle) { }},
 	  ZiEvent::HandleReadFn{
-	    async, ZmFnPtr<&AsyncJob::ready>{}}))) {
+	    async, ZmFnPtr<&SignatureWatch::ready>{}}))) {
       clearAsync();
       app()->error_(ZeEXCEPT(Error, "Ztls",
-	"ZiEventLoop::addHandle() failed for zpicotls async job"));
+	"ZiEventLoop::addHandle() failed for TLS async job"));
       disconnect_(false);
       return false;
     }
 
+    app()->asyncSignatureStarted_();
     return true;
+#endif
   }
 
-  void asyncHandshake_1(AsyncJobRef async, Zi::Handle handle_) {
+  void asyncHandshake_1(SignatureWatchRef async, Zi::Handle handle_) {
     if (ZuUnlikely(handle_ != async->handle)) return;
     if (++async->readCount != 2) return;
-    async->handle = Zi::nullHandle();
     app()->asyncDelHandle_(handle_);
     app()->rxRun([async = ZuMv(async)]() mutable {
 	async->link->asyncHandshake_2(async);
       });
   }
 
-  void asyncHandshake_2(AsyncJob *async) {
-    if (async->tls == m_tls &&
+  void asyncHandshake_2(SignatureWatch *async) {
+    ZuGuard finish{[app = this->app()]() { app->asyncSignatureFinished_(); }};
+    if (async->cxn.ptr() == m_tls &&
 	async->gen == m_tlsGen.load_() &&
 	m_asyncJob == async) {
       clearAsync();
       handshake_(nullptr);
       return;
     }
-    if (async->retired && async->tls) {
-      ptls_free(async->tls);
-      async->tls = nullptr;
+    if (async->retired && async->cxn) {
+      async->cxn->retireRx();
+      async->cxn = nullptr;
     }
-  }
-
-  void asyncCleanup() {
-    AsyncJobRef async;
-    if (m_asyncJob) async = ZmRef(m_asyncJob);
-    clearAsync();
-    if (!async) return;
-    Zi::Handle handle = async->handle;
-    async->handle = Zi::nullHandle();
-    if (!Zi::nullHandle(handle)) app()->asyncDelHandle(handle);
   }
 
   bool asyncRetireTLS() {
@@ -1281,10 +1255,6 @@ private:
     m_asyncJob->retired = true;
     clearAsync();
     return true;
-  }
-
-  void asyncDestroyed(AsyncJob *async) {
-    if (m_asyncJob == async) m_asyncJob = nullptr;
   }
 
 public:
@@ -1306,11 +1276,7 @@ public:
     auto oldState = state_();
     m_disconnecting = 1; // disconnect() might be bypassed
     stateChanged_(oldState);
-    bool asyncPending = asyncPending_();
-    if (asyncPending) {
-      asyncRetireTLS();
-      m_tls = nullptr;
-    }
+    if (asyncRetireTLS()) m_tls = nullptr;
     ZmRef<Cxn> cxn;
     if (m_cxn) cxn = ZmRef<Cxn>{m_cxn};
     if (cxn) {
@@ -1337,10 +1303,15 @@ protected:
 
   static int tlsver_(uint16_t v) {
     switch (v) {
-      case 0x0303: return 12;
       case 0x0304: return 13;
       default: return 0;
     }
+  }
+
+  void retireTLS() {
+    if (!m_tls) return;
+    if (!asyncRetireTLS()) m_tls->retireRx();
+    m_tls = nullptr;
   }
 
   template <bool CleanRx = true>
@@ -1350,25 +1321,8 @@ protected:
     app()->txRun([impl = ZmRef(impl()), gen]() mutable {
       impl->retireTx(gen);
     });
-    if (m_tls) {
-      if (!asyncRetireTLS())
-	ptls_free(m_tls);
-    }
-    m_plaintext.reset(app()->rxAllocator(), impl());
-    m_rxInput = nullptr;
-    m_rxPaused = false;
-    m_tls = ptls_new(app()->ctx(), m_isServer);
-    if (!m_tls) {
-      app()->error_(ZeEXCEPT(Error, "Ztls", "ptls_new() failed"));
-      return;
-    }
-    *ptls_get_data_ptr(m_tls) = impl();
-    if (ptls_receive_stream_check(m_tls)) {
-      app()->error_(ZeEXCEPT(Error, "Ztls", "selected TLS backend lacks serial decryption"));
-      return;
-    }
+    retireTLS();
     auto oldState = state_();
-    m_headroom = 0;
     m_txPending = false;
     m_txDeferred = false;
     m_closePending = false;
@@ -1376,8 +1330,6 @@ protected:
     m_peerClosed = false;
     m_disconnecting = 0;
     stateChanged_(oldState);
-    reset_handshake_props();
-
     if constexpr (CleanRx) m_rxStream.clean();
   }
 
@@ -1440,54 +1392,39 @@ private:
   // Read-mostly connection reference; mutation remains Rx-owned.
   CxnRef		m_cxn = nullptr;
 
-  struct AsyncJob : public ZmPolymorph {
-    AsyncJob(
-	ZmRef<Impl> link_, ptls_t *tls_, ptls_async_job_t *job_,
-	Zi::Handle handle_, uint64_t gen_) :
-	link{ZuMv(link_)}, tls{tls_}, job{job_}, handle{handle_}, gen{gen_} {
-    }
-    ~AsyncJob() {
-      link->asyncDestroyed(this);
-      if (retired && tls)
-	link->app()->error_(ZeEXCEPT(Error, "Ztls",
-	  "TLS async job destroyed while still pending"));
+  struct SignatureWatch : public ZmNHeap<SignatureWatch>, public ZmPolymorph {
+  friend inline ZuStringT<"Ztls.AsyncWatch"> ZmNHeapID(SignatureWatch *);
+    SignatureWatch(
+	ZmRef<Impl> link_, ZmRef<Cxn> cxn_, Zi::Handle handle_, uint64_t gen_) :
+	link{ZuMv(link_)}, cxn{ZuMv(cxn_)}, handle{handle_}, gen{gen_} {
     }
     void ready(Zi::Handle handle_) {
       link->asyncHandshake_1(ZmRef(this), handle_);
     }
 
     ZmRef<Impl>		link;
-    ptls_t		*tls = nullptr;
-    ptls_async_job_t	*job = nullptr;
-    Zi::Handle		handle = Zi::nullHandle();
-    uint64_t		gen = 0;
-    ZmAtomic<unsigned>	readCount = 0;
+    ZmRef<Cxn>		cxn;
+    const Zi::Handle	handle;
+    const uint64_t	gen;
+    unsigned		readCount = 0;
     bool		retired = false;
   };
 
-  // Rx thread exclusive
+  // Rx borrows the current physical connection until protocol retirement.
   alignas(Zm::CacheLineSize)
-  ptls_t		*m_tls = nullptr;
-  unsigned		m_headroom = 0;
+  Cxn			*m_tls = nullptr;
   bool			m_txPending = false;
   bool			m_txDeferred = false;
   bool			m_closePending = false;
   bool			m_handshook = false;
   bool			m_peerClosed = false;
-  ptls_handshake_properties_t m_props{};
-  AsyncJob		*m_asyncJob = nullptr;
+  SignatureWatch		*m_asyncJob = nullptr;
   RxStream		m_rxStream;
-  ZmRef<ZiIOBuf>	m_rxInput;
-  Pico::PlaintextSink m_plaintext;
-  bool			m_rxPaused = false;
 
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
-  ptls_tx_t		*m_txTLS = nullptr;
-  // Detached keys and their physical destination have the same Tx lifetime.
+  // Keeps the Tx members and their physical destination alive together.
   ZmRef<Cxn>		m_txCxn;
-  uint64_t		m_txTLSGen = 0;
-  bool			m_txClosing = false;
 };
 
 // client links are persistent, own the (transient) connection
@@ -1607,14 +1544,6 @@ template <typename> friend class Client;
   }
   void connectIP_(ZiIP ip) {
     reset_tls();
-    if (!tls()) { setupFailed_(true); return; }
-    int n = ptls_set_server_name(tls(), m_server.data(), m_server.length());
-    if (n) {
-      app()->error_(ZeEXCEPT(Error, "Ztls", ([server = LogMsg{m_server}, n](auto &s) {
-	s << "ptls_set_server_name(\"" << server << "\"): " << strerror_(n);
-      })));
-      setupFailed_(true); return;
-    }
     app()->mx()->connect(
       ZiConnectFn{ZmRef(impl()),
 	[](Impl *impl, const ZiCxnInfo &ci) -> ZiConnection * {
@@ -1627,8 +1556,8 @@ template <typename> friend class Client;
   }
 
 private:
-  void save_ticket(ptls_iovec_t input) {
-    if (!input.len || !input.base) {
+  void save_ticket(Ztls_::Bytes input) {
+    if (!input.length() || !input.data()) {
       m_ticket = {};
       return;
     }
@@ -1637,6 +1566,7 @@ private:
 
   // client connected variant - initiate new handshake
   void connected_() {
+    Ztls_::set_server_name(tls(), m_server.data(), m_server.length());
     reset_handshake_props();
 
     // set up HELO
@@ -1649,10 +1579,10 @@ private:
     }
     if (m_ticket.length())
       props->client.session_ticket =
-	ptls_iovec_init(m_ticket.data(), m_ticket.length());
+	Ztls_::wire_bytes(m_ticket.data(), m_ticket.length());
     m_maxEarlyData = 0;
     props->client.max_early_data_size = &m_maxEarlyData;
-    props->client.early_data_acceptance = PTLS_EARLY_DATA_ACCEPTANCE_UNKNOWN;
+    props->client.early_data_acceptance = Ztls_::EARLY_DATA_ACCEPTANCE_UNKNOWN;
 
     // send HELO
     handshake_(nullptr);
@@ -1728,38 +1658,36 @@ template <typename> friend class Server;
   SrvLink(App *app) : Base(app, true) { }
 
 private:
-  // client connected variant - reset TLS
-  void connected_() {
-    reset_tls();
-  }
+  // The server waits for the client's initial handshake message.
+  void connected_() { }
 
   int on_client_hello(
-      ptls_t *tls, ptls_on_client_hello_parameters_t *params) {
-    if (params->server_name.base && params->server_name.len)
-      ptls_set_server_name(
+      Ztls::Cxn *tls, Ztls_::on_client_hello_parameters_t *params) {
+    if (params->server_name.data() && params->server_name.length())
+      Ztls_::set_server_name(
 	tls,
-	reinterpret_cast<const char *>(params->server_name.base),
-	params->server_name.len);
+	reinterpret_cast<const char *>(params->server_name.data()),
+	params->server_name.length());
     auto list = app()->alpn_list();
     auto count = app()->alpn_count();
     if (!list || !count) return 0;
     if (!params->negotiated_protocols.list ||
 	!params->negotiated_protocols.count)
-      return PTLS_ALERT_NO_APPLICATION_PROTOCOL;
+      return Ztls_ALERT_NO_APPLICATION_PROTOCOL;
     for (unsigned i = 0; i < count; ++i) {
       for (unsigned j = 0; j < params->negotiated_protocols.count; ++j) {
 	auto &proto = params->negotiated_protocols.list[j];
-	if (proto.len != list[i].len) continue;
-	if (!memcmp(proto.base, list[i].base, proto.len)) {
-	  ptls_set_negotiated_protocol(
+	if (proto.length() != list[i].length()) continue;
+	if (!memcmp(proto.data(), list[i].data(), proto.length())) {
+	  Ztls_::set_negotiated_protocol(
 	    tls,
-	    reinterpret_cast<const char *>(list[i].base),
-	    list[i].len);
+	    reinterpret_cast<const char *>(list[i].data()),
+	    list[i].length());
 	  return 0;
 	}
       }
     }
-    return PTLS_ALERT_NO_APPLICATION_PROTOCOL;
+    return Ztls_ALERT_NO_APPLICATION_PROTOCOL;
   }
 };
 
@@ -1788,23 +1716,16 @@ public:
   App *app() { return static_cast<App *>(this); }
 
   Hub() : m_id{ZuID{} << "tls:" <<
-      ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>()} {
-    memset(&m_ctx, 0, sizeof(m_ctx));
-  }
+      ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>()} { }
   ~Hub() { release_(); }
 
 private:
   void release_() {
-    if (m_ctx.certificates.list) {
-      for (unsigned i = 0; i < m_ctx.certificates.count; ++i)
-	::free(m_ctx.certificates.list[i].base);
-      ::free(m_ctx.certificates.list);
-    }
-    Pico::verify_cert_free(m_verify);
+    verify_cert_free(m_verify);
     m_verify = nullptr;
-    Pico::cert_store_free(m_cacert);
+    cert_store_free(m_cacert);
     m_cacert = nullptr;
-    memset(&m_ctx, 0, sizeof(m_ctx));
+    m_ctx = {};
     m_alpnData.init();
     m_alpn.init();
   }
@@ -1909,7 +1830,7 @@ private:
     }
     if (params.rxAllocator()->capacity() < Ztls_::RxRecordCapacity) {
       error_(ZeEXCEPT(Error, "Ztls",
-	"RxTLS builtin capacity must be at least PTLS_RECEIVE_RECORD_CAPACITY"));
+	"RxTLS builtin capacity must be at least Ztls_RECEIVE_RECORD_CAPACITY"));
       return false;
     }
     unsigned rxThread = params.rxThread() ?
@@ -1936,7 +1857,7 @@ private:
     if (params.asyncThread()) {
 #ifdef _WIN32
       error_(ZeEXCEPT(Error, "Ztls", ([](auto &s) {
-	s << "asyncThread is unsupported on Windows because zpicotls exposes "
+	s << "asyncThread is unsupported on Windows because OpenSSL asynchronous signing exposes "
 	  << "an int fd while HANDLE is pointer-sized";
       })));
       return false;
@@ -1970,27 +1891,27 @@ private:
 
   template <typename Params, typename L>
   bool init_context(Params &params, L &l) {
-    if (!Pico::init()) {
+    if (!cryptoInit()) {
       error_(ZeEXCEPT(Error, "Ztls", "protocol initialization failed"));
       return false;
     }
-    memset(&m_ctx, 0, sizeof(m_ctx));
-    m_ctx.random_bytes = ptls_openssl_random_bytes;
-    m_ctx.get_time = &ptls_get_time;
-    m_ctx.key_exchanges = ptls_openssl_key_exchanges_all;
+    m_ctx = {};
+    m_ctx.random_bytes = Ztls_::openssl_random_bytes;
+    m_ctx.get_time = &Ztls_::get_time;
+    m_ctx.key_exchanges = Ztls_::openssl_key_exchanges_all;
     init_cipher_suites();
     m_ctx.cipher_suites = m_cipherSuites;
     m_ctx.server_cipher_preference = 1;
     init_alpn(params.alpn());
     if (!l(params)) return false;
-    auto available = [this](ptls_cipher_suite_t **suites) {
+    auto available = [this](Ztls_::cipher_suite_t **suites) {
       if (!suites) return true;
       for (auto p = suites; *p; ++p) {
-	uint8_t key[PTLS_MAX_SECRET_SIZE]{}, iv[PTLS_MAX_IV_SIZE]{};
-	auto aead = ptls_aead_new_direct((*p)->aead, 1, key, iv);
+	uint8_t key[Ztls_MAX_SECRET_SIZE]{}, iv[Ztls_MAX_IV_SIZE]{};
+	auto aead = Ztls_::aead_new_direct((*p)->aead, 1, key, iv);
 	bool ok = aead && aead->do_enc_begin &&
 	  aead->do_enc_chunk && aead->do_enc_end;
-	if (aead) ptls_aead_free(aead);
+	if (aead) Ztls_::aead_free(aead);
 	if (!ok) {
 	  error_(ZeEXCEPT(Error, "Ztls", "selected AEAD lacks serial record output"));
 	  return false;
@@ -1998,12 +1919,9 @@ private:
       }
       return true;
     };
-    if (!available(m_ctx.cipher_suites) || !available(m_ctx.tls12_cipher_suites))
-      return false;
-    auto probe = ptls_new(&m_ctx, 0);
-    if (!probe) return false;
-    int status = ptls_receive_stream_check(probe);
-    ptls_free(probe);
+    if (!available(m_ctx.cipher_suites)) return false;
+    Ztls::Cxn probe{&m_ctx, false};
+    int status = Ztls_::receive_stream_check(&probe);
     if (status) {
       error_(ZeEXCEPT(Error, "Ztls", "selected AEAD lacks serial record decryption"));
       return false;
@@ -2208,18 +2126,13 @@ private:
     m_eventLoop.delHandle(handle);
   }
 
-  void asyncDelHandle(Zi::Handle handle) {
-    if (Zi::nullHandle(handle) || !m_eventLoopStarted) return;
-    if (m_mx->invoked(m_asyncThread)) {
-      m_eventLoop.delHandle(handle);
-      return;
-    }
-    ZmBlock<>{}([this, handle](auto wake) mutable {
-      m_eventLoop.run([this, handle, wake = ZuMv(wake)]() mutable {
-	m_eventLoop.delHandle(handle);
-	wake();
-      });
-    });
+  void asyncSignatureStarted_() { ++m_asyncSignatures; }
+
+  void asyncSignatureFinished_() {
+    ZmAssert(m_asyncSignatures);
+    if (--m_asyncSignatures || !m_stopWaitingForSignatures) return;
+    m_stopWaitingForSignatures = false;
+    stop_0();
   }
 
 protected:
@@ -2234,6 +2147,10 @@ protected:
   }
 
   void stop_0() {		// Rx thread - enter Tx thread
+    if (m_asyncSignatures) {
+      m_stopWaitingForSignatures = true;
+      return;
+    }
     txRun([this]() { stop_1(); });
   }
 
@@ -2254,10 +2171,10 @@ protected:
   }
 
   // Ztls Rx thread
-  ptls_context_t *ctx() { return &m_ctx; }
-  const ptls_context_t *ctx() const { return &m_ctx; }
+  Ztls_::context_t *ctx() { return &m_ctx; }
+  const Ztls_::context_t *ctx() const { return &m_ctx; }
 
-  const ptls_iovec_t *alpn_list() const {
+  const Ztls_::Bytes *alpn_list() const {
     return m_alpn.length() ? m_alpn.data() : nullptr;
   }
   unsigned alpn_count() const { return m_alpn.length(); }
@@ -2277,7 +2194,7 @@ protected:
     return loadCA_(path ? path.data() : nullptr, &certs);
   }
   bool loadCA_(const char *path, const Certs *certs) {
-    if (!m_cacert) m_cacert = Pico::cert_store_new();
+    if (!m_cacert) m_cacert = cert_store_new();
     if (!m_cacert) {
       error_(ZeEXCEPT(Error, "Ztls", "cert_store_new() failed"));
       return false;
@@ -2309,7 +2226,7 @@ protected:
 
       PCCERT_CONTEXT context = nullptr;
       while (context = CertEnumCertificatesInStore(store, context)) {
-	if (!Pico::cert_store_add_der(m_cacert,
+	if (!cert_store_add_der(m_cacert,
 	      {context->pbCertEncoded, context->cbCertEncoded})) {
 	  error_(ZeEXCEPT(Error, "Ztls", "cert_store_add_der() failed"));
 	  CertFreeCertificateContext(context);
@@ -2326,10 +2243,10 @@ protected:
       const char *function;
       if (ZiStat{path}.isdir()) {
 	function = "cert_store_load_path";
-	ok = Pico::cert_store_load_path(m_cacert, path);
+	ok = cert_store_load_path(m_cacert, path);
       } else {
 	function = "cert_store_load_file";
-	ok = Pico::cert_store_load_file(m_cacert, path);
+	ok = cert_store_load_file(m_cacert, path);
       }
       if (!ok) {
 	error_(ZeEXCEPT(Error, "Ztls", ([function, path](auto &s) {
@@ -2342,19 +2259,19 @@ protected:
       unsigned n = certs->length();
       for (unsigned i = 0; i < n; ++i) {
 	const auto &cert = (*certs)[i];
-	if (!Pico::cert_store_add_ca(m_cacert, cert)) {
+	if (!cert_store_add_ca(m_cacert, cert)) {
 	  error_(ZeEXCEPT(Error, "Ztls", "cert_store_add_ca() failed"));
 	  return false;
 	}
       }
     }
-    if (m_verify) Pico::verify_cert_free(m_verify);
-    m_verify = Pico::verify_cert_new(m_cacert);
+    if (m_verify) verify_cert_free(m_verify);
+    m_verify = verify_cert_new(m_cacert);
     if (!m_verify) {
       error_(ZeEXCEPT(Error, "Ztls", "verify_cert_new() failed"));
       return false;
     }
-    m_ctx.verify_certificate = Pico::verify_cert_cb(m_verify);
+    m_ctx.verify_certificate = verify_cert_cb(m_verify);
     return true;
   }
 
@@ -2370,7 +2287,7 @@ protected:
     for (auto &s : alpn) {
       unsigned offset = m_alpnData.length();
       m_alpnData << ZuBSpan{s};
-      m_alpn.push(ptls_iovec_t{
+      m_alpn.push(Ztls_::Bytes{
 	m_alpnData.data() + offset,
 	s.length()});
     }
@@ -2381,21 +2298,21 @@ private:
     unsigned n = 0;
     bool use_fusion = false;
 #if Ztls_Fusion
-    use_fusion = ptls_fusion_is_supported_by_cpu();
+    use_fusion = Ztls_::fusion_is_supported_by_cpu();
 #endif
     if (use_fusion) {
 #if Ztls_Fusion
-      static ptls_cipher_suite_t fusion_aes256gcmsha384 = {
-	.id = PTLS_CIPHER_SUITE_AES_256_GCM_SHA384,
-	.aead = &ptls_fusion_aes256gcm,
-	.hash = &ptls_openssl_sha384,
-	.name = PTLS_CIPHER_SUITE_NAME_AES_256_GCM_SHA384
+      static Ztls_::cipher_suite_t fusion_aes256gcmsha384 = {
+	.id = Ztls_CIPHER_SUITE_AES_256_GCM_SHA384,
+	.aead = &Ztls_::fusion_aes256gcm,
+	.hash = &Ztls_::openssl_sha384,
+	.name = Ztls_CIPHER_SUITE_NAME_AES_256_GCM_SHA384
       };
-      static ptls_cipher_suite_t fusion_aes128gcmsha256 = {
-	.id = PTLS_CIPHER_SUITE_AES_128_GCM_SHA256,
-	.aead = &ptls_fusion_aes128gcm,
-	.hash = &ptls_openssl_sha256,
-	.name = PTLS_CIPHER_SUITE_NAME_AES_128_GCM_SHA256
+      static Ztls_::cipher_suite_t fusion_aes128gcmsha256 = {
+	.id = Ztls_CIPHER_SUITE_AES_128_GCM_SHA256,
+	.aead = &Ztls_::fusion_aes128gcm,
+	.hash = &Ztls_::openssl_sha256,
+	.name = Ztls_CIPHER_SUITE_NAME_AES_128_GCM_SHA256
       };
       // Non-temporal fusion decrypt is not exact-in-place safe: it overwrites
       // ciphertext before GHASH finishes reading it. Use normal fusion AEADs.
@@ -2403,10 +2320,10 @@ private:
       m_cipherSuites[n++] = &fusion_aes128gcmsha256;
 #endif
     }
-    for (auto p = ptls_openssl_cipher_suites; *p; ++p) {
+    for (auto p = Ztls_::openssl_cipher_suites; *p; ++p) {
       if (use_fusion &&
-	  ((*p)->id == PTLS_CIPHER_SUITE_AES_256_GCM_SHA384 ||
-	   (*p)->id == PTLS_CIPHER_SUITE_AES_128_GCM_SHA256))
+	  ((*p)->id == Ztls_CIPHER_SUITE_AES_256_GCM_SHA384 ||
+	   (*p)->id == Ztls_CIPHER_SUITE_AES_128_GCM_SHA256))
 	continue;
       m_cipherSuites[n++] = *p;
     }
@@ -2422,14 +2339,17 @@ private:
   AllocatorRef		m_txPacketAllocator = nullptr;
   ZiMultiplex			*m_mx = nullptr;
   ErrorFn			m_errorFn;
-  ptls_context_t		m_ctx{};
-  ptls_cipher_suite_t		*m_cipherSuites[16]{};
+  Ztls_::context_t		m_ctx{};
+  Ztls_::cipher_suite_t		*m_cipherSuites[16]{};
   ALPNData			m_alpnData;
   ALPN				m_alpn;
-  Pico::CertStore		*m_cacert = nullptr;
-  Pico::VerifyCert		*m_verify = nullptr;
+  CertStore		*m_cacert = nullptr;
+  VerifyCert		*m_verify = nullptr;
   unsigned			m_rxThread = 0;
   unsigned			m_txThread = 0;
+  // Rx-owned. Stop keeps readiness delivery active through retirement.
+  unsigned			m_asyncSignatures = 0;
+  bool				m_stopWaitingForSignatures = false;
   unsigned			m_asyncThread = 0;
   bool				m_registered = false;
 
@@ -2484,7 +2404,7 @@ friend Base;
 
   Client() { }
   ~Client() {
-    Pico::sign_cert_free(m_sign);
+    sign_cert_free(m_sign);
   }
 
   // specify certPath and keyPath for mTLS
@@ -2499,7 +2419,7 @@ private:
   // stable after init(); released by the destructor
   PK::Key			m_ownedKey;
   const PK::Key			*m_key = nullptr;
-  Pico::SignCert		*m_sign = nullptr;
+  SignCert		*m_sign = nullptr;
   ZmRef<PK::AnyPK>		m_keyRef;
 };
 
@@ -2522,9 +2442,9 @@ bool Client<App>::init(ClientParams params)
   }
 
   return Base::init_(ZuMv(params), [this](ClientParams &params) -> bool {
-    static ptls_save_ticket_t save_ticket_cb{
-      .cb = [](ptls_save_ticket_t *, ptls_t *tls, ptls_iovec_t input) -> int {
-	auto link = static_cast<Link *>(*ptls_get_data_ptr(tls));
+    static Ztls_::save_ticket_t save_ticket_cb{
+      .cb = [](Ztls_::save_ticket_t *, Ztls::Cxn *tls, Ztls_::Bytes input) -> int {
+	auto link = static_cast<Link *>(*Ztls_::get_data_ptr(tls));
 	if (link) link->save_ticket(input);
 	return 0;
       }
@@ -2538,17 +2458,17 @@ bool Client<App>::init(ClientParams params)
     if (!loadCA(ZuCSpan{params.caPath()}, params.caCerts())) return false;
 
     if (params.certPath() && params.keyPath()) {
-      if (!Pico::load_certificates(ctx, params.certPath().data()))
+      if (!load_certificates(ctx, params.certPath().data()))
 	return false;
       if (!PK::loadPEM(m_ownedKey, params.keyPath().data())) return false;
       m_key = &m_ownedKey;
-      m_sign = Pico::sign_cert_new(*m_key);
+      m_sign = sign_cert_new(*m_key);
       if (!m_sign) {
 	m_ownedKey.reset(nullptr);
 	m_key = nullptr;
 	return false;
       }
-      ctx->sign_certificate = Pico::sign_cert_cb(m_sign);
+      ctx->sign_certificate = sign_cert_cb(m_sign);
     } else if (params.key()) {
       m_keyRef = ZuMv(params.m_key);
       const auto &certs = params.certs();
@@ -2556,20 +2476,20 @@ bool Client<App>::init(ClientParams params)
       auto spans = ZtScratch(CertSpansScratch, n);
       for (unsigned i = 0; i < n; ++i) spans.push(certs[i]);
       m_key = &m_keyRef->key;
-      m_sign = Pico::sign_cert_new(*m_key);
+      m_sign = sign_cert_new(*m_key);
       if (!m_sign) {
 	m_key = nullptr;
 	m_keyRef = {};
 	return false;
       }
-      if (!Pico::load_certificates_der(ctx, spans, *m_key)) {
-	Pico::sign_cert_free(m_sign);
+      if (!load_certificates_der(ctx, spans, *m_key)) {
+	sign_cert_free(m_sign);
 	m_sign = nullptr;
 	m_key = nullptr;
 	m_keyRef = {};
 	return false;
       }
-      ctx->sign_certificate = Pico::sign_cert_cb(m_sign);
+      ctx->sign_certificate = sign_cert_cb(m_sign);
     }
     return true;
   });
@@ -2633,9 +2553,9 @@ friend Base;
 
 private:
   void release_() {
-    Pico::ticket_key_free(m_ticketKey);
+    ticket_key_free(m_ticketKey);
     m_ticketKey = nullptr;
-    Pico::sign_cert_free(m_sign);
+    sign_cert_free(m_sign);
     m_sign = nullptr;
     m_ownedKey.reset(nullptr);
     m_key = nullptr;
@@ -2779,8 +2699,8 @@ private:
   // stable after init(); released by the destructor
   PK::Key			m_ownedKey;
   const PK::Key			*m_key = nullptr;
-  Pico::SignCert		*m_sign = nullptr;
-  Pico::TicketKey		*m_ticketKey = nullptr;
+  SignCert		*m_sign = nullptr;
+  TicketKey		*m_ticketKey = nullptr;
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
@@ -2812,9 +2732,9 @@ bool Server<App>::init(ServerParams params)
   }
 
   return Base::init_(ZuMv(params), [this](const ServerParams &params) -> bool {
-    static ptls_on_client_hello_t on_client_hello_cb{
-      .cb = [](ptls_on_client_hello_t *, ptls_t *tls, ptls_on_client_hello_parameters_t *params) -> int {
-	auto link = static_cast<Link *>(*ptls_get_data_ptr(tls));
+    static Ztls_::on_client_hello_t on_client_hello_cb{
+      .cb = [](Ztls_::on_client_hello_t *, Ztls::Cxn *tls, Ztls_::on_client_hello_parameters_t *params) -> int {
+	auto link = static_cast<Link *>(*Ztls_::get_data_ptr(tls));
 	return link ? link->on_client_hello(tls, params) : 0;
       }
     };
@@ -2829,25 +2749,25 @@ bool Server<App>::init(ServerParams params)
       params.cacheTimeout() < 0 ? 86400 : params.cacheTimeout();
     if (!loadCA(ZuCSpan{params.caPath()})) return false;
 
-    if (!Pico::load_certificates(ctx, params.certPath().data()))
+    if (!load_certificates(ctx, params.certPath().data()))
       return false;
     if (!PK::loadPEM(m_ownedKey, params.keyPath().data())) return false;
     m_key = &m_ownedKey;
-    m_sign = Pico::sign_cert_new(*m_key);
+    m_sign = sign_cert_new(*m_key);
     if (!m_sign) {
       m_ownedKey.reset(nullptr);
       m_key = nullptr;
       return false;
     }
-    if (params.asyncThread() && !Pico::sign_cert_async(m_sign, true)) {
+    if (params.asyncThread() && !sign_cert_async(m_sign, true)) {
       error_(ZeEXCEPT(Error, "Ztls",
 	"async server certificate signing is unsupported"));
       return false;
     }
-    ctx->sign_certificate = Pico::sign_cert_cb(m_sign);
-    if (!m_ticketKey) m_ticketKey = Pico::ticket_key_new();
+    ctx->sign_certificate = sign_cert_cb(m_sign);
+    if (!m_ticketKey) m_ticketKey = ticket_key_new();
     if (!m_ticketKey) return false;
-    ctx->encrypt_ticket = Pico::ticket_encrypt_cb(m_ticketKey);
+    ctx->encrypt_ticket = ticket_encrypt_cb(m_ticketKey);
     return true;
   });
 }

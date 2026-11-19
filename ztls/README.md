@@ -1,11 +1,10 @@
 # Ztls: TLS transport, cryptography and credential storage
 
 Ztls supplies asynchronous TLS links, cryptographic primitives, key encoding,
-HPKE, age-format encryption, TOTP and a credential Vault. It integrates
-zpicotls/OpenSSL with Zi buffers and Rx/Tx scheduling. Include `<zlib/Ztls.hh>`
-for transport or individual facility headers, and link `libZtls`. See
-[DEPENDENCIES.md](../docs/DEPENDENCIES.md) for the required zpicotls backends and
-OpenSSL capabilities.
+HPKE, age-format encryption, TOTP and a credential Vault. `libZtls` includes
+the TLS 1.3 engine and its OpenSSL and Fusion backends. Include
+`<zlib/Ztls.hh>` for transport or individual facility headers and link
+`libZtls`. OpenSSL libcrypto supplies native cryptographic operations.
 
 ## TLS clients and servers
 
@@ -36,8 +35,8 @@ maximum record plus KeyUpdate budget using its physical MPS before publishing
 
 All TLS wire producers, including handshake, alerts and KeyUpdate, encrypt
 serially into packet spans. A record may span many packets without adding TLS
-headers, sequence numbers or tags at packet boundaries. Detached application
-output reserves every packet, including a pending KeyUpdate prefix, before
+headers, sequence numbers or tags at packet boundaries. Application output
+reserves every packet, including a pending KeyUpdate prefix, before
 protection or publication. Exhaustion releases the reservation and disconnects
 the originating generation without consuming application record cipher state.
 A failed handshake/control record is unpublished and terminates that session;
@@ -115,7 +114,8 @@ early data are separate behaviors; inspect the configured policy and link
 information rather than assuming a resumed connection admits early data.
 
 Initialize a server, call `start()`, then `listen()`. `stop()` cancels listening
-and drains native connections before `final()`. The bound address is retained,
+and drains native connections and registered signature completions before
+`final()`. The bound address is retained,
 including an OS-assigned port requested with zero. Late listener success during
 stop closes the new socket; late failures/retries cannot reopen it. Start a
 stopped hub again to reuse its configuration. After failed initialization, call
@@ -142,19 +142,18 @@ Use the selected primitive's initialization, update and finalization operations
 and check its result before consuming output. Buffer sizes and algorithm choices
 are part of the API; avoid silently truncating key or digest material. The
 [test directory](test/) contains concrete key, MAC and signature fixtures.
-Standalone cryptography uses OpenSSL libcrypto directly. `ZtlsPico` contains
-zpicotls protocol adapters, record sinks, certificate/ticket callbacks, and Fusion
-integration. `Ztls::cryptoInit()` initializes standalone crypto;
-`Ztls::Pico::init()` also installs protocol buffer hooks once. `Ztls::init()`
-initializes the protocol and throws on initialization failure.
+Standalone cryptography uses OpenSSL libcrypto directly.
+`Ztls::cryptoInit()` reports initialization failure through its return value.
+`Ztls::init()` reports it through `ZeException`. Both share the same
+thread-safe native initialization.
 
 MD/HMAC owners cannot be copied or moved. Digest finalization takes a snapshot;
 HMAC finalization resets to the same key. Streaming failures throw `ZeException`
 and invalidate the operation; recover with MD `reset()` or HMAC `start()`.
 HKDF and AEAD report failure through `bool` and clear the intended output.
 `PK::Key` embeds native EVP key ownership; imports replace a key only on success.
-The former `Ztls::Backend` API and headers have been removed. All dependents must
-use the concrete crypto operations and Pico protocol APIs.
+Use the concrete crypto operations for standalone work and the
+`Ztls::Client` and `Ztls::Server` interfaces for transport.
 
 ## HPKE, age and TOTP
 
@@ -231,8 +230,8 @@ branching on the multiplexer plugin. The callback preserves headroom and actual 
 context using the existing notification contract, and never grows input to the
 TLS record length.
 
-zpicotls incrementally parses each header, explicit IV, ciphertext and tag. It
-retains bounded parser/AEAD carry between chunks and decrypts directly from the
+The engine parses each TLS 1.3 record incrementally. It retains bounded header,
+tag, and AEAD carry between chunks and decrypts directly from the
 input span into one distinct, stable RxTLS allocation. No whole ciphertext record
 is gathered or copied into that allocation. The destination stays private until
 authentication succeeds; failure clears/discards provisional plaintext and
@@ -256,6 +255,13 @@ Handshake, alerts and KeyUpdate use the same packet sink. Packet boundaries do
 not restart protection or create additional TLS headers/tags. Retained packets
 remain immutable through partial writes, retransmission and completion.
 
-The legacy zpicotls buffer hook remains available to contiguous callers. It
-preserves origin ownership and base offsets when growing an origin-backed
-buffer; it is not the transport's incremental receive destination mechanism.
+Rx owns handshake state and receive keys. During the handshake, Rx also uses
+the outbound members. At handoff, Tx takes ownership of the same cache-line
+aligned members in `Ztls::Cxn`. The connection generation and physical
+destination are checked before queued sends, rekeys, and close alerts.
+The receive owner retains the handshake transcript needed for tickets and
+exported secrets. Pending signature digest and provider state remain on their
+originating connection until completion or retirement.
+
+See the [engine migration map](src/engine/README.md) for consumers moving their
+low-level includes or build dependencies to this version.

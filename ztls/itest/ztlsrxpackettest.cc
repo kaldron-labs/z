@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <zpicotls/openssl.h>
+#include <zlib/ZtlsEngineOpenSSL.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
@@ -98,7 +98,7 @@ int receivePayload(Link &link, Ztls::RxStream &rx, bool client)
       [](ZuBSpan span) -> int64_t { return span.length(); },
       []() -> ZmRef<ZiRxQueue::Node> { return nullptr; }, record);
     if (n <= 0 || !record || record->allocator() != expected || record->registered() ||
-	record->length > PTLS_RECEIVE_APPLICATION_CAPACITY ||
+	record->length > Ztls_RECEIVE_APPLICATION_CAPACITY ||
 	record->size - record->skip - record->allocator()->tailRoom < Ztls_::RxRecordCapacity) {
       state.fail(); return -1;
     }
@@ -159,19 +159,18 @@ struct Server : Ztls::Server<Server> {
   // Software OpenSSL keys may finish inside ASYNC_start_job. This signer
   // deliberately suspends once on an fd, then delegates the actual signature
   // to the configured key callback, making owner resume/teardown observable.
-  struct SignJob : ptls_async_job_t, ZmNHeap<SignJob> {
+  struct SignJob : ZmNHeap<SignJob> {
   friend inline ZuStringT<"Ztls.RxPair.SignJob"> ZmNHeapID(SignJob *);
     State *state;
+    Ztls_::sign_certificate_t *original;
     int fd[2];
     uint8_t input[256];
     uint16_t algorithms[64];
     size_t length, count;
-    SignJob(State *state_, ptls_iovec_t bytes, const uint16_t *algs, size_t n)
-    : ptls_async_job_t{}, state{state_}, length{bytes.len}, count{n} {
+    SignJob(State *state_, Ztls_::sign_certificate_t *original_, Ztls_::Bytes bytes, const uint16_t *algs, size_t n)
+    : state{state_}, original{original_}, length{bytes.length()}, count{n} {
       fd[0] = fd[1] = -1;
-      destroy_ = [](ptls_async_job_t *base) { delete static_cast<SignJob *>(base); };
-      get_fd = [](ptls_async_job_t *base) { return static_cast<SignJob *>(base)->fd[0]; };
-      memcpy(input, bytes.base, bytes.len);
+      memcpy(input, bytes.data(), bytes.length());
       memcpy(algorithms, algs, n * sizeof(uint16_t));
     }
     ~SignJob() {
@@ -180,38 +179,39 @@ struct Server : Ztls::Server<Server> {
       ++state->asyncReleased;
     }
   };
-  struct Sign : ptls_sign_certificate_t {
+  struct Sign : Ztls_::sign_certificate_t {
     Server *owner = nullptr;
-    ptls_sign_certificate_t *original = nullptr;
+    Ztls_::sign_certificate_t *original = nullptr;
     Sign() {
-      cb = [](ptls_sign_certificate_t *base, ptls_t *tls, ptls_async_job_t **async,
-	uint16_t *algorithm, ptls_buffer_t *output, ptls_iovec_t input,
+      cb = [](Ztls_::sign_certificate_t *base, Ztls::Cxn *tls, bool allowAsync,
+	uint16_t *algorithm, Ztls_::buffer_t *output, Ztls_::Bytes input,
 	const uint16_t *algorithms, size_t count) -> int {
 	auto self = static_cast<Sign *>(base);
-	if (!async) return PTLS_ERROR_LIBRARY;
-	if (*async) {
-	  auto job = static_cast<SignJob *>(*async);
-	  int n = self->original->cb(self->original, tls, nullptr, algorithm,
-	    output, ptls_iovec_init(job->input, job->length), job->algorithms, job->count);
-	  delete job; *async = nullptr;
-	  return n;
-	}
-	if (input.len > sizeof(SignJob::input) || count > 64) return PTLS_ERROR_LIBRARY;
+	if (!allowAsync) return Ztls_ERROR_LIBRARY;
+	if (input.length() > sizeof(SignJob::input) || count > 64) return Ztls_ERROR_LIBRARY;
 	SignJob *job = nullptr;
-	try { job = new SignJob{&self->owner->state, input, algorithms, count}; }
-	catch (...) { return PTLS_ERROR_NO_MEMORY; }
-	if (pipe(job->fd)) { delete job; return PTLS_ERROR_LIBRARY; }
-	*async = job;
+	try { job = new SignJob{&self->owner->state, self->original, input, algorithms, count}; }
+	catch (...) { return Ztls_ERROR_NO_MEMORY; }
+	if (pipe(job->fd)) { delete job; return Ztls_ERROR_LIBRARY; }
+	tls->signature_fd = job->fd[0];
+	tls->signature_retire = [job]() { delete job; };
+	tls->signature_resume = [tls, job](Ztls_::buffer_t *output, uint16_t *algorithm) {
+	  auto original = job->original;
+	  int n = original->cb(original, tls, false, algorithm, output,
+	    Ztls_::wire_bytes(job->input, job->length), job->algorithms, job->count);
+	  tls->retireSignature();
+	  return n;
+	};
 	++self->owner->state.asyncStarted;
 	if (self->owner->state.cancelAsync) {
 	  self->owner->state.cancelAsync = false;
-	  auto link = static_cast<Link *>(*ptls_get_data_ptr(tls));
+	  auto link = static_cast<Link *>(*Ztls_::get_data_ptr(tls));
 	  // Queue close after the suspended operation returns to its owner.
 	  self->owner->rxRun([link]() { link->disconnect_(); });
 	}
 	uint8_t ready = 1;
-	if (::write(job->fd[1], &ready, 1) != 1) return PTLS_ERROR_LIBRARY;
-	return PTLS_ERROR_ASYNC_OPERATION;
+	if (::write(job->fd[1], &ready, 1) != 1) return Ztls_ERROR_LIBRARY;
+	return Ztls_ERROR_ASYNC_OPERATION;
       };
     }
   } sign;
@@ -227,8 +227,13 @@ struct Server : Ztls::Server<Server> {
   void listenFailed(bool) { state.fail(); state.listening.post(); }
 };
 
-void workingPair(bool separateOwner, bool async = false, bool cancel = false)
+enum { Synchronous, NativeAsync, PausedAsync, CancelAsync };
+
+void workingPair(bool separateOwner, unsigned signing = Synchronous)
 {
+  bool async = signing != Synchronous;
+  bool mocked = signing == PausedAsync || signing == CancelAsync;
+  bool cancel = signing == CancelAsync;
   ZuTestScopeRT(workingPair);
   Cert cert;
   bool ready = cert.init();
@@ -266,7 +271,7 @@ void workingPair(bool separateOwner, bool async = false, bool cancel = false)
   bool cliInit = client.init(ZuMv(cliParams)), srvInit = server.init(ZuMv(srvParams));
   ZuCheckRT(cliInit && srvInit);
   if (!cliInit || !srvInit) return;
-  if (async) server.observeAsync();
+  if (mocked) server.observeAsync();
   bool started = mx.start();
   ZuCheckRT(started);
   if (!started) return;
@@ -297,7 +302,7 @@ void workingPair(bool separateOwner, bool async = false, bool cancel = false)
     if (cliStarted) ZuCheckRT(client.stop());
     if (srvStarted) ZuCheckRT(server.stop());
   }
-  if (async) ZuCheckRT(state.asyncStarted.load_() >= (cancel ? 2U : 1U));
+  if (mocked) ZuCheckRT(state.asyncStarted.load_() >= (cancel ? 2U : 1U));
   client.final(); server.final();
   ZuCheckRT(mx.stop());
   ZuCheckRT(state.asyncStarted.load_() == state.asyncReleased.load_());
@@ -307,8 +312,8 @@ void workingPair(bool separateOwner, bool async = false, bool cancel = false)
   state.retained = nullptr;
   ZuCheckRT(state.input.acquired.load_() > 6 && !state.input.errors.load_());
   ZuCheckRT(state.input.acquired.load_() == state.input.released.load_());
-  ZuCheckRT(cliInput->capacity() < PTLS_RECEIVE_APPLICATION_CAPACITY &&
-    srvInput->capacity() < PTLS_RECEIVE_APPLICATION_CAPACITY);
+  ZuCheckRT(cliInput->capacity() < Ztls_RECEIVE_APPLICATION_CAPACITY &&
+    srvInput->capacity() < Ztls_RECEIVE_APPLICATION_CAPACITY);
   inputStats = nullptr;
 }
 
@@ -320,9 +325,11 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(ztlsrxpackettest_::workingPair, false);
   ZuTestCall(ztlsrxpackettest_::workingPair, true);
-#if defined(PTLS_OPENSSL_HAVE_ASYNC) && PTLS_OPENSSL_HAVE_ASYNC
-  ZuTestCall(ztlsrxpackettest_::workingPair, false, true);
-  ZuTestCall(ztlsrxpackettest_::workingPair, true, true);
-  ZuTestCall(ztlsrxpackettest_::workingPair, true, true, true);
+#if defined(Ztls_OPENSSL_HAVE_ASYNC) && Ztls_OPENSSL_HAVE_ASYNC
+  using namespace ztlsrxpackettest_;
+  ZuTestCall(workingPair, true, NativeAsync);
+  ZuTestCall(workingPair, false, PausedAsync);
+  ZuTestCall(workingPair, true, PausedAsync);
+  ZuTestCall(workingPair, true, CancelAsync);
 #endif
 }

@@ -33,7 +33,10 @@
 #include "ZiTestResidue.hh"
 
 #include "ZtlsTestPorts.hh"
-#include <zlib/ZtlsPico.hh>
+#include "ZtlsTestHandshake.hh"
+#include <zlib/ZtlsBuf.hh>
+#include <zlib/ZtlsCredentials.hh>
+#include <zlib/ZtlsEngineOpenSSL.hh>
 
 using namespace ZuTestUtil;
 
@@ -41,7 +44,6 @@ using namespace ZuTestUtil;
 
 namespace {
 
-constexpr unsigned BufSize = 128;
 constexpr unsigned MaxSize = (1u << 20);
 constexpr unsigned JumboPayloadSize = 64u * 1024u;
 constexpr unsigned SmallPayloadSize = 4u * 1024u;
@@ -372,7 +374,7 @@ bool wait_done(TestState &state)
 
 uint16_t reserve_loopback_port(ZiIP ip = ZiIP{"127.0.0.1"})
 {
-  static uint16_t nextPort = ZtlsTestPort::BufHook;
+  static uint16_t nextPort = ZtlsTestPort::BufferTest;
   uint16_t port = nextPort++;
   int s = ::socket(ip.v6() ? AF_INET6 : AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (s < 0) return 0;
@@ -539,7 +541,7 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
 
   BaseClient(State &state_) : state(state_) { }
 
-  void override_cipher_suites(ptls_cipher_suite_t **suites) {
+  void override_cipher_suites(Ztls_::cipher_suite_t **suites) {
     this->ctx()->cipher_suites = suites;
   }
 
@@ -661,11 +663,8 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
   }
   void listenFailed(bool) { state.fail("listen failed"); }
 
-  void override_cipher_suites(ptls_cipher_suite_t **suites) {
+  void override_cipher_suites(Ztls_::cipher_suite_t **suites) {
     this->ctx()->cipher_suites = suites;
-  }
-  void override_tls12_cipher_suites(ptls_cipher_suite_t **suites) {
-    this->ctx()->tls12_cipher_suites = suites;
   }
 
   State	&state;
@@ -673,8 +672,8 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
 };
 
 struct SuiteList {
-  ptls_cipher_suite_t *list[2]{};
-  void set(ptls_cipher_suite_t *suite) {
+  Ztls_::cipher_suite_t *list[2]{};
+  void set(Ztls_::cipher_suite_t *suite) {
     list[0] = suite;
     list[1] = nullptr;
   }
@@ -690,7 +689,7 @@ void run_in_process(
     bool serverDisconnectAfterSend = false,
     ZiIP ip = ZiIP{"127.0.0.1"},
     const char *connectIP = "127.0.0.1",
-    ptls_cipher_suite_t **cipherSuites = nullptr,
+    Ztls_::cipher_suite_t **cipherSuites = nullptr,
     unsigned expectedCipher = 0,
     unsigned txHeadroom = 0,
     unsigned txTailroom = 0,
@@ -698,7 +697,6 @@ void run_in_process(
     Ztls::Certs clientCerts = {},
     Ztls::Certs caCerts = {})
 {
-  Ztls::Pico::reset_stats();
   capture.reset();
 
   TestState state;
@@ -844,13 +842,53 @@ void run_in_process(
   }
 }
 
-void free_certificates(ptls_context_t &ctx)
+static void ticketResumption(TempDir &temp)
 {
-  if (!ctx.certificates.list) return;
-  for (unsigned i = 0; i < ctx.certificates.count; ++i)
-    free(ctx.certificates.list[i].base);
-  free(ctx.certificates.list);
-  ctx.certificates = {};
+  ZuTestScopeRT(ticketResumption);
+  Ztls::PK::Key key;
+  bool loaded = Ztls::PK::loadPEM(key, temp.keyPath.data());
+  ZuCheckRT(loaded);
+  if (!loaded) return;
+  auto sign = Ztls::sign_cert_new(key);
+  auto ticketKey = Ztls::ticket_key_new();
+  Ztls_::context_t client{}, server{};
+  ZuGuard cleanup{[sign, ticketKey]() {
+    if (ticketKey) Ztls::ticket_key_free(ticketKey);
+    if (sign) Ztls::sign_cert_free(sign);
+  }};
+  bool configured = sign && ticketKey &&
+    Ztls::load_certificates(&server, temp.certPath.data());
+  ZuCheckRT(configured);
+  if (!configured) return;
+  client.random_bytes = server.random_bytes = Ztls_::openssl_random_bytes;
+  client.get_time = server.get_time = &Ztls_::get_time;
+  client.key_exchanges = server.key_exchanges = Ztls_::openssl_key_exchanges;
+  client.cipher_suites = server.cipher_suites = Ztls_::openssl_cipher_suites;
+  server.sign_certificate = Ztls::sign_cert_cb(sign);
+  server.encrypt_ticket = Ztls::ticket_encrypt_cb(ticketKey);
+  server.ticket_lifetime = 60;
+
+  ZtBArray<> ticket;
+  Ztls_::save_ticket_t save{[](Ztls_::save_ticket_t *, Ztls::Cxn *connection, Ztls_::Bytes input) {
+    auto &saved = *static_cast<ZtBArray<> *>(*Ztls_::get_data_ptr(connection));
+    if (!saved) saved = ZuBSpan{input.data(), unsigned(input.length())};
+    return 0;
+  }};
+  client.save_ticket = &save;
+  for (bool resume : {false, true}) {
+    Ztls::Cxn txConnection{&client, false}, rxConnection{&server, true};
+    auto tx = &txConnection, rx = &rxConnection;
+    ZuCheckRT(tx && rx);
+    if (!tx || !rx) return;
+    *Ztls_::get_data_ptr(tx) = &ticket;
+    Ztls_::handshake_properties_t properties{};
+    if (resume) properties.client.session_ticket = Ztls_::wire_bytes(ticket.data(), ticket.length());
+    bool complete = ZtlsTest::handshake(tx, rx, &properties);
+    ZuCheckRT(complete && ticket.length());
+    if (!complete || !ticket) return;
+    ZuCheckRT(bool(Ztls_::is_psk_handshake(tx)) == resume);
+    ZuCheckRT(bool(Ztls_::is_psk_handshake(rx)) == resume);
+  }
 }
 
 template <typename T>
@@ -940,23 +978,23 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
   if (!leaf || !root) return;
 
   ZuBSpan chain[] = {leaf, root};
-  ptls_context_t ctx{};
-  ZTLS_CHECK_RT(Ztls::Pico::load_certificates_der(
+  Ztls_::context_t ctx{};
+  ZTLS_CHECK_RT(Ztls::load_certificates_der(
       &ctx, chain, key->key), type, " in-memory chain validation failed");
-  auto installed = ctx.certificates.list;
-  auto installedCount = ctx.certificates.count;
+  auto installed = ctx.certificates.data();
+  auto installedCount = ctx.certificates.length();
   ZuBSpan malformed[] = {ZuBSpan{"bad"}};
-  ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
+  ZTLS_CHECK_RT(!Ztls::load_certificates_der(
       &ctx, malformed, key->key), type, " malformed certificate accepted");
-  ZTLS_CHECK_RT(ctx.certificates.list == installed &&
-      ctx.certificates.count == installedCount,
+  ZTLS_CHECK_RT(ctx.certificates.data() == installed &&
+      ctx.certificates.length() == installedCount,
     type, " failed chain replaced installed certificates");
-  free_certificates(ctx);
+  ctx.certificates.null();
 
   ZuBSpan reversed[] = {root, leaf};
-  ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
+  ZTLS_CHECK_RT(!Ztls::load_certificates_der(
       &ctx, reversed, key->key), type, " reversed chain accepted");
-  ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
+  ZTLS_CHECK_RT(!Ztls::load_certificates_der(
       &ctx, {}, key->key), type, " empty chain accepted");
 
   ZmRef<T> other;
@@ -966,7 +1004,7 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
     other = new T{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   else
     other = new T{rng};
-  ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
+  ZTLS_CHECK_RT(!Ztls::load_certificates_der(
       &ctx, chain, other->key), type, " mismatched key accepted");
 
   auto publicResult = key->mkPK();
@@ -974,7 +1012,7 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
     type, " public key creation failed");
   if (!publicResult.template is<ZeException>()) {
     auto publicKey = ZuMv(publicResult).template p<0>();
-    ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
+    ZTLS_CHECK_RT(!Ztls::load_certificates_der(
         &ctx, chain, publicKey->key), type, " public-only key accepted");
   }
 
@@ -993,7 +1031,7 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
     Ztls::Cert broken{leaf};
     broken[broken.length() - 1] ^= 1;
     ZuBSpan brokenChain[] = {broken, root};
-    ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
+    ZTLS_CHECK_RT(!Ztls::load_certificates_der(
         &ctx, brokenChain, key->key), type, " broken chain accepted");
 
     auto rejectIssued = [&](ZuCSpan name, ZuCSpan validity,
@@ -1013,7 +1051,7 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
       ZTLS_CHECK_RT(read, type, " ", name, " read failed");
       if (!read) return;
       ZuBSpan invalid[] = {cert, root};
-      ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
+      ZTLS_CHECK_RT(!Ztls::load_certificates_der(
           &ctx, invalid, key->key), type, " ", name, " accepted");
     };
     rejectIssued("expired.der",
@@ -1074,12 +1112,12 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
     ZTLS_CHECK_RT(constrained, type, " constrained chain read failed");
     if (constrained) {
       ZuBSpan constrainedChain[] = {constrainedLeaf, int1, int0, root};
-      ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
+      ZTLS_CHECK_RT(!Ztls::load_certificates_der(
           &ctx, constrainedChain, key->key),
         type, " path-length constraint violation accepted");
 
       ZuBSpan unrelatedChain[] = {leaf, int0};
-      ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
+      ZTLS_CHECK_RT(!Ztls::load_certificates_der(
           &ctx, unrelatedChain, key->key),
         type, " unrelated chain anchor accepted");
     }
@@ -1116,20 +1154,20 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
     ZTLS_CHECK_RT(nonCA, type, " non-CA chain read failed");
     if (nonCA) {
       ZuBSpan nonCAChain[] = {nonCALeaf, nonCACert, root};
-      ZTLS_CHECK_RT(!Ztls::Pico::load_certificates_der(
+      ZTLS_CHECK_RT(!Ztls::load_certificates_der(
           &ctx, nonCAChain, key->key),
         type, " non-CA intermediate accepted");
     }
   }
 
-  auto store = Ztls::Pico::cert_store_new();
-  ZTLS_CHECK_RT(store && Ztls::Pico::cert_store_add_ca(store, root),
+  auto store = Ztls::cert_store_new();
+  ZTLS_CHECK_RT(store && Ztls::cert_store_add_ca(store, root),
     type, " supplemental CA rejected");
-  ZTLS_CHECK_RT(store && Ztls::Pico::cert_store_add_ca(store, root),
+  ZTLS_CHECK_RT(store && Ztls::cert_store_add_ca(store, root),
     type, " duplicate supplemental CA rejected");
-  ZTLS_CHECK_RT(store && !Ztls::Pico::cert_store_add_ca(store, leaf),
+  ZTLS_CHECK_RT(store && !Ztls::cert_store_add_ca(store, leaf),
     type, " non-CA supplemental certificate accepted");
-  ZTLS_CHECK_RT(store && !Ztls::Pico::cert_store_add_ca(
+  ZTLS_CHECK_RT(store && !Ztls::cert_store_add_ca(
       store, ZuBSpan{"bad"}), type, " malformed supplemental CA accepted");
   if constexpr (ZuIsSame<T, Ztls::PK::SK_RSA>{}) {
     ZtString<> expiredCAPath = temp.pathOf("expired-ca.der");
@@ -1146,10 +1184,10 @@ void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
     expiredCA = expiredCA && read_bytes(expiredCAPath.data(), cert);
     ZTLS_CHECK_RT(expiredCA, type, " expired CA read failed");
     if (expiredCA)
-      ZTLS_CHECK_RT(!Ztls::Pico::cert_store_add_ca(store, cert),
+      ZTLS_CHECK_RT(!Ztls::cert_store_add_ca(store, cert),
         type, " expired supplemental CA accepted");
   }
-  Ztls::Pico::cert_store_free(store);
+  Ztls::cert_store_free(store);
 
   Ztls::Cert leaf2{leaf};
   Ztls::Cert root2{root};
@@ -1284,145 +1322,11 @@ void testWrongHostname(TempDir &temp, LogCapture &capture)
   ZiLog::start();
 }
 
-struct ImportedTLS {
-  SuiteList	suites;
-  ptls_context_t	ctx{};
-  ptls_t	*client = nullptr;
-  ptls_t	*server = nullptr;
-  ~ImportedTLS() {
-    if (client) ptls_free(client);
-    if (server) ptls_free(server);
-  }
-};
-
-bool import_tls12_one(
-    ptls_context_t *ctx,
-    ptls_cipher_suite_t *suite,
-    bool isServer,
-    ImportedTLS &pair)
-{
-  uint8_t master[PTLS_TLS12_MASTER_SECRET_SIZE];
-  uint8_t randoms[PTLS_HELLO_RANDOM_SIZE * 2];
-  for (unsigned i = 0; i < sizeof(master); ++i) master[i] = uint8_t(0x40 + i);
-  for (unsigned i = 0; i < sizeof(randoms); ++i) randoms[i] = uint8_t(0x80 + i);
-
-  uint8_t paramsStorage[512];
-  ptls_buffer_t params;
-  ptls_buffer_init_tx(&params, paramsStorage, sizeof(paramsStorage));
-  int n = ptls_build_tls12_export_params(
-    ctx, &params, isServer ? 1 : 0, 0, suite, master, randoms,
-    1, "localhost", ptls_iovec_init(nullptr, 0));
-  if (n) {
-    ptls_buffer_dispose(&params);
-    return false;
-  }
-  ptls_t *tls = nullptr;
-  n = ptls_import(ctx, &tls, ptls_iovec_init(params.base, params.off));
-  ptls_buffer_dispose(&params);
-  if (n) return false;
-  if (isServer)
-    pair.server = tls;
-  else
-    pair.client = tls;
-  return true;
-}
-
-bool import_tls12_pair(ptls_cipher_suite_t *suite, ImportedTLS &pair)
-{
-  pair.suites.set(suite);
-  pair.ctx.random_bytes = ptls_openssl_random_bytes;
-  pair.ctx.get_time = &ptls_get_time;
-  pair.ctx.cipher_suites = ptls_openssl_cipher_suites;
-  pair.ctx.tls12_cipher_suites = pair.suites.list;
-  return
-    import_tls12_one(&pair.ctx, suite, false, pair) &&
-    import_tls12_one(&pair.ctx, suite, true, pair);
-}
-
-bool tls12_roundtrip(
-    ptls_t *sender,
-    ptls_t *receiver,
-    ptls_cipher_suite_t *suite,
-    const ZtArray<uint8_t> &payload)
-{
-  constexpr unsigned TxRecordCapacity = 16 * 1024;
-  unsigned headroom = 5 + suite->aead->tls12.record_iv_size;
-  ZiMultiplex mx;
-  auto allocator = mx.allocator<Zi::IOBufType::TxTLS, ZiIOBuf,
-    BufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, MaxSize>();
-  auto buf = allocator->allocBuf();
-  if (!buf || !buf->ensure(TxRecordCapacity)) return false;
-  memcpy(buf->data_() + headroom, payload.data(), payload.length());
-
-  ptls_buffer_t tx;
-  ptls_buffer_init_tx(&tx, buf->data_(), TxRecordCapacity);
-  tx.origin = buf.ptr();
-  tx.align_bits = suite->aead->align_bits;
-  int n = ptls_send(sender, &tx, buf->data_() + headroom, payload.length());
-  if (n) return false;
-  if (tx.origin != buf.ptr() || tx.base != buf->data_() || !tx.off)
-    return false;
-
-  buf->skip = 0;
-  buf->length = uint32_t(tx.off);
-
-  ptls_buffer_t rx;
-  ptls_buffer_init_rx(&rx, buf->data_() + headroom, buf->size - headroom);
-  rx.origin = buf.ptr();
-  rx.align_bits = suite->aead->align_bits;
-  size_t inlen = buf->length;
-  n = ptls_receive(receiver, &rx, buf->data_(), &inlen);
-  if (n || inlen != buf->length) return false;
-  if (rx.origin != buf.ptr() || rx.base != buf->data_() + headroom)
-    return false;
-  if (rx.off != payload.length()) return false;
-  return !payload.length() || !memcmp(rx.base, payload.data(), payload.length());
-}
-
-void run_tls12_records(ptls_cipher_suite_t *suite)
-{
-  Ztls::Pico::install();
-  Ztls::Pico::reset_stats();
-
-  ImportedTLS pair;
-  bool imported = import_tls12_pair(suite, pair);
-  ZTLS_CHECK_RT(imported, "failed to import TLS 1.2 record state");
-  if (!imported) return;
-
-  ZTLS_CHECK_RT(ptls_get_protocol_version(pair.client) == PTLS_PROTOCOL_VERSION_TLS12,
-    "client import did not create TLS 1.2 state");
-  ZTLS_CHECK_RT(ptls_get_protocol_version(pair.server) == PTLS_PROTOCOL_VERSION_TLS12,
-    "server import did not create TLS 1.2 state");
-
-  auto overhead = 5 + suite->aead->tls12.record_iv_size + suite->aead->tag_size;
-  ZTLS_CHECK_RT(ptls_get_record_overhead(pair.client) == overhead,
-    "client TLS 1.2 record overhead mismatch");
-  ZTLS_CHECK_RT(ptls_get_record_overhead(pair.server) == overhead,
-    "server TLS 1.2 record overhead mismatch");
-
-  ZtArray<uint8_t> clientPayload;
-  ZtArray<uint8_t> serverPayload;
-  fill_payload(clientPayload, SmallPayloadSize, 0x27);
-  fill_payload(serverPayload, SmallPayloadSize, 0x91);
-
-  ZTLS_CHECK_RT(tls12_roundtrip(pair.client, pair.server, suite, clientPayload),
-    "client-to-server TLS 1.2 record round trip failed");
-  ZTLS_CHECK_RT(tls12_roundtrip(pair.server, pair.client, suite, serverPayload),
-    "server-to-client TLS 1.2 record round trip failed");
-}
-
 void run_tls12_handshake_rejected(
     TempDir &temp,
     LogCapture &capture)
 {
-  Ztls::Pico::reset_stats();
   capture.reset();
-
-  SuiteList suites;
-  auto suite = &ptls_openssl_tls12_ecdhe_rsa_aes128gcmsha256;
-  ZTLS_CHECK_RT(suite, "TLS 1.2 AES-GCM suite unavailable");
-  if (!suite) return;
-  suites.set(suite);
 
   TestState state;
   state.target = 1;
@@ -1442,7 +1346,6 @@ void run_tls12_handshake_rejected(
       .keyPath(temp.keyPath.data()));
   ZTLS_CHECK_RT(serverOK, "TLS server init failed");
   if (!serverOK) { mx.stop(); return; }
-  server.override_tls12_cipher_suites(suites.list);
   bool mxStarted = mx.start();
   ZTLS_CHECK_RT(mxStarted, "ZiMultiplex start failed");
   if (!mxStarted) return;
@@ -1509,7 +1412,6 @@ void testTLS13ConcurrentRecords(TempDir &temp, LogCapture &capture)
   ZuTestScopeRT(testTLS13ConcurrentRecords);
   constexpr unsigned Clients = 64;
   constexpr unsigned Payload = 4096;
-  Ztls::Pico::reset_stats();
   capture.reset();
 
   TestState state;
@@ -1576,14 +1478,14 @@ void testTLS13KeyUpdate(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testTLS13KeyUpdate);
   SuiteList suites;
-  auto suite = ptls_find_cipher_suite(ptls_openssl_cipher_suites, PTLS_CIPHER_SUITE_AES_128_GCM_SHA256);
+  auto suite = Ztls_::find_cipher_suite(Ztls_::openssl_cipher_suites, Ztls_CIPHER_SUITE_AES_128_GCM_SHA256);
   ZTLS_CHECK_RT(suite, "TLS 1.3 AES-GCM suite unavailable");
   if (!suite) return;
   suites.set(suite);
   run_in_process(
     temp, capture, SmallPayloadSize, SmallPayloadSize, true, false, false,
     ZiIP{"127.0.0.1"}, "127.0.0.1",
-    suites.list, PTLS_CIPHER_SUITE_AES_128_GCM_SHA256);
+    suites.list, Ztls_CIPHER_SUITE_AES_128_GCM_SHA256);
 }
 
 void testTLS13ServerKeyUpdate(TempDir &temp, LogCapture &capture)
@@ -1610,7 +1512,7 @@ void testTLS13ComposedHeadroom(TempDir &temp, LogCapture &capture)
     16 * 1024 - 325 - ExtraHeadroom - ExtraTailroom;
   constexpr unsigned Payload = RecordPayload * 2 + 1;
 
-  for (auto suites = ptls_openssl_cipher_suites; *suites; ++suites) {
+  for (auto suites = Ztls_::openssl_cipher_suites; *suites; ++suites) {
     SuiteList selected;
     selected.set(*suites);
     run_in_process(
@@ -1618,37 +1520,6 @@ void testTLS13ComposedHeadroom(TempDir &temp, LogCapture &capture)
       ZiIP{"127.0.0.1"}, "127.0.0.1",
       selected.list, (*suites)->id, ExtraHeadroom, ExtraTailroom);
   }
-}
-
-void testTLS12ExplicitIV(TempDir &temp, LogCapture &capture)
-{
-  (void)temp;
-  (void)capture;
-  ZuTestScopeRT(testTLS12ExplicitIV);
-  auto suite = &ptls_openssl_tls12_ecdhe_rsa_aes128gcmsha256;
-  ZTLS_CHECK_RT(suite, "TLS 1.2 AES-GCM suite unavailable");
-  if (!suite) return;
-  ZTLS_CHECK_RT(suite->aead->tls12.record_iv_size > 0,
-    "TLS 1.2 AES-GCM should use an explicit record IV");
-  run_tls12_records(suite);
-}
-
-void testTLS12NoExplicitIV(TempDir &temp, LogCapture &capture)
-{
-  (void)temp;
-  (void)capture;
-  ZuTestScopeRT(testTLS12NoExplicitIV);
-  ptls_cipher_suite_t *suite = nullptr;
-#if PTLS_OPENSSL_HAVE_CHACHA20_POLY1305
-  suite = &ptls_openssl_tls12_ecdhe_rsa_chacha20poly1305sha256;
-#endif
-  if (!suite) {
-    std::cout << "# TLS 1.2 ChaCha20-Poly1305 unavailable in this backend\n";
-    return;
-  }
-  ZTLS_CHECK_RT(!suite->aead->tls12.record_iv_size,
-    "TLS 1.2 ChaCha20-Poly1305 should not use an explicit record IV");
-  run_tls12_records(suite);
 }
 
 void testTLS12HandshakeRejected(TempDir &temp, LogCapture &capture)
@@ -1681,9 +1552,9 @@ int main(int argc, char **argv)
 {
   ZuTestUtil::parse(argc, argv);
 
-  ZiTestResidue::init("ZtlsBufHookTest");
+  ZiTestResidue::init("ZtlsBufferTest");
 
-  ZiLog::init("ZtlsBufHookTest");
+  ZiLog::init("ZtlsBufferTest");
   ZiLog::level(0);
 
   LogCapture capture;
@@ -1706,9 +1577,8 @@ int main(int argc, char **argv)
     ZuTestCall(testTLS13ServerKeyUpdate, temp, capture);
     ZuTestCall(testTLS13QueuedClose, temp, capture);
     ZuTestCall(testTLS13ComposedHeadroom, temp, capture);
-    ZuTestCall(testTLS12ExplicitIV, temp, capture);
-    ZuTestCall(testTLS12NoExplicitIV, temp, capture);
     ZuTestCall(testTLS12HandshakeRejected, temp, capture);
+    ZuTestCall(ticketResumption, temp);
     ZuTestCall(testInMemoryRSA, temp, capture);
     ZuTestCall(testInMemoryEC, temp, capture);
     ZuTestCall(testInMemoryED25519, temp, capture);

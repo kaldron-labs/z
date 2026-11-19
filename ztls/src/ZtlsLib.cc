@@ -4,18 +4,17 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z TLS Library - zpicotls/OpenSSL wrapper
+// Z TLS library
 
 #include <zlib/ZtlsLib.hh>
 
 #include <openssl/crypto.h>
 #include <openssl/err.h>
-#include <zpicotls.h>
+#include <zlib/ZtlsEngine.hh>
 
 #include <stdio.h>
 #include <string.h>
 
-#include <zlib/ZtlsPico.hh>
 #include <zlib/ZePlatform.hh>
 
 ZtlsExtern const char ZtlsLib[] = "@(#) Z TLS Library v" Z_VERNAME;
@@ -32,49 +31,49 @@ bool cryptoInit()
 static const char *alert_string(int alert)
 {
   switch (alert) {
-    case PTLS_ALERT_CLOSE_NOTIFY: return "close_notify";
-    case PTLS_ALERT_UNEXPECTED_MESSAGE: return "unexpected_message";
-    case PTLS_ALERT_BAD_RECORD_MAC: return "bad_record_mac";
-    case PTLS_ALERT_HANDSHAKE_FAILURE: return "handshake_failure";
-    case PTLS_ALERT_BAD_CERTIFICATE: return "bad_certificate";
-    case PTLS_ALERT_UNSUPPORTED_CERTIFICATE: return "unsupported_certificate";
-    case PTLS_ALERT_CERTIFICATE_REVOKED: return "certificate_revoked";
-    case PTLS_ALERT_CERTIFICATE_EXPIRED: return "certificate_expired";
-    case PTLS_ALERT_CERTIFICATE_UNKNOWN: return "certificate_unknown";
-    case PTLS_ALERT_ILLEGAL_PARAMETER: return "illegal_parameter";
-    case PTLS_ALERT_UNKNOWN_CA: return "unknown_ca";
-    case PTLS_ALERT_ACCESS_DENIED: return "access_denied";
-    case PTLS_ALERT_DECODE_ERROR: return "decode_error";
-    case PTLS_ALERT_DECRYPT_ERROR: return "decrypt_error";
-    case PTLS_ALERT_PROTOCOL_VERSION: return "protocol_version";
-    case PTLS_ALERT_INTERNAL_ERROR: return "internal_error";
-    case PTLS_ALERT_USER_CANCELED: return "user_canceled";
-    case PTLS_ALERT_MISSING_EXTENSION: return "missing_extension";
-    case PTLS_ALERT_UNSUPPORTED_EXTENSION: return "unsupported_extension";
-    case PTLS_ALERT_UNRECOGNIZED_NAME: return "unrecognized_name";
-    case PTLS_ALERT_UNKNOWN_PSK_IDENTITY: return "unknown_psk_identity";
-    case PTLS_ALERT_CERTIFICATE_REQUIRED: return "certificate_required";
-    case PTLS_ALERT_NO_APPLICATION_PROTOCOL: return "no_application_protocol";
-    case PTLS_ALERT_ECH_REQUIRED: return "ech_required";
+    case Ztls_ALERT_CLOSE_NOTIFY: return "close_notify";
+    case Ztls_ALERT_UNEXPECTED_MESSAGE: return "unexpected_message";
+    case Ztls_ALERT_BAD_RECORD_MAC: return "bad_record_mac";
+    case Ztls_ALERT_HANDSHAKE_FAILURE: return "handshake_failure";
+    case Ztls_ALERT_BAD_CERTIFICATE: return "bad_certificate";
+    case Ztls_ALERT_UNSUPPORTED_CERTIFICATE: return "unsupported_certificate";
+    case Ztls_ALERT_CERTIFICATE_REVOKED: return "certificate_revoked";
+    case Ztls_ALERT_CERTIFICATE_EXPIRED: return "certificate_expired";
+    case Ztls_ALERT_CERTIFICATE_UNKNOWN: return "certificate_unknown";
+    case Ztls_ALERT_ILLEGAL_PARAMETER: return "illegal_parameter";
+    case Ztls_ALERT_UNKNOWN_CA: return "unknown_ca";
+    case Ztls_ALERT_ACCESS_DENIED: return "access_denied";
+    case Ztls_ALERT_DECODE_ERROR: return "decode_error";
+    case Ztls_ALERT_DECRYPT_ERROR: return "decrypt_error";
+    case Ztls_ALERT_PROTOCOL_VERSION: return "protocol_version";
+    case Ztls_ALERT_INTERNAL_ERROR: return "internal_error";
+    case Ztls_ALERT_USER_CANCELED: return "user_canceled";
+    case Ztls_ALERT_MISSING_EXTENSION: return "missing_extension";
+    case Ztls_ALERT_UNSUPPORTED_EXTENSION: return "unsupported_extension";
+    case Ztls_ALERT_UNRECOGNIZED_NAME: return "unrecognized_name";
+    case Ztls_ALERT_UNKNOWN_PSK_IDENTITY: return "unknown_psk_identity";
+    case Ztls_ALERT_CERTIFICATE_REQUIRED: return "certificate_required";
+    case Ztls_ALERT_NO_APPLICATION_PROTOCOL: return "no_application_protocol";
+    case Ztls_ALERT_ECH_REQUIRED: return "ech_required";
   }
   return nullptr;
 }
 
-static const char *ptls_error_string(int err)
+static const char *engine_error_string(int err)
 {
   switch (err) {
-    case PTLS_ERROR_NO_MEMORY: return "no_memory";
-    case PTLS_ERROR_IN_PROGRESS: return "in_progress";
-    case PTLS_ERROR_LIBRARY: return "library_error";
-    case PTLS_ERROR_INCOMPATIBLE_KEY: return "incompatible_key";
-    case PTLS_ERROR_SESSION_NOT_FOUND: return "session_not_found";
-    case PTLS_ERROR_STATELESS_RETRY: return "stateless_retry";
-    case PTLS_ERROR_NOT_AVAILABLE: return "not_available";
-    case PTLS_ERROR_COMPRESSION_FAILURE: return "compression_failure";
-    case PTLS_ERROR_REJECT_EARLY_DATA: return "reject_early_data";
-    case PTLS_ERROR_DELEGATE: return "delegate";
-    case PTLS_ERROR_ASYNC_OPERATION: return "async_operation";
-    case PTLS_ERROR_BLOCK_OVERFLOW: return "block_overflow";
+    case Ztls_ERROR_NO_MEMORY: return "no_memory";
+    case Ztls_ERROR_IN_PROGRESS: return "in_progress";
+    case Ztls_ERROR_LIBRARY: return "library_error";
+    case Ztls_ERROR_INCOMPATIBLE_KEY: return "incompatible_key";
+    case Ztls_ERROR_SESSION_NOT_FOUND: return "session_not_found";
+    case Ztls_ERROR_STATELESS_RETRY: return "stateless_retry";
+    case Ztls_ERROR_NOT_AVAILABLE: return "not_available";
+    case Ztls_ERROR_COMPRESSION_FAILURE: return "compression_failure";
+    case Ztls_ERROR_REJECT_EARLY_DATA: return "reject_early_data";
+    case Ztls_ERROR_DELEGATE: return "delegate";
+    case Ztls_ERROR_ASYNC_OPERATION: return "async_operation";
+    case Ztls_ERROR_BLOCK_OVERFLOW: return "block_overflow";
   }
   return nullptr;
 }
@@ -88,21 +87,21 @@ size_t format_error(int err, char *buf, size_t len)
     ERR_error_string_n(oe, buf, len);
     return strlen(buf);
   }
-  if (PTLS_ERROR_GET_CLASS(err) == PTLS_ERROR_CLASS_SELF_ALERT ||
-      PTLS_ERROR_GET_CLASS(err) == PTLS_ERROR_CLASS_PEER_ALERT) {
-    if (auto alert = alert_string(PTLS_ERROR_TO_ALERT(err))) {
+  if (Ztls_ERROR_GET_CLASS(err) == Ztls_ERROR_CLASS_SELF_ALERT ||
+      Ztls_ERROR_GET_CLASS(err) == Ztls_ERROR_CLASS_PEER_ALERT) {
+    if (auto alert = alert_string(Ztls_ERROR_TO_ALERT(err))) {
       return snprintf(buf, len, "alert(%s)", alert);
     }
   }
-  if (auto ptls_err = ptls_error_string(err)) {
-    return snprintf(buf, len, "zpicotls(%s)", ptls_err);
+  if (auto engineErr = engine_error_string(err)) {
+    return snprintf(buf, len, "tls(%s)", engineErr);
   }
   return snprintf(buf, len, "error(%d)", err);
 }
 
 ZtlsExtern void init()
 {
-  if (!Pico::init())
+  if (!cryptoInit())
     throw ZeEXCEPT(Error, "Ztls", "crypto initialization failed");
 }
 

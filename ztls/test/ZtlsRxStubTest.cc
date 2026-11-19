@@ -5,13 +5,14 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <string.h>
-#include <zpicotls/openssl.h>
+#include <zlib/ZtlsEngineOpenSSL.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/Ztls.hh>
+#include "ZtlsTestHandshake.hh"
 
 using namespace ZuTestUtil;
 
@@ -150,36 +151,27 @@ friend inline ZuStringT<"Ztls.RxStub.Provider"> ZmNHeapID(Provider *);
   void unwatch() override { }
 };
 
-static ptls_t *importTLS(ptls_context_t *ctx, int server)
-{
-  uint8_t secret[PTLS_TLS12_MASTER_SECRET_SIZE], random[PTLS_HELLO_RANDOM_SIZE * 2], small;
-  memset(secret, 0x43, sizeof(secret)); memset(random, 0x76, sizeof(random));
-  ptls_buffer_t params;
-  ptls_buffer_init_tx(&params, &small, 0);
-  ptls_t *tls = nullptr;
-  int n = ptls_build_tls12_export_params(ctx, &params, server, 0,
-    &ptls_openssl_tls12_ecdhe_rsa_aes128gcmsha256, secret, random, 1,
-    "localhost", ptls_iovec_init(nullptr, 0));
-  if (!n) n = ptls_import(ctx, &tls, ptls_iovec_init(params.base, params.off));
-  ptls_buffer_dispose(&params);
-  return n ? nullptr : tls;
-}
-
 struct Client : Ztls::Client<Client> {
   using Ztls::Client<Client>::ctx;
   ZmSemaphore connected, done, received;
   ZmAtomic<unsigned> errors{0}, calls{0};
   uint8_t plaintext[Payload]{};
   ZmRef<ZiIOBuf> retained;
+  // Published by the connected notification, then owned by the test driver.
+  Ztls::Cxn peer;
+  bool peerReady = false;
   struct Link : Ztls::CliLink<Client, Link>, ZmNHeap<Link> {
   friend inline ZuStringT<"Ztls.RxStub.Link"> ZmNHeapID(Link *);
     using Base = Ztls::CliLink<Client, Link>;
     using Base::Base;
-    // Import an established session using the protected TLS installation API;
-    // the production connected dispatch still arms transport input and Tx keys.
+    // Establish the peer in memory before testing packet provider delivery.
     void connected_() {
-      ptls_free(this->tls()); this->tls(importTLS(this->app()->ctx(), 1));
-      if (!this->tls() || !this->handshake_(nullptr)) this->app()->done.post();
+      auto app = this->app();
+      this->tls()->initialize(app->ctx(), true, this);
+      this->tls()->plaintext.reset(app->rxAllocator(), this);
+      app->peer.initialize(app->ctx(), false);
+      app->peerReady = ZtlsTest::handshake(&app->peer, this->tls());
+      if (!app->peerReady || !this->handshake_(nullptr)) app->done.post();
     }
     void connected(Ztls::Connected) { this->app()->connected.post(); }
     void disconnected(bool) { this->app()->done.post(); }
@@ -237,9 +229,9 @@ void run(bool stub, bool corrupt, bool partial, bool stale)
   bool initialized = client.init(ZuMv(params));
   ZuCheckRT(initialized);
   if (!initialized) return;
-  ptls_cipher_suite_t *tls12Suites[] = {
-    &ptls_openssl_tls12_ecdhe_rsa_aes128gcmsha256, nullptr};
-  client.ctx()->tls12_cipher_suites = tls12Suites;
+  Ztls_::cipher_suite_t *suites[] = {&Ztls_::openssl_aes128gcmsha256, nullptr};
+  client.ctx()->cipher_suites = suites;
+  ZtlsTest::useTestPSK(*client.ctx(), suites[0]);
   bool started = mx.start(); ZuCheckRT(started);
   if (!started) { client.final(); return; }
   ZuCheckRT(client.start());
@@ -249,12 +241,13 @@ void run(bool stub, bool corrupt, bool partial, bool stale)
   for (unsigned pass = 0; pass < ((partial || stale) ? 2U : 1U); ++pass) {
     link->connect("127.0.0.1", 443);
     ZuCheckRT(!client.connected.timedwait(Zm::now(Timeout)));
-    auto tx = importTLS(client.ctx(), 0);
+    auto tx = client.peerReady ? &client.peer : nullptr;
+    client.peerReady = false;
     uint8_t small;
-    ptls_buffer_t wire;
-    ptls_buffer_init_tx(&wire, &small, 0);
-    ZuCheckRT(tx && !ptls_send(tx, &wire, payload, Payload));
-    ptls_free(tx);
+    Ztls_::buffer_t wire;
+    Ztls_::buffer_init_tx(&wire, &small, 0);
+    ZuCheckRT(tx && !Ztls_::send(tx, &wire, payload, Payload));
+    if (tx) { tx->retireRx(); tx->retireTx(); }
     if (corrupt) wire.base[wire.off - 1] ^= 1;
     bool incomplete = !pass && (partial || stale);
     unsigned length = incomplete ? 23 : unsigned(wire.off);
@@ -286,7 +279,7 @@ void run(bool stub, bool corrupt, bool partial, bool stale)
       link->disconnect();
       ZuCheckRT(!client.done.timedwait(Zm::now(Timeout)));
     }
-    ptls_buffer_dispose(&wire);
+    Ztls_::buffer_dispose(&wire);
   }
   ZuCheckRT(client.stop());
   if (!corrupt) {

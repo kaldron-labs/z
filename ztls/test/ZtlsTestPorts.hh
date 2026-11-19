@@ -8,7 +8,7 @@
 #define ZtlsTestPorts_HH
 
 namespace ZtlsTestPort {
-  enum { BufHook = 20200, BufHookEnd = 20299 };
+  enum { BufferTest = 20200, BufferTestEnd = 20299 };
 }
 
 #endif /* ZtlsTestPorts_HH */

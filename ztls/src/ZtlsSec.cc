@@ -8,6 +8,8 @@
 
 #include <zlib/ZtlsSec.hh>
 
+#include <openssl/crypto.h>
+
 #include <zlib/ZtlsKDF.hh>
 #include <zlib/ZtlsRandom.hh>
 
@@ -15,11 +17,9 @@ namespace Ztls {
 
 bool ctEqual(ZuBSpan l, ZuBSpan r)
 {
-  unsigned n = l.length();
+  auto n = l.length();
   if (n != r.length()) return false;
-  uint8_t v = 0;
-  for (unsigned i = 0; i < n; ++i) v |= l[i] ^ r[i];
-  return !v;
+  return !n || CRYPTO_memcmp(l.data(), r.data(), n) == 0;
 }
 
 static bool secretHash_(ZuBSpan secret, ZuBSpan salt, ZuSpan<uint8_t> digest)

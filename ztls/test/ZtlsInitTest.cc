@@ -13,37 +13,32 @@
 
 #include <zlib/ZtlsHMAC.hh>
 #include <zlib/ZtlsMD.hh>
-#include <zlib/ZtlsPico.hh>
+#include <zlib/ZtlsCxn.hh>
 #include <zlib/ZtlsRandom.hh>
 
 using namespace ZuTestUtil;
 
-static bool bufferHooks(bool tx)
+static bool growRecordBuffer(bool tx)
 {
-  uint8_t small[1]; // Force the first reservation to use the installed hook.
-  ptls_buffer_t buffer;
-  if (tx) ptls_buffer_init_tx(&buffer, small, sizeof(small));
-  else ptls_buffer_init_rx(&buffer, small, sizeof(small));
-  ZuGuard dispose{[&buffer]() { ptls_buffer_dispose(&buffer); }};
+  uint8_t small[1]; // Force the first reservation to grow the record buffer.
+  Ztls_::buffer_t buffer;
+  if (tx) Ztls_::buffer_init_tx(&buffer, small, sizeof(small));
+  else Ztls_::buffer_init_rx(&buffer, small, sizeof(small));
+  ZuGuard dispose{[&buffer]() { Ztls_::buffer_dispose(&buffer); }};
   buffer.base[0] = 0x5a;
   buffer.off = 1;
-  if (ptls_buffer_reserve(&buffer, 1, tx ? 1 : 0) ||
+  if (Ztls_::buffer_reserve(&buffer, 1, tx ? 1 : 0) ||
       !buffer.is_allocated || buffer.base == small ||
       buffer.base[0] != 0x5a || buffer.off != 1)
     return false;
   auto capacity = buffer.capacity;
-  if (ptls_buffer_reserve(&buffer, capacity, tx ? 1 : 0) ||
+  if (Ztls_::buffer_reserve(&buffer, capacity, tx ? 1 : 0) ||
       buffer.capacity <= capacity || buffer.base[0] != 0x5a || buffer.off != 1)
     return false;
   return true;
 }
 
-struct Hooks {
-  decltype(ptls_buffer_alloc) alloc;
-  decltype(ptls_buffer_free) free;
-};
-
-static void standaloneCrypto(const Hooks &original)
+static void standaloneCrypto()
 {
   ZuTestScope(standaloneCrypto);
   Ztls::Random random;
@@ -57,11 +52,9 @@ static void standaloneCrypto(const Hooks &original)
   hmac.start("standalone key");
   hmac.update("standalone MAC");
   hmac.finish(bytes);
-  ZuCheck(ptls_buffer_alloc == original.alloc);
-  ZuCheck(ptls_buffer_free == original.free);
 }
 
-static void concurrentProtocolInit(const Hooks &original)
+static void concurrentProtocolInit()
 {
   ZuTestScope(concurrentProtocolInit);
   ZmSemaphore ready, go;
@@ -69,7 +62,7 @@ static void concurrentProtocolInit(const Hooks &original)
   auto initialize = [&ready, &go](bool &ok) {
     ready.post();
     go.wait();
-    ok = Ztls::Pico::init();
+    try { Ztls::init(); ok = true; } catch (...) { ok = false; }
   };
   ZmThread first{[&initialize, &firstOK]() { initialize(firstOK); }};
   ZmThread second{[&initialize, &secondOK]() { initialize(secondOK); }};
@@ -82,34 +75,34 @@ static void concurrentProtocolInit(const Hooks &original)
   if (second) second.join();
   ZuCheck(started);
   ZuCheck(firstOK && secondOK);
-  ZuCheck(ptls_buffer_alloc != original.alloc);
-  ZuCheck(ptls_buffer_free != original.free);
-  auto installedAlloc = ptls_buffer_alloc;
-  auto installedFree = ptls_buffer_free;
-  ZuCheck(Ztls::Pico::init());
-  Ztls::Pico::install();
-  ZuCheck(ptls_buffer_alloc == installedAlloc);
-  ZuCheck(ptls_buffer_free == installedFree);
+  Ztls::init();
 }
 
-static void installedHooks()
+static void recordBuffers()
 {
-  ZuTestScope(installedHooks);
-  Ztls::Pico::reset_stats();
-  ZuCheck(bufferHooks(false));
-  ZuCheck(bufferHooks(true));
-  auto stats = Ztls::Pico::stats();
-  ZuCheck(stats.internal_alloc != 0);
-  ZuCheck(stats.internal_free != 0);
+  ZuTestScope(recordBuffers);
+  ZuCheck(growRecordBuffer(false));
+  ZuCheck(growRecordBuffer(true));
+}
+
+static void connectionAlignment()
+{
+  ZuTestScope(connectionAlignment);
+  Ztls::Cxn connection;
+  auto rx = reinterpret_cast<uintptr_t>(&connection.state);
+  auto tx = reinterpret_cast<uintptr_t>(&connection.tx_traffic);
+  ZuCheck(rx % Zm::CacheLineSize == 0);
+  ZuCheck(tx % Zm::CacheLineSize == 0);
+  ZuCheck(tx > rx && tx - rx >= Zm::CacheLineSize);
 }
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  Hooks original{ptls_buffer_alloc, ptls_buffer_free};
-  ZuTestCall(standaloneCrypto, original);
-  ZuTestCall(concurrentProtocolInit, original);
-  ZuTestCall(installedHooks);
+  ZuTestCall(standaloneCrypto);
+  ZuTestCall(concurrentProtocolInit);
+  ZuTestCall(recordBuffers);
+  ZuTestCall(connectionAlignment);
   return 0;
 }

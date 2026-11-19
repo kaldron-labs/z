@@ -206,7 +206,7 @@ AC_SUBST(Z_ZT_LIBS)
 AC_SUBST(Z_IO_LIBS)
 AC_SUBST(Z_TERM_LIBS)
 
-# zpicotls
+# Zquic and consumers of its public headers still use zpicotls.
 PKG_CHECK_MODULES([PTLS], [
   zpicotls-core >= 1.3
   zpicotls-openssl >= 1.3
@@ -216,39 +216,7 @@ PKG_CHECK_MODULES([PTLS], [
 ])
 AC_SUBST(PTLS_LIBS)
 AC_SUBST(PTLS_CFLAGS)
-PKG_CHECK_VAR([PTLS_LIBDIR], [zpicotls-core], [libdir], [], [
-  AC_MSG_ERROR([zpicotls-core pkg-config libdir required])
-])
-# Ztls public template headers need the selected dependency's include path.
 CPPFLAGS="$PTLS_CFLAGS $CPPFLAGS"
-z_save_LIBS=$LIBS
-LIBS="$PTLS_LIBS $LIBS"
-AC_MSG_CHECKING([for zpicotls serial record output])
-AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <zpicotls.h>
-#if !PTLS_HAVE_RECORD_CHUNKS
-#error serial record output required
-#endif]], [[
-  int n = ptls_tx_send_chunks(0, 0, 0, 0);
-  n += ptls_handshake_chunks(0, 0, 0, 0, 0);
-  return n + ptls_recv_chunks(0, 0, 0, 0, 0);
-]])], [AC_MSG_RESULT([yes])], [
-  AC_MSG_RESULT([no])
-  AC_MSG_ERROR([zpicotls with PTLS_HAVE_RECORD_CHUNKS and serial record APIs required; rebuild the zpicotls dependency])
-])
-AC_MSG_CHECKING([for zpicotls incremental record receive])
-AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <zpicotls.h>
-#if !PTLS_HAVE_RECEIVE_STREAM
-#error incremental record receive required
-#endif]], [[
-  ptls_plaintext_sink_t plaintext = {0};
-  size_t length = 0;
-  int n = ptls_receive_stream_check(0);
-  return n + ptls_receive_stream(0, &plaintext, 0, 0, &length, 0);
-]])], [AC_MSG_RESULT([yes])], [
-  AC_MSG_RESULT([no])
-  AC_MSG_ERROR([zpicotls with PTLS_HAVE_RECEIVE_STREAM and incremental receive APIs required; rebuild the zpicotls dependency])
-])
-LIBS=$z_save_LIBS
 
 PKG_CHECK_MODULES([CRYPTO], [libcrypto >= 3.5], [], [
   AC_MSG_ERROR([OpenSSL libcrypto >= 3.5 with ML-KEM-768 support required])

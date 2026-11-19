@@ -5160,8 +5160,8 @@ Used by the Linux [Ztls](https://github.com/kaldron-labs/z/blob/main/ztls/src/Zt
 ## Cryptographic primitives
 
 [Public headers](https://github.com/kaldron-labs/z/blob/main/ztls/src/) · [Module guide](../ztls/README.md).
-TLS and crypto use zpicotls/OpenSSL; backend requirements are in
-[dependencies](DEPENDENCIES.md). Hash/MAC comparisons use
+Ztls embeds its TLS 1.3 engine and uses OpenSSL libcrypto. See the
+[dependency inventory](DEPENDENCIES.md). Hash/MAC comparisons use
 [Boost.Hash2](https://www.boost.org/doc/libs/latest/libs/hash2/doc/html/hash2.html).
 
 <table>

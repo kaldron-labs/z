@@ -1,7 +1,7 @@
 # Z dependencies
 
 This inventory separates production/build dependencies from optional test and
-interoperability tools. Version constraints come from [configure.ac](configure.ac);
+interoperability tools. Version constraints come from [configure.ac](../configure.ac);
 link requirements also appear in module `src/Makefile.am` files. Install headers,
 libraries and pkg-config metadata, not just runtime packages. Z does not require
 Boost, Folly or BDE for its production libraries.
@@ -37,34 +37,26 @@ Boost, Folly or BDE for its production libraries.
 | [hwloc](https://www.open-mpi.org/projects/hwloc/) | `hwloc >= 2` | Hardware topology, affinity and NUMA placement |
 | [PCRE](https://www.pcre.org/) | Original `libpcre`, discovered by `AX_PATH_LIB_PCRE` | `ZtRegex`; PCRE2 is not a drop-in replacement for this build |
 | [c-ares](https://c-ares.org/) | `libcares` | Asynchronous DNS resolution |
-| [zpicotls](https://github.com/kaldron-labs/zpicotls) | `zpicotls-core`, `zpicotls-openssl`, `zpicotls-fusion`, each `>= 1.3` | TLS 1.2/1.3 and QUIC cryptographic integration |
-| [OpenSSL](https://openssl-library.org/) | `libcrypto >= 3.5`, with working ML-KEM-768 provider/API | Direct Z cryptographic operations and the zpicotls OpenSSL implementation |
+| [zpicotls](https://github.com/kaldron-labs/zpicotls) | `zpicotls-core`, `zpicotls-openssl`, `zpicotls-fusion`, each `>= 1.3` | Zquic handshake and packet protection |
+| [OpenSSL](https://openssl-library.org/) | `libcrypto >= 3.5`, with working ML-KEM-768 provider/API | Embedded Ztls TLS 1.3 engine and direct Z cryptographic operations |
 | [BFD and libiberty](https://www.gnu.org/software/binutils/) | `-lbfd -liberty` in `zm/src/Makefile.am` | Backtraces and symbol handling; current Zm build links both unconditionally |
 | [ncurses/terminfo](https://invisible-island.net/ncurses/) | Linux `-lncurses`; other Unix branch uses `-lterminfo` | Terminal capabilities for Zrl |
 | [GNU libiconv](https://www.gnu.org/software/libiconv/) | MinGW `-liconv`; libc supplies iconv on Linux | Character encoding conversion |
 
-Use **zpicotls**, the Z fork of [picotls](https://github.com/h2o/picotls),
-with all three pkg-config components above. Installing upstream picotls alone
-does not satisfy configure. Follow the fork's build instructions, including
-its submodules and backend prerequisites.
+Ztls builds its TLS 1.3 engine and Fusion backend into `libZtls`. Its transport
+and standalone cryptographic operations use OpenSSL libcrypto directly.
+When both Brotli encoder and decoder development packages are available via
+pkg-config, Ztls also builds support for certificate compression.
 
-Ztls requires a rebuilt zpicotls exposing `PTLS_HAVE_RECORD_CHUNKS`,
-`ptls_tx_send_chunks`, `ptls_handshake_chunks` and `ptls_recv_chunks`.
-It also requires `PTLS_HAVE_RECEIVE_STREAM`, `ptls_receive_stream` and
-`ptls_receive_stream_check`, plus the private plaintext sink declared by that
-header. Its selected OpenSSL and Fusion AEADs must supply checked serial
-encryption and decryption begin/chunk/end callbacks; unsupported selected
-providers fail configuration rather than gathering ciphertext. Rebuild and install
-zpicotls before configuring Z and rebuilding its Ztls, Zquic and Zhttp consumers; older vector-only builds are insufficient.
+Zquic still uses **zpicotls**, the Z fork of [picotls](https://github.com/h2o/picotls).
+The top-level configuration checks the three pkg-config components listed
+above for Zquic. Installing upstream picotls alone does not satisfy those
+checks. Follow the fork's build instructions for its submodules and backend
+prerequisites.
 
-OpenSSL libcrypto is checked independently through pkg-config, supplying
-`CRYPTO_CFLAGS` and `CRYPTO_LIBS` without a direct libssl dependency;
-zpicotls-openssl supplies its own libssl linkage. Standalone Ztls digests, MACs,
-HKDF, Age/HPKE AEAD, random generation, and key operations use libcrypto
-directly. Zpicotls remains responsible for TLS processing and QUIC protocol
-integration, including Fusion support.
-configure creates an ML-KEM-768 key and initializes encapsulation, rather than
-accepting the version string alone. Cross-compilation defers that runtime check.
+Configure checks libcrypto independently and verifies that it can create an
+ML-KEM-768 key and initialize encapsulation. Cross-compilation defers the
+runtime check.
 
 Platform runtime linkage also includes the C/C++ runtimes, math and atomic
 support; Linux uses pthreads, realtime and dynamic-loading facilities. Windows
@@ -198,7 +190,7 @@ See [mingw/README.md](mingw/README.md) for installation and rebuild behavior.
 For a nonstandard prefix, configure `PKG_CONFIG_PATH`, compiler include/library
 search paths, and the platform runtime loader consistently. See
 [z.config](z.config) for the wrapper's feature defaults and
-[configure.ac](configure.ac) for exact checks.
+[configure.ac](../configure.ac) for exact checks.
 
 ## Zfix independent FIX peer
 

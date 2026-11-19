@@ -25,10 +25,9 @@ zutcpapptest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/ztcp/src
 zutcpapptest_LDADD = $(LDADD) $(top_builddir)/ztcp/src/libZtcp.la
 zutcptlsapptest_SOURCES = zutcpapptest.cc
 zutcptlsapptest_CPPFLAGS = $(AM_CPPFLAGS) -DZUTCP_APP_TLS \
-	-I$(top_srcdir)/ztls/src -I$(top_srcdir)/zdbus/src @PTLS_CFLAGS@
-zutcptlsapptest_LDFLAGS = $(AM_LDFLAGS) -R@PTLS_LIBDIR@
+	-I$(top_srcdir)/ztls/src -I$(top_srcdir)/zdbus/src
 zutcptlsapptest_LDADD = $(LDADD) $(top_builddir)/ztls/src/libZtls.la \
-	$(top_builddir)/zdbus/src/libZdbus.la @PTLS_LIBS@
+	$(top_builddir)/zdbus/src/libZdbus.la
 zutcpudptest_SOURCES = zutcpudptest.cc
 EXTRA_DIST = README.md zutcpipfixture.sh zutcppairfixture.sh zutcpmxfixture.sh \
 	zutcpappfixture.sh zutcpmxlossfixture.sh zutcprecovery.py zutcpoptions.py zutcptfo.py \
