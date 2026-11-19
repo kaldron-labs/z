@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include "../test/ZfixTestAllocator.hh"
+#include "transport_fixture.hh"
 
 #include <iostream>
 #include <stdlib.h>
@@ -187,6 +188,8 @@ struct Output : public Zfix::WireTx<Output<Link>> {
       geometry.memory = ZmHeapAllocSize<sizeof(Zi::IOBufBuiltin<typename Link::TxBufAlloc::Buf,
 	Link::TxBufAlloc::Size, ZiIOBuf_Align>)>{} +
 	(geometry.size > Link::TxBufAlloc::Size ? Zfix::jumboBytes(geometry.size) : 0);
+#elif defined(ZFIX_TEST_AFXDP)
+      geometry = ZfixTest::packetGeometry(link);
 #endif
       if (!Base::open_(1, geometry)) link->app()->state->fail();
     });
@@ -375,8 +378,8 @@ struct Server : public Net::Server<Server> {
 
   ZiConnection *accepted(const ZiCxnInfo &);
 
-  ZiIP localIP() const { return ZiIP{"127.0.0.1"}; }
-  unsigned localPort() const { return 0; }
+  ZiIP localIP() const { return ZiIP{ZfixTest::ServerIP}; }
+  unsigned localPort() const { return ZfixTest::ServerPort; }
   unsigned nAccepts() const { return 1; }
 
   void listening(const ZiListenInfo &info) { state->port = info.port; state->listening.post(); }
@@ -460,13 +463,15 @@ static void loopback(const char *name, unsigned sessions, unsigned payload = 0,
   sendState = &state;
 #endif
   Server server{&state}; Client client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); })
       .thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2).rxBufSize(partial ? 4096 : 0).txBufSize(partial ? 4096 : 0)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   Net::ServerParams sp{&mx, "3", "4"};
   Net::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
@@ -491,11 +496,7 @@ static void loopback(const char *name, unsigned sessions, unsigned payload = 0,
     if (listening && state.port) {
       for (unsigned i = 0; i < sessions; ++i) {
 	ZmRef<Client::Link> link = new Client::Link{&client};
-#ifdef ZFIX_TEST_TLS
-	link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-	link->connect("127.0.0.1", state.port);
-#endif
+	ZfixTest::connect(link.ptr(), state.port);
 	links.push(ZuMv(link));
       }
       if (partial) {
@@ -704,8 +705,8 @@ struct SwapSrv : Net::Server<SwapSrv> {
   void release();
   void retired();
 
-  ZiIP localIP() const { return ZiIP{"127.0.0.1"}; }
-  unsigned localPort() const { return 0; }
+  ZiIP localIP() const { return ZiIP{ZfixTest::ServerIP}; }
+  unsigned localPort() const { return ZfixTest::ServerPort; }
   unsigned nAccepts() const { return 1; }
 
   void listening(const ZiListenInfo &i) { state->port = i.port; state->listening.post(); }
@@ -914,18 +915,19 @@ void SwapSrv::retired() {
 struct SwapRun : ZmNHeap<SwapRun> {
 friend inline ZuStringT<"Zfix.TransportSwap.Run"> ZmNHeapID(SwapRun *);
   SwapState		state;
-  ZiMultiplex		mx;
+  ZfixTest::TransportFixture transport;
+  ZiMultiplex		&mx;
   SwapSrv		server{&state};
   SwapCli		client{&state};
   ZmRef<SwapCli::Link>	a, b;
 
-  SwapRun() : mx{ZiMxParams{}.scheduler([](auto &s) {
+  SwapRun() : transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); })
       .thread(4, [](auto &t) { t.isolated(1); });
-    }).rxThread(1).txThread(2)} { }
+    }).rxThread(1).txThread(2)}, mx{transport.mx()} { }
 };
 
 static bool swapUndrained = false; // main-only failure exit, never a pass condition
@@ -937,6 +939,8 @@ static void replacement(bool late = false, bool refuse = false,
   ZuTestScopeRT(stale ? "staleTxPolicy" : protect ? "protectedReplacement" :
     late ? (refuse ? "refusedReplacement" : "closingReplacement") : "replacement");
   auto run = new SwapRun;
+  bool opened = run->transport.init(); ZuCheck(opened);
+  if (!opened) { delete run; return; }
   auto &s = run->state;
   s.late = late; s.refuse = refuse;
 #ifdef __linux__
@@ -979,11 +983,7 @@ static void replacement(bool late = false, bool refuse = false,
     run->server.listen();
     bool listening = swapWait(s.listening); ZuCheck(listening && s.port);
     auto connect = [&s](SwapCli::Link *link) {
-#ifdef ZFIX_TEST_TLS
-      link->connect("localhost", s.port, ZiIP{"127.0.0.1"});
-#else
-      link->connect("127.0.0.1", s.port);
-#endif
+      ZfixTest::connect(link, s.port);
     };
     if (listening && s.port) {
       connect(run->a.ptr());
@@ -1254,7 +1254,7 @@ int main(int argc, char **argv) {
   ZuTestCall(loopback, "multiple", 3);
   // TLS plaintext records are bounded at 2^14 bytes: cross two boundaries.
   ZuTestCall(loopback, "records", 2, 2 * (1U << 14) + 1);
-#ifdef __linux__
+#if defined(__linux__) && !defined(ZFIX_TEST_AFXDP)
   // Bound both FIX field size and wire retention while exceeding socket space.
   ZuTestCall(loopback, "partial", 1, 200 * 1024, true);
   ZuTestCall(loopback, "partialClose", 1, 200 * 1024, true, true);
@@ -1266,7 +1266,7 @@ int main(int argc, char **argv) {
   ZuTestCall(replacement, false, false, false, true);
 #endif
   ZuTestCall(replacement, false, false, true);
-#if defined(__linux__) && !defined(ZFIX_TEST_TLS)
+#if defined(__linux__) && !defined(ZFIX_TEST_TLS) && !defined(ZFIX_TEST_AFXDP)
   ZuTestCall(partialReplacement);
   ZuTestCall(resetTxPolicy);
 #endif

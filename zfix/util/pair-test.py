@@ -80,10 +80,13 @@ def ready(process, path, timeout):
                     return value
 
 
-def certificate(root):
+def certificate(root, server_ip=None):
+    names = "DNS:localhost,IP:127.0.0.1"
+    if server_ip:
+        names += f",IP:{server_ip}"
     subprocess.run([
         "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-        "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+        "-subj", "/CN=localhost", "-addext", f"subjectAltName={names}",
         "-keyout", str(root / "key.pem"), "-out", str(root / "cert.pem")],
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
 
@@ -129,7 +132,9 @@ def relay_result(directory, action, direction, negative):
 def run_case(client, server, root, transport, name, args, count, warmup, sessions=1,
              negative=False, pair="native-native", ready_timeout=10, process_timeout=40,
              relay=None, client_args=(), server_args=(), client_ca=None,
-             server_cert=None, server_key=None):
+             server_cert=None, server_key=None, launch=None):
+    if relay and launch:
+        raise ValueError("relay and namespaced peer launch are separate fixtures")
     directory = root / f"{transport}-{name}"
     directory.mkdir()
     common = ["--count", str(count), "--warmup", str(warmup), "--sessions", str(sessions),
@@ -148,6 +153,8 @@ def run_case(client, server, root, transport, name, args, count, warmup, session
     so, se, co, ce = [directory / entry for entry in (
         "server.jsonl", "server.log", "client.jsonl", "client.log")]
     server_cmd = [server, "--port", "0", *server_common, *server_args]
+    if launch:
+        server_cmd = launch("server", server_cmd)
     case = {"pair": pair, "transport": transport, "case": name, "sessions": sessions,
             "expected_failure": negative, "server_command": server_cmd,
             "ready_timeout": ready_timeout, "process_timeout": process_timeout,
@@ -179,6 +186,8 @@ def run_case(client, server, root, transport, name, args, count, warmup, session
             relayed = ready(proxy, directory / "relay.jsonl", ready_timeout)
             ports = relayed["ports"]
         client_cmd = [client, "--ports", ",".join(map(str, ports)), *client_common, *client_args]
+        if launch:
+            client_cmd = launch("client", client_cmd)
         case["client_command"] = client_cmd
         with co.open("wb") as output, ce.open("wb") as errors:
             cp = subprocess.Popen(client_cmd, stdout=output, stderr=errors,
@@ -277,7 +286,7 @@ def pair_cases(smoke=False, canonical=False, workflows=False, names=None):
 
 def run_pair(client, server, root, cases, *, pair="native-native", tcp_only=False,
              canonical=False, workflows=False, arguments=None, relay=None,
-             ready_timeout=10, process_timeout=40, timeout=None):
+             ready_timeout=10, process_timeout=40, timeout=None, launch=None, server_ip=None):
     """Run a reusable workload profile and retain its complete evidence."""
     client, server = str(Path(client).resolve()), str(Path(server).resolve())
     root = root.resolve()
@@ -294,8 +303,10 @@ def run_pair(client, server, root, cases, *, pair="native-native", tcp_only=Fals
                 "server_binary_sha256": digest(executable(Path(server))),
                 "workflows": workflows, "arguments": arguments or {}}
     if not tcp_only:
-        certificate(root)
+        certificate(root, server_ip)
         manifest["certificate_sha256"] = digest(root / "cert.pem")
+    if server_ip:
+        manifest["server_ip"] = server_ip
     lock = Path(__file__).resolve().parent.parent / "interop" / "quickfix.lock"
     if lock.exists():
         manifest["quickfix_lock"] = lock.read_text()
@@ -311,6 +322,6 @@ def run_pair(client, server, root, cases, *, pair="native-native", tcp_only=Fals
                     raise TimeoutError("pair profile deadline expired")
                 ready_limit, process_limit = min(ready_limit, remaining), min(process_limit, remaining)
             run_case(client, server, root, transport, name, args, count, warmup,
-                     sessions, negative, pair, ready_limit, process_limit, relay)
+                     sessions, negative, pair, ready_limit, process_limit, relay, launch=launch)
             completed += 1
     return completed

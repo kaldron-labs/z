@@ -19,6 +19,23 @@ make -C zfix/itest -j8
 make -C zfix/itest test
 ```
 
+On Linux, `make -C zfix/itest afxdp-test` runs the TCP and TLS transport,
+ingress, raw, reset, managed-session and recovery drivers through Zutcp and
+AF_XDP. It compiles the same driver sources and uses `sudo -n`, `unshare`,
+`ip`, `tc`, `ethtool`, OpenSSL and `prove`. The launcher makes a private veth
+and reflects IPv4 frames at its peer. Both FIX hubs share the same multiplexer
+and owner threads, as they do in the kernel tests. The reflection sends every
+frame through the native transmit and receive queues. Each independent mux opens
+a fresh veth to avoid deferred kernel queue unbinding from an earlier scope.
+Fixed ports and permanent neighbors belong to the isolated namespace. Fixture
+setup errors fail the run.
+
+The kernel `test` target also covers direct socket probes for EAGAIN and closed
+descriptors. The AF_XDP drivers exercise shared assertions over the native
+path, including the silent setup and raw TLS peer cases. The raw TLS peer uses
+kernel TCP and its return frames pass the XDP classifier. The Zfix unit suite
+is transport-independent and runs from `zfix/test`.
+
 `tcp_test` and `tls_test` compile the same transport fixture over Ztcp
 and Ztls. Each runs one connection, three simultaneous connections, and two
 connections carrying signed binary FIX frames larger than two TLS plaintext records.
@@ -170,6 +187,9 @@ end. No DNS/connect cancellation or setup deadline is used. Failed attempts
 preserve restored Rx cursor 19 and Tx cursor 27/epoch 1 and publish no Logon.
 Failure observers may override native defaults without skipping protocol drain.
 A later automatic retry reaches a restarted server and exchanges FIX normally.
+The AF_XDP fixture leaves its unopened port silent so the actual Zutcp connect
+timer supplies the retryable failure. In the colocated admission test it waits
+for both TCP owners to connect before starting the first FIX Logon.
 
 Raw `setupCleanup` repeats stop during setup three times before readiness, both with
 immediate and deferred manager stop. Its deferred case acknowledges Rx while Tx

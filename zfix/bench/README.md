@@ -357,13 +357,21 @@ the matched kernel/native results and their measurement conditions.
 
 `zfixbench` drives managed `Zfix::Client` and `Zfix::Server` sessions through
 `Zfix::TCP`, `Ztcp`, `Zi`, and either kernel TCP or `Zutcp`/`Zxdp`. It uses the
-same role/backend positional CLI as `zutcpbench`:
+same role/backend positional CLI as `zutcpbench`, with an additional DPDK
+backend when configured with `--with-dpdk=yes`:
 
 ```sh
-zfix/bench/zfixbench server|client kernel|native INTERFACE ADDRESS MESSAGES \
+zfix/bench/zfixbench server|client kernel|native|dpdk INTERFACE ADDRESS MESSAGES \
   WARMUP PIPELINE CONNECTIONS RESERVE RX_CPU TX_CPU SPIN [SAMPLES.csv]
 zfix/bench/zfixbench --selftest
 ```
+
+`BENCH_BACKENDS='kernel native dpdk'` selects the three backends in
+`zutcp/bench/run-compare.sh`. The DPDK case uses the `net_af_packet` PMD
+over the same private veth topology as the other cases. The fixture puts the
+routes and permanent neighbors on a matching dummy link because startup of the
+PMD flushes the veth's neighbor table. It requires `nft` to keep the namespace's
+kernel TCP stack from responding to traffic owned by Zutcp.
 
 `RESERVE` sets the native ingress, TCP packet, and application Tx pool counts
 per endpoint. Size it above both the total pipeline window and the aggregate

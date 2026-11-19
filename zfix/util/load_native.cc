@@ -12,6 +12,10 @@
 #include "load_main.hh"
 #include "load_native.hh"
 
+#ifdef ZFIX_LOAD_AFXDP
+#include "../interop/load_afxdp.hh"
+#endif
+
 namespace ZfixLoad {
 
 // Fixture-local checkpoint. Main alone reads/writes the file, with owner
@@ -80,13 +84,24 @@ static bool load(const Options &o, NativeCheckpoint &s) {
   }
   return f.offset() == f.size();
 }
+static ZiMxParams muxParams() {
+  return ZiMxParams{}.scheduler([](auto &s) {
+#ifdef ZFIX_LOAD_AFXDP
+    s.nThreads(5).thread(5, [](auto &t) { t.isolated(true).name("zxdpTx"); });
+#else
+    s.nThreads(4);
+#endif
+    s.thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
+      .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
+  }).rxThread(1).txThread(2);
+}
+
 template <typename Net> static int server(const Options &options, Ports ports) {
   NativeState state{options, ZuMv(ports), true};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
-    s.nThreads(4)
-      .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
-      .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
-  }).rxThread(1).txThread(2)};
+  ZiMultiplex mx{muxParams()};
+#ifdef ZFIX_LOAD_AFXDP
+  if (!attachAFXDP(mx)) return 1;
+#endif
   auto deadline = Zm::now(options.deadline); auto start = monotonic();
   using Hub = NativeHub<Net, false>;
   Rows<ZuPtr<Hub>> hubs;
@@ -153,11 +168,10 @@ template <typename Net> static int client(const Options &options, Ports ports) {
     ZiLOG(Error, "zfix", "invalid native workload checkpoint"); return 1;
   }
   NativeHub<Net, true> hub{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
-    s.nThreads(4)
-      .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
-      .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
-  }).rxThread(1).txThread(2)};
+  ZiMultiplex mx{muxParams()};
+#ifdef ZFIX_LOAD_AFXDP
+  if (!attachAFXDP(mx)) return 1;
+#endif
   auto deadline = Zm::now(options.deadline);
   typename Net::ClientParams params{&mx, "3", "4"};
   if constexpr (Net::Encrypted) params.caPath(options.ca);

@@ -33,6 +33,8 @@ namespace Net = Ztcp;
 #include <zlib/ZfixSeq.hh>
 #include <zlib/ZfixServer.hh>
 
+#include "transport_fixture.hh"
+
 using namespace ZuTestUtil;
 using namespace Zfix;
 
@@ -114,7 +116,7 @@ struct TestState {
   ZmAtomic<unsigned>	signedClient{0}, signedServer{0}, verifiedData{0}, verifiedAdmin{0};
   ZmSemaphore		contextReady;
   unsigned		workCase = 0; // immutable before workers start
-  ZmSemaphore		workReady, workStop, workSent, workStarted, workDrained;
+  ZmSemaphore		workReady, workStop, workClientStopped, workSent, workStarted, workDrained;
   ZmFn<void()>		workRelease, workDrain;
   ZmFn<bool()>		workIsDrained;
   bool			reverse = false; // immutable before workers start
@@ -142,6 +144,10 @@ struct TestState {
   ZmAtomic<unsigned>	traceRx{0}, traceTx{0}, traceLogons{0};
   ZmAtomic<unsigned>	busy{0}, downEvents{0};
   bool			setup = false, socketGate = false;
+#if defined(ZFIX_TEST_AFXDP) && !defined(ZFIX_TEST_TLS)
+  bool			gateLogon = false;
+  ZmSemaphore		clientTransportUp, serverTransportUp;
+#endif
 
   void fail(const char *file = __builtin_FILE(), unsigned line = __builtin_LINE()) {
     log("# ZfixLinkStateIOTest failure ", file, ":", line, " mode=", mode, " lane=", lane);
@@ -469,11 +475,10 @@ template <typename Impl> struct Peer {
 	if (state()->forceBusy) {
 	  auto b = TxBody::encode<OrderMsg>(Order{"req", state()->lane}, 101, error);
 	  if (error) state()->fail();
-	  else self()->app()->txRun([this, b = ZuMv(b)]() mutable {
-	    // Marker and submit keep the existing deterministic Busy fixture.
+	  else self()->app()->txRun([this, b = ZuMv(b)] {
+	    // Submit on the same Tx turn, before the queued pump can clear the marker.
 	    self()->queued();
-	    self()->app()->txRun([this, b = ZuMv(b)] { if (!self()->submit(b)) state()->fail();
-	      });
+	    if (!self()->submit(b)) state()->fail();
 	  });
 	} else if (!sendOrder(Order{"req", state()->lane}, client ? 101 : 201,
 	  error)) state()->fail();
@@ -644,6 +649,7 @@ template <typename Impl> struct Peer {
       || self()->session_().state_() != State::Disconnected) state()->fail();
     ++stopReports;
     state()->stopped();
+    if (client && state()->workCase == 2) state()->workClientStopped.post();
   }
 };
 
@@ -671,6 +677,15 @@ friend inline ZuStringT<"Zfix.session_io_test.Link"> ZmNHeapID(Link *);
   explicit Link(CliHub *app, TestState *s = nullptr, ZuID id = ZuID{"fixClient"}) : Base{app,
     ZuMv(id),
     config(true, s ? s : app->state)}, Peer<Link>{true}, test{s ? s : app->state} { }
+
+#if defined(ZFIX_TEST_AFXDP) && !defined(ZFIX_TEST_TLS)
+  WireGeometry fixGeometryTx() { return ZfixTest::packetGeometry(this); }
+
+  void connected(Net::Connected event) {
+    if (test->gateLogon) test->clientTransportUp.post();
+    else Base::connected(event);
+  }
+#endif
 
   bool connectSocket_(bool replacing) {
     bool accepted = Base::connectSocket_(replacing);
@@ -749,8 +764,8 @@ struct SrvHub : public Zfix::Server<SrvHub, Dictionary, Network> {
 
   ZiConnection *accepted(const ZiCxnInfo &);
 
-  ZiIP localIP() const { return ZiIP{"127.0.0.1"}; }
-  unsigned localPort() const { return state->listenPort; }
+  ZiIP localIP() const { return ZiIP{ZfixTest::ServerIP}; }
+  unsigned localPort() const { return state->listenPort ? state->listenPort : ZfixTest::ServerPort; }
   unsigned nAccepts() const { return 1; }
 
   void listening(const ZiListenInfo &i) { state->port = i.port; state->listening.post(); }
@@ -775,6 +790,15 @@ friend inline ZuStringT<"Zfix.session_io_test.Link"> ZmNHeapID(ServerLink *);
 
   explicit ServerLink(SrvHub *app, TestState *s) : Base{app, config(false, s)},
     Peer<ServerLink>{false}, test{s} { }
+
+#if defined(ZFIX_TEST_AFXDP) && !defined(ZFIX_TEST_TLS)
+  WireGeometry fixGeometryTx() { return ZfixTest::packetGeometry(this); }
+
+  void connected(Net::Connected event) {
+    Base::connected(event);
+    if (test->gateLogon) test->serverTransportUp.post();
+  }
+#endif
 
   using Peer<ServerLink>::SignMsg;
   using Peer<ServerLink>::signMsg;
@@ -847,7 +871,7 @@ static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
   state.keepContext = keepContext; state.reverse = reverse; state.workCase = workCase;
   if (workCase) sl.link.work.count = sl.work.count = 1;
   SrvHub server{&state, sl}; CliHub client{&state, cl};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
@@ -855,6 +879,8 @@ static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
       .thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   Net::ServerParams sp{&mx, "3", "4"}; Net::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   const char *cert = getenv("ZFIX_TEST_CERT"), *key = getenv("ZFIX_TEST_KEY");
@@ -870,16 +896,13 @@ static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
     bool listening = state.listening.timedwait(Zm::now(5)) == 0; ZuCheck(listening && state.port);
     if (listening && state.port) {
       link = new CliHub::Link{&client};
-#ifdef ZFIX_TEST_TLS
-      link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-      link->connect("127.0.0.1", state.port);
-#endif
+      ZfixTest::connect(link.ptr(), state.port);
       if (workCase >= 2) {
 	ZuCheck(state.workReady.timedwait(Zm::now(5)) == 0);
 	ZuCheck(state.workSent.timedwait(Zm::now(5)) == 0);
 	if (workCase == 2) {
 	  link->disconnect(); ZuCheck(state.workStop.timedwait(Zm::now(5)) == 0);
+	  ZuCheck(state.workClientStopped.timedwait(Zm::now(5)) == 0);
 	} else {
 	  ZuCheck(bool(state.workDrain)); if (state.workDrain) state.workDrain();
 	  ZuCheck(state.workStarted.timedwait(Zm::now(5)) == 0);
@@ -956,23 +979,25 @@ static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
     auto copy = state.retained;
     state.retained = {};
     ZuCheck(bool(copy) && copy.context().session && copy.context().epoch == 1);
-    ZuCheck(copy.context().connection == 1 && copy.context().seqNo >= 2
-      && !copy.context().replay);
-    ZuCheck(copy.sender() == "CLIENT" && copy.target() == "SERVER");
-    ZuCheck(state.retainedID == "req" && copy.frame().wire.length());
-    auto parsed = Fmt::frame(copy.frame().wire);
-    ZuCheck(parsed.state == Fmt::FrameState::Complete && parsed.view.msgType == "D");
-    if (signing) {
-      ZuCheck(copy.frame().wire.data() == state.retainedWire);
-      ZuCheck(state.retainedData == ZuBSpan{SignedPayload} &&
-	verifySignature<Order>(copy.frame(), state.retainedSignature));
-      Fmt::FieldPos data, signature;
-      ZuCheck(!Fmt::inspect<Order>(copy.frame().content, 96, data));
-      ZuCheck(!Fmt::inspect<Order>(copy.frame().content, 89, signature));
-      ZuCheck(state.retainedData.data() == reinterpret_cast<const uint8_t *>(
-	copy.frame().content.data() + data.offset));
-      ZuCheck(state.retainedSignature.data() == reinterpret_cast<const uint8_t *>(
-	copy.frame().content.data() + signature.offset));
+    if (copy) {
+      ZuCheck(copy.context().connection == 1 && copy.context().seqNo >= 2
+	&& !copy.context().replay);
+      ZuCheck(copy.sender() == "CLIENT" && copy.target() == "SERVER");
+      ZuCheck(state.retainedID == "req" && copy.frame().wire.length());
+      auto parsed = Fmt::frame(copy.frame().wire);
+      ZuCheck(parsed.state == Fmt::FrameState::Complete && parsed.view.msgType == "D");
+      if (signing) {
+	ZuCheck(copy.frame().wire.data() == state.retainedWire);
+	ZuCheck(state.retainedData == ZuBSpan{SignedPayload} &&
+	  verifySignature<Order>(copy.frame(), state.retainedSignature));
+	Fmt::FieldPos data, signature;
+	ZuCheck(!Fmt::inspect<Order>(copy.frame().content, 96, data));
+	ZuCheck(!Fmt::inspect<Order>(copy.frame().content, 89, signature));
+	ZuCheck(state.retainedData.data() == reinterpret_cast<const uint8_t *>(
+	  copy.frame().content.data() + data.offset));
+	ZuCheck(state.retainedSignature.data() == reinterpret_cast<const uint8_t *>(
+	  copy.frame().content.data() + signature.offset));
+      }
     }
   }
   if (signing) {
@@ -992,15 +1017,18 @@ static void routeMatrix(unsigned mode) {
   for (auto *s : states) {
     s->mode = mode; s->lane = ++lane;
   }
+  third.listenPort = ZfixTest::OtherPort;
   SrvHub server{&first}, other{&third};
   server.routes << &first << &second; other.routes << &third;
   CliHub client{&first};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   auto srvParams = [&mx] {
     Net::ServerParams p{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
@@ -1026,11 +1054,7 @@ static void routeMatrix(unsigned mode) {
   Items<ZmRef<CliHub::Link>> links;
   auto connect = [&links](CliHub *hub, TestState *s, unsigned port) {
     ZmRef<CliHub::Link> link = new CliHub::Link{hub, s}; links << link;
-#ifdef ZFIX_TEST_TLS
-    link->connect("localhost", port, ZiIP{"127.0.0.1"});
-#else
-    link->connect("127.0.0.1", port);
-#endif
+    ZfixTest::connect(link.ptr(), port);
   };
   connect(&client, &first, first.port);
   ZuCheck(first.done.timedwait(Zm::now(5)) == 0);
@@ -1090,11 +1114,13 @@ static void listenerCleanup() {
   ZuTestScope(listenerCleanup);
   TestState state, retry; retry.expectListenFailure = true;
   SrvHub server{&state}, rival{&retry};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   bool si = server.init(srvParams(&mx)); ZuCheck(si);
   bool ri = rival.init(srvParams(&mx)); ZuCheck(ri);
   bool started = mx.start(); ZuCheck(started); if (!started) return;
@@ -1134,11 +1160,13 @@ static void startupCleanup(unsigned mode) {
   ZuTestScope(startupCleanup);
   TestState state; state.mode = mode;
   SrvHub server{&state}; CliHub client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   ZmAtomic<unsigned> errors{0};
   auto failInit = [&server, &client, &errors](auto sp, auto cp) {
     sp.errorFn([&errors](ZeException) { ++errors; });
@@ -1167,11 +1195,7 @@ static void startupCleanup(unsigned mode) {
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
-#ifdef ZFIX_TEST_TLS
-  link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-  link->connect("127.0.0.1", state.port);
-#endif
+  ZfixTest::connect(link.ptr(), state.port);
   ZuCheck(state.done.timedwait(Zm::now(5)) == 0); link->logout();
   ZuCheck(state.drained.timedwait(Zm::now(5)) == 0);
   bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
@@ -1181,34 +1205,56 @@ static void startupCleanup(unsigned mode) {
   ZuCheck(state.received.load_() == 2 && state.businessSent.load_() == 2);
 }
 
-// A raw peer accepts TCP and deliberately never answers the TLS handshake.
-// Its lifetime is explicit; no read timeout or external network is involved.
+// A raw peer drains TCP input without answering the TLS handshake. This also
+// lets a graceful transport close retire the ClientHello before handling FIN.
 class SetupSink : public ZmNHeap<SetupSink>, public ZiConnection {
 friend inline ZuStringT<"Zfix.SessionIO.SetupSink"> ZmNHeapID(SetupSink *);
 public:
   using ZmNHeap<SetupSink>::operator new;
   using ZmNHeap<SetupSink>::operator delete;
 
-  SetupSink(ZiMultiplex *mx, const ZiCxnInfo &ci, ZmSemaphore *closed) :
-    ZiConnection{mx, ci}, m_closed{closed} { }
+  SetupSink(ZiMultiplex *mx, const ZiCxnInfo &ci) : ZiConnection{mx, ci} { }
 
-  void connected(ZiRxContext &io) override { io.complete(); }
+  void connected(ZiRxContext &io) override {
+    auto buf = info().rxAllocator->allocBuf(this);
+    if (!buf) { io.disconnect(); return; }
+    io.init(ZiRxFn{[this](ZiRxContext &io) {
+      if (io.buf && io.buf->length) {
+	io.buf = io.cxn->info().rxAllocator->allocBuf(io.cxn);
+	if (!m_seenInput) { m_seenInput = true; m_input.post(); }
+	if (!io.buf) io.disconnect();
+      }
+      return true;
+    }}, ZuMv(buf));
+  }
 
-  void disconnected(bool) override { m_closed->post(); }
+  void disconnected(bool) override { m_closed.post(); }
+  bool waitInput() { return m_input.timedwait(Zm::now(5)) == 0; }
+  bool waitClosed() { return m_closed.timedwait(Zm::now(5)) == 0; }
 private:
-  ZmSemaphore	*m_closed;
+  ZmSemaphore	m_input, m_closed;
+  bool		m_seenInput = false;
 };
 
 static void setupCleanup(unsigned mode) {
   ZuTestScope(setupCleanup);
   TestState state; state.mode = mode; state.setup = true;
   SrvHub server{&state}; CliHub client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+#ifdef ZFIX_TEST_AFXDP
+  // The test's unbound port has no responder. Let the native connect timer
+  // produce a retryable failure before the listener opens there.
+  bool opened = transport.init({.packet = [](ZmRef<ZiIOBuf>) {}, .connectTimeout = ZuTime{1}});
+#else
+  bool opened = transport.init();
+#endif
+  ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   Net::ServerParams sp{&mx, "3", "4"}; Net::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   sp.certPath(getenv("ZFIX_TEST_CERT")).keyPath(getenv("ZFIX_TEST_KEY"));
@@ -1229,6 +1275,9 @@ static void setupCleanup(unsigned mode) {
   ZuCheck(!::getsockname(dns, reinterpret_cast<sockaddr *>(&addr), &size));
   Zi::Name servers; servers << "127.0.0.1:" << ZuBoxed(ntohs(addr.sin_port));
   ZiResolver::init(ZiResolverParams{}.ipv6(false).timeoutMS(200).tries(1).servers(servers));
+#ifdef ZFIX_TEST_AFXDP
+  unsigned refusedPort = ZfixTest::OtherPort;
+#else
   auto refused = ::socket(AF_INET, SOCK_STREAM, 0);
   addr.sin_port = 0;
   ZuCheck(!Zi::nullSocket(refused) && !::bind(refused, reinterpret_cast<sockaddr *>(&addr),
@@ -1236,7 +1285,20 @@ static void setupCleanup(unsigned mode) {
   size = sizeof(addr);
   ZuCheck(!::getsockname(refused, reinterpret_cast<sockaddr *>(&addr), &size));
   unsigned refusedPort = ntohs(addr.sin_port);
+#endif
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
+  auto finish = [&client, &server, &mx, &link, dns
+#ifndef ZFIX_TEST_AFXDP
+    , &refused
+#endif
+  ] {
+    bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
+    client.final(); server.final(); ZiResolver::stop(); ZiResolver::final();
+#ifndef ZFIX_TEST_AFXDP
+    if (!Zi::nullSocket(refused)) Zi::closeSocket(refused);
+#endif
+    Zi::closeSocket(dns); mx.stop(); link = nullptr;
+  };
   Progress progress;
   auto snapshot = [&client, &link, &progress] {
     return ZmBlock<bool>{}([&client, &link, &progress](auto wake) {
@@ -1263,7 +1325,7 @@ static void setupCleanup(unsigned mode) {
   progress.tx.loaded = progress.tx.sent = progress.tx.acknowledged = 27;
   ZuCheck(restore());
   // Stop during numeric/DNS/socket setup. Submitted operations must finish
-  // normally before the endpoint reports stopped; no setup deadline cancels them.
+  // normally before the endpoint reports stopped; no application deadline cancels them.
   for (unsigned i = 0; i < 6; ++i) {
     ZmSemaphore blocked, release, cancelled;
     if (i == 5) {
@@ -1272,7 +1334,7 @@ static void setupCleanup(unsigned mode) {
     }
     client.rxRun([link, &state, i, refusedPort] {
       state.socketGate = i == 5;
-      link->connect(i == 2 || i == 3 ? "setup.test" : "127.0.0.1",
+      link->connect(i == 2 || i == 3 ? "setup.test" : ZfixTest::ServerIP,
 	i >= 4 ? refusedPort : state.port);
       if (i < 3) link->disconnect_(false);
     });
@@ -1290,28 +1352,45 @@ static void setupCleanup(unsigned mode) {
     ZuCheck(!state.ready.load_() && !state.admission.load_() && !link->lastLoad);
   }
 #ifdef ZFIX_TEST_TLS
+  struct SilentPeer {
+    ZmSemaphore listening, accepted;
+    ZmRef<SetupSink> sink;
+    unsigned port = 0;
+  } peers[2];
   for (unsigned i = 0; i < 2; ++i) {
-    ZmSemaphore listening, accepted, closed;
-    ZmRef<SetupSink> sink; unsigned port = 0;
-    mx.listen([&listening, &port](const ZiListenInfo &info) {
-      port = info.port; listening.post();
-    }, [&listening](bool) { listening.post(); },
-      [&mx, &sink, &closed, &accepted](const ZiCxnInfo &info) -> ZiConnection * {
-	sink = new SetupSink{&mx, info, &closed}; accepted.post(); return sink;
-      }, ZiIP{"127.0.0.1"}, 0, 1, server.rxAllocator());
-    ZuCheck(listening.timedwait(Zm::now(5)) == 0 && port);
-    link->connect("localhost", port, ZiIP{"127.0.0.1"});
-    ZuCheck(accepted.timedwait(Zm::now(5)) == 0 && sink);
-    ZuCheck(state.socketInstalled.timedwait(Zm::now(5)) == 0);
+    auto &peer = peers[i];
+    mx.listen([&peer](const ZiListenInfo &info) {
+      peer.port = info.port; peer.listening.post();
+    }, [&peer](bool) { peer.listening.post(); },
+      [&mx, &peer](const ZiCxnInfo &info) -> ZiConnection * {
+	peer.sink = new SetupSink{&mx, info}; peer.accepted.post(); return peer.sink;
+      }, ZiIP{ZfixTest::ServerIP}, ZfixTest::SilentPort, 1, server.socketRxAllocator());
+    bool listening = !peer.listening.timedwait(Zm::now(5)) && peer.port;
+    ZuCheck(listening);
+    if (!listening) { finish(); return; }
+    ZfixTest::connect(link.ptr(), peer.port);
+    bool accepted = !peer.accepted.timedwait(Zm::now(5)) && peer.sink;
+    ZuCheck(accepted);
+    if (!accepted) { finish(); return; }
+    auto sink = peer.sink;
+    bool installed = !state.socketInstalled.timedwait(Zm::now(5));
+    ZuCheck(installed);
+    bool receivedHello = sink->waitInput(); ZuCheck(receivedHello);
+    if (!installed || !receivedHello) { sink->close(); finish(); return; }
     if (i) link->disconnect();
-    else if (sink) sink->close();
-    ZuCheck(state.stoppedOne.timedwait(Zm::now(3)) == 0);
+    else sink->close();
+    bool stopped = !state.stoppedOne.timedwait(Zm::now(3)); ZuCheck(stopped);
     ZuCheck(snapshot());
     ZuCheck(progress.rx.received == 19 && progress.tx.loaded == 27 && !state.ready.load_()
       && !link->lastLoad);
-    if (sink) sink->close();
-    ZuCheck(closed.timedwait(Zm::now(5)) == 0); sink = nullptr;
-    mx.stopListening(ZiIP{"127.0.0.1"}, port);
+    bool rawClosed = sink->waitClosed();
+    ZuCheck(rawClosed);
+    if (!rawClosed || !stopped) {
+      if (!rawClosed) sink->close();
+      finish(); return;
+    }
+    mx.stopListening(ZiIP{ZfixTest::ServerIP}, peer.port);
+    ZmBlock<>{}([&mx](auto wake) { mx.rxRun(ZuMv(wake)); });
   }
 #endif
   ZuCheck(state.setupFailures.load_() == 4);
@@ -1328,7 +1407,11 @@ static void setupCleanup(unsigned mode) {
   ZuCheck(restore());
   client.rxRun([link, &state, refusedPort] {
     state.socketGate = false; state.reconn = 1;
+#ifdef ZFIX_TEST_AFXDP
+    ZfixTest::connect(link.ptr(), refusedPort);
+#else
     link->connect("localhost", refusedPort);
+#endif
   });
   ZuCheck(state.stoppedOne.timedwait(Zm::now(5)) == 0);
   // The second failure is an automatic native attempt on the same owner.
@@ -1336,7 +1419,10 @@ static void setupCleanup(unsigned mode) {
   ZuCheck(state.setupFailures.load_() == 6);
   ZuCheck(!state.ready.load_() && !link->lastLoad);
   bool stopped = server.stop(); ZuCheck(stopped);
+#ifndef ZFIX_TEST_AFXDP
   Zi::closeSocket(refused);
+  refused = Zi::nullSocket();
+#endif
   state.listenPort = refusedPort;
   bool restarted = server.start(); ZuCheck(restarted);
   server.listen();
@@ -1349,9 +1435,7 @@ static void setupCleanup(unsigned mode) {
   ZuCheck(state.closed.load_() == earlier + 2 && state.ready.load_() == 2
     && state.received.load_() == 2);
   ZuCheck(!state.errors.load_());
-  bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
-  client.final(); server.final(); ZiResolver::stop(); ZiResolver::final();
-  Zi::closeSocket(dns); mx.stop(); link = nullptr;
+  finish();
 }
 struct AdminGate {
   ZmSemaphore	entered, release, done;
@@ -1368,23 +1452,21 @@ static void reloadBudget(bool local) {
   // Between the jumbo response's serialized bytes and heap cache class.
   if (local) limits.link.postedAdminBytes = 24 * 1024;
   CliHub client{&state, limits}; SrvHub server{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(6)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, "5", "6"));
   ZuCheck(si && ci);
   bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
-#ifdef ZFIX_TEST_TLS
-  link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-  link->connect("127.0.0.1", state.port);
-#endif
+  ZfixTest::connect(link.ptr(), state.port);
   ZuCheck(state.done.timedwait(Zm::now(5)) == 0 && state.received.load_() == 2);
   PostedState posted, hub;
   bool clientStopped = false;
@@ -1501,6 +1583,9 @@ static void adminBudget(unsigned kind) {
   ZuTestScope(adminBudget);
   TestState state; state.scenario = Scenario::PostedOverflow;
   state.heartbeat = 0; state.adminTest = true; state.cutReplay = kind == 4;
+#if defined(ZFIX_TEST_AFXDP) && !defined(ZFIX_TEST_TLS)
+  state.gateLogon = kind == 8;
+#endif
   HubLimits cliLimits;
   if (kind == 0) cliLimits.link.postedAdminBytes = 0;
   if (kind == 1 || kind == 8) cliLimits.admin.bytes = 0;
@@ -1508,22 +1593,31 @@ static void adminBudget(unsigned kind) {
   other.heartbeat = 0; other.adminTest = true; other.lane = 1;
   CliHub client{&state, cliLimits}; SrvHub server{&state};
   if (kind == 6) { server.routes << &state << &other; }
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(6)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, kind == 8 ? "1" : "5",
     kind == 8 ? "2" : "6")); ZuCheck(si && ci);
   bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client}, rival;
-#ifdef ZFIX_TEST_TLS
-  link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-  link->connect("127.0.0.1", state.port);
+  ZfixTest::connect(link.ptr(), state.port);
+#if defined(ZFIX_TEST_AFXDP) && !defined(ZFIX_TEST_TLS)
+  if (state.gateLogon) {
+    // Let the passive TCP owner process the final ACK before the colocated
+    // initiator rejects its own first Logon and tears the connection down.
+    bool connected = !state.clientTransportUp.timedwait(Zm::now(5)) &&
+      !state.serverTransportUp.timedwait(Zm::now(5));
+    ZuCheck(connected);
+    if (connected) client.rxRun([link] { link->Base::connected(Net::Connected{}); });
+    else link->disconnect();
+  }
 #endif
   if (kind < 2 || kind == 8) {
     ZuCheck(state.drained.timedwait(Zm::now(5)) == 0);
@@ -1544,11 +1638,7 @@ static void adminBudget(unsigned kind) {
     ZuCheck(state.done.timedwait(Zm::now(5)) == 0 && state.received.load_() == 2);
     if (kind == 6) {
       rival = new CliHub::Link{&client, &other, ZuID{"fixSecond"}};
-#ifdef ZFIX_TEST_TLS
-      rival->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-      rival->connect("127.0.0.1", state.port);
-#endif
+      ZfixTest::connect(rival.ptr(), state.port);
       ZuCheck(other.done.timedwait(Zm::now(5)) == 0 && other.received.load_() == 2);
     }
     PostedState local, hub; RxStats rx; TxStats tx, otherTx;
@@ -1627,9 +1717,8 @@ static void adminBudget(unsigned kind) {
 	    ++c.seqNo; frame = txFrame(link->fixAllocTx(0), *body, cfg, c, error);
 	    if (error || !frame || !buf->append(frame->cspan())) { state.fail(); return; }
 	  }
-#ifdef ZFIX_TEST_TLS
-	  // FIX frames can exceed one TLS application record; retain their exact
-	  // bytes while the native plaintext stream splits record output.
+#if defined(ZFIX_TEST_TLS) || defined(ZFIX_TEST_AFXDP)
+	  // Preserve the injected stream when a FIX frame needs multiple records.
 	  auto stream = link->txStream_();
 	  stream << buf->cspan() << Zi::flush();
 	  if (stream.failed()) state.fail();
@@ -1785,22 +1874,20 @@ static void readAheadOverload() {
   CliHub client{&state, limits};
   limits.link.rx.readAheadCount = 0;
   SrvHub server{&state, limits};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx)); ZuCheck(si && ci);
   bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
-#ifdef ZFIX_TEST_TLS
-  link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-  link->connect("127.0.0.1", state.port);
-#endif
+  ZfixTest::connect(link.ptr(), state.port);
   ZuCheck(state.done.timedwait(Zm::now(5)) == 0);
   // Refusal at the public handoff must not invoke Tx selection or reserve a
   // sequence. The retained handle remains available for a later accepted post.
@@ -1989,7 +2076,7 @@ struct OwnState {
   const bool		established, preauth, terminal, chain, independent;
   ZmSemaphore		listening, admission, bound, business, oldClosed, physicalOne,
     stoppedA, stoppedB, stoppedServer, workReady, loadStarted, authenticated,
-    readyB, lateAccepted, clientLogon, physicalAny, stoppedMiddle, prefix;
+    readyB, lateAccepted, lateClientBound, clientLogon, physicalAny, stoppedMiddle, prefix;
   ZmAtomic<unsigned>	errors{0}, accepted{0}, logical{0}, physicalOpen{0}, physicalClosed{0},
     serverStops{0}, aReady{0}, bReady{0}, bStarted{0}, served{0}, received{0}, oldDecisions{0},
     loadPublished{0}, workReplied{0}, stopOutputFaults{0}, stopOutputEvents{0},
@@ -2100,8 +2187,8 @@ struct OwnServer : Zfix::Server<OwnServer, Dictionary, Network> {
     HubLimits limits; limits.work.count = limits.link.work.count = 1; return limits;
   }()}, state{s} { }
 
-  ZiIP localIP() const { return ZiIP{"127.0.0.1"}; }
-  unsigned localPort() const { return 0; }
+  ZiIP localIP() const { return ZiIP{ZfixTest::ServerIP}; }
+  unsigned localPort() const { return ZfixTest::ServerPort; }
   unsigned nAccepts() const { return 1; }
 
   void listening(const ZiListenInfo &info) {
@@ -2385,6 +2472,12 @@ friend inline ZuStringT<"Zfix.Own.Client"> ZmNHeapID(OwnCliLink *);
     Base{hub, first ? ZuID{"ownA"} : id, ownConfig(true, s ? s : hub->state)},
     test{s ? s : hub->state}, primary{first}, middle{interim} { }
 
+  bool connectSocket_(bool replacing) {
+    if (!Base::connectSocket_(replacing)) return false;
+    if (test->terminal && !primary) test->lateClientBound.post();
+    return true;
+  }
+
   unsigned fixAssociateTx(TxBody::Ref, TxContext, uint64_t) { return TxLoad::Accepted; }
 
   void fixSubmittedTx(TxBody::Ref body, unsigned result) {
@@ -2517,12 +2610,14 @@ static void nativeReplacement(unsigned mode, bool established = false)
 {
   ZuTestScope(nativeReplacement);
   OwnState state{mode, established}; OwnServer server{&state}; OwnClient client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(6)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, "5", "6"));
   ZuCheck(si && ci);
   bool started = mx.start(); ZuCheck(started); if (!started) return;
@@ -2535,11 +2630,7 @@ static void nativeReplacement(unsigned mode, bool established = false)
     ZuCheck(listening); if (!listening) break;
     a = new OwnCliLink{&client, true}; b = new OwnCliLink{&client, false};
     auto connect = [&state](OwnCliLink *link) {
-#ifdef ZFIX_TEST_TLS
-      link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-      link->connect("127.0.0.1", state.port);
-#endif
+      ZfixTest::connect(link, state.port);
     };
     attemptedA = true; connect(a.ptr());
     bool pending = established ? state.workReady.timedwait(Zm::now(5)) == 0 &&
@@ -2669,12 +2760,14 @@ static void nativeChain(unsigned mode)
     false, true};
   OwnServer server{&state}; server.side = &side;
   OwnClient client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(6)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, "5", "6"));
   ZuCheck(si && ci);
   bool started = mx.start(); ZuCheck(started); if (!started) return;
@@ -2682,11 +2775,7 @@ static void nativeChain(unsigned mode)
   ZmRef<OwnCliLink> a, b, c, other;
   bool triedA = false, triedB = false, triedC = false, triedSide = false, exchanged = false;
   auto connect = [&state](OwnCliLink *link) {
-#ifdef ZFIX_TEST_TLS
-    link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-    link->connect("127.0.0.1", state.port);
-#endif
+    ZfixTest::connect(link, state.port);
   };
   auto checkpoint = [&client](OwnCliLink *link, Progress &snapshot, bool restore) {
     return ZmBlock<bool>{}([&client, link, &snapshot, restore](auto wake) {

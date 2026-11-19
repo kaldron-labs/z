@@ -4,7 +4,9 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Plain, managed FIX over either Zi kernel TCP or Zutcp/Zxdp.
+// Plain, managed FIX over Zi kernel TCP or Zutcp/Zxdp.
+#include "config.h"
+
 #include <net/if.h>
 #include <sched.h>
 #include <stdint.h>
@@ -39,6 +41,9 @@
 #include <zlib/ZfixClient.hh>
 #include <zlib/ZfixServer.hh>
 #include <zlib/Zutcp.hh>
+#ifdef HAVE_DPDK
+#include <zlib/ZxdpDpdk.hh>
+#endif
 
 namespace FixBench {
 
@@ -238,7 +243,7 @@ struct Config {
     workload = 0, burstSize = 0, burstUS = 1000, ackHoldUS = 25000,
     queueSize = DefaultQueueSize, hashBits = 0;
   ZiIP address;
-  const char *addressText = nullptr;
+  const char *backend = "kernel", *interfaceName = nullptr, *addressText = nullptr;
   const char *samples = nullptr;
   const char *telemetryDir = nullptr;
   const char *telemetryPeerDir = nullptr;
@@ -1026,7 +1031,7 @@ static bool report(const Config &c, State &state, auto &links) {
     if (*link->end && (!*end || link->end > end)) end = link->end;
   }
   std::cout << "result role=" << (c.server ? "server" : "client") << " backend="
-    << (c.native ? "native" : "kernel") << " exact=" << unsigned(ok)
+    << c.backend << " exact=" << unsigned(ok)
     << " connections=" << c.connections << " pipeline=" << c.pipeline
     << " warmup=" << c.warmup << " measured_per_connection=" << c.messages
     << " workload=" << workloadName(c.workload) << " burst_size=" << c.burstSize
@@ -1286,6 +1291,7 @@ static bool calibrate(const Config &c) {
 
 static bool run(const Config &c) {
   State state{c};
+  bool afxdp = !strcmp(c.backend, "native");
   unsigned senderSid = 3;
   ZmSchedTParams sender;
   sender.isolated(true).name("zxdpTx");
@@ -1305,14 +1311,14 @@ static bool run(const Config &c) {
     });
   auto requestHash = params.requestHash();
   ZiMultiplex mx{ZuMv(params)};
-  std::cout << "config backend=" << (c.native ? "native" : "kernel")
+  std::cout << "config backend=" << c.backend
     << " rx_cpu=" << c.rxCPU << " tx_cpu=" << c.txCPU
     << " app_rx_cpu=" << c.appRxCPU << " app_tx_cpu=" << c.appTxCPU
     << " app_colocate=" << unsigned(c.appColocate)
     << " scheduler_threads=" << senderSid << " xdp_tx_sid=" << senderSid
     << " queue_size=" << mx.ring(1).size()
-    << " native_xdp_sender_threads=" << unsigned(c.native)
-    << " xdp_tx_cpu=" << (c.native ? (c.xdpTxCPU < 0 ? int(c.rxCPU) : c.xdpTxCPU) : -1)
+    << " native_xdp_sender_threads=" << unsigned(afxdp)
+    << " xdp_tx_cpu=" << (afxdp ? (c.xdpTxCPU < 0 ? int(c.rxCPU) : c.xdpTxCPU) : -1)
     << " rx_thread=1 tx_thread=2 app_rx_thread=" << (c.appColocate ? 1 : 3)
     << " app_tx_thread=" << (c.appColocate ? 2 : 4)
     << " spin=" << c.spin << " ll=" << unsigned(c.ll)
@@ -1321,9 +1327,30 @@ static bool run(const Config &c) {
     << " congestion_control=" << unsigned(!c.native || c.congestionControl)
     << " offer_rate=" << c.offers.rate << " pending_cap=" << c.offers.cap << '\n';
   if (c.native) {
-    auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
     Zxdp::Params xdpParams{Zxdp::Xdp::Params{
       .ifindex = c.interface, .spin = c.spin, .txSid = senderSid}};
+#ifdef HAVE_DPDK
+    if (!afxdp) {
+      constexpr auto port = "net_af_packet0"_z;
+      Zxdp::Dpdk::EALParams ealParams{};
+      ealParams.noPCI = ealParams.noHuge = ealParams.noShconf = ealParams.noTelemetry = true;
+      ealParams.iova = Zxdp::Dpdk::IOVA::VA;
+      ealParams.vdev.push(
+        Zxdp::Dpdk::EALParams::String{} << port << ",iface=" << c.interfaceName);
+      auto eal = Zxdp::Dpdk::EAL::instance();
+      auto initialized = eal->init(ealParams);
+      if (initialized.is<ZeException>()) {
+	ZiLogEvent(ZuMv(initialized).p<ZeException>());
+	return false;
+      }
+      Zxdp::Dpdk::Params dpdkParams;
+      dpdkParams.name = port;
+      dpdkParams.ifindex = c.interface;
+      dpdkParams.spin = c.spin;
+      xdpParams = ZuMv(dpdkParams);
+    }
+#endif
+    auto xdp = Zxdp::instance(afxdp ? Zxdp::Type::Xdp : Zxdp::Type::Dpdk);
     auto opened = xdp->init(&mx, xdpParams);
     if (opened.is<ZeException>()) {
       ZiLogEvent(ZuMv(opened).p<ZeException>());
@@ -1517,9 +1544,21 @@ int main(int argc, char **argv) {
   if (!queueConfig(c)) return 2;
   c.server = !strcmp(argv[1], "server");
   if (!c.server && strcmp(argv[1], "client")) return 2;
-  c.native = !strcmp(argv[2], "native");
-  if (!c.native && strcmp(argv[2], "kernel")) return 2;
-  c.interface = if_nametoindex(argv[3]); c.address = ZiIP{argv[4]};
+  c.backend = argv[2];
+  c.native = !strcmp(c.backend, "native");
+  if (!strcmp(c.backend, "dpdk")) {
+#ifdef HAVE_DPDK
+    c.native = true;
+#else
+    std::cerr << "DPDK support is disabled in this build\n";
+    return 2;
+#endif
+  } else if (!c.native && strcmp(c.backend, "kernel")) return 2;
+  c.interfaceName = argv[3];
+  c.interface = if_nametoindex(c.interfaceName); c.address = ZiIP{argv[4]};
+  if (!strcmp(c.backend, "dpdk"))
+    if (auto link = getenv("BENCH_DPDK_CONTROL_LINK"); link && *link)
+      c.interface = if_nametoindex(link);
   c.addressText = argv[4];
   c.messages = unsigned(ZuBox<unsigned>{argv[5]});
   c.warmup = unsigned(ZuBox<unsigned>{argv[6]});

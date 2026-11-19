@@ -6,7 +6,8 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 EXTRA_DIST = README.md tls-test.sh zfix_demo_io.hh zfix_demo_check.sh zfix_demo_tls_check.sh \
-	native_io_test.py recovery_swap.hh session_preauth_test.hh managed_partial_test.hh
+	native_io_test.py recovery_swap.hh session_preauth_test.hh managed_partial_test.hh \
+	transport-fixture.sh transport_fixture.hh afxdp_wire.hh
 noinst_LTLIBRARIES = libZfixITest.la
 nodist_libZfixITest_la_SOURCES = ZiTestResidue.cc
 BUILT_SOURCES = ZiTestResidue.cc
@@ -49,7 +50,64 @@ LDADD = $(top_builddir)/zfix/src/libZfix.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
-.PHONY: test
+if LINUX
+AFXDP_CPPFLAGS = $(AM_CPPFLAGS) -DZFIX_TEST_AFXDP \
+	-I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zxdp/src
+AFXDP_LDADD = $(top_builddir)/zutcp/src/libZutcp.la \
+	$(top_builddir)/zxdp/src/libZxdp.la $(LDADD)
+AFXDP_TCP_TESTS = afxdp_tcp_test afxdp_ingress_tcp_test afxdp_raw_tcp_test \
+	afxdp_reset_tcp_test afxdp_session_tcp_test afxdp_recovery_tcp_test
+AFXDP_TLS_TESTS = afxdp_tls_test afxdp_ingress_tls_test afxdp_raw_tls_test \
+	afxdp_reset_tls_test afxdp_session_tls_test afxdp_recovery_tls_test
+EXTRA_PROGRAMS = $(AFXDP_TCP_TESTS) $(AFXDP_TLS_TESTS)
+AFXDP_TARGETS = afxdp-programs afxdp-test
+afxdp_tcp_test_SOURCES = transport_test.cc
+afxdp_tcp_test_CPPFLAGS = $(AFXDP_CPPFLAGS)
+afxdp_tcp_test_LDADD = $(AFXDP_LDADD)
+afxdp_tls_test_SOURCES = transport_test.cc
+afxdp_tls_test_CPPFLAGS = $(AFXDP_CPPFLAGS) -DZFIX_TEST_TLS
+afxdp_tls_test_LDADD = $(AFXDP_LDADD)
+afxdp_ingress_tcp_test_SOURCES = ingress_io_test.cc
+afxdp_ingress_tcp_test_CPPFLAGS = $(AFXDP_CPPFLAGS)
+afxdp_ingress_tcp_test_LDADD = $(AFXDP_LDADD)
+afxdp_ingress_tls_test_SOURCES = ingress_io_test.cc
+afxdp_ingress_tls_test_CPPFLAGS = $(AFXDP_CPPFLAGS) -DZFIX_TEST_TLS
+afxdp_ingress_tls_test_LDADD = $(AFXDP_LDADD)
+afxdp_raw_tcp_test_SOURCES = raw_io_test.cc
+afxdp_raw_tcp_test_CPPFLAGS = $(AFXDP_CPPFLAGS)
+afxdp_raw_tcp_test_LDADD = $(AFXDP_LDADD)
+afxdp_raw_tls_test_SOURCES = raw_io_test.cc
+afxdp_raw_tls_test_CPPFLAGS = $(AFXDP_CPPFLAGS) -DZFIX_TEST_TLS
+afxdp_raw_tls_test_LDADD = $(AFXDP_LDADD)
+afxdp_reset_tcp_test_SOURCES = reset_io_test.cc
+afxdp_reset_tcp_test_CPPFLAGS = $(AFXDP_CPPFLAGS)
+afxdp_reset_tcp_test_LDADD = $(AFXDP_LDADD)
+afxdp_reset_tls_test_SOURCES = reset_io_test.cc
+afxdp_reset_tls_test_CPPFLAGS = $(AFXDP_CPPFLAGS) -DZFIX_TEST_TLS
+afxdp_reset_tls_test_LDADD = $(AFXDP_LDADD)
+afxdp_session_tcp_test_SOURCES = session_io_test.cc
+afxdp_session_tcp_test_CPPFLAGS = $(AFXDP_CPPFLAGS)
+afxdp_session_tcp_test_LDADD = $(AFXDP_LDADD)
+afxdp_session_tls_test_SOURCES = session_io_test.cc
+afxdp_session_tls_test_CPPFLAGS = $(AFXDP_CPPFLAGS) -DZFIX_TEST_TLS
+afxdp_session_tls_test_LDADD = $(AFXDP_LDADD)
+afxdp_recovery_tcp_test_SOURCES = recovery_io_test.cc
+afxdp_recovery_tcp_test_CPPFLAGS = $(AFXDP_CPPFLAGS)
+afxdp_recovery_tcp_test_LDADD = libZfixITest.la $(AFXDP_LDADD)
+afxdp_recovery_tls_test_SOURCES = recovery_io_test.cc
+afxdp_recovery_tls_test_CPPFLAGS = $(AFXDP_CPPFLAGS) -DZFIX_TEST_TLS
+afxdp_recovery_tls_test_LDADD = libZfixITest.la $(AFXDP_LDADD)
+
+afxdp-programs: $(AFXDP_TCP_TESTS) $(AFXDP_TLS_TESTS)
+
+afxdp-test: afxdp-programs
+	sudo -n unshare --net -- env ZI_LOGDIR="$(abs_top_builddir)/logs" \
+	  bash "$(srcdir)/transport-fixture.sh" prove $(AFXDP_TCP_TESTS)
+	sudo -n unshare --net -- env ZI_LOGDIR="$(abs_top_builddir)/logs" \
+	  bash "$(srcdir)/transport-fixture.sh" $(SHELL) "$(srcdir)/tls-test.sh" $(AFXDP_TLS_TESTS)
+endif
+
+.PHONY: test $(AFXDP_TARGETS)
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: all
 	prove ./ingress_tcp_test ./tcp_test ./session_tcp_test ./recovery_tcp_test ./raw_tcp_test ./reset_tcp_test

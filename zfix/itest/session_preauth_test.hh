@@ -51,12 +51,14 @@ static void nativePreauth(unsigned mode, bool alert)
 {
   ZuTestScope(nativePreauth);
   OwnState state{mode, false, true}; OwnServer server{&state}; OwnClient client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(6)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, "5", "6"));
   ZuCheck(si && ci);
   bool started = mx.start(); ZuCheck(started); if (!started) return;
@@ -70,7 +72,7 @@ static void nativePreauth(unsigned mode, bool alert)
     bool listening = state.listening.timedwait(Zm::now(5)) == 0 && state.port;
     ZuCheck(listening); if (!listening) break;
     a = new OwnCliLink{&client, true}; c = new OwnCliLink{&client, false};
-    attemptedA = true; a->connect("localhost", state.port, ZiIP{"127.0.0.1"});
+    attemptedA = true; ZfixTest::connect(a.ptr(), state.port);
     bool pending = state.admission.timedwait(Zm::now(5)) == 0;
     ZuCheck(pending); if (!pending) break;
     owner = state.serverLink;
@@ -92,9 +94,19 @@ static void nativePreauth(unsigned mode, bool alert)
     // B is a real bound TCP socket but sends no ClientHello. Association and
     // the stale A admission reply run while TLS/FIX opening remain incomplete.
     raw = socket(AF_INET, SOCK_STREAM, 0); ZuCheck(raw >= 0); if (raw < 0) break;
+#ifdef ZFIX_TEST_AFXDP
+    // This peer uses kernel TCP. Its replies pass the fixture's XDP filter.
+    sockaddr_in local{};
+    local.sin_family = AF_INET;
+    local.sin_addr = ZiIP{ZfixTest::KernelPeerIP}.inAddr();
+    timeval deadline{5, 0};
+    bool rawBound = !::bind(raw, reinterpret_cast<sockaddr *>(&local), sizeof(local)) &&
+      !::setsockopt(raw, SOL_SOCKET, SO_SNDTIMEO, &deadline, sizeof(deadline));
+    ZuCheck(rawBound); if (!rawBound) break;
+#endif
     sockaddr_in addr{};
     addr.sin_family = AF_INET; addr.sin_port = htons(state.port);
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_addr = ZiIP{ZfixTest::ServerIP}.inAddr();
     bool connected = !::connect(raw, reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
     ZuCheck(connected); if (!connected) break;
     ZuCheck(state.bound.timedwait(Zm::now(5)) == 0);
@@ -126,7 +138,7 @@ static void nativePreauth(unsigned mode, bool alert)
     if (!stoppedB) break;
     if (raw >= 0) { ::close(raw); raw = -1; }
 
-    attemptedC = true; c->connect("localhost", state.port, ZiIP{"127.0.0.1"});
+    attemptedC = true; ZfixTest::connect(c.ptr(), state.port);
     ZuCheck(state.bound.timedwait(Zm::now(5)) == 0);
     bool replied = state.business.timedwait(Zm::now(5)) == 0;
     ZuCheck(replied); if (!replied) break;
@@ -181,12 +193,14 @@ static void nativeStopBeforeBind(unsigned mode)
 {
   ZuTestScope(nativeStopBeforeBind);
   OwnState state{mode, false, false, true}; OwnServer server{&state}; OwnClient client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(6)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, "5", "6"));
   ZuCheck(si && ci);
   bool started = mx.start(); ZuCheck(started); if (!started) return;
@@ -201,11 +215,7 @@ static void nativeStopBeforeBind(unsigned mode)
     ZuCheck(listening); if (!listening) break;
     a = new OwnCliLink{&client, true}; b = new OwnCliLink{&client, false};
     attemptedA = true;
-#ifdef ZFIX_TEST_TLS
-    a->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-    a->connect("127.0.0.1", state.port);
-#endif
+    ZfixTest::connect(a.ptr(), state.port);
     bool pending = state.admission.timedwait(Zm::now(5)) == 0;
     ZuCheck(pending); if (!pending) break;
     Progress snapshot;
@@ -229,15 +239,16 @@ static void nativeStopBeforeBind(unsigned mode)
     bool gated = state.stopGate.entered.timedwait(Zm::now(5)) == 0;
     ZuCheck(gated); if (!gated) break;
     attemptedB = true;
-#ifdef ZFIX_TEST_TLS
-    b->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-    b->connect("127.0.0.1", state.port);
-#endif
+    ZfixTest::connect(b.ptr(), state.port);
     bool accepted = state.lateAccepted.timedwait(Zm::now(5)) == 0;
-    ZuCheck(accepted); state.stopGate.release.post(); if (!accepted) break;
-    // The I/O Rx accept callback posts B's bind before it can execute the
-    // listener-stop barrier. Native stop therefore accounts for and closes B.
+    ZuCheck(accepted);
+    bool clientBound = accepted && state.lateClientBound.timedwait(Zm::now(5)) == 0;
+    ZuCheck(clientBound);
+    // Acceptance is reported from inside the mux callback. Wait for the mux
+    // to publish B and queue its server bind while stopRx_ is still gated.
+    if (accepted) ZmBlock<>{}([&mx](auto wake) { mx.rxRun(ZuMv(wake)); });
+    state.stopGate.release.post();
+    if (!clientBound) break;
     stopped = state.stoppedServer.timedwait(Zm::now(5)) == 0;
     ZuCheck(stopped && state.serverStops.load_() == 1 && state.physicalOpen.load_() == 2);
     ZuCheck(state.oldClosed.timedwait(Zm::now(5)) == 0);

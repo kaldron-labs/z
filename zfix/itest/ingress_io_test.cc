@@ -14,6 +14,8 @@
 #include <zlib/ZfixClient.hh>
 #include <zlib/ZfixServer.hh>
 
+#include "transport_fixture.hh"
+
 using namespace ZuTestUtil;
 using namespace Zfix;
 #ifdef ZFIX_TEST_TLS
@@ -170,8 +172,8 @@ struct SrvHub : RawServer<SrvHub, Dictionary, Network> {
 
   explicit SrvHub(TestState *s, HubLimits limits = {}) : Base{limits}, state{s} { }
 
-  ZiIP localIP() const { return ZiIP{"127.0.0.1"}; }
-  unsigned localPort() const { return 0; }
+  ZiIP localIP() const { return ZiIP{ZfixTest::ServerIP}; }
+  unsigned localPort() const { return ZfixTest::ServerPort; }
   unsigned nAccepts() const { return 1; }
 
   void listening(const ZiListenInfo &i) { state->port = i.port; state->listening.post(); }
@@ -215,7 +217,7 @@ struct Harness {
   TestState		state;
   CliHub		client;
   SrvHub		server;
-  ZiMultiplex		mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(6)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
@@ -227,15 +229,18 @@ struct Harness {
     client{cli}, server{&state, srv} { }
 
   bool start(bool submitZero = false) {
+    if (!transport.init()) return false;
+    auto &mx = transport.mx();
     Network::ClientParams cp{&mx, "5", "6"}; Network::ServerParams sp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
     auto cert = getenv("ZFIX_TEST_CERT"), key = getenv("ZFIX_TEST_KEY");
-    if (!cert || !key) { mx.stop(); return false; }
+    if (!cert || !key) return false;
     cp.caPath(cert); sp.certPath(cert).keyPath(key);
 #endif
     bool ci = client.init(ZuMv(cp)), si = server.init(ZuMv(sp));
-    if (!ci || !si) { client.final(); server.final(); mx.stop(); return false; }
-    if (!mx.start()) return false;
+    if (!ci || !si || !mx.start()) {
+      client.final(); server.final(); return false;
+    }
     bool cs = client.start(), ss = server.start();
     if (!cs || !ss) {
       if (cs) client.stop(); if (ss) server.stop();
@@ -256,11 +261,7 @@ struct Harness {
   }
 
   template <typename Link> void connect(Link *link) {
-#ifdef ZFIX_TEST_TLS
-    link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-    link->connect("127.0.0.1", state.port);
-#endif
+    ZfixTest::connect(link, state.port);
   }
 
   bool finish(bool two = true) {
@@ -302,9 +303,9 @@ struct Harness {
 	  s->rx.frames != s->receives.load_() || s->rx.pendingBytes) s->fail();
     }
     bool cs = client.stop(), ss = server.stop();
-    client.final(); server.final(); mx.stop();
+    client.final(); server.final(); bool clean = transport.mx().stop();
     first = second = nullptr; server.first = server.second = nullptr;
-    return done && cs && ss;
+    return done && cs && ss && clean;
   }
 
 };

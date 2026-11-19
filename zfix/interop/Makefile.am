@@ -1,8 +1,9 @@
 METASOURCES = AUTO
 EXTRA_DIST = README.md quickfix.lock build-quickfix.sh codec-test.sh \
-	quickfixapp.hh quickfixwire.hh quickfix.patch dependency-test.py security-test.py duplicate-test.py matrix.py fault-proxy.py lifecycle-test.py probe-test.py
+	quickfixapp.hh quickfixwire.hh quickfix.patch dependency-test.py security-test.py duplicate-test.py matrix.py fault-proxy.py lifecycle-test.py probe-test.py \
+	afxdp-fixture.sh load_afxdp.hh
 
-.PHONY: test codec-test
+.PHONY: test codec-test $(AFXDP_TARGETS)
 test: codec-test load-test dependency-test
 
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I$(top_srcdir)/zi/src @Z_CPPFLAGS@
@@ -47,6 +48,31 @@ codec_test_LDADD = $(top_builddir)/zfix/util/libZfixLoad.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@QUICKFIX_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+endif
+
+if LINUX
+AFXDP_TARGETS = afxdp-programs
+EXTRA_PROGRAMS = afxdp_zfix afxdp_zfixd
+EXTRA_LTLIBRARIES = libZfixLoadAFXDP.la
+libZfixLoadAFXDP_la_SOURCES = ../util/load_native.cc
+libZfixLoadAFXDP_la_CPPFLAGS = $(AM_CPPFLAGS) -DZFIX_LOAD_AFXDP \
+	-I$(top_srcdir)/zfix/src -I$(top_srcdir)/ztcp/src -I$(top_srcdir)/ztls/src \
+	-I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zxdp/src
+AFXDP_LDADD = libZfixLoadAFXDP.la $(top_builddir)/zfix/util/libZfixLoadFIX.la \
+	$(top_builddir)/zfix/util/libZfixLoad.la $(top_builddir)/zfix/src/libZfix.la \
+	$(top_builddir)/zfix/src/libZfixFmt.la $(top_builddir)/ztls/src/libZtls.la \
+	$(top_builddir)/ztcp/src/libZtcp.la $(top_builddir)/zutcp/src/libZutcp.la \
+	$(top_builddir)/zxdp/src/libZxdp.la $(top_builddir)/zi/src/libZi.la \
+	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
+	$(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
+	$(top_builddir)/zu/src/libZu.la @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+afxdp_zfix_SOURCES = ../util/zfix.cc
+afxdp_zfix_CPPFLAGS = $(AM_CPPFLAGS)
+afxdp_zfix_LDADD = $(AFXDP_LDADD)
+afxdp_zfixd_SOURCES = ../util/zfixd.cc
+afxdp_zfixd_CPPFLAGS = $(AM_CPPFLAGS)
+afxdp_zfixd_LDADD = $(AFXDP_LDADD)
+afxdp-programs: afxdp_zfix afxdp_zfixd
 endif
 
 codec-test: all

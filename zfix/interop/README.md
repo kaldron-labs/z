@@ -143,6 +143,28 @@ The fault profile exercises both directions of fragmentation, frame loss,
 duplication, unknown tags, CheckSum and BodyLength corruption, plus malformed
 order quantity, recording each receiver's declared behavior.
 
+On Linux the canonical profile can also run Zfix through Zutcp and AF_XDP. Build
+the private fixture peers after the configured `zfix` libraries and utilities.
+
+```sh
+make -C zfix/interop -j8 all afxdp-programs
+sudo -n unshare --mount --net --propagation private \
+  bash zfix/interop/afxdp-fixture.sh \
+  python3 -B zfix/interop/matrix.py --afxdp --profile canonical \
+    --artifacts /tmp/zfix-afxdp-canonical
+```
+
+The launcher puts the initiator and acceptor in separate network namespaces and
+connects them with a veth pair and permanent neighbors. `--afxdp` selects the
+private Zfix binaries, while QuickFIX peers use ordinary kernel TCP inside their
+assigned namespaces. Results retain actual peer commands, binary digests,
+the fixture server address and the expected TCP backend for each peer. Plain
+Zfix peers submit FIX frames in records sized to the native link payload. The
+matrix checks whole FIX frames and completion counts. TLS uses an explicit SAN
+for the server address. This fixture runs direct smoke and canonical cases,
+including both mixed pairings.
+The original local relay remains available through the kernel fault profile.
+
 The pinned QuickFIX acceptor binds wildcard IPv4 addresses. `quickfixd` exposes
 that effective default as `--bind 0.0.0.0` and rejects unsupported bind-address
 values with exit status 2. The native `zfixd` default remains `127.0.0.1`.

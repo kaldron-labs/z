@@ -15,6 +15,8 @@
 #include <zlib/ZfixClient.hh>
 #include <zlib/ZfixServer.hh>
 
+#include "transport_fixture.hh"
+
 using namespace ZuTestUtil;
 using namespace Zfix;
 #ifdef ZFIX_TEST_TLS
@@ -295,8 +297,8 @@ struct SrvHub : Zfix::Server<SrvHub, Dictionary, Network> {
 
   ZiConnection *accepted(const ZiCxnInfo &);
 
-  ZiIP localIP() const { return ZiIP{"127.0.0.1"}; }
-  unsigned localPort() const { return 0; }
+  ZiIP localIP() const { return ZiIP{ZfixTest::ServerIP}; }
+  unsigned localPort() const { return ZfixTest::ServerPort; }
   unsigned nAccepts() const { return 1; }
 
   void listening(const ZiListenInfo &i) { test->port = i.port; test->listening.post(); }
@@ -379,12 +381,14 @@ static void resetLoop(unsigned mode, unsigned path, bool clientDriver = true,
   bool initial = false, unsigned fault = Fault::None) {
   ZuTestScope(resetLoop);
   TestState state{mode}; state.fault = fault; CliHub client{&state}; SrvHub server{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   Network::ClientParams cp{&mx, "3", "4"}; Network::ServerParams sp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   const char *cert = getenv("ZFIX_TEST_CERT"), *key = getenv("ZFIX_TEST_KEY");
@@ -410,11 +414,7 @@ static void resetLoop(unsigned mode, unsigned path, bool clientDriver = true,
   }
   server.listen(); ZuCheck(wait(state.listening) && state.port);
   auto connect = [&link, &state] {
-#ifdef ZFIX_TEST_TLS
-    link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-    link->connect("127.0.0.1", state.port);
-#endif
+    ZfixTest::connect(link.ptr(), state.port);
   };
   connect(); ZuCheck(wait(state.cli.ready)); ZuCheck(wait(state.srv.ready));
   link->order(1);

@@ -23,6 +23,10 @@
 #include "load_cache.hh"
 #include "load_fix.hh"
 
+#ifdef ZFIX_LOAD_AFXDP
+#include "../itest/afxdp_wire.hh"
+#endif
+
 namespace ZfixLoad {
 
 using HistKey = ZuTuple<uint64_t, uint64_t>;
@@ -255,6 +259,13 @@ public:
   using ZmNHeap<NativeLink>::operator new;
   using ZmNHeap<NativeLink>::operator delete;
   using Base::app;
+
+#ifdef ZFIX_LOAD_AFXDP
+  Zfix::WireGeometry fixGeometryTx() {
+    if constexpr (Net::Encrypted) return Base::fixGeometryTx();
+    else return ZfixTest::packetGeometry(this);
+  }
+#endif
 
   NativeLink(NativeHub<Net, Client> *hub, unsigned index) :
     NativeLink{hub, index, round_(hub)} { }

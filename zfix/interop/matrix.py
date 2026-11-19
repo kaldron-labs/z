@@ -3,7 +3,9 @@
 import argparse
 import contextlib
 import importlib.util
+import ipaddress
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -21,6 +23,23 @@ def run_profile(options, root, label, client, server, native_versions=False):
                             canonical=not native_versions,
                             workflows=not native_versions and options.profile != "smoke",
                             names=["44A", "T11"] if native_versions else None)
+    client_kind, server_kind = ("native", "native") if native_versions else label.split("-")
+    network = {}
+    if options.afxdp:
+        def launch(role, argv):
+            if role == "server":
+                if server_kind == "native":
+                    argv[argv.index("--port") + 1] = "19140"
+                    argv += ["--bind", options.server_ip]
+                namespace = options.server_namespace
+            else:
+                argv += ["--host", options.server_ip]
+                namespace = options.client_namespace
+            return ["ip", "netns", "exec", namespace, *argv]
+
+        network.update(launch=launch, server_ip=options.server_ip)
+    backends = {role: "Zutcp/AF_XDP" if options.afxdp and kind == "native" else "kernel TCP"
+                for role, kind in (("client", client_kind), ("server", server_kind))}
     with (root / f"{label}.jsonl").open("w") as output, \
             (root / f"{label}.log").open("w") as errors, \
             contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
@@ -28,8 +47,10 @@ def run_profile(options, root, label, client, server, native_versions=False):
                       tcp_only=options.tcp_only, canonical=not native_versions,
                       workflows=not native_versions and options.profile != "smoke",
                       arguments={"profile": options.profile, "native_versions": native_versions,
+                                 "network": "afxdp-veth" if options.afxdp else "kernel-loopback",
+                                 "tcp_backends": backends,
                                  "client": str(client), "server": str(server),
-                                 "artifacts": str(directory)}, timeout=options.timeout)
+                                 "artifacts": str(directory)}, timeout=options.timeout, **network)
     cases = [json.loads(path.read_text()) for path in directory.glob("*/case.json")]
     per_transport = 2 if native_versions else 1 if options.profile == "smoke" else 9
     assert len(cases) == per_transport * (1 if options.tcp_only else 2)
@@ -58,8 +79,8 @@ def run_fault(options, root, pair, client, server, transport, entry):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--native-client", type=Path, default=HERE.parent / "util" / "zfix")
-    parser.add_argument("--native-server", type=Path, default=HERE.parent / "util" / "zfixd")
+    parser.add_argument("--native-client", type=Path)
+    parser.add_argument("--native-server", type=Path)
     parser.add_argument("--quickfix-client", type=Path, default=HERE / "quickfix")
     parser.add_argument("--quickfix-server", type=Path, default=HERE / "quickfixd")
     parser.add_argument("--profile", choices=("smoke", "canonical", "faults", "all"),
@@ -68,9 +89,29 @@ def main():
                                                             "quickfix-native", "quickfix-quickfix"))
     parser.add_argument("--fault-case", action="append")
     parser.add_argument("--tcp-only", action="store_true")
+    parser.add_argument("--afxdp", action="store_true", help="use private veth peer namespaces")
     parser.add_argument("--artifacts", type=Path)
     parser.add_argument("--timeout", type=float, default=300)
     options = parser.parse_args()
+    if options.afxdp:
+        if options.profile in ("faults", "all"):
+            parser.error("--afxdp supports the direct smoke and canonical profiles")
+        if os.environ.get("ZFIX_INTEROP_AFXDP") != "1":
+            parser.error("launch --afxdp through afxdp-fixture.sh")
+        options.client_namespace = os.environ.get("ZFIX_INTEROP_CLIENT_NS")
+        options.server_namespace = os.environ.get("ZFIX_INTEROP_SERVER_NS")
+        try:
+            options.server_ip = str(ipaddress.IPv4Address(os.environ.get("ZFIX_INTEROP_SERVER_IP")))
+        except (ipaddress.AddressValueError, TypeError):
+            parser.error("AF_XDP fixture requires a server IPv4 address")
+        if not options.client_namespace or not options.server_namespace:
+            parser.error("AF_XDP fixture requires both peer namespaces")
+    if options.native_client is None:
+        options.native_client = (HERE / "afxdp_zfix" if options.afxdp
+                                 else HERE.parent / "util" / "zfix")
+    if options.native_server is None:
+        options.native_server = (HERE / "afxdp_zfixd" if options.afxdp
+                                 else HERE.parent / "util" / "zfixd")
     root = options.artifacts.resolve() if options.artifacts else Path(
         tempfile.mkdtemp(prefix="zfix-matrix-"))
     root.mkdir(parents=True, exist_ok=True)
@@ -121,7 +162,7 @@ def main():
             print(f"not ok {passed + failed} - {label}\n# {error}", flush=True)
     summary = {"passed": passed, "failed": failed, "cases": cases, "artifacts": str(root),
                "profile": options.profile,
-               "differences": {"native_server_bind": "127.0.0.1",
+               "differences": {"native_server_bind": options.server_ip if options.afxdp else "127.0.0.1",
                                "quickfix_server_bind": "0.0.0.0 (SDK API)",
                                "quickfix_outgoing_counts": "SDK wire attempts, not socket completion",
                                "history": "application-selected native bodies; "

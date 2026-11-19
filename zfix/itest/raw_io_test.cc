@@ -20,6 +20,8 @@
 #include <zlib/ZfixClient.hh>
 #include <zlib/ZfixServer.hh>
 
+#include "transport_fixture.hh"
+
 using namespace ZuTestUtil;
 using namespace Zfix;
 #ifdef ZFIX_TEST_TLS
@@ -72,6 +74,9 @@ static unsigned seq(unsigned i) { return i == 1 ? 2 : 17; }
 template <typename Impl, typename Base, bool Client>
 struct Peer : Base {
   using Base::app;
+#if defined(ZFIX_TEST_AFXDP) && !defined(ZFIX_TEST_TLS)
+  Zfix::WireGeometry fixGeometryTx() { return ZfixTest::packetGeometry(this); }
+#endif
   // Application Rx owns input progression and deferred resume state.
   unsigned		received = 0;
   bool			allowed = false, retried = false;
@@ -297,8 +302,8 @@ struct SrvHub : RawServer<SrvHub, Dictionary, Network> {
 
   ZiConnection *accepted(const ZiCxnInfo &);
 
-  ZiIP localIP() const { return ZiIP{"127.0.0.1"}; }
-  unsigned localPort() const { return 0; }
+  ZiIP localIP() const { return ZiIP{ZfixTest::ServerIP}; }
+  unsigned localPort() const { return ZfixTest::ServerPort; }
   unsigned nAccepts() const { return 1; }
 
   void listening(const ZiListenInfo &i) { state->port = i.port; state->listening.post(); }
@@ -344,12 +349,14 @@ static void loopback(bool pause, bool stop, bool quota, unsigned payload = 4) {
   for (unsigned i = 0; i < payload; ++i) state.text->data()[i] = Bits[i % Bits.length()];
   state.text->length = payload;
   SrvHub server{&state}; CliHub client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   typename Network::ServerParams sp{&mx, "3", "4"}; typename Network::ClientParams cp{&mx, "3",
     "4"};
 #ifdef ZFIX_TEST_TLS
@@ -362,11 +369,7 @@ static void loopback(bool pause, bool stop, bool quota, unsigned payload = 4) {
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
   server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0);
-#ifdef ZFIX_TEST_TLS
-  link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-  link->connect("127.0.0.1", state.port);
-#endif
+  ZfixTest::connect(link.ptr(), state.port);
   ZuCheck(state.done.timedwait(Zm::now(5)) == 0);
   link->disconnect(); ZuCheck(state.drained.timedwait(Zm::now(5)) == 0);
   bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
@@ -387,12 +390,14 @@ static void setupCleanup(bool deferred) {
   ZuTestScope(setupCleanup);
   TestState state; state.setup = true; state.deferStop = deferred;
   CliHub client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   typename Network::ClientParams params{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   params.caPath(getenv("ZFIX_TEST_CERT"));
@@ -402,7 +407,7 @@ static void setupCleanup(bool deferred) {
   bool up = init && client.start(); ZuCheck(up);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
   for (unsigned i = 0; i < 3; ++i) {
-    client.rxRun([link] { link->connect("127.0.0.1", 1); link->disconnect_(false); });
+    client.rxRun([link] { link->connect(ZfixTest::ServerIP, 1); link->disconnect_(false); });
     if (deferred) {
       ZuCheck(state.stopPending.timedwait(Zm::now(5)) == 0 && state.release);
       ZuCheck(state.rxStopped.timedwait(Zm::now(5)) == 0);
@@ -645,8 +650,8 @@ struct SwapServer : RawServer<SwapServer, Dictionary, Network> {
   explicit SwapServer(SwapState *s) : state{s} { }
 
   ZiConnection *accepted(const ZiCxnInfo &);
-  ZiIP localIP() const { return ZiIP{"127.0.0.1"}; }
-  unsigned localPort() const { return 0; }
+  ZiIP localIP() const { return ZiIP{ZfixTest::ServerIP}; }
+  unsigned localPort() const { return ZfixTest::ServerPort; }
   unsigned nAccepts() const { return 1; }
   void listening(const ZiListenInfo &i) { state->port = i.port; state->listening.post(); }
   void listenFailed(bool) { state->fail(); state->listening.post(); }
@@ -689,11 +694,13 @@ ZiConnection *SwapServer::accepted(const ZiCxnInfo &i) {
 static void replacement() {
   ZuTestScope(replacement);
   SwapState state; SwapServer server{&state}; SwapClient client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   typename Network::ServerParams sp{&mx, "3", "4"};
   typename Network::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
@@ -709,11 +716,7 @@ static void replacement() {
   ZmRef<SwapClient::Link> b = new SwapClient::Link{&client};
   ZmRef<SwapClient::Link> c = new SwapClient::Link{&client};
   for (auto link : {a, b, c}) {
-#ifdef ZFIX_TEST_TLS
-    link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-    link->connect("127.0.0.1", state.port);
-#endif
+    ZfixTest::connect(link.ptr(), state.port);
     ZuCheck(state.clientUp.timedwait(Zm::now(5)) == 0);
     ZuCheck(state.serverUp.timedwait(Zm::now(5)) == 0);
     link->request(); ZuCheck(state.reply.timedwait(Zm::now(5)) == 0);

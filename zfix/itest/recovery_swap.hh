@@ -41,8 +41,8 @@ struct ReplayServer : Zfix::Server<ReplayServer, Dictionary, Network> {
 
   explicit ReplayServer(ReplayState *s) : state{s} { }
 
-  ZiIP localIP() const { return ZiIP{"127.0.0.1"}; }
-  unsigned localPort() const { return 0; }
+  ZiIP localIP() const { return ZiIP{ZfixTest::ServerIP}; }
+  unsigned localPort() const { return ZfixTest::ServerPort; }
   unsigned nAccepts() const { return 1; }
 
   void listening(const ZiListenInfo &i) { state->port = i.port; state->listening.post(); }
@@ -252,12 +252,14 @@ static void replayReplacement(unsigned mode, bool logoutA)
   ZuTestScope(replayReplacement);
   ReplayState state{mode, logoutA};
   ReplayServer server{&state}; ReplayClient client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   Network::ServerParams sp{&mx, "3", "4"}; Network::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   auto cert = getenv("ZFIX_TEST_CERT"), key = getenv("ZFIX_TEST_KEY");
@@ -269,13 +271,7 @@ static void replayReplacement(unsigned mode, bool logoutA)
   bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<ReplayClient::Link> a, b;
   bool attemptedA = false, attemptedB = false, success = false;
-  auto connectPeer = [&state](ReplayClient::Link *link) {
-#ifdef ZFIX_TEST_TLS
-    link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-    link->connect("127.0.0.1", state.port);
-#endif
-  };
+  auto connectPeer = [&state](ReplayClient::Link *link) { ZfixTest::connect(link, state.port); };
   if (ss && cs) do {
     server.session = new ReplayServer::Link{&server};
     a = new ReplayClient::Link{&client, true};

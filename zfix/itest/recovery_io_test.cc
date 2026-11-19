@@ -21,6 +21,8 @@
 #include <zlib/ZfixClient.hh>
 #include <zlib/ZfixServer.hh>
 
+#include "transport_fixture.hh"
+
 using namespace ZuTestUtil;
 using namespace Zfix;
 #ifdef ZFIX_TEST_TLS
@@ -274,7 +276,8 @@ struct Peer : public Base {
     if (dropFrame) {
       // Fault injection occurs after logical publication: model bytes accepted
       // locally and lost before peer processing when the connection dies.
-      state()->oldBuf = bytes;
+      // Failover keeps the original identity for a late completion.
+      if (state()->failover) state()->oldBuf = bytes;
       this->transportSent(bytes, true);
       state()->dropped.post(); return true;
     }
@@ -457,12 +460,13 @@ struct SrvHub : public Zfix::Server<SrvHub, Dictionary, Network> {
   ZmRef<Link>	session; // network Rx routing; immutable while an accepted link is live
   unsigned	listenPort;
 
-  explicit SrvHub(TestState *s) : state{s}, listenPort{s->port} { }
+  explicit SrvHub(TestState *s, unsigned port = ZfixTest::ServerPort) :
+    state{s}, listenPort{s->port ? s->port : port} { }
 
 
   ZiConnection *accepted(const ZiCxnInfo &);
 
-  ZiIP localIP() const { return ZiIP{"127.0.0.1"}; }
+  ZiIP localIP() const { return ZiIP{ZfixTest::ServerIP}; }
   unsigned localPort() const { return listenPort; }
   unsigned nAccepts() const { return 1; }
 
@@ -505,7 +509,7 @@ ZiConnection *SrvHub::accepted(
 static void run(TestState &state, unsigned begin, unsigned end) {
   ZuTestScope(run);
   SrvHub server{&state}; CliHub client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
@@ -513,6 +517,8 @@ static void run(TestState &state, unsigned begin, unsigned end) {
       .thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
   typename Network::ServerParams sp{&mx, "3", "4"};
   typename Network::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
@@ -533,11 +539,7 @@ static void run(TestState &state, unsigned begin, unsigned end) {
   server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0);
   for (unsigned phase = begin; phase < end; ++phase) {
     state.phase = phase;
-#ifdef ZFIX_TEST_TLS
-    link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
-#else
-    link->connect("127.0.0.1", state.port);
-#endif
+    ZfixTest::connect(link.ptr(), state.port);
     if (!phase) {
       ZuCheck(state.dropped.timedwait(Zm::now(5)) == 0); link->disconnect();
     } else {
@@ -589,23 +591,18 @@ static void recovery(unsigned mode, bool restart) {
   }
 }
 static bool wait(ZmSemaphore &s) { return s.timedwait(Zm::now(10)) == 0; }
-static void connect(CliHub::Link *link, unsigned port) {
-#ifdef ZFIX_TEST_TLS
-  link->connect("localhost", port, ZiIP{"127.0.0.1"});
-#else
-  link->connect("127.0.0.1", port);
-#endif
-}
 static void failover(unsigned mode, bool cold) {
   ZuTestScope(failover);
   TestState state; state.mode = mode; state.failover = true;
-  SrvHub primary{&state}, backup{&state}; CliHub client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  SrvHub primary{&state}, backup{&state, ZfixTest::OtherPort}; CliHub client{&state};
+  ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
+  bool opened = transport.init(); ZuCheck(opened); if (!opened) return;
+  auto &mx = transport.mx();
 #ifdef ZFIX_TEST_TLS
   if (!getenv("ZFIX_TEST_CERT") || !getenv("ZFIX_TEST_KEY")) {
     ZuCheck(false); mx.stop(); return;
@@ -650,7 +647,7 @@ static void failover(unsigned mode, bool cold) {
   primary.listen(); ZuCheck(wait(state.listening)); unsigned primaryPort = state.port;
   backup.listen(); ZuCheck(wait(state.listening)); unsigned backupPort = state.port;
   ZuCheck(primaryPort && backupPort && primaryPort != backupPort);
-  connect(link.ptr(), primaryPort); ZuCheck(wait(state.dropped));
+  ZfixTest::connect(link.ptr(), primaryPort); ZuCheck(wait(state.dropped));
   Fmt::Error error;
   auto queued = TxBody::encode<OrderMsg>(Order{"new"}, 102, error);
   ZuCheck(queued && !error); link->enqueue(ZuMv(queued));
@@ -672,6 +669,7 @@ static void failover(unsigned mode, bool cold) {
   // The backup is already listening when the primary becomes unavailable.
   bool primaryStopped = primary.stop(); ZuCheck(primaryStopped);
   if (primaryStopped) ps = false;
+#ifndef ZFIX_TEST_AFXDP
   auto refused = ::socket(AF_INET, SOCK_STREAM, 0);
   int reuse = 1;
   if (!Zi::nullSocket(refused))
@@ -683,10 +681,11 @@ static void failover(unsigned mode, bool cold) {
     !::bind(refused, reinterpret_cast<sockaddr *>(&address), sizeof(address));
   ZuCheck(bound);
   if (!bound) { if (!Zi::nullSocket(refused)) Zi::closeSocket(refused); final(); return; }
+#endif
   RxProgress rxBefore, rxAfter; TxProgress txBefore, txAfter; uint64_t before, after;
   snapshot(rxBefore, txBefore, before);
   state.phase = 1;
-  connect(link.ptr(), primaryPort);
+  ZfixTest::connect(link.ptr(), primaryPort);
   ZuCheck(wait(state.setupFailed) && wait(state.cliStopped));
   snapshot(rxAfter, txAfter, after);
   ZuCheck(before == 1 && after == before && state.setupFailures.load_() == 1);
@@ -695,7 +694,9 @@ static void failover(unsigned mode, bool cold) {
   ZuCheck(txBefore.loaded == txAfter.loaded && txBefore.sent == txAfter.sent &&
     txBefore.acknowledged == txAfter.acknowledged &&
     txBefore.replayBegin == txAfter.replayBegin && txBefore.replayEnd == txAfter.replayEnd);
+#ifndef ZFIX_TEST_AFXDP
   Zi::closeSocket(refused);
+#endif
   if (cold) {
     auto path = ZiTestResidue::file(ZiTestResidue::uniqueName("failover-server"));
     auto previous = state.server;
@@ -721,7 +722,7 @@ static void failover(unsigned mode, bool cold) {
     mx.rxRun([&backup, standby, wake = ZuMv(wake)]() mutable { backup.session = standby; wake();
       });
   });
-  connect(link.ptr(), backupPort); ZuCheck(wait(state.loadPending));
+  ZfixTest::connect(link.ptr(), backupPort); ZuCheck(wait(state.loadPending));
   ZuCheck(state.newLoad > state.oldLoad && !state.newPublished.load_());
   link->loaded(state.oldLoad, false); // Late first-connection association reply.
   TxStats stale; TxProgress pending;
@@ -789,7 +790,7 @@ int main(int argc, char **argv) {
   ZuTestCall(replayReplacement, Transport::FIX4, true);
   ZuTestCall(replayReplacement, Transport::FIX44A, true);
   ZuTestCall(replayReplacement, Transport::FIXT11, true);
-#if defined(__linux__) && !defined(ZFIX_TEST_TLS)
+#if defined(__linux__) && !defined(ZFIX_TEST_TLS) && !defined(ZFIX_TEST_AFXDP)
   ZuTestCall(managedPartial);
 #endif
   return 0;
