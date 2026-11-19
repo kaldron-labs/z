@@ -5,6 +5,8 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmGuard.hh>
+#include <zlib/ZmPLock.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTimeInterval.hh>
 
@@ -35,12 +37,7 @@ private:
   ZuInline void sent_(unsigned n) { ++m_sendRequests; m_sendBytes += n; }
   ZuInline void rcvd_(unsigned n) { ++m_recvRequests; m_recvBytes += n; }
 
-  void dumpStats_() {
-    std::cout <<
-      "Recv " << ZuBoxed(m_recvRequests) << ':' << ZuBoxed(m_recvBytes) <<
-      " Send " << ZuBoxed(m_sendRequests) << ':' << ZuBoxed(m_sendBytes) <<
-      '\n';
-  }
+  void dumpStats_();
 
   static Global *instance();
 
@@ -54,8 +51,3 @@ private:
   uint64_t		m_sendRequests;
   uint64_t		m_sendBytes;
 };
-
-Global *Global::instance() {
-  static constexpr auto ctor = []() { return new Global(); };
-  return ZmSingleton<Global, ZmSingletonCtor<ctor>>::instance();
-}

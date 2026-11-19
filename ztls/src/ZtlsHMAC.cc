@@ -21,6 +21,10 @@ struct MACAlgo {
   EVP_MAC *mac = cryptoInit() ? EVP_MAC_fetch(nullptr, "HMAC", nullptr) : nullptr;
 
   ~MACAlgo() { EVP_MAC_free(mac); }
+
+  static MACAlgo *instance() {
+    return ZmSingleton<MACAlgo, ZmSingletonCleanup<ZmCleanup::Library>>::instance();
+  }
 };
 
 HMAC_::HMAC_(MDType type)
@@ -52,8 +56,7 @@ void HMAC_::clear()
 void HMAC_::start(ZuBSpan key)
 {
   clear();
-  auto algo = ZmSingleton<MACAlgo,
-    ZmSingletonCleanup<ZmCleanup::Library>>::instance()->mac;
+  auto algo = MACAlgo::instance()->mac;
   if (!algo) fail("EVP_MAC_fetch(HMAC)");
   if (!(m_ctx = EVP_MAC_CTX_new(algo))) fail("EVP_MAC_CTX_new()");
   OSSL_PARAM params[] = {

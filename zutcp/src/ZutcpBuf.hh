@@ -21,7 +21,6 @@
 
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmPolymorph.hh>
-#include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZiAssert.hh>
 #include <zlib/ZiIOBuf.hh>
@@ -65,9 +64,7 @@ using TxBufAlloc = Zutcp_::BufAlloc<Size, MaxSize, HeapID>;
 
 // Adapter for optional receive heap replacement. Owned here, independently of
 // the mx registry and native registered packet pools.
-inline Zi::IOBufAllocator *inlineAllocator() {
-  return ZmSingleton<TxBufAlloc<>>::instance();
-}
+ZutcpExtern Zi::IOBufAllocator *inlineAllocator();
 
 
 struct BufDiag { };

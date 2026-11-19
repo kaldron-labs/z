@@ -13,8 +13,8 @@ noinst_PROGRAMS = \
 	zilogtest
 noinst_HEADERS = global.hh httpheader.hh
 EXTRA_DIST = README.md
-zimxclient_SOURCES = zimxclient.cc
-zimxserver_SOURCES = zimxserver.cc
-zimxudpclient_SOURCES = zimxudpclient.cc
-zimxudpserver_SOURCES = zimxudpserver.cc
+zimxclient_SOURCES = zimxclient.cc global.cc
+zimxserver_SOURCES = zimxserver.cc global.cc
+zimxudpclient_SOURCES = zimxudpclient.cc global.cc
+zimxudpserver_SOURCES = zimxudpserver.cc global.cc
 zilogtest_SOURCES = zilogtest.cc

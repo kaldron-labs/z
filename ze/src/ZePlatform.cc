@@ -121,6 +121,10 @@ static constexpr struct {
 };
 class ZePlatform_WSAErrors {
 public:
+  static ZePlatform_WSAErrors *instance() {
+    return ZmSingleton<ZePlatform_WSAErrors>::instance();
+  }
+
   enum { N = sizeof(ZePlatform_WSAErrors_) / sizeof(ZePlatform_WSAErrors_[0]) };
   enum { Bits = ZuIntrin::log2(N) };
   ZmLHashKVDerive(Hash, DWORD, const char *,
@@ -161,7 +165,7 @@ const char *Ze::strerror(ErrNo e)
 {
   const char *msg;
 
-  if (msg = ZmSingleton<ZePlatform_WSAErrors>::instance()->lookup(e))
+  if (msg = ZePlatform_WSAErrors::instance()->lookup(e))
     return msg;
 
   if (e == ERROR_DUP_NAME)

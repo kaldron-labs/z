@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include <zlib/ZmAssert.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmTime.hh>
 
 #include <zlib/ZePlatform.hh>
@@ -22,6 +23,11 @@
 #include <zlib/ZutcpUDP.hh>
 
 namespace Zutcp {
+
+Zi::IOBufAllocator *inlineAllocator()
+{
+  return ZmSingleton<TxBufAlloc<>>::instance();
+}
 
 ClosedTuples::ClosedTuples(unsigned capacity)
 : m_index{new Index{ZmHashParams{capacity}.cBits(0).loadFactor(1)}}

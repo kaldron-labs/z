@@ -8,8 +8,6 @@
 
 #include <zlib/ZiDaemon.hh>
 
-#include <zlib/ZmSingleton.hh>
-
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiPIDFile.hh>
 #include <zlib/ZiProgram.hh>
@@ -178,7 +176,7 @@ int ZiDaemon::init(
 
   // create / check PID file
   if (pidName) {
-    auto file = ZmSingleton<ZiPIDFile>::instance();
+    auto file = ZiPIDFile::instance();
     int r = file->init(pidName);
     if (r == ZiPIDFile::Running) {
       ZiLOG(Error, "ZiDaemon", ([pid = file->pid()](auto &s) {

@@ -173,7 +173,7 @@ ZiFile_WindowsDrives *ZiFile_WindowsDrives::instance()
 {
   return
     ZmSingleton<ZiFile_WindowsDrives,
-      ZmSingletonCleanup<ZmCleanup::Platform>>>::instance();
+      ZmSingletonCleanup<ZmCleanup::Platform>>::instance();
 }
 
 ZiFile_WindowsDrives::ZiFile_WindowsDrives()

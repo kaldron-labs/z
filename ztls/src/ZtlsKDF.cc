@@ -23,9 +23,11 @@ struct HKDFAlgo {
     if (cryptoInit()) algo = EVP_KDF_fetch(nullptr, "HKDF", nullptr);
   }
   ~HKDFAlgo() { EVP_KDF_free(algo); }
-};
 
-using Algo = ZmSingleton<HKDFAlgo, ZmSingletonCleanup<ZmCleanup::Library>>;
+  static HKDFAlgo *instance() {
+    return ZmSingleton<HKDFAlgo, ZmSingletonCleanup<ZmCleanup::Library>>::instance();
+  }
+};
 
 HKDF::~HKDF() { EVP_KDF_CTX_free(m_ctx); }
 
@@ -33,7 +35,7 @@ bool HKDF::init()
 {
   EVP_KDF_CTX_free(m_ctx);
   m_ctx = nullptr;
-  auto algo = Algo::instance()->algo;
+  auto algo = HKDFAlgo::instance()->algo;
   if (!algo) return false;
   m_ctx = EVP_KDF_CTX_new(algo);
   return m_ctx;

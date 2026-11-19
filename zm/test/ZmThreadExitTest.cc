@@ -32,6 +32,10 @@ public:
   }
   bool started() const { return m_started; }
 
+  static Worker *instance() {
+    return ZmSingleton<Worker, ZmSingletonCleanup<ZmCleanup::Library>>::instance();
+  }
+
 private:
   ZmThread m_thread;
   ZmSemaphore m_ready;
@@ -45,9 +49,7 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  using Global = ZmSingleton<ZmThreadExitTest_::Worker,
-    ZmSingletonCleanup<ZmCleanup::Library>>;
-  ZuCheck(Global::instance()->started());
+  ZuCheck(ZmThreadExitTest_::Worker::instance()->started());
   // Deliberately leave the worker to its library cleanup, after application
   // globals have retired. Run under Valgrind to check the TLS exit ownership.
   return 0;

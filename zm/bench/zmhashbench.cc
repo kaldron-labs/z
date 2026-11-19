@@ -101,9 +101,11 @@ struct S : public ZmObject {
     }
   }
 
+  ZuInline static S *instance() { return ZmSingleton<S>::instance(); }
+
   static void singleton() {
     for (int i = 0; i < 100000; i++) {
-      ZmRef<S> s = ZmSingleton<S>::instance();
+      ZmRef<S> s = instance();
 
       s->foo();
     }

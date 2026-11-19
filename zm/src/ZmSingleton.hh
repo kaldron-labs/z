@@ -15,7 +15,7 @@
 // T can be ZuObject-derived, but does not have to be
 //
 // static T v; can be replaced with:
-// auto &v = *ZmSingleton<T>::instance(); // if T is unique
+// auto &v = *T::instance(); // T owns its ZmSingleton lookup in its .cc
 // auto &v = ZmStatic([]{ return new T(); }); // do not use in a header
 //
 // static T v(args); can be replaced with:

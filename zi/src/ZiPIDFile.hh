@@ -18,6 +18,8 @@
 #include <zlib/ZiPlatform.hh>
 
 class ZiAPI ZiPIDFile {
+friend class ZiDaemon;
+
   ZiPIDFile(const ZiPIDFile &) = delete;
   ZiPIDFile &operator =(const ZiPIDFile &) = delete;
 
@@ -36,6 +38,8 @@ public:
   int pid() const { return m_pid; }
 
 private:
+  static ZiPIDFile *instance();
+
   Zi::Path	m_path;
   ZeError	m_error = ZeOK;
   int		m_pid = 0;

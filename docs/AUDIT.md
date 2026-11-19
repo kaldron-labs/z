@@ -83,6 +83,13 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
   array and convert each element to a span only at its use boundary.
 
 ### Storage and capacity
+- Red Flag: a dependent uses `ZmSingleton<T, ...>` directly or a concrete
+  singleton's lookup is defined in a header.
+  Repeating the lookup exposes the lifetime policy and can select a different
+  singleton specialization. Define one accessor in the owner's `.cc`,
+  normally `T::instance()`, and route all callers through it. Preserve the
+  constructor and cleanup policy. See [Storage and lifetime](FRAMEWORK.md#storage-and-lifetime)
+  for the rule for template-dependent singleton types.
 - Red Flag: `operator new` overload outside `ZmNHeap`, except for objects
   managed by `ZmSingleton` or `ZmSpecific`
   Problem: fixed-size allocations outside `ZmSingleton` and `ZmSpecific`

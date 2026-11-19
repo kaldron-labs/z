@@ -123,6 +123,11 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
 - Use `ZmAlloc` for large single-object stack allocations with heap fallback.
 - Use `ZmSpecific` instead of `thread_local`.
 - Use `ZmSingleton` for global singletons.
+  Keep the `ZmSingleton<T, ...>` lookup, constructor policy, and cleanup level
+  in one accessor in the owning component's `.cc`, normally `T::instance()`.
+  Declare the accessor in the header and call it from dependents, examples,
+  and tests. A singleton whose type depends on an open set of template
+  arguments may keep the lookup in its own templated accessor in the header.
 - Intrusive reference-counting:
   - Non-atomic reference-counted thread-affined objects:
     - Use `ZuObject` for non-polymorphic types (no vtbl)

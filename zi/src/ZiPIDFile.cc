@@ -10,6 +10,7 @@
 #include <zlib/ZuBox.hh>
 
 #include <zlib/ZmPlatform.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmTime.hh>
 
 #include <zlib/ZiFile.hh>
@@ -132,6 +133,11 @@ static bool pidRunning(int pid)
   CloseHandle(h);
   return running;
 #endif
+}
+
+ZiPIDFile *ZiPIDFile::instance()
+{
+  return ZmSingleton<ZiPIDFile>::instance();
 }
 
 ZiPIDFile::~ZiPIDFile()
