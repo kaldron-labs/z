@@ -1909,7 +1909,7 @@ static void admission()
     ZuCheck(probeMx.start());
     bool accepted = ZmBlock<bool>{}([db = unregistered.ptr()](auto wake) {
       if (!db->saga(0, 1, zdbtest::liveSaga(43),
-	  [wake](bool ok) { wake(ok); }, [](bool) { })) wake(false);
+	  [wake](bool ok) mutable { wake(ok); }, [](bool) { })) wake(false);
     });
     ZuCheck(!accepted);
     ZuCheck(probeMx.stop());
