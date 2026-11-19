@@ -3619,7 +3619,13 @@ public:
 	  [](auto part) -> int64_t { return part.length(); },
 	  []() -> ZmRef<ZiRxQueue::Node> { return {}; }, node);
 	ZmAssert_(n == length && node);
-	if (!static_cast<DataRx *>(node.ptr())->attach(context.buf)) {
+	auto data = static_cast<DataRx *>(node.ptr());
+	// The connection's retention list owns the ingress packet until a
+	// uniquely delivered slice can transfer its backing to the typed stub.
+	if (auto packet = data->slice.packet.ptr(); packet && packet->registered() &&
+	    !packet->builtin() && data->refCount() == 1 && packet->refCount() == 2)
+	  m_rxRetained.delNode(packet);
+	if (!data->attach(context.buf)) {
 	  result = -1;
 	  break;
 	}

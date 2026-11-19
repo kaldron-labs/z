@@ -115,6 +115,7 @@ public:
   }
   unsigned pollTx() override { return 0; }
   unsigned allQueues(Ztc::QueueMgr::AllFn) const override { return 0; }
+  void status() override { }
 
   Zi::IOBufPool *reserves[2]{}, *rxPool = nullptr;
   ZtArray<Zi::IOBufPool *> txPools;

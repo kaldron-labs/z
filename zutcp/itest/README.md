@@ -126,3 +126,31 @@ sudo -n unshare --mount --net --propagation private \
 ```
 
 The runner accepts either address family with either mode.
+
+## DPDK software ports
+
+Configure the Clang release build with libdpdk 25.11 or later and its stock
+`net_ring` PMD. Build the enabled dependency closure from the repository root,
+then run the integration driver with privileges to create a private network
+namespace.
+
+```sh
+./z.config -c -L /usr/local
+make -j8
+sudo -n prove -v zutcp/itest/zutcpdpdktest
+```
+
+`zutcpdpdktest` creates its own namespace with `iproute2`. It opens `net_ring_zutcp0`
+and `net_ring_zutcp1` and gives each its own Linux dummy interface with a matching
+MAC and MTU. Static IPv4 and IPv6 routes and permanent neighbors provide the
+control-plane lookup. The independent software wire copies each Tx frame into a
+slot from the destination's DPDK ingress pool. Setup failures fail TAP.
+
+The driver uses real ZiMultiplex/Zutcp ownership transfers and Ztcp stream
+callbacks. It runs TCP-only, UDP-only and mixed traffic for both address families,
+checks typed endpoint delivery on accept and reconnect, verifies the original
+native ingress pool on retained packets and stops without injecting a wake
+packet. Separate EAL processes verify fatal ownership violations. Allocation and
+activation failure cases exercise rollback, frozen-registry retry, smaller Tx
+requests, retained Tx backing through failure and restart, and same-port reuse
+after finalization.

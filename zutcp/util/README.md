@@ -2,7 +2,7 @@
 
 Zutcp implements TCP for applications using this repository's `ZiMultiplex`
 connection and allocator interfaces. Install `Zutcp::Instance` on the multiplexer to
-select AF_XDP; leave the plugin unset to use regular kernel TCP. Existing Zi/Ztcp
+select AF_XDP or DPDK. Leave the plugin unset to use regular kernel TCP. Existing Zi/Ztcp
 application framing and callbacks remain in use. Ztls can run above either TCP
 backend; it is not a dependency of libZutcp.
 
@@ -43,7 +43,18 @@ The [FIX benchmark](../bench/README.md) uses the mapped ZiConnection application
 
 Stop application work and listeners, drain callbacks, then stop mx. Return all
 dependent buffers before destroying mx. The multiplexer finalizes Zutcp, which
-finalizes XDP and releases the registration.
+finalizes the packet device and releases the backing.
+
+For DPDK, initialize EAL explicitly and select `Zxdp::Type::Dpdk`. The
+device parameters carry the DPDK port name, the Linux routing-interface
+index, and the optional idle interval. Use a control-plane link with the
+same MTU and MAC as the port. Install routes with that output interface and
+permanent neighbors for the next hops. Keep the same stopped device/plugin
+handoffs and typed Tx and per-endpoint Rx allocation. The existing utility
+commands use AF_XDP with the topology shown below. The DPDK bootstrap and
+software fixture use matching dummy control-plane links.
+See the [DPDK bootstrap](../README.md#dpdk-device-selection) and
+[DPDK test commands](../itest/README.md#dpdk-software-fixture).
 
 ## Run a self-contained privileged interoperability check
 

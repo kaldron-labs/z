@@ -23,7 +23,7 @@ srx=${BENCH_SERVER_RX_CPU:-$srx} stx=${BENCH_SERVER_TX_CPU:-$stx}
 for family in ${BENCH_FAMILIES:-4 6}; do
   [[ $family == 4 || $family == 6 ]]
   for backend in ${BENCH_BACKENDS:-kernel native}; do
-    case $backend in kernel|native|native-client|native-server) ;; *) exit 2 ;; esac
+    case $backend in kernel|native|dpdk|native-client|native-server) ;; *) exit 2 ;; esac
     # The caller supplies privileges; only this newly unshared topology is changed.
     unshare -n -- bash "$script/private-veth.sh" "$binary" "$backend" "$family" \
       "$out/$family-$backend" "$crx" "$ctx" "$srx" "$stx" \

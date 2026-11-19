@@ -16,7 +16,7 @@ messages=$9 warmup=${10} pipeline=${11} connections=${12}
 reserve=${13} spin=${14} label=${15} capture=${16}
 client_backend=$backend server_backend=$backend matched=1
 case $backend in
-  kernel|native) ;;
+  kernel|native|dpdk) ;;
   native-client) client_backend=native server_backend=kernel ;;
   native-server) client_backend=kernel server_backend=native ;;
   *) exit 2 ;;
@@ -91,20 +91,29 @@ ip link set zbenchs netns "$srv"
 for ns in "$cli" "$srv"; do ip -n "$ns" link set lo up; done
 ip -n "$cli" link set zbenchc up
 ip -n "$srv" link set zbenchs up
-ip -n "$cli" addr add 198.18.87.1/32 dev zbenchc
-ip -n "$srv" addr add 198.18.87.2/32 dev zbenchs
-ip -n "$cli" -6 addr add 2001:db8:87::1/128 dev zbenchc nodad
-ip -n "$srv" -6 addr add 2001:db8:87::2/128 dev zbenchs nodad
 cmac=$(ip -n "$cli" -o link show zbenchc | sed -n 's/.*link\/ether \([^ ]*\).*/\1/p')
 smac=$(ip -n "$srv" -o link show zbenchs | sed -n 's/.*link\/ether \([^ ]*\).*/\1/p')
-ip -n "$cli" route add 198.18.87.2/32 dev zbenchc src 198.18.87.1
-ip -n "$srv" route add 198.18.87.1/32 dev zbenchs src 198.18.87.2
-ip -n "$cli" -6 route add 2001:db8:87::2/128 dev zbenchc src 2001:db8:87::1
-ip -n "$srv" -6 route add 2001:db8:87::1/128 dev zbenchs src 2001:db8:87::2
-ip -n "$cli" neigh replace 198.18.87.2 lladdr "$smac" nud permanent dev zbenchc
-ip -n "$srv" neigh replace 198.18.87.1 lladdr "$cmac" nud permanent dev zbenchs
-ip -n "$cli" -6 neigh replace 2001:db8:87::2 lladdr "$smac" nud permanent dev zbenchc
-ip -n "$srv" -6 neigh replace 2001:db8:87::1 lladdr "$cmac" nud permanent dev zbenchs
+control= croute=zbenchc sroute=zbenchs
+if [[ $backend == dpdk ]]; then
+  # The PMD restores the veth MAC at startup, which flushes its neighbors.
+  control=zbenchctl croute=zbenchctl sroute=zbenchctl
+  ip -n "$cli" link add "$control" address "$cmac" type dummy
+  ip -n "$srv" link add "$control" address "$smac" type dummy
+  ip -n "$cli" link set "$control" up
+  ip -n "$srv" link set "$control" up
+fi
+ip -n "$cli" addr add 198.18.87.1/32 dev "$croute"
+ip -n "$srv" addr add 198.18.87.2/32 dev "$sroute"
+ip -n "$cli" -6 addr add 2001:db8:87::1/128 dev "$croute" nodad
+ip -n "$srv" -6 addr add 2001:db8:87::2/128 dev "$sroute" nodad
+ip -n "$cli" route add 198.18.87.2/32 dev "$croute" src 198.18.87.1
+ip -n "$srv" route add 198.18.87.1/32 dev "$sroute" src 198.18.87.2
+ip -n "$cli" -6 route add 2001:db8:87::2/128 dev "$croute"
+ip -n "$srv" -6 route add 2001:db8:87::1/128 dev "$sroute"
+ip -n "$cli" neigh replace 198.18.87.2 lladdr "$smac" nud permanent dev "$croute"
+ip -n "$srv" neigh replace 198.18.87.1 lladdr "$cmac" nud permanent dev "$sroute"
+ip -n "$cli" -6 neigh replace 2001:db8:87::2 lladdr "$smac" nud permanent dev "$croute"
+ip -n "$srv" -6 neigh replace 2001:db8:87::1 lladdr "$cmac" nud permanent dev "$sroute"
 snapshot() {
   local phase=$1
   ip -n "$cli" -s -s link show zbenchc > "$out/client/link.$phase"
@@ -131,6 +140,17 @@ for side in client server; do
   ip netns exec "$ns" ethtool -l "$dev" > "$out/$side/channels"
   ip netns exec "$ns" sysctl net.ipv4.tcp_sack net.ipv4.tcp_timestamps \
     net.ipv4.tcp_window_scaling net.ipv4.tcp_ecn > "$out/$side/kernel-options"
+  if [[ $backend == dpdk ]]; then
+    # AF_PACKET receives before the IP input hook. Suppress kernel TCP replies.
+    ip netns exec "$ns" nft -f - <<EOF
+table inet zbench {
+  chain input {
+    type filter hook input priority filter; policy accept;
+    iifname "$dev" meta l4proto tcp drop
+  }
+}
+EOF
+  fi
 done
 if [[ $topology == bridge ]]; then
   for dev in zbenchca zbenchsa; do
@@ -229,7 +249,8 @@ if [[ $family == 6 ]]; then address=2001:db8:87::2; fi
 # cd gives each role its own ordinary gmon.out; GMON_OUT_PREFIX also separates PIDs
 # on runtimes which implement it. No clock or transport behavior is changed.
 ip netns exec "$srv" sh -c 'cd "$1"; shift; exec "$@"' sh "$out/server" \
-  env "GMON_OUT_PREFIX=$out/server/gmon" "BENCH_APP_RX_CPU=$sarx" \
+  env "GMON_OUT_PREFIX=$out/server/gmon" "RUNTIME_DIRECTORY=$out/server" \
+  "BENCH_DPDK_CONTROL_LINK=$control" "BENCH_APP_RX_CPU=$sarx" \
   "BENCH_APP_TX_CPU=$satx" /usr/bin/time -v -o "$out/server/time" \
   timeout 150 "$binary" server "$server_backend" zbenchs "$address" "$messages" "$warmup" \
   "$pipeline" "$connections" "$reserve" "$srx" "$stx" "$spin" \
@@ -241,7 +262,8 @@ for ((i=0;i<1000;i++)); do
 done
 grep -q '^ready=1$' "$out/server/output"
 ip netns exec "$cli" sh -c 'cd "$1"; shift; exec "$@"' sh "$out/client" \
-  env "GMON_OUT_PREFIX=$out/client/gmon" "BENCH_APP_RX_CPU=$carx" \
+  env "GMON_OUT_PREFIX=$out/client/gmon" "RUNTIME_DIRECTORY=$out/client" \
+  "BENCH_DPDK_CONTROL_LINK=$control" "BENCH_APP_RX_CPU=$carx" \
   "BENCH_APP_TX_CPU=$catx" /usr/bin/time -v -o "$out/client/time" \
   timeout 150 "$binary" client "$client_backend" zbenchc "$address" "$messages" "$warmup" \
   "$pipeline" "$connections" "$reserve" "$crx" "$ctx" "$spin" "$out/client/samples.csv" \

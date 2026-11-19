@@ -34,6 +34,15 @@ EXTRA_DIST = README.md zutcpipfixture.sh zutcppairfixture.sh zutcpmxfixture.sh \
 	zutcpappfixture.sh zutcpmxlossfixture.sh zutcprecovery.py zutcpoptions.py zutcptfo.py \
 	zutcpudpfixture.sh
 
+if DPDK
+noinst_PROGRAMS += zutcpdpdktest
+zutcpdpdktest_SOURCES = zutcpdpdktest.cc zutcpdpdkfixture.hh zutcpdpdkfixture.cc
+zutcpdpdktest_CPPFLAGS = $(AM_CPPFLAGS) $(DPDK_CFLAGS) \
+	-I$(top_srcdir)/zxdp/itest -I$(top_srcdir)/ztcp/src
+zutcpdpdktest_LDADD = $(top_builddir)/zxdp/itest/libZxdpDpdkFixture.la \
+	$(LDADD) $(top_builddir)/ztcp/src/libZtcp.la $(DPDK_LIBS) -lrte_net_ring
+endif
+
 .PHONY: test
 test: all
 	prove $(noinst_PROGRAMS)

@@ -8,8 +8,14 @@ opposite requests, and report completion through ZiMxPlugin's existing callbacks
 Stop retains configuration and history; final is idempotent, runs only after
 stop and releases configuration, pools, secrets and retained history. Destruction
 also calls final. Keep one Zxdp instance across stop/start; its own engine drains
-sender and kernel access before reporting stopped. There is no initialized flag
+packet service and backing access before reporting stopped. There is no initialized flag
 or restart-time replacement.
+
+The application opens the selected AF_XDP or DPDK device before transferring
+ownership. With DPDK, initialize EAL explicitly and supply the Linux control-plane
+link's ifindex. Route and permanent-neighbor resolution use that interface.
+Keep transport configuration and allocator registration independent of the
+selected packet device.
 There is no configure() method or public params() accessor. Transfer code uses Ztcp/Ztls
 or the generic Zi callback interface. There is no Zutcp Hub/Client/Server
 application transport hierarchy or nativeInstance() bridge. Instance directly
@@ -41,11 +47,11 @@ Dispatch preserves exact-local then wildcard lookup, and unbind removes only
 the requesting endpoint's own node before its owner drains. Accepted connections
 share their listener's binding and retain the existing TCP tuple routing.
 
-allQueues() delegates directly to Zxdp's existing ring enumeration. It does not
+allQueues() delegates directly to the packet device's queue enumeration. It does not
 traverse connections or listeners, or expose protocol bookkeeping as transport
 queues. Do not add queue containers, indexes, registries or tracking caches.
-Queue callbacks borrow the XDP rings; finish enumeration before closing their
-owning XDP instance.
+Queue callbacks borrow the device's queue views. Finish each callback before
+device teardown.
 
 Destination route/static-neighbor lookup runs synchronously on mx Rx during
 outbound and passive setup. It is intentional bounded blocking netlink work,

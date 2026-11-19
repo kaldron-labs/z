@@ -1,7 +1,7 @@
 # Zutcp: User-mode TCP/IP stack
 
 Zutcp is a Linux user-mode TCP and UDP transport integrated with `ZiMultiplex`, using
-[Zxdp](../zxdp/README.md) for raw AF_XDP packet I/O. It targets short FIX order,
+[Zxdp](../zxdp/README.md) for AF_XDP or DPDK packet I/O. It targets short FIX order,
 execution and market-data messages while keeping the existing Zi connection,
 allocator and application framing interfaces.
 
@@ -109,13 +109,48 @@ mx.listen(tcpListening, tcpFailed, tcpAccepted, localIP, tcpPort, 32, tcpRx);
 mx.udp(udpReady, udpFailed, localIP, udpPort, {}, 0, udpRx, ZiCxnOptions{}.udp(true));
 ```
 
+### DPDK device selection
+
+Initialize [DPDK EAL](../zxdp/README.md#dpdk) before creating the device. Set up a
+Linux control-plane link whose MAC and MTU match the DPDK port. Configure routes
+and permanent neighbors for the peer or next hop on that link.
+
+```cpp
+ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2)};
+auto device = Zxdp::instance(Zxdp::Type::Dpdk);
+Zxdp::Params config{Zxdp::Dpdk::Params{
+  .name = "net_ring0", .ifindex = routeIfindex, .rxInterval = 50}};
+auto opened = device->init(&mx, config);
+if (opened.is<ZeException>()) {
+  ZiLogEvent(ZuMv(opened).p<ZeException>());
+  return false;
+}
+ZmRef<Zutcp::Instance> plugin = new Zutcp::Instance;
+auto initialized = plugin->init(&mx, ZuMv(device), {.packetCount = 2048});
+if (initialized.is<ZeException>()) {
+  ZiLogEvent(ZuMv(initialized).p<ZeException>());
+  return false;
+}
+mx.plugin(ZuMv(plugin));
+auto tcpRx = mx.allocator<Zi::IOBufType::Rx, TcpRxBuf, 2048>();
+auto udpRx = mx.allocator<Zi::IOBufType::Rx, UdpRxBuf, 2048>();
+auto tcpTx = mx.allocator<Zi::IOBufType::TxTCP>(2048);
+auto udpTx = mx.allocator<Zi::IOBufType::TxUDP>(512);
+if (!tcpRx || !udpRx || !tcpTx || !udpTx || !mx.start()) return false;
+```
+
+DPDK uses the two existing I/O owners. The control-plane link supplies route
+and neighbor identity. DPDK owns packet access to the Ethernet port.
+
+### Shared allocation and endpoint setup
+
 Each `listen`, `connect`, or `udp` call selects its network receive allocator.
 Accepted TCP connections inherit the listener’s handle. An application may
 use TCP, UDP, or both on the same transport. Applications using
 [Ztcp](../ztcp/README.md) or [Ztls](../ztls/README.md) initialize their hub before
 starting the multiplexer so the hub can obtain its allocators.
 
-XDP owns the shared registration after the first successful allocation.
+The packet device owns the native backing after the first successful allocation.
 `mx.alloc()` is optional. When omitted, `mx.start()` allocates before packet
 activation and reports allocation or activation failure through its result.
 After allocation begins, every new allocator request returns `nullptr`. An
