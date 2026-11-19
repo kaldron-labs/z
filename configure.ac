@@ -348,6 +348,20 @@ AS_IF([test ".$with_pq" = ".yes"], [
 ])
 AM_CONDITIONAL([LIBPQ], [test ".$with_pq" = ".yes"])
 
+# DPDK (optional, Linux only)
+AC_ARG_WITH([dpdk],
+  AS_HELP_STRING([--with-dpdk=yes|no], [Build with DPDK (default: no)]), [],
+  [with_dpdk=no])
+AS_CASE([$with_dpdk],
+  [yes], [
+    AS_IF([test "$z_linux" != yes], [AC_MSG_ERROR([DPDK requires Linux])])
+    PKG_CHECK_MODULES([DPDK], [libdpdk >= 25.11])
+    AC_DEFINE([HAVE_DPDK], [1], [Define when building with DPDK])
+  ],
+  [no], [DPDK_CFLAGS=; DPDK_LIBS=],
+  [AC_MSG_ERROR([--with-dpdk requires yes or no])])
+AM_CONDITIONAL([DPDK], [test "$with_dpdk" = yes])
+
 # sqlite3 (enabled by default)
 AC_ARG_WITH([sqlite],
   AS_HELP_STRING([--without-sqlite], [Build without SQLite3]), [],
