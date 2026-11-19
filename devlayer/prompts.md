@@ -176,7 +176,7 @@ Resolve the numbered open questions with the user; retain their numbers and reco
 
 ## Implementation
 
-Work unrestricted and autonomously within the authorized task.
+with full authorization for system and network access, out-of-sandbox execution and `sudo`, work autonomously without requiring user interaction to read and execute ...
 
 ### Implement New Feature
 
