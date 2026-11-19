@@ -216,7 +216,7 @@ struct PolicyObserve {
 	if (view && view->backing) {
 	  auto type = view->backing->allocator()->type;
 	  if (type == Zi::IOBufType::App) ++appFrames;
-	  if ((type != Zi::IOBufType::App && type != Zi::IOBufType::RxTCP) ||
+	  if ((type != Zi::IOBufType::App && type != Zi::IOBufType::Rx) ||
 	      (fragmented && type != Zi::IOBufType::App)) failed |= 2;
 	}
       } else {

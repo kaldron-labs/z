@@ -14,12 +14,13 @@ A client derives from `Ztcp::Client<App>` and defines a link derived from
 `Ztcp::Server<App>` and `Ztcp::SrvLink` instead. Select allocator policies with
 `Ztcp::RxBufAlloc<N, MaxSize, HeapID>` and `Ztcp::TxBufAlloc<N>` on the link.
 These aliases describe allocators; `Policy::Buf` names the queue-node header.
-The application supplies primary allocators matching `App::Link::RxAllocator`
-and `App::Link::TxAllocator` through the hub parameters' `rxAllocator()` and
-`txAllocator()` setters. Hub initialization registers them with the multiplexer
-before links or listeners are published. The receive allocator preserves the
-`ZiRxBuf` queue node base. Keep the hub alive through multiplexer stop; allocators
-must outlive all buffers allocated from them.
+During initialization the hub acquires the link's typed network Rx allocator
+and retains it for listen, connect and reconnect. A caller can supply an
+existing typed Rx allocator through the hub parameters' `rxAllocator()` setter.
+The hub retains that exact handle. The receive allocator preserves the
+`ZiRxQueue::Node` base. Supply the primary Tx allocator through the
+`txAllocator()` setter and keep the multiplexer alive until every dependent
+buffer has been returned.
 
 Client links implement `connected(Ztcp::Connected)`, `connectFailed(bool)`,
 `disconnected(bool)` and `process(Ztcp::RxStream &)`. The application may set
@@ -42,16 +43,16 @@ the snippets here are extracts used inside those application/link types.
 
 ## Multiplexer and lifecycle
 
-Construct a configured `ZiMultiplex`, then create and register its primary
-allocator policies while it is stopped. Supply the allocators when initializing
-the client/server with `Ztcp::ClientParams(&mx, rxThreadID, txThreadID)` or
-`ServerParams`, then start the multiplexer:
+Construct a configured `ZiMultiplex` and attach any plugin before requesting
+allocators. Acquire the Tx allocator and initialize the hub with
+`Ztcp::ClientParams(&mx, rxThreadID, txThreadID)` or `ServerParams` while
+the allocator registry is open. The following start call performs deferred
+allocation if needed.
 
 ```cpp
-auto rx = App::Link::rxAllocator(&mx);
 auto tx = App::Link::txAllocator(&mx);
 Ztcp::ClientParams params(&mx, rxThreadID, txThreadID);
-params.rxAllocator(rx).txAllocator(tx);
+params.txAllocator(tx);
 if (!app.init(ZuMv(params))) return false;
 if (!mx.start()) return false;
 ```
@@ -59,12 +60,13 @@ if (!mx.start()) return false;
 Check initialization and start results. The thread IDs select transport work
 destinations; they may differ from the low-level socket Rx/Tx threads. Both
 application and Tx streams allocate through the supplied primary Tx policy.
-Additional application-owned Tx TCP allocators register through
-`hub.allocator(allocator)`; send buffers allocated from them directly with
-`link.send(buf)`. Callers of `allocBuf()` know their concrete allocator type.
-Ordinary `IOBufBuiltinAllocator` supplies inline storage, with separate heap
-backing for larger allocations and growth through the original allocator. Each allocator stays dedicated to its multiplexer; the hub and
-multiplexer retain registered allocators until their owning lifetimes end.
+Request additional Tx TCP allocators from the multiplexer before allocation or
+start. Send buffers from those handles directly with `link.send(buf)`. Kernel
+allocators supply built-in storage for ordinary buffers, with separate heap
+backing for larger allocations and growth through the original allocator.
+Plugin-backed Rx allocators prepare typed stubs and the transport attaches
+packet backing on delivery. Each accepted connection inherits its listener's
+allocator, and rearming uses the allocator carried by the connection.
 
 For clients, retain the link with `ZmRef`, call `connect(host, port)` and handle
 completion asynchronously. For servers, call `start()` after successful
@@ -134,12 +136,12 @@ in the top-level testing guide.
 
 ## Examples and tests
 
-Run `make -C ztcp test` from a configured build tree. The [test directory](test/)
-contains executable API examples and boundary cases. ZtcpLoopTest collects
-worker callback diagnostics and reports them on the test thread after owner
-drain; the TAP manager is single-threaded. See the top-level
-[testing guide](docs/TESTING.md) for environment, diagnostics and port allocations,
-and [dependencies](docs/DEPENDENCIES.md) for build prerequisites.
+Run `make -C ztcp/test test` after building the module in a configured tree.
+`ZtcpLoopTest` checks the link-specific Rx policy acquired during server
+initialization and the supplied Rx handle retained during client
+initialization. It verifies the same handles in listener, accept and outbound
+connection callbacks. The fixture collects worker diagnostics and reports them
+on the test thread after owner drain.
 
 Outgoing TCP links resolve hostnames asynchronously and consume the resolver's
 terminal continuation before submitting a socket connect. Submitted DNS and TCP

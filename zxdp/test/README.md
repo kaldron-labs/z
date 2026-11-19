@@ -9,7 +9,7 @@ These four TAP programs need no network privileges:
   reserves, exhaustion, advanced pointer return, retained mapping lifetime,
   malformed configuration, direct Zi metadata allocation/return over native slots,
   and contended payload-overlay recycling.
-* `ZxdpInstanceTest`: cold selection, init-before-start enforcement, idempotent init/final,
+* `ZxdpInstanceTest`: cold selection, synchronous init failure, idempotent final,
   independent pool factory lifetime and unchanged caller configuration.
 * `ZxdpClassifierTest`: mask normalization, instruction relocation and branches,
   and guarded attachment preconditions.

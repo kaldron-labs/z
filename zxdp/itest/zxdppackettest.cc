@@ -6,6 +6,7 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <iostream>
 #include <poll.h>
 #include <stdlib.h>
@@ -16,6 +17,7 @@
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
 #include <linux/if_xdp.h>
+#include <linux/netlink.h>
 
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuID.hh>
@@ -24,7 +26,7 @@
 #include <zlib/ZuLib.hh>
 
 #include <zlib/ZmAssert.hh>
-#include <zlib/ZmScheduler.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZmThread.hh>
@@ -41,7 +43,7 @@
 
 using namespace ZuTestUtil;
 
-enum { Bytes = 96, RxSlots = 8, TxSlots = 2 }; // exact fixture workload
+enum { Bytes = 96, RxSlots = 8, TxSlots = 2, Sender = 3 }; // exact fixture workload
 static ZmAtomic<unsigned> xdpKicks{0};
 static ZmAtomic<int> xdpSender{0};
 static ZmAtomic<unsigned> gateSender{0};
@@ -49,6 +51,40 @@ static ZmSemaphore senderEntered, senderRelease;
 static ZmAtomic<unsigned> xdpSid{0}, gateAfter{0}, retryError{0}, budgetOnce{0};
 static ZmAtomic<int> budgetResult{0};
 static ZmSemaphore afterEntered, afterRelease;
+static ZmAtomic<unsigned> xdpSockets{0}, xdpBinds{0}, xdpRegistrations{0};
+static ZmAtomic<unsigned> routeSockets{0};
+static int registrationFD = -1;
+static unsigned failServiceBind = 0;
+static bool failRegistration = false;
+
+extern "C" __attribute__((visibility("default")))
+int socket(int domain, int type, int protocol) noexcept
+{
+  if (domain == AF_XDP) ++xdpSockets;
+  if (domain == AF_NETLINK && protocol == NETLINK_ROUTE) ++routeSockets;
+  return syscall(SYS_socket, domain, type, protocol);
+}
+
+extern "C" __attribute__((visibility("default")))
+int bind(int fd, const sockaddr *address, socklen_t length) noexcept
+{
+  if (address && length >= sizeof(sa_family_t) && address->sa_family == AF_XDP) {
+    ++xdpBinds;
+    if (failServiceBind && !--failServiceBind) { errno = EBUSY; return -1; }
+  }
+  return syscall(SYS_bind, fd, address, length);
+}
+
+extern "C" __attribute__((visibility("default")))
+int setsockopt(int fd, int level, int option, const void *value, socklen_t length) noexcept
+{
+  if (level == SOL_XDP && option == XDP_UMEM_REG) {
+    ++xdpRegistrations;
+    registrationFD = fd;
+    if (failRegistration) { errno = ENOMEM; return -1; }
+  }
+  return syscall(SYS_setsockopt, fd, level, option, value, length);
+}
 
 extern "C" __attribute__((visibility("default")))
 ssize_t sendto(int fd, const void *data, size_t size, int flags,
@@ -84,8 +120,25 @@ static bool shutdown(ZmRef<Zxdp::Instance> &instance, ZeException &error)
   bool ok = instance->stop();
   error = instance->error();
   ZmAssert_(instance->state() == ZmEngineState::Stopped);
-  instance = nullptr; // last owner finalizes; other owners may inspect stopped rings
   return ok;
+}
+
+static void configureSender(ZmSchedParams &scheduler)
+{
+  scheduler.thread(Sender, [](auto &thread) { thread.isolated(true); });
+}
+
+static bool setup(
+  Zxdp::Instance *instance, ZiMultiplex &mx, const Zxdp::Params &config,
+  Zi::IOBufPool *rx, const Zi::IOBufPoolList &pools, Zxdp::RecvFn receive,
+  ZeException &error, Zxdp::StopFn stopped = {})
+{
+  auto initialized = instance->init(&mx, config);
+  auto allocated = initialized.is<void>() ? instance->alloc(rx, pools) : initialized;
+  if (allocated.is<ZeException>()) error = ZuMv(allocated).p<ZeException>();
+  else if (!mx.start()) error = ZeEXCEPT(Error, "Zxdp.PacketTest", "multiplexer start failed");
+  else if (!instance->start(ZuMv(receive), ZuMv(stopped))) error = instance->error();
+  return instance->ready();
 }
 
 static void testPackets()
@@ -115,9 +168,9 @@ static void testPackets()
   ZuCheckRT(bound, log_("independent peer packet socket bound"));
   if (!bound) { if (wire >= 0) close(wire); return; }
   auto instance = Zxdp::instance(Zxdp::Type::Xdp);
-  auto rx = instance->bufPool(RxSlots, local.mtu + 14);
-  auto tx = instance->bufPool(TxSlots, 128);
-  auto control = instance->bufPool(1, 64);
+  auto rx = instance->bufPool(Zi::IOBufType::Rx, RxSlots, local.mtu + 14);
+  auto tx = instance->bufPool(Zi::IOBufType::TxTCP, TxSlots, 128);
+  auto control = instance->bufPool(Zi::IOBufType::TxUDP, 1, 64);
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
   pools.pushNode(control.ptr());
@@ -128,32 +181,71 @@ static void testPackets()
     Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
   auto &params = config.p<Zxdp::Xdp::Params>();
   params.ifindex = ifindex;
-  params.txPools = ZuMv(pools);
-  params.rxPool = rx;
-  params.rx = [&received, &rxBytes, &rx, &current](uint8_t *p, unsigned n) {
+  params.txSid = Sender;
+  ZiMultiplex mx{ZiMxParams{}.scheduler(configureSender)};
+  auto receive = [&received, &rxBytes, &rx, &current](uint8_t *p, unsigned n) {
     if (!received) { received = p; rxBytes = n; current->wake(); } else rx->free(p);
   };
-  ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,
-    [&params](auto &thread) { thread = params.txThread; })};
-  params.scheduler = &scheduler;
-  params.txSid = 1;
-  bool started = scheduler.start();
-  ZuCheckRT(started);
-  if (!started) { close(wire); return; }
-  auto initialized = instance->init(config);
-  if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
-  else if (!instance->start()) error = instance->error();
-  bool ready = instance && instance->ready();
-  ZuCheckRT(ready, log_("named parameters bind all interface queues: ", error));
+  auto beforeInit = unsigned(routeSockets);
+  auto initialized = instance->init(&mx, config);
+  ZuCheckRT(initialized.is<void>() && instance->mx() == &mx &&
+      instance->ifindex() == ifindex && instance->mtu() == local.mtu &&
+      instance->rxQueues() == local.rxQueues && !instance->allocated(),
+    log_("synchronous init exposes link metadata before registration"));
+  if (initialized.is<ZeException>()) { close(wire); return; }
+  auto repeated = instance->init(&mx, config);
+  ++params.spin;
+  auto conflict = instance->init(&mx, config);
+  --params.spin;
+  ZuCheckRT(repeated.is<void>() && conflict.is<ZeException>() && instance->ifindex() == ifindex &&
+      routeSockets == beforeInit + 1,
+    log_("identical stopped init succeeds and conflicting config preserves the link"));
+  auto registrations = unsigned(xdpRegistrations);
+  failRegistration = true;
+  auto failed = instance->alloc(rx, pools);
+  failRegistration = false;
+  ZuCheckRT(failed.is<ZeException>() && !instance->allocated() &&
+      !rx->alloc() && !tx->alloc() && !control->alloc(),
+    log_("registration failure leaves pool backing unpublished"));
+  ++registrations;
+  auto allocated = instance->alloc(rx, pools);
+  int fd = registrationFD;
+  ZuCheckRT(allocated.is<void>() && instance->alloc(rx, pools).is<void>() &&
+      unsigned(xdpRegistrations) == registrations + 1 &&
+      instance->alloc(rx, {}).is<ZeException>(),
+    log_("same pools reuse the sole registration and conflicting allocation fails"));
+  if (allocated.is<ZeException>()) { instance->final(); close(wire); return; }
+  auto held = tx->alloc();
+  ZmAssert_(held);
+  memset(held, 0x5a, tx->size);
+  bool started = mx.start();
+  if (started) {
+    failServiceBind = 2;
+    auto activated = instance->start(receive);
+    failServiceBind = 0;
+    ZuCheckRT(!activated && instance->allocated() && instance->error() &&
+        !instance->allQueues([](Ztc::Queue *) { }) && held[0] == 0x5a,
+      log_("partial activation rolls back the run and keeps the registration live"));
+  }
+  bool ready = started && instance->start(receive);
+  ZuCheckRT(ready, log_("registered backing activates every interface queue: ", instance->error()));
   if (!ready) {
-    if (instance) ZmAssert_(shutdown(instance, error));
-    ZuCheckRT(scheduler.stop());
+    tx->free(held);
+    instance->final();
+    if (started) ZuCheckRT(mx.stop());
     close(wire);
     return;
   }
-  auto repeated = instance->init(config);
-  ZuCheckRT(repeated.is<ZeException>() && instance->ready() && instance->start(),
-    log_("running init is rejected while repeated start preserves the active interface"));
+  auto idleSockets = unsigned(xdpSockets), idleBinds = unsigned(xdpBinds);
+  ZuCheckRT(instance->stop() && instance->allocated() &&
+      !instance->allQueues([](Ztc::Queue *) { }) &&
+      unsigned(xdpBinds) == idleBinds && unsigned(xdpSockets) == idleSockets &&
+      held[0] == 0x5a && held[tx->size - 1] == 0x5a,
+    log_("idle stop preserves registration and held backing without socket creation or bind"));
+  ZuCheckRT(instance->start(receive) && unsigned(xdpRegistrations) == registrations + 1 &&
+      fcntl(fd, F_GETFD) >= 0 && held[0] == 0x5a && held[tx->size - 1] == 0x5a,
+    log_("restart reopens service on the same registered packet storage"));
+  tx->free(held);
   std::cout << "# AF_XDP mode=" << (instance->zeroCopy() ? "zero-copy" : "copy") << '\n';
   unsigned liveQueues = 0, completionCapacity = 0;
   auto completionID = ZuID{} << "xdp." << ZuBoxed(ifindex) << ".0.cq";
@@ -168,8 +260,8 @@ static void testPackets()
     queueViews &= data.size && data.count <= data.size && !!data.id &&
       (data.type == Ztc::QueueType::Rx || data.type == Ztc::QueueType::Tx);
   });
-  ZuCheckRT(queueViews && enumerated == liveQueues && liveQueues == local.rxQueues * 4,
-    log_("actual RX/FILL/TX/CQ queues enumerate once per hardware queue"));
+  ZuCheckRT(queueViews && enumerated == liveQueues && liveQueues == local.rxQueues * 2 + 2,
+    log_("RX/FILL enumerate per queue and one TX/CQ pair serves the sender"));
   ZuCheckRT(completionCapacity >= tx->count + control->count &&
       !(completionCapacity & (completionCapacity - 1)),
     log_("completion capacity covers every physical data/control slot "
@@ -203,10 +295,10 @@ static void testPackets()
   ZmSemaphore continued;
   if (entered) {
     for (unsigned i = 0; i < 8; ++i)
-      scheduler.run([&callbacks, &ordered, i] {
+      mx.run([&callbacks, &ordered, i] {
 	ordered &= callbacks++ == i;
-      }, 1);
-    scheduler.push([&continued] { continued.post(); }, 1);
+      }, Sender);
+    mx.push([&continued] { continued.post(); }, Sender);
   }
   gateSender = 0;
   senderRelease.post();
@@ -225,12 +317,12 @@ static void testPackets()
   }
   ZuCheckRT(captured && completions == 1,
     log_("peer sees exact arena bytes; CQ recycles backing directly to its pool"));
-  ZuCheckRT(unsigned(xdpKicks) > kicks && unsigned(xdpSid) == 1 &&
+  ZuCheckRT(unsigned(xdpKicks) > kicks && unsigned(xdpSid) == Sender &&
       int(xdpSender) != int(syscall(SYS_gettid)),
     log_("AF_XDP sendto runs on the assigned sender sid, not the Tx owner"));
   ZmSemaphore idle;
-  scheduler.run([] { }, 1);
-  scheduler.push([&idle] { idle.post(); }, 1);
+  mx.run([] { }, Sender);
+  mx.push([&idle] { idle.post(); }, Sender);
   bool yielded = !idle.timedwait(Zm::now() + ZuTime{10});
   ZuCheckRT(yielded,
     log_("empty Tx ring yields to queued scheduler work without another wake"));
@@ -245,7 +337,7 @@ static void testPackets()
     memcpy(recycled, expected, Bytes);
     bool sent = instance->send(recycled, Bytes);
     ZmSemaphore afterPacket;
-    scheduler.run([&afterPacket] { afterPacket.post(); }, 1);
+    mx.run([&afterPacket] { afterPacket.post(); }, Sender);
     progressed = sent && !afterPacket.timedwait(Zm::now() + ZuTime{10});
     unsigned completed = 0;
     auto deadline = Zm::now() + ZuTime{10};
@@ -281,47 +373,28 @@ static void testPackets()
   bool queued = instance->send(pending, 64);
   if (queued) control->free(pending);
   ZuCheckRT(queued, log_("small Tx pool supplies independent registered packet backing"));
-  // No CQ service: close must account for this submission using actual kernel
-  // retirement, including when completion is already queued but unconsumed.
-  auto retiredInstance = instance;
-  config.p<Zxdp::Xdp::Params>().txPools.clean();
-  config.p<Zxdp::Xdp::Params>().rxPool = nullptr;
-  auto rxPtr = rx.ptr(), txPtr = tx.ptr(), controlPtr = control.ptr();
-  rx = tx = control = nullptr;
-  ZuCheckRT(rxPtr->refCount() > 0 && txPtr->refCount() > 0 &&
-      controlPtr->refCount() > 0,
-    log_("instance owns Rx and every Tx pool after caller references are released"));
+  // Stop must finish the accepted submission even without an application CQ poll.
+  auto sockets = unsigned(xdpSockets), binds = unsigned(xdpBinds);
   bool closed = shutdown(instance, error);
-  ZuCheckRT(closed,
-    log_("instance-owned pools survive kernel retirement through completed close"));
-  rx = rxPtr;
-  tx = txPtr;
-  control = controlPtr;
-  ZuCheckRT(closed && !control->alloc(),
-    log_("close proves kernel retirement before recycling pending backing: ", error));
-  ZmAssert_(closed);
-  unsigned frozenQueues = 0;
-  queueViews = true;
-  retiredInstance->allQueues([&frozenQueues, &queueViews](Ztc::Queue *queue) {
-    Ztc::QueueTelemetry data;
-    queue->telemetry(data);
-    ++frozenQueues;
-    queueViews &= data.size && data.count <= data.size;
-  });
-  ZuCheckRT(queueViews && frozenQueues == liveQueues,
-    log_("closed queues retain final telemetry without descriptor mappings"));
-  retiredInstance = nullptr;
-  ZuCheckRT(scheduler.stop());
+  ZuCheckRT(closed && !instance->allQueues([](Ztc::Queue *) { }) &&
+      unsigned(xdpSockets) == sockets && unsigned(xdpBinds) == binds &&
+      unsigned(xdpRegistrations) == registrations + 1,
+    log_("stop drains the pending completion and releases active queues: ", error));
+  if (queued) pending = control->alloc();
+  ZuCheckRT(pending, log_("completed backing returns to the original pool after stop"));
+  if (pending) control->free(pending);
   if (received) {
     ZuCheckRT(!memcmp(received, observed, Bytes),
-      log_("application-held Rx bytes survive instance destruction"));
+      log_("application-held receive bytes survive stop"));
     rx->free(received);
   }
-  if (!queued) control->free(pending);
   if (recycled) tx->free(recycled);
   if (!submitted) tx->free(packet);
-  ZuCheckRT(!rx->alloc() && !tx->alloc(),
-    log_("retired pools accept final returns and refuse new allocations"));
+  instance->final();
+  ZuCheckRT(!rx->alloc() && !tx->alloc() && !instance->allocated() &&
+      fcntl(fd, F_GETFD) < 0 && errno == EBADF,
+    log_("final retires pool backing and registration"));
+  ZuCheckRT(mx.stop());
   close(wire);
   auto after = Zxdp::Xdp::queryLink(ifindex);
   if (after.is<ZeException>()) error = after.p<ZeException>();
@@ -334,8 +407,8 @@ static void testSenderProgress()
   ZuTestScopeRT(testSenderProgress);
   enum { Budget = 32, Initial = 80, More = 16, Total = Initial + More + 1 };
   auto instance = Zxdp::instance(Zxdp::Type::Xdp);
-  auto rx = instance->bufPool(RxSlots, 1514);
-  auto tx = instance->bufPool(Initial + More, 128);
+  auto rx = instance->bufPool(Zi::IOBufType::Rx, RxSlots, 1514);
+  auto tx = instance->bufPool(Zi::IOBufType::TxTCP, Initial + More, 128);
   ZeException error;
   ZmSemaphore stopped;
   unsigned stops = 0, stopSid = 0;
@@ -343,29 +416,21 @@ static void testSenderProgress()
     Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
   auto &params = config.p<Zxdp::Xdp::Params>();
   params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
-  params.rxPool = rx;
-  params.rx = [&rx](uint8_t *p, unsigned) { rx->free(p); };
-  params.txStopped = [&stopped, &stops, &stopSid] {
-    ++stops;
-    stopSid = ZmSelf()->sid();
-    stopped.post();
-  };
-  params.txPools.pushNode(tx.ptr());
-  ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,
-    [&params](auto &thread) { thread = params.txThread; })};
-  params.scheduler = &scheduler;
-  params.txSid = 1;
-  bool started = scheduler.start();
-  ZuCheckRT(started);
-  if (!started) return;
-  auto initialized = instance->init(config);
-  if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
-  else if (!instance->start()) error = instance->error();
-  bool ready = instance && instance->ready();
+  params.txSid = Sender;
+  ZiMultiplex mx{ZiMxParams{}.scheduler(configureSender)};
+  Zi::IOBufPoolList pools;
+  pools.pushNode(tx.ptr());
+  bool ready = setup(instance, mx, config, rx, pools,
+    [&rx](uint8_t *p, unsigned) { rx->free(p); }, error, [&stopped, &stops, &stopSid] {
+      ++stops;
+      stopSid = ZmSelf()->sid();
+      stopped.post();
+    });
   ZuCheckRT(ready, log_("coalesced sender fixture: ", error));
   if (!ready) {
-    if (instance) ZmAssert_(shutdown(instance, error));
-    ZuCheckRT(scheduler.stop());
+    ZmAssert_(shutdown(instance, error));
+    instance->final();
+    if (mx.running()) ZuCheckRT(mx.stop());
     return;
   }
   unsigned accepted = 0, retired = 0;
@@ -427,8 +492,8 @@ static void testSenderProgress()
   ZmSemaphore done;
   if (tail) {
     for (unsigned i = 0; i < 8; ++i)
-      scheduler.run([&callbacks, &ordered, i] { ordered &= callbacks++ == i; }, 1);
-    scheduler.run([&done] { done.post(); }, 1);
+      mx.run([&callbacks, &ordered, i] { ordered &= callbacks++ == i; }, Sender);
+    mx.run([&done] { done.post(); }, Sender);
   }
   gateAfter = 0;
   afterRelease.post();
@@ -436,12 +501,12 @@ static void testSenderProgress()
   ZuCheckRT(partial && second && last,
     log_("EAGAIN retry and three real bounded 32-descriptor drains preserve pending work"));
   ZuCheckRT(progressed && accepted == Total && retired == Total &&
-      ordered && callbacks == 8 && unsigned(xdpSid) == 1 && unsigned(xdpKicks) >= kicks + 5,
+      ordered && callbacks == 8 && unsigned(xdpSid) == Sender && unsigned(xdpKicks) >= kicks + 5,
     log_("concurrent publication and the last-drain race retire all 97 leases "
       "without another wake"));
   kicks = unsigned(xdpKicks);
   if (progressed) {
-    scheduler.run([&done] { done.post(); }, 1);
+    mx.run([&done] { done.post(); }, Sender);
     progressed = await(done);
   }
   ZuCheckRT(progressed && unsigned(xdpKicks) == kicks,
@@ -461,13 +526,14 @@ static void testSenderProgress()
   senderRelease.post();
   afterRelease.post();
   bool exited = final && !earlyStop && await(stopped) && await(stopComplete) && stopResult == 2;
-  ZuCheckRT(exited && stops == 1 && stopSid == 1,
+  ZuCheckRT(exited && stops == 1 && stopSid == Sender,
     log_("shutdown waits for the active sendto callback and its FIFO sender barrier"));
   bool closed = shutdown(instance, error);
   ZuCheckRT(closed,
     log_("shutdown retires the final unpolled CQ lease exactly once: ", error));
   ZmAssert_(closed);
-  ZuCheckRT(scheduler.stop());
+  instance->final();
+  ZuCheckRT(mx.stop());
 }
 
 static void testLeaseRace()
@@ -475,43 +541,24 @@ static void testLeaseRace()
   ZuTestScopeRT(testLeaseRace);
   enum { Turns = 96 }; // 32 returns before CQ, after CQ, and concurrent with CQ
   auto instance = Zxdp::instance(Zxdp::Type::Xdp);
-  auto rx = instance->bufPool(RxSlots, 1514);
-  auto tx = instance->bufPool(1, 64);
+  auto rx = instance->bufPool(Zi::IOBufType::Rx, RxSlots, 1514);
+  auto tx = instance->bufPool(Zi::IOBufType::TxTCP, 1, 64);
   ZeException error;
   Zxdp::Params config(
     Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
   auto &params = config.p<Zxdp::Xdp::Params>();
   params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
-  params.rxPool = rx;
-  params.rx = [&rx](uint8_t *p, unsigned) { rx->free(p); };
-  params.txPools.pushNode(tx.ptr());
-  ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,
-    [&params](auto &thread) { thread = params.txThread; })};
-  params.scheduler = &scheduler;
-  params.txSid = 1;
-  bool started = scheduler.start();
-  ZuCheckRT(started);
-  if (!started) return;
-  // The preceding test's retirement probe can release its binding
-  // asynchronously. Retry setup on this main-thread fixture, as in wake tests.
-  auto setupDeadline = Zm::now() + ZuTime{2};
-  bool ready = false;
-  for (;;) {
-    auto initialized = instance->init(config);
-    if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
-    else if (!instance->start()) error = instance->error();
-    else error = {};
-    if ((ready = instance->ready())) break;
-    ZeException cleanup;
-    if (!shutdown(instance, cleanup)) { error = ZuMv(cleanup); break; }
-    if (Zm::now() >= setupDeadline) break;
-    poll(nullptr, 0, 1);
-    instance = Zxdp::instance(Zxdp::Type::Xdp);
-  }
+  params.txSid = Sender;
+  ZiMultiplex mx{ZiMxParams{}.scheduler(configureSender)};
+  Zi::IOBufPoolList pools;
+  pools.pushNode(tx.ptr());
+  auto receive = [&rx](uint8_t *p, unsigned) { rx->free(p); };
+  bool ready = setup(instance, mx, config, rx, pools, receive, error);
   ZuCheckRT(ready, log_("single-slot lease race setup: ", error));
   if (!ready) {
-    if (instance) ZmAssert_(shutdown(instance, error));
-    ZuCheckRT(scheduler.stop());
+    ZmAssert_(shutdown(instance, error));
+    instance->final();
+    if (mx.running()) ZuCheckRT(mx.stop());
     return;
   }
   ZmSemaphore release, released;
@@ -563,21 +610,10 @@ static void testLeaseRace()
   worker.join();
   ZuCheckRT(valid && turns == Turns && retired == Turns,
     log_("cross-thread allocation returns and CQ retire each single-slot lease once"));
-  auto reusable = instance;
   bool closed = shutdown(instance, error);
   ZuCheckRT(closed, log_("lease race cleanup: ", error));
   ZmAssert_(closed);
-  // Reuse this exact handle and its drained pools. Kernel binding release can
-  // lag completed retirement; retry initialization only after each full close.
-  bool reopened = false;
-  auto reopenDeadline = Zm::now() + ZuTime{2};
-  do {
-    auto result = reusable->init(config);
-    if (result.is<void>() && reusable->start()) { reopened = reusable->ready(); break; }
-    auto rollback = reusable;
-    ZmAssert_(shutdown(rollback, error));
-    poll(nullptr, 0, 1);
-  } while (Zm::now() < reopenDeadline);
+  bool reopened = instance->start(receive);
   ZuCheckRT(reopened, log_("same XDP instance reopens with its original drained pools"));
   bool sent = false;
   unsigned completed = 0;
@@ -585,21 +621,52 @@ static void testLeaseRace()
     if (auto p = tx->alloc()) {
       memset(p, 0, 64);
       memset(p, 0xff, 6);
-      memcpy(p + 6, reusable->mac().data(), 6);
+      memcpy(p + 6, instance->mac().data(), 6);
       p[12] = 0x88; p[13] = 0xb5;
-      sent = reusable->send(p, 64);
+      sent = instance->send(p, 64);
       tx->free(p);
     }
     auto completionDeadline = Zm::now() + ZuTime{10};
     while (sent && !completed && Zm::now() < completionDeadline) {
-      completed += reusable->pollTx();
+      completed += instance->pollTx();
       if (!completed) poll(nullptr, 0, 1);
     }
   }
   ZuCheckRT(sent && completed == 1,
     log_("reopened instance restarts sender accounting and retires its first submission once"));
-  ZmAssert_(shutdown(reusable, error));
-  ZuCheckRT(scheduler.stop());
+  ZmAssert_(shutdown(instance, error));
+  instance->final();
+  ZuCheckRT(mx.stop());
+}
+
+static void testNeverStarted()
+{
+  ZuTestScopeRT(testNeverStarted);
+  ZiMultiplex mx{ZiMxParams{}.scheduler(configureSender)};
+  auto instance = Zxdp::instance(Zxdp::Type::Xdp);
+  Zxdp::Params config(
+    Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
+  auto &params = config.p<Zxdp::Xdp::Params>();
+  params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
+  params.txSid = Sender;
+  auto initialized = instance->init(&mx, config);
+  ZuCheckRT(initialized.is<void>() && instance->mx() == &mx);
+  if (initialized.is<ZeException>()) return;
+  auto rx = instance->bufPool(Zi::IOBufType::Rx, instance->rxQueues(), instance->mtu() + 14);
+  auto tx = instance->bufPool(Zi::IOBufType::TxUDP, 2, 128);
+  Zi::IOBufPoolList pools;
+  pools.pushNode(tx.ptr());
+  auto allocated = instance->alloc(rx, pools);
+  bool ready = allocated.is<void>() && instance->allocated() && !instance->everStarted();
+  ZuCheckRT(ready);
+  if (!ready) { instance->final(); return; }
+  int fd = registrationFD;
+  auto buf = tx->alloc();
+  ZuCheckRT(buf && fcntl(fd, F_GETFD) >= 0 && !instance->ready());
+  if (buf) tx->free(buf);
+  instance->final();
+  ZuCheckRT(!instance->allocated() && !instance->mx() && !tx->alloc() &&
+      fcntl(fd, F_GETFD) < 0 && errno == EBADF);
 }
 
 int main(int argc, char **argv)
@@ -609,8 +676,21 @@ int main(int argc, char **argv)
     std::cout << "1..0 # SKIP requires privileged fixture-owned veth indices\n";
     return 0;
   }
-  ZuTestMain();
-  ZuTestCall(testPackets);
-  ZuTestCall(testSenderProgress);
-  ZuTestCall(testLeaseRace);
+  auto test = getenv("ZXDP_PACKET_CASE");
+  if (!test || !strcmp(test, "packets")) {
+    ZuTestMain();
+    ZuTestCall(testPackets);
+  } else if (!strcmp(test, "sender")) {
+    ZuTestMain();
+    ZuTestCall(testSenderProgress);
+  } else if (!strcmp(test, "leases")) {
+    ZuTestMain();
+    ZuTestCall(testLeaseRace);
+  } else if (!strcmp(test, "unstarted")) {
+    ZuTestMain();
+    ZuTestCall(testNeverStarted);
+  } else {
+    std::cerr << "ZXDP_PACKET_CASE must be packets, sender, leases, or unstarted\n";
+    return 2;
+  }
 }

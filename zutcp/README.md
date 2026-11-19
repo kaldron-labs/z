@@ -1,6 +1,6 @@
 # Zutcp: User-mode TCP/IP stack
 
-Zutcp is a Linux user-mode TCP/IP stack integrated with `ZiMultiplex`, using
+Zutcp is a Linux user-mode TCP and UDP transport integrated with `ZiMultiplex`, using
 [Zxdp](../zxdp/README.md) for raw AF_XDP packet I/O. It targets short FIX order,
 execution and market-data messages while keeping the existing Zi connection,
 allocator and application framing interfaces.
@@ -62,88 +62,87 @@ segment-lifetime assumptions; it does not create an unlimited wire epoch.
 
 ## Application integration
 
-See the [kernel/native quickstart](util/README.md) for the stopped-multiplexer
-setup, actual command-line tools, sudo fixture commands and deployment prerequisites.
+Configure the multiplexer’s Rx, Tx, and XDP sender slots before constructing it.
+Open the XDP instance synchronously on that stopped multiplexer. A successful
+open exposes the interface index, MTU, and Rx queue count. Move XDP into
+`Zutcp::Instance::init` on the same multiplexer before XDP allocation or start,
+then move the initialized transport into `mx.plugin()`. The second transfer
+must precede the first allocator request, allocation, or start attempt.
 
-`Zutcp::Instance` implements `ZiMxPlugin`. Register it on a stopped multiplexer
-before creating application allocators or starting I/O. One Instance owns both
-outgoing and accepted connections and all listeners for its multiplexer. The app
-constructs and configures it statically; no module loader or factory is involved.
-Instance implements the inherited `Ztc::Mx` telemetry interface, not `Ztc::Hub`.
-Select the interface and
-optional destination network mask at setup; backend selection stays fixed while
-the multiplexer runs. An mx without this plugin uses its normal kernel backend.
-
-Applications continue to use [Ztcp](../ztcp/README.md) and, for encryption above
-TCP, [Ztls](../ztls/README.md). Zutcp itself supplies TCP transport and has no
-Ztls dependency. Ordinary `ZiIP` addresses and `ZiResolver` remain available.
-Zutcp resolves routes and static neighbors synchronously on mx Rx during
-connection setup, constrained to the configured interface. This bounded blocking
-netlink setup work finishes before the first SYN or SYNACK; there is no resolver
-worker. With a destination mask, unmatched traffic stays with the
-host stack; without a mask Zxdp selects the whole interface.
-
-Call `Instance::init()` before starting the multiplexer. Init is idempotent
-while stopped and returns an error during starting, running or stopping. The
-plugin uses ZmEngine's control FSM, including queued opposite operations, while
-preserving ZiMxPlugin's existing completion callbacks. Stop retains configuration
-and history, and restart reuses the same Zxdp instance. After stop, `final()`
-releases stopped resources, secrets and history; it is idempotent and the
-destructor also calls it. Release dependent application buffers before final.
-
-In the application bootstrap, initialize Instance before installing the plugin.
-Handle its structured initialization result before registering allocators or
-starting mx; this example returns false from a boolean bootstrap function:
-
-```c++
-// mx already has distinct Rx/Tx owners and an assigned AF_XDP sender slot.
-ZmRef<Zutcp::Instance> plugin = new Zutcp::Instance{&mx};
-auto initialized = plugin->init({.interface = ifindex, .txSid = senderSid,
-  .ackHoldTimeout = ZuTime{0, 25000000}});
-if (initialized.is<ZeException>()) {
-  ZiLogEvent(ZuMv(initialized.p<ZeException>()));
+```cpp
+ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
+  s.nThreads(3).thread(3, [](auto &t) { t.isolated(true); });
+})};
+auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
+Zxdp::Params xdpParams{Zxdp::Xdp::Params{.ifindex = ifindex, .txSid = 3}};
+auto opened = xdp->init(&mx, xdpParams);
+if (opened.is<ZeException>()) {
+  ZiLogEvent(ZuMv(opened).p<ZeException>());
   return false;
 }
-mx.plugin(plugin);
+
+ZmRef<Zutcp::Instance> plugin = new Zutcp::Instance;
+auto initialized = plugin->init(&mx, ZuMv(xdp), {.packetCount = 2048});
+if (initialized.is<ZeException>()) {
+  ZiLogEvent(ZuMv(initialized).p<ZeException>());
+  return false;
+}
+mx.plugin(ZuMv(plugin));
+
+// Protocol initialization retains each typed receive handle for endpoint setup.
+auto tcpRx = mx.allocator<Zi::IOBufType::Rx, TcpRxBuf, 2048>();
+auto udpRx = mx.allocator<Zi::IOBufType::Rx, UdpRxBuf, 2048>();
+auto tcpTx = mx.allocator<Zi::IOBufType::TxTCP>(2048);
+auto udpTx = mx.allocator<Zi::IOBufType::TxUDP>(512);
+if (!tcpRx || !udpRx || !tcpTx || !udpTx) return false;
+
+if (prepareTxBeforeStart) {
+  auto allocated = mx.alloc();
+  if (allocated.is<ZeException>()) {
+    ZiLogEvent(ZuMv(allocated).p<ZeException>());
+    return false;
+  }
+  // tcpTx and udpTx can allocate native buffers here.
+}
+if (!mx.start()) return false;
+mx.listen(tcpListening, tcpFailed, tcpAccepted, localIP, tcpPort, 32, tcpRx);
+mx.udp(udpReady, udpFailed, localIP, udpPort, {}, 0, udpRx, ZiCxnOptions{}.udp(true));
 ```
 
-Connection and transfer code uses Ztcp/Ztls or the existing generic Zi callbacks.
-The former Zutcp Hub, Client and Server application transport hierarchy is removed.
-Private protocol headers are available only in the source tree for backend tests.
+Each `listen`, `connect`, or `udp` call selects its network receive allocator.
+Accepted TCP connections inherit the listener’s handle. An application may
+use TCP, UDP, or both on the same transport. Applications using
+[Ztcp](../ztcp/README.md) or [Ztls](../ztls/README.md) initialize their hub before
+starting the multiplexer so the hub can obtain its allocators.
 
-Each connection owns one ordered bidirectional byte flow: reassembly, delivery,
-receive-credit retirement, retained transmit backing, recovery and close state.
-Application parsers must handle arbitrary receive boundaries. Protocol work runs
-on the multiplexer Rx and Tx owners configured through `ZiMxParams`, shared by
-multiple connections.
+XDP owns the shared registration after the first successful allocation.
+`mx.alloc()` is optional. When omitted, `mx.start()` allocates before packet
+activation and reports allocation or activation failure through its result.
+After allocation begins, every new allocator request returns `nullptr`. An
+identical stopped initialization succeeds without reopening the device or
+changing transport state. A conflicting initialization returns an error.
 
-### Returning to kernel TCP
+Close endpoints and let their callbacks drain, stop the multiplexer, and
+return any retained buffers before destroying it. The multiplexer finalizes the
+TCP/UDP plugin while its allocators are still live. The plugin in turn finalizes
+XDP, which releases the registration, arena, and device resources. This also
+happens when the multiplexer never starts. Stop and restart retain allocation
+and TCP history. The plugin’s binding to the multiplexer is permanent.
 
-Use fresh application owners and a fresh default-kernel multiplexer. A graceful
-process replacement provides that separation:
+Zutcp uses the injected XDP interface for route and static-neighbor resolution.
+This bounded netlink work runs on mx Rx during connection setup. A destination
+mask configured on XDP leaves unmatched traffic to the host stack.
 
-1. Stop accepting or producing new application work. Close existing sessions
-   through their normal owner callbacks while the native multiplexer remains
-   running, and wait for every initiated connection's terminal notification.
-2. Stop and finalize the application. Stop the native multiplexer and await its
-   plugin completion: accepted Tx submissions must retire before sender shutdown
-   and the XDP engine stop completes. Socket closure alone does not establish kernel retirement.
-3. Destroy remaining application owners before the native multiplexer. Allocator
-   registrations remain valid through this teardown, and providers/pools outlive
-   every packet lease. Check the normal process exit and teardown errors, not
-   merely a successful final application message.
-4. Verify that the instance's XDP attachment has been removed before starting
-   kernel endpoints. Preserve interfaces, addresses, routes and neighbors owned
-   by deployment configuration; the transport does not own them. Do not remove
-   another owner's XDP program to force a transition.
-5. Start fresh kernel processes, or construct a fresh multiplexer without the
-   plugin and obtain fresh builtin allocators while it is stopped. Reinitialize
-   application owners, start the multiplexer and establish new TCP sessions.
+### Using kernel TCP
 
-Do not clear the plugin on a stopped native multiplexer and reuse its existing
-allocator registrations. An established native TCP session cannot be transferred
-to a kernel socket. The process-replacement procedure does not establish an
-in-process backend-switching facility.
+Construct a new multiplexer with the regular kernel transport. Initialize
+application owners and request their allocators from that multiplexer before
+starting it. When replacing a native deployment, close its sessions, drain and
+stop its multiplexer, and return dependent buffers before destroying it. Start
+new TCP sessions on the kernel multiplexer.
+
+See the [client example](example/zutcp.cc), [server example](example/zutcpd.cc),
+and [kernel/native quickstart](util/README.md).
 
 ## TCP facilities
 
@@ -153,7 +152,7 @@ persist handling, ECN and NewReno congestion response. Peer extensions are
 negotiated optionally, with fallback when absent. Connection establishment,
 half-close, reset and bounded closed-tuple history follow TCP sequence semantics.
 
-TCP Fast Open is disabled in ordinary plugin application use. Private backend
+TCP Fast Open is disabled in ordinary plugin application use. Private protocol
 fixtures exercise explicit early-data authorization, cookie fallback and data
 arriving before establishment; these are protocol tests, not replacement
 application hooks. Initial sequence numbers
@@ -161,28 +160,22 @@ and Fast Open cookies use secure keyed primitives independently of TLS.
 
 ## Buffers and ownership
 
-`Zutcp::Allocator` implements `Zi::IOBufPool`, forwarding storage operations
-and receive-return notification to an injected common
-pool obtained from the selected `Zxdp::Instance` backend's `bufPool()` factory.
-Concrete registered pools remain internal to Zxdp. Instance selects that backend
-before creating pools, then constructs the typed configuration in place:
+Zutcp creates typed pools through the injected XDP instance. The multiplexer
+collects the first Rx pool and all application Tx pools. Zutcp includes its
+internal TCP data and control reserves in the same XDP allocation. Pool
+geometry is available before allocation. Native Tx slot allocation returns
+immediately and can fail when a pool is exhausted.
 
-```c++
-Zxdp::Params config(
-  Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-auto &params = config.p<Zxdp::Xdp::Params>();
-// Populate params, then call backend->init(config) before backend->start().
-```
+Protocols prepare their receive objects with the selected typed Rx allocator.
+Zutcp attaches bytes from the shared ingress pool to each prepared object,
+and the originating pool receives the slot back when the buffer is released.
+Use App allocators for parser copies and other storage owned solely by the
+application. Backing held across stop retains its address and contents.
 
-Configuration owns the Tx pool list and Rx reference; the initialized backend retains its own
-pool references independently of configuration-list membership. Instance retains
-raw pools through its transport providers between starts. Tx buffer allocation
-failure drops the connection rather than waiting for a pool grant. Pools publish
-fixed count, size, alignment,
-headroom and tailroom geometry before start.
-Zutcp writes complete Ethernet/IP/TCP packets directly into registered backing;
-there is no intermediate payload staging buffer. Hardware zero-copy depends on
-the kernel and NIC driver and requires physical-NIC validation.
+Zutcp constructs TCP wire headers over registered backing. UDP copies each
+outgoing datagram into a native wire buffer so Zi completion callbacks can
+still use the original application buffer. Hardware zero-copy depends on the
+kernel and NIC driver.
 
 One physical ingress reserve serves the instance. Tunable instance and
 per-connection retention limits preserve receive-service headroom; separate
@@ -193,12 +186,10 @@ admission independently of allocator counts.
 Transport ACK/recovery ownership retains the raw allocation lease independently
 of the kernel submission lease. CQ retires kernel access, not peer delivery.
 Refused output retains caller ownership. Shutdown keeps sender and CQ service
-active after admission stops, until accepted submissions complete on a healthy
-backend. This includes the final FIN ACK. The sender barrier and socket retirement
-follow that completion gate; a failed backend retains cancellation semantics.
-Shutdown drains work on its owners and
-retries raw close until kernel access retires. Providers and pools outlive every
-application-held or recovery-held packet.
+active after admission stops until accepted submissions complete. This includes
+the final FIN ACK. Shutdown drains work on its owners and closes the per-run
+sockets after the sender barrier. Allocation and the registering socket remain
+live through restart.
 
 ## Connection hash sizing
 
@@ -243,9 +234,8 @@ cold reads, and unsupported optional normalized metrics remain zero.
 
 ## Source and verification
 
-Include `<zlib/Zutcp.hh>` for the stack and `<zlib/ZutcpAlloc.hh>` for provider
-composition. `Zutcp.hh` is a small backend umbrella; connection/endpoint
-implementations remain private source-tree headers. IP framing and route helpers
+Include `<zlib/Zutcp.hh>` for the transport. Connection and endpoint
+implementations remain in private source-tree headers. IP framing and route helpers
 live in `ZutcpIP.hh`. Link `libZutcp`, `libZxdp` and their framework
 dependencies. Both modules are Linux-only and are excluded from Windows builds.
 

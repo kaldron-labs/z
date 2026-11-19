@@ -67,7 +67,7 @@ void testRxOverlapDrop()
   ZuTestScope(testRxOverlapDrop);
 
   ZiMultiplex mx;
-  auto allocator = mx.allocator<Zi::IOBufType::RxTLS>();
+  auto allocator = mx.allocator<Zi::IOBufType::App>();
   Zquic::StreamRxPQueue q{0};
   auto first = packet_("world");
   auto dup = packet_("WORLD");
@@ -105,7 +105,7 @@ void testOutOfOrderDrain()
   ZuTestScopeRT(testOutOfOrderDrain);
 
   ZiMultiplex mx;
-  auto allocator = mx.allocator<Zi::IOBufType::RxTLS>();
+  auto allocator = mx.allocator<Zi::IOBufType::App>();
   Zquic::StreamRxPQueue q{0};
   for (unsigned i = 1; i < 32; ++i) {
     auto packet = packet_("x");

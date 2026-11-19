@@ -522,7 +522,7 @@ template <
   unsigned MaxSize = (64<<10), // 64K
   ZuString HeapID = "Zquic.Crypto.RxBuf">
 using CryptoRxBufAlloc = Zi::IOBufBuiltinAllocator<
-  Zi::IOBufType::RxTLS, CryptoRxPQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
+  Zi::IOBufType::App, CryptoRxPQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
 using TxDataPQueue_ =
   ZmPQueue<StreamTxData,

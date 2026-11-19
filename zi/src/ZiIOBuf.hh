@@ -58,7 +58,25 @@ class ZiMultiplex;
 
 namespace Zi {
 
-ZtEnumNS(ZiAPI, IOBufType, int8_t, App, RxUDP, TxUDP, RxTCP, TxTCP, RxTLS, TxTLS);
+ZtEnumNS(ZiAPI, IOBufType, int8_t, App, Rx, TxUDP, TxTCP, RxTLS, TxTLS);
+
+struct ZiAPI IOBufPool_ : public ZmPolymorph {
+  const IOBufType::T type;
+  uint32_t	count = 0;	// - configured buffer count
+  uint32_t	size = 0;	// - overall size of each buffer
+  uint32_t	align = ZiIOBuf_DefltAlign; // - physical buffer alignment
+  uint32_t	headRoom = 0;	// - how much space is reserved for a frame header
+  uint32_t	tailRoom = 0;	// - how much space is reserved for a frame trailer
+
+  explicit IOBufPool_(IOBufType::T type_) : type(type_) { }
+
+  virtual uint8_t *alloc() = 0;
+  virtual void free(uint8_t *) = 0;
+};
+
+using IOBufPoolList = ZmList<IOBufPool_,
+  ZmListNode<IOBufPool_, ZmListHeapID<"">>>;
+ZuDerive(IOBufPool, (IOBufPoolList::Node));
 
 struct IOBufAllocator__ {
   ZiMultiplex	*mx = nullptr;
@@ -455,13 +473,16 @@ ZuAssert(!((sizeof(IOBufBuiltin<
 	ZiIOBuf_DefltAlign,
 	ZiIOBuf_HeapID>)) & (Zm::CacheLineSize - 1)));
 
-struct IOBufPool;
 struct ZiAPI IOBufAllocator : public IOBufAllocator_ {
+  ZmRef<IOBufPool> pool;
+
   using IOBufAllocator_::IOBufAllocator_;
-  virtual IOBufPool *provider() const { return nullptr; }
+  IOBufAllocator(ZiMultiplex *mx, IOBufPool *pool_) :
+    IOBufAllocator_(mx, pool_->type, pool_->size, pool_->headRoom, pool_->tailRoom),
+    pool(pool_) { }
+
   virtual ZmRef<IOBuf> allocBuf(
     void *owner = nullptr, uint32_t length = 0, uint32_t mps = ~uint32_t(0)) = 0;
-
 };
 
 inline IOBufAllocator *IOBuf_::allocator() const {
@@ -516,21 +537,6 @@ friend inline ZuStringT<"Zi.IOBufBuiltinAllocator"> ZmNHeapID(IOBufBuiltinAlloca
   }
 };
 
-struct ZiAPI IOBufPool_ : public ZmPolymorph {
-  uint32_t	count = 0;	// - configured buffer count
-  uint32_t	size = 0;	// - overall size of each buffer
-  uint32_t	align = ZiIOBuf_DefltAlign; // - physical buffer alignment
-  uint32_t	headRoom = 0;	// - how much space is reserved for a frame header
-  uint32_t	tailRoom = 0;	// - how much space is reserved for a frame trailer
-
-  virtual uint8_t *alloc() = 0;
-  virtual void free(uint8_t *) = 0;
-};
-
-using IOBufPoolList = ZmList<IOBufPool_,
-  ZmListNode<IOBufPool_, ZmListHeapID<"">>>;
-ZuDerive(IOBufPool, (IOBufPoolList::Node));
-
 // Pool allocators can use registered backing storage.
 template <
   IOBufType::T Type,
@@ -546,9 +552,8 @@ struct IOBufPoolAllocator :
 friend inline ZuStringT<"Zi.IOBufPoolAllocator"> ZmNHeapID(IOBufPoolAllocator *);
   using Heap = ZmNHeap<IOBufPoolAllocator<Type, Buf_, Size_, Align, HeapID, VHMaxSize_, Grow>>;
   ZuAssert(
-    Type == IOBufType::RxUDP || 
-    Type == IOBufType::TxUDP || 
-    Type == IOBufType::RxTCP || 
+    Type == IOBufType::Rx ||
+    Type == IOBufType::TxUDP ||
     Type == IOBufType::TxTCP);
 
   using Buf = Buf_;
@@ -556,17 +561,14 @@ friend inline ZuStringT<"Zi.IOBufPoolAllocator"> ZmNHeapID(IOBufPoolAllocator *)
   enum { VHMaxSize = BuiltinSize<Buf, Align>(VHMaxSize_) };
   using VHeap = ZmVHeap_<HeapID, Size, VHMaxSize, Align>;
 
-  ZmRef<IOBufPool>	pool;
-
   using Heap::operator new;
   using Heap::operator delete;
 
   IOBufPoolAllocator(ZiMultiplex *mx, IOBufPool *pool_) :
-    IOBufAllocator(mx, Type,
-      pool_->size, pool_->headRoom, pool_->tailRoom),
-    pool(pool_) { }
-
-  IOBufPool *provider() const override { return pool; }
+    IOBufAllocator(mx, pool_)
+  {
+    ZmAssert_(Type == pool->type);
+  }
 
   ZmRef<IOBuf> grantBuf(
     uint8_t *data, void *owner, uint32_t length, uint32_t mps)

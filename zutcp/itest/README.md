@@ -1,4 +1,4 @@
-# Native TCP integration tests
+# Native TCP and UDP integration tests
 
 These Linux tests exercise actual Instance/Zxdp packet I/O, standard TCP headers
 and raw application bytes. They require usable AF_XDP/BPF, sudo/root, network
@@ -10,7 +10,7 @@ Physical Ethernet operation remains unverified in the current environment.
 
 ## Build and run
 
-Use [the repair plan](../../zutcp_repair3.md)'s scoped clang-debug rebuild and
+Use [the repair plan](../../arc/zutcp/zutcp_repair3.md)'s scoped Clang release rebuild and
 freeze restrictions. Rebuild the listed dependency libraries before `zutcp/src`
 and its consumers, sharing one make jobserver with total concurrency 8. The
 commands below illustrate directory targets; when run concurrently they must
@@ -41,14 +41,14 @@ Ztls application drivers below. Use explicit native targets while developing TCP
 
 - `zutcppairtest` launches the Ztcp client/server examples with statically
   configured Instance plugins for ordinary transfer and half-close over both IP
-  families. Protocol-private modes run backend probe roles in the test driver;
+  families. Protocol-private modes run native protocol roles in the test driver;
   they do not expose test controls through application APIs. It checks exact 7200-byte request/echo, half-close, SYN/setup loss,
   established DATA loss, duplication, reordering, ACK loss, partial ACK, SACK holes
   and reneging, option negotiation/absence, ECN, TLP and Fast Open. Middle-bridge
   filters affect actual packets; capture/checker evidence establishes the intended
   fault, byte progress, recovery and FIN completion. It does not use kernel TCP
   as a native fallback.
-- `zutcppooltest` checks the Zutcp-owned Zi provider against real Zxdp arenas:
+- `zutcppooltest` checks Zi allocators backed by one shared Zxdp arena:
   factory geometry, registered backing, borrowed/native views, allocation versus
   kernel leases, exhaustion, retirement and safe return/reuse. Allocation is
   immediate; producers do not queue for grants from a depleted pool.
@@ -56,7 +56,7 @@ Ztls application drivers below. Use explicit native targets while developing TCP
   native first-send backing identity, replay/recovery lifetime, control admission
   under DATA pressure, close/restart and owner/kernel retirement. Dedicated test
   probes wait on actual admission/CQ state; the thin raw API has no completion
-  callback. Bounded lifecycle retries allow asynchronous kernel queue release.
+  callback. Same-instance restart retains the allocated UMEM.
   A gated sender admits a final frame before shutdown, then verifies exact peer
   receipt after stop, independently of the backing-retirement checks.
 - `zutcpiptest` uses an independent raw-IP peer codec for both families. It checks
@@ -106,3 +106,23 @@ sudo -n unshare --net bash zutcp/util/zutcpfixture.sh \
 For latency/throughput/profiling use the [benchmark](../bench/README.md) in a
 consistent optimized, non-ASan closure. Functional veth success is separate from
 performance and physical-NIC acceptance.
+
+## UDP and mixed transport fixture
+
+`zutcpudptest` runs two Zutcp plugins over a private veth pair. It verifies
+connected UDP sends, addressed replies, zero-length datagrams, datagram
+boundaries, peer addresses, TOS, and delivery into the prepared typed Rx buffer.
+Mixed mode also transfers TCP bytes through the same multiplexers and checks
+that the typed TCP and UDP allocators share an ingress pool. Both peers close
+their UDP endpoints and repeat the exchange after restarting with the original
+allocation.
+
+```sh
+make -C zutcp/itest zutcpudptest
+sudo -n unshare --mount --net --propagation private \
+  env ZXDP_RUN_FIXTURE=1 bash zutcp/itest/zutcpudpfixture.sh 4 mixed
+sudo -n unshare --mount --net --propagation private \
+  env ZXDP_RUN_FIXTURE=1 bash zutcp/itest/zutcpudpfixture.sh 6 udp
+```
+
+The runner accepts either address family with either mode.

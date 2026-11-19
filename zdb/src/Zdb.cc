@@ -204,12 +204,14 @@ void DB::init(
 
     m_cf = ZuMv(config);
     m_mx = mx;
-    m_rxAllocator = mx->allocator<Zi::IOBufType::RxTCP,
+    m_rxAllocator = mx->allocator<Zi::IOBufType::Rx,
       ZiRxQueue::Node, DefltBufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, MaxBufSize>();
     m_frameAllocator = mx->allocator<Zi::IOBufType::App,
       ZiRxQueue::Node, DefltBufSize, ZiIOBuf_Align, ZiIOBuf_HeapID, MaxBufSize>();
     m_hbAllocator = mx->allocator<Zi::IOBufType::TxTCP,
       ZiIOBuf, HBBufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, MaxBufSize>();
+    if (!m_rxAllocator || !m_frameAllocator || !m_hbAllocator)
+      throw ZeEXCEPT(Fatal, "Zdb", "cannot acquire replication allocator handles");
     m_handler = ZuMv(handler);
     {
       if (!m_cf.storeCf)
@@ -2044,8 +2046,16 @@ AnyTable::AnyTable(
   m_storeBufAllocFn{factory(m_mx)}
 {
   unsigned n = db->nShards();
+  if (!m_storeBufAllocFn)
+    throw ZeEXCEPT(Fatal, "Zdb", "cannot acquire store allocator handle");
   m_bufAllocFn.length(n);
-  for (unsigned i = 0; i < n; ++i) m_bufAllocFn[i] = factory(m_mx);
+  for (unsigned i = 0; i < n; ++i) {
+    m_bufAllocFn[i] = factory(m_mx);
+    if (!m_bufAllocFn[i]) {
+      while (i) m_bufAllocFn[--i] = IOBufAllocFn{};
+      throw ZeEXCEPT(Fatal, "Zdb", "cannot acquire shard allocator handle");
+    }
+  }
   m_nextUN.length(n);
   m_cacheUN.length(n);
   m_bufCacheUN.length(n);

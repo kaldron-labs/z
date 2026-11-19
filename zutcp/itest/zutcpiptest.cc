@@ -166,10 +166,14 @@ static void testCarriage(bool v6, bool tcp = false)
 {
   ZuTestScopeRT(testCarriage);
   alarm(30);
-  unsigned index = strtoul(getenv("ZXDP_RX_TEST_IFINDEX"), nullptr, 10);
-  unsigned peer = strtoul(getenv("ZXDP_RX_TEST_PEER_IFINDEX"), nullptr, 10);
-  Zutcp::IPPath path{ZiIP{v6 ? "2001:db8::1" : "198.18.0.1"},
-    ZiIP{v6 ? "2001:db8::2" : "198.18.0.2"}, {}, {}, 1500};
+  unsigned index = if_nametoindex(tcp ? (v6 ? "zitcp6a" : "zitcp4a") :
+    (v6 ? "zip6a" : "zxdprxa"));
+  unsigned peer = if_nametoindex(tcp ? (v6 ? "zitcp6b" : "zitcp4b") :
+    (v6 ? "zip6b" : "zxdprxb"));
+  Zutcp::IPPath path{
+    ZiIP{tcp ? (v6 ? "2001:db8:7::1" : "198.18.4.1") : (v6 ? "2001:db8:6::1" : "198.18.0.1")},
+    ZiIP{tcp ? (v6 ? "2001:db8:7::2" : "198.18.4.2") : (v6 ? "2001:db8:6::2" : "198.18.0.2")},
+    {}, {}, 1500};
   bool geometry = mac(index, path.localMAC) && mac(peer, path.remoteMAC);
   // Generic IP coverage uses fixture-only protocol 253. TCP coverage uses the
   // selected production framing and an independent peer segment codec.
@@ -192,8 +196,7 @@ static void testCarriage(bool v6, bool tcp = false)
   Zutcp::IPView seen;
   ZuBSpan seenPayload;
   bool onRx = false;
-  Zutcp::InstanceParams params{.interface = index,
-    .packet = [
+  Zutcp::InstanceParams params{.packet = [
       &mx, &input, &seen, &seenPayload, &onRx, &rxDone, &path, protocol, tcp
     ](ZmRef<Zi::IOBuf> buf) {
       Zutcp::IPView view;
@@ -208,22 +211,13 @@ static void testCarriage(bool v6, bool tcp = false)
       onRx = mx.invoked(mx.rxThread()) && buf->registered();
       input = ZuMv(buf);
       rxDone.post();
-    }, .spin = 0, .txSid = 4};
+    }};
   if (tcp) params.packet = {};
-  ZmRef<Zutcp::Instance> stack = ZutcpTest::makeInstance(&mx, ZuMv(params));
-  mx.plugin(stack);
+  auto instance = ZutcpTest::makeInstance(&mx, index, 4, ZuMv(params), {}, 0);
+  auto stack = instance.ptr();
+  mx.plugin(ZuMv(instance));
   auto tx = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 2048>(4);
-  // AF_XDP queue release can remain pending in the kernel after close. The
-  // caller owns lifecycle retries; retain the same providers and bound the wait.
-  bool started = false;
-  unsigned attempts = 0;
-  auto startDeadline = Zm::now() + ZuTime{2};
-  do {
-    ++attempts;
-    if ((started = mx.start())) break;
-    usleep(1000); // fixture control caller only
-  } while (Zm::now() < startDeadline);
-  std::cout << "# raw Instance startup attempts=" << attempts << '\n';
+  bool started = mx.start();
   ZuCheckRT(started, log_("raw packet Instance starts without a kernel Zutcp socket"));
   if (!started) { close(fd); alarm(0); return; }
   EndpointInput endpoint{&mx, &input, &seen, &seenPayload, &onRx, &rxDone};
@@ -256,7 +250,7 @@ static void testCarriage(bool v6, bool tcp = false)
     ZuCheckRT(boundEndpoint, log_("native local address/port membership installed"));
     bool routeDone = false;
     auto coldPath = path;
-    coldPath.remote = ZiIP{v6 ? "2001:db8::6" : "198.18.0.6"};
+    coldPath.remote = ZiIP{v6 ? "2001:db8:7::6" : "198.18.4.6"};
     mx.rxRun([&stack, coldPath, &routeDone, &controlDone, &mx] {
       auto result = stack->resolve(coldPath.remote, coldPath.local);
       routeDone = result.is<Zutcp::IPPath>() && result.p<Zutcp::IPPath>().mtu == 1500 &&
@@ -359,7 +353,7 @@ static void testCarriage(bool v6, bool tcp = false)
     ZmSemaphore stopDone;
     bool resolved = false, stopped = false, ordered = false;
     auto coldPath = path;
-    coldPath.remote = ZiIP{v6 ? "2001:db8::6" : "198.18.0.6"};
+    coldPath.remote = ZiIP{v6 ? "2001:db8:7::6" : "198.18.4.6"};
     mx.rxRun([&stack, coldPath, &resolved, &controlDone, &mx] {
       auto result = stack->resolve(coldPath.remote, coldPath.local);
       resolved = result.is<Zutcp::IPPath>() && mx.invoked(mx.rxThread());

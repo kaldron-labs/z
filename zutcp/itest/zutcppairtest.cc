@@ -54,9 +54,6 @@ public:
   void earlyDataRejected(Cxn *);
   App(Zutcp::Instance *stack, ZuCSpan request) : m_stack{stack} { m_request << request; }
   Zutcp::Instance *stack() const { return m_stack; }
-  bool init(const ZutcpTest::Params &params) {
-    return ZutcpTest::Instance::apply(*m_stack, params.config()).is<void>();
-  }
   void final() { }
   ZuCSpan request() const { return m_request; }
   void done() { m_established.post(); m_done.post(); }
@@ -65,7 +62,7 @@ public:
   void wait() { m_done.wait(); }
   void setError(const char *msg) {
     if (!m_error.xch(1))
-      ZiLOG(Error, "zutcpclient", ([msg = ZeString{msg}](auto &out) {
+      ZiLOG(Error, "zutcp", ([msg = ZeString{msg}](auto &out) {
 	out << "error: " << msg;
       }));
   }
@@ -89,7 +86,7 @@ public:
   using ZmNHeap<Cxn>::operator delete;
   Cxn(App *app, unsigned tfoID = 0) : Base{app->stack()}, m_probe{app}, m_tfoID{tfoID} {
     txErrorFn(ZiTxErrorFn{[](ZeException &e) {
-      ZiLOG(Error, "zutcpclient", ([e](auto &out) { out << "transmit error: " << e; }));
+      ZiLOG(Error, "zutcp", ([e](auto &out) { out << "transmit error: " << e; }));
       return false;
     }});
   }
@@ -197,7 +194,7 @@ void App::earlyDataRejected(Cxn *link)
 
 static void usage()
 {
-  std::cerr << "Usage: zutcpclient INTERFACE SERVER PORT [REQUEST]\n"
+  std::cerr << "Usage: zutcp INTERFACE SERVER PORT [REQUEST]\n"
     << std::flush;
   ::exit(1);
 }
@@ -220,7 +217,7 @@ static int run(int argc, char **argv)
     if (!count) usage();
   }
 
-  ZiLog::init("zutcpclient");
+  ZiLog::init("zutcp");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
@@ -233,13 +230,6 @@ static int run(int argc, char **argv)
 	  .thread(2, [](auto &t) { t.isolated(1); })
 	  .thread(4, [](auto &t) { t.isolated(true); }); })
 	.rxThread(1).txThread(2));
-  auto stack = ZutcpTest::makeInstance(&mx, {.interface = interface, .txSid = 4});
-  mx.plugin(stack);
-
-
-  ZmRef<App> appRef = new App{stack, request};
-  auto &app = *appRef;
-
   auto params = ZutcpTest::Params(&mx);
   if (const char *profile = getenv("ZUTCP_TEST_CLIENT_OPTIONS")) {
     unsigned options = ZuBox<unsigned>(profile);
@@ -249,14 +239,13 @@ static int run(int argc, char **argv)
   }
   if (const char *delay = getenv("ZUTCP_TEST_TLP_DELAY_US"))
     params.tlpPeerAckDelay(Zutcp::timeUS(ZuBox<unsigned>(delay)));
-  if (!app.init(params)) {
-    ZiLOG(Error, "zutcpclient", ([](auto &out) { out << "client initialization failed"; }));
-    mx.stop();
-    ZiLog::stop();
-    return 1;
-  }
+  auto instance = ZutcpTest::makeInstance(&mx, interface, 4, params.config());
+  auto stack = instance.ptr();
+  mx.plugin(ZuMv(instance));
+  ZmRef<App> appRef = new App{stack, request};
+  auto &app = *appRef;
   if (!mx.start()) {
-    ZiLOG(Error, "zutcpclient", ([](auto &out) { out << "ZiMultiplex start failed"; }));
+    ZiLOG(Error, "zutcp", ([](auto &out) { out << "ZiMultiplex start failed"; }));
     app.final();
     ZiLog::stop();
     return 1;
@@ -341,7 +330,7 @@ public:
   void wait() { m_done.wait(); }
   void setError(const char *msg) {
     if (!m_error.xch(1))
-      ZiLOG(Error, "zutcpserver", ([msg = ZeString{msg}](auto &out) {
+      ZiLOG(Error, "zutcpd", ([msg = ZeString{msg}](auto &out) {
 	out << "error: " << msg;
       }));
   }
@@ -369,7 +358,7 @@ public:
   using ZmNHeap<AppCxn>::operator delete;
   AppCxn(App *app, unsigned tfoID) : Base{app->stack()}, m_probe{app}, m_tfoID{tfoID} {
     txErrorFn(ZiTxErrorFn{[](ZeException &e) {
-      ZiLOG(Error, "zutcpserver", ([e](auto &out) { out << "transmit error: " << e; }));
+      ZiLOG(Error, "zutcpd", ([e](auto &out) { out << "transmit error: " << e; }));
       return false;
     }});
   }
@@ -462,7 +451,7 @@ ZmRef<AppCxn> App::accepted(const Zutcp::InitialInfo &)
 
 static void usage()
 {
-  std::cerr << "Usage: zutcpserver INTERFACE SERVER PORT [COUNT] [--wait-eof]\n"
+  std::cerr << "Usage: zutcpd INTERFACE SERVER PORT [COUNT] [--wait-eof]\n"
     << std::flush;
   ::exit(1);
 }
@@ -480,7 +469,7 @@ static int run(int argc, char **argv)
   if (positional == 5) count = ZuBox<unsigned>(argv[4]);
   if (!interface || !port || !count) usage();
 
-  ZiLog::init("zutcpserver");
+  ZiLog::init("zutcpd");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
@@ -493,13 +482,6 @@ static int run(int argc, char **argv)
 	  .thread(2, [](auto &t) { t.isolated(1); })
 	  .thread(4, [](auto &t) { t.isolated(true); }); })
 	.rxThread(1).txThread(2));
-  auto stack = ZutcpTest::makeInstance(&mx, {.interface = interface, .txSid = 4});
-  mx.plugin(stack);
-
-
-  ZmRef<App> appRef = new App{stack, server, port, count, waitEOF};
-  auto &app = *appRef;
-
   auto params = ZutcpTest::Params(&mx);
   if (const char *profile = getenv("ZUTCP_TEST_SERVER_OPTIONS")) {
     unsigned options = ZuBox<unsigned>(profile);
@@ -509,22 +491,20 @@ static int run(int argc, char **argv)
   }
   if (const char *delay = getenv("ZUTCP_TEST_TLP_DELAY_US"))
     params.tlpPeerAckDelay(Zutcp::timeUS(ZuBox<unsigned>(delay)));
-  if (!app.init(params)) {
-    ZiLOG(Error, "zutcpserver", ([](auto &out) { out << "server initialization failed"; }));
-    mx.stop();
-    ZiLog::stop();
-    return 1;
-  }
-
+  auto instance = ZutcpTest::makeInstance(&mx, interface, 4, params.config());
+  auto stack = instance.ptr();
+  mx.plugin(ZuMv(instance));
+  ZmRef<App> appRef = new App{stack, server, port, count, waitEOF};
+  auto &app = *appRef;
   if (!mx.start()) {
-    ZiLOG(Error, "zutcpserver", ([](auto &out) { out << "ZiMultiplex start failed"; }));
+    ZiLOG(Error, "zutcpd", ([](auto &out) { out << "ZiMultiplex start failed"; }));
     app.final();
     ZiLog::stop();
     return 1;
   }
 
   if (!app.start()) {
-    ZiLOG(Error, "zutcpserver", ([](auto &out) { out << "server listen failed"; }));
+    ZiLOG(Error, "zutcpd", ([](auto &out) { out << "server listen failed"; }));
     app.final();
     mx.stop();
     ZiLog::stop();
@@ -594,9 +574,6 @@ public:
       unsigned windowChunk = 0) :
     m_stack{stack}, m_result{result}, m_request{request}, m_windowChunk{windowChunk} { }
   Zutcp::Instance *stack() const { return m_stack; }
-  bool init(const ZutcpTest::Params &params) {
-    return ZutcpTest::Instance::apply(*stack(), params.config()).is<void>();
-  }
   void final() { }
   template <typename F> void rxRun(F &&fn) { stack()->rxRun(ZuFwd<F>(fn)); }
   Result &result() { return m_result; }
@@ -633,7 +610,7 @@ public:
   void earlyDataAccepted() { probe()->earlyDataAccepted(this); }
   void earlyDataRejected() { probe()->earlyDataRejected(this); }
   void connected(Zutcp::Connected) {
-    std::cerr << "backend=AF_XDP role=client connected=1\n";
+    std::cerr << "transport=AF_XDP role=client connected=1\n";
     std::cerr << std::flush;
     if (probe()->tfo()) std::cerr << "tfo native_client connected=" << m_id << "\n";
     if (m_reset) { startRequest(); probe()->result().connected(); }
@@ -764,7 +741,7 @@ public:
   void releaseReader();
   void listening() {
     auto stack = this->stack();
-    std::cerr << "backend=AF_XDP role=server ready=" << unsigned(stack && stack->ready()) << "\n";
+    std::cerr << "transport=AF_XDP role=server ready=" << unsigned(stack && stack->ready()) << "\n";
     std::cerr << std::flush;
   }
   void endpointReady(Zutcp_::Endpoint_<ServerApp> *ep) { Base::endpointReady(ep); listening(); }
@@ -815,7 +792,7 @@ public:
   void connected(Zutcp::Connected) {
 		m_connected = true;
     if (probe()->tfo()) std::cerr << "tfo native_server connected=" << m_id << "\n";
-    std::cerr << "backend=AF_XDP role=server connected=1\n";
+    std::cerr << "transport=AF_XDP role=server connected=1\n";
     std::cerr << std::flush;
     if (m_reset) {
       auto stack = probe()->stack();
@@ -1004,16 +981,20 @@ static int run(int argc, char **argv)
       .thread(2, [](auto &t) { t.isolated(1); })
       .thread(4, [](auto &t) { t.isolated(true); });
   }).rxThread(1).txThread(2)};
-  auto stack = ZutcpTest::makeInstance(&mx, {.interface = interface, .txSid = 4});
-  mx.plugin(stack);
+  auto xdp = ZutcpTest::openXdp(&mx, interface, 4);
+  auto payload = Zutcp::tcpPayload(xdp->mtu(), address.type());
+  auto params = ZutcpTest::Params{&mx};
+  options(params);
+  if (server && getenv("ZUTCP_KERNEL_READ_GATE")) params.maxData(4096);
+  bool windowClient = !server && getenv("ZUTCP_KERNEL_WINDOW_CLIENT");
+  if (windowClient) params.maxPayload(payload).sackPermitted(false).timestamps(true);
+  auto instance = ZutcpTest::makeInstance(&mx, ZuMv(xdp), params.config());
+  auto stack = instance.ptr();
+  mx.plugin(ZuMv(instance));
   if (server) {
     ZmRef<ServerApp> appRef = new ServerApp{stack, result, address, port, count};
     auto &app = *appRef;
-    auto params = ZutcpTest::Params{&mx};
-    options(params);
-    if (getenv("ZUTCP_KERNEL_READ_GATE")) params.maxData(4096);
-    bool initialized = app.init(params);
-    bool listening = initialized && mx.start() && app.start();
+    bool listening = mx.start() && app.start();
     if (!listening) result.fail("native server start");
     else {
       if (getenv("ZUTCP_KERNEL_READ_GATE")) {
@@ -1023,22 +1004,15 @@ static int run(int argc, char **argv)
       if (!result.failed()) result.wait();
     }
     if (listening) app.stop();
-    if (initialized) app.final();
+    app.final();
     mx.stop();
   } else {
-    unsigned windowChunk = getenv("ZUTCP_KERNEL_WINDOW_CLIENT") ?
-      (Zutcp::tcpPayload(stack->mtu(), address.type()) - 12)>>1 : 0;
+    unsigned windowChunk = windowClient ? (payload - 12)>>1 : 0;
     ZmRef<ClientApp> appRef = new ClientApp{stack, result, request, windowChunk};
     auto &app = *appRef;
-    auto params = ZutcpTest::Params{&mx};
-    options(params);
-    if (getenv("ZUTCP_KERNEL_WINDOW_CLIENT"))
-      params.maxPayload(Zutcp::tcpPayload(stack->mtu(), address.type()))
-	.sackPermitted(false).timestamps(true);
-    bool initialized = app.init(params);
-    if (!initialized || !mx.start()) result.fail("native client start");
+    if (!mx.start()) result.fail("native client start");
     else {
-      std::cerr << "backend=AF_XDP role=client ready=" << unsigned(stack->ready()) << "\n";
+      std::cerr << "transport=AF_XDP role=client ready=" << unsigned(stack->ready()) << "\n";
       for (unsigned i = 0; i < count && !result.failed(); ++i) {
 	bool reset = !i && getenv("ZUTCP_KERNEL_RESET_GATE");
 	ZmRef<ClientApp::Cxn> link = new ClientApp::Cxn{&app, reset, i + 1};
@@ -1064,14 +1038,14 @@ static int run(int argc, char **argv)
 	std::cerr << "native disconnect_complete=" << i + 1 << "\n";
       }
     }
-    if (initialized) app.final();
+    app.final();
     mx.stop();
   }
   auto admission = stack->cxnAdmission();
   auto tx = stack->txAdmission();
   bool drained = !stack->ready() && !admission.total && !admission.pending &&
     !tx.outstanding;
-  std::cerr << "backend=AF_XDP stopped=" << unsigned(!stack->ready()) << " cxns="
+  std::cerr << "transport=AF_XDP stopped=" << unsigned(!stack->ready()) << " cxns="
     << admission.total << " pending=" << admission.pending << " tx=" << tx.outstanding
     << " control_count=" << tx.controlCount << "\n";
   if (!drained) result.fail("native owner/provider drain incomplete");

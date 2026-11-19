@@ -6,7 +6,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/ZmScheduler.hh>
+#include <zlib/ZiMultiplex.hh>
 
 #include <zlib/ZePlatform.hh>
 
@@ -22,12 +22,15 @@ static void testCreation()
   auto instance = Zxdp::instance(Zxdp::Type::Xdp);
   ZuCHECK(instance && !instance->ready() && instance->state() == ZmEngineState::Stopped,
     "selected instance starts uninitialized and stopped");
-  ZuCHECK(!instance->start() && instance->state() == ZmEngineState::Stopped &&
+  ZuCHECK(!instance->start([](uint8_t *, unsigned) { }) && instance->state() == ZmEngineState::Stopped &&
       !!instance->error(), "start before init fails and returns the engine to Stopped");
   Zxdp::Params missing(
     Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-  ZuCHECK(instance->init(missing).is<ZeException>() &&
-      instance->init(missing).is<ZeException>() && !instance->ready(),
+  ZiMultiplex mx;
+  missing.p<Zxdp::Xdp::Params>().txSid = 3;
+  ZuCHECK(instance->init(&mx, missing).is<ZeException>() &&
+      instance->init(&mx, missing).is<ZeException>() && !instance->ready() &&
+      !instance->mx() && !instance->mtu() && !instance->rxQueues() && !instance->allocated(),
     "invalid configuration can be retried without creating active resources");
   ZuCHECK(instance->stop() && instance->stop(), "stopped stop is idempotent");
   instance->final();
@@ -40,46 +43,25 @@ static void testPoolFactory()
 {
   ZuTestScope(testPoolFactory);
   auto factory = Zxdp::instance(Zxdp::Type::Xdp);
-  auto rx = factory->bufPool(2, 1514);
-  auto tx = factory->bufPool(1, 128);
-  auto control = factory->bufPool(1, 64);
-  factory->final();
+  auto rx = factory->bufPool(Zi::IOBufType::Rx, 2, 1514);
+  auto tx = factory->bufPool(Zi::IOBufType::TxTCP, 1, 128);
+  auto udp = factory->bufPool(Zi::IOBufType::TxUDP, 1, 64, 8, 4, 128);
   factory->final();
   factory = nullptr;
-  ZuCHECK(rx && tx && control && rx->count == 2 && tx->size == 128,
-    "unbound pools survive factory finalization and destruction");
+  ZuCHECK(rx && tx && udp && rx->type == Zi::IOBufType::Rx &&
+      tx->type == Zi::IOBufType::TxTCP && udp->type == Zi::IOBufType::TxUDP &&
+      rx->count == 2 && tx->size == 128 && udp->size == 64 &&
+      udp->headRoom == 8 && udp->tailRoom == 4 && udp->align == 128,
+    "cold pool factory preserves the requested roles and geometry");
+
+  Zi::IOBufPoolList pools;
+  pools.pushNode(tx.ptr());
+  pools.pushNode(udp.ptr());
   auto instance = Zxdp::instance(Zxdp::Type::Xdp);
-  ZmScheduler scheduler{ZmSchedParams{}.nThreads(1)};
-  Zxdp::Params config(
-    Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-  auto &params = config.p<Zxdp::Xdp::Params>();
-  params.ifindex = 1;
-  params.rxPool = rx;
-  params.txPools.pushNode(tx.ptr());
-  params.txPools.pushNode(control.ptr());
-  params.rx = [](uint8_t *, unsigned) { };
-  params.scheduler = &scheduler;
-  params.txSid = 1;
-  auto initialized = instance->init(config);
-  auto rxRefs = rx->refCount(), txRefs = tx->refCount();
-  auto repeated = instance->init(config);
-  ZuCHECK(initialized.is<void>() && repeated.is<void>() && !instance->ready() &&
-      instance->state() == ZmEngineState::Stopped && rx->refCount() == rxRefs &&
-      tx->refCount() == txRefs && !rx->alloc() && !tx->alloc(),
-    "idempotent init retains configuration without starting I/O or duplicating pool references");
-  auto pools = params.txPools.citer();
-  ZuCHECK(params.rxPool.ptr() == rx.ptr() && params.txPools.count_() == 2 &&
-      params.txPools.headPtr() == tx.ptr() && pools() == tx.ptr() &&
-      pools() == control.ptr() && !pools(),
-    "initialization preserves the caller's intrusive membership and order");
-  ZuCHECK(!instance->start() && instance->state() == ZmEngineState::Stopped,
-    "start requires the caller's scheduler to be running");
-  ZuCHECK(instance->stop(), "failed start leaves an idempotently stopped instance");
-  instance->final();
-  instance->final();
-  ZuCHECK(instance->init(config).is<void>() && !instance->ready(),
-    "configuration can be initialized again after final without activating I/O");
-  instance->final();
+  ZuCHECK(instance->alloc(rx, pools).is<ZeException>() && !instance->allocated() &&
+      pools.headPtr() == tx.ptr() && pools.tailPtr() == udp.ptr() &&
+      !rx->alloc() && !tx->alloc() && !udp->alloc(),
+    "allocation before initialization leaves the pools unbacked and unmodified");
 }
 
 int main(int argc, char **argv)

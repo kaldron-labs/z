@@ -99,6 +99,7 @@ static void invalidRecovery(bool overflow)
   auto cf = config();
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
   ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex retryMx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
   using DB = zdbtest::LiveDB;
@@ -147,16 +148,16 @@ static void invalidRecovery(bool overflow)
   context->orders = nullptr;
   ZuCheckRT(mx.stop());
   db->final();
-  db->init(ZdbCf{fields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {}, store);
+  db->init(ZdbCf{fields.zdb.p<const ZfCf::AnyNode *>()}, &retryMx, {}, store);
   orders = db->initTable<zdbtest::Order>("o");
   context->orders = orders;
   db->sagas({definition});
-  ZuCheckRT(mx.start());
+  ZuCheckRT(retryMx.start());
   ZuCheckRT(!db->start());
   ZuCheckRT(!context->runs);
   orders = {};
   context->orders = nullptr;
-  ZuCheckRT(mx.stop());
+  ZuCheckRT(retryMx.stop());
   db->final();
   db = {};
   store = {};

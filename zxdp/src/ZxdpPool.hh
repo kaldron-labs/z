@@ -16,6 +16,8 @@
 #include <stdint.h>
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmAssert.hh>
+#include <zlib/ZmFn.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmRef.hh>
@@ -38,7 +40,7 @@ friend class Instance;
 public:
   using ZmNHeap<BufPool>::operator new;
   using ZmNHeap<BufPool>::operator delete;
-  BufPool(unsigned count = 0, unsigned size = 0);
+  BufPool(Zi::IOBufType::T, unsigned count, unsigned size);
   ~BufPool() override;
   BufPool(const BufPool &) = delete;
   BufPool &operator =(const BufPool &) = delete;
@@ -55,6 +57,15 @@ private:
 
   void init(ZmRef<UMem>, uint64_t offset, unsigned stride, unsigned prefix, unsigned first);
   void retire() { m_active = 0; }
+  void returned(ZmFn<void()> fn) { m_returned = ZuMv(fn); }
+  void final(unsigned kernelHeld) {
+    ZmAssert_(used() == kernelHeld);
+    retire();
+    m_returned = {};
+    m_arena = nullptr;
+    m_head = 0;
+    m_used = 0;
+  }
   unsigned first() const { return m_first; }
   unsigned stride() const { return unsigned(1)<<m_shift; }
 
@@ -64,6 +75,7 @@ private:
   uint64_t	m_offset = 0;
   unsigned	m_shift = 0, m_prefix = 0, m_first = 0;
   bool		m_tx = false;
+  ZmFn<void()>	m_returned;
   alignas(Zm::CacheLineSize) Head m_head{0};
   Count		m_used{0}, m_active{0};
 };

@@ -184,8 +184,8 @@ ip -n "$cli" -j link show dev zutcpa > "$out/capture-client-link.json"
 ip -n "$srv" -j link show dev zutcpb > "$out/capture-server-link.json"
 server=198.18.1.2
 if [[ $family == 6 ]]; then server=2001:db8:1::2; fi
-server_program=("$root/zutcp/example/zutcpserver")
-client_program=("$root/zutcp/example/zutcpclient")
+server_program=("$root/zutcp/example/zutcpd")
+client_program=("$root/zutcp/example/zutcp")
 if [[ $mode != plain && $mode != wait-eof ]]; then
   server_program=("$root/zutcp/itest/zutcppairtest" --protocol-server)
   client_program=("$root/zutcp/itest/zutcppairtest" --protocol-client)

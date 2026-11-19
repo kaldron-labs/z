@@ -328,19 +328,21 @@ static void testStack()
   ZmRef<Zi::IOBuf> input[RxCount], extra;
   unsigned packets = 0;
   bool onRx = true;
-  ZmRef<Zutcp::Instance> stack = ZutcpTest::makeInstance(&mx, {.interface = index,
+  auto instance = ZutcpTest::makeInstance(&mx, index, 3, {
     .packet = [&mx, &input, &extra, &packets, &onRx, &received](ZmRef<Zi::IOBuf> buf) {
       if (buf->length < 14 || buf->data()[12] != 0x88 || buf->data()[13] != 0xb5) return;
       onRx &= mx.invoked(mx.rxThread()) && buf->registered();
       if (packets < RxCount) input[packets] = ZuMv(buf); else extra = ZuMv(buf);
       ++packets;
       received.post();
-    }, .spin = 0, .packetCount = 2, .txSid = 3,
-    .controlBufCount = 3, .txControlCredits = 3, .maxData = 8192});
-  mx.plugin(stack);
+    }, .packetCount = 2, .controlBufCount = 2, .txControlCredits = 3,
+    .rxRetainFramesPerCxn = 1, .maxData = 8192, .closedTupleRingSize = 3,
+    .tfoCookieCacheSize = 3}, {}, 0);
+  auto stack = instance.ptr();
+  mx.plugin(ZuMv(instance));
   const auto initializedParams = ZutcpTest::Instance::parameters(*stack);
-  ZuCHECK(initializedParams.interface == index && initializedParams.packetCount == 2 &&
-      stack->txAdmission().controlCount == 3 && stack->txAdmission().reserved == 3 &&
+  ZuCHECK(initializedParams.packetCount == 2 &&
+      stack->txAdmission().controlCount == 2 && stack->txAdmission().reserved == 3 &&
       stack->maxData() == 8192,
     "initialization parameters must apply native setup and transport policy together");
   const auto provisioned = stack->txAdmission();
@@ -396,7 +398,7 @@ static void testStack()
     config.closedTupleRingSize = 0;
     bool rejected = ZutcpTest::Instance::apply(*stack, config).is<ZeException>();
     ZuCheckRT(rejected &&
-	stack->closedTupleStats().capacity == Zutcp::DefaultClosedTupleRingSize,
+	stack->closedTupleStats().capacity == initializedParams.closedTupleRingSize,
       log_("zero closed tuple capacity must preserve stopped configuration"));
   }
   auto &app = *stack;
@@ -407,19 +409,14 @@ static void testStack()
   ZuCheckRT(rejected &&
       stack->txAdmission().controlCount == provisioned.controlCount,
     log_("failed Instance control configuration preserves the original pool"));
-  Zutcp::InstanceParams initialConfig;
-  initialConfig.controlBufCount = 2;
-  initialConfig.txControlCredits = 3;
-  initialConfig.closedTupleRingSize = 3;
-  initialConfig.tfoCookieCacheSize = 3;
-  bool appReady = ZutcpTest::Instance::apply(app, initialConfig).is<void>();
+  bool appReady = ZutcpTest::Instance::apply(app, initializedParams).is<void>();
   ZuCheckRT(appReady && app.dataTxAllocator() == stack->dataTxAllocator(),
     log_("protocol owners use their Instance's native producer adapter"));
   auto tx = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 128>(3);
   auto small = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 64>(1);
-  auto rx = mx.allocator<Zi::IOBufType::RxTCP>(77);
+  auto rx = mx.allocator<Zi::IOBufType::Rx>(77);
   auto rxHeap = mx.allocator<Zi::IOBufType::App>();
-  auto otherRx = mx.allocator<Zi::IOBufType::RxTCP, Zi::IOBuf, 512>(55);
+  auto otherRx = mx.allocator<Zi::IOBufType::Rx, Zi::IOBuf, 512>(55);
   auto stub = rx->allocBuf(&mx), otherStub = otherRx->allocBuf(&mx);
   ZuCheckRT(!stack->ready() && !tx->allocBuf(&mx, Payload) && stub && otherStub &&
       !stub->data_() && !otherStub->data_() && !stub->size && !otherStub->size &&
@@ -560,9 +557,9 @@ static void testStack()
     reserves[0] = tx->allocBuf(&mx, Payload);
     reserves[1] = tx->allocBuf(&mx, Payload);
     // Acquire the control provider through its native raw pool, independently.
-    auto ctl = stack->control()->pool->alloc();
+    auto ctl = stack->control()->alloc();
     isolated = packet && reserves[0] && reserves[1] && !tx->allocBuf(&mx, 1) && ctl;
-    if (ctl) stack->control()->pool->free(ctl);
+    if (ctl) stack->control()->free(ctl);
     if (packet) {
       sentOrigin = packet->data_();
       memset(sentOrigin, 0, packet->skip + packet->length);
@@ -778,7 +775,7 @@ static void testStack()
   bool txStopped = mx.stop();
   releaseSender.join();
   ZuCheckRT(txStopped && !stack->ready(),
-    log_("asynchronous Rx then Tx drain retires the raw backend"));
+    log_("asynchronous Rx then Tx drain retires the XDP service"));
   pollfd shutdownReady{wire, POLLIN, 0};
   bool shutdownDelivered = false;
   auto shutdownDeadline = Zm::now() + ZuTime{2};
@@ -799,7 +796,7 @@ static void testStack()
     log_("stopped Instance preserves application-held Rx and Tx backing"));
   ZuCheckRT(leases.shutdownLease && **leases.shutdownLease &&
       leases.shutdownLease->data() == leases.origin && leases.origin[14] == 0x5a,
-    log_("backend close preserves recovery's caller lease after Zi metadata destruction"));
+    log_("XDP stop preserves recovery's caller lease after Zi metadata destruction"));
   // Owners are stopped. Clearing recovery returns its lease through the still
   // live provider; the subsequent restart also verifies pool drain.
   leases.recovery.clear();
@@ -814,46 +811,35 @@ static void testStack()
   for (auto &p : input) p = nullptr;
   for (auto &p : reserves) p = nullptr;
   probe.packet = nullptr;
-  // Construct only while stopped. This instance is never installed as the mx
-  // plugin or started, so it binds no backend and shares no provider leases.
-  ZmRef<Zutcp::Instance> freshStack = ZutcpTest::makeInstance(&mx,
-    {.interface = index, .spin = 0, .packetCount = 2, .txSid = 3});
-  Zutcp::InstanceParams restartedConfig;
-  restartedConfig.controlBufCount = 3;
-  restartedConfig.txControlCredits = 3;
-  restartedConfig.rxRetainFramesPerCxn = 1;
-  restartedConfig.closedTupleRingSize = 2;
-  restartedConfig.tfoCookieCacheSize = 3;
-  bool configured = ZutcpTest::Instance::apply(app, restartedConfig).is<void>();
-  ZuCheckRT(configured && app.controlBufCount() == 3 && app.txControlCredits() == 3 &&
-      stack->txAdmission().controlCount == 3 && stack->txAdmission().capacity == 9,
-    log_("stopped Instance configuration changes control count and preserves application counts"));
-  ZuCheckRT(configured && app.rxRetainFramesPerCxn() == 1,
-    log_("nondefault per-connection retention limit survives reinitialization"));
-  // Kernel queue release may outlast close; retry from this control caller,
-  // with the original providers and a finite deadline. No owner thread waits.
-  bool restarted = false;
-  unsigned attempts = 0;
-  auto restartDeadline = Zm::now() + ZuTime{2};
-  do {
-    ++attempts;
-    if ((restarted = mx.start())) break;
-    usleep(1000);
-  } while (Zm::now() < restartDeadline);
-  std::cout << "# raw Instance restart attempts=" << attempts << '\n';
+  auto freshStack = ZutcpTest::makeInstance(&mx, index, 3, {.packetCount = 2}, {}, 0);
+  auto conflicting = initializedParams;
+  conflicting.controlBufCount = 3;
+  conflicting.closedTupleRingSize = 2;
+  bool configured = ZutcpTest::Instance::apply(app, initializedParams).is<void>();
+  ZuCheckRT(configured && ZutcpTest::Instance::apply(app, conflicting).is<ZeException>() &&
+      app.controlBufCount() == 2 && app.txControlCredits() == 3 &&
+      stack->txAdmission().controlCount == 2 && stack->txAdmission().capacity == 8,
+    log_("conflicting stopped configuration preserves allocator geometry and counts"));
+  ZuCheckRT(app.rxRetainFramesPerCxn() == 1,
+    log_("nondefault per-connection retention limit survives restart"));
+
+  bool restarted = mx.start();
+  ZuCheckRT(restarted, log_("restart activates the retained packet service"));
+  if (!restarted) { close(wire); alarm(0); return; }
   bool running = stack->ready();
   bool historyKept = false;
   mx.rxRun([&stack, &history, &historyKept, &owner] {
     Zutcp::ClosedTuple found;
     auto stats = stack->closedTupleStats();
-    historyKept = stats.capacity == 2 && stats.count == 2 &&
-      !stack->closedTuple(history[0].key, found) && stack->closedTuple(history[1].key, found) &&
+    historyKept = stats.capacity == 3 && stats.count == 3 &&
+      stack->closedTuple(history[0].key, found) && found.id == history[0].id &&
+      stack->closedTuple(history[1].key, found) &&
       found.id == history[1].id && found.rxNext == history[1].rxNext &&
       stack->closedTuple(history[2].key, found) && found.id == history[2].id;
     owner.post();
   });
   owner.wait();
-  ZuCheckRT(historyKept, log_("restart and stopped shrink preserve newest tuple identities"));
+  ZuCheckRT(historyKept, log_("restart preserves established tuple history"));
 
   bool tfoKept = true, tfoNewInstance = true;
   mx.rxRun([&stack, &freshStack, &tfoClients, &tfoServers, &tfoIssued,
@@ -879,9 +865,9 @@ static void testStack()
   ZuCheckRT(tfoKept && configured && app.tfoCookieCacheSize() == 3,
     log_("same-size stopped configuration and actual restart retain TFO key "
       "and cookie evidence"));
-  ZuCheckRT(tfoNewInstance && mx.plugin() == stack.ptr() && !freshStack->ready(),
+  ZuCheckRT(tfoNewInstance && mx.plugin() == stack && !freshStack->ready(),
     log_("a new unstarted Instance has an independent key/cache "
-      "without replacing the active backend"));
+      "alongside the permanently attached plugin"));
 
   ZmRef<ZiIOBuf> pressureRx[3];
   bool arrived = restarted;

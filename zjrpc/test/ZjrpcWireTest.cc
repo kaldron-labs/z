@@ -258,7 +258,7 @@ static void retainedInputTest()
 {
   ZuTestScope(retainedInput);
   ZiMultiplex mx;
-  auto allocator = mx.allocator<Zi::IOBufType::App, ZiRxQueue::Node,
+  auto allocator = mx.allocator<Zi::IOBufType::Rx, ZiRxQueue::Node,
     ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zjrpc.Wire.Rx">>();
   ZmRef<ZiRxQueue::Node> source = allocator->allocBuf();
   *source << "padprefix{\"x\":1}tail";
@@ -271,7 +271,7 @@ static void retainedInputTest()
   Zjrpc::Input input;
   ZuCheck(input.begin(7, 64) && input.body(rx) && !rx);
   auto body = input.take();
-  ZuCheck(body.ptr() == owner && body->data() == ptr);
+  ZuCheck(body.ptr() == owner && body->data() == ptr && body->allocator() == allocator);
   ZuCheck(body->cspan() == "{\"x\":1}");
   rx.clean();
   ZuCheck(body->cspan() == "{\"x\":1}");
@@ -281,14 +281,15 @@ static void retainedInputTest()
   ZmRef<ZiRxQueue::Node> last = allocator->allocBuf();
   *first << "{\"x\":";
   *last << "1}";
-  auto original = first->ZiIOBuf::data();
+  auto original = first.ptr();
   fragments.push(ZuMv(first));
   fragments.push(ZuMv(last));
   ZuCheck(input.begin(7, 64));
   ZuCheck(input.body(fragments));
-  ZuCheck(input.buffer()->data() == original && !fragments);
+  ZuCheck(input.buffer().ptr() != original && !fragments);
   body = input.take();
-  ZuCheck(body->cspan() == "{\"x\":1}" && !fragments);
+  ZuCheck(body->allocator()->type == Zi::IOBufType::App &&
+    body->cspan() == "{\"x\":1}" && !fragments);
 }
 
 static void httpInputTest()
@@ -402,7 +403,6 @@ struct WSFixture : public Zjrpc::WSIO<WSFixture> {
     WSFixture *app() { return owner; }
     Link &state() { return *this; }
     Link &channel() { return *this; }
-    auto rxBufType() const { return Zi::IOBufType::App; }
     void close(unsigned code) { closeCode = code; }
   };
 

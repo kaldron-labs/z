@@ -13,6 +13,6 @@ LDADD = $(top_builddir)/ztcp/src/libZtcp.la $(top_builddir)/zutcp/src/libZutcp.l
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = zutcpclient zutcpserver
-zutcpclient_SOURCES = zutcpclient.cc
-zutcpserver_SOURCES = zutcpserver.cc
+noinst_PROGRAMS = zutcp zutcpd
+zutcp_SOURCES = zutcp.cc
+zutcpd_SOURCES = zutcpd.cc

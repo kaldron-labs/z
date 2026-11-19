@@ -489,23 +489,19 @@ void testCongestionControl()
 {
   ZuTestScope(testCongestionControl);
   ZiMultiplex mx{HubFixture::mxParams()};
-  ZmRef<HubApp> appRef = new HubApp{&mx};
-  auto &app = *appRef;
-  ZuCHECK(ZutcpTest::Params{}.congestionControl() &&
-      Zutcp::InstanceParams{}.congestionControl && app.congestionControl(),
+  ZuCHECK(ZutcpTest::Params{}.congestionControl() && Zutcp::InstanceParams{}.congestionControl,
     "congestion control must remain enabled by default for both configuration paths");
   for (bool enabled : {true, false}) for (bool ecn : {true, false}) {
+    ZmRef<HubApp> app = new HubApp{&mx};
     auto params = ZutcpTest::Params{&mx}.congestionControl(enabled).ecn(ecn);
-    bool ok = app.init(params);
+    bool ok = app->init(params);
     ZuCHECK(ok && params.congestionControl() == enabled && params.ecn() == ecn &&
-	app.congestionControl() == enabled && app.ecn() == (ecn && enabled),
+	app->congestionControl() == enabled && app->ecn() == (ecn && enabled),
       "Instance must retain congestion control and suppress ECN when it is disabled");
     params.congestionControl(!enabled).ecn(!ecn);
-    ZuCHECK(app.congestionControl() == enabled && app.ecn() == (ecn && enabled),
-      "subsequent parameter changes must not mutate initialized transport policy");
-    ZuCHECK(ZutcpTest::Instance::apply(app, Zutcp::InstanceParams{}).is<void>() &&
-        app.congestionControl() && !app.ecn(),
-      "explicit stopped configuration restores default policy");
+    ZuCHECK(!app->init(params) && app->congestionControl() == enabled &&
+        app->ecn() == (ecn && enabled),
+      "conflicting stopped configuration must preserve the initialized policy");
   }
 }
 

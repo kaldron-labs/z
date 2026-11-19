@@ -154,12 +154,11 @@ static bool service(
       s.nThreads(6).thread(6, [](auto &t) { t.isolated(true); });
       for (unsigned i = 1; i <= 4; ++i) s.thread(i, [](auto &t) { t.isolated(1); });
     })};
-  ZmRef<Zutcp::Instance> stack;
+  Zutcp::Instance *stack = nullptr;
   if (native) {
-    stack = ZutcpTest::makeInstance(&mx, {.interface = interface, .txSid = 6});
-    mx.plugin(stack);
-    auto configured = ZutcpTest::Instance::apply(*stack, {.rxRetainFramesPerCxn = 64});
-    if (configured.is<ZeException>()) return false;
+    auto instance = ZutcpTest::makeInstance(&mx, interface, 6, {.rxRetainFramesPerCxn = 64});
+    stack = instance.ptr();
+    mx.plugin(ZuMv(instance));
   }
 #ifdef ZUTCP_APP_TLS
   ZuCSpan alpn[] = {"zutcp-test"};

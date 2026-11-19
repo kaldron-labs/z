@@ -14,7 +14,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuLib.hh>
 
-#include <zlib/ZmScheduler.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZmRef.hh>
 
 #include <zlib/ZePlatform.hh>
@@ -104,28 +104,26 @@ static void testForeign()
   ZuCheckRT(attached, log_("fixture attaches an independent owner: ", error));
   if (!attached) return;
   auto instance = Zxdp::instance(Zxdp::Type::Xdp);
-  auto rx = instance->bufPool(8, 1514);
-  auto tx = instance->bufPool(1, 128);
+  auto rx = instance->bufPool(Zi::IOBufType::Rx, 8, 1514);
+  auto tx = instance->bufPool(Zi::IOBufType::TxTCP, 1, 128);
   Zxdp::Params config(
     Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
   auto &params = config.p<Zxdp::Xdp::Params>();
   params.ifindex = ifindex;
-  params.txPools.pushNode(tx.ptr());
-  params.rxPool = rx;
-  params.rx = [](uint8_t *, unsigned) { };
-  ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,
-    [&params](auto &thread) { thread = params.txThread; })};
-  params.scheduler = &scheduler;
-  params.txSid = 1;
-  bool started = scheduler.start();
-  ZuCheckRT(started);
-  if (!started) { attachment.detach(); return; }
-  auto initialized = instance->init(config);
-  bool activated = initialized.is<void>() && instance->start();
-  error = initialized.is<ZeException>() ? initialized.p<ZeException>() : instance->error();
+  params.txSid = 3;
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+    s.thread(3, [](auto &t) { t.isolated(true); });
+  })};
+  Zi::IOBufPoolList pools;
+  pools.pushNode(tx.ptr());
+  auto initialized = instance->init(&mx, config);
+  auto allocated = initialized.is<void>() ? instance->alloc(rx, pools) : initialized;
+  bool started = allocated.is<void>() && mx.start();
+  bool activated = started && instance->start([](uint8_t *, unsigned) { });
+  error = allocated.is<ZeException>() ? allocated.p<ZeException>() : instance->error();
   auto link = Zxdp::Xdp::queryLink(ifindex);
   if (link.is<ZeException>()) error = link.p<ZeException>();
-  ZuCheckRT(!activated && !instance->ready() &&
+  ZuCheckRT(started && !activated && !instance->ready() && instance->allocated() &&
       link.is<Zxdp::Xdp::LinkState>() &&
       (link.p<Zxdp::Xdp::LinkState>().drvID == foreign.id() ||
 	link.p<Zxdp::Xdp::LinkState>().skbID == foreign.id()),
@@ -135,7 +133,7 @@ static void testForeign()
     instance->final();
     instance = nullptr;
   }
-  ZuCheckRT(scheduler.stop());
+  if (started) ZuCheckRT(mx.stop());
   auto detached = attachment.detach();
   if (detached.is<ZeException>()) error = detached.p<ZeException>();
   ZuCheckRT(detached.is<void>(), log_("foreign owner retires its own attachment: ", error));

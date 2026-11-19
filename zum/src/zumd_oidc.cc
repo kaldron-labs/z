@@ -1659,7 +1659,7 @@ public:
     m_tls.rxAllocator(TLS::registerRx(mx))
       .txAllocator(TLS::registerTx(mx))
       .txPacketAllocator(TLS::registerTxPacket(mx))
-      .socketRxAllocator(mx->allocator<Zi::IOBufType::RxTCP, ZiIOBuf,
+      .socketRxAllocator(mx->allocator<Zi::IOBufType::Rx, ZiIOBuf,
         Ztls_::RxPacketCapacity>());
     m_resolverOwned = !ZiResolver::instance()->initialized();
     if (m_resolverOwned)

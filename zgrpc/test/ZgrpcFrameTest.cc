@@ -315,20 +315,25 @@ static void rich()
 static void fragmentedOwner()
 {
   ZuTestScope(fragmentedOwner);
-  ZmRef<ZiIOBuf> first = ZgrpcTest::Allocator<Pool>::get()->allocBuf();
-  uint8_t prefix[PrefixSize];
-  framePrefix(prefix, 6);
-  first->append(ZuBSpan{prefix});
-  first->append(ZuBSpan{"ab"});
-  auto identity = first.ptr();
-  auto input = first->cspan();
-  FrameRx parser;
-  Frame out;
-  unsigned used;
-  ZuCheck(parser.feed(input, ZuMv(first), used, out, UINT_MAX, true) == FrameResult::More);
-  ZuCheck(used == PrefixSize + 2 && !out.backing);
-  ZuCheck(parser.feed(ZuBSpan{"cdef"}, {}, used, out) == FrameResult::Message);
-  ZuCheck(out.backing.ptr() == identity && out.bytes == ZuBSpan{"abcdef"});
+  ZiMultiplex mx;
+  for (auto allocator : {ZgrpcTest::Allocator<Pool>::get(), mx.allocator<Zi::IOBufType::Rx>()}) {
+    auto first = allocator->allocBuf();
+    uint8_t prefix[PrefixSize];
+    framePrefix(prefix, 6);
+    first->append(ZuBSpan{prefix});
+    first->append(ZuBSpan{"ab"});
+    auto identity = first.ptr();
+    auto input = first->cspan();
+    FrameRx parser;
+    Frame out;
+    unsigned used;
+    ZuCheck(parser.feed(input, ZuMv(first), used, out, UINT_MAX, true) == FrameResult::More);
+    ZuCheck(used == PrefixSize + 2 && !out.backing);
+    ZuCheck(parser.feed(ZuBSpan{"cdef"}, {}, used, out) == FrameResult::Message);
+    ZuCheck(out.backing->allocator()->type == Zi::IOBufType::App &&
+      (out.backing.ptr() == identity) == (allocator->type == Zi::IOBufType::App) &&
+      out.bytes == ZuBSpan{"abcdef"});
+  }
 }
 
 int main(int argc, char **argv)

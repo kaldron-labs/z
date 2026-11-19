@@ -300,6 +300,34 @@ static void testTCPOptionWire()
   }
 }
 
+static void testUDP()
+{
+  ZuTestScopeRT(testUDP);
+  for (bool ipv6 : {false, true}) {
+    auto route = path(ipv6);
+    uint8_t frame[1600]{};
+    auto head = Zutcp::udpHead(route.local.type());
+    memcpy(frame + head, "abcde", 5);
+    auto wire = Zutcp::writeUDP(frame, sizeof(frame), route, 2381, 49252, 5, 0xab, 17);
+    Zutcp::IPView ip;
+    Zutcp::UDPView udp;
+    bool parsed = wire && Zutcp::readIP({frame, wire}, ip) && Zutcp::readUDP(ip, udp);
+    ZuCheckRT(parsed && ip.local == route.remote && ip.remote == route.local &&
+      ip.tos == 0xab && udp.srcPort == 2381 && udp.dstPort == 49252 &&
+      udp.payload == "abcde" && udp.payload.data() == frame + head &&
+      frame[ipv6 ? 21 : 22] == 17);
+    frame[head + 4] ^= 1;
+    ZuCheckRT(!Zutcp::readUDP(ip, udp));
+    frame[head - 2] = frame[head - 1] = 0;
+    ZuCheckRT(Zutcp::readUDP(ip, udp) == !ipv6);
+    wire = Zutcp::writeUDP(frame, sizeof(frame), route, 2381, 49252, 0);
+    ZuCheckRT(wire >= 60 && Zutcp::readIP({frame, wire}, ip) && Zutcp::readUDP(ip, udp) &&
+      !udp.payload.length());
+    unsigned tooLarge = route.mtu - head + 15;
+    ZuCheckRT(!Zutcp::writeUDP(frame, sizeof(frame), route, 2381, 49252, tooLarge));
+  }
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -311,4 +339,5 @@ int main(int argc, char **argv)
   ZuTestCall(testTCPGeometry);
   ZuTestCall(testTCPOptions);
   ZuTestCall(testTCPOptionWire);
+  ZuTestCall(testUDP);
 }

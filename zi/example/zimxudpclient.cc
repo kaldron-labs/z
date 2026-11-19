@@ -191,7 +191,7 @@ public:
   unsigned nMessages() const { return m_nMessages; }
 
 private:
-  RxAllocator *m_rx = allocator<Zi::IOBufType::RxUDP, ZiRxBuf, ZiIOBuf_DefltSize>();
+  RxAllocator *m_rx = allocator<Zi::IOBufType::Rx, ZiRxBuf, ZiIOBuf_DefltSize>();
   RxAllocator *m_frameAllocator = allocator<Zi::IOBufType::App, ZiRxBuf, ZiIOBuf_DefltSize>();
   TxAllocator *m_allocator = allocator<Zi::IOBufType::TxUDP, ZiIOBuf, ZiIOBuf_DefltSize>();
   ZiIP		m_localIP;

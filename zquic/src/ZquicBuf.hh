@@ -58,7 +58,7 @@ Zi::IOBufAllocator *plaintextAllocator(ZiMultiplex *mx) {
     Zi::IOBufType::T Type, typename Buf, unsigned Size, unsigned Align,
     typename HeapID, unsigned VHMaxSize, auto Grow
   >(Zi::IOBufBuiltinAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow> *) {
-    ZuAssert(Type == Zi::IOBufType::RxTLS || Type == Zi::IOBufType::TxTLS);
+    ZuAssert(Type == Zi::IOBufType::App || Type == Zi::IOBufType::TxTLS);
     return mx->allocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>();
   }(static_cast<Policy *>(nullptr));
 }
@@ -69,7 +69,7 @@ template <
   unsigned MaxSize = ZiIOBuf_DefltVHMaxSize,
   ZuString HeapID = "Zquic.Pkt.Rx">
 Zi::IOBufAllocator *pktRxAllocator(ZiMultiplex *mx) {
-  return mx->allocator<Zi::IOBufType::RxUDP, Zquic_::BufNode,
+  return mx->allocator<Zi::IOBufType::Rx, Zquic_::BufNode,
     Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>();
 }
 

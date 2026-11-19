@@ -121,7 +121,7 @@ void fragmentedRecord(ptls_cipher_suite_t *cipher, unsigned step, bool corrupt, 
   Ztls::Pico::RecordSink writer{packetOutput, &pool, 71, nullptr,
     [](void *, ZmRef<ZiIOBuf>) { return 0; }};
   auto recordOutput = writer.sink();
-  auto input = mx.allocator<Zi::IOBufType::RxTCP, ZiRxQueue::Node, 31>();
+  auto input = mx.allocator<Zi::IOBufType::Rx, ZiRxQueue::Node, 31>();
   unsigned acquired = 0;
   int result = PTLS_ERROR_IN_PROGRESS;
   bool spansValid = true, unpublished = true;

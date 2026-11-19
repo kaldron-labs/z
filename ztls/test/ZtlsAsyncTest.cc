@@ -310,9 +310,9 @@ void testPreparedAllocators()
   auto rx = mx.allocator<Zi::IOBufType::RxTLS, ZiRxQueue::Node, Ztls_::RxRecordCapacity>();
   auto tx = mx.allocator<Zi::IOBufType::TxTLS, ZiIOBuf, Ztls_::TxRecordCapacity>();
   auto txPacket = mx.allocator<Zi::IOBufType::TxTCP, Ztls::TxPacket, 1514>();
-  auto socket = mx.allocator<Zi::IOBufType::RxTCP, ZiRxQueue::Node, Ztls_::RxPacketCapacity>();
+  auto socket = mx.allocator<Zi::IOBufType::Rx, ZiRxQueue::Node, Ztls_::RxPacketCapacity>();
   auto wrong = mx.allocator<Zi::IOBufType::App, ZiRxQueue::Node>();
-  auto otherSocket = other.allocator<Zi::IOBufType::RxTCP>();
+  auto otherSocket = other.allocator<Zi::IOBufType::Rx>();
   auto params = [&mx, rx, tx, txPacket]() {
     return Ztls::HubParams{&mx}.rxAllocator(rx).txAllocator(tx).txPacketAllocator(txPacket)
       .errorFn(Ztls::ErrorFn{[](ZeException) { }});
@@ -343,7 +343,13 @@ void testPreparedAllocators()
     }
   }
 
-  // A later origin reuses all four roles without registering on a running Mx.
+  ZuCheck(!mx.alloc().is<ZeException>());
+  {
+    HubApp app;
+    ZuCheck(!app.init(params()));
+  }
+
+  // A later origin reuses all four allocators after registration closes.
   bool started = mx.start();
   ZuCheck(started);
   if (!started) return;

@@ -179,17 +179,19 @@ void run()
   }
 
   ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex retryMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
 
   {
+    ZiMultiplex emptyMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
     Zdb empty;
     auto emptyCf = ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()};
     emptyCf.nShards = 1;
     emptyCf.threads.length(0);
-    empty.init(ZuMv(emptyCf), &mx, {}, new zdbtest::Store{});
-    ZuCheck(mx.start());
+    empty.init(ZuMv(emptyCf), &emptyMx, {}, new zdbtest::Store{});
+    ZuCheck(emptyMx.start());
     ZuCheck(empty.start());
     ZuCheck(empty.stop());
-    ZuCheck(mx.stop());
+    ZuCheck(emptyMx.stop());
     empty.final();
   }
 
@@ -236,8 +238,8 @@ void run()
 
   auto init = [
     dbNode = configFields.zdb.p<const ZfCf::AnyNode *>(),
-    db = db.ptr(), mx = &mx, store
-  ]() mutable {
+    db = db.ptr(), store
+  ](ZiMultiplex *mx) mutable {
     auto dbCf = ZdbCf{dbNode};
     dbCf.tableCf("p");
     db->init(ZuMv(dbCf), mx, ZdbHandler{
@@ -245,7 +247,7 @@ void run()
     }, store);
   };
 
-  init();
+  init(&mx);
   ZuCheck(db->nShards() == 2);
   ZuCheck(db->shardSID(0) == mx.sid("zdb0"));
   ZuCheck(db->shardSID(1) == mx.sid("zdb1"));
@@ -642,11 +644,11 @@ void run()
   ZuCheck(watch.dbDelKeyOK);
   ZuCheck(Ztc::DBMgr::all({[](Ztc::DB *) { }}) == 0);
 
-  init();
+  init(&retryMx);
   orders = db->initTable<Order>("o");
-  ZuCheck(mx.start());
+  ZuCheck(retryMx.start());
   orders = {};
-  ZuCheck(mx.stop());
+  ZuCheck(retryMx.stop());
   db->final();
 
   ZuCheck(watch.dbAdds == 2);
@@ -659,13 +661,14 @@ void run()
   Ztc::DBMgr::unwatch();
 
   {
+    ZiMultiplex badMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
     Zdb bad;
     auto badCf = ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()};
     badCf.nShards = 1;
     badCf.threads.length(0);
     bool failed = false;
     try {
-      bad.init(ZuMv(badCf), &mx, {}, store);
+      bad.init(ZuMv(badCf), &badMx, {}, store);
     } catch (const ZeException &) {
       failed = true;
     }

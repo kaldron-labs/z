@@ -280,13 +280,12 @@ struct FrameAllocator : Zi::IOBufBuiltinAllocator<
 };
 
 struct NetworkAllocator : Zi::IOBufBuiltinAllocator<
-  Zi::IOBufType::RxTCP, RxBuf, 16, ZiIOBuf_DefltAlign,
+  Zi::IOBufType::Rx, RxBuf, 16, ZiIOBuf_DefltAlign,
   ZuStringT<"ZiRxTest.Packet">, 128> {
   bool stubs, reject = false, valid = true;
   unsigned allocations = 0, attached = 0, retired = 0;
 
-  NetworkAllocator(bool stubs_, bool udp) : stubs{stubs_} {
-    if (udp) type = Zi::IOBufType::RxUDP;
+  explicit NetworkAllocator(bool stubs_) : stubs{stubs_} {
     if (stubs) { size = 16; headRoom = 3; tailRoom = 4; }
   }
   ZmRef<ZiIOBuf> allocBuf(void *owner, uint32_t len = 0, uint32_t mps = ~uint32_t(0)) override {
@@ -404,10 +403,11 @@ void testConnectionFrames(bool stubs, bool synchronous, bool udp)
   ZuTestScopeRT(testConnectionFrames);
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(2); })
     .rxThread(1).txThread(2)};
-  ZmRef<RxPlugin> plugin = new RxPlugin{&mx};
-  mx.plugin(plugin);
+  auto plugin = new RxPlugin{&mx};
+  ZmRef<ZiMxPlugin> transport = plugin;
+  mx.plugin(ZuMv(transport));
   FrameAllocator app;
-  NetworkAllocator net{stubs, udp};
+  NetworkAllocator net{stubs};
   CxnHarness cxn{&mx, &app, &net, udp};
   bool started = mx.start();
   ZuCheckRT(started);

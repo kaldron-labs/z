@@ -49,14 +49,13 @@ class ZgrpcAPI FrameRx {
 public:
   explicit FrameRx(unsigned limit = Default::MaxMessageBytes) : m_limit{limit} { }
   void reset(unsigned limit);
-  void bufType(Zi::IOBufType::T type) { m_bufType = type; }
 
   // Consume at most one message and budget bytes; caller resumes the remaining
   // span in a bounded scheduler turn. A supplied backing must keep this slice
   // immutable until all returned Frame references are released. Without backing,
   // even a contiguous payload is copied into a consumer-owned pooled buffer.
-  // exclusive permits consuming backing metadata for final fragmented assembly;
-  // callers grant it only when no other reader retains any part of that buffer.
+  // exclusive permits reusing application backing for fragmented assembly
+  // when no other reader retains any part of that buffer.
   FrameResult::T feed(ZuBSpan, ZmRef<ZiIOBuf>, unsigned &used, Frame &,
     unsigned budget = UINT_MAX, bool exclusive = false);
   bool end();
@@ -66,7 +65,6 @@ public:
 private:
   FrameResult::T fail(FrameError::T error);
 
-  Zi::IOBufType::T	m_bufType = Zi::IOBufType::App;
   unsigned		m_limit;
   uint8_t		m_prefix[PrefixSize];
   unsigned		m_prefixLen = 0;

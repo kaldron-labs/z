@@ -73,7 +73,7 @@ public:
   using ZmNHeap<Cxn>::operator delete;
   Cxn(ClientApp *app) : Base{app} { }
   void connected(Ztcp::Connected) {
-    std::cerr << "backend=AF_XDP role=client connected=1\n" << std::flush;
+    std::cerr << "transport=AF_XDP role=client connected=1\n" << std::flush;
     auto tx = txStream();
     tx << *app()->request;
     if (!tx.flush()) app()->result->fail("native client send failed");
@@ -112,7 +112,7 @@ public:
   unsigned nAccepts() const { return m_count; }
   ZiConnection *accepted(const ZiCxnInfo &);
   void listening(const ZiListenInfo &) {
-    std::cerr << "backend=AF_XDP role=server ready=1\n" << std::flush;
+    std::cerr << "transport=AF_XDP role=server ready=1\n" << std::flush;
   }
   void listenFailed(bool) { m_result->fail("native listen failed"); }
 private:
@@ -152,7 +152,7 @@ public:
     ServerCxn *m_link;
   };
   void connected(Ztcp::Connected) {
-    std::cerr << "backend=AF_XDP role=server connected=1\n" << std::flush;
+    std::cerr << "transport=AF_XDP role=server connected=1\n" << std::flush;
   }
   int process(Ztcp::RxStream &rx) {
     auto length = rx.length();
@@ -229,16 +229,22 @@ int main(int argc, char **argv)
     s.nThreads(Sender);
     for (unsigned i = 1; i <= Sender; ++i) s.thread(i, [](auto &t) { t.isolated(true); });
   })};
-  ZmRef<Zutcp::Instance> instance = new Zutcp::Instance{&mx};
-  auto initializedBackend = instance->init({.interface = interface, .txSid = Sender});
-  if (initializedBackend.is<ZeException>()) {
-    ZiLOG(Error, "zutcppair", ([error = ZuMv(initializedBackend.p<ZeException>())](auto &out) {
-      out << "backend initialization: " << error;
-    }));
+  auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
+  Zxdp::Params xdpParams{Zxdp::Xdp::Params{.ifindex = interface, .txSid = Sender}};
+  auto opened = xdp->init(&mx, xdpParams);
+  if (opened.is<ZeException>()) {
+    ZiLogEvent(ZuMv(opened).p<ZeException>());
     ZiLog::stop();
     return 1;
   }
-  mx.plugin(instance);
+  ZmRef<Zutcp::Instance> instance = new Zutcp::Instance;
+  auto configured = instance->init(&mx, ZuMv(xdp), {});
+  if (configured.is<ZeException>()) {
+    ZiLogEvent(ZuMv(configured).p<ZeException>());
+    ZiLog::stop();
+    return 1;
+  }
+  mx.plugin(ZuMv(instance));
   Result result{&mx};
   if (server) {
     ServerApp app{&result, address, uint16_t(port), count};
@@ -259,7 +265,7 @@ int main(int argc, char **argv)
     bool initialized = app.init(ZuMv(params));
     if (!initialized || !mx.start()) result.fail("native client start");
     else {
-      std::cerr << "backend=AF_XDP role=client ready=1\n" << std::flush;
+      std::cerr << "transport=AF_XDP role=client ready=1\n" << std::flush;
       for (unsigned i = 0; i < count && !result.failed(); ++i) {
 	ZmRef<ClientApp::Cxn> link = new ClientApp::Cxn{&app};
 	link->connect(Ztcp::Host{argv[3]}, uint16_t(port));
@@ -270,7 +276,7 @@ int main(int argc, char **argv)
     if (initialized) app.final();
     mx.stop();
   }
-  std::cerr << "backend=AF_XDP stopped=1\n" << std::flush;
+  std::cerr << "transport=AF_XDP stopped=1\n" << std::flush;
   ZiLog::stop();
   return result.failed() ? 1 : 0;
 }

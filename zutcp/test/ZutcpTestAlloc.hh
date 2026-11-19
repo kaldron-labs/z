@@ -32,7 +32,7 @@ template <
   unsigned MaxSize = ZiIOBuf_DefltVHMaxSize,
   ZuString HeapID = "Zutcp.Pkt.Rx">
 Zi::IOBufAllocator *pktRxAllocator(ZiMultiplex *mx) {
-  return mx->allocator<Zi::IOBufType::RxTCP, Zutcp_::BufNode,
+  return mx->allocator<Zi::IOBufType::Rx, Zutcp_::BufNode,
     Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>();
 }
 

@@ -60,7 +60,6 @@ public:
     m_state = Open;
   }
 
-  void bufType(Zi::IOBufType::T type) { m_bufType = type; }
   int state() const { return m_state; }
   bool complete() const {
     return m_state == Open && !m_line.length() && !m_haveData;
@@ -157,22 +156,13 @@ private:
     }
   }
 
-  template <Zi::IOBufType::T Type>
   static ZmRef<ZiIOBuf> allocData_() {
     static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Type, ZiIOBuf,
+    static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf,
       ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.SSE.Input">>();
     return allocator->allocBuf();
   }
-  ZmRef<ZiIOBuf> allocData_() {
-    switch (m_bufType) {
-      case Zi::IOBufType::RxTCP: return allocData_<Zi::IOBufType::RxTCP>();
-      case Zi::IOBufType::RxTLS: return allocData_<Zi::IOBufType::RxTLS>();
-      default: return allocData_<Zi::IOBufType::App>();
-    }
-  }
 
-  Zi::IOBufType::T m_bufType = Zi::IOBufType::App;
   SSELine	m_line;
   ZmRef<ZiIOBuf>	m_data;
   bool		m_haveData = false;

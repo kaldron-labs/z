@@ -28,7 +28,7 @@ public:
   void wait() { m_done.wait(); }
   void setError(const char *msg) {
     if (!m_error.xch(1))
-      ZiLOG(Error, "zutcpclient", ([msg = ZeString{msg}](auto &out) {
+      ZiLOG(Error, "zutcp", ([msg = ZeString{msg}](auto &out) {
 	out << "error: " << msg;
       }));
   }
@@ -81,7 +81,7 @@ private:
 
 static void usage()
 {
-  std::cerr << "Usage: zutcpclient INTERFACE SERVER PORT [REQUEST]\n" << std::flush;
+  std::cerr << "Usage: zutcp INTERFACE SERVER PORT [REQUEST]\n" << std::flush;
   exit(1);
 }
 
@@ -93,7 +93,7 @@ int main(int argc, char **argv)
   if (!interface || !port || port > 65535) usage();
   ZuCSpan request = argc == 5 ? argv[4] : "zutcp-example";
 
-  ZiLog::init("zutcpclient");
+  ZiLog::init("zutcp");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
@@ -101,16 +101,22 @@ int main(int argc, char **argv)
     s.nThreads(5);
     for (unsigned i = 1; i <= 5; ++i) s.thread(i, [](auto &t) { t.isolated(true); });
   })};
-  ZmRef<Zutcp::Instance> instance = new Zutcp::Instance{&mx};
-  auto initializedBackend = instance->init({.interface = interface, .txSid = 5});
-  if (initializedBackend.is<ZeException>()) {
-    ZiLOG(Error, "zutcpclient", ([error = ZuMv(initializedBackend.p<ZeException>())](auto &out) {
-      out << "backend initialization: " << error;
-    }));
+  auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
+  Zxdp::Params xdpParams{Zxdp::Xdp::Params{.ifindex = interface, .txSid = 5}};
+  auto opened = xdp->init(&mx, xdpParams);
+  if (opened.is<ZeException>()) {
+    ZiLogEvent(ZuMv(opened).p<ZeException>());
     ZiLog::stop();
     return 1;
   }
-  mx.plugin(instance);
+  ZmRef<Zutcp::Instance> instance = new Zutcp::Instance;
+  auto configured = instance->init(&mx, ZuMv(xdp), {});
+  if (configured.is<ZeException>()) {
+    ZiLogEvent(ZuMv(configured).p<ZeException>());
+    ZiLog::stop();
+    return 1;
+  }
+  mx.plugin(ZuMv(instance));
   App app{request};
   Ztcp::ClientParams params{&mx, "3", "4"};
   params.rxAllocator(App::Cxn::rxAllocator(&mx)).txAllocator(App::Cxn::txAllocator(&mx));

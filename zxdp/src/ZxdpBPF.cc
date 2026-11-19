@@ -15,6 +15,7 @@
 #include <arpa/inet.h>
 #include <linux/if_link.h>
 #include <linux/if_arp.h>
+#include <linux/membarrier.h>
 #include <linux/rtnetlink.h>
 
 #include <zlib/Zu_aton.hh>
@@ -208,6 +209,7 @@ BPFProgram::~BPFProgram() { reset(); }
 void BPFProgram::reset()
 {
   if (m_fd >= 0) { close(m_fd); m_fd = -1; }
+  if (m_barrier >= 0) { close(m_barrier); m_barrier = -1; }
   if (m_xsk >= 0) { close(m_xsk); m_xsk = -1; }
   m_id = 0;
 }
@@ -223,6 +225,11 @@ ZuUnion<void, ZeException> BPFProgram::load(unsigned queues, const Filter &filte
   attr.max_entries = queues;
   m_xsk = bpfCall(BPF_MAP_CREATE, attr);
   if (m_xsk < 0) return fail(failed<"XSK map create">(ZeLastError));
+  attr.map_type = BPF_MAP_TYPE_ARRAY_OF_MAPS;
+  attr.max_entries = 1;
+  attr.inner_map_fd = m_xsk;
+  m_barrier = bpfCall(BPF_MAP_CREATE, attr);
+  if (m_barrier < 0) return fail(failed<"XSK redirect barrier map create">(ZeLastError));
   auto built = classifierCode(m_xsk, filter);
   if (built.is<ZeException>()) return fail(ZuMv(built).p<ZeException>());
   const auto &code = built.p<BPFCode>();
@@ -280,6 +287,26 @@ ZuUnion<void, ZeException> BPFProgram::quiesce(unsigned queue)
   attr.key = uintptr_t(&queue);
   if (bpfCall(BPF_MAP_DELETE_ELEM, attr) < 0 && errno != ENOENT)
     return failed<"remove XSK destination">(ZeLastError);
+  return {};
+}
+
+ZuUnion<void, ZeException> BPFProgram::synchronize()
+{
+  // Linux waits for an expedited RCU grace period before completing a
+  // map-in-map update. After removing the XSK entries this drains previously
+  // selected redirects, including the driver's deferred descriptor flush.
+  uint32_t key = 0;
+  bpf_attr attr{};
+  attr.map_fd = m_barrier;
+  attr.key = uintptr_t(&key);
+  attr.value = uintptr_t(&m_xsk);
+  if (bpfCall(BPF_MAP_UPDATE_ELEM, attr) < 0) {
+    auto error = ZeLastError;
+    // Linux implements the non-expedited global command with synchronize_rcu.
+    // It is unavailable on nohz_full systems, where the BPF path is preferred.
+    if (syscall(SYS_membarrier, MEMBARRIER_CMD_GLOBAL, 0, 0) < 0)
+      return failed<"drain XSK redirect readers">(error);
+  }
   return {};
 }
 
@@ -364,29 +391,36 @@ static ZuUnion<LinkState, ZeException> parseLink(const nlmsghdr *header, ZeError
   return state;
 }
 
-static ZuUnion<void, ZeException> transact(
-  LinkRequest &request, LinkState *state, bool *rejected = nullptr, ZeError *native = nullptr)
+ZuUnion<int, ZeException> openLink()
 {
-  if (rejected) *rejected = false;
-  if (native) *native = ZeOK;
   int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
-  if (fd < 0) {
-    auto error = ZeLastError;
-    if (native) *native = error;
-    return failed<"rtnetlink socket">(error);
-  }
-  auto fail = [fd, native](ZeException exception, ZeError error = ZeOK) {
-    if (native && error) *native = error;
-    close(fd);
-    return exception;
-  };
-  // Setup is a control-path transaction, never a packet-service wait. Bound a
-  // missing kernel response so failed startup remains diagnosable.
+  if (fd < 0) return failed<"rtnetlink socket">(ZeLastError);
   timeval timeout{2, 0};
   if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
     auto error = ZeLastError;
-    return fail(failed<"rtnetlink receive timeout">(error), error);
+    close(fd);
+    return failed<"rtnetlink receive timeout">(error);
   }
+  return fd;
+}
+
+static ZuUnion<void, ZeException> transact(
+  LinkRequest &request, LinkState *state, bool *rejected = nullptr, ZeError *native = nullptr,
+  int fd = -1)
+{
+  if (rejected) *rejected = false;
+  if (native) *native = ZeOK;
+  bool owned = fd < 0;
+  if (fd < 0) {
+    auto opened = openLink();
+    if (opened.is<ZeException>()) return ZuMv(opened).p<ZeException>();
+    fd = opened.p<int>();
+  }
+  auto fail = [fd, owned, native](ZeException exception, ZeError error = ZeOK) {
+    if (native && error) *native = error;
+    if (owned) close(fd);
+    return exception;
+  };
   sockaddr_nl peer{};
   peer.nl_family = AF_NETLINK;
   if (sendto(fd, &request, request.header.nlmsg_len, 0,
@@ -432,12 +466,12 @@ static ZuUnion<void, ZeException> transact(
 	  ZeError error{-result};
 	  return fail(failed<"rtnetlink link operation">(error), error);
 	}
-	if (!state) { close(fd); return {}; }
+	if (!state) { if (owned) close(fd); return {}; }
       } else if (state && header->nlmsg_type == RTM_NEWLINK) {
 	auto parsed = parseLink(header, native);
 	if (parsed.is<ZeException>()) return fail(ZuMv(parsed).p<ZeException>());
 	*state = parsed.p<LinkState>();
-	close(fd);
+	if (owned) close(fd);
 	return {};
       }
     }
@@ -445,7 +479,7 @@ static ZuUnion<void, ZeException> transact(
   }
 }
 
-static ZuUnion<LinkState, ZeException> queryLink_(unsigned ifindex, ZeError *native)
+static ZuUnion<LinkState, ZeException> queryLink_(unsigned ifindex, ZeError *native, int fd = -1)
 {
   if (!ifindex || ifindex > INT_MAX) {
     ZeError error{EINVAL};
@@ -460,14 +494,14 @@ static ZuUnion<LinkState, ZeException> queryLink_(unsigned ifindex, ZeError *nat
   request.info.ifi_family = AF_UNSPEC;
   request.info.ifi_index = ifindex;
   LinkState state;
-  auto result = transact(request, &state, nullptr, native);
+  auto result = transact(request, &state, nullptr, native, fd);
   if (result.is<ZeException>()) return ZuMv(result).p<ZeException>();
   return state;
 }
 
-ZuUnion<LinkState, ZeException> queryLink(unsigned ifindex)
+ZuUnion<LinkState, ZeException> queryLink(unsigned ifindex, int fd)
 {
-  return queryLink_(ifindex, nullptr);
+  return queryLink_(ifindex, nullptr, fd);
 }
 
 ZuUnion<void, ZeException> setXDP(

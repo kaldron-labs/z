@@ -886,8 +886,14 @@ protected:
       m_cryptoTxAllocator = plaintextAllocator<CryptoTxBufAlloc<>>(m_mx);
       m_tlsOutputAllocator = plaintextAllocator<
 	CryptoTxBufAlloc<Crypto::TLSOutputMax, Crypto::TLSOutputMax>>(m_mx);
-      m_streamRxAllocator = m_mx->allocator<Zi::IOBufType::RxTLS>();
+      m_streamRxAllocator = m_mx->allocator<Zi::IOBufType::App>();
       m_streamTxAllocator = plaintextAllocator<StreamTxBufAlloc<>>(m_mx);
+      if (!m_rxPktAllocator || !m_txPktAllocator || !m_cryptoRxAllocator ||
+	  !m_cryptoTxAllocator || !m_tlsOutputAllocator || !m_streamRxAllocator ||
+	  !m_streamTxAllocator) {
+	error_(ZeEXCEPT(Error, "Zquic", "cannot acquire multiplex allocator handles"));
+	return false;
+      }
       m_rxThread = thread_(params.rxThread(), m_mx->rxThread());
       m_txThread = thread_(params.txThread(), m_mx->txThread());
       m_asyncThread = params.asyncThread() ?

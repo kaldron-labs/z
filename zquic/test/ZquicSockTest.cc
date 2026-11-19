@@ -46,6 +46,20 @@ struct TestEndpoint : public Zquic_::Endpoint_<TestEndpoint> {
 
 
 
+struct SocketPool : ZmNHeap<SocketPool>, Zi::IOBufPool {
+friend inline ZuStringT<"Zquic.Test.SocketPool"> ZmNHeapID(SocketPool *);
+  using Heap = ZmVHeap<"Zquic.Test.SocketPacket", 64, 4096, ZiIOBuf_Align>;
+
+  SocketPool(Zi::IOBufType::T type, unsigned size_, unsigned align_, unsigned count_) :
+    Zi::IOBufPool{type} {
+    size = size_;
+    align = align_;
+    count = count_;
+  }
+  uint8_t *alloc() override { return static_cast<uint8_t *>(Heap::alloc(size)); }
+  void free(uint8_t *ptr) override { Heap::free(ptr, size); }
+};
+
 // Hold physical output while exercising the real ZiTx admission/completion path.
 struct HeldUDP : ZmNHeap<HeldUDP>, ZiMxPlugin {
 friend inline ZuStringT<"Zquic.HeldUDP"> ZmNHeapID(HeldUDP *);
@@ -55,8 +69,9 @@ friend inline ZuStringT<"Zquic.HeldUDP"> ZmNHeapID(HeldUDP *);
   ZiConnection *closing = nullptr;
   ZmFn<> beforeBind;
   explicit HeldUDP(ZiMultiplex *mx) : ZiMxPlugin{mx} { }
-  Zi::IOBufPool *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override {
-    return nullptr;
+  Zi::IOBufPool *allocator(
+    Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count) override {
+    return new SocketPool{type, size, align, count};
   }
   void start() override { mx()->pluginStarted({}); }
   void stop() override { mx()->pluginStopped({}); }
@@ -139,9 +154,10 @@ struct QueuedEndpoint {
     ZuTestScopeRT(queuedSendCompletion);
     ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(2); })
       .rxThread(1).txThread(2)};
+    auto provider = new HeldUDP{&mx};
+    ZmRef<ZiMxPlugin> transport = provider;
+    mx.plugin(ZuMv(transport));
     auto allocator = Zquic::pktTxAllocator(&mx);
-    ZmRef<HeldUDP> provider = new HeldUDP{&mx};
-    mx.plugin(provider);
     bool started = mx.start();
     ZuCheckRT(started, log_("synthetic UDP dispatcher start failed"));
     if (!started) return;
@@ -284,10 +300,11 @@ static void testPostedAdmission()
   using Cxn = Zquic_::EndpointCxn<TestEndpoint::Endpoint>;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(2); })
     .rxThread(1).txThread(2)};
+  auto provider = new HeldUDP{&mx};
+  ZmRef<ZiMxPlugin> transport = provider;
+  mx.plugin(ZuMv(transport));
   auto rxAllocator = Zquic::pktRxAllocator(&mx);
   auto txAllocator = Zquic::pktTxAllocator(&mx);
-  ZmRef<HeldUDP> provider = new HeldUDP{&mx};
-  mx.plugin(provider);
   TestEndpoint endpoint;
   ZuCheck(endpoint.init(&mx, rxAllocator, txAllocator));
   ZuCheck(mx.start());

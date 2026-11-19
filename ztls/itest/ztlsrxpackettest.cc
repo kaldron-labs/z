@@ -249,9 +249,9 @@ void workingPair(bool separateOwner, bool async = false, bool cancel = false)
   Server server{state};
   state.cliRx = Client::Link::rxAllocator(&mx);
   state.srvRx = Server::Link::rxAllocator(&mx);
-  auto cliInput = mx.allocator<Zi::IOBufType::RxTCP, Input, 23,
+  auto cliInput = mx.allocator<Zi::IOBufType::Rx, Input, 23,
     ZiIOBuf_DefltAlign, ZuStringT<"Ztls.RxPair.Cli">>();
-  auto srvInput = mx.allocator<Zi::IOBufType::RxTCP, Input, 97,
+  auto srvInput = mx.allocator<Zi::IOBufType::Rx, Input, 97,
     ZiIOBuf_DefltAlign, ZuStringT<"Ztls.RxPair.Srv">>();
   auto packets = mx.allocator<Zi::IOBufType::TxTCP, Ztls::TxPacket, 71>();
   auto owner = separateOwner ? "3" : "1";

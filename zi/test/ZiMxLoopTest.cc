@@ -238,7 +238,7 @@ private:
   }
 
 private:
-  RxAllocator *m_rx = allocator<Zi::IOBufType::RxTCP, ZiIOBuf, 4>();
+  RxAllocator *m_rx = allocator<Zi::IOBufType::Rx, ZiIOBuf, 4>();
   TxAllocator *m_tx = allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 4>();
   ZmAtomic<unsigned> m_registered = 0;
 	  ZmSemaphore		m_done;
@@ -363,7 +363,7 @@ private:
   }
 
 private:
-  RxAllocator *m_rx = allocator<Zi::IOBufType::RxUDP, ZiIOBuf, 4>();
+  RxAllocator *m_rx = allocator<Zi::IOBufType::Rx, ZiIOBuf, 4>();
   TxAllocator *m_tx = allocator<Zi::IOBufType::TxUDP, ZiIOBuf, 4>();
   ZmAtomic<unsigned> m_registered = 0;
   ZmSemaphore		m_done;
@@ -756,6 +756,95 @@ static void testUdpMPSIPv6()
   ZuCheck(mx.mpsOK_());
 }
 
+template <int Type> struct EndpointRxBuf : ZiIOBuf {
+  using ZiIOBuf::ZiIOBuf;
+};
+
+struct EndpointRxCheck {
+  ZiMultiplex	&mx;
+  Zi::IOBufAllocator *rx[ZiCxnType::N];
+  ZmSemaphore	done;
+  bool		listenerOK = false;
+  bool		connectedOK[ZiCxnType::N] = {};
+  bool		failed = false;
+
+  void fail(bool) {
+    failed = true;
+    done.post();
+  }
+
+  template <int Type>
+  ZiConnection *connected(const ZiCxnInfo &info) {
+    auto allocator = info.rxAllocator;
+    if (info.type == Type && allocator == rx[Type]) {
+      auto buf = allocator->allocBuf(this);
+      connectedOK[Type] = buf && buf->allocator() == allocator && buf->owner == this &&
+	dynamic_cast<EndpointRxBuf<Type> *>(buf.ptr()) && buf->builtin() && buf->data_();
+    }
+    done.post();
+    return nullptr;
+  }
+
+  void listening(const ZiListenInfo &info) {
+    listenerOK = info.rxAllocator == rx[ZiCxnType::TCPIn];
+    done.post();
+    mx.connect(
+      {this, ZmFnPtr<&EndpointRxCheck::connected<ZiCxnType::TCPOut>>{}},
+      {this, ZmFnPtr<&EndpointRxCheck::fail>{}},
+      info.ip, 0, info.ip, info.port, rx[ZiCxnType::TCPOut]);
+  }
+};
+
+static void testEndpointRxAllocators()
+{
+  ZuTestScope(testEndpointRxAllocators);
+  using namespace ZiCxnType;
+  using Zi::IOBufType::Rx;
+  ZiMultiplex mx;
+  EndpointRxCheck check{mx, {
+    mx.allocator<Rx, EndpointRxBuf<TCPIn>, 32>(),
+    mx.allocator<Rx, EndpointRxBuf<TCPOut>, 64>(),
+    mx.allocator<Rx, EndpointRxBuf<UDP>, 128>()}};
+  auto app = mx.allocator<>();
+  auto rxAgain = mx.allocator<Rx, EndpointRxBuf<TCPIn>, 32>();
+  ZuCheck(check.rx[TCPIn] && check.rx[TCPOut] && check.rx[UDP] && app && rxAgain);
+  ZuCheck(check.rx[TCPIn] != check.rx[TCPOut] && check.rx[TCPIn] != check.rx[UDP] &&
+    check.rx[TCPOut] != check.rx[UDP] && check.rx[TCPIn] != rxAgain);
+  if (!check.rx[TCPIn] || !check.rx[TCPOut] || !check.rx[UDP] || !app) return;
+  ZuCheck(!mx.alloc().is<ZeException>());
+  ZuCheck((!mx.allocator<Rx, EndpointRxBuf<TCPIn>, 32>()));
+  ZuCheck(!mx.allocator<>());
+  bool started = mx.start();
+  ZuCheck(started);
+  if (!started) return;
+  ZuCheck(!mx.allocator<Rx>());
+  ZiIP loopback{"127.0.0.1"};
+  mx.listen(
+    {&check, ZmFnPtr<&EndpointRxCheck::listening>{}},
+    {&check, ZmFnPtr<&EndpointRxCheck::fail>{}},
+    {&check, ZmFnPtr<&EndpointRxCheck::connected<TCPIn>>{}},
+    loopback, 0, 1, check.rx[TCPIn]);
+  mx.udp(
+    {&check, ZmFnPtr<&EndpointRxCheck::connected<UDP>>{}},
+    {&check, ZmFnPtr<&EndpointRxCheck::fail>{}},
+    loopback, 0, {}, 0, check.rx[UDP], ZiCxnOptions{}.udp(true));
+  auto deadline = Zm::now(5);
+  for (unsigned i = 0; i < N + 1; ++i) {
+    bool done = check.done.timedwait(deadline) == 0;
+    ZuCheck(done);
+    if (!done) break;
+  }
+  ZuCheck(mx.stop());
+  ZuCheck(!check.failed);
+  ZuCheck(check.listenerOK);
+  ZuCheck(check.connectedOK[TCPIn]);
+  ZuCheck(check.connectedOK[TCPOut]);
+  ZuCheck(check.connectedOK[UDP]);
+  ZuCheck(!mx.allocator<>());
+  auto buf = app->allocBuf();
+  ZuCheck(buf && buf->builtin());
+}
+
 struct MxWatchState {
   ZiMultiplex	*mx = nullptr;
   unsigned	rootAdds = 0;
@@ -782,6 +871,7 @@ static void testMxWatch()
     LoopMx mx{ZiIP{"127.0.0.1"}, ZiTestPort::MxLoopTCP4};
     ZuCheck(state.mx == &mx);
     ZuCheck(mx.start());
+    ZuCheck(!mx.allocator<>());
     ZuCheck(state.rootAdds == 1);
     ZuCheck(state.queueSeeds == mx.params().nThreads());
     ZuCheck(mx.stop());
@@ -818,6 +908,7 @@ static void testNativeStartFailure()
       bool started = mx.start();
       if (::setrlimit(RLIMIT_NOFILE, &saved)) _exit(3);
       if (started || mx.state() != ZmEngineState::Stopped) _exit(4);
+      if (mx.allocator<>()) _exit(8);
       // Failure is reported only after every worker has exited. In particular,
       // destructor cleanup must not be what retires this failed start's workers.
       unsigned n = mx.params().nThreads();
@@ -869,6 +960,7 @@ int main(int argc, char **argv)
   ZuTestCall(testTcpLoopbackIPv6);
   ZuTestCall(testUdpTOSIPv4);
   ZuTestCall(testUdpMPSIPv6);
+  ZuTestCall(testEndpointRxAllocators);
   ZuTestCall(testMxWatch);
   ZuTestCall(testWakeBurst);
   return 0;

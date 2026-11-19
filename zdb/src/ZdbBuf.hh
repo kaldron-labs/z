@@ -178,6 +178,7 @@ template <typename T>
 IOBufAllocFn tableBufAllocFn(ZiMultiplex *mx) {
   auto allocator = mx->allocator<Zi::IOBufType::TxTCP, IOBuf,
     ZdbBuf_Size<T>{}, ZiIOBuf_Align, ZdbBuf_HeapID<T>, MaxBufSize>();
+  if (!allocator) return {};
   IOBufAllocFn fn{[allocator]() {
     ZmRef<IOBuf> buf = allocator->allocBuf();
     if (!buf) return buf;

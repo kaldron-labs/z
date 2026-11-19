@@ -79,21 +79,17 @@ struct RtoParams {
   ZuTime	max{60};
   ZuTime	granularity{0, 1000000};
 
-  bool valid() const
-  {
+  bool operator ==(const RtoParams &) const = default;
+
+  bool valid() const {
     return initial > ZuTime{0} && min > ZuTime{0} && max >= min &&
       initial >= min && initial <= max && granularity > ZuTime{0};
   }
 };
 
 struct InstanceParams {
-  unsigned		interface = 0;
-  ZuCSpan		netmask;
   PacketFn		packet;
-  unsigned		spin = 1000;
   unsigned		packetCount = ZiIOBuf_DefltCount;
-  ZmSchedTParams	txThread = ZmSchedTParams().isolated(true);
-  unsigned		txSid = 0;
 
   unsigned		controlBufCount = DefaultControlBufCount;
   unsigned		txControlCredits = DefaultTxControlCredits;
@@ -116,6 +112,8 @@ struct InstanceParams {
   ZuTime		tlpPeerAckDelay{0, 200000000};
 
   bool			sackPermitted = true, windowScale = true, timestamps = true, ecn = false;
+
+  bool operator ==(const InstanceParams &) const = default;
 };
 
 // Shared endpoint data lives in the client/listener's intrusive binding node.
@@ -317,17 +315,11 @@ public:
   using Engine::stopping;
   using Params = InstanceParams;
 
-  explicit Instance(ZiMultiplex *);
+  Instance();
   ~Instance() override;
 
-  // Initialize while stopped, before plugin/allocator registration.
-  // Repeated stopped init is idempotent; init while starting/running/stopping fails.
-  ZuUnion<void, ZeException> init(Params params);
-  void final(); // stopped only; idempotent, also called by the destructor
-
-  Zi::IOBufPool *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override;
-  void start() override;
-  void stop() override;
+  // Takes ownership of the initialized XDP instance on the first successful call.
+  ZuUnion<void, ZeException> init(ZiMultiplex *, ZmRef<Zxdp::Instance> &&, Params params);
   void rx() override;
   void wake() override;
 
@@ -406,8 +398,7 @@ public:
   {
     if (!allocator || allocator->mx != mx() || allocator->type != Zi::IOBufType::TxTCP)
       return nullptr;
-    auto provider = static_cast<Allocator *>(allocator->provider());
-    return provider ? provider->pool.ptr() : nullptr;
+    return allocator->pool.ptr();
   }
 
   void reportError(ZeException);
@@ -437,7 +428,7 @@ public:
   TxAdmission txAdmission() const;
   bool ready() const;
   unsigned mtu() const { return m_mtu; }
-  Allocator *control() const { return m_control; }
+  Zi::IOBufPool *control() const { return m_control; }
   Zi::IOBufAllocator *dataRxAllocator() const;
   Zi::IOBufAllocator *dataTxAllocator() { return &m_allocators.p<1>().data; }
 
@@ -469,13 +460,17 @@ public:
   void unwatch() override;
 
 private:
-  Instance(ZiMultiplex *, unsigned, ZmRef<Zi::IOBufPool>,
-    ZmRef<Zi::IOBufPool>, ZmRef<Zi::IOBufPool>);
+  Zi::IOBufPool *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override;
+  bool deferredBacking() const override { return true; }
+  AllocResult alloc(Zi::IOBufPool *, const Zi::IOBufPoolList &) override;
+  void start() override;
+  void stop() override;
+  void final() override;
+
   enum { Down, Up, Closing }; // physical I/O publication, not the control FSM
   enum { DrainIdle, DrainQueued, DrainActive };
 
-  void addProvider(Allocator *);
-  void initControl(unsigned count, unsigned credits);
+  Zi::IOBufPool *ingress(unsigned count, unsigned align);
   template <typename L> bool spawn(L &&fn) {
     mx()->rxRun(ZuFwd<L>(fn));
     return true;
@@ -485,6 +480,10 @@ private:
   void stopTx();
   void stopEndpoints();
   void received(uint8_t *, unsigned);
+  void rxProgress();
+  void receivedUDP(uint8_t *, unsigned, const IPView &);
+  void sendUDP(ZiConnection *);
+  void closeUDP(ZiConnection *, bool);
   bool closedPacket(const uint8_t *, const IPView &, const TCPView &);
   void replyClosed(ClosedTuple, IPPath);
   void resetReply(const TCPHeader &, unsigned, IPPath);
@@ -504,7 +503,16 @@ private:
   template <typename C, typename L> void retire(C *, bool, L &&);
   template <typename L> static void visit(ZiConnection *, L &&);
 
-  using PacketAllocator = Zi::IOBufPoolAllocator<Zi::IOBufType::RxTCP>;
+  struct UdpBinding { unsigned portKey = 0; };
+  static unsigned udpPortKey(const UdpBinding &binding) { return binding.portKey; }
+  ZmHashDerive(UdpBindings, UdpBinding,
+    (ZmHashNode<UdpBinding, ZmHashKey<udpPortKey,
+      ZmHashShadow<ZmHashID<"Zutcp.UDP.Bindings", ZmHashHeapID<"">>>>>));
+  class UdpCxn;
+  bool publishUDP(UdpCxn *, ZiConnectFn &, ZiCxnInfo);
+  void retireUDP(UdpCxn *, bool);
+
+  using PacketAllocator = Zi::IOBufPoolAllocator<Zi::IOBufType::Rx>;
   using NativeTxAllocator = Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP,
     PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Pkt.Tx">>;
   using NativeDataAllocator = Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP,
@@ -513,13 +521,12 @@ private:
     PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Control.Tx">>;
 
   struct Allocators {
-    PacketAllocator		rx;
     NativeTxAllocator		packet;
     NativeDataAllocator		data;
     NativeControlAllocator	control;
 
-    Allocators(ZiMultiplex *mx, Allocator *ingress, Allocator *packets, Allocator *controls)
-    : rx{mx, ingress}, packet{mx, packets}, data{mx, packets}, control{mx, controls} { }
+    Allocators(ZiMultiplex *mx, Zi::IOBufPool *packets, Zi::IOBufPool *controls) :
+      packet{mx, packets}, data{mx, packets}, control{mx, controls} { }
   };
 
   // Configuration is fixed while running; init creates interface-bound resources.
@@ -527,15 +534,15 @@ private:
   ISN				m_isn;
   TFOKey			m_tfoKey;
   InstanceParams		m_params;
-  unsigned			m_mtu = 0;
+  unsigned			m_mtu = 0, m_ingressCount = 0;
   uint64_t			m_txCapacity = 0;
   unsigned			m_controlCredits = DefaultTxControlCredits;
-  Zi::Name			m_netmask;
 
-  ZmRef<Zxdp::Instance>		m_backend;
-  ZmRef<Allocator>		m_ingress;
-  ZmRef<Allocator>		m_packets;
-  Allocator			*m_providers = nullptr, *m_control = nullptr;
+  ZmRef<Zxdp::Instance>		m_xdp;
+  ZmRef<Zi::IOBufPool>		m_ingress;
+  ZmRef<Zi::IOBufPool>		m_packets, m_control;
+  ZmRef<Zi::IOBufPool>		m_requestedTx;
+  ZuUnion<void, PacketAllocator>	m_packetRx;
   ZuUnion<void, Allocators>	m_allocators;
 
   // One native connection list; pending and retiring entries remain owned.
@@ -557,13 +564,14 @@ private:
   // Wake callers write these atomics; keep them off the publication/read line.
   alignas(Zm::CacheLineSize)
   ZmAtomic<unsigned>		m_wakeUsers{0};
-  ZmAtomic<unsigned>		m_rxWakeQueued{0};
 
   // Rx-owned protocol, endpoint and connection state.
   alignas(Zm::CacheLineSize)
   TFOCache			m_tfoCookies;
   EndpointIndex			m_endpoints;
+  UdpBindings			m_udpBindings;
   unsigned			m_nextPort = ClientPorts::First;
+  unsigned			m_nextUdpPort = ClientPorts::First;
   uint64_t			m_cxnRefused = 0;
   unsigned			m_cxnTotal = 0, m_cxnPending = 0, m_cxnClosing = 0;
   ClosedTuples			m_closed;

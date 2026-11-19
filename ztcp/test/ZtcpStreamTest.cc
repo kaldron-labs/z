@@ -21,7 +21,7 @@ namespace {
 Zi::IOBufAllocator *bufAllocator()
 {
   static ZiMultiplex mx;
-  static auto allocator = mx.allocator<Zi::IOBufType::RxTCP, ZiRxQueue::Node, 16>();
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiRxQueue::Node, 16>();
   return allocator;
 }
 

@@ -561,24 +561,22 @@ def check(directory, mode):
 def window(directory, restart=False, lost=False):
     out = Path(directory)
     message = bytes((i * 13 + 7) & 255 for i in range(1024))
-    decoded = {side: decode(out / ('to-' + side + '.pcap'), message * 2)
-               for side in ('client', 'server')}
+    size = len(message)
     rounds = []
     if restart:
         handshakes = [flow for flow in capture_origins(out / 'to-client.pcap').evidence()
                       if flow['synacks']]
         assert {flow['client'][1] for flow in handshakes} == {18192, 18193}, handshakes
         assert all(flow['final_acks'] for flow in handshakes), handshakes
-    for size in ((1024, 512) if restart else (1024,)):
-        streams = decoded
-        if restart:
-            streams = {}
-            for side, stream in decoded.items():
-                keys = {p['key'] for p in stream['data']
-                        if p['offset'] == 0 and p['length'] == size}
-                assert len(keys) == 1, (side, size, keys)
-                streams[side] = decode(out / ('to-' + side + '.pcap'),
-                                       message[:size] * 2, next(iter(keys)))
+        tuples = [flow['client'] for flow in sorted(handshakes, key=lambda f: f['client'][1])]
+    else:
+        tuples = [None]
+    for client in tuples:
+        server = WireOrigins.reverse(client) if client else None
+        streams = {
+            'client': decode(out / 'to-client.pcap', message * 2, server),
+            'server': decode(out / 'to-server.pcap', message * 2, client),
+        }
         for side, peer in (('client', 'server'), ('server', 'client')):
             stream = streams[side]
             other = streams[peer]
@@ -638,7 +636,8 @@ def window(directory, restart=False, lost=False):
                     recovery_probe_stream=recovery_side,
                     recovery_probe_time=recovery[2]['time'],
                     duplex_reopening=recovery_side != side)
-        rounds.append({'window': size, 'streams': streams})
+        rounds.append({'client_port': client[1] if client else None,
+                       'window': size, 'streams': streams})
     evidence = {'rounds': rounds} if restart else rounds[0]['streams']
     if lost:
         evidence['wire_fault_selector'] = selector_evidence(out, 1024)
@@ -646,7 +645,7 @@ def window(directory, restart=False, lost=False):
             'restart-evidence.json' if restart else 'window-evidence.json')
     (out / name).write_text(json.dumps(evidence, indent=2) + '\n')
     print('# mapped ' + ('lost window: persist restores credit, ' if lost else
-             'restart: changed settings, ' if restart else 'zero window: ')
+             'restart: retained settings, ' if restart else 'zero window: ')
           + 'exact bytes, probe/backoff/reply and immediate reopening passed')
 
 

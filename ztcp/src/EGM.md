@@ -12,7 +12,7 @@ Header-defined CRTP TCP client/server transport over `ZiMultiplex`, with applica
 
 ## Invariants
 
-- `Hub::validate_` requires a multiplexer, valid distinct Rx/Tx thread IDs, and allocators of types `RxTCP` and `TxTCP`; `Hub::init_` requires both allocators to belong to that multiplexer. `Hub::final` requires a stopped engine. [Ztcp.hh](./Ztcp.hh)
+- `Hub::validate_` requires a multiplexer, valid distinct Rx/Tx thread IDs and a `TxTCP` allocator from that multiplexer. `Hub::init_` retains a supplied `Rx` allocator or acquires the link's typed Rx policy from the same multiplexer. `Hub::final` requires a stopped engine. [Ztcp.hh](./Ztcp.hh)
 - `Link` allocator buffers must derive from their respective queue node types. `txStream_` and `send_` require the application Tx thread; `txStream` must run outside it. `disconnect_` and client `connect_` require the application Rx thread. [Ztcp.hh](./Ztcp.hh)
 - Configure `Link::m_txErrorFn` before link use and keep it stable. The hub and multiplexer must remain alive while submitted DNS/socket operations drain through completion (`CliLink::stopConnect_`). [Ztcp.hh](./Ztcp.hh)
 - `Link::rcvd_` interprets application `process` results as zero to pause, negative to disconnect, and positive to continue while data remains. [Ztcp.hh](./Ztcp.hh)

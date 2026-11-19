@@ -319,20 +319,20 @@ def check_flow(directory, direction, family, profile, packets, request, tfo=Fals
     kernel_side = 'server' if direction == 'native-client' else 'client'
     native = (directory / (native_side + '.err')).read_text()
     kernel = (directory / (kernel_side + '.err')).read_text()
-    assert 'backend=AF_XDP role=' + native_side + ' ready=1' in native
+    assert 'transport=AF_XDP role=' + native_side + ' ready=1' in native
     roles = dict(line.split('=', 1) for line in
                  (directory / 'roles').read_text().splitlines() if '=' in line)
     native_driver = roles.get('native_driver')
     assert native_driver in ('application', 'protocol'), 'fixture must identify native driver'
     if native_driver == 'protocol':
         drained = re.search(
-            r'^backend=AF_XDP stopped=1 cxns=0 pending=0 tx=0 control_count=(\d+)$',
+            r'^transport=AF_XDP stopped=1 cxns=0 pending=0 tx=0 control_count=(\d+)$',
             native, re.MULTILINE)
         assert drained and int(drained[1]) > 0, 'native owner/Tx drain or control configuration'
     else:
-        assert re.search(r'^backend=AF_XDP stopped=1$', native, re.MULTILINE), (
+        assert re.search(r'^transport=AF_XDP stopped=1$', native, re.MULTILINE), (
             'application must report successful multiplexer stop')
-    assert 'backend=kernel-tcp role=' + kernel_side in kernel
+    assert 'transport=kernel-tcp role=' + kernel_side in kernel
     selected = {}
     if profile == 'loss':
         source = []
@@ -680,7 +680,7 @@ def check(directory, direction, family, profile='baseline'):
             reports.append(report)
         native_side = 'client' if direction == 'native-client' else 'server'
         native = (directory / (native_side + '.err')).read_text()
-        assert native.count('backend=AF_XDP role=' + native_side + ' connected=1\n') == 2
+        assert native.count('transport=AF_XDP role=' + native_side + ' connected=1\n') == 2
         if direction == 'native-client':
             assert native.count('native disconnect_complete=1\n') == 1
             assert native.count('native disconnect_complete=2\n') == 1

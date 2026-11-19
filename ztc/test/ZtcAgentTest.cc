@@ -30,8 +30,9 @@ static void httpLifecycle()
       .thread(1, [](auto &thread) { thread.name("rx"); thread.isolated(true); })
       .thread(2, [](auto &thread) { thread.name("tx"); thread.isolated(true); });
   }).rxThread(1).txThread(2);
-  ZiMultiplex mx{ZuMv(params)};
-  auto init = [&mx](Zum::PingHTTP &http) {
+  ZiMultiplex mx{params};
+  ZiMultiplex runtime{ZuMv(params)};
+  auto init = [](Zum::PingHTTP &http, ZiMultiplex &mx) {
     return http.init(&mx, "https://zum.example/oauth2/7",
       "https://zum.example/oauth2/7", "https://zum.example/manage");
   };
@@ -40,7 +41,7 @@ static void httpLifecycle()
   ZuCheckRT(http.stop());
   http.final();
   // Register the controller's allocators before starting the borrowed multiplexer.
-  ZuCheckRT(init(http));
+  ZuCheckRT(init(http, mx));
   ZuCheckRT(http.state() == ZmEngineState::Stopped);
   auto retained = http.fn();
   http.final(); // neither the HTTP controller nor resolver has started
@@ -52,7 +53,7 @@ static void httpLifecycle()
   retained = {};
 
   ZiResolver::init();
-  ZuCheckRT(init(http));
+  ZuCheckRT(init(http, mx));
   ZuCheckRT(mx.start());
   ZuCheckRT(!http.start()); // borrowed resolver is stopped
   ZuCheckRT(http.state() == ZmEngineState::Stopped);
@@ -61,8 +62,9 @@ static void httpLifecycle()
   ZiResolver::final();
   ZuCheckRT(mx.stop());
 
-  ZuCheckRT(init(http));
-  ZuCheckRT(mx.start());
+  ZuCheckRT(!init(http, mx));
+  ZuCheckRT(init(http, runtime));
+  ZuCheckRT(runtime.start());
   ZuCheckRT(http.start());
   ZuCheckRT(http.start());
   ZuCheckRT(http.state() == ZmEngineState::Running);
@@ -77,7 +79,7 @@ static void httpLifecycle()
     });
   });
   ZuCheckRT(stopped);
-  ZuCheckRT(mx.stop());
+  ZuCheckRT(runtime.stop());
 }
 
 static Ztc::AgentCf config()

@@ -20,7 +20,6 @@ void RxInput::bind_(Zhttp::Channel *channel)
 {
   if (!channel || m_channel) return;
   m_channel = channel;
-  m_frames.bufType(channel->rxBufType());
   m_route = {channel->mx(), channel->rxThread()};
 }
 

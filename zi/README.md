@@ -29,11 +29,49 @@ records; in-memory CSV formatting is in Zf.
 
 ## Socket multiplexing and event loops
 
-`ZiMultiplex` combines scheduler destinations with Linux epoll/io_uring or Windows IOCP.
+`ZiMultiplex` combines scheduler destinations with Linux epoll or Windows IOCP.
 Configure `ZiMxParams`, including its nested scheduler and `rxThread`/`txThread`,
 before `start()`. Connections expose receive/transmit callbacks and lifecycle
 notifications; use the higher-level [Ztcp guide](../ztcp/README.md) for a complete
 client/server application rather than reimplementing link management.
+
+### Transport plugins
+
+Construct a stopped multiplexer and initialize the plugin with its address.
+Move the initialized plugin into that same multiplexer with
+`mx.plugin(ZuMv(plugin))` before the first allocator request, explicit
+allocation, or start attempt. Registering the same nonnull plugin again is
+idempotent within that window. A null plugin, a different multiplexer, a switch
+to another plugin, or a registration after the window closes is a fatal
+application error. The binding is permanent. The multiplexer drives the
+plugin's allocation, activation, stop, and finalization, including
+finalization when it never started.
+
+During initialization, a protocol requests its typed `Rx` allocator from the
+multiplexer and keeps the returned handle for `listen`, `connect`, or `udp`,
+including retries and reconnects. Each operation selects its own receive
+allocator in both kernel and plugin modes. An accepted connection inherits the
+listener's handle. In kernel mode the protocol allocates receive objects with
+built-in storage. In plugin mode the protocol allocates typed stubs and the
+transport attaches packet storage from the common ingress pool on arrival.
+Applications can allocate outgoing and local buffers directly through their
+`TxTCP`, `TxUDP`, and `App` handles.
+
+The first `Rx` request sets the plugin's common ingress pool, which later Rx
+specializations share. Each native Tx request can contribute a distinct pool,
+including multiple pools with the same role. Each pool exposes its immutable
+`type` and its geometry through the allocator's `pool` member. Built-in
+allocators have a null `pool`.
+
+Request every allocator, including `App`, before allocation. Optional
+`mx.alloc()` passes the collected pools to a deferred-backing plugin and returns
+`ZuUnion<void, ZeException>`. A successful explicit call makes its native Tx
+storage available before start. Start allocates implicitly when necessary,
+reports allocation errors, and leaves the multiplexer stopped on failure.
+Every allocator request returns `nullptr` once the first allocation begins,
+including a repeat after failure. A retry uses the same pool set. Existing
+handles remain usable, and App storage is independent of packet backing.
+Successful allocation survives stop, restart, and activation failure.
 
 Keep receive state on Rx and transmit state on Tx. Public `rxRun`/`rxInvoke`
 and `txRun`/`txInvoke` hand work to the owner; internal underscore variants
@@ -138,106 +176,31 @@ connection does not correspond one-to-one with a socket.
 `ZiIOBuf` provides pooled, reference-counted I/O storage. Configure the pool for
 your message sizes and keep buffers alive through asynchronous output.
 
-Initialize the multiplexer, construct its typed Rx and Tx allocators, register
-both with `mx.allocator(a)`, then start the multiplexer and publish listeners or
-connections. Direct Zi use initializes the multiplexer in its constructor;
-Ztcp/Ztls dependents initialize their hub before preparing its allocator policies.
-Registration requires `state() == ZmEngineState::Stopped` and asserts that
-precondition. All allocators, including those registered by protocol client/server
-initialization, must be registered before `start()`. Binding and registry
-insertion complete directly before return; there is no I/O-thread dispatch.
-The application must serialize registration against other registrations,
-`start()` and teardown. The assertion does not prevent a concurrent start race.
-Selecting an allocator for I/O never registers it implicitly.
+The multiplexer owns the allocators it returns. The application serializes
+allocator requests with other requests, allocation, start, and teardown.
+A network allocator is permanently bound to its multiplexer. Selection for I/O
+uses an existing handle, and each submitted buffer identifies its Tx allocator
+independently of its `owner`. The original allocator is preserved during
+storage growth and when the application retains part of a received buffer.
+Reserve `App` for local storage such as parser copies and scratch buffers.
 
-Each network allocator is permanently dedicated to one multiplexer. Allocators
-are app-owned, and the multiplexer retains one intrusive list entry per bound
-allocator. There is no unbind, restart or reassignment lifecycle. Multiple
-listeners and connections can share an Rx allocator; different listeners can
-select different registered Rx allocators. `listen` and `connect` take the Rx
-allocator immediately before their options argument. Accepted connections inherit
-exactly their listener's selection. UDP setup also requires a registered UDP Rx
-allocator. `ZiMxParams` contains no allocator parameters or multiplexer-wide Rx
-allocator defaults.
+A pool supplies registered backing through `alloc()` and `free()`. Its geometry
+is `count`, `size`, `align`, `headRoom`, and `tailRoom`. Allocators retain their
+pools through the last registered return. Tx allocation returns immediately and
+can return null when the pool is exhausted.
 
-Each submitted buffer independently selects Tx through its original allocator,
-which must already be registered with that same multiplexer. The original
-allocator pointer is separate from application `owner` metadata and survives
-storage growth and retained ranges. Unregistered or wrong-multiplexer sends are
-fatal in every build and backend, including ordinary and oversized storage.
-Registration does not change compatibility: Rx cannot serve Tx, UDP cannot serve
-streams or vice versa, and App allocators cannot serve Mx I/O. Zi distinguishes
-direction and stream/datagram transport; Ztls owns TCP/TLS-specific checks.
+Graceful disconnect drains pending output. Abrupt close abandons it. Both finish
+connection operations and release I/O contexts before reporting closure. Stop
+drains I/O while retaining the registered allocators. Return dependent buffers
+before teardown so plugin finalization can release its backing while allocator
+storage is still valid.
 
-`Zi::IOBufPool` supplies registered backing through `alloc()` and `free()`.
-Its shared geometry is `count`, `size`, `align`, `headRoom` and `tailRoom`;
-metadata-only providers can leave `count` zero. Pools are intrusive nodes of
-`Zi::IOBufPoolList`, which retains them through list membership.
-`Zi::IOBufPoolAllocator` adapts a pool to typed I/O buffer metadata and retains
-that pool through the final registered return. Pool-list membership and allocator
-ownership are independent references.
-
-Pool clients use only `alloc()`/`free()` and geometry. Slot identity, allocation
-state and completion bookkeeping stay inside the backend. Kernel-held references
-preserve backing until completion independently of caller references.
-
-`allocBuf()` returns immediately. Tx buffer allocation failure means
-backpressure exceeded the Tx buffer pool capacity; drop the connection rather
-than waiting for a buffer.
-
-Payload slot counts belong to allocator constructors, for example
-`ZiRxTCPBufAllocator<>{256}` or `ZiTxTCPBufAllocator<>{512}` on Linux. The
-independent defaults are 128, overridable through `ZiIOBuf_DefltRxRingSize` and
-`ZiIOBuf_DefltTxRingSize`. Counts apply per allocator, not per connection; budget
-for every app-owned policy and its slot geometry. The payload arena limit is
-`ZiIOBuf_MaxRingSize` (32768). On `_WIN32`, network allocators have zero-argument
-constructors and ring-sizing controls are compiled out.
-
-`ZiMxParams::rxRingSize(n)` and `txRingSize(n)` configure the native owner's
-kernel SQ/CQ capacities, independently of payload pool counts. They are also
-compiled out on Windows. Kernel counts are in
-`[ZiMxParams::MinRingSize, ZiMxParams::MaxRingSize]` (2..32768), with defaults of
-128; kernel descriptor counts round up while allocator payload counts retain
-the requested size. Native operation shares one ordinary Rx kernel ring and one
-SQPOLL Tx kernel ring across the registered arenas, with distinct Rx/Tx threads.
-Native completion dispatch, SQ publication and kernel entry are handled directly
-by `ZiMultiplex` on those shards. Arena, operation and connection queues use
-intrinsic membership; there is no separate native event-loop object.
-`rxBufSize` and `txBufSize` select socket byte limits. The native-only `spin`
-setting defaults to 1000 and controls bounded idle checks before blocking.
-
-When runtime `Zi::uring()` is false, network policies allocate existing builtin
-`IOBufAlloc` backing; they do not initialize or map payload rings. Native arena
-exhaustion also falls back to existing `IOBufAlloc`, preserving original
-provenance and UDP receive metadata capacity. Heap tuning controls descriptors,
-builtin storage and jumbo growth. UDP preserves receive progress when mapped
-slots are retained and silently drops zero-length datagrams. TCP EOF retains its
-normal disconnect semantics.
-
-Arena slot allocation and return use the shared MPMC free list, with free-list
-links in unused aligned buffer heads. A depleted arena's return latch coalesces
-notifications: an Rx-owner return schedules that owner directly, while an
-off-owner return uses the existing scheduler queue and coalesced wake. Arming
-rechecks availability to avoid losing a concurrent return. Stop/detach disarms
-the latch, and service records remain stable until finalization. There is no
-per-arena return eventfd, kernel READ/CQE/rearm stage or separate return poller.
-
-Graceful disconnect drains pending output; abrupt close abandons it. Both finish
-their connection operations and release their I/O contexts before closure is
-reported. Staged Mx stop concludes I/O while retaining registered allocators and
-native resources. Final Mx teardown releases registrations, owner rings and its
-allocator references, clears raw back-pointers and permanently retires bindings.
-It never makes an allocator reusable by another Mx.
-
-The [workload sizing inventory](test/README.md#network-buffer-pool-sizing-in-workloads)
-records payload working-set choices. These API contracts do not establish a
-passing functional gate or measured performance acceptance.
 `ZiRx`/`ZiTx` and `ZiRxStream`/`ZiTxStream` manage receive/transmit flow; stream
 parsers must handle fragmented input, while writers should flush at deliberate
 message boundaries. A span into a buffer is only a view, not an ownership token.
 
 `ZiRx` provisions connection receive contexts exclusively from
-`ZiCxnInfo::rxAllocator` (RxTCP or RxUDP). Its CRTP `rxAllocator()` hook
+`ZiCxnInfo::rxAllocator` (`Rx`). Its CRTP `rxAllocator()` hook
 supplies App storage for framing and the memory-only receive entry points.
 An exact complete message retains the received backing; incomplete messages
 accumulate in callback-local App storage. Trailing bytes for asynchronous Body

@@ -14,6 +14,7 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = zutcppairtest zutcppooltest zutcpstacktest zutcpiptest zutcpmxtest zutcpapptest \
 	zutcptlsapptest
+EXTRA_PROGRAMS = zutcpudptest
 zutcppairtest_SOURCES = zutcppairtest.cc
 zutcppooltest_SOURCES = zutcppooltest.cc
 zutcpstacktest_SOURCES = zutcpstacktest.cc
@@ -28,8 +29,10 @@ zutcptlsapptest_CPPFLAGS = $(AM_CPPFLAGS) -DZUTCP_APP_TLS \
 zutcptlsapptest_LDFLAGS = $(AM_LDFLAGS) -R@PTLS_LIBDIR@
 zutcptlsapptest_LDADD = $(LDADD) $(top_builddir)/ztls/src/libZtls.la \
 	$(top_builddir)/zdbus/src/libZdbus.la @PTLS_LIBS@
+zutcpudptest_SOURCES = zutcpudptest.cc
 EXTRA_DIST = README.md zutcpipfixture.sh zutcppairfixture.sh zutcpmxfixture.sh \
-	zutcpappfixture.sh zutcpmxlossfixture.sh zutcprecovery.py zutcpoptions.py zutcptfo.py
+	zutcpappfixture.sh zutcpmxlossfixture.sh zutcprecovery.py zutcpoptions.py zutcptfo.py \
+	zutcpudpfixture.sh
 
 .PHONY: test
 test: all

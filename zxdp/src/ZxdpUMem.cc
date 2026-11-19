@@ -44,7 +44,7 @@ ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
   auto page = sysconf(_SC_PAGESIZE);
   if (page < 2048 || uint64_t(page) > UINT32_MAX || (page & (page - 1)))
     return fail("unsupported AF_XDP page size");
-  if (!rx || !rx->count || rx->ready() || rx->used())
+  if (!rx || rx->type != Zi::IOBufType::Rx || !rx->count || rx->ready() || rx->used())
     return fail("one unused, nonempty Rx pool is required");
   if (!rx->align || (rx->align & (rx->align - 1)) || rx->align > unsigned(page) ||
       rx->headRoom > rx->size || rx->tailRoom > rx->size - rx->headRoom)
@@ -61,7 +61,9 @@ ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
   {
     for (const auto &node : txPools) {
       auto pool = dynamic_cast<BufPool *>(node.ptr());
-      if (!pool || pool == rx || pool->ready() || pool->used() || !pool->size ||
+      if (!pool ||
+	(pool->type != Zi::IOBufType::TxTCP && pool->type != Zi::IOBufType::TxUDP) ||
+	pool->ready() || pool->used() || !pool->size ||
 	pool->size > unsigned(page) || pool->headRoom > pool->size ||
 	pool->tailRoom > pool->size - pool->headRoom || !pool->align ||
 	(pool->align & (pool->align - 1)) || pool->align > unsigned(page))
@@ -99,21 +101,26 @@ ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
   arena->m_pageShift = __builtin_ctz(unsigned(page));
   arena->m_pages.length(layout.length>>arena->m_pageShift);
   arena->m_tx.length(layout.txCount);
-  rx->init(arena, 0, layout.chunk, layout.prefix, 0);
-  for (size_t i = 0; i < layout.rxLength>>arena->m_pageShift; ++i) arena->m_pages[i] = rx;
-  uint64_t offset = rxBytes;
+  return arena;
+}
+
+void UMem::publish(ZuSpan<const ZmRef<Zi::IOBufPool>> txPools, BufPool *rx)
+{
+  unsigned page = 1U << m_pageShift;
+  rx->init(this, 0, m_layout.chunk, m_layout.prefix, 0);
+  for (size_t i = 0; i < m_layout.rxLength>>m_pageShift; ++i) m_pages[i] = rx;
+  uint64_t offset = m_layout.rxLength;
   unsigned first = 0;
   for (const auto &node : txPools) {
     auto pool = static_cast<BufPool *>(node.ptr());
     auto stride = poolStride(*pool);
     auto bytes = (uint64_t(pool->count) * stride + page - 1) & ~(uint64_t(page) - 1);
-    pool->init(arena, offset, stride, 0, first);
-    for (auto i = offset>>arena->m_pageShift; i < (offset + bytes)>>arena->m_pageShift; ++i)
-      arena->m_pages[i] = pool;
+    pool->init(this, offset, stride, 0, first);
+    for (auto i = offset>>m_pageShift; i < (offset + bytes)>>m_pageShift; ++i)
+      m_pages[i] = pool;
     first += pool->count;
     offset += bytes;
   }
-  return arena;
 }
 
 BufPool *UMem::pool(const void *packet) const
@@ -157,61 +164,54 @@ template <typename R> ZuUnion<void, ZeException> Xsk::map(
 
 Xsk::~Xsk() { close(); }
 
-ZuUnion<void, ZeException> Xsk::open(
-  ZmRef<UMem> arena, unsigned ifindex, unsigned queue, unsigned rxCount, unsigned txCount,
-  int shared)
+ZuUnion<void, ZeException> Xsk::owner(
+  UMem *arena, unsigned ifindex, unsigned queue, unsigned fillCount, unsigned compCount, int shared)
 {
-  auto prepared = prepare(ZuMv(arena), rxCount, txCount, shared);
-  if (prepared.is<ZeException>()) return ZuMv(prepared).p<ZeException>();
-  auto bound = bind(ifindex, queue);
-  if (bound.is<ZeException>()) { close(); return ZuMv(bound).p<ZeException>(); }
-  return {};
+  // A bound AF_XDP socket needs a packet ring even when it only owns FILL/CQ.
+  return open(arena, ifindex, queue, fillCount, compCount, 2, 0, shared);
 }
 
-ZuUnion<void, ZeException> Xsk::prepare(
-  ZmRef<UMem> arena, unsigned rxCount, unsigned txCount, int shared)
+ZuUnion<void, ZeException> Xsk::service(
+  unsigned ifindex, unsigned queue, unsigned rxCount, unsigned txCount, int shared)
 {
-  if (m_fd >= 0 || !arena || !rxCount || !txCount ||
-      (rxCount & (rxCount - 1)) || (txCount & (txCount - 1)))
-    return ZeEXCEPT(Error, "Zxdp", "invalid or already open AF_XDP registration/binding");
+  return open(nullptr, ifindex, queue, 0, 0, rxCount, txCount, shared);
+}
+
+ZuUnion<void, ZeException> Xsk::open(
+  UMem *arena, unsigned ifindex, unsigned queue, unsigned fillCount, unsigned compCount,
+  unsigned rxCount, unsigned txCount, int shared)
+{
+  ZmAssert_(m_fd < 0 && (arena || shared >= 0));
   m_fd = socket(AF_XDP, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
   if (m_fd < 0) return socketFailed("AF_XDP socket");
-  m_arena = ZuMv(arena);
-  m_shared = shared;
   auto fail = [this](const char *operation) {
     auto error = socketFailed(operation);
     close();
     return error;
   };
-  socklen_t namespaceLength = sizeof(m_namespace);
-  if (getsockopt(m_fd, SOL_SOCKET, SO_NETNS_COOKIE, &m_namespace, &namespaceLength))
-    return fail("AF_XDP socket namespace query");
-  if (namespaceLength != sizeof(m_namespace)) {
-    close();
-    return ZeEXCEPT(Error, "Zxdp", "AF_XDP kernel lacks socket namespace identity");
+  if (shared < 0) {
+    const auto &layout = arena->layout();
+    xdp_umem_reg reg{};
+    reg.addr = uintptr_t(arena->data());
+    reg.len = layout.length;
+    reg.chunk_size = layout.chunk;
+    reg.headroom = layout.prefix - XDP_PACKET_HEADROOM;
+    if (setsockopt(m_fd, SOL_XDP, XDP_UMEM_REG, &reg, sizeof(reg)))
+      return fail("AF_XDP UMEM registration");
   }
-  const auto &layout = m_arena->layout();
-  xdp_umem_reg reg{};
-  reg.addr = uintptr_t(m_arena->data());
-  reg.len = layout.length;
-  reg.chunk_size = layout.chunk;
-  reg.headroom = layout.prefix - XDP_PACKET_HEADROOM;
-  if (shared < 0 && setsockopt(m_fd, SOL_XDP, XDP_UMEM_REG, &reg, sizeof(reg)))
-    return fail("AF_XDP UMEM registration");
-  // Linux limits the copy-mode drain budget to Tx ring capacity. 32K permits
-  // sustained concurrent publication; CQ and pool credits still bound backing.
+  // The generic sender's drain budget is bounded by Tx ring capacity.
   enum { MinTxRing = 1<<15 };
-  unsigned txRingCount = txCount < MinTxRing ? MinTxRing : txCount;
+  if (txCount && txCount < MinTxRing) txCount = MinTxRing;
   struct { unsigned option, count; } rings[] = {
-    {XDP_UMEM_FILL_RING, rxCount}, {XDP_UMEM_COMPLETION_RING, txCount},
-    {XDP_RX_RING, rxCount}, {XDP_TX_RING, txRingCount}
+    {XDP_UMEM_FILL_RING, fillCount}, {XDP_UMEM_COMPLETION_RING, compCount},
+    {XDP_RX_RING, rxCount}, {XDP_TX_RING, txCount}
   };
   for (auto ring : rings)
-    if (setsockopt(m_fd, SOL_XDP, ring.option, &ring.count, sizeof(ring.count)))
+    if (ring.count &&
+	setsockopt(m_fd, SOL_XDP, ring.option, &ring.count, sizeof(ring.count)))
       return fail("AF_XDP ring configuration");
-  // Older kernels retain their default budget when this tuning option is absent.
-  if (setsockopt(m_fd, SOL_XDP, XDP_MAX_TX_SKB_BUDGET,
-	&txRingCount, sizeof(txRingCount)) && errno != ENOPROTOOPT)
+  if (txCount && setsockopt(m_fd, SOL_XDP, XDP_MAX_TX_SKB_BUDGET,
+	&txCount, sizeof(txCount)) && errno != ENOPROTOOPT)
     return fail("AF_XDP Tx budget configuration");
   xdp_mmap_offsets offsets{};
   socklen_t length = sizeof(offsets);
@@ -221,50 +221,29 @@ ZuUnion<void, ZeException> Xsk::prepare(
     close();
     return ZeEXCEPT(Error, "Zxdp", "AF_XDP kernel lacks required ring offset/flags ABI");
   }
-  auto mapped = map(0, m_fill, offsets.fr, rxCount, XDP_UMEM_PGOFF_FILL_RING);
-  if (mapped.is<void>()) mapped = map(1, m_comp, offsets.cr, txCount,
-    XDP_UMEM_PGOFF_COMPLETION_RING);
-  if (mapped.is<void>()) mapped = map(2, m_rx, offsets.rx, rxCount, XDP_PGOFF_RX_RING);
-  if (mapped.is<void>()) mapped = map(3, m_tx, offsets.tx, txRingCount, XDP_PGOFF_TX_RING);
-  if (mapped.is<ZeException>()) { close(); return ZuMv(mapped).p<ZeException>(); }
-  return {};
-}
+  auto mapped = fillCount ? map(0, m_fill, offsets.fr, fillCount, XDP_UMEM_PGOFF_FILL_RING) :
+    map(2, m_rx, offsets.rx, rxCount, XDP_PGOFF_RX_RING);
+  if (mapped.is<void>() && compCount)
+    mapped = map(1, m_comp, offsets.cr, compCount, XDP_UMEM_PGOFF_COMPLETION_RING);
+  if (mapped.is<void>() && txCount)
+    mapped = map(3, m_tx, offsets.tx, txCount, XDP_PGOFF_TX_RING);
+  if (mapped.is<ZeException>()) { close(); return mapped; }
 
-ZuUnion<void, ZeException> Xsk::bind(unsigned ifindex, unsigned queue)
-{
-  return bind_(ifindex, queue, true);
-}
-
-ZuUnion<void, ZeException> Xsk::bind_(unsigned ifindex, unsigned queue, bool queryOptions)
-{
-  m_retryBind = false;
-  if (m_fd < 0 || m_bound || !ifindex || ifindex > INT_MAX)
-    return ZeEXCEPT(Error, "Zxdp", "invalid or already bound AF_XDP socket");
   sockaddr_xdp address{};
   address.sxdp_family = AF_XDP;
   address.sxdp_ifindex = ifindex;
   address.sxdp_queue_id = queue;
-  // Ordinary binding lets the kernel select supported zero-copy operation.
-  address.sxdp_flags = XDP_USE_NEED_WAKEUP;
-  if (m_shared >= 0) {
-    address.sxdp_flags = XDP_SHARED_UMEM; // inherits NEED_WAKEUP from the first socket
-    address.sxdp_shared_umem_fd = m_shared;
-  }
-  if (::bind(m_fd, reinterpret_cast<sockaddr *>(&address), sizeof(address))) {
-    m_retryBind = errno == EBUSY;
-    return socketFailed("AF_XDP interface/queue bind");
-  }
-  m_bound = true;
-  m_ifindex = ifindex;
-  m_queue = queue;
-  if (!queryOptions) return {};
+  if (shared >= 0) {
+    address.sxdp_flags = XDP_SHARED_UMEM;
+    address.sxdp_shared_umem_fd = shared;
+  } else address.sxdp_flags = XDP_USE_NEED_WAKEUP;
+  if (::bind(m_fd, reinterpret_cast<sockaddr *>(&address), sizeof(address)))
+    return fail("AF_XDP interface/queue bind");
+
   xdp_options options{};
-  socklen_t length = sizeof(options);
-  if (getsockopt(m_fd, SOL_XDP, XDP_OPTIONS, &options, &length)) {
-    auto error = socketFailed("AF_XDP capability query");
-    close();
-    return error;
-  }
+  length = sizeof(options);
+  if (getsockopt(m_fd, SOL_XDP, XDP_OPTIONS, &options, &length))
+    return fail("AF_XDP capability query");
   if (length < sizeof(options)) {
     close();
     return ZeEXCEPT(Error, "Zxdp", "AF_XDP kernel lacks capability flags");
@@ -276,7 +255,6 @@ ZuUnion<void, ZeException> Xsk::bind_(unsigned ifindex, unsigned queue, bool que
 void Xsk::close()
 {
   m_rx.freeze(); m_fill.freeze(); m_tx.freeze(); m_comp.freeze();
-  if (m_fd >= 0) { ::close(m_fd); m_fd = -1; }
   m_rx.reset();
   m_fill.reset();
   m_tx.reset();
@@ -286,12 +264,8 @@ void Xsk::close()
     if (mapping.addr) munmap(mapping.addr, mapping.length);
     mapping = {};
   }
+  if (m_fd >= 0) { ::close(m_fd); m_fd = -1; }
   m_zeroCopy = false;
-  m_bound = m_retryBind = false;
-  m_ifindex = m_queue = 0;
-  m_namespace = 0;
-  m_shared = -1;
-  m_arena = nullptr;
 }
 
 } // namespace Zxdp::Xdp

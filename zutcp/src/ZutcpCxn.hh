@@ -2205,7 +2205,7 @@ protected:
   void tlpRecovery() {
     m_tlpTimerSelected = false;
     bool probe = m_tlp.expire(transportNow());
-    // RTO remains the fallback even if the sample, window or backend precludes a probe.
+    // RTO remains the fallback even if the sample, window or transport precludes a probe.
     m_dataRto.rearm(transportNow(), m_rtt, app()->rtoParams());
     scheduleDataRto();
     if (!probe || !tlpEligible()) return;
@@ -4272,7 +4272,7 @@ protected:
   template <typename Alloc, typename Send>
   bool sendTCP(const SentFrameRef &ref, bool syn, uint8_t control,
       Alloc alloc, Send send, bool persist = false) {
-    // A synchronous backend callback cannot admit another DATA transmission
+    // A synchronous transport callback cannot admit another DATA transmission
     // before the current original has committed its recovery accounting.
     if (ZuUnlikely(m_txPublishing && ref.kind == SentFrameKind::Data)) return false;
     if ((control & 0x04) && (m_mxFinishing || m_tcpResetPeer || m_tcpResetSent ||
@@ -4405,7 +4405,7 @@ protected:
       return false;
     }
     if (ZuLikely(original)) {
-      // The backend accepted this original. Complete recovery bookkeeping on
+      // The transport accepted this original. Complete recovery bookkeeping on
       // this owner before any queued ACK work or application callback.
       bool recorded = recordTxPkt(id, charged, ref, header, ecn);
       ZmAssert_(recorded);

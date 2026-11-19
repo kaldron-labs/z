@@ -11,52 +11,20 @@ replacement implementation of arbitrary POSIX `socket()` calls. Applications
 using raw kernel sockets continue to use the kernel until adapted to Zi/Ztcp. `zutcpkernelpeer` deliberately uses ordinary kernel sockets;
 `zutcppair` deliberately uses the actual native Instance, without socket fallback.
 
-## Select the backend before allocating or starting
+## Select the transport before requesting allocators
 
-The following boolean application-bootstrap fragment uses the existing plugin
-setter and the single init(Params) configuration entry. Handle its structured
-error before installing the plugin or registering application allocators:
+The application configures the XDP sender slot before constructing the
+multiplexer. Initialize XDP on that stopped multiplexer, move it into Zutcp,
+and move the initialized Zutcp plugin into the multiplexer before requesting
+any allocators. The [application integration example](../README.md#application-integration)
+shows both transfers and the structured error checks.
 
-```cpp
-#include <net/if.h>
-#include <zlib/ZmRef.hh>
-#include <zlib/ZiLog.hh>
-#include <zlib/ZiRx.hh>
-#include <zlib/ZiTx.hh>
-#include <zlib/Zutcp.hh>
-
-ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
-  s.nThreads(3)
-    .thread(1, [](auto &t) { t.isolated(1); })
-    .thread(2, [](auto &t) { t.isolated(1); })
-    .thread(3, [](auto &t) { t.isolated(true); });
-})};
-
-// Native branch only. Check if_nametoindex() before constructing Instance.
-ZmRef<Zutcp::Instance> stack = new Zutcp::Instance{&mx};
-auto initialized = stack->init({.interface = if_nametoindex("OWNED_INTERFACE"), .txSid = 3});
-if (initialized.is<ZeException>()) {
-  ZiLogEvent(ZuMv(initialized.p<ZeException>()));
-  return false;
-}
-mx.plugin(stack);
-
-// Factory calls follow plugin registration while mx is still stopped.
-auto rx = mx.allocator<Zi::IOBufType::RxTCP, ZiRxBuf, 2048>(4096);
-auto tx = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 1024>(4096);
-// Initialize the Ztcp application while stopped.
-// Start mx, then use ordinary listen/connect entry points.
-```
-
-For the kernel branch, omit Instance construction, `plugin()` and Instance configuration;
-use the same Zi connection/framing interfaces. Backend selection is fixed for the
-multiplexer lifetime. Do not attach the plugin after allocator factories: native
-providers must publish and register their geometry before start. For native Tx,
-use those registered Tx buffers and their published payload budget; do not substitute
-heap/network buffers. `rxBufSize` is kernel socket bytes in kernel mode and native
-ingress frame count with Instance, so do not pass a byte count as a native frame count.
-The factory count requests pool backing; kernel allocation does not emulate a
-fixed native pool. Log effective settings when comparing backends.
+Applications using kernel TCP construct a fresh multiplexer and obtain its
+built-in allocators before starting it. Transport selection is permanent.
+`rxBufSize` sets the kernel socket byte limit in kernel mode or the ingress
+frame count in native mode. The typed receive handle is selected for each
+endpoint, and native Tx allocators can supply registered backing after
+`mx.alloc()` or successful start.
 
 Protocol Rx and Tx run on the selected mx owners. Keep application dispatch and
 buffer lifetime rules intact. The client/server examples use Ztcp streams and
@@ -73,10 +41,9 @@ not alternate application transport APIs. Fixtures select those roles when a cas
 requires private protocol access. Ordinary application runs retain the Ztcp path.
 The [FIX benchmark](../bench/README.md) uses the mapped ZiConnection application path.
 
-Stop application work and listeners, drain callbacks, then stop mx. Instance is
-the single plugin transport owner. Do not free it or registered backing while
-queued I/O or kernel retirement can still reference them. No separate native
-Hub lifecycle exists.
+Stop application work and listeners, drain callbacks, then stop mx. Return all
+dependent buffers before destroying mx. The multiplexer finalizes Zutcp, which
+finalizes XDP and releases the registration.
 
 ## Run a self-contained privileged interoperability check
 
@@ -144,15 +111,15 @@ zutcppair client INTERFACE SERVER_ADDRESS PORT REQUEST_FILE [COUNT]
 zutcpkernelpeer server LOCAL_ADDRESS PORT COUNT
 zutcpkernelpeer client SERVER_ADDRESS PORT REQUEST_FILE [COUNT]
 
-zutcpserver INTERFACE LOCAL_ADDRESS PORT [COUNT] [--wait-eof]
-zutcpclient INTERFACE SERVER_ADDRESS PORT [REQUEST]
+zutcpd INTERFACE LOCAL_ADDRESS PORT [COUNT] [--wait-eof]
+zutcp INTERFACE SERVER_ADDRESS PORT [REQUEST]
 ```
 
 The first four tools exchange a binary file: client sends request then FIN;
 server reads EOF, echoes `echo: ` plus the exact request, then FIN. Client stdout
 contains the response; stderr reports role/backend and completed mx stop. Private
 protocol roles additionally verify and report native admission/provider drain.
-`zutcpclient`/`zutcpserver` are the smaller application examples; their request is
+`zutcp`/`zutcpd` are the smaller application examples; their request is
 a command-line string rather than the binary utility's file. They also use actual
 native transport. These are ordinary TCP application protocols, not wire envelopes.
 

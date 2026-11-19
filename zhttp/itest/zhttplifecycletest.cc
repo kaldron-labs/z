@@ -535,7 +535,7 @@ void testTCP()
 
   ZiMultiplex mx{mxParams()};
   ZuTestCallRT((runH1<TCPClient, TCPServer,
-    Zi::IOBufType::RxTCP, Zi::IOBufType::TxTCP>),
+    Zi::IOBufType::Rx, Zi::IOBufType::TxTCP>),
     mx, Ztcp::ClientParams(&mx, "3", "4"),
     Ztcp::ServerParams(&mx, "3", "4"), state);
   mx.stop();

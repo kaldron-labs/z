@@ -901,8 +901,8 @@ DB's registered transmit allocator without copying payload bytes.
 Recovery copies preserve this canonical span and its alignment when changing
 the replication discriminator.
 
-Await database stop before finalizing tables/database objects. The shared multiplexer can
-remain running through DB finalization and replacement; registered allocators
-remain retained until multiplexer destruction. Stopping the
-multiplexer before DB finalization also remains valid. Release retained network
-frames before their allocator owners.
+Initialize the DB, tables and sagas before the multiplexer allocates its pools
+or starts. Stop and restart the DB using its existing handles. A replacement
+that requests new handles needs a fresh multiplexer with its registry open.
+Await database stop before finalizing tables and the DB. Release retained
+network frames before the owning multiplexer is destroyed.

@@ -158,7 +158,7 @@ public:
   TxAllocator *txAllocator() const { return m_allocator; }
 
 private:
-  RxAllocator *m_rx = allocator<Zi::IOBufType::RxUDP, ZiIOBuf, ZiIOBuf_DefltSize>();
+  RxAllocator *m_rx = allocator<Zi::IOBufType::Rx, ZiIOBuf, ZiIOBuf_DefltSize>();
   TxAllocator *m_allocator = allocator<Zi::IOBufType::TxUDP, Packet, ZiIOBuf_DefltSize>();
   ZiIP		m_localIP;
   unsigned	m_localPort;

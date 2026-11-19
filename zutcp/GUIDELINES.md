@@ -72,12 +72,12 @@ return, then finishes recovery bookkeeping before queued peer-ACK work runs.
 Rx admits peer ACKs without consulting a transmitted byte frontier. Keep
 generation checks and the independent receive-window and RST qualification.
 
-Native providers implement `Zi::IOBufPool` over storage injected from a selected
-`Zxdp::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
-to Zxdp. Configuration owns its pool list; initialization retains independent
-backend references so configuration-list membership can expire after `init()`.
-Tx buffer allocation failure drops the connection; producers do not wait for
-pool grants. Alignment changes physical stride without inflating logical buffer capacity.
+Native allocators hold typed pools created by the injected XDP instance.
+The multiplexer collects the application pools while stopped. Zutcp forwards
+those objects to XDP allocation and adds its internal Tx reserves to that arena.
+XDP owns the registration through restart and finalization. Tx exhaustion
+drops the connection. Alignment changes physical stride without inflating
+logical buffer capacity.
 
 Build/test Zutcp and its dependency closure in explicit directory/target order.
 Use the five native drivers and separate independent-kernel interop runner while
@@ -204,7 +204,7 @@ Initial/response/ACK and bootstrap IDs while correcting the live path.
 
 The mechanically renamed baseline is recorded in
 `../review_context/zutcp-execution/zutcp-mechanical-rename.json`. Phase 1 is now
-being adapted under `../zutcp_plan.md`; the QUIC-specific material below describes
+being adapted under `../arc/zutcp/zutcp_plan.md`; the QUIC-specific material below describes
 the copied baseline until the corresponding facilities are removed. It does not
 require retaining TLS/protection, migration or multiple streams in Zutcp.
 
@@ -256,7 +256,7 @@ Keep all Zi provider/object composition in Zutcp. `ZutcpAlloc` supplies the firs
 Tx/control provider over a common pool injected from the backend factory. `ZutcpMx::Instance`
 composes those providers with one physical Rx reserve, accepted-output metadata
 detachment and mx owner lifecycle; see the current checkpoint in
-`../zutcp_plan.md`. The stripped transport remains subsequent work.
+`../arc/zutcp/zutcp_plan.md`. The stripped transport remains subsequent work.
 `ZutcpIP` owns direct Ethernet/IP framing. Its writer receives payload already
 at the family-specific header offset and writes headers/padding only. It adds no
 UDP header or transport shim. `writeTCP` builds the TCP base header over payload

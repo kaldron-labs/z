@@ -26,7 +26,7 @@ public:
   enum { MaxSlots = 8, SlotSize = 1536, HeadRoom = 32, TailRoom = 32 };
 
   explicit ZquicFiniteProvider(ZiMultiplex *, unsigned slots = 1) :
-    m_mask{(1U << slots) - 1}, m_shared{m_mask}
+    Zi::IOBufPool{Zi::IOBufType::TxUDP}, m_mask{(1U << slots) - 1}, m_shared{m_mask}
   {
     assert(slots && slots <= MaxSlots);
     count = slots;

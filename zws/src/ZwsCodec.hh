@@ -30,20 +30,8 @@
 
 namespace Zws {
 
-inline Zi::IOBufAllocator *frameRxAllocator(Zi::IOBufType::T type)
+inline Zi::IOBufAllocator *frameRxAllocator()
 {
-  if (type == Zi::IOBufType::RxTCP) {
-    static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Zi::IOBufType::RxTCP,
-      ZiRxQueue::Node>();
-    return allocator;
-  }
-  if (type == Zi::IOBufType::RxTLS) {
-    static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Zi::IOBufType::RxTLS,
-      ZiRxQueue::Node>();
-    return allocator;
-  }
   static ZiMultiplex mx;
   static auto allocator = mx.allocator<Zi::IOBufType::App, ZiRxQueue::Node>();
   return allocator;
@@ -76,7 +64,7 @@ public:
       fail_(Failure::InputPressure);
     } else if (lower) {
       uint64_t remaining = lower;
-      auto allocator = frameRxAllocator(m_stream->rxBufType());
+      auto allocator = frameRxAllocator();
       auto alloc = [allocator]() -> ZmRef<ZiRxQueue::Node> {
 	return allocator->allocBuf();
       };
@@ -403,7 +391,7 @@ private:
     int appRC = 1;
     if (length) {
       uint64_t remaining = length;
-      auto allocator = frameRxAllocator(m_stream->rxBufType());
+      auto allocator = frameRxAllocator();
       auto alloc = [allocator]() -> ZmRef<ZiRxQueue::Node> {
 	return allocator->allocBuf();
       };

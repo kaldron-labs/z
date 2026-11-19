@@ -33,58 +33,25 @@
 
 namespace Zrest {
 
-inline Zi::IOBufAllocator *inputBufAllocator(Zi::IOBufType::T type)
+inline Zi::IOBufAllocator *inputBufAllocator()
 {
-  if (type == Zi::IOBufType::App) {
-    static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Zi::IOBufType::App,
-      ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zrest.Input">>();
-    return allocator;
-  }
-  if (type == Zi::IOBufType::RxTCP) {
-    static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Zi::IOBufType::RxTCP,
-      ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zrest.Input">>();
-    return allocator;
-  }
-  {
-    static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Zi::IOBufType::RxTLS,
-      ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zrest.Input">>();
-    return allocator;
-  }
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App,
+    ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zrest.Input">>();
+  return allocator;
 }
 
-inline Zi::IOBufAllocator *inputNodeAllocator(Zi::IOBufType::T type)
+inline Zi::IOBufAllocator *inputNodeAllocator()
 {
-  if (type == Zi::IOBufType::App) {
-    static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Zi::IOBufType::App,
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
-      ZuStringT<"Zrest.Input">>();
-    return allocator;
-  }
-  if (type == Zi::IOBufType::RxTCP) {
-    static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Zi::IOBufType::RxTCP,
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
-      ZuStringT<"Zrest.Input">>();
-    return allocator;
-  }
-  {
-    static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Zi::IOBufType::RxTLS,
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
-      ZuStringT<"Zrest.Input">>();
-    return allocator;
-  }
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App,
+    ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zrest.Input">>();
+  return allocator;
 }
 
 class Input {
 public:
-  bool begin(uint64_t length, uint64_t max,
-      Zi::IOBufType::T type = Zi::IOBufType::App) {
-    m_type = type;
+  bool begin(uint64_t length, uint64_t max) {
     reset();
     if (!max || length > max) return false;
     if (max > UINT_MAX) max = UINT_MAX;
@@ -98,11 +65,15 @@ public:
     if (!fits_(span.length())) { reset(); return false; }
     if (!span.length()) return true;
     buffer();
-    if (m_body->refCount() > 1) {
-      auto shared = ZuMv(m_body);
-      m_body = inputBufAllocator(m_type)->allocBuf();
-      m_body->ensure(m_length + span.length());
-      m_body->append(shared->cspan());
+    auto source = m_body->allocator();
+    ZmRef<ZiIOBuf> shared;
+    if (m_body->refCount() > 1 || !source || source->type != Zi::IOBufType::App) {
+      shared = ZuMv(m_body);
+      m_body = inputBufAllocator()->allocBuf();
+      if (!m_body->ensure(m_length + span.length()) || !m_body->append(shared->cspan())) {
+	reset();
+	return false;
+      }
     }
     if (!m_body->append(span)) { reset(); return false; }
     m_length += span.length();
@@ -126,8 +97,8 @@ public:
       ZmRef<ZiIOBuf> buf;
       auto n = rx.extract(
         [](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
-        [this]() -> ZmRef<ZiRxQueue::Node> {
-	  return inputNodeAllocator(m_type)->allocBuf();
+        []() -> ZmRef<ZiRxQueue::Node> {
+	  return inputNodeAllocator()->allocBuf();
         }, buf);
       if (n <= 0 || !feed(ZuMv(buf))) { reset(); return false; }
     }
@@ -136,7 +107,7 @@ public:
 
   const ZmRef<ZiIOBuf> &buffer() {
     if (!m_body && m_max)
-      m_body = inputBufAllocator(m_type)->allocBuf();
+      m_body = inputBufAllocator()->allocBuf();
     return m_body;
   }
   ZmRef<ZiIOBuf> take() {
@@ -153,7 +124,6 @@ private:
   }
 
   ZmRef<ZiIOBuf> m_body;
-  Zi::IOBufType::T m_type = Zi::IOBufType::App;
   unsigned m_max = 0;
   unsigned m_length = 0;
 };
@@ -171,8 +141,6 @@ inline bool jsonTail(ZuSpan<uint8_t> span, int offset) {
 struct BorrowedData : public ZmNHeap<BorrowedData>, public ZmObject {
 friend inline ZuStringT<"Zrest.Borrowed"> ZmNHeapID(BorrowedData *);
 
-  explicit BorrowedData(Zi::IOBufType::T type) : m_type{type} { }
-
   ZuPtr<ZfJSON::AnyNode> json;
   ZuPtr<ZfURI::AnyNode> query;
   ZuPtr<ZfURI::AnyNode> body;
@@ -182,15 +150,12 @@ friend inline ZuStringT<"Zrest.Borrowed"> ZmNHeapID(BorrowedData *);
   template <typename Span>
   bool retain(Span input, Span &output) {
     if (!input.length()) { output = input; return true; }
-    ZmRef<ZiIOBuf> buffer = inputBufAllocator(m_type)->allocBuf();
+    ZmRef<ZiIOBuf> buffer = inputBufAllocator()->allocBuf();
     if (!buffer->append(input)) return false;
     output = Span{buffer->data(), buffer->length};
     buffers.push(ZuMv(buffer));
     return true;
   }
-
-private:
-  Zi::IOBufType::T m_type;
 };
 
 } // Zrest

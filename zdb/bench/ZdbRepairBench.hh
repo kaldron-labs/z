@@ -320,7 +320,6 @@ static void sagas(unsigned count, unsigned rounds, unsigned width)
   auto config = RepairBench::config();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
   ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
-  check(mx.start());
   auto store = newStore();
   ZmRef<SagaDB> db = new SagaDB{};
   ZmSemaphore active, completed;
@@ -330,6 +329,7 @@ static void sagas(unsigned count, unsigned rounds, unsigned width)
   ZmRef<SagaDB> context = db;
   context->orders = orders; context->done = &completed;
   db->sagas({zdbtest::liveSagaDef()});
+  check(mx.start());
   check(db->start()); active.wait();
   Samples samples((count + 1)*2);
   using Payload = ZdbAnySaga<zdbtest::PayloadDB>;

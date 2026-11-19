@@ -1194,17 +1194,16 @@ void testHandshakeCryptoLoss()
   TempDir temp;
   ZQUIC_CHECK_RT(temp.init(), "loss runtime temporary TLS certificate failed");
 
-  ZiMultiplex mx(
-      ZiMxParams()
-	.scheduler([](auto &s) {
-	  s.nThreads(5)
-	    .thread(1, [](auto &t) { t.isolated(1); })
-	    .thread(2, [](auto &t) { t.isolated(1); })
-	    .thread(3, [](auto &t) { t.isolated(1); })
-	    .thread(4, [](auto &t) { t.isolated(1); }); })
-	.rxThread(1).txThread(2));
-
   for (unsigned dropHandshake = 0; dropHandshake < 2; ++dropHandshake) {
+    ZiMultiplex mx(
+        ZiMxParams()
+	  .scheduler([](auto &s) {
+	    s.nThreads(5)
+	      .thread(1, [](auto &t) { t.isolated(1); })
+	      .thread(2, [](auto &t) { t.isolated(1); })
+	      .thread(3, [](auto &t) { t.isolated(1); })
+	      .thread(4, [](auto &t) { t.isolated(1); }); })
+	  .rxThread(1).txThread(2));
     TestServer server;
     ZQUIC_CHECK_RT(server.init(
 	Zquic::ServerParams(&mx, "3", "4")
@@ -1292,8 +1291,6 @@ void testHandshakeCryptoLoss()
     server.final();
     mx.stop();
   }
-
-  mx.stop();
 }
 
 template <typename Link>
@@ -2006,9 +2003,29 @@ void testRejectedTokenQLog()
 	  .maxStreamsSimplex(8)
 	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
     "rejected-token runtime client init failed");
+  TestServer policyServer;
+  bool policyInit = policyServer.init(
+      Zquic::ServerParams(&mx, "3", "4")
+	.certPath(temp.certPath.cspan())
+	.keyPath(temp.keyPath.cspan())
+	.qlog(true)
+	.qlogPath(policyQlogPath.cspan())
+
+	.qlogRingSize(1<<16)
+	.maxData(32768)
+	.maxStreamData(8192)
+	.maxStreamsDuplex(8)
+	.maxStreamsSimplex(8)
+	.retryAddrValidate(true)
+	.newTokenAddrValidate(false)
+	.addrValidationSecret(secret)
+	.addrValidationLifetime(60)
+	.alpn(ZuSpan<ZuCSpan>{"h3"}));
+  ZQUIC_CHECK_RT(policyInit, "rejected-token policy server init failed");
+  if (!policyInit) { client.final(); server.final(); policyServer.final(); return; }
   bool mxStarted = mx.start();
   ZQUIC_CHECK_RT(mxStarted, "rejected-token runtime multiplexer start failed");
-  if (!mxStarted) { client.final(); server.final(); return; }
+  if (!mxStarted) { client.final(); server.final(); policyServer.final(); return; }
 
   ZQUIC_CHECK_RT(server.start(), "rejected-token runtime server listen failed");
   ZQUIC_CHECK_RT(server.listening(),
@@ -2017,6 +2034,7 @@ void testRejectedTokenQLog()
 	    server.stop();
 	    client.final();
 	    server.final();
+	    policyServer.final();
 	    mx.stop();
 	    return;
 	  }
@@ -2041,6 +2059,7 @@ void testRejectedTokenQLog()
 	    server.stop();
 	    client.final();
 	    server.final();
+	    policyServer.final();
 	    mx.stop();
 	    return;
 	  }
@@ -2092,25 +2111,6 @@ void testRejectedTokenQLog()
   server.final();
 
   mx.stop();
-  TestServer policyServer;
-  ZQUIC_CHECK_RT(policyServer.init(
-      Zquic::ServerParams(&mx, "3", "4")
-	.certPath(temp.certPath.cspan())
-	.keyPath(temp.keyPath.cspan())
-	.qlog(true)
-	.qlogPath(policyQlogPath.cspan())
-
-	.qlogRingSize(1<<16)
-	.maxData(32768)
-	.maxStreamData(8192)
-	.maxStreamsDuplex(8)
-	.maxStreamsSimplex(8)
-	.retryAddrValidate(true)
-	.newTokenAddrValidate(false)
-	.addrValidationSecret(secret)
-	.addrValidationLifetime(60)
-	.alpn(ZuSpan<ZuCSpan>{"h3"})),
-    "rejected-token policy server init failed");
   bool policyMxStarted = mx.start();
   ZQUIC_CHECK_RT(policyMxStarted,
     "rejected-token policy multiplexer start failed");

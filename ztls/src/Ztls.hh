@@ -550,11 +550,11 @@ private:
 	});
 	return true;
       }
-      if (!io.buf) io.buf = app()->socketRxAllocator()->allocBuf(impl());
+      if (!io.buf) io.buf = io.cxn->info().rxAllocator->allocBuf(impl());
       if (!io.buf) io.disconnect();
       return true;
     }};
-    if (!io.buf) io.buf = app()->socketRxAllocator()->allocBuf(impl());
+    if (!io.buf) io.buf = io.cxn->info().rxAllocator->allocBuf(impl());
     if (!io.buf) { io.disconnect(); return; }
     io.init(ZuMv(fn), ZuMv(io.buf));
   }
@@ -1848,14 +1848,21 @@ protected:
     m_errorFn = ZuMv(params.errorFn());
     if (!m_errorFn) m_errorFn = defaultErrorFn();
     if (!validate_(params)) return false;
-    m_mx = params.mx();
-    if (params.rxAllocator()->mx != m_mx ||
-	!allocator(params.txAllocator()) ||
-	params.txPacketAllocator()->mx != m_mx) return false;
+    auto mx = params.mx();
+    if (params.rxAllocator()->mx != mx ||
+	params.txAllocator()->mx != mx ||
+	params.txPacketAllocator()->mx != mx) return false;
+    auto socketRxAllocator = params.socketRxAllocator();
+    if (!socketRxAllocator) {
+      socketRxAllocator = mx->template allocator<Zi::IOBufType::Rx, ZiRxBuf, Ztls_::RxPacketCapacity>();
+      if (!socketRxAllocator) {
+	error_(ZeEXCEPT(Error, "Ztls", "TLS socket Rx allocator is unavailable"));
+	return false;
+      }
+    }
+    m_mx = mx;
     m_rxAllocator = params.rxAllocator();
-    m_socketRxAllocator = params.socketRxAllocator();
-    if (!m_socketRxAllocator)
-      m_socketRxAllocator = m_mx->allocator<Zi::IOBufType::RxTCP, ZiRxBuf, Ztls_::RxPacketCapacity>();
+    m_socketRxAllocator = socketRxAllocator;
     m_txAllocator = params.txAllocator();
     m_txPacketAllocator = params.txPacketAllocator();
     m_rxThread = thread_(params.rxThread(), m_mx->rxThread());
@@ -1890,7 +1897,7 @@ private:
       return false;
     }
     if (auto a = params.socketRxAllocator(); a &&
-	(a->mx != params.mx() || a->type != Zi::IOBufType::RxTCP)) {
+	(a->mx != params.mx() || a->type != Zi::IOBufType::Rx)) {
       error_(ZeEXCEPT(Error, "Ztls", "invalid TLS socket Rx allocator"));
       return false;
     }

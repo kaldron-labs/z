@@ -43,9 +43,10 @@ Implemented foundations:
 `FrameRx::feed` consumes at most one message and its supplied byte budget. The
 adapter must bound calls per scheduler turn, retain unconsumed input and post a
 continuation. A non-null input backing promises immutable storage until the
-returned frame is released; mutable transport queues must not supply that
-promise unless their extraction contract guarantees it. Without backing, input
-is copied into one consumer-owned pooled buffer. Typed adapters must verify
+returned frame is released. Supply backing only when the transport queue's
+extraction contract guarantees that lifetime. Complete messages can retain the
+original allocator. Borrowed input copies and fragmented assembly use
+application storage. Typed adapters must verify
 payloads with Zpb before constructing objects; raw framing alone is opaque.
 
 Build from the repository root with `make -j8`. Run `make -C zgrpc test` after

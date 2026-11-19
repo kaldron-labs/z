@@ -13,10 +13,12 @@ Applications that discover additional TCP/TLS destinations while running can
 register matching typed allocator pairs before startup and retain them in
 `TCPConfig::rxAllocator/txAllocator` or `TLSConfig::rxAllocator/txAllocator`
 (`H2Config::tls()` exposes the TLS configuration). TLS also requires a prepared
-socket `RxTCP` allocator in `TLSConfig::socketRxAllocator` and a packet `TxTCP`
+socket `Rx` allocator in `TLSConfig::socketRxAllocator` and a packet `TxTCP`
 allocator in `TLSConfig::txPacketAllocator`. Obtain all four TLS roles from the
 same stopped multiplexer before initializing later hubs. The configuration
-stores borrowed allocator pointers; the multiplexer owns the instances. The policy
+stores borrowed allocator pointers and the multiplexer owns the instances. Parser
+copies, metadata and event assembly use App storage. Complete input buffers retained
+directly keep their original allocator. The policy
 buffer type and geometry must match the selected transport's
 `NativeTraits<Profile>::Transport::RxAllocator/TxAllocator` types. Endpoints
 retain the original receive buffers.

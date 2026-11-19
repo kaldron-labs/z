@@ -43,12 +43,13 @@ the originating generation without consuming application record cipher state.
 A failed handshake/control record is unpublished and terminates that session;
 earlier complete records of its flight may have been sent.
 
-For hubs initialized after the multiplexer starts, also supply a prepared
-`RxTCP` allocator with `socketRxAllocator()`. Create it through the same
-stopped multiplexer and reuse it across dynamic hubs. Cold hub initialization
-creates a missing socket allocator through the multiplexer factory. Its builtin
-capacity follows local receive geometry, independent of the peer MSS or outbound
-MPS; smaller input chunks remain valid.
+For hubs initialized after explicit allocation or startup, supply a prepared
+`Rx` allocator with `socketRxAllocator()`. Acquire it from the same
+multiplexer before `alloc()` or `start()` and reuse it across dynamic hubs.
+During initial setup, a hub can acquire its default socket allocator through
+the multiplexer factory. The hub passes the retained allocator to each endpoint
+setup. Builtin receive capacity follows local receive geometry. Smaller input
+chunks remain valid.
 
 Create additional TxTLS allocators through `mx.allocator<Zi::IOBufType::TxTLS, ZiTxBuf, Size>()`, then
 supply them to `hub.allocator(allocator)`. The hub checks the TxTLS type and
@@ -59,7 +60,7 @@ plaintext buffer retains the allocator that created it until encryption complete
 auto rx = App::Link::rxAllocator(&mx);
 auto tx = App::Link::txAllocator(&mx);
 auto packets = App::Link::txPacketAllocator(&mx, 1024);
-auto socketRx = mx.allocator<Zi::IOBufType::RxTCP, ZiRxQueue::Node, Ztls_::RxPacketCapacity>();
+auto socketRx = mx.allocator<Zi::IOBufType::Rx, ZiRxQueue::Node, Ztls_::RxPacketCapacity>();
 auto params = Ztls::ClientParams{&mx, "3", "4"}.hub([rx, tx, packets, socketRx](auto &p) {
   p.rxAllocator(rx).txAllocator(tx).txPacketAllocator(packets)
     .socketRxAllocator(socketRx);
@@ -222,7 +223,7 @@ ignore queued callbacks from earlier timer generations.
 
 ## Receive buffers and authentication
 
-The transport callback transfers the original RxTCP buffer and its readable
+The transport callback transfers the original Rx buffer and its readable
 range to the TLS Rx owner. Kernel buffers use packet-sized builtin backing;
 plugins may attach registered backing to an initially backingless context stub.
 Builtin and stub-backed reception use the same Ztls processing path without

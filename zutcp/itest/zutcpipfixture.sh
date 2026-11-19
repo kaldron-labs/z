@@ -30,5 +30,30 @@ ip neighbor replace 198.18.0.6 lladdr "$zutcp_peer_mac" nud permanent dev zxdprx
 ip -6 neighbor replace 2001:db8::6 lladdr "$zutcp_peer_mac" nud permanent dev zxdprxa
 # Veth otherwise carries CHECKSUM_PARTIAL metadata, unlike a real Ethernet wire.
 ethtool -K zxdprxb tx off tso off gso off gro off >/dev/null
+
+# Each independent XDP instance gets its own interface tuple. A new
+# registration does not depend on asynchronous release of the previous one.
+carriage_pair() {
+  local family=$1 raw=$2 peer=$3 local_ip=$4 peer_ip=$5 next_hop=$6 prefix=$7
+  ip link add "$raw" numrxqueues 1 numtxqueues 1 type veth peer name "$peer" numrxqueues 1 numtxqueues 1
+  ip link set "$raw" up
+  ip link set "$peer" up
+  if [[ $family == 6 ]]; then
+    ip -6 address add "$peer_ip/$prefix" dev "$peer" nodad
+  else
+    ip address add "$peer_ip/$prefix" dev "$peer"
+  fi
+  local raw_mac peer_mac
+  raw_mac=$(ip -o link show dev "$raw" | sed -n 's/.*link\/ether \([^ ]*\).*/\1/p')
+  peer_mac=$(ip -o link show dev "$peer" | sed -n 's/.*link\/ether \([^ ]*\).*/\1/p')
+  ip -"$family" route add "$local_ip/$prefix" dev "$peer" src "$peer_ip"
+  ip -"$family" neighbor replace "$local_ip" lladdr "$raw_mac" nud permanent dev "$peer"
+  ip -"$family" route add "$next_hop/$prefix" dev "$raw"
+  ip -"$family" neighbor replace "$next_hop" lladdr "$peer_mac" nud permanent dev "$raw"
+  ethtool -K "$peer" tx off tso off gso off gro off >/dev/null
+}
+carriage_pair 6 zip6a zip6b 2001:db8:6::1 2001:db8:6::2 2001:db8:6::6 128
+carriage_pair 4 zitcp4a zitcp4b 198.18.4.1 198.18.4.2 198.18.4.6 32
+carriage_pair 6 zitcp6a zitcp6b 2001:db8:7::1 2001:db8:7::2 2001:db8:7::6 128
 export ZUTCP_IP_FIXTURE=1
 exec "$@"

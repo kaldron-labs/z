@@ -46,7 +46,7 @@ template <
   unsigned MaxSize = ZiIOBuf_DefltVHMaxSize,
   ZuString HeapID = ZiIOBuf_HeapID{}()>
 using RxBufAlloc =
-  Zi::IOBufBuiltinAllocator<Zi::IOBufType::RxTCP,
+  Zi::IOBufBuiltinAllocator<Zi::IOBufType::Rx,
     RxQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
 template <
@@ -962,10 +962,15 @@ protected:
     m_errorFn = ZuMv(params.errorFn_);
     if (!m_errorFn) m_errorFn = defaultErrorFn();
     if (!validate_(params)) return false;
+    auto rxAllocator = params.rxAllocator();
+    if (!rxAllocator) rxAllocator = rxAlloc_(params.mx, 0);
+    if (!rxAllocator || rxAllocator->type != Zi::IOBufType::Rx ||
+	rxAllocator->mx != params.mx) {
+      error_(ZeEXCEPT(Error, "Ztcp", "TCP Rx allocator must belong to the multiplexer"));
+      return false;
+    }
     m_mx = params.mx;
-    if (params.rxAllocator()->mx != m_mx ||
-	!allocator(params.txAllocator())) return false;
-    m_rxAllocator = params.rxAllocator();
+    m_rxAllocator = rxAllocator;
     m_txAllocator = params.txAllocator();
     m_rxThread = thread_(params.rxThread, m_mx->rxThread());
     m_txThread = thread_(params.txThread, m_mx->txThread());
@@ -976,6 +981,15 @@ protected:
   }
 
 private:
+  template <typename A = App>
+  static auto rxAlloc_(ZiMultiplex *mx, int) -> decltype(A::Link::rxAllocator(mx)) {
+    return A::Link::rxAllocator(mx);
+  }
+
+  static Zi::IOBufAllocator *rxAlloc_(ZiMultiplex *mx, long) {
+    return mx->allocator<Zi::IOBufType::Rx, ZiRxQueue::Node>();
+  }
+
   unsigned thread_(const ParamString &id, unsigned deflt) const {
     return id ? m_mx->sid(id) : deflt;
   }
@@ -1007,11 +1021,10 @@ private:
 	"TCP Rx and Tx threads must differ"));
       return false;
     }
-    if (!params.rxAllocator() ||
-	params.rxAllocator()->type != Zi::IOBufType::RxTCP ||
-	!params.txAllocator() ||
-	params.txAllocator()->type != Zi::IOBufType::TxTCP) {
-      error_(ZeEXCEPT(Error, "Ztcp", "TCP Rx/Tx allocators are required"));
+    if (!params.txAllocator() ||
+	params.txAllocator()->type != Zi::IOBufType::TxTCP ||
+	params.txAllocator()->mx != params.mx) {
+      error_(ZeEXCEPT(Error, "Ztcp", "TCP Tx allocator must belong to the multiplexer"));
       return false;
     }
     return true;

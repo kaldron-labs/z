@@ -474,10 +474,11 @@ void fallback()
   if (agentInited) agent.final();
   mx.stop();
 
+  ZiMultiplex noReplayMx{mxParams()};
   Resolver noReplayResolver;
   ClientApp noReplayClient;
   bool noReplayInited = noReplayClient.init(
-    hub, 1, agentConfig, Zhttp::TCPConfig{},
+    Zhttp::HubConfig{&noReplayMx, "3", "4"}, 1, agentConfig, Zhttp::TCPConfig{},
     Zhttp::H2Config{}.tls([&cert](auto &tls) {
       tls.caPath(cert);
     }),
@@ -486,8 +487,8 @@ void fallback()
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port});
   noReplayClient.discoveryResolver(&noReplayResolver.ops);
   ZuCHECK(noReplayInited, "initialize no-replay prefer-mode agent");
-  mxUp = mx.start();
-  ZuCHECK(mxUp, "restart multiplexer for no-replay agent");
+  mxUp = noReplayMx.start();
+  ZuCHECK(mxUp, "start multiplexer for no-replay agent");
   bool noReplayUp = mxUp && noReplayInited && noReplayClient.start();
   ZuCHECK(noReplayUp, "start no-replay prefer-mode agent");
   if (noReplayUp) {
@@ -517,8 +518,9 @@ void fallback()
   }
   if (noReplayInited) noReplayClient.stop();
   if (noReplayInited) noReplayClient.final();
-  mx.stop();
+  noReplayMx.stop();
 
+  ZiMultiplex cacheMx{mxParams()};
   Resolver cacheResolver;
   ClientApp cachedClient;
   auto cacheConfig = Zhttp::Config()
@@ -526,7 +528,7 @@ void fallback()
     .protocol(Zhttp::ProtoPolicy::PreferH3).blindH3(false)
     .tcp(true).tls(true).quic(true);
   bool cacheInited = cachedClient.init(
-    hub, 1, cacheConfig, Zhttp::TCPConfig{},
+    Zhttp::HubConfig{&cacheMx, "3", "4"}, 1, cacheConfig, Zhttp::TCPConfig{},
     Zhttp::H2Config{}.tls([&cert](auto &tls) {
       tls.caPath(cert);
     }),
@@ -535,8 +537,8 @@ void fallback()
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port});
   cachedClient.discoveryResolver(&cacheResolver.ops);
   ZuCHECK(cacheInited, "initialize cached-routing agent");
-  mxUp = mx.start();
-  ZuCHECK(mxUp, "restart multiplexer for cached-routing agent");
+  mxUp = cacheMx.start();
+  ZuCHECK(mxUp, "start multiplexer for cached-routing agent");
   bool cacheUp = mxUp && cacheInited && cachedClient.start();
   ZuCHECK(cacheUp, "start cached-routing agent");
   if (cacheUp) {
@@ -577,15 +579,17 @@ void fallback()
     "Alt-Svc response wave completes before client teardown");
   if (cacheInited) cachedClient.stop();
   if (cacheInited) cachedClient.final();
-  mx.stop();
+  cacheMx.stop();
 
+  ZiMultiplex forcedMx{mxParams()};
   ClientApp forcedClient;
   auto forcedDefaults = Zhttp::Config()
     .concurrency(1).requestTimeout(10)
     .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
   bool forcedInited = forcedClient.init(
-    hub, 1, forcedDefaults, Zhttp::TCPConfig{}, Zhttp::H2Config{},
+    Zhttp::HubConfig{&forcedMx, "3", "4"}, 1, forcedDefaults,
+    Zhttp::TCPConfig{}, Zhttp::H2Config{},
     Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(500));
   forcedInited = forcedInited && forcedClient.pool(
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port},
@@ -593,8 +597,8 @@ void fallback()
       .protocol(Zhttp::ProtoPolicy::ForceH3).blindH3(true)
       .tls(false).quic(true));
   ZuCHECK(forcedInited, "initialize forced-H3 pool override");
-  mxUp = mx.start();
-  ZuCHECK(mxUp, "restart multiplexer for forced-H3 agent");
+  mxUp = forcedMx.start();
+  ZuCHECK(mxUp, "start multiplexer for forced-H3 agent");
   bool forcedUp = mxUp && forcedInited && forcedClient.start();
   ZuCHECK(forcedUp, "start forced-H3 agent");
   if (forcedUp) {
@@ -613,8 +617,9 @@ void fallback()
     "forced-H3 response completes before client teardown");
   if (forcedInited) forcedClient.stop();
   if (forcedInited) forcedClient.final();
-  mx.stop();
+  forcedMx.stop();
 
+  ZiMultiplex disabledMx{mxParams()};
   ClientApp disabledClient;
   auto disabledDefaults = Zhttp::Config()
     .concurrency(1).requestTimeout(10)
@@ -622,7 +627,7 @@ void fallback()
     .h2Policy(Zhttp::H2Policy::Disable)
     .tcp(true).tls(false).quic(true);
   bool disabledInited = disabledClient.init(
-    hub, 1, disabledDefaults, Zhttp::TCPConfig{},
+    Zhttp::HubConfig{&disabledMx, "3", "4"}, 1, disabledDefaults, Zhttp::TCPConfig{},
     Zhttp::H2Config{}.tls([&cert](auto &tls) {
       tls.caPath(cert);
     }), Zhttp::QUICConfig{});
@@ -633,8 +638,8 @@ void fallback()
       .h2Policy(Zhttp::H2Policy::Force)
       .tls(true).quic(false));
   ZuCHECK(disabledInited, "initialize H3-disabled pool override");
-  mxUp = mx.start();
-  ZuCHECK(mxUp, "restart multiplexer for H3-disabled agent");
+  mxUp = disabledMx.start();
+  ZuCHECK(mxUp, "start multiplexer for H3-disabled agent");
   bool disabledUp = mxUp && disabledInited && disabledClient.start();
   ZuCHECK(disabledUp, "start H3-disabled agent");
   if (disabledUp) {
@@ -654,7 +659,7 @@ void fallback()
   if (disabledInited) disabledClient.stop();
   if (disabledInited) disabledClient.final();
 
-  mx.stop();
+  disabledMx.stop();
   ZuCHECK(stopServer(server), "stop TLS fallback server");
 #endif
 }

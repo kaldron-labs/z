@@ -31,38 +31,6 @@ enum { DefaultControlBufCount = 256 };
 enum { DefaultTxControlCredits = 64 };
 enum { DefaultRxRetainPerCxn = 256 };
 
-// Zi adapters retain this provider through final registered returns. Its pool
-// therefore outlives the packet instance and all application/DMA-held buffers.
-// Freeze geometry and intrusive links while the raw instance is active.
-struct Allocator;
-
-struct AllocatorData : public Zi::IOBufPool {
-  using ReturnedFn = ZmFn<void(), ZmFnHeapID<"Zutcp.Returned">>;
-  ReturnedFn returned;
-  ZmRef<Zi::IOBufPool> pool;
-  Allocator	*nextProvider = nullptr;
-
-  explicit AllocatorData(ZmRef<Zi::IOBufPool> pool_) : pool{ZuMv(pool_)} {
-    ZmAssert_(pool);
-    count = pool->count;
-    size = pool->size;
-    align = pool->align;
-    headRoom = pool->headRoom;
-    tailRoom = pool->tailRoom;
-    ZmAssert_(headRoom <= size && tailRoom <= size - headRoom);
-  }
-};
-
-struct ZutcpAPI Allocator : public ZmNHeap<Allocator>, public AllocatorData {
-friend inline ZuStringT<"Zutcp.Allocator"> ZmNHeapID(Allocator *);
-  using ZmNHeap<Allocator>::operator new;
-  using ZmNHeap<Allocator>::operator delete;
-
-  using AllocatorData::AllocatorData;
-  uint8_t *alloc() override;
-  void free(uint8_t *) override;
-};
-
 // The caller allocation lease lives in an existing recovery/source node,
 // independently of copied SentPkt metadata and the raw kernel lease. Owners drain
 // recovery before releasing the provider; there is no per-packet owner ref.
@@ -98,19 +66,6 @@ inline void bindPacketLease(Zi::IOBuf *, PacketLease *) { }
 inline void bindPacketLease(PacketBuf *buf, PacketLease *lease) {
   buf->retained = lease;
 }
-
-// Logical Rx context providers own metadata only and retain the single physical
-// ingress provider. Final returns reach that original pool after stub attachment.
-struct ZutcpAPI RxAllocator : public ZmNHeap<RxAllocator>, public Zi::IOBufPool {
-friend inline ZuStringT<"Zutcp.RxAllocator"> ZmNHeapID(RxAllocator *);
-  using ZmNHeap<RxAllocator>::operator new;
-  using ZmNHeap<RxAllocator>::operator delete;
-  ZmRef<Allocator> ingress;
-
-  RxAllocator(Allocator *, unsigned head, unsigned count, unsigned align);
-  uint8_t *alloc() override { return nullptr; } // Zi Rx creates backingless stubs
-  void free(uint8_t *) override;
-};
 
 } // namespace Zutcp
 

@@ -608,7 +608,8 @@ void ZiMultiplex::udp_(ZiConnectFn fn, ZiFailFn failFn,
   Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
 {
   ZiAssert(invoked(rxThread()), "ZiMultiplex", (), "Rx exclusive", return);
-  ZiAssert(rxAllocator->mx == this, "ZiMultiplex", (), "Rx allocator", return);
+  ZiAssert(rxAllocator && rxAllocator->mx == this && rxAllocator->type == Zi::IOBufType::Rx,
+    "ZiMultiplex", (), "Rx allocator", return);
 
   if (ZuUnlikely(!running())) {
     Error("udp", Zi::NotReady, ZeOK);
@@ -1020,7 +1021,8 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
   Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
 {
   ZiAssert(invoked(rxThread()), "ZiMultiplex", (), "Rx exclusive", return);
-  ZiAssert(rxAllocator->mx == this, "ZiMultiplex", (), "Rx allocator", return);
+  ZiAssert(rxAllocator && rxAllocator->mx == this && rxAllocator->type == Zi::IOBufType::Rx,
+    "ZiMultiplex", (), "Rx allocator", return);
 
   if (ZuUnlikely(!running())) {
     Error("connect", Zi::NotReady, ZeOK);
@@ -1387,7 +1389,8 @@ void ZiMultiplex::listen_(
   Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options)
 {
   ZiAssert(invoked(rxThread()), "ZiMultiplex", (), "Rx exclusive", return);
-  ZiAssert(rxAllocator->mx == this, "ZiMultiplex", (), "Rx allocator", return);
+  ZiAssert(rxAllocator && rxAllocator->mx == this && rxAllocator->type == Zi::IOBufType::Rx,
+    "ZiMultiplex", (), "Rx allocator", return);
 
   if (ZuUnlikely(!running())) {
     Error("listen", Zi::NotReady, ZeOK);
@@ -2887,37 +2890,88 @@ ZiMultiplex::ZiMultiplex(ZiMxParams mxParams) :
 ZiMultiplex::~ZiMultiplex()
 {
   ZiMxMgr_::instance()->del(this);
+  if (m_plugin) {
+    ZmAssert_(state() == ZmEngineState::Stopped);
+    m_plugin->final();
+    m_plugin->mx(nullptr);
+    m_plugin = nullptr;
+  }
   // Registrations and allocator storage survive stop until final teardown.
+  m_rxPool = nullptr;
+  m_txPools.clean();
   m_allocators.clean();
 }
 
-void ZiMultiplex::plugin(ZmRef<ZiMxPlugin> plugin)
+void ZiMultiplex::plugin(ZmRef<ZiMxPlugin> &&plugin)
 {
-  ZmAssert(state() == ZmEngineState::Stopped);
-  m_plugin = ZuMv(plugin);
+  if (attachPlugin(plugin.ptr())) m_plugin = ZuMv(plugin);
+}
+
+bool ZiMultiplex::attachPlugin(ZiMxPlugin *plugin)
+{
+  ZmAssert_(plugin);
+  ZmAssert_(m_registration == Open && state() == ZmEngineState::Stopped);
+  ZmAssert_(plugin->mx() == this);
+  if (m_plugin) {
+    ZmAssert_(m_plugin.ptr() == plugin);
+    return false;
+  }
+  return true;
+}
+
+Zi::IOBufPool *ZiMultiplex::bufPool(
+  Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count)
+{
+  if (type == Zi::IOBufType::Rx && m_rxPool) return m_rxPool;
+  auto pool = m_plugin->allocator(type, size, align, count);
+  if (!pool) return nullptr;
+  ZmAssert_(pool->type == type);
+  if (type == Zi::IOBufType::Rx)
+    m_rxPool = pool;
+  else {
+    {
+      auto iter = m_txPools.citer();
+      while (auto tx = iter())
+	if (tx == pool) return pool;
+    }
+    m_txPools.pushNode(pool);
+  }
+  return pool;
+}
+
+ZuUnion<void, ZeException> ZiMultiplex::alloc()
+{
+  m_registration = AllocatorsClosed;
+  if (m_allocated) return {};
+  if (m_plugin && m_plugin->deferredBacking()) {
+    auto result = m_plugin->alloc(m_rxPool, m_txPools);
+    if (result.is<ZeException>()) return result;
+  }
+  m_allocated = true;
+  return {};
+}
+
+bool ZiMultiplex::start()
+{
+  m_registration = AllocatorsClosed;
+  return ZmScheduler::start();
 }
 
 bool ZiMultiplex::start__()
 {
+  if (!m_allocated) {
+    auto result = alloc();
+    if (result.is<ZeException>()) {
+      ZiLogEvent(ZuMv(result).p<ZeException>());
+      return false;
+    }
+  }
   if (!m_rxQuantum || m_rxQuantum > unsigned(INT_MAX)) {
     Error("rxQuantum", Zi::NotReady, ZeError{ZiEINVAL});
     return false;
   }
 
   if (!ZmScheduler::start__()) return false;
-
-  if (m_plugin) {
-    auto &starting = ZmTLS<ZmSemaphore, &ZiMultiplex::start__>();
-
-    m_starting = &starting;
-
-    m_pluginFailed = false;
-    m_plugin->start();
-
-    starting.wait();
-
-    if (m_pluginFailed) return false;
-  }
 
 #ifdef ZiMultiplex_IOCP
   {
@@ -2978,6 +3032,24 @@ bool ZiMultiplex::start__()
     }
   }
 #endif
+
+  if (m_plugin) {
+    auto &starting = ZmTLS<ZmSemaphore, &ZiMultiplex::start__>();
+
+    m_starting = &starting;
+
+    m_pluginFailed = false;
+    m_plugin->start();
+
+    starting.wait();
+
+    m_starting = nullptr;
+    if (m_pluginFailed) {
+      ZmScheduler::stop__();
+      stop_2();
+      return false;
+    }
+  }
 
   wakeFn(rxThread(),
     WakeFn{this, [](ZiMultiplex *mx) { mx->wakeRx(); }});

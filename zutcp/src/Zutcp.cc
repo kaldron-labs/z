@@ -15,12 +15,11 @@
 
 #include <zlib/ZiLog.hh>
 
-#include <zlib/ZxdpBPF.hh>
-
 #include <zlib/ZutcpIP.hh>
 #include <zlib/Zutcp.hh>
 #include <zlib/ZutcpCliCxn.hh>
 #include <zlib/ZutcpSrvCxn.hh>
+#include <zlib/ZutcpUDP.hh>
 
 namespace Zutcp {
 
@@ -540,93 +539,29 @@ template <typename L> void Instance::visit(ZiConnection *mx, L &&fn)
   }
 }
 
-static unsigned requireMTU(ZiMultiplex *mx, unsigned interface)
+Instance::Instance() :
+  m_endpoints{ZmHashParams{}.bits(5).loadFactor(1).cBits(3).init("Zutcp.Endpoints")},
+  m_udpBindings{ZmHashParams{}.bits(4).init("Zutcp.UDP.Bindings")}
 {
-  if (!mx) throw ZeEXCEPT(Error, "Zutcp", "packet interface requires a multiplexer");
-  auto result = interfaceMTU(interface);
-  if (result.is<ZeException>()) throw ZuMv(result.p<ZeException>());
-  return result.p<unsigned>();
 }
 
-static unsigned ingressCount(ZiMultiplex *mx, unsigned interface)
-{
-  if (mx->rxBufSize()) return mx->rxBufSize();
-  auto result = Zxdp::Xdp::queryLink(interface);
-  if (result.is<ZeException>()) throw ZuMv(result.p<ZeException>());
-  // Idle queues retain their FILL allocations. Each active queue needs room
-  // beyond one connection's default retained list before its oldest can return.
-  uint64_t count = uint64_t(result.p<Zxdp::Xdp::LinkState>().rxQueues) *
-    (uint64_t(DefaultRxRetainPerCxn) + mx->rxQuantum());
-  if (count > UINT_MAX) throw ZeEXCEPT(Error, "Zutcp", "Rx pool count overflow");
-  return count > ZiIOBuf_DefltCount ? unsigned(count) : ZiIOBuf_DefltCount;
-}
-
-static unsigned requirePackets(unsigned count)
-{
-  if (!count) throw ZeEXCEPT(Error, "Zutcp", "empty native packet pool");
-  return count;
-}
-
-static unsigned requireTCPSecrets(ISN &isn, TFOKey &tfo, unsigned interface)
-{
-  if (!isn.init(interface))
-    throw ZeEXCEPT(Error, "Zutcp", "secure TCP sequence initialization failed");
-  if (!tfo.init())
-    throw ZeEXCEPT(Error, "Zutcp", "secure Fast Open cookie initialization failed");
-  return interface;
-}
-
-Instance::Instance(ZiMultiplex *mx)
-: ZiMxPlugin{mx},
-  m_endpoints{ZmHashParams{}.bits(5).loadFactor(1).cBits(3).init("Zutcp.Endpoints")}
-{
-  ZmAssert_(mx && mx->state() == ZmEngineState::Stopped);
-  m_tfoCookies.queueOwner(mx->id());
-  m_closed.queueOwner(mx->id());
-}
-
-// Fixture storage has no kernel interface; use the nonzero loopback identity
-// solely for the ISN domain, without querying or opening that interface.
-Instance::Instance(ZiMultiplex *mx, unsigned mtu, ZmRef<Zi::IOBufPool> ingress,
-  ZmRef<Zi::IOBufPool> packets, ZmRef<Zi::IOBufPool> control)
-: ZiMxPlugin{mx}, m_params{.interface = requireTCPSecrets(m_isn, m_tfoKey, 1), .spin = 0},
-  m_mtu{mtu}, m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
-  m_ingress{new Allocator{ZuMv(ingress)}},
-  m_packets{new Allocator{ZuMv(packets)}}, m_control{new Allocator{ZuMv(control)}},
-  m_endpoints{ZmHashParams{}.bits(5).loadFactor(1).cBits(3).init("Zutcp.Endpoints")}
-{
-  m_tfoCookies.queueOwner(mx->id());
-  m_closed.queueOwner(mx->id());
-  new (m_allocators.new_<1>()) Allocators{mx, m_ingress, m_packets, m_control};
-  addProvider(m_packets);
-  addProvider(m_control);
-}
-
-Instance::~Instance() { final(); }
+Instance::~Instance() { if (m_xdp) final(); }
 
 void Instance::final()
 {
   ZmAssert_(state() == ZmEngineState::Stopped && !unsigned(m_wakeUsers));
   ZmAssert_(!m_txServicing && !m_txPending);
-  ZmAssert_(!m_endpoints.count_());
+  ZmAssert_(!m_endpoints.count_() && !m_udpBindings.count_());
   ZmAssert_(!m_cxns && !m_cxnCount && !m_listeners && !m_cxnRetiring && !m_cxnObjects);
   ZmAssert_(!m_cxnTotal && !m_cxnPending && !m_cxnClosing);
-  if (m_ingress) m_ingress->returned = {};
-  if (m_backend) m_backend->final();
-  m_backend = nullptr;
-  while (m_providers) {
-    auto p = m_providers;
-    m_providers = p->nextProvider;
-    p->nextProvider = nullptr;
-    ZmDEREF(p); // stopped, long-lived configuration ownership
-  }
+  if (m_xdp) m_xdp->final();
+  m_xdp = nullptr;
+  m_packetRx.null();
   m_allocators.null();
-  m_ingress = m_packets = nullptr;
-  m_control = nullptr;
-  m_txCapacity = m_mtu = 0;
+  m_ingress = m_packets = m_control = m_requestedTx = nullptr;
+  m_txCapacity = m_mtu = m_ingressCount = 0;
   m_cxnRefused = m_dataStalls = m_controlStalls = 0;
   m_params = {};
-  m_netmask = Zi::Name{};
   m_isn.~ISN(); new (&m_isn) ISN;
   m_tfoKey.~TFOKey(); new (&m_tfoKey) TFOKey;
   m_closed.final();
@@ -634,66 +569,83 @@ void Instance::final()
   m_ioState = Down;
   m_endpointDrain = DrainIdle;
   m_startFailed = false;
-  m_rxWakeQueued = m_rxPackets = 0;
-  m_nextPort = ClientPorts::First;
+  m_rxPackets = 0;
+  m_nextPort = m_nextUdpPort = ClientPorts::First;
   m_controlCredits = DefaultTxControlCredits;
   m_tcpClock = {};
   m_error = {};
   unwatch();
+  mx(nullptr);
 }
 
-void Instance::addProvider(Allocator *p)
+Zi::IOBufPool *Instance::ingress(unsigned count, unsigned align)
 {
-  ZmREF(p);
-  m_txCapacity += p->pool->count;
-  p->nextProvider = m_providers;
-  m_providers = p;
+  if (m_ingress) return m_ingress;
+  if (mx()->rxBufSize() || count < m_ingressCount) count = m_ingressCount;
+  m_ingress = m_xdp->bufPool(Zi::IOBufType::Rx, count, m_mtu + 14, 14 + 40 + 60, 0, align);
+  return m_ingress;
 }
 
 Zi::IOBufPool *Instance::allocator(
   Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count)
 {
-  ZmAssert_(mx()->state() == ZmEngineState::Stopped);
-  // Providers reserve complete output framing before Zi copies their geometry.
-  enum { Ethernet = 14, IPv6 = 40, TCP = 60 };
-  unsigned head;
+  ZmAssert_(m_xdp && mx()->state() == ZmEngineState::Stopped);
+  enum { Ethernet = 14, IPv6 = 40, TCP = 60, UDP = 8 };
+  unsigned head = Ethernet + IPv6;
   switch (type) {
-    case Zi::IOBufType::RxTCP:
-    case Zi::IOBufType::TxTCP: head = Ethernet + IPv6 + TCP; break;
-    default: throw ZeEXCEPT(Error, "Zutcp", "unsupported network allocator role");
+    case Zi::IOBufType::Rx:
+    case Zi::IOBufType::TxTCP: head += TCP; break;
+    case Zi::IOBufType::TxUDP: head += UDP; break;
+    default: return nullptr;
   }
   if (head >= m_mtu + Ethernet || !align || (align & (align - 1)) ||
-      align > unsigned(sysconf(_SC_PAGESIZE)))
-    throw ZeEXCEPT(Error, "Zutcp", "unsupported packet allocator geometry");
-  if (type == Zi::IOBufType::RxTCP)
-    return new RxAllocator{m_ingress, head, count, align};
+      align > unsigned(sysconf(_SC_PAGESIZE))) return nullptr;
+  if (type == Zi::IOBufType::Rx) return ingress(count, align);
+
+  if (!count || count > UINT_MAX - m_txCapacity) return nullptr;
   uint64_t bytes = uint64_t(size) + head;
   if (bytes > m_mtu + Ethernet) bytes = m_mtu + Ethernet;
-  auto p = new Allocator{m_backend->bufPool(count, unsigned(bytes), head, 0, align)};
-  addProvider(p);
-  return p;
+  // Keep the new pool alive until the multiplexer records its owning references.
+  m_requestedTx = m_xdp->bufPool(type, count, unsigned(bytes), head, 0, align);
+  if (m_requestedTx) m_txCapacity += m_requestedTx->count;
+  return m_requestedTx;
 }
 
-void Instance::initControl(unsigned count, unsigned credits)
+Instance::AllocResult Instance::alloc(Zi::IOBufPool *rx, const Zi::IOBufPoolList &tx)
 {
-  m_txCapacity = m_txCapacity - m_control->pool->count + count;
-  m_control->count = m_control->pool->count = count;
-  m_controlCredits = credits;
+  ZmAssert_(m_xdp && (!rx || rx == m_ingress.ptr()));
+  if (!rx) rx = ingress(0, ZiIOBuf_DefltAlign);
+  if (!rx) return ZeEXCEPT(Error, "Zutcp", "cannot create the ingress pool");
+  if (!m_packetRx.is<PacketAllocator>())
+    new (m_packetRx.new_<1>()) PacketAllocator{mx(), rx};
+  m_requestedTx = nullptr;
+  return m_xdp->alloc(rx, tx);
 }
 
 TxAdmission Instance::txAdmission() const
 {
   ZmAssert_(state() == ZmEngineState::Stopped || mx()->invoked(mx()->txThread()));
-  unsigned count = m_control ? m_control->pool->count : 0;
+  unsigned count = m_control ? m_control->count : 0;
   return {.capacity = m_txCapacity, .dataStalls = m_dataStalls,
     .controlStalls = m_controlStalls, .reserved = m_controlCredits,
     .outstanding = m_txPending, .controlCount = count};
 }
 
-ZuUnion<void, ZeException> Instance::init(Params config)
+ZuUnion<void, ZeException> Instance::init(
+  ZiMultiplex *mx_, ZmRef<Zxdp::Instance> &&xdp, Params config)
 {
-  if (state() != ZmEngineState::Stopped || mx()->state() != ZmEngineState::Stopped)
+  ZmAssert_(mx_);
+  ZmAssert_(!xdp || !xdp->allocated());
+  ZmAssert_(!xdp || (xdp->mx() == mx_ && xdp->ifindex() && !xdp->everStarted()));
+  ZmAssert_(!mx() || mx() == mx_);
+  ZmAssert_(m_xdp || xdp);
+  if (state() != ZmEngineState::Stopped || mx_->state() != ZmEngineState::Stopped)
     return ZeEXCEPT(Error, "Zutcp", "finish multiplexer stop before initialization");
+  if (config.heartBeat == ZuTime{0}) config.heartBeat = {};
+  if (m_xdp) {
+    if ((!xdp || xdp.ptr() == m_xdp.ptr()) && config == m_params) return {};
+    return ZeEXCEPT(Error, "Zutcp", "conflicting repeated TCP initialization");
+  }
   if (!config.rtoParams.valid())
     return ZeEXCEPT(Error, "Zutcp", "invalid RTO bounds or granularity");
   if (config.tlpPeerAckDelay < ZuTime{0})
@@ -703,8 +655,8 @@ ZuUnion<void, ZeException> Instance::init(Params config)
     return ZeEXCEPT(Error, "Zutcp", "invalid TCP heartbeat interval");
   if (!config.maxPayload || config.maxPayload > BufSize)
     return ZeEXCEPT(Error, "Zutcp", "invalid payload cap");
-  if (!rxThread() || !txThread() || rxThread() == txThread() ||
-      rxThread() > mx()->params().nThreads() || txThread() > mx()->params().nThreads())
+  auto rx = mx_->rxThread(), tx = mx_->txThread(), nThreads = mx_->params().nThreads();
+  if (!rx || !tx || rx == tx || rx > nThreads || tx > nThreads)
     return ZeEXCEPT(Error, "Zutcp", "invalid multiplexer Rx/Tx owners");
   if (!positiveTimeout(config.connectTimeout)) {
     return ZeEXCEPT(Error, "Zutcp", "invalid connect timeout");
@@ -732,50 +684,48 @@ ZuUnion<void, ZeException> Instance::init(Params config)
     return ZeEXCEPT(Error, "Zutcp", "invalid per-connection Rx retention limit");
   if (!config.packetCount)
     return ZeEXCEPT(Error, "Zutcp", "empty native packet pool");
-  uint64_t capacity = m_ingress ?
-    m_txCapacity - m_control->pool->count + config.controlBufCount :
-    uint64_t(config.packetCount) + config.controlBufCount;
+  uint64_t capacity = uint64_t(config.packetCount) + config.controlBufCount;
   if (!config.controlBufCount || !config.txControlCredits ||
-      config.txControlCredits >= capacity || capacity > UINT_MAX || m_txPending)
-    return ZeEXCEPT(Error, "Zutcp", "invalid or busy control reserve");
-  if (m_ingress && (config.interface != m_params.interface ||
-      config.packetCount != m_params.packetCount))
-    return ZeEXCEPT(Error, "Zutcp", "native interface and packet pool remain fixed after init");
-  if (!m_ingress) {
-    try {
-      auto mtu = requireMTU(mx(), config.interface);
-      requireTCPSecrets(m_isn, m_tfoKey, config.interface);
-      auto backend = Zxdp::instance(Zxdp::Type::Xdp);
-      ZmRef<Allocator> ingress = new Allocator{backend->bufPool(
-	ingressCount(mx(), config.interface), mtu + 14)};
-      ZmRef<Allocator> packets = new Allocator{backend->bufPool(
-	requirePackets(config.packetCount), mtu + 14, 14 + 40 + 60)};
-      ZmRef<Allocator> controls = new Allocator{backend->bufPool(
-	config.controlBufCount, mtu + 14, 14 + 40 + 60)};
-      new (m_allocators.new_<1>()) Allocators{mx(), ingress, packets, controls};
-      m_mtu = mtu;
-      m_backend = ZuMv(backend);
-      m_ingress = ZuMv(ingress);
-      m_packets = ZuMv(packets);
-      m_control = controls;
-      addProvider(m_packets);
-      addProvider(m_control);
-      m_ingress->returned = [this] {
-	if (!ready() || mx()->invoked(mx()->rxThread()) || m_rxWakeQueued.xch(1)) return;
-	mx()->rxRun([this] { m_rxWakeQueued = 0; });
-      };
-    } catch (ZeException &error) {
-      return ZuMv(error);
-    }
+      config.txControlCredits >= capacity || capacity > UINT_MAX)
+    return ZeEXCEPT(Error, "Zutcp", "invalid control reserve");
+  auto mtu = xdp->mtu(), queues = xdp->rxQueues();
+  if (mtu < 40 + 60 + 1 || mtu > UINT_MAX - 14 || !queues)
+    return ZeEXCEPT(Error, "Zutcp", "invalid XDP link geometry");
+  // Each queue needs enough ingress backing to let a connection return its
+  // oldest retained frame while continuing to receive.
+  uint64_t ingressCount = mx_->rxBufSize();
+  if (!ingressCount) {
+    ingressCount = uint64_t(queues) * (uint64_t(config.rxRetainFramesPerCxn) + mx_->rxQuantum());
+    if (ingressCount < ZiIOBuf_DefltCount) ingressCount = ZiIOBuf_DefltCount;
   }
-  initControl(config.controlBufCount, config.txControlCredits);
+  if (ingressCount > UINT_MAX || ingressCount < queues)
+    return ZeEXCEPT(Error, "Zutcp", "invalid ingress pool count");
+  enum { HeadRoom = 14 + 40 + 60 };
+  auto packets = xdp->bufPool(Zi::IOBufType::TxTCP, config.packetCount, mtu + 14, HeadRoom);
+  auto controls = xdp->bufPool(Zi::IOBufType::TxTCP, config.controlBufCount, mtu + 14, HeadRoom);
+  if (!packets || !controls)
+    return ZeEXCEPT(Error, "Zutcp", "cannot create TCP data and control pools");
+  if (!m_isn.init(xdp->ifindex()) || !m_tfoKey.init()) {
+    m_isn.~ISN(); new (&m_isn) ISN;
+    m_tfoKey.~TFOKey(); new (&m_tfoKey) TFOKey;
+    return ZeEXCEPT(Error, "Zutcp", "secure TCP sequence or cookie initialization failed");
+  }
   m_closed.resize(config.closedTupleRingSize);
   m_tfoCookies.resize(config.tfoCookieCacheSize);
-  Zi::Name netmask{config.netmask};
-  m_netmask = ZuMv(netmask);
+  m_closed.queueOwner(mx_->id());
+  m_tfoCookies.queueOwner(mx_->id());
+  Zi::IOBufPool *reserves[] = {packets.ptr(), controls.ptr()};
+  xdp->reserveTxPools(reserves);
+  new (m_allocators.new_<1>()) Allocators{mx_, packets, controls};
+  m_mtu = mtu;
+  m_ingressCount = unsigned(ingressCount);
+  m_txCapacity = capacity;
+  m_controlCredits = config.txControlCredits;
+  m_packets = ZuMv(packets);
+  m_control = ZuMv(controls);
   m_params = ZuMv(config);
-  m_params.netmask = m_netmask;
-  if (m_params.heartBeat == ZuTime{0}) m_params.heartBeat = {};
+  mx(mx_);
+  m_xdp = ZuMv(xdp);
   return {};
 }
 
@@ -970,7 +920,7 @@ ZuUnion<IPPath, ZeException> Instance::resolve(ZiIP remote, ZiIP local)
 {
   ZmAssert_(rxInvoked());
   if (!ready()) return ZeEXCEPT(Error, "Zutcp", "packet service unavailable during route setup");
-  return resolveIPPath(m_params.interface, IPPath{local, remote, {}, {}, 0});
+  return resolveIPPath(m_xdp->ifindex(), IPPath{local, remote, {}, {}, m_mtu});
 }
 
 Zi::IOBufAllocator *Instance::dataRxAllocator() const { return inlineAllocator(); }
@@ -990,40 +940,22 @@ void Instance::start_()
 {
   ZmAssert_(rxInvoked());
   m_endpointDrain = DrainIdle;
-  m_rxWakeQueued = 0;
   m_error = {};
-  if (!m_ingress) {
-    m_error = ZeEXCEPT(Error, "Zutcp", "initialize TCP before start");
-    Engine::started(false);
-    return;
-  }
-  Zxdp::Params config(
-    Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-  auto &params = config.p<Zxdp::Xdp::Params>();
-  params.ifindex = m_params.interface;
-  params.netmask = m_netmask;
-  params.rxPool = m_ingress->pool;
-  params.rx = [this](uint8_t *p, unsigned n) { received(p, n); };
-  params.spin = m_params.spin;
-  params.scheduler = mx();
-  params.txSid = m_params.txSid;
-  for (auto p = m_providers; p; p = p->nextProvider)
-    params.txPools.pushNode(p->pool.ptr());
-  auto initialized = m_backend->init(config);
-  if (initialized.is<ZeException>()) {
-    m_error = ZuMv(initialized).p<ZeException>();
-    Engine::started(false);
-    return;
-  }
-  m_backend->start([this](bool ok) {
-    auto error = m_backend->error();
+  ZmAssert_(m_xdp && m_xdp->allocated());
+  m_xdp->start([this](uint8_t *p, unsigned n) { received(p, n); }, {}, [this](bool ok) {
+    auto error = m_xdp->error();
     mx()->rxRun([this, ok, error = ZuMv(error)]() mutable {
-      if (ok && m_backend->mtu() == m_mtu) {
+      if (ok && m_xdp->mtu() == m_mtu) {
 	m_ioState = Up;
 	Engine::started(true);
 	return;
       }
       m_error = ZuMv(error);
+      if (!ok) {
+	if (!m_error) m_error = ZeEXCEPT(Error, "Zutcp", "XDP activation failed");
+	Engine::started(false);
+	return;
+      }
       if (!m_error)
 	m_error = ZeEXCEPT(Error, "Zutcp", "interface geometry changed before packet startup");
       m_startFailed = true;
@@ -1061,7 +993,7 @@ void Instance::stopTx()
 {
   ZmAssert_(txInvoked());
   if (m_senderStopping) return;
-  if (m_backend->ready() && m_txPending) {
+  if (m_xdp->ready() && m_txPending) {
     m_txDraining = true;
     txService(true);
     return;
@@ -1073,8 +1005,8 @@ void Instance::stopTx()
     return;
   }
   m_senderStopping = true;
-  m_backend->stop([this](bool ok) {
-    auto error = m_backend->error();
+  m_xdp->stop([this](bool ok) {
+    auto error = m_xdp->error();
     mx()->txRun([this, ok, error = ZuMv(error)]() mutable {
       m_senderStopping = false;
       if (!m_error && !!error) m_error = ZuMv(error);
@@ -1091,7 +1023,7 @@ void Instance::stopTx()
 void Instance::wake()
 {
   ++m_wakeUsers;
-  if (m_ioState == Up) m_backend->wake();
+  if (m_ioState == Up) m_xdp->wake();
   --m_wakeUsers;
   if (m_ioState == Up && Engine::stopping() &&
       !m_endpointDrain.cmpXch(DrainQueued, DrainIdle))
@@ -1105,7 +1037,7 @@ void Instance::rx()
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (!ready()) return;
   m_rxPackets = 0;
-  m_backend->rx();
+  m_xdp->rx();
 }
 
 void Instance::received(uint8_t *p, unsigned n)
@@ -1114,7 +1046,13 @@ void Instance::received(uint8_t *p, unsigned n)
   IPView ip;
   TCPView tcp;
   EndpointIndex::Node *binding = nullptr;
-  bool valid = readIP({p, n}, ip) && readTCP(ip, tcp);
+  bool validIP = readIP({p, n}, ip);
+  if (validIP && ip.protocol == IPPROTO_UDP) {
+    receivedUDP(p, n, ip);
+    rxProgress();
+    return;
+  }
+  bool valid = validIP && readTCP(ip, tcp);
   if (valid) {
     binding = m_endpoints.findPtr(ZiSockAddr{ip.local, tcp.header.dstPort});
     if (!binding) {
@@ -1130,7 +1068,7 @@ void Instance::received(uint8_t *p, unsigned n)
   if (closed) m_ingress->free(p);
   else if (binding || m_params.packet) {
     ZmRef<Zi::IOBuf> buf = new Zi::IOBufStub<Zi::IOBuf, ZiIOBuf_HeapID>{
-      p, n, &m_allocators.p<1>().rx, this, n, false, true};
+      p, n, &m_packetRx.p<1>(), this, n, false, true};
     if (binding) {
       buf->skip = tcp.payload.data() - p;
       buf->length = tcp.payload.length();
@@ -1147,8 +1085,13 @@ void Instance::received(uint8_t *p, unsigned n)
     }
     m_ingress->free(p);
   }
+  rxProgress();
+}
+
+void Instance::rxProgress()
+{
   if (++m_rxPackets >= mx()->rxQuantum()) {
-    m_backend->wake();
+    m_xdp->wake();
     mx()->push([this] { rx(); }, mx()->rxThread());
   }
 }
@@ -1288,7 +1231,7 @@ bool Instance::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease)
     if (control) ++m_controlStalls; else ++m_dataStalls;
     return false;
   }
-  if (!m_backend->send(buf->data(), buf->length)) return false;
+  if (!m_xdp->send(buf->data(), buf->length)) return false;
   // Transfer the caller lease to recovery when requested. The independent
   // kernel lease ends at CQ; neither lease retains submitted Zi metadata.
   auto backing = buf->data_();
@@ -1296,10 +1239,9 @@ bool Instance::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease)
   auto allocator = buf->allocator_;
   buf->data__ = 0;
   buf->size = buf->skip = buf->length = 0;
-  auto provider = control ? m_control :
-    (allocator == &m_allocators.p<1>().packet || allocator == &m_allocators.p<1>().data ?
-      m_packets.ptr() : nullptr);
-  if (!lease && provider) lease = static_cast<PacketBuf *>(buf.ptr())->retained;
+  bool nativePacket = control || allocator == &m_allocators.p<1>().packet ||
+    allocator == &m_allocators.p<1>().data;
+  if (!lease && nativePacket) lease = static_cast<PacketBuf *>(buf.ptr())->retained;
   if (lease) lease->adopt(buf->allocator(), backing, size);
   else allocator->free(backing, size, true);
   // The dedicated sender was notified by publication. Completion work follows
@@ -1313,8 +1255,8 @@ bool Instance::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease)
 void Instance::reconcileTx()
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
-  if (!m_backend || !m_backend->ready()) return;
-  auto n = m_backend->pollTx();
+  if (!m_xdp || !m_xdp->ready()) return;
+  auto n = m_xdp->pollTx();
   ZmAssert_(n <= m_txPending);
   m_txPending -= n;
   if (!m_txPending) txService(false);
@@ -1335,12 +1277,12 @@ void Instance::pollTx()
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (!ready() && !m_txDraining) { txService(false); return; }
   reconcileTx();
-  if (m_txDraining && (!m_txPending || !m_backend->ready())) {
+  if (m_txDraining && (!m_txPending || !m_xdp->ready())) {
     m_txDraining = false;
     stopTx();
     return;
   }
-  if (!m_txPending || !m_backend->ready()) txService(false);
+  if (!m_txPending || !m_xdp->ready()) txService(false);
 }
 
 void Instance::listen(
@@ -1393,13 +1335,21 @@ void Instance::connect(
   cxn->connectReserved(remote, remotePort);
 }
 
-void Instance::udp(ZiConnectFn, ZiFailFn fail, ZiIPType::T, ZiIP, uint16_t, ZiIP,
-  uint16_t, Zi::IOBufAllocator *, ZiCxnOptions) { if (fail) fail(false); }
+bool Instance::publishUDP(UdpCxn *endpoint, ZiConnectFn &fn, ZiCxnInfo info)
+{
+  return publish(endpoint, fn, ZuMv(info));
+}
+
+void Instance::retireUDP(UdpCxn *endpoint, bool peer)
+{
+  retire(endpoint, peer, [this, endpoint] { delCxn(endpoint); });
+}
 
 void Instance::recv(ZiConnection *cxn)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (!cxn->plugin()) { cxn->rxContext().complete(); return; }
+  if (cxn->info().type == ZiCxnType::UDP) return;
   visit(cxn, [](auto native) {
     if (!native->disconnecting()) native->recvMx();
   });
@@ -1408,11 +1358,13 @@ void Instance::send(ZiConnection *cxn)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (!cxn->plugin()) { cxn->txContext().complete(); return; }
+  if (cxn->info().type == ZiCxnType::UDP) { sendUDP(cxn); return; }
   visit(cxn, [](auto native) { native->sendMx(); });
 }
 void Instance::disconnect(ZiConnection *cxn, bool peer)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
+  if (cxn->info().type == ZiCxnType::UDP) { closeUDP(cxn, peer); return; }
   if (peer) { close(cxn, true); return; }
   cxn->txUp() = 0;
   cxn->txContext().complete();
@@ -1428,6 +1380,7 @@ void Instance::disconnect(ZiConnection *cxn, bool peer)
 void Instance::close(ZiConnection *cxn, bool peer)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
+  if (cxn->info().type == ZiCxnType::UDP) { closeUDP(cxn, peer); return; }
   cxn->txUp() = 0;
   cxn->txContext().complete();
   visit(cxn, [this, peer](auto native) {
@@ -1457,7 +1410,7 @@ unsigned Instance::allCxns(AllCxnsFn fn) const
 
 unsigned Instance::allQueues(Ztc::QueueMgr::AllFn fn) const
 {
-  return m_backend ? m_backend->allQueues(ZuMv(fn)) : 0;
+  return m_xdp ? m_xdp->allQueues(ZuMv(fn)) : 0;
 }
 
 void Instance::watch(AddCxnFn add, DelCxnFn del)

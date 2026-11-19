@@ -22,7 +22,7 @@ struct PacketBacking : Zi::IOBufPool {
   unsigned acquired = 0, released = 0;
   bool intact = true;
 
-  PacketBacking() {
+  PacketBacking() : Zi::IOBufPool{Zi::IOBufType::TxUDP} {
     count = 1;
     size = Size;
     headRoom = Head;
@@ -85,10 +85,11 @@ void testTxPacketGeometry(bool registered)
   ZuTestScopeRT(testTxPacketGeometry);
 
   ZiMultiplex mx;
-  ZmRef<PacketPlugin> plugin;
+  PacketPlugin *plugin = nullptr;
   if (registered) {
     plugin = new PacketPlugin{&mx};
-    mx.plugin(plugin);
+    ZmRef<ZiMxPlugin> transport = plugin;
+    mx.plugin(ZuMv(transport));
   }
   auto allocator = Zquic::pktTxAllocator<1536, 4096, "Zquic.Test.Pkt.Tx">(&mx);
   using Heap = ZuStringT<"Zquic.Test.Pkt.Tx">;
@@ -303,14 +304,14 @@ void testPacketAllocRoles()
   ZiMultiplex mx;
   auto rx = Zquic::pktRxAllocator(&mx);
   auto tx = Zquic::pktTxAllocator(&mx);
-  auto streamRx = mx.allocator<Zi::IOBufType::RxTLS>();
+  auto streamRx = mx.allocator<Zi::IOBufType::App>();
   auto packet = rx->allocBuf();
   auto wire = tx->allocBuf();
   ZuCHECK(packet && wire, "packet buffer allocation failed");
   if (!packet || !wire) return;
   ZuCHECK(packet->avail() >= Zquic::BufSize && wire->avail() >= Zquic::BufSize,
     "UDP recvmsg metadata must not reduce packet payload capacity");
-  ZuCHECK(rx->type == Zi::IOBufType::RxUDP &&
+  ZuCHECK(rx->type == Zi::IOBufType::Rx &&
       tx->type == Zi::IOBufType::TxUDP,
     "packet allocator roles mismatch");
   packet->data()[0] = 0x5a;
@@ -342,7 +343,7 @@ void testPacketAllocRoles()
   auto reassembly = Zquic::plaintextAllocator<Zquic::CryptoRxBufAlloc<>>(&mx)->allocBuf();
   ZuCHECK(stream->allocator()->type == Zi::IOBufType::TxTLS &&
       crypto->allocator()->type == Zi::IOBufType::TxTLS &&
-      reassembly->allocator()->type == Zi::IOBufType::RxTLS,
+      reassembly->allocator()->type == Zi::IOBufType::App,
     "retained plaintext allocator roles mismatch");
 }
 

@@ -409,7 +409,7 @@ private:
   bool m_txOpen = false;
 };
 
-// Passive endpoint protocol shared by the actual backend record and private
+// Passive endpoint protocol shared by the actual transport record and private
 // protocol fixtures. The Instance remains the sole transport/configuration owner.
 template <typename Impl, typename Link>
 class Listener_ : public Endpoint_<Impl> {

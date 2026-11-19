@@ -3,28 +3,20 @@
 Follow the repository guidance in ../AGENTS.md and the caller-supplied
 [interface contract](INTERFACE.md). The contract supersedes earlier plans.
 
-* Select a cold backend with `instance(Type::Xdp)`, then call virtual
-  `init(const Params &)` with backend `Xdp::Params` constructed in place using
-  `Params::New<Params::Index<Xdp::Params>{}>{}`. Configuration: interface index,
-  optional destination network mask,
-  owning intrusive `Zi::IOBufPoolList` with at least one nonempty Tx pool
-  supplying count, size and alignment,
-  one dedicated unlinked `ZmRef<Zi::IOBufPool>` Rx pool, receive callback.
-  Create pool objects with the selected instance's virtual `bufPool`.
-  Init retains one reference per pool through final, while node membership
-  remains in the caller configuration list. A node belongs to one
-  list at a time; retain pool references for packets that outlive the instance.
-  The concrete arena pool is internal. No transmit-completion callback. Without a mask all traffic is selected.
-* Follow ZmEngine's control FSM, including queued opposite requests. Init must
-  precede start and is idempotent while stopped; init in any other state is an
-  error. Init retains configuration; start activates I/O. Stop drains sender and
-  kernel access before completion. Final is stopped-only and idempotent, and is
-  also called by the destructor. Retain one instance across stop/start.
-  Clear retired ring state before restart under the existing queue lock. Pool
-  checks still reject reuse while caller backing remains held. Caller Rx/Tx/wake
-  service is quiescent before stop; the final sender barrier hands retirement to
-  bounded continuations on that scheduler slot. Keep the scheduler running until
-  stop completes. Final releases configuration and stopped storage without I/O.
+* Select the cold instance with `instance(Type::Xdp)`. Configure the sender
+  slot before constructing the multiplexer, then pass that same multiplexer to
+  synchronous `init(mx, params)`. Retain initialized link resources until
+  finalization. Init is idempotent for the same stopped configuration.
+* Provision one registered arena from the common Rx pool and the typed Tx
+  pools. Preserve intrusive membership in the caller's list and retain an
+  independent reference per pool. Keep backing and registration across
+  activation failures and stop/restart. Finalization requires stopped service
+  and returned application buffers.
+* Follow ZmEngine's control FSM, including queued opposite requests. Keep the
+  multiplexer scheduler running through stop. Quiesce caller service, withdraw
+  ingress destinations, drain the sender and completion work, and release the
+  run's mappings and callbacks. Persistent owners retain each tuple's FILL/CQ
+  and kernel-owned ingress frames until finalization.
 * Keep allocation and kernel leases distinct in preallocated slot bookkeeping.
   Explicit pool return may run before or after CQ. Recycle only after both leases
   end; safe stop releases kernel leases while caller-held backing stays valid.
@@ -39,13 +31,13 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
 * Query kernel ring mapping offsets and preserve SWSR ownership. The caller
   provides one Rx service owner and one Tx service owner; final pool return may
   run on any thread. Keep thread-exclusive mutable state on separate cache lines.
-* The application assigns a sender `txSid` in its `ZmScheduler` and configures
-  that slot with `Xdp::Params::txThread` (`ZmSchedTParams`, isolated by default).
+* The application assigns a sender `txSid` in its multiplexer configuration and
+  configures the slot through its scheduler parameters.
   The scheduler owns thread startup, waiting and teardown. Zxdp owns no sender
   thread or semaphore. Publish initialized descriptors immediately: increment
   the pending-descriptor counter before commit and use scheduler `run()` after
   commit only on a zero-to-one transition. The dedicated sender calls nonblocking
-  `sendto()`, observes the kernel consumer delta, spins for `Params_::spin` when
+  `sendto()`, observes the kernel consumer delta, spins for `Xdp::Params::spin` when
   pending work is exhausted, then atomically subtracts that delta. Use the
   returned pending count to continue or return without losing racing publication.
   Keep a persistent consumer cursor; never count the same consumption twice.
@@ -55,8 +47,8 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
   Check exit during service and idle spin, then drain sender callbacks with a
   FIFO continuation before engine stop retires sockets.
 * Construct payload directly in registered backing. No payload staging or copy.
-* Quiesce service before stop. Retire kernel access before returning submitted
-  backing. A caller-owned pool retains its arena through the last packet return.
+* Recycle submitted backing after its CQ retires the kernel lease. Reuse the
+  same allocated arena across runs and return caller-held leases before final.
 * Queue configuration and mask compilation are cold-path operations.
 * Own the required `rx()`/`wake()` pair: spin for a configurable count before
   blocking with the most efficient suitable kernel mechanism; receive packets

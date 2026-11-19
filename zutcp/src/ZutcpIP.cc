@@ -88,7 +88,8 @@ static void routeAttr(nlmsghdr *request, unsigned type, const void *data, unsign
   request->nlmsg_len = NLMSG_ALIGN(request->nlmsg_len) + RTA_SPACE(size);
 }
 
-static ZuUnion<IPPath, ZeException> resolvePath(int fd, unsigned interface, IPPath path)
+static ZuUnion<IPPath, ZeException> resolvePath(
+  int fd, unsigned interface, IPPath path, bool multicast)
 {
   auto family = path.remote.type() == ZiIPType::V4 ? AF_INET : AF_INET6;
   unsigned bytes = family == AF_INET ? sizeof(in_addr) : sizeof(in6_addr);
@@ -114,8 +115,9 @@ static ZuUnion<IPPath, ZeException> resolvePath(int fd, unsigned interface, IPPa
     return ZeEXCEPT(Error, "Zutcp", "missing route result");
   }
   route = reinterpret_cast<rtmsg *>(NLMSG_DATA(answer));
-  if (route->rtm_family != family || route->rtm_type != RTN_UNICAST) {
-    return ZeEXCEPT(Error, "Zutcp", "route is not unicast on the configured interface");
+  if (route->rtm_family != family ||
+      (route->rtm_type != RTN_UNICAST && !(multicast && route->rtm_type == RTN_MULTICAST))) {
+    return ZeEXCEPT(Error, "Zutcp", "unusable route on configured interface");
   }
   uint8_t nextHop[16];
   memcpy(nextHop, destination, bytes);
@@ -161,6 +163,18 @@ static ZuUnion<IPPath, ZeException> resolvePath(int fd, unsigned interface, IPPa
     }
     path.local = source;
   }
+  if (multicast) {
+    if (family == AF_INET) {
+      auto ip = static_cast<const uint8_t *>(destination);
+      const uint8_t mac[] = {0x01, 0x00, 0x5e, uint8_t(ip[1] & 0x7f), ip[2], ip[3]};
+      memcpy(path.remoteMAC, mac, sizeof(mac));
+    } else {
+      auto ip = static_cast<const uint8_t *>(destination);
+      const uint8_t mac[] = {0x33, 0x33, ip[12], ip[13], ip[14], ip[15]};
+      memcpy(path.remoteMAC, mac, sizeof(mac));
+    }
+    return path;
+  }
   memset(request, 0, sizeof(request));
   header->nlmsg_len = NLMSG_LENGTH(sizeof(ndmsg));
   header->nlmsg_type = RTM_GETNEIGH;
@@ -194,7 +208,7 @@ static ZuUnion<IPPath, ZeException> resolvePath(int fd, unsigned interface, IPPa
   return path;
 }
 
-ZuUnion<IPPath, ZeException> resolveIPPath(unsigned interface, IPPath path)
+static ZuUnion<IPPath, ZeException> resolvePath(unsigned interface, IPPath path, bool udp)
 {
   if ((path.remote.type() != ZiIPType::V4 && path.remote.type() != ZiIPType::V6) ||
       path.remote.wildcard() ||
@@ -218,13 +232,24 @@ ZuUnion<IPPath, ZeException> resolveIPPath(unsigned interface, IPPath path)
   int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
   if (fd < 0) return osError("route query socket", errno);
   timeval timeout{1, 0};
+  bool multicast = udp && path.remote.multicast();
   ZuUnion<IPPath, ZeException> result;
   if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)))
     result = osError("route query timeout", errno);
   else
-    result = resolvePath(fd, interface, ZuMv(path));
+    result = resolvePath(fd, interface, ZuMv(path), multicast);
   close(fd);
   return result;
+}
+
+ZuUnion<IPPath, ZeException> resolveIPPath(unsigned interface, IPPath path)
+{
+  return resolvePath(interface, ZuMv(path), false);
+}
+
+ZuUnion<IPPath, ZeException> resolveUDPPath(unsigned interface, IPPath path)
+{
+  return resolvePath(interface, ZuMv(path), true);
 }
 
 static unsigned get16(const uint8_t *p) { return (unsigned(p[0])<<8) | p[1]; }
@@ -251,9 +276,10 @@ static void put32(uint8_t *p, uint32_t n) {
   put16(p, n>>16); put16(p + 2, n);
 }
 
-static unsigned tcpSum(const ZiIP &local, const ZiIP &remote, unsigned length)
+static unsigned transportSum(
+  const ZiIP &local, const ZiIP &remote, unsigned length, unsigned protocol)
 {
-  unsigned value = IPPROTO_TCP + length;
+  unsigned value = protocol + length;
   if (local.type() == ZiIPType::V4) {
     value = sum(reinterpret_cast<const uint8_t *>(&local.inAddr()), 4, value);
     return sum(reinterpret_cast<const uint8_t *>(&remote.inAddr()), 4, value);
@@ -285,7 +311,7 @@ unsigned writeTCP(
   put16(tcp + 18, header.urgent);
   if (header.options.encode(tcp + 20, options, header.flags & 0x02) != int(options)) return 0;
   put16(tcp + 16, checksum(sum(tcp, length,
-    tcpSum(path.local, path.remote, length))));
+    transportSum(path.local, path.remote, length, IPPROTO_TCP))));
   return wire;
 }
 
@@ -299,7 +325,8 @@ bool readTCP(const IPView &ip, TCPView &view)
   auto tcp = ip.payload.data();
   unsigned head = (tcp[12]>>4)<<2;
   if (head < 20 || head > length ||
-      checksum(sum(tcp, length, tcpSum(ip.local, ip.remote, length)))) return false;
+      checksum(sum(tcp, length,
+	transportSum(ip.local, ip.remote, length, IPPROTO_TCP)))) return false;
   TCPHeader header{
     uint16_t(get16(tcp)), uint16_t(get16(tcp + 2)), get32(tcp + 4), get32(tcp + 8),
     uint16_t(get16(tcp + 14)), uint16_t(get16(tcp + 18)), tcp[13]};
@@ -310,9 +337,9 @@ bool readTCP(const IPView &ip, TCPView &view)
   return true;
 }
 
-unsigned writeIP(
+static unsigned writeIP(
   uint8_t *frame, unsigned capacity, const IPPath &path, unsigned protocol,
-  unsigned payload, unsigned ecn)
+  unsigned payload, uint8_t tos, uint8_t hops)
 {
   auto type = path.local.type();
   unsigned head = ipHead(type);
@@ -328,10 +355,10 @@ unsigned writeIP(
     put16(frame + 12, 0x0800);
     memset(ip, 0, 20);
     ip[0] = 0x45;
-    ip[1] = ecn & 3;
+    ip[1] = tos;
     put16(ip + 2, 20 + payload);
     put16(ip + 6, 0x4000); // no fragmentation; producers obey the running MTU
-    ip[8] = 64;
+    ip[8] = hops;
     ip[9] = protocol;
     memcpy(ip + 12, &path.local.inAddr(), 4);
     memcpy(ip + 16, &path.remote.inAddr(), 4);
@@ -339,11 +366,11 @@ unsigned writeIP(
   } else {
     put16(frame + 12, 0x86dd);
     memset(ip, 0, 40);
-    ip[0] = 0x60;
-    ip[1] = (ecn & 3)<<4;
+    ip[0] = 0x60 | (tos>>4);
+    ip[1] = tos<<4;
     put16(ip + 4, payload);
     ip[6] = protocol;
-    ip[7] = 64;
+    ip[7] = hops;
     memcpy(ip + 8, &path.local.in6Addr(), 16);
     memcpy(ip + 24, &path.remote.in6Addr(), 16);
   }
@@ -351,12 +378,20 @@ unsigned writeIP(
   return wire;
 }
 
+unsigned writeIP(
+  uint8_t *frame, unsigned capacity, const IPPath &path, unsigned protocol,
+  unsigned payload, unsigned ecn)
+{
+  return writeIP(frame, capacity, path, protocol, payload, uint8_t(ecn & 3), 64);
+}
+
 bool readIP(ZuBSpan frame, IPView &view)
 {
   auto packet = frame.data();
   if (frame.length() < 14) return false;
   auto ip = packet + 14;
-  unsigned length = frame.length() - 14, offset, protocol, ecn;
+  unsigned length = frame.length() - 14, offset, protocol;
+  uint8_t tos;
   ZiIP local, remote;
   switch (get16(packet + 12)) {
     case 0x0800: {
@@ -371,7 +406,7 @@ bool readIP(ZuBSpan frame, IPView &view)
       memcpy(&destination, ip + 16, 4);
       remote = source; local = destination;
       protocol = ip[9];
-      ecn = ip[1] & 3;
+      tos = ip[1];
     } break;
     case 0x86dd: {
       if (length < 40 || (ip[0]>>4) != 6) return false;
@@ -400,7 +435,7 @@ bool readIP(ZuBSpan frame, IPView &view)
       memcpy(&source, ip + 8, 16);
       memcpy(&destination, ip + 24, 16);
       remote = source; local = destination;
-      ecn = (ip[1]>>4) & 3;
+      tos = (ip[0]<<4) | (ip[1]>>4);
     } break;
     default: return false;
   }
@@ -408,7 +443,44 @@ bool readIP(ZuBSpan frame, IPView &view)
   view.remote = remote;
   view.payload = {ip + offset, length - offset};
   view.protocol = protocol;
-  view.ecn = ecn;
+  view.ecn = tos & 3;
+  view.tos = tos;
+  return true;
+}
+
+unsigned writeUDP(
+  uint8_t *frame, unsigned capacity, const IPPath &path, uint16_t srcPort, uint16_t dstPort,
+  unsigned payload, uint8_t tos, uint8_t hops)
+{
+  if (!dstPort || payload > 65535 - 8) return 0;
+  unsigned length = payload + 8;
+  auto wire = writeIP(frame, capacity, path, IPPROTO_UDP, length, tos, hops);
+  if (!wire) return 0;
+  auto udp = frame + ipHead(path.local.type());
+  put16(udp, srcPort);
+  put16(udp + 2, dstPort);
+  put16(udp + 4, length);
+  put16(udp + 6, 0);
+  auto check = checksum(sum(udp, length,
+    transportSum(path.local, path.remote, length, IPPROTO_UDP)));
+  put16(udp + 6, check ? check : 65535);
+  return wire;
+}
+
+bool readUDP(const IPView &ip, UDPView &view)
+{
+  auto family = ip.local.type();
+  if (ip.protocol != IPPROTO_UDP || ip.payload.length() < 8 ||
+      (family != ZiIPType::V4 && family != ZiIPType::V6) || family != ip.remote.type())
+    return false;
+  auto udp = ip.payload.data();
+  unsigned length = get16(udp + 4);
+  if (length < 8 || length > ip.payload.length() || !get16(udp + 2)) return false;
+  if (!get16(udp + 6)) {
+    if (family == ZiIPType::V6) return false;
+  } else if (checksum(sum(udp, length,
+      transportSum(ip.local, ip.remote, length, IPPROTO_UDP)))) return false;
+  view = {uint16_t(get16(udp)), uint16_t(get16(udp + 2)), {udp + 8, length - 8}};
   return true;
 }
 

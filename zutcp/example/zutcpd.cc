@@ -46,7 +46,7 @@ public:
   }
   void setError(const char *msg) {
     if (!m_error.xch(1))
-      ZiLOG(Error, "zutcpserver", ([msg = ZeString{msg}](auto &out) {
+      ZiLOG(Error, "zutcpd", ([msg = ZeString{msg}](auto &out) {
 	out << "error: " << msg;
       }));
     m_event.post();
@@ -148,7 +148,7 @@ ZiConnection *App::accepted(const ZiCxnInfo &info)
 
 static void usage()
 {
-  std::cerr << "Usage: zutcpserver INTERFACE SERVER PORT [COUNT] [--wait-eof]\n";
+  std::cerr << "Usage: zutcpd INTERFACE SERVER PORT [COUNT] [--wait-eof]\n";
   exit(1);
 }
 
@@ -163,7 +163,7 @@ int main(int argc, char **argv)
   unsigned count = positional == 5 ? unsigned(ZuBox<unsigned>(argv[4])) : 1;
   if (!interface || !port || port > 65535 || !count) usage();
 
-  ZiLog::init("zutcpserver");
+  ZiLog::init("zutcpd");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
@@ -171,16 +171,22 @@ int main(int argc, char **argv)
     s.nThreads(5);
     for (unsigned i = 1; i <= 5; ++i) s.thread(i, [](auto &t) { t.isolated(true); });
   })};
-  ZmRef<Zutcp::Instance> instance = new Zutcp::Instance{&mx};
-  auto initializedBackend = instance->init({.interface = interface, .txSid = 5});
-  if (initializedBackend.is<ZeException>()) {
-    ZiLOG(Error, "zutcpserver", ([error = ZuMv(initializedBackend.p<ZeException>())](auto &out) {
-      out << "backend initialization: " << error;
-    }));
+  auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
+  Zxdp::Params xdpParams{Zxdp::Xdp::Params{.ifindex = interface, .txSid = 5}};
+  auto opened = xdp->init(&mx, xdpParams);
+  if (opened.is<ZeException>()) {
+    ZiLogEvent(ZuMv(opened).p<ZeException>());
     ZiLog::stop();
     return 1;
   }
-  mx.plugin(instance);
+  ZmRef<Zutcp::Instance> instance = new Zutcp::Instance;
+  auto configured = instance->init(&mx, ZuMv(xdp), {});
+  if (configured.is<ZeException>()) {
+    ZiLogEvent(ZuMv(configured).p<ZeException>());
+    ZiLog::stop();
+    return 1;
+  }
+  mx.plugin(ZuMv(instance));
   App app{server, uint16_t(port), count, waitEOF};
   Ztcp::ServerParams params{&mx, "3", "4"};
   params.rxAllocator(AppCxn::rxAllocator(&mx)).txAllocator(AppCxn::txAllocator(&mx));

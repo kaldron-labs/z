@@ -119,11 +119,12 @@ friend inline ZuStringT<"ZjrpcITest.BatchCall"> ZmNHeapID(BatchCall *);
 static void testHTTP()
 {
   ZuTestScopeRT(testHTTP);
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &scheduler) {
+  auto params = ZiMxParams{}.scheduler([](auto &scheduler) {
     scheduler.nThreads(2)
       .thread(1, [](auto &thread) { thread.isolated(1); })
       .thread(2, [](auto &thread) { thread.isolated(1); });
-  }).rxThread(1).txThread(2)};
+  }).rxThread(1).txThread(2);
+  ZiMultiplex mx{params}, reuseMx{params};
   SrvApp srv;
   srv.mx = &mx;
   CliApp cli;
@@ -223,10 +224,12 @@ static void testHTTP()
   srv.context = nullptr;
   server.final();
   mx.stop();
-  bool reused = server.init(hub, serverConfig(false), &srv);
+  srv.mx = &reuseMx;
+  Zhttp::HubConfig reuseHub{&reuseMx, "1", "2"};
+  bool reused = server.init(reuseHub, serverConfig(false), &srv);
   ZuCheckRT(reused);
   if (reused) {
-    bool restarted = mx.start() && server.start();
+    bool restarted = reuseMx.start() && server.start();
     ZuCheckRT(restarted);
     if (restarted) {
       srv.listening_.wait();
@@ -234,12 +237,12 @@ static void testHTTP()
     }
   }
   server.final();
-  mx.stop();
+  reuseMx.stop();
+  ZiMultiplex validationMx{params};
   Zjrpc::HTTPServer<SrvApp, Catalog, Zhttp::Profiles<Zhttp::H1TCP, Zhttp::H1TLS,
     Zhttp::H2TLS>> partial;
-  ZuCheckRT(!partial.init(hub, serverConfig(true), &srv));
+  ZuCheckRT(!partial.init(Zhttp::HubConfig{&validationMx, "1", "2"}, serverConfig(true), &srv));
   partial.final();
-  mx.stop();
   ZuCheckRT(srv.calls == 4 && srv.enriched == 3 && !srv.failures);
   ZuCheckRT(cli.enriched == 2 && !cli.failures);
 }

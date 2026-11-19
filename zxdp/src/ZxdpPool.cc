@@ -11,7 +11,7 @@
 
 namespace Zxdp::Xdp {
 
-BufPool::BufPool(unsigned n, unsigned bytes) {
+BufPool::BufPool(Zi::IOBufType::T type, unsigned n, unsigned bytes) : Zi::IOBufPool{type} {
   count = n;
   size = bytes;
 }
@@ -67,6 +67,7 @@ loop:
   if (m_head.cmpXch(uintptr_t(p), next) != next) goto loop;
   // Final accounting follows publication; no mapping access follows it.
   ZmAssert_(m_used--);
+  if (m_returned) m_returned();
 }
 
 unsigned BufPool::slot(const void *packet) const

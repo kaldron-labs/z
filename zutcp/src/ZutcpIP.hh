@@ -27,7 +27,7 @@
 namespace Zutcp {
 
 // Linux owns interface configuration. Query before creating Zi adapters so
-// their framing geometry is stable; validate again against the running backend.
+// their framing geometry is stable; validate again against the XDP instance.
 ZutcpAPI ZuUnion<unsigned, ZeException> interfaceMTU(unsigned interface);
 
 struct IPPath {
@@ -40,11 +40,13 @@ struct IPPath {
 // interface and its static next-hop neighbor. Preserve an explicit local IP;
 // otherwise use the kernel-selected source. Publish only on success. No ARP/ND.
 ZutcpAPI ZuUnion<IPPath, ZeException> resolveIPPath(unsigned interface, IPPath);
+ZutcpAPI ZuUnion<IPPath, ZeException> resolveUDPPath(unsigned interface, IPPath);
 
 struct IPView {
   ZiIP		local, remote;
   ZuBSpan	payload;
   unsigned	protocol, ecn;
+  uint8_t	tos = 0;
 };
 
 // The payload is already at frame + ipHead(type). Write only framing and
@@ -67,6 +69,22 @@ ZutcpAPI unsigned writeIP(
 // headers are traversed in place; fragmented datagrams need IP reassembly and
 // are not admitted as complete transport packets.
 ZutcpAPI bool readIP(ZuBSpan frame, IPView &);
+
+struct UDPView {
+  uint16_t	srcPort = 0, dstPort = 0;
+  ZuBSpan	payload;
+};
+
+inline unsigned udpHead(ZiIPType::T type) {
+  unsigned head = ipHead(type);
+  return head ? head + 8 : 0;
+}
+
+// Like writeTCP, the payload is already positioned after the wire headers.
+ZutcpAPI unsigned writeUDP(
+  uint8_t *frame, unsigned capacity, const IPPath &, uint16_t srcPort, uint16_t dstPort,
+  unsigned payload, uint8_t tos = 0, uint8_t hops = 64);
+ZutcpAPI bool readUDP(const IPView &, UDPView &);
 
 struct TCPHeader {
   uint16_t	srcPort = 0, dstPort = 0;

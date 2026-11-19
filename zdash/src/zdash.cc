@@ -89,6 +89,15 @@ static ZmRef<ZiIOBuf> allocFrame()
   return allocator->allocBuf();
 }
 
+static ZmRef<ZiRxQueue::Node> allocRxFrame()
+{
+  static ZiMultiplex mx{ZiMxParams{}.scheduler(
+    [](auto &params) { params.id("ZDash.Rx"); })};
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiRxQueue::Node, 1024,
+    ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, FrameMax>();
+  return allocator->allocBuf();
+}
+
 struct Subscription {
   using Filter = Ztc::RequestFilter;
   String	deviceID;
@@ -1410,15 +1419,10 @@ public:
     auto &message = m_frame;
     unsigned incoming = rx.length();
     if (incoming > FrameMax - message.length()) { return reject(link, Zws::CloseCode::TooLarge); }
-    static ZiMultiplex mx{ZiMxParams{}.scheduler(
-      [](auto &params) { params.id(L::TLS ? "ZDash.RxTLS" : "ZDash.RxTCP"); })};
-    static auto allocator = mx.allocator<
-      L::TLS ? Zi::IOBufType::RxTLS : Zi::IOBufType::RxTCP, ZiRxQueue::Node, 1024,
-      ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, FrameMax>();
-    auto alloc = []() { return allocator->allocBuf(); };
     while (rx) {
       if (rx.splice(message,
-	[](ZuBSpan span) -> int64_t { return span.length(); }, alloc, alloc) <= 0)
+	[](ZuBSpan span) -> int64_t { return span.length(); },
+	allocRxFrame, allocRxFrame) <= 0)
 	{ return reject(link, Zws::CloseCode::TooLarge); }
     }
     return 1;
@@ -1428,11 +1432,6 @@ public:
   int messageEnd(L &link) {
     uint64_t remaining = m_frame.length();
     ZmRef<ZiIOBuf> frame;
-    static ZiMultiplex mx{ZiMxParams{}.scheduler(
-      [](auto &params) { params.id(L::TLS ? "ZDash.EndTLS" : "ZDash.EndTCP"); })};
-    static auto allocator = mx.allocator<
-      L::TLS ? Zi::IOBufType::RxTLS : Zi::IOBufType::RxTCP, ZiRxQueue::Node, 1024,
-      ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, FrameMax>();
     auto length = m_frame.extract(
       [&remaining](ZuBSpan span) -> int64_t {
 	if (remaining > span.length()) {
@@ -1440,7 +1439,7 @@ public:
 	  return 0;
 	}
 	return remaining;
-      }, []() { return allocator->allocBuf(); }, frame);
+      }, allocRxFrame, frame);
     auto code = length > 0 ? receive_(frame->cspan(), true) :
       Zws::CloseCode::InvalidData;
     m_frame.clean();
@@ -2117,7 +2116,7 @@ static bool session(
   auto tlsTx = TLS::registerTx(&mx);
   auto tls = Zhttp::TLSConfig{}.caPath(caPath).rxAllocator(tlsRx).txAllocator(tlsTx)
     .txPacketAllocator(TLS::registerTxPacket(&mx))
-    .socketRxAllocator(mx.allocator<Zi::IOBufType::RxTCP, ZiIOBuf,
+    .socketRxAllocator(mx.allocator<Zi::IOBufType::Rx, ZiIOBuf,
       Ztls_::RxPacketCapacity>());
   bool ok = app.init(&mx, ZuMv(config), tls, token, module);
   if (!ok || !mx.start()) { app.final(); return false; }

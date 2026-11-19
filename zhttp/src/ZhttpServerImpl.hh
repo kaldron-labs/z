@@ -1900,7 +1900,6 @@ struct BoundReqParser : public Zhttp::Parser {
   void init(ServerCore &owner, Channel *channel) {
     channel->resetFrames();
     binding.channel = channel;
-    binding.ops->bufType(binding.ctx, channel->rxBufType());
     binding.ops->init(binding.ctx, owner.context());
   }
   void bodyMax(uint64_t max) { binding.ops->bodyMax(binding.ctx, max); }
@@ -2008,7 +2007,6 @@ private:
     void bind(ServerImpl *server_, Link_ *link_) {
       server = server_;
       link = link_;
-      Base::bufType(link->channel().rxBufType());
       Base::bodyMax(server->config().bodyMax());
       Base::retainedBodyMax(server->config().retainedBodyMax());
       if constexpr (Profile::HTTPVersion == Version::H2)

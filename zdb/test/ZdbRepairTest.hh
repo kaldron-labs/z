@@ -332,6 +332,7 @@ inline void repairSaga(
   using DB = RepairDB;
   using M = ZdbAnySaga<RepairDB>;
   ZiMultiplex mx{ZvMxParams("mx", mxCf)};
+  ZiMultiplex retryMx{ZvMxParams("mx", mxCf)};
   ZmRef<DB> db = new DB{};
   db->init(ZdbCf{cf}, &mx, {}, store);
   auto table = db->initTable<RepairRow>("repair_saga");
@@ -367,17 +368,17 @@ inline void repairSaga(
 	ZuCheckRT(mx.stop());
 	db->final();
 	db = new RepairDB{};
-	db->init(ZdbCf{cf}, &mx, {}, store);
+	db->init(ZdbCf{cf}, &retryMx, {}, store);
 	table = db->initTable<RepairRow>("repair_saga");
 	context = db;
 	context->rows = table;
 	db->sagas({repairSagaDef()});
-	ZuCheckRT(mx.start());
+	ZuCheckRT(retryMx.start());
 	started = db->start();
 	ZuCheckRT(started);
 	if (!started) {
 	  table = {};
-	  ZuCheckRT(mx.stop());
+	  ZuCheckRT(retryMx.stop());
 	  db->final();
 	  db = {};
 	  return;
@@ -423,7 +424,7 @@ inline void repairSaga(
       context->deletes == unsigned(fail));
   }
   table = {};
-  ZuCheckRT(mx.stop());
+  ZuCheckRT(db->mx()->stop());
   db->final();
   db = {};
 }

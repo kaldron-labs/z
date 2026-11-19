@@ -7,7 +7,7 @@ Linux AF_XDP raw packet service and packet validation utilities. Application pro
 ## Subdirectories & Boundaries
 
 - [Packet library](./src/EGM.md): abstract `Zxdp::Instance`, tagged `Params`, and
-  `Zi::IOBufPool` references supplied by the selected backend.
+  `Zi::IOBufPool` references from the selected XDP instance.
 - [Packet utility and fixture](./util/EGM.md): direct packet exchange plus isolated namespace or physical-interface execution.
 
 ## Interface
@@ -16,15 +16,15 @@ Linux AF_XDP raw packet service and packet validation utilities. Application pro
 
 ## Invariants
 
-`Instance` uses separate single Rx/Tx owners. Caller allocation and kernel submission leases are independent, and backing is recycled only after both end. Quiesce service before close and retain pending retirement objects until completion. See [Zxdp.hh](./src/Zxdp.hh) and [ZxdpRetire.hh](./src/ZxdpRetire.hh).
+`Instance` uses separate single Rx/Tx owners. Caller allocation and kernel submission leases are independent, and backing is recycled only after both end. Quiesce service before stop, and return dependent backing before finalization. See [Zxdp.hh](./src/Zxdp.hh).
 
 ## Side Effects
 
-The `Zxdp::Xdp` implementation of `Instance::init` provisions mapped backing,
-sockets, BPF programs/maps, and event descriptors; packet service submits and
-receives raw frames. Utility fixture mode creates namespace-local links and
+`Instance::init` opens the link and wake descriptors. `alloc` provisions one shared
+registration, and start activates per-run packet sockets and the classifier.
+Packet service submits and receives raw frames. Utility fixture mode creates namespace-local links and
 writes run artifacts. See the child contracts for resource and teardown details.
 
 ## Verification
 
-From a configured repository root, run `make -j8 && make -C zxdp/test test`. Privileged integration/physical tests require their own environment. No tests or utilities were run for this documentation change; test-only directories are excluded from the contract index.
+From a configured repository root, run `make -j8 && make -C zxdp/test test`. Privileged integration/physical tests require their own environment.

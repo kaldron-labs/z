@@ -320,9 +320,10 @@ static void exercise(unsigned mode)
   ZuTestScopeRT(exercise);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZuPtr<ZiMultiplex> previousMx;
+  ZuPtr<ZiMultiplex> mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<DB> db = new DB{};
-  db->init(ZdbCf{cf}, &mx, {});
+  db->init(ZdbCf{cf}, mx, {});
   auto orders = db->initTable<zdbtest::Order>("pq_saga_order");
   auto items = db->initTable<zdbtest::Order>("pq_saga_item");
   ZmRef<zdbtest::SagaDB> context = db;
@@ -330,12 +331,12 @@ static void exercise(unsigned mode)
   context->items = items;
   auto contextPtr = context.ptr();
   db->sagas({zdbtest::liveSagaDef(), zdbtest::batchSagaDef()});
-  ZuCheckRT(mx.start());
+  ZuCheckRT(mx->start());
   bool started = db->start();
   ZuCheckRT(started);
   if (!started) {
     orders = {}; items = {};
-    ZuCheckRT(mx.stop());
+    ZuCheckRT(mx->stop());
     db->final();
     return;
   }
@@ -404,10 +405,12 @@ static void exercise(unsigned mode)
       // driver before a fresh connection reopens it. This is not a hard-crash test.
       ZuCheckRT(db->stop());
       orders = {}; items = {};
-      ZuCheckRT(mx.stop());
+      ZuCheckRT(mx->stop());
       db->final();
       db = new zdbtest::SagaDB{};
-      db->init(ZdbCf{cf}, &mx, {});
+      previousMx = ZuMv(mx);
+      mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+      db->init(ZdbCf{cf}, mx, {});
       orders = db->initTable<zdbtest::Order>("pq_saga_order");
       items = db->initTable<zdbtest::Order>("pq_saga_item");
       context = db;
@@ -416,12 +419,12 @@ static void exercise(unsigned mode)
       context->done = &done;
       contextPtr = context.ptr();
       db->sagas({zdbtest::liveSagaDef(), zdbtest::batchSagaDef()});
-      ZuCheckRT(mx.start());
+      ZuCheckRT(mx->start());
       started = db->start();
       ZuCheckRT(started);
       if (!started) {
 	orders = {}; items = {};
-	ZuCheckRT(mx.stop());
+	ZuCheckRT(mx->stop());
 	db->final();
 	return;
       }
@@ -455,7 +458,7 @@ static void exercise(unsigned mode)
   ZuCheckRT(clean);
   ZuCheckRT(db->stop());
   orders = {}; items = {};
-  ZuCheckRT(mx.stop());
+  ZuCheckRT(mx->stop());
   db->final();
   db = {};
 }
@@ -466,27 +469,29 @@ static void batches(
   ZuTestScopeRT(batches);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   auto cuts = recover ? (fail ? 2 : 2 * (2 * count + 1)) : 1;
   for (unsigned cut = 0; cut < cuts; ++cut) {
+    ZuPtr<ZiMultiplex> mx, previousMx;
     ZmRef<DB> db;
     ZdbTblRef<zdbtest::Order> orders, items;
     ZmRef<zdbtest::SagaDB> context;
-    auto start = [&db, &orders, &items, &context, &cf, &mx]() {
+    auto start = [&db, &orders, &items, &context, &cf, &cfFields, &mx, &previousMx]() {
+      previousMx = ZuMv(mx);
+      mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
       db = new DB{};
-      db->init(ZdbCf{cf}, &mx, {});
+      db->init(ZdbCf{cf}, mx, {});
       orders = db->initTable<zdbtest::Order>("pq_saga_order");
       items = db->initTable<zdbtest::Order>("pq_saga_item");
       context = db;
       context->orders = orders;
       context->items = items;
       db->sagas({zdbtest::liveSagaDef(), zdbtest::batchSagaDef()});
-      return mx.start() && db->start();
+      return mx->start() && db->start();
     };
     auto stop = [&db, &orders, &items, &context, &mx]() {
       bool ok = db->stop(); // drains PostgreSQL and shard callbacks
       orders = {}; items = {}; context = {};
-      ZuCheckRT(mx.stop());
+      ZuCheckRT(mx->stop());
       db->final();
       return ok;
     };
@@ -662,16 +667,17 @@ static void namespaces(bool maxID)
     while (id.length() < IDSize_ - 1) id << 'n';
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZuPtr<ZiMultiplex> previousMx;
+  ZuPtr<ZiMultiplex> mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<Zdb> db = new Zdb{};
-  db->init(ZdbCf{cf}, &mx, {});
+  db->init(ZdbCf{cf}, mx, {});
   auto orders = db->initTable<zdbtest::Order>("pq_saga_order");
-  ZuCheckRT(mx.start());
+  ZuCheckRT(mx->start());
   bool started = db->start();
   ZuCheckRT(started);
   if (!started) {
     orders = {};
-    ZuCheckRT(mx.stop());
+    ZuCheckRT(mx->stop());
     db->final();
     db = {};
     return;
@@ -720,11 +726,13 @@ static void namespaces(bool maxID)
 	ZuCheckRT(db->stop());
 	if (restart) {
 	  orders = {};
-	  ZuCheckRT(mx.stop());
+	  ZuCheckRT(mx->stop());
 	  db->final();
-	  db->init(ZdbCf{cf}, &mx, {});
+	  previousMx = ZuMv(mx);
+	  mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+	  db->init(ZdbCf{cf}, mx, {});
 	  orders = db->initTable<zdbtest::Order>("pq_saga_order");
-	  ZuCheckRT(mx.start());
+	  ZuCheckRT(mx->start());
 	}
 	bool started = db->start();
 	ZuCheckRT(started);
@@ -754,7 +762,7 @@ static void namespaces(bool maxID)
   }
   ZuCheckRT(db->stop());
   orders = {};
-  ZuCheckRT(mx.stop());
+  ZuCheckRT(mx->stop());
   db->final();
   db = {};
 }

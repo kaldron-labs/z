@@ -1088,7 +1088,7 @@ friend inline ZuStringT<"Zutcp.Handshake.EarlyBacking"> ZmNHeapID(EarlyBacking *
   alignas(ZiIOBuf_Align) uint8_t bytes[512];
   unsigned acquired = 0, returned = 0;
   bool valid = true;
-  EarlyBacking() { count = 1; size = sizeof(bytes); headRoom = 128; }
+  EarlyBacking() : Zi::IOBufPool{Zi::IOBufType::TxTCP} { count = 1; size = sizeof(bytes); headRoom = 128; }
   uint8_t *alloc() override {
     if (acquired != returned) return nullptr;
     ++acquired;
@@ -1109,7 +1109,7 @@ static void testEarlyWriterReadiness(unsigned scenario)
   Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP, ZiIOBuf, 512> allocator{
     app.mx(), backing};
   auto factory = Zxdp::instance(Zxdp::Type::Xdp);
-  auto pool = factory->bufPool(1, sizeof(backing->bytes));
+  auto pool = factory->bufPool(Zi::IOBufType::TxTCP, 1, sizeof(backing->bytes));
   app.testTx = &allocator; app.testPool = pool;
   ZmRef<GateCxn> link = new GateCxn{&app};
   Zutcp::TCPStateTest::stageEarly(*link);

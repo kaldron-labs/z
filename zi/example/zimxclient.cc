@@ -212,7 +212,7 @@ public:
   unsigned maxRecv() const { return m_maxRecv; }
 
 private:
-  RxAllocator *m_rx = allocator<Zi::IOBufType::RxTCP, ZiRxBuf, 4096>();
+  RxAllocator *m_rx = allocator<Zi::IOBufType::Rx, ZiRxBuf, 4096>();
   RxAllocator *m_frameAllocator = allocator<Zi::IOBufType::App, ZiRxBuf, 4096>();
   TxAllocator *m_allocator = allocator<Zi::IOBufType::TxTCP, ZiIOBuf, ZiIOBuf_DefltSize>();
   ZiIP			m_ip;

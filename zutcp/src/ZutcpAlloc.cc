@@ -7,19 +7,8 @@
 #include <zlib/ZmAssert.hh>
 
 #include <zlib/ZutcpAlloc.hh>
-#include <zlib/Zutcp.hh>
 
 namespace Zutcp {
-
-uint8_t *Allocator::alloc()
-{
-  return pool->alloc();
-}
-void Allocator::free(uint8_t *packet)
-{
-  pool->free(packet);
-  if (returned) returned();
-}
 
 PacketLease::~PacketLease() { reset(); }
 
@@ -43,18 +32,5 @@ void PacketLease::reset()
   m_allocator = nullptr;
   m_size = 0;
 }
-
-RxAllocator::RxAllocator(Allocator *source, unsigned head, unsigned n, unsigned alignment)
-: ingress{source}
-{
-  ZmAssert_(head <= source->size);
-  count = n;
-  align = alignment;
-  size = source->size;
-  headRoom = head;
-  tailRoom = 0;
-}
-
-void RxAllocator::free(uint8_t *packet) { ingress->free(packet); }
 
 } // namespace Zutcp

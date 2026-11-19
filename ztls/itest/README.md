@@ -41,7 +41,7 @@ normal reference retirement. This exercises TCP duplicate suppression; it does
 not claim AF_XDP or NIC zero-copy operation.
 
 `ztlsrxpackettest` uses a kernel TCP pair with deliberately small, unequal
-RxTCP capacities and small TxTCP packet spans. It sends application frames
+Rx capacities and small TxTCP packet spans. It sends application frames
 spanning multiple full authenticated TLS records in both directions and exercises
 KeyUpdate. Runs with mux Rx equal to and different from TLS Rx verify RxTLS
 allocator identities, fixed input capacity, payload integrity, retained plaintext

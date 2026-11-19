@@ -251,7 +251,7 @@ struct SliceHeap : Zi::IOBufAllocator {
   using Heap = ZmVHeap<"ZiRxStreamTest.Slice", 64, 256, ZiIOBuf_DefltAlign>;
   unsigned sourceReturns = 0, heapReturns = 0;
 
-  SliceHeap() : IOBufAllocator{nullptr, Zi::IOBufType::RxTCP, 64} { }
+  SliceHeap() : IOBufAllocator{nullptr, Zi::IOBufType::Rx, 64} { }
 
   uint8_t *alloc(unsigned n) const override {
     return static_cast<uint8_t *>(Heap::alloc(n));

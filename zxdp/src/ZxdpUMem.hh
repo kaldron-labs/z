@@ -53,6 +53,7 @@ public:
   ~UMem();
   static ZuUnion<ZmRef<UMem>, ZeException> create(
     ZuSpan<const ZmRef<Zi::IOBufPool>>, Zi::IOBufPool *rx, unsigned mtu);
+  void publish(ZuSpan<const ZmRef<Zi::IOBufPool>>, BufPool *rx);
   uint8_t *data() const { return m_data; }
   const ArenaLayout &layout() const { return m_layout; }
   BufPool *pool(const void *) const;
@@ -74,26 +75,20 @@ private:
 // Descriptor mappings never own application packet lifetime.
 // Handle closure alone does not prove retirement of outstanding device DMA.
 class ZxdpAPI Xsk {
-  friend class KernelRetirement;
-
 public:
   Xsk() = default;
   ~Xsk();
   Xsk(const Xsk &) = delete;
   Xsk &operator =(const Xsk &) = delete;
 
-  ZuUnion<void, ZeException> open(
-    ZmRef<UMem>, unsigned ifindex, unsigned queue, unsigned rxCount, unsigned txCount,
+  ZuUnion<void, ZeException> owner(
+    UMem *, unsigned ifindex, unsigned queue, unsigned fillCount, unsigned compCount,
     int shared = -1);
-  ZuUnion<void, ZeException> prepare(
-    ZmRef<UMem>, unsigned rxCount, unsigned txCount, int shared = -1);
-  // EBUSY preserves this prepared registration for owner-directed bind retry.
-  ZuUnion<void, ZeException> bind(unsigned ifindex, unsigned queue);
-  bool retryBind() const { return m_retryBind; }
+  ZuUnion<void, ZeException> service(
+    unsigned ifindex, unsigned queue, unsigned rxCount, unsigned txCount, int shared);
   void close();
   int fd() const { return m_fd; }
   bool zeroCopy() const { return m_zeroCopy; }
-  bool bound() const { return m_bound; }
 
   RxRing &rx() { return m_rx; }
   FillRing &fill() { return m_fill; }
@@ -101,25 +96,16 @@ public:
   CompRing &comp() { return m_comp; }
 
 private:
-  UMem *arena() const { return m_arena; }
-  uint64_t namespaceID() const { return m_namespace; }
-  unsigned ifindex() const { return m_ifindex; }
-  unsigned queue() const { return m_queue; }
-  ZuUnion<void, ZeException> bind_(unsigned ifindex, unsigned queue, bool queryOptions);
+  ZuUnion<void, ZeException> open(
+    UMem *, unsigned ifindex, unsigned queue, unsigned fillCount, unsigned compCount,
+    unsigned rxCount, unsigned txCount, int shared);
   struct Mapping { void *addr = nullptr; size_t length = 0; };
   template <typename R> ZuUnion<void, ZeException> map(
     unsigned i, R &, const xdp_ring_offset &, unsigned count, uint64_t offset);
 
   int		m_fd = -1;
-  int		m_shared = -1;
-  ZmRef<UMem>	m_arena;
   Mapping	m_maps[4];
-  uint64_t	m_namespace = 0;
-  unsigned	m_ifindex = 0;
-  unsigned	m_queue = 0;
   bool		m_zeroCopy = false;
-  bool		m_bound = false;
-  bool		m_retryBind = false;
   alignas(Zm::CacheLineSize) RxRing m_rx;
   FillRing		m_fill;
   alignas(Zm::CacheLineSize) TxRing m_tx;

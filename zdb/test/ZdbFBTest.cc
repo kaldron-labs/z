@@ -53,7 +53,7 @@ friend inline ZuStringT<"ZdbFBTest.Pool"> ZmNHeapID(Pool *);
   alignas(ZiIOBuf_Align) uint8_t bytes[ZdbBuf_Size<Small>{}];
   uint8_t *available = bytes;
 
-  Pool() {
+  Pool() : Zi::IOBufPool{Zi::IOBufType::TxTCP} {
     count = 1;
     size = sizeof(bytes);
     align = ZiIOBuf_Align;
@@ -113,14 +113,15 @@ static void poolAllocation()
 {
   ZuTestScope(poolAllocation);
   ZiMultiplex mx;
-  ZmRef<Plugin> plugin = new Plugin{&mx};
-  mx.plugin(plugin);
+  auto plugin = new Plugin{&mx};
+  ZmRef<ZiMxPlugin> transport = plugin;
+  mx.plugin(ZuMv(transport));
   auto alloc = tableBufAllocFn<Small>(&mx);
   ZuCheck(plugin->reqType == Zi::IOBufType::TxTCP);
   ZuCheck(plugin->reqSize == ZdbBuf_Size<Small>{});
   ZuCheck(plugin->reqAlign == ZiIOBuf_Align);
   ZuCheck(plugin->reqCount == ZiIOBuf_DefltCount);
-  ZuCheck(alloc.allocator() && alloc.allocator()->provider() == plugin->pool.ptr());
+  ZuCheck(alloc.allocator() && alloc.allocator()->pool == plugin->pool.ptr());
   auto buf = alloc();
   using Stub = Zi::IOBufStub<IOBuf, ZdbBuf_HeapID<Small>>;
   ZuCheck(bool(dynamic_cast<Stub *>(buf.ptr())));

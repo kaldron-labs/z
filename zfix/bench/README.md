@@ -365,6 +365,11 @@ zfix/bench/zfixbench server|client kernel|native INTERFACE ADDRESS MESSAGES \
 zfix/bench/zfixbench --selftest
 ```
 
+`RESERVE` sets the native ingress, TCP packet, and application Tx pool counts
+per endpoint. Size it above both the total pipeline window and the aggregate
+TCP ingress retention limit (256 frames per connection by default), with
+headroom for control and in-flight packets.
+
 `BENCH_WORKLOAD=order|marketdata|updates` selects typed FIX message pairs.
 `BENCH_BURST_SIZE` and `BENCH_BURST_US` pace application offers in bursts;
 zero burst size sends as pipeline credit permits.

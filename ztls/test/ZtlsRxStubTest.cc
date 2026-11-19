@@ -7,6 +7,8 @@
 #include <string.h>
 #include <zpicotls/openssl.h>
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmGuard.hh>
+#include <zlib/ZmPLock.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/Ztls.hh>
@@ -17,27 +19,37 @@ namespace ZtlsRxStubTest_ {
 
 enum { Head = 13, Tail = 7, Capacity = 31, Slots = 8, Payload = 257, Timeout = 10 };
 
-struct Backing : Zi::IOBufPool, ZmNHeap<Backing> {
+template <unsigned Size> struct Backing : Zi::IOBufPool, ZmNHeap<Backing<Size>> {
 friend inline ZuStringT<"Ztls.RxStub.Backing"> ZmNHeapID(Backing *);
-  uint8_t bytes[Slots][Head + Capacity + Tail];
-  bool used[Slots]{};
+  struct Slot {
+    alignas(ZiIOBuf_DefltAlign) uint8_t bytes[Head + Size + Tail];
+    bool used = false;
+  };
+  Slot slots[Slots];
+  ZmPLock lock;
   ZmAtomic<unsigned> acquired{0}, released{0}, errors{0};
-  Backing() { count = Slots; size = sizeof(bytes[0]); headRoom = Head; tailRoom = Tail; }
+
+  explicit Backing(Zi::IOBufType::T type) : Zi::IOBufPool{type} {
+    count = Slots; size = Head + Size + Tail; headRoom = Head; tailRoom = Tail;
+  }
   uint8_t *alloc() override {
-    for (unsigned i = 0; i < Slots; ++i) if (!used[i]) {
-      used[i] = true; ++acquired;
-      memset(bytes[i], 0xa5, sizeof(bytes[i]));
-      return bytes[i];
+    ZmGuard guard{lock};
+    for (auto &slot : slots) if (!slot.used) {
+      slot.used = true;
+      ++acquired;
+      memset(slot.bytes, 0xa5, sizeof(slot.bytes));
+      return slot.bytes;
     }
     ++errors; return nullptr;
   }
   void free(uint8_t *ptr) override {
-    for (unsigned i = 0; i < Slots; ++i) if (ptr == bytes[i]) {
-      if (!used[i]) ++errors;
+    ZmGuard guard{lock};
+    for (auto &slot : slots) if (ptr == slot.bytes) {
+      if (!slot.used) ++errors;
       for (unsigned j = 0; j < Head; ++j) if (ptr[j] != 0xa5) ++errors;
-      for (unsigned j = Head + Capacity; j < sizeof(bytes[i]); ++j)
+      for (unsigned j = Head + Size; j < sizeof(slot.bytes); ++j)
 	if (ptr[j] != 0xa5) ++errors;
-      used[i] = false; ++released; return;
+      slot.used = false; ++released; return;
     }
     ++errors;
   }
@@ -47,7 +59,9 @@ friend inline ZuStringT<"Ztls.RxStub.Backing"> ZmNHeapID(Backing *);
 // notification, exactly as a packet provider does; Ztls receives the same context.
 struct Provider : ZiMxPlugin, ZmNHeap<Provider> {
 friend inline ZuStringT<"Ztls.RxStub.Provider"> ZmNHeapID(Provider *);
-  ZmRef<Backing> backing = new Backing;
+  ZmRef<Backing<Capacity>> backing = new Backing<Capacity>{Zi::IOBufType::Rx};
+  ZmRef<Backing<Ztls_::TxRecordCapacity>> txPool =
+    new Backing<Ztls_::TxRecordCapacity>{Zi::IOBufType::TxTCP};
   ZmRef<ZiConnection> connection;
   ZmSemaphore event;
   bool stub;
@@ -56,7 +70,9 @@ friend inline ZuStringT<"Ztls.RxStub.Provider"> ZmNHeapID(Provider *);
   ZmAtomic<unsigned> emptyInitial{0}, deliveries{0}, errors{0};
   Provider(ZiMultiplex *mx, bool stub_) : ZiMxPlugin{mx}, stub{stub_} { }
   Zi::IOBufPool *allocator(Zi::IOBufType::T type, unsigned, unsigned, unsigned) override {
-    return stub && type == Zi::IOBufType::RxTCP ? backing.ptr() : nullptr;
+    if (type == Zi::IOBufType::TxTCP) return txPool;
+    ZmAssert_(stub && type == Zi::IOBufType::Rx);
+    return backing;
   }
   void start() override { mx()->pluginStarted({}); }
   void stop() override { mx()->pluginStopped({}); }
@@ -83,8 +99,12 @@ friend inline ZuStringT<"Ztls.RxStub.Provider"> ZmNHeapID(Provider *);
     if (cxn != connection.ptr() || !wire || offset == length) return;
     auto &io = cxn->rxContext();
     if (io.completed() || !io.buf) { ++errors; return; }
+    if (io.buf->allocator() != cxn->info().rxAllocator ||
+	io.buf->builtin() == stub) { ++errors; return; }
     if (stub) {
-      if (io.buf->data_()) { ++errors; return; }
+      if (io.buf->data_() || io.buf->allocator()->pool != backing.ptr()) {
+	++errors; return;
+      }
       auto ptr = backing->alloc();
       if (!ptr) return;
       io.buf->data__ = uintptr_t(ptr) | ZiIOBuf::Registered;
@@ -192,25 +212,34 @@ void run(bool stub, bool corrupt, bool partial, bool stale)
       .thread(3, [](auto &t) { t.isolated(1); })
       .thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  ZmRef<Provider> provider = new Provider{&mx, stub};
+  ZmRef<Provider> transport = new Provider{&mx, stub};
+  auto provider = transport.ptr();
+  mx.plugin(ZuMv(transport));
+  ZuCheckRT(!transport && mx.plugin() == provider);
   Client client;
   auto plain = Client::Link::rxAllocator(&mx);
   auto txPlain = Client::Link::txAllocator(&mx);
   auto packets = Client::Link::txPacketAllocator(&mx);
-  Zi::IOBufAllocator *input = nullptr;
-  if (!stub) input = mx.allocator<Zi::IOBufType::RxTCP, ZiRxBuf, Capacity>();
-  mx.plugin(provider);
-  if (stub) input = mx.allocator<Zi::IOBufType::RxTCP, ZiRxBuf, Capacity>();
+  // The builtin case injects a populated input allocator into the in-memory transport.
+  // The registered case exercises the mx factory and transport-owned Rx stub backing.
+  ZuPtr<Zi::IOBufAllocator> builtin;
+  if (!stub) builtin = new Zi::IOBufBuiltinAllocator<Zi::IOBufType::Rx, ZiRxBuf, Capacity>{&mx};
+  auto input = stub ? mx.allocator<Zi::IOBufType::Rx, ZiRxBuf, Capacity>() : builtin.ptr();
+  ZuCheckRT(input && packets);
+  if (!input || !packets) return;
+  ZuCheckRT(packets->pool == provider->txPool.ptr() &&
+    input->pool.ptr() == (stub ? provider->backing.ptr() : nullptr) &&
+    input->pool.ptr() != packets->pool.ptr());
   Ztls::ClientParams params{&mx, "3", "4"};
   params.rxAllocator(plain).txAllocator(txPlain)
     .txPacketAllocator(packets).socketRxAllocator(input)
     .errorFn([&client](ZeException) { ++client.errors; });
   bool initialized = client.init(ZuMv(params));
+  ZuCheckRT(initialized);
+  if (!initialized) return;
   ptls_cipher_suite_t *tls12Suites[] = {
     &ptls_openssl_tls12_ecdhe_rsa_aes128gcmsha256, nullptr};
   client.ctx()->tls12_cipher_suites = tls12Suites;
-  ZuCheckRT(initialized);
-  if (!initialized) return;
   bool started = mx.start(); ZuCheckRT(started);
   if (!started) { client.final(); return; }
   ZuCheckRT(client.start());
@@ -270,6 +299,8 @@ void run(bool stub, bool corrupt, bool partial, bool stale)
   ZuCheckRT(!provider->errors.load_() && provider->emptyInitial.load_());
   ZuCheckRT(!provider->backing->errors.load_());
   ZuCheckRT(provider->backing->acquired.load_() == provider->backing->released.load_());
+  ZuCheckRT(!provider->txPool->errors.load_() &&
+    provider->txPool->acquired.load_() == provider->txPool->released.load_());
   if (stub) ZuCheckRT(provider->backing->acquired.load_() == provider->deliveries.load_());
   if (!corrupt) ZuCheckRT(!client.errors.load_());
 }

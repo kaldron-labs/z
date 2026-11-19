@@ -21,7 +21,6 @@
 #include <zlib/ZmEngine.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmRef.hh>
-#include <zlib/ZmScheduler.hh>
 #include <zlib/ZmPolymorph.hh>
 
 #include <zlib/ZtEnum.hh>
@@ -35,24 +34,16 @@ namespace Zxdp {
 
 using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zxdp.Receive">>;
 using StopFn = ZmFn<void(), ZmFnHeapID<"Zxdp.TxStopped">>;
+using StartFn = ZmFn<void(bool), ZmFnHeapID<"Zxdp.Start">>;
 
 ZtEnumNS(ZxdpAPI, Type, uint8_t, Xdp);
 
-struct Params_ {
-  Zi::IOBufPoolList txPools; // at least one nonempty Tx pool is required
-  ZmRef<Zi::IOBufPool> rxPool;
-  RecvFn rx;
-  unsigned spin = 1000; // idle probes before Rx blocks or Tx service returns
-  ZmScheduler *scheduler = nullptr; // caller-owned scheduler
-  StopFn txStopped; // optional owner continuation after sender callbacks drain
-};
-
 namespace Xdp {
-  struct Params : public Params_ {
+  struct Params {
     unsigned ifindex = 0; // network-interface index in the current network namespace
     ZuCSpan netmask; // optional destination CIDR; empty takes all traffic
+    unsigned spin = 1000; // idle probes before Rx blocks or Tx service returns
     unsigned txSid = 0; // application-assigned sender slot
-    ZmSchedTParams txThread = ZmSchedTParams().isolated(true);
   };
 }
 ZuDerive(Params, (ZuUnion<Xdp::Params>));
@@ -72,19 +63,30 @@ public:
   Instance &operator =(const Instance &) = delete;
 
   // Pools are independent of the factory instance and can precede init().
-  virtual ZmRef<Zi::IOBufPool> bufPool(unsigned count, unsigned size,
+  virtual ZmRef<Zi::IOBufPool> bufPool(Zi::IOBufType::T type, unsigned count, unsigned size,
     unsigned headRoom = 0, unsigned tailRoom = 0,
     unsigned align = ZiIOBuf_DefltAlign) = 0;
-  // Configure before start. Repeated stopped init is idempotent;
-  // init during any start/stop operation or while running returns an error.
-  // Lifecycle calls are serialized by the caller. Pool nodes stay in the
-  // caller's list; the instance retains pool references independently.
-  virtual ZuUnion<void, ZeException> init(const Params &) = 0;
-  // Stop drains service and kernel access. Only Stopped permits final, which
-  // releases retained configuration/storage and may be called by the destructor.
+  // Open the link synchronously. Repeating the successful stopped configuration
+  // preserves device state and ownership.
+  virtual ZuUnion<void, ZeException> init(ZiMultiplex *, const Params &) = 0;
+
+  // Internal Tx reserves can participate without joining the caller's intrusive list.
+  virtual void reserveTxPools(ZuSpan<Zi::IOBufPool *const>) = 0;
+  // Allocate and register backing once. The caller's pool nodes stay in its list.
+  virtual ZuUnion<void, ZeException> alloc(
+    Zi::IOBufPool *rxPool, const Zi::IOBufPoolList &txPools) = 0;
+
+  virtual bool start(RecvFn, StopFn txStopped = {}) = 0;
+  virtual void start(RecvFn, StopFn txStopped, StartFn completion) = 0;
+  // Stop drains service. While stopped, final releases device and backing resources.
   virtual void final() = 0;
   virtual ZeException error() const = 0; // inspect after start/stop completion
 
+  virtual ZiMultiplex *mx() const = 0;
+  virtual unsigned ifindex() const = 0;
+  virtual unsigned rxQueues() const = 0;
+  virtual bool allocated() const = 0;
+  virtual bool everStarted() const = 0;
   virtual bool ready() const = 0;
   virtual unsigned mtu() const = 0;
   virtual bool zeroCopy() const = 0;

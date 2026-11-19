@@ -208,11 +208,11 @@ struct ResParser : public Response, public Zhttp::Parser {
       if (!inputMax) return false;
       if (streamed) {
 	if constexpr (Impl::Body == BodyPolicy::URI) return false;
-	else return input.begin(length, inputMax, this->bufType());
+	else return input.begin(length, inputMax);
       }
       if (length > UINT_MAX || (inputMax && length > inputMax)) return false;
       bodyLength = unsigned(length);
-      if constexpr (Impl::Borrowed) return input.begin(length, inputMax, this->bufType());
+      if constexpr (Impl::Borrowed) return input.begin(length, inputMax);
       return true;
     }
   }
@@ -268,7 +268,7 @@ struct ResParser : public Response, public Zhttp::Parser {
 
 private:
   BorrowedData &backing_() {
-    if (!borrowed) borrowed = new BorrowedData{this->bufType()};
+    if (!borrowed) borrowed = new BorrowedData{};
     return *borrowed;
   }
 
@@ -454,7 +454,6 @@ struct MResParser : public Zhttp::Parser {
       [this](auto J) -> bool {
         using Res = ZuType<J, AllResponses>;
 	auto response = new (u.template new_<J + 1, true>()) Res();
-	response->bufType(this->bufType());
 	response->init();
 	response->bodyMax(inputMax);
         return true;
@@ -543,7 +542,6 @@ struct MResParser : public Zhttp::Parser {
       if constexpr (HaveSSE && Res::Body == BodyPolicy::SSE) {
 	if (!sseContentType || !inputMax || length > inputMax) return false;
 	auto limits = sseLimits_(builder, 0);
-	sse.bufType(this->bufType());
 	sse.reset(limits.maxSSELineBytes, limits.maxSSEEventBytes);
 	sseBytes = 0;
 	return true;

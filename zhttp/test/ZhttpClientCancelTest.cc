@@ -2373,8 +2373,6 @@ void configuration()
 {
   ZuTestScope(configuration);
 
-  ZiMultiplex mx{mxParams()};
-
   auto defaults = Zhttp::Config()
     .links(2).concurrency(4).linkMax(2).secure(false)
     .requestTimeout(17).maxRetries(3).maxRedirects(5)
@@ -2385,6 +2383,21 @@ void configuration()
     .h2Policy(Zhttp::H2Policy::Disable)
     .blindH3(true).altSvcCrossHost(true)
     .tcp(true).tls(false).quic(false);
+  {
+    ZiMultiplex mx{mxParams()};
+    App app;
+    bool configured = app.init(
+      Zhttp::HubConfig{&mx, "3", "4"}, 2, defaults,
+      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{}) &&
+      app.pool(0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, 1});
+    ZuCHECK(configured && mx.start(),
+      "start multiplexer for incomplete pool configuration");
+    ZuCHECK(!app.start(), "reject start with an unconfigured pool slot");
+    app.final();
+    ZuCHECK(mx.stop(), "stop incomplete pool fixture");
+  }
+
+  ZiMultiplex mx{mxParams()};
   App app;
   ZuCHECK(app.init(
       Zhttp::HubConfig{&mx, "3", "4"}, 2, defaults,
@@ -2405,9 +2418,6 @@ void configuration()
   ZuCHECK(!app.pool(
       0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, 2}),
     "reject duplicate pool slot");
-  ZuCHECK(mx.start(), "start multiplexer for incomplete pool configuration");
-  ZuCHECK(!app.start(), "reject start with an unconfigured pool slot");
-  ZuCHECK(mx.stop(), "stop multiplexer before completing pool configuration");
   ZuCHECK(!app.pool(
       1, Zhttp::Destination{ZuBSpan{"localhost"}, 2},
       Zhttp::Config{}.links(0)),
@@ -3140,21 +3150,22 @@ void resolverLifecycle()
   mx.stop();
   ZiResolver::start();
   ZuCHECK(ZiResolver::instance()->running(), "start external resolver");
+  ZiMultiplex borrowerMx{mxParams()};
   {
     App app;
-    bool inited = startApp(app, mx, 1, config);
+    bool inited = startApp(app, borrowerMx, 1, config);
     ZuCHECK(inited, "start resolver-borrowing agent");
     if (inited) {
       ZmSemaphore finalized;
       bool stopped = false;
-      app.stop([&app, &mx, &finalized, &stopped](bool ok) {
+      app.stop([&app, &borrowerMx, &finalized, &stopped](bool ok) {
 	// Post behind the stop callback before releasing its owner. Calling a
 	// second blocking stop from final() here would deadlock the Rx shard.
-	mx.run([&app, &finalized, &stopped, ok]() {
+	borrowerMx.run([&app, &finalized, &stopped, ok]() {
 	  stopped = ok;
 	  if (ok) app.final();
 	  finalized.post();
-	}, mx.rxThread());
+	}, borrowerMx.rxThread());
       });
       finalized.wait();
       ZuCHECK(stopped, "finalize drained client on Rx without blocking");
@@ -3164,7 +3175,7 @@ void resolverLifecycle()
   }
   ZiResolver::stop();
   ZiResolver::final();
-  mx.stop();
+  borrowerMx.stop();
 }
 
 } // namespace ZhttpClientCancelTest_

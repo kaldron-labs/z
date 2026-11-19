@@ -21,7 +21,7 @@
 #include <zlib/ZuTime.hh>
 
 #include <zlib/ZmAssert.hh>
-#include <zlib/ZmScheduler.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmThread.hh>
@@ -88,66 +88,54 @@ static void closeInstance(ZmRef<Zxdp::Instance> &instance)
   instance = nullptr;
 }
 
-// Kernel queue release can outlast a completed close. Retry from this test's
-// control caller with the same drained pool, never from packet service.
-static ZmRef<Zxdp::Instance> createInstance(
-  const Zxdp::Params &params, ZeException &error)
+static bool setup(
+  Zxdp::Instance *instance, ZiMultiplex &mx, const Zxdp::Params &params,
+  Zi::IOBufPool *ingress, const Zi::IOBufPoolList &tx,
+  Zxdp::RecvFn rx, ZeException &error)
 {
-  auto deadline = Zm::now() + ZuTime{2};
-  unsigned attempts = 0;
-  do {
-    ++attempts;
-    wakeFD = -1;
-    captureWake = true;
-    auto instance = Zxdp::instance(Zxdp::Type::Xdp);
-    auto initialized = instance->init(params);
-    if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
-    else if (!instance->start()) error = instance->error();
-    else error = {};
-    captureWake = false;
-    if (instance && instance->ready()) {
-      std::cout << "# raw wake startup attempts=" << attempts << '\n';
-      return instance;
-    }
-    if (instance) closeInstance(instance);
-    poll(nullptr, 0, 1);
-  } while (Zm::now() < deadline);
-  return nullptr;
+  wakeFD = -1;
+  captureWake = true;
+  auto initialized = instance->init(&mx, params);
+  captureWake = false;
+  auto allocated = initialized.is<void>() ? instance->alloc(ingress, tx) : initialized;
+  if (allocated.is<ZeException>()) error = ZuMv(allocated).p<ZeException>();
+  else if (!mx.start()) error = ZeEXCEPT(Error, "Zxdp.WakeTest", "start multiplexer");
+  else if (!instance->start(ZuMv(rx))) error = instance->error();
+  return instance->ready();
 }
 
 static void testWake()
 {
   ZuTestScopeRT(testWake);
   alarm(20); // a missing wake fails the fixture; time does not establish success
-  auto backend = Zxdp::instance(Zxdp::Type::Xdp);
-  auto pool = backend->bufPool(8, 1514); // two queues, four receive slots each
-  auto tx = backend->bufPool(1, 128);
+  auto instance = Zxdp::instance(Zxdp::Type::Xdp);
+  auto pool = instance->bufPool(Zi::IOBufType::Rx, 8, 1514); // two queues, four receive slots each
+  auto tx = instance->bufPool(Zi::IOBufType::TxUDP, 1, 128);
   ZeException error;
   ZmSemaphore packet;
+  ZmAtomic<unsigned> retain{0};
+  uint8_t *held = nullptr;
   Zxdp::Params config(
     Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
   auto &params = config.p<Zxdp::Xdp::Params>();
   params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
-  params.rxPool = pool;
-  params.txPools.pushNode(tx.ptr());
-  params.rx = [&pool, &packet](uint8_t *p, unsigned) {
-    pool->free(p);
+  Zi::IOBufPoolList pools;
+  pools.pushNode(tx.ptr());
+  Zxdp::RecvFn receive = [&pool, &packet, &held, &retain](uint8_t *p, unsigned) {
+    if (retain.xch(0)) held = p;
+    else pool->free(p);
     packet.post();
   };
   params.spin = 0;
-  ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,
-    [&params](auto &thread) { thread = params.txThread; })};
-  params.scheduler = &scheduler;
-  params.txSid = 1;
-  bool started = scheduler.start();
-  ZuCheckRT(started);
-  if (!started) { alarm(0); return; }
-  auto instance = createInstance(config, error);
-  bool ready = instance && instance->ready();
+  params.txSid = 3;
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+    s.thread(3, [](auto &t) { t.isolated(true); });
+  })};
+  bool ready = setup(instance, mx, config, pool, pools, ZuMv(receive), error);
   ZuCheckRT(ready, log_("zero-spin receive instance starts: ", error));
   if (!ready) {
     if (instance) closeInstance(instance);
-    ZuCheckRT(scheduler.stop());
+    if (mx.running()) ZuCheckRT(mx.stop());
     alarm(0);
     return;
   }
@@ -238,10 +226,37 @@ static void testWake()
   instance->wake(); staleRx.join();
   ZuCheckRT(waits == before + 2,
     log_("stale eventfd readiness neither invents a return nor loses the next pulse"));
+
+  auto posted = [&instance] {
+    uint64_t count = 0;
+    instance->allQueues([&count](Ztc::Queue *queue) {
+      Ztc::QueueTelemetry data;
+      queue->telemetry(data);
+      if (data.type == Ztc::QueueType::Tx) count += data.inCount;
+    });
+    return count;
+  };
+  retain = 1;
+  ZmThread idleRx{[&instance] { instance->rx(); }};
+  parked.wait();
+  bool loaned = wire >= 0 && sendto(wire, bytes, sizeof(bytes), 0,
+    reinterpret_cast<sockaddr *>(&address), sizeof(address)) == sizeof(bytes);
+  ZuCheckRT(loaned, log_("peer sends one frame while the receiver is parked"));
+  if (loaned) {
+    packet.wait();
+    parked.wait();
+    auto before = posted();
+    pool->free(held);
+    parked.wait();
+    ZuCheckRT(posted() == before + 1,
+      log_("off-owner frame return wakes Rx and posts FILL without another packet"));
+  }
+  instance->wake();
+  idleRx.join();
   if (wire >= 0) close(wire);
   entered = nullptr;
   closeInstance(instance);
-  ZuCheckRT(scheduler.stop());
+  if (mx.running()) ZuCheckRT(mx.stop());
   ZuCheckRT(!pool->alloc(), log_("receive/wake resources retire with all kernel-held packets"));
   alarm(0);
 }
@@ -250,9 +265,9 @@ static void testActiveWake()
 {
   ZuTestScopeRT(testActiveWake);
   alarm(20);
-  auto backend = Zxdp::instance(Zxdp::Type::Xdp);
-  auto pool = backend->bufPool(8, 1514);
-  auto tx = backend->bufPool(1, 128);
+  auto instance = Zxdp::instance(Zxdp::Type::Xdp);
+  auto pool = instance->bufPool(Zi::IOBufType::Rx, 8, 1514);
+  auto tx = instance->bufPool(Zi::IOBufType::TxUDP, 1, 128);
   ZeException error;
   ZmSemaphore active, release;
   Zxdp::Instance *current = nullptr;
@@ -260,29 +275,27 @@ static void testActiveWake()
   Zxdp::Params config(
     Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
   auto &params = config.p<Zxdp::Xdp::Params>();
-  params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
-  params.rxPool = pool;
-  params.txPools.pushNode(tx.ptr());
-  params.rx = [&pool, &packets, &active, &release](uint8_t *p, unsigned) {
+  // Use the other tuple. Linux asynchronously releases a former owner's
+  // device pool after final close, independent of the stopped service.
+  params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_PEER_IFINDEX"), nullptr, 10));
+  Zi::IOBufPoolList pools;
+  pools.pushNode(tx.ptr());
+  Zxdp::RecvFn receive = [&pool, &packets, &active, &release](uint8_t *p, unsigned) {
     ++packets;
     active.post();
     release.wait();
     pool->free(p);
   };
   params.spin = unsigned(-1);
-  ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,
-    [&params](auto &thread) { thread = params.txThread; })};
-  params.scheduler = &scheduler;
-  params.txSid = 1;
-  bool started = scheduler.start();
-  ZuCheckRT(started);
-  if (!started) { alarm(0); return; }
-  auto instance = createInstance(config, error);
-  bool ready = instance && instance->ready();
+  params.txSid = 3;
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+    s.thread(3, [](auto &t) { t.isolated(true); });
+  })};
+  bool ready = setup(instance, mx, config, pool, pools, ZuMv(receive), error);
   ZuCheckRT(ready, log_("long-spin receive instance starts: ", error));
   if (!ready) {
     if (instance) closeInstance(instance);
-    ZuCheckRT(scheduler.stop());
+    if (mx.running()) ZuCheckRT(mx.stop());
     alarm(0);
     return;
   }
@@ -291,7 +304,7 @@ static void testActiveWake()
   sockaddr_ll address{};
   address.sll_family = AF_PACKET;
   address.sll_protocol = htons(ETH_P_ALL);
-  address.sll_ifindex = strtoul(getenv("ZXDP_TEST_PEER_IFINDEX"), nullptr, 10);
+  address.sll_ifindex = strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10);
   uint8_t bytes[64]{};
   memcpy(bytes, instance->mac().data(), 6);
   bytes[6] = 2; bytes[12] = 0x88; bytes[13] = 0xb5;
@@ -313,7 +326,7 @@ static void testActiveWake()
   entered = nullptr;
   if (wire >= 0) close(wire);
   closeInstance(instance);
-  ZuCheckRT(scheduler.stop());
+  if (mx.running()) ZuCheckRT(mx.stop());
   alarm(0);
 }
 

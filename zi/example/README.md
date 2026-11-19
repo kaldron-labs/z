@@ -25,7 +25,7 @@ unbind/restart/reassignment path. See the
 [test coverage notes](../test/README.md) for invariants and verification limits.
 
 The TCP client/server and UDP client use `ZiRx` for message framing. Their
-connection information supplies the network RxTCP/RxUDP allocator; the existing
+connection information supplies the network Rx allocator; the existing
 `rxAllocator()` hook supplies the separate App framing allocator. Split headers
 and messages accumulate outside `ZiRxContext`, while an exact complete message
 retains the original received packet. Request completion in `zimxserver`

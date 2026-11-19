@@ -199,7 +199,7 @@ int main(int argc, char **argv)
     if (setsockopt(listener.fd(), SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled)) ||
 	bind(listener.fd(), reinterpret_cast<sockaddr *>(&address), length) ||
 	listen(listener.fd(), ListenBacklog)) { failed("listen"); return 1; }
-    std::cerr << "backend=kernel-tcp role=server ready=1\n";
+    std::cerr << "transport=kernel-tcp role=server ready=1\n";
     std::cerr << std::flush;
     for (unsigned i = 0; i < count; ++i) {
       int accepted;
@@ -248,7 +248,7 @@ int main(int argc, char **argv)
 	} while (sent < 0 && errno == EINTR);
 	if (sent < 0) { failed("kernel MSG_FASTOPEN unsupported/failed"); return 77; }
 	if (sent > PrefixBytes) return 1;
-	std::cerr << "backend=kernel-tcp role=client connected=1 tfo_sent="
+	std::cerr << "transport=kernel-tcp role=client connected=1 tfo_sent="
 	  << unsigned(sent) << "\n";
 	if (!sendAll(connection.fd(), request.data() + sent,
 	    request.length() - unsigned(sent)) || shutdown(connection.fd(), SHUT_WR) ||
@@ -257,7 +257,7 @@ int main(int argc, char **argv)
       }
       if (connect(connection.fd(), reinterpret_cast<sockaddr *>(&address), length))
 	{ failed("connect"); return 1; }
-      std::cerr << "backend=kernel-tcp role=client connected=1\n";
+      std::cerr << "transport=kernel-tcp role=client connected=1\n";
       if (!i && getenv("ZUTCP_KERNEL_RESET_GATE")) {
 	if (!sendAll(connection.fd(), request.data(), PrefixBytes) ||
 	    !waitGate("ZUTCP_KERNEL_RESET_GATE")) return 1;

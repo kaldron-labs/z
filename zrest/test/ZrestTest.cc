@@ -41,7 +41,7 @@ struct BodySink {
   unsigned tailRoom() const { return 0; }
   unsigned maxSize() const { return UINT_MAX; }
   ZmRef<ZiIOBuf> allocBuf(unsigned head) {
-    allocated = Zrest::inputBufAllocator(Zi::IOBufType::App)->allocBuf();
+    allocated = Zrest::inputBufAllocator()->allocBuf();
     allocated->skip += head;
     return allocated;
   }
@@ -1433,7 +1433,7 @@ static void inputOwnedTest()
   ZuTestScope(inputOwned);
   static ZiMultiplex mx;
   static auto allocator = mx.allocator<
-    Zi::IOBufType::App, ZiRxQueue::Node, 32, ZiIOBuf_DefltAlign,
+    Zi::IOBufType::Rx, ZiRxQueue::Node, 32, ZiIOBuf_DefltAlign,
     ZuStringT<"Zrest.InputOwnedTest">, 512>();
   auto alloc = []() -> ZmRef<ZiRxQueue::Node> {
     return allocator->allocBuf();
@@ -1449,7 +1449,8 @@ static void inputOwnedTest()
   Zrest::Input input;
   ZuCheck(input.begin(4, 32) && input.body(rx) && !rx);
   auto retained = input.take();
-  ZuCheck(retained.ptr() == source && retained->data() == data && retained->cspan() == "body");
+  ZuCheck(retained.ptr() == source && retained->data() == data &&
+    retained->allocator() == allocator && retained->cspan() == "body");
   ZuCheck(retained->ensure(128) && !retained->builtin() && retained->cspan() == "body");
   ZuCheck(retained->refCount() == 1);
   retained = nullptr;
@@ -1457,13 +1458,14 @@ static void inputOwnedTest()
   ZuCheck(input.begin(8, 32));
   auto first = alloc(), last = alloc();
   *first << "body"; *last << "tail";
-  auto firstData = first->ZiIOBuf::data();
+  auto firstBuf = first.ptr();
   rx.push(ZuMv(first));
   ZuCheck(input.body(rx));
   rx.push(ZuMv(last));
   ZuCheck(input.body(rx));
   retained = input.take();
-  ZuCheck(retained->data() == firstData && retained->cspan() == "bodytail");
+  ZuCheck(retained.ptr() != firstBuf && retained->allocator()->type == Zi::IOBufType::App &&
+    retained->cspan() == "bodytail");
   input.reset();
   ZuCheck(input.begin(8, 32));
   uint8_t head[] = {'b', 'o', 'd', 'y'};
@@ -1471,7 +1473,8 @@ static void inputOwnedTest()
   ZuCheck(input.feed(ZuSpan<uint8_t>{head, sizeof(head)}) &&
     input.feed(ZuSpan<uint8_t>{tail, sizeof(tail)}));
   head[0] = tail[0] = 'x';
-  ZuCheck(input.take()->cspan() == "bodytail");
+  retained = input.take();
+  ZuCheck(retained->allocator()->type == Zi::IOBufType::App && retained->cspan() == "bodytail");
   input.reset();
   ZuCheck(input.begin(0, 32));
   first = alloc(); last = alloc();

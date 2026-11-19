@@ -1326,21 +1326,27 @@ int Agent::process(Link_ &link, Rx &rx)
   unsigned incoming = rx.length();
   unsigned held = message ? message->length : 0;
   if (incoming > m_state->cf.maxFrame - held) return -1;
+  auto alloc = []() -> ZmRef<ZiRxQueue::Node> {
+    static ZiMultiplex mx{ZiMxParams{}.scheduler(
+      [](auto &params) { params.id("Ztc.Agent.Rx"); })};
+    static auto allocator = mx.allocator<Zi::IOBufType::App, ZiRxQueue::Node>();
+    return allocator->allocBuf();
+  };
   while (rx.length()) {
     ZmRef<ZiIOBuf> buf;
     auto n = rx.extract(
-      [](ZuBSpan span) -> int64_t { return span.length(); },
-      []() {
-        static ZiMultiplex mx{ZiMxParams{}.scheduler(
-          [](auto &params) { params.id(Link_::TLS ? "Ztc.Agent.RxTLS" : "Ztc.Agent.RxTCP"); })};
-        static auto allocator = mx.allocator<
-          Link_::TLS ? Zi::IOBufType::RxTLS : Zi::IOBufType::RxTCP, ZiRxQueue::Node,
-          ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltVHMaxSize>();
-        return ZmRef<ZiRxQueue::Node>{allocator->allocBuf().template ptr<ZiRxQueue::Node>()};
-      }, buf);
+      [](ZuBSpan span) -> int64_t { return span.length(); }, alloc, buf);
     if (n <= 0) return -1;
-    if (!message) message = ZuMv(buf);
-    else if (!message->append(buf->cspan())) return -1;
+    if (!message) {
+      message = ZuMv(buf);
+      continue;
+    }
+    if (message->allocator()->type != Zi::IOBufType::App || message->refCount() > 1) {
+      auto assembled = alloc();
+      if (!assembled->append(message->cspan())) return -1;
+      message = ZuMv(assembled);
+    }
+    if (!message->append(buf->cspan())) return -1;
   }
   return 1;
 }

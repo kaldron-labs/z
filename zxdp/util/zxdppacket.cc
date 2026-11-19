@@ -25,7 +25,7 @@
 #include <zlib/ZuTime.hh>
 
 #include <zlib/ZmAssert.hh>
-#include <zlib/ZmScheduler.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmPlatform.hh>
@@ -212,41 +212,36 @@ struct Endpoint {
 
   bool run() {
     unsigned index = if_nametoindex(config.interface);
-    Zxdp::Xdp::LinkState link;
-    auto linkResult = Zxdp::Xdp::queryLink(index);
-    if (linkResult.is<ZeException>()) error = linkResult.p<ZeException>();
-    else link = linkResult.p<Zxdp::Xdp::LinkState>();
-    if (!index || linkResult.is<ZeException>() || link.mtu < 28 ||
-        config.payload > link.mtu - 28 || config.frames < link.rxQueues) {
-      ZiLOG(Error, "Zxdp.Packet", ([error = error](auto &s) {
-	s << "invalid interface/payload geometry: " << error;
-      }));
-      return false;
-    }
+    enum { Sender = 3 };
+    ZiMultiplex mx{ZiMxParams{}.scheduler([this](auto &s) {
+      s.spin(config.spin).timeout(config.timeout).thread(Sender, [](auto &t) { t.isolated(true); });
+    })};
     instance = Zxdp::instance(Zxdp::Type::Xdp);
-    rx = instance->bufPool(config.frames, link.mtu + 14);
-    tx = instance->bufPool(TxSlots, link.mtu + 14);
     Zxdp::Params setup(
       Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
     auto &params = setup.p<Zxdp::Xdp::Params>();
     params.ifindex = index;
-    params.rxPool = rx;
-    params.rx = [this](uint8_t *p, unsigned n) { receive(p, n); };
     params.spin = config.spin;
-    params.txPools.pushNode(tx.ptr());
-    ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).spin(config.spin).
-      timeout(config.timeout).thread(1,
-        [&params](auto &thread) { thread = params.txThread; })};
-    params.scheduler = &scheduler;
-    params.txSid = 1;
-    if (!scheduler.start()) {
-      ZiLOG(Error, "Zxdp.Packet", "sender scheduler startup failed");
-      return false;
+    params.txSid = Sender;
+    auto initialized = instance->init(&mx, setup);
+    if (initialized.is<ZeException>()) error = ZuMv(initialized).p<ZeException>();
+    else {
+      auto mtu = instance->mtu();
+      if (mtu < 28 || config.payload > mtu - 28 || config.frames < instance->rxQueues())
+	error = ZeEXCEPT(Error, "Zxdp.Packet", "invalid interface/payload geometry");
+      else {
+	rx = instance->bufPool(Zi::IOBufType::Rx, config.frames, mtu + 14);
+	tx = instance->bufPool(Zi::IOBufType::TxUDP, TxSlots, mtu + 14);
+	Zi::IOBufPoolList pools;
+	pools.pushNode(tx.ptr());
+	auto allocated = instance->alloc(rx, pools);
+	if (allocated.is<ZeException>()) error = ZuMv(allocated).p<ZeException>();
+	else if (!mx.start()) error = ZeEXCEPT(Error, "Zxdp.Packet", "multiplexer start failed");
+	else if (!instance->start([this](uint8_t *p, unsigned n) { receive(p, n); }))
+	  error = instance->error();
+      }
     }
-    auto initialized = instance->init(setup);
-    if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
-    else if (!instance->start()) error = instance->error();
-    if (!instance || !instance->ready()) failed = true;
+    if (!instance->ready()) failed = true;
     if (!failed && config.readyFile) {
       ZiFile file;
       if (file.open(config.readyFile, ZiFile::Write | ZiFile::Exclusive, 0600) != Zi::OK ||
@@ -284,11 +279,11 @@ struct Endpoint {
     // Application service is quiescent; engine stop drains sender and DMA.
     if (instance) {
       if (!instance->stop()) { error = instance->error(); failed = true; }
+      if (pending) { tx->free(pending); pending = nullptr; }
       instance->final();
       instance = nullptr;
     }
-    if (!scheduler.stop()) failed = true;
-    if (pending) { tx->free(pending); pending = nullptr; }
+    if (mx.running() && !mx.stop()) failed = true;
     auto ok = !failed && received == config.count && completed == config.count;
     std::cout << (ok ? "PASS" : "FAIL") << " role=" << (config.server ? "server" : "client")
       << " packets=" << unsigned(received) << " completions=" << unsigned(completed)

@@ -548,7 +548,7 @@ template <> struct Traits<TCP> {
   using RxAllocator = TCPRxBufAlloc;
   using TxAllocator = TCPTxBufAlloc;
   static Zi::IOBufAllocator *registerRx(ZiMultiplex *mx) {
-    return mx->allocator<Zi::IOBufType::RxTCP, typename RxAllocator::Buf,
+    return mx->allocator<Zi::IOBufType::Rx, typename RxAllocator::Buf,
       H1BufSize, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.TCP.Rx">, H1BufMax>();
   }
   static Zi::IOBufAllocator *registerTx(ZiMultiplex *mx) {

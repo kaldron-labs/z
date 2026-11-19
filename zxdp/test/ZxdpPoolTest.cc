@@ -31,6 +31,7 @@ using namespace ZuTestUtil;
 
 struct PlainPool : ZmNHeap<PlainPool>, Zi::IOBufPool {
 friend inline ZuStringT<"Zxdp.Test.PlainPool"> ZmNHeapID(PlainPool *);
+  PlainPool() : Zi::IOBufPool{Zi::IOBufType::TxTCP} { }
   uint8_t *alloc() override { return nullptr; }
   void free(uint8_t *) override { }
 };
@@ -42,17 +43,21 @@ static auto createArena(
   refs.size(pools.count_());
   auto iter = pools.citer();
   while (auto pool = iter()) new (refs.push()) ZmRef<Zi::IOBufPool>{pool};
-  return Zxdp::Xdp::UMem::create(refs.cspan(), rx, mtu);
+  auto result = Zxdp::Xdp::UMem::create(refs.cspan(), rx, mtu);
+  if (result.is<ZmRef<Zxdp::Xdp::UMem>>())
+    result.p<ZmRef<Zxdp::Xdp::UMem>>()->publish(
+      refs.cspan(), static_cast<Zxdp::Xdp::BufPool *>(rx));
+  return result;
 }
 
 static void testPools()
 {
   ZuTestScope(testPools);
-  auto backend = Zxdp::instance(Zxdp::Type::Xdp);
-  auto rx = backend->bufPool(3, 1514);
-  auto tx = backend->bufPool(5, 1514);
-  auto control = backend->bufPool(1, 128);
-  auto empty = backend->bufPool(0, 64);
+  auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
+  auto rx = xdp->bufPool(Zi::IOBufType::Rx, 3, 1514);
+  auto tx = xdp->bufPool(Zi::IOBufType::TxTCP, 5, 1514);
+  auto control = xdp->bufPool(Zi::IOBufType::TxUDP, 1, 128);
+  auto empty = xdp->bufPool(Zi::IOBufType::TxTCP, 0, 64);
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
   pools.pushNode(control.ptr());
@@ -62,7 +67,7 @@ static void testPools()
     "intrusive caller-owned pool list provisions the arena");
   if (created.is<ZeException>()) return;
   auto arena = ZuMv(created.p<ZmRef<Zxdp::Xdp::UMem>>());
-  auto heapPool = backend->bufPool(0, 0);
+  auto heapPool = xdp->bufPool(Zi::IOBufType::TxTCP, 0, 0);
   ZuCHECK(!(uintptr_t(heapPool.ptr()) % Zm::CacheLineSize),
     "framework heap preserves pool cacheline alignment");
   heapPool = nullptr;
@@ -112,9 +117,9 @@ static void testPools()
 static void testInvalid()
 {
   ZuTestScope(testInvalid);
-  auto backend = Zxdp::instance(Zxdp::Type::Xdp);
-  auto rx = backend->bufPool(2, 1514);
-  auto tx = backend->bufPool(1, 128);
+  auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
+  auto rx = xdp->bufPool(Zi::IOBufType::Rx, 2, 1514);
+  auto tx = xdp->bufPool(Zi::IOBufType::TxTCP, 1, 128);
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
   ZuCHECK(createArena({}, rx.ptr(), 1500).is<ZeException>(),
@@ -127,7 +132,7 @@ static void testInvalid()
   ZuCHECK(createArena(pools, rx.ptr(), 1500).is<ZeException>(),
     "Rx fits complete Ethernet frame");
   rx->size = 1514;
-  auto extra = backend->bufPool(1, 128);
+  auto extra = xdp->bufPool(Zi::IOBufType::TxTCP, 1, 128);
   pools.pushNode(extra.ptr());
   tx->count = unsigned(-1);
   ZuCHECK(createArena(pools, rx.ptr(), 1500).is<ZeException>(),
@@ -145,9 +150,9 @@ static void testInvalid()
 static void testZiAllocator()
 {
   ZuTestScope(testZiAllocator);
-  auto backend = Zxdp::instance(Zxdp::Type::Xdp);
-  auto rx = backend->bufPool(2, 1514);
-  auto tx = backend->bufPool(2, 128);
+  auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
+  auto rx = xdp->bufPool(Zi::IOBufType::Rx, 2, 1514);
+  auto tx = xdp->bufPool(Zi::IOBufType::TxTCP, 2, 128);
   tx->align = 256;
   tx->headRoom = 17;
   tx->tailRoom = 11;
@@ -184,10 +189,10 @@ static void testZiAllocator()
 static void testPoolGeometry()
 {
   ZuTestScope(testPoolGeometry);
-  auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+  auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
   enum { RxSize = 1514, TxSize = 128 }; // full Ethernet receive and small Tx fixtures
-  auto rx = backend->bufPool(2, RxSize, 0, 0, 512);
-  auto tx = backend->bufPool(1, TxSize);
+  auto rx = xdp->bufPool(Zi::IOBufType::Rx, 2, RxSize, 0, 0, 512);
+  auto tx = xdp->bufPool(Zi::IOBufType::TxTCP, 1, TxSize);
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
   auto created = createArena(pools, rx.ptr(), 1500);
@@ -231,10 +236,10 @@ static void testPoolGeometry()
 static void testContention()
 {
   ZuTestScope(testContention);
-  auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+  auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
   enum { Slots = 64, Threads = 6, Turns = 30000 }; // bounded contention fixture
-  auto rx = backend->bufPool(2, 1514);
-  auto tx = backend->bufPool(Slots, 128);
+  auto rx = xdp->bufPool(Zi::IOBufType::Rx, 2, 1514);
+  auto tx = xdp->bufPool(Zi::IOBufType::TxTCP, Slots, 128);
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
   auto created = createArena(pools, rx.ptr(), 1500);

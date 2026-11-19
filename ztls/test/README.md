@@ -68,7 +68,7 @@ directions, then compare the decrypted output byte-for-byte. The driver
 keeps the reference CLI and its interactive passphrase prompting out of the
 ordinary unit suite.
 
-`ZtlsRxPacketTest` feeds TLS 1.2 records from distinct packet-sized RxTCP
+`ZtlsRxPacketTest` feeds TLS 1.2 records from distinct packet-sized Rx
 buffers through the incremental parser into the private IOBuf plaintext sink.
 It checks one stable allocation, one-byte and block-boundary fragmentation,
 head/tail sentinels, publication only after authentication, bad tags, truncation
@@ -77,9 +77,10 @@ geometry, exception translation, ownership transfer and retained output lifetime
 The dependency's receive-stream tests supply the wider TLS 1.2/1.3 backend and
 protocol differential coverage; this target checks its Ztls storage integration.
 
-`ZtlsRxStubTest` exercises the actual Ztls receive-context callback with a
-bounded in-memory provider. The same link path handles builtin input and
-initially backingless RxTCP stubs with attached packet backing. It checks
+`ZtlsRxStubTest` exercises the Ztls receive-context callback with a bounded
+in-memory provider. The fixture attaches the provider before acquiring
+allocators. It uses separate Rx and TxTCP pools for registered packet backing
+and injects a builtin Rx allocator for the builtin comparison. The test checks
 head/tail sentinels, authentication gating on corruption, partial-record
 close/reconnect, stale queued-input rejection, early input release and retained
 plaintext lifetime after disconnect.

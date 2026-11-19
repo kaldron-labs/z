@@ -9,12 +9,12 @@ pkginclude_HEADERS = ZutcpLib.hh Zutcp.hh ZutcpAlloc.hh ZutcpIP.hh \
 	ZutcpISN.hh ZutcpOptions.hh ZutcpTFO.hh ZutcpQueue.hh
 noinst_HEADERS = ZutcpTypes.hh ZutcpBuf.hh ZutcpPQueue.hh Zutcp_.hh \
 	ZutcpCxn.hh ZutcpCliCxn.hh ZutcpSrvCxn.hh ZutcpPath.hh ZutcpSock.hh \
-	ZutcpConnectionUtil.hh ZutcpSched.hh ZutcpRecovery.hh ZutcpDiag.hh
+	ZutcpConnectionUtil.hh ZutcpSched.hh ZutcpRecovery.hh ZutcpDiag.hh ZutcpUDP.hh
 lib_LTLIBRARIES = libZutcp.la
 libZutcp_la_CPPFLAGS = $(AM_CPPFLAGS) @CRYPTO_CFLAGS@ -DZUTCP_EXPORTS
 libZutcp_la_CFLAGS = $(AM_CFLAGS)
 libZutcp_la_SOURCES = ZutcpISN.cc ZutcpOptions.cc ZutcpTFO.cc ZutcpLib.cc ZutcpTypes.cc ZutcpCxn.cc \
-	ZutcpAlloc.cc Zutcp.cc ZutcpIP.cc \
+	ZutcpAlloc.cc Zutcp.cc ZutcpIP.cc ZutcpUDP.cc \
 	ZutcpDiag.cc
 libZutcp_la_LIBADD = \
 	$(top_builddir)/zxdp/src/libZxdp.la \

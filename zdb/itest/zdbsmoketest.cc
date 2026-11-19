@@ -105,6 +105,7 @@ static void run()
   ZmTrap::sigintFn(sigint);
   ZmTrap::trap();
 
+  ZuPtr<ZiMultiplex> previousMx;
   try {
     auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
     mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
@@ -204,6 +205,8 @@ static void run()
     mx->stop();
     db->final();
 
+    previousMx = ZuMv(mx);
+    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
     db->init(ZdbCf{cfFields.zdb.p<const ZfCf::AnyNode *>()}, mx, ZdbHandler{
       .upFn = [](Zdb *, ZdbHost *host) {
 	ZiLOG(Info, "zdbsmoketest", ([id = host ? ZuID{host->id()} : ZuID{"unset"}](auto &s) {

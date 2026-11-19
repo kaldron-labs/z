@@ -227,26 +227,36 @@ public:
   explicit App(const Config &config, ZiMxParams params) :
     ZiMultiplex{ZuMv(params)}, m_config{config} {
     if (config.native) {
-      Zutcp::Instance::Params settings{.interface = config.interface,
-        .spin = config.spin, .packetCount = config.reserve, .txSid = 3};
-      ZmRef<Zutcp::Instance> instance = new Zutcp::Instance{this};
-      auto initialized = instance->init(settings);
-      if (initialized.is<ZeException>()) {
-        ZiLOG(Error, "zutcpbench", ([error = ZuMv(initialized.p<ZeException>())](auto &out) {
-          out << "backend initialization: " << error;
-        }));
+      auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
+      Zxdp::Params xdpParams{Zxdp::Xdp::Params{
+        .ifindex = config.interface, .spin = config.spin, .txSid = 3}};
+      auto opened = xdp->init(this, xdpParams);
+      if (opened.is<ZeException>()) {
+        ZiLogEvent(ZuMv(opened).p<ZeException>());
         m_failed = 1;
         return;
       }
-      plugin(instance);
+      Zutcp::Instance::Params settings{.packetCount = config.reserve};
+      ZmRef<Zutcp::Instance> instance = new Zutcp::Instance;
+      auto initialized = instance->init(this, ZuMv(xdp), settings);
+      if (initialized.is<ZeException>()) {
+        ZiLogEvent(ZuMv(initialized).p<ZeException>());
+        m_failed = 1;
+        return;
+      }
+      plugin(ZuMv(instance));
       std::cout << "native_configuration control_count=" << settings.controlBufCount
 	<< " control_credits=" << settings.txControlCredits << " rx_retain="
 	<< settings.rxRetainFramesPerCxn << " max_data="
 	<< settings.maxData << "\n";
     }
-    m_network = allocator<Zi::IOBufType::RxTCP, ZiRxBuf, 2048>(config.reserve);
+    m_network = allocator<Zi::IOBufType::Rx, ZiRxBuf, 2048>(config.reserve);
     m_frames = allocator<Zi::IOBufType::App, ZiRxBuf, MaxFrame>(config.reserve);
     m_output = allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 1024>(config.reserve);
+    if (!m_network || !m_frames || !m_output) {
+      m_failed = 1;
+      return;
+    }
     std::cout << "allocator_geometry network_size=" << m_network->size << " network_head="
       << m_network->headRoom << " network_tail=" << m_network->tailRoom << " tx_size="
       << m_output->size << " tx_head=" << m_output->headRoom << " tx_tail="

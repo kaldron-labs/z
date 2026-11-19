@@ -6,8 +6,11 @@
 
 #include <iostream>
 #include <poll.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <zlib/ZuTestUtil.hh>
@@ -30,55 +33,40 @@
 
 using namespace ZuTestUtil;
 
-static ZuUnion<bool, ZeException> closeInstance(ZmRef<Zxdp::Instance> &instance)
-{
-  bool ok = instance->stop();
-  auto error = instance->error();
-  instance->final();
-  instance = nullptr;
-  if (!ok) return error;
-  return true;
-}
-
 static void testProvider()
 {
   ZuTestScopeRT(testProvider);
   enum { PacketSize = 1514, Head = 42, Tail = 8, Payload = 42, RxCount = 8 };
-  // Provider ownership is deliberately independent of backend ownership. Zi's
-  // adapter owns the provider; the raw receive callback exchanges addresses only.
-  ZiMultiplex mx;
+  ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
+    s.nThreads(3).thread(3, [](auto &t) { t.isolated(true); });
+  })};
   auto instance = Zxdp::instance(Zxdp::Type::Xdp);
-  ZmRef<Zutcp::Allocator> provider = new Zutcp::Allocator{
-    instance->bufPool(2, PacketSize, Head, Tail)};
-  ZmRef<Zutcp::Allocator> control = new Zutcp::Allocator{instance->bufPool(1, 128)};
+  auto index = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
+  Zxdp::Params config{Zxdp::Xdp::Params{.ifindex = index, .txSid = 3}};
+  auto initialized = instance->init(&mx, config);
+  ZuCheckRT(initialized.is<void>());
+  if (initialized.is<ZeException>()) return;
+  auto provider = instance->bufPool(Zi::IOBufType::TxTCP, 2, PacketSize, Head, Tail);
+  auto control = instance->bufPool(Zi::IOBufType::TxUDP, 1, 128);
   Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP> allocator{&mx, provider};
-  Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP> ctlAllocator{&mx, control};
+  Zi::IOBufPoolAllocator<Zi::IOBufType::TxUDP> ctlAllocator{&mx, control};
   ZuCheckRT(allocator.size == PacketSize && allocator.headRoom == Head &&
       allocator.tailRoom == Tail && !allocator.allocBuf(nullptr, Payload),
-    log_("provider publishes fixed geometry before backing is activated"));
-  auto rx = instance->bufPool(RxCount, PacketSize);
+    log_("provider publishes fixed geometry before backing is allocated"));
+  auto rx = instance->bufPool(Zi::IOBufType::Rx, RxCount, PacketSize);
+  Zi::IOBufPoolList tx;
+  tx.pushNode(provider.ptr());
+  tx.pushNode(control.ptr());
+  auto allocated = instance->alloc(rx, tx);
+  ZuCheckRT(allocated.is<void>());
+  if (allocated.is<ZeException>()) { instance->final(); return; }
   unsigned completed = 0;
   uint8_t *canonical = nullptr;
-  Zxdp::Params config(
-    Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-  auto &params = config.p<Zxdp::Xdp::Params>();
-  params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
-  params.rxPool = rx;
-  params.rx = [&rx](uint8_t *p, unsigned) { rx->free(p); };
-  params.txPools.pushNode(provider->pool.ptr());
-  params.txPools.pushNode(control->pool.ptr());
-  ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1,
-    [&params](auto &thread) { thread = params.txThread; })};
-  params.scheduler = &scheduler;
-  params.txSid = 1;
-  bool started = scheduler.start();
+  bool started = mx.start();
   ZuCheckRT(started);
-  if (!started) return;
-  auto initialized = instance->init(config);
-  bool ready = initialized.is<void>() && instance->start() && instance->ready();
-  ZeException error = initialized.is<ZeException>() ?
-    initialized.p<ZeException>() : instance->error();
-  ZuCheckRT(ready, log_("raw instance activates caller-owned Zutcp provider pools: ", error));
+  if (!started) { instance->final(); return; }
+  bool ready = instance->start([&rx](uint8_t *p, unsigned) { rx->free(p); });
+  ZuCheckRT(ready, log_("XDP activates both caller-owned Tx pools: ", instance->error()));
   if (ready) {
     auto buf = allocator.allocBuf(&mx, Payload);
     auto other = allocator.allocBuf(&mx, Payload);
@@ -106,7 +94,7 @@ static void testProvider()
       auto heldOrigin = ctl->data_();
       bool held = instance->send(ctl->data(), ctl->length);
       ZuCheckRT(held,
-        log_("the backend accepts retained control backing"));
+        log_("XDP accepts retained control backing"));
       bool accepted = instance->send(buf->data(), buf->length);
       if (accepted) {
         buf->data__ = 0;
@@ -130,28 +118,56 @@ static void testProvider()
       ZuCheckRT(instance->send(ctl->data(), ctl->length),
         log_("retained backing can be resubmitted unchanged after CQ retirement"));
       other = nullptr;
-      // Close below while recycled remains application-owned, then release it through
-      // the still-live Zi provider. No connection object is needed for that free.
-      auto closed = closeInstance(instance);
-      bool retired = closed.is<bool>() && closed.p<bool>();
-      ZuCheckRT(retired, log_("kernel retirement completes independently of the application: ",
-	closed.is<ZeException>() ? closed.p<ZeException>() : ZeException{}));
-      ZmAssert_(retired);
-      ZuCheckRT(recycled && recycled->data_() == canonical &&
-          ctl->data_() == heldOrigin &&
+      bool stopped = instance->stop();
+      ZuCheckRT(stopped && instance->allocated(),
+        log_("stop retires packet service and preserves the registration"));
+      ZuCheckRT(recycled && recycled->data_() == canonical && ctl->data_() == heldOrigin &&
           !memcmp(ctl->data(), retainedBytes, 64),
-        log_("kernel close preserves caller-retained original backing and bytes"));
+        log_("stop preserves caller-retained backing and bytes"));
       recycled = nullptr;
       ctl = nullptr;
-      ZuCheckRT(!provider->alloc(),
-        log_("final Zi release returns exactly once to the retired originating pool"));
+      auto reused = allocator.allocBuf(&mx, Payload);
+      ZuCheckRT(reused, log_("stopped allocation still returns a native slot"));
     }
   }
-  if (instance) {
-    auto closed = closeInstance(instance);
-    ZmAssert_(closed.is<bool>() && closed.p<bool>());
+  if (instance->ready()) ZuCheckRT(instance->stop());
+  instance->final();
+  ZuCheckRT(!provider->alloc() && !control->alloc() && mx.stop());
+
+}
+
+static void testAllocatedHandoff(bool repeat)
+{
+  ZuTestScopeRT(testAllocatedHandoff);
+  auto index = getenv(repeat ? "ZXDP_RX_TEST_PEER_IFINDEX" : "ZXDP_RX_TEST_IFINDEX");
+  auto pid = fork();
+  if (!pid) {
+    const rlimit limit{0, 0};
+    setrlimit(RLIMIT_CORE, &limit);
+    ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
+      s.nThreads(3).thread(3, [](auto &t) { t.isolated(true); });
+    })};
+    Zxdp::Params params{Zxdp::Xdp::Params{
+      .ifindex = unsigned(strtoul(index, nullptr, 10)), .txSid = 3}};
+    Zutcp::Instance tcp;
+    if (repeat) {
+      auto initial = Zxdp::instance(Zxdp::Type::Xdp);
+      if (!initial->init(&mx, params).is<void>() ||
+          !tcp.init(&mx, ZuMv(initial), {}).is<void>()) _exit(2);
+    }
+    auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
+    if (!xdp->init(&mx, params).is<void>()) _exit(3);
+    auto rx = xdp->bufPool(Zi::IOBufType::Rx, 8, xdp->mtu() + 14);
+    auto tx = xdp->bufPool(Zi::IOBufType::TxTCP, 8, xdp->mtu() + 14);
+    Zi::IOBufPoolList pools;
+    pools.pushNode(tx.ptr());
+    if (!xdp->alloc(rx, pools).is<void>() || !xdp->allocated() || xdp->everStarted()) _exit(4);
+    tcp.init(&mx, ZuMv(xdp), {});
+    _exit(5);
   }
-  ZuCheckRT(scheduler.stop());
+  int status = 0;
+  ZuCheckRT(pid > 0 && waitpid(pid, &status, 0) == pid && WIFSIGNALED(status) &&
+    WTERMSIG(status) == SIGABRT, log_("allocated XDP is rejected at the TCP handoff"));
 }
 
 int main(int argc, char **argv)
@@ -163,4 +179,6 @@ int main(int argc, char **argv)
   }
   ZuTestMain();
   ZuTestCall(testProvider);
+  ZuTestCall(testAllocatedHandoff, false);
+  if (getenv("ZXDP_RX_TEST_PEER_IFINDEX")) ZuTestCall(testAllocatedHandoff, true);
 }

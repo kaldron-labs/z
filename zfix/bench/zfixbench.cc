@@ -849,7 +849,8 @@ struct ClientHub::Link : Zfix::CliLink<ClientHub, Link, Dictionary, Zfix::TCP>, 
 bool ClientHub::init(Zfix::TCP::ClientParams p) {
   if (p.multiplex()) {
     if (!p.rxAllocator()) p.rxAllocator(Link::rxAllocator(p.multiplex()));
-    if (!p.txAllocator()) p.txAllocator(Link::txAllocator(p.multiplex()));
+    if (!p.txAllocator())
+      p.txAllocator(p.multiplex()->allocator<Zi::IOBufType::TxTCP>(state->config.reserve));
   }
   return Base::init(ZuMv(p));
 }
@@ -896,7 +897,8 @@ struct ServerHub::Link : Zfix::SrvLink<ServerHub, Link, Dictionary, Zfix::TCP>, 
 bool ServerHub::init(Zfix::TCP::ServerParams p) {
   if (p.multiplex()) {
     if (!p.rxAllocator()) p.rxAllocator(Link::rxAllocator(p.multiplex()));
-    if (!p.txAllocator()) p.txAllocator(Link::txAllocator(p.multiplex()));
+    if (!p.txAllocator())
+      p.txAllocator(p.multiplex()->allocator<Zi::IOBufType::TxTCP>(state->config.reserve));
   }
   return Base::init(ZuMv(p));
 }
@@ -1319,17 +1321,24 @@ static bool run(const Config &c) {
     << " congestion_control=" << unsigned(!c.native || c.congestionControl)
     << " offer_rate=" << c.offers.rate << " pending_cap=" << c.offers.cap << '\n';
   if (c.native) {
-    Zutcp::Instance::Params settings{.interface = c.interface, .spin = c.spin,
-      .packetCount = c.reserve, .txThread = sender, .txSid = senderSid,
-      .ackHoldTimeout = ZuTime{0, int32_t(c.ackHoldUS * 1000)},
-      .congestionControl = c.congestionControl};
-    ZmRef<Zutcp::Instance> stack = new Zutcp::Instance{&mx};
-    auto initialized = stack->init(ZuMv(settings));
-    if (initialized.is<ZeException>()) {
-      std::cerr << "native_configuration error=" << initialized.p<ZeException>() << '\n';
+    auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
+    Zxdp::Params xdpParams{Zxdp::Xdp::Params{
+      .ifindex = c.interface, .spin = c.spin, .txSid = senderSid}};
+    auto opened = xdp->init(&mx, xdpParams);
+    if (opened.is<ZeException>()) {
+      ZiLogEvent(ZuMv(opened).p<ZeException>());
       return false;
     }
-    mx.plugin(stack);
+    Zutcp::Instance::Params settings{.packetCount = c.reserve,
+      .ackHoldTimeout = ZuTime{0, int32_t(c.ackHoldUS * 1000)},
+      .congestionControl = c.congestionControl};
+    ZmRef<Zutcp::Instance> stack = new Zutcp::Instance;
+    auto initialized = stack->init(&mx, ZuMv(xdp), ZuMv(settings));
+    if (initialized.is<ZeException>()) {
+      ZiLogEvent(ZuMv(initialized).p<ZeException>());
+      return false;
+    }
+    mx.plugin(ZuMv(stack));
   }
   Zfix::HubLimits limits;
   uint64_t budget = uint64_t(c.pipeline) * 1024 + 65536;

@@ -731,11 +731,6 @@ public:
   Channel(const ChannelOps &ops) : m_channelOps{&ops} { }
 
   Session session() const { return m_channelOps->session(ctx); }
-  Zi::IOBufType::T rxBufType() const {
-    if (!m_channelOps->session) return Zi::IOBufType::App;
-    return session().transport == Transport::TCP ?
-      Zi::IOBufType::RxTCP : Zi::IOBufType::RxTLS;
-  }
   Zi::IOBufType::T txBufType() const {
     if (!m_channelOps->session) return Zi::IOBufType::App;
     return session().transport == Transport::TCP ?

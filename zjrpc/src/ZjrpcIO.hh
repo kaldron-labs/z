@@ -32,51 +32,20 @@ inline auto batchBufAllocator()
   return allocator;
 }
 
-inline Zi::IOBufAllocator *inputBufAllocator(Zi::IOBufType::T type)
+inline Zi::IOBufAllocator *inputBufAllocator()
 {
-  if (type == Zi::IOBufType::App) {
-    static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Zi::IOBufType::App,
-      ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zjrpc.Input">>();
-    return allocator;
-  }
-  if (type == Zi::IOBufType::RxTCP) {
-    static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Zi::IOBufType::RxTCP,
-      ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zjrpc.Input">>();
-    return allocator;
-  }
-  {
-    static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Zi::IOBufType::RxTLS,
-      ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zjrpc.Input">>();
-    return allocator;
-  }
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App,
+    ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zjrpc.Input">>();
+  return allocator;
 }
 
-inline Zi::IOBufAllocator *inputNodeAllocator(Zi::IOBufType::T type)
+inline Zi::IOBufAllocator *inputNodeAllocator()
 {
-  if (type == Zi::IOBufType::App) {
-    static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Zi::IOBufType::App,
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
-      ZuStringT<"Zjrpc.Input">>();
-    return allocator;
-  }
-  if (type == Zi::IOBufType::RxTCP) {
-    static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Zi::IOBufType::RxTCP,
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
-      ZuStringT<"Zjrpc.Input">>();
-    return allocator;
-  }
-  {
-    static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Zi::IOBufType::RxTLS,
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign,
-      ZuStringT<"Zjrpc.Input">>();
-    return allocator;
-  }
+  static ZiMultiplex mx;
+  static auto allocator = mx.allocator<Zi::IOBufType::App,
+    ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zjrpc.Input">>();
+  return allocator;
 }
 
 template <typename Out>
@@ -173,9 +142,7 @@ private:
 // Bounded assembly of one transport message, independent of RPC routing/policy.
 class Input {
 public:
-  bool begin(uint64_t length, unsigned max,
-      Zi::IOBufType::T type = Zi::IOBufType::App) {
-    m_type = type;
+  bool begin(uint64_t length, unsigned max) {
     m_body = nullptr;
     m_max = max;
     m_hint = length <= max ? unsigned(length) : 0;
@@ -184,10 +151,12 @@ public:
   }
   bool feed(ZuSpan<uint8_t> span) {
     if (!m_active) return false;
-    if (!m_body) m_body = inputBufAllocator(m_type)->allocBuf();
-    if (m_body->refCount() > 1) {
-      auto held = ZuMv(m_body);
-      m_body = inputBufAllocator(m_type)->allocBuf();
+    if (!m_body) m_body = inputBufAllocator()->allocBuf();
+    auto source = m_body->allocator();
+    ZmRef<ZiIOBuf> held;
+    if (m_body->refCount() > 1 || !source || source->type != Zi::IOBufType::App) {
+      held = ZuMv(m_body);
+      m_body = inputBufAllocator()->allocBuf();
       if (!m_body->append(held->cspan())) { reset(); return false; }
     }
     if (m_hint && !m_body->ensure(m_hint)) { reset(); return false; }
@@ -214,8 +183,8 @@ public:
       ZmRef<ZiIOBuf> buf;
       auto n = rx.extract(
         [](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
-        [this]() -> ZmRef<ZiRxQueue::Node> {
-	  return inputNodeAllocator(m_type)->allocBuf();
+        []() -> ZmRef<ZiRxQueue::Node> {
+	  return inputNodeAllocator()->allocBuf();
         }, buf);
       if (n <= 0 || !feed(ZuMv(buf))) { reset(); return false; }
     }
@@ -227,7 +196,6 @@ public:
 
 private:
   ZmRef<ZiIOBuf> m_body;
-  Zi::IOBufType::T m_type = Zi::IOBufType::App;
   unsigned m_max = 0;
   unsigned m_hint = 0;
   bool m_active = false;

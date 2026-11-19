@@ -756,26 +756,37 @@ private:
 
 // ZiMultiplex plugin for user-mode TCP/UDP
 class ZiMxPlugin : public ZmPolymorph, public Ztc::Mx {
+friend ZiMultiplex;
+
 public:
-  // start/stop result
+  using AllocResult = ZuUnion<void, ZeException>;
   using StartResult = ZuUnion<void, ZeException>;
   using StopResult = ZuUnion<void, ZeException>;
 
-  // the derived class ctor can inspect mx->rxQuantum()
-  ZiMxPlugin(ZiMultiplex *mx) : m_mx(mx) { }
+  explicit ZiMxPlugin(ZiMultiplex *mx = nullptr) : m_mx(mx) { }
 
   ZiMultiplex *mx() const { return m_mx; }
 
-  // type will be one of RxUDP, TxUDP, RxTCP, TxTCP, RxTLS, TxTLS
+protected:
+  // The multiplexer alone drives allocator registration and the plugin lifecycle.
+  // type will be one of Rx, TxUDP, TxTCP
   virtual Zi::IOBufPool *allocator(
     Zi::IOBufType::T type,
     unsigned size, unsigned align, unsigned count) = 0;
+
+  // Deferred providers publish backing only after this hook succeeds.
+  virtual bool deferredBacking() const { return false; }
+  virtual AllocResult alloc(Zi::IOBufPool *, const Zi::IOBufPoolList &) { return {}; }
 
   // Rx thread idempotent start/stop
 
   virtual void start() = 0;		// callback: started
   virtual void stop() = 0;		// callback: stopped
 
+  // Called once after the last stop, or at teardown before the first start.
+  virtual void final() { }
+
+public:
   // Rx thread functions
 
   virtual void rx() = 0;		// handle I/O events until woken or rxQuantum processed
@@ -815,6 +826,9 @@ public:
   // non-Rx thread functions
 
   virtual void wake() = 0;		// wake up rx(), cause it to return
+
+protected:
+  void mx(ZiMultiplex *mx_) { m_mx = mx_; }
 
 private:
   ZiMultiplex	*m_mx = nullptr;
@@ -1017,9 +1031,16 @@ public:
       ZiIP remoteIP, uint16_t remotePort,
       Zi::IOBufAllocator *rxAllocator, ZiCxnOptions options = ZiCxnOptions());
 
+  ZuUnion<void, ZeException> alloc();
+  bool start();
+  template <typename Fn = decltype(nullptr)>
+  void start(Fn &&fn) {
+    m_registration = AllocatorsClosed;
+    ZmScheduler::start(ZuFwd<Fn>(fn));
+  }
   bool stop();
 
-  // register allocators and any plugin while stopped, before start() and I/O use
+  // Register allocators while stopped, before allocation and any I/O use.
   template <
     Zi::IOBufType::T Type = Zi::IOBufType::App,
     typename Buf = Zi::IOBuf,
@@ -1029,16 +1050,20 @@ public:
     unsigned VHMaxSize = ZiIOBuf_DefltVHMaxSize,
     auto Grow = ZmGrow>
   Zi::IOBufAllocator *allocator(unsigned count = ZiIOBuf_DefltCount) {
+    if (m_registration == AllocatorsClosed) return nullptr;
+    m_registration = PluginClosed;
     ZmAssert(state() == ZmEngineState::Stopped);
     Zi::IOBufAllocator *a = nullptr;
     if constexpr (
-	Type == Zi::IOBufType::RxUDP || 
-	Type == Zi::IOBufType::TxUDP || 
-	Type == Zi::IOBufType::RxTCP || 
+	Type == Zi::IOBufType::Rx ||
+	Type == Zi::IOBufType::TxUDP ||
 	Type == Zi::IOBufType::TxTCP) {
-      if (m_plugin)
+      if (m_plugin) {
+	auto pool = bufPool(Type, Size, Align, count);
+	if (!pool) return nullptr;
 	a = new Zi::IOBufPoolAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>(
-	  this, m_plugin->allocator(Type, Size, Align, count));
+	  this, pool);
+      }
     }
     if (!a)
       a = new Zi::IOBufBuiltinAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>(this);
@@ -1046,7 +1071,14 @@ public:
     return a;
   }
 
-  void plugin(ZmRef<ZiMxPlugin> plugin);
+  // Permanently attach an initialized plugin before allocator registration or start.
+  void plugin(ZmRef<ZiMxPlugin> &&plugin);
+  template <typename Plugin>
+  void plugin(ZmRef<Plugin> &&plugin) {
+    if (attachPlugin(plugin.ptr())) m_plugin = ZuMv(plugin);
+  }
+  template <typename Plugin>
+  void plugin(const ZmRef<Plugin> &) = delete;
   ZiMxPlugin *plugin() const { return m_plugin; }
 
   // threads
@@ -1117,6 +1149,8 @@ private:
   }
 #endif
 
+  bool attachPlugin(ZiMxPlugin *);
+  Zi::IOBufPool *bufPool(Zi::IOBufType::T, unsigned size, unsigned align, unsigned count);
   bool start__() override;
   bool stop__() override;
 
@@ -1194,6 +1228,10 @@ private:
   Ztc::Mx::DelCxnFn	m_delCxnFn;
   bool			m_pluginFailed = false;
 
+  enum { Open, PluginClosed, AllocatorsClosed };
+  ZmAtomic<unsigned>	m_registration = Open;
+  bool			m_allocated = false;
+
 #ifdef ZiMultiplex_DEBUG
   bool			m_trace = false;
   bool			m_debug = false;
@@ -1214,6 +1252,8 @@ private:
 #endif
   // Registration is stopped-only; the app serializes it with lifecycle changes.
   Zi::IOBufAllocatorList m_allocators;
+  ZmRef<Zi::IOBufPool>	m_rxPool;
+  Zi::IOBufPoolList	m_txPools;
   ZmRef<ListenerHash>	m_listeners;
 #if ZiMultiplex__ConnectHash
   ZmRef<ConnectHash>	m_connects;

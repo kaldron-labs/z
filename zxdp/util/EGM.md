@@ -13,7 +13,7 @@ Raw Ethernet/IPv4/UDP stop-and-wait packet exercise over Zxdp, with a Linux netw
 ## Invariants
 
 - `options` requires positive count/frames/deadline, payload at least four bytes, valid IPv4/MAC addresses, and ports 1–65535. `Endpoint::run` requires payload within MTU minus 28 and Rx frames covering interface queues; the Tx pool has two buffers. [zxdppacket.cc](./zxdppacket.cc)
-- `Endpoint::transmit` returns the caller allocation lease after successful send; the library retains kernel submission lifetime. `receive` returns buffers even for invalid/unrelated packets. Teardown joins Tx, retries close for up to ten seconds, and asserts retirement before releasing the instance. [zxdppacket.cc](./zxdppacket.cc)
+- `Endpoint::transmit` returns the caller allocation lease after successful send; the library retains kernel submission lifetime. `receive` returns buffers even for invalid/unrelated packets. Teardown joins Tx, stops XDP and returns retained backing before finalization. [zxdppacket.cc](./zxdppacket.cc)
 - Default fixture mode requires UID zero and network-namespace privileges, re-execs through `unshare --net`, and refuses to create resources in the namespace of PID 1. Output must be a new directory. Physical mode leaves interface configuration to the caller; kernel operations still require their normal privileges. [zxdpfixture.sh](./zxdpfixture.sh), `ZXDP_FIXTURE_INNER` and `--physical`.
 
 ## Side Effects

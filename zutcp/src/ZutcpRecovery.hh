@@ -1373,7 +1373,7 @@ public:
     return ref.range.storage ? ref.range.storage->rack : m_finTransmission;
   }
 
-  // Commit chronology only after the backend accepted this exact transmission.
+  // Commit chronology only after the transport accepted this exact transmission.
   // All copied ranges share their original backing; refusal never changes it.
   void acceptedData(uint64_t pn, ZuTime now) {
     auto node = m_packets.find(pn);

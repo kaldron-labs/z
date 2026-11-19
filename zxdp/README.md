@@ -11,52 +11,74 @@ Both modules are Linux-only and are excluded from Windows builds.
 
 ## Interface
 
-Include `Zxdp.hh`. Select a backend with `auto instance = Zxdp::instance(Zxdp::Type::Xdp)`.
-It starts cold. Construct the backend parameters in the generic `Params`
-tagged union, populate them, and call `instance->init(config)`:
+Configure the sender slot in the multiplexer before constructing it. Open the
+selected XDP link synchronously while the multiplexer is stopped.
 
 ```cpp
+ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &scheduler) {
+  scheduler.thread(3, [](auto &sender) { sender.isolated(true); });
+})};
+auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
 Zxdp::Params config(
   Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
 auto &params = config.p<Zxdp::Xdp::Params>();
+params.ifindex = ifindex;
+params.txSid = 3;
+auto opened = xdp->init(&mx, config);
+if (opened.is<ZeException>()) {
+  ZiLogEvent(ZuMv(opened).p<ZeException>());
+  return 1;
+}
+auto mtu = xdp->mtu();
+auto queues = xdp->rxQueues();
 ```
 
-Call `init(config)` before `start()`. Init is idempotent while stopped and
-returns an error while starting, running or stopping. It retains configuration
-without activating I/O. `start()`/`stop()` use the standard `ZmEngine` synchronous
-or callback control forms and state transitions. Call `final()` after stop;
-final is idempotent and the destructor also calls it. Keep the assigned scheduler
-running through stop completion, and use callback control from service threads.
+`ifindex()` and `mac()` expose the interface identity after initialization.
+The optional `netmask` field selects a destination IPv4 or IPv6 CIDR. An empty
+mask selects all traffic, including non-IP frames. The classifier handles Ethernet
+and up to two VLAN tags. `spin` configures idle probes before Rx blocks or the
+sender returns to its scheduler.
 
-AF_XDP-specific types and operations live in `Zxdp::Xdp`.
-`Xdp::Params` inherits the common `Params_` fields; assign fields directly:
+An application using Zutcp moves this initialized, unallocated, never-started XDP
+instance into TCP with `tcp->init(&mx, ZuMv(xdp), tcpParams)`. After successful
+initialization, move TCP into `mx.plugin(ZuMv(tcp))`, request allocator handles,
+and allocate through `mx.alloc()` or implicitly through `mx.start()`. TCP drives
+XDP allocation, start, stop, and finalization under the multiplexer lifecycle.
+See the full [Zutcp integration](../zutcp/README.md#application-integration).
 
-* `ifindex`: network-interface index in the current network namespace.
-* `netmask`: optional destination IPv4/IPv6 CIDR. An empty mask selects all
-  interface traffic, including non-IP frames. Unmatched traffic passes to the
-  kernel. The classifier handles Ethernet and up to two VLAN tags.
-* `txPools`: an owning `Zi::IOBufPoolList` in the caller configuration.
-  Each pool supplies `count`, maximum packet `size` and `align`.
-* `rxPool`: one nonempty `ZmRef<Zi::IOBufPool>` with a dedicated Rx region.
-* `rx`: callback receiving the raw packet address and length.
-* `spin`: idle probe rounds before Rx blocks or the Tx sender returns to its
-  scheduler (default 1000).
-* `scheduler` and `txSid`: caller-owned scheduler and explicitly assigned sender slot.
-* `txThread`: `ZmSchedTParams`, isolated by default; apply this configuration to
-  the assigned slot before scheduler startup. The scheduler owns sender teardown.
+Direct allocation is the standalone XDP test path. It uses a single unlinked
+Rx pool and an intrusive list of Tx pools. Each pool carries its role, count,
+packet size, headroom, tailroom, and alignment.
 
-Create pools with `instance->bufPool(count, size, headRoom, tailRoom, align)`.
-It returns `ZmRef<Zi::IOBufPool>`; the registered arena implementation stays
-internal. The same pool supplies backing through `Zi::IOBufPoolAllocator`
-without a separate raw-pool adapter. Headroom and tailroom default to zero and
-alignment defaults to 64 bytes. Add nodes with `params.txPools.pushNode(pool.ptr())`,
-or move an existing list into `params.txPools`. The parameters are constructed
-in place in the union before initialization.
-Initialization reads this union by const reference without consuming it and
-retains one reference per pool through final. Intrusive list membership remains
-with the caller configuration; a node belongs to one
-list at a time. Freeze pool geometry while bound, and retain a pool reference
-for any packet that outlives the instance. Generic Zi pools cannot supply XDP arena slots; use the factory.
+```cpp
+auto rx = xdp->bufPool(Zi::IOBufType::Rx, 8 * queues, mtu + 14);
+auto tx = xdp->bufPool(Zi::IOBufType::TxUDP, 16, mtu + 14);
+Zi::IOBufPoolList txPools;
+txPools.pushNode(tx.ptr());
+auto allocated = xdp->alloc(rx, txPools);
+if (allocated.is<ZeException>()) {
+  ZiLogEvent(ZuMv(allocated).p<ZeException>());
+  return 1;
+}
+if (!mx.start()) return 1;
+if (!xdp->start([&rx](uint8_t *packet, unsigned length) {
+  // Consume the raw Ethernet frame, then return its slot.
+  rx->free(packet);
+})) {
+  ZiLogEvent(xdp->error());
+  mx.stop();
+  return 1;
+}
+// Drive receive and transmit service. Quiesce owners before stopping XDP.
+xdp->stop();
+xdp->final();
+mx.stop();
+```
+
+The same allocated arena and packet addresses survive activation failure, stop,
+and restart. Return dependent buffers before finalization. Standalone callers
+own that ordering, including when they allocate and never start. `final()` is
+idempotent while stopped and the destructor also calls it.
 
 Allocate with `txPool.alloc()`, construct the complete Ethernet packet directly
 in that backing and call `instance->send(packet, length)`. A false return leaves
@@ -102,11 +124,9 @@ no Tx submissions. Linux exposes no separate CQ reservation-refusal counter;
 the zero is a structural bound, not a measured kernel refusal total. A zero RX
 value also applies when the statistics query is unsupported or fails.
 
-Enumeration and mapping retirement share a cold lifetime lock; packet service
-does not acquire it. Read telemetry synchronously inside the enumeration callback.
-Stopped instances retain ring objects and their final telemetry until the next
-start or final. FILL descriptors can remain queued at stop; they are not live packet
-leases after the kernel registration has retired.
+Enumeration and mapping retirement share a cold lifetime lock. Read telemetry
+synchronously inside the callback. Active instances expose RX and FILL per queue,
+plus TX and CQ on queue zero. Stopped instances expose zero active queues.
 
 Setup reserves one contiguous registered UMEM mapping containing disjoint,
 page-aligned Rx and Tx arena regions. Rx has one pool; Tx pools partition its
@@ -117,7 +137,7 @@ ownership lookup and active slot arrays are allocated during setup.
 
 `rx()` runs on the caller's Rx owner. It processes packets and invokes the
 receive callback until explicitly woken. On idle input it probes the mapped
-rings for `Params_::spin` rounds (default 1000), then blocks in epoll on packet
+rings for `Xdp::Params::spin` rounds (default 1000), then blocks in epoll on packet
 readiness and an internal eventfd. A round probes the configured Rx queues;
 zero spin goes directly to the wait after checking available work. Packet
 arrival resumes processing inside the same call, rather than returning it.
@@ -129,28 +149,17 @@ inside epoll, interrupting spinning, blocking or active processing so
 entry; concurrent posts are preserved. Kernel wait descriptors remain private.
 `pollTx()` services bounded completion turns on the caller's Tx owner.
 
-Allocation and return can run on other threads. Every interface Rx queue is bound
-to the shared registration and has a reserved share of the Rx pool. Tx uses queue
-zero. After an off-owner return to a depleted pool, wake the receive owner and
-arrange another `rx()` entry to replenish input. All packet service and wake
-operations use preallocated state; they perform no heap allocation or packet/
-buffer searches. Wake/join the receiver and quiesce Tx and wake callers before
-stop.
+Allocation and return can run on other threads. Each interface Rx queue has a
+reserved share of the common ingress pool. Returning a frame off the Rx owner
+coalesces a wakeup so the active receiver can replenish FILL. Wake and drain
+the receiver and quiesce Tx and wake callers before stop.
 
-Stop drains sender callbacks and completes kernel queue retirement through
-bounded continuations on the sender slot. Completion means the engine is Stopped,
-including after an I/O error; inspect `error()` for a failed operation's cause.
-Start failure also completes its rollback before reporting failure. There is no
-public close/retry loop. Stop retains pool references and final ring telemetry;
-final releases stopped storage and configuration without implicitly stopping.
-
-The same initialized instance may stop/start repeatedly. Return any retained
-caller backing before restarting with its pool, because arena creation requires
-unused pools. A pool retained by the caller may outlive instance finalization.
-Serialize init/final against control requests and keep pool geometry fixed while
-bound. Backend selection, the pool factory and init perform no interface activation.
-The interface must have no unrelated XDP attachment. Guarded attach/detach protects
-other owners, including changes concurrent with control operations.
+Stop withdraws ingress destinations, drains callbacks and accepted submissions,
+and closes the per-run sockets and their RX/TX mappings. Persistent queue owners
+keep their FILL/CQ rings and their share of posted frames for restart. They share
+a single UMEM registration whose owning FD closes during finalization.
+Guarded attachment preserves unrelated XDP programs. A failed activation uses
+the same cleanup path and returns its originating error through `error()`.
 
 ## Verification
 

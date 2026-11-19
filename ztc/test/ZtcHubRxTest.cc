@@ -622,6 +622,7 @@ static void fragmentedInput()
   auto source = ack(81, id);
   ZuCheckRT(source->length > 128 && source->length <= f.hub.config().maxFrame, (return));
   ZuCheckRT(f.start() == 1);
+  auto wire = f.server.timers.allocator;
   for (unsigned off = 0; off < source->length;) {
     unsigned n = source->length - off;
     if (n > 23) n = 23;
@@ -631,10 +632,12 @@ static void fragmentedInput()
     off += n;
     auto frame = f.link->input.frame;
     ZuCheckRT(frame->length == off && !memcmp(frame->data(), source->data(), off));
+    if (off != n) ZuCheckRT(frame->allocator()->type == Zi::IOBufType::App);
+    else ZuCheckRT(frame->allocator() == wire);
   }
   auto frame = f.link->input.frame;
   ZuCheckRT(f.end() == 1 && f.link->input.pendingBytes == source->length &&
-    frame->length == source->length && !frame->builtin());
+    frame->length == source->length && frame->allocator()->type == Zi::IOBufType::App);
 }
 
 } // namespace ZtcHubRxTest_

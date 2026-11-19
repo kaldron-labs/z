@@ -43,11 +43,12 @@ public:
   ZuUnion<void, ZeException> load(unsigned queues, const Filter &);
   ZuUnion<void, ZeException> publish(unsigned queue, int socket);
   ZuUnion<void, ZeException> quiesce(unsigned queue);
+  ZuUnion<void, ZeException> synchronize();
   void reset();
   int fd() const { return m_fd; }
   uint32_t id() const { return m_id; }
 private:
-  int		m_fd = -1, m_xsk = -1;
+  int		m_fd = -1, m_xsk = -1, m_barrier = -1;
   uint32_t	m_id = 0;
 };
 
@@ -57,7 +58,8 @@ struct LinkState {
   uint32_t	drvID = 0, skbID = 0, hwID = 0, progID = 0;
   bool occupied() const { return drvID || skbID || hwID || progID; }
 };
-ZxdpAPI ZuUnion<LinkState, ZeException> queryLink(unsigned ifindex);
+ZxdpAPI ZuUnion<int, ZeException> openLink();
+ZxdpAPI ZuUnion<LinkState, ZeException> queryLink(unsigned ifindex, int fd = -1);
 ZxdpAPI ZuUnion<void, ZeException> setXDP(
   unsigned ifindex, int fd, unsigned flags, int expected, bool *unsupported = nullptr);
 

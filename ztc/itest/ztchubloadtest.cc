@@ -83,7 +83,7 @@ static ZmRef<ZiIOBuf> allocTxFrame()
 static ZmRef<ZiIOBuf> allocRxFrame()
 {
   static ZiMultiplex mx;
-  static auto allocator = mx.allocator<Zi::IOBufType::RxTLS, ZiIOBuf, 1024, ZiIOBuf_Align,
+  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 1024, ZiIOBuf_Align,
     ZuStringT<"Ztc.Load.Frame">, 1U << 16>();
   return allocator->allocBuf();
 }

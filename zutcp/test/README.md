@@ -30,7 +30,7 @@ covering coordinates, repeated sends of identical bytes, bounded byte-ordered
 retirement, final-position handling and exclusion of bootstrap/empty records.
 The byte index uses a non-owning hook embedded in the existing sent-packet node.
 This is preparatory recovery work; the live ACK wire/RTO conversion remains open
-in `../zutcp_plan.md`. The application pair remains a regression check until that
+in `../../arc/zutcp/zutcp_plan.md`. The application pair remains a regression check until that
 conversion is connected and its end-to-end Phase 3 cases pass.
 
 `ZutcpDataTest::testMxTxQueue` checks the Zi Tx-context contract against the
@@ -69,16 +69,15 @@ factory request calls the plugin provider hook once. `ZutcpTestAlloc.hh` contain
 only test/application factory exercises; production Zutcp owns its internal pools
 and adapters, and makes no request to `ZiMultiplex::allocator`.
 
-For repair 3 use the scoped clang-debug procedure in
-[the repair plan](../../zutcp_repair3.md), which adopts `REBUILD.md` with the
-listed modules frozen. Reuse compatible builds and one shared make jobserver;
-do not run a full-tree build or add sanitizer configurations for this repair.
-After rebuilding the dependency libraries and unit binaries, run
-`make -C zutcp/test test`.
+For repair 3 use the Clang release build and phase order in
+[the repair plan](../../arc/zutcp/zutcp_repair3.md). Reuse compatible products with
+one eight-slot make jobserver. After rebuilding the dependency libraries and
+unit binaries, run `make -C zutcp/test test`.
 
-`ZutcpTestInstance.hh` constructs a real Instance over private heap-backed packet
-pools, with no Linux interface query or AF_XDP socket. The actual Instance owns
-policy, admission and retained-tuple state. Concrete test contexts provide only
+`ZutcpTestInstance.hh` injects a test XDP instance with in-memory backing through
+the production handoff. `ZutcpRuntimeTest` checks ownership, stopped repeat
+initialization, pool identity, allocation and activation retries, finalization,
+and fatal handoffs. The actual Instance owns policy, admission and retained tuples. Concrete test contexts provide only
 deterministic clock/dispatch and selected allocation/packet hooks. They do not
 recreate Hub/Client/Server transport owners or a production no-instance mode.
 The same header's private listener fixture reuses the production passive endpoint
@@ -97,7 +96,7 @@ and integration acceptance remains in the plan.
 
 The other programs cover the surviving connection, codec, recovery and runtime
 facilities during phase-1 adaptation. They do not establish the full native
-phase-1 gate or TCP interoperability. See `../../zutcp_plan.md` for the current
+phase-1 gate or TCP interoperability. See `../../arc/zutcp/zutcp_plan.md` for the current
 scope.
 
 `ZutcpAPITest::testPeerParamOwnership` delays the Rx-to-Tx handoff and checks

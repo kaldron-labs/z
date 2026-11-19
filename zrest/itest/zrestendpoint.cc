@@ -1197,7 +1197,7 @@ void call()
   ZuTestScopeRT(call);
   StreamProbe<Zhttp::H1TCP> streamRaw, streamJSON;
   StreamResFixture responseStream;
-  ZiMultiplex mx{mxParams()};
+  ZiMultiplex mx{mxParams()}, reuseMx{mxParams()};
   Zhttp::HubConfig hub{&mx, "rx", "tx"};
   uint16_t port = uint16_t(Zhttp::Test::loopbackPort(20800));
   ZuCheckRT(port);
@@ -1578,10 +1578,11 @@ void call()
   streamJSON.final();
   responseStream.final();
   mx.stop();
+  Zhttp::HubConfig reuseHub{&reuseMx, "rx", "tx"};
   Zrest::ServerConfig reuseServerConfig;
   reuseServerConfig.localIP(ZiIP{"127.0.0.1"}).port(port)
     .bodyMax(4096).retainedBodyMax(4096).tcp();
-  bool serverReused = server.init(hub, ZuMv(reuseServerConfig), &app);
+  bool serverReused = server.init(reuseHub, ZuMv(reuseServerConfig), &app);
   ZuCheckRT(serverReused);
   Zrest::ClientConfig reuseClientConfig;
   reuseClientConfig.links(1).concurrency(2).linkMax(2)
@@ -1589,11 +1590,11 @@ void call()
     .secure(false).tcp(true).tls(false).quic(false);
   reuseClientConfig.limits(clientLimits);
   bool clientReused = serverReused &&
-    client.init(hub, 1, ZuMv(reuseClientConfig), &clientApp);
+    client.init(reuseHub, 1, ZuMv(reuseClientConfig), &clientApp);
   ZuCheckRT(clientReused);
   bool clientReusedPool = clientReused && client.pool(0,
     Zhttp::Destination{"127.0.0.1", port, false});
-  bool serverRestarted = clientReusedPool && mx.start() && server.start() &&
+  bool serverRestarted = clientReusedPool && reuseMx.start() && server.start() &&
     app.listeningSem.timedwait(Zm::now(10)) == 0;
   ZuCheckRT(serverRestarted);
   bool clientRestarted = serverRestarted && client.start();
@@ -1613,7 +1614,7 @@ void call()
 
   ZiResolver::stop();
   ZiResolver::final();
-  mx.stop();
+  reuseMx.stop();
 }
 
 } // ZrestEndpointTest_

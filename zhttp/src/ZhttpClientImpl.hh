@@ -302,7 +302,6 @@ public:
       m_app, m_link, request, &m_response, &m_responseActive};
   }
   void reset() {
-    m_parser.bufType(m_link->channel().rxBufType());
     m_parser.reset(m_app->bodyMax(), m_app->retainedBodyMax());
     if constexpr (Message::ID != Version::H1) {
       if (!m_request || !m_operationOK) return;
@@ -5554,7 +5553,6 @@ struct BoundResParser : public Zhttp::Parser {
   void init(RequestRecord &request, Channel *channel) {
     channel->resetFrames();
     binding.channel = channel;
-    binding.ops->bufType(binding.ctx, channel->rxBufType());
     binding.ops->init(binding.ctx, request.ctx);
   }
   void bodyMax(uint64_t max) { binding.ops->bodyMax(binding.ctx, max); }

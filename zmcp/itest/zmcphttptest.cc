@@ -600,7 +600,7 @@ static void httpTest()
 	.thread(2, [](auto &thread) { thread.isolated(1); });
     }).rxThread(1).txThread(2);
   ZiMultiplex mx{ZuMv(params)};
-  RawRxAllocator *rawRx = mx.allocator<Zi::IOBufType::RxTCP>();
+  RawRxAllocator *rawRx = mx.allocator<Zi::IOBufType::Rx>();
   RawTxAllocator *rawTx = mx.allocator<Zi::IOBufType::TxTCP>();
   using TCP = Zhttp::NativeTraits<Zhttp::H1TCP>::Transport;
   Zi::IOBufAllocator *tcpRx = TCP::registerRx(&mx);

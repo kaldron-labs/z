@@ -244,23 +244,11 @@ public:
 
   BodyRx(uint64_t max = uint64_t(-1)) : m_max{max} { }
 
-  void bufType(Zi::IOBufType::T type) { m_type = type; }
-  Zi::IOBufType::T bufType() const { return m_type; }
-
-  template <Zi::IOBufType::T Type>
   static ZmRef<ZiRxQueue::Node> allocMeta() {
     static ZiMultiplex mx;
-    static auto allocator = mx.allocator<Type, Queue::Node,
+    static auto allocator = mx.allocator<Zi::IOBufType::App, Queue::Node,
       ZiIOBuf_DefltSize, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.Meta.Rx">>();
     return allocator->allocBuf();
-  }
-
-  ZmRef<ZiRxQueue::Node> allocMeta() const {
-    switch (m_type) {
-      case Zi::IOBufType::RxTCP: return allocMeta<Zi::IOBufType::RxTCP>();
-      case Zi::IOBufType::RxTLS: return allocMeta<Zi::IOBufType::RxTLS>();
-      default: return allocMeta<Zi::IOBufType::App>();
-    }
   }
 
   void reset() {
@@ -315,8 +303,8 @@ public:
     if (ZuLikely(length <= m_max - m_rx.length())) {
       int64_t n = src.splice(
 	m_rx, ZuFwd<Frame>(frame),
-	[this]() { return allocMeta(); },
-	[this]() { return allocMeta(); },
+	[]() { return allocMeta(); },
+	[]() { return allocMeta(); },
 	headLen, tailLen, ZuFwd<Transform>(transform));
       if (n <= 0) return n;
       m_received += length;
@@ -351,8 +339,8 @@ public:
 	  }
 	  return rest;
 	},
-	[this]() { return allocMeta(); },
-	[this]() { return allocMeta(); },
+	[]() { return allocMeta(); },
+	[]() { return allocMeta(); },
 	0, 0, transform);
       if (ZuUnlikely(moved <= 0)) return discard();
       m_received += n;
@@ -376,7 +364,6 @@ public:
 
 private:
   Stream	m_rx;
-  Zi::IOBufType::T m_type = Zi::IOBufType::App;
   uint64_t	m_max;
   uint64_t	m_received = 0;
   uint64_t	m_consumed = 0;

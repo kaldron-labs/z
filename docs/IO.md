@@ -48,22 +48,17 @@ may use only the `ZmPQTx` side.
 
 ### Allocator registration
 
-`ZiMultiplex::allocator(a)` requires `state() == ZmEngineState::Stopped` and
-asserts that precondition. Register all allocators before `start()` and before
-their use by `listen`, `connect`, UDP setup or a send. Initialize protocol clients
-and servers that register allocators while their multiplexer is stopped.
+`ZiMultiplex::allocator<...>()` creates a typed allocator and returns a handle
+while the multiplexer is stopped. Attach any plugin before the first allocator
+request, allocation, or start attempt. The application must serialize these
+operations with each other and with teardown.
 
-Registration binds the allocator and modifies the registry directly before
-returning. It does not dispatch to an I/O thread or wait for one. Repeating
-registration of an allocator already bound to that same multiplexer is permitted
-while stopped and does not insert it again.
-
-The application must serialize registration against other registrations,
-`start()` and teardown. The stopped-state assertion does not synchronize a
-concurrent `start()`; that race is the application's responsibility.
-Allocator selection never registers it implicitly. A network allocator remains
-bound to one multiplexer for its lifetime; an application allocator cannot be
-registered as a network allocator. See the [Zi buffer contract](../zi/README.md#buffers-and-streams).
+Acquire every allocator, including App, before the first explicit or implicit
+`alloc()` call. After that call begins, all allocator requests return
+`nullptr`. Registration binds the allocator directly without I/O dispatch.
+A network allocator remains bound to one multiplexer for its lifetime. Protocols
+retain their Rx handle and pass it to each endpoint setup, including reconnect.
+See the [Zi buffer contract](../zi/README.md#buffers-and-streams).
 
 ### I/O Function Organization
 Functions should be organized by owning shard:

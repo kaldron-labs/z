@@ -212,6 +212,8 @@ struct ClientApp::Link : public Ztcp::CliLink<ClientApp, Link> {
 
   void connected(Ztcp::Connected) {
     ZTCP_CHECK_RT(this->stream() == this, "client bidi stream is not link");
+    ZTCP_CHECK_RT(cxn() && cxn()->info().rxAllocator == app()->rxAllocator(),
+      "outbound connection did not use the hub Rx allocator");
     Link::StreamRef stream = this->stream();
     ZTCP_CHECK_RT(stream, "client stream ref is null");
     auto tx = stream->txStream();
@@ -251,6 +253,7 @@ struct ServerApp : public Ztcp::Server<ServerApp> {
   unsigned nAccepts() const { return 1; }
 
   void listening(const ZiListenInfo &info) {
+    ZTCP_CHECK_RT(info.rxAllocator == rxAllocator(), "listener did not use the hub Rx allocator");
     state->port = info.port;
     state->listening.post();
   }
@@ -297,6 +300,7 @@ struct ServerApp::Link : public Ztcp::SrvLink<ServerApp, Link, Ztcp::RxBufAlloc<
 
 ZiConnection *ServerApp::accepted(const ZiCxnInfo &ci)
 {
+  ZTCP_CHECK_RT(ci.rxAllocator == rxAllocator(), "accepted connection lost the hub Rx allocator");
   auto link = new Link(this);
   auto cxn = new Link::Cxn(link, ci);
   state->serverLink = link;
@@ -320,18 +324,22 @@ void testLoop(
   ServerApp server(&state);
   ClientApp client(&state);
   ZiMultiplex mx(mxParams(!!creditMessages));
-  Zi::IOBufAllocator *serverRx = ServerApp::Link::rxAllocator(&mx);
   Zi::IOBufAllocator *serverTx = ServerApp::Link::txAllocator(&mx);
   Ztcp::ServerParams serverParams(&mx, "3", "4");
-  serverParams.rxAllocator(serverRx).txAllocator(serverTx);
+  serverParams.txAllocator(serverTx);
   ZTCP_CHECK_RT(server.init(ZuMv(serverParams)),
     "server init failed");
+  auto serverRx = server.rxAllocator();
+  ZTCP_CHECK_RT(serverRx && serverRx->capacity() == ServerApp::Link::RxBufAlloc::Size,
+    "server init did not acquire the link's Rx policy");
   Zi::IOBufAllocator *clientRx = ClientApp::Link::rxAllocator(&mx);
   Zi::IOBufAllocator *clientTx = ClientApp::Link::txAllocator(&mx);
   Ztcp::ClientParams clientParams(&mx, "3", "4");
   clientParams.rxAllocator(clientRx).txAllocator(clientTx);
   ZTCP_CHECK_RT(client.init(ZuMv(clientParams)),
     "client init failed");
+  ZTCP_CHECK_RT(client.rxAllocator() == clientRx && clientRx != serverRx,
+    "client did not retain the supplied Rx allocator");
   bool mxStarted = mx.start();
   ZTCP_CHECK_RT(mxStarted, "ZiMultiplex start failed");
   if (!mxStarted) return;
