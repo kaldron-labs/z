@@ -15,9 +15,6 @@ report preserves the DPDK review without replacing those artifacts.
 ## Binding corrections
 
 * Include Zutcp DPDK selection, startup and restart integration.
-* Zdb table replication should request TxTCP through ZiMultiplex; this change
-  remains pending in the current Zdb caller. Keep table-requested sizing and
-  transport MTU constraints.
 * The source has already removed obsolete pool queries and waiter APIs. Public
   Zi::IOBufPool is geometry plus alloc/free only. Do not reintroduce writable,
   slots, occupancy/status queries, wait/cancel or IOBufWait.
@@ -35,7 +32,7 @@ report preserves the DPDK review without replacing those artifacts.
 | A4: port lifecycle | resolved | EAL owns devices; instance exclusively uses a port, asynchronously gates/drains Rx then Tx per docs/IO.md, stops/releases it for reuse; destructive port close belongs to final EAL teardown. |
 | A5: receive segments | closed as separate design issue | Existing contiguous-frame contract applies. Size usable mbuf capacity for MTU/frame overhead and leave scatter/coalescing disabled; ordinary setup, not a new receive feature or rejection subsystem. |
 | A6: fixture mapping | specified; ownership resolved | Named backend coverage is in the brief, using the adopted destination Rx-pool fixture ownership. |
-| A7: consumer scope | resolved | Include Zutcp backend startup/restart and Zdb TxTCP. Preserve Linux routing/static neighbors with an explicit routing-interface/DPDK-port association; no new resolver or ARP/ND feature. |
+| A7: consumer scope | resolved | Include Zutcp backend startup/restart. Preserve Linux routing/static neighbors with an explicit routing-interface/DPDK-port association; no new resolver or ARP/ND feature. |
 | A8: dependency policy | resolved | Optional like PostgreSQL: configure --with-dpdk, wrapper default yes and -K opt-out; enabled requires libdpdk >=25.11 and fails clearly if missing. Conditional backend/test builds. |
 
 ## Original finding traceability
@@ -77,7 +74,7 @@ under the binding corrections above. The selected architecture is unchanged.
 ## Work performed on resume
 
 Read the current Zi pool interface, Xdp pool internals, Zutcp retained-buffer
-queue and allocation/provider paths, Zdb table allocation, source history and
+queue and allocation/provider paths, source history and
 prior review artifacts. Corrected the brief's obsolete writable/interface
 assumptions. No C++ source edits, builds or tests were performed.
 
@@ -268,9 +265,7 @@ Update `zxdp/test/README.md`, `zxdp/itest/README.md`, `zxdp/README.md`,
 Modify `zutcp/src/ZutcpMx.hh/.cc` for backend selection and initial/restart pool
 provisioning; `zutcp/src/ZutcpIP.hh/.cc` where routing/device metadata currently
 requires Linux interface identity. Extend `zutcp/itest/zutcpmxtest.cc` and its
-`Makefile.am`/README for the backend-specific fixture. Modify only the
-network-multiplexer overload of `tableBufAllocFn` in `zdb/src/ZdbBuf.hh` to
-request TxTCP, preserving its requested geometry and the standalone allocator.
+`Makefile.am`/README for the backend-specific fixture.
 Consumer routing is resolved by the later adopted Linux routes/static-neighbor
 section. The brief enumerates affected selection/configuration callers.
 
@@ -283,8 +278,7 @@ Proposed buildable checkpoints:
    structured failure paths. Run pool/instance tests and existing AF_XDP tests.
 3. Add software ring/pcap fixtures and mapped backend integration tests. Verify
    Rx-pool provenance, direct Tx and accepted-work draining in those fixtures.
-4. Integrate Zutcp selection, device/path metadata and restart, then change the
-   Zdb network allocator role. Run the affected unit/native consumer tests.
+4. Integrate Zutcp selection, device/path metadata and restart. Run the affected unit/native consumer tests.
 
 The file inventory, build checkpoints and named coverage mapping are now in the
 brief. A3 is closed and the later author resolution settles A7 routing/neighbor
@@ -358,9 +352,9 @@ reports and the stable reviewed snapshot are in
 `final_findings.json`. This is the one final re-audit following the original
 resolution cycle, not a claim of convergence.
 
-**Result at that reviewed snapshot: not implementation-ready.** Three Major
+**Result at that reviewed snapshot: not implementation-ready.** Two DPDK Major
 findings were reported. Subsequent author resolutions and dpdk_plan.md now close
-all three; the preserved reports describe the earlier snapshot, not a new audit.
+both; the preserved reports describe the earlier snapshot, not a new audit.
 The settled Rx provisioning, software-loopback ownership, Linux static routing
 and neighbor setup, optional dependency and direct-Tx architecture are unchanged.
 
@@ -390,21 +384,6 @@ restart selection. It preserves the lazy Allocators aggregate and defines errors
 through init's structured result. No constructor setup, old next-copy policy
 configuration, new loader or copied application owner is restored.
 
-### final-M3 — closed: explicit Zdb guard and finite plugin test
-
-The original readiness/codebase findings identified a real null-dereference path
-in the proposed App-to-TxTCP migration and missing test scope. dpdk_plan.md
-section 5 specifies TxTCP for only the mx-backed callback and the exact guard
-`if (!buf) return nullptr;` immediately after allocBuf(), before assigning skip.
-Standalone allocation and downstream failure handling remain unchanged.
-
-The plan names zdb/src/ZdbBuf.hh and zdb/test/ZdbFBTest.cc and specifies a local,
-finite ZiMxPlugin/IOBufPool test without a Zutcp/DPDK dependency. It covers TxTCP
-dispatch, requested/effective geometry, exhaustion and allocation after return.
-Only actually affected outgoing-role assertions in zdbsagareptest may change;
-valid App receive/reassembly backing is preserved. This closes the planning
-finding; the source guard/tests have not been implemented by this review.
-
 ### final-N1 — historical reference in the brief
 
 Style reported one Nit: A7 is undefined within the standalone target. Record it
@@ -422,8 +401,7 @@ The author explicitly selected clamping the pool size when the allocator is
 registered, matching the current AF_XDP implementation. Updated every active
 allocation-time requirement in concepts_brief.md. This supersedes the earlier
 historical instruction not to clamp pool configuration. final-M1 is closed;
-final-M2 (concrete Zutcp parameters) and final-M3 (Zdb exhaustion handling/tests)
-remain open. Documentation only; no production change or runtime test required.
+final-M2 (concrete Zutcp parameters) remains open. Documentation only; no production change or runtime test required.
 
 
 ## Author resolution: route queries run on multiplexer Rx
@@ -436,7 +414,7 @@ current helper uses blocking netlink calls; this adopts Rx execution of those
 cold queries without inventing a new asynchronous resolver or hidden thread.
 
 The missing-route-worker subpoint of final-M2 is closed. Its concrete public
-backend-parameter declaration remains open, as does final-M3. No C++ source was
+backend-parameter declaration remains open. No C++ source was
 changed by recording this decision.
 
 
@@ -481,8 +459,7 @@ Created dpdk_plan.md as the authoritative execution artifact, retaining the full
 EALParams declaration in the linked design brief. It names exact source/test/
 documentation boundaries and four buildable phases. Added concrete DPDK consumer
 settings and initial/restart branching, retained registration-time MTU clamping
-and direct Rx resolution, and specified the author-approved Zdb null guard with
-finite plugin-backed tests. All original A1–A8 and final-M1–M3 planning items are
+and direct Rx resolution. All original A1–A8 and final-M1–M2 planning items are
 resolved. The style Nit is removed from the active brief.
 
 Validation of this documentation update: checked current API/source references,

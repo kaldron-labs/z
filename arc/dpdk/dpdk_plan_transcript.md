@@ -1,5 +1,7 @@
 # Codex conversation
 
+Selected excerpts from the DPDK planning conversation.
+
 ## User
 
 $egm:egm-brainstorm in `Zxdp.hh` virtualize `Zxdp::Instance` API, add `ZtEnumNS(uint8_t, Backend, AF_XDP, DPDK);`; add `Backend::T backend` to `Zxdp::Params`; virtualize `Zxdp::Instance` (deletes `InstanceData *m_data`, `rx` etc. become pure virtual), add a factory function `ZmRef<Instance> instance(const Params &params);` to create an instance and return it (takes `Params`, switches on `backend`, creates the appropriate derived instance); add `DPDK` alongside `AF_XDP` in `zxdp` (the `AF_XDP` implementation is a great reference for `DPDK`); add `DPDK` tests using software loopback pcap ring per `dpdk_loopback.md`
@@ -1419,7 +1421,6 @@ I’ll use `Params::interface` as the tagged interface configuration and check t
     ./ztc/src/ZtcMsg.hh:92:ZuDerive(BodyValue, (ZuUnion<void, Request, Ack, Telemetry, EOS, Error>));
     ./zjrpc/src/Zjrpc.hh:125:ZuDerive(ID, (ZuUnion<void, Null, int64_t, IDString>));
     ./zpb/test/ZpbReflectTest.cc:85:ZuDerive(ExportChoice, (ZuUnion<void, ExportA, ExportB>));
-    ./zdb/src/ZdbMsg.hh:86:ZuDerive(Body, (ZuUnion<void, Heartbeat, Record, Record, Commit>));
     ./zpb/itest/zpbgotest.cc:28:ZuDerive(Choice, (ZuUnion<void, Child, Other>));
     ./zpb/test/ZpbTest.cc:130:ZuDerive(BadUnion, (ZuUnion<void, BadAlt>));
     ./zpb/test/ZpbTest.cc:601:ZuDerive(PtrChoice, (ZuUnion<void, ChoicePtr, ChoiceB>));
@@ -2345,8 +2346,6 @@ I’ll run the Goldfish reviews against the working brief, then fold their findi
     
     ### Module layout
     - The Z modules are bundles of libraries and programs
-    - Every Z module is succinctly named `z*`, e.g. `zu`, `zdb`
-    - Z libraries scope naming with a corresponding prefix, e.g. `Zu`, `Zdb`
     - Every Z module has these required subdirectories:
       - `src`: library and program source code
       - `test`: unit tests using `ZuTest`/`ZuTestUtil` and emitting TAP
@@ -2359,7 +2358,6 @@ I’ll run the Goldfish reviews against the working brief, then fold their findi
       - `interop`: external interoperability framework testing
     - The standard directories are not an exhaustive allow-list. Additional
       module-specific directories are permitted as documented exceptions when a
-      distinct facility does not fit a standard role; for example, `zdb_pq/ext`
       contains a PostgreSQL extension, follows PostgreSQL/PGXS naming, and is built
       after the standard directories. Document each exception in the module's
       README or `GUIDELINES.md`, including its naming and build convention.
@@ -2424,7 +2422,6 @@ I’ll run the Goldfish reviews against the working brief, then fold their findi
     ## Testing Guidelines
     - Tests are built as standalone binaries under each module’s `test/` directory.
     - Run specific tests directly from the build tree, for example
-      `./zt/test/ZtArrayTest` or `./zdb/itest/zdbsmoketest`.
     - Use `ZuTestUtil` and underlying `ZuTest` for TAP-emitting unit tests.
     - No top-level coverage target is defined; document any new test entry points in the module `test/` directory.
     
@@ -13090,7 +13087,7 @@ The awkward part is initialization order: Zutcp queries MTU before creating pool
 
 ## User
 
-that doesn't sound right. the app is supposed to create buffer pools (allocators) by calling `ZiMultiplex::allocator`. for example `Zdb` calls it for replication buffers. those buffers should then transit `Ztcp`, `ZiMultiplex` and, if enabled via a plugin, `Zutcp` and `Zxdp`. they are constrained by MTU when allocated, but the initial configuration size is set by the `Zdb` table. So why is `zutcp` querying MTU to set the size?
+that doesn't sound right. the app is supposed to create buffer pools (allocators) by calling `ZiMultiplex::allocator`. So why is `zutcp` querying MTU to set the size?
 
 ## Assistant
 
@@ -13098,11 +13095,6 @@ I’ll trace `ZiMultiplex::allocator()` through the Zutcp pool provider and comp
 
 ## Activity
 
-    $ rg -n 'allocator\(' zdb/src | head -30; rg -n 'ZiMultiplex::allocator|IOBufPool \*Stack::allocator|Stack::allocator|requireMTU|m_mtu|packetCount' zi/src/ZiMultiplex.cc zi/src/ZiMultiplex.hh zutcp/src/ZutcpMx.cc zutcp/src/ZutcpMx.hh | head -100; sed -n '700,815p' zutcp/src/ZutcpMx.cc; sed -n '620,715p' zi/src/ZiIOBuf.hh
-    zdb/src/ZdbBuf.hh:119:    IOBuf{buf->data_(), buf->size, buf->allocator(), nullptr, buf->length, true},
-    zdb/src/ZdbBuf.hh:169:  Zi::IOBufAllocator *allocator() const { return m_allocator; }
-    zdb/src/ZdbBuf.hh:170:  void allocator(Zi::IOBufAllocator *value) { m_allocator = value; }
-    zdb/src/ZdbBuf.hh:187:  fn.allocator(allocator);
     zutcp/src/ZutcpMx.hh:80:  unsigned packetCount = ZiIOBuf_DefltCount;
     zutcp/src/ZutcpMx.hh:332:  unsigned mtu() const { return m_mtu; }
     zutcp/src/ZutcpMx.hh:399:  unsigned    m_interface, m_mtu, m_spin, m_txSid;
@@ -13333,135 +13325,17 @@ I’ll trace `ZiMultiplex::allocator()` through the Zutcp pool provider and comp
 
 ## Activity
 
-    $ rg -n 'allocator|BufSize|bufSize|rep.*[Bb]uf' zdb/src/Zdb.hh zdb/src/Zdb*.hh | head -65; rg -n 'allocator\(' zi/src/ZiMultiplex.hh | tail -20; rg -n 'rep.*[Aa]lloc|[Aa]lloc.*rep|->allocator|\.allocator|template allocator' zdb zdb_pq ztcp/src --glob '*.{hh,cc}' | head -70; rg -n 'mps\(|allocator\(' zi/src/ZiTx.hh ztcp/src/Ztcp* zdb/src/ZdbLink* --glob '*.{hh,cc}'
-    zdb/src/ZdbStore.hh:210:      IOBufAllocFn,            // buffer allocator
-    zdb/src/ZdbBuf.hh:33:enum { DefltBufSize = 192 };        // default row buffer size
-    zdb/src/ZdbBuf.hh:34:enum { HBBufSize = 128 };        // heartbeat buffer size
-    zdb/src/ZdbBuf.hh:35:enum { MaxBufSize = 100<<20 };        // 100Mb hard-coded safe upper limit
-    zdb/src/ZdbBuf.hh:42://   friend ZuUnsigned<512> ZdbBufSize(Foo *);
-    zdb/src/ZdbBuf.hh:44:ZuUnsigned<Zdb_::DefltBufSize> ZdbBufSize(...); // default
-    zdb/src/ZdbBuf.hh:46:struct ZdbBuf_Size_ { using T = decltype(ZdbBufSize(ZuDeclVal<U *>())); };
-    zdb/src/ZdbBuf.hh:69:  mutable void    *rep = nullptr;    // typed replication buffer RepBuf<T>
-    zdb/src/ZdbBuf.hh:119:    IOBuf{buf->data_(), buf->size, buf->allocator(), nullptr, buf->length, true},
-    zdb/src/ZdbBuf.hh:132:  TxBuf(Zi::IOBufAllocator *allocator, ZmRef<Zdb_::IOBuf> buf) :
-    zdb/src/ZdbBuf.hh:133:    ZiTxBuf{nullptr, 0, allocator}, backing{ZuMv(buf)}
-    zdb/src/ZdbBuf.hh:146:  static auto allocator = mx.allocator<Zi::IOBufType::App, IOBuf,
-    zdb/src/ZdbBuf.hh:147:    ZdbBuf_Size<T>{}, ZiIOBuf_Align, ZdbBuf_HeapID<T>, MaxBufSize>();
-    zdb/src/ZdbBuf.hh:148:  return allocator;
-    zdb/src/ZdbBuf.hh:162:// The callback retains its allocator; the handle registers transport ownership.
-    zdb/src/ZdbBuf.hh:169:  Zi::IOBufAllocator *allocator() const { return m_allocator; }
-    zdb/src/ZdbBuf.hh:170:  void allocator(Zi::IOBufAllocator *value) { m_allocator = value; }
-    zdb/src/ZdbBuf.hh:173:  Zi::IOBufAllocator *m_allocator = nullptr;
-    zdb/src/ZdbBuf.hh:179:  auto allocator = mx->allocator<Zi::IOBufType::App, IOBuf,
-    zdb/src/ZdbBuf.hh:180:    ZdbBuf_Size<T>{}, ZiIOBuf_Align, ZdbBuf_HeapID<T>, MaxBufSize>();
-    zdb/src/ZdbBuf.hh:181:  IOBufAllocFn fn{[allocator]() {
-    zdb/src/ZdbBuf.hh:182:    ZmRef<IOBuf> buf = allocator->allocBuf();
-    zdb/src/ZdbBuf.hh:187:  fn.allocator(allocator);
-    zdb/src/Zdb.hh:109:// ZdbBufSize(T *)    - buffer size
-    zdb/src/Zdb.hh:167:  public ZiRx<Cxn_, MaxBufSize>,
-    zdb/src/Zdb.hh:173:  using Rx = ZiRx<Cxn_, MaxBufSize>;
-    zdb/src/Zdb.hh:203:  void repRecordRcvd(ZmRef<IOBuf>);
-    zdb/src/Zdb.hh:204:  void repCommitRcvd(ZmRef<IOBuf>);
-    zdb/src/Zdb.hh:675:  // construct a typed row from a trusted replication buffer
-    zdb/src/Zdb.hh:732:  // cache replication buffer
-    zdb/src/Zdb.hh:734:  // evict replication buffer
-    zdb/src/Zdb.hh:759:  void repRecordRcvd(Shard shard, ZmRef<IOBuf> buf);
-    zdb/src/Zdb.hh:783:  ZtArray<ZmAtomic<UN>>    m_nextUN;        // UN allocator
-    zdb/src/Zdb.hh:806:// replication buffer
-    zdb/src/Zdb.hh:807:// - replication buffers contain a reference to the underlying I/O buffer
-    zdb/src/Zdb.hh:874:// replication buffer cache
-    zdb/src/Zdb.hh:878:// replication buffer
-    zdb/src/Zdb.hh:988:  enum { BufSize = ZdbBuf_Size<T>{} };
-    zdb/src/Zdb.hh:1025:  // buffer allocator
-    zdb/src/Zdb.hh:1074:      while (auto repBuf = i()) repBuf->stale = true;
-    zdb/src/Zdb.hh:1130:    while (auto repBuf = i()) {
-    zdb/src/Zdb.hh:1131:      if (repBuf->stale) continue;
-    zdb/src/Zdb.hh:1133:      auto vn = record_(msg_(repBuf->buf->hdr())).template get<Msg::ZfField(Record, vn)>();
-    zdb/src/Zdb.hh:1134:      if (vn <= 0) return repBuf->buf;
-    zdb/src/Zdb.hh:1176:    ZmRef<RepBuf<T>> repBuf = new RepBuf<T>{ZuMv(buf)};
-    zdb/src/Zdb.hh:1178:      m_bufCache[shard].template hash<0>()->addNode(ZuMv(repBuf));
-    zdb/src/Zdb.hh:1180:      m_bufCache[shard].add(ZuMv(repBuf));
-    zdb/src/Zdb.hh:1185:    ZmRef<RepBuf<T>> repBuf = projected ?
-    zdb/src/Zdb.hh:1188:    if (repBuf)
-    zdb/src/Zdb.hh:1189:      return ZuMv(repBuf->buf);
-    zdb/src/Zdb.hh:1493:      while (auto repBuf = i()) {
-    zdb/src/Zdb.hh:1494:    if (!repBuf->stale) {
-    zdb/src/Zdb.hh:1495:      repBuf->stale = true;
-    zdb/src/Zdb.hh:1496:      new (bufs.push()) ZmRef<RepBuf<T>>{ZuMv(repBuf)};
-    zdb/src/Zdb.hh:1533:      while (auto repBuf = i()) {
-    zdb/src/Zdb.hh:1534:    if (!repBuf->stale) {
-    zdb/src/Zdb.hh:1535:      repBuf->stale = true;
-    zdb/src/Zdb.hh:1536:      new (bufs.push()) ZmRef<RepBuf<T>>{ZuMv(repBuf)};
-    zdb/src/Zdb.hh:2190:  bool replicate(ZmRef<IOBuf> buf);
-    zdb/src/Zdb.hh:2229:  // SN allocator - atomic
-    zdb/src/Zdb.hh:109:// ZdbBufSize(T *)    - buffer size
-    zdb/src/Zdb.hh:167:  public ZiRx<Cxn_, MaxBufSize>,
-    zdb/src/Zdb.hh:173:  using Rx = ZiRx<Cxn_, MaxBufSize>;
-    zdb/src/Zdb.hh:203:  void repRecordRcvd(ZmRef<IOBuf>);
-    zdb/src/Zdb.hh:204:  void repCommitRcvd(ZmRef<IOBuf>);
     770:  virtual Zi::IOBufPool *allocator(
     1031:  Zi::IOBufAllocator *allocator(unsigned count = ZiIOBuf_DefltCount) {
     1041:      this, m_plugin->allocator(Type, Size, Align, count));
     ztcp/src/Ztcp.hh:231:      return mx->allocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>();
     ztcp/src/Ztcp.hh:239:      return mx->allocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>();
-    zdb_pq/test/ZdbPQTest.cc:20:  static auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align,
-    zdb/src/ZdbBuf.hh:119:    IOBuf{buf->data_(), buf->size, buf->allocator(), nullptr, buf->length, true},
-    zdb/src/ZdbBuf.hh:146:  static auto allocator = mx.allocator<Zi::IOBufType::App, IOBuf,
-    zdb/src/ZdbBuf.hh:179:  auto allocator = mx->allocator<Zi::IOBufType::App, IOBuf,
-    zdb/src/ZdbBuf.hh:187:  fn.allocator(allocator);
-    zdb/itest/zdbsagareptest.cc:187:    (!allocator || buf->allocator() == allocator);
-    zdb/itest/zdbsagareptest.cc:217:      auto type = view->backing->allocator()->type;
-    zdb/itest/zdbsagareptest.cc:294:  bool typed = policyAllocated<T>(buf.ptr(), buf->allocator());
-    zdb/itest/zdbsagareptest.cc:295:  if (buf->allocator()) typed &= buf->allocator() != shardAllocator;
-    zdb/itest/zdbsagareptest.cc:386:  ZuCheckRT(a->allocator() != b->allocator());
-    zdb/itest/zdbsagareptest.cc:387:  ZuCheckRT(ra->allocator() != rb->allocator());
-    zdb/itest/zdbsagareptest.cc:388:  sent.smallAllocator = a->allocator();
-    zdb/itest/zdbsagareptest.cc:389:  sent.otherAllocator = b->allocator();
-    zdb/itest/zdbsagareptest.cc:390:  sent.largeAllocator = c->allocator();
-    zdb/itest/zdbsagareptest.cc:423:  ZuCheckRT(policyRead<zdbtest::PolicySmall>(rxSmall.ptr(), ra->allocator()));
-    zdb/itest/zdbsagareptest.cc:424:  ZuCheckRT(policyRead<zdbtest::PolicySmall>(rxOther.ptr(), rb->allocator()));
-    zdb/itest/zdbsagareptest.cc:425:  ZuCheckRT(policyRead<zdbtest::PolicyLarge>(rxLarge.ptr(), rc->allocator()));
-    zdb/itest/zdbsagareptest.cc:429:  ZuCheckRT(policyRead<zdbtest::PolicySmall>(lastSmall.ptr(), lastA->allocator()));
-    zdb/itest/zdbsagareptest.cc:430:  ZuCheckRT(policyRead<zdbtest::PolicySmall>(lastOther.ptr(), lastB->allocator()));
-    zdb/itest/zdbsagareptest.cc:431:  ZuCheckRT(policyRead<zdbtest::PolicyLarge>(lastLarge.ptr(), lastC->allocator()));
-    zdb/src/Zdb.cc:207:    m_rxAllocator = mx->allocator<Zi::IOBufType::RxTCP,
-    zdb/src/Zdb.cc:209:    m_frameAllocator = mx->allocator<Zi::IOBufType::App,
-    zdb/src/Zdb.cc:211:    m_hbAllocator = mx->allocator<Zi::IOBufType::TxTCP,
-    zdb/test/ZdbFBTest.cc:59:  ZuCheck(first.allocator() && second.allocator() && large.allocator());
-    zdb/test/ZdbFBTest.cc:60:  ZuCheck(first.allocator() != second.allocator());
-    zdb/test/ZdbFBTest.cc:62:  ZuCheck(copied.allocator() == first.allocator());
-    zdb/test/ZdbFBTest.cc:64:  ZuCheck(moved.allocator() == first.allocator());
-    zdb/test/ZdbFBTest.cc:67:  ZuCheck(assigned.allocator() == first.allocator());
-    zdb/test/ZdbFBTest.cc:69:  ZuCheck(!assigned && !assigned.allocator());
-    zdb/test/ZdbFBTest.cc:71:  ZuCheck(local && !local.allocator());
-    zdb/test/ZdbFBTest.cc:79:  ZuCheck(a->allocator() != b->allocator());
-    zdb/test/ZdbFBTest.cc:87:  auto txAllocator = mx.allocator<Zi::IOBufType::TxTCP, ZiTxBuf,
-    zdb/test/ZdbFBTest.cc:135:  auto txAllocator = mx.allocator<Zi::IOBufType::TxTCP, ZiTxBuf,
-    zdb/test/ZdbRepairTest.hh:33:    buf->allocator() == allocator && !buf->rep;
-    zdb/test/ZdbRepairTest.hh:53:  ZuCheckRT(policyBuf<T>(first.ptr(), first->allocator()));
-    zdb/test/ZdbRepairTest.hh:54:  ZuCheckRT(policyBuf<T>(second.ptr(), second->allocator()));
-    zdb/test/ZdbRepairTest.hh:57:  if (other != table) ZuCheckRT(first->allocator() != second->allocator());
-    zdb/test/ZdbRepairTest.hh:69:  IOBufAllocFn replacementAllocator;
-    zdb/test/ZdbRepairTest.hh:71:  ZuCheckRT(policyBuf<T>(prototype.ptr(), prototype->allocator()));
-    zdb/test/ZdbRepairTest.hh:132:      ZuCheckRT(policyBuf<T>(buf.ptr(), prototype->allocator()));
-    zdb/test/ZdbRepairTest.hh:208:    replacementAllocator = tableBufAllocFn<T>(&mx);
-    zdb/test/ZdbRepairTest.hh:209:    auto replacementPrototype = replacementAllocator();
-    zdb/test/ZdbRepairTest.hh:210:    ZuCheckRT(prototype->allocator() != replacementPrototype->allocator());
-    zdb/test/ZdbRepairTest.hh:212:    opened = open(replacementAllocator);
-    zdb/test/ZdbSagaTest.cc:619:  ZuCheckRT(first->allocator() != second->allocator());
-    zdb/test/ZdbSagaTest.cc:620:  ZuCheckRT(first->allocator()->mx == &mx && second->allocator()->mx == &mx);
-    zdb/test/ZdbSagaTest.cc:647:      ZuCheckRT(buf->allocator() && buf->allocator() != allocator);
-    zdb/test/ZdbSagaTest.cc:660:  check.template operator()<zdbtest::SmallPolicy>(small.ptr(), first->allocator());
-    zdb/test/ZdbSagaTest.cc:661:  check.template operator()<zdbtest::SmallPolicy>(other.ptr(), second->allocator());
-    zdb/test/ZdbSagaTest.cc:662:  check.template operator()<zdbtest::LargePolicy>(large.ptr(), third->allocator());
-    rg: zdb/src/ZdbLink*: No such file or directory (os error 2)
     ztcp/src/Ztcp.hh:964:    !allocator(params.txAllocator())) return false;
     ztcp/src/Ztcp.hh:1055:  bool allocator(Zi::IOBufAllocator *a) {
     ✗ (2) • 0ms
 
 ## Activity
 
-    $ sed -n '1015,1060p' zi/src/ZiMultiplex.hh; sed -n '130,190p' zdb/src/ZdbBuf.hh; sed -n '1030,1095p' ztcp/src/Ztcp.hh; rg -n 'mps\(|allocBuf\(|capacity\(' zutcp/src/ZutcpConnection.hh ztcp/src/Ztcp.hh | head -55; sed -n '45,90p' zi/src/ZiIOBuf.hh; sed -n '195,218p' zdb/src/Zdb.cc
           ZiConnectFn fn, ZiFailFn failFn,
           ZiIP localIP, uint16_t localPort,
           ZiIP remoteIP, uint16_t remotePort,
@@ -13505,68 +13379,6 @@ I’ll trace `ZiMultiplex::allocator()` through the Zutcp pool provider and comp
     
       template <typename ...Args> void rxRun(Args &&...args) {
         run(ZuFwd<Args>(args)..., m_rxThread);
-      }
-      template <typename ...Args> void rxInvoke(Args &&...args) {
-        invoke(ZuFwd<Args>(args)..., m_rxThread);
-    
-      friend inline ZuStringT<"Zdb.TxBuf"> ZmNHeapID(TxBuf *);
-      TxBuf(Zi::IOBufAllocator *allocator, ZmRef<Zdb_::IOBuf> buf) :
-        ZiTxBuf{nullptr, 0, allocator}, backing{ZuMv(buf)}
-      {
-        auto span = backing->frameSpan();
-        data__ = reinterpret_cast<uintptr_t>(span.data()) | Builtin;
-        size = length = span.length();
-      }
-    };
-    
-    // buffer allocation
-    
-    template <typename T = void>
-    auto localBufAllocator() {
-      static ZiMultiplex mx;
-      static auto allocator = mx.allocator<Zi::IOBufType::App, IOBuf,
-        ZdbBuf_Size<T>{}, ZiIOBuf_Align, ZdbBuf_HeapID<T>, MaxBufSize>();
-      return allocator;
-    }
-    
-    template <typename T>
-    class RowBuilder : public Zfb::IOBuilder<Zfb::BufferAlign<T>::N> {
-      using Base = Zfb::IOBuilder<Zfb::BufferAlign<T>::N>;
-    public:
-      RowBuilder() : Base{Zdb_::localBufAllocator<T>()->allocBuf(), Base::Align, UINT32_MAX,
-        0, Zfb::Wire::MaxAlign} { }
-    };
-    
-    template <typename T>
-    using TableBufAllocator = Zi::IOBufAllocator;
-    
-    // The callback retains its allocator; the handle registers transport ownership.
-    class IOBufAllocFn :
-      public ZmFn<ZmRef<IOBuf>(), ZmFnHeapID<"Zdb.BufAlloc">> {
-      using Base = ZmFn<ZmRef<IOBuf>(), ZmFnHeapID<"Zdb.BufAlloc">>;
-    public:
-      using Base::Base;
-    
-      Zi::IOBufAllocator *allocator() const { return m_allocator; }
-      void allocator(Zi::IOBufAllocator *value) { m_allocator = value; }
-    
-    private:
-      Zi::IOBufAllocator *m_allocator = nullptr;
-    };
-    using IOBufAllocFactory = ZmFn<IOBufAllocFn(ZiMultiplex *)>;
-    
-    template <typename T>
-    IOBufAllocFn tableBufAllocFn(ZiMultiplex *mx) {
-      auto allocator = mx->allocator<Zi::IOBufType::App, IOBuf,
-        ZdbBuf_Size<T>{}, ZiIOBuf_Align, ZdbBuf_HeapID<T>, MaxBufSize>();
-      IOBufAllocFn fn{[allocator]() {
-        ZmRef<IOBuf> buf = allocator->allocBuf();
-        // Reserve the envelope before the backwards-growing row arena starts.
-        buf->skip = Zfb::Wire::MaxAlign;
-        return buf;
-      }};
-      fn.allocator(allocator);
-      return fn;
     }
     
     
@@ -13693,36 +13505,10 @@ I’ll trace `ZiMultiplex::allocator()` through the Zutcp pool provider and comp
       IOBufAllocator__ &operator =(const IOBufAllocator__ &) = delete;
       IOBufAllocator__(IOBufAllocator__ &&) = delete;
       IOBufAllocator__ &operator =(IOBufAllocator__ &&) = delete;
-    };
-          config.threads.all([mx, &config](const String &thread) {
-        auto sid = mx->sid(thread);
-        if (invalidSID(mx, sid))
-          throw ZeEXCEPT(Fatal, "Zdb",
-              ([thread = ZeString{thread}](auto &s) {
-            s << "Zdb shard thread misconfigured: " << thread; }));
-        config.sids.push(sid);
-          });
-        }
-    
-        m_cf = ZuMv(config);
-        m_mx = mx;
-        m_rxAllocator = mx->allocator<Zi::IOBufType::RxTCP,
-          ZiRxQueue::Node, DefltBufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, MaxBufSize>();
-        m_frameAllocator = mx->allocator<Zi::IOBufType::App,
-          ZiRxQueue::Node, DefltBufSize, ZiIOBuf_Align, ZiIOBuf_HeapID, MaxBufSize>();
-        m_hbAllocator = mx->allocator<Zi::IOBufType::TxTCP,
-          ZiTxBuf, HBBufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, MaxBufSize>();
-        m_handler = ZuMv(handler);
-        {
-          if (!m_cf.storeCf)
-        throw ZeEXCEPT(Fatal, "Zdb", ([](auto &s) {
-          s << "no data store configured"; }));
-          if (store)
     ✓ • 0ms
 
 ## Activity
 
-    $ sed -n '465,535p' ztcp/src/Ztcp.hh; sed -n '3385,3485p' zutcp/src/ZutcpConnection.hh; sed -n '150,230p' zutcp/src/ZutcpMx.cc; rg -n 'bufAllocFn|txAllocator|m_txAllocator|TxBuf' zdb/src/Zdb.hh zdb/src/Zdb.cc | head -40
         while (m_rxStream) {
           int n = impl()->process(m_rxStream);
           if (!n) break;
@@ -13976,17 +13762,6 @@ I’ll trace `ZiMultiplex::allocator()` through the Zutcp pool provider and comp
       using Base = CliCxn<Client, Cli>;
     public:
       using State = Base::Base;
-    zdb/src/Zdb.cc:212:      ZiTxBuf, HBBufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, MaxBufSize>();
-    zdb/src/Zdb.cc:1720:  Tx::send(new TxBuf{m_db->m_hbAllocator, ZuMv(buf)});
-    zdb/src/Zdb.cc:1723:void Cxn_::sent(ZmRef<ZiTxBuf>, bool ok)
-    zdb/src/Zdb.cc:1954:  Tx::send(ZmRef<ZiTxBuf>{saveHdr(fbb, this)});
-    zdb/src/Zdb.cc:2047:  m_bufAllocFn.length(n);
-    zdb/src/Zdb.cc:2048:  for (unsigned i = 0; i < n; ++i) m_bufAllocFn[i] = factory(m_mx);
-    zdb/src/Zdb.cc:2067:  for (auto &fn : m_bufAllocFn) fn = IOBufAllocFn{};
-    zdb/src/Zdb.hh:194:  void sent(ZmRef<ZiTxBuf>, bool ok);
-    zdb/src/Zdb.hh:629:  IOBufAllocFn bufAllocFn(Shard shard) const { return m_bufAllocFn[shard]; }
-    zdb/src/Zdb.hh:647:  ZmRef<IOBuf> allocBuf(Shard shard) { return m_bufAllocFn[shard](); }
-    zdb/src/Zdb.hh:802:  ZtArray<IOBufAllocFn>    m_bufAllocFn;
     ✓ • 0ms
 
 ## Assistant
@@ -13998,69 +13773,6 @@ bytes = min(requestedSize + protocolHeadroom, mtu + ethernetHeader);
 ```
 
 That happens in [`Stack::allocator()`](/home/count0/src/z/zutcp/src/ZutcpMx.cc:738). The MTU-sized pools in its constructor are separate internal pools. My earlier explanation conflated them with application-requested pools.
-
-Tracing Zdb reveals a more substantial mismatch with your intended path:
-
-- Zdb requests table-specific buffers as [`IOBufType::App`](/home/count0/src/z/zdb/src/ZdbBuf.hh:179).
-- [`ZiMultiplex::allocator()`](/home/count0/src/z/zi/src/ZiMultiplex.hh:1031) delegates to the plugin only for Rx/Tx TCP/UDP types.
-- Consequently, those Zdb `App` allocations currently bypass Zutcp’s pool provider and use the builtin allocator.
-
-So the MTU query has a purpose—constraining transport allocations—but **the current code does not provide the end-to-end application allocation path you describe**. The integration plan needs to address that boundary, rather than merely substitute a DPDK MTU query for the Linux one.
-
-## User
-
-Zdb should request `TxTCP` buffers
-
-## Assistant
-
-I’ll add that to the integration plan: Zdb’s table replication allocator will request `TxTCP` buffers through `ZiMultiplex::allocator()`.
-
-## Activity
-
-    $ python - <<'PY'
-        from pathlib import Path
-        p=Path('concepts_brief.md')
-        s=p.read_text()
-        snapshot=Path('review_context/zxdp-dpdk-readiness/reviewed_concepts_brief.md')
-        if not snapshot.exists(): snapshot.write_text(s)
-        anchor='### Explicit EAL ownership\n'
-        section='''### Adopted consumer integration scope
-        
-        Include DPDK selection and pool provisioning through Zutcp, for initial startup
-        and restart. Update `zutcp/src/ZutcpMx.hh` and `zutcp/src/ZutcpMx.cc`; do not
-        limit this work to standalone Zxdp service.
-        
-        Zdb's table replication allocator must request `Zi::IOBufType::TxTCP` through
-        `ZiMultiplex::allocator()`. Change the network-multiplexer-backed
-        `tableBufAllocFn<T>()` in `zdb/src/ZdbBuf.hh` from `App` to `TxTCP`, retaining
-        the table's configured size, alignment, heap identity and count policy. This
-        routes allocation through the selected transport plugin and its native pool.
-        The table's configured size remains the requested size; Zutcp constrains the
-        transport allocation to MTU/payload capacity and supplies protocol headroom.
-        Do not replace every application pool request with a fixed MTU-sized request.
-        
-        The current `ZiMultiplex::allocator()` already delegates TxTCP allocation to its
-        plugin. The earlier observed App-type bypass is corrected at the Zdb caller,
-        rather than by changing generic App allocation dispatch. Scope the associated
-        Zdb allocation/replication test updates to this transport-type change.
-        
-        '''
-        assert anchor in s
-        s=s.replace(anchor,section+anchor,1)
-        s=s.replace('   counted wakes, stopTx and structured retryable close. Update affected callers\n   to the current union initialization and owning pool APIs without shims.', '   counted wakes, stopTx and structured retryable close. Add DPDK selection and\n   initial/restart provisioning in `zutcp/src/ZutcpMx.hh/.cc`. Change the\n   replication `tableBufAllocFn<T>()` in `zdb/src/ZdbBuf.hh` to request TxTCP\n   buffers, preserving table-requested geometry and plugin MTU constraints.\n   Use the current union initialization and owning pool APIs without shims.')
-        p.write_text(s)
-        r=Path('goldfish_review_report.md')
-        s=r.read_text()
-        s+='''\n## Author resolution: consumer scope\n\nInclude Zutcp DPDK integration. Zdb table replication allocation requests TxTCP\ninstead of App; preserve the table-configured request size and plugin MTU\nconstraint. This resolves the scope and allocation-dispatch decision in A7.\nExact startup/restart configuration and the remaining implementation details\nstill need a concrete plan. The reviewed source text is preserved in\n`review_context/zxdp-dpdk-readiness/reviewed_concepts_brief.md`; original review\nline references apply to that snapshot.\n'''
-        r.write_text(s)
-        print('Recorded Zutcp scope and Zdb TxTCP allocation decision; no source edits.')
-        PY
-    Recorded Zutcp scope and Zdb TxTCP allocation decision; no source edits.
-    ✓ • 0ms
-
-## Assistant
-
-Recorded in the [plan](/home/count0/src/z/concepts_brief.md): Zdb’s `tableBufAllocFn<T>()` will request `TxTCP`, preserving the table-configured size while allowing the plugin to apply MTU constraints and headroom.
 
 No generic `App` dispatch change is needed. No source code changed yet.
 
@@ -14104,7 +13816,6 @@ I’ll trace `slot()` callers and its introduction to distinguish the current us
 
 ## Activity
 
-    $ rg -n --glob '*.{hh,cc}' '(->|\.)slot\(' zi zutcp zxdp ztcp zdb; git log -5 --oneline -- zi/src/ZiIOBuf.hh; git blame -L 583,610 zi/src/ZiIOBuf.hh
     zxdp/src/Zxdp.cc:223:      auto &slot = m_arena->txSlot(*pool, pool->slot(p));
     zxdp/src/Zxdp.cc:279:      auto id = m_rxPool->slot(p);
     zxdp/src/Zxdp.cc:413:  auto id = pool->slot(packet);
@@ -14994,7 +14705,6 @@ I treated the current implementation as justification for the API, but it crosse
 
 ## Activity
 
-    $ rg -l '\bIOBufWait\b|\bIOBufWaitResult\b' zi zutcp zxdp ztcp zdb --glob '*.{hh,cc}'; rg -n 'used\(|ready\(|slot\(|backing\(|owns\(|writable\(|wait/cancel|IOBufWait|direct.*identity|retention|slot' concepts_brief.md
     zi/src/ZiIOBuf.cc
     zutcp/src/ZutcpAlloc.hh
     zutcp/src/ZutcpAlloc.cc
@@ -15097,8 +14807,6 @@ I treated the current implementation as justification for the API, but it crosse
     4. Implement pool-derived queue setup, direct Tx, native reclamation, receive,
        counted wakes, stopTx and structured retryable close. Add DPDK selection and
        initial/restart provisioning in `zutcp/src/ZutcpMx.hh/.cc`. Change the
-       replication `tableBufAllocFn<T>()` in `zdb/src/ZdbBuf.hh` to request TxTCP
-       buffers, preserving table-requested geometry and plugin MTU constraints.
        Use the current union initialization and owning pool APIs without shims.
     5. Mirror existing AF_XDP unit/integration coverage using ring/pcap fixtures
        through the same DPDK path. Keep peer progress, Rx-pool provenance and queued
@@ -15430,19 +15138,9 @@ I’ll resume the implementation review with your correction as the baseline. I�
     and restart. Update `zutcp/src/ZutcpMx.hh` and `zutcp/src/ZutcpMx.cc`; do not
     limit this work to standalone Zxdp service.
     
-    Zdb's table replication allocator must request `Zi::IOBufType::TxTCP` through
-    `ZiMultiplex::allocator()`. Change the network-multiplexer-backed
-    `tableBufAllocFn<T>()` in `zdb/src/ZdbBuf.hh` from `App` to `TxTCP`, retaining
-    the table's configured size, alignment, heap identity and count policy. This
-    routes allocation through the selected transport plugin and its native pool.
-    The table's configured size remains the requested size; Zutcp constrains the
-    transport allocation to MTU/payload capacity and supplies protocol headroom.
-    Do not replace every application pool request with a fixed MTU-sized request.
+
     
-    The current `ZiMultiplex::allocator()` already delegates TxTCP allocation to its
-    plugin. The earlier observed App-type bypass is corrected at the Zdb caller,
-    rather than by changing generic App allocation dispatch. Scope the associated
-    Zdb allocation/replication test updates to this transport-type change.
+
     
     ### Explicit EAL ownership
     
@@ -15549,8 +15247,6 @@ I’ll resume the implementation review with your correction as the baseline. I�
     4. Implement pool-derived queue setup, direct Tx, native reclamation, receive,
        counted wakes, stopTx and structured retryable close. Add DPDK selection and
        initial/restart provisioning in `zutcp/src/ZutcpMx.hh/.cc`. Change the
-       replication `tableBufAllocFn<T>()` in `zdb/src/ZdbBuf.hh` to request TxTCP
-       buffers, preserving table-requested geometry and plugin MTU constraints.
        Use the current union initialization and owning pool APIs without shims.
     5. Mirror existing AF_XDP unit/integration coverage using ring/pcap fixtures
        through the same DPDK path. Keep peer progress, Rx-pool provenance and queued
@@ -15745,7 +15441,6 @@ I’ll resume the implementation review with your correction as the baseline. I�
 
 ## Activity
 
-    $ git show --stat --oneline 6a1dbab7; sed -n '505,575p' zi/src/ZiIOBuf.hh; rg -n 'rxQueue|maxRx|retainRx|rxRetain|IOQueue|rxCount|pool->(used|ready|slot|writable)' zutcp/src/ZutcpAlloc.hh zutcp/src/ZutcpAlloc.cc zutcp/src/ZutcpConnection.hh zutcp/src/ZutcpMx.cc; sed -n '160,185p' zdb/src/ZdbBuf.hh; head -30 implementation_readiness_report.md; rg --files review_context/zxdp-dpdk-readiness
     6a1dbab7 Remove obsolete I/O pool queries and receive slot accounting
      zi/README.md                        |   7 +-
      zi/src/ZiIOBuf.hh                   |  10 ---
@@ -15872,32 +15567,6 @@ I’ll resume the implementation review with your correction as the baseline. I�
     zutcp/src/ZutcpConnection.hh:3886:    auto iter = m_rxQueue.citer();
     zutcp/src/ZutcpConnection.hh:4664:  DataRxPQueue    m_rxQueue{0};
     zutcp/src/ZutcpConnection.hh:4665:  Zi::IOQueue        m_rxRetained;
-    using TableBufAllocator = Zi::IOBufAllocator;
-    
-    // The callback retains its allocator; the handle registers transport ownership.
-    class IOBufAllocFn :
-      public ZmFn<ZmRef<IOBuf>(), ZmFnHeapID<"Zdb.BufAlloc">> {
-      using Base = ZmFn<ZmRef<IOBuf>(), ZmFnHeapID<"Zdb.BufAlloc">>;
-    public:
-      using Base::Base;
-    
-      Zi::IOBufAllocator *allocator() const { return m_allocator; }
-      void allocator(Zi::IOBufAllocator *value) { m_allocator = value; }
-    
-    private:
-      Zi::IOBufAllocator *m_allocator = nullptr;
-    };
-    using IOBufAllocFactory = ZmFn<IOBufAllocFn(ZiMultiplex *)>;
-    
-    template <typename T>
-    IOBufAllocFn tableBufAllocFn(ZiMultiplex *mx) {
-      auto allocator = mx->allocator<Zi::IOBufType::App, IOBuf,
-        ZdbBuf_Size<T>{}, ZiIOBuf_Align, ZdbBuf_HeapID<T>, MaxBufSize>();
-      IOBufAllocFn fn{[allocator]() {
-        ZmRef<IOBuf> buf = allocator->allocBuf();
-        // Reserve the envelope before the backwards-growing row arena starts.
-        buf->skip = Zfb::Wire::MaxAlign;
-        return buf;
     Status: initial review superseded by interactive resolution.
     
     The original findings below are retained as review history. See
@@ -16257,12 +15926,11 @@ The current code has already been repaired: `Zi::IOBufPool` now exposes geometry
         f=json.loads((ctx/'findings.json').read_text())
         groups={}
         for x in f: groups.setdefault(x['action'],[]).append(x)
-        out='''# DPDK Implementation Review — Resumed Resolution\n\n**Target:** [concepts_brief.md](concepts_brief.md).\n**Status:** Stage 9 round 1 resolution resumed; no fresh re-audit or convergence claim.\n\nThe original three fresh-context reviews completed with 13 Major findings,\nconsolidated into eight actions. Their original line references apply to\n[the reviewed snapshot](review_context/zxdp-dpdk-readiness/reviewed_concepts_brief.md).\nThe generic report filenames now document a separate I/O repair; this scoped\nreport preserves the DPDK review without replacing those artifacts.\n\n## Binding corrections\n\n* Include Zutcp DPDK selection, startup and restart integration.\n* Zdb table replication should request TxTCP through ZiMultiplex; this change\n  remains pending in the current Zdb caller. Keep table-requested sizing and\n  transport MTU constraints.\n* The source has already removed obsolete pool queries and waiter APIs. Public\n  Zi::IOBufPool is geometry plus alloc/free only. Do not reintroduce writable,\n  slots, occupancy/status queries, wait/cancel or IOBufWait.\n* Receive accounting is a counted per-connection intrusive Zi::IOQueue of\n  Zi::IOBuf nodes, with head insertion and tail eviction at the configured cap.\n  No backing-slot accounting or substitute permission/wait protocol.\n\n## Action status\n\n| Action | Status | Remaining work |\n| --- | --- | --- |\n| A1: exact file inventory | open | Enumerate exact create/modify paths after consumer/backend details are settled. |\n| A2: buildable phases | open | Group API, overrides, build wiring and tests into buildable checkpoints. |\n| A3: queue provisioning | open | Specify descriptor topology/count adjustment using supplied pool geometry. No backing-based transport accounting or public pool queries. |\n| A4: port lifecycle | open | Specify stop/reuse versus destruction/recreation, partial-init rollback and private mbuf retirement. EAL persistence remains settled. |\n| A5: receive segments | open | Specify single-contiguous-packet admission and unsupported-chain release. |\n| A6: fixture mapping | open | Map applicable AF_XDP behavior to named DPDK tests; preserve node-based retention and direct Tx; exclude Xdp-only filter/sender assertions. |\n| A7: consumer scope | scope resolved | Include Zutcp and Zdb TxTCP; define concrete selection/device geometry/startup/restart changes. |\n| A8: dependency policy | open | Set supported libdpdk version, enablement/absence policy and compile/link integration. |\n\n## Original finding traceability\n\n'''
         for action,items in sorted(groups.items()):
          out+=f'### {action}\n\n'
          for x in items:
           out+=f"* `{x['id']}` — {x['severity']}: {x['title']}.\n"
-        out+='''\nRaw normalized per-lens reports, findings.json and approved external snapshots\nremain in review_context/zxdp-dpdk-readiness. Their assumptions must be interpreted\nunder the binding corrections above. The selected architecture is unchanged.\n\n## Work performed on resume\n\nRead the current Zi pool interface, Xdp pool internals, Zutcp retained-buffer\nqueue and allocation/provider paths, Zdb table allocation, source history and\nprior review artifacts. Corrected the brief's obsolete writable/interface\nassumptions. No C++ source edits, builds or tests were performed.\n'''
+        out+='''\nRaw normalized per-lens reports, findings.json and approved external snapshots\nremain in review_context/zxdp-dpdk-readiness. Their assumptions must be interpreted\nunder the binding corrections above. The selected architecture is unchanged.\n\n## Work performed on resume\n\nRead the current Zi pool interface, Xdp pool internals, Zutcp retained-buffer\nqueue and allocation/provider paths, source history and\nprior review artifacts. Corrected the brief's obsolete writable/interface\nassumptions. No C++ source edits, builds or tests were performed.\n'''
         Path('dpdk_implementation_review_report.md').write_text(out)
         print('Updated the DPDK brief and wrote dpdk_implementation_review_report.md; preserved other review artifacts.')
         PY
@@ -17029,8 +16697,6 @@ I’ll continue with port lifecycle: how an instance releases its queues while l
     ## Binding corrections
     
     * Include Zutcp DPDK selection, startup and restart integration.
-    * Zdb table replication should request TxTCP through ZiMultiplex; this change
-      remains pending in the current Zdb caller. Keep table-requested sizing and
       transport MTU constraints.
     * The source has already removed obsolete pool queries and waiter APIs. Public
       Zi::IOBufPool is geometry plus alloc/free only. Do not reintroduce writable,
@@ -17049,7 +16715,7 @@ I’ll continue with port lifecycle: how an instance releases its queues while l
     | A4: port lifecycle | open | Specify stop/reuse versus destruction/recreation, partial-init rollback and private mbuf retirement. EAL persistence remains settled. |
     | A5: receive segments | closed as separate design issue | Existing contiguous-frame contract applies. Size usable mbuf capacity for MTU/frame overhead and leave scatter/coalescing disabled; ordinary setup, not a new receive feature or rejection subsystem. |
     | A6: fixture mapping | open | Map applicable AF_XDP behavior to named DPDK tests; preserve node-based retention and direct Tx; exclude Xdp-only filter/sender assertions. |
-    | A7: consumer scope | scope resolved | Include Zutcp and Zdb TxTCP; define concrete selection/device geometry/startup/restart changes. |
+    | A7: consumer scope | scope resolved | Include Zutcp; define concrete selection/device geometry/startup/restart changes. |
     | A8: dependency policy | resolved | Optional like PostgreSQL: configure --with-dpdk, wrapper default yes and -K opt-out; enabled requires libdpdk >=25.11 and fails clearly if missing. Conditional backend/test builds. |
     
     ## Original finding traceability
@@ -20841,7 +20507,6 @@ I’ll rename `Zutcp::Stack` to `Zutcp::Instance`, update its declarations and c
 
 ## Activity
 
-    $ git status --short; cat zutcp/GUIDELINES.md; rg -n '\bStack\b|Stack::|Zutcp::Stack' zutcp zi ztcp zdb ztls zfix --glob '*.{hh,cc,md}'
      M TODO.md
      M gtags.conf
      M zxdp/GUIDELINES.md
@@ -22889,8 +22554,6 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
     $ rg -n 'Stack|nativeStack|StackParams|StackConfig' --glob '*.{hh,cc,h,cpp}' --glob '!review_context/**' --glob '!third_party/**'
     zrl/src/ZrlEditor.hh:395:ZuDerive(ModeStack, (ZtArray<unsigned, ZtArrayHeapID<"Zrl.ModeStack">>));
     zrl/src/ZrlEditor.hh:403:  ModeStack        stack;        // mode stack
-    zdb_pq/test/ZdbPQTest.cc:10:#include <zlib/ZmStackAvail.hh>
-    zdb_pq/test/ZdbPQTest.cc:271:    unsigned avail = ZmStackAvail();
     zrl/src/ZrlConfig.hh:24:  unsigned    maxStackDepth = 10;    // maximum mode stack depth
     zrl/src/ZrlEditor.cc:977:  if (ZuLikely(m_context.stack.length() < m_config.maxStackDepth)) {
     zfix/src/ZfixFmt.hh:43:#include <zlib/ZmStackAvail.hh>
@@ -23371,8 +23034,6 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
     
     ### Module layout
     - The Z modules are bundles of libraries and programs
-    - Every Z module is succinctly named `z*`, e.g. `zu`, `zdb`
-    - Z libraries scope naming with a corresponding prefix, e.g. `Zu`, `Zdb`
     - Every Z module has these required subdirectories:
       - `src`: library and program source code
       - `test`: unit tests using `ZuTest`/`ZuTestUtil` and emitting TAP
@@ -23385,7 +23046,6 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
       - `interop`: external interoperability framework testing
     - The standard directories are not an exhaustive allow-list. Additional
       module-specific directories are permitted as documented exceptions when a
-      distinct facility does not fit a standard role; for example, `zdb_pq/ext`
       contains a PostgreSQL extension, follows PostgreSQL/PGXS naming, and is built
       after the standard directories. Document each exception in the module's
       README or `GUIDELINES.md`, including its naming and build convention.
@@ -23450,7 +23110,6 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
     ## Testing Guidelines
     - Tests are built as standalone binaries under each module’s `test/` directory.
     - Run specific tests directly from the build tree, for example
-      `./zt/test/ZtArrayTest` or `./zdb/itest/zdbsmoketest`.
     - Use `ZuTestUtil` and underlying `ZuTest` for TAP-emitting unit tests.
     - No top-level coverage target is defined; document any new test entry points in the module `test/` directory.
     
@@ -24107,8 +23766,6 @@ I’ll resume the implementation review, checking the current code against the a
     ## Binding corrections
     
     * Include Zutcp DPDK selection, startup and restart integration.
-    * Zdb table replication should request TxTCP through ZiMultiplex; this change
-      remains pending in the current Zdb caller. Keep table-requested sizing and
       transport MTU constraints.
     * The source has already removed obsolete pool queries and waiter APIs. Public
       Zi::IOBufPool is geometry plus alloc/free only. Do not reintroduce writable,
@@ -24127,7 +23784,7 @@ I’ll resume the implementation review, checking the current code against the a
     | A4: port lifecycle | resolved | EAL owns devices; instance exclusively uses a port, asynchronously gates/drains Rx then Tx per docs/IO.md, stops/releases it for reuse; destructive port close belongs to final EAL teardown. |
     | A5: receive segments | closed as separate design issue | Existing contiguous-frame contract applies. Size usable mbuf capacity for MTU/frame overhead and leave scatter/coalescing disabled; ordinary setup, not a new receive feature or rejection subsystem. |
     | A6: fixture mapping | open | Map applicable AF_XDP behavior to named DPDK tests; preserve node-based retention and direct Tx; exclude Xdp-only filter/sender assertions. |
-    | A7: consumer scope | scope resolved | Include Zutcp and Zdb TxTCP; define concrete selection/device geometry/startup/restart changes. |
+    | A7: consumer scope | scope resolved | Include Zutcp; define concrete selection/device geometry/startup/restart changes. |
     | A8: dependency policy | resolved | Optional like PostgreSQL: configure --with-dpdk, wrapper default yes and -K opt-out; enabled requires libdpdk >=25.11 and fails clearly if missing. Conditional backend/test builds. |
     
     ## Original finding traceability
@@ -24169,7 +23826,7 @@ I’ll resume the implementation review, checking the current code against the a
     ## Work performed on resume
     
     Read the current Zi pool interface, Xdp pool internals, Zutcp retained-buffer
-    queue and allocation/provider paths, Zdb table allocation, source history and
+    queue and allocation/provider paths, source history and
     prior review artifacts. Corrected the brief's obsolete writable/interface
     assumptions. No C++ source edits, builds or tests were performed.
     
@@ -24719,7 +24376,6 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     58:## Analysis and adopted design
     60:### Backend selection and instance parameters
     113:### Adopted consumer integration scope
-    119:Zdb's table replication allocator must request `Zi::IOBufType::TxTCP` through
     120:`ZiMultiplex::allocator()`. Change the network-multiplexer-backed
     128:The current `ZiMultiplex::allocator()` already delegates TxTCP allocation to its
     133:### Optional DPDK dependency — adopted
@@ -25192,8 +24848,6 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     4. Implement pool-derived queue setup, direct Tx, native reclamation, receive,
        counted wakes, stopTx and structured retryable close. Add DPDK selection and
        initial/restart provisioning in `zutcp/src/ZutcpMx.hh/.cc`. Change the
-       replication `tableBufAllocFn<T>()` in `zdb/src/ZdbBuf.hh` to request TxTCP
-       buffers, preserving table-requested geometry and plugin MTU constraints.
        Use the current union initialization and owning pool APIs without shims.
     5. Mirror existing AF_XDP unit/integration coverage using ring/pcap fixtures
        through the same DPDK path. Keep peer progress, Rx-pool provenance and queued
@@ -25772,8 +25426,6 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     4. Implement pool-derived queue setup, direct Tx, native reclamation, receive,
        counted wakes, stopTx and structured retryable close. Add DPDK selection and
        initial/restart provisioning in `zutcp/src/ZutcpMx.hh/.cc`. Change the
-       replication `tableBufAllocFn<T>()` in `zdb/src/ZdbBuf.hh` to request TxTCP
-       buffers, preserving table-requested geometry and plugin MTU constraints.
        Use the current union initialization and owning pool APIs without shims.
     5. Mirror existing AF_XDP unit/integration coverage using ring/pcap fixtures
        through the same DPDK path. Keep peer progress, Rx-pool provenance and queued
@@ -26248,7 +25900,6 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
 
 ## Activity
 
-    $ cat zxdp/src/Makefile.am; cat zxdp/test/Makefile.am; cat zxdp/itest/Makefile.am; rg -n 'POSTGRES|postgres|with-pq|with_dpdk|dpdk|zdb_pq' configure.ac z.config Makefile.am; rg -n 'tableBufAllocFn|IOBufType::App' zdb/src/ZdbBuf.hh; sed -n '1,110p' zutcp/src/ZutcpMx.hh
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
@@ -26311,18 +25962,10 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     .PHONY: test
     test: $(noinst_PROGRAMS)
         prove $(noinst_PROGRAMS)
-    Makefile.am:23:SUBDIRS += zdb_pq
-    Makefile.am:42:    zdb_pq zdb_sqlite zdf zum zgtk # zdash
     z.config:115:  CC=clang CXX=clang++ CFLAGS="$FLAGS" CXXFLAGS="$FLAGS" LDFLAGS="$LDFLAGS" ./configure $BUILD --disable-static "--prefix=$PREFIX" "--with-pq=$PQ" "--with-sqlite=$SQLITE" "--with-gtk=$GTK" "--with-quickfix=$QUICKFIX" $LIBTOOL_LOCK
     z.config:118:  CFLAGS="$FLAGS" CXXFLAGS="$FLAGS" LDFLAGS="$LDFLAGS" ./configure $BUILD --disable-static "--prefix=$PREFIX" "--with-pq=$PQ" "--with-sqlite=$SQLITE" "--with-gtk=$GTK" "--with-quickfix=$QUICKFIX" $LIBTOOL_LOCK
     configure.ac:340:# postgres libpq (optional)
     configure.ac:341:AC_ARG_WITH([pq], AS_HELP_STRING([--with-pq], [Build with PostgreSQL]))
-    configure.ac:382:for i in zu zm zt ze zf zi zxdp zutcp zpb zfb zv zdbus ztcp ztls zfix zquic zhttp zgrpc zrest zjrpc zmcp zws zdb zdb_pq zdb_sqlite ztc zum zdf zrl zgtk zdash; do {
-    configure.ac:444:    zdb_pq/Makefile zdb_pq/src/Makefile zdb_pq/test/Makefile \
-    configure.ac:445:    zdb_pq/itest/Makefile zdb_pq/bench/Makefile \
-    146:  static auto allocator = mx.allocator<Zi::IOBufType::App, IOBuf,
-    178:IOBufAllocFn tableBufAllocFn(ZiMultiplex *mx) {
-    179:  auto allocator = mx->allocator<Zi::IOBufType::App, IOBuf,
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -26539,26 +26182,11 @@ Two details need explicit treatment. Some hardware PMDs allocate a replacement m
         Update `zxdp/test/README.md`, `zxdp/itest/README.md`, `zxdp/README.md`,
         `zxdp/INTERFACE.md` and `zxdp/GUIDELINES.md` with actual setup and guarantees.
         
-        Modify `zutcp/src/ZutcpMx.hh/.cc` for backend selection and initial/restart pool
-        provisioning; `zutcp/src/ZutcpIP.hh/.cc` where routing/device metadata currently
-        requires Linux interface identity. Extend `zutcp/itest/zutcpmxtest.cc` and its
-        `Makefile.am`/README for the backend-specific fixture. Modify only the
-        network-multiplexer overload of `tableBufAllocFn` in `zdb/src/ZdbBuf.hh` to
-        request TxTCP, preserving its requested geometry and the standalone allocator.
-        Consumer selection and routing details remain A7 work; this inventory does not
-        pretend a DPDK name is a Linux ifindex.
+
         
         Proposed buildable checkpoints:
         
-        1. Optional dependency wiring and the explicit EAL wrapper. Build both enabled
-           and disabled configurations before exposing an instantiable DPDK backend.
-        2. Complete native pool/instance implementation and factory selection together,
-           including all virtual overrides, status for both backends, draining and
-           structured failure paths. Run pool/instance tests and existing AF_XDP tests.
-        3. Add software ring/pcap fixtures and mapped backend integration tests. Verify
-           Rx-pool provenance, direct Tx and accepted-work draining in those fixtures.
-        4. Integrate Zutcp selection, device/path metadata and restart, then change the
-           Zdb network allocator role. Run the affected unit/native consumer tests.
+
         
         A1/A2/A6 are now concrete proposals awaiting incorporation into the brief;
         A3 and A7 still need their executable configuration details. The decisions on
@@ -26578,7 +26206,7 @@ Two details need explicit treatment. Some hardware PMDs allocate a replacement m
     3. Add software ring/pcap fixtures and mapped backend integration tests. Verify
        Rx-pool provenance, direct Tx and accepted-work draining in those fixtures.
     4. Integrate Zutcp selection, device/path metadata and restart, then change the
-       Zdb network allocator role. Run the affected unit/native consumer tests.
+
     
     A1/A2/A6 are now concrete proposals awaiting incorporation into the brief;
     A3 and A7 still need their executable configuration details. The decisions on
@@ -26849,19 +26477,9 @@ I’ll finish the consumer integration details, incorporate the file and test ma
     and restart. Update `zutcp/src/ZutcpMx.hh` and `zutcp/src/ZutcpMx.cc`; do not
     limit this work to standalone Zxdp service.
     
-    Zdb's table replication allocator must request `Zi::IOBufType::TxTCP` through
-    `ZiMultiplex::allocator()`. Change the network-multiplexer-backed
-    `tableBufAllocFn<T>()` in `zdb/src/ZdbBuf.hh` from `App` to `TxTCP`, retaining
-    the table's configured size, alignment, heap identity and count policy. This
-    routes allocation through the selected transport plugin and its native pool.
-    The table's configured size remains the requested size; Zutcp constrains the
-    transport allocation to MTU/payload capacity and supplies protocol headroom.
-    Do not replace every application pool request with a fixed MTU-sized request.
+
     
-    The current `ZiMultiplex::allocator()` already delegates TxTCP allocation to its
-    plugin. The earlier observed App-type bypass is corrected at the Zdb caller,
-    rather than by changing generic App allocation dispatch. Scope the associated
-    Zdb allocation/replication test updates to this transport-type change.
+
     
     ### Optional DPDK dependency — adopted
     
@@ -27117,26 +26735,11 @@ I’ll finish the consumer integration details, incorporate the file and test ma
     Update `zxdp/test/README.md`, `zxdp/itest/README.md`, `zxdp/README.md`,
     `zxdp/INTERFACE.md` and `zxdp/GUIDELINES.md` with actual setup and guarantees.
     
-    Modify `zutcp/src/ZutcpMx.hh/.cc` for backend selection and initial/restart pool
-    provisioning; `zutcp/src/ZutcpIP.hh/.cc` where routing/device metadata currently
-    requires Linux interface identity. Extend `zutcp/itest/zutcpmxtest.cc` and its
-    `Makefile.am`/README for the backend-specific fixture. Modify only the
-    network-multiplexer overload of `tableBufAllocFn` in `zdb/src/ZdbBuf.hh` to
-    request TxTCP, preserving its requested geometry and the standalone allocator.
-    Consumer selection and routing details remain A7 work; this inventory does not
-    pretend a DPDK name is a Linux ifindex.
+
     
     Proposed buildable checkpoints:
     
-    1. Optional dependency wiring and the explicit EAL wrapper. Build both enabled
-       and disabled configurations before exposing an instantiable DPDK backend.
-    2. Complete native pool/instance implementation and factory selection together,
-       including all virtual overrides, status for both backends, draining and
-       structured failure paths. Run pool/instance tests and existing AF_XDP tests.
-    3. Add software ring/pcap fixtures and mapped backend integration tests. Verify
-       Rx-pool provenance, direct Tx and accepted-work draining in those fixtures.
-    4. Integrate Zutcp selection, device/path metadata and restart, then change the
-       Zdb network allocator role. Run the affected unit/native consumer tests.
+
     
     A1/A2 and the A6 named coverage mapping remain concrete proposals. The A6
     ownership adaptation is adopted and recorded in the brief. A3 is closed; A7
@@ -27586,7 +27189,6 @@ I’ll finish the consumer integration details, incorporate the file and test ma
 
 ## Activity
 
-    $ rg -n 'txSid|txThread|nWorkers' zutcp/src/ZutcpMx.cc zutcp/example/zutcpclient.cc zutcp/util/zutcppair.cc | head -n 35; sed -n '640,675p' zutcp/src/ZutcpMx.cc; sed -n '170,196p' zdb/src/ZdbBuf.hh; ls /home/count0/.codex/plugins/cache/egm/egm/0.1.1/agents/
     zutcp/util/zutcppair.cc:443:  }).rxThread(1).txThread(2)};
     zutcp/util/zutcppair.cc:444:  auto stack = new Zutcp::Instance{&mx, {.interface = interface, .txSid = 4}};
     zutcp/example/zutcpclient.cc:191:    .rxThread(1).txThread(2));
@@ -27646,35 +27248,6 @@ I’ll finish the consumer integration details, incorporate the file and test ma
       return count;
     }
     
-    static unsigned requireTCPSecrets(ISN &isn, TFOKey &tfo, unsigned interface)
-    {
-      void allocator(Zi::IOBufAllocator *value) { m_allocator = value; }
-    
-    private:
-      Zi::IOBufAllocator *m_allocator = nullptr;
-    };
-    using IOBufAllocFactory = ZmFn<IOBufAllocFn(ZiMultiplex *)>;
-    
-    template <typename T>
-    IOBufAllocFn tableBufAllocFn(ZiMultiplex *mx) {
-      auto allocator = mx->allocator<Zi::IOBufType::App, IOBuf,
-        ZdbBuf_Size<T>{}, ZiIOBuf_Align, ZdbBuf_HeapID<T>, MaxBufSize>();
-      IOBufAllocFn fn{[allocator]() {
-        ZmRef<IOBuf> buf = allocator->allocBuf();
-        // Reserve the envelope before the backwards-growing row arena starts.
-        buf->skip = Zfb::Wire::MaxAlign;
-        return buf;
-      }};
-      fn.allocator(allocator);
-      return fn;
-    }
-    
-    template <typename T>
-    IOBufAllocFn localBufAllocFn() {
-      return IOBufAllocFn{[]() {
-        auto buf = ZmRef<IOBuf>{Zdb_::localBufAllocator<T>()->allocBuf()};
-        buf->skip = Zfb::Wire::MaxAlign;
-        return buf;
     bootstrap_orchestrator.md
     codebase_details.md
     comprehension.md
@@ -28028,13 +27601,7 @@ I’ll check how Linux-managed routes and ARP/ND fit when packet I/O uses a DPDK
         exception path before its topology is agreed. Static neighbors remain an
         explicit alternative; they do not constitute automatic discovery.
         
-        Backend selection and initial/restart pool provisioning still belong in
-        `Zutcp::InstanceParams` and `Zutcp::Instance`. Retain backend-specific settings,
-        create the selected factory on both initial startup and restart, establish pool
-        geometry before allocation, and preserve existing worker-to-Rx route completion
-        and shutdown draining. Retain table-requested Tx sizing and allocation-time MTU
-        constraints. The existing Xdp sender slot must not become a DPDK sender thread
-        merely to supply a route-worker fallback.
+
         
         Finalize the exact consumer configuration after the Linux-interface/DPDK-port
         mapping and neighbor control path are selected. Update affected constructors in
@@ -28542,7 +28109,6 @@ I’ll resolve the review item using Linux routes and static neighbor mappings, 
     concepts_brief.md:276:and releasing their remaining mbufs during teardown.
     concepts_brief.md:545:provisioning; `zutcp/src/ZutcpIP.hh/.cc` where routing/device metadata currently
     concepts_brief.md:550:The consumer section below records Linux routing and the remaining neighbor
-    concepts_brief.md:563:   Zdb network allocator role. Run the affected unit/native consumer tests.
     concepts_brief.md:582:## Consumer integration: Linux routes and neighbor resolution
     concepts_brief.md:584:The application uses the Linux kernel routing stack. Do not add the previously
     concepts_brief.md:585:proposed application-supplied route resolver. Query Linux routing for source
@@ -28554,12 +28120,11 @@ I’ll resolve the review item using Linux routes and static neighbor mappings, 
     concepts_brief.md:613:mapping and neighbor control path are selected. Update affected constructors in
     dpdk_implementation_review_report.md:27:| Action | Status | Remaining work |
     dpdk_implementation_review_report.md:29:| A1: exact file inventory | incorporated; consumer extension pending | Concrete backend/build/test paths are in the brief. Finish A7 caller and scope changes with its selected API. |
-    dpdk_implementation_review_report.md:35:| A7: consumer scope | scope resolved | Include Zutcp and Zdb TxTCP; define concrete selection/device geometry/startup/restart changes. |
+    dpdk_implementation_review_report.md:35:| A7: consumer scope | scope resolved | Include Zutcp; define concrete selection/device geometry/startup/restart changes. |
     dpdk_implementation_review_report.md:63:### A7
     dpdk_implementation_review_report.md:188:unimplemented. This continuation inspects the remaining findings; it is not a
     dpdk_implementation_review_report.md:265:provisioning; `zutcp/src/ZutcpIP.hh/.cc` where routing/device metadata currently
     dpdk_implementation_review_report.md:270:Consumer selection and routing details remain A7 work; this inventory does not
-    dpdk_implementation_review_report.md:283:   Zdb network allocator role. Run the affected unit/native consumer tests.
     dpdk_implementation_review_report.md:286:ownership adaptation is adopted and recorded in the brief. A3 is closed; A7
     dpdk_implementation_review_report.md:287:still needs its concrete consumer selection and path configuration details. The decisions on
     dpdk_implementation_review_report.md:297:A7 now has a concrete proposal in the brief under “Remaining consumer decision:
@@ -28622,16 +28187,7 @@ I’ll resolve the review item using Linux routes and static neighbor mappings, 
         resolver are outside this backend addition; none is required to mirror current
         AF_XDP test behavior.
         
-        Backend selection and initial/restart pool provisioning belong in
-        `Zutcp::InstanceParams` and `Zutcp::Instance`. Retain backend-specific settings,
-        create the selected factory on both initial startup and restart, establish pool
-        geometry before allocation, and preserve existing worker-to-Rx route completion
-        and shutdown draining. Retain table-requested Tx sizing and allocation-time MTU
-        constraints. The existing Xdp sender slot must not become a DPDK sender thread
-        merely to supply a route-worker fallback; use an existing eligible non-I/O worker
-        for the same cold route queries. Retain the instance's TCP secrets across restart
-        and use its Linux control-plane identity where the existing ISN setup needs it.
-        No ISN algorithm or scope API change is required by this resolution.
+
         
         Update affected constructors in `zutcp/bench/zutcpbench.cc`,
         `zutcp/example/zutcpclient.cc`, `zutcp/example/zutcpserver.cc`,
@@ -28648,7 +28204,7 @@ I’ll resolve the review item using Linux routes and static neighbor mappings, 
         p.write_text(s)
         p=Path('dpdk_implementation_review_report.md')
         s=p.read_text()
-        s=s.replace('| A7: consumer scope | scope resolved | Include Zutcp and Zdb TxTCP; define concrete selection/device geometry/startup/restart changes. |','| A7: consumer scope | resolved | Include Zutcp backend startup/restart and Zdb TxTCP. Preserve Linux routing/static neighbors with an explicit routing-interface/DPDK-port association; no new resolver or ARP/ND feature. |')
+        s=s.replace('| A7: consumer scope | scope resolved | Include Zutcp; define concrete selection/device geometry/startup/restart changes. |','| A7: consumer scope | resolved | Include Zutcp backend startup/restart. Preserve Linux routing/static neighbors with an explicit routing-interface/DPDK-port association; no new resolver or ARP/ND feature. |')
         s=s.replace('| A1: exact file inventory | incorporated; consumer extension pending | Concrete backend/build/test paths are in the brief. Finish A7 caller and scope changes with its selected API. |','| A1: exact file inventory | specified | Backend/build/test paths and affected consumer callers are enumerated in the brief. |')
         s=s.replace('Consumer selection and routing details remain A7 work; this inventory does not\npretend a DPDK name is a Linux ifindex.', 'Consumer routing is resolved by the later adopted Linux routes/static-neighbor\nsection. The brief enumerates affected selection/configuration callers.')
         s=s.replace('A1/A2 and the A6 named coverage mapping remain concrete proposals. The A6\nownership adaptation is adopted and recorded in the brief. A3 is closed; A7\nstill needs its concrete consumer selection and path configuration details. The decisions on\noptional DPDK, ownership, contiguous Rx and mandatory Tx remain unchanged.', 'The file inventory, build checkpoints and named coverage mapping are now in the\nbrief. A3 is closed and the later author resolution settles A7 routing/neighbor\nconfiguration. Earlier resolver and dynamic-discovery proposals are superseded.')
@@ -28794,7 +28350,7 @@ I’ll run the final readiness review against the updated brief, treating the re
     | A4: port lifecycle | resolved | EAL owns devices; instance exclusively uses a port, asynchronously gates/drains Rx then Tx per docs/IO.md, stops/releases it for reuse; destructive port close belongs to final EAL teardown. |
     | A5: receive segments | closed as separate design issue | Existing contiguous-frame contract applies. Size usable mbuf capacity for MTU/frame overhead and leave scatter/coalescing disabled; ordinary setup, not a new receive feature or rejection subsystem. |
     | A6: fixture mapping | specified; ownership resolved | Named backend coverage is in the brief, using the adopted destination Rx-pool fixture ownership. |
-    | A7: consumer scope | resolved | Include Zutcp backend startup/restart and Zdb TxTCP. Preserve Linux routing/static neighbors with an explicit routing-interface/DPDK-port association; no new resolver or ARP/ND feature. |
+    | A7: consumer scope | resolved | Include Zutcp backend startup/restart. Preserve Linux routing/static neighbors with an explicit routing-interface/DPDK-port association; no new resolver or ARP/ND feature. |
     | A8: dependency policy | resolved | Optional like PostgreSQL: configure --with-dpdk, wrapper default yes and -K opt-out; enabled requires libdpdk >=25.11 and fails clearly if missing. Conditional backend/test builds. |
     
     ## Original finding traceability
@@ -29312,7 +28868,6 @@ I’ll run the final readiness review against the updated brief, treating the re
 
 ## Activity
 
-    $ git log -3 --oneline; sed -n '1,135p' zxdp/src/Zxdp.hh; sed -n '74,90p' zutcp/src/ZutcpMx.hh; sed -n '175,191p' zdb/src/ZdbBuf.hh
     44398a5d Rename Zutcp Stack to Instance and require Zxdp Tx pools
     6a1dbab7 Remove obsolete I/O pool queries and receive slot accounting
     63c7af84 Specify key identifiers in TLS test certificate profiles
@@ -29434,23 +28989,6 @@ I’ll run the final readiness review against the updated brief, treating the re
       unsigned reserved = 0, outstanding = 0, controlCount = 0;
     };
     
-    using IOBufAllocFactory = ZmFn<IOBufAllocFn(ZiMultiplex *)>;
-    
-    template <typename T>
-    IOBufAllocFn tableBufAllocFn(ZiMultiplex *mx) {
-      auto allocator = mx->allocator<Zi::IOBufType::App, IOBuf,
-        ZdbBuf_Size<T>{}, ZiIOBuf_Align, ZdbBuf_HeapID<T>, MaxBufSize>();
-      IOBufAllocFn fn{[allocator]() {
-        ZmRef<IOBuf> buf = allocator->allocBuf();
-        // Reserve the envelope before the backwards-growing row arena starts.
-        buf->skip = Zfb::Wire::MaxAlign;
-        return buf;
-      }};
-      fn.allocator(allocator);
-      return fn;
-    }
-    
-    template <typename T>
     ✓ • 0ms
 
 ## Activity
@@ -29641,43 +29179,8 @@ I’ll run the final readiness review against the updated brief, treating the re
     • Finished waiting
       └ No agents completed yet
 
-## Assistant
-
-The style review found no material issue. The readiness review has identified gaps in the execution instructions: the Zutcp parameter shape, explicit removal of the existing Tx preclamp, and the exact Zdb test files affected by switching replication buffers to `TxTCP`. I’m checking those against the source.
-
 ## Activity
 
-    $ rg -n 'IOBufType::App|allocator|allocBuf|TxTCP' zdb/itest/zdbsagareptest.cc | head -n 30; rg -n 'tableBufAllocFn|IOBufType::App' zdb/test zdb/itest --glob '*.cc' | head -n 40; sed -n '120,150p' zi/src/ZiIOBuf.hh; rg -n 'capacity|allocBuf|mps' zi/src/ZiIOBuf.hh | tail -n 20
-    184:static bool policyAllocated(Zdb_::IOBuf *buf, Zi::IOBufAllocator_ *allocator = nullptr)
-    187:    (!allocator || buf->allocator() == allocator);
-    217:      auto type = view->backing->allocator()->type;
-    218:      if (type == Zi::IOBufType::App) ++appFrames;
-    219:      if ((type != Zi::IOBufType::App && type != Zi::IOBufType::RxTCP) ||
-    220:          (fragmented && type != Zi::IOBufType::App)) failed |= 2;
-    223:    auto allocator = id == "small" ? smallAllocator :
-    225:    bool typed = id == "large" ? policyAllocated<zdbtest::PolicyLarge>(buf, allocator) :
-    226:      policyAllocated<zdbtest::PolicySmall>(buf, allocator);
-    258:    table->run(0, [table, done = ZuMv(done)]() mutable { done(table->allocBuf(0)); });
-    294:  bool typed = policyAllocated<T>(buf.ptr(), buf->allocator());
-    295:  if (buf->allocator()) typed &= buf->allocator() != shardAllocator;
-    386:  ZuCheckRT(a->allocator() != b->allocator());
-    387:  ZuCheckRT(ra->allocator() != rb->allocator());
-    388:  sent.smallAllocator = a->allocator();
-    389:  sent.otherAllocator = b->allocator();
-    390:  sent.largeAllocator = c->allocator();
-    423:  ZuCheckRT(policyRead<zdbtest::PolicySmall>(rxSmall.ptr(), ra->allocator()));
-    424:  ZuCheckRT(policyRead<zdbtest::PolicySmall>(rxOther.ptr(), rb->allocator()));
-    425:  ZuCheckRT(policyRead<zdbtest::PolicyLarge>(rxLarge.ptr(), rc->allocator()));
-    429:  ZuCheckRT(policyRead<zdbtest::PolicySmall>(lastSmall.ptr(), lastA->allocator()));
-    430:  ZuCheckRT(policyRead<zdbtest::PolicySmall>(lastOther.ptr(), lastB->allocator()));
-    431:  ZuCheckRT(policyRead<zdbtest::PolicyLarge>(lastLarge.ptr(), lastC->allocator()));
-    zdb/itest/zdbsagareptest.cc:218:      if (type == Zi::IOBufType::App) ++appFrames;
-    zdb/itest/zdbsagareptest.cc:219:      if ((type != Zi::IOBufType::App && type != Zi::IOBufType::RxTCP) ||
-    zdb/itest/zdbsagareptest.cc:220:          (fragmented && type != Zi::IOBufType::App)) failed |= 2;
-    zdb/test/ZdbFBTest.cc:56:  auto first = tableBufAllocFn<Small>(&mx);
-    zdb/test/ZdbFBTest.cc:57:  auto second = tableBufAllocFn<Small>(&mx);
-    zdb/test/ZdbFBTest.cc:58:  auto large = tableBufAllocFn<Large>(&mx);
-    zdb/test/ZdbFBTest.cc:122:  auto alloc = tableBufAllocFn<Small>(&mx);
         bool registered_ = false)
       :
         size{size_}, owner{owner_}, allocator_{allocator__},
@@ -29737,76 +29240,6 @@ The style review found no material issue. The readiness review has identified ga
 
 ## Activity
 
-    $ sed -n '40,80p' zdb/test/ZdbFBTest.cc; sed -n '205,230p' zdb/itest/zdbsagareptest.cc; sed -n '565,604p' zi/src/ZiIOBuf.hh; rg -n 'm_bufAlloc|bufAllocFn|m_allocator|allocBuf\(' zdb/src/ZdbTable.hh | head -n 25
-      friend ZuUnsigned<256> ZdbBufSize(Small *);
-      friend ZuStringT<"Zdb.Test.Small"> ZdbBufHeapID(Small *);
-    };
-    struct Large {
-      friend ZuUnsigned<1024> ZdbBufSize(Large *);
-      friend ZuStringT<"Zdb.Test.Large"> ZdbBufHeapID(Large *);
-    };
-    
-    static void run()
-    {
-      ZuTestScope(buffers);
-      ZiMultiplex mx{ZiMxParams{}};
-      static_assert(ZdbBuf_Size<Small>{} == 256);
-      static_assert(ZdbBuf_Size<Large>{} == 1024);
-      static_assert(ZuIsSame<ZdbBuf_HeapID<Small>, ZuStringT<"Zdb.Test.Small">>{});
-      static_assert(ZuIsSame<ZdbBuf_HeapID<Large>, ZuStringT<"Zdb.Test.Large">>{});
-      auto first = tableBufAllocFn<Small>(&mx);
-      auto second = tableBufAllocFn<Small>(&mx);
-      auto large = tableBufAllocFn<Large>(&mx);
-      ZuCheck(first.allocator() && second.allocator() && large.allocator());
-      ZuCheck(first.allocator() != second.allocator());
-      auto copied = first;
-      ZuCheck(copied.allocator() == first.allocator());
-      auto moved = ZuMv(copied);
-      ZuCheck(moved.allocator() == first.allocator());
-      IOBufAllocFn assigned;
-      assigned = moved;
-      ZuCheck(assigned.allocator() == first.allocator());
-      assigned = IOBufAllocFn{};
-      ZuCheck(!assigned && !assigned.allocator());
-      auto local = localBufAllocFn<Small>();
-      ZuCheck(local && !local.allocator());
-      auto a = first();
-      auto b = second();
-      auto c = large();
-      ZuCheck(a && b && c);
-      ZuCheck(a->size >= 256 && c->size >= 1024);
-      ZuCheck(a->skip >= sizeof(Hdr));
-      ZuCheck(!a->rep && !b->rep && !c->rep);
-      ZuCheck(a->allocator() != b->allocator());
-      auto ptr = a->data();
-        unsigned failed = 0;
-        auto frame = buf ? buf->frameSpan() : ZuBSpan{};
-        if (!ok || original != buf || frame.length() < sizeof(Zdb_::Hdr))
-          failed |= 1;
-        if (frame.length() >= sizeof(Zdb_::Hdr)) {
-          if (receiver) {
-        auto view = dynamic_cast<Zdb_::RxBuf *>(buf);
-        if (!view || !view->backing ||
-            frame.data() < view->backing->data_() ||
-            frame.data() + frame.length() > view->backing->data_() + view->backing->size)
-          failed |= 2;
-        if (view && view->backing) {
-          auto type = view->backing->allocator()->type;
-          if (type == Zi::IOBufType::App) ++appFrames;
-          if ((type != Zi::IOBufType::App && type != Zi::IOBufType::RxTCP) ||
-              (fragmented && type != Zi::IOBufType::App)) failed |= 2;
-        }
-          } else {
-        auto allocator = id == "small" ? smallAllocator :
-          id == "other" ? otherAllocator : largeAllocator;
-        bool typed = id == "large" ? policyAllocated<zdbtest::PolicyLarge>(buf, allocator) :
-          policyAllocated<zdbtest::PolicySmall>(buf, allocator);
-        if (!typed) failed |= 4;
-          }
-          auto record = Zdb_::record_(Zdb_::msg_(buf->hdr()));
-          auto bytes = record.template get<Zdb_::Msg::ZfField(Record, data)>();
-      IOBufPoolAllocator(ZiMultiplex *mx, IOBufPool *pool_) :
-        IOBufAllocator(mx, Type,
           pool_->size, pool_->headRoom, pool_->tailRoom),
         pool(pool_) { }
     
@@ -29845,7 +29278,6 @@ The style review found no material issue. The readiness review has identified ga
           return buf;
         }
       }
-    rg: zdb/src/ZdbTable.hh: IO error for operation on zdb/src/ZdbTable.hh: No such file or directory (os error 2)
     ✓ • 0ms
 
 ## Activity
@@ -29865,10 +29297,6 @@ The style review found no material issue. The readiness review has identified ga
 
     • Completed `/root/final_codebase`
 
-## Assistant
-
-All three reviewers have finished. They found no reason to reopen the settled architecture. Three implementation-readiness gaps remain: enforcing MTU limits at allocation time, defining the Zutcp backend parameters, and handling Zdb allocation failure after the switch to `TxTCP`. I’ll consolidate them with the source evidence and proposed fixes.
-
 ## Activity
 
     $ python3 - <<'PY'
@@ -29876,14 +29304,11 @@ All three reviewers have finished. They found no reason to reopen the settled ar
         import json
         root=Path('review_context/zxdp-dpdk-readiness')
         reports={
-        'final-readiness.md':'''# Final implementation-readiness reviewer\n\nStatus: completed. Required persona, standard, full snapshot, reading list and relevant source/guidance/external snapshot sections were read; none unavailable. Read-only; no prior reports used.\n\n1. Major, snapshot 514–519 and 610–615; requirement 299–308. Allocation-time MTU clamping has no executable path. Current ZutcpMx.cc:759–761 clamps before bufPool; ZiIOBufPoolAllocator defaults mps to unlimited, and tableBufAllocFn supplies no mps. Specify the allocation-layer enforcement mechanism, retain configured geometry, identify affected files and test sizes below/above MTU including default table allocation.\n2. Major, snapshot 544–551 and 610–629. Public Zutcp::InstanceParams lacks a concrete selected-backend representation, owned DPDK name and idle settings/defaults; route worker absence has no defined startup rule after removing sender fallback. Specify declarations, retained configuration, initial/restart branches and missing-worker failure.\n3. Major, snapshot 517–519, 548–549, 562–563. Zdb callback dereferences native allocation failure. Define null propagation and name ZdbFBTest.cc plus affected replication tests in the manifest, with finite native pool exhaustion and geometry coverage.\n''',
-        'final-codebase.md':'''# Final codebase reviewer\n\nStatus: completed. Required persona, standard, full snapshot, reading list and relevant source/guidance/external snapshot sections were read; none unavailable. Read-only; no prior reports used.\n\n1. Major, snapshot 548–549 and 562–563. The role-only Zdb change introduces a null dereference: ZdbBuf.hh:182–184 unconditionally sets buf->skip after allocBuf, while ZiIOBuf.hh:588–592 returns null on native pool exhaustion. Minimal repair is a null guard in the network callback with unchanged null propagation. Zfb::IOStorage, saveHdr and AnyTable::mkBuf already accommodate missing backing.\n2. Major, snapshot 539–549, 562–563 and 565–580. No exact Zdb test path or finite plugin-backed test is specified. Current ZdbFBTest uses no plugin, so cannot demonstrate native dispatch/exhaustion. Name zdb/test/ZdbFBTest.cc and require TxTCP dispatch, preserved request geometry, null exhaustion, successful allocation after return and unchanged standalone allocator behavior. Name additional helpers/build files if needed.\n\nStatic routes/neighbors, initial/restart backend selection, optional dependency and software-peer Rx-pool transfer fit the codebase. Descriptor sizing and fixed fixture addressing remain ordinary implementation details.\n''',
         'final-style.md':'''# Final style reviewer\n\nStatus: completed. Required persona, context list, full snapshot and relevant source/guidance sections were read; none unavailable. Read-only; no prior reports used.\n\nNo Major or Blocker findings. Nit, snapshot line 629: undefined historical A7 reference in the standalone brief; delete the final sentence naming A7 because the section already specifies its contract. Required future implementation and verification are distinguished from existing DPDK behavior. Software-PMD evidence limits are calibrated.\n'''}
         for name,body in reports.items(): (root/name).write_text(body)
         findings=[
          {'id':'final-M1','severity':'Major','title':'Specify allocation-time MTU enforcement','sources':['final-readiness:1'],'scope':'snapshot 299–308, 514–519, 610–615'},
          {'id':'final-M2','severity':'Major','title':'Specify concrete Zutcp backend parameters and route worker failure','sources':['final-readiness:2'],'scope':'snapshot 544–551, 610–629'},
-         {'id':'final-M3','severity':'Major','title':'Handle Zdb native allocation failure and name plugin-backed tests','sources':['final-readiness:3','final-codebase:1','final-codebase:2'],'scope':'snapshot 517–519, 539–549, 562–580'},
          {'id':'final-N1','severity':'Nit','title':'Remove undefined historical A7 reference','sources':['final-style:1'],'scope':'snapshot 629','disposition':'recorded; does not block readiness'}]
         (root/'final_findings.json').write_text(json.dumps({'reviewers':{name:'completed' for name in ('readiness','codebase','style')},'snapshot':'final_review_snapshot.md','result':'not ready','findings':findings},indent=2)+'\n')
         p=Path('dpdk_implementation_review_report.md')
@@ -29907,17 +29332,12 @@ All three reviewers have finished. They found no reason to reopen the settled ar
         
         ### final-M1 — specify allocation-time MTU enforcement
         
-        Source: final readiness finding 1. Snapshot lines 299–308, 514–519 and 610–615.
-        The adopted requirement retains configured Tx requests and clamps actual buffer
-        allocation. Current ZutcpMx.cc:759–761 instead clamps before creating the pool.
-        ZiIOBufPoolAllocator only clamps to its supplied mps, whose default is unlimited;
-        the Zdb callback uses default allocBuf(). The brief names the intended outcome
-        but does not specify how all default allocations enforce it.
+
         
         **PROPOSE FIX:** define the allocation-layer mechanism and affected Zi/Zutcp/pool
         files explicitly; remove the existing preclamp as part of that implementation.
         Preserve requested geometry and enforce the effective MTU before exposing each
-        allocated buffer. Cover below/above-MTU requests and default table allocation.
+        allocated buffer. Cover below/above-MTU requests.
         Do not restore removed occupancy, writable or waiter APIs. This is implementation
         of the agreed clamping contract, not a new MTU policy.
         
@@ -29934,25 +29354,6 @@ All three reviewers have finished. They found no reason to reopen the settled ar
         packet port. Specify backend-specific startup/restart parameter construction.
         Require an existing eligible non-I/O worker for cold DPDK route queries and return
         a structured setup error if absent; do not create a DPDK sender thread.
-        
-        ### final-M3 — handle Zdb native allocation failure and name tests
-        
-        Sources: final readiness finding 3 and final codebase findings 1–2. Snapshot
-        lines 517–519, 539–549 and 562–580.
-        The network table callback in ZdbBuf.hh:182–184 writes buf->skip immediately after
-        allocBuf(). TxTCP native pools legitimately return null on exhaustion, so the
-        prescribed role-only change would dereference null. The existing downstream
-        storage/header/table facilities already accommodate absent backing.
-        
-        **PROPOSE FIX:** change the network callback to return null before assigning
-        skip when allocation fails. Preserve existing downstream null handling, the
-        standalone allocator and the no-fallback/no-waiter contract. Add
-        `zdb/test/ZdbFBTest.cc` to the exact manifest and require a finite plugin-backed
-        allocation test covering TxTCP dispatch, requested geometry, exhaustion and
-        successful allocation after a buffer is returned. Inspect/update
-        `zdb/itest/zdbsagareptest.cc` transport-role assertions only where the callback
-        change affects them; do not blindly replace its receive/reassembly App uses.
-        Name any additional test helper/build edits before implementation.
         
         ### final-N1 — historical reference in the brief
         
@@ -29972,10 +29373,6 @@ All three reviewers have finished. They found no reason to reopen the settled ar
 ## Assistant
 
 Final readiness review completed. Three gaps remain:
-
-- Specify how allocation enforces MTU while preserving configured pool sizes.
-- Define Zutcp’s concrete backend parameters and handling of a missing route worker.
-- Handle Zdb’s null allocation result on pool exhaustion and name the affected tests.
 
 Findings and proposed fixes are in [the review report](/home/count0/src/z/dpdk_implementation_review_report.md). The settled architecture remains unchanged; the plan is not yet implementation-ready.
 
@@ -30244,8 +29641,6 @@ bytes = min(requestedSize + protocolHeadroom, mtu + ethernetHeader);
 
 It creates the AF_XDP pool with that reduced size. Zi copies the pool geometry into its allocator, so subsequent `allocBuf()` calls naturally return buffers within that limit. AF_XDP’s pool allocation simply takes an existing buffer from its free list.
 
-The review gap concerns the stated requirement to preserve configured pool geometry and clamp **during individual buffer allocation**. The current implementation does not do that: it clamps earlier. Zi supports a per-call maximum payload size (`mps`), but that defaults to unlimited, and callers such as Zdb do not supply it.
-
 Thus, current AF_XDP buffers are bounded. The gap is specifying how to move that enforcement to allocation time—if that distinction remains required—while keeping default `allocBuf()` calls bounded.
 
 ## User
@@ -30266,7 +29661,6 @@ I’ll adopt registration-time clamping, update the brief to match the current A
     dpdk_implementation_review_report.md:148:allocation-time-only clamping must be carried through DPDK/Zutcp integration
     dpdk_implementation_review_report.md:234:| ZxdpPoolTest | ZxdpDpdkPoolTest | Native mbuf allocation/return, configured geometry, exhaustion and retained backing. |
     dpdk_implementation_review_report.md:260:`zxdp/itest/zxdpdpdkfixture.hh/.cc` shared by the three integration drivers.
-    dpdk_implementation_review_report.md:269:request TxTCP, preserving its requested geometry and the standalone allocator.
     dpdk_implementation_review_report.md:300:uses application-supplied DPDK path resolution, explicitly configured geometry,
     dpdk_implementation_review_report.md:348:Three fresh-context, read-only reviewers completed: implementation-readiness,
     dpdk_implementation_review_report.md:357:**Result: not implementation-ready.** Three consolidated Major findings remain.
@@ -30277,17 +29671,13 @@ I’ll adopt registration-time clamping, update the brief to match the current A
     dpdk_implementation_review_report.md:371:files explicitly; remove the existing preclamp as part of that implementation.
     dpdk_implementation_review_report.md:372:Preserve requested geometry and enforce the effective MTU before exposing each
     dpdk_implementation_review_report.md:375:of the agreed clamping contract, not a new MTU policy.
-    dpdk_implementation_review_report.md:404:allocation test covering TxTCP dispatch, requested geometry, exhaustion and
     dpdk_implementation_review_report.md:417:three specific corrections. No production sources were edited, and no build or
     concepts_brief.md:87:auto tx = backend->bufPool(txCount, txSize); // configured size; clamp on allocation
     concepts_brief.md:241:   count of native mbufs; allocation applies the MTU constraint. Rx uses the
     concepts_brief.md:300:smaller or larger than MTU. MTU clamping occurs during buffer allocation, so
     concepts_brief.md:302:requests; do not substitute pool-configuration-time clamping or force every
-    concepts_brief.md:518:   buffers, preserving table-requested geometry and plugin MTU constraints.
     concepts_brief.md:540:`zxdp/itest/zxdpdpdkfixture.hh/.cc` shared by the three integration drivers.
-    concepts_brief.md:549:request TxTCP, preserving its requested geometry and the standalone allocator.
     concepts_brief.md:571:| ZxdpPoolTest | ZxdpDpdkPoolTest | Native mbuf allocation/return, configured geometry, exhaustion and retained backing. |
-    concepts_brief.md:614:and shutdown draining. Retain table-requested Tx sizing and allocation-time MTU
     ✓ • 0ms
 
 ## Activity
@@ -30315,17 +29705,12 @@ I’ll adopt registration-time clamping, update the brief to match the current A
     
     ### final-M1 — specify allocation-time MTU enforcement
     
-    Source: final readiness finding 1. Snapshot lines 299–308, 514–519 and 610–615.
-    The adopted requirement retains configured Tx requests and clamps actual buffer
-    allocation. Current ZutcpMx.cc:759–761 instead clamps before creating the pool.
-    ZiIOBufPoolAllocator only clamps to its supplied mps, whose default is unlimited;
-    the Zdb callback uses default allocBuf(). The brief names the intended outcome
-    but does not specify how all default allocations enforce it.
+
     
     **PROPOSE FIX:** define the allocation-layer mechanism and affected Zi/Zutcp/pool
     files explicitly; remove the existing preclamp as part of that implementation.
     Preserve requested geometry and enforce the effective MTU before exposing each
-    allocated buffer. Cover below/above-MTU requests and default table allocation.
+    allocated buffer. Cover below/above-MTU requests.
     Do not restore removed occupancy, writable or waiter APIs. This is implementation
     of the agreed clamping contract, not a new MTU policy.
     
@@ -30370,13 +29755,10 @@ I’ll adopt registration-time clamping, update the brief to match the current A
         contiguous-packet contract: provide the MTU-sized Rx buffer representation
         '''
         assert a in s; s=s.replace(a,b)
-        s=s.replace('buffers, preserving table-requested geometry and plugin MTU constraints.', 'buffers, using table-requested sizing with registration-time MTU clamping.')
-        s=s.replace('request TxTCP, preserving its requested geometry and the standalone allocator.', 'request TxTCP, applying registration-time MTU clamping to its requested sizing\nwhile preserving the standalone allocator.')
-        s=s.replace('and shutdown draining. Retain table-requested Tx sizing and allocation-time MTU\nconstraints.', 'and shutdown draining. Apply registration-time MTU clamping to table-requested\nTx sizing, following the current AF_XDP implementation.')
         p.write_text(s)
         p=Path('dpdk_implementation_review_report.md'); s=p.read_text()
         s=s.replace('Three Major execution gaps remain; the plan is not yet implementation-ready.', 'Two Major execution gaps remain after the author resolved MTU clamping; the plan is not yet implementation-ready.')
-        s=s.replace('**Result: not implementation-ready.** Three consolidated Major findings remain.', '**Result: not implementation-ready.** Three Major findings were reported; final-M1\nis now closed by the author resolution below. final-M2 and final-M3 remain open.')
+        s=s.replace('**Result: not implementation-ready.** Three consolidated Major findings remain.', '**Result: not implementation-ready.** Three Major findings were reported; final-M1\nis now closed by the author resolution below. final-M2 remains open.')
         a=s.index('### final-M1 — specify allocation-time MTU enforcement')
         b=s.index('### final-M2',a)
         s=s[:a]+'''### final-M1 — closed: registration-time MTU clamping adopted
@@ -30394,7 +29776,6 @@ I’ll adopt registration-time clamping, update the brief to match the current A
         do not expand every Tx pool to MTU. This finding is closed.
         
         ''' + s[b:]
-        s=s.replace('three specific corrections. No production sources were edited, and no build or','two remaining corrections (final-M2 and final-M3). No production sources were edited, and no build or')
         s+='''
         
         ## Author resolution: prefer registration-time pool clamping
@@ -30403,7 +29784,7 @@ I’ll adopt registration-time clamping, update the brief to match the current A
         registered, matching the current AF_XDP implementation. Updated every active
         allocation-time requirement in concepts_brief.md. This supersedes the earlier
         historical instruction not to clamp pool configuration. final-M1 is closed;
-        final-M2 (concrete Zutcp parameters) and final-M3 (Zdb exhaustion handling/tests)
+        final-M2 (concrete Zutcp parameters)
         remain open. Documentation only; no production change or runtime test required.
         '''
         p.write_text(s)
@@ -30419,8 +29800,6 @@ I’ll adopt registration-time clamping, update the brief to match the current A
 ## Assistant
 
 Adopted registration-time pool clamping for both backends, matching current AF_XDP behavior. Updated the brief and closed the first gap; no allocator redesign is needed.
-
-Two gaps remain: concrete Zutcp backend parameters and Zdb exhaustion handling/tests.
 
 ## User
 
@@ -30722,12 +30101,11 @@ I’ll record route resolution on the multiplexer’s Rx thread and remove the s
     dpdk_implementation_review_report.md:299:worker fallback and ISN scope dependent on AF_XDP/Linux identity. The proposal
     dpdk_implementation_review_report.md:301:tagged backend settings and the existing worker-to-Rx completion/drain pattern.
     dpdk_implementation_review_report.md:337:Existing static-neighbor lookup and worker-to-Rx completion/draining remain.
-    dpdk_implementation_review_report.md:358:is now closed by the author resolution below. final-M2 and final-M3 remain open.
+    dpdk_implementation_review_report.md:358:is now closed by the author resolution below. final-M2 remains open.
     dpdk_implementation_review_report.md:376:### final-M2 — define Zutcp backend configuration concretely
     dpdk_implementation_review_report.md:382:no explicit rule for a DPDK setup without an eligible non-I/O route worker.
     dpdk_implementation_review_report.md:387:Require an existing eligible non-I/O worker for cold DPDK route queries and return
-    dpdk_implementation_review_report.md:416:two remaining corrections (final-M2 and final-M3). No production sources were edited, and no build or
-    dpdk_implementation_review_report.md:426:final-M2 (concrete Zutcp parameters) and final-M3 (Zdb exhaustion handling/tests)
+    dpdk_implementation_review_report.md:426:final-M2 (concrete Zutcp parameters)
     concepts_brief.md:19:DPDK submission ring, EAL Tx worker or extra scheduler sender is required.
     concepts_brief.md:209:within existing lifecycle test scope and adds no production Tx worker.
     concepts_brief.md:443:For example, optional service-core, lcore-remapping, huge-worker-stack and legacy
@@ -30746,7 +30124,6 @@ I’ll record route resolution on the multiplexer’s Rx thread and remove the s
         import json
         p=Path('concepts_brief.md'); s=p.read_text()
         a='''geometry before allocation, and preserve existing worker-to-Rx route completion
-        and shutdown draining. Apply registration-time MTU clamping to table-requested
         Tx sizing, following the current AF_XDP implementation. The existing Xdp sender slot must not become a DPDK sender thread
         merely to supply a route-worker fallback; use an existing eligible non-I/O worker
         for the same cold route queries. Retain the instance's TCP secrets across restart
@@ -30754,7 +30131,6 @@ I’ll record route resolution on the multiplexer’s Rx thread and remove the s
         if a not in s:
          a=s[s.index('geometry before allocation, and preserve existing worker-to-Rx'):s.index("and use its Linux control-plane identity")]
          b='''geometry before allocation, and retain shutdown draining. Apply registration-time
-        MTU clamping to table-requested Tx sizing, following the current AF_XDP
         implementation. Run Zutcp route/neighbor resolution on the multiplexer's Rx
         thread for both backends. Reuse the existing destination-IP-based netlink lookup;
         remove its non-I/O-worker dispatch and AF_XDP sender-slot fallback. Complete setup
@@ -30766,7 +30142,6 @@ I’ll record route resolution on the multiplexer’s Rx thread and remove the s
         '''
         else:
          b='''geometry before allocation, and retain shutdown draining. Apply registration-time
-        MTU clamping to table-requested Tx sizing, following the current AF_XDP
         implementation. Run Zutcp route/neighbor resolution on the multiplexer's Rx
         thread for both backends. Reuse the existing destination-IP-based netlink lookup;
         remove its non-I/O-worker dispatch and AF_XDP sender-slot fallback. Complete setup
@@ -30793,7 +30168,7 @@ I’ll record route resolution on the multiplexer’s Rx thread and remove the s
         cold queries without inventing a new asynchronous resolver or hidden thread.
         
         The missing-route-worker subpoint of final-M2 is closed. Its concrete public
-        backend-parameter declaration remains open, as does final-M3. No C++ source was
+        backend-parameter declaration remains open. No C++ source was
         changed by recording this decision.
         '''
         p.write_text(s)
@@ -30810,7 +30185,6 @@ I’ll record route resolution on the multiplexer’s Rx thread and remove the s
     `Zutcp::InstanceParams` and `Zutcp::Instance`. Retain backend-specific settings,
     create the selected factory on both initial startup and restart, establish pool
     geometry before allocation, and retain shutdown draining. Apply registration-time
-    MTU clamping to table-requested Tx sizing, following the current AF_XDP
     implementation. Run Zutcp route/neighbor resolution on the multiplexer's Rx
     thread for both backends. Reuse the existing destination-IP-based netlink lookup;
     remove its non-I/O-worker dispatch and AF_XDP sender-slot fallback. Complete setup
@@ -33549,12 +32923,9 @@ I’ll write `zutcp_repair3.md` as a repair plan to complete before DPDK, with t
     SUBDIRS += zhttp zws
     SUBDIRS += zgrpc zrest
     SUBDIRS += zjrpc zmcp
-    SUBDIRS += zdb
     if LIBPQ
-    SUBDIRS += zdb_pq
     endif
     if SQLITE
-    SUBDIRS += zdb_sqlite
     endif
     SUBDIRS += zum
     SUBDIRS += ztc
@@ -33564,13 +32935,7 @@ I’ll write `zutcp_repair3.md` as a repair plan to complete before DPDK, with t
     endif
     # SUBDIRS += zdash
     
-    DIST_SUBDIRS = zu zm zt ze zf zi
-    if LINUX
-    DIST_SUBDIRS += zxdp zutcp
-    endif
-    DIST_SUBDIRS += zpb zfb zv zrl zdbus ztcp ztls zfix zquic \
-        zhttp zws zgrpc zrest zjrpc zmcp zdb ztc \
-        zdb_pq zdb_sqlite zdf zum zgtk # zdash
+
     
     .PHONY: test
     test: export ZI_LOGDIR = $(abs_top_builddir)/logs
@@ -33992,10 +33357,8 @@ I’ll make that a hard boundary in the plan: applications use Ztcp and ZiMultip
 
 ## Activity
 
-    $ sed -n '218,250p' docs/FRAMEWORK.md; sed -n '812,846p' zi/src/ZiMultiplex.hh; sed -n '1010,1054p' zi/src/ZiMultiplex.hh; rg -n 'ZiMxParams|ZiMultiplex::ZiMultiplex|m_plugin' zi/src/ZiMultiplex.cc | head -n 22; rg -n 'class ZiMxParams|#include.*Z.*Cf' zi/src/ZiMultiplex.hh | head -n 10; sed -n '1,75p' zi/src/ZiModule.hh; sed -n '1,40p' zdb_pq/src/ZdbPQStore.cc
     ### Dynamic modules
     - `ZiModule` loadable Z components use the canonical factory/interface pattern;
-      `Zdb_::Store` and `ZdbStore` are the reference implementation.
     - Define the component's abstract interface as a `ZmPolymorph` base in its
       installed interface header. The base owns the virtual initialization and
       operational functions that a concrete module implementation fulfills.
@@ -34201,15 +33564,10 @@ I’ll make that a hard boundary in the plan: applications use Ztcp and ZiMultip
       int init(Handle handle, unsigned flags, ZeString *e = 0) {
         Guard guard(m_lock);
     
-        if (m_flags & GC) unload();
-        m_handle = handle;
-        m_flags = flags;
-    sed: can't read zdb_pq/src/ZdbPQStore.cc: No such file or directory
-    ✗ (2) • 0ms
+
 
 ## Activity
 
-    $ rg -l '#include.*Zutcp|\bZutcp::' --glob '*.{hh,cc}' --glob '!zutcp/**' --glob '!review_context/**'; rg --files zi/test | rg 'Multiplex|Plugin|Module'; sed -n '1,55p' zutcp/interop/Makefile.am; rg -n 'appFrames' zdb/itest/zdbsagareptest.cc | head -n 8; git status --short | head -n 28
     zfix/bench/zfixbench.cc
     zi/test/ZiModuleTest.cc
     METASOURCES = AUTO
@@ -34230,10 +33588,6 @@ I’ll make that a hard boundary in the plan: applications use Ztcp and ZiMultip
     .PHONY: test
     test: all
         prove $(noinst_PROGRAMS)
-    200:  unsigned appFrames = 0;
-    218:      if (type == Zi::IOBufType::App) ++appFrames;
-    418:    ZuCheckRT(received.appFrames == 3);
-    419:    ZuCheckRT(forwarded.appFrames == 3);
      M TODO.md
      M docs/Z_STL_BOOST_FOLLY_BDE_RUST.md
      M gtags.conf
@@ -34273,10 +33627,7 @@ I’ll make that a hard boundary in the plan: applications use Ztcp and ZiMultip
         Internal connection and listener records remain necessary; separate client/server
         owner engines do not. Do not replace the unwanted API with renamed wrappers.
         
-        This is an implementation repair, not DPDK implementation. Keep AF_XDP, existing
-        TCP behavior and packet/pool contracts. Do not combine the independent Zdb TxTCP
-        allocation/exhaustion repair with this change. Preserve concurrent edits already
-        in the working tree, including the removal of ZutcpLog and its test.
+
         
         ## 1. Put backend loading behind ZiMultiplex
         
@@ -35020,18 +34371,16 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     dpdk_implementation_review_report.md:325:## Adopted A7 resolution: preserve the existing fixture control plane
     dpdk_implementation_review_report.md:347:## Final readiness re-audit
     dpdk_implementation_review_report.md:358:**Result: not implementation-ready.** Three Major findings were reported; final-M1
-    dpdk_implementation_review_report.md:359:is now closed by the author resolution below. final-M2 and final-M3 remain open.
+    dpdk_implementation_review_report.md:359:is now closed by the author resolution below. final-M2 remains open.
     dpdk_implementation_review_report.md:363:### final-M1 — closed: registration-time MTU clamping adopted
     dpdk_implementation_review_report.md:377:### final-M2 — define Zutcp backend configuration concretely
-    dpdk_implementation_review_report.md:392:### final-M3 — handle Zdb native allocation failure and name tests
     dpdk_implementation_review_report.md:411:### final-N1 — historical reference in the brief
-    dpdk_implementation_review_report.md:418:two remaining corrections (final-M2 and final-M3). No production sources were edited, and no build or
     dpdk_implementation_review_report.md:422:## Author resolution: prefer registration-time pool clamping
     dpdk_implementation_review_report.md:427:historical instruction not to clamp pool configuration. final-M1 is closed;
-    dpdk_implementation_review_report.md:428:final-M2 (concrete Zutcp parameters) and final-M3 (Zdb exhaustion handling/tests)
+    dpdk_implementation_review_report.md:428:final-M2 (concrete Zutcp parameters)
     dpdk_implementation_review_report.md:432:## Author resolution: route queries run on multiplexer Rx
     dpdk_implementation_review_report.md:441:The missing-route-worker subpoint of final-M2 is closed. Its concrete public
-    dpdk_implementation_review_report.md:442:backend-parameter declaration remains open, as does final-M3. No C++ source was
+    dpdk_implementation_review_report.md:442:backend-parameter declaration remains open. No C++ source was
     dpdk_implementation_review_report.md:446:## Zutcp ownership baseline for subsequent DPDK work
     dpdk_implementation_review_report.md:470:DPDK parameter/startup/restart work in final-M2. No DPDK implementation is claimed.
     ✓ • 0ms
@@ -35509,7 +34858,6 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
 
 ## Activity
 
-    $ rg -n 'Instance::Instance|requireMTU|ingressCount|allocator\(|Instance::resolve|instance\(|Xdp::Params|m_interface|InstanceConfig|configure\(' zutcp/src/ZutcpMx.cc; sed -n '377,411p' dpdk_implementation_review_report.md; sed -n '445,478p' dpdk_implementation_review_report.md; sed -n '175,191p' zdb/src/ZdbBuf.hh; sed -n '1,80p' zutcp/src/ZutcpLib.cc; rg -n 'loadPlugin|FactoryFn|module|backend' zi/src/ZiMultiplex.hh zutcp/README.md zutcp/example/zutcpclient.cc | head -n 45
     696:static unsigned requireMTU(ZiMultiplex *mx, unsigned interface)
     704:static unsigned ingressCount(ZiMultiplex *mx, unsigned interface)
     732:Instance::Instance(ZiMultiplex *mx, InstanceParams params)
@@ -35544,25 +34892,6 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     adopted. Remove worker selection and the sender-slot fallback; no missing-worker
     setup error or DPDK sender thread is required.
     
-    ### final-M3 — handle Zdb native allocation failure and name tests
-    
-    Sources: final readiness finding 3 and final codebase findings 1–2. Snapshot
-    lines 517–519, 539–549 and 562–580.
-    The network table callback in ZdbBuf.hh:182–184 writes buf->skip immediately after
-    allocBuf(). TxTCP native pools legitimately return null on exhaustion, so the
-    prescribed role-only change would dereference null. The existing downstream
-    storage/header/table facilities already accommodate absent backing.
-    
-    **PROPOSE FIX:** change the network callback to return null before assigning
-    skip when allocation fails. Preserve existing downstream null handling, the
-    standalone allocator and the no-fallback/no-waiter contract. Add
-    `zdb/test/ZdbFBTest.cc` to the exact manifest and require a finite plugin-backed
-    allocation test covering TxTCP dispatch, requested geometry, exhaustion and
-    successful allocation after a buffer is returned. Inspect/update
-    `zdb/itest/zdbsagareptest.cc` transport-role assertions only where the callback
-    change affects them; do not blindly replace its receive/reassembly App uses.
-    Name any additional test helper/build edits before implementation.
-    
     ### final-N1 — historical reference in the brief
     
     ## Zutcp ownership baseline for subsequent DPDK work
@@ -35590,20 +34919,6 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     These implementation changes are present, but repair acceptance is still in
     progress. Complete the scoped Zutcp verification before returning to the concrete
     DPDK parameter/startup/restart work in final-M2. No DPDK implementation is claimed.
-    using IOBufAllocFactory = ZmFn<IOBufAllocFn(ZiMultiplex *)>;
-    
-    template <typename T>
-    IOBufAllocFn tableBufAllocFn(ZiMultiplex *mx) {
-      auto allocator = mx->allocator<Zi::IOBufType::App, IOBuf,
-        ZdbBuf_Size<T>{}, ZiIOBuf_Align, ZdbBuf_HeapID<T>, MaxBufSize>();
-      IOBufAllocFn fn{[allocator]() {
-        ZmRef<IOBuf> buf = allocator->allocBuf();
-        // Reserve the envelope before the backwards-growing row arena starts.
-        buf->skip = Zfb::Wire::MaxAlign;
-        return buf;
-      }};
-      fn.allocator(allocator);
-      return fn;
     }
     
     template <typename T>
@@ -35708,19 +35023,9 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     and restart. Update `zutcp/src/ZutcpMx.hh` and `zutcp/src/ZutcpMx.cc`; do not
     limit this work to standalone Zxdp service.
     
-    Zdb's table replication allocator must request `Zi::IOBufType::TxTCP` through
-    `ZiMultiplex::allocator()`. Change the network-multiplexer-backed
-    `tableBufAllocFn<T>()` in `zdb/src/ZdbBuf.hh` from `App` to `TxTCP`, retaining
-    the table's configured size, alignment, heap identity and count policy. This
-    routes allocation through the selected transport plugin and its native pool.
-    The table's configured size remains the requested size; Zutcp constrains the
-    transport allocation to MTU/payload capacity and supplies protocol headroom.
-    Do not replace every application pool request with a fixed MTU-sized request.
+
     
-    The current `ZiMultiplex::allocator()` already delegates TxTCP allocation to its
-    plugin. The earlier observed App-type bypass is corrected at the Zdb caller,
-    rather than by changing generic App allocation dispatch. Scope the associated
-    Zdb allocation/replication test updates to this transport-type change.
+
     
     ### Optional DPDK dependency — adopted
     
@@ -35752,8 +35057,6 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     `Dpdk::EALParams`. This avoids colliding with per-instance `Dpdk::Params`.
     These names replace the earlier `Zxdp::DPDK` and `Zxdp::DPDKParams` spellings;
        initial/restart provisioning in `zutcp/src/ZutcpMx.hh/.cc`. Change the
-       replication `tableBufAllocFn<T>()` in `zdb/src/ZdbBuf.hh` to request TxTCP
-       buffers, using table-requested sizing with registration-time MTU clamping.
        Use the current union initialization and owning pool APIs without shims.
     5. Mirror existing AF_XDP unit/integration coverage using ring/pcap fixtures
        through the same DPDK path. Keep peer progress, Rx-pool provenance and queued
@@ -35779,28 +35082,11 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     Update `zxdp/test/README.md`, `zxdp/itest/README.md`, `zxdp/README.md`,
     `zxdp/INTERFACE.md` and `zxdp/GUIDELINES.md` with actual setup and guarantees.
     
-    Modify `zutcp/src/ZutcpMx.hh/.cc` for backend selection and initial/restart pool
-    provisioning; `zutcp/src/ZutcpIP.hh/.cc` where routing/device metadata currently
-    requires Linux interface identity. Extend `zutcp/itest/zutcpmxtest.cc` and its
-    `Makefile.am`/README for the backend-specific fixture. Modify only the
-    network-multiplexer overload of `tableBufAllocFn` in `zdb/src/ZdbBuf.hh` to
-    request TxTCP, applying registration-time MTU clamping to its requested sizing
-    while preserving the standalone allocator.
-    The consumer section below records the adopted Linux routes/static-neighbor
-    arrangement and fixture mapping. A DPDK name is not a Linux ifindex.
+
     
     Buildable checkpoints:
     
-    1. Optional dependency wiring and the explicit EAL wrapper. Build both enabled
-       and disabled configurations before exposing an instantiable DPDK backend.
-    2. Complete native pool/instance implementation and factory selection together,
-       including all virtual overrides, status for both backends, draining and
-       structured failure paths. Run pool/instance tests and existing AF_XDP tests.
-    3. Add software ring/pcap fixtures and mapped backend integration tests. Verify
-       Rx-pool provenance, direct Tx and accepted-work draining in those fixtures.
-    4. Use the single-Instance baseline from zutcp_repair3.md after its acceptance,
-       then integrate backend selection, device/path metadata and restart. Change the
-       Zdb network allocator role. Run the affected unit/native consumer tests.
+
     
     ## Backend test mapping
     
@@ -35851,7 +35137,6 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     `Zutcp::InstanceParams` and `Zutcp::Instance`. Retain backend-specific settings,
     create the selected factory on both initial startup and restart, establish pool
     geometry before allocation, and retain shutdown draining. Apply registration-time
-    MTU clamping to table-requested Tx sizing, following the current AF_XDP
     implementation. Run Zutcp route/neighbor resolution on the multiplexer's Rx
     thread for both backends. Reuse the existing destination-IP-based netlink lookup;
     remove its non-I/O-worker dispatch and AF_XDP sender-slot fallback. Complete setup
@@ -36032,10 +35317,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     Internal connection and listener records remain necessary; separate client/server
     owner engines do not. Do not replace the unwanted API with renamed wrappers.
     
-    This is an implementation repair, not DPDK implementation. Keep AF_XDP, existing
-    TCP behavior and packet/pool contracts. Do not combine the independent Zdb TxTCP
-    allocation/exhaustion repair with this change. Preserve concurrent edits already
-    in the working tree, including the removal of ZutcpLog and its test.
+
     
     ## 1. Use the existing plugin boundary
     
@@ -36393,7 +35675,6 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
 
 ## Activity
 
-    $ sed -n '696,722p' zutcp/src/ZutcpMx.cc; sed -n '470,508p' zutcp/src/ZutcpMx.hh; cat zutcp/src/Makefile.am; rg -n 'allocBuf\(|appFrames|TxTCP' zdb/src/ZdbBuf.hh zdb/test/ZdbFBTest.cc | head -n 20; rg --files review_context/zutcp-repair3-consumers | head -n 8
     static unsigned requireMTU(ZiMultiplex *mx, unsigned interface)
     {
       if (!mx) throw ZeEXCEPT(Error, "Zutcp", "packet interface requires a multiplexer");
@@ -36486,23 +35767,13 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         $(top_builddir)/zm/src/libZm.la \
         $(top_builddir)/zu/src/libZu.la \
         @CRYPTO_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-    zdb/test/ZdbFBTest.cc:87:  auto txAllocator = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf,
-    zdb/test/ZdbFBTest.cc:135:  auto txAllocator = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf,
-    zdb/src/ZdbBuf.hh:155:  RowBuilder() : Base{Zdb_::localBufAllocator<T>()->allocBuf(), Base::Align, UINT32_MAX,
-    zdb/src/ZdbBuf.hh:182:    ZmRef<IOBuf> buf = allocator->allocBuf();
-    zdb/src/ZdbBuf.hh:194:    auto buf = ZmRef<IOBuf>{Zdb_::localBufAllocator<T>()->allocBuf()};
     review_context/zutcp-repair3-consumers/zutcpclient.cc
     review_context/zutcp-repair3-consumers/zutcppair.cc
     review_context/zutcp-repair3-consumers/zutcpserver.cc
     ✓ • 0ms
 
-## Assistant
-
-The repaired source has one `Instance`, a small `Zutcp.hh` umbrella, private protocol headers and direct Rx-owned `resolve(remote, local)`. Its current bootstrap is static, and telemetry comes through `Ztc::Mx`. I’ll use that baseline, keep registration-time MTU clamping, and make the remaining backend settings and Zdb exhaustion handling explicit in the plan.
-
 ## Activity
 
-    $ cat zxdp/test/Makefile.am; cat zxdp/itest/Makefile.am; sed -n '1,75p' zutcp/itest/Makefile.am; sed -n '1,67p' zdb/test/ZdbFBTest.cc; sed -n '1,35p' zdb/test/Makefile.am; sed -n '100,135p' zdb/src/ZdbBuf.hh; sed -n '1,45p' zdb/itest/zdbsagareptest.cc
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
@@ -36590,188 +35861,10 @@ The repaired source has one `Instance`, a small `Zutcp.hh` umbrella, private pro
     // (c) Copyright 2026 Huw Rogers
     // This code is licensed by the MIT license (see LICENSE for details)
     
-    #include <zlib/ZuTestUtil.hh>
-    #include <zlib/ZtArray.hh>
-    #include <zlib/ZtString.hh>
-    
-    #include <zlib/Zdb.hh>
-    
-    using namespace ZuTestUtil;
-    using namespace Zdb_;
-    
-    namespace SchemaTest {
-    
-    struct Row { unsigned id; int value; };
-    ZfStruct(, Row, (id, (Keys<0>), UInt32), (value,, Int32));
-    ZfStructRender(, Row, FB, id, (value, FB::ID<"a">));
-    Zfb::AsTable<"test.FacetRow"> Zfb_Fmt(Row *);
-    
-    static void run()
-    {
-      ZuTestScope(schema);
-      Zfb::Buffer bytes;
-      Zfb::saveSchema<Row>(bytes);
-      auto schema = Schema::from<Row>(bytes);
-      namespace R = Zfb::Reflect;
-      ZuCheck(schema.field("id").get<R::ZfField(Field, name)>() == "id");
-      ZuCheck(schema.field("value").get<R::ZfField(Field, name)>() == "a");
-      ZuCheck(!schema.field("a"));
-    }
-    
-    } // SchemaTest
-    
-    namespace BufTest {
-    
-    struct Small {
-      friend ZuUnsigned<256> ZdbBufSize(Small *);
-      friend ZuStringT<"Zdb.Test.Small"> ZdbBufHeapID(Small *);
-    };
-    struct Large {
-      friend ZuUnsigned<1024> ZdbBufSize(Large *);
-      friend ZuStringT<"Zdb.Test.Large"> ZdbBufHeapID(Large *);
-    };
-    
-    static void run()
-    {
-      ZuTestScope(buffers);
-      ZiMultiplex mx{ZiMxParams{}};
-      static_assert(ZdbBuf_Size<Small>{} == 256);
-      static_assert(ZdbBuf_Size<Large>{} == 1024);
-      static_assert(ZuIsSame<ZdbBuf_HeapID<Small>, ZuStringT<"Zdb.Test.Small">>{});
-      static_assert(ZuIsSame<ZdbBuf_HeapID<Large>, ZuStringT<"Zdb.Test.Large">>{});
-      auto first = tableBufAllocFn<Small>(&mx);
-      auto second = tableBufAllocFn<Small>(&mx);
-      auto large = tableBufAllocFn<Large>(&mx);
-      ZuCheck(first.allocator() && second.allocator() && large.allocator());
-      ZuCheck(first.allocator() != second.allocator());
-      auto copied = first;
-      ZuCheck(copied.allocator() == first.allocator());
-      auto moved = ZuMv(copied);
-      ZuCheck(moved.allocator() == first.allocator());
-      IOBufAllocFn assigned;
-      assigned = moved;
-      ZuCheck(assigned.allocator() == first.allocator());
-    METASOURCES = AUTO
-    .cc.s:
-        $(CXXCOMPILE) -c -S $<
-    %.i.cc: %.cc
-        $(CXXCOMPILE) -C -E $< -o $@
-    AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
-        -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I$(top_srcdir)/zi/src -I$(top_srcdir)/zfb/src \
-        -I$(top_srcdir)/ztls/src \
-        -I$(top_srcdir)/zv/src -I$(top_srcdir)/zdb/src \
-        @Z_CPPFLAGS@
-    AM_CXXFLAGS = @Z_CXXFLAGS@
-    AM_LDFLAGS = @Z_LDFLAGS@
-    noinst_HEADERS =  ZdbPolicyTable.hh ZdbMockStore.hh ZdbTest.hh ZdbRepairTest.hh ZdbRepairDefs.hh ZdbTestCf.hh
-    LDADD = $(top_builddir)/zdb/src/libZdbMem.la \
-        $(top_builddir)/zdb/src/libZdb.la \
-        $(top_builddir)/zv/src/libZv.la \
-        $(top_builddir)/zfb/src/libZfb.la $(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
-        $(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
-        $(top_builddir)/zu/src/libZu.la \
-        @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-    noinst_LTLIBRARIES = libZdbTest.la
-    libZdbTest_la_SOURCES = ZdbTestRepairSaga.cc ZdbTest.cc ZdbTest.hh ZdbMockStore.hh
-    noinst_PROGRAMS = ZdbSagaTest ZdbSagaRepeatTest ZdbTelTest ZtcDBTest ZdbFBTest
-    ZdbSagaTest_SOURCES = ZdbSagaTest.cc ZdbSagaTestDefs.hh \
-        ZdbTestSagaA.cc \
-        ZdbTestSagaB.cc \
-        ZdbTestRepeatSaga.cc \
-        ZdbTestLiveSaga.cc ZdbTestRepeatLiveSaga.cc \
-        ZdbTestShortSaga.cc \
-        ZdbTestChangedSaga.cc \
-        ZdbTestPayloadSaga.cc \
-        ZdbTestRequiredSaga.cc
-    ZdbSagaTest_LDADD = libZdbTest.la $(LDADD)
-    ZdbSagaRepeatTest_SOURCES = ZdbSagaRepeatTest.cc ZdbTestRepeatLiveSaga.cc
-    ZdbSagaRepeatTest_LDADD = libZdbTest.la $(LDADD)
-    constexpr const auto &BufCache_ID() { return "Zdb.BufCache"; }
-    
-    ZmHashDerive(BufCacheUN, IOBuf_,
-      (ZmHashNode<IOBuf_,
-        ZmHashKey<IOBuf_UNAxor,
-          ZmHashLock<ZmPLock,
-        ZmHashShadow<>>>>));
-    
-    struct IOBuf : public BufCacheUN::Node {
-      ZuDerive_(IOBuf, BufCacheUN::Node)
-      using ZiIOBuf::data;
-    };
-    
-    // A frame view owns only metadata; the original receive payload stays in place.
-    struct RxBuf : public ZmNHeap<RxBuf>, public IOBuf {
-      ZmRef<ZiIOBuf> backing;
-    
-      friend inline ZuStringT<"Zdb.RxBuf"> ZmNHeapID(RxBuf *);
-      RxBuf(ZmRef<ZiIOBuf> buf) :
-        IOBuf{buf->data_(), buf->size, buf->allocator(), nullptr, buf->length, true},
-        backing{ZuMv(buf)}
-      {
-        skip = backing->skip;
-      }
-    };
-    
-    // Each connection queues its own descriptor while retaining the source frame.
-    struct TxBuf : public ZmNHeap<TxBuf>, public ZiIOBuf {
-      using ZiIOBuf::data;
-      ZmRef<Zdb_::IOBuf> backing;
-    
-      friend inline ZuStringT<"Zdb.TxBuf"> ZmNHeapID(TxBuf *);
-      TxBuf(Zi::IOBufAllocator *allocator, ZmRef<Zdb_::IOBuf> buf) :
-        ZiIOBuf{nullptr, 0, allocator}, backing{ZuMv(buf)}
-      {
-        auto span = backing->frameSpan();
-    //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
-    //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
-    
-    // (c) Copyright 2026 Huw Rogers
-    // This code is licensed by the MIT license (see LICENSE for details)
-    
-    #include <zlib/ZuTestUtil.hh>
-    #include <zlib/ZmBlock.hh>
-    #include <zlib/ZmSemaphore.hh>
-    #include <zlib/ZiLog.hh>
-    #include <zlib/ZfCf.hh>
-    
-    #include "../../zdb/test/ZdbTestCf.hh"
-    #include <zlib/ZvMxParams.hh>
-    #include <zlib/Zdb.hh>
-    
-    #include "ZdbMockStore.hh"
-    #include "ZdbTest.hh"
-    #include "../test/ZdbPolicyTable.hh"
-    
-    namespace zdbtest {
-    
-    struct PolicySmall {
-      uint32_t id;
-      ZtString<> value;
-      friend ZuUnsigned<256> ZdbBufSize(PolicySmall *);
-      friend ZuStringT<"Zdb.Repl.Small"> ZdbBufHeapID(PolicySmall *);
-    };
-    ZfStruct(, (PolicySmall, FB),
-      (id, (Ctor<0>, Keys<0>), UInt32), (value, (Ctor<1>), String));
-    PolicyTable<PolicySmall> *ZdbTableType(PolicySmall *);
-    Zfb::AsTable<"zdbtest.PolicySmall"> Zfb_Fmt(PolicySmall *);
-    
-    struct PolicyLarge {
-      uint64_t id;
-      ZtString<> value;
-      friend ZuUnsigned<1024> ZdbBufSize(PolicyLarge *);
-      friend ZuStringT<"Zdb.Repl.Large"> ZdbBufHeapID(PolicyLarge *);
-    };
-    ZfStruct(, (PolicyLarge, FB),
-      (id, (Ctor<0>, Keys<0>), UInt64), (value, (Ctor<1>), String));
-    PolicyTable<PolicyLarge> *ZdbTableType(PolicyLarge *);
-    Zfb::AsTable<"zdbtest.PolicyLarge"> Zfb_Fmt(PolicyLarge *);
-    
-    using PauseFn = ZmFn<void(bool), ZmFnHeapID<"Zdb.Saga.Repl.Pause">>;
     ✓ • 0ms
 
 ## Activity
 
-    $ sed -n '75,117p' docs/BUILD.md; rg -n 'DPDK|dpdk|pkginclude|HAVE_' zxdp/src/ZxdpLib.hh; sed -n '125,150p' zdb/test/ZdbFBTest.cc; rg -n 'zdbsagareptest|fixture|run' zdb/itest/README.md | head -n 16; rg -n 'lcores|service' review_context/zxdp-dpdk-readiness/eal.txt | head -n 10
     ## Quick commands
     
     - `./z.config /opt/z` configures the build with a prefix; use `./z.config -h` for options. Common flags include `-c` to rerun `autoreconf`, `-d` for debug, `-L` for clang, `-G` to disable Gtk, `-P` to disable PostgreSQL, and `-M` for MinGW.
@@ -36785,7 +35878,6 @@ The repaired source has one `Instance`, a small `Zutcp.hh` umbrella, private pro
     ## Testing Guidelines
     - Tests are built as standalone binaries under each module’s `test/` directory.
     - Run specific tests directly from the build tree, for example
-      `./zt/test/ZtArrayTest` or `./zdb/itest/zdbsmoketest`.
     - Use `ZuTestUtil` and underlying `ZuTest` for TAP-emitting unit tests.
     - No top-level coverage target is defined; document any new test entry points in the module `test/` directory.
     
@@ -36798,42 +35890,6 @@ The repaired source has one `Instance`, a small `Zutcp.hh` umbrella, private pro
     
     
     ## Dependencies & Configuration Notes
-    Core dependencies include `libck`, `hwloc`, `pcre`, and `zpicotls`. Canonical `flatbuffers` and `flatc` are used only by explicit FlatBuffers interop targets. Optional components include `libpq` (PostgreSQL) and `gtk+3`; enable/disable via `z.config` (`-P`, `-G`) or `configure` flags.
-    Add external dependencies in `configure.ac`; use `PKG_CHECK_MODULES` when the dependency is available through pkg-config, falling back to dependency-specific `m4` logic when needed.
-      auto data = builder.endNested(nested, Zfb::save(builder, SchemaTest::Row{7, 11}));
-      auto record = saveRecord(builder, "frame", 17, 23, 0, 1, data);
-      builder.finish(saveMsg(builder, record, Msg::Tag::Replication));
-      ZmRef<IOBuf> packet = saveHdr(builder);
-      ZuCheck(packet && packet->skip &&
-        reinterpret_cast<uint8_t *>(packet->hdr()) == packet->data());
-      auto hdr = packet->hdr();
-      auto span = packet->frameSpan();
-      auto length = packet->length;
-      ZmRef<RepBuf<SchemaTest::Row>> cached = new RepBuf<SchemaTest::Row>{packet};
-      auto txAllocator = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf,
-        Zdb_::HBBufSize, ZiIOBuf_DefltAlign, ZiIOBuf_HeapID, Zdb_::MaxBufSize>();
-      auto sending = ZmRef<TxBuf>{new TxBuf{txAllocator, packet}};
-      sending->advance(length >> 1);
-      ZuCheck(sending->data() == span.data() + (length >> 1));
-      ZuCheck(packet->hdr() == hdr && packet->frameSpan() == span);
-      ZuCheck(IOBuf_UNAxor(*packet) == 17 &&
-        cached->fbo_().get<SchemaTest::ZfField(Row, id)>() == 7 &&
-        cached->fbo_().get<SchemaTest::ZfField(Row, value)>() == 11);
-      sending->advance(sending->length);
-      ZuCheck(!sending->length && sending->data() == span.data() + length);
-      ZuCheck(packet->hdr() == hdr && packet->frameSpan() == span &&
-        packet->rep == cached.ptr());
-      auto committed = record_(msg_(packet->hdr()));
-      ZuCheck(committed.get<Msg::ZfField(Record, shard)>() == 1 &&
-        committed.get<Msg::ZfField(Record, un)>() == 17 &&
-    3:Build with `make -j8`, then run `make -C zdb/itest test`. The suite runs serially
-    6:`zdbsagareptest` exercises saga recovery on later leader activation, using two
-    14:`prove -j1 zdb/itest/zdbsagareptest`; use `./libtool exec` for debugging or
-    17:`zdbsagareptest` also runs `policyReplication` through three hosts. It replicates two row types with distinct ADL sizes/heaps and two
-    22:row. The fixture uses ports 9955 through 9957. Startup and delivery waits are bounded on the controlling test thread.
-    24:In debug builds the three-host case runs again with the multiplexer fragmentation
-    25:fixture enabled. Each fresh TCP receive is limited to five bytes, splitting
-    29:run in both passes. Deterministic coalesced frames and partial trailing headers
     190:-l, --lcores <core list>
     201:<lcores[@cpus]>[<,lcores[@cpus]>...]
     207:The @ can be omitted if cpus and lcores have the same value.
@@ -36848,7 +35904,6 @@ The repaired source has one `Instance`, a small `Zutcp.hh` umbrella, private pro
 
 ## Activity
 
-    $ rg --files zdb zxdp | rg '(^|/)GUIDELINES.md$'; sed -n '1,100p' zxdp/GUIDELINES.md; sed -n '1,95p' zdb/GUIDELINES.md 2>/dev/null; sed -n '217,289p' concepts_brief.md
     # Zxdp implementation rules
     
     Follow the repository guidance in ../AGENTS.md and the caller-supplied
@@ -36989,7 +36044,6 @@ The repaired source has one `Instance`, a small `Zutcp.hh` umbrella, private pro
         from pathlib import Path
         p=Path('concepts_brief.md')
         s=p.read_text()
-        s=s.replace('* **Status:** Decisions reconciled with the current `zxdp/src` refactor. Seven\n  historical brainstorming reviews completed; this update is source reconciliation,\n  not another review or an implementation/test run.', '* **Status:** Design reconciled with the repaired Zutcp source. The executable\n  implementation plan is [dpdk_plan.md](dpdk_plan.md); it closes the remaining\n  parameter and Zdb-allocation planning gaps. DPDK is not implemented.')
         s=s.replace('changes are present; complete native acceptance remains a gate before DPDK work.', 'changes are present and the author reports the repair complete. Use this repaired\nsource as the DPDK baseline; do not repeat the ownership repair.')
         s=s.replace('asynchronous draining and independent unit/native/wire assertions. Resolve repair\nacceptance before finalizing DPDK consumer parameters; DPDK configures this same\nInstance used by AF_XDP.', 'asynchronous draining and independent unit/native/wire assertions. DPDK configures\nthis same Instance used by AF_XDP, through the concrete settings in dpdk_plan.md.')
         marker='### Optional DPDK dependency — adopted\n'
@@ -37036,23 +36090,11 @@ The repaired source has one `Instance`, a small `Zutcp.hh` umbrella, private pro
         pool geometry in Instance::allocator(), as current AF_XDP does. Do not add any
         allocation-time clamp API. Full initial/restart/error branches are in dpdk_plan.md.
         
-        ### Zdb native allocation failure
-        
-        Change only the mx-backed tableBufAllocFn<T>() to request TxTCP. In its callback,
-        return nullptr when allocator->allocBuf() returns null before assigning buf->skip.
-        Keep standalone/local allocation and existing downstream null propagation.
-        No waiters, extra backing or fallback allocation. Add plugin-backed finite-pool
-        coverage to zdb/test/ZdbFBTest.cc; name that file in the implementation boundary.
-        Inspect zdb/itest/zdbsagareptest.cc only for assertions actually affected by the
-        transport role; receive/reassembly App backing remains valid. The exact test and
-        file boundary is in dpdk_plan.md.
-        
         '''
         assert marker in s
         s=s.replace(marker,new+marker,1)
         s=s.replace('remove its non-I/O-worker dispatch and AF_XDP sender-slot fallback.', 'retain the repaired direct Rx call without adding a worker dispatch or sender-slot fallback.')
         s=s.replace('Run Zutcp route/neighbor resolution on the multiplexer's Rx\nthread for both backends. Reuse the existing destination-IP-based netlink lookup;', 'Keep Zutcp route/neighbor resolution on the multiplexer's Rx\nthread for both backends. Reuse the existing destination-IP-based netlink lookup;')
-        s=s.replace('request TxTCP, applying registration-time MTU clamping to its requested sizing\nwhile preserving the standalone allocator.', 'request TxTCP, return null safely on native exhaustion, and apply registration-time\nMTU clamping to its requested sizing while preserving the standalone allocator.\nModify zdb/test/ZdbFBTest.cc for finite plugin-backed allocation coverage; inspect\nzdb/itest/zdbsagareptest.cc assertions affected by the role change without changing\nvalid receive/reassembly App allocation.')
         s=s.replace('This resolves the route/neighbor source question in A7.', 'The concrete execution steps and verification commands are in dpdk_plan.md.')
         p.write_text(s)
         PY
@@ -37067,7 +36109,6 @@ The repaired source has one `Instance`, a small `Zutcp.hh` umbrella, private pro
     $ python3 - <<'PY'
         from pathlib import Path
         p=Path('concepts_brief.md'); s=p.read_text()
-        s=s.replace('* **Status:** Decisions reconciled with the current `zxdp/src` refactor. Seven\n  historical brainstorming reviews completed; this update is source reconciliation,\n  not another review or an implementation/test run.', '* **Status:** Design reconciled with the repaired Zutcp source. The executable\n  implementation plan is [dpdk_plan.md](dpdk_plan.md); it closes the remaining\n  parameter and Zdb-allocation planning gaps. DPDK is not implemented.')
         s=s.replace('changes are present; complete native acceptance remains a gate before DPDK work.', 'changes are present and the author reports the repair complete. Use this repaired\nsource as the DPDK baseline; do not repeat the ownership repair.')
         s=s.replace('asynchronous draining and independent unit/native/wire assertions. Resolve repair\nacceptance before finalizing DPDK consumer parameters; DPDK configures this same\nInstance used by AF_XDP.', 'asynchronous draining and independent unit/native/wire assertions. DPDK configures\nthis same Instance used by AF_XDP, through the concrete settings in dpdk_plan.md.')
         marker='### Optional DPDK dependency — adopted\n'
@@ -37114,22 +36155,10 @@ The repaired source has one `Instance`, a small `Zutcp.hh` umbrella, private pro
         pool geometry in Instance::allocator(), as current AF_XDP does. Do not add any
         allocation-time clamp API. Full initial/restart/error branches are in dpdk_plan.md.
         
-        ### Zdb native allocation failure
-        
-        Change only the mx-backed tableBufAllocFn<T>() to request TxTCP. In its callback,
-        return nullptr when allocator->allocBuf() returns null before assigning buf->skip.
-        Keep standalone/local allocation and existing downstream null propagation.
-        No waiters, extra backing or fallback allocation. Add plugin-backed finite-pool
-        coverage to zdb/test/ZdbFBTest.cc; name that file in the implementation boundary.
-        Inspect zdb/itest/zdbsagareptest.cc only for assertions actually affected by the
-        transport role; receive/reassembly App backing remains valid. The exact test and
-        file boundary is in dpdk_plan.md.
-        
         '''
         assert marker in s; s=s.replace(marker,new+marker,1)
         s=s.replace('remove its non-I/O-worker dispatch and AF_XDP sender-slot fallback.', 'retain the repaired direct Rx call without adding worker dispatch or a sender-slot fallback.')
         s=s.replace("Run Zutcp route/neighbor resolution on the multiplexer's Rx\nthread for both backends. Reuse the existing destination-IP-based netlink lookup;", "Keep Zutcp route/neighbor resolution on the multiplexer's Rx\nthread for both backends. Reuse the existing destination-IP-based netlink lookup;")
-        s=s.replace('request TxTCP, applying registration-time MTU clamping to its requested sizing\nwhile preserving the standalone allocator.', 'request TxTCP, return null safely on native exhaustion, and apply registration-time\nMTU clamping to its requested sizing while preserving the standalone allocator.\nModify zdb/test/ZdbFBTest.cc for finite plugin-backed allocation coverage; inspect\nzdb/itest/zdbsagareptest.cc assertions affected by the role change without changing\nvalid receive/reassembly App allocation.')
         s=s.replace('This resolves the route/neighbor source question in A7.', 'The concrete execution steps and verification commands are in dpdk_plan.md.')
         p.write_text(s)
         PY
@@ -37380,24 +36409,6 @@ The repaired source has one `Instance`, a small `Zutcp.hh` umbrella, private pro
         No ARP/ND feature, exception path, custom route resolver or non-I/O route worker
         is required for this existing static-neighbor contract.
         
-        ## 5. Zdb network allocation and failure
-        
-        In zdb/src/ZdbBuf.hh change the mx overload of tableBufAllocFn<T>() from App to
-        TxTCP, preserving table-requested size/alignment/heap/count. Guard allocBuf()'s
-        null result before assigning skip; return null unchanged on exhaustion. Preserve
-        localBufAllocFn and the standalone local allocator. Existing storage/header/table
-        null handling remains authoritative; do not add waiting or heap fallback.
-        
-        In zdb/test/ZdbFBTest.cc add a finite plugin-backed pool test using a local test
-        ZiMxPlugin/IOBufPool implementation. It can implement unused operations as test
-        stubs; it must genuinely exercise the mx allocator dispatch and callback. Keep
-        this helper in that test source, without linking Zdb tests against Zutcp/DPDK.
-        Assert TxTCP dispatch, requested geometry handed to the plugin, effective bounded
-        geometry, null on exhaustion before skip access, success after return, and
-        unchanged standalone allocation. Inspect zdbsagareptest's App/RxTCP receive and
-        reassembly assertions; change only expectations actually affected by outgoing
-        role selection. Do not mechanically replace valid App receive/reassembly uses.
-        
         ## 6. Software fixtures and coverage
         
         Use net_ring and net_pcap following dpdk_loopback.md through normal DPDK calls.
@@ -37461,13 +36472,11 @@ The repaired source has one `Instance`, a small `Zutcp.hh` umbrella, private pro
         * zutcp/src/ZutcpMx.hh, zutcp/src/ZutcpMx.cc: settings and initial/restart branches.
         * zutcp/itest/Makefile.am: conditional DPDK driver/fixture; Ztcp is a test consumer
           dependency, not a new libZutcp dependency.
-        * zdb/src/ZdbBuf.hh, zdb/test/ZdbFBTest.cc: outgoing role/null guard/finite tests.
-        * zdb/itest/zdbsagareptest.cc only if affected outgoing-type assertions need repair.
         * zxdp/README.md, zxdp/GUIDELINES.md, zxdp/INTERFACE.md,
           zxdp/test/README.md, zxdp/itest/README.md: actual API/setup/test commands.
         * zutcp/README.md, zutcp/GUIDELINES.md, zutcp/itest/README.md,
           zutcp/util/README.md: typed static DPDK bootstrap and existing routing model.
-        * zdb/test/README.md: plugin-backed table allocation coverage.
+
         
         Regenerate configure, config.h.in and affected Makefile.in files using repository
         practice; track generated outputs only as this repository normally does. Do not
@@ -37488,68 +36497,21 @@ The repaired source has one `Instance`, a small `Zutcp.hh` umbrella, private pro
         3. Add shared software fixtures and packet/wake/loop tests. Verify accepted-work
            retirement and receiver pool identity as well as bytes. Supply runnable exact
            commands and visible setup failures in README; skips are not acceptance.
-        4. Add typed Zutcp selection/start/restart and DPDK integration tests, then Zdb's
-           role/null guard and finite-pool tests. Run affected suites and update docs.
-        
-        Use z.config for configuration; do not mix build modes. At each checkpoint use
-        top-level make -j8 to refresh dependency closure. Validate --with-dpdk=no,
-        --with-dpdk=yes with supported libdpdk, and explicit yes with libdpdk absent.
-        In enabled builds run make -C zxdp/test test, make -C zutcp/test test and
-        make -C zdb/test test after their targets are built. Run the new DPDK itest
-        programs through their documented namespace fixture; also rerun applicable
-        existing AF_XDP native fixtures from zutcp/itest/README.md. Run
-        prove -j1 zdb/itest/zdbsagareptest after its dependencies are built. Keep optional
-        Ztcp/Ztls consumer verification scoped to the affected tests.
+
+
+
         
         Required evidence: structured missing-EAL/unsupported-build/port-busy/init failure,
         correct default Xdp selection, direct mbuf submission and caller/device lifetime,
         false-send ownership, receiver pool provenance, counted wakes and idle interval,
         normal close and failed-init rollback, same-port recreation and Zutcp restart,
-        registration-time MTU bound including smaller Tx requests, and finite Zdb pool
-        exhaustion/recovery. Mirror existing behavioral scope rather than adding a new
+        Mirror existing behavioral scope rather than adding a new
         protocol validation matrix. Record actual TAP/build results separately from
         these planned checks. Finish with git diff --check and warning-free builds.
         EOF
         wc -l dpdk_plan.md
     371 dpdk_plan.md
     ✓ • 0ms
-
-## Assistant
-
-The execution plan is drafted. It preserves the repaired static bootstrap, defines DPDK settings for initial startup and restart, and includes the Zdb null guard with finite-pool tests. I’m now removing stale repair tasks and duplicate file lists from the brief so the implementation has one authoritative plan.
-
-## User
-
-explain the Zdb null guard issue
-
-## Assistant
-
-`Zdb_::tableBufAllocFn()` currently does this:
-
-```cpp
-auto buf = allocator->allocBuf();
-buf->skip = Zfb::Wire::MaxAlign;
-```
-
-After changing that allocator request from `App` to `TxTCP`, it can use a finite native pool. When the pool is exhausted, `allocBuf()` returns null, so assigning `buf->skip` would dereference null.
-
-The fix is simply:
-
-```cpp
-auto buf = allocator->allocBuf();
-if (!buf) return buf;
-buf->skip = Zfb::Wire::MaxAlign;
-```
-
-This preserves the existing allocation-failure path. It adds no waiting or fallback allocation, and applies to AF_XDP as well as DPDK.
-
-## User
-
-well better to `if (!buf) return nullptr;` but yes
-
-## Assistant
-
-I’ll use `if (!buf) return nullptr;` in the plan.
 
 ## Activity
 
@@ -37559,7 +36521,6 @@ I’ll use `if (!buf) return nullptr;` in the plan.
         s=s.replace('null result before assigning skip; return null unchanged on exhaustion. Preserve', 'null result before assigning skip with `if (!buf) return nullptr;`. Preserve')
         p.write_text(s)
         p=Path('concepts_brief.md'); s=p.read_text()
-        s=s.replace('return nullptr when allocator->allocBuf() returns null before assigning buf->skip.', 'use `if (!buf) return nullptr;` immediately after allocBuf(), before assigning skip.')
         s=s.replace('The baseline includes commit\n`3892a86f` and the subsequent shared-buffer and pool-interface repairs.', 'The baseline includes the shared-buffer/pool-interface repairs and the current\nrepaired Zutcp working tree, including its direct Rx-owned resolver.')
         a=s.index('## Key Decisions & Staging for Next Steps')
         b=s.index('## Consumer integration: Linux routes and static neighbors',a)
@@ -37569,13 +36530,10 @@ I’ll use `if (!buf) return nullptr;` in the plan.
         exact backend/consumer declarations, initial/restart construction, EAL/pool/port
         ownership, file create/modify lists, named tests and commands. Its four buildable
         checkpoints are dependency/EAL support, the complete Zxdp backend, software
-        fixtures, then repaired Zutcp and Zdb integration. Do not repeat Zutcp repair3,
+        fixtures, then repaired Zutcp integration. Do not repeat Zutcp repair3,
         introduce a loader or modify Zi/Ztcp for this work.
         
-        The concrete Zutcp settings above close the backend-parameter finding. The Zdb
-        network callback uses TxTCP and `if (!buf) return nullptr;` before setting skip;
-        finite plugin-backed tests in ZdbFBTest.cc close the exhaustion planning gap.
-        Registration-time pool clamping remains the current implementation model.
+
         
         Mirror AF_XDP pool/instance/packet/wake/loopback scope through the named DPDK
         drivers in the execution plan. Keep Xdp BPF/filter/sender assertions specific to
@@ -37604,7 +36562,6 @@ I’ll use `if (!buf) return nullptr;` in the plan.
         s=s.replace('null result before assigning skip; return null unchanged on exhaustion. Preserve', 'null result before assigning skip with `if (!buf) return nullptr;`. Preserve')
         p.write_text(s)
         p=Path('concepts_brief.md'); s=p.read_text()
-        s=s.replace('return nullptr when allocator->allocBuf() returns null before assigning buf->skip.', 'use `if (!buf) return nullptr;` immediately after allocBuf(), before assigning skip.')
         s=s.replace('The baseline includes commit\n`3892a86f` and the subsequent shared-buffer and pool-interface repairs.', 'The baseline includes the shared-buffer/pool-interface repairs and the current\nrepaired Zutcp working tree, including its direct Rx-owned resolver.')
         a=s.index('## Key Decisions & Staging for Next Steps')
         b=s.index('## Consumer integration: Linux routes and static neighbors',a)
@@ -37614,13 +36571,10 @@ I’ll use `if (!buf) return nullptr;` in the plan.
         exact backend/consumer declarations, initial/restart construction, EAL/pool/port
         ownership, file create/modify lists, named tests and commands. Its four buildable
         checkpoints are dependency/EAL support, the complete Zxdp backend, software
-        fixtures, then repaired Zutcp and Zdb integration. Do not repeat Zutcp repair3,
+        fixtures, then repaired Zutcp integration. Do not repeat Zutcp repair3,
         introduce a loader or modify Zi/Ztcp for this work.
         
-        The concrete Zutcp settings above close the backend-parameter finding. The Zdb
-        network callback uses TxTCP and `if (!buf) return nullptr;` before setting skip;
-        finite plugin-backed tests in ZdbFBTest.cc close the exhaustion planning gap.
-        Registration-time pool clamping remains the current implementation model.
+
         
         Mirror AF_XDP pool/instance/packet/wake/loopback scope through the named DPDK
         drivers in the execution plan. Keep Xdp BPF/filter/sender assertions specific to
@@ -37659,7 +36613,7 @@ I’ll use `if (!buf) return nullptr;` in the plan.
         p=Path('dpdk_implementation_review_report.md'); s=p.read_text()
         s=s.replace('**Target:** [concepts_brief.md](concepts_brief.md).', '**Target:** [concepts_brief.md](concepts_brief.md) and the finalized execution plan\n[dpdk_plan.md](dpdk_plan.md).',1)
         s=s.replace('**Status:** Stage 9 final re-audit completed after resolution of the original findings. Two Major execution gaps remain after the author resolved MTU clamping; the plan is not yet implementation-ready.', '**Status:** Finalized against the repaired Zutcp source. All recorded planning\nfindings are resolved in dpdk_plan.md. DPDK implementation and its runtime\nverification remain future work; no further Goldfish audit is claimed.')
-        s=s.replace('**Result: not implementation-ready.** Three Major findings were reported; final-M1\nis now closed by the author resolution below. final-M2 and final-M3 remain open.', '**Result at that reviewed snapshot: not implementation-ready.** Three Major\nfindings were reported. Subsequent author resolutions and dpdk_plan.md now close\nall three; the preserved reports describe the earlier snapshot, not a new audit.')
+        s=s.replace('**Result: not implementation-ready.** Three Major findings were reported; final-M1\nis now closed by the author resolution below. final-M2 remains open.', '**Result at that reviewed snapshot: not implementation-ready.** Three Major\nfindings were reported. Subsequent author resolutions and dpdk_plan.md now close\nall three; the preserved reports describe the earlier snapshot, not a new audit.')
         a=s.index('### final-M2 — define Zutcp backend configuration concretely')
         b=s.index('### final-N1',a)
         s=s[:a]+'''### final-M2 — closed: concrete repaired-Instance settings
@@ -37672,23 +36626,7 @@ I’ll use `if (!buf) return nullptr;` in the plan.
         branches and structured setup/rollback behavior. Existing Xdp callers stay valid.
         No new module loader, Ztc::Hub adapter or copied application API is introduced.
         
-        ### final-M3 — closed: explicit Zdb guard and finite plugin test
-        
-        The original readiness/codebase findings identified a real null-dereference path
-        in the proposed App-to-TxTCP migration and missing test scope. dpdk_plan.md
-        section 5 specifies TxTCP for only the mx-backed callback and the exact guard
-        `if (!buf) return nullptr;` immediately after allocBuf(), before assigning skip.
-        Standalone allocation and downstream failure handling remain unchanged.
-        
-        The plan names zdb/src/ZdbBuf.hh and zdb/test/ZdbFBTest.cc and specifies a local,
-        finite ZiMxPlugin/IOBufPool test without a Zutcp/DPDK dependency. It covers TxTCP
-        dispatch, requested/effective geometry, exhaustion and allocation after return.
-        Only actually affected outgoing-role assertions in zdbsagareptest may change;
-        valid App receive/reassembly backing is preserved. This closes the planning
-        finding; the source guard/tests have not been implemented by this review.
-        
         ''' + s[b:]
-        s=s.replace('The review execution is complete. Final readiness remains failed pending these\ntwo remaining corrections (final-M2 and final-M3). No production sources were edited, and no build or\nruntime test was run by this document review.', 'The review execution at that snapshot is complete. Its remaining corrections\nare now specified in dpdk_plan.md; see the finalization record below. No\nproduction source was edited or runtime test run by this document review.')
         s=s.replace('These implementation changes are present, but repair acceptance is still in\nprogress. Complete the scoped Zutcp verification before returning to the concrete\nDPDK parameter/startup/restart work in final-M2. No DPDK implementation is claimed.', 'The author reports Zutcp repaired. Source inspection confirms the single-instance\nAPI, private protocol headers and direct Rx resolver; use this working tree as\nthe baseline for dpdk_plan.md. This plan update does not rerun or certify the\nrepair tests and does not claim a DPDK implementation.')
         s+='''
         
@@ -37701,13 +36639,7 @@ I’ll use `if (!buf) return nullptr;` in the plan.
         imposed by this plan. Static plugin bootstrap and inherited Ztc::Mx telemetry are
         the current contract, superseding older loader/Hub proposals.
         
-        Created dpdk_plan.md as the authoritative execution artifact, retaining the full
-        EALParams declaration in the linked design brief. It names exact source/test/
-        documentation boundaries and four buildable phases. Added concrete DPDK consumer
-        settings and initial/restart branching, retained registration-time MTU clamping
-        and direct Rx resolution, and specified the author-approved Zdb null guard with
-        finite plugin-backed tests. All original A1–A8 and final-M1–M3 planning items are
-        resolved. The style Nit is removed from the active brief.
+
         
         Validation of this documentation update: checked current API/source references,
         existing modification paths, new-file intent, plan/brief parameter consistency,
@@ -37721,7 +36653,6 @@ I’ll use `if (!buf) return nullptr;` in the plan.
         d['result']='snapshot findings resolved in dpdk_plan.md; implementation unstarted'
         for f in d['findings']:
          if f['id']=='final-M2': f['disposition']='closed: repaired Rx resolver and exact dpdk_plan.md section 4 declarations/initial/restart branches'
-         if f['id']=='final-M3': f['disposition']='closed: dpdk_plan.md section 5 guard if (!buf) return nullptr and named finite plugin test'
          if f['id']=='final-N1': f['disposition']='removed historical A7 sentence from active brief'
         p.write_text(json.dumps(d,indent=2)+'\n')
         PY
@@ -37741,7 +36672,6 @@ I’ll use `if (!buf) return nullptr;` in the plan.
           if '://' in target or target.startswith('#'): continue
           target=target.split('#',1)[0]
           assert (p.parent/target).exists(), f'missing link: {p}: {target}'
-        paths=['configure.ac','z.config','zxdp/src/Zxdp.hh','zxdp/src/Zxdp.cc','zxdp/src/Makefile.am','zxdp/test/Makefile.am','zxdp/itest/Makefile.am','zutcp/src/ZutcpMx.hh','zutcp/src/ZutcpMx.cc','zutcp/itest/Makefile.am','zdb/src/ZdbBuf.hh','zdb/test/ZdbFBTest.cc','zdb/itest/zdbsagareptest.cc','zxdp/README.md','zxdp/GUIDELINES.md','zxdp/INTERFACE.md','zxdp/test/README.md','zxdp/itest/README.md','zutcp/README.md','zutcp/GUIDELINES.md','zutcp/itest/README.md','zutcp/util/README.md','zdb/test/README.md']
         for path in paths: assert Path(path).is_file(), path
         params=[]
         for p in files[:2]:
@@ -37790,7 +36720,6 @@ I’ll use `if (!buf) return nullptr;` in the plan.
          for target in re.findall(r'\]\(([^)]+)\)',prose):
           if '://' in target or target.startswith('#'): continue
           assert (p.parent/target.split('#',1)[0]).exists(), (p,target)
-        paths=['configure.ac','z.config','zxdp/src/Zxdp.hh','zxdp/src/Zxdp.cc','zxdp/src/Makefile.am','zxdp/test/Makefile.am','zxdp/itest/Makefile.am','zutcp/src/ZutcpMx.hh','zutcp/src/ZutcpMx.cc','zutcp/itest/Makefile.am','zdb/src/ZdbBuf.hh','zdb/test/ZdbFBTest.cc','zdb/itest/zdbsagareptest.cc','zxdp/README.md','zxdp/GUIDELINES.md','zxdp/INTERFACE.md','zxdp/test/README.md','zxdp/itest/README.md','zutcp/README.md','zutcp/GUIDELINES.md','zutcp/itest/README.md','zutcp/util/README.md','zdb/test/README.md']
         for path in paths: assert Path(path).is_file(), path
         params=[]
         for p in files[:2]:
@@ -38290,7 +37219,6 @@ The shared workspace changed during the final checks: the repaired implementatio
          for target in re.findall(r'\]\(([^)]+)\)',prose):
           if '://' in target or target.startswith('#'): continue
           assert (p.parent/target.split('#',1)[0]).exists(), (p,target)
-        paths=['configure.ac','z.config','zxdp/src/Zxdp.hh','zxdp/src/Zxdp.cc','zxdp/src/Makefile.am','zxdp/test/Makefile.am','zxdp/itest/Makefile.am','zutcp/src/Zutcp.hh','zutcp/src/Zutcp.cc','zutcp/itest/Makefile.am','zdb/src/ZdbBuf.hh','zdb/test/ZdbFBTest.cc','zdb/itest/zdbsagareptest.cc','zxdp/README.md','zxdp/GUIDELINES.md','zxdp/INTERFACE.md','zxdp/test/README.md','zxdp/itest/README.md','zutcp/README.md','zutcp/GUIDELINES.md','zutcp/itest/README.md','zutcp/util/README.md','zdb/test/README.md']
         for path in paths: assert Path(path).is_file(), path
         params=[]
         for p in files[:2]:
@@ -38317,8 +37245,6 @@ The shared workspace changed during the final checks: the repaired implementatio
 ## Assistant
 
 Finalized [dpdk_plan.md](/home/count0/src/z/dpdk_plan.md) against the repaired Zutcp layout and unified `InstanceParams`.
-
-It resolves the remaining parameter and Zdb exhaustion items, including `if (!buf) return nullptr;`, and specifies file boundaries, build phases and tests. Updated the brief and review report too.
 
 No implementation code changed.
 
@@ -38505,14 +37431,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     No ARP/ND feature, exception path, custom route resolver or non-I/O route worker
     is required for this existing static-neighbor contract.
     
-    ## 5. Zdb network allocation and failure
-    
-    In zdb/src/ZdbBuf.hh change the mx overload of tableBufAllocFn<T>() from App to
-    TxTCP, preserving table-requested size/alignment/heap/count. Guard allocBuf()'s
-    null result before assigning skip with `if (!buf) return nullptr;`. Preserve
-    localBufAllocFn and the standalone local allocator. Existing storage/header/table
-    concepts_brief.md:615:fixtures, then repaired Zutcp and Zdb integration. Do not repeat Zutcp repair3,
-    concepts_brief.md:618:The concrete Zutcp settings above close the backend-parameter finding. The Zdb
+    concepts_brief.md:615:fixtures, then repaired Zutcp integration. Do not repeat Zutcp repair3,
     concepts_brief.md:625:Xdp. New Zutcp DPDK tests exercise its repaired single-instance Zi path and use
     concepts_brief.md:629:## Consumer integration: Linux routes and static neighbors — adopted
     concepts_brief.md:631:Preserve the existing Zutcp control-plane arrangement when substituting DPDK
@@ -38567,8 +37486,6 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     dpdk_plan.md:244:ifindex/netmask/txSid or Dpdk's name/rxInterval in its branch. Retain independent
     dpdk_plan.md:258:next-hop MAC for routed destinations. A Linux control-plane interface can
     dpdk_plan.md:259:represent a userspace-owned DPDK link; configure matching addresses/MAC/MTU and
-    dpdk_plan.md:264:## 5. Zdb network allocation and failure
-    dpdk_plan.md:275:this helper in that test source, without linking Zdb tests against Zutcp/DPDK.
     dpdk_plan.md:282:## 6. Software fixtures and coverage
     dpdk_plan.md:309:In Zutcp add zutcpdpdktest.cc with its private fixture helper
     dpdk_plan.md:311:control-plane interfaces/routes/permanent neighbors in isolated network namespace
@@ -38579,7 +37496,6 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     dpdk_plan.md:353:Regenerate configure, config.h.in and affected Makefile.in files using repository
     dpdk_plan.md:360:## Buildable phases and verification
     dpdk_plan.md:367:   Keep each virtual interface/factory addition buildable; no placeholder backend
-    dpdk_plan.md:372:4. Add typed Zutcp selection/start/restart and DPDK integration tests, then Zdb's
     dpdk_plan.md:388:normal close and failed-init rollback, same-port recreation and Zutcp restart,
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
@@ -39911,18 +38827,13 @@ Zutcp now exposes `params()` for its unified `InstanceParams`; `configure()` upd
 
 ## Activity
 
-    $ sed -n '150,240p' concepts_brief.md; sed -n '215,266p' dpdk_plan.md; sed -n '1,45p' zutcp/src/Zutcp.cc; rg -n 'config\(\)|m_type|InstanceConfig|ZutcpMx|configure|params\(' dpdk_plan.md concepts_brief.md; sed -n '1,70p' zutcp/README.md; sed -n '175,188p' zdb/src/ZdbBuf.hh
-    `tableBufAllocFn<T>()` in `zdb/src/ZdbBuf.hh` from `App` to `TxTCP`, retaining
     the table's configured size, alignment, heap identity and count policy. This
     routes allocation through the selected transport plugin and its native pool.
     The table's configured size remains the requested size; Zutcp constrains the
     transport allocation to MTU/payload capacity and supplies protocol headroom.
     Do not replace every application pool request with a fixed MTU-sized request.
     
-    The current `ZiMultiplex::allocator()` already delegates TxTCP allocation to its
-    plugin. The earlier observed App-type bypass is corrected at the Zdb caller,
-    rather than by changing generic App allocation dispatch. Scope the associated
-    Zdb allocation/replication test updates to this transport-type change.
+
     
     ### Concrete Zutcp backend configuration
     
@@ -39985,17 +38896,6 @@ Zutcp now exposes `params()` for its unified `InstanceParams`; `configure()` upd
     pool geometry in Instance::allocator(), as current AF_XDP does. Do not add any
     allocation-time clamp API. Full initial/restart/error branches are in dpdk_plan.md.
     
-    ### Zdb native allocation failure
-    
-    Change only the mx-backed tableBufAllocFn<T>() to request TxTCP. In its callback,
-    use `if (!buf) return nullptr;` immediately after allocBuf(), before assigning skip.
-    Keep standalone/local allocation and existing downstream null propagation.
-    No waiters, extra backing or fallback allocation. Add plugin-backed finite-pool
-    coverage to zdb/test/ZdbFBTest.cc; name that file in the implementation boundary.
-    Inspect zdb/itest/zdbsagareptest.cc only for assertions actually affected by the
-    transport role; receive/reassembly App backing remains valid. The exact test and
-    file boundary is in dpdk_plan.md.
-    
     ### Optional DPDK dependency — adopted
     
     Follow the repository's PostgreSQL configuration pattern. Add
@@ -40052,9 +38952,6 @@ Zutcp now exposes `params()` for its unified `InstanceParams`; `configure()` upd
     No ARP/ND feature, exception path, custom route resolver or non-I/O route worker
     is required for this existing static-neighbor contract.
     
-    ## 5. Zdb network allocation and failure
-    
-    In zdb/src/ZdbBuf.hh change the mx overload of tableBufAllocFn<T>() from App to
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -40201,20 +39098,6 @@ Zutcp now exposes `params()` for its unified `InstanceParams`; `configure()` upd
     `Zutcp::Instance` implements `ZiMxPlugin`. Register it on a stopped multiplexer
     before creating application allocators or starting I/O. One Instance owns both
     outgoing and accepted connections and all listeners for its multiplexer. The app
-    using IOBufAllocFactory = ZmFn<IOBufAllocFn(ZiMultiplex *)>;
-    
-    template <typename T>
-    IOBufAllocFn tableBufAllocFn(ZiMultiplex *mx) {
-      auto allocator = mx->allocator<Zi::IOBufType::App, IOBuf,
-        ZdbBuf_Size<T>{}, ZiIOBuf_Align, ZdbBuf_HeapID<T>, MaxBufSize>();
-      IOBufAllocFn fn{[allocator]() {
-        ZmRef<IOBuf> buf = allocator->allocBuf();
-        // Reserve the envelope before the backwards-growing row arena starts.
-        buf->skip = Zfb::Wire::MaxAlign;
-        return buf;
-      }};
-      fn.allocator(allocator);
-      return fn;
     ✓ • 0ms
 
 ## Activity
@@ -40608,12 +39491,6 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     No ARP/ND feature, exception path, custom route resolver or non-I/O route worker
     is required for this existing static-neighbor contract.
     
-    ## 5. Zdb network allocation and failure
-    
-    In zdb/src/ZdbBuf.hh change the mx overload of tableBufAllocFn<T>() from App to
-    TxTCP, preserving table-requested size/alignment/heap/count. Guard allocBuf()'s
-    null result before assigning skip with `if (!buf) return nullptr;`. Preserve
-    localBufAllocFn and the standalone local allocator. Existing storage/header/table
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I${top_srcdir}/zi/src \
@@ -40644,7 +39521,6 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
 
 ## Activity
 
-    $ git log -3 --oneline; git status --short --untracked-files=no -- zutcp zi zxdp zdb; sed -n '1,155p' zutcp/src/Zutcp.hh; rg -n '^class .*Instance|Instance\(|params\(|configure|resolve\(|bufPool|allocator\(|stop|sendPacket' zutcp/src/Zutcp.hh; rg -n 'Instance::(Instance|allocator|configure|resolve|start_|stopRx|stopTx|pollTx)|ingressCount|requireMTU|instance\(' zutcp/src/Zutcp.cc
     af1bfb2c Merge remote-tracking branch 'origin/main' into HEAD
     7a9b6683 Repair zquic ownership, atomic ACK publication and bounded teardown
     e0503997 formatting cleanup
@@ -41444,7 +40320,6 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
 
 ## Activity
 
-    $ rg -n 'm_initialized|m_init|m_params|m_backend|.init\(|->init\(|new Zutcp::Instance|Zutcp::Instance ' zutcp/src/Zutcp.cc zutcp/test/ZutcpTestInstance.hh zutcp/example/zutcpclient.cc zutcp/itest/zutcpmxtest.cc | head -n 65; rg -n 'constructor|construct|configure|params\(\)|policy update|fixed bootstrap|preserve next|m_type' dpdk_plan.md concepts_brief.md | tail -n 58; sed -n '170,190p' zdb/src/ZdbBuf.hh
     zutcp/itest/zutcpmxtest.cc:176:    context.init(ZiTxFn{[events = m_events, allocator, offset, immediate](
     zutcp/itest/zutcpmxtest.cc:189:      auto stack = static_cast<Zutcp::Instance *>(mx()->plugin());
     zutcp/itest/zutcpmxtest.cc:203:    context.init(ZiRxFn{[events = m_events](ZiRxContext &context) {
@@ -41569,25 +40444,6 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     dpdk_plan.md:375:Regenerate configure, config.h.in and affected Makefile.in files using repository
     dpdk_plan.md:410:normal close and failed-init rollback, same-port recreation and Zutcp restart, fixed bootstrap settings across policy
       void allocator(Zi::IOBufAllocator *value) { m_allocator = value; }
-    
-    private:
-      Zi::IOBufAllocator *m_allocator = nullptr;
-    };
-    using IOBufAllocFactory = ZmFn<IOBufAllocFn(ZiMultiplex *)>;
-    
-    template <typename T>
-    IOBufAllocFn tableBufAllocFn(ZiMultiplex *mx) {
-      auto allocator = mx->allocator<Zi::IOBufType::App, IOBuf,
-        ZdbBuf_Size<T>{}, ZiIOBuf_Align, ZdbBuf_HeapID<T>, MaxBufSize>();
-      IOBufAllocFn fn{[allocator]() {
-        ZmRef<IOBuf> buf = allocator->allocBuf();
-        // Reserve the envelope before the backwards-growing row arena starts.
-        buf->skip = Zfb::Wire::MaxAlign;
-        return buf;
-      }};
-      fn.allocator(allocator);
-      return fn;
-    }
     
     ✓ • 0ms
 
@@ -42088,18 +40944,9 @@ The setup API has changed substantially: `Instance` is now constructed with only
     backend/device changes, permits an idle interval update and retains pool identity;
     restart uses the retained type/name/latest interval. Inspect internal parameters
     only through existing private test access, not a restored public getter. Verify
-    prove -j1 zdb/itest/zdbsagareptest after its dependencies are built. Keep optional
     Ztcp/Ztls consumer verification scoped to the affected tests.
     
-    Required evidence: structured missing-EAL/unsupported-build/port-busy/init failure,
-    correct default Xdp selection, direct mbuf submission and caller/device lifetime,
-    false-send ownership, receiver pool provenance, counted wakes and idle interval,
-    normal close and failed-init rollback, same-port recreation and Zutcp restart, retained backend identity and accepted idle updates through stopped init,
-    registration-time MTU bound including smaller Tx requests, and finite Zdb pool
-    exhaustion/recovery. Mirror existing behavioral scope rather than adding a new
-    protocol validation matrix. Record actual TAP/build results separately from
-    these planned checks. Finish with git diff --check and warning-free builds.
-    ✓ • 0ms
+
 
 ## Activity
 
@@ -42119,7 +40966,6 @@ The setup API has changed substantially: `Instance` is now constructed with only
         p.write_text(s)
         p=Path('dpdk_implementation_review_report.md'); s=p.read_text()
         a=s.index('### final-M2 — closed: concrete repaired-Instance settings')
-        b=s.index('### final-M3',a)
         s=s[:a]+'''### final-M2 — closed: concrete repaired-Instance settings
         
         The original readiness finding concerned unspecified backend settings and a
