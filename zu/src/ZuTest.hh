@@ -27,7 +27,7 @@
 //   ZuTestCall(fn);
 // - sub-test in a callable named fn:
 //   void fn() { ZuTestScope(fn); ... }
-// - dynamic sub-tests that vary at runtime should use RT equivalents:
+// - dynamic sub-tests with workloads that vary at runtime should use RT equivalents:
 //   ZuTestCallRT / ZuTestScopeRT / ZuCheckRT / ZuTestRT
 
 #ifndef ZuTest_HH
