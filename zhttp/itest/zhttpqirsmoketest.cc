@@ -83,7 +83,7 @@ static pid_t startServer_(
   char b = 1;
   (void)::write(ready[1], &b, 1);
   ::close(ready[1]);
-  ::execl("./zhttpqir", "zhttpqir", "server", static_cast<char *>(nullptr));
+  ::execl("../interop/zhttpqir", "zhttpqir", "server", static_cast<char *>(nullptr));
   ::_exit(127);
 }
 
@@ -123,12 +123,12 @@ static void testExecutableContract()
 {
   ZuTestScope(testExecutableContract);
 
-  ZuCHECK(runStatus("./zhttpqir --help", 0), "help exits 0");
-  ZuCHECK(runStatus("./zhttpqir", 2), "missing role exits 2");
-  ZuCHECK(runStatus("./zhttpqir bogus", 2), "bad role exits 2");
-  ZuCHECK(runStatus("TESTCASE=retry ./zhttpqir client", 127),
+  ZuCHECK(runStatus("../interop/zhttpqir --help", 0), "help exits 0");
+  ZuCHECK(runStatus("../interop/zhttpqir", 2), "missing role exits 2");
+  ZuCHECK(runStatus("../interop/zhttpqir bogus", 2), "bad role exits 2");
+  ZuCHECK(runStatus("TESTCASE=retry ../interop/zhttpqir client", 127),
     "unsupported testcase exits 127");
-  ZuCHECK(runStatus("TESTCASE=http3 ./zhttpqir client", 2),
+  ZuCHECK(runStatus("TESTCASE=http3 ../interop/zhttpqir client", 2),
     "supported client without requests exits 2");
 }
 
@@ -143,7 +143,7 @@ static void testClientFilesystemPrep()
   ZtString<> cmd;
   cmd << "TESTCASE=http3 REQUESTS='https://server/a/b/file.bin "
     "https://other/file.bin' "
-    "ZHTTP_QIR_DOWNLOADS=" << downloads << " ./zhttpqir client";
+    "ZHTTP_QIR_DOWNLOADS=" << downloads << " ../interop/zhttpqir client";
   ZuCHECK(runStatus(cmd, 2),
     "valid client request creates dirs before authority validation");
   ZtString<> parent;
@@ -152,7 +152,7 @@ static void testClientFilesystemPrep()
 
   cmd.length(0);
   cmd << "TESTCASE=http3 REQUESTS=https://server/a/../bad "
-    "ZHTTP_QIR_DOWNLOADS=" << downloads << " ./zhttpqir client";
+    "ZHTTP_QIR_DOWNLOADS=" << downloads << " ../interop/zhttpqir client";
   ZuCHECK(runStatus(cmd, 2), "client rejects escaped output path");
 }
 
@@ -203,7 +203,7 @@ static bool runHQSingleFile(ZuCSpan testCase, unsigned largeSize = 0)
     "/file.bin ZHTTP_QIR_DOWNLOADS=" << downloads <<
     " ZHTTP_QIR_CA=" << certPath <<
     " QLOGDIR=" << qlogDir <<
-    " ZHTTP_QIR_PORT=" << port << " ./zhttpqir client";
+    " ZHTTP_QIR_PORT=" << port << " ../interop/zhttpqir client";
 
   bool ok = runStatus(cmd, 0);
   bool stopped = stopServer_(server);
@@ -282,7 +282,7 @@ static void testH3SingleFile()
     "/file.bin ZHTTP_QIR_DOWNLOADS=" << downloads <<
     " ZHTTP_QIR_CA=" << certPath <<
     " QLOGDIR=" << qlogDir <<
-    " ZHTTP_QIR_PORT=" << port << " ./zhttpqir client";
+    " ZHTTP_QIR_PORT=" << port << " ../interop/zhttpqir client";
 
   bool ok = runStatus(cmd, 0);
   bool stopped = stopServer_(server);
@@ -337,7 +337,7 @@ static void testHQMultiFile()
     "/c.bin' ZHTTP_QIR_DOWNLOADS=" << downloads <<
     " ZHTTP_QIR_CA=" << certPath <<
     " QLOGDIR=" << qlogDir <<
-    " ZHTTP_QIR_PORT=" << port << " ./zhttpqir client";
+    " ZHTTP_QIR_PORT=" << port << " ../interop/zhttpqir client";
 
   bool ok = runStatus(cmd, 0);
   bool stopped = stopServer_(server);
@@ -396,7 +396,7 @@ static void testH3MultiFile()
     "/c.bin' ZHTTP_QIR_DOWNLOADS=" << downloads <<
     " ZHTTP_QIR_CA=" << certPath <<
     " QLOGDIR=" << qlogDir <<
-    " ZHTTP_QIR_PORT=" << port << " ./zhttpqir client";
+    " ZHTTP_QIR_PORT=" << port << " ../interop/zhttpqir client";
 
   bool ok = runStatus(cmd, 0);
   bool stopped = stopServer_(server);

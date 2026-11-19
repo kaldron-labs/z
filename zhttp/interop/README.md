@@ -47,10 +47,10 @@ Known gaps:
 
 ## Local Tests
 
-Run the interop-local checks:
+Run the integration tests that exercise the interoperability tooling:
 
 ```sh
-make -C zhttp/interop test
+make -C zhttp/itest test
 ```
 
 Run the wider zhttp module path:
@@ -111,7 +111,7 @@ Unknown testcase names return `127`.
 The normal smoke path is:
 
 ```sh
-make -C zhttp/interop test
+make -C zhttp/itest test
 ```
 
 For manual debugging, create temporary directories and run the endpoint through

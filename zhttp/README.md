@@ -677,7 +677,7 @@ Run the gate with:
 ZHTTP_MATRIX=./zhttp/itest/zhttpmatrix \
 ZHTTP_CLIENT=./zhttp/util/zhttp \
 ZHTTP_SERVER=./zhttp/util/zhttpd \
-sh ./zhttp/interop/zhttph2interoptest.sh
+sh ./zhttp/itest/zhttph2interoptest.sh
 ```
 
 Set `ZHTTP_H2_ARTIFACTS` to the failure-residue directory and

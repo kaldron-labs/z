@@ -1,9 +1,8 @@
 METASOURCES = AUTO
-SUBDIRS = src test util itest interop bench
+SUBDIRS = src test util interop itest bench
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: all
 	$(MAKE) $(AM_MAKEFLAGS) -C test test
 	$(MAKE) $(AM_MAKEFLAGS) -C itest test
-	$(MAKE) $(AM_MAKEFLAGS) -C interop test

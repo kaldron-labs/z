@@ -17,7 +17,7 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
   - `itest`: integration tests using `ZuTest`/`ZuTestUtil` and emitting TAP
   - `example`: dependent programs demonstrating use of the module
   - `bench`: benchmark harnesses
-  - `interop`: external interoperability framework testing
+  - `interop`: external interoperability tooling
 - The standard directories are not an exhaustive allow-list. Additional
   module-specific directories are permitted as documented exceptions when a
   distinct facility does not fit a standard role; for example, `zdb_pq/ext`
@@ -26,16 +26,17 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
   README or `GUIDELINES.md`, including its naming and build convention.
 - `test` is for isolated unit tests. Tests which launch complete programs,
   require multiple services, exercise persistence or networking end to end, or
-  require environment setup belong in `itest`. Tests specifically exercising a
-  third-party implementation or conformance framework belong in `interop`.
+  require environment setup belong in `itest`, including tests that use
+  interoperability tooling.
 - Repository-owned unit and integration test programs use
   `ZuTest`/`ZuTestUtil`, emit valid TAP, and run from the corresponding
   directory's `make test` target. Shell scripts may be fixtures invoked by a
   ZuTest driver; external harness scripts in `interop` may remain native.
 - `util` is independently buildable. `itest` may depend on programs or scripts
   built by `util`; `util` must not depend on `itest`.
-- Module build traversal sequence is: `src`, `test`, `util`, `itest`, other
-  directories in dependency order
+- Module build traversal starts with `src`, `test`, `util`, followed by `itest`
+  and other directories in dependency order. Build `interop` before `itest`
+  when `itest` uses its tooling.
 - Headers should be organized as a directed acyclic graph with idempotent
   inclusion guards. Tail inclusion should NOT be used unless there is an
   exceptional reason. Circular depndencies should be avoided by factoring
