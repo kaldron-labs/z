@@ -11,7 +11,7 @@
 // - generic three-way and two-way comparison
 // - extensible distinguished sentinel null values
 
-// UDTs must implement the <, == and ! operators
+// UDTs should implement the <, == and ! operators
 //
 // For more efficiency, implement cmp()
 // (operators <, == and ! must always be implemented)
@@ -223,15 +223,26 @@ struct ZuCmp_Can_cmp<P1, P2, typename ZuCmp_Can_cmp_<
   decltype(ZuDeclVal<const P1 &>().cmp(ZuDeclVal<const P2 &>()))>::T> :
     public ZuTrue { };
 
+// test for operator !
+template <typename T, typename = void>
+struct ZuCmp_NullFn_ {
+  template <typename P> static bool null(const P &p) { return false; }
+};
+template <typename T>
+struct ZuCmp_NullFn_<T, decltype((!ZuDeclVal<const T &>()), void())> {
+  template <typename P> static bool null(const P &p) { return !p; }
+};
 // test for copy-constructible default constructor
 template <typename T, typename = void>
-struct ZuCmp_NullFn {
-  template <typename P> static bool null(const P &p) { return !p; }
+struct ZuCmp_NullFn : public ZuCmp_NullFn_<T> {
+  using ZuCmp_NullFn_<T>::null;
   ZuInline static T null() { return T{}; }
 };
 template <typename T>
-struct ZuCmp_NullFn<T, decltype(T(ZuDeclVal<const T &>()), void())> {
-  template <typename P> static bool null(const P &p) { return !p; }
+struct ZuCmp_NullFn<T, decltype(T(ZuDeclVal<const T &>()), void())> :
+  public ZuCmp_NullFn_<T>
+{
+  using ZuCmp_NullFn_<T>::null;
   static const T &null() { static T v; return v; }
 };
 

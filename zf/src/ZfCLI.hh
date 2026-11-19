@@ -325,6 +325,11 @@ using CSV = TimeFmt<ZfCLI::TimeFmt<ZfCLI::CSV, Scale, NDP>>;
 template <uint8_t Scale, int8_t NDP>
 using Unix = TimeFmt<ZfCLI::TimeFmt<ZfCLI::Unix, Scale, NDP>>;
 
+template <bool> struct AlwaysEmit;
+
+// shorthand for AlwaysEmit<true>
+using Emit = AlwaysEmit<true>;
+
 template <
   typename Field,
   bool = HasValue<typename Field::Props, ID>{}>
@@ -438,6 +443,20 @@ template <typename Props> using GetOpt = GetParam<Opt, Props>::T;
 template <typename Props> using GetFlag = GetParam<Flag, Props>::T;
 template <typename Props> using GetArg = GetParam<Arg, Props>::T;
 template <typename Props> using GetArgs = GetParam<Args, Props>::T;
+
+// GetAlwaysEmit
+template <
+  typename Props,
+  bool = HasValue<Props, AlwaysEmit>{}>
+struct GetAlwaysEmit_ {
+  using T = ZuFalse; // default
+};
+template <typename Props>
+struct GetAlwaysEmit_<Props, true> {
+  using T = GetValue<Props, AlwaysEmit>;
+};
+template <typename Props>
+using GetAlwaysEmit = GetAlwaysEmit_<Props>::T;
 
 } // ZuFieldProp::CLI
 
@@ -1548,22 +1567,66 @@ template <
   typename S, typename O>
 inline void saveField(S &s, const O &o, ZuCSpan prefix)
 {
-  using Type = Field::Type;
+  enum { TypeCode = Field::Type::Code };
   using Props = Field::Props;
+  auto save = [&s, prefix](const auto &v) mutable {
+    // append long option name to prefix (copy on stack)
+    ZuCSpan longOpt = ZuFieldProp::CLI::GetLong<Field>{}().cspan();
+    unsigned nestedSize = 0;
+    if (ZuLikely(!prefix))
+      nestedSize = longOpt.length();
+    else
+      nestedSize = prefix.length() + longOpt.length() + 1;
+    auto nested = ZmScratch(char, nestedSize);
+    if (prefix) nested << prefix << '.';
+    nested << longOpt;
 
-  // append long option name to prefix (copy on stack)
-  ZuCSpan longOpt = ZuFieldProp::CLI::GetLong<Field>{}().cspan();
-  unsigned nestedSize = 0;
-  if (ZuLikely(!prefix))
-    nestedSize = longOpt.length();
-  else
-    nestedSize = prefix.length() + longOpt.length() + 1;
-  auto nested = ZmScratch(char, nestedSize);
-  if (prefix) nested << prefix << '.';
-  nested << longOpt;
-
-  saveValue<Facet, Filter, Quote, Type::Code, Props>(
-    s, Field::get(o), nested);
+    saveValue<Facet, Filter, Quote, TypeCode, Props>(s, v, nested);
+  };
+  if constexpr (
+      ZuFieldProp::CLI::GetArg<Props>{}() < 0 &&
+      !ZuFieldProp::CLI::GetAlwaysEmit<Props>{}) {
+    if constexpr (
+	TypeCode == ZfFieldTC::CString ||
+	TypeCode == ZfFieldTC::String) {
+      ZuCSpan v = Field::get(o);
+      if (v) save(v);
+    } else if constexpr (
+	TypeCode == ZfFieldTC::Bytes) {
+      ZuBSpan v = Field::get(o);
+      if (v) save(v);
+    } else if constexpr (
+	TypeCode == ZfFieldTC::Int8 ||
+	TypeCode == ZfFieldTC::Int16 ||
+	TypeCode == ZfFieldTC::Int32 ||
+	TypeCode == ZfFieldTC::Int64 ||
+	TypeCode == ZfFieldTC::Int128 ||
+	TypeCode == ZfFieldTC::UInt8 ||
+	TypeCode == ZfFieldTC::UInt16 ||
+	TypeCode == ZfFieldTC::UInt32 ||
+	TypeCode == ZfFieldTC::UInt64 ||
+	TypeCode == ZfFieldTC::UInt128) {
+      auto &&v = Field::get(o);
+      if constexpr (ZuFieldProp::HasEnum<Props>{}) {
+	if (v < 0) return;
+      } else {
+	if (ZuNull(v)) return;
+      }
+      save(v);
+    } else if constexpr (
+	TypeCode == ZfFieldTC::Float ||
+	TypeCode == ZfFieldTC::Fixed ||
+	TypeCode == ZfFieldTC::Decimal ||
+	TypeCode == ZfFieldTC::Time ||
+	TypeCode == ZfFieldTC::DateTime ||
+	TypeCode == ZfFieldTC::UDT) {
+      auto &&v = Field::get(o);
+      if (ZuNull(v)) return;
+      save(v);
+    } else
+      save(Field::get(o));
+  } else
+    save(Field::get(o));
 }
 
 template <
