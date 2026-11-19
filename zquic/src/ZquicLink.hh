@@ -11398,7 +11398,7 @@ private:
     m_linkTx.newCxnIDControls.initQueue(app(), id, "new-cid", Ztc::QueueType::Tx,
       LocalCIDLimit);
     for (unsigned i = 0; i < PktNumSpace::N; ++i) {
-      ZtString<> prefix;
+      Zquic_::QueueString prefix;
       prefix << id << ":ack:" << PktNumSpace::Map::v2s(i);
       m_ackPost[i].initQueue(app(), prefix, "mailbox", Ztc::QueueType::Rx, 0);
       prefix.length(0);

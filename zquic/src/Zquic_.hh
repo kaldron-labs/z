@@ -595,7 +595,7 @@ public:
 	  [this] { return unsigned(txQueue.count_()); }}
   {
     auto hub = endpoint->queueHub();
-    ZtString<> prefix;
+    QueueString prefix;
     prefix << endpoint->queueID() << ':' << generation;
     auto &queues = endpoint->queueCatalog();
     // Endpoint diagnostics need queue lifetime protection even without a hub.

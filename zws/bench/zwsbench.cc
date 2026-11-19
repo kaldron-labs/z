@@ -355,7 +355,7 @@ int run(const Options &options, const TempDir &temp)
   ZmRef<Link> link;
   if (!state.failed) {
     Zws::URI uri;
-    ZtString<> text;
+    Zws::URIString text;
     text << (options.tls ? "wss" : "ws") <<
       "://127.0.0.1:" << state.port << "/bench";
     if (!Zws::URI::parse(uri, text).ok())

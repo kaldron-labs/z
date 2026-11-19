@@ -8,6 +8,7 @@
 #include <flatbuffers/reflection.h>
 #include "maps_generated.h"
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuPtr.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmHash.hh>
@@ -31,7 +32,8 @@ friend inline ZuStringT<"zfbmapinterop.Ints.Obj"> ZmNHeapID(Ints_ *);
 ZuDerive(Ints, Ints_);
 Zfb::AsMap<"maps.IntMap", ZfFieldTC::Int32, ZfFieldTC::Int32,
   ZuTypeList<>, ZuTypeList<ZuFieldProp::Deflt<-11>>> Zfb_Fmt(Ints *);
-ZuDerive(Texts, (ZmRBTreeKV<ZtString<>, ZtString<>,
+ZuDerive(TextString, (ZtString<ZtStringHeapID<"zfbmapinterop.Text">>));
+ZuDerive(Texts, (ZmRBTreeKV<TextString, TextString,
   ZmRBTreeHeapID<"zfbmapinterop.Texts">>));
 Zfb::AsMap<"maps.TextMap", ZfFieldTC::String, ZfFieldTC::String> Zfb_Fmt(Texts *);
 
@@ -172,6 +174,8 @@ static void compareSchema(const reflection::Schema &schema, const reflection::Sc
   }
 }
 
+ZuDerive(FBSString, (ZtString<ZtStringHeapID<"zfbmapinterop.FBS">>));
+
 static void schemas()
 {
   ZuTestScope(schemas);
@@ -189,7 +193,7 @@ static void schemas()
   ZuCheck(texts->fields()->LookupByKey("key")->key());
   ZuCheck(texts->fields()->LookupByKey("key")->required());
   ZuCheck(ints->fields()->LookupByKey("value")->default_integer() == -11);
-  ZtString<> fbs;
+  FBSString fbs;
   Zfb::saveFBS<Native::Row>(fbs);
   flatbuffers::Parser parser;
   bool parsed = parser.Parse(fbs.data());

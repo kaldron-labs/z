@@ -69,7 +69,7 @@ extern "C" {
 
 class ZiFile_WindowsDrives {
 public:
-  static int blkSize(ZtWString<> path) {
+  static int blkSize(Zi::Path path) {
     return instance()->blkSize_path(ZuMv(path));
   }
   static int blkSize(HANDLE handle) {
@@ -86,7 +86,7 @@ public:
   ~ZiFile_WindowsDrives();
 
 private:
-  int blkSize_path(ZtWString<> path);
+  int blkSize_path(Zi::Path path);
   int blkSize_handle(HANDLE handle);
 
 #if 0
@@ -97,7 +97,7 @@ private:
 
   static ZiFile_WindowsDrives *instance();
 
-  ZmRBTreeKVDerive(DriveLetters, ZtWString<>, char,
+  ZmRBTreeKVDerive(DriveLetters, Zi::Path, char,
     ZmRBTreeLock<ZmNoLock>);
   ZmRBTreeKVDerive(DriveBlkSizes, char, unsigned,
     ZmRBTreeUnique<true,
@@ -207,10 +207,10 @@ void ZiFile_WindowsDrives::refresh()
   } while ((len = GetLogicalDriveStrings(len, buf.data())) >
 	     static_cast<DWORD>(buf.length()));
   unsigned i = 0;
-  ZtWString<> drive;
+  Zi::Path drive;
   drive += L" :\\";
-  ZtWString<> pathBuf(Zi::PathMax + 1);
-  ZtWString<> path;
+  Zi::Path pathBuf(Zi::PathMax + 1);
+  Zi::Path path;
   char dl;
   do {
     dl = buf[i];
@@ -267,7 +267,7 @@ void ZiFile_WindowsDrives::dump_()
 }
 #endif
 
-int ZiFile_WindowsDrives::blkSize_path(ZtWString<> path)
+int ZiFile_WindowsDrives::blkSize_path(Zi::Path path)
 {
   if (!path.cmp(L"\\\\?\\", 4)) path.splice(4);
 
@@ -285,7 +285,7 @@ retry:
       auto i = m_driveLetters.citer<ZmRBTreeLessEqual>(path);
       DriveLetters::NodeRef dln = i();
       if (dln) {
-	const ZtWString<> &drive = dln->key();
+	const Zi::Path &drive = dln->key();
 	if (!drive.cmp(path, drive.length())) dl = dln->val();
       }
       if (!dl) {
@@ -293,10 +293,10 @@ retry:
 	return 0;
       }
     } else {
-      ZtWString<> dir_(Zi::PathMax + 1);
+      Zi::Path dir_(Zi::PathMax + 1);
       dir_.length(GetCurrentDirectory(Zi::PathMax + 1, dir_));
       if (dir_.length()) {
-	ZtWString<> dir(Zi::PathMax + 1);
+	Zi::Path dir(Zi::PathMax + 1);
 	dir.length(GetFullPathName(dir_, Zi::PathMax + 1, dir, 0));
 	if (dir.length()) dl = dir[0];
       }
@@ -1898,7 +1898,7 @@ ZiFile::Path ZiFile::cwd()
     ret.truncate();
   }
 #else
-  ZtWString<> dir(Zi::PathMax + 1);
+  Path dir(Zi::PathMax + 1);
   dir.length(GetCurrentDirectory(Zi::PathMax + 1, dir));
   if (!dir.length())
     ret.null();

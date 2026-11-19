@@ -11,8 +11,11 @@
 
 #include <iostream>
 
+#include <zlib/ZuDerive.hh>
+
 #include <zlib/ZtRegex.hh>
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtString.hh>
 
 #include <zlib/Ztls.hh>
 
@@ -34,6 +37,7 @@ const char *Response2 = "\r\n"
   "\r\n";
 
 ZuDerive(Payload, (ZtArray<char, ZtArrayHeapID<"Ztls.Example.Payload">>));
+ZuDerive(ResponseString, (ZtString<ZtStringHeapID<"Ztls.Example.Response">>));
 
 struct App : public Ztls::Server<App> {
   struct Link : public Ztls::SrvLink<App, Link> {
@@ -59,7 +63,7 @@ struct App : public Ztls::Server<App> {
 
     int process(Ztls::RxStream &rx) {
       while (!rx.empty()) {
-	ZtString<> response;
+	ResponseString response;
 	auto &content = app()->payload();
 	response << Response << content.length() << Response2;
 	{

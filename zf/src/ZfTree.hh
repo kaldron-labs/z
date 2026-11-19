@@ -35,6 +35,8 @@ namespace ScalarTC {
 
 // node in a scan tree
 class AnyNode {
+  ZuDerive(LayoutString, (ZtString<ZtStringHeapID_<Node_HeapID>>));
+
   AnyNode() = delete;
   AnyNode(const AnyNode &) = delete;
   AnyNode &operator =(const AnyNode &) = delete;
@@ -62,7 +64,7 @@ public:
   static constexpr unsigned SNodeSize = 48;
 
   static constexpr int StringSize =
-    (SNodeSize - (sizeof(ZtString<>) - ZtString<>::BuiltinSize));
+    SNodeSize - (sizeof(LayoutString) - LayoutString::BuiltinSize);
   ZuAssert(StringSize > 0);
   ZuDerive(String, (ZtString<
       ZtStringBuiltin<StringSize, ZtStringHeapID_<Node_HeapID>>>));

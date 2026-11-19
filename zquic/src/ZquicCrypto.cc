@@ -10,9 +10,12 @@
 
 #include <zlib/ZtlsPico.hh>
 
+#include <zlib/ZuDerive.hh>
+
 #include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtPlatform.hh>
+#include <zlib/ZtString.hh>
 
 #include <zlib/ZiFile.hh>
 
@@ -55,7 +58,9 @@ static char hexDigit(unsigned v)
   return v < 10 ? char('0' + v) : char('a' + v - 10);
 }
 
-static void hexAppend(ZtString<> &s, ZuBSpan data)
+ZuDerive(KeyLogString, (ZtString<ZtStringHeapID<"Zquic.KeyLog">>));
+
+static void hexAppend(KeyLogString &s, ZuBSpan data)
 {
   for (unsigned i = 0, n = data.length(); i < n; ++i) {
     unsigned c = data[i];
@@ -1184,7 +1189,7 @@ void Crypto::keyLog(int isEnc, PktKeyLevel::T level, ZuBSpan secret)
     default:
       return;
   }
-  ZtString<> line;
+  KeyLogString line;
   line << label << ' ';
   hexAppend(line, ZuBSpan{random.base, unsigned(random.len)});
   line << ' ';

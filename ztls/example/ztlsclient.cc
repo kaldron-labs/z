@@ -10,8 +10,13 @@
 
 #include <iostream>
 
+#include <zlib/ZuDerive.hh>
+
 #include <zlib/ZtRegex.hh>
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtString.hh>
+
+#include <zlib/ZePlatform.hh>
 
 #include <zlib/Ztls.hh>
 
@@ -22,6 +27,8 @@ const char *Request2 = "\r\n"
   "User-Agent: ztlsclient/1.0\r\n"
   "Accept: */*\r\n"
   "\r\n";
+
+ZuDerive(HeaderString, (ZtString<ZtStringHeapID<"Ztls.Example.Header">>));
 
 struct App : public Ztls::Client<App> {
   struct Link : public Ztls::CliLink<App, Link> {
@@ -45,7 +52,7 @@ struct App : public Ztls::Client<App> {
 	  app()->setError("early data unexpectedly enabled");
       }
       ZtArray<uint8_t> hostname = this->server();
-      std::cerr << (ZtString<>{}
+      std::cerr << (ZeString{}
 	  << "TLS handshake completed (hostname: " << ZuCSpan(hostname)
 	  << " TLS: " << info.version << " ALPN: " << info.alpn
 	  << " resumed: " << (resumed ? "yes" : "no")
@@ -142,7 +149,7 @@ struct App : public Ztls::Client<App> {
 
     unsigned	round = 0;
     unsigned	length = 0;
-    ZtString<>	header;
+    HeaderString	header;
     FILE	*file = nullptr;
   };
 

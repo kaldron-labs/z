@@ -15,6 +15,7 @@
 
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuID.hh>
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmGuard.hh>
@@ -70,6 +71,8 @@ private:
   QueueEntries m_entries;
 };
 
+ZuDerive(QueueString, (ZtString<ZtStringHeapID<"Zquic.Queue">>));
+
 class alignas(Zm::CacheLineSize) QueueInfo : public Ztc::Queue {
 public:
   QueueInfo() { m_entry.queue = this; }
@@ -81,7 +84,7 @@ public:
 
   void initQueue(Ztc::Hub *hub, ZuCSpan prefix, ZuCSpan role,
       Ztc::QueueType::T type, unsigned size = 0) {
-    ZtString<> id;
+    QueueString id;
     id << prefix << ':' << role;
     if (id.length() > ZuIDSize)
       throw ZeEXCEPT(Error, "Zquic", "queue telemetry ID exceeds ZuID capacity");

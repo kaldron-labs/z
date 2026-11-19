@@ -88,8 +88,7 @@ static void setBuf(DNSBuf &buf, ZuBSpan data)
   for (unsigned i = 0, n = data.length(); i < n; i++) buf[i] = data[i];
 }
 
-static bool dnsName(
-  const uint8_t *msg, unsigned len, unsigned &off, ZtString<> *name = nullptr)
+static bool dnsName(const uint8_t *msg, unsigned len, unsigned &off)
 {
   enum { MaxSteps = 64 };
 
@@ -105,10 +104,6 @@ static bool dnsName(
 	  return true;
 	}
 	if (pos + c > len) return false;
-	if (name) {
-	  if (name->length()) *name << '.';
-	  *name << ZuBSpan{msg + pos, c};
-	}
 	pos += c;
 	break;
       case 0xc0:

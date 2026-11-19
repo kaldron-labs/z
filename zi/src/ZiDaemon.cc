@@ -8,6 +8,10 @@
 
 #include <zlib/ZiDaemon.hh>
 
+#include <zlib/ZuDerive.hh>
+
+#include <zlib/ZtString.hh>
+
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiPIDFile.hh>
 #include <zlib/ZiProgram.hh>
@@ -22,8 +26,8 @@
 #pragma warning(disable:4996)
 #endif
 
-#ifndef _WIN32
-ZuDerive(EnvString, (ZtWString<ZtStringHeapID<"ZiDaemon.EnvString">>));
+#ifdef _WIN32
+ZuDerive(CredentialString, (ZtWString<ZtStringHeapID<"ZiDaemon.Credential">>));
 #endif
 
 int ZiDaemon::init(
@@ -90,7 +94,8 @@ int ZiDaemon::init(
     bool daemon = false;
 
     auto cmdLine = ZiProgram::cmdLine();
-    auto program = ZtWString<>{} << ZiProgram::name(cmdLine);
+    Zi::Path program;
+    program << ZiProgram::name(cmdLine);
     if (!program) return Error;
 
     {
@@ -128,7 +133,7 @@ int ZiDaemon::init(
 	// re-invoke same program as impersonated user
 	HANDLE user;
 	if (!LogonUserW(
-	      ZtWString<>(username), 0, ZtWString<>(password),
+	      CredentialString{username}, 0, CredentialString{password},
 	      LOGON32_LOGON_BATCH, LOGON32_PROVIDER_DEFAULT, &user
 	    )) {
 	  ZiLOG(Fatal, "ZiDaemon", ([e = ZeLastError](auto &s) {

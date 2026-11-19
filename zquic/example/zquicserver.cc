@@ -10,10 +10,12 @@
 
 #include <iostream>
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/Zquic.hh>
 
+ZuDerive(ResponseString, (ZtString<ZtStringHeapID<"Zquic.Example.Response">>));
 
 struct AppLink;
 struct AppStream;
@@ -100,7 +102,7 @@ friend inline ZuStringT<"Zquic.Example.SrvLink"> ZmNHeapID(AppLink *);
       return false;
     }});
 
-    ZtString<> response;
+    ResponseString response;
     response << "echo: " << payload;
     if (!send(stream, response, fin)) {
       app()->setError("stream echo send failed");
