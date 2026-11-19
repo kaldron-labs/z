@@ -4,6 +4,10 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <errno.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -14,8 +18,11 @@
 #include <time.h>
 
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuArray.hh>
+#include <zlib/ZuTime.hh>
 
 #include <zlib/ZmAssert.hh>
+#include <zlib/ZmBlock.hh>
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmGuard.hh>
 
@@ -23,6 +30,7 @@
 
 #include <zlib/ZePlatform.hh>
 
+#include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
 #include <zlib/Zxdp.hh>
@@ -30,9 +38,68 @@
 #include <zlib/ZxdpUMem.hh>
 #include <zlib/ZxdpPool.hh>
 
+#ifdef HAVE_DPDK
+#include <zlib/ZxdpDpdk.hh>
+#include <zlib/ZxdpDpdkInstance.hh>
+#endif
+
 namespace Zxdp {
 
 ZtEnumImplNS(Type);
+
+bool Instance::start(RecvFn receive, StopFn txStopped)
+{
+  return ZmBlock<bool>{}([this, &receive, &txStopped](auto wake) {
+    start(ZuMv(receive), ZuMv(txStopped), ZuMv(wake));
+  });
+}
+
+void Instance::start(RecvFn receive, StopFn txStopped, StartFn completion)
+{
+  m_everStarted = 1;
+  RunFns superseded;
+  Engine::start([completion = ZuMv(completion)](bool ok) {
+    if (completion) completion(ok);
+  }, [this, &receive, &txStopped, &superseded] {
+    superseded = takeRunFns();
+    m_nextRun = {ZuMv(receive), ZuMv(txStopped)};
+  });
+}
+
+ZuTime Instance::monotonicNow()
+{
+  timespec now{};
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return ZuTime{now};
+}
+
+void Instance::signalWake(int fd, const ZmAtomic<unsigned> &parking)
+{
+  if (!parking) return;
+  uint64_t one = 1;
+  while (::write(fd, &one, sizeof(one)) < 0) {
+    if (errno == EINTR) continue;
+    ZmAssert_(errno == EAGAIN);
+    break;
+  }
+}
+
+void Instance::drainWake(int fd)
+{
+  uint64_t value;
+  while (::read(fd, &value, sizeof(value)) < 0) {
+    if (errno == EINTR) continue;
+    ZmAssert_(errno == EAGAIN);
+    break;
+  }
+}
+
+bool Instance::takeWake(ZmAtomic<uint64_t> &wakes)
+{
+  if (!wakes) return false;
+  --wakes; // only the Rx owner consumes pulses
+  return true;
+}
 
 namespace Xdp {
 
@@ -44,13 +111,6 @@ friend inline ZuStringT<"Zxdp.Queue"> ZmNHeapID(Queue *);
   unsigned rxHeld = 0, quota = 0;
   bool published = false;
 };
-
-static ZuTime monotonicNow()
-{
-  timespec now{};
-  clock_gettime(CLOCK_MONOTONIC, &now);
-  return ZuTime{now};
-}
 
 class Instance final : public ZmNHeap<Instance>, public Zxdp::Instance {
 friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(Instance *);
@@ -65,6 +125,9 @@ public:
     ZmAssert_(Engine::state() == ZmEngineState::Stopped);
     ZmAssert_(m_ioState == Cold || m_ioState == Closed);
     ZmGuard guard(m_queueLock);
+    // A transient failure in stop may have left the expected-program FD open.
+    // Keep it for a later final() retry if this attempt also fails.
+    auto detached = m_attachment.detach();
     for (auto i = m_queues.length(); i; --i) delete m_queues[i - 1];
     m_queues.null();
     m_umemFD = -1;
@@ -83,7 +146,7 @@ public:
     m_rxPool = nullptr;
     m_arena = nullptr;
     m_receive = {}; m_txStopped = {};
-    m_nextReceive = {}; m_nextTxStopped = {};
+    resetRun();
     if (m_wakeFD >= 0) { ::close(m_wakeFD); m_wakeFD = -1; }
     if (m_linkFD >= 0) { ::close(m_linkFD); m_linkFD = -1; }
     m_mx = nullptr;
@@ -95,12 +158,13 @@ public:
     m_ioError = 0;
     m_txConsumed = 0;
     m_txExit = m_txExited = 1;
-    m_error = {};
-    m_startFailed = m_everStarted = m_ingressUncertain = false;
+    m_error = detached.is<ZeException>() ? ZuMv(detached).p<ZeException>() : ZeException{};
+    m_startFailed = m_ingressUncertain = false;
     m_stopQueued = StopIdle;
     m_ioState = Cold;
   }
 
+  void status() override;
   ZeException error() const override { return m_error; }
   ZmRef<Zi::IOBufPool> bufPool(
     Zi::IOBufType::T, unsigned count, unsigned size, unsigned headRoom,
@@ -109,7 +173,6 @@ public:
   unsigned ifindex() const override { return m_link.ifindex; }
   unsigned rxQueues() const override { return m_link.rxQueues; }
   bool allocated() const override { return m_umemFD >= 0; }
-  bool everStarted() const override { return m_everStarted; }
   bool ready() const override {
     return Engine::state() == ZmEngineState::Running && m_ioState == Active;
   }
@@ -130,6 +193,7 @@ public:
     ZmAssert_(mx);
     if (Engine::state() != ZmEngineState::Stopped || mx->state() != ZmEngineState::Stopped)
       return ZeEXCEPT(Error, "Zxdp", "stop AF_XDP before initialization");
+    if (!m_mx && m_attachment.ifindex()) return m_error;
     if (!params.is<Params>())
       return ZeEXCEPT(Error, "Zxdp", "AF_XDP instance requires XDP parameters");
     const auto &config = params.p<Params>();
@@ -216,17 +280,11 @@ public:
     if (created.is<ZeException>()) return ZuMv(created).p<ZeException>();
     auto arena = ZuMv(created).p<ZmRef<UMem>>();
     const auto &layout = arena->layout();
-    auto round = [](unsigned n) -> unsigned {
-      if (n > (unsigned(1)<<31)) return 0;
-      if (n < 2) return 2;
-      return unsigned(1)<<(32 - __builtin_clz(n - 1));
-    };
-    auto r = round(layout.rxCount/m_link.rxQueues + !!(layout.rxCount%m_link.rxQueues));
-    auto t = round(layout.txCount);
+    auto r = power2(layout.rxCount/m_link.rxQueues + !!(layout.rxCount%m_link.rxQueues));
+    auto t = power2(layout.txCount);
     if (!r || !t) return ZeEXCEPT(Error, "Zxdp", "AF_XDP ring capacity overflow");
     Queues queues;
     queues.length(m_link.rxQueues);
-    for (auto &queue : queues) queue = nullptr;
     for (unsigned i = 0; i < queues.length(); ++i) {
       auto queue = queues[i] = new Queue;
       queue->quota = layout.rxCount/m_link.rxQueues + (i < layout.rxCount%m_link.rxQueues);
@@ -259,34 +317,11 @@ public:
     return {};
   }
 
-  bool start(RecvFn fn, StopFn txStopped) override {
-    return ZmBlock<bool>{}([this, &fn, &txStopped](auto wake) {
-      start(ZuMv(fn), ZuMv(txStopped), ZuMv(wake));
-    });
-  }
-
-  void start(RecvFn fn, StopFn txStopped, StartFn completion) override {
-    {
-      ZmGuard guard(m_callbackLock);
-      m_everStarted = true;
-      auto state = Engine::state();
-      if (state == ZmEngineState::Stopped || state == ZmEngineState::Stopping) {
-	m_nextReceive = ZuMv(fn);
-	m_nextTxStopped = ZuMv(txStopped);
-      }
-    }
-    Engine::start([completion = ZuMv(completion)](bool ok) {
-      if (completion) completion(ok);
-    });
-  }
-
 private:
   void start_() override {
-    {
-      ZmGuard guard(m_callbackLock);
-      m_receive = ZuMv(m_nextReceive);
-      m_txStopped = ZuMv(m_nextTxStopped);
-    }
+    auto run = takeRunFns();
+    m_receive = ZuMv(run.receive);
+    m_txStopped = ZuMv(run.txStopped);
     m_stopQueued = StopIdle;
     m_error = {};
     if (!allocated() || !m_mx->running() || !m_receive) {
@@ -329,8 +364,9 @@ private:
       auto result = quiesceIngress();
       if (result.is<ZeException>() && !m_error) m_error = ZuMv(result).p<ZeException>();
     }
-    if (!drainTx()) {
-      m_mx->push([this] { retire(); }, m_txSid);
+    bool rxDone = drainRx();
+    if (!drainTx() || !rxDone) {
+      m_mx->run([this] { retire(); }, m_txSid);
       return;
     }
     auto result = close();
@@ -339,7 +375,7 @@ private:
     if (m_startFailed) {
       m_startFailed = false;
       Engine::started(false);
-    } else Engine::stopped(!m_error);
+    } else stoppedRun(!m_error);
   }
 
   ZuUnion<void, ZeException> open() {
@@ -350,7 +386,7 @@ private:
     m_nextQueue = 0;
     m_wakes = m_parking = m_rxReturned = 0;
     m_ioError = 0;
-    drainWake();
+    drainWake(m_wakeFD);
     if (m_ingressUncertain)
       return ZeEXCEPT(Error, "Zxdp", "AF_XDP ingress retirement could not be proved");
     if (m_txHeld) {
@@ -441,13 +477,17 @@ private:
       }
     }
     m_ingressQuiesced = true;
-    if (retired)
-      for (auto queue : m_queues)
-	while (consumeRx(*queue, false)) { }
-    else if (m_rxHeld)
-      m_ingressUncertain = true;
+    m_retireQueue = retired && published ? 0 : m_queues.length();
+    if (!retired && m_rxHeld) m_ingressUncertain = true;
     if (error) return error;
     return {};
+  }
+
+  bool drainRx() {
+    auto count = m_queues.length();
+    if (m_retireQueue == count) return true;
+    if (consumeRx(*m_queues[m_retireQueue], false) < Quantum) ++m_retireQueue;
+    return m_retireQueue == count;
   }
 
   ZuUnion<void, ZeException> close() {
@@ -538,37 +578,12 @@ private:
     // published a wait attempt. The ordered increment pairs with parking.xch
     // and the receiver's final pulse check; neither side can miss the other.
     ++m_wakes;
-    signalRx();
+    signalWake(m_wakeFD, m_parking);
   }
 
   void returned() {
     if (m_ioState != Active || m_mx->invoked(m_mx->rxThread()) || m_rxReturned.xch(1)) return;
-    signalRx();
-  }
-
-  void signalRx() {
-    if (!unsigned(m_parking)) return;
-    uint64_t one = 1;
-    while (::write(m_wakeFD, &one, sizeof(one)) < 0) {
-      if (errno == EINTR) continue;
-      ZmAssert_(errno == EAGAIN); // already readable on eventfd saturation
-      break;
-    }
-  }
-
-  void drainWake() {
-    uint64_t value;
-    while (::read(m_wakeFD, &value, sizeof(value)) < 0) {
-      if (errno == EINTR) continue;
-      ZmAssert_(errno == EAGAIN);
-      break;
-    }
-  }
-
-  bool woken() {
-    if (!uint64_t(m_wakes)) return false;
-    --m_wakes; // only the single Rx owner consumes pulses
-    return true;
+    signalWake(m_wakeFD, m_parking);
   }
 
   unsigned receiveQueue(unsigned q);
@@ -587,13 +602,12 @@ private:
   unsigned	m_nAppTxPools = 0;
   using RxPool = ZmRef<BufPool>;
   RxPool	m_rxPool;
-  RecvFn	m_receive, m_nextReceive;
-  StopFn	m_txStopped, m_nextTxStopped;
-  ZmLock	m_callbackLock;
+  RecvFn	m_receive;
+  StopFn	m_txStopped;
   LinkState	m_link;
   Filter	m_filter;
   ZeException	m_error;
-  bool		m_startFailed = false, m_everStarted = false;
+  bool		m_startFailed = false;
   bool		m_ingressQuiesced = true, m_ingressUncertain = false;
   ZmAtomic<unsigned> m_stopQueued{StopIdle};
   unsigned	m_spin = 1000, m_rxRingCount = 0, m_txRingCount = 0;
@@ -608,6 +622,7 @@ private:
   ZmAtomic<unsigned> m_ioState{Cold}, m_txExit{1}, m_txExited{1};
   ZmAtomic<int> m_ioError{0};
   ZuTime	m_drainDeadline;
+  unsigned	m_retireQueue = 0;
   alignas(Zm::CacheLineSize) ZmAtomic<unsigned> m_txPending{0};
   alignas(Zm::CacheLineSize) ZmAtomic<uint64_t> m_wakes{0};
   ZmAtomic<unsigned> m_parking{0}, m_rxReturned{0};
@@ -628,6 +643,28 @@ ZmRef<Zi::IOBufPool> Instance::bufPool(
   pool->tailRoom = tailRoom;
   pool->align = align;
   return pool;
+}
+
+void Instance::status()
+{
+  ZmGuard guard(m_queueLock);
+  // Six two-digit octets separated by colons, plus the terminator.
+  ZuCArray<18> mac;
+  for (auto octet : m_link.mac) {
+    if (mac.length()) mac << ':';
+    mac << ZuBoxed(unsigned(octet)).hex<false, ZuFmt::Right<2>>();
+  }
+  ZiLOG(Info, "Zxdp", ([
+    index = ifindex(), state = Engine::state(), mtu = m_link.mtu,
+    address = mac, allocated = allocated(), copy = !zeroCopy(),
+    queues = m_link.rxQueues, rxDesc = m_rxRingCount, txDesc = m_txRingCount
+  ](auto &out) {
+    out << "AF_XDP ifindex " << ZuBoxed(index) << " state " << ZuBoxed(state)
+      << " MTU " << ZuBoxed(mtu) << " MAC " << address
+      << " mode " << (allocated ? (copy ? "copy" : "zero-copy") : "unallocated")
+      << " Rx queues " << ZuBoxed(queues) << " Rx descriptors per queue " << ZuBoxed(rxDesc)
+      << " Tx descriptors " << ZuBoxed(txDesc);
+  }));
 }
 
 unsigned Instance::allQueues(Ztc::QueueMgr::AllFn fn) const
@@ -680,7 +717,7 @@ void Instance::rx()
   unsigned idle = 0, empty = 0;
   auto queueCount = m_queues.length(); // frozen until the caller quiesces Rx for close
   while (ready()) {
-    if (woken()) return;
+    if (takeWake(m_wakes)) return;
     if (m_rxReturned && m_rxReturned.xch(0)) idle = empty = 0;
     auto q = m_nextQueue++;
     if (m_nextQueue == queueCount) m_nextQueue = 0;
@@ -707,8 +744,8 @@ void Instance::rx()
       return;
     }
     // A delayed writer can leave stale readiness after its pulse was consumed.
-    // Draining readiness never creates a pulse; only woken() permits a return.
-    if (event.data.u32 == End) drainWake();
+    // Draining readiness never creates a pulse.
+    if (event.data.u32 == End) drainWake(m_wakeFD);
     else m_nextQueue = event.data.u32;
     idle = 0;
   }
@@ -801,6 +838,16 @@ ZmRef<Instance> instance(Type::T type)
 {
   switch (type) {
     case Type::Xdp: return new Xdp::Instance;
+    case Type::Dpdk: {
+#ifdef HAVE_DPDK
+      auto eal = Dpdk::EAL::instance();
+      if (!eal->ready())
+	throw ZeEXCEPT(Error, "Zxdp.Dpdk", "initialize DPDK EAL before selecting the backend");
+      return new Dpdk::Instance{*eal};
+#else
+      throw ZeEXCEPT(Error, "Zxdp.Dpdk", "Zxdp was built without DPDK support");
+#endif
+    }
     default: return nullptr;
   }
 }

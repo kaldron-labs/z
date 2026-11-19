@@ -25,6 +25,8 @@
 
 #include <zlib/ZePlatform.hh>
 
+#include <zlib/ZiLog.hh>
+
 #include <zlib/ZxdpBPF.hh>
 
 namespace Zxdp::Xdp {
@@ -536,7 +538,13 @@ ZuUnion<void, ZeException> setXDP(
   return result;
 }
 
-BPFAttach::~BPFAttach() { ZmAssert_(!m_ifindex && m_fd < 0); }
+BPFAttach::~BPFAttach()
+{
+  if (!m_ifindex) return;
+  auto result = detach();
+  if (result.is<ZeException>()) ZiLogEvent(ZuMv(result).p<ZeException>());
+  reset();
+}
 
 void BPFAttach::reset()
 {

@@ -1,6 +1,6 @@
-# Zxdp: Linux AF_XDP packet I/O
+# Zxdp: Linux packet I/O
 
-Zxdp supplies raw AF_XDP packet arenas, intrusive pools and kernel ring service.
+Zxdp supplies raw Ethernet packet service over AF_XDP and optional DPDK.
 The [interface contract](INTERFACE.md) defines its boundary. The caller supplies
 transport state, application adaptation and scheduling.
 Include `<zlib/Zxdp.hh>` and link `libZxdp`, `libZi` and their framework dependencies.
@@ -9,7 +9,56 @@ For Zi provider and transport integration see [Zutcp](../zutcp/README.md) and it
 ownership, routes and static neighbors.
 Both modules are Linux-only and are excluded from Windows builds.
 
-## Interface
+## DPDK
+
+On Linux, `z.config` enables DPDK when configuring the tree. It requires
+`libdpdk >= 25.11` in pkg-config. Pass `-K` for an AF_XDP-only build. For
+direct `configure` invocations, enable the feature with `--with-dpdk=yes`.
+
+Include `<zlib/ZxdpDpdk.hh>` and initialize EAL explicitly before selecting the
+backend. The aggregate EAL configuration owns its strings and token lists.
+This example selects a software ring device and a single EAL lcore on an allowed
+CPU while preserving the initializing thread's affinity.
+
+```cpp
+auto eal = Zxdp::Dpdk::EAL::instance();
+Zxdp::Dpdk::EALParams ealParams;
+ealParams.noPCI = ealParams.noHuge = ealParams.noShconf = true;
+ealParams.noTelemetry = true;
+ealParams.vdev.push("net_ring0");
+auto initialized = eal->init(ealParams);
+if (initialized.is<ZeException>()) {
+  ZiLogEvent(ZuMv(initialized).p<ZeException>());
+  return 1;
+}
+
+auto device = Zxdp::instance(Zxdp::Type::Dpdk);
+Zxdp::Params config{Zxdp::Dpdk::Params{.name = "net_ring0"}};
+auto opened = device->init(&mx, config);
+if (opened.is<ZeException>()) {
+  ZiLogEvent(ZuMv(opened).p<ZeException>());
+  return 1;
+}
+device->status();
+```
+
+The DPDK factory throws `ZeException` if the backend is omitted or EAL is
+uninitialized. Open the named Ethernet device on a stopped multiplexer. For
+Zutcp, provide a Linux control-plane `ifindex` with matching MTU and MAC. The
+standalone software packet fixtures can omit the link.
+
+DPDK uses the multiplexer’s existing Rx and Tx owners. It submits native mbufs
+directly with one driver reference per accepted send. Caller backing stays valid
+while its allocation lease is held. The same pools survive stop and restart.
+`rxInterval` caps idle parks in microseconds and defaults to 50. Set it to zero
+to poll continuously. Ring forwards mbuf pointers and pcap copies bytes.
+With the AF_PACKET PMD, the native ingress data room also accommodates the
+packet capacity of the configured `framesz`. When omitted, the PMD's default
+slot size is 2,048 bytes. The device MTU still bounds the caller's frame size.
+See the [DPDK lifecycle](INTERFACE.md#dpdk-lifecycle) and
+[software acceptance commands](itest/README.md#dpdk-software-fixtures).
+
+## AF_XDP interface
 
 Configure the sender slot in the multiplexer before constructing it. Open the
 selected XDP link synchronously while the multiplexer is stopped.

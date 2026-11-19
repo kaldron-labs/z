@@ -34,6 +34,13 @@
 
 namespace Zxdp::Xdp {
 
+inline unsigned power2(unsigned n)
+{
+  if (n > (unsigned(1)<<31)) return 0;
+  if (n < 2) return 2;
+  return unsigned(1)<<(32 - __builtin_clz(n - 1));
+}
+
 struct ArenaLayout {
   size_t length = 0, rxLength = 0, txLength = 0;
   unsigned chunk = 0, prefix = 0, rxCount = 0, txCount = 0;

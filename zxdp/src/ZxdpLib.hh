@@ -34,9 +34,6 @@ namespace Zxdp {
 
   inline constexpr const char Log[] = "Zxdp";
 
-  ZxdpExtern void init(); // idempotent
-  ZxdpExtern void warmup();
-
 }
 
 #endif /* ZxdpLib_HH */

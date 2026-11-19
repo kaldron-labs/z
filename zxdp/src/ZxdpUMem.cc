@@ -20,13 +20,6 @@
 
 namespace Zxdp::Xdp {
 
-static unsigned power2(unsigned n)
-{
-  if (n > (unsigned(1)<<31)) return 0;
-  if (n < 2) return 2;
-  return unsigned(1)<<(32 - __builtin_clz(n - 1));
-}
-
 static unsigned poolStride(const Zi::IOBufPool &pool)
 {
   unsigned size = pool.size;
@@ -199,9 +192,6 @@ ZuUnion<void, ZeException> Xsk::open(
     if (setsockopt(m_fd, SOL_XDP, XDP_UMEM_REG, &reg, sizeof(reg)))
       return fail("AF_XDP UMEM registration");
   }
-  // The generic sender's drain budget is bounded by Tx ring capacity.
-  enum { MinTxRing = 1<<15 };
-  if (txCount && txCount < MinTxRing) txCount = MinTxRing;
   struct { unsigned option, count; } rings[] = {
     {XDP_UMEM_FILL_RING, fillCount}, {XDP_UMEM_COMPLETION_RING, compCount},
     {XDP_RX_RING, rxCount}, {XDP_TX_RING, txCount}
@@ -210,7 +200,10 @@ ZuUnion<void, ZeException> Xsk::open(
     if (ring.count &&
 	setsockopt(m_fd, SOL_XDP, ring.option, &ring.count, sizeof(ring.count)))
       return fail("AF_XDP ring configuration");
-  if (txCount && setsockopt(m_fd, SOL_XDP, XDP_MAX_TX_SKB_BUDGET,
+  // Linux's default generic Tx budget is 32. The optional override must
+  // be at least that large and fit the configured descriptor ring.
+  enum { DefaultTxBudget = 32 };
+  if (txCount > DefaultTxBudget && setsockopt(m_fd, SOL_XDP, XDP_MAX_TX_SKB_BUDGET,
 	&txCount, sizeof(txCount)) && errno != ENOPROTOOPT)
     return fail("AF_XDP Tx budget configuration");
   xdp_mmap_offsets offsets{};

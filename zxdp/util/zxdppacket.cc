@@ -10,7 +10,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
-#include <poll.h>
 #include <netinet/ether.h>
 #include <iostream>
 #include <limits.h>
@@ -31,6 +30,7 @@
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmRef.hh>
+#include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZePlatform.hh>
 
@@ -143,6 +143,7 @@ struct Endpoint {
   alignas(Zm::CacheLineSize) Count	completed{0}; // Tx publication
   alignas(Zm::CacheLineSize) unsigned	sent = 0, sequence = 0; // Tx-exclusive
   uint8_t	*pending = nullptr;
+  ZmSemaphore	txNotice;
 
   explicit Endpoint(Options options) : config{options} { }
 
@@ -202,11 +203,15 @@ struct Endpoint {
     rx->free(p);
     if (!valid) {
       error = ZeEXCEPT(Error, "Zxdp.Packet", "packet integrity mismatch");
-      failed = 1; instance->wake(); return;
+      failed = 1;
+      txNotice.post();
+      instance->wake();
+      return;
     }
     ++received;
     if (config.server) nextSeq = seq;
     else if (seq < config.count) nextSeq = seq + 1;
+    txNotice.post();
     if (received == config.count && completed == config.count) instance->wake();
   }
 
@@ -260,14 +265,19 @@ struct Endpoint {
           auto seq = nextSeq.xch(0);
           if (seq) transmit(seq);
           else if (sequence) transmit(sequence);
-          if (!instance->ready() || Zm::now() >= deadline) {
+          auto now = Zm::now();
+          if (!instance->ready() || now >= deadline) {
             failed = 1;
             instance->wake();
             break;
           }
-          // Application Tx completion/deadline service; Rx waiting is wholly
-          // inside the library and its configured spin-before-epoll loop.
-          if (!work) poll(nullptr, 0, config.timeout);
+          // Kernel completions have no application notification. Probe at
+          // the configured interval, or earlier when Rx posts new work.
+          if (!work && config.timeout) {
+            auto probe = now + ZuTime{int64_t(config.timeout / 1000),
+              int32_t(config.timeout % 1000) * 1000000};
+            txNotice.timedwait(probe < deadline ? probe : deadline);
+          }
         }
       }};
       while (!failed && (received != config.count || completed != config.count))

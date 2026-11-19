@@ -4,6 +4,10 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZiMultiplex.hh>
@@ -19,7 +23,8 @@ using namespace ZuTestUtil;
 static void testCreation()
 {
   ZuTestScope(testCreation);
-  auto instance = Zxdp::instance(Zxdp::Type::Xdp);
+  static_assert(Zxdp::Type::T{} == Zxdp::Type::Xdp);
+  auto instance = Zxdp::instance(Zxdp::Type::T{});
   ZuCHECK(instance && !instance->ready() && instance->state() == ZmEngineState::Stopped,
     "selected instance starts uninitialized and stopped");
   ZuCHECK(!instance->start([](uint8_t *, unsigned) { }) && instance->state() == ZmEngineState::Stopped &&
@@ -37,6 +42,15 @@ static void testCreation()
   instance->final();
   ZuCHECK(instance->state() == ZmEngineState::Stopped && !instance->ready(),
     "repeated final preserves the uninitialized stopped state");
+#ifndef HAVE_DPDK
+  bool unsupported = false;
+  try {
+    Zxdp::instance(Zxdp::Type::Dpdk);
+  } catch (const ZeException &) {
+    unsupported = true;
+  }
+  ZuCHECK(unsupported, "disabled DPDK selection reports a structured error");
+#endif
 }
 
 static void testPoolFactory()

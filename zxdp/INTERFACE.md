@@ -1,4 +1,6 @@
-# XDP lifecycle and ownership
+# Packet device lifecycle and ownership
+
+## AF_XDP
 
 Configure the multiplexer and its sender slot before construction. Select XDP
 with `Zxdp::instance(Zxdp::Type::Xdp)` and initialize it synchronously with
@@ -92,3 +94,50 @@ initialized link resources. This applies after any number of runs and before
 the first start. It clears the borrowed multiplexer pointer. Standalone tests
 call it while their multiplexer still lives. In an application, multiplexer
 finalization drives TCP finalization, and TCP drives XDP finalization.
+
+## DPDK lifecycle
+
+Obtain the platform EAL singleton with `Dpdk::EAL::instance()` and initialize it
+once with an owned `Dpdk::EALParams` aggregate. Named fields and raw argv tokens
+can be combined when they configure different options. Repeated list values
+preserve their order.
+Keep the singleton alive until every device instance and dependent pool has
+retired. EAL closes its remaining registered ports and cleans up at process
+shutdown.
+
+The DPDK device opens a named Ethernet port exclusively on a stopped
+multiplexer. A successful open exposes MTU, MAC, the selected Rx queue count
+of one, and the configured Linux routing-link identity before any pools exist.
+An identical stopped init is idempotent, including the idle interval. A
+conflicting init preserves the original configuration.
+
+Provision the common Rx pool and each distinct Tx pool as one unit.
+If native allocation fails, retry with the same pool collection. Direct
+standalone allocation is idempotent for that collection. Backing has native
+mbuf headroom and exact logical capacity for the requested role. Tx pools
+may be smaller than an MTU. The PMD can use every Rx mbuf.
+
+Start configures one contiguous-frame Rx queue and one Tx queue. Run `rx()`
+and `pollTx()` on their single owners. Call `send()` on the Tx owner with a
+pointer within its native backing. Rejected sends preserve caller bytes and
+ownership. Accepted sends hold one driver reference until retirement. Keep
+bytes immutable until then. `pollTx()` counts each retired submission once,
+including when the application retains a separate recovery allocation lease.
+
+The Rx owner checks counted wakes between bursts. It spins through the
+configured number of empty probes, then uses a receive interrupt fd when
+available and short timed eventfd waits capped by `Dpdk::Params::rxInterval`.
+A zero interval keeps polling. Receive callbacks own the received mbuf through
+the common Rx pool. Return off the owner coalesces a wake while Rx is parked.
+
+Stop gates new work, drains the Rx callback and services accepted Tx on the
+Tx owner while the scheduler is running. A stopped or failed run retains the
+opened port and native backing for restart. Return dependent application
+buffers before finalization. Finalization releases backing and lets another
+instance open the same port.
+
+`allQueues()` enumerates the configured Rx and Tx queues. Consume each view
+inside its callback. DPDK counters are available only as supplied by the PMD.
+`status()` reports the backend, opened device, link geometry, copy mode and
+the current queue setup. Ring uses direct mbuf forwarding. Pcap uses copies
+and supports finite capture input in this lifecycle.

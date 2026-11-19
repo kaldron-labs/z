@@ -34,6 +34,8 @@
 
 #include <zlib/Zxdp.hh>
 
+#include "zxdpfixture.hh"
+
 using namespace ZuTestUtil;
 
 // Test-only observation/gating of the real blocking syscall. No synthetic
@@ -97,10 +99,7 @@ static bool setup(
   captureWake = true;
   auto initialized = instance->init(&mx, params);
   captureWake = false;
-  auto allocated = initialized.is<void>() ? instance->alloc(ingress, tx) : initialized;
-  if (allocated.is<ZeException>()) error = ZuMv(allocated).p<ZeException>();
-  else if (!mx.start()) error = ZeEXCEPT(Error, "Zxdp.WakeTest", "start multiplexer");
-  else if (!instance->start(ZuMv(rx))) error = instance->error();
+  error = ZxdpTest::start(instance, mx, ZuMv(initialized), ingress, tx, ZuMv(rx));
   return instance->ready();
 }
 

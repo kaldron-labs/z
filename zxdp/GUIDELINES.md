@@ -3,6 +3,18 @@
 Follow the repository guidance in ../AGENTS.md and the caller-supplied
 [interface contract](INTERFACE.md). The contract supersedes earlier plans.
 
+* Initialize DPDK EAL explicitly before selecting `Type::Dpdk`. Claim the opened
+  port through device finalization. Allocate the whole immutable pool set
+  transactionally and retain it across runs.
+* DPDK uses the existing Rx and Tx owners. Keep caller and driver leases
+  distinct. Account for completion only when the driver relinquishes its
+  mbuf reference. Stop with the scheduler running so its owners can quiesce.
+* The stock ring PMD leaves its rings with the fixture. The fixture copies
+  across its simulated wire into an mbuf from the destination's Rx pool.
+  Quiesce the software producer before draining that queue.
+
+## AF_XDP
+
 * Select the cold instance with `instance(Type::Xdp)`. Configure the sender
   slot before constructing the multiplexer, then pass that same multiplexer to
   synchronous `init(mx, params)`. Retain initialized link resources until

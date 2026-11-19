@@ -15,6 +15,15 @@ ZxdpRingTest_SOURCES = ZxdpRingTest.cc
 ZxdpPoolTest_SOURCES = ZxdpPoolTest.cc
 ZxdpInstanceTest_SOURCES = ZxdpInstanceTest.cc
 ZxdpClassifierTest_SOURCES = ZxdpClassifierTest.cc
+if DPDK
+noinst_PROGRAMS += ZxdpDpdkPoolTest ZxdpDpdkInstanceTest
+ZxdpDpdkPoolTest_SOURCES = ZxdpDpdkPoolTest.cc ../src/ZxdpDpdkPool.cc
+ZxdpDpdkPoolTest_CPPFLAGS = $(AM_CPPFLAGS) $(DPDK_CFLAGS)
+ZxdpDpdkPoolTest_LDADD = $(LDADD) $(DPDK_LIBS)
+ZxdpDpdkInstanceTest_SOURCES = ZxdpDpdkInstanceTest.cc
+ZxdpDpdkInstanceTest_CPPFLAGS = $(AM_CPPFLAGS) $(DPDK_CFLAGS)
+ZxdpDpdkInstanceTest_LDADD = $(LDADD) $(DPDK_LIBS)
+endif
 EXTRA_DIST = README.md
 
 .PHONY: test

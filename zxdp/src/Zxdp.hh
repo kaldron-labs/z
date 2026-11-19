@@ -15,15 +15,19 @@
 
 #include <stdint.h>
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZuTime.hh>
 #include <zlib/ZuUnion.hh>
 
+#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmEngine.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmPolymorph.hh>
 
 #include <zlib/ZtEnum.hh>
+#include <zlib/ZtString.hh>
 
 #include <zlib/ZePlatform.hh>
 
@@ -36,7 +40,7 @@ using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zxdp.Receive">>;
 using StopFn = ZmFn<void(), ZmFnHeapID<"Zxdp.TxStopped">>;
 using StartFn = ZmFn<void(bool), ZmFnHeapID<"Zxdp.Start">>;
 
-ZtEnumNS(ZxdpAPI, Type, uint8_t, Xdp);
+ZtEnumNS(ZxdpAPI, Type, uint8_t, Xdp, Dpdk);
 
 namespace Xdp {
   struct Params {
@@ -46,7 +50,19 @@ namespace Xdp {
     unsigned txSid = 0; // application-assigned sender slot
   };
 }
-ZuDerive(Params, (ZuUnion<Xdp::Params>));
+namespace Dpdk {
+  ZuDerive(DeviceString, (ZtString<ZtStringHeapID<"Zxdp.Dpdk.Device">>));
+
+  struct Params_ {
+    unsigned spin = 1000;
+  };
+  struct Params : public Params_ {
+    DeviceString	name; // owned Ethernet device name
+    unsigned		ifindex = 0;
+    unsigned		rxInterval = 50; // maximum idle park in microseconds
+  };
+}
+ZuDerive(Params, (ZuUnion<Xdp::Params, Dpdk::Params>));
 
 // The caller drives Rx/Tx on their respective single owners. Allocation/free
 // may run on other threads. Allocation holds backing until explicit pool return;
@@ -76,17 +92,17 @@ public:
   virtual ZuUnion<void, ZeException> alloc(
     Zi::IOBufPool *rxPool, const Zi::IOBufPoolList &txPools) = 0;
 
-  virtual bool start(RecvFn, StopFn txStopped = {}) = 0;
-  virtual void start(RecvFn, StopFn txStopped, StartFn completion) = 0;
+  virtual bool start(RecvFn, StopFn txStopped = {});
+  virtual void start(RecvFn, StopFn txStopped, StartFn completion);
   // Stop drains service. While stopped, final releases device and backing resources.
   virtual void final() = 0;
-  virtual ZeException error() const = 0; // inspect after start/stop completion
+  virtual ZeException error() const = 0; // inspect after start, stop or final
 
   virtual ZiMultiplex *mx() const = 0;
   virtual unsigned ifindex() const = 0;
   virtual unsigned rxQueues() const = 0;
   virtual bool allocated() const = 0;
-  virtual bool everStarted() const = 0;
+  virtual bool everStarted() const { return m_everStarted; }
   virtual bool ready() const = 0;
   virtual unsigned mtu() const = 0;
   virtual bool zeroCopy() const = 0;
@@ -101,11 +117,30 @@ public:
   virtual unsigned allQueues(Ztc::QueueMgr::AllFn) const = 0;
 
 protected:
+  struct RunFns {
+    RecvFn receive;
+    StopFn txStopped;
+  };
+
   Instance() = default;
+  RunFns takeRunFns() { return ZuMv(m_nextRun); }
+  void stoppedRun(bool ok) { Engine::stopped(ok, [this] { return takeRunFns(); }); }
+  void resetRun() { m_everStarted = 0; }
+
+  static ZuTime monotonicNow();
+  static void signalWake(int fd, const ZmAtomic<unsigned> &parking);
+  static void drainWake(int fd);
+  static bool takeWake(ZmAtomic<uint64_t> &wakes);
 
 private:
   virtual void start_() = 0;
   virtual void stop_() = 0;
+
+  RunFns m_nextRun;
+  ZmAtomic<unsigned> m_everStarted{0};
+
+public:
+  virtual void status() = 0;
 };
 
 ZxdpExtern ZmRef<Instance> instance(Type::T);

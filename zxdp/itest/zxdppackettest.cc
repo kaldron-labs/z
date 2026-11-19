@@ -41,6 +41,8 @@
 #include <zlib/Zxdp.hh>
 #include <zlib/ZxdpBPF.hh>
 
+#include "zxdpfixture.hh"
+
 using namespace ZuTestUtil;
 
 enum { Bytes = 96, RxSlots = 8, TxSlots = 2, Sender = 3 }; // exact fixture workload
@@ -133,12 +135,21 @@ static bool setup(
   Zi::IOBufPool *rx, const Zi::IOBufPoolList &pools, Zxdp::RecvFn receive,
   ZeException &error, Zxdp::StopFn stopped = {})
 {
-  auto initialized = instance->init(&mx, config);
-  auto allocated = initialized.is<void>() ? instance->alloc(rx, pools) : initialized;
-  if (allocated.is<ZeException>()) error = ZuMv(allocated).p<ZeException>();
-  else if (!mx.start()) error = ZeEXCEPT(Error, "Zxdp.PacketTest", "multiplexer start failed");
-  else if (!instance->start(ZuMv(receive), ZuMv(stopped))) error = instance->error();
+  error = ZxdpTest::start(instance, mx, instance->init(&mx, config), rx, pools,
+    ZuMv(receive), ZuMv(stopped));
   return instance->ready();
+}
+
+static unsigned waitTx(Zxdp::Instance *instance, unsigned expected, ZuTime deadline)
+{
+  // AF_XDP provides no user-space wait for the CQ. Fixture-controlled ordering
+  // is gated separately before entering this bounded kernel completion probe.
+  unsigned completed = 0;
+  while (completed < expected && Zm::now() < deadline) {
+    completed += instance->pollTx();
+    if (completed < expected) poll(nullptr, 0, 1);
+  }
+  return completed;
 }
 
 static void testPackets()
@@ -247,22 +258,26 @@ static void testPackets()
     log_("restart reopens service on the same registered packet storage"));
   tx->free(held);
   std::cout << "# AF_XDP mode=" << (instance->zeroCopy() ? "zero-copy" : "copy") << '\n';
-  unsigned liveQueues = 0, completionCapacity = 0;
+  unsigned liveQueues = 0, completionCapacity = 0, txCapacity = 0;
   auto completionID = ZuID{} << "xdp." << ZuBoxed(ifindex) << ".0.cq";
+  auto txID = ZuID{} << "xdp." << ZuBoxed(ifindex) << ".0.tx";
   bool queueViews = true;
   unsigned enumerated = instance->allQueues([
-    &liveQueues, &completionCapacity, &completionID, &queueViews
+    &liveQueues, &completionCapacity, &completionID, &txCapacity, &txID, &queueViews
   ](Ztc::Queue *queue) {
     Ztc::QueueTelemetry data;
     queue->telemetry(data);
     ++liveQueues;
     if (data.id == completionID) completionCapacity = data.size;
+    if (data.id == txID) txCapacity = data.size;
     queueViews &= data.size && data.count <= data.size && !!data.id &&
       (data.type == Ztc::QueueType::Rx || data.type == Ztc::QueueType::Tx);
   });
   ZuCheckRT(queueViews && enumerated == liveQueues && liveQueues == local.rxQueues * 2 + 2,
     log_("RX/FILL enumerate per queue and one TX/CQ pair serves the sender"));
-  ZuCheckRT(completionCapacity >= tx->count + control->count &&
+  ZuCheckRT(txCapacity == completionCapacity &&
+      completionCapacity >= tx->count + control->count &&
+      completionCapacity/2 < tx->count + control->count &&
       !(completionCapacity & (completionCapacity - 1)),
     log_("completion capacity covers every physical data/control slot "
       "with one descriptor per slot"));
@@ -339,13 +354,7 @@ static void testPackets()
     ZmSemaphore afterPacket;
     mx.run([&afterPacket] { afterPacket.post(); }, Sender);
     progressed = sent && !afterPacket.timedwait(Zm::now() + ZuTime{10});
-    unsigned completed = 0;
-    auto deadline = Zm::now() + ZuTime{10};
-    while (progressed && !completed && Zm::now() < deadline) {
-      completed += instance->pollTx();
-      if (!completed) poll(nullptr, 0, 1);
-    }
-    progressed &= completed == 1;
+    if (progressed) progressed = waitTx(instance, 1, Zm::now() + ZuTime{10}) == 1;
   }
   ZuCheckRT(progressed,
     log_("successive zero-to-one publications each drain without orphaning their final packet"));
@@ -451,12 +460,7 @@ static void testSenderProgress()
     return true;
   };
   auto drain = [&instance, &retired](unsigned expected) {
-    unsigned n = 0;
-    auto deadline = Zm::now() + ZuTime{10};
-    while (n < expected && Zm::now() < deadline) {
-      n += instance->pollTx();
-      if (n < expected) poll(nullptr, 0, 1);
-    }
+    auto n = waitTx(instance, expected, Zm::now() + ZuTime{10});
     retired += n;
     return n == expected;
   };
@@ -467,7 +471,7 @@ static void testSenderProgress()
   gateSender = 1;
   gateAfter = 1;
   retryError = EAGAIN;
-  budgetOnce = Budget; // test-only smaller per-syscall budget; production ring remains 32K
+  budgetOnce = Budget; // test-only override of the per-syscall budget
   budgetResult = -1;
   bool first = publish(1) && await(senderEntered);
   bool queued = first && publish(Initial - 1);
@@ -592,11 +596,7 @@ static void testLeaseRace()
         valid &= !tx->alloc();
       }
     }
-    unsigned completed = 0;
-    while (accepted && !completed && Zm::now() < deadline) {
-      completed += instance->pollTx();
-      if (!completed) poll(nullptr, 0, 1);
-    }
+    auto completed = accepted ? waitTx(instance, 1, deadline) : 0;
     if (order == 1) {
       valid &= !tx->alloc();
       release.post();
@@ -626,11 +626,7 @@ static void testLeaseRace()
       sent = instance->send(p, 64);
       tx->free(p);
     }
-    auto completionDeadline = Zm::now() + ZuTime{10};
-    while (sent && !completed && Zm::now() < completionDeadline) {
-      completed += instance->pollTx();
-      if (!completed) poll(nullptr, 0, 1);
-    }
+    if (sent) completed = waitTx(instance, 1, Zm::now() + ZuTime{10});
   }
   ZuCheckRT(sent && completed == 1,
     log_("reopened instance restarts sender accounting and retires its first submission once"));

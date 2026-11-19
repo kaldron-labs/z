@@ -1,4 +1,6 @@
-# Zxdp kernel integration
+# Zxdp integration tests
+
+## AF_XDP
 
 Build the tree with `make -j8`. The TAP programs skip privileged cases unless
 explicitly supplied fixture interfaces. Never supply an interface carrying
@@ -39,3 +41,34 @@ multiplexer alive through that completion and return dependent buffers before
 `final()` releases the registration. Kernel ring tests use actual queues and CQ
 entries. Veth verifies software-copy operation. Physical NIC DMA requires a
 hardware run.
+
+## DPDK software drivers
+
+Use DPDK 25.11 or newer with the stock `net_ring` and `net_pcap` PMDs installed.
+The fixtures initialize EAL with PCI, hugepages, shared configuration and
+telemetry disabled. The programs create their own named ports, rings and capture
+files. Run them directly in the current network namespace. Setup failures
+appear in TAP diagnostics.
+
+```sh
+pkg-config --atleast-version=25.11 libdpdk
+./z.config -c -L /usr/local
+make clean
+make -j8
+make -C zxdp/itest -j8
+prove ./zxdp/itest/zxdpdkpackettest ./zxdp/itest/zxdpdkwaketest \
+  ./zxdp/itest/zxdpdklooptest
+```
+
+* `zxdpdkpackettest` checks direct submission identity including packet
+  headroom offsets, refusal on a full ring, caller and PMD leases, one-time
+  retirement and exact Rx pool provenance. Its pcap case verifies input and
+  output bytes and the PMD's copy classification.
+* `zxdpdkwaketest` observes real `ppoll` calls on the internal eventfd. It
+  checks preposted and concurrent pulses, the configured idle backoff bound,
+  off-owner pool return wakes, sustained input, and polling with a zero
+  interval.
+* `zxdpdklooptest` transfers full-MTU and short frames between named ring
+  ports. An independent peer copies each transmitted frame into a destination
+  ingress-pool mbuf to simulate the wire and releases the original Tx reference.
+  The test checks bytes, retirement and teardown in both directions.

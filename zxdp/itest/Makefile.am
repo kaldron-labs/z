@@ -13,10 +13,27 @@ LDADD = $(top_builddir)/zxdp/src/libZxdp.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = zxdppackettest zxdpfiltertest zxdplooptest zxdpwaketest
-zxdppackettest_SOURCES = zxdppackettest.cc
-zxdpwaketest_SOURCES = zxdpwaketest.cc
+zxdppackettest_SOURCES = zxdppackettest.cc zxdpfixture.hh
+zxdpwaketest_SOURCES = zxdpwaketest.cc zxdpfixture.hh
 zxdpfiltertest_SOURCES = zxdpfiltertest.cc
 zxdplooptest_SOURCES = zxdplooptest.cc zxdplog.hh
+
+if DPDK
+noinst_LTLIBRARIES = libZxdpDpdkFixture.la
+libZxdpDpdkFixture_la_SOURCES = zxdpdkfixture.cc zxdpdkfixture.hh
+libZxdpDpdkFixture_la_CPPFLAGS = $(AM_CPPFLAGS) $(DPDK_CFLAGS)
+DPDK_FIXTURE_LIBS = libZxdpDpdkFixture.la $(LDADD) $(DPDK_LIBS) -lrte_net_ring
+noinst_PROGRAMS += zxdpdkpackettest zxdpdkwaketest zxdpdklooptest
+zxdpdkpackettest_SOURCES = zxdpdkpackettest.cc
+zxdpdkpackettest_CPPFLAGS = $(AM_CPPFLAGS) $(DPDK_CFLAGS)
+zxdpdkpackettest_LDADD = $(DPDK_FIXTURE_LIBS)
+zxdpdkwaketest_SOURCES = zxdpdkwaketest.cc
+zxdpdkwaketest_CPPFLAGS = $(AM_CPPFLAGS) $(DPDK_CFLAGS)
+zxdpdkwaketest_LDADD = $(DPDK_FIXTURE_LIBS)
+zxdpdklooptest_SOURCES = zxdpdklooptest.cc
+zxdpdklooptest_CPPFLAGS = $(AM_CPPFLAGS) $(DPDK_CFLAGS)
+zxdpdklooptest_LDADD = $(DPDK_FIXTURE_LIBS)
+endif
 
 .PHONY: test
 test: $(noinst_PROGRAMS)

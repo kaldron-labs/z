@@ -9,15 +9,3 @@
 #include <zlib/ZxdpLib.hh>
 
 ZxdpExtern const char ZxdpLib[] = "@(#) Z AF_XDP Library v" Z_VERNAME;
-
-namespace Zxdp {
-
-ZxdpExtern void init()
-{
-}
-
-ZxdpExtern void warmup()
-{
-}
-
-} // namespace Zxdp
