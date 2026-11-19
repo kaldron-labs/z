@@ -4728,7 +4728,7 @@ Linux-only; excluded from Windows builds.
 
 ## User-mode TCP/IP stack
 
-Sources: [module guide](../zutcp/README.md), [execution plan](../zutcp_plan.md).
+Sources: [module guide](../zutcp/README.md)
 These comparisons describe the planned TCP goal-state; implementation is in
 progress. Linux-only; excluded from Windows builds.
 
