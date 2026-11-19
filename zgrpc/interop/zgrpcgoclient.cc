@@ -11,10 +11,9 @@
 #include <zlib/ZiResolver.hh>
 #include <zlib/ZgrpcClient.hh>
 
-using namespace ZuTestUtil;
-using namespace Zgrpc;
-
 #include "zgrpcmatrix.hh"
+
+using namespace ZuTestUtil;
 
 // Instrumented peers need time for large transfers while retaining real deadlines.
 static unsigned peerTimeout()
