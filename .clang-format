@@ -1,18 +1,27 @@
+# Formatting counterpart to docs/STYLE.md and docs/CPP.md (clang-format 22+).
+# Local code precedent takes priority; review formatter output before applying it.
+# clang-format cannot express size-dependent namespace indentation, flush friend
+# declarations, a constructor ':' alone on its line, or operator-specific spacing
+# such as x/y. Preserve these and exact tabular layouts with clang-format off/on.
 Language: Cpp
 BasedOnStyle: LLVM
 # basic parameters
-ColumnLimit: 80
+ColumnLimit: 98
 IndentWidth: 2
 ContinuationIndentWidth: 2
 TabWidth: 8
-UseTab: ForContinuationAndIndentation # different than LLVM
+UseTab: Always # use hard tabs for alignment as well as indentation
 Standard: Latest
 
 # various specific indents
 AccessModifierOffset: -2
-ConstructorInitializerIndentWidth: 2
+# BeforeColon counts this from the constructor, so zero keeps ':' flush with it;
+# following initializers are two columns deeper.
+ConstructorInitializerIndentWidth: 0
 LambdaBodyIndentation: OuterScope
 IndentAccessModifiers: false
+IndentCaseLabels: false
+IndentCaseBlocks: false # preserves '} break;' for braced cases
 IndentGotoLabels: false
 IndentExternBlock: Indent
 IndentRequiresClause: true
@@ -31,7 +40,8 @@ PenaltyBreakString: 30
 PenaltyExcessCharacter: 1000000
 
 # everything below is different than LLVM
-AlignAfterOpenBracket: BlockIndent
+# Use one logical continuation level for wrapped argument lists.
+AlignAfterOpenBracket: false
 AlignArrayOfStructures: Right
 AlignConsecutiveDeclarations:
   Enabled: true
@@ -42,16 +52,19 @@ AlignConsecutiveShortCaseStatements:
 AlignEscapedNewlines: DontAlign
 AlignOperands: DontAlign
 
-AllowShortBlocksOnASingleLine: Never
+AllowShortBlocksOnASingleLine: Always
 AllowShortFunctionsOnASingleLine: All
 AllowShortIfStatementsOnASingleLine: WithoutElse
 AllowShortLoopsOnASingleLine: true
+AllowShortLambdasOnASingleLine: All
+AllowShortNamespacesOnASingleLine: true
 
 BitFieldColonSpacing: None
 
 BreakBeforeBraces: Custom
 BraceWrapping:
   AfterFunction: true
+  BeforeLambdaBody: true
   SplitEmptyFunction: false
   SplitEmptyRecord: false
   SplitEmptyNamespace: false
@@ -61,21 +74,23 @@ BreakAfterOpenBracketFunction: true
 BreakBeforeCloseBracketFunction: false
 BreakBeforeConceptDeclarations: Allowed
 BreakBeforeTernaryOperators: false
-BreakConstructorInitializers: AfterColon
+BreakConstructorInitializers: BeforeColon
 BreakInheritanceList: AfterColon
-# "Always" prefix is deprecated from clang-format v19
-AlwaysBreakAfterReturnType: None
-AlwaysBreakTemplateDeclarations: MultiLine
+BreakAfterReturnType: None
+BreakTemplateDeclarations: MultiLine
 
 
-CompactNamespaces: true
+CompactNamespaces: false
+# No size-dependent option exists; use the large-namespace convention by default.
 NamespaceIndentation: None
+# This threshold counts unwrapped lines and only controls namespace end comments.
 ShortNamespaceLines: 20
 FixNamespaceComments: true
 
 EmptyLineAfterAccessModifier: Never
 EmptyLineBeforeAccessModifier: Never
-KeepEmptyLinesAtTheStartOfBlocks: false
+KeepEmptyLines:
+  AtStartOfBlock: false
 
 PackConstructorInitializers: BinPack
 DerivePointerAlignment: false
@@ -83,17 +98,21 @@ DerivePointerAlignment: false
 PointerAlignment: Right
 ReferenceAlignment: Right
 
-QualifierAlignment: Custom
-QualifierOrder: ['friend', 'inline', 'static', 'constexpr', 'const', 'volatile', 'type', 'restrict']
+QualifierAlignment: Leave
 RemoveBracesLLVM: false
 RemoveParentheses: Leave
 RemoveSemicolon: false
 
-SortIncludes: Never
+IncludeBlocks: Preserve
+SortIncludes:
+  Enabled: false
 SortUsingDeclarations: Never
+# Preserve tabular macro bodies and comments, including header editor settings.
+SkipMacroDefinitionBody: true
+ReflowComments: Never
 
 SpaceBeforeParens: Custom
 SpaceBeforeParensOptions:
   BeforeNonEmptyParentheses: false
-SpaceInEmptyBlock: true
+SpaceInEmptyBraces: Block
 SpacesInContainerLiterals: false
