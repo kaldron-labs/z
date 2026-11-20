@@ -95,8 +95,8 @@ static void vector()
   ZuCheck(decode(expectedPK, PublicHex));
   ZuCheck(decode(ciphertext, CiphertextHex));
   ZuCheck(decode(expectedSecret, SecretHex));
-  SK_MLKEM768_X25519 sk{seed};
-  uint8_t	     pub[HybridPublicSize], secret[HybridSecretSize];
+  MLKEM768X25519Private sk{seed};
+  uint8_t		pub[HybridPublicSize], secret[HybridSecretSize];
   ZuCheck(!sk.exportPK(pub).template is<ZeException>());
   ZuCheck(!memcmp(pub, expectedPK, sizeof(pub)));
   ZuCheck(!sk.decapsulate(ciphertext, secret).template is<ZeException>());
@@ -112,12 +112,12 @@ static void roundtrip()
   ZuCheck(rng.init());
   uint8_t seed[HybridSeedSize];
   ZuCheck(rng.random(seed));
-  SK_MLKEM768_X25519 sk{seed};
-  uint8_t	     pub[HybridPublicSize];
+  MLKEM768X25519Private sk{seed};
+  uint8_t		pub[HybridPublicSize];
   ZuCheck(!sk.exportPK(pub).template is<ZeException>());
-  PK_MLKEM768_X25519 pk{pub};
-  uint8_t	     ct[HybridCiphertextSize], other[HybridCiphertextSize];
-  uint8_t	     secret[HybridSecretSize], recovered[HybridSecretSize];
+  MLKEM768X25519Public pk{pub};
+  uint8_t	       ct[HybridCiphertextSize], other[HybridCiphertextSize];
+  uint8_t	       secret[HybridSecretSize], recovered[HybridSecretSize];
   ZuCheck(!pk.encapsulate(rng, ct, secret).template is<ZeException>());
   ZuCheck(!sk.decapsulate(ct, recovered).template is<ZeException>());
   ZuCheck(!memcmp(secret, recovered, sizeof(secret)));
@@ -141,7 +141,7 @@ static void roundtrip()
   ZuCheck(sk.decapsulate(ct, {oversized, HybridSecretSize + 1}).template is<ZeException>());
   bool rejected = false;
   try {
-    SK_MLKEM768_X25519 invalid{
+    MLKEM768X25519Private invalid{
       {seed, sizeof(seed) - 1}
     };
   } catch (const ZeException &) {
@@ -150,7 +150,7 @@ static void roundtrip()
   ZuCheck(rejected);
   rejected = false;
   try {
-    PK_MLKEM768_X25519 invalid{
+    MLKEM768X25519Public invalid{
       {pub, sizeof(pub) - 1}
     };
   } catch (const ZeException &) {
@@ -160,7 +160,7 @@ static void roundtrip()
   memcpy(oversized, seed, sizeof(seed));
   rejected = false;
   try {
-    SK_MLKEM768_X25519 invalid{
+    MLKEM768X25519Private invalid{
       {oversized, HybridSeedSize + 1}
     };
   } catch (const ZeException &) {
@@ -170,7 +170,7 @@ static void roundtrip()
   memcpy(oversized, pub, sizeof(pub));
   rejected = false;
   try {
-    PK_MLKEM768_X25519 invalid{oversized};
+    MLKEM768X25519Public invalid{oversized};
   } catch (const ZeException &) {
     rejected = true;
   }

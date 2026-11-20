@@ -1253,7 +1253,7 @@ friend ZmEngine<App>;
     }
     bool ok = this->init_(ZuMv(params), Zquic::Vantage::Server,
       [this](const ServerParams &) {
-	if (!m_ticketKey) m_ticketKey = Ztls::ticket_key_new();
+	if (!m_ticketKey) m_ticketKey = Ztls::ticketKeyNew();
 	return m_ticketKey;
       });
     if (ok) m_routes.initQueue(this);
@@ -1355,7 +1355,7 @@ friend ZmEngine<App>;
   using Endpoint::pktAllocTarget;
   using Endpoint::waitTx;
   Ztls_::EncryptTicket *ticketEncryptCB() {
-    return Ztls::ticket_encrypt_cb(m_ticketKey);
+    return Ztls::ticketEncryptHook(m_ticketKey);
   }
   bool sendPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, bool priority = false) {
     if (!this->app()->sendPkt(buf)) return true;
@@ -1841,7 +1841,7 @@ private:
 
   void finalTicketKey() {
     if (!m_ticketKey) return;
-    Ztls::ticket_key_free(m_ticketKey);
+    Ztls::ticketKeyFree(m_ticketKey);
     m_ticketKey = nullptr;
   }
 

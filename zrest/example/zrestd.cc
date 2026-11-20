@@ -652,7 +652,7 @@ static void expireState(Map &map, Index &index, int64_t now)
 struct Application : public ZmNHeap<Application>, public ZmObject {
 friend inline ZuStringT<"zrestd.Application"> ZmNHeapID(Application *);
 
-  ZmRef<Ztls::PK::SK_EC>	key;
+  ZmRef<Ztls::PK::ECPrivate>	key;
   OAuthString		keyID;
   ZuBArray<Ztls::COSE::ES256::PublicKeySize> publicKey;
   ClientIDs		clients;
@@ -810,13 +810,13 @@ static bool cookieValue(ZuCSpan cookies, OAuthString &value)
 bool Application::init(Ztls::Random &rng)
 {
   try {
-    key = new Ztls::PK::SK_EC{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+    key = new Ztls::PK::ECPrivate{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   } catch (...) {
     return false;
   }
   publicKey.length(Ztls::COSE::ES256::PublicKeySize);
   if (!randomText(rng, keyID) ||
-      !Ztls::PK::pkey_ec_export_public(key->key, publicKey)) return false;
+      !Ztls::PK::ecExportPublic(key->key, publicKey)) return false;
   keyID.length(16);
   active = true;
   return true;

@@ -113,7 +113,7 @@ friend ZuDefaultRDecayer ZuRDecayer(Variant *);
 friend ZfDBUS::AsVariant ZfDBUS_Fmt(Variant *);
 };
 
-Ztls_API int propID(ZuCSpan);
+Ztls_Extern int propID(ZuCSpan);
 
 struct PropEntry {
   ZuCSpan	name;

@@ -67,7 +67,7 @@ static void ecInitFailure()
   KeyExchangeContext *context = nullptr;
   failedECEncodings = 0;
   failECEncoding = true;
-  int result = openssl_create_key_exchange(&context, key);
+  int result = opensslCreateKeyExchange(&context, key);
   failECEncoding = false;
   ZuCheck(result == Ztls_ErrorNoMemory && !context && failedECEncodings == 1);
   ZuCheck(!releases);
@@ -103,16 +103,16 @@ static void digest(const HashAlgo &algo, const EVP_MD *native)
 static void hashes()
 {
   ZuTestScope(hashes);
-  ZuTestCall(digest, openssl_sha256, EVP_sha256());
-  ZuTestCall(digest, openssl_sha384, EVP_sha384());
-  ZuTestCall(digest, openssl_sha512, EVP_sha512());
+  ZuTestCall(digest, opensslSha256, EVP_sha256());
+  ZuTestCall(digest, opensslSha384, EVP_sha384());
+  ZuTestCall(digest, opensslSha512, EVP_sha512());
   // RFC 4231 test case 1, including a reset before repeating the message.
   const uint8_t expected[] = {0xb0, 0x34, 0x4c, 0x61, 0xd8, 0xdb, 0x38, 0x53, 0x5c, 0xa8, 0xaf,
     0xce, 0xaf, 0x0b, 0xf1, 0x2b, 0x88, 0x1d, 0xc2, 0x00, 0xc9, 0x83, 0x3d, 0xa7, 0x26, 0xe9,
     0x37, 0x6c, 0x2e, 0x32, 0xcf, 0xf7};
   uint8_t	key[20], result[sizeof(expected)];
   memset(key, 0x0b, sizeof(key));
-  auto hmac = hmac_create(&openssl_sha256, key, sizeof(key));
+  auto hmac = hmacCreate(&opensslSha256, key, sizeof(key));
   ZuCheck(hmac && !hmac->clone());
   memset(result, 0x5a, sizeof(result));
   ZuCheck(hmac->final(result, HashFinalMode::Snapshot) == Ztls_ErrorNotAvailable);
@@ -145,7 +145,7 @@ friend inline ZuStringT<"Ztls.Test.Object"> ZmNHeapID(ObservedCipher *);
 
   ObservedCipher(
     ReleaseObservation *observer_, const void *key,
-    const CipherAlgo *algorithm = &openssl_aes128ecb)
+    const CipherAlgo *algorithm = &opensslAes128ecb)
   :
     CipherContext{algorithm}, native{algo->create(1, key)}, observer{observer_}
   { memcpy(secret, key, sizeof(secret)); }
@@ -187,13 +187,13 @@ static void ciphers()
   delete cipher;
   ZuCheck(observation.releases == 1 && observation.cleared);
   ZuCheck(uint64_t(cache->stats().frees) + uint64_t(cache->stats().heapFrees) == frees + 1);
-  cipher = openssl_aes128ecb.create(0, key);
+  cipher = opensslAes128ecb.create(0, key);
   cipher->transform(result, ciphertext, sizeof(ciphertext));
   ZuCheck(!memcmp(result, plaintext, sizeof(plaintext)));
   delete cipher;
 #if ZtlsFusion
-  if (fusion_is_supported_by_cpu()) {
-    cipher = fusion_aes128ctr.create(1, key);
+  if (fusionSupported()) {
+    cipher = fusionAes128ctr.create(1, key);
     cipher->init(plaintext);
     memset(result, 0, sizeof(result));
     cipher->transform(result, result, sizeof(result));
@@ -253,9 +253,8 @@ static void supplement(const AeadAlgo &aeadAlgo, const CipherAlgo &hpAlgo, bool 
   uint8_t key[Ztls_AES256KeySize]{}, iv[Ztls_AESGCMIVSize]{};
   uint8_t input[32]{}, output[48], expected[48], mask[16]{}, zero[16]{};
   enum { SampleOffset = 24 }; // Eight ciphertext bytes followed by eight tag bytes.
-  auto reference =
-    (aeadAlgo.keySize == Ztls_AES128KeySize ? openssl_aes128gcm : openssl_aes256gcm)
-      .create(true, key, iv);
+  auto reference = (aeadAlgo.keySize == Ztls_AES128KeySize ? opensslAes128gcm : opensslAes256gcm)
+		     .create(true, key, iv);
   reference->encrypt(expected, input, sizeof(input), 7, nullptr, 0, nullptr);
   delete reference;
   auto referenceHP = hpAlgo.create(true, key);
@@ -279,22 +278,22 @@ static void supplement(const AeadAlgo &aeadAlgo, const CipherAlgo &hpAlgo, bool 
 static void aeads()
 {
   ZuTestScope(aeads);
-  ZuTestCall(aead, openssl_aes128gcm);
+  ZuTestCall(aead, opensslAes128gcm);
 #if ZtlsFusion
-  if (fusion_is_supported_by_cpu()) {
-    ZuTestCall(aead, fusion_aes128gcm);
-    ZuTestCall(supplement, fusion_aes128gcm, *openssl_aes128gcm.ctrCipher, false);
-    ZuTestCall(supplement, fusion_aes128gcm, *openssl_aes128gcm.ctrCipher, true);
-    ZuTestCall(supplement, fusion_aes128gcm, *fusion_aes128gcm.ctrCipher, false);
-    ZuTestCall(supplement, fusion_aes256gcm, *fusion_aes128gcm.ctrCipher, false);
-    int wide = fusion_can_aesni256;
-    fusion_can_aesni256 = 0;
-    ZuTestCall(aead, non_temporal_aes128gcm);
+  if (fusionSupported()) {
+    ZuTestCall(aead, fusionAes128gcm);
+    ZuTestCall(supplement, fusionAes128gcm, *opensslAes128gcm.ctrCipher, false);
+    ZuTestCall(supplement, fusionAes128gcm, *opensslAes128gcm.ctrCipher, true);
+    ZuTestCall(supplement, fusionAes128gcm, *fusionAes128gcm.ctrCipher, false);
+    ZuTestCall(supplement, fusionAes256gcm, *fusionAes128gcm.ctrCipher, false);
+    int wide = fusionCanAesni256;
+    fusionCanAesni256 = 0;
+    ZuTestCall(aead, nonTemporalAes128gcm);
     if (wide) {
-      fusion_can_aesni256 = 1;
-      ZuTestCall(aead, non_temporal_aes128gcm);
+      fusionCanAesni256 = 1;
+      ZuTestCall(aead, nonTemporalAes128gcm);
     }
-    fusion_can_aesni256 = wide;
+    fusionCanAesni256 = wide;
   }
 #endif
 }
@@ -316,7 +315,7 @@ static void keyExchange(const KeyExchangeAlgo &algo)
 static void keyExchanges()
 {
   ZuTestScope(keyExchanges);
-  for (auto algo = openssl_key_exchanges_all; *algo; ++algo) ZuTestCallRT(keyExchange, **algo);
+  for (auto algo = opensslKeyExchangesAll; *algo; ++algo) ZuTestCallRT(keyExchange, **algo);
 }
 
 static void creationFailure()
@@ -325,9 +324,9 @@ static void creationFailure()
   uint8_t key[Ztls_AES128KeySize]{};
   // Native provider failure must release the already constructed context.
   ZuCheck(EVP_set_default_properties(nullptr, "provider=ztls-unavailable") == 1);
-  ZuCheck(!openssl_aes128ecb.create(1, key));
+  ZuCheck(!opensslAes128ecb.create(1, key));
   uint8_t iv[12]{};
-  ZuCheck(!openssl_aes128gcm.create(true, key, iv));
+  ZuCheck(!opensslAes128gcm.create(true, key, iv));
   ZuCheck(EVP_set_default_properties(nullptr, nullptr) == 1);
 }
 

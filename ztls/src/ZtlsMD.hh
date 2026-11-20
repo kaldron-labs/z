@@ -49,8 +49,8 @@ public:
   MD() : MD_{Type} { }
 };
 
-Ztls_API bool shake256(ZuBSpan, ZuSpan<uint8_t>);
-Ztls_API bool sha3_256(ZuSpan<const ZuBSpan>, ZuSpan<uint8_t>);
+Ztls_Extern bool shake256(ZuBSpan, ZuSpan<uint8_t>);
+Ztls_Extern bool sha3_256(ZuSpan<const ZuBSpan>, ZuSpan<uint8_t>);
 
 } // namespace Ztls
 

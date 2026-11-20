@@ -61,7 +61,7 @@ friend inline ZuStringT<"Zquic.Pressure.Link"> ZmNHeapID(PressureLink *);
     Base::setPeerStreamLimit(Zquic::StreamType::Duplex, 2);
     Base::txApplyMaxData(100);
     return Zquic::PktProt::deriveSecret(secret,
-      &Ztls_::openssl_aes128gcmsha256, ZuBSpan{bytes, sizeof(bytes)}) &&
+      &Ztls_::opensslAes128gcmsha256, ZuBSpan{bytes, sizeof(bytes)}) &&
       Base::txInstallSecret(Zquic::PktNumSpace::AppData, secret);
   }
   void waitPktTx(Zquic_::EndpointTxWait &wait, uint64_t epoch, Zquic_::EndpointTxFn fn) {

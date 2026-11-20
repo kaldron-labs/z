@@ -57,11 +57,11 @@ friend inline ZuStringT<"Ztls.TicketKey"> ZmNHeapID(TicketKey *);
     ZuClear(aesKey, sizeof(aesKey));
     ZuClear(hmacKey, sizeof(hmacKey));
   }
-  int call(Ztls::Cxn *, int is_encrypt, Ztls_::Buffer *dst, Ztls_::Bytes src) override;
+  int call(Ztls::Cxn *, int isEncrypt, Ztls_::Buffer *dst, Ztls_::Bytes src) override;
 };
 
-static int ticket_key_cb(
-  unsigned char *key_name, unsigned char *iv, EVP_CIPHER_CTX *ctx, EVP_MAC_CTX *hctx, int enc)
+static int ticketKeyHook(
+  unsigned char *keyName, unsigned char *iv, EVP_CIPHER_CTX *ctx, EVP_MAC_CTX *hctx, int enc)
 {
   auto key = ZmTLS<TicketKey *, (int TicketKey::*){}>();
   if (!key) return -1;
@@ -69,7 +69,7 @@ static int ticket_key_cb(
     OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST, const_cast<char *>("SHA256"), 0),
     OSSL_PARAM_construct_end()};
   if (enc) {
-    memcpy(key_name, key->name, sizeof(key->name));
+    memcpy(keyName, key->name, sizeof(key->name));
     Ztls::Random random;
     if (!random.random({iv, unsigned(EVP_CIPHER_iv_length(EVP_aes_256_cbc()))}) ||
       EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, key->aesKey, iv) != 1)
@@ -77,23 +77,23 @@ static int ticket_key_cb(
     if (EVP_MAC_init(hctx, key->hmacKey, sizeof(key->hmacKey), params) != 1) return -1;
     return 1;
   }
-  if (memcmp(key_name, key->name, sizeof(key->name))) return 0;
+  if (memcmp(keyName, key->name, sizeof(key->name))) return 0;
   EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, key->aesKey, iv);
   if (EVP_MAC_init(hctx, key->hmacKey, sizeof(key->hmacKey), params) != 1) return -1;
   return 1;
 }
 
-int TicketKey::call(Ztls::Cxn *, int is_encrypt, Ztls_::Buffer *dst, Ztls_::Bytes src)
+int TicketKey::call(Ztls::Cxn *, int isEncrypt, Ztls_::Buffer *dst, Ztls_::Bytes src)
 {
   auto &key = ZmTLS<TicketKey *, (int TicketKey::*){}>();
   key = this;
-  int ret = is_encrypt ? Ztls_::openssl_encrypt_ticket_evp(dst, src, ticket_key_cb) :
-			 Ztls_::openssl_decrypt_ticket_evp(dst, src, ticket_key_cb);
+  int ret = isEncrypt ? Ztls_::opensslEncryptTicketEvp(dst, src, ticketKeyHook) :
+			Ztls_::opensslDecryptTicketEvp(dst, src, ticketKeyHook);
   key = nullptr;
   return ret;
 }
 
-CertStore *cert_store_new()
+CertStore *certStoreNew()
 {
   auto store = new CertStore{};
   store->store = X509_STORE_new();
@@ -104,26 +104,26 @@ CertStore *cert_store_new()
   return store;
 }
 
-void cert_store_free(CertStore *store)
+void certStoreFree(CertStore *store)
 {
   if (!store) return;
   if (store->store) X509_STORE_free(store->store);
   delete store;
 }
 
-bool cert_store_load_path(CertStore *store, const char *path)
+bool certStoreLoadPath(CertStore *store, const char *path)
 {
   if (!store || !store->store || !path) return false;
   return X509_STORE_load_locations(store->store, nullptr, path) == 1;
 }
 
-bool cert_store_load_file(CertStore *store, const char *path)
+bool certStoreLoadFile(CertStore *store, const char *path)
 {
   if (!store || !store->store || !path) return false;
   return X509_STORE_load_locations(store->store, path, nullptr) == 1;
 }
 
-static X509 *x509_der(ZuBSpan data)
+static X509 *x509DER(ZuBSpan data)
 {
   if (!data) return nullptr;
   const unsigned char *ptr = data.data();
@@ -141,7 +141,7 @@ static X509 *x509_der(ZuBSpan data)
   return cert;
 }
 
-static bool cert_store_add_(CertStore *store, X509 *cert)
+static bool certStoreAdd(CertStore *store, X509 *cert)
 {
   int ok = X509_STORE_add_cert(store->store, cert);
   if (ok != 1) {
@@ -155,70 +155,70 @@ static bool cert_store_add_(CertStore *store, X509 *cert)
   return ok == 1;
 }
 
-bool cert_store_add_der(CertStore *store, ZuBSpan data)
+bool certStoreAddDER(CertStore *store, ZuBSpan data)
 {
   if (!store || !store->store) return false;
-  X509 *cert = x509_der(data);
+  X509 *cert = x509DER(data);
   if (!cert) return false;
-  bool ok = cert_store_add_(store, cert);
+  bool ok = certStoreAdd(store, cert);
   X509_free(cert);
   return ok;
 }
 
-bool cert_store_add_ca(CertStore *store, ZuBSpan data)
+bool certStoreAddCA(CertStore *store, ZuBSpan data)
 {
   if (!store || !store->store) return false;
-  X509 *cert = x509_der(data);
+  X509 *cert = x509DER(data);
   if (!cert) return false;
   bool ok = X509_cmp_current_time(X509_get0_notBefore(cert)) < 0 &&
     X509_cmp_current_time(X509_get0_notAfter(cert)) > 0 && X509_check_ca(cert) > 0 &&
-    cert_store_add_(store, cert);
+    certStoreAdd(store, cert);
   X509_free(cert);
   return ok;
 }
 
-VerifyCert *verify_cert_new(CertStore *store)
+VerifyCert *verifyCertNew(CertStore *store)
 {
   if (!store || !store->store) return nullptr;
   auto verify = new VerifyCert{};
-  if (Ztls_::openssl_init_verify_cert(&verify->impl, store->store) != 0) {
+  if (Ztls_::opensslInitVerifyCert(&verify->impl, store->store) != 0) {
     delete verify;
     return nullptr;
   }
   return verify;
 }
 
-void verify_cert_free(VerifyCert *verify)
+void verifyCertFree(VerifyCert *verify)
 {
   if (!verify) return;
-  Ztls_::openssl_dispose_verify_cert(&verify->impl);
+  Ztls_::opensslDisposeVerifyCert(&verify->impl);
   delete verify;
 }
 
-Ztls_::VerifyCertificate *verify_cert_cb(VerifyCert *verify)
+Ztls_::VerifyCertificate *verifyCertHook(VerifyCert *verify)
 { return verify ? &verify->impl : nullptr; }
 
-SignCert *sign_cert_new(const PK::Key &key)
+SignCert *signCertNew(const PK::Key &key)
 {
   if (!key.get()) return nullptr;
   auto sign = new SignCert{};
-  if (Ztls_::openssl_init_sign_cert(&sign->impl, key.get()) != 0) {
+  if (Ztls_::opensslInitSignCert(&sign->impl, key.get()) != 0) {
     delete sign;
     return nullptr;
   }
   return sign;
 }
 
-void sign_cert_free(SignCert *sign)
+void signCertFree(SignCert *sign)
 {
   if (!sign) return;
-  Ztls_::openssl_dispose_sign_cert(&sign->impl);
+  Ztls_::opensslDisposeSignCert(&sign->impl);
   delete sign;
 }
 
-Ztls_::SignCertificate *sign_cert_cb(SignCert *sign) { return sign ? &sign->impl : nullptr; }
+Ztls_::SignCertificate *signCertHook(SignCert *sign) { return sign ? &sign->impl : nullptr; }
 
-bool sign_cert_async(SignCert *sign, bool async)
+bool signCertAsync(SignCert *sign, bool async)
 {
   if (!sign) return false;
 #ifdef _WIN32
@@ -240,7 +240,7 @@ bool sign_cert_async(SignCert *sign, bool async)
 
 ZuDerive(CertificatePEM, (ZtBArray<ZtArrayHeapID<"Ztls.Engine.CertificatePEM">>));
 
-bool load_certificates(Ztls_::Context *ctx, const char *path)
+bool loadCerts(Ztls_::Context *ctx, const char *path)
 {
   if (!ctx || !path) return false;
   ZiFile file;
@@ -302,7 +302,7 @@ bool load_certificates(Ztls_::Context *ctx, const char *path)
   return true;
 }
 
-bool load_certificates_der(Ztls_::Context *ctx, ZuSpan<const ZuBSpan> certs, const PK::Key &key)
+bool loadCertsDER(Ztls_::Context *ctx, ZuSpan<const ZuBSpan> certs, const PK::Key &key)
 {
   if (!ctx || !certs.length() || !key.get() || !PK::check(key, true)) return false;
 
@@ -313,7 +313,7 @@ bool load_certificates_der(Ztls_::Context *ctx, ZuSpan<const ZuBSpan> certs, con
   bool		  ok = parsed && untrusted && store && verify;
 
   for (unsigned i = 0; ok && i < certs.length(); ++i) {
-    X509 *cert = x509_der(certs[i]);
+    X509 *cert = x509DER(certs[i]);
     if (!cert || !sk_X509_push(parsed, cert)) {
       X509_free(cert);
       ok = false;
@@ -347,7 +347,7 @@ bool load_certificates_der(Ztls_::Context *ctx, ZuSpan<const ZuBSpan> certs, con
   return ok;
 }
 
-TicketKey *ticket_key_new()
+TicketKey *ticketKeyNew()
 {
   if (!cryptoInit()) return nullptr;
   auto	       key = new TicketKey{};
@@ -359,12 +359,12 @@ TicketKey *ticket_key_new()
   return key;
 }
 
-void ticket_key_free(TicketKey *key)
+void ticketKeyFree(TicketKey *key)
 {
   if (!key) return;
   delete key;
 }
 
-Ztls_::EncryptTicket *ticket_encrypt_cb(TicketKey *key) { return key; }
+Ztls_::EncryptTicket *ticketEncryptHook(TicketKey *key) { return key; }
 
 } // namespace Ztls

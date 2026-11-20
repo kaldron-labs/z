@@ -40,8 +40,8 @@
 
 namespace Ztls {
 
-  Ztls_API bool cryptoInit();		// optional
-  Ztls_API void cryptoClearError();
+  Ztls_Extern bool cryptoInit();		// optional
+  Ztls_Extern void cryptoClearError();
 
 }
 

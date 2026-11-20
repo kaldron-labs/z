@@ -488,7 +488,7 @@ static FinishedAuthorization finishOIDCAuthorization(
 }
 
 static Zum::SignFn testSigner(
-    Ztls::Random &rng, Ztls::PK::SK_EC &key)
+    Ztls::Random &rng, Ztls::PK::ECPrivate &key)
 {
   return Zum::SignFn{[&rng, &key](
       const Zum::SignKey &record, ZuBSpan digest, Zum::SignatureFn complete) mutable {
@@ -506,7 +506,7 @@ static IssuedToken issueTokenRequest(
     Zum::Requests *requests, TestDB *db,
     Ztls::Random &rng,
     Zum::String form, Zum::String authorization,
-    Ztls::PK::SK_EC &key, int64_t now,
+    Ztls::PK::ECPrivate &key, int64_t now,
     Zum::String issuer = "issuer")
 {
   Zum::TokenConfig config{
@@ -824,7 +824,7 @@ static bool setKeyRetirement(
 
 void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
     ZmRef<Zum::DB> context, Ztls::Random &rng, Zum::Bytes &passkeyHandle,
-    ZmRef<Ztls::PK::SK_EC> &passkey)
+    ZmRef<Ztls::PK::ECPrivate> &passkey)
 {
   ZuTestScopeRT(prepareIdentity);
   Zum::Grant authorization;
@@ -1112,9 +1112,9 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
       ](int error, Zum::EnrollmentBeginResult) mutable { wake(error); });
   }) == Zum::WebAuthnError::Ceremony);
   passkeyHandle = enrollmentGrant.userHandle;
-  passkey = new Ztls::PK::SK_EC{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  passkey = new Ztls::PK::ECPrivate{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   uint8_t passkeyPublic[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheckRT(Ztls::PK::pkey_ec_export_public(passkey->key, passkeyPublic));
+  ZuCheckRT(Ztls::PK::ecExportPublic(passkey->key, passkeyPublic));
   Zum::RegistrationInput registrationInput;
   ZuCheckRT(makeRegistration(passkeyPublic, 5, "credential",
     enrollmentGrant.challenge,
@@ -1361,10 +1361,10 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   auto addGrant = loadGrant(context, addBegin.ceremonyID);
   ZuCheckRT(addGrant.purpose == Zum::GrantPurpose::AddCredential &&
     addGrant.userID == 42 && addGrant.userHandle == passkeyHandle);
-  Ztls::PK::SK_EC secondPasskey{
-    rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  Ztls::PK::ECPrivate secondPasskey{
+    rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   uint8_t secondPublic[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheckRT(Ztls::PK::pkey_ec_export_public(
+  ZuCheckRT(Ztls::PK::ecExportPublic(
     secondPasskey.key, secondPublic));
   ZuCheckRT(makeRegistration(secondPublic, 0, "credential-2",
     addGrant.challenge, "https://example.com", "example.com",

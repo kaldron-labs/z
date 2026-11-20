@@ -75,8 +75,8 @@ static void vector()
   ZuCheck(decode(aad, AADHex));
   ZuCheck(decode(ct, CiphertextHex));
   ZuCheck(decode(expected, PlaintextHex));
-  SK_MLKEM768_X25519 sk{seed};
-  auto		     r = Ztls::HPKE::openBase(sk, info, aad, enc, ct, plain);
+  MLKEM768X25519Private sk{seed};
+  auto			r = Ztls::HPKE::openBase(sk, info, aad, enc, ct, plain);
   ZuCheck(!r.template is<ZeException>());
   if (!r.template is<ZeException>()) {
     ZuCheck(r.template p<0>() == sizeof(plain));
@@ -93,15 +93,15 @@ static void roundtrip()
   ZuCheck(rng.init());
   uint8_t seed[HybridSeedSize], pub[HybridPublicSize];
   ZuCheck(rng.random(seed));
-  SK_MLKEM768_X25519 sk{seed};
+  MLKEM768X25519Private sk{seed};
   ZuCheck(!sk.exportPK(pub).template is<ZeException>());
-  PK_MLKEM768_X25519 pk{pub};
-  constexpr uint8_t  info[] = {1, 0, 2};
-  constexpr uint8_t  aad[] = {3, 0, 4};
-  constexpr uint8_t  input[] = {5, 0, 6, 7};
-  uint8_t	     enc[HybridCiphertextSize];
-  uint8_t	     ct[sizeof(input) + Ztls::HPKE::TagSize];
-  uint8_t	     plain[sizeof(input)];
+  MLKEM768X25519Public pk{pub};
+  constexpr uint8_t    info[] = {1, 0, 2};
+  constexpr uint8_t    aad[] = {3, 0, 4};
+  constexpr uint8_t    input[] = {5, 0, 6, 7};
+  uint8_t	       enc[HybridCiphertextSize];
+  uint8_t	       ct[sizeof(input) + Ztls::HPKE::TagSize];
+  uint8_t	       plain[sizeof(input)];
   ZuCheck(!Ztls::HPKE::sealBase(rng, pk, info, aad, input, enc, ct).template is<ZeException>());
   auto r = Ztls::HPKE::openBase(sk, info, aad, enc, ct, plain);
   ZuCheck(!r.template is<ZeException>());

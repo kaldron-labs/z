@@ -364,7 +364,7 @@ void run(bool stub, bool corrupt, bool partial, bool stale, bool txErrors = fals
   bool initialized = client.init(ZuMv(params));
   ZuCheckRT(initialized);
   if (!initialized) return;
-  auto suite = &Ztls_::openssl_aes128gcmsha256;
+  auto suite = &Ztls_::opensslAes128gcmsha256;
   client.ctx()->cipherSuites.length(0);
   client.ctx()->cipherSuites.push(suite);
   ZtlsTest::useTestPSK(*client.ctx(), suite);
@@ -386,7 +386,7 @@ void run(bool stub, bool corrupt, bool partial, bool stale, bool txErrors = fals
     client.peerReady = false;
     uint8_t	  small;
     Ztls_::Buffer wire;
-    Ztls_::buffer_init_tx(&wire, &small, 0);
+    Ztls_::bufferInitTx(&wire, &small, 0);
     ZuCheckRT(tx && !Ztls_::send(tx, &wire, payload, Payload));
     if (tx) {
       tx->retireRx();
@@ -425,7 +425,7 @@ void run(bool stub, bool corrupt, bool partial, bool stale, bool txErrors = fals
       link->disconnect();
       ZuCheckRT(!client.done.timedwait(Zm::now(Timeout)));
     }
-    Ztls_::buffer_dispose(&wire);
+    Ztls_::bufferDispose(&wire);
   }
   ZuCheckRT(client.stop());
   if (!corrupt && !txErrors) {

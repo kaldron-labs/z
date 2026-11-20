@@ -6,24 +6,24 @@
 
 // Z QUIC library
 
-#include <zlib/Zquic.hh>
+#include <zlib/ZePlatform.hh>
 
-#include "ZquicOpenSSL.hh"
-
+#ifndef ZtlsLib_HH
 #include <zlib/ZtlsLib.hh>
+#endif
+
+#include <zlib/Zquic.hh>
+#include "ZquicOpenSSL.hh"
 
 ZquicExtern const char ZquicLib[] = "@(#) Z QUIC Library v" Z_VERNAME;
 
 namespace Zquic {
 
-ZquicExtern void init()
-{
-  Ztls::init();
-}
+  ZquicExtern void init()
+  {
+    if (!Ztls::cryptoInit()) throw ZeEXCEPT(Error, "Zquic", "crypto initialization failed");
+  }
 
-ZquicExtern void warmup()
-{
-  (void)opensslCipherCtx();
-}
+  ZquicExtern void warmup() { (void)opensslCipherCtx(); }
 
-} // namespace Zquic
+}

@@ -232,7 +232,7 @@ public:
     if (!span) return true;
     if (m_vec.length() >= Max || span.length() > UINT_MAX - m_bytes)
       return false;
-    m_vec.push(Ztls_::wire_bytes(span.data(), span.length()));
+    m_vec.push(Ztls_::wireBytes(span.data(), span.length()));
     m_bytes += span.length();
     return true;
   }

@@ -23,29 +23,28 @@ struct SignCert;
 struct VerifyCert;
 struct TicketKey;
 
-Ztls_API CertStore *cert_store_new();
-Ztls_API void cert_store_free(CertStore *);
-Ztls_API bool cert_store_load_path(CertStore *, const char *path);
-Ztls_API bool cert_store_load_file(CertStore *, const char *path);
-Ztls_API bool cert_store_add_der(CertStore *, ZuBSpan cert);
-Ztls_API bool cert_store_add_ca(CertStore *, ZuBSpan cert);
+Ztls_Extern CertStore *certStoreNew();
+Ztls_Extern void certStoreFree(CertStore *);
+Ztls_Extern bool certStoreLoadPath(CertStore *, const char *path);
+Ztls_Extern bool certStoreLoadFile(CertStore *, const char *path);
+Ztls_Extern bool certStoreAddDER(CertStore *, ZuBSpan cert);
+Ztls_Extern bool certStoreAddCA(CertStore *, ZuBSpan cert);
 
-Ztls_API VerifyCert *verify_cert_new(CertStore *);
-Ztls_API void verify_cert_free(VerifyCert *);
-Ztls_API Ztls_::VerifyCertificate *verify_cert_cb(VerifyCert *);
+Ztls_Extern VerifyCert *verifyCertNew(CertStore *);
+Ztls_Extern void verifyCertFree(VerifyCert *);
+Ztls_Extern Ztls_::VerifyCertificate *verifyCertHook(VerifyCert *);
 
-Ztls_API SignCert *sign_cert_new(const PK::Key &);
-Ztls_API void sign_cert_free(SignCert *);
-Ztls_API Ztls_::SignCertificate *sign_cert_cb(SignCert *);
-Ztls_API bool sign_cert_async(SignCert *, bool);
+Ztls_Extern SignCert *signCertNew(const PK::Key &);
+Ztls_Extern void signCertFree(SignCert *);
+Ztls_Extern Ztls_::SignCertificate *signCertHook(SignCert *);
+Ztls_Extern bool signCertAsync(SignCert *, bool);
 
-Ztls_API bool load_certificates(Ztls_::Context *ctx, const char *path);
-Ztls_API bool
-load_certificates_der(Ztls_::Context *, ZuSpan<const ZuBSpan> certs, const PK::Key &key);
+Ztls_Extern bool loadCerts(Ztls_::Context *ctx, const char *path);
+Ztls_Extern bool loadCertsDER(Ztls_::Context *, ZuSpan<const ZuBSpan> certs, const PK::Key &key);
 
-Ztls_API TicketKey *ticket_key_new();
-Ztls_API void ticket_key_free(TicketKey *);
-Ztls_API Ztls_::EncryptTicket *ticket_encrypt_cb(TicketKey *);
+Ztls_Extern TicketKey *ticketKeyNew();
+Ztls_Extern void ticketKeyFree(TicketKey *);
+Ztls_Extern Ztls_::EncryptTicket *ticketEncryptHook(TicketKey *);
 
 } // namespace Ztls
 

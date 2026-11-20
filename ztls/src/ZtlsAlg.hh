@@ -41,7 +41,7 @@ template <> struct MDTraits<SHA512> {
   enum { Size = 64 };
 };
 
-Ztls_API const EVP_MD *evpMD(MDType);
+Ztls_Extern const EVP_MD *evpMD(MDType);
 
 } // namespace Ztls
 

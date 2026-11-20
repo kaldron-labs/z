@@ -1057,7 +1057,7 @@ static bool trafficSecret(
   uint8_t bytes[32];
   for (unsigned i = 0; i < sizeof(bytes); ++i) bytes[i] = seed + i;
   return Zquic::PktProt::deriveSecret(
-    secret, &Ztls_::openssl_aes128gcmsha256, Zquic::byteSpan(bytes, sizeof(bytes)));
+    secret, &Ztls_::opensslAes128gcmsha256, Zquic::byteSpan(bytes, sizeof(bytes)));
 }
 
 #ifdef Zquic_DEBUG
@@ -4419,7 +4419,7 @@ void testZeroRTTProtectedSend()
     secretBytes[i] = uint8_t(0x80 + i);
   Zquic::TrafficSecret secret;
   ZuCHECK(Zquic::PktProt::deriveSecret(
-      secret, &Ztls_::openssl_aes128gcmsha256,
+      secret, &Ztls_::opensslAes128gcmsha256,
       Zquic::byteSpan(secretBytes, sizeof(secretBytes))),
     "0-RTT traffic secret derivation failed");
 
@@ -4465,7 +4465,7 @@ void testZeroRTTEarlyStreamPolicy()
     secretBytes[i] = uint8_t(0xa0 + i);
   Zquic::TrafficSecret secret;
   ZuCHECK(Zquic::PktProt::deriveSecret(
-      secret, &Ztls_::openssl_aes128gcmsha256,
+      secret, &Ztls_::opensslAes128gcmsha256,
       Zquic::byteSpan(secretBytes, sizeof(secretBytes))),
     "0-RTT traffic secret derivation failed");
 

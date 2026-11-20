@@ -256,9 +256,9 @@ static void oidcRoles()
 
   Ztls::Random rng;
   ZuCheck(rng.init());
-  Ztls::PK::SK_EC key{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  Ztls::PK::ECPrivate key{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   uint8_t publicKey[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheck(Ztls::PK::pkey_ec_export_public(key.key, publicKey));
+  ZuCheck(Ztls::PK::ecExportPublic(key.key, publicKey));
   Zum::String token;
   ZuCheck(signJWT(rng, key, "{\"alg\":\"ES256\",\"kid\":\"upstream\","
     "\"typ\":\"JWT\"}",

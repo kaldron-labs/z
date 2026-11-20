@@ -362,7 +362,7 @@ void workingPair(unsigned mode, unsigned failAt = unsigned(-1))
     ZeString message;
     message << state.txFailure;
     ZuCheckRT(state.txFailure && state.errorOnRx);
-    ZuCheckRT(strstr(message.data(), "Ztls_::tx_send_chunks()"));
+    ZuCheckRT(strstr(message.data(), "Ztls_::txSendChunks()"));
     ZuCheckRT(strstr(message.data(), "no_memory"));
     ZuCheckRT(!strstr(message.data(), "invalid argument"));
   }

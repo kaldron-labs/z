@@ -48,14 +48,14 @@ bool signKeyCreate(Ztls::Random &rng, ZuBSpan dbKey,
     ZuCSpan issuerURL, ZuCSpan id, int64_t now, SignKey &signer)
 {
   if (!dbKey || !issuerURL || !id || now <= 0) return false;
-  Ztls::PK::SK_EC key{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  Ztls::PK::ECPrivate key{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   Secret privateKey;
   Bytes publicKey;
-  privateKey.length(Ztls::PK::pkey_ec_key_size(key.key), false);
-  publicKey.length(Ztls::PK::pkey_ec_public_size(key.key), false);
+  privateKey.length(Ztls::PK::ecKeySize(key.key), false);
+  publicKey.length(Ztls::PK::ecPublicSize(key.key), false);
   if (publicKey.length() != Ztls::COSE::ES256::PublicKeySize ||
-      !Ztls::PK::pkey_ec_export_private(key.key, privateKey) ||
-      !Ztls::PK::pkey_ec_export_public(key.key, publicKey)) return false;
+      !Ztls::PK::ecExportPrivate(key.key, privateKey) ||
+      !Ztls::PK::ecExportPublic(key.key, publicKey)) return false;
   String x, y;
   if (!keyCoordinate(x, {publicKey.data() + 1,
         Ztls::COSE::ES256::CoordinateSize}) ||

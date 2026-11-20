@@ -96,10 +96,10 @@ static bool publicKeyValid(const SignKey &key, ZuBSpan expected = {})
 bool signKeyMatch(Ztls::Random &rng, const SignKey &key, ZuBSpan privateKey)
 {
   try {
-    Ztls::PK::SK_EC signer{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1, privateKey};
+    Ztls::PK::ECPrivate signer{rng, Ztls::PK::OIDs::ECGroupSecp256r1, privateKey};
     ZuBArray<Ztls::COSE::ES256::PublicKeySize> point(
       Ztls::COSE::ES256::PublicKeySize, false);
-    return Ztls::PK::pkey_ec_export_public(signer.key, point) &&
+    return Ztls::PK::ecExportPublic(signer.key, point) &&
       publicKeyValid(key, point);
   } catch (...) {
     return false;

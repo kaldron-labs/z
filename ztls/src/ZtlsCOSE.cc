@@ -64,8 +64,8 @@ static bool verify_(ZuBSpan publicKey, ZuBSpan digest, ZuBSpan signature)
     !signature)
     return false;
   try {
-    PK::PK_EC key{PK::OIDs::EC_GRP_SECP256R1, publicKey};
-    auto      result = key.verify(digest, signature);
+    PK::ECPublic key{PK::OIDs::ECGroupSecp256r1, publicKey};
+    auto	 result = key.verify(digest, signature);
     return !result.template is<ZeException>() && result.template p<0>();
   } catch (...) {
     return false;
@@ -105,7 +105,7 @@ bool validPK(ZuBSpan publicKey)
 {
   if (publicKey.length() != PublicKeySize || publicKey[0] != 4) return false;
   try {
-    PK::PK_EC key{PK::OIDs::EC_GRP_SECP256R1, publicKey};
+    PK::ECPublic key{PK::OIDs::ECGroupSecp256r1, publicKey};
   } catch (...) {
     return false;
   }

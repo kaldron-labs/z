@@ -289,7 +289,7 @@ static bool sshU32(ZuBSpan blob, size_t &cursor, uint32_t &value)
   return true;
 }
 
-static bool sshRSA(ZuBSpan blob, Ztls::PK::Data::PK_PKCS1 &data)
+static bool sshRSA(ZuBSpan blob, Ztls::PK::Data::PKCS1Public &data)
 {
   size_t  cursor = 0;
   ZuBSpan type;
@@ -346,7 +346,7 @@ try {
     if (!unb64({encoded.data(), textLength}, {output.data(), expected})) break;
     ZuBSpan blob{output.data(), expected};
     if (rsa) {
-      Ztls::PK::Data::PK_PKCS1 data;
+      Ztls::PK::Data::PKCS1Public data;
       if (!sshRSA(blob, data)) break;
       return Recipient{SshRSARecipient{blob}};
     }
@@ -426,7 +426,7 @@ try {
 	memcmp(secret.data() + 32, pub.data(), 32) || !sshED(blob, envelopePub) ||
 	envelopePub != pub)
 	return invalidOpenSSH();
-      auto *ed = new Ztls::PK::SK_ED25519{
+      auto *ed = new Ztls::PK::Ed25519Private{
 	{secret.data(), 32}
 	   };
       key = ed;
@@ -434,14 +434,14 @@ try {
       if (ed->exportPK(derived).template is<ZeException>() || memcmp(derived, pub.data(), 32))
 	return invalidOpenSSH();
     } else if (type == ZuBSpan{"ssh-rsa"}) {
-      ZuBSpan		       modulus, pubExp, prvExp, coeff, prime1, prime2;
-      Ztls::PK::Data::PK_PKCS1 envelope;
+      ZuBSpan			  modulus, pubExp, prvExp, coeff, prime1, prime2;
+      Ztls::PK::Data::PKCS1Public envelope;
       if (!sshString(privateBlock, cursor, modulus) || !sshString(privateBlock, cursor, pubExp) ||
 	!sshString(privateBlock, cursor, prvExp) || !sshString(privateBlock, cursor, coeff) ||
 	!sshString(privateBlock, cursor, prime1) || !sshString(privateBlock, cursor, prime2) ||
 	!sshRSA(blob, envelope) || envelope.modulus != modulus || envelope.pubExp != pubExp)
 	return invalidOpenSSH();
-      key = new Ztls::PK::SK_RSA{modulus, pubExp, prvExp, coeff, prime1, prime2};
+      key = new Ztls::PK::RSAPrivate{modulus, pubExp, prvExp, coeff, prime1, prime2};
     } else
       return invalidOpenSSH();
   } catch (const ZeException &e) {
@@ -659,9 +659,9 @@ appendX25519(AgeHeaderScratch &header, Ztls::Random &rng, ZuBSpan recipient, ZuB
     uint8_t	wrapKey[KeySize];
     uint8_t	body[FileKeySize + TagSize];
   } data;
-  ZuGuard	      clear{[&data]() { ZuClear(&data, sizeof(data)); }};
-  Ztls::PK::SK_X25519 key{rng};
-  auto		      r = key.exportPK({data.salt, X25519KeySize});
+  ZuGuard		  clear{[&data]() { ZuClear(&data, sizeof(data)); }};
+  Ztls::PK::X25519Private key{rng};
+  auto			  r = key.exportPK({data.salt, X25519KeySize});
   if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
   r = key.agree(recipient, data.shared);
   if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
@@ -684,9 +684,9 @@ appendHybrid(AgeHeaderScratch &header, Ztls::Random &rng, ZuBSpan recipient, ZuB
 {
   if (recipient.length() != Ztls::PK::HybridPublicSize)
     return ZeEXCEPT(Error, "ZtlsAge", "invalid hybrid recipient length");
-  Ztls::PK::PK_MLKEM768_X25519 key{recipient};
-  uint8_t		       enc[Ztls::PK::HybridCiphertextSize];
-  uint8_t		       body[FileKeySize + Ztls::HPKE::TagSize];
+  Ztls::PK::MLKEM768X25519Public key{recipient};
+  uint8_t			 enc[Ztls::PK::HybridCiphertextSize];
+  uint8_t			 body[FileKeySize + Ztls::HPKE::TagSize];
   auto r = Ztls::HPKE::sealBase(rng, key, HybridInfo, {}, fileKey, enc, body);
   if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
   ZuBArray<ZuBase64::enclen<false>(Ztls::PK::HybridCiphertextSize)> enc64;
@@ -700,10 +700,10 @@ appendHybrid(AgeHeaderScratch &header, Ztls::Random &rng, ZuBSpan recipient, ZuB
 static ZuUnion<void, ZeException>
 appendSshRSA(AgeHeaderScratch &header, ZuBSpan publicKey, ZuBSpan fileKey)
 {
-  Ztls::PK::Data::PK_PKCS1 data;
+  Ztls::PK::Data::PKCS1Public data;
   if (!sshRSA(publicKey, data)) return ZeEXCEPT(Error, "ZtlsAge", "invalid SSH RSA public key");
-  Ztls::PK::PK_RSA key{data};
-  size_t	   keySize = Ztls::PK::pkey_rsa_size(key.key);
+  Ztls::PK::RSAPublic key{data};
+  size_t	      keySize = Ztls::PK::rsaSize(key.key);
   if (keySize < 256 || keySize > HeaderMaxSize/2)
     return ZeEXCEPT(Error, "ZtlsAge", "unsupported SSH RSA key size");
   unsigned n = keySize;
@@ -738,18 +738,18 @@ appendSshED(AgeHeaderScratch &header, Ztls::Random &rng, ZuBSpan publicKey, ZuBS
     uint8_t	tweaked[32], salt[64], wrapKey[32];
     uint8_t	body[FileKeySize + TagSize];
   } data;
-  ZuGuard	       clear{[&data]() { ZuClear(&data, sizeof(data)); }};
-  Ztls::PK::PK_ED25519 ed{edPublic};
-  auto		       r = ed.exportX25519({data.salt + 32, 32});
+  ZuGuard		  clear{[&data]() { ZuClear(&data, sizeof(data)); }};
+  Ztls::PK::Ed25519Public ed{edPublic};
+  auto			  r = ed.exportX25519({data.salt + 32, 32});
   if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
-  Ztls::PK::SK_X25519 ephemeral{rng};
+  Ztls::PK::X25519Private ephemeral{rng};
   r = ephemeral.exportPK({data.salt, 32});
   if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
   r = ephemeral.agree({data.salt + 32, 32}, data.shared);
   if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
   if (!hkdf({}, publicKey, SshEDLabel, data.tweak))
     return ZeEXCEPT(Error, "ZtlsAge", "SSH ED25519 tweak failed");
-  Ztls::PK::SK_X25519 tweak{data.tweak};
+  Ztls::PK::X25519Private tweak{data.tweak};
   r = tweak.agree(data.shared, data.tweaked);
   if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
   if (!hkdf(data.tweaked, data.salt, SshEDLabel, data.wrapKey) ||
@@ -884,8 +884,8 @@ static bool parseX25519(ZuCSpan args, ZuCSpan body, ZuBSpan seed, ZuSpan<uint8_t
   ZuCSpan ephemeralText{args.data() + X25519Arg.length(), args.length() - X25519Arg.length()};
   if (!unb64(ephemeralText, {data.salt, X25519KeySize}) || !unb64(body, data.wrapped))
     return false;
-  Ztls::PK::SK_X25519 key{seed};
-  auto		      r = key.exportPK({data.salt + X25519KeySize, X25519KeySize});
+  Ztls::PK::X25519Private key{seed};
+  auto			  r = key.exportPK({data.salt + X25519KeySize, X25519KeySize});
   if (r.template is<ZeException>()) return false;
   r = key.agree({data.salt, X25519KeySize}, data.shared);
   if (r.template is<ZeException>()) return false;
@@ -902,7 +902,7 @@ static bool parseHybrid(ZuCSpan args, ZuCSpan body, ZuBSpan seed, ZuSpan<uint8_t
   uint8_t wrapped[FileKeySize + Ztls::HPKE::TagSize];
   ZuCSpan encText{args.data() + HybridArg.length(), args.length() - HybridArg.length()};
   if (!unb64(encText, enc) || !unb64(body, wrapped)) return false;
-  Ztls::PK::SK_MLKEM768_X25519 key{seed};
+  Ztls::PK::MLKEM768X25519Private key{seed};
   auto r = Ztls::HPKE::openBase(key, HybridInfo, {}, enc, wrapped, fileKey);
   return !r.template is<ZeException>() && r.template p<size_t>() == FileKeySize;
 }
@@ -916,7 +916,7 @@ static bool parseSshRSA(
   uint8_t fingerprint[ZuBase64::enclen<false>(4)];
   sshFingerprint(identity.publicKey, fingerprint);
   if (memcmp(args.data() + SshRSAArg.length(), fingerprint, sizeof(fingerprint))) return false;
-  size_t keySize = Ztls::PK::pkey_rsa_size(identity.key->key);
+  size_t keySize = Ztls::PK::rsaSize(identity.key->key);
   if (
     keySize < 256 || keySize > HeaderMaxSize/2 || bodyChars != ZuBase64::enclen<false>(keySize))
     return false;
@@ -961,7 +961,7 @@ try {
   Ztls::MD<Ztls::SHA512> sha512;
   sha512.update(data.seed);
   sha512.finish(data.digest);
-  Ztls::PK::SK_X25519 x{
+  Ztls::PK::X25519Private x{
     ZuBSpan{data.digest, 32}
   };
   r = x.exportPK({data.salt + 32, 32});
@@ -969,7 +969,7 @@ try {
   r = x.agree({data.salt, 32}, data.shared);
   if (r.template is<ZeException>()) return false;
   if (!hkdf({}, identity.publicKey, SshEDLabel, data.tweak)) return false;
-  Ztls::PK::SK_X25519 tweak{data.tweak};
+  Ztls::PK::X25519Private tweak{data.tweak};
   r = tweak.agree(data.shared, data.tweaked);
   if (r.template is<ZeException>()) return false;
   return hkdf(data.tweaked, data.salt, SshEDLabel, data.wrapKey) &&

@@ -244,26 +244,26 @@ static void serialAndVector(const Ztls_::AeadAlgo *algo, const Ztls_::AeadAlgo *
   memset(iv, 0x17, sizeof(iv));
   memset(aad, 0x3b, sizeof(aad));
   for (unsigned i = 0; i < Length; ++i) input[i] = uint8_t(i * 31 + 7);
-  auto	  enc = Ztls_::aead_new_direct(algo, 1, key, iv);
-  auto	  dec = Ztls_::aead_new_direct(algo, 0, key, iv);
-  auto	  ref = Ztls_::aead_new_direct(reference, 1, key, iv);
+  auto	  enc = Ztls_::aeadNewDirect(algo, 1, key, iv);
+  auto	  dec = Ztls_::aeadNewDirect(algo, 0, key, iv);
+  auto	  ref = Ztls_::aeadNewDirect(reference, 1, key, iv);
   ZuGuard release{[enc, dec, ref]()
   {
-    if (enc) Ztls_::aead_free(enc);
-    if (dec) Ztls_::aead_free(dec);
-    if (ref) Ztls_::aead_free(ref);
+    if (enc) Ztls_::aeadFree(enc);
+    if (dec) Ztls_::aeadFree(dec);
+    if (ref) Ztls_::aeadFree(ref);
   }};
   ZuCheckRT(enc && dec && ref);
   if (!enc || !dec || !ref) return;
 
   for (unsigned split : {0U, 1U, 15U, 16U, 17U, 63U, 64U, 65U, 256U, 257U}) {
     uint64_t seq = split + 1;
-    Ztls_::aead_encrypt(ref, expected, input, Length, seq, aad, sizeof(aad));
+    Ztls_::aeadEncrypt(ref, expected, input, Length, seq, aad, sizeof(aad));
     Ztls_::Bytes spans[] = {
-      Ztls_::wire_bytes(input, split), Ztls_::wire_bytes(input + split, Length - split)};
+      Ztls_::wireBytes(input, split), Ztls_::wireBytes(input + split, Length - split)};
     memset(output, 0xa5, sizeof(output));
     auto encrypted =
-      Ztls_::aead_encrypt_v_s(enc, output + 1, spans, 2, seq, aad, sizeof(aad), nullptr);
+      Ztls_::aeadEncryptVS(enc, output + 1, spans, 2, seq, aad, sizeof(aad), nullptr);
     ZuCheckRT(encrypted == sizeof(expected) && !memcmp(expected, output + 1, encrypted));
     ZuCheckRT(output[0] == 0xa5 && output[sizeof(output) - 1] == 0xa5);
 
@@ -292,15 +292,15 @@ static void serialAndVector(const Ztls_::AeadAlgo *algo, const Ztls_::AeadAlgo *
 static void recordBackends()
 {
   ZuTestScope(recordBackends);
-  ZuTestCall(serialAndVector, &Ztls_::openssl_aes128gcm, &Ztls_::openssl_aes128gcm);
-  ZuTestCall(serialAndVector, &Ztls_::openssl_aes256gcm, &Ztls_::openssl_aes256gcm);
+  ZuTestCall(serialAndVector, &Ztls_::opensslAes128gcm, &Ztls_::opensslAes128gcm);
+  ZuTestCall(serialAndVector, &Ztls_::opensslAes256gcm, &Ztls_::opensslAes256gcm);
 #if ZtlsOpenSSLHaveChaCha
-  ZuTestCall(serialAndVector, &Ztls_::openssl_chacha20poly1305, &Ztls_::openssl_chacha20poly1305);
+  ZuTestCall(serialAndVector, &Ztls_::opensslChacha20poly1305, &Ztls_::opensslChacha20poly1305);
 #endif
 #if ZtlsFusion
-  if (Ztls_::fusion_is_supported_by_cpu()) {
-    ZuTestCall(serialAndVector, &Ztls_::fusion_aes128gcm, &Ztls_::openssl_aes128gcm);
-    ZuTestCall(serialAndVector, &Ztls_::fusion_aes256gcm, &Ztls_::openssl_aes256gcm);
+  if (Ztls_::fusionSupported()) {
+    ZuTestCall(serialAndVector, &Ztls_::fusionAes128gcm, &Ztls_::opensslAes128gcm);
+    ZuTestCall(serialAndVector, &Ztls_::fusionAes256gcm, &Ztls_::opensslAes256gcm);
   }
 #endif
 }

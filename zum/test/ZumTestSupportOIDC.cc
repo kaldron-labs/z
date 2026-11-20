@@ -489,7 +489,7 @@ static FinishedAuthorization finishOIDCAuthorization(
 }
 
 static Zum::SignFn testSigner(
-    Ztls::Random &rng, Ztls::PK::SK_EC &key)
+    Ztls::Random &rng, Ztls::PK::ECPrivate &key)
 {
   return Zum::SignFn{[&rng, &key](
       const Zum::SignKey &record, ZuBSpan digest, Zum::SignatureFn complete) mutable {
@@ -507,7 +507,7 @@ static IssuedToken issueTokenRequest(
     Zum::Requests *requests, TestDB *db,
     Ztls::Random &rng,
     Zum::String form, Zum::String authorization,
-    Ztls::PK::SK_EC &key, int64_t now,
+    Ztls::PK::ECPrivate &key, int64_t now,
     Zum::String issuer = "issuer")
 {
   Zum::TokenConfig config{
@@ -894,10 +894,10 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     .providerID = 8, .issuer = "https://upstream.example/oauth2/default",
     .subject = "00u44", .userID = 44, .created = 100, .updated = 100
   }));
-  Ztls::PK::SK_EC upstreamKey{
-    rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  Ztls::PK::ECPrivate upstreamKey{
+    rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   uint8_t upstreamPublic[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheckRT(Ztls::PK::pkey_ec_export_public(
+  ZuCheckRT(Ztls::PK::ecExportPublic(
     upstreamKey.key, upstreamPublic));
   auto x = base64URL(ZuBSpan{
     upstreamPublic + 1, Ztls::COSE::ES256::CoordinateSize});

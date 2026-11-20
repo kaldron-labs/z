@@ -62,11 +62,11 @@ public:
   };
   struct SshRSAIdentity {
     ZuBSpan			publicKey;
-    const Ztls::PK::SK_RSA	*key;
+    const Ztls::PK::RSAPrivate	*key;
   };
   struct SshED25519Identity {
-    ZuBSpan			publicKey;
-    const Ztls::PK::SK_ED25519	*key;
+    ZuBSpan				publicKey;
+    const Ztls::PK::Ed25519Private	*key;
   };
   using Identity =
     ZuUnion<X25519Identity, HybridIdentity, ScryptIdentity, SshRSAIdentity, SshED25519Identity>;

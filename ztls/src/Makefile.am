@@ -9,7 +9,7 @@ libZtls_la_LDFLAGS = $(AM_LDFLAGS) @Z_SO_LDFLAGS@ $(ZTLS_BROTLI_LIBS)
 pkginclude_HEADERS = ZtlsLib.hh ZtlsError.hh Ztls.hh \
 	ZtlsBuf.hh ZtlsCredentials.hh ZtlsCxn.hh ZtlsAlg.hh ZtlsKDF.hh ZtlsAEAD.hh ZtlsPKOps.hh \
 	ZtlsHMAC.hh ZtlsMD.hh ZtlsTOTP.hh ZtlsRandom.hh \
-	ZtlsPK.hh ZtlsPK_Data.hh ZtlsKEM.hh ZtlsHPKE.hh ZtlsAge.hh ZtlsCOSE.hh ZtlsSec.hh \
+	ZtlsPK.hh ZtlsPKData.hh ZtlsKEM.hh ZtlsHPKE.hh ZtlsAge.hh ZtlsCOSE.hh ZtlsSec.hh \
 	ZtlsVault.hh ZtlsVaultStore.hh
 pkginclude_HEADERS += ZtlsEngine.hh ZtlsEngineOpenSSL.hh ZtlsFusion.hh
 noinst_HEADERS = ZtlsVaultSS.hh \

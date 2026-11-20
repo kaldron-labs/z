@@ -105,7 +105,7 @@ struct App : public Ztls::Client<App> {
 	int	n = 0;
 	int64_t consumed = rx.consume([](ZuSpan<uint8_t> span) -> int64_t {
 	  return span.length();
-	}, [this, &n](ZuSpan<uint8_t> span) { n = process_span(span); });
+	}, [this, &n](ZuSpan<uint8_t> span) { n = processSpan(span); });
 	if (n < 0) return -1;
 	if (consumed < 0) return -1;
 	if (!consumed) return 0;
@@ -113,7 +113,7 @@ struct App : public Ztls::Client<App> {
       return 1;
     }
 
-    int process_span(ZuSpan<uint8_t> rcvd)
+    int processSpan(ZuSpan<uint8_t> rcvd)
     {
       if (!file) {
 	header << ZuCSpan(rcvd);
@@ -164,11 +164,11 @@ struct App : public Ztls::Client<App> {
   };
 
   App(unsigned repeats) : m_repeats(repeats) { }
-  App(unsigned repeats, unsigned payload_len) : m_repeats(repeats)
+  App(unsigned repeats, unsigned payloadLen) : m_repeats(repeats)
   {
-    if (!payload_len) return;
-    m_payload.length(payload_len);
-    for (unsigned i = 0; i < payload_len; ++i) m_payload[i] = uint8_t(i);
+    if (!payloadLen) return;
+    m_payload.length(payloadLen);
+    for (unsigned i = 0; i < payloadLen; ++i) m_payload[i] = uint8_t(i);
   }
 
   void done() { sem.post(); }
@@ -200,7 +200,7 @@ int main(int argc, char **argv)
   unsigned port = ZuBox<unsigned>(argv[2]);
 
   if (!port) usage();
-  auto is_number = [](const char *s)
+  auto isNumber = [](const char *s)
   {
     if (!s || !*s) return false;
     for (; *s; ++s)
@@ -208,10 +208,10 @@ int main(int argc, char **argv)
     return true;
   };
   const char *ca = nullptr;
-  unsigned    payload_len = 0;
+  unsigned    payloadLen = 0;
   unsigned    repeats = 1;
   if (argc == 4) {
-    if (is_number(argv[3]))
+    if (isNumber(argv[3]))
       repeats = ZuBox<unsigned>(argv[3]);
     else
       ca = argv[3];
@@ -221,7 +221,7 @@ int main(int argc, char **argv)
   }
   if (!repeats) repeats = 1;
   if (const char *payload = getenv("ZTLS_PAYLOAD")) {
-    if (is_number(payload)) payload_len = ZuBox<unsigned>(payload);
+    if (isNumber(payload)) payloadLen = ZuBox<unsigned>(payload);
   }
 
   ZiLog::init("ztlsclient");
@@ -231,7 +231,7 @@ int main(int argc, char **argv)
 
   ZuCSpan alpn[] = {"http/1.1"};
 
-  App app(repeats, payload_len);
+  App app(repeats, payloadLen);
 
   ZiMultiplex mx(
     ZiMxParams()

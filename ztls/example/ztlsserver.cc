@@ -94,13 +94,13 @@ struct App : public Ztls::Server<App> {
   :
     m_localIP(server), m_localPort(port), m_target(repeats)
   { }
-  App(ZiIP server, unsigned port, unsigned repeats, unsigned payload_len)
+  App(ZiIP server, unsigned port, unsigned repeats, unsigned payloadLen)
   :
     m_localIP(server), m_localPort(port), m_target(repeats)
   {
-    if (payload_len) {
-      m_payload.length(payload_len);
-      memset(m_payload.data(), 'X', payload_len);
+    if (payloadLen) {
+      m_payload.length(payloadLen);
+      memset(m_payload.data(), 'X', payloadLen);
     } else {
       auto length = strlen(Content);
       m_payload.length(length);
@@ -149,10 +149,10 @@ int main(int argc, char **argv)
   ZuCSpan alpn[] = {"http/1.1"};
 
   unsigned repeats = 1;
-  unsigned payload_len = 0;
+  unsigned payloadLen = 0;
   if (argc == 6) repeats = ZuBox<unsigned>(argv[5]);
   if (!repeats) repeats = 1;
-  auto is_number = [](const char *s)
+  auto isNumber = [](const char *s)
   {
     if (!s || !*s) return false;
     for (; *s; ++s)
@@ -160,9 +160,9 @@ int main(int argc, char **argv)
     return true;
   };
   if (const char *payload = getenv("ZTLS_PAYLOAD")) {
-    if (is_number(payload)) payload_len = ZuBox<unsigned>(payload);
+    if (isNumber(payload)) payloadLen = ZuBox<unsigned>(payload);
   }
-  App app(server, port, repeats, payload_len);
+  App app(server, port, repeats, payloadLen);
 
   ZiMultiplex mx(
     ZiMxParams()

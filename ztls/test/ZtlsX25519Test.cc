@@ -39,8 +39,8 @@ static void vectors()
   ZuCheck(bytes(alicePub, "8520F0098930A754748B7DDCB43EF75A0DBF3A0D26381AF4EBA4A98EAA9B4E6A"));
   ZuCheck(bytes(bobPub, "DE9EDB7D7B7DC1B4D35B61C2ECE435373F8343C85B78674DADFC7E146F882B4F"));
   ZuCheck(bytes(shared, "4A5D9D5BA4CE2DE1728E3BF480350F25E07E21C947D19E3376F09B3C1E161742"));
-  SK_X25519 a{alice}, b{bob};
-  uint8_t   out[32], seed[32];
+  X25519Private a{alice}, b{bob};
+  uint8_t	out[32], seed[32];
   ZuCheck(!a.exportPK(out).template is<ZeException>());
   ZuCheck(!memcmp(out, alicePub, sizeof(out)));
   ZuCheck(!b.exportPK(out).template is<ZeException>());
@@ -58,12 +58,12 @@ static void vectors()
     ZuCheck(!pk.template p<0>()->exportPK(out).template is<ZeException>());
     ZuCheck(!memcmp(out, alicePub, sizeof(out)));
   }
-  PK_X25519 imported{alicePub};
+  X25519Public imported{alicePub};
   ZuCheck(!imported.exportPK(out).template is<ZeException>());
   ZuCheck(!memcmp(out, alicePub, sizeof(out)));
   // Failed replacement must not discard the existing native key.
-  ZuCheck(!pkey_x25519_import_private(a.key, {alice, 31}));
-  ZuCheck(!pkey_x25519_import_public(a.key, {alicePub, 31}));
+  ZuCheck(!x25519ImportPrivate(a.key, {alice, 31}));
+  ZuCheck(!x25519ImportPublic(a.key, {alicePub, 31}));
   ZuCheck(!loadPEM(a.key, nullptr));
   ZuCheck(!a.exportPK(out).template is<ZeException>());
   ZuCheck(!memcmp(out, alicePub, sizeof(out)));
@@ -86,8 +86,8 @@ static void vectors()
   ZuCheck(cleared);
   ZuCheck(a.exportSK({seed, 31}).template is<ZeException>());
   ZuCheck(imported.exportPK({out, 31}).template is<ZeException>());
-  SK_X25519 failed{alice};
-  ZuCheck(Ztls::PK::pkey_x25519_import_public(failed.key, alicePub));
+  X25519Private failed{alice};
+  ZuCheck(Ztls::PK::x25519ImportPublic(failed.key, alicePub));
   memset(seed, 0xa5, sizeof(seed));
   ZuCheck(failed.exportSK(seed).template is<ZeException>());
   cleared = true;
@@ -97,7 +97,7 @@ static void vectors()
   ZuCheck(failed.save(failedDER).template is<ZeException>());
   bool rejected = false;
   try {
-    SK_X25519 invalid{
+    X25519Private invalid{
       {alice, 31}
 	 };
   } catch (const ZeException &) {
@@ -106,7 +106,7 @@ static void vectors()
   ZuCheck(rejected);
   rejected = false;
   try {
-    PK_X25519 invalid{
+    X25519Public invalid{
       {alicePub, 31}
     };
   } catch (const ZeException &) {
@@ -120,24 +120,24 @@ static void encoding()
   ZuTestScope(encoding);
   Ztls::Random rng;
   ZuCheck(rng.init());
-  SK_X25519 sk{rng};
-  uint8_t   pub[32];
+  X25519Private sk{rng};
+  uint8_t	pub[32];
   ZuCheck(!sk.exportPK(pub).template is<ZeException>());
-  PK_X25519 pk{pub};
-  ZtBArray  skDER, pkDER;
+  X25519Public pk{pub};
+  ZtBArray     skDER, pkDER;
   ZuCheck(!sk.save(skDER).template is<ZeException>());
   ZuCheck(!pk.save(pkDER).template is<ZeException>());
   auto loadedSK = LoadSK{rng}.load(skDER);
   auto loadedPK = LoadPK{}.load(pkDER);
-  ZuCheck(checkLoaded<SK_X25519>(loadedSK, pub));
-  ZuCheck(checkLoaded<PK_X25519>(loadedPK, pub));
+  ZuCheck(checkLoaded<X25519Private>(loadedSK, pub));
+  ZuCheck(checkLoaded<X25519Public>(loadedPK, pub));
   ZtArray<char> skPEM, pkPEM;
   ZuCheck(!savePEM(skPEM, &sk).template is<ZeException>());
   ZuCheck(!savePEM(pkPEM, &pk).template is<ZeException>());
   loadedSK = LoadSK{rng}.loadPEM(skPEM);
   loadedPK = LoadPK{}.loadPEM(pkPEM);
-  ZuCheck(checkLoaded<SK_X25519>(loadedSK, pub));
-  ZuCheck(checkLoaded<PK_X25519>(loadedPK, pub));
+  ZuCheck(checkLoaded<X25519Private>(loadedSK, pub));
+  ZuCheck(checkLoaded<X25519Public>(loadedPK, pub));
 }
 
 static void interop(int argc, char **argv)
@@ -152,8 +152,8 @@ static void interop(int argc, char **argv)
   Ztls::Random rng;
   ZuCheckRT(rng.init());
   if (!strcmp(argv[1], "--save")) {
-    SK_X25519 sk{rng};
-    auto      pk = sk.mkPK();
+    X25519Private sk{rng};
+    auto	  pk = sk.mkPK();
     ZuCheckRT(!pk.template is<ZeException>());
     if (pk.template is<ZeException>()) return;
     ZuCheckRT(!saveFile(argv[2], &sk).template is<ZeException>());
@@ -167,8 +167,8 @@ static void interop(int argc, char **argv)
   ZuCheckRT(!sk.template is<ZeException>());
   ZuCheckRT(!pk.template is<ZeException>());
   if (sk.template is<ZeException>() || pk.template is<ZeException>()) return;
-  auto privateKey = dynamic_cast<SK_X25519 *>(sk.template p<0>().ptr());
-  auto publicKey = dynamic_cast<PK_X25519 *>(pk.template p<0>().ptr());
+  auto privateKey = dynamic_cast<X25519Private *>(sk.template p<0>().ptr());
+  auto publicKey = dynamic_cast<X25519Public *>(pk.template p<0>().ptr());
   ZuCheckRT(privateKey && publicKey);
   if (!privateKey || !publicKey) return;
   uint8_t pub[32], ownPub[32], shared[32];

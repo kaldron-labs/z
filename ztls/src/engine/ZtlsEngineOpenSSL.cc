@@ -71,24 +71,24 @@ template <int Bits> struct OpenSSLSignature : OpenSSLSigScheme {
 static const OpenSSLSignature<256>   rsa256{Ztls_SigRSAPSSRSAESHA256};
 static const OpenSSLSignature<384>   rsa384{Ztls_SigRSAPSSRSAESHA384};
 static const OpenSSLSignature<512>   rsa512{Ztls_SigRSAPSSRSAESHA512};
-static const OpenSSLSigScheme *const rsa_signature_schemes[] = {&rsa256, &rsa384, &rsa512};
+static const OpenSSLSigScheme *const rsaSigSchemes[] = {&rsa256, &rsa384, &rsa512};
 static const OpenSSLSignature<256>   ec256{Ztls_SigECDSAP256SHA256};
-static const OpenSSLSigScheme *const secp256r1_signature_schemes[] = {&ec256};
+static const OpenSSLSigScheme *const secp256r1SigSchemes[] = {&ec256};
 #if ZtlsOpenSSLHaveSecp384r1
 static const OpenSSLSignature<384>   ec384{Ztls_SigECDSAP384SHA384};
-static const OpenSSLSigScheme *const secp384r1_signature_schemes[] = {&ec384};
+static const OpenSSLSigScheme *const secp384r1SigSchemes[] = {&ec384};
 #endif
 #if ZtlsOpenSSLHaveSecp521r1
 static const OpenSSLSignature<512>   ec512{Ztls_SigECDSAP521SHA512};
-static const OpenSSLSigScheme *const secp521r1_signature_schemes[] = {&ec512};
+static const OpenSSLSigScheme *const secp521r1SigSchemes[] = {&ec512};
 #endif
 #if ZtlsOpenSSLHaveEd25519
 static const OpenSSLSignature<0>     ed25519{Ztls_SigEd25519};
-static const OpenSSLSigScheme *const ed25519_signature_schemes[] = {&ed25519};
+static const OpenSSLSigScheme *const ed25519SigSchemes[] = {&ed25519};
 #endif
 
 // The default list sent in ClientHello.signatureAlgorithms. ECDSA certificates are preferred.
-static const uint16_t default_signature_schemes[] = {
+static const uint16_t defaultSigSchemes[] = {
 #if ZtlsOpenSSLHaveEd25519
   Ztls_SigEd25519,
 #endif
@@ -101,28 +101,28 @@ static const uint16_t default_signature_schemes[] = {
 #endif
   Ztls_SigRSAPSSRSAESHA512, Ztls_SigRSAPSSRSAESHA384, Ztls_SigRSAPSSRSAESHA256};
 
-ZuSpan<const OpenSSLSigScheme *const> openssl_lookup_sig_schemes(EVP_PKEY *key)
+ZuSpan<const OpenSSLSigScheme *const> opensslLookupSigSchemes(EVP_PKEY *key)
 {
   ZuSpan<const OpenSSLSigScheme *const> schemes;
 
   switch (EVP_PKEY_id(key)) {
   case EVP_PKEY_RSA:
-    schemes = rsa_signature_schemes;
+    schemes = rsaSigSchemes;
     break;
   case EVP_PKEY_EC: {
     EC_KEY *eckey = EVP_PKEY_get1_EC_KEY(key);
     switch (EC_GROUP_get_curve_name(EC_KEY_get0_group(eckey))) {
     case NID_X9_62_prime256v1:
-      schemes = secp256r1_signature_schemes;
+      schemes = secp256r1SigSchemes;
       break;
 #if ZtlsOpenSSLHaveSecp384r1
     case NID_secp384r1:
-      schemes = secp384r1_signature_schemes;
+      schemes = secp384r1SigSchemes;
       break;
 #endif
 #if ZtlsOpenSSLHaveSecp521r1
     case NID_secp521r1:
-      schemes = secp521r1_signature_schemes;
+      schemes = secp521r1SigSchemes;
       break;
 #endif
     default:
@@ -132,7 +132,7 @@ ZuSpan<const OpenSSLSigScheme *const> openssl_lookup_sig_schemes(EVP_PKEY *key)
   } break;
 #if ZtlsOpenSSLHaveEd25519
   case EVP_PKEY_ED25519:
-    schemes = ed25519_signature_schemes;
+    schemes = ed25519SigSchemes;
     break;
 #endif
   default:
@@ -142,7 +142,7 @@ ZuSpan<const OpenSSLSigScheme *const> openssl_lookup_sig_schemes(EVP_PKEY *key)
   return schemes;
 }
 
-const OpenSSLSigScheme *openssl_select_sig_scheme(
+const OpenSSLSigScheme *opensslSelectSigScheme(
   ZuSpan<const OpenSSLSigScheme *const> available, ZuSpan<const uint16_t> algorithms)
 {
   for (auto scheme : available)
@@ -165,7 +165,7 @@ struct OpenSSLRandom : RandomSource {
 static OpenSSLRandom randomSource;
 RandomSource	    &opensslRandom = randomSource;
 
-static EC_KEY *ecdh_generate_key(EC_GROUP *group)
+static EC_KEY *ecdhGenerateKey(EC_GROUP *group)
 {
   EC_KEY *key;
 
@@ -178,12 +178,12 @@ static EC_KEY *ecdh_generate_key(EC_GROUP *group)
   return key;
 }
 
-static int ecdh_calc_secret(
-  KeyExchangeBytes *out, const EC_GROUP *group, EC_KEY *privkey, EC_POINT *peer_point)
+static int
+ecdhCalcSecret(KeyExchangeBytes *out, const EC_GROUP *group, EC_KEY *privkey, EC_POINT *peerPoint)
 {
   KeyExchangeBytes secret;
   secret.length((EC_GROUP_get_degree(group) + 7)/8);
-  if (ECDH_compute_key(secret.data(), secret.length(), peer_point, privkey, NULL) <= 0) {
+  if (ECDH_compute_key(secret.data(), secret.length(), peerPoint, privkey, NULL) <= 0) {
     out->null();
     return Ztls_AlertHSFailure;
   }
@@ -191,7 +191,7 @@ static int ecdh_calc_secret(
   return 0;
 }
 
-static EC_POINT *x9_62_decode_point(const EC_GROUP *group, Bytes vec, BN_CTX *bnCtx)
+static EC_POINT *ecDecodePoint(const EC_GROUP *group, Bytes vec, BN_CTX *bnCtx)
 {
   EC_POINT *point = NULL;
 
@@ -204,16 +204,15 @@ static EC_POINT *x9_62_decode_point(const EC_GROUP *group, Bytes vec, BN_CTX *bn
   return point;
 }
 
-static KeyExchangeBytes
-x9_62_encode_point(const EC_GROUP *group, const EC_POINT *point, BN_CTX *bnCtx)
+static KeyExchangeBytes ecEncodePoint(const EC_GROUP *group, const EC_POINT *point, BN_CTX *bnCtx)
 {
   auto length = EC_POINT_point2oct(group, point, POINT_CONVERSION_UNCOMPRESSED, NULL, 0, bnCtx);
   if (!length) return {};
-  KeyExchangeBytes point_bytes(length, length);
+  KeyExchangeBytes pointBytes(length, length);
   if (EC_POINT_point2oct(
-	group, point, POINT_CONVERSION_UNCOMPRESSED, point_bytes.data(), length, bnCtx) != length)
+	group, point, POINT_CONVERSION_UNCOMPRESSED, pointBytes.data(), length, bnCtx) != length)
     return {};
-  return point_bytes;
+  return pointBytes;
 }
 
 struct ECKeyExchangeContext : ZmNHeap<ECKeyExchangeContext>, KeyExchangeContext {
@@ -235,7 +234,7 @@ int ECKeyExchangeContext::exchange(KeyExchangeBytes *secret, Bytes peerkey)
 {
   auto		  ctx = this;
   const EC_GROUP *group = EC_KEY_get0_group(ctx->privkey);
-  EC_POINT	 *peer_point = NULL;
+  EC_POINT	 *peerPoint = NULL;
   int		  ret;
 
   if (secret == NULL) {
@@ -243,18 +242,18 @@ int ECKeyExchangeContext::exchange(KeyExchangeBytes *secret, Bytes peerkey)
     goto Exit;
   }
 
-  if ((peer_point = x9_62_decode_point(group, peerkey, ctx->bnCtx)) == NULL) {
+  if ((peerPoint = ecDecodePoint(group, peerkey, ctx->bnCtx)) == NULL) {
     ret = Ztls_AlertDecodeError;
     goto Exit;
   }
-  if ((ret = ecdh_calc_secret(secret, group, ctx->privkey, peer_point)) != 0) goto Exit;
+  if ((ret = ecdhCalcSecret(secret, group, ctx->privkey, peerPoint)) != 0) goto Exit;
 
 Exit:
-  if (peer_point != NULL) EC_POINT_free(peer_point);
+  if (peerPoint != NULL) EC_POINT_free(peerPoint);
   return ret;
 }
 
-static int x9_62_create_context(const KeyExchangeAlgo *algo, ECKeyExchangeContext **ctx)
+static int ecCreateCtx(const KeyExchangeAlgo *algo, ECKeyExchangeContext **ctx)
 {
   int ret;
 
@@ -274,17 +273,17 @@ Exit:
   return ret;
 }
 
-static int x9_62_setup_pubkey(ECKeyExchangeContext *ctx)
+static int ecSetupPubkey(ECKeyExchangeContext *ctx)
 {
   const EC_GROUP *group = EC_KEY_get0_group(ctx->privkey);
   const EC_POINT *pubkey = EC_KEY_get0_public_key(ctx->privkey);
-  ctx->pubkeyBytes = x9_62_encode_point(group, pubkey, ctx->bnCtx);
+  ctx->pubkeyBytes = ecEncodePoint(group, pubkey, ctx->bnCtx);
   if (!ctx->pubkeyBytes.length()) return Ztls_ErrorNoMemory;
-  ctx->pubkey = wire_bytes(ctx->pubkeyBytes.data(), ctx->pubkeyBytes.length());
+  ctx->pubkey = wireBytes(ctx->pubkeyBytes.data(), ctx->pubkeyBytes.length());
   return 0;
 }
 
-static int x9_62_create_key_exchange(const KeyExchangeAlgo *algo, KeyExchangeContext **_ctx)
+static int ecCreateKeyExchange(const KeyExchangeAlgo *algo, KeyExchangeContext **_ctx)
 {
   EC_GROUP	       *group = NULL;
   ECKeyExchangeContext *ctx = NULL;
@@ -295,12 +294,12 @@ static int x9_62_create_key_exchange(const KeyExchangeAlgo *algo, KeyExchangeCon
     ret = Ztls_ErrorLibrary;
     goto Exit;
   }
-  if ((ret = x9_62_create_context(algo, &ctx)) != 0) goto Exit;
-  if ((ctx->privkey = ecdh_generate_key(group)) == NULL) {
+  if ((ret = ecCreateCtx(algo, &ctx)) != 0) goto Exit;
+  if ((ctx->privkey = ecdhGenerateKey(group)) == NULL) {
     ret = Ztls_ErrorLibrary;
     goto Exit;
   }
-  if ((ret = x9_62_setup_pubkey(ctx)) != 0) goto Exit;
+  if ((ret = ecSetupPubkey(ctx)) != 0) goto Exit;
   ret = 0;
 
 Exit:
@@ -315,14 +314,14 @@ Exit:
   return ret;
 }
 
-static int x9_62_init_key(const KeyExchangeAlgo *algo, KeyExchangeContext **_ctx, EC_KEY *eckey)
+static int ecInitKey(const KeyExchangeAlgo *algo, KeyExchangeContext **_ctx, EC_KEY *eckey)
 {
   ECKeyExchangeContext *ctx = NULL;
   int			ret;
 
-  if ((ret = x9_62_create_context(algo, &ctx)) != 0) goto Exit;
+  if ((ret = ecCreateCtx(algo, &ctx)) != 0) goto Exit;
   ctx->privkey = eckey;
-  if ((ret = x9_62_setup_pubkey(ctx)) != 0) goto Exit;
+  if ((ret = ecSetupPubkey(ctx)) != 0) goto Exit;
   ret = 0;
 
 Exit:
@@ -339,11 +338,11 @@ Exit:
   return ret;
 }
 
-static int x9_62_key_exchange(
+static int ecKeyExchange(
   EC_GROUP *group, KeyExchangeBytes *pubkey, KeyExchangeBytes *secret, Bytes peerkey,
   BN_CTX *bnCtx)
 {
-  EC_POINT *peer_point = NULL;
+  EC_POINT *peerPoint = NULL;
   EC_KEY   *privkey = NULL;
   int	    ret;
 
@@ -351,28 +350,28 @@ static int x9_62_key_exchange(
   secret->null();
 
   // decode peer key
-  if ((peer_point = x9_62_decode_point(group, peerkey, bnCtx)) == NULL) {
+  if ((peerPoint = ecDecodePoint(group, peerkey, bnCtx)) == NULL) {
     ret = Ztls_AlertDecodeError;
     goto Exit;
   }
 
   // create private key
-  if ((privkey = ecdh_generate_key(group)) == NULL) {
+  if ((privkey = ecdhGenerateKey(group)) == NULL) {
     ret = Ztls_ErrorNoMemory;
     goto Exit;
   }
 
   // encode public key
-  *pubkey = x9_62_encode_point(group, EC_KEY_get0_public_key(privkey), bnCtx);
+  *pubkey = ecEncodePoint(group, EC_KEY_get0_public_key(privkey), bnCtx);
   if (!pubkey->length()) {
     ret = Ztls_ErrorNoMemory;
     goto Exit;
   }
 
-  ret = ecdh_calc_secret(secret, group, privkey, peer_point);
+  ret = ecdhCalcSecret(secret, group, privkey, peerPoint);
 
 Exit:
-  if (peer_point != NULL) EC_POINT_free(peer_point);
+  if (peerPoint != NULL) EC_POINT_free(peerPoint);
   if (privkey != NULL) EC_KEY_free(privkey);
   if (ret != 0) {
     pubkey->null();
@@ -381,7 +380,7 @@ Exit:
   return ret;
 }
 
-static int secp_key_exchange(
+static int secpKeyExchange(
   const KeyExchangeAlgo *algo, KeyExchangeBytes *pubkey, KeyExchangeBytes *secret, Bytes peerkey)
 {
   EC_GROUP *group = NULL;
@@ -397,7 +396,7 @@ static int secp_key_exchange(
     goto Exit;
   }
 
-  ret = x9_62_key_exchange(group, pubkey, secret, peerkey, bnCtx);
+  ret = ecKeyExchange(group, pubkey, secret, peerkey, bnCtx);
 
 Exit:
   if (bnCtx != NULL) BN_CTX_free(bnCtx);
@@ -425,7 +424,7 @@ friend inline ZuStringT<"Ztls.Engine.EVPKeyExchange"> ZmNHeapID(EVPKeyExchangeCo
 
 #if ZtlsOpenSSLHaveX25519
 
-static int evp_keyex_derive(EVPKeyExchangeContext *ctx, KeyExchangeBytes *secret, Bytes peerkey)
+static int evpKeyexDerive(EVPKeyExchangeContext *ctx, KeyExchangeBytes *secret, Bytes peerkey)
 {
   EVP_PKEY     *evppeer = NULL;
   EVP_PKEY_CTX *evpctx = NULL;
@@ -492,23 +491,23 @@ Exit:
 
 // Upon success, ownership of `pkey` is transferred to the object being created. Otherwise, the
 // refcount remains unchanged.
-static int evp_keyex_init(const KeyExchangeAlgo *algo, KeyExchangeContext **_ctx, EVP_PKEY *pkey)
+static int evpKeyexInit(const KeyExchangeAlgo *algo, KeyExchangeContext **_ctx, EVP_PKEY *pkey)
 {
   EVPKeyExchangeContext *ctx = NULL;
-  uint8_t		*key_bytes = nullptr;
+  uint8_t		*keyBytes = nullptr;
   size_t		 length;
   int			 ret;
 
   ctx = new EVPKeyExchangeContext{algo, pkey, false};
 
   // set public key
-  if (!(length = EVP_PKEY_get1_tls_encodedpoint(ctx->privkey, &key_bytes))) {
-    OPENSSL_free(key_bytes);
+  if (!(length = EVP_PKEY_get1_tls_encodedpoint(ctx->privkey, &keyBytes))) {
+    OPENSSL_free(keyBytes);
     ret = Ztls_ErrorNoMemory;
     goto Exit;
   }
 
-  ctx->pubkey = {key_bytes, length};
+  ctx->pubkey = {keyBytes, length};
   *_ctx = ctx;
   ret = 0;
 Exit:
@@ -520,7 +519,7 @@ Exit:
   return ret;
 }
 
-static int evp_keyex_create(const KeyExchangeAlgo *algo, KeyExchangeContext **ctx)
+static int evpKeyexCreate(const KeyExchangeAlgo *algo, KeyExchangeContext **ctx)
 {
   EVP_PKEY_CTX *evpctx = NULL;
   EVP_PKEY     *pkey = NULL;
@@ -541,7 +540,7 @@ static int evp_keyex_create(const KeyExchangeAlgo *algo, KeyExchangeContext **ct
   }
 
   // setup
-  if ((ret = evp_keyex_init(algo, ctx, pkey)) != 0) goto Exit;
+  if ((ret = evpKeyexInit(algo, ctx, pkey)) != 0) goto Exit;
   pkey = NULL;
   ret = 0;
 
@@ -551,7 +550,7 @@ Exit:
   return ret;
 }
 
-static int evp_keyex_exchange(
+static int evpKeyexExchange(
   const KeyExchangeAlgo *algo, KeyExchangeBytes *outpubkey, KeyExchangeBytes *secret,
   Bytes peerkey)
 {
@@ -560,7 +559,7 @@ static int evp_keyex_exchange(
 
   outpubkey->null();
 
-  if ((ret = evp_keyex_create(algo, &ctx)) != 0) goto Exit;
+  if ((ret = evpKeyexCreate(algo, &ctx)) != 0) goto Exit;
   outpubkey->copy(ctx->pubkey.data(), ctx->pubkey.length());
   ret = ctx->exchange(secret, peerkey);
 
@@ -572,7 +571,7 @@ Exit:
 
 #endif
 
-static int evp_kem_derive(EVPKeyExchangeContext *ctx, KeyExchangeBytes *secret, Bytes ciphertext)
+static int evpKemDerive(EVPKeyExchangeContext *ctx, KeyExchangeBytes *secret, Bytes ciphertext)
 {
   EVP_PKEY_CTX *evpctx = NULL;
   size_t	length = 0;
@@ -616,16 +615,16 @@ Exit:
 int EVPKeyExchangeContext::exchange(KeyExchangeBytes *secret, Bytes peerkey)
 {
 #if ZtlsOpenSSLHaveX25519
-  if (!kem) return evp_keyex_derive(this, secret, peerkey);
+  if (!kem) return evpKeyexDerive(this, secret, peerkey);
 #endif
-  return evp_kem_derive(this, secret, peerkey);
+  return evpKemDerive(this, secret, peerkey);
 }
 
-static int evp_kem_create(const KeyExchangeAlgo *algo, KeyExchangeContext **_ctx)
+static int evpKemCreate(const KeyExchangeAlgo *algo, KeyExchangeContext **_ctx)
 {
   EVPKeyExchangeContext *ctx = NULL;
   EVP_PKEY_CTX		*evpctx = NULL;
-  uint8_t		*key_bytes = nullptr;
+  uint8_t		*keyBytes = nullptr;
   size_t		 length;
   int			 ret;
 
@@ -646,13 +645,13 @@ static int evp_kem_create(const KeyExchangeAlgo *algo, KeyExchangeContext **_ctx
   }
 
   // set public key
-  if (!(length = EVP_PKEY_get1_encoded_public_key(ctx->privkey, &key_bytes))) {
-    OPENSSL_free(key_bytes);
+  if (!(length = EVP_PKEY_get1_encoded_public_key(ctx->privkey, &keyBytes))) {
+    OPENSSL_free(keyBytes);
     ret = Ztls_ErrorNoMemory;
     goto Exit;
   }
 
-  ctx->pubkey = {key_bytes, length};
+  ctx->pubkey = {keyBytes, length};
   *_ctx = ctx;
   ret = 0;
 
@@ -662,13 +661,13 @@ Exit:
   return ret;
 }
 
-static int evp_kem_exchange(
+static int evpKemExchange(
   const KeyExchangeAlgo *algo, KeyExchangeBytes *ciphertext, KeyExchangeBytes *secret,
   Bytes peerkey)
 {
   EVP_PKEY_CTX *evpctx = NULL;
   EVP_PKEY     *key = NULL;
-  size_t	ciphertext_length = 0, secret_length = 0;
+  size_t	ciphertextLen = 0, secretLen = 0;
   int		ret;
 
   ciphertext->null();
@@ -701,21 +700,21 @@ static int evp_kem_exchange(
     ret = Ztls_ErrorLibrary;
     goto Exit;
   }
-  if (EVP_PKEY_encapsulate(evpctx, NULL, &ciphertext_length, NULL, &secret_length) <= 0) {
+  if (EVP_PKEY_encapsulate(evpctx, NULL, &ciphertextLen, NULL, &secretLen) <= 0) {
     ret = Ztls_ErrorLibrary;
     goto Exit;
   }
-  ciphertext->length(ciphertext_length);
-  secret->length(secret_length);
+  ciphertext->length(ciphertextLen);
+  secret->length(secretLen);
   if (EVP_PKEY_encapsulate(
-	evpctx, ciphertext->data(), &ciphertext_length, secret->data(), &secret_length) <= 0) {
+	evpctx, ciphertext->data(), &ciphertextLen, secret->data(), &secretLen) <= 0) {
     ret = Ztls_ErrorLibrary;
     goto Exit;
   }
-  if (secret->length() > secret_length)
-    ZuClear(secret->data() + secret_length, secret->length() - secret_length);
-  secret->length(secret_length);
-  ciphertext->length(ciphertext_length);
+  if (secret->length() > secretLen)
+    ZuClear(secret->data() + secretLen, secret->length() - secretLen);
+  secret->length(secretLen);
+  ciphertext->length(ciphertextLen);
   ret = 0;
 
 Exit:
@@ -728,7 +727,7 @@ Exit:
   return ret;
 }
 
-int openssl_create_key_exchange(KeyExchangeContext **ctx, EVP_PKEY *pkey)
+int opensslCreateKeyExchange(KeyExchangeContext **ctx, EVP_PKEY *pkey)
 {
   int ret, id;
 
@@ -741,16 +740,16 @@ int openssl_create_key_exchange(KeyExchangeContext **ctx, EVP_PKEY *pkey)
     const KeyExchangeAlgo *algo;
     switch (EC_GROUP_get_curve_name(EC_KEY_get0_group(eckey))) {
     case NID_X9_62_prime256v1:
-      algo = &openssl_secp256r1;
+      algo = &opensslSecp256r1;
       break;
 #if ZtlsOpenSSLHaveSecp384r1
     case NID_secp384r1:
-      algo = &openssl_secp384r1;
+      algo = &opensslSecp384r1;
       break;
 #endif
 #if ZtlsOpenSSLHaveSecp521r1
     case NID_secp521r1:
-      algo = &openssl_secp521r1;
+      algo = &opensslSecp521r1;
       break;
 #endif
     default:
@@ -759,7 +758,7 @@ int openssl_create_key_exchange(KeyExchangeContext **ctx, EVP_PKEY *pkey)
     }
 
     // load key
-    if ((ret = x9_62_init_key(algo, ctx, eckey)) != 0) {
+    if ((ret = ecInitKey(algo, ctx, eckey)) != 0) {
       EC_KEY_free(eckey);
       return ret;
     }
@@ -769,7 +768,7 @@ int openssl_create_key_exchange(KeyExchangeContext **ctx, EVP_PKEY *pkey)
 
 #if ZtlsOpenSSLHaveX25519
   case NID_X25519:
-    if ((ret = evp_keyex_init(&openssl_x25519, ctx, pkey)) != 0) return ret;
+    if ((ret = evpKeyexInit(&opensslX25519, ctx, pkey)) != 0) return ret;
     EVP_PKEY_up_ref(pkey);
     return 0;
 #endif
@@ -793,7 +792,7 @@ static void releaseSignDigest(Ztls::Cxn *tls)
   tls->signature.null();
 }
 
-static int sign_digest_job(void *arg)
+static int signDigestJob(void *arg)
 {
   auto tls = *static_cast<Ztls::Cxn **>(arg);
   return EVP_DigestSignFinal(tls->signatureDigest, tls->signature.data(), &tls->signatureLength);
@@ -816,7 +815,7 @@ static bool retireSignDigest(Ztls::Cxn *tls)
   if (tls->signatureJob) {
     int result;
     int status = ASYNC_start_job(
-      &tls->signatureJob, tls->signatureWait, &result, sign_digest_job, &tls, sizeof(tls));
+      &tls->signatureJob, tls->signatureWait, &result, signDigestJob, &tls, sizeof(tls));
     if (status == ASYNC_PAUSE) {
       updateSignatureHandle(tls);
       return false;
@@ -832,12 +831,12 @@ static bool retireSignDigest(Ztls::Cxn *tls)
   return true;
 }
 
-static int resume_sign_digest(Ztls::Cxn *tls, Buffer *outbuf, uint16_t *selected)
+static int resumeSignDigest(Ztls::Cxn *tls, Buffer *outbuf, uint16_t *selected)
 {
   *selected = tls->signatureAlgorithm;
   int ret;
   switch (ASYNC_start_job(
-    &tls->signatureJob, tls->signatureWait, &ret, sign_digest_job, &tls, sizeof(tls))) {
+    &tls->signatureJob, tls->signatureWait, &ret, signDigestJob, &tls, sizeof(tls))) {
   case ASYNC_PAUSE:
     updateSignatureHandle(tls);
     return Ztls_ErrorAsyncOperation;
@@ -860,7 +859,7 @@ Exit:
   return ret;
 }
 
-static int start_sign_digest(
+static int startSignDigest(
   Ztls::Cxn *tls, EVP_MD_CTX *digest, uint16_t algorithm, size_t length, Buffer *outbuf)
 {
   tls->signatureDigest = digest;
@@ -875,18 +874,18 @@ static int start_sign_digest(
   memset(tls->signature.data(), 0, length);
   tls->signatureRetire = [tls]() { return retireSignDigest(tls); };
   tls->signatureResume = [tls](Buffer *output, uint16_t *selected)
-  { return resume_sign_digest(tls, output, selected); };
-  return resume_sign_digest(tls, outbuf, &algorithm);
+  { return resumeSignDigest(tls, output, selected); };
+  return resumeSignDigest(tls, outbuf, &algorithm);
 }
 
 #endif
 
-static int do_sign(
+static int doSign(
   EVP_PKEY *key, const OpenSSLSigScheme *scheme, Buffer *outbuf, Bytes input, Ztls::Cxn *async)
 {
   EVP_MD_CTX   *ctx = NULL;
   const EVP_MD *md = scheme->md();
-  EVP_PKEY_CTX *pkey_ctx;
+  EVP_PKEY_CTX *keyCtx;
   size_t	siglen;
   int		ret;
 
@@ -895,7 +894,7 @@ static int do_sign(
     goto Exit;
   }
 
-  if (EVP_DigestSignInit(ctx, &pkey_ctx, md, NULL, key) != 1) {
+  if (EVP_DigestSignInit(ctx, &keyCtx, md, NULL, key) != 1) {
     ret = Ztls_ErrorLibrary;
     goto Exit;
   }
@@ -908,7 +907,7 @@ static int do_sign(
       ret = Ztls_ErrorLibrary;
       goto Exit;
     }
-    if ((ret = buffer_reserve(outbuf, siglen, outbuf->tx)) != 0) goto Exit;
+    if ((ret = bufferRes(outbuf, siglen, outbuf->tx)) != 0) goto Exit;
     if (EVP_DigestSign(ctx, outbuf->base + outbuf->off, &siglen, input.data(), input.length()) !=
       1) {
       ret = Ztls_ErrorLibrary;
@@ -918,15 +917,15 @@ static int do_sign(
 #endif
   {
     if (EVP_PKEY_id(key) == EVP_PKEY_RSA) {
-      if (EVP_PKEY_CTX_set_rsa_padding(pkey_ctx, RSA_PKCS1_PSS_PADDING) != 1) {
+      if (EVP_PKEY_CTX_set_rsa_padding(keyCtx, RSA_PKCS1_PSS_PADDING) != 1) {
 	ret = Ztls_ErrorLibrary;
 	goto Exit;
       }
-      if (EVP_PKEY_CTX_set_rsa_pss_saltlen(pkey_ctx, -1) != 1) {
+      if (EVP_PKEY_CTX_set_rsa_pss_saltlen(keyCtx, -1) != 1) {
 	ret = Ztls_ErrorLibrary;
 	goto Exit;
       }
-      if (EVP_PKEY_CTX_set_rsa_mgf1_md(pkey_ctx, md) != 1) {
+      if (EVP_PKEY_CTX_set_rsa_mgf1_md(keyCtx, md) != 1) {
 	ret = Ztls_ErrorLibrary;
 	goto Exit;
       }
@@ -942,10 +941,10 @@ static int do_sign(
     // If permitted by the caller (by providing a non-NULL `async` slot), use the asynchronous
     // signing method and return immediately.
 #if ZtlsOpenSSLHaveAsync
-    if (async) return start_sign_digest(async, ctx, scheme->schemeId, siglen, outbuf);
+    if (async) return startSignDigest(async, ctx, scheme->schemeId, siglen, outbuf);
 #endif
     // Otherwise, generate signature synchronously.
-    if ((ret = buffer_reserve(outbuf, siglen, outbuf->tx)) != 0) goto Exit;
+    if ((ret = bufferRes(outbuf, siglen, outbuf->tx)) != 0) goto Exit;
     if (EVP_DigestSignFinal(ctx, outbuf->base + outbuf->off, &siglen) != 1) {
       ret = Ztls_ErrorLibrary;
       goto Exit;
@@ -1069,27 +1068,27 @@ friend inline ZuStringT<"Ztls.Engine.AEAD.OpenSSL"> ZmNHeapID(OpenSSLAeadContext
     size_t aadlen) override;
 };
 
-static void openssl_aead_get_iv(AeadContext *_ctx, void *iv)
+static void aeadGetIV_(AeadContext *_ctx, void *iv)
 {
   struct OpenSSLAeadContext *ctx = static_cast<OpenSSLAeadContext *>(_ctx);
 
   memcpy(iv, ctx->staticIv, ctx->algo->ivSize);
 }
 
-static void openssl_aead_set_iv(AeadContext *_ctx, const void *iv)
+static void aeadSetIV_(AeadContext *_ctx, const void *iv)
 {
   struct OpenSSLAeadContext *ctx = static_cast<OpenSSLAeadContext *>(_ctx);
 
   memcpy(ctx->staticIv, iv, ctx->algo->ivSize);
 }
 
-static int aead_enc_begin(AeadContext *_ctx, uint64_t seq, const void *aad, size_t aadlen)
+static int aeadEncBegin(AeadContext *_ctx, uint64_t seq, const void *aad, size_t aadlen)
 {
   struct OpenSSLAeadContext *ctx = static_cast<OpenSSLAeadContext *>(_ctx);
   uint8_t		     iv[Ztls_MaxIVSize];
   int			     len;
   if (aadlen > INT_MAX) return Ztls_ErrorLibrary;
-  aead__build_iv(_ctx->algo, iv, ctx->staticIv, seq);
+  aeadBuildIV(_ctx->algo, iv, ctx->staticIv, seq);
   if (!EVP_EncryptInit_ex(ctx->evpCtx, NULL, NULL, NULL, iv) ||
     (aadlen != 0 &&
       !EVP_EncryptUpdate(
@@ -1099,7 +1098,7 @@ static int aead_enc_begin(AeadContext *_ctx, uint64_t seq, const void *aad, size
 }
 
 static int
-aead_enc_chunk(AeadContext *_ctx, void *output, const void *input, size_t length, size_t *written)
+aeadEncChunk(AeadContext *_ctx, void *output, const void *input, size_t length, size_t *written)
 {
   struct OpenSSLAeadContext *ctx = static_cast<OpenSSLAeadContext *>(_ctx);
   int			     len;
@@ -1114,7 +1113,7 @@ aead_enc_chunk(AeadContext *_ctx, void *output, const void *input, size_t length
   return 0;
 }
 
-static int aead_enc_end(AeadContext *_ctx, void *output, size_t capacity, size_t *written)
+static int aeadEncEnd(AeadContext *_ctx, void *output, size_t capacity, size_t *written)
 {
   struct OpenSSLAeadContext *ctx = static_cast<OpenSSLAeadContext *>(_ctx);
   uint8_t		     final[EVP_MAX_BLOCK_LENGTH];
@@ -1130,36 +1129,36 @@ static int aead_enc_end(AeadContext *_ctx, void *output, size_t capacity, size_t
 
 // Only GCM and ChaCha20-Poly1305 install these callbacks. Their update calls
 // emit exactly the input size; final emits no additional plaintext.
-static int aead_dec_error(struct OpenSSLAeadContext *ctx, int error)
+static int aeadDecError(struct OpenSSLAeadContext *ctx, int error)
 {
   ctx->decActive = 0;
   EVP_CIPHER_CTX_reset(ctx->evpCtx);
   return error;
 }
 
-static void aead_dec_abort(AeadContext *_ctx)
-{ aead_dec_error(static_cast<OpenSSLAeadContext *>(_ctx), Ztls_ErrorLibrary); }
+static void aeadDecAbort(AeadContext *_ctx)
+{ aeadDecError(static_cast<OpenSSLAeadContext *>(_ctx), Ztls_ErrorLibrary); }
 
-static int aead_dec_begin(AeadContext *_ctx, uint64_t seq, const void *aad, size_t aadlen)
+static int aeadDecBegin(AeadContext *_ctx, uint64_t seq, const void *aad, size_t aadlen)
 {
   struct OpenSSLAeadContext *ctx = static_cast<OpenSSLAeadContext *>(_ctx);
   uint8_t		     iv[Ztls_MaxIVSize];
   int			     len;
   if (ctx->decActive || aadlen > INT_MAX || (aadlen != 0 && aad == NULL))
-    return aead_dec_error(ctx, Ztls_ErrorLibrary);
-  aead__build_iv(_ctx->algo, iv, ctx->staticIv, seq);
+    return aeadDecError(ctx, Ztls_ErrorLibrary);
+  aeadBuildIV(_ctx->algo, iv, ctx->staticIv, seq);
   int ret = EVP_DecryptInit_ex(ctx->evpCtx, NULL, NULL, NULL, iv);
   ZuClear(iv, sizeof(iv));
   if (!ret ||
     (aadlen != 0 &&
       !EVP_DecryptUpdate(
 	ctx->evpCtx, NULL, &len, static_cast<const unsigned char *>(aad), (int)aadlen)))
-    return aead_dec_error(ctx, Ztls_ErrorLibrary);
+    return aeadDecError(ctx, Ztls_ErrorLibrary);
   ctx->decActive = 1;
   return 0;
 }
 
-static int aead_dec_chunk(
+static int aeadDecChunk(
   AeadContext *_ctx, void *output, size_t capacity, const void *input, size_t length,
   size_t *written)
 {
@@ -1168,49 +1167,49 @@ static int aead_dec_chunk(
   *written = 0;
   if (!ctx->decActive || length > capacity || length > INT_MAX ||
     (length != 0 && (output == NULL || input == NULL)))
-    return aead_dec_error(ctx, Ztls_ErrorLibrary);
+    return aeadDecError(ctx, Ztls_ErrorLibrary);
   if (length != 0 &&
     (!EVP_DecryptUpdate(
        ctx->evpCtx, static_cast<unsigned char *>(output), &len,
        static_cast<const unsigned char *>(input), (int)length) ||
       len != length))
-    return aead_dec_error(ctx, Ztls_ErrorLibrary);
+    return aeadDecError(ctx, Ztls_ErrorLibrary);
   *written = length;
   return 0;
 }
 
-static int aead_dec_end(AeadContext *_ctx, const void *tag, size_t taglen)
+static int aeadDecEnd(AeadContext *_ctx, const void *tag, size_t taglen)
 {
   struct OpenSSLAeadContext *ctx = static_cast<OpenSSLAeadContext *>(_ctx);
   uint8_t		     final[EVP_MAX_BLOCK_LENGTH];
   int			     len;
   if (!ctx->decActive || tag == NULL || taglen != _ctx->algo->tagSize ||
     !EVP_CIPHER_CTX_ctrl(ctx->evpCtx, EVP_CTRL_GCM_SET_TAG, (int)taglen, (void *)tag))
-    return aead_dec_error(ctx, Ztls_ErrorLibrary);
+    return aeadDecError(ctx, Ztls_ErrorLibrary);
   int ret = EVP_DecryptFinal_ex(ctx->evpCtx, final, &len);
   ZuClear(final, sizeof(final));
   if (!ret) {
     // Rejected early data may be skipped before the next protected record.
     // Reset the per-record provider state while retaining the installed key.
     // A fresh nonce on begin replaces this unused clearing nonce.
-    uint8_t cleared_iv[Ztls_MaxIVSize] = {0};
+    uint8_t clearedIV[Ztls_MaxIVSize] = {0};
     ctx->decActive = 0;
-    if (!EVP_DecryptInit_ex(ctx->evpCtx, NULL, NULL, NULL, cleared_iv))
-      return aead_dec_error(ctx, Ztls_ErrorLibrary);
+    if (!EVP_DecryptInit_ex(ctx->evpCtx, NULL, NULL, NULL, clearedIV))
+      return aeadDecError(ctx, Ztls_ErrorLibrary);
     return Ztls_AlertBadRecordMac;
   }
-  if (len != 0) return aead_dec_error(ctx, Ztls_ErrorLibrary);
+  if (len != 0) return aeadDecError(ctx, Ztls_ErrorLibrary);
   ctx->decActive = 0;
   return 0;
 }
 
-static void aead_do_encrypt_init(AeadContext *_ctx, uint64_t seq, const void *aad, size_t aadlen)
+static void aeadDoEncryptInit(AeadContext *_ctx, uint64_t seq, const void *aad, size_t aadlen)
 {
   struct OpenSSLAeadContext *ctx = static_cast<OpenSSLAeadContext *>(_ctx);
   uint8_t		     iv[Ztls_MaxIVSize];
   [[maybe_unused]] int	     ret;
 
-  aead__build_iv(ctx->algo, iv, ctx->staticIv, seq);
+  aeadBuildIV(ctx->algo, iv, ctx->staticIv, seq);
   ret = EVP_EncryptInit_ex(ctx->evpCtx, NULL, NULL, NULL, iv);
   assert(ret);
 
@@ -1223,7 +1222,7 @@ static void aead_do_encrypt_init(AeadContext *_ctx, uint64_t seq, const void *aa
 }
 
 static size_t
-aead_do_encrypt_update(AeadContext *_ctx, void *output, const void *input, size_t inlen)
+aeadDoEncryptUpdate(AeadContext *_ctx, void *output, const void *input, size_t inlen)
 {
   struct OpenSSLAeadContext *ctx = static_cast<OpenSSLAeadContext *>(_ctx);
   int			     blocklen;
@@ -1237,7 +1236,7 @@ aead_do_encrypt_update(AeadContext *_ctx, void *output, const void *input, size_
   return blocklen;
 }
 
-static size_t aead_do_encrypt_final(AeadContext *_ctx, void *_output)
+static size_t aeadDoEncryptFinal(AeadContext *_ctx, void *_output)
 {
   struct OpenSSLAeadContext *ctx = static_cast<OpenSSLAeadContext *>(_ctx);
   uint8_t		    *output = static_cast<uint8_t *>(_output);
@@ -1255,7 +1254,7 @@ static size_t aead_do_encrypt_final(AeadContext *_ctx, void *_output)
   return off;
 }
 
-static size_t aead_do_decrypt(
+static size_t aeadDoDecrypt(
   AeadContext *_ctx, void *_output, const void *input, size_t inlen, uint64_t seq,
   const void *aad, size_t aadlen)
 {
@@ -1267,7 +1266,7 @@ static size_t aead_do_decrypt(
 
   if (inlen < tagSize) return SIZE_MAX;
 
-  aead__build_iv(ctx->algo, iv, ctx->staticIv, seq);
+  aeadBuildIV(ctx->algo, iv, ctx->staticIv, seq);
   ret = EVP_DecryptInit_ex(ctx->evpCtx, NULL, NULL, NULL, iv);
   assert(ret);
   if (aadlen != 0) {
@@ -1290,8 +1289,8 @@ static size_t aead_do_decrypt(
   return off;
 }
 
-static int aead_setup_crypto(
-  AeadContext *_ctx, int is_enc, const void *key, const void *iv, const EVP_CIPHER *cipher)
+static int aeadSetupCrypto(
+  AeadContext *_ctx, int isEnc, const void *key, const void *iv, const EVP_CIPHER *cipher)
 {
   struct OpenSSLAeadContext *ctx = static_cast<OpenSSLAeadContext *>(_ctx);
   int			     ret;
@@ -1302,7 +1301,7 @@ static int aead_setup_crypto(
     ret = Ztls_ErrorNoMemory;
     goto Error;
   }
-  if (is_enc) {
+  if (isEnc) {
     if (!EVP_EncryptInit_ex(
 	  ctx->evpCtx, cipher, NULL, static_cast<const unsigned char *>(key), NULL)) {
       ret = Ztls_ErrorLibrary;
@@ -1335,14 +1334,14 @@ OpenSSLAeadContext::~OpenSSLAeadContext()
   decActive = 0;
 }
 
-void OpenSSLAeadContext::getIV(void *iv) { openssl_aead_get_iv(this, iv); }
+void OpenSSLAeadContext::getIV(void *iv) { aeadGetIV_(this, iv); }
 
-void OpenSSLAeadContext::setIV(const void *iv) { openssl_aead_set_iv(this, iv); }
+void OpenSSLAeadContext::setIV(const void *iv) { aeadSetIV_(this, iv); }
 
 int OpenSSLAeadContext::encBegin(uint64_t seq, const void *aad, size_t aadlen)
 {
   if (!isEnc) return Ztls_ErrorNotAvailable;
-  return aead_enc_begin(this, seq, aad, aadlen);
+  return aeadEncBegin(this, seq, aad, aadlen);
 }
 
 int OpenSSLAeadContext::encChunk(void *output, const void *input, size_t length, size_t *written)
@@ -1351,7 +1350,7 @@ int OpenSSLAeadContext::encChunk(void *output, const void *input, size_t length,
     *written = 0;
     return Ztls_ErrorNotAvailable;
   }
-  return aead_enc_chunk(this, output, input, length, written);
+  return aeadEncChunk(this, output, input, length, written);
 }
 
 int OpenSSLAeadContext::encEnd(void *output, size_t capacity, size_t *written)
@@ -1360,13 +1359,13 @@ int OpenSSLAeadContext::encEnd(void *output, size_t capacity, size_t *written)
     *written = 0;
     return Ztls_ErrorNotAvailable;
   }
-  return aead_enc_end(this, output, capacity, written);
+  return aeadEncEnd(this, output, capacity, written);
 }
 
 int OpenSSLAeadContext::decBegin(uint64_t seq, const void *aad, size_t aadlen)
 {
   if (isEnc) return Ztls_ErrorNotAvailable;
-  return aead_dec_begin(this, seq, aad, aadlen);
+  return aeadDecBegin(this, seq, aad, aadlen);
 }
 
 int OpenSSLAeadContext::decChunk(
@@ -1376,33 +1375,33 @@ int OpenSSLAeadContext::decChunk(
     *written = 0;
     return Ztls_ErrorNotAvailable;
   }
-  return aead_dec_chunk(this, output, capacity, input, length, written);
+  return aeadDecChunk(this, output, capacity, input, length, written);
 }
 
 int OpenSSLAeadContext::decEnd(const void *tag, size_t taglen)
 {
   if (isEnc) return Ztls_ErrorNotAvailable;
-  return aead_dec_end(this, tag, taglen);
+  return aeadDecEnd(this, tag, taglen);
 }
 
-void OpenSSLAeadContext::decAbort() { aead_dec_abort(this); }
+void OpenSSLAeadContext::decAbort() { aeadDecAbort(this); }
 
 void OpenSSLAeadContext::encryptV(
   void *output, const Bytes *input, size_t incnt, uint64_t seq, const void *aad, size_t aadlen)
 {
   assert(isEnc);
-  aead_do_encrypt_init(this, seq, aad, aadlen);
+  aeadDoEncryptInit(this, seq, aad, aadlen);
   auto dst = static_cast<uint8_t *>(output);
   for (size_t i = 0; i != incnt; ++i)
-    dst += aead_do_encrypt_update(this, dst, input[i].data(), input[i].length());
-  aead_do_encrypt_final(this, dst);
+    dst += aeadDoEncryptUpdate(this, dst, input[i].data(), input[i].length());
+  aeadDoEncryptFinal(this, dst);
 }
 
 size_t OpenSSLAeadContext::decrypt(
   void *output, const void *input, size_t inlen, uint64_t seq, const void *aad, size_t aadlen)
 {
   assert(!isEnc);
-  return aead_do_decrypt(this, output, input, inlen, seq, aad, aadlen);
+  return aeadDoDecrypt(this, output, input, inlen, seq, aad, aadlen);
 }
 
 template <int Kind> struct OpenSSLAeadAlgo : AeadAlgo {
@@ -1419,7 +1418,7 @@ template <int Kind> struct OpenSSLAeadAlgo : AeadAlgo {
       cipher = EVP_chacha20_poly1305();
 #endif
     auto ctx = new OpenSSLAeadContext{this, isEnc};
-    if (aead_setup_crypto(ctx, isEnc, key, iv, cipher)) {
+    if (aeadSetupCrypto(ctx, isEnc, key, iv, cipher)) {
       delete ctx;
       return nullptr;
     }
@@ -1482,22 +1481,22 @@ template <int Bits> struct OpenSSLHashAlgo : HashAlgo {
 };
 
 int OpenSSLSignCert::call(
-  Ztls::Cxn *tls, bool allow_async, uint16_t *selected_algorithm, Buffer *outbuf, Bytes input,
+  Ztls::Cxn *tls, bool allowAsync, uint16_t *selectedAlgo, Buffer *outbuf, Bytes input,
   ZuSpan<const uint16_t> algorithms)
 {
   auto self = this;
-  auto scheme = openssl_select_sig_scheme(self->schemes, algorithms);
+  auto scheme = opensslSelectSigScheme(self->schemes, algorithms);
   if (!scheme) return Ztls_AlertHSFailure;
-  *selected_algorithm = scheme->schemeId;
+  *selectedAlgo = scheme->schemeId;
 
 #if ZtlsOpenSSLHaveAsync
-  return do_sign(self->key, scheme, outbuf, input, allow_async && self->async ? tls : nullptr);
+  return doSign(self->key, scheme, outbuf, input, allowAsync && self->async ? tls : nullptr);
 #else
-  return do_sign(self->key, scheme, outbuf, input, nullptr);
+  return doSign(self->key, scheme, outbuf, input, nullptr);
 #endif
 }
 
-static X509 *to_x509(Bytes vec)
+static X509 *toX509(Bytes vec)
 {
   const uint8_t *p = vec.data();
   return d2i_X509(NULL, &p, (long)vec.length());
@@ -1517,14 +1516,14 @@ int OpenSSLVerifySignature::verify(uint16_t algo, Bytes data, Bytes signature)
   ZuSpan<const OpenSSLSigScheme *const> available;
   const OpenSSLSigScheme	       *scheme;
   EVP_MD_CTX			       *ctx = NULL;
-  EVP_PKEY_CTX			       *pkey_ctx = NULL;
+  EVP_PKEY_CTX			       *keyCtx = NULL;
   int					ret = 0;
 
-  if (!(available = openssl_lookup_sig_schemes(key)).length()) {
+  if (!(available = opensslLookupSigSchemes(key)).length()) {
     ret = Ztls_ErrorLibrary;
     goto Exit;
   }
-  scheme = openssl_select_sig_scheme(available, {&algo, 1});
+  scheme = opensslSelectSigScheme(available, {&algo, 1});
   if (scheme) goto SchemeFound;
   ret = Ztls_AlertIllegalParameter;
   goto Exit;
@@ -1539,7 +1538,7 @@ SchemeFound:
   if (EVP_PKEY_id(key) == EVP_PKEY_ED25519) {
     // ED25519 requires the use of the all-at-once function that appeared in OpenSSL 1.1.1, hence
     // different path
-    if (EVP_DigestVerifyInit(ctx, &pkey_ctx, NULL, NULL, key) != 1) {
+    if (EVP_DigestVerifyInit(ctx, &keyCtx, NULL, NULL, key) != 1) {
       ret = Ztls_ErrorLibrary;
       goto Exit;
     }
@@ -1551,21 +1550,21 @@ SchemeFound:
   } else
 #endif
   {
-    if (EVP_DigestVerifyInit(ctx, &pkey_ctx, scheme->md(), NULL, key) != 1) {
+    if (EVP_DigestVerifyInit(ctx, &keyCtx, scheme->md(), NULL, key) != 1) {
       ret = Ztls_ErrorLibrary;
       goto Exit;
     }
 
     if (EVP_PKEY_id(key) == EVP_PKEY_RSA) {
-      if (EVP_PKEY_CTX_set_rsa_padding(pkey_ctx, RSA_PKCS1_PSS_PADDING) != 1) {
+      if (EVP_PKEY_CTX_set_rsa_padding(keyCtx, RSA_PKCS1_PSS_PADDING) != 1) {
 	ret = Ztls_ErrorLibrary;
 	goto Exit;
       }
-      if (EVP_PKEY_CTX_set_rsa_pss_saltlen(pkey_ctx, -1) != 1) {
+      if (EVP_PKEY_CTX_set_rsa_pss_saltlen(keyCtx, -1) != 1) {
 	ret = Ztls_ErrorLibrary;
 	goto Exit;
       }
-      if (EVP_PKEY_CTX_set_rsa_mgf1_md(pkey_ctx, scheme->md()) != 1) {
+      if (EVP_PKEY_CTX_set_rsa_mgf1_md(keyCtx, scheme->md()) != 1) {
 	ret = Ztls_ErrorLibrary;
 	goto Exit;
       }
@@ -1587,12 +1586,11 @@ Exit:
   return ret;
 }
 
-int openssl_init_sign_cert(OpenSSLSignCert *self, EVP_PKEY *key)
+int opensslInitSignCert(OpenSSLSignCert *self, EVP_PKEY *key)
 {
   self->async = 0;
 
-  if (!(self->schemes = openssl_lookup_sig_schemes(key)).length())
-    return Ztls_ErrorIncompatibleKey;
+  if (!(self->schemes = opensslLookupSigSchemes(key)).length()) return Ztls_ErrorIncompatibleKey;
   EVP_PKEY_up_ref(key);
   self->key = key;
 
@@ -1601,40 +1599,40 @@ int openssl_init_sign_cert(OpenSSLSignCert *self, EVP_PKEY *key)
 
 OpenSSLSignCert::~OpenSSLSignCert() { EVP_PKEY_free(key); }
 
-void openssl_dispose_sign_cert(OpenSSLSignCert *self)
+void opensslDisposeSignCert(OpenSSLSignCert *self)
 {
   EVP_PKEY_free(self->key);
   self->key = nullptr;
 }
 
-static int verify_cert_chain(
+static int verifyCertChain(
   X509_STORE *store, X509 *cert, STACK_OF(X509) * chain, int isServer, const char *serverName,
-  int *ossl_x509_err)
+  int *osslX509Err)
 {
-  X509_STORE_CTX *verify_ctx;
+  X509_STORE_CTX *verifyCtx;
   int		  ret;
-  *ossl_x509_err = 0;
+  *osslX509Err = 0;
 
   // verify certificate chain
-  if ((verify_ctx = X509_STORE_CTX_new()) == NULL) {
+  if ((verifyCtx = X509_STORE_CTX_new()) == NULL) {
     ret = Ztls_ErrorNoMemory;
     goto Exit;
   }
-  if (X509_STORE_CTX_init(verify_ctx, store, cert, chain) != 1) {
+  if (X509_STORE_CTX_init(verifyCtx, store, cert, chain) != 1) {
     ret = Ztls_ErrorLibrary;
     goto Exit;
   }
 
   {
     // setup verify params
-    X509_VERIFY_PARAM *params = X509_STORE_CTX_get0_param(verify_ctx);
+    X509_VERIFY_PARAM *params = X509_STORE_CTX_get0_param(verifyCtx);
     X509_VERIFY_PARAM_set_purpose(
       params, isServer ? X509_PURPOSE_SSL_CLIENT : X509_PURPOSE_SSL_SERVER);
     X509_VERIFY_PARAM_set_depth(params, 98);
     // use the default of OpenSSL 1.0.2 and above; see `man SSL_CTX_set_verify`
     // when _acting_ as client, set the server name if provided
     if (!isServer && serverName != NULL) {
-      if (server_name_is_ipaddr(serverName)) {
+      if (serverNameIsIP(serverName)) {
 	X509_VERIFY_PARAM_set1_ip_asc(params, serverName);
       } else {
 	X509_VERIFY_PARAM_set1_host(params, serverName, strlen(serverName));
@@ -1643,9 +1641,9 @@ static int verify_cert_chain(
     }
   }
 
-  if (X509_verify_cert(verify_ctx) != 1) {
-    *ossl_x509_err = X509_STORE_CTX_get_error(verify_ctx);
-    switch (*ossl_x509_err) {
+  if (X509_verify_cert(verifyCtx) != 1) {
+    *osslX509Err = X509_STORE_CTX_get_error(verifyCtx);
+    switch (*osslX509Err) {
     case X509_V_ERR_OUT_OF_MEM:
       ret = Ztls_ErrorNoMemory;
       break;
@@ -1682,7 +1680,7 @@ static int verify_cert_chain(
   ret = 0;
 
 Exit:
-  if (verify_ctx != NULL) X509_STORE_CTX_free(verify_ctx);
+  if (verifyCtx != NULL) X509_STORE_CTX_free(verifyCtx);
   return ret;
 }
 
@@ -1693,33 +1691,32 @@ int OpenSSLVerifyCert::call(
   X509 *cert = NULL;
   STACK_OF(X509) *chain = sk_X509_new_null();
   size_t i;
-  int	 ossl_x509_err, ret;
+  int	 osslX509Err, ret;
 
   // If any certs are given, convert them to OpenSSL representation, then verify the cert chain.
   // If no certs are given, just give the overrideCallback to see if we want to stay fail open.
   if (certs.length() != 0) {
-    if ((cert = to_x509(certs[0])) == NULL) {
+    if ((cert = toX509(certs[0])) == NULL) {
       ret = Ztls_AlertBadCert;
       goto Exit;
     }
     for (i = 1; i != certs.length(); ++i) {
-      X509 *interm = to_x509(certs[i]);
+      X509 *interm = toX509(certs[i]);
       if (interm == NULL) {
 	ret = Ztls_AlertBadCert;
 	goto Exit;
       }
       sk_X509_push(chain, interm);
     }
-    ret =
-      verify_cert_chain(self->certStore, cert, chain, isServer(tls), serverName, &ossl_x509_err);
+    ret = verifyCertChain(self->certStore, cert, chain, isServer(tls), serverName, &osslX509Err);
   } else {
     ret = Ztls_AlertCertRequired;
-    ossl_x509_err = 0;
+    osslX509Err = 0;
   }
 
   // When override callback is available, let it override the error.
   if (self->overrideCallback != NULL)
-    ret = self->overrideCallback->call(tls, ret, ossl_x509_err, cert, chain);
+    ret = self->overrideCallback->call(tls, ret, osslX509Err, cert, chain);
 
   if (ret != 0 || certs.length() == 0) goto Exit;
 
@@ -1737,16 +1734,16 @@ Exit:
   return ret;
 }
 
-int openssl_init_verify_cert(OpenSSLVerifyCert *self, X509_STORE *store)
+int opensslInitVerifyCert(OpenSSLVerifyCert *self, X509_STORE *store)
 {
-  self->algos = default_signature_schemes;
+  self->algos = defaultSigSchemes;
 
   if (store != NULL) {
     X509_STORE_up_ref(store);
     self->certStore = store;
   } else {
     // use default store
-    if ((self->certStore = openssl_default_cert_store()) == NULL) return -1;
+    if ((self->certStore = opensslDefaultCertStore()) == NULL) return -1;
   }
 
   return 0;
@@ -1754,13 +1751,13 @@ int openssl_init_verify_cert(OpenSSLVerifyCert *self, X509_STORE *store)
 
 OpenSSLVerifyCert::~OpenSSLVerifyCert() { X509_STORE_free(certStore); }
 
-void openssl_dispose_verify_cert(OpenSSLVerifyCert *self)
+void opensslDisposeVerifyCert(OpenSSLVerifyCert *self)
 {
   X509_STORE_free(self->certStore);
   self->certStore = nullptr;
 }
 
-X509_STORE *openssl_default_cert_store(void)
+X509_STORE *opensslDefaultCertStore(void)
 {
   X509_STORE  *store;
   X509_LOOKUP *lookup;
@@ -1778,12 +1775,12 @@ Error:
 }
 
 // OpenSSL ticket callback uses a 16-byte key name and its maximum IV size.
-enum { TICKET_LABEL_SIZE = 16, TICKET_IV_SIZE = EVP_MAX_IV_LENGTH };
+enum { TicketLabelSize = 16, TicketIVSize = EVP_MAX_IV_LENGTH };
 
-int openssl_encrypt_ticket_evp(
+int opensslEncryptTicketEvp(
   Buffer *buf, Bytes src,
   int (*cb)(
-    unsigned char *key_name, unsigned char *iv, EVP_CIPHER_CTX *ctx, EVP_MAC_CTX *hctx, int enc))
+    unsigned char *keyName, unsigned char *iv, EVP_CIPHER_CTX *ctx, EVP_MAC_CTX *hctx, int enc))
 {
   EVP_CIPHER_CTX *cctx = NULL;
   EVP_MAC	 *mac = NULL;
@@ -1805,20 +1802,19 @@ int openssl_encrypt_ticket_evp(
     goto Exit;
   }
 
-  if (
-    (ret = buffer_reserve(
-       buf,
-       TICKET_LABEL_SIZE + TICKET_IV_SIZE + src.length() + EVP_MAX_BLOCK_LENGTH + EVP_MAX_MD_SIZE,
-       buf->tx)) != 0)
+  if ((ret = bufferRes(
+	 buf,
+	 TicketLabelSize + TicketIVSize + src.length() + EVP_MAX_BLOCK_LENGTH + EVP_MAX_MD_SIZE,
+	 buf->tx)) != 0)
     goto Exit;
   dst = buf->base + buf->off;
 
   // fill label and iv, as well as obtaining the keys
-  if (!(*cb)(dst, dst + TICKET_LABEL_SIZE, cctx, hctx, 1)) {
+  if (!(*cb)(dst, dst + TicketLabelSize, cctx, hctx, 1)) {
     ret = Ztls_ErrorLibrary;
     goto Exit;
   }
-  dst += TICKET_LABEL_SIZE + TICKET_IV_SIZE;
+  dst += TicketLabelSize + TicketIVSize;
 
   // encrypt
   if (!EVP_EncryptUpdate(cctx, dst, &clen, src.data(), (int)src.length())) {
@@ -1851,12 +1847,12 @@ Exit:
   return ret;
 }
 
-int openssl_decrypt_ticket_evp(
+int opensslDecryptTicketEvp(
   Buffer *buf, Bytes src,
   int (*cb)(
-    unsigned char *key_name, unsigned char *iv, EVP_CIPHER_CTX *ctx, EVP_MAC_CTX *hctx, int enc))
+    unsigned char *keyName, unsigned char *iv, EVP_CIPHER_CTX *ctx, EVP_MAC_CTX *hctx, int enc))
 {
-  size_t	  hmac_size;
+  size_t	  hmacSize;
   EVP_CIPHER_CTX *cctx = NULL;
   EVP_MAC	 *mac = NULL;
   EVP_MAC_CTX	 *hctx = NULL;
@@ -1878,37 +1874,37 @@ int openssl_decrypt_ticket_evp(
 
   // obtain cipher and hash context. Note: no need to handle renew, since the server always sends
   // a new ticket to minimize the chance of ticket reuse
-  if (src.length() < TICKET_LABEL_SIZE + TICKET_IV_SIZE) {
+  if (src.length() < TicketLabelSize + TicketIVSize) {
     ret = Ztls_AlertDecodeError;
     goto Exit;
   }
-  if (!(*cb)(src.data(), src.data() + TICKET_LABEL_SIZE, cctx, hctx, 0)) {
+  if (!(*cb)(src.data(), src.data() + TicketLabelSize, cctx, hctx, 0)) {
     ret = Ztls_ErrorLibrary;
     goto Exit;
   }
 
   // check hmac, and exclude label, iv, hmac
-  hmac_size = EVP_MAC_CTX_get_mac_size(hctx);
-  if (src.length() < TICKET_LABEL_SIZE + TICKET_IV_SIZE + hmac_size) {
+  hmacSize = EVP_MAC_CTX_get_mac_size(hctx);
+  if (src.length() < TicketLabelSize + TicketIVSize + hmacSize) {
     ret = Ztls_AlertDecodeError;
     goto Exit;
   }
-  src = {src.data(), src.length() - hmac_size};
+  src = {src.data(), src.length() - hmacSize};
   uint8_t hmac[EVP_MAX_MD_SIZE];
   if (!EVP_MAC_update(hctx, src.data(), src.length()) ||
     !EVP_MAC_final(hctx, hmac, &hlen, sizeof(hmac))) {
     ret = Ztls_ErrorLibrary;
     goto Exit;
   }
-  if (!Ztls::ctEqual({src.data() + src.length(), hmac_size}, {hmac, hmac_size})) {
+  if (!Ztls::ctEqual({src.data() + src.length(), hmacSize}, {hmac, hmacSize})) {
     ret = Ztls_AlertHSFailure;
     goto Exit;
   }
-  src = {src.data() + TICKET_LABEL_SIZE + TICKET_IV_SIZE,
-    src.length() - TICKET_LABEL_SIZE - TICKET_IV_SIZE};
+  src = {
+    src.data() + TicketLabelSize + TicketIVSize, src.length() - TicketLabelSize - TicketIVSize};
 
   // decrypt
-  if ((ret = buffer_reserve(buf, src.length(), buf->tx)) != 0) goto Exit;
+  if ((ret = bufferRes(buf, src.length(), buf->tx)) != 0) goto Exit;
   if (!EVP_DecryptUpdate(cctx, buf->base + buf->off, &clen, src.data(), (int)src.length())) {
     ret = Ztls_ErrorLibrary;
     goto Exit;
@@ -1933,151 +1929,159 @@ template <int Kind> struct OpenSSLKeyExchangeAlgo : KeyExchangeAlgo {
   using KeyExchangeAlgo::KeyExchangeAlgo;
   int create(KeyExchangeContext **ctx) const override
   {
-    if constexpr (Kind == 0) return x9_62_create_key_exchange(this, ctx);
+    if constexpr (Kind == 0) return ecCreateKeyExchange(this, ctx);
 #if ZtlsOpenSSLHaveX25519
     else if constexpr (Kind == 1)
-      return evp_keyex_create(this, ctx);
+      return evpKeyexCreate(this, ctx);
 #endif
     else
-      return evp_kem_create(this, ctx);
+      return evpKemCreate(this, ctx);
   }
   int exchange(KeyExchangeBytes *pubkey, KeyExchangeBytes *secret, Bytes peerkey) const override
   {
-    if constexpr (Kind == 0) return secp_key_exchange(this, pubkey, secret, peerkey);
+    if constexpr (Kind == 0) return secpKeyExchange(this, pubkey, secret, peerkey);
 #if ZtlsOpenSSLHaveX25519
     else if constexpr (Kind == 1)
-      return evp_keyex_exchange(this, pubkey, secret, peerkey);
+      return evpKeyexExchange(this, pubkey, secret, peerkey);
 #endif
     else
-      return evp_kem_exchange(this, pubkey, secret, peerkey);
+      return evpKemExchange(this, pubkey, secret, peerkey);
   }
 };
 
 static const OpenSSLKeyExchangeAlgo<0> secp256r1Algo{
   Ztls_GroupSecp256r1, NID_X9_62_prime256v1, Ztls_GroupNameSecp256r1};
-const KeyExchangeAlgo &openssl_secp256r1 = secp256r1Algo;
+const KeyExchangeAlgo &opensslSecp256r1 = secp256r1Algo;
 #if ZtlsOpenSSLHaveSecp384r1
 static const OpenSSLKeyExchangeAlgo<0> secp384r1Algo{
   Ztls_GroupSecp384r1, NID_secp384r1, Ztls_GroupNameSecp384r1};
-const KeyExchangeAlgo &openssl_secp384r1 = secp384r1Algo;
+const KeyExchangeAlgo &opensslSecp384r1 = secp384r1Algo;
 #endif
 #if ZtlsOpenSSLHaveSecp521r1
 static const OpenSSLKeyExchangeAlgo<0> secp521r1Algo{
   Ztls_GroupSecp521r1, NID_secp521r1, Ztls_GroupNameSecp521r1};
-const KeyExchangeAlgo &openssl_secp521r1 = secp521r1Algo;
+const KeyExchangeAlgo &opensslSecp521r1 = secp521r1Algo;
 #endif
 #if ZtlsOpenSSLHaveX25519
 static const OpenSSLKeyExchangeAlgo<1> x25519Algo{
   Ztls_GroupX25519, NID_X25519, Ztls_GroupNameX25519};
-const KeyExchangeAlgo &openssl_x25519 = x25519Algo;
+const KeyExchangeAlgo &opensslX25519 = x25519Algo;
 #endif
-#define Ztls_DefineMlkemKeyex(lowcase, id_, name_) \
-  static const OpenSSLKeyExchangeAlgo<2> lowcase##Algo{id_, intptr_t(name_), name_}; \
-  const KeyExchangeAlgo			&openssl_##lowcase = lowcase##Algo
-Ztls_DefineMlkemKeyex(x25519mlkem768, Ztls_GroupX25519mlkem768, Ztls_GrpStrX25519mlkem768);
-Ztls_DefineMlkemKeyex(secp256r1mlkem768, Ztls_GroupSecp256r1mlkem768, Ztls_GroupStrP256mlkem768);
-Ztls_DefineMlkemKeyex(secp384r1mlkem1024, Ztls_GroupP384mlkem1024, Ztls_GroupStrP384mlkem1024);
-Ztls_DefineMlkemKeyex(mlkem512, Ztls_GroupMLKEM512, Ztls_GroupNameMLKEM512);
-Ztls_DefineMlkemKeyex(mlkem768, Ztls_GroupMLKEM768, Ztls_GroupNameMLKEM768);
-Ztls_DefineMlkemKeyex(mlkem1024, Ztls_GroupMLKEM1024, Ztls_GroupNameMLKEM1024);
-#undef Ztls_DefineMlkemKeyex
+static const OpenSSLKeyExchangeAlgo<2> x25519mlkem768Algo{
+  Ztls_GroupX25519mlkem768, intptr_t(Ztls_GrpStrX25519mlkem768), Ztls_GrpStrX25519mlkem768};
+const KeyExchangeAlgo &opensslX25519mlkem768 = x25519mlkem768Algo;
+static const OpenSSLKeyExchangeAlgo<2> secp256r1mlkem768Algo{
+  Ztls_GroupSecp256r1mlkem768, intptr_t(Ztls_GroupStrP256mlkem768), Ztls_GroupStrP256mlkem768};
+const KeyExchangeAlgo &opensslSecp256r1mlkem768 = secp256r1mlkem768Algo;
+static const OpenSSLKeyExchangeAlgo<2> secp384r1mlkem1024Algo{
+  Ztls_GroupP384mlkem1024, intptr_t(Ztls_GroupStrP384mlkem1024), Ztls_GroupStrP384mlkem1024};
+const KeyExchangeAlgo &opensslSecp384r1mlkem1024 = secp384r1mlkem1024Algo;
+static const OpenSSLKeyExchangeAlgo<2> mlkem512Algo{
+  Ztls_GroupMLKEM512, intptr_t(Ztls_GroupNameMLKEM512), Ztls_GroupNameMLKEM512};
+const KeyExchangeAlgo &opensslMlkem512 = mlkem512Algo;
+static const OpenSSLKeyExchangeAlgo<2> mlkem768Algo{
+  Ztls_GroupMLKEM768, intptr_t(Ztls_GroupNameMLKEM768), Ztls_GroupNameMLKEM768};
+const KeyExchangeAlgo &opensslMLKEM768 = mlkem768Algo;
+static const OpenSSLKeyExchangeAlgo<2> mlkem1024Algo{
+  Ztls_GroupMLKEM1024, intptr_t(Ztls_GroupNameMLKEM1024), Ztls_GroupNameMLKEM1024};
+const KeyExchangeAlgo &opensslMlkem1024 = mlkem1024Algo;
 
-const KeyExchangeAlgo *openssl_key_exchanges[] = {&openssl_secp256r1, NULL};
-const KeyExchangeAlgo *openssl_key_exchanges_all[] = {&openssl_x25519mlkem768,
+const KeyExchangeAlgo *opensslKeyExchanges[] = {&opensslSecp256r1, NULL};
+const KeyExchangeAlgo *opensslKeyExchangesAll[] = {&opensslX25519mlkem768,
 #if ZtlsOpenSSLHaveSecp521r1
-  &openssl_secp521r1,
+  &opensslSecp521r1,
 #endif
 #if ZtlsOpenSSLHaveSecp384r1
-  &openssl_secp384r1,
+  &opensslSecp384r1,
 #endif
 #if ZtlsOpenSSLHaveX25519
-  &openssl_x25519,
+  &opensslX25519,
 #endif
-  &openssl_secp384r1mlkem1024, &openssl_secp256r1mlkem768, &openssl_mlkem1024, &openssl_mlkem768,
-  &openssl_mlkem512, &openssl_secp256r1, NULL};
+  &opensslSecp384r1mlkem1024, &opensslSecp256r1mlkem768, &opensslMlkem1024, &opensslMLKEM768,
+  &opensslMlkem512, &opensslSecp256r1, NULL};
 static const OpenSSLCipherAlgo<OpenSSLCipherKind::AES128ECB> aes128ecbAlgo{
   "AES128-ECB", Ztls_AES128KeySize, Ztls_AESBlockSize, 0};
-const CipherAlgo					    &openssl_aes128ecb = aes128ecbAlgo;
+const CipherAlgo					    &opensslAes128ecb = aes128ecbAlgo;
 static const OpenSSLCipherAlgo<OpenSSLCipherKind::AES128CTR> aes128ctrAlgo{
   "AES128-CTR", Ztls_AES128KeySize, 1, Ztls_AESIVSize};
-const CipherAlgo		 &openssl_aes128ctr = aes128ctrAlgo;
+const CipherAlgo		 &opensslAes128ctr = aes128ctrAlgo;
 static const OpenSSLAeadAlgo<128> aes128gcmAlgo{"AES128-GCM", Ztls_AESGCMConfLimit,
-  Ztls_AESGCMIntegrityLimit, &openssl_aes128ctr, &openssl_aes128ecb, Ztls_AES128KeySize,
+  Ztls_AESGCMIntegrityLimit, &opensslAes128ctr, &opensslAes128ecb, Ztls_AES128KeySize,
   Ztls_AESGCMIVSize, Ztls_AESGCMTagSize,
 
   0, 0,
 
   1, 1};
-const AeadAlgo			 &openssl_aes128gcm = aes128gcmAlgo;
+const AeadAlgo			 &opensslAes128gcm = aes128gcmAlgo;
 static const OpenSSLCipherAlgo<OpenSSLCipherKind::AES256ECB> aes256ecbAlgo{
   "AES256-ECB", Ztls_AES256KeySize, Ztls_AESBlockSize, 0};
-const CipherAlgo					    &openssl_aes256ecb = aes256ecbAlgo;
+const CipherAlgo					    &opensslAes256ecb = aes256ecbAlgo;
 static const OpenSSLCipherAlgo<OpenSSLCipherKind::AES256CTR> aes256ctrAlgo{
   "AES256-CTR", Ztls_AES256KeySize, 1, Ztls_AESIVSize};
-const CipherAlgo		 &openssl_aes256ctr = aes256ctrAlgo;
+const CipherAlgo		 &opensslAes256ctr = aes256ctrAlgo;
 static const OpenSSLAeadAlgo<256> aes256gcmAlgo{"AES256-GCM", Ztls_AESGCMConfLimit,
-  Ztls_AESGCMIntegrityLimit, &openssl_aes256ctr, &openssl_aes256ecb, Ztls_AES256KeySize,
+  Ztls_AESGCMIntegrityLimit, &opensslAes256ctr, &opensslAes256ecb, Ztls_AES256KeySize,
   Ztls_AESGCMIVSize, Ztls_AESGCMTagSize,
 
   0, 0,
 
   1, 1};
-const AeadAlgo			 &openssl_aes256gcm = aes256gcmAlgo;
+const AeadAlgo			 &opensslAes256gcm = aes256gcmAlgo;
 static const OpenSSLHashAlgo<256> sha256Algo{
   "sha256", Ztls_SHA256BlockSize, Ztls_SHA256DigestSize, Ztls_ZeroDigestSHA256};
-const HashAlgo			 &openssl_sha256 = sha256Algo;
+const HashAlgo			 &opensslSha256 = sha256Algo;
 static const OpenSSLHashAlgo<384> sha384Algo{
   "sha384", Ztls_SHA384BlockSize, Ztls_SHA384DigestSize, Ztls_ZeroDigestSHA384};
-const HashAlgo			 &openssl_sha384 = sha384Algo;
+const HashAlgo			 &opensslSha384 = sha384Algo;
 static const OpenSSLHashAlgo<512> sha512Algo{
   "sha512", Ztls_SHA512BlockSize, Ztls_SHA512DigestSize, Ztls_ZeroDigestSHA512};
-const HashAlgo	 &openssl_sha512 = sha512Algo;
-const CipherSuite openssl_aes128gcmsha256 = {.id = Ztls_SuiteAes128gcmSHA256,
-  .aead = &openssl_aes128gcm,
-  .hash = &openssl_sha256,
+const HashAlgo	 &opensslSha512 = sha512Algo;
+const CipherSuite opensslAes128gcmsha256 = {.id = Ztls_SuiteAes128gcmSHA256,
+  .aead = &opensslAes128gcm,
+  .hash = &opensslSha256,
   .name = Ztls_SuiteStrAes128gcm};
-const CipherSuite openssl_aes256gcmsha384 = {.id = Ztls_SuiteAes256gcmSHA384,
-  .aead = &openssl_aes256gcm,
-  .hash = &openssl_sha384,
+const CipherSuite opensslAes256gcmsha384 = {.id = Ztls_SuiteAes256gcmSHA384,
+  .aead = &opensslAes256gcm,
+  .hash = &opensslSha384,
   .name = Ztls_SuiteStrAes256gcm};
 #if ZtlsOpenSSLHaveChaCha
 static const OpenSSLCipherAlgo<OpenSSLCipherKind::ChaCha20> chacha20Algo{
   "CHACHA20", Ztls_ChaCha20KeySize, 1, Ztls_ChaCha20IVSize};
-const CipherAlgo		&openssl_chacha20 = chacha20Algo;
+const CipherAlgo		&opensslChacha20 = chacha20Algo;
 static const OpenSSLAeadAlgo<20> chachaPolyAlgo{"CHACHA20-POLY1305", Ztls_ChaChaConfLimit,
-  Ztls_ChaChaIntLimit, &openssl_chacha20, nullptr, Ztls_ChaCha20KeySize, Ztls_ChaChaIVSize,
+  Ztls_ChaChaIntLimit, &opensslChacha20, nullptr, Ztls_ChaCha20KeySize, Ztls_ChaChaIVSize,
   Ztls_ChaChaTagSize, false, 0, true, true};
-const AeadAlgo			&openssl_chacha20poly1305 = chachaPolyAlgo;
-const CipherSuite		 openssl_chachasha256 = {.id = Ztls_SuiteChaChaSHA256,
-  .aead = &openssl_chacha20poly1305,
-  .hash = &openssl_sha256,
+const AeadAlgo			&opensslChacha20poly1305 = chachaPolyAlgo;
+const CipherSuite		 opensslChachasha256 = {.id = Ztls_SuiteChaChaSHA256,
+  .aead = &opensslChacha20poly1305,
+  .hash = &opensslSha256,
   .name = Ztls_SuiteStrChaChaSHA256};
 #endif
 
-const CipherSuites openssl_cipher_suites = []
+const CipherSuites opensslCipherSuites = []
 {
   CipherSuites suites;
   // ciphers used with sha384 (must be first)
-  suites.push(&openssl_aes256gcmsha384);
+  suites.push(&opensslAes256gcmsha384);
 
   // ciphers used with sha256
-  suites.push(&openssl_aes128gcmsha256);
+  suites.push(&opensslAes128gcmsha256);
 #if ZtlsOpenSSLHaveChaCha
-  suites.push(&openssl_chachasha256);
+  suites.push(&opensslChachasha256);
 #endif
   return suites;
 }();
 
-const CipherSuites openssl_cipher_suites_all = []
+const CipherSuites opensslCipherSuitesAll = []
 {
   CipherSuites suites;
   // ciphers used with sha384 (must be first)
-  suites.push(&openssl_aes256gcmsha384);
+  suites.push(&opensslAes256gcmsha384);
 
   // ciphers used with sha256
-  suites.push(&openssl_aes128gcmsha256);
+  suites.push(&opensslAes128gcmsha256);
 #if ZtlsOpenSSLHaveChaCha
-  suites.push(&openssl_chachasha256);
+  suites.push(&opensslChachasha256);
 #endif
   return suites;
 }();
@@ -2085,60 +2089,60 @@ const CipherSuites openssl_cipher_suites_all = []
 #if ZtlsOpenSSLHaveBF
 static const OpenSSLCipherAlgo<OpenSSLCipherKind::BlowfishECB> bfecbAlgo{
   "BF-ECB", Ztls_BlowfishKeySize, Ztls_BlowfishBlockSize, 0};
-const CipherAlgo &openssl_bfecb = bfecbAlgo;
+const CipherAlgo &opensslBfecb = bfecbAlgo;
 #endif
 
-const HpkeKem openssl_hpke_kem_p256sha256 = {
-  Ztls_HPKEKEMP256SHA256, &openssl_secp256r1, &openssl_sha256};
+const HpkeKem opensslHPKEKemP256SHA256 = {
+  Ztls_HPKEKEMP256SHA256, &opensslSecp256r1, &opensslSha256};
 #if ZtlsOpenSSLHaveSecp384r1
-const HpkeKem openssl_hpke_kem_p384sha384 = {
-  Ztls_HPKEKEMP384SHA384, &openssl_secp384r1, &openssl_sha384};
+const HpkeKem opensslHPKEKemP384SHA384 = {
+  Ztls_HPKEKEMP384SHA384, &opensslSecp384r1, &opensslSha384};
 #endif
 #if ZtlsOpenSSLHaveX25519
-const HpkeKem openssl_hpke_x25519sha256 = {
-  Ztls_HPKEKEMX25519SHA256, &openssl_x25519, &openssl_sha256};
+const HpkeKem opensslHPKEX25519sha256 = {
+  Ztls_HPKEKEMX25519SHA256, &opensslX25519, &opensslSha256};
 #endif
-const HpkeKem *openssl_hpke_kems[] = {
+const HpkeKem *opensslHPKEKems[] = {
 #if ZtlsOpenSSLHaveSecp384r1
-  &openssl_hpke_kem_p384sha384,
+  &opensslHPKEKemP384SHA384,
 #endif
 #if ZtlsOpenSSLHaveX25519
-  &openssl_hpke_x25519sha256,
+  &opensslHPKEX25519sha256,
 #endif
-  &openssl_hpke_kem_p256sha256, NULL};
+  &opensslHPKEKemP256SHA256, NULL};
 
-const HpkeSuite openssl_hpke_aes128gcmsha256 = {
+const HpkeSuite opensslHPKEAes128gcmsha256 = {
   .id = {.kdf = Ztls_HPKEHKDFSHA256, .aead = Ztls_HPKEAEADAES128GCM},
   .name = "HKDF-SHA256/AES-128-GCM",
-  .hash = &openssl_sha256,
-  .aead = &openssl_aes128gcm
+  .hash = &opensslSha256,
+  .aead = &opensslAes128gcm
 };
-const HpkeSuite openssl_hpke_aes128gcmsha512 = {
+const HpkeSuite opensslHPKEAes128gcmsha512 = {
   .id = {.kdf = Ztls_HPKEHKDFSHA512, .aead = Ztls_HPKEAEADAES128GCM},
   .name = "HKDF-SHA512/AES-128-GCM",
-  .hash = &openssl_sha512,
-  .aead = &openssl_aes128gcm
+  .hash = &opensslSha512,
+  .aead = &opensslAes128gcm
 };
-const HpkeSuite openssl_hpke_aes256gcmsha384 = {
+const HpkeSuite opensslHPKEAes256gcmsha384 = {
   .id = {.kdf = Ztls_HPKEHKDFSHA384, .aead = Ztls_HPKEAEADAES256GCM},
   .name = "HKDF-SHA384/AES-256-GCM",
-  .hash = &openssl_sha384,
-  .aead = &openssl_aes256gcm
+  .hash = &opensslSha384,
+  .aead = &opensslAes256gcm
 };
 #if ZtlsOpenSSLHaveChaCha
-const HpkeSuite openssl_hpke_chachasha256 = {
+const HpkeSuite opensslHPKEChachasha256 = {
   .id = {.kdf = Ztls_HPKEHKDFSHA256, .aead = Ztls_HPKEAEADChaCha},
   .name = "HKDF-SHA256/ChaCha20Poly1305",
-  .hash = &openssl_sha256,
-  .aead = &openssl_chacha20poly1305
+  .hash = &opensslSha256,
+  .aead = &opensslChacha20poly1305
 };
 #endif
-const HpkeSuite *openssl_hpke_cipher_suites[] = {&openssl_hpke_aes128gcmsha256,
-  &openssl_hpke_aes256gcmsha384,
+const HpkeSuite *opensslHPKECipherSuites[] = {&opensslHPKEAes128gcmsha256,
+  &opensslHPKEAes256gcmsha384,
 #if ZtlsOpenSSLHaveChaCha
-  &openssl_hpke_chachasha256,
+  &opensslHPKEChachasha256,
 #endif
-  &openssl_hpke_aes128gcmsha512,
+  &opensslHPKEAes128gcmsha512,
   // likely only for tests
   NULL};
 

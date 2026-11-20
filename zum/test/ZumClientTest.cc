@@ -215,9 +215,9 @@ static void serviceToken()
   ZuTestScopeRT(serviceToken);
   Ztls::Random rng;
   ZuCheckRT(rng.init());
-  Ztls::PK::SK_EC key{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  Ztls::PK::ECPrivate key{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   uint8_t point[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheckRT(Ztls::PK::pkey_ec_export_public(key.key, point));
+  ZuCheckRT(Ztls::PK::ecExportPublic(key.key, point));
   auto x = encode({point + 1, Ztls::COSE::ES256::CoordinateSize});
   auto y = encode({point + 1 + Ztls::COSE::ES256::CoordinateSize,
     Ztls::COSE::ES256::CoordinateSize});
@@ -559,10 +559,10 @@ static void serviceToken()
   ZuCheckRT(scheduler.stop());
 }
 
-static Zum::String keyJWK(Ztls::PK::SK_EC &key, ZuCSpan id)
+static Zum::String keyJWK(Ztls::PK::ECPrivate &key, ZuCSpan id)
 {
   uint8_t point[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheckRT(Ztls::PK::pkey_ec_export_public(key.key, point));
+  ZuCheckRT(Ztls::PK::ecExportPublic(key.key, point));
   return Zum::String{"{\"kid\":\""} << id <<
     "\",\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"" <<
     encode({point + 1, Ztls::COSE::ES256::CoordinateSize}) <<
@@ -570,7 +570,7 @@ static Zum::String keyJWK(Ztls::PK::SK_EC &key, ZuCSpan id)
       Ztls::COSE::ES256::CoordinateSize}) << "\"}";
 }
 
-static Zum::String keyJWT(Ztls::Random &rng, Ztls::PK::SK_EC &key,
+static Zum::String keyJWT(Ztls::Random &rng, Ztls::PK::ECPrivate &key,
     ZuCSpan id, bool workload = false)
 {
   int64_t now = Zm::now().sec();
@@ -600,7 +600,7 @@ static Zum::String keyJWT(Ztls::Random &rng, Ztls::PK::SK_EC &key,
   return token;
 }
 
-static Zum::String keySET(Ztls::Random &rng, Ztls::PK::SK_EC &signer,
+static Zum::String keySET(Ztls::Random &rng, Ztls::PK::ECPrivate &signer,
     ZuCSpan id, ZuCSpan issuer)
 {
   Zum::String token;
@@ -730,9 +730,9 @@ static void serviceKeys()
   ZuTestScopeRT(serviceKeys);
   Ztls::Random rng;
   ZuCheckRT(rng.init());
-  Ztls::PK::SK_EC management{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
-  Ztls::PK::SK_EC a{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
-  Ztls::PK::SK_EC b{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  Ztls::PK::ECPrivate management{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
+  Ztls::PK::ECPrivate a{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
+  Ztls::PK::ECPrivate b{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   auto managementJWK = keyJWK(management, "management");
   auto workload = keyJWT(rng, management, "management", true);
   ZmSchedParams params;
@@ -749,7 +749,7 @@ static void serviceKeys()
     Zum::String entries;
     Zum::StringVec tokens;
     for (unsigned i = 0; i < count; ++i) {
-      Ztls::PK::SK_EC key{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+      Ztls::PK::ECPrivate key{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
       auto id = Zum::String{"key-"} << i;
       if (i) entries << ',';
       entries << keyJWK(key, id);

@@ -182,8 +182,8 @@ static void recipientFiles()
   for (unsigned i = 0; i < 2; ++i) {
     ZuCheckRT(rng.random(xSeed[i]));
     ZuCheckRT(rng.random(pqSeed[i]));
-    Ztls::PK::SK_X25519		 x{xSeed[i]};
-    Ztls::PK::SK_MLKEM768_X25519 pq{pqSeed[i]};
+    Ztls::PK::X25519Private	    x{xSeed[i]};
+    Ztls::PK::MLKEM768X25519Private pq{pqSeed[i]};
     ZuCheckRT(!x.exportPK(xPublic[i]).template is<ZeException>());
     ZuCheckRT(!pq.exportPK(pqPublic[i]).template is<ZeException>());
   }
@@ -249,7 +249,7 @@ static void malformedFile()
   uint8_t seed[Ztls::X25519KeySize], publicKey[sizeof(seed)];
   ZuGuard clear{[&seed]() { ZuClear(seed, sizeof(seed)); }};
   ZuCheckRT(rng.random(seed));
-  Ztls::PK::SK_X25519 key{seed};
+  Ztls::PK::X25519Private key{seed};
   ZuCheckRT(!key.exportPK(publicKey).template is<ZeException>());
   ZtlsAge::Recipient recipient = ZtlsAge::X25519Recipient{publicKey};
   ZtlsAge::Identity  identity = ZtlsAge::X25519Identity{seed};
@@ -472,9 +472,9 @@ static void sshRSAFile()
   auto	       path = ZiTestResidue::file("ssh-rsa.age");
   Ztls::Random rng;
   ZuCheckRT(rng.init());
-  Ztls::PK::SK_RSA key{rng, 2048};
-  uint8_t	   modulus[256], exponent[8];
-  ZuCheckRT(Ztls::PK::pkey_rsa_export_public(key.key, modulus, exponent));
+  Ztls::PK::RSAPrivate key{rng, 2048};
+  uint8_t	       modulus[256], exponent[8];
+  ZuCheckRT(Ztls::PK::rsaExportPublic(key.key, modulus, exponent));
   Bytes blob;
   sshString(blob, ZuBSpan{"ssh-rsa"});
   sshString(blob, exponent, true);
@@ -516,8 +516,8 @@ static void sshEDFile()
   auto	       path = ZiTestResidue::file("ssh-ed.age");
   Ztls::Random rng;
   ZuCheckRT(rng.init());
-  Ztls::PK::SK_ED25519 key{rng};
-  uint8_t	       publicKey[32];
+  Ztls::PK::Ed25519Private key{rng};
+  uint8_t		   publicKey[32];
   ZuCheckRT(!key.exportPK(publicKey).template is<ZeException>());
   Bytes blob;
   sshString(blob, ZuBSpan{"ssh-ed25519"});
@@ -565,7 +565,7 @@ static void openSSHKey()
   ZuCheckRT(!loaded.template is<ZeException>());
   if (loaded.template is<ZeException>()) return;
   auto key = ZuMv(loaded).template p<ZtlsAge::SshKey>();
-  ZuCheckRT(dynamic_cast<Ztls::PK::SK_ED25519 *>(key.key.ptr()));
+  ZuCheckRT(dynamic_cast<Ztls::PK::Ed25519Private *>(key.key.ptr()));
   bool cleared = true;
   for (auto c : pem) cleared &= !c;
   ZuCheckRT(cleared);
@@ -610,11 +610,11 @@ static void sshReference()
     ZuCheckRT(key.publicKey == expected);
     ZtlsAge::Identity identity;
     if (rsa) {
-      auto sk = dynamic_cast<Ztls::PK::SK_RSA *>(key.key.ptr());
+      auto sk = dynamic_cast<Ztls::PK::RSAPrivate *>(key.key.ptr());
       ZuCheckRT(sk);
       identity = ZtlsAge::SshRSAIdentity{key.publicKey, sk};
     } else {
-      auto sk = dynamic_cast<Ztls::PK::SK_ED25519 *>(key.key.ptr());
+      auto sk = dynamic_cast<Ztls::PK::Ed25519Private *>(key.key.ptr());
       ZuCheckRT(sk);
       identity = ZtlsAge::SshED25519Identity{key.publicKey, sk};
     }

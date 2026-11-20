@@ -84,7 +84,7 @@ static void runtimeIdentity()
   Ztls::Random rng;
   ZuCheck(rng.init());
   Zum::Bytes passkeyHandle;
-  ZmRef<Ztls::PK::SK_EC> passkey;
+  ZmRef<Ztls::PK::ECPrivate> passkey;
   ZuTestCall(prepareIdentity, db, context, rng, passkeyHandle, passkey);
   ZmSemaphore requestsDown;
   db->requests->deactivate([&requestsDown](bool) { requestsDown.post(); });

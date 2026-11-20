@@ -415,7 +415,7 @@ struct AeadSupplement {
 
   // Input to the supplementary cipher. This field may point into the AEAD output buffer,
   // including ciphertext or tag bytes. AEAD callbacks must read it only after the referenced
-  // output bytes have been written; `aead_encrypt_v_s` reads it after the entire
+  // output bytes have been written; `aeadEncryptVS` reads it after the entire
   // ciphertext-plus-tag output has been written.
   const void	*input;
 
@@ -625,7 +625,7 @@ struct GetTime {
 };
 
 // after receiving ClientHello, the core calls the optional callback to give a chance to the swap
-// the context depending on the input values. The callback is required to call `set_server_name`
+// the context depending on the input values. The callback is required to call `serverName`
 // if an SNI extension needs to be sent to the client.
 struct OnClientHello {
   virtual ~OnClientHello() = default;
@@ -637,8 +637,8 @@ struct OnClientHello {
 struct EmitCertificate {
   virtual ~EmitCertificate() = default;
   virtual int call(
-    Ztls::Cxn *tls, MessageEmitter *emitter, KeySchedule *key_sched, Bytes context,
-    int push_status_request, ZuSpan<const uint16_t> compress_algos) = 0;
+    Ztls::Cxn *tls, MessageEmitter *emitter, KeySchedule *keySched, Bytes context,
+    int pushStatusReq, ZuSpan<const uint16_t> compressAlgos) = 0;
 };
 
 // Sign CertificateVerify. A server signer may suspend by installing a
@@ -647,7 +647,7 @@ struct EmitCertificate {
 struct SignCertificate {
   virtual ~SignCertificate() = default;
   virtual int call(
-    Ztls::Cxn *tls, bool allow_async, uint16_t *selected_algorithm, Buffer *output, Bytes input,
+    Ztls::Cxn *tls, bool allowAsync, uint16_t *selectedAlgo, Buffer *output, Bytes input,
     ZuSpan<const uint16_t> algorithms) = 0;
 };
 
@@ -671,13 +671,13 @@ struct VerifyCertificate {
 };
 
 // Encrypt-and-signs (or verify-and-decrypts) a ticket (server-only). When used for encryption
-// (i.e., is_encrypt being set), the function should return 0 if successful, or else a non-zero
+// (i.e., isEncrypt being set), the function should return 0 if successful, or else a non-zero
 // value. When used for decryption, the function should return 0 (successful),
 // Ztls_ErrorRejectEarlyData (successful, but 0-RTT is forbidden), or any other value to indicate
 // failure.
 struct EncryptTicket {
   virtual ~EncryptTicket() = default;
-  virtual int call(Ztls::Cxn *tls, int is_encrypt, Buffer *dst, Bytes src) = 0;
+  virtual int call(Ztls::Cxn *tls, int isEncrypt, Buffer *dst, Bytes src) = 0;
 };
 
 // saves a ticket (client-only)
@@ -692,10 +692,10 @@ struct SaveTicket {
 
 // applications that have their own record layer can set this function to derive their own traffic
 // keys from the traffic secret. The cipher-suite that is being associated to the connection can
-// be obtained by calling the get_cipher function.
+// be obtained by calling the cipher function.
 struct UpdateTrafficKey {
   virtual ~UpdateTrafficKey() = default;
-  virtual int call(Ztls::Cxn *tls, int is_enc, size_t epoch, const void *secret) = 0;
+  virtual int call(Ztls::Cxn *tls, int isEnc, size_t epoch, const void *secret) = 0;
 };
 
 // callback for every extension detected during decoding
@@ -712,13 +712,13 @@ struct DecompressCertificate {
 };
 
 // ECH: creates the AEAD context to be used for "Open"-ing inner CH. Given `configId`, the
-// callback looks up the ECH config and the corresponding private key, invokes `hpke_setup_base_r`
-// with provided `cipher`, `enc`, and `info_prefix` (which will be "tls ech" || 00).
+// callback looks up the ECH config and the corresponding private key, invokes `hpkeSetupBaseR`
+// with provided `cipher`, `enc`, and `infoPrefix` (which will be "tls ech" || 00).
 struct EchCreateOpener {
   virtual ~EchCreateOpener() = default;
   virtual AeadContext *call(
     const HpkeKem **kem, const HpkeSuite **cipher, Ztls::Cxn *tls, uint8_t configId,
-    HpkeSuiteID cipher_id, Bytes enc, Bytes info_prefix) = 0;
+    HpkeSuiteID cipherID, Bytes enc, Bytes infoPrefix) = 0;
 };
 
 // the configuration
@@ -939,42 +939,42 @@ struct HandshakeProps {
 };
 
 // builds a new Bytes instance using the supplied parameters
-static Bytes wire_bytes(const void *p, size_t len);
+static Bytes wireBytes(const void *p, size_t len);
 
 // initializes a buffer, setting the default destination to the small buffer provided as the
 // argument. `tx` is direction (0: receive-side, 1: transmit-side)
-static void buffer_init(Buffer *buf, void *smallbuf, size_t smallbuf_size, int tx);
+static void bufferInit(Buffer *buf, void *smallbuf, size_t inlineSize, int tx);
 
 // initializes a receive-side buffer
-static void buffer_init_rx(Buffer *buf, void *smallbuf, size_t smallbuf_size);
+static void bufferInitRx(Buffer *buf, void *smallbuf, size_t inlineSize);
 
 // initializes a transmit-side buffer
-static void buffer_init_tx(Buffer *buf, void *smallbuf, size_t smallbuf_size);
+static void bufferInitTx(Buffer *buf, void *smallbuf, size_t inlineSize);
 
 // disposes a buffer, freeing resources allocated by the buffer itself (if any)
-static void buffer_dispose(Buffer *buf);
+static void bufferDispose(Buffer *buf);
 
 // internal
-Ztls_API void buffer__release_memory(Buffer *buf);
+Ztls_Extern void bufferRelease(Buffer *buf);
 
 // reserves space for additional amount of memory
-Ztls_API int buffer_reserve(Buffer *buf, size_t delta, int tx);
+Ztls_Extern int bufferRes(Buffer *buf, size_t delta, int tx);
 
 // reserves space for additional amount of memory, requiring `buf->base` to follow specified
 // alignment
-int buffer_reserve_aligned(Buffer *buf, size_t delta, uint8_t alignBits, int tx);
+Ztls_Extern int bufferResAligned(Buffer *buf, size_t delta, uint8_t alignBits, int tx);
 
 // internal
-int buffer__do_pushv(Buffer *buf, const void *src, size_t len);
+Ztls_Extern int bufferPushv(Buffer *buf, const void *src, size_t len);
 #define Ztls_BufferPushv(buf, src, len) \
   do { \
-    if ((ret = buffer__do_pushv((buf), (src), (len))) != 0) goto Exit; \
+    if ((ret = bufferPushv((buf), (src), (len))) != 0) goto Exit; \
   } while (0)
 
 #define Ztls_BufferPush_1(buf, ...) \
   do { \
     if ( \
-      (ret = buffer__do_pushv( \
+      (ret = bufferPushv( \
 	 (buf), (uint8_t[]){__VA_ARGS__}, sizeof((uint8_t[]){__VA_ARGS__}))) != 0 \
     ) \
       goto Exit; \
@@ -1008,43 +1008,43 @@ int buffer__do_pushv(Buffer *buf, const void *src, size_t len);
   do { \
     size_t capacity = (_capacity); \
     Ztls_BufferPushv((buf), "\0\0\0\0\0\0\0", capacity); \
-    size_t body_start = (buf)->off; \
+    size_t bodyStart = (buf)->off; \
     do { \
       block \
     } while (0); \
-    size_t body_size = (buf)->off - body_start; \
-    if (capacity < sizeof(size_t) && body_size >= (size_t)1 << (capacity * 8)) { \
+    size_t bodySize = (buf)->off - bodyStart; \
+    if (capacity < sizeof(size_t) && bodySize >= (size_t)1 << (capacity * 8)) { \
       ret = Ztls_ErrorBlockOverflow; \
       goto Exit; \
     } \
     for (; capacity != 0; --capacity) \
-      (buf)->base[body_start - capacity] = (uint8_t)(body_size >> (8 * (capacity - 1))); \
+      (buf)->base[bodyStart - capacity] = (uint8_t)(bodySize >> (8 * (capacity - 1))); \
   } while (0)
 
-#define Ztls_BufferPushMsgBody(buf, key_sched, type, block) \
+#define Ztls_BufferPushMsgBody(buf, keySched, type, block) \
   do { \
     Buffer	*_buf = (buf); \
-    KeySchedule *_key_sched = (key_sched); \
-    size_t	 mess_start = _buf->off; \
+    KeySchedule *_key_sched = (keySched); \
+    size_t	 messStart = _buf->off; \
     Ztls_BufferPush_1(_buf, (type)); \
     Ztls_BufferPushBlock(_buf, 3, block); \
     if (_key_sched != NULL) \
-      _key_schedule_update_hash(_key_sched, _buf->base + mess_start, _buf->off - mess_start, 0); \
+      keyScheduleUpdateHash(_key_sched, _buf->base + messStart, _buf->off - messStart, 0); \
   } while (0)
 
-#define Ztls_PushMessage(emitter, key_sched, type, block) \
+#define Ztls_PushMessage(emitter, keySched, type, block) \
   do { \
     MessageEmitter *_emitter = (emitter); \
     if ((ret = _emitter->beginMessage()) != 0) goto Exit; \
-    Ztls_BufferPushMsgBody(_emitter->buf, (key_sched), (type), block); \
+    Ztls_BufferPushMsgBody(_emitter->buf, (keySched), (type), block); \
     if ((ret = _emitter->commitMessage()) != 0) goto Exit; \
   } while (0)
 
-int decode8(uint8_t *value, const uint8_t **src, const uint8_t *end);
-int decode16(uint16_t *value, const uint8_t **src, const uint8_t *end);
-int decode24(uint32_t *value, const uint8_t **src, const uint8_t *end);
-int decode32(uint32_t *value, const uint8_t **src, const uint8_t *end);
-int decode64(uint64_t *value, const uint8_t **src, const uint8_t *end);
+Ztls_Extern int decode8(uint8_t *value, const uint8_t **src, const uint8_t *end);
+Ztls_Extern int decode16(uint16_t *value, const uint8_t **src, const uint8_t *end);
+Ztls_Extern int decode24(uint32_t *value, const uint8_t **src, const uint8_t *end);
+Ztls_Extern int decode32(uint32_t *value, const uint8_t **src, const uint8_t *end);
+Ztls_Extern int decode64(uint64_t *value, const uint8_t **src, const uint8_t *end);
 
 #define Ztls_DecodeOpenBlock(src, end, capacity, block) \
   do { \
@@ -1088,58 +1088,58 @@ int decode64(uint64_t *value, const uint8_t **src, const uint8_t *end);
   } while (0)
 
 // returns address of the crypto callbacks that the connection is using
-Context *get_context(Ztls::Cxn *tls);
+Ztls_Extern Context *context(Ztls::Cxn *tls);
 
 // updates the context of a connection. Can be called from `onClientHello` callback.
-void set_context(Ztls::Cxn *tls, Context *ctx);
+Ztls_Extern void context(Ztls::Cxn *tls, Context *ctx);
 
 // returns the client-random
-Ztls_API Bytes get_client_random(Ztls::Cxn *tls);
+Ztls_Extern Bytes cliRandom(Ztls::Cxn *tls);
 
 // returns the cipher-suite being used
-Ztls_API const CipherSuite *get_cipher(Ztls::Cxn *tls);
+Ztls_Extern const CipherSuite *cipher(Ztls::Cxn *tls);
 
 // returns a supported cipher-suite given an id
-Ztls_API const CipherSuite *find_cipher_suite(SuiteSpan cipherSuites, uint16_t id);
+Ztls_Extern const CipherSuite *findCipherSuite(SuiteSpan cipherSuites, uint16_t id);
 
 // Returns the negotiated TLS 1.3 protocol identifier, 0x0304.
-Ztls_API uint16_t get_protocol_version(Ztls::Cxn *tls);
+Ztls_Extern uint16_t protocolVersion(Ztls::Cxn *tls);
 
 // Returns current state of traffic keys. The cipher-suite being used, as well as the length of
-// the traffic keys, can be obtained via `get_cipher`. TODO: Even in case of offloading just the
+// the traffic keys, can be obtained via `cipher`. TODO: Even in case of offloading just the
 // TX side, there should be API for handling key updates, sending Close aleart.
-int get_traffic_keys(Ztls::Cxn *tls, int is_enc, uint8_t *key, uint8_t *iv, uint64_t *seq);
+Ztls_Extern int trafficKeys(Ztls::Cxn *tls, int isEnc, uint8_t *key, uint8_t *iv, uint64_t *seq);
 
 // returns the server-name (NULL if SNI is not used or failed to negotiate)
-const char *get_server_name(Ztls::Cxn *tls);
+Ztls_Extern const char *serverName(Ztls::Cxn *tls);
 
 // sets the server name associated with the TLS connection. On the client-side, the value is used
 // for certificate validation. The value will be also sent as an SNI extension, if it looks like a
 // DNS name. On the server-side, it can be called from onClientHello to indicate the acceptance of
 // the SNI extension to the client.
-Ztls_API int set_server_name(Ztls::Cxn *tls, ZuCSpan serverName);
+Ztls_Extern int serverName(Ztls::Cxn *tls, ZuCSpan serverName);
 
 // returns the negotiated protocol (or NULL)
-Ztls_API const char *get_negotiated_protocol(Ztls::Cxn *tls);
+Ztls_Extern const char *negotiatedProtocol(Ztls::Cxn *tls);
 
 // sets the negotiated protocol.
-Ztls_API int set_negotiated_protocol(Ztls::Cxn *tls, ZuCSpan protocol);
+Ztls_Extern int negotiatedProtocol(Ztls::Cxn *tls, ZuCSpan protocol);
 
 // returns if the handshake has been completed
-Ztls_API int handshake_is_complete(Ztls::Cxn *tls);
+Ztls_Extern int handshakeComplete(Ztls::Cxn *tls);
 
 // returns if a PSK (or PSK-DHE) handshake was performed
-Ztls_API int isPskHandshake(Ztls::Cxn *tls);
+Ztls_Extern int isPskHandshake(Ztls::Cxn *tls);
 
 // return if a ECH handshake was performed, as well as optionally the kem and cipher-suite being
 // used
 // FIXME: this function always return false when the TLS session is exported and imported
-int is_ech_handshake(
+Ztls_Extern int isECHHandshake(
   Ztls::Cxn *tls, uint8_t *configId, const HpkeKem **kem, const HpkeSuite **cipher);
 
 // returns a pointer to user data pointer (client is reponsible for freeing the associated data
 // prior to calling free)
-Ztls_API void **get_data_ptr(Ztls::Cxn *tls);
+Ztls_Extern void **dataPtr(Ztls::Cxn *tls);
 
 // proceeds with the handshake, optionally taking some input from peer. The function returns zero
 // in case the handshake completed successfully. Ztls_ErrorInProgress is returned in case the
@@ -1149,7 +1149,7 @@ Ztls_API void **get_data_ptr(Ztls::Cxn *tls);
 // input. Upon return the value is updated to the number of bytes consumed by the handshake. In
 // case the returned value is Ztls_ErrorInProgress there is a guarantee that all the input are
 // consumed (i.e. the value of inlen does not change).
-Ztls_API int handshake(
+Ztls_Extern int handshake(
   Ztls::Cxn *tls, Buffer *sendbuf, const void *input, size_t *inlen, HandshakeProps *args);
 
 ZtEnumNS(Ztls_API, RawHandshakeOp, int8_t, Start, Input, ResumeSignature);
@@ -1166,21 +1166,21 @@ struct RawHandshakeResult {
 // The caller supplies ordered CRYPTO bytes at one epoch and owns the output span.
 // Offsets delimit Initial, 0-RTT, Handshake, and Application, in that order.
 // In-progress or suspended signing can still produce complete output ranges.
-Ztls_API RawHandshakeResult raw_handshake(
-  Ztls::Cxn *, HandshakeProps *, RawHandshakeOp::T, size_t input_epoch, ZuBSpan input,
+Ztls_Extern RawHandshakeResult rawHandshake(
+  Ztls::Cxn *, HandshakeProps *, RawHandshakeOp::T, size_t inputEpoch, ZuBSpan input,
   Bytes output);
-Ztls_API size_t raw_read_epoch(const Ztls::Cxn *);
+Ztls_Extern size_t rawReadEpoch(const Ztls::Cxn *);
 
 // decrypts the first record within given buffer
-Ztls_API int receive(Ztls::Cxn *tls, Buffer *plaintextbuf, const void *input, size_t *len);
+Ztls_Extern int receive(Ztls::Cxn *tls, Buffer *plaintextbuf, const void *input, size_t *len);
 
 // encrypts given buffer into multiple TLS records
-Ztls_API int send(Ztls::Cxn *tls, Buffer *sendbuf, const void *input, size_t inlen);
+Ztls_Extern int send(Ztls::Cxn *tls, Buffer *sendbuf, const void *input, size_t inlen);
 
 // updates the send traffic key (as well as asks the peer to update)
-int update_key(Ztls::Cxn *tls, int request_update);
+Ztls_Extern int updateKey(Ztls::Cxn *tls, int reqUpdate);
 // Mark the point where the Tx thread assumes ownership of the outbound members.
-Ztls_API int handoff_tx(Ztls::Cxn *tls);
+Ztls_Extern int handoffTx(Ztls::Cxn *tls);
 
 // encrypts application data with the connection's outbound record protection
 // All chunks output APIs: reserve failure leaves outbound state retryable. After a successful
@@ -1189,12 +1189,12 @@ Ztls_API int handoff_tx(Ztls::Cxn *tls);
 // commit only advances private output, and finish publishes it. Never retry a terminal Tx.
 // Handshake/receive callers must tear down the connection on errors other than their documented
 // IN_PROGRESS / ASYNC_OPERATION continuations; prior records may already have been published.
-Ztls_API int
-tx_send_chunks(Ztls::Cxn *tls, Ztls::RecordSink *sink, const void *input, size_t length);
-Ztls_API int tx_key_chunks(Ztls::Cxn *tls, Ztls::RecordSink *sink, int request_update);
-Ztls_API int
-tx_alert_chunks(Ztls::Cxn *tls, Ztls::RecordSink *sink, uint8_t level, uint8_t description);
-int handshake_chunks(
+Ztls_Extern int
+txSendChunks(Ztls::Cxn *tls, Ztls::RecordSink *sink, const void *input, size_t length);
+Ztls_Extern int txKeyChunks(Ztls::Cxn *tls, Ztls::RecordSink *sink, int reqUpdate);
+Ztls_Extern int
+txAlertChunks(Ztls::Cxn *tls, Ztls::RecordSink *sink, uint8_t level, uint8_t description);
+Ztls_Extern int handshakeChunks(
   Ztls::Cxn *tls, Ztls::RecordSink *sink, const void *input, size_t *length,
   HandshakeProps *properties);
 
@@ -1206,106 +1206,106 @@ int handshake_chunks(
 // Receive one record incrementally, retaining provisional plaintext privately
 // across fragments until authentication. The allocator remains live through
 // commit or discard. The input length reports consumed bytes on return.
-Ztls_API int receive_stream(
+Ztls_Extern int rxStream(
   Ztls::Cxn *tls, Ztls::RecordSink *output, const void *input, size_t *length,
   HandshakeProps *properties);
-Ztls_API int receive_stream_check(Ztls::Cxn *tls);
+Ztls_Extern int rxStreamCheck(Ztls::Cxn *tls);
 
 // Return overhead for the connection's negotiated Tx record protection.
-Ztls_API size_t tx_get_record_overhead(Ztls::Cxn *tls);
+Ztls_Extern size_t txRecordOverhead(Ztls::Cxn *tls);
 
 // consumes one pending peer request for a reciprocal KeyUpdate; returns one when consumed,
 // otherwise zero
-Ztls_API int take_key_update_request(Ztls::Cxn *tls);
+Ztls_Extern int takeKeyUpdateReq(Ztls::Cxn *tls);
 
 // Returns if the context is a server context.
-int isServer(Ztls::Cxn *tls);
+Ztls_Extern int isServer(Ztls::Cxn *tls);
 
 // returns per-record overhead
-Ztls_API size_t get_record_overhead(Ztls::Cxn *tls);
+Ztls_Extern size_t recordOverhead(Ztls::Cxn *tls);
 
 // sends an alert
-int send_alert(Ztls::Cxn *tls, Buffer *sendbuf, uint8_t level, uint8_t description);
+Ztls_Extern int sendAlert(Ztls::Cxn *tls, Buffer *sendbuf, uint8_t level, uint8_t description);
 
-int export_secret(
-  Ztls::Cxn *tls, void *output, size_t outlen, const char *label, Bytes context_value,
-  int is_early);
+Ztls_Extern int exportSecret(
+  Ztls::Cxn *tls, void *output, size_t outlen, const char *label, Bytes ctxValue, int isEarly);
 
 // build the body of a Certificate message. Can be called with tls set to NULL in order to create
 // a precompressed message.
-int build_certificate_message(
-  Buffer *buf, Bytes request_context, ZuSpan<const Bytes> certificates, Bytes ocsp_status);
+Ztls_Extern int buildCertMessage(
+  Buffer *buf, Bytes reqCtx, ZuSpan<const Bytes> certificates, Bytes ocspStatus);
 
-int calc_hash(const HashAlgo *algo, void *output, const void *src, size_t len);
+Ztls_Extern int calcHash(const HashAlgo *algo, void *output, const void *src, size_t len);
 
-Ztls_API HashContext *hmac_create(const HashAlgo *algo, const void *key, size_t keySize);
+Ztls_Extern HashContext *hmacCreate(const HashAlgo *algo, const void *key, size_t keySize);
 
-int hkdf_extract(const HashAlgo *hash, void *output, Bytes salt, Bytes ikm);
+Ztls_Extern int hkdfExtract(const HashAlgo *hash, void *output, Bytes salt, Bytes ikm);
 
-int hkdf_expand(const HashAlgo *hash, void *output, size_t outlen, Bytes prk, Bytes info);
+Ztls_Extern int hkdfExpand(
+  const HashAlgo *hash, void *output, size_t outlen, Bytes prk, Bytes info);
 
-Ztls_API int hkdf_expand_label(
+Ztls_Extern int hkdfExpandLabel(
   const HashAlgo *algo, void *output, size_t outlen, Bytes secret, const char *label,
-  Bytes hash_value, const char *label_prefix);
+  Bytes hashValue, const char *labelPrefix);
 
 // instantiates a symmetric cipher
-Ztls_API CipherContext *cipher_new(const CipherAlgo *algo, int is_enc, const void *key);
+Ztls_Extern CipherContext *cipherNew(const CipherAlgo *algo, int isEnc, const void *key);
 
 // destroys a symmetric cipher
-Ztls_API void cipher_free(CipherContext *ctx);
+Ztls_Extern void cipherFree(CipherContext *ctx);
 
-// initializes the IV; this function must be called prior to calling cipher_encrypt
-static void cipher_init(CipherContext *ctx, const void *iv);
+// initializes the IV; this function must be called prior to calling cipherEncrypt
+static void cipherInit(CipherContext *ctx, const void *iv);
 
 // Encrypts given text. The function must be used in a way that the output length would be equal
 // to the input length. For example, when using a block cipher in ECB mode, `len` must be a
 // multiple of the block size when using a block cipher. The length can be of any value when using
 // a stream cipher or a block cipher in CTR mode.
-static void cipher_encrypt(CipherContext *ctx, void *output, const void *input, size_t len);
+static void cipherEncrypt(CipherContext *ctx, void *output, const void *input, size_t len);
 
 // instantiates an AEAD cipher given a secret, which is expanded using hkdf to a set of key and iv
 // @param aead
 // @param hash
-// @param is_enc 1 if creating a context for encryption, 0 if creating a context for decryption
+// @param isEnc 1 if creating a context for encryption, 0 if creating a context for decryption
 // @param secret the secret. The size must be the digest length of the hash algorithm
 // @return pointer to an AEAD context if successful, otherwise NULL
-AeadContext *aead_new(
-  const AeadAlgo *aead, const HashAlgo *hash, int is_enc, const void *secret,
-  const char *label_prefix);
+Ztls_Extern AeadContext *aeadNew(
+  const AeadAlgo *aead, const HashAlgo *hash, int isEnc, const void *secret,
+  const char *labelPrefix);
 
 // instantiates an AEAD cipher given key and iv
 // @param aead
-// @param is_enc 1 if creating a context for encryption, 0 if creating a context for decryption
+// @param isEnc 1 if creating a context for encryption, 0 if creating a context for decryption
 // @return pointer to an AEAD context if successful, otherwise NULL
-Ztls_API AeadContext *
-aead_new_direct(const AeadAlgo *aead, int is_enc, const void *key, const void *iv);
+Ztls_Extern AeadContext *
+aeadNewDirect(const AeadAlgo *aead, int isEnc, const void *key, const void *iv);
 
 // destroys an AEAD cipher context
-Ztls_API void aead_free(AeadContext *ctx);
+Ztls_Extern void aeadFree(AeadContext *ctx);
 
 // Permutes the static IV by applying given bytes using bit-wise XOR. This API can be used for
 // supplying nonces longer than 64- bits.
-void aead_xor_iv(AeadContext *ctx, const void *bytes, size_t len);
-static void aead_get_iv(AeadContext *ctx, void *iv);
-static void aead_set_iv(AeadContext *ctx, const void *iv);
+Ztls_Extern void aeadXorIV(AeadContext *ctx, const void *bytes, size_t len);
+static void aeadGetIV(AeadContext *ctx, void *iv);
+static void aeadSetIV(AeadContext *ctx, const void *iv);
 
 // Encrypts one AEAD block, writing ciphertext followed by the AEAD tag. `output` must have room
 // for `inlen + tagSize` bytes.
-static size_t aead_encrypt(
+static size_t aeadEncrypt(
   AeadContext *ctx, void *output, const void *input, size_t inlen, uint64_t seq, const void *aad,
   size_t aadlen);
 
 // Encrypts one AEAD block, as well as one block of ECB (for QUIC / DTLS packet number
 // encryption). Depending on the AEAD engine being used, the two operations might run
 // simultaneously.
-static void aead_encrypt_s(
+static void aeadEncryptS(
   AeadContext *ctx, void *output, const void *input, size_t inlen, uint64_t seq, const void *aad,
   size_t aadlen, AeadSupplement *supp);
 
 // Encrypts one AEAD block from read-only plaintext vectors, writing the logically concatenated
 // ciphertext followed by the AEAD tag. `output` must have room for the sum of vector lengths plus
 // `tagSize` bytes.
-static void aead_encrypt_v(
+static void aeadEncryptV(
   AeadContext *ctx, void *output, const Bytes *input, size_t incnt, uint64_t seq, const void *aad,
   size_t aadlen);
 
@@ -1316,59 +1316,60 @@ static void aead_encrypt_v(
 // vectors are accepted. For direct retained-buffer use, plaintext vector ranges must not overlap
 // `output`. `supp->input` may point into `output`, including the tag, and is read after the
 // ciphertext-plus-tag output has been written.
-static size_t aead_encrypt_v_s(
+static size_t aeadEncryptVS(
   AeadContext *ctx, void *output, const Bytes *input, size_t incnt, uint64_t seq, const void *aad,
   size_t aadlen, AeadSupplement *supp);
 
 // decrypts an AEAD record @return number of bytes emitted to output if successful, or SIZE_MAX if
 // the input is invalid (e.g. broken MAC)
-static size_t aead_decrypt(
+static size_t aeadDecrypt(
   AeadContext *ctx, void *output, const void *input, size_t inlen, uint64_t seq, const void *aad,
   size_t aadlen);
 
 // internal
-void aead__build_iv(const AeadAlgo *algo, uint8_t *iv, const uint8_t *staticIv, uint64_t seq);
+Ztls_Extern void aeadBuildIV(
+  const AeadAlgo *algo, uint8_t *iv, const uint8_t *staticIv, uint64_t seq);
 
 // internal; suitable only for backends whose `do_encrypt_v` consumes vector input without full
 // plaintext flattening and returns after any required output-store visibility guarantees have
 // been satisfied.
 
 // internal
-void _key_schedule_update_hash(
-  KeySchedule *sched, const uint8_t *msg, size_t msglen, int use_outer);
+Ztls_Extern void keyScheduleUpdateHash(
+  KeySchedule *sched, const uint8_t *msg, size_t msglen, int useOuter);
 
 // checks if a server name is an IP address.
-int server_name_is_ipaddr(const char *name);
+Ztls_Extern int serverNameIsIP(const char *name);
 
 // encodes one ECH Config
-Ztls_API int ech_encode_config(
+Ztls_Extern int echEncodeConfig(
   Buffer *buf, uint8_t configId, const HpkeKem *kem, Bytes publicKey, const HpkeSuite **ciphers,
   uint8_t maxNameLength, const char *publicName);
 
 // SetupBaseS function of RFC 9180. Given `kem`, `algo`, `info`, and receiver's public key,
 // returns an ephemeral public key and an AEAD context used for encrypting data.
-int hpke_setup_base_s(
-  const HpkeKem *kem, const HpkeSuite *cipher, KeyExchangeBytes *pk_s, AeadContext **ctx,
-  Bytes pk_r, Bytes info);
+Ztls_Extern int hpkeSetupBaseS(
+  const HpkeKem *kem, const HpkeSuite *cipher, KeyExchangeBytes *pkS, AeadContext **ctx,
+  Bytes pkR, Bytes info);
 
 // SetupBaseR function of RFC 9180. Given `kem`, `algo`, `info`, receiver's private key (`keyex`),
 // and the esnder's public key, returns the AEAD context to be used for decrypting data.
-Ztls_API int hpke_setup_base_r(
+Ztls_Extern int hpkeSetupBaseR(
   const HpkeKem *kem, const HpkeSuite *cipher, KeyExchangeContext *keyex, AeadContext **ctx,
-  Bytes pk_s, Bytes info);
+  Bytes pkS, Bytes info);
 
 // the default getTime callback
 Ztls_Extern GetTime &getTime;
 
-inline Bytes wire_bytes(const void *data, size_t length)
+inline Bytes wireBytes(const void *data, size_t length)
 { return {const_cast<uint8_t *>(static_cast<const uint8_t *>(data)), length}; }
 
-inline void buffer_init(Buffer *buf, void *smallbuf, size_t smallbuf_size, int tx)
+inline void bufferInit(Buffer *buf, void *smallbuf, size_t inlineSize, int tx)
 {
   assert(tx == 0 || tx == 1);
   assert(smallbuf != NULL);
   buf->base = (uint8_t *)smallbuf;
-  buf->capacity = smallbuf_size;
+  buf->capacity = inlineSize;
   buf->off = 0;
   buf->isAllocated = 0;
   buf->alignBits = 0;
@@ -1377,28 +1378,28 @@ inline void buffer_init(Buffer *buf, void *smallbuf, size_t smallbuf_size, int t
   buf->recordSink = NULL;
 }
 
-inline void buffer_init_rx(Buffer *buf, void *smallbuf, size_t smallbuf_size)
-{ buffer_init(buf, smallbuf, smallbuf_size, 0); }
+inline void bufferInitRx(Buffer *buf, void *smallbuf, size_t inlineSize)
+{ bufferInit(buf, smallbuf, inlineSize, 0); }
 
-inline void buffer_init_tx(Buffer *buf, void *smallbuf, size_t smallbuf_size)
-{ buffer_init(buf, smallbuf, smallbuf_size, 1); }
+inline void bufferInitTx(Buffer *buf, void *smallbuf, size_t inlineSize)
+{ bufferInit(buf, smallbuf, inlineSize, 1); }
 
-inline void buffer_dispose(Buffer *buf)
+inline void bufferDispose(Buffer *buf)
 {
-  buffer__release_memory(buf);
+  bufferRelease(buf);
   *buf = Buffer{};
 }
 
-inline void cipher_init(CipherContext *ctx, const void *iv) { ctx->init(iv); }
+inline void cipherInit(CipherContext *ctx, const void *iv) { ctx->init(iv); }
 
-inline void cipher_encrypt(CipherContext *ctx, void *output, const void *input, size_t len)
+inline void cipherEncrypt(CipherContext *ctx, void *output, const void *input, size_t len)
 { ctx->transform(output, input, len); }
 
-inline void aead_get_iv(AeadContext *ctx, void *iv) { ctx->getIV(iv); }
+inline void aeadGetIV(AeadContext *ctx, void *iv) { ctx->getIV(iv); }
 
-inline void aead_set_iv(AeadContext *ctx, const void *iv) { ctx->setIV(iv); }
+inline void aeadSetIV(AeadContext *ctx, const void *iv) { ctx->setIV(iv); }
 
-inline size_t aead_encrypt(
+inline size_t aeadEncrypt(
   AeadContext *ctx, void *output, const void *input, size_t inlen, uint64_t seq, const void *aad,
   size_t aadlen)
 {
@@ -1406,17 +1407,17 @@ inline size_t aead_encrypt(
   return inlen + ctx->algo->tagSize;
 }
 
-inline void aead_encrypt_s(
+inline void aeadEncryptS(
   AeadContext *ctx, void *output, const void *input, size_t inlen, uint64_t seq, const void *aad,
   size_t aadlen, AeadSupplement *supp)
 { ctx->encrypt(output, input, inlen, seq, aad, aadlen, supp); }
 
-inline void aead_encrypt_v(
+inline void aeadEncryptV(
   AeadContext *ctx, void *output, const Bytes *input, size_t incnt, uint64_t seq, const void *aad,
   size_t aadlen)
 { ctx->encryptV(output, input, incnt, seq, aad, aadlen); }
 
-static inline size_t aead__sum_iovec(const Bytes *input, size_t incnt)
+static inline size_t aeadVecSize(const Bytes *input, size_t incnt)
 {
   size_t inlen = 0;
 
@@ -1427,23 +1428,23 @@ static inline size_t aead__sum_iovec(const Bytes *input, size_t incnt)
   return inlen;
 }
 
-inline size_t aead_encrypt_v_s(
+inline size_t aeadEncryptVS(
   AeadContext *ctx, void *output, const Bytes *input, size_t incnt, uint64_t seq, const void *aad,
   size_t aadlen, AeadSupplement *supp)
 {
-  size_t inlen = aead__sum_iovec(input, incnt);
+  size_t inlen = aeadVecSize(input, incnt);
 
   if (ctx->algo->tagSize > SIZE_MAX - inlen) abort();
   ctx->encryptVS(output, input, incnt, seq, aad, aadlen, supp);
   return inlen + ctx->algo->tagSize;
 }
 
-static inline void aead__do_supplementary(AeadSupplement *supp)
+static inline void aeadSupplement(AeadSupplement *supp)
 {
   if (supp != NULL) {
-    cipher_init(supp->ctx, supp->input);
+    cipherInit(supp->ctx, supp->input);
     memset(supp->output, 0, sizeof(supp->output));
-    cipher_encrypt(supp->ctx, supp->output, supp->output, sizeof(supp->output));
+    cipherEncrypt(supp->ctx, supp->output, supp->output, sizeof(supp->output));
   }
 }
 
@@ -1452,9 +1453,9 @@ inline void AeadContext::encrypt(
   AeadSupplement *supp)
 {
   assert(isEnc);
-  Bytes vector = wire_bytes(input, inlen);
+  Bytes vector = wireBytes(input, inlen);
   encryptV(output, &vector, 1, seq, aad, aadlen);
-  aead__do_supplementary(supp);
+  aeadSupplement(supp);
 }
 
 inline void AeadContext::encryptVS(
@@ -1463,10 +1464,10 @@ inline void AeadContext::encryptVS(
 {
   assert(isEnc);
   encryptV(output, input, incnt, seq, aad, aadlen);
-  aead__do_supplementary(supp);
+  aeadSupplement(supp);
 }
 
-inline size_t aead_decrypt(
+inline size_t aeadDecrypt(
   AeadContext *ctx, void *output, const void *input, size_t inlen, uint64_t seq, const void *aad,
   size_t aadlen)
 { return ctx->decrypt(output, input, inlen, seq, aad, aadlen); }

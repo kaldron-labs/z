@@ -36,13 +36,13 @@ struct BrotliDecompress : DecompressCertificate {
   BrotliDecompress();
   int call(Ztls::Cxn *tls, uint16_t algorithm, Bytes output, Bytes input) override
   {
-    size_t decoded_size = output.length();
+    size_t decodedSize = output.length();
     if (algorithm != Ztls_CertCompAlgoBrotli) goto Fail;
-    if (BrotliDecoderDecompress(input.length(), input.data(), &decoded_size, output.data()) !=
+    if (BrotliDecoderDecompress(input.length(), input.data(), &decodedSize, output.data()) !=
       BROTLI_DECODER_RESULT_SUCCESS)
       goto Fail;
 
-    if (decoded_size != output.length()) goto Fail;
+    if (decodedSize != output.length()) goto Fail;
 
     return 0;
 Fail:
@@ -57,8 +57,8 @@ static BrotliDecompress brotliDecompress;
 DecompressCertificate  &decompressCertificate = brotliDecompress;
 
 int EmitCompressedCert::call(
-  Ztls::Cxn *tls, MessageEmitter *emitter, KeySchedule *key_sched, Bytes context,
-  int push_status_request, ZuSpan<const uint16_t> compress_algos)
+  Ztls::Cxn *tls, MessageEmitter *emitter, KeySchedule *keySched, Bytes context,
+  int pushStatusReq, ZuSpan<const uint16_t> compressAlgos)
 {
   auto		       self = this;
   CompressedCertEntry *entry;
@@ -66,7 +66,7 @@ int EmitCompressedCert::call(
 
   assert(context.length() == 0 || !"precompressed mode can only be used for server certificates");
 
-  for (auto algorithm : compress_algos) {
+  for (auto algorithm : compressAlgos) {
     if (algorithm == Ztls_CertCompAlgoBrotli) goto FoundBrotli;
   }
   // brotli not found, delegate to the core
@@ -75,9 +75,9 @@ int EmitCompressedCert::call(
 
 FoundBrotli:
   entry = &self->withoutOcsp;
-  if (push_status_request && self->withOcsp.uncompressedLength != 0) entry = &self->withOcsp;
+  if (pushStatusReq && self->withOcsp.uncompressedLength != 0) entry = &self->withOcsp;
 
-  Ztls_PushMessage(emitter, key_sched, Ztls_HsTypeCompressedCert, {
+  Ztls_PushMessage(emitter, keySched, Ztls_HsTypeCompressedCert, {
     Ztls_BufferPush16(emitter->buf, Ztls_CertCompAlgoBrotli);
     Ztls_BufferPush24(emitter->buf, entry->uncompressedLength);
     Ztls_BufferPushBlock(emitter->buf, 3, {
@@ -92,17 +92,16 @@ Exit:
 }
 
 static int
-build_compressed(CompressedCertEntry *entry, ZuSpan<const Bytes> certificates, Bytes ocsp_status)
+buildCompressed(CompressedCertEntry *entry, ZuSpan<const Bytes> certificates, Bytes ocspStatus)
 {
   Buffer uncompressed;
   size_t size;
   int	 ret;
 
-  buffer_init_tx(&uncompressed, const_cast<char *>(""), 0);
+  bufferInitTx(&uncompressed, const_cast<char *>(""), 0);
 
   // build uncompressed
-  if ((ret = build_certificate_message(
-	 &uncompressed, wire_bytes(NULL, 0), certificates, ocsp_status)) != 0)
+  if ((ret = buildCertMessage(&uncompressed, wireBytes(NULL, 0), certificates, ocspStatus)) != 0)
     goto Exit;
   entry->uncompressedLength = (uint32_t)uncompressed.off;
 
@@ -121,33 +120,33 @@ build_compressed(CompressedCertEntry *entry, ZuSpan<const Bytes> certificates, B
 
 Exit:
   if (ret != 0) *entry = {};
-  buffer_dispose(&uncompressed);
+  bufferDispose(&uncompressed);
   return ret;
 }
 
-int init_compressed_certificate(
-  EmitCompressedCert *self, ZuSpan<const Bytes> certificates, Bytes ocsp_status)
+int initCompressedCert(
+  EmitCompressedCert *self, ZuSpan<const Bytes> certificates, Bytes ocspStatus)
 {
   int ret;
 
-  dispose_compressed_certificate(self);
+  disposeCompressedCert(self);
   self->algo = Ztls_CertCompAlgoBrotli;
 
   // build entries
-  if ((ret = build_compressed(&self->withoutOcsp, certificates, wire_bytes(NULL, 0))) != 0)
+  if ((ret = buildCompressed(&self->withoutOcsp, certificates, wireBytes(NULL, 0))) != 0)
     goto Exit;
-  if (ocsp_status.length() != 0) {
-    if ((ret = build_compressed(&self->withOcsp, certificates, ocsp_status)) != 0) goto Exit;
+  if (ocspStatus.length() != 0) {
+    if ((ret = buildCompressed(&self->withOcsp, certificates, ocspStatus)) != 0) goto Exit;
   }
 
   ret = 0;
 
 Exit:
-  if (ret != 0) dispose_compressed_certificate(self);
+  if (ret != 0) disposeCompressedCert(self);
   return ret;
 }
 
-void dispose_compressed_certificate(EmitCompressedCert *self)
+void disposeCompressedCert(EmitCompressedCert *self)
 {
   self->withOcsp = {};
   self->withoutOcsp = {};

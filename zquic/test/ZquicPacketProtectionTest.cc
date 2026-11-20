@@ -228,9 +228,9 @@ void testRFC9001ClientInitialProt()
     "full Initial packet protection RFC vector mismatch");
   uint8_t packetV[sizeof(packet)];
   Ztls_::Bytes initialVec[3] = {
-    Ztls_::wire_bytes(payload, 32),
-    Ztls_::wire_bytes(payload + 32, 0),
-    Ztls_::wire_bytes(payload + 32, sizeof(payload) - 32)
+    Ztls_::wireBytes(payload, 32),
+    Ztls_::wireBytes(payload + 32, 0),
+    Ztls_::wireBytes(payload + 32, sizeof(payload) - 32)
   };
   int nv = Zquic::InitialPktProt::protectLongV(
     packetV, sizeof(packetV), keys.client, 2,
@@ -298,7 +298,7 @@ void testTrafficSecretProt()
   for (unsigned i = 0; i < sizeof(secretBytes); ++i) secretBytes[i] = i;
   Zquic::TrafficSecret rejected;
   ZuCHECK(!Zquic::PktProt::deriveSecret(
-	rejected, &Ztls_::openssl_aes128gcmsha256,
+	rejected, &Ztls_::opensslAes128gcmsha256,
 	Zquic::byteSpan(secretBytes, sizeof(secretBytes) - 1)) &&
       !rejected.valid() && !rejected.secret.length() &&
       !rejected.key.length() && !rejected.iv.length() &&
@@ -307,7 +307,7 @@ void testTrafficSecretProt()
 
   Zquic::TrafficSecret secret;
   ZuCHECK(Zquic::PktProt::deriveSecret(
-      secret, &Ztls_::openssl_aes128gcmsha256,
+      secret, &Ztls_::opensslAes128gcmsha256,
       Zquic::byteSpan(secretBytes, sizeof(secretBytes))),
     "traffic secret derivation failed");
   ZuCHECK(secret.valid() && secret.key.length() == 16 &&
@@ -320,7 +320,7 @@ void testTrafficSecretProt()
       !reinstalled.key.length() && !reinstalled.iv.length() &&
       !reinstalled.hp.length() &&
       Zquic::PktProt::deriveSecret(
-	reinstalled, &Ztls_::openssl_aes128gcmsha256,
+	reinstalled, &Ztls_::opensslAes128gcmsha256,
 	Zquic::byteSpan(secretBytes, sizeof(secretBytes))) &&
       reinstalled.valid(),
     "traffic secret clear/reinstall failed");
@@ -378,8 +378,8 @@ void testTrafficSecretProt()
     "traffic Handshake protection left packet visible");
   uint8_t packetV[256];
   Ztls_::Bytes longVec[2] = {
-    Ztls_::wire_bytes(payload, 1),
-    Ztls_::wire_bytes(payload + 1, sizeof(payload) - 1)
+    Ztls_::wireBytes(payload, 1),
+    Ztls_::wireBytes(payload + 1, sizeof(payload) - 1)
   };
   int nv = Zquic::PktProt::protectLongV(
     packetV, sizeof(packetV), txLongSplit, 7, Zquic::byteSpan(header, unsigned(h)),
@@ -409,9 +409,9 @@ void testTrafficSecretProt()
   ZuCHECK(memcmp(packet, header, unsigned(h)),
     "traffic short header was not protected");
   Ztls_::Bytes shortVec[3] = {
-    Ztls_::wire_bytes(payload, 3),
-    Ztls_::wire_bytes(payload + 3, 0),
-    Ztls_::wire_bytes(payload + 3, sizeof(payload) - 3)
+    Ztls_::wireBytes(payload, 3),
+    Ztls_::wireBytes(payload + 3, 0),
+    Ztls_::wireBytes(payload + 3, sizeof(payload) - 3)
   };
 	  nv = Zquic::PktProt::protectShortV(
 	    packetV, sizeof(packetV), txShortSplit, 11, Zquic::byteSpan(header, unsigned(h)),

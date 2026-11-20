@@ -30,7 +30,7 @@ namespace Ztls_ {
 
 static constexpr auto hpkeV1Label = "HPKE-v1"_z;
 
-static int build_suite_id(Buffer *buf, const HpkeKem *kem, const HpkeSuite *cipher)
+static int buildSuiteID(Buffer *buf, const HpkeKem *kem, const HpkeSuite *cipher)
 {
   int ret;
 
@@ -50,210 +50,207 @@ Exit:
   return ret;
 }
 
-static int labeled_extract(
+static int labeledExtract(
   const HpkeKem *kem, const HpkeSuite *cipher, void *output, Bytes salt, const char *label,
   Bytes ikm)
 {
-  Buffer  labeled_ikm;
-  uint8_t labeled_ikm_smallbuf[64];
+  Buffer  labeledIkm;
+  uint8_t labeledIkmInline[64];
   int	  ret;
 
-  buffer_init_tx(&labeled_ikm, labeled_ikm_smallbuf, sizeof(labeled_ikm_smallbuf));
+  bufferInitTx(&labeledIkm, labeledIkmInline, sizeof(labeledIkmInline));
 
-  Ztls_BufferPushv(&labeled_ikm, hpkeV1Label.data(), hpkeV1Label.length());
-  if ((ret = build_suite_id(&labeled_ikm, kem, cipher)) != 0) goto Exit;
-  Ztls_BufferPushv(&labeled_ikm, label, strlen(label));
-  Ztls_BufferPushv(&labeled_ikm, ikm.data(), ikm.length());
+  Ztls_BufferPushv(&labeledIkm, hpkeV1Label.data(), hpkeV1Label.length());
+  if ((ret = buildSuiteID(&labeledIkm, kem, cipher)) != 0) goto Exit;
+  Ztls_BufferPushv(&labeledIkm, label, strlen(label));
+  Ztls_BufferPushv(&labeledIkm, ikm.data(), ikm.length());
 
-  ret = hkdf_extract(
+  ret = hkdfExtract(
     cipher != NULL ? cipher->hash : kem->hash, output, salt,
-    wire_bytes(labeled_ikm.base, labeled_ikm.off));
+    wireBytes(labeledIkm.base, labeledIkm.off));
 
 Exit:
-  buffer_dispose(&labeled_ikm);
+  bufferDispose(&labeledIkm);
   return ret;
 }
 
-static int labeled_expand(
+static int labeledExpand(
   const HpkeKem *kem, const HpkeSuite *cipher, void *output, size_t outlen, Bytes prk,
   const char *label, Bytes info)
 {
-  Buffer  labeled_info;
-  uint8_t labeled_info_smallbuf[64];
+  Buffer  labeledInfo;
+  uint8_t labeledInfoInline[64];
   int	  ret;
 
   assert(outlen < UINT16_MAX);
 
-  buffer_init_tx(&labeled_info, labeled_info_smallbuf, sizeof(labeled_info_smallbuf));
+  bufferInitTx(&labeledInfo, labeledInfoInline, sizeof(labeledInfoInline));
 
-  Ztls_BufferPush16(&labeled_info, (uint16_t)outlen);
-  Ztls_BufferPushv(&labeled_info, hpkeV1Label.data(), hpkeV1Label.length());
-  if ((ret = build_suite_id(&labeled_info, kem, cipher)) != 0) goto Exit;
-  Ztls_BufferPushv(&labeled_info, label, strlen(label));
-  Ztls_BufferPushv(&labeled_info, info.data(), info.length());
+  Ztls_BufferPush16(&labeledInfo, (uint16_t)outlen);
+  Ztls_BufferPushv(&labeledInfo, hpkeV1Label.data(), hpkeV1Label.length());
+  if ((ret = buildSuiteID(&labeledInfo, kem, cipher)) != 0) goto Exit;
+  Ztls_BufferPushv(&labeledInfo, label, strlen(label));
+  Ztls_BufferPushv(&labeledInfo, info.data(), info.length());
 
-  ret = hkdf_expand(
+  ret = hkdfExpand(
     cipher != NULL ? cipher->hash : kem->hash, output, outlen, prk,
-    wire_bytes(labeled_info.base, labeled_info.off));
+    wireBytes(labeledInfo.base, labeledInfo.off));
 
 Exit:
-  buffer_dispose(&labeled_info);
+  bufferDispose(&labeledInfo);
   return ret;
 }
 
-static int extract_and_expand(
-  const HpkeKem *kem, void *secret, size_t secret_len, Bytes pk_s, Bytes pk_r, Bytes dh)
+static int extractAndExpand(
+  const HpkeKem *kem, void *secret, size_t secretLen, Bytes pkS, Bytes pkR, Bytes dh)
 {
-  Buffer  kem_context;
-  uint8_t kem_context_smallbuf[128], eae_prk[Ztls_MaxDigestSize];
+  Buffer  kemCtx;
+  uint8_t kemCtxInline[128], eaePrk[Ztls_MaxDigestSize];
   int	  ret;
 
-  buffer_init_tx(&kem_context, kem_context_smallbuf, sizeof(kem_context_smallbuf));
+  bufferInitTx(&kemCtx, kemCtxInline, sizeof(kemCtxInline));
 
-  Ztls_BufferPushv(&kem_context, pk_s.data(), pk_s.length());
-  Ztls_BufferPushv(&kem_context, pk_r.data(), pk_r.length());
+  Ztls_BufferPushv(&kemCtx, pkS.data(), pkS.length());
+  Ztls_BufferPushv(&kemCtx, pkR.data(), pkR.length());
 
-  if ((ret = labeled_extract(kem, NULL, eae_prk, wire_bytes("", 0), "eae_prk", dh)) != 0)
-    goto Exit;
-  if ((ret = labeled_expand(
-	 kem, NULL, secret, secret_len, wire_bytes(eae_prk, kem->hash->digestSize),
-	 "shared_secret", wire_bytes(kem_context.base, kem_context.off))) != 0)
+  if ((ret = labeledExtract(kem, NULL, eaePrk, wireBytes("", 0), "eae_prk", dh)) != 0) goto Exit;
+  if ((ret = labeledExpand(
+	 kem, NULL, secret, secretLen, wireBytes(eaePrk, kem->hash->digestSize), "shared_secret",
+	 wireBytes(kemCtx.base, kemCtx.off))) != 0)
     goto Exit;
 
 Exit:
-  buffer_dispose(&kem_context);
-  ZuClear(eae_prk, sizeof(eae_prk));
+  bufferDispose(&kemCtx);
+  ZuClear(eaePrk, sizeof(eaePrk));
   return ret;
 }
 
-static int dh_derive(const HpkeKem *kem, void *secret, Bytes pk_s, Bytes pk_r, Bytes dh)
-{ return extract_and_expand(kem, secret, kem->hash->digestSize, pk_s, pk_r, dh); }
+static int dhDerive(const HpkeKem *kem, void *secret, Bytes pkS, Bytes pkR, Bytes dh)
+{ return extractAndExpand(kem, secret, kem->hash->digestSize, pkS, pkR, dh); }
 
-static int dh_encap(const HpkeKem *kem, void *secret, KeyExchangeBytes *pk_s, Bytes pk_r)
+static int dhEncap(const HpkeKem *kem, void *secret, KeyExchangeBytes *pkS, Bytes pkR)
 {
   KeyExchangeBytes dh;
   int		   ret;
 
-  pk_s->null();
+  pkS->null();
 
-  if ((ret = kem->keyex->exchange(pk_s, &dh, pk_r)) != 0) {
-    assert(!pk_s->length());
+  if ((ret = kem->keyex->exchange(pkS, &dh, pkR)) != 0) {
+    assert(!pkS->length());
     assert(!dh.length());
     goto Exit;
   }
 
-  if ((ret = dh_derive(
-	 kem, secret, wire_bytes(pk_s->data(), pk_s->length()), pk_r,
-	 wire_bytes(dh.data(), dh.length()))) != 0)
+  if ((ret = dhDerive(
+	 kem, secret, wireBytes(pkS->data(), pkS->length()), pkR,
+	 wireBytes(dh.data(), dh.length()))) != 0)
     goto Exit;
 
 Exit:
-  if (ret != 0) pk_s->null();
+  if (ret != 0) pkS->null();
   return ret;
 }
 
 static int
-dh_decap(const HpkeKem *kem, void *secret, KeyExchangeContext *keyex, Bytes pk_s, Bytes pk_r)
+dhDecap(const HpkeKem *kem, void *secret, KeyExchangeContext *keyex, Bytes pkS, Bytes pkR)
 {
   KeyExchangeBytes dh;
   int		   ret;
 
-  if ((ret = keyex->exchange(&dh, pk_s)) != 0) {
+  if ((ret = keyex->exchange(&dh, pkS)) != 0) {
     assert(!dh.length());
     goto Exit;
   }
 
-  if ((ret = dh_derive(kem, secret, pk_s, pk_r, wire_bytes(dh.data(), dh.length()))) != 0)
-    goto Exit;
+  if ((ret = dhDerive(kem, secret, pkS, pkR, wireBytes(dh.data(), dh.length()))) != 0) goto Exit;
 
 Exit:
   return ret;
 }
 
 static int keySchedule(
-  const HpkeKem *kem, const HpkeSuite *cipher, AeadContext **ctx, int is_enc,
-  const void *shared_secret, Bytes info)
+  const HpkeKem *kem, const HpkeSuite *cipher, AeadContext **ctx, int isEnc,
+  const void *sharedSecret, Bytes info)
 {
-  Buffer  key_schedule_context;
-  uint8_t key_sched_ctx_smallbuf[128], secret[Ztls_MaxDigestSize], key[Ztls_MaxSecretSize],
-    base_nonce[Ztls_MaxIVSize];
+  Buffer  keyScheduleCtx;
+  uint8_t keySchedCtxInline[128], secret[Ztls_MaxDigestSize], key[Ztls_MaxSecretSize],
+    baseNonce[Ztls_MaxIVSize];
   int ret;
 
   *ctx = NULL;
 
-  buffer_init(
-    &key_schedule_context, key_sched_ctx_smallbuf, sizeof(key_sched_ctx_smallbuf), is_enc != 0);
+  bufferInit(&keyScheduleCtx, keySchedCtxInline, sizeof(keySchedCtxInline), isEnc != 0);
 
-  // key_schedule_context = concat(mode, LabeledExtract("", "psk_id_hash", psk_id),
+  // keyScheduleCtx = concat(mode, LabeledExtract("", "psk_id_hash", psk_id),
   // LabeledExtract("", "info_hash", info))
-  Ztls_BufferPush_1(&key_schedule_context, Ztls_HPKEModeBase);
-  if ((ret = buffer_reserve(&key_schedule_context, cipher->hash->digestSize, is_enc != 0)) != 0 ||
-    (ret = labeled_extract(
-       kem, cipher, key_schedule_context.base + key_schedule_context.off, wire_bytes(NULL, 0),
-       "psk_id_hash", wire_bytes(NULL, 0))) != 0)
+  Ztls_BufferPush_1(&keyScheduleCtx, Ztls_HPKEModeBase);
+  if ((ret = bufferRes(&keyScheduleCtx, cipher->hash->digestSize, isEnc != 0)) != 0 ||
+    (ret = labeledExtract(
+       kem, cipher, keyScheduleCtx.base + keyScheduleCtx.off, wireBytes(NULL, 0), "psk_id_hash",
+       wireBytes(NULL, 0))) != 0)
     goto Exit;
-  key_schedule_context.off += cipher->hash->digestSize;
-  if ((ret = buffer_reserve(&key_schedule_context, cipher->hash->digestSize, is_enc != 0)) != 0 ||
-    (ret = labeled_extract(
-       kem, cipher, key_schedule_context.base + key_schedule_context.off, wire_bytes(NULL, 0),
-       "info_hash", info)) != 0)
+  keyScheduleCtx.off += cipher->hash->digestSize;
+  if ((ret = bufferRes(&keyScheduleCtx, cipher->hash->digestSize, isEnc != 0)) != 0 ||
+    (ret = labeledExtract(
+       kem, cipher, keyScheduleCtx.base + keyScheduleCtx.off, wireBytes(NULL, 0), "info_hash",
+       info)) != 0)
     goto Exit;
-  key_schedule_context.off += cipher->hash->digestSize;
+  keyScheduleCtx.off += cipher->hash->digestSize;
 
-  //  secret = LabeledExtract(shared_secret, "secret", psk)
-  if ((ret = labeled_extract(
-	 kem, cipher, secret, wire_bytes(shared_secret, kem->hash->digestSize), "secret",
-	 wire_bytes("", 0))) != 0)
-    goto Exit;
-
-  // key, base_nonce
-  if ((ret = labeled_expand(
-	 kem, cipher, key, cipher->aead->keySize, wire_bytes(secret, cipher->hash->digestSize),
-	 "key", wire_bytes(key_schedule_context.base, key_schedule_context.off))) != 0)
-    goto Exit;
-  if ((ret = labeled_expand(
-	 kem, cipher, base_nonce, cipher->aead->ivSize,
-	 wire_bytes(secret, cipher->hash->digestSize), "base_nonce",
-	 wire_bytes(key_schedule_context.base, key_schedule_context.off))) != 0)
+  //  secret = LabeledExtract(sharedSecret, "secret", psk)
+  if ((ret = labeledExtract(
+	 kem, cipher, secret, wireBytes(sharedSecret, kem->hash->digestSize), "secret",
+	 wireBytes("", 0))) != 0)
     goto Exit;
 
-  *ctx = aead_new_direct(cipher->aead, is_enc, key, base_nonce);
+  // key, baseNonce
+  if ((ret = labeledExpand(
+	 kem, cipher, key, cipher->aead->keySize, wireBytes(secret, cipher->hash->digestSize),
+	 "key", wireBytes(keyScheduleCtx.base, keyScheduleCtx.off))) != 0)
+    goto Exit;
+  if (
+    (ret = labeledExpand(
+       kem, cipher, baseNonce, cipher->aead->ivSize, wireBytes(secret, cipher->hash->digestSize),
+       "base_nonce", wireBytes(keyScheduleCtx.base, keyScheduleCtx.off))) != 0)
+    goto Exit;
+
+  *ctx = aeadNewDirect(cipher->aead, isEnc, key, baseNonce);
 
 Exit:
-  buffer_dispose(&key_schedule_context);
+  bufferDispose(&keyScheduleCtx);
   ZuClear(secret, sizeof(secret));
   ZuClear(key, sizeof(key));
-  ZuClear(base_nonce, sizeof(base_nonce));
+  ZuClear(baseNonce, sizeof(baseNonce));
   return ret;
 }
 
-int hpke_setup_base_s(
-  const HpkeKem *kem, const HpkeSuite *cipher, KeyExchangeBytes *pk_s, AeadContext **ctx,
-  Bytes pk_r, Bytes info)
+int hpkeSetupBaseS(
+  const HpkeKem *kem, const HpkeSuite *cipher, KeyExchangeBytes *pkS, AeadContext **ctx,
+  Bytes pkR, Bytes info)
 {
   uint8_t secret[Ztls_MaxDigestSize];
   int	  ret;
 
-  pk_s->null();
+  pkS->null();
 
-  if ((ret = dh_encap(kem, secret, pk_s, pk_r)) != 0) goto Exit;
+  if ((ret = dhEncap(kem, secret, pkS, pkR)) != 0) goto Exit;
 
   if ((ret = keySchedule(kem, cipher, ctx, 1, secret, info)) != 0) goto Exit;
 
 Exit:
-  if (ret != 0) pk_s->null();
+  if (ret != 0) pkS->null();
   ZuClear(secret, sizeof(secret));
   return ret;
 }
 
-int hpke_setup_base_r(
+int hpkeSetupBaseR(
   const HpkeKem *kem, const HpkeSuite *cipher, KeyExchangeContext *keyex, AeadContext **ctx,
-  Bytes pk_s, Bytes info)
+  Bytes pkS, Bytes info)
 {
   uint8_t secret[Ztls_MaxDigestSize];
   int	  ret;
 
-  if ((ret = dh_decap(kem, secret, keyex, pk_s, keyex->pubkey)) != 0) goto Exit;
+  if ((ret = dhDecap(kem, secret, keyex, pkS, keyex->pubkey)) != 0) goto Exit;
 
   if ((ret = keySchedule(kem, cipher, ctx, 0, secret, info)) != 0) goto Exit;
 

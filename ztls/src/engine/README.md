@@ -56,8 +56,8 @@ owned or reserved through Zi allocators. Use the Ztls transport interface
 for socket-based TLS and the standalone crypto headers for primitive
 operations.
 
-Zquic drives the same handshake with `raw_handshake` and uses
-`raw_read_epoch` to query the expected input level. Zquic owns its
+Zquic drives the same handshake with `rawHandshake` and uses
+`rawReadEpoch` to query the expected input level. Zquic owns its
 connection on Rx, supplies ordered CRYPTO bytes, and retains the output
 storage. The driver writes complete handshake messages directly into the
 supplied span and returns the five boundaries for the four epoch slots.

@@ -653,7 +653,7 @@ private:
   void cleanupStop();
   void cleanup_1(MaintenanceResult);
 
-  using Key = ZmRef<Ztls::PK::SK_EC>;
+  using Key = ZmRef<Ztls::PK::ECPrivate>;
   using SSF = ZmRef<SSFTransmitter>;
   using CleanupRun = ZmRef<ZmPolymorph>;
 

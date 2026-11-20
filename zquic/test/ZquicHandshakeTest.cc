@@ -377,7 +377,7 @@ void testMessageLevelTLSHandshake()
   ZuCHECK(h > 0, "1-RTT traffic probe short header encode failed");
   unsigned pnOffset = unsigned(h) - 2;
   uint8_t packet[256];
-  Ztls_::Bytes plain = Ztls_::wire_bytes(payload, sizeof(payload));
+  Ztls_::Bytes plain = Ztls_::wireBytes(payload, sizeof(payload));
   int n = Zquic::PktProt::protectShortV(
     packet, sizeof(packet), client.txProtState(Zquic::PktNumSpace::AppData),
     3, Zquic::byteSpan(header, unsigned(h)), &plain, 1, pnOffset, 2);

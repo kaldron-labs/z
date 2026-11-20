@@ -70,20 +70,25 @@ namespace Data {
 struct Header {
   uint8_t	kty;
 };
-ZfStruct(Ztls_API, Header, (kty, (Mutable), UInt8));
-ZfStructRender(Ztls_API, Header, CBOR, (kty, (CBOR::ID<"1">, CBOR::IntID)));
+ZfStruct(Ztls_API, Header,
+  (kty,		(Mutable),		UInt8));
+ZfStructRender(Ztls_API, Header, CBOR,
+  (kty,		(CBOR::ID<"1">, CBOR::IntID)));
 
 struct EC2PK {
   uint8_t	kty, crv;
   ZuBSpan	x, y;
 };
-ZfStruct(
-  Ztls_API, EC2PK, (kty, (Mutable), UInt8), (crv, (Mutable), UInt8), (x, (Mutable), Bytes),
-  (y, (Mutable), Bytes));
-ZfStructRender(
-  Ztls_API, EC2PK, CBOR, (kty, (CBOR::ID<"1">, CBOR::IntID)),
-  (crv, (CBOR::ID<"-1">, CBOR::IntID)), (x, (CBOR::ID<"-2">, CBOR::IntID)),
-  (y, (CBOR::ID<"-3">, CBOR::IntID)));
+ZfStruct(Ztls_API, EC2PK,
+  (kty,		(Mutable),		UInt8),
+  (crv,		(Mutable),		UInt8),
+  (x,		(Mutable),		Bytes),
+  (y,		(Mutable),		Bytes));
+ZfStructRender(Ztls_API, EC2PK, CBOR,
+  (kty,		(CBOR::ID<"1">, CBOR::IntID)),
+  (crv,		(CBOR::ID<"-1">, CBOR::IntID)),
+  (x,		(CBOR::ID<"-2">, CBOR::IntID)),
+  (y,		(CBOR::ID<"-3">, CBOR::IntID)));
 
 struct ES256PK {
   uint8_t	kty;
@@ -91,71 +96,101 @@ struct ES256PK {
   uint8_t	crv;
   ZuBSpan	x, y;
 };
-ZfStruct(
-  Ztls_API, ES256PK, (kty, (Mutable), UInt8), (alg, (Mutable), Int8), (crv, (Mutable), UInt8),
-  (x, (Mutable), Bytes), (y, (Mutable), Bytes));
-ZfStructRender(
-  Ztls_API, ES256PK, CBOR, (kty, (CBOR::ID<"1">, CBOR::IntID)),
-  (alg, (CBOR::ID<"3">, CBOR::IntID)), (crv, (CBOR::ID<"-1">, CBOR::IntID)),
-  (x, (CBOR::ID<"-2">, CBOR::IntID)), (y, (CBOR::ID<"-3">, CBOR::IntID)));
+ZfStruct(Ztls_API, ES256PK,
+  (kty,		(Mutable),		UInt8),
+  (alg,		(Mutable),		Int8),
+  (crv,		(Mutable),		UInt8),
+  (x,		(Mutable),		Bytes),
+  (y,		(Mutable),		Bytes));
+ZfStructRender(Ztls_API, ES256PK, CBOR,
+  (kty,		(CBOR::ID<"1">, CBOR::IntID)),
+  (alg,		(CBOR::ID<"3">, CBOR::IntID)),
+  (crv,		(CBOR::ID<"-1">, CBOR::IntID)),
+  (x,		(CBOR::ID<"-2">, CBOR::IntID)),
+  (y,		(CBOR::ID<"-3">, CBOR::IntID)));
 
 struct EC2SK {
   uint8_t	kty, crv;
   ZuBSpan	x, y, d;
 };
-ZfStruct(
-  Ztls_API, EC2SK, (kty, (Mutable), UInt8), (crv, (Mutable), UInt8), (x, (Mutable), Bytes),
-  (y, (Mutable), Bytes), (d, (Mutable), Bytes));
-ZfStructRender(
-  Ztls_API, EC2SK, CBOR, (kty, (CBOR::ID<"1">, CBOR::IntID)),
-  (crv, (CBOR::ID<"-1">, CBOR::IntID)), (x, (CBOR::ID<"-2">, CBOR::IntID)),
-  (y, (CBOR::ID<"-3">, CBOR::IntID)), (d, (CBOR::ID<"-4">, CBOR::IntID)));
+ZfStruct(Ztls_API, EC2SK,
+  (kty,		(Mutable),		UInt8),
+  (crv,		(Mutable),		UInt8),
+  (x,		(Mutable),		Bytes),
+  (y,		(Mutable),		Bytes),
+  (d,		(Mutable),		Bytes));
+ZfStructRender(Ztls_API, EC2SK, CBOR,
+  (kty,		(CBOR::ID<"1">, CBOR::IntID)),
+  (crv,		(CBOR::ID<"-1">, CBOR::IntID)),
+  (x,		(CBOR::ID<"-2">, CBOR::IntID)),
+  (y,		(CBOR::ID<"-3">, CBOR::IntID)),
+  (d,		(CBOR::ID<"-4">, CBOR::IntID)));
 
 struct OKPPK {
   uint8_t	kty, crv;
   ZuBSpan	x;
 };
-ZfStruct(
-  Ztls_API, OKPPK, (kty, (Mutable), UInt8), (crv, (Mutable), UInt8), (x, (Mutable), Bytes));
-ZfStructRender(
-  Ztls_API, OKPPK, CBOR, (kty, (CBOR::ID<"1">, CBOR::IntID)),
-  (crv, (CBOR::ID<"-1">, CBOR::IntID)), (x, (CBOR::ID<"-2">, CBOR::IntID)));
+ZfStruct(Ztls_API, OKPPK,
+  (kty,		(Mutable),		UInt8),
+  (crv,		(Mutable),		UInt8),
+  (x,		(Mutable),		Bytes));
+ZfStructRender(Ztls_API, OKPPK, CBOR,
+  (kty,		(CBOR::ID<"1">, CBOR::IntID)),
+  (crv,		(CBOR::ID<"-1">, CBOR::IntID)),
+  (x,		(CBOR::ID<"-2">, CBOR::IntID)));
 
 struct OKPSK {
   uint8_t	kty, crv;
   ZuBSpan	x, d;
 };
-ZfStruct(
-  Ztls_API, OKPSK, (kty, (Mutable), UInt8), (crv, (Mutable), UInt8), (x, (Mutable), Bytes),
-  (d, (Mutable), Bytes));
-ZfStructRender(
-  Ztls_API, OKPSK, CBOR, (kty, (CBOR::ID<"1">, CBOR::IntID)),
-  (crv, (CBOR::ID<"-1">, CBOR::IntID)), (x, (CBOR::ID<"-2">, CBOR::IntID)),
-  (d, (CBOR::ID<"-4">, CBOR::IntID)));
+ZfStruct(Ztls_API, OKPSK,
+  (kty,		(Mutable),		UInt8),
+  (crv,		(Mutable),		UInt8),
+  (x,		(Mutable),		Bytes),
+  (d,		(Mutable),		Bytes));
+ZfStructRender(Ztls_API, OKPSK, CBOR,
+  (kty,		(CBOR::ID<"1">, CBOR::IntID)),
+  (crv,		(CBOR::ID<"-1">, CBOR::IntID)),
+  (x,		(CBOR::ID<"-2">, CBOR::IntID)),
+  (d,		(CBOR::ID<"-4">, CBOR::IntID)));
 
 struct RSAPK {
   uint8_t	kty;
   ZuBSpan	n, e;
 };
-ZfStruct(Ztls_API, RSAPK, (kty, (Mutable), UInt8), (n, (Mutable), Bytes), (e, (Mutable), Bytes));
-ZfStructRender(
-  Ztls_API, RSAPK, CBOR, (kty, (CBOR::ID<"1">, CBOR::IntID)), (n, (CBOR::ID<"-1">, CBOR::IntID)),
-  (e, (CBOR::ID<"-2">, CBOR::IntID)));
+ZfStruct(Ztls_API, RSAPK,
+  (kty,		(Mutable),		UInt8),
+  (n,		(Mutable),		Bytes),
+  (e,		(Mutable),		Bytes));
+ZfStructRender(Ztls_API, RSAPK, CBOR,
+  (kty,		(CBOR::ID<"1">, CBOR::IntID)),
+  (n,		(CBOR::ID<"-1">, CBOR::IntID)),
+  (e,		(CBOR::ID<"-2">, CBOR::IntID)));
 
 struct RSASK {
   uint8_t	kty;
   ZuBSpan	n, e, d, p, q, dp, dq, qi;
 };
-ZfStruct(
-  Ztls_API, RSASK, (kty, (Mutable), UInt8), (n, (Mutable), Bytes), (e, (Mutable), Bytes),
-  (d, (Mutable), Bytes), (p, (Mutable), Bytes), (q, (Mutable), Bytes), (dp, (Mutable), Bytes),
-  (dq, (Mutable), Bytes), (qi, (Mutable), Bytes));
-ZfStructRender(
-  Ztls_API, RSASK, CBOR, (kty, (CBOR::ID<"1">, CBOR::IntID)), (n, (CBOR::ID<"-1">, CBOR::IntID)),
-  (e, (CBOR::ID<"-2">, CBOR::IntID)), (d, (CBOR::ID<"-3">, CBOR::IntID)),
-  (p, (CBOR::ID<"-4">, CBOR::IntID)), (q, (CBOR::ID<"-5">, CBOR::IntID)),
-  (dp, (CBOR::ID<"-6">, CBOR::IntID)), (dq, (CBOR::ID<"-7">, CBOR::IntID)),
-  (qi, (CBOR::ID<"-8">, CBOR::IntID)));
+ZfStruct(Ztls_API, RSASK,
+  (kty,		(Mutable),		UInt8),
+  (n,		(Mutable),		Bytes),
+  (e,		(Mutable),		Bytes),
+  (d,		(Mutable),		Bytes),
+  (p,		(Mutable),		Bytes),
+  (q,		(Mutable),		Bytes),
+  (dp,		(Mutable),		Bytes),
+  (dq,		(Mutable),		Bytes),
+  (qi,		(Mutable),		Bytes));
+ZfStructRender(Ztls_API, RSASK, CBOR,
+  (kty,		(CBOR::ID<"1">, CBOR::IntID)),
+  (n,		(CBOR::ID<"-1">, CBOR::IntID)),
+  (e,		(CBOR::ID<"-2">, CBOR::IntID)),
+  (d,		(CBOR::ID<"-3">, CBOR::IntID)),
+  (p,		(CBOR::ID<"-4">, CBOR::IntID)),
+  (q,		(CBOR::ID<"-5">, CBOR::IntID)),
+  (dp,		(CBOR::ID<"-6">, CBOR::IntID)),
+  (dq,		(CBOR::ID<"-7">, CBOR::IntID)),
+  (qi,		(CBOR::ID<"-8">, CBOR::IntID)));
 
 } // namespace Data
 
@@ -195,20 +230,20 @@ public:
 	uint8_t point[ES256::PublicKeySize];
 	if (!p256(data, point)) break;
 	return ZmRef<PK::AnyKey>{
-	  new PK::PK_EC{PK::OIDs::EC_GRP_SECP256R1, point}
-	  };
+	  new PK::ECPublic{PK::OIDs::ECGroupSecp256r1, point}
+	     };
       }
       case KeyType::OKP: {
 	auto data = ZfCBOR::handler<Data::OKPPK>(input).ctor();
 	if (data.kty != KeyType::OKP || data.crv != Curve::Ed25519 ||
 	  data.x.length() != Ed25519::KeySize)
 	  break;
-	return ZmRef<PK::AnyKey>{new PK::PK_ED25519{data.x}};
+	return ZmRef<PK::AnyKey>{new PK::Ed25519Public{data.x}};
       }
       case KeyType::RSA: {
 	auto data = ZfCBOR::handler<Data::RSAPK>(input).ctor();
 	if (data.kty != KeyType::RSA || !data.n || !data.e) break;
-	return ZmRef<PK::AnyKey>{new PK::PK_RSA{PK::Data::PK_PKCS1{data.n, data.e}}};
+	return ZmRef<PK::AnyKey>{new PK::RSAPublic{PK::Data::PKCS1Public{data.n, data.e}}};
       }
       }
     } catch (const ZeException &e) {
@@ -232,11 +267,10 @@ public:
 	auto	data = ZfCBOR::handler<Data::EC2SK>(input).ctor();
 	uint8_t point[ES256::PublicKeySize], derived[ES256::PublicKeySize];
 	if (!p256(data, point)) break;
-	ZmRef<PK::SK_EC> key{
-	  new PK::SK_EC{m_rng, PK::OIDs::EC_GRP_SECP256R1, data.d}
-	  };
-	if (
-	  !PK::pkey_ec_export_public(key->key, derived) || memcmp(point, derived, sizeof(point)))
+	ZmRef<PK::ECPrivate> key{
+	  new PK::ECPrivate{m_rng, PK::OIDs::ECGroupSecp256r1, data.d}
+	      };
+	if (!PK::ecExportPublic(key->key, derived) || memcmp(point, derived, sizeof(point)))
 	  break;
 	return ZmRef<PK::AnyKey>{ZuMv(key)};
       }
@@ -245,9 +279,9 @@ public:
 	if (data.kty != KeyType::OKP || data.crv != Curve::Ed25519 ||
 	  data.x.length() != Ed25519::KeySize || data.d.length() != Ed25519::KeySize)
 	  break;
-	ZmRef<PK::SK_ED25519> key{new PK::SK_ED25519{data.d}};
-	uint8_t		      derived[Ed25519::KeySize];
-	if (!PK::pkey_ed25519_export_public(key->key, derived) ||
+	ZmRef<PK::Ed25519Private> key{new PK::Ed25519Private{data.d}};
+	uint8_t			  derived[Ed25519::KeySize];
+	if (!PK::ed25519ExportPublic(key->key, derived) ||
 	  memcmp(data.x.data(), derived, sizeof(derived)))
 	  break;
 	return ZmRef<PK::AnyKey>{ZuMv(key)};
@@ -257,7 +291,7 @@ public:
 	if (data.kty != KeyType::RSA || !data.n || !data.e || !data.d || !data.p || !data.q ||
 	  !data.dp || !data.dq || !data.qi)
 	  break;
-	return ZmRef<PK::AnyKey>{new PK::SK_RSA{PK::Data::SK_PKCS1{
+	return ZmRef<PK::AnyKey>{new PK::RSAPrivate{PK::Data::PKCS1Private{
 	  0, data.n, data.e, data.d, data.p, data.q, data.dp, data.dq, data.qi}}};
       }
       }
@@ -270,16 +304,16 @@ private:
   Random	&m_rng;
 };
 
-template <typename S> inline ZuUnion<void, ZeException> save(S &s, const PK::PK_EC *key)
+template <typename S> inline ZuUnion<void, ZeException> save(S &s, const PK::ECPublic *key)
 {
-  unsigned oidLen = PK::pkey_ec_oid_size(key->key);
+  unsigned oidLen = PK::ecOIDSize(key->key);
   auto	   oid = ZtScratch(Scratch, oidLen);
   oid.length(oidLen);
-  if (!PK::pkey_ec_export_oid(key->key, oid) || ZuBSpan{oid} != PK::OIDs::EC_GRP_SECP256R1)
+  if (!PK::ecExportOID(key->key, oid) || ZuBSpan{oid} != PK::OIDs::ECGroupSecp256r1)
     return ZeEXCEPT(Error, "ZtlsCOSE", "unsupported EC curve");
   auto point = ZtScratch(Scratch, ES256::PublicKeySize);
   point.length(ES256::PublicKeySize);
-  if (!PK::pkey_ec_export_public(key->key, point) || point[0] != 4)
+  if (!PK::ecExportPublic(key->key, point) || point[0] != 4)
     return ZeEXCEPT(Error, "ZtlsCOSE", "EC public key export failed");
   // clang-format off
   ZfCBOR::save(
@@ -293,65 +327,60 @@ template <typename S> inline ZuUnion<void, ZeException> save(S &s, const PK::PK_
   return {};
 }
 
-template <typename S> inline ZuUnion<void, ZeException> save(S &s, const PK::SK_EC *key)
+template <typename S> inline ZuUnion<void, ZeException> save(S &s, const PK::ECPrivate *key)
 {
   auto point = ZtScratch(Scratch, ES256::PublicKeySize);
   point.length(ES256::PublicKeySize);
   auto d = ZtScratch(Scratch, ES256::CoordinateSize);
   d.length(ES256::CoordinateSize);
-  unsigned oidLen = PK::pkey_ec_oid_size(key->key);
+  unsigned oidLen = PK::ecOIDSize(key->key);
   auto	   oid = ZtScratch(Scratch, oidLen);
   oid.length(oidLen);
-  if (!PK::pkey_ec_export_oid(key->key, oid) || ZuBSpan{oid} != PK::OIDs::EC_GRP_SECP256R1)
+  if (!PK::ecExportOID(key->key, oid) || ZuBSpan{oid} != PK::OIDs::ECGroupSecp256r1)
     return ZeEXCEPT(Error, "ZtlsCOSE", "unsupported EC curve");
-  if (!PK::pkey_ec_export_public(key->key, point) || point[0] != 4 ||
-    !PK::pkey_ec_export_private(key->key, d))
+  if (!PK::ecExportPublic(key->key, point) || point[0] != 4 || !PK::ecExportPrivate(key->key, d))
     return ZeEXCEPT(Error, "ZtlsCOSE", "EC private key export failed");
   ZfCBOR::save(
     s,
     Data::EC2SK{
-      KeyType::EC2, Curve::P256,
-      {point.data() + 1, ES256::CoordinateSize},
-      {point.data() + 1 + ES256::CoordinateSize, ES256::CoordinateSize},
-      d
-    });
+      KeyType::EC2, Curve::P256, {point.data() + 1, ES256::CoordinateSize},
+      {point.data() + 1 + ES256::CoordinateSize, ES256::CoordinateSize}, d});
   return {};
 }
 
-template <typename S> inline ZuUnion<void, ZeException> save(S &s, const PK::PK_ED25519 *key)
+template <typename S> inline ZuUnion<void, ZeException> save(S &s, const PK::Ed25519Public *key)
 {
   uint8_t x[Ed25519::KeySize];
-  if (!PK::pkey_ed25519_export_public(key->key, x))
+  if (!PK::ed25519ExportPublic(key->key, x))
     return ZeEXCEPT(Error, "ZtlsCOSE", "ED25519 public key export failed");
   ZfCBOR::save(s, Data::OKPPK{KeyType::OKP, Curve::Ed25519, x});
   return {};
 }
 
-template <typename S> inline ZuUnion<void, ZeException> save(S &s, const PK::SK_ED25519 *key)
+template <typename S> inline ZuUnion<void, ZeException> save(S &s, const PK::Ed25519Private *key)
 {
   uint8_t x[Ed25519::KeySize], d[Ed25519::KeySize];
-  if (
-    !PK::pkey_ed25519_export_public(key->key, x) || !PK::pkey_ed25519_export_private(key->key, d))
+  if (!PK::ed25519ExportPublic(key->key, x) || !PK::ed25519ExportPrivate(key->key, d))
     return ZeEXCEPT(Error, "ZtlsCOSE", "ED25519 private key export failed");
   ZfCBOR::save(s, Data::OKPSK{KeyType::OKP, Curve::Ed25519, x, d});
   return {};
 }
 
-template <typename S> inline ZuUnion<void, ZeException> save(S &s, const PK::PK_RSA *key)
+template <typename S> inline ZuUnion<void, ZeException> save(S &s, const PK::RSAPublic *key)
 {
-  unsigned	  n = PK::pkey_rsa_size(key->key);
+  unsigned	  n = PK::rsaSize(key->key);
   auto		  scratch = ZtScratch(Scratch, n + RSA::ExponentSize);
   ZuSpan<uint8_t> modulus{scratch.data(), n};
   ZuSpan<uint8_t> exponent{scratch.data() + n, RSA::ExponentSize};
-  if (!PK::pkey_rsa_export_public(key->key, modulus, exponent))
+  if (!PK::rsaExportPublic(key->key, modulus, exponent))
     return ZeEXCEPT(Error, "ZtlsCOSE", "RSA public key export failed");
   ZfCBOR::save(s, Data::RSAPK{KeyType::RSA, modulus, exponent});
   return {};
 }
 
-template <typename S> inline ZuUnion<void, ZeException> save(S &s, const PK::SK_RSA *key)
+template <typename S> inline ZuUnion<void, ZeException> save(S &s, const PK::RSAPrivate *key)
 {
-  unsigned	  n = PK::pkey_rsa_size(key->key), p = n >> 1;
+  unsigned	  n = PK::rsaSize(key->key), p = n >> 1;
   auto		  scratch = ZtScratch(Scratch, 2 * n + 5 * p + RSA::ExponentSize);
   auto		  ptr = scratch.data();
   ZuSpan<uint8_t> modulus{ptr, n};
@@ -369,8 +398,7 @@ template <typename S> inline ZuUnion<void, ZeException> save(S &s, const PK::SK_
   ZuSpan<uint8_t> exp2{ptr, p};
   ptr += p;
   ZuSpan<uint8_t> coeff{ptr, p};
-  if (!PK::pkey_rsa_export_private(
-	key->key, modulus, exponent, d, prime1, prime2, exp1, exp2, coeff))
+  if (!PK::rsaExportPrivate(key->key, modulus, exponent, d, prime1, prime2, exp1, exp2, coeff))
     return ZeEXCEPT(Error, "ZtlsCOSE", "RSA private key export failed");
   ZfCBOR::save(
     s, Data::RSASK{KeyType::RSA, modulus, exponent, d, prime1, prime2, exp1, exp2, coeff});
@@ -384,8 +412,8 @@ inline bool ES256::loadPK(ZuBSpan input, ZuSpan<uint8_t> output)
   ZfCBOR::handler<Data::ES256PK>(input).load(data);
   if (data.alg != -7 || !p256(data, output)) return false;
   try {
-    PK::PK_EC key{
-      PK::OIDs::EC_GRP_SECP256R1, {output.data(), ES256::PublicKeySize}
+    PK::ECPublic key{
+      PK::OIDs::ECGroupSecp256r1, {output.data(), ES256::PublicKeySize}
     };
   } catch (...) {
     return false;

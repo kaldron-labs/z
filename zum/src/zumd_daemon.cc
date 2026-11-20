@@ -467,8 +467,8 @@ bool Daemon::loadKey()
       "zum.sign_key", key.id, "privateMaterial", key.privateMaterial,
       privateKey)) return false;
   try {
-    m_key = new Ztls::PK::SK_EC{m_rng,
-      Ztls::PK::OIDs::EC_GRP_SECP256R1, privateKey};
+    m_key = new Ztls::PK::ECPrivate{m_rng,
+      Ztls::PK::OIDs::ECGroupSecp256r1, privateKey};
     if (!signKeyMatch(m_rng, key, privateKey)) {
       ZuClear(privateKey);
       m_key = nullptr;
@@ -548,7 +548,7 @@ bool Daemon::init(
           "zum.sign_key", record.id, "privateMaterial",
           record.privateMaterial, privateKey)) {
         try {
-          Ztls::PK::SK_EC key{m_rng, Ztls::PK::OIDs::EC_GRP_SECP256R1,
+          Ztls::PK::ECPrivate key{m_rng, Ztls::PK::OIDs::ECGroupSecp256r1,
             privateKey};
           ZuClear(privateKey);
           sign(key);

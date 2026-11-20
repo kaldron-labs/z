@@ -250,7 +250,7 @@ static __m128i gfmul(__m128i x, __m128i y)
   return _mm_xor_si128(hi, lo);
 }
 
-static inline __m128i gfmul_do_reduce(__m128i hi, __m128i lo, __m128i mid)
+static inline __m128i gfmulDoReduce(__m128i hi, __m128i lo, __m128i mid)
 {
   mid = _mm_xor_si128(mid, hi);
   mid = _mm_xor_si128(mid, lo);
@@ -285,7 +285,7 @@ static inline __m128i xor128(__m128i x, __m128i y)
 }
 
 static inline void
-gfmul_do_step128(struct FusionGfmul128 *gstate, __m128i X, struct FusionGhash128 *precompute)
+gfmulDoStep128(struct FusionGfmul128 *gstate, __m128i X, struct FusionGhash128 *precompute)
 {
   __m128i t1 = _mm_clmulepi64_si128(precompute->H, X, 0x00);
   __m128i t2 = _mm_clmulepi64_si128(precompute->H, X, 0x11);
@@ -298,27 +298,27 @@ gfmul_do_step128(struct FusionGfmul128 *gstate, __m128i X, struct FusionGhash128
 }
 
 static inline void
-gfmul_firststep128(struct FusionGfmul128 *gstate, __m128i X, struct FusionGhash128 *precompute)
+gfmulFirststep128(struct FusionGfmul128 *gstate, __m128i X, struct FusionGhash128 *precompute)
 {
   X = _mm_shuffle_epi8(X, byteswap128);
   X = _mm_xor_si128(gstate->lo, X);
   gstate->lo = _mm_setzero_si128();
   gstate->hi = _mm_setzero_si128();
   gstate->mid = _mm_setzero_si128();
-  gfmul_do_step128(gstate, X, precompute);
+  gfmulDoStep128(gstate, X, precompute);
 }
 
 static inline void
-gfmul_nextstep128(struct FusionGfmul128 *gstate, __m128i X, struct FusionGhash128 *precompute)
+gfmulNextstep128(struct FusionGfmul128 *gstate, __m128i X, struct FusionGhash128 *precompute)
 {
   X = _mm_shuffle_epi8(X, byteswap128);
-  gfmul_do_step128(gstate, X, precompute);
+  gfmulDoStep128(gstate, X, precompute);
 }
 
-static inline void gfmul_reduce128(struct FusionGfmul128 *gstate)
-{ gstate->lo = gfmul_do_reduce(gstate->hi, gstate->lo, gstate->mid); }
+static inline void gfmulReduce128(struct FusionGfmul128 *gstate)
+{ gstate->lo = gfmulDoReduce(gstate->hi, gstate->lo, gstate->mid); }
 
-static inline __m128i gfmul_get_tag128(struct FusionGfmul128 *gstate, __m128i ek0)
+static inline __m128i gfmulGetTag128(struct FusionGfmul128 *gstate, __m128i ek0)
 {
   __m128i tag = _mm_shuffle_epi8(gstate->lo, byteswap128);
   tag = _mm_xor_si128(tag, ek0);
@@ -330,7 +330,7 @@ struct FusionGfmul256 {
 };
 
 static inline void
-gfmul_do_step256(struct FusionGfmul256 *gstate, __m256i X, union FusionGhash256 *precompute)
+gfmulDoStep256(struct FusionGfmul256 *gstate, __m256i X, union FusionGhash256 *precompute)
 {
   __m256i t = _mm256_clmulepi64_epi128(precompute->wide.Hx2, X, 0x00);
   gstate->lo = _mm256_xor_si256(gstate->lo, t);
@@ -342,7 +342,7 @@ gfmul_do_step256(struct FusionGfmul256 *gstate, __m256i X, union FusionGhash256 
   gstate->mid = _mm256_xor_si256(gstate->mid, t);
 }
 
-static inline void gfmul_firststep256(
+static inline void gfmulFirststep256(
   struct FusionGfmul256 *gstate, __m256i X, int half, union FusionGhash256 *precompute)
 {
   X = _mm256_shuffle_epi8(X, byteswap256);
@@ -351,17 +351,17 @@ static inline void gfmul_firststep256(
   gstate->lo = _mm256_setzero_si256();
   gstate->hi = _mm256_setzero_si256();
   gstate->mid = _mm256_setzero_si256();
-  gfmul_do_step256(gstate, X, precompute);
+  gfmulDoStep256(gstate, X, precompute);
 }
 
 static inline void
-gfmul_nextstep256(struct FusionGfmul256 *gstate, __m256i X, union FusionGhash256 *precompute)
+gfmulNextstep256(struct FusionGfmul256 *gstate, __m256i X, union FusionGhash256 *precompute)
 {
   X = _mm256_shuffle_epi8(X, byteswap256);
-  gfmul_do_step256(gstate, X, precompute);
+  gfmulDoStep256(gstate, X, precompute);
 }
 
-static inline void gfmul_reduce256(struct FusionGfmul256 *gstate)
+static inline void gfmulReduce256(struct FusionGfmul256 *gstate)
 {
 #define Ztls_Xor256to128(y) \
   _mm_xor_si128(_mm256_castsi256_si128(y), _mm256_extractf128_si256((y), 1))
@@ -370,18 +370,18 @@ static inline void gfmul_reduce256(struct FusionGfmul256 *gstate)
   __m128i mid = Ztls_Xor256to128(gstate->mid);
 #undef Ztls_Xor256to128
 
-  lo = gfmul_do_reduce(hi, lo, mid);
+  lo = gfmulDoReduce(hi, lo, mid);
   gstate->lo = _mm256_zextsi128_si256(lo);
 }
 
-static inline __m128i gfmul_get_tag256(struct FusionGfmul256 *gstate, __m128i ek0)
+static inline __m128i gfmulGetTag256(struct FusionGfmul256 *gstate, __m128i ek0)
 {
   __m128i tag = _mm_shuffle_epi8(_mm256_castsi256_si128(gstate->lo), byteswap128);
   tag = _mm_xor_si128(tag, ek0);
   return tag;
 }
 
-static inline __m128i aesecb_encrypt(FusionEcbContext *ctx, __m128i v)
+static inline __m128i aesecbEncrypt(FusionEcbContext *ctx, __m128i v)
 {
 #define Ztls_Roundkey(i) \
   (ctx->aesni256 ? _mm256_castsi256_si128(ctx->keys.m256[i]) : ctx->keys.m128[i])
@@ -396,30 +396,30 @@ static inline __m128i aesecb_encrypt(FusionEcbContext *ctx, __m128i v)
 }
 
 // 32-bytes of 0xff followed by 31-bytes of 0x00
-static const uint8_t loadn_mask[63] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+static const uint8_t loadnMask[63] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
   0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
   0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-static const uint8_t loadn_shuffle[31] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+static const uint8_t loadnShuffle[31] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
   0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, // first 16 bytes map to byte offsets
   0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
   0x80}; // latter 15 bytes map to zero
 
-Ztls_NoSanitizeAddress static inline __m128i loadn_end_of_page(const void *p, size_t l)
+Ztls_NoSanitizeAddress static inline __m128i loadnEndOfPage(const void *p, size_t l)
 {
   uintptr_t shift = (uintptr_t)p & 15;
-  __m128i   pattern = _mm_loadu_si128((const __m128i *)(loadn_shuffle + shift));
+  __m128i   pattern = _mm_loadu_si128((const __m128i *)(loadnShuffle + shift));
   return _mm_shuffle_epi8(_mm_load_si128((const __m128i *)((uintptr_t)p - shift)), pattern);
 }
 
 Ztls_NoSanitizeAddress static inline __m128i loadn128(const void *p, size_t l)
 {
-  __m128i   v, mask = _mm_loadu_si128((__m128i *)(loadn_mask + 32 - l));
+  __m128i   v, mask = _mm_loadu_si128((__m128i *)(loadnMask + 32 - l));
   uintptr_t mod4k = (uintptr_t)p % 4096;
 
   if (ZuLikely(mod4k <= 4096 - 16) || mod4k + l > 4096) {
     v = _mm_loadu_si128(reinterpret_cast<const __m128i *>(p));
   } else {
-    v = loadn_end_of_page(p, l);
+    v = loadnEndOfPage(p, l);
   }
   v = _mm_and_si128(v, mask);
 
@@ -428,7 +428,7 @@ Ztls_NoSanitizeAddress static inline __m128i loadn128(const void *p, size_t l)
 
 Ztls_NoSanitizeAddress static inline __m256i loadn256(const void *p, size_t l)
 {
-  __m256i   v, mask = _mm256_loadu_si256((__m256i *)(loadn_mask + 32 - l));
+  __m256i   v, mask = _mm256_loadu_si256((__m256i *)(loadnMask + 32 - l));
   uintptr_t mod4k = (uintptr_t)p % 4096;
 
   if (ZuLikely(mod4k < 4096 - 32) || mod4k + l > 4096) {
@@ -441,7 +441,7 @@ Ztls_NoSanitizeAddress static inline __m256i loadn256(const void *p, size_t l)
   } else if (l == 16) {
     v = _mm256_castsi128_si256(_mm_loadu_si128(reinterpret_cast<const __m128i *>(p)));
   } else {
-    v = _mm256_castsi128_si256(loadn_end_of_page(p, l));
+    v = _mm256_castsi128_si256(loadnEndOfPage(p, l));
   }
   v = _mm256_and_si256(v, mask);
 
@@ -465,10 +465,10 @@ struct FusionInput {
   size_t	vecCount;
 };
 
-static inline struct FusionInput fusion_input_iovec(const Bytes *input, size_t incnt)
+static inline struct FusionInput inputVec(const Bytes *input, size_t incnt)
 { return (struct FusionInput){NULL, 0, input, 0, incnt}; }
 
-static inline int fusion_input_next(struct FusionInput *src)
+static inline int inputNext(struct FusionInput *src)
 {
   while (src->len == 0 && src->vecIndex != src->vecCount) {
     src->ptr = src->vec[src->vecIndex].data();
@@ -478,11 +478,11 @@ static inline int fusion_input_next(struct FusionInput *src)
   return src->len != 0;
 }
 
-static size_t fusion_input_read(struct FusionInput *src, uint8_t *dst, size_t max)
+static size_t inputRead(struct FusionInput *src, uint8_t *dst, size_t max)
 {
   size_t off = 0;
 
-  while (off != max && fusion_input_next(src)) {
+  while (off != max && inputNext(src)) {
     size_t len = max - off;
     if (len > src->len) len = src->len;
     memcpy(dst + off, src->ptr, len);
@@ -493,20 +493,20 @@ static size_t fusion_input_read(struct FusionInput *src, uint8_t *dst, size_t ma
   return off;
 }
 
-static inline void fusion_input_consume(struct FusionInput *src, size_t len)
+static inline void inputConsume(struct FusionInput *src, size_t len)
 {
   src->ptr += len;
   src->len -= len;
 }
 
 static inline void
-fusion_ghash_update128(struct FusionGcm128 *ctx, struct FusionGfmul128 *gstate, __m128i block)
+ghashUpdate128(struct FusionGcm128 *ctx, struct FusionGfmul128 *gstate, __m128i block)
 {
-  gfmul_firststep128(gstate, block, ctx->ghash.data());
-  gfmul_reduce128(gstate);
+  gfmulFirststep128(gstate, block, ctx->ghash.data());
+  gfmulReduce128(gstate);
 }
 
-static void fusion_aesgcm_encrypt_iter(
+static void aesgcmEncryptIter(
   FusionGcmContext *_ctx, void *output, struct FusionInput *input, size_t inlen, __m128i ctr,
   const void *_aad, size_t aadlen)
 {
@@ -514,34 +514,34 @@ static void fusion_aesgcm_encrypt_iter(
   const uint8_t	       *aad = static_cast<const uint8_t *>(_aad);
   uint8_t	       *dst = static_cast<uint8_t *>(output);
   struct FusionGfmul128 gstate = {0};
-  size_t		aadlen_total = aadlen;
+  size_t		aadlenTotal = aadlen;
 
   assert(!_ctx->ecb.aesni256);
 
   while (aadlen >= 16) {
-    fusion_ghash_update128(ctx, &gstate, _mm_loadu_si128((const __m128i *)aad));
+    ghashUpdate128(ctx, &gstate, _mm_loadu_si128((const __m128i *)aad));
     aad += 16;
     aadlen -= 16;
   }
-  if (aadlen != 0) fusion_ghash_update128(ctx, &gstate, loadn128(aad, aadlen));
+  if (aadlen != 0) ghashUpdate128(ctx, &gstate, loadn128(aad, aadlen));
 
   ctr = _mm_insert_epi32(ctr, 1, 0);
-  __m128i ek0 = aesecb_encrypt(&ctx->ecb, _mm_shuffle_epi8(ctr, byteswap128));
+  __m128i ek0 = aesecbEncrypt(&ctx->ecb, _mm_shuffle_epi8(ctr, byteswap128));
 
   for (size_t left = inlen; left != 0;) {
     ctr = _mm_add_epi64(ctr, one8);
-    __m128i bits = aesecb_encrypt(&ctx->ecb, _mm_shuffle_epi8(ctr, byteswap128)), enc;
+    __m128i bits = aesecbEncrypt(&ctx->ecb, _mm_shuffle_epi8(ctr, byteswap128)), enc;
     size_t  blocklen;
 
-    if (fusion_input_next(input) && input->len >= 16) {
+    if (inputNext(input) && input->len >= 16) {
       enc = _mm_xor_si128(_mm_loadu_si128((const __m128i *)input->ptr), bits);
       _mm_storeu_si128((__m128i *)dst, enc);
-      fusion_input_consume(input, 16);
+      inputConsume(input, 16);
       blocklen = 16;
     } else {
       uint8_t block[16] = {0}, encbuf[16] = {0};
 
-      blocklen = fusion_input_read(input, block, left < 16 ? left : 16);
+      blocklen = inputRead(input, block, left < 16 ? left : 16);
       assert(blocklen != 0);
       enc = _mm_xor_si128(_mm_loadu_si128((const __m128i *)block), bits);
       storen128(dst, blocklen, enc);
@@ -549,18 +549,18 @@ static void fusion_aesgcm_encrypt_iter(
       enc = _mm_loadu_si128((const __m128i *)encbuf);
     }
 
-    fusion_ghash_update128(ctx, &gstate, enc);
+    ghashUpdate128(ctx, &gstate, enc);
     dst += blocklen;
     left -= blocklen;
   }
 
   __m128i ac =
-    _mm_shuffle_epi8(_mm_set_epi32(0, (int)aadlen_total * 8, 0, (int)inlen * 8), byteswap128);
-  fusion_ghash_update128(ctx, &gstate, ac);
-  _mm_storeu_si128((__m128i *)dst, gfmul_get_tag128(&gstate, ek0));
+    _mm_shuffle_epi8(_mm_set_epi32(0, (int)aadlenTotal * 8, 0, (int)inlen * 8), byteswap128);
+  ghashUpdate128(ctx, &gstate, ac);
+  _mm_storeu_si128((__m128i *)dst, gfmulGetTag128(&gstate, ek0));
 }
 
-void fusion_aesgcm_encrypt(
+void fusionAesgcmEncrypt(
   FusionGcmContext *_ctx, void *output, const void *input, size_t inlen, __m128i ctr,
   const void *_aad, size_t aadlen, AeadSupplement *supp)
 {
@@ -568,8 +568,8 @@ void fusion_aesgcm_encrypt(
   if (supp && (!fused || fused->fusion.rounds != _ctx->ecb.rounds)) {
     // Generic ciphers and different AES key widths use their own virtual operation.
     // The sample may include the tag, so compute it after all AEAD output exists.
-    fusion_aesgcm_encrypt(_ctx, output, input, inlen, ctr, _aad, aadlen, nullptr);
-    aead__do_supplementary(supp);
+    fusionAesgcmEncrypt(_ctx, output, input, inlen, ctr, _aad, aadlen, nullptr);
+    aeadSupplement(supp);
     return;
   }
 // init the bits (we can always run in full), but use the last slot for calculating ek0, if
@@ -596,7 +596,7 @@ void fusion_aesgcm_encrypt(
       } \
       if ( \
 	(state & Ztls_StateSuppUsed) != 0 && srclen <= 16 * 4 && \
-	(const __m128i *)supp->input + 1 <= dst_ghash \
+	(const __m128i *)supp->input + 1 <= dstGhash \
       ) { \
 	bits4 = _mm_loadu_si128(static_cast<const __m128i *>(supp->input)); \
 	bits4keys = fused->fusion.keys.m128; \
@@ -649,12 +649,12 @@ void fusion_aesgcm_encrypt(
   const __m128i *src = static_cast<const __m128i *>(input);
   __m128i	*dst = static_cast<__m128i *>(output);
   size_t	 srclen = inlen;
-  // aad and src_ghash are updated before the chunk is processed (i.e., when the pointers are fed
+  // aad and srcGhash are updated before the chunk is processed (i.e., when the pointers are fed
   // indo the processor)
-  const __m128i *aad = static_cast<const __m128i *>(_aad), *dst_ghash = dst;
-  size_t	 dst_ghashlen = srclen;
+  const __m128i *aad = static_cast<const __m128i *>(_aad), *dstGhash = dst;
+  size_t	 dstGhashlen = srclen;
 
-  struct FusionGhash128 *ghash_precompute =
+  struct FusionGhash128 *ghashPrecompute =
     ctx->ghash.data() + (aadlen + 15)/16 + (srclen + 15)/16 + 1;
 
 #define Ztls_StateEk0BeenFed 0x3
@@ -675,17 +675,17 @@ void fusion_aesgcm_encrypt(
   // build first ghash data (only AAD can be fed at this point, as this would be calculated
   // alongside the first AES block)
   const __m128i *gdata = gdatabuf; // points to the elements fed into GHASH
-  size_t	 gdata_cnt = 0;
+  size_t	 gdataCnt = 0;
   if (ZuLikely(aadlen != 0)) {
-    while (gdata_cnt < 6) {
+    while (gdataCnt < 6) {
       if (ZuLikely(aadlen < 16)) {
 	if (aadlen != 0) {
-	  gdatabuf[gdata_cnt++] = loadn128(aad, aadlen);
+	  gdatabuf[gdataCnt++] = loadn128(aad, aadlen);
 	  aadlen = 0;
 	}
 	goto MainLoop;
       }
-      gdatabuf[gdata_cnt++] = _mm_loadu_si128(aad++);
+      gdatabuf[gdataCnt++] = _mm_loadu_si128(aad++);
       aadlen -= 16;
     }
   }
@@ -695,9 +695,9 @@ MainLoop:
   while (1) {
     // run AES and multiplication in parallel
     size_t i;
-    for (i = 2; i < gdata_cnt + 2; ++i) {
+    for (i = 2; i < gdataCnt + 2; ++i) {
       Ztls_AESECB6Update(i);
-      gfmul_nextstep128(&gstate, _mm_loadu_si128(gdata++), --ghash_precompute);
+      gfmulNextstep128(&gstate, _mm_loadu_si128(gdata++), --ghashPrecompute);
     }
     for (; i < ctx->ecb.rounds; ++i) Ztls_AESECB6Update(i);
     Ztls_AESECB6Final(i);
@@ -762,56 +762,55 @@ ApplyEnd:;
 
     // setup gdata
     if (ZuUnlikely(aadlen != 0)) {
-      gdata_cnt = 0;
-      while (gdata_cnt < 6) {
+      gdataCnt = 0;
+      while (gdataCnt < 6) {
 	if (aadlen < 16) {
 	  if (aadlen != 0) {
-	    gdatabuf[gdata_cnt++] = loadn128(aad, aadlen);
+	    gdatabuf[gdataCnt++] = loadn128(aad, aadlen);
 	    aadlen = 0;
 	  }
 	  goto GdataFillDST;
 	}
-	gdatabuf[gdata_cnt++] = _mm_loadu_si128(aad++);
+	gdatabuf[gdataCnt++] = _mm_loadu_si128(aad++);
 	aadlen -= 16;
       }
       gdata = gdatabuf;
-    } else if (ZuLikely(dst_ghashlen >= 6 * 16)) {
-      gdata = dst_ghash;
-      gdata_cnt = 6;
-      dst_ghash += 6;
-      dst_ghashlen -= 96;
+    } else if (ZuLikely(dstGhashlen >= 6 * 16)) {
+      gdata = dstGhash;
+      gdataCnt = 6;
+      dstGhash += 6;
+      dstGhashlen -= 96;
     } else {
-      gdata_cnt = 0;
+      gdataCnt = 0;
 GdataFillDST:
-      while (gdata_cnt < 6) {
-	if (dst_ghashlen < 16) {
-	  if (dst_ghashlen != 0) {
-	    gdatabuf[gdata_cnt++] = loadn128(dst_ghash, dst_ghashlen);
-	    dst_ghashlen = 0;
+      while (gdataCnt < 6) {
+	if (dstGhashlen < 16) {
+	  if (dstGhashlen != 0) {
+	    gdatabuf[gdataCnt++] = loadn128(dstGhash, dstGhashlen);
+	    dstGhashlen = 0;
 	  }
-	  if (gdata_cnt < 6) goto Finish;
+	  if (gdataCnt < 6) goto Finish;
 	  break;
 	}
-	gdatabuf[gdata_cnt++] = _mm_loadu_si128(dst_ghash++);
-	dst_ghashlen -= 16;
+	gdatabuf[gdataCnt++] = _mm_loadu_si128(dstGhash++);
+	dstGhashlen -= 16;
       }
       gdata = gdatabuf;
     }
   }
 
 Finish:
-  gdatabuf[gdata_cnt++] = ac;
+  gdatabuf[gdataCnt++] = ac;
 
   // We have complete set of data to be fed into GHASH. Let's finish the remaining calculation.
   // Note that by now, all AES operations for payload encryption and ek0 are complete. This is is
   // because it is necessary for GCM to process at least the same amount of data (i.e.
   // payload-blocks + AC), and because AES is at least one 96-byte block ahead.
   assert(Ztls_StateEk0Ready());
-  for (size_t i = 0; i < gdata_cnt; ++i)
-    gfmul_nextstep128(&gstate, gdatabuf[i], --ghash_precompute);
+  for (size_t i = 0; i < gdataCnt; ++i) gfmulNextstep128(&gstate, gdatabuf[i], --ghashPrecompute);
 
-  gfmul_reduce128(&gstate);
-  _mm_storeu_si128(dst, gfmul_get_tag128(&gstate, ek0));
+  gfmulReduce128(&gstate);
+  _mm_storeu_si128(dst, gfmulGetTag128(&gstate, ek0));
 
   // Finish the calculation of supplemental vector. Done at the very last, because the sample
   // might cover the GCM tag.
@@ -839,7 +838,7 @@ Finish:
 #undef Ztls_StateSuppInProcess
 }
 
-int fusion_aesgcm_decrypt(
+int fusionAesgcmDecrypt(
   FusionGcmContext *_ctx, void *output, const void *input, size_t inlen, __m128i ctr,
   const void *_aad, size_t aadlen, const void *tag)
 {
@@ -851,22 +850,22 @@ int fusion_aesgcm_decrypt(
   __m128i		gdatabuf[6];
   __m128i		ac =
     _mm_shuffle_epi8(_mm_set_epi32(0, (int)aadlen * 8, 0, (int)inlen * 8), byteswap128);
-  struct FusionGhash128 *ghash_precompute =
+  struct FusionGhash128 *ghashPrecompute =
     ctx->ghash.data() + (aadlen + 15)/16 + (inlen + 15)/16 + 1;
 
   const __m128i *gdata; // points to the elements fed into GHASH
-  size_t	 gdata_cnt;
+  size_t	 gdataCnt;
 
-  const __m128i *src_ghash = static_cast<const __m128i *>(input),
-		*src_aes = static_cast<const __m128i *>(input),
+  const __m128i *srcGhash = static_cast<const __m128i *>(input),
+		*srcAes = static_cast<const __m128i *>(input),
 		*aad = static_cast<const __m128i *>(_aad);
   __m128i *dst = static_cast<__m128i *>(output);
-  size_t   nondata_aes_cnt = 0, src_ghashlen = inlen, src_aeslen = inlen;
+  size_t   nondataAesCnt = 0, srcGhashlen = inlen, srcAeslen = inlen;
 
   // schedule ek0 and suppkey
   ctr = _mm_add_epi64(ctr, one8);
   bits0 = _mm_xor_si128(_mm_shuffle_epi8(ctr, byteswap128), ctx->ecb.keys.m128[0]);
-  ++nondata_aes_cnt;
+  ++nondataAesCnt;
 
 #define Ztls_StateIsFirstRun 0x1
 #define Ztls_StateGhashHasMore 0x2
@@ -877,50 +876,50 @@ int fusion_aesgcm_decrypt(
     // setup gdata
     if (ZuUnlikely(aadlen != 0)) {
       gdata = gdatabuf;
-      gdata_cnt = 0;
-      while (gdata_cnt < 6) {
+      gdataCnt = 0;
+      while (gdataCnt < 6) {
 	if (aadlen < 16) {
 	  if (aadlen != 0) {
-	    gdatabuf[gdata_cnt++] = loadn128(aad, aadlen);
+	    gdatabuf[gdataCnt++] = loadn128(aad, aadlen);
 	    aadlen = 0;
-	    ++nondata_aes_cnt;
+	    ++nondataAesCnt;
 	  }
 	  goto GdataFillSrc;
 	}
-	gdatabuf[gdata_cnt++] = _mm_loadu_si128(aad++);
+	gdatabuf[gdataCnt++] = _mm_loadu_si128(aad++);
 	aadlen -= 16;
-	++nondata_aes_cnt;
+	++nondataAesCnt;
       }
-    } else if (ZuLikely(src_ghashlen >= 6 * 16)) {
-      gdata = src_ghash;
-      gdata_cnt = 6;
-      src_ghash += 6;
-      src_ghashlen -= 6 * 16;
+    } else if (ZuLikely(srcGhashlen >= 6 * 16)) {
+      gdata = srcGhash;
+      gdataCnt = 6;
+      srcGhash += 6;
+      srcGhashlen -= 6 * 16;
     } else {
       gdata = gdatabuf;
-      gdata_cnt = 0;
+      gdataCnt = 0;
 GdataFillSrc:
-      while (gdata_cnt < 6) {
-	if (src_ghashlen < 16) {
-	  if (src_ghashlen != 0) {
-	    gdatabuf[gdata_cnt++] = loadn128(src_ghash, src_ghashlen);
-	    src_ghash = (__m128i *)((uint8_t *)src_ghash + src_ghashlen);
-	    src_ghashlen = 0;
+      while (gdataCnt < 6) {
+	if (srcGhashlen < 16) {
+	  if (srcGhashlen != 0) {
+	    gdatabuf[gdataCnt++] = loadn128(srcGhash, srcGhashlen);
+	    srcGhash = (__m128i *)((uint8_t *)srcGhash + srcGhashlen);
+	    srcGhashlen = 0;
 	  }
-	  if (gdata_cnt < 6 && (state & Ztls_StateGhashHasMore) != 0) {
-	    gdatabuf[gdata_cnt++] = ac;
+	  if (gdataCnt < 6 && (state & Ztls_StateGhashHasMore) != 0) {
+	    gdatabuf[gdataCnt++] = ac;
 	    state &= ~Ztls_StateGhashHasMore;
 	  }
 	  break;
 	}
-	gdatabuf[gdata_cnt++] = _mm_loadu_si128(src_ghash++);
-	src_ghashlen -= 16;
+	gdatabuf[gdataCnt++] = _mm_loadu_si128(srcGhash++);
+	srcGhashlen -= 16;
       }
     }
 
     // setup aes bits
-    if (ZuLikely(nondata_aes_cnt == 0)) goto InitAllBits;
-    switch (nondata_aes_cnt) {
+    if (ZuLikely(nondataAesCnt == 0)) goto InitAllBits;
+    switch (nondataAesCnt) {
 #define Ztls_InitBits(n, keys) \
   case n: \
     ctr = _mm_add_epi64(ctr, one8); \
@@ -949,9 +948,9 @@ InitAllBits:
   } while (0)
 
       size_t aesi;
-      for (aesi = 1; aesi <= gdata_cnt; ++aesi) {
+      for (aesi = 1; aesi <= gdataCnt; ++aesi) {
 	Ztls_AESECB6Update(aesi);
-	gfmul_nextstep128(&gstate, _mm_loadu_si128(gdata++), --ghash_precompute);
+	gfmulNextstep128(&gstate, _mm_loadu_si128(gdata++), --ghashPrecompute);
       }
       for (; aesi < ctx->ecb.rounds; ++aesi) Ztls_AESECB6Update(aesi);
       __m128i k = ctx->ecb.keys.m128[aesi];
@@ -966,9 +965,9 @@ InitAllBits:
     }
 
     // apply aes bits
-    if (ZuLikely(nondata_aes_cnt == 0 && src_aeslen >= 6 * 16)) {
+    if (ZuLikely(nondataAesCnt == 0 && srcAeslen >= 6 * 16)) {
 #define Ztls_Apply(i) \
-  _mm_storeu_si128(dst + i, _mm_xor_si128(_mm_loadu_si128(src_aes + i), bits##i))
+  _mm_storeu_si128(dst + i, _mm_xor_si128(_mm_loadu_si128(srcAes + i), bits##i))
       Ztls_Apply(0);
       Ztls_Apply(1);
       Ztls_Apply(2);
@@ -977,20 +976,20 @@ InitAllBits:
       Ztls_Apply(5);
 #undef Ztls_Apply
       dst += 6;
-      src_aes += 6;
-      src_aeslen -= 6 * 16;
+      srcAes += 6;
+      srcAeslen -= 6 * 16;
     } else {
       if ((state & Ztls_StateIsFirstRun) != 0) {
 	ek0 = bits0;
 	state &= ~Ztls_StateIsFirstRun;
       }
-      switch (nondata_aes_cnt) {
+      switch (nondataAesCnt) {
 #define Ztls_Apply(i) \
   \
   case i: \
-    if (ZuLikely(src_aeslen > 16)) { \
-      _mm_storeu_si128(dst++, _mm_xor_si128(_mm_loadu_si128(src_aes++), bits##i)); \
-      src_aeslen -= 16; \
+    if (ZuLikely(srcAeslen > 16)) { \
+      _mm_storeu_si128(dst++, _mm_xor_si128(_mm_loadu_si128(srcAes++), bits##i)); \
+      srcAeslen -= 16; \
     } else { \
       bits0 = bits##i; \
       goto Finish; \
@@ -1003,15 +1002,15 @@ InitAllBits:
 	Ztls_Apply(5);
 #undef Ztls_Apply
       }
-      nondata_aes_cnt = 0;
+      nondataAesCnt = 0;
     }
   }
 
 Finish:
-  if (src_aeslen == 16) {
-    _mm_storeu_si128(dst, _mm_xor_si128(_mm_loadu_si128(src_aes), bits0));
-  } else if (src_aeslen != 0) {
-    storen128(dst, src_aeslen, _mm_xor_si128(loadn128(src_aes, src_aeslen), bits0));
+  if (srcAeslen == 16) {
+    _mm_storeu_si128(dst, _mm_xor_si128(_mm_loadu_si128(srcAes), bits0));
+  } else if (srcAeslen != 0) {
+    storen128(dst, srcAeslen, _mm_xor_si128(loadn128(srcAes, srcAeslen), bits0));
   }
 
   assert((state & Ztls_StateIsFirstRun) == 0);
@@ -1019,12 +1018,12 @@ Finish:
   // the only case where AES operation is complete and GHASH is not is when the application of AC
   // is remaining
   if ((state & Ztls_StateGhashHasMore) != 0) {
-    assert(ghash_precompute - 1 == ctx->ghash.data());
-    gfmul_nextstep128(&gstate, ac, --ghash_precompute);
+    assert(ghashPrecompute - 1 == ctx->ghash.data());
+    gfmulNextstep128(&gstate, ac, --ghashPrecompute);
   }
 
-  gfmul_reduce128(&gstate);
-  __m128i calctag = gfmul_get_tag128(&gstate, ek0);
+  gfmulReduce128(&gstate);
+  __m128i calctag = gfmulGetTag128(&gstate, ek0);
 
   return _mm_movemask_epi8(_mm_cmpeq_epi8(
 	   calctag, _mm_loadu_si128(reinterpret_cast<const __m128i *>(tag)))) == 0xffff;
@@ -1033,7 +1032,7 @@ Finish:
 #undef Ztls_StateGhashHasMore
 }
 
-static __m128i expand_key(__m128i key, __m128i temp)
+static __m128i expandKey(__m128i key, __m128i temp)
 {
   key = _mm_xor_si128(key, _mm_slli_si128(key, 4));
   key = _mm_xor_si128(key, _mm_slli_si128(key, 4));
@@ -1047,11 +1046,11 @@ static __m128i expand_key(__m128i key, __m128i temp)
 ZuDerive(Aes128Keys, (ZtArray<__m128i, ZtArrayHeapID<"Ztls.Fusion.AES128Keys">>));
 ZuDerive(Aes256Keys, (ZtArray<__m256i, ZtArrayHeapID<"Ztls.Fusion.AES256Keys">>));
 
-void fusion_aesecb_init(
-  FusionEcbContext *ctx, int is_enc, const void *key, size_t keySize, int aesni256)
+void fusionAesecbInit(
+  FusionEcbContext *ctx, int isEnc, const void *key, size_t keySize, int aesni256)
 {
-  if (ctx->keys.m128) fusion_aesecb_dispose(ctx);
-  assert(is_enc && "decryption is not supported (yet)");
+  if (ctx->keys.m128) fusionAesecbDispose(ctx);
+  assert(isEnc && "decryption is not supported (yet)");
 
   size_t i = 0;
 
@@ -1078,13 +1077,13 @@ void fusion_aesecb_init(
   while (1) {
 #define Ztls_Expand(R) \
   { \
-    keys128[i] = expand_key( \
+    keys128[i] = expandKey( \
       keys128[i - keySize/16], \
       _mm_shuffle_epi32(_mm_aeskeygenassist_si128(keys128[i - 1], R), _MM_SHUFFLE(3, 3, 3, 3))); \
     if (i == ctx->rounds) break; \
     ++i; \
     if (keySize > 24) { \
-      keys128[i] = expand_key( \
+      keys128[i] = expandKey( \
 	keys128[i - keySize/16], \
 	_mm_shuffle_epi32( \
 	  _mm_aeskeygenassist_si128(keys128[i - 1], R), _MM_SHUFFLE(2, 2, 2, 2))); \
@@ -1118,10 +1117,10 @@ void fusion_aesecb_init(
 
 FusionEcbContext::~FusionEcbContext()
 {
-  if (keys.m128) fusion_aesecb_dispose(this);
+  if (keys.m128) fusionAesecbDispose(this);
 }
 
-void fusion_aesecb_dispose(FusionEcbContext *ctx)
+void fusionAesecbDispose(FusionEcbContext *ctx)
 {
   if (!ctx->keys.m128) return;
   if (ctx->aesni256) {
@@ -1136,15 +1135,15 @@ void fusion_aesecb_dispose(FusionEcbContext *ctx)
   ctx->aesni256 = 0;
 }
 
-void fusion_aesecb_encrypt(FusionEcbContext *ctx, void *dst, const void *src)
+void fusionAesecbEncrypt(FusionEcbContext *ctx, void *dst, const void *src)
 {
   __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i *>(src));
-  v = aesecb_encrypt(ctx, v);
+  v = aesecbEncrypt(ctx, v);
   _mm_storeu_si128(reinterpret_cast<__m128i *>(dst), v);
 }
 
 // returns the number of ghash entries that is required to handle an AEAD block of given size
-static size_t aesgcm_calc_ghash_cnt(size_t capacity)
+static size_t aesgcmCalcGhashCnt(size_t capacity)
 {
   // round-up by block size, add to handle worst split of the size between AAD and payload, plus
   // context to hash AC
@@ -1176,7 +1175,7 @@ void FusionGcm256::setupOne()
   ++ghashCnt;
 }
 
-template <typename Array> static void grow_ghash(Array &ghash, size_t count)
+template <typename Array> static void growGhash(Array &ghash, size_t count)
 {
   if (count <= ghash.size()) {
     ghash.length(count);
@@ -1192,19 +1191,18 @@ template <typename Array> static void grow_ghash(Array &ghash, size_t count)
 
 size_t FusionGcm128::grow(size_t count)
 {
-  grow_ghash(ghash, count);
+  growGhash(ghash, count);
   return count;
 }
 
 size_t FusionGcm256::grow(size_t count)
 {
   count += count % 2;
-  grow_ghash(ghash, count/2);
+  growGhash(ghash, count/2);
   return count;
 }
 
-static FusionGcmContext *
-new_aesgcm(const void *key, size_t keySize, size_t capacity, int aesni256)
+static FusionGcmContext *newAesgcm(const void *key, size_t keySize, size_t capacity, int aesni256)
 {
   FusionGcmContext *ctx;
   if (aesni256) {
@@ -1216,10 +1214,10 @@ new_aesgcm(const void *key, size_t keySize, size_t capacity, int aesni256)
     ZmAssert(!(uintptr_t(storage) % alignof(FusionGcm128)));
     ctx = storage;
   }
-  fusion_aesecb_init(&ctx->ecb, 1, key, keySize, aesni256);
+  fusionAesecbInit(&ctx->ecb, 1, key, keySize, aesni256);
 
-  size_t  count = aesgcm_calc_ghash_cnt(capacity);
-  __m128i H0 = aesecb_encrypt(&ctx->ecb, _mm_setzero_si128());
+  size_t  count = aesgcmCalcGhashCnt(capacity);
+  __m128i H0 = aesecbEncrypt(&ctx->ecb, _mm_setzero_si128());
   H0 = transformH(_mm_shuffle_epi8(H0, byteswap128));
   count = ctx->grow(count);
   ctx->seed(H0);
@@ -1228,12 +1226,12 @@ new_aesgcm(const void *key, size_t keySize, size_t capacity, int aesni256)
   return ctx;
 }
 
-FusionGcmContext *fusion_aesgcm_new(const void *key, size_t keySize, size_t capacity)
-{ return new_aesgcm(key, keySize, capacity, 0); }
+FusionGcmContext *fusionAesgcmNew(const void *key, size_t keySize, size_t capacity)
+{ return newAesgcm(key, keySize, capacity, 0); }
 
-FusionGcmContext *fusion_aesgcm_set_capacity(FusionGcmContext *ctx, size_t capacity)
+FusionGcmContext *fusionAesgcmSetCapacity(FusionGcmContext *ctx, size_t capacity)
 {
-  size_t count = aesgcm_calc_ghash_cnt(capacity);
+  size_t count = aesgcmCalcGhashCnt(capacity);
   if (count <= ctx->ghashCnt) return ctx;
   count = ctx->grow(count);
   ctx->capacity = capacity;
@@ -1241,12 +1239,12 @@ FusionGcmContext *fusion_aesgcm_set_capacity(FusionGcmContext *ctx, size_t capac
   return ctx;
 }
 
-void fusion_aesgcm_free(FusionGcmContext *ctx) { delete ctx; }
+void fusionAesgcmFree(FusionGcmContext *ctx) { delete ctx; }
 
 FusionCtrContext::FusionCtrContext(const CipherAlgo *algo, const void *key) : CipherContext{algo}
 {
   // The header-protection block does not benefit from the 256-bit AES path.
-  fusion_aesecb_init(&fusion, 1, key, algo->keySize, 0);
+  fusionAesecbInit(&fusion, 1, key, algo->keySize, 0);
 }
 
 FusionCtrContext::~FusionCtrContext() { ZuClear(&bits, sizeof(bits)); }
@@ -1254,7 +1252,7 @@ FusionCtrContext::~FusionCtrContext() { ZuClear(&bits, sizeof(bits)); }
 void FusionCtrContext::init(const void *iv)
 {
   _mm_storeu_si128(
-    &bits, aesecb_encrypt(&fusion, _mm_loadu_si128(reinterpret_cast<const __m128i *>(iv))));
+    &bits, aesecbEncrypt(&fusion, _mm_loadu_si128(reinterpret_cast<const __m128i *>(iv))));
   isReady = 1;
 }
 
@@ -1277,15 +1275,15 @@ struct FusionCipherAlgo : CipherAlgo {
   { return new FusionCtrContext{this, key}; }
 };
 
-static void aesgcm_ensure_capacity(struct FusionAeadContext *ctx, size_t textlen, size_t aadlen)
+static void aesgcmEnsureCapacity(struct FusionAeadContext *ctx, size_t textlen, size_t aadlen)
 {
   if (aadlen > SIZE_MAX - textlen) abort();
 
   size_t required = textlen + aadlen;
-  if (required > ctx->aesgcm->capacity) { fusion_aesgcm_set_capacity(ctx->aesgcm, required); }
+  if (required > ctx->aesgcm->capacity) { fusionAesgcmSetCapacity(ctx->aesgcm, required); }
 }
 
-static inline __m128i calc_counter(struct FusionAeadContext *ctx, uint64_t seq)
+static inline __m128i calcCounter(struct FusionAeadContext *ctx, uint64_t seq)
 {
   __m128i ctr = _mm_setzero_si128();
   ctr = _mm_insert_epi64(ctr, seq, 0);
@@ -1295,7 +1293,7 @@ static inline __m128i calc_counter(struct FusionAeadContext *ctx, uint64_t seq)
 }
 
 // The serial path never allocates or reads outside the supplied destination span.
-static void serial_hash(struct FusionAeadContext *ctx, __m128i block)
+static void serialHash(struct FusionAeadContext *ctx, __m128i block)
 {
   __m128i h = ctx->aesgcm->ecb.aesni256 ?
     ((struct FusionGcm256 *)ctx->aesgcm)->ghash[0].narrow.H[1] :
@@ -1304,38 +1302,38 @@ static void serial_hash(struct FusionAeadContext *ctx, __m128i block)
     gfmul(_mm_xor_si128(ctx->serial.hash, _mm_shuffle_epi8(block, byteswap128)), h);
 }
 
-static int serial_error(struct FusionAeadContext *ctx)
+static int serialError(struct FusionAeadContext *ctx)
 {
   ZuClear(&ctx->serial, sizeof(ctx->serial));
   return Ztls_ErrorLibrary;
 }
 
-int fusion_aead_enc_begin(AeadContext *_ctx, uint64_t seq, const void *_aad, size_t aadlen)
+int fusionAeadEncBegin(AeadContext *_ctx, uint64_t seq, const void *_aad, size_t aadlen)
 {
   struct FusionAeadContext *ctx = static_cast<FusionAeadContext *>(_ctx);
   const uint8_t		   *aad = static_cast<const uint8_t *>(_aad);
   ZuClear(&ctx->serial, sizeof(ctx->serial));
-  if (aadlen > UINT64_MAX/8 || (aadlen != 0 && aad == NULL)) return serial_error(ctx);
+  if (aadlen > UINT64_MAX/8 || (aadlen != 0 && aad == NULL)) return serialError(ctx);
   ctx->serial.aadlen = aadlen;
-  ctx->serial.ctr = _mm_insert_epi32(calc_counter(ctx, seq), 1, 0);
+  ctx->serial.ctr = _mm_insert_epi32(calcCounter(ctx, seq), 1, 0);
   ctx->serial.j0 = _mm_shuffle_epi8(ctx->serial.ctr, byteswap128);
   ctx->serial.bitUsed = 16;
   ctx->serial.active = 1;
   while (aadlen >= 16) {
-    serial_hash(ctx, _mm_loadu_si128(reinterpret_cast<const __m128i *>((const void *)aad)));
+    serialHash(ctx, _mm_loadu_si128(reinterpret_cast<const __m128i *>((const void *)aad)));
     aad += 16;
     aadlen -= 16;
   }
   if (aadlen != 0) {
     uint8_t block[16] = {0};
     memcpy(block, aad, aadlen);
-    serial_hash(ctx, _mm_loadu_si128(reinterpret_cast<const __m128i *>((const void *)block)));
+    serialHash(ctx, _mm_loadu_si128(reinterpret_cast<const __m128i *>((const void *)block)));
   }
   return 0;
 }
 
 // Full-block kernel keeps six AES pipelines in flight, using the selected expanded keys.
-static void serial_blocks(
+static void serialBlocks(
   struct FusionAeadContext *ctx, uint8_t *dst, const uint8_t *src, int wide, int decrypt)
 {
   FusionEcbContext *ecb = &ctx->aesgcm->ecb;
@@ -1365,11 +1363,11 @@ static void serial_blocks(
       else
 	_mm256_storeu_si256(reinterpret_cast<__m256i *>((void *)(dst + 32 * i)), enc);
       if (i == 0)
-	gfmul_firststep256(&gstate, auth, 0, gctx->ghash.data() + 5);
+	gfmulFirststep256(&gstate, auth, 0, gctx->ghash.data() + 5);
       else
-	gfmul_nextstep256(&gstate, auth, gctx->ghash.data() + 5 - i);
+	gfmulNextstep256(&gstate, auth, gctx->ghash.data() + 5 - i);
     }
-    gfmul_reduce256(&gstate);
+    gfmulReduce256(&gstate);
     ctx->serial.hash = _mm256_castsi256_si128(gstate.lo);
   } else {
     struct FusionGcm128	 *gctx = static_cast<struct FusionGcm128 *>(ctx->aesgcm);
@@ -1393,16 +1391,16 @@ static void serial_blocks(
       else
 	_mm_storeu_si128(reinterpret_cast<__m128i *>((void *)(dst + 16 * i)), enc);
       if (i == 0)
-	gfmul_firststep128(&gstate, auth, gctx->ghash.data() + 5);
+	gfmulFirststep128(&gstate, auth, gctx->ghash.data() + 5);
       else
-	gfmul_nextstep128(&gstate, auth, gctx->ghash.data() + 5 - i);
+	gfmulNextstep128(&gstate, auth, gctx->ghash.data() + 5 - i);
     }
-    gfmul_reduce128(&gstate);
+    gfmulReduce128(&gstate);
     ctx->serial.hash = gstate.lo;
   }
 }
 
-static int serial_chunk(
+static int serialChunk(
   AeadContext *_ctx, void *_output, const void *_input, size_t length, size_t *written,
   int decrypt)
 {
@@ -1412,12 +1410,12 @@ static int serial_chunk(
   *written = 0;
   if (!ctx->serial.active || length > UINT64_MAX/8 - ctx->serial.textlen ||
     (length != 0 && (dst == NULL || src == NULL)))
-    return serial_error(ctx);
+    return serialError(ctx);
   ctx->serial.textlen += length;
   size_t left = length, batch = ctx->aesgcm->ecb.aesni256 ? 192 : 96;
   while (left != 0) {
     if (ctx->serial.bitUsed == 16 && left >= batch) {
-      serial_blocks(ctx, dst, src, ctx->aesgcm->ecb.aesni256, decrypt);
+      serialBlocks(ctx, dst, src, ctx->aesgcm->ecb.aesni256, decrypt);
       dst += batch;
       src += batch;
       left -= batch;
@@ -1427,7 +1425,7 @@ static int serial_chunk(
       ctx->serial.ctr = _mm_add_epi32(ctx->serial.ctr, _mm_set_epi32(0, 0, 0, 1));
       _mm_storeu_si128(
 	reinterpret_cast<__m128i *>((void *)ctx->serial.bits),
-	aesecb_encrypt(&ctx->aesgcm->ecb, _mm_shuffle_epi8(ctx->serial.ctr, byteswap128)));
+	aesecbEncrypt(&ctx->aesgcm->ecb, _mm_shuffle_epi8(ctx->serial.ctr, byteswap128)));
       ctx->serial.bitUsed = 0;
     }
     size_t n = 16 - ctx->serial.bitUsed;
@@ -1439,7 +1437,7 @@ static int serial_chunk(
       ctx->serial.carry[ctx->serial.carryUsed++] = decrypt ? c : p;
     }
     if (ctx->serial.carryUsed == 16) {
-      serial_hash(
+      serialHash(
 	ctx, _mm_loadu_si128(reinterpret_cast<const __m128i *>((const void *)ctx->serial.carry)));
       ctx->serial.carryUsed = 0;
     }
@@ -1452,51 +1450,51 @@ static int serial_chunk(
   return 0;
 }
 
-int fusion_aead_enc_chunk(
+int fusionAeadEncChunk(
   AeadContext *ctx, void *output, const void *input, size_t length, size_t *written)
-{ return serial_chunk(ctx, output, input, length, written, 0); }
+{ return serialChunk(ctx, output, input, length, written, 0); }
 
-int fusion_aead_dec_chunk(
+int fusionAeadDecChunk(
   AeadContext *ctx, void *output, size_t capacity, const void *input, size_t length,
   size_t *written)
 {
   *written = 0;
-  if (length > capacity) return serial_error(static_cast<FusionAeadContext *>(ctx));
-  return serial_chunk(ctx, output, input, length, written, 1);
+  if (length > capacity) return serialError(static_cast<FusionAeadContext *>(ctx));
+  return serialChunk(ctx, output, input, length, written, 1);
 }
 
-int fusion_aead_enc_end(AeadContext *_ctx, void *output, size_t capacity, size_t *written)
+int fusionAeadEncEnd(AeadContext *_ctx, void *output, size_t capacity, size_t *written)
 {
   struct FusionAeadContext *ctx = static_cast<FusionAeadContext *>(_ctx);
   *written = 0;
-  if (!ctx->serial.active || capacity < 16 || output == NULL) return serial_error(ctx);
+  if (!ctx->serial.active || capacity < 16 || output == NULL) return serialError(ctx);
   if (ctx->serial.carryUsed != 0) {
     memset(ctx->serial.carry + ctx->serial.carryUsed, 0, 16 - ctx->serial.carryUsed);
-    serial_hash(
+    serialHash(
       ctx, _mm_loadu_si128(reinterpret_cast<const __m128i *>((const void *)ctx->serial.carry)));
   }
   __m128i lengths = _mm_set_epi64x(ctx->serial.aadlen * 8, ctx->serial.textlen * 8);
-  serial_hash(ctx, _mm_shuffle_epi8(lengths, byteswap128));
+  serialHash(ctx, _mm_shuffle_epi8(lengths, byteswap128));
   _mm_storeu_si128(
     reinterpret_cast<__m128i *>(output),
     _mm_xor_si128(
       _mm_shuffle_epi8(ctx->serial.hash, byteswap128),
-      aesecb_encrypt(&ctx->aesgcm->ecb, ctx->serial.j0)));
+      aesecbEncrypt(&ctx->aesgcm->ecb, ctx->serial.j0)));
   ZuClear(&ctx->serial, sizeof(ctx->serial));
   *written = 16;
   return 0;
 }
 
-int fusion_aead_dec_begin(AeadContext *ctx, uint64_t seq, const void *aad, size_t aadlen)
-{ return fusion_aead_enc_begin(ctx, seq, aad, aadlen); }
+int fusionAeadDecBegin(AeadContext *ctx, uint64_t seq, const void *aad, size_t aadlen)
+{ return fusionAeadEncBegin(ctx, seq, aad, aadlen); }
 
-int fusion_aead_dec_end(AeadContext *ctx, const void *tag, size_t taglen)
+int fusionAeadDecEnd(AeadContext *ctx, const void *tag, size_t taglen)
 {
   uint8_t expected[16];
   size_t  written;
   if (tag == NULL || taglen != sizeof(expected))
-    return serial_error(static_cast<FusionAeadContext *>(ctx));
-  int ret = fusion_aead_enc_end(ctx, expected, sizeof(expected), &written);
+    return serialError(static_cast<FusionAeadContext *>(ctx));
+  int ret = fusionAeadEncEnd(ctx, expected, sizeof(expected), &written);
   if (ret == 0 &&
     !Ztls::ctEqual(
       {expected, sizeof(expected)}, {static_cast<const uint8_t *>(tag), sizeof(expected)}))
@@ -1505,42 +1503,41 @@ int fusion_aead_dec_end(AeadContext *ctx, const void *tag, size_t taglen)
   return ret;
 }
 
-void fusion_aead_dec_abort(AeadContext *ctx)
-{ serial_error(static_cast<FusionAeadContext *>(ctx)); }
+void fusionAeadDecAbort(AeadContext *ctx) { serialError(static_cast<FusionAeadContext *>(ctx)); }
 
-void aead_do_encrypt(
+void aeadDoEncrypt(
   AeadContext *_ctx, void *output, const void *input, size_t inlen, uint64_t seq, const void *aad,
   size_t aadlen, AeadSupplement *supp)
 {
   struct FusionAeadContext *ctx = static_cast<FusionAeadContext *>(_ctx);
 
-  aesgcm_ensure_capacity(ctx, inlen, aadlen);
-  fusion_aesgcm_encrypt(
-    ctx->aesgcm, output, input, inlen, calc_counter(ctx, seq), aad, aadlen, supp);
+  aesgcmEnsureCapacity(ctx, inlen, aadlen);
+  fusionAesgcmEncrypt(
+    ctx->aesgcm, output, input, inlen, calcCounter(ctx, seq), aad, aadlen, supp);
 }
 
 ZuDerive(FusionOverlap, (ZtBArray<ZtArrayHeapID<"Ztls.Fusion.OverlapScratch">>));
 
-static void aead_do_encrypt_v(
+static void aeadDoEncryptV(
   AeadContext *_ctx, void *output, const Bytes *input, size_t incnt, uint64_t seq,
   const void *aad, size_t aadlen)
 {
-  size_t inlen = aead__sum_iovec(input, incnt);
-  int	 use_scratch = 0;
+  size_t inlen = aeadVecSize(input, incnt);
+  int	 useScratch = 0;
 
   if (incnt == 1) {
-    aead_do_encrypt(_ctx, output, input[0].data(), input[0].length(), seq, aad, aadlen, NULL);
+    aeadDoEncrypt(_ctx, output, input[0].data(), input[0].length(), seq, aad, aadlen, NULL);
     return;
   }
 
   size_t off = 0;
   for (size_t i = 0; i != incnt; ++i) {
-    uintptr_t out_start = (uintptr_t)output, out_end = out_start + inlen;
-    uintptr_t in_start = (uintptr_t)input[i].data(), in_end = in_start + input[i].length();
+    uintptr_t outStart = (uintptr_t)output, outEnd = outStart + inlen;
+    uintptr_t inStart = (uintptr_t)input[i].data(), inEnd = inStart + input[i].length();
 
-    if (input[i].length() != 0 && in_start < out_end && out_start < in_end &&
+    if (input[i].length() != 0 && inStart < outEnd && outStart < inEnd &&
       input[i].data() != (uint8_t *)output + off) {
-      use_scratch = 1;
+      useScratch = 1;
       break;
     }
     off += input[i].length();
@@ -1553,10 +1550,10 @@ static void aead_do_encrypt_v(
       if (input[i].length() != 0) memmove(dst + offset, input[i].data(), input[i].length());
       offset += input[i].length();
     }
-    aead_do_encrypt(_ctx, output, dst, inlen, seq, aad, aadlen, NULL);
+    aeadDoEncrypt(_ctx, output, dst, inlen, seq, aad, aadlen, NULL);
   };
 
-  if (!use_scratch) {
+  if (!useScratch) {
     encrypt(static_cast<uint8_t *>(output));
     return;
   }
@@ -1570,22 +1567,22 @@ static void aead_do_encrypt_v(
   encrypt(scratch.data());
 }
 
-static void aead_do_encrypt_v_s(
+static void aeadDoEncryptVS(
   AeadContext *_ctx, void *output, const Bytes *input, size_t incnt, uint64_t seq,
   const void *aad, size_t aadlen, AeadSupplement *supp)
 {
   struct FusionAeadContext *ctx = static_cast<FusionAeadContext *>(_ctx);
-  size_t		    inlen = aead__sum_iovec(input, incnt);
-  struct FusionInput	    input_iter = fusion_input_iovec(input, incnt);
+  size_t		    inlen = aeadVecSize(input, incnt);
+  struct FusionInput	    inputIter = inputVec(input, incnt);
 
-  aesgcm_ensure_capacity(ctx, inlen, aadlen);
+  aesgcmEnsureCapacity(ctx, inlen, aadlen);
 
-  fusion_aesgcm_encrypt_iter(
-    ctx->aesgcm, output, &input_iter, inlen, calc_counter(ctx, seq), aad, aadlen);
-  aead__do_supplementary(supp);
+  aesgcmEncryptIter(
+    ctx->aesgcm, output, &inputIter, inlen, calcCounter(ctx, seq), aad, aadlen);
+  aeadSupplement(supp);
 }
 
-static size_t aead_do_decrypt(
+static size_t aeadDoDecrypt(
   AeadContext *_ctx, void *output, const void *input, size_t inlen, uint64_t seq, const void *aad,
   size_t aadlen)
 {
@@ -1594,15 +1591,15 @@ static size_t aead_do_decrypt(
   if (inlen < 16) return SIZE_MAX;
 
   size_t enclen = inlen - 16;
-  aesgcm_ensure_capacity(ctx, enclen, aadlen);
-  if (!fusion_aesgcm_decrypt(
-	ctx->aesgcm, output, input, enclen, calc_counter(ctx, seq), aad, aadlen,
+  aesgcmEnsureCapacity(ctx, enclen, aadlen);
+  if (!fusionAesgcmDecrypt(
+	ctx->aesgcm, output, input, enclen, calcCounter(ctx, seq), aad, aadlen,
 	(const uint8_t *)input + enclen))
     return SIZE_MAX;
   return enclen;
 }
 
-static inline void aesgcm_get_iv(AeadContext *_ctx, void *iv)
+static inline void aesgcmGetIV(AeadContext *_ctx, void *iv)
 {
   struct FusionAeadContext *ctx = static_cast<FusionAeadContext *>(_ctx);
 
@@ -1610,7 +1607,7 @@ static inline void aesgcm_get_iv(AeadContext *_ctx, void *iv)
   storen128(iv, Ztls_AESGCMIVSize, m128);
 }
 
-static inline void aesgcm_set_iv(AeadContext *_ctx, const void *iv)
+static inline void aesgcmSetIV(AeadContext *_ctx, const void *iv)
 {
   struct FusionAeadContext *ctx = static_cast<FusionAeadContext *>(_ctx);
 
@@ -1619,7 +1616,7 @@ static inline void aesgcm_set_iv(AeadContext *_ctx, const void *iv)
 }
 
 static int
-aesgcm_setup(AeadContext *_ctx, int is_enc, const void *key, const void *iv, size_t keySize)
+aesgcmSetup(AeadContext *_ctx, int isEnc, const void *key, const void *iv, size_t keySize)
 {
   struct FusionAeadContext *ctx = static_cast<FusionAeadContext *>(_ctx);
 
@@ -1629,7 +1626,7 @@ aesgcm_setup(AeadContext *_ctx, int is_enc, const void *key, const void *iv, siz
   ctx->staticIv = _mm_shuffle_epi8(ctx->staticIv, byteswap128);
   if (key == NULL) return 0;
 
-  ctx->aesgcm = new_aesgcm(
+  ctx->aesgcm = newAesgcm(
     key, keySize,
     1500
     // assume ordinary packet size
@@ -1640,14 +1637,14 @@ aesgcm_setup(AeadContext *_ctx, int is_enc, const void *key, const void *iv, siz
   return 0;
 }
 
-static int non_temporal_setup(AeadContext *, int, const void *, const void *, size_t);
+static int nonTemporalSetup(AeadContext *, int, const void *, const void *, size_t);
 struct FusionAeadAlgo : AeadAlgo {
   using AeadAlgo::AeadAlgo;
   AeadContext *create(bool isEnc, const void *key, const void *iv) const override
   {
     auto ctx = new FusionAeadContext{this, isEnc};
-    int	 ret = nonTemporal ? non_temporal_setup(ctx, isEnc, key, iv, keySize) :
-			     aesgcm_setup(ctx, isEnc, key, iv, keySize);
+    int	 ret = nonTemporal ? nonTemporalSetup(ctx, isEnc, key, iv, keySize) :
+			     aesgcmSetup(ctx, isEnc, key, iv, keySize);
     if (ret) {
       delete ctx;
       return nullptr;
@@ -1656,76 +1653,75 @@ struct FusionAeadAlgo : AeadAlgo {
   }
 };
 
-int			      fusion_can_aesni256 = 0;
+int			      fusionCanAesni256 = 0;
 static const FusionCipherAlgo aes128ctrAlgo{"AES128-CTR", Ztls_AES128KeySize, 1, Ztls_AESIVSize};
-const CipherAlgo	     &fusion_aes128ctr = aes128ctrAlgo;
+const CipherAlgo	     &fusionAes128ctr = aes128ctrAlgo;
 static const FusionCipherAlgo aes256ctrAlgo{"AES256-CTR", Ztls_AES256KeySize, 1, Ztls_AESIVSize};
-const CipherAlgo	     &fusion_aes256ctr = aes256ctrAlgo;
+const CipherAlgo	     &fusionAes256ctr = aes256ctrAlgo;
 static const FusionAeadAlgo   aes128gcmAlgo{"AES128-GCM", Ztls_AESGCMConfLimit,
-  Ztls_AESGCMIntegrityLimit, &fusion_aes128ctr,
+  Ztls_AESGCMIntegrityLimit, &fusionAes128ctr,
   NULL, // &fusion_aes128ecb,
   Ztls_AES128KeySize, Ztls_AESGCMIVSize, Ztls_AESGCMTagSize, 0, 0,
 
   1, 1};
-const AeadAlgo		     &fusion_aes128gcm = aes128gcmAlgo;
+const AeadAlgo		     &fusionAes128gcm = aes128gcmAlgo;
 static const FusionAeadAlgo   aes256gcmAlgo{"AES256-GCM", Ztls_AESGCMConfLimit,
-  Ztls_AESGCMIntegrityLimit, &fusion_aes256ctr,
+  Ztls_AESGCMIntegrityLimit, &fusionAes256ctr,
   NULL, // &fusion_aes256ecb,
   Ztls_AES256KeySize, Ztls_AESGCMIVSize, Ztls_AESGCMTagSize, 0, 0,
 
   1, 1};
-const AeadAlgo		     &fusion_aes256gcm = aes256gcmAlgo;
+const AeadAlgo		     &fusionAes256gcm = aes256gcmAlgo;
 
-static inline void reduce_aad128(
+static inline void reduceAad128(
   struct FusionGfmul128 *gstate, struct FusionGhash128 *ghash, const void *_aad, size_t aadlen)
 {
-  struct FusionGhash128 *ghash_precompute;
+  struct FusionGhash128 *ghashPrecompute;
   const uint8_t		*aad = static_cast<const uint8_t *>(_aad);
 
   while (ZuUnlikely(aadlen >= 6 * 16)) {
-    ghash_precompute = ghash + 6;
-    gfmul_firststep128(
-      gstate, _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)aad)),
-      --ghash_precompute);
+    ghashPrecompute = ghash + 6;
+    gfmulFirststep128(
+      gstate, _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)aad)), --ghashPrecompute);
     aad += 16;
     aadlen -= 16;
     for (int i = 1; i < 6; ++i) {
-      gfmul_nextstep128(
+      gfmulNextstep128(
 	gstate, _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)aad)),
-	--ghash_precompute);
+	--ghashPrecompute);
       aad += 16;
       aadlen -= 16;
     }
-    gfmul_reduce128(gstate);
+    gfmulReduce128(gstate);
   }
 
   if (ZuLikely(aadlen != 0)) {
-    ghash_precompute = ghash + (aadlen + 15)/16;
+    ghashPrecompute = ghash + (aadlen + 15)/16;
     if (ZuUnlikely(aadlen >= 16)) {
-      gfmul_firststep128(
+      gfmulFirststep128(
 	gstate, _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)aad)),
-	--ghash_precompute);
+	--ghashPrecompute);
       aad += 16;
       aadlen -= 16;
       while (aadlen >= 16) {
-	gfmul_nextstep128(
+	gfmulNextstep128(
 	  gstate, _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)aad)),
-	  --ghash_precompute);
+	  --ghashPrecompute);
 	aad += 16;
 	aadlen -= 16;
       }
       if (ZuLikely(aadlen != 0))
-	gfmul_nextstep128(gstate, loadn128(aad, aadlen), --ghash_precompute);
+	gfmulNextstep128(gstate, loadn128(aad, aadlen), --ghashPrecompute);
     } else {
-      gfmul_firststep128(gstate, loadn128(aad, aadlen), --ghash_precompute);
+      gfmulFirststep128(gstate, loadn128(aad, aadlen), --ghashPrecompute);
     }
-    assert(ghash == ghash_precompute);
-    gfmul_reduce128(gstate);
+    assert(ghash == ghashPrecompute);
+    gfmulReduce128(gstate);
   }
 }
 
 Ztls_NoSanitizeAddress static inline uint8_t *
-load_preceding_unaligned(uint8_t *encbuf, uint8_t **output)
+loadPrecedingUnaligned(uint8_t *encbuf, uint8_t **output)
 {
   uint8_t *encp;
 
@@ -1744,7 +1740,7 @@ load_preceding_unaligned(uint8_t *encbuf, uint8_t **output)
 }
 
 Ztls_NoSanitizeAddress static inline void
-write_remaining_bytes(uint8_t *dst, const uint8_t *src, const uint8_t *end)
+writeRemainingBytes(uint8_t *dst, const uint8_t *src, const uint8_t *end)
 {
   // Write in 64-byte chunks, using NT store instructions. Last partial block, if any, is written
   // to cache, as that cache line would likely be read when the next TLS record is being built.
@@ -1767,7 +1763,7 @@ write_remaining_bytes(uint8_t *dst, const uint8_t *src, const uint8_t *end)
   }
 }
 
-Ztls_NoSanitizeAddress static void non_temporal_encrypt_v128(
+Ztls_NoSanitizeAddress static void nonTemporalEncryptV128(
   AeadContext *_ctx, void *_output, const Bytes *input, size_t incnt, uint64_t seq,
   const void *aad, size_t aadlen)
 {
@@ -1785,7 +1781,7 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v128(
     bits3 = _mm_shuffle_epi8(ctr, byteswap128); \
     ctr = _mm_add_epi64(ctr, one8); \
     bits4 = _mm_shuffle_epi8(ctr, byteswap128); \
-    if (ZuLikely(srclen > 16 * 5) || src_vecleft != 0) { \
+    if (ZuLikely(srclen > 16 * 5) || srcVecleft != 0) { \
       ctr = _mm_add_epi64(ctr, one8); \
       bits5 = _mm_shuffle_epi8(ctr, byteswap128); \
     } else { \
@@ -1841,18 +1837,18 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v128(
   ZuAssert(sizeof(encbuf) >= 64 + 6 * 16 + 16);
 
   // load unaligned data within same cache line preceding `output`, adjusting pointers accordingly
-  encp = load_preceding_unaligned(encbuf, &output);
+  encp = loadPrecedingUnaligned(encbuf, &output);
 
   // First write would be 128 bytes (32+6*16), if encbuf contains no less than 32 bytes already.
   if (encp - encbuf >= 32) state |= Ztls_StateCopy128b;
 
   // setup ctr, retain Ek(0), len(A) | len(C) to be fed into GCM
-  size_t  total_length = aead__sum_iovec(input, incnt);
-  __m128i ctr = calc_counter(agctx, seq);
+  size_t  totalLen = aeadVecSize(input, incnt);
+  __m128i ctr = calcCounter(agctx, seq);
   ctr = _mm_insert_epi32(ctr, 1, 0);
   __m128i ek0 = _mm_shuffle_epi8(ctr, byteswap128);
   __m128i ac =
-    _mm_shuffle_epi8(_mm_set_epi32(0, (int)aadlen * 8, 0, (int)total_length * 8), byteswap128);
+    _mm_shuffle_epi8(_mm_set_epi32(0, (int)aadlen * 8, 0, (int)totalLen * 8), byteswap128);
 
   struct FusionGcm128  *ctx = static_cast<struct FusionGcm128 *>(agctx->aesgcm);
   __m128i		bits0, bits1, bits2, bits3, bits4, bits5 = _mm_setzero_si128();
@@ -1860,19 +1856,19 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v128(
 
   // find the first non-empty vec
   const uint8_t *src = NULL;
-  size_t	 srclen = 0, src_vecleft = incnt;
-  while (srclen == 0 && src_vecleft != 0) {
+  size_t	 srclen = 0, srcVecleft = incnt;
+  while (srclen == 0 && srcVecleft != 0) {
     src = reinterpret_cast<const uint8_t *>(input[0].data());
     srclen = input[0].length();
     ++input;
-    --src_vecleft;
+    --srcVecleft;
   }
 
   // Prepare first 6 blocks of bit stream, at the same time calculating ghash of AAD.
   Ztls_AESECB6Init();
   Ztls_AESECB6Update(1);
   Ztls_AESECB6Update(2);
-  reduce_aad128(&gstate, ctx->ghash.data(), aad, aadlen);
+  reduceAad128(&gstate, ctx->ghash.data(), aad, aadlen);
   for (size_t i = 3; i < ctx->ecb.rounds; ++i) Ztls_AESECB6Update(i);
   Ztls_AESECB6Final(ctx->ecb.rounds);
 
@@ -1882,10 +1878,10 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v128(
   //  3. calculate ghash of the blocks being written to encbuf,
   //  4. calculate next 6 * 16 bytes of keystream,
   //  5. writes encbuf in 64-byte blocks
-  // When exitting the loop, `remaining_ghash_from` represents the offset within `encbuf` from
+  // When exitting the loop, `remainingGhashFrom` represents the offset within `encbuf` from
   // where ghash remains to be
   // calculated.
-  size_t remaining_ghash_from = encp - encbuf;
+  size_t remainingGhashFrom = encp - encbuf;
   if (srclen != 0) {
     while (1) {
       // apply the bit stream to input, writing to encbuf
@@ -1906,41 +1902,41 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v128(
 	src += 6 * 16;
 	srclen -= 6 * 16;
 	if (ZuUnlikely(srclen == 0)) {
-	  if (src_vecleft == 0) {
-	    remaining_ghash_from = (encp - encbuf) - 96;
+	  if (srcVecleft == 0) {
+	    remainingGhashFrom = (encp - encbuf) - 96;
 	    break;
 	  }
 	  src = reinterpret_cast<const uint8_t *>(input[0].data());
 	  srclen = input[0].length();
 	  ++input;
-	  --src_vecleft;
+	  --srcVecleft;
 	}
       } else {
 	// slow path, load at most 6 * 16 bytes to encbuf then encrypt in-place
-	size_t bytes_copied = 0;
+	size_t bytesCopied = 0;
 	do {
-	  if (srclen >= 16 && bytes_copied < 5 * 16) {
+	  if (srclen >= 16 && bytesCopied < 5 * 16) {
 	    _mm_storeu_si128(
-	      reinterpret_cast<__m128i *>((void *)(encp + bytes_copied)),
+	      reinterpret_cast<__m128i *>((void *)(encp + bytesCopied)),
 	      _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)src)));
-	    bytes_copied += 16;
+	    bytesCopied += 16;
 	    src += 16;
 	    srclen -= 16;
 	  } else {
-	    encp[bytes_copied++] = *src++;
+	    encp[bytesCopied++] = *src++;
 	    --srclen;
 	  }
 	  if (ZuUnlikely(srclen == 0)) {
 	    do {
-	      if (src_vecleft == 0) break;
+	      if (srcVecleft == 0) break;
 	      src = reinterpret_cast<const uint8_t *>(input[0].data());
 	      srclen = input[0].length();
 	      ++input;
-	      --src_vecleft;
+	      --srcVecleft;
 	    } while (srclen == 0);
 	    if (srclen == 0) break;
 	  }
-	} while (bytes_copied < 6 * 16);
+	} while (bytesCopied < 6 * 16);
 #define Ztls_Apply(i) \
   \
   _mm_storeu_si128( \
@@ -1953,12 +1949,12 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v128(
 	Ztls_Apply(4);
 	Ztls_Apply(5);
 #undef Ztls_Apply
-	encp += bytes_copied;
+	encp += bytesCopied;
 	if (ZuUnlikely(srclen == 0)) {
 	  // Calculate amonut of data left to be ghashed, as well as zero-clearing the remainedr
 	  // of partial block, as it will be fed into ghash.
-	  remaining_ghash_from = (encp - encbuf) - bytes_copied;
-	  if ((bytes_copied & 15) != 0)
+	  remainingGhashFrom = (encp - encbuf) - bytesCopied;
+	  if ((bytesCopied & 15) != 0)
 	    _mm_storeu_si128(reinterpret_cast<__m128i *>((void *)encp), _mm_setzero_si128());
 	  break;
 	}
@@ -1967,18 +1963,18 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v128(
       // Next 96-byte block starts here. Run AES and ghash in while writing output using
       // non-temporal stores in 64-byte blocks.
       Ztls_AESECB6Init();
-      struct FusionGhash128 *ghash_precompute = ctx->ghash.data() + 6;
-      gfmul_firststep128(
+      struct FusionGhash128 *ghashPrecompute = ctx->ghash.data() + 6;
+      gfmulFirststep128(
 	&gstate, _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)(encp - 6 * 16))),
-	--ghash_precompute);
+	--ghashPrecompute);
       Ztls_AESECB6Update(1);
-      gfmul_nextstep128(
+      gfmulNextstep128(
 	&gstate, _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)(encp - 5 * 16))),
-	--ghash_precompute);
+	--ghashPrecompute);
       Ztls_AESECB6Update(2);
-      gfmul_nextstep128(
+      gfmulNextstep128(
 	&gstate, _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)(encp - 4 * 16))),
-	--ghash_precompute);
+	--ghashPrecompute);
       Ztls_AESECB6Update(3);
       _mm256_stream_si256(
 	(void *)output, _mm256_load_si256(reinterpret_cast<const __m256i *>((void *)encbuf)));
@@ -1986,17 +1982,17 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v128(
 	(void *)(output + 32),
 	_mm256_load_si256(reinterpret_cast<const __m256i *>((void *)(encbuf + 32))));
       Ztls_AESECB6Update(4);
-      gfmul_nextstep128(
+      gfmulNextstep128(
 	&gstate, _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)(encp - 3 * 16))),
-	--ghash_precompute);
+	--ghashPrecompute);
       Ztls_AESECB6Update(5);
-      gfmul_nextstep128(
+      gfmulNextstep128(
 	&gstate, _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)(encp - 2 * 16))),
-	--ghash_precompute);
+	--ghashPrecompute);
       Ztls_AESECB6Update(6);
-      gfmul_nextstep128(
+      gfmulNextstep128(
 	&gstate, _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)(encp - 1 * 16))),
-	--ghash_precompute);
+	--ghashPrecompute);
       Ztls_AESECB6Update(7);
       if ((state & Ztls_StateCopy128b) != 0) {
 	_mm256_stream_si256(
@@ -2030,8 +2026,8 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v128(
       if (ZuUnlikely(ctx->ecb.rounds != 10)) {
 	for (size_t i = 10; ZuLikely(i < ctx->ecb.rounds); ++i) Ztls_AESECB6Update(i);
       }
-      assert(ctx->ghash.data() == ghash_precompute);
-      gfmul_reduce128(&gstate);
+      assert(ctx->ghash.data() == ghashPrecompute);
+      gfmulReduce128(&gstate);
       Ztls_AESECB6Final(ctx->ecb.rounds);
     }
   }
@@ -2041,27 +2037,25 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v128(
   {
     // Run ghash against the remaining bytes, after appending `ac` (i.e., len(A) | len(C)). At
     // this point, we might be ghashing 7 blocks at once.
-    size_t ac_off =
-      remaining_ghash_from + ((encp - encbuf) - remaining_ghash_from + 15)/16 * 16;
-    _mm_storeu_si128(reinterpret_cast<__m128i *>((void *)(encbuf + ac_off)), ac);
-    size_t blocks = ((encp - encbuf) - remaining_ghash_from + 15)/16 + 1;
+    size_t acOff = remainingGhashFrom + ((encp - encbuf) - remainingGhashFrom + 15)/16 * 16;
+    _mm_storeu_si128(reinterpret_cast<__m128i *>((void *)(encbuf + acOff)), ac);
+    size_t blocks = ((encp - encbuf) - remainingGhashFrom + 15)/16 + 1;
     // round up, +1 for AC
     assert(blocks <= 7);
-    struct FusionGhash128 *ghash_precompute = ctx->ghash.data() + blocks;
-    gfmul_firststep128(
+    struct FusionGhash128 *ghashPrecompute = ctx->ghash.data() + blocks;
+    gfmulFirststep128(
       &gstate,
-      _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)(encbuf + remaining_ghash_from))),
-      --ghash_precompute);
-    remaining_ghash_from += 16;
-    while (ghash_precompute != ctx->ghash.data()) {
-      gfmul_nextstep128(
+      _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)(encbuf + remainingGhashFrom))),
+      --ghashPrecompute);
+    remainingGhashFrom += 16;
+    while (ghashPrecompute != ctx->ghash.data()) {
+      gfmulNextstep128(
 	&gstate,
-	_mm_loadu_si128(
-	  reinterpret_cast<const __m128i *>((void *)(encbuf + remaining_ghash_from))),
-	--ghash_precompute);
-      remaining_ghash_from += 16;
+	_mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)(encbuf + remainingGhashFrom))),
+	--ghashPrecompute);
+      remainingGhashFrom += 16;
     }
-    gfmul_reduce128(&gstate);
+    gfmulReduce128(&gstate);
   }
 
   // Calculate EK0, if in the unlikely case on not been done yet. When encoding in full size
@@ -2074,11 +2068,11 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v128(
   }
 
   // append tag to encbuf
-  _mm_storeu_si128(reinterpret_cast<__m128i *>((void *)encp), gfmul_get_tag128(&gstate, bits5));
+  _mm_storeu_si128(reinterpret_cast<__m128i *>((void *)encp), gfmulGetTag128(&gstate, bits5));
   encp += 16;
 
   // write remaining bytes
-  write_remaining_bytes(output, encbuf, encp);
+  writeRemainingBytes(output, encbuf, encp);
 
 #undef Ztls_AESECB6Init
 #undef Ztls_AESECB6Update
@@ -2087,7 +2081,7 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v128(
 #undef Ztls_StateCopy128b
 }
 
-static size_t non_temporal_decrypt128(
+static size_t nonTemporalDecrypt128(
   AeadContext *_ctx, void *_output, const void *_input, size_t inlen, uint64_t seq,
   const void *aad, size_t aadlen)
 {
@@ -2158,7 +2152,7 @@ static size_t non_temporal_decrypt128(
   int32_t state = 0;
 
   // setup ctr, retain Ek(0), len(A) | len(C) to be fed into GCM
-  __m128i ctr = calc_counter(agctx, seq);
+  __m128i ctr = calcCounter(agctx, seq);
   ctr = _mm_insert_epi32(ctr, 1, 0);
   __m128i ek0 = _mm_shuffle_epi8(ctr, byteswap128);
   __m128i ac =
@@ -2172,7 +2166,7 @@ static size_t non_temporal_decrypt128(
   Ztls_AESECB6Init();
   Ztls_AESECB6Update(1);
   Ztls_AESECB6Update(2);
-  reduce_aad128(&gstate, ctx->ghash.data(), aad, aadlen);
+  reduceAad128(&gstate, ctx->ghash.data(), aad, aadlen);
   for (size_t i = 3; i < ctx->ecb.rounds; ++i) Ztls_AESECB6Update(i);
   Ztls_AESECB6Final(ctx->ecb.rounds);
 
@@ -2190,14 +2184,14 @@ static size_t non_temporal_decrypt128(
     Ztls_Decrypt(5);
 #undef Ztls_Decrypt
 #define Ztls_GfmulNext(i) \
-  gfmul_nextstep128( \
+  gfmulNextstep128( \
     &gstate, _mm_loadu_si128(reinterpret_cast<const __m128i *>(input + i * 16)), \
     ctx->ghash.data() + 5 - i)
     Ztls_AESECB6Init();
     Ztls_AESECB6Update(1);
     Ztls_AESECB6Update(2);
     Ztls_AESECB6Update(3);
-    gfmul_firststep128(
+    gfmulFirststep128(
       &gstate, _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)input)),
       ctx->ghash.data() + 5);
     Ztls_AESECB6Update(4);
@@ -2211,7 +2205,7 @@ static size_t non_temporal_decrypt128(
     Ztls_AESECB6Update(8);
     Ztls_GfmulNext(5);
     Ztls_AESECB6Update(9);
-    gfmul_reduce128(&gstate);
+    gfmulReduce128(&gstate);
     if (ZuUnlikely(ctx->ecb.rounds != 10)) {
       size_t i = 10;
       do {
@@ -2227,16 +2221,16 @@ static size_t non_temporal_decrypt128(
 
   // Decrypt the remainder as well as finishing GHASH calculation.
   if (inlen != 0) {
-    struct FusionGhash128 *ghash_precompute = ctx->ghash.data() + (inlen + 15)/16 + 1;
+    struct FusionGhash128 *ghashPrecompute = ctx->ghash.data() + (inlen + 15)/16 + 1;
 #define Ztls_Oneblock(i) \
   do { \
     if (inlen != 0) { \
       __m128i b = inlen >= 16 ? _mm_loadu_si128(reinterpret_cast<const __m128i *>(input)) : \
 				loadn128(input, inlen); \
       if (i == 0) { \
-	gfmul_firststep128(&gstate, b, --ghash_precompute); \
+	gfmulFirststep128(&gstate, b, --ghashPrecompute); \
       } else { \
-	gfmul_nextstep128(&gstate, b, --ghash_precompute); \
+	gfmulNextstep128(&gstate, b, --ghashPrecompute); \
       } \
       b = _mm_xor_si128(b, bits##i); \
       if (inlen >= 16) { \
@@ -2259,12 +2253,12 @@ static size_t non_temporal_decrypt128(
     Ztls_Oneblock(4);
     Ztls_Oneblock(5);
 #undef Ztls_Oneblock
-    gfmul_nextstep128(&gstate, ac, --ghash_precompute);
-    assert(ghash_precompute == ctx->ghash.data());
+    gfmulNextstep128(&gstate, ac, --ghashPrecompute);
+    assert(ghashPrecompute == ctx->ghash.data());
   } else {
-    gfmul_firststep128(&gstate, ac, ctx->ghash.data());
+    gfmulFirststep128(&gstate, ac, ctx->ghash.data());
   }
-  gfmul_reduce128(&gstate);
+  gfmulReduce128(&gstate);
 
   // Calculate EK0 if not yet available in bits5.
   if ((state & Ztls_StateEk0Ready) == 0) {
@@ -2275,7 +2269,7 @@ static size_t non_temporal_decrypt128(
   }
 
   // Calculate GCM tag and compare.
-  __m128i calctag = gfmul_get_tag128(&gstate, bits5);
+  __m128i calctag = gfmulGetTag128(&gstate, bits5);
   __m128i recvtag = _mm_loadu_si128(reinterpret_cast<const __m128i *>((void *)input));
   if (_mm_movemask_epi8(_mm_cmpeq_epi8(calctag, recvtag)) != 0xffff) return SIZE_MAX;
 
@@ -2287,7 +2281,7 @@ static size_t non_temporal_decrypt128(
 #undef Ztls_StateEk0Ready
 }
 
-Ztls_NoSanitizeAddress static void non_temporal_encrypt_v256(
+Ztls_NoSanitizeAddress static void nonTemporalEncryptV256(
   AeadContext *_ctx, void *_output, const Bytes *input, size_t incnt, uint64_t seq,
   const void *_aad, size_t aadlen)
 {
@@ -2307,8 +2301,8 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v256(
     bits4 = _mm256_shuffle_epi8(ctr, byteswap256); \
     ctr = _mm256_add_epi64(ctr, incr128x2); \
     bits5 = _mm256_shuffle_epi8(ctr, byteswap256); \
-    if (ZuUnlikely(srclen <= 32 * 6 - 16) && src_vecleft == 0) { \
-      bits5 = _mm256_permute2f128_si256(bits5, ac_ek0, 0x30); \
+    if (ZuUnlikely(srclen <= 32 * 6 - 16) && srcVecleft == 0) { \
+      bits5 = _mm256_permute2f128_si256(bits5, acEk0, 0x30); \
       state |= Ztls_StateEk0Ready; \
     } \
     __m256i k = ctx->ecb.keys.m256[0]; \
@@ -2360,16 +2354,16 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v256(
   ZuAssert(sizeof(encbuf) >= 64 + 6 * 32 + 16);
 
   // load unaligned data within same cache line preceding `output`, adjusting pointers accordingly
-  encp = load_preceding_unaligned(encbuf, &output);
+  encp = loadPrecedingUnaligned(encbuf, &output);
 
   // setup ctr, retaining Ek(0), len(A) | len(C) to be fed into GCM
-  size_t  total_length = aead__sum_iovec(input, incnt);
-  __m256i ctr = _mm256_broadcastsi128_si256(calc_counter(agctx, seq));
+  size_t  totalLen = aeadVecSize(input, incnt);
+  __m256i ctr = _mm256_broadcastsi128_si256(calcCounter(agctx, seq));
   ctr = _mm256_insert_epi32(ctr, 1, 4);
-  __m256i ac_ek0 = _mm256_permute2f128_si256(
+  __m256i acEk0 = _mm256_permute2f128_si256(
     // first half: ac
     _mm256_castsi128_si256(
-      _mm_shuffle_epi8(_mm_set_epi32(0, (int)aadlen * 8, 0, (int)total_length * 8), byteswap128)),
+      _mm_shuffle_epi8(_mm_set_epi32(0, (int)aadlen * 8, 0, (int)totalLen * 8), byteswap128)),
     // second half: ek0
     _mm256_shuffle_epi8(ctr, byteswap256), 0x30);
 
@@ -2379,12 +2373,12 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v256(
 
   // find the first non-empty vec
   const uint8_t *src = NULL;
-  size_t	 srclen = 0, src_vecleft = incnt;
-  while (srclen == 0 && src_vecleft != 0) {
+  size_t	 srclen = 0, srcVecleft = incnt;
+  while (srclen == 0 && srcVecleft != 0) {
     src = reinterpret_cast<const uint8_t *>(input[0].data());
     srclen = input[0].length();
     ++input;
-    --src_vecleft;
+    --srcVecleft;
   }
 
   // Prepare first 6 blocks of bit stream, at the same time calculating ghash of AAD.
@@ -2392,55 +2386,55 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v256(
   Ztls_AESECB6Update(1);
   Ztls_AESECB6Update(2);
   if (ZuLikely(aadlen != 0)) {
-    union FusionGhash256 *ghash_precompute;
+    union FusionGhash256 *ghashPrecompute;
     while (ZuUnlikely(aadlen >= 6 * 32)) {
-      ghash_precompute = ctx->ghash.data() + 6;
-      gfmul_firststep256(
+      ghashPrecompute = ctx->ghash.data() + 6;
+      gfmulFirststep256(
 	&gstate, _mm256_loadu_si256(reinterpret_cast<const __m256i *>((void *)aad)), 0,
-	--ghash_precompute);
+	--ghashPrecompute);
       aad += 32;
       aadlen -= 32;
       for (int i = 1; i < 6; ++i) {
-	gfmul_nextstep256(
+	gfmulNextstep256(
 	  &gstate, _mm256_loadu_si256(reinterpret_cast<const __m256i *>((void *)aad)),
-	  --ghash_precompute);
+	  --ghashPrecompute);
 	aad += 32;
 	aadlen -= 32;
       }
-      gfmul_reduce256(&gstate);
+      gfmulReduce256(&gstate);
     }
     if (ZuLikely(aadlen != 0)) {
-      ghash_precompute = ctx->ghash.data() + (aadlen + 31)/32;
+      ghashPrecompute = ctx->ghash.data() + (aadlen + 31)/32;
       if (ZuUnlikely(aadlen >= 32)) {
 	if (aadlen % 32 == 0 || aadlen % 32 > 16) {
-	  gfmul_firststep256(
+	  gfmulFirststep256(
 	    &gstate, _mm256_loadu_si256(reinterpret_cast<const __m256i *>((void *)aad)), 0,
-	    --ghash_precompute);
+	    --ghashPrecompute);
 	  aad += 32;
 	  aadlen -= 32;
 	} else {
-	  gfmul_firststep256(
+	  gfmulFirststep256(
 	    &gstate, _mm256_loadu_si256(reinterpret_cast<const __m256i *>((void *)aad)), 1,
-	    --ghash_precompute);
+	    --ghashPrecompute);
 	  aad += 16;
 	  aadlen -= 16;
 	}
 	while (aadlen >= 32) {
-	  gfmul_nextstep256(
+	  gfmulNextstep256(
 	    &gstate, _mm256_loadu_si256(reinterpret_cast<const __m256i *>((void *)aad)),
-	    --ghash_precompute);
+	    --ghashPrecompute);
 	  aad += 32;
 	  aadlen -= 32;
 	}
 	if (ZuLikely(aadlen != 0)) {
 	  assert(aadlen > 16);
-	  gfmul_nextstep256(&gstate, loadn256(aad, aadlen), --ghash_precompute);
+	  gfmulNextstep256(&gstate, loadn256(aad, aadlen), --ghashPrecompute);
 	}
       } else {
-	gfmul_firststep256(&gstate, loadn256(aad, aadlen), aadlen <= 16, --ghash_precompute);
+	gfmulFirststep256(&gstate, loadn256(aad, aadlen), aadlen <= 16, --ghashPrecompute);
       }
-      assert(ctx->ghash.data() == ghash_precompute);
-      gfmul_reduce256(&gstate);
+      assert(ctx->ghash.data() == ghashPrecompute);
+      gfmulReduce256(&gstate);
     }
   }
   for (size_t i = 3; i < ctx->ecb.rounds; ++i) Ztls_AESECB6Update(i);
@@ -2452,10 +2446,10 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v256(
   //  3. calculate ghash of the blocks being written to encbuf,
   //  4. calculate next 6 * 16 bytes of keystream,
   //  5. writes encbuf in 64-byte blocks
-  // When exitting the loop, `remaining_ghash_from` represents the offset within `encbuf` from
+  // When exitting the loop, `remainingGhashFrom` represents the offset within `encbuf` from
   // where ghash remains to be
   // calculated.
-  size_t remaining_ghash_from = encp - encbuf;
+  size_t remainingGhashFrom = encp - encbuf;
   if (srclen != 0) {
     while (1) {
       // apply the bit stream to input, writing to encbuf
@@ -2477,41 +2471,41 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v256(
 	src += 6 * 32;
 	srclen -= 6 * 32;
 	if (ZuUnlikely(srclen == 0)) {
-	  if (src_vecleft == 0) {
-	    remaining_ghash_from = (encp - encbuf) - 6 * 32;
+	  if (srcVecleft == 0) {
+	    remainingGhashFrom = (encp - encbuf) - 6 * 32;
 	    break;
 	  }
 	  src = reinterpret_cast<const uint8_t *>(input[0].data());
 	  srclen = input[0].length();
 	  ++input;
-	  --src_vecleft;
+	  --srcVecleft;
 	}
       } else {
 	// slow path, load at most 6 * 32 bytes to encbuf then encrypt in-place
-	size_t bytes_copied = 0;
+	size_t bytesCopied = 0;
 	do {
-	  if (srclen >= 32 && bytes_copied < 5 * 32) {
+	  if (srclen >= 32 && bytesCopied < 5 * 32) {
 	    _mm256_storeu_si256(
-	      reinterpret_cast<__m256i *>((void *)(encp + bytes_copied)),
+	      reinterpret_cast<__m256i *>((void *)(encp + bytesCopied)),
 	      _mm256_loadu_si256(reinterpret_cast<const __m256i *>((void *)src)));
-	    bytes_copied += 32;
+	    bytesCopied += 32;
 	    src += 32;
 	    srclen -= 32;
 	  } else {
-	    encp[bytes_copied++] = *src++;
+	    encp[bytesCopied++] = *src++;
 	    --srclen;
 	  }
 	  if (ZuUnlikely(srclen == 0)) {
 	    do {
-	      if (src_vecleft == 0) break;
+	      if (srcVecleft == 0) break;
 	      src = reinterpret_cast<const uint8_t *>(input[0].data());
 	      srclen = input[0].length();
 	      ++input;
-	      --src_vecleft;
+	      --srcVecleft;
 	    } while (srclen == 0);
 	    if (srclen == 0) break;
 	  }
-	} while (bytes_copied < 6 * 32);
+	} while (bytesCopied < 6 * 32);
 #define Ztls_Apply(i) \
   \
   _mm256_storeu_si256( \
@@ -2525,12 +2519,12 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v256(
 	Ztls_Apply(4);
 	Ztls_Apply(5);
 #undef Ztls_Apply
-	encp += bytes_copied;
+	encp += bytesCopied;
 	if (ZuUnlikely(srclen == 0)) {
 	  // Calculate amonut of data left to be ghashed, as well as zero-clearing the remainedr
 	  // of partial block, as it will be fed into ghash.
-	  remaining_ghash_from = (encp - encbuf) - bytes_copied;
-	  if ((bytes_copied & 15) != 0)
+	  remainingGhashFrom = (encp - encbuf) - bytesCopied;
+	  if ((bytesCopied & 15) != 0)
 	    _mm_storeu_si128(reinterpret_cast<__m128i *>((void *)encp), _mm_setzero_si128());
 	  break;
 	}
@@ -2539,22 +2533,22 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v256(
       // Next 96-byte block starts here. Run AES and ghash in parallel while writing output using
       // non-temporal store instructions.
       Ztls_AESECB6Init();
-      union FusionGhash256 *ghash_precompute = ctx->ghash.data() + 6;
-      gfmul_firststep256(
+      union FusionGhash256 *ghashPrecompute = ctx->ghash.data() + 6;
+      gfmulFirststep256(
 	&gstate, _mm256_loadu_si256(reinterpret_cast<const __m256i *>((void *)(encp - 6 * 32))),
-	0, --ghash_precompute);
+	0, --ghashPrecompute);
       Ztls_AESECB6Update(1);
-      gfmul_nextstep256(
+      gfmulNextstep256(
 	&gstate, _mm256_loadu_si256(reinterpret_cast<const __m256i *>((void *)(encp - 5 * 32))),
-	--ghash_precompute);
+	--ghashPrecompute);
       Ztls_AESECB6Update(2);
-      gfmul_nextstep256(
+      gfmulNextstep256(
 	&gstate, _mm256_loadu_si256(reinterpret_cast<const __m256i *>((void *)(encp - 4 * 32))),
-	--ghash_precompute);
+	--ghashPrecompute);
       Ztls_AESECB6Update(3);
-      gfmul_nextstep256(
+      gfmulNextstep256(
 	&gstate, _mm256_loadu_si256(reinterpret_cast<const __m256i *>((void *)(encp - 3 * 32))),
-	--ghash_precompute);
+	--ghashPrecompute);
       Ztls_AESECB6Update(4);
       _mm256_stream_si256(
 	(void *)output, _mm256_load_si256(reinterpret_cast<const __m256i *>((void *)encbuf)));
@@ -2574,13 +2568,13 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v256(
 	(void *)(output + 160),
 	_mm256_load_si256(reinterpret_cast<const __m256i *>((void *)(encbuf + 160))));
       Ztls_AESECB6Update(5);
-      gfmul_nextstep256(
+      gfmulNextstep256(
 	&gstate, _mm256_loadu_si256(reinterpret_cast<const __m256i *>((void *)(encp - 2 * 32))),
-	--ghash_precompute);
+	--ghashPrecompute);
       Ztls_AESECB6Update(6);
-      gfmul_nextstep256(
+      gfmulNextstep256(
 	&gstate, _mm256_loadu_si256(reinterpret_cast<const __m256i *>((void *)(encp - 1 * 32))),
-	--ghash_precompute);
+	--ghashPrecompute);
       output += 192;
       encp -= 192;
       Ztls_AESECB6Update(7);
@@ -2595,8 +2589,8 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v256(
       if (ZuUnlikely(ctx->ecb.rounds != 10)) {
 	for (size_t i = 10; ZuLikely(i < ctx->ecb.rounds); ++i) Ztls_AESECB6Update(i);
       }
-      assert(ctx->ghash.data() == ghash_precompute);
-      gfmul_reduce256(&gstate);
+      assert(ctx->ghash.data() == ghashPrecompute);
+      gfmulReduce256(&gstate);
       Ztls_AESECB6Final(ctx->ecb.rounds);
     }
   }
@@ -2606,44 +2600,43 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v256(
   {
     // Run ghash against the remaining bytes, after appending `ac` (i.e., len(A) | len(C)). At
     // this point, we might be ghashing 7 blocks at once.
-    size_t ac_off =
-      remaining_ghash_from + ((encp - encbuf) - remaining_ghash_from + 15)/16 * 16;
+    size_t acOff = remainingGhashFrom + ((encp - encbuf) - remainingGhashFrom + 15)/16 * 16;
     _mm_storeu_si128(
-      reinterpret_cast<__m128i *>((void *)(encbuf + ac_off)), _mm256_castsi256_si128(ac_ek0));
-    size_t blocks = ((encp - encbuf) - remaining_ghash_from + 15)/16 + 1;
+      reinterpret_cast<__m128i *>((void *)(encbuf + acOff)), _mm256_castsi256_si128(acEk0));
+    size_t blocks = ((encp - encbuf) - remainingGhashFrom + 15)/16 + 1;
     // round up, +1 for AC
     assert(blocks <= 13);
-    union FusionGhash256 *ghash_precompute = ctx->ghash.data() + blocks/2;
+    union FusionGhash256 *ghashPrecompute = ctx->ghash.data() + blocks/2;
     if (blocks % 2 != 0) {
-      gfmul_firststep256(
+      gfmulFirststep256(
 	&gstate,
 	_mm256_loadu_si256(
-	  reinterpret_cast<const __m256i *>((void *)(encbuf + remaining_ghash_from))),
-	1, ghash_precompute);
-      remaining_ghash_from += 16;
+	  reinterpret_cast<const __m256i *>((void *)(encbuf + remainingGhashFrom))),
+	1, ghashPrecompute);
+      remainingGhashFrom += 16;
     } else {
-      gfmul_firststep256(
+      gfmulFirststep256(
 	&gstate,
 	_mm256_loadu_si256(
-	  reinterpret_cast<const __m256i *>((void *)(encbuf + remaining_ghash_from))),
-	0, --ghash_precompute);
-      remaining_ghash_from += 32;
+	  reinterpret_cast<const __m256i *>((void *)(encbuf + remainingGhashFrom))),
+	0, --ghashPrecompute);
+      remainingGhashFrom += 32;
     }
-    while (ghash_precompute != ctx->ghash.data()) {
-      gfmul_nextstep256(
+    while (ghashPrecompute != ctx->ghash.data()) {
+      gfmulNextstep256(
 	&gstate,
 	_mm256_loadu_si256(
-	  reinterpret_cast<const __m256i *>((void *)(encbuf + remaining_ghash_from))),
-	--ghash_precompute);
-      remaining_ghash_from += 32;
+	  reinterpret_cast<const __m256i *>((void *)(encbuf + remainingGhashFrom))),
+	--ghashPrecompute);
+      remainingGhashFrom += 32;
     }
-    gfmul_reduce256(&gstate);
+    gfmulReduce256(&gstate);
   }
 
   // Calculate EK0, if in the unlikely case on not been done yet. When encoding in full size
   // (16K), EK0 will be ready.
   if (ZuUnlikely((state & Ztls_StateEk0Ready) == 0)) {
-    bits5 = ac_ek0;
+    bits5 = acEk0;
     bits5 = _mm256_xor_si256(bits5, ctx->ecb.keys.m256[0]);
     for (size_t i = 1; i < ctx->ecb.rounds; ++i)
       bits5 = _mm256_aesenc_epi128(bits5, ctx->ecb.keys.m256[i]);
@@ -2653,19 +2646,19 @@ Ztls_NoSanitizeAddress static void non_temporal_encrypt_v256(
   // append tag to encbuf
   _mm_storeu_si128(
     reinterpret_cast<__m128i *>((void *)encp),
-    gfmul_get_tag256(
+    gfmulGetTag256(
       &gstate, _mm256_castsi256_si128(_mm256_permute2f128_si256(bits5, bits5, 0x11))));
   encp += 16;
 
   // write remaining bytes
-  write_remaining_bytes(output, encbuf, encp);
+  writeRemainingBytes(output, encbuf, encp);
 }
 
 static int
-non_temporal_setup(AeadContext *_ctx, int is_enc, const void *key, const void *iv, size_t keySize)
+nonTemporalSetup(AeadContext *_ctx, int isEnc, const void *key, const void *iv, size_t keySize)
 {
   struct FusionAeadContext *ctx = static_cast<FusionAeadContext *>(_ctx);
-  int			    aesni256 = is_enc && fusion_can_aesni256;
+  int			    aesni256 = isEnc && fusionCanAesni256;
 
   memset(&ctx->serial, 0, sizeof(ctx->serial));
 
@@ -2673,103 +2666,102 @@ non_temporal_setup(AeadContext *_ctx, int is_enc, const void *key, const void *i
   ctx->staticIv = _mm_shuffle_epi8(ctx->staticIv, byteswap128);
   if (key == NULL) return 0;
 
-  assert(is_enc || !aesni256);
+  assert(isEnc || !aesni256);
 
-  ctx->aesgcm = new_aesgcm(
+  ctx->aesgcm = newAesgcm(
     key, keySize,
     7 *
-      (fusion_can_aesni256 ? 32 :
-			     16), // 6 blocks at once, plus len(A) | len(C) that we might append
+      (fusionCanAesni256 ? 32 :
+			   16), // 6 blocks at once, plus len(A) | len(C) that we might append
     aesni256);
   return 0;
 }
 
-static const FusionAeadAlgo nonTemporalaes128gcmAlgo{"AES128-GCM", Ztls_AESGCMConfLimit,
-  Ztls_AESGCMIntegrityLimit, &fusion_aes128ctr,
+static const FusionAeadAlgo nonTemporalAes128gcmAlgo{"AES128-GCM", Ztls_AESGCMConfLimit,
+  Ztls_AESGCMIntegrityLimit, &fusionAes128ctr,
   NULL, // &fusion_aes128ecb,
   Ztls_AES128KeySize, Ztls_AESGCMIVSize, Ztls_AESGCMTagSize,
 
   1, ZtlsX86CacheLineAlignBits,
 
   1, 1};
-const AeadAlgo		   &non_temporal_aes128gcm = nonTemporalaes128gcmAlgo;
-static const FusionAeadAlgo nonTemporalaes256gcmAlgo{"AES256-GCM", Ztls_AESGCMConfLimit,
-  Ztls_AESGCMIntegrityLimit, &fusion_aes256ctr,
+const AeadAlgo		   &nonTemporalAes128gcm = nonTemporalAes128gcmAlgo;
+static const FusionAeadAlgo nonTemporalAes256gcmAlgo{"AES256-GCM", Ztls_AESGCMConfLimit,
+  Ztls_AESGCMIntegrityLimit, &fusionAes256ctr,
   NULL, // &fusion_aes128ecb,
   Ztls_AES256KeySize, Ztls_AESGCMIVSize, Ztls_AESGCMTagSize,
 
   1, ZtlsX86CacheLineAlignBits,
 
   1, 1};
-const AeadAlgo		   &non_temporal_aes256gcm = nonTemporalaes256gcmAlgo;
+const AeadAlgo		   &nonTemporalAes256gcm = nonTemporalAes256gcmAlgo;
 
 #ifdef _WIN32
 
-// fusion_is_supported_by_cpu:
+// fusionSupported:
 // Check that the CPU has extended instructions for PCMUL, AES and AVX2.
 // This test assumes that the CPU is following the x86/x64 architecture.
-// A slightly more refined test could check that the cpu_info spells out
+// A slightly more refined test could check that the cpuInfo spells out
 // "genuineIntel" or "authenticAMD", but would fail in presence of
 // little known CPU brands or some VM
-int fusion_is_supported_by_cpu(void)
+int fusionSupported(void)
 {
-  uint32_t cpu_info[4];
-  uint32_t nb_ids;
-  int	   is_supported = 0;
+  uint32_t cpuInfo[4];
+  uint32_t nbIds;
+  int	   isSupported = 0;
 
-  __cpuid(cpu_info, 0);
-  nb_ids = cpu_info[0];
+  __cpuid(cpuInfo, 0);
+  nbIds = cpuInfo[0];
 
-  if (nb_ids >= 7) {
-    uint32_t leaf1_ecx;
-    __cpuid(cpu_info, 1);
-    leaf1_ecx = cpu_info[2];
+  if (nbIds >= 7) {
+    uint32_t leaf1Ecx;
+    __cpuid(cpuInfo, 1);
+    leaf1Ecx = cpuInfo[2];
 
     if (
       // PCLMUL
-      (leaf1_ecx & (1 << 5)) != 0 &&
+      (leaf1Ecx & (1 << 5)) != 0 &&
       // AES
-      (leaf1_ecx & (1 << 25)) != 0) {
-      uint32_t leaf7_ebx, leaf7_ecx;
-      __cpuid(cpu_info, 7);
-      leaf7_ebx = cpu_info[1];
-      leaf7_ecx = cpu_info[2];
+      (leaf1Ecx & (1 << 25)) != 0) {
+      uint32_t leaf7Ebx, leaf7Ecx;
+      __cpuid(cpuInfo, 7);
+      leaf7Ebx = cpuInfo[1];
+      leaf7Ecx = cpuInfo[2];
 
-      is_supported =
+      isSupported =
 	// AVX2
-	(leaf7_ebx & (1 << 5)) != 0;
+	(leaf7Ebx & (1 << 5)) != 0;
 
       // enable 256-bit mode if possible
-      if (is_supported && (leaf7_ecx & 0x600) != 0 && !fusion_can_aesni256)
-	fusion_can_aesni256 = 1;
+      if (isSupported && (leaf7Ecx & 0x600) != 0 && !fusionCanAesni256) fusionCanAesni256 = 1;
     }
   }
 
-  return is_supported;
+  return isSupported;
 }
 #else
-int fusion_is_supported_by_cpu(void)
+int fusionSupported(void)
 {
-  unsigned leaf1_ecx, leaf7_ebx, leaf7_ecx;
+  unsigned leaf1Ecx, leaf7Ebx, leaf7Ecx;
 
   {
     // GCC-specific code to obtain CPU features
-    unsigned leaf_cnt;
-    __asm__("cpuid" : "=a"(leaf_cnt) : "a"(0) : "ebx", "ecx", "edx");
-    if (leaf_cnt < 7) return 0;
-    __asm__("cpuid" : "=c"(leaf1_ecx) : "a"(1) : "ebx", "edx");
-    __asm__("cpuid" : "=b"(leaf7_ebx), "=c"(leaf7_ecx) : "a"(7), "c"(0) : "edx");
+    unsigned leafCnt;
+    __asm__("cpuid" : "=a"(leafCnt) : "a"(0) : "ebx", "ecx", "edx");
+    if (leafCnt < 7) return 0;
+    __asm__("cpuid" : "=c"(leaf1Ecx) : "a"(1) : "ebx", "edx");
+    __asm__("cpuid" : "=b"(leaf7Ebx), "=c"(leaf7Ecx) : "a"(7), "c"(0) : "edx");
   }
 
   // AVX2
-  if ((leaf7_ebx & (1 << 5)) == 0) return 0;
+  if ((leaf7Ebx & (1 << 5)) == 0) return 0;
   // AES
-  if ((leaf1_ecx & (1 << 25)) == 0) return 0;
+  if ((leaf1Ecx & (1 << 25)) == 0) return 0;
   // PCLMUL
-  if ((leaf1_ecx & (1 << 1)) == 0) return 0;
+  if ((leaf1Ecx & (1 << 1)) == 0) return 0;
 
   // enable 256-bit mode if possible
-  if ((leaf7_ecx & 0x600) != 0 && !fusion_can_aesni256) fusion_can_aesni256 = 1;
+  if ((leaf7Ecx & 0x600) != 0 && !fusionCanAesni256) fusionCanAesni256 = 1;
 
   return 1;
 }
@@ -2778,18 +2770,18 @@ int fusion_is_supported_by_cpu(void)
 FusionAeadContext::~FusionAeadContext()
 {
   ZuClear(&serial, sizeof(serial));
-  if (aesgcm) fusion_aesgcm_free(aesgcm);
+  if (aesgcm) fusionAesgcmFree(aesgcm);
   ZuClear(&staticIv, sizeof(staticIv));
 }
 
-void FusionAeadContext::getIV(void *iv) { aesgcm_get_iv(this, iv); }
+void FusionAeadContext::getIV(void *iv) { aesgcmGetIV(this, iv); }
 
-void FusionAeadContext::setIV(const void *iv) { aesgcm_set_iv(this, iv); }
+void FusionAeadContext::setIV(const void *iv) { aesgcmSetIV(this, iv); }
 
 int FusionAeadContext::encBegin(uint64_t seq, const void *aad, size_t aadlen)
 {
   if (!isEnc) return Ztls_ErrorNotAvailable;
-  return fusion_aead_enc_begin(this, seq, aad, aadlen);
+  return fusionAeadEncBegin(this, seq, aad, aadlen);
 }
 
 int FusionAeadContext::encChunk(void *output, const void *input, size_t length, size_t *written)
@@ -2798,7 +2790,7 @@ int FusionAeadContext::encChunk(void *output, const void *input, size_t length, 
     *written = 0;
     return Ztls_ErrorNotAvailable;
   }
-  return fusion_aead_enc_chunk(this, output, input, length, written);
+  return fusionAeadEncChunk(this, output, input, length, written);
 }
 
 int FusionAeadContext::encEnd(void *output, size_t capacity, size_t *written)
@@ -2807,13 +2799,13 @@ int FusionAeadContext::encEnd(void *output, size_t capacity, size_t *written)
     *written = 0;
     return Ztls_ErrorNotAvailable;
   }
-  return fusion_aead_enc_end(this, output, capacity, written);
+  return fusionAeadEncEnd(this, output, capacity, written);
 }
 
 int FusionAeadContext::decBegin(uint64_t seq, const void *aad, size_t aadlen)
 {
   if (isEnc) return Ztls_ErrorNotAvailable;
-  return fusion_aead_dec_begin(this, seq, aad, aadlen);
+  return fusionAeadDecBegin(this, seq, aad, aadlen);
 }
 
 int FusionAeadContext::decChunk(
@@ -2823,36 +2815,35 @@ int FusionAeadContext::decChunk(
     *written = 0;
     return Ztls_ErrorNotAvailable;
   }
-  return fusion_aead_dec_chunk(this, output, capacity, input, length, written);
+  return fusionAeadDecChunk(this, output, capacity, input, length, written);
 }
 
 int FusionAeadContext::decEnd(const void *tag, size_t taglen)
 {
   if (isEnc) return Ztls_ErrorNotAvailable;
-  return fusion_aead_dec_end(this, tag, taglen);
+  return fusionAeadDecEnd(this, tag, taglen);
 }
 
-void FusionAeadContext::decAbort() { fusion_aead_dec_abort(this); }
+void FusionAeadContext::decAbort() { fusionAeadDecAbort(this); }
 
 void FusionAeadContext::encryptV(
   void *output, const Bytes *input, size_t incnt, uint64_t seq, const void *aad, size_t aadlen)
 {
   assert(isEnc);
   if (!algo->nonTemporal)
-    aead_do_encrypt_v(this, output, input, incnt, seq, aad, aadlen);
+    aeadDoEncryptV(this, output, input, incnt, seq, aad, aadlen);
   else if (aesgcm->ecb.aesni256)
-    non_temporal_encrypt_v256(this, output, input, incnt, seq, aad, aadlen);
+    nonTemporalEncryptV256(this, output, input, incnt, seq, aad, aadlen);
   else
-    non_temporal_encrypt_v128(this, output, input, incnt, seq, aad, aadlen);
+    nonTemporalEncryptV128(this, output, input, incnt, seq, aad, aadlen);
 }
 
 size_t FusionAeadContext::decrypt(
   void *output, const void *input, size_t inlen, uint64_t seq, const void *aad, size_t aadlen)
 {
   assert(!isEnc);
-  return algo->nonTemporal ?
-    non_temporal_decrypt128(this, output, input, inlen, seq, aad, aadlen) :
-    aead_do_decrypt(this, output, input, inlen, seq, aad, aadlen);
+  return algo->nonTemporal ? nonTemporalDecrypt128(this, output, input, inlen, seq, aad, aadlen) :
+			     aeadDoDecrypt(this, output, input, inlen, seq, aad, aadlen);
 }
 
 void FusionAeadContext::encrypt(
@@ -2863,7 +2854,7 @@ void FusionAeadContext::encrypt(
   if (algo->nonTemporal)
     AeadContext::encrypt(output, input, inlen, seq, aad, aadlen, supp);
   else
-    aead_do_encrypt(this, output, input, inlen, seq, aad, aadlen, supp);
+    aeadDoEncrypt(this, output, input, inlen, seq, aad, aadlen, supp);
 }
 
 void FusionAeadContext::encryptVS(
@@ -2874,7 +2865,7 @@ void FusionAeadContext::encryptVS(
   if (algo->nonTemporal)
     AeadContext::encryptVS(output, input, incnt, seq, aad, aadlen, supp);
   else
-    aead_do_encrypt_v_s(this, output, input, incnt, seq, aad, aadlen, supp);
+    aeadDoEncryptVS(this, output, input, incnt, seq, aad, aadlen, supp);
 }
 
 } // namespace Ztls_

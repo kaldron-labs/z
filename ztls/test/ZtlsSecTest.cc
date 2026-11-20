@@ -110,9 +110,9 @@ static void verify()
   ZuTestScope(verify);
   Ztls::Random rng;
   ZuCheck(rng.init());
-  Ztls::PK::SK_EC sk{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
-  uint8_t	  key[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheck(Ztls::PK::pkey_ec_export_public(sk.key, key));
+  Ztls::PK::ECPrivate sk{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
+  uint8_t	      key[Ztls::COSE::ES256::PublicKeySize];
+  ZuCheck(Ztls::PK::ecExportPublic(sk.key, key));
   ZuBSpan data{"signed bytes"};
   uint8_t digest[Ztls::MD<>::Size];
   {
@@ -167,9 +167,9 @@ static void coseKeys()
   ZuTestScope(coseKeys);
   Ztls::Random rng;
   ZuCheck(rng.init());
-  Ztls::PK::SK_RSA rsa{rng, 1024};
+  Ztls::PK::RSAPrivate rsa{rng, 1024};
   ZuCheck(coseKey(rng, rsa));
-  Ztls::PK::SK_EC ec{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  Ztls::PK::ECPrivate ec{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   ZuCheck(coseKey(rng, ec));
   ZtBArray genericEC;
   uint8_t  coordinate[Ztls::COSE::ES256::CoordinateSize] = {};
@@ -178,7 +178,7 @@ static void coseKeys()
     Ztls::COSE::Data::EC2PK{
       Ztls::COSE::KeyType::EC2, Ztls::COSE::Curve::P256, coordinate, coordinate});
   ZuCheck(genericEC.length() && genericEC[0] == 0xa4);
-  Ztls::PK::SK_ED25519 ed25519{rng};
+  Ztls::PK::Ed25519Private ed25519{rng};
   ZuCheck(coseKey(rng, ed25519));
 }
 

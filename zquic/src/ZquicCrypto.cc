@@ -329,7 +329,7 @@ int InitialCrypto::encrypt(
   ZuBSpan aad, ZuBSpan plaintext)
 {
   Ztls_::Bytes plain =
-    Ztls_::wire_bytes(plaintext.data(), plaintext.length());
+    Ztls_::wireBytes(plaintext.data(), plaintext.length());
   return encryptV(out, len, secret, pn, aad, &plain, 1);
 }
 
@@ -429,7 +429,7 @@ int InitialPktProt::protectLong(
   ZuBSpan header, ZuBSpan plaintext, unsigned pnOffset, unsigned pnLength)
 {
   Ztls_::Bytes plain =
-    Ztls_::wire_bytes(plaintext.data(), plaintext.length());
+    Ztls_::wireBytes(plaintext.data(), plaintext.length());
   return protectLongV(out, len, secret, pn, header, &plain, 1,
     pnOffset, pnLength);
 }
@@ -522,15 +522,15 @@ bool PktProtState::init(
   if (!secret_.valid() || !secret_.aead || !secret_.hpCipher ||
       !secret_.hpSuppCipher)
     return false;
-  aead = Ztls_::aead_new_direct(
+  aead = Ztls_::aeadNewDirect(
     secret_.aead, tx_, secret_.key.data(), secret_.iv.data());
   if (!aead) return false;
-  hp = Ztls_::cipher_new(secret_.hpCipher, true, secret_.hp.data());
+  hp = Ztls_::cipherNew(secret_.hpCipher, true, secret_.hp.data());
   if (!hp) {
     clear();
     return false;
   }
-  if (tx_) hpSupp = Ztls_::cipher_new(secret_.hpSuppCipher, true, secret_.hp.data());
+  if (tx_) hpSupp = Ztls_::cipherNew(secret_.hpSuppCipher, true, secret_.hp.data());
   if (tx_ && (!hpSupp)) {
     clear();
     return false;
@@ -544,9 +544,9 @@ bool PktProtState::init(
 
 void PktProtState::clear()
 {
-  if (aead) Ztls_::aead_free(aead);
-  if (hp) Ztls_::cipher_free(hp);
-  if (hpSupp) Ztls_::cipher_free(hpSupp);
+  if (aead) Ztls_::aeadFree(aead);
+  if (hp) Ztls_::cipherFree(hp);
+  if (hpSupp) Ztls_::cipherFree(hpSupp);
   aead = nullptr;
   hp = hpSupp = nullptr;
   secret.clear();
@@ -560,10 +560,10 @@ static bool hkdfExpandTrafficLabel(
   ZuBSpan secret, const char *label)
 {
   return hash && out && outLen &&
-    !Ztls_::hkdf_expand_label(
+    !Ztls_::hkdfExpandLabel(
       hash, out, outLen,
-      Ztls_::wire_bytes(secret.data(), secret.length()),
-      label, Ztls_::wire_bytes(nullptr, 0), "tls13 ");
+      Ztls_::wireBytes(secret.data(), secret.length()),
+      label, Ztls_::wireBytes(nullptr, 0), "tls13 ");
 }
 
 bool PktProt::deriveSecret(
@@ -718,8 +718,8 @@ static bool trafficMask(
     return false;
   Ztls_::CipherContext *ctx = state.hp;
   ZuBArray<32> block(32, false);
-  Ztls_::cipher_init(ctx, nullptr);
-  Ztls_::cipher_encrypt(ctx, block.data(), sample.data(), 16);
+  Ztls_::cipherInit(ctx, nullptr);
+  Ztls_::cipherEncrypt(ctx, block.data(), sample.data(), 16);
   memcpy(mask, block.data(), InitialSecret::HPMaskLen);
   return true;
 }
@@ -749,7 +749,7 @@ static int protect_(
     memcpy(out, header.data(), header.length());
 
   Ztls_::AeadContext *ctx = state.aead;
-  Ztls_::aead_encrypt_v(
+  Ztls_::aeadEncryptV(
     ctx, out + header.length(), plain, plainCount, pn,
     out, header.length());
   size_t n = plainLen + secret.tagLen;
@@ -812,14 +812,14 @@ static int unprotect_(
       uint8_t, ZtArrayHeapID<"Zquic.PktProt.Plain">>;
     auto plain = ZmScratch(uint8_t, cipherLen, Plain::VHeap);
     plain.length(cipherLen);
-    n = Ztls_::aead_decrypt(
+    n = Ztls_::aeadDecrypt(
       ctx, plain.data(), packet + payloadOffset,
       cipherLen, pn, packet, payloadOffset);
     if (n == SIZE_MAX) return fail();
     if (n > cipherLen) return fail();
     if (n) memcpy(packet + payloadOffset, plain.data(), n);
   } else {
-    n = Ztls_::aead_decrypt(
+    n = Ztls_::aeadDecrypt(
       ctx, packet + payloadOffset, packet + payloadOffset,
       cipherLen, pn, packet, payloadOffset);
     if (n == SIZE_MAX) return fail();
@@ -842,7 +842,7 @@ int PktProt::protectLong(
   ZuBSpan header, ZuBSpan plaintext, unsigned pnOffset, unsigned pnLength)
 {
   Ztls_::Bytes plain =
-    Ztls_::wire_bytes(plaintext.data(), plaintext.length());
+    Ztls_::wireBytes(plaintext.data(), plaintext.length());
   return protectLongV(out, len, state, pn, header, &plain, 1,
     pnOffset, pnLength);
 }
@@ -891,7 +891,7 @@ int PktProt::protectShort(
   ZuBSpan header, ZuBSpan plaintext, unsigned pnOffset, unsigned pnLength)
 {
   Ztls_::Bytes plain =
-    Ztls_::wire_bytes(plaintext.data(), plaintext.length());
+    Ztls_::wireBytes(plaintext.data(), plaintext.length());
   return protectShortV(out, len, state, pn, header, &plain, 1,
     pnOffset, pnLength);
 }
@@ -984,8 +984,8 @@ bool Crypto::initTLSContext(const CryptoConfig &config)
   if (!Ztls::cryptoInit()) return false;
   m_tlsCtx.random = &Ztls_::opensslRandom;
   m_tlsCtx.getTime = &Ztls_::getTime;
-  m_tlsCtx.keyExchanges = Ztls_::openssl_key_exchanges;
-  for (auto suite : Ztls_::openssl_cipher_suites)
+  m_tlsCtx.keyExchanges = Ztls_::opensslKeyExchanges;
+  for (auto suite : Ztls_::opensslCipherSuites)
     if (suite->aead && suite->aead->ecbCipher && suite->aead->ctrCipher)
       m_tlsCtx.cipherSuites.push(suite);
   m_tlsCtx.serverCipherPreference = 1;
@@ -1000,12 +1000,12 @@ bool Crypto::initTLSContext(const CryptoConfig &config)
 
   if (m_isServer) {
     if (!config.certPath || !config.keyPath) return false;
-    if (!Ztls::load_certificates(&m_tlsCtx, config.certPath.data()))
+    if (!Ztls::loadCerts(&m_tlsCtx, config.certPath.data()))
       return false;
     if (!Ztls::PK::loadPEM(m_key, config.keyPath.data())) return false;
-    m_sign = Ztls::sign_cert_new(m_key);
+    m_sign = Ztls::signCertNew(m_key);
     if (!m_sign) return false;
-    m_tlsCtx.signCertificate = Ztls::sign_cert_cb(m_sign);
+    m_tlsCtx.signCertificate = Ztls::signCertHook(m_sign);
     struct ClientHelloHook : Ztls_::OnClientHello {
       int call(Ztls::Cxn *tls, Ztls_::CliHelloParams *params) override { return Crypto::onClientHelloCB(tls, params); }
     };
@@ -1024,23 +1024,23 @@ bool Crypto::initTLSContext(const CryptoConfig &config)
       m_tlsCtx.saveTicket = &saveSessionTicket;
     }
     if (config.caPath) {
-      m_certStore = Ztls::cert_store_new();
+      m_certStore = Ztls::certStoreNew();
       if (!m_certStore) return false;
       bool ok = isDir(config.caPath) ?
-	Ztls::cert_store_load_path(
+	Ztls::certStoreLoadPath(
 	  m_certStore, config.caPath.data()) :
-	Ztls::cert_store_load_file(
+	Ztls::certStoreLoadFile(
 	  m_certStore, config.caPath.data());
       if (!ok) return false;
-      m_verify = Ztls::verify_cert_new(m_certStore);
+      m_verify = Ztls::verifyCertNew(m_certStore);
       if (!m_verify) return false;
-      m_tlsCtx.verifyCertificate = Ztls::verify_cert_cb(m_verify);
+      m_tlsCtx.verifyCertificate = Ztls::verifyCertHook(m_verify);
     }
   }
 
   m_tls.initialize(&m_tlsCtx, m_isServer, this);
   if (!m_isServer && m_serverName)
-    if (Ztls_::set_server_name(&m_tls, m_serverName))
+    if (Ztls_::serverName(&m_tls, m_serverName))
       return false;
   return true;
 }
@@ -1056,7 +1056,7 @@ bool Crypto::initTLSProperties(const CryptoConfig &config)
   if (n < 0 || unsigned(n) != m_tlsParams.length()) return false;
   m_tlsExtensions[0].type = TLSExtQUICParamsV1;
   m_tlsExtensions[0].data =
-    Ztls_::wire_bytes(m_tlsParams.data(), m_tlsParams.length());
+    Ztls_::wireBytes(m_tlsParams.data(), m_tlsParams.length());
   m_tlsExtensions[1].type = UINT16_MAX;
   m_tlsExtensions[1].data = {};
   m_tls.handshakeProps.additionalExtensions = m_tlsExtensions;
@@ -1070,14 +1070,14 @@ bool Crypto::initTLSProperties(const CryptoConfig &config)
   m_tls.handshakeProps.extensions = &extensionHooks;
 
   if (!m_isServer && m_alpn) {
-    m_alpnVec = Ztls_::wire_bytes(m_alpn.data(), m_alpn.length());
+    m_alpnVec = Ztls_::wireBytes(m_alpn.data(), m_alpn.length());
     m_tls.handshakeProps.client.negotiatedProtocols = {&m_alpnVec, 1};
   }
   if (!m_isServer) {
     m_maxEarlyData = 0;
     if (config.sessionTicket)
       m_tls.handshakeProps.client.sessionTicket =
-	Ztls_::wire_bytes(config.sessionTicket.data(), config.sessionTicket.length());
+	Ztls_::wireBytes(config.sessionTicket.data(), config.sessionTicket.length());
     if (config.enable0RTT) {
       m_tls.handshakeProps.client.maxEarlyDataSize = &m_maxEarlyData;
       m_tls.handshakeProps.client.earlyDataAcceptance =
@@ -1094,16 +1094,16 @@ void Crypto::resetTLS_()
   m_tls.retireRx();
   m_tls.retireTx();
   if (m_sign) {
-    Ztls::sign_cert_free(m_sign);
+    Ztls::signCertFree(m_sign);
     m_sign = nullptr;
   }
   m_key.reset(nullptr);
   if (m_verify) {
-    Ztls::verify_cert_free(m_verify);
+    Ztls::verifyCertFree(m_verify);
     m_verify = nullptr;
   }
   if (m_certStore) {
-    Ztls::cert_store_free(m_certStore);
+    Ztls::certStoreFree(m_certStore);
     m_certStore = nullptr;
   }
   m_tlsCtx = {};
@@ -1147,7 +1147,7 @@ void Crypto::keyLog(int isEnc, PktKeyLevel::T level, ZuBSpan secret)
       level != PktKeyLevel::Handshake &&
       level != PktKeyLevel::OneRTT)
     return;
-  Ztls_::Bytes random = Ztls_::get_client_random(&m_tls);
+  Ztls_::Bytes random = Ztls_::cliRandom(&m_tls);
   if (!random.data() || random.length() != 32) return;
   bool clientSecret = isEnc ? !m_isServer : m_isServer;
   const char *label = nullptr;
@@ -1189,7 +1189,7 @@ int Crypto::updateTrafficKey_(int isEnc, size_t epoch, const void *secret)
   PktNumSpace::T space = spaceFromKeyLevel(keyLevel);
   if (space == PktNumSpace::N) return 0;
 
-  const Ztls_::CipherSuite *cipher = Ztls_::get_cipher(&m_tls);
+  const Ztls_::CipherSuite *cipher = Ztls_::cipher(&m_tls);
   if (!cipher || !cipher->hash) return -1;
   ZuBSpan secretSpan{
     static_cast<const uint8_t *>(secret),
@@ -1226,13 +1226,13 @@ int Crypto::onClientHello_(Ztls_::CliHelloParams *params)
 {
   if (!params) return Ztls_AlertToPeerError(Ztls_AlertInternalError);
   if (params->serverName.data() && params->serverName.length())
-    Ztls_::set_server_name(&m_tls, ZuCSpan{params->serverName});
+    Ztls_::serverName(&m_tls, ZuCSpan{params->serverName});
   if (!m_alpn) return 0;
   for (auto protocol : params->negotiatedProtocols) {
     if (protocol.length() != m_alpn.length() ||
 	memcmp(protocol.data(), m_alpn.data(), m_alpn.length()))
       continue;
-    return Ztls_::set_negotiated_protocol(&m_tls, m_alpn);
+    return Ztls_::negotiatedProtocol(&m_tls, m_alpn);
   }
   return Ztls_AlertToPeerError(Ztls_AlertNoAppProto);
 }
@@ -1287,7 +1287,7 @@ ZuCSpan Crypto::negotiatedProtocol() const
 
 size_t Crypto::tlsReadEpoch() const
 {
-  return tlsReady() ? Ztls_::raw_read_epoch(&m_tls) : 0;
+  return tlsReady() ? Ztls_::rawReadEpoch(&m_tls) : 0;
 }
 
 int Crypto::handleTLSMessage(
@@ -1308,7 +1308,7 @@ int Crypto::handleTLSMessage(
     else if (m_tls.state == Ztls_::State::SrvBuildCertSig)
       operation = RawHandshakeOp::ResumeSignature;
   }
-  auto result = raw_handshake(
+  auto result = rawHandshake(
     &m_tls, &m_tls.handshakeProps, operation, inEpoch, input,
     {out->data_(), out->size});
   m_tlsResult = result.status;
@@ -1325,7 +1325,7 @@ int Crypto::handleTLSMessage(
   out->length = result.length;
   if (result.length) ++m_diag.tlsMessagesEmitted;
   syncEarlyDataState();
-  if (!result.status && handshake_is_complete(&m_tls)) m_oneRTTReady = true;
+  if (!result.status && handshakeComplete(&m_tls)) m_oneRTTReady = true;
   return int(result.length);
 }
 

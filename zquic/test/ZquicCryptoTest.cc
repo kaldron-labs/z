@@ -83,7 +83,7 @@ void testEarlyTrafficSecretState()
   for (unsigned i = 0; i < sizeof(secretBytes); ++i) secretBytes[i] = uint8_t(i);
   Zquic::TrafficSecret secret;
   ZuCHECK(Zquic::PktProt::deriveSecret(
-      secret, &Ztls_::openssl_aes128gcmsha256,
+      secret, &Ztls_::opensslAes128gcmsha256,
       Zquic::byteSpan(secretBytes, sizeof(secretBytes))),
     "0-RTT traffic secret derivation failed");
 

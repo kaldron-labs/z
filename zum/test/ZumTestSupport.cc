@@ -65,7 +65,7 @@ bool oidcParams(
 }
 
 bool signJWT(
-    Ztls::Random &rng, Ztls::PK::SK_EC &key,
+    Ztls::Random &rng, Ztls::PK::ECPrivate &key,
     ZuCSpan header, ZuCSpan claims, Zum::String &token)
 {
   Zum::String next;
@@ -94,7 +94,7 @@ bool signJWT(
 enum { TestAuthDataSize = Ztls::MD<>::Size + 1 + 4 };
 
 bool makeAssertion(
-    Ztls::Random &rng, Ztls::PK::SK_EC &sk, uint32_t signCount,
+    Ztls::Random &rng, Ztls::PK::ECPrivate &sk, uint32_t signCount,
     Zum::AssertionInput &input, bool backupEligible)
 {
   uint8_t authData[TestAuthDataSize];
@@ -139,7 +139,7 @@ bool makeAssertion(
 }
 
 bool makeAssertion(
-    Ztls::Random &rng, Ztls::PK::SK_EC &sk, uint32_t signCount,
+    Ztls::Random &rng, Ztls::PK::ECPrivate &sk, uint32_t signCount,
     ZuBSpan challenge, ZuCSpan origin, ZuCSpan rpID,
     Zum::AssertionInput &input)
 {

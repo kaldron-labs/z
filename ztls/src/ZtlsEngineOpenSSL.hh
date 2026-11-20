@@ -23,6 +23,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 // IN THE SOFTWARE.
+
 #ifndef ZtlsEngineOpenSSL_HH
 #define ZtlsEngineOpenSSL_HH
 
@@ -97,72 +98,72 @@
 
 namespace Ztls_ {
 
-Ztls_Extern const KeyExchangeAlgo &openssl_secp256r1;
+Ztls_Extern const KeyExchangeAlgo	&opensslSecp256r1;
 #if ZtlsOpenSSLHaveSecp384r1
-Ztls_Extern const KeyExchangeAlgo &openssl_secp384r1;
+Ztls_Extern const KeyExchangeAlgo	&opensslSecp384r1;
 #endif
 #if ZtlsOpenSSLHaveSecp521r1
-Ztls_Extern const KeyExchangeAlgo &openssl_secp521r1;
+Ztls_Extern const KeyExchangeAlgo	&opensslSecp521r1;
 #endif
 #if ZtlsOpenSSLHaveX25519
-Ztls_Extern const KeyExchangeAlgo &openssl_x25519;
+Ztls_Extern const KeyExchangeAlgo	&opensslX25519;
 #endif
 
-Ztls_Extern const KeyExchangeAlgo &openssl_mlkem512;
-Ztls_Extern const KeyExchangeAlgo &openssl_mlkem768;
-Ztls_Extern const KeyExchangeAlgo &openssl_mlkem1024;
-Ztls_Extern const KeyExchangeAlgo &openssl_secp256r1mlkem768;
-Ztls_Extern const KeyExchangeAlgo &openssl_secp384r1mlkem1024;
-Ztls_Extern const KeyExchangeAlgo &openssl_x25519mlkem768;
+Ztls_Extern const KeyExchangeAlgo	&opensslMlkem512;
+Ztls_Extern const KeyExchangeAlgo	&opensslMLKEM768;
+Ztls_Extern const KeyExchangeAlgo	&opensslMlkem1024;
+Ztls_Extern const KeyExchangeAlgo	&opensslSecp256r1mlkem768;
+Ztls_Extern const KeyExchangeAlgo	&opensslSecp384r1mlkem1024;
+Ztls_Extern const KeyExchangeAlgo	&opensslX25519mlkem768;
 
-Ztls_Extern const KeyExchangeAlgo *openssl_key_exchanges[];
-Ztls_Extern const KeyExchangeAlgo *openssl_key_exchanges_all[];
+Ztls_Extern const KeyExchangeAlgo	*opensslKeyExchanges[];
+Ztls_Extern const KeyExchangeAlgo	*opensslKeyExchangesAll[];
 
-Ztls_Extern const CipherAlgo  &openssl_aes128ecb;
-extern const CipherAlgo	      &openssl_aes128ctr;
-Ztls_Extern const AeadAlgo    &openssl_aes128gcm;
-extern const CipherAlgo	      &openssl_aes256ecb;
-extern const CipherAlgo	      &openssl_aes256ctr;
-Ztls_Extern const AeadAlgo    &openssl_aes256gcm;
-Ztls_Extern const HashAlgo    &openssl_sha256;
-Ztls_Extern const HashAlgo    &openssl_sha384;
-Ztls_Extern const HashAlgo    &openssl_sha512;
-Ztls_Extern const CipherSuite  openssl_aes128gcmsha256;
-extern const CipherSuite       openssl_aes256gcmsha384;
-Ztls_Extern const CipherSuites openssl_cipher_suites;
-extern const CipherSuites      openssl_cipher_suites_all;
+Ztls_Extern const CipherAlgo		&opensslAes128ecb;
+Ztls_Extern const CipherAlgo		&opensslAes128ctr;
+Ztls_Extern const AeadAlgo		&opensslAes128gcm;
+Ztls_Extern const CipherAlgo		&opensslAes256ecb;
+Ztls_Extern const CipherAlgo		&opensslAes256ctr;
+Ztls_Extern const AeadAlgo		&opensslAes256gcm;
+Ztls_Extern const HashAlgo		&opensslSha256;
+Ztls_Extern const HashAlgo		&opensslSha384;
+Ztls_Extern const HashAlgo		&opensslSha512;
+Ztls_Extern const CipherSuite		opensslAes128gcmsha256;
+Ztls_Extern const CipherSuite		opensslAes256gcmsha384;
+Ztls_Extern const CipherSuites		opensslCipherSuites;
+Ztls_Extern const CipherSuites		opensslCipherSuitesAll;
 
 #if ZtlsOpenSSLHaveChaCha
-extern const CipherAlgo	   &openssl_chacha20;
-Ztls_Extern const AeadAlgo &openssl_chacha20poly1305;
-extern const CipherSuite    openssl_chachasha256;
+Ztls_Extern const CipherAlgo		&opensslChacha20;
+Ztls_Extern const AeadAlgo		&opensslChacha20poly1305;
+Ztls_Extern const CipherSuite		opensslChachasha256;
 #endif
 
 #if ZtlsOpenSSLHaveBF
-extern const CipherAlgo &openssl_bfecb;
+Ztls_Extern const CipherAlgo		&opensslBfecb;
 #endif
 
-extern const HpkeKem openssl_hpke_kem_p256sha256;
+Ztls_Extern const HpkeKem		opensslHPKEKemP256SHA256;
 #if ZtlsOpenSSLHaveSecp384r1
-extern const HpkeKem openssl_hpke_kem_p384sha384;
+Ztls_Extern const HpkeKem		opensslHPKEKemP384SHA384;
 #endif
 #if ZtlsOpenSSLHaveX25519
-Ztls_Extern const HpkeKem openssl_hpke_x25519sha256;
+Ztls_Extern const HpkeKem		opensslHPKEX25519sha256;
 #endif
-extern const HpkeKem *openssl_hpke_kems[];
+Ztls_Extern const HpkeKem		*opensslHPKEKems[];
 
-Ztls_Extern const HpkeSuite openssl_hpke_aes128gcmsha256;
-extern const HpkeSuite	    openssl_hpke_aes128gcmsha512;
-extern const HpkeSuite	    openssl_hpke_aes256gcmsha384;
+Ztls_Extern const HpkeSuite		opensslHPKEAes128gcmsha256;
+Ztls_Extern const HpkeSuite		opensslHPKEAes128gcmsha512;
+Ztls_Extern const HpkeSuite		opensslHPKEAes256gcmsha384;
 #if ZtlsOpenSSLHaveChaCha
-extern const HpkeSuite openssl_hpke_chachasha256;
+Ztls_Extern const HpkeSuite		opensslHPKEChachasha256;
 #endif
-extern const HpkeSuite *openssl_hpke_cipher_suites[];
+Ztls_Extern const HpkeSuite		*opensslHPKECipherSuites[];
 
-Ztls_Extern RandomSource &opensslRandom;
+Ztls_Extern RandomSource		&opensslRandom;
 
 // constructs a key exchange context. pkey's reference count is incremented.
-Ztls_API int openssl_create_key_exchange(KeyExchangeContext **ctx, EVP_PKEY *pkey);
+Ztls_Extern int opensslCreateKeyExchange(KeyExchangeContext **ctx, EVP_PKEY *pkey);
 
 struct OpenSSLSigScheme {
   uint16_t	schemeId;
@@ -173,10 +174,10 @@ struct OpenSSLSigScheme {
 };
 
 // Given a private key, returns a list of compatible signature schemes.
-ZuSpan<const OpenSSLSigScheme *const> openssl_lookup_sig_schemes(EVP_PKEY *key);
+Ztls_Extern ZuSpan<const OpenSSLSigScheme *const> opensslLookupSigSchemes(EVP_PKEY *key);
 
 // Given available schemes and input, choses one, or returns NULL if none is available.
-const OpenSSLSigScheme *openssl_select_sig_scheme(
+Ztls_Extern const OpenSSLSigScheme *opensslSelectSigScheme(
   ZuSpan<const OpenSSLSigScheme *const> available, ZuSpan<const uint16_t> algorithms);
 
 struct Ztls_API OpenSSLSignCert : SignCertificate {
@@ -199,8 +200,8 @@ struct Ztls_API OpenSSLSignCert : SignCertificate {
     ZuSpan<const uint16_t> algorithms) override;
 };
 
-Ztls_API int openssl_init_sign_cert(OpenSSLSignCert *self, EVP_PKEY *key);
-Ztls_API void openssl_dispose_sign_cert(OpenSSLSignCert *self);
+Ztls_Extern int opensslInitSignCert(OpenSSLSignCert *self, EVP_PKEY *key);
+Ztls_Extern void opensslDisposeSignCert(OpenSSLSignCert *self);
 
 // When verifying the certificate chain, this optional callback can be used to store necessary
 // information (e.g., client certificate chain being provided) or to override the result. To give
@@ -210,7 +211,7 @@ Ztls_API void openssl_dispose_sign_cert(OpenSSLSignCert *self);
 // condition (as indicated by `ret == Ztls_AlertCertRequired`).
 struct OpenSSLCertVerify {
   virtual ~OpenSSLCertVerify() = default;
-  virtual int call(Ztls::Cxn *tls, int ret, int ossl_ret, X509 *cert, STACK_OF(X509) * chain) = 0;
+  virtual int call(Ztls::Cxn *tls, int ret, int osslRet, X509 *cert, STACK_OF(X509) * chain) = 0;
 };
 
 struct Ztls_API OpenSSLVerifyCert : VerifyCertificate {
@@ -226,14 +227,14 @@ struct Ztls_API OpenSSLVerifyCert : VerifyCertificate {
     ZuSpan<const Bytes> certs) override;
 };
 
-Ztls_API int openssl_init_verify_cert(OpenSSLVerifyCert *self, X509_STORE *store);
-Ztls_API void openssl_dispose_verify_cert(OpenSSLVerifyCert *self);
-X509_STORE *openssl_default_cert_store(void);
+Ztls_Extern int opensslInitVerifyCert(OpenSSLVerifyCert *self, X509_STORE *store);
+Ztls_Extern void opensslDisposeVerifyCert(OpenSSLVerifyCert *self);
+Ztls_Extern X509_STORE *opensslDefaultCertStore(void);
 
-Ztls_API int openssl_encrypt_ticket_evp(
+Ztls_Extern int opensslEncryptTicketEvp(
   Buffer *dst, Bytes src,
   int (*cb)(unsigned char *, unsigned char *, EVP_CIPHER_CTX *, EVP_MAC_CTX *, int));
-Ztls_API int openssl_decrypt_ticket_evp(
+Ztls_Extern int opensslDecryptTicketEvp(
   Buffer *dst, Bytes src,
   int (*cb)(unsigned char *, unsigned char *, EVP_CIPHER_CTX *, EVP_MAC_CTX *, int));
 

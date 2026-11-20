@@ -26,7 +26,7 @@ struct RuntimeDB : public Zum::DB {
 extern Zum::StringVec logRows;
 
 void prepareIdentity(ZmRef<RuntimeDB>, ZmRef<Zum::DB>,
-  Ztls::Random &, Zum::Bytes &, ZmRef<Ztls::PK::SK_EC> &);
+  Ztls::Random &, Zum::Bytes &, ZmRef<Ztls::PK::ECPrivate> &);
 
 struct OIDCSetup {
   Zum::Client browser;
@@ -44,11 +44,11 @@ struct TokenSetup {
 
 void prepareToken(ZmRef<RuntimeDB>, ZmRef<Zum::DB>,
   Ztls::Random &, OIDCSetup &, const Zum::Bytes &,
-  Ztls::PK::SK_EC &, Ztls::PK::SK_EC &,
+  Ztls::PK::ECPrivate &, Ztls::PK::ECPrivate &,
   uint8_t (&)[Ztls::COSE::ES256::PublicKeySize], TokenSetup &);
 
 void checkKeys(ZmRef<RuntimeDB>, ZmRef<Zum::DB>, Ztls::Random &,
-  Ztls::PK::SK_EC &,
+  Ztls::PK::ECPrivate &,
   uint8_t (&)[Ztls::COSE::ES256::PublicKeySize]);
 
 inline constexpr char assertionClientData_[] =
@@ -59,11 +59,11 @@ inline constexpr char assertionClientData_[] =
 Zum::String testJwk(ZuCSpan);
 Zum::String base64URL(ZuBSpan);
 bool oidcParams(Zum::String, Zum::String &, Zum::String &);
-bool signJWT(Ztls::Random &, Ztls::PK::SK_EC &,
+bool signJWT(Ztls::Random &, Ztls::PK::ECPrivate &,
   ZuCSpan, ZuCSpan, Zum::String &);
-bool makeAssertion(Ztls::Random &, Ztls::PK::SK_EC &, uint32_t,
+bool makeAssertion(Ztls::Random &, Ztls::PK::ECPrivate &, uint32_t,
   Zum::AssertionInput &, bool backupEligible = false);
-bool makeAssertion(Ztls::Random &, Ztls::PK::SK_EC &, uint32_t,
+bool makeAssertion(Ztls::Random &, Ztls::PK::ECPrivate &, uint32_t,
   ZuBSpan, ZuCSpan, ZuCSpan, Zum::AssertionInput &);
 bool makeRegistration(ZuBSpan, uint32_t, ZuCSpan,
   ZuBSpan, ZuCSpan, ZuCSpan, Zum::RegistrationInput &);

@@ -84,7 +84,7 @@ static void runtimeOIDC()
   Ztls::Random rng;
   ZuCheck(rng.init());
   Zum::Bytes passkeyHandle;
-  ZmRef<Ztls::PK::SK_EC> passkey;
+  ZmRef<Ztls::PK::ECPrivate> passkey;
   ZuTestCall(prepareIdentity, db, context, rng, passkeyHandle, passkey);
   OIDCSetup state;
   ZuTestCall(prepareOIDC, db, context, rng, state);

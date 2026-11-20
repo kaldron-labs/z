@@ -145,10 +145,10 @@ static int run(int argc, char **argv)
   } :
     sshRSA ? ZtlsAge::Identity{ZtlsAge::SshRSAIdentity{
 	       sshRecipient.template p<ZtlsAge::SshRSARecipient>().publicKey,
-	       dynamic_cast<Ztls::PK::SK_RSA *>(privateKey.ptr())}} :
+	       dynamic_cast<Ztls::PK::RSAPrivate *>(privateKey.ptr())}} :
     sshED  ? ZtlsAge::Identity{ZtlsAge::SshED25519Identity{
 	       sshRecipient.template p<ZtlsAge::SshED25519Recipient>().publicKey,
-	       dynamic_cast<Ztls::PK::SK_ED25519 *>(privateKey.ptr())}} :
+	       dynamic_cast<Ztls::PK::Ed25519Private *>(privateKey.ptr())}} :
     x25519 ? ZtlsAge::Identity{ZtlsAge::X25519Identity{{key, keySize}}} :
 	     ZtlsAge::Identity{ZtlsAge::HybridIdentity{{key, keySize}}};
   auto		    decrypted = age.decrypt(input, {&identity, 1}, plaintext);

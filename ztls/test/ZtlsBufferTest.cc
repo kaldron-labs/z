@@ -136,47 +136,47 @@ struct TestState {
   bool			expectConnectFailure = false;
   unsigned		txHeadroom = 0;
   unsigned		txTailroom = 0;
-  ZmAtomic<unsigned>	done_count{0};
+  ZmAtomic<unsigned>	doneCount{0};
   ZmAtomic<unsigned>	errors{0};
-  ZmAtomic<unsigned>	client_rx_bytes{0};
-  ZmAtomic<unsigned>	server_rx_bytes{0};
-  ZmAtomic<unsigned>	client_connected{0};
-  ZmAtomic<unsigned>	server_connected{0};
-  ZmAtomic<unsigned>	client_tlsver{0};
-  ZmAtomic<unsigned>	server_tlsver{0};
-  ZmAtomic<unsigned>	client_cipher{0};
-  ZmAtomic<unsigned>	server_cipher{0};
-  ZmAtomic<unsigned>	client_closed{0};
-  ZmAtomic<unsigned>	server_replied{0};
-  ZmAtomic<unsigned>	client_tx_protected{0};
-  ZmAtomic<unsigned>	server_tx_protected{0};
-  ZmAtomic<unsigned>	client_peer_closed{0};
-  ZmAtomic<unsigned>	connect_failed{0};
-  ZmAtomic<unsigned>	connect_failed_on_rx{0};
-  ZmAtomic<unsigned>	connect_failed_transient{0};
-  ZmAtomic<uint64_t>	client_wire_count{0};
-  ZmAtomic<uint64_t>	client_wire_bytes{0};
-  ZmAtomic<uint64_t>	server_wire_count{0};
-  ZmAtomic<uint64_t>	server_wire_bytes{0};
-  Ztc::QueueTelemetry	client_rx;
-  Ztc::QueueTelemetry	client_tx;
-  Ztc::QueueTelemetry	server_rx;
-  Ztc::QueueTelemetry	server_tx;
-  const char		*error_msg = nullptr;
+  ZmAtomic<unsigned>	cliRxBytes{0};
+  ZmAtomic<unsigned>	srvRxBytes{0};
+  ZmAtomic<unsigned>	cliConnected{0};
+  ZmAtomic<unsigned>	srvConnected{0};
+  ZmAtomic<unsigned>	cliTlsver{0};
+  ZmAtomic<unsigned>	srvTlsver{0};
+  ZmAtomic<unsigned>	cliCipher{0};
+  ZmAtomic<unsigned>	srvCipher{0};
+  ZmAtomic<unsigned>	cliClosed{0};
+  ZmAtomic<unsigned>	srvReplied{0};
+  ZmAtomic<unsigned>	cliTxProtected{0};
+  ZmAtomic<unsigned>	srvTxProtected{0};
+  ZmAtomic<unsigned>	cliPeerClosed{0};
+  ZmAtomic<unsigned>	connectFailed{0};
+  ZmAtomic<unsigned>	connectFailedOnRx{0};
+  ZmAtomic<unsigned>	connectFailedTransient{0};
+  ZmAtomic<uint64_t>	cliWireCount{0};
+  ZmAtomic<uint64_t>	cliWireBytes{0};
+  ZmAtomic<uint64_t>	srvWireCount{0};
+  ZmAtomic<uint64_t>	srvWireBytes{0};
+  Ztc::QueueTelemetry	cliRx;
+  Ztc::QueueTelemetry	cliTx;
+  Ztc::QueueTelemetry	srvRx;
+  Ztc::QueueTelemetry	srvTx;
+  const char		*errorMsg = nullptr;
 
-  void done_one()
+  void doneOne()
   {
-    if (done_count.xchAdd(1) < target) done.post();
+    if (doneCount.xchAdd(1) < target) done.post();
   }
   void fail(const char *msg)
   {
-    if (!errors.xch(1)) error_msg = msg;
+    if (!errors.xch(1)) errorMsg = msg;
     for (unsigned i = 0; i < target; ++i) done.post();
   }
 };
 
 template <typename Link>
-void queue_telemetry(Link &link, Ztc::QueueTelemetry &rx, Ztc::QueueTelemetry &tx)
+void queueTelemetry(Link &link, Ztc::QueueTelemetry &rx, Ztc::QueueTelemetry &tx)
 {
   auto	   linkKey = link.telKey();
   unsigned count = 0;
@@ -228,27 +228,27 @@ void queue_telemetry(Link &link, Ztc::QueueTelemetry &rx, Ztc::QueueTelemetry &t
   Ztls_CheckRT_1(rx.type != tx.type, "Rx and Tx queue types do not discriminate the keys");
 }
 
-template <typename Link> void check_queues(Link &link)
+template <typename Link> void checkQueues(Link &link)
 {
   Ztc::QueueTelemetry rx;
   Ztc::QueueTelemetry tx;
-  queue_telemetry(link, rx, tx);
+  queueTelemetry(link, rx, tx);
 }
 
-void fill_payload(ZtArray<uint8_t> &payload, unsigned len, uint8_t seed)
+void fillPayload(ZtArray<uint8_t> &payload, unsigned len, uint8_t seed)
 {
   payload.length(len);
   for (unsigned i = 0; i < len; ++i) payload[i] = uint8_t(seed + (i * 31u) + (i >> 3));
 }
 
-bool write_bytes(const char *path, const ZtArray<uint8_t> &data)
+bool writeBytes(const char *path, const ZtArray<uint8_t> &data)
 {
   ZiFile file{path, ZiFile::Write | ZiFile::GC};
   if (!file) return false;
   return !data.length() || file.write(data.data(), data.length()) == Zi::OK;
 }
 
-template <typename A> bool read_bytes(const char *path, A &data)
+template <typename A> bool readBytes(const char *path, A &data)
 {
   ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
   if (!file) return false;
@@ -269,7 +269,7 @@ struct CertIssue {
   bool		der = true;
 };
 
-bool issue_cert(const TempDir &temp, const CertIssue &p)
+bool issueCert(const TempDir &temp, const CertIssue &p)
 {
   ZtString<> cmd;
   cmd << "openssl x509 -req -inform DER -in " << p.csr << " -CA " << p.ca << " -CAkey " << p.caKey
@@ -280,7 +280,7 @@ bool issue_cert(const TempDir &temp, const CertIssue &p)
   return TempDir::systemOK(system(cmd.data()));
 }
 
-bool gen_csr(ZuCSpan key, ZuCSpan csr, ZuCSpan subject)
+bool genCSR(ZuCSpan key, ZuCSpan csr, ZuCSpan subject)
 {
   ZtString<> cmd;
   cmd << "openssl req -new -newkey rsa:2048 -nodes -subj /CN=" << subject << " -keyout " << key
@@ -288,14 +288,14 @@ bool gen_csr(ZuCSpan key, ZuCSpan csr, ZuCSpan subject)
   return TempDir::systemOK(system(cmd.data()));
 }
 
-bool cert_to_der(ZuCSpan cert, ZuCSpan der)
+bool certToDER(ZuCSpan cert, ZuCSpan der)
 {
   ZtString<> cmd;
   cmd << "openssl x509 -in " << cert << " -outform DER -out " << der << " >/dev/null 2>&1";
   return TempDir::systemOK(system(cmd.data()));
 }
 
-bool consume_payload(
+bool consumePayload(
   TestState &state, ZmAtomic<unsigned> &offset, const ZtArray<uint8_t> &expected,
   ZuSpan<uint8_t> span, const char *msg)
 {
@@ -312,7 +312,7 @@ bool consume_payload(
   return off + len >= expected.length();
 }
 
-int consume_payload_frame(
+int consumePayloadFrame(
   TestState &state, ZmAtomic<unsigned> &offset, const ZtArray<uint8_t> &expected,
   Ztls::RxStream &rx, const char *msg, bool &complete)
 {
@@ -331,22 +331,22 @@ int consume_payload_frame(
     if (seen < need) return 0;
     return span.length() - (seen - need);
   }, [&state, &offset, &expected, msg, &complete](ZuSpan<uint8_t> span)
-  { complete = consume_payload(state, offset, expected, span, msg); });
+  { complete = consumePayload(state, offset, expected, span, msg); });
 
   if (ZuUnlikely(consumed < 0)) return -1;
   return consumed ? 1 : 0;
 }
 
-bool wait_for(ZmSemaphore &sem) { return sem.timedwait(Zm::now(TimeoutSeconds)) == 0; }
+bool waitFor(ZmSemaphore &sem) { return sem.timedwait(Zm::now(TimeoutSeconds)) == 0; }
 
-bool wait_done(TestState &state)
+bool waitDone(TestState &state)
 {
   for (unsigned i = 0; i < state.target; ++i)
-    if (!wait_for(state.done)) return false;
+    if (!waitFor(state.done)) return false;
   return true;
 }
 
-uint16_t reserve_loopback_port(ZiIP ip = ZiIP{"127.0.0.1"})
+uint16_t resLoopbackPort(ZiIP ip = ZiIP{"127.0.0.1"})
 {
   static uint16_t nextPort = ZtlsTestPort::BufferTest;
   uint16_t	  port = nextPort++;
@@ -360,7 +360,7 @@ uint16_t reserve_loopback_port(ZiIP ip = ZiIP{"127.0.0.1"})
   return port;
 }
 
-ZiMxParams mx_params()
+ZiMxParams mxParams()
 {
   return ZiMxParams()
     .scheduler(
@@ -391,7 +391,7 @@ template <typename Lower> struct ReserveLayer : public ZiTxLayer<ReserveLayer<Lo
   bool prepareBuf_(ZiIOBuf *, bool) { return true; }
 };
 
-template <typename Link> void send_payload(Link *link, const ZtArray<uint8_t> &payload)
+template <typename Link> void sendPayload(Link *link, const ZtArray<uint8_t> &payload)
 {
   if (!payload.length()) return;
   auto	       tx = link->txStream();
@@ -439,29 +439,29 @@ template <typename State> struct BaseClient : public Ztls::Client<BaseClient<Sta
   friend inline ZuStringT<"Ztls.BufferTest.CliLink"> ZmNHeapID(Link *);
     using BaseLink = Ztls::CliLink<BaseClient, Link, RxBufAlloc, TxBufAlloc>;
     Link(BaseClient *app) : BaseLink{app, ZuID{"client"}} { }
-    ZmAtomic<unsigned>	rx_offset{0};
+    ZmAtomic<unsigned>	rxOffset{0};
 
     void connected(Ztls::Connected info)
     {
       auto &state = this->app()->state;
       if (state.checkALPN && info.alpn != "h2") state.fail("server ALPN preference lost");
-      check_queues(*this);
-      state.client_connected = 1;
-      state.client_tlsver = unsigned(info.version);
-      state.client_cipher = this->tlsInfo().cipherID;
+      checkQueues(*this);
+      state.cliConnected = 1;
+      state.cliTlsver = unsigned(info.version);
+      state.cliCipher = this->tlsInfo().cipherID;
       if (state.clientKeyUpdate && !this->updateKey_0(true)) {
 	state.fail("client key update failed");
 	return;
       }
-      send_payload(this, state.clientPayload);
+      sendPayload(this, state.clientPayload);
     }
     void disconnected(bool peer)
     {
       auto &state = this->app()->state;
       if (!this->txQueue.empty_())
 	state.fail("client disconnect completed before I/O Tx drained");
-      state.client_peer_closed = peer;
-      state.done_one();
+      state.cliPeerClosed = peer;
+      state.doneOne();
     }
     void connectFailed(bool transient)
     {
@@ -471,9 +471,9 @@ template <typename State> struct BaseClient : public Ztls::Client<BaseClient<Sta
 	state.fail("connect failed");
 	return;
       }
-      state.connect_failed_on_rx = app->rxInvoked();
-      state.connect_failed_transient = transient;
-      state.connect_failed.xchAdd(1);
+      state.connectFailedOnRx = app->rxInvoked();
+      state.connectFailedTransient = transient;
+      state.connectFailed.xchAdd(1);
       state.done.post();
     }
     void txProtected()
@@ -485,7 +485,7 @@ template <typename State> struct BaseClient : public Ztls::Client<BaseClient<Sta
 	app->state.fail("client record protection ran outside TLS Tx thread");
 	return;
       }
-      app->state.client_tx_protected.xchAdd(1);
+      app->state.cliTxProtected.xchAdd(1);
     }
     void sent(ZmRef<ZiIOBuf> buf, bool ok)
     {
@@ -498,21 +498,21 @@ template <typename State> struct BaseClient : public Ztls::Client<BaseClient<Sta
 	state.fail("client TLS wire send failed");
 	return;
       }
-      state.client_wire_count.xchAdd(1);
-      state.client_wire_bytes.xchAdd(buf->length);
+      state.cliWireCount.xchAdd(1);
+      state.cliWireBytes.xchAdd(buf->length);
     }
     int process(Ztls::RxStream &rx)
     {
       auto &state = this->app()->state;
       while (!rx.empty()) {
 	bool complete = false;
-	int  consumed = consume_payload_frame(
-	  state, state.multi ? rx_offset : state.client_rx_bytes, state.serverPayload, rx,
+	int  consumed = consumePayloadFrame(
+	  state, state.multi ? rxOffset : state.cliRxBytes, state.serverPayload, rx,
 	  "client received unexpected payload", complete);
 	if (ZuUnlikely(consumed < 0)) return -1;
 	if (!consumed) return 0;
-	if (complete && (state.multi || !state.client_closed.xch(1))) {
-	  if (!state.multi) { queue_telemetry(*this, state.client_rx, state.client_tx); }
+	if (complete && (state.multi || !state.cliClosed.xch(1))) {
+	  if (!state.multi) { queueTelemetry(*this, state.cliRx, state.cliTx); }
 	  if (!state.serverDisconnectAfterSend) this->disconnect_();
 	}
       }
@@ -522,7 +522,7 @@ template <typename State> struct BaseClient : public Ztls::Client<BaseClient<Sta
 
   BaseClient(State &state_) : state(state_) { }
 
-  void override_cipher_suites(Ztls_::SuiteSpan suites) { this->ctx()->cipherSuites = suites; }
+  void overrideCipherSuites(Ztls_::SuiteSpan suites) { this->ctx()->cipherSuites = suites; }
 
   State			&state;
 };
@@ -562,25 +562,25 @@ template <typename State> struct BaseServer : public Ztls::Server<BaseServer<Sta
   friend inline ZuStringT<"Ztls.BufferTest.SrvLink"> ZmNHeapID(Link *);
     using BaseLink = Ztls::SrvLink<BaseServer, Link, RxBufAlloc, TxBufAlloc>;
     Link(BaseServer *app) : BaseLink{app} { }
-    ZmAtomic<unsigned>	rx_offset{0};
+    ZmAtomic<unsigned>	rxOffset{0};
 
     void connected(Ztls::Connected info)
     {
       auto &state = this->app()->state;
       if (state.checkALPN && info.alpn != "h2") state.fail("server ALPN preference lost");
-      check_queues(*this);
-      state.server_connected = 1;
-      state.server_tlsver = unsigned(info.version);
-      state.server_cipher = this->tlsInfo().cipherID;
+      checkQueues(*this);
+      state.srvConnected = 1;
+      state.srvTlsver = unsigned(info.version);
+      state.srvCipher = this->tlsInfo().cipherID;
     }
     void disconnected(bool)
     {
       auto &state = this->app()->state;
       if (!this->txQueue.empty_())
 	state.fail("server disconnect completed before I/O Tx drained");
-      if (!state.multi && state.server_connected.load_())
-	queue_telemetry(*this, state.server_rx, state.server_tx);
-      state.done_one();
+      if (!state.multi && state.srvConnected.load_())
+	queueTelemetry(*this, state.srvRx, state.srvTx);
+      state.doneOne();
     }
     void txProtected()
     {
@@ -591,7 +591,7 @@ template <typename State> struct BaseServer : public Ztls::Server<BaseServer<Sta
 	app->state.fail("server record protection ran outside TLS Tx thread");
 	return;
       }
-      app->state.server_tx_protected.xchAdd(1);
+      app->state.srvTxProtected.xchAdd(1);
     }
     void sent(ZmRef<ZiIOBuf> buf, bool ok)
     {
@@ -604,25 +604,25 @@ template <typename State> struct BaseServer : public Ztls::Server<BaseServer<Sta
 	state.fail("server TLS wire send failed");
 	return;
       }
-      state.server_wire_count.xchAdd(1);
-      state.server_wire_bytes.xchAdd(buf->length);
+      state.srvWireCount.xchAdd(1);
+      state.srvWireBytes.xchAdd(buf->length);
     }
     int process(Ztls::RxStream &rx)
     {
       auto &state = this->app()->state;
       while (!rx.empty()) {
 	bool complete = false;
-	int  consumed = consume_payload_frame(
-	  state, state.multi ? rx_offset : state.server_rx_bytes, state.clientPayload, rx,
+	int  consumed = consumePayloadFrame(
+	  state, state.multi ? rxOffset : state.srvRxBytes, state.clientPayload, rx,
 	  "server received unexpected payload", complete);
 	if (ZuUnlikely(consumed < 0)) return -1;
 	if (!consumed) return 0;
-	if (complete && (state.multi || !state.server_replied.xch(1))) {
+	if (complete && (state.multi || !state.srvReplied.xch(1))) {
 	  if (state.serverKeyUpdate && !this->updateKey_0(true)) {
 	    state.fail("server key update failed");
 	    return -1;
 	  }
-	  send_payload(this, state.serverPayload);
+	  sendPayload(this, state.serverPayload);
 	  if (state.serverDisconnectAfterSend) this->disconnect_();
 	}
       }
@@ -645,13 +645,13 @@ template <typename State> struct BaseServer : public Ztls::Server<BaseServer<Sta
   }
   void listenFailed(bool) { state.fail("listen failed"); }
 
-  void override_cipher_suites(Ztls_::SuiteSpan suites) { this->ctx()->cipherSuites = suites; }
+  void overrideCipherSuites(Ztls_::SuiteSpan suites) { this->ctx()->cipherSuites = suites; }
 
   State			&state;
   ZiIP			ip;
 };
 
-void run_in_process(
+void runInProcess(
   TempDir &temp, LogCapture &capture, unsigned clientLen, unsigned serverLen,
   bool clientKeyUpdate, bool serverKeyUpdate = false, bool serverDisconnectAfterSend = false,
   ZiIP ip = ZiIP{"127.0.0.1"}, const char *connectIP = "127.0.0.1",
@@ -664,14 +664,14 @@ void run_in_process(
   TestState state;
   state.target = 2;
   state.ip = ip;
-  state.port = reserve_loopback_port(ip);
+  state.port = resLoopbackPort(ip);
   state.clientKeyUpdate = clientKeyUpdate;
   state.serverKeyUpdate = serverKeyUpdate;
   state.serverDisconnectAfterSend = serverDisconnectAfterSend;
   state.txHeadroom = txHeadroom;
   state.txTailroom = txTailroom;
-  fill_payload(state.clientPayload, clientLen, 0x11);
-  fill_payload(state.serverPayload, serverLen, 0x63);
+  fillPayload(state.clientPayload, clientLen, 0x11);
+  fillPayload(state.serverPayload, serverLen, 0x63);
   if (ip.v6() && !state.port) {
     std::cout << "# IPv6 loopback unavailable; skipping TLS loopback\n";
     return;
@@ -681,7 +681,7 @@ void run_in_process(
 
   BaseServer<TestState> server(state, state.ip);
   BaseClient<TestState> client(state);
-  ZiMultiplex		mx(mx_params());
+  ZiMultiplex		mx(mxParams());
   Ztls::ServerParams	serverParams{&mx, "3", "4"};
   serverParams.certPath(temp.certPath.data()).keyPath(temp.keyPath.data());
   ZuCSpan protocols[] = {"h2", "http/1.1", "h2"};
@@ -714,8 +714,8 @@ void run_in_process(
   }
 
   if (cipherSuites.length()) {
-    server.override_cipher_suites(cipherSuites);
-    client.override_cipher_suites(cipherSuites);
+    server.overrideCipherSuites(cipherSuites);
+    client.overrideCipherSuites(cipherSuites);
   }
 
   bool mxStarted = mx.start();
@@ -735,7 +735,7 @@ void run_in_process(
   }
 
   server.listen();
-  bool listening = wait_for(state.listening);
+  bool listening = waitFor(state.listening);
   Ztls_CheckRT_1(listening, "listen timed out");
   if (!listening) {
     mx.stop();
@@ -743,10 +743,10 @@ void run_in_process(
   }
 
   ZmRef<BaseClient<TestState>::Link> link = new BaseClient<TestState>::Link(&client);
-  check_queues(*link);
+  checkQueues(*link);
   link->connect(connectIP, state.port);
 
-  bool done = wait_done(state);
+  bool done = waitDone(state);
   Ztls_CheckRT_1(done, "TLS disconnect wait timed out");
 
   link = nullptr;
@@ -759,57 +759,52 @@ void run_in_process(
   mx.stop();
 
   Ztls_CheckRT_1(!capture.errors.load_(), "unexpected error logs");
-  Ztls_CheckRT_1(!state.errors.load_(), state.error_msg ? state.error_msg : "state error");
-  Ztls_CheckRT_1(state.client_connected.load_(), "client did not connect");
-  Ztls_CheckRT_1(state.server_connected.load_(), "server did not connect");
-  Ztls_CheckRT_1(state.client_tlsver.load_() == 13, "client did not use TLS 1.3");
-  Ztls_CheckRT_1(state.server_tlsver.load_() == 13, "server did not use TLS 1.3");
-  Ztls_CheckRT_1(state.client_rx_bytes.load_() == serverLen, "client payload length mismatch");
-  Ztls_CheckRT_1(state.server_rx_bytes.load_() == clientLen, "server payload length mismatch");
-  Ztls_CheckRT_1(state.client_rx.inBytes == serverLen, "client plaintext Rx telemetry mismatch");
-  Ztls_CheckRT_1(state.server_rx.inBytes == clientLen, "server plaintext Rx telemetry mismatch");
-  Ztls_CheckRT_1(state.client_rx.inCount, "client plaintext Rx ingress count is zero");
-  Ztls_CheckRT_1(state.server_rx.inCount, "server plaintext Rx ingress count is zero");
+  Ztls_CheckRT_1(!state.errors.load_(), state.errorMsg ? state.errorMsg : "state error");
+  Ztls_CheckRT_1(state.cliConnected.load_(), "client did not connect");
+  Ztls_CheckRT_1(state.srvConnected.load_(), "server did not connect");
+  Ztls_CheckRT_1(state.cliTlsver.load_() == 13, "client did not use TLS 1.3");
+  Ztls_CheckRT_1(state.srvTlsver.load_() == 13, "server did not use TLS 1.3");
+  Ztls_CheckRT_1(state.cliRxBytes.load_() == serverLen, "client payload length mismatch");
+  Ztls_CheckRT_1(state.srvRxBytes.load_() == clientLen, "server payload length mismatch");
+  Ztls_CheckRT_1(state.cliRx.inBytes == serverLen, "client plaintext Rx telemetry mismatch");
+  Ztls_CheckRT_1(state.srvRx.inBytes == clientLen, "server plaintext Rx telemetry mismatch");
+  Ztls_CheckRT_1(state.cliRx.inCount, "client plaintext Rx ingress count is zero");
+  Ztls_CheckRT_1(state.srvRx.inCount, "server plaintext Rx ingress count is zero");
   Ztls_CheckRT_1(
-    state.client_tx.inCount && state.client_tx.inBytes, "client serialized Tx ingress is zero");
+    state.cliTx.inCount && state.cliTx.inBytes, "client serialized Tx ingress is zero");
   Ztls_CheckRT_1(
-    state.server_tx.inCount && state.server_tx.inBytes, "server serialized Tx ingress is zero");
-  Ztls_CheckRT_1(state.client_tx.inBytes == clientLen, "client plaintext Tx telemetry mismatch");
-  Ztls_CheckRT_1(state.server_tx.inBytes == serverLen, "server plaintext Tx telemetry mismatch");
+    state.srvTx.inCount && state.srvTx.inBytes, "server serialized Tx ingress is zero");
+  Ztls_CheckRT_1(state.cliTx.inBytes == clientLen, "client plaintext Tx telemetry mismatch");
+  Ztls_CheckRT_1(state.srvTx.inBytes == serverLen, "server plaintext Tx telemetry mismatch");
   Ztls_CheckRT_1(
-    state.client_tx_protected.load_(), "client application records were not protected on TLS Tx");
+    state.cliTxProtected.load_(), "client application records were not protected on TLS Tx");
   Ztls_CheckRT_1(
-    state.server_tx_protected.load_(), "server application records were not protected on TLS Tx");
+    state.srvTxProtected.load_(), "server application records were not protected on TLS Tx");
   Ztls_CheckRT_1(
-    state.client_wire_count.load_() && state.client_wire_bytes.load_(),
-    "client TLS wire egress is zero");
+    state.cliWireCount.load_() && state.cliWireBytes.load_(), "client TLS wire egress is zero");
   Ztls_CheckRT_1(
-    state.server_wire_count.load_() && state.server_wire_bytes.load_(),
-    "server TLS wire egress is zero");
+    state.srvWireCount.load_() && state.srvWireBytes.load_(), "server TLS wire egress is zero");
   Ztls_CheckRT_1(
-    state.client_rx.count <= state.client_rx.inCount &&
-      state.client_tx.count <= state.client_tx.inCount,
+    state.cliRx.count <= state.cliRx.inCount && state.cliTx.count <= state.cliTx.inCount,
     "client TLS queue occupancy exceeds ingress");
   Ztls_CheckRT_1(
-    state.server_rx.count <= state.server_rx.inCount &&
-      state.server_tx.count <= state.server_tx.inCount,
+    state.srvRx.count <= state.srvRx.inCount && state.srvTx.count <= state.srvTx.inCount,
     "server TLS queue occupancy exceeds ingress");
   if (clientKeyUpdate || serverKeyUpdate) {
     Ztls_CheckRT_1(
-      state.client_rx.inCount == 1,
+      state.cliRx.inCount == 1,
       "zero-output control record incremented client plaintext Rx count");
     Ztls_CheckRT_1(
-      state.server_rx.inCount == 1,
+      state.srvRx.inCount == 1,
       "zero-output control record incremented server plaintext Rx count");
   }
   if (serverDisconnectAfterSend)
-    Ztls_CheckRT_1(
-      state.client_peer_closed.load_(), "client did not receive graceful server close");
+    Ztls_CheckRT_1(state.cliPeerClosed.load_(), "client did not receive graceful server close");
   if (expectedCipher) {
     Ztls_CheckRT_1(
-      state.client_cipher.load_() == expectedCipher, "client selected unexpected cipher");
+      state.cliCipher.load_() == expectedCipher, "client selected unexpected cipher");
     Ztls_CheckRT_1(
-      state.server_cipher.load_() == expectedCipher, "server selected unexpected cipher");
+      state.srvCipher.load_() == expectedCipher, "server selected unexpected cipher");
   }
 }
 
@@ -820,30 +815,30 @@ static void ticketResumption(TempDir &temp)
   bool		loaded = Ztls::PK::loadPEM(key, temp.keyPath.data());
   ZuCheckRT(loaded);
   if (!loaded) return;
-  auto		 sign = Ztls::sign_cert_new(key);
-  auto		 ticketKey = Ztls::ticket_key_new();
+  auto		 sign = Ztls::signCertNew(key);
+  auto		 ticketKey = Ztls::ticketKeyNew();
   Ztls_::Context client{}, server{};
   ZuGuard	 cleanup{[sign, ticketKey]()
   {
-    if (ticketKey) Ztls::ticket_key_free(ticketKey);
-    if (sign) Ztls::sign_cert_free(sign);
+    if (ticketKey) Ztls::ticketKeyFree(ticketKey);
+    if (sign) Ztls::signCertFree(sign);
   }};
-  bool configured = sign && ticketKey && Ztls::load_certificates(&server, temp.certPath.data());
+  bool		 configured = sign && ticketKey && Ztls::loadCerts(&server, temp.certPath.data());
   ZuCheckRT(configured);
   if (!configured) return;
   client.random = server.random = &Ztls_::opensslRandom;
   client.getTime = server.getTime = &Ztls_::getTime;
-  client.keyExchanges = server.keyExchanges = Ztls_::openssl_key_exchanges;
-  client.cipherSuites = server.cipherSuites = Ztls_::openssl_cipher_suites;
-  server.signCertificate = Ztls::sign_cert_cb(sign);
-  server.encryptTicket = Ztls::ticket_encrypt_cb(ticketKey);
+  client.keyExchanges = server.keyExchanges = Ztls_::opensslKeyExchanges;
+  client.cipherSuites = server.cipherSuites = Ztls_::opensslCipherSuites;
+  server.signCertificate = Ztls::signCertHook(sign);
+  server.encryptTicket = Ztls::ticketEncryptHook(ticketKey);
   server.ticketLifetime = 60;
 
   ZtBArray<> ticket;
   struct SaveSessionTicket : Ztls_::SaveTicket {
     int call(Ztls::Cxn *connection, Ztls_::Bytes input) override
     {
-      auto &saved = *static_cast<ZtBArray<> *>(*Ztls_::get_data_ptr(connection));
+      auto &saved = *static_cast<ZtBArray<> *>(*Ztls_::dataPtr(connection));
       if (!saved) saved = ZuBSpan{input.data(), unsigned(input.length())};
       return 0;
     }
@@ -854,10 +849,10 @@ static void ticketResumption(TempDir &temp)
     auto      tx = &txConnection, rx = &rxConnection;
     ZuCheckRT(tx && rx);
     if (!tx || !rx) return;
-    *Ztls_::get_data_ptr(tx) = &ticket;
+    *Ztls_::dataPtr(tx) = &ticket;
     Ztls_::HandshakeProps properties{};
     if (resume)
-      properties.client.sessionTicket = Ztls_::wire_bytes(ticket.data(), ticket.length());
+      properties.client.sessionTicket = Ztls_::wireBytes(ticket.data(), ticket.length());
     bool complete = ZtlsTest::handshake(tx, rx, &properties);
     ZuCheckRT(complete && ticket.length());
     if (!complete || !ticket) return;
@@ -866,7 +861,7 @@ static void ticketResumption(TempDir &temp)
   }
 }
 
-template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuCSpan type)
+template <typename T> void runInMemory(TempDir &temp, LogCapture &capture, ZuCSpan type)
 {
   static constexpr char CertExts[] =
     "[client]\n"
@@ -908,15 +903,15 @@ template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuC
   ZtBArray extData;
   extData << ZuBSpan{CertExts};
   Ztls_CheckRT_1(
-    write_bytes(temp.extPath.data(), extData), type, " extension configuration write failed");
+    writeBytes(temp.extPath.data(), extData), type, " extension configuration write failed");
 
   Ztls::Random rng;
   Ztls_CheckRT_1(rng.init(), type, " random initialization failed");
   ZmRef<T> key;
-  if constexpr (ZuIsSame<T, Ztls::PK::SK_RSA>{})
+  if constexpr (ZuIsSame<T, Ztls::PK::RSAPrivate>{})
     key = new T{rng, 2048};
-  else if constexpr (ZuIsSame<T, Ztls::PK::SK_EC>{})
-    key = new T{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  else if constexpr (ZuIsSame<T, Ztls::PK::ECPrivate>{})
+    key = new T{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   else
     key = new T{rng};
 
@@ -931,9 +926,9 @@ template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuC
   name = {};
   name << type << ".cert.der";
   ZtString<> certPath = temp.pathOf(name.data());
-  Ztls_CheckRT_1(write_bytes(csrPath.data(), csr), type, " CSR write failed");
+  Ztls_CheckRT_1(writeBytes(csrPath.data(), csr), type, " CSR write failed");
   Ztls_CheckRT_1(
-    issue_cert(
+    issueCert(
       temp,
       CertIssue{.csr = csrPath,
 	.cert = certPath,
@@ -946,48 +941,43 @@ template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuC
 
   Ztls::Cert leaf;
   Ztls::Cert root;
-  Ztls_CheckRT_1(read_bytes(certPath.data(), leaf), type, " issued certificate read failed");
-  Ztls_CheckRT_1(read_bytes(temp.certDERPath.data(), root), type, " CA certificate read failed");
+  Ztls_CheckRT_1(readBytes(certPath.data(), leaf), type, " issued certificate read failed");
+  Ztls_CheckRT_1(readBytes(temp.certDERPath.data(), root), type, " CA certificate read failed");
   if (!leaf || !root) return;
 
   ZuBSpan	 chain[] = {leaf, root};
   Ztls_::Context ctx{};
   Ztls_CheckRT_1(
-    Ztls::load_certificates_der(&ctx, chain, key->key), type,
-    " in-memory chain validation failed");
+    Ztls::loadCertsDER(&ctx, chain, key->key), type, " in-memory chain validation failed");
   auto	  installed = ctx.certificates.data();
   auto	  installedCount = ctx.certificates.length();
   ZuBSpan malformed[] = {ZuBSpan{"bad"}};
   Ztls_CheckRT_1(
-    !Ztls::load_certificates_der(&ctx, malformed, key->key), type,
-    " malformed certificate accepted");
+    !Ztls::loadCertsDER(&ctx, malformed, key->key), type, " malformed certificate accepted");
   Ztls_CheckRT_1(
     ctx.certificates.data() == installed && ctx.certificates.length() == installedCount, type,
     " failed chain replaced installed certificates");
   ctx.certificates.null();
 
   ZuBSpan reversed[] = {root, leaf};
-  Ztls_CheckRT_1(
-    !Ztls::load_certificates_der(&ctx, reversed, key->key), type, " reversed chain accepted");
-  Ztls_CheckRT_1(!Ztls::load_certificates_der(&ctx, {}, key->key), type, " empty chain accepted");
+  Ztls_CheckRT_1(!Ztls::loadCertsDER(&ctx, reversed, key->key), type, " reversed chain accepted");
+  Ztls_CheckRT_1(!Ztls::loadCertsDER(&ctx, {}, key->key), type, " empty chain accepted");
 
   ZmRef<T> other;
-  if constexpr (ZuIsSame<T, Ztls::PK::SK_RSA>{})
+  if constexpr (ZuIsSame<T, Ztls::PK::RSAPrivate>{})
     other = new T{rng, 2048};
-  else if constexpr (ZuIsSame<T, Ztls::PK::SK_EC>{})
-    other = new T{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  else if constexpr (ZuIsSame<T, Ztls::PK::ECPrivate>{})
+    other = new T{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   else
     other = new T{rng};
-  Ztls_CheckRT_1(
-    !Ztls::load_certificates_der(&ctx, chain, other->key), type, " mismatched key accepted");
+  Ztls_CheckRT_1(!Ztls::loadCertsDER(&ctx, chain, other->key), type, " mismatched key accepted");
 
   auto publicResult = key->mkPK();
   Ztls_CheckRT_1(!publicResult.template is<ZeException>(), type, " public key creation failed");
   if (!publicResult.template is<ZeException>()) {
     auto publicKey = ZuMv(publicResult).template p<0>();
     Ztls_CheckRT_1(
-      !Ztls::load_certificates_der(&ctx, chain, publicKey->key), type,
-      " public-only key accepted");
+      !Ztls::loadCertsDER(&ctx, chain, publicKey->key), type, " public-only key accepted");
   }
 
   TestState		 invalidState;
@@ -1002,17 +992,17 @@ template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuC
   Ztls_CheckRT_1(
     !invalidClient.init(ZuMv(mixedParams)), type, " mixed path/in-memory credentials accepted");
 
-  if constexpr (ZuIsSame<T, Ztls::PK::SK_RSA>{}) {
+  if constexpr (ZuIsSame<T, Ztls::PK::RSAPrivate>{}) {
     Ztls::Cert broken{leaf};
     broken[broken.length() - 1] ^= 1;
     ZuBSpan brokenChain[] = {broken, root};
     Ztls_CheckRT_1(
-      !Ztls::load_certificates_der(&ctx, brokenChain, key->key), type, " broken chain accepted");
+      !Ztls::loadCertsDER(&ctx, brokenChain, key->key), type, " broken chain accepted");
 
     auto rejectIssued = [&](ZuCSpan name, ZuCSpan validity, ZuCSpan profile, unsigned serial)
     {
       ZtString<> path = temp.pathOf(name);
-      bool	 issued = issue_cert(
+      bool	 issued = issueCert(
 	temp,
 	CertIssue{.csr = csrPath,
 	  .cert = path,
@@ -1023,12 +1013,11 @@ template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuC
 	  .serial = serial});
       Ztls_CheckRT_1(issued, type, " ", name, " issuance failed");
       Ztls::Cert cert;
-      bool	 read = issued && read_bytes(path.data(), cert);
+      bool	 read = issued && readBytes(path.data(), cert);
       Ztls_CheckRT_1(read, type, " ", name, " read failed");
       if (!read) return;
       ZuBSpan invalid[] = {cert, root};
-      Ztls_CheckRT_1(
-	!Ztls::load_certificates_der(&ctx, invalid, key->key), type, " ", name, " accepted");
+      Ztls_CheckRT_1(!Ztls::loadCertsDER(&ctx, invalid, key->key), type, " ", name, " accepted");
     };
     rejectIssued(
       "expired.der", "-not_before 20000101000000Z -not_after 20010101000000Z", "client", 101);
@@ -1046,8 +1035,8 @@ template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuC
     ZtString<> int1PEM = temp.pathOf("int1.pem");
     ZtString<> int1DER = temp.pathOf("int1.der");
     ZtString<> constrainedPath = temp.pathOf("constrained.der");
-    bool       constrained = gen_csr(int0Key, int0CSR, "int0") &&
-      issue_cert(
+    bool       constrained = genCSR(int0Key, int0CSR, "int0") &&
+      issueCert(
 	temp,
 	CertIssue{.csr = int0CSR,
 	  .cert = int0PEM,
@@ -1057,8 +1046,8 @@ template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuC
 	  .profile = "ca0",
 	  .serial = 105,
 	  .der = false}) &&
-      cert_to_der(int0PEM, int0DER) && gen_csr(int1Key, int1CSR, "int1") &&
-      issue_cert(
+      certToDER(int0PEM, int0DER) && genCSR(int1Key, int1CSR, "int1") &&
+      issueCert(
 	temp,
 	CertIssue{.csr = int1CSR,
 	  .cert = int1PEM,
@@ -1068,8 +1057,8 @@ template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuC
 	  .profile = "ca",
 	  .serial = 106,
 	  .der = false}) &&
-      cert_to_der(int1PEM, int1DER) &&
-      issue_cert(
+      certToDER(int1PEM, int1DER) &&
+      issueCert(
 	temp,
 	CertIssue{.csr = csrPath,
 	  .cert = constrainedPath,
@@ -1082,18 +1071,18 @@ template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuC
     Ztls::Cert constrainedLeaf;
     Ztls::Cert int0;
     Ztls::Cert int1;
-    constrained = constrained && read_bytes(constrainedPath.data(), constrainedLeaf) &&
-      read_bytes(int0DER.data(), int0) && read_bytes(int1DER.data(), int1);
+    constrained = constrained && readBytes(constrainedPath.data(), constrainedLeaf) &&
+      readBytes(int0DER.data(), int0) && readBytes(int1DER.data(), int1);
     Ztls_CheckRT_1(constrained, type, " constrained chain read failed");
     if (constrained) {
       ZuBSpan constrainedChain[] = {constrainedLeaf, int1, int0, root};
       Ztls_CheckRT_1(
-	!Ztls::load_certificates_der(&ctx, constrainedChain, key->key), type,
+	!Ztls::loadCertsDER(&ctx, constrainedChain, key->key), type,
 	" path-length constraint violation accepted");
 
       ZuBSpan unrelatedChain[] = {leaf, int0};
       Ztls_CheckRT_1(
-	!Ztls::load_certificates_der(&ctx, unrelatedChain, key->key), type,
+	!Ztls::loadCertsDER(&ctx, unrelatedChain, key->key), type,
 	" unrelated chain anchor accepted");
     }
 
@@ -1102,8 +1091,8 @@ template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuC
     ZtString<> nonCAPEM = temp.pathOf("nonca.pem");
     ZtString<> nonCADER = temp.pathOf("nonca.der");
     ZtString<> nonCALeafPath = temp.pathOf("nonca-leaf.der");
-    bool       nonCA = gen_csr(nonCAKey, nonCACSR, "nonca") &&
-      issue_cert(
+    bool       nonCA = genCSR(nonCAKey, nonCACSR, "nonca") &&
+      issueCert(
 	temp,
 	CertIssue{.csr = nonCACSR,
 	  .cert = nonCAPEM,
@@ -1113,8 +1102,8 @@ template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuC
 	  .profile = "nonca",
 	  .serial = 108,
 	  .der = false}) &&
-      cert_to_der(nonCAPEM, nonCADER) &&
-      issue_cert(
+      certToDER(nonCAPEM, nonCADER) &&
+      issueCert(
 	temp,
 	CertIssue{.csr = csrPath,
 	  .cert = nonCALeafPath,
@@ -1126,31 +1115,29 @@ template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuC
     Ztls_CheckRT_1(nonCA, type, " non-CA chain issuance failed");
     Ztls::Cert nonCACert;
     Ztls::Cert nonCALeaf;
-    nonCA = nonCA && read_bytes(nonCADER.data(), nonCACert) &&
-      read_bytes(nonCALeafPath.data(), nonCALeaf);
+    nonCA = nonCA && readBytes(nonCADER.data(), nonCACert) &&
+      readBytes(nonCALeafPath.data(), nonCALeaf);
     Ztls_CheckRT_1(nonCA, type, " non-CA chain read failed");
     if (nonCA) {
       ZuBSpan nonCAChain[] = {nonCALeaf, nonCACert, root};
       Ztls_CheckRT_1(
-	!Ztls::load_certificates_der(&ctx, nonCAChain, key->key), type,
-	" non-CA intermediate accepted");
+	!Ztls::loadCertsDER(&ctx, nonCAChain, key->key), type, " non-CA intermediate accepted");
     }
   }
 
-  auto store = Ztls::cert_store_new();
+  auto store = Ztls::certStoreNew();
+  Ztls_CheckRT_1(store && Ztls::certStoreAddCA(store, root), type, " supplemental CA rejected");
   Ztls_CheckRT_1(
-    store && Ztls::cert_store_add_ca(store, root), type, " supplemental CA rejected");
+    store && Ztls::certStoreAddCA(store, root), type, " duplicate supplemental CA rejected");
   Ztls_CheckRT_1(
-    store && Ztls::cert_store_add_ca(store, root), type, " duplicate supplemental CA rejected");
-  Ztls_CheckRT_1(
-    store && !Ztls::cert_store_add_ca(store, leaf), type,
+    store && !Ztls::certStoreAddCA(store, leaf), type,
     " non-CA supplemental certificate accepted");
   Ztls_CheckRT_1(
-    store && !Ztls::cert_store_add_ca(store, ZuBSpan{"bad"}), type,
+    store && !Ztls::certStoreAddCA(store, ZuBSpan{"bad"}), type,
     " malformed supplemental CA accepted");
-  if constexpr (ZuIsSame<T, Ztls::PK::SK_RSA>{}) {
+  if constexpr (ZuIsSame<T, Ztls::PK::RSAPrivate>{}) {
     ZtString<> expiredCAPath = temp.pathOf("expired-ca.der");
-    bool       expiredCA = issue_cert(
+    bool       expiredCA = issueCert(
       temp,
       CertIssue{.csr = csrPath,
 	.cert = expiredCAPath,
@@ -1161,13 +1148,13 @@ template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuC
 	.serial = 110});
     Ztls_CheckRT_1(expiredCA, type, " expired CA issuance failed");
     Ztls::Cert cert;
-    expiredCA = expiredCA && read_bytes(expiredCAPath.data(), cert);
+    expiredCA = expiredCA && readBytes(expiredCAPath.data(), cert);
     Ztls_CheckRT_1(expiredCA, type, " expired CA read failed");
     if (expiredCA)
       Ztls_CheckRT_1(
-	!Ztls::cert_store_add_ca(store, cert), type, " expired supplemental CA accepted");
+	!Ztls::certStoreAddCA(store, cert), type, " expired supplemental CA accepted");
   }
-  Ztls::cert_store_free(store);
+  Ztls::certStoreFree(store);
 
   Ztls::Cert  leaf2{leaf};
   Ztls::Cert  root2{root};
@@ -1177,7 +1164,7 @@ template <typename T> void run_in_memory(TempDir &temp, LogCapture &capture, ZuC
   Ztls::Certs caCerts;
   caCerts.push(ZuMv(root));
   ZmRef<Ztls::PK::AnyPK> clientKey{ZuMv(key)};
-  run_in_process(
+  runInProcess(
     temp, capture, SmallPayloadSize, SmallPayloadSize, false, false, false, ZiIP{"127.0.0.1"},
     "127.0.0.1", {}, 0, 0, 0, ZuMv(clientKey), ZuMv(clientCerts), ZuMv(caCerts));
 }
@@ -1189,12 +1176,12 @@ void testConnectFailureShard(TempDir &temp, LogCapture &capture)
 
   TestState state;
   state.expectConnectFailure = true;
-  uint16_t port = reserve_loopback_port();
+  uint16_t port = resLoopbackPort();
   Ztls_CheckRT_1(port, "failed to reserve refused-connect port");
   if (!port) return;
 
   BaseClient<TestState> client{state};
-  ZiMultiplex		mx(mx_params());
+  ZiMultiplex		mx(mxParams());
   bool			clientOK = client.init(
     Ztls::ClientParams(&mx, "3", "4").hub([&temp](auto &p) { p.caPath(temp.certPath.data()); }));
   Ztls_CheckRT_1(clientOK, "TLS failure client init failed");
@@ -1217,7 +1204,7 @@ void testConnectFailureShard(TempDir &temp, LogCapture &capture)
 
   ZmRef<BaseClient<TestState>::Link> link = new BaseClient<TestState>::Link{&client};
   link->connect("localhost", port, ZiIP{"127.0.0.1"});
-  bool completed = wait_for(state.done);
+  bool completed = waitFor(state.done);
   Ztls_CheckRT_1(completed, "TLS connect failure timed out");
 
   link = nullptr;
@@ -1226,15 +1213,13 @@ void testConnectFailureShard(TempDir &temp, LogCapture &capture)
   client.final();
   mx.stop();
 
+  Ztls_CheckRT_1(!state.cliConnected.load_(), "refused TLS connection unexpectedly connected");
+  Ztls_CheckRT_1(state.connectFailed.load_() == 1, "TLS connect failure callback count mismatch");
   Ztls_CheckRT_1(
-    !state.client_connected.load_(), "refused TLS connection unexpectedly connected");
-  Ztls_CheckRT_1(
-    state.connect_failed.load_() == 1, "TLS connect failure callback count mismatch");
-  Ztls_CheckRT_1(
-    state.connect_failed_on_rx.load_(),
+    state.connectFailedOnRx.load_(),
     "TLS connect failure callback ran outside configured Rx thread");
   Ztls_CheckRT_1(
-    state.connect_failed_transient.load_(), "TLS refused-connect failure lost transient status");
+    state.connectFailedTransient.load_(), "TLS refused-connect failure lost transient status");
   capture.reset();
 }
 
@@ -1246,13 +1231,13 @@ void testWrongHostname(TempDir &temp, LogCapture &capture)
   TestState state;
   state.expectConnectFailure = true;
   state.ip = ZiIP{"127.0.0.1"};
-  state.port = reserve_loopback_port(state.ip);
+  state.port = resLoopbackPort(state.ip);
   Ztls_CheckRT_1(state.port, "failed to reserve wrong-hostname port");
   if (!state.port) return;
 
   BaseServer<TestState> server{state, state.ip};
   BaseClient<TestState> client{state};
-  ZiMultiplex		mx(mx_params());
+  ZiMultiplex		mx(mxParams());
   bool			serverOK = server.init(
     Ztls::ServerParams(&mx, "3", "4")
       .certPath(temp.certPath.data())
@@ -1283,7 +1268,7 @@ void testWrongHostname(TempDir &temp, LogCapture &capture)
   }
 
   server.listen();
-  bool listening = wait_for(state.listening);
+  bool listening = waitFor(state.listening);
   Ztls_CheckRT_1(listening, "wrong-hostname listen timed out");
   if (!listening) {
     mx.stop();
@@ -1292,7 +1277,7 @@ void testWrongHostname(TempDir &temp, LogCapture &capture)
 
   ZmRef<BaseClient<TestState>::Link> link = new BaseClient<TestState>::Link{&client};
   link->connect("wrong.invalid", state.port, state.ip);
-  bool completed = wait_done(state);
+  bool completed = waitDone(state);
   Ztls_CheckRT_1(completed, "wrong-hostname failure timed out");
 
   link = nullptr;
@@ -1305,28 +1290,28 @@ void testWrongHostname(TempDir &temp, LogCapture &capture)
   mx.stop();
 
   ZiLog::stop();
-  Ztls_CheckRT_1(!state.client_connected.load_(), "wrong-hostname TLS connection succeeded");
+  Ztls_CheckRT_1(!state.cliConnected.load_(), "wrong-hostname TLS connection succeeded");
   Ztls_CheckRT_1(capture.errors.load_(), "wrong-hostname failure did not report a TLS error");
   capture.reset();
   ZiLog::start();
 }
 
-void run_tls12_handshake_rejected(TempDir &temp, LogCapture &capture)
+void rejectTLS12(TempDir &temp, LogCapture &capture)
 {
   capture.reset();
 
   TestState state;
   state.target = 1;
   state.ip = ZiIP("127.0.0.1");
-  state.port = reserve_loopback_port();
+  state.port = resLoopbackPort();
   state.serverDisconnectAfterSend = true;
-  fill_payload(state.clientPayload, SmallPayloadSize, 0x27);
-  fill_payload(state.serverPayload, SmallPayloadSize, 0x91);
+  fillPayload(state.clientPayload, SmallPayloadSize, 0x27);
+  fillPayload(state.serverPayload, SmallPayloadSize, 0x91);
   Ztls_CheckRT_1(state.port, "failed to reserve loopback port");
   if (!state.port) return;
 
   BaseServer<TestState> server(state, state.ip);
-  ZiMultiplex		mx(mx_params());
+  ZiMultiplex		mx(mxParams());
   bool			serverOK = server.init(
     Ztls::ServerParams(&mx, "3", "4")
       .certPath(temp.certPath.data())
@@ -1351,7 +1336,7 @@ void run_tls12_handshake_rejected(TempDir &temp, LogCapture &capture)
   auto inPath = temp.pathOf("tls12-in.bin");
   auto outPath = temp.pathOf("tls12-out.bin");
   auto errPath = temp.pathOf("tls12-err.log");
-  bool wrote = write_bytes(inPath.data(), state.clientPayload);
+  bool wrote = writeBytes(inPath.data(), state.clientPayload);
   Ztls_CheckRT_1(wrote, "failed to write openssl input");
   if (!wrote) {
     mx.stop();
@@ -1359,7 +1344,7 @@ void run_tls12_handshake_rejected(TempDir &temp, LogCapture &capture)
   }
 
   server.listen();
-  bool listening = wait_for(state.listening);
+  bool listening = waitFor(state.listening);
   Ztls_CheckRT_1(listening, "listen timed out");
   if (!listening) {
     mx.stop();
@@ -1375,7 +1360,7 @@ void run_tls12_handshake_rejected(TempDir &temp, LogCapture &capture)
   bool cmdOK = TempDir::systemOK(system(cmd.data()));
   if (cmdOK) state.fail("unexpected TLS 1.2 handshake success");
 
-  bool done = wait_done(state);
+  bool done = waitDone(state);
   Ztls_CheckRT_1(done, "TLS server disconnect wait timed out");
 
   mx.stopListening(state.ip, state.port);
@@ -1384,20 +1369,20 @@ void run_tls12_handshake_rejected(TempDir &temp, LogCapture &capture)
   server.final();
   mx.stop();
   ZtArray<uint8_t> err;
-  bool		   readErr = read_bytes(errPath.data(), err);
+  bool		   readErr = readBytes(errPath.data(), err);
   bool		   protocolVersion = readErr && LogCapture::contains(err, "protocol version");
   Ztls_CheckRT_1(!cmdOK, "TLS 1.2 handshake unexpectedly succeeded");
   Ztls_CheckRT_1(capture.errors.load_(), "TLS 1.2 rejection did not log an error");
   Ztls_CheckRT_1(protocolVersion, "TLS 1.2 rejection did not report protocol version");
-  Ztls_CheckRT_1(!state.errors.load_(), state.error_msg ? state.error_msg : "state error");
+  Ztls_CheckRT_1(!state.errors.load_(), state.errorMsg ? state.errorMsg : "state error");
   Ztls_CheckRT_1(
-    !state.server_connected.load_(), "TLS 1.2 rejection reached application connected()");
+    !state.srvConnected.load_(), "TLS 1.2 rejection reached application connected()");
 }
 
 void testTLS13JumboBuffers(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testTLS13JumboBuffers);
-  run_in_process(temp, capture, JumboPayloadSize, JumboPayloadSize, false);
+  runInProcess(temp, capture, JumboPayloadSize, JumboPayloadSize, false);
 }
 
 void testTLS13ConcurrentRecords(TempDir &temp, LogCapture &capture)
@@ -1411,16 +1396,16 @@ void testTLS13ConcurrentRecords(TempDir &temp, LogCapture &capture)
   state.multi = true;
   state.target = Clients * 2;
   state.ip = ZiIP{"127.0.0.1"};
-  state.port = reserve_loopback_port();
+  state.port = resLoopbackPort();
   state.serverDisconnectAfterSend = true;
-  fill_payload(state.clientPayload, Payload, 0x11);
-  fill_payload(state.serverPayload, Payload, 0x63);
+  fillPayload(state.clientPayload, Payload, 0x11);
+  fillPayload(state.serverPayload, Payload, 0x63);
   Ztls_CheckRT_1(state.port, "failed to reserve loopback port");
   if (!state.port) return;
 
   BaseServer<TestState> server(state, state.ip);
   BaseClient<TestState> client(state);
-  ZiMultiplex		mx(mx_params());
+  ZiMultiplex		mx(mxParams());
   bool			serverOK = server.init(
     Ztls::ServerParams(&mx, "3", "4")
       .certPath(temp.certPath.data())
@@ -1444,7 +1429,7 @@ void testTLS13ConcurrentRecords(TempDir &temp, LogCapture &capture)
     return;
   }
   server.listen();
-  if (!wait_for(state.listening)) {
+  if (!waitFor(state.listening)) {
     Ztls_CheckRT_1(false, "TLS stress listen timed out");
   } else {
     ZtArray<ZmRef<BaseClient<TestState>::Link>> links;
@@ -1453,7 +1438,7 @@ void testTLS13ConcurrentRecords(TempDir &temp, LogCapture &capture)
       links[i] = new BaseClient<TestState>::Link(&client);
       links[i]->connect("127.0.0.1", state.port);
     }
-    Ztls_CheckRT_1(wait_done(state), "TLS stress disconnect wait timed out");
+    Ztls_CheckRT_1(waitDone(state), "TLS stress disconnect wait timed out");
   }
   mx.stopListening(state.ip, state.port);
   client.stop();
@@ -1462,23 +1447,23 @@ void testTLS13ConcurrentRecords(TempDir &temp, LogCapture &capture)
   server.final();
   mx.stop();
   Ztls_CheckRT_1(!capture.errors.load_(), "TLS stress emitted error logs");
-  Ztls_CheckRT_1(!state.errors.load_(), state.error_msg ? state.error_msg : "TLS stress failed");
+  Ztls_CheckRT_1(!state.errors.load_(), state.errorMsg ? state.errorMsg : "TLS stress failed");
 }
 
 void testTLS13IPv6Loopback(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testTLS13IPv6Loopback);
-  run_in_process(
+  runInProcess(
     temp, capture, SmallPayloadSize, SmallPayloadSize, false, false, false, ZiIP{"::1"}, "::1");
 }
 
 void testTLS13KeyUpdate(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testTLS13KeyUpdate);
-  auto suite = Ztls_::find_cipher_suite(Ztls_::openssl_cipher_suites, Ztls_SuiteAes128gcmSHA256);
+  auto suite = Ztls_::findCipherSuite(Ztls_::opensslCipherSuites, Ztls_SuiteAes128gcmSHA256);
   Ztls_CheckRT_1(suite, "TLS 1.3 AES-GCM suite unavailable");
   if (!suite) return;
-  run_in_process(
+  runInProcess(
     temp, capture, SmallPayloadSize, SmallPayloadSize, true, false, false, ZiIP{"127.0.0.1"},
     "127.0.0.1", {&suite, 1}, Ztls_SuiteAes128gcmSHA256);
 }
@@ -1486,13 +1471,13 @@ void testTLS13KeyUpdate(TempDir &temp, LogCapture &capture)
 void testTLS13ServerKeyUpdate(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testTLS13ServerKeyUpdate);
-  run_in_process(temp, capture, SmallPayloadSize, SmallPayloadSize, false, true);
+  runInProcess(temp, capture, SmallPayloadSize, SmallPayloadSize, false, true);
 }
 
 void testTLS13QueuedClose(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testTLS13QueuedClose);
-  run_in_process(temp, capture, SmallPayloadSize, SmallPayloadSize, false, false, true);
+  runInProcess(temp, capture, SmallPayloadSize, SmallPayloadSize, false, false, true);
 }
 
 void testTLS13ComposedHeadroom(TempDir &temp, LogCapture &capture)
@@ -1504,8 +1489,8 @@ void testTLS13ComposedHeadroom(TempDir &temp, LogCapture &capture)
   constexpr unsigned RecordPayload = 16 * 1024 - 325 - ExtraHeadroom - ExtraTailroom;
   constexpr unsigned Payload = RecordPayload * 2 + 1;
 
-  for (auto suite : Ztls_::openssl_cipher_suites) {
-    run_in_process(
+  for (auto suite : Ztls_::opensslCipherSuites) {
+    runInProcess(
       temp, capture, Payload, Payload, false, false, false, ZiIP{"127.0.0.1"}, "127.0.0.1",
       {&suite, 1}, suite->id, ExtraHeadroom, ExtraTailroom);
   }
@@ -1514,25 +1499,25 @@ void testTLS13ComposedHeadroom(TempDir &temp, LogCapture &capture)
 void testTLS12HandshakeRejected(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testTLS12HandshakeRejected);
-  run_tls12_handshake_rejected(temp, capture);
+  rejectTLS12(temp, capture);
 }
 
 void testInMemoryRSA(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testInMemoryRSA);
-  run_in_memory<Ztls::PK::SK_RSA>(temp, capture, "rsa");
+  runInMemory<Ztls::PK::RSAPrivate>(temp, capture, "rsa");
 }
 
 void testInMemoryEC(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testInMemoryEC);
-  run_in_memory<Ztls::PK::SK_EC>(temp, capture, "ec");
+  runInMemory<Ztls::PK::ECPrivate>(temp, capture, "ec");
 }
 
 void testInMemoryED25519(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testInMemoryED25519);
-  run_in_memory<Ztls::PK::SK_ED25519>(temp, capture, "ed25519");
+  runInMemory<Ztls::PK::Ed25519Private>(temp, capture, "ed25519");
 }
 
 } // namespace

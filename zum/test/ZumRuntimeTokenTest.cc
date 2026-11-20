@@ -169,11 +169,11 @@ static void runtimeToken()
   Ztls::Random rng;
   ZuCheck(rng.init());
   Zum::Bytes passkeyHandle;
-  ZmRef<Ztls::PK::SK_EC> passkey;
+  ZmRef<Ztls::PK::ECPrivate> passkey;
   ZuTestCall(prepareIdentity, db, context, rng, passkeyHandle, passkey);
   OIDCSetup state;
   ZuTestCall(prepareOIDC, db, context, rng, state);
-  Ztls::PK::SK_EC tokenKey{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  Ztls::PK::ECPrivate tokenKey{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   uint8_t tokenPublic[Ztls::COSE::ES256::PublicKeySize];
   TokenSetup token;
   ZuTestCall(prepareToken, db, context, rng, state, passkeyHandle,

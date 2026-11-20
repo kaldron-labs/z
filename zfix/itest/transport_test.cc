@@ -728,7 +728,7 @@ friend inline ZuStringT<"Zfix.TransportSwap.Srv"> ZmNHeapID(Link *);
   bool connectSocket_(bool) {
     if (++sockets != 2) return true;
     // Signal after connected_1 completes its Rx turn and installs B's TLS
-    // generation; waking main inside this hook could resume A before reset_tls.
+    // generation; waking main inside this hook could resume A before resetTLS.
     auto state = app()->state;
     app()->rxRun([state] { state->associated.post(); });
     return !state->refuse;

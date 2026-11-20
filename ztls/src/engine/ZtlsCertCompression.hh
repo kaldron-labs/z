@@ -53,10 +53,10 @@ struct Ztls_API EmitCompressedCert : EmitCertificate {
 Ztls_Extern DecompressCertificate &decompressCertificate;
 
 // initializes a certificate emitter that precompresses a certificate chain (and ocsp status)
-Ztls_API int init_compressed_certificate(
-  EmitCompressedCert *ecc, ZuSpan<const Bytes> certificates, Bytes ocsp_status);
+Ztls_Extern int
+initCompressedCert(EmitCompressedCert *ecc, ZuSpan<const Bytes> certificates, Bytes ocspStatus);
 
-Ztls_API void dispose_compressed_certificate(EmitCompressedCert *ecc);
+Ztls_Extern void disposeCompressedCert(EmitCompressedCert *ecc);
 
 } // namespace Ztls_
 

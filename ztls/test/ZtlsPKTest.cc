@@ -127,17 +127,16 @@ template <typename T> void checkKey(Ztls::Random &rng, ZuCSpan type)
 
   ZmRef<T> sk;
 
-  if constexpr (ZuIsSame<T, SK_RSA>{}) {
+  if constexpr (ZuIsSame<T, RSAPrivate>{}) {
     sk = new T{rng, 2048};
-  } else if constexpr (ZuIsSame<T, SK_EC>{}) {
-    sk = new T{rng, OIDs::EC_GRP_SECP256R1};
-  } else if constexpr (ZuIsSame<T, SK_ED25519>{}) {
+  } else if constexpr (ZuIsSame<T, ECPrivate>{}) {
+    sk = new T{rng, OIDs::ECGroupSecp256r1};
+  } else if constexpr (ZuIsSame<T, Ed25519Private>{}) {
     sk = new T{rng};
   }
 
   checkCSR(sk, type);
-  Ztls_CheckRT_1(
-    !Ztls::PK::pkey_csr(sk->key, nullptr, rejectCSR), type, " CSR sink failure ignored");
+  Ztls_CheckRT_1(!Ztls::PK::csr(sk->key, nullptr, rejectCSR), type, " CSR sink failure ignored");
 
   ZtBArray asn;
   {
@@ -192,8 +191,7 @@ template <typename T> void checkKey(Ztls::Random &rng, ZuCSpan type)
     }
     auto pk = ZuMv(r).template p<0>();
     Ztls_CheckRT_1(
-      !Ztls::PK::pkey_csr(pk->key, nullptr, acceptCSR), type,
-      " public-only CSR generation succeeded");
+      !Ztls::PK::csr(pk->key, nullptr, acceptCSR), type, " public-only CSR generation succeeded");
     ZtBArray asn3;
     pk->save(asn3);
     if (save) {
@@ -288,7 +286,7 @@ void pemChain()
   for (unsigned i = 0; i < ZtlsCertChainBuiltin; ++i)
     ZuCheckRT(file.write(first.data(), first.length()) == Zi::OK);
   file.close();
-  ZuCheckRT(Ztls::load_certificates(&ctx, path.data()));
+  ZuCheckRT(Ztls::loadCerts(&ctx, path.data()));
   ZuCheckRT(ctx.certificates.length() == ZtlsCertChainBuiltin);
 
   auto append = [&](ZuCSpan text)
@@ -299,7 +297,7 @@ void pemChain()
     return result == Zi::OK;
   };
   ZuCheckRT(append(last));
-  ZuCheckRT(Ztls::load_certificates(&ctx, path.data()));
+  ZuCheckRT(Ztls::loadCerts(&ctx, path.data()));
   auto intact = [&]()
   {
     if (ctx.certificates.length() != ZtlsCertChainBuiltin + 1) return false;
@@ -311,20 +309,20 @@ void pemChain()
   };
   ZuCheckRT(intact());
   ZuCheckRT(append("-----BEGIN CERTIFICATE-----\n!\n-----END CERTIFICATE-----\n"_z));
-  ZuCheckRT(!Ztls::load_certificates(&ctx, path.data()));
+  ZuCheckRT(!Ztls::loadCerts(&ctx, path.data()));
   ZuCheckRT(intact());
   ZuCheckRT(file.open(path, ZiFile::WriteOnly) == Zi::OK);
   ZuCheckRT(file.truncate(ZiFile::Offset(INT_MAX) + 1) == Zi::OK);
   file.close();
-  ZuCheckRT(!Ztls::load_certificates(&ctx, path.data()));
+  ZuCheckRT(!Ztls::loadCerts(&ctx, path.data()));
   ZuCheckRT(intact());
 }
 
 void testRSA(Ztls::Random &rng)
 {
   ZuTestScopeRT(rsa);
-  checkKey<Ztls::PK::SK_RSA>(rng, "rsa");
-  Ztls::PK::SK_RSA key{rng, 2048};
+  checkKey<Ztls::PK::RSAPrivate>(rng, "rsa");
+  Ztls::PK::RSAPrivate key{rng, 2048};
   // OpenSSL requires an RSA-modulus-sized decryption output buffer.
   uint8_t secret[16], ciphertext[256], recovered[256];
   ZuGuard clear{[&]()
@@ -336,7 +334,7 @@ void testRSA(Ztls::Random &rng)
   auto publicResult = key.mkPK();
   ZuCheckRT(!publicResult.template is<ZeException>());
   if (publicResult.template is<ZeException>()) return;
-  auto		 pub = ZuMv(publicResult).template p<ZmRef<Ztls::PK::PK_RSA>>();
+  auto		 pub = ZuMv(publicResult).template p<ZmRef<Ztls::PK::RSAPublic>>();
   constexpr auto label = "age-encryption.org/v1/ssh-rsa"_z;
   auto		 encrypted = pub->oaepEncrypt(secret, label, ciphertext);
   ZuCheckRT(!encrypted.template is<ZeException>());
@@ -354,17 +352,17 @@ void testRSA(Ztls::Random &rng)
 void testEC(Ztls::Random &rng)
 {
   ZuTestScopeRT(ec);
-  checkKey<Ztls::PK::SK_EC>(rng, "ec");
+  checkKey<Ztls::PK::ECPrivate>(rng, "ec");
 }
 
 void testED25519(Ztls::Random &rng)
 {
   ZuTestScopeRT(ed25519);
-  checkKey<Ztls::PK::SK_ED25519>(rng, "ed25519");
-  Ztls::PK::SK_ED25519 key{rng};
-  uint8_t	       seed[32], digest[Ztls::MD<Ztls::SHA512>::Size];
-  uint8_t	       mapped[32], derived[32];
-  ZuGuard	       clear{[&]()
+  checkKey<Ztls::PK::Ed25519Private>(rng, "ed25519");
+  Ztls::PK::Ed25519Private key{rng};
+  uint8_t		   seed[32], digest[Ztls::MD<Ztls::SHA512>::Size];
+  uint8_t		   mapped[32], derived[32];
+  ZuGuard		   clear{[&]()
   {
     ZuClear(seed, sizeof(seed));
     ZuClear(digest, sizeof(digest));
@@ -373,7 +371,7 @@ void testED25519(Ztls::Random &rng)
   Ztls::MD<Ztls::SHA512> sha512;
   sha512.update(seed);
   sha512.finish(digest);
-  Ztls::PK::SK_X25519 x{
+  Ztls::PK::X25519Private x{
     ZuBSpan{digest, 32}
   };
   ZuCheckRT(!x.exportPK(derived).template is<ZeException>());
@@ -381,7 +379,7 @@ void testED25519(Ztls::Random &rng)
   ZuCheckRT(!memcmp(mapped, derived, sizeof(mapped)));
   uint8_t invalid[32];
   memset(invalid, 0xff, sizeof(invalid));
-  ZuCheckRT(!Ztls::PK::ed25519_to_x25519(invalid, mapped));
+  ZuCheckRT(!Ztls::PK::ed25519ToX25519(invalid, mapped));
 }
 
 } // namespace

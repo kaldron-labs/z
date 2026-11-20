@@ -489,7 +489,7 @@ static FinishedAuthorization finishOIDCAuthorization(
 }
 
 static Zum::SignFn testSigner(
-    Ztls::Random &rng, Ztls::PK::SK_EC &key)
+    Ztls::Random &rng, Ztls::PK::ECPrivate &key)
 {
   return Zum::SignFn{[&rng, &key](
       const Zum::SignKey &record, ZuBSpan digest, Zum::SignatureFn complete) mutable {
@@ -507,7 +507,7 @@ static IssuedToken issueTokenRequest(
     Zum::Requests *requests, TestDB *db,
     Ztls::Random &rng,
     Zum::String form, Zum::String authorization,
-    Ztls::PK::SK_EC &key, int64_t now,
+    Ztls::PK::ECPrivate &key, int64_t now,
     Zum::String issuer = "issuer")
 {
   Zum::TokenConfig config{
@@ -824,8 +824,8 @@ static bool setKeyRetirement(
 
 void zumtest::prepareToken(ZmRef<RuntimeDB> db,
     ZmRef<Zum::DB> context, Ztls::Random &rng, OIDCSetup &oidcSetup,
-    const Zum::Bytes &passkeyHandle, Ztls::PK::SK_EC &passkey,
-    Ztls::PK::SK_EC &tokenKey,
+    const Zum::Bytes &passkeyHandle, Ztls::PK::ECPrivate &passkey,
+    Ztls::PK::ECPrivate &tokenKey,
     uint8_t (&tokenPublic)[Ztls::COSE::ES256::PublicKeySize], TokenSetup &state)
 {
   ZuTestScope(prepareToken);
@@ -1023,7 +1023,7 @@ void zumtest::prepareToken(ZmRef<RuntimeDB> db,
     });
   }));
 
-  ZuCheck(Ztls::PK::pkey_ec_export_public(tokenKey.key, tokenPublic));
+  ZuCheck(Ztls::PK::ecExportPublic(tokenKey.key, tokenPublic));
   ZuCheck(setKeyRetirement(context, "app-token-key", 250));
   auto issued = issueTokenRequest(db->requests, db, rng,
     Zum::String{"grant_type=client_credentials"},

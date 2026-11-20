@@ -225,7 +225,7 @@ struct Server : Ztls::Server<Server> {
       ++self->owner->state.asyncStarted;
       if (self->owner->state.cancelAsync) {
 	self->owner->state.cancelAsync = false;
-	auto link = static_cast<Link *>(*Ztls_::get_data_ptr(tls));
+	auto link = static_cast<Link *>(*Ztls_::dataPtr(tls));
 	// Queue close after the suspended operation returns to its owner.
 	self->owner->rxRun([link]() { link->disconnect_(); });
       }
@@ -234,7 +234,7 @@ struct Server : Ztls::Server<Server> {
       return Ztls_ErrorAsyncOperation;
     }
   } sign;
-  void signer(Ztls::SignCert *sign) { ctx()->signCertificate = Ztls::sign_cert_cb(sign); }
+  void signer(Ztls::SignCert *sign) { ctx()->signCertificate = Ztls::signCertHook(sign); }
   void observeAsync()
   {
     sign.owner = this;
@@ -313,14 +313,14 @@ struct NativePauses {
     Ztls::PK::Key key;
     key.reset(EVP_PKEY_new());
     if (!key.get() || !EVP_PKEY_set1_RSA(key.get(), rsa)) return false;
-    sign = Ztls::sign_cert_new(key);
-    if (!sign || !Ztls::sign_cert_async(sign, true)) return false;
+    sign = Ztls::signCertNew(key);
+    if (!sign || !Ztls::signCertAsync(sign, true)) return false;
     server.signer(sign);
     return true;
   }
   ~NativePauses()
   {
-    Ztls::sign_cert_free(sign);
+    Ztls::signCertFree(sign);
     RSA_meth_free(method);
     for (auto &pair : pipes)
       for (auto fd : pair)

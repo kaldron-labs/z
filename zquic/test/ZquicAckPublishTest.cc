@@ -95,7 +95,7 @@ public:
     Zquic::TrafficSecret secret;
     Base::initClientPathTx({}, {});
     return Zquic::PktProt::deriveSecret(secret,
-      &Ztls_::openssl_aes128gcmsha256, ZuBSpan{bytes, sizeof(bytes)}) &&
+      &Ztls_::opensslAes128gcmsha256, ZuBSpan{bytes, sizeof(bytes)}) &&
       Base::installAppDataKeys_(secret, secret, Zquic::CxnID{"publish"});
   }
   void receive(unsigned pn, Zquic::EcnMark::T mark = Zquic::EcnMark::ECT0) {

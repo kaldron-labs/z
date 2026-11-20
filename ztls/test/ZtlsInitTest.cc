@@ -23,17 +23,17 @@ static bool growRecordBuffer(bool tx)
   uint8_t	small[1]; // Force the first reservation to grow the record buffer.
   Ztls_::Buffer buffer;
   if (tx)
-    Ztls_::buffer_init_tx(&buffer, small, sizeof(small));
+    Ztls_::bufferInitTx(&buffer, small, sizeof(small));
   else
-    Ztls_::buffer_init_rx(&buffer, small, sizeof(small));
-  ZuGuard dispose{[&buffer]() { Ztls_::buffer_dispose(&buffer); }};
+    Ztls_::bufferInitRx(&buffer, small, sizeof(small));
+  ZuGuard dispose{[&buffer]() { Ztls_::bufferDispose(&buffer); }};
   buffer.base[0] = 0x5a;
   buffer.off = 1;
-  if (Ztls_::buffer_reserve(&buffer, 1, tx ? 1 : 0) || !buffer.isAllocated ||
-    buffer.base == small || buffer.base[0] != 0x5a || buffer.off != 1)
+  if (Ztls_::bufferRes(&buffer, 1, tx ? 1 : 0) || !buffer.isAllocated || buffer.base == small ||
+    buffer.base[0] != 0x5a || buffer.off != 1)
     return false;
   auto capacity = buffer.capacity;
-  if (Ztls_::buffer_reserve(&buffer, capacity, tx ? 1 : 0) || buffer.capacity <= capacity ||
+  if (Ztls_::bufferRes(&buffer, capacity, tx ? 1 : 0) || buffer.capacity <= capacity ||
     buffer.base[0] != 0x5a || buffer.off != 1)
     return false;
   return true;

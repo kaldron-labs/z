@@ -41,7 +41,7 @@ private:
   EVP_KDF_CTX	*m_ctx = nullptr;
 };
 
-Ztls_API bool scrypt(
+Ztls_Extern bool scrypt(
   ZuBSpan password, ZuBSpan salt, uint64_t n, unsigned r, unsigned p, uint64_t maxMem,
   ZuSpan<uint8_t> output);
 

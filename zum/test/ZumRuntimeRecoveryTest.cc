@@ -527,7 +527,7 @@ static FinishedAuthorization finishOIDCAuthorization(
 }
 
 static Zum::SignFn testSigner(
-    Ztls::Random &rng, Ztls::PK::SK_EC &key)
+    Ztls::Random &rng, Ztls::PK::ECPrivate &key)
 {
   return Zum::SignFn{[&rng, &key](
       const Zum::SignKey &record, ZuBSpan digest, Zum::SignatureFn complete) mutable {
@@ -545,7 +545,7 @@ static IssuedToken issueTokenRequest(
     Zum::Requests *requests, TestDB *db,
     Ztls::Random &rng,
     Zum::String form, Zum::String authorization,
-    Ztls::PK::SK_EC &key, int64_t now,
+    Ztls::PK::ECPrivate &key, int64_t now,
     Zum::String issuer = "issuer")
 {
   Zum::TokenConfig config{
@@ -890,13 +890,13 @@ static void runtimeRecovery()
   Ztls::Random rng;
   ZuCheck(rng.init());
   Zum::Bytes passkeyHandle;
-  ZmRef<Ztls::PK::SK_EC> passkey;
+  ZmRef<Ztls::PK::ECPrivate> passkey;
   ZuTestCall(prepareIdentity, db, context, rng, passkeyHandle, passkey);
   Zum::RegistrationInput registrationInput;
 
   OIDCSetup oidcSetup;
   ZuTestCall(prepareOIDC, db, context, rng, oidcSetup);
-  Ztls::PK::SK_EC tokenKey{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  Ztls::PK::ECPrivate tokenKey{rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   uint8_t tokenPublic[Ztls::COSE::ES256::PublicKeySize];
   TokenSetup tokenSetup;
   ZuTestCall(prepareToken, db, context, rng, oidcSetup, passkeyHandle,
@@ -1038,10 +1038,10 @@ static void runtimeRecovery()
     rollbackUser.updated == recoveredUser.updated && rollbackUser.handle == recoveredUser.handle);
   ZuCheck(loadGrant(context, recoveryGrant.id).state == Zum::State::Active &&
     !loadGrant(context, recoveryGrant.id).owner);
-  Ztls::PK::SK_EC recoveryPasskey{
-    rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  Ztls::PK::ECPrivate recoveryPasskey{
+    rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   uint8_t recoveryPublic[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheck(Ztls::PK::pkey_ec_export_public(
+  ZuCheck(Ztls::PK::ecExportPublic(
     recoveryPasskey.key, recoveryPublic));
   ZuCheck(makeRegistration(recoveryPublic, 1, "recovery-credential",
     recoveryGrant.challenge, "https://example.com", "example.com",
@@ -1123,10 +1123,10 @@ static void runtimeRecovery()
   }) == Zum::WebAuthnError::OK);
   auto browserEnrollmentGrant = loadGrant(
     context, browserEnrollmentBegin.ceremonyID);
-  Ztls::PK::SK_EC browserPasskey{
-    rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  Ztls::PK::ECPrivate browserPasskey{
+    rng, Ztls::PK::OIDs::ECGroupSecp256r1};
   uint8_t browserPublic[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheck(Ztls::PK::pkey_ec_export_public(
+  ZuCheck(Ztls::PK::ecExportPublic(
     browserPasskey.key, browserPublic));
   ZuCheck(makeRegistration(browserPublic, 0, "browser-credential",
     browserEnrollmentGrant.challenge, "https://example.com", "example.com",

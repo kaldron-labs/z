@@ -33,7 +33,7 @@ struct Peer {
   static int trafficKey(Ztls::Cxn *tls, int transmit, size_t epoch, const void *secret)
   {
     auto peer = static_cast<Peer *>(tls->dataPtr);
-    if (epoch >= EpochCount || !secret || !get_cipher(tls)) return Ztls_ErrorLibrary;
+    if (epoch >= EpochCount || !secret || !cipher(tls)) return Ztls_ErrorLibrary;
     peer->traffic[!!transmit] |= 1U << epoch;
     return 0;
   }
@@ -55,8 +55,8 @@ static void configure(Context &context)
   static TrafficHook traffic;
   context.random = &opensslRandom;
   context.getTime = &Ztls_::getTime;
-  context.keyExchanges = openssl_key_exchanges;
-  context.cipherSuites = openssl_cipher_suites;
+  context.keyExchanges = opensslKeyExchanges;
+  context.cipherSuites = opensslCipherSuites;
   context.omitEndOfEarlyData = 1;
   context.updateTrafficKey = &traffic;
 }
@@ -72,7 +72,7 @@ struct Flight {
     unsigned capacity = Capacity)
   {
     memset(storage, Sentinel, sizeof(storage));
-    result = raw_handshake(
+    result = rawHandshake(
       &peer.tls, &peer.tls.handshakeProps, operation, epoch, input, {storage, capacity});
     return result.status;
   }
@@ -187,14 +187,14 @@ static bool certificate(Context &server, const Ztls::PK::Key &key)
 static bool exchange(Peer &client, Peer &server, Flight &c, Flight &s, bool retry)
 {
   if (!accepted(c.drive(client, RawHandshakeOp::Start)) || !c.valid() ||
-    raw_read_epoch(&server.tls) != Initial)
+    rawReadEpoch(&server.tls) != Initial)
     return false;
 
   auto hello = c.bytes(Initial);
   if (hello.length() <= 3 ||
     s.drive(server, RawHandshakeOp::Input, Initial, {hello.data(), 3}) != Ztls_ErrorInProgress ||
-    !s.valid() || s.result.length || raw_read_epoch(&server.tls) != Initial ||
-    server.traffic[0] || server.traffic[1] ||
+    !s.valid() || s.result.length || rawReadEpoch(&server.tls) != Initial || server.traffic[0] ||
+    server.traffic[1] ||
     !accepted(
       s.drive(server, RawHandshakeOp::Input, Initial, {hello.data() + 3, hello.length() - 3})) ||
     !s.valid())
@@ -202,29 +202,29 @@ static bool exchange(Peer &client, Peer &server, Flight &c, Flight &s, bool retr
 
   if (retry) {
     if (!s.startsWith(Initial, Ztls_HsTypeSrvHello) || s.result.offsets[1] != s.result.length ||
-      raw_read_epoch(&server.tls) != Initial ||
+      rawReadEpoch(&server.tls) != Initial ||
       !accepted(c.drive(client, RawHandshakeOp::Input, Initial, s.bytes(Initial))) ||
       !c.valid() || !c.startsWith(Initial, Ztls_HsTypeCliHello) ||
-      c.result.offsets[1] != c.result.length || raw_read_epoch(&client.tls) != Initial ||
+      c.result.offsets[1] != c.result.length || rawReadEpoch(&client.tls) != Initial ||
       !accepted(s.drive(server, RawHandshakeOp::Input, Initial, c.bytes(Initial))) || !s.valid())
       return false;
   }
 
   return s.startsWith(Initial, Ztls_HsTypeSrvHello) &&
     s.startsWith(Handshake, Ztls_HsTypeEncExts) &&
-    s.startsWith(Application, Ztls_HsTypeNewTicket) && raw_read_epoch(&server.tls) == Handshake &&
+    s.startsWith(Application, Ztls_HsTypeNewTicket) && rawReadEpoch(&server.tls) == Handshake &&
     !(server.traffic[0] & (1U << Application)) && (server.traffic[1] & (1U << Application)) &&
     accepted(c.drive(client, RawHandshakeOp::Input, Initial, s.bytes(Initial))) && c.valid() &&
-    !c.result.length && raw_read_epoch(&client.tls) == Handshake &&
+    !c.result.length && rawReadEpoch(&client.tls) == Handshake &&
     !c.drive(client, RawHandshakeOp::Input, Handshake, s.bytes(Handshake)) && c.valid() &&
-    c.startsWith(Handshake, Ztls_HSTypeFinished) && raw_read_epoch(&client.tls) == Application &&
-    !raw_handshake(
+    c.startsWith(Handshake, Ztls_HSTypeFinished) && rawReadEpoch(&client.tls) == Application &&
+    !rawHandshake(
       &client.tls, &client.tls.handshakeProps, RawHandshakeOp::Input, Application,
       s.bytes(Application), {})
        .status &&
     !s.drive(server, RawHandshakeOp::Input, Handshake, c.bytes(Handshake)) && s.valid() &&
-    raw_read_epoch(&server.tls) == Application && handshake_is_complete(&client.tls) &&
-    handshake_is_complete(&server.tls);
+    rawReadEpoch(&server.tls) == Application && handshakeComplete(&client.tls) &&
+    handshakeComplete(&server.tls);
 }
 
 static void handshake(bool compressed = false)
@@ -239,32 +239,32 @@ static void handshake(bool compressed = false)
   static SaveSessionTicket save;
   clientContext.saveTicket = &save;
   Ztls::PK::Key key;
-  bool haveCert = Ztls::PK::pkey_rsa_generate(key, 2048) && certificate(serverContext, key);
+  bool		haveCert = Ztls::PK::rsaGenerate(key, 2048) && certificate(serverContext, key);
   ZuCheckRT(haveCert);
   if (!haveCert) return;
-  auto	  signer = Ztls::sign_cert_new(key);
-  auto	  tickets = Ztls::ticket_key_new();
+  auto	  signer = Ztls::signCertNew(key);
+  auto	  tickets = Ztls::ticketKeyNew();
   ZuGuard cleanup{[signer, tickets]()
   {
-    if (tickets) Ztls::ticket_key_free(tickets);
-    if (signer) Ztls::sign_cert_free(signer);
+    if (tickets) Ztls::ticketKeyFree(tickets);
+    if (signer) Ztls::signCertFree(signer);
   }};
   ZuCheckRT(signer && tickets);
   if (!signer || !tickets) return;
-  serverContext.signCertificate = Ztls::sign_cert_cb(signer);
-  serverContext.encryptTicket = Ztls::ticket_encrypt_cb(tickets);
+  serverContext.signCertificate = Ztls::signCertHook(signer);
+  serverContext.encryptTicket = Ztls::ticketEncryptHook(tickets);
   serverContext.ticketLifetime = 60;
   serverContext.maxEarlyDataSize = 1024;
 
 #if ZtlsUseBrotli
   EmitCompressedCert emitter;
-  ZuGuard	     dispose{[&emitter]() { dispose_compressed_certificate(&emitter); }};
+  ZuGuard	     dispose{[&emitter]() { disposeCompressedCert(&emitter); }};
   if (compressed) {
     auto &cert = serverContext.certificates[0];
     Bytes certificates[] = {
       {cert.data(), cert.length()}
 	  };
-    ZuCheckRT(!init_compressed_certificate(&emitter, certificates, {}));
+    ZuCheckRT(!initCompressedCert(&emitter, certificates, {}));
     serverContext.emitCertificate = &emitter;
     clientContext.decompressCertificate = &decompressCertificate;
   }
@@ -279,7 +279,7 @@ static void handshake(bool compressed = false)
     server.tls.initialize(&serverContext, true, &server);
     size_t earlyLimit = 0;
     if (pass) {
-      client.tls.handshakeProps.client.sessionTicket = wire_bytes(ticket.data(), ticket.length());
+      client.tls.handshakeProps.client.sessionTicket = wireBytes(ticket.data(), ticket.length());
       client.tls.handshakeProps.client.maxEarlyDataSize = &earlyLimit;
     }
     server.tls.handshakeProps.server.enforceRetry = retry;
@@ -322,24 +322,24 @@ static void echHandshake(bool accept)
   configure(clientContext);
   configure(serverContext);
   Ztls::PK::Key key;
-  bool haveCert = Ztls::PK::pkey_rsa_generate(key, 2048) && certificate(serverContext, key);
+  bool		haveCert = Ztls::PK::rsaGenerate(key, 2048) && certificate(serverContext, key);
   ZuCheckRT(haveCert);
   if (!haveCert) return;
-  auto	  signer = Ztls::sign_cert_new(key);
-  auto	  tickets = Ztls::ticket_key_new();
+  auto	  signer = Ztls::signCertNew(key);
+  auto	  tickets = Ztls::ticketKeyNew();
   ZuGuard credentials{[signer, tickets]()
   {
-    Ztls::ticket_key_free(tickets);
-    Ztls::sign_cert_free(signer);
+    Ztls::ticketKeyFree(tickets);
+    Ztls::signCertFree(signer);
   }};
   ZuCheckRT(signer && tickets);
   if (!signer || !tickets) return;
-  serverContext.signCertificate = Ztls::sign_cert_cb(signer);
-  serverContext.encryptTicket = Ztls::ticket_encrypt_cb(tickets);
+  serverContext.signCertificate = Ztls::signCertHook(signer);
+  serverContext.encryptTicket = Ztls::ticketEncryptHook(tickets);
   serverContext.ticketLifetime = 60;
 
-  const HpkeKem	  *kems[] = {&openssl_hpke_x25519sha256, nullptr};
-  const HpkeSuite *ciphers[] = {&openssl_hpke_aes128gcmsha256, nullptr};
+  const HpkeKem	  *kems[] = {&opensslHPKEX25519sha256, nullptr};
+  const HpkeSuite *ciphers[] = {&opensslHPKEAes128gcmsha256, nullptr};
   clientContext.ech.client.kems = kems;
   clientContext.ech.client.ciphers = ciphers;
   KeyExchangeContext *receiver = nullptr;
@@ -348,11 +348,11 @@ static void echHandshake(bool accept)
   ZuGuard receiverKey{[receiver]() { delete receiver; }};
   uint8_t storage[1024];
   Buffer  config;
-  buffer_init_tx(&config, storage, sizeof(storage));
-  ZuGuard configBytes{[&config]() { buffer_dispose(&config); }};
+  bufferInitTx(&config, storage, sizeof(storage));
+  ZuGuard configBytes{[&config]() { bufferDispose(&config); }};
   config.off = 2;
   enum { ConfigID = 42 };
-  ZuCheckRT(!ech_encode_config(
+  ZuCheckRT(!echEncodeConfig(
     &config, ConfigID, kems[0], receiver->pubkey, ciphers, 32, "public.example"));
   config.base[0] = uint8_t((config.off - 2) >> 8);
   config.base[1] = uint8_t(config.off - 2);
@@ -373,17 +373,16 @@ static void echHandshake(bool accept)
       Bytes enc, Bytes prefix) override
     {
       ++calls;
-      if (!accept || id != ConfigID || suite.kdf != openssl_hpke_aes128gcmsha256.id.kdf ||
-	suite.aead != openssl_hpke_aes128gcmsha256.id.aead)
+      if (!accept || id != ConfigID || suite.kdf != opensslHPKEAes128gcmsha256.id.kdf ||
+	suite.aead != opensslHPKEAes128gcmsha256.id.aead)
 	return nullptr;
-      *kem = &openssl_hpke_x25519sha256;
-      *cipher = &openssl_hpke_aes128gcmsha256;
+      *kem = &opensslHPKEX25519sha256;
+      *cipher = &opensslHPKEAes128gcmsha256;
       ZtBArray<ZtArrayHeapID<"Ztls.Test.EchInfo">> info;
       info.append(prefix.data(), prefix.length());
       info.append(config.data(), config.length());
       AeadContext *aead = nullptr;
-      result =
-	hpke_setup_base_r(*kem, *cipher, receiver, &aead, enc, {info.data(), info.length()});
+      result = hpkeSetupBaseR(*kem, *cipher, receiver, &aead, enc, {info.data(), info.length()});
       return result ? nullptr : aead;
     }
   } opener{
@@ -403,7 +402,7 @@ static void echHandshake(bool accept)
     int call(Ztls::Cxn *tls, CliHelloParams *params) override
     {
       ++calls;
-      return set_server_name(tls, params->serverName);
+      return serverName(tls, params->serverName);
     }
   } hello;
   serverContext.ech.server.createOpener = &opener;
@@ -412,7 +411,7 @@ static void echHandshake(bool accept)
   Peer client, server;
   client.tls.initialize(&clientContext, false, &client);
   server.tls.initialize(&serverContext, true, &server);
-  ZuCheckRT(!set_server_name(&client.tls, "private.example"));
+  ZuCheckRT(!serverName(&client.tls, "private.example"));
   client.tls.handshakeProps.client.ech.configs = {config.base, config.off};
   Flight c, s;
   ZuCheckRT(accepted(c.drive(client, RawHandshakeOp::Start)));
@@ -422,7 +421,7 @@ static void echHandshake(bool accept)
   bool complete = false;
   if (accept && !status) {
     ZuCheckRT(!s.drive(server, RawHandshakeOp::Input, Handshake, c.bytes(Handshake)));
-    complete = handshake_is_complete(&client.tls) && handshake_is_complete(&server.tls);
+    complete = handshakeComplete(&client.tls) && handshakeComplete(&server.tls);
   }
   ZuCheckRT(opener.calls == 1 && extensions.calls && hello.calls == 1);
   if (accept) {
@@ -457,15 +456,15 @@ static void listGrowth(unsigned extra)
   configure(clientContext);
   configure(serverContext);
   Ztls::PK::Key key;
-  if (!Ztls::PK::pkey_rsa_generate(key, 2048)) {
+  if (!Ztls::PK::rsaGenerate(key, 2048)) {
     ZuCheckRT(false);
     return;
   }
-  auto	  signer = Ztls::sign_cert_new(key);
-  ZuGuard cleanup{[signer]() { Ztls::sign_cert_free(signer); }};
+  auto	  signer = Ztls::signCertNew(key);
+  ZuGuard cleanup{[signer]() { Ztls::signCertFree(signer); }};
   ZuCheckRT(signer);
   if (!signer) return;
-  serverContext.signCertificate = Ztls::sign_cert_cb(signer);
+  serverContext.signCertificate = Ztls::signCertHook(signer);
 
   struct Verifier : VerifyCertificate {
     bool	seen = false;
@@ -549,14 +548,14 @@ static void verifierLifetime(unsigned mode)
   configure(clientContext);
   configure(serverContext);
   Ztls::PK::Key key;
-  bool haveCert = Ztls::PK::pkey_rsa_generate(key, 2048) && certificate(serverContext, key);
+  bool		haveCert = Ztls::PK::rsaGenerate(key, 2048) && certificate(serverContext, key);
   ZuCheckRT(haveCert);
   if (!haveCert) return;
-  auto	  signer = Ztls::sign_cert_new(key);
-  ZuGuard cleanup{[signer]() { Ztls::sign_cert_free(signer); }};
+  auto	  signer = Ztls::signCertNew(key);
+  ZuGuard cleanup{[signer]() { Ztls::signCertFree(signer); }};
   ZuCheckRT(signer);
   if (!signer) return;
-  serverContext.signCertificate = Ztls::sign_cert_cb(signer);
+  serverContext.signCertificate = Ztls::signCertHook(signer);
   VerifyObservation observation;
   struct Verifier : VerifyCertificate {
     VerifyObservation	&observation;
@@ -599,7 +598,7 @@ static void verifierLifetime(unsigned mode)
       ZuCheckRT(accepted(c.drive(
 	client, RawHandshakeOp::Input, Handshake,
 	{flight.data() + certificateEnd, flight.length() - certificateEnd})));
-      ZuCheckRT(handshake_is_complete(&client.tls) && observation.verifies == 1);
+      ZuCheckRT(handshakeComplete(&client.tls) && observation.verifies == 1);
       break;
     case VerifyLifetime::BadSignature: {
       uint8_t malformed[] = {Ztls_HsTypeCertVerify, 0, 0, 1, 0};
@@ -640,7 +639,7 @@ static void wrongEpoch()
   status = s.drive(server, RawHandshakeOp::Input, Handshake, c.bytes(Initial));
   ZuCHECK(
     Ztls_ErrorToAlert(status) == Ztls_AlertUnwaitedMsg && !s.result.keyUpdateRejected &&
-      s.empty() && raw_read_epoch(&server.tls) == Initial && !server.tls.recvbuf.mess.off &&
+      s.empty() && rawReadEpoch(&server.tls) == Initial && !server.tls.recvbuf.mess.off &&
       !server.traffic[0] && !server.traffic[1],
     "wrong-epoch input changed the receive state: ", status);
 }

@@ -401,7 +401,7 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
     uint8_t bytes[32] = {};
     Zquic::TrafficSecret secret;
     return Zquic::PktProt::deriveSecret(secret,
-      &Ztls_::openssl_aes128gcmsha256, ZuBSpan{bytes, sizeof(bytes)}) &&
+      &Ztls_::opensslAes128gcmsha256, ZuBSpan{bytes, sizeof(bytes)}) &&
       Base::installAppDataKeys_(secret, secret, Zquic::CxnID{"ack-test"});
   }
   bool appPackets(unsigned count) {
@@ -830,7 +830,7 @@ void testLongProbePadding()
   ZuBArray<32> material(32, false);
   memset(material.data(), 0x35, material.length());
   ZQUIC_CHECK_RT(Zquic::PktProt::deriveSecret(
-      secret, &Ztls_::openssl_aes128gcmsha256, material),
+      secret, &Ztls_::opensslAes128gcmsha256, material),
     "long probe secret derivation failed");
   ZmRef<TestLink> link = new TestLink{&fixture.app};
   link->setRuntimeCIDs(

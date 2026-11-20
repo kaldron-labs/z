@@ -95,11 +95,11 @@ void sinkGeometry()
 static void exactRecord(unsigned length)
 {
   ZuTestScopeRT(exactRecord);
-  auto		 cipher = &Ztls_::openssl_aes128gcmsha256;
+  auto		 cipher = &Ztls_::opensslAes128gcmsha256;
   Ztls_::Context ctx{};
   ctx.random = &Ztls_::opensslRandom;
   ctx.getTime = &Ztls_::getTime;
-  ctx.keyExchanges = Ztls_::openssl_key_exchanges;
+  ctx.keyExchanges = Ztls_::opensslKeyExchanges;
   ctx.cipherSuites.push(cipher);
   ZtlsTest::useTestPSK(ctx, cipher);
   Ztls::Cxn txConnection{&ctx, false}, rxConnection{&ctx, true};
@@ -112,14 +112,14 @@ static void exactRecord(unsigned length)
   uint8_t wire[Ztls_RxAppCapacity + 5 + 1 + Ztls_MaxDigestSize + 1];
   memset(payload, 0x37, length);
   Ztls_::Buffer send, receive;
-  Ztls_::buffer_init_tx(&send, wire, sizeof(wire) - 1);
-  ZuGuard releaseSend{[&send]() { Ztls_::buffer_dispose(&send); }};
+  Ztls_::bufferInitTx(&send, wire, sizeof(wire) - 1);
+  ZuGuard releaseSend{[&send]() { Ztls_::bufferDispose(&send); }};
   int	  sent = Ztls_::send(tx, &send, payload, length);
   ZuCheckRT(!sent && send.base == wire);
   if (sent || send.base != wire) return;
   wire[send.off] = 0xa5;
-  Ztls_::buffer_init_rx(&receive, wire + 5, send.off - 5);
-  ZuGuard releaseReceive{[&receive]() { Ztls_::buffer_dispose(&receive); }};
+  Ztls_::bufferInitRx(&receive, wire + 5, send.off - 5);
+  ZuGuard releaseReceive{[&receive]() { Ztls_::bufferDispose(&receive); }};
   auto	  consumed = send.off;
   ZuCheckRT(!Ztls_::receive(rx, &receive, wire, &consumed));
   ZuCheckRT(consumed == send.off && receive.off == length);
@@ -134,7 +134,7 @@ void fragmentedRecord(
   Ztls_::Context ctx{};
   ctx.random = &Ztls_::opensslRandom;
   ctx.getTime = &Ztls_::getTime;
-  ctx.keyExchanges = Ztls_::openssl_key_exchanges;
+  ctx.keyExchanges = Ztls_::opensslKeyExchanges;
   ctx.cipherSuites.push(cipher);
   ZtlsTest::useTestPSK(ctx, cipher);
   Ztls::Cxn txConnection{&ctx, false}, rxConnection{&ctx, true};
@@ -146,7 +146,7 @@ void fragmentedRecord(
   for (unsigned i = 0; i < sizeof(source); ++i) source[i] = uint8_t(i * 19 + (i >> 6));
   Ztls_::Buffer wire;
   uint8_t	small;
-  Ztls_::buffer_init_tx(&wire, &small, 0);
+  Ztls_::bufferInitTx(&wire, &small, 0);
   ZuCheckRT(!Ztls_::send(tx, &wire, source, sizeof(source)));
   if (corrupt) wire.base[wire.off - 1] ^= 1;
   size_t    length = truncate ? truncate : wire.off;
@@ -173,7 +173,7 @@ void fragmentedRecord(
     packet->length = uint32_t(chunk);
     auto   address = packet->data();
     size_t consumed = chunk;
-    result = Ztls_::receive_stream(rx, &writer, address, &consumed, nullptr);
+    result = Ztls_::rxStream(rx, &writer, address, &consumed, nullptr);
     spansValid &= consumed <= chunk && consumed > 0;
     spansValid &= address != pool.bytes + PlainPool::Head && packet->length == chunk;
     off += consumed;
@@ -204,13 +204,13 @@ void fragmentedRecord(
     ZuCheckRT(cleared);
   }
   tx->retireTx();
-  Ztls_::buffer_dispose(&wire);
+  Ztls_::bufferDispose(&wire);
 }
 
 void records()
 {
   ZuTestScopeRT(records);
-  auto cipher = &Ztls_::openssl_aes128gcmsha256;
+  auto cipher = &Ztls_::opensslAes128gcmsha256;
   for (unsigned step : {1U, 7U, 16U, 31U}) ZuTestCallRT(fragmentedRecord, cipher, step, false, 0);
   ZuTestCallRT(fragmentedRecord, cipher, 7, true, 0);
   for (unsigned end : {1U, 4U, 5U, 9U, 14U, 37U, 16397U, 16405U})

@@ -22,8 +22,8 @@
 
 namespace Ztls::TOTP {
 
-    Ztls_Extern unsigned calc(ZuBSpan, int offset = 0);
-    Ztls_Extern bool verify(ZuBSpan, unsigned code, unsigned range);
+  Ztls_Extern unsigned calc(ZuBSpan, int offset = 0);
+  Ztls_Extern bool verify(ZuBSpan, unsigned code, unsigned range);
 
 }
 

@@ -88,7 +88,7 @@ static bool schedule(ZuBSpan shared, ZuBSpan info, KeyNonce &material)
 }
 
 ZuUnion<void, ZeException> sealBase(
-  Random &rng, const PK::PK_MLKEM768_X25519 &recipient, ZuBSpan info, ZuBSpan aad,
+  Random &rng, const PK::MLKEM768X25519Public &recipient, ZuBSpan info, ZuBSpan aad,
   ZuBSpan plaintext, ZuSpan<uint8_t> enc, ZuSpan<uint8_t> ciphertext)
 {
   if (
@@ -114,7 +114,7 @@ ZuUnion<void, ZeException> sealBase(
 }
 
 ZuUnion<size_t, ZeException> openBase(
-  const PK::SK_MLKEM768_X25519 &identity, ZuBSpan info, ZuBSpan aad, ZuBSpan enc,
+  const PK::MLKEM768X25519Private &identity, ZuBSpan info, ZuBSpan aad, ZuBSpan enc,
   ZuBSpan ciphertext, ZuSpan<uint8_t> plaintext)
 {
   if (ciphertext.length() < TagSize || plaintext.length() < ciphertext.length() - TagSize)
