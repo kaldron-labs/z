@@ -52,12 +52,12 @@ zum_test_libs = $(top_builddir)/zum/src/libZum.la \
 	$(top_builddir)/zfb/src/libZfb.la $(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
-	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_LTLIBRARIES = libZumTestSupport.la
 libZumTestSupport_la_SOURCES = ZumTestSupport.cc ZumTestSupportIdentity.cc \
 	ZumTestSupportOIDC.cc ZumTestSupportToken.cc ZumTestSupportKeys.cc \
 	ZumTestSupport.hh
-LDADD = $(zumd_test_objects) libZumTestSupport.la $(zum_test_libs)
+LDADD = $(zumd_test_objects) libZumTestSupport.la $(zum_test_libs) @CRYPTO_LIBS@
 noinst_PROGRAMS = ZumRecordsTest ZumMgmtTest ZumHTTPTest ZumOAuthTest \
 	ZumAuthTest ZumDiscoveryTest ZumJWTTest ZumWebAuthnTest \
 	ZumSagaCatalogTest ZumSagaIdentityTest ZumSagaOrganizationTest \
@@ -68,7 +68,8 @@ noinst_PROGRAMS = ZumRecordsTest ZumMgmtTest ZumHTTPTest ZumOAuthTest \
 	ZumRuntimeRevocationTest \
 	ZumOIDCHTTPTest ZumClientTest ZumSecretTest ZumScopeTest ZumDaemonTest
 ZumSecretTest_SOURCES = ZumSecretTest.cc
-ZumSecretTest_LDADD = $(zumd_objdir)/zumd-zumd_secret.$(OBJEXT) $(zum_test_libs)
+ZumSecretTest_LDADD = $(zumd_objdir)/zumd-zumd_secret.$(OBJEXT) \
+	$(zum_test_libs) @CRYPTO_LIBS@
 ZumRecordsTest_SOURCES = ZumRecordsTest.cc
 ZumMgmtTest_SOURCES = ZumMgmtTest.cc
 ZumHTTPTest_SOURCES = ZumHTTPTest.cc
@@ -109,7 +110,7 @@ ZumClientTest_LDADD = $(top_builddir)/zum/src/libZum.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
-	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
 .PHONY: test
 test: $(noinst_PROGRAMS)

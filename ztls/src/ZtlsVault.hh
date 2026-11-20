@@ -26,38 +26,39 @@
 
 namespace Ztls {
 
-ZtEnumNS(ZtlsAPI, VaultStore, int8_t, Ephemeral, File, KeyRing, Module, Auto);
-ZtEnumNS(ZtlsAPI, VaultVariant, int8_t, Default, Direct, Indirect);
+ZtEnumNS(Ztls_API, VaultStore, int8_t, Ephemeral, File, KeyRing, Module, Auto);
+ZtEnumNS(Ztls_API, VaultVariant, int8_t, Default, Direct, Indirect);
 
 using VaultResult = ZuUnion<void, ZeException>;
 using VaultLoadFn = ZmFn<void(ZuSpan<uint8_t>), ZmFnHeapID<"Ztls.Vault.LoadFn">>;
 using VaultString = ZtString<ZtStringHeapID<"Ztls.Vault.Config">>;
-ZuDerive(VaultScratch, (ZtString<ZtStringSharded<true,
-  ZtStringHeapID<"Ztls.Vault.Config">>>));
+ZuDerive(VaultScratch, (ZtString<ZtStringSharded<true, ZtStringHeapID<"Ztls.Vault.Config">>>));
 
 namespace Scopes {
-struct Global { };
-struct Environment { ZuCSpan name; };
-using Union = ZuUnion<Global, Environment>;
+  struct Global { };
+  struct Environment {
+    ZuCSpan	name;
+  };
+  using Union = ZuUnion<Global, Environment>;
 }
 ZuDerive(Scope, Scopes::Union);
 
 struct VaultConfig {
-  VaultString program;
-  VaultString account;
-  VaultString envPrefix;
-  VaultString module;
-  int store = VaultStore::Auto;
-  int variant = VaultVariant::Default;
+  VaultString	program;
+  VaultString	account;
+  VaultString	envPrefix;
+  VaultString	module;
+  int		store = VaultStore::Auto;
+  int		variant = VaultVariant::Default;
 };
 
-class ZtlsAPI Vault {
+class Ztls_API Vault {
 public:
   Vault();
   ~Vault();
 
   Vault(const Vault &) = delete;
-  Vault &operator =(const Vault &) = delete;
+  Vault &operator=(const Vault &) = delete;
 
   VaultResult init(const VaultConfig &);
   VaultResult open();
@@ -66,12 +67,12 @@ public:
 
   VaultResult load(Scope, ZuCSpan name, VaultLoadFn);
   VaultResult save(Scope, ZuCSpan name, ZuBSpan);
-
 private:
   struct State;
-  State *m_state = nullptr;
+  State	*m_state = nullptr;
 };
 
-}
+} // namespace Ztls
 
-#endif /* ZtlsVault_HH */
+// ZtlsVault_HH
+#endif

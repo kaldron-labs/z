@@ -11,48 +11,48 @@
 
 #include <zlib/ZuLib.hh>
 
+#ifndef ZtlsExports
+#define ZtlsExports 0
+#endif
+
+#ifndef ZtlsUseBrotli
+#define ZtlsUseBrotli 0
+#endif
+
 #ifdef _WIN32
 
-#ifdef ZTLS_EXPORTS
-#define ZtlsAPI ZuExport_API
-#define ZtlsExplicit ZuExport_Explicit
+#if ZtlsExports
+#define Ztls_API ZuExport_API
+#define Ztls_Explicit ZuExport_Explicit
 #else
-#define ZtlsAPI ZuImport_API
-#define ZtlsExplicit ZuImport_Explicit
+#define Ztls_API ZuImport_API
+#define Ztls_Explicit ZuImport_Explicit
 #endif
-#define ZtlsExtern extern ZtlsAPI
+#define Ztls_Extern extern Ztls_API
 
 #else
 
-#define ZtlsAPI ZuExport_API
-#define ZtlsExplicit ZuExport_Explicit
-#define ZtlsExtern extern ZtlsAPI
+#define Ztls_API ZuExport_API
+#define Ztls_Explicit ZuExport_Explicit
+#define Ztls_Extern extern Ztls_API
 
 #endif
-
-#include <zlib/ZmSpecific.hh>
 
 #include <zlib/ZtString.hh>
 
+#include <zlib/ZePlatform.hh>
+
 namespace Ztls {
 
-ZtlsAPI bool cryptoInit();
-ZtlsAPI size_t format_error(int, char *, size_t);
+  Ztls_API bool cryptoInit();
+  Ztls_API void clearTLSError();
+  Ztls_API ZeException tlsError(
+    const char *operation, int code, const char *file = __builtin_FILE(),
+    unsigned line = __builtin_LINE(), const char *function = __builtin_FUNCTION());
 
-ZtlsExtern void init(); // can be called repeatedly
-
-struct StrError { char buf[200]; };
-
-ZtlsAPI inline ZuCSpan strerror_(int e) {
-  char *buf = ZmTLS<StrError>().buf;
-  constexpr unsigned N = sizeof(StrError{}.buf);
-  unsigned n = format_error(e, buf, N);
-  for (unsigned i = 0; i < N; i++) if (!buf[i]) { n = i; break; }
-  ZuCSpan s{&buf[0], n};
-  s.chomp();
-  return s;
-}
+  Ztls_Extern void init(); // can be called repeatedly
 
 }
 
-#endif /* ZtlsLib_HH */
+// ZtlsLib_HH
+#endif

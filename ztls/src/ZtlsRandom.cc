@@ -4,16 +4,16 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZtlsRandom.hh>
-
 #include <openssl/rand.h>
+
+#include <zlib/ZtlsRandom.hh>
 
 namespace Ztls {
 
-bool Random::random(ZuSpan<uint8_t> data)
-{
-  if (!data) return true;
-  return cryptoInit() && RAND_bytes_ex(nullptr, data.data(), data.length(), 0) == 1;
-}
+  bool Random::random(ZuSpan<uint8_t> data)
+  {
+    if (!data) return true;
+    return cryptoInit() && RAND_bytes_ex(nullptr, data.data(), data.length(), 0) == 1;
+  }
 
-} // Ztls
+}

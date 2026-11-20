@@ -7,11 +7,11 @@ Fusion identified in its source header also carry the Apache 2.0 terms.
 
 | Former location | Ztls location |
 | --- | --- |
-| `lib/picotls.c` | `ztls/src/engine/tls13.cc` |
-| `lib/openssl.c` | `ztls/src/engine/openssl.cc` |
-| `lib/fusion.c` | `ztls/src/engine/fusion.cc` |
-| `lib/hpke.c` | `ztls/src/engine/hpke.cc` |
-| `lib/certificate_compression.c` | `ztls/src/engine/certificate_compression.cc` |
+| `lib/picotls.c` | `ztls/src/engine/ZtlsTLS13.cc` |
+| `lib/openssl.c` | `ztls/src/engine/ZtlsEngineOpenSSL.cc` |
+| `lib/fusion.c` | `ztls/src/engine/ZtlsFusion.cc` |
+| `lib/hpke.c` | `ztls/src/engine/ZtlsEngineHPKE.cc` |
+| `lib/certificate_compression.c` | `ztls/src/engine/ZtlsCertCompression.cc` |
 | `<zpicotls.h>` | `<zlib/ZtlsEngine.hh>` |
 | `<zpicotls/openssl.h>` | `<zlib/ZtlsEngineOpenSSL.hh>` |
 | `<zpicotls/fusion.h>` | `<zlib/ZtlsFusion.hh>` |
@@ -23,17 +23,48 @@ Fusion compilation uses per-translation-unit ISA flags, and backend selection
 checks CPU capabilities. Brotli is used when available for TLS certificate
 compression. OpenSSL libcrypto remains a native dependency.
 
-Ordinary retained `ptls_*` names are members of `Ztls_` without the prefix.
-Retained `PTLS_*` macros use `Ztls_*`. Borrowed byte ranges use
-`ZuSpan<uint8_t>` through the engine's `Bytes` vocabulary. Connection and transmission
-state live in `Ztls::Cxn`. There is no detached Tx allocation or process-global
-buffer hook. A consumer moving low-level code should re-evaluate its
-allocation and thread ownership alongside renaming. The existing ticket
-encoding and the TLS 1.3 legacy version fields are part of the protocol
-behavior this migration preserves.
+The engine exposes native C++ types in `Ztls_`. `CipherAlgo`, `AeadAlgo`,
+`HashAlgo` and `KeyExchangeAlgo` create complete derived contexts on concrete,
+named heaps. Contexts use virtual operations and destructors. Algorithm catalogs
+hold borrowed pointers or references to complete provider objects; they never
+slice a polymorphic descriptor. Borrowed byte ranges use `Bytes` (`ZuSpan<uint8_t>`).
+
+`Context` borrows its random source, clock and other typed hooks. Their owners
+must outlive all connections that use them. Credential holders own native keys
+and certificate stores. Certificate verification transfers a `VerifySignature`
+object to `Ztls::Cxn`; verification, failure, reset and teardown retire it exactly
+once. Hash finalization leaves ownership with the caller; HMAC rejects snapshot
+mode with `Ztls_ErrorNotAvailable` and does not support cloning.
+
+Fusion GCM storage inherits its context interface. Each width owns its GHASH
+array, implements growth and setup, and clears its table before release. Expanded
+AES keys and serial state are cleared on destruction. SIMD load/store casts do
+not recover enclosing objects from a presumed prefix layout.
+
+OpenSSL async/RSA entry points and ticket-key callback parameters retain their
+native C signatures. They are adapters at the native boundary; no engine object
+stores a C dispatch table. Existing framework continuations retain their async
+scheduling and retirement contracts. The `ZtlsVaultStore` module factory retains
+its C linkage and ABI.
+
+Connection and transmission state live in `Ztls::Cxn`. The TLS wire format,
+ticket encoding and TLS 1.3 legacy version fields retain their protocol meaning.
 
 The application link owns scheduling, dispatch, and socket lifecycle.
 The protocol operates on its connection fields and on buffers directly
 owned or reserved through Zi allocators. Use the Ztls transport interface
 for socket-based TLS and the standalone crypto headers for primitive
-operations. Zquic still uses its existing zpicotls-based integration.
+operations.
+
+Zquic drives the same handshake with `raw_handshake` and uses
+`raw_read_epoch` to query the expected input level. Zquic owns its
+connection on Rx, supplies ordered CRYPTO bytes, and retains the output
+storage. The driver writes complete handshake messages directly into the
+supplied span and returns the five boundaries for the four epoch slots.
+The 0-RTT slot is empty. A terminal output failure leaves the failed
+flight unpublished and the caller retires the handshake.
+
+The raw driver reports traffic secrets through the handshake callback.
+Zquic owns packet protection, epoch retirement, and packet key updates.
+The driver rejects TLS KeyUpdate on the QUIC path and carries session
+tickets in the Application epoch.

@@ -23,8 +23,7 @@ typed receive is implemented. Typed send/reply, bounded deferred processing and 
 correlation, archive availability and
 durability policy belong to the application.
 
-TLS and cryptographic operations use Ztls; Zpicotls is a dependency of Ztls.
-FIX code and build targets access it through Ztls APIs.
+FIX code and build targets use the Ztls APIs for TLS and cryptographic operations.
 
 Build `make -C zfix/src -j8` before `make -C zfix/test -j8` and
 `make -C zfix/test test`, using existing compatible foundation and transport

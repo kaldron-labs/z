@@ -4,23 +4,27 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZtlsAlg.hh>
-
 #include <openssl/evp.h>
+
+#include <zlib/ZtlsAlg.hh>
 
 namespace Ztls {
 
-ZtEnumImplNS(MDAlg);
+  ZtEnumImplNS(MDAlg);
 
-const EVP_MD *evpMD(MDType type)
-{
-  switch (type) {
-    case SHA1: return EVP_sha1();
-    case SHA256: return EVP_sha256();
-    case SHA384: return EVP_sha384();
-    case SHA512: return EVP_sha512();
+  const EVP_MD *evpMD(MDType type)
+  {
+    switch (type) {
+    case SHA1:
+      return EVP_sha1();
+    case SHA256:
+      return EVP_sha256();
+    case SHA384:
+      return EVP_sha384();
+    case SHA512:
+      return EVP_sha512();
+    }
+    return EVP_sha256();
   }
-  return EVP_sha256();
-}
 
-} // Ztls
+}

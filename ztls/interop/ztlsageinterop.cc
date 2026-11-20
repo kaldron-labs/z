@@ -8,11 +8,12 @@
 
 #include <string.h>
 
-#include <iostream>
-
 #include <zlib/ZtArray.hh>
+
 #include <zlib/ZtlsAge.hh>
 #include <zlib/ZtlsKEM.hh>
+
+#include <iostream>
 
 using Bytes = ZtBArray<ZtArrayHeapID<"Ztls.Age.Interop">>;
 
@@ -21,7 +22,7 @@ static bool readFile(ZuCSpan path, Bytes &bytes)
   ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
   if (!file) return false;
   auto n = file.size();
-  if (n < 0 || n > (64<<20)) return false;
+  if (n < 0 || n > (64 << 20)) return false;
   bytes.length(n);
   return file.read(bytes.data(), n) == n;
 }
@@ -29,7 +30,11 @@ static bool readFile(ZuCSpan path, Bytes &bytes)
 static void trimLine(Bytes &bytes)
 {
   unsigned n = bytes.length();
-  while (n && (bytes[n - 1] == '\n' || bytes[n - 1] == '\r')) --n;
+  while (n) {
+    auto c = bytes[n - 1];
+    if (c != '\n' && c != '\r') break;
+    --n;
+  }
   bytes.length(n);
 }
 
@@ -42,8 +47,8 @@ static ZuCSpan keyLine(const Bytes &bytes, bool recipient)
     unsigned end = cursor;
     if (end > start && bytes[end - 1] == '\r') --end;
     ZuCSpan line{bytes.data() + start, end - start};
-    if (recipient ? line.prefix("age1"_z) == 4 :
-        line.prefix("AGE-SECRET-KEY-"_z) == 15) return line;
+    if (recipient ? line.prefix("age1"_z) == 4 : line.prefix("AGE-SECRET-KEY-"_z) == 15)
+      return line;
     if (cursor < n) ++cursor;
   }
   return {};
@@ -65,31 +70,30 @@ static int run(int argc, char **argv)
   Bytes keyText;
   if (!readFile(ssh && !encrypt ? argv[6] : argv[3], keyText)) return 1;
   if (scrypt) trimLine(keyText);
-  uint8_t key[Ztls::PK::HybridPublicSize];
-  ZuGuard clear{[&key, &keyText]() {
+  uint8_t	     key[Ztls::PK::HybridPublicSize];
+  ZuGuard	     clear{[&key, &keyText]()
+  {
     ZuClear(key, sizeof(key));
     ZuClear(keyText);
   }};
-  unsigned keySize = x25519 ? 32 :
-    encrypt ? Ztls::PK::HybridPublicSize : Ztls::PK::HybridSeedSize;
+  unsigned	     keySize = x25519 ? 32 :
+    encrypt			      ? Ztls::PK::HybridPublicSize :
+					Ztls::PK::HybridSeedSize;
   ZtlsAge::Recipient sshRecipient;
   if (ssh) {
-    auto decoded = ZtlsAge::decodeSSHRecipient(keyText,
-      keyText);
+    auto decoded = ZtlsAge::decodeSSHRecipient(keyText, keyText);
     if (decoded.template is<ZeException>()) return 1;
     sshRecipient = ZuMv(decoded).template p<ZtlsAge::Recipient>();
     if (sshRSA != sshRecipient.template is<ZtlsAge::SshRSARecipient>() ||
-        sshED != sshRecipient.template is<ZtlsAge::SshED25519Recipient>())
+      sshED != sshRecipient.template is<ZtlsAge::SshED25519Recipient>())
       return 1;
   } else if (!scrypt) {
     auto line = keyLine(keyText, encrypt);
     if (!line) return 1;
     auto type = x25519 ? ZtlsAgeKeyType::X25519 : ZtlsAgeKeyType::Hybrid;
-    auto decoded = encrypt ?
-      ZtlsAge::decodeRecipient(type, line, {key, keySize}) :
-      ZtlsAge::decodeIdentity(type, line, {key, keySize});
-    if (decoded.template is<ZeException>() ||
-        decoded.template p<size_t>() != keySize) return 1;
+    auto decoded = encrypt ? ZtlsAge::decodeRecipient(type, line, {key, keySize}) :
+			     ZtlsAge::decodeIdentity(type, line, {key, keySize});
+    if (decoded.template is<ZeException>() || decoded.template p<size_t>() != keySize) return 1;
   }
   ZtlsAge age;
   if (encrypt) {
@@ -97,20 +101,20 @@ static int run(int argc, char **argv)
     if (!readFile(argv[4], plaintext)) return 1;
     ZtlsAge::Recipient recipient = scrypt ?
       ZtlsAge::Recipient{ZtlsAge::ScryptRecipient{keyText}} :
-      ssh ? ZuMv(sshRecipient) : x25519 ?
-        ZtlsAge::Recipient{ZtlsAge::X25519Recipient{{key, keySize}}} :
-        ZtlsAge::Recipient{ZtlsAge::HybridRecipient{{key, keySize}}};
-    ZiFile output{argv[5], ZiFile::Write | ZiFile::GC, 0600};
+      ssh    ? ZuMv(sshRecipient) :
+      x25519 ? ZtlsAge::Recipient{ZtlsAge::X25519Recipient{{key, keySize}}} :
+	       ZtlsAge::Recipient{ZtlsAge::HybridRecipient{{key, keySize}}};
+    ZiFile	       output{argv[5], ZiFile::Write | ZiFile::GC, 0600};
     if (!output) return 1;
     Ztls::Random rng;
     if (!rng.init()) return 1;
-    return age.encrypt(rng, {&recipient, 1}, plaintext, output)
-      .template is<ZeException>() ? 1 : 0;
+    return age.encrypt(rng, {&recipient, 1}, plaintext, output).template is<ZeException>() ? 1 :
+											     0;
   }
   ZiFile input{argv[4], ZiFile::ReadOnly | ZiFile::GC};
   if (!input) return 1;
   auto n = input.size();
-  if (n < 0 || n > (64<<20)) return 1;
+  if (n < 0 || n > (64 << 20)) return 1;
   Bytes plaintext;
   plaintext.length(n);
   Ztls::Random rng;
@@ -118,50 +122,48 @@ static int run(int argc, char **argv)
   ZmRef<Ztls::PK::AnyKey> privateKey;
   if (ssh) {
     Ztls::PK::LoadSK loader{rng};
-    auto loaded = loader.loadFile(argv[3]);
+    auto	     loaded = loader.loadFile(argv[3]);
     if (!loaded.template is<ZeException>())
       privateKey = ZuMv(loaded).template p<ZmRef<Ztls::PK::AnyKey>>();
     else {
       Bytes privateText, embedded;
       if (!readFile(argv[3], privateText)) return 1;
       embedded.length(4096);
-      auto decoded = ZtlsAge::loadOpenSSH(
-        privateText,
-        embedded);
+      auto decoded = ZtlsAge::loadOpenSSH(privateText, embedded);
       if (decoded.template is<ZeException>()) return 1;
-      auto key = ZuMv(decoded).template p<ZtlsAge::SshKey>();
+      auto    key = ZuMv(decoded).template p<ZtlsAge::SshKey>();
       ZuBSpan expected = sshRSA ?
-        sshRecipient.template p<ZtlsAge::SshRSARecipient>().publicKey :
-        sshRecipient.template p<ZtlsAge::SshED25519Recipient>().publicKey;
+	sshRecipient.template p<ZtlsAge::SshRSARecipient>().publicKey :
+	sshRecipient.template p<ZtlsAge::SshED25519Recipient>().publicKey;
       if (key.publicKey != expected) return 1;
       privateKey = ZuMv(key.key);
     }
   }
   ZtlsAge::Identity identity = scrypt ?
-    ZtlsAge::Identity{ZtlsAge::ScryptIdentity{keyText}} :
+    ZtlsAge::Identity{
+      ZtlsAge::ScryptIdentity{keyText}
+  } :
     sshRSA ? ZtlsAge::Identity{ZtlsAge::SshRSAIdentity{
-      sshRecipient.template p<ZtlsAge::SshRSARecipient>().publicKey,
-      dynamic_cast<Ztls::PK::SK_RSA *>(privateKey.ptr())}} :
-    sshED ? ZtlsAge::Identity{ZtlsAge::SshED25519Identity{
-      sshRecipient.template p<ZtlsAge::SshED25519Recipient>().publicKey,
-      dynamic_cast<Ztls::PK::SK_ED25519 *>(privateKey.ptr())}} :
-    x25519 ?
-      ZtlsAge::Identity{ZtlsAge::X25519Identity{{key, keySize}}} :
-      ZtlsAge::Identity{ZtlsAge::HybridIdentity{{key, keySize}}};
-  auto decrypted = age.decrypt(input, {&identity, 1},
-    plaintext);
+	       sshRecipient.template p<ZtlsAge::SshRSARecipient>().publicKey,
+	       dynamic_cast<Ztls::PK::SK_RSA *>(privateKey.ptr())}} :
+    sshED  ? ZtlsAge::Identity{ZtlsAge::SshED25519Identity{
+	       sshRecipient.template p<ZtlsAge::SshED25519Recipient>().publicKey,
+	       dynamic_cast<Ztls::PK::SK_ED25519 *>(privateKey.ptr())}} :
+    x25519 ? ZtlsAge::Identity{ZtlsAge::X25519Identity{{key, keySize}}} :
+	     ZtlsAge::Identity{ZtlsAge::HybridIdentity{{key, keySize}}};
+  auto		    decrypted = age.decrypt(input, {&identity, 1}, plaintext);
   if (decrypted.template is<ZeException>()) return 1;
   ZiFile output{argv[5], ZiFile::Write | ZiFile::GC, 0600};
   if (!output) return 1;
-  return output.write(plaintext.data(),
-    decrypted.template p<size_t>()) == Zi::OK ? 0 : 1;
+  return output.write(plaintext.data(), decrypted.template p<size_t>()) == Zi::OK ? 0 : 1;
 }
 
 int main(int argc, char **argv)
 {
   int r = run(argc, argv);
-  if (r) std::cerr << "Usage: ZtlsAgeInterop encrypt|decrypt "
-    "x25519|hybrid|scrypt|ssh-rsa|ssh-ed25519 "
-    "key-file input-file output-file [ssh-public-file]\n";
+  if (r)
+    std::cerr << "Usage: ZtlsAgeInterop encrypt|decrypt "
+		 "x25519|hybrid|scrypt|ssh-rsa|ssh-ed25519 "
+		 "key-file input-file output-file [ssh-public-file]\n";
   return r;
 }

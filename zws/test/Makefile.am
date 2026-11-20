@@ -20,7 +20,7 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
-	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = \
 	ZwsProtocolTest ZwsH1HubTest ZwsH2HubTest ZwsH3HubTest \
 	ZwsSourceBoundaryTest

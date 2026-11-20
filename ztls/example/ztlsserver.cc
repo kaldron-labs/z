@@ -4,20 +4,19 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuLib.hh>
-
 #include <stdlib.h>
 #include <string.h>
 
-#include <iostream>
-
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuLib.hh>
 
-#include <zlib/ZtRegex.hh>
 #include <zlib/ZtArray.hh>
+#include <zlib/ZtRegex.hh>
 #include <zlib/ZtString.hh>
 
 #include <zlib/Ztls.hh>
+
+#include <iostream>
 
 const char *Content =
   "<html><head>\n"
@@ -32,7 +31,8 @@ const char *Response =
   "HTTP/1.1 200 OK\r\n"
   "Content-Type: text/html\r\n"
   "Content-Length: ";
-const char *Response2 = "\r\n"
+const char *Response2 =
+  "\r\n"
   "Accept: */*\r\n"
   "\r\n";
 
@@ -40,31 +40,35 @@ ZuDerive(Payload, (ZtArray<char, ZtArrayHeapID<"Ztls.Example.Payload">>));
 ZuDerive(ResponseString, (ZtString<ZtStringHeapID<"Ztls.Example.Response">>));
 
 struct App : public Ztls::Server<App> {
-  struct Link : public Ztls::SrvLink<App, Link> {
-    Link(App *app) : Ztls::SrvLink<App, Link>(app) {
-      txErrorFn(ZiTxErrorFn{[](ZeException &e) {
-	ZiLOG(Error, "ztlsserver", ([e](auto &s) {
-	  s << "transmit error: " << e;
-	}));
+  struct Link : ZmNHeap<Link>, Ztls::SrvLink<App, Link> {
+  friend inline ZuStringT<"Ztls.Example.SrvLink"> ZmNHeapID(Link *);
+    Link(App *app) : Ztls::SrvLink<App, Link>(app)
+    {
+      txErrorFn(
+	ZiTxErrorFn{[](ZeException &e)
+      {
+	ZiLOG(Error, "ztlsserver", ([e](auto &s) { s << "transmit error: " << e; }));
 	return false;
       }});
     }
 
-    void connected(Ztls::Connected info) {
-      std::cerr << (ZuCArray<100>()
-	  << "TLS handshake completed (TLS: " << info.version
-	  << " ALPN: " << info.alpn << ")\n")
-	<< std::flush;
+    void connected(Ztls::Connected info)
+    {
+      std::cerr << (ZuCArray<100>() << "TLS handshake completed (TLS: " << info.version
+				    << " ALPN: " << info.alpn << ")\n")
+		<< std::flush;
     }
-    void disconnected(bool) {
+    void disconnected(bool)
+    {
       std::cerr << "disconnected\n" << std::flush;
       app()->done();
     }
 
-    int process(Ztls::RxStream &rx) {
+    int process(Ztls::RxStream &rx)
+    {
       while (!rx.empty()) {
 	ResponseString response;
-	auto &content = app()->payload();
+	auto	      &content = app()->payload();
 	response << Response << content.length() << Response2;
 	{
 	  auto tx = txStream();
@@ -75,8 +79,7 @@ struct App : public Ztls::Server<App> {
 	  tx << content << Zi::flush();
 	}
 	int64_t consumed = rx.consume(
-	  [](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
-	  [](ZuSpan<uint8_t>) { });
+	  [](ZuSpan<uint8_t> span) -> int64_t { return span.length(); }, [](ZuSpan<uint8_t>) { });
 	if (consumed < 0) return -1;
 	if (!consumed) return 0;
       }
@@ -85,14 +88,16 @@ struct App : public Ztls::Server<App> {
   };
 
   using Cxn = Link::Cxn;
-  Cxn *accepted(const ZiCxnInfo &ci) {
-    return new Cxn(new Link(this), ci);
-  }
+  Cxn *accepted(const ZiCxnInfo &ci) { return new Cxn(new Link(this), ci); }
 
-  App(ZiIP server, unsigned port, unsigned repeats) :
-    m_localIP(server), m_localPort(port), m_target(repeats) { }
-  App(ZiIP server, unsigned port, unsigned repeats, unsigned payload_len) :
-      m_localIP(server), m_localPort(port), m_target(repeats) {
+  App(ZiIP server, unsigned port, unsigned repeats)
+  :
+    m_localIP(server), m_localPort(port), m_target(repeats)
+  { }
+  App(ZiIP server, unsigned port, unsigned repeats, unsigned payload_len)
+  :
+    m_localIP(server), m_localPort(port), m_target(repeats)
+  {
     if (payload_len) {
       m_payload.length(payload_len);
       memset(m_payload.data(), 'X', payload_len);
@@ -107,22 +112,23 @@ struct App : public Ztls::Server<App> {
   unsigned localPort() const { return m_localPort; }
   Payload &payload() { return m_payload; }
 
-  void done() { if (++m_done >= m_target) m_sem.post(); }
+  void done()
+  {
+    if (++m_done >= m_target) m_sem.post();
+  }
   void wait() { m_sem.wait(); }
-
 private:
-  ZmSemaphore	m_sem;
-  ZmAtomic<unsigned> m_done{0};
-  ZiIP		m_localIP;
-  unsigned	m_localPort;
-  unsigned	m_target = 1;
-  Payload m_payload;
+  ZmSemaphore		m_sem;
+  ZmAtomic<unsigned>	m_done{0};
+  ZiIP			m_localIP;
+  unsigned		m_localPort;
+  unsigned		m_target = 1;
+  Payload		m_payload;
 };
 
 void usage()
 {
-  std::cerr << "Usage: ztlsserver SERVER PORT CERT KEY [REPEAT]\n"
-    << std::flush;
+  std::cerr << "Usage: ztlsserver SERVER PORT CERT KEY [REPEAT]\n" << std::flush;
   ::exit(1);
 }
 
@@ -130,7 +136,7 @@ int main(int argc, char **argv)
 {
   if (argc != 5 && argc != 6) usage();
 
-  ZuCSpan server = argv[1];
+  ZuCSpan  server = argv[1];
   unsigned port = ZuBox<unsigned>(argv[2]);
 
   if (!port) usage();
@@ -140,43 +146,53 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
-  ZuCSpan alpn[] = { "http/1.1" };
+  ZuCSpan alpn[] = {"http/1.1"};
 
   unsigned repeats = 1;
   unsigned payload_len = 0;
   if (argc == 6) repeats = ZuBox<unsigned>(argv[5]);
   if (!repeats) repeats = 1;
-  auto is_number = [](const char *s) {
+  auto is_number = [](const char *s)
+  {
     if (!s || !*s) return false;
-    for (; *s; ++s) if (*s < '0' || *s > '9') return false;
+    for (; *s; ++s)
+      if (*s < '0' || *s > '9') return false;
     return true;
   };
   if (const char *payload = getenv("ZTLS_PAYLOAD")) {
-    if (is_number(payload))
-      payload_len = ZuBox<unsigned>(payload);
+    if (is_number(payload)) payload_len = ZuBox<unsigned>(payload);
   }
   App app(server, port, repeats, payload_len);
 
   ZiMultiplex mx(
-      ZiMxParams()
-	.scheduler([](auto &s) {
-	  s.nThreads(4)
-	  .thread(1, [](auto &t) { t.isolated(1); })
-	  .thread(2, [](auto &t) { t.isolated(1); })
-	  .thread(3, [](auto &t) { t.isolated(1); })
-	  .thread(4, [](auto &t) { t.isolated(1); }); })
-	.rxThread(1).txThread(2));
+    ZiMxParams()
+      .scheduler(
+	[](auto &s)
+  {
+    s.nThreads(4).thread(1, [](auto &t) {
+      t.isolated(1);
+    }).thread(2, [](auto &t) {
+      t.isolated(1);
+    }).thread(3, [](auto &t) {
+      t.isolated(1);
+    }).thread(4, [](auto &t) { t.isolated(1); });
+  })
+      .rxThread(1)
+      .txThread(2));
 
   Zi::IOBufAllocator *rx = App::Link::rxAllocator(&mx);
   Zi::IOBufAllocator *tx = App::Link::txAllocator(&mx);
-  auto txPacket = App::Link::txPacketAllocator(&mx);
+  auto		      txPacket = App::Link::txPacketAllocator(&mx);
 
   Ztls::ServerParams params(&mx, "3", "4");
   params.alpn(alpn).certPath(argv[3]).keyPath(argv[4]);
   params.rxAllocator(rx).txAllocator(tx).txPacketAllocator(txPacket);
   if (!app.init(ZuMv(params))) {
     std::cerr << "TLS server initialization failed\n" << std::flush;
-    app.final(); mx.stop(); ZiLog::stop(); return 1;
+    app.final();
+    mx.stop();
+    ZiLog::stop();
+    return 1;
   }
 
   if (!mx.start()) {
@@ -184,7 +200,12 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  if (!app.start()) { app.final(); mx.stop(); ZiLog::stop(); return 1; }
+  if (!app.start()) {
+    app.final();
+    mx.stop();
+    ZiLog::stop();
+    return 1;
+  }
   app.listen();
 
   app.wait();

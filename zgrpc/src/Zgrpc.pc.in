@@ -7,5 +7,5 @@ Name: Zgrpc
 Description: Native gRPC over Zhttp with Zpb
 Version: @VERSION@
 Libs: -L${libdir} -lZgrpc
-Libs.private: -lZhttp -lZpb -lZquic -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+Libs.private: -lZhttp -lZpb -lZquic -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu @CRYPTO_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 Cflags: -I${includedir} @Z_CPPFLAGS@

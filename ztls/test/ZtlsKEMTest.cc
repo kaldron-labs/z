@@ -5,13 +5,14 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <string.h>
-
 #include <openssl/core_names.h>
 #include <openssl/evp.h>
 #include <openssl/x509.h>
 
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZtArray.hh>
+
 #include <zlib/ZtlsKEM.hh>
 
 using namespace ZuTestUtil;
@@ -27,7 +28,7 @@ static void kem()
   uint8_t pub[MLKEM768PublicSize];
   ZuCheck(!sk.exportPK(pub).template is<ZeException>());
   PK_MLKEM768 pk{pub};
-  auto publicResult = sk.mkPK();
+  auto	      publicResult = sk.mkPK();
   ZuCheck(!publicResult.template is<ZeException>());
   if (publicResult.template is<ZeException>()) return;
   auto derived = ZuMv(publicResult).template p<0>();
@@ -48,21 +49,18 @@ static void kem()
   ZuCheck(memcmp(secret, secret2, sizeof(secret)) != 0);
   ct[0] ^= 1;
   auto altered = sk.decapsulate(ct, recovered);
-  ZuCheck(altered.template is<ZeException>() ||
-    memcmp(secret, recovered, sizeof(secret)) != 0);
+  ZuCheck(altered.template is<ZeException>() || memcmp(secret, recovered, sizeof(secret)) != 0);
 
-  ZuCheck(pk.encapsulate(rng, {ct, sizeof(ct) - 1}, secret)
-    .template is<ZeException>());
-  ZuCheck(sk.decapsulate({ct, sizeof(ct) - 1}, recovered)
-    .template is<ZeException>());
+  ZuCheck(pk.encapsulate(rng, {ct, sizeof(ct) - 1}, secret).template is<ZeException>());
+  ZuCheck(sk.decapsulate({ct, sizeof(ct) - 1}, recovered).template is<ZeException>());
   ZuCheck(pk.exportPK({pub, sizeof(pub) - 1}).template is<ZeException>());
-  ZuCheck(pk.encapsulate(rng, ct, {secret, sizeof(secret) - 1})
-    .template is<ZeException>());
-  ZuCheck(sk.decapsulate(ct2, {recovered, sizeof(recovered) - 1})
-    .template is<ZeException>());
+  ZuCheck(pk.encapsulate(rng, ct, {secret, sizeof(secret) - 1}).template is<ZeException>());
+  ZuCheck(sk.decapsulate(ct2, {recovered, sizeof(recovered) - 1}).template is<ZeException>());
   bool rejected = false;
   try {
-    PK_MLKEM768 invalid{{pub, sizeof(pub) - 1}};
+    PK_MLKEM768 invalid{
+      {pub, sizeof(pub) - 1}
+    };
   } catch (const ZeException &) {
     rejected = true;
   }
@@ -75,14 +73,14 @@ static void encoding()
   Ztls::Random rng;
   ZuCheck(rng.init());
   SK_MLKEM768 sk{rng};
-  ZtBArray privateDER, publicDER;
+  ZtBArray    privateDER, publicDER;
   ZuCheck(!sk.save(privateDER).template is<ZeException>());
   ZuCheck(!sk.savePK(publicDER).template is<ZeException>());
   ZuCheck(privateDER.length() < DERBufSize);
   ZuCheck(publicDER.length() < DERBufSize);
 
   const unsigned char *ptr = privateDER.data();
-  auto osslSK = d2i_AutoPrivateKey(nullptr, &ptr, privateDER.length());
+  auto		       osslSK = d2i_AutoPrivateKey(nullptr, &ptr, privateDER.length());
   ZuCheck(osslSK && ptr == privateDER.data() + privateDER.length());
   if (!osslSK) return;
   ptr = publicDER.data();
@@ -100,38 +98,44 @@ static void encoding()
     ZuCheck(dynamic_cast<PK_MLKEM768 *>(loadedPK.template p<0>().ptr()));
 
   uint8_t seed[MLKEM768SeedSize];
-  size_t n = 0;
-  ZuCheck(EVP_PKEY_get_octet_string_param(osslSK,
-    OSSL_PKEY_PARAM_ML_KEM_SEED, seed, sizeof(seed), &n) == 1 &&
+  size_t  n = 0;
+  ZuCheck(
+    EVP_PKEY_get_octet_string_param(
+      osslSK, OSSL_PKEY_PARAM_ML_KEM_SEED, seed, sizeof(seed), &n) == 1 &&
     n == sizeof(seed));
   bool rejected = false;
   try {
-    SK_MLKEM768 invalid{ZuBSpan{seed, sizeof(seed) - 1}};
+    SK_MLKEM768 invalid{
+      ZuBSpan{seed, sizeof(seed) - 1}
+    };
   } catch (const ZeException &) {
     rejected = true;
   }
   ZuCheck(rejected);
-  SK_MLKEM768 seeded{ZuBSpan{seed, sizeof(seed)}};
+  SK_MLKEM768 seeded{
+    ZuBSpan{seed, sizeof(seed)}
+  };
   ZtBArray seededDER;
   ZuCheck(!seeded.save(seededDER).template is<ZeException>());
   ZuCheck(seededDER == privateDER);
 
   uint8_t expanded[MLKEM768PrivateSize];
   n = 0;
-  ZuCheck(EVP_PKEY_get_octet_string_param(osslSK,
-    OSSL_PKEY_PARAM_PRIV_KEY, expanded, sizeof(expanded), &n) == 1 &&
+  ZuCheck(
+    EVP_PKEY_get_octet_string_param(
+      osslSK, OSSL_PKEY_PARAM_PRIV_KEY, expanded, sizeof(expanded), &n) == 1 &&
     n == sizeof(expanded));
   rejected = false;
   try {
-    SK_MLKEM768 invalid{ZuBSpan{expanded, sizeof(expanded) - 1}};
+    SK_MLKEM768 invalid{
+      ZuBSpan{expanded, sizeof(expanded) - 1}
+    };
   } catch (const ZeException &) {
     rejected = true;
   }
   ZuCheck(rejected);
-  Data::SK_PKCS8_MLKEM_EXPANDED expandedData{
-    .version = 0, .id = OIDs::MLKEM768, .key = expanded
-  };
-  ZtBArray expandedDER;
+  Data::SK_PKCS8_MLKEM_EXPANDED expandedData{.version = 0, .id = OIDs::MLKEM768, .key = expanded};
+  ZtBArray			expandedDER;
   ZfASN1::save(expandedDER, expandedData);
   loaded = LoadSK{rng}.load(expandedDER);
   ZuCheck(!loaded.template is<ZeException>());
@@ -143,21 +147,18 @@ static void encoding()
       ZuCheck(!expandedSK->save(saved).template is<ZeException>());
       ZuCheck(saved == expandedDER);
       ZtArray<char> expandedPEM;
-      ZuCheck(!savePEM(expandedPEM, expandedSK)
-        .template is<ZeException>());
+      ZuCheck(!savePEM(expandedPEM, expandedSK).template is<ZeException>());
       ZuCheck(expandedPEM.length() < BufSize);
       auto expandedLoaded = LoadSK{rng}.loadPEM(expandedPEM);
       ZuCheck(!expandedLoaded.template is<ZeException>());
     }
   }
   ptr = expandedDER.data();
-  auto osslExpanded = d2i_AutoPrivateKey(
-    nullptr, &ptr, expandedDER.length());
+  auto osslExpanded = d2i_AutoPrivateKey(nullptr, &ptr, expandedDER.length());
   ZuCheck(osslExpanded && ptr == expandedDER.data() + expandedDER.length());
   EVP_PKEY_free(osslExpanded);
   Data::SK_PKCS8_MLKEM_BOTH bothData{
-    .version = 0, .id = OIDs::MLKEM768,
-    .both = {.seed = seed, .key = expanded}
+    .version = 0, .id = OIDs::MLKEM768, .both = {.seed = seed, .key = expanded}
   };
   ZtBArray bothDER;
   ZfASN1::save(bothDER, bothData);
@@ -183,7 +184,9 @@ static void encoding()
   ZuCheck(!savePEM(privatePEM, &sk).template is<ZeException>());
   uint8_t pub[MLKEM768PublicSize];
   ZuCheck(!sk.exportPK(pub).template is<ZeException>());
-  PK_MLKEM768 pk{ZuBSpan{pub, sizeof(pub)}};
+  PK_MLKEM768 pk{
+    ZuBSpan{pub, sizeof(pub)}
+  };
   ZuCheck(!savePEM(publicPEM, &pk).template is<ZeException>());
   ZuCheck(privatePEM.length() < BufSize);
   loaded = LoadSK{rng}.loadPEM(privatePEM);
@@ -209,12 +212,11 @@ static void interop(int argc, char **argv)
   ZuCheckRT(rng.init());
   if (!strcmp(argv[1], "--save")) {
     SK_MLKEM768 sk{rng};
-    auto pk = sk.mkPK();
+    auto	pk = sk.mkPK();
     ZuCheckRT(!pk.template is<ZeException>());
     if (pk.template is<ZeException>()) return;
     ZuCheckRT(!saveFile(argv[2], &sk).template is<ZeException>());
-    ZuCheckRT(!saveFile(argv[3], pk.template p<0>().ptr())
-      .template is<ZeException>());
+    ZuCheckRT(!saveFile(argv[3], pk.template p<0>().ptr()).template is<ZeException>());
     return;
   }
   ZuCheckRT(!strcmp(argv[1], "--load"));
@@ -231,10 +233,8 @@ static void interop(int argc, char **argv)
   uint8_t ct[MLKEM768CiphertextSize];
   uint8_t secret[MLKEM768SecretSize];
   uint8_t recovered[MLKEM768SecretSize];
-  ZuCheckRT(!publicKey->encapsulate(rng, ct, secret)
-    .template is<ZeException>());
-  ZuCheckRT(!privateKey->decapsulate(ct, recovered)
-    .template is<ZeException>());
+  ZuCheckRT(!publicKey->encapsulate(rng, ct, secret).template is<ZeException>());
+  ZuCheckRT(!privateKey->decapsulate(ct, recovered).template is<ZeException>());
   ZuCheckRT(!memcmp(secret, recovered, sizeof(secret)));
 }
 

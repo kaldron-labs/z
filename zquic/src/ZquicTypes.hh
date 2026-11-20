@@ -98,7 +98,7 @@ private:
 
 using PathData = ZuBArray<PathChallenge::Length>;
 
-// picotls reports output boundaries for epochs 0 through 3.
+// Boundaries delimit the Initial, 0-RTT, Handshake, and Application epochs.
 enum { TLSEpochCount = 4 };
 using CryptoOffsets = ZuArray<size_t, TLSEpochCount + 1>;
 

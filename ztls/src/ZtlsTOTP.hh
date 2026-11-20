@@ -16,16 +16,16 @@
 #include <stdlib.h>
 
 #include <zlib/ZuByteSwap.hh>
-
 #include <zlib/ZuTime.hh>
 
 #include <zlib/ZtlsHMAC.hh>
 
 namespace Ztls::TOTP {
 
-ZtlsExtern unsigned calc(ZuBSpan, int offset = 0);
-ZtlsExtern bool verify(ZuBSpan, unsigned code, unsigned range);
+    Ztls_Extern unsigned calc(ZuBSpan, int offset = 0);
+    Ztls_Extern bool verify(ZuBSpan, unsigned code, unsigned range);
 
 }
 
-#endif /* ZtlsTOTP_HH */
+// ZtlsTOTP_HH
+#endif

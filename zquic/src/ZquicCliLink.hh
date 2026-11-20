@@ -865,20 +865,13 @@ private:
       },
       [this]() { markEstablished_(); },
       [](ZiSockAddr) { return true; });
-    if (!ok && input) connectFailed_0(false);
+    if (!ok && input && Base::crypto_().tlsReady()) connectFailed_0(false);
     return ok;
   }
 
   bool sendCryptoFlights_(
     ZmRef<ZiIOBuf> data, const CryptoOffsets &offsets,
     ZiSockAddr addr) {
-    if (!data || !validCryptoOffsets(offsets, data->length)) {
-      app()->txRun([link = impl()]() {
-	if (!link->disconnecting_())
-	  link->invalidCryptoOffsetsTx();
-      });
-      return true;
-    }
     typename Base::TxCryptoSnapshot txCrypto;
     Base::snapshotTxCrypto(txCrypto);
     data->owner = impl();

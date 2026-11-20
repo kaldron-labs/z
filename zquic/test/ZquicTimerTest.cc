@@ -10,7 +10,7 @@
 #include <zlib/ZmBlock.hh>
 #include <zlib/Zquic.hh>
 
-#include <zpicotls/openssl.h>
+#include <zlib/ZtlsEngineOpenSSL.hh>
 
 using namespace ZuTestUtil;
 
@@ -23,7 +23,7 @@ static bool trafficSecret(Zquic::TrafficSecret &secret, uint8_t seed)
   uint8_t bytes[32];
   for (unsigned i = 0; i < sizeof(bytes); ++i) bytes[i] = seed + i;
   return Zquic::PktProt::deriveSecret(
-    secret, &ptls_openssl_aes128gcmsha256, Zquic::byteSpan(bytes, sizeof(bytes)));
+    secret, &Ztls_::openssl_aes128gcmsha256, Zquic::byteSpan(bytes, sizeof(bytes)));
 }
 
 class TimerApp : public Zquic::Hub<TimerApp> {

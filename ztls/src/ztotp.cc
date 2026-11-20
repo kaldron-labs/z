@@ -1,17 +1,17 @@
-#include <iostream>
-
+#include <zlib/ZuBase32.hh>
 #include <zlib/ZuBox.hh>
 
 #include <zlib/ZtArray.hh>
 
-#include <zlib/ZuBase32.hh>
 #include <zlib/ZtlsTOTP.hh>
 
-static void usage() {
-  std::cout
-    << "Usage: ztotp BASE32\n\n"
-    << "app URI is otpauth://totp/ID@DOMAIN?secret=BASE32&issuer=ISSUER\n"
-    << std::flush;
+#include <iostream>
+
+static void usage()
+{
+  std::cout << "Usage: ztotp BASE32\n\n"
+	    << "app URI is otpauth://totp/ID@DOMAIN?secret=BASE32&issuer=ISSUER\n"
+	    << std::flush;
   ::exit(1);
 }
 

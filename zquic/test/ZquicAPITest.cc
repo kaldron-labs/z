@@ -17,7 +17,7 @@
 #include <zlib/ZiFile.hh>
 #include <zlib/Zquic.hh>
 
-#include <zpicotls/openssl.h>
+#include <zlib/ZtlsEngineOpenSSL.hh>
 
 #include "ZiTestResidue.hh"
 
@@ -401,7 +401,7 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
     uint8_t bytes[32] = {};
     Zquic::TrafficSecret secret;
     return Zquic::PktProt::deriveSecret(secret,
-      &ptls_openssl_aes128gcmsha256, ZuBSpan{bytes, sizeof(bytes)}) &&
+      &Ztls_::openssl_aes128gcmsha256, ZuBSpan{bytes, sizeof(bytes)}) &&
       Base::installAppDataKeys_(secret, secret, Zquic::CxnID{"ack-test"});
   }
   bool appPackets(unsigned count) {
@@ -629,8 +629,8 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
 	    if (refs.count() != 1) return false;
 	    unsigned used = 0;
 	    return !Zquic::FrameCodec::parse(
-	      ZuBSpan{build.data()[0].base, build.data()[0].len},
-	      frame, used) && used == build.data()[0].len;
+	      build.data()[0],
+	      frame, used) && used == build.data()[0].length();
 	  }
 	  bool installAppDataKeys(
 	    const Zquic::TrafficSecret &rx, const Zquic::TrafficSecret &tx,
@@ -830,7 +830,7 @@ void testLongProbePadding()
   ZuBArray<32> material(32, false);
   memset(material.data(), 0x35, material.length());
   ZQUIC_CHECK_RT(Zquic::PktProt::deriveSecret(
-      secret, &ptls_openssl_aes128gcmsha256, material),
+      secret, &Ztls_::openssl_aes128gcmsha256, material),
     "long probe secret derivation failed");
   ZmRef<TestLink> link = new TestLink{&fixture.app};
   link->setRuntimeCIDs(
@@ -909,13 +909,11 @@ void testParams()
   }
   ZuCHECK(badHeartBeat, "negative heartBeat interval was accepted");
 
-  uint8_t h3[] = { 'h', '3' };
-  ptls_iovec_t iov[] = { ptls_iovec_init(h3, sizeof(h3)) };
   auto serverParams = Zquic::ServerParams(nullptr, "1", "2")
     .caPath("ca.pem")
     .certPath("server.pem")
     .keyPath("server.key")
-    .alpn(ZuSpan<const ptls_iovec_t>(iov, 1))
+    .alpn(ZuSpan<ZuCSpan>{"h3"})
     .errorFn(Zquic::defaultErrorFn());
   ZuCHECK(serverParams.migrationMode() == Zquic::MigrationMode::Passive,
     "default migration mode was not passive");
@@ -1421,8 +1419,8 @@ void testAckPublications()
   Zquic::Frame frame;
   unsigned used = 0;
   ZQUIC_CHECK_RT(!Zquic::FrameCodec::parse(
-      ZuBSpan{second.data()[0].base, unsigned(second.data()[0].len)}, frame, used) &&
-      frame.type == Zquic::FrameType::Ack && second.data()[0].base[0] == 0x03 &&
+      second.data()[0], frame, used) &&
+      frame.type == Zquic::FrameType::Ack && second.data()[0].data()[0] == 0x03 &&
       frame.ackECN.ect0 == 1 && frame.ackECN.ce == 1,
     "published ACK range and ECN counters were incoherent");
 
@@ -2762,7 +2760,9 @@ void testInitValidate()
     bool ok = app.init(
       Zquic::ClientParams(&mx, "3", "4").alpn(ZuSpan<ZuCSpan>{"h3"}));
     ZuCHECK(ok, "valid client init failed");
-    ZuCHECK(app.alpn_count() == 1, "client ALPN count mismatch");
+    auto protocols = app.alpn_list();
+    ZuCHECK(app.alpn_count() == 1 && protocols.length() == 1 && protocols[0] == "h3",
+      "client ALPN list mismatch");
     if (ok) app.final();
   }
   {

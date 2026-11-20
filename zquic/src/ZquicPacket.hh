@@ -14,14 +14,13 @@
 
 #include <limits.h>
 
-#include <zpicotls.h>
-
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuHash.hh>
 #include <zlib/ZuSpan.hh>
 
 #include <zlib/ZtEnum.hh>
+#include <zlib/ZtlsEngine.hh>
 
 namespace Zquic {
 
@@ -220,7 +219,7 @@ public:
   // frame payload, and padding for up to SentPkt::MaxFrames runtime frames.
   enum { Max = 18 };
 
-  const ptls_iovec_t *data() const { return m_vec.data(); }
+  const Ztls_::Bytes *data() const { return m_vec.data(); }
   unsigned count() const { return m_vec.length(); }
   unsigned bytes() const { return m_bytes; }
 
@@ -233,13 +232,13 @@ public:
     if (!span) return true;
     if (m_vec.length() >= Max || span.length() > UINT_MAX - m_bytes)
       return false;
-    m_vec.push(ptls_iovec_init(span.data(), span.length()));
+    m_vec.push(Ztls_::wire_bytes(span.data(), span.length()));
     m_bytes += span.length();
     return true;
   }
 
 private:
-  ZuArray<ptls_iovec_t, Max> m_vec;
+  ZuArray<Ztls_::Bytes, Max> m_vec;
   unsigned	m_bytes = 0;
 };
 
@@ -250,7 +249,7 @@ public:
   PktBuild(const PktBuild &) = delete;
   PktBuild &operator =(const PktBuild &) = delete;
 
-  const ptls_iovec_t *data() const { return m_plain.data(); }
+  const Ztls_::Bytes *data() const { return m_plain.data(); }
   unsigned count() const { return m_plain.count(); }
   unsigned bytes() const { return m_plain.bytes(); }
   uint8_t *scratch() { return m_scratch.data() + m_scratchLen; }

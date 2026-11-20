@@ -19,5 +19,5 @@ libZGtk_la_LIBADD = $(top_builddir)/zv/src/libZv.la \
 	$(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
-	@GTK_LIBS@  @PTLS_LIBS@ \
+	@GTK_LIBS@ \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@

@@ -4,6 +4,9 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zi/src -I$(top_srcdir)/ztls/src \
 	-I$(top_srcdir)/zi/test \
 	@Z_CPPFLAGS@
+ZTLS_BROTLI_LIBS = $(shell $(PKG_CONFIG) --libs libbrotlidec libbrotlienc 2>/dev/null)
+ZtlsUseBrotli ?= $(if $(ZTLS_BROTLI_LIBS),1,0)
+AM_CPPFLAGS += -DZtlsUseBrotli=$(ZtlsUseBrotli)
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 LDADD = $(top_builddir)/zi/test/libZiTest.la \
@@ -15,9 +18,10 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@CRYPTO_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = ZtlsCryptoTest ZtlsCryptoFailTest ZtlsInitTest ZtlsKDFTest ZtlsAEADTest ZtlsPKTest ZtlsX25519Test ZtlsKEMTest ZtlsHybridTest ZtlsHPKETest ZtlsAgeTest ZtlsVaultTest ZtlsBufferTest ZtlsAsyncTest ZtlsSecTest ZtlsTxPacketTest ZtlsRxPacketTest ZtlsRxStubTest
+noinst_PROGRAMS += ZtlsRawHandshakeTest ZtlsEngineObjectTest
 noinst_LTLIBRARIES = libZtlsVaultFixture.la
 libZtlsVaultFixture_la_SOURCES = ZtlsVaultFixture.cc
-libZtlsVaultFixture_la_CPPFLAGS = $(AM_CPPFLAGS) -DZTLS_EXPORTS
+libZtlsVaultFixture_la_CPPFLAGS = $(AM_CPPFLAGS) -DZtlsExports=1
 libZtlsVaultFixture_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version -rpath $(abs_builddir)
 libZtlsVaultFixture_la_LIBADD = $(top_builddir)/ztls/src/libZtls.la
 noinst_HEADERS = ZtlsTestHandshake.hh ZtlsTestPorts.hh
@@ -34,13 +38,15 @@ ZtlsHPKETest_SOURCES = ZtlsHPKETest.cc
 ZtlsAgeTest_SOURCES = ZtlsAgeTest.cc ZtlsAgeVectors.hh ZtlsAgeSSHVectors.hh
 ZtlsVaultTest_SOURCES = ZtlsVaultTest.cc
 if LINUX
-ZtlsVaultTest_CPPFLAGS = $(AM_CPPFLAGS) -DZTLS_VAULT_FIXTURE_PATH='"$(abs_builddir)/.libs/libZtlsVaultFixture.so"'
+ZtlsVaultTest_CPPFLAGS = $(AM_CPPFLAGS) -DZtlsVaultFixturePath='"$(abs_builddir)/.libs/libZtlsVaultFixture.so"'
 noinst_PROGRAMS += ZtlsVaultSSTest
 ZtlsVaultSSTest_SOURCES = ZtlsVaultSSTest.cc
 else
-ZtlsVaultTest_CPPFLAGS = $(AM_CPPFLAGS) -DZTLS_VAULT_FIXTURE_PATH='"$(abs_builddir)/.libs/libZtlsVaultFixture.dll"'
+ZtlsVaultTest_CPPFLAGS = $(AM_CPPFLAGS) -DZtlsVaultFixturePath='"$(abs_builddir)/.libs/libZtlsVaultFixture.dll"'
 endif
 ZtlsBufferTest_SOURCES = ZtlsBufferTest.cc
+ZtlsRawHandshakeTest_SOURCES = ZtlsRawHandshakeTest.cc
+ZtlsEngineObjectTest_SOURCES = ZtlsEngineObjectTest.cc
 ZtlsAsyncTest_SOURCES = ZtlsAsyncTest.cc
 ZtlsSecTest_SOURCES = ZtlsSecTest.cc
 ZtlsTxPacketTest_SOURCES = ZtlsTxPacketTest.cc

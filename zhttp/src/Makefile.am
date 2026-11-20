@@ -29,7 +29,7 @@ libZhttp_la_LIBADD = \
 	$(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
-	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
 noinst_HEADERS = ZhttpCompression.hh ZhttpHPack.hh ZhttpQPack.hh \
 	ZhttpH1.hh ZhttpH2.hh ZhttpH2Hub.hh ZhttpH3.hh \

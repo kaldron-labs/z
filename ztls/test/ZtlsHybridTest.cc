@@ -8,16 +8,14 @@
 
 #include <zlib/ZuHex.hh>
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZtlsKEM.hh>
 
 using namespace ZuTestUtil;
 using namespace Ztls::PK;
 
 static bool decode(ZuSpan<uint8_t> out, ZuCSpan hex)
-{
-  return hex.length() == ZuHex::enclen(out.length()) &&
-    ZuHex::decode(out, hex) == out.length();
-}
+{ return hex.length() == ZuHex::enclen(out.length()) && ZuHex::decode(out, hex) == out.length(); }
 
 // MLKEM768-X25519 KEM 0x647a, first HPKE-PQ vector:
 // https://github.com/FiloSottile/hpke/blob/main/testdata/hpke-pq.json
@@ -98,7 +96,7 @@ static void vector()
   ZuCheck(decode(ciphertext, CiphertextHex));
   ZuCheck(decode(expectedSecret, SecretHex));
   SK_MLKEM768_X25519 sk{seed};
-  uint8_t pub[HybridPublicSize], secret[HybridSecretSize];
+  uint8_t	     pub[HybridPublicSize], secret[HybridSecretSize];
   ZuCheck(!sk.exportPK(pub).template is<ZeException>());
   ZuCheck(!memcmp(pub, expectedPK, sizeof(pub)));
   ZuCheck(!sk.decapsulate(ciphertext, secret).template is<ZeException>());
@@ -115,11 +113,11 @@ static void roundtrip()
   uint8_t seed[HybridSeedSize];
   ZuCheck(rng.random(seed));
   SK_MLKEM768_X25519 sk{seed};
-  uint8_t pub[HybridPublicSize];
+  uint8_t	     pub[HybridPublicSize];
   ZuCheck(!sk.exportPK(pub).template is<ZeException>());
   PK_MLKEM768_X25519 pk{pub};
-  uint8_t ct[HybridCiphertextSize], other[HybridCiphertextSize];
-  uint8_t secret[HybridSecretSize], recovered[HybridSecretSize];
+  uint8_t	     ct[HybridCiphertextSize], other[HybridCiphertextSize];
+  uint8_t	     secret[HybridSecretSize], recovered[HybridSecretSize];
   ZuCheck(!pk.encapsulate(rng, ct, secret).template is<ZeException>());
   ZuCheck(!sk.decapsulate(ct, recovered).template is<ZeException>());
   ZuCheck(!memcmp(secret, recovered, sizeof(secret)));
@@ -128,42 +126,54 @@ static void roundtrip()
   ZuCheck(!sk.decapsulate(other, secret).template is<ZeException>());
   ZuCheck(!memcmp(secret, recovered, sizeof(secret)));
   ZuCheck(pk.exportPK({pub, sizeof(pub) - 1}).template is<ZeException>());
-  ZuCheck(pk.encapsulate(rng, {ct, sizeof(ct) - 1}, secret)
-    .template is<ZeException>());
-  ZuCheck(pk.encapsulate(rng, ct, {secret, sizeof(secret) - 1})
-    .template is<ZeException>());
-  ZuCheck(sk.decapsulate({ct, sizeof(ct) - 1}, recovered)
-    .template is<ZeException>());
-  ZuCheck(sk.decapsulate(ct, {recovered, sizeof(recovered) - 1})
-    .template is<ZeException>());
+  ZuCheck(pk.encapsulate(rng, {ct, sizeof(ct) - 1}, secret).template is<ZeException>());
+  ZuCheck(pk.encapsulate(rng, ct, {secret, sizeof(secret) - 1}).template is<ZeException>());
+  ZuCheck(sk.decapsulate({ct, sizeof(ct) - 1}, recovered).template is<ZeException>());
+  ZuCheck(sk.decapsulate(ct, {recovered, sizeof(recovered) - 1}).template is<ZeException>());
   uint8_t oversized[HybridPublicSize + 1];
   ZuCheck(pk.exportPK(oversized).template is<ZeException>());
   ZuCheck(pk.encapsulate(rng, {oversized, HybridCiphertextSize + 1}, secret)
-    .template is<ZeException>());
-  ZuCheck(pk.encapsulate(rng, ct, {oversized, HybridSecretSize + 1})
-    .template is<ZeException>());
+      .template is<ZeException>());
+  ZuCheck(pk.encapsulate(rng, ct, {oversized, HybridSecretSize + 1}).template is<ZeException>());
   memcpy(oversized, ct, sizeof(ct));
-  ZuCheck(sk.decapsulate({oversized, HybridCiphertextSize + 1}, recovered)
-    .template is<ZeException>());
-  ZuCheck(sk.decapsulate(ct, {oversized, HybridSecretSize + 1})
-    .template is<ZeException>());
+  ZuCheck(
+    sk.decapsulate({oversized, HybridCiphertextSize + 1}, recovered).template is<ZeException>());
+  ZuCheck(sk.decapsulate(ct, {oversized, HybridSecretSize + 1}).template is<ZeException>());
   bool rejected = false;
-  try { SK_MLKEM768_X25519 invalid{{seed, sizeof(seed) - 1}}; }
-  catch (const ZeException &) { rejected = true; }
+  try {
+    SK_MLKEM768_X25519 invalid{
+      {seed, sizeof(seed) - 1}
+    };
+  } catch (const ZeException &) {
+    rejected = true;
+  }
   ZuCheck(rejected);
   rejected = false;
-  try { PK_MLKEM768_X25519 invalid{{pub, sizeof(pub) - 1}}; }
-  catch (const ZeException &) { rejected = true; }
+  try {
+    PK_MLKEM768_X25519 invalid{
+      {pub, sizeof(pub) - 1}
+    };
+  } catch (const ZeException &) {
+    rejected = true;
+  }
   ZuCheck(rejected);
   memcpy(oversized, seed, sizeof(seed));
   rejected = false;
-  try { SK_MLKEM768_X25519 invalid{{oversized, HybridSeedSize + 1}}; }
-  catch (const ZeException &) { rejected = true; }
+  try {
+    SK_MLKEM768_X25519 invalid{
+      {oversized, HybridSeedSize + 1}
+    };
+  } catch (const ZeException &) {
+    rejected = true;
+  }
   ZuCheck(rejected);
   memcpy(oversized, pub, sizeof(pub));
   rejected = false;
-  try { PK_MLKEM768_X25519 invalid{oversized}; }
-  catch (const ZeException &) { rejected = true; }
+  try {
+    PK_MLKEM768_X25519 invalid{oversized};
+  } catch (const ZeException &) {
+    rejected = true;
+  }
   ZuCheck(rejected);
   memset(ct + MLKEM768CiphertextSize, 0, Ztls::X25519KeySize);
   ZuCheck(sk.decapsulate(ct, recovered).template is<ZeException>());

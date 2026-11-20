@@ -14,8 +14,7 @@ pkginclude_HEADERS = ZquicLib.hh ZquicTypes.hh ZquicBuf.hh ZquicPQueue.hh Zquic.
 	ZquicRecovery.hh ZquicDiag.hh
 noinst_HEADERS = ZquicOpenSSL.hh
 lib_LTLIBRARIES = libZquic.la
-libZquic_la_CPPFLAGS = $(AM_CPPFLAGS) @PTLS_CFLAGS@ -DZQUIC_EXPORTS
-libZquic_la_CFLAGS = $(AM_CFLAGS) @PTLS_CFLAGS@
+libZquic_la_CPPFLAGS = $(AM_CPPFLAGS) -DZQUIC_EXPORTS
 libZquic_la_SOURCES = ZquicLib.cc ZquicTypes.cc ZquicLink.cc \
 	ZquicSock.cc ZquicPacket.cc ZquicFrame.cc \
 	ZquicTransport.cc ZquicCrypto.cc Zquic.cc \
@@ -27,4 +26,4 @@ libZquic_la_LIBADD = \
 	$(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
-	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+	@CRYPTO_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@

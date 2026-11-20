@@ -75,6 +75,12 @@ direct packet writer through reservation failure, partial cleanup, provider
 geometry, and publication errors. It compares serial and vector operations
 for the retained OpenSSL and CPU-supported Fusion suites.
 
+`ZtlsRawHandshakeTest` drives the raw TLS 1.3 handshake used by Zquic. It
+checks split and coalesced input, encryption levels, HelloRetryRequest,
+ticket delivery, and caller-owned output at and below the required
+capacity. It also checks wrong-epoch input and rejection of TLS KeyUpdate
+on the QUIC path.
+
 `ZtlsRxPacketTest` establishes an in-memory TLS 1.3 session and feeds distinct
 packet-sized Rx buffers into the connection's private plaintext reservation.
 It checks one stable allocation, one-byte and block-boundary fragmentation,
@@ -96,3 +102,13 @@ and checks KeyUpdate, async signing, cancellation, and reuse after shutdown.
 `ZtlsInitTest` checks independent standalone initialization, concurrent TLS
 initialization, internal buffer growth, and the connection's aligned Rx and Tx
 member groups.
+
+`ZtlsEngineObjectTest` exercises virtual cipher, AEAD, hash and key-exchange
+operations, hash clone/reset independence, HMAC snapshot rejection, partial
+native initialization failure, both available Fusion widths, and destruction
+through a secondary polymorphic base. It observes secret clearing before
+release and checks the matching named heap release. `ZtlsRawHandshakeTest`
+checks verifier retirement after success, malformed or unexpected messages,
+reinitialization, teardown and certificate-provider rejection. It also covers
+ECH acceptance/rejection, extension hooks and, when Brotli is available, actual
+compressed-certificate handshakes.

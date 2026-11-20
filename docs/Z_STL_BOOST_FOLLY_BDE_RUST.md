@@ -5373,7 +5373,7 @@ V2 adds no application capabilities and does not deprecate v1
   <td><a href="https://docs.rs/quinn-proto/latest/quinn_proto/"><code>quinn-proto</code></a> token, reset and connection-ID handling; storage/bootstrap policies differ</td>
 </tr>
 <tr valign="top">
-  <td>QUIC crypto (<a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicCrypto.hh"><code>ZquicCrypto</code></a><code>.hh</code>)<br>➕ zpicotls handshake state, packet protection and key retirement</td>
+  <td>QUIC crypto (<a href="https://github.com/kaldron-labs/z/blob/main/zquic/src/ZquicCrypto.hh"><code>ZquicCrypto</code></a><code>.hh</code>)<br>➕ Ztls handshake state, packet protection and key retirement</td>
   <td>None: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Asio</a></td>
   <td>Partial: <a href="https://docs.rs/quinn-proto/latest/quinn_proto/crypto/index.html"><code>quinn_proto::crypto</code></a></td>
 </tr>

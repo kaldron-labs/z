@@ -4,7 +4,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zi/src -I$(top_srcdir)/ztls/src \
 	-I$(top_srcdir)/zi/test \
 	-I$(top_srcdir)/zquic/src \
-	@Z_CPPFLAGS@ @PTLS_CFLAGS@
+	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 LDADD = $(top_builddir)/zi/test/libZiTest.la \
@@ -15,7 +15,7 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
-	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = ZquicAPITest ZquicSockTest \
 	ZquicCodecTest ZquicCryptoTest ZquicPacketProtectionTest \
 	ZquicHandshakeTest ZquicRecoveryTest ZquicRttLossTest \

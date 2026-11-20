@@ -10,7 +10,6 @@
 #define ZtlsKEM_HH
 
 #ifndef ZtlsLib_HH
-#include <zlib/ZuDerive.hh>
 #include <zlib/ZtlsLib.hh>
 #endif
 
@@ -37,20 +36,18 @@ struct PK_MLKEM768_ : public ZmNHeap<PK_MLKEM768_<Enabled>, Enabled>, public Any
 friend inline ZuStringT<"Ztls.PK_MLKEM768"> ZmNHeapID(PK_MLKEM768_ *);
 
   enum { Secret = 0 };
-
 protected:
   PK_MLKEM768_() { }
-
 public:
-  PK_MLKEM768_(ZuBSpan pubKey) {
+  PK_MLKEM768_(ZuBSpan pubKey)
+  {
     if (!pkey_mlkem768_import_public(key, pubKey))
       throw ZeEXCEPT(Error, "ZtlsKEM", "ML-KEM-768 public key import failed");
   }
 
-  template <typename S>
-  ZuUnion<void, ZeException> save(S &s) const {
-    auto pubKey = ZmScratch(
-      uint8_t, MLKEM768PublicSize, KEMScratchHeap);
+  template <typename S> ZuUnion<void, ZeException> save(S &s) const
+  {
+    auto pubKey = ZmScratch(uint8_t, MLKEM768PublicSize, KEMScratchHeap);
     pubKey.length(MLKEM768PublicSize);
     if (!pkey_mlkem768_export_public(key, pubKey))
       return ZeEXCEPT(Error, "ZtlsKEM", "ML-KEM-768 public key export failed");
@@ -59,15 +56,15 @@ public:
     return {};
   }
 
-  ZuUnion<void, ZeException> exportPK(ZuSpan<uint8_t> pubKey) const {
+  ZuUnion<void, ZeException> exportPK(ZuSpan<uint8_t> pubKey) const
+  {
     if (!pkey_mlkem768_export_public(key, pubKey))
       return ZeEXCEPT(Error, "ZtlsKEM", "ML-KEM-768 public key export failed");
     return {};
   }
 
   ZuUnion<void, ZeException>
-  encapsulate(
-    Random &rng, ZuSpan<uint8_t> ciphertext, ZuSpan<uint8_t> secret) const
+  encapsulate(Random &rng, ZuSpan<uint8_t> ciphertext, ZuSpan<uint8_t> secret) const
   {
     (void)rng;
     if (!pkey_mlkem768_encapsulate(key, ciphertext, secret))
@@ -85,24 +82,23 @@ friend inline ZuStringT<"Ztls.SK_MLKEM768"> ZmNHeapID(SK_MLKEM768 *);
   using PK_ = PK_MLKEM768_<false>;
   using PK_::key;
 
-  SK_MLKEM768(Random &rng) {
+  SK_MLKEM768(Random &rng)
+  {
     (void)rng;
     if (!pkey_mlkem768_generate(key))
       throw ZeEXCEPT(Error, "ZtlsKEM", "ML-KEM-768 key generation failed");
   }
 
-  SK_MLKEM768(ZuBSpan bytes) {
-    bool ok = bytes.length() == MLKEM768SeedSize ?
-      pkey_mlkem768_import_seed(key, bytes) :
-      pkey_mlkem768_import_private(key, bytes);
-    if (!ok)
-      throw ZeEXCEPT(Error, "ZtlsKEM", "ML-KEM-768 private key import failed");
+  SK_MLKEM768(ZuBSpan bytes)
+  {
+    bool ok = bytes.length() == MLKEM768SeedSize ? pkey_mlkem768_import_seed(key, bytes) :
+						   pkey_mlkem768_import_private(key, bytes);
+    if (!ok) throw ZeEXCEPT(Error, "ZtlsKEM", "ML-KEM-768 private key import failed");
   }
 
-  template <typename S>
-  ZuUnion<void, ZeException> save(S &s) const {
-    auto bytes = ZmScratch(
-      uint8_t, MLKEM768PrivateSize, KEMScratchHeap);
+  template <typename S> ZuUnion<void, ZeException> save(S &s) const
+  {
+    auto bytes = ZmScratch(uint8_t, MLKEM768PrivateSize, KEMScratchHeap);
     bytes.length(MLKEM768PrivateSize);
     size_t n = 0;
     if (!pkey_mlkem768_export_private(key, bytes, &n)) {
@@ -111,31 +107,27 @@ friend inline ZuStringT<"Ztls.SK_MLKEM768"> ZmNHeapID(SK_MLKEM768 *);
     }
     if (n == MLKEM768SeedSize) {
       Data::SK_PKCS8_MLKEM_SEED data{
-        .version = 0, .id = OIDs::MLKEM768,
-        .seed = ZuBSpan{bytes.data(), n}
-      };
+	.version = 0, .id = OIDs::MLKEM768, .seed = ZuBSpan{bytes.data(), n}
+	    };
       ZfASN1::save(s, data);
     } else {
       Data::SK_PKCS8_MLKEM_EXPANDED data{
-        .version = 0, .id = OIDs::MLKEM768,
-        .key = ZuBSpan{bytes.data(), n}
-      };
+	.version = 0, .id = OIDs::MLKEM768, .key = ZuBSpan{bytes.data(), n}
+	   };
       ZfASN1::save(s, data);
     }
     ZuClear(bytes.data(), n);
     return {};
   }
 
-  template <typename S>
-  ZuUnion<void, ZeException> savePK(S &s) const { return PK_::save(s); }
+  template <typename S> ZuUnion<void, ZeException> savePK(S &s) const { return PK_::save(s); }
 
-  ZuUnion<ZmRef<PK>, ZeException> mkPK() const {
-    auto bytes = ZmScratch(
-      uint8_t, MLKEM768PublicSize, KEMScratchHeap);
+  ZuUnion<ZmRef<PK>, ZeException> mkPK() const
+  {
+    auto bytes = ZmScratch(uint8_t, MLKEM768PublicSize, KEMScratchHeap);
     bytes.length(MLKEM768PublicSize);
     auto r = PK_::exportPK(bytes);
-    if (r.template is<ZeException>())
-      return ZuMv(r).template p<ZeException>();
+    if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
     try {
       return ZmRef(new PK{bytes});
     } catch (const ZeException &e) {
@@ -143,14 +135,13 @@ friend inline ZuStringT<"Ztls.SK_MLKEM768"> ZmNHeapID(SK_MLKEM768 *);
     }
   }
 
-  ZuUnion<void, ZeException> decapsulate(
-    ZuBSpan ciphertext, ZuSpan<uint8_t> secret) const {
+  ZuUnion<void, ZeException> decapsulate(ZuBSpan ciphertext, ZuSpan<uint8_t> secret) const
+  {
     if (!pkey_mlkem768_decapsulate(key, ciphertext, secret))
       return ZeEXCEPT(Error, "ZtlsKEM", "ML-KEM-768 decapsulation failed");
     return {};
   }
 };
-
 
 enum {
   HybridSeedSize = X25519KeySize,
@@ -160,12 +151,11 @@ enum {
   HybridExpandedSize = MLKEM768SeedSize + X25519KeySize
 };
 
-inline bool hybridCombine(
-  ZuBSpan pq, ZuBSpan x, ZuBSpan ephemeral, ZuBSpan recipient,
-  ZuSpan<uint8_t> secret)
+inline bool
+hybridCombine(ZuBSpan pq, ZuBSpan x, ZuBSpan ephemeral, ZuBSpan recipient, ZuSpan<uint8_t> secret)
 {
   constexpr uint8_t label[] = {0x5c, 0x2e, 0x2f, 0x2f, 0x5e, 0x5c};
-  ZuBSpan input[] = {pq, x, ephemeral, recipient, label};
+  ZuBSpan	    input[] = {pq, x, ephemeral, recipient, label};
   return Ztls::sha3_256(input, secret);
 }
 
@@ -175,55 +165,47 @@ friend inline ZuStringT<"Ztls.PK_MLKEM768_X25519"> ZmNHeapID(PK_MLKEM768_X25519_
 
   enum { Secret = 0 };
 
-  uint8_t xPublic[X25519KeySize];
-
+  uint8_t	xPublic[X25519KeySize];
 protected:
   PK_MLKEM768_X25519_() { }
-
 public:
-  PK_MLKEM768_X25519_(ZuBSpan pubKey) {
+  PK_MLKEM768_X25519_(ZuBSpan pubKey)
+  {
     if (pubKey.length() != HybridPublicSize ||
-	!pkey_mlkem768_import_public(key,
-	  {pubKey.data(), MLKEM768PublicSize}))
+      !pkey_mlkem768_import_public(key, {pubKey.data(), MLKEM768PublicSize}))
       throw ZeEXCEPT(Error, "ZtlsKEM", "hybrid public key import failed");
     memcpy(xPublic, pubKey.data() + MLKEM768PublicSize, X25519KeySize);
   }
 
-  ZuUnion<void, ZeException> exportPK(ZuSpan<uint8_t> pubKey) const {
+  ZuUnion<void, ZeException> exportPK(ZuSpan<uint8_t> pubKey) const
+  {
     if (pubKey.length() != HybridPublicSize ||
-	!pkey_mlkem768_export_public(key,
-	  {pubKey.data(), MLKEM768PublicSize}))
+      !pkey_mlkem768_export_public(key, {pubKey.data(), MLKEM768PublicSize}))
       return ZeEXCEPT(Error, "ZtlsKEM", "hybrid public key export failed");
     memcpy(pubKey.data() + MLKEM768PublicSize, xPublic, X25519KeySize);
     return {};
   }
 
-  ZuUnion<void, ZeException> encapsulate(Random &rng,
-    ZuSpan<uint8_t> ciphertext, ZuSpan<uint8_t> secret) const {
-    if (ciphertext.length() != HybridCiphertextSize ||
-	secret.length() != HybridSecretSize)
+  ZuUnion<void, ZeException>
+  encapsulate(Random &rng, ZuSpan<uint8_t> ciphertext, ZuSpan<uint8_t> secret) const
+  {
+    if (ciphertext.length() != HybridCiphertextSize || secret.length() != HybridSecretSize)
       return ZeEXCEPT(Error, "ZtlsKEM", "invalid hybrid output size");
     uint8_t shared[MLKEM768SecretSize + X25519KeySize];
     ZuGuard clear{[&shared]() { ZuClear(shared, sizeof(shared)); }};
-    if (!pkey_mlkem768_encapsulate(key,
-	{ciphertext.data(), MLKEM768CiphertextSize},
-	{shared, MLKEM768SecretSize}))
+    if (!pkey_mlkem768_encapsulate(
+	  key, {ciphertext.data(), MLKEM768CiphertextSize}, {shared, MLKEM768SecretSize}))
       return ZeEXCEPT(Error, "ZtlsKEM", "hybrid ML-KEM encapsulation failed");
     try {
       SK_X25519 ephemeral{rng};
-      auto ephPub = ZuSpan<uint8_t>{
-	ciphertext.data() + MLKEM768CiphertextSize, X25519KeySize};
+      auto ephPub = ZuSpan<uint8_t>{ciphertext.data() + MLKEM768CiphertextSize, X25519KeySize};
       auto r = ephemeral.exportPK(ephPub);
-      if (r.template is<ZeException>())
-	return ZuMv(r).template p<ZeException>();
-      r = ephemeral.agree(xPublic,
-	{shared + MLKEM768SecretSize, X25519KeySize});
-      if (r.template is<ZeException>())
-	return ZuMv(r).template p<ZeException>();
+      if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
+      r = ephemeral.agree(xPublic, {shared + MLKEM768SecretSize, X25519KeySize});
+      if (r.template is<ZeException>()) return ZuMv(r).template p<ZeException>();
       if (!hybridCombine(
-	{shared, MLKEM768SecretSize},
-	{shared + MLKEM768SecretSize, X25519KeySize},
-	ephPub, xPublic, secret))
+	    {shared, MLKEM768SecretSize}, {shared + MLKEM768SecretSize, X25519KeySize}, ephPub,
+	    xPublic, secret))
 	return ZeEXCEPT(Error, "ZtlsKEM", "hybrid SHA3-256 failed");
       return {};
     } catch (const ZeException &e) {
@@ -233,7 +215,9 @@ public:
 };
 using PK_MLKEM768_X25519 = PK_MLKEM768_X25519_<>;
 
-struct SK_MLKEM768_X25519 : public ZmNHeap<SK_MLKEM768_X25519>, public PK_MLKEM768_X25519_<false> {
+struct SK_MLKEM768_X25519 :
+public ZmNHeap<SK_MLKEM768_X25519>,
+  public PK_MLKEM768_X25519_<false> {
 friend inline ZuStringT<"Ztls.SK_MLKEM768_X25519"> ZmNHeapID(SK_MLKEM768_X25519 *);
 
   enum { Secret = 1 };
@@ -242,49 +226,43 @@ friend inline ZuStringT<"Ztls.SK_MLKEM768_X25519"> ZmNHeapID(SK_MLKEM768_X25519 
   using PK_::key;
   using PK_::xPublic;
 
-  Key xKey;
+  Key	xKey;
 
-  SK_MLKEM768_X25519(ZuBSpan seed) {
+  SK_MLKEM768_X25519(ZuBSpan seed)
+  {
     if (seed.length() != HybridSeedSize)
       throw ZeEXCEPT(Error, "ZtlsKEM", "invalid hybrid identity seed");
     uint8_t expanded[HybridExpandedSize];
     ZuGuard clear{[&expanded]() { ZuClear(expanded, sizeof(expanded)); }};
     if (!Ztls::shake256(seed, expanded))
       throw ZeEXCEPT(Error, "ZtlsKEM", "hybrid seed expansion failed");
-    if (!pkey_mlkem768_import_seed(key,
-	{expanded, MLKEM768SeedSize}) ||
-	!pkey_x25519_import_private(xKey,
-	  {expanded + MLKEM768SeedSize, X25519KeySize}) ||
-	!pkey_x25519_export_public(xKey, xPublic))
+    if (!pkey_mlkem768_import_seed(key, {expanded, MLKEM768SeedSize}) ||
+      !pkey_x25519_import_private(xKey, {expanded + MLKEM768SeedSize, X25519KeySize}) ||
+      !pkey_x25519_export_public(xKey, xPublic))
       throw ZeEXCEPT(Error, "ZtlsKEM", "hybrid identity import failed");
   }
 
-  ZuUnion<void, ZeException> decapsulate(
-    ZuBSpan ciphertext, ZuSpan<uint8_t> secret) const {
-    if (ciphertext.length() != HybridCiphertextSize ||
-	secret.length() != HybridSecretSize)
+  ZuUnion<void, ZeException> decapsulate(ZuBSpan ciphertext, ZuSpan<uint8_t> secret) const
+  {
+    if (ciphertext.length() != HybridCiphertextSize || secret.length() != HybridSecretSize)
       return ZeEXCEPT(Error, "ZtlsKEM", "invalid hybrid input size");
     uint8_t shared[MLKEM768SecretSize + X25519KeySize];
     ZuGuard clear{[&shared]() { ZuClear(shared, sizeof(shared)); }};
-    if (!pkey_mlkem768_decapsulate(key,
-	{ciphertext.data(), MLKEM768CiphertextSize},
-	{shared, MLKEM768SecretSize}))
+    if (!pkey_mlkem768_decapsulate(
+	  key, {ciphertext.data(), MLKEM768CiphertextSize}, {shared, MLKEM768SecretSize}))
       return ZeEXCEPT(Error, "ZtlsKEM", "hybrid ML-KEM decapsulation failed");
-    auto ephPub = ZuBSpan{
-      ciphertext.data() + MLKEM768CiphertextSize, X25519KeySize};
-    if (!pkey_x25519_agree(xKey, ephPub,
-	{shared + MLKEM768SecretSize, X25519KeySize}))
+    auto ephPub = ZuBSpan{ciphertext.data() + MLKEM768CiphertextSize, X25519KeySize};
+    if (!pkey_x25519_agree(xKey, ephPub, {shared + MLKEM768SecretSize, X25519KeySize}))
       return ZeEXCEPT(Error, "ZtlsKEM", "hybrid X25519 agreement failed");
     if (!hybridCombine(
-	{shared, MLKEM768SecretSize},
-	{shared + MLKEM768SecretSize, X25519KeySize},
-	ephPub, xPublic, secret))
+	  {shared, MLKEM768SecretSize}, {shared + MLKEM768SecretSize, X25519KeySize}, ephPub,
+	  xPublic, secret))
       return ZeEXCEPT(Error, "ZtlsKEM", "hybrid SHA3-256 failed");
     return {};
   }
 };
 
+} // namespace Ztls::PK
 
-} // Ztls::PK
-
-#endif /* ZtlsKEM_HH */
+// ZtlsKEM_HH
+#endif

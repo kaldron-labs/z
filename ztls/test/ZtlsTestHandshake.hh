@@ -9,46 +9,47 @@
 #ifndef ZtlsTestHandshake_HH
 #define ZtlsTestHandshake_HH
 
+#include <zlib/ZuLib.hh>
+
 #include <zlib/ZtlsCxn.hh>
 #include <zlib/ZtlsEngineOpenSSL.hh>
-#include <zlib/ZuLib.hh>
 
 namespace ZtlsTest {
 
-inline void useTestPSK(Ztls_::context_t &ctx, Ztls_::cipher_suite_t *suite)
+inline void useTestPSK(Ztls_::Context &ctx, const Ztls_::CipherSuite *suite)
 {
   // Reuse the TLS 1.3 credentials from zpicotls's exact receive test.
-  ctx.pre_shared_key.identity = Ztls_::wire_bytes("inplace", 7);
-  ctx.pre_shared_key.secret = Ztls_::wire_bytes("exact receive capacity", 22);
-  ctx.pre_shared_key.hash = suite->hash;
+  ctx.preSharedKey.identity = Ztls_::wire_bytes("inplace", 7);
+  ctx.preSharedKey.secret = Ztls_::wire_bytes("exact receive capacity", 22);
+  ctx.preSharedKey.hash = suite->hash;
 }
 
-inline bool handshake(Ztls::Cxn *client, Ztls::Cxn *server,
-  Ztls_::handshake_properties_t *properties = nullptr)
+inline bool
+handshake(Ztls::Cxn *client, Ztls::Cxn *server, Ztls_::HandshakeProps *properties = nullptr)
 {
   if (!client || !server) return false;
-  Ztls_::buffer_t request, response;
-  uint8_t requestStorage[1024], responseStorage[1024];
+  Ztls_::Buffer request, response;
+  uint8_t	requestStorage[1024], responseStorage[1024];
   Ztls_::buffer_init_tx(&request, requestStorage, sizeof(requestStorage));
   Ztls_::buffer_init_tx(&response, responseStorage, sizeof(responseStorage));
-  ZuGuard dispose{[&request, &response]() {
+  ZuGuard dispose{[&request, &response]()
+  {
     Ztls_::buffer_dispose(&response);
     Ztls_::buffer_dispose(&request);
   }};
-  if (Ztls_::handshake(client, &request, nullptr, nullptr, properties) !=
-      Ztls_ERROR_IN_PROGRESS) return false;
-  size_t consumed = request.off;
-  int result = Ztls_::handshake(server, &response, request.base, &consumed, nullptr);
-  if ((result && result != Ztls_ERROR_IN_PROGRESS) || consumed != request.off)
+  if (Ztls_::handshake(client, &request, nullptr, nullptr, properties) != Ztls_ErrorInProgress)
     return false;
+  size_t consumed = request.off;
+  int	 result = Ztls_::handshake(server, &response, request.base, &consumed, nullptr);
+  if ((result && result != Ztls_ErrorInProgress) || consumed != request.off) return false;
   request.off = 0;
   consumed = response.off;
   if (Ztls_::handshake(client, &request, response.base, &consumed, properties)) return false;
   if (consumed != response.off) {
-    auto remaining = response.off - consumed;
-    auto read = remaining;
-    Ztls_::buffer_t plaintext;
-    uint8_t small;
+    auto	  remaining = response.off - consumed;
+    auto	  read = remaining;
+    Ztls_::Buffer plaintext;
+    uint8_t	  small;
     Ztls_::buffer_init_rx(&plaintext, &small, 0);
     auto status = Ztls_::receive(client, &plaintext, response.base + consumed, &read);
     bool received = !status && read == remaining && !plaintext.off;
@@ -62,6 +63,6 @@ inline bool handshake(Ztls::Cxn *client, Ztls::Cxn *server,
     Ztls_::handshake_is_complete(server);
 }
 
-} // ZtlsTest
+} // namespace ZtlsTest
 
 #endif // ZtlsTestHandshake_HH

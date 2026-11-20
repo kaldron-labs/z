@@ -12,25 +12,14 @@
 
 #include <string.h>
 
-#include <zpicotls.h>
-
 #include <zlib/ZmFn.hh>
 #include <zlib/ZiRxStream.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtBuiltin.hh>
 
-#include <zlib/ZtlsPico.hh>
-
-namespace Ztls {
-namespace Backend {
-  struct PKey;
-  struct CertStore;
-  struct SignCert;
-  struct TicketKey;
-  struct VerifyCert;
-}
-}
+#include <zlib/ZtlsCxn.hh>
+#include <zlib/ZtlsCredentials.hh>
 
 namespace Zquic {
 
@@ -99,7 +88,7 @@ struct ZquicAPI InitialCrypto {
     uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuBSpan, ZuBSpan);
   static int encryptV(
     uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuBSpan,
-    const ptls_iovec_t *, unsigned);
+    const Ztls_::Bytes *, unsigned);
   static int decrypt(
     uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuBSpan, ZuBSpan);
   static bool headerMask(
@@ -112,7 +101,7 @@ struct ZquicAPI InitialPktProt {
     ZuBSpan, ZuBSpan, unsigned, unsigned);
   static int protectLongV(
     uint8_t *, unsigned, const InitialSecret &, uint64_t,
-    ZuBSpan, const ptls_iovec_t *, unsigned, unsigned, unsigned);
+    ZuBSpan, const Ztls_::Bytes *, unsigned, unsigned, unsigned);
   static int unprotectLong(
     uint8_t *, unsigned, const InitialSecret &, uint64_t,
     unsigned, uint64_t &, unsigned &);
@@ -134,15 +123,16 @@ struct ZquicAPI TrafficSecret {
   SecretBytes<MaxIVLen>		iv;
   SecretBytes<MaxHPLen>		hp;
   unsigned			tagLen = 0;
-  ptls_aead_algorithm_t		*aead = nullptr;
-  ptls_hash_algorithm_t		*hash = nullptr;
-  ptls_cipher_algorithm_t	*hpCipher = nullptr;
-  ptls_cipher_algorithm_t	*hpSuppCipher = nullptr;
+  const Ztls_::AeadAlgo		*aead = nullptr;
+  const Ztls_::HashAlgo		*hash = nullptr;
+  const Ztls_::CipherAlgo	*hpCipher = nullptr;
+  const Ztls_::CipherAlgo	*hpSuppCipher = nullptr;
   bool				installed = false;
 };
 
 struct ZquicAPI PktProtState {
   PktProtState() = default;
+  ~PktProtState() { clear(); }
   PktProtState(const PktProtState &) = delete;
   PktProtState &operator =(const PktProtState &) = delete;
 
@@ -150,9 +140,9 @@ struct ZquicAPI PktProtState {
   void clear();
   bool valid() const { return installed; }
 
-  Ztls::Pico::AeadCtx	aead;
-  Ztls::Pico::CipherCtx hp;
-  Ztls::Pico::CipherCtx hpSupp;
+  Ztls_::AeadContext	*aead = nullptr;
+  Ztls_::CipherContext *hp = nullptr;
+  Ztls_::CipherContext *hpSupp = nullptr;
   TrafficSecret		secret;
   PktNumSpace::T	level = PktNumSpace::Initial;
   bool			tx = false;
@@ -161,10 +151,10 @@ struct ZquicAPI PktProtState {
 
 struct ZquicAPI PktProt {
   static bool deriveSecret(
-    TrafficSecret &, ptls_cipher_suite_t *, ZuBSpan);
+    TrafficSecret &, const Ztls_::CipherSuite *, ZuBSpan);
   static int protectLongV(
     uint8_t *, unsigned, PktProtState &, uint64_t,
-    ZuBSpan, const ptls_iovec_t *, unsigned, unsigned, unsigned);
+    ZuBSpan, const Ztls_::Bytes *, unsigned, unsigned, unsigned);
   static int protectLong(
     uint8_t *, unsigned, PktProtState &, uint64_t,
     ZuBSpan, ZuBSpan, unsigned, unsigned);
@@ -179,7 +169,7 @@ struct ZquicAPI PktProt {
     unsigned, uint64_t &, unsigned &);
   static int protectShortV(
     uint8_t *, unsigned, PktProtState &, uint64_t,
-    ZuBSpan, const ptls_iovec_t *, unsigned, unsigned, unsigned);
+    ZuBSpan, const Ztls_::Bytes *, unsigned, unsigned, unsigned);
   static int protectShort(
     uint8_t *, unsigned, PktProtState &, uint64_t,
     ZuBSpan, ZuBSpan, unsigned, unsigned);
@@ -210,7 +200,7 @@ struct CryptoDiag {
 
 using CryptoStreamRxNTP = ZmPQRxGapIgnore<>;
 
-// A TLS epoch retains its original picotls output through one buffer view.
+// A TLS epoch retains its original output through one buffer view.
 // The active skip/length identify exactly this epoch's CRYPTO bytes.
 struct CryptoFlight : public ZmNHeap<CryptoFlight>, public ZiIOBuf {
 friend inline ZuStringT<"Zquic.Crypto.Flight"> ZmNHeapID(CryptoFlight *);
@@ -345,7 +335,7 @@ struct CryptoConfig {
   ZuCSpan		serverName;
   const TransportParams	*localParams = nullptr;
   ZquicLogger::Trace	*qlogTrace = nullptr;
-  ptls_encrypt_ticket_t	*encryptTicket = nullptr;
+  Ztls_::EncryptTicket	*encryptTicket = nullptr;
   void			*saveSessionTicketArg = nullptr;
   void			(*saveSessionTicket)(void *, ZuBSpan) = nullptr;
   ZuBSpan		sessionTicket;
@@ -358,9 +348,8 @@ class ZquicAPI Crypto {
 public:
   enum { TLSOutputMax = (64<<10) }; // 64K
   // QUIC uses TLS 1.3 cipher suites with defined header protection. TLS 1.3
-  // currently has a small suite set; keep one extra slot for picotls' null
+  // currently has a small suite set; keep one extra slot for the null
   // terminator.
-  enum { TLSMaxCiphers = 15 };
 
   ~Crypto();
 
@@ -383,7 +372,7 @@ public:
   }
   size_t maxEarlyData() const { return m_maxEarlyData; }
   bool oneRTTReady() const { return m_oneRTTReady; }
-  bool tlsReady() const { return m_tls; }
+  bool tlsReady() const { return m_tls.rxActive && !m_tlsFailed; }
   ZuCSpan alpn() const { return m_alpn; }
   ZuCSpan negotiatedProtocol() const;
   bool secretInstalled(PktNumSpace::T level) const {
@@ -439,6 +428,7 @@ public:
   bool rxKeySecret(PktKeyLevel::T, const TrafficSecret &);
   const CryptoDiag &diag() const { return m_diag; }
   int tlsResult() const { return m_tlsResult; }
+  bool tlsKeyUpdateRejected() const { return m_tlsKeyUpdateRejected; }
   size_t tlsReadEpoch() const;
   const TransportParams &localParams() const {
     return m_localParams;
@@ -464,9 +454,8 @@ public:
   bool completeHandshake();
   bool initTLS(const CryptoConfig &);
   void resetTLS() { resetTLS_(); }
-  // Raw pointer-decayed offsets preserve the picotls C callback ABI.
-  int handleTLSMessage(
-    ZiIOBuf *, size_t[5], size_t, ZuBSpan);
+  void failTLS() { m_tlsFailed = true; }
+  int handleTLSMessage(ZiIOBuf *, CryptoOffsets &, size_t, ZuBSpan);
 
 private:
   void resetTLS_();
@@ -475,19 +464,19 @@ private:
   int updateTrafficKey_(int, size_t, const void *);
   void keyLog(int, PktKeyLevel::T, ZuBSpan);
   void syncEarlyDataState();
-  int onClientHello_(ptls_on_client_hello_parameters_t *);
-  int saveSessionTicket_(ptls_iovec_t);
-  int collectedExtensions(ptls_raw_extension_t *);
+  int onClientHello_(Ztls_::CliHelloParams *);
+  int saveSessionTicket_(Ztls_::Bytes);
+  int collectedExtensions(Ztls_::RawExtension *);
   static int updateTrafficKeyCB(
-    ptls_update_traffic_key_t *, ptls_t *, int, size_t, const void *);
+    Ztls::Cxn *, int, size_t, const void *);
   static int onClientHelloCB(
-    ptls_on_client_hello_t *, ptls_t *, ptls_on_client_hello_parameters_t *);
+    Ztls::Cxn *, Ztls_::CliHelloParams *);
   static int saveSessionTicketCB(
-    ptls_save_ticket_t *, ptls_t *, ptls_iovec_t);
+    Ztls::Cxn *, Ztls_::Bytes);
   static int collectExtensionCB(
-    ptls_t *, ptls_handshake_properties_t *, uint16_t);
+    Ztls::Cxn *, uint16_t);
   static int collectedExtensionsCB(
-    ptls_t *, ptls_handshake_properties_t *, ptls_raw_extension_t *);
+    Ztls::Cxn *, Ztls_::RawExtension *);
 
   bool				m_isServer = false;
   bool				m_earlyDataEnabled = false;
@@ -526,21 +515,19 @@ private:
   TransportParams 		m_localParams;
   TransportParams 		m_peerParams;
   bool				m_peerParamsSet = false;
-  ptls_context_t 		m_tlsCtx{};
-  // picotls consumes this null-terminated raw pointer array through its C ABI.
-  ptls_cipher_suite_t		*m_tlsCipherSuites[TLSMaxCiphers + 1]{};
-  ptls_t			*m_tls = nullptr;
-  ptls_handshake_properties_t 	m_tlsProps{};
-  // picotls requires an inline sentinel-terminated C extension array.
-  ptls_raw_extension_t 		m_tlsExtensions[2]{};
+  Ztls_::Context 		m_tlsCtx{};
+  Ztls::Cxn			m_tls;
+  Ztls_::RawExtension 		m_tlsExtensions[2]{};
   TLSTransportParams 		m_tlsParams;
-  ptls_iovec_t			m_alpnVec{};
+  Ztls_::Bytes			m_alpnVec{};
   size_t			m_maxEarlyData = 0;
-  int				m_tlsResult = PTLS_ERROR_IN_PROGRESS;
-  Ztls::Pico::CertStore	*m_certStore = nullptr;
-  Ztls::Pico::VerifyCert	*m_verify = nullptr;
+  int				m_tlsResult = Ztls_ErrorInProgress;
+  bool				m_tlsKeyUpdateRejected = false;
+  bool				m_tlsFailed = false;
+  Ztls::CertStore	*m_certStore = nullptr;
+  Ztls::VerifyCert	*m_verify = nullptr;
   Ztls::PK::Key		m_key;
-  Ztls::Pico::SignCert	*m_sign = nullptr;
+  Ztls::SignCert	*m_sign = nullptr;
 };
 
 } // namespace Zquic

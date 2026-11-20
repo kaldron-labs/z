@@ -9,6 +9,10 @@
 #ifndef ZtlsCredentials_HH
 #define ZtlsCredentials_HH
 
+#ifndef ZtlsLib_HH
+#include <zlib/ZtlsLib.hh>
+#endif
+
 #include <zlib/ZtlsEngine.hh>
 #include <zlib/ZtlsPKOps.hh>
 
@@ -19,30 +23,31 @@ struct SignCert;
 struct VerifyCert;
 struct TicketKey;
 
-ZtlsAPI CertStore *cert_store_new();
-ZtlsAPI void cert_store_free(CertStore *);
-ZtlsAPI bool cert_store_load_path(CertStore *, const char *path);
-ZtlsAPI bool cert_store_load_file(CertStore *, const char *path);
-ZtlsAPI bool cert_store_add_der(CertStore *, ZuBSpan cert);
-ZtlsAPI bool cert_store_add_ca(CertStore *, ZuBSpan cert);
+Ztls_API CertStore *cert_store_new();
+Ztls_API void cert_store_free(CertStore *);
+Ztls_API bool cert_store_load_path(CertStore *, const char *path);
+Ztls_API bool cert_store_load_file(CertStore *, const char *path);
+Ztls_API bool cert_store_add_der(CertStore *, ZuBSpan cert);
+Ztls_API bool cert_store_add_ca(CertStore *, ZuBSpan cert);
 
-ZtlsAPI VerifyCert *verify_cert_new(CertStore *);
-ZtlsAPI void verify_cert_free(VerifyCert *);
-ZtlsAPI Ztls_::verify_certificate_t *verify_cert_cb(VerifyCert *);
+Ztls_API VerifyCert *verify_cert_new(CertStore *);
+Ztls_API void verify_cert_free(VerifyCert *);
+Ztls_API Ztls_::VerifyCertificate *verify_cert_cb(VerifyCert *);
 
-ZtlsAPI SignCert *sign_cert_new(const PK::Key &);
-ZtlsAPI void sign_cert_free(SignCert *);
-ZtlsAPI Ztls_::sign_certificate_t *sign_cert_cb(SignCert *);
-ZtlsAPI bool sign_cert_async(SignCert *, bool);
+Ztls_API SignCert *sign_cert_new(const PK::Key &);
+Ztls_API void sign_cert_free(SignCert *);
+Ztls_API Ztls_::SignCertificate *sign_cert_cb(SignCert *);
+Ztls_API bool sign_cert_async(SignCert *, bool);
 
-ZtlsAPI bool load_certificates(Ztls_::context_t *ctx, const char *path);
-ZtlsAPI bool load_certificates_der(
-  Ztls_::context_t *, ZuSpan<const ZuBSpan> certs, const PK::Key &key);
+Ztls_API bool load_certificates(Ztls_::Context *ctx, const char *path);
+Ztls_API bool
+load_certificates_der(Ztls_::Context *, ZuSpan<const ZuBSpan> certs, const PK::Key &key);
 
-ZtlsAPI TicketKey *ticket_key_new();
-ZtlsAPI void ticket_key_free(TicketKey *);
-ZtlsAPI Ztls_::encrypt_ticket_t *ticket_encrypt_cb(TicketKey *);
+Ztls_API TicketKey *ticket_key_new();
+Ztls_API void ticket_key_free(TicketKey *);
+Ztls_API Ztls_::EncryptTicket *ticket_encrypt_cb(TicketKey *);
 
 } // namespace Ztls
 
-#endif /* ZtlsCredentials_HH */
+// ZtlsCredentials_HH
+#endif

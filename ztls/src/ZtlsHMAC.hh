@@ -14,26 +14,25 @@
 #endif
 
 #include <zlib/ZuSpan.hh>
+
 #include <zlib/ZtlsAlg.hh>
 
 namespace Ztls {
 
-class ZtlsAPI HMAC_ {
+class Ztls_API HMAC_ {
 public:
   ~HMAC_();
   HMAC_(const HMAC_ &) = delete;
-  HMAC_ &operator =(const HMAC_ &) = delete;
+  HMAC_ &operator=(const HMAC_ &) = delete;
   HMAC_(HMAC_ &&) = delete;
-  HMAC_ &operator =(HMAC_ &&) = delete;
+  HMAC_ &operator=(HMAC_ &&) = delete;
 
   void start(ZuBSpan);
   void update(ZuBSpan);
   void finish(ZuSpan<uint8_t>);
   void reset();
-
 protected:
   explicit HMAC_(MDType);
-
 private:
   void clear();
   [[noreturn]] void fail(const char *, ZuSpan<uint8_t> = {});
@@ -50,6 +49,7 @@ public:
   HMAC() : HMAC_{Type} { }
 };
 
-} // Ztls
+} // namespace Ztls
 
-#endif /* ZtlsHMAC_HH */
+// ZtlsHMAC_HH
+#endif

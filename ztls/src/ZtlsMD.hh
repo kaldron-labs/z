@@ -14,25 +14,24 @@
 #endif
 
 #include <zlib/ZuSpan.hh>
+
 #include <zlib/ZtlsAlg.hh>
 
 namespace Ztls {
 
-class ZtlsAPI MD_ {
+class Ztls_API MD_ {
 public:
   ~MD_();
   MD_(const MD_ &) = delete;
-  MD_ &operator =(const MD_ &) = delete;
+  MD_ &operator=(const MD_ &) = delete;
   MD_(MD_ &&) = delete;
-  MD_ &operator =(MD_ &&) = delete;
+  MD_ &operator=(MD_ &&) = delete;
 
   void update(ZuBSpan);
   void finish(ZuSpan<uint8_t>);
   void reset();
-
 protected:
   explicit MD_(MDType);
-
 private:
   void clear();
   [[noreturn]] void fail(const char *, ZuSpan<uint8_t> = {});
@@ -50,9 +49,10 @@ public:
   MD() : MD_{Type} { }
 };
 
-ZtlsAPI bool shake256(ZuBSpan, ZuSpan<uint8_t>);
-ZtlsAPI bool sha3_256(ZuSpan<const ZuBSpan>, ZuSpan<uint8_t>);
+Ztls_API bool shake256(ZuBSpan, ZuSpan<uint8_t>);
+Ztls_API bool sha3_256(ZuSpan<const ZuBSpan>, ZuSpan<uint8_t>);
 
-} // Ztls
+} // namespace Ztls
 
-#endif /* ZtlsMD_HH */
+// ZtlsMD_HH
+#endif

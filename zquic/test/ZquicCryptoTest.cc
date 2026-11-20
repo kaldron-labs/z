@@ -6,9 +6,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zquic.hh>
-#include <zlib/ZtlsPico.hh>
-
-#include <zpicotls/openssl.h>
+#include <zlib/ZtlsEngineOpenSSL.hh>
 
 using namespace ZuTestUtil;
 
@@ -67,7 +65,7 @@ void testEarlyDataTLSProperties()
   ZmRef<ZiIOBuf> out =
     allocator<Zquic::CryptoTxBufAlloc<
       Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>>()->allocBuf();
-  size_t offsets[5] = {};
+  Zquic::CryptoOffsets offsets;
   int n = crypto.handleTLSMessage(out.ptr(), offsets, 0, {});
   ZuCHECK(n > 0, "client TLS initial output failed");
   ZuCHECK(!crypto.earlyDataEnabled() &&
@@ -85,7 +83,7 @@ void testEarlyTrafficSecretState()
   for (unsigned i = 0; i < sizeof(secretBytes); ++i) secretBytes[i] = uint8_t(i);
   Zquic::TrafficSecret secret;
   ZuCHECK(Zquic::PktProt::deriveSecret(
-      secret, &ptls_openssl_aes128gcmsha256,
+      secret, &Ztls_::openssl_aes128gcmsha256,
       Zquic::byteSpan(secretBytes, sizeof(secretBytes))),
     "0-RTT traffic secret derivation failed");
 
@@ -133,16 +131,16 @@ void testTLSOutputBuffer()
   ZmRef<ZiIOBuf> out =
     allocator<Zquic::CryptoTxBufAlloc<
       Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>>()->allocBuf();
-  size_t offsets[5] = {};
-  Ztls::Pico::reset_stats();
+  Zquic::CryptoOffsets offsets;
+  auto backing = out->data();
+  auto capacity = out->size;
   int n = crypto.handleTLSMessage(out.ptr(), offsets, 0, {});
-  auto stats = Ztls::Pico::stats();
   ZuCHECK(n > 0 && out->length == unsigned(n) && !out->skip,
     "TLS output buffer was not published");
   ZuCHECK(offsets[0] == 0 && offsets[1] == unsigned(n),
     "TLS output epoch offsets mismatch");
-  ZuCHECK(!stats.internal_alloc && !stats.internal_free,
-    "TLS output used picotls internal buffer allocation");
+  ZuCHECK(out->data() == backing && out->size == capacity,
+    "TLS output replaced caller backing");
   ZuCHECK(crypto.diag().tlsMessagesEmitted == 1,
     "TLS output diagnostic not updated");
 }
@@ -163,44 +161,51 @@ void testCryptoFlightOffsets()
     return true;
   };
 
-  size_t empty[5] = {};
-  ZuCHECK(Zquic::sendCryptoFlights(
-      txCrypto, diag, nullptr, 0, empty, 16, {}, send) &&
+  auto alloc = allocator<Zquic::CryptoTxBufAlloc<>>();
+  auto backing = [alloc](ZuBSpan bytes) {
+    auto buf = alloc->allocBuf();
+    if (bytes.length() && !buf->append(bytes)) return ZmRef<ZiIOBuf>{};
+    return buf;
+  };
+
+  Zquic::CryptoOffsets empty{0, 0, 0, 0, 0};
+  ZuCHECK(Zquic::sendCryptoFlights_(
+      txCrypto, diag, backing({}), empty, 16, {}, send) &&
       !sends && !diag.failures,
     "empty crypto flights failed");
 
-  size_t one[5] = {0, 3, 3, 3, 3};
-  ZuCHECK(Zquic::sendCryptoFlights(
-      txCrypto, diag, ZuBSpan{"abc"}.data(), 3,
-      one, 16, {}, send) &&
+  Zquic::CryptoOffsets one{0, 3, 3, 3, 3};
+  ZuCHECK(Zquic::sendCryptoFlights_(
+      txCrypto, diag, backing("abc"), one, 16, {}, send) &&
       sends == 1 && diag.cryptoBytesTx == Zquic::DiagCounter{3},
     "single-epoch crypto flights failed");
 
   Zquic::CryptoStream multiCrypto[Zquic::PktNumSpace::N];
   for (auto &stream : multiCrypto)
-    stream.allocators(nullptr, allocator<Zquic::CryptoTxBufAlloc<>>());
+    stream.allocators(nullptr, alloc);
   Zquic::LinkTxDiag multiDiag;
   sends = 0;
-  size_t multi[5] = {0, 2, 2, 4, 6};
-  ZuCHECK(Zquic::sendCryptoFlights(
-      multiCrypto, multiDiag,
-      ZuBSpan{"abcdef"}.data(), 6,
-      multi, 16, {}, send) &&
+  Zquic::CryptoOffsets multi{0, 2, 2, 4, 6};
+  ZuCHECK(Zquic::sendCryptoFlights_(
+      multiCrypto, multiDiag, backing("abcdef"), multi, 16, {}, send) &&
       sends == 4 && multiDiag.cryptoBytesTx == Zquic::DiagCounter{6},
     "multi-epoch crypto flights failed");
 
-  size_t descending[5] = {0, 3, 2, 3, 3};
-  size_t beyond[5] = {0, 0, 0, 0, 4};
-  ZuCHECK(!Zquic::sendCryptoFlights(
-      multiCrypto, multiDiag,
-      ZuBSpan{"abc"}.data(), 3,
-      descending, 16, {}, send) &&
-      !Zquic::sendCryptoFlights(
-	multiCrypto, multiDiag,
-	ZuBSpan{"abc"}.data(), 3,
-	beyond, 16, {}, send) &&
-      multiDiag.failures == Zquic::DiagCounter{2},
-    "invalid crypto offsets diagnostics mismatch");
+  const Zquic::CryptoOffsets invalid[] = {
+    {0, 3, 3, 2, 3}, // descending
+    {0, 0, 0, 0, 4}, // beyond backing
+    {1, 1, 1, 3, 3}, // leading bytes omitted
+    {0, 1, 1, 2, 2}, // trailing bytes omitted
+    {0, 1, 2, 3, 3}, // 0-RTT CRYPTO output
+    {0, 0, 0, 3},    // missing boundary
+  };
+  auto sent = sends;
+  bool rejected = true;
+  for (const auto &offsets : invalid)
+    rejected &= !Zquic::sendCryptoFlights_(
+      multiCrypto, multiDiag, backing("abc"), offsets, 16, {}, send);
+  ZuCHECK(rejected && sends == sent && multiDiag.cryptoBytesTx == Zquic::DiagCounter{6},
+    "invalid crypto offsets published data");
 }
 
 void testOwnedCryptoFlights()
@@ -213,12 +218,10 @@ void testOwnedCryptoFlights()
     "owned TLS output initialization failed");
   ZmRef<ZiIOBuf> out = allocator<Zquic::CryptoTxBufAlloc<
     Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>>()->allocBuf();
-  size_t positions[5] = {};
-  int n = crypto.handleTLSMessage(out.ptr(), positions, 0, {});
+  Zquic::CryptoOffsets offsets;
+  int n = crypto.handleTLSMessage(out.ptr(), offsets, 0, {});
   ZuCHECK(n > 0, "owned TLS output generation failed");
   if (n <= 0) return;
-  Zquic::CryptoOffsets offsets(Zquic::TLSEpochCount + 1, false);
-  for (unsigned i = 0; i <= Zquic::TLSEpochCount; ++i) offsets[i] = positions[i];
   Zquic::CryptoStream streams[Zquic::PktNumSpace::N];
   for (auto &stream : streams)
     stream.allocators(nullptr, allocator<Zquic::CryptoTxBufAlloc<>>());

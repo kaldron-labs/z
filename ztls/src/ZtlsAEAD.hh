@@ -19,31 +19,31 @@
 
 namespace Ztls {
 
-class ZtlsAPI ChaCha20Poly1305 {
+class Ztls_API ChaCha20Poly1305 {
 public:
   // RFC 8439 AEAD key, nonce, and authenticator lengths.
   enum { KeySize = 32, NonceSize = 12, TagSize = 16 };
 
   ChaCha20Poly1305() = default;
   ChaCha20Poly1305(const ChaCha20Poly1305 &) = delete;
-  ChaCha20Poly1305 &operator =(const ChaCha20Poly1305 &) = delete;
+  ChaCha20Poly1305 &operator=(const ChaCha20Poly1305 &) = delete;
   ChaCha20Poly1305(ChaCha20Poly1305 &&) = delete;
-  ChaCha20Poly1305 &operator =(ChaCha20Poly1305 &&) = delete;
+  ChaCha20Poly1305 &operator=(ChaCha20Poly1305 &&) = delete;
   ~ChaCha20Poly1305();
 
   bool init(bool encrypt, ZuBSpan key);
   bool seal(ZuBSpan nonce, ZuBSpan aad, ZuBSpan input, ZuSpan<uint8_t> output);
   bool open(ZuBSpan nonce, ZuBSpan aad, ZuBSpan input, ZuSpan<uint8_t> output);
-
 private:
   bool fail(ZuSpan<uint8_t>);
   bool aad(ZuBSpan);
   bool data(ZuBSpan, ZuSpan<uint8_t>);
 
   EVP_CIPHER_CTX	*m_ctx = nullptr;
-  bool		m_encrypt = false;
+  bool			m_encrypt = false;
 };
 
-} // Ztls
+} // namespace Ztls
 
-#endif /* ZtlsAEAD_HH */
+// ZtlsAEAD_HH
+#endif

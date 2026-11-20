@@ -18,7 +18,7 @@ ZHTTP_LDADD = $(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
-	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_LTLIBRARIES = libzhttputil.la
 noinst_PROGRAMS = zhttp zhttpd
 noinst_HEADERS = runtime.hh zhttpput.hh zhttpd.hh

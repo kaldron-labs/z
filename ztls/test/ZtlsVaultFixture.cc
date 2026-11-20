@@ -6,8 +6,9 @@
 
 // Loadable vault store fixture: one record suffices for Direct and Indirect.
 
-#include <zlib/ZuDerive.hh>
 #include <string.h>
+
+#include <zlib/ZuDerive.hh>
 
 #include <zlib/ZmHeap.hh>
 
@@ -17,40 +18,36 @@
 
 namespace ZtlsVaultFixture_ {
 
-using Value = ZtBArray<ZtArraySecret<true,
-  ZtArrayHeapID<"Ztls.Vault.FixtureValue">>>;
+using Value = ZtBArray<ZtArraySecret<true, ZtArrayHeapID<"Ztls.Vault.FixtureValue">>>;
 
 class Store_ : public ZmNHeap<Store_>, public Ztls_::VaultStore {
 friend inline ZuStringT<"Ztls.Vault.Fixture"> ZmNHeapID(Store_ *);
-
 public:
   Ztls::VaultResult init(const Ztls::VaultConfig &) override { return {}; }
-  void final() override {
+  void final() override
+  {
     m_value.clear();
     m_key.clear();
   }
-  Ztls::VaultResult load(ZuCSpan key, Ztls::VaultLoadFn fn) override {
-    if (key != m_key)
-      return ZeEXCEPT(Error, "ZtlsVaultFixture", "credential missing");
+  Ztls::VaultResult load(ZuCSpan key, Ztls::VaultLoadFn fn) override
+  {
+    if (key != m_key) return ZeEXCEPT(Error, "ZtlsVaultFixture", "credential missing");
     fn(m_value);
     return {};
   }
-  Ztls::VaultResult save(ZuCSpan key, ZuBSpan value) override {
+  Ztls::VaultResult save(ZuCSpan key, ZuBSpan value) override
+  {
     m_key = key;
     m_value = value;
     return {};
   }
-
 private:
-  Ztls::VaultString m_key;
-  Value m_value;
+  Ztls::VaultString	m_key;
+  Value			m_value;
 };
 
 ZuDerive(Store, Store_);
 
-} // ZtlsVaultFixture_
+} // namespace ZtlsVaultFixture_
 
-extern "C" Ztls_::VaultStore *ZtlsVaultStore()
-{
-  return new ZtlsVaultFixture_::Store;
-}
+extern "C" Ztls_::VaultStore *ZtlsVaultStore() { return new ZtlsVaultFixture_::Store; }

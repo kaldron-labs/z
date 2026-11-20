@@ -19,22 +19,21 @@
 
 namespace Ztls::KDF {
 
-class ZtlsAPI HKDF {
+class Ztls_API HKDF {
 public:
   enum { HashSize = 32, MaxSize = 255 * HashSize }; // RFC 5869, SHA256
 
   HKDF() = default;
   HKDF(const HKDF &) = delete;
-  HKDF &operator =(const HKDF &) = delete;
+  HKDF &operator=(const HKDF &) = delete;
   HKDF(HKDF &&) = delete;
-  HKDF &operator =(HKDF &&) = delete;
+  HKDF &operator=(HKDF &&) = delete;
   ~HKDF();
 
   bool init();
   bool extract(ZuBSpan salt, ZuBSpan ikm, ZuSpan<uint8_t> prk);
   bool expand(ZuBSpan prk, ZuBSpan info, ZuSpan<uint8_t> output);
   bool derive(ZuBSpan salt, ZuBSpan ikm, ZuBSpan info, ZuSpan<uint8_t> output);
-
 private:
   bool derive_(int, ZuBSpan, ZuBSpan, ZuBSpan, ZuSpan<uint8_t>);
   bool fail(ZuSpan<uint8_t>);
@@ -42,10 +41,11 @@ private:
   EVP_KDF_CTX	*m_ctx = nullptr;
 };
 
-ZtlsAPI bool scrypt(
-  ZuBSpan password, ZuBSpan salt, uint64_t n,
-  unsigned r, unsigned p, uint64_t maxMem, ZuSpan<uint8_t> output);
+Ztls_API bool scrypt(
+  ZuBSpan password, ZuBSpan salt, uint64_t n, unsigned r, unsigned p, uint64_t maxMem,
+  ZuSpan<uint8_t> output);
 
-} // Ztls::KDF
+} // namespace Ztls::KDF
 
-#endif /* ZtlsKDF_HH */
+// ZtlsKDF_HH
+#endif

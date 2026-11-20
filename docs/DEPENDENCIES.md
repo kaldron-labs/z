@@ -37,7 +37,6 @@ Boost, Folly or BDE for its production libraries.
 | [hwloc](https://www.open-mpi.org/projects/hwloc/) | `hwloc >= 2` | Hardware topology, affinity and NUMA placement |
 | [PCRE](https://www.pcre.org/) | Original `libpcre`, discovered by `AX_PATH_LIB_PCRE` | `ZtRegex`; PCRE2 is not a drop-in replacement for this build |
 | [c-ares](https://c-ares.org/) | `libcares` | Asynchronous DNS resolution |
-| [zpicotls](https://github.com/kaldron-labs/zpicotls) | `zpicotls-core`, `zpicotls-openssl`, `zpicotls-fusion`, each `>= 1.3` | Zquic handshake and packet protection |
 | [OpenSSL](https://openssl-library.org/) | `libcrypto >= 3.5`, with working ML-KEM-768 provider/API | Embedded Ztls TLS 1.3 engine and direct Z cryptographic operations |
 | [BFD and libiberty](https://www.gnu.org/software/binutils/) | `-lbfd -liberty` in `zm/src/Makefile.am` | Backtraces and symbol handling; current Zm build links both unconditionally |
 | [ncurses/terminfo](https://invisible-island.net/ncurses/) | Linux `-lncurses`; other Unix branch uses `-lterminfo` | Terminal capabilities for Zrl |
@@ -48,13 +47,11 @@ and standalone cryptographic operations use OpenSSL libcrypto directly.
 When both Brotli encoder and decoder development packages are available via
 pkg-config, Ztls also builds support for certificate compression.
 
-Zquic still uses **zpicotls**, the Z fork of [picotls](https://github.com/h2o/picotls).
-The top-level configuration checks the three pkg-config components listed
-above for Zquic. Installing upstream picotls alone does not satisfy those
-checks. Follow the fork's build instructions for its submodules and backend
-prerequisites.
+Zquic links `libZtls` for the raw handshake and negotiated packet protection.
+Its direct libcrypto calls cover functions that include Initial packet
+protection and Retry integrity.
 
-Configure checks libcrypto independently and verifies that it can create an
+Configure checks libcrypto and verifies that it can create an
 ML-KEM-768 key and initialize encapsulation. Cross-compilation defers the
 runtime check.
 

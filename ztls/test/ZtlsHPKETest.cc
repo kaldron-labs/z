@@ -8,16 +8,14 @@
 
 #include <zlib/ZuHex.hh>
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZtlsHPKE.hh>
 
 using namespace ZuTestUtil;
 using namespace Ztls::PK;
 
 static bool decode(ZuSpan<uint8_t> out, ZuCSpan hex)
-{
-  return hex.length() == ZuHex::enclen(out.length()) &&
-    ZuHex::decode(out, hex) == out.length();
-}
+{ return hex.length() == ZuHex::enclen(out.length()) && ZuHex::decode(out, hex) == out.length(); }
 
 // First base-mode hybrid HPKE vector:
 // https://github.com/FiloSottile/hpke/blob/main/testdata/hpke-pq.json
@@ -54,8 +52,7 @@ static constexpr char EncHex[] =
   "C3C3151FFD27608173637FB9DE30B3C02D96EECAC05DBF7C2FBC98B4A1F6972CE928322A22E2B75C";
 static constexpr char InfoHex[] =
   "34663634363532303666366532303631323034373732363536333639363136653230353537323665";
-static constexpr char AADHex[] =
-  "436F756E742D30";
+static constexpr char AADHex[] = "436F756E742D30";
 static constexpr char CiphertextHex[] =
   "AC355D192158CD54250E1702BE51E9D2EAFE5F9292A9F153E02A2323E1FF071A30947836C38C63C9"
   "86C28CCF05E00D4E5FE066A48AB8D5B39C69D32DA80C93DC868DAA0F853A6CBDD640";
@@ -67,10 +64,10 @@ static void vector()
 {
   ZuTestScope(vector);
   uint8_t seed[HybridSeedSize], enc[HybridCiphertextSize];
-  uint8_t info[(sizeof(InfoHex) - 1) / 2];
-  uint8_t aad[(sizeof(AADHex) - 1) / 2];
-  uint8_t ct[(sizeof(CiphertextHex) - 1) / 2];
-  uint8_t expected[(sizeof(PlaintextHex) - 1) / 2];
+  uint8_t info[(sizeof(InfoHex) - 1)/2];
+  uint8_t aad[(sizeof(AADHex) - 1)/2];
+  uint8_t ct[(sizeof(CiphertextHex) - 1)/2];
+  uint8_t expected[(sizeof(PlaintextHex) - 1)/2];
   uint8_t plain[sizeof(expected)];
   ZuCheck(decode(seed, SeedHex));
   ZuCheck(decode(enc, EncHex));
@@ -79,8 +76,7 @@ static void vector()
   ZuCheck(decode(ct, CiphertextHex));
   ZuCheck(decode(expected, PlaintextHex));
   SK_MLKEM768_X25519 sk{seed};
-  auto r = Ztls::HPKE::openBase(sk,
-    info, aad, enc, ct, plain);
+  auto		     r = Ztls::HPKE::openBase(sk, info, aad, enc, ct, plain);
   ZuCheck(!r.template is<ZeException>());
   if (!r.template is<ZeException>()) {
     ZuCheck(r.template p<0>() == sizeof(plain));
@@ -100,66 +96,65 @@ static void roundtrip()
   SK_MLKEM768_X25519 sk{seed};
   ZuCheck(!sk.exportPK(pub).template is<ZeException>());
   PK_MLKEM768_X25519 pk{pub};
-  constexpr uint8_t info[] = {1, 0, 2};
-  constexpr uint8_t aad[] = {3, 0, 4};
-  constexpr uint8_t input[] = {5, 0, 6, 7};
-  uint8_t enc[HybridCiphertextSize];
-  uint8_t ct[sizeof(input) + Ztls::HPKE::TagSize];
-  uint8_t plain[sizeof(input)];
-  ZuCheck(!Ztls::HPKE::sealBase(rng, pk, info, aad, input, enc, ct)
-    .template is<ZeException>());
+  constexpr uint8_t  info[] = {1, 0, 2};
+  constexpr uint8_t  aad[] = {3, 0, 4};
+  constexpr uint8_t  input[] = {5, 0, 6, 7};
+  uint8_t	     enc[HybridCiphertextSize];
+  uint8_t	     ct[sizeof(input) + Ztls::HPKE::TagSize];
+  uint8_t	     plain[sizeof(input)];
+  ZuCheck(!Ztls::HPKE::sealBase(rng, pk, info, aad, input, enc, ct).template is<ZeException>());
   auto r = Ztls::HPKE::openBase(sk, info, aad, enc, ct, plain);
   ZuCheck(!r.template is<ZeException>());
   if (!r.template is<ZeException>()) {
     ZuCheck(r.template p<0>() == sizeof(input));
     ZuCheck(!memcmp(plain, input, sizeof(input)));
   }
-  ZuCheck(Ztls::HPKE::openBase(sk, info, {info, sizeof(info)}, enc, ct, plain)
-    .template is<ZeException>());
-  ZuCheck(Ztls::HPKE::openBase(sk, aad, aad, enc, ct, plain)
-    .template is<ZeException>());
+  ZuCheck(
+    Ztls::HPKE::openBase(sk, info, {info, sizeof(info)}, enc, ct, plain)
+      .template is<ZeException>());
+  ZuCheck(Ztls::HPKE::openBase(sk, aad, aad, enc, ct, plain).template is<ZeException>());
   // Encapsulation rejection happens before key derivation or AEAD writes.
   // Every failure clears the expected plaintext prefix, preserving extra room.
   uint8_t guarded[sizeof(input) + 8];
   memset(guarded, 0xA5, sizeof(guarded));
-  ZuCheck(Ztls::HPKE::openBase(sk, info, aad,
-    {enc, sizeof(enc) - 1}, ct, guarded).template is<ZeException>());
+  ZuCheck(
+    Ztls::HPKE::openBase(sk, info, aad, {enc, sizeof(enc) - 1}, ct, guarded)
+      .template is<ZeException>());
   bool prefixClear = true, tailUnchanged = true;
   for (unsigned i = 0; i < sizeof(input); ++i) prefixClear &= !guarded[i];
-  for (unsigned i = sizeof(input); i < sizeof(guarded); ++i)
-    tailUnchanged &= guarded[i] == 0xA5;
+  for (unsigned i = sizeof(input); i < sizeof(guarded); ++i) tailUnchanged &= guarded[i] == 0xA5;
   ZuCheck(prefixClear);
   ZuCheck(tailUnchanged);
-  ZuCheck(Ztls::HPKE::openBase(sk, info, aad, enc,
-    {ct, sizeof(ct) - 1}, plain).template is<ZeException>());
-  ZuCheck(Ztls::HPKE::openBase(sk, info, aad, enc,
-    {ct, Ztls::HPKE::TagSize - 1}, plain).template is<ZeException>());
-  ZuCheck(Ztls::HPKE::openBase(sk, info, aad, enc, ct,
-    {plain, sizeof(plain) - 1}).template is<ZeException>());
+  ZuCheck(
+    Ztls::HPKE::openBase(sk, info, aad, enc, {ct, sizeof(ct) - 1}, plain)
+      .template is<ZeException>());
+  ZuCheck(
+    Ztls::HPKE::openBase(sk, info, aad, enc, {ct, Ztls::HPKE::TagSize - 1}, plain)
+      .template is<ZeException>());
+  ZuCheck(
+    Ztls::HPKE::openBase(sk, info, aad, enc, ct, {plain, sizeof(plain) - 1})
+      .template is<ZeException>());
   ct[sizeof(ct) - 1] ^= 1;
   memset(plain, 0xA5, sizeof(plain));
-  ZuCheck(Ztls::HPKE::openBase(sk, info, aad, enc, ct, plain)
-    .template is<ZeException>());
+  ZuCheck(Ztls::HPKE::openBase(sk, info, aad, enc, ct, plain).template is<ZeException>());
   uint8_t zero[sizeof(plain)] = {};
   ZuCheck(!memcmp(plain, zero, sizeof(plain)));
   ct[sizeof(ct) - 1] ^= 1;
-  ZuCheck(Ztls::HPKE::sealBase(rng, pk, info, aad, input,
-    {enc, sizeof(enc) - 1}, ct).template is<ZeException>());
-  ZuCheck(Ztls::HPKE::sealBase(rng, pk, info, aad, input,
-    enc, {ct, sizeof(ct) - 1}).template is<ZeException>());
+  ZuCheck(
+    Ztls::HPKE::sealBase(rng, pk, info, aad, input, {enc, sizeof(enc) - 1}, ct)
+      .template is<ZeException>());
+  ZuCheck(
+    Ztls::HPKE::sealBase(rng, pk, info, aad, input, enc, {ct, sizeof(ct) - 1})
+      .template is<ZeException>());
   uint8_t emptyCT[Ztls::HPKE::TagSize], emptyPlain[1];
-  ZuCheck(!Ztls::HPKE::sealBase(rng, pk, info, aad, {},
-    enc, emptyCT).template is<ZeException>());
-  auto empty = Ztls::HPKE::openBase(sk, info, aad, enc, emptyCT,
-    {emptyPlain, 0});
+  ZuCheck(!Ztls::HPKE::sealBase(rng, pk, info, aad, {}, enc, emptyCT).template is<ZeException>());
+  auto empty = Ztls::HPKE::openBase(sk, info, aad, enc, emptyCT, {emptyPlain, 0});
   ZuCheck(!empty.template is<ZeException>());
-  if (!empty.template is<ZeException>())
-    ZuCheck(empty.template p<0>() == 0);
+  if (!empty.template is<ZeException>()) ZuCheck(empty.template p<0>() == 0);
   memcpy(ct, input, sizeof(input));
-  ZuCheck(!Ztls::HPKE::sealBase(rng, pk, info, aad,
-    {ct, sizeof(input)}, enc, ct).template is<ZeException>());
-  auto inPlace = Ztls::HPKE::openBase(sk, info, aad, enc, ct,
-    {ct, sizeof(input)});
+  ZuCheck(!Ztls::HPKE::sealBase(rng, pk, info, aad, {ct, sizeof(input)}, enc, ct)
+      .template is<ZeException>());
+  auto inPlace = Ztls::HPKE::openBase(sk, info, aad, enc, ct, {ct, sizeof(input)});
   ZuCheck(!inPlace.template is<ZeException>());
   if (!inPlace.template is<ZeException>()) {
     ZuCheck(inPlace.template p<0>() == sizeof(input));

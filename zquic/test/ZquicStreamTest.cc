@@ -16,7 +16,7 @@
 
 #include "ZiTestResidue.hh"
 
-#include <zpicotls/openssl.h>
+#include <zlib/ZtlsEngineOpenSSL.hh>
 
 using namespace ZuTestUtil;
 
@@ -354,8 +354,8 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
       return false;
     unsigned used = 0;
     bool parsed = !Zquic::FrameCodec::parse(
-      ZuBSpan{build.data()[0].base, unsigned(build.data()[0].len)},
-      frame, used) && used == build.data()[0].len;
+      build.data()[0],
+      frame, used) && used == build.data()[0].length();
     if (parsed && payload) *payload = frame.payload;
     return parsed;
   }
@@ -531,9 +531,9 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     if (!Base::buildRetxCrypto(level, build, ref)) return false;
     unsigned n = 0;
     for (unsigned i = 0, l = build.count(); i < l; ++i) {
-      if (build.data()[i].len > size - n) return false;
-      memcpy(b + n, build.data()[i].base, build.data()[i].len);
-      n += unsigned(build.data()[i].len);
+      if (build.data()[i].length() > size - n) return false;
+      memcpy(b + n, build.data()[i].data(), build.data()[i].length());
+      n += build.data()[i].length();
     }
     unsigned used = 0;
     return !Zquic::FrameCodec::parse(
@@ -751,11 +751,11 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     bool retained = !ref.length;
     for (unsigned i = 0; i < build.count(); ++i) {
       const auto &part = build.data()[i];
-      if (part.len > sizeof(plain) - bytes) return false;
-      memcpy(plain + bytes, part.base, part.len);
-      bytes += unsigned(part.len);
-      if (ref.range.buf && part.base == ref.range.buf->data_() + ref.range.offset &&
-	  part.len == ref.length) retained = true;
+      if (part.length() > sizeof(plain) - bytes) return false;
+      memcpy(plain + bytes, part.data(), part.length());
+      bytes += part.length();
+      if (ref.range.buf && part.data() == ref.range.buf->data_() + ref.range.offset &&
+	  part.length() == ref.length) retained = true;
     }
     bool framed = false;
     for (unsigned offset = 0; offset < bytes;) {
@@ -1057,7 +1057,7 @@ static bool trafficSecret(
   uint8_t bytes[32];
   for (unsigned i = 0; i < sizeof(bytes); ++i) bytes[i] = seed + i;
   return Zquic::PktProt::deriveSecret(
-    secret, &ptls_openssl_aes128gcmsha256, Zquic::byteSpan(bytes, sizeof(bytes)));
+    secret, &Ztls_::openssl_aes128gcmsha256, Zquic::byteSpan(bytes, sizeof(bytes)));
 }
 
 #ifdef Zquic_DEBUG
@@ -1722,7 +1722,10 @@ void testStreamTxQueueLimit()
 	link->disconnecting_(),
       "QUIC stream Tx queue overflow did not close the connection");
 
-    link->teardown();
+    // Overflow already queued disconnect completion on the multiplexer Tx thread.
+    ZmBlock<>{}([&app](auto wake) {
+      app.mx()->txRun([wake = ZuMv(wake)]() mutable { wake(); });
+    });
     ZuCHECK(!stream->txQueueCount() && !stream->txRangeCount(),
       "QUIC stream Tx queue overflow did not retire retained output");
 
@@ -3339,12 +3342,12 @@ void testAckECNValidateDisable()
   Zquic::PktBuild build;
   ZuCHECK(link->writePendingAck(build) &&
       build.count() == 1 &&
-      build.data()[0].len > 0,
+      build.data()[0].length() > 0,
     "runtime pending ACK_ECN build failed");
   Zquic::Frame frame;
   unsigned used = 0;
   ZuCHECK(!Zquic::FrameCodec::parse(
-      ZuBSpan{build.data()[0].base, unsigned(build.data()[0].len)},
+      build.data()[0],
       frame, used) &&
       frame.type == Zquic::FrameType::Ack &&
       frame.ackECN.ect0 == 1 &&
@@ -4416,7 +4419,7 @@ void testZeroRTTProtectedSend()
     secretBytes[i] = uint8_t(0x80 + i);
   Zquic::TrafficSecret secret;
   ZuCHECK(Zquic::PktProt::deriveSecret(
-      secret, &ptls_openssl_aes128gcmsha256,
+      secret, &Ztls_::openssl_aes128gcmsha256,
       Zquic::byteSpan(secretBytes, sizeof(secretBytes))),
     "0-RTT traffic secret derivation failed");
 
@@ -4462,7 +4465,7 @@ void testZeroRTTEarlyStreamPolicy()
     secretBytes[i] = uint8_t(0xa0 + i);
   Zquic::TrafficSecret secret;
   ZuCHECK(Zquic::PktProt::deriveSecret(
-      secret, &ptls_openssl_aes128gcmsha256,
+      secret, &Ztls_::openssl_aes128gcmsha256,
       Zquic::byteSpan(secretBytes, sizeof(secretBytes))),
     "0-RTT traffic secret derivation failed");
 

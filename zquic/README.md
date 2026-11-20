@@ -6,6 +6,12 @@ control, timers, qlog instrumentation, and transport-facing diagnostics.
 It is a transport library, not an HTTP/3 stack; production HTTP/3 is owned by
 `Zhttp` and uses `Zquic` underneath.
 
+Zquic uses the raw TLS 1.3 handshake driver in `libZtls`. The Rx owner feeds
+handshake bytes from CRYPTO streams and supplies the output buffer. Zquic
+retains the returned buffer and epoch ranges for CRYPTO transmission and
+recovery. The handshake reports traffic secrets to Rx. Zquic owns packet
+protection, key phases, and packet-space retirement.
+
 This file is a map for navigating the implementation.  Required review rules
 for editing `zquic` live in `zquic/GUIDELINES.md`.
 
@@ -93,8 +99,8 @@ server's stream response.
   number handling, Retry, stateless reset, and Version Negotiation encoding.
 - `ZquicFrame.hh` / `ZquicFrame.cc`: frame parsing/formatting and transport
   parameter encoding.
-- `ZquicCrypto.hh` / `ZquicCrypto.cc`: picotls integration, Initial/Handshake/
-  0-RTT/1-RTT key state, packet protection, TLS output, and early-data state.
+- `ZquicCrypto.hh` / `ZquicCrypto.cc`: Ztls raw handshake integration,
+  Initial/Handshake/0-RTT/1-RTT key state, packet protection, and early data.
 - `ZquicRecovery.hh`: ACK ranges, sent-packet tracking,
   PTO/loss recovery, retransmit queues, RTT, congestion, and ECN validation.
 - `ZquicStream.hh`: stream objects, Rx reassembly, Tx

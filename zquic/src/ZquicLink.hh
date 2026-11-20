@@ -577,6 +577,7 @@ public:
       CryptoStream *crypto = &m_linkRx.rxCrypto[i];
       initCryptoDequeue(space);
       crypto->deliveryFn([this, space](ZuBSpan span) {
+	if (!m_linkRx.crypto.tlsReady() || linkClosedRx_()) return;
 	size_t epoch = space == PktNumSpace::Initial ? 0 :
 	  space == PktNumSpace::Handshake ? 2 : 3;
 	if (!this->impl()->emitTLS_(epoch, span, m_linkRx.rxCryptoAddr[space]))
@@ -1091,8 +1092,10 @@ protected:
     m_linkTx.txLinkState = LinkState::Closing;
     LinkStateSnapshot snapshot = linkSnapshotTx();
     cancelTimers_();
-    app()->rxRun([link = impl(), snapshot]() mutable {
-      if (link->disconnecting_()) return;
+    app()->rxRun([
+      link = impl(), runtime = m_linkTx.txRuntimeGen, snapshot
+    ]() mutable {
+      if (link->disconnecting_() || runtime != link->m_linkRx.rxRuntimeGen) return;
       link->applyCloseSnapshotRx(snapshot);
     });
   }
@@ -5147,24 +5150,46 @@ protected:
     size_t inEpoch, ZuBSpan input, ZiSockAddr addr,
     SendFlights sendFlights, MarkEstablished markEstablished,
     AfterEstablished afterEstablished) {
+    auto &crypto = m_linkRx.crypto;
+    if (!crypto.tlsReady() || linkClosedRx_()) return false;
     auto out = app()->tlsOutputAllocator()->allocBuf(this);
-    // picotls writes this fixed five-offset array through its C callback ABI.
-    size_t offsets[5] = {};
-    int n =
-      m_linkRx.crypto.handleTLSMessage(out.ptr(), offsets, inEpoch, input);
+    CryptoOffsets offsets;
+    int n = crypto.handleTLSMessage(out.ptr(), offsets, inEpoch, input);
     if (n < 0) {
       tlsFailure();
+      if (crypto.tlsKeyUpdateRejected()) {
+	// RFC 9001 section 6.
+	failTLS_(0x010a, ZuMv(addr));
+      } else if (crypto.tlsResult() == Ztls_ErrorRawOutput) {
+	failTLS_(TransportError::InternalError, {});
+      }
       return false;
     }
-    CryptoOffsets offsets_(TLSEpochCount + 1, false);
-    for (unsigned i = 0; i <= TLSEpochCount; ++i)
-      offsets_[i] = offsets[i];
     syncEarlyDataTLS();
-    out->length = unsigned(n);
-    if (!sendFlights(ZuMv(out), offsets_, addr))
+    if (!sendFlights(ZuMv(out), offsets, addr))
       return false;
     markEstablished();
     return afterEstablished(ZuMv(addr));
+  }
+
+  void failTLS_(uint64_t error, ZiSockAddr addr) {
+    m_linkRx.crypto.failTLS();
+    if (!addr) {
+      // Record the failure before disconnecting suppresses close publication.
+      closeState(error);
+      disconnect();
+      return;
+    }
+    // The closing snapshot retires TLS on Rx after CRYPTO delivery returns.
+    app()->txRun([
+      link = impl(), runtime = m_linkRx.rxRuntimeGen, error, addr = ZuMv(addr)
+    ]() mutable {
+      if (link->disconnecting_() || runtime != link->m_linkTx.txRuntimeGen)
+	return;
+      link->closeStateTx(error);
+      (void)link->sendCloseFrame(ZuMv(addr), true);
+      link->enterLocalClosingTx();
+    });
   }
 
   StreamRef nextWritableStream() {
@@ -8727,12 +8752,6 @@ nextSpace:
       });
   }
 
-  void invalidCryptoOffsetsTx() {
-    ZiAssert(txInvoked_(), "Zquic", (),
-      "QUIC crypto offset failure outside Tx thread", return);
-    ++m_linkTx.txDiag.failures;
-  }
-
   template <
     typename BuildPayload,
     typename SendInitial, typename SendHandshake, typename SendShort>
@@ -8975,7 +8994,7 @@ nextSpace:
     if (payload) {
       if (!payload->count()) return ranges;
       const auto &part = payload->data()[0];
-      if (FrameCodec::parse(byteSpan(part.base, unsigned(part.len)), encoded, used) ||
+      if (FrameCodec::parse(part, encoded, used) ||
 	  !encoded.ackRanges) return ranges;
     }
     const auto &ackRanges = payload ? encoded.ackRanges : m_linkTx.txAck[ackLevel].ranges;
@@ -10225,7 +10244,8 @@ protected:
 	case FrameType::Crypto: {
 	  ZuBSpan contiguous;
 	  m_linkRx.rxCryptoAddr[level] = addr;
-	  if (m_linkRx.rxCrypto[level].receiveFrame(frame, contiguous) < 0) {
+	  if (!m_linkRx.crypto.tlsReady() ||
+	      m_linkRx.rxCrypto[level].receiveFrame(frame, contiguous) < 0) {
 	    return false;
 	  }
 	  m_linkRx.rxDiag.cryptoBytesRx += frame.payload.length();

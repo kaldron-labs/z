@@ -9,24 +9,25 @@
 #ifndef ZtlsRandom_HH
 #define ZtlsRandom_HH
 
+#ifndef ZtlsLib_HH
 #include <zlib/ZtlsLib.hh>
+#endif
 
 #include <zlib/ZuSpan.hh>
 
 namespace Ztls {
 
-class ZtlsAPI Random {
-public:
-  Random() { }
-  ~Random() { }
+  class Ztls_API Random {
+  public:
+    Random() { }
+    ~Random() { }
 
-  bool init() {
-    return cryptoInit();
-  }
+    bool init() { return cryptoInit(); }
 
-  bool random(ZuSpan<uint8_t> data);
-};
+    bool random(ZuSpan<uint8_t> data);
+  };
 
 }
 
-#endif /* ZtlsRandom_HH */
+// ZtlsRandom_HH
+#endif

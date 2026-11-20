@@ -19,22 +19,22 @@
 
 namespace Ztls_ {
 
-class VaultStore : public ZmPolymorph {
-public:
-  virtual Ztls::VaultResult init(const Ztls::VaultConfig &) = 0;
-  virtual void final() = 0;
-  virtual Ztls::VaultResult load(ZuCSpan key, Ztls::VaultLoadFn) = 0;
-  virtual Ztls::VaultResult save(ZuCSpan key, ZuBSpan) = 0;
-};
+  class VaultStore : public ZmPolymorph {
+  public:
+    virtual Ztls::VaultResult init(const Ztls::VaultConfig &) = 0;
+    virtual void final() = 0;
+    virtual Ztls::VaultResult load(ZuCSpan key, Ztls::VaultLoadFn) = 0;
+    virtual Ztls::VaultResult save(ZuCSpan key, ZuBSpan) = 0;
+  };
 
-typedef VaultStore *(*VaultStoreFn)();
+  using VaultStoreFn = VaultStore *(*)();
 
 }
 
 extern "C" {
-  typedef Ztls_::VaultStoreFn ZtlsVaultStoreFn;
-  ZtlsExtern Ztls_::VaultStore *ZtlsVaultStore();
+  using ZtlsVaultStoreFn = Ztls_::VaultStoreFn;
+  Ztls_Extern Ztls_::VaultStore *ZtlsVaultStore();
 }
-#define ZtlsVaultStoreFnSym "ZtlsVaultStore"
 
-#endif /* ZtlsVaultStore_HH */
+// ZtlsVaultStore_HH
+#endif

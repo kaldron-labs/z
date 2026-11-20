@@ -19,11 +19,7 @@
 
 namespace Ztls {
 
-ZtEnumNS(ZtlsAPI, MDAlg, int8_t,
-  SHA1,
-  SHA256,
-  SHA384,
-  SHA512);
+ZtEnumNS(Ztls_API, MDAlg, int8_t, SHA1, SHA256, SHA384, SHA512);
 
 using MDType = MDAlg::T;
 inline constexpr MDType SHA1 = MDAlg::SHA1;
@@ -32,13 +28,22 @@ inline constexpr MDType SHA384 = MDAlg::SHA384;
 inline constexpr MDType SHA512 = MDAlg::SHA512;
 
 template <MDType Type> struct MDTraits;
-template <> struct MDTraits<SHA1> { enum { Size = 20 }; };
-template <> struct MDTraits<SHA256> { enum { Size = 32 }; };
-template <> struct MDTraits<SHA384> { enum { Size = 48 }; };
-template <> struct MDTraits<SHA512> { enum { Size = 64 }; };
+template <> struct MDTraits<SHA1> {
+  enum { Size = 20 };
+};
+template <> struct MDTraits<SHA256> {
+  enum { Size = 32 };
+};
+template <> struct MDTraits<SHA384> {
+  enum { Size = 48 };
+};
+template <> struct MDTraits<SHA512> {
+  enum { Size = 64 };
+};
 
-ZtlsAPI const EVP_MD *evpMD(MDType);
+Ztls_API const EVP_MD *evpMD(MDType);
 
-} // Ztls
+} // namespace Ztls
 
-#endif /* ZtlsAlg_HH */
+// ZtlsAlg_HH
+#endif

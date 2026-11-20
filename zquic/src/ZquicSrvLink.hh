@@ -469,13 +469,6 @@ private:
   bool sendCryptoFlights_(
     ZmRef<ZiIOBuf> data, const CryptoOffsets &offsets,
     ZiSockAddr addr) {
-    if (!data || !validCryptoOffsets(offsets, data->length)) {
-      app()->txRun([link = impl()]() {
-	if (!link->disconnecting_())
-	  link->invalidCryptoOffsetsTx();
-      });
-      return true;
-    }
     typename Base::TxCryptoSnapshot txCrypto;
     Base::snapshotTxCrypto(txCrypto);
     data->owner = impl();

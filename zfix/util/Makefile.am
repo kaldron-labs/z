@@ -14,7 +14,7 @@ zfixd_SOURCES = zfixd.cc
 ZFIX_NATIVE_LIBS = \
 	$(top_builddir)/zfix/src/libZfix.la $(top_builddir)/zfix/src/libZfixFmt.la \
 	$(top_builddir)/ztls/src/libZtls.la $(top_builddir)/ztcp/src/libZtcp.la $(top_builddir)/zi/src/libZi.la \
-	$(LDADD) @PTLS_LIBS@ @Z_IO_LIBS@
+	$(LDADD) @Z_IO_LIBS@
 zfix_LDADD = libZfixLoadNative.la libZfixLoadFIX.la libZfixLoad.la $(ZFIX_NATIVE_LIBS)
 zfixd_LDADD = $(zfix_LDADD)
 LDADD = $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \

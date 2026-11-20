@@ -13,19 +13,18 @@ namespace Ztls::PK {
 
 namespace Load_ {
 
-struct KeyTypeIDs {
-  using Keys = ZuStringTL<
-    OIDs::PKCS1_RSA, OIDs::EC_ALG_UNRESTRICTED, OIDs::ED25519,
-    OIDs::MLKEM768, OIDs::X25519>;
-};
+  struct KeyTypeIDs {
+    using Keys = ZuStringTL<
+      OIDs::PKCS1_RSA, OIDs::EC_ALG_UNRESTRICTED, OIDs::ED25519, OIDs::MLKEM768, OIDs::X25519>;
+  };
 
-int keyType(ZuCSpan id)
-{
-  static constexpr auto matcher = ZuMatcher<KeyTypeIDs>();
-  return matcher.exact(id);
+  int keyType(ZuCSpan id)
+  {
+    static constexpr auto matcher = ZuMatcher<KeyTypeIDs>();
+    return matcher.exact(id);
+  }
+
 }
-
-} // namespace Load_
 
 namespace Data {
 
@@ -37,9 +36,8 @@ struct PEMHeadIDs {
 };
 struct PEMTailIDs {
   using Keys = ZuStringTL<
-    "-----END PRIVATE KEY-----", "-----END EC PRIVATE KEY-----",
-    "-----END RSA PRIVATE KEY-----", "-----END PUBLIC KEY-----",
-    "-----END RSA PUBLIC KEY-----">;
+    "-----END PRIVATE KEY-----", "-----END EC PRIVATE KEY-----", "-----END RSA PRIVATE KEY-----",
+    "-----END PUBLIC KEY-----", "-----END RSA PUBLIC KEY-----">;
 };
 
 int pemHead(ZuCSpan span, unsigned &offset, unsigned &length)
@@ -49,9 +47,8 @@ int pemHead(ZuCSpan span, unsigned &offset, unsigned &length)
   if (offset_ < 0) return -1;
   using Keys = ZuDecay<decltype(matcher.keys())>;
   offset = unsigned(offset_);
-  length = ZuSwitch::dispatch<Keys::N>(unsigned(type), [](auto I) {
-    return ZuType<I, Keys>{}().length();
-  });
+  length = ZuSwitch::dispatch<Keys::N>(
+    unsigned(type), [](auto I) { return ZuType<I, Keys>{}().length(); });
   return type;
 }
 

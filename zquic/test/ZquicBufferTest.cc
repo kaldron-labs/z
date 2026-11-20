@@ -187,7 +187,7 @@ void testDiagAggregation()
   diag.notePTO();
   diag.noteRetransmit(Zquic::SentFrameRef::control());
   diag.setRecovery(12000, 500);
-  diag.setHandshakeState("one_rtt");
+  diag.setHandshakeState("oneRtt");
   diag.setStreamCounts(3, 2);
 
   Zquic::BufDiag buf;
@@ -222,7 +222,7 @@ void testDiagAggregation()
       diag.retransmittedFrames == 1 &&
       diag.cwnd == 12000 &&
       diag.bytesInFlight == 500 &&
-      diag.handshakeState == "one_rtt" &&
+      diag.handshakeState == "oneRtt" &&
       diag.openStreams == 3 &&
       diag.closedStreams == 2 &&
       diag.pmtudProbes == 2 &&
@@ -235,7 +235,7 @@ void testDiagAggregation()
       strstr(summary.data(), "headerBytesRx=11") &&
       strstr(summary.data(), "bodyBytesTx=14") &&
       strstr(summary.data(), "cwnd=12000") &&
-      strstr(summary.data(), "handshakeState=one_rtt") &&
+      strstr(summary.data(), "handshakeState=oneRtt") &&
       strstr(summary.data(), "pmtudFailure=2"),
     "diagnostic summary text mismatch");
 
@@ -286,8 +286,8 @@ void testPktBuildMetadata()
       build.padTo(Zquic::MinUDPPayload) &&
       build.count() == 1 &&
       build.bytes() == Zquic::MinUDPPayload &&
-      build.data()[0].base[0] == 0 &&
-      build.data()[0].base[Zquic::MinUDPPayload - 1] == 0,
+      build.data()[0][0] == 0 &&
+      build.data()[0][Zquic::MinUDPPayload - 1] == 0,
     "QUIC Initial minimum padding metadata mismatch");
 
   build.reset();

@@ -17,23 +17,19 @@
 
 namespace Ztls {
 
-class Random;
+  class Random;
 
-// constant-time equal
-ZtlsExtern bool ctEqual(ZuBSpan, ZuBSpan);
+  // constant-time equal
+  Ztls_Extern bool ctEqual(ZuBSpan, ZuBSpan);
 
-namespace SecretHash {
-  enum {
-    Version = 1,
-    SaltSize = 16,
-    DigestSize = 32,
-    Size = 1 + SaltSize + DigestSize
-  };
-}
+  namespace SecretHash {
+    enum { Version = 1, SaltSize = 16, DigestSize = 32, Size = 1 + SaltSize + DigestSize };
+  }
 
-ZtlsExtern bool secretHash(Random &, ZuBSpan, ZuSpan<uint8_t>);
-ZtlsExtern bool secretVerify(ZuBSpan, ZuBSpan);
+  Ztls_Extern bool secretHash(Random &, ZuBSpan, ZuSpan<uint8_t>);
+  Ztls_Extern bool secretVerify(ZuBSpan, ZuBSpan);
 
 }
 
-#endif /* ZtlsSec_HH */
+// ZtlsSec_HH
+#endif

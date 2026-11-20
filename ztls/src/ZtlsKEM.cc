@@ -8,22 +8,22 @@
 
 namespace Ztls::PK::Load_ {
 
-ZuUnion<ZmRef<AnyKey>, ZeException> loadMLKEM768PK(ZuBSpan pubKey)
-{
-  try {
-    return ZmRef<AnyKey>{new PK_MLKEM768{pubKey}};
-  } catch (const ZeException &e) {
-    return e;
-  }
-}
+      ZuUnion<ZmRef<AnyKey>, ZeException> loadMLKEM768PK(ZuBSpan pubKey)
+      {
+	try {
+	  return ZmRef<AnyKey>{new PK_MLKEM768{pubKey}};
+	} catch (const ZeException &e) {
+	  return e;
+	}
+      }
 
-ZuUnion<ZmRef<AnyKey>, ZeException> loadMLKEM768SK(ZuBSpan key)
-{
-  try {
-    return ZmRef<AnyKey>{new SK_MLKEM768{key}};
-  } catch (const ZeException &e) {
-    return e;
-  }
-}
+      ZuUnion<ZmRef<AnyKey>, ZeException> loadMLKEM768SK(ZuBSpan key)
+      {
+	try {
+	  return ZmRef<AnyKey>{new SK_MLKEM768{key}};
+	} catch (const ZeException &e) {
+	  return e;
+	}
+      }
 
-} // Ztls::PK::Load_
+}

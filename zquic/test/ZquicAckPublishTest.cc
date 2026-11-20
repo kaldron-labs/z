@@ -13,7 +13,7 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/Zquic.hh>
 
-#include <zpicotls/openssl.h>
+#include <zlib/ZtlsEngineOpenSSL.hh>
 
 using namespace ZuTestUtil;
 
@@ -95,7 +95,7 @@ public:
     Zquic::TrafficSecret secret;
     Base::initClientPathTx({}, {});
     return Zquic::PktProt::deriveSecret(secret,
-      &ptls_openssl_aes128gcmsha256, ZuBSpan{bytes, sizeof(bytes)}) &&
+      &Ztls_::openssl_aes128gcmsha256, ZuBSpan{bytes, sizeof(bytes)}) &&
       Base::installAppDataKeys_(secret, secret, Zquic::CxnID{"publish"});
   }
   void receive(unsigned pn, Zquic::EcnMark::T mark = Zquic::EcnMark::ECT0) {
@@ -109,7 +109,7 @@ public:
     Zquic::Frame frame;
     unsigned used = 0;
     return !Zquic::FrameCodec::parse(
-      ZuBSpan{build.data()[0].base, unsigned(build.data()[0].len)}, frame, used) &&
+      build.data()[0], frame, used) &&
       frame.type == Zquic::FrameType::Ack && frame.ackECN.ect0 == pn &&
       !frame.ackECN.ect1 && !frame.ackECN.ce && frame.ackRanges.length() == 1 &&
       frame.ackRanges[0].first == 1 && frame.ackRanges[0].largest == pn;
@@ -152,7 +152,7 @@ public:
     constexpr auto space = Zquic::PktNumSpace::AppData;
     if (!Base::appendPendingAck(space, build) || !build.ack(space) ||
 	build.count() != 1 || build.bytes() > size) return 0;
-    memcpy(data, build.data()[0].base, build.bytes());
+    memcpy(data, build.data()[0].data(), build.bytes());
     Base::ackSentTx(space, build.ackGen());
     return build.bytes();
   }

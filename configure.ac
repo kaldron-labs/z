@@ -206,18 +206,6 @@ AC_SUBST(Z_ZT_LIBS)
 AC_SUBST(Z_IO_LIBS)
 AC_SUBST(Z_TERM_LIBS)
 
-# Zquic and consumers of its public headers still use zpicotls.
-PKG_CHECK_MODULES([PTLS], [
-  zpicotls-core >= 1.3
-  zpicotls-openssl >= 1.3
-  zpicotls-fusion >= 1.3
-], [], [dnl
-  AC_MSG_ERROR([zpicotls >= 1.3 with OpenSSL and fusion support required])
-])
-AC_SUBST(PTLS_LIBS)
-AC_SUBST(PTLS_CFLAGS)
-CPPFLAGS="$PTLS_CFLAGS $CPPFLAGS"
-
 PKG_CHECK_MODULES([CRYPTO], [libcrypto >= 3.5], [], [
   AC_MSG_ERROR([OpenSSL libcrypto >= 3.5 with ML-KEM-768 support required])
 ])

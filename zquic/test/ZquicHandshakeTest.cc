@@ -105,7 +105,7 @@ struct TLSPeer : public ZmNHeap<TLSPeer> {
 friend inline ZuStringT<"Zquic.Test.TLSPeer"> ZmNHeapID(TLSPeer *);
 
   Zquic::Crypto		*crypto;
-  // picotls uses four TLS encryption epochs.
+  // The raw TLS flight has four encryption levels.
   ZuArray<Zquic::CryptoStream, 4> tx;
   ZuArray<Zquic::CryptoStream, 4> rx;
 
@@ -118,10 +118,11 @@ friend inline ZuStringT<"Zquic.Test.TLSPeer"> ZmNHeapID(TLSPeer *);
   }
 };
 
-static bool enqueueFlight(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
-    size_t offsets[5])
+static bool enqueueFlight(
+  TLSPeer &peer, TLSQueue &queue, ZuBSpan data, const Zquic::CryptoOffsets &offsets)
 {
-  for (size_t epoch = 0; epoch < 4; ++epoch) {
+  if (!Zquic::validCryptoOffsets(offsets, data.length())) return false;
+  for (size_t epoch = 0; epoch < Zquic::TLSEpochCount; ++epoch) {
     if (offsets[epoch + 1] <= offsets[epoch]) continue;
     unsigned off = unsigned(offsets[epoch]);
     unsigned len = unsigned(offsets[epoch + 1] - offsets[epoch]);
@@ -130,7 +131,7 @@ static bool enqueueFlight(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
       Zquic::VarInt::length(len) + len;
     if (size > TLSBufSize) return false;
     ZmRef<TLSQueue::Node> msg = allocator<TLSBufAlloc>()->allocBuf();
-    int n = tx.writeFrame(msg->alloc(size), size, Zquic::byteSpan(data + off, len));
+    int n = tx.writeFrame(msg->alloc(size), size, ZuBSpan{data.data() + off, len});
     if (n < 0) return false;
     msg->epoch = epoch;
     msg->length = unsigned(n);
@@ -144,7 +145,7 @@ static bool handleTLS(
 {
   ZmRef<ZiIOBuf> buf =
     allocator<Zquic::CryptoTxBufAlloc<TLSBufSize, TLSBufSize>>()->allocBuf();
-  size_t offsets[5] = {};
+  Zquic::CryptoOffsets offsets;
   ZuBSpan in;
   size_t inEpoch = msg ? msg->epoch : 0;
   if (msg) {
@@ -158,7 +159,7 @@ static bool handleTLS(
     if (!in) return true;
   }
   int n = dst.crypto->handleTLSMessage(buf.ptr(), offsets, inEpoch, in);
-  return n >= 0 && enqueueFlight(dst, out, buf->data(), offsets);
+  return n >= 0 && enqueueFlight(dst, out, buf->cspan(), offsets);
 }
 
 static bool drainTLS(TLSPeer &dst, TLSQueue &in, TLSQueue &out)
@@ -376,7 +377,7 @@ void testMessageLevelTLSHandshake()
   ZuCHECK(h > 0, "1-RTT traffic probe short header encode failed");
   unsigned pnOffset = unsigned(h) - 2;
   uint8_t packet[256];
-  ptls_iovec_t plain = ptls_iovec_init(payload, sizeof(payload));
+  Ztls_::Bytes plain = Ztls_::wire_bytes(payload, sizeof(payload));
   int n = Zquic::PktProt::protectShortV(
     packet, sizeof(packet), client.txProtState(Zquic::PktNumSpace::AppData),
     3, Zquic::byteSpan(header, unsigned(h)), &plain, 1, pnOffset, 2);

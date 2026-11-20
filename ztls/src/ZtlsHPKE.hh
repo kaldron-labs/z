@@ -19,18 +19,17 @@
 
 namespace Ztls::HPKE {
 
-  enum { TagSize = 16 }; // ChaCha20-Poly1305 authentication tag
+    enum { TagSize = 16 }; // ChaCha20-Poly1305 authentication tag
 
-  ZtlsAPI ZuUnion<void, ZeException> sealBase(
-    Random &rng, const PK::PK_MLKEM768_X25519 &recipient,
-    ZuBSpan info, ZuBSpan aad, ZuBSpan plaintext,
-    ZuSpan<uint8_t> enc, ZuSpan<uint8_t> ciphertext);
+    Ztls_API ZuUnion<void, ZeException> sealBase(
+      Random &rng, const PK::PK_MLKEM768_X25519 &recipient, ZuBSpan info, ZuBSpan aad,
+      ZuBSpan plaintext, ZuSpan<uint8_t> enc, ZuSpan<uint8_t> ciphertext);
 
-  ZtlsAPI ZuUnion<size_t, ZeException> openBase(
-    const PK::SK_MLKEM768_X25519 &identity,
-    ZuBSpan info, ZuBSpan aad, ZuBSpan enc, ZuBSpan ciphertext,
-    ZuSpan<uint8_t> plaintext);
+    Ztls_API ZuUnion<size_t, ZeException> openBase(
+      const PK::SK_MLKEM768_X25519 &identity, ZuBSpan info, ZuBSpan aad, ZuBSpan enc,
+      ZuBSpan ciphertext, ZuSpan<uint8_t> plaintext);
 
 }
 
-#endif /* ZtlsHPKE_HH */
+// ZtlsHPKE_HH
+#endif

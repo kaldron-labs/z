@@ -8,10 +8,10 @@
 #include <limits.h>
 #include <string.h>
 
-#include <zlib/ZuDerive.hh>
-#include <zlib/ZuHex.hh>
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuByteSwap.hh>
+#include <zlib/ZuDerive.hh>
+#include <zlib/ZuHex.hh>
 
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmHash.hh>
@@ -22,21 +22,23 @@
 #include <zlib/ZtPlatform.hh>
 #include <zlib/ZtScratch.hh>
 
+#include <zlib/ZfJSON.hh>
+
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiModule.hh>
 #include <zlib/ZiPIDFile.hh>
 #include <zlib/ZiPlatform.hh>
 
-#include <zlib/ZfJSON.hh>
-
-#include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsAge.hh>
+#include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/ZtlsVaultStore.hh>
 
 #if defined(_WIN32) || defined(__linux__)
-namespace Ztls_ { VaultStore *vaultKeyRing(); }
+namespace Ztls_ {
+  VaultStore *vaultKeyRing();
+}
 #endif
 
 namespace Ztls {
@@ -46,115 +48,92 @@ ZtEnumImplNS(VaultVariant);
 
 namespace Vault_ {
 
-using Bytes = ZtBArray<ZtArraySecret<true,
-  ZtArrayHeapID<"Ztls.Vault.Value">>>;
+using Bytes = ZtBArray<ZtArraySecret<true, ZtArrayHeapID<"Ztls.Vault.Value">>>;
 
 struct Entry_ {
-  VaultString key;
-  Bytes value;
+  VaultString	key;
+  Bytes		value;
 
   Entry_(ZuCSpan key_, ZuBSpan value_) : key{key_}, value{value_} { }
   static ZuCSpan KeyAxor(const Entry_ &entry) { return entry.key; }
 };
 
-ZmHashDerive(Entries, Entry_,
-  (ZmHashNode<Entry_,
-    ZmHashKey<Entry_::KeyAxor,
-      ZmHashHeapID<"Ztls.Vault.Entry">>>));
+ZmHashDerive(
+  Entries, Entry_,
+  (ZmHashNode<Entry_, ZmHashKey<Entry_::KeyAxor, ZmHashHeapID<"Ztls.Vault.Entry">>>));
 
 class Ephemeral_ : public ZmNHeap<Ephemeral_>, public Ztls_::VaultStore {
 friend inline ZuStringT<"Ztls.Vault.Ephemeral"> ZmNHeapID(Ephemeral_ *);
-
 public:
   VaultResult init(const VaultConfig &) override { return {}; }
   void final() override { m_entries.clean(); }
 
-  VaultResult load(ZuCSpan key, VaultLoadFn fn) override {
+  VaultResult load(ZuCSpan key, VaultLoadFn fn) override
+  {
     auto entry = m_entries.find(key);
-    if (!entry)
-      return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
+    if (!entry) return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
     fn(entry->value);
     return {};
   }
 
-  VaultResult save(ZuCSpan key, ZuBSpan value) override {
+  VaultResult save(ZuCSpan key, ZuBSpan value) override
+  {
     if (auto entry = m_entries.find(key)) {
       entry->value = value;
     } else
       m_entries.addNode(new Entries::Node{key, value});
     return {};
   }
-
 private:
-  Entries m_entries;
+  Entries	m_entries;
 };
 
 ZuDerive(Ephemeral, Ephemeral_);
 
-struct Values : ZmRBTreeKV<ZuCSpan, ZuBSpan,
-    ZmRBTreeUnique<true, ZmRBTreeHeapID<"Ztls.Vault.FileEntry">>> {
-  using Base = ZmRBTreeKV<ZuCSpan, ZuBSpan,
-    ZmRBTreeUnique<true, ZmRBTreeHeapID<"Ztls.Vault.FileEntry">>>;
-  void add(ZuCSpan key, ZuBSpan value) {
-    if (auto node = find(key)) node->val() = value;
-    else Base::add(key, value);
+struct Values :
+ZmRBTreeKV<ZuCSpan, ZuBSpan, ZmRBTreeUnique<true, ZmRBTreeHeapID<"Ztls.Vault.FileEntry">>> {
+  using Base =
+    ZmRBTreeKV<ZuCSpan, ZuBSpan, ZmRBTreeUnique<true, ZmRBTreeHeapID<"Ztls.Vault.FileEntry">>>;
+  void add(ZuCSpan key, ZuBSpan value)
+  {
+    if (auto node = find(key))
+      node->val() = value;
+    else
+      Base::add(key, value);
   }
 };
 inline ZfJSON::AsMap<ZfFieldTC::Bytes> ZfJSON_Fmt(Values *);
 
-struct Accounts : ZmRBTreeKV<ZuCSpan, Values,
-    ZmRBTreeUnique<true, ZmRBTreeHeapID<"Ztls.Vault.FileAccount">>> {
-  using Base = ZmRBTreeKV<ZuCSpan, Values,
-    ZmRBTreeUnique<true, ZmRBTreeHeapID<"Ztls.Vault.FileAccount">>>;
-  void add(ZuCSpan key, Values value) {
-    if (auto node = find(key)) node->val() = ZuMv(value);
-    else Base::add(key, ZuMv(value));
+struct Accounts :
+ZmRBTreeKV<ZuCSpan, Values, ZmRBTreeUnique<true, ZmRBTreeHeapID<"Ztls.Vault.FileAccount">>> {
+  using Base =
+    ZmRBTreeKV<ZuCSpan, Values, ZmRBTreeUnique<true, ZmRBTreeHeapID<"Ztls.Vault.FileAccount">>>;
+  void add(ZuCSpan key, Values value)
+  {
+    if (auto node = find(key))
+      node->val() = ZuMv(value);
+    else
+      Base::add(key, ZuMv(value));
   }
 };
 inline ZfJSON::AsMap<ZfFieldTC::UDT> ZfJSON_Fmt(Accounts *);
 
 struct FileData {
-  uint32_t version = 0;
-  Accounts accounts;
+  uint32_t	version = 0;
+  Accounts	accounts;
 };
-ZfStruct(ZtlsAPI, (FileData, JSON),
-  (version, (Mutable),		UInt32),
-  (accounts, (Mutable),		UDT));
+ZfStruct(Ztls_API, (FileData, JSON), (version, (Mutable), UInt32), (accounts, (Mutable), UDT));
 
-// Loading a single credential retains only the selected parse-tree views.
-struct FileView {
-  uint32_t version = 0;
-  ZfJSON::Union<> accounts;
-};
-ZfStruct(ZtlsAPI, (FileView, JSON),
-  (version, (Mutable),		UInt32),
-  (accounts, (Mutable),		UDT));
-
-struct FilePick {
-  using Key = ZuCSpan;
-  using Val = ZfJSON::Union<>;
-  ZuCSpan wanted;
-  const ZfJSON::AnyNode *node = nullptr;
-
-  void clean() { node = nullptr; }
-  void add(ZuCSpan key, Val value) {
-    if (key == wanted) node = value.p<const ZfJSON::AnyNode *>();
-  }
-};
-inline ZfJSON::AsMap<ZfFieldTC::UDT> ZfJSON_Fmt(FilePick *);
-
-using FileText = ZtCArray<ZtArraySecret<true,
-  ZtArrayHeapID<"Ztls.Vault.FileText">>>;
+using FileText = ZtCArray<ZtArraySecret<true, ZtArrayHeapID<"Ztls.Vault.FileText">>>;
 
 enum { TempIDSize = 16 };
 
 template <typename L>
-VaultResult publish(const Zi::Path &dir, const Zi::Path &path,
-  ZuCSpan prefix, L &&write)
+VaultResult publish(const Zi::Path &dir, const Zi::Path &path, ZuCSpan prefix, L &&write)
 {
   // A 128-bit random suffix avoids conflicts with interrupted older writes.
   uint8_t id[TempIDSize];
-  Random rng;
+  Random  rng;
   if (!rng.init() || !rng.random(id))
     return ZeEXCEPT(Error, "ZtlsVault", "temporary name failed");
   char hex[ZuHex::enclen(sizeof(id))];
@@ -163,69 +142,69 @@ VaultResult publish(const Zi::Path &dir, const Zi::Path &path,
   Zi::Path leaf;
   leaf << prefix << ZuCSpan{hex, sizeof(hex)};
   Zi::Path temp = ZiFile::append(dir, leaf);
-  ZiFile file;
-  if (file.open(temp, ZiFile::WriteOnly | ZiFile::Create |
-      ZiFile::Exclusive | ZiFile::NoFollow | ZiFile::GC, 0600) != Zi::OK)
-    return ZeEXCEPT(Error, "ZtlsVault", "temporary open failed");
-  bool published = false;
-  ZuGuard cleanup{[&file, &published, &temp]() {
+  ZiFile   file;
+  if (file.open(
+	temp,
+	ZiFile::WriteOnly | ZiFile::Create | ZiFile::Exclusive | ZiFile::NoFollow | ZiFile::GC,
+	0600) != Zi::OK)
+    return ZeEXCEPT(
+      Error, "ZtlsVault", ([e = file.error()](auto &s) { s << "temporary open failed: " << e; }));
+  bool	  published = false;
+  ZuGuard cleanup{[&file, &published, &temp]()
+  {
     file.close();
     if (!published) ZiFile::remove(temp);
   }};
-  auto result = ZuFwd<L>(write)(file);
+  auto	  result = ZuFwd<L>(write)(file);
   if (result.template is<ZeException>()) return result;
   if (file.sync() != Zi::OK)
-    return ZeEXCEPT(Error, "ZtlsVault", "aggregate sync failed");
+    return ZeEXCEPT(
+      Error, "ZtlsVault", ([e = file.error()](auto &s) { s << "aggregate sync failed: " << e; }));
   file.close();
-  if (ZiFile::rename(temp, path) != Zi::OK)
-    return ZeEXCEPT(Error, "ZtlsVault", "aggregate publish failed");
+  ZeError e;
+  if (ZiFile::rename(temp, path, &e) != Zi::OK)
+    return ZeEXCEPT(
+      Error, "ZtlsVault", ([e](auto &s) { s << "aggregate publish failed: " << e; }));
   published = true;
   return {};
 }
 
 class File_ : public ZmNHeap<File_>, public Ztls_::VaultStore {
 friend inline ZuStringT<"Ztls.Vault.File"> ZmNHeapID(File_ *);
-
 public:
   File_(const Zi::Path &dir) : m_dir{dir} { }
 
-  VaultResult init(const VaultConfig &cf) override {
+  VaultResult init(const VaultConfig &cf) override
+  {
     m_account = cf.account;
     m_path = ZiFile::append(m_dir, "secrets.json");
     return {};
   }
   void final() override { m_account.clear(); }
 
-  VaultResult load(ZuCSpan key, VaultLoadFn fn) override {
-    FileText text;
-    FileView data;
+  VaultResult load(ZuCSpan key, VaultLoadFn fn) override
+  {
+    FileText		   text;
+    FileData		   data;
     ZuPtr<ZfJSON::AnyNode> parsed;
-    auto result = read_(data, text, parsed);
+    auto		   result = read(data, text, parsed);
     if (result.template is<ZeException>()) return result;
-    if (!data.version)
-      return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
-    FilePick account{m_account};
-    ZfJSON::handler<FilePick>(data.accounts.p<const ZfJSON::AnyNode *>()).load(account);
-    if (!account.node)
-      return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
-    FilePick entry{key};
-    ZfJSON::handler<FilePick>(account.node).load(entry);
-    if (!entry.node)
-      return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
-    auto value = ZfJSON::loadValue<ZuFacet::JSON, ZfFieldFilter::Load,
-      ZfFieldTC::Bytes, ZuTypeList<>, ZuBSpan>(
-	const_cast<ZfJSON::AnyNode *>(entry.node));
-    // JSON decoding keeps byte values as views into the mutable file buffer.
-    fn(ZuSpan<uint8_t>{const_cast<uint8_t *>(value.data()),
-      value.length()});
+    if (!data.version) return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
+    auto account = data.accounts.find(m_account);
+    if (!account) return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
+    auto entry = account->val().find(key);
+    if (!entry) return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
+    auto value = entry->val();
+    fn(ZuSpan<uint8_t>{const_cast<uint8_t *>(value.data()), value.length()});
     return {};
   }
 
-  VaultResult save(ZuCSpan key, ZuBSpan value) override {
-    FileText text;
-    FileData data;
+  VaultResult save(ZuCSpan key, ZuBSpan value) override
+  {
+    FileText		   text;
+    FileData		   data;
     ZuPtr<ZfJSON::AnyNode> parsed;
-    auto result = read_(data, text, parsed);
+    auto		   result = read(data, text, parsed);
     if (result.template is<ZeException>()) return result;
     if (!data.version) data.version = 1;
     auto account = data.accounts.find(m_account);
@@ -234,37 +213,35 @@ public:
       account = data.accounts.find(m_account);
     }
     account->val().add(key, value);
-    return write_(data);
+    return write(data);
   }
-
 private:
-  template <typename Data>
-  VaultResult read_(Data &data, FileText &text,
-      ZuPtr<ZfJSON::AnyNode> &nodes) const {
+  VaultResult read(FileData &data, FileText &text, ZuPtr<ZfJSON::AnyNode> &nodes) const
+  {
     ZiFile file;
-    if (file.open(m_path, ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC)
-	!= Zi::OK) {
+    if (file.open(m_path, ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) != Zi::OK) {
       if (file.error().errNo() == ZiENOENT) return {};
 #ifdef _WIN32
       if (file.error().errNo() == ERROR_PATH_NOT_FOUND) return {};
 #endif
-      return ZeEXCEPT(Error, "ZtlsVault", "aggregate open failed");
+      return ZeEXCEPT(Error, "ZtlsVault", ([e = file.error()](auto &s) {
+	s << "aggregate open failed: " << e;
+      }));
     }
     auto size = file.size();
-    if (size <= 0 || size > INT_MAX)
-      return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
+    if (size <= 0 || size > INT_MAX) return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
     text = FileText(size, size);
     if (file.read(text.data(), unsigned(size)) != size)
-      return ZeEXCEPT(Error, "ZtlsVault", "aggregate read failed");
+      return ZeEXCEPT(Error, "ZtlsVault", ([e = file.error()](auto &s) {
+	s << "aggregate read failed: " << e;
+      }));
     auto parsed = ZfJSON::scan(text);
     if (parsed.p<0>() < 0 || !parsed.p<1>() ||
-	parsed.p<1>()->data<ZfJSON::AnyNode::Array>().length() != 1)
+      parsed.p<1>()->data<ZfJSON::AnyNode::Array>().length() != 1)
       return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
-    ZuCSpan remaining{text.data() + parsed.p<0>(),
-	unsigned(size - parsed.p<0>())};
-    if (remaining.find([](char c) {
-	return c != ' ' && c != '\t' && c != '\n' && c != '\r';
-      }) >= 0)
+    ZuCSpan remaining{text.data() + parsed.p<0>(), unsigned(size - parsed.p<0>())};
+    if (
+      remaining.find([](char c) { return c != ' ' && c != '\t' && c != '\n' && c != '\r'; }) >= 0)
       return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
     nodes = ZuMv(parsed.p<1>());
     auto &root = (*nodes)[0];
@@ -286,29 +263,32 @@ private:
 	    return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
       }
     }
-    auto handler = ZfJSON::handler<Data>(root);
-    if (!handler.valid)
-      return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
+    auto handler = ZfJSON::handler<FileData>(root);
+    if (!handler.valid) return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
     handler.load(data);
     if (data.version != 1 || !hasAccounts)
       return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
     return {};
   }
 
-  VaultResult write_(const FileData &data) const {
+  VaultResult write(const FileData &data) const
+  {
     FileText text;
     ZfJSON::save(text, data);
-    return publish(m_dir, m_path, "secrets.json.tmp.",
-      [&text](ZiFile &file) {
+    return publish(
+      m_dir, m_path, "secrets.json.tmp.", [&text](ZiFile &file)
+    {
       if (file.write(text.data(), text.length()) != Zi::OK)
-	return VaultResult{ZeEXCEPT(Error, "ZtlsVault", "aggregate write failed")};
+	return VaultResult{ZeEXCEPT(Error, "ZtlsVault", ([e = file.error()](auto &s) {
+	  s << "aggregate write failed: " << e;
+	}))};
       return VaultResult{};
     });
   }
 
-  Zi::Path m_dir;
-  Zi::Path m_path;
-  VaultString m_account;
+  Zi::Path	m_dir;
+  Zi::Path	m_path;
+  VaultString	m_account;
 };
 
 ZuDerive(File, File_);
@@ -317,12 +297,14 @@ VaultResult ensureDir(const Zi::Path &);
 
 class Auto_ : public ZmNHeap<Auto_>, public Ztls_::VaultStore {
 friend inline ZuStringT<"Ztls.Vault.Auto"> ZmNHeapID(Auto_ *);
-
 public:
-  Auto_(const Zi::Path &home, ZiPIDFile *pid) :
-    m_home{home}, m_dir{ZiFile::append(home, "vault")}, m_pid{pid} { }
+  Auto_(const Zi::Path &home, ZiPIDFile *pid)
+  :
+    m_home{home}, m_dir{ZiFile::append(home, "vault")}, m_pid{pid}
+  { }
 
-  VaultResult init(const VaultConfig &cf) override {
+  VaultResult init(const VaultConfig &cf) override
+  {
     m_config = cf;
 #ifdef _WIN32
     if (cf.variant != VaultVariant::Direct)
@@ -334,10 +316,11 @@ public:
       m_native->final();
       m_native = nullptr;
     }
-    return file_();
+    return file();
   }
 
-  void final() override {
+  void final() override
+  {
     if (m_native) {
       m_native->final();
       m_native = nullptr;
@@ -348,35 +331,37 @@ public:
     }
   }
 
-  VaultResult load(ZuCSpan key, VaultLoadFn fn) override {
+  VaultResult load(ZuCSpan key, VaultLoadFn fn) override
+  {
     if (m_native) {
       auto result = m_native->load(key, fn);
       if (!result.template is<ZeException>()) return result;
     }
-    auto result = file_();
+    auto result = file();
     if (result.template is<ZeException>()) return result;
     return m_file->load(key, ZuMv(fn));
   }
 
-  VaultResult save(ZuCSpan key, ZuBSpan value) override {
+  VaultResult save(ZuCSpan key, ZuBSpan value) override
+  {
     if (m_native) {
       auto result = m_native->save(key, value);
       if (!result.template is<ZeException>()) return result;
     }
-    auto result = file_();
+    auto result = file();
     if (result.template is<ZeException>()) return result;
     return m_file->save(key, value);
   }
-
 private:
-  VaultResult file_() {
+  VaultResult file()
+  {
     if (m_file) return {};
     auto result = ensureDir(m_home);
     if (result.template is<ZeException>()) return result;
     result = ensureDir(m_dir);
     if (result.template is<ZeException>()) return result;
     if (m_config.variant == VaultVariant::Direct &&
-	m_pid->init(m_dir, "vault.pid") != ZiPIDFile::OK)
+      m_pid->init(m_dir, "vault.pid") != ZiPIDFile::OK)
       return ZeEXCEPT(Error, "ZtlsVault", "vault already open");
     m_file = new File{m_dir};
     result = m_file->init(m_config);
@@ -387,19 +372,19 @@ private:
     return result;
   }
 
-  VaultConfig m_config;
-  Zi::Path m_home;
-  Zi::Path m_dir;
-  ZiPIDFile *m_pid;
-  ZmRef<Ztls_::VaultStore> m_native;
-  ZmRef<Ztls_::VaultStore> m_file;
+  VaultConfig			m_config;
+  Zi::Path			m_home;
+  Zi::Path			m_dir;
+  ZiPIDFile			*m_pid;
+  ZmRef<Ztls_::VaultStore>	m_native;
+  ZmRef<Ztls_::VaultStore>	m_file;
 };
 
 ZuDerive(Auto, Auto_);
 
 // Versioned, length-delimited plaintext inside the authenticated age file.
 constexpr uint8_t SecretsMagic[] = {'Z', 'V', 'L', 'T', 1};
-constexpr auto PassphraseKey = "vault/passphrase"_z;
+constexpr auto	  PassphraseKey = "vault/passphrase"_z;
 enum {
   PassphraseBytes = 32,
   PassphraseSize = ZuBase64::enclen(PassphraseBytes),
@@ -408,17 +393,19 @@ enum {
 
 class Indirect_ : public ZmNHeap<Indirect_>, public Ztls_::VaultStore {
 friend inline ZuStringT<"Ztls.Vault.Indirect"> ZmNHeapID(Indirect_ *);
-
 public:
-  Indirect_(ZmRef<Ztls_::VaultStore> store, const Zi::Path &dir) :
-      m_store{ZuMv(store)}, m_dir{dir} { }
+  Indirect_(ZmRef<Ztls_::VaultStore> store, const Zi::Path &dir)
+  :
+    m_store{ZuMv(store)}, m_dir{dir}
+  { }
 
 // GCC loses the dynamic path storage bounds through the builtin flag.
 #if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-overflow"
 #endif
-  VaultResult init(const VaultConfig &cf) override {
+  VaultResult init(const VaultConfig &cf) override
+  {
     try {
       MD<SHA256> hash;
       hash.update(cf.account);
@@ -427,73 +414,74 @@ public:
       char hex[ZuHex::enclen(sizeof(digest))];
       ZuHex::encode(hex, digest);
       ZuClear(digest, sizeof(digest));
-      m_path = ZiFile::append(m_dir,
-        Zi::Path{} << ZuCSpan{hex, sizeof(hex)} << ".age");
+      m_path = ZiFile::append(m_dir, Zi::Path{} << ZuCSpan{hex, sizeof(hex)} << ".age");
       return m_store->init(cf);
-    } catch (const ZeException &e) { return e; }
+    } catch (const ZeException &e) {
+      return e;
+    }
   }
 #if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
 #pragma GCC diagnostic pop
 #endif
 
-  void final() override { m_store->final(); m_path.null(); }
+  void final() override
+  {
+    m_store->final();
+    m_path.null();
+  }
 
-  VaultResult load(ZuCSpan key, VaultLoadFn fn) override {
+  VaultResult load(ZuCSpan key, VaultLoadFn fn) override
+  {
     ZiFile file;
-    auto result = open_(file);
+    auto   result = open_(file);
     if (result.template is<ZeException>()) return result;
     uint8_t passphrase[PassphraseSize];
-    ZuGuard clearPassphrase{[&passphrase]() {
-      ZuClear(passphrase, sizeof(passphrase));
-    }};
-    result = passphrase_(passphrase, false);
+    ZuGuard clearPassphrase{[&passphrase]() { ZuClear(passphrase, sizeof(passphrase)); }};
+    result = readPassphrase(passphrase, false);
     if (result.template is<ZeException>()) return result;
     Bytes plain;
-    result = decrypt_(file, passphrase, plain);
+    result = decrypt(file, passphrase, plain);
     if (result.template is<ZeException>()) return result;
     uint64_t offset = 0, length = 0;
-    result = find_(plain, key, offset, length);
+    result = find(plain, key, offset, length);
     if (result.template is<ZeException>()) return result;
-    if (offset == UINT64_MAX)
-      return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
-    fn(ZuSpan<uint8_t>{plain.data() + offset + RecordSize + key.length(),
-      length});
+    if (offset == UINT64_MAX) return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
+    fn(ZuSpan<uint8_t>{plain.data() + offset + RecordSize + key.length(), length});
     return {};
   }
 
-  VaultResult save(ZuCSpan key, ZuBSpan value) override {
-    if (key.length() > UINT32_MAX ||
-	value.length() > SIZE_MAX - RecordSize - key.length())
+  VaultResult save(ZuCSpan key, ZuBSpan value) override
+  {
+    if (key.length() > UINT32_MAX || value.length() > SIZE_MAX - RecordSize - key.length())
       return ZeEXCEPT(Error, "ZtlsVault", "aggregate too large");
     uint64_t newSize = RecordSize + key.length() + value.length();
-    ZiFile file;
-    if (file.open(m_path, ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC)
-	!= Zi::OK && file.error().errNo() != ZiENOENT
+    ZiFile   file;
+    if (file.open(m_path, ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) != Zi::OK &&
+      file.error().errNo() != ZiENOENT
 #ifdef _WIN32
-	&& file.error().errNo() != ERROR_PATH_NOT_FOUND
+      && file.error().errNo() != ERROR_PATH_NOT_FOUND
 #endif
-      )
-      return ZeEXCEPT(Error, "ZtlsVault", "aggregate open failed");
+    )
+      return ZeEXCEPT(Error, "ZtlsVault", ([e = file.error()](auto &s) {
+	s << "aggregate open failed: " << e;
+      }));
 
     uint8_t passphrase[PassphraseSize];
-    ZuGuard clearPassphrase{[&passphrase]() {
-      ZuClear(passphrase, sizeof(passphrase));
-    }};
-    auto result = passphrase_(passphrase, !file);
+    ZuGuard clearPassphrase{[&passphrase]() { ZuClear(passphrase, sizeof(passphrase)); }};
+    auto    result = readPassphrase(passphrase, !file);
     if (result.template is<ZeException>()) return result;
     Bytes plain;
     if (file) {
-      result = decrypt_(file, passphrase, plain, newSize);
+      result = decrypt(file, passphrase, plain, newSize);
       if (result.template is<ZeException>()) return result;
       file.close();
     } else {
       plain = Bytes{ZuBSpan{SecretsMagic}};
     }
     uint64_t offset = 0, oldLength = 0;
-    result = find_(plain, key, offset, oldLength);
+    result = find(plain, key, offset, oldLength);
     if (result.template is<ZeException>()) return result;
-    uint64_t oldSize = offset == UINT64_MAX ? 0 :
-      RecordSize + key.length() + oldLength;
+    uint64_t oldSize = offset == UINT64_MAX ? 0 : RecordSize + key.length() + oldLength;
     uint64_t oldTotal = plain.length();
     if (newSize > SIZE_MAX - oldTotal + oldSize)
       return ZeEXCEPT(Error, "ZtlsVault", "aggregate too large");
@@ -502,103 +490,94 @@ public:
     // Reserve before moving; replacement changes only the suffix in place.
     if (newTotal > plain.size()) plain.size(newTotal);
     uint64_t tail = oldTotal - offset - oldSize;
-    if (tail)
-      ::memmove(plain.data() + offset + newSize,
-	plain.data() + offset + oldSize, tail);
+    if (tail) ::memmove(plain.data() + offset + newSize, plain.data() + offset + oldSize, tail);
     uint32_t keySize = ZuBE(uint32_t(key.length()));
     uint64_t valSize = ZuBE(uint64_t(value.length()));
     ::memcpy(plain.data() + offset, &keySize, sizeof(keySize));
     ::memcpy(plain.data() + offset + sizeof(keySize), &valSize, sizeof(valSize));
     ::memcpy(plain.data() + offset + RecordSize, key.data(), key.length());
     if (value)
-      ::memcpy(plain.data() + offset + RecordSize + key.length(),
-	value.data(), value.length());
+      ::memcpy(plain.data() + offset + RecordSize + key.length(), value.data(), value.length());
     plain.length(newTotal);
     Random rng;
-    if (!rng.init())
-      return ZeEXCEPT(Error, "ZtlsVault", "encryption unavailable");
-    ZtlsAge age;
+    if (!rng.init()) return ZeEXCEPT(Error, "ZtlsVault", "encryption unavailable");
+    ZtlsAge	       age;
     ZtlsAge::Recipient recipient{ZtlsAge::ScryptRecipient{passphrase}};
-    return publish(m_dir, m_path, "secrets.age.tmp.",
-      [&age, &rng, &recipient, &plain](ZiFile &output) {
-      return age.encrypt(rng, {&recipient, 1}, plain, output);
-    });
+    return publish(
+      m_dir, m_path, "secrets.age.tmp.", [&age, &rng, &recipient, &plain](ZiFile &output)
+    { return age.encrypt(rng, {&recipient, 1}, plain, output); });
   }
-
 private:
-  VaultResult open_(ZiFile &file) const {
-    if (file.open(m_path, ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC)
-	== Zi::OK) return {};
+  VaultResult open_(ZiFile &file) const
+  {
+    if (file.open(m_path, ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) == Zi::OK) return {};
     if (file.error().errNo() == ZiENOENT
 #ifdef _WIN32
-	|| file.error().errNo() == ERROR_PATH_NOT_FOUND
+      || file.error().errNo() == ERROR_PATH_NOT_FOUND
 #endif
-      )
+    )
       return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
-    return ZeEXCEPT(Error, "ZtlsVault", "aggregate open failed");
+    return ZeEXCEPT(
+      Error, "ZtlsVault", ([e = file.error()](auto &s) { s << "aggregate open failed: " << e; }));
   }
 
-  VaultResult passphrase_(ZuSpan<uint8_t> passphrase, bool create) {
+  VaultResult readPassphrase(ZuSpan<uint8_t> passphrase, bool create)
+  {
     if (!create) {
       bool loaded = false;
-      auto result = m_store->load(PassphraseKey,
-        [passphrase, &loaded](ZuSpan<uint8_t> stored) mutable {
+      auto result = m_store->load(
+	PassphraseKey, [passphrase, &loaded](ZuSpan<uint8_t> stored) mutable
+      {
 	if (stored.length() == passphrase.length()) {
 	  ::memcpy(passphrase.data(), stored.data(), stored.length());
 	  loaded = true;
 	}
       });
       if (result.template is<ZeException>()) return result;
-      if (!loaded)
-	return ZeEXCEPT(Error, "ZtlsVault", "invalid passphrase");
+      if (!loaded) return ZeEXCEPT(Error, "ZtlsVault", "invalid passphrase");
       return {};
     }
     uint8_t random[PassphraseBytes];
     ZuGuard clearRandom{[&random]() { ZuClear(random, sizeof(random)); }};
-    Random rng;
+    Random  rng;
     if (!rng.init() || !rng.random(random))
       return ZeEXCEPT(Error, "ZtlsVault", "passphrase generation failed");
     ZuBase64::encode(passphrase, random);
     return m_store->save(PassphraseKey, passphrase);
   }
 
-  VaultResult decrypt_(ZiFile &file, ZuBSpan passphrase, Bytes &plain,
-      uint64_t extra = 0) const {
+  VaultResult decrypt(ZiFile &file, ZuBSpan passphrase, Bytes &plain, uint64_t extra = 0) const
+  {
     auto size = file.size();
     if (size <= 0 || uint64_t(size) > SIZE_MAX - extra)
       return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
     plain.size(size + extra);
-    ZtlsAge age;
+    ZtlsAge	      age;
     ZtlsAge::Identity identity{ZtlsAge::ScryptIdentity{passphrase}};
-    auto result = age.decrypt(file, {&identity, 1},
-      ZuSpan<uint8_t>{plain.data(), plain.size()});
-    if (result.template is<ZeException>())
-      return ZuMv(result).template p<ZeException>();
+    auto result = age.decrypt(file, {&identity, 1}, ZuSpan<uint8_t>{plain.data(), plain.size()});
+    if (result.template is<ZeException>()) return ZuMv(result).template p<ZeException>();
     plain.length(result.template p<size_t>());
     return {};
   }
 
-  VaultResult find_(ZuBSpan plain, ZuCSpan key,
-      uint64_t &offset, uint64_t &valueLength) const {
+  VaultResult find(ZuBSpan plain, ZuCSpan key, uint64_t &offset, uint64_t &valueLength) const
+  {
     if (plain.length() < sizeof(SecretsMagic) ||
-	::memcmp(plain.data(), SecretsMagic, sizeof(SecretsMagic)))
+      ::memcmp(plain.data(), SecretsMagic, sizeof(SecretsMagic)))
       return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
     offset = UINT64_MAX;
-    for (uint64_t pos = sizeof(SecretsMagic), end = plain.length();
-	pos < end;) {
-      if (end - pos < RecordSize)
-	return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
+    for (uint64_t pos = sizeof(SecretsMagic), end = plain.length(); pos < end;) {
+      if (end - pos < RecordSize) return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
       uint32_t keySize;
       uint64_t valSize;
       ::memcpy(&keySize, plain.data() + pos, sizeof(keySize));
       ::memcpy(&valSize, plain.data() + pos + sizeof(keySize), sizeof(valSize));
       keySize = ZuBE(keySize);
       valSize = ZuBE(valSize);
-      if (keySize > end - pos - RecordSize ||
-	  valSize > end - pos - RecordSize - keySize)
+      if (keySize > end - pos - RecordSize || valSize > end - pos - RecordSize - keySize)
 	return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
       if (keySize == key.length() &&
-	  !::memcmp(plain.data() + pos + RecordSize, key.data(), keySize)) {
+	!::memcmp(plain.data() + pos + RecordSize, key.data(), keySize)) {
 	offset = pos;
 	valueLength = valSize;
       }
@@ -607,15 +586,14 @@ private:
     return {};
   }
 
-  ZmRef<Ztls_::VaultStore> m_store;
-  Zi::Path m_dir;
-  Zi::Path m_path;
+  ZmRef<Ztls_::VaultStore>	m_store;
+  Zi::Path			m_dir;
+  Zi::Path			m_path;
 };
 
 ZuDerive(Indirect, Indirect_);
 
-template <typename L>
-VaultResult withKey(Scope scope, ZuCSpan name, L &&l)
+template <typename L> VaultResult withKey(Scope scope, ZuCSpan name, L &&l)
 {
   if (!name || name.find([](char c) { return c == '/'; }) >= 0)
     return ZeEXCEPT(Error, "ZtlsVault", "invalid credential name");
@@ -627,8 +605,7 @@ VaultResult withKey(Scope scope, ZuCSpan name, L &&l)
   } else if (!scope.template is<Scopes::Global>())
     return ZeEXCEPT(Error, "ZtlsVault", "invalid scope");
 
-  auto key = ZtScratch(VaultScratch,
-    (env ? 5 + env.length() : 7) + name.length() + 1);
+  auto key = ZtScratch(VaultScratch, (env ? 5 + env.length() : 7) + name.length() + 1);
   if (env)
     key << "env/" << env << '/' << name;
   else
@@ -646,24 +623,26 @@ VaultResult ensureDir(const Zi::Path &path)
 {
   ZiFile::mkdir(path, 0700);
   ZiFile dir;
-  if (dir.open(path, ZiFile::ReadOnly | ZiFile::Directory |
-	ZiFile::NoFollow | ZiFile::GC) != Zi::OK)
-    return ZeEXCEPT(Error, "ZtlsVault", "vault directory unavailable");
+  if (dir.open(path, ZiFile::ReadOnly | ZiFile::Directory | ZiFile::NoFollow | ZiFile::GC) !=
+    Zi::OK)
+    return ZeEXCEPT(Error, "ZtlsVault", ([e = dir.error()](auto &s) {
+      s << "vault directory unavailable: " << e;
+    }));
   return {};
 }
 
 struct State_ : public ZmNHeap<State_> {
 friend inline ZuStringT<"Ztls.Vault.State"> ZmNHeapID(State_ *);
 
-  VaultConfig config;
-  Zi::Path home;
-  Zi::Path dir;
-  Zi::Path modulePath;
-  ZiPIDFile pid;
-  ZmRef<Ztls_::VaultStore> store;
+  VaultConfig			config;
+  Zi::Path			home;
+  Zi::Path			dir;
+  Zi::Path			modulePath;
+  ZiPIDFile			pid;
+  ZmRef<Ztls_::VaultStore>	store;
 };
 
-} // Vault_
+} // namespace Vault_
 
 struct Vault::State : Vault_::State_ { };
 
@@ -672,12 +651,10 @@ Vault::~Vault() { final(); }
 
 VaultResult Vault::init(const VaultConfig &config)
 {
-  if (m_state)
-    return ZeEXCEPT(Error, "ZtlsVault", "already initialized");
+  if (m_state) return ZeEXCEPT(Error, "ZtlsVault", "already initialized");
 
   if (config.store < VaultStore::Ephemeral || config.store >= VaultStore::N ||
-      config.variant < VaultVariant::Default ||
-      config.variant >= VaultVariant::N)
+    config.variant < VaultVariant::Default || config.variant >= VaultVariant::N)
     return ZeEXCEPT(Error, "ZtlsVault", "invalid configuration");
 
   auto state = new State{};
@@ -685,9 +662,9 @@ VaultResult Vault::init(const VaultConfig &config)
   auto &cf = state->config;
   if (cf.variant == VaultVariant::Default) {
 #ifdef _WIN32
-    cf.variant = cf.store == VaultStore::KeyRing ||
-      cf.store == VaultStore::Auto ?
-      VaultVariant::Indirect : VaultVariant::Direct;
+    cf.variant = cf.store == VaultStore::KeyRing || cf.store == VaultStore::Auto ?
+      VaultVariant::Indirect :
+      VaultVariant::Direct;
 #else
     cf.variant = VaultVariant::Direct;
 #endif
@@ -719,8 +696,7 @@ VaultResult Vault::init(const VaultConfig &config)
     delete state;
     return ZeEXCEPT(Error, "ZtlsVault", "home unavailable");
   }
-  if (!ZiFile::absolute(state->home))
-    state->home = ZiFile::append(ZiFile::cwd(), state->home);
+  if (!ZiFile::absolute(state->home)) state->home = ZiFile::append(ZiFile::cwd(), state->home);
   if (cf.module) {
     state->modulePath = cf.module;
     if (!ZiFile::absolute(state->modulePath))
@@ -741,12 +717,11 @@ VaultResult Vault::init(const VaultConfig &config)
 
 VaultResult Vault::open()
 {
-  if (!m_state)
-    return ZeEXCEPT(Error, "ZtlsVault", "not initialized");
+  if (!m_state) return ZeEXCEPT(Error, "ZtlsVault", "not initialized");
   if (m_state->store) return {};
 
   auto &cf = m_state->config;
-  bool indirect = cf.variant == VaultVariant::Indirect;
+  bool	indirect = cf.variant == VaultVariant::Indirect;
   if (cf.store == VaultStore::File || indirect) {
     auto result = Vault_::ensureDir(m_state->home);
     if (result.template is<ZeException>()) return result;
@@ -782,8 +757,7 @@ VaultResult Vault::open()
       m_state->pid.final();
       return ZeEXCEPT(Error, "ZtlsVault", "module load failed");
     }
-    auto factory = reinterpret_cast<Ztls_::VaultStoreFn>(
-      module.resolve(ZtlsVaultStoreFnSym));
+    auto factory = reinterpret_cast<Ztls_::VaultStoreFn>(module.resolve("ZtlsVaultStore"));
     if (!factory) {
       module.unload();
       m_state->pid.final();
@@ -803,8 +777,9 @@ VaultResult Vault::open()
     return ZeEXCEPT(Error, "ZtlsVault", "store not yet implemented");
   }
   m_state->store = indirect ?
-    ZmRef<Ztls_::VaultStore>{new Vault_::Indirect{ZuMv(selected),
-      m_state->dir}} :
+    ZmRef<Ztls_::VaultStore>{
+      new Vault_::Indirect{ZuMv(selected), m_state->dir}
+	} :
     ZuMv(selected);
   auto result = m_state->store->init(cf);
   if (result.template is<ZeException>()) {
@@ -833,18 +808,16 @@ void Vault::final()
 
 VaultResult Vault::load(Scope scope, ZuCSpan name, VaultLoadFn fn)
 {
-  if (!m_state || !m_state->store)
-    return ZeEXCEPT(Error, "ZtlsVault", "not started");
-  return Vault_::withKey(ZuMv(scope), name,
-    [this, &fn](ZuCSpan key) { return m_state->store->load(key, ZuMv(fn)); });
+  if (!m_state || !m_state->store) return ZeEXCEPT(Error, "ZtlsVault", "not started");
+  return Vault_::withKey(
+    ZuMv(scope), name, [this, &fn](ZuCSpan key) { return m_state->store->load(key, ZuMv(fn)); });
 }
 
 VaultResult Vault::save(Scope scope, ZuCSpan name, ZuBSpan value)
 {
-  if (!m_state || !m_state->store)
-    return ZeEXCEPT(Error, "ZtlsVault", "not started");
-  return Vault_::withKey(ZuMv(scope), name,
-    [this, value](ZuCSpan key) { return m_state->store->save(key, value); });
+  if (!m_state || !m_state->store) return ZeEXCEPT(Error, "ZtlsVault", "not started");
+  return Vault_::withKey(
+    ZuMv(scope), name, [this, value](ZuCSpan key) { return m_state->store->save(key, value); });
 }
 
-} // Ztls
+} // namespace Ztls

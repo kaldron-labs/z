@@ -13,18 +13,20 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <iostream>
-
-#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuHex.hh>
-#include "ZiTestResidue.hh"
+#include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZiFile.hh>
+
+#include <zlib/ZdbusAddress.hh>
+
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/ZtlsVault.hh>
-#include <zlib/ZdbusAddress.hh>
 
 #include "../../zdbus/util/zdbustesttool.hh"
+#include "ZiTestResidue.hh"
+#include <iostream>
 
 using namespace ZuTestUtil;
 
@@ -44,8 +46,7 @@ static Zi::Path agePath(const Zi::Path &dir, ZuCSpan account)
   char hex[ZuHex::enclen(sizeof(digest))];
   ZuHex::encode(hex, digest);
   ZuClear(digest, sizeof(digest));
-  return ZiFile::append(dir,
-    Zi::Path{} << ZuCSpan{hex, sizeof(hex)} << ".age");
+  return ZiFile::append(dir, Zi::Path{} << ZuCSpan{hex, sizeof(hex)} << ".age");
 }
 #if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
 #pragma GCC diagnostic pop
@@ -57,14 +58,15 @@ static bool serviceReady()
 {
   pid_t child = ::fork();
   if (!child) {
-    ::execlp("gdbus", "gdbus", "wait", "--session", "--timeout=5",
-      "org.freedesktop.secrets", static_cast<char *>(nullptr));
+    ::execlp(
+      "gdbus", "gdbus", "wait", "--session", "--timeout=5", "org.freedesktop.secrets",
+      static_cast<char *>(nullptr));
     ::_exit(errno == ENOENT ? 127 : 126);
   }
   if (child < 0) return false;
   int status = 0;
-  return ZdbusTestTool::waitChild(child, 0, status) &&
-    WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  return ZdbusTestTool::waitChild(child, 0, status) && WIFEXITED(status) &&
+    WEXITSTATUS(status) == 0;
 }
 
 static void native()
@@ -92,8 +94,9 @@ static void native()
   ::unsetenv("GNOME_KEYRING_CONTROL");
 
   const char *fixture = ZiStat{"../../zdbus/util/zdbusbus"}.exists() ?
-    "../../zdbus/util/zdbusbus" : "zdbus/util/zdbusbus";
-  int input[2], output[2];
+    "../../zdbus/util/zdbusbus" :
+    "zdbus/util/zdbusbus";
+  int	      input[2], output[2];
   ZuCheckRT(!::pipe2(input, O_CLOEXEC));
   if (::pipe2(output, O_CLOEXEC)) {
     ::close(input[0]);
@@ -114,13 +117,14 @@ static void native()
   ::close(input[0]);
   ::close(output[1]);
   ZuCheckRT(bus > 0);
-  ZuGuard stopBus{[bus, &input]() {
+  ZuGuard	     stopBus{[bus, &input]()
+  {
     ::close(input[1]);
     int status = 0;
     ZdbusTestTool::waitChild(bus, 0, status);
   }};
   ZdbusAddress::Text address;
-  bool got = ZdbusTestTool::line(output[0], address);
+  bool		     got = ZdbusTestTool::line(output[0], address);
   ::close(output[0]);
   ZdbusAddress parsed;
   ZuCheckRT(got && ZdbusAddress::parse(parsed, address));
@@ -144,9 +148,10 @@ static void native()
     ZiFile nullFile{"/dev/null", ZiFile::WriteOnly | ZiFile::GC};
     if (!nullFile) ::_exit(1);
     ::dup2(nullFile.handle(), STDERR_FILENO);
-    ::execlp("gnome-keyring-daemon", "gnome-keyring-daemon",
-      "--foreground", "--unlock", "--components=secrets", "--control-directory",
-      static_cast<const char *>(control), static_cast<char *>(nullptr));
+    ::execlp(
+      "gnome-keyring-daemon", "gnome-keyring-daemon", "--foreground", "--unlock",
+      "--components=secrets", "--control-directory", static_cast<const char *>(control),
+      static_cast<char *>(nullptr));
     ::_exit(errno == ENOENT ? 127 : 126);
   }
   ::close(unlock[0]);
@@ -155,7 +160,8 @@ static void native()
   ZuCheckRT(::write(unlock[1], "\n", 1) == 1);
   ::close(unlock[1]);
   ZuCheckRT(daemon > 0);
-  ZuGuard stopDaemon{[daemon]() {
+  ZuGuard	     stopDaemon{[daemon]()
+  {
     int status = 0;
     ZdbusTestTool::waitChild(daemon, SIGTERM, status);
   }};
@@ -170,25 +176,33 @@ static void native()
   cf.variant = Ztls::VaultVariant::Direct;
   Ztls::Vault vault;
   ZuCheckRT(!vault.init(cf).is<ZeException>());
-  bool started = false;
-  ZuGuard stopVault{[&vault, &started]() {
+  bool	  started = false;
+  ZuGuard stopVault{[&vault, &started]()
+  {
     if (started) vault.close();
     vault.final();
   }};
   ZuCheckRT(!vault.open().is<ZeException>());
   started = true;
   Ztls::Scope scope{Ztls::Scopes::Global{}};
-  bool called = false;
-  ZuCheckRT(vault.load(scope, "missing", [&called](ZuSpan<uint8_t>) {
-    called = true;
-  }).is<ZeException>() && !called);
+  bool	      called = false;
+  ZuCheckRT(
+    vault.load(scope, "missing", [&called](ZuSpan<uint8_t>) { called = true; })
+      .is<ZeException>() &&
+    !called);
   uint8_t first[] = {0, 0xff, 7};
   uint8_t second[] = {8, 0, 9, 0xff};
   ZuCheckRT(!vault.save(scope, "token", first).is<ZeException>());
   ZuCheckRT(!vault.save(scope, "token", second).is<ZeException>());
-  ZuCheckRT(!vault.load(scope, "token", [&called, &second](ZuSpan<uint8_t> value) {
+  ZuCheckRT(
+    !vault
+      .load(
+	scope, "token",
+	[&called, &second](ZuSpan<uint8_t> value)
+  {
     called = value == ZuBSpan{second};
-  }).is<ZeException>() && called);
+  }).is<ZeException>() &&
+    called);
   vault.close();
   started = false;
 
@@ -200,8 +214,7 @@ static void native()
   indirect.close();
   indirect.final();
   Zi::Path age = agePath(
-    ZiFile::append(ZiFile::append(home, ".ztls-vault-interop-test"), "vault"),
-    cf.account);
+    ZiFile::append(ZiFile::append(home, ".ztls-vault-interop-test"), "vault"), cf.account);
   ZuCheckRT(ZiStat{age}.exists());
 
   cf.store = Ztls::VaultStore::Auto;
@@ -209,10 +222,15 @@ static void native()
   ZuCheckRT(!recovered.init(cf).is<ZeException>());
   ZuCheckRT(!recovered.open().is<ZeException>());
   called = false;
-  ZuCheckRT(!recovered.load(scope, "private",
-    [&called, &second](ZuSpan<uint8_t> value) {
-      called = value == ZuBSpan{second};
-    }).is<ZeException>() && called);
+  ZuCheckRT(
+    !recovered
+      .load(
+	scope, "private",
+	[&called, &second](ZuSpan<uint8_t> value)
+  {
+    called = value == ZuBSpan{second};
+  }).is<ZeException>() &&
+    called);
   recovered.close();
   recovered.final();
 }
@@ -222,7 +240,7 @@ static void native()
 int main()
 {
   if (!ZdbusTestTool::available("dbus-daemon") ||
-      !ZdbusTestTool::available("gnome-keyring-daemon")) {
+    !ZdbusTestTool::available("gnome-keyring-daemon")) {
     std::cout << "1..0 # SKIP dbus-daemon or gnome-keyring-daemon unavailable\n";
     return 0;
   }

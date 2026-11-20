@@ -6,33 +6,33 @@
 
 // time-based one time password (Google Authenticator compatible)
 
-#include <zlib/ZtlsTOTP.hh>
-
 #include <zlib/ZmTime.hh>
+
+#include <zlib/ZtlsTOTP.hh>
 
 namespace Ztls::TOTP {
 
-ZtlsExtern unsigned calc(ZuBSpan data, int offset)
+Ztls_Extern unsigned calc(ZuBSpan data, int offset)
 {
-  ZuBigEndian<uint64_t> t = (Zm::now().sec() / 30) + offset;
-  HMAC<SHA1> hmac;
-  uint8_t sha1[20];
+  ZuBigEndian<uint64_t> t = (Zm::now().sec()/30) + offset;
+  HMAC<SHA1>		hmac;
+  uint8_t		sha1[20];
   hmac.start(data);
   hmac.update({reinterpret_cast<const uint8_t *>(&t), 8});
   hmac.finish(sha1);
-  typedef uint8_t Bytes[4];
+  using Bytes = uint8_t[4];
   ZuPun<Bytes, uint32_t> pun;
   memcpy(&pun.in[0], sha1 + (sha1[19] & 0xf), 4);
   auto code = pun.out;
-  code &= ~(uint32_t(1)<<31);
+  code &= ~(uint32_t(1) << 31);
   return code % uint32_t(1000000);
 }
 
-ZtlsExtern bool verify(ZuBSpan data, unsigned code, unsigned range)
+Ztls_Extern bool verify(ZuBSpan data, unsigned code, unsigned range)
 {
   for (int i = -static_cast<int>(range); i <= static_cast<int>(range); i++)
     if (code == calc(data, i)) return true;
   return false;
 }
 
-} // Ztls::TOTP
+} // namespace Ztls::TOTP

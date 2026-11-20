@@ -8,18 +8,18 @@
 
 #include <zlib/ZuHex.hh>
 #include <zlib/ZuTestUtil.hh>
+
 #include <zlib/ZtlsAEAD.hh>
 
 using namespace ZuTestUtil;
 
 static bool decode(ZuSpan<uint8_t> out, ZuCSpan hex)
-{
-  return hex.length() == out.length() << 1 && ZuHex::decode<false>(out, hex) == out.length();
-}
+{ return hex.length() == out.length() << 1 && ZuHex::decode<false>(out, hex) == out.length(); }
 
 static bool filled(ZuBSpan bytes, uint8_t value)
 {
-  for (auto c : bytes) if (c != value) return false;
+  for (auto c : bytes)
+    if (c != value) return false;
   return true;
 }
 
@@ -34,7 +34,8 @@ static void vector()
   for (unsigned i = 0; i < sizeof(key); ++i) key[i] = 0x80 + i;
   ZuCheck(decode(nonce, "070000004041424344454647"));
   ZuCheck(decode(aad, "50515253c0c1c2c3c4c5c6c7"));
-  ZuCheck(decode(expected,
+  ZuCheck(decode(
+    expected,
     "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d6"
     "3dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b36"
     "92ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3"
@@ -78,9 +79,9 @@ static void vector()
 static void empty()
 {
   ZuTestScope(empty);
-  uint8_t key[Ztls::ChaCha20Poly1305::KeySize]{};
-  uint8_t nonce[Ztls::ChaCha20Poly1305::NonceSize]{};
-  uint8_t tag[Ztls::ChaCha20Poly1305::TagSize];
+  uint8_t		 key[Ztls::ChaCha20Poly1305::KeySize]{};
+  uint8_t		 nonce[Ztls::ChaCha20Poly1305::NonceSize]{};
+  uint8_t		 tag[Ztls::ChaCha20Poly1305::TagSize];
   Ztls::ChaCha20Poly1305 enc, dec;
   ZuCheck(enc.init(true, key));
   ZuCheck(dec.init(false, key));
@@ -101,9 +102,9 @@ static void empty()
 static void errors()
 {
   ZuTestScope(errors);
-  uint8_t key[Ztls::ChaCha20Poly1305::KeySize]{};
-  uint8_t nonce[Ztls::ChaCha20Poly1305::NonceSize]{};
-  uint8_t output[Ztls::ChaCha20Poly1305::TagSize];
+  uint8_t		 key[Ztls::ChaCha20Poly1305::KeySize]{};
+  uint8_t		 nonce[Ztls::ChaCha20Poly1305::NonceSize]{};
+  uint8_t		 output[Ztls::ChaCha20Poly1305::TagSize];
   Ztls::ChaCha20Poly1305 aead;
   ZuCheck(!aead.init(true, {key, sizeof(key) - 1}));
   memset(output, 0xa5, sizeof(output));

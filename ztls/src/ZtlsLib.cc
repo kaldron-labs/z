@@ -6,55 +6,79 @@
 
 // Z TLS library
 
-#include <zlib/ZtlsLib.hh>
-
 #include <openssl/crypto.h>
 #include <openssl/err.h>
-#include <zlib/ZtlsEngine.hh>
-
 #include <stdio.h>
 #include <string.h>
 
 #include <zlib/ZePlatform.hh>
 
-ZtlsExtern const char ZtlsLib[] = "@(#) Z TLS Library v" Z_VERNAME;
+#include <zlib/ZtlsEngine.hh>
+
+#ifndef ZtlsLib_HH
+#include <zlib/ZtlsLib.hh>
+#endif
+Ztls_Extern const char ZtlsLib[] = "@(#) Z TLS Library v" Z_VERNAME;
 
 namespace Ztls {
 
 bool cryptoInit()
 {
-  static const bool done =
-    OPENSSL_init_crypto(OPENSSL_INIT_LOAD_CONFIG, nullptr) == 1;
+  static const bool done = OPENSSL_init_crypto(OPENSSL_INIT_LOAD_CONFIG, nullptr) == 1;
   return done;
 }
 
 static const char *alert_string(int alert)
 {
   switch (alert) {
-    case Ztls_ALERT_CLOSE_NOTIFY: return "close_notify";
-    case Ztls_ALERT_UNEXPECTED_MESSAGE: return "unexpected_message";
-    case Ztls_ALERT_BAD_RECORD_MAC: return "bad_record_mac";
-    case Ztls_ALERT_HANDSHAKE_FAILURE: return "handshake_failure";
-    case Ztls_ALERT_BAD_CERTIFICATE: return "bad_certificate";
-    case Ztls_ALERT_UNSUPPORTED_CERTIFICATE: return "unsupported_certificate";
-    case Ztls_ALERT_CERTIFICATE_REVOKED: return "certificate_revoked";
-    case Ztls_ALERT_CERTIFICATE_EXPIRED: return "certificate_expired";
-    case Ztls_ALERT_CERTIFICATE_UNKNOWN: return "certificate_unknown";
-    case Ztls_ALERT_ILLEGAL_PARAMETER: return "illegal_parameter";
-    case Ztls_ALERT_UNKNOWN_CA: return "unknown_ca";
-    case Ztls_ALERT_ACCESS_DENIED: return "access_denied";
-    case Ztls_ALERT_DECODE_ERROR: return "decode_error";
-    case Ztls_ALERT_DECRYPT_ERROR: return "decrypt_error";
-    case Ztls_ALERT_PROTOCOL_VERSION: return "protocol_version";
-    case Ztls_ALERT_INTERNAL_ERROR: return "internal_error";
-    case Ztls_ALERT_USER_CANCELED: return "user_canceled";
-    case Ztls_ALERT_MISSING_EXTENSION: return "missing_extension";
-    case Ztls_ALERT_UNSUPPORTED_EXTENSION: return "unsupported_extension";
-    case Ztls_ALERT_UNRECOGNIZED_NAME: return "unrecognized_name";
-    case Ztls_ALERT_UNKNOWN_PSK_IDENTITY: return "unknown_psk_identity";
-    case Ztls_ALERT_CERTIFICATE_REQUIRED: return "certificate_required";
-    case Ztls_ALERT_NO_APPLICATION_PROTOCOL: return "no_application_protocol";
-    case Ztls_ALERT_ECH_REQUIRED: return "ech_required";
+  case Ztls_AlertCloseNotify:
+    return "close_notify";
+  case Ztls_AlertUnwaitedMsg:
+    return "unexpected_message";
+  case Ztls_AlertBadRecordMac:
+    return "bad_record_mac";
+  case Ztls_AlertHSFailure:
+    return "handshake_failure";
+  case Ztls_AlertBadCert:
+    return "bad_certificate";
+  case Ztls_AlertUnsupportedCert:
+    return "unsupported_certificate";
+  case Ztls_AlertCertRevoked:
+    return "certificate_revoked";
+  case Ztls_AlertCertExpired:
+    return "certificate_expired";
+  case Ztls_AlertCertUnknown:
+    return "certificate_unknown";
+  case Ztls_AlertIllegalParameter:
+    return "illegal_parameter";
+  case Ztls_AlertUnknownCa:
+    return "unknown_ca";
+  case Ztls_AlertAccessDenied:
+    return "access_denied";
+  case Ztls_AlertDecodeError:
+    return "decode_error";
+  case Ztls_AlertDecryptError:
+    return "decrypt_error";
+  case Ztls_AlertProtoVer:
+    return "protocol_version";
+  case Ztls_AlertInternalError:
+    return "internal_error";
+  case Ztls_AlertUserCanceled:
+    return "user_canceled";
+  case Ztls_AlertMissingExt:
+    return "missing_extension";
+  case Ztls_AlertUnsupportedExt:
+    return "unsupported_extension";
+  case Ztls_AlertUnrecognizedName:
+    return "unrecognized_name";
+  case Ztls_AlertUnknownPSKId:
+    return "unknown_psk_identity";
+  case Ztls_AlertCertRequired:
+    return "certificate_required";
+  case Ztls_AlertNoAppProto:
+    return "no_application_protocol";
+  case Ztls_AlertECHRequired:
+    return "ech_required";
   }
   return nullptr;
 }
@@ -62,47 +86,61 @@ static const char *alert_string(int alert)
 static const char *engine_error_string(int err)
 {
   switch (err) {
-    case Ztls_ERROR_NO_MEMORY: return "no_memory";
-    case Ztls_ERROR_IN_PROGRESS: return "in_progress";
-    case Ztls_ERROR_LIBRARY: return "library_error";
-    case Ztls_ERROR_INCOMPATIBLE_KEY: return "incompatible_key";
-    case Ztls_ERROR_SESSION_NOT_FOUND: return "session_not_found";
-    case Ztls_ERROR_STATELESS_RETRY: return "stateless_retry";
-    case Ztls_ERROR_NOT_AVAILABLE: return "not_available";
-    case Ztls_ERROR_COMPRESSION_FAILURE: return "compression_failure";
-    case Ztls_ERROR_REJECT_EARLY_DATA: return "reject_early_data";
-    case Ztls_ERROR_DELEGATE: return "delegate";
-    case Ztls_ERROR_ASYNC_OPERATION: return "async_operation";
-    case Ztls_ERROR_BLOCK_OVERFLOW: return "block_overflow";
+  case Ztls_ErrorNoMemory:
+    return "no_memory";
+  case Ztls_ErrorInProgress:
+    return "in_progress";
+  case Ztls_ErrorLibrary:
+    return "library_error";
+  case Ztls_ErrorIncompatibleKey:
+    return "incompatible_key";
+  case Ztls_ErrorSessionNotFound:
+    return "session_not_found";
+  case Ztls_ErrorStatelessRetry:
+    return "stateless_retry";
+  case Ztls_ErrorNotAvailable:
+    return "not_available";
+  case Ztls_ErrorCompFailure:
+    return "compression_failure";
+  case Ztls_ErrorRejectEarlyData:
+    return "reject_early_data";
+  case Ztls_ErrorDelegate:
+    return "delegate";
+  case Ztls_ErrorAsyncOperation:
+    return "async_operation";
+  case Ztls_ErrorBlockOverflow:
+    return "block_overflow";
   }
   return nullptr;
 }
 
-size_t format_error(int err, char *buf, size_t len)
+void clearTLSError() { ERR_clear_error(); }
+
+ZeException
+tlsError(const char *operation, int code, const char *file, unsigned line, const char *function)
 {
-  if (!buf || !len) return 0;
-  buf[0] = '\0';
-  unsigned long oe = ERR_peek_last_error();
-  if (oe) {
-    ERR_error_string_n(oe, buf, len);
-    return strlen(buf);
-  }
-  if (Ztls_ERROR_GET_CLASS(err) == Ztls_ERROR_CLASS_SELF_ALERT ||
-      Ztls_ERROR_GET_CLASS(err) == Ztls_ERROR_CLASS_PEER_ALERT) {
-    if (auto alert = alert_string(Ztls_ERROR_TO_ALERT(err))) {
-      return snprintf(buf, len, "alert(%s)", alert);
+  auto provider = code == Ztls_ErrorLibrary ? ERR_peek_last_error() : 0UL;
+  return ZeMkException(
+    Ze::Error, file, line, function, "Ztls",
+    [operation = ZeString{operation}, code, provider](auto &s)
+  {
+    s << operation << ": " << code;
+    auto name = Ztls_ErrorGetClass(code) == Ztls_ErrorClassSelfAlert ||
+	Ztls_ErrorGetClass(code) == Ztls_ErrorClassPeerAlert ?
+      alert_string(Ztls_ErrorToAlert(code)) :
+      engine_error_string(code);
+    if (name) s << " (" << name << ')';
+    if (provider) {
+      char detail[256];
+      ERR_error_string_n(provider, detail, sizeof(detail));
+      s << ": " << detail;
     }
-  }
-  if (auto engineErr = engine_error_string(err)) {
-    return snprintf(buf, len, "tls(%s)", engineErr);
-  }
-  return snprintf(buf, len, "error(%d)", err);
+  });
 }
 
-ZtlsExtern void init()
+Ztls_Extern void init()
 {
-  if (!cryptoInit())
-    throw ZeEXCEPT(Error, "Ztls", "crypto initialization failed");
+  if (!cryptoInit()) throw ZeEXCEPT(Error, "Ztls", "crypto initialization failed");
 }
 
 } // namespace Ztls

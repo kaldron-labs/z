@@ -195,6 +195,12 @@ struct TestServer :
     public Zquic::Server<TestServer, TestServerLink> {
   using Link = TestServerLink;
   using Stream = TestServerStream;
+  using Base = Zquic::Server<TestServer, TestServerLink>;
+
+  Zi::IOBufAllocator *tlsOutputOverride = nullptr;
+  Zi::IOBufAllocator *tlsOutputAllocator() const {
+    return tlsOutputOverride ? tlsOutputOverride : Base::tlsOutputAllocator();
+  }
 
   ZmAtomic<unsigned> holdHandshakeDone = 0;
   ZmAtomic<unsigned> heldHandshakeDone = 0;
@@ -492,6 +498,42 @@ friend inline ZuStringT<"Zquic.Runtime.SrvLink"> ZmNHeapID(TestServerLink *);
   ZmAtomic<unsigned> streamedCount = 0;
 
   TestServerLink(TestServer *app) : Base{app} { }
+
+  bool initTLSFixture() {
+    return Base::initTLS_(Zquic::CryptoConfig{
+      .isServer = true,
+      .alpn = app()->firstALPN(),
+      .certPath = app()->certPath(),
+      .keyPath = app()->keyPath()
+    }) && Base::startHandshake();
+  }
+
+  bool inputTLS(size_t epoch, ZuBSpan input, ZiSockAddr addr = {}) {
+    return Base::advanceTLS(epoch, input, ZuMv(addr),
+      [this](ZmRef<ZiIOBuf> output, const Zquic::CryptoOffsets &, ZiSockAddr) {
+	tlsFlightBytes += output->length;
+	return true;
+      },
+      [] {}, [](ZiSockAddr) { return true; });
+  }
+
+  bool inputCryptoFrame(uint64_t offset, ZuBSpan input) {
+    uint8_t frame[Zquic::BufSize];
+    int n = Zquic::FrameCodec::writeCrypto(frame, sizeof(frame), offset, input);
+    if (n < 0) return false;
+    typename Base::RxAckMeta ack;
+    return Base::consumeProtFrames(
+      Zquic::PktNumSpace::Initial, 0, ZuBSpan{frame, unsigned(n)}, {}, {},
+      ack, nullptr,
+      [this](size_t epoch, ZuBSpan bytes, ZiSockAddr addr) {
+	return inputTLS(epoch, bytes, ZuMv(addr));
+      },
+      [](Zquic::PktNumSpace::T, const Zquic::Frame &, ZiSockAddr) {
+	return false;
+      });
+  }
+
+  unsigned tlsFlightBytes = 0;
 
   void connected(Zquic::Connected) {
     Base::snapshotTxCrypto(handshakeKeys);
@@ -1293,6 +1335,86 @@ void testHandshakeCryptoLoss()
   }
 }
 
+void testTLSOutputFailure()
+{
+  ZuTestScopeRT(testTLSOutputFailure);
+
+  TempDir temp;
+  if (!temp.init()) {
+    ZQUIC_CHECK_RT(false, "TLS output failure fixture certificate failed");
+    return;
+  }
+
+  ZiMultiplex mx(
+    ZiMxParams().scheduler([](auto &s) { s.nThreads(5); })
+      .rxThread(1).txThread(2));
+  TestServer server;
+  server.tlsOutputOverride = Zquic::plaintextAllocator<
+    Zquic::CryptoTxBufAlloc<1, 1, "Zquic.Runtime.ShortTLS">>(&mx);
+  bool initialized = server.tlsOutputOverride &&
+    server.init(Zquic::ServerParams(&mx, "3", "4")
+      .certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan())
+      .alpn(ZuSpan<ZuCSpan>{"h3"}));
+  ZQUIC_CHECK_RT(initialized, "TLS output failure fixture init failed");
+  if (!initialized) return;
+  bool started = mx.start();
+  ZQUIC_CHECK_RT(started, "TLS output failure multiplexer start failed");
+  if (!started) { server.final(); return; }
+
+  if (server.start() && server.listening()) {
+    Zquic::Crypto client;
+    auto hello = server.Base::tlsOutputAllocator()->allocBuf();
+    Zquic::CryptoOffsets offsets;
+    bool generated = client.initTLS(Zquic::CryptoConfig{.alpn = "h3"}) &&
+      client.handleTLSMessage(hello.ptr(), offsets, 0, {}) > 1;
+    ZQUIC_CHECK_RT(generated, "TLS output failure fixture ClientHello failed");
+    if (generated) for (bool deferred : {false, true}) {
+      ZmRef<TestServerLink> link = new TestServerLink{&server};
+      bool admitted = ZmBlock<bool>{}([link, hello, deferred](auto wake) {
+	link->app()->rxRun([link, hello, deferred, wake = ZuMv(wake)]() mutable {
+	  if (!link->initTLSFixture()) { wake(false); return; }
+	  if (deferred) {
+	    // The queued tail forces the head through CRYPTO dequeue delivery.
+	    wake(link->inputCryptoFrame(1, hello->cspan(1)) &&
+		 link->inputCryptoFrame(0, ZuBSpan{hello->data(), 1}));
+	  } else {
+	    wake(!link->inputCryptoFrame(0, hello->cspan()) &&
+		 !link->crypto().tlsReady() &&
+		 link->crypto().tlsResult() == Ztls_ErrorRawOutput);
+	  }
+	});
+      });
+      ZQUIC_CHECK_RT(admitted, "TLS output failure fixture input failed");
+      bool closed = admitted && link->waitDisconnected(Zm::now(10));
+      ZQUIC_CHECK_RT(closed &&
+	  link->closeError() == Zquic::TransportError::InternalError,
+	"TLS output failure did not retire the failed handshake");
+      bool rejected = ZmBlock<bool>{}([link, hello](auto wake) {
+	link->app()->rxRun([link, hello, wake = ZuMv(wake)]() mutable {
+	  const auto &crypto = link->crypto();
+	  uint64_t handled = crypto.diag().tlsMessagesHandled;
+	  wake(handled && !crypto.diag().tlsMessagesEmitted &&
+	       !link->tlsFlightBytes && !link->inputTLS(0, hello->cspan()) &&
+	       handled == crypto.diag().tlsMessagesHandled);
+	});
+      });
+      ZQUIC_CHECK_RT(rejected && !diag(link).tx.cryptoBytesTx,
+	"failed TLS output was published or TLS resumed");
+      if (!closed) {
+	link->disconnect();
+	(void)link->waitDisconnected(Zm::now(10));
+      }
+      waitThread(mx, server.rxThread());
+    }
+  } else {
+    ZQUIC_CHECK_RT(false, "TLS output failure fixture could not listen");
+  }
+  server.stop();
+  waitDisconnect(server);
+  server.final();
+  mx.stop();
+}
+
 template <typename Link>
 unsigned handshakeKeysLive(const ZmRef<Link> &link)
 {
@@ -1383,6 +1505,18 @@ void testHandshakeKeyRetirement()
     }, Zm::now(10)), "client retained Handshake keys after HANDSHAKE_DONE");
     ZQUIC_CHECK_RT(staleKeysStayRetired(clientLink),
       "stale TLS snapshot restored retired client Handshake keys");
+
+    bool rejected = ZmBlock<bool>{}([clientLink, serverLink](auto wake) {
+      serverLink->app()->rxRun([clientLink, serverLink, wake = ZuMv(wake)]() mutable {
+	const uint8_t keyUpdate[] = {Ztls_HsTypeKeyUpdate, 0, 0, 1, 0};
+	wake(!serverLink->inputTLS(3, keyUpdate, clientLink->local()) &&
+	     !serverLink->crypto().tlsReady() && !serverLink->tlsFlightBytes);
+      });
+    });
+    ZQUIC_CHECK_RT(rejected, "QUIC accepted a TLS KeyUpdate");
+    ZQUIC_CHECK_RT(client.rxEvent.wait([clientLink] {
+      return clientLink->closeError() == 0x010a;
+    }, Zm::now(10)), "peer did not receive QUIC crypto error 0x010a");
   }
   bool closed = clientLink->close();
   server.stop();
@@ -2277,6 +2411,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testEndpointOpen);
   ZuTestCall(testHandshakeCryptoLoss);
+  ZuTestCall(testTLSOutputFailure);
   ZuTestCall(testHandshakeKeyRetirement);
   ZuTestCall(testMigrationLoss);
   ZuTestCall(testSrvMultiCxn);

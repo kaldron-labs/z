@@ -19,8 +19,6 @@
 #include <sys/socket.h>
 #endif
 
-#include <zpicotls.h>
-
 #include <zlib/ZuObject.hh>
 #include <zlib/ZuUnion.hh>
 #include <zlib/ZuUnroll.hh>
@@ -44,7 +42,7 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZtcHub.hh>
 
-#include <zlib/ZtlsPico.hh>
+#include <zlib/ZtlsCredentials.hh>
 
 #if defined(ZDEBUG) && !defined(Zquic_DEBUG)
 #define Zquic_DEBUG	// enable testing / debugging
@@ -89,7 +87,7 @@ struct InitialInfo {
 };
 
 ZuDerive(ALPNData, (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.ALPNData">>));
-ZuDerive(ALPN, (ZtArray<ptls_iovec_t, ZtArrayHeapID<"Zquic.ALPN">>));
+ZuDerive(ALPN, (ZtArray<ZuCSpan, ZtArrayHeapID<"Zquic.ALPN">>));
 ZuDerive(TokenBytes,
   (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.TokenBytes">>));
 ZuDerive(TokenSecret,
@@ -376,10 +374,11 @@ private:
 inline bool validCryptoOffsets(
   const CryptoOffsets &offsets, unsigned len)
 {
+  if (offsets.length() != TLSEpochCount + 1 || offsets[0] ||
+      offsets[TLSEpochCount] != len || offsets[1] != offsets[2])
+    return false;
   for (unsigned epoch = 0; epoch < TLSEpochCount; ++epoch)
-    if (offsets[epoch + 1] < offsets[epoch] ||
-	offsets[epoch + 1] > len)
-      return false;
+    if (offsets[epoch + 1] < offsets[epoch]) return false;
   return true;
 }
 
@@ -435,33 +434,6 @@ inline bool sendCryptoFlights_(
     }
   }
   return complete;
-}
-
-// Raw array-reference ingress preserves the public picotls-style callback
-// contract; the internal helper also accepts the owning ZuArray directly.
-template <typename Send>
-inline bool sendCryptoFlights(
-  CryptoStream (&txCrypto)[PktNumSpace::N], LinkTxDiag &diag,
-  const uint8_t *data, unsigned len, const size_t offsets[5],
-  unsigned chunkMax, ZiSockAddr addr, Send send)
-{
-  if (!offsets) {
-    ++diag.failures;
-    return false;
-  }
-  CryptoOffsets offsets_(TLSEpochCount + 1, false);
-  for (unsigned i = 0; i <= TLSEpochCount; ++i)
-    offsets_[i] = offsets[i];
-  if (!validCryptoOffsets(offsets_, len)) {
-    ++diag.failures;
-    return false;
-  }
-  auto allocator = txCrypto[0].txAllocator();
-  if (ZuUnlikely(!allocator)) return false;
-  auto backing = allocator->allocBuf();
-  if (!backing->append(ZuBSpan{data, len})) return false;
-  return sendCryptoFlights_(
-    txCrypto, diag, ZuMv(backing), offsets_, chunkMax, ZuMv(addr), ZuMv(send));
 }
 
 // Hub configuration
@@ -568,13 +540,6 @@ public:
     m_alpn = {};
     m_alpn.ensure(v.length());
     for (auto &s : v) m_alpn.push(ParamString{s});
-    return ZuMv(*this);
-  }
-  HubParams &&alpn(ZuSpan<const ptls_iovec_t> v) {
-    m_alpn = {};
-    m_alpn.ensure(v.length());
-    for (auto &p : v)
-      m_alpn.push(ParamString{ZuCSpan{p.base, unsigned(p.len)}});
     return ZuMv(*this);
   }
   HubParams &&errorFn(ErrorFn v) { m_errorFn = ZuMv(v); return ZuMv(*this); }
@@ -785,13 +750,9 @@ public:
   unsigned txThread() const { return m_txThread; }
   unsigned asyncThread() const { return m_asyncThread; }
 
-  const ptls_iovec_t *alpn_list() const { return m_alpn.data(); }
+  ZuSpan<const ZuCSpan> alpn_list() const { return m_alpn; }
   unsigned alpn_count() const { return m_alpn.length(); }
-  ZuCSpan firstALPN() const {
-    return m_alpn.length() ?
-      ZuCSpan{
-	m_alpn[0].base, unsigned(m_alpn[0].len)} : ZuCSpan{};
-  }
+  ZuCSpan firstALPN() const { return m_alpn.length() ? m_alpn[0] : ZuCSpan{}; }
   ZuCSpan caPath() const { return m_caPath; }
   ZuCSpan certPath() const { return m_certPath; }
   ZuCSpan keyPath() const { return m_keyPath; }
@@ -1124,9 +1085,14 @@ private:
     if (bytes) m_alpnData.ensure(bytes);
     m_alpn.ensure(alpn.length());
     for (auto &s : alpn) {
+      if (!s.length()) {
+	m_alpn.push(ZuCSpan{});
+	continue;
+      }
       unsigned offset = m_alpnData.length();
       m_alpnData << ZuBSpan{s};
-      m_alpn.push(ptls_iovec_t{m_alpnData.data() + offset, s.length()});
+      m_alpn.push(ZuCSpan{
+	reinterpret_cast<const char *>(m_alpnData.data() + offset), s.length()});
     }
   }
 
@@ -1287,7 +1253,7 @@ friend ZmEngine<App>;
     }
     bool ok = this->init_(ZuMv(params), Zquic::Vantage::Server,
       [this](const ServerParams &) {
-	if (!m_ticketKey) m_ticketKey = Ztls::Pico::ticket_key_new();
+	if (!m_ticketKey) m_ticketKey = Ztls::ticket_key_new();
 	return m_ticketKey;
       });
     if (ok) m_routes.initQueue(this);
@@ -1388,8 +1354,8 @@ friend ZmEngine<App>;
   }
   using Endpoint::pktAllocTarget;
   using Endpoint::waitTx;
-  ptls_encrypt_ticket_t *ticketEncryptCB() {
-    return Ztls::Pico::ticket_encrypt_cb(m_ticketKey);
+  Ztls_::EncryptTicket *ticketEncryptCB() {
+    return Ztls::ticket_encrypt_cb(m_ticketKey);
   }
   bool sendPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, bool priority = false) {
     if (!this->app()->sendPkt(buf)) return true;
@@ -1875,7 +1841,7 @@ private:
 
   void finalTicketKey() {
     if (!m_ticketKey) return;
-    Ztls::Pico::ticket_key_free(m_ticketKey);
+    Ztls::ticket_key_free(m_ticketKey);
     m_ticketKey = nullptr;
   }
 
@@ -1886,7 +1852,7 @@ private:
   CxnRouter<Link>	m_routes;
   ZiSockAddr		m_localAddr;
   AddrValidationDiag	m_addrValidationDiag;
-  Ztls::Pico::TicketKey *m_ticketKey	= nullptr;
+  Ztls::TicketKey *m_ticketKey	= nullptr;
   unsigned		m_stopCount = 0;
 };
 

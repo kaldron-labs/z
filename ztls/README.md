@@ -6,6 +6,12 @@ the TLS 1.3 engine and its OpenSSL and Fusion backends. Include
 `<zlib/Ztls.hh>` for transport or individual facility headers and link
 `libZtls`. OpenSSL libcrypto supplies native cryptographic operations.
 
+The same engine drives QUIC through the raw handshake API in
+`<zlib/ZtlsEngine.hh>`. The caller owns the connection and output storage.
+The engine reports output ranges by encryption level and delivers traffic
+secrets to the caller. See the [engine notes](src/engine/README.md) for the
+raw output contract.
+
 ## TLS clients and servers
 
 The CRTP transport API parallels [Ztcp](../ztcp/README.md): derive an application

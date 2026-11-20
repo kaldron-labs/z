@@ -18,7 +18,7 @@ LDADD = $(top_builddir)/zrest/src/libZrest.la \
 	$(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
-	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = ZrestTest ZrestExampleTest
 ZrestTest_SOURCES = ZrestTest.cc
 ZrestExampleTest_SOURCES = ZrestExampleTest.cc

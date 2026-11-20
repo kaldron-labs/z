@@ -11,4 +11,5 @@ namespace ZtlsTestPort {
   enum { BufferTest = 20200, BufferTestEnd = 20299 };
 }
 
-#endif /* ZtlsTestPorts_HH */
+// ZtlsTestPorts_HH
+#endif

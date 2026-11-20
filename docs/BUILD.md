@@ -99,5 +99,5 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
 
 
 ## Dependencies & Configuration Notes
-Core dependencies include `libck`, `hwloc`, `pcre`, and OpenSSL libcrypto. The top-level configuration also checks for `zpicotls` for Zquic. Ztls builds its TLS 1.3 engine into `libZtls`. Canonical `flatbuffers` and `flatc` are used only by explicit FlatBuffers interop targets. Optional components include `libpq` (PostgreSQL) and `gtk+3`; enable/disable via `z.config` (`-P`, `-G`) or `configure` flags.
+Core dependencies include `libck`, `hwloc`, `pcre`, and OpenSSL libcrypto. Ztls builds its TLS 1.3 engine into `libZtls`, which provides Zquic's raw handshake driver. Canonical `flatbuffers` and `flatc` are used only by explicit FlatBuffers interop targets. Optional components include `libpq` (PostgreSQL) and `gtk+3`; enable/disable via `z.config` (`-P`, `-G`) or `configure` flags.
 Add external dependencies in `configure.ac`; use `PKG_CHECK_MODULES` when the dependency is available through pkg-config, falling back to dependency-specific `m4` logic when needed.

@@ -12,23 +12,24 @@ pkginclude_HEADERS = ZtlsLib.hh Ztls.hh \
 	ZtlsPK.hh ZtlsPK_Data.hh ZtlsKEM.hh ZtlsHPKE.hh ZtlsAge.hh ZtlsCOSE.hh ZtlsSec.hh \
 	ZtlsVault.hh ZtlsVaultStore.hh
 pkginclude_HEADERS += ZtlsEngine.hh ZtlsEngineOpenSSL.hh ZtlsFusion.hh
-noinst_HEADERS = ZtlsVaultSS.hh engine/chacha20poly1305.h \
-	engine/certificate_compression.h
+noinst_HEADERS = ZtlsVaultSS.hh \
+	engine/ZtlsCertCompression.hh
 lib_LTLIBRARIES = libZtls.la
 ZTLS_BROTLI_PACKAGES = libbrotlidec libbrotlienc
 ZTLS_BROTLI_LIBS = $(shell $(PKG_CONFIG) --libs $(ZTLS_BROTLI_PACKAGES) 2>/dev/null)
-ZTLS_BROTLI_CPPFLAGS = $(if $(ZTLS_BROTLI_LIBS),$(shell $(PKG_CONFIG) --cflags $(ZTLS_BROTLI_PACKAGES)) -DZtls_USE_BROTLI=1)
-libZtls_la_CPPFLAGS = $(AM_CPPFLAGS) $(ZTLS_DBUS_CPPFLAGS) $(ZTLS_BROTLI_CPPFLAGS) @CRYPTO_CFLAGS@ -DZTLS_EXPORTS
+ZtlsUseBrotli ?= $(if $(ZTLS_BROTLI_LIBS),1,0)
+ZTLS_BROTLI_CPPFLAGS = $(if $(ZTLS_BROTLI_LIBS),$(shell $(PKG_CONFIG) --cflags $(ZTLS_BROTLI_PACKAGES))) -DZtlsUseBrotli=$(ZtlsUseBrotli)
+libZtls_la_CPPFLAGS = $(AM_CPPFLAGS) $(ZTLS_DBUS_CPPFLAGS) $(ZTLS_BROTLI_CPPFLAGS) @CRYPTO_CFLAGS@ -DZtlsExports=1
 
 # Keep Fusion ISA options on its implementation translation unit.
 ZTLS_FUSION_CXXFLAGS = $(if $(filter x86_64 i386 i486 i586 i686,$(host_cpu)),-mavx2 -maes -mpclmul -mvaes -mvpclmulqdq)
 noinst_LTLIBRARIES = libZtlsFusion.la
 libZtlsFusion_la_CPPFLAGS = $(libZtls_la_CPPFLAGS)
 libZtlsFusion_la_CXXFLAGS = $(AM_CXXFLAGS) $(ZTLS_FUSION_CXXFLAGS)
-libZtlsFusion_la_SOURCES = engine/fusion.cc
+libZtlsFusion_la_SOURCES = engine/ZtlsFusion.cc
 libZtls_la_SOURCES = ZtlsLib.cc ZtlsAlg.cc ZtlsMD.cc ZtlsHMAC.cc ZtlsKDF.cc ZtlsAEAD.cc ZtlsPKOps.cc ZtlsRandom.cc ZtlsCredentials.cc ZtlsPK.cc ZtlsKEM.cc ZtlsHPKE.cc ZtlsAge.cc ZtlsCOSE.cc ZtlsTOTP.cc ZtlsSec.cc ZtlsVault.cc
-libZtls_la_SOURCES += engine/tls13.cc engine/openssl.cc engine/hpke.cc \
-	engine/certificate_compression.cc
+libZtls_la_SOURCES += engine/ZtlsTLS13.cc engine/ZtlsEngineOpenSSL.cc engine/ZtlsEngineHPKE.cc \
+	engine/ZtlsCertCompression.cc
 if !LINUX
 libZtls_la_SOURCES += ZtlsVaultWindows.cc
 endif

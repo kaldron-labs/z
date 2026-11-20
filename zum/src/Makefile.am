@@ -54,7 +54,6 @@ libZum_la_LIBADD = \
 	$(top_builddir)/zfb/src/libZfb.la $(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
-	@PTLS_LIBS@ \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 zum_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zv/src \
 	-I$(top_srcdir)/ztcp/src -I$(top_srcdir)/zquic/src
@@ -66,7 +65,7 @@ zum_LDADD = libZum.la \
 	$(top_builddir)/zfb/src/libZfb.la $(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
-	@PTLS_LIBS@ @Z_MT_LIBS@
+	@Z_MT_LIBS@
 zum_SOURCES = zum.cc
 zumd_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zv/src \
 	-I$(top_srcdir)/ztcp/src -I$(top_srcdir)/zquic/src \
@@ -81,7 +80,7 @@ zumd_LDADD = $(top_builddir)/ztc/src/libZtcApp.la libZum.la \
 	$(top_builddir)/zfb/src/libZfb.la $(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
-	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+	@CRYPTO_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 zumd_SOURCES = zumd.cc zumd_bootstrap.cc zumd_daemon.cc \
 	zumd_daemon_admin.cc zumd_role_delete.cc \
 	zumd_core.cc zumd_admin.cc zumd_authorize.cc zumd_db.cc \

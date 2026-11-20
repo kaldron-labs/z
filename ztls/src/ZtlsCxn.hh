@@ -9,113 +9,92 @@
 #ifndef ZtlsCxn_HH
 #define ZtlsCxn_HH
 
+#ifndef ZtlsLib_HH
+#include <zlib/ZtlsLib.hh>
+#endif
+
+#include <openssl/async.h>
 #include <openssl/types.h>
 
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmLib.hh>
-#include <zlib/ZtlsBuf.hh>
 
-struct async_job_st;
-struct async_wait_ctx_st;
+#include <zlib/ZtlsBuf.hh>
 
 namespace Ztls_ {
 
 struct TrafficProtection {
-    uint8_t secret[Ztls_MAX_DIGEST_SIZE];
-    size_t epoch;
-    /* the following fields are not used if the key_change callback is set */
-    aead_context_t *aead;
-    uint64_t seq;
-    unsigned failed : 1;
+  uint8_t	secret[Ztls_MaxDigestSize];
+  size_t	epoch;
+  // The following fields are unused when updateTrafficKey is installed.
+  AeadContext	*aead;
+  uint64_t	seq;
+  unsigned	failed:1;
 };
 
-struct SignatureAlgorithms {
-    uint16_t list[Ztls_MAX_SIGNATURE_ALGORITHMS];
-    size_t count;
-};
+ZuDerive(
+  SignatureAlgorithms,
+  (ZtBuiltin<
+    ZtArray<uint16_t, ZtArrayHeapID<"Ztls.Engine.SignatureAlgorithms">>, ZtlsMaxSigAlgos>));
 
 struct CertificateRequest {
-    /**
-     * context.base becomes non-NULL when a CertificateRequest is pending for processing
-     */
-    Bytes context;
-    SignatureAlgorithms signature_algorithms;
+  // context.base becomes non-NULL when a CertificateRequest is pending for processing
+  Bytes			context;
+  SignatureAlgorithms	signatureAlgorithms;
 };
 
-/**
- * Properties for ECH. Iff ECH is used and not rejected, `aead` is non-NULL.
- */
-enum en_ech_state_t {
-    Ztls_ECH_STATE_NONE = 0,
-    Ztls_ECH_STATE_OFFERED,
-    Ztls_ECH_STATE_ACCEPTED,
-    Ztls_ECH_STATE_GREASE
-};
+// Properties for ECH. Iff ECH is used and not rejected, aead is non-null.
+ZtEnumNS(Ztls_API, EchState, int8_t, None, Offered, Accepted, Grease);
 
 ZuDerive(EchPublicName, (ZtCArray<ZtArrayHeapID<"Ztls.Engine.ECH.PublicName">>));
 
 struct Ech {
-    /**
-     * ECH state for this connection. `OFFERED` and `ACCEPTED` are used on both client and server; `GREASE` is client-only (server
-     * cannot distinguish GREASE from a config mismatch, both are simply ECH that fails to decrypt).
-     */
-    en_ech_state_t state;
-    uint8_t config_id;
-    hpke_kem_t *kem;
-    hpke_cipher_suite_t *cipher;
-    aead_context_t *aead;
-    uint8_t inner_client_random[Ztls_HELLO_RANDOM_SIZE];
-    struct {
-        KeyExchangeBytes enc;
-        uint8_t max_name_length;
-        EchPublicName public_name;
-        /**
-         * retains a copy of entire ECH extension so that it can be replayed in the 2nd CH when ECH is rejected via HRR
-         */
-        EchBytes first_ech;
-    } client;
+  // ECH state for this connection. Offered and Accepted are used on both client and server;
+  // Grease is client-only (server cannot distinguish GREASE from a config mismatch, both are
+  // simply ECH that fails to decrypt).
+  Ztls_::EchState::T	state;
+  uint8_t		configId;
+  const HpkeKem		*kem;
+  const HpkeSuite	*cipher;
+  AeadContext		*aead;
+  uint8_t		innerClientRandom[Ztls_HelloRandomSize];
+  struct Client {
+    KeyExchangeBytes	enc;
+    uint8_t		maxNameLength;
+    EchPublicName	publicName;
+
+    // retains a copy of entire ECH extension so that it can be replayed in the 2nd CH when ECH is
+    // rejected via HRR
+    EchBytes		firstEch;
+  } client;
 };
 
-/* One receive operation, owned by the connection's serial receive caller. */
+// One receive operation, owned by the connection's serial receive caller.
 struct StreamRecord {
-    uint8_t header[5], tag[16];
-    size_t header_off, tag_off, tag_size;
-    size_t length, text_length, written;
-    uint8_t *base;
-    size_t capacity;
-    unsigned encrypted : 1;
-    unsigned begun : 1;
-    unsigned reserved : 1;
-    unsigned failed : 1;
+  uint8_t	header[5], tag[16];
+  size_t	headerOff, tagOff, tagSize;
+  size_t	length, textLength, written;
+  uint8_t	*base;
+  size_t	capacity;
+  unsigned	encrypted:1, begun:1, reserved:1, failed:1;
 };
 
-enum en_state_t {
-    Ztls_STATE_CLIENT_HANDSHAKE_START,
-    Ztls_STATE_CLIENT_EXPECT_SERVER_HELLO,
-    Ztls_STATE_CLIENT_EXPECT_SECOND_SERVER_HELLO,
-    Ztls_STATE_CLIENT_EXPECT_ENCRYPTED_EXTENSIONS,
-    Ztls_STATE_CLIENT_EXPECT_CERTIFICATE_REQUEST_OR_CERTIFICATE,
-    Ztls_STATE_CLIENT_EXPECT_CERTIFICATE,
-    Ztls_STATE_CLIENT_EXPECT_CERTIFICATE_VERIFY,
-    Ztls_STATE_CLIENT_EXPECT_FINISHED,
-    Ztls_STATE_SERVER_EXPECT_CLIENT_HELLO,
-    Ztls_STATE_SERVER_EXPECT_SECOND_CLIENT_HELLO,
-    Ztls_STATE_SERVER_GENERATING_CERTIFICATE_VERIFY,
-    Ztls_STATE_SERVER_EXPECT_CERTIFICATE,
-    Ztls_STATE_SERVER_EXPECT_CERTIFICATE_VERIFY,
-    /* send can be called if the state is below here */
-    Ztls_STATE_SERVER_EXPECT_END_OF_EARLY_DATA,
-    Ztls_STATE_SERVER_EXPECT_FINISHED,
-    Ztls_STATE_POST_HANDSHAKE_MIN,
-    Ztls_STATE_CLIENT_POST_HANDSHAKE = Ztls_STATE_POST_HANDSHAKE_MIN,
-    Ztls_STATE_SERVER_POST_HANDSHAKE
-};
+ZtEnumNS(
+  Ztls_API, State, int8_t, CliHSStart, CliWaitSrvHello, CliWait2ndSrvHello, CliWaitEncExts,
+  CliWaitCertReq, CliExpectCert, CliWaitCertSig, CliWaitFinished, SrvWaitCliHello,
+  SrvWait2ndCliHello, SrvBuildCertSig, SrvExpectCert, SrvWaitCertSig, SrvWaitEarlyEnd,
+  SrvWaitFinished, CliPostHS, SrvPostHS);
+namespace State {
+  enum { PostHSMin = CliPostHS };
+}
 
 ZuDerive(ServerName, (ZtCArray<ZtArrayHeapID<"Ztls.Engine.SNI">>));
 ZuDerive(NegotiatedProtocol, (ZtCArray<ZtArrayHeapID<"Ztls.Engine.ALPN">>));
 ZuDerive(CertificateRequestBytes, (ZtBArray<ZtArrayHeapID<"Ztls.Engine.CertificateRequest">>));
-ZuDerive(HandshakeSecret, (ZtBArray<ZtArraySecret<true, ZtArrayHeapID<"Ztls.Engine.HandshakeSecret">>>));
-ZuDerive(ExporterSecret, (ZtBArray<ZtArraySecret<true, ZtArrayHeapID<"Ztls.Engine.ExporterSecret">>>));
+ZuDerive(
+  HandshakeSecret, (ZtBArray<ZtArraySecret<true, ZtArrayHeapID<"Ztls.Engine.HandshakeSecret">>>));
+ZuDerive(
+  ExporterSecret, (ZtBArray<ZtArraySecret<true, ZtArrayHeapID<"Ztls.Engine.ExporterSecret">>>));
 
 } // namespace Ztls_
 
@@ -123,94 +102,97 @@ namespace Ztls {
 
 ZuDerive(AsyncSignature, (ZtBArray<ZtArrayHeapID<"Ztls.Handshake.Signature">>));
 
-class ZtlsAPI Cxn {
-  Cxn(const Cxn &) = delete;
-  Cxn &operator =(const Cxn &) = delete;
+struct Ztls_API Cxn {
+  using KeyExchange = const Ztls_::KeyExchangeAlgo;
+  using KeyExchangeCtx = Ztls_::KeyExchangeContext;
+  using SignatureResume =
+    ZmFn<int(Ztls_::Buffer *, uint16_t *), ZmFnHeapID<"Ztls.Handshake.SignatureResume">>;
+  using SignatureRetire = ZmFn<bool(), ZmFnHeapID<"Ztls.Handshake.SignatureRetire">>;
 
-public:
+  // Published before use and stable throughout active transport.
+  Ztls_::Context			*ctx = nullptr;
+  void					*dataPtr = nullptr;
+  bool					isServer = false;
+
+  // Selected by Rx during handshake and read by Tx after handoff.
+  const Ztls_::CipherSuite		*cipherSuite = nullptr;
+
+  // Rx owns handshake, receive state, and optional exporter secrets.
+  alignas(Zm::CacheLineSize)
+  Ztls_::State::T			state{};
+  Ztls_::TrafficProtection		rxTraffic{};
+  struct RxBuffers {
+    Ztls_::Buffer	rec, mess;
+  } recvbuf{};
+  Ztls_::StreamRecord			streamRec{};
+  Ztls_::KeySchedule			*keySchedule = nullptr;
+  Ztls_::ServerName			serverName;
+  Ztls_::NegotiatedProtocol		negotiatedProtocol;
+  KeyExchange				*keyShare = nullptr;
+  uint8_t				clientRandom[Ztls_HelloRandomSize]{};
+  struct ExporterSecrets {
+    Ztls_::ExporterSecret	early, oneRtt;
+  } exporterMasterSecret;
+  Ztls_::Ech				ech{};
+  bool					rxActive = false;
+  bool					isPskHandshake = false;
+  bool					sendChangeCipherSpec = false;
+  bool					txHandedOff = false;
+  uint32_t				keyUpdateRequests = 0;
+  Ztls_::Bytes				legacySessionId{};
+  uint8_t				legacySessionIdBuf[32]{};
+  KeyExchangeCtx			*keyShareCtx = nullptr;
+  bool					offeredPsk = false;
+  bool					usingEarlyData = false;
+  Ztls_::CertificateRequest		certificateRequest{};
+  uint8_t				pendingTrafficSecret[Ztls_MaxDigestSize]{};
+  uint32_t				earlyDataSkippedBytes = UINT32_MAX;
+  uint8_t				numTicketsToSend = 0;
+  SignatureResume			signatureResume;
+  SignatureRetire			signatureRetire;
+  int					signatureFd = -1;
+  EVP_MD_CTX				*signatureDigest = nullptr;
+  ASYNC_WAIT_CTX			*signatureWait = nullptr;
+  ASYNC_JOB				*signatureJob = nullptr;
+  AsyncSignature			signature;
+  size_t				signatureLength = 0;
+  uint16_t				signatureAlgorithm = 0;
+  Ztls_::VerifySignature		*certificateVerify = nullptr;
+  Ztls_::HandshakeSecret		pendingHandshakeSecret;
+  Ztls_::CertificateRequestBytes	certificateRequestBytes;
+  Ztls_::HandshakeProps			handshakeProps{};
+  ZmRef<ZiIOBuf>			rxInput;
+  PlaintextSink				plaintext;
+  bool					rxPaused = false;
+
+  // Rx uses these members while negotiating. The handoff assigns them to Tx.
+  alignas(Zm::CacheLineSize)
+  Ztls_::TrafficProtection		txTraffic{};
+  bool					needsKeyUpdate = false;
+  bool					keyUpdateSendRequest = false;
+  bool					txClosing = false;
+  uint64_t				txGeneration = 0;
+
+  Cxn(const Cxn &) = delete;
+  Cxn &operator=(const Cxn &) = delete;
   Cxn() = default;
-  Cxn(Ztls_::context_t *ctx, bool server) { initialize(ctx, server); }
+  Cxn(Ztls_::Context *ctx, bool server) { initialize(ctx, server); }
   ~Cxn();
 
   // Initialize before publishing the connection. Reinitialization requires
   // both directions to be idle.
-  void initialize(Ztls_::context_t *, bool server, void *owner = nullptr);
+  void initialize(Ztls_::Context *, bool server, void *owner = nullptr);
+  void clearVerifier()
+  {
+    delete certificateVerify;
+    certificateVerify = nullptr;
+  }
   void retireRx();
   void retireTx();
-  void retireSignature();
-
-  using SignatureResume = ZmFn<int(Ztls_::buffer_t *, uint16_t *),
-    ZmFnHeapID<"Ztls.Handshake.SignatureResume">>;
-  using SignatureRetire = ZmFn<void(), ZmFnHeapID<"Ztls.Handshake.SignatureRetire">>;
-
-  // Published before use and stable throughout active transport.
-  Ztls_::context_t	*ctx = nullptr;
-  void			*data_ptr = nullptr;
-  bool			is_server = false;
-
-  // Selected by Rx during handshake and read by Tx after handoff.
-  Ztls_::cipher_suite_t	*cipher_suite = nullptr;
-
-  // Rx owns handshake, receive state, and optional exporter secrets.
-  alignas(Zm::CacheLineSize)
-  Ztls_::en_state_t	state{};
-  Ztls_::TrafficProtection rx_traffic{};
-  struct {
-    Ztls_::buffer_t	rec, mess;
-  } recvbuf{};
-  Ztls_::StreamRecord stream_rec{};
-  Ztls_::key_schedule_t	*key_schedule = nullptr;
-  Ztls_::ServerName	server_name;
-  Ztls_::NegotiatedProtocol negotiated_protocol;
-  Ztls_::key_exchange_algorithm_t *key_share = nullptr;
-  uint8_t		client_random[Ztls_HELLO_RANDOM_SIZE]{};
-  struct {
-    Ztls_::ExporterSecret early, one_rtt;
-  } exporter_master_secret;
-  Ztls_::Ech	ech{};
-  bool			rx_active = false;
-  bool			is_psk_handshake = false;
-  bool			send_change_cipher_spec = false;
-  bool			tx_handed_off = false;
-  uint32_t		key_update_requests = 0;
-  Ztls_::Bytes		legacy_session_id{};
-  uint8_t		legacy_session_id_buf[32]{};
-  Ztls_::key_exchange_context_t *key_share_ctx = nullptr;
-  bool			offered_psk = false;
-  bool			using_early_data = false;
-  Ztls_::CertificateRequest certificate_request{};
-  uint8_t		pending_traffic_secret[Ztls_MAX_DIGEST_SIZE]{};
-  uint32_t		early_data_skipped_bytes = UINT32_MAX;
-  uint8_t		num_tickets_to_send = 0;
-  SignatureResume	signature_resume;
-  SignatureRetire	signature_retire;
-  int			signature_fd = -1;
-  EVP_MD_CTX		*signature_digest = nullptr;
-  async_wait_ctx_st	*signature_wait = nullptr;
-  async_job_st		*signature_job = nullptr;
-  AsyncSignature	signature;
-  size_t		signature_length = 0;
-  uint16_t		signature_algorithm = 0;
-  struct {
-    int (*cb)(void *, uint16_t, Ztls_::Bytes, Ztls_::Bytes);
-    void *verify_ctx;
-  } certificate_verify{};
-  Ztls_::HandshakeSecret pending_handshake_secret;
-  Ztls_::CertificateRequestBytes certificate_request_bytes;
-  Ztls_::handshake_properties_t handshake_props{};
-  ZmRef<ZiIOBuf>	rx_input;
-  PlaintextSink		plaintext;
-  bool			rx_paused = false;
-
-  // Rx uses these members while negotiating. The handoff assigns them to Tx.
-  alignas(Zm::CacheLineSize)
-  Ztls_::TrafficProtection tx_traffic{};
-  bool			needs_key_update = false;
-  bool			key_update_send_request = false;
-  bool			tx_closing = false;
-  uint64_t		tx_generation = 0;
+  bool retireSignature();
 };
 
 } // namespace Ztls
 
-#endif /* ZtlsCxn_HH */
+// ZtlsCxn_HH
+#endif

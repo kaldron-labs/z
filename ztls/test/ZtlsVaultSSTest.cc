@@ -53,7 +53,7 @@ static void bodies()
     ZuCheck(decoded.input.is<Text>());
   }
 
-  Attrs attrs{"example", "user", "global/token"};
+  Attrs	    attrs{"example", "user", "global/token"};
   SearchArg search{{&attrs}};
   wire.length(0);
   ZfDBUS::save(wire, search);
@@ -66,17 +66,16 @@ static void bodies()
     ZuCheck(decoded.attributes.owned.findVal("key") == "global/token");
   }
 
-  uint8_t value[] = {0, 0xff, 1};
+  uint8_t	value[] = {0, 0xff, 1};
   CreateItemArg item;
   item.properties.label = Text{"token"};
   item.properties.attributes = AttrsView{&attrs};
-  item.secret = Secret{Text{"/org/freedesktop/secrets/session/1"}, {}, value,
-    Text{"application/octet-stream"}};
+  item.secret = Secret{
+    Text{"/org/freedesktop/secrets/session/1"}, {}, value, Text{"application/octet-stream"}};
   item.replace = true;
   wire.length(0);
   ZfDBUS::save(wire, item);
-  auto itemHandler = ZfDBUS::handler<CreateItemArg>({wire,
-    "a{sv}(oayays)b"});
+  auto itemHandler = ZfDBUS::handler<CreateItemArg>({wire, "a{sv}(oayays)b"});
   ZuCheck(bool(itemHandler));
   if (itemHandler) {
     CreateItemArg decoded;
