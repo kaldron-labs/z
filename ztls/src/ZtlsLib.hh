@@ -38,19 +38,10 @@
 
 #endif
 
-#include <zlib/ZtString.hh>
-
-#include <zlib/ZePlatform.hh>
-
 namespace Ztls {
 
-  Ztls_API bool cryptoInit();
-  Ztls_API void clearTLSError();
-  Ztls_API ZeException tlsError(
-    const char *operation, int code, const char *file = __builtin_FILE(),
-    unsigned line = __builtin_LINE(), const char *function = __builtin_FUNCTION());
-
-  Ztls_Extern void init(); // can be called repeatedly
+  Ztls_API bool cryptoInit();		// optional
+  Ztls_API void cryptoClearError();
 
 }
 

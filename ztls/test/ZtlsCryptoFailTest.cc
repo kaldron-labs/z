@@ -14,6 +14,7 @@
 
 #include <zlib/ZtlsAEAD.hh>
 #include <zlib/ZtlsEngine.hh>
+#include <zlib/ZtlsError.hh>
 #include <zlib/ZtlsHMAC.hh>
 #include <zlib/ZtlsKDF.hh>
 #include <zlib/ZtlsMD.hh>
@@ -68,24 +69,27 @@ static void unavailable()
 static void deferredError()
 {
   ZuTestScope(deferredError);
-  Ztls::clearTLSError();
+  Ztls::cryptoClearError();
   ERR_raise(ERR_LIB_EVP, ERR_R_INTERNAL_ERROR);
   char expected[256];
   ERR_error_string_n(ERR_peek_last_error(), expected, sizeof(expected));
   ZeException error;
+  unsigned    line;
   {
     ZeString operation{"certificate verification"};
-    error = Ztls::tlsError(operation.data(), Ztls_ErrorLibrary);
+    line = __LINE__ + 1;
+    error = ZeEXCEPT(Error, "Ztls", Ztls::Error(operation, Ztls_ErrorLibrary));
   }
   ZuCheck(error.file == ZuCSpan{__FILE__});
-  ZuCheck(error.function == "deferredError"_z);
-  Ztls::clearTLSError();
+  ZuCheck(error.line == line);
+  ZuCheck(error.function == ZuCSpan{ZuFnName});
+  Ztls::cryptoClearError();
   ERR_raise(ERR_LIB_RSA, ERR_R_PASSED_INVALID_ARGUMENT);
   ZeString message;
   message << error;
   ZuCheck(strstr(message.data(), "certificate verification"));
   ZuCheck(strstr(message.data(), expected));
-  Ztls::clearTLSError();
+  Ztls::cryptoClearError();
 }
 
 int main(int argc, char **argv)

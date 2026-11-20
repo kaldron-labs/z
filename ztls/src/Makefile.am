@@ -6,7 +6,7 @@ AM_CPPFLAGS = -I$(srcdir) -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 libZtls_la_LDFLAGS = $(AM_LDFLAGS) @Z_SO_LDFLAGS@ $(ZTLS_BROTLI_LIBS)
-pkginclude_HEADERS = ZtlsLib.hh Ztls.hh \
+pkginclude_HEADERS = ZtlsLib.hh ZtlsError.hh Ztls.hh \
 	ZtlsBuf.hh ZtlsCredentials.hh ZtlsCxn.hh ZtlsAlg.hh ZtlsKDF.hh ZtlsAEAD.hh ZtlsPKOps.hh \
 	ZtlsHMAC.hh ZtlsMD.hh ZtlsTOTP.hh ZtlsRandom.hh \
 	ZtlsPK.hh ZtlsPK_Data.hh ZtlsKEM.hh ZtlsHPKE.hh ZtlsAge.hh ZtlsCOSE.hh ZtlsSec.hh \
@@ -27,7 +27,7 @@ noinst_LTLIBRARIES = libZtlsFusion.la
 libZtlsFusion_la_CPPFLAGS = $(libZtls_la_CPPFLAGS)
 libZtlsFusion_la_CXXFLAGS = $(AM_CXXFLAGS) $(ZTLS_FUSION_CXXFLAGS)
 libZtlsFusion_la_SOURCES = engine/ZtlsFusion.cc
-libZtls_la_SOURCES = ZtlsLib.cc ZtlsAlg.cc ZtlsMD.cc ZtlsHMAC.cc ZtlsKDF.cc ZtlsAEAD.cc ZtlsPKOps.cc ZtlsRandom.cc ZtlsCredentials.cc ZtlsPK.cc ZtlsKEM.cc ZtlsHPKE.cc ZtlsAge.cc ZtlsCOSE.cc ZtlsTOTP.cc ZtlsSec.cc ZtlsVault.cc
+libZtls_la_SOURCES = ZtlsLib.cc ZtlsError.cc ZtlsAlg.cc ZtlsMD.cc ZtlsHMAC.cc ZtlsKDF.cc ZtlsAEAD.cc ZtlsPKOps.cc ZtlsRandom.cc ZtlsCredentials.cc ZtlsPK.cc ZtlsKEM.cc ZtlsHPKE.cc ZtlsAge.cc ZtlsCOSE.cc ZtlsTOTP.cc ZtlsSec.cc ZtlsVault.cc
 libZtls_la_SOURCES += engine/ZtlsTLS13.cc engine/ZtlsEngineOpenSSL.cc engine/ZtlsEngineHPKE.cc \
 	engine/ZtlsCertCompression.cc
 if !LINUX

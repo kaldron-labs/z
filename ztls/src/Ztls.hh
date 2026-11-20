@@ -42,6 +42,7 @@
 #include <zlib/ZtlsCredentials.hh>
 #include <zlib/ZtlsCxn.hh>
 #include <zlib/ZtlsEngineOpenSSL.hh>
+#include <zlib/ZtlsError.hh>
 #include <zlib/ZtlsRandom.hh>
 
 #if ZtlsFusion
@@ -549,7 +550,7 @@ private:
     bool replacing = bool(old);
     m_closing = nullptr;
     if (m_isServer)
-      reset_tls();
+      resetTLS();
     else
       retireTLS();
     if (ZuUnlikely(old)) {
@@ -647,7 +648,7 @@ private:
       auto	   reservation = packetSink(output);
 
       size_t consumed = m_tls->rxInput ? m_tls->rxInput->length : 0;
-      clearTLSError();
+      cryptoClearError();
       int n = Ztls_::receive_stream(
 	m_tls, &reservation, m_tls->rxInput ? m_tls->rxInput->data() : nullptr, &consumed,
 	&m_tls->handshakeProps);
@@ -663,7 +664,7 @@ private:
 	  m_peerClosed = true;
 	  disconnect_(true);
 	} else {
-	  app()->error_(tlsError("Ztls_::receive_stream()", n));
+	  app()->error_(ZeEXCEPT(Error, "Ztls", Ztls::Error("Ztls_::receive_stream()", n)));
 	  disconnect_(false);
 	}
 	return false;
@@ -733,7 +734,7 @@ private:
       disconnect_(false);
       return false;
     }
-    clearTLSError();
+    cryptoClearError();
     int n = Ztls_::handoff_tx(m_tls);
     // A server can finish producing its handshake flight before it has
     // consumed the client's Finished.  Its outbound application keys exist,
@@ -743,7 +744,7 @@ private:
       return true;
     }
     if (ZuUnlikely(n)) {
-      app()->error_(tlsError("Ztls_::handoff_tx()", n));
+      app()->error_(ZeEXCEPT(Error, "Ztls", Ztls::Error("Ztls_::handoff_tx()", n)));
       disconnect_(false);
       return false;
     }
@@ -821,8 +822,9 @@ private:
     if (ZuLikely(!m_disconnecting.load_())) processRx_();
   }
 
-  const Ztls_::CipherSuite *rxCipher() const
-  { return m_tls ? Ztls_::get_cipher(m_tls) : nullptr; }
+  const Ztls_::CipherSuite *rxCipher() const {
+    return m_tls ? Ztls_::get_cipher(m_tls) : nullptr;
+  }
 
   struct PacketTarget : RecordPublisher {
     Link		*link;
@@ -912,21 +914,16 @@ private:
 
       // Retire queued mux Rx admissions before releasing the link. Reception
       // is disarmed, and TLS Rx can no longer post a rearm for this connection.
-      cxn->mx()->rxRun([impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer]() mutable
-      {
+      cxn->mx()->rxRun([impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer]() mutable {
 	auto app = impl->app();
 	// drain Tx while keeping cxn/impl referenced
-	app->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer]() mutable
-	{
+	app->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer]() mutable {
 	  if (impl->closing_() == cxn.ptr()) impl->clearTx(gen);
 	  // TLS Tx has stopped producing; drain its queued socket sends next.
-	  auto mx = cxn->mx();
-	  mx->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer]() mutable
-	  {
+	  cxn->mx()->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer]() mutable {
 	    if (impl->closing_() == cxn.ptr() && gen == impl->tlsGen()) impl->Tx::txQueue.clean();
 	    auto app = impl->app();
-	    app->rxRun([impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer]() mutable
-	    {
+	    app->rxRun([impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer]() mutable {
 	      if (impl->closing_() == cxn.ptr()) {
 		impl->closing_(nullptr);
 		if (gen == impl->tlsGen()) impl->disconnected_1(peer);
@@ -963,7 +960,7 @@ private:
     ZiAssert(
       app()->rxInvoked(), "Ztls", (), "TLS disconnect completion outside Rx thread", return);
     peer |= m_peerClosed;
-    reset_tls<false>();
+    resetTLS<false>();
     m_rxStream.clean();
     impl()->connectClosed_();
     impl()->disconnected(peer);
@@ -1109,10 +1106,10 @@ private:
     PacketTarget output{this, target.ptr(), gen, buf.ptr()};
     auto	 reservation = packetSink(output);
 
-    clearTLSError();
+    cryptoClearError();
     int n = Ztls_::tx_send_chunks(target.ptr(), &reservation, buf->data(), buf->length);
     if (n) {
-      txError(gen, tlsError("Ztls_::tx_send_chunks()", n));
+      txError(gen, ZeEXCEPT(Error, "Ztls", Ztls::Error("Ztls_::tx_send_chunks()", n)));
       return false;
     }
     return true;
@@ -1138,9 +1135,10 @@ private:
     PacketTarget output{this, target.ptr(), gen};
     auto	 reservation = packetSink(output);
 
-    clearTLSError();
+    cryptoClearError();
     int n = Ztls_::tx_key_chunks(target.ptr(), &reservation, requestUpdate ? 1 : 0);
-    if (ZuUnlikely(n)) txError(gen, tlsError("Ztls_::tx_key_chunks()", n));
+    if (ZuUnlikely(n))
+      txError(gen, ZeEXCEPT(Error, "Ztls", Ztls::Error("Ztls_::tx_key_chunks()", n)));
   }
 
   void closeTx_(ZmRef<Cxn> cxn, uint64_t gen)
@@ -1151,10 +1149,11 @@ private:
       PacketTarget output{this, cxn.ptr(), gen};
       auto	   reservation = packetSink(output);
 
-      clearTLSError();
+      cryptoClearError();
       int n = Ztls_::tx_alert_chunks(
 	m_txCxn.ptr(), &reservation, Ztls_AlertLevelWarning, Ztls_AlertCloseNotify);
-      if (ZuUnlikely(n)) txError(gen, tlsError("Ztls_::tx_alert_chunks()", n));
+      if (ZuUnlikely(n))
+	txError(gen, ZeEXCEPT(Error, "Ztls", Ztls::Error("Ztls_::tx_alert_chunks()", n)));
       m_txCxn->txClosing = true;
     }
     auto mx = cxn->mx();
@@ -1329,7 +1328,7 @@ protected:
     m_tls = nullptr;
   }
 
-  template <bool CleanRx = true> void reset_tls()
+  template <bool CleanRx = true> void resetTLS()
   {
     uint64_t gen = m_tlsGen.load_() + 1;
     m_tlsGen.store_(gen);
@@ -1460,7 +1459,7 @@ public:
 
   using Base::impl;
   using Base::app;
-  using Base::reset_tls;
+  using Base::resetTLS;
   using Base::handshakeProps;
   using Base::reset_handshake_props;
   using Base::handshake_;
@@ -1571,7 +1570,7 @@ template <typename> friend class Client;
   }
   void connectIP_(ZiIP ip)
   {
-    reset_tls();
+    resetTLS();
     app()->mx()->connect(
       ZiConnectFn{ZmRef(impl()),
 	[](Impl *impl, const ZiCxnInfo &ci) -> ZiConnection * { return new Cxn(impl, ci); }},
@@ -1670,7 +1669,7 @@ public:
 
   using Base::impl;
   using Base::app;
-  using Base::reset_tls;
+  using Base::resetTLS;
 
 friend Base;
 template <typename> friend class Server;

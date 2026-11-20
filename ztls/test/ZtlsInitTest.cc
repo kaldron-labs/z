@@ -55,21 +55,16 @@ static void standaloneCrypto()
   hmac.finish(bytes);
 }
 
-static void concurrentProtocolInit()
+static void concurrentCryptoInit()
 {
-  ZuTestScope(concurrentProtocolInit);
+  ZuTestScope(concurrentCryptoInit);
   ZmSemaphore ready, go;
   bool	      firstOK = false, secondOK = false;
   auto	      initialize = [&ready, &go](bool &ok)
   {
     ready.post();
     go.wait();
-    try {
-      Ztls::init();
-      ok = true;
-    } catch (...) {
-      ok = false;
-    }
+    ok = Ztls::cryptoInit();
   };
   ZmThread first{[&initialize, &firstOK]() { initialize(firstOK); }};
   ZmThread second{[&initialize, &secondOK]() { initialize(secondOK); }};
@@ -82,7 +77,7 @@ static void concurrentProtocolInit()
   if (second) second.join();
   ZuCheck(started);
   ZuCheck(firstOK && secondOK);
-  Ztls::init();
+  ZuCheck(Ztls::cryptoInit());
 }
 
 static void recordBuffers()
@@ -108,7 +103,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(standaloneCrypto);
-  ZuTestCall(concurrentProtocolInit);
+  ZuTestCall(concurrentCryptoInit);
   ZuTestCall(recordBuffers);
   ZuTestCall(connectionAlignment);
   return 0;

@@ -248,7 +248,7 @@ struct Client : Ztls::Client<Client> {
       app->received.post();
       return n > 0 ? 1 : 0;
     }
-    void invalidate() { this->reset_tls(); }
+    void invalidate() { this->resetTLS(); }
     bool sendFor(ZmRef<ZiIOBuf> buf, uint64_t gen) { return this->send(ZuMv(buf), gen); }
     void txPacketized(const ZiIOBuf *, ZmRef<ZiIOBuf>) { this->app()->packetized.post(); }
     void failCurrent()
