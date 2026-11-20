@@ -38,7 +38,7 @@ The directory contracts below are the architectural index. Source contracts iden
 | [zt](./zt/EGM.md) | Dynamic arrays and strings, bitmaps and windows, regex and text adapters, and timezone/platform utilities. |
 | [ztc](./ztc/EGM.md) | Telemetry and control services connecting application publishers over local shared rings to authenticated WebSocket subscribers through an agent and hub. |
 | [ztcp](./ztcp/EGM.md) | TCP transport and ping/pong examples built on the framework multiplexer. The library provides CRTP client/server links, allocator-backed streams, telemetry, and asynchronous connection teardown. |
-| [ztls](./ztls/EGM.md) | TLS transport over the framework multiplexer, with cryptographic primitives, age encryption, and secret storage. OpenSSL and picotls back the library. |
+| [ztls](./ztls/EGM.md) | TLS transport over the framework multiplexer, with cryptographic primitives, age encryption, and secret storage. Ztls embeds its TLS 1.3 engine and uses OpenSSL libcrypto. |
 | [zu](./zu/EGM.md) | Foundation library for low-level types, compile-time reflection, containers, numeric/text codecs, time values and test infrastructure. |
 | [zum](./zum/EGM.md) | Zum groups the service-side authentication library, persistent authorization daemon, management CLI, and a native-client/resource-server example. It builds on Zhttp/Zrest, Ztls, Zdb, Vault and the framework scheduler; daemon telemetry uses Ztc. The existing [README.md](./zum/README.md) describes deployment and provisioning. |
 | [zv](./zv/EGM.md) | Configuration file I/O and runtime parameter adaptation. |

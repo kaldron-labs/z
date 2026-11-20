@@ -91,7 +91,7 @@ void sinkGeometry()
   ZuCheck(output.reserve(37, &base, &capacity) == Ztls_ErrorNoMemory);
 }
 
-// Retains zpicotls t/exact-rx.c's record-boundary and zero-copy assertions.
+// Checks exact record boundaries and zero-copy receive behavior.
 static void exactRecord(unsigned length)
 {
   ZuTestScopeRT(exactRecord);

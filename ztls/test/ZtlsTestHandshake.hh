@@ -18,7 +18,7 @@ namespace ZtlsTest {
 
 inline void useTestPSK(Ztls_::Context &ctx, const Ztls_::CipherSuite *suite)
 {
-  // Reuse the TLS 1.3 credentials from zpicotls's exact receive test.
+  // Shared TLS 1.3 credentials for exact receive tests.
   ctx.preSharedKey.identity = Ztls_::wireBytes("inplace", 7);
   ctx.preSharedKey.secret = Ztls_::wireBytes("exact receive capacity", 22);
   ctx.preSharedKey.hash = suite->hash;

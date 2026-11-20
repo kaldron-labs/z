@@ -44,6 +44,8 @@ Boost, Folly or BDE for its production libraries.
 
 Ztls builds its TLS 1.3 engine and Fusion backend into `libZtls`. Its transport
 and standalone cryptographic operations use OpenSSL libcrypto directly.
+All engine sources and headers ship under `ztls/src`; no external TLS engine
+checkout, headers, or libraries are required.
 When both Brotli encoder and decoder development packages are available via
 pkg-config, Ztls also builds support for certificate compression.
 
@@ -133,13 +135,13 @@ The QIR image additionally installs [ethtool](https://www.kernel.org/pub/softwar
 [iproute2](https://wiki.linuxfoundation.org/networking/iproute2),
 [net-tools](https://net-tools.sourceforge.io/) and
 [OpenBSD netcat](https://www.openbsd.org/) for network setup and diagnostics;
-see [Dockerfile.interop](zhttp/interop/Dockerfile.interop).
+see [Dockerfile.interop](../zhttp/interop/Dockerfile.interop).
 
 ### Pinned Go fixture packages
 
-[zrest/interop/go/go.mod](zrest/interop/go/go.mod) declares Go 1.22 and
+[zrest/interop/go/go.mod](../zrest/interop/go/go.mod) declares Go 1.22 and
 [golang-jwt/jwt v5.2.1](https://github.com/golang-jwt/jwt).
-[zmcp/interop/go.mod](zmcp/interop/go.mod) declares Go 1.26.0 and
+[zmcp/interop/go.mod](../zmcp/interop/go.mod) declares Go 1.26.0 and
 [mcp-go v1.0.0-beta.1](https://github.com/mark3labs/mcp-go), plus these recorded
 indirect dependencies:
 
@@ -182,18 +184,18 @@ The script builds BFD and libsframe DLLs/import libraries from MinGW archives.
 Its link dependencies include libiberty, Binutils libsframe,
 [GNU gettext/libintl](https://www.gnu.org/software/gettext/),
 [zlib](https://zlib.net/) and [Zstandard](https://facebook.github.io/zstd/).
-See [mingw/README.md](mingw/README.md) for installation and rebuild behavior.
+See [mingw/README.md](../mingw/README.md) for installation and rebuild behavior.
 
 For a nonstandard prefix, configure `PKG_CONFIG_PATH`, compiler include/library
 search paths, and the platform runtime loader consistently. See
-[z.config](z.config) for the wrapper's feature defaults and
+[z.config](../z.config) for the wrapper's feature defaults and
 [configure.ac](../configure.ac) for exact checks.
 
 ## Zfix independent FIX peer
 
 QuickFIX/C++ is an optional fixture dependency, separate from the Zfix libraries.
 The pinned version, source/dictionary checksums and SSL build helper are in
-[zfix/interop](zfix/interop/README.md). Build prerequisites are CMake, a C++17
+[zfix/interop](../zfix/interop/README.md). Build prerequisites are CMake, a C++17
 compiler, OpenSSL development files, curl, tar and SHA-256 tools. The helper
 uses a caller-selected installation root and verifies the canonical FIX 4.4
 dictionary. Configure `--with-quickfix=PREFIX` to enable the independent codec

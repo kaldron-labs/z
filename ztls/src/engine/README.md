@@ -1,21 +1,22 @@
 # Embedded TLS 1.3 engine
 
-These sources were moved from Z's zpicotls migration input. Retained source
-files carry their upstream copyright and license notices. The portions of
+The TLS 1.3 engine and its backends are built directly into `libZtls` from
+the sources and headers in `ztls/src`. Retained source files carry their
+upstream copyright and license notices. The portions of
 Fusion identified in its source header also carry the Apache 2.0 terms.
 [Apache 2.0 license](LICENSE.Apache-2.0)
 
-| Former location | Ztls location |
+| Component | Sources and headers |
 | --- | --- |
-| `lib/picotls.c` | `ztls/src/engine/ZtlsTLS13.cc` |
-| `lib/openssl.c` | `ztls/src/engine/ZtlsEngineOpenSSL.cc` |
-| `lib/fusion.c` | `ztls/src/engine/ZtlsFusion.cc` |
-| `lib/hpke.c` | `ztls/src/engine/ZtlsEngineHPKE.cc` |
-| `lib/certificate_compression.c` | `ztls/src/engine/ZtlsCertCompression.cc` |
-| `<zpicotls.h>` | `<zlib/ZtlsEngine.hh>` |
-| `<zpicotls/openssl.h>` | `<zlib/ZtlsEngineOpenSSL.hh>` |
-| `<zpicotls/fusion.h>` | `<zlib/ZtlsFusion.hh>` |
-| `ZtlsPico.hh` / `ZtlsPico.cc` | Connection state in `ZtlsCxn.hh`, direct packet storage in `ZtlsBuf.hh`, and credential and ticket setup in `ZtlsCredentials.hh` / `.cc` |
+| TLS protocol and engine API | `ZtlsTLS13.cc`, `ZtlsEngine.hh` |
+| OpenSSL backend | `ZtlsEngineOpenSSL.cc`, `ZtlsEngineOpenSSL.hh` |
+| Fusion backend | `ZtlsFusion.cc`, `ZtlsFusion.hh` |
+| HPKE | `ZtlsEngineHPKE.cc` |
+| Certificate compression | `ZtlsCertCompression.cc`, `ZtlsCertCompression.hh` |
+| Connection state, packet storage and credentials | `ZtlsCxn.hh`, `ZtlsBuf.hh`, `ZtlsCredentials.hh` / `.cc` |
+
+Backend implementations live in `ztls/src/engine`; installed headers live in
+`ztls/src`. No external TLS engine checkout, headers, or libraries are required.
 
 Transport clients include `<zlib/Ztls.hh>` and link `libZtls`. The
 engine's backend descriptors and implementation are part of that library.
