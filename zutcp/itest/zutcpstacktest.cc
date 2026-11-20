@@ -65,9 +65,9 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
   using ZmNHeap<WriterCxn>::operator delete;
 
   Zutcp::SentFrameRef retry;
-  unsigned extraAlloc = 0, submitted = 0, controls = 0;
+  unsigned extraAlloc = 0, submitted = 0, controls = 0, refused = 0;
   bool offerAck = true;
-  bool original = true, detached = true, bounded = true, reused = true;
+  bool original = true, detached = true, bounded = true, reused = true, preserved = true;
 
   explicit WriterCxn(WriterApp *app) : Base{app} { }
   bool flushTx() { return false; } // this fixture explicitly steps packetization
@@ -119,9 +119,17 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
     packet->data_()[6] = 2;
     packet->data_()[12] = 0x88; packet->data_()[13] = 0xb5;
     packet->rewind(packet->skip);
+    auto backing = packet->data_();
+    auto size = packet->size, length = packet->length;
     bool sent = stack->sendPacket(packet, nullptr);
-    detached &= sent && !packet->data_() && !packet->size;
-    if (sent) { if (control) ++controls; else ++submitted; }
+    if (sent) {
+      detached &= !packet->data_() && !packet->size;
+      if (control) ++controls; else ++submitted;
+    } else {
+      ++refused;
+      preserved &= packet->data_() == backing && packet->size == size &&
+	!packet->skip && packet->length == length;
+    }
     return sent;
   }
   void ackFirst() {
@@ -165,10 +173,21 @@ struct RetxProbe {
   ZmSemaphore done;
   ZmScheduler::Timer timer;
   ZuTime deadline;
-  bool sent = false;
+  bool sent = false, refused = false;
 
   void run() {
-    if ((sent = cxn->replay(stack)) || Zm::now() >= deadline) { done.post(); return; }
+    if ((sent = cxn->replay(stack))) {
+      // A duplicate replay can be refused by pacing or kernel-held backing.
+      // Either refusal must preserve the retained payload and send count.
+      auto previous = cxn->submitted;
+      auto backing = cxn->retry.range.storage->data;
+      refused = !cxn->replay(stack) && cxn->submitted == previous &&
+	cxn->retry.range.storage->data == backing &&
+	!memcmp(backing + cxn->retry.range.offset, "second--", 8);
+      done.post();
+      return;
+    }
+    if (Zm::now() >= deadline) { done.post(); return; }
     mx->add(&timer, Zm::now() + ZuTime{0, 1000000}, ZmScheduler::Update,
       [this](auto &&arm) { return arm([this] { run(); }); }, mx->txThread());
   }
@@ -487,6 +506,12 @@ static void testStack()
   if (!bound) { if (wire >= 0) close(wire); ZmAssert_(mx.stop()); alarm(0); return; }
 
   ControlProbe pressure{&mx, stack};
+  ZmSemaphore pressureSenderEntered, pressureSenderRelease;
+  mx.run([&pressureSenderEntered, &pressureSenderRelease] {
+    pressureSenderEntered.post();
+    pressureSenderRelease.wait();
+  }, 3);
+  pressureSenderEntered.wait();
   mx.txRun([&mx, &tx, &small, &stack, &pressure, &owner] {
     enum { DataFrames = 6, Accepted = 5 }; // fixture pools: 3 + 1 + 2 slots
     ZmRef<ZiIOBuf> data[DataFrames];
@@ -527,6 +552,7 @@ static void testStack()
     owner.post();
   });
   owner.wait();
+  pressureSenderRelease.post();
   ZuCheckRT(pressure.submitted && pressure.during.capacity == 8 &&
       pressure.during.reserved == 3 && pressure.during.outstanding == 7 &&
       pressure.during.dataStalls == 1 &&
@@ -649,9 +675,12 @@ static void testStack()
   retransmit.deadline = Zm::now() + ZuTime{2};
   mx.txRun([&cxn, &retransmit] { cxn->ackFirst(); retransmit.run(); });
   retransmit.done.wait();
-  ZuCheckRT(retransmit.sent && cxn->reused && !cxn->extraAlloc &&
+  ZuCheckRT(retransmit.sent && retransmit.refused && cxn->preserved &&
+      cxn->reused && !cxn->extraAlloc &&
       cxn->submitted == 3 && cxn->detached,
-    log_("retransmission reuses the retained raw payload address without packet allocation"));
+    log_("retransmission reuses the retained raw payload address without packet allocation; ",
+      "sent ", retransmit.sent, " reused ", cxn->reused, " extra allocations ", cxn->extraAlloc,
+      " submitted ", cxn->submitted, " detached ", cxn->detached, " refused ", cxn->refused));
   bool replaySeen = false;
   for (unsigned tries = 0; tries < 16 && !replaySeen; ++tries) {
     pollfd ready{wire, POLLIN, 0};

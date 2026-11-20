@@ -595,8 +595,11 @@ def window(directory, restart=False, lost=False):
             for probe in probes[:2]:
                 assert any(c['next'] == size and c['window'] == 0 and
                            0 <= c['time'] - probe['time'] < .5 for c in other['acks'])
+            # Duplex send progress can precede the local window update. The
+            # ACK must still authorize this sender's second original.
             opening = next(c for c in other['acks']
-                           if c['next'] == size and c['window'] == size and c['seq'] == size)
+                           if c['next'] == size and c['window'] == size
+                           and c['seq'] in (size, size * 2))
             assert -.01 <= second['time'] - opening['time'] < .5
             if lost:
                 recovery = probes

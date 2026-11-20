@@ -234,7 +234,9 @@ bool Connection::received(ZiRxContext &io)
 
 void Connection::write(ZuBSpan data, ZiSockAddr peer)
 {
-  send(ZiTxFn{[state = m_operation, data, peer, this](ZiTxContext &io) {
+  send(ZiTxFn{[data, peer, this](ZiTxContext &io) {
+    auto state = m_operation;
+    auto destination = peer;
     auto buf = state->tx->allocBuf(this);
     if (!buf || !buf->append(data)) {
       ++state->errors;
@@ -243,12 +245,13 @@ void Connection::write(ZuBSpan data, ZiSockAddr peer)
       return false;
     }
     io.init(ZiTxFn{[state, data](ZiTxContext &io) {
+      auto output = &state->output;
       if (io.length != int(data.length()) ||
 	  (state->udp && (!io.buf || io.buf->cspan() != data))) ++state->errors;
       io.complete();
-      state->output.post();
+      output->post();
       return true;
-    }}, ZuMv(buf), peer, ZiTOS{uint8_t(0x28)});
+    }}, ZuMv(buf), destination, ZiTOS{uint8_t(0x28)});
     return true;
   }});
 }
