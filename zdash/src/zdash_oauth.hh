@@ -785,8 +785,7 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
   auto tlsTx = TLS::registerTx(&mx);
   auto tcp = Zhttp::TCPConfig{}.rxAllocator(tcpRx).txAllocator(tcpTx);
   auto tls = Zhttp::TLSConfig{}.rxAllocator(tlsRx).txAllocator(tlsTx)
-    .txPacketAllocator(TLS::registerTxPacket(&mx))
-    .socketRxAllocator(mx.allocator<Zi::IOBufType::Rx, ZiRxQueue::Node, Ztls_::RxPacketCapacity>());
+    .rxPktAllocator(mx.allocator<Zi::IOBufType::Rx, ZiRxQueue::Node, Ztls_::RxPacketCapacity>());
   Clients clients{tcp, tls};
   if (!clients.add(&mx, issuerURL.url(), config.caPath) ||
       !mx.start() || !clients.start()) {

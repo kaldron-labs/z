@@ -575,7 +575,7 @@ public:
   void push(const CipherSuite *suite);
   void clear();
   unsigned length() const { return unsigned(m_suites.length()); }
-  const CipherSuite *operator[](unsigned i) const { return m_suites[i]; }
+  const CipherSuite *const &operator[](unsigned i) const { return m_suites[i]; }
   auto begin() const { return m_suites.data(); }
   auto end() const { return m_suites.data() + m_suites.length(); }
   operator SuiteSpan() const { return {m_suites.data(), length()}; }

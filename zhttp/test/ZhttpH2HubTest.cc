@@ -51,6 +51,7 @@ struct FlowApp {
   enum { Rx, Tx };
 
   ZiMultiplex *mx() { return &multiplex; }
+  Zi::IOBufAllocator *txAllocator() const { return allocator; }
   unsigned rxThread() const { return 0; }
   bool rxInvoked() const { return shard == Rx; }
   bool txInvoked() const { return shard == Tx; }
@@ -89,6 +90,7 @@ private:
 public:
 
   ZiMultiplex multiplex;
+  Zi::IOBufAllocator *allocator = nullptr;
   int shard = Rx;
   bool deferred = false;
   Tasks rxTasks, txTasks;
@@ -103,16 +105,17 @@ struct FlowH1App : FlowApp {
 
 struct FlowH1Native : ZmNHeap<FlowH1Native>, ZmObject {
 friend inline ZuStringT<"Zhttp.H1.FlowNative"> ZmNHeapID(FlowH1Native *);
-  FlowH1App *app;
+  FlowH1App *app_;
+  FlowH1App *app() const { return app_; }
   unsigned ends = 0;
   unsigned resets = 0;
 
   struct Tx { };
-  Tx txStream() { ZmAssert(app->rxInvoked()); return {}; }
-  Tx txStream_() { ZmAssert(app->txInvoked()); return {}; }
-  void streamTxEnd() { ZmAssert(app->txInvoked()); ++ends; }
-  void closeAfterTx() { ZmAssert(app->txInvoked()); ++ends; }
-  void disconnectNative() { ZmAssert(app->rxInvoked()); ++resets; }
+  Tx txStream(Zi::IOBufAllocator *) { ZmAssert(app_->rxInvoked()); return {}; }
+  Tx txStream_(Zi::IOBufAllocator *) { ZmAssert(app_->txInvoked()); return {}; }
+  void streamTxEnd() { ZmAssert(app_->txInvoked()); ++ends; }
+  void closeAfterTx() { ZmAssert(app_->txInvoked()); ++ends; }
+  void disconnectNative() { ZmAssert(app_->rxInvoked()); ++resets; }
 };
 
 struct FlowH1Channel {
@@ -154,7 +157,7 @@ void runH1Shards()
   FlowH1App app;
   app.deferred = true;
   ZmRef<FlowH1Native> native = new FlowH1Native;
-  native->app = &app;
+  native->app_ = &app;
   auto exercise = [&app, &native](auto link) {
     ZuCheckRT(link->streamEnable() && link->streamAccept(), log_("Rx negotiation"));
     unsigned calls = 0;
@@ -227,14 +230,16 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
     FlowWire *wire;
   };
 
-  FlowWire(FlowApp *app_) : app_{app_} { }
+  FlowWire(FlowApp *app_) : app_{app_} {
+    app_->allocator = ZhttpTest::Allocator<BufAlloc>::get();
+  }
 
   FlowApp *app() const { return app_; }
   static unsigned txMaxSize() { return BufAlloc::Size; }
   template <bool> unsigned txHeadRoom() const { return 0; }
   template <bool> unsigned txTailRoom() const { return 0; }
-  template <bool> ZmRef<ZiIOBuf> txAllocBuf(unsigned headRoom) {
-    ZmRef<ZiIOBuf> buf = ZhttpTest::Allocator<BufAlloc>::get()->allocBuf();
+  template <bool> ZmRef<ZiIOBuf> txAllocBuf(Zi::IOBufAllocator *allocator, unsigned headRoom) {
+    ZmRef<ZiIOBuf> buf = allocator->allocBuf();
     buf->skip += headRoom;
     buf->length = 0;
     return buf;
@@ -272,7 +277,7 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
     return true;
   }
   Tx txStream() { return Tx{this}; }
-  Tx txStream_() { return Tx{this}; }
+  Tx txStream_(Zi::IOBufAllocator *) { return Tx{this}; }
   void h2CapacityTx(bool value) {
     capacity = value;
     ++capacityCalls;
@@ -1868,16 +1873,14 @@ void run()
 
   Zhttp::HubConfig hub{&mx, "3", "4"};
   auto tx = Zhttp::Transport_::Traits<Zhttp::TLS>::registerTx(&mx);
-  auto txPacket = Zhttp::Transport_::Traits<Zhttp::TLS>::registerTxPacket(&mx);
-  ZuCHECK(tx->type == Zi::IOBufType::TxTLS &&
-    txPacket->type == Zi::IOBufType::TxTCP, "TLS plaintext and packet allocator roles");
-  auto serverConfig = Zhttp::H2Config().tls([&cert, tx, txPacket](auto &tls) {
+  ZuCHECK(tx->type == Zi::IOBufType::TxTLS, "TLS plaintext allocator role");
+  auto serverConfig = Zhttp::H2Config().tls([&cert, tx](auto &tls) {
     tls.certPath(cert.certPath).keyPath(cert.keyPath)
-      .txAllocator(tx).txPacketAllocator(txPacket);
+      .txAllocator(tx);
   })
     .maxConcurrentStreams(1).maxQueuedFrames(16);
-  auto clientConfig = Zhttp::H2Config().tls([&cert, tx, txPacket](auto &tls) {
-    tls.caPath(cert.certPath).txAllocator(tx).txPacketAllocator(txPacket);
+  auto clientConfig = Zhttp::H2Config().tls([&cert, tx](auto &tls) {
+    tls.caPath(cert.certPath).txAllocator(tx);
   }).initialWindowSize(1)
     .maxConcurrentStreams(1);
   Server server{&state};

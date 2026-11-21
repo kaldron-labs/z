@@ -280,6 +280,7 @@ struct RejectClient::Link :
 };
 
 struct RejectTLSClient : public Ztls::Client<RejectTLSClient> {
+  Zi::IOBufAllocator *txBufAllocator = nullptr;
   struct Link;
   RejectState	*state;
 
@@ -296,7 +297,7 @@ struct RejectTLSClient::Link :
   Link(RejectTLSClient *app) : Base{app} { }
 
   void connected(Ztls::Connected) {
-    auto tx = txStream();
+    auto tx = txStream(app()->txBufAllocator);
     tx << "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
     tx.flush();
   }
@@ -592,11 +593,9 @@ void rejectTLS(const TempDir &temp)
   RejectTLSClient client{&response};
   RejectTLSClient::Link::RxAllocator *rejectRx =
     RejectTLSClient::Link::rxAllocator(&mx);
-  RejectTLSClient::Link::TxAllocator *rejectTx =
-    RejectTLSClient::Link::txAllocator(&mx);
+  client.txBufAllocator = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
   Ztls::ClientParams rejectParams{&mx, "3", "4"};
-  rejectParams.rxAllocator(rejectRx).txAllocator(rejectTx);
-  rejectParams.txPacketAllocator(RejectTLSClient::Link::txPacketAllocator(&mx));
+  rejectParams.rxAllocator(rejectRx);
   rejectParams.hub([&temp](auto &p) {
     p.caPath(temp.certPath.cspan()).alpn(ZuSpan<ZuCSpan>{"http/1.1"});
   });

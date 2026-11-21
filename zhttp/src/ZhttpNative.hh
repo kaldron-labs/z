@@ -392,6 +392,13 @@ template <typename Link>
 struct HasTxStream<Link,
   decltype(ZuDeclVal<Link &>().txStream(), void())> : public ZuTrue { };
 
+template <typename Link, typename = void>
+struct HasAllocTxStream : public ZuFalse { };
+template <typename Link>
+struct HasAllocTxStream<Link,
+  decltype(ZuDeclVal<Link &>().txStream(ZuDeclVal<Zi::IOBufAllocator *>()), void())>
+  : public ZuTrue { };
+
 template <bool AppThread, typename Native,
   typename = decltype(ZuDeclVal<const Native &>().template txCanAdopt<AppThread>(
     ZuDeclVal<const ZiIOBuf &>(), unsigned{}, unsigned{}))>
@@ -436,7 +443,7 @@ struct HasDisconnected<Link,
 template <
   typename Link, typename Rx, typename Info,
   typename = ZuIfT<
-    HasTxStream<Link>{} &&
+    (HasTxStream<Link>{} || HasAllocTxStream<Link>{}) &&
     HasProcess<Link, Rx>{} &&
     HasConnected<Link, Info>{} &&
     HasDisconnected<Link>{}>>
@@ -451,19 +458,29 @@ inline Zquic::MigrationMode::T migration(int8_t v)
   }
 }
 
-inline Ztls::ClientParams tlsParams(
+template <typename Native> class TLSParams : public Native {
+public:
+  using Native::Native;
+  Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
+  TLSParams &txAllocator(Zi::IOBufAllocator *v) { m_txAllocator = v; return *this; }
+  template <typename L> TLSParams &&hub(L &&l) {
+    ZuFwd<L>(l)(*this);
+    return ZuMv(*this);
+  }
+private:
+  Zi::IOBufAllocator *m_txAllocator = nullptr;
+};
+
+inline TLSParams<Ztls::ClientParams> tlsParams(
   const HubConfig &hub, const TLSConfig &config)
 {
-  return Ztls::ClientParams{
-    hub.mx(), hub.rxThread(), hub.txThread()}.hub(
-      [&hub, &config](auto &p) {
-	p.asyncThread(hub.asyncThread())
-	  .rxAllocator(config.rxAllocator()).txAllocator(config.txAllocator())
-	  .txPacketAllocator(config.txPacketAllocator())
-	  .socketRxAllocator(config.socketRxAllocator())
-	  .caPath(config.caPath()).certPath(config.certPath())
-	  .keyPath(config.keyPath()).alpn(ZuSpan<ZuCSpan>{"http/1.1"});
-      });
+  TLSParams<Ztls::ClientParams> params{hub.mx(), hub.rxThread(), hub.txThread()};
+  params.txAllocator(config.txAllocator());
+  params.asyncThread(hub.asyncThread())
+    .rxAllocator(config.rxAllocator()).rxPktAllocator(config.rxPktAllocator())
+    .caPath(config.caPath()).certPath(config.certPath())
+    .keyPath(config.keyPath()).alpn(ZuSpan<ZuCSpan>{"http/1.1"});
+  return params;
 }
 
 inline Zquic::HubParams quicParams(
@@ -507,27 +524,23 @@ public:
     if (!mx) return false;
     if (m_allocatorMx != mx) {
       m_allocatorMx = mx;
-      m_rx = m_tx = m_txPacket = nullptr;
+      m_rx = m_tx = nullptr;
     }
     if (params.rxAllocator()) m_rx = params.rxAllocator();
     else if (!m_rx) m_rx = Transport::registerRx(mx);
     if (params.txAllocator()) m_tx = params.txAllocator();
     else if (!m_tx) m_tx = Transport::registerTx(mx);
-    params.rxAllocator(m_rx).txAllocator(m_tx);
-    if constexpr (Transport::Secure) {
-      if (params.txPacketAllocator()) m_txPacket = params.txPacketAllocator();
-      else if (!m_txPacket) m_txPacket = Transport::registerTxPacket(mx);
-      params.txPacketAllocator(m_txPacket);
-    }
+    params.rxAllocator(m_rx);
+    if constexpr (!Transport::Secure) params.txAllocator(m_tx);
     return Native::init(ZuMv(params));
   }
+  Zi::IOBufAllocator *txAllocator() const { return m_tx; }
 private:
   static ZiMultiplex *mx_(const Ztcp::HubParams &params) { return params.mx; }
   static ZiMultiplex *mx_(const Ztls::HubParams &params) { return params.mx(); }
   ZiMultiplex *m_allocatorMx = nullptr;
   Zi::IOBufAllocator *m_rx = nullptr;
   Zi::IOBufAllocator *m_tx = nullptr;
-  Zi::IOBufAllocator *m_txPacket = nullptr;
 };
 
 template <typename Protocol> struct Traits;
@@ -602,8 +615,8 @@ template <> struct Traits<TLS> {
     Datagram = false
   };
 
-  using ClientParams = Ztls::ClientParams;
-  using ServerParams = Ztls::ServerParams;
+  using ClientParams = TLSParams<Ztls::ClientParams>;
+  using ServerParams = TLSParams<Ztls::ServerParams>;
   using Config = TLSConfig;
   using RxStream = Ztls::RxStream;
   using Connected = Ztls::Connected;
@@ -611,16 +624,11 @@ template <> struct Traits<TLS> {
   using RxAllocator = TLSRxBufAlloc;
   using TxAllocator = TLSTxBufAlloc;
   static Zi::IOBufAllocator *registerRx(ZiMultiplex *mx) {
-    return mx->allocator<Zi::IOBufType::RxTLS, typename RxAllocator::Buf,
-      Ztls_::RxRecordCapacity, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.TLS.Rx">, H1BufMax>();
+    return Ztls::rxAllocator<RxAllocator>(mx);
   }
   static Zi::IOBufAllocator *registerTx(ZiMultiplex *mx) {
     return mx->allocator<Zi::IOBufType::TxTLS, typename TxAllocator::Buf,
       Ztls_::TxRecordCapacity, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.TLS.Tx">, H1BufMax>();
-  }
-  static Zi::IOBufAllocator *registerTxPacket(ZiMultiplex *mx) {
-    return mx->allocator<Zi::IOBufType::TxTCP, Ztls::TxPacket,
-      1514, ZiIOBuf_DefltAlign, ZuStringT<"Zhttp.TLS.Packet">>(1024);
   }
   template <typename App>
   using Client = Hub<Ztls::Client<App>, Traits>;
@@ -628,10 +636,10 @@ template <> struct Traits<TLS> {
   using Server = Hub<Ztls::Server<App>, Traits>;
   template <typename App, typename Link>
   using ClientLink =
-    Ztls::CliLink<App, Link, TLSRxBufAlloc, TLSTxBufAlloc>;
+    Ztls::CliLink<App, Link, TLSRxBufAlloc>;
   template <typename App, typename Link>
   using ServerLink =
-    Ztls::SrvLink<App, Link, TLSRxBufAlloc, TLSTxBufAlloc>;
+    Ztls::SrvLink<App, Link, TLSRxBufAlloc>;
 
   static ClientParams clientParams(
     const HubConfig &hub, const TLSConfig &config)
@@ -643,11 +651,11 @@ template <> struct Traits<TLS> {
   {
     ServerParams params{
       hub.mx(), hub.rxThread(), hub.txThread()};
+    params.txAllocator(config.txAllocator());
     params
       .asyncThread(hub.asyncThread())
-      .rxAllocator(config.rxAllocator()).txAllocator(config.txAllocator())
-      .txPacketAllocator(config.txPacketAllocator())
-      .socketRxAllocator(config.socketRxAllocator())
+      .rxAllocator(config.rxAllocator())
+      .rxPktAllocator(config.rxPktAllocator())
       .caPath(config.caPath()).certPath(config.certPath())
       .keyPath(config.keyPath()).alpn(ZuSpan<ZuCSpan>{"http/1.1"});
     params.mTLS(config.mTLS()).cacheTimeout(config.cacheTimeout());
@@ -897,8 +905,8 @@ public:
   auto frameTx_() {
     if constexpr (Traits::ID == Transport::TCP)
       return TCPStream<Impl, AppThread>{*impl()};
-    else if constexpr (AppThread) return this->txStream();
-    else return this->txStream_();
+    else if constexpr (AppThread) return this->txStream(this->app()->txAllocator());
+    else return this->txStream_(this->app()->txAllocator());
   }
 
   template <typename T = Traits, typename = ZuIfT<T::ID == Transport::TCP>>

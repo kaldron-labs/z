@@ -56,9 +56,11 @@ struct TCP {
   using ServerParams = Ztcp::ServerParams;
   template <typename App> using Client = Ztcp::Client<App>;
   template <typename App> using Server = Ztcp::Server<App>;
-  template <typename App, typename Impl, typename Rx, typename Tx>
+  template <typename App, typename Impl,
+    typename Rx = Ztcp::RxBufAlloc<>, typename Tx = Ztcp::TxBufAlloc<>>
   using CliLink = Ztcp::CliLink<App, Impl, Rx, Tx>;
-  template <typename App, typename Impl, typename Rx, typename Tx>
+  template <typename App, typename Impl,
+    typename Rx = Ztcp::RxBufAlloc<>, typename Tx = Ztcp::TxBufAlloc<>>
   using SrvLink = Ztcp::SrvLink<App, Impl, Rx, Tx>;
   using RxStream = Ztcp::RxStream;
   template <unsigned Size = ZiIOBuf_DefltSize,
@@ -69,17 +71,53 @@ struct TCP {
   using TxBufAlloc = Ztcp::TxBufAlloc<Size, Max, Heap>;
 };
 
+template <typename Native> class TLSParams : public Native {
+public:
+  using Native::Native;
+  Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
+  TLSParams &txAllocator(Zi::IOBufAllocator *v) { m_txAllocator = v; return *this; }
+  template <typename L> TLSParams &&hub(L &&l) {
+    ZuFwd<L>(l)(*this);
+    return ZuMv(*this);
+  }
+private:
+  Zi::IOBufAllocator *m_txAllocator = nullptr;
+};
+
+template <typename Native> class TLSHub : public Native {
+public:
+  using Native::Native;
+  template <typename Params> bool init(Params params) {
+    m_txAllocator = params.txAllocator();
+    return Native::init(ZuMv(params));
+  }
+  Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
+private:
+  Zi::IOBufAllocator *m_txAllocator = nullptr;
+};
+
+template <typename Native, typename Tx> class TLSLink : public Native {
+public:
+  using Native::Native;
+  using TxBufAlloc = Tx;
+  static Zi::IOBufAllocator *txAllocator(ZiMultiplex *mx)
+  { return Ztls::allocator<Tx>(mx); }
+  Zi::IOBufAllocator *txAllocator() const { return this->app()->txAllocator(); }
+};
+
 struct TLS {
   enum { Encrypted = true };
   using Connected = Ztls::Connected;
-  using ClientParams = Ztls::ClientParams;
-  using ServerParams = Ztls::ServerParams;
-  template <typename App> using Client = Ztls::Client<App>;
-  template <typename App> using Server = Ztls::Server<App>;
-  template <typename App, typename Impl, typename Rx, typename Tx>
-  using CliLink = Ztls::CliLink<App, Impl, Rx, Tx>;
-  template <typename App, typename Impl, typename Rx, typename Tx>
-  using SrvLink = Ztls::SrvLink<App, Impl, Rx, Tx>;
+  using ClientParams = TLSParams<Ztls::ClientParams>;
+  using ServerParams = TLSParams<Ztls::ServerParams>;
+  template <typename App> using Client = TLSHub<Ztls::Client<App>>;
+  template <typename App> using Server = TLSHub<Ztls::Server<App>>;
+  template <typename App, typename Impl,
+    typename Rx = Ztls::RxBufAlloc<>, typename Tx = Ztls::TxBufAlloc<>>
+  using CliLink = TLSLink<Ztls::CliLink<App, Impl, Rx>, Tx>;
+  template <typename App, typename Impl,
+    typename Rx = Ztls::RxBufAlloc<>, typename Tx = Ztls::TxBufAlloc<>>
+  using SrvLink = TLSLink<Ztls::SrvLink<App, Impl, Rx>, Tx>;
   using RxStream = Ztls::RxStream;
   template <unsigned Size = Ztls_::RxRecordCapacity,
     unsigned Max = ZiIOBuf_DefltVHMaxSize, ZuString Heap = "Zfix.TLS.Rx">

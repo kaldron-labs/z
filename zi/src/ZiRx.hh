@@ -70,6 +70,31 @@ public:
   template <auto Hdr, auto Body>
   void recvSync(ZiRxContext &io) { arm<true, Hdr, Body>(io); }
 
+  // Transfer one original transport chunk, disarming reception until the
+  // consumer requests another. State identifies this particular admission.
+  // void Body(Impl *, ZiConnection *, ZmRef<ZiIOBuf>, State)
+  template <auto Body, typename State>
+  void recv(ZiConnection *cxn, State state) {
+    auto owner = impl();
+    cxn->recv(ZiRxFn{[owner, state](ZiRxContext &io) {
+      if (!io.cxn->up()) { io.complete(); return true; }
+      if (!io.buf) io.buf = io.cxn->info().rxAllocator->allocBuf(owner);
+      if (!io.buf) { io.disconnect(); return true; }
+      io.init(ZiRxFn{[owner, state](ZiRxContext &io) {
+	if (!io.buf || !io.buf->length) return true;
+	// complete() releases the callback; preserve everything needed first.
+	auto receiver = owner;
+	auto admission = state;
+	auto cxn = io.cxn;
+	auto buf = ZuMv(io.buf);
+	io.complete();
+	ZuInvoke<Body>(receiver, cxn, ZuMv(buf), admission);
+	return true;
+      }}, ZuMv(io.buf));
+      return true;
+    }});
+  }
+
 private:
   // rxAllocator() supplies App message storage only. Transport receive slots
   // always come from the physical connection's network allocator.

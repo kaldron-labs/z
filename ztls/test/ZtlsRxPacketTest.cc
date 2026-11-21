@@ -150,7 +150,7 @@ void fragmentedRecord(
   bool	    ready = ZtlsTest::handshake(tx, rx);
   ZuCheckRT(ready);
   if (!ready) return;
-  uint8_t partial = Ztls_HsTypeNewSessionTicket;
+  uint8_t partial = Ztls_HsTypeNewTicket;
   if (partialHandshake) {
     Ztls_::bufferInitRx(&rx->recvbuf.mess, &partial, sizeof(partial));
     rx->recvbuf.mess.off = sizeof(partial);

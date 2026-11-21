@@ -701,15 +701,18 @@ bool assertionFails(L &&l)
 
 struct H2Native {
   H2Native *app() { return this; }
+  Zi::IOBufAllocator *txAllocator() const {
+    return ZhttpTest::Allocator<TxBufAlloc>::get();
+  }
   bool txInvoked() const { return true; }
   // No native writer: H2 must obtain geometry/allocation at the origin.
   static unsigned txMaxSize() { return 64; }
   template <bool> unsigned txHeadRoom() const { return 0; }
   template <bool> unsigned txTailRoom() const { return 0; }
-  template <bool> ZmRef<ZiIOBuf> txAllocBuf(unsigned headRoom) {
+  template <bool> ZmRef<ZiIOBuf> txAllocBuf(Zi::IOBufAllocator *allocator, unsigned headRoom) {
     // Admission can reject a request before any Z heap allocation.
     if (!admitOK) return nullptr;
-    ZmRef<ZiIOBuf> buf = ZhttpTest::Allocator<TxBufAlloc>::get()->allocBuf();
+    ZmRef<ZiIOBuf> buf = allocator->allocBuf();
     buf->skip += headRoom;
     buf->length = 0;
     return buf;
@@ -1370,24 +1373,22 @@ void testParams()
   ZiMultiplex mx;
   auto rx = TLS::registerRx(&mx);
   auto tx = TLS::registerTx(&mx);
-  auto txPacket = TLS::registerTxPacket(&mx);
   auto socketRx = TCP::registerRx(&mx);
-  auto prepared = Zhttp::TLSConfig{}.rxAllocator(rx).txAllocator(tx).txPacketAllocator(txPacket)
-    .socketRxAllocator(socketRx);
+  auto prepared = Zhttp::TLSConfig{}.rxAllocator(rx).txAllocator(tx)
+    .rxPktAllocator(socketRx);
   auto preparedCli = TLS::clientParams(hub, prepared);
   auto preparedSrv = TLS::serverParams(hub, prepared);
   auto preparedH2 = Zhttp::H2Config{}.tls([&prepared](auto &tls) { tls = prepared; });
   auto preparedH2Cli = Zhttp::TLS_::clientParams(hub, preparedH2);
   auto preparedH2Srv = Zhttp::TLS_::serverParams(hub, preparedH2);
-  auto checkPrepared = [rx, tx, txPacket, socketRx](const auto &params) {
+  auto checkPrepared = [rx, tx, socketRx](const auto &params) {
     return params.rxAllocator() == rx && params.txAllocator() == tx &&
-      params.txPacketAllocator() == txPacket &&
-      tx->type == Zi::IOBufType::TxTLS && txPacket->type == Zi::IOBufType::TxTCP &&
-      params.socketRxAllocator() == socketRx;
+      tx->type == Zi::IOBufType::TxTLS &&
+      params.rxPktAllocator() == socketRx;
   };
   ZuCHECK(checkPrepared(preparedCli) && checkPrepared(preparedSrv) &&
       checkPrepared(preparedH2Cli) && checkPrepared(preparedH2Srv),
-    "H1/H2 client/server preserve all prepared TLS allocator roles");
+    "H1/H2 client/server preserve prepared application and socket TLS allocator roles");
 
   auto force = Zhttp::H2Config{}.tls([](auto &tls) {
     tls.caPath("h2-ca.pem").certPath("h2-cert.pem").keyPath("h2-key.pem")

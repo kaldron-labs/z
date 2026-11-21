@@ -21,11 +21,11 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiLog.hh>
 #ifdef ZFIX_TEST_TLS
-#include <zlib/Ztls.hh>
-namespace Net = Ztls;
+#include <zlib/ZfixNet.hh>
+using Net = Zfix::TLS;
 #else
-#include <zlib/Ztcp.hh>
-namespace Net = Ztcp;
+#include <zlib/ZfixNet.hh>
+using Net = Zfix::TCP;
 #endif
 #include <zlib/ZtlsHMAC.hh>
 #include <zlib/ZfixClient.hh>
@@ -36,6 +36,17 @@ namespace Net = Ztcp;
 #include "transport_fixture.hh"
 
 using namespace ZuTestUtil;
+
+template <bool AppThread = false, typename Link> auto writer(Link &link) {
+  if constexpr (Net::Encrypted) {
+    if constexpr (AppThread) return link.txStream(link.txAllocator());
+    else return link.txStream_(link.txAllocator());
+  } else {
+    if constexpr (AppThread) return link.txStream();
+    else return link.txStream_();
+  }
+}
+
 using namespace Zfix;
 
 struct Progress {
@@ -744,10 +755,6 @@ bool CliHub::init(Network::ClientParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
-#ifdef ZFIX_TEST_TLS
-  if (!params.txPacketAllocator())
-    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
-#endif
   return Zfix::Client<CliHub, Dictionary, Network>::init(ZuMv(params));
 }
 
@@ -839,10 +846,6 @@ bool SrvHub::init(Network::ServerParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
-#ifdef ZFIX_TEST_TLS
-  if (!params.txPacketAllocator())
-    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
-#endif
   return Zfix::Server<SrvHub, Dictionary, Network>::init(ZuMv(params));
 }
 
@@ -1364,7 +1367,7 @@ static void setupCleanup(unsigned mode) {
     }, [&peer](bool) { peer.listening.post(); },
       [&mx, &peer](const ZiCxnInfo &info) -> ZiConnection * {
 	peer.sink = new SetupSink{&mx, info}; peer.accepted.post(); return peer.sink;
-      }, ZiIP{ZfixTest::ServerIP}, ZfixTest::SilentPort, 1, server.socketRxAllocator());
+      }, ZiIP{ZfixTest::ServerIP}, ZfixTest::SilentPort, 1, server.rxPktAllocator());
     bool listening = !peer.listening.timedwait(Zm::now(5)) && peer.port;
     ZuCheck(listening);
     if (!listening) { finish(); return; }
@@ -1719,7 +1722,7 @@ static void adminBudget(unsigned kind) {
 	  }
 #if defined(ZFIX_TEST_TLS) || defined(ZFIX_TEST_AFXDP)
 	  // Preserve the injected stream when a FIX frame needs multiple records.
-	  auto stream = link->txStream_();
+	  auto stream = writer(*link);
 	  stream << buf->cspan() << Zi::flush();
 	  if (stream.failed()) state.fail();
 #else
@@ -2395,10 +2398,6 @@ bool OwnServer::init(Network::ServerParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
-#ifdef ZFIX_TEST_TLS
-  if (!params.txPacketAllocator())
-    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
-#endif
   return Zfix::Server<OwnServer, Dictionary, Network>::init(ZuMv(params));
 }
 
@@ -2587,10 +2586,6 @@ bool OwnClient::init(Network::ClientParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
-#ifdef ZFIX_TEST_TLS
-  if (!params.txPacketAllocator())
-    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
-#endif
   return Zfix::Client<OwnClient, Dictionary, Network>::init(ZuMv(params));
 }
 
@@ -2814,7 +2809,7 @@ static void nativeChain(unsigned mode)
     ZuCheck(state.aReady.load_() == 1 && state.loadContext.connection == 1 &&
       state.loadContext.epoch == 1 && state.loadContext.seqNo == 2);
     client.txRun([a, &state] {
-      auto output = a->txStream_(); output << "8=F";
+      auto output = writer(*a); output << "8=F";
       if (!output.flush()) state.fail();
     });
     bool prefix = state.prefix.timedwait(Zm::now(5)) == 0;

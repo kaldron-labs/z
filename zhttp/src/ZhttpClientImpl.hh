@@ -917,7 +917,7 @@ template <typename App>
 class CliLink :
   public ZmNHeap<CliLink<App>>,
   public Ztls::CliLink<ClientHub<App>, CliLink<App>,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
+    Transport_::TLSRxBufAlloc>,
   public Wire<CliLink<App>, typename App::Link> {
 friend inline ZuStringT<"Zhttp.H2.Link"> ZmNHeapID(CliLink *);
 
@@ -925,7 +925,7 @@ public:
   using Hub = ClientHub<App>;
   using AppLink = App::Link;
   using Base = Ztls::CliLink<Hub, CliLink,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
+    Transport_::TLSRxBufAlloc>;
   using Wire_ = Wire<CliLink, AppLink>;
 friend Wire_;
   using Base::up;
@@ -1503,14 +1503,14 @@ public:
   void streamTx_(L &&write) {
     ZmAssert(m_app->txInvoked());
     if (!m_streamTx || !m_txNative) return;
-    auto tx = m_txNative->txStream_();
+    auto tx = m_txNative->txStream_(m_txNative->app()->txAllocator());
     ZuFwd<L>(write)(tx);
   }
   template <typename L>
   void streamTx(L &&write) {
     ZmAssert(m_app->rxInvoked());
     if (!m_stream.tx() || !m_native) return;
-    auto tx = m_native->txStream();
+    auto tx = m_native->txStream(m_native->app()->txAllocator());
     ZuFwd<L>(write)(tx);
   }
   void streamTxEnd() {
@@ -1525,7 +1525,7 @@ public:
   void peerEnd(Stream) { impl()->channel().frameEnd(); }
   template <typename Stream>
   void error(Stream) { impl()->channel().frameError(); }
-  auto txStream() { return m_native->txStream(); }
+  auto txStream() { return m_native->txStream(m_native->app()->txAllocator()); }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
   template <typename Builder>
@@ -1533,7 +1533,7 @@ public:
   template <typename Builder>
   auto transmit_(Builder &) {
     ZmAssert(m_app->txInvoked() && m_txNative);
-    return m_txNative->txStream_();
+    return m_txNative->txStream_(m_txNative->app()->txAllocator());
   }
   void finish() { }
   template <typename Done>
@@ -1951,7 +1951,7 @@ class CliLink :
   public Ztls::CliLink<
     ClientHub<App, H1AppLink_, H2AppLink_>,
     CliLink<App, H1AppLink_, H2AppLink_>,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
+    Transport_::TLSRxBufAlloc>,
   public H2_::Wire<
     CliLink<App, H1AppLink_, H2AppLink_>, H2AppLink_> {
 friend inline ZuStringT<"Zhttp.TLS.Link"> ZmNHeapID(CliLink *);
@@ -1962,7 +1962,7 @@ public:
   using H2AppLink = H2AppLink_;
   using Choice = Hub::Choice;
   using Base = Ztls::CliLink<Hub, CliLink,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
+    Transport_::TLSRxBufAlloc>;
   using Wire = H2_::Wire<CliLink, H2AppLink>;
 friend Wire;
   using Base::up;

@@ -58,6 +58,9 @@ Acquire every allocator, including App, before the first explicit or implicit
 `nullptr`. Registration binds the allocator directly without I/O dispatch.
 A network allocator remains bound to one multiplexer for its lifetime. Protocols
 retain their Rx handle and pass it to each endpoint setup, including reconnect.
+`findAllocator<Concrete>()` only looks up an existing registration; it remains
+available after registration closes and creates no allocator or storage.
+Serialize lookup with setup and teardown as well.
 See the [Zi buffer contract](../zi/README.md#buffers-and-streams).
 
 ### I/O Function Organization

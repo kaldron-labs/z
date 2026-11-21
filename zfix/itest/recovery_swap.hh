@@ -155,10 +155,6 @@ inline bool ReplayServer::init(Network::ServerParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
-#ifdef ZFIX_TEST_TLS
-  if (!params.txPacketAllocator())
-    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
-#endif
   return Zfix::Server<ReplayServer, Dictionary, Network>::init(ZuMv(params));
 }
 
@@ -240,10 +236,6 @@ inline bool ReplayClient::init(Network::ClientParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
-#ifdef ZFIX_TEST_TLS
-  if (!params.txPacketAllocator())
-    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
-#endif
   return Zfix::Client<ReplayClient, Dictionary, Network>::init(ZuMv(params));
 }
 

@@ -85,10 +85,18 @@ bool consume(Rx &rx, ZuCSpan expected)
   return ok;
 }
 
+template <typename Stream, typename = decltype(
+  ZuDeclVal<Stream &>().txStream(ZuDeclVal<Zi::IOBufAllocator *>()))>
+auto writer(Stream &stream, int)
+{ return stream.txStream(stream.app()->txBufAllocator); }
+
+template <typename Stream> auto writer(Stream &stream, long)
+{ return stream.txStream(); }
+
 template <typename Stream>
 void txReady(Stream &stream, State &state, int event)
 {
-  auto tx = stream.txStream();
+  auto tx = writer(stream, 0);
   (void)tx;
   state.trace.push(event);
 }
@@ -96,7 +104,7 @@ void txReady(Stream &stream, State &state, int event)
 template <typename Stream>
 void sendMsg(Stream &stream, State &state, int event, ZuCSpan data)
 {
-  auto tx = stream.txStream();
+  auto tx = writer(stream, 0);
   state.trace.push(event);
   tx << data << Zi::flush();
 }
@@ -242,6 +250,7 @@ ZiConnection *TCPServer::accepted(const ZiCxnInfo &ci)
 }
 
 struct TLSClient : public Ztls::Client<TLSClient> {
+  Zi::IOBufAllocator *txBufAllocator = nullptr;
   using TxBufAlloc = Ztls::TxBufAlloc<>;
   struct Link;
 
@@ -252,8 +261,8 @@ struct TLSClient : public Ztls::Client<TLSClient> {
 };
 
 struct TLSClient::Link :
-  public Ztls::CliLink<TLSClient, Link, Ztls::RxBufAlloc<>, TxBufAlloc> {
-  using Base = Ztls::CliLink<TLSClient, Link, Ztls::RxBufAlloc<>, TxBufAlloc>;
+  public Ztls::CliLink<TLSClient, Link, Ztls::RxBufAlloc<>> {
+  using Base = Ztls::CliLink<TLSClient, Link, Ztls::RxBufAlloc<>>;
 
   Link(TLSClient *app) : Base{app} { }
 
@@ -276,6 +285,7 @@ struct TLSClient::Link :
 };
 
 struct TLSServer : public Ztls::Server<TLSServer> {
+  Zi::IOBufAllocator *txBufAllocator = nullptr;
   using TxBufAlloc = Ztls::TxBufAlloc<>;
   struct Link;
 
@@ -292,8 +302,8 @@ struct TLSServer : public Ztls::Server<TLSServer> {
 };
 
 struct TLSServer::Link :
-  public Ztls::SrvLink<TLSServer, Link, Ztls::RxBufAlloc<>, TxBufAlloc> {
-  using Base = Ztls::SrvLink<TLSServer, Link, Ztls::RxBufAlloc<>, TxBufAlloc>;
+  public Ztls::SrvLink<TLSServer, Link, Ztls::RxBufAlloc<>> {
+  using Base = Ztls::SrvLink<TLSServer, Link, Ztls::RxBufAlloc<>>;
 
   Link(TLSServer *app) : Base{app} { }
 
@@ -459,20 +469,15 @@ void runH1(
   Client client{&state};
   Server server{&state};
   auto cliRx = Client::Link::rxAllocator(&mx);
-  auto cliTx = Client::Link::txAllocator(&mx);
   auto srvRx = Server::Link::rxAllocator(&mx);
-  auto srvTx = Server::Link::txAllocator(&mx);
-  cliParams.rxAllocator(cliRx).txAllocator(cliTx);
-  srvParams.rxAllocator(srvRx).txAllocator(srvTx);
+  cliParams.rxAllocator(cliRx);
+  srvParams.rxAllocator(srvRx);
   if constexpr (TxType == Zi::IOBufType::TxTLS) {
-    auto cliPacket = Client::Link::txPacketAllocator(&mx);
-    auto srvPacket = Server::Link::txPacketAllocator(&mx);
-    cliParams.txPacketAllocator(cliPacket);
-    srvParams.txPacketAllocator(srvPacket);
-    ZuCheckRT(cliTx->type == Zi::IOBufType::TxTLS &&
-      srvTx->type == Zi::IOBufType::TxTLS &&
-      cliPacket->type == Zi::IOBufType::TxTCP &&
-      srvPacket->type == Zi::IOBufType::TxTCP, log_("TLS allocator role mismatch"));
+    client.txBufAllocator = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
+    server.txBufAllocator = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
+  } else {
+    cliParams.txAllocator(Client::Link::txAllocator(&mx));
+    srvParams.txAllocator(Server::Link::txAllocator(&mx));
   }
   bool serverInit = server.init(ZuMv(srvParams));
   bool clientInit = client.init(ZuMv(cliParams));

@@ -426,8 +426,7 @@ public:
       .txAllocator(TCP::registerTx(mx));
     m_tls.rxAllocator(TLS::registerRx(mx))
       .txAllocator(TLS::registerTx(mx))
-      .txPacketAllocator(TLS::registerTxPacket(mx))
-      .socketRxAllocator(mx->allocator<Zi::IOBufType::Rx, ZiIOBuf,
+      .rxPktAllocator(mx->allocator<Zi::IOBufType::Rx, ZiIOBuf,
         Ztls_::RxPacketCapacity>());
     return true;
   }

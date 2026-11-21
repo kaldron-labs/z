@@ -30,11 +30,11 @@
 #include <zlib/ZfixIOBuf.hh>
 #include <zlib/ZtlsHMAC.hh>
 #ifdef ZFIX_TEST_TLS
-#include <zlib/Ztls.hh>
-namespace Net = Ztls;
+#include <zlib/ZfixNet.hh>
+using Net = Zfix::TLS;
 #else
-#include <zlib/Ztcp.hh>
-namespace Net = Ztcp;
+#include <zlib/ZfixNet.hh>
+using Net = Zfix::TCP;
 #endif
 #include <zlib/ZfixRxFramer.hh>
 #include <zlib/ZfixTxMsg.hh>
@@ -46,6 +46,17 @@ static ZmRef<ZiIOBuf> frameBuf() {
 }
 
 using namespace ZuTestUtil;
+
+template <bool AppThread = false, typename Link> auto writer(Link &link) {
+  if constexpr (Net::Encrypted) {
+    if constexpr (AppThread) return link.txStream(link.txAllocator());
+    else return link.txStream_(link.txAllocator());
+  } else {
+    if constexpr (AppThread) return link.txStream();
+    else return link.txStream_();
+  }
+}
+
 
 constexpr auto Wire = "8=FIX.4.4\1" "9=13\1" "35=D\1" "58=ABCD\1" "10=155\1"_z;
 struct Payload {
@@ -279,11 +290,6 @@ struct Client : public Net::Client<Client> {
       txBufAllocator = ZfixTest::Allocator<TxBufAlloc>::registerWith(*params.multiplex());
       params.txAllocator(txBufAllocator);
     }
-#ifdef ZFIX_TEST_TLS
-    if (!params.txPacketAllocator())
-      params.txPacketAllocator(params.multiplex()->template allocator<
-	Zi::IOBufType::TxTCP, Ztls::TxPacket>());
-#endif
     return Net::Client<Client>::init(ZuMv(params));
   }
   struct Link;
@@ -362,11 +368,6 @@ struct Server : public Net::Server<Server> {
       txBufAllocator = ZfixTest::Allocator<TxBufAlloc>::registerWith(*params.multiplex());
       params.txAllocator(txBufAllocator);
     }
-#ifdef ZFIX_TEST_TLS
-    if (!params.txPacketAllocator())
-      params.txPacketAllocator(params.multiplex()->template allocator<
-	Zi::IOBufType::TxTCP, Ztls::TxPacket>());
-#endif
     return Net::Server<Server>::init(ZuMv(params));
   }
   struct Link;
@@ -610,11 +611,6 @@ struct SwapCli : Net::Client<SwapCli> {
       txBufAllocator = ZfixTest::Allocator<TxBufAlloc>::registerWith(*params.multiplex());
       params.txAllocator(txBufAllocator);
     }
-#ifdef ZFIX_TEST_TLS
-    if (!params.txPacketAllocator())
-      params.txPacketAllocator(params.multiplex()->template allocator<
-	Zi::IOBufType::TxTCP, Ztls::TxPacket>());
-#endif
     return Net::Client<SwapCli>::init(ZuMv(params));
   }
   struct Link;
@@ -644,7 +640,7 @@ friend inline ZuStringT<"Zfix.TransportSwap.Cli"> ZmNHeapID(Link *);
 
   void write(ZuCSpan bytes) {
     app()->txRun([this, bytes] {
-      auto output = this->txStream_(); output << bytes;
+      auto output = writer(*this); output << bytes;
       if (!output.flush()) app()->state->fail();
     });
   }
@@ -677,11 +673,6 @@ struct SwapSrv : Net::Server<SwapSrv> {
       txBufAllocator = ZfixTest::Allocator<TxBufAlloc>::registerWith(*params.multiplex());
       params.txAllocator(txBufAllocator);
     }
-#ifdef ZFIX_TEST_TLS
-    if (!params.txPacketAllocator())
-      params.txPacketAllocator(params.multiplex()->template allocator<
-	Zi::IOBufType::TxTCP, Ztls::TxPacket>());
-#endif
     return Net::Server<SwapSrv>::init(ZuMv(params));
   }
   struct Link;
@@ -750,7 +741,7 @@ friend inline ZuStringT<"Zfix.TransportSwap.Srv"> ZmNHeapID(Link *);
 #ifdef ZFIX_TEST_TLS
       bool protectedAttempt = app()->state->protectNext.load_();
 #endif
-      auto output = this->txStream_(); output << Wire;
+      auto output = writer(*this); output << Wire;
 #ifndef ZFIX_TEST_TLS
       auto s = app()->state;
       if (s->protectNext.xch(0)) {
@@ -790,7 +781,7 @@ friend inline ZuStringT<"Zfix.TransportSwap.Srv"> ZmNHeapID(Link *);
     }
     if (ZuCSpan{bytes->cspan()} != ZuCSpan{Wire}) { app()->state->fail(); return -1; }
     app()->txRun([this] {
-      auto output = this->txStream_(); output << Wire;
+      auto output = writer(*this); output << Wire;
       if (!output.flush()) app()->state->fail();
     });
     return 1;
@@ -998,7 +989,7 @@ static void replacement(bool late = false, bool refuse = false,
 	  bool protectedRecord = swapWait(s.protectedRecord); ZuCheck(protectedRecord);
 	}
 #ifdef ZFIX_TEST_TLS
-	auto oldStream = run->server.link->txStream();
+	auto oldStream = writer<true>(*run->server.link);
 	if (stale) oldStream << Wire;
 #endif
 	connect(run->b.ptr());
@@ -1118,7 +1109,7 @@ static void partialReplacement()
 	  writes.watch = 1;
 	  server.txRun([link = server.link, &writes] {
 	    auto packet = makePacket(200 * 1024);
-	    auto output = link->txStream_(); output << packet->cspan();
+	    auto output = writer(*link); output << packet->cspan();
 	    if (!output.flush()) link->app()->state->fail();
 	    writes.ready.post();
 	  });

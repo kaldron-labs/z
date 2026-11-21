@@ -35,6 +35,13 @@ before `start()`. Connections expose receive/transmit callbacks and lifecycle
 notifications; use the higher-level [Ztcp guide](../ztcp/README.md) for a complete
 client/server application rather than reimplementing link management.
 
+`ZiRx::recv<Body>(connection, state)` admits one original transport chunk.
+It obtains receive storage from the connection's packet allocator and disarms
+reception before transferring the buffer to `Body`. The consumer requests the
+next chunk after processing or an asynchronous continuation; this mode performs
+no framing accumulation or payload copy. Existing framed `ZiRx` modes continue
+to gather application messages separately when required.
+
 ### Transport plugins
 
 Construct a stopped multiplexer and initialize the plugin with its address.
@@ -72,6 +79,9 @@ Every allocator request returns `nullptr` once the first allocation begins,
 including a repeat after failure. A retry uses the same pool set. Existing
 handles remain usable, and App storage is independent of packet backing.
 Successful allocation survives stop, restart, and activation failure.
+`findAllocator<Concrete>()` retrieves a matching existing registration without
+creating an allocator, including after registration closes. Serialize lookup
+with registration and teardown.
 
 Keep receive state on Rx and transmit state on Tx. Public `rxRun`/`rxInvoke`
 and `txRun`/`txInvoke` hand work to the owner; internal underscore variants

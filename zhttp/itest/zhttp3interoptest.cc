@@ -177,10 +177,18 @@ struct ResponseBuilder :
 using H1ResponseBuilder = ResponseBuilder<H1ResponseBuilder_>;
 using H3ResponseBuilder = ResponseBuilder<H3ResponseBuilder_>;
 
+template <typename Stream, typename = decltype(
+  ZuDeclVal<Stream &>().txStream(ZuDeclVal<Zi::IOBufAllocator *>()))>
+auto writer(Stream &stream, int)
+{ return stream.txStream(stream.app()->txBufAllocator); }
+
+template <typename Stream> auto writer(Stream &stream, long)
+{ return stream.txStream(); }
+
 template <typename Stream>
 void sendH1Response(Stream &stream, ZuCSpan body)
 {
-  auto tx = stream.txStream();
+  auto tx = writer(stream, 0);
   H1ResponseBuilder builder{body};
   builder.begin(tx);
   if (body) {
@@ -420,7 +428,7 @@ using H3RequestBuilder = RequestBuilder<RequestBuilderH3>;
 template <typename Stream>
 void sendH1Request(Stream &stream, ZuCSpan body)
 {
-  auto tx = stream.txStream();
+  auto tx = writer(stream, 0);
   H1RequestBuilder builder{body};
   builder.begin(tx);
   builder.finish(tx);
@@ -525,6 +533,7 @@ ZiConnection *TCPServer::accepted(const ZiCxnInfo &ci)
 }
 
 struct TLSServer : public Ztls::Server<TLSServer> {
+  Zi::IOBufAllocator *txBufAllocator = nullptr;
   using TxBufAlloc = Ztls::TxBufAlloc<Ztls_::TxRecordCapacity, 4<<20>;
   struct Link;
 
@@ -544,10 +553,10 @@ struct TLSServer : public Ztls::Server<TLSServer> {
 
 struct TLSServer::Link :
   public Ztls::SrvLink<TLSServer, TLSServer::Link,
-    Ztls::RxBufAlloc<>, TLSServer::TxBufAlloc>,
+    Ztls::RxBufAlloc<>>,
   public H1ServerLinkOps<TLSServer::Link> {
   using Base = Ztls::SrvLink<TLSServer, TLSServer::Link,
-    Ztls::RxBufAlloc<>, TLSServer::TxBufAlloc>;
+    Ztls::RxBufAlloc<>>;
   using Base::Base;
 
   Link(TLSServer *app) : Base{app} { }
@@ -832,12 +841,13 @@ struct TCPClient : public Ztcp::Client<TCPClient> {
 };
 
 struct TLSClient : public Ztls::Client<TLSClient> {
+  Zi::IOBufAllocator *txBufAllocator = nullptr;
   using TxBufAlloc = Ztls::TxBufAlloc<Ztls_::TxRecordCapacity, 4<<20>;
   struct Link :
     public H1ClientLinkOps<TLSClient,
-      Ztls::CliLink<TLSClient, Link, Ztls::RxBufAlloc<>, TxBufAlloc>> {
+      Ztls::CliLink<TLSClient, Link, Ztls::RxBufAlloc<>>> {
     using Base = H1ClientLinkOps<TLSClient,
-      Ztls::CliLink<TLSClient, Link, Ztls::RxBufAlloc<>, TxBufAlloc>>;
+      Ztls::CliLink<TLSClient, Link, Ztls::RxBufAlloc<>>>;
     using Base::Base;
   };
   TLSClient(ClientState *state_) : state{state_} { }
@@ -1142,13 +1152,12 @@ void testZhttpClientCaddyHttpsH1()
   state.body = "";
   TLSClient client{&state};
   TLSClient::Link::RxAllocator *rxAllocator = TLSClient::Link::rxAllocator(&mx);
-  auto txAllocator = TLSClient::Link::txAllocator(&mx);
-  auto txPacket = TLSClient::Link::txPacketAllocator(&mx);
+  client.txBufAllocator = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
   ZuCSpan alpn[] = { "http/1.1" };
   ZuCHECK(client.init(Ztls::ClientParams(&mx, "3", "4").hub(
-      [&certPath, &alpn, &rxAllocator, &txAllocator, txPacket](auto &p) {
+      [&certPath, &alpn, &rxAllocator](auto &p) {
 	p.caPath(certPath.cspan()).alpn(alpn)
-	  .rxAllocator(rxAllocator).txAllocator(txAllocator).txPacketAllocator(txPacket);
+	  .rxAllocator(rxAllocator);
       })),
     "Zhttp client->Caddy HTTPS/H1 client init failed");
   bool mxStarted = mx.start();
@@ -1347,11 +1356,10 @@ void testCurlZhttpHttpsH1Server()
   ZiMultiplex mx(mxParams());
   TLSServer server{&state};
   TLSServer::Link::RxAllocator *rxAllocator = TLSServer::Link::rxAllocator(&mx);
-  auto txAllocator = TLSServer::Link::txAllocator(&mx);
-  auto txPacket = TLSServer::Link::txPacketAllocator(&mx);
+  server.txBufAllocator = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
   ZuCSpan alpn[] = { "http/1.1" };
   auto params = Ztls::ServerParams(&mx, "3", "4");
-  params.rxAllocator(rxAllocator).txAllocator(txAllocator).txPacketAllocator(txPacket)
+  params.rxAllocator(rxAllocator)
     .certPath(certPath.cspan()).keyPath(keyPath.cspan()).alpn(alpn);
   ZuCHECK(server.init(ZuMv(params)),
     "curl->Zhttp HTTPS/H1 server init failed");

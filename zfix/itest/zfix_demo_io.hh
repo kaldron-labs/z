@@ -95,9 +95,6 @@ template <typename Net> struct Hub<Net, true> : Zfix::Client<Hub<Net, true>, Dic
       tx = Link::txAllocator(params.multiplex());
       params.txAllocator(tx);
     }
-    if constexpr (Net::Encrypted)
-      if (!params.txPacketAllocator())
-        params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
     return Zfix::Client<Hub, Dictionary, Net>::init(ZuMv(params));
   }
 };
@@ -130,9 +127,6 @@ template <typename Net> struct Hub<Net, false> : Zfix::Server<Hub<Net, false>, D
       tx = Link::txAllocator(params.multiplex());
       params.txAllocator(tx);
     }
-    if constexpr (Net::Encrypted)
-      if (!params.txPacketAllocator())
-        params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
     return Zfix::Server<Hub, Dictionary, Net>::init(ZuMv(params));
   }
 };

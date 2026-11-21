@@ -2115,8 +2115,7 @@ static bool session(
   auto tlsRx = TLS::registerRx(&mx);
   auto tlsTx = TLS::registerTx(&mx);
   auto tls = Zhttp::TLSConfig{}.caPath(caPath).rxAllocator(tlsRx).txAllocator(tlsTx)
-    .txPacketAllocator(TLS::registerTxPacket(&mx))
-    .socketRxAllocator(mx.allocator<Zi::IOBufType::Rx, ZiIOBuf,
+    .rxPktAllocator(mx.allocator<Zi::IOBufType::Rx, ZiIOBuf,
       Ztls_::RxPacketCapacity>());
   bool ok = app.init(&mx, ZuMv(config), tls, token, module);
   if (!ok || !mx.start()) { app.final(); return false; }

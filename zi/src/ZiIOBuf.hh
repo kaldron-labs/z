@@ -61,14 +61,14 @@ namespace Zi {
 ZtEnumNS(ZiAPI, IOBufType, int8_t, App, Rx, TxUDP, TxTCP, RxTLS, TxTLS);
 
 struct ZiAPI IOBufPool_ : public ZmPolymorph {
-  const IOBufType::T type;
   uint32_t	count = 0;	// - configured buffer count
   uint32_t	size = 0;	// - overall size of each buffer
   uint32_t	align = ZiIOBuf_DefltAlign; // - physical buffer alignment
   uint32_t	headRoom = 0;	// - how much space is reserved for a frame header
   uint32_t	tailRoom = 0;	// - how much space is reserved for a frame trailer
+  const IOBufType::T type;
 
-  explicit IOBufPool_(IOBufType::T type_) : type(type_) { }
+  IOBufPool_(IOBufType::T type_) : type(type_) { }
 
   virtual uint8_t *alloc() = 0;
   virtual void free(uint8_t *) = 0;
@@ -80,18 +80,15 @@ ZuDerive(IOBufPool, (IOBufPoolList::Node));
 
 struct IOBufAllocator__ {
   ZiMultiplex	*mx = nullptr;
-  IOBufType::T	type = IOBufType::App;
   uint32_t	size = 0;	// - overall capacity for each buffer
   uint32_t	headRoom = 0;	// - how much space is reserved for a frame header
   uint32_t	tailRoom = 0;	// - how much space is reserved for a frame trailer
+  IOBufType::T	type;
 
   IOBufAllocator__(ZiMultiplex *mx_, IOBufType::T type_,
     uint32_t size_, uint32_t headRoom_ = 0, uint32_t tailRoom_ = 0)
   :
-    mx(mx_), type(type_),
-    size(size_),
-    headRoom(headRoom_),
-    tailRoom(tailRoom_) { }
+    mx(mx_), size(size_), headRoom(headRoom_), tailRoom(tailRoom_), type(type_) { }
 
   virtual ~IOBufAllocator__() = default;
 

@@ -976,8 +976,7 @@ int main(int argc, char **argv)
       .txAllocator(TCP::registerTx(&mx));
   tls.rxAllocator(TLS::registerRx(&mx))
       .txAllocator(TLS::registerTx(&mx))
-      .txPacketAllocator(TLS::registerTxPacket(&mx))
-      .socketRxAllocator(mx.allocator<Zi::IOBufType::Rx, ZiIOBuf,
+      .rxPktAllocator(mx.allocator<Zi::IOBufType::Rx, ZiIOBuf,
         Ztls_::RxPacketCapacity>());
   if (!mx.start()) return 1;
 

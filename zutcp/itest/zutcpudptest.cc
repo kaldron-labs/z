@@ -129,8 +129,9 @@ void Connection::write(ZuBSpan payload, ZiSockAddr peer)
     io.init(ZiTxFn{[state, payload](ZiTxContext &io) {
       if (io.length < 0 || unsigned(io.length) != payload.length() ||
 	  (state->udp && (!io.buf || io.buf->cspan() != payload))) ++state->errors;
+      auto output = &state->output;
       io.complete();
-      state->output.post();
+      output->post();
       return true;
     }}, ZuMv(buf), peer, ZiTOS{uint8_t(0x28)});
     return true;

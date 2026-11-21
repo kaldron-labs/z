@@ -170,32 +170,32 @@ inline void alpn(Params &params, H2Policy::T policy)
   }
 }
 
-inline Ztls::ClientParams clientParams(
+inline Transport_::TLSParams<Ztls::ClientParams> clientParams(
   const HubConfig &hub, const H2Config &config)
 {
-  Ztls::ClientParams params{
+  Transport_::TLSParams<Ztls::ClientParams> params{
     hub.mx(), hub.rxThread(), hub.txThread()};
   const auto &tls = config.tls();
+  params.txAllocator(tls.txAllocator());
   params.asyncThread(hub.asyncThread())
-    .rxAllocator(tls.rxAllocator()).txAllocator(tls.txAllocator())
-    .txPacketAllocator(tls.txPacketAllocator())
-    .socketRxAllocator(tls.socketRxAllocator())
+    .rxAllocator(tls.rxAllocator())
+    .rxPktAllocator(tls.rxPktAllocator())
     .caPath(tls.caPath()).certPath(tls.certPath())
     .keyPath(tls.keyPath());
   alpn(params, config.policy());
   return params;
 }
 
-inline Ztls::ServerParams serverParams(
+inline Transport_::TLSParams<Ztls::ServerParams> serverParams(
   const HubConfig &hub, const H2Config &config)
 {
-  Ztls::ServerParams params{
+  Transport_::TLSParams<Ztls::ServerParams> params{
     hub.mx(), hub.rxThread(), hub.txThread()};
   const auto &tls = config.tls();
+  params.txAllocator(tls.txAllocator());
   params.asyncThread(hub.asyncThread())
-    .rxAllocator(tls.rxAllocator()).txAllocator(tls.txAllocator())
-    .txPacketAllocator(tls.txPacketAllocator())
-    .socketRxAllocator(tls.socketRxAllocator())
+    .rxAllocator(tls.rxAllocator())
+    .rxPktAllocator(tls.rxPktAllocator())
     .caPath(tls.caPath()).certPath(tls.certPath())
     .keyPath(tls.keyPath());
   params.mTLS(tls.mTLS()).cacheTimeout(tls.cacheTimeout());
@@ -600,7 +600,7 @@ public:
   }
   ZmRef<ZiIOBuf> allocBuf(unsigned headRoom) {
     if (failed()) return nullptr;
-    auto buf = m_native.template txAllocBuf<AppThread>(headRoom);
+    auto buf = m_native.template txAllocBuf<AppThread>(m_native.app()->txAllocator(), headRoom);
     if (!buf || buf->failed()) { fail_(); return nullptr; }
     return buf;
   }
@@ -846,7 +846,8 @@ class Wire : public H2::Connection<Wire<Impl, AppLink>> {
       return Transport_::canAdopt<AppThread>(*m_wire->impl_(), buf, head, tail, 0);
     }
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-      return m_wire->impl_()->template txAllocBuf<AppThread>(headRoom);
+      return m_wire->impl_()->template txAllocBuf<AppThread>(
+	m_wire->impl_()->app()->txAllocator(), headRoom);
     }
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       if (!m_wire->m_controlAdmission.push()) return false;
@@ -869,7 +870,7 @@ public:
   bool sendSource(const TxFrame &frame) {
     // TLS serializes the actual HTTP frame directly into its output records.
     // The protocol owns these buffers throughout the synchronous write.
-    auto tx = impl_()->txStream_();
+    auto tx = impl_()->txStream_(impl_()->app()->txAllocator());
     frame.each([&tx](ZuBSpan bytes) { tx << bytes; });
     return tx.flush() && !tx.failed();
   }
@@ -1221,7 +1222,7 @@ public:
     if (!entry_ || entry_->localEndQueued) return false;
     entry_->localEndQueued = true;
     auto buf = impl_()->template txAllocBuf<true>(
-      impl_()->template txHeadRoom<true>());
+      impl_()->app()->txAllocator(), impl_()->template txHeadRoom<true>());
     if (!buf) {
       impl_()->h2Cancel(id);
       return false;
@@ -1852,7 +1853,7 @@ private:
     auto entry_ = txWindow(id);
     if (!entry_ || entry_->localEndQueued) return false;
     auto buf = impl_()->template txAllocBuf<false>(
-      impl_()->template txHeadRoom<false>());
+      impl_()->app()->txAllocator(), impl_()->template txHeadRoom<false>());
     if (!buf) {
       txError_(id);
       return false;
@@ -2382,7 +2383,7 @@ private:
       if (pending) {
 	bool ok;
 	if (pending.buf) {
-	  auto tx = impl_()->txStream_();
+	  auto tx = impl_()->txStream_(impl_()->app()->txAllocator());
 	  tx << ZuMv(pending.buf) << Zi::Flush{};
 	  ok = !tx.failed();
 	} else
@@ -2414,7 +2415,7 @@ private:
     bool close = buf->length >= FrameHeaderSize + 8 &&
       buf->data()[3] == FrameType::Goaway &&
       ZuBE(*reinterpret_cast<const uint32_t *>(buf->data() + FrameHeaderSize + 4));
-    auto tx = impl_()->txStream_();
+    auto tx = impl_()->txStream_(impl_()->app()->txAllocator());
     tx << ZuMv(buf) << Zi::Flush{};
     if (tx.failed()) { frameTxFailed(); return false; }
     // A fatal GOAWAY can sit behind multiple bounded control/header turns.

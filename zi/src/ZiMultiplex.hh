@@ -1071,6 +1071,15 @@ public:
     return a;
   }
 
+  // Look up an existing registration without reopening allocator registration.
+  // Callers serialize setup; after alloc(), the registration list is immutable.
+  template <typename Allocator> Allocator *findAllocator() {
+    auto i = m_allocators.iter();
+    while (auto allocator = i())
+      if (auto match = dynamic_cast<Allocator *>(allocator)) return match;
+    return nullptr;
+  }
+
   // Permanently attach an initialized plugin before allocator registration or start.
   void plugin(ZmRef<ZiMxPlugin> &&plugin);
   template <typename Plugin>

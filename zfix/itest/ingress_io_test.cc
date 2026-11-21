@@ -156,10 +156,6 @@ bool CliHub::init(Network::ClientParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
-#ifdef ZFIX_TEST_TLS
-  if (!params.txPacketAllocator())
-    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
-#endif
   return Zfix::RawClient<CliHub, Dictionary, Network>::init(ZuMv(params));
 }
 
@@ -202,10 +198,6 @@ bool SrvHub::init(Network::ServerParams params) {
     tx = Link::txAllocator(params.multiplex());
     params.txAllocator(tx);
   }
-#ifdef ZFIX_TEST_TLS
-  if (!params.txPacketAllocator())
-    params.txPacketAllocator(Link::txPacketAllocator(params.multiplex()));
-#endif
   return Zfix::RawServer<SrvHub, Dictionary, Network>::init(ZuMv(params));
 }
 

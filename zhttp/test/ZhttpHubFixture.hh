@@ -130,7 +130,7 @@ bool consumeStream(Rx &rx, ZuCSpan expected, unsigned &offset)
 template <typename Link>
 void send(Link &link, State &state, int ready, int sent, ZuCSpan data)
 {
-  auto tx = link.txStream();
+  auto tx = link.template frameTx_<true>();
   state.trace.push(ready);
   state.trace.push(sent);
   tx << data << Zi::flush();
@@ -144,7 +144,7 @@ struct ServerSession {
   void connected(Link &link) {
     auto &state = *link.app()->state;
     state.trace.push(LifeEvt::SrvConnected);
-    auto tx = link.txStream();
+    auto tx = link.template frameTx_<true>();
     (void)tx;
     state.trace.push(LifeEvt::SrvTxReady);
   }
@@ -155,7 +155,7 @@ struct ServerSession {
     if (!consume(rx, Ping)) return 0;
     auto &state = *link.app()->state;
     state.trace.push(LifeEvt::SrvProcess);
-    auto tx = link.txStream();
+    auto tx = link.template frameTx_<true>();
     state.trace.push(LifeEvt::SrvSend);
     tx << Pong << Zi::flush();
     return 1;
@@ -411,7 +411,7 @@ struct UpgradeSession {
       link.app()->state->fail();
       return -1;
     }
-    auto tx = link.txStream();
+    auto tx = link.template frameTx_<true>();
     tx << "HTTP/1.1 101 Switching Protocols\r\n"
 	  "Upgrade: opaque\r\n"
 	  "Connection: Upgrade\r\n\r\n";
@@ -526,7 +526,7 @@ struct UpgradeClient :
       state->fail();
       return;
     }
-    auto tx = link.txStream();
+    auto tx = link.template frameTx_<true>();
     tx << "GET /stream HTTP/1.1\r\n"
 	  "Host: localhost\r\n"
 	  "Upgrade: opaque\r\n"

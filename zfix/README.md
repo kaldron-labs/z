@@ -53,17 +53,14 @@ to `LinkTx::sent_`, followed by `writable_` on success; local completion never
 advances peer acknowledgement. Close the adapter after physical I/O Tx drains,
 then drain its posted completions before releasing the enclosing owner.
 
-The application selects and supplies its Rx and primary Tx allocators through
-the transport parameters' `rxAllocator()` and `txAllocator()` setters before
-endpoint initialization. The FIX endpoint inherits transport initialization;
-it does not select or construct network allocators. The concrete policies match
-the link's `RxAllocator` and `TxAllocator` types. Additional TxTCP or TxTLS
-policies register through the inherited `allocator()` method. Transport hubs
-register the supplied policies. Network buffers are created through the selected
-allocator's `allocBuf()`. Frame construction consumes a supplied `ZiIOBuf`;
-standalone encoded bodies and trace records use their existing typed App allocators.
-Each retained buffer keeps its original allocator pointer through growth, and
-its allocator outlives it.
+The application selects and supplies its Rx and formatting Tx allocators through
+`rxAllocator()` and `txAllocator()` on the FIX transport parameters before
+endpoint initialization. For TLS, FIX retains the formatting allocator in its
+own adapter; Ztls receives no plaintext Tx allocator during initialization.
+TLS streams take that allocator explicitly when constructing output. The
+multiplexer owns registered allocators and must outlive retained buffers.
+Frame construction consumes a supplied `ZiIOBuf`; standalone encoded bodies
+and trace records use their existing typed App allocators.
 
 The application uses Zi's ordinary Tx buffer base for its output allocator;
 FIX requires no derived buffer type. `TxFrame` serializes directly into the

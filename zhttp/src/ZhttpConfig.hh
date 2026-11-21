@@ -81,15 +81,11 @@ class TLSConfig {
 public:
   Zi::IOBufAllocator *rxAllocator() const { return m_rxAllocator; }
   Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
-  Zi::IOBufAllocator *txPacketAllocator() const { return m_txPacketAllocator; }
-  Zi::IOBufAllocator *socketRxAllocator() const { return m_socketRxAllocator; }
+  Zi::IOBufAllocator *rxPktAllocator() const { return m_rxPktAllocator; }
   TLSConfig &rxAllocator(Zi::IOBufAllocator *v) { m_rxAllocator = v; return *this; }
   TLSConfig &txAllocator(Zi::IOBufAllocator *v) { m_txAllocator = v; return *this; }
-  TLSConfig &txPacketAllocator(Zi::IOBufAllocator *v) {
-    m_txPacketAllocator = v; return *this;
-  }
-  TLSConfig &socketRxAllocator(Zi::IOBufAllocator *v) {
-    m_socketRxAllocator = v; return *this;
+  TLSConfig &rxPktAllocator(Zi::IOBufAllocator *v) {
+    m_rxPktAllocator = v; return *this;
   }
   ZuCSpan caPath() const { return m_caPath; }
   ZuCSpan certPath() const { return m_certPath; }
@@ -106,8 +102,7 @@ public:
 private:
   Zi::IOBufAllocator *m_rxAllocator = nullptr;
   Zi::IOBufAllocator *m_txAllocator = nullptr;
-  Zi::IOBufAllocator *m_txPacketAllocator = nullptr;
-  Zi::IOBufAllocator *m_socketRxAllocator = nullptr;
+  Zi::IOBufAllocator *m_rxPktAllocator = nullptr;
   ConfigString	m_caPath;
   ConfigString	m_certPath;
   ConfigString	m_keyPath;

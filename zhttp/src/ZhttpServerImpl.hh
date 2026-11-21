@@ -367,13 +367,13 @@ template <typename App, typename AppLink>
 class SrvLink :
   public ZmNHeap<SrvLink<App, AppLink>>,
   public Ztls::SrvLink<ServerHub<App, AppLink>, SrvLink<App, AppLink>,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
+    Transport_::TLSRxBufAlloc>,
   public Wire<SrvLink<App, AppLink>, AppLink> {
   friend inline ZuStringT<"Zhttp.Server.H2Link"> ZmNHeapID(SrvLink *);
 public:
   using Hub = ServerHub<App, AppLink>;
   using Base = Ztls::SrvLink<Hub, SrvLink,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
+    Transport_::TLSRxBufAlloc>;
   using Wire_ = Wire<SrvLink, AppLink>;
 friend Wire_;
   using Cxn = Base::Cxn;
@@ -742,14 +742,14 @@ public:
   void streamTx_(L &&write) {
     ZmAssert(m_app->txInvoked());
     if (!m_streamTx || !m_txNative) return;
-    auto tx = m_txNative->txStream_();
+    auto tx = m_txNative->txStream_(m_txNative->app()->txAllocator());
     ZuFwd<L>(write)(tx);
   }
   template <typename L>
   void streamTx(L &&write) {
     ZmAssert(m_app->rxInvoked());
     if (!m_stream.tx() || !m_native) return;
-    auto tx = m_native->txStream();
+    auto tx = m_native->txStream(m_native->app()->txAllocator());
     ZuFwd<L>(write)(tx);
   }
   void streamTxEnd() {
@@ -764,7 +764,7 @@ public:
   void peerEnd(Stream) { impl()->channel().frameEnd(); }
   template <typename Stream>
   void error(Stream) { impl()->channel().frameError(); }
-  auto txStream() { return m_native->txStream(); }
+  auto txStream() { return m_native->txStream(m_native->app()->txAllocator()); }
   void txErrorFn(ZiTxErrorFn fn) {
     if (m_native) m_native->txErrorFn(ZuMv(fn));
   }
@@ -775,7 +775,7 @@ public:
   template <typename Builder>
   auto transmit_(Builder &) {
     ZmAssert(m_app->txInvoked() && m_txNative);
-    return m_txNative->txStream_();
+    return m_txNative->txStream_(m_txNative->app()->txAllocator());
   }
   // Tx uses its published handle; quiescent observers use the Rx snapshot.
   bool active() const {
@@ -993,7 +993,7 @@ template <typename App>
 class SrvLink :
   public ZmNHeap<SrvLink<App>>,
   public Ztls::SrvLink<ServerHub<App>, SrvLink<App>,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
+    Transport_::TLSRxBufAlloc>,
   public H2_::Wire<SrvLink<App>, typename App::H2Link>,
   public Transport_::TLSClose<SrvLink<App>> {
   friend inline ZuStringT<"Zhttp.Server.TLSLink"> ZmNHeapID(SrvLink *);
@@ -1002,7 +1002,7 @@ public:
   using H1AppLink = App::H1Link;
   using H2AppLink = App::H2Link;
   using Base = Ztls::SrvLink<Hub, SrvLink,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
+    Transport_::TLSRxBufAlloc>;
   using Wire = H2_::Wire<SrvLink, H2AppLink>;
 friend Wire;
   friend Transport_::TLSClose<SrvLink>;

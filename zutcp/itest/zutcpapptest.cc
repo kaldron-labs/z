@@ -79,6 +79,9 @@ template <typename Link> static void connected(Link *link, AppIO::Connected info
 }
 
 struct ClientApp : public AppIO::Client<ClientApp> {
+#ifdef ZUTCP_APP_TLS
+  Zi::IOBufAllocator *txBufAllocator = nullptr;
+#endif
   struct Link;
   AppState *state;
   ClientApp(AppState *state_) : state{state_} { }
@@ -93,7 +96,11 @@ friend inline ZuStringT<"Zutcp.App.Client"> ZmNHeapID(Link *);
   Link(ClientApp *app) : Base{app} { }
   void connected(AppIO::Connected info) {
     ::connected(this, info);
+#ifdef ZUTCP_APP_TLS
+    auto tx = txStream(app()->txBufAllocator);
+#else
     auto tx = txStream();
+#endif
     tx << app()->state->payload << Zi::flush();
   }
   int process(AppIO::RxStream &rx) {
@@ -108,6 +115,9 @@ friend inline ZuStringT<"Zutcp.App.Client"> ZmNHeapID(Link *);
 };
 
 struct ServerApp : public AppIO::Server<ServerApp> {
+#ifdef ZUTCP_APP_TLS
+  Zi::IOBufAllocator *txBufAllocator = nullptr;
+#endif
   struct Link;
   AppState *state;
   ZiIP ip;
@@ -130,7 +140,11 @@ friend inline ZuStringT<"Zutcp.App.Server"> ZmNHeapID(Link *);
   void connected(AppIO::Connected info) { ::connected(this, info); }
   int process(AppIO::RxStream &rx) {
     if (!consume(rx, app()->state)) return 0;
+#ifdef ZUTCP_APP_TLS
+    auto tx = txStream(app()->txBufAllocator);
+#else
     auto tx = txStream();
+#endif
     tx << app()->state->payload << Zi::flush();
     return 1;
   }
@@ -168,11 +182,14 @@ static bool service(
   if (server) {
     ServerApp app{&state, peer, uint16_t(port)};
     AppIO::ServerParams params{&mx, "3", "4"};
-    params.rxAllocator(ServerApp::Link::rxAllocator(&mx))
-      .txAllocator(ServerApp::Link::txAllocator(&mx));
+    params.rxAllocator(ServerApp::Link::rxAllocator(&mx));
 #ifdef ZUTCP_APP_TLS
-    params.alpn(alpn).certPath(getenv("ZUTCP_TEST_CERT")).keyPath(getenv("ZUTCP_TEST_KEY"))
-      .txPacketAllocator(ServerApp::Link::txPacketAllocator(&mx));
+    app.txBufAllocator = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
+#else
+    params.txAllocator(ServerApp::Link::txAllocator(&mx));
+#endif
+#ifdef ZUTCP_APP_TLS
+    params.alpn(alpn).certPath(getenv("ZUTCP_TEST_CERT")).keyPath(getenv("ZUTCP_TEST_KEY"));
 #endif
     bool initialized = app.init(ZuMv(params));
     if (native && stack->txAdmission().capacity != txCapacity + ZiIOBuf_DefltCount)
@@ -186,11 +203,14 @@ static bool service(
   } else {
     ClientApp app{&state};
     AppIO::ClientParams params{&mx, "3", "4"};
-    params.rxAllocator(ClientApp::Link::rxAllocator(&mx))
-      .txAllocator(ClientApp::Link::txAllocator(&mx));
+    params.rxAllocator(ClientApp::Link::rxAllocator(&mx));
 #ifdef ZUTCP_APP_TLS
-    params.alpn(alpn).caPath(getenv("ZUTCP_TEST_CERT"))
-      .txPacketAllocator(ClientApp::Link::txPacketAllocator(&mx));
+    app.txBufAllocator = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
+#else
+    params.txAllocator(ClientApp::Link::txAllocator(&mx));
+#endif
+#ifdef ZUTCP_APP_TLS
+    params.alpn(alpn).caPath(getenv("ZUTCP_TEST_CERT"));
 #endif
     bool initialized = app.init(ZuMv(params));
     if (native && stack->txAdmission().capacity != txCapacity + ZiIOBuf_DefltCount)

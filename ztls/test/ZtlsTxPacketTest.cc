@@ -239,7 +239,8 @@ void sequencingAndPublishFailure()
   ZuCheckRT(output.last == output.packets.tailPtr());
   unsigned length = 0;
   while (auto buf = output.packets.shift()) {
-    ZuCheckRT(!memcmp(buf->data(), bytes + length, buf->length));
+    ZuCheckRT(
+	!memcmp(static_cast<ZiIOBuf *>(buf.ptr())->data(), bytes + length, buf->length));
     length += buf->length;
   }
   ZuCheckRT(length == sizeof(bytes));
