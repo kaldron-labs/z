@@ -121,6 +121,44 @@ inline ErrorFn defaultErrorFn()
   return ErrorFn{[](ZeException e) { ZiLogEvent(ZuMv(e)); }};
 }
 
+namespace Alloc_ {
+  template <
+    Zi::IOBufType::T Type, typename Buf, unsigned Size, unsigned Align, typename HeapID,
+    unsigned VHMaxSize, auto Grow>
+  Zi::IOBufAllocator *txPktAllocator(
+    ZiMultiplex *mx,
+    Zi::IOBufBuiltinAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow> *)
+  {
+    ZuAssert(Type == Zi::IOBufType::TxTCP);
+    using Builtin = Zi::IOBufBuiltinAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>;
+    using Pool = Zi::IOBufPoolAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>;
+    if (auto allocator = mx->template findAllocator<Builtin>()) return allocator;
+    if (auto allocator = mx->template findAllocator<Pool>()) return allocator;
+    return mx->template allocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>();
+  }
+}
+
+// Register a buffer allocation policy.
+template <typename Policy> Zi::IOBufAllocator *allocator(ZiMultiplex *mx)
+{
+  return [mx]<
+    Zi::IOBufType::T Type, typename Buf, unsigned Size, unsigned Align, typename HeapID,
+    unsigned VHMaxSize, auto Grow>(
+    Zi::IOBufBuiltinAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow> *)
+  {
+    return mx->allocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>();
+  }(static_cast<Policy *>(nullptr));
+}
+
+template <
+  typename Plain,
+  typename Packet = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTCP, TxPacket>>
+Zi::IOBufAllocator *rxAllocator(ZiMultiplex *mx)
+{
+  if (!Alloc_::txPktAllocator(mx, static_cast<Packet *>(nullptr))) return nullptr;
+  return allocator<Plain>(mx);
+}
+
 struct HubParams {
   HubParams(ZiMultiplex *mx = nullptr, ZuCSpan rxThread = {}, ZuCSpan txThread = {})
   :
@@ -132,19 +170,9 @@ struct HubParams {
     m_rxAllocator = v;
     return ZuMv(*this);
   }
-  HubParams &&txAllocator(Zi::IOBufAllocator *v)
+  HubParams &&rxPktAllocator(Zi::IOBufAllocator *v)
   {
-    m_txAllocator = v;
-    return ZuMv(*this);
-  }
-  HubParams &&txPacketAllocator(Zi::IOBufAllocator *v)
-  {
-    m_txPacketAllocator = v;
-    return ZuMv(*this);
-  }
-  HubParams &&socketRxAllocator(Zi::IOBufAllocator *v)
-  {
-    m_socketRxAllocator = v;
+    m_rxPktAllocator = v;
     return ZuMv(*this);
   }
 
@@ -184,9 +212,7 @@ struct HubParams {
   ZiMultiplex *multiplex() const { return m_mx; }
   ZiMultiplex *mx() const { return m_mx; }
   Zi::IOBufAllocator *rxAllocator() const { return m_rxAllocator; }
-  Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
-  Zi::IOBufAllocator *txPacketAllocator() const { return m_txPacketAllocator; }
-  Zi::IOBufAllocator *socketRxAllocator() const { return m_socketRxAllocator; }
+  Zi::IOBufAllocator *rxPktAllocator() const { return m_rxPktAllocator; }
   ZuCSpan rxThread() const { return m_rxThread; }
   ZuCSpan txThread() const { return m_txThread; }
   const ParamStrings &alpn() const { return m_alpn; }
@@ -200,9 +226,7 @@ private:
   using Allocator = Zi::IOBufAllocator;
   ZiMultiplex	*m_mx = nullptr;
   Allocator	*m_rxAllocator = nullptr;
-  Allocator	*m_txAllocator = nullptr;
-  Allocator	*m_txPacketAllocator = nullptr;
-  Allocator	*m_socketRxAllocator = nullptr;
+  Allocator	*m_rxPktAllocator = nullptr;
   ParamString	m_rxThread;
   ParamString	m_txThread;
   ParamStrings	m_alpn;
@@ -327,7 +351,7 @@ struct TlsInfo {
 // Server            | accepted()  | connected() disconnected() | listen()
 // Client            |             | connect_() connectFailed() | connect()
 // Disconnect        |             | disconnect_()              | disconnect()
-// Transmission (Tx) |             | txStream_()                | txStream()
+// Transmission (Tx) |             | txStream_(allocator)       | txStream(allocator)
 // Reception    (Rx) |             | process()                  |
 
 // ZiIOBuf buffers transport data between threads (--> arrows below)
@@ -380,11 +404,12 @@ template <
 using TxBufAlloc = Ztls_::TxBufAlloc<Size, MaxSize, HeapID>;
 
 template <
-  typename App, typename Impl, typename RxBufAlloc_, typename TxBufAlloc_, typename Cxn_,
+  typename App, typename Impl, typename RxBufAlloc_, typename Cxn_,
   typename CxnRef_>
-class Link : public ZmPolymorph, public ZiTx<Impl>, public Ztc::Link {
+class Link :
+  public ZmPolymorph, public ZiRx<Impl, Ztls_::RxRecordCapacity>,
+  public ZiTx<Impl>, public Ztc::Link {
   ZuAssert((ZuIs_<typename RxBufAlloc_::Buf, Ztls_::RxQueue::Node>{}));
-  ZuAssert((ZuIs_<typename TxBufAlloc_::Buf, ZiIOBuf>{}));
 
   class TelQueue final : public Ztc::Queue {
   public:
@@ -408,11 +433,10 @@ class Link : public ZmPolymorph, public ZiTx<Impl>, public Ztc::Link {
   };
 public:
   using RxBufAlloc = RxBufAlloc_;
-  using TxBufAlloc = TxBufAlloc_;
   using RxAllocator = Zi::IOBufAllocator;
-  using TxAllocator = Zi::IOBufAllocator;
   using Cxn = Cxn_;
   using CxnRef = CxnRef_;
+  using Rx = ZiRx<Impl, Ztls_::RxRecordCapacity>;
   using Tx = ZiTx<Impl>;
   using ImplRef = Cxn::LinkRef;
   using Stream = Impl;
@@ -443,35 +467,8 @@ public:
 
   App *app() const { return m_app; }
   static Zi::IOBufAllocator *rxAllocator(ZiMultiplex *mx)
-  {
-    return [mx]<
-	     Zi::IOBufType::T Type, typename Buf, unsigned Size, unsigned Align, typename HeapID,
-	     unsigned VHMaxSize, auto Grow>(
-	     Zi::IOBufBuiltinAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow> *)
-    {
-      return mx->allocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>();
-    }(static_cast<RxBufAlloc *>(nullptr));
-  }
-  static Zi::IOBufAllocator *txAllocator(ZiMultiplex *mx)
-  {
-    return [mx]<
-	     Zi::IOBufType::T Type, typename Buf, unsigned Size, unsigned Align, typename HeapID,
-	     unsigned VHMaxSize, auto Grow>(
-	     Zi::IOBufBuiltinAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow> *)
-    {
-      return mx->allocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>();
-    }(static_cast<TxBufAlloc *>(nullptr));
-  }
-  static Zi::IOBufAllocator *
-  txPacketAllocator(ZiMultiplex *mx, unsigned count = ZiIOBuf_DefltCount)
-  {
-    // Validate the actual record reservation after provider activation and
-    // negotiation; allocator provisioning encapsulates packet backing.
-    return mx->allocator<Zi::IOBufType::TxTCP, TxPacket>(count);
-  }
-  Zi::IOBufAllocator *txPacketAllocator() const { return app()->txPacketAllocator(); }
+  { return Ztls::rxAllocator<RxBufAlloc, typename App::TxPktAlloc>(mx); }
   RxAllocator *rxAllocator() const { return app()->rxAllocator(); }
-  TxAllocator *txAllocator() const { return static_cast<TxAllocator *>(app()->txAllocator()); }
   Cxn *cxn() const { return m_cxn; }
   bool disconnecting() const { return m_disconnecting.load_(); }
   StreamRef stream() { return impl(); }
@@ -586,59 +583,30 @@ private:
     }
     impl()->connected_(); // client initiates handshake
     // Install the first admission with the initialized TLS generation.
-    rearmInput_();
+    if (m_tls && m_cxn && !m_disconnecting.load_())
+      Rx::template recv<&Link::input_>(m_cxn, m_tlsGen.load_());
   }
 
-  // Mux Rx owns contexts. Disarm while the original backing is on TLS Rx;
-  // rearming through recv() also notifies packet providers of admission.
-  void armInput(ZiRxContext &io, uint64_t gen)
+private:
+  void input_(ZiConnection *physical, ZmRef<ZiIOBuf> buf, uint64_t gen)
   {
-    if (!io.cxn->up()) {
-      io.complete();
-      return;
-    }
-    auto fn = ZiRxFn{[this, gen](ZiRxContext &io)
+    auto cxn = static_cast<Cxn *>(physical);
+    app()->rxRun([this, gen, cxn = ZmRef(cxn), buf = ZuMv(buf)]() mutable
     {
-      if (io.buf && io.buf->length) {
-	// complete() destroys this callback; snapshot its captures first.
-	auto link = this;
-	auto generation = gen;
-	auto cxn = static_cast<Cxn *>(io.cxn);
-	auto buf = ZuMv(io.buf);
-	io.complete();
-	link->app()->rxRun([link, generation, cxn = ZmRef(cxn), buf = ZuMv(buf)]() mutable
-	{
-	  if (link->m_cxn != cxn.ptr() || link->m_tls != cxn.ptr() ||
-	    link->m_disconnecting.load_() || generation != link->m_tlsGen.load_())
-	    return;
-	  cxn->rxPaused = true;
-	  cxn->rxInput = ZuMv(buf);
-	  link->receiveInput_();
-	});
-	return true;
-      }
-      if (!io.buf) io.buf = io.cxn->info().rxAllocator->allocBuf(impl());
-      if (!io.buf) io.disconnect();
-      return true;
-    }};
-    if (!io.buf) io.buf = io.cxn->info().rxAllocator->allocBuf(impl());
-    if (!io.buf) {
-      io.disconnect();
-      return;
-    }
-    io.init(ZuMv(fn), ZuMv(io.buf));
+      if (m_cxn != cxn.ptr() || m_tls != cxn.ptr() || m_disconnecting.load_() ||
+	gen != m_tlsGen.load_())
+	return;
+      cxn->rxPaused = true;
+      cxn->rxInput = ZuMv(buf);
+      processRx_();
+    });
   }
 protected:
-  bool handshake_(ZmRef<ZiIOBuf> buf)
-  {
-    if (buf && m_tls) m_tls->rxInput = ZuMv(buf);
-    return receiveInput_();
-  }
-private:
-  bool receiveInput_(SignatureWatch *resuming = nullptr)
+  bool processRx_(ZmRef<ZiIOBuf> input = nullptr, SignatureWatch *resuming = nullptr)
   {
     ZiAssert(app()->rxInvoked(), "Ztls", (), "TLS input outside Rx thread", return false);
     if (!m_tls || !m_cxn || m_disconnecting.load_()) return false;
+    if (input) m_tls->rxInput = ZuMv(input);
     if (asyncPending()) return true;
     unsigned records = 0;
     do {
@@ -681,36 +649,31 @@ private:
       }
       while (Ztls_::takeKeyUpdateReq(m_tls))
 	if (!updateKey_0()) return false;
-      if (m_handshook) processRx_();
+      if (m_handshook) {
+	while (m_rxStream) {
+	  int n = impl()->process(m_rxStream);
+	  if (!n) break;
+	  if (n < 0) { disconnect_(true); return false; }
+	}
+      }
       if (gen != m_tlsGen.load_() || m_cxn != target.ptr() || m_disconnecting.load_())
 	return false;
       if (!m_tls->rxInput) break;
       if (++records == 32) {
 	app()->rxRun([this, gen, target = ZuMv(target)]()
 	{
-	  if (gen == m_tlsGen.load_() && m_cxn == target.ptr()) receiveInput_();
+	  if (gen == m_tlsGen.load_() && m_cxn == target.ptr()) processRx_();
 	});
 	return true;
       }
     } while (true);
     if (m_tls->rxPaused) {
       m_tls->rxPaused = false;
-      rearmInput_();
+      Rx::template recv<&Link::input_>(m_cxn, m_tlsGen.load_());
     }
     return true;
   }
 
-  void rearmInput_()
-  {
-    if (!m_tls || !m_cxn || m_disconnecting.load_()) return;
-    auto gen = m_tlsGen.load_();
-    m_cxn->recv(
-      ZiRxFn{[this, gen](ZiRxContext &io)
-    {
-      armInput(io, gen);
-      return true;
-    }});
-  }
 private:
   bool finishHandshake_0()
   {
@@ -763,23 +726,9 @@ private:
     if (ZuLikely(gen == m_tlsGen.load_() && !m_disconnecting.load_() && cxn && cxn->up())) {
       if (m_txCxn && m_txCxn->txGeneration != gen) retireTx(gen);
       if (!m_txCxn) {
-	// Probe the entire record budget before publishing application Tx.
-	struct ProbePublisher : RecordPublisher {
-	  int publish(ZmRef<ZiIOBuf>) override { return 0; }
-	} publisher;
-	RecordSink probe{txPacketAllocator(), impl(), cxn->info().mps, publisher};
-
-	auto   overhead = Ztls_::txRecordOverhead(cxn.ptr());
-	size_t maxWire = TxRecordCapacity + overhead + 5 + overhead; // includes KeyUpdate
-	int    n = probe.reserve(maxWire);
-	probe.discard();
-	if (n) {
-	  cxn->close();
-	} else {
-	  cxn->txGeneration = gen;
-	  m_txCxn = cxn;
-	  installed = true;
-	}
+	cxn->txGeneration = gen;
+	m_txCxn = cxn;
+	installed = true;
       } else {
 	installed = m_txCxn == cxn;
       }
@@ -854,7 +803,7 @@ private:
   {
     auto cxn = target.cxn;
     auto mps = cxn ? cxn->info().mps : 0;
-    return RecordSink{txPacketAllocator(), impl(), mps, target};
+    return RecordSink{app()->txPktAllocator(), impl(), mps, target};
   }
 
   bool finalizeTxBuf(ZmRef<ZiIOBuf> buf, Cxn *cxn)
@@ -881,18 +830,6 @@ private:
     // Dispatch has transferred ownership. A peer can consume this last packet
     // and close before this thread resumes; sent() owns its completion result.
     return true;
-  }
-
-  void processRx_()
-  {
-    while (m_rxStream) {
-      int n = impl()->process(m_rxStream);
-      if (ZuUnlikely(!n)) return;
-      if (ZuUnlikely(n < 0)) {
-	disconnect_(true);
-	return;
-      }
-    }
   }
 
   Cxn *closing_() const { return m_closing.load_(); }
@@ -972,17 +909,19 @@ public:
   static constexpr unsigned txMaxSize() { return TxRecordCapacity; }
   template <bool AppThread> unsigned txHeadRoom() const { return 0; }
   template <bool AppThread> unsigned txTailRoom() const { return 0; }
-  template <bool AppThread> ZmRef<ZiIOBuf> txAllocBuf(unsigned skip)
+  template <bool AppThread>
+  ZmRef<ZiIOBuf> txAllocBuf(Zi::IOBufAllocator *allocator, unsigned skip)
   {
     if (ZuUnlikely(skip < txHeadRoom<AppThread>() || skip > txMaxSize())) return nullptr;
-    auto buf = allocTxBuf(skip);
+    auto buf = allocTxBuf(allocator, skip);
     if (ZuUnlikely(!buf || skip > buf->size)) return nullptr;
     return buf;
   }
 private:
-  ZmRef<ZiIOBuf> allocTxBuf(unsigned headroom)
+  ZmRef<ZiIOBuf> allocTxBuf(Zi::IOBufAllocator *allocator, unsigned headroom)
   { // App/Tx threads
-    auto buf = txAllocator()->allocBuf(impl(), TxRecordCapacity);
+    auto buf = allocator->allocBuf(impl(), TxRecordCapacity);
+    if (!buf) return nullptr;
     // Preserve only headroom requested by application framing.
     buf->skip = headroom;
     buf->length = 0;
@@ -992,12 +931,15 @@ private:
   template <bool AppThread> class TxStream_ : public Zi::TxStream<TxStream_<AppThread>> {
     using Base = Zi::TxStream<TxStream_<AppThread>>;
   public:
-    TxStream_(Link &link) : TxStream_(link, link.template txHeadRoom<AppThread>()) { }
-  private:
-    TxStream_(Link &link, unsigned headroom)
+    TxStream_(Link &link, Zi::IOBufAllocator *allocator)
     :
-      Base(link.txMaxSize(), headroom, 0), m_link{&link}, m_gen{link.m_tlsGen.load_()},
-      m_headroom{headroom}
+      TxStream_(link, allocator, link.template txHeadRoom<AppThread>())
+    { }
+  private:
+    TxStream_(Link &link, Zi::IOBufAllocator *allocator, unsigned headroom)
+    :
+      Base(link.txMaxSize(), headroom, 0), m_link{&link}, m_allocator{allocator},
+      m_gen{link.m_tlsGen.load_()}, m_headroom{headroom}
     { }
   public:
     ~TxStream_()
@@ -1012,7 +954,7 @@ private:
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip)
     {
       if (ZuUnlikely(skip < m_headroom)) return nullptr;
-      return m_link->template txAllocBuf<AppThread>(skip);
+      return m_link->template txAllocBuf<AppThread>(m_allocator, skip);
     }
 
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool)
@@ -1025,22 +967,23 @@ private:
     }
   private:
     // immutable
-    Link	*m_link;
-    uint64_t	m_gen = 0;
-    unsigned	m_headroom = 0;
+    Link		*m_link;
+    Zi::IOBufAllocator	*m_allocator;
+    uint64_t		m_gen = 0;
+    unsigned		m_headroom = 0;
   };
 public:
   void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }
 
-  auto txStream()
+  auto txStream(Zi::IOBufAllocator *allocator)
   { // App thread(s)
     ZmAssert(!app()->txInvoked());
-    return TxStream_<true>{*this};
+    return TxStream_<true>{*this, allocator};
   }
-  TxStream_<false> txStream_()
+  TxStream_<false> txStream_(Zi::IOBufAllocator *allocator)
   { // direct call from within tx thread
     ZmAssert(app()->txInvoked());
-    return TxStream_<false>{*this};
+    return TxStream_<false>{*this, allocator};
   }
 protected:
   bool updateKey_0(bool requestUpdate = false)
@@ -1257,7 +1200,7 @@ private:
     async->armed = false;
     if (async->cxn.ptr() == m_tls && async->gen == m_tlsGen.load_() && m_asyncJob == async) {
       clearAsync();
-      receiveInput_(async);
+      processRx_(nullptr, async);
     } else if (async->retired) {
       if (!async->cxn->retireSignature()) {
 	armSignature(ZmRef(async));
@@ -1443,28 +1386,26 @@ private:
 };
 
 // client links are persistent, own the (transient) connection
-template <typename App, typename Impl, typename RxBufAlloc, typename TxBufAlloc, typename Cxn>
-using CliLink_ = Link<App, Impl, RxBufAlloc, TxBufAlloc, Cxn, ZmRef<Cxn>>;
+template <typename App, typename Impl, typename RxBufAlloc, typename Cxn>
+using CliLink_ = Link<App, Impl, RxBufAlloc, Cxn, ZmRef<Cxn>>;
 // server links are transient, are owned by the connection
-template <typename App, typename Impl, typename RxBufAlloc, typename TxBufAlloc, typename Cxn>
-using SrvLink_ = Link<App, Impl, RxBufAlloc, TxBufAlloc, Cxn, Cxn *>;
+template <typename App, typename Impl, typename RxBufAlloc, typename Cxn>
+using SrvLink_ = Link<App, Impl, RxBufAlloc, Cxn, Cxn *>;
 
 template <
-  typename App, typename Impl, typename RxBufAlloc_ = Ztls::RxBufAlloc<>,
-  typename TxBufAlloc_ = Ztls::TxBufAlloc<>>
-class CliLink : public CliLink_<App, Impl, RxBufAlloc_, TxBufAlloc_, CliCxn<Impl>> {
+  typename App, typename Impl, typename RxBufAlloc_ = Ztls::RxBufAlloc<>>
+class CliLink : public CliLink_<App, Impl, RxBufAlloc_, CliCxn<Impl>> {
 public:
   using Cxn = CliCxn<Impl>;
   using RxBufAlloc = RxBufAlloc_;
-  using TxBufAlloc = TxBufAlloc_;
-  using Base = CliLink_<App, Impl, RxBufAlloc, TxBufAlloc, Cxn>;
+  using Base = CliLink_<App, Impl, RxBufAlloc, Cxn>;
 
   using Base::impl;
   using Base::app;
   using Base::resetTLS;
   using Base::handshakeProps;
   using Base::resetHandshakeProps;
-  using Base::handshake_;
+  using Base::processRx_;
   using Base::tls;
 
 friend Base;
@@ -1582,7 +1523,7 @@ template <typename> friend class Client;
       auto app = impl->app();
       app->rxRun([owner = ZmRef(impl), transient] { owner->setupFailed_(transient); });
     }},
-      ZiIP{}, 0, ip, m_port, app()->socketRxAllocator());
+      ZiIP{}, 0, ip, m_port, app()->rxPktAllocator());
   }
 private:
   void saveTicket(Ztls_::Bytes input)
@@ -1610,7 +1551,7 @@ private:
     props->client.earlyDataAcceptance = Ztls_::EarlyDataAcceptance::Unknown;
 
     // send HELO
-    handshake_(nullptr);
+    processRx_();
   }
 protected:
   size_t maxEarlyData() const { return m_maxEarlyData; }
@@ -1660,14 +1601,12 @@ private:
 };
 
 template <
-  typename App, typename Impl, typename RxBufAlloc_ = Ztls::RxBufAlloc<>,
-  typename TxBufAlloc_ = Ztls::TxBufAlloc<>>
-class SrvLink : public SrvLink_<App, Impl, RxBufAlloc_, TxBufAlloc_, SrvCxn<Impl>> {
+  typename App, typename Impl, typename RxBufAlloc_ = Ztls::RxBufAlloc<>>
+class SrvLink : public SrvLink_<App, Impl, RxBufAlloc_, SrvCxn<Impl>> {
 public:
   using Cxn = SrvCxn<Impl>;
   using RxBufAlloc = RxBufAlloc_;
-  using TxBufAlloc = TxBufAlloc_;
-  using Base = SrvLink_<App, Impl, RxBufAlloc, TxBufAlloc, Cxn>;
+  using Base = SrvLink_<App, Impl, RxBufAlloc, Cxn>;
 
   using Base::impl;
   using Base::app;
@@ -1700,11 +1639,12 @@ ZuDerive(
 
 template <typename App_> class Hub : public Random, public ZmEngine<App_>, public Ztc::Hub {
 friend ZmEngine<App_>;
-template <typename, typename, typename, typename, typename, typename> friend class Link;
-template <typename, typename, typename, typename> friend class CliLink;
-template <typename, typename, typename, typename> friend class SrvLink;
+template <typename, typename, typename, typename, typename> friend class Link;
+template <typename, typename, typename> friend class CliLink;
+template <typename, typename, typename> friend class SrvLink;
 public:
   using App = App_;
+  using TxPktAlloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTCP, TxPacket>;
   using HubCtl = ZmEngine<App>;
   using Links = ZmHash<Ztc::Link *, ZmHashLock<ZmPLock, ZmHashHeapID<"Ztls.Hub.Links">>>;
 
@@ -1767,23 +1707,26 @@ protected:
     if (!m_errorFn) m_errorFn = defaultErrorFn();
     if (!validate_(params)) return false;
     auto mx = params.mx();
-    if (params.rxAllocator()->mx != mx || params.txAllocator()->mx != mx ||
-      params.txPacketAllocator()->mx != mx)
+    if (params.rxAllocator()->mx != mx) return false;
+    auto packet = Alloc_::txPktAllocator(
+      mx, static_cast<typename App::TxPktAlloc *>(nullptr));
+    if (!packet) {
+      error_(ZeEXCEPT(Error, "Ztls", "TLS packet allocator is unavailable"));
       return false;
-    auto socketRxAllocator = params.socketRxAllocator();
-    if (!socketRxAllocator) {
-      socketRxAllocator =
+    }
+    auto rxPktAllocator = params.rxPktAllocator();
+    if (!rxPktAllocator) {
+      rxPktAllocator =
 	mx->template allocator<Zi::IOBufType::Rx, ZiRxBuf, Ztls_::RxPacketCapacity>();
-      if (!socketRxAllocator) {
-	error_(ZeEXCEPT(Error, "Ztls", "TLS socket Rx allocator is unavailable"));
+      if (!rxPktAllocator) {
+	error_(ZeEXCEPT(Error, "Ztls", "TLS Rx packet allocator is unavailable"));
 	return false;
       }
     }
     m_mx = mx;
     m_rxAllocator = params.rxAllocator();
-    m_socketRxAllocator = socketRxAllocator;
-    m_txAllocator = params.txAllocator();
-    m_txPacketAllocator = params.txPacketAllocator();
+    m_rxPktAllocator = rxPktAllocator;
+    m_txPktAllocator = packet;
     m_rxThread = thread_(params.rxThread(), m_mx->rxThread());
     m_txThread = thread_(params.txThread(), m_mx->txThread());
     m_asyncThread = params.asyncThread() ? m_mx->sid(params.asyncThread()) : 0;
@@ -1803,21 +1746,19 @@ private:
       error_(ZeEXCEPT(Error, "Ztls", "multiplexer is null"));
       return false;
     }
-    if (!params.rxAllocator() || params.rxAllocator()->type != Zi::IOBufType::RxTLS ||
-      !params.txAllocator() || params.txAllocator()->type != Zi::IOBufType::TxTLS ||
-      !params.txPacketAllocator() || params.txPacketAllocator()->type != Zi::IOBufType::TxTCP) {
+    if (!params.rxAllocator() || params.rxAllocator()->type != Zi::IOBufType::RxTLS) {
       error_(
-	ZeEXCEPT(Error, "Ztls", "TLS Rx, plaintext Tx and packet Tx allocators are required"));
+	ZeEXCEPT(Error, "Ztls", "TLS Rx allocator is required"));
       return false;
     }
-    if (auto a = params.socketRxAllocator();
+    if (auto a = params.rxPktAllocator();
       a && (a->mx != params.mx() || a->type != Zi::IOBufType::Rx)) {
-      error_(ZeEXCEPT(Error, "Ztls", "invalid TLS socket Rx allocator"));
+      error_(ZeEXCEPT(Error, "Ztls", "invalid TLS Rx packet allocator"));
       return false;
     }
-    if (!params.socketRxAllocator() && params.mx()->state() != ZmEngineState::Stopped) {
+    if (!params.rxPktAllocator() && params.mx()->state() != ZmEngineState::Stopped) {
       error_(ZeEXCEPT(
-	Error, "Ztls", "running multiplexer requires a prepared TLS socket Rx allocator"));
+	Error, "Ztls", "running multiplexer requires a prepared TLS Rx packet allocator"));
       return false;
     }
     if (params.rxAllocator()->capacity() < Ztls_::RxRecordCapacity) {
@@ -1894,11 +1835,7 @@ private:
     auto available = [this](Ztls_::SuiteSpan suites)
     {
       for (auto suite : suites) {
-	uint8_t key[Ztls_MaxSecretSize]{}, iv[Ztls_MaxIVSize]{};
-	auto	aead = Ztls_::aeadNewDirect(suite->aead, 1, key, iv);
-	bool	ok = aead && aead->serialEncrypt();
-	if (aead) Ztls_::aeadFree(aead);
-	if (!ok) {
+	if (!suite->aead->serialEncrypt) {
 	  error_(ZeEXCEPT(Error, "Ztls", "selected AEAD lacks serial record output"));
 	  return false;
 	}
@@ -1947,18 +1884,14 @@ public:
   { m_mx->invoke(ZuFwd<Args>(args)..., m_txThread); }
   bool txInvoked() { return m_mx->invoked(m_txThread); }
 
-  // Validate Tx TLS backing created by the underlying Mx.
-  bool allocator(Zi::IOBufAllocator *a)
-  { return a && a->type == Zi::IOBufType::TxTLS && m_mx && a->mx == m_mx; }
-
   Zi::IOBufAllocator *rxAllocator() const { return m_rxAllocator; }
-  Zi::IOBufAllocator *socketRxAllocator() const { return m_socketRxAllocator; }
-  Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
-  Zi::IOBufAllocator *txPacketAllocator() const { return m_txPacketAllocator; }
+  Zi::IOBufAllocator *rxPktAllocator() const { return m_rxPktAllocator; }
 
   void linkConnected_() { }
   void linkDisconnected_() { }
 private:
+  Zi::IOBufAllocator *txPktAllocator() const { return m_txPktAllocator; }
+
   void linkAdded_(Ztc::Link *link)
   {
     m_links.add(link);
@@ -2342,9 +2275,8 @@ private:
   // stable after init(); m_errorFn is cleared during final()
   const ZuID		m_id;
   AllocatorRef		m_rxAllocator = nullptr;
-  AllocatorRef		m_socketRxAllocator = nullptr;
-  AllocatorRef		m_txAllocator = nullptr;
-  AllocatorRef		m_txPacketAllocator = nullptr;
+  AllocatorRef		m_rxPktAllocator = nullptr;
+  AllocatorRef		m_txPktAllocator = nullptr;
   ZiMultiplex		*m_mx = nullptr;
   ErrorFn		m_errorFn;
   Ztls_::Context	m_ctx{};
@@ -2382,7 +2314,7 @@ struct App : public Client<App> {
 
   void exception(ZmRef<ZeEvent>); // optional
 
-  struct Link : public CliLink<App, Link, RxBufAlloc, TxBufAlloc> {
+  struct Link : public CliLink<App, Link, RxBufAlloc> {
     // Ztls Rx thread - handshake completed
     void connected(Ztls::Connected);
 
@@ -2400,7 +2332,7 @@ struct App : public Client<App> {
 };
 #endif
 template <typename App> class Client : public Hub<App> {
-template <typename, typename, typename, typename> friend class CliLink;
+template <typename, typename, typename> friend class CliLink;
 public:
   using Base = Hub<App>;
 friend Base;
@@ -2509,7 +2441,7 @@ struct App : public Server<App> {
 
   void exception(ZmRef<ZeEvent>); // optional
 
-  struct Link : public SrvLink<App, Link, RxBufAlloc, TxBufAlloc> {
+  struct Link : public SrvLink<App, Link, RxBufAlloc> {
     // Ztls Rx thread - handshake completed
     void connected(Ztls::Connected);
 
@@ -2591,7 +2523,7 @@ public:
     }},
       ZiConnectFn{
 	app(), [](App *app, const ZiCxnInfo &ci) -> ZiConnection * { return app->accepted(ci); }},
-      app()->localIP(), app()->localPort(), app()->nAccepts(), app()->socketRxAllocator(),
+      app()->localIP(), app()->localPort(), app()->nAccepts(), app()->rxPktAllocator(),
       ZiCxnOptions());
   }
 

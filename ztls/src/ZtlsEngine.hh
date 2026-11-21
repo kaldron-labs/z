@@ -1278,7 +1278,7 @@ Ztls_Extern AeadContext *aeadNew(
 // @param isEnc 1 if creating a context for encryption, 0 if creating a context for decryption
 // @return pointer to an AEAD context if successful, otherwise NULL
 Ztls_Extern AeadContext *
-aeadNewDirect(const AeadAlgo *aead, int isEnc, const void *key, const void *iv);
+aeadNew_(const AeadAlgo *aead, int isEnc, const void *key, const void *iv);
 
 // destroys an AEAD cipher context
 Ztls_Extern void aeadFree(AeadContext *ctx);

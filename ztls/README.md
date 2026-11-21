@@ -19,25 +19,29 @@ from `Ztls::Client<App>` or `Ztls::Server<App>` and define `CliLink`/`SrvLink`
 types. Configure the multiplexer, Rx/Tx destinations, certificates, keys, trust
 and ALPN before initiating connections. `connected(Ztls::Connected)` reports
 handshake completion and negotiated information; consume plaintext through the
-receive stream and emit plaintext through `txStream()` for encryption/output.
+receive stream and emit plaintext through `txStream(allocator)` for encryption/output.
+Use `txStream_(allocator)` on the TLS Tx thread.
 
-The application selects its buffer allocator policies; the multiplexer creates
-and owns the allocator instances. `Ztls::RxBufAlloc<>` and `Ztls::TxBufAlloc<>`
-name policies, whose `Buf` members name queue-node headers. Supply explicit
-RxTLS, TxTLS plaintext and TxTCP packet allocators through `rxAllocator(rx)`,
-`txAllocator(tx)` and `txPacketAllocator(packets)`. TxTLS and RxTLS always use
-ordinary builtin/heap storage. RxTLS reserves `Ztls_::RxRecordCapacity`, enough for
-a full 16 KiB application record plus the supported TLS 1.3 inner content type
-and padding. Custom RxTLS geometry must supply that capacity before traffic;
-initialization rejects insufficient storage. TxTLS holds a complete application
-record (up to 16 KiB) and has no TLS header/tag reservation. TxTCP supplies distinct ciphertext
-backing, registered when provided by the multiplexer plugin. Its fixed provider
-geometry reserves lower-layer headroom and tailroom; each connection passes its
-MPS as the packet payload cap. Create all selections through the stopped
-multiplexer before hub initialization. TLS validates their roles and common mx.
-After provider activation and negotiation, the link reserves and releases the
-maximum record plus KeyUpdate budget using its physical MPS before publishing
-`connected()`. A pool unable to hold that budget terminates the session.
+The hub accepts an RxTLS plaintext allocator through `rxAllocator(rx)`.
+`Ztls::RxBufAlloc<>` names its ordinary builtin/heap policy. It must supply
+`Ztls_::RxRecordCapacity`, enough for a full 16 KiB record plus inner content
+type and padding; initialization rejects insufficient capacity.
+
+Each application Tx stream receives its own plaintext allocator explicitly.
+The same link can use several allocators, and adopted buffers retain their
+original allocator until encryption completes. `Ztls::TxBufAlloc<>` names a
+convenient plaintext policy; it is not a Link template parameter or hub property.
+Plaintext records hold up to 16 KiB without a TLS header/tag reserve.
+
+The hub owns `txPktAllocator`, obtained internally from the multiplexer.
+Its `TxPktAlloc` policy defaults to TxTCP packet storage and can be specialized
+by the application type for memory geometry. TLS receive preparation through
+`Link::rxAllocator()` or `Ztls::rxAllocator<Policy>()` prepares that internal
+registration while the multiplexer is stopped. Native plugins provide registered
+packet backing; later hubs reuse an existing matching registration.
+Packet capacity comes from the allocator, while each connection supplies its
+MPS. Actual sends reserve spans using both bounds. Handshake, alerts and other
+TLS control output require no application plaintext Tx allocator.
 
 All TLS wire producers, including handshake, alerts and KeyUpdate, encrypt
 serially into packet spans. A record may span many packets without adding TLS
@@ -48,48 +52,45 @@ the originating generation without consuming application record cipher state.
 A failed handshake/control record is unpublished and terminates that session;
 earlier complete records of its flight may have been sent.
 
-For hubs initialized after explicit allocation or startup, supply a prepared
-`Rx` allocator with `socketRxAllocator()`. Acquire it from the same
-multiplexer before `alloc()` or `start()` and reuse it across dynamic hubs.
-During initial setup, a hub can acquire its default socket allocator through
-the multiplexer factory. The hub passes the retained allocator to each endpoint
-setup. Builtin receive capacity follows local receive geometry. Smaller input
-chunks remain valid.
+For hubs initialized after explicit allocation or startup, prepare TLS Rx
+storage through one of these helpers and retain a packet `Rx` allocator for
+`rxPktAllocator()`. Obtain the handles before `alloc()` or `start()` and reuse
+them across dynamic hubs. Initial hub setup can register its default receive
+packet allocator itself. The hub passes that handle to each endpoint setup.
 
-Create additional TxTLS allocators through `mx.allocator<Zi::IOBufType::TxTLS, ZiTxBuf, Size>()`, then
-supply them to `hub.allocator(allocator)`. The hub checks the TxTLS type and
-existing multiplexer binding. Each outgoing
-plaintext buffer retains the allocator that created it until encryption completes. Application output is not restricted to the primary factory.
+`ZiRx::recv<Body>()` allocates and admits each transport input chunk, then
+transfers its original backing to TLS Rx with reception disarmed. Ztls's
+`processRx_()` drives record processing and application delivery, requesting the
+next chunk only after consuming the current input. Fragmented records decrypt
+incrementally into private RxTLS storage without gathering ciphertext.
 
 ```cpp
 auto rx = App::Link::rxAllocator(&mx);
-auto tx = App::Link::txAllocator(&mx);
-auto packets = App::Link::txPacketAllocator(&mx, 1024);
-auto socketRx = mx.allocator<Zi::IOBufType::Rx, ZiRxQueue::Node, Ztls_::RxPacketCapacity>();
-auto params = Ztls::ClientParams{&mx, "3", "4"}.hub([rx, tx, packets, socketRx](auto &p) {
-  p.rxAllocator(rx).txAllocator(tx).txPacketAllocator(packets)
-    .socketRxAllocator(socketRx);
+auto rxPkt = mx.allocator<Zi::IOBufType::Rx, ZiRxQueue::Node, Ztls_::RxPacketCapacity>();
+auto output = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
+auto other = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 4096>();
+auto params = Ztls::ClientParams{&mx, "3", "4"}.hub([rx, rxPkt](auto &p) {
+  p.rxAllocator(rx).rxPktAllocator(rxPkt);
 });
-bool initialized = app.init(ZuMv(params));
-
-auto output = mx.allocator<Zi::IOBufType::TxTLS, ZiTxBuf, 4096>();
-bool registered = initialized && app.allocator(output);
-if (registered && !mx.start()) return false;
-// Once connected, append application plaintext.
-if (registered) {
-  auto buf = output->allocBuf();
-  buf->append(payload);
-  link.send(ZuMv(buf));
+if (!app.init(ZuMv(params)) || !mx.start()) return false;
+// Once connected, choose an allocator for each application writer.
+{
+  auto tx = link.txStream(output);
+  tx << payload << Zi::flush();
+  if (tx.failed()) link.disconnect();
+}
+{
+  auto tx = link.txStream(other);
+  tx << morePayload << Zi::flush();
+  if (tx.failed()) link.disconnect();
 }
 ```
 
-Construct the multiplexer before TLS hub initialization, which uses its
-scheduler for TLS setup and any configured async event loop. Create and
-register all allocators while the multiplexer is stopped, then start it before
-publishing links or listeners. Allocators stay dedicated to their multiplexer,
-which must outlive retained buffers. Allocator selection and first sends do not
-register policies implicitly. Additional Tx allocators need not share the primary allocator's
-capacity; a stream grows plaintext storage through the normal heap path as needed.
+Create all allocators while the multiplexer is stopped, then start it before
+publishing links or listeners. Allocators must outlive their streams and retained
+buffers. A formatting stream grows plaintext storage through its allocator as
+needed; allocator selection and first sends never register policies implicitly.
+Keep owners alive through pending I/O and drain links before stopping the multiplexer.
 
 `sent(buf, ok)` reports each ciphertext packet through the existing ZiTx
 completion contract. Forward overrides to the base hook. A dependent retaining

@@ -104,7 +104,7 @@ struct State {
 template <typename Link> void sendPayload(Link &link)
 {
   auto &state = link.app()->state;
-  auto	tx = link.txStream();
+  auto	tx = link.txStream(link.app()->txBufAllocator);
   tx << ZuSpan<const uint8_t>{state.plain, PlainSize} << Zi::flush();
   if (tx.failed()) {
     state.fail();
@@ -145,9 +145,9 @@ template <typename Base> struct PacketHooks : Base {
       ++state.rejected;
       return;
     }
-    if (!ok || buf->allocator() != this->txPacketAllocator() ||
-      buf->allocator() == this->txAllocator() || buf->skip ||
-      buf->length > this->txPacketAllocator()->capacity())
+    if (!ok || buf->allocator()->type != Zi::IOBufType::TxTCP ||
+      buf->allocator() == this->app()->txBufAllocator || buf->skip ||
+      buf->length > buf->allocator()->capacity())
       state.fail();
     ++state.packets;
   }
@@ -155,6 +155,10 @@ template <typename Base> struct PacketHooks : Base {
 };
 
 struct Client : Ztls::Client<Client> {
+  Zi::IOBufAllocator	*txBufAllocator = nullptr;
+  using TxPktAlloc = Zi::IOBufBuiltinAllocator<
+    Zi::IOBufType::TxTCP, TrackedPacket, PacketSize, ZiIOBuf_DefltAlign,
+    ZuStringT<"Ztls.ITest.Cli.Packet">>;
   State	&state;
   explicit Client(State &s) : state{s} { }
   struct Link : ZmNHeap<Link>, PacketHooks<Ztls::CliLink<Client, Link>> {
@@ -165,26 +169,21 @@ struct Client : Ztls::Client<Client> {
     {
       auto &state = this->app()->state;
       ++state.cliConnected;
-      if (state.mode == Limited) {
-	state.fail();
-	this->disconnect_();
-	return;
-      }
       if (!this->cxn()->info().mps) {
 	state.fail();
 	return;
       }
       state.output.socket = this->cxn()->info().socket;
-      if (state.mode == Exhaustion || state.mode == FlushFail) {
+      if (state.mode == Exhaustion || state.mode == FlushFail || state.mode == Limited) {
 	state.fault.armed = 1;
-	auto buf = this->txAllocator()->allocBuf(this, PlainSize);
+	auto buf = this->app()->txBufAllocator->allocBuf(this, PlainSize);
 	memcpy(buf->data(), state.plain, PlainSize);
 	state.retainedPlain = buf;
 	this->app()->txRun([this, buf = ZuMv(buf)]() mutable
 	{
 	  auto &state = this->app()->state;
 	  if (state.mode == FlushFail) {
-	    auto tx = this->txStream_();
+	    auto tx = this->txStream_(this->app()->txBufAllocator);
 	    tx << ZuSpan<const uint8_t>{buf->data(), buf->length} << Zi::flush();
 	    if (tx.failed()) {
 	      state.flushFailed = 1;
@@ -216,6 +215,10 @@ struct Client : Ztls::Client<Client> {
 };
 
 struct Server : Ztls::Server<Server> {
+  Zi::IOBufAllocator	*txBufAllocator = nullptr;
+  using TxPktAlloc = Zi::IOBufBuiltinAllocator<
+    Zi::IOBufType::TxTCP, Ztls::TxPacket, PacketSize, ZiIOBuf_DefltAlign,
+    ZuStringT<"Ztls.ITest.Srv.Packet">>;
   State	&state;
   explicit Server(State &s) : state{s} { }
   struct Link : ZmNHeap<Link>, PacketHooks<Ztls::SrvLink<Server, Link>> {
@@ -279,29 +282,26 @@ void workingPair(unsigned mode, unsigned failAt = unsigned(-1))
   Client client{state};
   Server server{state};
   auto	 cliRx = Client::Link::rxAllocator(&mx);
-  auto	 cliTx = Client::Link::txAllocator(&mx);
+  auto	 cliTx = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
   auto	 srvRx = Server::Link::rxAllocator(&mx);
-  auto	 srvTx = Server::Link::txAllocator(&mx);
-  auto	 cliPacket = mx.allocator<
-    Zi::IOBufType::TxTCP, TrackedPacket, PacketSize, ZiIOBuf_DefltAlign,
-    ZuStringT<"Ztls.ITest.Cli.Packet">>(1024);
-  auto srvPacket = mx.allocator<
-    Zi::IOBufType::TxTCP, Ztls::TxPacket, PacketSize, ZiIOBuf_DefltAlign,
-    ZuStringT<"Ztls.ITest.Srv.Packet">>(1024);
+  auto	 srvTx = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
+  client.txBufAllocator = cliTx;
+  server.txBufAllocator = srvTx;
   ZuCheckRT(cliTx->capacity() >= PlainSize && srvTx->capacity() >= PlainSize);
-  ZuCheckRT(cliPacket->capacity() < PlainSize && srvPacket->capacity() < PlainSize);
   Ztls::ClientParams cliParams{&mx, "3", "4"};
-  cliParams.rxAllocator(cliRx).txAllocator(cliTx).txPacketAllocator(cliPacket).caPath(
+  cliParams.rxAllocator(cliRx).caPath(
     cert.cert.cspan());
   Ztls::ServerParams srvParams{&mx, "3", "4"};
   srvParams.rxAllocator(srvRx)
-    .txAllocator(srvTx)
-    .txPacketAllocator(srvPacket)
     .certPath(cert.cert.cspan())
     .keyPath(cert.key.cspan());
   bool cliInit = client.init(ZuMv(cliParams));
   bool srvInit = server.init(ZuMv(srvParams));
   ZuCheckRT(cliInit && srvInit);
+  auto cliPacket = mx.findAllocator<Client::TxPktAlloc>();
+  auto srvPacket = mx.findAllocator<Server::TxPktAlloc>();
+  ZuCheckRT(cliPacket && srvPacket &&
+    cliPacket->capacity() < PlainSize && srvPacket->capacity() < PlainSize);
   if (!cliInit || !srvInit) return;
   bool mxStarted = mx.start();
   ZuCheckRT(mxStarted);
@@ -331,9 +331,11 @@ void workingPair(unsigned mode, unsigned failAt = unsigned(-1))
 	ZuCheckRT(!state.protectedRecords.load_() && !state.packetized.load_());
 	ZuCheckRT(!state.cliBytes.load_() && !state.srvBytes.load_() && !state.packets.load_());
       } else if (mode == Limited) {
-	ZuCheckRT(state.fault.txDepleted.load_() && !state.cliConnected.load_());
+	ZuCheckRT(state.fault.txDepleted.load_() && state.cliConnected.load_() == 1);
 	ZuCheckRT(!state.protectedRecords.load_() && !state.packetized.load_());
 	ZuCheckRT(!state.cliBytes.load_() && !state.srvBytes.load_());
+	ZuCheckRT(state.retainedPlain && state.retainedPlain->length == PlainSize);
+	ZuCheckRT(!memcmp(state.retainedPlain->data(), state.plain, PlainSize));
       } else if (mode == Exhaustion || mode == FlushFail) {
 	ZuCheckRT(!state.protectedRecords.load_() && !state.packetized.load_());
 	ZuCheckRT(!state.cliBytes.load_() && !state.srvBytes.load_());

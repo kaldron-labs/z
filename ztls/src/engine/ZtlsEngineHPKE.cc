@@ -214,7 +214,7 @@ static int keySchedule(
        "base_nonce", wireBytes(keyScheduleCtx.base, keyScheduleCtx.off))) != 0)
     goto Exit;
 
-  *ctx = aeadNewDirect(cipher->aead, isEnc, key, baseNonce);
+  *ctx = aeadNew_(cipher->aead, isEnc, key, baseNonce);
 
 Exit:
   bufferDispose(&keyScheduleCtx);

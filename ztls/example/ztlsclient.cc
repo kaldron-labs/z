@@ -33,6 +33,7 @@ static constexpr auto Request2 =
 ZuDerive(HeaderString, (ZtString<ZtStringHeapID<"Ztls.Example.Header">>));
 
 struct App : public Ztls::Client<App> {
+  Zi::IOBufAllocator	*txBufAllocator = nullptr;
   struct Link : ZmNHeap<Link>, Ztls::CliLink<App, Link> {
   friend inline ZuStringT<"Ztls.Example.CliLink"> ZmNHeapID(Link *);
     using Base = Ztls::CliLink<App, Link>;
@@ -67,11 +68,11 @@ struct App : public Ztls::Client<App> {
 			       << " early_data: " << this->maxEarlyData() << ")\n")
 		<< std::flush;
       {
-	auto tx = txStream();
+	auto tx = txStream(app()->txBufAllocator);
 	tx << ZuBSpan{Request} << ZuBSpan{hostname} << ZuBSpan{Request2} << Zi::flush();
       }
       if (app()->payload().length()) {
-	auto tx = txStream();
+	auto tx = txStream(app()->txBufAllocator);
 	tx.append(app()->payload().data(), app()->payload().length());
 	tx << Zi::flush();
       }
@@ -250,11 +251,10 @@ int main(int argc, char **argv)
       .txThread(2));
 
   Zi::IOBufAllocator *rx = App::Link::rxAllocator(&mx);
-  Zi::IOBufAllocator *tx = App::Link::txAllocator(&mx);
-  auto		      txPacket = App::Link::txPacketAllocator(&mx);
+  app.txBufAllocator = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
 
-  if (!app.init(Ztls::ClientParams(&mx, "3", "4").hub([&alpn, ca, &rx, &tx, txPacket](auto &p) {
-    p.alpn(alpn).caPath(ca).rxAllocator(rx).txAllocator(tx).txPacketAllocator(txPacket);
+  if (!app.init(Ztls::ClientParams(&mx, "3", "4").hub([&alpn, ca, &rx](auto &p) {
+    p.alpn(alpn).caPath(ca).rxAllocator(rx);
   }))) {
     std::cerr << "TLS client initialization failed\n" << std::flush;
     return 1;

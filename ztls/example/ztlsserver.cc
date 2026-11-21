@@ -40,6 +40,7 @@ ZuDerive(Payload, (ZtArray<char, ZtArrayHeapID<"Ztls.Example.Payload">>));
 ZuDerive(ResponseString, (ZtString<ZtStringHeapID<"Ztls.Example.Response">>));
 
 struct App : public Ztls::Server<App> {
+  Zi::IOBufAllocator	*txBufAllocator = nullptr;
   struct Link : ZmNHeap<Link>, Ztls::SrvLink<App, Link> {
   friend inline ZuStringT<"Ztls.Example.SrvLink"> ZmNHeapID(Link *);
     Link(App *app) : Ztls::SrvLink<App, Link>(app)
@@ -71,11 +72,11 @@ struct App : public Ztls::Server<App> {
 	auto	      &content = app()->payload();
 	response << Response << content.length() << Response2;
 	{
-	  auto tx = txStream();
+	  auto tx = txStream(app()->txBufAllocator);
 	  tx << response << Zi::flush();
 	}
 	{
-	  auto tx = txStream();
+	  auto tx = txStream(app()->txBufAllocator);
 	  tx << content << Zi::flush();
 	}
 	int64_t consumed = rx.consume(
@@ -181,12 +182,11 @@ int main(int argc, char **argv)
       .txThread(2));
 
   Zi::IOBufAllocator *rx = App::Link::rxAllocator(&mx);
-  Zi::IOBufAllocator *tx = App::Link::txAllocator(&mx);
-  auto		      txPacket = App::Link::txPacketAllocator(&mx);
+  app.txBufAllocator = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
 
   Ztls::ServerParams params(&mx, "3", "4");
   params.alpn(alpn).certPath(argv[3]).keyPath(argv[4]);
-  params.rxAllocator(rx).txAllocator(tx).txPacketAllocator(txPacket);
+  params.rxAllocator(rx);
   if (!app.init(ZuMv(params))) {
     std::cerr << "TLS server initialization failed\n" << std::flush;
     app.final();

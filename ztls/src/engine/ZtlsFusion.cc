@@ -1202,7 +1202,7 @@ size_t FusionGcm256::grow(size_t count)
   return count;
 }
 
-static FusionGcmContext *newAesgcm(const void *key, size_t keySize, size_t capacity, int aesni256)
+FusionGcmContext *fusionAesgcmNew(const void *key, size_t keySize, size_t capacity, int aesni256)
 {
   FusionGcmContext *ctx;
   if (aesni256) {
@@ -1225,9 +1225,6 @@ static FusionGcmContext *newAesgcm(const void *key, size_t keySize, size_t capac
   while (ctx->ghashCnt < count) ctx->setupOne();
   return ctx;
 }
-
-FusionGcmContext *fusionAesgcmNew(const void *key, size_t keySize, size_t capacity)
-{ return newAesgcm(key, keySize, capacity, 0); }
 
 FusionGcmContext *fusionAesgcmSetCapacity(FusionGcmContext *ctx, size_t capacity)
 {
@@ -1626,7 +1623,7 @@ aesgcmSetup(AeadContext *_ctx, int isEnc, const void *key, const void *iv, size_
   ctx->staticIv = _mm_shuffle_epi8(ctx->staticIv, byteswap128);
   if (key == NULL) return 0;
 
-  ctx->aesgcm = newAesgcm(
+  ctx->aesgcm = fusionAesgcmNew(
     key, keySize,
     1500
     // assume ordinary packet size
@@ -2668,7 +2665,7 @@ nonTemporalSetup(AeadContext *_ctx, int isEnc, const void *key, const void *iv, 
 
   assert(isEnc || !aesni256);
 
-  ctx->aesgcm = newAesgcm(
+  ctx->aesgcm = fusionAesgcmNew(
     key, keySize,
     7 *
       (fusionCanAesni256 ? 32 :

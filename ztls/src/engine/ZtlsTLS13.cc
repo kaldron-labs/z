@@ -241,9 +241,6 @@ struct ExtensionBitmap {
 
 static const uint8_t zeroesOfMaxDigestSize[Ztls_MaxDigestSize] = {0};
 
-static AeadContext *newAead(
-  const AeadAlgo *aead, const HashAlgo *hash, int isEnc, const void *secret, Bytes hashValue,
-  const char *labelPrefix);
 static int srvFinishHandshake(
   Ztls::Cxn *tls, MessageEmitter *emitter, int needCertVerify,
   SignatureAlgorithms *signatureAlgorithms);
@@ -475,9 +472,9 @@ static size_t recordWireSize(TrafficProtection *enc, size_t length)
 // A record has one nonce, one cipher stream and one tag, independent of destination span
 // boundaries.
 template <typename Sink>
-static int recordEmitv(
-  RecordWriter<Sink> *writer, TrafficProtection *enc, uint8_t type, Bytes *input, size_t incnt,
-  size_t length)
+static int recordEmit(
+  RecordWriter<Sink> *writer, TrafficProtection *enc, uint8_t type,
+  const void *input, size_t length)
 {
   uint8_t      header[5] = {type, Ztls_RecordVerMajor, Ztls_RecordVerMinor};
   uint8_t      tag[Ztls_MaxDigestSize];
@@ -492,23 +489,22 @@ static int recordEmitv(
   header[4] = (uint8_t)(wireSize - 5);
   if ((ret = recordWrite(writer, header, sizeof(header), NULL)) != 0) return ret;
   if (aead == NULL) {
-    for (size_t i = 0; i != incnt; ++i)
-      if ((ret = recordWrite(writer, input[i].data(), input[i].length(), NULL)) != 0) return ret;
+    if ((ret = recordWrite(writer, input, length, NULL)) != 0) return ret;
     return 0;
   }
   if (writer->contiguous) {
     // Preserve the optimized vector operation for contiguous destinations.
     void  *dst = NULL;
-    size_t capacity = 0, count = incnt + 1, size = length + aead->algo->tagSize + 1;
-    input[incnt] = wireBytes(&type, 1);
+    size_t capacity = 0, size = length + aead->algo->tagSize + 1;
+    Bytes spans[2] = {wireBytes(input, length), wireBytes(&type, 1)};
     if ((ret = writer->sink->next(&dst, &capacity)) != 0) return ret;
     if (dst == NULL || capacity < size || size > writer->remaining) return Ztls_ErrorLibrary;
-    if (incnt == 1 && input[0].data() == dst) {
+    if (input == dst) {
       // Handshake encryption aliases its formatting buffer; _v_s requires disjoint input.
-      aeadEncryptV(aead, dst, input, count, nonce, header, sizeof(header));
+      aeadEncryptV(aead, dst, spans, 2, nonce, header, sizeof(header));
       written = size;
     } else {
-      written = aeadEncryptVS(aead, dst, input, count, nonce, header, sizeof(header), NULL);
+      written = aeadEncryptVS(aead, dst, spans, 2, nonce, header, sizeof(header), NULL);
     }
     ++enc->seq;
     if (written != size) return Ztls_ErrorLibrary;
@@ -518,8 +514,7 @@ static int recordEmitv(
   }
   if (aead->encBegin(nonce, header, sizeof(header)) != 0) return Ztls_ErrorLibrary;
   ++enc->seq;
-  for (size_t i = 0; i != incnt; ++i)
-    if ((ret = recordWrite(writer, input[i].data(), input[i].length(), aead)) != 0) return ret;
+  if ((ret = recordWrite(writer, input, length, aead)) != 0) return ret;
   if ((ret = recordWrite(writer, &type, 1, aead)) != 0) return ret;
   void	*dst = NULL;
   size_t capacity = 0;
@@ -537,15 +532,6 @@ static int recordEmitv(
   if (aead->encEnd(tag, sizeof(tag), &written) != 0 || written != aead->algo->tagSize)
     return Ztls_ErrorLibrary;
   return recordWrite(writer, tag, written, NULL);
-}
-
-template <typename Sink>
-static int recordEmit(
-  RecordWriter<Sink> *writer, TrafficProtection *enc, uint8_t type, const void *input,
-  size_t length)
-{
-  Bytes spans[2] = {wireBytes(input, length)};
-  return recordEmitv(writer, enc, type, spans, 1, length);
 }
 
 template <typename Sink>
@@ -962,7 +948,7 @@ static void cliSetupECHGrease(
   // aead is generated from random
   random->fill(randomSecret, sizeof(randomSecret));
   ech->aead =
-    aeadNewDirect(ech->cipher->aead, 1, randomSecret, randomSecret + Ztls_AES128KeySize);
+    aeadNew_(ech->cipher->aead, 1, randomSecret, randomSecret + Ztls_AES128KeySize);
   ZuClear(randomSecret, sizeof(randomSecret));
 
   // `enc` is random bytes
@@ -5642,9 +5628,9 @@ int rxStreamCheck(Ztls::Cxn *tls)
   return checkSerialSuites(tls, 1);
 }
 
-// Copy only bounded parser carry, never encrypted record bodies.
+// Stash the bounded record header or authentication tag across input chunks.
 static size_t
-streamCarry(uint8_t *dest, size_t *off, size_t size, const uint8_t **src, size_t *available)
+stashRecordHdr(uint8_t *dest, size_t *off, size_t size, const uint8_t **src, size_t *available)
 {
   size_t n = size - *off;
   if (n > *available) n = *available;
@@ -5687,7 +5673,7 @@ int rxStream(
   emitFatal = 1;
   aead = tls->rxTraffic.aead;
   if (r->headerOff != 5) {
-    streamCarry(r->header, &r->headerOff, 5, &src, &available);
+    stashRecordHdr(r->header, &r->headerOff, 5, &src, &available);
     if (r->headerOff != 5) goto Incomplete;
     switch (r->header[0]) {
     case Ztls_ContentChangeCipher:
@@ -5757,7 +5743,7 @@ int rxStream(
     if (r->written != r->textLength) goto Incomplete;
   }
   if (r->tagOff != r->tagSize) {
-    streamCarry(r->tag, &r->tagOff, r->tagSize, &src, &available);
+    stashRecordHdr(r->tag, &r->tagOff, r->tagSize, &src, &available);
     if (r->tagOff != r->tagSize) goto Incomplete;
   }
   rec = (Record){r->header[0], loadBe<uint16_t>(r->header + 1), r->textLength, r->base};
@@ -6174,8 +6160,8 @@ CipherContext *cipherNew(const CipherAlgo *algo, int isEnc, const void *key)
 
 void cipherFree(CipherContext *ctx) { delete ctx; }
 
-AeadContext *newAead(
-  const AeadAlgo *aead, const HashAlgo *hash, int isEnc, const void *secret, Bytes hashValue,
+AeadContext *aeadNew(
+  const AeadAlgo *aead, const HashAlgo *hash, int isEnc, const void *secret,
   const char *labelPrefix)
 {
   AeadContext *ctx = NULL;
@@ -6185,20 +6171,15 @@ AeadContext *newAead(
   } keyIV;
   int ret;
 
-  if ((ret = trafficKeys(aead, hash, keyIV.key, keyIV.iv, secret, hashValue, labelPrefix)) != 0)
+  if ((ret = trafficKeys(aead, hash, keyIV.key, keyIV.iv, secret, {}, labelPrefix)) != 0)
     goto Exit;
-  ctx = aeadNewDirect(aead, isEnc, keyIV.key, keyIV.iv);
+  ctx = aeadNew_(aead, isEnc, keyIV.key, keyIV.iv);
 Exit:
   ZuClear(&keyIV, sizeof(keyIV));
   return ctx;
 }
 
-AeadContext *aeadNew(
-  const AeadAlgo *aead, const HashAlgo *hash, int isEnc, const void *secret,
-  const char *labelPrefix)
-{ return newAead(aead, hash, isEnc, secret, wireBytes(NULL, 0), labelPrefix); }
-
-AeadContext *aeadNewDirect(const AeadAlgo *aead, int isEnc, const void *key, const void *iv)
+AeadContext *aeadNew_(const AeadAlgo *aead, int isEnc, const void *key, const void *iv)
 { return aead->create(isEnc, key, iv); }
 
 void aeadFree(AeadContext *ctx) { delete ctx; }

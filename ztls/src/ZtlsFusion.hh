@@ -71,7 +71,8 @@ Ztls_Extern void fusionAesecbEncrypt(FusionEcbContext *ctx, void *dst, const voi
 // Creates an AES-GCM context.
 // @param key       the AES key (128 bits)
 // @param capacity  maximum size of AEAD record (i.e. AAD + encrypted payload)
-Ztls_Extern FusionGcmContext *fusionAesgcmNew(const void *key, size_t keySize, size_t capacity);
+Ztls_Extern FusionGcmContext *fusionAesgcmNew(
+  const void *key, size_t keySize, size_t capacity, int aesni256 = 0);
 
 // Updates the capacity.
 Ztls_Extern FusionGcmContext *fusionAesgcmSetCapacity(FusionGcmContext *ctx, size_t capacity);

@@ -244,9 +244,9 @@ static void serialAndVector(const Ztls_::AeadAlgo *algo, const Ztls_::AeadAlgo *
   memset(iv, 0x17, sizeof(iv));
   memset(aad, 0x3b, sizeof(aad));
   for (unsigned i = 0; i < Length; ++i) input[i] = uint8_t(i * 31 + 7);
-  auto	  enc = Ztls_::aeadNewDirect(algo, 1, key, iv);
-  auto	  dec = Ztls_::aeadNewDirect(algo, 0, key, iv);
-  auto	  ref = Ztls_::aeadNewDirect(reference, 1, key, iv);
+  auto	  enc = Ztls_::aeadNew_(algo, 1, key, iv);
+  auto	  dec = Ztls_::aeadNew_(algo, 0, key, iv);
+  auto	  ref = Ztls_::aeadNew_(reference, 1, key, iv);
   ZuGuard release{[enc, dec, ref]()
   {
     if (enc) Ztls_::aeadFree(enc);

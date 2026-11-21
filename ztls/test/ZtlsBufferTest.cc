@@ -394,7 +394,7 @@ template <typename Lower> struct ReserveLayer : public ZiTxLayer<ReserveLayer<Lo
 template <typename Link> void sendPayload(Link *link, const ZtArray<uint8_t> &payload)
 {
   if (!payload.length()) return;
-  auto	       tx = link->txStream();
+  auto	       tx = link->txStream(link->app()->txBufAllocator);
   auto	      &state = link->app()->state;
   unsigned     head1 = state.txHeadroom >> 1;
   unsigned     tail1 = state.txTailroom >> 1;
@@ -419,15 +419,8 @@ template <typename State> struct BaseClient : public Ztls::Client<BaseClient<Sta
       rxBufAllocator = Link::rxAllocator(params.multiplex());
       params.rxAllocator(rxBufAllocator);
     }
-    if (!params.txAllocator()) {
-      txBufAllocator = Link::txAllocator(params.multiplex());
-      params.txAllocator(txBufAllocator);
-    }
-    if (!params.txPacketAllocator()) {
-      params.txPacketAllocator(params.multiplex()
-	  ->template allocator<
-	    Zi::IOBufType::TxTCP, Ztls::TxPacket, 1514, ZiIOBuf_DefltAlign,
-	    ZuStringT<"Ztls.Test.Packet">>(1024));
+    if (!txBufAllocator) {
+      txBufAllocator = Ztls::allocator<TxBufAlloc>(params.multiplex());
     }
     return params;
   }
@@ -435,9 +428,9 @@ template <typename State> struct BaseClient : public Ztls::Client<BaseClient<Sta
   template <typename Params> bool init(Params params)
   { return Base::init(buffers(ZuMv(params))); }
 
-  struct Link : ZmNHeap<Link>, Ztls::CliLink<BaseClient, Link, RxBufAlloc, TxBufAlloc> {
+  struct Link : ZmNHeap<Link>, Ztls::CliLink<BaseClient, Link, RxBufAlloc> {
   friend inline ZuStringT<"Ztls.BufferTest.CliLink"> ZmNHeapID(Link *);
-    using BaseLink = Ztls::CliLink<BaseClient, Link, RxBufAlloc, TxBufAlloc>;
+    using BaseLink = Ztls::CliLink<BaseClient, Link, RxBufAlloc>;
     Link(BaseClient *app) : BaseLink{app, ZuID{"client"}} { }
     ZmAtomic<unsigned>	rxOffset{0};
 
@@ -491,8 +484,8 @@ template <typename State> struct BaseClient : public Ztls::Client<BaseClient<Sta
     {
       auto &state = this->app()->state;
       BaseLink::sent(buf, ok);
-      if (buf->allocator() != this->txPacketAllocator() ||
-	buf->allocator() == this->txAllocator() || buf->skip)
+      if (buf->allocator()->type != Zi::IOBufType::TxTCP ||
+	buf->allocator() == this->app()->txBufAllocator || buf->skip)
 	state.fail("TLS wire output lost its separate kernel packet backing");
       if (!ok) {
 	state.fail("client TLS wire send failed");
@@ -542,15 +535,8 @@ template <typename State> struct BaseServer : public Ztls::Server<BaseServer<Sta
       rxBufAllocator = Link::rxAllocator(params.multiplex());
       params.rxAllocator(rxBufAllocator);
     }
-    if (!params.txAllocator()) {
-      txBufAllocator = Link::txAllocator(params.multiplex());
-      params.txAllocator(txBufAllocator);
-    }
-    if (!params.txPacketAllocator()) {
-      params.txPacketAllocator(params.multiplex()
-	  ->template allocator<
-	    Zi::IOBufType::TxTCP, Ztls::TxPacket, 1514, ZiIOBuf_DefltAlign,
-	    ZuStringT<"Ztls.Test.Packet">>(1024));
+    if (!txBufAllocator) {
+      txBufAllocator = Ztls::allocator<TxBufAlloc>(params.multiplex());
     }
     return params;
   }
@@ -558,9 +544,9 @@ template <typename State> struct BaseServer : public Ztls::Server<BaseServer<Sta
   template <typename Params> bool init(Params params)
   { return Base::init(buffers(ZuMv(params))); }
 
-  struct Link : ZmNHeap<Link>, Ztls::SrvLink<BaseServer, Link, RxBufAlloc, TxBufAlloc> {
+  struct Link : ZmNHeap<Link>, Ztls::SrvLink<BaseServer, Link, RxBufAlloc> {
   friend inline ZuStringT<"Ztls.BufferTest.SrvLink"> ZmNHeapID(Link *);
-    using BaseLink = Ztls::SrvLink<BaseServer, Link, RxBufAlloc, TxBufAlloc>;
+    using BaseLink = Ztls::SrvLink<BaseServer, Link, RxBufAlloc>;
     Link(BaseServer *app) : BaseLink{app} { }
     ZmAtomic<unsigned>	rxOffset{0};
 
@@ -597,8 +583,8 @@ template <typename State> struct BaseServer : public Ztls::Server<BaseServer<Sta
     {
       auto &state = this->app()->state;
       BaseLink::sent(buf, ok);
-      if (buf->allocator() != this->txPacketAllocator() ||
-	buf->allocator() == this->txAllocator() || buf->skip)
+      if (buf->allocator()->type != Zi::IOBufType::TxTCP ||
+	buf->allocator() == this->app()->txBufAllocator || buf->skip)
 	state.fail("TLS wire output lost its separate kernel packet backing");
       if (!ok) {
 	state.fail("server TLS wire send failed");

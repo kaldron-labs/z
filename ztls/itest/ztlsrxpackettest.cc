@@ -72,7 +72,7 @@ struct State {
 
 template <typename Link> void sendPayload(Link &link)
 {
-  auto tx = link.txStream();
+  auto tx = link.txStream(link.app()->txBufAllocator);
   tx << ZuSpan<const uint8_t>{link.app()->state.payload, PayloadSize} << Zi::flush();
   if (tx.failed()) {
     link.app()->state.fail();
@@ -119,6 +119,8 @@ template <typename Link> int receivePayload(Link &link, Ztls::RxStream &rx, bool
 }
 
 struct Client : Ztls::Client<Client> {
+  Zi::IOBufAllocator	*txBufAllocator = nullptr;
+  using TxPktAlloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTCP, Ztls::TxPacket, 71>;
   State	&state;
   explicit Client(State &s) : state{s} { }
   struct Link : ZmNHeap<Link>, Ztls::CliLink<Client, Link> {
@@ -146,6 +148,8 @@ struct Client : Ztls::Client<Client> {
 };
 
 struct Server : Ztls::Server<Server> {
+  Zi::IOBufAllocator	*txBufAllocator = nullptr;
+  using TxPktAlloc = Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTCP, Ztls::TxPacket, 71>;
   State	&state;
   explicit Server(State &s) : state{s} { }
   struct Link : ZmNHeap<Link>, Ztls::SrvLink<Server, Link> {
@@ -373,19 +377,16 @@ void workingPair(bool separateOwner, unsigned signing = Synchronous)
     Zi::IOBufType::Rx, Input, 23, ZiIOBuf_DefltAlign, ZuStringT<"Ztls.RxPair.Cli">>();
   auto srvInput = mx.allocator<
     Zi::IOBufType::Rx, Input, 97, ZiIOBuf_DefltAlign, ZuStringT<"Ztls.RxPair.Srv">>();
-  auto		     packets = mx.allocator<Zi::IOBufType::TxTCP, Ztls::TxPacket, 71>();
   auto		     owner = separateOwner ? "3" : "1";
+  client.txBufAllocator = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
+  server.txBufAllocator = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
   Ztls::ClientParams cliParams{&mx, owner, "4"};
   cliParams.rxAllocator(state.cliRx)
-    .txAllocator(Client::Link::txAllocator(&mx))
-    .txPacketAllocator(packets)
-    .socketRxAllocator(cliInput)
+    .rxPktAllocator(cliInput)
     .caPath(cert.cert.cspan());
   Ztls::ServerParams srvParams{&mx, owner, "4"};
   srvParams.rxAllocator(state.srvRx)
-    .txAllocator(Server::Link::txAllocator(&mx))
-    .txPacketAllocator(packets)
-    .socketRxAllocator(srvInput)
+    .rxPktAllocator(srvInput)
     .certPath(cert.cert.cspan())
     .keyPath(cert.key.cspan());
   if (async) srvParams.asyncThread("5");

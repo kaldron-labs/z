@@ -201,6 +201,7 @@ friend inline ZuStringT<"Ztls.RxStub.Provider"> ZmNHeapID(Provider *);
 };
 
 struct Client : Ztls::Client<Client> {
+  Zi::IOBufAllocator	*txBufAllocator = nullptr;
   using Ztls::Client<Client>::ctx;
   ZmSemaphore		connected, done, received, packetized;
   ZmAtomic<unsigned>	errors{0}, calls{0};
@@ -221,7 +222,7 @@ struct Client : Ztls::Client<Client> {
       this->tls()->plaintext.reset(app->rxAllocator(), this);
       app->peer.initialize(app->ctx(), false);
       app->peerReady = ZtlsTest::handshake(&app->peer, this->tls());
-      if (!app->peerReady || !this->handshake_(nullptr)) app->done.post();
+      if (!app->peerReady || !this->processRx_()) app->done.post();
     }
     void connected(Ztls::Connected) { this->app()->connected.post(); }
     void disconnected(bool) { this->app()->done.post(); }
@@ -257,7 +258,7 @@ struct Client : Ztls::Client<Client> {
       this->app()->txRun([this, cxn = ZuMv(cxn)]()
       {
 	cxn->txTraffic.failed = true;
-	auto buf = this->txAllocator()->allocBuf(this, 1);
+	auto buf = this->app()->txBufAllocator->allocBuf(this, 1);
 	buf->data()[0] = 42;
 	this->send_(ZuMv(buf));
       });
@@ -283,7 +284,7 @@ void txGenerations(Client &client, ZmRef<Client::Link> link)
   };
   auto buffer = [link]()
   {
-    auto buf = link->txAllocator()->allocBuf(link.ptr(), 1);
+    auto buf = link->app()->txBufAllocator->allocBuf(link.ptr(), 1);
     buf->data()[0] = 42;
     return buf;
   };
@@ -342,28 +343,29 @@ void run(bool stub, bool corrupt, bool partial, bool stale, bool txErrors = fals
   ZuCheckRT(!transport && mx.plugin() == provider);
   Client client;
   auto	 plain = Client::Link::rxAllocator(&mx);
-  auto	 txPlain = Client::Link::txAllocator(&mx);
-  auto	 packets = Client::Link::txPacketAllocator(&mx);
+  client.txBufAllocator = Ztls::allocator<Ztls::TxBufAlloc<>>(&mx);
   // The builtin case injects a populated input allocator into the in-memory transport.
   // The registered case exercises the mx factory and transport-owned Rx stub backing.
   ZuPtr<Zi::IOBufAllocator> builtin;
   if (!stub) builtin = new Zi::IOBufBuiltinAllocator<Zi::IOBufType::Rx, ZiRxBuf, Capacity>{&mx};
   auto input = stub ? mx.allocator<Zi::IOBufType::Rx, ZiRxBuf, Capacity>() : builtin.ptr();
-  ZuCheckRT(input && packets);
-  if (!input || !packets) return;
-  ZuCheckRT(
-    packets->pool == provider->txPool.ptr() &&
-    input->pool.ptr() == (stub ? provider->backing.ptr() : nullptr) &&
-    input->pool.ptr() != packets->pool.ptr());
+  ZuCheckRT(input);
+  if (!input) return;
   Ztls::ClientParams params{&mx, "3", "4"};
   params.rxAllocator(plain)
-    .txAllocator(txPlain)
-    .txPacketAllocator(packets)
-    .socketRxAllocator(input)
+    .rxPktAllocator(input)
     .errorFn([&client](ZeException) { ++client.errors; });
   bool initialized = client.init(ZuMv(params));
   ZuCheckRT(initialized);
   if (!initialized) return;
+  auto packets = mx.findAllocator<
+    Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP, Ztls::TxPacket>>();
+  ZuCheckRT(packets);
+  if (!packets) return;
+  ZuCheckRT(
+    packets->pool == provider->txPool.ptr() &&
+    input->pool.ptr() == (stub ? provider->backing.ptr() : nullptr) &&
+    input->pool.ptr() != packets->pool.ptr());
   auto suite = &Ztls_::opensslAes128gcmsha256;
   client.ctx()->cipherSuites.length(0);
   client.ctx()->cipherSuites.push(suite);
