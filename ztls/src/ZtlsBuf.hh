@@ -137,7 +137,7 @@ public:
       remaining -= capacity;
       m_packets.pushNode(ZuMv(buf));
     }
-    m_current = m_packets.headPtr();
+    m_current = m_cursor();
     return 0;
   } catch (...) {
     discard();
@@ -150,8 +150,7 @@ public:
     auto buf = m_current;
     auto room = buf->size - buf->skip - m_allocator->tailRoom - buf->length;
     if (!room) {
-      m_written.pushNode(m_packets.shift());
-      buf = m_current = m_packets.headPtr();
+      buf = m_current = m_cursor();
       if (!buf) return Ztls_ErrorLibrary;
       room = buf->size - buf->skip - m_allocator->tailRoom;
     }
@@ -173,9 +172,8 @@ public:
   int finish()
   try {
     if (!m_active || m_committed != m_size) return Ztls_ErrorLibrary;
-    m_written += ZuMv(m_packets);
-    m_publisher.ready(ZmRef<ZiIOBuf>{m_written.tailPtr()});
-    while (auto buf = m_written.shift()) {
+    m_publisher.ready(ZmRef<ZiIOBuf>{m_packets.tailPtr()});
+    while (auto buf = m_packets.shift()) {
       int n = m_publisher.publish(ZuMv(buf));
       if (n) {
 	discard();
@@ -191,8 +189,8 @@ public:
 
   void discard()
   {
+    m_cursor.reset();
     m_packets.clean();
-    m_written.clean();
     m_current = nullptr;
     m_size = m_committed = m_exposed = 0;
     m_active = false;
@@ -203,7 +201,7 @@ private:
   uint32_t		m_mps;
   RecordPublisher	&m_publisher;
   Zi::IOQueue		m_packets;
-  Zi::IOQueue		m_written;
+  Zi::IOQueue::CIter	m_cursor{m_packets};
   using Node = Zi::IOQueue::Node;
   Node			*m_current = nullptr;
   size_t		m_size = 0;

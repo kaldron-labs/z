@@ -226,6 +226,24 @@ void sequencingAndPublishFailure()
   ZuCheckRT(output.ordered && output.readyCalls == 1);
   output.packets.clean();
   ZuCheckRT(!pool.live && pool.intact && pool.acquired == pool.released);
+  // Reuse after failed publication and after discarding a partially filled record.
+  output.calls = output.readyCalls = 0;
+  output.failAt = unsigned(-1);
+  ZuCheckRT(!sink.reserve(sizeof(bytes)));
+  ZuCheckRT(!write(sink, bytes, 13));
+  sink.discard();
+  ZuCheckRT(!pool.live);
+  ZuCheckRT(!sink.reserve(sizeof(bytes)));
+  ZuCheckRT(!write(sink, bytes, sizeof(bytes)) && !sink.finish());
+  ZuCheckRT(output.calls == 3 && output.readyCalls == 1 && output.ordered);
+  ZuCheckRT(output.last == output.packets.tailPtr());
+  unsigned length = 0;
+  while (auto buf = output.packets.shift()) {
+    ZuCheckRT(!memcmp(buf->data(), bytes + length, buf->length));
+    length += buf->length;
+  }
+  ZuCheckRT(length == sizeof(bytes));
+  ZuCheckRT(!pool.live && pool.intact && pool.acquired == pool.released);
   Ztls::RecordSink zero{&pool, nullptr, 0, output};
   auto		  &invalid = zero;
   auto		   attempts = pool.attempts;

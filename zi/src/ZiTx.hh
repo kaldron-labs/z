@@ -55,44 +55,49 @@ public:
     if (ZuUnlikely(!buf || !buf->length || !cxn)) return;
     buf->owner = impl();
     cxn->send(ZiTxFn::mvFn(ZuMv(buf), [](ZmRef<ZiIOBuf> buf, ZiTxContext &io) {
-      // A queued setup can run after abrupt close and physical-queue handoff.
-      if (ZuUnlikely(!io.cxn->up())) return false;
-      auto impl_ = impl(buf);
-      auto &queue = impl_->ZiTx::txQueue;
-      if (auto count = queue.count_()) {
-	if (count >= impl_->maxQueueLen())
-	  impl_->sent(ZuMv(buf), false);
-	else
-	  queue.pushNode(ZuMv(buf));
-	return true;
-      }
-      auto buf_ = buf.ptr();
-      queue.pushNode(ZuMv(buf));
-      io.init(ZiTxFn{buf_,
-	[](ZiIOBuf *buf, ZiTxContext &io) {
-	  auto impl_ = impl(buf);
-	  auto &queue = impl_->ZiTx::txQueue;
-	  if (ZuUnlikely(io.length < 0)) {
-	    impl_->sent(queue.shift(), false);
-	    queue.clean();
-	    io.complete();
-	    return true;
-	  }
-	  if (ZuUnlikely((io.offset += io.length) < io.buf->length)) return true;
-	  impl_->sent(queue.shift(), true);
-	  if (queue.count_()) {
-	    io.buf = queue.headNode();
-	    io.fn.object(io.buf.ptr());
-	    io.offset = 0;
-	    impl_->sending(io);
-	  } else {
-	    io.complete();
-	  }
-	  return true;
-	}}, ZmRef<ZiIOBuf>{buf_});
-      impl_->sending(io);
-      return true;
+      return impl(buf)->ZiTx::send_(ZuMv(buf), io);
     }));
+  }
+
+  // Queue prepared output while already inside the physical Tx setup callback.
+  bool send_(ZmRef<ZiIOBuf> buf, ZiTxContext &io) {
+    // A queued setup can run after abrupt close and physical-queue handoff.
+    if (ZuUnlikely(!io.cxn->up())) return false;
+    auto impl_ = impl(buf);
+    auto &queue = impl_->ZiTx::txQueue;
+    if (auto count = queue.count_()) {
+      if (count >= impl_->maxQueueLen())
+	impl_->sent(ZuMv(buf), false);
+      else
+	queue.pushNode(ZuMv(buf));
+      return true;
+    }
+    auto buf_ = buf.ptr();
+    queue.pushNode(ZuMv(buf));
+    io.init(ZiTxFn{buf_,
+      [](ZiIOBuf *buf, ZiTxContext &io) {
+	auto impl_ = impl(buf);
+	auto &queue = impl_->ZiTx::txQueue;
+	if (ZuUnlikely(io.length < 0)) {
+	  impl_->sent(queue.shift(), false);
+	  queue.clean();
+	  io.complete();
+	  return true;
+	}
+	if (ZuUnlikely((io.offset += io.length) < io.buf->length)) return true;
+	impl_->sent(queue.shift(), true);
+	if (queue.count_()) {
+	  io.buf = queue.headNode();
+	  io.fn.object(io.buf.ptr());
+	  io.offset = 0;
+	  impl_->sending(io);
+	} else {
+	  io.complete();
+	}
+	return true;
+      }}, ZmRef<ZiIOBuf>{buf_});
+    impl_->sending(io);
+    return true;
   }
 
   unsigned maxQueueLen() { return 1<<10; } // can be overridden

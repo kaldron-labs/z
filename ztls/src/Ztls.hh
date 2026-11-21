@@ -822,8 +822,7 @@ private:
 	cxn->close();
 	return false;
       }
-      link->Tx::send(cxn, ZuMv(buf));
-      return false;
+      return link->Tx::send_(ZuMv(buf), io);
     }));
     // Dispatch has transferred ownership. A peer can consume this last packet
     // and close before this thread resumes; sent() owns its completion result.
@@ -910,36 +909,22 @@ public:
   template <bool AppThread>
   ZmRef<ZiIOBuf> txAllocBuf(Zi::IOBufAllocator *allocator, unsigned skip)
   {
-    if (ZuUnlikely(skip < txHeadRoom<AppThread>() || skip > txMaxSize())) return nullptr;
-    auto buf = allocTxBuf(allocator, skip);
-    if (ZuUnlikely(!buf || skip > buf->size)) return nullptr;
-    return buf;
-  }
-private:
-  ZmRef<ZiIOBuf> allocTxBuf(Zi::IOBufAllocator *allocator, unsigned headroom)
-  { // App/Tx threads
+    if (ZuUnlikely(skip > txMaxSize())) return nullptr;
     auto buf = allocator->allocBuf(impl(), TxRecordCapacity);
-    if (!buf) return nullptr;
-    // Preserve only headroom requested by application framing.
-    buf->skip = headroom;
+    if (ZuUnlikely(!buf || skip > buf->size)) return nullptr;
+    buf->skip = skip;
     buf->length = 0;
     return buf;
   }
-
+private:
   template <bool AppThread> class TxStream_ : public Zi::TxStream<TxStream_<AppThread>> {
     using Base = Zi::TxStream<TxStream_<AppThread>>;
   public:
     TxStream_(Link &link, Zi::IOBufAllocator *allocator)
     :
-      TxStream_(link, allocator, link.template txHeadRoom<AppThread>())
+      Base(link.txMaxSize(), 0, 0), m_link{&link}, m_allocator{allocator},
+      m_gen{link.m_tlsGen.load_()}
     { }
-  private:
-    TxStream_(Link &link, Zi::IOBufAllocator *allocator, unsigned headroom)
-    :
-      Base(link.txMaxSize(), headroom, 0), m_link{&link}, m_allocator{allocator},
-      m_gen{link.m_tlsGen.load_()}, m_headroom{headroom}
-    { }
-  public:
     ~TxStream_()
     {
       this->flush();
@@ -951,13 +936,11 @@ private:
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip)
     {
-      if (ZuUnlikely(skip < m_headroom)) return nullptr;
       return m_link->template txAllocBuf<AppThread>(m_allocator, skip);
     }
 
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool)
     {
-      buf->owner = m_link->impl();
       if constexpr (AppThread)
 	return m_link->send(ZuMv(buf), m_gen);
       else
@@ -968,7 +951,6 @@ private:
     Link		*m_link;
     Zi::IOBufAllocator	*m_allocator;
     uint64_t		m_gen = 0;
-    unsigned		m_headroom = 0;
   };
 public:
   void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }

@@ -414,15 +414,15 @@ int bufferPushv(Buffer *buf, const void *src, size_t len)
 static int recordSerialAvailable(TrafficProtection *enc)
 { return enc->aead == NULL || enc->aead->serialEncrypt(); }
 
-template <typename Sink> struct RecordWriter {
+template <bool Contiguous, typename Sink> struct RecordWriter {
   Sink		*sink;
   size_t	remaining;
-  int		contiguous;
 };
 
-template <typename Sink>
+template <bool Contiguous, typename Sink>
 static int
-recordWrite(RecordWriter<Sink> *writer, const void *input, size_t length, AeadContext *aead)
+recordWrite(
+  RecordWriter<Contiguous, Sink> *writer, const void *input, size_t length, AeadContext *aead)
 {
   const uint8_t *src = static_cast<const uint8_t *>(input);
   int		 ret;
@@ -452,9 +452,9 @@ static size_t recordWireSize(TrafficProtection *enc, size_t length)
 
 // A record has one nonce, one cipher stream and one tag, independent of destination span
 // boundaries.
-template <typename Sink>
+template <bool Contiguous, typename Sink>
 static int recordEmit(
-  RecordWriter<Sink> *writer, TrafficProtection *enc, uint8_t type,
+  RecordWriter<Contiguous, Sink> *writer, TrafficProtection *enc, uint8_t type,
   const void *input, size_t length)
 {
   uint8_t      header[5] = {type, Ztls_RecordVerMajor, Ztls_RecordVerMinor};
@@ -464,7 +464,6 @@ static int recordEmit(
   int	       ret;
   uint64_t     nonce = enc->seq;
   if (enc->failed || length > Ztls_MaxPlainRecordSize) return Ztls_ErrorLibrary;
-  if (!writer->contiguous && !recordSerialAvailable(enc)) return Ztls_ErrorNotAvailable;
   if (aead != NULL) header[0] = Ztls_ContentTypeAppdata;
   header[3] = (uint8_t)((wireSize - 5) >> 8);
   header[4] = (uint8_t)(wireSize - 5);
@@ -473,7 +472,7 @@ static int recordEmit(
     if ((ret = recordWrite(writer, input, length, NULL)) != 0) return ret;
     return 0;
   }
-  if (writer->contiguous) {
+  if constexpr (Contiguous) {
     // Preserve the optimized vector operation for contiguous destinations.
     void  *dst = NULL;
     size_t capacity = 0, size = length + aead->algo->tagSize + 1;
@@ -515,15 +514,15 @@ static int recordEmit(
   return recordWrite(writer, tag, written, NULL);
 }
 
-template <typename Sink>
-static int recordTransaction_(
-  Sink *sink, TrafficProtection *enc, uint8_t type, const void *input, size_t length,
-  int contiguous)
+template <bool Contiguous = false, typename Sink>
+static int recordTransaction(
+  Sink *sink, TrafficProtection *enc, uint8_t type, const void *input, size_t length)
 {
   int ret;
   if (!sink) return Ztls_ErrorLibrary;
-  if (!contiguous && !recordSerialAvailable(enc)) return Ztls_ErrorNotAvailable;
-  RecordWriter writer{sink, recordWireSize(enc, length), contiguous};
+  if constexpr (!Contiguous)
+    if (!recordSerialAvailable(enc)) return Ztls_ErrorNotAvailable;
+  RecordWriter<Contiguous, Sink> writer{sink, recordWireSize(enc, length)};
   if (enc->failed) return Ztls_ErrorLibrary;
   if ((ret = sink->reserve(writer.remaining)) != 0) {
     sink->discard();
@@ -537,10 +536,6 @@ static int recordTransaction_(
   }
   return ret;
 }
-
-static int recordTransaction(
-  Ztls::RecordSink *sink, TrafficProtection *enc, uint8_t type, const void *input, size_t length)
-{ return recordTransaction_(sink, enc, type, input, length, 0); }
 
 // A contiguous record has already reserved space before the writer borrows
 // any input that may alias its destination.
@@ -577,7 +572,7 @@ bufferRecord(Buffer *buf, TrafficProtection *enc, uint8_t type, const void *inpu
     buf, recordWireSize(enc, length), enc->aead != NULL ? enc->aead->algo->alignBits : 0, 1);
   if (ret != 0) return ret;
   ContiguousRecord sink{buf};
-  return recordTransaction_(&sink, enc, type, input, length, 1);
+  return recordTransaction<true>(&sink, enc, type, input, length);
 }
 
 static int bufferPushEncRecords(
@@ -619,7 +614,7 @@ static int bufferEncryptRecord(Buffer *buf, size_t recStart, TrafficProtection *
     if ((ret = bufferResAligned(buf, extra, enc->aead->algo->alignBits, 1)) != 0) return ret;
     buf->off = recStart;
     ContiguousRecord sink{buf};
-    return recordTransaction_(&sink, enc, type, buf->base + recStart + 5, bodylen, 1);
+    return recordTransaction<true>(&sink, enc, type, buf->base + recStart + 5, bodylen);
   }
 
   RecordPlaintext plaintext(buf->base + recStart + 5, bodylen);
@@ -5880,7 +5875,7 @@ int txSendChunks(Ztls::Cxn *tls, Ztls::RecordSink *sink, const void *input, size
   size_t size =
     (length != 0 ? recordWireSize(enc, length) : 0) + (update ? recordWireSize(enc, 5) : 0);
   if (size == 0) return 0;
-  RecordWriter writer{sink, size, 0};
+  RecordWriter<false, Ztls::RecordSink> writer{sink, size};
   if ((ret = sink->reserve(size)) != 0) {
     sink->discard();
     return ret;
