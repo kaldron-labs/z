@@ -339,9 +339,10 @@ static void echHandshake(bool accept)
   serverContext.ticketLifetime = 60;
 
   const HpkeKem	  *kems[] = {&opensslHPKEX25519sha256, nullptr};
-  const HpkeSuite *ciphers[] = {&opensslHPKEAes128gcmsha256, nullptr};
+  const HpkeSuite *const choices[] = {&opensslHPKEAes128gcmsha256};
+  const HpkeSuites ciphers{choices};
   clientContext.ech.client.kems = kems;
-  clientContext.ech.client.ciphers = ciphers;
+  clientContext.ech.client.ciphers = &ciphers;
   KeyExchangeContext *receiver = nullptr;
   ZuCheckRT(!kems[0]->keyex->create(&receiver) && receiver);
   if (!receiver) return;

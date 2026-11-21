@@ -602,19 +602,17 @@ private:
     });
   }
 protected:
-  bool processRx_(ZmRef<ZiIOBuf> input = nullptr, SignatureWatch *resuming = nullptr)
+  bool processRx_(SignatureWatch *resuming = nullptr)
   {
     ZiAssert(app()->rxInvoked(), "Ztls", (), "TLS input outside Rx thread", return false);
     if (!m_tls || !m_cxn || m_disconnecting.load_()) return false;
-    if (input) m_tls->rxInput = ZuMv(input);
     if (asyncPending()) return true;
-    unsigned records = 0;
+    auto	 gen = m_tlsGen.load_();
+    ZmRef<Cxn>	 target{m_cxn};
+    PacketTarget output{this, target.ptr(), gen};
+    auto	 reservation = packetSink(output);
+    unsigned	 records = 0;
     do {
-      auto	   gen = m_tlsGen.load_();
-      ZmRef<Cxn>   target{m_cxn};
-      PacketTarget output{this, target.ptr(), gen};
-      auto	   reservation = packetSink(output);
-
       size_t consumed = m_tls->rxInput ? m_tls->rxInput->length : 0;
       cryptoClearError();
       int n = Ztls_::rxStream(
@@ -1200,7 +1198,7 @@ private:
     async->armed = false;
     if (async->cxn.ptr() == m_tls && async->gen == m_tlsGen.load_() && m_asyncJob == async) {
       clearAsync();
-      processRx_(nullptr, async);
+      processRx_(async);
     } else if (async->retired) {
       if (!async->cxn->retireSignature()) {
 	armSignature(ZmRef(async));
@@ -1832,21 +1830,8 @@ private:
     m_ctx.serverCipherPreference = 1;
     initALPN(params.alpn(), ZuIsSame<ServerParams, Params>{});
     if (!l(params)) return false;
-    auto available = [this](Ztls_::SuiteSpan suites)
-    {
-      for (auto suite : suites) {
-	if (!suite->aead->serialEncrypt) {
-	  error_(ZeEXCEPT(Error, "Ztls", "selected AEAD lacks serial record output"));
-	  return false;
-	}
-      }
-      return true;
-    };
-    if (!available(m_ctx.cipherSuites)) return false;
-    Ztls::Cxn probe{&m_ctx, false};
-    int	      status = Ztls_::rxStreamCheck(&probe);
-    if (status) {
-      error_(ZeEXCEPT(Error, "Ztls", "selected AEAD lacks serial record decryption"));
+    if (!m_ctx.cipherSuites.serialTx() || !m_ctx.cipherSuites.serialRx()) {
+      error_(ZeEXCEPT(Error, "Ztls", "selected AEAD lacks serial record protection"));
       return false;
     }
     return true;
@@ -2242,12 +2227,8 @@ protected:
 private:
   void initCipherSuites()
   {
-    bool useFusion = false;
 #if ZtlsFusion
-    useFusion = Ztls_::fusionSupported();
-#endif
-    if (useFusion) {
-#if ZtlsFusion
+    if (Ztls_::fusionSupported()) {
       static const Ztls_::CipherSuite fusionAes256gcmsha384 = {.id = Ztls_SuiteAes256gcmSHA384,
 	.aead = &Ztls_::fusionAes256gcm,
 	.hash = &Ztls_::opensslSha384,
@@ -2258,16 +2239,17 @@ private:
 	.name = Ztls_SuiteStrAes128gcm};
       // Non-temporal fusion decrypt is not exact-in-place safe: it overwrites
       // ciphertext before GHASH finishes reading it. Use normal fusion AEADs.
-      m_ctx.cipherSuites.push(&fusionAes256gcmsha384);
-      m_ctx.cipherSuites.push(&fusionAes128gcmsha256);
+      const Ztls_::CipherSuite *const suites[] = {
+	&fusionAes256gcmsha384, &fusionAes128gcmsha256,
+#if ZtlsOpenSSLHaveChaCha
+	&Ztls_::opensslChachasha256,
 #endif
+      };
+      m_ctx.cipherSuites = Ztls_::SuiteSpan{suites};
+      return;
     }
-    for (auto suite : Ztls_::opensslCipherSuites) {
-      if (useFusion &&
-	(suite->id == Ztls_SuiteAes256gcmSHA384 || suite->id == Ztls_SuiteAes128gcmSHA256))
-	continue;
-      m_ctx.cipherSuites.push(suite);
-    }
+#endif
+    m_ctx.cipherSuites = Ztls_::opensslCipherSuites;
   }
 
   using AllocatorRef = Zi::IOBufAllocator *;

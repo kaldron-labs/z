@@ -61,10 +61,9 @@ void sinkGeometry()
   PlainPool	      pool;
   Ztls::PlaintextSink output{&pool, &pool};
   void		     *base = nullptr;
-  size_t	      capacity = 0;
-  ZuCheck(!output.reserve(PlainPool::Extent, &base, &capacity));
-  ZuCheck(base == pool.bytes + PlainPool::Head && capacity == PlainPool::Extent);
-  memset(base, 0x39, capacity);
+  ZuCheck(!output.reserve(PlainPool::Extent, &base));
+  ZuCheck(base == pool.bytes + PlainPool::Head);
+  memset(base, 0x39, PlainPool::Extent);
   ZuCheck(!output.take() && pool.acquired == 1 && !pool.released);
   ZuCheck(!output.commit(Ztls_RxAppCapacity));
   auto buf = output.take();
@@ -72,12 +71,12 @@ void sinkGeometry()
   ZuCheck(buf && buf->length == Ztls_RxAppCapacity && !buf->registered());
   ZuCheck(!output.take() && pool.live);
   bool paddingCleared = true;
-  for (unsigned i = Ztls_RxAppCapacity; i < capacity; ++i)
+  for (unsigned i = Ztls_RxAppCapacity; i < PlainPool::Extent; ++i)
     paddingCleared &= pool.bytes[PlainPool::Head + i] == 0;
   ZuCheck(paddingCleared);
   buf = nullptr;
   ZuCheck(!pool.live && pool.intact && pool.released == pool.acquired);
-  ZuCheck(!output.reserve(37, &base, &capacity));
+  ZuCheck(!output.reserve(37, &base));
   memset(base, 0x91, 37);
   output.discard();
   bool discardedCleared = true;
@@ -85,14 +84,14 @@ void sinkGeometry()
   ZuCheck(discardedCleared);
   ZuCheck(!output.take() && !pool.live && pool.intact);
   pool.geometry = PlainPool::Extent - 1;
-  ZuCheck(output.reserve(37, &base, &capacity) == Ztls_ErrorLibrary);
+  ZuCheck(output.reserve(37, &base) == Ztls_ErrorLibrary);
   ZuCheck(!pool.live && pool.acquired == pool.released);
   pool.throws = true;
-  ZuCheck(output.reserve(37, &base, &capacity) == Ztls_ErrorNoMemory);
+  ZuCheck(output.reserve(37, &base) == Ztls_ErrorNoMemory);
 }
 
 // Checks exact record boundaries and zero-copy receive behavior.
-static void exactRecord(unsigned length)
+static void exactRecord(unsigned length, bool corruptHeader = false)
 {
   ZuTestScopeRT(exactRecord);
   auto		 cipher = &Ztls_::opensslAes128gcmsha256;
@@ -120,15 +119,24 @@ static void exactRecord(unsigned length)
   wire[send.off] = 0xa5;
   Ztls_::bufferInitRx(&receive, wire + 5, send.off - 5);
   ZuGuard releaseReceive{[&receive]() { Ztls_::bufferDispose(&receive); }};
-  auto	  consumed = send.off;
+  auto consumed = send.off;
+  if (corruptHeader) {
+    wire[2] ^= 1;
+    ZuCheckRT(Ztls_::receive(rx, &receive, wire, &consumed) == Ztls_AlertBadRecordMac);
+    ZuCheckRT(!receive.off);
+    return;
+  }
   ZuCheckRT(!Ztls_::receive(rx, &receive, wire, &consumed));
   ZuCheckRT(consumed == send.off && receive.off == length);
   ZuCheckRT(receive.base == wire + 5 && !receive.isAllocated);
   ZuCheckRT(!memcmp(receive.base, payload, length) && wire[send.off] == 0xa5);
 }
 
+enum { RxClean, RxBadTag, RxBadHeader };
+
 void fragmentedRecord(
-  const Ztls_::CipherSuite *cipher, unsigned step, bool corrupt, unsigned truncate)
+  const Ztls_::CipherSuite *cipher, unsigned step, unsigned corrupt, unsigned truncate,
+  bool partialHandshake = false)
 {
   ZuTestScopeRT(fragmentedRecord);
   Ztls_::Context ctx{};
@@ -142,13 +150,18 @@ void fragmentedRecord(
   bool	    ready = ZtlsTest::handshake(tx, rx);
   ZuCheckRT(ready);
   if (!ready) return;
+  uint8_t partial = Ztls_HsTypeNewSessionTicket;
+  if (partialHandshake) {
+    Ztls_::bufferInitRx(&rx->recvbuf.mess, &partial, sizeof(partial));
+    rx->recvbuf.mess.off = sizeof(partial);
+  }
   uint8_t source[Ztls_RxAppCapacity];
   for (unsigned i = 0; i < sizeof(source); ++i) source[i] = uint8_t(i * 19 + (i >> 6));
   Ztls_::Buffer wire;
   uint8_t	small;
   Ztls_::bufferInitTx(&wire, &small, 0);
   ZuCheckRT(!Ztls_::send(tx, &wire, source, sizeof(source)));
-  if (corrupt) wire.base[wire.off - 1] ^= 1;
+  if (corrupt) wire.base[corrupt == RxBadHeader ? 2 : wire.off - 1] ^= 1;
   size_t    length = truncate ? truncate : wire.off;
   PlainPool pool;
   auto	   &output = rx->plaintext;
@@ -178,11 +191,13 @@ void fragmentedRecord(
     spansValid &= address != pool.bytes + PlainPool::Head && packet->length == chunk;
     off += consumed;
     acquired = pool.acquired;
-    if (off < wire.off || corrupt || truncate) unpublished &= !output.take();
+    if (off < wire.off || corrupt || truncate || partialHandshake) unpublished &= !output.take();
     if (!consumed || (result != 0 && result != Ztls_ErrorInProgress)) break;
   }
   ZuCheckRT(spansValid && unpublished);
-  if (corrupt)
+  if (partialHandshake)
+    ZuCheckRT(result == Ztls_AlertDecodeError && !pool.live);
+  else if (corrupt)
     ZuCheckRT(result == Ztls_AlertBadRecordMac && !pool.live);
   else if (truncate)
     ZuCheckRT(result == Ztls_ErrorInProgress && !output.take());
@@ -197,7 +212,7 @@ void fragmentedRecord(
   output.clear();
   ZuCheckRT(pool.acquired == acquired && pool.acquired <= 1);
   ZuCheckRT(!pool.live && pool.intact && pool.acquired == pool.released);
-  if (corrupt || truncate) {
+  if (corrupt || truncate || partialHandshake) {
     bool cleared = true;
     for (unsigned i = 0; i < PlainPool::Extent; ++i)
       cleared &= pool.bytes[PlainPool::Head + i] == 0 || pool.bytes[PlainPool::Head + i] == 0xa5;
@@ -211,10 +226,13 @@ void records()
 {
   ZuTestScopeRT(records);
   auto cipher = &Ztls_::opensslAes128gcmsha256;
-  for (unsigned step : {1U, 7U, 16U, 31U}) ZuTestCallRT(fragmentedRecord, cipher, step, false, 0);
-  ZuTestCallRT(fragmentedRecord, cipher, 7, true, 0);
+  for (unsigned step : {1U, 7U, 16U, 31U})
+    ZuTestCallRT(fragmentedRecord, cipher, step, RxClean, 0);
+  ZuTestCallRT(fragmentedRecord, cipher, 7, RxBadTag, 0);
+  ZuTestCallRT(fragmentedRecord, cipher, 7, RxBadHeader, 0);
+  ZuTestCallRT(fragmentedRecord, cipher, 7, RxClean, 0, true);
   for (unsigned end : {1U, 4U, 5U, 9U, 14U, 37U, 16397U, 16405U})
-    ZuTestCallRT(fragmentedRecord, cipher, 7, false, end);
+    ZuTestCallRT(fragmentedRecord, cipher, 7, RxClean, end);
 }
 
 int main(int argc, char **argv)
@@ -223,6 +241,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(sinkGeometry);
   ZuTestCall(exactRecord, 1U);
+  ZuTestCall(exactRecord, 1U, true);
   ZuTestCall(exactRecord, Ztls_RxAppCapacity);
   ZuTestCall(records);
 }

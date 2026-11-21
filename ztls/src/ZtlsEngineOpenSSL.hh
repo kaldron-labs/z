@@ -158,7 +158,7 @@ Ztls_Extern const HpkeSuite		opensslHPKEAes256gcmsha384;
 #if ZtlsOpenSSLHaveChaCha
 Ztls_Extern const HpkeSuite		opensslHPKEChachasha256;
 #endif
-Ztls_Extern const HpkeSuite		*opensslHPKECipherSuites[];
+Ztls_Extern const HpkeSuites		opensslHPKECipherSuites;
 
 Ztls_Extern RandomSource		&opensslRandom;
 

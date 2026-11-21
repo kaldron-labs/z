@@ -38,9 +38,12 @@
 #include <sys/types.h>
 
 #include <zlib/ZuArray.hh>
+#include <zlib/ZuAssert.hh>
 #include <zlib/ZuByteSwap.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuLib.hh>
+
+#include <zlib/ZmLHash.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtBuiltin.hh>
@@ -65,6 +68,10 @@
 #ifndef ZtlsSuiteBuiltin
 #define ZtlsSuiteBuiltin 16
 #endif
+#ifndef ZtlsSuiteBits
+#define ZtlsSuiteBits 6
+#endif
+ZuAssert(ZtlsSuiteBits >= 2);
 #ifndef ZtlsALPNBuiltin
 #define ZtlsALPNBuiltin 16
 #endif
@@ -552,11 +559,49 @@ struct CipherSuite {
   const char		*name;
 };
 
-ZuDerive(
-  CipherSuites,
-  (ZtBuiltin<
-    ZtArray<const CipherSuite *, ZtArrayHeapID<"Ztls.Engine.CipherSuites">>, ZtlsSuiteBuiltin>));
 using SuiteSpan = ZuSpan<const CipherSuite *const>;
+
+// Configured order plus fixed indexes. Mutations are setup-only; active
+// connections borrow the immutable configuration and retain the selected suite.
+class Ztls_API CipherSuites {
+public:
+  CipherSuites() = default;
+  CipherSuites(const CipherSuites &);
+  CipherSuites(CipherSuites &&);
+  CipherSuites &operator=(const CipherSuites &);
+  CipherSuites &operator=(CipherSuites &&);
+  CipherSuites &operator=(SuiteSpan);
+
+  void push(const CipherSuite *suite);
+  void clear();
+  unsigned length() const { return unsigned(m_suites.length()); }
+  const CipherSuite *operator[](unsigned i) const { return m_suites[i]; }
+  auto begin() const { return m_suites.data(); }
+  auto end() const { return m_suites.data() + m_suites.length(); }
+  operator SuiteSpan() const { return {m_suites.data(), length()}; }
+
+  int index(uint16_t id) const;
+  const CipherSuite *find(uint16_t id) const;
+  const CipherSuite *first(const HashAlgo *hash) const;
+  SuiteSpan hashes() const { return {m_hashes.data(), unsigned(m_hashes.length())}; }
+  bool serialRx() const { return m_serialRx; }
+  bool serialTx() const { return m_serialTx; }
+
+private:
+  void addIndex(unsigned i);
+  void reindex();
+
+  using Array = ZtBuiltin<
+    ZtArray<const CipherSuite *, ZtArrayHeapID<"Ztls.Engine.CipherSuites">>, ZtlsSuiteBuiltin>;
+  using IDIndex = ZmLHashKV<uint16_t, unsigned,
+    ZmLHashStatic<ZtlsSuiteBits, ZmLHashLocal<>>>;
+  using HashIndex = ZmLHashKV<const HashAlgo *, unsigned,
+    ZmLHashStatic<ZtlsSuiteBits, ZmLHashLocal<>>>;
+  Array		m_suites, m_hashes;
+  IDIndex	m_ids;
+  HashIndex	m_hashIndex;
+  bool		m_serialRx = true, m_serialTx = true;
+};
 
 struct TrafficProtection;
 
@@ -590,6 +635,25 @@ struct HpkeSuite {
   // in form of "<kdf>/<aead>" using the sames specified in IANA HPKE registry
   const HashAlgo	*hash;
   const AeadAlgo	*aead;
+};
+
+class Ztls_API HpkeSuites {
+public:
+  explicit HpkeSuites(ZuSpan<const HpkeSuite *const> suites);
+  HpkeSuites(const HpkeSuites &) = delete;
+  HpkeSuites &operator=(const HpkeSuites &) = delete;
+
+  const HpkeSuite *find(HpkeSuiteID id) const;
+  auto begin() const { return m_suites.data(); }
+  auto end() const { return m_suites.data() + m_suites.length(); }
+
+private:
+  using Array = ZtBuiltin<
+    ZtArray<const HpkeSuite *, ZtArrayHeapID<"Ztls.Engine.HpkeSuites">>, ZtlsSuiteBuiltin>;
+  using Index = ZmLHashKV<uint32_t, const HpkeSuite *,
+    ZmLHashStatic<ZtlsSuiteBits, ZmLHashLocal<>>>;
+  Array	m_suites;
+  Index	m_index;
 };
 
 struct CliHelloPskIdentity {
@@ -735,7 +799,7 @@ struct Context {
   // list of supported key-exchange algorithms terminated by NULL
   const KeyExchangeAlgo	**keyExchanges;
 
-  // list of supported cipher-suites terminated by NULL
+  // supported cipher suites in preference order, indexed by wire ID and hash
   CipherSuites		cipherSuites;
 
   // list of certificates
@@ -756,7 +820,7 @@ struct Context {
   struct Ech {
     struct Client {
       // list of HPKE symmetric cipher-suites (set to NULL to disable ECH altogether)
-      const HpkeSuite	**ciphers;
+      const HpkeSuites	*ciphers;
 
       // KEMs being supported
       const HpkeKem	**kems;
@@ -1099,9 +1163,6 @@ Ztls_Extern Bytes cliRandom(Ztls::Cxn *tls);
 // returns the cipher-suite being used
 Ztls_Extern const CipherSuite *cipher(Ztls::Cxn *tls);
 
-// returns a supported cipher-suite given an id
-Ztls_Extern const CipherSuite *findCipherSuite(SuiteSpan cipherSuites, uint16_t id);
-
 // Returns the negotiated TLS 1.3 protocol identifier, 0x0304.
 Ztls_Extern uint16_t protocolVersion(Ztls::Cxn *tls);
 
@@ -1343,7 +1404,7 @@ Ztls_Extern int serverNameIsIP(const char *name);
 
 // encodes one ECH Config
 Ztls_Extern int echEncodeConfig(
-  Buffer *buf, uint8_t configId, const HpkeKem *kem, Bytes publicKey, const HpkeSuite **ciphers,
+  Buffer *buf, uint8_t configId, const HpkeKem *kem, Bytes publicKey, const HpkeSuites &ciphers,
   uint8_t maxNameLength, const char *publicName);
 
 // SetupBaseS function of RFC 9180. Given `kem`, `algo`, `info`, and receiver's public key,

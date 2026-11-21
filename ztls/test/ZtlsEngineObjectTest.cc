@@ -20,6 +20,8 @@
 
 #include <zlib/ZmHeap.hh>
 
+#include <zlib/ZePlatform.hh>
+
 #include <zlib/ZtlsEngineOpenSSL.hh>
 
 #if ZtlsFusion
@@ -330,6 +332,44 @@ static void creationFailure()
   ZuCheck(EVP_set_default_properties(nullptr, nullptr) == 1);
 }
 
+static void suiteIndexes()
+{
+  ZuTestScope(suiteIndexes);
+  CipherSuites suites;
+  suites.push(&opensslAes128gcmsha256);
+  suites.push(&opensslAes256gcmsha384);
+  suites.push(&opensslAes128gcmsha256);
+  ZuCheck(suites.index(Ztls_SuiteAes128gcmSHA256) == 0);
+  ZuCheck(suites.find(Ztls_SuiteAes256gcmSHA384) == &opensslAes256gcmsha384);
+  ZuCheck(!suites.find(0xffff));
+  ZuCheck(suites.first(&opensslSha256) == &opensslAes128gcmsha256);
+  ZuCheck(!suites.first(&opensslSha512));
+  ZuCheck(suites.hashes().length() == 2 && suites.serialRx() && suites.serialTx());
+  CipherSuites copy{suites};
+  suites.clear();
+  ZuCheck(!suites.length() && !suites.find(Ztls_SuiteAes128gcmSHA256));
+  const CipherSuite *const order[] = {&opensslAes256gcmsha384, &opensslAes128gcmsha256};
+  copy = SuiteSpan{order};
+  CipherSuites moved{ZuMv(copy)};
+  ZuCheck(!copy.length() && moved.index(Ztls_SuiteAes128gcmSHA256) == 1);
+  ZuCheck(moved.first(&opensslSha384) == &opensslAes256gcmsha384);
+  ZuCheck(opensslHPKECipherSuites.find(
+    {Ztls_HPKEHKDFSHA256, Ztls_HPKEAEADAES128GCM}) == &opensslHPKEAes128gcmsha256);
+  ZuCheck(!opensslHPKECipherSuites.find({0xffff, Ztls_HPKEAEADAES128GCM}));
+  enum { Capacity = 1U << ZtlsSuiteBits };
+  ZtArray<CipherSuite, ZtArrayHeapID<"Ztls.Test.Suites">> extra(Capacity + 1, Capacity + 1);
+  CipherSuites full;
+  for (unsigned i = 0; i <= Capacity; ++i) {
+    extra[i] = opensslAes128gcmsha256;
+    extra[i].id = uint16_t(0x2000 + i);
+    if (i < Capacity) full.push(&extra[i]);
+  }
+  bool rejected = false;
+  try { full.push(&extra[Capacity]); }
+  catch (const ZeException &) { rejected = true; }
+  ZuCheck(rejected && full.length() == Capacity && !full.find(extra[Capacity].id));
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -342,5 +382,6 @@ int main(int argc, char **argv)
   ZuTestCall(ecInitFailure);
 #endif
   ZuTestCall(creationFailure);
+  ZuTestCall(suiteIndexes);
   return 0;
 }

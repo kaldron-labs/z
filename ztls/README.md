@@ -43,6 +43,14 @@ Packet capacity comes from the allocator, while each connection supplies its
 MPS. Actual sends reserve spans using both bounds. Handshake, alerts and other
 TLS control output require no application plaintext Tx allocator.
 
+Cipher-suite configurations retain preference order and maintain fixed
+`ZmLHashStatic` indexes for wire IDs and PSK hashes. HPKE configurations index
+the KDF/AEAD pair. Configure these lists before use and keep descriptors immutable
+while registered. `ZtlsSuiteBits` sets the fixed index capacity (64 distinct keys
+by default); oversized configuration raises a structured error. ID/hash matching
+uses these indexes during negotiation. Established records use their installed
+traffic context and require no cipher-suite lookup.
+
 All TLS wire producers, including handshake, alerts and KeyUpdate, encrypt
 serially into packet spans. A record may span many packets without adding TLS
 headers, sequence numbers or tags at packet boundaries. Application output
@@ -63,6 +71,9 @@ transfers its original backing to TLS Rx with reception disarmed. Ztls's
 `processRx_()` drives record processing and application delivery, requesting the
 next chunk only after consuming the current input. Fragmented records decrypt
 incrementally into private RxTLS storage without gathering ciphertext.
+A receive pass pins its connection and reuses its output sink across records.
+Authenticated application records commit directly to the plaintext queue;
+handshake/control dispatch remains responsible for those record types.
 
 ```cpp
 auto rx = App::Link::rxAllocator(&mx);

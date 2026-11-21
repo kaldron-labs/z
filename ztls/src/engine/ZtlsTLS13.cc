@@ -26,6 +26,7 @@
 #include <string.h>
 
 #include <zlib/ZuAssert.hh>
+#include <zlib/ZuCmp.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuTraits.hh>
 
@@ -34,6 +35,8 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtScratch.hh>
+
+#include <zlib/ZePlatform.hh>
 
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiIP.hh>
@@ -408,28 +411,6 @@ int bufferPushv(Buffer *buf, const void *src, size_t len)
   return 0;
 }
 
-static void buildAAD(uint8_t aad[5], size_t reclen)
-{
-  aad[0] = Ztls_ContentTypeAppdata;
-  aad[1] = Ztls_RecordVerMajor;
-  aad[2] = Ztls_RecordVerMinor;
-  aad[3] = (uint8_t)(reclen >> 8);
-  aad[4] = (uint8_t)reclen;
-}
-
-static int
-aeadDecrypt(TrafficProtection *ctx, void *output, size_t *outlen, const void *input, size_t inlen)
-{
-  uint8_t aad[5];
-
-  buildAAD(aad, inlen);
-  if ((*outlen = aeadDecrypt(ctx->aead, output, input, inlen, ctx->seq, aad, sizeof(aad))) ==
-    SIZE_MAX)
-    return Ztls_AlertBadRecordMac;
-  ++ctx->seq;
-  return 0;
-}
-
 static int recordSerialAvailable(TrafficProtection *enc)
 { return enc->aead == NULL || enc->aead->serialEncrypt(); }
 
@@ -769,8 +750,8 @@ static void clearECH(Ech *ech, int isServer)
 // Decodes one ECHConfigContents (tls-esni-15 section 4). `decoded->kem` and `cipher` may be NULL
 // even when the function returns zero, if the corresponding entries are not found.
 static int decodeOneECHConfig(
-  const HpkeKem **kems, const HpkeSuite **ciphers, DecodedEchConfig *decoded, const uint8_t **src,
-  const uint8_t *const end)
+  const HpkeKem **kems, const HpkeSuites *ciphers, DecodedEchConfig *decoded, const uint8_t **src,
+  const uint8_t *const end, bool select)
 {
   EchPublicName publicNameBuf;
   int		ret;
@@ -780,10 +761,12 @@ static int decodeOneECHConfig(
   if ((ret = decode8(&decoded->id, src, end)) != 0) goto Exit;
   uint16_t kemID;
   if ((ret = decode16(&kemID, src, end)) != 0) goto Exit;
-  for (size_t i = 0; kems[i] != NULL; ++i) {
-    if (kems[i]->id == kemID) {
-      decoded->kem = kems[i];
-      break;
+  if (select) {
+    for (size_t i = 0; kems[i] != NULL; ++i) {
+      if (kems[i]->id == kemID) {
+	decoded->kem = kems[i];
+	break;
+      }
     }
   }
   Ztls_DecodeOpenBlock(*src, end, 2, {
@@ -800,14 +783,8 @@ static int decodeOneECHConfig(
       uint16_t aeadID;
       if ((ret = decode16(&kdfID, src, end)) != 0) goto Exit;
       if ((ret = decode16(&aeadID, src, end)) != 0) goto Exit;
-      if (decoded->cipher == NULL) {
-	for (size_t i = 0; ciphers[i] != NULL; ++i) {
-	  if (ciphers[i]->id.kdf == kdfID && ciphers[i]->id.aead == aeadID) {
-	    decoded->cipher = ciphers[i];
-	    break;
-	  }
-	}
-      }
+      if (decoded->kem && decoded->cipher == NULL)
+	decoded->cipher = ciphers->find({kdfID, aeadID});
     } while (*src != end);
   });
   if ((ret = decode8(&decoded->maxNameLength, src, end)) != 0) goto Exit;
@@ -870,7 +847,8 @@ static int cliDecodeECHConfigList(Context *ctx, DecodedEchConfig *decoded, Bytes
 	if (version == Ztls_ECHConfigVer) {
 	  DecodedEchConfig thisconf;
 	  if ((ret = decodeOneECHConfig(
-		 ctx->ech.client.kems, ctx->ech.client.ciphers, &thisconf, &src, end)) != 0)
+		 ctx->ech.client.kems, ctx->ech.client.ciphers, &thisconf,
+		 &src, end, !matchFound)) != 0)
 	    goto Exit;
 	  if (!matchFound && thisconf.kem != NULL && thisconf.cipher != NULL) {
 	    *decoded = thisconf;
@@ -920,7 +898,7 @@ Exit:
 }
 
 static void cliSetupECHGrease(
-  Ech *ech, RandomSource *random, const HpkeKem **kems, const HpkeSuite **ciphers,
+  Ech *ech, RandomSource *random, const HpkeKem **kems, const HpkeSuites *ciphers,
   ZuCSpan sniName)
 {
   static const size_t x25519KeySize = 32;
@@ -933,13 +911,7 @@ static void cliSetupECHGrease(
       break;
     }
   }
-  for (size_t i = 0; ciphers[i] != NULL; ++i) {
-    if (ciphers[i]->id.kdf == Ztls_HPKEHKDFSHA256 &&
-      ciphers[i]->id.aead == Ztls_HPKEAEADAES128GCM) {
-      ech->cipher = ciphers[i];
-      break;
-    }
-  }
+  ech->cipher = ciphers->find({Ztls_HPKEHKDFSHA256, Ztls_HPKEAEADAES128GCM});
   if (ech->kem == NULL || ech->cipher == NULL) {
     clearECH(ech, 0);
     return;
@@ -1010,56 +982,149 @@ static void keyScheduleFree(KeySchedule *sched)
   delete sched;
 }
 
-static KeySchedule *keyScheduleNew(const CipherSuite *preferred, SuiteSpan offered, int useOuter)
+HpkeSuites::HpkeSuites(ZuSpan<const HpkeSuite *const> suites)
 {
-#define Ztls_ForeachHash(block) \
-  do { \
-    const CipherSuite *cs; \
-    if ((cs = preferred) != NULL) { \
-      block \
-    } \
-    if (offered.length()) { \
-      size_t i, j; \
-      for (i = 0; i < offered.length(); ++i) { \
-	if ((cs = offered[i]) && (preferred == NULL || cs->hash != preferred->hash)) { \
-	  for (j = 0; j != i; ++j) \
-	    if (cs->hash == offered[j]->hash) break; \
-	  if (j == i) { \
-	    block \
-	  } \
-	} \
-      } \
-    } \
-  } while (0)
+  m_suites = suites;
+  for (auto suite : m_suites) {
+    uint32_t key = (uint32_t(suite->id.kdf) << 16) | suite->id.aead;
+    if (m_index.findVal(key)) continue;
+    if (m_index.count_() == (1U << ZtlsSuiteBits))
+      throw ZeEXCEPT(Error, "Ztls", "HPKE suite configuration exceeds the fixed index capacity");
+    m_index.add(key, suite);
+  }
+}
 
-  if (!preferred && !offered.length()) return nullptr;
-  size_t numHashes = 0;
-  Ztls_ForeachHash({ ++numHashes; });
+const HpkeSuite *HpkeSuites::find(HpkeSuiteID id) const
+{ return m_index.findVal((uint32_t(id.kdf) << 16) | id.aead); }
+
+CipherSuites::CipherSuites(const CipherSuites &other)
+{ *this = SuiteSpan(other); }
+
+CipherSuites::CipherSuites(CipherSuites &&other)
+:
+  m_suites{ZuMv(other.m_suites)}
+{
+  reindex();
+  other.clear();
+}
+
+CipherSuites &CipherSuites::operator=(const CipherSuites &other)
+{
+  if (this != &other) *this = SuiteSpan(other);
+  return *this;
+}
+
+CipherSuites &CipherSuites::operator=(CipherSuites &&other)
+{
+  if (this != &other) {
+    m_suites = ZuMv(other.m_suites);
+    reindex();
+    other.clear();
+  }
+  return *this;
+}
+
+CipherSuites &CipherSuites::operator=(SuiteSpan suites)
+{
+  Array copy;
+  copy = suites;
+  Array previous{ZuMv(m_suites)};
+  m_suites = ZuMv(copy);
+  try { reindex(); }
+  catch (...) {
+    m_suites = ZuMv(previous);
+    reindex();
+    throw;
+  }
+  return *this;
+}
+
+void CipherSuites::addIndex(unsigned i)
+{
+  auto suite = m_suites[i];
+  bool newID = ZuCmp<unsigned>::null(m_ids.findVal(suite->id));
+  bool newHash = ZuCmp<unsigned>::null(m_hashIndex.findVal(suite->hash));
+  if ((newID && m_ids.count_() == (1U << ZtlsSuiteBits)) ||
+    (newHash && m_hashIndex.count_() == (1U << ZtlsSuiteBits)))
+    throw ZeEXCEPT(Error, "Ztls", "cipher-suite configuration exceeds the fixed index capacity");
+  if (newID) m_ids.add(suite->id, i);
+  if (newHash) {
+    m_hashIndex.add(suite->hash, i);
+    m_hashes.push(suite);
+  }
+  m_serialRx &= suite->aead->serialDecrypt && suite->aead->tagSize <= 16;
+  m_serialTx &= suite->aead->serialEncrypt;
+}
+
+void CipherSuites::reindex()
+{
+  m_ids.clean();
+  m_hashIndex.clean();
+  m_hashes.length(0);
+  m_serialRx = m_serialTx = true;
+  for (unsigned i = 0, n = length(); i < n; ++i) addIndex(i);
+}
+
+void CipherSuites::push(const CipherSuite *suite)
+{
+  unsigned i = length();
+  m_suites.push(suite);
+  try { addIndex(i); }
+  catch (...) { m_suites.length(i); throw; }
+}
+
+void CipherSuites::clear()
+{
+  m_suites.length(0);
+  reindex();
+}
+
+int CipherSuites::index(uint16_t id) const
+{
+  unsigned i = m_ids.findVal(id);
+  return ZuCmp<unsigned>::null(i) ? -1 : int(i);
+}
+
+const CipherSuite *CipherSuites::find(uint16_t id) const
+{
+  int i = index(id);
+  return i < 0 ? nullptr : m_suites[i];
+}
+
+const CipherSuite *CipherSuites::first(const HashAlgo *hash) const
+{
+  unsigned i = m_hashIndex.findVal(hash);
+  return ZuCmp<unsigned>::null(i) ? nullptr : m_suites[i];
+}
+
+static KeySchedule *keyScheduleNew(
+  const CipherSuite *preferred, const CipherSuites *offered, int useOuter)
+{
+  // A preferred suite, when supplied with offers, was selected from those offers.
+  auto hashes = offered ? offered->hashes() : SuiteSpan{};
+  size_t numHashes = hashes.length() ? hashes.length() : preferred ? 1 : 0;
+  if (!numHashes) return nullptr;
   auto sched = new KeySchedule{};
   sched->hashes.length(numHashes);
-
-  // setup the hash algos and contexts
-  Ztls_ForeachHash({
-    sched->hashes[sched->numHashes].algo = cs->hash;
-    if ((sched->hashes[sched->numHashes].ctx = cs->hash->create()) == NULL) goto Fail;
-    if (useOuter) {
-      if ((sched->hashes[sched->numHashes].ctxOuter = cs->hash->create()) == NULL) {
-	auto ctx = sched->hashes[sched->numHashes].ctx;
-	delete ctx;
-	goto Fail;
-      }
-    } else {
-      sched->hashes[sched->numHashes].ctxOuter = NULL;
+  auto add = [sched, useOuter](const HashAlgo *algo) {
+    auto &slot = sched->hashes[sched->numHashes];
+    slot.algo = algo;
+    slot.ctxOuter = NULL;
+    if ((slot.ctx = algo->create()) == NULL) return false;
+    if (useOuter && (slot.ctxOuter = algo->create()) == NULL) {
+      delete slot.ctx;
+      return false;
     }
     ++sched->numHashes;
-  });
-
+    return true;
+  };
+  if (preferred && !add(preferred->hash)) goto Fail;
+  for (auto suite : hashes)
+    if ((!preferred || suite->hash != preferred->hash) && !add(suite->hash)) goto Fail;
   return sched;
 Fail:
   keyScheduleFree(sched);
   return NULL;
-
-#undef Ztls_ForeachHash
 }
 
 static int keyScheduleExtract(KeySchedule *sched, Bytes ikm)
@@ -1092,7 +1157,7 @@ keyScheduleSelectCipher(KeySchedule *sched, const CipherSuite *cs, int reset, By
 
   assert(sched->generation == 1);
 
-  // find the one, while freeing others
+  // Retire unused transcript contexts while retaining the negotiated hash.
   for (i = 0; i != sched->numHashes; ++i) {
     if (sched->hashes[i].algo == cs->hash) {
       assert(foundSlot == SIZE_MAX);
@@ -1303,7 +1368,7 @@ static int decodeStoredSessionTicket(
 
   {
     // determine the cipher-suite
-    *cs = findCipherSuite(tls->ctx->cipherSuites, csid);
+    *cs = tls->ctx->cipherSuites.find(csid);
     if (!*cs) {
       ret = Ztls_ErrorLibrary;
       goto Exit;
@@ -1708,7 +1773,7 @@ Exit:
 
 // @param hash optional argument for restricting the underlying hash algorithm
 static int selectCipher(
-  const CipherSuite **selected, SuiteSpan candidates, const uint8_t *src,
+  const CipherSuite **selected, const CipherSuites &candidates, const uint8_t *src,
   const uint8_t *const end, int srvPreference, int srvChachaPriority, const HashAlgo *hash)
 {
   size_t foundIndex = SIZE_MAX;
@@ -1717,19 +1782,18 @@ static int selectCipher(
   while (src != end) {
     uint16_t id;
     if ((ret = decode16(&id, &src, end)) != 0) goto Exit;
-    for (size_t i = 0; i < candidates.length(); ++i) {
-      if (candidates[i]->id == id && (hash == NULL || candidates[i]->hash == hash)) {
-	if (srvPreference && !(srvChachaPriority && id == Ztls_SuiteChaChaSHA256)) {
-	  // preserve smallest matching index, and proceed to the next input
-	  if (i < foundIndex) {
-	    foundIndex = i;
-	    break;
-	  }
-	} else {
-	  //  return the pointer matching to the first input that can be used
-	  *selected = candidates[i];
-	  goto Exit;
+    int i = candidates.index(id);
+    auto suite = i < 0 ? nullptr : candidates[i];
+    if (suite && (hash == NULL || suite->hash == hash)) {
+      if (srvPreference && !(srvChachaPriority && id == Ztls_SuiteChaChaSHA256)) {
+	if (unsigned(i) < foundIndex) {
+	  foundIndex = unsigned(i);
+	  *selected = suite;
 	}
+      } else {
+	*selected = suite;
+	ret = 0;
+	goto Exit;
       }
     }
     // first position of the server list matched (srvPreference)
@@ -1739,7 +1803,6 @@ static int selectCipher(
     srvChachaPriority = 0;
   }
   if (foundIndex != SIZE_MAX) {
-    *selected = candidates[foundIndex];
     ret = 0;
   } else {
     ret = Ztls_AlertHSFailure;
@@ -2083,12 +2146,7 @@ sendCliHello(Ztls::Cxn *tls, MessageEmitter *emitter, HandshakeProps *properties
   if (tls->ctx->preSharedKey.identity.data() != NULL) {
     if (!isSecondFlight) {
       tls->offeredPsk = 1;
-      for (size_t i = 0; i < tls->ctx->cipherSuites.length(); ++i) {
-	if (tls->ctx->cipherSuites[i]->hash == tls->ctx->preSharedKey.hash) {
-	  tls->cipherSuite = tls->ctx->cipherSuites[i];
-	  break;
-	}
-      }
+      tls->cipherSuite = tls->ctx->cipherSuites.first(tls->ctx->preSharedKey.hash);
       assert(
 	tls->cipherSuite != NULL && "no compatible cipher-suite provided that matches psk.hash");
       if (properties != NULL && properties->client.maxEarlyDataSize != NULL) {
@@ -2153,7 +2211,7 @@ sendCliHello(Ztls::Cxn *tls, MessageEmitter *emitter, HandshakeProps *properties
   // initialize key schedule
   if (!isSecondFlight) {
     if ((tls->keySchedule = keyScheduleNew(
-	   tls->cipherSuite, tls->ctx->cipherSuites, tls->ech.aead != NULL)) == NULL) {
+	   tls->cipherSuite, &tls->ctx->cipherSuites, tls->ech.aead != NULL)) == NULL) {
       ret = Ztls_ErrorNoMemory;
       goto Exit;
     }
@@ -2284,13 +2342,6 @@ Exit:
   return ret;
 }
 
-const CipherSuite *findCipherSuite(SuiteSpan suites, uint16_t id)
-{
-  for (auto suite : suites)
-    if (suite->id == id) return suite;
-  return nullptr;
-}
-
 static int
 decodeSrvHello(Ztls::Cxn *tls, ServerHello *sh, const uint8_t *src, const uint8_t *const end)
 {
@@ -2328,9 +2379,11 @@ decodeSrvHello(Ztls::Cxn *tls, ServerHello *sh, const uint8_t *src, const uint8_
     // select cipherSuite
     uint16_t csid;
     if ((ret = decode16(&csid, &src, end)) != 0) goto Exit;
-    if ((tls->cipherSuite = findCipherSuite(tls->ctx->cipherSuites, csid)) == NULL) {
-      ret = Ztls_AlertIllegalParameter;
-      goto Exit;
+    if (!tls->cipherSuite || tls->cipherSuite->id != csid) {
+      if ((tls->cipherSuite = tls->ctx->cipherSuites.find(csid)) == NULL) {
+	ret = Ztls_AlertIllegalParameter;
+	goto Exit;
+      }
     }
   }
 
@@ -4228,7 +4281,7 @@ srvHandleHello(Ztls::Cxn *tls, MessageEmitter *emitter, Bytes message, Handshake
       goto Exit;
     if (!isSecondFlight) {
       tls->cipherSuite = cs;
-      if ((tls->keySchedule = keyScheduleNew(cs, {}, 0)) == NULL) {
+      if ((tls->keySchedule = keyScheduleNew(cs, nullptr, 0)) == NULL) {
 	ret = Ztls_ErrorNoMemory;
 	goto Exit;
       }
@@ -4841,7 +4894,7 @@ static void streamDiscard(Ztls::Cxn *tls)
   StreamRecord *r = &tls->streamRec;
   if (r->begun && tls->rxTraffic.aead != NULL && tls->rxTraffic.aead->serialDecrypt())
     tls->rxTraffic.aead->decAbort();
-  if (r->reserved) tls->plaintext.discard();
+  tls->plaintext.discard();
   ZuClear(r, sizeof(*r));
 }
 
@@ -5306,12 +5359,15 @@ static int handleInput(
     size_t decryptedLen;
     if (rec.type != Ztls_ContentTypeAppdata) return Ztls_AlertHSFailure;
     if ((ret = bufferRes(decryptbuf, rec.length, 0)) != 0) return ret;
-    if ((ret = aeadDecrypt(
-	   &tls->rxTraffic, decryptbuf->base + decryptbuf->off, &decryptedLen, rec.fragment,
-	   rec.length)) != 0) {
+    decryptedLen = aeadDecrypt(
+      tls->rxTraffic.aead, decryptbuf->base + decryptbuf->off, rec.fragment, rec.length,
+      tls->rxTraffic.seq, rec.fragment - 5, 5);
+    if (decryptedLen == SIZE_MAX) {
+      ret = Ztls_AlertBadRecordMac;
       if (tls->isServer && tls->earlyDataSkippedBytes != UINT32_MAX) goto ServerSkipEarlyData;
       return ret;
     }
+    ++tls->rxTraffic.seq;
     rec.length = decryptedLen;
     rec.fragment = decryptbuf->base + decryptbuf->off;
     // skip padding
@@ -5598,34 +5654,21 @@ int handoffTx(Ztls::Cxn *tls)
   return 0;
 }
 
-// Descriptor capabilities are inspected without constructing dummy keyed contexts.
-// No cache: applications may replace suite lists before negotiating a connection.
-static int checkSerialSuites(Ztls::Cxn *tls, int receive)
-{
-  for (auto suite : tls->ctx->cipherSuites) {
-    const AeadAlgo *algo = suite->aead;
-    if (receive ? !algo->serialDecrypt || algo->tagSize > 16 : !algo->serialEncrypt)
-      return Ztls_ErrorNotAvailable;
-  }
-  return 0;
-}
-
 static int chunksCheck(Ztls::Cxn *tls, Ztls::RecordSink *sink)
 {
   if (tls == NULL) return Ztls_ErrorNotAvailable;
   if (tls->txTraffic.failed || !sink) return Ztls_ErrorLibrary;
   if (!recordSerialAvailable(&tls->txTraffic)) return Ztls_ErrorNotAvailable;
-  return checkSerialSuites(tls, 0);
+  return tls->txTraffic.aead || tls->ctx->cipherSuites.serialTx() ? 0 :
+    Ztls_ErrorNotAvailable;
 }
-
-static int serialRxAvailable(AeadContext *aead) { return aead != NULL && aead->serialDecrypt(); }
 
 int rxStreamCheck(Ztls::Cxn *tls)
 {
   if (tls == NULL) return Ztls_ErrorNotAvailable;
-  if (tls->rxTraffic.aead != NULL && !serialRxAvailable(tls->rxTraffic.aead))
-    return Ztls_ErrorNotAvailable;
-  return checkSerialSuites(tls, 1);
+  if (auto aead = tls->rxTraffic.aead)
+    return aead->serialDecrypt() && aead->algo->tagSize <= 16 ? 0 : Ztls_ErrorNotAvailable;
+  return tls->ctx->cipherSuites.serialRx() ? 0 : Ztls_ErrorNotAvailable;
 }
 
 // Stash the bounded record header or authentication tag across input chunks.
@@ -5702,21 +5745,13 @@ int rxStream(
     }
     r->textLength = r->length - r->tagSize;
     void *base = NULL;
-    r->reserved = 1;
-    ret = tls->plaintext.reserve(r->textLength, &base, &r->capacity);
-    r->base = static_cast<uint8_t *>(base);
+    ret = tls->plaintext.reserve(r->textLength, &base);
     if (ret != 0) goto Fail;
-    if (base == NULL || r->capacity < r->textLength) {
-      ret = Ztls_ErrorNoMemory;
-      goto Fail;
-    }
+    r->base = static_cast<uint8_t *>(base);
   }
   if (r->encrypted && !r->begun) {
-    uint8_t aad[5];
-    buildAAD(aad, r->length);
     r->begun = 1;
-    ret = aead->decBegin(tls->rxTraffic.seq, aad, sizeof(aad));
-    ZuClear(aad, sizeof(aad));
+    ret = aead->decBegin(tls->rxTraffic.seq, r->header, sizeof(r->header));
     if (ret != 0) goto Fail;
   }
   if (r->written != r->textLength) {
@@ -5725,7 +5760,7 @@ int rxStream(
     if (n != 0) {
       size_t written = n;
       if (r->encrypted) {
-	ret = aead->decChunk(r->base + r->written, r->capacity - r->written, src, n, &written);
+	ret = aead->decChunk(r->base + r->written, r->textLength - r->written, src, n, &written);
 	// A failed provider might have written provisional bytes; clear the entire reserved
 	// extent.
 	if (ret != 0 || written != n) {
@@ -5781,20 +5816,19 @@ int rxStream(
     }
     ret = 0;
   } else {
-    Buffer		 formatting;
-    RecordMessageEmitter emitter;
-    bufferInitTx(&formatting, const_cast<char *>(""), 0);
-    formatting.recordSink = output;
-    initRecordMessageEmitter(tls, &emitter, &formatting);
-    int application = 0;
-    ret = dispatchRecord(tls, &emitter, &rec, properties, &application);
-    bufferDispose(&formatting);
-    if (ret != 0 && ret != Ztls_ErrorInProgress && ret != Ztls_ErrorAsyncOperation) goto Fail;
-    if (application) {
-      if ((ret = tls->plaintext.commit(rec.length)) != 0) goto Fail;
-      r->base = NULL;
-      r->reserved = 0;
+    int application = rec.type == Ztls_ContentTypeAppdata &&
+      tls->state >= Ztls_::State::PostHSMin && tls->recvbuf.mess.base == NULL;
+    if (!application) {
+      Buffer formatting;
+      RecordMessageEmitter emitter;
+      bufferInitTx(&formatting, const_cast<char *>(""), 0);
+      formatting.recordSink = output;
+      initRecordMessageEmitter(tls, &emitter, &formatting);
+      ret = dispatchRecord(tls, &emitter, &rec, properties, &application);
+      bufferDispose(&formatting);
+      if (ret != 0 && ret != Ztls_ErrorInProgress && ret != Ztls_ErrorAsyncOperation) goto Fail;
     }
+    if (application && (ret = tls->plaintext.commit(rec.length)) != 0) goto Fail;
   }
   streamDiscard(tls);
   if (length != NULL) *length = original - available;
@@ -6225,7 +6259,7 @@ int serverNameIsIP(const char *name)
 }
 
 int echEncodeConfig(
-  Buffer *buf, uint8_t configId, const HpkeKem *kem, Bytes publicKey, const HpkeSuite **ciphers,
+  Buffer *buf, uint8_t configId, const HpkeKem *kem, Bytes publicKey, const HpkeSuites &ciphers,
   uint8_t maxNameLength, const char *publicName)
 {
   int ret;
@@ -6238,9 +6272,9 @@ int echEncodeConfig(
     Ztls_BufferPushBlock(
       buf, 2, { Ztls_BufferPushv(buf, publicKey.data(), publicKey.length()); });
     Ztls_BufferPushBlock(buf, 2, {
-      for (size_t i = 0; ciphers[i] != NULL; ++i) {
-	Ztls_BufferPush16(buf, ciphers[i]->id.kdf);
-	Ztls_BufferPush16(buf, ciphers[i]->id.aead);
+      for (auto cipher : ciphers) {
+	Ztls_BufferPush16(buf, cipher->id.kdf);
+	Ztls_BufferPush16(buf, cipher->id.aead);
       }
     });
     Ztls_BufferPush_1(buf, maxNameLength);

@@ -50,7 +50,7 @@ public:
   }
   ZmRef<ZiIOBuf> take() { return ZuMv(m_ready); }
 
-  int reserve(size_t size, void **base, size_t *capacity)
+  int reserve(size_t size, void **base)
   {
     if (m_private || m_ready || !m_allocator || m_allocator->type != Zi::IOBufType::RxTLS ||
       size > Ztls_RxRecordCapacity)
@@ -69,7 +69,6 @@ public:
     m_extent = size;
     m_private = ZuMv(buf);
     *base = m_private->data();
-    *capacity = size;
     return 0;
   }
   int commit(size_t length)

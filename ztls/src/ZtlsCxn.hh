@@ -75,8 +75,7 @@ struct StreamRecord {
   size_t	headerOff, tagOff, tagSize;
   size_t	length, textLength, written;
   uint8_t	*base;
-  size_t	capacity;
-  unsigned	encrypted:1, begun:1, reserved:1, failed:1;
+  unsigned	encrypted:1, begun:1, failed:1;
 };
 
 ZtEnumNS(

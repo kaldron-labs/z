@@ -2137,13 +2137,14 @@ const HpkeSuite opensslHPKEChachasha256 = {
   .aead = &opensslChacha20poly1305
 };
 #endif
-const HpkeSuite *opensslHPKECipherSuites[] = {&opensslHPKEAes128gcmsha256,
-  &opensslHPKEAes256gcmsha384,
+const HpkeSuites opensslHPKECipherSuites = [] {
+  const HpkeSuite *const suites[] = {
+    &opensslHPKEAes128gcmsha256, &opensslHPKEAes256gcmsha384,
 #if ZtlsOpenSSLHaveChaCha
-  &opensslHPKEChachasha256,
+    &opensslHPKEChachasha256,
 #endif
-  &opensslHPKEAes128gcmsha512,
-  // likely only for tests
-  NULL};
+    &opensslHPKEAes128gcmsha512};
+  return HpkeSuites{suites};
+}();
 
 } // namespace Ztls_

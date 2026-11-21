@@ -1446,7 +1446,7 @@ void testTLS13IPv6Loopback(TempDir &temp, LogCapture &capture)
 void testTLS13KeyUpdate(TempDir &temp, LogCapture &capture)
 {
   ZuTestScopeRT(testTLS13KeyUpdate);
-  auto suite = Ztls_::findCipherSuite(Ztls_::opensslCipherSuites, Ztls_SuiteAes128gcmSHA256);
+  auto suite = Ztls_::opensslCipherSuites.find(Ztls_SuiteAes128gcmSHA256);
   Ztls_CheckRT_1(suite, "TLS 1.3 AES-GCM suite unavailable");
   if (!suite) return;
   runInProcess(

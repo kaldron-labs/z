@@ -367,7 +367,7 @@ void run(bool stub, bool corrupt, bool partial, bool stale, bool txErrors = fals
     input->pool.ptr() == (stub ? provider->backing.ptr() : nullptr) &&
     input->pool.ptr() != packets->pool.ptr());
   auto suite = &Ztls_::opensslAes128gcmsha256;
-  client.ctx()->cipherSuites.length(0);
+  client.ctx()->cipherSuites.clear();
   client.ctx()->cipherSuites.push(suite);
   ZtlsTest::useTestPSK(*client.ctx(), suite);
   bool started = mx.start();
