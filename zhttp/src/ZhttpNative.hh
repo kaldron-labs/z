@@ -349,8 +349,7 @@ public:
 	if (!own || !own->append(buf->cspan())) return false;
 	buf = ZuMv(own);
       }
-      auto head = ZmRef<TCPHeader>::acquire(
-	static_cast<TCPHeader *>(ZuMv(buf).release()));
+      ZmRef<TCPHeader> head{ZuMv(buf)};
       if (!m_link->startTCP(head, AppThread)) return false;
       m_head = ZuMv(head);
       if (m_slot) *m_slot = m_head;
@@ -696,9 +695,9 @@ template <> struct Traits<QUIC> {
   template <typename App, typename Link>
   using Server = Zquic::Server<App, Link>;
   template <typename App, typename Link, typename Stream>
-  using ClientLink = Zquic::CliLink<App, Link, Stream, H3TxBufAlloc>;
+  using ClientLink = Zquic::CliLink<App, Link, Stream>;
   template <typename App, typename Link, typename Stream>
-  using ServerLink = Zquic::SrvLink<App, Link, Stream, H3TxBufAlloc>;
+  using ServerLink = Zquic::SrvLink<App, Link, Stream>;
   template <typename Link, typename Stream>
   using ClientStream = Zquic::CliStream<Link, Stream>;
   template <typename Link, typename Stream>
@@ -936,7 +935,7 @@ public:
     header->appSettled = true;
     // Move the native-link hold to Rx BEFORE dropping any Cxn hold. Final link
     // destruction follows the same Rx ownership as normal disconnected drain.
-    auto link = ZmRef<Impl>::acquire(static_cast<Impl *>(ZuMv(header->link).release()));
+    ZmRef<Impl> link{ZuMv(header->link)};
     header->detach_();
     // Release the descriptor before signaling the App-owned logical drain.
     header = nullptr;
@@ -994,8 +993,7 @@ public:
       bytes += unsigned(n);
     }
     // begin() serialized this first HTTP header through our TCP allocator.
-    auto header = ZmRef<TCPHeader>::acquire(
-      static_cast<TCPHeader *>(ZuMv(first.buf).release()));
+    ZmRef<TCPHeader> header{ZuMv(first.buf)};
     header->entries = ZuMv(entries);
     header->appThread = this->app()->txThread();
     header->link = ZmRef<ZmPolymorph>{impl()};

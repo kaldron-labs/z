@@ -128,9 +128,18 @@ bool consumeStream(Rx &rx, ZuCSpan expected, unsigned &offset)
 }
 
 template <typename Link>
+auto frameTx(Link &link)
+{
+  if constexpr (ZuIsSame<typename Link::Protocol, Zhttp::QUIC>{})
+    return link.txStream();
+  else
+    return link.template frameTx_<true>();
+}
+
+template <typename Link>
 void send(Link &link, State &state, int ready, int sent, ZuCSpan data)
 {
-  auto tx = link.template frameTx_<true>();
+  auto tx = frameTx(link);
   state.trace.push(ready);
   state.trace.push(sent);
   tx << data << Zi::flush();
@@ -144,7 +153,7 @@ struct ServerSession {
   void connected(Link &link) {
     auto &state = *link.app()->state;
     state.trace.push(LifeEvt::SrvConnected);
-    auto tx = link.template frameTx_<true>();
+    auto tx = frameTx(link);
     (void)tx;
     state.trace.push(LifeEvt::SrvTxReady);
   }
@@ -155,7 +164,7 @@ struct ServerSession {
     if (!consume(rx, Ping)) return 0;
     auto &state = *link.app()->state;
     state.trace.push(LifeEvt::SrvProcess);
-    auto tx = link.template frameTx_<true>();
+    auto tx = frameTx(link);
     state.trace.push(LifeEvt::SrvSend);
     tx << Pong << Zi::flush();
     return 1;
@@ -190,6 +199,7 @@ struct ServerLink :
     Server<Profile>, ServerLink<Profile>, Profile, ServerSession> {
   using Base = Zhttp::ServerLink<
     Server<Profile>, ServerLink<Profile>, Profile, ServerSession>;
+  using Protocol = typename Profile::Protocol;
   friend inline ZuStringT<"Zhttp.Test.SrvLink"> ZmNHeapID(ServerLink *);
   using Base::Base;
 
@@ -214,6 +224,7 @@ struct Client :
     public Zhttp::ClientLink<Client, Link, Profile> {
     friend inline ZuStringT<"Zhttp.Test.CliLink"> ZmNHeapID(Link *);
     using Base = Zhttp::ClientLink<Client, Link, Profile>;
+    using Protocol = typename Profile::Protocol;
     using Base::Base;
 
     unsigned responses = 0;
