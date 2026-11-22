@@ -298,6 +298,11 @@ void Listener::begin()
   if (!Endpoint::init(stack()) ||
       !Endpoint::open(PathMode::ServerUnconnected, m_local.ip(), m_local.port()))
     endpointFailed(false);
+  else if (Endpoint::tupleBound()) {
+    // Zi publishes a successful passive bind on Rx before a following stop
+    // barrier. Keep endpoint Tx setup queued ahead of any accepted output.
+    endpointReady(this);
+  }
 }
 
 void Listener::endpointReady(Endpoint *)
@@ -952,6 +957,7 @@ void Instance::start_()
     auto error = m_xdp->error();
     mx()->rxRun([this, ok, error = ZuMv(error)]() mutable {
       if (ok && m_xdp->mtu() == m_mtu) {
+	m_tcpChksumOffload = m_xdp->tcpChksumOffload();
 	m_ioState = Up;
 	Engine::started(true);
 	return;
@@ -999,6 +1005,11 @@ void Instance::stopTx()
 {
   ZmAssert_(txInvoked());
   if (m_senderStopping) return;
+  ZmAssert_(!m_txWaitCount);
+  if (m_txResumeQueued) {
+    mx()->txRun([this] { stopTx(); });
+    return;
+  }
   if (m_xdp->ready() && m_txPending) {
     m_txDraining = true;
     txService(true);
@@ -1059,6 +1070,11 @@ void Instance::received(uint8_t *p, unsigned n)
     return;
   }
   bool valid = validIP && readTCP(ip, tcp);
+#if 0
+  if (!m_tcpChksumOffload) {
+    if (valid && tcpChecksum(ip.local, ip.remote, ip.payload)) valid = false;
+  }
+#endif
   if (valid) {
     binding = m_endpoints.findPtr(ZiSockAddr{ip.local, tcp.header.dstPort});
     if (!binding) {
@@ -1096,7 +1112,7 @@ void Instance::received(uint8_t *p, unsigned n)
 
 void Instance::rxProgress()
 {
-  if (++m_rxPackets >= mx()->rxQuantum()) {
+  if (++m_rxPackets == mx()->rxQuantum()) {
     m_xdp->wake();
     mx()->push([this] { rx(); }, mx()->rxThread());
   }
@@ -1141,7 +1157,8 @@ void Instance::replyControl(TCPHeader tcp, IPPath path)
   if (!wire) return;
   packet->skip = 0;
   packet->length = wire;
-  sendPacket(packet);
+  Zutcp::TCPLayout layout{14, uint16_t(ipHead(path.local.type()))};
+  sendPacket(packet, nullptr, &layout);
 }
 
 bool Instance::closedPacket(const uint8_t *frame, const IPView &ip, const TCPView &tcp)
@@ -1201,7 +1218,8 @@ void Instance::replyClosed(ClosedTuple record, IPPath path)
   if (!wire) return;
   packet->skip = 0;
   packet->length = wire;
-  if (sendPacket(packet) && record.timestamps)
+  Zutcp::TCPLayout layout{14, uint16_t(ipHead(path.local.type()))};
+  if (sendPacket(packet, nullptr, &layout) && record.timestamps)
     mx()->rxRun([this, key = record.key, id = record.id, sent = tcp.options.tsval] {
       ClosedTuple current;
       if (m_closed.find(key, current) && current.id == id) {
@@ -1223,21 +1241,14 @@ ZmRef<PacketBuf> Instance::allocPacket(void *owner, ZiIPType::T family, bool con
   return buf;
 }
 
-bool Instance::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease)
+bool Instance::sendPacket(
+  const ZmRef<Zi::IOBuf> &buf, PacketLease *lease, const Zutcp::TCPLayout *layout)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (!ready() || !buf || !buf->registered() || !buf->length ||
       buf->skip > buf->size || buf->length > buf->size - buf->skip) return false;
   bool control = buf->allocator_ == &m_allocators.p<1>().control;
-  uint64_t limit = control ? m_txCapacity : m_txCapacity - m_controlCredits;
-  // Eligible application DATA is published first. Reconcile before submission
-  // only when completion credit is required to admit this packet.
-  if (m_txPending >= limit) reconcileTx();
-  if (m_txPending >= limit) {
-    if (control) ++m_controlStalls; else ++m_dataStalls;
-    return false;
-  }
-  if (!m_xdp->send(buf->data(), buf->length)) return false;
+  if (!submitPacket(buf->data(), buf->length, control, layout)) return false;
   // Transfer the caller lease to recovery when requested. The independent
   // kernel lease ends at CQ; neither lease retains submitted Zi metadata.
   auto backing = buf->data_();
@@ -1250,12 +1261,43 @@ bool Instance::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease)
   if (!lease && nativePacket) lease = static_cast<PacketBuf *>(buf.ptr())->retained;
   if (lease) lease->adopt(buf->allocator(), backing, size);
   else allocator->free(backing, size, true);
-  // The dedicated sender was notified by publication. Completion work follows
-  // the accepted packet on this owner; idle service keeps the last CQ live.
+  submittedPacket();
+  return true;
+}
+
+bool Instance::submitPacket(
+  uint8_t *packet, unsigned length, bool control, const Zutcp::TCPLayout *layout)
+{
+  ZmAssert_(mx()->invoked(mx()->txThread()));
+  if (!ready()) return false;
+  uint64_t limit = control ? m_txCapacity : m_txCapacity - m_controlCredits;
+  // Reconcile only when completion credit is required for this admission.
+  if (m_txPending >= limit) reconcileTx();
+  if (m_txPending >= limit) {
+    if (control) ++m_controlStalls; else ++m_dataStalls;
+    return false;
+  }
+  unsigned previous = 0;
+  if (layout) {
+    if (layout->tcp > length || length - layout->tcp < 20) return false;
+    previous = (unsigned(packet[layout->tcp + 16])<<8) | packet[layout->tcp + 17];
+    if (!tcpChecksum(packet, length, *layout, m_tcpChksumOffload)) return false;
+  }
+  if (m_xdp->send(packet, length)) return true;
+  if (layout) {
+    packet[layout->tcp + 16] = previous>>8;
+    packet[layout->tcp + 17] = previous;
+  }
+  return false;
+}
+
+void Instance::submittedPacket()
+{
+  // Backend publication already notified its sender. Keep the final CQ live
+  // even when the producer becomes idle after this accepted packet.
   if (!m_txPending++) txService(true);
   enum { Batch = 64 }; // bounded CQ service during continuous submission
   if (!(m_txPending % Batch)) reconcileTx();
-  return true;
 }
 
 void Instance::reconcileTx()
@@ -1265,7 +1307,58 @@ void Instance::reconcileTx()
   auto n = m_xdp->pollTx();
   ZmAssert_(n <= m_txPending);
   m_txPending -= n;
+  if (n && m_txWaitCount) {
+    if (m_txResumeBudget < m_txWaitCount) m_txResumeBudget = m_txWaitCount;
+    scheduleTxResume();
+  }
   if (!m_txPending) txService(false);
+}
+
+void Instance::waitTx(Cxn *cxn)
+{
+  if (!ready() || !m_txPending || cxn->txWaitPrev) return;
+  ZmAssert_(txInvoked());
+  cxn->txWaitNext = nullptr;
+  cxn->txWaitPrev = m_txWaitTail;
+  *m_txWaitTail = cxn;
+  m_txWaitTail = &cxn->txWaitNext;
+  ++m_txWaitCount;
+}
+
+void Instance::cancelTxWait(Cxn *cxn)
+{
+  if (!cxn->txWaitPrev) return;
+  ZmAssert_(txInvoked());
+  if (cxn->txWaitNext) cxn->txWaitNext->txWaitPrev = cxn->txWaitPrev;
+  else m_txWaitTail = cxn->txWaitPrev;
+  *cxn->txWaitPrev = cxn->txWaitNext;
+  cxn->txWaitNext = nullptr;
+  cxn->txWaitPrev = nullptr;
+  --m_txWaitCount;
+}
+
+void Instance::scheduleTxResume()
+{
+  if (m_txResumeQueued || !m_txResumeBudget) return;
+  m_txResumeQueued = true;
+  // Never reenter a packet's publication/recovery accounting from admission.
+  mx()->txRun([this] { resumeTx(); });
+}
+
+void Instance::resumeTx()
+{
+  ZmAssert_(txInvoked());
+  m_txResumeQueued = false;
+  if (!ready()) { m_txResumeBudget = 0; return; }
+  enum { Batch = 64 };
+  for (unsigned i = 0; i < Batch && m_txResumeBudget && m_txWait; ++i) {
+    --m_txResumeBudget;
+    auto cxn = m_txWait;
+    cancelTxWait(cxn);
+    cxn->resumeTx();
+  }
+  if (!m_txWait) m_txResumeBudget = 0;
+  scheduleTxResume();
 }
 
 void Instance::txService(bool active)

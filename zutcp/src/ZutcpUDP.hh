@@ -26,6 +26,7 @@ public:
   const ZiCxnInfo &info() const { return m_info; }
   ZuUnion<void, ZeException> join();
   bool accepts(ZiIP, const ZiSockAddr &) const;
+  ZiIOBuf *rxBuf() const;
   bool receive(uint8_t *, unsigned, unsigned, const ZiSockAddr &, uint8_t);
   void send(ZiConnection *);
   void close(bool);

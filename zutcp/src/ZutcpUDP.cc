@@ -84,15 +84,24 @@ bool Instance::UdpCxn::accepts(ZiIP local, const ZiSockAddr &peer) const
   return false;
 }
 
-bool Instance::UdpCxn::receive(
-  uint8_t *frame, unsigned offset, unsigned length, const ZiSockAddr &peer, uint8_t tos)
+ZiIOBuf *Instance::UdpCxn::rxBuf() const
 {
   auto cxn = mxCxn;
-  if (!cxn || !cxn->rxUp()) return false;
+  if (!cxn || !cxn->rxUp()) return nullptr;
   auto &io = cxn->rxContext();
   auto stub = io.buf.ptr();
   if (io.completed() || !stub || stub->allocator() != m_info.rxAllocator ||
-      !stub->registered() || stub->data_()) return false;
+      !stub->registered() || stub->data_()) return nullptr;
+  return stub;
+}
+
+bool Instance::UdpCxn::receive(
+  uint8_t *frame, unsigned offset, unsigned length, const ZiSockAddr &peer, uint8_t tos)
+{
+  auto stub = rxBuf();
+  if (!stub) return false;
+  auto cxn = mxCxn;
+  auto &io = cxn->rxContext();
   auto owner = stub->owner;
   stub->data__ = uintptr_t(frame) | ZiIOBuf::Registered;
   stub->size = offset + length;
@@ -167,32 +176,39 @@ void Instance::UdpCxn::routed(
 
 int Instance::UdpCxn::submit(const ZiTxContext &io, const ZiSockAddr &dest)
 {
-  if (!io.buf || io.offset > io.buf->length || io.buf->skip > io.buf->size ||
+  // UDP is atomic: a nonzero cursor has no separate network-header reserve.
+  // Reject it before framing so refusal preserves the complete producer view.
+  if (!io.buf || io.offset || io.buf->skip > io.buf->size ||
       io.buf->length > io.buf->size - io.buf->skip) return -1;
-  unsigned length = io.buf->length - io.offset;
+  auto buf = io.buf.ptr();
+  auto allocator = buf->allocator();
+  if (!buf->registered() || buf->builtin() || !buf->data_() ||
+      allocator->mx != m_owner->mx() || allocator->type != Zi::IOBufType::TxUDP ||
+      !allocator->pool || allocator->pool->type != Zi::IOBufType::TxUDP)
+    return -1;
+  unsigned length = buf->length;
   unsigned head = udpHead(dest.ip().type());
-  auto packet = m_owner->allocPacket(this, dest.ip().type());
-  if (!packet || head > packet->size || length > packet->size - head) return -1;
-  // Keep producer metadata intact through Zi's completion callback.
-  if (length) {
-    if (!io.buf->data_()) return -1;
-    memcpy(packet->data_() + head, io.buf->data() + io.offset, length);
-  }
+  unsigned offset = buf->skip;
+  if (!head || offset < head) return -1;
+  auto frame = buf->data_() + offset - head;
+  unsigned capacity = buf->size - (offset - head);
+  if (!m_owner->txReady(frame)) return -1;
+  // Header framing uses provider headroom. Zi still owns the unchanged producer
+  // descriptor and caller lease; the backend acquires its independent lease.
   bool multicast = dest.ip().multicast();
   uint8_t hops = multicast ? (m_info.options.ttl() ? uint8_t(m_info.options.ttl()) : 1) : 64;
   uint8_t tos = io.tos.is<uint8_t>() ? io.tos.p<uint8_t>() : 0;
-  unsigned wire = writeUDP(packet->data_(), packet->size, m_path,
+  unsigned wire = writeUDP(frame, capacity, m_path,
     m_info.local.port(), dest.port(), length, tos, hops);
   if (!wire) return -1;
   uint8_t *loop = nullptr;
   if (multicast && (!m_info.options.multicast() || m_info.options.loopBack()) &&
       wire <= m_owner->m_ingress->size) {
     loop = m_owner->m_ingress->alloc();
-    if (loop) memcpy(loop, packet->data_(), wire);
+    if (loop) memcpy(loop, frame, wire);
   }
-  packet->skip = 0;
-  packet->length = wire;
-  bool sent = m_owner->sendPacket(packet);
+  bool sent = m_owner->submitPacket(frame, wire, false);
+  if (sent) m_owner->submittedPacket();
   if (loop) {
     if (sent)
       m_owner->rxRun([owner = m_owner, loop, wire] {
@@ -327,21 +343,27 @@ void Instance::receivedUDP(uint8_t *frame, unsigned length, const IPView &ip)
       }
       if (match && match->receive(frame, offset, udp.payload.length(), peer, ip.tos)) return;
     } else {
+      ZmRef<UdpCxn> first;
       ZtArray<ZmRef<UdpCxn>, ZtArrayHeapID<"Zutcp.UDP.RxMatches">> matches;
       {
 	auto i = m_udpBindings.citer(key);
 	while (auto node = i()) {
 	  auto endpoint = static_cast<UdpCxn *>(node);
-	  if (endpoint->accepts(ip.local, peer)) new (matches.push()) ZmRef{endpoint};
+	  if (!endpoint->accepts(ip.local, peer)) continue;
+	  if (!first) first = endpoint;
+	  else new (matches.push()) ZmRef{endpoint};
 	}
       }
-      for (unsigned j = 0, n = matches.length(); j < n; ++j) {
+      for (unsigned j = 0, n = first ? 1 + matches.length() : 0; j < n; ++j) {
+	auto endpoint = j ? matches[j - 1].ptr() : first.ptr();
 	if (j + 1 == n) {
-	  if (matches[j]->receive(frame, offset, udp.payload.length(), peer, ip.tos)) return;
-	} else if (auto copy = m_ingress->alloc()) {
-	  memcpy(copy, frame, length);
-	  if (!matches[j]->receive(copy, offset, udp.payload.length(), peer, ip.tos))
-	    m_ingress->free(copy);
+	  if (endpoint->receive(frame, offset, udp.payload.length(), peer, ip.tos)) return;
+	} else if (endpoint->rxBuf()) {
+	  if (auto copy = m_ingress->alloc()) {
+	    memcpy(copy, frame, length);
+	    if (!endpoint->receive(copy, offset, udp.payload.length(), peer, ip.tos))
+	      m_ingress->free(copy);
+	  }
 	}
       }
     }

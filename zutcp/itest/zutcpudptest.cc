@@ -16,6 +16,26 @@ enum { ServerUDP = 18172, ClientUDP = 18173, ServerTCP = 18174 };
 static constexpr auto TCPData = "tcp fixture bytes"_z;
 static const ZuBSpan UDPData[] = {"first datagram", "", "a longer final datagram"};
 
+// The transmitted IP/UDP frame must surround the caller's own payload backing.
+// Completion leaves its descriptor and payload intact through the Zi callback.
+static bool framedUDP(const ZiIOBuf *buf, ZuBSpan payload)
+{
+  if (!buf || !buf->registered() || buf->cspan() != payload) return false;
+  for (auto family : {ZiIPType::V4, ZiIPType::V6}) {
+    unsigned head = Zutcp::udpHead(family);
+    if (buf->skip < head) continue;
+    unsigned wire = head + buf->length;
+    if (wire < 60) wire = 60; // Ethernet minimum, excluding FCS
+    if (wire > buf->size - buf->skip + head) continue;
+    Zutcp::IPView ip;
+    Zutcp::UDPView udp;
+    if (Zutcp::readIP({buf->data() - head, wire}, ip) &&
+	Zutcp::readUDP(ip, udp) && udp.payload.data() == buf->data() &&
+	udp.payload == payload) return true;
+  }
+  return false;
+}
+
 template <bool UDP> struct Input : ZiIOBuf { using ZiIOBuf::ZiIOBuf; };
 
 struct Exchange;
@@ -126,9 +146,14 @@ void Connection::write(ZuBSpan payload, ZiSockAddr peer)
       state->output.post();
       return false;
     }
-    io.init(ZiTxFn{[state, payload](ZiTxContext &io) {
+    io.init(ZiTxFn{[state, payload, original = buf.ptr(),
+	backing = buf->data_(), skip = buf->skip, size = buf->size,
+	owner = buf->owner](ZiTxContext &io) {
+      if (state->udp && (!io.buf || io.buf.ptr() != original ||
+	  io.buf->data_() != backing || io.buf->skip != skip || io.buf->size != size ||
+	  io.buf->owner != owner)) ++state->errors;
       if (io.length < 0 || unsigned(io.length) != payload.length() ||
-	  (state->udp && (!io.buf || io.buf->cspan() != payload))) ++state->errors;
+	  (state->udp && !framedUDP(io.buf.ptr(), payload))) ++state->errors;
       auto output = &state->output;
       io.complete();
       output->post();

@@ -44,6 +44,7 @@
 #include <zlib/Zxdp.hh>
 
 #include <zlib/ZutcpAlloc.hh>
+#include <zlib/ZutcpChecksum.hh>
 #include <zlib/ZutcpIP.hh>
 #include <zlib/ZutcpISN.hh>
 #include <zlib/ZutcpOptions.hh>
@@ -165,9 +166,14 @@ struct ZutcpAPI Cxn : public ZmPolymorph {
   bool			retiring = false;
   uint8_t			admission = 0; // Rx-owned, independent of list membership
 
-  ~Cxn() override { ZmAssert_(!admission); }
+  // Tx-owned retry membership; independent of Rx ownership/publication.
+  Cxn			*txWaitNext = nullptr;
+  Cxn			**txWaitPrev = nullptr;
+
+  ~Cxn() override { ZmAssert_(!admission && !txWaitPrev); }
 
   virtual void abortRx() = 0;
+  virtual void resumeTx() { }
   virtual ClosedTupleKey closedKeyRx() const = 0;
   virtual bool established() const = 0;
   virtual const Zutcp_::Listener *listener() const { return nullptr; }
@@ -325,8 +331,16 @@ public:
 
   // Native phase-1 entry: complete contiguous Ethernet packet on mx Tx.
   // Acceptance detaches backing; refusal leaves the buffer unchanged.
-  bool sendPacket(const ZmRef<Zi::IOBuf> &, PacketLease * = nullptr);
+  bool txReady(uint8_t *packet) const { return ready() && m_xdp->txReady(packet); }
+  bool sendPacket(const ZmRef<Zi::IOBuf> &, PacketLease * = nullptr,
+    const Zutcp::TCPLayout * = nullptr);
+  // Read-only checksum including the current field: zero validates a segment.
+  static unsigned tcpChecksum(const ZiIP &, const ZiIP &, ZuBSpan);
+  // Finalize software checksum or prepare a pseudo-header seed for offload.
+  static bool tcpChecksum(uint8_t *, unsigned, TCPLayout, bool offload = false);
   void reconcileTx(); // Tx owner: retire kernel leases before retained header changes
+  void waitTx(Cxn *); // coalesce refused connection work until CQ returns capacity
+  void cancelTxWait(Cxn *);
   ZmRef<PacketBuf> allocPacket(void *owner, ZiIPType::T, bool control = false);
 
   ZuTime transportNow() const { return Zm::now(); }
@@ -386,12 +400,11 @@ public:
   ZuTime tlpPeerAckDelay() const { return m_params.tlpPeerAckDelay; }
   ZuTime ackHoldTimeout() const { return m_params.ackHoldTimeout; }
 
-  bool retainRx(ZiIOBuf *packet, Zi::IOQueue &retained)
+  void retainRx(ZiIOBuf *packet, Zi::IOQueue &retained)
   {
-    if (retained.headPtr() == packet) return true;
+    if (retained.headPtr() == packet) return;
     retained.unshiftNode(packet);
     while (retained.count_() > m_params.rxRetainFramesPerCxn) retained.pop();
-    return true;
   }
 
   Zi::IOBufPool *txPool(Zi::IOBufAllocator *allocator) const
@@ -488,6 +501,10 @@ private:
   void replyClosed(ClosedTuple, IPPath);
   void resetReply(const TCPHeader &, unsigned, IPPath);
   void replyControl(TCPHeader, IPPath);
+  void resumeTx();
+  void scheduleTxResume();
+  bool submitPacket(uint8_t *, unsigned, bool control, const Zutcp::TCPLayout * = nullptr);
+  void submittedPacket();
   void pollTx();
   void txService(bool);
   void addCxn(Cxn *);
@@ -535,6 +552,8 @@ private:
   TFOKey			m_tfoKey;
   InstanceParams		m_params;
   unsigned			m_mtu = 0, m_ingressCount = 0;
+  // Published before Up; immutable on both packet owners for each run.
+  bool				m_tcpChksumOffload = false;
   uint64_t			m_txCapacity = 0;
   unsigned			m_controlCredits = DefaultTxControlCredits;
 
@@ -583,6 +602,10 @@ private:
   alignas(Zm::CacheLineSize)
   TCPClock			m_tcpClock;
   unsigned			m_txPending = 0;
+  Cxn				*m_txWait = nullptr;
+  Cxn				**m_txWaitTail = &m_txWait;
+  unsigned			m_txWaitCount = 0, m_txResumeBudget = 0;
+  bool				m_txResumeQueued = false;
   bool				m_senderStopping = false;
   bool				m_txServicing = false, m_txDraining = false;
   uint64_t			m_dataStalls = 0, m_controlStalls = 0;

@@ -8,11 +8,13 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuPtr.hh>
+#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmQueue.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmRef.hh>
+#include <zlib/ZtcHeap.hh>
 
 #include <zlib/ZtArray.hh>
 
@@ -222,6 +224,19 @@ struct TCPStateTest {
   }
   template <typename T> static void synCandidate(T &link, unsigned length) {
     core(link).m_rxTFOEnd = length;
+  }
+  template <typename T> static bool refusedSYN(T &link) {
+    auto &c = core(link);
+    bool sent = c.sendTCP({}, true, 0,
+      []() -> ZmRef<PacketBuf> { return {}; }, [](auto, auto) { return false; });
+    return !sent && c.m_synDeadline == c.transportNow() + c.app()->rtoParams().initial &&
+      c.m_ptoTimerOut == c.m_synDeadline && !c.m_tcpSynSent;
+  }
+  template <typename T> static bool fireSYN(T &link) {
+    auto &c = core(link);
+    c.app()->clock = c.m_synDeadline;
+    c.cxnTimer(CxnTimer::PTO);
+    return link.synCalls == 1;
   }
   template <typename T> static void synTimeout(T &link) { core(link).synTimeout(); }
   template <typename T> static void fallback(T &link) { core(link).fallbackTFO(); }
@@ -450,7 +465,7 @@ friend inline ZuStringT<"Zutcp.DataTest.App"> ZmNHeapID(App *);
   Zi::IOBufPool *nativePool = nullptr;
   ZmRef<Zxdp::Instance> nativeFactory = Zxdp::instance(Zxdp::Type::Xdp);
   ZmQueue<ZmFn<>> txJobs, rxJobs;
-  bool holdTx = false, holdRx = false, allowRx = true;
+  bool holdTx = false, holdRx = false;
   unsigned demands = 0;
   mutable unsigned clockCalls = 0;
   mutable ZmFn<> clockFn;
@@ -490,7 +505,10 @@ friend inline ZuStringT<"Zutcp.DataTest.App"> ZmNHeapID(App *);
     if (a && (a == nativeAllocator || a == nativeAllocator2)) return nativePool;
     return Base::txPool(a);
   }
-  bool retainRx(ZiIOBuf *, Zi::IOQueue &) { ++demands; return allowRx; }
+  void retainRx(ZiIOBuf *packet, Zi::IOQueue &retained) {
+    ++demands;
+    Base::retainRx(packet, retained);
+  }
   template <typename F> void txRun(F f) {
     if (holdTx) txJobs.push([f = ZuMv(f)]() mutable { f(); }); else f();
   }
@@ -657,6 +675,36 @@ static void peerEcho(unsigned scenario)
   link->finish();
 }
 
+// Named-heap deltas over the existing whole-original send/ACK/refusal scenario.
+// Count application requests (cache plus heap), not just arena provisioning.
+static constexpr const char *txHeapIDs[] = {
+  "Zutcp.TxUnackdRange", "Zutcp.Connection.TxUnackdRanges",
+  "Zutcp.Connection.TxUnackdIndex", "Zutcp.Connection.TxRanges",
+  "Zutcp.Pkt.TxSentNode", "Zutcp.Pkt.OutstandingRange",
+  "Zutcp.Pkt.RetransmitQueue"};
+struct TxHeapSample {
+  using Keys = ZuStringTL<
+    "Zutcp.TxUnackdRange", "Zutcp.Connection.TxUnackdRanges",
+    "Zutcp.Connection.TxUnackdIndex", "Zutcp.Connection.TxRanges",
+    "Zutcp.Pkt.TxSentNode", "Zutcp.Pkt.OutstandingRange",
+    "Zutcp.Pkt.RetransmitQueue">;
+  uint64_t allocs[7]{}, frees[7]{};
+};
+static TxHeapSample txHeapSample()
+{
+  TxHeapSample sample;
+  Ztc::HeapMgr::all([&sample](Ztc::Heap *heap) {
+    static constexpr auto matcher = ZuMatcher<TxHeapSample>();
+    int i = matcher.exact(heap->telKey().p<0>());
+    if (i < 0) return;
+    Ztc::HeapTelemetry data;
+    heap->telemetry(data);
+    sample.allocs[i] += data.cacheAllocs + data.heapAllocs;
+    sample.frees[i] += data.cacheFrees + data.heapFrees;
+  });
+  return sample;
+}
+
 static void wholeOriginal(bool accept, bool syn)
 {
   ZuTestScopeRT(wholeOriginal);
@@ -669,6 +717,7 @@ static void wholeOriginal(bool accept, bool syn)
   ZmRef<ZiIOBuf> original = new Zi::IOBufStub<ZiIOBuf>{
     a.bytes, sizeof(a.bytes), &a, nullptr, 64, false, true};
   original->skip = 256;
+  auto heapBefore = txHeapSample();
   bool admitted = link->enqueue_(original);
   Zutcp::TxRange range;
   bool selected = link->txRange(0, range);
@@ -700,6 +749,14 @@ static void wholeOriginal(bool accept, bool syn)
   }
   link->finish(); link = nullptr; ref = {}; range = {}; original = nullptr;
   ZuCHECK(a.valid && a.returned == 1, "all refusal/accepted/fallback owners drain backing once");
+  auto heapAfter = txHeapSample();
+  for (unsigned i = 0; i < 7; ++i)
+    std::cout << "# whole-original accept=" << accept << " syn=" << syn << ' '
+      << txHeapIDs[i] << " alloc=" << heapAfter.allocs[i] - heapBefore.allocs[i]
+      << " free=" << heapAfter.frees[i] - heapBefore.frees[i] << '\n';
+  std::cout << "# metadata sizes SentPkt=" << sizeof(Zutcp::SentPkt)
+    << " SentNode=" << sizeof(Zutcp::TxPktQueue::Node)
+    << " RetainedNode=" << sizeof(Zutcp::TxRanges::Node) << '\n';
 }
 
 static void originalTxOrder(unsigned scenario)
@@ -909,16 +966,16 @@ static void admissionAndACK()
   Native a{app.mx()}; auto pool = app.nativeFactory->bufPool(Zi::IOBufType::TxTCP, 1, sizeof(a.bytes));
   auto ref = retained(a, *pool, 4);
   bool setup = Zutcp::TCPStateTest::record(*link, ref);
-  app.allowRx = false;
-  bool refused = link->receive(input(app, "tail", 4, 4));
-  ZuCHECK(setup && refused && link->txAckd() == 4 && !link->rxPending() &&
-      !link->rxAdmitted() && !link->rxBytes() && !link->disconnecting() && !link->resets,
-    "real TCP ACK retires outgoing bytes while refused out-of-order payload commits no error");
-  app.allowRx = true;
-  bool retried = link->receive(input(app, "tail", 4, 4));
-  ZuCHECK(retried && link->rxPending() == 1 && link->rxAdmitted() == 4 &&
+  bool initial = link->receive(input(app, "head", 4));
+  bool duplicate = link->receive(input(app, "head", 4, 4));
+  ZuCHECK(setup && initial && duplicate && link->txAckd() == 4 && link->rxPending() == 1 &&
+      link->rxAdmitted() == 4 && !link->rxBytes() && app.demands == 1 &&
+      !link->disconnecting() && !link->resets,
+    "TCP ACK retires outgoing bytes without readmitting duplicate payload");
+  bool retried = link->receive(input(app, "tail", 12, 4));
+  ZuCHECK(retried && link->rxPending() == 2 && link->rxAdmitted() == 8 &&
       !link->reader().length() && !link->rxBytes(),
-    "same sequence range remains admissible after Rx capacity returns; no packet-number gate");
+    "out-of-order input remains admissible after independent ACK processing");
   link->finish(); link = nullptr; ref = {};
   ZuCHECK(a.valid && a.returned == 1, "independent ACK retirement retains no extra owner");
 }
@@ -1062,6 +1119,20 @@ static void ackHoldByteBound()
   ZuCHECK(Zutcp::TCPStateTest::pendingACK(*link) &&
       !Zutcp::TCPStateTest::heldACK(*link),
     "two advertised MSS of new data releases the latest cumulative ACK");
+  link->finish();
+}
+
+static void synAllocationRetry()
+{
+  ZuTestScopeRT(synAllocationRetry);
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
+  ZmRef<Link> link = new Link{&app};
+  Zutcp::TCPStateTest::syn(*link);
+  bool armed = Zutcp::TCPStateTest::refusedSYN(*link);
+  bool retried = armed && Zutcp::TCPStateTest::fireSYN(*link);
+  ZuCHECK(armed && retried,
+    "a first SYN with no control buffer arms PTO and reaches its handshake retry");
   link->finish();
 }
 
@@ -2401,6 +2472,47 @@ static void testMxRxStub(bool grow, bool shared)
     "final receive release must return original or replacement backing once");
 }
 
+static void checkRxLease(unsigned kind)
+{
+  RxAttachAlloc allocator;
+  alignas(64) uint8_t bytes[64];
+  memcpy(bytes + 8, "slice", 5);
+  Zi::IOQueue retained, foreign;
+  ZmRef<ZiIOBuf> packet = new Zi::IOBufStub<ZiIOBuf>{
+    bytes, sizeof(bytes), &allocator, nullptr, sizeof(bytes), false, true};
+  ZmRef<Zutcp::DataRxPQueue::Node> data = new Zutcp::DataRxPQueue::Node{
+    packet, bytes + 8, 5, Zutcp::inlineAllocator(), nullptr, 0};
+  auto &list = kind == 2 ? foreign : retained;
+  list.unshiftNode(packet.ptr());
+  if (kind == 4)
+    retained.pushNode(Zutcp::inlineAllocator()->allocBuf(nullptr, 1));
+  if (kind == 1 || kind == 4)
+    retained.unshiftNode(Zutcp::inlineAllocator()->allocBuf(nullptr, 1));
+  packet = nullptr;
+  auto alias = kind == 3 ? data : ZmRef<Zutcp::DataRxPQueue::Node>{};
+  auto stub = allocator.allocBuf(nullptr);
+  ZuCheckRT(data->attach(stub, &retained) && stub->length == 5 &&
+      !memcmp(stub->data(), "slice", 5), log_("attachment preserves the exact payload"));
+  bool transfer = kind < 2 || kind == 4;
+  ZuCheckRT((stub->data() == bytes + 8) == transfer &&
+      stub->registered() == transfer &&
+      (kind != 2 || (foreign.count_() == 1 && !retained.count_())),
+    log_("only unique backing in the supplied retention list transfers"));
+  data = alias = nullptr;
+  retained.clean(); foreign.clean();
+  ZuCheckRT(allocator.returned == unsigned(!transfer),
+    log_("shared and foreign-list packets return independently of copied output"));
+  stub = nullptr;
+  ZuCheckRT(allocator.returned == 1 && allocator.heapReturned == unsigned(!transfer),
+    log_("physical packet and replacement backing each return exactly once"));
+}
+
+static void testRxLeases()
+{
+  ZuTestScopeRT(testRxLeases);
+  for (unsigned kind = 0; kind < 5; ++kind) checkRxLease(kind);
+}
+
 class MxRxCxn : public ZmNHeap<MxRxCxn>, public ZiConnection {
 friend inline ZuStringT<"Zutcp.Test.MxRx"> ZmNHeapID(MxRxCxn *);
 public:
@@ -2518,7 +2630,7 @@ static void testMxRxRegistered()
   cxn->finish();
 }
 
-static void contiguousHeldBacking(bool refuse)
+static void contiguousHeldBacking()
 {
   ZuTestScope(contiguousHeldBacking);
   ZmRef<App> appRef = new App;
@@ -2529,7 +2641,6 @@ static void contiguousHeldBacking(bool refuse)
   memcpy(second + 8, "def", 3);
   ZmRef<Link> link = new Link{&app};
   link->ready = false;
-  app.allowRx = !refuse;
   auto a = input(app, {});
   a.buf = new Zi::IOBufStub<ZiIOBuf>{
     first, sizeof(first), &allocator, nullptr, 3, false, true};
@@ -2538,10 +2649,8 @@ static void contiguousHeldBacking(bool refuse)
   ZuCHECK(firstAccepted && link->rxBytes() == 3 &&
       link->rxAdmitted() == 3 && link->reader().length() == 3 &&
       !link->rxPending() && link->rxCreditUsed() == 3 && app.demands == 1 &&
-      allocator.returned == unsigned(refuse) &&
-      (refuse ? link->reader().span().data() != first + 8 :
-	link->reader().span().data() == first + 8),
-    "first contiguous input must retain registered storage or its service copy");
+      !allocator.returned && link->reader().span().data() == first + 8,
+    "first contiguous input retains its original registered backing");
   auto b = input(app, {}, 3);
   b.buf = new Zi::IOBufStub<ZiIOBuf>{
     second, sizeof(second), &allocator, nullptr, 3, false, true};
@@ -2551,24 +2660,20 @@ static void contiguousHeldBacking(bool refuse)
       link->rxAdmitted() == 6 && !link->rxRetired() &&
       link->reader().length() == 6 && !link->rxPending() &&
       link->rxCreditUsed() == 6 && app.demands == 2 && !link->processed &&
-      allocator.returned == (refuse ? 2u : 0u) &&
+      !allocator.returned &&
       link->closedSnapshotRx(link->closedKeyRx()).rxNext == 2007,
     "next contiguous input must advance the ACK frontier while Reader holds its prefix");
-  if (refuse) {
-    memset(first, 0x91, sizeof(first));
-    memset(second, 0x92, sizeof(second));
-  }
   uint8_t bytes[6];
   unsigned copied = link->reader().copy(0, {bytes, sizeof(bytes)});
   auto retired = link->reader().advance(copied);
   bool released = link->retireRx(retired);
   ZuCHECK(copied == sizeof(bytes) && !memcmp(bytes, "abcdef", sizeof(bytes)) &&
       retired == 6 && released && link->reader().empty() &&
-      link->rxRetired() == 6 && allocator.returned == 2,
-    "both retained ingress slices or service copies must deliver exact bytes and release once");
+      link->rxRetired() == 6 && !allocator.returned,
+    "consumed ingress backing remains owned by the bounded retention list");
   link->finish(); link = nullptr;
   ZuCHECK(allocator.returned == 2,
-    "connection teardown must not return already retired ingress storage again");
+    "connection teardown returns each retained ingress allocation exactly once");
 }
 
 static void contiguousQueued(bool prefix)
@@ -3492,6 +3597,7 @@ int main(int argc, char **argv)
   ZuTestCall(ackHoldTimer, true);
   ZuTestCall(ackHoldCoalesce);
   ZuTestCall(ackHoldByteBound);
+  ZuTestCall(synAllocationRetry);
   ZuTestCall(handshakeRTT, false, 0);
   ZuTestCall(handshakeRTT, false, 1);
   ZuTestCall(handshakeRTT, false, 2);
@@ -3583,8 +3689,8 @@ int main(int argc, char **argv)
   ZuTestCall(testMxRxDelivery, false);
   ZuTestCall(testMxRxDelivery, true);
   ZuTestCall(testMxRxRegistered);
-  ZuTestCall(contiguousHeldBacking, false);
-  ZuTestCall(contiguousHeldBacking, true);
+  ZuTestCall(testRxLeases);
+  ZuTestCall(contiguousHeldBacking);
   ZuTestCall(contiguousQueued, false);
   ZuTestCall(contiguousQueued, true);
   ZuTestCall(mappedTxQueue);

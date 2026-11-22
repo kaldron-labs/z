@@ -325,6 +325,12 @@ private:
       ++m_txDiag.txDropped;
       return false;
     }
+    auto lease = static_cast<PacketBuf *>(buf.ptr())->retained;
+    if (lease && **lease && !m_instance->txReady(buf->data_())) {
+      ++m_txDiag.txBackPressure;
+      ++m_txDiag.txDropped;
+      return false;
+    }
     unsigned bytes = buf->length;
     header.srcPort = bindAddr.port();
     header.dstPort = addr.port();
@@ -334,7 +340,8 @@ private:
     buf->length = wire;
     // Native endpoint output is built with PacketBuf metadata, including the
     // retained source node's borrowed wire view.
-    if (!m_instance->sendPacket(buf, static_cast<PacketBuf *>(buf.ptr())->retained)) {
+    Zutcp::TCPLayout layout{14, uint16_t(ipHead(path.local.type()))};
+    if (!m_instance->sendPacket(buf, static_cast<PacketBuf *>(buf.ptr())->retained, &layout)) {
       buf->skip = head;
       buf->length = bytes;
       ++m_txDiag.txBackPressure;

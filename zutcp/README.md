@@ -207,10 +207,51 @@ and the originating pool receives the slot back when the buffer is released.
 Use App allocators for parser copies and other storage owned solely by the
 application. Backing held across stop retains its address and contents.
 
-Zutcp constructs TCP wire headers over registered backing. UDP copies each
-outgoing datagram into a native wire buffer so Zi completion callbacks can
-still use the original application buffer. Hardware zero-copy depends on the
-kernel and NIC driver.
+Zutcp constructs TCP wire headers over the original registered source backing.
+Native TCP requires originals within the published payload budget; oversized
+input and a reduced budget fail rather than transparently split or copy the
+source. Positive peer windows retain the whole-original send/recovery policy.
+Hardware zero-copy depends on the kernel and NIC driver.
+
+`Instance::tcpChecksum(...)` owns software TCP checksums and offload seed
+preparation. Start caches the device's active `tcpChksumOffload()` result after
+activation, refreshing it on restart. Zxdp enables device offload and installs
+native submission metadata; all output uses plain `send()`. Software Rx checksum
+validation remains disabled; its optional check is guarded by the cached state.
+
+Transmit completion has four distinct boundaries:
+
+| Event | Meaning |
+| --- | --- |
+| Zi completion | The native connection admitted the range to its queue. The callback owns offset advancement and selection of the next buffer. This is not peer delivery. |
+| Source dequeue | Packetization removed the original from the producer queue and returned that queue's credit. Recovery can still retain its payload. |
+| Device retirement | AF_XDP CQ or the PMD relinquished its independent access to the submitted slot. This does not imply peer acknowledgment. |
+| Cumulative peer ACK | TCP retires its transport retention. SACK evidence alone does not release the original backing. |
+
+Physical slot reuse waits for both caller/allocation and device leases to end.
+An accepted native TCP send can clear the producer descriptor's backing and
+length before its Zi callback. Read the signed `ZiTxContext::length` for local
+progress; do not expect the callback's descriptor to retain its old byte view.
+Admission does not authorize modifying retained bytes through another alias.
+Zutcp checks the existing device submission state on Tx before rewriting retained
+TCP headers, then encodes and submits synchronously on that same owner.
+
+Temporary TCP output refusal waits for counted device completion. One coalesced
+Tx continuation per connection retries recovery before ordinary output when
+capacity returns, including when the application is idle. Tx reset and teardown
+cancel this work. Internal control buffers held by device leases use the same
+continuation; application source-pool exhaustion retains its connection-failure
+policy.
+
+UDP frames directly in registered producer headroom and preserves the original
+producer descriptor and payload through its completion callback. Its caller lease
+and the device lease remain independent; callback completion alone does not
+permit another alias to mutate an outstanding frame. Multicast loopback needs a
+separate full-frame copy for its receive owner. Receive multicast fanout also
+copies the full received frame for each additional admitted destination with
+available backing. These copies preserve independent mutable receive owners.
+Unregistered or incorrectly sized native output is rejected; there is no hidden
+producer-to-wire payload-copy fallback.
 
 One physical ingress reserve serves the instance. Tunable instance and
 per-connection retention limits preserve receive-service headroom; separate

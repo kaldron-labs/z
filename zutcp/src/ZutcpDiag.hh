@@ -99,7 +99,6 @@ struct ZutcpAPI Diag {
     (void)state;
 #endif
   }
-  void add(const BufDiag &) { }
 
   void add(const PathDiag &diag) {
     pmtudProbes += diag.probesSent;

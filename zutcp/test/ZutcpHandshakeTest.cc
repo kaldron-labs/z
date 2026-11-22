@@ -719,6 +719,11 @@ static void testFinRequestReplacement()
   for (unsigned retained = 0; retained < 2; ++retained) {
     ZmRef<GateApp> appRef = new GateApp;
     auto &app = *appRef;
+    ZmRef<ZutcpTest::Pool> backing = new ZutcpTest::Pool{
+      Zi::IOBufType::TxTCP, 1, 512, 128, 0, ZiIOBuf_Align, true};
+    Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP, ZiIOBuf, 512> allocator{
+      app.mx(), backing};
+    app.testTx = &allocator; app.testPool = backing;
     ZmRef<AbortCli> client = new AbortCli{&app};
     client->prepare();
     app.drain();
@@ -733,7 +738,7 @@ static void testFinRequestReplacement()
     };
     bool accepted;
     if (retained) {
-      auto buf = app.packets.allocBuf();
+      auto buf = allocator.allocBuf(client.ptr(), 0, 4);
       buf->length = 4;
       accepted = client->send(buf, true);
     } else accepted = client->send("data", true);
@@ -748,6 +753,7 @@ static void testFinRequestReplacement()
     app.drain();
     client = nullptr;
     app.drain();
+    app.testTx = nullptr; app.testPool = nullptr;
   }
 }
 

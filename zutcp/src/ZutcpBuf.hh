@@ -67,8 +67,6 @@ using TxBufAlloc = Zutcp_::BufAlloc<Size, MaxSize, HeapID>;
 ZutcpExtern Zi::IOBufAllocator *inlineAllocator();
 
 
-struct BufDiag { };
-
 // Base of the existing queued-range node. Recovery references this storage,
 // independently of its current queued view or submitted Zi metadata. Before
 // submission pending owns backing; raw handoff replaces it with the pool lease.

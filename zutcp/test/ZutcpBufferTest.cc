@@ -231,9 +231,6 @@ void testDiagAggregation()
   diag.setRecovery(12000, 500);
   diag.setHandshakeState("established");
 
-  Zutcp::BufDiag buf;
-  diag.add(buf);
-
   Zutcp::PathDiag path;
   path.probesSent = 2;
   path.probesAckd = 1;

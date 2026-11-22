@@ -72,6 +72,15 @@ Keep the accepted whole-original send/recovery policy, including positive peer
 windows smaller than an original. RST receive policy is window-qualified, with
 silent out-of-window rejection and no reflection of accepted peer resets.
 
+Counted device completion resumes refused connection work through one coalesced
+Tx wait membership per connection. Wait membership owns no reference and is
+bounded by connection admission. Retire at most 64 waiters per owner turn, with
+recovery attempted before fresh output. Repeated refusal can re-enroll but does
+not create timer polling or retries without completion evidence. Cancel wait
+membership during Tx reset and teardown before releasing the owner. Internal
+control backing held by device leases uses this same continuation; exhausted
+application source pools retain the connection-failure policy.
+
 Raw send returns accepted/refused without a commit callback. Tx publishes the
 packet's ACK monotonically through the atomic `sentAck` only after successful
 return, then finishes recovery bookkeeping before queued peer-ACK work runs.
@@ -197,9 +206,13 @@ cap or final-release accounting service. Final ingress return still wakes receiv
 service so an empty FILL ring can be replenished.
 
 Pool clients use only allocation/return and geometry. Keep slot/address
-calculations and allocation/completion bookkeeping internal to Zxdp. Retained
-transmit backing needs no writable query; preserve kernel/caller leases through
-completion and teardown.
+calculations and allocation/completion bookkeeping internal to Zxdp. Before
+rewriting retained transmit headers, check Zxdp's existing submission state through
+`txReady()` on the Tx owner, then encode and synchronously submit on that same
+owner. The gated AF_XDP recovery fixture demonstrates that raw duplicate-send
+refusal alone occurs too late to protect outstanding header bytes. This query
+takes no lease and adds no per-slot state; preserve independent kernel/caller
+leases through completion and teardown.
 
 The re-audit found `migCloseOnFail` configuration residue and unused
 `asyncThread` settings, which are now removed. Server establishment now waits for retained response ACK evidence, completed Tx
@@ -266,9 +279,16 @@ detachment and mx owner lifecycle; see the current checkpoint in
 `ZutcpIP` owns direct Ethernet/IP framing. Its writer receives payload already
 at the family-specific header offset and writes headers/padding only. It adds no
 UDP header or transport shim. `writeTCP` builds the TCP base header over payload
-already at `tcpHead(type)`, with protocol 6, source/destination ports and the TCP
-pseudo-header/header/payload checksum. `readTCP` validates that checksum before
-publishing borrowed option/payload spans. Sequence, ACK, window and state semantics
+already at `tcpHead(type)`, with protocol 6 and source/destination ports.
+`Instance::tcpChecksum(...)` owns software TCP checksum calculation and hardware
+pseudo-header seed preparation; `writeTCP` initially leaves the field zero.
+Instance reads `Zxdp::Instance::tcpChksumOffload()` after device activation during
+start, caches the active state for that run, and refreshes it on restart. Every
+TCP submission uses plain device `send()`. Zxdp discovers/enables offload and
+supplies native submission flags/lengths; it performs no software checksum.
+`readTCP` parses borrowed option/payload spans without software checksum
+validation. The optional validation in Instance remains under `#if 0` and guards
+its software check with `if (!m_tcpChksumOffload)`. Sequence, ACK, window and state semantics
 belong to the connection; this codec alone does not establish TCP interoperability.
 The live endpoint and final-packet recovery lease integration are implemented;
 the retained protocol regression suite is the Phase 1 acceptance gate. Keep payload ownership and

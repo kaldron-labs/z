@@ -1394,6 +1394,7 @@ protected:
     ZiAssert(txInvoked(), "Zutcp", (),
       "TCP Tx runtime reset outside Tx thread", return);
     if (gen != dataGen()) return;
+    app()->cancelTxWait(this);
     ++m_txRuntimeGen;
     m_txPublishing = false;
     cancelPersist();
@@ -1949,6 +1950,7 @@ protected:
   void delTimers() {
     ZiAssert(txInvoked(), "Zutcp", (),
       "TCP timer teardown outside Tx thread", return);
+    app()->cancelTxWait(this);
     m_connectTimerOut = ZuTime{};
     m_userTimerOut = ZuTime{};
     m_userTimerRes = ZuTime{};
@@ -3331,8 +3333,7 @@ public:
   }
   bool recordTxUnackd(uint64_t offset, uint64_t length, bool fin) {
     if (!length && !fin) return false;
-    return m_txUnackd.add(new TxUnackdQueue::Node{
-      TxUnackdRange{offset, length, fin}}) != ZmPQResult::Invalid;
+    return m_txUnackd.add(TxUnackdRange{offset, length, fin}) != ZmPQResult::Invalid;
   }
   bool discardTxUnackd(uint64_t offset, uint64_t length, bool fin = false) {
     uint64_t n = length + (fin ? 1 : 0);
@@ -3470,16 +3471,15 @@ public:
   void stop(uint64_t appError) { reset(appError); }
 
   bool receiveDataFrame(
-    const ByteData &frame, ZmRef<ZiIOBuf> packet, BufDiag *diag = nullptr) {
-    return receiveDataFrame_(frame, diag, ZuMv(packet));
+    const ByteData &frame, ZmRef<ZiIOBuf> packet) {
+    return receiveDataFrame_(frame, ZuMv(packet));
   }
   int processFrame(
-    const ByteData &frame, ZmRef<ZiIOBuf> packet, BufDiag *diag = nullptr,
-    bool *refused = nullptr) {
+    const ByteData &frame, ZmRef<ZiIOBuf> packet) {
     uint64_t delivered = m_rxState.delivered();
     bool finSeen = m_rxState.finSeen();
     unsigned pending = m_rxQueue.count_();
-    if (!receiveDataFrame_(frame, diag, ZuMv(packet), refused)) return -1;
+    if (!receiveDataFrame_(frame, ZuMv(packet))) return -1;
     // Publish accepted bytes before application delivery can queue a response.
     if ((m_rxState.delivered() != delivered || m_rxState.finSeen() != finSeen))
       publishTCPEcho();
@@ -3611,25 +3611,18 @@ public:
 	break;
       }
       if (context.completed() || !context.buf || m_rx.empty()) break;
-      auto span = m_rx.span();
-      unsigned length = span.length();
+      unsigned length;
       if (!context.buf->data_()) {
-	ZmRef<ZiIOBuf> node;
-	auto n = m_rx.extract(
-	  [](auto part) -> int64_t { return part.length(); },
-	  []() -> ZmRef<ZiRxQueue::Node> { return {}; }, node);
-	ZmAssert_(n == length && node);
+	auto node = m_rx.shift();
+	length = node->length;
 	auto data = static_cast<DataRx *>(node.ptr());
-	// The connection's retention list owns the ingress packet until a
-	// uniquely delivered slice can transfer its backing to the typed stub.
-	if (auto packet = data->slice.packet.ptr(); packet && packet->registered() &&
-	    !packet->builtin() && data->refCount() == 1 && packet->refCount() == 2)
-	  m_rxRetained.delNode(packet);
-	if (!data->attach(context.buf)) {
+	if (!data->attach(context.buf, &m_rxRetained)) {
 	  result = -1;
 	  break;
 	}
       } else {
+	auto span = m_rx.span();
+	length = span.length();
 	auto buf = context.buf.ptr();
 	if (length > UINT32_MAX - buf->length) { result = -1; break; }
 	auto ptr = buf->ensure(buf->length + length);
@@ -3763,8 +3756,7 @@ private:
   void applyStopRx(uint64_t appError) { m_rxAppError = appError; }
 
   bool receiveDataFrame_(
-    const ByteData &frame, BufDiag *diag, ZmRef<ZiIOBuf> packet,
-    bool *refused = nullptr) {
+    const ByteData &frame, ZmRef<ZiIOBuf> packet) {
     ZiAssert(rxInvoked(), "Zutcp", (),
       "TCP connection receive outside Rx thread", return false);
     if (frame.length != frame.payload.length() ||
@@ -3777,23 +3769,16 @@ private:
       return false;
     if (frame.fin && rxPendingBeyond(end)) return false;
 
-    auto accept = [this, &frame, diag, &packet, refused, end](
+    auto accept = [this, &frame, &packet, end](
       const auto &spans, uint64_t newBytes) {
       if (end > m_rxDataCredit.limit()) return false;
-      bool heap = false;
       if (spans && !packet) return false;
-      if (spans && !app()->retainRx(packet, m_rxRetained)) {
-	if (spans[0].first != m_rxDelivered) {
-	  if (refused) *refused = true;
-	  return false;
-	}
-	heap = true;
-      }
+      if (spans) app()->retainRx(packet, m_rxRetained);
       if (!m_rxDataCredit.consumeTo(end)) return false;
 
       bool complete = m_rxState.complete();
       if (spans)
-	if (!queueRxSlices(frame, spans, ZuMv(packet), diag, heap)) return false;
+	if (!queueRxSlices(frame, spans, ZuMv(packet))) return false;
 
       if (!m_rxState.receive(frame.offset, frame.length, frame.fin)) return false;
       uint64_t next = m_rxState.delivered();
@@ -3824,19 +3809,22 @@ private:
       RxSpan span{frame.offset, end};
       return accept(ZuSpan<const RxSpan>{&span, 1}, frame.length);
     }
+    if (!frame.length || (!frame.fin && end <= m_rxDelivered))
+      return accept(ZuSpan<const RxSpan>{}, 0);
     auto spans = ZmScratch(
       RxSpan, m_rxQueue.count_() + 1, RxSpans::VHeap);
-    if (frame.length && !newRxSpans(frame, spans)) return false;
-    return accept(spans, rxSpanBytes(spans));
+    auto bytes = newRxSpans(frame, spans);
+    if (bytes < 0) return false;
+    return accept(spans, uint64_t(bytes));
   }
 
   template <typename Spans>
-  bool newRxSpans(const ByteData &frame, Spans &spans) const {
+  int64_t newRxSpans(const ByteData &frame, Spans &spans) const {
     ZiAssert(rxInvoked(), "Zutcp", (),
-      "TCP connection Rx span check outside Rx thread", return false);
+      "TCP connection Rx span check outside Rx thread", return -1);
     uint64_t end = frame.offset + frame.length;
-    if (end < frame.offset) return false;
-    if (end <= m_rxDelivered) return true;
+    if (end < frame.offset) return -1;
+    if (end <= m_rxDelivered) return 0;
 
     uint64_t first = frame.offset < m_rxDelivered ? m_rxDelivered : frame.offset;
     return rxNovelSpans(m_rxQueue, first, end, spans);
@@ -3845,7 +3833,7 @@ private:
   template <typename Spans>
   bool queueRxSlices(
     const ByteData &frame, const Spans &spans,
-    ZmRef<ZiIOBuf> packet, BufDiag *diag, bool heap = false) {
+    ZmRef<ZiIOBuf> packet) {
     ZiAssert(rxInvoked(), "Zutcp", (),
       "TCP connection Rx queue outside Rx thread", return false);
     if (!packet) return false;
@@ -3859,7 +3847,6 @@ private:
       ZmRef<RxMsg> node = new RxMsg{
 	packet, data, unsigned(length64), app()->dataRxAllocator(),
 	this, spans[i].first};
-      if (heap && !node->ensure(unsigned(length64) + 1)) return false;
       Rx::rcvd(ZuMv(node));
     }
     return true;
@@ -4104,15 +4091,13 @@ public:
       RxSpan duplicate = duplicateTCP(tcp, frame.length);
       noteDuplicateTCP(duplicate);
       if (clipTCPData(frame, tcp.seq)) {
-	bool refused = false;
 	// Transfer the last ingress reference before synchronous application
 	// delivery so a unique registered packet can attach without copying.
 	m_rxAckHoldEligible = holdCandidate;
-	int result = processFrame(frame, ZuMv(d.buf), nullptr, &refused);
+	int result = processFrame(frame, ZuMv(d.buf));
 	m_rxAckHoldEligible = false;
 	if (gen != m_rxDataGen || disconnecting() || m_rxAborting) return true;
 	m_rxTFOAllow = false;
-	if (refused) { requestTCPAck(); return true; }
 	if (result < 0) {
 	  noteInvalidData(TransportError::FinalSize, false, true);
 	  return false;
@@ -4275,6 +4260,14 @@ protected:
     }
     updateUserTimeout_();
   }
+  void waitForTx(bool syn = false) {
+    m_txWaitGen = m_txRuntimeGen;
+    app()->waitTx(this);
+    if (syn) {
+      m_synDeadline = transportNow() + app()->rtoParams().initial;
+      schedulePTO_();
+    }
+  }
   template <typename Alloc, typename Send>
   bool sendTCP(const SentFrameRef &ref, bool syn, uint8_t control,
       Alloc alloc, Send send, bool persist = false) {
@@ -4343,7 +4336,10 @@ protected:
       source->fin |= ref.fin;
     } else {
       buf = alloc();
-      if (!buf || head > buf->size) return false;
+      // Internal control backing can still be held by a counted device lease.
+      // Application source exhaustion is handled at admission, before this path.
+      if (!buf) { waitForTx(syn); return false; }
+      if (head > buf->size) return false;
       buf->skip = head;
     }
     TxPacketView view{source ? buf.ptr() : nullptr, shift, head};
@@ -4399,14 +4395,11 @@ protected:
     }
     if (runtime != m_txRuntimeGen) return sent;
     if (ZuUnlikely(!sent)) {
+      waitForTx(syn);
       if (original) m_txPublishing = false;
       else if (data) {
 	m_txPkts.discard(id);
 	if (ZuUnlikely(app()->congestionControl())) m_congestion.release(charged);
-      }
-      if (syn) {
-	m_synDeadline = transportNow() + app()->rtoParams().initial;
-	schedulePTO_();
       }
       return false;
     }
@@ -4465,6 +4458,18 @@ protected:
     updateCongestionDiag();
     return true;
   }
+public:
+  void resumeTx() override {
+    ZiAssert(txInvoked(), "Zutcp", (), "TCP retry outside Tx thread", return);
+    if (m_txWaitGen != m_txRuntimeGen || m_txDataGen != dataGen() ||
+	disconnecting() || linkClosedTx()) return;
+    if ((congestionAllowance() || fastRecoveryReady()) && !m_peerWindowZero &&
+	m_txPkts.retransmitPending())
+      impl()->retransmit(true, 2);
+    impl()->flushTx();
+    finishMxTx();
+  }
+protected:
   template <typename Send>
   bool flushTCP(Send send) {
     bool sent = false;
@@ -4756,7 +4761,7 @@ protected:
   ZuTime		m_pmtudTimerOut;
   LinkTxDiag		m_txDiag;
   NewReno		m_congestion;
-  uint64_t		m_txRuntimeGen = 0;
+  uint64_t		m_txRuntimeGen = 0, m_txWaitGen = 0;
   uint64_t m_txID = 0;
   PktTxSpace m_txPkts;
   Path m_path;

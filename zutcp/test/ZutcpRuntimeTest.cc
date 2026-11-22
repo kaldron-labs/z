@@ -5,15 +5,19 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <signal.h>
+#include <string.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <iostream>
 
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmBlock.hh>
+#include <zlib/ZtcHeap.hh>
 
 #include <zlib/Zutcp.hh>
+#include <zlib/ZutcpUDP.hh>
 
 #include "ZutcpTestAlloc.hh"
 #include "ZutcpTestInstance.hh"
@@ -27,6 +31,502 @@ struct Endpoint : Zutcp_::Endpoint_<Endpoint> {
   void endpointFailed(bool) { }
   void endpointDatagram(Zutcp::Datagram) { }
 };
+
+class BurstXdp : public ZmNHeap<BurstXdp>, public ZutcpTest::Xdp {
+friend inline ZuStringT<"Zutcp.Test.BurstXdp"> ZmNHeapID(BurstXdp *);
+public:
+  using ZmNHeap<BurstXdp>::operator new;
+  using ZmNHeap<BurstXdp>::operator delete;
+  explicit BurstXdp(ZmFn<void(unsigned)> done) : m_done{ZuMv(done)} { }
+  void rx() override {
+    ++m_calls;
+    if (m_sent) return;
+    m_sent = true;
+    uint8_t packet[64]{};
+    for (unsigned i = 0; i < 64; ++i) {
+      packet[0] = uint8_t(i);
+      receive({packet, sizeof(packet)});
+    }
+    mx()->rxRun([this] { m_done(m_calls); });
+  }
+private:
+  ZmFn<void(unsigned)>	m_done;
+  unsigned		m_calls = 0;
+  bool			m_sent = false;
+};
+
+static void checkBurstQuantum(unsigned quantum)
+{
+  ZiMultiplex mx{ZiMxParams{}.rxQuantum(quantum).scheduler(
+    [](auto &s) { s.nThreads(3); }).rxThread(1).txThread(2)};
+  ZmSemaphore done;
+  unsigned calls = 0, packets = 0;
+  bool ordered = true;
+  ZmRef<Zxdp::Instance> device = new BurstXdp{[&done, &calls](unsigned n) {
+    calls = n; done.post();
+  }};
+  auto opened = device->init(&mx, {});
+  Zutcp::InstanceParams params;
+  params.packet = [&packets, &ordered](ZmRef<ZiIOBuf> packet) {
+    ordered &= packet->length == 64 && packet->data()[0] == packets;
+    ++packets;
+  };
+  ZmRef<Zutcp::Instance> stack = new Zutcp::Instance;
+  auto configured = stack->init(&mx, ZuMv(device), ZuMv(params));
+  bool initialized = opened.is<void>() && configured.is<void>();
+  ZuCheckRT(initialized, log_("configure a burst device through the production plugin"));
+  if (!initialized) return;
+  mx.plugin(ZuMv(stack));
+  bool started = mx.start();
+  if (!quantum) {
+    ZuCheckRT(!started, log_("zero receive quantum is rejected by Zi before device service"));
+    mx.stop();
+    return;
+  }
+  bool finished = started && !done.timedwait(Zm::now(5));
+  mx.stop();
+  std::cout << "# rx burst quantum=" << quantum << " packets=" << packets
+    << " polls=" << calls << '\n';
+  ZuCheckRT(finished && ordered && packets == 64 &&
+      calls == 1 + unsigned(quantum <= 64),
+    log_("a full burst delivers every frame with at most one quantum continuation"));
+}
+
+static void testBurstQuantum()
+{
+  ZuTestScopeRT(testBurstQuantum);
+  constexpr unsigned quanta[] = {0, 1, 7, 32, 33, 64, 65};
+  for (auto quantum : quanta) checkBurstQuantum(quantum);
+}
+
+static void testListenPublication()
+{
+  ZuTestScope(testListenPublication);
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
+    .rxThread(1).txThread(2)};
+  ZmRef<Zutcp::Instance> stack = new Zutcp::Instance;
+  auto device = ZutcpTest::fixtureXdp(&mx);
+  bool configured = stack->init(&mx, ZuMv(device), {}).is<void>();
+  ZuCheck(configured); if (!configured) return;
+  mx.plugin(ZmRef{stack});
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
+  ZmSemaphore held, release;
+  mx.txRun([&held, &release] { held.post(); release.wait(); });
+  bool blocked = held.timedwait(Zm::now(5)) == 0;
+  unsigned successes = 0, failures = 0;
+  bool published = false, correctInfo = true;
+  if (blocked) {
+    ZmBlock<>{}([stack, &mx, &successes, &failures, &published, &correctInfo](auto wake) {
+      mx.rxRun([stack, &successes, &failures, &published, &correctInfo,
+	wake = ZuMv(wake)]() mutable {
+	ZiIP local{"198.18.92.2"};
+	auto listen = [stack, local, &successes, &failures, &correctInfo] {
+	  stack->listen(ZiListenFn{[local, &successes, &correctInfo](const ZiListenInfo &info) {
+	    ++successes;
+	    correctInfo &= info.ip == local && info.port == 18181;
+	  }}, ZiFailFn{[&failures](bool) { ++failures; }}, {}, local, 18181, 1, nullptr, {});
+	};
+	// Hold endpoint Tx setup: publication, conflicting bind, cancellation and
+	// exact-port rebind must all finish on Rx without a late listen callback.
+	listen();
+	published = successes == 1 && !failures;
+	listen();
+	published &= successes == 1 && failures == 1;
+	stack->stopListening(local, 18181);
+	listen();
+	published &= successes == 2 && failures == 1;
+	stack->stopListening(local, 18181);
+	wake();
+      });
+    });
+  }
+  release.post();
+  bool stopped = mx.stop();
+  ZuCheck(blocked && published && correctInfo && stopped);
+  ZuCheck(successes == 2 && failures == 1);
+}
+
+struct RetryDevice : ZmNHeap<RetryDevice>, ZutcpTest::Xdp {
+friend inline ZuStringT<"Zutcp.Test.RetryDevice"> ZmNHeapID(RetryDevice *);
+  using ZmNHeap<RetryDevice>::operator new;
+  using ZmNHeap<RetryDevice>::operator delete;
+  unsigned pending = 0, completed = 0;
+  bool send(uint8_t *, unsigned) override { ++pending; return true; }
+  unsigned pollTx() override {
+    auto n = completed;
+    completed = 0;
+    pending -= n;
+    return n;
+  }
+};
+struct RetryCxn : Zutcp::Cxn {
+  ZmFn<> retry;
+  unsigned calls = 0;
+  void abortRx() override { }
+  Zutcp::ClosedTupleKey closedKeyRx() const override { return {}; }
+  bool established() const override { return true; }
+  void resumeTx() override { ++calls; retry(); }
+};
+
+static void testCompletionRetries()
+{
+  ZuTestScopeRT(testCompletionRetries);
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
+    .rxThread(1).txThread(2)};
+  ZmRef<RetryDevice> device = new RetryDevice;
+  ZmRef<Zxdp::Instance> backend = device;
+  ZmRef<Zutcp::Instance> stack = new Zutcp::Instance;
+  bool configured = device->init(&mx, {}).is<void>() &&
+    stack->init(&mx, ZuMv(backend), {}).is<void>();
+  ZuCheckRT(configured, log_("configure completion retry service"));
+  if (!configured) return;
+  mx.plugin(ZmRef{stack});
+  if (!mx.start()) { ZuCheck(false); return; }
+  enum { Count = 130 }; // more than two bounded 64-connection owner turns
+  RetryCxn cxns[Count];
+  ZmSemaphore turn, last;
+  unsigned markerCalls[2] = {};
+  uint64_t markerNS[2] = {};
+  bool accepted = true;
+  mx.txRun([stack, &mx, &cxns, &accepted, &turn, &last, &markerCalls, &markerNS] {
+    for (unsigned i = 0; i < 2; ++i) {
+      auto packet = stack->allocPacket(&mx, ZiIPType::V4);
+      if (!packet) { accepted = false; break; }
+      memset(packet->data_(), 0, 64);
+      packet->skip = 0; packet->length = 64;
+      accepted &= stack->sendPacket(packet);
+    }
+    for (unsigned i = 0; i < Count; ++i) {
+      auto cxn = &cxns[i];
+
+      cxn->retry = [stack, cxn, i, &mx, &cxns, &last, &markerCalls, &markerNS] {
+	if (!i && cxn->calls <= 2) {
+	  // Ordinary owner work queued inside the first retry must run before
+	  // the next retry batch, even when every connection refuses again.
+	  unsigned pass = cxn->calls - 1;
+	  auto start = Zm::now();
+	  mx.txRun([pass, start, &cxns, &markerCalls, &markerNS] {
+	    unsigned calls = 0;
+	    for (auto &cxn : cxns) calls += cxn.calls;
+	    markerCalls[pass] = calls - pass * Count;
+	    markerNS[pass] = uint64_t((Zm::now() - start).nanosecs());
+	  });
+	}
+	// Repeated refusal coalesces; a completion permits only a finite pass.
+	stack->waitTx(cxn);
+	stack->waitTx(cxn);
+	if (i + 1 == Count) last.post();
+      };
+      stack->waitTx(cxn);
+      stack->waitTx(cxn);
+    }
+    turn.post();
+  });
+  turn.wait();
+  bool first = false, second = false;
+  mx.txRun([device] { device->completed = 1; });
+  bool reached = !last.timedwait(Zm::now(2));
+  mx.txRun([stack, device, &cxns, &first, &turn] {
+    first = device->pending == 1 && stack->txAdmission().outstanding == 1;
+    for (auto &cxn : cxns) first &= cxn.calls == 1;
+    turn.post();
+  });
+  turn.wait();
+  mx.txRun([device] { device->completed = 1; });
+  reached &= !last.timedwait(Zm::now(2));
+  mx.txRun([stack, device, &cxns, &second, &turn] {
+    second = !device->pending && !stack->txAdmission().outstanding;
+    for (auto &cxn : cxns) {
+      second &= cxn.calls == 2 && !cxn.txWaitPrev;
+      stack->cancelTxWait(&cxn);
+    }
+    turn.post();
+  });
+  turn.wait();
+  bool stopped = mx.stop();
+  std::cout << "# retry owner marker calls=" << markerCalls[0] << ',' << markerCalls[1]
+    << " delay_ns=" << markerNS[0] << ',' << markerNS[1] << '\n';
+  ZuCheckRT(accepted && reached && first && second && stopped,
+    log_("130 coalesced waiters get one pass per actual completion, drain across "
+      "bounded owner turns, and stop with no queued retry or lease"));
+  ZuCheckRT(markerCalls[0] == 64 && markerCalls[1] == 64,
+    log_("ordinary owner work runs between completion retry batches under repeated refusal"));
+}
+
+static uint64_t heapAllocs(ZuCSpan id)
+{
+  uint64_t total = 0;
+  Ztc::HeapMgr::all([id, &total](Ztc::Heap *heap) {
+    if (heap->telKey().p<0>() != id) return;
+    Ztc::HeapTelemetry data;
+    heap->telemetry(data);
+    total += data.cacheAllocs + data.heapAllocs;
+  });
+  return total;
+}
+
+class MulticastCxn : public ZmNHeap<MulticastCxn>, public ZiConnection {
+friend inline ZuStringT<"Zutcp.Test.Multicast"> ZmNHeapID(MulticastCxn *);
+public:
+  using ZmNHeap<MulticastCxn>::operator new;
+  using ZmNHeap<MulticastCxn>::operator delete;
+  MulticastCxn(ZiMultiplex *mx, const ZiCxnInfo &info) : ZiConnection{mx, info} { }
+  void connected(ZiRxContext &) override { }
+  void disconnected(bool) override { }
+};
+
+bool ZutcpTest::Instance::multicast(
+  Instance &stack, unsigned mode, bool v6, unsigned &raw)
+{
+  auto mx = stack.mx();
+  auto allocator = mx->findAllocator<Zi::IOBufPoolAllocator<Zi::IOBufType::Rx>>();
+  if (!allocator) return false;
+  auto pool = static_cast<Pool *>(allocator->pool.ptr());
+  ZiIP group{v6 ? "ff02::1234" : "239.18.0.1"};
+  ZiIP peer{v6 ? "2001:db8::1" : "198.18.0.1"};
+  ZiCxnInfo info{.type = ZiCxnType::UDP, .socket = Zi::nullSocket(),
+    .local = {group, 18191}, .rxAllocator = allocator};
+  info.options.udp(true).multicast(true);
+  if (v6) info.options.mreq(ZiMReq{group, 1U});
+  else info.options.mreq(ZiMReq{group, ZiIP{in_addr{}}});
+  ZmRef<UdpCxn> endpoints[2];
+  ZmRef<MulticastCxn> connections[2];
+  unsigned count = mode == 0 ? 0 : mode == 1 ? 1 : 2;
+  for (unsigned i = 0; i < count; ++i) {
+    connections[i] = new MulticastCxn{mx, info};
+    connections[i]->rxUp() = 1;
+    endpoints[i] = new UdpCxn{&stack, info, {}};
+    endpoints[i]->mxCxn = connections[i].ptr();
+    stack.m_udpBindings.addNode(endpoints[i].ptr());
+  }
+  MulticastCxn *first = nullptr, *last = nullptr;
+  if (count) {
+    auto i = stack.m_udpBindings.citer(((unsigned(group.type()) << 16) | 18191U));
+    while (auto node = i()) {
+      auto cxn = static_cast<MulticastCxn *>(static_cast<UdpCxn *>(node)->mxCxn);
+      if (!first) first = cxn;
+      last = cxn;
+    }
+  }
+  ZmRef<ZiIOBuf> held[2];
+  unsigned calls = 0, copies = 0, copyBytes = 0, wireLength = 0;
+  uint8_t *origin = nullptr;
+  uint8_t expectedFrame[14 + 40 + 8 + 4];
+  bool exact = true;
+  auto inspect = [&exact, &copies, &copyBytes, &wireLength, &origin, &expectedFrame](
+      ZiRxContext &io) {
+    exact &= io.buf->length == 4 && !memcmp(io.buf->data(), "data", 4) &&
+      !memcmp(io.buf->data_(), expectedFrame, wireLength);
+    if (io.buf->data_() != origin) { ++copies; copyBytes += wireLength; }
+  };
+  auto arm = [&allocator, &held, &calls, &inspect](MulticastCxn *cxn, unsigned slot) {
+    cxn->rxContext().init(ZiRxFn{[&held, &calls, &inspect, slot](ZiRxContext &io) {
+      inspect(io);
+      held[slot] = io.buf;
+      io.buf->data()[0] = 'X';
+      ++calls;
+      io.complete();
+      return true;
+    }}, allocator->allocBuf(cxn));
+  };
+  if (count) arm(first, 0);
+  if (count == 2 && mode != 6) arm(last, 1);
+  if (mode == 3) first->rxContext().complete();
+  if (mode == 4 || mode == 6) {
+    first->rxContext().init(ZiRxFn{
+      [&held, &calls, &inspect, &arm, last, mode](ZiRxContext &io) {
+	inspect(io);
+	held[0] = io.buf;
+	io.buf->data()[0] = 'X';
+	++calls;
+	if (mode == 4) last->rxUp() = 0;
+	else arm(last, 1);
+	io.complete();
+	return true;
+      }}, allocator->allocBuf(first));
+  }
+  auto frame = pool->alloc();
+  auto head = Zutcp::udpHead(group.type());
+  memcpy(frame + head, "data", 4);
+  Zutcp::IPPath path{.local = peer, .remote = group, .mtu = 1500};
+  unsigned length = Zutcp::writeUDP(frame, pool->size, path, 18192, 18191, 4, 0, 64);
+  origin = frame;
+  wireLength = length;
+  memcpy(expectedFrame, frame, length);
+  unsigned allocations = pool->allocCalls, returned = pool->returns;
+  auto snapshots = heapAllocs("Zutcp.UDP.RxMatches");
+  if (mode == 5) pool->available = false;
+  stack.received(frame, length);
+  pool->available = true;
+  snapshots = heapAllocs("Zutcp.UDP.RxMatches") - snapshots;
+  unsigned expected = count;
+  if (mode == 3 || mode == 4 || mode == 5) expected = 1;
+  bool copied = count == 2 && mode != 3 && mode != 5;
+  std::cout << "# multicast family=" << (v6 ? 6 : 4) << " mode=" << mode
+    << " deliveries=" << calls << " copies=" << copies
+    << " copyBytes=" << copyBytes << " snapshots=" << snapshots << '\n';
+  bool passed = (count > 1 || !snapshots) && length && calls == expected && exact &&
+    copies == unsigned(copied) && copyBytes == (copied ? length : 0) &&
+    raw == unsigned(mode == 0 || mode == 4) &&
+    pool->allocCalls - allocations == unsigned(count == 2 && mode != 3) &&
+    (!copied || (held[0] && held[0]->data_() != frame)) &&
+    (expected != 2 || held[0]->data_() != held[1]->data_());
+  held[0] = held[1] = nullptr;
+  for (unsigned i = 0; i < count; ++i) {
+    connections[i]->rxContext().complete();
+    stack.m_udpBindings.delNode(endpoints[i].ptr());
+    endpoints[i]->mxCxn = nullptr;
+  }
+  return passed && pool->returns - returned == 1 + unsigned(copied);
+}
+
+static void checkMulticast(unsigned mode, bool v6)
+{
+  ZiMultiplex mx{ZiMxParams{}.scheduler(
+    [](auto &s) { s.nThreads(3); }).rxThread(1).txThread(2)};
+  ZmRef<ZutcpTest::Instance> stack = new ZutcpTest::Instance{&mx};
+  auto config = ZutcpTest::Instance::parameters(*stack);
+  unsigned raw = 0;
+  config.packet = [&raw](ZmRef<ZiIOBuf>) { ++raw; };
+  bool initialized = ZutcpTest::Instance::apply(*stack, config).is<void>();
+  auto owner = stack.ptr();
+  if (!initialized) { ZuCheckRT(false); return; }
+  mx.plugin(ZuMv(stack));
+  auto allocator = mx.allocator<Zi::IOBufType::Rx>();
+  ZuCheckRT(initialized && allocator, log_("configure registered multicast input"));
+  if (!initialized || !allocator) return;
+  bool started = mx.start();
+  bool passed = started && ZmBlock<bool>{}([&mx, owner, mode, v6, &raw](auto done) {
+    mx.rxRun([owner, mode, v6, &raw, done = ZuMv(done)]() mutable {
+      done(ZutcpTest::Instance::multicast(*owner, mode, v6, raw));
+    });
+  });
+  mx.stop();
+  ZuCheckRT(passed,
+    log_("multicast snapshots preserve mutable backing and live recipient admission"));
+}
+
+static void testMulticast()
+{
+  ZuTestScopeRT(testMulticast);
+  for (unsigned mode = 0; mode < 7; ++mode) {
+    checkMulticast(mode, false);
+    checkMulticast(mode, true);
+  }
+}
+
+// Observe complete loopback frames at pool return, including a clone that is
+// discarded after synchronous send refusal. The saved comparison is fixture-only.
+struct LoopPool : ZmNHeap<LoopPool>, ZutcpTest::Pool {
+friend inline ZuStringT<"Zutcp.Test.LoopPool"> ZmNHeapID(LoopPool *);
+  using ZmNHeap<LoopPool>::operator new;
+  using ZmNHeap<LoopPool>::operator delete;
+  using ZutcpTest::Pool::Pool;
+  uint8_t expected[1514];
+  uint8_t *source = nullptr;
+  unsigned length = 0;
+  ZmAtomic<unsigned> copies{0}, bytes{0}, valid{1};
+  void free(uint8_t *p) override {
+    if (!length || p == source || memcmp(p, expected, length)) valid = 0;
+    ++copies;
+    bytes += length;
+    ZutcpTest::Pool::free(p);
+  }
+};
+
+struct LoopDevice : ZmNHeap<LoopDevice>, ZutcpTest::Xdp {
+friend inline ZuStringT<"Zutcp.Test.LoopDevice"> ZmNHeapID(LoopDevice *);
+  using ZmNHeap<LoopDevice>::operator new;
+  using ZmNHeap<LoopDevice>::operator delete;
+  ZmRef<LoopPool> ingress;
+  unsigned completions = 0;
+  bool refuse = false;
+  ZmRef<Zi::IOBufPool> bufPool(Zi::IOBufType::T type, unsigned count, unsigned size,
+      unsigned head, unsigned tail, unsigned align) override
+  {
+    if (type != Zi::IOBufType::Rx)
+      return Xdp::bufPool(type, count, size, head, tail, align);
+    ingress = new LoopPool{type, count, size, head, tail, align, true};
+    return ingress;
+  }
+  bool send(uint8_t *p, unsigned n) override {
+    ingress->source = p;
+    ingress->length = n;
+    memcpy(ingress->expected, p, n);
+    if (!refuse) ++completions;
+    return !refuse;
+  }
+  unsigned pollTx() override { unsigned n = completions; completions = 0; return n; }
+};
+
+static void testLoopCopies()
+{
+  ZuTestScopeRT(testLoopCopies);
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
+    .rxThread(1).txThread(2)};
+  ZmRef<LoopDevice> device = new LoopDevice;
+  bool opened = device->init(&mx, {}).is<void>();
+  ZmRef<Zutcp::Instance> stack = new Zutcp::Instance;
+  ZmAtomic<unsigned> deliveries{0};
+  Zutcp::Instance::Params config{};
+  config.packet = [&deliveries](ZmRef<ZiIOBuf>) { ++deliveries; };
+  ZmRef<Zxdp::Instance> backend = device;
+  bool configured = stack->init(&mx, ZuMv(backend), ZuMv(config)).is<void>();
+  auto plugin = stack;
+  mx.plugin(ZuMv(plugin));
+  auto tx = mx.allocator<Zi::IOBufType::TxUDP, ZiIOBuf, 128>(1);
+  bool started = opened && configured && tx && mx.start();
+  ZuCheckRT(started, log_("start UDP copy-volume fixture with registered producer backing"));
+  if (!started) return;
+  for (bool v6 : {false, true}) for (unsigned mode = 0; mode < 5; ++mode) {
+    bool passed = ZmBlock<bool>{}([&mx, &stack, &device, &deliveries, tx, v6, mode](auto done) {
+      mx.txRun([&mx, &stack, &device, &deliveries, tx, v6, mode,
+	  done = ZuMv(done)]() mutable {
+	auto pool = device->ingress;
+	unsigned allocs = pool->allocCalls, frees = pool->returns;
+	unsigned copies = pool->copies, bytes = pool->bytes, received = deliveries;
+	Zutcp::IPPath path{.local = ZiIP{v6 ? "2001:db8::1" : "198.18.0.1"},
+	  .remote = ZiIP{v6 ? (mode ? "ff02::1234" : "2001:db8::2") :
+	    (mode ? "239.18.0.1" : "198.18.0.2")}, .mtu = 1500};
+	ZiCxnInfo info{.type = ZiCxnType::UDP, .socket = Zi::nullSocket(),
+	  .options = ZiCxnOptions{}.udp(true).multicast(mode != 0).loopBack(mode >= 2),
+	  .local = {path.local, 18192}, .remote = {path.remote, 18191}};
+	ZmRef<MulticastCxn> cxn = new MulticastCxn{&mx, info};
+	auto packet = tx->allocBuf(cxn.ptr());
+	bool valid = packet && packet->append("data");
+	if (!valid) { done(false); return; }
+	auto frame = packet->data() - Zutcp::udpHead(path.local.type());
+	bool callback = false;
+	cxn->txContext().init(ZiTxFn{[&callback, mode](ZiTxContext &io) {
+	  callback = io.length == (mode == 3 ? -1 : 4) && io.buf && io.buf->cspan() == "data";
+	  io.complete();
+	  return true;
+	}}, ZuMv(packet), info.remote);
+	device->refuse = mode == 3;
+	pool->available = mode != 4;
+	ZutcpTest::Instance::udpSend(*stack, cxn.ptr(), path);
+	pool->available = true;
+	stack->reconcileTx();
+	valid &= callback && pool->source == frame;
+	mx.rxRun([pool, &deliveries, mode, v6, allocs, frees, copies, bytes, received, valid,
+	    done = ZuMv(done)]() mutable {
+	  unsigned copied = unsigned(mode == 2 || mode == 3);
+	  unsigned volume = pool->bytes - bytes;
+	  bool exact = valid && pool->valid && pool->copies - copies == copied &&
+	    volume == copied * (v6 ? 66 : 60) &&
+	    pool->allocCalls - allocs == unsigned(mode >= 2) &&
+	    pool->returns - frees == copied && deliveries - received == unsigned(mode == 2);
+	  std::cout << "# loopback family=" << (v6 ? 6 : 4) << " mode=" << mode
+	    << " copies=" << pool->copies - copies << " copyBytes=" << volume
+	    << " allocations=" << pool->allocCalls - allocs << '\n';
+	  done(exact);
+	});
+      });
+    });
+    ZuCheckRT(passed, log_("observe complete loopback copies, including refusal/exhaustion"));
+  }
+  ZuCheckRT(mx.stop(), log_("drain UDP copy fixture without retained native backing"));
+}
 
 static void testStoppedInstance()
 {
@@ -185,6 +685,11 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(testBurstQuantum);
+  ZuTestCall(testListenPublication);
+  ZuTestCall(testCompletionRetries);
+  ZuTestCall(testMulticast);
+  ZuTestCall(testLoopCopies);
   ZuTestCall(testStoppedInstance);
   ZuTestCall(testHandoff);
   ZuTestCall(testNeverStartedFinal);

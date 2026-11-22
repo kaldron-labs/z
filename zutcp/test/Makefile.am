@@ -15,13 +15,15 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZutcpTFOTest ZutcpISNTest ZutcpOptionsTest ZutcpConnectionTest ZutcpIPTest ZutcpAPITest ZutcpSockTest \
+noinst_PROGRAMS = ZutcpChecksumTest ZutcpTFOTest ZutcpISNTest ZutcpOptionsTest ZutcpConnectionTest ZutcpIPTest ZutcpAPITest ZutcpSockTest \
 	ZutcpHandshakeTest ZutcpRecoveryTest ZutcpRttLossTest \
 	ZutcpConnectionStateTest ZutcpPMTUDTest \
 	ZutcpDataTest ZutcpFlowTest ZutcpBufferTest \
 	ZutcpCongestionTest ZutcpPQueueTest ZutcpLoopTest ZutcpRuntimeTest \
 	ZutcpTimerTest ZutcpRxAccountingTest ZutcpRxAdmissionTest
-noinst_HEADERS = ZutcpTestInstance.hh ZutcpTestAlloc.hh ZutcpConnectionFixture.hh ZutcpTestPorts.hh
+noinst_HEADERS = ZutcpTestInstance.hh ZutcpTestAlloc.hh ZutcpConnectionFixture.hh \
+	ZutcpTestPorts.hh ZutcpUDPLeaseTest.hh
+ZutcpChecksumTest_SOURCES = ZutcpChecksumTest.cc
 ZutcpTFOTest_SOURCES = ZutcpTFOTest.cc
 ZutcpISNTest_SOURCES = ZutcpISNTest.cc
 ZutcpOptionsTest_SOURCES = ZutcpOptionsTest.cc

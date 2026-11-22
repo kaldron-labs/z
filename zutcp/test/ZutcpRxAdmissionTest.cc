@@ -21,7 +21,6 @@ struct AdmissionApp : public ZmNHeap<AdmissionApp>, public ZutcpTest::Context<> 
 friend inline ZuStringT<"Zutcp.RxAdmissionTest.AdmissionApp"> ZmNHeapID(AdmissionApp *);
   using ZmNHeap<AdmissionApp>::operator new;
   using ZmNHeap<AdmissionApp>::operator delete;
-  bool allow = true;
   unsigned demands = 0;
 
   AdmissionApp() { ZmAssert_(init(ZutcpTest::Params{&multiplex}.maxData(16))); }
@@ -31,10 +30,9 @@ friend inline ZuStringT<"Zutcp.RxAdmissionTest.AdmissionApp"> ZmNHeapID(Admissio
   template <typename L> void txRun(L l) { l(); }
   template <typename L> void txInvoke(L l) { l(); }
   template <typename O, typename L> void txInvoke(O *, L l) { l(); }
-  // Exercise resource refusal independently of native buffer retention.
-  bool retainRx(ZiIOBuf *, Zi::IOQueue &) {
+  void retainRx(ZiIOBuf *packet, Zi::IOQueue &retained) {
     ++demands;
-    return allow;
+    ZutcpTest::Context<>::retainRx(packet, retained);
   }
 };
 
@@ -54,13 +52,6 @@ friend inline ZuStringT<"Zutcp.Test.RxAdmission"> ZmNHeapID(AdmissionCxn *);
   void pto() { }
   bool retransmit(bool = false, unsigned = 2) { return false; }
   void finish() { Base::resetLink(); }
-  int receive(const ByteData &data, ZmRef<ZiIOBuf> packet, bool *admitted = nullptr) {
-    bool refused = false;
-    int result = Base::processFrame(data, ZuMv(packet), nullptr, &refused);
-    if (admitted) *admitted = !refused;
-    return refused ? 0 : result;
-  }
-
 };
 
 static ZmRef<ZiIOBuf> bytes(AdmissionApp &app, ZuBSpan data)
@@ -80,27 +71,27 @@ static ByteData dataFrame(ZiIOBuf *buf, uint64_t offset)
   return frame;
 }
 
-static void testRefusedData()
+static void testDuplicateRanges()
 {
-  ZuTestScope(testRefusedData);
+  ZuTestScope(testDuplicateRanges);
   ZmRef<AdmissionApp> appRef = new AdmissionApp;
   auto &app = *appRef;
   ZmRef<AdmissionCxn> cxn = new AdmissionCxn{&app};
   auto source = bytes(app, "tail");
-  app.allow = false;
-  bool admitted = true;
-  ZuCHECK(cxn->receive(dataFrame(source, 4), source, &admitted) == 0 &&
-      !admitted && !cxn->rxPending() && !cxn->rxCreditUsed() &&
+  ZuCHECK(cxn->processFrame(dataFrame(source, 16), source) < 0 &&
+      !cxn->rxPending() && !cxn->rxCreditUsed() &&
       !cxn->rxAdmitted() && cxn->rxError() == DataError::None,
-    "resource refusal must not commit bytes, final size or a protocol error");
-  app.allow = true;
-  ZuCHECK(cxn->receive(dataFrame(source, 4), source, &admitted) == 0 &&
-      admitted && cxn->rxPending() == 1 && cxn->rxAdmitted() == 4,
-    "the same unacknowledged range must be admissible after capacity returns");
+    "out-of-window input commits no bytes, final size or protocol error");
+  ZuCHECK(cxn->processFrame(dataFrame(source, 4), source) == 0 &&
+      cxn->rxPending() == 1 && cxn->rxAdmitted() == 4,
+    "an eligible range remains admissible after rejecting out-of-window input");
   unsigned demands = app.demands;
-  ZuCHECK(cxn->receive(dataFrame(source, 4), source) == 0 && app.demands == demands,
-    "duplicate bytes must demand no additional physical frame");
+  unsigned refs = source->refCount();
+  ZuCHECK(cxn->processFrame(dataFrame(source, 4), source) == 0 &&
+      app.demands == demands && source->refCount() == refs,
+    "duplicate bytes demand no additional frame or retention reference");
   cxn->closeRx();
+  ZuCHECK(source->refCount() == 1, "teardown releases reassembly and retention references");
 }
 
 static void testGapService()
@@ -113,11 +104,10 @@ static void testGapService()
   auto head = bytes(app, "head");
   ZuCHECK(cxn->processFrame(dataFrame(tail, 4), tail) == 0 && cxn->rxPending() == 1,
     "service fixture must retain an out-of-order range");
-  app.allow = false;
   unsigned refs = head->refCount();
   ZuCHECK(cxn->processFrame(dataFrame(head, 0), head) == 0 && !cxn->rxPending() &&
-      cxn->rxBytes() == 8 && head->refCount() == refs,
-    "gap service must drain contiguous input without retaining its ingress backing");
+      cxn->rxBytes() == 8 && head->refCount() == refs + 2,
+    "gap service keeps reader and retention references to the original ingress backing");
   bool exact = false;
   unsigned remaining = 8;
   auto consumed = cxn->reader().consume(
@@ -128,7 +118,7 @@ static void testGapService()
     [&exact](auto span) {
       exact = span.length() == 8 && !memcmp(span.data(), "headtail", 8);
     });
-  ZuCHECK(consumed == 8 && exact, "service copy must preserve exact byte order");
+  ZuCHECK(consumed == 8 && exact, "packet-backed gap service preserves exact byte order");
   cxn->closeRx();
 }
 
@@ -137,25 +127,25 @@ static void testServiceWindow()
   ZuTestScope(testServiceWindow);
   ZmRef<AdmissionApp> appRef = new AdmissionApp;
   auto &app = *appRef;
-  app.allow = false;
   ZmRef<AdmissionCxn> cxn = new AdmissionCxn{&app};
   auto part = bytes(app, "data");
   bool accepted = true;
   for (unsigned i = 0; i < 4; ++i)
     accepted &= cxn->processFrame(dataFrame(part, i<<2), part) == 0;
-  ZuCHECK(accepted && cxn->rxBytes() == 16 && part->refCount() == 1 &&
+  ZuCHECK(accepted && cxn->rxBytes() == 16 && part->refCount() == 6 &&
       cxn->rxCreditUsed() == 16,
-    "application backpressure must retain only bounded heap bytes during contiguous service");
+    "held input shares its original backing across four slices and one retention reference");
   ZuCHECK(cxn->processFrame(dataFrame(part, 16), part) < 0 && cxn->rxBytes() == 16,
     "service must not bypass existing receive byte credit");
   cxn->closeRx();
+  ZuCHECK(part->refCount() == 1, "teardown releases every held slice and retention reference");
 }
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testRefusedData);
+  ZuTestCall(testDuplicateRanges);
   ZuTestCall(testGapService);
   ZuTestCall(testServiceWindow);
 }

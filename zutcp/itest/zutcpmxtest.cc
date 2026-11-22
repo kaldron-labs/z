@@ -300,7 +300,8 @@ static bool extraInitial(
       unsigned wire = Zutcp::writeTCP(packet->data_(), packet->size, path, tcp, 0);
       packet->skip = 0;
       packet->length = wire;
-      done(wire && stack->sendPacket(packet));
+      Zutcp::TCPLayout layout{14, uint16_t(Zutcp::ipHead(path.local.type()))};
+      done(wire && stack->sendPacket(packet, nullptr, &layout));
     });
   });
 }
@@ -1163,7 +1164,8 @@ static void testGracefulFin(
 	    unsigned wire = Zutcp::writeTCP(packet->data_(), packet->size, path, tcp, bytes);
 	    packet->skip = 0;
 	    packet->length = wire;
-	    done(wire && clientStack->sendPacket(packet));
+	    Zutcp::TCPLayout layout{14, uint16_t(Zutcp::ipHead(path.local.type()))};
+	    done(wire && clientStack->sendPacket(packet, nullptr, &layout));
 	  });
 	});
       };
@@ -2736,7 +2738,8 @@ static bool passiveWire(
       unsigned n = Zutcp::writeTCP(buf->data_(), buf->size, path, d.tcp, d.buf->length);
       buf->skip = 0;
       buf->length = n;
-      done(n && stack->sendPacket(buf));
+      Zutcp::TCPLayout layout{14, uint16_t(Zutcp::ipHead(path.local.type()))};
+      done(n && stack->sendPacket(buf, nullptr, &layout));
     });
   });
 }

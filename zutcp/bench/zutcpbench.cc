@@ -30,6 +30,8 @@
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTime.hh>
+#include <zlib/ZtcQueue.hh>
+#include <zlib/ZtcHeap.hh>
 
 #include <zlib/ZtArray.hh>
 
@@ -252,7 +254,8 @@ public:
     }
     m_network = allocator<Zi::IOBufType::Rx, ZiRxBuf, 2048>(config.reserve);
     m_frames = allocator<Zi::IOBufType::App, ZiRxBuf, MaxFrame>(config.reserve);
-    m_output = allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 1024>(config.reserve);
+    m_output = allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 1024,
+      ZiIOBuf_DefltAlign, ZuStringT<"Zutcp.Bench.Output">>(config.reserve);
     if (!m_network || !m_frames || !m_output) {
       m_failed = 1;
       return;
@@ -607,6 +610,27 @@ bool App::report()
       << ZuBoxed(double(n * request)/seconds).fp<3>() << " response_bytes_per_second="
       << ZuBoxed(double(n * response)/seconds).fp<3>() << "\n";
   }
+  unsigned sid = 0;
+  ZmScheduler::allQueues([&sid](Ztc::Queue *queue) {
+    Ztc::QueueTelemetry data;
+    queue->telemetry(data);
+    std::cout << "scheduler_queue sid=" << ++sid << " published=" << data.inCount
+      << " consumed=" << data.outCount << " published_bytes=" << data.inBytes
+      << " consumed_bytes=" << data.outBytes << " pending=" << data.count
+      << " full=" << data.full << " includes_setup_warmup=1\n";
+  });
+  Ztc::HeapMgr::all([](Ztc::Heap *heap) {
+    auto id = heap->telKey().p<0>();
+    if (id.length() < 6 || memcmp(id.data(), "Zutcp.", 6)) return;
+    Ztc::HeapTelemetry data;
+    heap->telemetry(data);
+    std::cout << "heap id=";
+    std::cout.write(id.data(), id.length());
+    std::cout << " size=" << data.size << " alignment=" << data.alignment
+      << " partition=" << data.partition << " requests=" << data.cacheAllocs + data.heapAllocs
+      << " returns=" << data.cacheFrees + data.heapFrees << " live=" << data.allocated()
+      << " includes_setup_warmup=1 before_finalization=1\n";
+  });
   if (m_config.native) {
     unsigned cxns = 0;
     allCxns([&cxns](Ztc::Connection *) { ++cxns; });

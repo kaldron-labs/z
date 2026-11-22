@@ -7,17 +7,20 @@
 #ifndef ZutcpTestInstance_HH
 #define ZutcpTestInstance_HH
 
-#include <zlib/ZmHeap.hh>
+#include <string.h>
+
+#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmBlock.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmRef.hh>
+#include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmVHeap.hh>
+
 #include <zlib/Zutcp.hh>
 #include <zlib/ZutcpCxn.hh>
 #include <zlib/ZutcpCliCxn.hh>
-#include <zlib/ZmBlock.hh>
-#include <zlib/ZmSemaphore.hh>
-
 #include <zlib/ZutcpSrvCxn.hh>
+#include <zlib/ZutcpUDP.hh>
 
 namespace ZutcpTest {
 
@@ -26,7 +29,9 @@ namespace ZutcpTest {
 struct Pool : ZmNHeap<Pool>, Zi::IOBufPool {
 friend inline ZuStringT<"Zutcp.Test.Pool"> ZmNHeapID(Pool *);
   using Heap = ZmVHeap<"Zutcp.Test.Backing", 2048, 2048, ZiIOBuf_Align>;
-  bool available;
+  using Counter = ZmAtomic<unsigned>;
+  bool		available;
+  Counter		allocCalls = 0, returns = 0;
 
   Pool(Zi::IOBufType::T type, unsigned n, unsigned bytes, unsigned head, unsigned tail,
       unsigned alignment, bool available_) :
@@ -39,9 +44,10 @@ friend inline ZuStringT<"Zutcp.Test.Pool"> ZmNHeapID(Pool *);
     align = alignment;
   }
   uint8_t *alloc() override {
+    ++allocCalls;
     return available ? static_cast<uint8_t *>(Heap::alloc(size)) : nullptr;
   }
-  void free(uint8_t *ptr) override { Heap::free(ptr, size); }
+  void free(uint8_t *ptr) override { ++returns; Heap::free(ptr, size); }
 };
 
 class Xdp : public ZmNHeap<Xdp>, public Zxdp::Instance {
@@ -107,7 +113,15 @@ public:
   unsigned mtu() const override { return 1500; }
   bool zeroCopy() const override { return false; }
   ZuBSpan mac() const override { return {}; }
+  void receive(ZuBSpan bytes) {
+    auto packet = rxPool->alloc();
+    ZmAssert_(packet && bytes.length() <= rxPool->size);
+    memcpy(packet, bytes.data(), bytes.length());
+    m_receive(packet, bytes.length());
+  }
+  bool txReady(uint8_t *) const override { return ready(); }
   bool send(uint8_t *, unsigned) override { return false; }
+  bool tcpChksumOffload() override { return false; }
   void rx() override { m_event.wait(); }
   void wake() override {
     m_event.post();
@@ -236,9 +250,14 @@ private:
 class Instance : public Zutcp::Instance {
 public:
   explicit Instance(ZiMultiplex *mx) : m_fixtureMx{mx} { }
+  static bool multicast(Instance &, unsigned, bool, unsigned &);
   ZiMultiplex *mx() const { return m_fixtureMx; }
   using Zutcp::Instance::final;
 
+  static void udpSend(Zutcp::Instance &instance, ZiConnection *cxn, Zutcp::IPPath path) {
+    Zutcp::Instance::UdpCxn endpoint{&instance, cxn->info(), ZuMv(path)};
+    endpoint.send(cxn);
+  }
   static Zutcp::InstanceParams parameters(const Zutcp::Instance &instance) {
     return instance.m_params;
   }
@@ -269,11 +288,11 @@ private:
 };
 
 inline ZmRef<Zxdp::Instance> openXdp(
-  ZiMultiplex *mx, unsigned interface, unsigned sender, ZuCSpan filter = {}, unsigned spin = 1000)
+  ZiMultiplex *mx, unsigned interface, unsigned sender, unsigned spin = 1000)
 {
   auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
   Zxdp::Params xdpParams{Zxdp::Xdp::Params{
-    .ifindex = interface, .netmask = filter, .spin = spin, .txSid = sender}};
+    .ifindex = interface, .spin = spin, .txSid = sender}};
   auto opened = xdp->init(mx, xdpParams);
   if (opened.is<ZeException>()) throw ZuMv(opened).p<ZeException>();
   return xdp;
@@ -290,9 +309,9 @@ inline ZmRef<Zutcp::Instance> makeInstance(
 
 inline ZmRef<Zutcp::Instance> makeInstance(
   ZiMultiplex *mx, unsigned interface, unsigned sender, Zutcp::InstanceParams params = {},
-  ZuCSpan filter = {}, unsigned spin = 1000)
+  unsigned spin = 1000)
 {
-  return makeInstance(mx, openXdp(mx, interface, sender, filter, spin), ZuMv(params));
+  return makeInstance(mx, openXdp(mx, interface, sender, spin), ZuMv(params));
 }
 
 template <typename M = ZiMultiplex> struct MxStorage {

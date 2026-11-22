@@ -177,6 +177,20 @@ mechanisms equal. Larger pipelines must retain all refusal/stall observations.
 
 Owners are released after stop and before reporting generic connection/Tx-queue
 drain. No additional queue registry or telemetry cache is maintained.
+After stop, `scheduler_queue` reports each scheduler slot's existing publication
+and consumption counters, bytes, pending entries and full observations. These
+include setup, warmup and shutdown; direct owner calls and polling are excluded.
+Publication totals use the ring's existing relaxed load/store statistics, which
+can lose increments under concurrent publishers. Consumption totals come from
+the single owner. Do not infer lost work from a small counter discrepancy; use
+actual pending state and application/wire validation for drain acceptance.
+The base scheduler enumeration is distinct from native device queue telemetry.
+`heap` rows report existing `Zutcp.*` named-heap counters by object size and
+partition. Requests/returns include cache and heap operations. Output producers
+use the dedicated `Zutcp.Bench.Output` tag with the same allocation type, size
+and alignment for both backends. Reporting precedes finalization, so retained
+configuration/history and benchmark result storage may still be live. These
+counts describe application requests, not allocator arena size or RSS.
 Client `samples.csv` contains preallocated bounded raw RTT samples (at most two
 million across connections). Sorting/reporting/files occur after owner shutdown.
 Summaries include p50/p99/max, throughput and separate request/response FIX bytes,

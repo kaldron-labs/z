@@ -223,19 +223,18 @@ void testTxUnackdRangeQueue()
   ZuTestScope(testTxUnackdRangeQueue);
 
   Zutcp::DataTxPQueue q{0};
-  ZuCHECK(q.add(new Zutcp::DataTxPQueue::Node{
-	Zutcp::TxUnackdRange{10, 10}}) == ZmPQResult::Inserted,
+  ZuCHECK(q.add(Zutcp::TxUnackdRange{10, 10}) == ZmPQResult::Inserted,
     "stream unackd range insert failed");
   ZuCHECK(q.clear(13, 4),
     "stream unackd range middle clear failed");
 
-  ZmRef<Zutcp::DataTxPQueue::Node> head = q.find(10);
-  ZmRef<Zutcp::DataTxPQueue::Node> tail = q.find(17);
+  auto head = q.find(10);
+  auto tail = q.find(17);
   ZuCHECK(head && tail &&
-      head->data().key() == 10 &&
-      head->data().length() == 3 &&
-      tail->data().key() == 17 &&
-      tail->data().length() == 3 &&
+      head->key() == 10 &&
+      head->length() == 3 &&
+      tail->key() == 17 &&
+      tail->length() == 3 &&
       q.count_() == 2 &&
       q.length_() == 6 &&
       q.verify(),
@@ -254,19 +253,18 @@ void testTxUnackdFinSentinel()
   ZuTestScope(testTxUnackdFinSentinel);
 
   Zutcp::DataTxPQueue dataFin{0};
-  ZuCHECK(dataFin.add(new Zutcp::DataTxPQueue::Node{
-	Zutcp::TxUnackdRange{20, 5, true}}) == ZmPQResult::Inserted &&
+  ZuCHECK(dataFin.add(Zutcp::TxUnackdRange{20, 5, true}) == ZmPQResult::Inserted &&
       dataFin.length_() == 6,
     "stream unackd data+FIN range insert failed");
   ZuCHECK(dataFin.clear(20, 5) &&
       dataFin.count_() == 1 &&
       dataFin.length_() == 1,
     "stream unackd data ACK did not leave FIN sentinel");
-  ZmRef<Zutcp::DataTxPQueue::Node> fin = dataFin.find(25);
+  auto fin = dataFin.find(25);
   ZuCHECK(fin &&
-      fin->data().key() == 25 &&
-      fin->data().bytes == 0 &&
-      fin->data().fin,
+      fin->key() == 25 &&
+      fin->bytes == 0 &&
+      fin->fin,
     "stream unackd FIN sentinel has wrong offset/state");
   ZuCHECK(dataFin.clear(25, 1) &&
       !dataFin.count_() &&
@@ -275,8 +273,7 @@ void testTxUnackdFinSentinel()
     "stream unackd FIN sentinel clear failed");
 
   Zutcp::DataTxPQueue finOnly{0};
-  ZuCHECK(finOnly.add(new Zutcp::DataTxPQueue::Node{
-	Zutcp::TxUnackdRange{30, 0, true}}) == ZmPQResult::Inserted &&
+  ZuCHECK(finOnly.add(Zutcp::TxUnackdRange{30, 0, true}) == ZmPQResult::Inserted &&
       finOnly.clear(30, 1) &&
       !finOnly.count_() &&
       finOnly.verify(),
@@ -304,7 +301,7 @@ void testTxUnackdFragmentation()
   ZUTCP_CHECK_RT(q.add(Zutcp::TxUnackdRange{1, 1}) == ZmPQResult::Inserted &&
       q.count_() == Ranges - 1 &&
       q.length_() == Ranges + 1 &&
-      q.find(0)->data().length() == 3 &&
+      q.find(0)->length() == 3 &&
       q.verify(),
     "fragmented stream ranges did not coalesce around an inserted bridge");
 

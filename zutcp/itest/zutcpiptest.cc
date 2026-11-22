@@ -213,7 +213,7 @@ static void testCarriage(bool v6, bool tcp = false)
       rxDone.post();
     }};
   if (tcp) params.packet = {};
-  auto instance = ZutcpTest::makeInstance(&mx, index, 4, ZuMv(params), {}, 0);
+  auto instance = ZutcpTest::makeInstance(&mx, index, 4, ZuMv(params), 0);
   auto stack = instance.ptr();
   mx.plugin(ZuMv(instance));
   auto tx = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 2048>(4);
@@ -300,7 +300,8 @@ static void testCarriage(bool v6, bool tcp = false)
 	auto wire = tcp ? Zutcp::writeTCP(frame, packet->size, path, header, n, 3) :
 	  Zutcp::writeIP(frame, packet->size, path, protocol, n, 3);
 	packet->skip = 0; packet->length = wire;
-	accepted = wire && stack->sendPacket(packet);
+	Zutcp::TCPLayout layout{14, uint16_t(Zutcp::ipHead(path.local.type()))};
+	accepted = wire && stack->sendPacket(packet, nullptr, tcp ? &layout : nullptr);
       }
       txDone.post();
     });

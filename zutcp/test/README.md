@@ -80,6 +80,11 @@ initialization, pool identity, allocation and activation retries, finalization,
 and fatal handoffs. The actual Instance owns policy, admission and retained tuples. Concrete test contexts provide only
 deterministic clock/dispatch and selected allocation/packet hooks. They do not
 recreate Hub/Client/Server transport owners or a production no-instance mode.
+Runtime multicast diagnostics compare complete frames before recipient mutation
+and count distinct copied backing. `testLoopCopies` observes complete frames at
+ingress-pool return, including a loopback clone discarded on send refusal. It
+separates unicast, disabled loopback, accepted/refused sends and ingress exhaustion
+for both IP families; fixture comparison copies are excluded from reported volume.
 The same header's private listener fixture reuses the production passive endpoint
 primitive and holds only its local membership and drain state.
 
@@ -260,3 +265,21 @@ work is rejected after a connection generation reset, while current work succeed
 ZutcpTimerTest separately exercises actual scheduler firing and cancel
 past a later sentinel. Native zero-window fault scenarios and advertised-window
 conversion remain Phase 4 acceptance work.
+
+`ZutcpChecksumTest` checks scalar/SIMD accumulation against independent byte sums,
+IPv4/IPv6 pseudo-headers, odd payloads, options, padding and stale seeds. Its
+Instance/device fixture changes active offload across restarts and checks
+software checksums, hardware seeds, refused-send rollback and accepted metadata
+detachment through plain device submission. Hardware offload itself requires
+physical-device validation.
+
+`ZutcpRuntimeTest::testCompletionRetries` checks 130 waiting connections across
+bounded owner turns, repeated enrollment coalescing, one finite retry pass per
+counted completion, and drained stop. The actual idle-producer, reset/close and
+control-exhaustion regressions run over gated AF_XDP in `zutcpstacktest`.
+Ordinary owner work queued inside the first retry must run after 64 callbacks
+and before the next batch, on each completion pass. The test reports marker
+delay for diagnostics; acceptance checks ordering rather than a timing cutoff.
+`ZutcpDataTest` emits named-heap allocation/free deltas around its whole-original
+send/ACK/refusal cases, separating the removed temporary unacknowledged-range
+node from retained source, sent-packet and recovery metadata.

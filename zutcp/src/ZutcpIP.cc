@@ -16,6 +16,7 @@
 
 #include <zlib/ZePlatform.hh>
 
+
 #include <zlib/ZutcpIP.hh>
 
 namespace Zutcp {
@@ -310,8 +311,6 @@ unsigned writeTCP(
   put16(tcp + 16, 0);
   put16(tcp + 18, header.urgent);
   if (header.options.encode(tcp + 20, options, header.flags & 0x02) != int(options)) return 0;
-  put16(tcp + 16, checksum(sum(tcp, length,
-    transportSum(path.local, path.remote, length, IPPROTO_TCP))));
   return wire;
 }
 
@@ -324,9 +323,7 @@ bool readTCP(const IPView &ip, TCPView &view)
     return false;
   auto tcp = ip.payload.data();
   unsigned head = (tcp[12]>>4)<<2;
-  if (head < 20 || head > length ||
-      checksum(sum(tcp, length,
-	transportSum(ip.local, ip.remote, length, IPPROTO_TCP)))) return false;
+  if (head < 20 || head > length) return false;
   TCPHeader header{
     uint16_t(get16(tcp)), uint16_t(get16(tcp + 2)), get32(tcp + 4), get32(tcp + 8),
     uint16_t(get16(tcp + 14)), uint16_t(get16(tcp + 18)), tcp[13]};

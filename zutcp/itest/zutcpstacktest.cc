@@ -15,12 +15,15 @@
 #include <linux/if_packet.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZuMatcher.hh>
+#include <zlib/ZtcHeap.hh>
 
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmFn.hh>
 #include <zlib/ZmRef.hh>
 
 #include <zlib/ZePlatform.hh>
@@ -36,6 +39,58 @@ using namespace ZuTestUtil;
 
 enum { RxCount = 4, Head = 14 + 40 + 60, Payload = 32,
   WireSize = Head + Payload, Repeats = 1 }; // exact fixture workload
+
+struct MetaTotals {
+  enum { Count = 16 };
+  using Keys = ZuStringTL<
+    "Zutcp.Data.Tx", "Zutcp.Connection.TxRanges", "Zutcp.Pkt.TxSentNode",
+    "Zutcp.Pkt.OutstandingRange", "Zutcp.Pkt.OutstandingFlow", "Zutcp.OutstandingFlows",
+    "Zutcp.Pkt.OutstandingExact", "Zutcp.OutstandingExact", "Zutcp.Pkt.RetransmitQueue",
+    "Zutcp.Pkt.AckdFrame", "Zutcp.AckdFrameHash", "Zutcp.TxUnackdRange",
+    "Zutcp.Connection.TxUnackdRanges", "Zutcp.Connection.TxUnackdIndex",
+    "Zutcp.Pkt.TxLostPNs", "Zutcp.Recovery.FrameUpdates">;
+  uint64_t requests[Count]{}, returns[Count]{}, bytes[Count]{}, returnedBytes[Count]{};
+};
+
+static MetaTotals metaTotals()
+{
+  MetaTotals result;
+  Ztc::HeapMgr::all([&result](Ztc::Heap *heap) {
+    static constexpr auto matcher = ZuMatcher<MetaTotals>();
+    int i = matcher.exact(heap->telKey().p<0>());
+    if (i < 0) return;
+    Ztc::HeapTelemetry data;
+    heap->telemetry(data);
+    uint64_t allocated = data.cacheAllocs + data.heapAllocs;
+    uint64_t freed = data.cacheFrees + data.heapFrees;
+    result.requests[i] += allocated;
+    result.returns[i] += freed;
+    result.bytes[i] += allocated * data.size;
+    result.returnedBytes[i] += freed * data.size;
+  });
+  return result;
+}
+
+static void reportMeta(unsigned mode, const char *phase,
+    const MetaTotals &before, const MetaTotals &after)
+{
+  static constexpr const char *ids[] = {
+    "Zutcp.Data.Tx", "Zutcp.Connection.TxRanges", "Zutcp.Pkt.TxSentNode",
+    "Zutcp.Pkt.OutstandingRange", "Zutcp.Pkt.OutstandingFlow", "Zutcp.OutstandingFlows",
+    "Zutcp.Pkt.OutstandingExact", "Zutcp.OutstandingExact", "Zutcp.Pkt.RetransmitQueue",
+    "Zutcp.Pkt.AckdFrame", "Zutcp.AckdFrameHash", "Zutcp.TxUnackdRange",
+    "Zutcp.Connection.TxUnackdRanges", "Zutcp.Connection.TxUnackdIndex",
+    "Zutcp.Pkt.TxLostPNs", "Zutcp.Recovery.FrameUpdates"};
+  for (unsigned i = 0; i < MetaTotals::Count; ++i) {
+    auto allocations = after.requests[i] - before.requests[i];
+    auto frees = after.returns[i] - before.returns[i];
+    if (!allocations && !frees && (i < 11 || i > 13)) continue;
+    std::cout << "# metadata mode=" << mode << " phase=" << phase << " id=" << ids[i]
+      << " requests=" << allocations << " returns=" << frees
+      << " bytes=" << after.bytes[i] - before.bytes[i]
+      << " returnedBytes=" << after.returnedBytes[i] - before.returnedBytes[i] << '\n';
+  }
+}
 
 struct Probe {
   ZiMultiplex *mx;
@@ -56,6 +111,15 @@ struct Probe {
 
 using WriterApp = Zutcp::Instance;
 
+struct WireEndpoint : Zutcp_::Endpoint_<WireEndpoint> {
+  ZmSemaphore ready;
+  enum { EndpointRef = false };
+  void endpointReady(Zutcp_::Endpoint_<WireEndpoint> *) { ready.post(); }
+  void endpointFailed(bool) { ready.post(); }
+  void endpointDown_(Zutcp_::Endpoint_<WireEndpoint> *) { }
+  void endpointDatagram(Zutcp::Datagram) { }
+};
+
 struct WriterCxn : public ZmNHeap<WriterCxn>,
   public Zutcp::Cxn_<WriterApp, WriterCxn, Zutcp::TxBufAlloc<>> {
 friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
@@ -66,15 +130,79 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
 
   Zutcp::SentFrameRef retry;
   unsigned extraAlloc = 0, submitted = 0, controls = 0, refused = 0;
-  bool offerAck = true;
+  bool offerAck = true, recovering = false, resuming = false;
+  unsigned resumedRecovery = 0, resumedFinalACK = 0, finishes = 0, allocRefused = 0;
+  unsigned sourceEncodes = 0;
+  ZmSemaphore finalClosed;
   bool original = true, detached = true, bounded = true, reused = true, preserved = true;
 
   explicit WriterCxn(WriterApp *app) : Base{app} { }
-  bool flushTx() { return false; } // this fixture explicitly steps packetization
+  ZmFn<bool()> resume;
+  bool flushTx() { return resume ? resume() : false; }
+  bool recoveryPending() const { return Base::txDiag().retransmitPending; }
+  void resumeTx() override {
+    resuming = true;
+    Base::resumeTx();
+    resuming = false;
+  }
   void queueTxFlush(ZiSockAddr = {}) { }
   void queueRetransmit() { }
   void pto() { }
-  bool retransmit(bool = false, unsigned = 2) { return false; }
+  bool sendSyn() { return false; }
+  bool retransmit(bool = false, unsigned budget = 2) {
+    if (!recovering) return false;
+    bool sent = false;
+    for (unsigned i = 0; i < budget; ++i) {
+      Zutcp::SentFrameRef ref;
+      if (!Base::nextRetransmit(ref)) break;
+      bool accepted = Base::sendRecovery(ref, [this, &ref] {
+	return Base::sendTCP(ref, false, 0,
+	  [this]() { ++extraAlloc; return app()->allocPacket(this, ZiIPType::V4); },
+	  [this](auto packet, auto) { return submit(app(), ZuMv(packet)); });
+      });
+      if (!accepted) { Base::requeueRetransmit(ref); break; }
+      if (resuming) ++resumedRecovery;
+      sent = true;
+    }
+    return sent;
+  }
+  void nativeFinished() {
+    ++finishes;
+    Base::disconnect_(false, [this] { finalClosed.post(); });
+  }
+  void prepareFINRx() {
+    Base::configLocalParams(app());
+    prepareRx();
+  }
+  bool peerFIN(bool v6) {
+    Zutcp::Datagram packet{{}, {ZiIP{v6 ? "2001:db8::2" : "198.18.0.2"}, 18181}};
+    packet.local = {ZiIP{v6 ? "2001:db8::1" : "198.18.0.1"}, 18181};
+    packet.tcp = {.seq = 0, .ack = 1, .window = 8, .flags = 0x11};
+    return Base::receiveSegment(ZuMv(packet)) && Base::finReceived() &&
+      Base::rxComplete() && Base::retireRx(0);
+  }
+  void beginFIN() {
+    Base::extendTxCredit(1);
+    Base::fin(); // notifyTx() drives the real packetizer synchronously.
+  }
+  bool wireFlush(WireEndpoint &endpoint, const Zutcp::IPPath &path) {
+    return Base::flushTCP([this, &endpoint, &path](
+	const Zutcp::SentFrameRef &ref, bool syn, uint8_t control, bool persist) {
+      return Base::sendTCP(ref, syn, control,
+	[this, &path]() {
+	  auto packet = app()->allocPacket(this, path.local.type(), true);
+	  if (!packet) ++allocRefused;
+	  return packet;
+	}, [this, &endpoint, &path, &ref](auto packet, auto ecn) {
+	  bool sent = endpoint.send(ZuMv(packet), {path.remote, 18181}, ecn, true, &path);
+	  if (sent) {
+	    ++controls;
+	    if (!ref.fin && resuming) ++resumedFinalACK;
+	  }
+	  return sent;
+	}, persist);
+    });
+  }
   int process(Zutcp::Reader &) { return 0; }
   void prepareRx() {
     Base::startHandshake();
@@ -83,10 +211,10 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
       .localKnown = true, .peerKnown = true});
     Base::establish();
   }
-  void prepareTx() {
+  void prepareTx(bool v6 = false) {
     Base::initClientPathTx(
-      ZiSockAddr{ZiIP{"198.18.0.1"}, 18181},
-      ZiSockAddr{ZiIP{"198.18.0.2"}, 18181});
+      ZiSockAddr{ZiIP{v6 ? "2001:db8::1" : "198.18.0.1"}, 18181},
+      ZiSockAddr{ZiIP{v6 ? "2001:db8::2" : "198.18.0.2"}, 18181});
   }
   void clearRx() { Base::resetLink(); }
   bool sendNext(Zutcp::Instance *stack) {
@@ -102,7 +230,7 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
     Zutcp::TxRange range;
     if (!Base::txRange(0, range)) return false;
     auto ref = Zutcp::SentFrameRef::data(range, false);
-    if (submitted == 1) retry = ref;
+    if (submitted == 1 || recovering) retry = ref;
     auto payload = range.storage->data + range.offset;
     return Base::sendTCP(ref, false, 0,
       [this, stack]() { ++extraAlloc; return stack->allocPacket(this, ZiIPType::V4); },
@@ -132,6 +260,29 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
     }
     return sent;
   }
+  void loseForRecovery() {
+    for (unsigned i = 0; i < 4; ++i)
+      Base::applyTCP({.ack = 0, .window = 8, .flags = 0x10});
+  }
+  bool sourceOutput(WireEndpoint &endpoint, const Zutcp::IPPath &path,
+      bool fin, bool replay = false) {
+    if (!replay) {
+      Zutcp::TxRange range;
+      if (!Base::txRange(0, range)) return false;
+      retry = Zutcp::SentFrameRef::data(range, fin);
+      if (fin) { Base::extendTxCredit(9); Base::fin(); }
+    }
+    return Base::sendTCP(retry, false, 0,
+      [this, &path]() { return app()->allocPacket(this, path.local.type()); },
+      [this, &endpoint, &path, replay](auto packet, auto ecn) {
+	++sourceEncodes;
+	if (replay) { packet->tcp.ack += 100; packet->tcp.window = 1; }
+	return endpoint.send(ZuMv(packet), {path.remote, 18187}, ecn, true, &path);
+      });
+  }
+  void ackOriginal(bool fin = false) {
+    Base::applyTCP({.ack = unsigned(8 + fin), .window = 8, .flags = 0x10});
+  }
   void ackFirst() {
     Zutcp::TCPHeader header;
     header.flags = 0x10;
@@ -147,6 +298,37 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
 	reused &= payload == retry.range.storage->data + retry.range.offset &&
 	  packet->length == 8 && !memcmp(payload, "second--", 8);
 	return submit(stack, ZuMv(packet));
+      });
+  }
+  bool wireReplay(WireEndpoint &endpoint, const Zutcp::IPPath &path,
+      uint32_t ack, uint8_t *&frame, unsigned &length, unsigned mode = 0) {
+    return Base::sendTCP(retry, false, 0,
+      [this]() { return app()->allocPacket(this, ZiIPType::V4); },
+      [this, &endpoint, &path, ack, &frame, &length, mode](auto packet, auto ecn) {
+	packet->tcp.ack = ack;
+	packet->tcp.window = uint16_t(ack);
+	// Exercise the endpoint with changed wire options/FIN without changing
+	// this writer's synthetic recovery history. Keep the payload in place.
+	packet->tcp.options = {};
+	if (mode & 1) {
+	  packet->tcp.options.flags = Zutcp::TCPOptions::TS;
+	  packet->tcp.options.tsval = ack;
+	  packet->tcp.options.tsecr = ack - 1;
+	  packet->tcp.options.sackCount = ack == 100 ? 1 : 2;
+	  packet->tcp.options.sack[0] = {ack + 10, ack + 20};
+	  packet->tcp.options.sack[1] = {ack + 30, ack + 40};
+	}
+	if (mode & 2) packet->tcp.flags |= 0x01;
+	auto head = Zutcp::tcpHead(path.local.type(), packet->tcp);
+	auto start = packet->data() - head;
+	auto &source = *retry.range.storage;
+	packet->data__ = uintptr_t(start) | ZiIOBuf::Builtin | ZiIOBuf::Registered;
+	packet->size = source.size - unsigned(start - source.data);
+	packet->skip = head;
+	frame = packet->data_();
+	length = Zutcp::tcpHead(path.local.type(), packet->tcp) + packet->length;
+	if (length < 60) length = 60; // Ethernet minimum, excluding FCS
+	return endpoint.send(ZuMv(packet), {path.remote, 18184}, ecn, true, &path);
       });
   }
   bool finControl(Zutcp::Instance *stack) {
@@ -165,6 +347,100 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
   }
 
 };
+
+// Independent bytewise reference; do not use the production checksum dispatch.
+static unsigned wireSum(const uint8_t *data, unsigned length)
+{
+  unsigned sum = 0;
+  for (; length > 1; data += 2, length -= 2) sum += (unsigned(data[0])<<8) | data[1];
+  if (length) sum += unsigned(*data)<<8;
+  while (sum>>16) sum = (sum & 0xffff) + (sum>>16);
+  return sum;
+}
+
+static void checkHeldHeaders(
+  ZiMultiplex &mx, Zutcp::Instance *stack, WriterCxn *cxn, int wire)
+{
+  WireEndpoint endpoint;
+  ZmSemaphore owner, entered, release;
+  bool opened = false;
+  mx.rxRun([&endpoint, stack, &opened, &owner] {
+    opened = endpoint.init(stack) && endpoint.open(
+      Zutcp::PathMode::ServerUnconnected, ZiIP{"198.18.0.1"}, 18183);
+    owner.post();
+  });
+  owner.wait();
+  bool ready = opened && !endpoint.ready.timedwait(Zm::now(2));
+  ZuCheckRT(ready, log_("open real encoder endpoint for the held-submission check"));
+  for (unsigned mode = 0; ready && mode < 8; ++mode) {
+    bool retired = false;
+    auto deadline = Zm::now(2);
+    do {
+      mx.txRun([stack, &retired, &owner] {
+	retired = !stack->txAdmission().outstanding;
+	owner.post();
+      });
+      owner.wait();
+    } while (!retired && Zm::now() < deadline);
+    ZuCheckRT(retired, log_("observe prior device retirement before gating the sender"));
+    mx.run([&entered, &release] { entered.post(); release.wait(); }, 3);
+    entered.wait();
+    uint8_t snapshot[1600];
+    bool accepted = false, refused = false, unchanged = false;
+    unsigned length = 0;
+    mx.txRun([&endpoint, stack, cxn, &snapshot, &accepted, &refused,
+	&unchanged, &length, &owner, mode] {
+      Zutcp::IPPath path{
+	.local = ZiIP{mode & 4 ? "2001:db8::1" : "198.18.0.1"},
+	.remote = ZiIP{mode & 4 ? "2001:db8::2" : "198.18.0.2"}, .mtu = 1500};
+      memset(path.remoteMAC, 0xff, sizeof(path.remoteMAC));
+      path.localMAC[0] = 2;
+      uint8_t *frame = nullptr;
+      accepted = cxn->wireReplay(endpoint, path, 100, frame, length, mode);
+      if (accepted && length <= sizeof(snapshot)) {
+	memcpy(snapshot, frame, length);
+	auto before = stack->txAdmission().outstanding;
+	refused = true;
+	unchanged = true;
+	auto held = frame;
+	auto heldLength = length;
+	for (unsigned attempt = 1; attempt <= 3; ++attempt) {
+	  refused &= !cxn->wireReplay(endpoint, path, 100 + 100 * attempt,
+	    frame, length, mode) && stack->txAdmission().outstanding == before;
+	  unchanged &= !memcmp(held, snapshot, heldLength);
+	}
+	length = heldLength;
+      }
+      owner.post();
+    });
+    owner.wait();
+    release.post();
+    bool received = false;
+    uint8_t observed[1600];
+    for (unsigned attempt = 0; accepted && attempt < 16 && !received; ++attempt) {
+      pollfd readable{wire, POLLIN, 0};
+      if (poll(&readable, 1, 1000) <= 0) break;
+      auto n = recv(wire, observed, sizeof(observed), 0);
+      if (n != int(length) || memcmp(observed, snapshot, length)) continue;
+      auto ip = observed + 14;
+      unsigned l3 = mode & 4 ? 40 : 20;
+      unsigned segment = mode & 4 ? (unsigned(ip[4])<<8) | ip[5] :
+	((unsigned(ip[2])<<8) | ip[3]) - l3;
+      unsigned pseudo = wireSum(ip + (mode & 4 ? 8 : 12), mode & 4 ? 32 : 8) +
+	segment + 6;
+      unsigned sum = pseudo + wireSum(ip + l3, segment);
+      while (sum>>16) sum = (sum & 0xffff) + (sum>>16);
+      received = sum == 0xffff && (mode & 4 || wireSum(ip, l3) == 0xffff);
+    }
+    std::cout << "# held header mode=" << mode << " accepted=" << accepted
+      << " refused=" << refused << " unchanged=" << unchanged
+      << " peer=" << received << " wireBytes=" << length << '\n';
+    ZuCheckRT(accepted && refused && unchanged && received,
+      log_("refused recovery preserves the held frame; peer receives its exact bytes/checksum"));
+  }
+  endpoint.disconnect([&owner] { owner.post(); });
+  owner.wait();
+}
 
 struct RetxProbe {
   ZiMultiplex *mx;
@@ -335,6 +611,387 @@ struct ControlProbe {
   }
 };
 
+struct IdleProgress {
+  ZiMultiplex *mx;
+  Zutcp::Instance *stack;
+  WriterCxn *cxn;
+  unsigned wanted = 1;
+  bool closed = false;
+  ZmScheduler::Timer timer;
+  ZmSemaphore done;
+  ZuTime deadline;
+  bool resumed = false;
+
+  void run() {
+    resumed = cxn->submitted == wanted && (closed || !cxn->txQueueCount()) &&
+      (!cxn->recovering || (!cxn->recoveryPending() && cxn->resumedRecovery == 1)) &&
+      !stack->txAdmission().outstanding;
+    if (resumed || Zm::now() >= deadline) { done.post(); return; }
+    mx->add(&timer, Zm::now() + ZuTime{0, 1000000}, ZmScheduler::Update,
+      [this](auto &&arm) { return arm([this] { run(); }); }, mx->txThread());
+  }
+};
+
+// Fill instance DATA admission with the sender gated, then refuse the first
+// original on another connection. Its producer never submits another byte.
+static void checkIdleRefusal(ZiMultiplex &mx, Zutcp::Instance *stack,
+    Zi::IOBufAllocator *tx, Zi::IOBufAllocator *small, int wire, unsigned scenario,
+    MetaTotals *samples = nullptr)
+{
+  ZmRef<WriterCxn> cxn = new WriterCxn{stack};
+  ZmSemaphore owner, entered, release;
+  mx.rxRun([cxn, &owner] { cxn->prepareRx(); owner.post(); });
+  owner.wait();
+  mx.run([&entered, &release] { entered.post(); release.wait(); }, 3);
+  entered.wait();
+  bool refused = false;
+  mx.txRun([&mx, stack, tx, small, cxn, scenario, samples, &refused, &owner] {
+    cxn->prepareTx();
+    cxn->offerAck = scenario == 3;
+    cxn->extendTxCredit(8);
+    if (samples) samples[0] = metaTotals();
+    auto writer = cxn->writer_();
+    auto original = writer.allocBuf(writer.headRoom());
+    if (!original) { owner.post(); return; }
+    original->append(reinterpret_cast<const uint8_t *>("resume--"), 8);
+    bool queued = writer.appendBuf(ZuMv(original));
+    bool recovery = scenario == 4;
+    bool primed = true;
+    if (recovery) {
+      cxn->recovering = true;
+      primed = cxn->sendNext(stack);
+    }
+    if (samples) samples[1] = metaTotals();
+    ZmRef<ZiIOBuf> fill[5];
+    for (unsigned i = 0; i < 3; ++i) fill[i] = tx->allocBuf(&mx, Payload);
+    fill[3] = small->allocBuf(&mx, Payload);
+    if (!recovery) fill[4] = stack->allocPacket(&mx, ZiIPType::V4);
+    bool full = true;
+    for (unsigned i = 0; i < (recovery ? 4 : 5); ++i) {
+      auto &packet = fill[i];
+      if (!packet) { full = false; continue; }
+      ControlProbe::frame(packet, 0xa1);
+      full &= stack->sendPacket(packet);
+    }
+    if (scenario == 3) {
+      // The prior ownership fixture retains one control slot. Hold the other
+      // under a kernel lease so ACK allocation must wait for this CQ.
+      auto control = stack->allocPacket(&mx, ZiIPType::V4, true);
+      if (control) {
+	ControlProbe::frame(control, 0xa2);
+	full &= stack->sendPacket(control);
+      } else full = false;
+    }
+    cxn->resume = [link = cxn.ptr(), stack] { return link->sendNext(stack); };
+    if (recovery) cxn->loseForRecovery();
+    bool attempted = recovery ? cxn->retransmit() : cxn->flushTx();
+    refused = queued && primed && full && !attempted &&
+      (scenario == 3 ? !cxn->controls : recovery ? cxn->refused >= 1 : cxn->refused == 1) &&
+      cxn->txQueueCount() == unsigned(!recovery) &&
+      cxn->submitted == unsigned(recovery) &&
+      (!recovery || cxn->recoveryPending()) &&
+      stack->txAdmission().outstanding == (scenario == 3 ? 6 : 5);
+    if (samples) samples[2] = metaTotals();
+    if (scenario == 4) std::cout << "# recovery queued=" << queued << " primed=" << primed
+      << " full=" << full << " attempted=" << attempted << " refused=" << cxn->refused
+      << " queuedCount=" << cxn->txQueueCount() << " sent=" << cxn->submitted
+      << " recovery=" << cxn->recoveryPending() << " ref=" << bool(cxn->retry)
+      << " refBytes=" << cxn->retry.length
+      << " outstanding=" << stack->txAdmission().outstanding << '\n';
+    owner.post();
+  });
+  owner.wait();
+  if (scenario == 1) {
+    mx.rxRun([cxn, &mx, &owner] {
+      cxn->clearRx();
+      mx.txRun([&mx, &owner] { mx.rxRun([&owner] { owner.post(); }); });
+    });
+    owner.wait();
+  } else if (scenario == 2) {
+    mx.rxRun([cxn, &owner] { cxn->disconnect_(false, [&owner] { owner.post(); }); });
+    owner.wait();
+  }
+  release.post();
+  ZuCheckRT(refused, log_("output is refused under held admission; scenario ", scenario));
+  IdleProgress progress{&mx, stack, cxn};
+  bool cancelled = scenario == 1 || scenario == 2;
+  if (cancelled) progress.wanted = 0;
+  if (scenario == 4) progress.wanted = 2;
+  progress.closed = scenario == 2;
+  progress.deadline = Zm::now() + ZuTime{2};
+  mx.txRun([&progress] { progress.run(); });
+  progress.done.wait();
+  unsigned matches = 0, wanted = cancelled ? 1 : scenario == 4 ? 2 : 1;
+  uint8_t bytes[2048];
+  for (unsigned attempt = 0; attempt < 16 && matches < wanted; ++attempt) {
+    pollfd ready{wire, POLLIN, 0};
+    if (poll(&ready, 1, cancelled ? 0 : 1000) <= 0) break;
+    auto n = recv(wire, bytes, sizeof(bytes), 0);
+    if (n >= 8 && !memcmp(bytes + n - 8, "resume--", 8)) ++matches;
+  }
+  bool exact = matches == (cancelled ? 0 : wanted);
+  ZuCheckRT(progress.resumed && exact,
+    log_("CQ resumes idle refused output, while reset/close cancels old work; scenario ",
+      scenario, " completed ", progress.resumed, " peer bytes ", exact));
+  mx.txRun([cxn, samples, &owner] {
+    cxn->resume = {};
+    if (samples) samples[3] = metaTotals();
+    owner.post();
+  });
+  owner.wait();
+  mx.rxRun([cxn, &mx, &owner] {
+    cxn->clearRx();
+    mx.txRun([&mx, &owner] { mx.rxRun([&owner] { owner.post(); }); });
+  });
+  owner.wait();
+}
+
+// One control slot is retained by ControlProbe; the other carries the local
+// FIN behind the gated sender. Acknowledging that FIN releases its caller lease,
+// but the peer-FIN ACK must wait for CQ before it can allocate the same slot.
+static void checkFinalACK(ZiMultiplex &mx, Zutcp::Instance *stack, int wire, bool v6)
+{
+  ZmRef<WriterCxn> cxn = new WriterCxn{stack};
+  WireEndpoint endpoint;
+  Zutcp::IPPath path{.local = ZiIP{v6 ? "2001:db8::1" : "198.18.0.1"},
+    .remote = ZiIP{v6 ? "2001:db8::2" : "198.18.0.2"}, .mtu = 1500};
+  memset(path.remoteMAC, 0xff, sizeof(path.remoteMAC));
+  path.localMAC[0] = 2;
+  ZmSemaphore owner, entered, release;
+  bool opened = false;
+  mx.rxRun([stack, cxn, &endpoint, &opened, &owner, &path] {
+    cxn->prepareFINRx();
+    opened = endpoint.init(stack) && endpoint.open(
+      Zutcp::PathMode::ServerUnconnected, path.local, 18185);
+    owner.post();
+  });
+  owner.wait();
+  bool ready = opened && !endpoint.ready.timedwait(Zm::now(2));
+  ZuCheckRT(ready, log_("open real encoder for refused final FIN ACK"));
+  if (!ready) return;
+  mx.run([&entered, &release] { entered.post(); release.wait(); }, 3);
+  entered.wait();
+  bool local = false;
+  mx.txRun([cxn, stack, &endpoint, &path, &local, &owner, v6] {
+    cxn->prepareTx(v6);
+    cxn->resume = [link = cxn.ptr(), &endpoint, &path] {
+      return link->wireFlush(endpoint, path);
+    };
+    cxn->beginFIN();
+    local = cxn->controls == 1 && stack->txAdmission().outstanding == 1;
+    owner.post();
+  });
+  owner.wait();
+  bool peer = false;
+  mx.rxRun([cxn, &mx, &peer, &owner, v6] {
+    peer = cxn->peerFIN(v6);
+    mx.txRun([&mx, &owner] {
+      mx.rxRun([&mx, &owner] { mx.txRun([&owner] { owner.post(); }); });
+    });
+  });
+  owner.wait();
+  bool blocked = false;
+  mx.txRun([cxn, stack, &blocked, &owner] {
+    blocked = cxn->controls == 1 && cxn->allocRefused && !cxn->finishes &&
+      stack->txAdmission().outstanding == 1;
+    std::cout << "# final ACK before CQ controls=" << cxn->controls
+      << " allocRefused=" << cxn->allocRefused << " finishes=" << cxn->finishes
+      << " pending=" << stack->txAdmission().outstanding << '\n';
+    owner.post();
+  });
+  owner.wait();
+  std::cout << "# final ACK local=" << local << " peer=" << peer << '\n';
+  ZuCheckRT(local && peer && blocked,
+    log_("peer FIN is retired but its refused ACK cannot finish graceful close"));
+  release.post();
+  bool closed = !cxn->finalClosed.timedwait(Zm::now(2));
+  bool drained = false, completed = false, returned = false;
+  auto deadline = Zm::now(2);
+  do {
+    mx.txRun([cxn, stack, &completed, &drained, &returned, &owner] {
+      completed = cxn->controls == 2 && cxn->resumedFinalACK == 1 && cxn->finishes == 1;
+      drained = !stack->txAdmission().outstanding;
+      if (drained) {
+	auto slot = stack->allocPacket(cxn.ptr(), ZiIPType::V4, true);
+	returned = slot && !stack->allocPacket(cxn.ptr(), ZiIPType::V4, true);
+	std::cout << "# final ACK after CQ controls=" << cxn->controls
+	  << " resume=" << cxn->resumedFinalACK << " finishes=" << cxn->finishes
+	  << " returned=" << returned << '\n';
+      }
+      owner.post();
+    });
+    owner.wait();
+  } while (!drained && Zm::now() < deadline);
+  unsigned seen = 0;
+  for (unsigned attempt = 0; attempt < 16 && seen != 3; ++attempt) {
+    pollfd readable{wire, POLLIN, 0};
+    if (poll(&readable, 1, 1000) <= 0) break;
+    uint8_t bytes[2048];
+    auto n = recv(wire, bytes, sizeof(bytes), 0);
+    if (n != (v6 ? 74 : 60) || bytes[12] != (v6 ? 0x86 : 8) ||
+	bytes[13] != (v6 ? 0xdd : 0) || bytes[14] != (v6 ? 0x60 : 0x45)) continue;
+    auto tcp = bytes + (v6 ? 54 : 34);
+    if (tcp[0] != (18185>>8) || tcp[1] != (18185 & 255)) continue;
+    unsigned sum = wireSum(bytes + (v6 ? 22 : 26), v6 ? 32 : 8) +
+      20 + 6 + wireSum(tcp, 20);
+    while (sum>>16) sum = (sum & 0xffff) + (sum>>16);
+    bool exact = sum == 0xffff && (v6 || wireSum(bytes + 14, 20) == 0xffff);
+    if (!v6) for (unsigned i = 54; i < 60; ++i) exact &= !bytes[i];
+    if (exact && tcp[13] == 0x11 && !tcp[7] && !tcp[11]) seen |= 1;
+    if (exact && tcp[13] == 0x10 && tcp[7] == 1 && tcp[11] == 1) seen |= 2;
+  }
+  ZuCheckRT(closed && completed && drained && returned && seen == 3,
+    log_("CQ resumes final ACK exactly once, completes close and sends valid FIN/ACK; "
+      "IPv6 ", v6));
+  if (!closed) {
+    mx.rxRun([cxn, &owner] { cxn->disconnect_(false, [&owner] { owner.post(); }); });
+    owner.wait();
+  }
+  mx.txRun([cxn, &owner] { cxn->resume = {}; owner.post(); });
+  owner.wait();
+  endpoint.disconnect([&owner] { owner.post(); });
+  owner.wait();
+}
+
+// Hold the other internal DATA slot so allocation identifies this source's
+// exact final return, independently of the retained range metadata lifetime.
+static void checkSourceRetirement(ZiMultiplex &mx, Zutcp::Instance *stack, int wire)
+{
+  for (unsigned mode = 0; mode < 8; ++mode) {
+    bool v6 = mode & 4, ackFirst = mode & 2, fin = mode & 1;
+    ZmRef<WriterCxn> cxn = new WriterCxn{stack};
+    WireEndpoint endpoint;
+    Zutcp::IPPath path{.local = ZiIP{v6 ? "2001:db8::1" : "198.18.0.1"},
+      .remote = ZiIP{v6 ? "2001:db8::2" : "198.18.0.2"}, .mtu = 1500};
+    memset(path.remoteMAC, 0xff, 6);
+    path.localMAC[0] = 2;
+    ZmSemaphore owner, entered, release;
+    bool ready = false;
+    mx.rxRun([cxn, stack, &endpoint, &path, &ready, &owner] {
+      cxn->prepareRx();
+      ready = endpoint.init(stack) && endpoint.open(
+	Zutcp::PathMode::ServerUnconnected, path.local, 18186);
+      owner.post();
+    });
+    owner.wait();
+    ready &= !endpoint.ready.timedwait(Zm::now(2));
+    ZuCheckRT(ready, log_("open retained DATA/FIN endpoint"));
+    mx.run([&entered, &release] { entered.post(); release.wait(); }, 3);
+    entered.wait();
+    MetaTotals baseline, admitted, attempted, drained;
+    ZmRef<Zutcp::PacketBuf> other, returned;
+    uint8_t *origin = nullptr;
+    bool submitted = false, blocked = false, preserved = false;
+    auto family = v6 ? ZiIPType::V6 : ZiIPType::V4;
+    mx.txRun([cxn, stack, v6, family, ackFirst, fin, &endpoint, &path, &other, &origin,
+	&submitted, &blocked, &preserved, &baseline, &admitted, &attempted, &owner] {
+      cxn->prepareTx(v6);
+      cxn->offerAck = false;
+      cxn->extendTxCredit(8);
+      baseline = metaTotals();
+      auto writer = cxn->writer_();
+      auto packet = writer.allocBuf(writer.headRoom());
+      if (packet) {
+	packet->append(reinterpret_cast<const uint8_t *>("retire--"), 8);
+	submitted = writer.appendBuf(ZuMv(packet)) && cxn->sourceOutput(endpoint, path, fin);
+      }
+      admitted = metaTotals();
+      if (submitted) {
+	auto &source = *cxn->retry.range.storage;
+	origin = source.data;
+	auto head = Zutcp::tcpHead(family, source.tcp);
+	auto frame = origin + source.payloadOffset - head;
+	unsigned length = head + 8;
+	uint8_t snapshot[128];
+	memcpy(snapshot, frame, length);
+	auto before = cxn->sourceEncodes;
+	preserved = true;
+	for (unsigned attempt = 0; attempt < 3; ++attempt)
+	  preserved &= !cxn->sourceOutput(endpoint, path, fin, true) &&
+	    !memcmp(frame, snapshot, length);
+	preserved &= cxn->sourceEncodes == before + 3 &&
+	  stack->txAdmission().outstanding == 1;
+	attempted = metaTotals();
+	other = stack->allocPacket(cxn.ptr(), family);
+	if (other) {
+	  auto a = uintptr_t(origin), b = uintptr_t(other->data_());
+	  std::cout << "# retained-source payload=8 logical=" << source.size
+	    << " poolCapacity=" << source.pool->size << " slotSpacing=" << (a > b ? a - b : b - a)
+	    << " fin=" << fin << '\n';
+	}
+	submitted &= other && source.fin == fin && cxn->txNext() == unsigned(8 + fin) &&
+	  stack->txAdmission().outstanding == 1;
+	if (ackFirst) {
+	  cxn->ackOriginal(fin);
+	  blocked = !source.data && !*source.backing &&
+	    !stack->allocPacket(cxn.ptr(), family) && stack->txAdmission().outstanding == 1;
+	}
+      }
+      owner.post();
+    });
+    owner.wait();
+    release.post();
+    bool retired = false;
+    auto deadline = Zm::now(2);
+    do {
+      mx.txRun([stack, &retired, &owner] {
+	retired = !stack->txAdmission().outstanding;
+	owner.post();
+      });
+      owner.wait();
+    } while (!retired && Zm::now() < deadline);
+    bool exact = false;
+    mx.txRun([cxn, stack, family, ackFirst, fin, origin, &blocked, &returned, &exact, &owner] {
+      if (cxn->retry) {
+	auto &source = *cxn->retry.range.storage;
+	if (!ackFirst) {
+	  blocked = source.data == origin && *source.backing &&
+	    !stack->allocPacket(cxn.ptr(), family);
+	  cxn->ackOriginal(fin);
+	}
+	returned = stack->allocPacket(cxn.ptr(), family);
+	cxn->ackOriginal(fin); // Duplicate cumulative ACK cannot release this slot again.
+	exact = !source.data && !*source.backing && returned &&
+	  returned->data_() == origin && !stack->allocPacket(cxn.ptr(), family);
+      }
+      owner.post();
+    });
+    owner.wait();
+    bool received = false;
+    for (unsigned attempt = 0; submitted && attempt < 16 && !received; ++attempt) {
+      pollfd readable{wire, POLLIN, 0};
+      if (poll(&readable, 1, 1000) <= 0) break;
+      uint8_t bytes[2048];
+      auto n = recv(wire, bytes, sizeof(bytes), 0);
+      if (n != (v6 ? 82 : 62) || memcmp(bytes + n - 8, "retire--", 8)) continue;
+      auto ip = bytes + 14;
+      auto tcp = ip + (v6 ? 40 : 20);
+      unsigned sum = wireSum(ip + (v6 ? 8 : 12), v6 ? 32 : 8) + 28 + 6 + wireSum(tcp, 28);
+      while (sum>>16) sum = (sum & 0xffff) + (sum>>16);
+      received = sum == 0xffff && (v6 || wireSum(ip, 20) == 0xffff) &&
+	bool(tcp[13] & 1) == fin;
+    }
+    ZuCheckRT(ready && submitted && preserved && blocked && retired && exact && received,
+      log_("retained DATA returns its exact slot once after ACK and CQ; IPv6 ", v6,
+	" ACK before CQ ", ackFirst, " FIN ", fin));
+    mx.txRun([&other, &returned, &owner] { other = returned = nullptr; owner.post(); });
+    owner.wait();
+    mx.rxRun([cxn, &mx, &owner] {
+      cxn->clearRx();
+      mx.txRun([&mx, &owner] { mx.rxRun([&owner] { owner.post(); }); });
+    });
+    owner.wait();
+    endpoint.disconnect([&owner] { owner.post(); });
+    owner.wait();
+    cxn = nullptr;
+    mx.txRun([&drained, &owner] { drained = metaTotals(); owner.post(); });
+    owner.wait();
+    reportMeta(mode, "admission", baseline, admitted);
+    reportMeta(mode, "three-refusals", admitted, attempted);
+    reportMeta(mode, "teardown", attempted, drained);
+  }
+}
+
 static void testStack()
 {
   ZuTestScopeRT(testStack);
@@ -356,7 +1013,7 @@ static void testStack()
       received.post();
     }, .packetCount = 2, .controlBufCount = 2, .txControlCredits = 3,
     .rxRetainFramesPerCxn = 1, .maxData = 8192, .closedTupleRingSize = 3,
-    .tfoCookieCacheSize = 3}, {}, 0);
+    .tfoCookieCacheSize = 3}, 0);
   auto stack = instance.ptr();
   mx.plugin(ZuMv(instance));
   const auto initializedParams = ZutcpTest::Instance::parameters(*stack);
@@ -575,6 +1232,20 @@ static void testStack()
   ZuCheckRT(pressure.kernelOnly,
     log_("CQ restores admission while transport recovery still owns control backing"));
 
+  MetaTotals recoverySamples[5];
+  for (unsigned scenario = 0; scenario < 5; ++scenario)
+    checkIdleRefusal(mx, stack, tx, small, wire, scenario,
+      scenario == 4 ? recoverySamples : nullptr);
+  mx.txRun([&recoverySamples, &owner] { recoverySamples[4] = metaTotals(); owner.post(); });
+  owner.wait();
+  reportMeta(8, "recovery-admission", recoverySamples[0], recoverySamples[1]);
+  reportMeta(8, "loss-and-refusals", recoverySamples[1], recoverySamples[2]);
+  reportMeta(8, "completion-retry", recoverySamples[2], recoverySamples[3]);
+  reportMeta(8, "recovery-teardown", recoverySamples[3], recoverySamples[4]);
+  checkFinalACK(mx, stack, wire, false);
+  checkFinalACK(mx, stack, wire, true);
+  checkSourceRetirement(mx, stack, wire);
+
   ZmRef<Zi::IOBuf> reserves[2]; // remaining two slots in the three-packet Tx pool
   uint8_t *sentOrigin = nullptr;
   bool accepted = false, isolated = false;
@@ -671,6 +1342,7 @@ static void testStack()
     }
   }
   ZuCheckRT(dataSeen == 3, log_("independent peer consumes both original producer payloads"));
+  checkHeldHeaders(mx, stack, cxn, wire);
   RetxProbe retransmit{&mx, cxn, stack};
   retransmit.deadline = Zm::now() + ZuTime{2};
   mx.txRun([&cxn, &retransmit] { cxn->ackFirst(); retransmit.run(); });
@@ -840,7 +1512,7 @@ static void testStack()
   for (auto &p : input) p = nullptr;
   for (auto &p : reserves) p = nullptr;
   probe.packet = nullptr;
-  auto freshStack = ZutcpTest::makeInstance(&mx, index, 3, {.packetCount = 2}, {}, 0);
+  auto freshStack = ZutcpTest::makeInstance(&mx, index, 3, {.packetCount = 2}, 0);
   auto conflicting = initializedParams;
   conflicting.controlBufCount = 3;
   conflicting.closedTupleRingSize = 2;
@@ -924,15 +1596,13 @@ static void testStack()
 	value.payload = {buf->data() + 14, length};
 	return value;
       };
-      bool refused = false;
-      auto receive = [&refused](WriterCxn *cxn, const Zutcp::ByteData &data,
+      auto receive = [](WriterCxn *cxn, const Zutcp::ByteData &data,
 	  ZmRef<ZiIOBuf> packet) {
-	refused = false;
-	return cxn->processFrame(data, ZuMv(packet), nullptr, &refused);
+	return cxn->processFrame(data, ZuMv(packet));
       };
-      bool first = receive(a.ptr(), frame(pressureRx[0], 0), pressureRx[0]) >= 0 && !refused;
-      bool second = receive(b.ptr(), frame(pressureRx[1], 0), pressureRx[1]) >= 0 && !refused;
-      bool third = receive(c.ptr(), frame(pressureRx[2], 0), pressureRx[2]) >= 0 && !refused;
+      bool first = receive(a.ptr(), frame(pressureRx[0], 0), pressureRx[0]) >= 0;
+      bool second = receive(b.ptr(), frame(pressureRx[1], 0), pressureRx[1]) >= 0;
+      bool third = receive(c.ptr(), frame(pressureRx[2], 0), pressureRx[2]) >= 0;
       pressurePassed = first && second && third &&
 	a->rxError() == Zutcp::DataError::None && c->rxError() == Zutcp::DataError::None;
       mx.rxRun([a = ZuMv(a), b = ZuMv(b), c = ZuMv(c),

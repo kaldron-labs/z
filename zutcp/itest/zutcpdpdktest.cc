@@ -9,8 +9,11 @@
 #include <rte_mempool.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmThread.hh>
 
 #include <zlib/Ztcp.hh>
+#include <zlib/ZutcpCxn.hh>
+#include <zlib/Zutcp_.hh>
 #include <zlib/ZxdpDpdkPool.hh>
 
 #include "zutcpdpdkfixture.hh"
@@ -24,6 +27,26 @@ enum { TCPPort = 18210, UDPPortA = 18211, UDPPortB = 18212 };
 
 static constexpr auto TCPData = "DPDK carries the exact Ztcp byte stream"_z;
 static const ZuBSpan UDPData[] = {"first datagram", "", "a longer final datagram"};
+
+// The transmitted IP/UDP frame must surround the caller's own payload backing.
+// Completion leaves its descriptor and payload intact through the Zi callback.
+static bool framedUDP(const ZiIOBuf *buf, ZuBSpan payload)
+{
+  if (!buf || !buf->registered() || buf->cspan() != payload) return false;
+  for (auto family : {ZiIPType::V4, ZiIPType::V6}) {
+    unsigned head = Zutcp::udpHead(family);
+    if (buf->skip < head) continue;
+    unsigned wire = head + buf->length;
+    if (wire < 60) wire = 60; // Ethernet minimum, excluding FCS
+    if (wire > buf->size - buf->skip + head) continue;
+    Zutcp::IPView ip;
+    Zutcp::UDPView udp;
+    if (Zutcp::readIP({buf->data() - head, wire}, ip) &&
+	Zutcp::readUDP(ip, udp) && udp.payload.data() == buf->data() &&
+	udp.payload == payload) return true;
+  }
+  return false;
+}
 
 template <unsigned Kind> struct Input : ZiIOBuf { using ZiIOBuf::ZiIOBuf; };
 using TCPInput = Input<0>;
@@ -244,10 +267,15 @@ void Connection::write(ZuBSpan data, ZiSockAddr peer)
       state->output.post();
       return false;
     }
-    io.init(ZiTxFn{[state, data](ZiTxContext &io) {
+    io.init(ZiTxFn{[state, data, original = buf.ptr(),
+	backing = buf->data_(), skip = buf->skip, size = buf->size,
+	owner = buf->owner](ZiTxContext &io) {
+      if (state->udp && (!io.buf || io.buf.ptr() != original ||
+	  io.buf->data_() != backing || io.buf->skip != skip || io.buf->size != size ||
+	  io.buf->owner != owner)) ++state->errors;
       auto output = &state->output;
       if (io.length != int(data.length()) ||
-	  (state->udp && (!io.buf || io.buf->cspan() != data))) ++state->errors;
+	  (state->udp && !framedUDP(io.buf.ptr(), data))) ++state->errors;
       io.complete();
       output->post();
       return true;
@@ -392,6 +420,268 @@ static bool allReturned(Peer &peer)
 {
   auto pool = ZxdpDpdkTest::native(peer.rx->pool);
   return pool && !rte_mempool_in_use_count(pool);
+}
+
+// This endpoint and synthetic established connection exercise the same borrowed
+// source view and encoder as native output, while the peer holds the PMD mbuf.
+struct HeldEndpoint : Zutcp_::Endpoint_<HeldEndpoint> {
+  ZmSemaphore ready;
+  enum { EndpointRef = false };
+  void endpointReady(Zutcp_::Endpoint_<HeldEndpoint> *) { ready.post(); }
+  void endpointFailed(bool) { ready.post(); }
+  void endpointDown_(Zutcp_::Endpoint_<HeldEndpoint> *) { }
+  void endpointDatagram(Zutcp::Datagram) { }
+};
+
+struct HeldCxn : ZmNHeap<HeldCxn>, Zutcp::Cxn_<Zutcp::Instance, HeldCxn, Zutcp::TxBufAlloc<>> {
+friend inline ZuStringT<"Zutcp.DpdkTest.Held"> ZmNHeapID(HeldCxn *);
+  using Base = Zutcp::Cxn_<Zutcp::Instance, HeldCxn, Zutcp::TxBufAlloc<>>;
+  using ZmNHeap<HeldCxn>::operator new;
+  using ZmNHeap<HeldCxn>::operator delete;
+  Zutcp::SentFrameRef original;
+  unsigned encodes = 0;
+
+  explicit HeldCxn(Zutcp::Instance *app) : Base{app} { }
+  void prepareRx() {
+    Base::startHandshake();
+    Base::setTCPOriginsRx({.local = UINT32_MAX, .peer = UINT32_MAX,
+      .localKnown = true, .peerKnown = true});
+    Base::establish();
+  }
+  bool prepareTx(const Zutcp::IPPath &path, bool fin) {
+    Base::initClientPathTx({path.local, 18219}, {path.remote, 18220});
+    Base::extendTxCredit(8 + fin);
+    auto writer = Base::writer_();
+    auto packet = writer.allocBuf(writer.headRoom());
+    if (!packet) return false;
+    packet->append(reinterpret_cast<const uint8_t *>("held----"), 8);
+    if (!writer.appendBuf(ZuMv(packet))) return false;
+    Zutcp::TxRange range;
+    if (!Base::txRange(0, range)) return false;
+    original = Zutcp::SentFrameRef::data(range, fin);
+    if (fin) Base::fin();
+    return true;
+  }
+  bool output(HeldEndpoint &endpoint, const Zutcp::IPPath &path, unsigned mode,
+      uint32_t ack, uint8_t *&frame, unsigned &length) {
+    return Base::sendTCP(original, false, 0,
+      [this, &path]() { return app()->allocPacket(this, path.local.type()); },
+      [this, &endpoint, &path, mode, ack, &frame, &length](auto packet, auto ecn) {
+	++encodes;
+	packet->tcp.ack = ack;
+	packet->tcp.window = uint16_t(ack);
+	packet->tcp.options = {};
+	if (mode & 1) {
+	  packet->tcp.options.flags = Zutcp::TCPOptions::TS;
+	  packet->tcp.options.tsval = ack;
+	  packet->tcp.options.tsecr = ack - 1;
+	  packet->tcp.options.sackCount = ack == 100 ? 1 : 2;
+	  packet->tcp.options.sack[0] = {ack + 10, ack + 20};
+	  packet->tcp.options.sack[1] = {ack + 30, ack + 40};
+	}
+	// The retained reference carries FIN through original send and recovery.
+	auto head = Zutcp::tcpHead(path.local.type(), packet->tcp);
+	frame = packet->data() - head;
+	auto &source = *original.range.storage;
+	packet->data__ = uintptr_t(frame) | ZiIOBuf::Builtin | ZiIOBuf::Registered;
+	packet->size = source.size - unsigned(frame - source.data);
+	packet->skip = head;
+	length = head + packet->length;
+	if (length < 60) length = 60;
+	return endpoint.send(ZuMv(packet), {path.remote, 18220}, ecn, true, &path);
+      });
+  }
+  void ack() {
+    Base::applyTCP({.ack = unsigned(8 + original.fin), .window = 8, .flags = 0x10});
+  }
+  void finishRx() { Base::resetLink(); }
+  bool flushTx() { return false; }
+  void queueTxFlush(ZiSockAddr = {}) { }
+  void queueRetransmit() { }
+  void pto() { }
+  bool retransmit(bool = false, unsigned = 2) { return false; }
+  int process(Zutcp::Reader &) { return 0; }
+};
+
+static unsigned heldSum(const uint8_t *data, unsigned length)
+{
+  unsigned sum = 0;
+  for (; length > 1; data += 2, length -= 2) sum += (unsigned(data[0])<<8) | data[1];
+  if (length) sum += unsigned(*data)<<8;
+  while (sum>>16) sum = (sum & 0xffff) + (sum>>16);
+  return sum;
+}
+
+static bool heldChecksum(
+  const uint8_t *frame, unsigned length, bool v6, unsigned ack, unsigned mode)
+{
+  unsigned l3 = v6 ? 40 : 20, segment = length - 14 - l3;
+  auto ip = frame + 14;
+  auto tcp = ip + l3;
+  unsigned options = mode & 1 ? (ack == 100 ? 20 : 28) : 0;
+  unsigned encoded = v6 ? (unsigned(ip[4])<<8) | ip[5] :
+    ((unsigned(ip[2])<<8) | ip[3]) - l3;
+  unsigned sum = heldSum(ip + (v6 ? 8 : 12), v6 ? 32 : 8) + segment + 6 +
+    heldSum(ip + l3, segment);
+  while (sum>>16) sum = (sum & 0xffff) + (sum>>16);
+  return sum == 0xffff && (v6 || heldSum(ip, l3) == 0xffff) && encoded == segment &&
+    segment == 20 + options + 8 && unsigned(tcp[12]>>4)<<2 == 20 + options &&
+    !tcp[4] && !tcp[5] && !tcp[6] && !tcp[7] && !tcp[8] && !tcp[9] &&
+    tcp[10] == ack>>8 && tcp[11] == (ack & 255) &&
+    tcp[14] == ack>>8 && tcp[15] == (ack & 255) && bool(tcp[13] & 1) == bool(mode & 2) &&
+    !memcmp(frame + length - 8, "held----", 8);
+}
+
+static void heldOwnership(Peers &pair)
+{
+  ZuTestScopeRT(heldOwnership);
+  auto &peer = pair.a;
+  ZmSemaphore owner;
+  for (unsigned mode = 0; mode < 8; ++mode) {
+    bool v6 = mode & 4;
+    Zutcp::IPPath path{.local = ZiIP{v6 ? Links[0].ip6 : Links[0].ip},
+      .remote = ZiIP{v6 ? Links[1].ip6 : Links[1].ip}, .mtu = 1500};
+    memcpy(path.localMAC, Links[0].address.addr_bytes, 6);
+    memcpy(path.remoteMAC, Links[1].address.addr_bytes, 6);
+    HeldEndpoint endpoint;
+    ZmRef<HeldCxn> cxn = new HeldCxn{peer.tcp.ptr()};
+    auto finish = [&peer, &owner, cxn, &endpoint] {
+      peer.mx.rxRun([cxn, &peer, &owner] {
+	cxn->finishRx();
+	peer.mx.txRun([&peer, &owner] { peer.mx.rxRun([&owner] { owner.post(); }); });
+      });
+      owner.wait();
+      endpoint.disconnect([&owner] { owner.post(); });
+      owner.wait();
+    };
+    bool opened = false;
+    peer.mx.rxRun([&endpoint, cxn, &peer, &path, &opened, &owner] {
+      cxn->prepareRx();
+      opened = endpoint.init(peer.tcp.ptr()) && endpoint.open(
+	Zutcp::PathMode::ServerUnconnected, path.local, 18219);
+      owner.post();
+    });
+    owner.wait();
+    bool ready = opened && wait(endpoint.ready);
+    CHECK(ready, "open retained endpoint profile ", mode);
+    if (!ready) { finish(); return; }
+    bool prepared = false, accepted = false;
+    uint8_t *frame = nullptr;
+    unsigned length = 0;
+    peer.mx.txRun([cxn, &endpoint, &path, mode, &prepared, &accepted,
+	&frame, &length, &owner] {
+      prepared = cxn->prepareTx(path, mode & 2);
+      if (prepared) accepted = cxn->output(endpoint, path, mode, 100, frame, length);
+      owner.post();
+    });
+    owner.wait();
+    auto take = [&pair]() {
+      rte_mbuf *packet;
+      auto deadline = Zm::now(2);
+      do { packet = pair.fixture.ports[0].take(); }
+      while (!packet && Zm::now() < deadline);
+      return packet;
+    };
+    auto packet = accepted ? take() : nullptr;
+    CHECK(prepared && accepted && packet, "submit through TCP/endpoint into the actual PMD");
+    if (!packet) { finish(); return; }
+    auto slot = Zxdp::Dpdk::BufPool::slot(packet);
+    auto pool = packet->pool;
+    unsigned inUse = rte_mempool_in_use_count(pool);
+    uint8_t snapshot[1600];
+    bool exact = length <= sizeof(snapshot) && rte_pktmbuf_pkt_len(packet) == length &&
+      rte_pktmbuf_mtod(packet, uint8_t *) == frame && heldChecksum(frame, length, v6, 100, mode);
+    if (exact) memcpy(snapshot, frame, length);
+    bool refused = false;
+    peer.mx.txRun([cxn, &endpoint, &path, &peer, mode, frame, length,
+	&snapshot, &refused, exact, slot, packet, &owner] {
+      auto pending = peer.tcp->txAdmission().outstanding;
+      auto calls = cxn->encodes;
+      refused = !peer.device->txReady(frame) && exact && pending == 1 && rte_mbuf_refcnt_read(packet) == 2 &&
+	slot->leases.load_() == (Zxdp::Dpdk::Slot::Caller | Zxdp::Dpdk::Slot::Submitted);
+      for (unsigned attempt = 1; refused && attempt <= 3; ++attempt) {
+	auto view = frame;
+	auto bytes = length;
+	refused &= !cxn->output(endpoint, path, mode, 100 + 100 * attempt, view, bytes) &&
+	  !memcmp(frame, snapshot, length) && rte_mbuf_refcnt_read(packet) == 2 &&
+	  peer.tcp->txAdmission().outstanding == pending;
+      }
+      refused &= cxn->encodes == calls + 3;
+      owner.post();
+    });
+    owner.wait();
+    CHECK(refused, "held PMD bytes/refcount/admission survive changed ACK/window/options");
+    rte_pktmbuf_free(packet);
+    auto retired = [&peer, &owner]() {
+      bool idle = false;
+      auto deadline = Zm::now(2);
+      do {
+	peer.mx.txRun([&peer, &idle, &owner] {
+	  idle = !peer.tcp->txAdmission().outstanding;
+	  owner.post();
+	});
+	owner.wait();
+      } while (!idle && Zm::now() < deadline);
+      return idle;
+    };
+    bool first = retired();
+    peer.mx.txRun([cxn, &endpoint, &path, mode, &accepted, &frame, &length, &owner] {
+      accepted = cxn->output(endpoint, path, mode, 500, frame, length);
+      owner.post();
+    });
+    owner.wait();
+    packet = accepted ? take() : nullptr;
+    bool recovery = first && packet && Zxdp::Dpdk::BufPool::slot(packet) == slot &&
+      rte_pktmbuf_mtod(packet, uint8_t *) == frame &&
+      heldChecksum(frame, length, v6, 500, mode);
+    bool before = false;
+    if (mode & 1) {
+      peer.mx.txRun([cxn, slot, pool, inUse, &before, &owner] {
+	cxn->ack();
+	before = !cxn->original.range.storage->data &&
+	  slot->leases.load_() == Zxdp::Dpdk::Slot::Submitted &&
+	  rte_mempool_in_use_count(pool) == inUse;
+	owner.post();
+      });
+      owner.wait();
+    }
+    bool finished = false;
+    if (mode == 7 && recovery) {
+      // The peer ACK has released transport retention, but the PMD still owns
+      // the frame. Drain connection/endpoint owners before stopping the mux.
+      uint8_t stopping[1600];
+      memcpy(stopping, frame, length);
+      finish();
+      finished = true;
+      bool observed = false;
+      ZmThread release{[tcp = peer.tcp, packet, frame, length, &stopping, &observed] {
+	auto deadline = Zm::now(2);
+	while (tcp->ready() && Zm::now() < deadline) Zm::yield();
+	observed = !tcp->ready() && !memcmp(frame, stopping, length);
+	rte_pktmbuf_free(packet);
+      }};
+      bool stopped = peer.mx.stop();
+      release.join();
+      bool restarted = peer.mx.start();
+      CHECK(stopped && observed && restarted && !peer.device->error(),
+	"stop drains the held PMD submission unchanged and restarts on the same arena");
+    } else if (packet) rte_pktmbuf_free(packet);
+    bool second = retired();
+    bool returned = false;
+    peer.mx.txRun([cxn, slot, pool, inUse, mode, &before, &returned, &owner] {
+      if (!(mode & 1)) {
+	before = slot->leases.load_() == Zxdp::Dpdk::Slot::Caller &&
+	  rte_mempool_in_use_count(pool) == inUse;
+	cxn->ack();
+      }
+      returned = !slot->leases.load_() && rte_mempool_in_use_count(pool) + 1 == inUse;
+      owner.post();
+    });
+    owner.wait();
+    CHECK(recovery && second && before && returned,
+      "same backing recovers after PMD release and returns once; ACK-before-CQ ", bool(mode & 1));
+    if (!finished) finish();
+  }
 }
 
 static void traffic(Peers &pair, bool useTCP, bool useUDP, bool reconnect, bool v6)
@@ -547,6 +837,7 @@ static void testDpdk()
 	  a.device->allocated() && b.device->allocated() && intact(),
 	"start/restart both plugins with retained backing [IPv", v6 ? 6 : 4, ", cycle ", cycle, "]");
       if (!startA || !startB) return;
+      if (!v6 && !cycle) ZuTestCallRT(heldOwnership, pair);
       ZuTestCallRT(traffic, pair, cycle != 1, cycle != 0, cycle == 0, v6);
       auto other = Zxdp::instance(Zxdp::Type::Dpdk);
       CHECK(a.mx.state() == ZmEngineState::Stopped && b.mx.state() == ZmEngineState::Stopped &&

@@ -59,6 +59,26 @@ Ztls application drivers below. Use explicit native targets while developing TCP
   callback. Same-instance restart retains the allocated UMEM.
   A gated sender admits a final frame before shutdown, then verifies exact peer
   receipt after stop, independently of the backing-retirement checks.
+  Eight held-frame profiles cover IPv4/IPv6, TS/SACK options and FIN wire flags.
+  Refused endpoint attempts change ACK/window/options without changing any
+  outstanding byte; an independent peer compares the snapshot and a separate
+  bytewise checksum. FIN flags in these profiles are codec inputs, not a proof
+  of the connection's FIN retention lifecycle. Completion-driven progress cases
+  cover first DATA, control-buffer exhaustion, reset/close cancellation and
+  duplicate-ACK recovery with the application producer idle. Recovery must drain
+  its existing queue through `resumeTx()` after CQ and deliver both wire copies.
+  Retained-source cases cover both ACK/CQ orders for IPv4/IPv6 DATA and actual
+  DATA+FIN references, including three refused endpoint attempts and exact final
+  slot return after duplicate ACK. These directly constructed references test
+  the supported API; the native packetizer still sends FIN separately from DATA.
+  Named-heap diagnostics separate first admission, three held-source refusals,
+  actual queued-loss recovery and final owner teardown. They report cache plus
+  heap request/return counts and rounded object bytes, with native slot spacing
+  reported separately. Snapshotting and printing are test-only, not latency data.
+  IPv4/IPv6 graceful-close gates hold the local FIN under a kernel lease, receive
+  and retire peer FIN, and refuse final-ACK allocation until CQ returns the slot.
+  They verify one completion-driven retry, exact close/owner drain, control-slot
+  reuse and independent wire checksums, including IPv4 Ethernet padding.
 - `zutcpiptest` uses an independent raw-IP peer codec for both families. It checks
   zero/odd/full-MTU TCP payloads, pseudo-header checksums, protocol/ECN fields,
   borrowed ingress, exact/wildcard endpoint routing, duplicate binding refusal,
@@ -154,3 +174,13 @@ packet. Separate EAL processes verify fatal ownership violations. Allocation and
 activation failure cases exercise rollback, frozen-registry retry, smaller Tx
 requests, retained Tx backing through failure and restart, and same-port reuse
 after finalization.
+
+Before starting its forwarding wire, the driver holds a real ring-PMD mbuf while
+three connection/endpoint attempts change ACK/window/options. Eight profiles
+cover both families, TS/SACK and ordinary DATA/DATA+FIN references. FIN is retained
+through the actual send/recovery protocol history and cumulative ACK covers its
+extra sequence position. It verifies unchanged whole-frame bytes,
+callback entry, native reference count and admission, then same-slot recovery
+with independent checksum/header/payload checks. Both ACK/driver-retirement
+orders return the slot once. A held-PMD shutdown case releases the reference
+only after Instance Closing is observed, then verifies stop/restart and retirement.

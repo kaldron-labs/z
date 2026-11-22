@@ -72,11 +72,26 @@ struct DataRx : public ZiRxQueue::Node {
     data__ = 0;
   }
 
-  bool attach(ZiIOBuf *stub) {
+  bool attach(ZiIOBuf *stub, Zi::IOQueue *retained = nullptr) {
     ZmAssert_(!stub->data_() && !stub->length);
     auto packet = slice.packet.ptr();
-    if (packet && packet->registered() && !packet->builtin() &&
-	packet->refCount() == 1 && refCount() == 1) {
+    bool transfer = false;
+    if (packet && packet->registered() && !packet->builtin() && refCount() == 1) {
+      auto refs = packet->refCount();
+      if (refs == 2 && retained) {
+	bool member = retained->headPtr() == packet || retained->tailPtr() == packet;
+	if (!member) {
+	  // Older reordered packets need a bounded membership check. An
+	  // arbitrary second alias does not authorize unlinking another list.
+	  auto i = retained->citer();
+	  while (auto node = i())
+	    if (node == packet) { member = true; break; }
+	}
+	if (member) { retained->delNode(packet); --refs; }
+      }
+      transfer = refs == 1;
+    }
+    if (transfer) {
       stub->skip = unsigned(data_() + skip - packet->data_());
       stub->size = packet->size;
       stub->length = length;
@@ -194,30 +209,12 @@ public:
     using IndexedBase::IndexedBase;
   };
 
-  class Node : public ZmNHeap<Node>, public ZuObject {
-  friend inline ZuStringT<"Zutcp.TxUnackdRange"> ZmNHeapID(Node *);
-  public:
-    Node() = default;
-    explicit Node(const TxUnackdRange &range) : m_range{range} { }
-
-    TxUnackdRange &data() { return m_range; }
-    const TxUnackdRange &data() const { return m_range; }
-
-  private:
-    TxUnackdRange	m_range;
-  };
-
   explicit TxUnackdRanges(uint64_t = 0) { }
   void telemetry(Ztc::QueueTelemetry &data) const override {
     queueTelemetry(data);
     data.count = count_();
   }
 
-  ZmPQResult::T add(Node *node) {
-    ZmRef<Node> node_{node};
-    if (!node_) return ZmPQResult::Invalid;
-    return add(node_->data());
-  }
   ZmPQResult::T add(const TxUnackdRange &range) {
     if (range.fin && range.bytes == uint64_t(-1))
       return ZmPQResult::Invalid;
@@ -313,16 +310,17 @@ public:
     }
     return true;
   }
-  ZmRef<Node> find(uint64_t offset) const {
+  // The returned range is borrowed until the next update.
+  const TxUnackdRange *find(uint64_t offset) const {
     if (m_index) {
       auto node = m_index->find(offset);
       if (node && node->data().offset == offset)
-	return new Node{node->data()};
+	return &node->data();
       return nullptr;
     }
     unsigned i = lowerBound(offset);
     if (i < m_ranges.length() && m_ranges[i].offset == offset)
-      return new Node{m_ranges[i]};
+      return &m_ranges[i];
     return nullptr;
   }
   void clear() {
@@ -620,42 +618,17 @@ private:
 ZuDerive(RxSpans, (ZtArray<RxSpan, ZtArrayHeapID<"Zutcp.RxSpans">>));
 
 template <typename Queue, typename Spans>
-inline bool rxNovelSpans(
+inline int64_t rxNovelSpans(
   const Queue &queue, uint64_t first, uint64_t end, Spans &spans)
 {
-  if (end < first) return false;
-  return queue.gaps(first, end - first, [&spans](const auto &span) {
-    spans << RxSpan{span.key(), span.key() + span.length()};
-    return true;
-  });
-}
-
-template <typename Spans>
-inline uint64_t rxSpanBytes(const Spans &spans)
-{
+  if (end < first) return -1;
   uint64_t bytes = 0;
-  for (unsigned i = 0, n = spans.length(); i < n; ++i) bytes += spans[i].length();
-  return bytes;
-}
-
-template <typename Spans, typename Alloc, typename Enqueue>
-inline bool queueRxSpans(
-  const Spans &spans, uint64_t srcOffset, ZuBSpan payload,
-  Alloc alloc, Enqueue enqueue)
-{
-  for (unsigned i = 0, n = spans.length(); i < n; ++i) {
-    uint64_t payloadOffset = spans[i].first - srcOffset;
-    uint64_t length64 = spans[i].length();
-    if (payloadOffset > payload.length() ||
-	length64 > payload.length() - payloadOffset)
-      return false;
-    unsigned length = unsigned(length64);
-    auto buf = alloc(length);
-    if (ZuUnlikely(!buf)) return false;
-    buf->append(ZuBSpan{payload.data() + payloadOffset, length});
-    enqueue(ZuMv(buf), spans[i].first, length);
-  }
-  return true;
+  if (!queue.gaps(first, end - first, [&spans, &bytes](const auto &span) {
+    spans << RxSpan{span.key(), span.key() + span.length()};
+    bytes += span.length();
+    return true;
+  })) return -1;
+  return int64_t(bytes);
 }
 
 } // namespace Zutcp

@@ -116,14 +116,14 @@ inline unsigned tcpPayload(unsigned mtu, ZiIPType::T type) {
 }
 
 // Construct TCP header/options over payload already at frame + tcpHead(type, header).
-// Includes IP framing and the mandatory TCP pseudo-header checksum. No payload
-// move or allocation; invalid geometry leaves the frame unchanged. Sequence,
+// Includes IP framing; Instance::tcpChecksum finalizes the TCP checksum. No payload move
+// or allocation; invalid geometry leaves the frame unchanged. Sequence,
 // ACK, flags and window semantics belong to the connection, not this codec.
 ZutcpAPI unsigned writeTCP(
   uint8_t *frame, unsigned capacity, const IPPath &, const TCPHeader &,
   unsigned payload, unsigned ecn = 0);
 
-// Consume the original IP payload, including any TCP options in its checksum.
+// Parse the original IP payload without software TCP checksum validation.
 // The returned options/payload borrow that storage. Publish only on success.
 ZutcpAPI bool readTCP(const IPView &, TCPView &);
 
