@@ -119,6 +119,201 @@ void testEarlyTrafficSecretState()
     "0-RTT reject was not idempotent");
 }
 
+struct CountHP : Ztls_::CipherAlgo {
+  const Ztls_::CipherAlgo *impl;
+  mutable unsigned created = 0;
+
+  explicit CountHP(const Ztls_::CipherAlgo *impl_) :
+    Ztls_::CipherAlgo{*impl_}, impl{impl_} { }
+  Ztls_::CipherContext *create(int encrypt, const void *key) const override {
+    ++created;
+    return impl->create(encrypt, key);
+  }
+};
+
+struct CountAEAD : Ztls_::AeadAlgo {
+  const Ztls_::AeadAlgo *impl;
+  mutable unsigned created = 0;
+
+  CountAEAD(const Ztls_::AeadAlgo *impl_, const Ztls_::CipherAlgo *hp) :
+    Ztls_::AeadAlgo{*impl_}, impl{impl_} {
+    ecbCipher = hp;
+    ctrCipher = nullptr; // Packet protection never uses a supplementary cipher.
+  }
+  Ztls_::AeadContext *create(bool encrypt, const void *key, const void *iv) const override {
+    ++created;
+    return impl->create(encrypt, key, iv);
+  }
+};
+
+struct CryptoPubApp : Zquic::Hub<CryptoPubApp> {
+  bool rxInvoked() const { return true; }
+  bool txInvoked() const { return true; }
+};
+struct CryptoPubLink;
+struct CryptoPubStream :
+  Zquic::Stream<CryptoPubLink, CryptoPubStream> {
+  using Base = Zquic::Stream<CryptoPubLink, CryptoPubStream>;
+  using Base::Base;
+  int process(Zquic::RxStream &) { return 0; }
+};
+struct CryptoPubLink :
+  Zquic::Link<CryptoPubApp, CryptoPubLink, CryptoPubStream> {
+  using Base =
+    Zquic::Link<CryptoPubApp, CryptoPubLink, CryptoPubStream>;
+  using Base::Base;
+  using Base::crypto_;
+  using Base::snapshotTxCrypto;
+  using Base::installTxCrypto;
+  using Base::txInstallSecret;
+  using Base::txKeySecretInstalled_;
+  using Base::rejectZeroRTTTx;
+  using Base::configLocalParams;
+  using Snapshot = Base::TxCryptoSnapshot;
+  void flushTx_() { }
+  void queueTxFlush() { }
+  void queueRetransmit() { }
+  void ptoTimer() { }
+  bool retransmit_(bool = false, unsigned = 2,
+    Zquic::PktNumSpace::T = Zquic::PktNumSpace::N) { return false; }
+};
+
+void testTxCryptoGenerations()
+{
+  ZuTestScope(testTxCryptoGenerations);
+
+  const auto &base = Ztls_::opensslAes128gcmsha256;
+  CountHP hp{base.aead->ecbCipher};
+  CountAEAD aead{base.aead, &hp};
+  Ztls_::CipherSuite suite{base};
+  suite.aead = &aead;
+  uint8_t bytes[32];
+  memset(bytes, 0x42, sizeof(bytes));
+  Zquic::TrafficSecret secret, next;
+  ZuCHECK(Zquic::PktProt::deriveSecret(secret, &suite, ZuBSpan{bytes, sizeof(bytes)}) &&
+      Zquic::PktProt::deriveNextSecret(next, secret), "generation fixture keys failed");
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(2); })
+    .rxThread(1).txThread(2)};
+  CryptoPubApp app;
+  ZuCHECK(app.init(Zquic::HubParams(&mx, "1", "2")), "generation fixture app failed");
+  {
+    CryptoPubLink link{&app};
+    link.configLocalParams(&app);
+    auto &crypto = link.crypto_();
+    ZuCHECK(crypto.init(Zquic::CryptoConfig{false, true, "h3"}) &&
+        crypto.txSecret(Zquic::PktNumSpace::Handshake, secret),
+      "generation fixture secret publication failed");
+    CryptoPubLink::Snapshot first, second, unchanged;
+    link.snapshotTxCrypto(first);
+    ZuCHECK(first.localGen == 1 &&
+        link.installTxCrypto(first) && aead.created == 1 && hp.created == 1 &&
+        link.installTxCrypto(first) && aead.created == 1 && hp.created == 1,
+      "a published Tx generation was installed more than once");
+    link.snapshotTxCrypto(unchanged);
+    ZuCHECK(!unchanged.gen[Zquic::PktKeyLevel::Handshake] &&
+        !unchanged.peerGen && !unchanged.localGen &&
+        link.installTxCrypto(unchanged) && aead.created == 1,
+      "unchanged TLS progress republished or rebuilt encryption state");
+    ZuCHECK(crypto.txSecret(Zquic::PktNumSpace::Handshake, next),
+      "replacement secret publication failed");
+    link.snapshotTxCrypto(second);
+    ZuCHECK(second.gen[Zquic::PktKeyLevel::Handshake] == 2 &&
+        link.installTxCrypto(second) && aead.created == 2 && hp.created == 2 &&
+        link.installTxCrypto(first) && aead.created == 2,
+      "late key publication replaced a newer Tx generation");
+    Zquic::TransportParams params;
+    params.initialMaxData = 8192;
+    crypto.peerParams(params);
+    link.snapshotTxCrypto(unchanged);
+    ZuCHECK(unchanged.peerGen == 1 && unchanged.peerParams.initialMaxData == 8192 &&
+        !unchanged.gen[Zquic::PktKeyLevel::Handshake] &&
+        link.installTxCrypto(unchanged) && aead.created == 2,
+      "parameter-only publication copied or rebuilt keys");
+    ZuCHECK(crypto.txKeySecret(Zquic::PktKeyLevel::ZeroRTT, secret),
+      "early key publication failed");
+    link.snapshotTxCrypto(first);
+    ZuCHECK(link.installTxCrypto(first) &&
+        link.txKeySecretInstalled_(Zquic::PktKeyLevel::ZeroRTT) && aead.created == 3,
+      "0-RTT Tx generation was not installed");
+    link.rejectZeroRTTTx();
+    ZuCHECK(link.installTxCrypto(first) &&
+        !link.txKeySecretInstalled_(Zquic::PktKeyLevel::ZeroRTT) && aead.created == 3,
+      "late publication resurrected rejected 0-RTT keys");
+    ZuCHECK(crypto.txSecret(Zquic::PktNumSpace::AppData, secret),
+      "1-RTT key publication failed");
+    link.snapshotTxCrypto(first);
+    ZuCHECK(link.installTxCrypto(first) && aead.created == 4 &&
+        link.txInstallSecret(Zquic::PktNumSpace::AppData, next) && aead.created == 5 &&
+        link.installTxCrypto(first) && aead.created == 5,
+      "replayed TLS publication rolled back a QUIC key update");
+    ++first.runtime;
+    ZuCHECK(!link.installTxCrypto(first) && aead.created == 5,
+      "a prior runtime's key snapshot was accepted");
+  }
+  app.final();
+}
+
+void testTxSecretPublication()
+{
+  ZuTestScope(testTxSecretPublication);
+
+  const auto &base = Ztls_::opensslAes128gcmsha256;
+  CountHP hp{base.aead->ecbCipher};
+  CountAEAD aead{base.aead, &hp};
+  Ztls_::CipherSuite suite{base};
+  suite.aead = &aead;
+  uint8_t bytes[32];
+  for (unsigned i = 0; i < sizeof(bytes); ++i) bytes[i] = uint8_t(i);
+  Zquic::TrafficSecret secret, next;
+  ZuCHECK(Zquic::PktProt::deriveSecret(secret, &suite, ZuBSpan{bytes, sizeof(bytes)}) &&
+      Zquic::PktProt::deriveNextSecret(next, secret),
+    "traffic secrets must not require supplementary cipher support");
+  Zquic::Crypto crypto;
+  ZuCHECK(crypto.init(Zquic::CryptoConfig{false, true, "h3"}),
+    "secret publication fixture init failed");
+  ZuCHECK(!crypto.txKeyGen(Zquic::PktKeyLevel::Handshake) &&
+      !crypto.txKeyGen(Zquic::PktKeyLevel::ZeroRTT) && !crypto.peerParamsGen(),
+    "new crypto state retained publication generations");
+  ZuCHECK(crypto.txSecret(Zquic::PktNumSpace::Handshake, secret) &&
+      crypto.txKeyGen(Zquic::PktKeyLevel::Handshake) == 1 &&
+      !aead.created && !hp.created,
+    "publishing a TLS Tx secret created an Rx-owned encryption context");
+  Zquic::PktProtState tx;
+  ZuCHECK(tx.init(crypto.txSecret(Zquic::PktNumSpace::Handshake),
+      Zquic::PktNumSpace::Handshake, true) && aead.created == 1 && hp.created == 1,
+    "explicit Tx owner must create only AEAD and HP contexts");
+  ZuCHECK(crypto.txSecret(Zquic::PktNumSpace::Handshake, next) &&
+      crypto.txKeyGen(Zquic::PktKeyLevel::Handshake) == 2 &&
+      aead.created == 1 && hp.created == 1 && tx.secret.secret.bspan() == secret.secret.bspan(),
+    "new TLS publication rebuilt or changed the Tx owner's protector");
+  ZuCHECK(crypto.rxSecret(Zquic::PktNumSpace::Handshake, secret) &&
+      crypto.rxProtState(Zquic::PktNumSpace::Handshake).valid() &&
+      aead.created == 2 && hp.created == 2,
+    "Rx key publication must retain its decryption context");
+  ZuCHECK(crypto.discardSecret(Zquic::PktNumSpace::Handshake) &&
+      crypto.txKeyGen(Zquic::PktKeyLevel::Handshake) == 3 &&
+      !crypto.txSecretInstalled(Zquic::PktNumSpace::Handshake),
+    "retired Tx key generation was not published");
+  crypto.discardSecret(Zquic::PktNumSpace::Handshake);
+  ZuCHECK(crypto.txKeyGen(Zquic::PktKeyLevel::Handshake) == 3 &&
+      crypto.txKeySecret(Zquic::PktKeyLevel::ZeroRTT, secret) &&
+      crypto.txKeyGen(Zquic::PktKeyLevel::ZeroRTT) == 1 &&
+      !crypto.txKeyGen(Zquic::PktKeyLevel::OneRTT),
+    "key generations crossed encryption levels or repeated retirement");
+  ZuCHECK(crypto.rejectZeroRTT() &&
+      crypto.txKeyGen(Zquic::PktKeyLevel::ZeroRTT) == 2 &&
+      crypto.rejectZeroRTT() && crypto.txKeyGen(Zquic::PktKeyLevel::ZeroRTT) == 2,
+    "0-RTT rejection must publish removal exactly once");
+  Zquic::TransportParams params;
+  crypto.peerParams(params);
+  ZuCHECK(crypto.peerParamsGen() == 1 && crypto.peerParamsSet(),
+    "peer parameter publication was not versioned");
+  ZuCHECK(crypto.init(Zquic::CryptoConfig{false, false, "h3"}) &&
+      !crypto.txKeyGen(Zquic::PktKeyLevel::Handshake) &&
+      !crypto.txKeyGen(Zquic::PktKeyLevel::ZeroRTT) && !crypto.peerParamsGen(),
+    "new runtime retained earlier publication generations");
+}
+
 void testTLSOutputBuffer()
 {
   ZuTestScope(testTLSOutputBuffer);
@@ -188,7 +383,7 @@ void testCryptoFlightOffsets()
   Zquic::CryptoOffsets multi{0, 2, 2, 4, 6};
   ZuCHECK(Zquic::sendCryptoFlights_(
       multiCrypto, multiDiag, backing("abcdef"), multi, 16, {}, send) &&
-      sends == 4 && multiDiag.cryptoBytesTx == Zquic::DiagCounter{6},
+      sends == 3 && multiDiag.cryptoBytesTx == Zquic::DiagCounter{6},
     "multi-epoch crypto flights failed");
 
   const Zquic::CryptoOffsets invalid[] = {
@@ -315,6 +510,8 @@ int main(int argc, char **argv)
   ZuTestCall(testCryptoPosture);
   ZuTestCall(testEarlyDataTLSProperties);
   ZuTestCall(testEarlyTrafficSecretState);
+  ZuTestCall(testTxSecretPublication);
+  ZuTestCall(testTxCryptoGenerations);
   ZuTestCall(testTLSOutputBuffer);
   ZuTestCall(testCryptoFlightOffsets);
   ZuTestCall(testOwnedCryptoFlights);

@@ -18,7 +18,7 @@ struct TestEndpoint : public Zquic_::Endpoint_<TestEndpoint> {
   using ReadyFn = ZmFn<void(bool), ZmFnHeapID<"Zquic.Endpoint.TestReady">>;
   enum { EndpointRef = false };
 
-  ZmFn<void(Zquic::Datagram)> recvFn;
+  ZmFn<void(ZmRef<Zquic::RxPkt>)> recvFn;
 
   ReadyFn readyFn;
   unsigned ready = 0;
@@ -37,7 +37,7 @@ struct TestEndpoint : public Zquic_::Endpoint_<TestEndpoint> {
     ReadyFn fn = ZuMv(readyFn);
     if (fn) fn(false);
   }
-  void endpointDatagram(Zquic::Datagram d) {
+  void endpointPacket(ZmRef<Zquic::RxPkt> d) {
     ++datagrams;
     auto fn = ZuMv(recvFn);
     if (fn) fn(ZuMv(d));
@@ -515,9 +515,9 @@ void testEndpointRebind()
       ZiSockAddr dst) {
     return ZmBlock<bool>{}([&endpoint, &mx, target, src, dst](auto wake) {
       mx.rxRun([&endpoint, &mx, target, src, dst, wake = ZuMv(wake)]() mutable {
-	endpoint.recvFn = [wake, src, dst](Zquic::Datagram d) mutable {
-	  wake(d.local == dst && d.addr == src && d.buf->length == 1 &&
-	    d.buf->data()[0] == 0x42);
+	endpoint.recvFn = [wake, src, dst](ZmRef<Zquic::RxPkt> d) mutable {
+	  wake(d->local == dst && d->addr == src && d->length == 1 &&
+	    d->data()[0] == 0x42);
 	};
 	mx.txRun([&endpoint, target, dst, wake = ZuMv(wake)]() mutable {
 	  auto buf = endpoint.allocTxPkt();

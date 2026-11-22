@@ -17,8 +17,8 @@ using namespace ZuTestUtil;
 struct LayoutApp : Zquic::Hub<LayoutApp> { };
 struct LayoutLink;
 struct LayoutStream :
-  Zquic::Stream<LayoutLink, LayoutStream, Zquic::StreamTxBufAlloc<>> {
-  using Base = Zquic::Stream<LayoutLink, LayoutStream, Zquic::StreamTxBufAlloc<>>;
+  Zquic::Stream<LayoutLink, LayoutStream> {
+  using Base = Zquic::Stream<LayoutLink, LayoutStream>;
   using Base::Base;
   using Base::ownerLayout;
   uint64_t applicationTail = 0;
@@ -27,12 +27,12 @@ struct LayoutStream :
 };
 struct LayoutLink :
   ZmNHeap<LayoutLink>,
-  Zquic::Link<LayoutApp, LayoutLink, Zquic::StreamTxBufAlloc<>, LayoutStream> {
+  Zquic::Link<LayoutApp, LayoutLink, LayoutStream> {
 friend inline ZuStringT<"Zquic.Layout.Link"> ZmNHeapID(LayoutLink *);
   using ZmNHeap<LayoutLink>::operator new;
   using ZmNHeap<LayoutLink>::operator delete;
   using Base =
-    Zquic::Link<LayoutApp, LayoutLink, Zquic::StreamTxBufAlloc<>, LayoutStream>;
+    Zquic::Link<LayoutApp, LayoutLink, LayoutStream>;
   using Base::Base;
   using Base::ownerLayout;
   uint64_t applicationTail = 0;

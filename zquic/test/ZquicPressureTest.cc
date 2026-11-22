@@ -22,18 +22,18 @@ struct FailedAllocator : Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxUDP, Zquic_:
 };
 struct PressureLink;
 struct PressureStream :
-  Zquic::Stream<PressureLink, PressureStream, Zquic::StreamTxBufAlloc<>> {
-  using Base = Zquic::Stream<PressureLink, PressureStream, Zquic::StreamTxBufAlloc<>>;
+  Zquic::Stream<PressureLink, PressureStream> {
+  using Base = Zquic::Stream<PressureLink, PressureStream>;
   using Base::Base;
   int process(Zquic::RxStream &) { return 0; }
 };
 struct PressureLink : ZmNHeap<PressureLink>,
-  Zquic::Link<PressureApp, PressureLink, Zquic::StreamTxBufAlloc<>, PressureStream> {
+  Zquic::Link<PressureApp, PressureLink, PressureStream> {
 friend inline ZuStringT<"Zquic.Pressure.Link"> ZmNHeapID(PressureLink *);
   using ZmNHeap<PressureLink>::operator new;
   using ZmNHeap<PressureLink>::operator delete;
   using Base =
-    Zquic::Link<PressureApp, PressureLink, Zquic::StreamTxBufAlloc<>, PressureStream>;
+    Zquic::Link<PressureApp, PressureLink, PressureStream>;
   using Base::disconnect_;
   using Base::txPackets;
   using Base::allocPktTx;
@@ -252,12 +252,12 @@ template <bool capacity, bool bufferAfterGrant = false> static void finalStream(
       if (delivered) {
         const auto &ref = refs[0];
         delivered &= ref.kind == Zquic::SentFrameKind::Stream && ref.offset == 0 &&
-	  ref.length == 5 && ref.fin && ref.range.buf &&
-	  !memcmp(ref.range.buf->data_() + ref.range.offset, "final", 5) &&
+	  ref.length == 5 && ref.fin && ref.range().buf &&
+	  !memcmp(ref.range().buf->data_() + ref.range().offset, "final", 5) &&
 	  stream->txCreditAvailable() == credit && stream->txUnackdBytes() == 6;
         if (!delivered) log("ref offset=", ref.offset, " length=", ref.length,
 	  " fin=", int(ref.fin), " credit=", stream->txCreditAvailable(), "/", credit,
-	  " unackd=", stream->txUnackdBytes(), " range=", bool(ref.range.buf));
+	  " unackd=", stream->txUnackdBytes(), " range=", bool(ref.range().buf));
       }
     });
     ZuCheck(delivered);
@@ -378,13 +378,20 @@ void testCapacityGate()
   // Reusing a request with the same caller epoch still invalidates its old token.
   arm(first, 0);
   drain(mx);
-  bool stale = true, wrongPhysical = true;
-  on(mx, 2, [&gate, old, token = tokens[0], &stale, &wrongPhysical]() mutable {
+  bool stale = true, wrongPhysical = true, wrongSlot = true, wrongSerial = true;
+  on(mx, 2, [&gate, old, token = tokens[0], &stale, &wrongPhysical,
+      &wrongSlot, &wrongSerial]() mutable {
     stale = gate.consume(old);
+    auto invalid = token;
+    invalid.slot = unsigned(-1);
+    wrongSlot = gate.consume(invalid);
+    invalid = token;
+    ++invalid.reservation;
+    wrongSerial = gate.consume(invalid);
     token.physical = nullptr;
     wrongPhysical = gate.consume(token);
   });
-  ZuCheck(grants[0] == 2 && !stale && !wrongPhysical);
+  ZuCheck(grants[0] == 2 && !stale && !wrongPhysical && !wrongSlot && !wrongSerial);
   arm(second, 1);
   drain(mx);
   bool rowsValid = true;

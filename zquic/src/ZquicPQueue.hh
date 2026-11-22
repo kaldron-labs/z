@@ -76,40 +76,6 @@ using StreamRxPQueueFn =
     ZmPQueueDefaultKeyAxor(),
     ZquicPQueueBufLenAxor()>;
 
-struct StreamTxData : public ZiIOBuf {
-  // Application stream storage remains owned through ACK or retransmission.
-  alignas(ZiIOBuf_Align) uint8_t data_[BufSize];
-  uint64_t		streamOffset = 0;
-
-  explicit StreamTxData(Zi::IOBufAllocator_ *allocator_, void *owner_ = nullptr) :
-    ZiIOBuf{data_, BufSize, allocator_, owner_, 0, true} { }
-
-  void publish(uint32_t offset_, uint32_t length_, uint64_t streamOffset_) {
-    skip = offset_;
-    length = length_;
-    streamOffset = streamOffset_;
-  }
-  uint64_t key() const { return streamOffset; }
-
-  uint64_t clipHead(uint64_t n) {
-    if (n > length) n = length;
-    skip += n;
-    streamOffset += n;
-    return length -= n;
-  }
-  uint64_t clipTail(uint64_t n) {
-    if (n > length) n = length;
-    return length -= n;
-  }
-  template <typename I>
-  void write(const I &) { }
-};
-
-using StreamTxPQueueFn =
-  ZmPQueueDefaultFn<StreamTxData,
-    ZmPQueueDefaultKeyAxor(),
-    ZquicPQueueBufLenAxor()>;
-
 struct RxPktMark {
   uint64_t	pn = 0;
 
@@ -191,18 +157,6 @@ public:
 	  ZmPQueueBits<2,
 	    ZmPQueueLevels<3>>>>>;
 
-  class Node : public ZuObject {
-  public:
-    Node() = default;
-    explicit Node(const TxUnackdRange &range) : m_range{range} { }
-
-    TxUnackdRange &data() { return m_range; }
-    const TxUnackdRange &data() const { return m_range; }
-
-  private:
-    TxUnackdRange	m_range;
-  };
-
   explicit TxUnackdRanges(uint64_t = 0) { }
   TxUnackdRanges(TxUnackdRanges &&other) :
     m_ranges{ZuMv(other.m_ranges)}, m_index{ZuMv(other.m_index)},
@@ -224,11 +178,6 @@ public:
     return *this;
   }
 
-  ZmPQResult::T add(Node *node) {
-    ZmRef<Node> node_{node};
-    if (!node_) return ZmPQResult::Invalid;
-    return add(node_->data());
-  }
   ZmPQResult::T add(const TxUnackdRange &range) {
     if (range.fin && range.bytes == uint64_t(-1))
       return ZmPQResult::Invalid;
@@ -326,17 +275,17 @@ public:
     }
     return true;
   }
-  ZmRef<Node> find(uint64_t offset) const {
+  bool find(uint64_t offset, TxUnackdRange &range) const {
     if (m_index) {
       auto node = m_index->find(offset);
-      if (node && node->data().offset == offset)
-	return new Node{node->data()};
-      return nullptr;
+      if (!node || node->data().offset != offset) return false;
+      range = node->data();
+      return true;
     }
     unsigned i = lowerBound(offset);
-    if (i < m_ranges.length() && m_ranges[i].offset == offset)
-      return new Node{m_ranges[i]};
-    return nullptr;
+    if (i == m_ranges.length() || m_ranges[i].offset != offset) return false;
+    range = m_ranges[i];
+    return true;
   }
   bool drain(unsigned &budget) {
     if (m_index) {
@@ -403,55 +352,66 @@ private:
     uint64_t first = range.offset;
     uint64_t end = end_(range);
     bool fin = range.fin;
-    if (first) {
-      auto prev = m_index->find(first - 1);
-      if (prev && end_(prev->data()) >= first) {
-	TxUnackdRange old = prev->data();
-	first = old.offset;
-	if (end_(old) > end) {
-	  end = end_(old);
+    Indexed::NodeRef retained;
+    {
+      auto iter = m_index->iter(first ? first - 1 : 0);
+      while (auto node = iter()) {
+	const TxUnackdRange &old = node->data();
+	if (old.offset > end) break;
+	uint64_t oldEnd = end_(old);
+	if (oldEnd < first) continue;
+	if (old.offset <= first && oldEnd >= end &&
+	    (oldEnd != end || !fin || old.fin))
+	  return ZmPQResult::Inserted;
+	if (old.offset < first) first = old.offset;
+	if (oldEnd > end) {
+	  end = oldEnd;
 	  fin = old.fin;
-	} else if (end_(old) == end)
+	} else if (oldEnd == end)
 	  fin = fin || old.fin;
-	(void)m_index->del(old.offset);
+	auto removed = iter.del();
+	if (!retained) retained = ZuMv(removed);
       }
     }
-    auto iter = m_index->iter(first);
-    while (auto node = iter()) {
-      const TxUnackdRange &old = node->data();
-      if (old.offset > end) break;
-      uint64_t oldEnd = end_(old);
-      if (oldEnd > end) {
-	end = oldEnd;
-	fin = old.fin;
-      } else if (oldEnd == end)
-	fin = fin || old.fin;
-      (void)iter.del();
-    }
-    m_index->add(new Indexed::Node{makeRange(first, end, fin)});
+    TxUnackdRange merged = makeRange(first, end, fin);
+    if (retained)
+      retained->data() = merged;
+    else
+      retained = new Indexed::Node{merged};
+    m_index->add(ZuMv(retained));
     m_count = m_index->count_();
     m_length = m_index->length_();
     return ZmPQResult::Inserted;
   }
   bool clearIndexed(uint64_t offset, uint64_t end) {
-    ZuArray<TxUnackdRange, 2> survivors;
+    ZuArray<Indexed::NodeRef, 2> survivors;
     bool changed = false;
-    auto iter = m_index->iter(offset);
-    while (auto node = iter()) {
-      TxUnackdRange range = node->data();
-      uint64_t first = range.offset;
-      uint64_t rangeEnd = end_(range);
-      if (first >= end) break;
-      if (rangeEnd <= offset) continue;
-      changed = true;
-      (void)iter.del();
-      if (first < offset)
-	survivors.push(slice(range, first, offset));
-      if (rangeEnd > end)
-	survivors.push(slice(range, end, rangeEnd));
+    {
+      auto iter = m_index->iter(offset);
+      while (auto node = iter()) {
+	TxUnackdRange range = node->data();
+	uint64_t first = range.offset;
+	uint64_t rangeEnd = end_(range);
+	if (first >= end) break;
+	if (rangeEnd <= offset) continue;
+	changed = true;
+	auto retained = iter.del();
+	if (first < offset) {
+	  retained->data() = slice(range, first, offset);
+	  survivors.push(ZuMv(retained));
+	}
+	if (rangeEnd > end) {
+	  TxUnackdRange tail = slice(range, end, rangeEnd);
+	  if (retained)
+	    retained->data() = tail;
+	  else
+	    retained = new Indexed::Node{tail};
+	  survivors.push(ZuMv(retained));
+	}
+      }
     }
     for (unsigned i = 0, n = survivors.length(); i < n; ++i)
-      addIndexed(survivors[i]);
+      m_index->add(ZuMv(survivors[i]));
     m_count = m_index->count_();
     m_length = m_index->length_();
     return changed;
@@ -523,44 +483,6 @@ template <
   ZuString HeapID = "Zquic.Crypto.RxBuf">
 using CryptoRxBufAlloc = Zi::IOBufBuiltinAllocator<
   Zi::IOBufType::App, CryptoRxPQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
-
-using TxDataPQueue_ =
-  ZmPQueue<StreamTxData,
-    ZmPQueueNode<StreamTxData,
-      ZmPQueueHeapID<"Zquic.Stream.TxQueue",
-	ZmPQueueFn<StreamTxPQueueFn,
-	  ZmPQueueBits<2,
-	    ZmPQueueLevels<3>>>>>>;
-using TxDataPQueue = Zquic_::Queue<TxDataPQueue_, Zquic_::PQueueCount>;
-
-// Each queued application buffer transfers its active skip/length to Tx.
-// Packet and recovery records separately track logical STREAM positions.
-struct StreamTxRange {
-  ZmRef<ZiIOBuf> buf;
-  uint64_t streamOffset = 0;
-
-  StreamTxRange() = default;
-  StreamTxRange(ZmRef<ZiIOBuf> buf_, uint64_t offset_) :
-    buf{ZuMv(buf_)}, streamOffset{offset_} { }
-  uint64_t key() const { return streamOffset; }
-  uint64_t length() const { return buf ? buf->length : 0; }
-  uint64_t clipHead(uint64_t n) {
-    if (n > length()) n = length();
-    buf->advance(unsigned(n));
-    streamOffset += n;
-    return length();
-  }
-  uint64_t clipTail(uint64_t n) {
-    if (n > length()) n = length();
-    return buf->length -= n;
-  }
-  template <typename I> void write(const I &) { }
-};
-using StreamTxRanges = ZmPQueue<StreamTxRange,
-  ZmPQueueNode<StreamTxRange,
-    ZmPQueueHeapID<"Zquic.Stream.TxRanges",
-      ZmPQueueFn<ZmPQueueDefaultFn<StreamTxRange>,
-	ZmPQueueBits<2, ZmPQueueLevels<3>>>>>>;
 
 using StreamTxPQueue = Zquic_::Queue<TxUnackdRanges>;
 class CryptoTxPQueue final : public Zquic_::Queue<TxUnackdRanges> {

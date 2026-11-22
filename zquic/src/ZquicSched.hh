@@ -57,28 +57,6 @@ struct PktBudget {
   }
 };
 
-class PktAssembly {
-public:
-  bool streamAdded() const { return m_streamFrames; }
-  unsigned controlFrames() const { return m_controlFrames; }
-  unsigned streamFrames() const { return m_streamFrames; }
-
-  bool addControl(PktBudget &budget, unsigned bytes) {
-    if (!budget.add(bytes)) return false;
-    ++m_controlFrames;
-    return true;
-  }
-  bool addStream(PktBudget &budget, unsigned bytes) {
-    if (!budget.add(bytes)) return false;
-    ++m_streamFrames;
-    return true;
-  }
-
-private:
-  unsigned	m_controlFrames = 0;
-  unsigned	m_streamFrames = 0;
-};
-
 class Pacer {
 public:
   explicit Pacer(unsigned maxDatagram = MinUDPPayload) :
@@ -249,7 +227,7 @@ public:
   template <typename Stream>
   static int writeNext(
     uint8_t *out, unsigned len, PktBudget &budget,
-    PktAssembly &assembly, Stream &stream,
+    Stream &stream,
     StreamFrameInfo *info = nullptr)
   {
     if (info) *info = {};
@@ -262,17 +240,17 @@ public:
     bool fin = false;
     if (!stream.nextTxRange(budget, range, fin)) return 0;
     if (!fin)
-      return writeRange(out, avail, budget, assembly, stream, uint64_t(id),
+      return writeRange(out, len, budget, stream, uint64_t(id),
 	info, range);
 
-    return writeFin(out, avail, budget, assembly, stream, uint64_t(id), info);
+    return writeFin(out, len, budget, stream, uint64_t(id), info);
   }
 
 private:
   template <typename Stream>
   static int writeRange(
     uint8_t *out, unsigned len, PktBudget &budget,
-    PktAssembly &assembly, Stream &stream, uint64_t id,
+    Stream &stream, uint64_t id,
     StreamFrameInfo *info, const TxRange &range)
   {
     ZiAssert(range.buf && range.length, "Zquic", (),
@@ -281,24 +259,34 @@ private:
       (),
       "stream Tx range exceeds buffer capacity", return -1);
     unsigned payloadLen = range.length;
-    if (payloadLen > len) payloadLen = len;
     if (payloadLen > budget.remaining()) payloadLen = budget.remaining();
     if (payloadLen > budget.flowRemaining()) payloadLen = budget.flowRemaining();
     if (payloadLen > stream.txCreditAvailable())
       payloadLen = unsigned(stream.txCreditAvailable());
-    bool fin = false;
-    int n = -1;
-    while (payloadLen) {
-      fin = stream.finSent() && stream.txRangeCount() == 1 &&
-	payloadLen == range.length;
-      n = FrameCodec::writeStreamPrefix(
-	out, len, id, range.streamOffset, payloadLen, fin);
-      if (n > 0 && unsigned(n) + payloadLen <= budget.remaining()) break;
-      --payloadLen;
+    unsigned wire = budget.remaining();
+    unsigned fixed = 1 + VarInt::length(id) +
+      (range.streamOffset ? VarInt::length(range.streamOffset) : 0);
+    if (wire <= fixed + 1) return -1;
+    // At most four length-width classes; encode only the selected prefix.
+    unsigned fit = 0;
+    for (unsigned width : {1U, 2U, 4U, 8U}) {
+      if (wire <= fixed + width || len < fixed + width) continue;
+      uint64_t ceiling = width == 8 ? (uint64_t(1)<<62) - 1 :
+        (uint64_t(1)<<(width*8 - 2)) - 1;
+      unsigned candidate = wire - fixed - width;
+      if (candidate > payloadLen) candidate = payloadLen;
+      if (candidate > ceiling) candidate = unsigned(ceiling);
+      if (candidate > fit && VarInt::length(candidate) == width) fit = candidate;
     }
+    payloadLen = fit;
+    if (!payloadLen) return -1;
+    bool fin = stream.finSent() && stream.txRangeCount() == 1 &&
+      payloadLen == range.length;
+    int n = FrameCodec::writeStreamPrefix(
+      out, len, id, range.streamOffset, payloadLen, fin);
     if (n <= 0) return -1;
     unsigned frameBytes = unsigned(n) + payloadLen;
-    if (!assembly.addStream(budget, frameBytes)) return -1;
+    if (!budget.add(frameBytes)) return -1;
     TxRange consumed;
     if (!stream.commitTxRange(consumed, range, payloadLen)) return -1;
     ZiAssert(stream.consumeTxCredit(payloadLen), "Zquic",
@@ -323,13 +311,13 @@ private:
   template <typename Stream>
   static int writeFin(
     uint8_t *out, unsigned len, PktBudget &budget,
-    PktAssembly &assembly, Stream &stream, uint64_t id,
+    Stream &stream, uint64_t id,
     StreamFrameInfo *info)
   {
     uint64_t offset = stream.txBytes();
     int n = FrameCodec::writeStream(out, len, id, offset, {}, true);
     if (n <= 0) return -1;
-    if (!assembly.addStream(budget, unsigned(n))) return -1;
+    if (!budget.add(unsigned(n))) return -1;
     uint64_t dequeuedOffset = 0;
     ZiAssert(stream.dequeueFin(dequeuedOffset) && dequeuedOffset == offset,
       "Zquic", (),

@@ -607,31 +607,53 @@ struct AckGrowth {
   }
 };
 
+struct SentCIDData {
+  CxnID id;
+  ResetToken token;
+};
+
+struct SentControl {
+  uint64_t value = 0;
+  FrameType::T type = FrameType::Unknown;
+  StreamType::T streamType = StreamType::Duplex;
+  ZuUnion<void, PathData, SentCIDData> data;
+};
+
 struct SentFrameRef {
-  SentFrameKind::T	kind = SentFrameKind::None;
-  FrameType::T		controlType = FrameType::Unknown;
-  uint64_t		streamID = 0;
-  uint64_t		offset = 0;
-  uint64_t		length = 0;
-  uint64_t		value = 0;
-  Zquic::StreamType::T	streamType = Zquic::StreamType::Duplex;
-  bool			fin = false;
-  PathData		payload;
-  CxnID			cxnID;
-  ResetToken		resetToken;
-  TxRange		range;
+  uint64_t streamID = 0;
+  uint64_t offset = 0;
+  uint64_t length = 0;
+  SentFrameKind::T kind = SentFrameKind::None;
+  bool fin = false;
+  ZuUnion<void, TxRange, SentControl> data;
 
   bool operator !() const { return kind == SentFrameKind::None; }
   ZuOpBool
 
-  static SentFrameRef stream(uint64_t id, const TxRange &range_, bool fin_) {
+  auto &range() { return data.p<1>(); }
+  const auto &range() const { return data.p<1>(); }
+  FrameType::T controlType() const {
+    return kind == SentFrameKind::Control ? data.p<2>().type : FrameType::Unknown;
+  }
+  uint64_t value() const {
+    return kind == SentFrameKind::Control ? data.p<2>().value : 0;
+  }
+  StreamType::T streamType() const {
+    return kind == SentFrameKind::Control ?
+      data.p<2>().streamType : StreamType::Duplex;
+  }
+  const auto &payload() const { return data.p<2>().data.p<1>(); }
+  const auto &cxnID() const { return data.p<2>().data.p<2>().id; }
+  const auto &resetToken() const { return data.p<2>().data.p<2>().token; }
+
+  static SentFrameRef stream(uint64_t id, TxRange range_, bool fin_) {
     SentFrameRef ref;
     ref.kind = SentFrameKind::Stream;
     ref.streamID = id;
     ref.offset = range_.streamOffset;
     ref.length = range_.length;
     ref.fin = fin_;
-    ref.range = range_;
+    new (ref.data.new_<1>()) TxRange{ZuMv(range_)};
     return ref;
   }
 
@@ -643,84 +665,126 @@ struct SentFrameRef {
     return ref;
   }
 
-  static SentFrameRef control() {
+  static SentFrameRef control(
+    FrameType::T type = FrameType::Unknown, uint64_t value = 0,
+    StreamType::T streamType = StreamType::Duplex) {
     SentFrameRef ref;
     ref.kind = SentFrameKind::Control;
+    new (ref.data.new_<2>()) SentControl{value, type, streamType, {}};
     return ref;
   }
 
   static SentFrameRef flowUpdate(const FlowUpdate &update) {
-    SentFrameRef ref = control();
-    ref.controlType = update.type;
+    auto ref = control(update.type, update.maximum, update.streamType);
     ref.streamID = update.streamID;
-    ref.value = update.maximum;
-    ref.streamType = update.streamType;
     return ref;
   }
 
   static SentFrameRef blocked(
     FrameType::T type, uint64_t streamID_, uint64_t limit,
-    Zquic::StreamType::T streamType_ = Zquic::StreamType::Duplex) {
-    SentFrameRef ref = control();
-    ref.controlType = type;
+    StreamType::T streamType = StreamType::Duplex) {
+    auto ref = control(type, limit, streamType);
     ref.streamID = streamID_;
-    ref.value = limit;
-    ref.streamType = streamType_;
     return ref;
   }
 
-  static SentFrameRef pathResponse(ZuBSpan data) {
-    SentFrameRef ref = control();
-    ref.controlType = FrameType::PathResponse;
-    ref.payload = data.length() == PathChallenge::Length ?
-      PathData{data} : PathData(PathChallenge::Length, true);
+  static SentFrameRef pathResponse(ZuBSpan bytes) {
+    auto ref = control(FrameType::PathResponse);
+    new (ref.data.p<2>().data.new_<1>()) PathData{
+      bytes.length() == PathChallenge::Length ?
+	PathData{bytes} : PathData(PathChallenge::Length, true)};
     return ref;
   }
-  static SentFrameRef pathChallenge(ZuBSpan data) {
-    SentFrameRef ref = control();
-    ref.controlType = FrameType::PathChallenge;
-    ref.payload = data.length() == PathChallenge::Length ?
-      PathData{data} : PathData(PathChallenge::Length, true);
+  static SentFrameRef pathChallenge(ZuBSpan bytes) {
+    auto ref = control(FrameType::PathChallenge);
+    new (ref.data.p<2>().data.new_<1>()) PathData{
+      bytes.length() == PathChallenge::Length ?
+	PathData{bytes} : PathData(PathChallenge::Length, true)};
     return ref;
   }
 
   static SentFrameRef handshakeDone() {
-    SentFrameRef ref = control();
-    ref.controlType = FrameType::HandshakeDone;
-    return ref;
+    return control(FrameType::HandshakeDone);
   }
 
   static SentFrameRef newCxnID(
     uint64_t sequence, uint64_t retirePriorTo,
     const CxnID &id, const ResetToken &token) {
-    SentFrameRef ref = control();
-    ref.controlType = FrameType::NewCxnID;
+    auto ref = control(FrameType::NewCxnID, retirePriorTo);
     ref.streamID = sequence;
-    ref.value = retirePriorTo;
     ref.length = id.length();
-    ref.cxnID = id;
-    ref.resetToken = token;
+    new (ref.data.p<2>().data.new_<2>()) SentCIDData{id, token};
     return ref;
   }
 
   static SentFrameRef resetStream(
     uint64_t id, uint64_t appError, uint64_t finalSize) {
-    SentFrameRef ref = control();
-    ref.controlType = FrameType::ResetStream;
+    auto ref = control(FrameType::ResetStream, appError);
     ref.streamID = id;
-    ref.value = appError;
     ref.length = finalSize;
     return ref;
   }
 
   static SentFrameRef stopSending(uint64_t id, uint64_t appError) {
-    SentFrameRef ref = control();
-    ref.controlType = FrameType::StopSending;
+    auto ref = control(FrameType::StopSending, appError);
     ref.streamID = id;
-    ref.value = appError;
     return ref;
   }
 };
+
+inline SentFrameRef controlRef(const ControlFrame &frame) {
+  switch (frame.type) {
+    case FrameType::MaxData:
+    case FrameType::MaxStreamData:
+    case FrameType::MaxStreams:
+	return SentFrameRef::flowUpdate(
+	  FlowUpdate{frame.type, frame.streamID, frame.value, frame.streamType});
+    case FrameType::DataBlocked:
+    case FrameType::StreamDataBlocked:
+    case FrameType::StreamsBlocked:
+	return SentFrameRef::blocked(
+	  frame.type, frame.streamID, frame.value, frame.streamType);
+    case FrameType::PathChallenge:
+	return SentFrameRef::pathChallenge(frame.payload);
+    case FrameType::PathResponse:
+	return SentFrameRef::pathResponse(frame.payload);
+    case FrameType::HandshakeDone:
+	return SentFrameRef::handshakeDone();
+    case FrameType::NewCxnID:
+	return SentFrameRef::newCxnID(
+	  frame.streamID, frame.value, frame.cxnID, frame.resetToken);
+    case FrameType::ResetStream:
+	return SentFrameRef::resetStream(
+	  frame.streamID, frame.errorCode, frame.value);
+    case FrameType::StopSending:
+	return SentFrameRef::stopSending(frame.streamID, frame.errorCode);
+    default:
+	return SentFrameRef::control();
+  }
+}
+
+inline ControlFrame controlFrame(const SentFrameRef &ref) {
+  ControlFrame frame;
+  frame.type = ref.controlType();
+  frame.streamID = ref.streamID;
+  frame.value = ref.value();
+  if (ref.controlType() == FrameType::ResetStream) {
+    frame.errorCode = ref.value();
+    frame.value = ref.length;
+  } else if (ref.controlType() == FrameType::StopSending) {
+    frame.errorCode = ref.value();
+    frame.value = 0;
+  }
+  frame.streamType = ref.streamType();
+  if (ref.controlType() == FrameType::PathChallenge ||
+	ref.controlType() == FrameType::PathResponse)
+    frame.payload = ref.payload();
+  else if (ref.controlType() == FrameType::NewCxnID) {
+    frame.cxnID = ref.cxnID();
+    frame.resetToken = ref.resetToken();
+  }
+  return frame;
+}
 
 struct SentFrameKey {
   SentFrameKind::T	kind = SentFrameKind::None;
@@ -733,8 +797,8 @@ struct SentFrameKey {
 
   SentFrameKey() = default;
   explicit SentFrameKey(const SentFrameRef &ref) :
-    kind{ref.kind}, controlType{ref.controlType}, streamID{ref.streamID},
-    offset{ref.offset}, length{ref.length}, value{ref.value}, fin{ref.fin} { }
+    kind{ref.kind}, controlType{ref.controlType()}, streamID{ref.streamID},
+    offset{ref.offset}, length{ref.length}, value{ref.value()}, fin{ref.fin} { }
 
   bool operator !() const { return kind == SentFrameKind::None; }
   ZuOpBool
@@ -800,15 +864,15 @@ struct SentFrameKey {
     return ref.kind == SentFrameKind::Stream ||
       ref.kind == SentFrameKind::Crypto ||
       (ref.kind == SentFrameKind::Control &&
-	(ref.controlType == FrameType::MaxData ||
-	  ref.controlType == FrameType::MaxStreamData ||
-	  ref.controlType == FrameType::MaxStreams ||
-	  ref.controlType == FrameType::DataBlocked ||
-	  ref.controlType == FrameType::StreamDataBlocked ||
-	  ref.controlType == FrameType::StreamsBlocked ||
-	  ref.controlType == FrameType::ResetStream ||
-	  ref.controlType == FrameType::StopSending ||
-	  ref.controlType == FrameType::NewCxnID));
+	(ref.controlType() == FrameType::MaxData ||
+	  ref.controlType() == FrameType::MaxStreamData ||
+	  ref.controlType() == FrameType::MaxStreams ||
+	  ref.controlType() == FrameType::DataBlocked ||
+	  ref.controlType() == FrameType::StreamDataBlocked ||
+	  ref.controlType() == FrameType::StreamsBlocked ||
+	  ref.controlType() == FrameType::ResetStream ||
+	  ref.controlType() == FrameType::StopSending ||
+	  ref.controlType() == FrameType::NewCxnID));
   }
 };
 
@@ -885,6 +949,26 @@ struct SentFrameUpdate {
   void		*owner = nullptr;
 };
 
+// Delayed qlog work owns metadata only, never retained plaintext or owners.
+struct QLogTxFrame {
+  SentFrameKind::T kind;
+  FrameType::T controlType;
+  uint64_t streamID;
+  uint64_t offset;
+  uint64_t length;
+  uint64_t value;
+  StreamType::T streamType;
+  bool fin;
+  CxnID cxnID;
+
+  QLogTxFrame() = default;
+  explicit QLogTxFrame(const SentFrameRef &ref) :
+    kind{ref.kind}, controlType{ref.controlType()}, streamID{ref.streamID},
+    offset{ref.offset}, length{ref.length}, value{ref.value()},
+    streamType{ref.streamType()}, fin{ref.fin},
+    cxnID{ref.controlType() == FrameType::NewCxnID ? ref.cxnID() : CxnID{}} { }
+};
+
 struct SentPkt {
   enum { MaxFrames = 8 };
 
@@ -901,7 +985,6 @@ struct SentPkt {
   bool		ackd = false;
   bool		lost = false;
   bool		ptoReclaimed = false;
-  void		*recoveryNode = nullptr;
   uint8_t	ackLevel = PktNumSpace::N;
   uint64_t	ackLargest = 0;
   ZuArray<SentFrameUpdate, MaxFrames> frames;
@@ -913,10 +996,10 @@ struct SentPkt {
   template <typename I>
   void write(const I &) { }
 
-  bool addFrame(const SentFrameRef &frame, void *owner = nullptr) {
+  bool addFrame(SentFrameRef frame, void *owner = nullptr) {
     if (frame.kind == SentFrameKind::None || frames.length() >= MaxFrames)
       return false;
-    frames.push(SentFrameUpdate{frame, owner});
+    frames.push(SentFrameUpdate{ZuMv(frame), owner});
     return true;
   }
   unsigned framesUsed() const { return frames.length(); }
@@ -1090,11 +1173,11 @@ private:
       if (first < frame.offset || length > uint64_t(uint32_t(-1)))
 	return false;
       uint64_t advance = first - frame.offset;
-      uint64_t rangeOffset = uint64_t(frame.range.offset) + advance;
+      uint64_t rangeOffset = uint64_t(frame.range().offset) + advance;
       if (rangeOffset > uint64_t(uint32_t(-1))) return false;
-      frame.range.offset = uint32_t(rangeOffset);
-      frame.range.length = uint32_t(length);
-      frame.range.streamOffset = first;
+      frame.range().offset = uint32_t(rangeOffset);
+      frame.range().length = uint32_t(length);
+      frame.range().streamOffset = first;
       frame.fin = fin;
     }
     frame.offset = first;
@@ -1234,8 +1317,16 @@ private:
 #endif
 };
 
-ZmListDerive(RecoveryPktList_, SentPkt *,
-  ZmListHeapID<"Zquic.Pkt.Recovery">);
+// Snapshots contain no container links or reference count. The retained node
+// owns its sent index and both non-owning recovery/loss memberships.
+struct SentPktData : SentPkt, ZuObject {
+  SentPktData() = default;
+};
+ZmListDerive(LostPktList_, SentPktData,
+  ZmListNode<SentPktData, ZmListShadow<>>);
+using LostPktList = Zquic_::Queue<LostPktList_>;
+ZmListDerive(RecoveryPktList_, LostPktList::Node,
+  ZmListNode<LostPktList::Node, ZmListShadow<>>);
 using RecoveryPktList = Zquic_::Queue<RecoveryPktList_>;
 
 using TxPkt = SentPkt;
@@ -1246,18 +1337,25 @@ using SentFrameUpdates = ZtBuiltin<
     ZtArrayHeapID<"Zquic.Recovery.FrameUpdates">>,
   64>;
 
+struct PktTxQLog {
+  enum { MaxFrames = 64, AckedPNSampleMax = 64 };
+  using PNSample = ZuArray<uint64_t, AckedPNSampleMax>;
+
+  PNSample ackedPNs = fixedArray<uint64_t, AckedPNSampleMax>();
+  ZuArray<QLogTxFrame, MaxFrames> lostFrames;
+  unsigned nAckedPNs = 0;
+  bool ackedPNsTruncated = false;
+};
+
 struct PktTxUpdate {
-  enum { MaxFrames = 64 }; // preserved qlog sample policy
-  enum { AckedPNSampleMax = 64 };
+  enum { MaxFrames = PktTxQLog::MaxFrames };
+  enum { AckedPNSampleMax = PktTxQLog::AckedPNSampleMax };
   enum { MaxAckedPNs = AckedPNSampleMax };
 
-  using PNSample = ZuArray<uint64_t, AckedPNSampleMax>;
   using AckFlags = ZuArray<bool, PktNumSpace::N>;
   using AckLargest = ZuArray<uint64_t, PktNumSpace::N>;
 
   uint64_t	ackdBytes = 0;
-  PNSample	ackedPNs =
-		  fixedArray<uint64_t, AckedPNSampleMax>();
   PktNumSpace::T	level = PktNumSpace::Initial;
   unsigned	ecnAckdPackets = 0;
   uint64_t	ecnAckdBytes = 0;
@@ -1277,15 +1375,41 @@ struct PktTxUpdate {
   AckLargest	ackLargest =
 		  fixedArray<uint64_t, PktNumSpace::N>();
   SentFrameUpdates ackdFrames;
-  SentFrameUpdates lostFrames;
-  unsigned	nAckedPNs = 0;
-  bool		ackedPNsTruncated = false;
+  unsigned nLostFrames = 0;
+#ifdef Zquic_DEBUG
+  ZuUnion<void, PktTxQLog> qlogData;
+#endif
 
-  void ackd(const SentPkt &p, bool wasInFlight, uint64_t boundary = 0) {
-    if (nAckedPNs < AckedPNSampleMax)
-      ackedPNs[nAckedPNs++] = p.pn;
-    else
-      ackedPNsTruncated = true;
+  PktTxUpdate() {
+#ifdef Zquic_DEBUG
+    if (ZquicLogger::enabled())
+      new (qlogData.new_<1>()) PktTxQLog{};
+#endif
+  }
+  PktTxQLog *qlog() {
+#ifdef Zquic_DEBUG
+    return qlogData.type() == 1 ? &qlogData.p<1>() : nullptr;
+#else
+    return nullptr;
+#endif
+  }
+  const PktTxQLog *qlog() const {
+#ifdef Zquic_DEBUG
+    return qlogData.type() == 1 ? &qlogData.p<1>() : nullptr;
+#else
+    return nullptr;
+#endif
+  }
+
+  void ackd(SentPkt &p, bool wasInFlight, uint64_t boundary = 0) {
+#ifdef Zquic_DEBUG
+    if (auto log = qlog()) {
+      if (log->nAckedPNs < AckedPNSampleMax)
+	log->ackedPNs[log->nAckedPNs++] = p.pn;
+      else
+	log->ackedPNsTruncated = true;
+    }
+#endif
     noteAckdAck(p);
     addAckdFrames(p);
     if (p.lost) return;
@@ -1334,23 +1458,24 @@ struct PktTxUpdate {
       ackLargest[p.ackLevel] = p.ackLargest;
     }
   }
-  void addAckdFrames(const SentPkt &p) {
+  void addAckdFrames(SentPkt &p) {
     unsigned n = ackdFrames.length();
     for (unsigned i = 0, l = p.framesUsed(); i < l; ++i)
-      ackdFrames.push(SentFrameUpdate{p.frame(i), p.frameOwner(i)});
+      ackdFrames.push(ZuMv(p.frames[i]));
     ZiAssert(ackdFrames.length() - n == p.framesUsed(), "Zquic", (),
       "ACK frame update truncation", return);
   }
   void addLostFrames(const SentPkt &p) {
-    unsigned n = lostFrames.length();
-    for (unsigned i = 0, l = p.framesUsed(); i < l; ++i)
-      lostFrames.push(SentFrameUpdate{p.frame(i), p.frameOwner(i)});
-    ZiAssert(lostFrames.length() - n == p.framesUsed(), "Zquic", (),
-      "lost frame update truncation", return);
+    nLostFrames += p.framesUsed();
+#ifdef Zquic_DEBUG
+    if (auto log = qlog()) {
+      for (unsigned i = 0, n = p.framesUsed();
+	  i < n && log->lostFrames.length() < MaxFrames; ++i)
+	log->lostFrames.push(QLogTxFrame{p.frame(i)});
+    }
+#endif
   }
   void clearAckdFrames() { ackdFrames.clear(); }
-
-
 };
 
 struct PktAckBatch {
@@ -1369,12 +1494,35 @@ struct PktLossBatch {
   unsigned	lost = 0;
 };
 
-using TxPktQueue =
-  Zquic_::Queue<ZmPQueue<TxPkt,
-    ZmPQueueNode<ZuObject,
-      ZmPQueueHeapID<"Zquic.Pkt.TxSentNode",
-	ZmPQueueBits<3,
-	  ZmPQueueLevels<4>>>>>, Zquic_::PQueueCount>;
+inline uint64_t sentPktPN(const SentPkt &p) { return p.pn; }
+using SentPktTree = ZmRBTree<RecoveryPktList::Node,
+  ZmRBTreeNode<RecoveryPktList::Node,
+    ZmRBTreeKey<sentPktPN,
+      ZmRBTreeHeapID<"Zquic.Pkt.TxSentNode">>>>;
+
+class TxPktQueue : public Zquic_::Queue<SentPktTree> {
+  using Base = Zquic_::Queue<SentPktTree>;
+public:
+  void addNode(Node *node) {
+    Base::addNode(node);
+    ++m_inCount;
+  }
+  NodeMvRef shift() {
+    auto node = minimumPtr();
+    if (!node) return {};
+    ++m_outCount;
+    return delNode(node);
+  }
+  void telemetry(Ztc::QueueTelemetry &data) const override {
+    Base::telemetry(data);
+    data.inCount = m_inCount;
+    data.outCount = m_outCount;
+  }
+
+private:
+  uint64_t m_inCount = 0;
+  uint64_t m_outCount = 0;
+};
 
 class RetransmitQueue {
 public:
@@ -1427,60 +1575,35 @@ private:
   unsigned	m_dropped = 0;
 };
 
-class PktTxSpace :
-  public ZmPQTx<PktTxSpace, TxPktQueue> {
+class PktTxSpace {
 public:
   enum { RetainedLostMax = 1024 };
   using Queue = TxPktQueue;
-  using LostPNs =
-    Zquic_::Queue<ZmQueue<uint64_t,
-      ZmQueueHeapID<"Zquic.Pkt.TxLostPNs">>>;
-  using Tx = ZmPQTx<PktTxSpace, Queue>;
   using Msg = Queue::Node;
-  using Span = Queue::Span;
-  using Key = Queue::Key;
-
-  PktTxSpace() { Tx::start(); }
 
   void initQueues(Ztc::Hub *hub, ZuCSpan prefix) {
     m_packets.initQueue(hub, prefix, "sent", Ztc::QueueType::Tx, 0);
     m_retransmit.queue()->initQueue(hub, prefix, "retx", Ztc::QueueType::Tx, 0);
-    m_lostPNs.initQueue(hub, prefix, "lost", Ztc::QueueType::Tx, RetainedLostMax);
+    m_lostPkts.initQueue(hub, prefix, "lost", Ztc::QueueType::Tx, RetainedLostMax);
     m_recovery.initQueue(hub, prefix, "recovery", Ztc::QueueType::Tx, 0);
   }
   template <typename L> void allQueues(L fn) const {
     fn(const_cast<Queue *>(&m_packets));
     fn(m_retransmit.queue());
-    fn(const_cast<LostPNs *>(&m_lostPNs));
+    fn(const_cast<LostPktList *>(&m_lostPkts));
     fn(const_cast<RecoveryPktList *>(&m_recovery));
   }
 
   Queue *txQueue() { return &m_packets; }
 
-  bool send_(Msg *, bool) { return true; }
-  bool resend_(Msg *msg, bool) {
-    if (msg) enqueueRetransmit(msg->data());
-    return true;
-  }
-  bool sendGap_(const Span &, bool) { return true; }
-  bool resendGap_(const Span &, bool) { return true; }
-  void archive_(Msg *) { }
-  ZmRef<Msg> retrieve_(Key, Key) { return nullptr; }
-  void scheduleSend() { }
-  void rescheduleSend() { }
-  void idleSend() { }
-  void scheduleResend() { }
-  void rescheduleResend() { }
-  void idleResend() { }
-  void scheduleArchive() { }
-  void rescheduleArchive() { }
-  void idleArchive() { }
-
-  bool add(const SentPkt &p) {
-    if (m_packets.has(p.pn)) return false;
-    ZmRef<Msg> node = new Queue::Node{p};
-    TxPkt &packet = node->data();
-    Tx::send(node);
+  template <typename Init>
+  bool add(uint64_t pn, Init init) {
+    if (m_packets.findPtr(pn)) return false;
+    ZmRef<Msg> node = new Msg;
+    SentPkt &packet = node->data();
+    packet.pn = pn;
+    init(packet);
+    m_packets.addNode(node.ptr());
     m_outstanding.add(packet);
     if (packet.inFlight) {
       m_bytesInFlight += packet.bytes;
@@ -1492,6 +1615,9 @@ public:
     }
     return true;
   }
+  bool add(SentPkt p) {
+    return add(p.pn, [&p](SentPkt &packet) { packet = ZuMv(p); });
+  }
 
   bool discard(uint64_t pn) {
     auto node = m_packets.find(pn);
@@ -1499,14 +1625,15 @@ public:
     TxPkt &p = node->data();
     if (!p.ackd && !p.lost && !p.ptoReclaimed) m_outstanding.del(p);
     if (p.inFlight) release_(p);
-    (void)m_packets.del(pn);
+    if (p.lost) unlinkLost(p);
+    (void)m_packets.delNode(node.ptr());
     return true;
   }
 
   bool ack(uint64_t pn) {
     auto node = m_packets.find(pn);
     if (!node || !ack_(node->data())) return false;
-    (void)m_packets.del(pn);
+    (void)m_packets.delNode(node.ptr());
     return true;
   }
 
@@ -1520,7 +1647,7 @@ public:
       TxPkt &p = node->data();
       bool wasLost = p.lost;
       if (ranges.contains(p.pn) && ack_(p)) {
-	(void)iter.del();
+	(void)m_packets.delNode(node);
 	if (!wasLost) ++n;
       }
     }
@@ -1570,7 +1697,7 @@ public:
 	      haveAckd = true;
 	    }
 	  }
-	  (void)iter.del();
+	  (void)m_packets.delNode(node);
 	}
       }
     }
@@ -1620,7 +1747,7 @@ public:
 	      batch.haveAckd = true;
 	    }
 	  }
-	  (void)iter.del();
+	  (void)m_packets.delNode(node);
 	}
 	if (++scanned >= budget) {
 	  batch.nextPN = nextPN;
@@ -1652,10 +1779,9 @@ public:
 #ifdef ZDEBUG
       ++m_recoveryVisits;
 #endif
-      TxPkt &p = *node->data();
+      TxPkt &p = node->data();
       if (p.pn > last) break;
       if (lose_(p, false)) {
-	p.recoveryNode = nullptr;
 	(void)iter.del();
 	++n;
 	if (lostBytes) *lostBytes += p.bytes;
@@ -1683,18 +1809,17 @@ public:
 #ifdef ZDEBUG
       ++m_recoveryVisits;
 #endif
-      TxPkt &p = *node->data();
+      TxPkt &p = node->data();
       if (p.pn > last) break;
       batch.nextPN = ZuNull(p.pn) ? p.pn : p.pn + 1;
       if (lose_(p, false)) {
-	p.recoveryNode = nullptr;
 	(void)iter.del();
 	++batch.lost;
 	if (update) update->lost(p);
       }
       if (++scanned >= budget) {
 	const auto *head = m_recovery.headPtr();
-	if (head && head->data()->pn <= last) return false;
+	if (head && head->data().pn <= last) return false;
 	batch.nextPN = 0;
 	return true;
       }
@@ -1716,12 +1841,11 @@ public:
 #ifdef ZDEBUG
       ++m_recoveryVisits;
 #endif
-      TxPkt &p = *node->data();
+      TxPkt &p = node->data();
       if (p.pn >= largestAckd) break;
       if (!*p.sentTime || p.sentTime > now || now - p.sentTime < threshold)
 	break;
       if (lose_(p, false)) {
-	p.recoveryNode = nullptr;
 	(void)iter.del();
 	++n;
 	if (lostBytes) *lostBytes += p.bytes;
@@ -1744,13 +1868,12 @@ public:
 #ifdef ZDEBUG
       ++m_recoveryVisits;
 #endif
-      TxPkt &p = *node->data();
+      TxPkt &p = node->data();
       if (p.pn >= largestAckd) break;
       if (!*p.sentTime || p.sentTime > now || now - p.sentTime < threshold)
 	break;
       batch.nextPN = ZuNull(p.pn) ? p.pn : p.pn + 1;
       if (lose_(p, false)) {
-	p.recoveryNode = nullptr;
 	(void)iter.del();
 	++batch.lost;
 	if (update) update->lost(p);
@@ -1758,7 +1881,7 @@ public:
       if (++scanned >= budget) {
 	const auto *head = m_recovery.headPtr();
 	if (head) {
-	  const SentPkt &next = *head->data();
+	  const SentPkt &next = head->data();
 	  if (next.pn < largestAckd && *next.sentTime &&
 	      next.sentTime <= now && now - next.sentTime >= threshold)
 	    return false;
@@ -1780,7 +1903,7 @@ public:
 #ifdef ZDEBUG
     if (head) ++m_recoveryVisits;
 #endif
-    const SentPkt *p = head ? head->data() : nullptr;
+    const SentPkt *p = head ? &head->data() : nullptr;
     if (!p || p->pn >= largestAckd || !*p->sentTime) return ZuTime{};
     return p->sentTime + threshold;
   }
@@ -1799,13 +1922,10 @@ public:
       TxPkt &p = node->data();
       if (p.packetType != packetType) continue;
       bool wasInFlight = p.inFlight;
-      if (!p.ackd && !p.lost && lose_(p) && update) update->lost(p);
+      if (!p.ackd && !p.lost && lose_(p, true, false) && update) update->lost(p);
       if (wasInFlight && releasedBytes) *releasedBytes += p.bytes;
-      if (p.lost) {
-	m_lostPNs.del(p.pn);
-	if (m_retainedLost) --m_retainedLost;
-      }
-      (void)iter.del();
+      if (p.lost) unlinkLost(p);
+      (void)m_packets.delNode(node);
       ++n;
     }
     return n;
@@ -1843,8 +1963,7 @@ public:
 	    (needFrames && !p.framesUsed()))
 	  continue;
 	if (!p.ptoReclaimed) m_outstanding.del(p);
-	Tx::resend(Span{p.pn, 1});
-	Tx::resend();
+	enqueueRetransmit(p);
 	p.ptoReclaimed = true;
 	++n;
       }
@@ -1882,17 +2001,13 @@ public:
       if (!packet.ackd && !packet.lost && !packet.ptoReclaimed)
 	m_outstanding.del(packet);
       if (packet.inFlight) release_(packet);
+      if (packet.lost) unlinkLost(packet);
       --budget;
     }
     if (m_packets.count_()) return false;
     SentFrameRef frame;
     while (budget && m_retransmit.pop(frame)) --budget;
     if (!m_retransmit.empty()) return false;
-    while (budget && m_lostPNs.count_()) {
-      (void)m_lostPNs.shift();
-      --budget;
-    }
-    if (m_lostPNs.count_()) return false;
     clear();
     return true;
   }
@@ -1900,9 +2015,9 @@ public:
   void clear() {
     m_recovery.clean();
     m_outstanding.clear();
-    Tx::txReset(0);
+    m_lostPkts.clean();
+    m_packets.clean();
     m_retransmit.clear();
-    m_lostPNs.clean();
     m_bytesInFlight = 0;
     m_latestAckSentTime = {};
     m_ackd = 0;
@@ -1946,8 +2061,7 @@ private:
     if (!p.lost && !p.ptoReclaimed) m_outstanding.del(p);
     p.ackd = true;
     if (p.lost) {
-      m_lostPNs.del(p.pn);
-      if (m_retainedLost) --m_retainedLost;
+      unlinkLost(p);
       return true;
     }
     if (p.inFlight) release_(p);
@@ -1955,18 +2069,18 @@ private:
     return true;
   }
 
-  bool lose_(TxPkt &p, bool unlink = true) {
+  bool lose_(TxPkt &p, bool unlink = true, bool trim = true) {
     if (p.ackd || p.lost) return false;
     if (!p.ptoReclaimed) m_outstanding.del(p);
     p.lost = true;
-    m_lostPNs.push(p.pn);
+    m_lostPkts.pushNode(static_cast<LostPktList::Node *>(&p));
     ++m_retainedLost;
     if (p.inFlight) release_(p, unlink);
     if (p.ackEliciting && !p.pmtudProbe) {
       ++m_retransmittable;
       enqueueRetransmit(p);
     }
-    trimLost();
+    if (trim) trimLost();
     ++m_lost;
     return true;
   }
@@ -1981,16 +2095,18 @@ private:
   void linkRecovery(TxPkt &p) {
 #ifdef ZDEBUG
     const auto *tail = m_recovery.tailPtr();
-    ZmAssert(!tail || tail->data()->pn < p.pn);
+    ZmAssert(!tail || tail->data().pn < p.pn);
 #endif
-    p.recoveryNode = m_recovery.push(&p);
+    m_recovery.pushNode(static_cast<RecoveryPktList::Node *>(&p));
   }
 
   void unlinkRecovery(TxPkt &p) {
-    if (!p.recoveryNode) return;
-    (void)m_recovery.delNode(
-      static_cast<RecoveryPktList::Node *>(p.recoveryNode));
-    p.recoveryNode = nullptr;
+    (void)m_recovery.delNode(static_cast<RecoveryPktList::Node *>(&p));
+  }
+
+  void unlinkLost(TxPkt &p) {
+    (void)m_lostPkts.delNode(static_cast<LostPktList::Node *>(&p));
+    --m_retainedLost;
   }
 
   void enqueueRetransmit(const SentPkt &p) {
@@ -2005,22 +2121,19 @@ private:
     return m_outstanding.clip(frame, m_retransmit);
   }
   void trimLost() {
-    if (m_retainedLost > RetainedLostMax) m_lostPNs.queueFull();
+    if (m_retainedLost > RetainedLostMax) m_lostPkts.queueFull();
     while (m_retainedLost > RetainedLostMax) {
-      uint64_t pn = m_lostPNs.shift();
-      auto node = m_packets.find(pn);
-      if (!node) continue;
-      TxPkt &p = node->data();
-      if (!p.lost || p.ackd) continue;
-      (void)m_packets.del(pn);
+      auto lost = m_lostPkts.shift();
+      auto node = static_cast<Msg *>(lost);
+      (void)m_packets.delNode(node);
       --m_retainedLost;
     }
   }
 
-  Queue		m_packets{0};
+  Queue		m_packets;
   RetransmitQueue m_retransmit;
   OutstandingFrames m_outstanding;
-  LostPNs	m_lostPNs{ZmQueueParams{}.initial(RetainedLostMax)};
+  LostPktList	m_lostPkts;
   uint64_t	m_bytesInFlight = 0;
   ZuTime	m_latestAckSentTime;
   unsigned	m_ackd = 0;

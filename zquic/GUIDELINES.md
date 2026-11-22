@@ -27,6 +27,9 @@ in `README.md`.
   datagrams and in-place QUIC packet protection removal. Configure it through
   `ZiMultiplex::allocator` registration and the UDP call's receive allocator;
   the endpoint receives the original `io.buf`.
+  Its `RxPkt` metadata holds peer/local addresses and ECN on that same object;
+  pass its reference through routing and packet processing without a separate
+  receive envelope. Both builtin and plugin Rx allocators construct this type.
 - `PktTxBufAllocator` defaults to the `"Zquic.Pkt.Tx"` heap for transmit
   packetization and packet protection output. Each endpoint retains its own
   allocator; active output belongs to `ZiTxContext::buf` until kernel retirement.
@@ -68,8 +71,9 @@ submissions after rebind rather than routing them through a replacement. Closing
 prevents admission; physical disconnect and Tx owner drain precede context and
 queue retirement. Backend-held backing remains the backend's responsibility until
 its retirement. ZiTx advances queued output in the common completion turn rather
-than posting the former per-packet scheduler continuation; pacing remains above
-this queue. Measure bounded-drain latency when changing the capacity.
+than posting the former per-packet scheduler continuation. Admission, congestion
+credit and bounded batching govern runtime output; `Pacer` is a helper without
+runtime integration. Measure bounded-drain latency when changing the capacity.
 
 `BufSize` is `1472`.  It is packet-buffer capacity, not the active UDP payload
 limit.  The active path payload starts at the QUIC minimum and is raised only by
@@ -90,6 +94,10 @@ CRYPTO receive is different from STREAM receive.  Fragmented or out-of-order
 CRYPTO data may be copied into retained `CryptoRxBufAlloc` buffers for
 reassembly.  In-order CRYPTO delivery and TLS output should use direct
 spans/origin-backed buffers when possible.
+Callback delivery passes each ordered retained fragment directly to TLS; only
+synchronous callers requesting a contiguous result assemble a delivery buffer.
+Keep that synchronous storage lazy: runtime fragment delivery and Tx epochs
+must not reserve inline assembly buffers.
 
 Cross-shard STREAM sends transfer an owned range or construct directly in the
 stream writer's retained buffers. Do not stage bytes in an asynchronous byte

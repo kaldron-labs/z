@@ -47,5 +47,6 @@ both been built, run `./zquic/itest/zquictxqueuetest` and retain its TAP
 diagnostic line. For syscall/CPU profiling, run
 `./libtool --mode=execute perf stat -e task-clock,context-switches,cpu-migrations ./zquic/itest/zquictxqueuetest`
 where host perf permissions permit. Do not compare the measured debug drain
-turn with a release throughput result or infer protocol pacing from it;
-QUIC pacing remains above the completed-packet queue.
+turn with a release throughput result or infer protocol pacing from it.
+Runtime output uses admission, congestion credit and bounded batching;
+`Pacer` remains a helper without runtime integration.

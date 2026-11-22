@@ -16,8 +16,6 @@ using namespace ZuTestUtil;
 
 #define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
-using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
-
 static bool trafficSecret(Zquic::TrafficSecret &secret, uint8_t seed)
 {
   uint8_t bytes[32];
@@ -78,8 +76,8 @@ private:
 
 struct TimerLink;
 struct TimerStream :
-  public Zquic::Stream<TimerLink, TimerStream, StreamTxBufAlloc> {
-  using Base = Zquic::Stream<TimerLink, TimerStream, StreamTxBufAlloc>;
+  public Zquic::Stream<TimerLink, TimerStream> {
+  using Base = Zquic::Stream<TimerLink, TimerStream>;
   TimerStream(int64_t id) : Base{nullptr, id} { }
   using Base::Base;
   int process(Zquic::RxStream &) { return 0; }
@@ -87,12 +85,12 @@ struct TimerStream :
 
 struct TimerLink :
   public ZmNHeap<TimerLink>,
-  public Zquic::Link<TimerApp, TimerLink, StreamTxBufAlloc, TimerStream> {
+  public Zquic::Link<TimerApp, TimerLink, TimerStream> {
 friend inline ZuStringT<"Zquic.TimerTest.Link"> ZmNHeapID(TimerLink *);
   using ZmNHeap<TimerLink>::operator new;
   using ZmNHeap<TimerLink>::operator delete;
 
-  using Base = Zquic::Link<TimerApp, TimerLink, StreamTxBufAlloc, TimerStream>;
+  using Base = Zquic::Link<TimerApp, TimerLink, TimerStream>;
   using Base::Base;
 
   ZmSemaphore		event;

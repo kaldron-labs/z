@@ -227,7 +227,7 @@ void testRetransmitQueue()
       frame.offset == 12 &&
       frame.length == 4 &&
       frame.fin &&
-      frame.range.buf.ptr() == buf.ptr(),
+      frame.range().buf.ptr() == buf.ptr(),
     "stream retransmission frame reference mismatch");
   ZuCHECK(tracker.nextRetransmit(frame) &&
       frame.kind == Zquic::SentFrameKind::Control &&

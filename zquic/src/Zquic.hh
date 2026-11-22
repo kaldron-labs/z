@@ -159,13 +159,8 @@ inline bool sentFrameRef(
     ref = SentFrameRef::crypto(frame.offset, frame.length);
     return true;
   case FrameType::Stream:
-    ref.kind = SentFrameKind::Stream;
-    ref.streamID = frame.streamID;
-    ref.offset = frame.offset;
-    ref.length = frame.length;
-    ref.fin = frame.fin;
-    ref.range = TxRange{
-      nullptr, 0, uint32_t(frame.length), frame.offset};
+    ref = SentFrameRef::stream(frame.streamID,
+      TxRange{nullptr, 0, uint32_t(frame.length), frame.offset}, frame.fin);
     return true;
   case FrameType::MaxData:
   case FrameType::MaxStreamData:
@@ -400,32 +395,25 @@ inline bool sendCryptoFlights_(
     if (!spaceFromTLSEpoch(epoch, space)) continue;
     unsigned off = unsigned(offsets[epoch]);
     unsigned remaining = unsigned(offsets[epoch + 1] - offsets[epoch]);
-    ZmRef<ZiIOBuf> flight = new CryptoFlight{data, offsets, epoch};
-    if (!txCrypto[space].sent(txCrypto[space].txOffset(), ZuMv(flight))) {
+    if (!txCrypto[space].sent(txCrypto[space].txOffset(), data,
+	data->skip + off, remaining)) {
       ++diag.failures;
       return false;
     }
     while (remaining) {
       unsigned chunk = remaining > chunkMax ? chunkMax : remaining;
-      using Frame = ZtArray<uint8_t, ZtArrayHeapID<"Zquic.Runtime.Frame">>;
-      auto frame = ZmScratch(uint8_t, BufSize, Frame::VHeap);
+      uint8_t frame[CryptoStream::PrefixMax];
       uint64_t cryptoOffset = txCrypto[space].txOffset();
-      int n = txCrypto[space].writeFramePrefix(frame.data(), BufSize, chunk);
+      int n = txCrypto[space].writeFramePrefix(frame, sizeof(frame), chunk);
       if (n < 0) {
 	++diag.failures;
 	return false;
       }
       SentFrameRef ref = SentFrameRef::crypto(cryptoOffset, chunk);
       diag.cryptoBytesTx += chunk;
-      bool sent = send(space, byteSpan(frame.data(), unsigned(n)),
+      bool sent = send(space, byteSpan(frame, unsigned(n)),
 	byteSpan(data->data() + off, chunk), ref, addr);
       if (!sent) {
-	if (!defer(space, ref)) return false;
-	complete = false;
-      }
-      if (sent && space == PktNumSpace::Handshake &&
-	  !send(space, byteSpan(frame.data(), unsigned(n)),
-	    byteSpan(data->data() + off, chunk), ref, addr)) {
 	if (!defer(space, ref)) return false;
 	complete = false;
       }
@@ -633,11 +621,11 @@ template <typename App_> class Hub :
   public Ztc::Hub,
   public Ztc::QueueMgr {
 friend ZmEngine<App_>;
-template <typename, typename, typename, typename>
+template <typename, typename, typename>
 friend class Link;
-template <typename, typename, typename, typename>
+template <typename, typename, typename>
 friend class CliLink;
-template <typename, typename, typename, typename>
+template <typename, typename, typename>
 friend class SrvLink;
 template <typename>
 friend class Zquic_::Endpoint_;
@@ -1173,7 +1161,6 @@ public:
   using Base = Hub<App>;
   enum { TLSBufSize = (64<<10) }; // 64K
   enum { PNLength = 2 };
-  enum { CryptoChunk = 900 };
 
   bool init(ClientParams params) {
     if (bool(params.certPath()) != bool(params.keyPath())) {
@@ -1236,9 +1223,8 @@ public:
   enum { EndpointRef = false };
   enum { TLSBufSize = Client<App>::TLSBufSize };
   enum { PNLength = Client<App>::PNLength };
-  enum { CryptoChunk = Client<App>::CryptoChunk };
 
-template <typename, typename, typename, typename>
+template <typename, typename, typename>
 friend class SrvLink;
 friend ZmEngine<App>;
 
@@ -1376,9 +1362,9 @@ friend ZmEngine<App>;
   }
 
 public:
-  void endpointDatagram(Datagram d) {
-    this->rxInvoke([this, d = ZuMv(d)]() mutable {
-      received_(ZuMv(d));
+  void endpointPacket(ZmRef<RxPkt> pkt) {
+    this->rxInvoke([this, pkt = ZuMv(pkt)]() mutable {
+      received_(ZuMv(pkt));
     });
   }
   void endpointReady(Endpoint *ep) {
@@ -1429,7 +1415,7 @@ private:
     this->app()->listenFailed(transient);
   }
 
-  void received_(Datagram d) {
+  void received_(ZmRef<RxPkt> pkt) {
     if (this->state() != ZmEngineState::Running) {
       Endpoint::failure();
       this->app()->datagramDropped();
@@ -1437,55 +1423,49 @@ private:
     }
     CxnID routedDCID;
     ResetToken resetToken;
-    Link *link = routePacket(d, &routedDCID, &resetToken);
+    Link *link = routePacket(pkt, &routedDCID, &resetToken);
     if (!link) {
-      sendStatelessReset(d, resetToken);
+      sendStatelessReset(pkt, resetToken);
       Endpoint::failure();
       this->app()->datagramDropped();
       return;
     }
-    if (link->receivedRouted(ZuMv(d), routedDCID))
+    if (link->receivedRouted(ZuMv(pkt), routedDCID))
       link->installRoutes(m_routes);
     else
       link->disconnect();
   }
 
   Link *routePacket(
-      const Datagram &d, CxnID *routedDCID = nullptr,
+      const ZmRef<RxPkt> &pkt, CxnID *routedDCID = nullptr,
       ResetToken *resetToken = nullptr) {
-    if (!d.buf || !d.buf->length) return nullptr;
-    auto packet = d.buf->cspan();
-    if (Pkt::isLong(packet)) return routeLong(d, packet);
-    return routeShort(d, packet, routedDCID, resetToken);
+    if (!pkt || !pkt->length) return nullptr;
+    auto packet = pkt->cspan();
+    if (Pkt::isLong(packet)) return routeLong(pkt, packet);
+    return m_routes.matchShort(packet, routedDCID, resetToken);
   }
 
-  Link *routeLong(const Datagram &d, ZuBSpan packet) {
+  Link *routeLong(const ZmRef<RxPkt> &pkt, ZuBSpan packet) {
     LongHdr h;
     if (Pkt::parseLong(packet, h) < 0) return nullptr;
     if (!VersionNeg::supported(h.version)) {
-      sendVerNeg(h, d.addr);
+      sendVerNeg(h, pkt->addr);
       return nullptr;
     }
     if (Link *link = m_routes.find(h.dcid)) return link;
     if (h.type != PktType::Initial) return nullptr;
-    InitialInfo info{h, d.addr, d.buf->length};
+    InitialInfo info{h, pkt->addr, pkt->length};
     if (!validateInitial(info, packet)) {
       if (app()->retryAddrValidate())
-	sendRetry(h, d.addr);
+	sendRetry(h, pkt->addr);
       return nullptr;
     }
     return accept_(info);
   }
 
-  Link *routeShort(
-      const Datagram &, ZuBSpan packet, CxnID *routedDCID,
-      ResetToken *resetToken) {
-    return m_routes.matchShort(packet, routedDCID, resetToken);
-  }
-
-  bool sendStatelessReset(const Datagram &d, const ResetToken &token) {
-    if (!d.buf || !d.buf->length) return false;
-    auto packet = d.buf->cspan();
+  bool sendStatelessReset(const ZmRef<RxPkt> &d, const ResetToken &token) {
+    if (!d || !d->length) return false;
+    auto packet = d->cspan();
     if (Pkt::isLong(packet) || !token.valid()) return false;
     ZmRef<ZiIOBuf> buf = allocTxPkt_();
     if (ZuUnlikely(!buf)) return false;
@@ -1493,7 +1473,7 @@ private:
       buf->data(), txPktCapacity(buf), packet, token);
     if (n < 0) return false;
     buf->length = unsigned(n);
-    bool sent = sendPkt_(ZuMv(buf), d.addr);
+    bool sent = sendPkt_(ZuMv(buf), d->addr);
     if (sent) {
       ZquicLOG(app()->qlogTrace(), ([
 	resetBytes = unsigned(n)

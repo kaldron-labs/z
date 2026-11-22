@@ -318,6 +318,47 @@ void testCryptoStreamFrames()
     "CRYPTO reset retained fragments or prevented reuse");
 }
 
+void testCryptoFragmentDelivery()
+{
+  ZuTestScope(testCryptoFragmentDelivery);
+
+  Zquic::CryptoStream rx{allocator<Zquic::CryptoRxBufAlloc<>>()};
+  uint8_t payload[Zquic::BufSize];
+  memset(payload, 0x42, sizeof(payload));
+  uint64_t delivered = 0;
+  bool intact = true;
+  rx.deliveryFn([&delivered, &intact](ZuBSpan bytes) {
+    for (auto byte : bytes) intact &= byte == 0x42;
+    delivered += bytes.length();
+  });
+  ZuBSpan contiguous;
+  // Retain a multi-packet flight, then fill its gap.
+  // Fragment callbacks must not allocate or populate that unused assembly buffer.
+  enum { Fragments = 8 };
+  for (unsigned i = 1; i <= Fragments; ++i)
+    ZuCheck(!rx.receive(uint64_t(i) * sizeof(payload),
+      ZuBSpan{payload, sizeof(payload)}, contiguous));
+  ZuCHECK(!delivered && rx.rangeCount() == Fragments,
+    "CRYPTO delivered data ahead of the gap");
+  auto assemblyAllocs = [] {
+    uint64_t count = 0;
+    Ztc::HeapMgr::all([&count](Ztc::Heap *heap) {
+      if (heap->telKey().p<0>() != "Zquic.CryptoDelivery") return;
+      Ztc::HeapTelemetry data;
+      heap->telemetry(data);
+      count += data.cacheAllocs + data.heapAllocs;
+    });
+    return count;
+  };
+  uint64_t before = assemblyAllocs();
+  ZuCHECK(!rx.receive(0, ZuBSpan{payload, sizeof(payload)}, contiguous) &&
+      intact && delivered == uint64_t(Fragments + 1) * sizeof(payload) &&
+      rx.rxOffset() == delivered && !rx.rangeCount() && !contiguous,
+    "CRYPTO fragment delivery lost ordered bytes");
+  ZuCHECK(assemblyAllocs() == before,
+    "fragment callbacks allocated an unused contiguous CRYPTO assembly buffer");
+}
+
 void testMessageLevelTLSHandshake()
 {
   ZuTestScope(testMessageLevelTLSHandshake);
@@ -378,8 +419,12 @@ void testMessageLevelTLSHandshake()
   unsigned pnOffset = unsigned(h) - 2;
   uint8_t packet[256];
   Ztls_::Bytes plain = Ztls_::wireBytes(payload, sizeof(payload));
+  Zquic::PktProtState tx;
+  ZuCHECK(tx.init(client.txSecret(Zquic::PktNumSpace::AppData),
+      Zquic::PktNumSpace::AppData, true),
+    "standalone TLS consumer could not install its Tx protector");
   int n = Zquic::PktProt::protectShortV(
-    packet, sizeof(packet), client.txProtState(Zquic::PktNumSpace::AppData),
+    packet, sizeof(packet), tx,
     3, Zquic::byteSpan(header, unsigned(h)), &plain, 1, pnOffset, 2);
   ZuCHECK(n == int(unsigned(h) + sizeof(payload) + 16),
     "1-RTT traffic probe protection failed");
@@ -485,6 +530,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testDeterministicHSProfile);
   ZuTestCall(testCryptoStreamFrames);
+  ZuTestCall(testCryptoFragmentDelivery);
   ZuTestCall(testMessageLevelTLSHandshake);
   ZuTestCall(testZeroRTTPktDrop);
 }

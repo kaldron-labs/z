@@ -636,9 +636,9 @@ void retxSkipsUnackdStreamBytes()
       ref.streamID == 7 &&
       ref.offset == 50 &&
       ref.length == 50 &&
-      ref.range.streamOffset == 50 &&
-      ref.range.offset == 50 &&
-      ref.range.length == 50 &&
+      ref.range().streamOffset == 50 &&
+      ref.range().offset == 50 &&
+      ref.range().length == 50 &&
       !ref.fin &&
       !tx.nextRetransmit(ref),
     "stream retransmit did not skip outstanding prefix");
@@ -652,28 +652,28 @@ void testTypedControlRefs()
     Zquic::FrameType::MaxStreamData, 8, 4096, Zquic::StreamType::Duplex};
   Zquic::SentFrameRef ref = Zquic::SentFrameRef::flowUpdate(update);
   ZuCHECK(ref.kind == Zquic::SentFrameKind::Control &&
-      ref.controlType == Zquic::FrameType::MaxStreamData &&
+      ref.controlType() == Zquic::FrameType::MaxStreamData &&
       ref.streamID == 8 &&
-      ref.value == 4096,
+      ref.value() == 4096,
     "typed flow-update control ref mismatch");
 
   ref = Zquic::SentFrameRef::blocked(
     Zquic::FrameType::StreamsBlocked, 0, 17, Zquic::StreamType::Simplex);
   ZuCHECK(ref.kind == Zquic::SentFrameKind::Control &&
-      ref.controlType == Zquic::FrameType::StreamsBlocked &&
-      ref.streamType == Zquic::StreamType::Simplex &&
-      ref.value == 17,
+      ref.controlType() == Zquic::FrameType::StreamsBlocked &&
+      ref.streamType() == Zquic::StreamType::Simplex &&
+      ref.value() == 17,
     "typed blocked control ref mismatch");
 
   ref = Zquic::SentFrameRef::pathResponse("12345678");
   ZuCHECK(ref.kind == Zquic::SentFrameKind::Control &&
-      ref.controlType == Zquic::FrameType::PathResponse &&
-      ref.payload == "12345678",
+      ref.controlType() == Zquic::FrameType::PathResponse &&
+      ref.payload() == "12345678",
     "typed PATH_RESPONSE control ref mismatch");
 
   ref = Zquic::SentFrameRef::handshakeDone();
   ZuCHECK(ref.kind == Zquic::SentFrameKind::Control &&
-      ref.controlType == Zquic::FrameType::HandshakeDone,
+      ref.controlType() == Zquic::FrameType::HandshakeDone,
     "typed HANDSHAKE_DONE control ref mismatch");
 }
 
@@ -707,7 +707,7 @@ void ptoProgressWithNewPackets()
 	tx.nextRetransmit(ref) && !tx.retransmitPending(),
       "PTO changed loss/accounting or failed to produce its bounded probe");
     if (ref.kind == Zquic::SentFrameKind::Control) {
-      ZQUIC_CHECK_RT(ref.controlType == Zquic::FrameType::HandshakeDone,
+      ZQUIC_CHECK_RT(ref.controlType() == Zquic::FrameType::HandshakeDone,
 	"PTO produced an unrelated control frame");
       served |= 1;
     } else {
@@ -774,13 +774,13 @@ void testFlowControlRetransmit()
   Zquic::SentFrameRef ref;
   ZuCHECK(tx.nextRetransmit(ref) &&
       ref.kind == Zquic::SentFrameKind::Control &&
-      ref.controlType == Zquic::FrameType::MaxStreams &&
-      ref.value == 129,
+      ref.controlType() == Zquic::FrameType::MaxStreams &&
+      ref.value() == 129,
     "lost MAX_STREAMS was not queued for retransmit");
   ZuCHECK(tx.nextRetransmit(ref) &&
       ref.kind == Zquic::SentFrameKind::Control &&
-      ref.controlType == Zquic::FrameType::StreamsBlocked &&
-      ref.value == 128 &&
+      ref.controlType() == Zquic::FrameType::StreamsBlocked &&
+      ref.value() == 128 &&
       !tx.nextRetransmit(ref),
 	    "lost STREAMS_BLOCKED was not queued for retransmit");
 }
@@ -1028,11 +1028,21 @@ void testLosslessFrameUpdates()
 	reinterpret_cast<void *>(uintptr_t(i + 1)));
     lost.lost(packet);
   }
-  ZuCHECK(lostSetup && lost.lostFrames.length() == 65 &&
-      lost.lostFrames[64].ref.offset == 64 &&
-      lost.lostFrames[64].owner ==
-	reinterpret_cast<void *>(uintptr_t(65)),
-    "lost updates stopped at built-in capacity");
+  ZuCHECK(lostSetup && lost.nLostFrames == 65 && lost.lostBytes == 65 &&
+      !lost.qlog(),
+    "disabled qlog retained loss diagnostics or lost protocol accounting");
+#ifdef Zquic_DEBUG
+  Zquic::PktTxUpdate sampled;
+  new (sampled.qlogData.new_<1>()) Zquic::PktTxQLog{};
+  for (unsigned i = 0; i < 65; ++i) {
+    auto packet = txCryptoPkt(i, i, 1);
+    sampled.lost(packet);
+  }
+  ZuCHECK(sampled.nLostFrames == 65 &&
+      sampled.qlog()->lostFrames.length() == Zquic::PktTxUpdate::MaxFrames &&
+      sampled.qlog()->lostFrames[63].offset == 63,
+    "qlog loss samples exceeded their bound or altered protocol totals");
+#endif
 
   Zquic::PktTxUpdate ackd;
   bool ackdSetup = true;
@@ -1051,9 +1061,104 @@ void testLosslessFrameUpdates()
       ackd.ackdFrames.length() == 256 * Zquic::SentPkt::MaxFrames &&
       ackd.ackdFrames[2047].ref.offset == 2047 &&
       ackd.ackdFrames[2047].owner ==
-	reinterpret_cast<void *>(uintptr_t(2048)) &&
-      ackd.ackedPNsTruncated,
-    "ACK updates or qlog truncation policy mismatch");
+	reinterpret_cast<void *>(uintptr_t(2048)) && !ackd.qlog(),
+    "ACK updates were truncated or disabled qlog accumulated PN samples");
+}
+
+void testIntrusiveRecoveryLifetime()
+{
+  ZuTestScopeRT(testIntrusiveRecoveryLifetime);
+
+  Zquic::PktTxSpace tx;
+  for (uint64_t pn = 1; pn <= Zquic::PktTxSpace::RetainedLostMax + 2; ++pn)
+    ZQUIC_CHECK_RT(tx.add(txPkt(pn)) && tx.lose(pn),
+      "intrusive retained loss setup failed");
+  ZQUIC_CHECK_RT(!tx.ack(1) && !tx.ack(2) &&
+      tx.count() == Zquic::PktTxSpace::RetainedLostMax &&
+      tx.retainedLost() == Zquic::PktTxSpace::RetainedLostMax &&
+      !tx.recoveryCount(),
+    "retained loss did not evict the oldest packet nodes");
+  ZQUIC_CHECK_RT(tx.ack(3) && tx.discard(4) &&
+      tx.retainedLost() == Zquic::PktTxSpace::RetainedLostMax - 2 &&
+      tx.count() == tx.retainedLost(),
+    "late ACK/discard left lost membership behind");
+
+  unsigned initialized = 0;
+  ZQUIC_CHECK_RT(tx.add(2000, [&initialized](Zquic::SentPkt &packet) {
+      ++initialized;
+      packet.bytes = 100;
+      packet.ackEliciting = packet.inFlight = true;
+      packet.sentTime = Zquic::timeUS(200000);
+      packet.addFrame(Zquic::SentFrameRef::crypto(20000, 8));
+    }) && !tx.add(2000, [&initialized](Zquic::SentPkt &) { ++initialized; }) &&
+      initialized == 1 && tx.recoveryCount() == 1,
+    "retained node initialization repeated or lost recovery membership");
+  while (tx.count() || tx.retransmitPending()) {
+    unsigned budget = 1;
+    unsigned before = tx.count() + tx.retransmitPending();
+    (void)tx.drain(budget);
+    ZQUIC_CHECK_RT(before - tx.count() - tx.retransmitPending() <= 1,
+      "recovery drain exceeded its work budget");
+#ifdef ZDEBUG
+    ZQUIC_CHECK_RT(tx.verifyOutstanding(),
+      "bounded drain broke the outstanding index");
+#endif
+  }
+  ZQUIC_CHECK_RT(!tx.retainedLost() && !tx.recoveryCount() && !tx.bytesInFlight(),
+    "drained recovery retained packet memberships or in-flight bytes");
+}
+
+void testFrameVariantLifetime()
+{
+  ZuTestScope(testFrameVariantLifetime);
+
+  ZiMultiplex mx;
+  auto buf = Zquic::plaintextAllocator<Zquic::StreamTxBufAlloc<>>(&mx)->allocBuf();
+  auto stream = Zquic::SentFrameRef::stream(7, Zquic::TxRange{buf, 0, 3, 12}, true);
+  ZuCHECK(buf->refCount() == 2 && stream.data.type() == 1,
+    "STREAM reference did not retain exactly its selected range");
+  auto copy = stream;
+  Zquic::QLogTxFrame snapshot{copy};
+  ZuCHECK(buf->refCount() == 3 && snapshot.streamID == 7 && snapshot.offset == 12 &&
+      snapshot.length == 3 && snapshot.fin && !snapshot.cxnID,
+    "qlog snapshot retained plaintext or read inactive control metadata");
+  copy = Zquic::SentFrameRef::crypto(100, 3);
+  ZuCHECK(buf->refCount() == 2 && copy.data.type() == 0 &&
+      copy.controlType() == Zquic::FrameType::Unknown && !copy.value(),
+    "CRYPTO replacement retained the inactive STREAM range");
+
+  Zquic::SentPkt packet;
+  packet.addFrame(ZuMv(stream));
+  Zquic::PktTxUpdate update;
+  update.ackd(packet, false);
+  ZuCHECK(buf->refCount() == 2 && update.ackdFrames.length() == 1 &&
+      update.ackdFrames[0].ref.range().buf == buf,
+    "ACK retirement failed to move the retained range");
+  update.clearAckdFrames();
+  ZuCHECK(buf->refCount() == 1 && snapshot.length == 3,
+    "qlog metadata or moved packet state retained ACKed plaintext");
+
+  auto control = Zquic::SentFrameRef::handshakeDone();
+  ZuCHECK(control.data.type() == 2 && control.data.p<2>().data.type() == 0,
+    "ordinary control initialized unrelated path or CID state");
+  control = Zquic::SentFrameRef::pathChallenge("12345678");
+  ZuCHECK(control.data.p<2>().data.type() == 1 && control.payload() == "12345678",
+    "path control lost its selected payload");
+  Zquic::QLogTxFrame path{control};
+  ZuCHECK(!path.cxnID && path.controlType == Zquic::FrameType::PathChallenge,
+    "path qlog snapshot read inactive CID state");
+#ifdef Zquic_DEBUG
+  Zquic::PktTxUpdate sampled;
+  new (sampled.qlogData.new_<1>()) Zquic::PktTxQLog{};
+  for (unsigned pn = 0; pn < 65; ++pn) {
+    auto sent = txPkt(pn);
+    sampled.ackd(sent, false);
+  }
+  ZuCHECK(sampled.qlog()->nAckedPNs == Zquic::PktTxQLog::AckedPNSampleMax &&
+      sampled.qlog()->ackedPNs[63] == 63 && sampled.qlog()->ackedPNsTruncated &&
+      sampled.ackdFrames.length() == 65,
+    "bounded qlog ACK samples truncated protocol retirement");
+#endif
 }
 
 int main(int argc, char **argv)
@@ -1065,6 +1170,8 @@ int main(int argc, char **argv)
   ZuTestCall(ackdFrameStopsLossReclaim);
   ZuTestCall(testLossThresholds);
   ZuTestCall(testRetainedLossFrontier);
+  ZuTestCall(testIntrusiveRecoveryLifetime);
+  ZuTestCall(testFrameVariantLifetime);
   ZuTestCall(outstandingLifecycleIndex);
   ZuTestCall(testPktNumSpaceAckLoss);
   ZuTestCall(testPTOReclaimUsesRetxQueue);

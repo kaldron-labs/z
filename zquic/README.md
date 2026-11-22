@@ -250,7 +250,9 @@ Protocol ACK handling services pending retained retransmissions before ordinary
 output consumes reopened congestion credit. This preserves recovery progress under
 bulk transfer and rebinding while using the existing bounded batch and records.
 
-ZiTx services queued successors within the common I/O turn. QUIC pacing remains
-above that queue. See `itest/README.md` for sustained-output and servicing checks,
+ZiTx services queued successors within the common I/O turn. Runtime output is
+controlled by admission limits, congestion credit and bounded batching.
+`Pacer` remains a scheduling helper without runtime integration; these controls
+do not provide time-based pacing. See `itest/README.md` for sustained-output and servicing checks,
 and `../review_context/zquic-zitx-contracts.md` for frozen dependency contracts,
 including the positive-short UDP backend limitation.

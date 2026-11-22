@@ -14,6 +14,7 @@ using namespace ZuTestUtil;
 #define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 ZuAssert((ZuIsBase<Zquic_::TxPkt, ZiIOBuf>{}));
+ZuAssert((ZuIsBase<Zquic::RxPkt, ZiIOBuf>{}));
 ZuAssert((ZuIsBase<Zquic_::BufNode, ZiIOBuf>{}));
 
 struct PacketBacking : Zi::IOBufPool {
@@ -22,7 +23,7 @@ struct PacketBacking : Zi::IOBufPool {
   unsigned acquired = 0, released = 0;
   bool intact = true;
 
-  PacketBacking() : Zi::IOBufPool{Zi::IOBufType::TxUDP} {
+  PacketBacking(Zi::IOBufType::T type = Zi::IOBufType::TxUDP) : Zi::IOBufPool{type} {
     count = 1;
     size = Size;
     headRoom = Head;
@@ -44,11 +45,12 @@ struct PacketBacking : Zi::IOBufPool {
 
 // Exercise the ordinary mx factory, including its construction of Tx metadata.
 struct PacketPlugin : ZiMxPlugin {
-  ZmRef<PacketBacking> backing = new PacketBacking;
+  ZmRef<PacketBacking> backing;
   Zi::IOBufType::T requestedType = Zi::IOBufType::App;
   unsigned requestedSize = 0, requestedAlign = 0, requestedCount = 0;
 
-  explicit PacketPlugin(ZiMultiplex *mx) : ZiMxPlugin{mx} { }
+  explicit PacketPlugin(ZiMultiplex *mx, Zi::IOBufType::T type = Zi::IOBufType::TxUDP) :
+    ZiMxPlugin{mx}, backing{new PacketBacking{type}} { }
   Zi::IOBufPool *allocator(
       Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count) override {
     requestedType = type;
@@ -297,6 +299,58 @@ void testPktBuildMetadata()
     "packet protection sample padding metadata mismatch");
 }
 
+void testRxPacketGeometry(bool registered)
+{
+  ZuTestScopeRT(testRxPacketGeometry);
+
+  ZiMultiplex mx;
+  PacketPlugin *plugin = nullptr;
+  if (registered) {
+    plugin = new PacketPlugin{&mx, Zi::IOBufType::Rx};
+    ZmRef<ZiMxPlugin> transport = plugin;
+    mx.plugin(ZuMv(transport));
+  }
+  auto allocator = Zquic::pktRxAllocator(&mx);
+  auto appAllocator = mx.allocator<Zi::IOBufType::App>();
+  auto buf = allocator->allocBuf();
+  ZQUIC_CHECK_RT(dynamic_cast<Zquic::RxPkt *>(buf.ptr()),
+    "Rx allocator must construct packet metadata with either backing provider");
+  ZmRef<Zquic::RxPkt> pkt{ZuMv(buf)};
+  ZQUIC_CHECK_RT(!pkt->addr && !pkt->local && pkt->ecn == Zquic::EcnMark::NotECT,
+    "Rx packet metadata was not initialized");
+  if (registered) {
+    ZQUIC_CHECK_RT(!pkt->data_() && !plugin->backing->acquired,
+      "arming plugin Rx must allocate only metadata");
+    auto backing = plugin->backing->alloc();
+    pkt->data__ = uintptr_t(backing) | ZiIOBuf::Registered;
+    pkt->size = PacketBacking::Size;
+    pkt->skip = PacketBacking::Head;
+  }
+  pkt->addr = {ZiIP{"127.0.0.1"}, 4433};
+  pkt->local = {ZiIP{"127.0.0.2"}, 4434};
+  pkt->ecn = Zquic::EcnMark::CE;
+  memset(pkt->data(), 0x42, PacketBacking::Payload);
+  pkt->length = PacketBacking::Payload;
+  auto original = pkt.ptr();
+  auto payload = pkt->data();
+  ZmRef<ZiIOBuf> handoff{ZuMv(pkt)};
+  pkt = ZuMv(handoff);
+  ZQUIC_CHECK_RT(pkt.ptr() == original && pkt->data() == payload &&
+      pkt->refCount() == 1 && pkt->addr.port() == 4433 &&
+      pkt->local.port() == 4434 && pkt->ecn == Zquic::EcnMark::CE,
+    "packet handoff must move the original reference, backing and receive metadata");
+  {
+    Zquic::StreamRxData slice{pkt, payload, PacketBacking::Payload,
+      appAllocator, nullptr, 0};
+    pkt = nullptr;
+    ZQUIC_CHECK_RT(slice.packet.ptr() == original && slice.span().data() == payload &&
+        slice.span()[0] == 0x42 && (!registered || !plugin->backing->released),
+      "STREAM delivery must retain provider backing without a payload copy");
+  }
+  ZQUIC_CHECK_RT(!registered || (plugin->backing->released == 1 && plugin->backing->intact),
+    "last STREAM slice must return the original pool slot exactly once");
+}
+
 void testPacketAllocRoles()
 {
   ZuTestScope(testPacketAllocRoles);
@@ -353,6 +407,8 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testTxPacketGeometry, false);
   ZuTestCall(testTxPacketGeometry, true);
+  ZuTestCall(testRxPacketGeometry, false);
+  ZuTestCall(testRxPacketGeometry, true);
   ZuTestCall(testPacketAllocRoles);
   ZuTestCall(testDiagAggregation);
   ZuTestCall(testPktBuildMetadata);

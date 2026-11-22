@@ -153,16 +153,33 @@ void CryptoStream::reset()
   m_txRanges.length(0); m_txBytes = 0;
 }
 
+unsigned CryptoStream::txRangeIndex(uint64_t offset) const
+{
+  unsigned lo = 0, hi = m_txRanges.length();
+  while (lo < hi) {
+    unsigned mid = lo + ((hi - lo)>>1);
+    if (m_txRanges[mid].offset <= offset) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo ? lo - 1 : unsigned(-1);
+}
+
 bool CryptoStream::matches_(uint64_t offset, ZuBSpan payload) const
 {
   uint64_t end = offset + payload.length();
   if (end < offset || end > m_txBytes) return false;
-  unsigned used = 0;
+  unsigned index = txRangeIndex(offset), used = 0;
   while (used < payload.length()) {
-    ZuBSpan prior;
-    if (!txPayload(offset + used, payload.length() - used, prior) || !prior ||
-	memcmp(prior.data(), payload.data() + used, prior.length())) return false;
-    used += prior.length();
+    if (index >= m_txRanges.length()) return false;
+    const auto &range = m_txRanges[index++];
+    uint64_t position = offset + used;
+    if (position < range.offset || position - range.offset >= range.length) return false;
+    unsigned begin = unsigned(position - range.offset);
+    unsigned n = range.length - begin;
+    if (n > payload.length() - used) n = payload.length() - used;
+    if (memcmp(range.data->data_() + range.begin + begin, payload.data() + used, n))
+      return false;
+    used += n;
   }
   return true;
 }
@@ -183,14 +200,23 @@ bool CryptoStream::sent(uint64_t offset, ZuBSpan payload)
 
 bool CryptoStream::sent(uint64_t offset, ZmRef<ZiIOBuf> payload)
 {
-  if (!payload || payload->failed() || payload->skip > payload->size ||
-      payload->length > payload->size - payload->skip) return false;
-  uint64_t end = offset + payload->length;
+  if (!payload) return false;
+  unsigned begin = payload->skip, length = payload->length;
+  return sent(offset, ZuMv(payload), begin, length);
+}
+
+bool CryptoStream::sent(
+  uint64_t offset, ZmRef<ZiIOBuf> payload, unsigned begin, unsigned length)
+{
+  if (!payload || payload->failed() || begin > payload->size ||
+      length > payload->size - begin) return false;
+  uint64_t end = offset + length;
   if (end < offset || end > MaxBufSize) return false;
-  if (offset < m_txBytes) return matches_(offset, payload->cspan());
+  if (offset < m_txBytes)
+    return matches_(offset, byteSpan(payload->data_() + begin, length));
   if (offset != m_txBytes) return false;
-  if (!payload->length) return true;
-  m_txRanges.push(TxRange{ZuMv(payload), offset});
+  if (!length) return true;
+  m_txRanges.push(TxRange{ZuMv(payload), offset, begin, length});
   m_txBytes = end;
   return true;
 }
@@ -198,18 +224,19 @@ bool CryptoStream::sent(uint64_t offset, ZmRef<ZiIOBuf> payload)
 bool CryptoStream::txPayload(
   uint64_t offset, uint64_t length, ZuBSpan &payload) const
 {
+  payload = {};
   uint64_t end = offset + length;
   if (end < offset || end > m_txBytes) return false;
-  for (const auto &range : m_txRanges) {
-    if (offset < range.offset || offset >= range.offset + range.data->length) continue;
-    unsigned begin = unsigned(offset - range.offset);
-    unsigned n = range.data->length - begin;
-    if (length < n) n = unsigned(length);
-    payload = range.data->cspan().offset(begin).trunc(n);
-    return true;
-  }
-  payload = {};
-  return !length;
+  if (!length) return true;
+  unsigned index = txRangeIndex(offset);
+  if (index >= m_txRanges.length()) return false;
+  const auto &range = m_txRanges[index];
+  unsigned begin = unsigned(offset - range.offset);
+  if (begin >= range.length) return false;
+  unsigned n = range.length - begin;
+  if (length < n) n = unsigned(length);
+  payload = byteSpan(range.data->data_() + range.begin + begin, n);
+  return true;
 }
 
 int CryptoStream::writeFrame(
@@ -279,9 +306,9 @@ int CryptoStream::receive(
 	}))
     return -1;
 
-  if (m_asyncDelivery) resumeReadyDequeue();
+  if (m_deliveryFn) resumeReadyDequeue();
   if (diag) diag->cryptoBytesRx += bytes;
-  if (!m_asyncDelivery && m_delivery)
+  if (!m_deliveryFn && m_delivery)
     contiguous = m_delivery.cspan();
   return 0;
 }
@@ -308,9 +335,10 @@ void CryptoStream::process(Msg *node)
   CryptoRxData &data = node->data();
   if (!data.length) return;
   const uint8_t *p = data.data();
-  appendDelivery(p, data.length);
-  if (m_asyncDelivery)
+  if (m_deliveryFn)
     m_deliveryFn(ZuBSpan{p, data.length});
+  else
+    appendDelivery(p, data.length);
   m_rxOffset += data.length;
 }
 
@@ -330,21 +358,37 @@ int InitialCrypto::encrypt(
 {
   Ztls_::Bytes plain =
     Ztls_::wireBytes(plaintext.data(), plaintext.length());
-  return encryptV(out, len, secret, pn, aad, &plain, 1);
+  return encryptV_(out, len, secret, pn, aad, &plain, 1, plaintext.length());
+}
+
+static bool plainLength(
+  const Ztls_::Bytes *plain, unsigned plainCount, unsigned &length)
+{
+  if (!plain && plainCount) return false;
+  uint64_t plainLen = 0;
+  for (unsigned i = 0; i < plainCount; ++i) {
+    if (plain[i].length() > UINT_MAX || plainLen > UINT_MAX - plain[i].length())
+      return false;
+    plainLen += plain[i].length();
+  }
+  length = unsigned(plainLen);
+  return true;
 }
 
 int InitialCrypto::encryptV(
   uint8_t *out, unsigned len, const InitialSecret &secret, uint64_t pn,
   ZuBSpan aad, const Ztls_::Bytes *plain, unsigned plainCount)
 {
-  if (!plain && plainCount) return -1;
-  size_t plainLen = 0;
-  for (unsigned i = 0; i < plainCount; ++i) {
-    if (plain[i].length() > UINT_MAX || plainLen > UINT_MAX - plain[i].length())
-      return -1;
-    plainLen += plain[i].length();
-  }
-  if (len < plainLen + InitialSecret::TagLen) return -1;
+  unsigned plainLen;
+  if (!plainLength(plain, plainCount, plainLen)) return -1;
+  return encryptV_(out, len, secret, pn, aad, plain, plainCount, plainLen);
+}
+
+int InitialCrypto::encryptV_(
+  uint8_t *out, unsigned len, const InitialSecret &secret, uint64_t pn,
+  ZuBSpan aad, const Ztls_::Bytes *plain, unsigned plainCount, unsigned plainLen)
+{
+  if (len < uint64_t(plainLen) + InitialSecret::TagLen) return -1;
   ZuBArray<InitialSecret::IVLen> nonce(InitialSecret::IVLen, false);
   makeNonce(nonce.data(), secret, pn);
 
@@ -430,8 +474,8 @@ int InitialPktProt::protectLong(
 {
   Ztls_::Bytes plain =
     Ztls_::wireBytes(plaintext.data(), plaintext.length());
-  return protectLongV(out, len, secret, pn, header, &plain, 1,
-    pnOffset, pnLength);
+  return protectLongV_(out, len, secret, pn, header, &plain, 1,
+    plaintext.length(), pnOffset, pnLength);
 }
 
 int InitialPktProt::protectLongV(
@@ -439,25 +483,29 @@ int InitialPktProt::protectLongV(
   ZuBSpan header, const Ztls_::Bytes *plain, unsigned plainCount,
   unsigned pnOffset, unsigned pnLength)
 {
+  unsigned plainLen;
+  if (!plainLength(plain, plainCount, plainLen)) return -1;
+  return protectLongV_(out, len, secret, pn, header, plain, plainCount,
+    plainLen, pnOffset, pnLength);
+}
+
+int InitialPktProt::protectLongV_(
+  uint8_t *out, unsigned len, const InitialSecret &secret, uint64_t pn,
+  ZuBSpan header, const Ztls_::Bytes *plain, unsigned plainCount,
+  unsigned plainLen, unsigned pnOffset, unsigned pnLength)
+{
   if (pnLength < 1 || pnLength > 4 ||
       header.length() != pnOffset + pnLength)
     return -1;
-  if (!plain && plainCount) return -1;
-  size_t plainLen = 0;
-  for (unsigned i = 0; i < plainCount; ++i) {
-    if (plain[i].length() > UINT_MAX || plainLen > UINT_MAX - plain[i].length())
-      return -1;
-    plainLen += plain[i].length();
-  }
-  unsigned packetLen = header.length() + unsigned(plainLen) +
+  uint64_t packetLen = uint64_t(header.length()) + plainLen +
     InitialSecret::TagLen;
   if (len < packetLen || packetLen < pnOffset + 4 + 16) return -1;
   if (out != header.data())
     memcpy(out, header.data(), header.length());
-  int n = InitialCrypto::encryptV(
+  int n = InitialCrypto::encryptV_(
     out + header.length(), len - header.length(), secret, pn,
     ZuBSpan{out, header.length()},
-    plain, plainCount);
+    plain, plainCount, plainLen);
   if (n != int(plainLen + InitialSecret::TagLen)) return -1;
 
   ZuBArray<InitialSecret::HPMaskLen>
@@ -511,7 +559,6 @@ void TrafficSecret::clear()
   aead = nullptr;
   hash = nullptr;
   hpCipher = nullptr;
-  hpSuppCipher = nullptr;
   installed = false;
 }
 
@@ -519,19 +566,13 @@ bool PktProtState::init(
   const TrafficSecret &secret_, PktNumSpace::T level_, bool tx_)
 {
   clear();
-  if (!secret_.valid() || !secret_.aead || !secret_.hpCipher ||
-      !secret_.hpSuppCipher)
+  if (!secret_.valid() || !secret_.aead || !secret_.hpCipher)
     return false;
-  aead = Ztls_::aeadNewDirect(
+  aead = Ztls_::aeadNew_(
     secret_.aead, tx_, secret_.key.data(), secret_.iv.data());
   if (!aead) return false;
   hp = Ztls_::cipherNew(secret_.hpCipher, true, secret_.hp.data());
   if (!hp) {
-    clear();
-    return false;
-  }
-  if (tx_) hpSupp = Ztls_::cipherNew(secret_.hpSuppCipher, true, secret_.hp.data());
-  if (tx_ && (!hpSupp)) {
     clear();
     return false;
   }
@@ -546,9 +587,8 @@ void PktProtState::clear()
 {
   if (aead) Ztls_::aeadFree(aead);
   if (hp) Ztls_::cipherFree(hp);
-  if (hpSupp) Ztls_::cipherFree(hpSupp);
   aead = nullptr;
-  hp = hpSupp = nullptr;
+  hp = nullptr;
   secret.clear();
   level = PktNumSpace::Initial;
   tx = false;
@@ -566,28 +606,32 @@ static bool hkdfExpandTrafficLabel(
       label, Ztls_::wireBytes(nullptr, 0), "tls13 ");
 }
 
+static const Ztls_::CipherAlgo *trafficHPCipher(const Ztls_::CipherSuite *suite)
+{
+  if (!suite || !suite->aead) return nullptr;
+  // RFC 9001 sections 5.4.3/5.4.4 select AES-ECB or ChaCha20, respectively.
+  return suite->id == Ztls_SuiteChaChaSHA256 ?
+    suite->aead->ctrCipher : suite->aead->ecbCipher;
+}
+
 bool PktProt::deriveSecret(
   TrafficSecret &out, const Ztls_::CipherSuite *cipher, ZuBSpan secret)
 {
   out.clear();
-  if (!cipher || !cipher->aead || !cipher->hash ||
-      !cipher->aead->ecbCipher || !cipher->aead->ctrCipher || !secret)
-    return false;
+  const auto hpCipher = trafficHPCipher(cipher);
+  if (!hpCipher || !cipher->hash || !secret) return false;
 
   unsigned secretLen = cipher->hash->digestSize;
   unsigned keyLen = cipher->aead->keySize;
   unsigned ivLen = cipher->aead->ivSize;
   if (ivLen < 8) ivLen = 8;
-  unsigned hpLen = cipher->aead->ecbCipher->keySize;
-  unsigned hpSuppLen = cipher->aead->ctrCipher->keySize;
+  unsigned hpLen = hpCipher->keySize;
   unsigned tagLen = cipher->aead->tagSize;
   if (secret.length() != secretLen ||
       secretLen > TrafficSecret::MaxSecretLen ||
       keyLen > TrafficSecret::MaxKeyLen ||
       ivLen > TrafficSecret::MaxIVLen ||
       hpLen > TrafficSecret::MaxHPLen ||
-      hpSuppLen > TrafficSecret::MaxHPLen ||
-      hpSuppLen != hpLen ||
       !tagLen)
     return false;
 
@@ -614,8 +658,7 @@ bool PktProt::deriveSecret(
   out.tagLen = tagLen;
   out.aead = cipher->aead;
   out.hash = cipher->hash;
-  out.hpCipher = cipher->aead->ecbCipher;
-  out.hpSuppCipher = cipher->aead->ctrCipher;
+  out.hpCipher = hpCipher;
   out.installed = true;
   return true;
 }
@@ -638,7 +681,6 @@ bool PktProt::deriveNextSecret(
   out.aead = current.aead;
   out.hash = current.hash;
   out.hpCipher = current.hpCipher;
-  out.hpSuppCipher = current.hpSuppCipher;
 
   if (!hkdfExpandTrafficLabel(
 	current.hash, out.secret.data(), out.secret.length(),
@@ -665,7 +707,10 @@ bool Crypto::txSecret(
 {
   if (level < 0 || level >= PktNumSpace::N || !secret.valid()) return false;
   m_txTrafficSecrets[level] = secret;
-  return m_txProt[level].init(m_txTrafficSecrets[level], level, true);
+  auto keyLevel = level == PktNumSpace::Initial ? PktKeyLevel::Initial :
+    level == PktNumSpace::Handshake ? PktKeyLevel::Handshake : PktKeyLevel::OneRTT;
+  ++m_txKeyGen[keyLevel];
+  return true;
 }
 
 bool Crypto::rxSecret(
@@ -688,7 +733,8 @@ bool Crypto::txKeySecret(
   if (m_earlyDataState == EarlyDataState::Disabled ||
       m_earlyDataState == EarlyDataState::Enabled)
     m_earlyDataState = EarlyDataState::Offered;
-  return m_txEarlyProt.init(m_txEarlySecret, space, true);
+  ++m_txKeyGen[PktKeyLevel::ZeroRTT];
+  return true;
 }
 
 bool Crypto::rxKeySecret(
@@ -718,8 +764,15 @@ static bool trafficMask(
     return false;
   Ztls_::CipherContext *ctx = state.hp;
   ZuBArray<32> block(32, false);
-  Ztls_::cipherInit(ctx, nullptr);
-  Ztls_::cipherEncrypt(ctx, block.data(), sample.data(), 16);
+  if (secret.hpCipher->ivSize) {
+    // ChaCha20 uses the sample as its counter/nonce and encrypts zeroes.
+    Ztls_::cipherInit(ctx, sample.data());
+    memset(block.data(), 0, InitialSecret::HPMaskLen);
+    Ztls_::cipherEncrypt(ctx, block.data(), block.data(), InitialSecret::HPMaskLen);
+  } else {
+    Ztls_::cipherInit(ctx, nullptr);
+    Ztls_::cipherEncrypt(ctx, block.data(), sample.data(), 16);
+  }
   memcpy(mask, block.data(), InitialSecret::HPMaskLen);
   return true;
 }
@@ -727,23 +780,17 @@ static bool trafficMask(
 static int protect_(
   uint8_t *out, unsigned len, PktProtState &state, uint64_t pn,
   ZuBSpan header, const Ztls_::Bytes *plain, unsigned plainCount,
-  unsigned pnOffset, unsigned pnLength,
+  unsigned plainLen, unsigned pnOffset, unsigned pnLength,
   uint8_t firstMask)
 {
   const TrafficSecret &secret = state.secret;
   if (!state.valid() || !secret.valid() || !state.aead ||
-      !state.hpSupp || !secret.aead || !secret.hpSuppCipher ||
+      !state.hp || !secret.aead || !secret.hpCipher ||
       (!plain && plainCount) ||
       pnLength < 1 || pnLength > 4 ||
       header.length() != pnOffset + pnLength)
     return -1;
-  size_t plainLen = 0;
-  for (unsigned i = 0; i < plainCount; ++i) {
-    if (plain[i].length() > UINT_MAX || plainLen > UINT_MAX - plain[i].length())
-      return -1;
-    plainLen += plain[i].length();
-  }
-  unsigned packetLen = header.length() + unsigned(plainLen) + secret.tagLen;
+  uint64_t packetLen = uint64_t(header.length()) + plainLen + secret.tagLen;
   if (len < packetLen || packetLen < pnOffset + 4 + 16) return -1;
   if (out != header.data())
     memcpy(out, header.data(), header.length());
@@ -752,8 +799,6 @@ static int protect_(
   Ztls_::aeadEncryptV(
     ctx, out + header.length(), plain, plainCount, pn,
     out, header.length());
-  size_t n = plainLen + secret.tagLen;
-  if (n != plainLen + secret.tagLen) return -1;
 
   ZuBArray<InitialSecret::HPMaskLen>
     mask(InitialSecret::HPMaskLen, false);
@@ -833,8 +878,19 @@ int PktProt::protectLongV(
   ZuBSpan header, const Ztls_::Bytes *plain, unsigned plainCount,
   unsigned pnOffset, unsigned pnLength)
 {
+  unsigned plainLen;
+  if (!plainLength(plain, plainCount, plainLen)) return -1;
+  return protectLongV_(out, len, state, pn, header, plain, plainCount,
+    plainLen, pnOffset, pnLength);
+}
+
+int PktProt::protectLongV_(
+  uint8_t *out, unsigned len, PktProtState &state, uint64_t pn,
+  ZuBSpan header, const Ztls_::Bytes *plain, unsigned plainCount,
+  unsigned plainLen, unsigned pnOffset, unsigned pnLength)
+{
   return protect_(out, len, state, pn, header, plain, plainCount,
-    pnOffset, pnLength, 0x0f);
+    plainLen, pnOffset, pnLength, 0x0f);
 }
 
 int PktProt::protectLong(
@@ -843,8 +899,8 @@ int PktProt::protectLong(
 {
   Ztls_::Bytes plain =
     Ztls_::wireBytes(plaintext.data(), plaintext.length());
-  return protectLongV(out, len, state, pn, header, &plain, 1,
-    pnOffset, pnLength);
+  return protectLongV_(out, len, state, pn, header, &plain, 1,
+    plaintext.length(), pnOffset, pnLength);
 }
 
 int PktProt::protectLong(
@@ -882,8 +938,19 @@ int PktProt::protectShortV(
   ZuBSpan header, const Ztls_::Bytes *plain, unsigned plainCount,
   unsigned pnOffset, unsigned pnLength)
 {
+  unsigned plainLen;
+  if (!plainLength(plain, plainCount, plainLen)) return -1;
+  return protectShortV_(out, len, state, pn, header, plain, plainCount,
+    plainLen, pnOffset, pnLength);
+}
+
+int PktProt::protectShortV_(
+  uint8_t *out, unsigned len, PktProtState &state, uint64_t pn,
+  ZuBSpan header, const Ztls_::Bytes *plain, unsigned plainCount,
+  unsigned plainLen, unsigned pnOffset, unsigned pnLength)
+{
   return protect_(out, len, state, pn, header, plain, plainCount,
-    pnOffset, pnLength, 0x1f);
+    plainLen, pnOffset, pnLength, 0x1f);
 }
 
 int PktProt::protectShort(
@@ -892,8 +959,8 @@ int PktProt::protectShort(
 {
   Ztls_::Bytes plain =
     Ztls_::wireBytes(plaintext.data(), plaintext.length());
-  return protectShortV(out, len, state, pn, header, &plain, 1,
-    pnOffset, pnLength);
+  return protectShortV_(out, len, state, pn, header, &plain, 1,
+    plaintext.length(), pnOffset, pnLength);
 }
 
 int PktProt::protectShort(
@@ -945,9 +1012,8 @@ bool Crypto::init(const CryptoConfig &config)
   for (auto &secret : m_rxTrafficSecrets) secret.clear();
   m_txEarlySecret.clear();
   m_rxEarlySecret.clear();
-  for (auto &state : m_txProt) state.clear();
+  for (auto &gen : m_txKeyGen) gen = 0;
   for (auto &state : m_rxProt) state.clear();
-  m_txEarlyProt.clear();
   m_rxEarlyProt.clear();
   m_alpn = ParamString{config.alpn};
   m_serverName = Host{config.serverName};
@@ -962,6 +1028,7 @@ bool Crypto::init(const CryptoConfig &config)
     *config.localParams : TransportParams{};
   m_peerParams = {};
   m_peerParamsSet = false;
+  m_peerParamsGen = 0;
   return true;
 }
 
@@ -986,7 +1053,7 @@ bool Crypto::initTLSContext(const CryptoConfig &config)
   m_tlsCtx.getTime = &Ztls_::getTime;
   m_tlsCtx.keyExchanges = Ztls_::opensslKeyExchanges;
   for (auto suite : Ztls_::opensslCipherSuites)
-    if (suite->aead && suite->aead->ecbCipher && suite->aead->ctrCipher)
+    if (trafficHPCipher(suite))
       m_tlsCtx.cipherSuites.push(suite);
   m_tlsCtx.serverCipherPreference = 1;
   m_tlsCtx.maxEarlyDataSize = config.enable0RTT ? UINT32_MAX : 0;
@@ -1200,12 +1267,15 @@ int Crypto::updateTrafficKey_(int isEnc, size_t epoch, const void *secret)
   bool installed = traffic.valid();
   if (!PktProt::deriveSecret(traffic, cipher, secretSpan))
     return -1;
-  PktProtState &state = keyLevel == PktKeyLevel::ZeroRTT ?
-    (isEnc ? m_txEarlyProt : m_rxEarlyProt) :
-    (isEnc ? m_txProt[space] : m_rxProt[space]);
-  if (!state.init(traffic, space, isEnc)) {
-    traffic.clear();
-    return -1;
+  if (isEnc)
+    ++m_txKeyGen[keyLevel];
+  else {
+    PktProtState &state = keyLevel == PktKeyLevel::ZeroRTT ?
+      m_rxEarlyProt : m_rxProt[space];
+    if (!state.init(traffic, space, false)) {
+      traffic.clear();
+      return -1;
+    }
   }
   keyLog(isEnc, keyLevel, secretSpan);
   if (keyLevel == PktKeyLevel::ZeroRTT) {
@@ -1272,6 +1342,7 @@ int Crypto::collectedExtensions(Ztls_::RawExtension *extensions)
     if (decodeParams(in, m_peerParams) < 0)
       return Ztls_AlertToPeerError(Ztls_AlertDecodeError);
     m_peerParamsSet = true;
+    ++m_peerParamsGen;
     return 0;
   }
   return Ztls_AlertToPeerError(Ztls_AlertMissingExt);
@@ -1338,9 +1409,9 @@ void Crypto::syncEarlyDataState()
       break;
     case Ztls_::EarlyDataAcceptance::Rejected:
       if (m_earlyDataState != EarlyDataState::Rejected) {
+	if (m_txEarlySecret.valid()) ++m_txKeyGen[PktKeyLevel::ZeroRTT];
 	m_txEarlySecret.clear();
 	m_rxEarlySecret.clear();
-	m_txEarlyProt.clear();
 	m_rxEarlyProt.clear();
 	m_earlyDataEnabled = false;
 	m_earlyDataState = EarlyDataState::Rejected;
@@ -1388,9 +1459,13 @@ bool Crypto::discardSecret(PktNumSpace::T level)
   m_secretInstalled[level] = false;
   if (level == PktNumSpace::Initial)
     m_initialKeys.clear();
+  if (m_txTrafficSecrets[level].valid()) {
+    auto keyLevel = level == PktNumSpace::Initial ? PktKeyLevel::Initial :
+      level == PktNumSpace::Handshake ? PktKeyLevel::Handshake : PktKeyLevel::OneRTT;
+    ++m_txKeyGen[keyLevel];
+  }
   m_txTrafficSecrets[level].clear();
   m_rxTrafficSecrets[level].clear();
-  m_txProt[level].clear();
   m_rxProt[level].clear();
   if (installed) ++m_diag.secretsDiscarded;
   return installed;
@@ -1408,9 +1483,9 @@ bool Crypto::rejectZeroRTT()
   bool wasRejected = m_earlyDataState == EarlyDataState::Rejected;
   bool hadEarly =
     m_txEarlySecret.valid() || m_rxEarlySecret.valid();
+  if (m_txEarlySecret.valid()) ++m_txKeyGen[PktKeyLevel::ZeroRTT];
   m_txEarlySecret.clear();
   m_rxEarlySecret.clear();
-  m_txEarlyProt.clear();
   m_rxEarlyProt.clear();
   m_earlyDataEnabled = false;
   m_earlyDataState = EarlyDataState::Rejected;

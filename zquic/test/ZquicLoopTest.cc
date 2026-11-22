@@ -17,8 +17,6 @@ using namespace ZuTestUtil;
 #define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 
-using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
-
 class App : public Zquic::Hub<App> {
 public:
   using Base = Zquic::Hub<App>;
@@ -56,9 +54,9 @@ private:
 };
 struct TestLink;
 struct TestStream :
-  public Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc>
+  public Zquic::Stream<TestLink, TestStream>
 {
-  using Base = Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc>;
+  using Base = Zquic::Stream<TestLink, TestStream>;
   using Base::Base;
   unsigned processed = 0;
 
@@ -66,11 +64,9 @@ struct TestStream :
 };
 struct TestLink :
   public ZmNHeap<TestLink>,
-  public Zquic::Link<App, TestLink,
-    StreamTxBufAlloc, TestStream>
+  public Zquic::Link<App, TestLink, TestStream>
 {
-  using Base = Zquic::Link<App, TestLink,
-    StreamTxBufAlloc, TestStream>;
+  using Base = Zquic::Link<App, TestLink, TestStream>;
   friend inline ZuStringT<"Zquic.Loop.Link"> ZmNHeapID(TestLink *);
   using ZmNHeap<TestLink>::operator new;
   using ZmNHeap<TestLink>::operator delete;
@@ -102,28 +98,30 @@ struct TestLink :
     memset(buf->data_(), 0, bytes);
     buf->skip = 0;
     buf->length = bytes;
-    Base::receiveDatagram_(
-      Zquic::Datagram{ZuMv(buf), {}},
-      [](Zquic::Datagram &, unsigned, unsigned) { return true; },
-      [](Zquic::Datagram &, unsigned, unsigned) { return true; });
+    Base::rxPacket(
+      ZmRef<Zquic::RxPkt>{ZuMv(buf)},
+      [](const ZmRef<Zquic::RxPkt> &, unsigned, unsigned,
+	  const Zquic::LongHdr &) { return true; },
+      [](const ZmRef<Zquic::RxPkt> &, unsigned, unsigned) { return true; });
   }
   bool receivePayload(ZmRef<ZiIOBuf> buf, unsigned longBytes) {
     auto original = buf.ptr();
     auto payload = buf->data();
     unsigned length = buf->length, longs = 0, shorts = 0;
     bool geometry = true;
-    Base::receiveDatagram_(Zquic::Datagram{ZuMv(buf), {}},
+    Base::rxPacket(ZmRef<Zquic::RxPkt>{ZuMv(buf)},
       [&geometry, &longs, original, payload, longBytes](
-	  Zquic::Datagram &d, unsigned offset, unsigned bytes) {
+	  const ZmRef<Zquic::RxPkt> &d, unsigned offset, unsigned bytes,
+	  const Zquic::LongHdr &h) {
 	++longs;
-	geometry &= d.buf.ptr() == original && d.buf->data() == payload &&
-	  !offset && bytes == longBytes;
+	geometry &= d.ptr() == original && d->data() == payload &&
+	  !offset && bytes == longBytes && h.type == Zquic::PktType::Initial;
 	return true;
       },
       [&geometry, &shorts, original, payload, longBytes, length](
-	  Zquic::Datagram &d, unsigned offset, unsigned bytes) {
+	  const ZmRef<Zquic::RxPkt> &d, unsigned offset, unsigned bytes) {
 	++shorts;
-	geometry &= d.buf.ptr() == original && d.buf->data() == payload &&
+	geometry &= d.ptr() == original && d->data() == payload &&
 	  offset == longBytes && bytes == length - longBytes;
 	return true;
       });

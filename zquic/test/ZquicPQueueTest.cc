@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/Zquic.hh>
 
@@ -340,26 +341,24 @@ void testTxUnackdRangeQueue()
   ZuTestScope(testTxUnackdRangeQueue);
 
   Zquic::StreamTxPQueue q{0};
-  ZuCHECK(q.add(new Zquic::StreamTxPQueue::Node{
-	Zquic::TxUnackdRange{10, 10}}) == ZmPQResult::Inserted,
+  ZuCHECK(q.add(Zquic::TxUnackdRange{10, 10}) == ZmPQResult::Inserted,
     "stream unackd range insert failed");
   ZuCHECK(q.clear(13, 4),
     "stream unackd range middle clear failed");
 
-  ZmRef<Zquic::StreamTxPQueue::Node> head = q.find(10);
-  ZmRef<Zquic::StreamTxPQueue::Node> tail = q.find(17);
-  ZuCHECK(head && tail &&
-      head->data().key() == 10 &&
-      head->data().length() == 3 &&
-      tail->data().key() == 17 &&
-      tail->data().length() == 3 &&
+  Zquic::TxUnackdRange head, tail;
+  ZuCHECK(q.find(10, head) && q.find(17, tail) &&
+      head.key() == 10 &&
+      head.length() == 3 &&
+      tail.key() == 17 &&
+      tail.length() == 3 &&
       q.count_() == 2 &&
       q.length_() == 6 &&
       q.verify(),
     "stream unackd range clear did not split retained ranges");
 
   ZuCHECK(q.clear(10, 3) &&
-      !q.find(10) &&
+      !q.find(10, head) &&
       q.count_() == 1 &&
       q.length_() == 3 &&
       q.verify(),
@@ -371,19 +370,18 @@ void testTxUnackdFinSentinel()
   ZuTestScope(testTxUnackdFinSentinel);
 
   Zquic::StreamTxPQueue dataFin{0};
-  ZuCHECK(dataFin.add(new Zquic::StreamTxPQueue::Node{
-	Zquic::TxUnackdRange{20, 5, true}}) == ZmPQResult::Inserted &&
+  ZuCHECK(dataFin.add(Zquic::TxUnackdRange{20, 5, true}) == ZmPQResult::Inserted &&
       dataFin.length_() == 6,
     "stream unackd data+FIN range insert failed");
   ZuCHECK(dataFin.clear(20, 5) &&
       dataFin.count_() == 1 &&
       dataFin.length_() == 1,
     "stream unackd data ACK did not leave FIN sentinel");
-  ZmRef<Zquic::StreamTxPQueue::Node> fin = dataFin.find(25);
-  ZuCHECK(fin &&
-      fin->data().key() == 25 &&
-      fin->data().bytes == 0 &&
-      fin->data().fin,
+  Zquic::TxUnackdRange fin;
+  ZuCHECK(dataFin.find(25, fin) &&
+      fin.key() == 25 &&
+      fin.bytes == 0 &&
+      fin.fin,
     "stream unackd FIN sentinel has wrong offset/state");
   ZuCHECK(dataFin.clear(25, 1) &&
       !dataFin.count_() &&
@@ -392,8 +390,7 @@ void testTxUnackdFinSentinel()
     "stream unackd FIN sentinel clear failed");
 
   Zquic::StreamTxPQueue finOnly{0};
-  ZuCHECK(finOnly.add(new Zquic::StreamTxPQueue::Node{
-	Zquic::TxUnackdRange{30, 0, true}}) == ZmPQResult::Inserted &&
+  ZuCHECK(finOnly.add(Zquic::TxUnackdRange{30, 0, true}) == ZmPQResult::Inserted &&
       finOnly.clear(30, 1) &&
       !finOnly.count_() &&
       finOnly.verify(),
@@ -403,6 +400,7 @@ void testTxUnackdFinSentinel()
 void testTxUnackdFragmentation()
 {
   ZuTestScopeRT(testTxUnackdFragmentation);
+  Zquic::TxUnackdRange found;
 
   Zquic::StreamTxPQueue q{0};
   enum { Ranges = Zquic::StreamTxPQueue::Max << 1 };
@@ -412,16 +410,16 @@ void testTxUnackdFragmentation()
       "fragmented stream range insert failed");
   ZQUIC_CHECK_RT(q.count_() == Ranges &&
       q.length_() == Ranges &&
-      q.find(0) &&
-      q.find((uint64_t(Ranges - 1) << 1)) &&
-      !q.find(1) &&
+      q.find(0, found) &&
+      q.find(uint64_t(Ranges - 1) << 1, found) &&
+      !q.find(1, found) &&
       q.verify(),
     "fragmented stream ranges did not grow beyond former capacity");
 
   ZQUIC_CHECK_RT(q.add(Zquic::TxUnackdRange{1, 1}) == ZmPQResult::Inserted &&
       q.count_() == Ranges - 1 &&
       q.length_() == Ranges + 1 &&
-      q.find(0)->data().length() == 3 &&
+      q.find(0, found) && found.length() == 3 &&
       q.verify(),
     "fragmented stream ranges did not coalesce around an inserted bridge");
 
@@ -471,6 +469,7 @@ void testTxUnackdBoundaries()
 void testTxUnackdDrain()
 {
   ZuTestScopeRT(testTxUnackdDrain);
+  Zquic::TxUnackdRange found;
 
   unsigned counts[] = {4, Zquic::StreamTxPQueue::BuiltinRanges + 3};
   for (unsigned count : counts) {
@@ -489,7 +488,7 @@ void testTxUnackdDrain()
       "zero-budget drain changed retained ranges");
     budget = 2;
     ZQUIC_CHECK_RT(!q.drain(budget) && !budget && q.count_() == count - 2 &&
-	q.length_() == length - 3 && !q.find(0) && !q.find(8) && q.find(16) &&
+	q.length_() == length - 3 && !q.find(0, found) && !q.find(8, found) && q.find(16, found) &&
 	q.verify(), "partial drain exceeded its budget or lost remaining ranges");
 #ifdef ZDEBUG
     ZQUIC_CHECK_RT(q.indexed() == (count > Zquic::StreamTxPQueue::BuiltinRanges),
@@ -504,9 +503,73 @@ void testTxUnackdDrain()
 #endif
     ZQUIC_CHECK_RT(q.drain(budget) && budget == 7 &&
 	q.add(Zquic::TxUnackdRange{0, 1}) == ZmPQResult::Inserted &&
-	q.find(0) && q.count_() == 1 && q.length_() == 1 && q.verify(),
+	q.find(0, found) && q.count_() == 1 && q.length_() == 1 && q.verify(),
       "drained queue did not accept a fresh runtime at offset zero");
   }
+}
+
+void testTxUnackdIndexedReuse()
+{
+  ZuTestScopeRT(testTxUnackdIndexedReuse);
+
+  using Node = Zquic::TxUnackdRanges::Indexed::Node;
+  using Cache = ZmHeapCacheT<
+    ZmNHeapID_<Node>, ZmHeapAllocSize<sizeof(Node)>{}, alignof(Node),
+    ZmNHeapSharded_<Node>{}>;
+  auto cache = Cache::instance()->cache();
+  auto allocs = [cache] {
+    const auto &stats = cache->stats();
+    return stats.allocs.load_() + stats.heapAllocs.load_();
+  };
+  uint64_t baseline = allocs();
+  Zquic::TxUnackdRanges q;
+  ZQUIC_CHECK_RT(q.add({10, 10}) == ZmPQResult::Inserted &&
+      q.add({40, 10}) == ZmPQResult::Inserted && allocs() == baseline,
+    "inline interval insert allocated index storage");
+  for (unsigned i = 0; i < 8; ++i)
+    ZQUIC_CHECK_RT(q.add({1000 + uint64_t(i) * 100, 10}) ==
+	ZmPQResult::Inserted, "indexed reuse setup failed");
+  baseline = allocs();
+  auto check = [&q](ZuSpan<const Zquic::TxUnackdRange> expected) {
+    unsigned i = 0;
+    uint64_t length = 80;
+    for (const auto &range : expected) length += range.length();
+    bool equal = q.spans(0, 1000, [&expected, &i](const auto &range) {
+      if (i == expected.length()) return false;
+      const auto &want = expected[i++];
+      return range.offset == want.offset && range.bytes == want.bytes &&
+	range.fin == want.fin;
+    });
+    return equal && i == expected.length() &&
+      q.count_() == 8 + expected.length() && q.length_() == length && q.verify();
+  };
+  Zquic::TxUnackdRange extended[] = {{10, 15}, {40, 10}};
+  ZQUIC_CHECK_RT(q.add({20, 5}) == ZmPQResult::Inserted &&
+      q.add({12, 1}) == ZmPQResult::Inserted && check(extended) &&
+      allocs() == baseline, "indexed append/contained insert replaced a node");
+  Zquic::TxUnackdRange bridged[] = {{10, 40}};
+  ZQUIC_CHECK_RT(q.add({25, 15}) == ZmPQResult::Inserted && check(bridged) &&
+      allocs() == baseline, "indexed bridge merge allocated a replacement");
+  Zquic::TxUnackdRange clipped[] = {{15, 30}};
+  ZQUIC_CHECK_RT(q.clear(10, 5) && q.clear(45, 5) && check(clipped) &&
+      allocs() == baseline, "indexed head/tail clip allocated a replacement");
+  Zquic::TxUnackdRange split[] = {{15, 10}, {30, 15}};
+  ZQUIC_CHECK_RT(q.clear(25, 5) && check(split) && allocs() == baseline + 1,
+    "indexed middle split did not allocate exactly one additional node");
+  ++baseline;
+  Zquic::TxUnackdRange withFin[] = {{15, 10}, {30, 15, true}};
+  ZQUIC_CHECK_RT(q.add({45, 0, true}) == ZmPQResult::Inserted && check(withFin) &&
+      q.add({45, 0, true}) == ZmPQResult::Inserted && check(withFin) &&
+      allocs() == baseline, "indexed FIN extension/duplicate replaced a node");
+  Zquic::TxUnackdRange finOnly[] = {{15, 10}, {45, 0, true}};
+  ZQUIC_CHECK_RT(q.clear(30, 15) && check(finOnly) && allocs() == baseline,
+    "indexed data ACK did not reuse the FIN sentinel node");
+  Zquic::TxUnackdRange headOnly[] = {{15, 10}};
+  ZQUIC_CHECK_RT(q.clear(45, 1) && check(headOnly) && allocs() == baseline,
+    "indexed FIN ACK changed allocation accounting");
+  unsigned budget = q.count_();
+  ZQUIC_CHECK_RT(q.drain(budget) && !budget && !q.count_() && !q.length_() &&
+      q.verify() && allocs() == baseline, "indexed empty drain allocated storage");
 }
 
 void testTxUnackdRandomized()
@@ -580,5 +643,6 @@ int main(int argc, char **argv)
   ZuTestCall(testTxUnackdFragmentation);
   ZuTestCall(testTxUnackdBoundaries);
   ZuTestCall(testTxUnackdDrain);
+  ZuTestCall(testTxUnackdIndexedReuse);
   ZuTestCall(testTxUnackdRandomized);
 }

@@ -26,8 +26,6 @@ using namespace ZuTestUtil;
 #define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 
-using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
-
 #ifdef Zquic_DEBUG
 static Zi::Path g_residue;
 
@@ -83,8 +81,8 @@ static void closeQLog(ZquicLogger::Trace &trace)
 
 struct TestLink;
 struct TestStream :
-    public Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc> {
-  using Base = Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc>;
+    public Zquic::Stream<TestLink, TestStream> {
+  using Base = Zquic::Stream<TestLink, TestStream>;
   using Base::Base;
 
   unsigned txCompleteCount = 0;
@@ -159,9 +157,9 @@ struct ServerAppLink;
 struct ServerApp : public Zquic::Server<ServerApp, ServerAppLink> { };
 struct ServerAppStream :
     public Zquic::SrvStream<
-      ServerAppLink, ServerAppStream, StreamTxBufAlloc> {
+      ServerAppLink, ServerAppStream> {
   using Base = Zquic::SrvStream<
-    ServerAppLink, ServerAppStream, StreamTxBufAlloc>;
+    ServerAppLink, ServerAppStream>;
   using Base::Base;
 
   int process(Zquic::RxStream &) { return 0; }
@@ -169,13 +167,13 @@ struct ServerAppStream :
 struct ServerAppLink :
   public ZmNHeap<ServerAppLink>,
     public Zquic::SrvLink<
-      ServerApp, ServerAppLink, ServerAppStream, StreamTxBufAlloc> {
+      ServerApp, ServerAppLink, ServerAppStream> {
   friend inline ZuStringT<"Zquic.API.SrvLink"> ZmNHeapID(ServerAppLink *);
   using ZmNHeap<ServerAppLink>::operator new;
   using ZmNHeap<ServerAppLink>::operator delete;
 
   using Base = Zquic::SrvLink<
-    ServerApp, ServerAppLink, ServerAppStream, StreamTxBufAlloc>;
+    ServerApp, ServerAppLink, ServerAppStream>;
 
   ServerAppLink(ServerApp *app) : Base{app} { }
 
@@ -187,9 +185,9 @@ struct ClientShapeApp : public Zquic::Client<ClientShapeApp> { };
 struct ClientShapeLink;
 struct ClientShapeStream :
     public Zquic::CliStream<
-      ClientShapeLink, ClientShapeStream, StreamTxBufAlloc> {
+      ClientShapeLink, ClientShapeStream> {
   using Base = Zquic::CliStream<
-    ClientShapeLink, ClientShapeStream, StreamTxBufAlloc>;
+    ClientShapeLink, ClientShapeStream>;
   using Base::Base;
 
   int process(Zquic::RxStream &) { return 0; }
@@ -198,15 +196,13 @@ struct ClientShapeStream :
 struct ClientShapeLink :
     public ZmNHeap<ClientShapeLink>,
     public Zquic::CliLink<
-      ClientShapeApp, ClientShapeLink, ClientShapeStream,
-      StreamTxBufAlloc> {
+      ClientShapeApp, ClientShapeLink, ClientShapeStream> {
 friend inline ZuStringT<"Zquic.APITest.CliLink"> ZmNHeapID(ClientShapeLink *);
   using ZmNHeap<ClientShapeLink>::operator new;
   using ZmNHeap<ClientShapeLink>::operator delete;
 
   using Base = Zquic::CliLink<
-    ClientShapeApp, ClientShapeLink, ClientShapeStream,
-    StreamTxBufAlloc>;
+    ClientShapeApp, ClientShapeLink, ClientShapeStream>;
 
   ZmAtomic<unsigned> failures = 0;
   ZmAtomic<unsigned> disconnects = 0;
@@ -225,9 +221,9 @@ struct ServerShapeApp :
     public Zquic::Server<ServerShapeApp, ServerShapeLink> { };
 struct ServerShapeStream :
     public Zquic::SrvStream<
-      ServerShapeLink, ServerShapeStream, StreamTxBufAlloc> {
+      ServerShapeLink, ServerShapeStream> {
   using Base = Zquic::SrvStream<
-    ServerShapeLink, ServerShapeStream, StreamTxBufAlloc>;
+    ServerShapeLink, ServerShapeStream>;
   using Base::Base;
 
   int process(Zquic::RxStream &) { return 0; }
@@ -236,15 +232,13 @@ struct ServerShapeStream :
 struct ServerShapeLink :
     public ZmNHeap<ServerShapeLink>,
     public Zquic::SrvLink<
-      ServerShapeApp, ServerShapeLink, ServerShapeStream,
-      StreamTxBufAlloc> {
+      ServerShapeApp, ServerShapeLink, ServerShapeStream> {
 friend inline ZuStringT<"Zquic.APITest.SrvLink"> ZmNHeapID(ServerShapeLink *);
   using ZmNHeap<ServerShapeLink>::operator new;
   using ZmNHeap<ServerShapeLink>::operator delete;
 
   using Base = Zquic::SrvLink<
-    ServerShapeApp, ServerShapeLink, ServerShapeStream,
-    StreamTxBufAlloc>;
+    ServerShapeApp, ServerShapeLink, ServerShapeStream>;
 
   ZmFn<void()> startedFn;
   ZmFn<void()> promotedFn;
@@ -281,14 +275,14 @@ friend inline ZuStringT<"Zquic.APITest.SrvLink"> ZmNHeapID(ServerShapeLink *);
 struct TestLink :
     public ZmNHeap<TestLink>,
     public Zquic::Link<
-      HubApp, TestLink, StreamTxBufAlloc,
+      HubApp, TestLink,
       TestStream> {
 friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
   using ZmNHeap<TestLink>::operator new;
   using ZmNHeap<TestLink>::operator delete;
 
   using Base = Zquic::Link<
-    HubApp, TestLink, StreamTxBufAlloc,
+    HubApp, TestLink,
     TestStream>;
   ZmRef<TestStream> lastOpened;
   ZmRef<TestStream> lastDataStream;
@@ -337,6 +331,7 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
   unsigned pathUpdateCount = 0;
   unsigned migrationFailureCount = 0;
   unsigned txFlushQueued = 0;
+  unsigned txRecoveryCalls = 0;
   bool lastDataFin = false;
   bool lastPathValidated = false;
 
@@ -386,7 +381,7 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
 	return allocate ? app()->txPktAllocator()->allocBuf(nullptr, 0) : ZmRef<ZiIOBuf>{};
       },
       [this, &send](auto packet, ZiSockAddr addr, Zquic::EcnMark::T ecn) {
-	return this->Base::sendPathPkt(ZuMv(packet), ZuMv(addr),
+	return this->Base::template submitPathPkt<Base::PathTx::Direct>(ZuMv(packet), ZuMv(addr),
 	  [&send](auto buf, ZiSockAddr, Zquic::EcnMark::T) { return send(ZuMv(buf)); }, ecn);
       });
   }
@@ -476,10 +471,10 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
       return true;
     };
     if (early)
-      return Base::sendProtZeroRTTPkt(
+      return Base::template sendProtLongPkt<Zquic::PktType::ZeroRTT>(
 	Base::CIDSel::Peer, Base::CIDSel::Local, pnLength,
 	payload, {}, {}, nullptr, false, alloc, send);
-    return Base::sendProtHandshakePkt(
+    return Base::template sendProtLongPkt<Zquic::PktType::Handshake>(
       Base::CIDSel::Peer, Base::CIDSel::Local, pnLength,
       payload, {}, {}, nullptr, false, alloc, send);
   }
@@ -544,7 +539,12 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
   void ptoTimer() { }
   void queueRetransmit() { }
   bool retransmit_(bool = false, unsigned = 2,
-    Zquic::PktNumSpace::T = Zquic::PktNumSpace::N) { return false; }
+    Zquic::PktNumSpace::T = Zquic::PktNumSpace::N) {
+    ++txRecoveryCalls; return false;
+  }
+  void postOrdinaryTx() { Base::queueTxFlush(); }
+  void postRecoveryTx() { Base::queueRetransmit(); }
+  void resetRuntimeForWork() { Base::resetLink([] { }); }
   void statelessReset() { ++statelessResetCount; }
   void migrationStarted(const Zquic::MigrationResult &result) {
     lastMigration = result;
@@ -1151,6 +1151,54 @@ void testAlignedSurfaceShape()
   client = nullptr;
   serverApp.final();
   clientApp.final();
+}
+
+void testPendingTxReasons()
+{
+  ZuTestScopeRT(testPendingTxReasons);
+
+  HubFixture fixture;
+  ZmRef<TestLink> link = new TestLink{&fixture.app};
+  auto &app = fixture.app;
+  app.defer();
+  app.enterTx();
+  unsigned flushes = link->txFlushQueued;
+  unsigned recovery = link->txRecoveryCalls;
+  for (unsigned i = 0; i < 5; ++i) {
+    link->postOrdinaryTx();
+    link->postRecoveryTx();
+  }
+  ZQUIC_CHECK_RT(app.txPendingQ.count_() == 2,
+    "duplicate Tx reasons posted more than one continuation each");
+  app.runTx();
+  app.runTx();
+  ZQUIC_CHECK_RT(!app.txPending() && link->txFlushQueued == flushes + 1 &&
+      link->txRecoveryCalls == recovery + 1,
+    "ordinary/recovery continuations did not run independently exactly once");
+  link->postOrdinaryTx();
+  link->postRecoveryTx();
+  app.deferMode = false;
+  link->resetRuntimeForWork();
+  app.deferMode = true;
+  app.enterTx();
+  flushes = link->txFlushQueued;
+  recovery = link->txRecoveryCalls;
+  link->postOrdinaryTx();
+  link->postRecoveryTx();
+  ZQUIC_CHECK_RT(app.txPendingQ.count_() == 4,
+    "runtime reset retained stale pending reason bits");
+  app.runTx();
+  app.runTx();
+  link->postOrdinaryTx();
+  link->postRecoveryTx();
+  ZQUIC_CHECK_RT(app.txPendingQ.count_() == 2 && link->txFlushQueued == flushes &&
+      link->txRecoveryCalls == recovery,
+    "stale continuation ran work or cleared a new runtime pending bit");
+  app.runTx();
+  app.runTx();
+  ZQUIC_CHECK_RT(!app.txPending() && link->txFlushQueued == flushes + 1 &&
+      link->txRecoveryCalls == recovery + 1,
+    "new runtime continuations were suppressed by stale work");
 }
 
 void testLinkStateOwnership()
@@ -2881,6 +2929,7 @@ int main(int argc, char **argv)
   ZuTestCall(testStreamShape);
   ZuTestCall(testWritableMembership);
   ZuTestCall(testAlignedSurfaceShape);
+  ZuTestCall(testPendingTxReasons);
   ZuTestCall(testLinkStateOwnership);
   ZuTestCall(testStreamLimitOwnership);
   ZuTestCall(testStatelessResetDetection);

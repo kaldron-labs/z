@@ -56,14 +56,14 @@ struct alignas(Zm::CacheLineSize) StreamRxStorage {
 };
 
 struct alignas(Zm::CacheLineSize) StreamTxStorage {
-  using TxRanges = Queue<StreamTxRanges, PQueueCount>;
+  using TxRanges = Queue<StreamTxRanges>;
 
   uint64_t		rxAdvertised = 0;
   uint64_t		controlRuntime = 0;
   uint64_t		lastBlocked = U64Null;
   PendingControl	maxStreamDataControl;
   PendingControl	dataBlockedCtl;
-  TxRanges		txRanges{0};
+  TxRanges		txRanges;
   uint64_t		txBytes = 0;
   uint64_t		txBufferedBytes = 0;
   FlowCredit		txCredit;
@@ -127,27 +127,27 @@ template <typename Impl>
 struct alignas(Zm::CacheLineSize) StreamRxBase :
   ZmPQRx<Impl, StreamRxPQueue, ZmPQRxGapIgnore<>> { };
 
-template <typename Link_, typename Impl, typename TxBufAlloc_>
+template <typename Link_, typename Impl>
 class Stream :
   public StreamQueue::Node,
   // Rx thread exclusive base. Only the Rx thread may use ZmPQRx APIs/state.
-  public StreamRxBase<Stream<Link_, Impl, TxBufAlloc_>> {
-template <typename, typename, typename, typename>
+  public StreamRxBase<Stream<Link_, Impl>> {
+template <typename, typename, typename>
+friend class Link;
+template <typename, typename, typename>
 friend class CliLink;
-template <typename, typename, typename, typename>
+template <typename, typename, typename>
 friend class SrvLink;
 
 public:
   enum { DefltTxQueueMax = 4096 };
 
-  using Self = Stream<Link_, Impl, TxBufAlloc_>;
+  using Self = Stream<Link_, Impl>;
   using Link = Link_;
   using Impl_ = Impl;
-  using TxBufAlloc = TxBufAlloc_;
   using Rx = StreamRxBase<Self>;
   using RxMsg = StreamRxPQueue::Node;
   using RxQueueSpan = StreamRxPQueue::Span;
-  using TxMsg = TxDataPQueue::Node;
   using TxUnackdQueue = StreamTxPQueue;
 
   auto impl() const { return static_cast<const Impl *>(this); }
@@ -306,7 +306,7 @@ public:
     while (budget) {
       auto range = m_streamTx.txRanges.shift();
       if (!range) break;
-      m_streamTx.txBufferedBytes -= range->data().length();
+      m_streamTx.txBufferedBytes -= static_cast<StreamTxData *>(range.ptr())->rangeLength;
       --m_admission.count;
       --budget;
     }
@@ -410,7 +410,7 @@ public:
     if (slot && slot->frame == frame) slot->queued = false;
   }
   void clearControl(const SentFrameRef &ref) {
-    PendingControl *slot = controlSlot(ref.controlType);
+    PendingControl *slot = controlSlot(ref.controlType());
     if (!slot) return;
     ControlFrame frame = controlFrame(ref);
     if (slot->frame == frame) *slot = {};
@@ -492,15 +492,17 @@ public:
   }
 
   bool txRange(unsigned i, TxRange &range) const {
-    auto iter = m_streamTx.txRanges.citer();
-    while (auto node = iter()) {
-      if (i--) continue;
-      const auto &data = node->data();
-      range = TxRange{data.buf, data.buf->skip, data.buf->length,
-	data.streamOffset};
-      return true;
+    auto node = m_streamTx.txRanges.headPtr();
+    if (i) {
+      auto iter = m_streamTx.txRanges.citer();
+      while ((node = iter()) && i) --i;
     }
-    return false;
+    if (!node) return false;
+    const auto &data = *static_cast<StreamTxData *>(node);
+    range = TxRange{data.backing ? data.backing : ZmRef<ZiIOBuf>{
+	const_cast<StreamTxData *>(&data)},
+      data.rangeOffset, data.rangeLength, data.streamOffset};
+    return true;
   }
   bool nextTxRange(PktBudget &, TxRange &range, bool &fin) const {
     fin = false;
@@ -531,20 +533,19 @@ public:
     TxRange &range, const TxRange &selected, uint32_t length) {
     if (!length) return false;
     if (!selected.buf) return false;
-    uint64_t key = selected.streamOffset;
-    auto part = m_streamTx.txRanges.find(key);
-    if (!part) return false;
-    const auto &stored = part->data();
-    if (stored.buf != selected.buf || stored.buf->skip != selected.offset ||
-	stored.buf->length != selected.length || length > stored.length()) return false;
-    auto node = m_streamTx.txRanges.del(key);
+    auto node = static_cast<StreamTxData *>(m_streamTx.txRanges.headPtr());
+    if (!node) return false;
+    auto backing = node->backing ? node->backing.ptr() : static_cast<ZiIOBuf *>(node);
+    if (backing != selected.buf || node->rangeOffset != selected.offset ||
+	node->rangeLength != selected.length || node->streamOffset != selected.streamOffset ||
+	length > node->rangeLength) return false;
     range = selected;
     range.length = length;
     m_streamTx.txBufferedBytes -= length;
-    if (length < node->data().length()) {
-      node->data().clipHead(length);
-      m_streamTx.txRanges.add(ZuMv(node).release());
-    } else {
+    if (length < node->rangeLength)
+      node->advanceRange(length);
+    else {
+      (void)m_streamTx.txRanges.shift();
       --m_admission.count;
       // Return producer credit after this packetizer turn has committed flow
       // credit, FIN and recovery metadata. Recovery retains the plaintext until
@@ -570,8 +571,7 @@ public:
   }
   bool recordTxUnackd(uint64_t offset, uint64_t length, bool fin) {
     if (!length && !fin) return false;
-    return m_streamTx.txUnackd.add(new TxUnackdQueue::Node{
-      TxUnackdRange{offset, length, fin}}) != ZmPQResult::Invalid;
+    return m_streamTx.txUnackd.add(TxUnackdRange{offset, length, fin}) != ZmPQResult::Invalid;
   }
   bool discardTxUnackd(uint64_t offset, uint64_t length, bool fin = false) {
     uint64_t n = length + (fin ? 1 : 0);
@@ -615,7 +615,10 @@ public:
 
   public:
     TxStream_(Stream &stream) :
-      Base(unsigned(BufSize), 0, 0), m_stream{&stream} { }
+      Base(stream.link()->app()->streamTxAllocator()->size,
+	stream.link()->app()->streamTxAllocator()->headRoom,
+	stream.link()->app()->streamTxAllocator()->tailRoom),
+      m_stream{&stream} { }
 
     uint64_t frameMax() const { return m_stream->txFrameMax(); }
 
@@ -624,10 +627,13 @@ public:
     TxStream_ &operator =(TxStream_ &&) = default;
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
-      ZiAssert(skip <= BufSize, "Zquic", (skip),
+      auto allocator = m_stream->link()->app()->streamTxAllocator();
+      ZiAssert(skip <= allocator->size - allocator->tailRoom, "Zquic", (skip),
 	"invalid stream headroom " << skip, return nullptr);
-      ZmRef<ZiIOBuf> buf = new TxDataPQueue::Node{
-	m_stream->link()->app()->streamTxAllocator(), m_stream};
+      auto buf = allocator->allocBuf(m_stream);
+      if (!buf) return nullptr;
+      ZiAssert(skip <= buf->size && allocator->tailRoom <= buf->size - skip,
+	"Zquic", (), "stream buffer cannot hold allocator framing", return nullptr);
       buf->skip = skip;
       buf->length = 0;
       return buf;
@@ -636,7 +642,9 @@ public:
     bool appendBuf(ZmRef<ZiIOBuf> buf) {
       if (!Base::flush()) return false;
       if (buf && !buf->failed() && !buf->length) return true;
-      bool ok = sendBuf_(ZuMv(buf), false);
+      bool ok;
+      if constexpr (AppThread) ok = m_stream->send(ZuMv(buf));
+      else ok = m_stream->send_(ZuMv(buf));
       if (!ok) this->fail();
       return ok;
     }
@@ -647,8 +655,9 @@ public:
     }
 
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
-      if constexpr (AppThread) return m_stream->send(ZuMv(buf));
-      else return m_stream->send_(ZuMv(buf));
+      ZmRef<StreamTxData> data = static_cast<StreamTxData *>(buf.ptr());
+      data->publish();
+      return m_stream->template sendOwned<AppThread>(ZuMv(data));
     }
 
   private:
@@ -962,21 +971,17 @@ private:
     return false;
   }
 
-  bool send(ZmRef<ZiIOBuf> buf) {
-    if (!buf || buf->failed() || !buf->length) return false;
-    if (!admitTx()) return txOverflow();
-    // Stream retirement can precede this admission's Tx dispatch. Keep the
-    // stream alive until sendAdmitted_ installs the retained range.
-    txInvoke_([stream = ZmRef<Impl>{impl()}, buf = ZuMv(buf)]() mutable {
-      stream->sendAdmitted(ZuMv(buf));
-    });
-    return true;
+  bool send(ZmRef<ZiIOBuf> buf, bool fin = false) {
+    return sendBuffer<true>(ZuMv(buf), fin);
   }
-  bool send_(ZmRef<ZiIOBuf> buf) {
-    ZiAssert(txInvoked_(), "Zquic", (),
-      "QUIC stream send outside Tx thread", return false);
-    if (!admitTx()) return txOverflow();
-    return sendAdmitted(ZuMv(buf));
+  bool send_(ZmRef<ZiIOBuf> buf, bool fin = false) {
+    return sendBuffer<false>(ZuMv(buf), fin);
+  }
+  bool send(ZuBSpan data, bool fin = false) {
+    return sendBytes<true>(data, fin);
+  }
+  bool send_(ZuBSpan data, bool fin = false) {
+    return sendBytes<false>(data, fin);
   }
 
 private:
@@ -994,39 +999,106 @@ private:
     --m_admission.count;
     return false;
   }
-  bool sendAdmitted(ZmRef<ZiIOBuf> buf) {
+  template <bool AppThread>
+  bool sendOperation(StreamTxOp op) {
+    unsigned count = op.ranges.count_();
+    unsigned admitted = 0;
+    while (admitted < count) {
+      if (!admitTx()) {
+	m_admission.count -= admitted;
+	return txOverflow();
+      }
+      ++admitted;
+    }
+    if constexpr (AppThread) {
+      // A single dispatch transfers all owned ranges and their final FIN intent.
+      txInvoke_([stream = ZmRef<Impl>{impl()}, op = ZuMv(op)]() mutable {
+	stream->sendAdmitted(ZuMv(op));
+      });
+      return true;
+    } else
+      return sendAdmitted(ZuMv(op));
+  }
+  template <bool AppThread>
+  bool sendOwned(ZmRef<StreamTxData> data) {
+    if (!data || data->failed() || !data->rangeLength) return false;
+    StreamTxOp op;
+    op.ranges.pushNode(ZuMv(data));
+    return sendOperation<AppThread>(ZuMv(op));
+  }
+  template <bool AppThread>
+  bool sendBuffer(ZmRef<ZiIOBuf> buf, bool fin) {
+    if (buf && buf->failed()) return false;
+    if ((!buf || !buf->length) && !fin) return false;
+    ZiAssert(!buf || (buf->skip <= buf->size && buf->length <= buf->size - buf->skip),
+      "Zquic", (), "stream Tx buffer range violation", return false);
+    StreamTxOp op;
+    op.fin = fin;
+    if (buf && buf->length) op.ranges.pushNode(new StreamTxView{ZuMv(buf)});
+    return sendOperation<AppThread>(ZuMv(op));
+  }
+  template <bool AppThread>
+  bool sendBytes(ZuBSpan data, bool fin) {
+    if (!data.length() && !fin) return false;
+    StreamTxOp op;
+    op.fin = fin;
+    auto allocator = m_config.link->app()->streamTxAllocator();
+    unsigned capacity = allocator->capacity();
+    if (!capacity) return sendError("QUIC stream allocator has no payload capacity");
+    uint64_t count = data.length() ? 1 + (data.length() - 1)/capacity : 0;
+    unsigned admitted = m_admission.count.load_();
+    if (count && (count > m_config.txQueueMax || admitted > m_config.txQueueMax - count))
+      return txOverflow();
+    // Concurrent producers can spend credit after this preflight. The actual
+    // reservation below remains authoritative before the owned operation posts.
+    while (data.length()) {
+      auto buf = allocator->allocBuf(this);
+      if (!buf || buf->failed()) return false;
+      unsigned length = buf->avail() - allocator->tailRoom;
+      if (data.length() < length) length = unsigned(data.length());
+      if (!length || !buf->append(ZuBSpan{data.data(), length})) return false;
+      auto node = static_cast<StreamTxData *>(buf.ptr());
+      node->publish();
+      op.ranges.pushNode(node);
+      data = ZuBSpan{data.data() + length, data.length() - length};
+    }
+    return sendOperation<AppThread>(ZuMv(op));
+  }
+  bool sendAdmitted(StreamTxOp op) {
+    unsigned count = op.ranges.count_();
     ZiAssert(txInvoked_(), "Zquic", (),
-      "QUIC stream send_ outside Tx thread",
-      --m_admission.count; return false);
-    if (ZuUnlikely(!buf || buf->failed() || m_streamTx.retired ||
-	m_streamTx.resetSent || !buf->length)) {
-      --m_admission.count;
+      "QUIC stream send outside Tx thread",
+      m_admission.count -= count; return false);
+    if (ZuUnlikely(m_streamTx.retired || m_streamTx.resetSent || m_streamTx.fin)) {
+      m_admission.count -= count;
       return sendError("QUIC stream is closed for transmission");
     }
-    ZiAssert(buf->skip + buf->length <= buf->size, "Zquic", (),
-      "stream Tx buffer range violation",
-      --m_admission.count; return false);
-    uint32_t length = buf->length;
-    m_streamTx.txRanges.add(new StreamTxRanges::Node{ZuMv(buf), m_streamTx.txBytes});
-    if (m_config.link)
-      ZquicLOG(m_config.link->app()->qlogTrace(), ([
-	streamID = id() >= 0 ? uint64_t(id()) : U64Null,
-	streamOffset = m_streamTx.txBytes,
-	length = uint64_t(length),
-	linkInfo = m_config.link->linkInfo()
-      ](auto &o, ZuTime time) {
-	if (streamID == U64Null) return;
-	StreamDataEvt event{
-	  .linkInfo = linkInfo,
-	  .streamID = streamID,
-	  .offset = streamOffset,
-	  .length = length,
-	  .from = StreamDataLoc::Application,
-	  .to = StreamDataLoc::Transport};
-	o.logStreamDataMoved(event, time);
-      }));
-    m_streamTx.txBytes += length;
-    m_streamTx.txBufferedBytes += length;
+    while (auto queued = op.ranges.shift()) {
+      auto node = static_cast<StreamTxData *>(queued.ptr());
+      uint32_t length = node->rangeLength;
+      node->streamOffset = m_streamTx.txBytes;
+      m_streamTx.txRanges.pushNode(ZuMv(queued));
+      if (m_config.link)
+	ZquicLOG(m_config.link->app()->qlogTrace(), ([
+	  streamID = id() >= 0 ? uint64_t(id()) : U64Null,
+	  streamOffset = m_streamTx.txBytes,
+	  length = uint64_t(length),
+	  linkInfo = m_config.link->linkInfo()
+	](auto &o, ZuTime time) {
+	  if (streamID == U64Null) return;
+	  StreamDataEvt event{
+	    .linkInfo = linkInfo,
+	    .streamID = streamID,
+	    .offset = streamOffset,
+	    .length = length,
+	    .from = StreamDataLoc::Application,
+	    .to = StreamDataLoc::Transport};
+	  o.logStreamDataMoved(event, time);
+	}));
+      m_streamTx.txBytes += length;
+      m_streamTx.txBufferedBytes += length;
+    }
+    if (op.fin) m_streamTx.fin = true;
     notifyTx();
     return true;
   }
@@ -1104,21 +1176,6 @@ public:
   const PendingControl *controlSlot(FrameType::T type) const {
     return const_cast<Stream *>(this)->controlSlot(type);
   }
-  static ControlFrame controlFrame(const SentFrameRef &ref) {
-    ControlFrame frame;
-    frame.type = ref.controlType;
-    frame.streamID = ref.streamID;
-    frame.value = ref.value;
-    if (ref.controlType == FrameType::ResetStream) {
-      frame.errorCode = ref.value;
-      frame.value = ref.length;
-    } else if (ref.controlType == FrameType::StopSending) {
-      frame.errorCode = ref.value;
-      frame.value = 0;
-    }
-    frame.streamType = ref.streamType;
-    return frame;
-  }
 
 private:
   // Immutable/published configuration, separate from the Rx base tail and
@@ -1143,17 +1200,17 @@ private:
 
 };
 
-template <typename Link, typename Impl, typename TxBufAlloc_ = StreamTxBufAlloc<>>
-class CliStream : public Stream<Link, Impl, TxBufAlloc_> {
+template <typename Link, typename Impl>
+class CliStream : public Stream<Link, Impl> {
 public:
-  using Base = Stream<Link, Impl, TxBufAlloc_>;
+  using Base = Stream<Link, Impl>;
   using Base::Base;
 };
 
-template <typename Link, typename Impl, typename TxBufAlloc_ = StreamTxBufAlloc<>>
-class SrvStream : public Stream<Link, Impl, TxBufAlloc_> {
+template <typename Link, typename Impl>
+class SrvStream : public Stream<Link, Impl> {
 public:
-  using Base = Stream<Link, Impl, TxBufAlloc_>;
+  using Base = Stream<Link, Impl>;
   using Base::Base;
 };
 

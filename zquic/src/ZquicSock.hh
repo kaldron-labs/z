@@ -14,19 +14,6 @@
 
 namespace Zquic {
 
-struct Datagram {
-  ZmRef<ZiIOBuf>	buf;
-  ZiSockAddr		addr;
-  ZiSockAddr		local;
-  EcnMark::T		ecn = EcnMark::NotECT;
-
-  Datagram() = default;
-  Datagram(ZmRef<ZiIOBuf> buf_, ZiSockAddr addr_) :
-    buf{ZuMv(buf_)}, addr{ZuMv(addr_)} { }
-  Datagram(ZmRef<ZiIOBuf> buf_, ZiSockAddr addr_, EcnMark::T ecn_) :
-    buf{ZuMv(buf_)}, addr{ZuMv(addr_)}, ecn{ecn_} { }
-};
-
 inline uint8_t ecnBits(EcnMark::T ecn)
 {
   switch (ecn) {

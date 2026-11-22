@@ -49,6 +49,14 @@ static bool hexEquals(const ZuBArray<N> &actual, const char *expected)
     hexDecode(b, N, expected) && !memcmp(actual.data(), b, N);
 }
 
+template <unsigned N>
+static bool hexEquals(const Zquic::SecretBytes<N> &actual, const char *expected)
+{
+  uint8_t b[N];
+  unsigned n = actual.length();
+  return hexDecode(b, n, expected) && !memcmp(actual.data(), b, n);
+}
+
 static ZuBSpan textSpan(const char *s)
 {
   return ZuBSpan{s};
@@ -238,6 +246,12 @@ void testRFC9001ClientInitialProt()
     initialVec, 3, 18, 4);
   ZuCHECK(nv == n && !memcmp(packetV, packet, sizeof(packet)),
     "Initial vector packet protection parity failed");
+  nv = Zquic::InitialPktProt::protectLongV_(
+    packetV, sizeof(packetV), keys.client, 2,
+    Zquic::byteSpan(unprotectedHdr, sizeof(unprotectedHdr)),
+    initialVec, 3, sizeof(payload), 18, 4);
+  ZuCHECK(nv == n && !memcmp(packetV, packet, sizeof(packet)),
+    "known-length Initial vector packet protection changed ciphertext");
 
   uint64_t pn = 0;
   unsigned payloadOffset = 0;
@@ -340,12 +354,10 @@ void testTrafficSecretProt()
     "traffic packet protection state init failed");
   auto txLongAead = txLong.aead;
   auto txLongHP = txLong.hp;
-  auto txLongHPSupp = txLong.hpSupp;
   auto rxLongAead = rxLong.aead;
   auto rxLongHP = rxLong.hp;
   auto txShortAead = txShort.aead;
   auto txShortHP = txShort.hp;
-  auto txShortHPSupp = txShort.hpSupp;
   auto rxShortAead = rxShort.aead;
   auto rxShortHP = rxShort.hp;
 
@@ -386,6 +398,11 @@ void testTrafficSecretProt()
     longVec, 2, pnOffset, LongPNLength);
   ZuCHECK(nv == n && !memcmp(packetV, packet, unsigned(n)),
     "traffic Handshake vector protection parity failed");
+  nv = Zquic::PktProt::protectLongV_(
+    packetV, sizeof(packetV), txLongSplit, 7, Zquic::byteSpan(header, unsigned(h)),
+    longVec, 2, sizeof(payload), pnOffset, LongPNLength);
+  ZuCHECK(nv == n && !memcmp(packetV, packet, unsigned(n)),
+    "known-length Handshake vector protection changed ciphertext");
 
   uint64_t pn = 0;
   unsigned payloadOffset = 0;
@@ -418,6 +435,11 @@ void testTrafficSecretProt()
 	    shortVec, 3, pnOffset, 2);
 	  ZuCHECK(nv == n && !memcmp(packetV, packet, unsigned(n)),
 	    "traffic short vector protection parity failed");
+  nv = Zquic::PktProt::protectShortV_(
+    packetV, sizeof(packetV), txShortSplit, 11, Zquic::byteSpan(header, unsigned(h)),
+    shortVec, 3, sizeof(payload), pnOffset, 2);
+  ZuCHECK(nv == n && !memcmp(packetV, packet, unsigned(n)),
+    "known-length short vector protection changed ciphertext");
 
 	  Zquic::TrafficSecret wrongSecret = secret;
 	  wrongSecret.key[0] ^= 0x55;
@@ -448,10 +470,8 @@ void testTrafficSecretProt()
       !memcmp(packet + payloadOffset, payload, sizeof(payload)),
     "traffic short unprotect plaintext mismatch");
   ZuCHECK(txLong.aead == txLongAead && txLong.hp == txLongHP &&
-      txLong.hpSupp == txLongHPSupp &&
       rxLong.aead == rxLongAead && rxLong.hp == rxLongHP &&
       txShort.aead == txShortAead && txShort.hp == txShortHP &&
-      txShort.hpSupp == txShortHPSupp &&
       rxShort.aead == rxShortAead && rxShort.hp == rxShortHP,
     "traffic packet protection contexts were not reused");
 
@@ -475,6 +495,87 @@ void testTrafficSecretProt()
     "traffic zero-vector protection failed");
 }
 
+// https://www.rfc-editor.org/rfc/rfc9001.html#appendix-A.5
+#if ZtlsOpenSSLHaveChaCha
+void testRFC9001ChaChaProt()
+{
+  ZuTestScope(testRFC9001ChaChaProt);
+
+  // RFC 9001 Appendix A.5: HP samples the tag after a one-byte PING.
+  uint8_t bytes[32];
+  ZuCHECK(hexDecode(bytes, sizeof(bytes),
+      "9ac312a7f877468ebe69422748ad00a15443f18203a07d6060f688f30f21632b"),
+    "ChaCha secret decode failed");
+  Zquic::TrafficSecret secret;
+  ZuCHECK(Zquic::PktProt::deriveSecret(secret, &Ztls_::opensslChachasha256,
+      Zquic::byteSpan(bytes, sizeof(bytes))), "ChaCha secret derivation failed");
+  ZuCHECK(secret.key.length() == 32 && secret.iv.length() == 12 &&
+      secret.hp.length() == 32 &&
+      hexEquals(secret.key,
+	"c6d98ff3441c3fe1b2182094f69caa2ed4b716b65488960a7a984979fb23e1c8") &&
+      hexEquals(secret.iv, "e0459b3474bdd0e44a41c144") &&
+      hexEquals(secret.hp,
+	"25a282b9e82f06f21f488917a4fc8f1b73573685608597d0efcb076b0ab7a7a4"),
+    "RFC 9001 ChaCha derived key/IV/HP mismatch");
+  Zquic::TrafficSecret next;
+  ZuCHECK(Zquic::PktProt::deriveNextSecret(next, secret) &&
+      hexEquals(next.secret,
+	"1223504755036d556342ee9361d253421a826c9ecdf3c7148684b36b714881f9") &&
+      next.hp.length() == secret.hp.length() &&
+      !memcmp(next.hp.data(), secret.hp.data(), secret.hp.length()) &&
+      next.hpCipher == secret.hpCipher,
+    "RFC 9001 ChaCha key update changed HP or derived the wrong secret");
+  uint8_t header[4];
+  ZuCHECK(hexDecode(header, sizeof(header), "4200bff4"),
+    "ChaCha header decode failed");
+  uint8_t ping = 1, packet[21];
+  Ztls_::Bytes plain = Ztls_::wireBytes(&ping, 1);
+  Zquic::PktProtState tx, rx;
+  ZuCHECK(tx.init(secret, Zquic::PktNumSpace::AppData, true) &&
+      rx.init(secret, Zquic::PktNumSpace::AppData, false),
+    "ChaCha protection context init failed");
+  int n = Zquic::PktProt::protectShortV_(packet, sizeof(packet), tx, 654360564,
+    Zquic::byteSpan(header, sizeof(header)), &plain, 1, 1, 1, 3);
+  ZuCHECK(n == int(sizeof(packet)) && hexEquals(packet,
+      "4cfe4189655e5cd55c41f69080575d7999c25a5bfb"),
+    "RFC 9001 ChaCha packet mismatch");
+  uint64_t pn = 0;
+  unsigned offset = 0;
+  n = Zquic::PktProt::unprotectShort(packet, sizeof(packet), rx,
+    654360563, 1, pn, offset);
+  ZuCHECK(n == 1 && pn == 654360564 && offset == sizeof(header) &&
+      !memcmp(packet, header, sizeof(header)) && packet[offset] == ping,
+    "RFC 9001 ChaCha packet decrypt mismatch");
+}
+
+#endif
+
+void testVectorLengthValidation()
+{
+  ZuTestScope(testVectorLengthValidation);
+
+  uint8_t out[32], byte = 0;
+  Zquic::InitialSecret initial;
+  Zquic::PktProtState traffic;
+  Ztls_::Bytes overflow[2] = {
+    Ztls_::wireBytes(&byte, UINT_MAX), Ztls_::wireBytes(&byte, 1)
+  };
+  ZuCHECK(Zquic::InitialCrypto::encryptV(out, sizeof(out), initial, 0,
+      {}, nullptr, 1) < 0 &&
+      Zquic::InitialCrypto::encryptV(out, sizeof(out), initial, 0,
+      {}, overflow, 2) < 0,
+    "Initial vector accepted missing descriptors or overflowing length");
+  ZuCHECK(Zquic::InitialPktProt::protectLongV(out, sizeof(out), initial, 0,
+      {}, nullptr, 1, 0, 1) < 0 &&
+      Zquic::InitialPktProt::protectLongV(out, sizeof(out), initial, 0,
+      {}, overflow, 2, 0, 1) < 0 &&
+      Zquic::PktProt::protectLongV(out, sizeof(out), traffic, 0,
+      {}, overflow, 2, 0, 1) < 0 &&
+      Zquic::PktProt::protectShortV(out, sizeof(out), traffic, 0,
+      {}, nullptr, 1, 0, 1) < 0,
+    "packet vector accepted missing descriptors or overflowing length");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -484,4 +585,8 @@ int main(int argc, char **argv)
   ZuTestCall(testRFC9001ClientInitialProt);
   ZuTestCall(testHdrProt);
   ZuTestCall(testTrafficSecretProt);
+#if ZtlsOpenSSLHaveChaCha
+  ZuTestCall(testRFC9001ChaChaProt);
+#endif
+  ZuTestCall(testVectorLengthValidation);
 }

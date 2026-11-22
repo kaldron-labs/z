@@ -269,7 +269,7 @@ struct TestServer :
   bool sendFrame(const Zquic::SentFrameRef &ref) {
     if (holdHandshakeDone &&
 	ref.kind == Zquic::SentFrameKind::Control &&
-	ref.controlType == Zquic::FrameType::HandshakeDone) {
+	ref.controlType() == Zquic::FrameType::HandshakeDone) {
       ++heldHandshakeDone;
       handshakeDoneEvent.post();
       return false;
@@ -352,8 +352,7 @@ friend inline ZuStringT<"Zquic.Runtime.CliLink"> ZmNHeapID(Link *);
     auto &crypto = Base::crypto_();
     return crypto.rxSecretInstalled(Zquic::PktNumSpace::Handshake) ||
       crypto.txSecretInstalled(Zquic::PktNumSpace::Handshake) ||
-      crypto.rxProtState(Zquic::PktNumSpace::Handshake).valid() ||
-      crypto.txProtState(Zquic::PktNumSpace::Handshake).valid();
+      crypto.rxProtState(Zquic::PktNumSpace::Handshake).valid();
   }
   bool handshakeTxKeysLive() const {
     return Base::txSecretInstalled_(Zquic::PktNumSpace::Handshake);
@@ -544,8 +543,7 @@ friend inline ZuStringT<"Zquic.Runtime.SrvLink"> ZmNHeapID(TestServerLink *);
     auto &crypto = Base::crypto_();
     return crypto.rxSecretInstalled(Zquic::PktNumSpace::Handshake) ||
       crypto.txSecretInstalled(Zquic::PktNumSpace::Handshake) ||
-      crypto.rxProtState(Zquic::PktNumSpace::Handshake).valid() ||
-      crypto.txProtState(Zquic::PktNumSpace::Handshake).valid();
+      crypto.rxProtState(Zquic::PktNumSpace::Handshake).valid();
   }
   bool handshakeTxKeysLive() const {
     return Base::txSecretInstalled_(Zquic::PktNumSpace::Handshake);

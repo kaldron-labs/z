@@ -40,6 +40,11 @@ struct App : public Zquic::Hub<App> {
 
   bool		earlyStreamAllowed = false;
   bool		deferredTx = false;
+  bool		deferredInvoke = false;
+  bool		txOwner = true;
+  ZmFn<void()> pendingInvoke;
+  Zi::IOBufAllocator *testTxAllocator = nullptr;
+  ZmFn<void()> earlyStreamHook;
   unsigned	earlyStreamChecks = 0;
   uint64_t	lastEarlyStreamID = 0;
   bool		lastEarlyStreamFin = false;
@@ -62,14 +67,20 @@ struct App : public Zquic::Hub<App> {
   }
 
   bool rxInvoked() const { return true; }
-  bool txInvoked() const { return true; }
+  bool txInvoked() const { return txOwner; }
   template <typename L> void rxRun(L l) { l(); }
   template <typename L> void rxInvoke(L l) { l(); }
   template <typename L> void txRun(L l) {
     if (deferredTx) mxStorage.run(ZuMv(l), Base::txThread());
     else l();
   }
-  template <typename L> void txInvoke(L l) { l(); }
+  template <typename L> void txInvoke(L l) {
+    if (deferredInvoke) pendingInvoke = ZmFn<void()>{ZuMv(l)};
+    else l();
+  }
+  Zi::IOBufAllocator *streamTxAllocator() const {
+    return testTxAllocator ? testTxAllocator : Base::streamTxAllocator();
+  }
   template <typename O, typename L> void txInvoke(O *, L l) { l(); }
   void drainTx() {
     ZmBlock<>{}([this](auto wake) {
@@ -90,6 +101,7 @@ struct App : public Zquic::Hub<App> {
     ++earlyStreamChecks;
     lastEarlyStreamID = streamID;
     lastEarlyStreamFin = fin;
+    if (earlyStreamHook) earlyStreamHook();
     return earlyStreamAllowed;
   }
 
@@ -103,9 +115,9 @@ struct App : public Zquic::Hub<App> {
 };
 struct TestLink;
 struct TestStream :
-  public Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc>
+  public Zquic::Stream<TestLink, TestStream>
 {
-  using Base = Zquic::Stream<TestLink, TestStream, StreamTxBufAlloc>;
+  using Base = Zquic::Stream<TestLink, TestStream>;
   using Base::Base;
   unsigned processed = 0;
   ZmFn<void()> dequeued;
@@ -159,15 +171,16 @@ struct RecoveryService {
 
 struct TestLink :
   public ZmNHeap<TestLink>,
-  public Zquic::Link<App, TestLink,
-    StreamTxBufAlloc, TestStream>
+  public Zquic::Link<App, TestLink, TestStream>
 {
 friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
 
-  using Base = Zquic::Link<App, TestLink,
-    StreamTxBufAlloc, TestStream>;
+  using Base = Zquic::Link<App, TestLink, TestStream>;
   using ZmNHeap<TestLink>::operator new;
   using ZmNHeap<TestLink>::operator delete;
+  using Base::send;
+  using Base::send_;
+  using Base::txRuntime;
 
   RecoveryService *service = nullptr;
   unsigned *probeSpaces = nullptr;
@@ -360,8 +373,9 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     return parsed;
   }
   bool flushCongestedStream(ZmRef<TestStream> stream) {
-    return Base::sendQueuedStreamPkt(
-      ZuMv(stream), ZiSockAddr{},
+    Base::streamWritable(stream);
+    return Base::flushCtlStreamsTx(
+      ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
       [this](
 	  Zquic::PktBuild &build, ZiSockAddr,
@@ -505,11 +519,11 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     auto send = [this, &bytes, reject](auto buf, ZiSockAddr addr) {
       bytes = buf->length;
       if (reject) return false;
-      return Base::sendPathPkt(
+      return Base::template submitPathPkt<Base::PathTx::Direct>(
 	ZuMv(buf), ZuMv(addr),
 	[](ZmRef<ZiIOBuf>, ZiSockAddr, Zquic::EcnMark::T) { return true; });
     };
-    return Base::sendProtHandshakePkt(
+    return Base::template sendProtLongPkt<Zquic::PktType::Handshake>(
       Base::CIDSel::Peer, Base::CIDSel::Local, Base::txPNLength(level),
       build, ZiSockAddr{}, {}, &refs, true, alloc, send);
   }
@@ -599,17 +613,10 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
 	([] { static ZiMultiplex mx; return Zquic::pktTxAllocator(&mx); })();
       return allocator->allocBuf(owner, 0);
     })(nullptr);
-    ZmRef<ZiIOBuf> handshake = ([](void *owner) {
-      static Zi::IOBufAllocator *allocator =
-	([] { static ZiMultiplex mx; return Zquic::pktTxAllocator(&mx); })();
-      return allocator->allocBuf(owner, 0);
-    })(nullptr);
-    if (ZuUnlikely(!initial || !handshake)) return false;
-    initial->skip = handshake->skip = 0;
+    if (ZuUnlikely(!initial)) return false;
+    auto identity = initial.ptr();
     initial->length = 100;
-    handshake->length = 40;
-    memset(initial->data_(), 0x11, initial->length);
-    memset(handshake->data_(), 0x22, handshake->length);
+    memset(initial->data(), 0x11, initial->length);
     Base::beginLongCoalesce();
     bool ok = Base::holdInitialForCoalesce(
       ZuMv(initial), ZiSockAddr{},
@@ -618,6 +625,13 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
 	bytes += buf->length;
 	return true;
       });
+    unsigned offset = 0, allocations = 0;
+    auto handshake = Base::allocLongPkt(40, ZiSockAddr{}, offset,
+      [&allocations]() -> ZmRef<ZiIOBuf> { ++allocations; return nullptr; });
+    if (!handshake || handshake.ptr() != identity || allocations || offset != 100)
+      return false;
+    memset(handshake->data() + offset, 0x22, 40);
+    handshake->length = offset + 40;
     ok = Base::sendHandshakeCoalesced(
       ZuMv(handshake), ZiSockAddr{},
       [&sends, &bytes](auto buf, ZiSockAddr) {
@@ -630,6 +644,290 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
       }) && ok;
     Base::endLongCoalesce();
     return ok;
+  }
+  ZmFn<ZmRef<ZiIOBuf>()> coalesceAlloc;
+  ZmFn<bool(ZmRef<ZiIOBuf>, ZiSockAddr)> coalesceOutput;
+  unsigned coalesceInitialSize = 0;
+  bool coalesceMarkAck = false;
+  bool coalesceRecover = false;
+
+  bool sendPathBuf(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+    return Base::template submitPathPkt<Base::PathTx::Direct>(
+      ZuMv(buf), ZuMv(addr),
+      [this](auto packet, auto remote, Zquic::EcnMark::T) {
+	return coalesceOutput && coalesceOutput(ZuMv(packet), ZuMv(remote));
+      });
+  }
+  bool sendInitialPkt(
+    Zquic::PktBuild &payload, ZiSockAddr addr, ZuBSpan frame,
+    const Zquic::SentFrameRef *ref = nullptr, bool ackEliciting = false) {
+    Base::TxPktRefs refs;
+    if (ref) refs.add(*ref);
+    if (coalesceMarkAck) payload.markAck(Zquic::PktNumSpace::Initial, 1, 0);
+    return Base::sendProtInitialPkt(Base::CIDSel::Peer, Base::CIDSel::Local,
+      Base::txPNLength(Zquic::PktNumSpace::Initial), {}, false,
+      payload, ZuMv(addr), frame, ref ? &refs : nullptr,
+      ackEliciting, [this] { return coalesceAlloc(); },
+      [this](auto buf, ZiSockAddr remote) {
+	coalesceInitialSize = buf->length;
+	return Base::holdInitialForCoalesce(ZuMv(buf), ZuMv(remote),
+	  [this](auto packet, auto address) {
+	    return sendPathBuf(ZuMv(packet), ZuMv(address));
+	  });
+      });
+  }
+  bool sendHandshakePkt(
+    Zquic::PktBuild &payload, ZiSockAddr addr, ZuBSpan frame,
+    const Zquic::SentFrameRef *ref = nullptr, bool ackEliciting = false) {
+    Base::TxPktRefs refs;
+    if (ref) refs.add(*ref);
+    return Base::template sendProtLongPkt<Zquic::PktType::Handshake>(
+      Base::CIDSel::Peer, Base::CIDSel::Local,
+      Base::txPNLength(Zquic::PktNumSpace::Handshake),
+      payload, ZuMv(addr), frame, ref ? &refs : nullptr, ackEliciting,
+      [this] { return coalesceAlloc(); },
+      [this](auto buf, ZiSockAddr remote) {
+	return Base::sendHandshakeCoalesced(ZuMv(buf), ZuMv(remote),
+	  [this](auto packet, auto address) {
+	    return sendPathBuf(ZuMv(packet), ZuMv(address));
+	  });
+      });
+  }
+  bool sendShortPkt(
+    Zquic::PktBuild &, ZiSockAddr, ZuBSpan,
+    const Zquic::SentFrameRef * = nullptr, bool = false) { return false; }
+
+  bool protectedCoalesceProbe(unsigned mode) {
+    // Combined, capacity/PMTU fallback, refusal, reset, standalone, short
+    // provider, and anti-amplification exhaustion all use the real flight path.
+    uint8_t key[32] = {}, ping[4] = {1, 0, 0, 0};
+    Zquic::TrafficSecret secret;
+    if (!Base::deriveInitial_() ||
+	!Zquic::PktProt::deriveSecret(secret, &Ztls_::opensslAes128gcmsha256,
+	  Zquic::byteSpan(key, sizeof(key))) || !installHandshake(secret))
+      return false;
+    unsigned allocations = 0, sends = 0, decodedInitial = 0, decodedHandshake = 0;
+    ZiIOBuf *first = nullptr;
+    bool valid = true;
+    coalesceAlloc = [&]() -> ZmRef<ZiIOBuf> {
+      static auto *normal = [] {
+	static ZiMultiplex mx;
+	return Zquic::pktTxAllocator(&mx);
+      }();
+      static auto *limited = [] {
+	static ZiMultiplex mx;
+	return Zquic::pktTxAllocator<1200, 1200, "Zquic.Test.LimitedPkt">(&mx);
+      }();
+      static auto *shortBuf = [] {
+	static ZiMultiplex mx;
+	return Zquic::pktTxAllocator<1199, 1199, "Zquic.Test.ShortPkt">(&mx);
+      }();
+      auto allocator = mode == 1 ? limited : mode == 6 ? shortBuf : normal;
+      auto buf = allocator->allocBuf(nullptr, 0,
+	mode == 6 ? 1199U : mode == 1 ? 1200U : unsigned(-1));
+      if (!allocations++) first = buf.ptr();
+      return buf;
+    };
+    Zquic::InitialKeyMaterial initialKeys;
+    if (!Zquic::InitialCrypto::derive(initialKeys, {})) return false;
+    coalesceOutput = [&](auto buf, ZiSockAddr) {
+      ++sends;
+      valid &= buf->length <= Zquic::txPktCapacity(buf);
+      if (sends == 1) valid &= !Base::txDiag().ackSentTx;
+      if (mode == 0 || mode == 3 || mode == 4)
+	valid &= buf.ptr() == first && buf->length == Zquic::MinUDPPayload &&
+	  coalesceInitialSize < buf->length;
+      unsigned at = 0;
+      while (at < buf->length) {
+	Zquic::LongHdr h;
+	auto packet = buf->data() + at;
+	if (Zquic::Pkt::parseLong(
+	    Zquic::byteSpan(packet, buf->length - at), h) < 0) return false;
+	unsigned packetBytes = h.pnOffset + unsigned(h.length);
+	uint64_t pn = 0;
+	unsigned offset = 0;
+	int plain = -1;
+	if (h.type == Zquic::PktType::Initial) {
+	  valid &= buf->length >= Zquic::MinUDPPayload;
+	  plain = Zquic::InitialPktProt::unprotectLong(packet, packetBytes,
+	    initialKeys.server, 0, h.pnOffset, pn, offset);
+	  ++decodedInitial;
+	} else if (h.type == Zquic::PktType::Handshake) {
+	  plain = Zquic::PktProt::unprotectLong(packet, packetBytes, secret,
+	    0, h.pnOffset, pn, offset);
+	  ++decodedHandshake;
+	}
+	if (plain < 0 || !packetBytes || packetBytes > buf->length - at) return false;
+	at += packetBytes;
+      }
+      if (mode == 4) resetRuntimeForTest();
+      return mode != 3;
+    };
+    coalesceMarkAck = true;
+    if (mode == 7) { initServerPath(); pathReceived(399); }
+    else validatePath();
+    auto backing = app()->streamTxAllocator()->allocBuf();
+    unsigned initialLength = mode == 1 || mode == 2 ? 900 : sizeof(ping);
+    unsigned handshakeLength = mode == 1 || mode == 2 ? 400 :
+      mode == 5 ? 0 : sizeof(ping);
+    memset(backing->data(), 0x42, initialLength + handshakeLength);
+    backing->length = initialLength + handshakeLength;
+    Zquic::CryptoOffsets offsets{
+      0, initialLength, initialLength, backing->length, backing->length};
+    Base::beginLongCoalesce();
+    bool completed = Base::sendCryptoFlights_(ZuMv(backing), offsets, 900, {},
+      [&](Zquic::PktNumSpace::T level, ZuBSpan prefix, ZuBSpan data,
+	  const Zquic::SentFrameRef &ref, ZiSockAddr addr) {
+	return Base::sendCryptoPkt_(level, prefix, data, ref, ZuMv(addr));
+      });
+    if (mode != 4)
+      completed = Base::flushCoalescedInitial([this](auto packet, auto address) {
+	return sendPathBuf(ZuMv(packet), ZuMv(address));
+      }) && completed;
+    Base::endLongCoalesce();
+    coalesceAlloc = {};
+    coalesceOutput = {};
+    bool retained = mode < 3 || mode == 5;
+    valid &= Base::txDiag().ackSentTx == unsigned(retained);
+    if (mode == 3 || mode == 6 || mode == 7)
+      valid &= pendingRetx(Zquic::PktNumSpace::Initial) == 1 &&
+	pendingRetx(Zquic::PktNumSpace::Handshake) == 1;
+    unsigned expectedSends = mode >= 6 ? 0 : mode == 1 || mode == 2 ? 2 : 1;
+    valid &= decodedInitial == (mode >= 6 ? 0U : 1U) &&
+      decodedHandshake == (mode >= 6 || mode == 5 ? 0U : 1U);
+    bool ok = valid && completed == retained &&
+      allocations == ((mode == 1 || mode == 2) ? 2U : 1U) && sends == expectedSends &&
+      sentPacketCount(Zquic::PktNumSpace::Initial) == unsigned(retained) &&
+      sentPacketCount(Zquic::PktNumSpace::Handshake) == unsigned(retained && mode != 5);
+    if (!ok) log_("coalesce mode=", mode, " valid=", valid, " completed=", completed,
+      " allocations=", allocations, " sends=", sends,
+      " decoded=", decodedInitial, '/', decodedHandshake,
+      " ACK commits=", Base::txDiag().ackSentTx,
+      " retained=", sentPacketCount(Zquic::PktNumSpace::Initial), '/',
+      sentPacketCount(Zquic::PktNumSpace::Handshake),
+      " recovery=", pendingRetx(Zquic::PktNumSpace::Initial), '/',
+      pendingRetx(Zquic::PktNumSpace::Handshake));
+    return ok;
+  }
+  bool initialPaddingProbe(bool server) {
+    if (!Base::deriveInitial_()) return false;
+    validatePath();
+    coalesceAlloc = [] {
+      static auto *allocator = [] {
+	static ZiMultiplex mx;
+	return Zquic::pktTxAllocator(&mx);
+      }();
+      return allocator->allocBuf(nullptr, 0);
+    };
+    bool valid = false;
+    coalesceOutput = [&](auto buf, ZiSockAddr) {
+      Zquic::LongHdr h;
+      Zquic::InitialKeyMaterial keys;
+      uint64_t pn = 0;
+      unsigned offset = 0;
+      valid = (server ? buf->length < Zquic::MinUDPPayload :
+	  buf->length == Zquic::MinUDPPayload) &&
+	Zquic::InitialCrypto::derive(keys, {}) &&
+	Zquic::Pkt::parseLong(Zquic::byteSpan(buf->data(), buf->length), h) >= 0 &&
+	Zquic::InitialPktProt::unprotectLong(buf->data(), buf->length,
+	  server ? keys.server : keys.client, 0, h.pnOffset, pn, offset) >= 0;
+      return valid;
+    };
+    uint8_t ack[] = {2, 0, 0, 0, 0};
+    Zquic::PktBuild payload;
+    payload.add(Zquic::byteSpan(ack, sizeof(ack)));
+    bool sent = sendInitialPkt(payload, {}, Zquic::byteSpan(ack, sizeof(ack)));
+    coalesceAlloc = {};
+    coalesceOutput = {};
+    return sent && valid;
+  }
+  bool handshakeValidationProbe() {
+    uint8_t key[32] = {};
+    Zquic::TrafficSecret secret;
+    if (!Base::deriveInitial_() ||
+	!Zquic::PktProt::deriveSecret(secret, &Ztls_::opensslAes128gcmsha256,
+	  Zquic::byteSpan(key, sizeof(key))) || !installHandshake(secret) ||
+	!Base::rxInstallKeySecret(Zquic::PktKeyLevel::Handshake, secret)) return false;
+    initServerPath();
+    pathReceived(32); // A retained 900-byte flight cannot fit the 96-byte budget.
+    recordSentPkt(Zquic::PktNumSpace::Initial, 0, 60,
+      Zquic::SentFrameRef::control(), false);
+    recordSentPkt(Zquic::PktNumSpace::Handshake, 0, 60,
+      Zquic::SentFrameRef::control(), false);
+    coalesceAlloc = [] {
+      static auto *allocator = [] {
+	static ZiMultiplex mx;
+	return Zquic::pktTxAllocator(&mx);
+      }();
+      return allocator->allocBuf(nullptr, 0);
+    };
+    unsigned sent = 0;
+    bool coherent = true;
+    coalesceOutput = [&](auto buf, ZiSockAddr) {
+      ++sent;
+      coherent &= app()->mx()->invoked(app()->txThread()) &&
+	!Base::establishedTx() && pathValidated();
+      Zquic::LongHdr h;
+      uint64_t pn = 0;
+      unsigned offset = 0, used = 0;
+      if (Zquic::Pkt::parseLong(buf->cspan(), h) < 0) return false;
+      int n = Zquic::PktProt::unprotectLong(buf->data(), buf->length,
+	secret, 0, h.pnOffset, pn, offset);
+      Zquic::Frame frame;
+      coherent &= n > 0 && !Zquic::FrameCodec::parse(
+	Zquic::byteSpan(buf->data() + offset, unsigned(n)), frame, used) &&
+	frame.type == Zquic::FrameType::Crypto && frame.offset == 0 &&
+	frame.payload.length() == 900;
+      return coherent;
+    };
+    auto backing = app()->streamTxAllocator()->allocBuf();
+    memset(backing->data(), 0x42, 900);
+    backing->length = 900;
+    Zquic::CryptoOffsets offsets{0, 0, 0, 900, 900};
+    bool blocked = !Base::sendCryptoFlights_(ZuMv(backing), offsets, 900, {},
+      [this](auto level, auto prefix, auto data, const auto &ref, auto addr) {
+	return Base::sendCryptoPkt_(level, prefix, data, ref, ZuMv(addr));
+      }) && !sent && pendingRetx(Zquic::PktNumSpace::Handshake) == 1;
+    auto ackPacket = [&](bool initial, bool tamper) -> ZmRef<ZiIOBuf> {
+      static auto *allocator = [] {
+	static ZiMultiplex mx;
+	return Zquic::pktRxAllocator(&mx);
+      }();
+      auto packet = allocator->allocBuf();
+      uint8_t ack[] = {2, 0, 0, 0, 0};
+      unsigned pnLength = 4;
+      int header = Zquic::Pkt::writeLong(packet->data(), packet->size,
+	initial ? Zquic::PktType::Initial : Zquic::PktType::Handshake,
+	{}, {}, sizeof(ack) + secret.tagLen, pnLength);
+      if (header < 0) return nullptr;
+      Zquic::PktNumber::encode(packet->data() + header,
+	packet->size - unsigned(header), 0, pnLength);
+      int n = initial ? Zquic::InitialPktProt::protectLong(
+	packet->data(), packet->size, Base::crypto_().initialKeys().server, 0,
+	Zquic::byteSpan(packet->data(), unsigned(header) + pnLength),
+	Zquic::byteSpan(ack, sizeof(ack)), unsigned(header), pnLength) :
+	Zquic::PktProt::protectLong(packet->data(), packet->size, secret, 0,
+	  Zquic::byteSpan(packet->data(), unsigned(header) + pnLength),
+	  Zquic::byteSpan(ack, sizeof(ack)), unsigned(header), pnLength);
+      if (n < 0) return nullptr;
+      packet->length = unsigned(n);
+      if (tamper) packet->data()[n - 1] ^= 1;
+      return packet;
+    };
+    bool rejected = receiveLong(ackPacket(false, true)) &&
+      receiveLong(ackPacket(true, false)) && !pathValidated() && !sent &&
+      pendingRetx(Zquic::PktNumSpace::Handshake) == 1;
+    coalesceRecover = true;
+    app()->deferredTx = true;
+    bool accepted = receiveLong(ackPacket(false, false));
+    for (unsigned i = 0; i < 3; ++i) app()->drainTx();
+    app()->deferredTx = false;
+    coalesceRecover = false;
+    coalesceAlloc = {};
+    coalesceOutput = {};
+    return blocked && rejected && accepted && coherent && sent == 1 &&
+      pathValidated() && !Base::establishedTx() &&
+      !pendingRetx(Zquic::PktNumSpace::Handshake);
   }
   void sendAckEliciting(uint64_t pn, unsigned bytes = 1200) {
     recordSentPkt(
@@ -718,7 +1016,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     if (ZuUnlikely(!buf)) return false;
     buf->skip = 0;
     buf->length = bytes;
-    return Base::sendPathPkt(
+    return Base::template submitPathPkt<Base::PathTx::Direct>(
       ZuMv(buf), ZiSockAddr{},
       [](ZmRef<ZiIOBuf>, ZiSockAddr, Zquic::EcnMark::T) { return true; });
   }
@@ -754,7 +1052,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
       if (part.length() > sizeof(plain) - bytes) return false;
       memcpy(plain + bytes, part.data(), part.length());
       bytes += part.length();
-      if (ref.range.buf && part.data() == ref.range.buf->data_() + ref.range.offset &&
+      if (ref.range().buf && part.data() == ref.range().buf->data_() + ref.range().offset &&
 	  part.length() == ref.length) retained = true;
     }
     bool framed = false;
@@ -768,7 +1066,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
       if (frame.type != Zquic::FrameType::Stream) continue;
       if (frame.streamID != ref.streamID || frame.offset != ref.offset ||
 	  frame.length != ref.length || frame.fin != ref.fin ||
-	  frame.payload != Zquic::byteSpan(ref.range.buf->data_() + ref.range.offset,
+	  frame.payload != Zquic::byteSpan(ref.range().buf->data_() + ref.range().offset,
 	    unsigned(ref.length))) return false;
       framed = true;
     }
@@ -784,7 +1082,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
 	return allocator->allocBuf(nullptr, 0);
       },
       [this, &wire, fail](auto buf, ZiSockAddr addr, Zquic::EcnMark::T ecn) {
-	return Base::sendPathPkt(ZuMv(buf), ZuMv(addr),
+	return Base::template submitPathPkt<Base::PathTx::Direct>(ZuMv(buf), ZuMv(addr),
 	  [&wire, fail](auto packet, ZiSockAddr, Zquic::EcnMark::T) {
 	    wire = ZuMv(packet);
 	    return !fail;
@@ -804,7 +1102,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
 	return allocator->allocBuf(nullptr, 0);
       },
       [this, &wireBytes](auto buf, ZiSockAddr addr, Zquic::EcnMark::T ecn) {
-	return Base::sendValidPathPktApp(ZuMv(buf), ZuMv(addr),
+	return Base::template submitPathPkt<Base::PathTx::Validation>(ZuMv(buf), ZuMv(addr),
 	  [&wireBytes](auto sentBuf, ZiSockAddr, Zquic::EcnMark::T, bool &sent) {
 	    wireBytes = sentBuf->length;
 	    sent = true;
@@ -902,7 +1200,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     if (n != 1) return false;
     Zquic::PktBuild payload;
     if (!payload.add(Zquic::byteSpan(ping, unsigned(n)))) return false;
-    return Base::sendProtZeroRTTPkt(
+    return Base::template sendProtLongPkt<Zquic::PktType::ZeroRTT>(
       Base::CIDSel::Peer, Base::CIDSel::Local,
       Base::txPNLength(Zquic::PktNumSpace::AppData),
       payload, ZiSockAddr{}, Zquic::byteSpan(ping, unsigned(n)), nullptr, true,
@@ -912,19 +1210,22 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
       return allocator->allocBuf(owner, 0);
     })(nullptr); },
       [&sent](auto buf, ZiSockAddr) {
-	sent = ZuMv(buf);
+	// Model the wire boundary with the receiver's concrete packet metadata.
+	static Zi::IOBufAllocator *allocator =
+	  ([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
+	sent = allocator->allocBuf();
+	sent->append(buf->cspan());
 	return true;
       });
   }
 	  bool receiveShort(ZmRef<ZiIOBuf> buf, bool *qlogSeen = nullptr) {
     if (!buf) return false;
-    Zquic::Datagram d;
-    d.buf = ZuMv(buf);
+    ZmRef<Zquic::RxPkt> d{ZuMv(buf)};
     return Base::rxProtShortPkt(
-      d, 0, d.buf->length,
+      d, 0, d->length,
       [this, qlogSeen](
 	  Zquic::PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
-		  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
+		  ZiSockAddr addr, const ZmRef<Zquic::RxPkt> &packetBuf,
 		  Base::RxAckMeta &ack, auto *qlog) {
 	if (qlogSeen) *qlogSeen = qlog != nullptr;
 	return Base::consumeProtFrames(
@@ -935,16 +1236,17 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
 	  });
 	      });
 	  }
-	  bool receiveZeroRTT(ZmRef<ZiIOBuf> buf) {
+  bool receiveLong(ZmRef<ZiIOBuf> buf) {
 	    if (!buf) return false;
-	    Zquic::Datagram d;
-	    d.buf = ZuMv(buf);
+	    ZmRef<Zquic::RxPkt> d{ZuMv(buf)};
+	    Zquic::LongHdr h;
+	    if (Zquic::Pkt::parseLong(d->cspan(), h) < 0) return false;
 	    return Base::receiveProtLongPkt(
-	      Base::InitialKeyDir::Server, d, 0, d.buf->length,
-	      [](const Zquic::LongHdr &, Zquic::Datagram &) { return true; },
+	      Base::InitialKeyDir::Server, d, 0, d->length, h,
+	      [](const Zquic::LongHdr &, const ZmRef<Zquic::RxPkt> &) { return true; },
 	      [this](
 		  Zquic::PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
-		  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
+		  ZiSockAddr addr, const ZmRef<Zquic::RxPkt> &packetBuf,
 		  Base::RxAckMeta &ack, auto *qlog, bool earlyData) {
 		return Base::consumeProtFrames(
 		  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog,
@@ -979,6 +1281,13 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     Zquic::PktNumSpace::T onlySpace = Zquic::PktNumSpace::N) {
     ++retransmits;
     ++retransmitCalls;
+    if (coalesceRecover)
+      return Base::template retransmitFrames<false>(pto, maxPackets, onlySpace,
+	[this](Zquic::PktNumSpace::T level, Zquic::PktBuild &build,
+	    const Zquic::SentFrameRef &ref) {
+	  return level == Zquic::PktNumSpace::Handshake &&
+	    sendHandshakePkt(build, {}, {}, &ref, true);
+	}, [] { return false; });
     if (pto && probeSpaces) {
       Zquic::PktNumSpace::T level;
       Zquic::SentFrameRef ref;
@@ -1020,8 +1329,8 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
       return false;
     }
     service->valid &= ref.kind == Zquic::SentFrameKind::Stream &&
-      ref.range.buf.ptr() == service->origin && ref.length == 8 &&
-      !memcmp(ref.range.buf->data_() + ref.range.offset, "retained", 8);
+      ref.range().buf.ptr() == service->origin && ref.length == 8 &&
+      !memcmp(ref.range().buf->data_() + ref.range().offset, "retained", 8);
     service->note('R');
     service->recoveredPN = sentPkts;
     recordSentPkt(level, sentPkts++, 100, ref, true);
@@ -1069,7 +1378,7 @@ static ZmRef<ZiIOBuf> shortPing(
   if (!tx.init(secret, Zquic::PktNumSpace::AppData, true)) return {};
   ZmRef<ZiIOBuf> buf = ([](void *owner) {
       static Zi::IOBufAllocator *allocator =
-	([] { static ZiMultiplex mx; return Zquic::pktTxAllocator(&mx); })();
+	([] { static ZiMultiplex mx; return Zquic::pktRxAllocator(&mx); })();
       return allocator->allocBuf(owner, 0);
     })(nullptr);
   if (ZuUnlikely(!buf)) return {};
@@ -1682,7 +1991,7 @@ void testStreamTxRetainedBuffers()
   ZuCHECK(stream->txRange(0, selected) && selected.buf.ptr() == secondView &&
       selected.buf->data_() + selected.offset == original + 6 && selected.streamOffset == 1 &&
       stream->commitTxRange(consumed, selected, 1) &&
-      stream->txRange(0, selected) && selected.buf->data() == original + 7 &&
+      stream->txRange(0, selected) && selected.buf->data_() + selected.offset == original + 7 &&
       selected.length == 1 && selected.streamOffset == 2,
     "QUIC partial buffer consumption copied or lost positions");
   ZuCHECK(backing->length == 8 && backing->skip == 7 &&
@@ -1691,6 +2000,183 @@ void testStreamTxRetainedBuffers()
   stream->reset(0);
   ZuCHECK(!stream->txRangeCount() && !stream->txQueueCount(),
     "QUIC reset failed to release mixed range metadata and plaintext nodes");
+}
+
+void testStreamTxRegisteredWriter()
+{
+  ZuTestScopeRT(testStreamTxRegisteredWriter);
+
+  using SmallAlloc = Zquic::StreamTxBufAlloc<32, 128, "Zquic.Test.SmallTx">;
+  struct Allocator : public SmallAlloc {
+    unsigned calls = 0;
+    ZmRef<ZiIOBuf> allocBuf(
+      void *owner = nullptr, uint32_t length = 0, uint32_t mps = ~uint32_t(0)) override {
+      ++calls;
+      return SmallAlloc::allocBuf(owner, length, mps);
+    }
+  } allocator;
+  App app;
+  app.testTxAllocator = &allocator;
+  auto link = testLink(&app);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
+  {
+    auto writer = stream->txStream_();
+    writer << "registered" << Zi::Flush{};
+    ZQUIC_CHECK_RT(!writer.failed(), "registered writer flush failed");
+  }
+  Zquic::TxRange selected, consumed;
+  ZQUIC_CHECK_RT(allocator.calls == 1 && stream->txRangeCount() == 1 &&
+      stream->txRange(0, selected) && selected.buf->allocator() == &allocator &&
+      !static_cast<Zquic::StreamTxData *>(selected.buf.ptr())->backing &&
+      stream->commitTxRange(consumed, selected, 3) &&
+      stream->txRange(0, selected) && selected.offset == 3 &&
+      selected.length == 7 && selected.buf == consumed.buf && allocator.calls == 1,
+    "writer bypassed registered allocator or allocated a separate range owner");
+  stream->reset(0);
+  auto split = link->stream(Zquic::StreamType::Duplex);
+  ZtArray<uint8_t> payload;
+  payload.length(allocator.capacity() + 1);
+  memset(payload.data(), 'x', payload.length());
+  {
+    auto writer = split->txStream_();
+    writer << ZuBSpan{payload.data(), payload.length()} << Zi::Flush{};
+    ZQUIC_CHECK_RT(!writer.failed() && writer.maxSize() == allocator.size &&
+	writer.headRoom() == allocator.headRoom && writer.tailRoom() == allocator.tailRoom,
+      "writer did not adopt registered allocation geometry");
+  }
+  ZQUIC_CHECK_RT(allocator.calls == 3 && split->txRangeCount() == 2 &&
+      split->txBufferedBytes() == payload.length(),
+    "small registered allocator did not split writer output at its capacity");
+  split->reset(0);
+  auto rejectedLink = testLink(&app);
+  auto rejected = rejectedLink->stream(Zquic::StreamType::Duplex);
+  rejected->txQueueMax(1);
+  unsigned calls = allocator.calls;
+  ZQUIC_CHECK_RT(!rejectedLink->send_(rejected,
+	ZuBSpan{payload.data(), payload.length()}, true) && allocator.calls == calls &&
+      !rejected->finSent() && !rejected->txQueueCount() && !rejected->txRangeCount(),
+    "impossible borrowed operation allocated/copied or leaked FIN/admission state");
+  app.drainTx();
+}
+
+void testStreamTxPendingOperation()
+{
+  ZuTestScopeRT(testStreamTxPendingOperation);
+
+  App app;
+  auto link = testLink(&app);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
+  app.deferredInvoke = true;
+  app.txOwner = false;
+  uint8_t data[] = {'a', 'b', 'c'};
+  ZQUIC_CHECK_RT(link->send(stream, ZuBSpan{data, sizeof(data)}, true) &&
+      stream->txQueueCount() == 1 && !stream->txRangeCount() && !stream->finSent(),
+    "pending operation did not reserve exactly one admission");
+  memset(data, 'x', sizeof(data));
+  auto dispatch = ZuMv(app.pendingInvoke);
+  app.txOwner = true;
+  dispatch();
+  Zquic::TxRange range;
+  ZQUIC_CHECK_RT(stream->txRange(0, range) && stream->finSent() &&
+      !memcmp(range.buf->data_() + range.offset, "abc", 3),
+    "off-owner borrowed operation did not synchronously acquire ownership");
+  stream->reset(0);
+  auto reset = link->stream(Zquic::StreamType::Duplex);
+  app.txOwner = false;
+  ZQUIC_CHECK_RT(link->send(reset, ZuBSpan{"late"}, true) &&
+      reset->txQueueCount() == 1, "pending reset fixture failed admission");
+  app.txOwner = true;
+  reset->reset(0);
+  auto late = ZuMv(app.pendingInvoke);
+  late();
+  ZQUIC_CHECK_RT(!reset->txQueueCount() && !reset->txRangeCount() && !reset->finSent(),
+    "reset between dispatches installed FIN or retired admission twice");
+  app.deferredInvoke = false;
+}
+
+void testStreamTxSharedViews()
+{
+  ZuTestScopeRT(testStreamTxSharedViews);
+
+  App app;
+  auto link = testLink(&app);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
+  auto backing = app.streamTxAllocator()->allocBuf();
+  backing->skip = 7;
+  backing->append(ZuBSpan{"abcdef"});
+  ZQUIC_CHECK_RT(link->send_(stream, backing, false) && link->send_(stream, backing, false),
+    "shared external backing admission failed");
+  Zquic::TxRange selected, consumed;
+  ZQUIC_CHECK_RT(stream->txRange(0, selected) && selected.buf == backing &&
+      selected.offset == 7 && selected.length == 6 &&
+      stream->commitTxRange(consumed, selected, 2) && consumed.offset == 7 &&
+      consumed.length == 2 && stream->txRange(0, selected) &&
+      selected.offset == 9 && selected.length == 4 && selected.streamOffset == 2 &&
+      stream->commitTxRange(consumed, selected, 4) &&
+      stream->txRange(0, selected) && selected.offset == 7 && selected.length == 6 &&
+      selected.streamOffset == 6 && backing->skip == 7 && backing->length == 6,
+    "independent external admissions shared a mutable cursor");
+  stream->reset(0);
+  ZQUIC_CHECK_RT(!stream->txQueueCount() && !stream->txRangeCount() &&
+      !memcmp(consumed.buf->data_() + consumed.offset, "cdef", 4),
+    "reset changed retained recovery coordinates or leaked admission credit");
+}
+
+void testStreamTxOperation()
+{
+  ZuTestScopeRT(testStreamTxOperation);
+
+  App app;
+  auto link = testLink(&app);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
+  ZtArray<uint8_t> bytes;
+  bytes.length(app.streamTxAllocator()->capacity() + 17);
+  memset(bytes.data(), 0x5a, bytes.length());
+  ZQUIC_CHECK_RT(link->send_(stream, ZuBSpan{bytes.data(), bytes.length()}, true) &&
+      stream->finSent() && stream->txRangeCount() == 2 &&
+      stream->txQueueCount() == 2 && stream->txBufferedBytes() == bytes.length(),
+    "producer operation did not admit all direct buffers and FIN together");
+  Zquic::TxRange range;
+  unsigned copied = 0;
+  while (stream->dequeueTxRange(range)) {
+    ZQUIC_CHECK_RT(range.buf->allocator() == app.streamTxAllocator() &&
+	!memcmp(range.buf->data_() + range.offset, bytes.data() + copied, range.length),
+      "producer operation bypassed registered plaintext storage");
+    copied += range.length;
+  }
+  ZQUIC_CHECK_RT(copied == bytes.length() && !stream->txQueueCount() &&
+      stream->finReady(), "producer operation lost data or admission credit");
+  auto empty = link->stream(Zquic::StreamType::Duplex);
+  ZQUIC_CHECK_RT(link->send_(empty, ZmRef<ZiIOBuf>{}, true) && empty->finReady() &&
+      !empty->txQueueCount(), "FIN-only producer operation was not admitted");
+  auto emptyOwned = link->stream(Zquic::StreamType::Duplex);
+  auto emptyBuf = app.streamTxAllocator()->allocBuf();
+  ZQUIC_CHECK_RT(link->send_(emptyOwned, ZuMv(emptyBuf), true) && emptyOwned->finReady() &&
+      !emptyOwned->txQueueCount(), "empty owned buffer did not admit FIN-only operation");
+  auto reset = link->stream(Zquic::StreamType::Duplex);
+  reset->reset(0);
+  ZQUIC_CHECK_RT(!link->send_(reset, ZuBSpan{"late"}, true) && !reset->finSent() &&
+      !reset->txQueueCount() && !reset->txRangeCount(),
+    "rejected operation installed FIN or leaked queue credit");
+}
+
+void testStreamEmptyVisitBound()
+{
+  ZuTestScopeRT(testStreamEmptyVisitBound);
+
+  App app;
+  auto link = testLink(&app);
+  for (unsigned i = 0; i < 70; ++i) {
+    ZmRef<TestStream> stream = new TestLink::Streams::Node{link.ptr(), int64_t(i) << 2};
+    link->scheduleStream(stream);
+  }
+  unsigned before = link->txFlushQueued;
+  ZQUIC_CHECK_RT(link->scheduledStreams() == 70 && !link->flushControlSends() &&
+      link->scheduledStreams() == 6 && link->txFlushQueued == before + 1,
+    "empty scheduled streams exceeded the turn bound or lost their continuation");
+  ZQUIC_CHECK_RT(!link->flushControlSends() && !link->scheduledStreams() &&
+      link->txFlushQueued == before + 1,
+    "empty scheduled continuation failed to drain or reposted indefinitely");
 }
 
 void testStreamTxQueueLimit()
@@ -1897,16 +2383,16 @@ void testStreamRetxPacketBudget()
   Zquic::SentFrameRef original;
   unsigned n = link->flushRecordedRefs(&original, 1);
   bool ready = n == 1 && original.kind == Zquic::SentFrameKind::Stream &&
-    original.range.buf && original.length == Size && original.fin;
+    original.range().buf && original.length == Size && original.fin;
   ZuCHECK(ready, "old MTU packet did not retain the complete STREAM plus FIN");
   if (!ready) { link->teardown(); return; }
-  auto backing = original.range.buf;
+  auto backing = original.range().buf;
   link->sendAckEliciting(4);
   link->ackOnly(4);
   Zquic::PktNumSpace::T lostLevel;
   Zquic::SentFrameRef lost;
   bool reclaimed = link->nextRetransmitRef(lostLevel, lost) &&
-    lostLevel == Zquic::PktNumSpace::AppData && lost.range.buf == backing &&
+    lostLevel == Zquic::PktNumSpace::AppData && lost.range().buf == backing &&
     lost.offset == original.offset && lost.length == original.length && lost.fin;
   ZuCHECK(reclaimed, "old packet loss did not yield its actual retained recovery reference");
   if (!reclaimed) { link->teardown(); return; }
@@ -1921,7 +2407,7 @@ void testStreamRetxPacketBudget()
   bool sent = link->protectedStreamRetx(head, wire, true, withAck);
   bool split = !sent && wire && wire->length <= 1200 && withAck &&
     head.length && head.length < original.length && !head.fin &&
-    head.range.buf == backing && link->ackPending();
+    head.range().buf == backing && link->ackPending();
   ZuCHECK(split,
     "failed first retransmission must fit the new MTU with sparse ACKs, keep "
     "the original backing, and retain the pending ACK");
@@ -1938,11 +2424,11 @@ void testStreamRetxPacketBudget()
     bool ok = level == Zquic::PktNumSpace::AppData &&
       ref.kind == Zquic::SentFrameKind::Stream &&
       link->protectedStreamRetx(ref, wire, false, withAck);
-    valid &= ok && wire && wire->length <= 1200 && ref.range.buf == backing &&
+    valid &= ok && wire && wire->length <= 1200 && ref.range().buf == backing &&
       ref.offset <= Size && ref.length <= Size - ref.offset &&
       (!ref.fin || ref.offset + ref.length == Size);
     if (!ok || ref.offset > Size || ref.length > Size - ref.offset) break;
-    memcpy(decoded + ref.offset, backing->data_() + ref.range.offset,
+    memcpy(decoded + ref.offset, backing->data_() + ref.range().offset,
       unsigned(ref.length));
     for (unsigned i = unsigned(ref.offset); i < ref.offset + ref.length; ++i)
       ++coverage[i];
@@ -2006,9 +2492,8 @@ void testStreamProducerCredit()
     uint8_t out[64];
     Zquic::PktBudget budget;
     budget.flow = credit;
-    Zquic::PktAssembly assembly;
     return Zquic::StreamPktizer::writeNext(
-      out, sizeof(out), budget, assembly, *stream, &info);
+      out, sizeof(out), budget, *stream, &info);
   };
   app.onTx([&app, &stream, &callbacks, &stable, &next, &retained, &packetize]() {
     stream->txCredit(6);
@@ -2117,12 +2602,10 @@ void testStreamPktizer()
 
   uint8_t b[128];
   Zquic::PktBudget budget;
-  Zquic::PktAssembly assembly;
   Zquic::StreamFrameInfo info;
   int n = Zquic::StreamPktizer::writeNext(
-    b, sizeof(b), budget, assembly, *stream, &info);
+    b, sizeof(b), budget, *stream, &info);
   ZuCHECK(n > 0 &&
-      assembly.streamAdded() &&
       budget.used == info.bytes &&
       info.streamID == 0 &&
       info.offset == 0 &&
@@ -2152,7 +2635,7 @@ void testStreamPktizer()
       !frame.fin,
     "first packetized STREAM parse mismatch");
   n = Zquic::StreamPktizer::writeNext(
-    b, sizeof(b), budget, assembly, *stream, &info);
+    b, sizeof(b), budget, *stream, &info);
   ZuCHECK(n > 0 &&
       budget.used == usedAfterFirst + info.bytes &&
       info.offset == 3 &&
@@ -2179,9 +2662,8 @@ void testStreamPktizer()
     "second packetized STREAM parse mismatch");
 
   budget = {};
-	  assembly = {};
 	  ZuCHECK(!Zquic::StreamPktizer::writeNext(
-	      b, sizeof(b), budget, assembly, *stream, &info),
+	      b, sizeof(b), budget, *stream, &info),
 	    "packetizer wrote a frame for an empty stream");
 
   auto blocked = client->stream(Zquic::StreamType::Duplex);
@@ -2192,12 +2674,11 @@ void testStreamPktizer()
   }
   budget = {};
   budget.pmtu = budget.congestion = budget.antiAmplification = 2;
-  assembly = {};
   ZuCHECK(Zquic::StreamPktizer::writeNext(
-      b, sizeof(b), budget, assembly, *blocked, &info) < 0 &&
+      b, sizeof(b), budget, *blocked, &info) < 0 &&
       blocked->txRangeCount() == 1 &&
       blocked->txBufferedBytes() == 7 &&
-      !assembly.streamAdded(),
+      budget.used == 0,
     "packetizer consumed data without packet budget");
 
   auto split = client->stream(Zquic::StreamType::Duplex);
@@ -2208,9 +2689,8 @@ void testStreamPktizer()
   }
   budget = {};
   budget.pmtu = budget.congestion = budget.antiAmplification = 8;
-  assembly = {};
   n = Zquic::StreamPktizer::writeNext(
-    b, sizeof(b), budget, assembly, *split, &info);
+    b, sizeof(b), budget, *split, &info);
   ZuCHECK(n > 0 &&
       unsigned(n) < info.bytes &&
       info.streamID == uint64_t(split->id()) &&
@@ -2704,6 +3184,30 @@ void testLongHeaderCoalescing()
       bytes == 140,
     "Initial/Handshake coalescing did not emit one combined datagram");
   link->closeForTest();
+  for (unsigned mode = 0; mode < 8; ++mode) {
+    App protectedApp{mode == 1 ? 1400U : 1200U};
+    auto protectedLink = testLink(&protectedApp, true);
+    ZuCHECK(protectedLink->protectedCoalesceProbe(mode),
+      "protected coalescing backing, fallback, refusal or reset failed");
+    protectedLink->closeForTest();
+  }
+  for (bool server : {false, true}) {
+    auto ackLink = testLink(&app, server);
+    ZuCHECK(ackLink->initialPaddingProbe(server),
+      "Initial ACK-only padding did not follow endpoint role");
+    ackLink->closeForTest();
+  }
+}
+
+void testHandshakeAddressValidation()
+{
+  ZuTestScope(testHandshakeAddressValidation);
+
+  App app;
+  auto server = testLink(&app, true);
+  ZuCHECK(server->handshakeValidationProbe(),
+    "authenticated Handshake ACK-only did not release retained CRYPTO before Finished");
+  server->closeForTest();
 }
 
 static void ackCreditServicesRetx(bool pending)
@@ -3026,7 +3530,7 @@ void passivePathChallengeRecovery()
     Zquic::PktNumSpace::T level;
     Zquic::SentFrameRef ref;
     ZuCHECK(blocked->nextRetransmitRef(level, ref) &&
-	ref.kind == Zquic::SentFrameKind::Stream && ref.range.buf,
+	ref.kind == Zquic::SentFrameKind::Stream && ref.range().buf,
       "PTO did not retain its older STREAM recovery work");
     ZuCHECK(blocked->pathResponse(token.cspan()) &&
 	blocked->activePathRemote() == newRemote,
@@ -3870,9 +4374,9 @@ void testLocalResetStopSend()
   unsigned n = link->flushSentRefs(refs, 2);
   ZuCHECK(n == 1 &&
       refs[0].kind == Zquic::SentFrameKind::Control &&
-      refs[0].controlType == Zquic::FrameType::ResetStream &&
+      refs[0].controlType() == Zquic::FrameType::ResetStream &&
       refs[0].streamID == uint64_t(reset->id()) &&
-      refs[0].value == 42 &&
+      refs[0].value() == 42 &&
       !refs[0].length &&
       !link->queuedControlFrames(),
     "unsent application bytes entered RESET_STREAM final size");
@@ -3904,7 +4408,7 @@ void testLocalResetStopSend()
       !partial->txQueueCount() && !partial->txUnackdCount(),
     "RESET_STREAM retained unsent or recovery ranges");
   n = link->flushSentRefs(refs, 2);
-  ZuCHECK(n == 1 && refs[0].controlType == Zquic::FrameType::ResetStream &&
+  ZuCHECK(n == 1 && refs[0].controlType() == Zquic::FrameType::ResetStream &&
       refs[0].streamID == uint64_t(partial->id()) && refs[0].length == 2 &&
       link->rebuildControl(refs[0], rebuilt) && rebuilt.length == 2 &&
       !partial->ackReset(43, 6) && partial->ackReset(43, 2),
@@ -3920,9 +4424,9 @@ void testLocalResetStopSend()
   n = link->flushSentRefs(refs, 2);
   ZuCHECK(n == 1 &&
       refs[0].kind == Zquic::SentFrameKind::Control &&
-      refs[0].controlType == Zquic::FrameType::StopSending &&
+      refs[0].controlType() == Zquic::FrameType::StopSending &&
       refs[0].streamID == uint64_t(stop->id()) &&
-      refs[0].value == 9,
+      refs[0].value() == 9,
     "local STOP_SENDING sent ref mismatch");
   ZuCHECK(link->rebuildControl(refs[0], rebuilt) &&
       rebuilt.type == Zquic::FrameType::StopSending &&
@@ -3947,14 +4451,14 @@ void testLocalResetStopSend()
   n = lost->flushSentRefs(refs, 2);
   ZuCHECK(n == 1 &&
       refs[0].kind == Zquic::SentFrameKind::Control &&
-      refs[0].controlType == Zquic::FrameType::StopSending,
+      refs[0].controlType() == Zquic::FrameType::StopSending,
     "lost STOP_SENDING sent ref setup failed");
   lost->sendControlRef(2, refs[0]);
   lost->sendAckEliciting(5);
   lost->ackOnly(5);
   ZuCHECK(lost->nextRetransmitRef(level, ref) &&
       ref.kind == Zquic::SentFrameKind::Control &&
-      ref.controlType == Zquic::FrameType::StopSending &&
+      ref.controlType() == Zquic::FrameType::StopSending &&
       ref.streamID == uint64_t(lostStop->id()) &&
       !lost->nextRetransmitRef(level, ref),
     "lost STOP_SENDING did not queue one retransmit");
@@ -4124,7 +4628,7 @@ void invalidClosedStreamActivity()
   Zquic::SentFrameRef sent;
   ZQUIC_CHECK_RT(maxLink->flushRecordedRefs(&sent, 1) == 1 &&
       sent.kind == Zquic::SentFrameKind::Control &&
-      sent.controlType == Zquic::FrameType::ResetStream && local->txClosedRx(),
+      sent.controlType() == Zquic::FrameType::ResetStream && local->txClosedRx(),
     "closed-stream fixture did not commit RESET_STREAM and notify Rx");
   int n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), uint64_t(local->id()), 4096);
@@ -4199,7 +4703,7 @@ void invalidClosedStreamActivity()
   noisy->reset(3);
   ZQUIC_CHECK_RT(threshold->flushRecordedRefs(&sent, 1) == 1 &&
       sent.kind == Zquic::SentFrameKind::Control &&
-      sent.controlType == Zquic::FrameType::ResetStream && noisy->txClosedRx(),
+      sent.controlType() == Zquic::FrameType::ResetStream && noisy->txClosedRx(),
     "closed-stream threshold fixture did not commit RESET_STREAM and notify Rx");
   n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), uint64_t(noisy->id()), 4096);
@@ -4456,6 +4960,94 @@ void testZeroRTTProtectedSend()
   link->teardown();
 }
 
+void testEarlyStreamVisitBound()
+{
+  ZuTestScopeRT(testEarlyStreamVisitBound);
+
+  App app;
+  auto link = testLink(&app);
+  Zquic::TrafficSecret secret;
+  ZQUIC_CHECK_RT(trafficSecret(secret, 0xa0) && link->installZeroRTTTx(secret),
+    "early stream turn fixture failed key installation");
+  for (unsigned i = 0; i < 65; ++i) {
+    ZmRef<TestStream> stale = new TestLink::Streams::Node{link.ptr(), 1000 + int64_t(i) * 4};
+    link->scheduleStream(stale);
+  }
+  auto ready = link->stream(Zquic::StreamType::Duplex);
+  ready->fin();
+  app.earlyStreamAllowed = true;
+  unsigned before = link->txFlushQueued;
+  Zquic::SentFrameRef refs[Zquic::SentPkt::MaxFrames];
+  ZQUIC_CHECK_RT(!link->flushEarlyStreamRefs(refs, Zquic::SentPkt::MaxFrames) &&
+      link->scheduledStreams() == 2 && link->txFlushQueued == before + 1,
+    "early stale cleanup exceeded64 visits or failed to request continuation");
+  ZQUIC_CHECK_RT(link->flushEarlyStreamRefs(refs, Zquic::SentPkt::MaxFrames) &&
+      !link->scheduledStreams() && ready->finDequeued(),
+    "runnable early stream beyond stale prefix was stranded");
+
+  auto denied = testLink(&app);
+  ZQUIC_CHECK_RT(denied->installZeroRTTTx(secret), "denied early fixture key failure");
+  app.earlyStreamAllowed = false;
+  ZmRef<TestStream> wake;
+  // Production Tx registries retain frame owners through packet recording.
+  // These synthetic streams deliberately bypass registry admission limits.
+  ZuArray<ZmRef<TestStream>, 70> held;
+  for (unsigned i = 0; i < 70; ++i) {
+    ZmRef<TestStream> stream = new TestLink::Streams::Node{denied.ptr(), int64_t(i) * 4};
+    stream->fin();
+    held.push(stream);
+    wake = ZuMv(stream);
+  }
+  before = denied->txFlushQueued;
+  unsigned checks = app.earlyStreamChecks;
+  ZQUIC_CHECK_RT(!denied->flushEarlyStreamRefs(refs, Zquic::SentPkt::MaxFrames) &&
+      app.earlyStreamChecks == checks + 64 && denied->scheduledStreams() == 70 &&
+      denied->txFlushQueued == before + 1,
+    "early denial sweep was not bounded or lost remaining work");
+  ZQUIC_CHECK_RT(!denied->flushEarlyStreamRefs(refs, Zquic::SentPkt::MaxFrames) &&
+      app.earlyStreamChecks == checks + 70 && denied->txFlushQueued == before + 1 &&
+      !denied->flushEarlyStreamRefs(refs, Zquic::SentPkt::MaxFrames) &&
+      app.earlyStreamChecks == checks + 70 && denied->txFlushQueued == before + 1,
+    "fully ineligible early streams caused an unbounded/busy sweep");
+  ZmRef<TestStream> fresh = new TestLink::Streams::Node{denied.ptr(), 280};
+  fresh->fin(); // a new producer notification reopens the completed denial sweep
+  checks = app.earlyStreamChecks;
+  ZQUIC_CHECK_RT(!denied->flushEarlyStreamRefs(refs, Zquic::SentPkt::MaxFrames) &&
+      app.earlyStreamChecks == checks + 64 &&
+      !denied->flushEarlyStreamRefs(refs, Zquic::SentPkt::MaxFrames) &&
+      app.earlyStreamChecks == checks + 71,
+    "new producer notification did not reopen one bounded early sweep");
+  app.earlyStreamAllowed = true;
+  denied->scheduleStream(wake);
+  ZQUIC_CHECK_RT(denied->flushEarlyStreamRefs(refs, Zquic::SentPkt::MaxFrames) &&
+      denied->scheduledStreams() < 71 && app.earlyStreamChecks > checks + 71,
+    "new eligibility notification did not reopen the early sweep");
+  denied->teardown();
+  link->teardown();
+}
+
+void testEarlyStreamCallbackReset()
+{
+  ZuTestScopeRT(testEarlyStreamCallbackReset);
+
+  App app;
+  auto link = testLink(&app);
+  Zquic::TrafficSecret secret;
+  ZQUIC_CHECK_RT(trafficSecret(secret, 0x91) && link->installZeroRTTTx(secret),
+    "early callback reset fixture key installation failed");
+  auto stream = link->stream(Zquic::StreamType::Duplex);
+  stream->fin();
+  uint64_t runtime = link->txRuntime();
+  app.earlyStreamAllowed = true;
+  app.earlyStreamHook = [link] { link->resetRuntimeForTest(); };
+  Zquic::SentFrameRef refs[Zquic::SentPkt::MaxFrames];
+  ZQUIC_CHECK_RT(!link->flushEarlyStreamRefs(refs, Zquic::SentPkt::MaxFrames) &&
+      link->txRuntime() != runtime && !link->scheduledStreams() && !link->sentPkts &&
+      !stream->finDequeued(),
+    "early eligibility callback reset continued old-epoch packetization");
+  app.earlyStreamHook = {};
+}
+
 void testZeroRTTEarlyStreamPolicy()
 {
   ZuTestScope(testZeroRTTEarlyStreamPolicy);
@@ -4492,6 +5084,7 @@ void testZeroRTTEarlyStreamPolicy()
     "default 0-RTT stream denial consumed or unscheduled data");
 
   app.earlyStreamAllowed = true;
+  link->scheduleStream(stream); // publish changed application eligibility
   unsigned n = link->flushEarlyStreamRefs(refs, 4);
   ZuCHECK(n == 1 &&
       refs[0].kind == Zquic::SentFrameKind::Stream &&
@@ -4555,7 +5148,7 @@ void testZeroRTTAcceptQLog()
     "0-RTT accept probe send failed");
   ZuCHECK(client->txEarlyState() == Zquic::LinkEarlyState::Offered,
     "0-RTT accept client did not enter offered state");
-  ZuCHECK(server->receiveZeroRTT(ZuMv(sent)) &&
+  ZuCHECK(server->receiveLong(ZuMv(sent)) &&
       server->rxEarlyState() == Zquic::LinkEarlyState::Recv,
     "0-RTT accept server did not record received early data");
 
@@ -4617,7 +5210,7 @@ void zeroRTTAfterOneRTTRejected()
     "1-RTT receive did not advance AppData receive state");
   uint64_t packets = link->diag().rx.packetsRx;
 
-  ZuCHECK(link->receiveZeroRTT(zeroRTTLongHdr(1)),
+  ZuCHECK(link->receiveLong(zeroRTTLongHdr(1)),
     "late 0-RTT packet was treated as a receive failure");
   ZuCHECK(link->rxEarlyState() == Zquic::LinkEarlyState::Rejected &&
       link->txEarlyState() == Zquic::LinkEarlyState::Rejected &&
@@ -4743,9 +5336,8 @@ void testFlowControlQLog()
     auto tx = stream->txStream_();
     tx << "connection-blocked" << Zi::flush();
   }
-  ZuCHECK(!link->flushCongestedStream(stream) &&
-      stream->txRangeCount() &&
-      link->queuedControlFrames() == 1,
+  ZuCHECK(link->flushCongestedStream(stream) && !link->sentPkts &&
+      stream->txRangeCount() && link->queuedControlFrames() == 1,
     "flow-control qlog connection data-credit block not reached");
   link->grantDataCredit(32);
   ZuCHECK(!link->queuedControlFrames(),
@@ -4760,9 +5352,8 @@ void testFlowControlQLog()
     auto tx = streamBlocked->txStream_();
     tx << "blocked" << Zi::flush();
   }
-  ZuCHECK(!link->flushCongestedStream(streamBlocked) &&
-      streamBlocked->txRangeCount() &&
-      link->queuedControlFrames() == 1,
+  ZuCHECK(link->flushCongestedStream(streamBlocked) && link->sentPkts == 1 &&
+      streamBlocked->txRangeCount() && link->queuedControlFrames() == 1,
     "flow-control qlog stream data-credit block not reached");
   link->grantStreamCredit(streamBlocked, 7);
   ZuCHECK(!link->queuedControlFrames(),
@@ -4920,6 +5511,11 @@ int main(int argc, char **argv)
   ZuTestCall(testRxRetirement);
   ZuTestCall(testStreamTxRetention);
   ZuTestCall(testStreamTxRetainedBuffers);
+  ZuTestCall(testStreamTxRegisteredWriter);
+  ZuTestCall(testStreamTxPendingOperation);
+  ZuTestCall(testStreamTxSharedViews);
+  ZuTestCall(testStreamTxOperation);
+  ZuTestCall(testStreamEmptyVisitBound);
   ZuTestCall(testStreamTxQueueLimit);
   ZuTestCall(testStreamTxUnackd);
   ZuTestCall(testStreamTxUnackdFin);
@@ -4938,6 +5534,7 @@ int main(int argc, char **argv)
   ZuTestCall(testPTOMultipleSpaces);
   ZuTestCall(testPktNumLength);
   ZuTestCall(testLongHeaderCoalescing);
+  ZuTestCall(testHandshakeAddressValidation);
   ZuTestCall(congestionBudgetGatesSends);
   ZuTestCall(ackCreditServicesRetx, true);
   ZuTestCall(ackCreditServicesRetx, false);
@@ -4966,6 +5563,8 @@ int main(int argc, char **argv)
   ZuTestCall(testStreamGC);
   ZuTestCall(frameRoleAndSpaceLegality);
   ZuTestCall(testZeroRTTProtectedSend);
+  ZuTestCall(testEarlyStreamVisitBound);
+  ZuTestCall(testEarlyStreamCallbackReset);
   ZuTestCall(testZeroRTTEarlyStreamPolicy);
 #ifdef Zquic_DEBUG
   ZuTestCall(testZeroRTTAcceptQLog);

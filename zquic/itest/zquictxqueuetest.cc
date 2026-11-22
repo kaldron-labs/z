@@ -119,16 +119,16 @@ struct Endpoint : public Zquic_::Endpoint_<Endpoint> {
   void endpointReady(Base *) { auto fn = ZuMv(readyFn); fn(true); }
   void endpointFailed(bool) { auto fn = ZuMv(readyFn); fn(false); }
   void endpointDown_(Base *) { auto fn = ZuMv(downFn); if (fn) fn(); }
-  void endpointDatagram(Zquic::Datagram d) {
+  void endpointPacket(ZmRef<Zquic::RxPkt> d) {
     unsigned value = 0;
-    length = d.buf ? d.buf->length : 0;
-    if (length) memcpy(bytes, d.buf->data(), length < sizeof(bytes) ? length : sizeof(bytes));
-    if (d.buf && d.buf->length == sizeof(value))
-      memcpy(&value, d.buf->data(), sizeof(value));
+    length = d ? d->length : 0;
+    if (length) memcpy(bytes, d->data(), length < sizeof(bytes) ? length : sizeof(bytes));
+    if (d && d->length == sizeof(value))
+      memcpy(&value, d->data(), sizeof(value));
     if (!value || (gaps ? value <= last : value != last + 1))
       ordered = false;
     last = value;
-    source = d.addr.port();
+    source = d->addr.port();
     if (++received == target) done.post();
   }
   bool open() {

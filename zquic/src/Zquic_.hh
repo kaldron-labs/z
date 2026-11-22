@@ -267,6 +267,8 @@ struct EndpointTxToken {
   uint64_t serial = 0;
   uint64_t epoch = 0;
   unsigned generation = 0;
+  unsigned slot = unsigned(-1);
+  uint64_t reservation = 0;
 
   bool operator !() const { return !wait; }
   ZuOpBool
@@ -280,6 +282,7 @@ struct EndpointTxWaitData {
   enum { Idle, Pending, Reserved, Terminal };
   EndpointTxGate *gate = nullptr;
   unsigned phase = Idle; // mx Tx, including intrusive membership below
+  unsigned slot = unsigned(-1);
 };
 using EndpointTxWaitList = ZmList<EndpointTxWaitData,
   ZmListNode<EndpointTxWaitData, ZmListShadow<>>>;
@@ -356,7 +359,11 @@ public:
   EndpointTxGate(ZiMultiplex *mx, void *physical, unsigned generation,
     unsigned limit, CountFn count) :
     m_mx{mx}, m_physical{physical}, m_generation{generation},
-    m_limit{limit}, m_count{ZuMv(count)} { }
+    m_limit{limit}, m_count{ZuMv(count)} {
+    // One 24-byte reservation slot per physical queue entry (96 KiB at4096).
+    m_slots.length(limit);
+    for (unsigned i = 0; i < limit; ++i) m_slots[i].next = i + 1;
+  }
   ~EndpointTxGate() {
     assert(m_pending.empty_() && m_reserved.empty_() && !m_draining && !m_posted);
   }
@@ -401,14 +408,10 @@ public:
     // Reject stale physical identity before touching the request.
     if (!token || token.physical != m_physical ||
 	token.generation != m_generation || m_closing) return false;
-    EndpointTxWait *wait = nullptr;
-    {
-      auto i = m_reserved.citer();
-      while (auto node = i())
-	if (node == token.wait) { wait = static_cast<EndpointTxWait *>(node); break; }
-    }
-    // A consumed token may contain the address of an already retired request.
-    // Only dereference current reservation members, then check request reuse.
+    if (token.slot >= m_limit) return false;
+    const auto &slot = m_slots[token.slot];
+    if (slot.serial != token.reservation || slot.wait != token.wait) return false;
+    auto wait = slot.wait;
     if (!wait || !wait->matches(token)) return false;
     m_reserved.delNode(wait);
     terminal(*wait, EndpointTxResult::Retired);
@@ -432,7 +435,17 @@ public:
       auto wait = static_cast<EndpointTxWait *>(m_pending.shift());
       wait->phase = EndpointTxWaitData::Reserved;
       m_reserved.pushNode(wait); // reserve before posting the grant
-      wait->grant(wait->token(m_physical, m_generation));
+      assert(m_free < m_limit);
+      unsigned index = m_free;
+      auto &slot = m_slots[index];
+      m_free = slot.next;
+      slot.wait = wait;
+      slot.serial = ++m_serial;
+      wait->slot = index;
+      auto token = wait->token(m_physical, m_generation);
+      token.slot = index;
+      token.reservation = slot.serial;
+      wait->grant(token);
       ++n;
     }
     if (!m_posted && !m_pending.empty_() && available()) {
@@ -469,6 +482,13 @@ private:
     closed();
   }
   void terminal(EndpointTxWait &wait, int result) {
+    if (wait.slot < m_limit) {
+      auto &slot = m_slots[wait.slot];
+      slot.wait = nullptr;
+      slot.next = m_free;
+      m_free = wait.slot;
+      wait.slot = unsigned(-1);
+    }
     wait.phase = EndpointTxWaitData::Terminal;
     ++m_draining;
     wait.complete(result, [this] { --m_draining; closed(); });
@@ -485,6 +505,14 @@ private:
   unsigned m_generation, m_limit;
   CountFn m_count;
   Queue<EndpointTxWaitList> m_pending, m_reserved;
+  struct Slot {
+    EndpointTxWait *wait = nullptr;
+    uint64_t serial = 0;
+    unsigned next = 0;
+  };
+  ZtArray<Slot, ZtArrayHeapID<"Zquic.Endpoint.TxSlots">> m_slots;
+  unsigned m_free = 0;
+  uint64_t m_serial = 0;
   EndpointDiscFn m_done;
   unsigned m_draining = 0;
   bool m_closing = false, m_posted = false;
@@ -736,11 +764,11 @@ private:
   bool recv_1(ZiRxContext &io) {
     if (io.buf && io.buf->length) {
 	// Snapshot recvmsg metadata before transferring the provided slot.
-	auto addr = io.addr;
-	auto ecn = ecnMarkFromTOS(io.tos);
-	Datagram d{ZuMv(io.buf), ZuMv(addr), ecn};
-	d.local = m_config.local;
-	m_config.endpoint->received_(ZuMv(d));
+	ZmRef<RxPkt> pkt{ZuMv(io.buf)};
+	pkt->addr = io.addr;
+	pkt->ecn = ecnMarkFromTOS(io.tos);
+	pkt->local = m_config.local;
+	m_config.endpoint->received_(ZuMv(pkt));
     }
     if (m_closeState.closing.load_()) io.complete();
     else if (!io.buf) {
@@ -1282,10 +1310,10 @@ private:
     if (fn) fn(success, ZiSockAddr{}, false);
   }
 
-  void received_(Datagram datagram) {
+  void received_(ZmRef<RxPkt> packet) {
     ++m_endpointRx.diag.datagramsRx;
-    if (datagram.buf) m_endpointRx.diag.bytesRx += datagram.buf->length;
-    impl()->endpointDatagram(ZuMv(datagram));
+    m_endpointRx.diag.bytesRx += packet->length;
+    impl()->endpointPacket(ZuMv(packet));
   }
 
   void sent_(unsigned bytes) {

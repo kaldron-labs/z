@@ -30,17 +30,17 @@ template <typename Owner, typename L> static void capture(Owner &owner, L fn)
   fn(rows);
 }
 struct QueueLink;
-struct QueueStream : Zquic::Stream<QueueLink, QueueStream, Zquic::StreamTxBufAlloc<>> {
-  using Base = Zquic::Stream<QueueLink, QueueStream, Zquic::StreamTxBufAlloc<>>;
+struct QueueStream : Zquic::Stream<QueueLink, QueueStream> {
+  using Base = Zquic::Stream<QueueLink, QueueStream>;
   using Base::Base;
   int process(Zquic::RxStream &) { return 0; }
 };
 struct QueueLink : ZmNHeap<QueueLink>,
-    Zquic::Link<QueueApp, QueueLink, Zquic::StreamTxBufAlloc<>, QueueStream> {
+    Zquic::Link<QueueApp, QueueLink, QueueStream> {
 friend inline ZuStringT<"Zquic.QueueTest.Link"> ZmNHeapID(QueueLink *);
   using ZmNHeap<QueueLink>::operator new;
   using ZmNHeap<QueueLink>::operator delete;
-  using Base = Zquic::Link<QueueApp, QueueLink, Zquic::StreamTxBufAlloc<>, QueueStream>;
+  using Base = Zquic::Link<QueueApp, QueueLink, QueueStream>;
   using Base::Base;
   using Base::resetLink;
   using Base::disconnect_;

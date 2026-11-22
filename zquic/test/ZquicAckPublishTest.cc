@@ -67,20 +67,20 @@ private:
 
 class PublishLink;
 struct PublishStream :
-    Zquic::Stream<PublishLink, PublishStream, Zquic::StreamTxBufAlloc<>> {
-  using Base = Zquic::Stream<PublishLink, PublishStream, Zquic::StreamTxBufAlloc<>>;
+    Zquic::Stream<PublishLink, PublishStream> {
+  using Base = Zquic::Stream<PublishLink, PublishStream>;
   using Base::Base;
   int process(Zquic::RxStream &) { return 0; }
 };
 
 class PublishLink : public ZmNHeap<PublishLink>,
-    public Zquic::Link<PublishApp, PublishLink, Zquic::StreamTxBufAlloc<>, PublishStream> {
+    public Zquic::Link<PublishApp, PublishLink, PublishStream> {
 friend inline ZuStringT<"Zquic.Publish.Link"> ZmNHeapID(PublishLink *);
 public:
   using ZmNHeap<PublishLink>::operator new;
   using ZmNHeap<PublishLink>::operator delete;
   using Base =
-    Zquic::Link<PublishApp, PublishLink, Zquic::StreamTxBufAlloc<>, PublishStream>;
+    Zquic::Link<PublishApp, PublishLink, PublishStream>;
   using Base::Base;
   using Base::ackSentTx;
   using Base::consumeAckSentRx;
@@ -174,7 +174,7 @@ public:
       Zquic::CxnID{"publish"}, 1, build, {}, {}, &refs, true,
       [this] { return app()->txPktAllocator()->allocBuf(nullptr, 0); },
       [this, &mark](auto packet, ZiSockAddr addr, Zquic::EcnMark::T ecn) {
-	return Base::sendPathPkt(ZuMv(packet), ZuMv(addr),
+	return Base::template submitPathPkt<Base::PathTx::Direct>(ZuMv(packet), ZuMv(addr),
 	  [&mark](auto buf, ZiSockAddr, Zquic::EcnMark::T ecn) {
 	    mark = ecn;
 	    return buf && buf->length;

@@ -89,6 +89,9 @@ struct ZquicAPI InitialCrypto {
   static int encryptV(
     uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuBSpan,
     const Ztls_::Bytes *, unsigned);
+  static int encryptV_(
+    uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuBSpan,
+    const Ztls_::Bytes *, unsigned, unsigned);
   static int decrypt(
     uint8_t *, unsigned, const InitialSecret &, uint64_t, ZuBSpan, ZuBSpan);
   static bool headerMask(
@@ -102,6 +105,9 @@ struct ZquicAPI InitialPktProt {
   static int protectLongV(
     uint8_t *, unsigned, const InitialSecret &, uint64_t,
     ZuBSpan, const Ztls_::Bytes *, unsigned, unsigned, unsigned);
+  static int protectLongV_(
+    uint8_t *, unsigned, const InitialSecret &, uint64_t,
+    ZuBSpan, const Ztls_::Bytes *, unsigned, unsigned, unsigned, unsigned);
   static int unprotectLong(
     uint8_t *, unsigned, const InitialSecret &, uint64_t,
     unsigned, uint64_t &, unsigned &);
@@ -126,7 +132,6 @@ struct ZquicAPI TrafficSecret {
   const Ztls_::AeadAlgo		*aead = nullptr;
   const Ztls_::HashAlgo		*hash = nullptr;
   const Ztls_::CipherAlgo	*hpCipher = nullptr;
-  const Ztls_::CipherAlgo	*hpSuppCipher = nullptr;
   bool				installed = false;
 };
 
@@ -142,7 +147,6 @@ struct ZquicAPI PktProtState {
 
   Ztls_::AeadContext	*aead = nullptr;
   Ztls_::CipherContext *hp = nullptr;
-  Ztls_::CipherContext *hpSupp = nullptr;
   TrafficSecret		secret;
   PktNumSpace::T	level = PktNumSpace::Initial;
   bool			tx = false;
@@ -155,6 +159,9 @@ struct ZquicAPI PktProt {
   static int protectLongV(
     uint8_t *, unsigned, PktProtState &, uint64_t,
     ZuBSpan, const Ztls_::Bytes *, unsigned, unsigned, unsigned);
+  static int protectLongV_(
+    uint8_t *, unsigned, PktProtState &, uint64_t,
+    ZuBSpan, const Ztls_::Bytes *, unsigned, unsigned, unsigned, unsigned);
   static int protectLong(
     uint8_t *, unsigned, PktProtState &, uint64_t,
     ZuBSpan, ZuBSpan, unsigned, unsigned);
@@ -170,6 +177,9 @@ struct ZquicAPI PktProt {
   static int protectShortV(
     uint8_t *, unsigned, PktProtState &, uint64_t,
     ZuBSpan, const Ztls_::Bytes *, unsigned, unsigned, unsigned);
+  static int protectShortV_(
+    uint8_t *, unsigned, PktProtState &, uint64_t,
+    ZuBSpan, const Ztls_::Bytes *, unsigned, unsigned, unsigned, unsigned);
   static int protectShort(
     uint8_t *, unsigned, PktProtState &, uint64_t,
     ZuBSpan, ZuBSpan, unsigned, unsigned);
@@ -200,28 +210,10 @@ struct CryptoDiag {
 
 using CryptoStreamRxNTP = ZmPQRxGapIgnore<>;
 
-// A TLS epoch retains its original output through one buffer view.
-// The active skip/length identify exactly this epoch's CRYPTO bytes.
-struct CryptoFlight : public ZmNHeap<CryptoFlight>, public ZiIOBuf {
-friend inline ZuStringT<"Zquic.Crypto.Flight"> ZmNHeapID(CryptoFlight *);
-  ZmRef<ZiIOBuf> tlsOutput;
-
-  CryptoFlight(ZmRef<ZiIOBuf> output, const CryptoOffsets &offsets, unsigned epoch) :
-    ZiIOBuf{output->data_(), output->size, output->allocator(), nullptr, 0, true},
-    tlsOutput{ZuMv(output)} {
-    skip = tlsOutput->skip + unsigned(offsets[epoch]);
-    length = unsigned(offsets[epoch + 1] - offsets[epoch]);
-  }
-
-};
-
 class ZquicAPI CryptoStream :
   public ZmPQRx<CryptoStream, CryptoRxPQueue, CryptoStreamRxNTP> {
 public:
-  enum { MaxBufSize = (64<<10) }; // 64K
-  // Covers mainstream TLS 1.3 handshakes without packet loss while avoiding
-  // heap allocation on the common path; larger certificate chains fall back.
-  enum { BuiltinBufSize = (8<<10) }; // 8K
+  enum { MaxBufSize = (64<<10), PrefixMax = 1 + 8 + 8 }; // 64K
   using Queue = CryptoRxPQueue;
   using Rx = ZmPQRx<CryptoStream, Queue, CryptoStreamRxNTP>;
   using Msg = Queue::Node;
@@ -274,6 +266,7 @@ public:
   void reset();
   bool sent(uint64_t, ZuBSpan);
   bool sent(uint64_t, ZmRef<ZiIOBuf>);
+  bool sent(uint64_t, ZmRef<ZiIOBuf>, unsigned, unsigned);
   bool txPayload(uint64_t, uint64_t, ZuBSpan &) const;
   int writeFramePrefix(uint8_t *, unsigned, unsigned, CryptoDiag * = nullptr);
   int writeFrame(uint8_t *, unsigned, ZuBSpan, CryptoDiag * = nullptr);
@@ -289,24 +282,23 @@ public:
   void dequeueFn(DequeueFn fn) { m_dequeueFn = ZuMv(fn); }
   void deliveryFn(DeliveryFn fn) {
     m_deliveryFn = ZuMv(fn);
-    m_asyncDelivery = true;
   }
   using Rx::dequeue;
 
 private:
 ZuDerive(Delivery,
-(ZtBuiltin<
-  ZtArray<uint8_t,
-    ZtArrayHeapMax<MaxBufSize,
-      ZtArrayHeapID<"Zquic.CryptoDelivery">>>,
-  BuiltinBufSize>));
+(ZtArray<uint8_t,
+  ZtArrayHeapMax<MaxBufSize,
+    ZtArrayHeapID<"Zquic.CryptoDelivery">>>));
   struct TxRange {
     ZmRef<ZiIOBuf> data;
     uint64_t offset;
+    unsigned begin, length;
   };
   using TxRanges = Zquic_::Queue<
     ZtArray<TxRange, ZtArrayHeapID<"Zquic.CryptoTx.Ranges">>, Zquic_::ArrayCount>;
 
+  unsigned txRangeIndex(uint64_t) const;
   bool matches_(uint64_t, ZuBSpan) const;
   void appendDelivery(const uint8_t *, uint64_t);
   void resumeReadyDequeue();
@@ -321,7 +313,6 @@ ZuDerive(Delivery,
   uint64_t		m_txBytes = 0;
   DequeueFn		m_dequeueFn;
   DeliveryFn		m_deliveryFn;
-  bool			m_asyncDelivery = false;
 };
 
 struct CryptoConfig {
@@ -408,16 +399,10 @@ public:
     return level == PktKeyLevel::ZeroRTT ?
       m_rxEarlySecret : rxSecret(spaceFromKeyLevel(level));
   }
-  PktProtState &txProtState(PktNumSpace::T level) {
-    return m_txProt[level];
-  }
   PktProtState &rxProtState(PktNumSpace::T level) {
     return m_rxProt[level];
   }
-  PktProtState &txKeyProtState(PktKeyLevel::T level) {
-    return level == PktKeyLevel::ZeroRTT ?
-      m_txEarlyProt : txProtState(spaceFromKeyLevel(level));
-  }
+  uint64_t txKeyGen(PktKeyLevel::T level) const { return m_txKeyGen[level]; }
   PktProtState &rxKeyProtState(PktKeyLevel::T level) {
     return level == PktKeyLevel::ZeroRTT ?
       m_rxEarlyProt : rxProtState(spaceFromKeyLevel(level));
@@ -442,7 +427,9 @@ public:
   void peerParams(const TransportParams &params) {
     m_peerParams = params;
     m_peerParamsSet = true;
+    ++m_peerParamsGen;
   }
+  uint64_t peerParamsGen() const { return m_peerParamsGen; }
 
   int encodeParams(uint8_t *, unsigned, const TransportParams &);
   int decodeParams(ZuBSpan, TransportParams &);
@@ -494,15 +481,13 @@ private:
 				    PktNumSpace::N);
   TrafficSecret 		m_txEarlySecret;
   TrafficSecret 		m_rxEarlySecret;
-  ZuArray<PktProtState, PktNumSpace::N>
-				m_txProt =
-				  ZuArray<PktProtState, PktNumSpace::N>(
-				    PktNumSpace::N);
+  ZuArray<uint64_t, PktKeyLevel::N>
+				m_txKeyGen =
+				  fixedArray<uint64_t, PktKeyLevel::N>();
   ZuArray<PktProtState, PktNumSpace::N>
 				m_rxProt =
 				  ZuArray<PktProtState, PktNumSpace::N>(
 				    PktNumSpace::N);
-  PktProtState			m_txEarlyProt;
   PktProtState			m_rxEarlyProt;
   ParamString			m_alpn;
   Host				m_serverName;
@@ -515,6 +500,7 @@ private:
   TransportParams 		m_localParams;
   TransportParams 		m_peerParams;
   bool				m_peerParamsSet = false;
+  uint64_t			m_peerParamsGen = 0;
   Ztls_::Context 		m_tlsCtx{};
   Ztls::Cxn			m_tls;
   Ztls_::RawExtension 		m_tlsExtensions[2]{};

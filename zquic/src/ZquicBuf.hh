@@ -23,7 +23,16 @@
 
 namespace Zquic_ {
 
-// Receive packets and retained plaintext keep metadata separate from final Tx packets.
+// Receive metadata travels with the original builtin or provider-backed packet.
+struct RxPkt : public ZiIOBuf {
+  ZiSockAddr	addr;
+  ZiSockAddr	local;
+  EcnMark::T	ecn = EcnMark::NotECT;
+
+  using ZiIOBuf::ZiIOBuf;
+};
+
+// Retained plaintext does not carry packet address or ECN metadata.
 struct BufNode : public ZiIOBuf {
   using ZiIOBuf::ZiIOBuf;
 };
@@ -50,6 +59,7 @@ using BufAlloc =
 
 namespace Zquic {
 
+using RxPkt = Zquic_::RxPkt;
 using RxStream = Zquic_::RxStream;
 
 template <typename Policy>
@@ -69,7 +79,7 @@ template <
   unsigned MaxSize = ZiIOBuf_DefltVHMaxSize,
   ZuString HeapID = "Zquic.Pkt.Rx">
 Zi::IOBufAllocator *pktRxAllocator(ZiMultiplex *mx) {
-  return mx->allocator<Zi::IOBufType::Rx, Zquic_::BufNode,
+  return mx->allocator<Zi::IOBufType::Rx, RxPkt,
     Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>();
 }
 
@@ -82,11 +92,41 @@ Zi::IOBufAllocator *pktTxAllocator(ZiMultiplex *mx) {
     Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>();
 }
 
+// Writer buffers carry their unsent FIFO membership and independent cursor.
+// External admissions use the same metadata with one retained backing owner.
+struct StreamTxData : public ZiIOBuf {
+  ZmRef<ZiIOBuf> backing;
+  uint64_t streamOffset = 0;
+  uint32_t rangeOffset = 0;
+  uint32_t rangeLength = 0;
+
+  using ZiIOBuf::ZiIOBuf;
+  explicit StreamTxData(ZmRef<ZiIOBuf> backing_) :
+    ZiIOBuf{nullptr, 0, nullptr, nullptr, 0, true},
+    backing{ZuMv(backing_)}, rangeOffset{backing->skip},
+    rangeLength{backing->length} { }
+
+  void publish() { rangeOffset = skip; rangeLength = length; }
+  void advanceRange(unsigned n) {
+    rangeOffset += n;
+    rangeLength -= n;
+    streamOffset += n;
+  }
+};
+using StreamTxRanges = Zi::IOQueue;
+using StreamTxView = Zi::IOBufStub<StreamTxData, ZuStringT<"Zquic.Stream.TxView">>;
+struct StreamTxOp {
+  StreamTxRanges ranges;
+  bool fin = false;
+};
+
 template <
   unsigned Size = BufSize,
   unsigned MaxSize = ZiIOBuf_DefltVHMaxSize,
   ZuString HeapID = "Zquic.Stream.TxBuf">
-using StreamTxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
+using StreamTxBufAlloc = Zi::IOBufBuiltinAllocator<
+  Zi::IOBufType::TxTLS, StreamTxData, Size, ZiIOBuf_Align,
+  ZuStringT<HeapID>, MaxSize>;
 
 template <
   unsigned Size = BufSize,
@@ -113,7 +153,7 @@ struct TxRange {
 
 inline unsigned txPktCapacity(const ZiIOBuf *buf)
 {
-  return buf->avail() - buf->allocator()->tailRoom;
+  return buf->size - buf->skip - buf->allocator()->tailRoom;
 }
 
 inline void assertPktCapacity(const ZiIOBuf *buf, unsigned required)

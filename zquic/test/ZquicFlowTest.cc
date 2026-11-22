@@ -9,8 +9,6 @@
 
 using namespace ZuTestUtil;
 
-using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
-
 class FlowApp : public Zquic::Hub<FlowApp> {
 public:
   using Base = Zquic::Hub<FlowApp>;
@@ -47,18 +45,19 @@ private:
 };
 struct FlowLink;
 struct FlowStream :
-  public Zquic::Stream<FlowLink, FlowStream, StreamTxBufAlloc>
+  public Zquic::Stream<FlowLink, FlowStream>
 {
-  using Base = Zquic::Stream<FlowLink, FlowStream, StreamTxBufAlloc>;
+  using Base = Zquic::Stream<FlowLink, FlowStream>;
   FlowStream(int64_t id) : Base{nullptr, id} { }
   using Base::Base;
   int process(Zquic::RxStream &) { return 0; }
 };
 struct FlowLink :
-  public Zquic::Link<FlowApp, FlowLink, StreamTxBufAlloc, FlowStream>
+  public Zquic::Link<FlowApp, FlowLink, FlowStream>
 {
-  using Base = Zquic::Link<FlowApp, FlowLink, StreamTxBufAlloc, FlowStream>;
+  using Base = Zquic::Link<FlowApp, FlowLink, FlowStream>;
   using Base::Base;
+  void flushTx_() { } // This flow-only fixture has no transport output.
 };
 
 static ZmRef<ZiIOBuf> streamPkt(
@@ -282,12 +281,10 @@ void testScheduling()
   budget.pmtu = 50;
   budget.congestion = 50;
   budget.antiAmplification = 50;
-  Zquic::PktAssembly packet;
-  ZuCHECK(packet.addControl(budget, 10) &&
-    packet.addStream(budget, 20) &&
-    packet.addStream(budget, 1) &&
-    packet.addControl(budget, 19) &&
-    packet.controlFrames() == 2 && packet.streamFrames() == 2 &&
+  ZuCHECK(budget.add(10) &&
+    budget.add(20) &&
+    budget.add(1) &&
+    budget.add(19) &&
     !budget.remaining(), "packet assembly budget/STREAM rules mismatch");
 
   Zquic::ControlFrame control = Zquic::ControlFrame::blocked(
@@ -313,6 +310,66 @@ void testScheduling()
       frame.streamType == Zquic::StreamType::Simplex &&
       frame.value == 8,
     "queued MAX_STREAMS control write mismatch");
+}
+
+void testStreamPrefixFit()
+{
+  ZuTestScope(testStreamPrefixFit);
+
+  FlowApp app;
+  auto backing = app.streamTxAllocator()->allocBuf(nullptr, 16384);
+  memset(backing->data(), 0x5a, backing->length);
+  struct Stream {
+    Zquic::TxRange range;
+    uint64_t credit;
+    int64_t streamID;
+    bool ended = false;
+    unsigned committed = 0;
+    int64_t id() const { return streamID; }
+    uint64_t txCreditAvailable() const { return credit; }
+    bool consumeTxCredit(unsigned n) { credit -= n; return true; }
+    bool finSent() const { return true; }
+    unsigned txRangeCount() const { return 1; }
+    bool nextTxRange(Zquic::PktBudget &, Zquic::TxRange &out, bool &fin) const {
+      out = range; fin = false; return true;
+    }
+    bool commitTxRange(Zquic::TxRange &out, const Zquic::TxRange &selected, unsigned n) {
+      out = selected; out.length = n; committed = n; return true;
+    }
+    bool dequeueFin(uint64_t &offset) {
+      ended = true; offset = range.streamOffset + range.length; return true;
+    }
+    uint64_t txBytes() const { return range.streamOffset + range.length; }
+  };
+  unsigned lengths[] = {63, 64, 16383, 16384};
+  for (uint64_t id : {uint64_t(4), uint64_t(1)<<30}) {
+    for (uint64_t offset : {uint64_t(0), uint64_t(1)<<20}) {
+      for (unsigned length : lengths) {
+	unsigned fixed = 1 + Zquic::VarInt::length(id) +
+	  (offset ? Zquic::VarInt::length(offset) : 0);
+	unsigned payload = length > Zquic::BufSize ? Zquic::BufSize - fixed - 2 : length;
+	unsigned prefix = fixed + Zquic::VarInt::length(payload);
+	Stream stream{{backing, 0, length, offset}, length, int64_t(id)};
+	Zquic::PktBudget budget;
+	budget.pmtu = budget.congestion = budget.antiAmplification = prefix + payload;
+	budget.flow = length;
+	uint8_t scratch[32];
+	memset(scratch, 0xa5, sizeof(scratch));
+	Zquic::StreamFrameInfo info;
+	int n = Zquic::StreamPktizer::writeNext(scratch, prefix, budget, stream, &info);
+	ZuCHECK(n == int(prefix) && stream.committed == payload && stream.ended == (payload == length) &&
+	    info.length == payload && info.fin == (payload == length) && !budget.remaining() &&
+	    budget.flowRemaining() == length - payload && scratch[prefix] == 0xa5,
+	  "STREAM varint boundary/minimal prefix scratch fit mismatch");
+	stream = Stream{{backing, 0, length, offset}, 0, int64_t(id)};
+	budget.used = 0;
+	budget.flow = length;
+	ZuCHECK(Zquic::StreamPktizer::writeNext(scratch, prefix, budget, stream) < 0 &&
+	    !stream.committed && !stream.ended && !budget.used,
+	  "zero stream credit committed output");
+      }
+    }
+  }
 }
 
 void testPacing()
@@ -342,5 +399,6 @@ int main(int argc, char **argv)
   ZuTestCall(testReceiveFlowControl);
   ZuTestCall(testReceiveFlowUpdates);
   ZuTestCall(testScheduling);
+  ZuTestCall(testStreamPrefixFit);
   ZuTestCall(testPacing);
 }
