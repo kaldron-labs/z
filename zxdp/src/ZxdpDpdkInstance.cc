@@ -28,6 +28,7 @@
 #include <zlib/ZxdpBPF.hh>
 #include <zlib/ZxdpDpdk.hh>
 #include <zlib/ZxdpDpdkInstance.hh>
+#include <rte_net.h>
 
 namespace Zxdp::Dpdk {
 
@@ -153,6 +154,7 @@ Instance::Result Instance::init(ZiMultiplex *mx, const Zxdp::Params &params)
 
   m_config = config;
   m_port = port;
+  m_tcpOffload = bool(info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_TCP_CKSUM);
   m_wakeFD = fd;
   m_mtu = mtu;
   m_mac = mac;
@@ -339,6 +341,8 @@ Instance::Result Instance::activate()
 
   rte_eth_conf config{};
   config.rxmode.mtu = m_mtu;
+  config.txmode.offloads = info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_TCP_CKSUM;
+  config.rxmode.offloads = info.rx_offload_capa & RTE_ETH_RX_OFFLOAD_TCP_CKSUM;
   // Try arrival interrupts where available. Software PMDs may also accept
   // this setting and supply no interrupt fd.
   config.intr_conf.rxq = m_config.rxInterval && !m_ring && !m_pcap && !m_afPacketMinRxSize;
@@ -347,7 +351,16 @@ Instance::Result Instance::activate()
     config.intr_conf.rxq = 0;
     rc = rte_eth_dev_configure(m_port, 1, 1, &config);
   }
+  if ((rc == -ENOTSUP || rc == -EINVAL) && config.rxmode.offloads) {
+    config.rxmode.offloads = 0;
+    rc = rte_eth_dev_configure(m_port, 1, 1, &config);
+  }
+  if ((rc == -ENOTSUP || rc == -EINVAL) && config.txmode.offloads) {
+    config.txmode.offloads = 0;
+    rc = rte_eth_dev_configure(m_port, 1, 1, &config);
+  }
   if (rc) return deviceError("configure Ethernet port", -rc);
+  m_tcpOffload = bool(config.txmode.offloads & RTE_ETH_TX_OFFLOAD_TCP_CKSUM);
   auto rx = info.default_rxconf;
   unsigned rxCount = m_rxPool->count;
   if (!m_ring && !m_pcap) {
@@ -366,8 +379,8 @@ Instance::Result Instance::activate()
     return deviceError("ingress pool is smaller than the required descriptors", EINVAL);
   const auto socket = rte_eth_dev_socket_id(m_port);
   auto tx = info.default_txconf;
-  tx.offloads = 0;
-  rx.offloads = 0;
+  tx.offloads = config.txmode.offloads;
+  rx.offloads = config.rxmode.offloads;
   if ((rc = rte_eth_tx_queue_setup(m_port, 0, txDesc, socket, &tx)))
     return deviceError("set up Ethernet Tx queue", -rc);
   if ((rc = rte_eth_rx_queue_setup(m_port, 0, rxDesc, socket, &rx, m_rxPool->native())))
@@ -469,16 +482,49 @@ void Instance::wake()
   if (Engine::stopping() && !m_stopping.cmpXch(1, 0)) Engine::stopped();
 }
 
+bool Instance::txReady(uint8_t *packet) const
+{
+  if (!ready() || !packet) return false;
+  auto slot = m_txIndex.find(packet);
+  return slot && slot->leases.load_() == Slot::Caller;
+}
+
 bool Instance::send(uint8_t *packet, unsigned length)
 {
   if (!ready() || !packet || !length || length > m_mtu + RTE_ETHER_HDR_LEN) return false;
   auto slot = m_txIndex.find(packet);
   if (!slot || length > slot->pool->size - unsigned(packet - slot->packet) ||
-      m_pendingCount == m_pending.length() || !slot->submit()) return false;
+      m_pendingCount == m_pending.length()) return false;
+  if (!slot->submit()) return false;
   auto mbuf = slot->mbuf;
+  mbuf->ol_flags &= ~RTE_MBUF_F_TX_OFFLOAD_MASK;
+  mbuf->tx_offload = 0;
   mbuf->data_off = packet - static_cast<uint8_t *>(mbuf->buf_addr);
   mbuf->data_len = mbuf->pkt_len = length;
+  if (m_tcpOffload) {
+    // The caller supplies the pseudo-header seed. Only native mbuf metadata
+    // belongs here; no checksum traversal or modification of caller bytes.
+    rte_net_hdr_lens head{};
+    auto type = rte_net_get_ptype(mbuf, &head,
+      RTE_PTYPE_L2_MASK | RTE_PTYPE_L3_MASK | RTE_PTYPE_L4_MASK);
+    if ((type & RTE_PTYPE_L4_MASK) == RTE_PTYPE_L4_TCP) {
+      auto ip = packet + head.l2_len;
+      bool v6 = ip[0]>>4 == 6;
+      unsigned size = v6 ? 40 + (unsigned(ip[4])<<8) + ip[5] :
+	(unsigned(ip[2])<<8) + ip[3];
+      mbuf->l2_len = head.l2_len;
+      mbuf->l3_len = head.l3_len;
+      mbuf->l4_len = head.l4_len;
+      mbuf->ol_flags |= RTE_MBUF_F_TX_TCP_CKSUM |
+	(v6 ? RTE_MBUF_F_TX_IPV6 : RTE_MBUF_F_TX_IPV4);
+      // The NIC supplies Ethernet minimum-frame padding after checksum work.
+      // Do not include software padding in the offloaded transport extent.
+      mbuf->data_len = mbuf->pkt_len = head.l2_len + size;
+    }
+  }
   if (!rte_eth_tx_burst(m_port, 0, &mbuf, 1)) {
+    mbuf->ol_flags &= ~RTE_MBUF_F_TX_OFFLOAD_MASK;
+    mbuf->tx_offload = 0;
     rte_pktmbuf_free_seg(mbuf);
     slot->releaseSubmission();
     return false;
@@ -543,6 +589,7 @@ unsigned Instance::receive(bool deliver)
   for (unsigned i = 0; i < count; ++i) {
     auto mbuf = packets[i];
     if (deliver && m_active && mbuf->nb_segs == 1 &&
+        (mbuf->ol_flags & RTE_MBUF_F_RX_L4_CKSUM_MASK) != RTE_MBUF_F_RX_L4_CKSUM_BAD &&
 	mbuf->data_len == mbuf->pkt_len && mbuf->pkt_len &&
 	mbuf->pkt_len <= m_mtu + RTE_ETHER_HDR_LEN && m_rxPool->adopt(mbuf))
       m_receive(rte_pktmbuf_mtod(mbuf, uint8_t *), mbuf->pkt_len);
@@ -619,11 +666,12 @@ void Instance::status()
     name = m_config.name, state = state(), index = ifindex(), mtu = m_mtu,
     address = ZuCArray<RTE_ETHER_ADDR_FMT_SIZE>{mac},
     mode = m_ring ? "zero-copy" : (m_pcap || m_afPacketMinRxSize) ? "copy" : "unverified",
-    started = m_started, rxDesc = m_rxDesc, txDesc = m_txDesc
+    started = m_started, rxDesc = m_rxDesc, txDesc = m_txDesc, tcpOffload = m_tcpOffload
   ](auto &out) {
     out << "DPDK " << name << " state " << ZuBoxed(state)
       << " ifindex " << ZuBoxed(index) << " MTU " << ZuBoxed(mtu)
-      << " MAC " << address << " mode " << mode;
+      << " MAC " << address << " mode " << mode
+      << " TCP checksum " << (tcpOffload ? "offload" : "offload unavailable");
     if (started)
       out << " Rx queues 1 (" << ZuBoxed(rxDesc) << " requested descriptors)"
         " Tx queues 1 (" << ZuBoxed(txDesc) << " requested descriptors)";

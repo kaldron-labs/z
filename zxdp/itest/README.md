@@ -4,11 +4,11 @@
 
 Build the tree with `make -j8`. The TAP programs skip privileged cases unless
 explicitly supplied fixture interfaces. Never supply an interface carrying
-traffic you need to retain: an absent mask selects all its traffic.
+traffic you need to retain: AF_XDP redirects all its traffic.
 
 * `zxdppackettest` uses `ZXDP_TEST_IFINDEX` and `ZXDP_TEST_PEER_IFINDEX`, a
   fixture-owned two-queue veth pair. An independent raw packet socket verifies
-  transmitted bytes and injects unmasked Ethernet reception. The default
+  transmitted bytes and injects raw Ethernet reception. The default
   `ZXDP_PACKET_CASE=packets` checks registration retry, activation rollback,
   idle stop, restart on the same arena, outstanding CQ completion and backing
   returned before finalization. Use `ZXDP_PACKET_CASE=sender` for
@@ -18,9 +18,19 @@ traffic you need to retain: an absent mask selects all its traffic.
   and restart. `ZXDP_PACKET_CASE=unstarted` checks finalization after allocation
   without activation. Use a fresh pair for each case because Linux releases a
   finalized registration's device pools asynchronously.
+  `ZXDP_PACKET_CASE=metadata` checks real kernel UMEM metadata registration.
+  `ZXDP_METADATA_CASE=0` uses the current ABI; `1` injects explicit-flag rejection
+  to exercise the legacy retry; `2` rejects both metadata forms to verify clean
+  fallback. The legacy behavior is simulated, not an older-kernel result.
+  `ZXDP_PACKET_CASE=offload` emulates advertised checksum capability and zero-copy
+  reporting while using the real kernel's test-only software-checksum option.
+  An independent peer validates IPv4/IPv6 checksums, empty/odd/full-MTU payloads,
+  TCP options, padding, refused sends, raw-frame slot reuse and capability changes
+  across restart. The fixture checks that the production library never requests
+  software checksums. This validates the metadata/wire contract, not NIC offload.
 * `zxdpfiltertest` uses `ZXDP_TEST_IFINDEX`. Kernel program test runs verify
-  IPv4/IPv6 masks, high-bit addresses, truncated headers, zero/one/two VLAN tags
-  and absent-mask behavior. A separate attachment checks foreign-owner protection.
+  unconditional redirection of IPv4, IPv6, ARP and other Ethernet frames.
+  A separate attachment checks foreign-owner protection.
 * `zxdpwaketest` uses the same pair. Real Rx epoll/eventfd observation verifies
   zero-spin blocking, queued/concurrent wake pulses, repeated check-to-wait races,
   packet processing without returning, and interruption during active processing

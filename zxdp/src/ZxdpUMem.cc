@@ -20,15 +20,22 @@
 
 namespace Zxdp::Xdp {
 
-static unsigned poolStride(const Zi::IOBufPool &pool)
+static unsigned poolPrefix(const Zi::IOBufPool &pool, bool metadata)
 {
-  unsigned size = pool.size;
+  if (!metadata) return 0;
+  unsigned bytes = power2(sizeof(xsk_tx_metadata));
+  return pool.align > bytes ? pool.align : bytes;
+}
+
+static unsigned poolStride(const Zi::IOBufPool &pool, bool metadata)
+{
+  unsigned size = pool.size + poolPrefix(pool, metadata);
   if (size < pool.align) size = pool.align;
   return power2(size < 64 ? 64 : size);
 }
 
 ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
-  ZuSpan<const ZmRef<Zi::IOBufPool>> txPools, Zi::IOBufPool *rxPool, unsigned mtu)
+  ZuSpan<const ZmRef<Zi::IOBufPool>> txPools, Zi::IOBufPool *rxPool, unsigned mtu, bool metadata)
 {
   auto fail = [](const char *text) { return ZeEXCEPT(Error, "Zxdp", text); };
   // Linux copy-mode Rx adds NET_IP_ALIGN before the Ethernet header.
@@ -45,7 +52,17 @@ ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
   unsigned prefix = rx->align > XDP_PACKET_HEADROOM ? rx->align : XDP_PACKET_HEADROOM;
   if (!mtu || rx->size < mtu + 14 || uint64_t(rx->size) + prefix + RxAlign > unsigned(page))
     return fail("Rx packet size does not fit the interface and one AF_XDP chunk");
+  // Keep logical capacities/alignment unchanged. A physical metadata prefix is
+  // reserved only for an advertised offload and only when every pool still fits
+  // a kernel chunk. Otherwise this arena uses caller software checksums.
+  if (metadata) for (const auto &pool : txPools) {
+    if (!pool || uint64_t(pool->size) + poolPrefix(*pool, true) > uint64_t(page)) {
+      metadata = false;
+      break;
+    }
+  }
   ArenaLayout layout;
+  layout.txMetadata = metadata ? sizeof(xsk_tx_metadata) : 0;
   layout.prefix = prefix;
   layout.chunk = power2(rx->size + layout.prefix + RxAlign);
   if (layout.chunk < 2048) layout.chunk = 2048;
@@ -63,7 +80,7 @@ ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
 	return fail("invalid or busy Tx pool");
       if (pool->count > UINT32_MAX - layout.txCount) return fail("Tx count overflow");
       layout.txCount += pool->count;
-      auto stride = poolStride(*pool);
+      auto stride = poolStride(*pool, metadata);
       if (stride > layout.chunk) layout.chunk = stride;
       auto bytes = uint64_t(pool->count) * stride;
       auto length = (bytes + page - 1) & ~(uint64_t(page) - 1);
@@ -106,9 +123,10 @@ void UMem::publish(ZuSpan<const ZmRef<Zi::IOBufPool>> txPools, BufPool *rx)
   unsigned first = 0;
   for (const auto &node : txPools) {
     auto pool = static_cast<BufPool *>(node.ptr());
-    auto stride = poolStride(*pool);
+    bool metadata = m_layout.txMetadata;
+    auto stride = poolStride(*pool, metadata);
     auto bytes = (uint64_t(pool->count) * stride + page - 1) & ~(uint64_t(page) - 1);
-    pool->init(this, offset, stride, 0, first);
+    pool->init(this, offset, stride, poolPrefix(*pool, metadata), first);
     for (auto i = offset>>m_pageShift; i < (offset + bytes)>>m_pageShift; ++i)
       m_pages[i] = pool;
     first += pool->count;
@@ -189,8 +207,22 @@ ZuUnion<void, ZeException> Xsk::open(
     reg.len = layout.length;
     reg.chunk_size = layout.chunk;
     reg.headroom = layout.prefix - XDP_PACKET_HEADROOM;
-    if (setsockopt(m_fd, SOL_XDP, XDP_UMEM_REG, &reg, sizeof(reg)))
-      return fail("AF_XDP UMEM registration");
+    reg.tx_metadata_len = layout.txMetadata;
+    if (reg.tx_metadata_len) reg.flags = XDP_UMEM_TX_METADATA_LEN;
+    auto unsupported = [] { return errno == EINVAL || errno == EOPNOTSUPP ||
+      errno == ENOPROTOOPT; };
+    int rc = setsockopt(m_fd, SOL_XDP, XDP_UMEM_REG, &reg, sizeof(reg));
+    if (rc && reg.tx_metadata_len && unsupported()) {
+      // The original metadata ABI predates the explicit registration flag.
+      reg.flags = 0;
+      rc = setsockopt(m_fd, SOL_XDP, XDP_UMEM_REG, &reg, sizeof(reg));
+      if (rc && unsupported()) {
+	reg.tx_metadata_len = 0;
+	rc = setsockopt(m_fd, SOL_XDP, XDP_UMEM_REG, &reg, sizeof(reg));
+      }
+    }
+    if (rc) return fail("AF_XDP UMEM registration");
+    m_txMetadata = reg.tx_metadata_len != 0;
   }
   struct { unsigned option, count; } rings[] = {
     {XDP_UMEM_FILL_RING, fillCount}, {XDP_UMEM_COMPLETION_RING, compCount},
@@ -247,6 +279,7 @@ ZuUnion<void, ZeException> Xsk::open(
 
 void Xsk::close()
 {
+  m_txMetadata = false;
   m_rx.freeze(); m_fill.freeze(); m_tx.freeze(); m_comp.freeze();
   m_rx.reset();
   m_fill.reset();

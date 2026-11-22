@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Private mask classifier and guarded interface attachment.
+// Private XSK redirect program and guarded interface attachment.
 
 #ifndef ZxdpBPF_HH
 #define ZxdpBPF_HH
@@ -16,7 +16,6 @@
 #include <stdint.h>
 #include <linux/bpf.h>
 
-#include <zlib/ZuSpan.hh>
 #include <zlib/ZuUnion.hh>
 
 #include <zlib/ZtArray.hh>
@@ -25,14 +24,8 @@
 
 namespace Zxdp::Xdp {
 
-struct Filter {
-  uint32_t	address[4]{};
-  uint32_t	mask[4]{};
-  unsigned	family = 0; // zero selects all interface traffic
-};
 using BPFCode = ZtArray<bpf_insn, ZtArrayHeapID<"Zxdp.BPF.Code">>;
-ZxdpAPI ZuUnion<Filter, ZeException> parseFilter(ZuCSpan);
-ZxdpAPI ZuUnion<BPFCode, ZeException> classifierCode(int xsk, const Filter &);
+ZxdpAPI ZuUnion<BPFCode, ZeException> redirectCode(int xsk);
 
 class ZxdpAPI BPFProgram {
 public:
@@ -40,7 +33,7 @@ public:
   ~BPFProgram();
   BPFProgram(const BPFProgram &) = delete;
   BPFProgram &operator =(const BPFProgram &) = delete;
-  ZuUnion<void, ZeException> load(unsigned queues, const Filter &);
+  ZuUnion<void, ZeException> load(unsigned queues);
   ZuUnion<void, ZeException> publish(unsigned queue, int socket);
   ZuUnion<void, ZeException> quiesce(unsigned queue);
   ZuUnion<void, ZeException> synchronize();

@@ -43,7 +43,7 @@ inline unsigned power2(unsigned n)
 
 struct ArenaLayout {
   size_t length = 0, rxLength = 0, txLength = 0;
-  unsigned chunk = 0, prefix = 0, rxCount = 0, txCount = 0;
+  unsigned chunk = 0, prefix = 0, rxCount = 0, txCount = 0, txMetadata = 0;
 };
 
 // Final allocation returns can race producer/CQ work on neighboring slots.
@@ -59,7 +59,7 @@ friend inline ZuStringT<"Zxdp.UMem"> ZmNHeapID(UMem *);
 public:
   ~UMem();
   static ZuUnion<ZmRef<UMem>, ZeException> create(
-    ZuSpan<const ZmRef<Zi::IOBufPool>>, Zi::IOBufPool *rx, unsigned mtu);
+    ZuSpan<const ZmRef<Zi::IOBufPool>>, Zi::IOBufPool *rx, unsigned mtu, bool txMetadata);
   void publish(ZuSpan<const ZmRef<Zi::IOBufPool>>, BufPool *rx);
   uint8_t *data() const { return m_data; }
   const ArenaLayout &layout() const { return m_layout; }
@@ -96,6 +96,7 @@ public:
   void close();
   int fd() const { return m_fd; }
   bool zeroCopy() const { return m_zeroCopy; }
+  bool txMetadata() const { return m_txMetadata; }
 
   RxRing &rx() { return m_rx; }
   FillRing &fill() { return m_fill; }
@@ -112,7 +113,7 @@ private:
 
   int		m_fd = -1;
   Mapping	m_maps[4];
-  bool		m_zeroCopy = false;
+  bool		m_zeroCopy = false, m_txMetadata = false;
   alignas(Zm::CacheLineSize) RxRing m_rx;
   FillRing		m_fill;
   alignas(Zm::CacheLineSize) TxRing m_tx;

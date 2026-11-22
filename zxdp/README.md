@@ -83,10 +83,8 @@ auto queues = xdp->rxQueues();
 ```
 
 `ifindex()` and `mac()` expose the interface identity after initialization.
-The optional `netmask` field selects a destination IPv4 or IPv6 CIDR. An empty
-mask selects all traffic, including non-IP frames. The classifier handles Ethernet
-and up to two VLAN tags. `spin` configures idle probes before Rx blocks or the
-sender returns to its scheduler.
+AF_XDP redirects all interface traffic, including non-IP frames. `spin` configures
+idle probes before Rx blocks or the sender returns to its scheduler.
 
 An application using Zutcp moves this initialized, unallocated, never-started XDP
 instance into TCP with `tcp->init(&mx, ZuMv(xdp), tcpParams)`. After successful

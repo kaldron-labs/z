@@ -43,7 +43,7 @@ static auto createArena(
   refs.size(pools.count_());
   auto iter = pools.citer();
   while (auto pool = iter()) new (refs.push()) ZmRef<Zi::IOBufPool>{pool};
-  auto result = Zxdp::Xdp::UMem::create(refs.cspan(), rx, mtu);
+  auto result = Zxdp::Xdp::UMem::create(refs.cspan(), rx, mtu, false);
   if (result.is<ZmRef<Zxdp::Xdp::UMem>>())
     result.p<ZmRef<Zxdp::Xdp::UMem>>()->publish(
       refs.cspan(), static_cast<Zxdp::Xdp::BufPool *>(rx));

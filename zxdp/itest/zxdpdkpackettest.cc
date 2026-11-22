@@ -64,9 +64,9 @@ static void testRing()
   bool sent = false, full = false, duplicate = false;
   unsigned premature = 0;
   endpoint.onTx([&endpoint, offset, second, &sent, &full, &duplicate, &premature] {
-    sent = endpoint.device->send(offset, 64);
-    duplicate = !endpoint.device->send(offset, 64);
-    full = !endpoint.device->send(second, 64);
+    sent = endpoint.device->txReady(offset) && endpoint.device->send(offset, 64);
+    duplicate = !endpoint.device->txReady(offset) && !endpoint.device->send(offset, 64);
+    full = endpoint.device->txReady(second) && !endpoint.device->send(second, 64);
     premature = endpoint.device->pollTx();
   });
   ZuCheckRT(sent && full && duplicate && !premature && !memcmp(second, b, sizeof(b)),
@@ -94,7 +94,7 @@ static void testRing()
   if (reused) endpoint.tx->free(reused);
 
   bool accepted = false;
-  endpoint.onTx([&endpoint, second, &accepted] { accepted = endpoint.device->send(second, 64); });
+  endpoint.onTx([&endpoint, second, &accepted] { accepted = endpoint.device->txReady(second) && endpoint.device->send(second, 64); });
   mbuf = port.take();
   ZuCheckRT(accepted && mbuf && rte_pktmbuf_mtod(mbuf, uint8_t *) == second,
     log_("the refused packet can be resubmitted without reacquiring its caller lease"));

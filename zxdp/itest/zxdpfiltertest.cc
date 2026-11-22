@@ -4,10 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <arpa/inet.h>
 #include <iostream>
 #include <stdlib.h>
-#include <string.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -37,57 +35,24 @@ static unsigned action(int fd, const void *bytes, unsigned length)
     unsigned(-1) : attr.test.retval;
 }
 
-static void testKernelMasks()
+static void testKernelRedirect()
 {
-  ZuTestScopeRT(testKernelMasks);
-  ZeException error;
-  // Empty XSK map returns DROP for a selected packet and PASS for unmatched
-  // traffic. Real socket redirection is exercised separately by packet tests.
-  struct Case { const char *mask, *match, *other; unsigned family; } cases[] = {
-    {"192.0.2.7/24", "192.0.2.99", "192.0.3.99", 4},
-    {"2001:db8:1234::7/48", "2001:db8:1234::99", "2001:db8:1235::99", 6},
-    {"128.0.0.1/1", "192.0.2.1", "127.0.0.1", 4}
-  };
-  for (auto test : cases) {
-    auto parsed = Zxdp::Xdp::parseFilter(test.mask);
-    Zxdp::Xdp::BPFProgram program;
-    bool loaded = false;
-    if (parsed.is<ZeException>()) error = parsed.p<ZeException>();
-    else {
-      auto result = program.load(2, parsed.p<Zxdp::Xdp::Filter>());
-      loaded = result.is<void>();
-      if (!loaded) error = result.p<ZeException>();
-    }
-    ZuCheckRT(loaded, log_("kernel verifier accepts network mask ", test.mask, ": ", error));
-    if (!loaded) continue;
-    uint8_t bytes[96]{}; // Ethernet plus either IP header, including two VLAN tags
-    for (unsigned tags = 0; tags <= 2; ++tags) {
-      auto ip = 14 + 4 * tags;
-      for (unsigned i = 0; i < tags; ++i) {
-        bytes[12 + 4 * i] = 0x81;
-        bytes[13 + 4 * i] = 0x00;
-      }
-      bytes[ip - 2] = test.family == 4 ? 0x08 : 0x86;
-      bytes[ip - 1] = test.family == 4 ? 0x00 : 0xdd;
-      bytes[ip] = test.family == 4 ? 0x45 : 0x60;
-      auto dest = bytes + ip + (test.family == 4 ? 16 : 24);
-      inet_pton(test.family == 4 ? AF_INET : AF_INET6, test.match, dest);
-      bool matched = action(program.fd(), bytes, sizeof(bytes)) == XDP_DROP;
-      inet_pton(test.family == 4 ? AF_INET : AF_INET6, test.other, dest);
-      ZuCheckRT(matched && action(program.fd(), bytes, sizeof(bytes)) == XDP_PASS &&
-          action(program.fd(), bytes, ip + (test.family == 4 ? 19 : 39)) == XDP_PASS,
-        log_("kernel mask distinguishes destination and bounds with VLAN depth ", tags));
-    }
-  }
+  ZuTestScopeRT(testKernelRedirect);
   Zxdp::Xdp::BPFProgram program;
-  auto unmasked = program.load(2, {});
-  if (unmasked.is<ZeException>()) error = unmasked.p<ZeException>();
-  ZuCheckRT(unmasked.is<void>(), log_("kernel accepts unmasked classifier: ", error));
+  auto loaded = program.load(2);
+  ZeException error;
+  if (loaded.is<ZeException>()) error = loaded.p<ZeException>();
+  ZuCheckRT(loaded.is<void>(), log_("kernel verifier accepts redirect program: ", error));
+  if (!loaded.is<void>()) return;
+  // An empty XSK map drops every frame. Packet tests exercise live redirects.
   uint8_t frame[64]{};
-  frame[12] = 0x88;
-  frame[13] = 0xb5;
-  ZuCheckRT(action(program.fd(), frame, sizeof(frame)) == XDP_DROP,
-    log_("absent mask selects non-IP traffic as well"));
+  const unsigned types[] = {0x0800, 0x86dd, 0x0806, 0x88b5};
+  for (auto type : types) {
+    frame[12] = type>>8;
+    frame[13] = type;
+    ZuCheckRT(action(program.fd(), frame, sizeof(frame)) == XDP_DROP,
+      log_("redirect selects EtherType ", type));
+  }
 }
 
 static void testForeign()
@@ -97,7 +62,7 @@ static void testForeign()
   Zxdp::Xdp::BPFProgram foreign;
   Zxdp::Xdp::BPFAttach attachment;
   ZeException error;
-  auto attachedResult = foreign.load(2, {});
+  auto attachedResult = foreign.load(2);
   if (attachedResult.is<void>()) attachedResult = attachment.attach(ifindex, foreign);
   bool attached = attachedResult.is<void>();
   if (!attached) error = attachedResult.p<ZeException>();
@@ -147,6 +112,6 @@ int main(int argc, char **argv)
     return 0;
   }
   ZuTestMain();
-  ZuTestCall(testKernelMasks);
+  ZuTestCall(testKernelRedirect);
   ZuTestCall(testForeign);
 }

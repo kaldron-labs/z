@@ -18,6 +18,9 @@
 #include <linux/if_packet.h>
 #include <linux/if_xdp.h>
 #include <linux/netlink.h>
+#include <linux/genetlink.h>
+#include <linux/netdev.h>
+#include <linux/rtnetlink.h>
 
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuID.hh>
@@ -40,6 +43,10 @@
 
 #include <zlib/Zxdp.hh>
 #include <zlib/ZxdpBPF.hh>
+#include <zlib/ZxdpUMem.hh>
+#include <zlib/ZxdpPool.hh>
+#include <zlib/ZxdpTx.hh>
+#include <zlib/ZtArray.hh>
 
 #include "zxdpfixture.hh"
 
@@ -58,6 +65,12 @@ static ZmAtomic<unsigned> routeSockets{0};
 static int registrationFD = -1;
 static unsigned failServiceBind = 0;
 static bool failRegistration = false;
+static unsigned metadataReject = 0;
+static bool softwareChecksum = false;
+// Fixture-only hardware emulation. The production library never requests the
+// kernel software checksum flag; this lets a veth validate metadata end to end.
+static bool emulateOffload = false, emulatedCapability = true;
+static unsigned netdevFamily = 0;
 
 extern "C" __attribute__((visibility("default")))
 int socket(int domain, int type, int protocol) noexcept
@@ -84,8 +97,67 @@ int setsockopt(int fd, int level, int option, const void *value, socklen_t lengt
     ++xdpRegistrations;
     registrationFD = fd;
     if (failRegistration) { errno = ENOMEM; return -1; }
+    if (length >= sizeof(xdp_umem_reg)) {
+      auto reg = static_cast<const xdp_umem_reg *>(value);
+      softwareChecksum |= reg->flags & XDP_UMEM_TX_SW_CSUM;
+      if (reg->tx_metadata_len &&
+	  (metadataReject == 2 || (metadataReject == 1 &&
+	    (reg->flags & XDP_UMEM_TX_METADATA_LEN)))) { errno = EINVAL; return -1; }
+    }
+  }
+  if (emulateOffload && level == SOL_XDP && option == XDP_UMEM_REG &&
+      length >= sizeof(xdp_umem_reg)) {
+    auto reg = *static_cast<const xdp_umem_reg *>(value);
+    reg.flags |= XDP_UMEM_TX_SW_CSUM;
+    return syscall(SYS_setsockopt, fd, level, option, &reg, sizeof(reg));
   }
   return syscall(SYS_setsockopt, fd, level, option, value, length);
+}
+
+extern "C" __attribute__((visibility("default")))
+int getsockopt(int fd, int level, int option, void *value, socklen_t *length) noexcept
+{
+  int rc = syscall(SYS_getsockopt, fd, level, option, value, length);
+  if (!rc && emulateOffload && level == SOL_XDP && option == XDP_OPTIONS &&
+      *length >= sizeof(xdp_options))
+    static_cast<xdp_options *>(value)->flags |= XDP_OPTIONS_ZEROCOPY;
+  return rc;
+}
+
+extern "C" __attribute__((visibility("default")))
+ssize_t recv(int fd, void *data, size_t length, int flags)
+{
+  auto n = syscall(SYS_recvfrom, fd, data, length, flags, nullptr, nullptr);
+  if (!emulateOffload || n <= 0 || size_t(n) > length) return n;
+  auto header = static_cast<nlmsghdr *>(data);
+  if (size_t(n) < sizeof(*header)) return n;
+  if (header->nlmsg_type == GENL_ID_CTRL && header->nlmsg_seq == 1) {
+    auto family = Zxdp::Xdp::genlScalar({static_cast<uint8_t *>(data), unsigned(n)},
+      GENL_ID_CTRL, 1, CTRL_ATTR_FAMILY_ID, 2);
+    if (family) netdevFamily = family;
+  } else if (netdevFamily && header->nlmsg_type == netdevFamily &&
+      header->nlmsg_seq == 2 && header->nlmsg_len == unsigned(n) &&
+      header->nlmsg_len >= NLMSG_LENGTH(GENL_HDRLEN)) {
+    int remaining = header->nlmsg_len - NLMSG_LENGTH(GENL_HDRLEN);
+    auto attr = reinterpret_cast<rtattr *>(
+      static_cast<uint8_t *>(NLMSG_DATA(header)) + GENL_HDRLEN);
+    for (; RTA_OK(attr, remaining); attr = RTA_NEXT(attr, remaining))
+      if ((attr->rta_type & NLA_TYPE_MASK) == NETDEV_A_DEV_XSK_FEATURES &&
+	  RTA_PAYLOAD(attr) == sizeof(uint64_t)) break;
+    uint64_t features = 0;
+    if (!RTA_OK(attr, remaining)) {
+      if (NLMSG_ALIGN(n) + RTA_SPACE(sizeof(features)) > length) return n;
+      attr = reinterpret_cast<rtattr *>(static_cast<uint8_t *>(data) + NLMSG_ALIGN(n));
+      attr->rta_type = NETDEV_A_DEV_XSK_FEATURES;
+      attr->rta_len = RTA_LENGTH(sizeof(features));
+      n = NLMSG_ALIGN(n) + RTA_SPACE(sizeof(features));
+      header->nlmsg_len = n;
+    } else memcpy(&features, RTA_DATA(attr), sizeof(features));
+    if (emulatedCapability) features |= NETDEV_XSK_FLAGS_TX_CHECKSUM;
+    else features &= ~uint64_t(NETDEV_XSK_FLAGS_TX_CHECKSUM);
+    memcpy(RTA_DATA(attr), &features, sizeof(features));
+  }
+  return n;
 }
 
 extern "C" __attribute__((visibility("default")))
@@ -296,8 +368,8 @@ static void testPackets()
     log_("invalid submissions leave caller backing unchanged "
       "without a kernel lease or sender kick"));
   gateSender = 1;
-  bool submitted = instance->send(output, Bytes);
-  ZuCheckRT(submitted && !instance->send(output, Bytes),
+  bool submitted = instance->txReady(output) && instance->send(output, Bytes);
+  ZuCheckRT(submitted && !instance->txReady(output) && !instance->send(output, Bytes),
     log_("accepted submission holds a kernel lease and cannot resubmit before retirement"));
   if (submitted) tx->free(packet);
   auto spare = tx->alloc();
@@ -359,7 +431,7 @@ static void testPackets()
   ZuCheckRT(progressed,
     log_("successive zero-to-one publications each drain without orphaning their final packet"));
   // Send independent raw Ethernet traffic back. No IP/TCP/UDP selection exists
-  // without a mask, so the experimental EtherType must reach the raw callback.
+  // for all traffic, so the experimental EtherType must reach the raw callback.
   memcpy(observed, local.mac, 6);
   memcpy(observed + 6, remote.mac, 6);
   observed[12] = 0x88;
@@ -375,7 +447,7 @@ static void testPackets()
   returned.post();
   watchdog.join();
   ZuCheckRT(injected && received && rxBytes == Bytes && !memcmp(received, observed, Bytes),
-    log_("unmasked callback receives raw Ethernet bytes from the dedicated Rx pool"));
+    log_("callback receives raw Ethernet bytes from the dedicated Rx pool"));
   auto pending = control->alloc();
   ZmAssert_(pending);
   memcpy(pending, observed, 64);
@@ -665,6 +737,176 @@ static void testNeverStarted()
       fcntl(fd, F_GETFD) < 0 && errno == EBADF);
 }
 
+static unsigned wireSum(const uint8_t *p, unsigned n)
+{
+  uint64_t value = 0;
+  for (unsigned i = 0; i < n; ++i) value += unsigned(p[i]) << ((i & 1) ? 0 : 8);
+  while (value>>16) value = (value & 0xffff) + (value>>16);
+  return value;
+}
+static unsigned foldWire(unsigned value)
+{
+  while (value>>16) value = (value & 0xffff) + (value>>16);
+  return value;
+}
+static void wire16(uint8_t *p, unsigned value) { p[0] = value>>8; p[1] = value; }
+
+static void testOffloadWire()
+{
+  ZuTestScopeRT(testOffloadWire);
+  emulateOffload = true;
+  auto index = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
+  auto peer = unsigned(strtoul(getenv("ZXDP_TEST_PEER_IFINDEX"), nullptr, 10));
+  int wire = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(ETH_P_ALL));
+  sockaddr_ll address{};
+  address.sll_family = AF_PACKET; address.sll_protocol = htons(ETH_P_ALL);
+  address.sll_ifindex = peer;
+  bool bound = wire >= 0 && !bind(wire, reinterpret_cast<sockaddr *>(&address), sizeof(address));
+  ZuCheckRT(bound, log_("bind independent peer for emulated checksum metadata"));
+  if (!bound) { if (wire >= 0) close(wire); return; }
+  ZiMultiplex mx{ZiMxParams{}.scheduler(configureSender)};
+  auto instance = Zxdp::instance(Zxdp::Type::Xdp);
+  auto rx = instance->bufPool(Zi::IOBufType::Rx, RxSlots, 1514);
+  auto tx = instance->bufPool(Zi::IOBufType::TxTCP, 2, 2048);
+  Zi::IOBufPoolList pools; pools.pushNode(tx.ptr());
+  Zxdp::Params config(Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
+  config.p<Zxdp::Xdp::Params>().ifindex = index;
+  config.p<Zxdp::Xdp::Params>().txSid = Sender;
+  ZeException error;
+  bool running = setup(instance, mx, config, rx, pools,
+    [rx](auto p, auto) { rx->free(p); }, error);
+  ZuCheckRT(running, log_("start supported metadata emulation: ", error));
+  if (!running) { instance->final(); mx.stop(); close(wire); return; }
+  auto packet = tx->alloc();
+  bool exact = packet != nullptr;
+  constexpr unsigned payloads[] = {0, 1, 1460};
+  for (unsigned run = 0; run < 3 && packet; ++run) {
+    if (run) {
+      exact &= shutdown(instance, error);
+      emulatedCapability = run == 2;
+      exact &= instance->start([rx](auto p, auto) { rx->free(p); });
+    }
+    bool offload = run != 1;
+    exact &= instance->tcpChksumOffload() == offload;
+    for (unsigned family = 4; family <= 6; family += 2) for (auto payload : payloads) {
+      if (family == 6 && payload == 1460) payload = 1440;
+      unsigned l3 = family == 4 ? 20 : 40, options = payload == 1 ? 12 : 0;
+      unsigned segment = 20 + options + payload, encoded = 14 + l3 + segment;
+      unsigned length = encoded < 60 ? 60 : encoded;
+      memset(packet, 0, length); memset(packet, 0xff, 6); packet[6] = 2;
+      wire16(packet + 12, family == 4 ? 0x0800 : 0x86dd);
+      auto ip = packet + 14;
+      ip[0] = family == 4 ? 0x45 : 0x60;
+      if (family == 4) {
+	wire16(ip + 2, l3 + segment); ip[8] = 64; ip[9] = 6;
+	ip[12] = ip[16] = 192; ip[14] = ip[18] = 2; ip[15] = 1; ip[19] = 2;
+	wire16(ip + 10, wireSum(ip, l3) ^ 0xffff);
+      } else {
+	wire16(ip + 4, segment); ip[6] = 6; ip[7] = 64;
+	ip[8] = ip[24] = 0x20; ip[9] = ip[25] = 1;
+	ip[10] = ip[26] = 0x0d; ip[11] = ip[27] = 0xb8;
+	ip[23] = 1; ip[39] = 2;
+      }
+      auto tcp = ip + l3;
+      wire16(tcp, 1000); wire16(tcp + 2, 2000);
+      tcp[7] = 1; tcp[11] = 2; tcp[12] = ((20 + options)>>2)<<4;
+      tcp[13] = 0x10; wire16(tcp + 14, 4096);
+      if (options) { tcp[20] = tcp[21] = 1; tcp[22] = 8; tcp[23] = 10; tcp[27] = 1; }
+      for (unsigned i = 0; i < payload; ++i) tcp[20 + options + i] = i ^ 0x6b;
+      unsigned pseudo = foldWire(wireSum(ip + (family == 4 ? 12 : 8), family == 4 ? 8 : 32) +
+	segment + 6);
+      wire16(tcp + 16, offload ? pseudo : foldWire(pseudo + wireSum(tcp, segment)) ^ 0xffff);
+      bool sent = instance->send(packet, length);
+      uint8_t saved[2048 + sizeof(xsk_tx_metadata)];
+      memcpy(saved, packet - sizeof(xsk_tx_metadata), length + sizeof(xsk_tx_metadata));
+      exact &= sent && !instance->send(packet, length) &&
+	!memcmp(saved, packet - sizeof(xsk_tx_metadata), length + sizeof(xsk_tx_metadata));
+      bool received = false;
+      uint8_t observed[2048];
+      for (unsigned attempt = 0; attempt < 16 && !received; ++attempt) {
+	pollfd ready{wire, POLLIN, 0};
+	if (poll(&ready, 1, 1000) <= 0) break;
+	auto n = recvfrom(wire, observed, sizeof(observed), 0, nullptr, nullptr);
+	if (n < int(encoded) || memcmp(observed, packet, 14 + l3)) continue;
+	received = foldWire(wireSum(observed + 14 + l3, segment) + pseudo) == 0xffff;
+	received &= !memcmp(observed + 14 + l3 + 20 + options,
+	  tcp + 20 + options, payload);
+      }
+      auto completed = waitTx(instance, 1, Zm::now() + ZuTime{2});
+      exact &= received && completed == 1;
+    }
+    // Reuse the same slot for a generic raw frame; stale checksum metadata must
+    // be ignored when the descriptor's metadata option is clear.
+    memset(packet, 0x5e, 64); memset(packet, 0xff, 6); packet[6] = 2;
+    wire16(packet + 12, 0x88b5);
+    bool sent = instance->send(packet, 64);
+    uint8_t observed[2048];
+    bool raw = false;
+    for (unsigned attempt = 0; sent && attempt < 16 && !raw; ++attempt) {
+      pollfd ready{wire, POLLIN, 0};
+      if (poll(&ready, 1, 1000) <= 0) break;
+      raw = recvfrom(wire, observed, sizeof(observed), 0, nullptr, nullptr) == 64 &&
+	!memcmp(observed, packet, 64);
+    }
+    auto completed = waitTx(instance, 1, Zm::now() + ZuTime{2});
+    exact &= raw && completed == 1;
+  }
+  if (packet) tx->free(packet);
+  exact &= shutdown(instance, error);
+  instance->final();
+  exact &= mx.stop();
+  close(wire);
+  ZuCheckRT(exact && !softwareChecksum,
+    log_("kernel-emulated metadata completes independent IPv4/IPv6 checksums across "
+      "capability restarts, options, padding, refusal and raw slot reuse; hardware unverified"));
+  emulateOffload = false;
+}
+
+static void testMetadataRegistration()
+{
+  ZuTestScopeRT(testMetadataRegistration);
+  using namespace Zxdp::Xdp;
+  auto mode = getenv("ZXDP_METADATA_CASE");
+  metadataReject = mode ? unsigned(strtoul(mode, nullptr, 10)) : 0;
+  ZuCheckRT(metadataReject <= 2,
+    log_("select supported, legacy-flag or unavailable metadata ABI"));
+  if (metadataReject > 2) return;
+  auto device = Zxdp::instance(Zxdp::Type::Xdp);
+  auto rx = device->bufPool(Zi::IOBufType::Rx, 2, 1514);
+  auto tx = device->bufPool(Zi::IOBufType::TxTCP, 2, 256);
+  Zi::IOBufPoolList pools;
+  pools.pushNode(tx.ptr());
+  ZtArray<ZmRef<Zi::IOBufPool>> refs;
+  refs.push(tx);
+  auto created = UMem::create(refs.cspan(), rx.ptr(), 1500, true);
+  ZuCheckRT(created.is<ZmRef<UMem>>(), log_("reserve native metadata backing"));
+  if (created.is<ZeException>()) return;
+  auto arena = ZuMv(created).p<ZmRef<UMem>>();
+  Xsk owner;
+  auto index = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
+  auto before = unsigned(xdpRegistrations);
+  auto opened = owner.owner(arena, index, 0, 2, 2);
+  bool registered = opened.is<void>();
+  std::cout << "# metadata ABI=" << metadataReject << " registered=" << registered
+    << " enabled=" << owner.txMetadata() << " advertised=" << tcpChksumAvailable(index)
+    << " zero-copy=" << owner.zeroCopy() << '\n';
+  if (!registered) std::cout << "# " << opened.p<ZeException>() << '\n';
+  ZuCheckRT(registered && owner.txMetadata() == (metadataReject != 2) &&
+      unsigned(xdpRegistrations) - before == metadataReject + 1 && !softwareChecksum &&
+      !device->tcpChksumOffload(),
+    log_("native registration negotiates metadata without enabling kernel software checksum; "
+      "the cold instance never advertises active hardware offload"));
+  if (registered) {
+    arena->publish(refs.cspan(), static_cast<BufPool *>(rx.ptr()));
+    auto a = tx->alloc(), b = tx->alloc();
+    ZuCheckRT(a && b && !tx->alloc(), log_("negotiation preserves exact caller pool leases"));
+    if (a) tx->free(a);
+    if (b) tx->free(b);
+    owner.close();
+    arena->retire(pools, static_cast<BufPool *>(rx.ptr()));
+  }
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -682,11 +924,18 @@ int main(int argc, char **argv)
   } else if (!strcmp(test, "leases")) {
     ZuTestMain();
     ZuTestCall(testLeaseRace);
+  } else if (!strcmp(test, "offload")) {
+    ZuTestMain();
+    ZuTestCall(testOffloadWire);
+  } else if (!strcmp(test, "metadata")) {
+    ZuTestMain();
+    ZuTestCall(testMetadataRegistration);
   } else if (!strcmp(test, "unstarted")) {
     ZuTestMain();
     ZuTestCall(testNeverStarted);
   } else {
-    std::cerr << "ZXDP_PACKET_CASE must be packets, sender, leases, or unstarted\n";
+    std::cerr << "ZXDP_PACKET_CASE must be packets, sender, leases, "
+      "metadata, offload, or unstarted\n";
     return 2;
   }
 }

@@ -47,7 +47,6 @@ ZtEnumNS(ZxdpAPI, Type, uint8_t, Xdp, Dpdk);
 namespace Xdp {
   struct Params {
     unsigned ifindex = 0; // network-interface index in the current network namespace
-    ZuCSpan netmask; // optional destination CIDR; empty takes all traffic
     unsigned spin = 1000; // idle probes before Rx blocks or Tx service returns
     unsigned txSid = 0; // application-assigned sender slot
   };
@@ -169,9 +168,14 @@ public:
   virtual bool zeroCopy() const = 0;
   virtual ZuBSpan mac() const = 0;
 
+  // Tx owner: encode only when no prior submission owns this slot. This
+  // reserves nothing; encode and send on the same owner without resubmission.
+  virtual bool txReady(uint8_t *packet) const = 0;
   // False acquires no kernel lease. After true, keep bytes immutable until
   // kernel retirement. One descriptor may be outstanding for each slot.
   virtual bool send(uint8_t *packet, unsigned length) = 0;
+  // Active TCP checksum offload configuration, queried after start.
+  virtual bool tcpChksumOffload() = 0;
   virtual void rx() = 0; // Rx owner, until wake() or device failure
   virtual void wake() = 0;
   virtual unsigned pollTx() = 0;

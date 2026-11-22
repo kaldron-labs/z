@@ -12,13 +12,11 @@
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <sys/socket.h>
-#include <arpa/inet.h>
 #include <linux/if_link.h>
 #include <linux/if_arp.h>
 #include <linux/membarrier.h>
 #include <linux/rtnetlink.h>
 
-#include <zlib/Zu_aton.hh>
 #include <zlib/ZuString.hh>
 
 #include <zlib/ZmAssert.hh>
@@ -47,164 +45,22 @@ static ZeException failed(ZeError error)
   }));
 }
 
-ZuUnion<Filter, ZeException> parseFilter(ZuCSpan text)
-{
-  if (!text.length()) return Filter{};
-  auto slash = static_cast<const char *>(memchr(text.data(), '/', text.length()));
-  auto n = slash ? unsigned(slash - text.data()) : unsigned(text.length());
-  // inet_pton needs a terminated address; its protocol bounds this scratch.
-  char address[INET6_ADDRSTRLEN];
-  if (!n || n >= sizeof(address))
-    return ZeEXCEPT(Error, "Zxdp", "invalid network mask address");
-  memcpy(address, text.data(), n);
-  address[n] = 0;
-  Filter result;
-  if (inet_pton(AF_INET, address, result.address) == 1) result.family = 4;
-  else if (inet_pton(AF_INET6, address, result.address) == 1) result.family = 6;
-  else return ZeEXCEPT(Error, "Zxdp", "invalid network mask address");
-  unsigned bits = result.family == 4 ? 32 : 128;
-  if (slash) {
-    auto length = unsigned(text.length()) - n - 1;
-    unsigned prefix;
-    if (!length || length > 3 ||
-	Zu_nscan<ZuFmt::Default>::atou(prefix, slash + 1, length) != length || prefix > bits)
-      return ZeEXCEPT(Error, "Zxdp", "invalid network mask prefix");
-    bits = prefix;
-  }
-  auto words = result.family == 4 ? 1U : 4U;
-  for (unsigned i = 0; i < words; ++i) {
-    auto width = bits > 32 ? 32 : bits;
-    auto mask = htonl(!width ? 0 : width == 32 ? UINT32_MAX : UINT32_MAX<<(32 - width));
-    result.mask[i] = mask;
-    result.address[i] &= mask;
-    bits -= width;
-  }
-  return result;
-}
-
-class Builder {
-public:
-  unsigned label() {
-    auto id = m_labels.length();
-    m_labels.push(-1);
-    return id;
-  }
-  void mark(unsigned label) {
-    if (!m_valid) return;
-    auto index = label < m_labels.length() ? m_labels[label] : Marked;
-    if (index == Marked) {
-      m_valid = false;
-      return;
-    }
-    auto end = m_code.length();
-    while (index >= 0) {
-      auto &insn = m_code[index];
-      auto next = insn.off;
-      insn.off = end - unsigned(index) - 1;
-      index = next;
-    }
-    m_labels[label] = Marked;
-  }
-  void emit(uint8_t code, unsigned dst = 0, unsigned src = 0, int off = 0, int imm = 0) {
-    if (m_code.length() == BPF_MAXINSNS) { m_valid = false; return; }
-    bpf_insn insn;
-    insn.code = code;
-    insn.dst_reg = dst;
-    insn.src_reg = src;
-    insn.off = off;
-    insn.imm = imm;
-    m_code.push(insn);
-  }
-  void jump(uint8_t op, unsigned dst, unsigned src, int imm, unsigned label) {
-    auto prev = label < m_labels.length() ? m_labels[label] : Marked;
-    if (prev == Marked) {
-      m_valid = false;
-      return;
-    }
-    m_labels[label] = m_code.length();
-    emit(BPF_JMP | op, dst, src, prev, imm);
-  }
-  void mov(unsigned dst, unsigned src) { emit(BPF_ALU64 | BPF_MOV | BPF_X, dst, src); }
-  void imm(unsigned dst, int value) { emit(BPF_ALU64 | BPF_MOV | BPF_K, dst, 0, 0, value); }
-  void add(unsigned dst, int value) { emit(BPF_ALU64 | BPF_ADD | BPF_K, dst, 0, 0, value); }
-  void load(unsigned size, unsigned dst, unsigned src, int off) {
-    emit(BPF_LDX | BPF_MEM | size, dst, src, off);
-  }
-  void be16(unsigned reg) { emit(BPF_ALU | BPF_END | BPF_FROM_BE, reg, 0, 0, 16); }
-  void map(unsigned dst, int fd) {
-    emit(BPF_LD | BPF_DW | BPF_IMM, dst, BPF_PSEUDO_MAP_FD, 0, fd);
-    emit(0);
-  }
-  void call(int fn) { emit(BPF_JMP | BPF_CALL, 0, 0, 0, fn); }
-  void exit() { emit(BPF_JMP | BPF_EXIT); }
-  void bound(unsigned cursor, unsigned bytes, unsigned pass) {
-    mov(1, cursor);
-    add(1, bytes);
-    jump(BPF_JGT | BPF_X, 1, 7, 0, pass);
-  }
-  ZuUnion<BPFCode, ZeException> finish() {
-    for (auto label : m_labels) if (label != Marked) { m_valid = false; break; }
-    if (!m_valid)
-      return ZeEXCEPT(Error, "Zxdp", "invalid or overflowing XDP instruction program");
-    return ZuMv(m_code);
-  }
-
-private:
-  // Linux's instruction limit also bounds chain indices and patched offsets.
-  ZuAssert(BPF_MAXINSNS <= SHRT_MAX);
-  enum { Marked = -2 };
-  using Labels = ZtArray<int, ZtArrayHeapID<"Zxdp.BPF.Labels">>;
-  BPFCode	m_code;
-  Labels	m_labels;
-  bool		m_valid = true;
-};
-
-ZuUnion<BPFCode, ZeException> classifierCode(int xsk, const Filter &filter)
+ZuUnion<BPFCode, ZeException> redirectCode(int xsk)
 {
   if (xsk < 0) return ZeEXCEPT(Error, "Zxdp", "invalid XSK map descriptor");
-  Builder b;
-  auto pass = b.label();
-  b.mov(9, 1);
-  if (filter.family) {
-    b.load(BPF_W, 6, 9, offsetof(xdp_md, data));
-    b.load(BPF_W, 7, 9, offsetof(xdp_md, data_end));
-    b.bound(6, 14, pass);
-    b.load(BPF_H, 2, 6, 12);
-    b.be16(2);
-    b.mov(8, 6);
-    b.add(8, 14);
-    // Ethernet permits stacked service/customer VLAN headers.
-    for (unsigned i = 0; i < 2; ++i) {
-      auto tag = b.label(), next = b.label();
-      b.jump(BPF_JEQ | BPF_K, 2, 0, 0x8100, tag);
-      b.jump(BPF_JNE | BPF_K, 2, 0, 0x88a8, next);
-      b.mark(tag);
-      b.bound(8, 4, pass);
-      b.load(BPF_H, 2, 8, 2);
-      b.be16(2);
-      b.add(8, 4);
-      b.mark(next);
-    }
-    b.jump(BPF_JNE | BPF_K, 2, 0, filter.family == 4 ? 0x0800 : 0x86dd, pass);
-    b.bound(8, filter.family == 4 ? 20 : 40, pass);
-    auto words = filter.family == 4 ? 1U : 4U;
-    for (unsigned i = 0; i < words; ++i) {
-      auto mask = filter.mask[i];
-      if (!mask) continue;
-      b.load(BPF_W, 2, 8, (filter.family == 4 ? 16 : 24) + (i<<2));
-      b.emit(BPF_ALU | BPF_AND | BPF_K, 2, 0, 0, mask);
-      b.emit(BPF_ALU | BPF_MOV | BPF_K, 3, 0, 0, filter.address[i]);
-      b.jump(BPF_JNE | BPF_X, 2, 3, 0, pass);
-    }
-  }
-  b.load(BPF_W, 2, 9, offsetof(xdp_md, rx_queue_index));
-  b.map(1, xsk);
-  b.imm(3, XDP_DROP);
-  b.call(BPF_FUNC_redirect_map);
-  b.exit();
-  b.mark(pass);
-  if (filter.family) { b.imm(0, XDP_PASS); b.exit(); }
-  return b.finish();
+  // Redirect every frame by its Rx queue; unpublished queues drop traffic.
+  const bpf_insn insns[] = {
+    {BPF_LDX | BPF_MEM | BPF_W, 2, 1, offsetof(xdp_md, rx_queue_index), 0},
+    {BPF_LD | BPF_DW | BPF_IMM, 1, BPF_PSEUDO_MAP_FD, 0, xsk},
+    {}, // upper half of the map descriptor load
+    {BPF_ALU64 | BPF_MOV | BPF_K, 3, 0, 0, XDP_DROP},
+    {BPF_JMP | BPF_CALL, 0, 0, 0, BPF_FUNC_redirect_map},
+    {BPF_JMP | BPF_EXIT, 0, 0, 0, 0}
+  };
+  BPFCode code;
+  code.size(sizeof(insns)/sizeof(insns[0]));
+  for (const auto &insn : insns) code.push(insn);
+  return ZuMv(code);
 }
 
 BPFProgram::~BPFProgram() { reset(); }
@@ -216,7 +72,7 @@ void BPFProgram::reset()
   m_id = 0;
 }
 
-ZuUnion<void, ZeException> BPFProgram::load(unsigned queues, const Filter &filter)
+ZuUnion<void, ZeException> BPFProgram::load(unsigned queues)
 {
   if (m_fd >= 0 || !queues)
     return ZeEXCEPT(Error, "Zxdp", "invalid XDP program configuration");
@@ -232,7 +88,7 @@ ZuUnion<void, ZeException> BPFProgram::load(unsigned queues, const Filter &filte
   attr.inner_map_fd = m_xsk;
   m_barrier = bpfCall(BPF_MAP_CREATE, attr);
   if (m_barrier < 0) return fail(failed<"XSK redirect barrier map create">(ZeLastError));
-  auto built = classifierCode(m_xsk, filter);
+  auto built = redirectCode(m_xsk);
   if (built.is<ZeException>()) return fail(ZuMv(built).p<ZeException>());
   const auto &code = built.p<BPFCode>();
   // Bounded cold-load diagnostics, independent of packet service storage.
@@ -249,7 +105,7 @@ ZuUnion<void, ZeException> BPFProgram::load(unsigned queues, const Filter &filte
   attr.log_level = 1;
   attr.log_size = log.length();
   attr.log_buf = uintptr_t(log.data());
-  memcpy(attr.prog_name, "zxdp_mask", sizeof("zxdp_mask"));
+  memcpy(attr.prog_name, "zxdp_redirect", sizeof("zxdp_redirect"));
   m_fd = bpfCall(BPF_PROG_LOAD, attr);
   if (m_fd < 0) {
     auto error = ZeLastError;

@@ -5,8 +5,8 @@
 Configure the multiplexer and its sender slot before construction. Select XDP
 with `Zxdp::instance(Zxdp::Type::Xdp)` and initialize it synchronously with
 `init(&mx, config)`. Construct the `Xdp::Params` payload in `Zxdp::Params`.
-Set `ifindex`, `txSid`, and the optional destination `netmask` and idle
-`spin`. The sender slot belongs to the multiplexer and is distinct from its
+Set `ifindex`, `txSid`, and idle `spin`. AF_XDP redirects all interface traffic,
+including non-IP frames. The sender slot belongs to the multiplexer and is distinct from its
 Rx and Tx owners.
 
 ```cpp
@@ -75,6 +75,37 @@ tracks pending work. `pollTx()` separately retires kernel leases on the Tx
 owner. The caller returns its own allocation lease with the original pool.
 Recycling waits for both leases.
 
+`bool Instance::tcpChksumOffload()` reports whether the started device is
+actually configured for TCP checksum offload. Query it after each start, including
+restart. Device capability discovery/enablement belongs to Zxdp; software TCP
+checksum calculation belongs to its caller. AF_XDP queries the netdev generic-
+netlink XSK checksum capability, provisions a private Tx metadata prefix and
+registers its length with UMEM. It reports true only with successful metadata
+registration, native zero-copy service and current driver capability. Copy mode,
+unsupported registration and pools requiring a full-page frame report false.
+DPDK reports its enabled setting after configuration fallback. All frames use
+plain `send()`.
+
+When offload is false, supply a completed TCP checksum. When true, TCP frames
+must contain the pseudo-header seed; DPDK derives native header lengths/flags
+from the Ethernet/IP/TCP headers and leaves caller bytes untouched. It excludes
+software Ethernet padding from the mbuf extent; the NIC supplies wire padding.
+The native TCP caller emits contiguous IPv4/IPv6 TCP frames. UDP and other raw
+protocols retain their existing checksum contract. AF_XDP writes checksum start/
+offset metadata before accepted TCP frames and excludes software padding from
+the descriptor extent. The private prefix preserves caller capacity, alignment
+and configured head/tail room. Every accepted descriptor selects fresh metadata
+options; refusal leaves caller bytes and the prefix unchanged. DPDK clears
+stale mbuf flags on refusal/reuse. No software fallback exists inside Zxdp.
+
+Before rewriting headers in retained backing, call `txReady(packet)` on the Tx
+owner. It checks the existing slot's outstanding-submission state without taking
+a lease or reserving ring capacity. A true result permits encoding followed by
+synchronous `send()` on that same owner, with no intervening submission of the
+slot. Other threads may return their caller leases but cannot submit the slot.
+`send()` still owns admission and may refuse for ring/device pressure. Bytes
+remain immutable after acceptance until `pollTx()` retires the submission.
+
 ## Stop and finalization
 
 The caller quiesces its Rx and Tx service before stop and keeps the multiplexer
@@ -121,7 +152,8 @@ Start configures one contiguous-frame Rx queue and one Tx queue. Run `rx()`
 and `pollTx()` on their single owners. Call `send()` on the Tx owner with a
 pointer within its native backing. Rejected sends preserve caller bytes and
 ownership. Accepted sends hold one driver reference until retirement. Keep
-bytes immutable until then. `pollTx()` counts each retired submission once,
+bytes immutable until then. The same `txReady(packet)` Tx-owner contract applies
+before re-encoding retained backing. `pollTx()` counts each retired submission once,
 including when the application retains a separate recovery allocation lease.
 
 The Rx owner checks counted wakes between bursts. It spins through the

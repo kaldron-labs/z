@@ -9,9 +9,12 @@ The AF_XDP TAP programs need no network privileges:
   reserves, exhaustion, advanced pointer return, retained mapping lifetime,
   malformed configuration, direct Zi metadata allocation/return over native slots,
   and contended payload-overlay recycling.
+* `ZxdpOffloadTest`: bounded TCP header classification, VLAN/IP/TCP options,
+  padding, malformed input, unaligned metadata placement, generic-netlink scalar
+  reply parsing and private arena-prefix geometry including full-page fallback.
 * `ZxdpInstanceTest`: cold selection, synchronous init failure, idempotent final,
   independent pool factory lifetime and unchanged caller configuration.
-* `ZxdpClassifierTest`: mask normalization, instruction relocation and branches,
+* `ZxdpClassifierTest`: unconditional XSK redirect instruction emission,
   and guarded attachment preconditions.
 
 Ring publication tests intentionally run producer/consumer service loops to

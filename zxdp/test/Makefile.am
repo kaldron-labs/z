@@ -10,7 +10,8 @@ LDADD = $(top_builddir)/zxdp/src/libZxdp.la \
 	$(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-noinst_PROGRAMS = ZxdpRingTest ZxdpPoolTest ZxdpInstanceTest ZxdpClassifierTest
+noinst_PROGRAMS = ZxdpOffloadTest ZxdpRingTest ZxdpPoolTest ZxdpInstanceTest ZxdpClassifierTest
+ZxdpOffloadTest_SOURCES = ZxdpOffloadTest.cc
 ZxdpRingTest_SOURCES = ZxdpRingTest.cc
 ZxdpPoolTest_SOURCES = ZxdpPoolTest.cc
 ZxdpInstanceTest_SOURCES = ZxdpInstanceTest.cc

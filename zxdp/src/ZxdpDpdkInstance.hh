@@ -59,7 +59,9 @@ public:
   bool zeroCopy() const override { return m_ring; }
   ZuBSpan mac() const override { return m_mac.addr_bytes; }
 
+  bool txReady(uint8_t *) const override;
   bool send(uint8_t *, unsigned) override;
+  bool tcpChksumOffload() override { return ready() && m_tcpOffload; }
   void rx() override;
   void wake() override;
   unsigned pollTx() override;
@@ -91,6 +93,7 @@ private:
   unsigned	m_mtu = 0, m_appTx = 0, m_afPacketMinRxSize = 0;
   uint16_t	m_port = NoPort;
   bool		m_ring = false, m_pcap = false;
+  bool		m_tcpOffload = false;
   int		m_wakeFD = -1;
 
   ZmRef<BufPool>	m_rxPool;

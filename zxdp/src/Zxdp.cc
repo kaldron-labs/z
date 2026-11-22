@@ -37,6 +37,7 @@
 #include <zlib/ZxdpBPF.hh>
 #include <zlib/ZxdpUMem.hh>
 #include <zlib/ZxdpPool.hh>
+#include <zlib/ZxdpTx.hh>
 
 #ifdef HAVE_DPDK
 #include <zlib/ZxdpDpdk.hh>
@@ -218,7 +219,6 @@ public:
     m_mx = nullptr;
     m_txSid = 0;
     m_link = {};
-    m_filter = {};
     m_nextQueue = m_nAppTxPools = 0;
     m_wakes = m_parking = m_rxReturned = 0;
     m_ioError = 0;
@@ -245,7 +245,9 @@ public:
   unsigned mtu() const override { return m_link.mtu; }
   bool zeroCopy() const override { return allocated() && m_queues[0]->owner.zeroCopy(); }
   ZuBSpan mac() const override { return m_link.mac; }
+  bool txReady(uint8_t *) const override;
   bool send(uint8_t *, unsigned) override;
+  bool tcpChksumOffload() override { return ready() && m_tcpOffload; }
   void rx() override;
   void wake() override {
     notify();
@@ -263,15 +265,9 @@ public:
     if (!params.is<Params>())
       return ZeEXCEPT(Error, "Zxdp", "AF_XDP instance requires XDP parameters");
     const auto &config = params.p<Params>();
-    auto parsed = parseFilter(config.netmask);
-    if (parsed.is<ZeException>()) return ZuMv(parsed).p<ZeException>();
-    auto &filter = parsed.p<Filter>();
     if (m_mx) {
       if (m_mx == mx && m_link.ifindex == config.ifindex &&
-	  m_spin == config.spin && m_txSid == config.txSid &&
-	  m_filter.family == filter.family &&
-	  !memcmp(m_filter.address, filter.address, sizeof(filter.address)) &&
-	  !memcmp(m_filter.mask, filter.mask, sizeof(filter.mask)))
+	  m_spin == config.spin && m_txSid == config.txSid)
 	return {};
       return ZeEXCEPT(Error, "Zxdp", "conflicting AF_XDP initialization");
     }
@@ -299,7 +295,6 @@ public:
     m_link = queried.p<LinkState>();
     m_spin = config.spin;
     m_txSid = config.txSid;
-    m_filter = filter;
     return {};
   }
 
@@ -342,7 +337,8 @@ public:
 	  return ZeEXCEPT(Error, "Zxdp", "duplicate AF_XDP Tx pool");
       new (txPools.push()) ZmRef<Zi::IOBufPool>{reserve};
     }
-    auto created = UMem::create(txPools.cspan(), ingress, m_link.mtu);
+    auto created = UMem::create(txPools.cspan(), ingress, m_link.mtu,
+      tcpChksumAvailable(m_link.ifindex));
     if (created.is<ZeException>()) return ZuMv(created).p<ZeException>();
     auto arena = ZuMv(created).p<ZmRef<UMem>>();
     const auto &layout = arena->layout();
@@ -498,7 +494,7 @@ private:
       if (epoll_ctl(m_events, EPOLL_CTL_ADD, queue.service.fd(), &event))
 	return ioError("AF_XDP readiness registration");
     }
-    auto loaded = m_program.load(m_link.rxQueues, m_filter);
+    auto loaded = m_program.load(m_link.rxQueues);
     if (loaded.is<ZeException>()) return loaded;
     for (unsigned i = 0; i < m_queues.length(); ++i) {
       auto &queue = *m_queues[i];
@@ -509,6 +505,8 @@ private:
     auto attached = m_attachment.attach(m_link.ifindex, m_program);
     if (attached.is<ZeException>()) return attached;
 
+    m_tcpOffload = m_queues[0]->owner.txMetadata() &&
+      m_queues[0]->service.zeroCopy() && tcpChksumAvailable(m_link.ifindex);
     m_txConsumed = m_queues[0]->service.tx().consumed();
     m_txExit = m_txExited = 0;
     m_ioState = Active;
@@ -671,9 +669,8 @@ private:
   RecvFn	m_receive;
   StopFn	m_txStopped;
   LinkState	m_link;
-  Filter	m_filter;
   ZeException	m_error;
-  bool		m_startFailed = false;
+  bool		m_startFailed = false, m_tcpOffload = false;
   bool		m_ingressQuiesced = true, m_ingressUncertain = false;
   ZmAtomic<unsigned> m_stopQueued{StopIdle};
   unsigned	m_spin = 1000, m_rxRingCount = 0, m_txRingCount = 0;
@@ -723,13 +720,15 @@ void Instance::status()
   ZiLOG(Info, "Zxdp", ([
     index = ifindex(), state = Engine::state(), mtu = m_link.mtu,
     address = mac, allocated = allocated(), copy = !zeroCopy(),
-    queues = m_link.rxQueues, rxDesc = m_rxRingCount, txDesc = m_txRingCount
+    queues = m_link.rxQueues, rxDesc = m_rxRingCount, txDesc = m_txRingCount,
+    tcpOffload = tcpChksumOffload()
   ](auto &out) {
     out << "AF_XDP ifindex " << ZuBoxed(index) << " state " << ZuBoxed(state)
       << " MTU " << ZuBoxed(mtu) << " MAC " << address
       << " mode " << (allocated ? (copy ? "copy" : "zero-copy") : "unallocated")
       << " Rx queues " << ZuBoxed(queues) << " Rx descriptors per queue " << ZuBoxed(rxDesc)
-      << " Tx descriptors " << ZuBoxed(txDesc);
+      << " Tx descriptors " << ZuBoxed(txDesc)
+      << " TCP checksum " << (tcpOffload ? "offload" : "offload unavailable");
   }));
 }
 
@@ -751,6 +750,15 @@ unsigned Instance::allQueues(Ztc::QueueMgr::AllFn fn) const
   }
   return count;
 }
+bool Instance::txReady(uint8_t *packet) const
+{
+  if (!ready() || !packet) return false;
+  auto pool = m_arena->pool(packet);
+  if (!pool || pool == m_rxPool.ptr()) return false;
+  auto id = pool->slot(packet);
+  return id != BufPool::NoSlot && !m_arena->txSlot(*pool, id).pending;
+}
+
 bool Instance::send(uint8_t *packet, unsigned length)
 {
   if (!ready() || !packet || !length) return false;
@@ -771,7 +779,16 @@ bool Instance::send(uint8_t *packet, unsigned length)
   slot.pending = true;
   ++slot.refs;
   auto address = uint64_t(packet - m_arena->data());
-  ring.entry(0) = {address, length, 0};
+  unsigned options = 0;
+  if (m_tcpOffload) {
+    TxTCP tcp;
+    if (tcp.init(packet, length)) {
+      tcp.metadata(packet);
+      length = tcp.wire;
+      options = XDP_TX_METADATA;
+    }
+  }
+  ring.entry(0) = {address, length, options};
   bool idle = !m_txPending++;
   ring.commit();
   if (idle) m_mx->run([this] { serveTx(); }, m_txSid);

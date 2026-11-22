@@ -13,6 +13,24 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
   across its simulated wire into an mbuf from the destination's Rx pool.
   Quiesce the software producer before draining that queue.
 
+## TCP checksum offload
+
+* Discover device TCP checksum offload through DPDK / AF_XDP and enable it when
+  supported. `tcpChksumOffload()` reports active offload after start, including
+  configuration fallback; it does not merely report advertised capability.
+* Zxdp implements no software TCP checksum. The caller finalizes checksums when
+  offload is unavailable and supplies the pseudo-header seed when it is active.
+  All output uses plain `send()`. DPDK installs native header lengths/flags and
+  excludes Ethernet padding from the offloaded extent; clear stale metadata on
+  every submission/refusal. AF_XDP queries netdev XSK checksum capability and
+  enables UMEM Tx metadata when supported. Report true only for registered
+  metadata on native zero-copy service with current driver support. Reserve a
+  private aligned prefix without consuming configured packet capacity or
+  head/tail room; disable metadata if it would exceed the kernel page limit.
+  Registration fallback preserves software output in the caller. Never request
+  `XDP_UMEM_TX_SW_CSUM` in the library. Reset descriptor options on every
+  accepted submission; refuse before touching metadata or caller bytes.
+
 ## AF_XDP
 
 * Select the cold instance with `instance(Type::Xdp)`. Configure the sender
@@ -59,9 +77,13 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
   Check exit during service and idle spin, then drain sender callbacks with a
   FIFO continuation before engine stop retires sockets.
 * Construct payload directly in registered backing. No payload staging or copy.
+* `txReady(packet)` reads existing slot submission state on the Tx owner before
+  retained header re-encoding. It reserves nothing and adds no lease or slot state.
+  Encoding and the subsequent synchronous send must stay on that owner without an
+  intervening submission of the slot. Raw send retains its own admission checks.
 * Recycle submitted backing after its CQ retires the kernel lease. Reuse the
   same allocated arena across runs and return caller-held leases before final.
-* Queue configuration and mask compilation are cold-path operations.
+* Queue configuration and redirect program loading are cold-path operations.
 * Own the required `rx()`/`wake()` pair: spin for a configurable count before
   blocking with the most efficient suitable kernel mechanism; receive packets
   until explicitly woken, then return. With epoll, post wakeups through an
