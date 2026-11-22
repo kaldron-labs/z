@@ -35,16 +35,17 @@ that backing. Initialization and `connected()` may have no buffer. Native messag
 to connection error/teardown handling.
 
 `ZiTxContext::length` retains the latest signed send result, including callbacks
-that select subsequent output without a buffer installed. Its packed `flags`
-distinguish data completion, disconnect and retained-range mode. Completion of
-data does not retire kernel-held backing: a saved Tx context retains the original
-buffer and callback until that operation can safely release it. Producer changes
-clear only `TxDataDone`, preserving pending disconnect and retained-range state.
+that select subsequent output without a buffer installed. `offset` tracks partial
+send progress independently of the buffer descriptor. `state` holds the packed
+disconnect flag; it has no data-completion or retained-range flags.
+`complete()` clears the current callback and buffer and releases connection sync
+waiters. A backend that retains backing after local completion must hold its own
+buffer reference or provider lease until retirement; Zi does not save a second Tx
+context for that purpose.
 
 `ZmPQRx` is Rx-owned in its entirety. `ZmPQTx` is Tx-owned in its entirety.
-If a class inherits both, as `Zquic::Stream` does, each base subobject still
-keeps its own shard ownership. Rx code may use only the `ZmPQRx` side; Tx code
-may use only the `ZmPQTx` side.
+A class with both facilities keeps each base subobject on its owner.
+`Zquic::Stream` uses its Rx base on Rx and its unsent plaintext FIFO on Tx.
 
 ### Allocator registration
 

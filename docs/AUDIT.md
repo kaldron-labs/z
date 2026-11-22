@@ -37,8 +37,10 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
   Problem: formatting discards structured error identity and provenance, and
   callers cannot propagate or inspect the original error.
   Fix: follow [Errors and events](FRAMEWORK.md#errors-and-events). Higher-level
-  fallible functions normally return `ZuUnion<T, ZeException>` (or
-  `ZuUnion<void, ZeException>`); low-level OS wrappers may use a `ZeError`
+  functions used only for startup initialization/configuration may throw
+  `ZeException`. Fallible functions callable during steady operation return
+  `ZuUnion<T, ZeException>` (or `ZuUnion<void, ZeException>`) instead of throwing;
+  low-level OS wrappers may use a `ZeError`
   output parameter. Preserve typed `ZeEvent`-derived events or type-erased
   `ZeException` through callbacks and retained state. Capture original OS
   errors as `ZeError` instead of transporting `strerror()` output.

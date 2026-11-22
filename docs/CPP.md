@@ -99,6 +99,15 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
 - maximally leverage the Z framework foundation libraries:
   - `zu`, `zm`, `zt`, `zf`, `ze`, `zi`
 
+### Exceptions and Error Returns
+- never throw exceptions on a hot path during systained program run
+- above `ze`, do not throw anything other than `ZeException`-derived types in Z
+- prefer returning `ZuUnion<T, ZeException>` (`T` is most often `void`) to throwing exceptions
+  - `T` is the normal return, `ZeException` is the type-erased `ZeEvent` for the error
+  - EXCEPT prefer exceptions to `ZuUnion<T, ZeException>` return values:
+    - during one-time initialization or configuration occurring exclusively during program startup
+- see also [Errors and events](FRAMEWORK.md#errors-and-events).
+
 ## Windows
 - MSVC/Intel compatibility is a non-goal
 - Targets are gcc and clang under MinGW / MSYS2, 64bit only

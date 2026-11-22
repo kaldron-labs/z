@@ -51,11 +51,16 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
 - At `ze` and above, errors must be represented by low-level OS `ZeError`
   values or structured `ZeEvent`-derived events, including typed events and
   the type-erased `ZeException`.
-- Higher-level functions that can fail normally return
-  `ZuUnion<T, ZeException>`, where `T` is the normal result type. Use
-  `ZuUnion<void, ZeException>` when successful completion has no value.
-  Low-level OS wrappers may instead report a `ZeError` through an output
-  parameter.
+- Initialization and configuration functions called only during program startup
+  may throw `ZeException` to report failure.
+  - use `ZeEXCEPT(...)`, e.g. `throw ZeEXCEPT`
+- Higher-level fallible functions that might be called during steady operation
+  return `ZuUnion<T, ZeException>` instead of throwing, where `T` is the normal
+  result type. Use `ZuUnion<void, ZeException>` when successful completion has
+  no value. This also applies to initialization or configuration functions that
+  support use during steady operation; the function's name does not determine
+  its error contract. Low-level OS wrappers may instead report a `ZeError`
+  through an output parameter.
 - Never return, store, or propagate an error as a plain string. This includes
   returning strings by value, writing errors through mutable string references
   or pointers, retaining error-string members, and passing strings as the error
@@ -70,6 +75,10 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
   The captured text will eventually form part of a logged error message;
   `ZeString` itself is not an error representation. Formatting a structured
   error at its final logging or presentation boundary is permitted.
+- for performance-sensitive low-level system functions such as system call wrappers, align with OS conventions:
+  - return `int` (negative means error)
+  - use `Zi::IOError`, etc. for I/O functions
+  - provide an optional `ZeError *e = nullptr` parameter to provide the error to the caller if needed
 
 ### Fixed and floating point
 - use CPU/GPU device-native types for quantitative analysis
