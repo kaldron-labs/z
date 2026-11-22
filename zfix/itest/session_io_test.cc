@@ -2720,21 +2720,30 @@ static void nativeReplacement(unsigned mode, bool established = false)
   }
   // Logical callbacks retire before either hub finalizes its owner queues.
   // Never destroy an active fixture owner to conceal a failed protocol/drain.
-  bool drained = true;
+  bool drained = true, stoppedA = true, stoppedB = true, stoppedServer = true;
   if (attemptedA) {
-    bool stopped = state.stoppedA.timedwait(Zm::now(5)) == 0;
-    ZuCheck(stopped); drained &= stopped;
+    stoppedA = state.stoppedA.timedwait(Zm::now(5)) == 0;
+    ZuCheck(stoppedA); drained &= stoppedA;
   }
   if (attemptedB) {
-    bool stopped = state.stoppedB.timedwait(Zm::now(5)) == 0;
-    ZuCheck(stopped); drained &= stopped;
+    stoppedB = state.stoppedB.timedwait(Zm::now(5)) == 0;
+    ZuCheck(stoppedB); drained &= stoppedB;
   }
   if (state.accepted.load_()) {
-    bool stopped = state.stoppedServer.timedwait(Zm::now(5)) == 0;
-    ZuCheck(stopped); drained &= stopped;
+    stoppedServer = state.stoppedServer.timedwait(Zm::now(5)) == 0;
+    ZuCheck(stoppedServer); drained &= stoppedServer;
   }
   if (!drained) {
-    log_("Bail out! replacement owner did not drain mode=", mode);
+    log_("Bail out! replacement owner did not drain mode=", mode,
+      " established=", established, " exchangedAll=", exchangedAll,
+      " attemptedA=", attemptedA, " attemptedB=", attemptedB,
+      " stoppedA=", stoppedA, " stoppedB=", stoppedB, " stoppedServer=", stoppedServer,
+      " accepted=", state.accepted.load_(), " physicalOpen=", state.physicalOpen.load_(),
+      " physicalClosed=", state.physicalClosed.load_(),
+      " serverStops=", state.serverStops.load_(), " errors=", state.errors.load_(),
+      " served=", state.served.load_(),
+      " received=", state.received.load_(), " loadPublished=", state.loadPublished.load_(),
+      " workReplied=", state.workReplied.load_());
     abort();
   }
   bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);

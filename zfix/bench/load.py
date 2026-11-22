@@ -2,6 +2,7 @@
 """Measure independent FIX peers in separate processes and retain raw evidence."""
 import argparse
 import importlib.util
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -108,8 +109,14 @@ def metadata(options, pair, programs):
               "programs": {}, "linkedLibraries": {},
               "arguments": {k: str(v) if isinstance(v, Path) else v
                                               for k, v in vars(options).items()},
+              "network": {"topology": options.network, "zfixTcpBackend": options.tcp_backend,
+                          "quickfixTcpBackend": "kernel", "serverIp": options.server_ip,
+                          "nativePoolCount": options.native_pool_count
+                              if options.tcp_backend == "zutcp" else None},
               "differences": {
-                  "bind": "native loopback; QuickFIX wildcard IPv4; local clients use localhost",
+                  "bind": ("Zfix fixture IPv4; QuickFIX wildcard IPv4; clients use fixture IPv4"
+                           if options.network == "fixture-veth" else
+                           "native loopback; QuickFIX wildcard IPv4; local clients use localhost"),
                   "validation": "native declared typed dictionary; QuickFIX canonical dictionary "
                                 "and default validation; directional interop expectations "
                                 "are recorded separately",
@@ -165,11 +172,14 @@ def peer_command(options, command, directory, role, diagnostic):
         else:
             environment += [f"LD_PRELOAD={options.heaptrace.resolve()}",
                             f"ZFIX_HEAPTRACE_FILE={directory / (role + '-heap.json')}"]
-    if not environment:
-        return command
-    # libtool sources the wrapper to set library paths and substitutes its ELF
-    # argument before env installs the observer. Python/libtool/env are unobserved.
-    return [str(BASE.parent / "libtool"), "--mode=execute", "env", *environment, *command]
+    if environment:
+        # Resolve the peer before installing its observer, inside its namespace.
+        command = [str(BASE.parent / "libtool"), "--mode=execute", "env",
+                   *environment, *command]
+    if options.network == "fixture-veth":
+        namespace = options.client_namespace if role == "client" else options.server_namespace
+        command = ["ip", "netns", "exec", namespace, *command]
+    return command
 
 
 def common_args(options, profile):
@@ -213,12 +223,26 @@ def run_case(options, pair, root, programs, label, profile, transport, repeat, d
             "remote": remote, "commands": {},
             "resources": {}, "status": "running", "timeouts": 0,
             "expectedOrders": options.count * options.sessions}
+    case["network"] = options.network
+    case["zfixTcpBackend"] = options.tcp_backend
+    case["nativePoolCount"] = (options.native_pool_count
+                               if options.tcp_backend == "zutcp" and
+                               "native" in (client_kind, server_kind) else None)
+    case["tcpBackends"] = {
+        role: ("external (unmeasured)" if kind == "external" else
+               "Zutcp/AF_XDP" if kind == "native" and options.tcp_backend == "zutcp" else
+               "kernel TCP")
+        for role, kind in (("client", client_kind), ("server", server_kind))}
     processes = {}
     started = time.monotonic()
     try:
         ports = options.remote_ports
         if not remote:
             command = [str(programs[f"{server_kind}_server"]), "--port", "0", *common]
+            if options.network == "fixture-veth":
+                command[command.index("--port") + 1] = "19140"
+                if server_kind == "native":
+                    command += ["--bind", options.server_ip]
             command = peer_command(options, command, directory, "server", diagnostic)
             case["commands"]["server"] = command
             with (directory / "server.log").open("wb") as errors:
@@ -253,7 +277,7 @@ def run_case(options, pair, root, programs, label, profile, transport, repeat, d
             processes["relay"] = proxy
             opened = pair.ready(proxy, directory / "relay.jsonl", options.ready_timeout)
             ports = opened["ports"]
-        host = options.remote_host or "localhost"
+        host = options.remote_host or options.server_ip or "localhost"
         if remote and profile in ("fragmentation", "replay"):
             host = "localhost"
         command = [str(programs[f"{client_kind}_client"]), "--host", host,
@@ -293,6 +317,20 @@ def run_case(options, pair, root, programs, label, profile, transport, repeat, d
         for row in servers:
             assert row["errors"] == 0, row
             assert row["progress"]["complete"] == options.count + options.warmup, row
+        case["backendObservations"] = {}
+        for role in ("client", "server"):
+            if remote and role == "server":
+                continue
+            observations = [r for r in pair.records(directory / f"{role}.jsonl")
+                            if r.get("event") == "tcp_backend"]
+            if case["tcpBackends"][role] == "Zutcp/AF_XDP":
+                assert len(observations) == 1, (role, "missing active native backend record")
+                observed = observations[0]
+                assert observed["backend"] == "Zutcp/AF_XDP" and observed["ready"] is True
+                assert observed["poolCount"] == options.native_pool_count
+                case["backendObservations"][role] = observed
+            else:
+                assert not observations, (role, "unexpected native transport activation")
         if "relay" in processes:
             summary = pair.records(directory / "relay-summary.jsonl")
             assert not any(row["event"] in ("frame", "fault") for row in summary), summary
@@ -371,6 +409,9 @@ def report(root, manifest, results):
     lines = ["# FIX process load measurements", "",
              f"Build label: {manifest['buildLabel']}. Platform: {manifest['platform']}.",
              "No configured clean release or platform acceptance is inferred from a label.", "",
+             f"Network: {manifest['network']['topology']}; Zfix TCP stack: "
+             f"{manifest['network']['zfixTcpBackend']}. QuickFIX always uses kernel TCP. "
+             "Per-role active backend observations and exact commands are retained in case.json.", "",
              "CPU/RSS cover whole local processes; latency and orders/s use each client's "
              "measured phase. Wire bytes include warmup and controls, so wire B/s uses "
              "case wall duration including setup/teardown. Shared-window orders/s divides "
@@ -503,8 +544,8 @@ def report(root, manifest, results):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name, default in (("native-client", BASE / "util" / "zfix"),
-                          ("native-server", BASE / "util" / "zfixd"),
+    for name, default in (("native-client", None),
+                          ("native-server", None),
                           ("quickfix-client", BASE / "interop" / "quickfix"),
                           ("quickfix-server", BASE / "interop" / "quickfixd")):
         parser.add_argument(f"--{name}", type=Path, default=default)
@@ -534,6 +575,9 @@ def main():
     parser.add_argument("--ready-timeout", type=float, default=15)
     parser.add_argument("--process-timeout", type=float, default=150)
     parser.add_argument("--build-label", default="unverified")
+    parser.add_argument("--network", choices=("loopback", "fixture-veth"), default="loopback")
+    parser.add_argument("--tcp-backend", choices=("kernel", "zutcp"), default="kernel",
+                        help="TCP stack for Zfix peers; QuickFIX always uses kernel TCP")
     observer = parser.add_mutually_exclusive_group()
     observer.add_argument("--heaptrace", type=Path)
     observer.add_argument("--audittrace", type=Path)
@@ -545,6 +589,39 @@ def main():
     parser.add_argument("--remote-server-label", default="external")
     parser.add_argument("--ca", type=Path)
     options = parser.parse_args()
+    options.client_namespace = options.server_namespace = options.server_ip = None
+    options.native_pool_count = None
+    if options.tcp_backend == "zutcp" and options.network != "fixture-veth":
+        parser.error("Zutcp measurements require --network fixture-veth")
+    if options.network == "fixture-veth":
+        if options.remote_host or any(p in ("fragmentation", "replay")
+                                      for p in options.profile or PROFILES):
+            parser.error("fixture-veth requires local direct profiles (no fragmentation/replay)")
+        if os.environ.get("ZFIX_INTEROP_AFXDP") != "1":
+            parser.error("launch fixture-veth through zfix/interop/afxdp-fixture.sh")
+        options.client_namespace = os.environ.get("ZFIX_INTEROP_CLIENT_NS")
+        options.server_namespace = os.environ.get("ZFIX_INTEROP_SERVER_NS")
+        try:
+            options.server_ip = str(ipaddress.IPv4Address(os.environ.get("ZFIX_INTEROP_SERVER_IP")))
+        except (ipaddress.AddressValueError, TypeError):
+            parser.error("fixture-veth requires the fixture server IPv4 address")
+        if not options.client_namespace or not options.server_namespace:
+            parser.error("fixture-veth requires both peer namespaces")
+        if options.sessions > 65536 - 19140:
+            parser.error("fixture-veth sessions exceed the fixed listener port range")
+        if options.tcp_backend == "zutcp":
+            try:
+                options.native_pool_count = int(os.environ.get("ZFIX_INTEROP_POOL_COUNT", "1024"))
+            except ValueError:
+                parser.error("invalid ZFIX_INTEROP_POOL_COUNT")
+            if not 1024 <= options.native_pool_count <= 65536:
+                parser.error("ZFIX_INTEROP_POOL_COUNT must be between 1024 and 65536")
+    if options.native_client is None:
+        options.native_client = (BASE / "interop" / "afxdp_zfix" if options.tcp_backend == "zutcp"
+                                 else BASE / "util" / "zfix")
+    if options.native_server is None:
+        options.native_server = (BASE / "interop" / "afxdp_zfixd" if options.tcp_backend == "zutcp"
+                                 else BASE / "util" / "zfixd")
     if not hasattr(os, "wait4"):
         parser.error("wait4 process resource measurement requires a supported POSIX host")
     if any(getattr(options, name) <= 0 for name in (
@@ -592,7 +669,7 @@ def main():
     programs = {name: getattr(options, name).resolve() for name in names}
     manifest = metadata(options, pair, programs)
     if "tls" in transports:
-        pair.certificate(root)
+        pair.certificate(root, options.server_ip)
         manifest["certificateSha256"] = pair.digest(root / "cert.pem")
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(json.dumps({"event": "artifacts", "path": str(root)}), flush=True)

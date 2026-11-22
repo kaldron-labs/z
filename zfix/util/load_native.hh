@@ -25,6 +25,7 @@
 
 #ifdef ZFIX_LOAD_AFXDP
 #include "../itest/afxdp_wire.hh"
+#include "../interop/load_afxdp.hh"
 #endif
 
 namespace ZfixLoad {
@@ -139,7 +140,11 @@ template <typename Net> struct NativeHub<Net, true> : Zfix::Client<NativeHub<Net
       params.rxAllocator(rx);
     }
     if (!params.txAllocator()) {
+#ifdef ZFIX_LOAD_AFXDP
+      tx = afxdpAllocator<typename Link::TxBufAlloc>(params.multiplex());
+#else
       tx = Link::txAllocator(params.multiplex());
+#endif
       params.txAllocator(tx);
     }
     return Zfix::Client<NativeHub, Dictionary, Net>::init(ZuMv(params));
@@ -234,7 +239,11 @@ friend inline ZuStringT<"Zfix.Load.Hub"> ZmNHeapID(NativeHub *);
       params.rxAllocator(rx);
     }
     if (!params.txAllocator()) {
+#ifdef ZFIX_LOAD_AFXDP
+      tx = afxdpAllocator<typename Link::TxBufAlloc>(params.multiplex());
+#else
       tx = Link::txAllocator(params.multiplex());
+#endif
       params.txAllocator(tx);
     }
     return Zfix::Server<NativeHub, Dictionary, Net>::init(ZuMv(params));

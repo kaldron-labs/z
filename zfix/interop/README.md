@@ -25,8 +25,11 @@ scenarios with leak detection enabled, including eight forced/graceful TCP
 shutdown rounds. The original failing probe binary also passed against the
 repaired SDK before the regression was added.
 
-The peer dependency is pinned to [QuickFIX/C++ 1.16.0](https://github.com/quickfix/quickfix/releases/tag/v1.16.0),
-commit `2ce8a60667d95a55cdc57a210f165e19cb757126`.
+The peer dependency uses current QuickFIX/C++ master commit
+[`386ce46e917ae494ab6e90b1be90fd421cdbe3f9`](https://github.com/quickfix/quickfix/commit/386ce46e917ae494ab6e90b1be90fd421cdbe3f9).
+Upstream still reports version 1.16.0; the commit and content hashes identify
+this newer snapshot. Earlier verification records above describe their original
+SDK revision, not a new sanitizer qualification of this update.
 `quickfix.lock` records the source archive, canonical `spec/FIX44.xml` and
 fixture-only `quickfix.patch` SHA-256 hashes. Fixture dictionaries must be named
 explicitly; custom tags/groups will
@@ -316,6 +319,14 @@ Neither initiator may withhold all ordinary business admission pending that
 liveness echo. The current source requires nonzero admitted work, zero completed
 work in the silenced direction, and the matching dropped echo plus Native's own
 timeout diagnostic. See [STATUS.md](../STATUS.md) for current repair execution evidence.
+The relay must establish exactly one upstream connection and close every accepted
+attempt. QuickFIX's one-second reconnect policy can make an extra attempt after
+Native stops listening. Such attempts must be refused and occur after all
+original frame/fault activity; they remain counted in `case.json`, rather than
+being mistaken for another established FIX connection. The current relay trace
+does not timestamp clean socket closure, so it does not prove a stricter ordering
+against that closure. A successful second connection, an unbalanced attempt, an
+earlier refusal or a different failed-attempt error still fails the gate.
 QuickFIX/QuickFIX is excluded from this Native-specific
 timer oracle. All six detailed traces, JSON records, diagnostics, declared
 phases, binary/dictionary pins and valid TAP remain under the printed artifact

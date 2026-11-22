@@ -7,6 +7,16 @@ from pathlib import Path
 import statistics
 
 
+def network_provenance(manifest):
+    # Older loopback manifests have no network annotation. Namespace names are
+    # run-local evidence, while these dimensions must remain stable to reduce.
+    if "network" not in manifest:
+        return None
+    network = manifest["network"]
+    return {key: network[key] for key in
+            ("topology", "zfixTcpBackend", "quickfixTcpBackend", "serverIp", "nativePoolCount")}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("artifacts", type=Path, nargs="+")
@@ -22,6 +32,8 @@ def main():
         if manifest is None:
             manifest = current
         else:
+            assert network_provenance(current) == network_provenance(manifest), (
+                f"different network/backend/pool provenance: {root}")
             for key in ("buildFlags", "dictionarySha256",
                         "cpu", "affinity", "sourceFiles"):
                 assert current[key] == manifest[key], f"different {key}: {root}"

@@ -23,11 +23,19 @@ ip link set zfixr up
 for device in zfixc zfixr; do
   ethtool -K "$device" tx off tso off gso off gro off >/dev/null
 done
+# The peer ingress and route back to the source differ in this private
+# reflection topology. Disable effective reverse-path filtering on that peer.
+sysctl -qw net.ipv4.conf.all.rp_filter=0 net.ipv4.conf.zfixr.rp_filter=0
 
 # Both FIX hubs share the native mux. Reflect its output across the veth peer
 # so each direction traverses AF_XDP Tx and Rx while retaining the same owners.
 tc qdisc add dev zfixr clsact
-tc filter add dev zfixr ingress protocol ip matchall action mirred egress redirect dev zfixr
+# The silent TLS peer uses kernel TCP. Deliver its replies at the peer before
+# reflecting native addresses back through the XDP-owned interface.
+tc filter add dev zfixr ingress pref 1 protocol ip u32 \
+  match ip dst 198.18.92.100/32 action skbedit ptype host action pass
+tc filter add dev zfixr ingress pref 2 protocol ip matchall \
+  action mirred egress redirect dev zfixr
 
 # The dummy provides a preferred client source in route lookups constrained to
 # zfixc. Neither test endpoint has a local route on the native device.

@@ -183,6 +183,63 @@ framework allocation calls and live bytes, excluding SDK/STL/libc allocations.
 It measures neither peak RSS nor total process heap usage. A requested missing
 or malformed observation fails the run; otherwise the event is optional.
 
+## Matched veth stack and implementation matrix
+
+`load.py --network fixture-veth --tcp-backend kernel|zutcp` uses the existing
+`zfix/interop/afxdp-fixture.sh` topology for both stack selections. The initiator
+and acceptor run in separate namespaces over the same veth settings. In the
+`zutcp` selection only Zfix roles use `afxdp_zfix`/`afxdp_zfixd`; QuickFIX always
+uses its ordinary kernel TCP implementation. Thus QuickFIX/QuickFIX is a
+kernel/kernel control under both selections. Pair names identify implementations,
+not stacks. `case.json` records the selection and each role's actual expected
+stack, with a required runtime plugin-ready/pool-count observation from every
+Zutcp role. Kernel roles must not emit that native activation observation.
+
+Build the private peers with `make -C zfix/interop -j8 all afxdp-programs` after
+their configured dependencies. Run the same dictionary, workload, in-flight
+bound and affinity for the two selections. For example, one stack/session row
+(all four implementation pairings, plain TCP) is:
+
+```sh
+sudo -n unshare --mount --net --propagation private \
+  env ZFIX_INTEROP_POOL_COUNT=65536 bash zfix/interop/afxdp-fixture.sh \
+  python3 -B zfix/bench/load.py --network fixture-veth --tcp-backend zutcp \
+    --dictionary /absolute/quickfix/prefix/share/quickfix/FIX44.xml \
+    --artifacts /new/output/zutcp-128 --sessions 128 --inflight 64 \
+    --count 10000 --warmup 1000 --repeat 3 --profile scalar --transport tcp \
+    --build-label configured-clang-release
+```
+
+Repeat with session counts 1/128 and stack selections kernel/zutcp to cover the
+full 2×2×2×2 plain-TCP matrix. Keep backend order/repetitions in the raw evidence.
+Use `--transport tls` for separately labeled TLS rows; certificates include the
+fixture server IP and verification remains enabled. The veth mode accepts local
+direct profiles (scalar/groups/text/overload); fragmentation/replay relay and
+remote-server profiles retain the existing loopback/remote path.
+
+Fixture listeners use the fixed base port 19140 and consecutive per-session
+ports, with Zfix bound to the fixture IP and QuickFIX's wildcard bind recorded.
+`ZFIX_INTEROP_POOL_COUNT` is read once by private AF_XDP peers, defaults to 1024,
+and accepts 1024–65536. It sets native ingress and internal packet counts and
+the shared exact typed output allocators; TLS additionally shares its existing
+packet-provider type. It preserves buffer type, size, alignment and heap ID,
+adds no production registry, and avoids one large pool per listener. Use 65536
+for both single- and 128-session native comparisons, rather than allowing the
+128-session/in-flight workload to exhaust the default pools. Kernel/QuickFIX
+rows allocate no native pool merely because this environment is present.
+
+The existing reducer intentionally rejects different executable/library hashes.
+Reduce session counts together within each stack selection, then compare their
+explicitly labeled tables; do not relax provenance checks to merge the two
+different Zfix transport executables. Timing excludes observers/captures and
+concurrent builds/tests. Separate small functional runs and the independent
+interop/native wire gates establish correctness. This load harness does not
+claim independent packet capture merely from application counters.
+The reducer also requires matching topology, selected Zfix/QuickFIX TCP backends,
+server IP and native pool count; ephemeral namespace names may differ. Legacy
+manifests without these annotations retain their existing reduction behavior,
+but cannot be mixed with annotated runs as if their topology were known.
+
 ## Separate allocation/copy diagnostics
 
 Add `--heaptrace /absolute/path/to/heaptrace.so` to repeat each case in a

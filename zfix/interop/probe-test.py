@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prove Native FIX probe expiry using independent TCP/TLS peer processes."""
 import argparse
+import errno
 import importlib.util
 import json
 from pathlib import Path
@@ -15,6 +16,21 @@ HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("zfix_pair", HERE.parent / "util" / "pair-test.py")
 pair = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pair)
+
+
+def relay_connections(wire, result, quickfix_client):
+    connected = [row for row in wire if row["event"] == "connected"]
+    assert len(connected) == 1, connected
+    refused = [row for row in wire if row["event"] == "closed" and
+               row.get("detail", "").startswith(f"[Errno {errno.ECONNREFUSED}]")]
+    assert quickfix_client or not refused, refused
+    # QuickFIX reconnects every second. A late attempt can reach the relay
+    # after Native has stopped listening; it must establish no second pair.
+    assert result["opened"] == result["closed"] == 1 + len(refused), result
+    traffic = [row["ns"] for row in wire if row["event"] in ("frame", "fault")]
+    assert traffic and all(row["ns"] > max(traffic) for row in refused), refused
+    return {"established": 1, "acceptedAttempts": result["opened"],
+            "closedAttempts": result["closed"], "refusedAfterTraffic": len(refused)}
 
 
 def run_case(options, root, programs, label, transport):
@@ -97,7 +113,7 @@ def run_case(options, root, programs, label, transport):
         wire = pair.records(directory / "wire.jsonl")
         outcome = [row for row in wire if row["event"] == "result"]
         assert len(outcome) == 1 and outcome[0]["errors"] == 0
-        assert outcome[0]["opened"] == outcome[0]["closed"] == 1
+        case["relayConnections"] = relay_connections(wire, outcome[0], client_kind == "quickfix")
         requests = [(i, row) for i, row in enumerate(wire) if row["event"] == "frame"
                     and row["direction"] != direction and row["kind"] == "1"
                     and row.get("admin", {}).get("112")]

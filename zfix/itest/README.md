@@ -33,8 +33,13 @@ setup errors fail the run.
 The kernel `test` target also covers direct socket probes for EAGAIN and closed
 descriptors. The AF_XDP drivers exercise shared assertions over the native
 path, including the silent setup and raw TLS peer cases. The raw TLS peer uses
-kernel TCP and its return frames pass the XDP classifier. The Zfix unit suite
-is transport-independent and runs from `zfix/test`.
+kernel TCP at its dedicated fixture address. The peer veth delivers replies for
+that address to its kernel ingress before the general native reflection rule;
+frames reaching the XDP-owned interface are redirected unconditionally to AF_XDP.
+The private namespace disables effective reverse-path filtering on the peer
+because its ingress and return route deliberately differ in this reflection
+topology. Host network policy is unchanged.
+The Zfix unit suite is transport-independent and runs from `zfix/test`.
 
 `tcp_test` and `tls_test` compile the same transport fixture over Ztcp
 and Ztls. Each runs one connection, three simultaneous connections, and two

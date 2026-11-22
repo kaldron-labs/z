@@ -76,7 +76,10 @@ public:
 
   void disconnected(bool peer) { this->clearInput(); this->transportDown_0(peer); }
 
-  int process(typename Net::RxStream &s) { this->input_(s); return this->process_(s); }
+  int process(typename Net::RxStream &s) {
+    NetInput<Impl, Net>::input_(s);
+    return this->process_(s);
+  }
 
   bool sendRecord(ZmRef<ZiIOBuf> b) { return NetBase::send_(ZuMv(b)); }
 

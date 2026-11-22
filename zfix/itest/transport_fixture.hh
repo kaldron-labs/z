@@ -66,7 +66,7 @@ public:
     }
     auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
     auto opened = xdp->init(&m_mx, Zxdp::Params{Zxdp::Xdp::Params{
-      .ifindex = index, .netmask = "198.18.92.0/30", .txSid = m_mx.params().nThreads()}});
+      .ifindex = index, .txSid = m_mx.params().nThreads()}});
     if (opened.is<ZeException>()) return failed(opened.p<ZeException>());
     ZmRef<Zutcp::Instance> tcp = new Zutcp::Instance;
     auto initialized = tcp->init(&m_mx, ZuMv(xdp), ZuMv(params));

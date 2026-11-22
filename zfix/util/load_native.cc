@@ -85,7 +85,11 @@ static bool load(const Options &o, NativeCheckpoint &s) {
   return f.offset() == f.size();
 }
 static ZiMxParams muxParams() {
-  return ZiMxParams{}.scheduler([](auto &s) {
+  return ZiMxParams{}
+#ifdef ZFIX_LOAD_AFXDP
+    .rxBufSize(afxdpPoolCount())
+#endif
+    .scheduler([](auto &s) {
 #ifdef ZFIX_LOAD_AFXDP
     s.nThreads(5).thread(5, [](auto &t) { t.isolated(true).name("zxdpTx"); });
 #else
@@ -100,7 +104,7 @@ template <typename Net> static int server(const Options &options, Ports ports) {
   NativeState state{options, ZuMv(ports), true};
   ZiMultiplex mx{muxParams()};
 #ifdef ZFIX_LOAD_AFXDP
-  if (!attachAFXDP(mx)) return 1;
+  if (!attachAFXDP(mx, Net::Encrypted)) return 1;
 #endif
   auto deadline = Zm::now(options.deadline); auto start = monotonic();
   using Hub = NativeHub<Net, false>;
@@ -113,6 +117,9 @@ template <typename Net> static int server(const Options &options, Ports ports) {
     hubs.push(ZuMv(hub));
   }
   if (!mx.start()) return 1;
+#ifdef ZFIX_LOAD_AFXDP
+  if (!readyAFXDP(mx)) { mx.stop(); return 1; }
+#endif
   for (auto &hub : hubs) {
     hub->active = hub->initialized && hub->start();
     if (!hub->active) state.fail();
@@ -170,13 +177,16 @@ template <typename Net> static int client(const Options &options, Ports ports) {
   NativeHub<Net, true> hub{&state};
   ZiMultiplex mx{muxParams()};
 #ifdef ZFIX_LOAD_AFXDP
-  if (!attachAFXDP(mx)) return 1;
+  if (!attachAFXDP(mx, Net::Encrypted)) return 1;
 #endif
   auto deadline = Zm::now(options.deadline);
   typename Net::ClientParams params{&mx, "3", "4"};
   if constexpr (Net::Encrypted) params.caPath(options.ca);
   bool initialized = hub.init(ZuMv(params));
   if (!mx.start()) return 1;
+#ifdef ZFIX_LOAD_AFXDP
+  if (!readyAFXDP(mx)) { mx.stop(); return 1; }
+#endif
   bool active = initialized && hub.start();
   Rows<ZmRef<NativeLink<Net, true>>> links;
   if (!active) state.fail();
