@@ -149,6 +149,12 @@ public:
   auto count_() const { return m_queue.count_(); }
   uint64_t length() const { return m_length; }
 
+  auto shift() {
+    auto node = m_queue.shift();
+    if (node) m_length -= node->length;
+    return node;
+  }
+
 private:
   enum { Locked = !ZuIsSame<ZmNoLock, typename Queue::Lock>{} };
   using NodeRef = ZuIf<Locked, typename Queue::NodeRef, typename Queue::NodePtr>;

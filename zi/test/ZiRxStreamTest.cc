@@ -688,6 +688,23 @@ struct RxBase {
   }
 };
 
+void testShift()
+{
+  ZuTestScope(testShift);
+  ZiRxStream<RxQueue> stream;
+  ZuCheck(!stream.shift() && !stream.length());
+  auto first = mkBuf("abcd"), second = mkBuf("ef");
+  auto original = first.ptr();
+  stream.push(ZuMv(first));
+  stream.push(ZuMv(second));
+  ZuCheck(stream.advance(1) == 1 && stream.length() == 5);
+  auto node = stream.shift();
+  ZuCheck(node.ptr() == original && spanEq(node->span(), "bcd") &&
+    stream.length() == 2 && stream.count_() == 1);
+  stream.clean();
+  ZuCheck(spanEq(node->span(), "bcd") && !stream.length() && !stream.shift());
+}
+
 void testGeometry()
 {
   ZuTestScope(testGeometry);
@@ -731,6 +748,7 @@ int main(int argc, char **argv)
   ZuTestCall(testCopyAndEach);
   ZuTestCall(testMoveAndClean);
   ZuTestCall(testEmptyIsPassive);
+  ZuTestCall(testShift);
   ZuTestCall(testGeometry);
   return 0;
 }
