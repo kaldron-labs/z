@@ -472,7 +472,7 @@ struct GoPeer : Zhttp::ProtocolServer<GoPeer<Profile>, Profile, GoLink<Profile>>
       using Native = Zhttp::H2_::SrvLink<GoPeer, GoLink<Profile>>;
       ZmRef<Native> link{reinterpret_cast<Native *>(appLink.session().id)};
       this->txRun([link = ZuMv(link), s = state]() {
-	auto tx = link->txStream_();
+	auto tx = link->txStream_(link->app()->txAllocator());
 	Zhttp::H2_::StreamBytes out{tx};
 	if (Zhttp::H2::putGoaway(out, s->drain ? 1 : 0, Zhttp::H2::Error::NoError) < 0 || !tx.flush())
 	  ++s->errors;
