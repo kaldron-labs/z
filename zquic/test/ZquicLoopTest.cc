@@ -102,7 +102,7 @@ struct TestLink :
       ZmRef<Zquic::RxPkt>{ZuMv(buf)},
       [](const ZmRef<Zquic::RxPkt> &, unsigned, unsigned,
 	  const Zquic::LongHdr &) { return true; },
-      [](const ZmRef<Zquic::RxPkt> &, unsigned, unsigned) { return true; });
+      [](const ZmRef<Zquic::RxPkt> &, unsigned, unsigned, bool *) { return true; });
   }
   bool receivePayload(ZmRef<ZiIOBuf> buf, unsigned longBytes) {
     auto original = buf.ptr();
@@ -119,7 +119,7 @@ struct TestLink :
 	return true;
       },
       [&geometry, &shorts, original, payload, longBytes, length](
-	  const ZmRef<Zquic::RxPkt> &d, unsigned offset, unsigned bytes) {
+	  const ZmRef<Zquic::RxPkt> &d, unsigned offset, unsigned bytes, bool *) {
 	++shorts;
 	geometry &= d.ptr() == original && d->data() == payload &&
 	  offset == longBytes && bytes == length - longBytes;

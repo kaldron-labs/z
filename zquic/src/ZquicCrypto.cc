@@ -1049,12 +1049,20 @@ bool Crypto::initTLS(const CryptoConfig &config)
 bool Crypto::initTLSContext(const CryptoConfig &config)
 {
   if (!Ztls::cryptoInit()) return false;
+  static const Ztls_::KeyExchangeAlgo *keyExchanges[] = {
+#if ZtlsOpenSSLHaveX25519
+    &Ztls_::opensslX25519,
+#endif
+    &Ztls_::opensslSecp256r1, nullptr
+  };
   m_tlsCtx.random = &Ztls_::opensslRandom;
   m_tlsCtx.getTime = &Ztls_::getTime;
-  m_tlsCtx.keyExchanges = Ztls_::opensslKeyExchanges;
+  m_tlsCtx.keyExchanges = keyExchanges;
   for (auto suite : Ztls_::opensslCipherSuites)
-    if (trafficHPCipher(suite))
+    if (trafficHPCipher(suite) &&
+      (!config.chachaOnly || suite->id == Ztls_SuiteChaChaSHA256))
       m_tlsCtx.cipherSuites.push(suite);
+  if (!m_tlsCtx.cipherSuites.length()) return false;
   m_tlsCtx.serverCipherPreference = 1;
   m_tlsCtx.maxEarlyDataSize = config.enable0RTT ? UINT32_MAX : 0;
   m_tlsCtx.omitEndOfEarlyData = 1;

@@ -1161,10 +1161,72 @@ void testFrameVariantLifetime()
 #endif
 }
 
+void testPathEpochRetirement()
+{
+  ZuTestScope(testPathEpochRetirement);
+  Zquic::PktTxSpace tx;
+  for (unsigned pn = 0; pn < 3; ++pn) {
+    auto p = txStreamPkt(pn, 0, pn * 100, 100, pn == 2);
+    p.pathEpoch = pn;
+    p.ecn = Zquic::EcnMark::ECT0;
+    p.pmtudProbe = pn == 1;
+    p.pmtudSize = 1400;
+    ZuCheck(tx.add(p));
+  }
+  ZuCheck(tx.ectRetained() == 3);
+  Zquic::AckRange ranges[]{Zquic::AckRange{2, 0}};
+  Zquic::PktAckBatch batch;
+  Zquic::PktTxUpdate first;
+  ZuCheck(!tx.ackBatch(ranges, 1, batch, 1,
+    Zquic::PktNumSpace::AppData, &first, 0, 1));
+  ZuCheck(first.ackdFrames.length() == 1 && !first.normalAckdBytes &&
+    !first.ecnAckdPackets && !batch.ackd && tx.ectRetained() == 2);
+  // Promotion between bounded turns clears the prior epoch's staged RTT
+  // and byte summaries while continuing all protocol retirement.
+  Zquic::PktTxUpdate rest;
+  ZuCheck(tx.ackBatch(ranges, 1, batch, 8,
+    Zquic::PktNumSpace::AppData, &rest, 0, 2));
+  ZuCheck(rest.ackdFrames.length() == 2 && rest.normalAckdBytes == 100 &&
+    !rest.pmtudAckdBytes && rest.ecnAckdPackets == 1 &&
+    batch.ackd == 1 && batch.latestAckd == 2 && !tx.count() &&
+    !tx.ectRetained());
+
+  auto old = txStreamPkt(3, 0, 300, 100, true);
+  old.pathEpoch = 1;
+  old.ecn = Zquic::EcnMark::ECT0;
+  ZuCheck(tx.add(old));
+  Zquic::PktLossBatch losses;
+  Zquic::PktTxUpdate loss;
+  ZuCheck(tx.markPktThreshLossBatch(6, 3, losses, 8, &loss, 2));
+  ZuCheck(loss.lostBytes == 100 && !loss.normalLostBytes &&
+    !*loss.normalLostSentTime && tx.retransmitPending() == 1 &&
+    !losses.lost && tx.ectRetained() == 1);
+  Zquic::SentFrameRef retained;
+  ZuCheck(tx.nextRetransmit(retained) && retained.fin && retained.offset == 300);
+  Zquic::PktTxUpdate late;
+  Zquic::PktAckBatch lateBatch;
+  Zquic::AckRange lateRange{3, 3};
+  ZuCheck(tx.ackBatch(&lateRange, 1, lateBatch, 8,
+    Zquic::PktNumSpace::AppData, &late, 0, 2));
+  ZuCheck(late.ackdFrames.length() == 1 && !late.normalAckdBytes &&
+    !lateBatch.ackd && !tx.count() && !tx.ectRetained());
+  auto cancelled = txPkt(4);
+  cancelled.ecn = Zquic::EcnMark::ECT0;
+  cancelled.pathEpoch = 7;
+  uint64_t epoch = 0;
+  ZuCheck(tx.add(cancelled) && tx.ectRetained() == 1 &&
+    tx.discard(4, &epoch) && epoch == 7 && !tx.ectRetained());
+  ZuCheck(tx.add(cancelled));
+  unsigned budget = 8;
+  ZuCheck(tx.drain(budget) && !tx.ectRetained());
+
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(testPathEpochRetirement);
   ZuTestCall(testRecovery);
   ZuTestCall(testPktReorderDuplicateLoss);
   ZuTestCall(ackdFrameStopsLossReclaim);

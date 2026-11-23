@@ -330,6 +330,7 @@ struct CryptoConfig {
   void			*saveSessionTicketArg = nullptr;
   void			(*saveSessionTicket)(void *, ZuBSpan) = nullptr;
   ZuBSpan		sessionTicket;
+  bool			chachaOnly = false;
 };
 
 ZuDerive(TLSTransportParams,

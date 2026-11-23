@@ -29,6 +29,7 @@ struct alignas(Zm::CacheLineSize) CliRxStorage {
   uint16_t		port = 0;
   bool			peerParamsValidated = false;
   bool			handshakeConfirmed = false;
+  bool			handshakeDonePending = false;
   bool			notifyEndpointDown = true;
 };
 
@@ -603,6 +604,7 @@ private:
     m_cliRx.remoteAddr = {};
     m_cliRx.peerParamsValidated = false;
     m_cliRx.handshakeConfirmed = false;
+    m_cliRx.handshakeDonePending = false;
     m_cliRx.bootstrap = {};
     Base::resetLink([link = impl(), l = ZuMv(l)]() mutable {
       link->app()->txRun([link] {
@@ -661,7 +663,8 @@ private:
       .saveSessionTicketArg = impl(),
       .saveSessionTicket = [](void *arg, ZuBSpan ticket) {
 	static_cast<Impl *>(arg)->saveEarlyData_(ticket);
-      }
+      },
+      .chachaOnly = app()->chachaOnly()
     };
     ZuBSpan sessionTicket;
     ZuBSpan appParams;
@@ -694,13 +697,16 @@ private:
     Base::initClientPath_(m_cliRx.localAddr, m_cliRx.remoteAddr);
     if (!initRuntimeCrypto()) return false;
     if (!Base::startHandshake()) return false;
-    return emitTLS_(0, {}, m_cliRx.remoteAddr);
+    if (!emitTLS_(0, {}, m_cliRx.remoteAddr)) return false;
+    if (Base::crypto_().earlyDataEnabled())
+      app()->earlyDataReady(impl());
+    return true;
   }
 
   void restartAfterRetry_0() {
     Base::resetLink([link = impl()] {
       if (!link->restartAfterRetry_1()) link->tlsFailure();
-    });
+    }, true);
   }
   bool restartAfterRetry_1() {
     m_cliRx.peerParamsValidated = false;
@@ -734,6 +740,11 @@ private:
     Base::validatePath_();
     Base::schedulePMTUD();
     Base::scheduleMigrationCIDs();
+    if (m_cliRx.handshakeDonePending) {
+      m_cliRx.handshakeDonePending = false;
+      Base::discardPktNumSpace_0(PktNumSpace::Handshake);
+      preferredAddress();
+    }
     impl()->connected(Connected{
       .alpn = Base::negotiatedProtocol_(),
       .version = Version1
@@ -824,6 +835,9 @@ private:
     });
     return true;
   }
+  void sendObservedResponse(ZuBSpan data, ZiSockAddr addr, ZiSockAddr, unsigned) {
+    (void)sendPathResponseTx(data, ZuMv(addr));
+  }
   bool sendPathResponseTx(ZuBSpan data, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client PATH_RESPONSE outside Tx thread", return false);
@@ -853,6 +867,7 @@ private:
   void preferredAddress() {
     if (m_cliRx.handshakeConfirmed) return;
     m_cliRx.handshakeConfirmed = true;
+    impl()->handshakeConfirmed();
     if (app()->migrationMode() == MigrationMode::Disabled) return;
     auto remote = Base::crypto_().peerParams().preferredAddress.select(
       m_cliRx.remoteAddr.ip());
@@ -868,6 +883,7 @@ private:
       if (!link->prepareMig(params, reason, true)) link->m_cliTx.preferred = false;
     });
   }
+  void handshakeConfirmed() { }
 
   template <typename L> void commitMigEndpoint(L l) {
     if (!m_cliTx.preferred) { l(true); return; }
@@ -901,6 +917,7 @@ private:
     Base::cancelPktWait([this] { Endpoint::finishProbe(false); });
   }
 
+protected:
   void migrationCIDReady() {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client migration CID completion outside Tx thread", return);
@@ -950,6 +967,7 @@ private:
     Base::failMig(MigrationReason::Validation);
   }
 
+private:
   bool sendMigChal(bool retry = false) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client migration challenge outside Tx thread", return false);
@@ -1329,8 +1347,9 @@ private:
 	  unsigned packetLen, const LongHdr &h) {
 	return receivedLong(pkt_, packetOffset, packetLen, h);
       },
-      [this](const ZmRef<RxPkt> &pkt_, unsigned packetOffset, unsigned packetLen) {
-	return receivedShort(pkt_, packetOffset, packetLen);
+      [this](const ZmRef<RxPkt> &pkt_, unsigned packetOffset, unsigned packetLen,
+	  bool *pathAccounted) {
+	return receivedShort(pkt_, packetOffset, packetLen, pathAccounted);
       });
   }
 
@@ -1394,7 +1413,8 @@ private:
       });
   }
 
-  bool receivedShort(const ZmRef<RxPkt> &pkt, unsigned packetOffset, unsigned packetLen) {
+  bool receivedShort(const ZmRef<RxPkt> &pkt, unsigned packetOffset, unsigned packetLen,
+      bool *pathAccounted = nullptr) {
     return Base::rxProtShortPkt(
       pkt, packetOffset, packetLen,
       [this, local = pkt->local](
@@ -1403,15 +1423,16 @@ private:
 	  Base::RxAckMeta &ack, ZquicLog_::PktEvt *qlog) {
 	return consumeFrames_(
 	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog, false, local);
-      });
+      }, nullptr, pathAccounted);
   }
 
   bool consumeFrames_(
     PktNumSpace::T level, uint64_t pn, ZuBSpan frames, ZiSockAddr addr,
     const ZmRef<RxPkt> &packetBuf, Base::RxAckMeta &ack,
-    ZquicLog_::PktEvt *qlog, bool earlyData = false, ZiSockAddr local = {}) {
+    ZquicLog_::PktEvt *qlog, bool earlyData, ZiSockAddr local) {
     ZiSockAddr peer = addr;
-    if (!local) local = m_cliRx.localAddr;
+    if (packetBuf) local = packetBuf->local;
+    if (!local) return false;
     unsigned pathBytes = packetBuf ? packetBuf->length : 0;
     bool ok = Base::consumeProtFrames(
       level, pn, frames, ZuMv(addr), packetBuf, ack, qlog,
@@ -1424,14 +1445,14 @@ private:
 	  level_, frame, ZuMv(addr_), local, pathBytes);
       },
       earlyData);
-    if (ok && level == PktNumSpace::AppData && Base::establishedRx())
-      Base::observePathRx_(ZuMv(local), ZuMv(peer), pathBytes);
+    if (ok && !packetBuf && level == PktNumSpace::AppData && Base::establishedRx())
+      Base::observePathRx_(ZuMv(local), ZuMv(peer), 0);
     return ok;
   }
 
   bool handleControlFrame(
     PktNumSpace::T level, const Frame &frame, ZiSockAddr addr,
-    ZiSockAddr local = {}, unsigned pathBytes = 0) {
+    ZiSockAddr local, unsigned pathBytes = 0) {
     switch (frame.type) {
       case FrameType::MaxData:
       case FrameType::MaxStreamData:
@@ -1451,7 +1472,7 @@ private:
 	if (Base::establishedRx()) {
 	  Base::discardPktNumSpace_0(PktNumSpace::Handshake);
 	  preferredAddress();
-	}
+	} else m_cliRx.handshakeDonePending = true;
 	return true;
       case FrameType::ConnectionClose:
       case FrameType::ApplicationClose:

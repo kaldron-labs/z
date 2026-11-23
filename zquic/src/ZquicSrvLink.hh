@@ -24,6 +24,11 @@ struct alignas(Zm::CacheLineSize) SrvRxStorage {
 struct alignas(Zm::CacheLineSize) SrvTxStorage {
   ZiSockAddr		peerAddr;
   bool			closePeer = false;
+  PktAllocTarget	activeTarget;
+  PktAllocTarget	probeTarget;
+  ZiSockAddr		probeLocal;
+  ZiSockAddr		probeRemote;
+  Path *		responsePath = nullptr;
 };
 
 } // Zquic_
@@ -50,21 +55,43 @@ public:
 
   SrvLink(App *app) : Base{app, true} { Base::initCryptoDelivery(); }
 
-  Zquic_::PktAllocTarget pktAllocTarget() const { return app()->pktAllocTarget(); }
+  Zquic_::PktAllocTarget pktAllocTarget() const {
+    return m_srvTx.probeLocal ? m_srvTx.probeTarget : m_srvTx.activeTarget;
+  }
+  ZiSockAddr outputLocal() const {
+    return m_srvTx.probeLocal ? m_srvTx.probeLocal : Base::activePathLocal_();
+  }
+  bool probingOutput() const {
+    return m_srvTx.probeLocal &&
+      (m_srvTx.probeLocal != Base::activePathLocal_() ||
+       m_srvTx.probeRemote != Base::activePathRemote_());
+  }
+  Path *outputPath() const { return m_srvTx.responsePath; }
+  void pathBinding(const ZiSockAddr &local, unsigned &slot, uint64_t &generation) const {
+    slot = app()->endpointSlot(local);
+    generation = app()->endpointGeneration();
+  }
+  bool pathBindingValid(const ZiSockAddr &local, unsigned slot, uint64_t generation) const {
+    return generation == app()->endpointGeneration() && app()->endpointSlot(local) == slot &&
+      app()->pktAllocTarget(slot, unsigned(generation)).physical;
+  }
   void pktPressureResume() {
     uint64_t runtime = Base::txRuntime();
     retransmit_();
     if (runtime == Base::txRuntime() && !Base::disconnecting_()) flushTx_(m_srvTx.peerAddr);
   }
   void waitPktTx(Zquic_::EndpointTxWait &wait, uint64_t epoch, Zquic_::EndpointTxFn fn) {
-    app()->waitTx(wait, app()->txThread(), epoch, ZuMv(fn));
+    app()->waitTx(wait, app()->txThread(), epoch, ZuMv(fn), pktAllocTarget());
   }
   bool sendEndpointPkt(ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
     EcnMark::T ecn, bool priority = false) {
+    auto target = pktAllocTarget();
+    if (!buf || buf->owner != target.owner) return false;
     return Base::submitPktTx(ZuMv(buf), ZuMv(addr), ecn, priority,
-      [this](auto buf, ZiSockAddr addr, EcnMark::T ecn, bool priority,
+      [this, target](auto buf, ZiSockAddr addr, EcnMark::T ecn, bool priority,
 	Zquic_::EndpointTxToken token, bool *blocked) {
-	return app()->sendPktRaw(ZuMv(buf), ZuMv(addr), ecn, priority, token, blocked);
+	return app()->sendPktRaw(
+	  ZuMv(buf), ZuMv(addr), ecn, priority, token, blocked, target);
       });
   }
 
@@ -276,6 +303,21 @@ private:
       m_srvRx.bootstrap.localInitialSCID(), 0, m_srvRx.bootstrap.statelessResetToken());
     if (!Base::loadSrvParams(m_srvRx.bootstrap)) return false;
     Base::configLocalParams(app());
+    const auto &addrs = app()->runtimeServerAddrs();
+    if (addrs.preferred4 || addrs.preferred6) {
+      PreferredAddress preferred{
+	.ipv4 = addrs.preferred4,
+	.ipv6 = addrs.preferred6
+      };
+      if (!CxnIDGen::random(preferred.cid) || !preferred.resetToken.generate() ||
+	  !Base::addLocalCID_(preferred.cid, 1, preferred.resetToken))
+	return false;
+      Base::setPreferredAddress_(preferred);
+      // Register sequence 1 before TLS can publish the transport parameter.
+      app()->refreshLinkRoutes(impl());
+      auto cid = Base::findLocalCID(1);
+      if (!cid || !cid->associated) return false;
+    }
     if (!Base::deriveInitial_()) return false;
     uint32_t maxEarlyData = app()->maxEarlyData(impl());
     if (!Base::initTLS_(CryptoConfig{
@@ -286,7 +328,8 @@ private:
 	  .keyPath = app()->keyPath(),
 	  .keyLogPath = app()->keyLogPath(),
 	  .qlogTrace = &app()->qlogTrace(),
-	  .encryptTicket = app()->ticketEncryptCB()
+	  .encryptTicket = app()->ticketEncryptCB(),
+	  .chachaOnly = app()->chachaOnly()
 	}))
       return false;
     if (!Base::startHandshake()) return false;
@@ -342,7 +385,10 @@ private:
   bool sendPktPath(
       ZmRef<ZiIOBuf> buf, ZiSockAddr addr, EcnMark::T ecn, bool &sent) {
     sent = false;
+    auto target = pktAllocTarget();
+    if (!buf || buf->owner != target.owner) return false;
     if (!app()->sendPkt(buf)) return true;
+    if (!(target == pktAllocTarget())) return false;
     sent = sendEndpointPkt(ZuMv(buf), ZuMv(addr), ecn);
     return sent;
   }
@@ -353,7 +399,26 @@ private:
   using Base::flushStreamWritable;
   using Base::queueTxFlush;
 
+  template <typename Fn>
+  bool withProbeOutput(ZiSockAddr local, ZiSockAddr remote, Fn fn) {
+    auto previousTarget = m_srvTx.probeTarget;
+    auto previousLocal = m_srvTx.probeLocal;
+    auto previousRemote = m_srvTx.probeRemote;
+    m_srvTx.probeTarget = app()->pktAllocTarget(local);
+    m_srvTx.probeLocal = ZuMv(local);
+    m_srvTx.probeRemote = ZuMv(remote);
+    bool sent = fn();
+    m_srvTx.probeTarget = previousTarget;
+    m_srvTx.probeLocal = ZuMv(previousLocal);
+    m_srvTx.probeRemote = ZuMv(previousRemote);
+    return sent;
+  }
+
   bool sendPassiveMigChal() {
+    return withProbeOutput(Base::validatingLocal(), Base::validatingRemote(),
+      [this] { return sendPassiveMigChal_(); });
+  }
+  bool sendPassiveMigChal_() {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server passive migration challenge outside Tx thread",
       return false);
@@ -401,13 +466,40 @@ private:
       ZiSockAddr remote = addr;
       ZiSockAddr responseAddr = addr;
       link->observePathRxTx(
-	ZuMv(local), ZuMv(remote), rxBytes);
+	local, ZuMv(remote), rxBytes, true, true, false, false);
       link->sendPathResponseTx(
-	payload, ZuMv(responseAddr));
+	payload, ZuMv(responseAddr), ZuMv(local));
     });
     return true;
   }
-  bool sendPathResponseTx(ZuBSpan data, ZiSockAddr addr) {
+  void sendObservedResponse(
+      ZuBSpan data, ZiSockAddr remote, ZiSockAddr local, unsigned bytes) {
+    bool active = local == Base::activePathLocal_() &&
+      remote == Base::activePathRemote_();
+    bool candidate = local == Base::validatingLocal() &&
+      remote == Base::validatingRemote();
+    if (active || candidate) {
+      (void)sendPathResponseTx(data, ZuMv(remote), ZuMv(local));
+      return;
+    }
+    // A competing tuple has only this datagram's allowance. Its response
+    // uses stack state and cannot borrow the retained candidate's credit.
+    Path path = Path::server(local, remote);
+    path.received(bytes);
+    auto previous = m_srvTx.responsePath;
+    m_srvTx.responsePath = &path;
+    (void)sendPathResponseTx(data, ZuMv(remote), ZuMv(local));
+    m_srvTx.responsePath = previous;
+  }
+
+  bool sendPathResponseTx(ZuBSpan data, ZiSockAddr addr, ZiSockAddr local) {
+    ZiSockAddr remote = addr;
+    return withProbeOutput(ZuMv(local), ZuMv(remote),
+      [this, data, addr = ZuMv(addr)]() mutable {
+	return sendPathResponseTx_(data, ZuMv(addr));
+      });
+  }
+  bool sendPathResponseTx_(ZuBSpan data, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server PATH_RESPONSE outside Tx thread", return false);
     return Base::sendPathResponsePkt(
@@ -440,6 +532,8 @@ private:
     // output follows the active tuple; candidate probes use their own route.
     addr = m_srvTx.peerAddr;
     uint64_t runtime = Base::txRuntime();
+    bool probed = Base::hasPendingMigChallenge() && sendPassiveMigChal();
+    if (runtime != Base::txRuntime()) return probed;
     bool sent = Base::flushCtlStreamsBatch(
 	addr,
 	[this](PktBuild &build) {
@@ -455,7 +549,7 @@ private:
     sent |= sendPMTUDProbe(ZuMv(addr));
     if (runtime != Base::txRuntime()) return sent;
     if (!sent) sent = flushPendingAcks(ZuMv(addr));
-    return sent;
+    return sent || probed;
   }
 
   bool sendFrameRefs(const Base::TxPktRefs *recordRefs) {
@@ -858,7 +952,7 @@ private:
 
   bool received_(ZmRef<RxPkt> pkt, const CxnID *routedDCID = nullptr) {
     if (!Base::handshakeStartedRx() && pkt)
-      Base::initServerPath_(app()->local(), pkt->addr);
+      Base::initServerPath_(m_srvRx.initialInfo.local, pkt->addr);
     Base::rxPacket(
       ZuMv(pkt),
       [this](const ZmRef<RxPkt> &pkt_, unsigned packetOffset,
@@ -866,8 +960,9 @@ private:
 	return receivedLong(pkt_, packetOffset, packetLen, h);
       },
       [this, routedDCID](
-	  const ZmRef<RxPkt> &pkt_, unsigned packetOffset, unsigned packetLen) {
-	return receivedShort(pkt_, packetOffset, packetLen, routedDCID);
+	  const ZmRef<RxPkt> &pkt_, unsigned packetOffset, unsigned packetLen,
+	  bool *pathAccounted) {
+	return receivedShort(pkt_, packetOffset, packetLen, routedDCID, pathAccounted);
       });
     return !Base::disconnecting_();
   }
@@ -879,8 +974,11 @@ private:
       [this](const LongHdr &h, const ZmRef<RxPkt> &pkt_) {
 	if (!Base::handshakeStartedRx()) {
 	  ZiSockAddr peerAddr = pkt_->addr;
-	  app()->txInvoke(impl(), [link = impl(), peerAddr]() mutable {
+	  auto target = app()->pktAllocTarget(
+	    m_srvRx.initialInfo.endpointSlot, m_srvRx.initialInfo.runtimeGeneration);
+	  app()->txInvoke(impl(), [link = impl(), peerAddr, target]() mutable {
 	    link->m_srvTx.peerAddr = ZuMv(peerAddr);
+	    link->m_srvTx.activeTarget = target;
 	    return link;
 	  });
 	  if (!initRuntimeCrypto(h, pkt_->length)) return false;
@@ -894,13 +992,13 @@ private:
 	  Base::RxAckMeta &ack, ZquicLog_::PktEvt *qlog,
 	  bool earlyData) {
 	return consumeFrames_(
-	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog, earlyData);
+	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog, earlyData, packetBuf->local);
       });
   }
 
   bool receivedShort(
     const ZmRef<RxPkt> &pkt, unsigned packetOffset, unsigned packetLen,
-    const CxnID *routedDCID = nullptr) {
+    const CxnID *routedDCID = nullptr, bool *pathAccounted = nullptr) {
     return Base::rxProtShortPkt(
       pkt, packetOffset, packetLen,
       [this](
@@ -908,17 +1006,17 @@ private:
 	  ZiSockAddr addr, const ZmRef<RxPkt> &packetBuf,
 	  Base::RxAckMeta &ack, ZquicLog_::PktEvt *qlog) {
 	return consumeFrames_(
-	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog);
+	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog, false, packetBuf->local);
       },
-      routedDCID);
+      routedDCID, pathAccounted);
   }
 
   bool consumeFrames_(
     PktNumSpace::T level, uint64_t pn, ZuBSpan frames, ZiSockAddr addr,
     const ZmRef<RxPkt> &packetBuf, Base::RxAckMeta &ack,
-    ZquicLog_::PktEvt *qlog, bool earlyData = false) {
-    ZiSockAddr peer = addr;
-    ZiSockAddr local = app()->local();
+    ZquicLog_::PktEvt *qlog, bool earlyData, ZiSockAddr local) {
+    if (packetBuf) local = packetBuf->local;
+    if (!local) return false;
     unsigned pathBytes = packetBuf ? packetBuf->length : 0;
     bool ok = Base::consumeProtFrames(
       level, pn, frames, ZuMv(addr), packetBuf, ack, qlog,
@@ -931,14 +1029,12 @@ private:
 	  level_, frame, ZuMv(addr_), local, pathBytes);
       },
       earlyData);
-    if (ok && level == PktNumSpace::AppData && Base::establishedRx())
-      Base::observePathRx_(ZuMv(local), ZuMv(peer), pathBytes);
     return ok;
   }
 
   bool handleControlFrame(
     PktNumSpace::T level, const Frame &frame, ZiSockAddr addr,
-    ZiSockAddr local = {}, unsigned pathBytes = 0) {
+    ZiSockAddr local, unsigned pathBytes = 0) {
     switch (frame.type) {
       case FrameType::MaxData:
       case FrameType::MaxStreamData:
@@ -1009,6 +1105,13 @@ private:
 
   void pathPromoted() {
     m_srvTx.peerAddr = Base::activePathRemote_();
+    auto previous = m_srvTx.activeTarget;
+    m_srvTx.activeTarget = app()->pktAllocTarget(Base::activePathLocal_());
+    if (!(previous == m_srvTx.activeTarget))
+      Base::cancelPktWait([link = impl(), runtime = Base::txRuntime()] {
+	if (runtime != link->txRuntime() || link->disconnecting_()) return;
+	link->pktPressureResume();
+      });
   }
   void refreshPromotedRoutes() {
     if (app()->rxInvoked()) {
@@ -1020,6 +1123,10 @@ private:
     });
   }
   void localCIDsIssued() {
+    if (app()->rxInvoked()) {
+      app()->refreshLinkRoutes(impl());
+      return;
+    }
     app()->rxRun([link = impl()]() mutable {
       link->app()->refreshLinkRoutes(link);
     });
@@ -1037,11 +1144,13 @@ private:
     return received_(ZuMv(d), &routedDCID);
   }
 
+protected:
   void installRoutes(CxnRouter<Impl> &routes) {
     routes.add(m_srvRx.bootstrap.origDCID(), 0, impl());
     Base::installLocalCIDRoutes_(routes);
   }
 
+private:
   void retireRoutes(CxnRouter<Impl> &routes) {
     routes.tombstone(m_srvRx.bootstrap.origDCID());
     Base::tombstoneLocalCIDRoutes_(routes);

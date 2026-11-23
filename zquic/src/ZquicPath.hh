@@ -61,6 +61,10 @@ public:
   const ZiSockAddr &local() const { return m_local; }
   const ZiSockAddr &remote() const { return m_remote; }
   bool validated() const { return m_validated; }
+  bool matches(const ZiSockAddr &local, const ZiSockAddr &remote,
+      bool compareLocal = true) const {
+    return remote == m_remote && (!compareLocal || local == m_local);
+  }
   bool ecnDisabled() const {
     return m_ecnState == PathECNState::Disabled ||
       m_ecnState == PathECNState::Failed;

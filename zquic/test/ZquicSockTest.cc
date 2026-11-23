@@ -68,6 +68,11 @@ friend inline ZuStringT<"Zquic.HeldUDP"> ZmNHeapID(HeldUDP *);
   unsigned calls = 0, closes = 0;
   ZiConnection *closing = nullptr;
   ZmFn<> beforeBind;
+  bool holdOpen = false;
+  unsigned openCount = 0;
+  ZiConnectFn pendingOpen[4];
+  ZiFailFn pendingFail[4];
+  ZiCxnInfo pendingInfo[4];
   explicit HeldUDP(ZiMultiplex *mx) : ZiMxPlugin{mx} { }
   Zi::IOBufPool *allocator(
     Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count) override {
@@ -82,7 +87,7 @@ friend inline ZuStringT<"Zquic.HeldUDP"> ZmNHeapID(HeldUDP *);
   void stopListening(ZiIP, uint16_t) override { }
   void connect(ZiConnectFn, ZiFailFn, ZiIPType::T, ZiIP, uint16_t, ZiIP,
     uint16_t, Zi::IOBufAllocator *, ZiCxnOptions) override { }
-  void udp(ZiConnectFn fn, ZiFailFn, ZiIPType::T, ZiIP localIP,
+  void udp(ZiConnectFn fn, ZiFailFn fail, ZiIPType::T, ZiIP localIP,
     uint16_t localPort, ZiIP remoteIP, uint16_t remotePort,
     Zi::IOBufAllocator *allocator_, ZiCxnOptions options) override {
     ZiCxnInfo ci{.type = ZiCxnType::UDP, .socket = Zi::nullSocket(),
@@ -90,8 +95,27 @@ friend inline ZuStringT<"Zquic.HeldUDP"> ZmNHeapID(HeldUDP *);
       .remote = {remoteIP, remotePort}, .rxAllocator = allocator_};
     ZmFn<> before = ZuMv(beforeBind);
     if (before) before();
-    connection = fn(ci);
-    connection->connected(connection->rxContext());
+    if (holdOpen) {
+      assert(openCount < 4);
+      unsigned slot = openCount++;
+      pendingOpen[slot] = ZuMv(fn);
+      pendingFail[slot] = ZuMv(fail);
+      pendingInfo[slot] = ci;
+      return;
+    }
+    finishOpen(ZuMv(fn), ci);
+  }
+  void finishOpen(ZiConnectFn fn, const ZiCxnInfo &ci) {
+    auto cxn = fn(ci);
+    if (!cxn) return;
+    connection = cxn;
+    cxn->connected(cxn->rxContext());
+  }
+  void releaseOpen(unsigned slot, bool success) {
+    auto fn = ZuMv(pendingOpen[slot]);
+    auto fail = ZuMv(pendingFail[slot]);
+    if (success) finishOpen(ZuMv(fn), pendingInfo[slot]);
+    else fail(false);
   }
   void recv(ZiConnection *) override { }
   // An EAGAIN-equivalent hold does not change the installed context.
@@ -152,11 +176,10 @@ struct QueuedEndpoint {
   void exercise(bool fail)
   {
     ZuTestScopeRT(queuedSendCompletion);
-    ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(2); })
-      .rxThread(1).txThread(2)};
-    auto provider = new HeldUDP{&mx};
+    auto provider = new HeldUDP{nullptr};
     ZmRef<ZiMxPlugin> transport = provider;
-    mx.plugin(ZuMv(transport));
+    ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(2); })
+      .rxThread(1).txThread(2), ZuMv(transport)};
     auto allocator = Zquic::pktTxAllocator(&mx);
     bool started = mx.start();
     ZuCheckRT(started, log_("synthetic UDP dispatcher start failed"));
@@ -298,11 +321,10 @@ static void testPostedAdmission()
 {
   ZuTestScope(testPostedAdmission);
   using Cxn = Zquic_::EndpointCxn<TestEndpoint::Endpoint>;
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(2); })
-    .rxThread(1).txThread(2)};
-  auto provider = new HeldUDP{&mx};
+  auto provider = new HeldUDP{nullptr};
   ZmRef<ZiMxPlugin> transport = provider;
-  mx.plugin(ZuMv(transport));
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(2); })
+    .rxThread(1).txThread(2), ZuMv(transport)};
   auto rxAllocator = Zquic::pktRxAllocator(&mx);
   auto txAllocator = Zquic::pktTxAllocator(&mx);
   TestEndpoint endpoint;
@@ -567,6 +589,73 @@ void testEndpointRebind()
   mx.stop();
 }
 
+static void testPendingEndpointOpen()
+{
+  ZuTestScope(testPendingEndpointOpen);
+  auto provider = new HeldUDP{nullptr};
+  provider->holdOpen = true;
+  ZmRef<ZiMxPlugin> transport = provider;
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(2); })
+    .rxThread(1).txThread(2), ZuMv(transport)};
+  auto rx = Zquic::pktRxAllocator(&mx);
+  auto tx = Zquic::pktTxAllocator(&mx);
+  TestEndpoint endpoints[4];
+  for (auto &ep : endpoints) ZuCheck(ep.init(&mx, rx, tx));
+  ZuCheck(mx.start());
+  bool opened = ZmBlock<bool>{}([&mx, &endpoints](auto wake) {
+    mx.rxRun([&endpoints, wake = ZuMv(wake)]() mutable {
+      bool ok = true;
+      for (unsigned i = 0; i < 4; ++i)
+	ok &= endpoints[i].openUDP(Zquic::PathMode::ServerUnconnected,
+	  ZiIP{"127.0.0.1"}, uint16_t(ZquicTestPort::Original4 + i));
+      wake(ok);
+    });
+  });
+  ZuCheck(opened && provider->openCount == 4);
+  ZmAtomic<unsigned> drained = 0;
+  for (auto &ep : endpoints) ep.disconnect([&drained] { ++drained; });
+  auto fence = [&mx]() {
+    ZmBlock<>{}([&mx](auto wake) {
+      mx.rxRun([&mx, wake = ZuMv(wake)]() mutable {
+	mx.txRun([wake = ZuMv(wake)]() mutable { wake(); });
+      });
+    });
+  };
+  fence();
+  ZuCheck(!drained); // unresolved plugin setup retains its endpoint owner
+  for (unsigned slot = 0; slot < 4; ++slot) {
+    ZmBlock<>{}([&mx, provider, slot](auto wake) {
+      mx.rxRun([provider, slot, wake = ZuMv(wake)]() mutable {
+	provider->releaseOpen(slot, !(slot & 1));
+	wake();
+      });
+    });
+  }
+  // Completion crosses mx Tx -> Rx -> Tx. Synchronize with the actual final
+  // callbacks rather than using elapsed time to infer their arrival.
+  ZmBlock<>{}([&mx](auto wake) {
+    mx.txRun([&mx, wake = ZuMv(wake)]() mutable {
+      mx.rxRun([&mx, wake = ZuMv(wake)]() mutable {
+	mx.txRun([wake = ZuMv(wake)]() mutable { wake(); });
+      });
+    });
+  });
+  bool quiet = true;
+  for (auto &ep : endpoints) quiet &= !ep.ready && !ep.failed && !ep.connected();
+  ZuCheck(drained == 4 && quiet && !provider->connection);
+  provider->holdOpen = false;
+  bool restarted = ZmBlock<bool>{}([&endpoints](auto wake) {
+    endpoints[0].readyFn = [wake = ZuMv(wake)](bool ok) mutable { wake(ok); };
+    endpoints[0].openUDP(Zquic::PathMode::ServerUnconnected,
+      ZiIP{"127.0.0.1"}, ZquicTestPort::Original4);
+  });
+  ZuCheck(restarted && endpoints[0].generation() == 2 && endpoints[0].ready == 1);
+  ZmBlock<>{}([&endpoints](auto wake) {
+    endpoints[0].disconnect([wake = ZuMv(wake)]() mutable { wake(); });
+  });
+  mx.stop();
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -575,5 +664,6 @@ int main(int argc, char **argv)
   ZuTestCall(testECNTOS);
   ZuTestCall(testQueuedSendCompletion);
   ZuTestCall(testPostedAdmission);
+  ZuTestCall(testPendingEndpointOpen);
   ZuTestCall(testEndpointRebind);
 }

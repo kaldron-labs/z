@@ -819,7 +819,8 @@ public:
 
   Endpoint_() = default;
   ~Endpoint_() {
-    ZiAssert(!m_endpointRx.open && !m_endpointRx.ioCxns && !m_endpointRx.unbinding, "Zquic", (),
+    ZiAssert(!m_endpointRx.open && !m_endpointRx.ioCxns && !m_endpointRx.pendingUDP &&
+      !m_endpointRx.unbinding, "Zquic", (),
       "QUIC endpoint destroyed before finalization", return);
   }
 
@@ -852,7 +853,7 @@ public:
     ZiAssert(mx->running(), "Zquic", (),
       "endpoint multiplexer is not running", return false);
     if (m_endpointRx.open || m_endpointRx.cxn ||
-	m_endpointRx.ioCxns || m_endpointRx.unbinding) return false;
+	m_endpointRx.ioCxns || m_endpointRx.pendingUDP || m_endpointRx.unbinding) return false;
 
 
     m_endpointRx.mode = mode;
@@ -865,7 +866,8 @@ public:
     m_endpointRx.sockDiag = {};
     m_target.ready = false;
     m_endpointRx.open = true;
-    ++m_endpointRx.generation;
+    unsigned generation = ++m_endpointRx.generation;
+    ++m_endpointRx.pendingUDP;
 
     m_config.mx->txInvoke([this]() mutable {
       m_endpointTx.diag = {};
@@ -875,13 +877,23 @@ public:
     options.udp(true);
 
     m_config.mx->udp(
-      ZiConnectFn{this, [](Endpoint_ *self, const ZiCxnInfo &ci) -> ZiConnection * {
-	auto cxn = new Cxn_{self, ci, self->m_endpointRx.generation};
-	self->m_endpointRx.cxn = cxn;
+      ZiConnectFn{[this, generation](const ZiCxnInfo &ci) -> ZiConnection * {
+	--m_endpointRx.pendingUDP;
+	if (!m_endpointRx.open || generation != m_endpointRx.generation) {
+	  if (!m_endpointRx.open) discFns();
+	  return nullptr;
+	}
+	auto cxn = new Cxn_{this, ci, generation};
+	m_endpointRx.cxn = cxn;
 	return cxn;
       }},
-      ZiFailFn{this, [](Endpoint_ *self, bool transient) {
-	self->failed_(transient);
+      ZiFailFn{[this, generation](bool transient) {
+	--m_endpointRx.pendingUDP;
+	if (!m_endpointRx.open || generation != m_endpointRx.generation) {
+	  if (!m_endpointRx.open) discFns();
+	  return;
+	}
+	failed_(transient);
       }},
       localIP, localPort,
       mode == PathMode::ClientConnected ? remoteIP : ZiIP{},
@@ -976,7 +988,7 @@ private:
       ZiIP remoteIP, uint16_t remotePort,
       EndpointRebindFn fn, bool probe) {
     if (!m_config.mx || !m_endpointRx.open || !m_endpointRx.cxn ||
-	m_endpointRx.rebindCxn || m_endpointRx.rebinding) {
+	m_endpointRx.rebindCxn || m_endpointRx.rebinding || m_endpointRx.pendingUDP) {
       fn(false, ZiSockAddr{}, false);
       return false;
     }
@@ -994,7 +1006,8 @@ private:
     m_endpointRx.rebindSockConfig = SockConfig{family, m_endpointRx.mode, true, true};
     if (m_endpointRx.rebindGeneration < m_endpointRx.generation)
       m_endpointRx.rebindGeneration = m_endpointRx.generation;
-    ++m_endpointRx.rebindGeneration;
+    unsigned generation = ++m_endpointRx.rebindGeneration;
+    ++m_endpointRx.pendingUDP;
     m_endpointRx.rebindFn = ZuMv(fn);
     m_endpointRx.rebinding = true;
     m_endpointRx.probing = probe;
@@ -1002,15 +1015,20 @@ private:
     ZiCxnOptions options;
     options.udp(true);
     m_config.mx->udp(
-      ZiConnectFn{this, [](Endpoint_ *self, const ZiCxnInfo &ci) ->
-	  ZiConnection * {
-	if (!self->m_endpointRx.rebinding) return nullptr;
-	auto cxn = new Cxn_{self, ci, self->m_endpointRx.rebindGeneration};
-	self->m_endpointRx.rebindCxn = cxn;
+      ZiConnectFn{[this, generation](const ZiCxnInfo &ci) -> ZiConnection * {
+	--m_endpointRx.pendingUDP;
+	if (!m_endpointRx.rebinding || generation != m_endpointRx.rebindGeneration) {
+	  if (!m_endpointRx.open) discFns();
+	  return nullptr;
+	}
+	auto cxn = new Cxn_{this, ci, generation};
+	m_endpointRx.rebindCxn = cxn;
 	return cxn;
       }},
-      ZiFailFn{this, [](Endpoint_ *self, bool) {
-	self->failedRebind(false);
+      ZiFailFn{[this, generation](bool) {
+	--m_endpointRx.pendingUDP;
+	if (generation == m_endpointRx.rebindGeneration) failedRebind(false);
+	if (!m_endpointRx.open) discFns();
       }},
       localIP, localPort,
       m_endpointRx.mode == PathMode::ClientConnected ? remoteIP : ZiIP{},
@@ -1227,7 +1245,7 @@ private:
       cxn->finalQueues();
       --self->m_endpointRx.ioCxns;
       self->disconnected_(cxn.ptr());
-      if (!self->m_endpointRx.ioCxns &&
+      if (!self->m_endpointRx.ioCxns && !self->m_endpointRx.pendingUDP &&
 	  !self->m_endpointRx.cxn && !self->m_endpointRx.rebindCxn) {
 	self->unbindEndpoint(ZuMvPtr(impl), ZuMv(cxn));
 	return;
@@ -1395,7 +1413,7 @@ private:
     return fns;
   }
   void discFns() {
-    if (m_endpointRx.ioCxns || m_endpointRx.unbinding) return;
+    if (m_endpointRx.ioCxns || m_endpointRx.pendingUDP || m_endpointRx.unbinding) return;
     if constexpr (Impl::EndpointRef)
       unbindEndpoint(ZmRef(impl()));
     else
@@ -1459,6 +1477,7 @@ private:
     EndpointDiscFns	discFns;
     unsigned		rebindGeneration = 0;
     unsigned		ioCxns = 0;
+    unsigned		pendingUDP = 0;
     bool			unbinding = false;
     bool			downPending = false;
     EndpointRebindFn	rebindFn;
@@ -1475,6 +1494,29 @@ private:
     CxnRef active;
     CxnRef probe;
   } m_endpointTx;
+};
+
+// Server-owned shared listener. The server drains both I/O owners before
+// finalizing any adapter; packets never retain a reference to this object.
+template <typename Server_>
+class ServerEP : public Endpoint_<ServerEP<Server_>>,
+    public ZmNHeap<ServerEP<Server_>> {
+  friend inline ZuStringT<"Zquic.Server.Endpoint"> ZmNHeapID(ServerEP *);
+public:
+  using Base = Endpoint_<ServerEP>;
+  enum { EndpointRef = false };
+
+  ServerEP(Server_ *server, unsigned slot) : m_server{server}, m_slot{slot} { }
+  unsigned slot() const { return m_slot; }
+  void endpointReady(Base *) { m_server->endpointReady(this); }
+  void endpointFailed(bool transient) { m_server->endpointFailed(this, transient); }
+  void endpointDown_(Base *) { m_server->endpointDown_(this); }
+  void endpointPacket(ZmRef<RxPkt> pkt) {
+    m_server->endpointPacket(this, ZuMv(pkt));
+  }
+private:
+  Server_ *const m_server;
+  const unsigned m_slot;
 };
 
 } // namespace Zquic_

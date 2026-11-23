@@ -11,6 +11,9 @@ handshake bytes from CRYPTO streams and supplies the output buffer. Zquic
 retains the returned buffer and epoch ranges for CRYPTO transmission and
 recovery. The handshake reports traffic secrets to Rx. Zquic owns packet
 protection, key phases, and packet-space retirement.
+Its TLS key-exchange list offers X25519 when OpenSSL provides it, followed by
+P-256. `libZtls` supports ticket resumption after a group-mismatch
+HelloRetryRequest and rejects 0-RTT on that path.
 
 This file is a map for navigating the implementation.  Required review rules
 for editing `zquic` live in `zquic/GUIDELINES.md`.
@@ -91,6 +94,78 @@ disables this automatic migration.
 `ZquicServer` listens on one UDP socket and accepts routed `SrvLink`s, while
 `ZquicClient` opens a `CliLink`, sends one stream payload, and prints the
 server's stream response.
+
+Servers configure preferred endpoints by overriding
+`Zquic::ServerAddrs serverAddrs() const`. Its fields are `original4`,
+`preferred4`, `original6`, and `preferred6`, each a `ZiSockAddr`. For example:
+
+```c++
+Zquic::ServerAddrs serverAddrs() const {
+  return {
+    .original4 = {ZiIP{"192.0.2.1"}, 443},
+    .preferred4 = {ZiIP{"192.0.2.1"}, 8443}
+  };
+}
+```
+
+Four empty values retain `localIP()`/`localPort()` behavior, including wildcard
+and ephemeral binding, with one embedded endpoint. Explicit configuration ignores
+those callbacks and requires concrete unicast addresses, nonzero ports, an
+original for every preferred family, and at least one distinct alternative.
+IPv4-mapped IPv6, scoped/link-local IPv6, wildcard and multicast bindings are
+rejected before any socket opens. Identical original/preferred bindings normalize
+away. The callback is sampled once per start; configuration changes require
+stop/drain and restart.
+
+A server shares at most four listeners across all its connections. Readiness
+requires every configured bind; failed startup drains partial bindings. The
+primary original address remains the diagnostic `local()`. Each connection's
+original address comes from its received packet. Only original bindings admit
+unknown Initials; registered CIDs route on all bindings. The preferred CID and
+reset token are generated per connection, registered at sequence 1 before TLS
+advertisement, and counted in the existing CID table even when ordinary active
+migration and its spare reserve are disabled.
+
+Server path identity includes both local and remote addresses. A preferred
+candidate needs both matching challenge proof and fresh non-probing input before
+ordinary output moves; either arrival order works. Candidate probes use their
+receiving socket and leave ACKs and ordinary output on the active path. Migration
+preserves TLS, streams, packet numbers and retained recovery, while preferred
+promotion starts a fresh congestion controller, RTT estimator and minimum PMTU.
+Old-epoch ACK/loss retires protocol obligations without changing the new path's
+controller. The promoted path starts with NotECT. Once retained ECT records retire
+and a cumulative peer baseline is available, existing ECN testing restarts from
+that baseline; ambiguous late old-path feedback fences testing again and cannot
+reduce the new congestion window.
+
+Listeners remain server-owned through all connection migrations. Shutdown drains
+connection owners and every physical listener, including pending asynchronous UDP
+setup, before finalization releases additional adapters. One connection's failed
+validation or disconnect does not close a shared listener.
+
+Each physical queue admits 4096 datagrams: four admit at most 16,384 in aggregate.
+Each physical reservation table occupies 96 KiB (4096 entries of 24 bytes), so four
+reserve 384 KiB, 288 KiB more than the default. Allocator registrations and provider
+backing are shared; finite backing can exhaust before queue capacity. Selection
+uses the bounded binding table and the original packet backing.
+
+Current Linux/Clang release measurements are 1216 bytes per server adapter,
+1856 per physical connection, 24 for its queue object, and 768 for its gate
+object. The physical connection includes its queue/gate; these figures are not
+additive. Three extra adapters/connections add 9216 bytes of object storage,
+besides the additional 288 KiB of reservation tables. Provider registrations and
+backing are shared, with zero extra provider registrations per binding. The
+builtin backing grows; its default pool request of 1024 is not a hard cap. The
+finite-provider fixtures exercise eight shared 1536-byte slots (12 KiB) and four
+usable slots (6 KiB; its fixture object reserves eight slots).
+
+Tx CID-control validity uses an Rx-published snapshot of eight inline entries,
+520 bytes per link, without a second CID issuer or allocation. Current Tx-owner
+`LinkTxStorage` is 18112 bytes; server-specific Tx path/target storage is 192
+bytes. Ordinary active-path input publishes byte credit without
+posting a scheduler record or retaining an extra packet reference. Path-control
+handoffs retain the original decrypted packet and read only its control frames
+again on Tx; they add no payload copy or receive wrapper.
 
 ## Source Map
 
@@ -205,6 +280,22 @@ Tests are standalone binaries under `zquic/test`.  Useful entry points:
   `ZquicLogTest`, and runtime loopback tests: public migration params and
   callbacks, endpoint rebinding, CID policy, passive/active validation,
   diagnostics, and qlog JSON-SEQ event streams.
+
+For the preferred-server-address repair on 2026-11-22, the current Clang
+release configuration passed the full zquic suite (25 programs, 279 test
+groups) and physical queue integration (7 groups). The stream teardown
+regression passed 100 CPU-pressure repetitions. Valgrind of the stream and
+runtime suites reported zero unsuppressed errors and no definite, indirect or
+possible leaks with the reviewed opt-in OpenSSL suppression from
+`.valgrind/openssl.valgrind.supp`; the default accelerated libcrypto path
+otherwise reports the documented conditional false positives. The matching
+QIR image passed `connectionmigration` against ngtcp2 in both roles, including
+the server preferred-address path. Other peer results and the full matrix are
+reported in `../zhttp/interop/README.md` and the saved QIR reports. The full
+176-cell run recorded 95 succeeded, 74 unsupported and 7 failed cells; three
+of those failures were other reference clients that did not probe the advertised
+preferred port. Valgrind also passed the API suite with the same reviewed
+suppression and zero unsuppressed errors or definite, indirect or possible leaks.
 
 Run the module tests with:
 

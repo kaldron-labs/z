@@ -377,6 +377,12 @@ void testMessageLevelTLSHandshake()
   serverParams.initialMaxData = 16384;
   serverParams.initialMaxStreamsUni = 4;
   serverParams.initialSCID = "servertp";
+  serverParams.preferredAddress = {
+    .ipv4 = ZiSockAddr{ZiIP{"127.0.0.1"}, 8443},
+    .ipv6 = ZiSockAddr{ZiIP{"::1"}, 8443},
+    .cid = Zquic::CxnID{"prefer01"},
+    .resetToken = Zquic::ResetToken{"0123456789abcdef"}
+  };
 
   Zquic::Crypto client;
   Zquic::Crypto server;
@@ -447,6 +453,14 @@ void testMessageLevelTLSHandshake()
       client.peerParams().initialMaxData == 16384 &&
       client.peerParams().initialSCID == serverParams.initialSCID,
     "client did not collect server transport parameters");
+  const auto &preferred = client.peerParams().preferredAddress;
+  ZuCHECK(preferred.ipv4 == serverParams.preferredAddress.ipv4 &&
+      preferred.ipv6 == serverParams.preferredAddress.ipv6 &&
+      preferred.cid == serverParams.preferredAddress.cid &&
+      preferred.resetToken == serverParams.preferredAddress.resetToken,
+    "TLS handshake did not preserve preferred endpoints, CID and reset token");
+  ZuCHECK(!server.peerParams().preferredAddress,
+    "client unexpectedly advertised a preferred address");
   ZuCHECK(server.peerParams().maxUDPPayloadSize == 1400 &&
       server.peerParams().initialMaxData == 8192 &&
       server.peerParams().initialSCID == clientParams.initialSCID,

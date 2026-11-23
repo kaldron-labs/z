@@ -86,9 +86,13 @@ struct TestStream :
   using Base::Base;
 
   unsigned txCompleteCount = 0;
+  ZmFn<> txCompleteFn;
 
   int process(Zquic::RxStream &) { return 0; }
-  void txComplete(bool) { ++txCompleteCount; }
+  void txComplete(bool) {
+    ++txCompleteCount;
+    if (txCompleteFn) txCompleteFn();
+  }
 };
 
 struct HubApp : public Zquic::Hub<HubApp> {
@@ -253,12 +257,19 @@ friend inline ZuStringT<"Zquic.APITest.SrvLink"> ZmNHeapID(ServerShapeLink *);
   void migrationPromoted(const Zquic::MigrationResult &) {
     if (promotedFn) promotedFn();
   }
+  void migrationFailed(const Zquic::MigrationResult &) {
+    if (promotedFn) promotedFn();
+  }
   void onStarted(ZmFn<void()> fn) { startedFn = ZuMv(fn); }
   void onPromoted(ZmFn<void()> fn) { promotedFn = ZuMv(fn); }
   void initSrvPath(ZiSockAddr local, ZiSockAddr remote) {
     Base::initServerPathTx(ZuMv(local), ZuMv(remote));
   }
 #ifdef Zquic_DEBUG
+  bool pathBindingValid(const ZiSockAddr &local, unsigned, uint64_t) const {
+    // The shape fixture uses a synthetic local binding without a listener.
+    return local == Base::activePathLocal_();
+  }
   void observePath(ZiSockAddr local, ZiSockAddr remote) {
     Base::observePathRxTx(ZuMv(local), ZuMv(remote));
   }
@@ -575,6 +586,59 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
 	  void setPeerResetToken(const Zquic::ResetToken &token) {
 	    Base::setPeerResetToken_(token);
 	  }
+  void observePacket(const ZmRef<Zquic::RxPkt> &pkt,
+      unsigned offset, unsigned length, unsigned bytes, uint64_t pn,
+      bool nonProbing, bool controls) {
+    Base::observePathPacket(pkt, offset, length, bytes, pn, true, nonProbing, controls);
+  }
+  bool authenticatedPing(
+      const Zquic::TrafficSecret &secret, const Zquic::CxnID &cid, uint64_t pn,
+      ZiSockAddr local, ZiSockAddr remote) {
+    Zquic::PktProtState tx;
+    if (!tx.init(secret, Zquic::PktNumSpace::AppData, true)) return false;
+    ZmRef<Zquic::RxPkt> pkt{app()->rxPktAllocator()->allocBuf(nullptr, 0)};
+    if (!pkt) return false;
+    enum { PNLength = 2 };
+    int h = Zquic::Pkt::writeShort(pkt->data_(), pkt->size, cid, pn, PNLength);
+    if (h < 0) return false;
+    uint8_t payload[32]{};
+    if (Zquic::FrameCodec::writePing(payload, sizeof(payload)) != 1) return false;
+    int n = Zquic::PktProt::protectShort(
+      pkt->data_(), pkt->size, tx, pn,
+      Zquic::byteSpan(pkt->data_(), unsigned(h)),
+      Zquic::byteSpan(payload, sizeof(payload)), unsigned(h) - PNLength, PNLength);
+    if (n < 0) return false;
+    pkt->skip = 0;
+    pkt->length = unsigned(n);
+    pkt->local = ZuMv(local);
+    pkt->addr = ZuMv(remote);
+    return Base::rxProtShortPkt(pkt, 0, unsigned(n),
+      [this](auto level, auto packetPN, ZuBSpan frames, ZiSockAddr addr,
+          const auto &packet, auto &ack, auto *qlog) {
+        return Base::consumeProtFrames(
+          level, packetPN, frames, ZuMv(addr), packet, ack, qlog,
+          [](size_t, ZuBSpan, ZiSockAddr) { return true; },
+          [](Zquic::PktNumSpace::T, const Zquic::Frame &, ZiSockAddr) {
+            return true;
+          });
+      });
+  }
+  bool cidRetxValid(const Zquic::ControlFrame &frame) {
+    Zquic::PktBuild build;
+    return Base::buildRetxCtl(build, Zquic::controlRef(frame));
+  }
+  bool cidPacket(const Zquic::ControlFrame &frame) {
+    return Base::recordTxPkt(Zquic::PktNumSpace::AppData, 0, 100,
+      Zquic::controlRef(frame), true);
+  }
+  bool cidRetxQueued() const {
+    return Base::txPackets_(Zquic::PktNumSpace::AppData).retransmitPending();
+  }
+  bool takeRetx() {
+    Zquic::PktNumSpace::T space;
+    Zquic::SentFrameRef ref;
+    return Base::nextRetransmit_(space, ref);
+  }
 	  bool addLocalCID(
 	    const Zquic::CxnID &id, uint64_t sequence,
 	    const Zquic::ResetToken &token = {}) {
@@ -745,6 +809,54 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
   void observePath(ZiSockAddr local, ZiSockAddr remote) {
     Base::startPathValidation(ZuMv(local), ZuMv(remote));
   }
+  bool epochPacket(unsigned pn, Zquic::EcnMark::T ecn = Zquic::EcnMark::NotECT,
+      TestStream *stream = nullptr) {
+    constexpr auto space = Zquic::PktNumSpace::AppData;
+    Base::setTxPN(space, pn + 1);
+    Base::TxPktRefs refs;
+    if (stream) {
+      Zquic::TxRange range;
+      if (!refs.add(Zquic::SentFrameRef::stream(stream->id(), range, true), stream))
+	return false;
+    }
+    return Base::recordTxPkt(space, pn, 100, refs, true, false, 0,
+      Zquic::PktNumSpace::N, 0, Zquic::PktType::Short, ecn);
+  }
+  void epochAck(unsigned pn, Zquic::AckECN ecn = {}) {
+    Base::AckSnapshot ack;
+    ack.level = Zquic::PktNumSpace::AppData;
+    ack.ranges.push(Zquic::AckRange{pn, pn});
+    ack.ecn = ecn;
+    ack.receivedUS = uint64_t(Zm::now().microsecs()) + 1000;
+    Base::processAckFrameTx(ack);
+  }
+  uint64_t controllerFlight() const {
+    return Base::congestionWindow() - Base::congestionAllowance_();
+  }
+  auto pmtudTimeoutFn() { return Base::cxnTimerFn(Zquic::CxnTimer::PMTUD); }
+  bool beginPMTUD() {
+    return Base::sendPMTUDProbe(Base::activePathRemote_(),
+      [](Zquic::PktBuild &, ZiSockAddr, unsigned) { return true; });
+  }
+  bool activeECN() const { return !Base::ecnDisabled_(); }
+  void advertisePreferred(const ZiSockAddr &local, const ZiSockAddr &local6 = {}) {
+    Zquic::PreferredAddress preferred;
+    preferred.ipv4 = local;
+    preferred.ipv6 = local6;
+    Zquic::CxnIDGen::random(preferred.cid);
+    preferred.resetToken.generate();
+    Base::setPreferredAddress_(preferred);
+    Base::TxCryptoSnapshot snapshot;
+    Base::snapshotTxCrypto(snapshot);
+    Base::installTxCrypto(snapshot);
+  }
+  void observePreferred(ZiSockAddr local, ZiSockAddr remote,
+      bool fresh, bool nonProbing, uint64_t pn) {
+    Base::observePathRxTx(ZuMv(local), ZuMv(remote), 1200, false, false,
+      fresh, nonProbing, pn);
+  }
+  ZiSockAddr activeLocal() const { return Base::activePathLocal_(); }
+  uint64_t migrationAttemptForTest() const { return Base::migrationResult().attemptID; }
   void observePathRx(ZiSockAddr local, ZiSockAddr remote) {
     Base::observePathRxTx(ZuMv(local), ZuMv(remote), false);
   }
@@ -769,8 +881,10 @@ struct HubFixture {
   ZiMultiplex	mx;
   HubApp	app;
 
-  HubFixture(bool cc = true, bool ecn = false, bool start = true) : mx{mxParams()} {
-    ZiAssert(app.init(Zquic::HubParams(&mx, "3", "4").congestionControl(cc).ecn(ecn)),
+  HubFixture(bool cc = true, bool ecn = false, bool start = true,
+      unsigned maxUDP = Zquic::MinUDPPayload) : mx{mxParams()} {
+    ZiAssert(app.init(Zquic::HubParams(&mx, "3", "4")
+	.maxUDP(maxUDP).congestionControl(cc).ecn(ecn)),
       "Zquic", (), "API test hub init failed", return);
     ZiAssert(!start || mx.start(), "Zquic", (),
       "API test multiplexer start failed", return);
@@ -1826,6 +1940,9 @@ void disabledCongestionRecovery()
     link->recoveryAck(1, 1);
     ZuCheck(!link->recoveryDiag().bytesInFlight);
     link->recoveryStop();
+    ZmBlock<>{}([link](auto wake) {
+      link->disconnect_(false, [wake = ZuMv(wake)]() mutable { wake(); });
+    });
   }
 }
 
@@ -2914,6 +3031,374 @@ void testHashConfig()
   }
 }
 
+static void testServerAddrs()
+{
+  ZuTestScope(testServerAddrs);
+  using Addrs = Zquic::ServerAddrs;
+  auto a4 = [](const char *ip, unsigned port = 443) {
+    return ZiSockAddr{ZiIP{ip}, uint16_t(port)};
+  };
+  Addrs empty;
+  ZuCheck(!empty && empty.normalize());
+  auto valid4 = Addrs{a4("127.0.0.1"), a4("127.0.0.1", 8443), {}, {}};
+  ZuCheck(valid4.normalize() && valid4 && valid4.preferred4.port() == 8443);
+  auto invalid = [&valid4](auto change) {
+    auto a = valid4;
+    change(a);
+    return !a.normalize();
+  };
+  ZuCheck(invalid([](auto &a) { a.original4.null(); }));
+  ZuCheck(invalid([](auto &a) { a.preferred4.null(); }));
+  ZuCheck(invalid([](auto &a) { a.preferred4 = a.original4; }));
+  ZuCheck(invalid([&a4](auto &a) { a.original4 = a4("0.0.0.0"); }));
+  ZuCheck(invalid([&a4](auto &a) { a.preferred4 = a4("224.0.0.1"); }));
+  ZuCheck(invalid([&a4](auto &a) { a.preferred4 = a4("255.255.255.255"); }));
+  ZuCheck(invalid([&a4](auto &a) { a.preferred4 = a4("127.0.0.2", 0); }));
+  ZuCheck(invalid([&a4](auto &a) { a.preferred4 = a4("::1"); }));
+  ZuCheck(invalid([&a4](auto &a) { a.preferred6 = a4("::1", 8443); }));
+  Addrs both{a4("127.0.0.1"), a4("127.0.0.1"),
+    a4("::1"), a4("::1", 8443)};
+  ZuCheck(both.normalize() && !both.preferred4 && both.preferred6);
+  Addrs v6{{}, {}, a4("::1"), a4("::1", 8443)};
+  ZuCheck(v6.normalize());
+  auto invalid6 = [&v6, &a4](const char *ip) {
+    auto a = v6;
+    a.preferred6 = a4(ip, 8443);
+    return !a.normalize();
+  };
+  ZuCheck(invalid6("::"));
+  ZuCheck(invalid6("ff02::1"));
+  ZuCheck(invalid6("fe80::1"));
+  ZuCheck(invalid6("fec0::1"));
+  ZuCheck(invalid6("::ffff:127.0.0.1"));
+  auto scoped = v6;
+  scoped.preferred6.sin6().sin6_scope_id = 1;
+  ZuCheck(!scoped.normalize());
+  auto different = valid4;
+  different.preferred4 = a4("127.0.0.2");
+  ZuCheck(different.normalize() && different.preferred4.port() == 443);
+  ZuCheck(Addrs::valid(a4("fd00::1"), true));
+}
+
+void testPreferredPathProof()
+{
+  ZuTestScope(testPreferredPathProof);
+  HubFixture fixture;
+  fixture.app.migrationMode(Zquic::MigrationMode::Disabled);
+  ZiSockAddr original{ZiIP{"127.0.0.1"}, 443};
+  ZiSockAddr preferred{ZiIP{"127.0.0.1"}, 8443};
+  ZiSockAddr competing{ZiIP{"127.0.0.2"}, 8443};
+  ZiSockAddr preferred6{ZiIP{"fd00::1"}, 8443};
+  ZiSockAddr remote6{ZiIP{"fd00::3"}, 50000};
+  ZiSockAddr remote{ZiIP{"127.0.0.3"}, 50000};
+  for (unsigned proofFirst = 0; proofFirst != 2; ++proofFirst) {
+    ZmRef<TestLink> link = new TestLink{&fixture.app, true};
+    link->initServerPath(original, remote);
+    link->advertisePreferred(preferred, preferred6);
+    link->observePreferred(preferred, remote, true, false, 0);
+    ZuCheck(link->migrationActive() && link->activeLocal() == original);
+    Zquic::PathData challenge{link->validatingChallenge()};
+    uint64_t attempt = link->migrationAttemptForTest();
+    auto candidate = link->candidatePathInfo();
+    link->observePreferred(competing, remote, true, true, 1);
+    ZuCheck(link->candidatePathInfo().local == preferred &&
+      link->validatingChallenge() == challenge);
+    // Both families were advertised for this same connection. The second
+    // candidate cannot replace the first, add credit, or qualify its input.
+    link->observePreferred(preferred6, remote6, true, true, 2);
+    ZuCheck(link->candidatePathInfo().local == preferred &&
+      link->candidatePathInfo().remote == remote &&
+      link->candidatePathInfo().bytesRx == candidate.bytesRx &&
+      link->migrationAttemptForTest() == attempt &&
+      link->validatingChallenge() == challenge);
+    if (proofFirst) {
+      ZuCheck(link->pathResponse(challenge));
+      ZuCheck(!link->migrationPromotedCount && link->activeLocal() == original);
+      link->observePreferred(preferred, remote, false, true, 0);
+      ZuCheck(!link->migrationPromotedCount);
+      // ACK-only is non-probing and qualifies even though it is not
+      // acknowledgment-eliciting. Packet zero qualifies on an empty tracker.
+      link->observePreferred(preferred, remote, true, true, 0);
+    } else {
+      link->observePreferred(preferred, remote, true, true, 0);
+      ZuCheck(!link->migrationPromotedCount && link->activeLocal() == original);
+      ZuCheck(link->pathResponse(challenge));
+    }
+    ZuCheck(link->migrationPromotedCount == 1 &&
+      link->activeLocal() == preferred && !link->migrationActive());
+    link->observePreferred(original, remote, true, true, 2);
+    ZuCheck(link->activeLocal() == preferred && !link->migrationActive());
+    link->recoveryStop();
+  }
+  ZmRef<TestLink> timeout = new TestLink{&fixture.app, true};
+  timeout->initServerPath(original, remote);
+  timeout->advertisePreferred(preferred);
+  timeout->observePreferred(preferred, remote, true, false, 0);
+  Zquic::PathData stale{timeout->validatingChallenge()};
+  timeout->pathTimeout();
+  ZuCheck(!timeout->pathResponse(stale) && timeout->activeLocal() == original);
+  timeout->recoveryStop();
+}
+
+void testPreferredAuthenticatedFreshness()
+{
+  ZuTestScope(testPreferredAuthenticatedFreshness);
+  HubFixture fixture;
+  fixture.app.migrationMode(Zquic::MigrationMode::Disabled);
+  ZiSockAddr original{ZiIP{"127.0.0.1"}, 443};
+  ZiSockAddr preferred{ZiIP{"127.0.0.1"}, 8443};
+  ZiSockAddr remote{ZiIP{"127.0.0.3"}, 50000};
+  Zquic::CxnID localCID{"fresh000"}, peerCID{"peer0000"};
+  uint8_t bytes[32]{};
+  Zquic::TrafficSecret secret;
+  ZuCheck(Zquic::PktProt::deriveSecret(secret,
+    &Ztls_::opensslAes128gcmsha256, ZuBSpan{bytes, sizeof(bytes)}));
+  for (bool reordered : {false, true}) {
+    ZmRef<TestLink> link = new TestLink{&fixture.app, true};
+    link->setRuntimeCIDs(localCID, peerCID);
+    ZuCheck(link->installAppDataKeys(secret, secret, localCID));
+    link->initServerPath(original, remote);
+    link->advertisePreferred(preferred);
+    if (reordered)
+      ZuCheck(link->authenticatedPing(secret, localCID, 2, original, remote));
+    ZuCheck(link->authenticatedPing(
+      secret, localCID, reordered ? 1 : 0, preferred, remote));
+    ZuCheck(link->migrationActive() && link->activeLocal() == original);
+    Zquic::PathData challenge{link->validatingChallenge()};
+    ZuCheck(link->pathResponse(challenge));
+    ZuCheck((link->migrationPromotedCount == 1) == !reordered);
+    if (reordered) {
+      ZuCheck(link->authenticatedPing(secret, localCID, 1, preferred, remote));
+      ZuCheck(!link->migrationPromotedCount);
+      ZuCheck(link->authenticatedPing(secret, localCID, 3, preferred, remote));
+      ZuCheck(link->migrationPromotedCount == 1);
+    }
+    link->cancelAckRx();
+    link->recoveryStop();
+  }
+}
+
+void testPreferredRecoveryEpoch()
+{
+  ZuTestScope(testPreferredRecoveryEpoch);
+  ZiSockAddr original{ZiIP{"127.0.0.1"}, 443};
+  ZiSockAddr preferred{ZiIP{"127.0.0.1"}, 8443};
+  ZiSockAddr remote{ZiIP{"127.0.0.3"}, 50000};
+  for (bool differentIP : {false, true}) {
+    HubFixture fixture{true, true, false, Zquic::BufSize};
+    ZmRef<TestLink> link = new TestLink{&fixture.app, true};
+    ZiSockAddr destination = differentIP ?
+      ZiSockAddr{ZiIP{"127.0.0.2"}, 8443} : preferred;
+    ZuCheck(link->ackEstablished());
+    link->initServerPath(original, remote);
+    link->advertisePreferred(destination);
+    link->observePreferred(original, remote, true, true, 0);
+    ZuCheck(link->epochPacket(1, Zquic::EcnMark::ECT0));
+    auto stalePMTUD = link->pmtudTimeoutFn();
+    link->observePreferred(destination, remote, true, true, 1);
+    Zquic::PathData challenge{link->validatingChallenge()};
+    ZuCheck(link->pathResponse(challenge));
+    ZuCheck(link->recoveryDiag().congestionWindow == 12000 &&
+      !link->controllerFlight() && !link->activeECN());
+    uint64_t initialPTO = link->diag().tx.ptoTimeoutUS;
+    ZuCheck(link->epochPacket(2));
+    link->epochAck(1, Zquic::AckECN{1, 0, 0});
+    ZuCheck(link->controllerFlight() == 100 &&
+      link->recoveryDiag().congestionWindow == 12000 &&
+      link->diag().tx.ptoTimeoutUS == initialPTO && link->activeECN());
+    // A late old-path CE snapshot must never reduce or invalidate the
+    // promoted controller, including after ECN testing restarted.
+    auto before = link->diag().tx;
+    link->epochAck(1, Zquic::AckECN{1, 0, 1});
+    ZuCheck(link->controllerFlight() == 100 &&
+      link->recoveryDiag().congestionWindow == 12000 &&
+      link->diag().tx.ecnValidationFailures == before.ecnValidationFailures);
+    ZuCheck(link->beginPMTUD());
+    auto probe = link->recoveryPathDiag();
+    stalePMTUD();
+    ZuCheck(link->recoveryPathDiag().probesExpired == probe.probesExpired);
+    auto currentPMTUD = link->pmtudTimeoutFn();
+    currentPMTUD();
+    ZuCheck(link->recoveryPathDiag().probesExpired == probe.probesExpired + 1);
+    link->epochAck(2, Zquic::AckECN{1, 0, 1});
+    ZuCheck(!link->controllerFlight() &&
+      link->recoveryDiag().congestionWindow == 12100);
+    link->recoveryStop();
+  }
+
+  // A same-runtime promotion inside local send admission cannot release
+  // the new path's flight when that older protected packet is refused.
+  {
+    HubFixture fixture{true, false, false};
+    ZmRef<TestLink> link = new TestLink{&fixture.app, true};
+    ZuCheck(link->ackEstablished());
+    link->initServerPath(original, remote);
+    link->advertisePreferred(preferred);
+    link->observePreferred(original, remote, true, true, 0);
+    link->observePreferred(preferred, remote, true, true, 1);
+    Zquic::PathData challenge{link->validatingChallenge()};
+    bool promoted = false;
+    ZuCheck(!link->shortCommit([&link, &promoted, challenge](ZmRef<ZiIOBuf>) {
+      promoted = link->pathResponse(challenge) && link->epochPacket(1);
+      return false;
+    }));
+    ZuCheck(promoted && link->controllerFlight() == 100 &&
+      link->recoveryDiag().congestionWindow == 12000);
+    link->recoveryStop();
+  }
+
+  // STREAM FIN retirement invokes application completion synchronously.
+  // A promotion in that callback must fence the already extracted summary.
+  {
+    HubFixture fixture{true, false, false};
+    ZmRef<TestLink> link = new TestLink{&fixture.app, true};
+    ZuCheck(link->ackEstablished());
+    link->initServerPath(original, remote);
+    link->advertisePreferred(preferred);
+    auto stream = link->stream();
+    stream->fin();
+    uint64_t offset = 0;
+    ZuCheck(stream->dequeueFin(offset) && link->epochPacket(1,
+      Zquic::EcnMark::NotECT, stream.ptr()));
+    link->observePreferred(preferred, remote, true, true, 1);
+    Zquic::PathData challenge{link->validatingChallenge()};
+    bool promoted = false;
+    stream->txCompleteFn = [&link, &promoted, challenge] {
+      promoted = link->pathResponse(challenge) && link->epochPacket(2);
+    };
+    link->epochAck(1);
+    ZuCheck(promoted && stream->txCompleteCount == 1 &&
+      link->controllerFlight() == 100 &&
+      link->recoveryDiag().congestionWindow == 12000);
+    stream->txCompleteFn = {};
+    link->recoveryStop();
+  }
+}
+
+void testLocalCIDTxValidity()
+{
+  ZuTestScope(testLocalCIDTxValidity);
+  HubFixture fixture{true, false, false};
+  auto &app = fixture.app;
+  ZmRef<TestLink> link = new TestLink{&app, true};
+  ZuCheck(link->ackEstablished());
+  app.defer();
+  Zquic::CxnID id{"mirror01"};
+  Zquic::ResetToken token{"0123456789abcdef"};
+  auto frame = Zquic::ControlFrame::newCxnID(1, 0, id, token);
+  ZuCheck(link->addLocalCID(id, 1, token) && app.txPending());
+  app.enterTx();
+  ZuCheck(!link->cidRetxValid(frame)); // Rx insertion is not a Tx publication.
+  app.runTx();
+  ZuCheck(link->cidRetxValid(frame) && !app.txPending());
+  ZuCheck(link->cidPacket(frame) && link->epochPacket(4));
+  link->epochAck(4);
+  ZuCheck(link->cidRetxQueued());
+  app.enterRx();
+  Zquic::Frame retired;
+  retired.type = Zquic::FrameType::RetireCxnID;
+  retired.value = 1;
+  ZuCheck(link->receiveRetireCxnID(retired) && app.txPending());
+  app.enterTx();
+  ZuCheck(link->cidRetxValid(frame)); // Only the Tx snapshot is read here.
+  while (app.txPending()) app.runTx();
+  ZuCheck(!link->cidRetxValid(frame) && !link->takeRetx() && !link->cidRetxQueued());
+
+  for (unsigned sequence = 2; sequence <= 65; ++sequence) {
+    uint8_t bytes[8]{'m', 'i', 'r', 'r', 'o', 'r', 0, uint8_t(sequence)};
+    Zquic::CxnID replacement{ZuBSpan{bytes, sizeof(bytes)}};
+    auto next = Zquic::ControlFrame::newCxnID(sequence, 0, replacement, token);
+    app.enterRx();
+    ZuCheck(link->addLocalCID(replacement, sequence, token));
+    while (app.txPending()) app.runTx();
+    ZuCheck(link->cidRetxValid(next) && !link->cidRetxValid(frame));
+    app.enterRx();
+    retired.value = sequence;
+    ZuCheck(link->receiveRetireCxnID(retired));
+    while (app.txPending()) app.runTx();
+    ZuCheck(!link->cidRetxValid(next));
+  }
+
+  app.enterRx();
+  retired.value = 1;
+  ZuCheck(link->receiveRetireCxnID(retired) && !app.txPending());
+  retired.value = 66;
+  ZuCheck(!link->receiveRetireCxnID(retired));
+  ZuCheck(link->addLocalCID(id, 66, token));
+  auto stale = Zquic::ControlFrame::newCxnID(66, 0, id, token);
+  app.enterTx();
+  link->recoveryReset();
+  while (app.txPending()) app.runTx();
+  ZuCheck(!link->cidRetxValid(stale));
+  while (app.rxPending()) app.runRx();
+  app.enterTx();
+  link->recoveryStop();
+  log("# Local CID Tx validity sizeof=", sizeof(ZuArray<Zquic_::LinkCID, Zquic::LocalCIDLimit>),
+    " LinkCID sizeof=", sizeof(Zquic_::LinkCID),
+    " LinkTxStorage sizeof=", sizeof(Zquic_::LinkTxStorage));
+}
+
+void testPacketPathHandoff()
+{
+  ZuTestScope(testPacketPathHandoff);
+  HubFixture fixture{true, false, false};
+  auto &app = fixture.app;
+  ZmRef<TestLink> link = new TestLink{&app, true};
+  ZuCheck(link->ackEstablished());
+  ZiSockAddr original{ZiIP{"127.0.0.1"}, 443};
+  ZiSockAddr preferred{ZiIP{"127.0.0.1"}, 8443};
+  ZiSockAddr remote{ZiIP{"127.0.0.3"}, 50000};
+  link->initServerPath(original, remote);
+  link->advertisePreferred(preferred);
+  app.defer();
+  ZmRef<Zquic::RxPkt> packet{app.rxPktAllocator()->allocBuf(nullptr, 0)};
+  ZuCheck(packet);
+  packet->local = original;
+  packet->addr = remote;
+  unsigned references = packet->refCount();
+  link->observePacket(packet, 0, 0, 123, 0, true, false);
+  ZuCheck(!app.txPending() && packet->refCount() == references);
+  app.enterTx();
+  link->refreshPathRxTx();
+  ZuCheck(link->recoveryPathDiag().bytesRx == 123);
+
+  // Keeping the peer tuple while changing only the local server binding
+  // must bypass the active fast path and retain one original packet.
+  app.enterRx();
+  packet->local = preferred;
+  link->observePacket(packet, 0, 0, 1200, 1, true, false);
+  ZuCheck(app.txPendingQ.count_() == 1 && packet->refCount() == references + 1);
+  while (app.rxPending() || app.txPending()) {
+    if (app.rxPending()) app.runRx();
+    if (app.txPending()) app.runTx();
+  }
+  app.enterTx();
+  ZuCheck(link->migrationActive() && link->candidatePathInfo().local == preferred);
+  Zquic::PathData challenge{link->validatingChallenge()};
+
+  // A preceding coalesced packet/header is not part of the immutable frame
+  // span. Invalid prefix bytes make a missing absolute offset observable.
+  enum { Prefix = 32 };
+  memset(packet->data_(), 0xff, Prefix);
+  int n = Zquic::FrameCodec::writePathResponse(
+    packet->data_() + Prefix, packet->size - Prefix, challenge);
+  ZuCheck(n > 0);
+  packet->length = Prefix + unsigned(n);
+  auto retained = packet.ptr();
+  app.enterRx();
+  link->observePacket(packet, Prefix, unsigned(n), packet->length, 2, false, true);
+  ZuCheck(app.txPendingQ.count_() == 1 && packet->refCount() == references + 1);
+  packet = nullptr;
+  ZuCheck(retained->refCount() == 1);
+  while (app.rxPending() || app.txPending()) {
+    if (app.rxPending()) app.runRx();
+    if (app.txPending()) app.runTx();
+  }
+  app.enterTx();
+  ZuCheck(link->migrationPromotedCount == 1 && link->activeLocal() == preferred);
+  link->recoveryStop();
+}
+
 int main(int argc, char **argv)
 {
   ZuTestUtil::parse(argc, argv);
@@ -2924,7 +3409,13 @@ int main(int argc, char **argv)
 #endif
 
   ZuTestMain();
+  ZuTestCall(testPreferredPathProof);
+  ZuTestCall(testPreferredAuthenticatedFreshness);
+  ZuTestCall(testPreferredRecoveryEpoch);
+  ZuTestCall(testLocalCIDTxValidity);
+  ZuTestCall(testPacketPathHandoff);
   ZuTestCall(testParams);
+  ZuTestCall(testServerAddrs);
   ZuTestCall(testLongProbePadding);
   ZuTestCall(testStreamShape);
   ZuTestCall(testWritableMembership);

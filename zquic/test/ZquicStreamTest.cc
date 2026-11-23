@@ -87,6 +87,12 @@ struct App : public Zquic::Hub<App> {
 	mxStorage.invoke([wake = ZuMv(wake)]() mutable { wake(); },
 	  Base::txThread());
     });
+    // Link disconnect also fences the physical I/O owner, which differs
+    // from this fixture's protocol Tx owner. Keep links and their callbacks
+    // alive until that final handoff has completed.
+    ZmBlock<>{}([this](auto wake) {
+      mxStorage.txRun([wake = ZuMv(wake)]() mutable { wake(); });
+    });
   }
   template <typename L> void onTx(L l) {
     ZmBlock<>{}([this, l = ZuMv(l)](auto wake) mutable {
@@ -663,7 +669,8 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     const Zquic::SentFrameRef *ref = nullptr, bool ackEliciting = false) {
     Base::TxPktRefs refs;
     if (ref) refs.add(*ref);
-    if (coalesceMarkAck) payload.markAck(Zquic::PktNumSpace::Initial, 1, 0);
+    if (coalesceMarkAck && (!payload.ack(Zquic::PktNumSpace::Initial) ||
+	  payload.ackGen() != 1)) return false;
     return Base::sendProtInitialPkt(Base::CIDSel::Peer, Base::CIDSel::Local,
       Base::txPNLength(Zquic::PktNumSpace::Initial), {}, false,
       payload, ZuMv(addr), frame, ref ? &refs : nullptr,
@@ -706,7 +713,14 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
 	!Zquic::PktProt::deriveSecret(secret, &Ztls_::opensslAes128gcmsha256,
 	  Zquic::byteSpan(key, sizeof(key))) || !installHandshake(secret))
       return false;
+    Base::AckSnapshot initialAck;
+    initialAck.level = Zquic::PktNumSpace::Initial;
+    initialAck.gen = 1;
+    initialAck.due = true;
+    initialAck.ranges.push(Zquic::AckRange{0, 0});
+    if (!Base::noteAckTx(initialAck)) return false;
     unsigned allocations = 0, sends = 0, decodedInitial = 0, decodedHandshake = 0;
+    unsigned decodedAck = 0;
     ZiIOBuf *first = nullptr;
     bool valid = true;
     coalesceAlloc = [&]() -> ZmRef<ZiIOBuf> {
@@ -733,7 +747,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     coalesceOutput = [&](auto buf, ZiSockAddr) {
       ++sends;
       valid &= buf->length <= Zquic::txPktCapacity(buf);
-      if (sends == 1) valid &= !Base::txDiag().ackSentTx;
+      if (sends == 1) valid &= Base::pendingAck(Zquic::PktNumSpace::Initial);
       if (mode == 0 || mode == 3 || mode == 4)
 	valid &= buf.ptr() == first && buf->length == Zquic::MinUDPPayload &&
 	  coalesceInitialSize < buf->length;
@@ -758,6 +772,19 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
 	  ++decodedHandshake;
 	}
 	if (plain < 0 || !packetBytes || packetBytes > buf->length - at) return false;
+	if (h.type == Zquic::PktType::Initial) {
+	  Zquic::Frame frame;
+	  unsigned position = 0;
+	  while (position < unsigned(plain)) {
+	    unsigned used = 0;
+	    if (Zquic::FrameCodec::parse(Zquic::byteSpan(
+		packet + offset + position, unsigned(plain) - position),
+		frame, used) < 0 || !used)
+	      return false;
+	    if (frame.type == Zquic::FrameType::Ack) ++decodedAck;
+	    position += used;
+	  }
+	}
 	at += packetBytes;
       }
       if (mode == 4) resetRuntimeForTest();
@@ -788,7 +815,12 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     coalesceAlloc = {};
     coalesceOutput = {};
     bool retained = mode < 3 || mode == 5;
-    valid &= Base::txDiag().ackSentTx == unsigned(retained);
+    bool ackPending = Base::pendingAck(Zquic::PktNumSpace::Initial);
+    // The actual published generation rejects an already committed snapshot.
+    // This remains observable when release builds erase diagnostic counters.
+    bool ackCommitted = !Base::noteAckTx(initialAck);
+    valid &= ackCommitted == retained && ackPending == (!retained && mode != 4);
+    valid &= decodedAck == (mode >= 6 ? 0U : 1U);
     if (mode == 3 || mode == 6 || mode == 7)
       valid &= pendingRetx(Zquic::PktNumSpace::Initial) == 1 &&
 	pendingRetx(Zquic::PktNumSpace::Handshake) == 1;
@@ -802,7 +834,8 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     if (!ok) log_("coalesce mode=", mode, " valid=", valid, " completed=", completed,
       " allocations=", allocations, " sends=", sends,
       " decoded=", decodedInitial, '/', decodedHandshake,
-      " ACK commits=", Base::txDiag().ackSentTx,
+      " ACK committed=", ackCommitted, " pending=", ackPending,
+      " decoded ACKs=", decodedAck,
       " retained=", sentPacketCount(Zquic::PktNumSpace::Initial), '/',
       sentPacketCount(Zquic::PktNumSpace::Handshake),
       " recovery=", pendingRetx(Zquic::PktNumSpace::Initial), '/',
@@ -1336,6 +1369,9 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     recordSentPkt(level, sentPkts++, 100, ref, true);
     ++service->recovered;
     return true;
+  }
+  ZiSockAddr outputLocal() const {
+    return directPassive ? Base::validatingLocal() : ZiSockAddr{};
   }
   bool sendPassiveMigChal() {
     if (!directPassive) return false;
@@ -2057,6 +2093,8 @@ void testStreamTxRegisteredWriter()
       !rejected->finSent() && !rejected->txQueueCount() && !rejected->txRangeCount(),
     "impossible borrowed operation allocated/copied or leaked FIN/admission state");
   app.drainTx();
+  rejectedLink->teardown();
+  link->teardown();
 }
 
 void testStreamTxPendingOperation()

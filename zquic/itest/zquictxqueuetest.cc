@@ -8,6 +8,8 @@
 #include <zlib/ZmBlock.hh>
 #include <zlib/Zquic.hh>
 
+#include "../test/ZquicFiniteProvider.hh"
+
 #ifdef linux
 #include <errno.h>
 #include <sys/syscall.h>
@@ -556,6 +558,99 @@ static void testRebindQueued()
   ZuCheck(rx.received == 2 && rx.ordered && rx.source == replacement);
 }
 
+static void testSharedBindingCompletion()
+{
+  ZuTestScope(testSharedBindingCompletion);
+  ZiMultiplex mx{params()};
+  auto rxAllocator = Zquic::pktRxAllocator(&mx);
+  ZmRef<ZquicFiniteProvider> provider = new ZquicFiniteProvider{&mx, 4};
+  Zi::IOBufPoolAllocator<Zi::IOBufType::TxUDP, Zquic_::TxPkt> allocator{&mx, provider};
+  Endpoint original, preferred, originalRx, preferredRx;
+  originalRx.target = 2;
+  preferredRx.target = 1;
+  ZuCheck(mx.start(), (return));
+  bool opened = original.init(&mx, rxAllocator, &allocator) &&
+    preferred.init(&mx, rxAllocator, &allocator) &&
+    originalRx.init(&mx, rxAllocator, &allocator) &&
+    preferredRx.init(&mx, rxAllocator, &allocator) &&
+    original.open() && preferred.open() && originalRx.open() && preferredRx.open();
+  ZuCheck(opened);
+  ZmRef<ZiIOBuf> observed[2];
+  const uint8_t *data[2] = {};
+  bool held = false, promoted = false, completed = false;
+  if (opened) {
+    held = ZmBlock<bool>{}([&mx, &original, &originalRx, &allocator,
+	&observed, &data](auto wake) {
+      mx.txRun([&original, &originalRx, &allocator, &observed, &data,
+	  wake = ZuMv(wake)]() mutable {
+	sendProbe = {original.local().port(), -1, true};
+	bool ok = true;
+	for (unsigned i = 0; i < 2; ++i) {
+	  auto target = original.pktAllocTarget();
+	  auto buf = allocator.allocBuf(target.owner, 0, target.mps);
+	  if (!buf) { ok = false; break; }
+	  unsigned value = i + 1;
+	  memcpy(buf->end(), &value, sizeof(value));
+	  buf->length = sizeof(value);
+	  observed[i] = buf;
+	  data[i] = buf->data();
+	  ok &= buf->registered() && buf->skip == ZquicFiniteProvider::HeadRoom &&
+	    original.send(ZuMv(buf), originalRx.local(), Zquic::EcnMark::NotECT,
+	      false, {}, nullptr, target);
+	}
+	auto d = original.diag();
+	if (observed[0]) original.physical =
+	  static_cast<Zquic_::EndpointCxn<Endpoint::Base> *>(observed[0]->owner);
+	wake(ok && d.txPending == 1 && d.txQueued == 1 && !d.tx.datagramsTx);
+      });
+    });
+    ZuCheck(held);
+    promoted = ZmBlock<bool>{}([&mx, &preferred, &preferredRx, &original,
+	&originalRx, &allocator, &observed, &data](auto wake) {
+      mx.txRun([&preferred, &preferredRx, &original, &originalRx, &allocator,
+	  &observed, &data, wake = ZuMv(wake)]() mutable {
+	// Both bindings retain shared provider geometry. Admission credits do
+	// not create new backing when the common finite pool is exhausted.
+	auto spare0 = allocator.allocBuf(), spare1 = allocator.allocBuf();
+	bool bounded = spare0 && spare1 && !allocator.allocBuf();
+	spare0 = nullptr;
+	// Promotion changes the selector for newly constructed output only.
+	Endpoint *active = &preferred;
+	bool sent = active->packet(1, preferredRx.local());
+	bool immutable = true;
+	for (unsigned i = 0; i < 2; ++i) {
+	  auto pkt = static_cast<Zquic_::TxPkt *>(observed[i].ptr());
+	  unsigned value = 0;
+	  memcpy(&value, pkt->data(), sizeof(value));
+	  immutable &= pkt->data() == data[i] && value == i + 1 &&
+	    pkt->addr == originalRx.local() && pkt->ecn == Zquic::EcnMark::NotECT;
+	}
+	wake(bounded && sent && immutable && original.diag().txQueued == 1);
+      });
+    });
+    ZuCheck(promoted && preferredRx.done.timedwait(Zm::now(3)) == 0 &&
+      preferredRx.source == preferred.local().port());
+    completed = ZmBlock<bool>{}([&mx, &original, &observed, &data](auto wake) {
+      mx.txRun([&original, &observed, &data, wake = ZuMv(wake)]() mutable {
+	sendProbe.hold = false;
+	original.physical->send(ZiTxFn{[](ZiTxContext &) { return true; }});
+	auto d = original.diag();
+	bool same = true;
+	for (unsigned i = 0; i < 2; ++i)
+	  same &= observed[i]->data() == data[i] && observed[i]->refCount() == 1;
+	wake(same && d.tx.datagramsTx == 2 && !d.txPending && !d.txQueued);
+      });
+    });
+    ZuCheck(completed && originalRx.done.timedwait(Zm::now(3)) == 0 &&
+      originalRx.received == 2 && originalRx.ordered &&
+      originalRx.source == original.local().port());
+  }
+  for (auto &buf : observed) buf = nullptr;
+  original.close(); preferred.close(); originalRx.close(); preferredRx.close();
+  sendProbe = {};
+  ZuCheck(mx.stop());
+}
+
 // Characterization of a backend violating the UDP all-or-error contract.
 // Positive short results are invalid backend completions; ZiTx needs no repair.
 static void testBadUDPBackend()
@@ -611,6 +706,7 @@ int main(int argc, char **argv)
   ZuTestCall(testSustainedDrain);
   ZuTestCall(testCapacityReturn);
   ZuTestCall(testRebindQueued);
+  ZuTestCall(testSharedBindingCompletion);
   ZuTestCall(testBadUDPBackend);
 #endif
 }

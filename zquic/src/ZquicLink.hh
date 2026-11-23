@@ -106,11 +106,14 @@ struct AckSnapshot {
 struct RxAckMeta {
   bool		ackEliciting = false;
   bool		immediateAck = false;
+  bool		nonProbing = false;
+  bool		pathControls = false;
 };
 struct TxAckWork {
   AckSnapshot		ack;
   uint64_t		gen = 0;
   uint64_t		peerSequence = 0;
+  uint64_t		pathEpoch = 0;
   AckGrowth		growth;
   PktAckBatch		ackBatch;
   PktLossBatch	lossBatch;
@@ -234,6 +237,12 @@ struct PathState {
   bool		closeOnFailure = false;
   bool		armTimer = true;
   bool		sendChallenge = true;
+  bool		preferred = false;
+  bool		proofSeen = false;
+  bool		nonProbeSeen = false;
+  uint64_t		qualifyingPN = U64Null;
+  unsigned		localSlot = 0;
+  uint64_t		localGeneration = 0;
 };
 
 struct QLogTxFrameRefs {
@@ -333,6 +342,9 @@ enum { PathResponseMax = SentPkt::MaxFrames };
 struct alignas(Zm::CacheLineSize) LinkTxStorage {
   using TxStreamsRef = ZmRef<Zquic::TxStreams>;
 
+  // Rx remains the CID lifecycle owner; this bounded Tx snapshot only
+  // validates immutable NEW_CONNECTION_ID controls and retained recovery.
+  ZuArray<LinkCID, LocalCIDLimit> localCIDValidity;
   Zquic::LinkInfo info;
   InitialSecret initialSecret;
   TransportParams localParams;
@@ -349,6 +361,13 @@ struct alignas(Zm::CacheLineSize) LinkTxStorage {
   LinkState::T		txLinkState = LinkState::Closed;
   TxStreamsRef		txStreams{new TxStreams};
   CreditStreams	creditStreams;
+  uint64_t		pathEpoch = 1;
+  bool		preferredDone = false;
+  bool		ecnFence = false;
+  unsigned		ecnSeen = 0;
+  uint64_t		ecnBoundary = 0;
+  ZuArray<AckECN, PktNumSpace::N> latestECN =
+    fixedArray<AckECN, PktNumSpace::N>();
   RttEstimator		rtt;
   PTOBackoff		ptoBackoff;
   // Connection-owned timers; callbacks run on Tx.
@@ -1852,6 +1871,17 @@ protected:
   void rememberZeroRTTParams(const TransportParams &params) {
     m_linkRx.zeroRTTParams = params;
     m_linkRx.zeroRTTParamsSet = true;
+    app()->txRun([
+      link = impl(), params, runtime = m_linkRx.rxRuntimeGen
+    ]() mutable {
+      if (link->disconnecting_() ||
+          runtime != link->m_linkTx.txRuntimeGen) return;
+      link->m_linkTx.peerParams = params;
+      link->m_linkTx.peerParamsSet = true;
+      link->m_linkTx.txDataCredit.set(params.initialMaxData);
+      link->applyPeerStreamLimitsTx(
+        params.initMaxStreamsDuplex, params.initialMaxStreamsUni);
+    });
   }
   void clearZeroRTTParams() {
     m_linkRx.zeroRTTParamsSet = false;
@@ -2458,6 +2488,7 @@ protected:
       local = m_linkTx.path.local(), remote = m_linkTx.path.remote()
     ]() mutable {
       if (link->disconnecting_() || runtime != link->m_linkRx.rxRuntimeGen) return;
+      link->m_linkRx.rxPathLocal = local;
       link->m_linkRx.rxPathRemote = remote;
       link->m_rxPathPub.base = link->m_linkRx.rxPathBytes;
       link->m_rxPathPub.epoch = epoch;
@@ -2480,26 +2511,35 @@ protected:
     }
   }
   void recordPathRx(ZiSockAddr remote, unsigned bytes) {
-    if (establishedRx() && remote && remote == m_linkRx.rxPathRemote) {
+    recordPathRx({}, ZuMv(remote), bytes);
+  }
+  void recordPathRx(ZiSockAddr local, ZiSockAddr remote, unsigned bytes) {
+    if (establishedRx() && remote && remote == m_linkRx.rxPathRemote &&
+	(!m_config.isServer || local == m_linkRx.rxPathLocal)) {
       m_linkRx.rxPathBytes += bytes;
       m_rxPathPub.bytes = m_linkRx.rxPathBytes;
       return;
     }
     app()->txRun([
       link = impl(),
+      local = ZuMv(local),
       remote = ZuMv(remote),
       bytes
     ]() mutable {
       if (link->disconnecting_()) return;
-      link->recordPathRxTx(ZuMv(remote), bytes);
+      link->recordPathRxTx(ZuMv(local), ZuMv(remote), bytes);
     });
   }
   void recordPathRxTx(ZiSockAddr remote, unsigned bytes) {
-    if (remote && m_linkTx.migration.active && remote == m_linkTx.migration.path.remote()) {
+    recordPathRxTx({}, ZuMv(remote), bytes);
+  }
+  void recordPathRxTx(ZiSockAddr local, ZiSockAddr remote, unsigned bytes) {
+    if (remote && m_linkTx.migration.active &&
+	m_linkTx.migration.path.matches(local, remote, m_config.isServer)) {
       m_linkTx.migration.path.received(bytes);
       return;
     }
-    if (remote && remote != m_linkTx.path.remote()) return;
+    if (remote && !m_linkTx.path.matches(local, remote, m_config.isServer)) return;
     m_linkTx.path.received(bytes);
     ZquicLOG(app()->qlogTrace(), ([
       action = PathAction::Received,
@@ -2523,21 +2563,77 @@ protected:
       o.logPathUpdated(event, time);
     }));
   }
-  void observePathRx_(ZiSockAddr local, ZiSockAddr remote, unsigned bytes) {
-    if (remote && remote == m_linkRx.rxPathRemote) return;
+  void observePathRx_(
+    ZiSockAddr local, ZiSockAddr remote, unsigned bytes,
+    bool fresh = true, bool nonProbing = true, uint64_t pn = 0) {
     app()->txRun([
-      link = impl(),
-      local = ZuMv(local),
-      remote = ZuMv(remote),
-      bytes
+      link = impl(), runtime = m_linkRx.rxRuntimeGen,
+      local = ZuMv(local), remote = ZuMv(remote), bytes, fresh, nonProbing, pn
     ]() mutable {
-      if (link->disconnecting_()) return;
-      link->observePathRxTx(ZuMv(local), ZuMv(remote), bytes);
+      if (link->disconnecting_() || runtime != link->txRuntime()) return;
+      link->observePathRxTx(
+	ZuMv(local), ZuMv(remote), bytes, true, true, fresh, nonProbing, pn);
     });
+  }
+  void observePathPacket(
+    const ZmRef<RxPkt> &pkt, unsigned offset, unsigned length, unsigned bytes,
+    uint64_t pn, bool fresh, bool nonProbing, bool controls) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC packet path observation outside Rx thread", return);
+    if (!controls && establishedRx() && pkt->local == m_linkRx.rxPathLocal &&
+	pkt->addr == m_linkRx.rxPathRemote) {
+      // Ordinary active input publishes only its datagram byte credit. No
+      // packet reference, scheduler record or fallback allocation is added.
+      if (bytes) recordPathRx(pkt->local, pkt->addr, bytes);
+      return;
+    }
+    app()->txRun([
+      link = impl(), runtime = m_linkRx.rxRuntimeGen, pkt,
+      offset, length, bytes, pn, fresh, nonProbing, controls
+    ] {
+      if (link->disconnecting_() || runtime != link->txRuntime()) return;
+      link->observePathRxTx(
+	pkt->local, pkt->addr, bytes, true, true, fresh, nonProbing, pn);
+      if (controls && !link->disconnecting_() && runtime == link->txRuntime())
+	link->observePathControlsTx(pkt, offset, length, bytes, runtime);
+    });
+  }
+  void observePathControlsTx(
+    const ZmRef<RxPkt> &pkt, unsigned offset, unsigned length,
+    unsigned bytes, uint64_t runtime) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC path control observation outside Tx thread", return);
+    // Only exceptional control packets are read again. The original decrypted
+    // Rx backing is retained; no payload is copied and no receive wrapper is
+    // allocated. Other frames have already run on Rx and are only skipped.
+    auto frame_ = ZmScratch(Frame, 1);
+    auto &frame = *new (frame_.push()) Frame{};
+    unsigned position = 0, responses = 0, challenges = 0;
+    while (position < length) {
+      unsigned used = 0;
+      if (FrameCodec::parse(
+	  ZuBSpan{pkt->data() + offset + position, length - position},
+	  frame, used) < 0 || !used) return;
+      if (frame.type == FrameType::PathResponse && responses++ < SentPkt::MaxFrames)
+	(void)onPathResponse(frame.payload);
+      else if (frame.type == FrameType::PathChallenge && challenges++ < SentPkt::MaxFrames)
+	impl()->sendObservedResponse(frame.payload, pkt->addr, pkt->local,
+	  challenges == 1 ? bytes : 0);
+      if (disconnecting_() || runtime != m_linkTx.txRuntimeGen) return;
+      position += used;
+    }
+  }
+  bool preferredLocal(const ZiSockAddr &local) const {
+    if (!m_config.isServer || m_linkTx.preferredDone) return false;
+    const auto &preferred = m_linkTx.localParams.preferredAddress;
+    return bool(preferred) &&
+      ((preferred.ipv4 && local == preferred.ipv4) ||
+       (preferred.ipv6 && local == preferred.ipv6));
   }
   void observePathRxTx(
     ZiSockAddr local, ZiSockAddr remote, unsigned bytes = 0,
-    bool armTimer = true, bool sendChallenge = true) {
+    bool armTimer = true, bool sendChallenge = true,
+    bool fresh = true, bool nonProbing = true, uint64_t pn = 0) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path receive observation outside Tx thread", return);
     ++m_linkTx.txDiag.pathRxObserved;
@@ -2546,16 +2642,30 @@ protected:
       return;
     }
     if (m_linkTx.migration.active &&
-	remote == m_linkTx.migration.path.remote()) {
+	m_linkTx.migration.path.matches(local, remote, m_config.isServer)) {
       if (bytes) m_linkTx.migration.path.received(bytes);
+      if (fresh && nonProbing) {
+	m_linkTx.migration.nonProbeSeen = true;
+	m_linkTx.migration.qualifyingPN = pn;
+      }
+      if (m_linkTx.migration.proofSeen && m_linkTx.migration.nonProbeSeen)
+	promotePath_0();
       ++m_linkTx.txDiag.pathValidationActive;
       return;
     }
-    if (remote == m_linkTx.path.remote()) {
+    if (m_linkTx.path.matches(local, remote, m_config.isServer)) {
+      if (bytes) m_linkTx.path.received(bytes);
       ++m_linkTx.txDiag.pathRxSame;
       return;
     }
-    if (app()->migrationMode() == MigrationMode::Disabled) {
+    if (m_linkTx.migration.active) return;
+    // A completed preferred migration cannot be undone by delayed input
+    // addressed to an old server listener. Peer rebinding still uses policy.
+    if (m_config.isServer && m_linkTx.preferredDone &&
+	local != m_linkTx.path.local()) return;
+    bool preferred = preferredLocal(local);
+    if (!preferred && (!fresh || !nonProbing)) return;
+    if (!preferred && app()->migrationMode() == MigrationMode::Disabled) {
       ++m_linkTx.txDiag.pathValidationDisabled;
       ++m_linkTx.txDiag.migration.policyReject;
       return;
@@ -2581,15 +2691,22 @@ protected:
       o.logPathUpdated(event, time);
     }));
     startPathValid(
-      ZuMv(local), ZuMv(remote), armTimer, bytes, sendChallenge);
+      ZuMv(local), ZuMv(remote), armTimer, bytes, sendChallenge,
+      preferred, fresh && nonProbing, pn);
   }
   bool startPathValid(
     ZiSockAddr local, ZiSockAddr remote, bool armTimer = true,
-    unsigned rxBytes = 0, bool sendChallenge = true) {
+    unsigned rxBytes = 0, bool sendChallenge = true,
+    bool preferred = false, bool nonProbing = false, uint64_t pn = 0) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC path validation start outside Tx thread", return false);
-    if (!remote || remote == m_linkTx.path.remote()) return false;
+    if (!remote || m_linkTx.migration.active ||
+	m_linkTx.path.matches(local, remote, m_config.isServer)) return false;
     PathState state;
+    impl()->pathBinding(local, state.localSlot, state.localGeneration);
+    state.preferred = preferred;
+    state.nonProbeSeen = nonProbing;
+    if (nonProbing) state.qualifyingPN = pn;
     state.prev = m_linkTx.path;
     state.path = m_config.isServer ?
       Path::server(ZuMv(local), remote) :
@@ -2741,7 +2858,9 @@ protected:
 
       o.logPathValid(event, time);
     }));
-    promotePath_0();
+    m_linkTx.migration.proofSeen = true;
+    if (!m_linkTx.migration.preferred || m_linkTx.migration.nonProbeSeen)
+      promotePath_0();
     return true;
   }
   void rxPathResponse(ZuBSpan data) {
@@ -2760,6 +2879,11 @@ protected:
     if (!m_linkTx.migration.active ||
 	m_linkTx.migration.state != MigrationState::Validating)
       return;
+    if (!impl()->pathBindingValid(m_linkTx.migration.path.local(),
+	  m_linkTx.migration.localSlot, m_linkTx.migration.localGeneration)) {
+      failMig(MigrationReason::Validation);
+      return;
+    }
     m_linkTx.migration.state = MigrationState::Promoted;
     cancelPathTimer();
     promotePath_1();
@@ -2771,7 +2895,9 @@ protected:
     if (!m_linkTx.migration.active || m_linkTx.migration.attemptID != attemptID ||
 	m_linkTx.migration.state != MigrationState::Promoted)
       return;
-    if (!committed || id != m_linkTx.txCandidatePeerCID ||
+    if (!impl()->pathBindingValid(m_linkTx.migration.path.local(),
+	  m_linkTx.migration.localSlot, m_linkTx.migration.localGeneration) ||
+	!committed || id != m_linkTx.txCandidatePeerCID ||
 	sequence != m_linkTx.txCandidatePeerSeq) {
       failMig(MigrationReason::NoPeerCID);
       return;
@@ -2784,8 +2910,20 @@ protected:
   }
   void promotePath_4() {
     refreshPathRxTx();
+    if (m_linkTx.migration.preferred) {
+      cancelPMTUDTimer();
+      ++m_linkTx.pathEpoch;
+      m_linkTx.rtt = RttEstimator{};
+      m_linkTx.ptoBackoff.reset();
+      m_linkTx.congestion = NewReno{MinUDPPayload};
+      m_linkTx.migration.path.ecn(false);
+      m_linkTx.preferredDone = true;
+      m_linkTx.ecnFence = true;
+      m_linkTx.ecnBoundary = m_linkTx.txPN[PktNumSpace::AppData];
+    }
     m_linkTx.path = m_linkTx.migration.path;
     m_linkTx.path.validated();
+    resumeECNTx();
     publishActivePathRx();
     ++m_linkTx.txDiag.pathValidationPromoted;
     ++m_linkTx.txDiag.migration.promoted;
@@ -2831,6 +2969,8 @@ protected:
 
       o.logPathUpdated(event, time);
     }));
+    schedulePTO_();
+    scheduleLossTimer();
     impl()->pathPromoted();
     MigrationResult result = migrationResult(true, m_linkTx.migration.reason);
     logMigration(ZquicLog_::MigrationAction::Promoted);
@@ -3046,6 +3186,9 @@ protected:
     if (!m_linkTx.migration.active ||
 	m_linkTx.migration.state != MigrationState::Validating)
       return false;
+    if (!impl()->pathBindingValid(m_linkTx.migration.path.local(),
+	  m_linkTx.migration.localSlot, m_linkTx.migration.localGeneration))
+      return false;
     frame = ControlFrame::pathChallenge(m_linkTx.migration.challenge.bspan());
     build.reset();
     int n = frame.write(build.scratch(), build.scratchAvail());
@@ -3072,7 +3215,7 @@ protected:
     if (includeChallenge && remote && m_linkTx.migration.active &&
 	m_linkTx.migration.state == MigrationState::Validating &&
 	m_linkTx.migration.challenge.valid() &&
-	remote == m_linkTx.migration.path.remote()) {
+	m_linkTx.migration.path.matches(impl()->outputLocal(), remote, m_config.isServer)) {
       ControlFrame frame =
 	ControlFrame::pathChallenge(m_linkTx.migration.challenge.bspan());
       int n = frame.write(build.scratch(), build.scratchAvail());
@@ -3093,9 +3236,10 @@ protected:
     ZiSockAddr validationAddr = addr;
     PktBuild build;
     TxPktRefs refs;
-    if (!buildPathResponse(data, build, refs, ZuMv(buildAddr))) {
+    bool includeAck = !(m_config.isServer && impl()->probingOutput());
+    if (!buildPathResponse(data, build, refs, ZuMv(buildAddr), true, includeAck)) {
       refs = {};
-      if (!buildPathResponse(data, build, refs)) return false;
+      if (!buildPathResponse(data, build, refs, {}, false, includeAck)) return false;
     }
     bool sent = send(build, ZuMv(addr), &refs);
     if (runtime != m_linkTx.txRuntimeGen || sent) return sent;
@@ -3110,7 +3254,8 @@ protected:
     if (runtime != m_linkTx.txRuntimeGen) return sent;
     if (sent && validationAddr && m_linkTx.migration.active &&
 	m_linkTx.migration.state == MigrationState::Validating &&
-	validationAddr == m_linkTx.migration.path.remote())
+	m_linkTx.migration.path.matches(
+	  impl()->outputLocal(), validationAddr, m_config.isServer))
       (void)impl()->sendPassiveMigChal();
     return sent;
   }
@@ -3267,13 +3412,41 @@ protected:
   }
   bool validatingPath_() const { return migrationActive_(); }
   bool startPathValidation(ZiSockAddr local, ZiSockAddr remote) {
-    if (!remote || remote == m_linkTx.path.remote())
+    if (!remote || m_linkTx.path.matches(local, remote, m_config.isServer))
       return false;
     if (m_linkTx.migration.active &&
-	remote == m_linkTx.migration.path.remote())
+	m_linkTx.migration.path.matches(local, remote, m_config.isServer))
       return false;
     return startPathValid(ZuMv(local), ZuMv(remote), false);
   }
+  const ZiSockAddr &activePathLocal_() const { return m_linkTx.path.local(); }
+  bool hasPendingMigChallenge() const {
+    return m_linkTx.migration.active &&
+      m_linkTx.migration.state == MigrationState::Validating &&
+      m_linkTx.pathChallengeControl.queued;
+  }
+  const ZiSockAddr &validatingLocal() const {
+    return m_linkTx.migration.path.local();
+  }
+  auto cxnTimerFn(CxnTimer::T action) {
+    return [link = impl(), action, runtime = m_linkTx.txRuntimeGen,
+	pathEpoch = m_linkTx.pathEpoch, attemptID = m_linkTx.migration.attemptID]() {
+      if (link->disconnecting_() || runtime != link->m_linkTx.txRuntimeGen) return;
+      if (action == CxnTimer::PMTUD && pathEpoch != link->m_linkTx.pathEpoch) return;
+      if (action == CxnTimer::PathValid &&
+	  (attemptID != link->m_linkTx.migration.attemptID ||
+	   (attemptID && link->m_linkTx.migration.state != MigrationState::Validating)))
+	return;
+      link->cxnTimer(action);
+    };
+  }
+
+  void sendObservedResponse(ZuBSpan, ZiSockAddr, ZiSockAddr, unsigned) { }
+  Path *outputPath() const { return nullptr; }
+  void pathBinding(const ZiSockAddr &, unsigned &, uint64_t &) const { }
+  bool pathBindingValid(const ZiSockAddr &, unsigned, uint64_t) const { return true; }
+  ZiSockAddr outputLocal() const { return {}; }
+  bool probingOutput() const { return false; }
   const ZiSockAddr &validatingRemote() const {
     return m_linkTx.migration.path.remote();
   }
@@ -3338,7 +3511,10 @@ protected:
     enum { Direct, Probe, Filter, Validation, FilterProbe };
   };
   Path &txPath(const ZiSockAddr &addr) {
-    if (addr && m_linkTx.migration.active && addr == m_linkTx.migration.path.remote())
+    if (m_config.isServer)
+      if (auto path = impl()->outputPath()) return *path;
+    if (addr && m_linkTx.migration.active &&
+	m_linkTx.migration.path.matches(impl()->outputLocal(), addr, m_config.isServer))
       return m_linkTx.migration.path;
     return m_linkTx.path;
   }
@@ -3423,7 +3599,7 @@ protected:
     m_linkTx.txPN[level] = pn;
   }
   template <typename L>
-  void resetLink(L l) {
+  void resetLink(L l, bool preservePN = false) {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC runtime reset outside Rx thread", return);
     cancelAckRx();
@@ -3444,6 +3620,7 @@ protected:
       m_linkRx.rxAckMinGen[i] = m_linkRx.rxAcks.gen(PktNumSpace::T(i)) + 1;
       m_linkRx.rxAckRetired[i] = 0;
     }
+    m_linkRx.rxPathLocal = {};
     m_linkRx.rxPathRemote = {};
     disconnecting_(false);
     m_linkRx.statelessReset = false;
@@ -3471,10 +3648,15 @@ protected:
       m_linkRx.crypto.discardSecret(PktNumSpace::T(i));
     }
     app()->txInvoke(impl(), [
-      link = impl(), creditSequence, runtime = m_linkRx.rxRuntimeGen, l = ZuMv(l)
+      link = impl(), creditSequence, runtime = m_linkRx.rxRuntimeGen,
+      preservePN, l = ZuMv(l)
     ]() mutable {
       if (link->disconnecting_()) return link;
-      link->resetTx(creditSequence, [link, runtime, l = ZuMv(l)]() mutable {
+      auto pn = link->m_linkTx.txPN;
+      link->resetTx(creditSequence, [link, runtime, pn, preservePN, l = ZuMv(l)]() mutable {
+	if (preservePN)
+	  for (unsigned i = 0; i < PktNumSpace::N; ++i)
+	    link->setTxPN(PktNumSpace::T(i), pn[i]);
 	link->app()->rxRun([link, runtime, l = ZuMv(l)]() mutable {
 	  link->drainResetRx(runtime, ZuMv(l));
 	});
@@ -3509,7 +3691,14 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Tx runtime reset outside Tx thread", return);
     ++m_linkTx.txRuntimeGen;
+    m_linkTx.localCIDValidity.clear();
     m_linkTx.resetting = true;
+    ++m_linkTx.pathEpoch;
+    m_linkTx.preferredDone = false;
+    m_linkTx.ecnFence = false;
+    m_linkTx.ecnSeen = 0;
+    m_linkTx.ecnBoundary = 0;
+    for (auto &ecn : m_linkTx.latestECN) ecn.reset();
     m_linkTx.txSendDeferred = false;
     m_linkTx.flushPending = m_linkTx.recoveryPending = false;
     m_linkTx.earlySkipped = 0;
@@ -3995,7 +4184,34 @@ protected:
   bool addLocalCID_(
     const CxnID &id, uint64_t sequence,
     const ResetToken &resetToken = {}) {
-    return addCID(m_linkRx.localCIDs, id, sequence, resetToken, true);
+    if (!addCID(m_linkRx.localCIDs, id, sequence, resetToken, true)) return false;
+    if (sequence > m_linkRx.localCIDSequence)
+      m_linkRx.localCIDSequence = sequence;
+    publishLocalCID(*findLocalCID(sequence));
+    return true;
+  }
+  void publishLocalCID(LinkCID value) {
+    ZiAssert(rxInvoked_(), "Zquic", (),
+      "QUIC local CID publication outside Rx thread", return);
+    value.associated = false;
+    app()->txRun([link = impl(), value, runtime = m_linkRx.rxRuntimeGen] {
+      if (link->disconnecting_() || runtime != link->m_linkTx.txRuntimeGen) return;
+      link->updateLocalCIDTx(value);
+    });
+  }
+  void updateLocalCIDTx(const LinkCID &value) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC local CID snapshot outside Tx thread", return);
+    auto slot = findCID(m_linkTx.localCIDValidity, value.sequence);
+    if (!slot) {
+      if (value.state != CxnState::Active) return;
+      for (auto &cid : m_linkTx.localCIDValidity)
+	if (cid.state != CxnState::Active) { slot = &cid; break; }
+      if (!slot && m_linkTx.localCIDValidity.length() < LocalCIDLimit)
+	slot = m_linkTx.localCIDValidity.push();
+    }
+    ZiAssert(slot, "Zquic", (), "QUIC local CID snapshot capacity mismatch", return);
+    *slot = value;
   }
   bool addPeerCID_(
     const CxnID &id, uint64_t sequence,
@@ -4011,12 +4227,10 @@ protected:
   const LinkCID *peerCID_(uint64_t sequence) const {
     return findCID(m_linkRx.peerCIDs, sequence);
   }
-  bool retireLocalCID(uint64_t sequence, CxnID &id) {
-    LinkCID *cid = findLocalCID(sequence);
-    if (!cid || cid->state == CxnState::Tombstone) return false;
-    id = cid->id;
+  void retireLocalCID(LinkCID *cid) {
     cid->state = CxnState::Retired;
     cid->associated = false;
+    publishLocalCID(*cid);
     ZquicLOG(app()->qlogTrace(), ([
       action = CIDAction::Retired,
       reason = CIDReason::PeerRequest,
@@ -4042,7 +4256,6 @@ protected:
 
       o.logCIDUpdated(event, time);
     }));
-    return true;
   }
   bool receiveNewCxnID_(const Frame &frame) {
     if (frame.type != FrameType::NewCxnID) return false;
@@ -4059,45 +4272,47 @@ protected:
   }
   bool receiveRetireCxnID_(const Frame &frame) {
     if (frame.type != FrameType::RetireCxnID) return false;
-    CxnID id;
-    if (!retireLocalCID(frame.value, id)) return false;
+    // A retransmitted retirement can arrive after its slot has been reused.
+    auto cid = findLocalCID(frame.value);
+    if (!cid)
+      return m_linkRx.localCIDs.length() &&
+	frame.value <= m_linkRx.localCIDSequence;
+    if (cid->state == CxnState::Retired) return true;
+    CxnID id = cid->id;
+    retireLocalCID(cid);
     impl()->retiredLocalCID(frame.value, id);
+    scheduleMigrationCIDs();
     return true;
   }
   bool issueMigrationCIDs() {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC migration CID issuance outside Rx thread", return false);
-    if (!establishedRx() ||
-	app()->migrationMode() != MigrationMode::Active ||
-	!app()->migCIDRes())
-      return true;
+    if (!establishedRx()) return true;
+    bool preferred = m_config.isServer && bool(m_linkRx.transportParams.preferredAddress);
+    bool ordinary = app()->migrationMode() == MigrationMode::Active && app()->migCIDRes();
+    if (!preferred && !ordinary) return true;
     unsigned peerLimit = m_linkRx.crypto.peerParamsSet() ?
       unsigned(m_linkRx.crypto.peerParams().activeCxnIDLimit) : 2;
     if (peerLimit < 2) return true;
-    unsigned target = app()->migCIDRes() + 1;
+    unsigned target = ordinary ? app()->migCIDRes() + 1 : 2;
+    if (preferred && target < 2) target = 2;
     if (target > peerLimit) target = peerLimit;
     if (target > LocalCIDLimit) target = LocalCIDLimit;
     unsigned active = 0;
-    uint64_t sequence = 0;
-    for (auto &cid : m_linkRx.localCIDs) {
+    for (const auto &cid : m_linkRx.localCIDs)
       if (cid.state == CxnState::Active) ++active;
-      if (cid.state != CxnState::Tombstone && cid.sequence > sequence)
-	sequence = cid.sequence;
-    }
-    bool issued = false;
     unsigned attempts = 0;
     while (active < target && attempts++ < target * 2) {
       CxnID id;
       ResetToken token;
       if (!CxnIDGen::random(id) || !token.generate()) return false;
-      uint64_t seq = ++sequence;
+      uint64_t seq = m_linkRx.localCIDSequence + 1;
       if (!addLocalCID_(id, seq, token)) continue;
+      // Bind the route on Rx before a concurrent Tx flush can advertise it.
+      impl()->localCIDsIssued();
       queueControl(ControlFrame::newCxnID(seq, 0, id, token));
-      issued = true;
       ++active;
     }
-    if (issued)
-      impl()->localCIDsIssued();
     return active >= target;
   }
   void scheduleMigrationCIDs() {
@@ -4354,6 +4569,7 @@ protected:
   void clearCIDState() {
     m_linkRx.localCIDs.clear();
     m_linkRx.peerCIDs.clear();
+    m_linkRx.localCIDSequence = 0;
     m_linkRx.peerRetirePriorTo = 0;
   }
   template <typename CIDs>
@@ -4595,6 +4811,10 @@ protected:
     ++m_linkRx.localParamsGen;
   }
 
+  void setPreferredAddress_(const PreferredAddress &addr) {
+    m_linkRx.transportParams.preferredAddress = addr;
+    ++m_linkRx.localParamsGen;
+  }
   bool loadSrvParams(const ServerBootstrap &bootstrap) {
     if (bootstrap.transportParams(m_linkRx.transportParams)) {
       ++m_linkRx.localParamsGen;
@@ -5035,7 +5255,7 @@ protected:
       o.logKeyRetired(event, time);
     }));
   }
-  bool txInstallPeerKeyUpdate(uint64_t keyGeneration) {
+  bool txInstallPeerKeyUpdate(uint64_t keyGeneration, bool local = false) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC peer key update outside Tx thread", return false);
     if (keyGeneration <= m_linkTx.txKeyGeneration) return true;
@@ -5047,23 +5267,31 @@ protected:
       return false;
     m_linkTx.txKeyPhase = !m_linkTx.txKeyPhase;
     m_linkTx.txKeyGeneration = keyGeneration;
-	    ZquicLOG(app()->qlogTrace(), ([
-	      level = PktNumSpace::T(PktNumSpace::AppData),
-	      keyPhase = uint64_t(m_linkTx.txKeyPhase),
-	      linkInfo = linkInfo_()
-	    ](auto &o, ZuTime time) {
+    ZquicLOG(app()->qlogTrace(), ([
+      level = PktNumSpace::T(PktNumSpace::AppData),
+      keyPhase = uint64_t(m_linkTx.txKeyPhase),
+      reason = SecReason::T(local ? SecReason::KeyUpdate : SecReason::PeerUpdate),
+      linkInfo = linkInfo_()
+    ](auto &o, ZuTime time) {
       SecEvt event{
-		.linkInfo = linkInfo,
-		.value = keyPhase,
+	.linkInfo = linkInfo,
+	.value = keyPhase,
 	.kind = SecKind::KeyUpdated,
 	.packetSpace = level,
 	.keyType = SecKeyType::TX,
 	.trigger = SecTrigger::Local,
-		.reason = SecReason::PeerUpdate,
-		.success = true};
+	.reason = reason,
+	.success = true};
       o.logKeyUpdated(event, time);
     }));
     return true;
+  }
+
+  bool txInitiateKeyUpdate() {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC local key update outside Tx thread", return false);
+    return establishedTx() && m_linkTx.txKeyGeneration == 0 &&
+      txInstallPeerKeyUpdate(1, true);
   }
 
   bool checkStatelessReset_(ZuBSpan datagram, bool notify = false) {
@@ -5290,7 +5518,9 @@ protected:
 	    m_linkTx.streamsBlockedControl[i], build, budget, refs,
 	    sentControls))
 	return false;
-    if (refs.count() < SentPkt::MaxFrames &&
+    if (!(m_config.isServer && m_linkTx.migration.active &&
+	  m_linkTx.migration.preferred) &&
+	refs.count() < SentPkt::MaxFrames &&
 	!appendQueuedCtl(
 	  m_linkTx.pathChallengeControl, build, budget, refs,
 	  sentControls))
@@ -6035,7 +6265,7 @@ protected:
     PktTxUpdate update;
     complete = m_linkTx.txPkts[level].markTimeThreshLossBatch(
       m_linkTx.txLargestAckd[level], now, threshold, batch,
-      RecoveryScanBatch, &update);
+      RecoveryScanBatch, &update, m_linkTx.pathEpoch);
     if (!update.lostBytes)
       return false;
     applyLossUpdateTx(update);
@@ -6065,8 +6295,9 @@ protected:
 	o.logMarkRetrans(event, time);
     }));
     if (ZuUnlikely(app()->congestionControl()))
-      if (complete && m_linkTx.txPkts[level].persistentCongestion(
-	  persistentCongestionThresh(), RecoveryScanBatch))
+      if (complete && update.normalLostBytes &&
+	  m_linkTx.txPkts[level].persistentCongestion(
+	  persistentCongestionThresh(), RecoveryScanBatch, m_linkTx.pathEpoch))
 	persistentCongestion_();
     updateCongestionDiag();
     return true;
@@ -6553,6 +6784,13 @@ protected:
   }
 
   void schedulePathTimer(ZuTime out) {
+    if (m_config.isServer && m_linkTx.migration.active &&
+	m_linkTx.migration.preferred && !m_linkTx.migration.proofSeen) {
+      ZuTime interval = ptoTimeout();
+      if (interval < PathValidMinTimeout) interval = PathValidMinTimeout;
+      ZuTime retry = now_() + interval;
+      if (retry < out) out = retry;
+    }
     scheduleCxnTimer(
       "path validation", CxnTimer::PathValid,
       out, ZmScheduler::Update, &m_timers.path.node);
@@ -6679,6 +6917,16 @@ protected:
     if (disconnecting_()) return;
     if (m_linkTx.migration.active && *m_linkTx.migration.deadline &&
 	now_() < m_linkTx.migration.deadline) {
+      if (m_config.isServer && m_linkTx.migration.preferred &&
+	  !m_linkTx.migration.proofSeen) {
+	if (!impl()->pathBindingValid(m_linkTx.migration.path.local(),
+	    m_linkTx.migration.localSlot, m_linkTx.migration.localGeneration)) {
+	  failMig(MigrationReason::Validation);
+	  return;
+	}
+	(void)impl()->sendPassiveMigChal();
+      }
+      if (!m_linkTx.migration.active) return;
       schedulePathTimer(m_linkTx.migration.deadline);
       return;
     }
@@ -7104,7 +7352,10 @@ protected:
     for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       auto level = PktNumSpace::T(i);
       if (level == probeLevel || m_linkTx.txSpaceDiscarded[level] ||
-	  !txSecretInstalled_(level) || !m_linkTx.txPkts[level].ackElicitingInFlight())
+	  !m_linkTx.txPkts[level].ackElicitingInFlight())
+	continue;
+      // In-flight Initial packets already have the dedicated Initial secret.
+      if (level != PktNumSpace::Initial && !txSecretInstalled_(level))
 	continue;
       companion = level;
       break;
@@ -7113,12 +7364,15 @@ protected:
     uint64_t companionPN = companion < PktNumSpace::N ? m_linkTx.txPN[companion] : 0;
     uint64_t packetsBefore = txPackets();
     unsigned budget = companion < PktNumSpace::N ? 1 : 2;
-    auto finish = [this, &sendProbe, probeLevel, companion,
+    auto finish = [this, &sendCrypto, &sendProbe, probeLevel, companion,
 	primaryPN, companionPN, packetsBefore](bool primarySent) {
       if (primarySent && companion < PktNumSpace::N &&
 	  m_linkTx.txPN[probeLevel] != primaryPN &&
 	  m_linkTx.txPN[companion] == companionPN && txPackets() - packetsBefore < 2) {
-	if (sendProbe(companion)) notePTOProbe(companion, 1);
+	// If a coalesced flight was lost, the peer needs CRYPTO in both spaces.
+	if ((companion <= PktNumSpace::Handshake &&
+	     sendCryptoPTO(sendCrypto, companion)) || sendProbe(companion))
+	  notePTOProbe(companion, 1);
       }
       schedulePTO_();
     };
@@ -7548,10 +7802,13 @@ nextSpace:
     EcnMark::T ecn = EcnMark::NotECT) {
     if (m_linkTx.txSpaceDiscarded[level]) return true;
     if (!ackEliciting && !refs.count()) return true;
-    if (!m_linkTx.txPkts[level].add(pn, [level, pn, bytes, &refs,
+    uint64_t pathEpoch = m_config.isServer && impl()->probingOutput() ?
+      0 : m_linkTx.pathEpoch;
+    if (!m_linkTx.txPkts[level].add(pn, [level, pn, bytes, &refs, pathEpoch,
 	ackEliciting, pmtudProbe, pmtudSize, ackLevel, ackLargest, packetType, ecn
     ](SentPkt &packet) {
       packet.pn = pn;
+      packet.pathEpoch = pathEpoch;
       packet.space = level;
       packet.packetType = packetType == PktType::N ?
         pktTypeFromSpace(level) : packetType;
@@ -7568,10 +7825,11 @@ nextSpace:
         packet.addFrame(refs[i], refs.stream(i));
     })) return false;
     if (ZuUnlikely(app()->congestionControl()))
-      if (ackEliciting) m_linkTx.path.sentECN(level, ecn);
+      if (ackEliciting && pathEpoch) m_linkTx.path.sentECN(level, ecn);
     recordTxUnackd_(level, refs);
     if (ackEliciting) {
-      if (ZuUnlikely(app()->congestionControl())) m_linkTx.congestion.sent(bytes);
+      if (ZuUnlikely(app()->congestionControl()) && pathEpoch)
+	m_linkTx.congestion.sent(bytes);
       if constexpr (Finish) {
 	updateCongestionDiag();
 	schedulePTO_();
@@ -7788,7 +8046,8 @@ nextSpace:
   void applyECNAckTx(
     const AckSnapshot *ack, const PktTxUpdate &update, bool *ecnValid,
     uint64_t *ceDelta) {
-    if (!ack || !update.ecnAckdPackets || m_linkTx.path.ecnDisabled()) return;
+    if (!ack || !update.ecnAckdPackets || m_linkTx.path.ecnDisabled() ||
+	(ecnValid && !*ecnValid)) return;
     if (!ack->ecn.any()) {
       if (m_linkTx.path.ecnProbeExpired() && ecnValid && *ecnValid) {
 #ifdef Zquic_DEBUG
@@ -7885,8 +8144,9 @@ nextSpace:
 	streamRef = findTxStream_(int64_t(ref.streamID));
 	stream = streamRef.ptr();
       }
-      if (ackTxFrame_(update.level, ref, stream))
-	switch (ref.kind) {
+      bool acked = ackTxFrame_(update.level, ref, stream);
+      if (work.gen != m_linkTx.txRuntimeGen) return;
+      if (acked) switch (ref.kind) {
 	  case SentFrameKind::Stream:
 	    if (ref.fin) queueAckReap(reapStreams, stream);
 	    break;
@@ -7899,6 +8159,10 @@ nextSpace:
 	}
     }
     work.retiredData |= bool(update.ackdFrames);
+    if (update.pathEpoch != m_linkTx.pathEpoch) {
+      refreshAckPath(work);
+      return;
+    }
     if (ZuUnlikely(app()->congestionControl())) {
       applyECNAckTx(ack, update, ecnValid, ceDelta);
       work.growth.stage(m_linkTx.congestion, workEpoch, update.eligibleAckdBytes);
@@ -8010,6 +8274,20 @@ nextSpace:
 	o.logCongStateUpd(event, time);
       }));
     }
+    resumeECNTx();
+  }
+
+  void refreshAckPath(TxAckWork &work) {
+    if (work.pathEpoch == m_linkTx.pathEpoch) return;
+    work.pathEpoch = m_linkTx.pathEpoch;
+    work.growth = {};
+    work.ackBatch.ackd = 0;
+    work.ackBatch.haveAckd = false;
+    work.ackBatch.latestSentTime = {};
+    work.lossBatch.lost = 0;
+    work.ecnValidated = true;
+    work.ecnValid = false;
+    work.ceDelta = 0;
   }
 
   void processAckFrameTx(const AckSnapshot &ack, uint64_t peerSequence = 0) {
@@ -8019,12 +8297,14 @@ nextSpace:
     work.ack = ack;
     work.gen = m_linkTx.txRuntimeGen;
     work.peerSequence = peerSequence;
+    work.pathEpoch = m_linkTx.pathEpoch;
     processAckFrameTx(ZuMv(work));
   }
   void processAckFrameTx(TxAckWork work) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC ACK sent-packet processing outside Tx thread", return);
     AckSnapshot &ack = work.ack;
+    refreshAckPath(work);
     if (disconnecting_() || work.gen != m_linkTx.txRuntimeGen) return;
     if (work.peerSequence && work.peerSequence != m_linkTx.txPeerAckActive) return;
     if (!ack.ranges || m_linkTx.txSpaceDiscarded[ack.level]) {
@@ -8037,8 +8317,11 @@ nextSpace:
       return;
     }
     if (!work.ecnValidated) {
-      if (ZuUnlikely(app()->congestionControl()))
-	work.ecnValid = validateAckECN(ack, &work.ceDelta);
+      if (ZuUnlikely(app()->congestionControl())) {
+	bool oldECN = observeECNAck(ack);
+	work.ecnValid = !oldECN && !m_linkTx.ecnFence &&
+	  validateAckECN(ack, &work.ceDelta);
+      }
       for (unsigned i = 0, n = ack.ranges.length(); i < n; ++i) {
 	uint64_t largest = ack.ranges[i].largest;
 	if (ZuNull(m_linkTx.txLargestAckd[ack.level]) ||
@@ -8056,10 +8339,12 @@ nextSpace:
 	      if (!m_linkTx.txPkts[ack.level].ackBatch(
 		  ack.ranges.data(), ack.ranges.length(),
 		  work.ackBatch, RecoveryScanBatch,
-		  ack.level, &update, recoveryStart)) {
+		  ack.level, &update, recoveryStart, m_linkTx.pathEpoch)) {
 		applyAckUpdateTx(
 		  update, work, reapStreams,
 		  &ack, &work.ecnValid, &work.ceDelta);
+      if (work.gen != m_linkTx.txRuntimeGen || disconnecting_()) return;
+      refreshAckPath(work);
 		ZquicLOG(app()->qlogTrace(), ([
 	  level = ack.level,
 	  largestAcked = ack.ranges ?
@@ -8091,6 +8376,8 @@ nextSpace:
 		  o.logPktsAcked(event, time);
 		}));
 		reapAckedStreams(update, reapStreams);
+      if (work.gen != m_linkTx.txRuntimeGen || disconnecting_()) return;
+      refreshAckPath(work);
 		app()->txRun([link = impl(), work = ZuMv(work)]() mutable {
 		  if (link->disconnecting_()) return;
 		  link->processAckFrameTx(ZuMv(work));
@@ -8100,6 +8387,8 @@ nextSpace:
 	      applyAckUpdateTx(
 		update, work, reapStreams,
 		&ack, &work.ecnValid, &work.ceDelta);
+      if (work.gen != m_linkTx.txRuntimeGen || disconnecting_()) return;
+      refreshAckPath(work);
 	      ZquicLOG(app()->qlogTrace(), ([
 	level = ack.level,
 	largestAcked = ack.ranges ?
@@ -8131,18 +8420,24 @@ nextSpace:
 		o.logPktsAcked(event, time);
 	      }));
 	      reapAckedStreams(update, reapStreams);
+      if (work.gen != m_linkTx.txRuntimeGen || disconnecting_()) return;
+      refreshAckPath(work);
 	      work.lossPhase = true;
 	    } else {
 	      applyAckUpdateTx(
 		update, work, reapStreams,
 		&ack, &work.ecnValid, &work.ceDelta);
+      if (work.gen != m_linkTx.txRuntimeGen || disconnecting_()) return;
+      refreshAckPath(work);
 	      reapAckedStreams(update, reapStreams);
+      if (work.gen != m_linkTx.txRuntimeGen || disconnecting_()) return;
+      refreshAckPath(work);
 	    }
     if (work.ackBatch.haveAckForLoss) {
       PktTxUpdate lossUpdate;
       if (!m_linkTx.txPkts[ack.level].markPktThreshLossBatch(
 	  work.ackBatch.largestAckdForLoss, 3, work.lossBatch,
-	  RecoveryScanBatch, &lossUpdate)) {
+	  RecoveryScanBatch, &lossUpdate, m_linkTx.pathEpoch)) {
 	applyLossUpdateTx(lossUpdate);
 	ZquicLOG(app()->qlogTrace(), ([
 	  level = ack.level,
@@ -8208,10 +8503,10 @@ nextSpace:
     }
     if (ZuUnlikely(app()->congestionControl()) && work.lossBatch.lost) {
       if (m_linkTx.txPkts[ack.level].persistentCongestion(
-	  persistentCongestionThresh(), RecoveryScanBatch))
+	  persistentCongestionThresh(), RecoveryScanBatch, m_linkTx.pathEpoch))
 	persistentCongestion_();
     }
-    if (work.ackBatch.ackd) {
+    if (work.pathEpoch == m_linkTx.pathEpoch && work.ackBatch.ackd) {
       ZuTime now = ack.receivedUS ? intervalUS(ack.receivedUS) : now_();
       if (*work.ackBatch.latestSentTime && work.ackBatch.latestSentTime < now) {
 	m_linkTx.rtt.sample(
@@ -8246,6 +8541,7 @@ nextSpace:
       }
       m_linkTx.ptoBackoff.reset();
     }
+    resumeECNTx();
     // Commit only after this ACK's ECN and loss responses, including all
     // bounded continuations. Reset/discard return above without growth.
     if (ZuUnlikely(app()->congestionControl())) work.growth.commit(m_linkTx.congestion);
@@ -8274,6 +8570,40 @@ nextSpace:
     for (unsigned i = 0, n = ack.ranges.length(); i < n; ++i)
       if (ack.ranges[i].largest >= m_linkTx.txPN[ack.level]) return false;
     return true;
+  }
+
+  bool observeECNAck(const AckSnapshot &ack) {
+    bool old = false;
+    if (m_linkTx.preferredDone && ack.level == PktNumSpace::AppData)
+      for (const auto &range : ack.ranges)
+	if (range.first < m_linkTx.ecnBoundary) { old = true; break; }
+    if (!ack.ecn.any()) return old;
+    auto &latest = m_linkTx.latestECN[ack.level];
+    bool newer = ack.ecn.ect0 >= latest.ect0 && ack.ecn.ect1 >= latest.ect1 &&
+      ack.ecn.ce >= latest.ce && !(ack.ecn == latest);
+    if (newer) {
+      latest = ack.ecn;
+      m_linkTx.ecnSeen |= 1U << unsigned(ack.level);
+      if (old && !m_linkTx.ecnFence) {
+	// Late old-path feedback can include newly acknowledged ECT packets.
+	// Resume only after those records retire and the baseline is exact.
+	m_linkTx.ecnFence = true;
+	m_linkTx.path.ecn(false);
+      }
+    }
+    return old;
+  }
+  void resumeECNTx() {
+    if (!m_linkTx.ecnFence || !app()->congestionControl() || !app()->ecn()) return;
+    for (unsigned i = 0; i < PktNumSpace::N; ++i)
+      if (m_linkTx.txPkts[i].ectRetained()) return;
+    if (!(m_linkTx.ecnSeen & (1U << PktNumSpace::AppData))) return;
+    m_linkTx.path.ecnTesting();
+    for (unsigned i = 0; i < PktNumSpace::N; ++i) {
+      m_linkTx.path.peerAckECN(PktNumSpace::T(i)) = m_linkTx.latestECN[i];
+      m_linkTx.path.sentECN(PktNumSpace::T(i)) = m_linkTx.latestECN[i];
+    }
+    m_linkTx.ecnFence = false;
   }
 
   bool validateAckECN(const AckSnapshot &ack, uint64_t *ceDelta = nullptr) {
@@ -8849,12 +9179,17 @@ nextSpace:
 
   void discardProtPktTx(
     PktNumSpace::T level, uint64_t pn, unsigned bytes, bool ackEliciting) {
-    m_linkTx.txPkts[level].discard(pn);
+    uint64_t pathEpoch = 0;
+    bool discarded = m_linkTx.txPkts[level].discard(pn, &pathEpoch);
     // A failed send retires only this packet; its data still needs an ACK.
-    if (ackEliciting) {
-      if (ZuUnlikely(app()->congestionControl())) m_linkTx.congestion.release(bytes);
+    // A synchronous send hook can promote before reporting local refusal.
+    if (ackEliciting && discarded) {
+      if (ZuUnlikely(app()->congestionControl()) &&
+	  pathEpoch == m_linkTx.pathEpoch)
+	m_linkTx.congestion.release(bytes);
       updateCongestionDiag();
     }
+    resumeECNTx();
   }
 
   static uint64_t qlogUS(ZuTime t) {
@@ -9089,8 +9424,15 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC packet allocation outside Tx thread", return nullptr);
     if (m_pressure.pending) { m_pressure.restart = true; return nullptr; }
-    if (m_capacity.needed && m_capacity.wait.busy() && !m_capacity.token) return nullptr;
+    bool probing = m_config.isServer && impl()->probingOutput();
     auto target = impl()->pktAllocTarget();
+    if (!probing && (m_capacity.wait.busy() || m_capacity.token) &&
+	!(m_capacity.target == target)) {
+      cancelCapacityTx([link = impl()] { link->pktPressureResume(); });
+      return nullptr;
+    }
+    if (!probing && m_capacity.needed && m_capacity.wait.busy() &&
+	!m_capacity.token) return nullptr;
     if (!target.allocator) return nullptr;
     auto buf = target.allocator->allocBuf(target.owner, 0, target.mps);
     if (ZuUnlikely(!buf)) impl()->pktAllocFailed();
@@ -9101,13 +9443,19 @@ protected:
     ZmRef<ZiIOBuf> buf, ZiSockAddr addr, EcnMark::T ecn, bool priority, Send send) {
     if (m_pressure.pending) { m_pressure.restart = true; return false; }
     uint64_t runtime = m_linkTx.txRuntimeGen;
-    auto token = m_capacity.token;
-    m_capacity.token = {};
+    bool probing = m_config.isServer && impl()->probingOutput();
+    auto target = impl()->pktAllocTarget();
+    if (!probing && m_capacity.token && !(m_capacity.target == target)) {
+      cancelCapacityTx([link = impl()] { link->pktPressureResume(); });
+      return false;
+    }
+    auto token = probing ? Zquic_::EndpointTxToken{} : m_capacity.token;
+    if (!probing) m_capacity.token = {};
     bool blocked = false;
     bool sent = send(ZuMv(buf), ZuMv(addr), ecn, priority, token, &blocked);
     if (runtime != m_linkTx.txRuntimeGen) return sent;
     if (!sent && token) cancelCapacityTx();
-    if (blocked) {
+    if (blocked && !probing) {
       m_capacity.needed = true;
       requestCapacityTx();
     }
@@ -9506,7 +9854,8 @@ protected:
     buf->length = unsigned(n);
     bool pktAckEliciting = txAckEliciting(recordFrame, recordRefs, ackEliciting);
     EcnMark::T ecn = EcnMark::NotECT;
-    if (ZuUnlikely(app()->congestionControl()))
+    if (ZuUnlikely(app()->congestionControl()) &&
+	!(m_config.isServer && impl()->probingOutput()))
       ecn = m_linkTx.path.txECN(PktNumSpace::AppData, pktAckEliciting, pmtudSize != 0);
     return submitProtPkt(PktNumSpace::AppData, pn, unsigned(n),
       ZuMv(buf), ZuMv(addr), payload, recordFrame, recordRefs,
@@ -9523,8 +9872,10 @@ protected:
       return;
     }
     m_linkRx.rxDiag.bytesRx += pkt->length;
-    recordPathRx(pkt->addr, pkt->length);
+
     bool ok = true;
+    bool pathAccounted = !establishedRx();
+    if (pathAccounted) recordPathRx(pkt->local, pkt->addr, pkt->length);
     unsigned offset = 0;
     while (offset < pkt->length) {
       ZuBSpan packet{
@@ -9572,9 +9923,10 @@ protected:
 	offset += unsigned(packetLen);
 	continue;
       }
-      if (!receiveShort(pkt, offset, pkt->length - offset)) ok = false;
+      if (!receiveShort(pkt, offset, pkt->length - offset, &pathAccounted)) ok = false;
       break;
     }
+    if (!pathAccounted) recordPathRx(pkt->local, pkt->addr, pkt->length);
     if (!ok) ++m_linkRx.rxDiag.failures;
     ZquicLOG(app()->qlogTrace(), ([
       bytes = pkt->length,
@@ -9811,7 +10163,8 @@ protected:
   template <typename ConsumeFrames>
   bool rxProtShortPkt(
     const ZmRef<RxPkt> &pkt, unsigned packetOffset, unsigned packetLen,
-    ConsumeFrames consumeFrames, const CxnID *routedDCID = nullptr) {
+    ConsumeFrames consumeFrames, const CxnID *routedDCID = nullptr,
+    bool *pathAccounted = nullptr) {
     uint8_t *base = pkt->data() + packetOffset;
     ZuBSpan packet{base, packetLen};
     auto datagram = pkt->cspan();
@@ -10033,6 +10386,16 @@ protected:
 	  byteSpan(base + payloadOffset, unsigned(plainLen)),
 	  pkt->addr, pkt, ack, qlog_))
       return false;
+    uint64_t priorPN = 0;
+    bool fresh = !m_linkRx.rxAcks.tracker(PktNumSpace::AppData).largest(priorPN) ||
+      pn > priorPN;
+    {
+      unsigned bytes = pathAccounted && *pathAccounted ? 0 : pkt->length;
+      observePathPacket(pkt, packetOffset + payloadOffset, unsigned(plainLen), bytes, pn,
+	m_config.isServer ? fresh : true, m_config.isServer ? ack.nonProbing : true,
+	ack.pathControls);
+      if (pathAccounted) *pathAccounted = true;
+    }
     m_linkRx.rxEarlyData.oneRTTSeen = true;
     ZquicLOG(app()->qlogTrace(), ([
       level = PktNumSpace::AppData,
@@ -10083,6 +10446,10 @@ protected:
 	if (earlyData) rejectEarlyData(ZeroRTTReason::FramePolicy);
 	return false;
       }
+      if (frame.type != FrameType::Padding &&
+	  frame.type != FrameType::PathChallenge &&
+	  frame.type != FrameType::PathResponse &&
+	  frame.type != FrameType::NewCxnID) ackMeta.nonProbing = true;
       if (qlog) qlogAddRxFrame(*qlog, level, frame);
       if (FrameCodec::ackEliciting(frame.type))
 	ackEliciting = true;
@@ -10191,8 +10558,20 @@ protected:
 	    return false;
 	  }
 	  break;
-	case FrameType::PathChallenge:
 	case FrameType::PathResponse:
+	  if (packetBuf) {
+	    ackMeta.pathControls = true;
+	    break;
+	  }
+	  if (!handleControl(level, frame, addr)) return false;
+	  break;
+	case FrameType::PathChallenge:
+	  if (packetBuf) {
+	    ackMeta.pathControls = true;
+	    break;
+	  }
+	  if (!handleControl(level, frame, addr)) return false;
+	  break;
 	case FrameType::ConnectionClose:
 	case FrameType::ApplicationClose:
 	case FrameType::HandshakeDone:
@@ -10577,7 +10956,7 @@ private:
       case FrameType::HandshakeDone:
 	return m_linkTx.handshakeDoneControl.frame == frame;
       case FrameType::NewCxnID: {
-	const LinkCID *cid = findLocalCID(frame.streamID);
+	const LinkCID *cid = findCID(m_linkTx.localCIDValidity, frame.streamID);
 	return cid &&
 	  cid->state == CxnState::Active &&
 	  cid->id == frame.cxnID &&
@@ -10906,12 +11285,9 @@ private:
     if (debugLog()) ZiLOG(Debug, "Zquic", ([name = ZeString{name}](auto &s) {
       s << "QUIC timer armed name=" << name;
     }));
-    app()->mx()->add(timer, out, mode, [link = impl(), action](auto &&arm) {
-      return arm([link, action]() mutable {
-	if (link->disconnecting_()) return;
-	link->cxnTimer(action);
-      });
-    }, app()->txThread());
+    app()->mx()->add(timer, out, mode,
+      [fn = cxnTimerFn(action)](auto &&arm) mutable { return arm(fn); },
+      app()->txThread());
   }
 
   void cancelTimer(const char *, ZmScheduler::Timer *timer) {
@@ -11411,6 +11787,7 @@ private:
     uint64_t		rxAckTimerSerial = 0;
     bool			rxAckFast = false;
     bool			rxAckResume = false;
+    ZiSockAddr		rxPathLocal;
     ZiSockAddr		rxPathRemote;
     uint64_t		rxPathBytes = 0;
     uint64_t		rxRuntimeGen = 0;
@@ -11432,6 +11809,7 @@ private:
 			rxSpaceDiscarded =
 			  fixedArray<bool, PktNumSpace::N>();
     LinkState::T		rxLinkState = LinkState::Closed;
+    uint64_t		localCIDSequence = 0;
     uint64_t		peerRetirePriorTo = 0;
     unsigned		suspiciousStreamFrames = 0;
     bool			suspiciousStreamClosed = false;

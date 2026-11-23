@@ -86,13 +86,9 @@ void testTxPacketGeometry(bool registered)
 {
   ZuTestScopeRT(testTxPacketGeometry);
 
-  ZiMultiplex mx;
-  PacketPlugin *plugin = nullptr;
-  if (registered) {
-    plugin = new PacketPlugin{&mx};
-    ZmRef<ZiMxPlugin> transport = plugin;
-    mx.plugin(ZuMv(transport));
-  }
+  PacketPlugin *plugin = registered ? new PacketPlugin{nullptr} : nullptr;
+  ZmRef<ZiMxPlugin> transport = plugin;
+  ZiMultiplex mx{{}, ZuMv(transport)};
   auto allocator = Zquic::pktTxAllocator<1536, 4096, "Zquic.Test.Pkt.Tx">(&mx);
   using Heap = ZuStringT<"Zquic.Test.Pkt.Tx">;
   if (registered) {
@@ -303,13 +299,10 @@ void testRxPacketGeometry(bool registered)
 {
   ZuTestScopeRT(testRxPacketGeometry);
 
-  ZiMultiplex mx;
-  PacketPlugin *plugin = nullptr;
-  if (registered) {
-    plugin = new PacketPlugin{&mx, Zi::IOBufType::Rx};
-    ZmRef<ZiMxPlugin> transport = plugin;
-    mx.plugin(ZuMv(transport));
-  }
+  PacketPlugin *plugin = registered ?
+    new PacketPlugin{nullptr, Zi::IOBufType::Rx} : nullptr;
+  ZmRef<ZiMxPlugin> transport = plugin;
+  ZiMultiplex mx{{}, ZuMv(transport)};
   auto allocator = Zquic::pktRxAllocator(&mx);
   auto appAllocator = mx.allocator<Zi::IOBufType::App>();
   auto buf = allocator->allocBuf();

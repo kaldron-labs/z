@@ -89,6 +89,9 @@ public:
   using Base::awaitPeerAckTx;
   using Base::resetLink;
   using Base::resetPath;
+  bool probingOutput() const { return m_probing; }
+  void probingOutput(bool probing) { m_probing = probing; }
+  void streamed(ZmRef<PublishStream>) { }
 
   bool establish() {
     uint8_t bytes[32]{};
@@ -97,6 +100,51 @@ public:
     return Zquic::PktProt::deriveSecret(secret,
       &Ztls_::opensslAes128gcmsha256, ZuBSpan{bytes, sizeof(bytes)}) &&
       Base::installAppDataKeys_(secret, secret, Zquic::CxnID{"publish"});
+  }
+  bool frameMeta(ZuBSpan frames, bool nonProbing, bool ackEliciting,
+      bool controls = false) {
+    Base::RxAckMeta meta;
+    ZmRef<Zquic::RxPkt> packet{app()->rxPktAllocator()->allocBuf(nullptr, 0)};
+    if (!packet) return false;
+    bool ok = Base::consumeProtFrames(
+      Zquic::PktNumSpace::AppData, 0, frames, {}, packet, meta, nullptr,
+      [](size_t, ZuBSpan, ZiSockAddr) { return true; },
+      [](Zquic::PktNumSpace::T, const Zquic::Frame &, ZiSockAddr) { return true; });
+    return ok && meta.nonProbing == nonProbing && meta.ackEliciting == ackEliciting &&
+      meta.pathControls == controls;
+  }
+  bool responsePreservesAck() {
+    Zquic::PktBuild response;
+    Base::TxPktRefs refs;
+    if (!Base::buildPathResponse("12345678", response, refs, {}, false, false) ||
+	response.ack(Zquic::PktNumSpace::AppData)) return false;
+    Zquic::Frame frame;
+    unsigned used = 0;
+    if (Zquic::FrameCodec::parse(response.data()[0], frame, used) ||
+	frame.type != Zquic::FrameType::PathResponse) return false;
+    return encode(1);
+  }
+  bool responseDispatchPreservesAck(bool retry) {
+    unsigned calls = 0;
+    bool probingOnly = true;
+    bool sent = Base::sendPathResponsePkt(
+      "12345678", ZiSockAddr{ZiIP{"127.0.0.1"}, 443},
+      [&calls, &probingOnly, retry](Zquic::PktBuild &build, ZiSockAddr,
+          const Base::TxPktRefs *) {
+        ++calls;
+        Zquic::Frame frame;
+        unsigned used = 0;
+        bool response = false;
+        for (unsigned i = 0; i < build.count(); ++i) {
+          auto span = build.data()[i];
+          if (Zquic::FrameCodec::parse(span, frame, used)) return false;
+          if (frame.type == Zquic::FrameType::PathResponse) response = true;
+          if (frame.type == Zquic::FrameType::Ack) probingOnly = false;
+        }
+        probingOnly &= response && !build.ack(Zquic::PktNumSpace::AppData);
+        return !retry || calls == 2;
+      });
+    return sent && probingOnly && calls == (retry ? 2u : 1u) && encode(1);
   }
   void receive(unsigned pn, Zquic::EcnMark::T mark = Zquic::EcnMark::ECT0) {
     Base::noteAck(Zquic::PktNumSpace::AppData, pn, true, {}, false, mark);
@@ -204,6 +252,7 @@ public:
   }
 
 private:
+  bool m_probing = false;
   ZmAtomic<unsigned> m_recoveries = 0;
   bool m_park = false;
 };
@@ -213,7 +262,8 @@ struct PublishFixture {
   ZmRef<PublishLink> link;
   bool ready;
 
-  PublishFixture(bool cc = true, bool ecn = false) : app{cc, ecn}, link{new PublishLink{&app}} {
+  PublishFixture(bool cc = true, bool ecn = false, bool server = false) :
+    app{cc, ecn}, link{new PublishLink{&app, server}} {
     ready = link->establish() && app.start();
   }
   ~PublishFixture() {
@@ -504,10 +554,42 @@ void testDuplicateWhileParked()
     "duplicate ACK consumed the blocked sender's next wake");
 }
 
+void testProbingAckMetadata()
+{
+  ZuTestScope(testProbingAckMetadata);
+  PublishApp app{false, false};
+  ZmRef<PublishLink> parser = new PublishLink{&app};
+  uint8_t frames[128];
+  int n = Zquic::FrameCodec::writePadding(frames, sizeof(frames), 1);
+  ZuCheck(n > 0 && parser->frameMeta(ZuBSpan{frames, unsigned(n)}, false, false));
+  n = Zquic::FrameCodec::writePathChallenge(frames, sizeof(frames), "12345678");
+  ZuCheck(n > 0 && parser->frameMeta(ZuBSpan{frames, unsigned(n)}, false, true, true));
+  n = Zquic::FrameCodec::writePathResponse(frames, sizeof(frames), "12345678");
+  ZuCheck(n > 0 && parser->frameMeta(ZuBSpan{frames, unsigned(n)}, false, true, true));
+  n = Zquic::FrameCodec::writeAck(frames, sizeof(frames), 0, 0, 0);
+  ZuCheck(n > 0 && parser->frameMeta(ZuBSpan{frames, unsigned(n)}, true, false));
+  n = Zquic::FrameCodec::writePing(frames, sizeof(frames));
+  ZuCheck(n > 0 && parser->frameMeta(ZuBSpan{frames, unsigned(n)}, true, true));
+
+  PublishFixture f{false, false};
+  auto link = f.link;
+  ZuCheck(f.ready && f.rx([link] { link->receive(1); return true; }));
+  ZuCheck(f.tx([link] { return link->responsePreservesAck(); }));
+  PublishFixture server{false, false, true};
+  auto probing = server.link;
+  ZuCheck(server.ready && server.rx([probing] { probing->receive(1); return true; }));
+  ZuCheck(server.tx([probing] {
+    probing->probingOutput(true);
+    return probing->responseDispatchPreservesAck(false) &&
+      probing->responseDispatchPreservesAck(true);
+  }));
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(testProbingAckMetadata);
   ZuTestCall(testConcurrentCompletion);
   ZuTestCall(testOrdinaryPublication);
   ZuTestCall(testPeerAckParking);

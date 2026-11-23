@@ -175,6 +175,25 @@ void testRetryParamValidate()
       checkedBootstrap.retrySCID() == retrySCID,
     "authenticated Retry bootstrap validation failed");
 
+  Zquic::CxnID shortRetrySCID{"short"};
+  Zquic::ClientBootstrap shortBootstrap;
+  ZuCHECK(shortBootstrap.start(initialDCID, initialSCID),
+    "short Retry bootstrap start failed");
+  n = Zquic::Pkt::writeRetryAuth(
+    b, sizeof(b), initialSCID, shortRetrySCID, "retry-token", initialDCID);
+  ZuCHECK(n > 0 && shortBootstrap.onRetry(
+      ZuBSpan{b, unsigned(n)}) &&
+      shortBootstrap.retrySCID() == shortRetrySCID,
+    "five-byte Retry source CID was rejected");
+
+  Zquic::ClientBootstrap sameBootstrap;
+  ZuCHECK(sameBootstrap.start(initialDCID, initialSCID),
+    "same Retry bootstrap start failed");
+  n = Zquic::Pkt::writeRetryAuth(
+    b, sizeof(b), initialSCID, initialDCID, "retry-token", initialDCID);
+  ZuCHECK(n > 0 && !sameBootstrap.onRetry(ZuBSpan{b, unsigned(n)}),
+    "Retry reused the original destination CID");
+
   Zquic::ClientBootstrap badBootstrap;
   ZuCHECK(badBootstrap.start(initialDCID, initialSCID),
     "bad Retry bootstrap start failed");

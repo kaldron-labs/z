@@ -1,7 +1,7 @@
 # zquic supplementary guidelines
 
 These guidelines are the audit checklist for code changes in `zquic`.  They
-supplement the repo-wide rules in `../GUIDELINES.md`; follow both when editing
+supplement the repo-wide rules in `../docs/GUIDELINES.md`; follow both when editing
 or reviewing `zquic` code.  Implementation discovery and source navigation live
 in `README.md`.
 
@@ -119,9 +119,10 @@ do not add a separate completion timer or retry queue.
 
 A PTO services its selected packet-number space. When another space has data
 in flight and transmit keys, leave room for an acknowledgment-eliciting probe
-there within the two-datagram budget (RFC 9002 section 6.2.4). A successful
-Handshake retransmission must not suppress all outstanding 1-RTT probes. A
-failed primary send does not authorize an unrelated substitute. Application
+there within the two-datagram budget (RFC 9002 section 6.2.4). Prefer retained
+CRYPTO for an Initial or Handshake companion before falling back to PING.
+A successful Handshake retransmission must leave room for outstanding 1-RTT
+probes. A failed primary send does not authorize an unrelated substitute. Application
 Data does not independently select PTO before handshake confirmation.
 Candidate path proof retains priority over ordinary recovery for both active
 client migration and passive server rebinding.
@@ -131,6 +132,40 @@ Keep the original endpoint active while probing the advertised address with
 its sequence-1 CID. Promote only after PATH_RESPONSE matches the challenge. RFC 9000 section
 8.2.3 permits that response to arrive on any network path. A failed probe closes only the candidate;
 endpoint teardown drains both sockets on their existing Rx/Tx owners.
+
+Preferred server bindings use the same server-owned endpoint adapters, CID router
+and connection state. Keep explicit bindings concrete and immutable per runtime;
+never use the primary diagnostic address to infer a packet's destination. Retain
+one routing lookup and the original Rx buffer. Ordinary active input uses the
+existing byte publication without a scheduler handoff. Exceptional path-control
+handoffs retain the original immutable decrypted span and reparse only to dispatch
+path controls on Tx; do not capture arrays of frame payloads or copy plaintext. Extra adapters share registered
+allocators and are released only in explicit finalization after all endpoint
+owners and pending UDP setup have drained.
+
+The 2026-11-22 QIR image passed preferred-address migration with ngtcp2 in
+both roles. Its full 176-cell interop run recorded 95 succeeded, 74 unsupported
+and 7 failed cells. Keep failed and unsupported peer results visible in the
+interop report; successful reference coverage does not establish support in
+other clients.
+
+Server candidate identity includes local and remote addresses and the binding's
+runtime fence. Retain the first candidate; competing probes have only their own
+datagram allowance and receiving endpoint. Preferred promotion requires matching
+proof plus fresh non-probing input on that exact tuple. A matching response can
+arrive elsewhere. Keep ACK, STREAM and ordinary controls off candidate probes.
+Timeout or failure retains the active path and every shared listener.
+During server stop, drain validation and endpoint/CID commit continuations before
+releasing any shared binding. A continuation retained from an earlier runtime
+must fail its generation fence after restart; test this with a live four-binding
+server and concurrent connections in both address families.
+
+Stamp protected output and recovery with the selected path epoch. Preferred
+server promotion resets RTT, PTO backoff, congestion and PMTU before ordinary
+output on the new endpoint. Late old-epoch ACK/loss must retire retained ranges
+exactly once without changing the new controller, RTT, PMTU or ECN. Endpoint
+allocation, admission credit and send must use one physical identity/generation;
+reentrant application hooks cannot reroute already protected output.
 
 Server confirmation occurs at TLS completion; client confirmation occurs on
 HANDSHAKE_DONE. Retire the actual Handshake secrets on Rx and the independent

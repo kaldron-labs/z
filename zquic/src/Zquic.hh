@@ -84,6 +84,9 @@ struct InitialInfo {
   CxnID		retrySCID;
   bool		addressValidated = false;
   int8_t	tokenKind = 0;
+  ZiSockAddr	local;
+  unsigned	endpointSlot = 0;
+  unsigned	runtimeGeneration = 0;
 };
 
 ZuDerive(ALPNData, (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.ALPNData">>));
@@ -308,7 +311,7 @@ public:
     if (!m_started ||
 	m_retried ||
 	retry.header.type != PktType::Retry ||
-	retry.header.scid.length() < MinCIDLength ||
+	retry.header.scid == m_initialDCID ||
 	!retry.token ||
 	retry.integrityTag.length() != 16)
       return false;
@@ -488,6 +491,7 @@ public:
   HubParams &&maxUDP(unsigned v) { m_maxUDP = v; return ZuMv(*this); }
   HubParams &&congestionControl(bool v) { m_congestionControl = v; return ZuMv(*this); }
   HubParams &&ecn(bool v) { m_ecn = v; return ZuMv(*this); }
+  HubParams &&chachaOnly(bool v) { m_chachaOnly = v; return ZuMv(*this); }
   HubParams &&migrationMode(MigrationMode::T v) {
     m_migrationMode = v;
     return ZuMv(*this);
@@ -551,6 +555,7 @@ public:
   unsigned maxUDP() const { return m_maxUDP; }
   bool congestionControl() const { return m_congestionControl; }
   bool ecn() const { return m_ecn; }
+  bool chachaOnly() const { return m_chachaOnly; }
   MigrationMode::T migrationMode() const { return m_migrationMode; }
   bool activeMigration() const {
     return m_migrationMode == MigrationMode::Active;
@@ -601,6 +606,7 @@ private:
   unsigned		m_maxUDP = MinUDPPayload;
   bool			m_congestionControl = true;
   bool			m_ecn = false;
+  bool			m_chachaOnly = false;
   MigrationMode::T	m_migrationMode = MigrationMode::Passive;
   unsigned		m_migCIDRes = DefaultMigCIDRes;
   bool			m_migCloseOnFail = false;
@@ -756,6 +762,7 @@ public:
   unsigned maxUDP() const { return m_maxUDP; }
   bool congestionControl() const { return m_congestionControl; }
   bool ecn() const { return m_ecn; }
+  bool chachaOnly() const { return m_chachaOnly; }
   MigrationMode::T migrationMode() const { return m_migrationMode; }
   bool activeMigration() const {
     return m_migrationMode == MigrationMode::Active;
@@ -861,6 +868,7 @@ protected:
       m_maxUDP = params.maxUDP();
       m_congestionControl = params.congestionControl();
       m_ecn = params.ecn();
+      m_chachaOnly = params.chachaOnly();
       m_migrationMode = params.migrationMode();
       m_migCIDRes = params.migCIDRes();
       m_migCloseOnFail = params.migCloseOnFail();
@@ -979,6 +987,8 @@ protected:
   }
   template <typename Link>
   void saveEarlyData(Link *, ZuBSpan, const TransportParams &) { }
+  template <typename Link>
+  void earlyDataReady(Link *) { }
   template <typename Link>
   uint32_t maxEarlyData(Link *) { return 0; }
   template <typename Link>
@@ -1116,6 +1126,7 @@ private:
   unsigned		m_maxUDP = MinUDPPayload;
   bool			m_congestionControl = true;
   bool			m_ecn = false;
+  bool			m_chachaOnly = false;
   MigrationMode::T	m_migrationMode = MigrationMode::Passive;
   unsigned		m_migCIDRes = DefaultMigCIDRes;
   bool			m_migCloseOnFail = false;
@@ -1206,9 +1217,46 @@ struct AppLink : public Zquic::SrvLink<App, AppLink, AppStream> {
   void streamed(ZmRef<Stream>); // Zquic Rx thread
 };
 #endif
+// Empty addresses preserve the traditional single (possibly wildcard) bind.
+struct ServerAddrs {
+  ZiSockAddr original4;
+  ZiSockAddr preferred4;
+  ZiSockAddr original6;
+  ZiSockAddr preferred6;
+
+  explicit operator bool() const {
+    return !!original4 || !!preferred4 || !!original6 || !!preferred6;
+  }
+  static bool valid(const ZiSockAddr &addr, bool v6) {
+    if (!addr) return true;
+    auto ip = addr.ip();
+    if (!addr.port() || ip.v6() != v6 || ip.wildcard() ||
+	ip.multicast() || ip.mappedV4()) return false;
+    if (v6) {
+      auto &a = ip.in6Addr();
+      // Link-local and scoped addresses cannot be represented by ZiIP.
+      if ((a.s6_addr[0] == 0xfe && (a.s6_addr[1] & 0x80) == 0x80) ||
+	  addr.sin6().sin6_scope_id) return false;
+    } else {
+      unsigned a = ZuBE(ip.inAddr().s_addr);
+      if (!(a >> 24) || a >= 0xe0000000U) return false;
+    }
+    return true;
+  }
+  bool normalize() {
+    if (!*this) return true;
+    if (!valid(original4, false) || !valid(preferred4, false) ||
+	!valid(original6, true) || !valid(preferred6, true) ||
+	(!original4 && !original6) ||
+	(preferred4 && !original4) || (preferred6 && !original6)) return false;
+    if (preferred4 == original4) preferred4.null();
+    if (preferred6 == original6) preferred6.null();
+    return !!preferred4 || !!preferred6;
+  }
+};
+
 template <typename App_, typename Link_> class Server :
-  public Hub<App_>,
-  public Endpoint_<Server<App_, Link_>> {
+  public Hub<App_> {
 public:
   using App = App_;
   using Link = Link_;
@@ -1217,7 +1265,7 @@ public:
   using LinkRefs =
     ZtArray<LinkRef, ZtArrayHeapID<"Zquic.Server.LinkRefs">>;
   using Base = Hub<App>;
-  using Endpoint = Endpoint_<Server>;
+  using Endpoint = Zquic_::ServerEP<Server>;
   using Base::app;
   using Base::allLinks;
   enum { EndpointRef = false };
@@ -1228,6 +1276,7 @@ template <typename, typename, typename>
 friend class SrvLink;
 friend ZmEngine<App>;
 
+  Server() : m_primary{this, 0} { m_endpoints[0] = &m_primary; }
   ~Server() { finalTicketKey(); }
 
   bool init(ServerParams params) {
@@ -1249,30 +1298,50 @@ friend ZmEngine<App>;
   void final() {
     m_links = nullptr;
     m_routes.final();
+    for (unsigned i = 1; i < 4; ++i) {
+      delete m_endpoints[i];
+      m_endpoints[i] = nullptr;
+    }
     Base::final();
     finalTicketKey();
   }
 
   unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
-    return Base::allQueues(fn) + Endpoint::allQueues(fn) + m_routes.allQueues(fn);
+    unsigned n = Base::allQueues(fn) + m_routes.allQueues(fn);
+    for (unsigned i = 0; i < 4; ++i)
+      if (m_endpoints[i]) n += m_endpoints[i]->allQueues(fn);
+    return n;
   }
 
-  using Endpoint::listening;
-  using Endpoint::connected;
+  bool listening() const {
+    return !m_startFailed && m_readyMask == (1U << m_endpointCount) - 1 &&
+      m_primary.listening();
+  }
+  bool connected() const { return listening(); }
   const ZiSockAddr &local() const { return m_localAddr; }
   template <typename L>
   void endpointDiag(L &&l) const {
     auto mx = this->mx();
     if (!mx || mx->invoked(mx->txThread())) {
-      EndpointDiag diag = Endpoint::diag();
+      EndpointDiag diag = physicalDiag();
       l(diag);
       return;
     }
     auto server = const_cast<Server *>(this);
     mx->txRun([server, l = ZuFwd<L>(l)]() mutable {
-      EndpointDiag diag = server->Endpoint::diag();
+      EndpointDiag diag = server->physicalDiag();
       l(diag);
     });
+  }
+  template <typename L>
+  void endpointDiag(unsigned slot, L &&l) const {
+    auto server = const_cast<Server *>(this);
+    auto read = [server, slot, l = ZuFwd<L>(l)]() mutable {
+      l(slot < server->m_endpointCount ? server->m_endpoints[slot]->diag() : EndpointDiag{});
+    };
+    auto mx = this->mx();
+    if (!mx || mx->invoked(mx->txThread())) read();
+    else mx->txRun(ZuMv(read));
   }
   template <typename L>
   void addrValidationDiag(L &&l) const {
@@ -1315,6 +1384,10 @@ friend ZmEngine<App>;
     return n;
   }
 
+  ServerAddrs serverAddrs() const { return {}; }
+  const ServerAddrs &runtimeServerAddrs() const { return m_serverAddrs; }
+  unsigned endpointGeneration() const { return m_runtimeGeneration; }
+  unsigned endpointCount() const { return m_endpointCount; }
   ZiIP localIP() const { return ZiIP{}; }
   uint16_t localPort() const { return 0; }
   bool sendPkt(const ZmRef<ZiIOBuf> &) { return true; }
@@ -1335,23 +1408,55 @@ friend ZmEngine<App>;
     return {};
   }
 
-  ZmRef<ZiIOBuf> allocTxPkt_() {
-    return Endpoint::allocTxPkt();
+  unsigned endpointSlot(const ZiSockAddr &local) const {
+    for (unsigned i = 0; i < m_endpointCount; ++i)
+      if (m_bindings[i] == local) return i;
+    return ~unsigned(0);
   }
-  using Endpoint::pktAllocTarget;
-  using Endpoint::waitTx;
+  Zquic_::PktAllocTarget pktAllocTarget() const {
+    return m_primary.pktAllocTarget();
+  }
+  Zquic_::PktAllocTarget pktAllocTarget(unsigned slot, unsigned runtime) const {
+    if (runtime != m_runtimeGeneration || slot >= m_endpointCount) return {};
+    return m_endpoints[slot]->pktAllocTarget();
+  }
+  Zquic_::PktAllocTarget pktAllocTarget(const ZiSockAddr &local) const {
+    return pktAllocTarget(endpointSlot(local), m_runtimeGeneration);
+  }
+  ZmRef<ZiIOBuf> allocTxPkt_(Zquic_::PktAllocTarget target = {}) {
+    if (!target.owner && !m_serverAddrs) target = pktAllocTarget();
+    if (!target.allocator || !target.physical || !targetEndpoint(target)) return {};
+    return target.allocator->allocBuf(target.owner, 0, target.mps);
+  }
+  void waitTx(Zquic_::EndpointTxWait &wait, unsigned sid, uint64_t epoch,
+      Zquic_::EndpointTxFn fn, Zquic_::PktAllocTarget target = {}) {
+    if (!target.owner && !m_serverAddrs) target = pktAllocTarget();
+    if (auto ep = targetEndpoint(target)) {
+      ep->waitTx(wait, sid, epoch, ZuMv(fn), target);
+    } else {
+      wait.start(this->mx(), sid, epoch, ZuMv(fn));
+      this->mx()->txRun([wait = &wait] { wait->reject(); });
+    }
+  }
   Ztls_::EncryptTicket *ticketEncryptCB() {
     return Ztls::ticketEncryptHook(m_ticketKey);
   }
-  bool sendPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, bool priority = false) {
+  bool sendPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, bool priority = false,
+      Zquic_::PktAllocTarget target = {}) {
     if (!this->app()->sendPkt(buf)) return true;
-    return Endpoint::send(ZuMv(buf), ZuMv(addr), EcnMark::NotECT, priority);
+    return sendPktRaw(ZuMv(buf), ZuMv(addr), EcnMark::NotECT, priority,
+      {}, nullptr, target);
   }
   bool sendPktRaw(
       ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
       EcnMark::T ecn = EcnMark::NotECT, bool priority = false,
-      Zquic_::EndpointTxToken token = {}, bool *blocked = nullptr) {
-    return Endpoint::send(ZuMv(buf), ZuMv(addr), ecn, priority, token, blocked);
+      Zquic_::EndpointTxToken token = {}, bool *blocked = nullptr,
+      Zquic_::PktAllocTarget target = {}) {
+    if (blocked) *blocked = false;
+    if (!target.owner && !m_serverAddrs) target = pktAllocTarget();
+    auto ep = targetEndpoint(target);
+    if (!ep || !target.physical) return false;
+    return ep->send(ZuMv(buf), ZuMv(addr), ecn, priority, token, blocked, target);
   }
   void tombstoneRoute(const CxnID &id) {
     m_routes.tombstone(id);
@@ -1362,31 +1467,77 @@ friend ZmEngine<App>;
   }
 
 public:
-  void endpointPacket(ZmRef<RxPkt> pkt) {
-    this->rxInvoke([this, pkt = ZuMv(pkt)]() mutable {
-      received_(ZuMv(pkt));
+  void endpointPacket(Endpoint *ep, ZmRef<RxPkt> pkt) {
+    this->rxInvoke([this, slot = ep->slot(), runtime = m_runtimeGeneration,
+	pkt = ZuMv(pkt)]() mutable {
+      if (runtime != m_runtimeGeneration) return;
+      received_(slot, ZuMv(pkt));
     });
   }
   void endpointReady(Endpoint *ep) {
-    this->rxRun([this, local = ep->local()]() mutable {
-      m_localAddr = ZuMv(local);
+    this->rxRun([this, slot = ep->slot(), runtime = m_runtimeGeneration,
+	local = ep->local()]() mutable {
+      if (runtime != m_runtimeGeneration || m_startFailed) return;
+      m_bindings[slot] = local;
+      if (!slot) m_localAddr = local;
+      m_readyMask |= 1U << slot;
+      if (m_readyMask != (1U << m_endpointCount) - 1) return;
       switch (this->state()) {
 	case ZmEngineState::Starting:
 	case ZmEngineState::StopPending:
 	  this->started(true);
+	  this->app()->listening();
 	  break;
 	default:
 	  break;
       }
-      this->app()->listening();
     });
   }
-  void endpointFailed(bool transient) {
-    this->rxRun([this, transient]() {
-      failed_0(transient);
+  void endpointFailed(Endpoint *, bool transient) {
+    this->rxRun([this, runtime = m_runtimeGeneration, transient]() {
+      if (runtime != m_runtimeGeneration) return;
+      if (this->state() == ZmEngineState::Starting ||
+	  this->state() == ZmEngineState::StopPending) {
+	failStart();
+	return;
+      }
+      this->app()->listenFailed(transient);
     });
   }
-  void endpointDown_(Endpoint *) { }
+  void endpointDown_(Endpoint *ep) {
+    this->rxRun([this, slot = ep->slot(), runtime = m_runtimeGeneration]() {
+      if (runtime == m_runtimeGeneration) m_readyMask &= ~(1U << slot);
+    });
+  }
+private:
+  EndpointDiag physicalDiag() const {
+    EndpointDiag out;
+    for (unsigned i = 0; i < m_endpointCount; ++i) {
+      auto d = m_endpoints[i]->diag();
+      out.rx.datagramsRx += d.rx.datagramsRx;
+      out.rx.bytesRx += d.rx.bytesRx;
+      out.rx.failures += d.rx.failures;
+      out.tx.sendCalls += d.tx.sendCalls;
+      out.tx.directCalls += d.tx.directCalls;
+      out.tx.asyncCalls += d.tx.asyncCalls;
+      out.tx.submittedTx += d.tx.submittedTx;
+      out.tx.submittedBytes += d.tx.submittedBytes;
+      out.tx.datagramsTx += d.tx.datagramsTx;
+      out.tx.bytesTx += d.tx.bytesTx;
+      out.tx.txBackPressure += d.tx.txBackPressure;
+      out.tx.txDropped += d.tx.txDropped;
+      out.tx.failures += d.tx.failures;
+      out.txPending += d.txPending;
+      out.txQueued += d.txQueued;
+    }
+    return out;
+  }
+  Endpoint *targetEndpoint(const Zquic_::PktAllocTarget &target) const {
+    for (unsigned i = 0; i < m_endpointCount; ++i)
+      if (static_cast<typename Endpoint::Base *>(m_endpoints[i]) == target.owner)
+	return m_endpoints[i];
+    return nullptr;
+  }
 private:
   template <typename L>
   void allLinks_0(L &&l) const {
@@ -1403,21 +1554,9 @@ private:
     links.all(ZuFwd<L>(l));
   }
 
-  void failed_0(bool transient) {
-    switch (this->state()) {
-      case ZmEngineState::Starting:
-      case ZmEngineState::StopPending:
-	this->started(false);
-	return;
-      default:
-	break;
-    }
-    this->app()->listenFailed(transient);
-  }
-
-  void received_(ZmRef<RxPkt> pkt) {
+  void received_(unsigned slot, ZmRef<RxPkt> pkt) {
     if (this->state() != ZmEngineState::Running) {
-      Endpoint::failure();
+      m_endpoints[slot]->failure();
       this->app()->datagramDropped();
       return;
     }
@@ -1426,7 +1565,7 @@ private:
     Link *link = routePacket(pkt, &routedDCID, &resetToken);
     if (!link) {
       sendStatelessReset(pkt, resetToken);
-      Endpoint::failure();
+      m_endpoints[slot]->failure();
       this->app()->datagramDropped();
       return;
     }
@@ -1449,15 +1588,20 @@ private:
     LongHdr h;
     if (Pkt::parseLong(packet, h) < 0) return nullptr;
     if (!VersionNeg::supported(h.version)) {
-      sendVerNeg(h, pkt->addr);
+      sendVerNeg(h, pkt->addr, pktAllocTarget(pkt->local));
       return nullptr;
     }
     if (Link *link = m_routes.find(h.dcid)) return link;
     if (h.type != PktType::Initial) return nullptr;
+    unsigned slot = endpointSlot(pkt->local);
+    if (slot >= m_endpointCount || !(m_originalMask & (1U << slot))) return nullptr;
     InitialInfo info{h, pkt->addr, pkt->length};
+    info.local = pkt->local;
+    info.endpointSlot = slot;
+    info.runtimeGeneration = m_runtimeGeneration;
     if (!validateInitial(info, packet)) {
       if (app()->retryAddrValidate())
-	sendRetry(h, pkt->addr);
+	sendRetry(h, pkt->addr, pktAllocTarget(slot, m_runtimeGeneration));
       return nullptr;
     }
     return accept_(info);
@@ -1467,13 +1611,14 @@ private:
     if (!d || !d->length) return false;
     auto packet = d->cspan();
     if (Pkt::isLong(packet) || !token.valid()) return false;
-    ZmRef<ZiIOBuf> buf = allocTxPkt_();
+    auto target = pktAllocTarget(d->local);
+    ZmRef<ZiIOBuf> buf = allocTxPkt_(target);
     if (ZuUnlikely(!buf)) return false;
     int n = StatelessReset::writeForUnknownCID(
       buf->data(), txPktCapacity(buf), packet, token);
     if (n < 0) return false;
     buf->length = unsigned(n);
-    bool sent = sendPkt_(ZuMv(buf), d->addr);
+    bool sent = sendPkt_(ZuMv(buf), d->addr, false, target);
     if (sent) {
       ZquicLOG(app()->qlogTrace(), ([
 	resetBytes = unsigned(n)
@@ -1496,7 +1641,7 @@ private:
     link = this->app()->accepted(info);
     if (!link) return nullptr;
     ZquicLOG(app()->qlogTrace(), ([
-      local = local(),
+      local = info.local,
       remote = info.peer,
       origDCID = info.origDCID.length() ? info.origDCID : info.header.dcid,
       dcid = info.header.dcid,
@@ -1555,13 +1700,82 @@ private:
 
   void start_1() {
     Base::warmup_();
-    ZiIP localIP = this->app()->localIP();
-    uint16_t localPort = this->app()->localPort();
-    if (!Endpoint::init(this->mx(), this->rxPktAllocator(), this->txPktAllocator(),
-	this, this->queueOrdinal()) ||
-	!Endpoint::openUDP(PathMode::ServerUnconnected, localIP, localPort)) {
+    ++m_runtimeGeneration;
+    m_readyMask = 0;
+    m_startFailed = false;
+    m_serverAddrs = app()->serverAddrs();
+    if (!m_serverAddrs.normalize()) {
+      this->error_(ZeEXCEPT(Error, "Zquic", "invalid server address configuration"));
       Base::stopQLog([this]() { this->started(false); });
+      return;
     }
+    m_endpointCount = 0;
+    m_originalMask = 0;
+    if (m_serverAddrs) {
+      auto add = [this](const ZiSockAddr &addr, bool original) {
+	if (!addr) return;
+	unsigned slot = m_endpointCount++;
+	m_bindings[slot] = addr;
+	if (original) m_originalMask |= 1U << slot;
+      };
+      add(m_serverAddrs.original4, true);
+      add(m_serverAddrs.original6, true);
+      add(m_serverAddrs.preferred4, false);
+      add(m_serverAddrs.preferred6, false);
+    } else {
+      m_endpointCount = 1;
+      m_originalMask = 1;
+      m_bindings[0].init(app()->localIP(), app()->localPort());
+    }
+    // Initialize every adapter with the existing shared allocator handles before
+    // opening any socket. Each physical queue has its own stable cold ordinal.
+    for (unsigned i = 0; i < m_endpointCount; ++i) {
+      if (!m_endpoints[i]) m_endpoints[i] = new Endpoint{this, i};
+      if (!m_endpoints[i]->init(this->mx(), this->rxPktAllocator(),
+	  this->txPktAllocator(), this, this->queueOrdinal())) {
+	failStart();
+	return;
+      }
+    }
+    for (unsigned i = 0; i < m_endpointCount; ++i)
+      if (!m_endpoints[i]->openUDP(PathMode::ServerUnconnected,
+	  m_bindings[i].ip(), m_bindings[i].port())) {
+	failStart();
+	return;
+      }
+  }
+
+  void failStart() {
+    if (m_startFailed) return;
+    m_startFailed = true;
+    drainEndpoints([this]() {
+      Base::stopQLog([this]() { this->started(false); });
+    });
+  }
+
+  void drainEndpoints(Zquic_::EndpointDiscFn done) {
+    m_drainDone = ZuMv(done);
+    m_drainMask = (1U << m_endpointCount) - 1;
+    if (!m_drainMask) {
+      auto fn = ZuMv(m_drainDone);
+      if (fn) fn();
+      return;
+    }
+    for (unsigned i = 0; i < m_endpointCount; ++i) {
+      if (!m_endpoints[i]) { endpointDrained(i); continue; }
+      m_endpoints[i]->disconnect([this, i, runtime = m_runtimeGeneration]() {
+	Base::rxRun([this, i, runtime]() {
+	  if (runtime == m_runtimeGeneration) endpointDrained(i);
+	});
+      });
+    }
+  }
+
+  void endpointDrained(unsigned slot) {
+    m_drainMask &= ~(1U << slot);
+    if (m_drainMask) return;
+    auto fn = ZuMv(m_drainDone);
+    if (fn) fn();
   }
 
   void stop_() {		// hub callback - enter Rx thread
@@ -1584,21 +1798,17 @@ private:
 
   void stop_1() {		// Rx thread - clean links / drain endpoint
     m_links->clean();
-    Base::txRun([this]() {
-      Endpoint::disconnect([this]() {
-	Base::rxRun([this]() { Base::stop_0(); });
-      });
-    });
+    drainEndpoints([this]() { Base::stop_0(); });
   }
 
-  bool sendVerNeg(const LongHdr &h, ZiSockAddr addr) {
-    ZmRef<ZiIOBuf> buf = allocTxPkt_();
+  bool sendVerNeg(const LongHdr &h, ZiSockAddr addr, Zquic_::PktAllocTarget target) {
+    ZmRef<ZiIOBuf> buf = allocTxPkt_(target);
     if (ZuUnlikely(!buf)) return false;
     int n = VersionNeg::write(
       buf->data(), txPktCapacity(buf), h.scid, h.dcid);
     if (n < 0) return false;
     buf->length = unsigned(n);
-    bool sent = sendPkt_(ZuMv(buf), ZuMv(addr));
+    bool sent = sendPkt_(ZuMv(buf), ZuMv(addr), false, target);
     if (sent) {
       ZquicLOG(app()->qlogTrace(), ([
 	version = h.version
@@ -1780,7 +1990,7 @@ private:
     return true;
   }
 
-  bool sendRetry(const LongHdr &h, ZiSockAddr addr) {
+  bool sendRetry(const LongHdr &h, ZiSockAddr addr, Zquic_::PktAllocTarget target) {
     CxnID retrySCID;
     TokenBytes token;
     if (!CxnIDGen::random(retrySCID) ||
@@ -1789,14 +1999,14 @@ private:
 	  h.dcid, retrySCID, uint64_t(Zm::now().sec()),
 	  app()->addrValidatePeerPort()))
       return false;
-    ZmRef<ZiIOBuf> buf = allocTxPkt_();
+    ZmRef<ZiIOBuf> buf = allocTxPkt_(target);
     if (ZuUnlikely(!buf)) return false;
     int n = Pkt::writeRetryAuth(
       buf->data(), txPktCapacity(buf), h.scid, retrySCID,
       token, h.dcid);
     if (n < 0) return false;
     buf->length = unsigned(n);
-    bool sent = sendPkt_(ZuMv(buf), ZuMv(addr), true);
+    bool sent = sendPkt_(ZuMv(buf), ZuMv(addr), true, target);
     if (sent) {
       ++m_addrValidationDiag.retrySent;
       ZquicLOG(app()->qlogTrace(), ([
@@ -1824,6 +2034,20 @@ private:
     Ztls::ticketKeyFree(m_ticketKey);
     m_ticketKey = nullptr;
   }
+
+  Endpoint m_primary;
+  Endpoint *m_endpoints[4] = {};
+  // Frozen while the runtime is active; endpoint objects remain server-owned
+  // until explicit finalization, after all owner drains.
+  ServerAddrs m_serverAddrs;
+  ZiSockAddr m_bindings[4];
+  unsigned m_endpointCount = 1;
+  unsigned m_runtimeGeneration = 0;
+  unsigned m_originalMask = 1;
+  unsigned m_readyMask = 0;
+  unsigned m_drainMask = 0;
+  bool m_startFailed = false;
+  Zquic_::EndpointDiscFn m_drainDone;
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)

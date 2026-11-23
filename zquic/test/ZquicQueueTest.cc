@@ -8,6 +8,8 @@
 #include <zlib/ZmBlock.hh>
 #include <zlib/Zquic.hh>
 
+#include "ZquicFiniteProvider.hh"
+
 using namespace ZuTestUtil;
 
 struct QueueApp : Zquic::Hub<QueueApp> {
@@ -465,12 +467,121 @@ static void testCryptoQueues()
   ZuCheck(mx.stop());
 }
 
+static void testFourEndpointGates()
+{
+  ZuTestScope(testFourEndpointGates);
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(4); })
+    .rxThread(1).txThread(2)};
+  QueueApp app;
+  ZuCheck(app.init(Zquic::HubParams{&mx, "3", "4"}));
+  unsigned queued[4] = {4096, 4096, 4096, 4096};
+  using Gate = Zquic_::EndpointTxGate;
+  Gate gates[4] = {
+    {&mx, &queued[0], 1, 4096, [&queued] { return queued[0]; }},
+    {&mx, &queued[1], 1, 4096, [&queued] { return queued[1]; }},
+    {&mx, &queued[2], 1, 4096, [&queued] { return queued[2]; }},
+    {&mx, &queued[3], 1, 4096, [&queued] { return queued[3]; }}
+  };
+  for (unsigned slot = 0; slot < 4; ++slot) {
+    ZuID id;
+    id << "quic:binding" << slot;
+    gates[slot].initQueues(&app, id);
+  }
+  unsigned rows = 0;
+  bool bounds = true;
+  ZtArray<ZuID> ids;
+  for (auto &gate : gates) gate.allQueues([&rows, &bounds, &ids](Ztc::Queue *q) {
+    Ztc::QueueTelemetry d;
+    q->telemetry(d);
+    ++rows;
+    for (auto &id : ids) bounds &= id != d.id;
+    ids.push(d.id);
+    ZtString<> id{d.id};
+    if (id.find<":reserved">() >= 0) bounds &= d.size == 4096;
+  });
+  ZuCheck(rows == 8 && bounds);
+  ZuCheck(mx.start());
+  Zquic_::EndpointTxWait waits[4];
+  Zquic_::EndpointTxToken tokens[4];
+  unsigned grants[4] = {}, retired[4] = {};
+  on(mx, 4, [&mx, &gates, &waits, &tokens, &grants, &retired] {
+    for (unsigned i = 0; i < 4; ++i) {
+      waits[i].start(&mx, 4, 1, [i, &tokens, &grants, &retired](
+	  int result, Zquic_::EndpointTxToken token) {
+	if (result == Zquic_::EndpointTxResult::Ready) {
+	  tokens[i] = token;
+	  ++grants[i];
+	} else if (result == Zquic_::EndpointTxResult::Retired) ++retired[i];
+      });
+      mx.txRun([&gates, &waits, i] { gates[i].waitTx(waits[i]); });
+    }
+  });
+  bool isolated = true;
+  on(mx, 2, [&gates, &queued, &isolated] {
+    for (auto &gate : gates)
+      isolated &= gate.waiting() == 1 && !gate.reservations() && !gate.available();
+    --queued[0];
+    gates[0].service();
+  });
+  on(mx, 4, [] {});
+  ZuCheck(isolated && grants[0] == 1 && !grants[1] && !grants[2] && !grants[3]);
+  on(mx, 2, [&gates, &tokens, &isolated] {
+    for (unsigned i = 1; i < 4; ++i)
+      isolated &= !gates[i].consume(tokens[0]) && gates[i].waiting() == 1 &&
+	!gates[i].reservations();
+    isolated &= gates[0].consume(tokens[0]) && !gates[0].consume(tokens[0]);
+  });
+  on(mx, 4, [] {});
+  ZuCheck(isolated && retired[0] == 1 && !waits[0].busy());
+  on(mx, 2, [&gates, &queued] {
+    for (unsigned i = 1; i < 4; ++i) { --queued[i]; gates[i].service(); }
+  });
+  on(mx, 4, [] {});
+  on(mx, 2, [&gates, &tokens, &isolated] {
+    for (unsigned i = 1; i < 4; ++i) {
+      for (unsigned j = 0; j < 4; ++j)
+	if (i != j) isolated &= !gates[j].consume(tokens[i]);
+      isolated &= gates[i].consume(tokens[i]);
+    }
+  });
+  on(mx, 4, [] {});
+  for (unsigned i = 0; i < 4; ++i)
+    ZuCheck(isolated && grants[i] == 1 && retired[i] == 1 && !waits[i].busy());
+  for (auto &gate : gates) ZmBlock<>{}([&mx, &gate](auto wake) {
+    mx.txRun([&gate, wake = ZuMv(wake)]() mutable { gate.close(ZuMv(wake)); });
+  });
+  // All four gates share one finite provider. Its eight slots, rather than
+  // 16,384 queue credits, bound aggregate packet backing in this fixture.
+  ZmRef<ZquicFiniteProvider> provider = new ZquicFiniteProvider{&mx, 8};
+  Zi::IOBufPoolAllocator<Zi::IOBufType::TxUDP, Zquic_::TxPkt> allocator{&mx, provider};
+  ZmRef<ZiIOBuf> backing[8];
+  bool geometry = true;
+  for (unsigned i = 0; i < 8; ++i) {
+    backing[i] = allocator.allocBuf(&gates[i >> 1], 0, 1024);
+    geometry &= backing[i] && backing[i]->registered() &&
+      backing[i]->owner == &gates[i >> 1] &&
+      backing[i]->skip == ZquicFiniteProvider::HeadRoom;
+  }
+  for (auto &gate : gates) geometry &= !allocator.allocBuf(&gate, 0, 1024);
+  backing[7] = nullptr;
+  backing[7] = allocator.allocBuf(&gates[0], 0, 1024);
+  geometry &= backing[7] && backing[7]->owner == &gates[0];
+  for (auto &buf : backing) buf = nullptr;
+  ZuCheck(geometry);
+  log("# four gates: reservation bytes=", 4*4096*24,
+    " shared finite backing slots=8 bytes=", 8*ZquicFiniteProvider::SlotSize);
+  for (auto &gate : gates) gate.finalQueues();
+  app.final();
+  ZuCheck(mx.stop());
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testQueueLifetime);
   ZuTestCall(testQueueIdentity);
+  ZuTestCall(testFourEndpointGates);
   ZuTestCall(testStreamQueues);
   ZuTestCall(testRouterQueue);
   ZuTestCall(testSchedulerQueues);

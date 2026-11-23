@@ -12,6 +12,10 @@ namespace ZquicTestPort {
     Sock = 20300,
     SockRebind = 20301,
     Runtime = 20310,
+    Original4 = 20311,
+    Preferred4 = 20312,
+    Original6 = 20313,
+    Preferred6 = 20314,
     Interop = 20320,
     InteropEnd = 20329
   };

@@ -74,6 +74,42 @@ void testCxnRouter()
     "CID tombstone state mismatch");
 }
 
+void testPreferredCIDRoutes()
+{
+  ZuTestScope(testPreferredCIDRoutes);
+
+  TestRouteLink first;
+  TestRouteLink second;
+  Zquic::CxnRouter<TestRouteLink> routes;
+  Zquic::PreferredAddress preferred[2];
+  for (unsigned i = 0; i < 2; ++i) {
+    preferred[i].ipv4 = {ZiIP{"127.0.0.1"}, 8443};
+    preferred[i].ipv6 = {ZiIP{"::1"}, 8443};
+    ZuCHECK(Zquic::CxnIDGen::random(preferred[i].cid) &&
+	preferred[i].resetToken.generate(),
+      "preferred CID/token generation failed");
+  }
+  ZuCHECK(preferred[0].cid != preferred[1].cid &&
+      preferred[0].resetToken != preferred[1].resetToken,
+    "connections shared a preferred CID or reset token");
+  ZuCHECK(routes.add(preferred[0].cid, 1, &first, preferred[0].resetToken) &&
+      routes.add(preferred[1].cid, 1, &second, preferred[1].resetToken),
+    "per-connection sequence-1 routes failed");
+  uint8_t packet[64] = {};
+  int n = Zquic::Pkt::writeShort(packet, sizeof(packet), preferred[0].cid, 0, 2);
+  Zquic::CxnID matched;
+  ZuCHECK(n > 0 && routes.matchShort(Zquic::byteSpan(packet, unsigned(n)), &matched) ==
+      &first && matched == preferred[0].cid,
+    "preferred CID did not route to its original connection");
+  Zquic::ResetToken reset;
+  ZuCHECK(routes.resetToken(matched, reset) && reset == preferred[0].resetToken,
+    "advertised reset token differed from the registered route");
+  ZuCHECK(routes.tombstone(preferred[0].cid) && !routes.find(preferred[0].cid) &&
+      routes.find(preferred[1].cid) == &second,
+    "preferred retirement disrupted another connection");
+}
+
+
 void testCxnRouterTombstoneFIFO()
 {
   ZuTestScopeRT(testCxnRouterTombstoneFIFO);
@@ -344,6 +380,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testFixedProtocolValues);
   ZuTestCall(testCxnRouter);
+  ZuTestCall(testPreferredCIDRoutes);
   ZuTestCall(testCxnRouterTombstoneFIFO);
   ZuTestCall(testStatelessReset);
   ZuTestCall(variableShortCIDRouteMatch);

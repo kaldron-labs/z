@@ -973,6 +973,7 @@ struct SentPkt {
   enum { MaxFrames = 8 };
 
   uint64_t	pn = 0;
+  uint64_t	pathEpoch = 1;
   ZuTime	sentTime;
   unsigned	bytes = 0;
   PktNumSpace::T space = PktNumSpace::AppData;
@@ -1355,6 +1356,7 @@ struct PktTxUpdate {
   using AckFlags = ZuArray<bool, PktNumSpace::N>;
   using AckLargest = ZuArray<uint64_t, PktNumSpace::N>;
 
+  uint64_t	pathEpoch = 0; // zero selects all epochs for standalone helpers
   uint64_t	ackdBytes = 0;
   PktNumSpace::T	level = PktNumSpace::Initial;
   unsigned	ecnAckdPackets = 0;
@@ -1414,6 +1416,7 @@ struct PktTxUpdate {
     addAckdFrames(p);
     if (p.lost) return;
     ackdBytes += p.bytes;
+    if (pathEpoch && p.pathEpoch != pathEpoch) return;
     switch (p.ecn) {
       case EcnMark::ECT0:
       case EcnMark::ECT1:
@@ -1439,6 +1442,7 @@ struct PktTxUpdate {
   void lost(const SentPkt &p) {
     addLostFrames(p);
     lostBytes += p.bytes;
+    if (pathEpoch && p.pathEpoch != pathEpoch) return;
     if (p.pmtudProbe) {
       pmtudLostBytes += p.bytes;
       if (p.pmtudSize > pmtudLostSize)
@@ -1479,6 +1483,7 @@ struct PktTxUpdate {
 };
 
 struct PktAckBatch {
+  uint64_t	pathEpoch = 0;
   unsigned	range = 0;
   uint64_t	nextPN = 0;
   uint64_t	largestAckdForLoss = 0;
@@ -1490,6 +1495,7 @@ struct PktAckBatch {
 };
 
 struct PktLossBatch {
+  uint64_t	pathEpoch = 0;
   uint64_t	nextPN = 0;
   unsigned	lost = 0;
 };
@@ -1604,6 +1610,7 @@ public:
     packet.pn = pn;
     init(packet);
     m_packets.addNode(node.ptr());
+    if (packet.ecn != EcnMark::NotECT) ++m_ectRetained;
     m_outstanding.add(packet);
     if (packet.inFlight) {
       m_bytesInFlight += packet.bytes;
@@ -1619,13 +1626,15 @@ public:
     return add(p.pn, [&p](SentPkt &packet) { packet = ZuMv(p); });
   }
 
-  bool discard(uint64_t pn) {
+  bool discard(uint64_t pn, uint64_t *pathEpoch = nullptr) {
     auto node = m_packets.find(pn);
     if (!node) return false;
     TxPkt &p = node->data();
+    if (pathEpoch) *pathEpoch = p.pathEpoch;
     if (!p.ackd && !p.lost && !p.ptoReclaimed) m_outstanding.del(p);
     if (p.inFlight) release_(p);
     if (p.lost) unlinkLost(p);
+    retireECT(node->data());
     (void)m_packets.delNode(node.ptr());
     return true;
   }
@@ -1633,6 +1642,7 @@ public:
   bool ack(uint64_t pn) {
     auto node = m_packets.find(pn);
     if (!node || !ack_(node->data())) return false;
+    retireECT(node->data());
     (void)m_packets.delNode(node.ptr());
     return true;
   }
@@ -1647,6 +1657,7 @@ public:
       TxPkt &p = node->data();
       bool wasLost = p.lost;
       if (ranges.contains(p.pn) && ack_(p)) {
+	retireECT(node->data());
 	(void)m_packets.delNode(node);
 	if (!wasLost) ++n;
       }
@@ -1697,6 +1708,7 @@ public:
 	      haveAckd = true;
 	    }
 	  }
+	  retireECT(node->data());
 	  (void)m_packets.delNode(node);
 	}
       }
@@ -1713,10 +1725,16 @@ public:
   bool ackBatch(
     const AckRange *ranges, unsigned nRanges, PktAckBatch &batch,
     unsigned budget, PktNumSpace::T level, PktTxUpdate *update = nullptr,
-    uint64_t boundary = 0)
+    uint64_t boundary = 0, uint64_t pathEpoch = 0)
   {
     if (!budget) return false;
-    if (update) update->level = level;
+    if (batch.pathEpoch != pathEpoch) {
+      batch.pathEpoch = pathEpoch;
+      batch.ackd = 0;
+      batch.haveAckd = false;
+      batch.latestSentTime = {};
+    }
+    if (update) { update->level = level; update->pathEpoch = pathEpoch; }
     unsigned scanned = 0;
     while (batch.range < nRanges) {
       const AckRange &range = ranges[batch.range];
@@ -1736,17 +1754,19 @@ public:
 	if (ack_(p)) {
 	  if (update) update->ackd(p, wasInFlight, boundary);
 	  if (!wasLost) {
-	    ++batch.ackd;
+	    if (!pathEpoch || p.pathEpoch == pathEpoch) ++batch.ackd;
 	    if (!batch.haveAckForLoss || p.pn > batch.largestAckdForLoss) {
 	      batch.largestAckdForLoss = p.pn;
 	      batch.haveAckForLoss = true;
 	    }
-	    if (!batch.haveAckd || p.pn > batch.latestAckd) {
+	    if ((!pathEpoch || p.pathEpoch == pathEpoch) &&
+		(!batch.haveAckd || p.pn > batch.latestAckd)) {
 	      batch.latestAckd = p.pn;
 	      batch.latestSentTime = p.sentTime;
 	      batch.haveAckd = true;
 	    }
 	  }
+	  retireECT(node->data());
 	  (void)m_packets.delNode(node);
 	}
 	if (++scanned >= budget) {
@@ -1795,9 +1815,14 @@ public:
 
   bool markPktThreshLossBatch(
     uint64_t largestAckd, unsigned threshold, PktLossBatch &batch,
-    unsigned budget, PktTxUpdate *update = nullptr)
+    unsigned budget, PktTxUpdate *update = nullptr, uint64_t pathEpoch = 0)
   {
     if (!budget) return false;
+    if (batch.pathEpoch != pathEpoch) {
+      batch.pathEpoch = pathEpoch;
+      batch.lost = 0;
+    }
+    if (update) update->pathEpoch = pathEpoch;
     if (largestAckd < threshold) {
       batch.nextPN = 0;
       return true;
@@ -1814,7 +1839,7 @@ public:
       batch.nextPN = ZuNull(p.pn) ? p.pn : p.pn + 1;
       if (lose_(p, false)) {
 	(void)iter.del();
-	++batch.lost;
+	if (!pathEpoch || p.pathEpoch == pathEpoch) ++batch.lost;
 	if (update) update->lost(p);
       }
       if (++scanned >= budget) {
@@ -1858,9 +1883,14 @@ public:
   }
   bool markTimeThreshLossBatch(
     uint64_t largestAckd, ZuTime now, ZuTime threshold, PktLossBatch &batch,
-    unsigned budget, PktTxUpdate *update = nullptr)
+    unsigned budget, PktTxUpdate *update = nullptr, uint64_t pathEpoch = 0)
   {
     if (!budget) return false;
+    if (batch.pathEpoch != pathEpoch) {
+      batch.pathEpoch = pathEpoch;
+      batch.lost = 0;
+    }
+    if (update) update->pathEpoch = pathEpoch;
     if (ZuNull(largestAckd)) return true;
     unsigned scanned = 0;
     auto iter = m_recovery.iter();
@@ -1875,7 +1905,7 @@ public:
       batch.nextPN = ZuNull(p.pn) ? p.pn : p.pn + 1;
       if (lose_(p, false)) {
 	(void)iter.del();
-	++batch.lost;
+	if (!pathEpoch || p.pathEpoch == pathEpoch) ++batch.lost;
 	if (update) update->lost(p);
       }
       if (++scanned >= budget) {
@@ -1925,6 +1955,7 @@ public:
       if (!p.ackd && !p.lost && lose_(p, true, false) && update) update->lost(p);
       if (wasInFlight && releasedBytes) *releasedBytes += p.bytes;
       if (p.lost) unlinkLost(p);
+      retireECT(node->data());
       (void)m_packets.delNode(node);
       ++n;
     }
@@ -1932,6 +1963,7 @@ public:
   }
 
   uint64_t bytesInFlight() const { return m_bytesInFlight; }
+  uint64_t ectRetained() const { return m_ectRetained; }
   ZuTime latestAckSentTime() const { return m_latestAckSentTime; }
   unsigned ackd() const { return m_ackd; }
   unsigned lost() const { return m_lost; }
@@ -1998,6 +2030,7 @@ public:
       auto node = m_packets.shift();
       if (!node) break;
       auto &packet = node->data();
+      retireECT(packet);
       if (!packet.ackd && !packet.lost && !packet.ptoReclaimed)
 	m_outstanding.del(packet);
       if (packet.inFlight) release_(packet);
@@ -2019,13 +2052,15 @@ public:
     m_packets.clean();
     m_retransmit.clear();
     m_bytesInFlight = 0;
+    m_ectRetained = 0;
     m_latestAckSentTime = {};
     m_ackd = 0;
     m_lost = 0;
     m_retainedLost = 0;
     m_retransmittable = 0;
   }
-  bool persistentCongestion(ZuTime threshold, unsigned budget = 256) const {
+  bool persistentCongestion(
+    ZuTime threshold, unsigned budget = 256, uint64_t pathEpoch = 0) const {
     bool havePN = false, haveTime = false;
     uint64_t lastPN = 0;
     ZuTime first, last;
@@ -2033,7 +2068,9 @@ public:
     unsigned scanned = 0;
     while (auto node = iter()) {
       const SentPkt &p = node->data();
-      if (p.ackd && p.ackEliciting && !p.pmtudProbe) {
+      if (pathEpoch && p.pathEpoch != pathEpoch) {
+	havePN = haveTime = false;
+      } else if (p.ackd && p.ackEliciting && !p.pmtudProbe) {
 	havePN = haveTime = false;
       } else if (p.lost && p.ackEliciting) {
 	if (havePN && p.pn != lastPN + 1) haveTime = false;
@@ -2056,6 +2093,9 @@ public:
   }
 
 private:
+  void retireECT(const SentPkt &p) {
+    if (p.ecn != EcnMark::NotECT) --m_ectRetained;
+  }
   bool ack_(TxPkt &p) {
     if (p.ackd) return false;
     if (!p.lost && !p.ptoReclaimed) m_outstanding.del(p);
@@ -2125,6 +2165,7 @@ private:
     while (m_retainedLost > RetainedLostMax) {
       auto lost = m_lostPkts.shift();
       auto node = static_cast<Msg *>(lost);
+      retireECT(node->data());
       (void)m_packets.delNode(node);
       --m_retainedLost;
     }
@@ -2135,6 +2176,7 @@ private:
   OutstandingFrames m_outstanding;
   LostPktList	m_lostPkts;
   uint64_t	m_bytesInFlight = 0;
+  uint64_t	m_ectRetained = 0;
   ZuTime	m_latestAckSentTime;
   unsigned	m_ackd = 0;
   unsigned	m_lost = 0;
