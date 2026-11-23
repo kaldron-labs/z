@@ -1,40 +1,39 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2024 Huw Rogers
+// (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// multiplexer configuration
+// multiplexer configuration from ZfCf
 
-#ifndef ZvMxParams_HH
-#define ZvMxParams_HH
+#ifndef ZiMxConfig_HH
+#define ZiMxConfig_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZiLib_HH
+#include <zlib/ZiLib.hh>
 #endif
 
 #include <limits.h>
 
 #include <zlib/ZiMultiplex.hh>
-
+#include <zlib/ZiThreadParams.hh>
 #include <zlib/ZfCf.hh>
-#include <zlib/ZvThreadParams.hh>
 
-ZfStruct(ZvAPI, (ZiCxnOptions, Cf),
+ZfStruct(ZiAPI, (ZiCxnOptions, Cf),
   ((options, AliasFn, flags, flags),
     (Mutable, (Flags<ZiCxnFlags::Map>)),	UInt32),
   ((ttl, Fn),	(Mutable, (Range<0U, 255>)),	UInt32));
 
-ZfStruct(ZvAPI, (ZmSchedTParams, Cf),
+ZfStruct(ZiAPI, (ZmSchedTParams, Cf),
   ((isolated, Fn),	(Mutable),					Bool),
-  ((name, Fn),	(Mutable),						String),
+  ((name, Fn),		(Mutable),					String),
   ((stackSize, Fn),	(Mutable, (Range<0U, INT_MAX>)),		UInt32),
   ((priority, Fn),	(Mutable, (Enum<ZmThreadPriority::Map>)),	Int32),
   ((partition, Fn),	(Mutable, (Range<0U, INT_MAX>)),		UInt32),
   ((cpuset, Fn),	(Mutable),					String),
   ((detached, Fn),	(Mutable),					Bool));
 
-ZfStruct(ZvAPI, (ZmSchedParams, Cf),
+ZfStruct(ZiAPI, (ZmSchedParams, Cf),
   ((nThreads, Fn),	(Mutable, (Range<1U, 1024U>)),			UInt32),
   ((stackSize, Fn),	(Mutable, (Range<16384U, INT_MAX>)),		UInt32),
   ((priority, Fn),	(Mutable, (Enum<ZmThreadPriority::Map>)),	Int32),
@@ -46,7 +45,7 @@ ZfStruct(ZvAPI, (ZmSchedParams, Cf),
   ((timeout, Fn),	(Mutable, (Range<0U, 3600U>)),			UInt32),
 );
 
-ZfStruct(ZvAPI, (ZiMxParams, Cf),
+ZfStruct(ZiAPI, (ZiMxParams, Cf),
   ((rxThread, AliasFn, rxThreadID, rxThread), (Mutable),	String),
   ((txThread, AliasFn, txThreadID, txThread), (Mutable),	String),
 #ifdef ZiMultiplex_EPoll
@@ -57,32 +56,31 @@ ZfStruct(ZvAPI, (ZiMxParams, Cf),
   ((txBufSize, Fn),	(Mutable, (Range<0U, INT_MAX>)),	UInt32)
 #ifdef ZiMultiplex_DEBUG
   ,
-  ((trace, Fn),	(Mutable),					Bool),
-  ((debug, Fn),	(Mutable),					Bool),
+  ((trace, Fn),		(Mutable),				Bool),
+  ((debug, Fn),		(Mutable),				Bool),
   ((frag, Fn),		(Mutable),				Bool),
-  ((yield, Fn),	(Mutable),					Bool)
+  ((yield, Fn),		(Mutable),				Bool)
 #endif
 );
 
-inline ZiIP zvCxnIP(const ZfCf::AnyNode *cf)
+inline ZiIP ZiIP_load(const ZfCf::AnyNode *cf)
 {
   if (!cf->has<ZfCf::AnyNode::String>())
     throw ZfCf_EXCEPT(ZfCfError::badType(cf, "string"));
   return ZiIP{cf->data<ZfCf::AnyNode::String>()};
 }
 
-ZvAPI void zvCxnFields(const ZfCf::AnyNode *,
-  const ZfCf::AnyNode *(&lookup)[2]);
+ZiAPI void ZiCxnFields_load(const ZfCf::AnyNode *, const ZfCf::AnyNode *(&lookup)[2]);
 
-inline ZiCxnOptions ZvCxnOptions(
-    const ZfCf::AnyNode *cf, ZiCxnOptions options = {})
+inline ZiCxnOptions ZiCxnOptions_load(
+  const ZfCf::AnyNode *cf, ZiCxnOptions options = {})
 {
   if (!cf) return options;
   ZfCf::handler<ZiCxnOptions>(cf).update(options);
   if (options.multicast()) {
     const ZfCf::AnyNode *lookup[2]{};
-    zvCxnFields(cf, lookup);
-    if (lookup[0]) options.mif(zvCxnIP(lookup[0]));
+    ZiCxnFields_load(cf, lookup);
+    if (lookup[0]) options.mif(ZiIP_load(lookup[0]));
     if (auto mreqs = lookup[1]) {
 	if (!mreqs->has<ZfCf::AnyNode::Object>())
 	  throw ZfCf_EXCEPT(ZfCfError::badType(mreqs, "object"));
@@ -95,9 +93,9 @@ inline ZiCxnOptions ZvCxnOptions(
 	    if (f.p<0>() == "interface") interface = f.p<1>().ptr();
 	  if (!interface)
 	    throw ZfCf_EXCEPT(ZfCfError::required(mreq, "interface"));
-	  ZiIP addr{field.p<0>()}, mif{zvCxnIP(interface)};
+	  ZiIP addr{field.p<0>()}, mif{ZiIP_load(interface)};
 	  if (!addr || !addr.multicast())
-	    throw ZeEXCEPT(Error, "ZvCxnOptions", ([
+	    throw ZeEXCEPT(Error, "ZiCxnOptions_load", ([
 	      key = ZfCfError::fullKey(field.p<1>()), addr
 	    ](auto &s) {
 	      s << '"' << key << "\" invalid multicast IP " << addr;
@@ -109,8 +107,8 @@ inline ZiCxnOptions ZvCxnOptions(
   return options;
 }
 
-inline ZiMxParams ZvMxParams(
-    ZuCSpan id, const ZfCf::AnyNode *cf, ZiMxParams params = {})
+inline ZiMxParams ZiMxParams_load(
+  ZuCSpan id, const ZfCf::AnyNode *cf, ZiMxParams params = {})
 {
   ZmSchedParams &sched = params.scheduler();
   sched.id(id);
@@ -130,7 +128,7 @@ inline ZiMxParams ZvMxParams(
 	if ((parsed.p<0>() > 0 &&
 	     (parsed.p<0>() != int(key.length()) || !parsed.p<1>())) ||
 	    !sid || sid > sched.nThreads())
-	  throw ZeEXCEPT(Error, "ZvMxParams", ([
+	  throw ZeEXCEPT(Error, "ZiMxParams", ([
 	    key = ZfCfError::fullKey(field.p<1>()),
 	    value = ZeString{field.p<0>()}, max = sched.nThreads()
 	  ](auto &s) {
@@ -145,4 +143,4 @@ inline ZiMxParams ZvMxParams(
   return params;
 }
 
-#endif /* ZvMxParams_HH */
+#endif /* ZiMxConfig_HH */

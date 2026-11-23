@@ -1,17 +1,19 @@
 //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
 //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
 
-// (c) Copyright 2026 Huw Rogers
+// (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+// ZiMultiplexer configuration
+
 #include <zlib/ZuMatcher.hh>
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 
 struct CxnKeys {
   using Keys = ZuStringTL<"mif", "mreqs">;
 };
 
-void zvCxnFields(const ZfCf::AnyNode *cf,
+void ZiCxnFields_load(const ZfCf::AnyNode *cf,
     const ZfCf::AnyNode *(&lookup)[2])
 {
   static constexpr auto matcher = ZuMatcher<CxnKeys>();
@@ -22,7 +24,11 @@ void zvCxnFields(const ZfCf::AnyNode *cf,
   }
 }
 
-ZtEnumImplNS(ZmThreadPriority);
-
-ZfStructImpl(ZmThreadParams);
-ZfStructImpl(ZmThreadParams, Cf);
+ZfStructImpl(ZiCxnOptions);
+ZfStructImpl(ZiCxnOptions, Cf);
+ZfStructImpl(ZmSchedTParams);
+ZfStructImpl(ZmSchedTParams, Cf);
+ZfStructImpl(ZmSchedParams);
+ZfStructImpl(ZmSchedParams, Cf);
+ZfStructImpl(ZiMxParams);
+ZfStructImpl(ZiMxParams, Cf);

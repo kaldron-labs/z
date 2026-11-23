@@ -2843,8 +2843,9 @@ void ZiConnection::close_2(bool peer)
   executedDisconnect(peer);
 }
 
-ZiMultiplex::ZiMultiplex(ZiMxParams mxParams) :
+ZiMultiplex::ZiMultiplex(ZiMxParams mxParams, ZmRef<ZiMxPlugin> plugin) :
   ZmScheduler(ZuMv(mxParams.scheduler())),
+  m_plugin(ZuMv(plugin)),
   m_rxThread(mxParams.rxThread()),
   m_txThread(mxParams.txThread()),
   m_rxBufSize(mxParams.rxBufSize()),
@@ -2900,23 +2901,6 @@ ZiMultiplex::~ZiMultiplex()
   m_rxPool = nullptr;
   m_txPools.clean();
   m_allocators.clean();
-}
-
-void ZiMultiplex::plugin(ZmRef<ZiMxPlugin> &&plugin)
-{
-  if (attachPlugin(plugin.ptr())) m_plugin = ZuMv(plugin);
-}
-
-bool ZiMultiplex::attachPlugin(ZiMxPlugin *plugin)
-{
-  ZmAssert_(plugin);
-  ZmAssert_(m_registration == Open && state() == ZmEngineState::Stopped);
-  ZmAssert_(plugin->mx() == this);
-  if (m_plugin) {
-    ZmAssert_(m_plugin.ptr() == plugin);
-    return false;
-  }
-  return true;
 }
 
 Zi::IOBufPool *ZiMultiplex::bufPool(

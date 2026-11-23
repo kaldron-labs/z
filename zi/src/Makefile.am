@@ -9,16 +9,20 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = \
-	ZiDir.hh ZiFile.hh ZiGlob.hh ZiIP.hh ZiLib.hh ZiModule.hh \
-	ZiMultiplex.hh ZiPlatform.hh ZiProgram.hh ZiRing.hh ZiDaemon.hh ZiPIDFile.hh \
+	ZiLib.hh ZiPlatform.hh \
+	ZiDir.hh ZiFile.hh ZiGlob.hh ZiIP.hh  \
+	ZiModule.hh ZiMultiplex.hh ZiMxParams.hh ZiMxConfig.hh \
+	ZiProgram.hh ZiRing.hh ZiRingParams.hh ZiStackParams.hh ZiThreadParams.hh ZiDaemon.hh ZiPIDFile.hh \
 	ZiIOBuf.hh ZiIOContext.hh ZiRx.hh ZiTx.hh ZiLog.hh ZiAssert.hh ZiCSV.hh \
 	ZiTxStream.hh ZiFileTxStream.hh ZiRxStream.hh ZiEventLoop.hh \
 	ZiResolver.hh ZiHeapTune.hh ZiHashTune.hh \
 	ZtcHub.hh ZtcLink.hh ZtcMx.hh ZtcPool.hh
 lib_LTLIBRARIES = libZi.la
 libZi_la_SOURCES = \
-	ZiDir.cc ZiFile.cc ZiGlob.cc ZiIOContext.hh ZiIP.cc ZiLib.cc \
-	ZiModule.cc ZiMultiplex.cc ZiPlatform.cc ZiProgram.cc \
+	ZiLib.cc ZiPlatform.cc \
+	ZiDir.cc ZiFile.cc ZiGlob.cc ZiIOContext.hh ZiIP.cc \
+	ZiMxParams.cc ZiThreadParams.cc ZiRingParams.cc ZiStackParams.cc \
+	ZiModule.cc ZiMultiplex.cc ZiProgram.cc \
 	ZiRing.cc ZiLog.cc ZiEventLoop.cc ZiDaemon.cc ZiPIDFile.cc \
 	ZiResolver.cc ZtcHub.cc \
 	ZtcLink.cc ZtcPool.cc

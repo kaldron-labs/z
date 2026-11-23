@@ -4,13 +4,13 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// thread configuration
+// ZmThread configuration
 
-#ifndef ZvThreadParams_HH
-#define ZvThreadParams_HH
+#ifndef ZiThreadParams_HH
+#define ZiThreadParams_HH
 
-#ifndef ZvLib_HH
-#include <zlib/ZvLib.hh>
+#ifndef ZiLib_HH
+#include <zlib/ZiLib.hh>
 #endif
 
 #include <limits.h>
@@ -23,20 +23,20 @@
 
 namespace ZmThreadPriority {
   using T = int8_t;
-  ZtEnumMap(ZvAPI, ZmThreadPriority, Map, "RealTime", "High", "Normal", "Low");
+  ZtEnumMap(ZiAPI, ZmThreadPriority, Map, "RealTime", "High", "Normal", "Low");
 }
 
-ZfStruct(ZvAPI, (ZmThreadParams, Cf),
+ZfStruct(ZiAPI, (ZmThreadParams, Cf),
   ((stackSize, Fn),	(Mutable, (Range<16384U, INT_MAX>)),		UInt32),
   ((priority, Fn),	(Mutable, (Enum<ZmThreadPriority::Map>)),	Int32),
   ((partition, Fn),	(Mutable),					UInt32),
   ((cpuset, Fn),	(Mutable),					String));
 
-inline ZmThreadParams ZvThreadParams(
+inline ZmThreadParams ZiThreadParams(
     const ZfCf::AnyNode *cf, ZmThreadParams params = {})
 {
   if (cf) ZfCf::handler<ZmThreadParams>(cf).update(params);
   return params;
 }
 
-#endif /* ZvThreadParams_HH */
+#endif /* ZiThreadParams_HH */

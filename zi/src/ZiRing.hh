@@ -29,82 +29,11 @@
 
 #include <zlib/ZiPlatform.hh>
 #include <zlib/ZiFile.hh>
+#include <zlib/ZiRingParams.hh>
 
 namespace ZiRing_ {
 
 using namespace ZmRing_;
-
-// ring buffer parameters
-
-struct ParamData : public ZmRing_::ParamData {
-  Zi::Path	name;
-  unsigned	initial = 0; // creation default when size is zero
-  unsigned	killWait = 1;
-  bool		coredump = false;
-
-  inline const ParamData &data() { return *this; } // upcast
-
-  using Base = ZmRing_::ParamData;
-
-  ParamData() = default;
-  ParamData(const ParamData &) = default;
-  ParamData(ParamData &&) = default;
-  template <
-    typename Arg0, typename ...Args,
-    typename = ZuIsNot<Arg0, ZmRing_::ParamData>,
-    decltype(Base(ZuDeclVal<Args &&>()...), int()) = 0>
-  ParamData(Arg0 &&arg0, Args &&...args) :
-      Base(ZuFwd<Args>(args)...), name{ZuFwd<Arg0>(arg0)} { }
-  ParamData &operator =(const ParamData &) = default;
-  ParamData &operator =(ParamData &&) = default;
-};
-
-template <typename Derived, typename Data = ParamData>
-class Params_ : public ZmRing_::Params_<Derived, Data> {
-  using Base = ZmRing_::Params_<Derived, Data>;
-
-  Derived &&derived() { return ZuMv(*static_cast<Derived *>(this)); }
-
-public:
-  Params_() = default;
-  Params_(const Params_ &) = default;
-  Params_(Params_ &&) = default;
-  template <
-    typename Arg0, typename ...Args,
-    typename = ZuIsNot<Arg0, ZmRing_::ParamData>,
-    decltype(Base(ZuDeclVal<Arg0 &&>(), ZuDeclVal<Args &&>()...), int()) = 0>
-  Params_(Arg0 &&arg0, Args &&...args) :
-      Base(ZuFwd<Arg0>(arg0), ZuFwd<Args>(args)...) { }
-  Params_ &operator =(const Params_ &) = default;
-  Params_ &operator =(Params_ &&) = default;
-
-  Derived &&name(ZuCSpan s) { Data::name = s; return derived(); }
-  Derived &&initial(unsigned n) { Data::initial = n; return derived(); }
-  Derived &&killWait(unsigned n) { Data::killWait = n; return derived(); }
-  Derived &&coredump(bool b) { Data::coredump = b; return derived(); }
-
-  const Zi::Path &name() const { return Data::name; }
-  unsigned initial() const { return Data::initial; }
-  unsigned killWait() const { return Data::killWait; }
-  bool coredump() const { return Data::coredump; }
-};
-
-class Params : public Params_<Params> {
-  using Base = Params_<Params>;
-
-public:
-  Params() = default;
-  Params(const Params &) = default;
-  Params(Params &&) = default;
-  template <
-    typename Arg0, typename ...Args,
-    typename = ZuIsNot<Arg0, ZmRing_::ParamData>,
-    decltype(Base(ZuDeclVal<Arg0 &&>(), ZuDeclVal<Args &&>()...), int()) = 0>
-  Params(Arg0 &&arg0, Args &&...args) :
-      Base(ZuFwd<Arg0>(arg0), ZuFwd<Args>(args)...) { }
-  Params &operator =(const Params &) = default;
-  Params &operator =(Params &&) = default;
-};
 
 class ZiAPI Blocker {
 public:
@@ -499,7 +428,6 @@ inline void RingExt<Ring, MW, MR>::detached(unsigned id)
 
 } // ZiRing_
 
-using ZiRingParams = ZiRing_::Params;
 
 template <typename NTP = ZiRing_::Defaults>
 using ZiRing = ZmRing_::Ring<

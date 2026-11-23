@@ -9,8 +9,8 @@
 #include <zlib/ZmPlatform.hh>
 
 #include <zlib/ZvCf.hh>
-#include <zlib/ZvThreadParams.hh>
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiThreadParams.hh>
+#include <zlib/ZiMxConfig.hh>
 
 #include "ZiTestResidue.hh"
 
@@ -344,13 +344,13 @@ void mxBufSizes()
   auto file = path("mx-bufs.cf");
   write(file, "rxBufSize: 4096, txBufSize: 8192\n");
   auto source = ZvCf::load(file);
-  auto params = ZvMxParams("mx", source.p<1>().ptr());
+  auto params = ZiMxParams_load("mx", source.p<1>().ptr());
   ZuCheckRT(params.rxBufSize() == 4096 && params.txBufSize() == 8192);
   for (auto text : {"rxBufSize: 2147483648", "txBufSize: 2147483648"}) {
     write(file, text);
     source = ZvCf::load(file);
     auto message = exception([&source]() {
-      ZvMxParams("mx", source.p<1>().ptr());
+      ZiMxParams_load("mx", source.p<1>().ptr());
     });
     ZuCheckRT(!!message);
   }
