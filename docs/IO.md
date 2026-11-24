@@ -34,6 +34,14 @@ that backing. Initialization and `connected()` may have no buffer. Native messag
 `flags` remain separate from the packed disconnect `state`; receive errors belong
 to connection error/teardown handling.
 
+A packet provider may set `ZiRxContext::burst` while delivering datagrams already
+available in one bounded receive turn. The pointer borrows the provider's stack
+and is valid only inside the callback. A receiver can move the original buffer
+nodes into the burst for a single ordered handoff to its processing thread.
+Flush the preceding receiver's run before switching physical receivers or
+dispatching unrelated work. End the burst before yielding or parking. With a
+null pointer the receiver dispatches the datagram immediately.
+
 `ZiTxContext::length` retains the latest signed send result, including callbacks
 that select subsequent output without a buffer installed. `offset` tracks partial
 send progress independently of the buffer descriptor. On Tx, `io.disconnect()`

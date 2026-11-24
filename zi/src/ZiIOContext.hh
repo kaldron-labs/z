@@ -32,10 +32,45 @@ using ZiTOS = ZuUnion<void, uint8_t>;	// IP TOS raw byte
 
 ZtFlagsNS(ZiAPI, ZiIOState, uint8_t, Disconnect, Close, Partial);
 
+// One hardware dequeue, on the multiplexer Rx owner. Retain the physical
+// receiver and move each consecutive run of its original nodes into one handoff.
+class ZiRxBurst {
+  ZiRxBurst(const ZiRxBurst &) = delete;
+  ZiRxBurst &operator =(const ZiRxBurst &) = delete;
+
+public:
+  ZiRxBurst() = default;
+  ~ZiRxBurst() { flush(); }
+
+  void boundary(const ZmPolymorph *next) {
+    if (m_receiver && m_receiver.ptr() != next) flush();
+  }
+  void append(ZmPolymorph *receiver, ZmRef<ZiIOBuf> buf,
+      void (*deliver)(ZmPolymorph *, Zi::IOQueue)) {
+    boundary(receiver);
+    if (!m_receiver) {
+      m_receiver = receiver;
+      m_deliver = deliver;
+    }
+    m_packets.pushNode(ZuMv(buf));
+  }
+  void flush() {
+    if (!m_receiver) return;
+    auto receiver = ZuMv(m_receiver);
+    m_deliver(receiver.ptr(), ZuMv(m_packets));
+  }
+
+private:
+  ZmRef<ZmPolymorph> m_receiver;
+  void (*m_deliver)(ZmPolymorph *, Zi::IOQueue) = nullptr;
+  Zi::IOQueue m_packets;
+};
+
 struct ZiRxContext {
   ZiConnection	*cxn = nullptr;	// connection - set by ZiMultiplex
   ZmAnyFn	fn;		// callback - set by app
   ZmRef<Zi::IOBuf> buf;		// original backing, moved through the I/O path
+  ZiRxBurst	*burst = nullptr; // borrowed for this provider receive callback only
   ZiSockAddr	addr;		// source address for UDP
   unsigned	flags = 0;	// platform-native receive message flags
   uint8_t	state = 0;	// ZiIOState
