@@ -10,6 +10,12 @@ ip link add zpkta numrxqueues 2 numtxqueues 2 type veth \
   peer name zpktb numrxqueues 2 numtxqueues 2
 ip link set zpkta up
 ip link set zpktb up
+# Two experimental EtherTypes steer the AF_XDP wake fixture to distinct queues.
+if command -v tc >/dev/null && tc qdisc add dev zpktb clsact &&
+   tc filter add dev zpktb egress protocol 0x88b5 matchall action skbedit queue_mapping 0 &&
+   tc filter add dev zpktb egress protocol 0x88b6 matchall action skbedit queue_mapping 1; then
+  export ZPKT_TEST_QUEUE_STEERING=1
+fi
 ip link add zpktdummy type dummy
 ip link add zpktrxa numrxqueues 1 numtxqueues 1 type veth \
   peer name zpktrxb numrxqueues 1 numtxqueues 1

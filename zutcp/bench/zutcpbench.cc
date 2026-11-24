@@ -223,7 +223,7 @@ private:
 using Owners = ZtArray<ZmRef<Cxn>, ZtArrayHeapID<"Zutcp.Bench.Owners">>;
 
 static ZuUnion<Zpkt::Nif *, ZeException> openNif(
-  Zpkt::Env *env, ZiMultiplex *mx, ZuCSpan name, unsigned sender, unsigned spin = 1000)
+  Zpkt::Env *env, ZiMultiplex *mx, ZuCSpan name, unsigned sender, unsigned spin)
 {
   using Node = ZfCf::AnyNode;
   auto root = ZfCf::newNode<Node::Object>(nullptr);

@@ -473,9 +473,9 @@ private:
   void stop_();
   void stopTx();
   void stopEndpoints();
-  void received(uint8_t *, unsigned);
+  void received(uint8_t *, unsigned, ZiRxBurst *);
   void rxProgress();
-  void receivedUDP(uint8_t *, unsigned, const IPView &);
+  void receivedUDP(uint8_t *, unsigned, const IPView &, ZiRxBurst *);
   void openUDPRouteMonitor();
   uint64_t udpRouteGeneration();
   void sendUDP(ZiConnection *);

@@ -43,9 +43,10 @@ public:
     if (m_sent) return;
     m_sent = true;
     uint8_t packet[64]{};
+    ZiRxBurst burst;
     for (unsigned i = 0; i < 64; ++i) {
       packet[0] = uint8_t(i);
-      receive({packet, sizeof(packet)});
+      receive({packet, sizeof(packet)}, &burst);
     }
     mx()->rxRun([this] { m_done(m_calls); });
   }
@@ -269,6 +270,8 @@ public:
   MulticastCxn(ZiMultiplex *mx, const ZiCxnInfo &info) : ZiConnection{mx, info} { }
   void connected(ZiRxContext &) override { }
   void disconnected(bool) override { }
+  unsigned delivered = 0, rawAtDelivery = 0;
+  const unsigned *raw = nullptr;
 };
 
 bool ZutcpTest::MxPlugin::multicast(
@@ -309,9 +312,11 @@ bool ZutcpTest::MxPlugin::multicast(
   uint8_t *origin = nullptr;
   uint8_t expectedFrame[14 + 40 + 8 + 4];
   bool exact = true;
-  auto inspect = [&exact, &copies, &copyBytes, &wireLength, &origin, &expectedFrame](
+  ZiRxBurst burst;
+  auto expectedBurst = mode == 1 ? nullptr : &burst;
+  auto inspect = [expectedBurst, &exact, &copies, &copyBytes, &wireLength, &origin, &expectedFrame](
       ZiRxContext &io) {
-    exact &= io.buf->length == 4 && !memcmp(io.buf->data(), "data", 4) &&
+    exact &= io.burst == expectedBurst && io.buf->length == 4 && !memcmp(io.buf->data(), "data", 4) &&
       !memcmp(io.buf->data_(), expectedFrame, wireLength);
     if (io.buf->data_() != origin) { ++copies; copyBytes += wireLength; }
   };
@@ -351,7 +356,7 @@ bool ZutcpTest::MxPlugin::multicast(
   memcpy(expectedFrame, frame, length);
   unsigned allocations = pool->allocCalls, returned = pool->returns;
   if (mode == 5) pool->available = false;
-  stack.received(frame, length);
+  stack.received(frame, length, expectedBurst);
   pool->available = true;
   unsigned expected = count;
   if (mode == 3 || mode == 4 || mode == 5) expected = 1;
@@ -365,6 +370,25 @@ bool ZutcpTest::MxPlugin::multicast(
     pool->allocCalls - allocations == unsigned(count == 2 && mode != 3) &&
     (!copied || (held[0] && held[0]->data_() != frame)) &&
     (expected != 2 || held[0]->data_() != held[1]->data_());
+  if (mode == 1) {
+    // An unrelated Ethernet frame must publish preceding UDP work before its
+    // raw callback. Even when it is the last descriptor, no later UDP callback
+    // is available to drain the group.
+    auto receiver = connections[0];
+    receiver->raw = &raw;
+    burst.append(receiver.ptr(), held[0], [](ZmPolymorph *p, Zi::IOQueue packets) {
+      auto receiver = static_cast<MulticastCxn *>(p);
+      receiver->delivered += packets.count_();
+      receiver->rawAtDelivery = *receiver->raw;
+    });
+    auto rawFrame = pool->alloc();
+    *rawFrame = 0;
+    auto prior = raw;
+    stack.received(rawFrame, 1, &burst);
+    passed &= raw == prior + 1 && receiver->delivered == 1 &&
+      receiver->rawAtDelivery == prior && !receiver->rxContext().burst;
+    ++returned; // raw ingress lease
+  }
   held[0] = held[1] = nullptr;
   for (unsigned i = 0; i < count; ++i) {
     connections[i]->rxContext().complete();

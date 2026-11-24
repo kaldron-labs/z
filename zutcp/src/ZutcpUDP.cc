@@ -102,11 +102,12 @@ ZiIOBuf *MxPlugin::UdpCxn::rxBuf() const
 }
 
 bool MxPlugin::UdpCxn::receive(
-  uint8_t *frame, unsigned offset, unsigned length, const ZiSockAddr &peer, uint8_t tos)
+  uint8_t *frame, unsigned offset, unsigned length, const ZiSockAddr &peer, uint8_t tos, ZiRxBurst *burst)
 {
+  auto cxn = mxCxn;
+  if (burst) burst->boundary(cxn);
   auto stub = rxBuf();
   if (!stub) return false;
-  auto cxn = mxCxn;
   auto &io = cxn->rxContext();
   auto owner = stub->owner;
   stub->data__ = uintptr_t(frame) | ZiIOBuf::Registered;
@@ -116,9 +117,14 @@ bool MxPlugin::UdpCxn::receive(
   io.addr = peer;
   io.tos = tos;
   io.flags = 0;
+  io.burst = burst;
   while (!io.completed() && !io()) { }
-  if (io.disconnected()) cxn->disconnect();
-  else if (!io.completed() && (!io.buf || io.buf.ptr() == stub)) {
+  io.burst = nullptr;
+  if (io.completed()) {
+    if (burst) burst->flush();
+    if (io.disconnected()) cxn->disconnect();
+  } else if (!io.buf || io.buf.ptr() == stub) {
+    if (burst) burst->flush();
     // Preserve a retained datagram and arm fresh metadata for the next packet.
     io.buf = m_info.rxAllocator->allocBuf(owner, 0, m_info.mps);
     if (!io.buf) io.complete();
@@ -300,7 +306,7 @@ int MxPlugin::UdpCxn::submit(
     if (sent)
       m_owner->rxRun([owner = m_owner, loop, wire] {
 	IPView ip;
-	if (owner->ready() && readIP({loop, wire}, ip)) owner->receivedUDP(loop, wire, ip);
+	if (owner->ready() && readIP({loop, wire}, ip)) owner->receivedUDP(loop, wire, ip, nullptr);
 	else owner->m_ingress->free(loop);
       });
     else m_owner->m_ingress->free(loop);
@@ -413,7 +419,7 @@ void MxPlugin::udp(
   if (!publishUDP(endpoint, connected, ZuMv(info))) endpoint->close(false);
 }
 
-void MxPlugin::receivedUDP(uint8_t *frame, unsigned length, const IPView &ip)
+void MxPlugin::receivedUDP(uint8_t *frame, unsigned length, const IPView &ip, ZiRxBurst *burst)
 {
   UDPView udp;
   if (readUDP(ip, udp)) {
@@ -431,7 +437,7 @@ void MxPlugin::receivedUDP(uint8_t *frame, unsigned length, const IPView &ip)
 	  if (endpoint->info().local.ip() == ip.local && endpoint->info().remote) break;
 	}
       }
-      if (match && match->receive(frame, offset, udp.payload.length(), peer, ip.tos)) return;
+      if (match && match->receive(frame, offset, udp.payload.length(), peer, ip.tos, burst)) return;
     } else {
       ZmRef<UdpCxn> first;
       ZtArray<ZmRef<UdpCxn>, ZtArrayHeapID<"Zutcp.UDP.RxMatches">> matches;
@@ -447,17 +453,18 @@ void MxPlugin::receivedUDP(uint8_t *frame, unsigned length, const IPView &ip)
       for (unsigned j = 0, n = first ? 1 + matches.length() : 0; j < n; ++j) {
 	auto endpoint = j ? matches[j - 1].ptr() : first.ptr();
 	if (j + 1 == n) {
-	  if (endpoint->receive(frame, offset, udp.payload.length(), peer, ip.tos)) return;
+	  if (endpoint->receive(frame, offset, udp.payload.length(), peer, ip.tos, burst)) return;
 	} else if (endpoint->rxBuf()) {
 	  if (auto copy = m_ingress->alloc()) {
 	    memcpy(copy, frame, length);
-	    if (!endpoint->receive(copy, offset, udp.payload.length(), peer, ip.tos))
+	    if (!endpoint->receive(copy, offset, udp.payload.length(), peer, ip.tos, burst))
 	      m_ingress->free(copy);
 	  }
 	}
       }
     }
   }
+  if (burst) burst->flush();
   if (m_params.packet)
     m_params.packet(new Zi::IOBufStub<ZiIOBuf, ZiIOBuf_HeapID>{
       frame, length, &m_packetRx.p<1>(), this, length, false, true});

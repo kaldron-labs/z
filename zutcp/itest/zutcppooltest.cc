@@ -63,7 +63,7 @@ static void testProvider()
   bool started = mx.start();
   ZuCheckRT(started);
   if (!started) { instance->final(); return; }
-  bool ready = instance->start([&rx](uint8_t *p, unsigned) { rx->free(p); });
+  bool ready = instance->start([&rx](uint8_t *p, unsigned, ZiRxBurst *) { rx->free(p); });
   ZuCheckRT(ready, log_("XDP activates both caller-owned Tx pools: ", instance->error()));
   if (ready) {
     auto buf = allocator.allocBuf(&mx, Payload);

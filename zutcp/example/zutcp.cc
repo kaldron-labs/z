@@ -86,7 +86,7 @@ static void usage()
 }
 
 static ZuUnion<Zpkt::Nif *, ZeException> openNif(
-  Zpkt::Env *env, ZiMultiplex *mx, ZuCSpan name, unsigned sender, unsigned spin = 1000)
+  Zpkt::Env *env, ZiMultiplex *mx, ZuCSpan name, unsigned sender)
 {
   using Node = ZfCf::AnyNode;
   auto root = ZfCf::newNode<Node::Object>(nullptr);
@@ -100,7 +100,6 @@ static ZuUnion<Zpkt::Nif *, ZeException> openNif(
   };
   value(root.ptr(), "module", ZUTCP_XDP_MODULE);
   value(nif.ptr(), "txSid", sender);
-  value(nif.ptr(), "spin", spin);
   interfaces->data.push(Node::Field{name, ZuMv(nif)});
   root->data.push(Node::Field{"interfaces", ZuMv(interfaces)});
   try { env->init(root.ptr()); }

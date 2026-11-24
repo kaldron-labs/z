@@ -930,7 +930,7 @@ void MxPlugin::start_()
   m_endpointDrain = DrainIdle;
   m_error = {};
   ZmAssert_(m_xdp && m_xdp->allocated());
-  m_xdp->start([this](uint8_t *p, unsigned n) { received(p, n); }, {}, [this](bool ok) {
+  m_xdp->start([this](uint8_t *p, unsigned n, ZiRxBurst *burst) { received(p, n, burst); }, {}, [this](bool ok) {
     auto error = m_xdp->error();
     mx()->rxRun([this, ok, error = ZuMv(error)]() mutable {
       if (ok && m_xdp->mtu() == m_mtu) {
@@ -1036,7 +1036,7 @@ void MxPlugin::rx()
   m_xdp->rx();
 }
 
-void MxPlugin::received(uint8_t *p, unsigned n)
+void MxPlugin::received(uint8_t *p, unsigned n, ZiRxBurst *burst)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   IPView ip;
@@ -1044,10 +1044,11 @@ void MxPlugin::received(uint8_t *p, unsigned n)
   EndpointIndex::Node *binding = nullptr;
   bool validIP = readIP({p, n}, ip);
   if (validIP && ip.protocol == IPPROTO_UDP) {
-    receivedUDP(p, n, ip);
+    receivedUDP(p, n, ip, burst);
     rxProgress();
     return;
   }
+  if (burst) burst->flush();
   bool valid = validIP && readTCP(ip, tcp);
 #if 0
   if (!m_tcpChksumOffload) {

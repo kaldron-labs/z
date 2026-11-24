@@ -114,11 +114,11 @@ public:
   unsigned mtu() const override { return 1500; }
   bool zeroCopy() const override { return false; }
   ZuBSpan mac() const override { return {}; }
-  void receive(ZuBSpan bytes) {
+  void receive(ZuBSpan bytes, ZiRxBurst *burst = nullptr) {
     auto packet = rxPool->alloc();
     ZmAssert_(packet && bytes.length() <= rxPool->size);
     memcpy(packet, bytes.data(), bytes.length());
-    m_receive(packet, bytes.length());
+    m_receive(packet, bytes.length(), burst);
   }
   bool txReady(uint8_t *) const override { return ready(); }
   bool send(uint8_t *, unsigned) override { return false; }
@@ -308,7 +308,7 @@ private:
 };
 
 inline ZmRef<Zpkt::Nif> openXdp(
-  Zpkt::Env *env, ZiMultiplex *mx, unsigned interface, unsigned sender, unsigned spin = 1000)
+  Zpkt::Env *env, ZiMultiplex *mx, unsigned interface, unsigned sender, int64_t spin = -1)
 {
   char name[IF_NAMESIZE];
   if (!if_indextoname(interface, name))
@@ -336,7 +336,7 @@ inline ZmRef<Zutcp::MxPlugin> initMxPlugin(
 
 inline ZmRef<Zutcp::MxPlugin> initMxPlugin(
   Zpkt::Env *env, ZiMultiplex *mx, unsigned interface, unsigned sender,
-  Zutcp::MxParams params = {}, unsigned spin = 1000)
+  Zutcp::MxParams params = {}, int64_t spin = -1)
 {
   return initMxPlugin(ZmRef{static_cast<Zutcp::MxPlugin *>(mx->plugin())},
     env, mx, openXdp(env, mx, interface, sender, spin), ZuMv(params));
