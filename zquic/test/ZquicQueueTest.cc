@@ -33,6 +33,8 @@ friend inline ZuStringT<"Zquic.QueueTest.Link"> ZmNHeapID(QueueLink *);
   using Base::clearWritableStreams;
   unsigned flushes = 0;
   void flushTx_(ZiSockAddr = {}) { ++flushes; }
+  bool retransmit_() { return false; }
+  void ptoTimer() { }
 };
 
 template <typename L> static void on(ZiMultiplex &mx, unsigned sid, L fn)

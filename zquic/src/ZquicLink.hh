@@ -85,16 +85,19 @@ struct RxAckUpdate {
   bool			newest;
 };
 
-// Rx can pair the next ready packet with this ordinary update. Two eliciting
-// packets already make an ACK due. A forced ACK always ends the pair.
+// Only already-dequeued datagrams can contribute. Two eliciting updates are
+// sufficient to make an ACK due. Bound a run of non-eliciting updates too.
 struct RxAckBurst {
-  RxAckUpdate		first;
+  enum { Capacity = 8 };
+  ZuArray<RxAckUpdate, Capacity> updates;
   ZiSockAddr		local;
   ZiSockAddr		addr;
   uint64_t		key = 0;
   uint64_t		delay = 0;
+  uint64_t		deadline = 0;
   PktNumSpace::T	level = PktNumSpace::N;
   bool			more = false;
+  bool			updated = false;
 };
 struct RxAckMeta {
   bool		ackEliciting = false;
@@ -746,6 +749,7 @@ public:
 	frame.type != FrameType::StopSending)
       return -1;
     StreamRef stream = findOrAccept(frame.streamID);
+    if (heldAckRx()) flushAckRx();
     if (frame.type == FrameType::StopSending && canLocalSend(frame.streamID) &&
         (stream || closedStreamID(frame.streamID))) {
       app()->txInvoke([link = impl(), id = int64_t(frame.streamID), error = frame.errorCode,
@@ -833,6 +837,7 @@ public:
       if (immediateAck) *immediateAck = true;
       return 0;
     }
+    if (heldAckRx()) flushAckRx();
     if (earlyData) stream->earlyData(true);
     bool rxClosed = stream->rxComplete() || stream->resetReceived();
     int rc = stream->processFrame(frame, m_linkRx.rxDataCredit, ZuMv(packet), diag);
@@ -3370,7 +3375,8 @@ protected:
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC runtime reset outside Rx thread", return);
     ++m_linkRx.rxRuntimeGen;
-    m_linkRx.ackBurst.level = PktNumSpace::N;
+    m_linkRx.ackBurst.updates.clear();
+    m_linkRx.ackBurst.deadline = 0;
     m_linkRx.ackBurst.more = false;
     for (auto &pending : m_linkRx.openQueuedPending) pending = false;
     for (auto &gen : m_linkRx.txCryptoGen) gen = 0;
@@ -3786,7 +3792,8 @@ protected:
   }
   void beginDisconnectRx(bool peer, Zquic_::LinkDiscFn l) {
     disconnecting_(true);
-    m_linkRx.ackBurst.level = PktNumSpace::N;
+    m_linkRx.ackBurst.updates.clear();
+    m_linkRx.ackBurst.deadline = 0;
     m_linkRx.ackBurst.more = false;
     auto mx = app()->mx();
     bool live = mx && mx->running() && app()->txThread();
@@ -4977,6 +4984,7 @@ protected:
 		.success = true};
       o.logKeyUpdated(event, time);
     }));
+    flushAckRx();
     app()->txInvoke(impl(), [link = impl(), keyGeneration]() mutable {
       if (link->disconnecting_()) return link;
       link->txInstallPeerKeyUpdate(keyGeneration);
@@ -5643,72 +5651,96 @@ protected:
     });
   }
 
-  template <typename ...Updates>
+  template <unsigned N, typename ...Registration>
   void postAckRanges(PktNumSpace::T level, ZiSockAddr addr, uint64_t key,
-      uint64_t delay, Updates ...updates) {
+      uint64_t delay, ZuArray<Zquic_::RxAckUpdate, N> updates, Registration ...stream) {
     app()->txRun([link = impl(), level, addr = ZuMv(addr), key, delay,
-	runtime = m_linkRx.rxRuntimeGen, updates...]() mutable {
-      if (runtime != link->txRuntime() || link->disconnecting_() || link->linkClosedTx_() ||
+	runtime = m_linkRx.rxRuntimeGen, updates = ZuMv(updates), ...stream = ZuMv(stream)]() mutable {
+      if (runtime != link->txRuntime()) return;
+      // Publish before ACK processing: a due ACK can enter the packetizer.
+      (link->publishStreamTx(ZuMv(stream)), ...);
+      if (link->disconnecting_() || link->linkClosedTx_() ||
 	  link->m_linkTx.txSpaceDiscarded[level]) return;
       if (level == PktNumSpace::AppData) {
 	if (!link->txInstallPeerKeyUpdate(key)) return;
 	link->m_linkTx.ackAddr = addr;
       }
-      (link->updateAckTx(level, updates.range, updates.eliciting, updates.immediate,
-	updates.mark, updates.newest, updates.receivedUS, delay), ...);
+      for (const auto &update : updates)
+	link->updateAckTx(level, update.range, update.eliciting, update.immediate,
+	  update.mark, update.newest, update.receivedUS, delay);
       if (link->pendingAck(level)) link->flushTx_(ZuMv(addr));
       if (level == PktNumSpace::AppData && runtime == link->txRuntime())
 	link->armPendingAck();
     });
   }
 
-  bool heldAckRx() const { return m_linkRx.ackBurst.level != PktNumSpace::N; }
+  bool heldAckRx() const { return !!m_linkRx.ackBurst.updates; }
 
-  void flushAckRx() {
+  template <typename ...Registration>
+  void flushAckRx(Registration ...stream) {
     auto &burst = m_linkRx.ackBurst;
-    if (!heldAckRx()) return;
-    auto level = burst.level;
-    burst.level = PktNumSpace::N;
-    postAckRanges(level, ZuMv(burst.addr), burst.key, burst.delay, burst.first);
+    const unsigned count = burst.updates.length();
+    if (!count) return;
+    // Singles and the usual eliciting pair use small scheduler captures.
+    auto post = [&]<unsigned N>() {
+      ZuArray<Zquic_::RxAckUpdate, N> updates{burst.updates.cspan()};
+      burst.updates.clear();
+      burst.deadline = 0;
+      postAckRanges(burst.level, ZuMv(burst.addr), burst.key, burst.delay,
+	ZuMv(updates), ZuMv(stream)...);
+    };
+    if (count == 1)
+      post.template operator ()<1>();
+    else if (count == 2)
+      post.template operator ()<2>();
+    else
+      post.template operator ()<Zquic_::RxAckBurst::Capacity>();
   }
 
-  void beginAckRx(const ZiSockAddr &local, bool more) {
+  void beginAckRx(const ZiSockAddr &local, const ZiSockAddr &addr, bool more) {
     auto &burst = m_linkRx.ackBurst;
-    if (heldAckRx() && burst.local != local) flushAckRx();
-    // A malformed or ACK-free second datagram must also release its predecessor.
-    burst.more = more && !heldAckRx();
-    if (burst.more) burst.local = local;
+    if (heldAckRx() && (burst.local != local || burst.addr != addr ||
+	(burst.deadline && nowUS() >= burst.deadline))) flushAckRx();
+    burst.more = more;
+    burst.updated = false;
+    if (more && !heldAckRx()) burst.local = local;
   }
 
   void endAckRx() {
     auto &burst = m_linkRx.ackBurst;
-    if (!burst.more) flushAckRx();
+    if (heldAckRx() && (!burst.more || !burst.updated ||
+	(burst.deadline && nowUS() >= burst.deadline))) flushAckRx();
     burst.more = false;
   }
 
   void postAckRange(PktNumSpace::T level, AckRange range, bool eliciting, bool immediate,
       EcnMark::T mark, bool newest, ZiSockAddr addr) {
-    Zquic_::RxAckUpdate update{range, nowUS(), mark, eliciting, immediate, newest};
+    using Update = Zquic_::RxAckUpdate;
+    Update update{range, nowUS(), mark, eliciting, immediate, newest};
     auto delay = localMaxAckDelayUS();
     auto key = m_linkRx.rxKeyGeneration;
     auto &burst = m_linkRx.ackBurst;
-    if (heldAckRx()) {
-      if (burst.level == level && burst.addr == addr && burst.key == key && burst.delay == delay) {
-	burst.level = PktNumSpace::N;
-	postAckRanges(level, ZuMv(addr), key, delay, burst.first, update);
+    if (heldAckRx() && (burst.level != level || burst.addr != addr ||
+	burst.key != key || burst.delay != delay ||
+	(burst.deadline && update.receivedUS >= burst.deadline))) flushAckRx();
+    if (!heldAckRx()) {
+      if (!burst.more || !delay || immediate || level != PktNumSpace::AppData) {
+	postAckRanges(level, ZuMv(addr), key, delay, ZuArray<Update, 1>{update});
 	return;
       }
-      flushAckRx();
-    }
-    if (burst.more && delay && !immediate && level == PktNumSpace::AppData) {
       burst.level = level;
       burst.addr = ZuMv(addr);
       burst.key = key;
       burst.delay = delay;
-      burst.first = update;
+    }
+    burst.updated = true;
+    burst.updates.push(update);
+    if (!burst.more || immediate || (eliciting && burst.deadline) ||
+	burst.updates.length() == Zquic_::RxAckBurst::Capacity) {
+      flushAckRx();
       return;
     }
-    postAckRanges(level, ZuMv(addr), key, delay, update);
+    if (eliciting) burst.deadline = update.receivedUS + delay;
   }
 
   void noteAck(
@@ -9953,11 +9985,13 @@ protected:
     ZquicLog_::PktEvt *qlog_ = nullptr;
     if (ZquicLogger::enabled())
       qlog_ = new (qlog.new_<1>()) ZquicLog_::PktEvt{};
+    uint64_t runtime = m_linkRx.rxRuntimeGen;
     if (!consumeFrames(
 	  PktNumSpace::AppData, pn,
 	  byteSpan(base + payloadOffset, unsigned(plainLen)),
 	  pkt->addr, pkt, ack, qlog_))
       return false;
+    if (runtime != m_linkRx.rxRuntimeGen) return true;
     uint64_t priorPN = 0;
     bool fresh = !m_linkRx.seenPackets[PktNumSpace::AppData].largest(priorPN) ||
       pn > priorPN;
@@ -10025,6 +10059,12 @@ protected:
       if (qlog) qlogAddRxFrame(*qlog, level, frame);
       if (FrameCodec::ackEliciting(frame.type))
 	ackEliciting = true;
+      // Stream admission can include the held ACK in its registration. Other
+      // controls may call the application or submit work to Tx immediately.
+      if (heldAckRx() && frame.type != FrameType::Stream &&
+	  frame.type != FrameType::StopSending && frame.type != FrameType::ResetStream &&
+	  frame.type != FrameType::Padding && frame.type != FrameType::Ping &&
+	  frame.type != FrameType::Ack) flushAckRx();
       switch (frame.type) {
 	case FrameType::Ack:
 	  processAckFrame(level, frame);
@@ -10654,9 +10694,14 @@ private:
       stream->markRetiredRx();
       stream->m_streamTx.rxDetached = true;
     } else publishStreamRx(stream);
-    app()->txRun([link = impl(), stream, gen = m_linkRx.rxRuntimeGen]() mutable {
-      if (gen == link->txRuntime()) link->publishStreamTx(ZuMv(stream));
-    });
+    // streamOpen can synchronously submit dependent work. Registration must
+    // already be queued when the application first sees the stream.
+    if (heldAckRx())
+      flushAckRx(stream);
+    else
+      app()->txRun([link = impl(), stream, gen = m_linkRx.rxRuntimeGen]() mutable {
+	if (gen == link->txRuntime()) link->publishStreamTx(ZuMv(stream));
+      });
     ZquicLOG(app()->qlogTrace(), ([
       streamID = uint64_t(id),
       streamType = StreamType::T(StreamID::uni(uint64_t(id))),

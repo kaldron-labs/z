@@ -86,6 +86,7 @@ public:
   using Base::beginAckRx;
   using Base::endAckRx;
   using Base::heldAckRx;
+  using Base::noteAck;
   using Base::drainPeerAcksTx;
   using Base::awaitPeerAckTx;
   using Base::resetLink;
@@ -150,19 +151,26 @@ public:
   void receive(unsigned pn, Zquic::EcnMark::T mark = Zquic::EcnMark::ECT0) {
     Base::noteAck(Zquic::PktNumSpace::AppData, pn, true, {}, false, mark);
   }
-  bool encode(unsigned pn) {
+  bool encode(unsigned pn) { return encode(pn, pn, pn, 0, 0); }
+  bool encode(unsigned pn, unsigned gen, unsigned ect0, unsigned ect1, unsigned ce) {
     Zquic::PktBuild build;
     constexpr auto space = Zquic::PktNumSpace::AppData;
     if (!Base::appendPendingAck(space, build) || !build.ack(space) ||
-	build.ackGen() != pn || build.ackLargest() != pn) return false;
+	build.ackGen() != gen || build.ackLargest() != pn) return false;
     Zquic::Frame frame;
     unsigned used = 0;
     return !Zquic::FrameCodec::parse(
       build.data()[0], frame, used) &&
-      frame.type == Zquic::FrameType::Ack && frame.ackECN.ect0 == pn &&
-      !frame.ackECN.ect1 && !frame.ackECN.ce && frame.ackRanges.length() == 1 &&
+      frame.type == Zquic::FrameType::Ack && frame.ackECN.ect0 == ect0 &&
+      frame.ackECN.ect1 == ect1 && frame.ackECN.ce == ce && frame.ackRanges.length() == 1 &&
       frame.ackRanges[0].first == 1 && frame.ackRanges[0].largest == pn;
   }
+  void streamOpen(StreamRef stream, bool) {
+    app()->txInvoke([this, stream] {
+      m_openVisible = Base::findTxStream_(stream->id()) == stream && encode(1);
+    });
+  }
+  bool openVisible() const { return m_openVisible; }
   bool packets(unsigned count) {
     constexpr auto space = Zquic::PktNumSpace::AppData;
     Base::setTxPN(space, count + 1);
@@ -242,6 +250,7 @@ public:
 
 private:
   bool m_probing = false;
+  bool m_openVisible = false;
   ZmAtomic<unsigned> m_recoveries = 0;
   bool m_park = false;
 };
@@ -333,11 +342,11 @@ void testReceiveBurst()
   ZuCHECK(f.ready, "receive burst fixture did not start");
   unsigned before = f.app.txPosts();
   ZuCheck(f.rx([link] {
-    link->beginAckRx({}, true);
+    link->beginAckRx({}, {}, true);
     link->receive(1);
     link->endAckRx();
     if (!link->heldAckRx()) return false;
-    link->beginAckRx({}, false);
+    link->beginAckRx({}, {}, false);
     link->receive(2);
     link->endAckRx();
     return !link->heldAckRx();
@@ -347,10 +356,10 @@ void testReceiveBurst()
 
   // Even when more traffic is queued, a dropped datagram ends the held pair.
   ZuCheck(f.rx([link] {
-    link->beginAckRx({}, true);
+    link->beginAckRx({}, {}, true);
     link->receive(3);
     link->endAckRx();
-    link->beginAckRx({}, true);
+    link->beginAckRx({}, {}, true);
     link->endAckRx();
     return !link->heldAckRx();
   }));
@@ -358,10 +367,10 @@ void testReceiveBurst()
   ZuCheck(f.tx([link] { return link->encode(3); }));
 
   ZuCheck(f.rx([link] {
-    link->beginAckRx({}, true);
+    link->beginAckRx({}, {}, true);
     link->receive(4);
     link->endAckRx();
-    link->beginAckRx(ZiSockAddr{ZiIP{"127.0.0.2"}, 443}, false);
+    link->beginAckRx(ZiSockAddr{ZiIP{"127.0.0.2"}, 443}, {}, false);
     link->receive(5);
     link->endAckRx();
     return !link->heldAckRx();
@@ -371,12 +380,94 @@ void testReceiveBurst()
 
   // A gap forces a standalone handoff even at the head of a ready burst.
   ZuCheck(f.rx([link] {
-    link->beginAckRx({}, true);
+    link->beginAckRx({}, {}, true);
     link->receive(7);
     link->endAckRx();
     return !link->heldAckRx();
   }));
   ZuCheck(f.app.txPosts() == before + 5);
+}
+
+void testMixedAckBurst()
+{
+  ZuTestScope(testMixedAckBurst);
+  PublishFixture f;
+  auto link = f.link;
+  ZuCHECK(f.ready, "mixed receive burst fixture did not start");
+  unsigned before = f.app.txPosts();
+  ZuCheck(f.rx([link] {
+    // Capacity bounds non-eliciting updates without losing their ECN marks.
+    for (unsigned pn = 1; pn <= 8; ++pn) {
+      link->beginAckRx({}, {}, true);
+      link->noteAck(Zquic::PktNumSpace::AppData, pn, pn == 1, {}, false,
+	pn & 1 ? Zquic::EcnMark::ECT0 : Zquic::EcnMark::ECT1);
+      link->endAckRx();
+      if (link->heldAckRx() != (pn < 8)) return false;
+    }
+    return true;
+  }));
+  ZuCheck(f.app.txPosts() == before + 1);
+  ZuCheck(f.tx([link] {
+    bool valid = link->encode(8, 1, 4, 4, 0);
+    link->ackSentTx(Zquic::PktNumSpace::AppData, 1);
+    return valid;
+  }));
+  ZuCheck(f.rx([link] {
+    // The second eliciting update is due with more datagrams still available.
+    for (unsigned pn = 9; pn <= 12; ++pn) {
+      link->beginAckRx({}, {}, true);
+      link->noteAck(Zquic::PktNumSpace::AppData, pn, pn == 9 || pn == 12, {},
+	false, Zquic::EcnMark::CE);
+      link->endAckRx();
+      if (link->heldAckRx() != (pn < 12)) return false;
+    }
+    return true;
+  }));
+  ZuCheck(f.app.txPosts() == before + 2);
+  ZuCheck(f.tx([link] { return link->encode(12, 3, 4, 4, 4); }));
+}
+
+void testBurstDeadline()
+{
+  ZuTestScope(testBurstDeadline);
+  PublishFixture f;
+  auto link = f.link;
+  ZuCHECK(f.ready, "deadline fixture did not start");
+  unsigned before = f.app.txPosts();
+  ZuCheck(f.rx([link] {
+    link->beginAckRx({}, {}, true);
+    link->receive(1);
+    link->endAckRx();
+    if (!link->heldAckRx()) return false;
+    Zm::sleep(ZuTime{0, 40000000});
+    link->beginAckRx({}, {}, true);
+    bool published = !link->heldAckRx();
+    link->endAckRx();
+    return published;
+  }));
+  ZuCheck(f.app.txPosts() == before + 1);
+  ZuCheck(f.tx([link] { return link->encode(1); }));
+}
+
+void testBurstStreamOpen(bool burst)
+{
+  ZuTestScope(testBurstStreamOpen);
+  PublishFixture f;
+  auto link = f.link;
+  ZuCHECK(f.ready, "stream registration fixture did not start");
+  unsigned before = f.app.txPosts();
+  ZuCheck(f.rx([link, burst] {
+    link->setPeerStreamLimit(Zquic::StreamType::Duplex, 1);
+    link->beginAckRx({}, {}, burst);
+    link->receive(1);
+    link->endAckRx();
+    if (burst) link->beginAckRx({}, {}, false);
+    auto stream = link->stream();
+    link->endAckRx();
+    return stream && !link->heldAckRx();
+  }));
+  ZuCheck(f.app.txPosts() == before + (burst ? 2 : 3));
+  ZuCheck(f.tx([link] { return link->openVisible(); }));
 }
 
 void testPeerAckParking()
@@ -607,6 +698,10 @@ int main(int argc, char **argv)
   ZuTestCall(testConcurrentCompletion);
   ZuTestCall(testOrdinaryPublication);
   ZuTestCall(testReceiveBurst);
+  ZuTestCall(testMixedAckBurst);
+  ZuTestCall(testBurstDeadline);
+  ZuTestCall(testBurstStreamOpen, false);
+  ZuTestCall(testBurstStreamOpen, true);
   ZuTestCall(testPeerAckParking);
   ZuTestCall(testPeerAckPressure);
   ZuTestCall(testECNFeedback);

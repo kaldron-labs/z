@@ -551,6 +551,15 @@ struct alignas(Zm::CacheLineSize) EndpointTargetPub {
 
 struct alignas(Zm::CacheLineSize) EndpointRxStats : EndpointRxDiag { };
 
+template <typename Fn>
+void forRxPackets(ZmRef<RxPkt> pkt, Fn &&fn) { fn(ZuMv(pkt), false); }
+
+template <typename Fn>
+void forRxPackets(Zi::IOQueue packets, Fn &&fn) {
+  while (auto node = packets.shift())
+    fn(ZmRef<RxPkt>{ZuMv(node)}, !packets.empty_());
+}
+
 template <typename Endpoint_>
 class EndpointCxn :
   public ZmNHeap<EndpointCxn<Endpoint_>>,
@@ -697,7 +706,7 @@ private:
 	pkt->addr = io.addr;
 	pkt->ecn = ecnMarkFromTOS(io.tos);
 	pkt->local = m_config.local;
-	m_config.endpoint->received_(ZuMv(pkt));
+	m_config.endpoint->received_(this, ZuMv(pkt), io.burst);
     }
     if (m_closeState.closing.load_()) io.complete();
     else if (!io.buf) {
@@ -1001,11 +1010,6 @@ public:
   SockDiag sockDiag() const { return m_endpointRx.sockDiag; }
   void failure() { ++m_endpointRx.diag.failures; }
 
-  // Multiplexer Rx captures the sequence before dispatch. QUIC Rx may
-  // combine only with work for which the later dispatch has already returned.
-  uint64_t packetSequence() const { return m_endpointRx.diag.datagramsRx; }
-  void postedPacket(uint64_t sequence) { m_postedRx.store_(sequence); }
-  bool morePackets(uint64_t sequence) const { return m_postedRx.load_() > sequence; }
   PktAllocTarget pktAllocTarget() const {
     uint128_t target = m_target.value;
     return {m_config.txBufAllocator, const_cast<Endpoint_ *>(this),
@@ -1235,10 +1239,17 @@ private:
     if (fn) fn(success, ZiSockAddr{}, false);
   }
 
-  void received_(ZmRef<RxPkt> packet) {
+  void received_(Cxn_ *cxn, ZmRef<RxPkt> packet, ZiRxBurst *burst) {
     ++m_endpointRx.diag.datagramsRx;
     m_endpointRx.diag.bytesRx += packet->length;
-    impl()->endpointPacket(ZuMv(packet));
+    if (!burst) {
+      impl()->endpointPacket(ZuMv(packet));
+      return;
+    }
+    burst->append(cxn, ZuMv(packet), [](ZmPolymorph *receiver, Zi::IOQueue packets) {
+      auto cxn = static_cast<Cxn_ *>(receiver);
+      cxn->m_config.endpoint->impl()->endpointPacket(ZuMv(packets));
+    });
   }
 
   void sent_(unsigned bytes) {
@@ -1353,7 +1364,6 @@ private:
   Zquic_::EndpointConfig m_config;
 
   Zquic_::EndpointTargetPub m_target;
-  alignas(Zm::CacheLineSize) ZmAtomic<uint64_t> m_postedRx = 0;
 
   // Physical identity and status are Rx-written with existing advisory readers.
   struct alignas(Zm::CacheLineSize) RxStorage {
@@ -1403,8 +1413,9 @@ public:
   void endpointReady(Base *) { m_server->endpointReady(this); }
   void endpointFailed(bool transient) { m_server->endpointFailed(this, transient); }
   void endpointDown_(Base *) { m_server->endpointDown_(this); }
-  void endpointPacket(ZmRef<RxPkt> pkt) {
-    m_server->endpointPacket(this, ZuMv(pkt));
+  template <typename Packets>
+  void endpointPacket(Packets packets) {
+    m_server->endpointPacket(this, ZuMv(packets));
   }
 private:
   Server_ *const m_server;

@@ -1518,22 +1518,18 @@ private:
   }
 
 public:
-  void endpointPacket(ZmRef<RxPkt> pkt) {
+  template <typename Packets>
+  void endpointPacket(Packets packets) {
     if (Base::disconnecting_()) return;
-    if (app()->rxThread() == app()->mx()->rxThread()) {
-      received_(ZuMv(pkt));
-      return;
-    }
-    auto sequence = Endpoint::packetSequence();
-    app()->rxInvoke(impl(), [link = impl(), sequence, pkt = ZuMv(pkt)]() mutable {
-      if (!link->disconnecting_()) {
-	link->beginAckRx(pkt->local, link->Endpoint::morePackets(sequence));
+    app()->rxInvoke(impl(), [link = impl(), packets = ZuMv(packets)]() mutable {
+      Zquic_::forRxPackets(ZuMv(packets), [link](ZmRef<RxPkt> pkt, bool more) {
+	if (link->disconnecting_()) return;
+	link->beginAckRx(pkt->local, pkt->addr, more);
 	link->received_(ZuMv(pkt));
 	link->endAckRx();
-      }
+      });
       return link;
     });
-    Endpoint::postedPacket(sequence);
   }
   void endpointReady(Endpoint *ep) {
     if (Base::disconnecting_()) return;

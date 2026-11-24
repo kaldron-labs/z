@@ -92,7 +92,13 @@ struct Endpoint : public Zquic_::Endpoint_<Endpoint> {
   void endpointReady(Base *) { auto fn = ZuMv(readyFn); fn(true); }
   void endpointFailed(bool) { auto fn = ZuMv(readyFn); fn(false); }
   void endpointDown_(Base *) { auto fn = ZuMv(downFn); if (fn) fn(); }
-  void endpointPacket(ZmRef<Zquic::RxPkt> d) {
+  template <typename Packets>
+  void endpointPacket(Packets packets) {
+    Zquic_::forRxPackets(ZuMv(packets), [this](ZmRef<Zquic::RxPkt> packet, bool) {
+      datagram(ZuMv(packet));
+    });
+  }
+  void datagram(ZmRef<Zquic::RxPkt> d) {
     unsigned value = 0;
     length = d ? d->length : 0;
     if (length) memcpy(bytes, d->data(), length < sizeof(bytes) ? length : sizeof(bytes));

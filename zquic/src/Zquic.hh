@@ -1352,18 +1352,15 @@ friend ZmEngine<App>;
   }
 
 public:
-  void endpointPacket(Endpoint *ep, ZmRef<RxPkt> pkt) {
-    if (this->rxInvoked()) {
-      received_(ep->slot(), ZuMv(pkt), false);
-      return;
-    }
-    auto sequence = ep->packetSequence();
-    this->rxRun([this, slot = ep->slot(), runtime = m_runtimeGeneration,
-	sequence, pkt = ZuMv(pkt)]() mutable {
+  template <typename Packets>
+  void endpointPacket(Endpoint *ep, Packets packets) {
+    this->rxInvoke([this, slot = ep->slot(), runtime = m_runtimeGeneration,
+	packets = ZuMv(packets)]() mutable {
       if (runtime != m_runtimeGeneration) return;
-      received_(slot, ZuMv(pkt), m_endpoints[slot]->morePackets(sequence));
+      Zquic_::forRxPackets(ZuMv(packets), [this, slot](ZmRef<RxPkt> pkt, bool more) {
+	received_(slot, ZuMv(pkt), more);
+      });
     });
-    ep->postedPacket(sequence);
   }
   void endpointReady(Endpoint *ep) {
     this->rxRun([this, slot = ep->slot(), runtime = m_runtimeGeneration,
@@ -1451,7 +1448,7 @@ private:
       this->app()->datagramDropped();
       return;
     }
-    link->beginAckRx(pkt->local, more);
+    link->beginAckRx(pkt->local, pkt->addr, more);
     bool ok = link->receivedRouted(ZuMv(pkt), routedDCID);
     link->endAckRx();
     if (ok) {

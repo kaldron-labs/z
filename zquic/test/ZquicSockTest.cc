@@ -24,7 +24,8 @@ struct TestEndpoint : public Zquic_::Endpoint_<TestEndpoint> {
   unsigned ready = 0;
   unsigned down = 0;
   unsigned failed = 0;
-  unsigned datagrams = 0;
+  unsigned datagrams = 0, groups = 0, more = 0;
+  unsigned order = 0;
 
   void endpointReady(Endpoint *) {
     ++ready;
@@ -37,7 +38,16 @@ struct TestEndpoint : public Zquic_::Endpoint_<TestEndpoint> {
     ReadyFn fn = ZuMv(readyFn);
     if (fn) fn(false);
   }
-  void endpointPacket(ZmRef<Zquic::RxPkt> d) {
+  template <typename Packets>
+  void endpointPacket(Packets packets) {
+    ++groups;
+    Zquic_::forRxPackets(ZuMv(packets), [this](ZmRef<Zquic::RxPkt> packet, bool following) {
+      more += following;
+      if (packet->length == 1) order = (order << 4) | packet->data()[0];
+      datagram(ZuMv(packet));
+    });
+  }
+  void datagram(ZmRef<Zquic::RxPkt> d) {
     ++datagrams;
     auto fn = ZuMv(recvFn);
     if (fn) fn(ZuMv(d));
@@ -307,6 +317,72 @@ static void testQueuedSendCompletion()
   ZuTestCall(success.exercise, false);
   QueuedEndpoint failure;
   ZuTestCall(failure.exercise, true);
+}
+
+static void testIngressBurst()
+{
+  ZuTestScopeRT(testIngressBurst);
+  auto provider = new HeldUDP{nullptr};
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(2); })
+    .rxThread(1).txThread(2), ZmRef<ZiMxPlugin>{provider}};
+  auto rx = Zquic::pktRxAllocator(&mx);
+  auto tx = Zquic::pktTxAllocator(&mx);
+  TestEndpoint endpoints[2];
+  ZmRef<ZiConnection> cxns[2];
+  bool started = mx.start();
+  ZuCheckRT(started);
+  if (!started) return;
+  for (unsigned i = 0; i < 2; ++i) {
+    auto &ep = endpoints[i];
+    bool opened = ep.init(&mx, rx, tx) && ZmBlock<bool>{}([&ep, i](auto wake) {
+      ep.readyFn = [wake = ZuMv(wake)](bool ok) mutable { wake(ok); };
+      ep.openUDP(Zquic::PathMode::ServerUnconnected, ZiIP{"127.0.0.1"}, 12001 + i);
+    });
+    ZuCheckRT(opened);
+    if (!opened) break;
+    cxns[i] = provider->connection;
+  }
+  if (cxns[1]) {
+    bool ordered = ZmBlock<bool>{}([&mx, &cxns, &endpoints, rx](auto wake) {
+      mx.rxRun([&cxns, &endpoints, rx, wake = ZuMv(wake)]() mutable {
+	auto feed = [&cxns, rx](unsigned which, uint8_t value, ZiRxBurst *burst) {
+	  auto &io = cxns[which]->rxContext();
+	  auto data = rx->pool->alloc();
+	  data[0] = value;
+	  io.buf->data__ = uintptr_t(data) | ZiIOBuf::Registered;
+	  io.buf->size = io.buf->length = 1;
+	  io.burst = burst;
+	  io();
+	  io.burst = nullptr;
+	};
+	auto &a = endpoints[0], &b = endpoints[1];
+	feed(0, 1, nullptr);
+	bool ok = a.groups == 1 && a.order == 1 && !a.more;
+	{
+	  ZiRxBurst burst;
+	  feed(0, 2, &burst);
+	  feed(0, 3, &burst);
+	  ok &= a.groups == 1;
+	  feed(1, 4, &burst);
+	  ok &= a.groups == 2 && a.order == 0x123 && a.more == 1 && !b.groups;
+	  feed(1, 5, &burst);
+	}
+	ok &= b.groups == 1 && b.order == 0x45 && b.more == 1;
+	auto early = [&feed] { ZiRxBurst burst; feed(0, 6, &burst); };
+	early();
+	wake(ok && a.groups == 3 && a.order == 0x1236 && a.more == 1);
+      });
+    });
+    ZuCheckRT(ordered, log_("one ordered delivery per physical endpoint run, including early exit"));
+  }
+  for (unsigned i = 0; i < 2; ++i) {
+    if (!cxns[i]) continue;
+    ZmBlock<>{}([&ep = endpoints[i]](auto wake) {
+      ep.disconnect([wake = ZuMv(wake)]() mutable { wake(); });
+    });
+    cxns[i] = nullptr;
+  }
+  mx.stop();
 }
 
 static void testPostedAdmission()
@@ -657,6 +733,7 @@ int main(int argc, char **argv)
   ZuTestCall(testPlans);
   ZuTestCall(testECNTOS);
   ZuTestCall(testQueuedSendCompletion);
+  ZuTestCall(testIngressBurst);
   ZuTestCall(testPostedAdmission);
   ZuTestCall(testPendingEndpointOpen);
   ZuTestCall(testEndpointRebind);
