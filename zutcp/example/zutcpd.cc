@@ -191,7 +191,7 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
   ZmRef<Zpkt::Env> env = new Zpkt::Env;
-  ZmRef<Zutcp::Instance> instance = new Zutcp::Instance;
+  ZmRef<Zutcp::MxPlugin> instance = new Zutcp::MxPlugin;
   ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
     s.nThreads(5);
     for (unsigned i = 1; i <= 5; ++i) s.thread(i, [](auto &t) { t.isolated(true); });
@@ -203,11 +203,11 @@ int main(int argc, char **argv)
     return 1;
   }
   ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
-  auto configured = instance->init(&mx, env, ZuMv(xdp), {});
-  if (configured.is<ZeException>()) {
+  try { instance->init(&mx, env, ZuMv(xdp), {}); }
+  catch (ZeException &e) {
     xdp->final();
     if (auto error = xdp->error()) ZiLogEvent(ZuMv(error));
-    ZiLogEvent(ZuMv(configured).p<ZeException>());
+    ZiLogEvent(ZuMv(e));
     ZiLog::stop();
     return 1;
   }

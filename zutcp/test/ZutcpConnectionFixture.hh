@@ -13,7 +13,7 @@
 #include <zlib/Zutcp.hh>
 
 #include "ZutcpTestAlloc.hh"
-#include "ZutcpTestInstance.hh"
+#include "ZutcpTestMxPlugin.hh"
 
 class TestApp : public ZmNHeap<TestApp>, public ZutcpTest::Context<> {
 friend inline ZuStringT<"Zutcp.ConnectionFixture.TestApp"> ZmNHeapID(TestApp *);

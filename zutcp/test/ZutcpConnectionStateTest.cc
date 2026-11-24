@@ -9,7 +9,7 @@
 #include <zlib/Zutcp.hh>
 #include <zlib/ZutcpConnectionUtil.hh>
 
-#include "ZutcpTestInstance.hh"
+#include "ZutcpTestMxPlugin.hh"
 
 using namespace ZuTestUtil;
 
@@ -157,7 +157,7 @@ void testSharedAdmission()
   ZuTestScope(testSharedAdmission);
   ZutcpTest::Context<> stack;
   bool initialized = stack.init(ZutcpTest::Params{stack.mx()}.maxCxns(2).maxPendingCxns(1));
-  ZuCHECK(initialized, "configure shared admission limits on the actual Instance");
+  ZuCHECK(initialized, "configure shared admission limits on the actual MxPlugin");
   if (!initialized) return;
   bool reserved = stack.reserveCxn();
   bool deniedPending = stack.reserveCxn();
@@ -211,7 +211,7 @@ void testPendingAdmissionTransfer()
   ZuTestScope(testPendingAdmissionTransfer);
   ZutcpTest::Context<> stack;
   bool initialized = stack.init(ZutcpTest::Params{stack.mx()}.maxCxns(2).maxPendingCxns(1));
-  ZuCHECK(initialized, "configure passive admission limits on the actual Instance");
+  ZuCHECK(initialized, "configure passive admission limits on the actual MxPlugin");
   if (!initialized) return;
   ZmRef<Zutcp_::PendingTable> pending = new Zutcp_::PendingTable;
   Zutcp::ClosedTupleKey tuple{ZiSockAddr{ZiIP{"198.18.0.1"}, 18191},

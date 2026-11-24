@@ -116,7 +116,7 @@ inline unsigned tcpPayload(unsigned mtu, ZiIPType::T type) {
 }
 
 // Construct TCP header/options over payload already at frame + tcpHead(type, header).
-// Includes IP framing; Instance::tcpChecksum finalizes the TCP checksum. No payload move
+// Includes IP framing; MxPlugin::tcpChecksum finalizes the TCP checksum. No payload move
 // or allocation; invalid geometry leaves the frame unchanged. Sequence,
 // ACK, flags and window semantics belong to the connection, not this codec.
 ZutcpAPI unsigned writeTCP(

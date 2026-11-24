@@ -3,9 +3,9 @@
 `zutcpkerneltest` runs nine private-veth profiles in both native client/kernel
 server and kernel client/native server roles over IPv4 and IPv6 (36 cases). The kernel utility uses
 ordinary TCP sockets. The native application statically installs a configured
-`Zutcp::Instance` plugin and transfers through Ztcp/ZiMultiplex over AF_XDP.
+`Zutcp::MxPlugin` plugin and transfers through Ztcp/ZiMultiplex over AF_XDP.
 Protocol-private scenarios use the native test driver's probe roles, sharing the
-same Instance-owned protocol/pool state; there is no kernel socket fallback.
+same MxPlugin-owned protocol/pool state; there is no kernel socket fallback.
 
 Build `zutcp/util` and `zutcp/interop` after the required lower modules. Run
 `make -C zutcp/interop test` under the repository's privileged private-network
@@ -25,7 +25,7 @@ verifies checksums, standard TCP options, raw application payload, sequence
 positions, EOF framing and final FIN acknowledgments. `roles` identifies the
 native driver as `application` or `protocol`. The application reports successful
 multiplexer stop. Private protocol roles additionally report the stopped
-Instance's empty connection/Tx admissions and configured control count; these
+MxPlugin's empty connection/Tx admissions and configured control count; these
 internal assertions remain backend coverage rather than application APIs.
 This veth evidence does not establish physical-NIC zero-copy capability or
 independently prove canonical backing-pointer identity.
@@ -62,7 +62,7 @@ These profiles complement the controlled backing-lifetime assertions. Repeated
 sessions, reset and opt-in kernel TFO have the separate profiles below.
 
 The `repeat` profile performs two complete exchanges using the same utility
-processes, native App/Instance and server listener. Each flow has independent tuple
+processes, native App/MxPlugin and server listener. Each flow has independent tuple
 and SYN-origin decoding, exact bytes and both eventual FIN acknowledgments. Native
 clients report completion of each public disconnect callback before opening the
 next connection. Kernel clients open after the prior response EOF and local close;
@@ -75,7 +75,7 @@ observer waits for actual peer cumulative acknowledgment before releasing the
 client main thread. The private native client probe uses protocol numeric disconnect with a full
 64-bit local error; the kernel client uses `SO_LINGER{1,0}` and ordinary close.
 The first connection must carry RST without FIN or reflection. The same listener
-and App/Instance then perform a fresh complete binary request/echo/FIN exchange.
+and App/MxPlugin then perform a fresh complete binary request/echo/FIN exchange.
 
 For the kernel-client reset case only, the native server explicitly seeds a
 same-key closed-history record after actual establishment while its live owner

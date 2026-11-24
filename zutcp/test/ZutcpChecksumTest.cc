@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <iostream>
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
@@ -11,7 +12,7 @@
 #include <zlib/Zutcp.hh>
 #include <zlib/ZutcpChecksum.hh>
 
-#include "ZutcpTestInstance.hh"
+#include "ZutcpTestMxPlugin.hh"
 
 using namespace ZuTestUtil;
 
@@ -95,8 +96,8 @@ struct TCPChecksumTest {
 	for (unsigned i = 0; i < length; ++i) tcp[i] = uint8_t(i ^ (i>>3));
 	tcp[12] = (tcpHead>>2)<<4;
 	tcp[16] = 0x34; tcp[17] = 0x56; // stale completion or hardware seed
-	passed &= Instance::tcpChecksum(frame, wire, {14, uint16_t(14 + ipHead)});
-	passed &= !Instance::tcpChecksum(local, remote, {tcp, length});
+	passed &= MxPlugin::tcpChecksum(frame, wire, {14, uint16_t(14 + ipHead)});
+	passed &= !MxPlugin::tcpChecksum(local, remote, {tcp, length});
 	unsigned old = (unsigned(tcp[16])<<8) | tcp[17];
 	tcp[16] = tcp[17] = 0;
         uint64_t pseudo = reference(src, v6 ? 16 : 4) + reference(dst, v6 ? 16 : 4) + length + 6;
@@ -106,15 +107,15 @@ struct TCPChecksumTest {
 	passed &= old == (unsigned(sum) ^ 0xffff);
 	tcp[16] = old>>8; tcp[17] = old;
 	for (unsigned i = 14 + size; i < wire; ++i) frame[i] ^= 0xff;
-	passed &= !Instance::tcpChecksum(local, remote, {tcp, length});
+	passed &= !MxPlugin::tcpChecksum(local, remote, {tcp, length});
 	TCPChecksum metadata;
 	passed &= metadata.init(frame, wire, {14, uint16_t(14 + ipHead)});
 	tcp[8] ^= 1;
-	passed &= Instance::tcpChecksum(local, remote, {tcp, length}) != 0;
-	passed &= Instance::tcpChecksum(frame, wire, {14, uint16_t(14 + ipHead)}, true);
+	passed &= MxPlugin::tcpChecksum(local, remote, {tcp, length}) != 0;
+	passed &= MxPlugin::tcpChecksum(frame, wire, {14, uint16_t(14 + ipHead)}, true);
 	passed &= ((unsigned(tcp[16])<<8) | tcp[17]) == pseudo;
 	metadata.finish();
-	passed &= !Instance::tcpChecksum(local, remote, {tcp, length});
+	passed &= !MxPlugin::tcpChecksum(local, remote, {tcp, length});
       }
       ZuCheckRT(passed, log_("TCP utility/finalization covers payloads, options, padding and stale seeds"));
     }
@@ -127,16 +128,16 @@ struct TCPChecksumTest {
     frame[16] = 0; frame[17] = 40; frame[23] = 6;
     frame[46] = 0x50;
     memcpy(saved, frame, sizeof(frame));
-    ZuCheck(!Instance::tcpChecksum(nullptr, sizeof(frame), {14, 34}));
-    ZuCheck(!Instance::tcpChecksum(frame, 53, {14, 34}));
-    ZuCheck(!Instance::tcpChecksum(frame, sizeof(frame), {14, 35}));
+    ZuCheck(!MxPlugin::tcpChecksum(nullptr, sizeof(frame), {14, 34}));
+    ZuCheck(!MxPlugin::tcpChecksum(frame, 53, {14, 34}));
+    ZuCheck(!MxPlugin::tcpChecksum(frame, sizeof(frame), {14, 35}));
     frame[46] = 0x40;
     saved[46] = 0x40;
-    ZuCheck(!Instance::tcpChecksum(frame, sizeof(frame), {14, 34}) &&
+    ZuCheck(!MxPlugin::tcpChecksum(frame, sizeof(frame), {14, 34}) &&
       !memcmp(frame, saved, sizeof(frame)));
     ZiIP local{"192.0.2.1"}, remote{"2001:db8::1"};
-    ZuCheck(Instance::tcpChecksum(local, remote, {frame + 34, 20}) != 0);
-    ZuCheck(Instance::tcpChecksum(local, local, {frame + 34, 19}) != 0);
+    ZuCheck(MxPlugin::tcpChecksum(local, remote, {frame + 34, 20}) != 0);
+    ZuCheck(MxPlugin::tcpChecksum(local, local, {frame + 34, 19}) != 0);
   }
 
   struct Device : ZmNHeap<Device>, ZutcpTest::Xdp {
@@ -167,7 +168,7 @@ struct TCPChecksumTest {
 	  ip.payload.length() + 6;
 	while (pseudo>>16) pseudo = (pseudo & 0xffff) + (pseudo>>16);
 	exact &= actual == pseudo;
-      } else exact &= !Zutcp::Instance::tcpChecksum(ip.local, ip.remote, ip.payload);
+      } else exact &= !Zutcp::MxPlugin::tcpChecksum(ip.local, ip.remote, ip.payload);
       if (refuse) return false;
       ++pending;
       return true;
@@ -178,12 +179,16 @@ struct TCPChecksumTest {
   static void testRestartSelection() {
     ZuTestScopeRT(testRestartSelection);
     auto env = ZutcpTest::fixtureEnv();
-    ZmRef<Instance> stack = new Instance;
+    ZmRef<MxPlugin> stack = new MxPlugin;
     ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
       .rxThread(1).txThread(2), stack};
     ZmRef<Device> device = new Device{&mx};
     ZmRef<Zpkt::Nif> backend = device;
-    bool configured = stack->init(&mx, env, ZuMv(backend), {}).is<void>();
+    bool configured = false;
+    try { stack->init(&mx, env, ZuMv(backend), {}); configured = true; }
+    catch (ZeException &e) {
+      std::cerr << e << '\n' << std::flush;
+    }
     ZuCheckRT(configured, log_("configure checksum capability fixture"));
     if (!configured) return;
     unsigned runs = 0;

@@ -30,7 +30,7 @@
 
 #include <zlib/ZutcpAlloc.hh>
 #include <zlib/Zutcp.hh>
-#include "ZutcpTestInstance.hh"
+#include "ZutcpTestMxPlugin.hh"
 
 using namespace ZuTestUtil;
 
@@ -147,11 +147,12 @@ static void testAllocatedHandoff(bool repeat)
       s.nThreads(3).thread(3, [](auto &t) { t.isolated(true); });
     })};
     auto nativeIndex = unsigned(strtoul(index, nullptr, 10));
-    Zutcp::Instance tcp;
+    Zutcp::MxPlugin tcp;
     auto xdp = ZutcpTest::openXdp(env, &mx, nativeIndex, 3);
     if (repeat) {
       ZmRef<Zpkt::Nif> initial = xdp;
-      if (!tcp.init(&mx, env, ZuMv(initial), {}).is<void>()) _exit(2);
+      try { tcp.init(&mx, env, ZuMv(initial), {}); }
+      catch (ZeException &e) { std::cerr << e << '\n' << std::flush; _exit(2); }
     }
     auto rx = xdp->bufPool(Zi::IOBufType::Rx, 8, xdp->mtu() + 14);
     auto tx = xdp->bufPool(Zi::IOBufType::TxTCP, 8, xdp->mtu() + 14);

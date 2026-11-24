@@ -12,7 +12,7 @@
 #include <zlib/Zutcp.hh>
 
 #include "ZutcpTestAlloc.hh"
-#include "ZutcpTestInstance.hh"
+#include "ZutcpTestMxPlugin.hh"
 
 using namespace ZuTestUtil;
 using namespace Zutcp;

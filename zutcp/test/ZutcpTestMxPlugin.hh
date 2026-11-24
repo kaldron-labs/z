@@ -4,9 +4,10 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#ifndef ZutcpTestInstance_HH
-#define ZutcpTestInstance_HH
+#ifndef ZutcpTestMxPlugin_HH
+#define ZutcpTestMxPlugin_HH
 
+#include <iostream>
 #include <string.h>
 #include <net/if.h>
 
@@ -168,7 +169,7 @@ class Params {
 public:
   explicit Params(ZiMultiplex *mx = nullptr) : m_mx{mx} { }
   ZiMultiplex *mx() const { return m_mx; }
-  const Zutcp::InstanceParams &config() const { return m_config; }
+  const Zutcp::MxParams &config() const { return m_config; }
   Params &&sackPermitted(bool value) { m_config.sackPermitted = value; return ZuMv(*this); }
   bool sackPermitted() const { return m_config.sackPermitted; }
   Params &&windowScale(bool value) { m_config.windowScale = value; return ZuMv(*this); }
@@ -240,7 +241,7 @@ public:
 
 private:
   ZiMultiplex *m_mx;
-  Zutcp::InstanceParams m_config;
+  Zutcp::MxParams m_config;
   ErrorFn m_error;
 };
 
@@ -253,39 +254,43 @@ inline ZmRef<Zpkt::Env> fixtureEnv()
 }
 
 // Use the production handoff for deterministic fixtures and native drivers.
-class Instance : public Zutcp::Instance {
+class MxPlugin : public Zutcp::MxPlugin {
 public:
-  explicit Instance(ZiMultiplex *mx) : m_fixtureEnv{fixtureEnv()}, m_fixtureMx{mx} { }
-  ~Instance() override { final(); }
-  static bool multicast(Instance &, unsigned, bool, unsigned &);
+  explicit MxPlugin(ZiMultiplex *mx) : m_fixtureEnv{fixtureEnv()}, m_fixtureMx{mx} { }
+  ~MxPlugin() override { final(); }
+  static bool multicast(MxPlugin &, unsigned, bool, unsigned &);
   ZiMultiplex *mx() const { return m_fixtureMx; }
-  using Zutcp::Instance::final;
+  using Zutcp::MxPlugin::final;
 
-  static void udpSend(Zutcp::Instance &instance, ZiConnection *cxn, Zutcp::IPPath path) {
-    Zutcp::Instance::UdpCxn endpoint{&instance, cxn->info(), ZuMv(path)};
+  static void udpSend(Zutcp::MxPlugin &instance, ZiConnection *cxn, Zutcp::IPPath path) {
+    Zutcp::MxPlugin::UdpCxn endpoint{&instance, cxn->info(), ZuMv(path)};
     endpoint.send(cxn);
   }
-  static Zutcp::InstanceParams parameters(const Zutcp::Instance &instance) {
+  static Zutcp::MxParams parameters(const Zutcp::MxPlugin &instance) {
     return instance.m_params;
   }
-  static ZuUnion<void, ZeException> apply(
-    Zutcp::Instance &instance, Zutcp::InstanceParams params)
+  static void apply(
+    Zutcp::MxPlugin &instance, Zutcp::MxParams params)
   {
-    return instance.init(instance.mx(), instance.m_xdpEnv, {}, ZuMv(params));
+    instance.init(instance.mx(), instance.m_xdpEnv, {}, ZuMv(params));
   }
-  static ZuUnion<void, ZeException> apply(Instance &instance, Zutcp::InstanceParams params)
+  static void apply(MxPlugin &instance, Zutcp::MxParams params)
   {
-    if (instance.m_xdpEnv)
-      return apply(static_cast<Zutcp::Instance &>(instance), ZuMv(params));
+    if (instance.m_xdpEnv) {
+      apply(static_cast<Zutcp::MxPlugin &>(instance), ZuMv(params));
+      return;
+    }
     auto xdp = fixtureXdp(instance.mx());
-    return instance.Zutcp::Instance::init(
+    instance.Zutcp::MxPlugin::init(
       instance.mx(), instance.m_fixtureEnv, ZuMv(xdp), ZuMv(params));
   }
   bool init(const ZutcpTest::Params &params) {
-    auto result = params.mx() == mx() ? apply(*this, params.config()) :
-      ZuUnion<void, ZeException>{ZeEXCEPT(Error, "ZutcpTest", "fixture mx mismatch")};
-    if (result.template is<ZeException>()) {
-      if (params.errorFn()) params.errorFn()(result.template p<ZeException>());
+    try {
+      if (params.mx() != mx()) throw ZeEXCEPT(Error, "ZutcpTest", "fixture mx mismatch");
+      apply(*this, params.config());
+    } catch (ZeException &e) {
+      if (params.errorFn()) params.errorFn()(ZuMv(e));
+      else std::cerr << e << '\n' << std::flush;
       return false;
     }
     return true;
@@ -309,23 +314,25 @@ inline ZmRef<Zpkt::Nif> openXdp(
   return opened.p<Zpkt::Nif *>();
 }
 
-inline ZmRef<Zutcp::Instance> initInstance(
-  ZmRef<Zutcp::Instance> instance, Zpkt::Env *env, ZiMultiplex *mx,
-  ZmRef<Zpkt::Nif> &&xdp, Zutcp::InstanceParams params)
+inline ZmRef<Zutcp::MxPlugin> initMxPlugin(
+  ZmRef<Zutcp::MxPlugin> instance, Zpkt::Env *env, ZiMultiplex *mx,
+  ZmRef<Zpkt::Nif> &&xdp, Zutcp::MxParams params)
 {
-  auto result = instance->init(mx, env, ZuMv(xdp), ZuMv(params));
-  if (result.is<ZeException>()) {
+  try { instance->init(mx, env, ZuMv(xdp), ZuMv(params)); }
+  catch (ZeException &e) {
     xdp->final();
-    throw ZuMv(result).p<ZeException>();
+    auto message = e;
+    std::cerr << message << '\n' << std::flush;
+    throw;
   }
   return instance;
 }
 
-inline ZmRef<Zutcp::Instance> initInstance(
+inline ZmRef<Zutcp::MxPlugin> initMxPlugin(
   Zpkt::Env *env, ZiMultiplex *mx, unsigned interface, unsigned sender,
-  Zutcp::InstanceParams params = {}, unsigned spin = 1000)
+  Zutcp::MxParams params = {}, unsigned spin = 1000)
 {
-  return initInstance(ZmRef{static_cast<Zutcp::Instance *>(mx->plugin())},
+  return initMxPlugin(ZmRef{static_cast<Zutcp::MxPlugin *>(mx->plugin())},
     env, mx, openXdp(env, mx, interface, sender, spin), ZuMv(params));
 }
 
@@ -335,16 +342,16 @@ template <typename M = ZiMultiplex> struct MxStorage {
 };
 
 template <typename M = ZiMultiplex>
-class Context : public MxStorage<M>, public Instance {
+class Context : public MxStorage<M>, public MxPlugin {
 public:
   explicit Context(ZiMxParams params = ZiMxParams{}.scheduler(
       [](auto &s) { s.nThreads(4); }).rxThread(1).txThread(2))
-  : MxStorage<M>{ZuMv(params)}, Instance{&this->multiplex} { }
-  M *mx() const { return static_cast<M *>(Instance::mx()); }
+  : MxStorage<M>{ZuMv(params)}, MxPlugin{&this->multiplex} { }
+  M *mx() const { return static_cast<M *>(MxPlugin::mx()); }
 };
 
 // Test-only local passive listener record over the same protocol primitive as
-// the native transport. Its Instance owns all native resources and protocol policy.
+// the native transport. Its MxPlugin owns all native resources and protocol policy.
 template <typename Impl, typename Link>
 class Listener : public ZmPolymorph, public Zutcp_::Listener_<Impl, Link> {
   using Passive = Zutcp_::Listener_<Impl, Link>;
@@ -353,15 +360,21 @@ public:
   using Done = ZmFn<void(bool)>;
   enum { EndpointRef = true };
 
-  Listener(Zutcp::Instance *instance, ZiIP local, uint16_t port)
+  Listener(Zutcp::MxPlugin *instance, ZiIP local, uint16_t port)
   : m_instance{instance}, m_local{local, port} { }
-  Zutcp::Instance *stack() const { return m_instance; }
+  Zutcp::MxPlugin *stack() const { return m_instance; }
   ZiMultiplex *mx() const { return m_instance->mx(); }
   ZiIP localIP() const { return m_local.ip(); }
   uint16_t localPort() const { return m_local.port(); }
   unsigned state() const { return m_state; }
   bool init(const ZutcpTest::Params &params) {
-    return params.mx() == mx() && Instance::apply(*m_instance, params.config()).template is<void>();
+    if (params.mx() != mx()) return false;
+    try { MxPlugin::apply(*m_instance, params.config()); }
+    catch (ZeException &e) {
+      std::cerr << e << '\n' << std::flush;
+      return false;
+    }
+    return true;
   }
   void final() { ZmAssert_(!m_members->count_() && state() == ZmEngineState::Stopped); }
   template <typename F> void rxRun(F &&fn) { m_instance->rxRun(ZuFwd<F>(fn)); }
@@ -471,7 +484,7 @@ private:
     if (auto done = ZuMv(m_stopped)) done(true);
   }
 
-  Zutcp::Instance *m_instance;
+  Zutcp::MxPlugin *m_instance;
   ZiSockAddr m_local;
   ZmRef<Zutcp_::ServerLinkTable> m_members = new Zutcp_::ServerLinkTable{
     ZmHashParams{}.bits(5).loadFactor(1).cBits(3).init("Zutcp.ServerLinks")};
@@ -483,4 +496,4 @@ private:
 
 } // namespace ZutcpTest
 
-#endif /* ZutcpTestInstance_HH */
+#endif /* ZutcpTestMxPlugin_HH */

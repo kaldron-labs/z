@@ -15,7 +15,7 @@
 #include <zlib/Zutcp.hh>
 
 #include "ZutcpTestAlloc.hh"
-#include "ZutcpTestInstance.hh"
+#include "ZutcpTestMxPlugin.hh"
 
 using namespace ZuTestUtil;
 
@@ -99,11 +99,11 @@ friend inline ZuStringT<"Zutcp.Test.DataRx"> ZmNHeapID(TestDataRx *);
   using Zutcp::DataRx::DataRx;
 };
 
-struct App : public ZmNHeap<App>, public ZutcpTest::Instance {
+struct App : public ZmNHeap<App>, public ZutcpTest::MxPlugin {
 friend inline ZuStringT<"Zutcp.BufferTest.App"> ZmNHeapID(App *);
   using ZmNHeap<App>::operator new;
   using ZmNHeap<App>::operator delete;
-  using ZutcpTest::Instance::Instance;
+  using ZutcpTest::MxPlugin::MxPlugin;
 };
 
 static void testAllocatorDirection()
@@ -143,12 +143,12 @@ static void testAllocatorDirection()
       app.rtoParams().min == Zutcp::timeUS(100000) &&
       app.rtoParams().max == ZuTime{30} &&
       app.rtoParams().granularity == Zutcp::timeUS(2000),
-    "Instance must retain configured RTO policy");
+    "MxPlugin must retain configured RTO policy");
   ZuCHECK(initialized && !provider->requests,
     "transport initialization makes no request to the mx allocator factory");
   if (!initialized) return;
   ZuCHECK(app.dataTxAllocator() && !provider->requests,
-    "Instance owns producer storage independently of the mx factory");
+    "MxPlugin owns producer storage independently of the mx factory");
   auto application = mx.allocator<Zi::IOBufType::TxTCP>();
   ZuCHECK(application && provider->requests == 1 &&
       provider->requestedType == Zi::IOBufType::TxTCP &&

@@ -16,7 +16,7 @@
 
 #include <zlib/Zutcp.hh>
 
-#include "ZutcpTestInstance.hh"
+#include "ZutcpTestMxPlugin.hh"
 #include "ZpktPool.hh"
 
 using namespace ZuTestUtil;
@@ -964,7 +964,7 @@ static void testAbortReentrantConnect()
     ordered &= link->endpointDownCount == 1;
   });
   app.drain();
-  // The real fixture Instance is cold: reentrant connect reaches stopped-owner
+  // The real fixture MxPlugin is cold: reentrant connect reaches stopped-owner
   // setup failure cleanup after the old drain and all completions.
   ZuCHECK(ordered && completed[0] == 1 && completed[1] == 1 &&
       link->disconnectedCount == 2 && link->endpointDownCount == 2 &&
@@ -992,7 +992,7 @@ static void testCoalescedNativeConnect()
     link->connect(Zutcp::Host{"198.18.0.88"}, 18192);
     if (invalid) link->connect(Zutcp::Host{"198.18.0.99"}, 0);
     app.drain();
-    // The cold Instance rejects the one adopted attempt before raw endpoint I/O.
+    // The cold MxPlugin rejects the one adopted attempt before raw endpoint I/O.
     // A second continuation must neither reset its token nor mix target fields.
     ZiSockAddr expected{ZiIP{"198.18.0.77"}, 18191};
     ZuCHECK(link->dataGen() == generation + 1 && link->setups == 1 &&

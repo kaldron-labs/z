@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <iostream>
 #include <string.h>
 
 #include <rte_mempool.h>
@@ -66,7 +67,7 @@ static bool wait(ZmSemaphore &event) { return !event.timedwait(Zm::now(6)); }
 struct Peer {
   Zpkt::Env *env = nullptr;
   ZmRef<Zpkt::Nif> device;
-  ZmRef<Zutcp::Instance> tcp = new Zutcp::Instance;
+  ZmRef<Zutcp::MxPlugin> tcp = new Zutcp::MxPlugin;
   ZiMultiplex mx{ZiMxParams{}.rxBufSize(128).rxQuantum(16).scheduler([](auto &s) {
     s.nThreads(5)
       .thread(3, [](auto &t) { t.name("appRx"); t.isolated(true); })
@@ -95,15 +96,26 @@ struct Peer {
     CHECK(env->nif(&conflictingMx, link.name).is<ZeException>() && device->mx() == &mx,
       "a conflicting multiplexer preserves the originally opened device");
     auto moving = device;
-    if (!checked(tcp->init(&mx, env, ZuMv(moving), tcpParams()), "move the initialized device into Zutcp"))
-      return false;
-    CHECK(!moving && tcp->init(&mx, env, ZuMv(moving), tcpParams()).is<void>(),
+    try { tcp->init(&mx, env, ZuMv(moving), tcpParams()); }
+    catch (ZeException &e) { std::cerr << e << '\n' << std::flush; return false; }
+    bool repeated = false;
+    try { tcp->init(&mx, env, ZuMv(moving), tcpParams()); repeated = true; }
+    catch (ZeException &e) {
+      std::cerr << e << '\n' << std::flush;
+    }
+    CHECK(!moving && repeated,
       "moved-from repeated TCP init identifies the owned device");
     if (!index) {
       auto alt = env->nif(&mx, Links[1].name);
       if (alt.is<ZeException>()) return checked(alt.p<ZeException>(), "open another device");
       ZmRef<Zpkt::Nif> other = alt.p<Zpkt::Nif *>();
-      CHECK(tcp->init(&mx, env, ZuMv(other), tcpParams()).is<ZeException>() && other &&
+      bool rejected = false;
+      try { tcp->init(&mx, env, ZuMv(other), tcpParams()); }
+      catch (ZeException &e) {
+        std::cerr << e << '\n' << std::flush;
+        rejected = true;
+      }
+      CHECK(rejected && other &&
 	  other->mx() == &mx,
 	"conflicting TCP init leaves a different eligible device with its caller");
       other->final();
@@ -422,15 +434,15 @@ struct HeldEndpoint : Zutcp_::Endpoint_<HeldEndpoint> {
   void endpointDatagram(Zutcp::Datagram) { }
 };
 
-struct HeldCxn : ZmNHeap<HeldCxn>, Zutcp::Cxn_<Zutcp::Instance, HeldCxn, Zutcp::TxBufAlloc<>> {
+struct HeldCxn : ZmNHeap<HeldCxn>, Zutcp::Cxn_<Zutcp::MxPlugin, HeldCxn, Zutcp::TxBufAlloc<>> {
 friend inline ZuStringT<"Zutcp.DpdkTest.Held"> ZmNHeapID(HeldCxn *);
-  using Base = Zutcp::Cxn_<Zutcp::Instance, HeldCxn, Zutcp::TxBufAlloc<>>;
+  using Base = Zutcp::Cxn_<Zutcp::MxPlugin, HeldCxn, Zutcp::TxBufAlloc<>>;
   using ZmNHeap<HeldCxn>::operator new;
   using ZmNHeap<HeldCxn>::operator delete;
   Zutcp::SentFrameRef original;
   unsigned encodes = 0;
 
-  explicit HeldCxn(Zutcp::Instance *app) : Base{app} { }
+  explicit HeldCxn(Zutcp::MxPlugin *app) : Base{app} { }
   void prepareRx() {
     Base::startHandshake();
     Base::setTCPOriginsRx({.local = UINT32_MAX, .peer = UINT32_MAX,
@@ -741,7 +753,7 @@ static void noStartFinal(Fixture &fixture, bool allocate)
 {
   ZuTestScopeRT(noStartFinal);
   ZmRef<Zpkt::Nif> device;
-  ZmRef<Zutcp::Instance> plugin;
+  ZmRef<Zutcp::MxPlugin> plugin;
   ZmRef<Zi::IOBufPool> ingress, transmit;
   {
     Peer peer;
@@ -781,7 +793,7 @@ static void testDpdk()
   ZuTestCallRT(noStartFinal, fixture, false);
   ZuTestCallRT(noStartFinal, fixture, true);
   ZmRef<Zpkt::Nif> device;
-  ZmRef<Zutcp::Instance> plugin;
+  ZmRef<Zutcp::MxPlugin> plugin;
   {
     Peers pair{fixture};
     auto &a = pair.a;

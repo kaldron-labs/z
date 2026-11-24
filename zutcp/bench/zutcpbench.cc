@@ -255,7 +255,7 @@ class App : private XdpEnvOwner, public ZiMultiplex {
 public:
   explicit App(const Config &config, ZiMxParams params) :
     ZiMultiplex{ZuMv(params), config.native ?
-      ZmRef<Zutcp::Instance>{new Zutcp::Instance} : ZmRef<Zutcp::Instance>{}},
+      ZmRef<Zutcp::MxPlugin>{new Zutcp::MxPlugin} : ZmRef<Zutcp::MxPlugin>{}},
     m_config{config} {
     if (config.native) {
       char name[IF_NAMESIZE];
@@ -267,13 +267,13 @@ public:
         return;
       }
       ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
-      Zutcp::Instance::Params settings{.packetCount = config.reserve};
-      auto instance = static_cast<Zutcp::Instance *>(plugin());
-      auto initialized = instance->init(this, env, ZuMv(xdp), settings);
-      if (initialized.is<ZeException>()) {
+      Zutcp::MxPlugin::Params settings{.packetCount = config.reserve};
+      auto instance = static_cast<Zutcp::MxPlugin *>(plugin());
+      try { instance->init(this, env, ZuMv(xdp), settings); }
+      catch (ZeException &e) {
 	xdp->final();
 	if (auto error = xdp->error()) ZiLogEvent(ZuMv(error));
-        ZiLogEvent(ZuMv(initialized).p<ZeException>());
+        ZiLogEvent(ZuMv(e));
         m_failed = 1;
         return;
       }

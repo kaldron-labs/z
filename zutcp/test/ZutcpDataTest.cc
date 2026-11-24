@@ -21,7 +21,7 @@
 #include <zlib/Zutcp.hh>
 
 #include "ZutcpTestAlloc.hh"
-#include "ZutcpTestInstance.hh"
+#include "ZutcpTestMxPlugin.hh"
 #include "ZpktPool.hh"
 
 using namespace ZuTestUtil;
@@ -493,7 +493,7 @@ friend inline ZuStringT<"Zutcp.DataTest.App"> ZmNHeapID(App *);
     ZmAssert_(multiplex.start());
   }
   ~App() { multiplex.stop(); }
-  bool ioActive() const { return false; } // Controlled owners have no raw Instance/endpoint.
+  bool ioActive() const { return false; } // Controlled owners have no raw MxPlugin/endpoint.
   bool rxInvoked() const { return true; }
   bool txInvoked() const { return true; }
   ZuTime transportNow() const {

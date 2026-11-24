@@ -149,7 +149,7 @@ static unsigned pseudoSum(
     TCPChecksum::sum(remote, bytes) + length + 6);
 }
 
-unsigned Instance::tcpChecksum(const ZiIP &local, const ZiIP &remote, ZuBSpan segment)
+unsigned MxPlugin::tcpChecksum(const ZiIP &local, const ZiIP &remote, ZuBSpan segment)
 {
   if (segment.length() < 20 || segment.length() > 65535 ||
       local.type() != remote.type()) return 0xffff;
@@ -202,7 +202,7 @@ void TCPChecksum::finish()
 
 void TCPChecksum::seed() { put16(tcp + 16, pseudo); }
 
-bool Instance::tcpChecksum(uint8_t *frame, unsigned wire, TCPLayout layout, bool offload)
+bool MxPlugin::tcpChecksum(uint8_t *frame, unsigned wire, TCPLayout layout, bool offload)
 {
   TCPChecksum sum;
   if (!sum.init(frame, wire, layout)) return false;

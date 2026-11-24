@@ -152,7 +152,7 @@ static void testTCPVectors()
     memcpy(frame + head, "abcde", 5);
     Zutcp::TCPHeader header{12345, 443, 0x12345678, 0x90abcdef, 4096, 0, 0x18};
     auto wire = Zutcp::writeTCP(frame, sizeof(frame), route, header, 5, 3);
-    bool finalized = wire && Zutcp::Instance::tcpChecksum(frame, wire,
+    bool finalized = wire && Zutcp::MxPlugin::tcpChecksum(frame, wire,
       {14, uint16_t(Zutcp::ipHead(route.local.type()))});
     uint8_t expected[sizeof(tcpBase)];
     memcpy(expected, tcpBase, sizeof(expected));
@@ -172,7 +172,7 @@ static void testTCPVectors()
     bool rejects = true;
     for (unsigned i = 0; i < sizeof(expected); ++i) {
       frame[head - 20 + i] ^= 1;
-      rejects &= Zutcp::Instance::tcpChecksum(ip.local, ip.remote, ip.payload) != 0;
+      rejects &= Zutcp::MxPlugin::tcpChecksum(ip.local, ip.remote, ip.payload) != 0;
       frame[head - 20 + i] ^= 1;
     }
     ZuCHECK(rejects, "the explicit checksum utility covers every TCP header/payload byte");
@@ -180,11 +180,11 @@ static void testTCPVectors()
     ZuCHECK(Zutcp::readTCP(ip, tcp), "Rx parsing does not calculate or validate TCP checksums");
     frame[head] ^= 1;
     ip.local = route.local;
-    ZuCHECK(Zutcp::Instance::tcpChecksum(ip.local, ip.remote, ip.payload) != 0,
+    ZuCHECK(Zutcp::MxPlugin::tcpChecksum(ip.local, ip.remote, ip.payload) != 0,
       "checksum utility includes the IP destination");
     ip.local = route.remote;
     ip.remote = route.remote;
-    ZuCHECK(Zutcp::Instance::tcpChecksum(ip.local, ip.remote, ip.payload) != 0,
+    ZuCHECK(Zutcp::MxPlugin::tcpChecksum(ip.local, ip.remote, ip.payload) != 0,
       "checksum utility includes the IP source");
     ip.remote = route.local;
     ip.protocol = 253;
@@ -214,10 +214,10 @@ static void testTCPGeometry()
       auto wire = Zutcp::writeTCP(frame, sizeof(frame), route, header, n);
       Zutcp::IPView ip;
       Zutcp::TCPView tcp;
-      valid &= wire && Zutcp::Instance::tcpChecksum(frame, wire,
+      valid &= wire && Zutcp::MxPlugin::tcpChecksum(frame, wire,
 	{14, uint16_t(Zutcp::ipHead(route.local.type()))}) &&
 	Zutcp::readIP({frame, wire}, ip) && Zutcp::readTCP(ip, tcp) &&
-	!Zutcp::Instance::tcpChecksum(ip.local, ip.remote, ip.payload) &&
+	!Zutcp::MxPlugin::tcpChecksum(ip.local, ip.remote, ip.payload) &&
 	tcp.payload.data() == frame + head && tcp.payload.length() == n &&
 	tcp.header.seq == 0xffffffff && tcp.header.urgent == 7;
     }
@@ -254,12 +254,13 @@ static void testTCPOptions()
     memcpy(segment + 20, "\x02\x04\x05\xb4" "abcde", 9);
     Zutcp::IPView ip{route.remote, route.local, {segment, 29}, IPPROTO_TCP, 0};
     Zutcp::TCPView tcp;
-    ZuCHECK(!Zutcp::Instance::tcpChecksum(ip.local, ip.remote, ip.payload) &&
+    ZuCHECK(!Zutcp::MxPlugin::tcpChecksum(ip.local, ip.remote, ip.payload) &&
 	Zutcp::readTCP(ip, tcp) && tcp.options.data() == segment + 20 &&
 	tcp.options.length() == 4 && tcp.payload.data() == segment + 24 &&
 	tcp.payload.length() == 5, "independent checksummed options are borrowed in place");
     segment[23] ^= 1;
-    ZuCHECK(Zutcp::Instance::tcpChecksum(ip.local, ip.remote, ip.payload) && Zutcp::readTCP(ip, tcp),
+    ZuCHECK(Zutcp::MxPlugin::tcpChecksum(ip.local, ip.remote, ip.payload) &&
+	Zutcp::readTCP(ip, tcp),
       "the checksum utility detects changed options while Rx only parses them");
     segment[23] ^= 1;
     segment[21] = 3;
@@ -294,7 +295,7 @@ static void testTCPOptionWire()
     unsigned wire = Zutcp::writeTCP(frame, sizeof(frame), route, header, 5);
     Zutcp::IPView ip;
     Zutcp::TCPView tcp;
-    bool parsed = wire && Zutcp::Instance::tcpChecksum(frame, wire,
+    bool parsed = wire && Zutcp::MxPlugin::tcpChecksum(frame, wire,
       {14, uint16_t(Zutcp::ipHead(route.local.type()))}) &&
       Zutcp::readIP({frame, wire}, ip) && Zutcp::readTCP(ip, tcp);
     ZuCHECK(parsed && head == base + sizeof(expected) && frame[base - 8] == 0x80 &&

@@ -37,18 +37,18 @@ static ZeException membershipError(int error)
   }));
 }
 
-Instance::UdpCxn::UdpCxn(Instance *owner, const ZiCxnInfo &info, IPPath path) :
+MxPlugin::UdpCxn::UdpCxn(MxPlugin *owner, const ZiCxnInfo &info, IPPath path) :
   m_owner{owner}, m_info{info}, m_path{ZuMv(path)}
 {
   portKey = udpKey(info.local.ip().type(), info.local.port());
 }
 
-Instance::UdpCxn::~UdpCxn()
+MxPlugin::UdpCxn::~UdpCxn()
 {
   if (m_membershipFD >= 0) ::close(m_membershipFD);
 }
 
-ZuUnion<void, ZeException> Instance::UdpCxn::join()
+ZuUnion<void, ZeException> MxPlugin::UdpCxn::join()
 {
   if (!m_info.options.multicast() || !m_info.options.mreqs().length()) return {};
   auto v6 = m_info.local.ip().v6();
@@ -72,7 +72,7 @@ ZuUnion<void, ZeException> Instance::UdpCxn::join()
   return {};
 }
 
-bool Instance::UdpCxn::accepts(ZiIP local, const ZiSockAddr &peer) const
+bool MxPlugin::UdpCxn::accepts(ZiIP local, const ZiSockAddr &peer) const
 {
   if (retiring || !mxCxn || !mxCxn->rxUp() ||
       (!m_info.local.ip().wildcard() && m_info.local.ip() != local) ||
@@ -84,7 +84,7 @@ bool Instance::UdpCxn::accepts(ZiIP local, const ZiSockAddr &peer) const
   return false;
 }
 
-ZiIOBuf *Instance::UdpCxn::rxBuf() const
+ZiIOBuf *MxPlugin::UdpCxn::rxBuf() const
 {
   auto cxn = mxCxn;
   if (!cxn || !cxn->rxUp()) return nullptr;
@@ -95,7 +95,7 @@ ZiIOBuf *Instance::UdpCxn::rxBuf() const
   return stub;
 }
 
-bool Instance::UdpCxn::receive(
+bool MxPlugin::UdpCxn::receive(
   uint8_t *frame, unsigned offset, unsigned length, const ZiSockAddr &peer, uint8_t tos)
 {
   auto stub = rxBuf();
@@ -121,19 +121,19 @@ bool Instance::UdpCxn::receive(
   return true;
 }
 
-ZiSockAddr Instance::UdpCxn::destination(const ZiTxContext &io) const
+ZiSockAddr MxPlugin::UdpCxn::destination(const ZiTxContext &io) const
 {
   return io.addr ? io.addr : m_info.remote;
 }
 
-void Instance::UdpCxn::send(ZiConnection *cxn)
+void MxPlugin::UdpCxn::send(ZiConnection *cxn)
 {
   if (m_sending) return;
   m_sending = true;
   sendNext(cxn);
 }
 
-void Instance::UdpCxn::sendNext(ZiConnection *cxn)
+void MxPlugin::UdpCxn::sendNext(ZiConnection *cxn)
 {
   auto &io = cxn->txContext();
   while (cxn->txUp() && !io.completed()) {
@@ -161,7 +161,7 @@ void Instance::UdpCxn::sendNext(ZiConnection *cxn)
   m_sending = false;
 }
 
-void Instance::UdpCxn::routed(
+void MxPlugin::UdpCxn::routed(
   ZiConnection *cxn, const ZiSockAddr &dest, ZuUnion<IPPath, ZeException> route)
 {
   if (cxn->txUp() && !cxn->txContext().completed()) {
@@ -174,7 +174,7 @@ void Instance::UdpCxn::routed(
   sendNext(cxn);
 }
 
-int Instance::UdpCxn::submit(const ZiTxContext &io, const ZiSockAddr &dest)
+int MxPlugin::UdpCxn::submit(const ZiTxContext &io, const ZiSockAddr &dest)
 {
   // UDP is atomic: a nonzero cursor has no separate network-header reserve.
   // Reject it before framing so refusal preserves the complete producer view.
@@ -221,7 +221,7 @@ int Instance::UdpCxn::submit(const ZiTxContext &io, const ZiSockAddr &dest)
   return sent ? int(length) : -1;
 }
 
-void Instance::UdpCxn::sent(ZiConnection *cxn, int length)
+void MxPlugin::UdpCxn::sent(ZiConnection *cxn, int length)
 {
   auto &io = cxn->txContext();
   auto original = io.buf;
@@ -235,7 +235,7 @@ void Instance::UdpCxn::sent(ZiConnection *cxn, int length)
     io.complete();
 }
 
-void Instance::UdpCxn::close(bool peer)
+void MxPlugin::UdpCxn::close(bool peer)
 {
   if (retiring) return;
   m_owner->m_udpBindings.delNode(this);
@@ -248,13 +248,13 @@ void Instance::UdpCxn::close(bool peer)
   m_owner->retireUDP(this, peer);
 }
 
-void Instance::UdpCxn::releaseCxnRx()
+void MxPlugin::UdpCxn::releaseCxnRx()
 {
   m_owner->releaseCxn(*this);
   m_owner->cxnRetired();
 }
 
-void Instance::udp(
+void MxPlugin::udp(
   ZiConnectFn connected, ZiFailFn fail, ZiIPType::T family, ZiIP local, uint16_t localPort,
   ZiIP remote, uint16_t remotePort, Zi::IOBufAllocator *allocator, ZiCxnOptions options)
 {
@@ -323,7 +323,7 @@ void Instance::udp(
   if (!publishUDP(endpoint, connected, ZuMv(info))) endpoint->close(false);
 }
 
-void Instance::receivedUDP(uint8_t *frame, unsigned length, const IPView &ip)
+void MxPlugin::receivedUDP(uint8_t *frame, unsigned length, const IPView &ip)
 {
   UDPView udp;
   if (readUDP(ip, udp)) {
@@ -374,12 +374,12 @@ void Instance::receivedUDP(uint8_t *frame, unsigned length, const IPView &ip)
   else m_ingress->free(frame);
 }
 
-void Instance::sendUDP(ZiConnection *cxn)
+void MxPlugin::sendUDP(ZiConnection *cxn)
 {
   static_cast<UdpCxn *>(cxn->plugin())->send(cxn);
 }
 
-void Instance::closeUDP(ZiConnection *cxn, bool peer)
+void MxPlugin::closeUDP(ZiConnection *cxn, bool peer)
 {
   ZmRef<UdpCxn> endpoint = static_cast<UdpCxn *>(cxn->plugin());
   cxn->txUp() = 0;

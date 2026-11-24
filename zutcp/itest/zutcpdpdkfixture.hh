@@ -43,7 +43,7 @@ struct Fixture {
 };
 
 
-Zutcp::Instance::Params tcpParams();
+Zutcp::MxPlugin::Params tcpParams();
 void failAllocation(unsigned call);
 bool allocationFailed();
 bool allocationRolledBack();

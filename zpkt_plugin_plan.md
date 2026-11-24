@@ -197,7 +197,7 @@ tests retain the default real function and existing namespace fixtures.
 Retain TCP's existing device handoff and add the borrowed environment parameter:
 
 ```cpp
-ZuUnion<void, ZeException> Zutcp::Instance::init(
+ZuUnion<void, ZeException> Zutcp::MxPlugin::init(
   ZiMultiplex *mx, Zpkt::Env *xdpEnv,
   ZmRef<Zpkt::Nif> &&nif, Params params);
 ```
@@ -231,7 +231,7 @@ if (opened.is<ZeException>()) {
   return;
 }
 ZmRef<Zpkt::Nif> nif = opened.p<Zpkt::Nif *>();
-ZmRef<Zutcp::Instance> tcp = new Zutcp::Instance;
+ZmRef<Zutcp::MxPlugin> tcp = new Zutcp::MxPlugin;
 auto result = tcp->init(&mx, env.ptr(), ZuMv(nif), ZuMv(tcpParams));
 if (result.is<ZeException>()) {
   // Failed TCP initialization has not consumed nif.
@@ -392,7 +392,7 @@ than method names:
 | Module initialization entry point and Env::init | Startup-only; throw ZeException on failure. The entry point returns an initialized Plugin; there is no separate Plugin::init API. |
 | Env::nif, Plugin::nif, nifQuery | Potentially called during steady operation; return ZuUnion<Nif *, ZeException> or ZuUnion<NifInfo, ZeException>, respectively. Do not throw through these interfaces. |
 | Env::final, Plugin::final | Teardown may occur during program operation; return ZuUnion<void, ZeException>. Destructors log errors and never throw. |
-| Zutcp::Instance::init | Preserve its existing result union: it supports repeated initialization of a stopped instance during program operation. |
+| Zutcp::MxPlugin::init | Preserve its existing result union: it supports repeated initialization of a stopped instance during program operation. |
 | Existing packet-service and asynchronous lifecycle APIs | Preserve existing nonthrowing admission, completion and error() contracts; no broad runtime API migration in this refactor. |
 
 Never represent failed creation as a successful null pointer. Preserve native
@@ -677,7 +677,7 @@ backend construction API. Module selection uses the configured path, not
 Modify shared test infrastructure and callers:
 
 ```text
-zutcp/test/ZutcpTestInstance.hh
+zutcp/test/ZutcpTestMxPlugin.hh
 zutcp/test/ZutcpUDPLeaseTest.hh
 zutcp/test/ZutcpChecksumTest.cc
 zutcp/test/ZutcpRuntimeTest.cc

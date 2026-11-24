@@ -24,7 +24,7 @@ noinst_PROGRAMS = ZutcpChecksumTest ZutcpTFOTest ZutcpISNTest ZutcpOptionsTest Z
 	ZutcpDataTest ZutcpFlowTest ZutcpBufferTest \
 	ZutcpCongestionTest ZutcpPQueueTest ZutcpLoopTest ZutcpRuntimeTest \
 	ZutcpTimerTest ZutcpRxAccountingTest ZutcpRxAdmissionTest
-noinst_HEADERS = ZutcpTestInstance.hh ZutcpTestAlloc.hh ZutcpConnectionFixture.hh \
+noinst_HEADERS = ZutcpTestMxPlugin.hh ZutcpTestAlloc.hh ZutcpConnectionFixture.hh \
 	ZutcpTestPorts.hh ZutcpUDPLeaseTest.hh
 ZutcpChecksumTest_SOURCES = ZutcpChecksumTest.cc
 ZutcpTFOTest_SOURCES = ZutcpTFOTest.cc

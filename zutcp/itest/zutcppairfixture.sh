@@ -622,7 +622,7 @@ if [[ $mode == loss || $mode == data-loss || $mode == ack-loss || $mode == parti
     if [[ $mode == ack-loss || $mode == partial-ack ]]; then
       sleep 1.1
       # Dispose of held reverse DATA/FIN as well as the ACK-loss filter. Keeping
-      # the four-second queue after either Instance stops feeds stale copies to
+      # the four-second queue after either MxPlugin stops feeds stale copies to
       # the host kernel. The real sender still owns those unacknowledged bytes
       # and must recover them through the now-unimpeded native TCP path.
       tc -s qdisc show dev "$port" > "$out/$port.release-qdisc"

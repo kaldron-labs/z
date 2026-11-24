@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <iostream>
 #include <dlfcn.h>
 #include <errno.h>
 #include <net/if.h>
@@ -107,9 +108,9 @@ void Fixture::drain()
   for (auto &port : ports) port.drain();
 }
 
-Zutcp::Instance::Params tcpParams()
+Zutcp::MxPlugin::Params tcpParams()
 {
-  Zutcp::Instance::Params params{};
+  Zutcp::MxPlugin::Params params{};
   params.packetCount = 128;
   params.controlBufCount = 32;
   params.txControlCredits = 16;
@@ -200,7 +201,7 @@ int fatalHandoff(ZuCSpan scenario)
   auto opened = env->nif(&mx, "zdpfatal");
   if (opened.is<ZeException>()) return 5;
   ZmRef<Zpkt::Nif> device = opened.p<Zpkt::Nif *>();
-  ZmRef<Zutcp::Instance> tcp = new Zutcp::Instance;
+  ZmRef<Zutcp::MxPlugin> tcp = new Zutcp::MxPlugin;
   if (scenario == "device-mx") {
     ZiMultiplex wrong;
     tcp->init(&wrong, env, ZuMv(device), tcpParams());
@@ -213,7 +214,8 @@ int fatalHandoff(ZuCSpan scenario)
       auto firstResult = env->nif(&mx, "zdpfirst");
       if (firstResult.is<ZeException>()) return 6;
       ZmRef<Zpkt::Nif> first = firstResult.p<Zpkt::Nif *>();
-      if (tcp->init(&mx, env, ZuMv(first), tcpParams()).is<ZeException>()) return 6;
+      try { tcp->init(&mx, env, ZuMv(first), tcpParams()); }
+      catch (ZeException &e) { std::cerr << e << '\n' << std::flush; return 6; }
     }
     auto rx = device->bufPool(Zi::IOBufType::Rx, 8, 1514);
     auto tx = device->bufPool(Zi::IOBufType::TxTCP, 8, 128);

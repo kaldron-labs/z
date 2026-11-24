@@ -1182,7 +1182,7 @@ def shared_admission(directory):
             evidence[side] = {'flows': flows, 'pending_initials': pending,
                               'mapped_denial_packets': 0}
     (out / 'shared-admission-evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
-    print('# shared Instance admission: native Hubs/listeners, mapped denial and slot reuse passed')
+    print('# shared MxPlugin admission: native Hubs/listeners, mapped denial and slot reuse passed')
 
 
 def conservative_tuple(directory):

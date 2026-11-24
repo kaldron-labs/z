@@ -1,9 +1,9 @@
-# Instance ownership boundary
+# MxPlugin ownership boundary
 
-Applications construct one Instance and inject it through the ZiMultiplex
+Applications construct one MxPlugin and inject it through the ZiMultiplex
 constructor. Initialize it through init(mx, env, ZuMv(nif), params) before allocator
-registration. Init is idempotent while stopped and fails in every other engine
-state. Start requires initialization. Start/stop use ZmEngine, including queued
+registration. Init is idempotent while stopped and throws ZeException on failure,
+including in every other engine state. Start requires initialization. Start/stop use ZmEngine, including queued
 opposite requests, and report completion through ZiMxPlugin's existing callbacks.
 Stop retains configuration and history; final is idempotent, runs only after
 stop and releases configuration, pools, secrets and retained history. Destruction
@@ -23,20 +23,20 @@ Keep transport configuration and allocator registration independent of the
 selected packet device.
 There is no configure() method or public params() accessor. Transfer code uses Ztcp/Ztls
 or the generic Zi callback interface. There is no Zutcp Hub/Client/Server
-application transport hierarchy or nativeInstance() bridge. Instance directly
+application transport hierarchy or nativeInstance() bridge. MxPlugin directly
 owns outgoing/accepted protocol records, listener endpoints, admission, secrets,
 history and native pools. Internal listeners own only local bind/options,
 pending/live membership and listener drain state.
 
-Instance implements ZiMxPlugin and its inherited Ztc::Mx interface, not Ztc::Hub.
+MxPlugin implements ZiMxPlugin and its inherited Ztc::Mx interface, not Ztc::Hub.
 One Cxn base supplies connection identity, application association and intrusive
 ownership membership; CliCxn and SrvCxn share the Cxn_ protocol implementation.
-Instance owns one m_cxns list, m_cxnCount and m_cxnsLock. allCxns() snapshots
+MxPlugin owns one m_cxns list, m_cxnCount and m_cxnsLock. allCxns() snapshots
 published application connections from that list, filtering pending and retiring
 entries, then invokes callbacks without holding the membership lock. There is no
 separate observation list or connection-manager object.
 
-Connection admission counters and limit checks belong directly to Instance.
+Connection admission counters and limit checks belong directly to MxPlugin.
 Cxn carries its admitted/pending/closing flags; there are no separate admission
 token or ledger classes. Reserve before constructing a connection, cancel failed
 setup reservations, and attach successful reservations before first delivery.
@@ -45,7 +45,7 @@ Release admitted capacity only after the connection's Rx/Tx drain. Admission
 totals are distinct from ownership-list counts because reservation precedes
 construction.
 
-Client and listener endpoints embed their binding hash nodes. Instance contains
+Client and listener endpoints embed their binding hash nodes. MxPlugin contains
 the non-owning EndpointIndex directly; no separately allocated binding records,
 opaque owner pointers or duplicate bound-local-address fields are maintained.
 Dispatch preserves exact-local then wildcard lookup, and unbind removes only
@@ -67,7 +67,7 @@ teardown; test contexts cannot reintroduce a second production owner or mode.
 # Current Phase 8 execution boundary
 
 The live protocol uses standard
-TCP headers/options and raw application bytes over Instance/Zpkt. Endpoint ownership
+TCP headers/options and raw application bytes over MxPlugin/Zpkt. Endpoint ownership
 uses TCP tuples; accepted byte history, canonical backing and owner handoffs
 remain authoritative. Intermediate packet/frame codecs and peer packet-number
 acknowledgments are deleted. Providers reserve the maximum standard Ethernet,
@@ -109,21 +109,21 @@ Phase 8 wire changes supersede their references to intermediate framing.
 
 # Historical Phase 1 execution boundary
 
-The live transport now uses Instance/Zpkt with TCP-aligned IP carriage. The native
+The live transport now uses MxPlugin/Zpkt with TCP-aligned IP carriage. The native
 endpoint tests exercise the client/server cutover and working pairs. Do not restore a kernel UDP mode,
 fallback or separate backend. Cold interface/route/static-neighbor queries remain
 control work outside Rx/Tx.
 
 Allocator dependency is strictly one way: Zutcp supplies lower-level pool
 providers through the ZiMxPlugin allocator hook. Do not call
-`ZiMultiplex::allocator` from Zutcp, directly or through a helper. Instance owns its
+`ZiMultiplex::allocator` from Zutcp, directly or through a helper. MxPlugin owns its
 internal native packet pool and metadata adapters independently of that factory.
 Queued Tx ranges now retain their existing node through `TxBacking`. Keep stable
 base/extent and raw lease ownership there, separately from the queue's mutable
 offset/length. Retained frames must survive queue removal and submitted Zi
 metadata destruction without owning a connection. Before raw handoff the node's
 pending descriptor owns source storage; clear that descriptor after accepted
-detachment. Native writers now allocate through Instance's local producer adapter
+detachment. Native writers now allocate through MxPlugin's local producer adapter
 and first submission reuses the same registered slot. The inline TxData type and
 queue are removed. Preserve whole-buffer credit admission, bounded piggyback
 prefix space and unchanged application payload addresses. Restore producer view
@@ -170,9 +170,9 @@ belongs in this context mapping.
 Control output now uses a dedicated protocol-sized pool, including Initial,
 ACK, window, probe, close and version-negotiation output. Positive DATA remains
 on data backing; FIN-only/control packets may use the control pool. HubParams
-owns controlBufCount (256) and txControlCredits (64), applied to Instance under the
-serialized stopped lifecycle. The old InstanceParams::controlCount is removed.
-Callers sharing Instance use matching instance settings. Do not mutate control count
+owns controlBufCount (256) and txControlCredits (64), applied to MxPlugin under the
+serialized stopped lifecycle. The old MxParams::controlCount is removed.
+Callers sharing MxPlugin use matching instance settings. Do not mutate control count
 while old control backing remains held or resize a live arena.
 
 Data admission uses total accepted outstanding < capacity - reserved; control
@@ -277,7 +277,7 @@ own reserved credit once when dispatched. Generation checks protect reuse, while
 owner lifetime still requires the independent teardown/drain contract.
 
 Keep all Zi provider/object composition in Zutcp. `ZutcpAlloc` supplies the first
-Tx/control provider over a common pool injected from the backend factory. `ZutcpMx::Instance`
+Tx/control provider over a common pool injected from the backend factory. `ZutcpMx::MxPlugin`
 composes those providers with one physical Rx reserve, accepted-output metadata
 detachment and mx owner lifecycle; see the current checkpoint in
 `../arc/zutcp/zutcp_plan.md`. The stripped transport remains subsequent work.
@@ -285,14 +285,14 @@ detachment and mx owner lifecycle; see the current checkpoint in
 at the family-specific header offset and writes headers/padding only. It adds no
 UDP header or transport shim. `writeTCP` builds the TCP base header over payload
 already at `tcpHead(type)`, with protocol 6 and source/destination ports.
-`Instance::tcpChecksum(...)` owns software TCP checksum calculation and hardware
+`MxPlugin::tcpChecksum(...)` owns software TCP checksum calculation and hardware
 pseudo-header seed preparation; `writeTCP` initially leaves the field zero.
-Instance reads `Zpkt::Nif::tcpChksumOffload()` after device activation during
+MxPlugin reads `Zpkt::Nif::tcpChksumOffload()` after device activation during
 start, caches the active state for that run, and refreshes it on restart. Every
 TCP submission uses plain device `send()`. Zpkt discovers/enables offload and
 supplies native submission flags/lengths; it performs no software checksum.
 `readTCP` parses borrowed option/payload spans without software checksum
-validation. The optional validation in Instance remains under `#if 0` and guards
+validation. The optional validation in MxPlugin remains under `#if 0` and guards
 its software check with `if (!m_tcpChksumOffload)`. Sequence, ACK, window and state semantics
 belong to the connection; this codec alone does not establish TCP interoperability.
 The live endpoint and final-packet recovery lease integration are implemented;
@@ -350,13 +350,13 @@ Keep Zi types, adapter state and mx scheduler integration in Zutcp. Zpkt owns
 its required configurable spin-before-epoll `rx()` and interrupting `wake()`.
 Delegate the plugin hooks to that pair; use the raw named-parameter pool/callback
 interface in the updated plan.
-Instance owns native local address/port membership on Rx. Bind/unbind there; dispatch
+MxPlugin owns native local address/port membership on Rx. Bind/unbind there; dispatch
 validates TCP integrity and advances the original registered Rx view without
 copying payload or taking an endpoint reference. Remove membership before draining
-the endpoint's raw callbacks. `Instance::resolvePath` uses an existing mx worker
+the endpoint's raw callbacks. `MxPlugin::resolvePath` uses an existing mx worker
 outside Rx/Tx and posts completion to Rx. Native setup must provide that worker,
 drain every accepted setup callback and fence its generation before owner release.
-Instance stop waits for pending setup before the Tx/backend drain. No blocking route
+MxPlugin stop waits for pending setup before the Tx/backend drain. No blocking route
 lookup or independent protocol owner thread belongs on the packet path.
 
 Reuse Clang/debug/ASan for development and acceptance with leak detection enabled.

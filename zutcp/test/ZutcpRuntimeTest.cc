@@ -20,7 +20,7 @@
 #include <zlib/ZutcpUDP.hh>
 
 #include "ZutcpTestAlloc.hh"
-#include "ZutcpTestInstance.hh"
+#include "ZutcpTestMxPlugin.hh"
 
 using namespace ZuTestUtil;
 
@@ -59,7 +59,7 @@ private:
 static void checkBurstQuantum(unsigned quantum)
 {
   auto env = ZutcpTest::fixtureEnv();
-  ZmRef<Zutcp::Instance> stack = new Zutcp::Instance;
+  ZmRef<Zutcp::MxPlugin> stack = new Zutcp::MxPlugin;
   ZiMultiplex mx{ZiMxParams{}.rxQuantum(quantum).scheduler(
     [](auto &s) { s.nThreads(3); }).rxThread(1).txThread(2), stack};
   ZmSemaphore done;
@@ -68,13 +68,14 @@ static void checkBurstQuantum(unsigned quantum)
   ZmRef<Zpkt::Nif> device = new BurstXdp{&mx, [&done, &calls](unsigned n) {
     calls = n; done.post();
   }};
-  Zutcp::InstanceParams params;
+  Zutcp::MxParams params;
   params.packet = [&packets, &ordered](ZmRef<ZiIOBuf> packet) {
     ordered &= packet->length == 64 && packet->data()[0] == packets;
     ++packets;
   };
-  auto configured = stack->init(&mx, env, ZuMv(device), ZuMv(params));
-  bool initialized = configured.is<void>();
+  bool initialized = false;
+  try { stack->init(&mx, env, ZuMv(device), ZuMv(params)); initialized = true; }
+  catch (ZeException &e) { std::cerr << e << '\n' << std::flush; }
   ZuCheckRT(initialized, log_("configure a burst device through the production plugin"));
   if (!initialized) return;
   bool started = mx.start();
@@ -103,11 +104,15 @@ static void testListenPublication()
 {
   ZuTestScope(testListenPublication);
   auto env = ZutcpTest::fixtureEnv();
-  ZmRef<Zutcp::Instance> stack = new Zutcp::Instance;
+  ZmRef<Zutcp::MxPlugin> stack = new Zutcp::MxPlugin;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
     .rxThread(1).txThread(2), stack};
   auto device = ZutcpTest::fixtureXdp(&mx);
-  bool configured = stack->init(&mx, env, ZuMv(device), {}).is<void>();
+  bool configured = false;
+  try { stack->init(&mx, env, ZuMv(device), {}); configured = true; }
+  catch (ZeException &e) {
+    std::cerr << e << '\n' << std::flush;
+  }
   ZuCheck(configured); if (!configured) return;
   bool started = mx.start(); ZuCheck(started); if (!started) return;
   ZmSemaphore held, release;
@@ -173,12 +178,16 @@ static void testCompletionRetries()
 {
   ZuTestScopeRT(testCompletionRetries);
   auto env = ZutcpTest::fixtureEnv();
-  ZmRef<Zutcp::Instance> stack = new Zutcp::Instance;
+  ZmRef<Zutcp::MxPlugin> stack = new Zutcp::MxPlugin;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
     .rxThread(1).txThread(2), stack};
   ZmRef<RetryDevice> device = new RetryDevice{&mx};
   ZmRef<Zpkt::Nif> backend = device;
-  bool configured = stack->init(&mx, env, ZuMv(backend), {}).is<void>();
+  bool configured = false;
+  try { stack->init(&mx, env, ZuMv(backend), {}); configured = true; }
+  catch (ZeException &e) {
+    std::cerr << e << '\n' << std::flush;
+  }
   ZuCheckRT(configured, log_("configure completion retry service"));
   if (!configured) return;
   if (!mx.start()) { ZuCheck(false); return; }
@@ -275,8 +284,8 @@ public:
   void disconnected(bool) override { }
 };
 
-bool ZutcpTest::Instance::multicast(
-  Instance &stack, unsigned mode, bool v6, unsigned &raw)
+bool ZutcpTest::MxPlugin::multicast(
+  MxPlugin &stack, unsigned mode, bool v6, unsigned &raw)
 {
   auto mx = stack.mx();
   auto allocator = mx->findAllocator<Zi::IOBufPoolAllocator<Zi::IOBufType::Rx>>();
@@ -384,12 +393,16 @@ static void checkMulticast(unsigned mode, bool v6)
 {
   ZiMultiplex mx{ZiMxParams{}.scheduler(
     [](auto &s) { s.nThreads(3); }).rxThread(1).txThread(2),
-    ZmRef{new ZutcpTest::Instance{&mx}}};
-  auto stack = static_cast<ZutcpTest::Instance *>(mx.plugin());
-  auto config = ZutcpTest::Instance::parameters(*stack);
+    ZmRef{new ZutcpTest::MxPlugin{&mx}}};
+  auto stack = static_cast<ZutcpTest::MxPlugin *>(mx.plugin());
+  auto config = ZutcpTest::MxPlugin::parameters(*stack);
   unsigned raw = 0;
   config.packet = [&raw](ZmRef<ZiIOBuf>) { ++raw; };
-  bool initialized = ZutcpTest::Instance::apply(*stack, config).is<void>();
+  bool initialized = false;
+  try { ZutcpTest::MxPlugin::apply(*stack, config); initialized = true; }
+  catch (ZeException &e) {
+    std::cerr << e << '\n' << std::flush;
+  }
   auto owner = stack;
   if (!initialized) { ZuCheckRT(false); return; }
   auto allocator = mx.allocator<Zi::IOBufType::Rx>();
@@ -398,7 +411,7 @@ static void checkMulticast(unsigned mode, bool v6)
   bool started = mx.start();
   bool passed = started && ZmBlock<bool>{}([&mx, owner, mode, v6, &raw](auto done) {
     mx.rxRun([owner, mode, v6, &raw, done = ZuMv(done)]() mutable {
-      done(ZutcpTest::Instance::multicast(*owner, mode, v6, raw));
+      done(ZutcpTest::MxPlugin::multicast(*owner, mode, v6, raw));
     });
   });
   mx.stop();
@@ -464,15 +477,19 @@ static void testLoopCopies()
 {
   ZuTestScopeRT(testLoopCopies);
   auto env = ZutcpTest::fixtureEnv();
-  ZmRef<Zutcp::Instance> stack = new Zutcp::Instance;
+  ZmRef<Zutcp::MxPlugin> stack = new Zutcp::MxPlugin;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
     .rxThread(1).txThread(2), stack};
   ZmRef<LoopDevice> device = new LoopDevice{&mx};
   ZmAtomic<unsigned> deliveries{0};
-  Zutcp::Instance::Params config{};
+  Zutcp::MxPlugin::Params config{};
   config.packet = [&deliveries](ZmRef<ZiIOBuf>) { ++deliveries; };
   ZmRef<Zpkt::Nif> backend = device;
-  bool configured = stack->init(&mx, env, ZuMv(backend), ZuMv(config)).is<void>();
+  bool configured = false;
+  try { stack->init(&mx, env, ZuMv(backend), ZuMv(config)); configured = true; }
+  catch (ZeException &e) {
+    std::cerr << e << '\n' << std::flush;
+  }
   auto tx = mx.allocator<Zi::IOBufType::TxUDP, ZiIOBuf, 128>(1);
   bool started = configured && tx && mx.start();
   ZuCheckRT(started, log_("start UDP copy-volume fixture with registered producer backing"));
@@ -503,7 +520,7 @@ static void testLoopCopies()
 	}}, ZuMv(packet), info.remote);
 	device->refuse = mode == 3;
 	pool->available = mode != 4;
-	ZutcpTest::Instance::udpSend(*stack, cxn.ptr(), path);
+	ZutcpTest::MxPlugin::udpSend(*stack, cxn.ptr(), path);
 	pool->available = true;
 	stack->reconcileTx();
 	valid &= callback && pool->source == frame;
@@ -527,45 +544,51 @@ static void testLoopCopies()
   ZuCheckRT(mx.stop(), log_("drain UDP copy fixture without retained native backing"));
 }
 
-static void testStoppedInstance()
+static void testStoppedPlugin()
 {
-  ZuTestScope(testStoppedInstance);
+  ZuTestScope(testStoppedPlugin);
   auto env = ZutcpTest::fixtureEnv();
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(4); })
     .rxThread(1).txThread(2)};
   {
-    Zutcp::Instance cold;
+    Zutcp::MxPlugin cold;
     auto xdp = ZutcpTest::fixtureXdp(&mx);
-    auto before = ZutcpTest::Instance::parameters(cold);
+    auto before = ZutcpTest::MxPlugin::parameters(cold);
     auto invalid = before;
     invalid.maxCxns = 0;
-    auto result = cold.init(&mx, env, ZuMv(xdp), ZuMv(invalid));
+    bool result = false;
+    try { cold.init(&mx, env, ZuMv(xdp), ZuMv(invalid)); result = true; }
+    catch (ZeException &e) { std::cerr << e << '\n' << std::flush; }
     auto admission = cold.txAdmission();
-    auto after = ZutcpTest::Instance::parameters(cold);
-    ZuCHECK(result.is<ZeException>() && !cold.ready() && !admission.capacity &&
+    auto after = ZutcpTest::MxPlugin::parameters(cold);
+    ZuCHECK(!result && !cold.ready() && !admission.capacity &&
         !admission.controlCount && !cold.mx() && xdp && after == before,
       "failed initial configuration leaves cold resources and policy untouched");
   }
   auto rx = ZutcpTest::pktRxAllocator(&mx);
   auto tx = ZutcpTest::pktTxAllocator(&mx);
-  ZutcpTest::Instance stack{&mx};
-  auto config = ZutcpTest::Instance::parameters(stack);
-  auto first = ZutcpTest::Instance::apply(stack, config);
-  ZuCheck(first.is<void>());
-  if (first.is<ZeException>()) return;
+  ZutcpTest::MxPlugin stack{&mx};
+  auto config = ZutcpTest::MxPlugin::parameters(stack);
+  bool first = false;
+  try { ZutcpTest::MxPlugin::apply(stack, config); first = true; }
+  catch (ZeException &e) { std::cerr << e << '\n' << std::flush; }
+  ZuCheck(first);
+  if (!first) return;
   auto capacity = stack.txAdmission().capacity;
   auto allocator = stack.dataTxAllocator();
   Zutcp::ClosedTuple record{.key = {ZiSockAddr{ZiIP{"198.18.0.1"}, 18191},
     ZiSockAddr{ZiIP{"198.18.0.2"}, 18192}}, .txNext = 20, .rxNext = 30, .fin = true};
   record = stack.rememberClosed(record);
-  auto repeated = ZutcpTest::Instance::apply(stack, config);
+  bool repeated = false;
+  try { ZutcpTest::MxPlugin::apply(stack, config); repeated = true; }
+  catch (ZeException &e) { std::cerr << e << '\n' << std::flush; }
   Zutcp::ClosedTuple retained;
-  ZuCHECK(first.is<void>() && repeated.is<void>() &&
+  ZuCHECK(first && repeated &&
       stack.txAdmission().capacity == capacity && stack.dataTxAllocator() == allocator &&
       stack.closedTuple(record.key, retained) && retained.id == record.id,
     "repeated stopped init preserves allocator identity, capacity and closed tuple evidence");
   Endpoint endpoint;
-  ZuCHECK(endpoint.init(&stack), "endpoint uses its known owning Instance directly");
+  ZuCHECK(endpoint.init(&stack), "endpoint uses its known owning MxPlugin directly");
   ZuCHECK(!stack.ready() && !endpoint.connected() && !endpoint.listening(),
     "binding the known owner creates no transport endpoint or kernel fallback");
   ZuCHECK(rx->type == Zi::IOBufType::Rx && tx->type == Zi::IOBufType::TxTCP,
@@ -581,22 +604,53 @@ static void testHandoff()
 {
   ZuTestScope(testHandoff);
   auto env = ZutcpTest::fixtureEnv();
-  auto tcp = new Zutcp::Instance;
-  ZmRef<Zutcp::Instance> plugin{tcp};
+  auto tcp = new Zutcp::MxPlugin;
+  ZmRef<Zutcp::MxPlugin> plugin{tcp};
   ZiMultiplex mx{{}, ZuMv(plugin)};
   auto xdp = ZutcpTest::fixtureXdp(&mx, true);
   auto fixture = ZmRef<ZutcpTest::Xdp>{static_cast<ZutcpTest::Xdp *>(xdp.ptr())};
-  auto initialized = tcp->init(&mx, env, ZuMv(xdp), {});
-  ZuCheck(initialized.is<void>() && !xdp && tcp->mx() == &mx && fixture->mx() == &mx);
-  if (initialized.is<ZeException>()) return;
-  ZuCheck(tcp->init(&mx, env, ZuMv(xdp), {}).is<void>() && fixture->opens == 1);
+  bool initialized = false;
+  try { tcp->init(&mx, env, ZuMv(xdp), {}); initialized = true; }
+  catch (ZeException &e) { std::cerr << e << '\n' << std::flush; }
+  ZuCheck(initialized && !xdp && tcp->mx() == &mx && fixture->mx() == &mx);
+  if (!initialized) return;
+  bool repeated = false;
+  try { tcp->init(&mx, env, ZuMv(xdp), {}); repeated = true; }
+  catch (ZeException &e) {
+    std::cerr << e << '\n' << std::flush;
+  }
+  ZuCheck(repeated && fixture->opens == 1);
   ZiMultiplex otherMx;
-  ZuCheck(tcp->init(&otherMx, env, ZuMv(xdp), {}).is<ZeException>() && fixture->opens == 1);
-  ZuCheck(tcp->init(&mx, env, ZuMv(xdp), {.packetCount = 32}).is<ZeException>());
+  bool otherMxRejected = false;
+  try { tcp->init(&otherMx, env, ZuMv(xdp), {}); }
+  catch (ZeException &e) {
+    std::cerr << e << '\n' << std::flush;
+    otherMxRejected = true;
+  }
+  ZuCheck(otherMxRejected && fixture->opens == 1);
+  bool configRejected = false;
+  try { tcp->init(&mx, env, ZuMv(xdp), {.packetCount = 32}); }
+  catch (ZeException &e) {
+    std::cerr << e << '\n' << std::flush;
+    configRejected = true;
+  }
+  ZuCheck(configRejected);
   auto otherEnv = ZutcpTest::fixtureEnv();
-  ZuCheck(tcp->init(&mx, otherEnv, ZuMv(xdp), {}).is<ZeException>());
+  bool envRejected = false;
+  try { tcp->init(&mx, otherEnv, ZuMv(xdp), {}); }
+  catch (ZeException &e) {
+    std::cerr << e << '\n' << std::flush;
+    envRejected = true;
+  }
+  ZuCheck(envRejected);
   auto other = ZutcpTest::fixtureXdp(&mx);
-  ZuCheck(tcp->init(&mx, env, ZuMv(other), {}).is<ZeException>() && other);
+  bool deviceRejected = false;
+  try { tcp->init(&mx, env, ZuMv(other), {}); }
+  catch (ZeException &e) {
+    std::cerr << e << '\n' << std::flush;
+    deviceRejected = true;
+  }
+  ZuCheck(deviceRejected && other);
 
   auto instance = tcp;
   ZuCheck(!plugin && mx.plugin() == instance);
@@ -642,13 +696,15 @@ static void testNeverStartedFinal()
     auto env = ZutcpTest::fixtureEnv();
     ZmRef<ZutcpTest::Xdp> fixture;
     {
-      ZmRef<Zutcp::Instance> tcp = new Zutcp::Instance;
+      ZmRef<Zutcp::MxPlugin> tcp = new Zutcp::MxPlugin;
       ZiMultiplex mx{{}, tcp};
       auto xdp = ZutcpTest::fixtureXdp(&mx, true);
       fixture = static_cast<ZutcpTest::Xdp *>(xdp.ptr());
-      auto result = tcp->init(&mx, env, ZuMv(xdp), {});
-      ZuCheck(result.is<void>());
-      if (result.is<ZeException>()) return;
+      bool result = false;
+      try { tcp->init(&mx, env, ZuMv(xdp), {}); result = true; }
+      catch (ZeException &e) { std::cerr << e << '\n' << std::flush; }
+      ZuCheck(result);
+      if (!result) return;
       if (allocate) ZuCheck(mx.alloc().is<void>());
     }
     ZuCheck(fixture->finals == 1 && !fixture->mx() && !fixture->starts && !fixture->stops);
@@ -666,18 +722,20 @@ static void testFatalHandoffs()
       setrlimit(RLIMIT_CORE, &limit);
       auto env = ZutcpTest::fixtureEnv();
       ZiMultiplex a, b;
-      ZmRef<Zutcp::Instance> tcp = new Zutcp::Instance;
+      ZmRef<Zutcp::MxPlugin> tcp = new Zutcp::MxPlugin;
       ZmRef<Zpkt::Nif> xdp;
       if (scenario == Uninitialized) xdp = new ZutcpTest::Xdp{nullptr};
       else if (scenario != Null) xdp = ZutcpTest::fixtureXdp(&a);
-      if (scenario == RepeatAllocated)
-        if (!tcp->init(&a, env, ZuMv(xdp), {}).is<void>()) _exit(2);
+      if (scenario == RepeatAllocated) {
+        try { tcp->init(&a, env, ZuMv(xdp), {}); }
+        catch (ZeException &e) { std::cerr << e << '\n' << std::flush; _exit(2); }
+      }
       if (scenario == Allocated || scenario == RepeatAllocated) {
         if (!xdp) xdp = ZutcpTest::fixtureXdp(&a);
         Zi::IOBufPoolList tx;
         if (!xdp->alloc(nullptr, tx).is<void>()) _exit(3);
       }
-      auto result = tcp->init(scenario == DifferentMx ? &b : &a, env, ZuMv(xdp), {});
+      tcp->init(scenario == DifferentMx ? &b : &a, env, ZuMv(xdp), {});
       _exit(4);
     }
     int status = 0;
@@ -695,7 +753,7 @@ int main(int argc, char **argv)
   ZuTestCall(testCompletionRetries);
   ZuTestCall(testMulticast);
   ZuTestCall(testLoopCopies);
-  ZuTestCall(testStoppedInstance);
+  ZuTestCall(testStoppedPlugin);
   ZuTestCall(testHandoff);
   ZuTestCall(testNeverStartedFinal);
   ZuTestCall(testFatalHandoffs);

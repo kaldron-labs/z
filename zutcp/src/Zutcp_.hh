@@ -147,7 +147,7 @@ public:
   Endpoint_(const Endpoint_ &) = delete;
   Endpoint_ &operator =(const Endpoint_ &) = delete;
 
-  bool init(Instance *stack) {
+  bool init(MxPlugin *stack) {
     if (!stack) return false;
     auto mx = stack->mx();
     if (m_mx) return m_mx == mx && m_instance == stack;
@@ -247,7 +247,7 @@ public:
     if (endpointTxInvoked())
       return send_(ZuMv(buf), ZuMv(addr), ecn, generation, path, true);
     // Path metadata is bounded. This post retains the submitted buffer only
-    // until admission; accepted Instance output detaches its backing immediately.
+    // until admission; accepted MxPlugin output detaches its backing immediately.
     IPPath route = path ? *path : IPPath{};
     m_mx->txRun([this, buf = ZuMv(buf), addr = ZuMv(addr), route,
 	supplied = bool(path), ecn, generation]() mutable {
@@ -391,7 +391,7 @@ private:
 
   // Stable configuration; publish before setup/packet servicing.
   ZiMultiplex *m_mx = nullptr;
-  Instance *m_instance = nullptr;
+  MxPlugin *m_instance = nullptr;
   ZuID m_queueID;
   ZiIPType::T m_family = ZiIPType::Null;
   unsigned m_payloadLimit = 0;
@@ -417,7 +417,7 @@ private:
 };
 
 // Passive endpoint protocol shared by the actual transport record and private
-// protocol fixtures. The Instance remains the sole transport/configuration owner.
+// protocol fixtures. The MxPlugin remains the sole transport/configuration owner.
 template <typename Impl, typename Link>
 class Listener_ : public Endpoint_<Impl> {
   using Endpoint = Endpoint_<Impl>;

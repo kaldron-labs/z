@@ -4,10 +4,11 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <iostream>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zutcp.hh>
 
-#include "ZutcpTestInstance.hh"
+#include "ZutcpTestMxPlugin.hh"
 
 using namespace ZuTestUtil;
 
@@ -20,10 +21,15 @@ static void testConnectionRetention()
 {
   ZuTestScope(testConnectionRetention);
   ZiMultiplex mx;
-  ZutcpTest::Instance hub{&mx};
-  Zutcp::InstanceParams config;
+  ZutcpTest::MxPlugin hub{&mx};
+  Zutcp::MxParams config;
   config.rxRetainFramesPerCxn = 2;
-  ZuCHECK(ZutcpTest::Instance::apply(hub, config).is<void>(),
+  bool initialized = false;
+  try { ZutcpTest::MxPlugin::apply(hub, config); initialized = true; }
+  catch (ZeException &e) {
+    std::cerr << e << '\n' << std::flush;
+  }
+  ZuCHECK(initialized,
     "initialize the configured per-connection retention bound");
   unsigned retired = 0;
   auto allocator = mx.allocator<Zi::IOBufType::App, RetainedBuf, 64>();

@@ -8,7 +8,7 @@ repeat. Pool-only tests directly construct private backend pools.
 
 ## Repair verification — 2026-11-18
 
-Verified the single-Instance repair and subsequent connection/endpoint/lifecycle
+Verified the single-MxPlugin repair and subsequent connection/endpoint/lifecycle
 consolidation on Linux x86-64 with the configured Clang debug build, without
 sanitizers or a clean build. Rebuilt the scoped libraries, unit binaries, native
 drivers, examples, benchmark and Zfix benchmark under one eight-job make jobserver.
@@ -63,13 +63,13 @@ views, off-thread final replacement, repeated heap growth, immediate backing reu
 and exactly one provider return. `testPacketAllocRoles` checks the same transition
 with ordinary heap-backed source packets.
 
-Live client/server coverage now runs through Instance/Zpkt in `../itest/zutcppairtest`.
+Live client/server coverage now runs through MxPlugin/Zpkt in `../itest/zutcppairtest`.
 The former kernel-loopback runtime and completed-socket-queue cases were retired
 and archived with the native-endpoint checkpoint. Native multi-connection, idle,
 pressure and stale owner-work equivalents remain open; current green tests do not
 extend the completed Phase 1 regression gate or establish TCP interoperability.
 
-`ZutcpBufferTest::testAllocatorDirection` verifies Instance configuration and retained
+`ZutcpBufferTest::testAllocatorDirection` verifies MxPlugin configuration and retained
 byte adaptation make zero mx allocator requests. An external application-side
 factory request calls the plugin provider hook once. `ZutcpTestAlloc.hh` contains
 only test/application factory exercises; production Zutcp owns its internal pools
@@ -80,10 +80,10 @@ For repair 3 use the Clang release build and phase order in
 one eight-slot make jobserver. After rebuilding the dependency libraries and
 unit binaries, run `make -C zutcp/test test`.
 
-`ZutcpTestInstance.hh` injects a test XDP instance with in-memory backing through
+`ZutcpTestMxPlugin.hh` injects a test XDP instance with in-memory backing through
 the production handoff. `ZutcpRuntimeTest` checks ownership, stopped repeat
 initialization, pool identity, allocation and activation retries, finalization,
-and fatal handoffs. The actual Instance owns policy, admission and retained tuples. Concrete test contexts provide only
+and fatal handoffs. The actual MxPlugin owns policy, admission and retained tuples. Concrete test contexts provide only
 deterministic clock/dispatch and selected allocation/packet hooks. They do not
 recreate Hub/Client/Server transport owners or a production no-instance mode.
 Runtime multicast diagnostics compare complete frames before recipient mutation
@@ -198,11 +198,11 @@ Tx retained ranges now reference shared queued-node storage, independently of it
 mutable queue position and pending Zi descriptor. The data tests check original
 descriptor coordinates through partial consumption, retained byte identity after
 queue reset, and the same storage identity through loss/retransmission splitting.
-Production writers now allocate registered backing through Instance and first
-submission reuses it. Deterministic connection producers use the real Instance's
+Production writers now allocate registered backing through MxPlugin and first
+submission reuses it. Deterministic connection producers use the real MxPlugin's
 registered adapter over private heap-backed packet pools. Isolated codec inputs
 and explicit control-packet hooks may still use builtin test storage.
-ZutcpBufferTest verifies Instance makes no request to the mx allocator factory
+ZutcpBufferTest verifies MxPlugin makes no request to the mx allocator factory
 and retains its own producer adapter independently of application factory calls. Packetization and
 recovery fixtures still cover heap-backed application input and fragmentation.
 Native same-slot production and whole-buffer credit are exercised by
@@ -229,7 +229,7 @@ selection across repeated transmissions and exclusion from control packet loss.
 The timeout congestion check preserves ssthresh on repeated loss of the same
 covering range. ZutcpTimerTest exercises the actual connection RTO separately
 from control PTO and includes it in cancellation and disconnect draining.
-ZutcpBufferTest verifies Instance defaults, bounds and stopped configuration.
+ZutcpBufferTest verifies MxPlugin defaults, bounds and stopped configuration.
 Connection timestamps and timer deadlines use the inherited Zm::now() clock
 and existing mx add() API. ZutcpTimerTest injects time to check early callbacks,
 replacement deadlines, Advance ordering, rearming and cancellation. No scheduler
@@ -274,7 +274,7 @@ conversion remain Phase 4 acceptance work.
 
 `ZutcpChecksumTest` checks scalar/SIMD accumulation against independent byte sums,
 IPv4/IPv6 pseudo-headers, odd payloads, options, padding and stale seeds. Its
-Instance/device fixture changes active offload across restarts and checks
+MxPlugin/device fixture changes active offload across restarts and checks
 software checksums, hardware seeds, refused-send rollback and accepted metadata
 detachment through plain device submission. Hardware offload itself requires
 physical-device validation.

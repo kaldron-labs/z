@@ -12,7 +12,7 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/Zutcp.hh>
 
-#include "ZutcpTestInstance.hh"
+#include "ZutcpTestMxPlugin.hh"
 
 enum { ServerUDP = 18172, ClientUDP = 18173, ServerTCP = 18174 };
 static constexpr auto TCPData = "tcp fixture bytes"_z;
@@ -220,14 +220,14 @@ int main(int argc, char **argv)
   bool server = !strcmp(argv[4], "server"), mixed = !strcmp(argv[5], "mixed");
   if (!ifindex || !local || !peer || local.type() != peer.type()) return 2;
   ZmRef<Zpkt::Env> env = new Zpkt::Env;
-  ZmRef<Zutcp::Instance> transport = new Zutcp::Instance;
+  ZmRef<Zutcp::MxPlugin> transport = new Zutcp::MxPlugin;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(4).thread(4, [](auto &t) { t.isolated(true); });
   }), transport};
   auto xdp = ZutcpTest::openXdp(env, &mx, ifindex, 4);
-  auto initialized = transport->init(&mx, env, ZuMv(xdp), {});
-  if (initialized.is<ZeException>()) {
-    ZiLogEvent(ZuMv(initialized.p<ZeException>())); return 1;
+  try { transport->init(&mx, env, ZuMv(xdp), {}); }
+  catch (ZeException &e) {
+    ZiLogEvent(ZuMv(e)); return 1;
   }
   auto udpRx = mx.allocator<Zi::IOBufType::Rx, Input<true>>();
   auto udpTx = mx.allocator<Zi::IOBufType::TxUDP>(16);

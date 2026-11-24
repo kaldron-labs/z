@@ -24,7 +24,7 @@
 #include <zlib/ZutcpIP.hh>
 #include <zlib/Zutcp.hh>
 
-#include "../test/ZutcpTestInstance.hh"
+#include "../test/ZutcpTestMxPlugin.hh"
 
 using namespace ZuTestUtil;
 
@@ -192,13 +192,13 @@ static void testCarriage(bool v6, bool tcp = false)
   ZmRef<Zpkt::Env> env = new Zpkt::Env;
   ZiMultiplex mx{ZiMxParams{}.rxBufSize(32).rxQuantum(8)
     .scheduler([](auto &p) { p.nThreads(4).thread(4, [](auto &t) { t.isolated(true); }); }),
-    ZmRef{new Zutcp::Instance}};
+    ZmRef{new Zutcp::MxPlugin}};
   ZmSemaphore rxDone, txDone, controlDone;
   ZmRef<Zi::IOBuf> input;
   Zutcp::IPView seen;
   ZuBSpan seenPayload;
   bool onRx = false;
-  Zutcp::InstanceParams params{.packet = [
+  Zutcp::MxParams params{.packet = [
       &mx, &input, &seen, &seenPayload, &onRx, &rxDone, &path, protocol, tcp
     ](ZmRef<Zi::IOBuf> buf) {
       Zutcp::IPView view;
@@ -215,11 +215,11 @@ static void testCarriage(bool v6, bool tcp = false)
       rxDone.post();
     }};
   if (tcp) params.packet = {};
-  auto instance = ZutcpTest::initInstance(env, &mx, index, 4, ZuMv(params), 0);
+  auto instance = ZutcpTest::initMxPlugin(env, &mx, index, 4, ZuMv(params), 0);
   auto stack = instance.ptr();
   auto tx = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 2048>(4);
   bool started = mx.start();
-  ZuCheckRT(started, log_("raw packet Instance starts without a kernel Zutcp socket"));
+  ZuCheckRT(started, log_("raw packet MxPlugin starts without a kernel Zutcp socket"));
   if (!started) { close(fd); alarm(0); return; }
   EndpointInput endpoint{&mx, &input, &seen, &seenPayload, &onRx, &rxDone};
   EndpointInput wildcard{&mx, &input, &seen, &seenPayload, &onRx, &rxDone};

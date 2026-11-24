@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Instance-owned TCP initial sequence primitive.
+// MxPlugin-owned TCP initial sequence primitive.
 
 #ifndef ZutcpISN_HH
 #define ZutcpISN_HH

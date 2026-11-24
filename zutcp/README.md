@@ -19,7 +19,7 @@ Internal byte positions remain wide offsets relative to the chosen origins.
 Endpoint routing uses the TCP four-tuple. Intermediate packet/frame codecs,
 bootstrap IDs and packet-number acknowledgment formats have been removed.
 
-`InstanceParams::sackPermitted`, `windowScale` and `timestamps` default to enabled.
+`MxParams::sackPermitted`, `windowScale` and `timestamps` default to enabled.
 Configure them before starting the multiplexer. SACK permission is directional;
 scaling and timestamps require both peers' offers. The receive scale derives
 from `maxData`. Without a peer MSS option, the send cap is 536 bytes for IPv4 or
@@ -36,14 +36,14 @@ only after negotiation; retransmissions and control packets remain Not-ECT.
 With congestion control enabled, accepted DATA sends create pacing debt;
 pure ACK/window traffic can proceed.
 
-`InstanceParams::congestionControl = false` disables congestion-window limits,
+`MxParams::congestionControl = false` disables congestion-window limits,
 congestion accounting and pacing for controlled low-latency networks. Set it before starting
 the multiplexer. The default is enabled; the setting is cached at initialization.
 Disabled mode suppresses ECN negotiation while retaining receiver flow control,
 bounded local buffer credits, ACK/SACK retirement, loss recovery and RTO backoff.
 Nagle remains disabled in both modes.
 
-`InstanceParams::ackHoldTimeout` configures the cumulative ACK hold. It defaults to 25
+`MxParams::ackHoldTimeout` configures the cumulative ACK hold. It defaults to 25
 milliseconds, accept zero to disable holding, and require a value below 500
 milliseconds. Eligible in-order DATA may hold one pending ACK; each receive
 updates it to the latest cumulative position. Outgoing DATA can carry that ACK
@@ -66,9 +66,10 @@ Configure the multiplexer’s Rx, Tx, and XDP sender slots before constructing i
 Retain an intrusive `Zpkt::Env` and load its configured plugin before opening a
 named Nif synchronously on that stopped multiplexer. A successful
 open exposes the interface index, MTU, and Rx queue count. Move XDP into
-`Zutcp::Instance::init` on the same multiplexer before XDP allocation or start.
+`Zutcp::MxPlugin::init` on the same multiplexer before XDP allocation or start.
 Inject the transport into the multiplexer constructor, and finish transport
 initialization before the first allocator request, allocation, or start attempt.
+Initialization throws `ZeException` on failure and preserves the caller’s Nif reference.
 
 The loaded Cf tree contains `module libZpkt_xdp.so` and
 `interfaces { veth0 { txSid 3 } }`. Handle startup `ZeException` around the whole
@@ -77,7 +78,7 @@ application scope. Declare Env before the multiplexer so it outlives every child
 ```cpp
 ZmRef<Zpkt::Env> env = new Zpkt::Env;
 env->init(cf);
-ZmRef<Zutcp::Instance> plugin = new Zutcp::Instance;
+ZmRef<Zutcp::MxPlugin> plugin = new Zutcp::MxPlugin;
 ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
   s.nThreads(3).thread(3, [](auto &t) { t.isolated(true); });
 }), plugin};
@@ -88,9 +89,10 @@ if (opened.is<ZeException>()) {
 }
 
 ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
-auto initialized = plugin->init(&mx, env, ZuMv(xdp), {.packetCount = 2048});
-if (initialized.is<ZeException>()) {
-  ZiLogEvent(ZuMv(initialized).p<ZeException>());
+try { plugin->init(&mx, env, ZuMv(xdp), {.packetCount = 2048}); }
+catch (ZeException &e) {
+  xdp->final();
+  ZiLogEvent(ZuMv(e));
   return false;
 }
 
@@ -208,7 +210,7 @@ input and a reduced budget fail rather than transparently split or copy the
 source. Positive peer windows retain the whole-original send/recovery policy.
 Hardware zero-copy depends on the kernel and NIC driver.
 
-`Instance::tcpChecksum(...)` owns software TCP checksums and offload seed
+`MxPlugin::tcpChecksum(...)` owns software TCP checksums and offload seed
 preparation. Start caches the device's active `tcpChksumOffload()` result after
 activation, refreshing it on restart. Zpkt enables device offload and installs
 native submission metadata; all output uses plain `send()`. Software Rx checksum
@@ -264,7 +266,7 @@ live through restart.
 
 ## Connection hash sizing
 
-Before constructing the Instance, bootstrap code can configure the existing
+Before constructing the MxPlugin, bootstrap code can configure the existing
 `ZmHashMgr` IDs `Zutcp.Endpoints`, `Zutcp.Endpoint.TupleRouter`, and
 `Zutcp.ServerLinks`. These constructors retain their default 32 buckets and load
 factor 1 when no named override is installed. The tables are owner-local and use
@@ -279,25 +281,25 @@ hash does not enable allocation of the inner intrusive node.
 
 `Cxn` is the common connection identity and lifecycle interface. `CliCxn` and
 `SrvCxn` share TCP behavior through the internal `Cxn_` implementation.
-`Instance` owns one intrusive list containing pending, published and retiring
+`MxPlugin` owns one intrusive list containing pending, published and retiring
 connections. `allCxns()` filters pending and retiring entries, takes temporary
 application connection references under `m_cxnsLock`, then invokes callbacks
 without holding the lock. No separate observation list or manager is maintained.
 
-Instance also owns admission counters and checks limits before connection
+MxPlugin also owns admission counters and checks limits before connection
 construction. Cxn carries admitted, pending and closing flags directly. Failed
 setup cancels its reservation; successful setup attaches it to Cxn before first
 packet delivery. Capacity remains charged through owner drain, independently of
 ownership-list membership. No separate admission token or ledger is maintained.
 
-Clients and listeners embed their local binding nodes. Instance holds the
+Clients and listeners embed their local binding nodes. MxPlugin holds the
 non-owning endpoint hash directly, with no separate binding-record allocations.
 Packet dispatch finds the exact local address first, then the family wildcard;
 accepted connections share their listener's binding and use its tuple routing.
 Unbinding removes the endpoint's own node before owner teardown. Embedded hash
 telemetry is available through the framework's `HashMgr::capture()` operation.
 
-`Instance::allQueues()` delegates to `Zpkt::Nif::allQueues()`, exposing its
+`MxPlugin::allQueues()` delegates to `Zpkt::Nif::allQueues()`, exposing its
 Rx, fill, Tx and completion rings. It does not traverse connections or listeners.
 Callbacks borrow the rings; finish enumeration before shutting down their owning
 XDP instance. Queue pointers must not escape the callback. Fields are advisory

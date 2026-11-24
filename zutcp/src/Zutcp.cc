@@ -125,15 +125,15 @@ namespace Zutcp_ {
 using namespace Zutcp;
 
 class CliCxn :
-  public ZmNHeap<CliCxn>, public Zutcp::CliCxn<Instance, CliCxn> {
+  public ZmNHeap<CliCxn>, public Zutcp::CliCxn<MxPlugin, CliCxn> {
 friend inline ZuStringT<"Zutcp.Mx.CliCxn"> ZmNHeapID(CliCxn *);
-  using Base = Zutcp::CliCxn<Instance, CliCxn>;
+  using Base = Zutcp::CliCxn<MxPlugin, CliCxn>;
 public:
   using State = Base::Base;
   using Base::connectReserved;
   using ZmNHeap<CliCxn>::operator new;
   using ZmNHeap<CliCxn>::operator delete;
-  CliCxn(Instance *owner, ZiConnectFn connected, ZiFailFn fail,
+  CliCxn(MxPlugin *owner, ZiConnectFn connected, ZiFailFn fail,
     ZiSockAddr local, Zi::IOBufAllocator *allocator, ZiCxnOptions options)
   : Base{owner}, m_connected{ZuMv(connected)},
     m_fail{ZuMv(fail)}, m_local{local}, m_allocator{allocator}, m_options{ZuMv(options)} { }
@@ -188,12 +188,12 @@ public:
   enum { EndpointRef = true };
   using ZmNHeap<Listener>::operator new;
   using ZmNHeap<Listener>::operator delete;
-  Listener(Instance *owner, ZiListenFn listening, ZiFailFn fail, ZiConnectFn accept,
+  Listener(MxPlugin *owner, ZiListenFn listening, ZiFailFn fail, ZiConnectFn accept,
     ZiSockAddr local, unsigned count, Zi::IOBufAllocator *allocator, ZiCxnOptions options)
   : m_owner{owner}, m_listening{ZuMv(listening)}, m_fail{ZuMv(fail)},
     m_accept{ZuMv(accept)}, m_local{local}, m_count{count},
     m_allocator{allocator}, m_options{ZuMv(options)} { }
-  Instance *stack() const { return m_owner; }
+  MxPlugin *stack() const { return m_owner; }
   void endpointReady(Endpoint *);
   void endpointFailed(bool);
   void endpointDown_(Endpoint *) { }
@@ -230,7 +230,7 @@ public:
   }
 
 private:
-  Instance *m_owner;
+  MxPlugin *m_owner;
   ZiListenFn m_listening;
   ZiFailFn m_fail;
   ZiConnectFn m_accept;
@@ -242,9 +242,9 @@ private:
 };
 
 class SrvCxn : public ZmNHeap<SrvCxn>,
-  public Zutcp::SrvCxn<Instance, SrvCxn> {
+  public Zutcp::SrvCxn<MxPlugin, SrvCxn> {
 friend inline ZuStringT<"Zutcp.Mx.SrvCxn"> ZmNHeapID(SrvCxn *);
-  using Base = Zutcp::SrvCxn<Instance, SrvCxn>;
+  using Base = Zutcp::SrvCxn<MxPlugin, SrvCxn>;
 public:
   using State = Base::Base;
   using Base::receivedRouted;
@@ -252,7 +252,7 @@ public:
   using State::discardUnadoptedRx;
   using ZmNHeap<SrvCxn>::operator new;
   using ZmNHeap<SrvCxn>::operator delete;
-  SrvCxn(Instance *owner, Listener *listener, ZiCxnInfo info)
+  SrvCxn(MxPlugin *owner, Listener *listener, ZiCxnInfo info)
   : Base{owner}, m_listener{listener}, m_info{ZuMv(info)} { }
   ~SrvCxn() {
     app()->txRun([owner = app(), listener = m_listener] {
@@ -393,7 +393,7 @@ namespace Zutcp {
 
 using Zutcp_::Listener;
 
-void Instance::addCxn(Cxn *cxn)
+void MxPlugin::addCxn(Cxn *cxn)
 {
   ZmAssert_(rxInvoked());
   ZmGuard guard(m_cxnsLock);
@@ -405,7 +405,7 @@ void Instance::addCxn(Cxn *cxn)
   ++m_cxnObjects;
 }
 
-void Instance::stopLinks(const Listener *listener, bool all)
+void MxPlugin::stopLinks(const Listener *listener, bool all)
 {
   for (auto cxn = m_cxns; cxn;) {
     auto next = cxn->ownerNext;
@@ -415,14 +415,14 @@ void Instance::stopLinks(const Listener *listener, bool all)
   }
 }
 
-bool Instance::tupleClaimed(const Listener *listener, const ClosedTupleKey &key) const
+bool MxPlugin::tupleClaimed(const Listener *listener, const ClosedTupleKey &key) const
 {
   for (auto cxn = m_cxns; cxn; cxn = cxn->ownerNext)
     if (cxn->listener() == listener && cxn->closedKeyRx() == key) return true;
   return false;
 }
 
-void Instance::stopCxns()
+void MxPlugin::stopCxns()
 {
   ZmAssert_(rxInvoked());
   m_endpointDrain = DrainActive;
@@ -431,7 +431,7 @@ void Instance::stopCxns()
   cxnsDrained();
 }
 
-void Instance::delCxn(Cxn *cxn)
+void MxPlugin::delCxn(Cxn *cxn)
 {
   ZmAssert_(rxInvoked());
   {
@@ -445,7 +445,7 @@ void Instance::delCxn(Cxn *cxn)
   ZmDEREF(cxn);
 }
 
-void Instance::delListener(Listener *listener)
+void MxPlugin::delListener(Listener *listener)
 {
   ZmAssert_(rxInvoked());
   if (listener->ownerNext) listener->ownerNext->ownerPrev = listener->ownerPrev;
@@ -456,7 +456,7 @@ void Instance::delListener(Listener *listener)
   cxnsDrained();
 }
 
-void Instance::cxnsDrained()
+void MxPlugin::cxnsDrained()
 {
   if (m_endpointDrain != DrainActive || m_cxns || m_listeners || m_cxnRetiring || m_cxnObjects)
     return;
@@ -465,7 +465,7 @@ void Instance::cxnsDrained()
   stopEndpoints();
 }
 
-void Instance::cxnRetired(ZiFailFn fail, bool transient)
+void MxPlugin::cxnRetired(ZiFailFn fail, bool transient)
 {
   ZmAssert_(rxInvoked());
   ZmAssert_(m_cxnObjects);
@@ -474,7 +474,7 @@ void Instance::cxnRetired(ZiFailFn fail, bool transient)
   cxnsDrained();
 }
 
-template <typename C> bool Instance::publish(C *cxn, ZiConnectFn &fn, ZiCxnInfo info)
+template <typename C> bool MxPlugin::publish(C *cxn, ZiConnectFn &fn, ZiCxnInfo info)
 {
   ZmAssert_(rxInvoked());
   if (m_endpointDrain || !fn) return false;
@@ -496,7 +496,7 @@ template <typename C> bool Instance::publish(C *cxn, ZiConnectFn &fn, ZiCxnInfo 
   return true;
 }
 
-template <typename C, typename L> void Instance::retire(C *cxn, bool peer, L &&done)
+template <typename C, typename L> void MxPlugin::retire(C *cxn, bool peer, L &&done)
 {
   ZmAssert_(rxInvoked());
   ++m_cxnRetiring;
@@ -537,7 +537,7 @@ template <typename C, typename L> void Instance::retire(C *cxn, bool peer, L &&d
   });
 }
 
-template <typename L> void Instance::visit(ZiConnection *mx, L &&fn)
+template <typename L> void MxPlugin::visit(ZiConnection *mx, L &&fn)
 {
   if (!mx->plugin()) return;
   switch (mx->info().type) {
@@ -550,15 +550,15 @@ template <typename L> void Instance::visit(ZiConnection *mx, L &&fn)
   }
 }
 
-Instance::Instance() :
+MxPlugin::MxPlugin() :
   m_endpoints{ZmHashParams{}.bits(5).loadFactor(1).cBits(3).init("Zutcp.Endpoints")},
   m_udpBindings{ZmHashParams{}.bits(4).init("Zutcp.UDP.Bindings")}
 {
 }
 
-Instance::~Instance() { if (m_xdp) final(); }
+MxPlugin::~MxPlugin() { if (m_xdp) final(); }
 
-void Instance::final()
+void MxPlugin::final()
 {
   ZmAssert_(state() == ZmEngineState::Stopped && !unsigned(m_wakeUsers));
   ZmAssert_(!m_txServicing && !m_txPending);
@@ -590,7 +590,7 @@ void Instance::final()
   mx(nullptr);
 }
 
-Zi::IOBufPool *Instance::ingress(unsigned count, unsigned align)
+Zi::IOBufPool *MxPlugin::ingress(unsigned count, unsigned align)
 {
   if (m_ingress) return m_ingress;
   if (mx()->rxBufSize() || count < m_ingressCount) count = m_ingressCount;
@@ -598,7 +598,7 @@ Zi::IOBufPool *Instance::ingress(unsigned count, unsigned align)
   return m_ingress;
 }
 
-Zi::IOBufPool *Instance::allocator(
+Zi::IOBufPool *MxPlugin::allocator(
   Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count)
 {
   ZmAssert_(m_xdp && mx()->state() == ZmEngineState::Stopped);
@@ -623,7 +623,7 @@ Zi::IOBufPool *Instance::allocator(
   return m_requestedTx;
 }
 
-Instance::AllocResult Instance::alloc(Zi::IOBufPool *rx, const Zi::IOBufPoolList &tx)
+MxPlugin::AllocResult MxPlugin::alloc(Zi::IOBufPool *rx, const Zi::IOBufPoolList &tx)
 {
   ZmAssert_(m_xdp && (!rx || rx == m_ingress.ptr()));
   if (!rx) rx = ingress(0, ZiIOBuf_DefltAlign);
@@ -634,7 +634,7 @@ Instance::AllocResult Instance::alloc(Zi::IOBufPool *rx, const Zi::IOBufPoolList
   return m_xdp->alloc(rx, tx);
 }
 
-TxAdmission Instance::txAdmission() const
+TxAdmission MxPlugin::txAdmission() const
 {
   ZmAssert_(state() == ZmEngineState::Stopped || mx()->invoked(mx()->txThread()));
   unsigned count = m_control ? m_control->count : 0;
@@ -643,7 +643,7 @@ TxAdmission Instance::txAdmission() const
     .outstanding = m_txPending, .controlCount = count};
 }
 
-ZuUnion<void, ZeException> Instance::init(
+void MxPlugin::init(
   ZiMultiplex *mx_, Zpkt::Env *xdpEnv, ZmRef<Zpkt::Nif> &&xdp, Params config)
 {
   ZmAssert_(mx_ && xdpEnv);
@@ -651,58 +651,58 @@ ZuUnion<void, ZeException> Instance::init(
   ZmAssert_(!xdp || (xdp->mx() == mx_ && xdp->ifindex() && !xdp->everStarted()));
   ZmAssert_(m_xdp || xdp);
   if (state() != ZmEngineState::Stopped || mx_->state() != ZmEngineState::Stopped)
-    return ZeEXCEPT(Error, "Zutcp", "finish multiplexer stop before initialization");
+    throw ZeEXCEPT(Error, "Zutcp", "finish multiplexer stop before initialization");
   if (config.heartBeat == ZuTime{0}) config.heartBeat = {};
   if (m_xdp) {
     if (xdpEnv == m_xdpEnv && mx_ == mx() &&
-	(!xdp || xdp.ptr() == m_xdp.ptr()) && config == m_params) return {};
-    return ZeEXCEPT(Error, "Zutcp", "conflicting repeated TCP initialization");
+	(!xdp || xdp.ptr() == m_xdp.ptr()) && config == m_params) return;
+    throw ZeEXCEPT(Error, "Zutcp", "conflicting repeated TCP initialization");
   }
   if (!config.rtoParams.valid())
-    return ZeEXCEPT(Error, "Zutcp", "invalid RTO bounds or granularity");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid RTO bounds or granularity");
   if (config.tlpPeerAckDelay < ZuTime{0})
-    return ZeEXCEPT(Error, "Zutcp", "negative peer ACK allowance");
+    throw ZeEXCEPT(Error, "Zutcp", "negative peer ACK allowance");
   if (*config.heartBeat && (config.heartBeat < ZuTime{0} || config.heartBeat.nsec() < 0 ||
       config.heartBeat.nsec() >= 1000000000))
-    return ZeEXCEPT(Error, "Zutcp", "invalid TCP heartbeat interval");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid TCP heartbeat interval");
   if (!config.maxPayload || config.maxPayload > BufSize)
-    return ZeEXCEPT(Error, "Zutcp", "invalid payload cap");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid payload cap");
   auto rx = mx_->rxThread(), tx = mx_->txThread(), nThreads = mx_->params().nThreads();
   if (!rx || !tx || rx == tx || rx > nThreads || tx > nThreads)
-    return ZeEXCEPT(Error, "Zutcp", "invalid multiplexer Rx/Tx owners");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid multiplexer Rx/Tx owners");
   if (!positiveTimeout(config.connectTimeout)) {
-    return ZeEXCEPT(Error, "Zutcp", "invalid connect timeout");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid connect timeout");
   }
   if (!positiveTimeout(config.closeDrainTimeout) || !positiveTimeout(config.finWaitTimeout)) {
-    return ZeEXCEPT(Error, "Zutcp", "invalid close timeout");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid close timeout");
   }
   if (!positiveTimeout(config.userTimeout) && config.userTimeout != ZuTime{0}) {
-    return ZeEXCEPT(Error, "Zutcp", "invalid user timeout");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid user timeout");
   }
   if (config.ackHoldTimeout < ZuTime{0} ||
       config.ackHoldTimeout >= ZuTime{0, 500000000}) {
-    return ZeEXCEPT(Error, "Zutcp", "invalid TCP ACK hold timeout");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid TCP ACK hold timeout");
   }
   if (!config.maxCxns || !config.maxPendingCxns || config.maxPendingCxns > config.maxCxns) {
-    return ZeEXCEPT(Error, "Zutcp", "invalid connection admission limits");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid connection admission limits");
   }
   if (!config.tfoCookieCacheSize) {
-    return ZeEXCEPT(Error, "Zutcp", "invalid Fast Open cookie cache size");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid Fast Open cookie cache size");
   }
   if (!config.closedTupleRingSize) {
-    return ZeEXCEPT(Error, "Zutcp", "invalid closed tuple ring size");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid closed tuple ring size");
   }
   if (!config.rxRetainFramesPerCxn)
-    return ZeEXCEPT(Error, "Zutcp", "invalid per-connection Rx retention limit");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid per-connection Rx retention limit");
   if (!config.packetCount)
-    return ZeEXCEPT(Error, "Zutcp", "empty native packet pool");
+    throw ZeEXCEPT(Error, "Zutcp", "empty native packet pool");
   uint64_t capacity = uint64_t(config.packetCount) + config.controlBufCount;
   if (!config.controlBufCount || !config.txControlCredits ||
       config.txControlCredits >= capacity || capacity > UINT_MAX)
-    return ZeEXCEPT(Error, "Zutcp", "invalid control reserve");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid control reserve");
   auto mtu = xdp->mtu(), queues = xdp->rxQueues();
   if (mtu < 40 + 60 + 1 || mtu > UINT_MAX - 14 || !queues)
-    return ZeEXCEPT(Error, "Zutcp", "invalid XDP link geometry");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid XDP link geometry");
   // Each queue needs enough ingress backing to let a connection return its
   // oldest retained frame while continuing to receive.
   uint64_t ingressCount = mx_->rxBufSize();
@@ -711,16 +711,16 @@ ZuUnion<void, ZeException> Instance::init(
     if (ingressCount < ZiIOBuf_DefltCount) ingressCount = ZiIOBuf_DefltCount;
   }
   if (ingressCount > UINT_MAX || ingressCount < queues)
-    return ZeEXCEPT(Error, "Zutcp", "invalid ingress pool count");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid ingress pool count");
   enum { HeadRoom = 14 + 40 + 60 };
   auto packets = xdp->bufPool(Zi::IOBufType::TxTCP, config.packetCount, mtu + 14, HeadRoom);
   auto controls = xdp->bufPool(Zi::IOBufType::TxTCP, config.controlBufCount, mtu + 14, HeadRoom);
   if (!packets || !controls)
-    return ZeEXCEPT(Error, "Zutcp", "cannot create TCP data and control pools");
+    throw ZeEXCEPT(Error, "Zutcp", "cannot create TCP data and control pools");
   if (!m_isn.init(xdp->ifindex()) || !m_tfoKey.init()) {
     m_isn.~ISN(); new (&m_isn) ISN;
     m_tfoKey.~TFOKey(); new (&m_tfoKey) TFOKey;
-    return ZeEXCEPT(Error, "Zutcp", "secure TCP sequence or cookie initialization failed");
+    throw ZeEXCEPT(Error, "Zutcp", "secure TCP sequence or cookie initialization failed");
   }
   m_closed.resize(config.closedTupleRingSize);
   m_tfoCookies.resize(config.tfoCookieCacheSize);
@@ -739,10 +739,10 @@ ZuUnion<void, ZeException> Instance::init(
   mx(mx_);
   m_xdpEnv = xdpEnv;
   m_xdp = ZuMv(xdp);
-  return {};
+  return;
 }
 
-CxnAdmission Instance::cxnAdmission() const
+CxnAdmission MxPlugin::cxnAdmission() const
 {
   ZmAssert_(state() == ZmEngineState::Stopped || rxInvoked());
   return {.refused = m_cxnRefused, .total = m_cxnTotal, .pending = m_cxnPending,
@@ -750,7 +750,7 @@ CxnAdmission Instance::cxnAdmission() const
     .maxPendingCxns = m_params.maxPendingCxns};
 }
 
-bool Instance::reserveCxn()
+bool MxPlugin::reserveCxn()
 {
   ZmAssert_(state() == ZmEngineState::Stopped || rxInvoked());
   if (m_cxnTotal >= m_params.maxCxns || m_cxnPending >= m_params.maxPendingCxns) {
@@ -762,7 +762,7 @@ bool Instance::reserveCxn()
   return true;
 }
 
-void Instance::cancelCxn()
+void MxPlugin::cancelCxn()
 {
   ZmAssert_(state() == ZmEngineState::Stopped || rxInvoked());
   ZmAssert_(m_cxnTotal && m_cxnPending);
@@ -770,14 +770,14 @@ void Instance::cancelCxn()
   --m_cxnPending;
 }
 
-void Instance::admitCxn(Cxn &cxn)
+void MxPlugin::admitCxn(Cxn &cxn)
 {
   ZmAssert_(state() == ZmEngineState::Stopped || rxInvoked());
   ZmAssert_(!cxn.admission && m_cxnTotal && m_cxnPending);
   cxn.admission = Cxn::Admitted | Cxn::Pending;
 }
 
-void Instance::establishedCxn(Cxn &cxn)
+void MxPlugin::establishedCxn(Cxn &cxn)
 {
   ZmAssert_(state() == ZmEngineState::Stopped || rxInvoked());
   if (!(cxn.admission & Cxn::Pending)) return;
@@ -786,7 +786,7 @@ void Instance::establishedCxn(Cxn &cxn)
   --m_cxnPending;
 }
 
-void Instance::closingCxn(Cxn &cxn)
+void MxPlugin::closingCxn(Cxn &cxn)
 {
   ZmAssert_(state() == ZmEngineState::Stopped || rxInvoked());
   if (!(cxn.admission & Cxn::Admitted) || (cxn.admission & Cxn::Closing)) return;
@@ -794,7 +794,7 @@ void Instance::closingCxn(Cxn &cxn)
   ++m_cxnClosing;
 }
 
-void Instance::releaseCxn(Cxn &cxn)
+void MxPlugin::releaseCxn(Cxn &cxn)
 {
   ZmAssert_(state() == ZmEngineState::Stopped || rxInvoked());
   auto state = cxn.admission;
@@ -807,19 +807,19 @@ void Instance::releaseCxn(Cxn &cxn)
   if (state & Cxn::Closing) --m_cxnClosing;
 }
 
-bool Instance::chooseISN(const ZiSockAddr &local, const ZiSockAddr &remote, uint32_t &isn) const
+bool MxPlugin::chooseISN(const ZiSockAddr &local, const ZiSockAddr &remote, uint32_t &isn) const
 {
   ZmAssert_(state() == ZmEngineState::Stopped || rxInvoked());
   return m_isn.generate(local, remote, isn);
 }
 
-bool Instance::tfoCookie(const ZiIP &client, const ZiSockAddr &server, TFOCookie &cookie) const
+bool MxPlugin::tfoCookie(const ZiIP &client, const ZiSockAddr &server, TFOCookie &cookie) const
 {
   ZmAssert_(state() == ZmEngineState::Stopped || rxInvoked());
   return m_tfoCookies.find({client, server}, cookie);
 }
 
-void Instance::saveTFOCookie(
+void MxPlugin::saveTFOCookie(
   const ZiIP &client, const ZiSockAddr &server, const TFOCookie &cookie)
 {
   ZmAssert_(state() == ZmEngineState::Stopped || rxInvoked());
@@ -827,49 +827,50 @@ void Instance::saveTFOCookie(
   else m_tfoCookies.erase({client, server});
 }
 
-bool Instance::issueTFO(const ZiSockAddr &local, const ZiIP &client, TFOCookie &cookie) const
+bool MxPlugin::issueTFO(const ZiSockAddr &local, const ZiIP &client, TFOCookie &cookie) const
 {
   ZmAssert_(state() == ZmEngineState::Stopped || rxInvoked());
   return m_tfoKey.issue({client, local}, cookie);
 }
 
-bool Instance::validTFO(const ZiSockAddr &local, const ZiIP &client, const TFOCookie &cookie) const
+bool MxPlugin::validTFO(
+  const ZiSockAddr &local, const ZiIP &client, const TFOCookie &cookie) const
 {
   ZmAssert_(state() == ZmEngineState::Stopped || rxInvoked());
   return m_tfoKey.validate({client, local}, cookie.span());
 }
 
-bool Instance::tcpTimestamp(ZuTime now, uint32_t &out)
+bool MxPlugin::tcpTimestamp(ZuTime now, uint32_t &out)
 {
   ZmAssert_(state() == ZmEngineState::Stopped || txInvoked());
   return m_tcpClock.sample(now, out);
 }
 
-ClosedTuple Instance::rememberClosed(ClosedTuple record)
+ClosedTuple MxPlugin::rememberClosed(ClosedTuple record)
 {
   ZmAssert_(state() == ZmEngineState::Stopped || rxInvoked());
   return m_closed.remember(ZuMv(record));
 }
 
-bool Instance::closedTuple(const ClosedTupleKey &key, ClosedTuple &record) const
+bool MxPlugin::closedTuple(const ClosedTupleKey &key, ClosedTuple &record) const
 {
   ZmAssert_(state() == ZmEngineState::Stopped || mx()->invoked(mx()->rxThread()));
   return m_closed.find(key, record);
 }
 
-bool Instance::updateClosed(const ClosedTuple &record)
+bool MxPlugin::updateClosed(const ClosedTuple &record)
 {
   ZmAssert_(state() == ZmEngineState::Stopped || rxInvoked());
   return m_closed.update(record);
 }
 
-ClosedTupleStats Instance::closedTupleStats() const
+ClosedTupleStats MxPlugin::closedTupleStats() const
 {
   ZmAssert_(state() == ZmEngineState::Stopped || mx()->invoked(mx()->rxThread()));
   return m_closed.stats();
 }
 
-bool Instance::ready() const { return state() == ZmEngineState::Running; }
+bool MxPlugin::ready() const { return state() == ZmEngineState::Running; }
 
 CxnBindError::T bindCxnTuple(
   EndpointIndex::Node &endpoint, const ZiSockAddr &remote, unsigned &nextPort,
@@ -899,7 +900,7 @@ CxnBindError::T bindCxnTuple(
   return CxnBindError::None;
 }
 
-ZuUnion<void, ZeException> Instance::bind(
+ZuUnion<void, ZeException> MxPlugin::bind(
   EndpointIndex::Node &endpoint, const ZiSockAddr &remote)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
@@ -921,7 +922,7 @@ ZuUnion<void, ZeException> Instance::bind(
   }
 }
 
-bool Instance::unbind(EndpointIndex::Node &endpoint)
+bool MxPlugin::unbind(EndpointIndex::Node &endpoint)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (m_endpoints.findPtr(endpoint.bindAddr) != &endpoint) return false;
@@ -929,18 +930,18 @@ bool Instance::unbind(EndpointIndex::Node &endpoint)
   return true;
 }
 
-ZuUnion<IPPath, ZeException> Instance::resolve(ZiIP remote, ZiIP local)
+ZuUnion<IPPath, ZeException> MxPlugin::resolve(ZiIP remote, ZiIP local)
 {
   ZmAssert_(rxInvoked());
   if (!ready()) return ZeEXCEPT(Error, "Zutcp", "packet service unavailable during route setup");
   return resolveIPPath(m_xdp->ifindex(), IPPath{local, remote, {}, {}, m_mtu});
 }
 
-Zi::IOBufAllocator *Instance::dataRxAllocator() const { return inlineAllocator(); }
+Zi::IOBufAllocator *MxPlugin::dataRxAllocator() const { return inlineAllocator(); }
 
-void Instance::reportError(ZeException error) { ZiLogEvent(ZuMv(error)); }
+void MxPlugin::reportError(ZeException error) { ZiLogEvent(ZuMv(error)); }
 
-void Instance::start()
+void MxPlugin::start()
 {
   Engine::start([this](bool ok) {
     auto error = m_error;
@@ -949,7 +950,7 @@ void Instance::start()
   });
 }
 
-void Instance::start_()
+void MxPlugin::start_()
 {
   ZmAssert_(rxInvoked());
   m_endpointDrain = DrainIdle;
@@ -979,7 +980,7 @@ void Instance::start_()
   });
 }
 
-void Instance::stop()
+void MxPlugin::stop()
 {
   Engine::stop([this](bool ok) {
     auto error = m_error;
@@ -988,13 +989,13 @@ void Instance::stop()
   });
 }
 
-void Instance::stop_()
+void MxPlugin::stop_()
 {
   ZmAssert_(rxInvoked());
   stopCxns();
 }
 
-void Instance::stopEndpoints()
+void MxPlugin::stopEndpoints()
 {
   // Existing wake calls finish before XDP retires its wait descriptor.
   m_ioState = Closing;
@@ -1003,7 +1004,7 @@ void Instance::stopEndpoints()
   mx()->txRun([this] { stopTx(); });
 }
 
-void Instance::stopTx()
+void MxPlugin::stopTx()
 {
   ZmAssert_(txInvoked());
   if (m_senderStopping) return;
@@ -1039,7 +1040,7 @@ void Instance::stopTx()
   });
 }
 
-void Instance::wake()
+void MxPlugin::wake()
 {
   ++m_wakeUsers;
   if (m_ioState == Up) m_xdp->wake();
@@ -1051,7 +1052,7 @@ void Instance::wake()
     });
 }
 
-void Instance::rx()
+void MxPlugin::rx()
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (!ready()) return;
@@ -1059,7 +1060,7 @@ void Instance::rx()
   m_xdp->rx();
 }
 
-void Instance::received(uint8_t *p, unsigned n)
+void MxPlugin::received(uint8_t *p, unsigned n)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   IPView ip;
@@ -1112,7 +1113,7 @@ void Instance::received(uint8_t *p, unsigned n)
   rxProgress();
 }
 
-void Instance::rxProgress()
+void MxPlugin::rxProgress()
 {
   if (++m_rxPackets == mx()->rxQuantum()) {
     m_xdp->wake();
@@ -1120,7 +1121,7 @@ void Instance::rxProgress()
   }
 }
 
-bool Instance::recoverClosed(const Datagram &d)
+bool MxPlugin::recoverClosed(const Datagram &d)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (!d.buf || d.buf->skip < 14) return false;
@@ -1129,7 +1130,7 @@ bool Instance::recoverClosed(const Datagram &d)
   return closedPacket(d.buf->data_(), ip, tcp);
 }
 
-void Instance::resetUnmatched(const Datagram &d)
+void MxPlugin::resetUnmatched(const Datagram &d)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (!d.buf || d.buf->skip < 14 || (d.tcp.flags & 0x04)) return;
@@ -1139,7 +1140,7 @@ void Instance::resetUnmatched(const Datagram &d)
   resetReply(d.tcp, d.buf->length, path);
 }
 
-void Instance::resetReply(const TCPHeader &incoming, unsigned payload, IPPath path)
+void MxPlugin::resetReply(const TCPHeader &incoming, unsigned payload, IPPath path)
 {
   TCPHeader tcp{.srcPort = incoming.dstPort, .dstPort = incoming.srcPort, .flags = 0x04};
   if (incoming.flags & 0x10) tcp.seq = incoming.ack;
@@ -1151,7 +1152,7 @@ void Instance::resetReply(const TCPHeader &incoming, unsigned payload, IPPath pa
   mx()->txRun([this, tcp, path] { replyControl(tcp, path); });
 }
 
-void Instance::replyControl(TCPHeader tcp, IPPath path)
+void MxPlugin::replyControl(TCPHeader tcp, IPPath path)
 {
   auto packet = allocPacket(this, path.local.type(), true);
   if (!packet) return;
@@ -1163,7 +1164,7 @@ void Instance::replyControl(TCPHeader tcp, IPPath path)
   sendPacket(packet, nullptr, &layout);
 }
 
-bool Instance::closedPacket(const uint8_t *frame, const IPView &ip, const TCPView &tcp)
+bool MxPlugin::closedPacket(const uint8_t *frame, const IPView &ip, const TCPView &tcp)
 {
   ClosedTuple record;
   ClosedTupleKey key{ZiSockAddr{ip.local, tcp.header.dstPort},
@@ -1202,7 +1203,7 @@ bool Instance::closedPacket(const uint8_t *frame, const IPView &ip, const TCPVie
   return true;
 }
 
-void Instance::replyClosed(ClosedTuple record, IPPath path)
+void MxPlugin::replyClosed(ClosedTuple record, IPPath path)
 {
   auto packet = allocPacket(this, path.local.type(), true);
   if (!packet) return;
@@ -1231,7 +1232,7 @@ void Instance::replyClosed(ClosedTuple record, IPPath path)
     });
 }
 
-ZmRef<PacketBuf> Instance::allocPacket(void *owner, ZiIPType::T family, bool control)
+ZmRef<PacketBuf> MxPlugin::allocPacket(void *owner, ZiIPType::T family, bool control)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   auto head = tcpHead(family);
@@ -1243,7 +1244,7 @@ ZmRef<PacketBuf> Instance::allocPacket(void *owner, ZiIPType::T family, bool con
   return buf;
 }
 
-bool Instance::sendPacket(
+bool MxPlugin::sendPacket(
   const ZmRef<Zi::IOBuf> &buf, PacketLease *lease, const Zutcp::TCPLayout *layout)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
@@ -1267,7 +1268,7 @@ bool Instance::sendPacket(
   return true;
 }
 
-bool Instance::submitPacket(
+bool MxPlugin::submitPacket(
   uint8_t *packet, unsigned length, bool control, const Zutcp::TCPLayout *layout)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
@@ -1293,7 +1294,7 @@ bool Instance::submitPacket(
   return false;
 }
 
-void Instance::submittedPacket()
+void MxPlugin::submittedPacket()
 {
   // Backend publication already notified its sender. Keep the final CQ live
   // even when the producer becomes idle after this accepted packet.
@@ -1302,7 +1303,7 @@ void Instance::submittedPacket()
   if (!(m_txPending % Batch)) reconcileTx();
 }
 
-void Instance::reconcileTx()
+void MxPlugin::reconcileTx()
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (!m_xdp || !m_xdp->ready()) return;
@@ -1316,7 +1317,7 @@ void Instance::reconcileTx()
   if (!m_txPending) txService(false);
 }
 
-void Instance::waitTx(Cxn *cxn)
+void MxPlugin::waitTx(Cxn *cxn)
 {
   if (!ready() || !m_txPending || cxn->txWaitPrev) return;
   ZmAssert_(txInvoked());
@@ -1327,7 +1328,7 @@ void Instance::waitTx(Cxn *cxn)
   ++m_txWaitCount;
 }
 
-void Instance::cancelTxWait(Cxn *cxn)
+void MxPlugin::cancelTxWait(Cxn *cxn)
 {
   if (!cxn->txWaitPrev) return;
   ZmAssert_(txInvoked());
@@ -1339,7 +1340,7 @@ void Instance::cancelTxWait(Cxn *cxn)
   --m_txWaitCount;
 }
 
-void Instance::scheduleTxResume()
+void MxPlugin::scheduleTxResume()
 {
   if (m_txResumeQueued || !m_txResumeBudget) return;
   m_txResumeQueued = true;
@@ -1347,7 +1348,7 @@ void Instance::scheduleTxResume()
   mx()->txRun([this] { resumeTx(); });
 }
 
-void Instance::resumeTx()
+void MxPlugin::resumeTx()
 {
   ZmAssert_(txInvoked());
   m_txResumeQueued = false;
@@ -1363,17 +1364,17 @@ void Instance::resumeTx()
   scheduleTxResume();
 }
 
-void Instance::txService(bool active)
+void MxPlugin::txService(bool active)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (m_txServicing == active) return;
   m_txServicing = active;
   mx()->serviceFn(mx()->txThread(), active ?
-    ZmScheduler::ServiceFn{this, ZmFnPtr<&Instance::pollTx>{}} :
+    ZmScheduler::ServiceFn{this, ZmFnPtr<&MxPlugin::pollTx>{}} :
     ZmScheduler::ServiceFn{});
 }
 
-void Instance::pollTx()
+void MxPlugin::pollTx()
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (!ready() && !m_txDraining) { txService(false); return; }
@@ -1386,7 +1387,7 @@ void Instance::pollTx()
   if (!m_txPending || !m_xdp->ready()) txService(false);
 }
 
-void Instance::listen(
+void MxPlugin::listen(
   ZiListenFn listening, ZiFailFn fail, ZiConnectFn accept, ZiIP local, uint16_t port,
   unsigned count, Zi::IOBufAllocator *allocator, ZiCxnOptions options)
 {
@@ -1408,14 +1409,14 @@ void Instance::listen(
   listener->begin();
 }
 
-void Instance::stopListening(ZiIP local, uint16_t port)
+void MxPlugin::stopListening(ZiIP local, uint16_t port)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   for (auto listener = m_listeners; listener; listener = listener->ownerNext)
     if (listener->local().ip() == local && listener->local().port() == port) listener->end();
 }
 
-void Instance::connect(
+void MxPlugin::connect(
   ZiConnectFn connected, ZiFailFn fail, ZiIPType::T family, ZiIP local, uint16_t localPort,
   ZiIP remote, uint16_t remotePort, Zi::IOBufAllocator *allocator, ZiCxnOptions options)
 {
@@ -1436,17 +1437,17 @@ void Instance::connect(
   cxn->connectReserved(remote, remotePort);
 }
 
-bool Instance::publishUDP(UdpCxn *endpoint, ZiConnectFn &fn, ZiCxnInfo info)
+bool MxPlugin::publishUDP(UdpCxn *endpoint, ZiConnectFn &fn, ZiCxnInfo info)
 {
   return publish(endpoint, fn, ZuMv(info));
 }
 
-void Instance::retireUDP(UdpCxn *endpoint, bool peer)
+void MxPlugin::retireUDP(UdpCxn *endpoint, bool peer)
 {
   retire(endpoint, peer, [this, endpoint] { delCxn(endpoint); });
 }
 
-void Instance::recv(ZiConnection *cxn)
+void MxPlugin::recv(ZiConnection *cxn)
 {
   ZmAssert_(mx()->invoked(mx()->rxThread()));
   if (!cxn->plugin()) { cxn->rxContext().complete(); return; }
@@ -1455,14 +1456,14 @@ void Instance::recv(ZiConnection *cxn)
     if (!native->disconnecting()) native->recvMx();
   });
 }
-void Instance::send(ZiConnection *cxn)
+void MxPlugin::send(ZiConnection *cxn)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (!cxn->plugin()) { cxn->txContext().complete(); return; }
   if (cxn->info().type == ZiCxnType::UDP) { sendUDP(cxn); return; }
   visit(cxn, [](auto native) { native->sendMx(); });
 }
-void Instance::disconnect(ZiConnection *cxn, bool peer)
+void MxPlugin::disconnect(ZiConnection *cxn, bool peer)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (cxn->info().type == ZiCxnType::UDP) { closeUDP(cxn, peer); return; }
@@ -1478,7 +1479,7 @@ void Instance::disconnect(ZiConnection *cxn, bool peer)
   });
 }
 
-void Instance::close(ZiConnection *cxn, bool peer)
+void MxPlugin::close(ZiConnection *cxn, bool peer)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (cxn->info().type == ZiCxnType::UDP) { closeUDP(cxn, peer); return; }
@@ -1493,9 +1494,9 @@ void Instance::close(ZiConnection *cxn, bool peer)
     });
   });
 }
-void Instance::telemetry(Ztc::MxTelemetry &data) const { mx()->telemetry(data); }
+void MxPlugin::telemetry(Ztc::MxTelemetry &data) const { mx()->telemetry(data); }
 
-unsigned Instance::allCxns(AllCxnsFn fn) const
+unsigned MxPlugin::allCxns(AllCxnsFn fn) const
 {
   ZtArray<ZmRef<ZiConnection>, ZtArrayHeapID<"Zutcp.Mx.CxnRefs">> refs;
   {
@@ -1509,12 +1510,12 @@ unsigned Instance::allCxns(AllCxnsFn fn) const
   return refs.length();
 }
 
-unsigned Instance::allQueues(Ztc::QueueMgr::AllFn fn) const
+unsigned MxPlugin::allQueues(Ztc::QueueMgr::AllFn fn) const
 {
   return m_xdp ? m_xdp->allQueues(ZuMv(fn)) : 0;
 }
 
-void Instance::watch(AddCxnFn add, DelCxnFn del)
+void MxPlugin::watch(AddCxnFn add, DelCxnFn del)
 {
   ZmGuard guard(m_watchLock);
   ZmAssert_(!m_addCxn && !m_delCxn);
@@ -1522,7 +1523,7 @@ void Instance::watch(AddCxnFn add, DelCxnFn del)
   m_delCxn = ZuMv(del);
 }
 
-void Instance::unwatch()
+void MxPlugin::unwatch()
 {
   ZmGuard guard(m_watchLock);
   m_addCxn = {};

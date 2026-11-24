@@ -11,7 +11,7 @@
 
 namespace Zutcp {
 
-class Instance::UdpCxn :
+class MxPlugin::UdpCxn :
   public ZmNHeap<UdpCxn>, public Cxn, public UdpBindings::Node {
 friend inline ZuStringT<"Zutcp.UDP.Cxn"> ZmNHeapID(UdpCxn *);
 
@@ -20,7 +20,7 @@ public:
   using ZmNHeap<UdpCxn>::operator delete;
   using State = UdpCxn;
 
-  UdpCxn(Instance *, const ZiCxnInfo &, IPPath);
+  UdpCxn(MxPlugin *, const ZiCxnInfo &, IPPath);
   ~UdpCxn() override;
 
   const ZiCxnInfo &info() const { return m_info; }
@@ -44,7 +44,7 @@ private:
   int submit(const ZiTxContext &, const ZiSockAddr &);
   void sent(ZiConnection *, int);
 
-  Instance	*m_owner;
+  MxPlugin	*m_owner;
   ZiCxnInfo	m_info;
   int		m_membershipFD = -1; // multicast control only
   IPPath	m_path; // Tx owner after setup

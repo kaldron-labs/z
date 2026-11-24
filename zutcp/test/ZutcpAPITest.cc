@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <iostream>
 #include <unistd.h>
 #include <net/if.h>
 #include <stdlib.h>
@@ -22,7 +23,7 @@
 #include <zlib/Zutcp.hh>
 
 #include "ZutcpTestAlloc.hh"
-#include "ZutcpTestInstance.hh"
+#include "ZutcpTestMxPlugin.hh"
 
 using namespace ZuTestUtil;
 
@@ -32,7 +33,7 @@ using namespace ZuTestUtil;
 using TxBufAlloc = Zutcp::TxBufAlloc<>;
 
 struct TestLink;
-struct HubApp : public ZmNHeap<HubApp>, public ZutcpTest::Instance {
+struct HubApp : public ZmNHeap<HubApp>, public ZutcpTest::MxPlugin {
 friend inline ZuStringT<"Zutcp.APITest.HubApp"> ZmNHeapID(HubApp *);
   using ZmNHeap<HubApp>::operator new;
   using ZmNHeap<HubApp>::operator delete;
@@ -45,7 +46,7 @@ friend inline ZuStringT<"Zutcp.APITest.HubApp"> ZmNHeapID(HubApp *);
   unsigned shard = Rx;
   bool deferMode = false;
 
-  explicit HubApp(ZiMultiplex *mx) : ZutcpTest::Instance{mx} { }
+  explicit HubApp(ZiMultiplex *mx) : ZutcpTest::MxPlugin{mx} { }
 
   bool rxInvoked() const { return !deferMode || shard == Rx; }
   bool txInvoked() const { return !deferMode || shard == Tx; }
@@ -184,10 +185,16 @@ void testParams()
   auto zero = ZutcpTest::Params(nullptr).heartBeat(ZuTime{0});
   ZuCHECK(zero.heartBeat() == ZuTime{0}, "zero heartbeat must be disabled");
   ZiMultiplex policyMx{HubFixture::mxParams()};
-  ZutcpTest::Instance policy{&policyMx};
-  Zutcp::InstanceParams invalid;
+  ZutcpTest::MxPlugin policy{&policyMx};
+  Zutcp::MxParams invalid;
   invalid.heartBeat = ZuTime{-1};
-  ZuCHECK(ZutcpTest::Instance::apply(policy, invalid).is<ZeException>(),
+  bool rejected = false;
+  try { ZutcpTest::MxPlugin::apply(policy, invalid); }
+  catch (ZeException &e) {
+    std::cerr << e << '\n' << std::flush;
+    rejected = true;
+  }
+  ZuCHECK(rejected,
     "negative heartbeat was accepted");
   }
 
@@ -229,12 +236,12 @@ void testDataReadiness()
 void testPluginShape()
 {
   ZuTestScope(testPluginShape);
-  ZuCHECK((ZuIsBase<Zutcp::Instance, ZiMxPlugin>{}),
-    "Instance implements the existing multiplexer plugin interface");
-  ZuCHECK((ZuIsBase<Zutcp::Instance, Ztc::Mx>{}),
-    "Instance exposes multiplexer telemetry through ZiMxPlugin");
-  ZuCHECK((!ZuIsBase<Zutcp::Instance, Ztc::Hub>{}),
-    "Instance has no separate hub telemetry or lifecycle owner");
+  ZuCHECK((ZuIsBase<Zutcp::MxPlugin, ZiMxPlugin>{}),
+    "MxPlugin implements the existing multiplexer plugin interface");
+  ZuCHECK((ZuIsBase<Zutcp::MxPlugin, Ztc::Mx>{}),
+    "MxPlugin exposes multiplexer telemetry through ZiMxPlugin");
+  ZuCHECK((!ZuIsBase<Zutcp::MxPlugin, Ztc::Hub>{}),
+    "MxPlugin has no separate hub telemetry or lifecycle owner");
 }
 
 void testLinkStateOwnership()
@@ -412,9 +419,15 @@ void testInitValidate()
       "transport owners must be the multiplexer I/O owners");
     ZuCHECK(ok && app.maxCxns() == 7 && app.maxPendingCxns() == 3,
       "initialized application must retain its connection limits");
-    auto invalid = ZutcpTest::Instance::parameters(app);
+    auto invalid = ZutcpTest::MxPlugin::parameters(app);
     invalid.maxCxns = 0;
-    ZuCHECK(ZutcpTest::Instance::apply(app, ZuMv(invalid)).is<ZeException>() &&
+    bool rejected = false;
+    try { ZutcpTest::MxPlugin::apply(app, ZuMv(invalid)); }
+    catch (ZeException &e) {
+      ZiLogEvent(ZuMv(e));
+      rejected = true;
+    }
+    ZuCHECK(rejected &&
         app.maxCxns() == 7 && app.maxPendingCxns() == 3,
       "invalid stopped initialization preserves the last accepted policy");
   }
@@ -489,7 +502,7 @@ void testCongestionControl()
 {
   ZuTestScope(testCongestionControl);
   ZiMultiplex mx{HubFixture::mxParams()};
-  ZuCHECK(ZutcpTest::Params{}.congestionControl() && Zutcp::InstanceParams{}.congestionControl,
+  ZuCHECK(ZutcpTest::Params{}.congestionControl() && Zutcp::MxParams{}.congestionControl,
     "congestion control must remain enabled by default for both configuration paths");
   for (bool enabled : {true, false}) for (bool ecn : {true, false}) {
     ZmRef<HubApp> app = new HubApp{&mx};
@@ -497,7 +510,7 @@ void testCongestionControl()
     bool ok = app->init(params);
     ZuCHECK(ok && params.congestionControl() == enabled && params.ecn() == ecn &&
 	app->congestionControl() == enabled && app->ecn() == (ecn && enabled),
-      "Instance must retain congestion control and suppress ECN when it is disabled");
+      "MxPlugin must retain congestion control and suppress ECN when it is disabled");
     params.congestionControl(!enabled).ecn(!ecn);
     ZuCHECK(!app->init(params) && app->congestionControl() == enabled &&
         app->ecn() == (ecn && enabled),
@@ -528,8 +541,8 @@ void testHashSizing(bool tuned)
   {
     Zutcp::EndpointIndex::Node endpointNodes[128];
     ZiMultiplex mx{ZiMxParams{}.rxBufSize(8)};
-    // The supplied-pool fixture embeds the real Instance endpoint index.
-    ZmRef<ZutcpTest::Instance> stack = new ZutcpTest::Instance{&mx};
+    // The supplied-pool fixture embeds the real MxPlugin endpoint index.
+    ZmRef<ZutcpTest::MxPlugin> stack = new ZutcpTest::MxPlugin{&mx};
     Zutcp_::TupleRouter<HashMember> router;
     ZmRef<Zutcp_::ServerLinkTable> membership = new Zutcp_::ServerLinkTable{
       ZmHashParams{}.bits(5).loadFactor(1).cBits(3).init("Zutcp.ServerLinks")};

@@ -28,7 +28,7 @@
 #include <zlib/ZiLog.hh>
 
 #include "ZiTestResidue.hh"
-#include "../test/ZutcpTestInstance.hh"
+#include "../test/ZutcpTestMxPlugin.hh"
 
 using namespace ZuTestUtil;
 
@@ -52,8 +52,8 @@ public:
   bool allowEarlyStream(Cxn *, uint64_t, bool);
   void earlyDataAccepted(Cxn *);
   void earlyDataRejected(Cxn *);
-  App(Zutcp::Instance *stack, ZuCSpan request) : m_stack{stack} { m_request << request; }
-  Zutcp::Instance *stack() const { return m_stack; }
+  App(Zutcp::MxPlugin *stack, ZuCSpan request) : m_stack{stack} { m_request << request; }
+  Zutcp::MxPlugin *stack() const { return m_stack; }
   void final() { }
   ZuCSpan request() const { return m_request; }
   void done() { m_established.post(); m_done.post(); }
@@ -69,7 +69,7 @@ public:
   bool error() const { return m_error.load_(); }
 
 private:
-  Zutcp::Instance *m_stack;
+  Zutcp::MxPlugin *m_stack;
   bool			m_tfo = getenv("ZUTCP_TEST_TFO") != nullptr;
   bool			m_allowEarly = getenv("ZUTCP_TEST_TFO_SEND_DENIED") == nullptr;
   ZmSemaphore		m_done, m_established;
@@ -78,9 +78,9 @@ private:
 };
 
 class App::Cxn : public ZmNHeap<App::Cxn>,
-  public Zutcp::CliCxn<Zutcp::Instance, App::Cxn> {
+  public Zutcp::CliCxn<Zutcp::MxPlugin, App::Cxn> {
 friend inline ZuStringT<"Zutcp.Example.CliCxn"> ZmNHeapID(Cxn *);
-  using Base = Zutcp::CliCxn<Zutcp::Instance, App::Cxn>;
+  using Base = Zutcp::CliCxn<Zutcp::MxPlugin, App::Cxn>;
 public:
   using ZmNHeap<Cxn>::operator new;
   using ZmNHeap<Cxn>::operator delete;
@@ -230,7 +230,7 @@ static int run(int argc, char **argv)
 	  .thread(1, [](auto &t) { t.isolated(1); })
 	  .thread(2, [](auto &t) { t.isolated(1); })
 	  .thread(4, [](auto &t) { t.isolated(true); }); })
-	.rxThread(1).txThread(2), ZmRef{new Zutcp::Instance});
+	.rxThread(1).txThread(2), ZmRef{new Zutcp::MxPlugin});
   auto params = ZutcpTest::Params(&mx);
   if (const char *profile = getenv("ZUTCP_TEST_CLIENT_OPTIONS")) {
     unsigned options = ZuBox<unsigned>(profile);
@@ -240,7 +240,7 @@ static int run(int argc, char **argv)
   }
   if (const char *delay = getenv("ZUTCP_TEST_TLP_DELAY_US"))
     params.tlpPeerAckDelay(Zutcp::timeUS(ZuBox<unsigned>(delay)));
-  auto instance = ZutcpTest::initInstance(env, &mx, interface, 4, params.config());
+  auto instance = ZutcpTest::initMxPlugin(env, &mx, interface, 4, params.config());
   auto stack = instance.ptr();
   ZmRef<App> appRef = new App{stack, request};
   auto &app = *appRef;
@@ -312,7 +312,7 @@ public:
   uint32_t maxEarlyData(AppCxn *) { return m_tfo && m_service ? 400 : 0; }
   bool allowEarlyStream(AppCxn *, uint64_t, bool) { return m_tfo && m_allowEarly; }
   void listening() { std::cerr << "listening\n" << std::flush; }
-  App(Zutcp::Instance *stack, ZiIP ip, unsigned port, unsigned target, bool waitEOF) :
+  App(Zutcp::MxPlugin *stack, ZiIP ip, unsigned port, unsigned target, bool waitEOF) :
     Base{stack, ip, uint16_t(port)}, m_localIP{ip}, m_localPort{port},
     m_target{target}, m_waitEOF{waitEOF} {
     if (m_tfo)
@@ -350,9 +350,9 @@ private:
   alignas(Zm::CacheLineSize) unsigned m_nextCxn = 0; // Rx
 };
 
-class AppCxn : public ZmNHeap<AppCxn>, public Zutcp::SrvCxn<Zutcp::Instance, AppCxn> {
+class AppCxn : public ZmNHeap<AppCxn>, public Zutcp::SrvCxn<Zutcp::MxPlugin, AppCxn> {
 friend inline ZuStringT<"Zutcp.Example.SrvCxn"> ZmNHeapID(AppCxn *);
-  using Base = Zutcp::SrvCxn<Zutcp::Instance, AppCxn>;
+  using Base = Zutcp::SrvCxn<Zutcp::MxPlugin, AppCxn>;
 public:
   using ZmNHeap<AppCxn>::operator new;
   using ZmNHeap<AppCxn>::operator delete;
@@ -482,7 +482,7 @@ static int run(int argc, char **argv)
 	  .thread(1, [](auto &t) { t.isolated(1); })
 	  .thread(2, [](auto &t) { t.isolated(1); })
 	  .thread(4, [](auto &t) { t.isolated(true); }); })
-	.rxThread(1).txThread(2), ZmRef{new Zutcp::Instance});
+	.rxThread(1).txThread(2), ZmRef{new Zutcp::MxPlugin});
   auto params = ZutcpTest::Params(&mx);
   if (const char *profile = getenv("ZUTCP_TEST_SERVER_OPTIONS")) {
     unsigned options = ZuBox<unsigned>(profile);
@@ -492,7 +492,7 @@ static int run(int argc, char **argv)
   }
   if (const char *delay = getenv("ZUTCP_TEST_TLP_DELAY_US"))
     params.tlpPeerAckDelay(Zutcp::timeUS(ZuBox<unsigned>(delay)));
-  auto instance = ZutcpTest::initInstance(env, &mx, interface, 4, params.config());
+  auto instance = ZutcpTest::initMxPlugin(env, &mx, interface, 4, params.config());
   auto stack = instance.ptr();
   ZmRef<App> appRef = new App{stack, server, port, count, waitEOF};
   auto &app = *appRef;
@@ -570,10 +570,10 @@ public:
   using ZmNHeap<ClientApp>::operator new;
   using ZmNHeap<ClientApp>::operator delete;
   class Cxn;
-  ClientApp(Zutcp::Instance *stack, Result &result, const PeerBytes &request,
+  ClientApp(Zutcp::MxPlugin *stack, Result &result, const PeerBytes &request,
       unsigned windowChunk = 0) :
     m_stack{stack}, m_result{result}, m_request{request}, m_windowChunk{windowChunk} { }
-  Zutcp::Instance *stack() const { return m_stack; }
+  Zutcp::MxPlugin *stack() const { return m_stack; }
   void final() { }
   template <typename F> void rxRun(F &&fn) { stack()->rxRun(ZuFwd<F>(fn)); }
   Result &result() { return m_result; }
@@ -585,7 +585,7 @@ public:
   void earlyDataAccepted(Cxn *);
   void earlyDataRejected(Cxn *);
 private:
-  Zutcp::Instance *m_stack;
+  Zutcp::MxPlugin *m_stack;
   Result		&m_result;
   const PeerBytes	&m_request;
   const unsigned	m_windowChunk;
@@ -594,9 +594,9 @@ private:
 };
 
 class ClientApp::Cxn : public ZmNHeap<ClientApp::Cxn>,
-  public Zutcp::CliCxn<Zutcp::Instance, ClientApp::Cxn> {
+  public Zutcp::CliCxn<Zutcp::MxPlugin, ClientApp::Cxn> {
 friend inline ZuStringT<"Zutcp.KernelInterop.Client"> ZmNHeapID(Cxn *);
-  using Base = Zutcp::CliCxn<Zutcp::Instance, Cxn>;
+  using Base = Zutcp::CliCxn<Zutcp::MxPlugin, Cxn>;
 public:
   using ZmNHeap<Cxn>::operator new;
   using ZmNHeap<Cxn>::operator delete;
@@ -727,7 +727,7 @@ friend inline ZuStringT<"Zutcp.NativePeer.ServerApp"> ZmNHeapID(ServerApp *);
 public:
   using ZmNHeap<ServerApp>::operator new;
   using ZmNHeap<ServerApp>::operator delete;
-  ServerApp(Zutcp::Instance *stack, Result &result, ZiIP address, unsigned port, unsigned count) :
+  ServerApp(Zutcp::MxPlugin *stack, Result &result, ZiIP address, unsigned port, unsigned count) :
     Base{stack, address, uint16_t(port)}, m_result{result}, m_address{address},
     m_port{port}, m_target{count} { }
   ZiIP localIP() const { return m_address; }
@@ -762,9 +762,9 @@ private:
   ZmRef<ServerCxn>	m_held; // Rx, fixture hold through the existing Reader only
 };
 
-class ServerCxn : public ZmNHeap<ServerCxn>, public Zutcp::SrvCxn<Zutcp::Instance, ServerCxn> {
+class ServerCxn : public ZmNHeap<ServerCxn>, public Zutcp::SrvCxn<Zutcp::MxPlugin, ServerCxn> {
 friend inline ZuStringT<"Zutcp.KernelInterop.Server"> ZmNHeapID(ServerCxn *);
-  using Base = Zutcp::SrvCxn<Zutcp::Instance, ServerCxn>;
+  using Base = Zutcp::SrvCxn<Zutcp::MxPlugin, ServerCxn>;
 public:
   using ZmNHeap<ServerCxn>::operator new;
   using ZmNHeap<ServerCxn>::operator delete;
@@ -981,7 +981,7 @@ static int run(int argc, char **argv)
     s.nThreads(4).thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
       .thread(4, [](auto &t) { t.isolated(true); });
-  }).rxThread(1).txThread(2), ZmRef{new Zutcp::Instance}};
+  }).rxThread(1).txThread(2), ZmRef{new Zutcp::MxPlugin}};
   auto xdp = ZutcpTest::openXdp(env, &mx, interface, 4);
   auto payload = Zutcp::tcpPayload(xdp->mtu(), address.type());
   auto params = ZutcpTest::Params{&mx};
@@ -989,7 +989,7 @@ static int run(int argc, char **argv)
   if (server && getenv("ZUTCP_KERNEL_READ_GATE")) params.maxData(4096);
   bool windowClient = !server && getenv("ZUTCP_KERNEL_WINDOW_CLIENT");
   if (windowClient) params.maxPayload(payload).sackPermitted(false).timestamps(true);
-  auto instance = ZutcpTest::initInstance(ZmRef{static_cast<Zutcp::Instance *>(mx.plugin())},
+  auto instance = ZutcpTest::initMxPlugin(ZmRef{static_cast<Zutcp::MxPlugin *>(mx.plugin())},
     env, &mx, ZuMv(xdp), params.config());
   auto stack = instance.ptr();
   if (server) {

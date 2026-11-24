@@ -25,7 +25,7 @@
 
 #include <zlib/Zutcp.hh>
 
-#include "../test/ZutcpTestInstance.hh"
+#include "../test/ZutcpTestMxPlugin.hh"
 
 #include "ZiTestResidue.hh"
 
@@ -168,10 +168,10 @@ static bool service(
     .scheduler([](auto &s) {
       s.nThreads(6).thread(6, [](auto &t) { t.isolated(true); });
       for (unsigned i = 1; i <= 4; ++i) s.thread(i, [](auto &t) { t.isolated(1); });
-    }), native ? ZmRef<Zutcp::Instance>{new Zutcp::Instance} : ZmRef<Zutcp::Instance>{}};
-  Zutcp::Instance *stack = nullptr;
+    }), native ? ZmRef<Zutcp::MxPlugin>{new Zutcp::MxPlugin} : ZmRef<Zutcp::MxPlugin>{}};
+  Zutcp::MxPlugin *stack = nullptr;
   if (native) {
-    auto instance = ZutcpTest::initInstance(env, &mx, interface, 6, {.rxRetainFramesPerCxn = 64});
+    auto instance = ZutcpTest::initMxPlugin(env, &mx, interface, 6, {.rxRetainFramesPerCxn = 64});
     stack = instance.ptr();
   }
 #ifdef ZUTCP_APP_TLS

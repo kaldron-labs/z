@@ -13,7 +13,7 @@
 
 #include <zlib/Zutcp.hh>
 
-#include "ZutcpTestInstance.hh"
+#include "ZutcpTestMxPlugin.hh"
 
 using namespace ZuTestUtil;
 

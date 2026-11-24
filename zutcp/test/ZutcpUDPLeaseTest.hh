@@ -7,7 +7,9 @@
 #ifndef ZutcpUDPLeaseTest_HH
 #define ZutcpUDPLeaseTest_HH
 
-#include "ZutcpTestInstance.hh"
+#include <iostream>
+
+#include "ZutcpTestMxPlugin.hh"
 
 namespace UDPLeaseTest {
 
@@ -89,12 +91,16 @@ static void testUDPLeases()
 {
   ZuTestScope(testUDPLeases);
   auto env = ZutcpTest::fixtureEnv();
-  ZmRef<Zutcp::Instance> stack = new Zutcp::Instance;
+  ZmRef<Zutcp::MxPlugin> stack = new Zutcp::MxPlugin;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
     .rxThread(1).txThread(2), stack};
   ZmRef<UDPLeaseTest::Device> device = new UDPLeaseTest::Device{&mx};
   ZmRef<Zpkt::Nif> backend = device;
-  bool configured = stack->init(&mx, env, ZuMv(backend), {}).is<void>();
+  bool configured = false;
+  try { stack->init(&mx, env, ZuMv(backend), {}); configured = true; }
+  catch (ZeException &e) {
+    std::cerr << e << '\n' << std::flush;
+  }
   auto tx = mx.allocator<Zi::IOBufType::TxUDP, ZiIOBuf, 128>(1);
   auto app = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 128>();
   bool started = configured && tx && app && mx.start();
@@ -139,7 +145,7 @@ static void testUDPLeases()
             return true;
           }}, ZuMv(buf), info.remote, ZiTOS{uint8_t(0xab)});
           io.offset = unsigned(mode == 4);
-          ZutcpTest::Instance::udpSend(*stack, cxn.ptr(), route);
+          ZutcpTest::MxPlugin::udpSend(*stack, cxn.ptr(), route);
           ok &= callback && device->calls == calls + !unsupported;
           if (mode == 3) continue;
           ok &= !device->pool->caller && device->pool->releases == releases + 1;

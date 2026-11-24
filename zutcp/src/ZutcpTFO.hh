@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Instance-owned Fast Open cookie authenticator and Rx-owned bounded cache.
+// MxPlugin-owned Fast Open cookie authenticator and Rx-owned bounded cache.
 
 #ifndef ZutcpTFO_HH
 #define ZutcpTFO_HH

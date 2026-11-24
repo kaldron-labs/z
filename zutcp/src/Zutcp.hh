@@ -57,7 +57,7 @@ namespace Zutcp_ {
   class SrvCxn;
   class Listener;
 }
-namespace ZutcpTest { class Instance; }
+namespace ZutcpTest { class MxPlugin; }
 
 namespace Zutcp {
 
@@ -89,7 +89,7 @@ struct RtoParams {
   }
 };
 
-struct InstanceParams {
+struct MxParams {
   PacketFn		packet;
   unsigned		packetCount = ZiIOBuf_DefltCount;
 
@@ -115,11 +115,11 @@ struct InstanceParams {
 
   bool			sackPermitted = true, windowScale = true, timestamps = true, ecn = false;
 
-  bool operator ==(const InstanceParams &) const = default;
+  bool operator ==(const MxParams &) const = default;
 };
 
 // Shared endpoint data lives in the client/listener's intrusive binding node.
-// Instance indexes those nodes without owning or retaining the endpoints.
+// MxPlugin indexes those nodes without owning or retaining the endpoints.
 struct Endpoint;
 using EndpointFn = void (*)(
   Endpoint *, ZmRef<Zi::IOBuf>, ZiSockAddr, ZiSockAddr, unsigned, const TCPHeader &);
@@ -156,7 +156,7 @@ struct CxnAdmission {
 using ClosedTupleKey = ZuTuple<ZiSockAddr, ZiSockAddr>; // local, remote
 
 // One identity and ownership membership for every native TCP connection.
-// Instance mutates membership/publication on Rx under m_cxnsLock; telemetry
+// MxPlugin mutates membership/publication on Rx under m_cxnsLock; telemetry
 // takes lifetime references under that lock before invoking callbacks.
 struct ZutcpAPI Cxn : public ZmPolymorph {
   enum { Admitted = 1, Pending = 2, Closing = 4 };
@@ -180,7 +180,7 @@ struct ZutcpAPI Cxn : public ZmPolymorph {
   virtual const Zutcp_::Listener *listener() const { return nullptr; }
 };
 
-// Interface/routing scope belongs to the containing Instance. No packet or
+// Interface/routing scope belongs to the containing MxPlugin. No packet or
 // connection reference survives in a closed record. Copies cross owners.
 struct ClosedTuple {
   ClosedTupleKey	key;
@@ -280,13 +280,13 @@ struct ClientPorts {
 };
 ZtEnumStruct(ZutcpAPI, CxnBindError, int8_t, None, Invalid, InUse, Retained, Exhausted);
 
-// Cold binding policy shared by Instance and deterministic storage tests. Mutation
-// in production is confined to Instance's Rx boundary; this owns no extra registry.
+// Cold binding policy shared by MxPlugin and deterministic storage tests. Mutation
+// in production is confined to MxPlugin's Rx boundary; this owns no extra registry.
 ZutcpAPI CxnBindError::T bindCxnTuple(
   EndpointIndex::Node &, const ZiSockAddr &remote, unsigned &nextPort,
   EndpointIndex &, const ClosedTuples &history);
 
-// Scalar timestamp clock; Instance samples it only on Tx using the existing clock.
+// Scalar timestamp clock; MxPlugin samples it only on Tx using the existing clock.
 // A backward wall step adjusts the logical offset without freezing later ticks.
 class TCPClock {
 public:
@@ -306,27 +306,27 @@ private:
   bool		m_known = false;
 };
 
-class ZutcpAPI Instance : public ZmNHeap<Instance>, public ZiMxPlugin,
-  private ZmEngine<Instance> {
-friend inline ZuStringT<"Zutcp.Instance"> ZmNHeapID(Instance *);
-friend class ZutcpTest::Instance;
-friend class ZmEngine<Instance>;
+class ZutcpAPI MxPlugin : public ZmNHeap<MxPlugin>, public ZiMxPlugin,
+  private ZmEngine<MxPlugin> {
+friend inline ZuStringT<"Zutcp.MxPlugin"> ZmNHeapID(MxPlugin *);
+friend class ZutcpTest::MxPlugin;
+friend class ZmEngine<MxPlugin>;
 friend class Zutcp_::CliCxn;
 friend class Zutcp_::SrvCxn;
 friend class Zutcp_::Listener;
-  using Engine = ZmEngine<Instance>;
+  using Engine = ZmEngine<MxPlugin>;
 
 public:
   using Engine::state;
   using Engine::running;
   using Engine::stopping;
-  using Params = InstanceParams;
+  using Params = MxParams;
 
-  Instance();
-  ~Instance() override;
+  MxPlugin();
+  ~MxPlugin() override;
 
   // Takes ownership of the initialized XDP instance on the first successful call.
-  ZuUnion<void, ZeException> init(ZiMultiplex *, Zpkt::Env *, ZmRef<Zpkt::Nif> &&, Params params);
+  void init(ZiMultiplex *, Zpkt::Env *, ZmRef<Zpkt::Nif> &&, Params params);
   void rx() override;
   void wake() override;
 
@@ -551,7 +551,7 @@ private:
   // Live secret operations are const after initialization.
   ISN				m_isn;
   TFOKey			m_tfoKey;
-  InstanceParams		m_params;
+  MxParams		m_params;
   unsigned			m_mtu = 0, m_ingressCount = 0;
   // Published before Up; immutable on both packet owners for each run.
   bool				m_tcpChksumOffload = false;

@@ -1,7 +1,7 @@
 # Select Zutcp or the regular kernel TCP backend
 
 Zutcp implements TCP for applications using this repository's `ZiMultiplex`
-connection and allocator interfaces. Install `Zutcp::Instance` on the multiplexer to
+connection and allocator interfaces. Install `Zutcp::MxPlugin` on the multiplexer to
 select AF_XDP or DPDK. Leave the plugin unset to use regular kernel TCP. Existing Zi/Ztcp
 application framing and callbacks remain in use. Ztls can run above either TCP
 backend; it is not a dependency of libZutcp.
@@ -9,7 +9,7 @@ backend; it is not a dependency of libZutcp.
 This is an application integration choice, not an `LD_PRELOAD` library or a
 replacement implementation of arbitrary POSIX `socket()` calls. Applications
 using raw kernel sockets continue to use the kernel until adapted to Zi/Ztcp. `zutcpkernelpeer` deliberately uses ordinary kernel sockets;
-`zutcppair` deliberately uses the actual native Instance, without socket fallback.
+`zutcppair` deliberately uses the actual native MxPlugin, without socket fallback.
 
 ## Select the transport before requesting allocators
 
@@ -30,7 +30,7 @@ endpoint, and native Tx allocators can supply registered backing after
 
 Protocol Rx and Tx run on the selected mx owners. Keep application dispatch and
 buffer lifetime rules intact. The client/server examples use Ztcp streams and
-callbacks with static Instance bootstrap; they do not construct Zutcp connection
+callbacks with static MxPlugin bootstrap; they do not construct Zutcp connection
 classes. The binary [zutcppair.cc](zutcppair.cc) uses the same Ztcp path. Its
 server observes EOF through the existing generic Zi receive context, forwards
 data to Ztcp, and queues its reply on application Tx. Only the control caller
@@ -172,7 +172,7 @@ route/neighbor queries; it does not implement ARP/ND or a parallel routing servi
 Provision these resources deliberately or use the private fixture instead of a
 control/management NIC. Interface/queue and XDP attachment ownership must be
 exclusive: existing foreign XDP users or UMEM reservations are not overridden.
-Use the optional `InstanceParams::netmask` only for the intended destination scope;
+Use the optional `MxParams::netmask` only for the intended destination scope;
 without a mask, raw classification selects the whole interface. Keep unrelated
 kernel services outside that selected traffic scope. Check backend/mode and
 teardown diagnostics rather than assuming hardware zero-copy. The recorded veth

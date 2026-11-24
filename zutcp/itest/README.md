@@ -6,7 +6,7 @@ EAL lives in the plugin; dummy Linux interfaces provide routing identity while
 independently named ring/pcap ports provide the simulated wire. Build-tree module
 paths are supplied per target. Stop/drain and buffer-return ordering is unchanged.
 
-These Linux tests exercise actual Instance/Zpkt packet I/O, standard TCP headers
+These Linux tests exercise actual MxPlugin/Zpkt packet I/O, standard TCP headers
 and raw application bytes. They require usable AF_XDP/BPF, sudo/root, network
 namespaces, iproute2, ethtool, tcpdump, Python3 and Perl/prove. Missing privileges
 or fixture variables produce visible skips; a skip is not native acceptance.
@@ -47,7 +47,7 @@ Ztls application drivers below. Use explicit native targets while developing TCP
 ## Driver coverage
 
 - `zutcppairtest` launches the Ztcp client/server examples with statically
-  configured Instance plugins for ordinary transfer and half-close over both IP
+  configured MxPlugin plugins for ordinary transfer and half-close over both IP
   families. Protocol-private modes run native protocol roles in the test driver;
   they do not expose test controls through application APIs. It checks exact 7200-byte request/echo, half-close, SYN/setup loss,
   established DATA loss, duplication, reordering, ACK loss, partial ACK, SACK holes
@@ -93,7 +93,7 @@ Ztls application drivers below. Use explicit native targets while developing TCP
   protocol 253; TCP uses protocol 6. Route/static-neighbor lookup runs directly
   on Rx and returns a structured result. Ordered lookup/stop coverage checks
   completion before plugin teardown; no route worker or cancellation API remains.
-- `zutcpmxtest` installs real Instance plugins on two Zi multiplexers and checks
+- `zutcpmxtest` installs real MxPlugin plugins on two Zi multiplexers and checks
   mapped connection callbacks, association/watch lifecycle, exact bidirectional
   contexts, nonzero offsets, detached metadata before CQ, one-slot pool reuse,
   stopped acceptors and active stop. Further cases cover DATA/control loss,
@@ -193,4 +193,4 @@ extra sequence position. It verifies unchanged whole-frame bytes,
 callback entry, native reference count and admission, then same-slot recovery
 with independent checksum/header/payload checks. Both ACK/driver-retirement
 orders return the slot once. A held-PMD shutdown case releases the reference
-only after Instance Closing is observed, then verifies stop/restart and retirement.
+only after MxPlugin Closing is observed, then verifies stop/restart and retirement.

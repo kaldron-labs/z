@@ -13,7 +13,7 @@ separate application fixture.
 
 One `ZiMultiplex` / `ZiConnection` / `ZiRx` / `ZiTx` application supplies both
 choices. `kernel` leaves the plugin unset and uses ordinary TCP sockets. `native`
-installs the existing `Zutcp::Instance` before registration of application allocators.
+installs the existing `Zutcp::MxPlugin` before registration of application allocators.
 Each run has two endpoints of the selected kind. Independent real-kernel-peer
 interoperability is covered separately in `zutcp/interop`.
 
@@ -173,7 +173,7 @@ defaults to 25 milliseconds, accepts 0 to disable holding, and must be below
 packet count, not equal physical pool mechanics. The builtin kernel allocator
 ignores factory count. Both use identical application buffer sizes/alignment and
 a bounded application pipeline. The existing mx `rxBufSize` setting means socket
-bytes for kernel TCP and ingress frame count for Instance: kernel runs request 1 MiB
+bytes for kernel TCP and ingress frame count for MxPlugin: kernel runs request 1 MiB
 socket buffers; native runs request `BENCH_RESERVE` ingress frames. These units
 are reported explicitly rather than passing a byte count as a native frame count.
 Actual kernel socket buffers and
@@ -243,7 +243,7 @@ BENCH_BACKENDS='native-client native-server' BENCH_MESSAGES=64 BENCH_WARMUP=16 \
   /absolute/build/zutcp/bench/zutcpbench /absolute/out/mixed check
 ```
 
-`native-client` pairs an actual Instance client with an ordinary kernel-socket
+`native-client` pairs an actual MxPlugin client with an ordinary kernel-socket
 server; `native-server` reverses the roles. Each connection checks the plugin
 and null/non-null kernel socket identity, and output records actual per-role
 backends. The script verifies those role-specific result records and labels
