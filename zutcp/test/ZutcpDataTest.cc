@@ -655,11 +655,9 @@ static void peerEcho(unsigned scenario)
   Zutcp::TCPStateTest::peerTimers(*link);
   auto before = app.clock;
   app.holdTx = true;
-  bool received = link->receive(input(app, {}));
-  ZuCHECK(received && app.txJobs.count_() == 2,
-    "pure ACK with active peer timers queues ACK processing and one activity event");
-  // Process the ACK, then observe the explicit peer-activity event alone.
-  if (auto job = app.txJobs.shift()) job();
+  bool received = link->receive(input(app, {})) && link->receive(input(app, {}));
+  ZuCHECK(received && app.txJobs.count_() == 1,
+    "two pure ACKs share one Tx post for ordered ACK processing and peer timer refresh");
   if (scenario == 1) Zutcp::TCPStateTest::staleEcho(*link, true);
   if (scenario == 2) link->disconnecting(true);
   app.clock += ZuTime{1};
@@ -1176,20 +1174,23 @@ static void ackHoldCoalesce()
   link->finish();
 }
 
-static void ackPosting()
+static void ackPosting(bool cc)
 {
   ZuTestScope(ackPosting);
-  ZmRef<App> appRef = new App;
+  ZmRef<App> appRef = new App{ZuTime{0, 25000000}, ZuTime{10}, cc};
   auto &app = *appRef;
   ZmRef<Link> link = new Link{&app};
+  Zutcp::TCPStateTest::peerTimers(*link);
+  app.clock += ZuTime{1};
   app.holdTx = true;
   bool received = link->receive(input(app, "a")) && link->receive(input(app, "b", 1));
   ZuCHECK(received && app.txJobs.count_() == 1,
     "two in-order segments share one Tx post for their peer ACKs and delayed reply");
   app.runTx();
   ZuCHECK(Zutcp::TCPStateTest::heldACK(*link) &&
+      Zutcp::TCPStateTest::peerTimersAt(*link, app.clock, false) &&
       Zutcp::TCPStateTest::peerSequence(*link) == 1,
-    "Tx retains the ACK deadline and the last peer window sequence");
+    "Tx refreshes peer timers, retains the ACK deadline and applies both peer windows");
   bool tail = link->receive(input(app, "f", 5));
   app.runTx();
   auto before = Zutcp::TCPStateTest::header(*link);
@@ -1200,7 +1201,7 @@ static void ackPosting()
   auto after = Zutcp::TCPStateTest::header(*link);
   ZuCHECK(tail && pure && jobs == 1 && before.options.sackCount == 1 &&
       after.options.sackCount == 1 && serial && Zutcp::TCPStateTest::echoSerial(*link) == serial,
-    "a pure ACK across an unchanged receive gap posts only its peer ACK");
+    "a pure ACK preserves the existing gap report and refreshes the peer timers");
   link->finish();
 }
 
@@ -1841,7 +1842,7 @@ static void peerAckMerge(unsigned scenario)
     app.runTx();
     bool once = link->txAckd() == 64 && !Zutcp::TCPStateTest::duplicates(*link);
     for (unsigned i = 0; i < 3; ++i) Zutcp::TCPStateTest::peer(*link, 64);
-    bool queued = app.txJobs.count_() == 3;
+    bool queued = app.txJobs.count_() == 1;
     app.runTx();
     ZuCHECK(once && queued && Zutcp::TCPStateTest::duplicates(*link) == 3 && link->queued,
       "snapshot deduplication invents no duplicate ACK; three wire duplicates still trigger "
@@ -1872,6 +1873,19 @@ static void peerAckWindow(unsigned scenario)
   bool recorded = Zutcp::TCPStateTest::record(*link, ref);
   Zutcp::TCPStateTest::peer(*link, 0);
   app.holdTx = true;
+  if (!scenario) {
+    Zutcp::TCPStateTest::peer(*link, 0, 65535, 1);
+    Zutcp::TCPStateTest::peer(*link, 16, 65535, 1);
+    Zutcp::TCPStateTest::peer(*link, 16, 4096, 1);
+    bool ordered = app.txJobs.count_() == 3;
+    if (auto job = app.txJobs.shift()) job();
+    ordered &= !link->txAckd() && Zutcp::TCPStateTest::peerLimit(*link) == 65535;
+    if (auto job = app.txJobs.shift()) job();
+    ordered &= link->txAckd() == 16 && Zutcp::TCPStateTest::peerLimit(*link) == 16 + 65535;
+    app.runTx();
+    ZuCHECK(ordered && Zutcp::TCPStateTest::peerLimit(*link) == 16 + 4096,
+      "a window change after a cumulative publication cannot join its preceding ACK batch");
+  }
   Zutcp::TCPStateTest::peer(*link, 32);
   unsigned window = scenario ? 0 : 4096;
   Zutcp::TCPStateTest::peer(*link, 32, window, 1);
@@ -2237,14 +2251,11 @@ static void repeatDataACKIntent()
   };
   app.holdTx = true;
   bool received = link->receive(input(app, "z", 0, 64, 0x18));
-  bool two = app.txJobs.count_() == 2;
-  if (auto job = app.txJobs.shift()) job();
-  bool retained = outputs ? outputs == 1 && sent.ack == 2002 :
-    Zutcp::TCPStateTest::pendingACK(*link);
+  bool one = app.txJobs.count_() == 1;
   app.runTx();
-  ZuCHECK(recorded && refused && received && two && retained && outputs == 1 &&
+  ZuCHECK(recorded && refused && received && one && outputs == 1 &&
       sent.ack == 2002 && !Zutcp::TCPStateTest::pendingACK(*link),
-    "peer-ACK work and queued DATA ACK intent satisfy the refused local ACK exactly once");
+    "one Tx post applies the peer ACK and satisfies the refused local ACK exactly once");
   link->flushFn = {};
   link->finish(); link = nullptr; ref = {};
   ZuCHECK(source.valid && source.returned == 1,
@@ -3815,7 +3826,8 @@ int main(int argc, char **argv)
   ZuTestCall(ackHoldTimer, false);
   ZuTestCall(ackHoldTimer, true);
   ZuTestCall(ackHoldCoalesce);
-  ZuTestCall(ackPosting);
+  ZuTestCall(ackPosting, true);
+  ZuTestCall(ackPosting, false);
   ZuTestCall(ackBatchOrder);
   ZuTestCall(ackHoldByteBound);
   ZuTestCall(synAllocationRetry);

@@ -166,9 +166,9 @@ struct TCPAckBatch {
     bool timestamp : 1, data : 1;
   };
   enum : unsigned { Capacity = 8, CountBits = 4, CountMask = (1U << CountBits) - 1,
-    Reading = ~0U };
-  // Low bits give the published prefix length. Upper bits hold the byte
-  // threshold for a delayed reply requested after receive-state publication.
+    PeerActivity = 1U << 31, Reading = ~0U };
+  // The count, delayed ACK byte threshold and peer timer refresh are claimed
+  // together when Tx seals the published entries.
   ZmAtomic<unsigned> state{0};
   Entry entries[Capacity];
 };
@@ -726,11 +726,15 @@ protected:
   }
   void receiveTCP(const TCPHeader &header, bool incomingData = false) {
     if (!(header.flags & 0x10)) return;
-    if (app()->congestionControl()) {
-      if (!(header.flags & ~0x18U) && !header.options.sackCount &&
-	  !(header.options.flags & ~TCPOptions::TS) && establishedRx() &&
-	  batchPeerAck(header, incomingData)) return;
-    } else if (publishPeerAck(header)) return;
+    if (!app()->congestionControl() && publishPeerAck(header)) {
+      m_rxBatchOpen = false;
+      return;
+    }
+    // Repeats and window changes retain one ordered entry per wire ACK,
+    // including when ordinary advancing ACKs use the cumulative view.
+    if (!(header.flags & ~0x18U) && !header.options.sackCount &&
+	!(header.options.flags & ~TCPOptions::TS) && establishedRx() &&
+	batchPeerAck(header, incomingData)) return;
     // A full-header callback is an ordering boundary for later peer ACKs.
     m_rxBatchOpen = false;
     app()->txRun([link = impl(), header, incomingData, gen = m_rxDataGen] {
@@ -738,7 +742,7 @@ protected:
       link->applyTCP(header, incomingData);
     });
   }
-  bool batchPeerAck(const TCPHeader &header, bool data) {
+  ZuInline bool batchPeerAck(const TCPHeader &header, bool data) {
     unsigned state = m_ackBatch.state, n = state & TCPAckBatch::CountMask;
     if (n >= TCPAckBatch::Capacity || (n && !m_rxBatchOpen)) return false;
     m_ackBatch.entries[n] = {header.seq, header.ack, header.options.tsecr,
@@ -764,7 +768,9 @@ protected:
 	e.data);
     }
     m_ackBatch.state = 0;
-    unsigned threshold = state >> TCPAckBatch::CountBits;
+    if ((state & TCPAckBatch::PeerActivity) && gen == dataGen() && !disconnecting())
+      notePeerPktTx();
+    unsigned threshold = (state & ~TCPAckBatch::PeerActivity) >> TCPAckBatch::CountBits;
     if (threshold && gen == m_txDataGen && gen == dataGen() && !disconnecting())
       serviceTCPAck(true, false, threshold);
   }
@@ -4083,12 +4089,10 @@ public:
     ++m_rxDiag.packetsRx;
     m_rxDiag.dataBytesRx += payload.length();
     if (data || echoChanged) publishTCPEcho();
-    if (app()->maxIdleTimeout() || *app()->heartBeat())
-      app()->txRun([link = impl()] {
-	if (!link->disconnecting()) link->notePeerPktTx();
-      });
+    bool activity = app()->maxIdleTimeout() || *app()->heartBeat();
     if (syn && m_rxOrigins.server) {
-      app()->txRun([link = impl(), gen = m_rxDataGen] {
+      app()->txRun([link = impl(), gen = m_rxDataGen, activity] {
+	if (activity && gen == link->dataGen() && !link->disconnecting()) link->notePeerPktTx();
 	if (gen == link->m_txDataGen && !link->disconnecting()) link->sendSyn();
       });
     } else if (syn || data) {
@@ -4098,7 +4102,11 @@ public:
       bool covered = (flags & 0x01) && tcp.seq == uint32_t(ackBefore) &&
 	rxByteNext() > ackBefore && m_rxState.complete() &&
 	d.ecn != EcnMark::CE && !(flags & 0x80) && !m_rxRead.sack.load_();
-      requestTCPAck(holdAck, covered);
+      requestTCPAck(holdAck, covered, activity);
+    } else if (activity && !joinAckBatch(0, true)) {
+      app()->txRun([link = impl(), gen] {
+	if (gen == link->dataGen() && !link->disconnecting()) link->notePeerPktTx();
+      });
     }
     return true;
   }
@@ -4174,22 +4182,28 @@ protected:
     }
     return true;
   }
-  void requestTCPAck(bool hold = false, bool covered = false) {
+  bool joinAckBatch(unsigned threshold, bool activity) {
+    if (!m_rxBatchOpen) return false;
+    unsigned state = m_ackBatch.state;
+    if (!state || state == TCPAckBatch::Reading) return false;
+    unsigned requested = state;
+    if (threshold)
+      requested = (state & (TCPAckBatch::PeerActivity | TCPAckBatch::CountMask)) |
+	(threshold << TCPAckBatch::CountBits);
+    if (activity) requested |= TCPAckBatch::PeerActivity;
+    return m_ackBatch.state.cmpXch(requested, state) == state;
+  }
+  void requestTCPAck(bool hold = false, bool covered = false, bool activity = false) {
     // Join an outstanding peer-ACK callback only after the receive frontier
     // is published. An urgent reply always retains its own wire opportunity.
     auto ackThreshold = hold ? 2 * localMSSOfferRx() : 0;
-    if (ackThreshold && m_rxBatchOpen) {
-      unsigned state = m_ackBatch.state;
-      unsigned requested = (ackThreshold << TCPAckBatch::CountBits) |
-	(state & TCPAckBatch::CountMask);
-      if (state && state != TCPAckBatch::Reading &&
-	  m_ackBatch.state.cmpXch(requested, state) == state) return;
-    }
+    if (ackThreshold && joinAckBatch(ackThreshold, activity)) return;
     m_rxBatchOpen = false;
     auto tag = (m_rxDataGen<<1) | 1;
     ZmAtomic_release();
-    if (m_ackRequest.xch(tag) == tag && hold) return;
-    app()->txRun([link = impl(), gen = m_rxDataGen, hold, covered, ackThreshold] {
+    if (m_ackRequest.xch(tag) == tag && hold && !activity) return;
+    app()->txRun([link = impl(), gen = m_rxDataGen, hold, covered, activity, ackThreshold] {
+      if (activity && gen == link->dataGen() && !link->disconnecting()) link->notePeerPktTx();
       if (gen != link->dataGen() || gen != link->m_txDataGen || link->disconnecting()) return;
       // An old incarnation must never clear a new incarnation's notification.
       link->m_ackRequest.cmpXch(gen<<1, (gen<<1) | 1);

@@ -162,3 +162,40 @@ Local logs and the reproducible fixture are in
 
 The expanded pilot, archive/restore and compression plans were deleted. The
 requested performance reproduction and report are complete; this task is closed.
+
+## Native FIX spin budgets and CPU placement
+
+For pipelined `zfixbench` over native IPv4, use a spin count of 4096 when Rx,
+protocol Tx and the AF_XDP sender each have a distinct logical CPU. The stock
+benchmark passes its spin argument to the scheduler and the AF_XDP interface,
+where it controls both Rx and sender polling. A temporary benchmark build
+allowed the two AF_XDP counts to vary independently for this comparison.
+
+Client Rx, protocol Tx and sender ran on CPUs 0, 1 and 6. The server used
+2, 3 and 4. With SMT sibling pairs 0/4, 1/5, 2/6 and 3/7, each endpoint's
+three threads had distinct physical cores. The private veth fixture used
+`BENCH_CONGESTION_CONTROL=0` and `BENCH_LL=0`. Each run measured 10,000
+requests after 250 warmups per connection. Entries are medians from six runs
+per configuration, using all six configuration orders.
+
+| Connections × depth | Budgets at 4096 (others zero) | Requests/s | p95 RTT (µs) | Combined endpoint CPU (ms) |
+|---|---|---:|---:|---:|
+| 1 × 1 | Sender | 20,545 | 58.4 | 850 |
+| 1 × 1 | Rx, sender | 22,102 | 54.3 | 1,210 |
+| 1 × 1 | Scheduler, Rx, sender | 22,118 | 54.1 | 1,285 |
+| 4 × 8 | Sender | 157,698 | 225.9 | 460 |
+| 4 × 8 | Rx, sender | 158,171 | 224.7 | 465 |
+| 4 × 8 | Scheduler, Rx, sender | 164,828 | 216.0 | 460 |
+
+CPU time includes setup and warmup. For serial requests, enabling Rx polling
+captured nearly all the latency gain and raised CPU use. For pipelined
+requests, enabling all three budgets increased throughput by 4.5% over
+sender-only polling at the same measured median CPU time.
+
+Three separate scheduler traces per configuration measured sender wake-to-run
+delay. With all budgets at 4096, moving the sender off the Rx CPU reduced the
+median of the per-run mean delays from 19.0 to 0.86 µs for serial requests and
+from 74.9 to 1.65 µs for pipelined requests. On the shared CPU, Rx blocked in
+60,535 of 61,641 direct serial handoffs to a woken sender. In the pipeline Rx
+was still runnable in 2,211 of 3,903 such handoffs. The traces identify CPU
+contention but leave the cause of individual preemptions unresolved.
