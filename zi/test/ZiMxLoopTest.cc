@@ -265,8 +265,9 @@ public:
   using RxAllocator = Zi::IOBufAllocator;
   using TxAllocator = Zi::IOBufAllocator;
 
-  UdpTOSMx(ZiIP loopIP, unsigned port) :
-    m_loopIP{loopIP}, m_serverPort{uint16_t(port)} {
+  UdpTOSMx(ZiIP loopIP, unsigned port, ZiIP clientIP = {}) :
+    m_loopIP{loopIP}, m_clientIP{!!clientIP ? clientIP : loopIP},
+    m_serverPort{uint16_t(port)} {
     m_registered = state() == ZmEngineState::Stopped &&
       m_rx && m_rx->mx == this && m_tx && m_tx->mx == this;
   }
@@ -359,7 +360,7 @@ private:
     udp(
       ZiConnectFn{this, ZmFnPtr<&UdpTOSMx::connected>{}},
       ZiFailFn{this, ZmFnPtr<&UdpTOSMx::failed>{}},
-      m_loopIP, 0, m_loopIP, m_serverPort, m_rx, options);
+      m_clientIP, 0, m_clientIP, m_serverPort, m_rx, options);
   }
 
 private:
@@ -368,6 +369,7 @@ private:
   ZmAtomic<unsigned> m_registered = 0;
   ZmSemaphore		m_done;
   ZiIP			m_loopIP;
+  ZiIP			m_clientIP;
   uint16_t		m_serverPort = 0;
   ZmRef<UdpTOSCxn>	m_serverCxn;
   ZmRef<UdpTOSCxn>	m_clientCxn;
@@ -741,6 +743,22 @@ static void testUdpTOSIPv4()
   ZuCheck(mx.tos_() == 0x2e);
 }
 
+static void testUdpTOSMappedIPv4()
+{
+  ZuTestScope(testUdpTOSMappedIPv4);
+
+  UdpTOSMx mx{ZiIP{"::"}, 0, ZiIP{"127.0.0.1"}};
+  ZuCheck(mx.start());
+  mx.startServer();
+  ZuCheck(mx.waitDone(5));
+  mx.stop();
+
+  ZuCheck(!mx.failed_());
+  ZuCheck(mx.payloadOK_());
+  ZuCheck(mx.haveTOS_());
+  ZuCheck(mx.tos_() == 0x2e);
+}
+
 static void testUdpMPSIPv6()
 {
   ZuTestScope(testUdpMPSIPv6);
@@ -959,6 +977,7 @@ int main(int argc, char **argv)
   ZuTestCall(testTcpLoopbackIPv4);
   ZuTestCall(testTcpLoopbackIPv6);
   ZuTestCall(testUdpTOSIPv4);
+  ZuTestCall(testUdpTOSMappedIPv4);
   ZuTestCall(testUdpMPSIPv6);
   ZuTestCall(testEndpointRxAllocators);
   ZuTestCall(testMxWatch);

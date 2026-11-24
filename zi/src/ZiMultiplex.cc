@@ -453,6 +453,13 @@ static bool cxnType(ZiIP localIP, ZiIP remoteIP, ZiIPType::T &type)
   return true;
 }
 
+static ZiIPType::T txTOSType(const ZiSockAddr &addr, ZiIP local, ZiIP remote)
+{
+  ZiIP ip = addr ? addr.ip() : remote;
+  if (!ip) ip = local;
+  return ip.v4() || ip.mappedV4() ? ZiIPType::V4 : ZiIPType::V6;
+}
+
 static ZiTOS tosValue(unsigned v)
 {
   return uint8_t(v);
@@ -465,7 +472,13 @@ static bool recvTOS(Zi::Socket s, ZiIPType::T type)
   switch (type) {
     case ZiIPType::V6:
 #ifdef IPV6_RECVTCLASS
-      return setsockopt(s, IPPROTO_IPV6, IPV6_RECVTCLASS, &b, sizeof(b)) >= 0;
+      if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVTCLASS, &b, sizeof(b)) < 0)
+	return false;
+#ifdef IP_RECVTOS
+      // A dual-stack UDP socket receives IPv4-mapped packets with IP_TOS.
+      (void)setsockopt(s, IPPROTO_IP, IP_RECVTOS, &b, sizeof(b));
+#endif
+      return true;
 #else
       return false;
 #endif
@@ -518,8 +531,13 @@ static bool recvTOS(Zi::Socket s, ZiIPType::T type)
   switch (type) {
     case ZiIPType::V6:
 #ifdef IPV6_RECVTCLASS
-      return !setsockopt(s,
-	IPPROTO_IPV6, IPV6_RECVTCLASS, (const char *)&b, sizeof(b));
+      if (setsockopt(s,
+	IPPROTO_IPV6, IPV6_RECVTCLASS, (const char *)&b, sizeof(b)))
+	return false;
+#ifdef IP_RECVTOS
+      (void)setsockopt(s, IPPROTO_IP, IP_RECVTOS, (const char *)&b, sizeof(b));
+#endif
+      return true;
 #else
       return false;
 #endif
@@ -2250,9 +2268,8 @@ retry:
     msg.lpBuffers = &wsaBuf;
     msg.dwBufferCount = 1;
     msg.dwFlags = 0;
-    ZiIPType::T type;
-    if (!cxnType(m_info.local.ip(), m_info.remote.ip(), type))
-      type = ZiIPType::V4;
+    ZiIPType::T type = txTOSType(
+      m_txContext.addr, m_info.local.ip(), m_info.remote.ip());
     if (type == ZiIPType::V6) {
 #ifdef IPV6_TCLASS
       putTOS(msg, control, m_txContext.tos, IPPROTO_IPV6, IPV6_TCLASS);
@@ -2320,9 +2337,8 @@ retry:
     }
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
-    ZiIPType::T type;
-    if (!cxnType(m_info.local.ip(), m_info.remote.ip(), type))
-      type = ZiIPType::V4;
+    ZiIPType::T type = txTOSType(
+      m_txContext.addr, m_info.local.ip(), m_info.remote.ip());
     if (type == ZiIPType::V6) {
 #ifdef IPV6_TCLASS
       putTOS(msg, control, sizeof(control), m_txContext.tos,
