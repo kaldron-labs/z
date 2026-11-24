@@ -232,15 +232,7 @@ public:
   }
   Zi::IOBufAllocator *txAllocator() const { return m_txAllocator; }
 
-  void initRxQueue(Ztc::Hub *hub, ZuCSpan prefix) {
-    m_rxQueue.initQueue(hub, prefix, "reasm", Ztc::QueueType::Rx, 0);
-  }
-  void initTxQueue(Ztc::Hub *hub, ZuCSpan prefix) {
-    m_txRanges.initQueue(hub, prefix, "retained", Ztc::QueueType::Tx, 0);
-  }
 
-  Ztc::Queue *rxQueue() const { return const_cast<decltype(m_rxQueue) *>(&m_rxQueue); }
-  Ztc::Queue *txQueue() const { return const_cast<decltype(m_txRanges) *>(&m_txRanges); }
 
   uint64_t txOffset() const { return m_txOffset; }
   bool drainTx(unsigned &budget) {
@@ -295,8 +287,7 @@ ZuDerive(Delivery,
     uint64_t offset;
     unsigned begin, length;
   };
-  using TxRanges = Zquic_::Queue<
-    ZtArray<TxRange, ZtArrayHeapID<"Zquic.CryptoTx.Ranges">>, Zquic_::ArrayCount>;
+  using TxRanges = ZtArray<TxRange, ZtArrayHeapID<"Zquic.CryptoTx.Ranges">>;
 
   unsigned txRangeIndex(uint64_t) const;
   bool matches_(uint64_t, ZuBSpan) const;

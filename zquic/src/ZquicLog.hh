@@ -29,7 +29,6 @@
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiIP.hh>
 
-#include <zlib/ZquicQueue.hh>
 
 namespace ZquicLog_ {
 
@@ -667,19 +666,10 @@ friend ZmEngine<ZquicLogger>;
   using Engine = ZmEngine<ZquicLogger>;
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
-  class Ring final : public Zquic_::QueueInfo, public ZmRing<ZmRingMW<true>> {
-    using Storage = ZmRing<ZmRingMW<true>>;
-  public:
-    void telemetry(Ztc::QueueTelemetry &data) const override {
-      queueTelemetry(data);
-      data.count = Storage::count_(); // bytes, including native ring alignment
-      Storage::stats(data.inCount, data.inBytes, data.outCount, data.outBytes);
-      data.full = Storage::full();
-    }
-  };
+  using Ring = ZmRing<ZmRingMW<true>>;
   using Fn = ZmRingFn<ZquicLogger *>;
   ZmQueueDerive(Queue_, Fn, ZmQueueHeapID<"Zquic.Log.Queue">);
-  class Queue final : public Zquic_::Queue<Queue_> {
+  class Queue final : public Queue_ {
     using Lock = ZmPLock;
     using Guard = ZmGuard<Lock>;
 
@@ -718,13 +708,6 @@ public:
   ZquicLogger(const ZquicLogger &) = delete;
   ZquicLogger &operator =(const ZquicLogger &) = delete;
 
-  unsigned allQueues(Ztc::QueueMgr::AllFn fn) {
-    Guard guard(m_lifecycle.lock);
-    if (!m_coordination.ring.ctrl()) return 0;
-    fn(&m_coordination.ring);
-    fn(&m_coordination.queue);
-    return 2;
-  }
 
   static ZquicLogger *instance();
 

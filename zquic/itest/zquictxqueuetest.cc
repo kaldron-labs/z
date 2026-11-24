@@ -74,35 +74,6 @@ static uint64_t nanosecs(clockid_t clock = CLOCK_MONOTONIC)
 
 using namespace ZuTestUtil;
 
-struct QueueHub : Ztc::Hub {
-  QueueHub() { Ztc::HubMgr::add(this); }
-  ~QueueHub() { Ztc::HubMgr::del(this); }
-  TelKey telKey() const override { return {Ztc::LinkType::QUIC, "endpoint-queues"}; }
-  void telemetry(Ztc::HubTelemetry &data) const override {
-    data.id = "endpoint-queues";
-    data.linkType = Ztc::LinkType::QUIC;
-  }
-  bool start() override { return true; }
-  bool stop() override { return true; }
-  unsigned allLinks(AllLinksFn) const override { return 0; }
-  unsigned allPools(AllPoolsFn) const override { return 0; }
-};
-
-template <typename Owner>
-static Ztc::QueueTelemetry queueSnapshot(Owner &owner, ZuCSpan id)
-{
-  Ztc::QueueTelemetry result;
-  owner.allQueues([&result, id](Ztc::Queue *queue) {
-    if (queue->telKey().p<1>() == id) queue->telemetry(result);
-  });
-  return result;
-}
-
-template <typename Owner> static unsigned queueCount(Owner &owner)
-{
-  return owner.allQueues([](Ztc::Queue *) {});
-}
-
 struct Endpoint : public Zquic_::Endpoint_<Endpoint> {
   using Base = Zquic_::Endpoint_<Endpoint>;
   using ReadyFn = ZmFn<void(bool), ZmFnHeapID<"Zquic.TxQueue.Ready">>;
@@ -193,10 +164,9 @@ static void testReopenFromDown()
   ZiMultiplex mx{params()};
   auto rxAllocator = Zquic::pktRxAllocator(&mx);
   auto txAllocator = Zquic::pktTxAllocator(&mx);
-  QueueHub hub;
   Endpoint endpoint;
   ZuCheck(mx.start(), (return));
-  bool opened = endpoint.init(&mx, rxAllocator, txAllocator, &hub, 1) && endpoint.open();
+  bool opened = endpoint.init(&mx, rxAllocator, txAllocator) && endpoint.open();
   ZuCheck(opened);
   if (opened) {
     bool reopened = false, started = false;
@@ -208,12 +178,8 @@ static void testReopenFromDown()
     };
     endpoint.close();
     ZuCheck(ready.timedwait(Zm::now(3)) == 0 && started && reopened);
-    ZuCheck(queueCount(endpoint) == 4 &&
-      queueSnapshot(endpoint, "quic:endpoint:1:disconnect").type == Ztc::QueueType::Rx &&
-      queueSnapshot(endpoint, "quic:endpoint:1:2:udp").size == 4096);
   }
   endpoint.close();
-  ZuCheck(queueCount(endpoint) == 1);
   ZuCheck(mx.stop());
 }
 
@@ -340,7 +306,6 @@ static void testCapacityReturn()
   ZiMultiplex mx{params()};
   auto rxAllocator = Zquic::pktRxAllocator(&mx);
   auto txAllocator = Zquic::pktTxAllocator(&mx);
-  QueueHub hub;
   Endpoint rx, tx;
   rx.gaps = true;
   rx.target = unsigned(-1);
@@ -371,11 +336,10 @@ static void testCapacityReturn()
       });
   };
   ZuCheck(mx.start(), (return));
-  bool opened = rx.init(&mx, rxAllocator, txAllocator, &hub, 1) &&
-    tx.init(&mx, rxAllocator, txAllocator, &hub, 2) && rx.open() && tx.open();
+  bool opened = rx.init(&mx, rxAllocator, txAllocator) &&
+    tx.init(&mx, rxAllocator, txAllocator) && rx.open() && tx.open();
   ZuCheck(opened);
   if (opened) {
-    ZuCheck(queueCount(rx) + queueCount(tx) == 8);
     bool filled = true;
     onTx([&rx, &tx, &first, &second, &subscribe, &filled] {
       sendProbe = {tx.local().port(), -1, true};
@@ -390,12 +354,6 @@ static void testCapacityReturn()
     drain();
     ZuCheck(filled && !ready[0] && !ready[1]);
     ZuCheck(tx.queueIsolated());
-    auto udp = queueSnapshot(tx, "quic:endpoint:2:1:udp");
-    auto pending = queueSnapshot(tx, "quic:endpoint:2:1:wait");
-    auto slots = queueSnapshot(tx, "quic:endpoint:2:1:reserved");
-    ZuCheck(udp.type == Ztc::QueueType::Tx && udp.count == 4096 &&
-      udp.size == 4096 && udp.full == 1 && pending.count == 2 &&
-      !slots.count && slots.size == 4096);
     bool reserved = false;
     onTx([&rx, &tx, &reserved] {
       sendProbe.allowance = 1;
@@ -407,10 +365,6 @@ static void testCapacityReturn()
     });
     drain();
     ZuCheck(reserved && ready[0] == 1 && !ready[1]);
-    udp = queueSnapshot(tx, "quic:endpoint:2:1:udp");
-    pending = queueSnapshot(tx, "quic:endpoint:2:1:wait");
-    slots = queueSnapshot(tx, "quic:endpoint:2:1:reserved");
-    ZuCheck(udp.count == 4095 && udp.full == 2 && pending.count == 1 && slots.count == 1);
     auto stale = tokens[0];
     bool consumed = false;
     onTx([&rx, &tx, &tokens, &consumed] {
@@ -454,12 +408,6 @@ static void testCapacityReturn()
       terminal.timedwait(Zm::now(3)) == 0;
     ZuCheck(rebound && drained && cancelled[0] == 1 && cancelled[1] == 2 &&
       !first.busy() && !second.busy());
-    ZuCheck(queueCount(rx) + queueCount(tx) == 8 &&
-      queueSnapshot(tx, "quic:endpoint:2:1:udp").type == -1 &&
-      queueSnapshot(tx, "quic:endpoint:2:1:wait").type == -1 &&
-      queueSnapshot(tx, "quic:endpoint:2:1:reserved").type == -1 &&
-      queueSnapshot(tx, "quic:endpoint:2:2:udp").size == 4096 &&
-      queueSnapshot(tx, "quic:endpoint:2:disconnect").type == Ztc::QueueType::Rx);
     bool replacement = false;
     onTx([&rx, &tx, &tokens, &replacement] {
       sendProbe = {};
@@ -473,10 +421,8 @@ static void testCapacityReturn()
     ZuCheck(ready[0] == 3 && first.busy());
     tx.close();
     ZuCheck(cancelled[0] == 2 && !first.busy());
-    ZuCheck(queueCount(rx) + queueCount(tx) == 5);
   }
   tx.close(); rx.close();
-  ZuCheck(queueCount(rx) + queueCount(tx) == 2);
   ZuCheck(mx.stop());
   sendProbe = {};
 }

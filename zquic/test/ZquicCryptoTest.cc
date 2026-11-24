@@ -170,7 +170,7 @@ struct CryptoPubLink :
   using Base::rejectZeroRTTTx;
   using Base::configLocalParams;
   using Snapshot = Base::TxCryptoSnapshot;
-  void flushTx_() { }
+  void flushTx_(ZiSockAddr = {}) { }
   void queueTxFlush() { }
   void queueRetransmit() { }
   void ptoTimer() { }

@@ -173,10 +173,13 @@ Tx protector/recovery state on Tx. Defer server Rx retirement until its current
 CRYPTO delivery callback unwinds. Late crypto and ACK snapshots must not
 repopulate a retired packet-number space. Initial packet construction uses the
 Tx-owned Initial secret published during setup/Retry; packetization must not read
-Rx crypto storage. Normal ACK metadata and completion use shared atomic
-publication in both directions, including incoming peer ACKs. Do not accompany
-ordinary publication with a cross-thread scheduler notification; posts are
-reserved for exceptional handoffs and wakeups.
+Rx crypto storage. Rx captures the packet-number space and affected ACK range
+by value when posting each update to Tx. Tx owns separate fixed-capacity ACK
+members for Initial (8 ranges), Handshake (8), and Application Data (48).
+Tx encodes the selected ranges directly into the packet. Successful submission
+satisfies the encoded generation. Peer acknowledgment of the carrying packet
+retires the contiguous receive prefix it reported. Incoming peer ACKs use their
+separate recovery publication.
 
 # qlog
 

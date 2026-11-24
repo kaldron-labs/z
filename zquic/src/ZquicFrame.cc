@@ -314,18 +314,26 @@ int FrameCodec::writeAckECN(
   uint8_t *out, unsigned len, const AckRange *ranges, unsigned nRanges,
   uint64_t delay, const AckECN &ecn)
 {
-  if (!len || !ranges || !nRanges) return -1;
+  return writeAckECN(out, len, ranges, nRanges, delay, ecn, nullptr);
+}
+
+int FrameCodec::writeAckECN(
+  uint8_t *out, unsigned len, const AckRange *ranges, unsigned nRanges,
+  uint64_t delay, const AckECN &ecn, const AckRange *lowest)
+{
+  if (!len || (nRanges ? !ranges : !lowest)) return -1;
   PktWriter w{out, len};
   w.put(ecn.any() ? 0x03 : 0x02);
-  const AckRange *range = &ranges[nRanges - 1];
+  unsigned n = nRanges;
+  const AckRange *range = n ? &ranges[--n] : lowest;
   if (range->first > range->largest) return -1;
   w.putVar(range->largest);
   w.putVar(delay);
-  w.putVar(nRanges - 1);
+  w.putVar(nRanges + unsigned(lowest != nullptr) - 1);
   w.putVar(range->largest - range->first);
   uint64_t smallest = range->first;
-  for (unsigned i = nRanges - 1; i--;) {
-    range = &ranges[i];
+  while (n || (lowest && range != lowest)) {
+    range = n ? &ranges[--n] : lowest;
     if (range->first > range->largest || range->largest > smallest ||
 	smallest - range->largest < 2)
       return -1;

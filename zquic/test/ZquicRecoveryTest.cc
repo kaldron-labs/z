@@ -824,193 +824,27 @@ void testPktNumSpaceBatchCursors()
     "final batch loss cursor failed");
 }
 
-void testAckManager()
+void testPendingAck()
 {
-  ZuTestScope(testAckManager);
-
-  Zquic::AckManager acks;
-  ZuCHECK(acks.received(Zquic::PktNumSpace::Initial, 1, 1000, 25) &&
-      acks.received(Zquic::PktNumSpace::AppData, 5, 1000, 25, false),
-    "ACK manager receive failed");
-  ZuCHECK(acks.pending(Zquic::PktNumSpace::Initial) &&
-      acks.deadlineSet(Zquic::PktNumSpace::Initial) &&
-      acks.deadline(Zquic::PktNumSpace::Initial) == 1025 &&
-      !acks.due(Zquic::PktNumSpace::Initial, 1024) &&
-      acks.due(Zquic::PktNumSpace::Initial, 1025),
-    "ACK manager Initial deadline mismatch");
-  ZuCHECK(!acks.pending(Zquic::PktNumSpace::AppData) &&
-      !acks.deadlineSet(Zquic::PktNumSpace::AppData) &&
-      !acks.due(Zquic::PktNumSpace::AppData, 2000),
-    "ACK-only AppData packet created pending ACK work");
-  ZuCHECK(!acks.post(Zquic::PktNumSpace::AppData),
-    "ACK manager posted ACK-only packet");
-
-  Zquic::AckManager postAcks;
-  ZuCHECK(postAcks.received(Zquic::PktNumSpace::AppData, 5, 1000, 25, false) &&
-      postAcks.ackEliciting(
-      Zquic::PktNumSpace::AppData, 5, 1500, 25) &&
-      postAcks.pending(Zquic::PktNumSpace::AppData) &&
-      postAcks.post(Zquic::PktNumSpace::AppData) &&
-      !postAcks.post(Zquic::PktNumSpace::AppData),
-    "ACK manager did not post/suppress ack-eliciting packet");
-
-  uint8_t b[64];
-  int n = acks.writeFrame(Zquic::PktNumSpace::Initial, b, sizeof(b), 4);
-  Zquic::Frame frame;
-  unsigned used = 0;
-  ZuCHECK(n > 0 &&
-      !Zquic::FrameCodec::parse(
-	ZuBSpan{b, unsigned(n)},
-	frame, used) &&
-      frame.type == Zquic::FrameType::Ack &&
-      frame.offset == 1 &&
-      frame.value == 4 &&
-      !frame.length,
-    "ACK manager Initial frame mismatch");
-  acks.sent(Zquic::PktNumSpace::Initial);
-  ZuCHECK(!acks.pending(Zquic::PktNumSpace::Initial) &&
-      !acks.pending(Zquic::PktNumSpace::AppData),
-    "ACK manager sent cleared wrong packet space");
-
-  ZuCHECK(acks.received(Zquic::PktNumSpace::AppData, 6, 2000, 25) &&
-      acks.post(Zquic::PktNumSpace::AppData) &&
-      !acks.post(Zquic::PktNumSpace::AppData) &&
-      acks.deadlineSet(Zquic::PktNumSpace::AppData) &&
-      acks.deadline(Zquic::PktNumSpace::AppData) == 2025,
-    "ACK manager AppData post/deadline mismatch");
-  ZuCHECK(!acks.received(Zquic::PktNumSpace::AppData, 6, 2010, 50) &&
-      acks.pending(Zquic::PktNumSpace::AppData) &&
-      acks.deadlineSet(Zquic::PktNumSpace::AppData) &&
-      acks.deadline(Zquic::PktNumSpace::AppData) == 2025 &&
-      acks.tracker(Zquic::PktNumSpace::AppData).count() == 1,
-    "ACK manager duplicate packet changed deadline or ranges");
-  n = acks.writeFrame(Zquic::PktNumSpace::AppData, b, sizeof(b));
-  ZuCHECK(n > 0 &&
-      !Zquic::FrameCodec::parse(
-	ZuBSpan{b, unsigned(n)},
-	frame, used) &&
-      frame.offset == 6 &&
-      frame.length == 1,
-    "ACK manager AppData coalesced frame mismatch");
-
-  Zquic::AckManager ecnAcks;
-  ZuCHECK(ecnAcks.received(
-      Zquic::PktNumSpace::AppData, 1, 1000, 25, true, false,
-      Zquic::EcnMark::ECT0) &&
-      ecnAcks.received(
-	Zquic::PktNumSpace::AppData, 2, 1001, 25, true, false,
-	Zquic::EcnMark::ECT1) &&
-      ecnAcks.received(
-	Zquic::PktNumSpace::AppData, 3, 1002, 25, true, false,
-	Zquic::EcnMark::CE) &&
-      !ecnAcks.received(
-	Zquic::PktNumSpace::AppData, 3, 1003, 25, true, false,
-	Zquic::EcnMark::CE),
-    "ACK manager ECN receive accounting failed");
-  n = ecnAcks.writeFrame(Zquic::PktNumSpace::AppData, b, sizeof(b), 0, true);
-  ZuCHECK(n > 0 && b[0] == 0x03 &&
-      !Zquic::FrameCodec::parse(ZuBSpan{b, unsigned(n)}, frame, used) &&
-      frame.ackECN.ect0 == 1 &&
-      frame.ackECN.ect1 == 1 &&
-      frame.ackECN.ce == 1,
-    "ACK manager ACK_ECN frame mismatch");
-
-  Zquic::AckManager runtime;
-  ZuCHECK(runtime.received(Zquic::PktNumSpace::Initial, 1, 1000, 25, true, true) &&
-      runtime.immediate(Zquic::PktNumSpace::Initial) &&
-      runtime.due(Zquic::PktNumSpace::Initial, 1000) &&
-      runtime.largestRxTime(Zquic::PktNumSpace::Initial) == 1000,
-    "ACK manager Initial immediate state mismatch");
-  uint64_t initialGen = runtime.gen(Zquic::PktNumSpace::Initial);
-  ZuCHECK(runtime.received(Zquic::PktNumSpace::Handshake, 7, 1100, 25, true, true) &&
-      runtime.immediate(Zquic::PktNumSpace::Handshake) &&
-      runtime.due(Zquic::PktNumSpace::Handshake, 1100),
-    "ACK manager Handshake immediate state mismatch");
-  runtime.sent(Zquic::PktNumSpace::Initial, initialGen - 1);
-  ZuCHECK(runtime.pending(Zquic::PktNumSpace::Initial),
-    "ACK manager stale generation cleared pending ACK");
-  runtime.sent(Zquic::PktNumSpace::Initial, initialGen);
-  ZuCHECK(!runtime.pending(Zquic::PktNumSpace::Initial) &&
-      runtime.pending(Zquic::PktNumSpace::Handshake),
-    "ACK manager generation commit mismatch");
-
-  ZuCHECK(runtime.received(Zquic::PktNumSpace::AppData, 10, 2000, 50) &&
-      runtime.deadlineSet(Zquic::PktNumSpace::AppData) &&
-      runtime.deadline(Zquic::PktNumSpace::AppData) == 2050 &&
-      !runtime.immediate(Zquic::PktNumSpace::AppData),
-    "ACK manager AppData delayed state mismatch");
-  uint64_t appGen = runtime.gen(Zquic::PktNumSpace::AppData);
-  ZuCHECK(runtime.post(Zquic::PktNumSpace::AppData),
-    "ACK manager did not post initial pending ACK work");
-  ZuCHECK(runtime.received(
-	Zquic::PktNumSpace::AppData, 11, 2005, 50, false, false) &&
-      runtime.gen(Zquic::PktNumSpace::AppData) == appGen &&
-      !runtime.post(Zquic::PktNumSpace::AppData),
-    "ACK manager ACK-only packet posted pending ACK work");
-  ZuCHECK(runtime.received(Zquic::PktNumSpace::AppData, 12, 2010, 50, true, true) &&
-      runtime.gen(Zquic::PktNumSpace::AppData) == appGen + 1 &&
-      runtime.immediate(Zquic::PktNumSpace::AppData) &&
-      runtime.due(Zquic::PktNumSpace::AppData, 2010) &&
-      runtime.largestRxTime(Zquic::PktNumSpace::AppData) == 2010,
-    "ACK manager AppData immediate/reordered state mismatch");
-  ZuCHECK(!runtime.received(Zquic::PktNumSpace::AppData, 12, 2020, 50) &&
-      runtime.gen(Zquic::PktNumSpace::AppData) == appGen + 1,
-    "ACK manager duplicate changed generation");
-
-  Zquic::AckManager active;
-  ZuCHECK(active.received(Zquic::PktNumSpace::AppData, 1, 1000, 50) &&
-      active.deadlineSet(Zquic::PktNumSpace::AppData) &&
-      !active.immediate(Zquic::PktNumSpace::AppData),
-    "ACK manager active ACK first packet state mismatch");
-  ZuCHECK(active.received(Zquic::PktNumSpace::AppData, 2, 1001, 50) &&
-      active.immediate(Zquic::PktNumSpace::AppData) &&
-      active.due(Zquic::PktNumSpace::AppData, 1001) &&
-      !active.deadlineSet(Zquic::PktNumSpace::AppData),
-    "ACK manager active ACK threshold did not make ACK immediate");
-  uint64_t activeGen = active.gen(Zquic::PktNumSpace::AppData);
-  active.sent(Zquic::PktNumSpace::AppData, activeGen);
-  ZuCHECK(active.received(Zquic::PktNumSpace::AppData, 3, 1025, 50) &&
-      active.deadlineSet(Zquic::PktNumSpace::AppData) &&
-      !active.immediate(Zquic::PktNumSpace::AppData),
-    "ACK manager active ACK threshold did not reset after send");
-
-}
-
-void testAckCompletion()
-{
-  ZuTestScopeRT(testAckCompletion);
-
-  Zquic::AckManager partial;
-  constexpr auto space = Zquic::PktNumSpace::AppData;
-  ZQUIC_CHECK_RT(partial.received(space, 0, 1000, 50) &&
-      partial.received(space, 1, 1010, 50) && partial.immediate(space),
-    "partial completion setup failed");
-  partial.sent(space, 1);
-  ZQUIC_CHECK_RT(partial.pending(space) && !partial.immediate(space) &&
-      partial.deadline(space) == 1060 && !partial.due(space, 1050),
-    "partial completion retained the covered packet's threshold/deadline");
-  partial.sent(space, 1);
-  ZQUIC_CHECK_RT(partial.deadline(space) == 1060,
-    "duplicate completion changed a newer deadline");
-  ZQUIC_CHECK_RT(partial.received(space, 2, 1020, 50) && partial.immediate(space),
-    "remaining obligation did not count toward the two-packet threshold");
-  partial.sent(space, 3);
-  ZQUIC_CHECK_RT(!partial.pending(space), "latest completion did not clear the obligation");
-  partial.clear();
-  ZQUIC_CHECK_RT(partial.received(space, 0, 2000, 50) && partial.gen(space) == 4,
-    "reset reused an ACK obligation identity");
-  partial.sent(space, 3);
-  ZQUIC_CHECK_RT(partial.pending(space) && partial.deadline(space) == 2050,
-    "old-runtime completion cleared fresh ACK work");
-
-  Zquic::PktBuild encoded;
-  encoded.markAck(unsigned(space), 4, 12);
-  partial.received(space, 1, 2010, 50);
-  ZQUIC_CHECK_RT(encoded.ack(space) && encoded.ackGen() == 4 &&
-      encoded.ackLargest() == 12,
-    "encoded ACK identity changed with a newer receive obligation");
-  encoded.reset();
-  ZQUIC_CHECK_RT(!encoded.ack(space), "packet reset retained an encoded ACK identity");
+  ZuTestScopeRT(testPendingAck);
+  Zquic::PendingAck<8> ack;
+  ack.received({0, 0}, false, false, Zquic::EcnMark::ECT0, true, 990, 50);
+  ZuCheck(!ack.pending() && ack.ecn.ect0 == 1);
+  ack.received({1, 0}, true, false, Zquic::EcnMark::ECT1, true, 1000, 50);
+  ZuCheck(ack.pending() && !ack.due(1049) && ack.due(1050));
+  ack.received({2, 0}, true, false, Zquic::EcnMark::CE, true, 1010, 50);
+  ZuCheck(ack.due(1010) && ack.largestRxTime == 1010 && ack.ecn.ce == 1);
+  ack.sent(1);
+  ZuCheck(ack.pending() && !ack.due(1059) && ack.due(1060));
+  ack.sent(2);
+  ZuCheck(!ack.pending() && ack.ranges.length() == 1);
+  ack.retire(1);
+  ack.add({3, 0});
+  ZuCheck(ack.ranges[0].first == 2 && ack.ranges[0].largest == 3);
+  ack.clear();
+  ack.received({0, 0}, true, true, Zquic::EcnMark::NotECT, true, 2000, 50);
+  ack.sent(2);
+  ZuCheck(ack.gen == 3 && ack.pending() && ack.due(2000) && !ack.ecn.any());
 }
 
 void testLosslessFrameUpdates()
@@ -1243,7 +1077,6 @@ int main(int argc, char **argv)
   ZuTestCall(ptoProgressWithNewPackets);
   ZuTestCall(testFlowControlRetransmit);
   ZuTestCall(testPktNumSpaceBatchCursors);
-  ZuTestCall(testAckManager);
-  ZuTestCall(testAckCompletion);
+  ZuTestCall(testPendingAck);
   ZuTestCall(testLosslessFrameUpdates);
 }

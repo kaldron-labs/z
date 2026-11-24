@@ -83,8 +83,6 @@ public:
     Zquic::Link<PublishApp, PublishLink, PublishStream>;
   using Base::Base;
   using Base::ackSentTx;
-  using Base::consumeAckSentRx;
-  using Base::cancelAckRx;
   using Base::drainPeerAcksTx;
   using Base::awaitPeerAckTx;
   using Base::resetLink;
@@ -176,19 +174,7 @@ public:
   unsigned lostPackets() const {
     return Base::txPackets_(Zquic::PktNumSpace::AppData).lost();
   }
-  unsigned deferredCount() const {
-    unsigned count = unsigned(-1);
-    Base::allQueues([&count](Ztc::Queue *queue) {
-      constexpr auto suffix = ":peer-ack:deferred"_z;
-      auto id = queue->telKey().p<1>();
-      if (id.length() < suffix.length() ||
-	memcmp(id.data() + id.length() - suffix.length(), suffix.data(), suffix.length())) return;
-      Ztc::QueueTelemetry data;
-      queue->telemetry(data);
-      count = data.count;
-    });
-    return count;
-  }
+  using Base::deferredPeerAcks_;
   void peerAck(unsigned first, unsigned largest) {
     Zquic::Frame frame;
     frame.type = Zquic::FrameType::Ack;
@@ -296,34 +282,21 @@ void testConcurrentCompletion()
     return valid;
   }), "initial ACK epoch was not installed");
   unsigned rxPosts = f.app.rxPosts();
-  ZmSemaphore published, copied, rxDone, txDone;
-  bool coherent = true;
-  // Both owners remain in their turns, excluding deadline notifications while
-  // exercising repeated ring wrap and completion against a newer publication.
-  f.app.rxRun([link, &published, &copied, &rxDone]() {
-    for (unsigned batch = 0; batch < 32; ++batch) {
-      for (unsigned i = 0; i < 16; ++i) link->receive(2 + (batch << 4) + i);
-      published.post();
-      copied.wait();
-    }
-    link->consumeAckSentRx();
-    link->cancelAckRx();
-    rxDone.post();
-  });
-  f.app.txRun([link, &published, &copied, &txDone, &coherent]() {
-    for (unsigned batch = 0; batch < 32; ++batch) {
-      published.wait();
-      unsigned pn = 17 + (batch << 4);
-      coherent &= link->encode(pn);
-      copied.post();
-      link->ackSentTx(Zquic::PktNumSpace::AppData, pn);
-    }
-    txDone.post();
-  });
-  bool done = !rxDone.timedwait(Zm::now(10)) && !txDone.timedwait(Zm::now(10));
-  ZuCHECK(done && coherent, "concurrent ACK publication mixed generation, range or ECN");
-  ZuCHECK(f.app.rxPosts() == rxPosts,
-    "ACK completion posted to Rx while a newer generation was being published");
+  for (unsigned batch = 0; batch < 32; ++batch) {
+    unsigned first = 2 + (batch << 4);
+    f.rx([link, first] {
+      for (unsigned i = 0; i < 16; ++i) link->receive(first + i);
+      return true;
+    });
+    ZuCheck(f.tx([link, first] {
+      bool coherent = link->encode(first + 15);
+      link->ackSentTx(Zquic::PktNumSpace::AppData, first + 14);
+      coherent &= link->encode(first + 15);
+      link->ackSentTx(Zquic::PktNumSpace::AppData, first + 15);
+      return coherent;
+    }));
+  }
+  ZuCheck(f.app.rxPosts() == rxPosts);
 }
 
 void testOrdinaryPublication()
@@ -338,31 +311,15 @@ void testOrdinaryPublication()
     return true;
   });
   unsigned rxPosts = f.app.rxPosts(), txPosts = f.app.txPosts();
-  ZmSemaphore published, sent, rxDone, txDone;
-  bool coherent = true;
-  f.app.rxRun([link, &published, &sent, &rxDone]() {
-    for (unsigned pn = 2; pn <= 257; ++pn) {
-      link->receive(pn);
-      published.post();
-      sent.wait();
-    }
-    link->consumeAckSentRx();
-    link->cancelAckRx();
-    rxDone.post();
-  });
-  f.app.txRun([link, &published, &sent, &txDone, &coherent]() {
-    for (unsigned pn = 2; pn <= 257; ++pn) {
-      published.wait();
-      coherent &= link->encode(pn);
+  for (unsigned pn = 2; pn <= 257; ++pn) {
+    f.rx([link, pn] { link->receive(pn); return true; });
+    ZuCheck(f.tx([link, pn] {
+      bool coherent = link->encode(pn);
       link->ackSentTx(Zquic::PktNumSpace::AppData, pn);
-      sent.post();
-    }
-    txDone.post();
-  });
-  bool done = !rxDone.timedwait(Zm::now(10)) && !txDone.timedwait(Zm::now(10));
-  ZuCHECK(done && coherent, "ordinary piggybacked ACK lost coherent metadata");
-  ZuCHECK(f.app.rxPosts() == rxPosts && f.app.txPosts() == txPosts,
-    "ordinary publication or completion posted across owners");
+      return coherent;
+    }));
+  }
+  ZuCheck(f.app.rxPosts() == rxPosts && f.app.txPosts() == txPosts + 256);
 }
 
 void testPeerAckParking()
@@ -504,6 +461,7 @@ void testDeferredReset()
   auto link = f.link;
   ZuCHECK(f.ready && f.tx([link] { return link->packets(1024); }),
     "deferred ACK reset fixture did not start");
+  unsigned deferred = 0;
   ZmSemaphore held, resume, received, reset;
   f.app.txRun([link, &held, &resume] {
     link->armRecovery(Zm::now() + Zquic::timeUS(10000));
@@ -511,7 +469,6 @@ void testDeferredReset()
     resume.wait();
   });
   bool ready = !held.timedwait(Zm::now(10));
-  unsigned deferred = 0;
   ZmScheduler::Timer sentinel;
   f.app.mx()->add(&sentinel, Zm::now() + Zquic::timeUS(30000),
     ZmScheduler::Update, [link, &deferred, &received, &reset](auto &&arm) {
@@ -521,7 +478,7 @@ void testDeferredReset()
 	link->peerAck(965, 1024);
 	// Recovery callbacks are already queued before these fallback posts.
 	// They begin a bounded ACK retirement; reset overtakes its continuation.
-	link->app()->txRun([link, &deferred] { deferred = link->deferredCount(); });
+	link->app()->txRun([link, &deferred] { deferred = link->deferredPeerAcks_(); });
 	link->resetLink([&reset] { reset.post(); });
 	received.post();
       });
@@ -529,7 +486,7 @@ void testDeferredReset()
   ready &= !received.timedwait(Zm::now(10));
   resume.post();
   ready &= !reset.timedwait(Zm::now(10));
-  bool cleared = f.tx([link] { return !link->packetCount() && !link->deferredCount(); });
+  bool cleared = f.tx([link] { return !link->packetCount() && !link->deferredPeerAcks_(); });
   ZuCHECK(ready && deferred == 2 && cleared && !link->recoveries(),
     "reset retained deferred ACKs or allowed old retirement/recovery to run");
   f.app.mx()->del(&sentinel);

@@ -1041,14 +1041,7 @@ void ZquicLogger::start_()
     if (m_lifecycle.configured) {
       m_coordination.ring.init(ZmRingParams{m_lifecycle.params.ringSize()});
       ok = m_coordination.ring.open(Ring::Read | Ring::Write) == Zu::OK;
-      if (ok) {
-	m_coordination.ring.initQueue(nullptr, "quic:qlog", "ring",
-	  Ztc::QueueType::Tx, m_coordination.ring.size());
-	m_coordination.queue.initQueue(nullptr, "quic:qlog", "fallback",
-	  Ztc::QueueType::Tx);
-      } else {
-	++m_writerStats.writerFailures;
-      }
+      if (!ok) ++m_writerStats.writerFailures;
     }
   }
   started(ok);

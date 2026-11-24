@@ -133,12 +133,6 @@ friend inline ZuStringT<"Zquic.HeldUDP"> ZmNHeapID(HeldUDP *);
       cxn->disconnected(peer);
     });
   }
-  TelKey telKey() const override { return {}; }
-  void telemetry(Ztc::MxTelemetry &) const override { }
-  unsigned allCxns(AllCxnsFn) const override { return 0; }
-  unsigned allQueues(Ztc::QueueMgr::AllFn) const override { return 0; }
-  void watch(AddCxnFn, DelCxnFn) override { }
-  void unwatch() override { }
 };
 
 struct QueuedEndpoint {
@@ -147,7 +141,6 @@ struct QueuedEndpoint {
   enum { EndpointRef = false };
 
   ZiMultiplex *mxPtr = nullptr;
-  Zquic_::QueueCatalog queues;
   unsigned submitted = 0;
   unsigned submittedBytes = 0;
   unsigned sent = 0;
@@ -158,9 +151,6 @@ struct QueuedEndpoint {
   unsigned wakeups = 0;
 
   ZiMultiplex *mx_() const { return mxPtr; }
-  Ztc::Hub *queueHub() const { return nullptr; }
-  Zquic_::QueueCatalog &queueCatalog() { return queues; }
-  ZuCSpan queueID() const { return {}; }
   QueuedEndpoint *impl() { return this; }
   bool endpointTxInvoked() const { return mxPtr->invoked(mxPtr->txThread()); }
   void cxnAdded() { }

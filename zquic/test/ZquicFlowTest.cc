@@ -57,7 +57,7 @@ struct FlowLink :
 {
   using Base = Zquic::Link<FlowApp, FlowLink, FlowStream>;
   using Base::Base;
-  void flushTx_() { } // This flow-only fixture has no transport output.
+  void flushTx_(ZiSockAddr = {}) { } // This flow-only fixture has no transport output.
 };
 
 static ZmRef<ZiIOBuf> streamPkt(

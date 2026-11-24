@@ -259,12 +259,14 @@ public:
   bool ack(unsigned level) const {
     return m_ackLevel == level && m_ackLevel < PktNumSpace::N;
   }
-  void markAck(unsigned level, uint64_t gen, uint64_t largest) {
+  void markAck(unsigned level, uint64_t gen, uint64_t largest, uint64_t prefix) {
     m_ackLevel = level;
     m_ackGen = gen;
     m_ackLargest = largest;
+    m_ackPrefix = prefix;
   }
   uint64_t ackGen() const { return m_ackGen; }
+  uint64_t ackPrefix() const { return m_ackPrefix; }
   uint64_t ackLargest() const { return m_ackLargest; }
   bool pathValidation() const { return m_pathValidation; }
   void markPathValidation() { m_pathValidation = true; }
@@ -319,6 +321,7 @@ private:
   unsigned		m_ackLevel = PktNumSpace::N;
   uint64_t		m_ackGen = 0;
   uint64_t		m_ackLargest = 0;
+  uint64_t		m_ackPrefix = 0;
   bool			m_pathValidation = false;
 };
 

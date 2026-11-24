@@ -40,7 +40,6 @@
 
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
-#include <zlib/ZtcHub.hh>
 
 #include <zlib/ZtlsCredentials.hh>
 
@@ -54,7 +53,6 @@ namespace Zquic {
 namespace Zquic_ { using namespace Zquic; }
 
 #include <zlib/ZquicTypes.hh>
-#include <zlib/ZquicQueue.hh>
 #include <zlib/ZquicBuf.hh>
 #include <zlib/ZquicPacket.hh>
 #include <zlib/ZquicFrame.hh>
@@ -623,9 +621,7 @@ using ServerParams = HubParams;
 
 template <typename App_> class Hub :
   public ZmPolymorph,
-  public ZmEngine<App_>,
-  public Ztc::Hub,
-  public Ztc::QueueMgr {
+  public ZmEngine<App_> {
 friend ZmEngine<App_>;
 template <typename, typename, typename>
 friend class Link;
@@ -648,54 +644,12 @@ public:
   const App *app() const { return static_cast<const App *>(this); }
   App *app() { return static_cast<App *>(this); }
 
-  Hub() : m_id{ZuID{} << "quic:" <<
-    ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>()} { }
-
   bool init(HubParams params) {
     return init_(ZuMv(params), Zquic::Vantage::Unknown,
       [](const HubParams &) { return true; });
   }
-  bool start() override { return HubCtl::start(); }
-  bool stop() override { return HubCtl::stop(); }
-
-  TelKey telKey() const override {
-    return {Ztc::LinkType::QUIC, m_id};
-  }
-  void telemetry(Ztc::HubTelemetry &data) const override {
-    data.id = m_id;
-    if (m_mx) data.mxID = m_mx->id();
-    data.down = m_down.load_();
-    data.disabled = 0;
-    data.transient = m_transient.load_();
-    data.up = m_up.load_();
-    data.reconn = 0;
-    data.failed = 0;
-    data.nLinks = m_nLinks.load_();
-    data.rxThread = m_rxThread;
-    data.txThread = m_txThread;
-    data.linkType = Ztc::LinkType::QUIC;
-    data.state = state();
-  }
-  unsigned allLinks(Ztc::Hub::AllLinksFn fn) const override {
-    return app()->allLinks_(ZuMv(fn));
-  }
-  unsigned allPools(Ztc::Hub::AllPoolsFn fn) const override {
-    return app()->allPools_(ZuMv(fn));
-  }
-
-  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
-    unsigned n = 0;
-    allLinks([&fn, &n](Ztc::Link *link) { n += link->allQueues(fn); });
-    allPools([&fn, &n](Ztc::Pool *pool) { n += pool->allQueues(fn); });
-    return n;
-  }
-
   void final() {
     bool ok = HubCtl::lock(ZmEngineState::Stopped, [this]() {
-      if (m_registered) {
-	Ztc::HubMgr::del(this);
-	m_registered = false;
-      }
       ZquicLogger::final(m_qlogTrace);
       m_mx = nullptr;
       m_rxThread = 0;
@@ -798,38 +752,10 @@ public:
   }
   bool txInvoked() { return m_mx && m_txThread && m_mx->invoked(m_txThread); }
 
-private:
-  using Ztc::Hub::linkAdded_;
-  void linkDeleted_(Ztc::Link *link, Ztc::LinkState::T state) {
-    switch (state) {
-      case Ztc::LinkState::Down: Ztc::Hub::linkDownDec_(); break;
-      case Ztc::LinkState::Up: Ztc::Hub::linkUpDec_(); break;
-      default: Ztc::Hub::linkTransientDec_(); break;
-    }
-    Ztc::Hub::linkDeleted_(link);
-  }
-
-public:
-  uint64_t queueOrdinal() { return ++m_queueOrdinal; } // cold object identity only
-
-  void linkState(
-      Ztc::LinkState::T oldState, Ztc::LinkState::T newState) {
-    switch (oldState) {
-      case Ztc::LinkState::Down: Ztc::Hub::linkDownDec_(); break;
-      case Ztc::LinkState::Up: Ztc::Hub::linkUpDec_(); break;
-      default: Ztc::Hub::linkTransientDec_(); break;
-    }
-    switch (newState) {
-      case Ztc::LinkState::Down: Ztc::Hub::linkDownInc_(); break;
-      case Ztc::LinkState::Up: Ztc::Hub::linkUpInc_(); break;
-      default: Ztc::Hub::linkTransientInc_(); break;
-    }
-  }
-
 protected:
   template <typename Params, typename L>
   bool init_(Params params, Zquic::Vantage::T vantage, L &&l) {
-    bool ok = HubCtl::lock(
+    return HubCtl::lock(
 	ZmEngineState::Stopped,
 	[this, params = ZuMv(params), vantage, l = ZuFwd<L>(l)]() mutable -> bool {
       m_errorFn = ZuMv(params.errorFn());
@@ -890,15 +816,8 @@ protected:
 	return false;
       return l(params);
     });
-    if (ok) {
-      Ztc::HubMgr::add(this);
-      m_registered = true;
-    }
-    return ok;
   }
 
-  unsigned allLinks_(Ztc::Hub::AllLinksFn) const { return 0; }
-  unsigned allPools_(Ztc::Hub::AllPoolsFn) const { return 0; }
 
   void error_(ZeException e) {
     if (m_errorFn)
@@ -1103,7 +1022,6 @@ private:
   Zi::IOBufAllocator *m_streamTxAllocator = nullptr;
 
   // immutable after init()
-  const ZuID		m_id;
   ZiMultiplex		*m_mx = nullptr;
   unsigned		m_rxThread = 0;
   unsigned		m_txThread = 0;
@@ -1135,8 +1053,6 @@ private:
   bool			m_retryAddrValidate = false;
   bool			m_newTokenAddrValidate = false;
   bool			m_addrValidatePeerPort = false;
-  bool			m_registered = false;
-  ZmAtomic<uint64_t>	m_queueOrdinal = 0;
 
 };
 
@@ -1267,7 +1183,6 @@ public:
   using Base = Hub<App>;
   using Endpoint = Zquic_::ServerEP<Server>;
   using Base::app;
-  using Base::allLinks;
   enum { EndpointRef = false };
   enum { TLSBufSize = Client<App>::TLSBufSize };
   enum { PNLength = Client<App>::PNLength };
@@ -1286,13 +1201,11 @@ friend ZmEngine<App>;
 	"server certPath and keyPath are required"));
       return false;
     }
-    bool ok = this->init_(ZuMv(params), Zquic::Vantage::Server,
+    return this->init_(ZuMv(params), Zquic::Vantage::Server,
       [this](const ServerParams &) {
 	if (!m_ticketKey) m_ticketKey = Ztls::ticketKeyNew();
 	return m_ticketKey;
       });
-    if (ok) m_routes.initQueue(this);
-    return ok;
   }
 
   void final() {
@@ -1306,12 +1219,8 @@ friend ZmEngine<App>;
     finalTicketKey();
   }
 
-  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
-    unsigned n = Base::allQueues(fn) + m_routes.allQueues(fn);
-    for (unsigned i = 0; i < 4; ++i)
-      if (m_endpoints[i]) n += m_endpoints[i]->allQueues(fn);
-    return n;
-  }
+
+  void stopLink(Link *link) { link->disconnect(); }
 
   bool listening() const {
     return !m_startFailed && m_readyMask == (1U << m_endpointCount) - 1 &&
@@ -1360,30 +1269,6 @@ friend ZmEngine<App>;
       l(server->m_addrValidationDiag);
     });
   }
-  template <typename L, typename Done>
-  void allLinks(L &&l, Done &&done) {
-    ZiAssert(this->mx() && this->rxThread(), "Zquic", (),
-      "QUIC server link iteration before app initialization", return);
-    if (this->rxInvoked()) {
-      if (this->state() == ZmEngineState::Running)
-	allLinks_0([&l](LinkRef &ref) { l(ZuMv(ref)); });
-      done();
-      return;
-    }
-    this->rxInvoke([this, l = ZuFwd<L>(l), done = ZuFwd<Done>(done)]() mutable {
-      allLinks(ZuMv(l), ZuMv(done));
-    });
-  }
-
-  unsigned allLinks_(Ztc::Hub::AllLinksFn fn) const {
-    unsigned n = 0;
-    allLinks_0([&fn, &n](LinkRef &ref) {
-      ++n;
-      fn(ref.ptr());
-    });
-    return n;
-  }
-
   ServerAddrs serverAddrs() const { return {}; }
   const ServerAddrs &runtimeServerAddrs() const { return m_serverAddrs; }
   unsigned endpointGeneration() const { return m_runtimeGeneration; }
@@ -1539,21 +1424,6 @@ private:
     return nullptr;
   }
 private:
-  template <typename L>
-  void allLinks_0(L &&l) const {
-    ZmRef<LinkTable> table = m_links;
-    if (!table) return;
-    unsigned n = table->count_();
-    if (!n) return;
-    auto links = ZmScratch(LinkRef, n, typename LinkRefs::VHeap);
-    {
-      auto i = table->citer();
-      while (auto node = i())
-	links.push(LinkRef{static_cast<Link *>(node)});
-    }
-    links.all(ZuFwd<L>(l));
-  }
-
   void received_(unsigned slot, ZmRef<RxPkt> pkt) {
     if (this->state() != ZmEngineState::Running) {
       m_endpoints[slot]->failure();
@@ -1732,7 +1602,7 @@ private:
     for (unsigned i = 0; i < m_endpointCount; ++i) {
       if (!m_endpoints[i]) m_endpoints[i] = new Endpoint{this, i};
       if (!m_endpoints[i]->init(this->mx(), this->rxPktAllocator(),
-	  this->txPktAllocator(), this, this->queueOrdinal())) {
+	  this->txPktAllocator())) {
 	failStart();
 	return;
       }
@@ -1783,17 +1653,19 @@ private:
   }
 
   void stop_0() {		// Rx thread - disconnect links
-    m_stopCount = 0;
+    m_stopCount = m_links->count_();
+    if (!m_stopCount) {
+      m_routes.clear();
+      stop_1();
+      return;
+    }
+    auto links = ZmScratch(LinkRef, m_stopCount, typename LinkRefs::VHeap);
     {
       auto i = m_links->citer();
-      while (auto node = i()) {
-	LinkRef ref{static_cast<Link *>(node)};
-	ref->disconnect();
-	++m_stopCount;
-      }
+      while (auto node = i()) links.push(LinkRef{static_cast<Link *>(node)});
     }
     m_routes.clear();
-    if (!m_stopCount) stop_1();
+    for (auto &link : links) this->app()->stopLink(link.ptr());
   }
 
   void stop_1() {		// Rx thread - clean links / drain endpoint

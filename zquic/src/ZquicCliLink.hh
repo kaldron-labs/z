@@ -102,23 +102,11 @@ public:
     m_cliTx.closeNotify = true;
     Base::pktAllocFailed();
   }
-  CliLink(App *app, ZuID id) : Base{app, false, ZuMv(id)} {
-    Base::initCryptoDelivery();
-  }
   CliLink(App *app, Host server, uint16_t port) :
     Base{app, false}, m_cliRx{.server = ZuMv(server), .port = port} {
     Base::initCryptoDelivery();
   }
-  CliLink(App *app, ZuID id, Host server, uint16_t port) :
-    Base{app, false, ZuMv(id)},
-    m_cliRx{.server = ZuMv(server), .port = port} {
-    Base::initCryptoDelivery();
-  }
   ~CliLink() = default;
-
-  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
-    return Base::allQueues(fn) + Endpoint::allQueues(fn);
-  }
 
   void connect() {
     ZiAssert(app() && app()->mx(), "Zquic", (),
@@ -157,7 +145,6 @@ protected:
       "QUIC cached token access outside Rx thread", return false);
     return bool(m_cliRx.newToken);
   }
-  void up_() { connect(); }
 
 public:
 
@@ -428,8 +415,7 @@ public:
     Base::initCryptoDelivery();
     Base::resetDiagRx();
 
-    if (!Endpoint::init(app()->mx(), app()->rxPktAllocator(), app()->txPktAllocator(),
-	app(), app()->queueOrdinal())) {
+    if (!Endpoint::init(app()->mx(), app()->rxPktAllocator(), app()->txPktAllocator())) {
       connectFailed_0(false);
       return;
     }

@@ -58,7 +58,6 @@ friend inline ZuStringT<"Zquic.Pressure.Link"> ZmNHeapID(PressureLink *);
     uint8_t bytes[32]{};
     Zquic::TrafficSecret secret;
     Base::initClientPathTx({}, {});
-    Base::setPeerStreamLimit(Zquic::StreamType::Duplex, 2);
     Base::txApplyMaxData(100);
     return Zquic::PktProt::deriveSecret(secret,
       &Ztls_::opensslAes128gcmsha256, ZuBSpan{bytes, sizeof(bytes)}) &&
@@ -205,9 +204,12 @@ template <bool capacity, bool bufferAfterGrant = false> static void finalStream(
   ZmRef<PressureStream> stream;
   ZuCheck(mx.start());
   bool setup = false;
+  on(mx, 3, [&link, &stream] {
+    link->setPeerStreamLimit(Zquic::StreamType::Duplex, 2);
+    stream = link->stream();
+  });
   on(mx, sid, [&link, &stream, &setup] {
     setup = link->setupWire();
-    stream = link->stream();
     if (!stream) { setup = false; return; }
     stream->txCredit(100);
     auto tx = stream->txStream_();
@@ -327,7 +329,6 @@ void testCapacityGate()
   Zquic_::EndpointTxToken tokens[2];
   Zquic_::EndpointTxWait first, second;
   Zquic_::EndpointTxGate gate{&mx, &queued, 7, 1, [&queued] { return queued; }};
-  gate.initQueues(&app, "gate");
   ZuCheck(mx.start());
   auto arm = [&mx, &gate, &tokens, &grants, &retired, &cancelled](
     Zquic_::EndpointTxWait &wait, unsigned index) {
@@ -394,16 +395,9 @@ void testCapacityGate()
   ZuCheck(grants[0] == 2 && !stale && !wrongPhysical && !wrongSlot && !wrongSerial);
   arm(second, 1);
   drain(mx);
-  bool rowsValid = true;
-  unsigned rows = gate.allQueues([&rowsValid](Ztc::Queue *queue) {
-    Ztc::QueueTelemetry row;
-    queue->telemetry(row);
-    rowsValid &= row.count == 1;
-    if (row.id == "gate:reserved") rowsValid &= row.size == 1 && row.full == 1;
-    else rowsValid &= row.id == "gate:wait" && !row.size && !row.full;
-  });
-  rowsValid &= rows == 2;
-  ZuCheck(rowsValid);
+  bool gateQueued = false;
+  on(mx, 2, [&gate, &gateQueued] { gateQueued = gate.waiting() == 1 && gate.reservations() == 1; });
+  ZuCheck(gateQueued);
   ZmSemaphore entered, release;
   mx.run([&entered, &release] { entered.post(); release.wait(); }, 4);
   entered.wait();
@@ -415,12 +409,8 @@ void testCapacityGate()
     });
   });
   ZuCheck(!closed);
-  gate.allQueues([&rowsValid](Ztc::Queue *queue) {
-    Ztc::QueueTelemetry row;
-    queue->telemetry(row);
-    rowsValid &= !row.count;
-  });
-  ZuCheck(rowsValid);
+  on(mx, 2, [&gate, &gateQueued] { gateQueued = gate.waiting() || gate.reservations(); });
+  ZuCheck(!gateQueued);
   release.post();
   drain(mx);
   ZuCheck(closed && drained && !first.busy() && !second.busy());

@@ -128,7 +128,7 @@ static auto openStream(
   using StreamRef = decltype(link->stream(type));
   StreamRef stream;
   ZmBlock<>{}([&link, type, &stream](auto wake) {
-    link->app()->txRun([
+    link->app()->rxRun([
       link, type, &stream, wake = ZuMv(wake)
     ]() mutable {
       stream = link->stream(type);
@@ -1391,20 +1391,6 @@ void testServerBindings()
 	wake();
       });
     });
-    ZtArray<ZuID> ids;
-    unsigned udpQueues = 0;
-    bool unique = true;
-    server.allQueues([&ids, &udpQueues, &unique](Ztc::Queue *queue) {
-      Ztc::QueueTelemetry row;
-      queue->telemetry(row);
-      ZtString<> id{row.id};
-      if (id.find<":udp">() < 0) return;
-      ++udpQueues;
-      for (auto &other : ids) unique &= other != row.id;
-      ids.push(row.id);
-    });
-    ZQUIC_CHECK_RT(udpQueues == 4 && unique,
-      "physical listeners did not register four independent UDP queue identities");
     ZQUIC_CHECK_RT(server.stop() && !server.listening(),
       "shared listeners remained ready after shutdown drain");
   }

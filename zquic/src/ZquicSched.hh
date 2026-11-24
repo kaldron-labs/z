@@ -348,16 +348,12 @@ ZmHashDerive(StreamScheduleHash, StreamScheduleEntry,
       ZmHashLock<ZmNoLock,
 	ZmHashHeapID<"Zquic.StreamScheduler">>>>));
 
-class StreamScheduler final : public Zquic_::QueueInfo {
+class StreamScheduler final {
 public:
   StreamScheduler() : m_hash{new StreamScheduleHash} { }
   StreamScheduler(ZmHashParams params) :
     m_hash{new StreamScheduleHash{params.init(StreamScheduleHash::ID{}())}} { }
 
-  void telemetry(Ztc::QueueTelemetry &data) const override {
-    queueTelemetry(data);
-    data.count = m_hash->count_();
-  }
 
   bool add(uint64_t id) {
     if (m_hash->findPtr(id)) return true;
@@ -423,16 +419,7 @@ private:
 
 class TxScheduler {
 public:
-  void initQueues(Ztc::Hub *hub, ZuCSpan prefix) {
-    m_control.initQueue(hub, prefix, "control", Ztc::QueueType::Tx, 0);
-    m_stream.initQueue(hub, prefix, "stream", Ztc::QueueType::Tx, 0);
-  }
 
-  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const {
-    fn(const_cast<StreamScheduler *>(&m_control));
-    fn(const_cast<StreamScheduler *>(&m_stream));
-    return 2;
-  }
 
   bool addControl(uint64_t id) { return m_control.add(id); }
   bool addStream(uint64_t id) { return m_stream.add(id); }

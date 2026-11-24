@@ -237,19 +237,12 @@ again on Tx; they add no payload copy or receive wrapper.
 - HTTP/3, QPACK, WebTransport, DATAGRAM, multipath, and QUIC v2 are not
   exposed by this module.
 
-Queue telemetry follows existing ownership: the hub visits links and pools,
-links visit their packet spaces and Rx/Tx stream tables, and endpoints visit
-their current and candidate connections. Queue identities remain local to those
-objects; there is no global queue registry. Enumeration borrows queue views for
-the callback only. The existing link-keyed Rx/Tx summaries remain available to
-`Ztc`; detailed role IDs are available through direct `allQueues` enumeration.
-
 ## Tests
 
 Tests are standalone binaries under `zquic/test`.  Useful entry points:
 
-- `ZquicQueueTest`: owner enumeration, queue identity, stream retirement, and
-  router, scheduler, and crypto queue counters.
+- `ZquicQueueTest` exercises stream retirement, bounded routing, packet scheduling,
+  crypto buffering, and endpoint capacity.
 - `ZquicCodecTest`: packet/frame/transport-parameter codec coverage.
 - `ZquicPacketProtectionTest`: RFC 9001 packet protection vectors and traffic
   secret protection.
@@ -258,7 +251,7 @@ Tests are standalone binaries under `zquic/test`.  Useful entry points:
 - `ZquicRttLossTest`: falling/rising/constant RTT thresholds, initial fallback,
   granularity floor, and packet-loss deadline edges at full time precision.
 - `ZquicAckPublishTest`: concurrent Rx/Tx ACK metadata and completion,
-  ordinary publication without owner posts, sender parking, ring pressure,
+  range updates posted to the Tx owner, sender parking, ring pressure,
   ordered bounded peer-ACK retirement, reset with deferred ACKs, and recovery
   callbacks already handed off when an ACK arrives. Serialized ACK_ECN feedback
   and protected output marking cover all four congestion-control/ECN policies.

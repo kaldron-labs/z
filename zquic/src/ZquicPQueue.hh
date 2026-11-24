@@ -466,7 +466,7 @@ using StreamRxPQueue =
 	      ZmPQueueLevels<2>>>>>>>;
 
 
-using CryptoRxPQueue_ =
+using CryptoRxPQueue =
   ZmPQueue<CryptoRxData,
     ZmPQueueNode<CryptoRxData,
       ZmPQueueHeapID<"",
@@ -475,7 +475,6 @@ using CryptoRxPQueue_ =
 	  ZmPQueueOverwrite<false,
 	    ZmPQueueBits<2,
 	      ZmPQueueLevels<2>>>>>>>;
-using CryptoRxPQueue = Zquic_::Queue<CryptoRxPQueue_, Zquic_::PQueueCount>;
 
 template <
   unsigned Size = BufSize,
@@ -484,21 +483,16 @@ template <
 using CryptoRxBufAlloc = Zi::IOBufBuiltinAllocator<
   Zi::IOBufType::App, CryptoRxPQueue::Node, Size, ZiIOBuf_Align, ZuStringT<HeapID>, MaxSize>;
 
-using StreamTxPQueue = Zquic_::Queue<TxUnackdRanges>;
-class CryptoTxPQueue final : public Zquic_::Queue<TxUnackdRanges> {
-public:
-  using Base = Zquic_::Queue<TxUnackdRanges>;
-  using Base::Base;
-};
+using StreamTxPQueue = TxUnackdRanges;
+using CryptoTxPQueue = TxUnackdRanges;
 
-using PktRxPQueue_ =
+using PktRxPQueue =
   ZmPQueue<RxPktMark,
     ZmPQueueNode<ZuObject,
       ZmPQueueHeapID<"Zquic.Pkt.RxQueue",
 	ZmPQueueOverwrite<false,
 	  ZmPQueueBits<4,
 	    ZmPQueueLevels<4>>>>>>;
-using PktRxPQueue = Zquic_::Queue<PktRxPQueue_, Zquic_::PQueueCount>;
 
 struct RxSpan {
   uint64_t	first = 0;

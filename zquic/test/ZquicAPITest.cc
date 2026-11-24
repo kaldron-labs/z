@@ -358,9 +358,7 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
   using Base::noteAck;
   using Base::appendPendingAck;
   using Base::ackSentTx;
-  using Base::consumeAckSentRx;
-  using Base::serviceAckRx;
-  using Base::cancelAckRx;
+  using Base::applyAckOfAckTx;
   using Base::recordPathRx;
   using Base::observePathRx_;
   using Base::refreshPathRxTx;
@@ -369,10 +367,10 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
   using Base::drainPeerAcksTx;
   using Base::awaitPeerAckTx;
   using Base::publishStreamTx;
-  using Base::requestCreditTx;
+  using Base::postFlowUpdate;
   using Base::resetLink;
   using Base::AckSnapshot;
-  using Base::noteAckTx;
+  using Base::updateAckTx;
   using Base::ackFrameValidTx;
   using Base::pendingAck;
   using Base::txPackets;
@@ -760,7 +758,7 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
   }
   void clearScheduledStreams() { Base::clearWritableStreams(); }
   void postPeerLimits(uint64_t duplex, uint64_t simplex) {
-    Base::postPeerStreamLimitsTx(duplex, simplex);
+    Base::setPeerStreamLimitsRx(duplex, simplex);
   }
   bool receiveMaxStreams(
     Zquic::StreamType::T type, uint64_t maximum) {
@@ -1070,7 +1068,9 @@ void testStreamShape()
   ZuCHECK(c0->link() == client.ptr() && c1->link() == client.ptr(),
     "client stream owner link mismatch");
   ZuCHECK(s0->link() == server.ptr(), "server stream owner link mismatch");
-  ZuCHECK(client->streamCount() == 2, "client stream count mismatch");
+  ZuCHECK(client->streamCount() == 1 && !client->findStream(c1->id()) &&
+      client->findTxStream(c1->id()) == c1,
+    "send-only client stream must reside in the Tx registry");
   ZuCHECK(client->findStream(0) == c0, "stream hash lookup failed");
 
   {
@@ -1153,7 +1153,7 @@ void testAlignedSurfaceShape()
   ZmRef<ClientShapeLink> client = new ClientShapeLink{&clientApp};
   ZmRef<ClientShapeStream> c0;
   ZmBlock<>{}([&clientApp, &client, &c0](auto wake) {
-    clientApp.txRun([client, &c0, wake = ZuMv(wake)]() mutable {
+    clientApp.rxRun([client, &c0, wake = ZuMv(wake)]() mutable {
       c0 = client->stream();
       wake();
     });
@@ -1169,7 +1169,7 @@ void testAlignedSurfaceShape()
   ZmRef<ServerShapeLink> server = new ServerShapeLink{&serverApp};
   ZmRef<ServerShapeStream> s0;
   ZmBlock<>{}([&serverApp, &server, &s0](auto wake) {
-    serverApp.txRun([server, &s0, wake = ZuMv(wake)]() mutable {
+    serverApp.rxRun([server, &s0, wake = ZuMv(wake)]() mutable {
       s0 = server->stream();
       wake();
     });
@@ -1411,21 +1411,11 @@ void testStreamLimitOwnership()
   link->initClientPath(ZiSockAddr{}, ZiSockAddr{});
   fixture.app.defer();
 
-  fixture.app.enterTx();
-  link->setPeerStreamLimit(Zquic::StreamType::Duplex, 0);
-  link->setPeerStreamLimit(Zquic::StreamType::Simplex, 0);
-  fixture.app.enterRx();
   link->postPeerLimits(1, 2);
-  ZuCHECK(fixture.app.txPending(),
-    "initial peer stream limits were not posted to Tx");
-  fixture.app.enterTx();
-  ZuCHECK(!link->peerStreamLimit(Zquic::StreamType::Duplex) &&
-      !link->peerStreamLimit(Zquic::StreamType::Simplex),
-    "Tx observed peer stream limits before applying the publication");
-  fixture.app.runTx();
-  ZuCHECK(link->peerStreamLimit(Zquic::StreamType::Duplex) == 1 &&
+  ZuCHECK(!fixture.app.txPending() &&
+      link->peerStreamLimit(Zquic::StreamType::Duplex) == 1 &&
       link->peerStreamLimit(Zquic::StreamType::Simplex) == 2,
-    "Tx did not apply the initial peer stream limits");
+    "Rx did not install the initial stream allowances locally");
 
   ZuCHECK(link->stream(), "initial peer stream limit did not open a stream");
   ZuCHECK(!link->stream() &&
@@ -1436,16 +1426,11 @@ void testStreamLimitOwnership()
   fixture.app.enterRx();
   ZuCHECK(link->receiveMaxStreams(Zquic::StreamType::Duplex, 2) &&
       fixture.app.txPending(),
-    "received MAX_STREAMS was not posted to Tx");
-  fixture.app.enterTx();
-  ZuCHECK(link->peerStreamLimit(Zquic::StreamType::Duplex) == 1 &&
-      link->queuedLocalStreams(Zquic::StreamType::Duplex) == 1,
-    "Tx applied MAX_STREAMS before its queued handoff");
-  fixture.app.runTx();
+    "MAX_STREAMS did not publish the admitted stream to Tx");
   ZuCHECK(link->peerStreamLimit(Zquic::StreamType::Duplex) == 2 &&
       link->localStreamsOpened(Zquic::StreamType::Duplex) == 2 &&
       !link->queuedLocalStreams(Zquic::StreamType::Duplex),
-    "MAX_STREAMS did not open the queued local stream on Tx");
+    "MAX_STREAMS did not open the queued local stream on Rx");
   while (fixture.app.txPending()) fixture.app.runTx();
   fixture.app.enterRx();
   while (fixture.app.rxPending()) fixture.app.runRx();
@@ -1536,106 +1521,63 @@ void testStatelessResetDetection()
 #endif
 }
 
-static Ztc::QueueTelemetry ackQueue(TestLink &link, ZuCSpan role)
-{
-  Ztc::QueueTelemetry result;
-  link.allQueues([&result, role](Ztc::Queue *queue) {
-    auto key = queue->telKey();
-    ZtString<> id{key.p<1>()};
-    auto offset = id.rfind(role);
-    if (offset >= 0 && unsigned(offset) + role.length() == id.length())
-      queue->telemetry(result);
-  });
-  return result;
-}
 
 void testAckPublications()
 {
   ZuTestScopeRT(testAckPublications);
-  // Owner turns are controlled explicitly. The stopped scheduler retains
-  // timer reservations without racing the deterministic handoff fixture.
   HubFixture fixture{true, false, false};
   auto &app = fixture.app;
   ZmRef<TestLink> link = new TestLink{&app};
   ZQUIC_CHECK_RT(link->ackEstablished(), "ACK fixture keys did not install");
   app.defer();
   constexpr auto space = Zquic::PktNumSpace::AppData;
-  link->noteAck(space, 1, true, {}, false, Zquic::EcnMark::ECT0);
-  ZQUIC_CHECK_RT(app.txPending(), "initial ACK epoch did not use its setup handoff");
-  while (app.txPending()) app.runTx();
-  Zquic::PktBuild first;
-  ZQUIC_CHECK_RT(link->appendPendingAck(space, first) && first.ack(space) &&
-      first.ackGen() == 1 && first.ackLargest() == 1,
-    "initial ACK snapshot was not installed");
-  link->ackSentTx(space, first.ackGen());
-  ZQUIC_CHECK_RT(!app.rxPending(), "ACK completion posted to Rx");
-
-  app.enterRx();
+  link->noteAck(space, 0, true, {}, false, Zquic::EcnMark::ECT0);
   link->noteAck(space, 2, true, {}, false, Zquic::EcnMark::CE);
-  ZQUIC_CHECK_RT(!app.txPending(), "ordinary receive posted an ACK state copy");
+  Zquic::PktBuild before;
   app.enterTx();
-  Zquic::PktBuild second;
-  ZQUIC_CHECK_RT(link->appendPendingAck(space, second) && second.ack(space) &&
-      second.ackGen() == 2 && second.ackLargest() == 2,
-    "atomic ACK publication was not visible to packetization");
+  ZuCheck(link->appendPendingAck(space, before) && !before.ack(space));
+  app.runTx();
+  app.runTx();
+  Zquic::PktBuild sparse;
+  ZuCheck(link->appendPendingAck(space, sparse) && sparse.ackPrefix() == 1 &&
+      sparse.ackLargest() == 2);
   Zquic::Frame frame;
   unsigned used = 0;
-  ZQUIC_CHECK_RT(!Zquic::FrameCodec::parse(
-      second.data()[0], frame, used) &&
-      frame.type == Zquic::FrameType::Ack && second.data()[0].data()[0] == 0x03 &&
-      frame.ackECN.ect0 == 1 && frame.ackECN.ce == 1,
-    "published ACK range and ECN counters were incoherent");
-
+  ZuCheck(!Zquic::FrameCodec::parse(sparse.data()[0], frame, used) &&
+      frame.ackRanges.length() == 2 && frame.ackECN.ect0 == 1 && frame.ackECN.ce == 1);
   app.enterRx();
-  link->noteAck(space, 3, true, {});
-  app.enterTx();
-  Zquic::PktBuild third;
-  ZQUIC_CHECK_RT(link->appendPendingAck(space, third) && third.ackGen() == 3,
-    "newer ACK snapshot was not copied");
-  link->ackSentTx(space, second.ackGen());
-  Zquic::PktBuild stillPending;
-  ZQUIC_CHECK_RT(link->appendPendingAck(space, stillPending) &&
-      stillPending.ack(space) && stillPending.ackGen() == 3,
-    "submission cleared an ACK newer than the encoded generation");
-  ZQUIC_CHECK_RT(!app.rxPending(), "stale ACK completion posted to Rx");
-  link->ackSentTx(space, third.ackGen());
+  link->noteAck(space, 1, true, {});
+  app.runTx();
+  link->ackSentTx(space, sparse.ackGen());
+  Zquic::PktTxUpdate confirmed;
+  confirmed.ackdAck[space] = true;
+  confirmed.ackLargest[space] = sparse.ackPrefix() - 1;
+  link->applyAckOfAckTx(confirmed);
+  Zquic::PktBuild filled;
+  ZuCheck(link->appendPendingAck(space, filled) && filled.ack(space) &&
+      filled.ackGen() == 3 && !Zquic::FrameCodec::parse(filled.data()[0], frame, used) &&
+      frame.ackRanges.length() == 1 && frame.ackRanges[0].first == 1 &&
+      frame.ackRanges[0].largest == 2);
+  link->ackSentTx(space, filled.ackGen());
+  app.enterRx();
+  // Fill all three spaces before Tx consumes any updates.
+  for (unsigned i = 0; i < 52; ++i)
+    for (unsigned j = 0; j < Zquic::PktNumSpace::N; ++j)
+      link->noteAck(Zquic::PktNumSpace::T(j), 10 + 2*i, true, {});
   while (app.txPending()) app.runTx();
-
-  // Do not allow a stalled consumer's slot to be overwritten. Pressure
-  // enters the owned exceptional handoff and then resumes publication.
-  app.enterRx();
-  for (unsigned pn = 4; pn <= 68; ++pn) link->noteAck(space, pn, true, {});
-  ZQUIC_CHECK_RT(app.txPending(), "ACK publication pressure did not request service");
-  auto ring = ackQueue(*link, ":ack:publication");
-  auto mailbox = ackQueue(*link, ":ack:AppData:mailbox");
-  ZQUIC_CHECK_RT(ring.count == 64 && ring.size == 64 && ring.full == 1 &&
-      ring.type == Ztc::QueueType::Rx && mailbox.count == 1 && !mailbox.size &&
-      !mailbox.full, "ACK queue pressure telemetry mismatch");
-  while (app.txPending()) app.runTx();
-  ring = ackQueue(*link, ":ack:publication");
-  mailbox = ackQueue(*link, ":ack:AppData:mailbox");
-  ZQUIC_CHECK_RT(!ring.count && ring.full == 1 && !mailbox.count && !mailbox.full,
-    "exceptional ACK consumption did not retire queue occupancy");
-  Zquic::PktBuild pressure;
-  ZQUIC_CHECK_RT(link->appendPendingAck(space, pressure) &&
-      pressure.ackGen() == 68 && pressure.ackLargest() == 68,
-    "publication pressure lost the newest coherent ACK snapshot");
-  link->ackSentTx(space, pressure.ackGen());
-  app.enterRx();
-  link->noteAck(space, 69, true, {});
-  ZQUIC_CHECK_RT(!app.txPending(), "drained ACK epoch did not resume atomic publication");
-  app.enterTx();
-  Zquic::PktBuild resumed;
-  ZQUIC_CHECK_RT(link->appendPendingAck(space, resumed) && resumed.ackLargest() == 69,
-    "resumed publication lost accepted packet coverage");
-  link->ackSentTx(space, resumed.ackGen());
-  app.enterRx();
-  link->consumeAckSentRx();
-  link->cancelAckRx();
-  app.enterTx();
+  for (unsigned j = 0; j < Zquic::PktNumSpace::N; ++j) {
+    auto level = Zquic::PktNumSpace::T(j);
+    unsigned expected = level == space ? 48 : 8;
+    Zquic::PktBuild packet;
+    ZuCheck(link->appendPendingAck(level, packet) && packet.ack(level) &&
+	!Zquic::FrameCodec::parse(packet.data()[0], frame, used) &&
+	frame.ackRanges.length() == expected);
+    for (unsigned i = 0; i < frame.ackRanges.length(); ++i) {
+      auto pn = 10 + 2*(52 - expected + i);
+      ZuCheck(frame.ackRanges[i].first == pn && frame.ackRanges[i].largest == pn);
+    }
+  }
   link->recoveryStop();
-  ZQUIC_CHECK_RT(!app.rxPending() && !app.txPending(),
-    "normal ACK exchange left a cross-owner state-copy callback");
 }
 
 void testPeerAckPublications()
@@ -1663,19 +1605,10 @@ void testPeerAckPublications()
     link->processAckFrame(space, ack);
   }
   ZQUIC_CHECK_RT(!app.txPending(), "ordinary peer ACK ring posted before pressure");
-  auto ring = ackQueue(*link, ":peer-ack:publication");
-  ZQUIC_CHECK_RT(ring.count == 64 && ring.size == 64 && !ring.full &&
-      ring.type == Ztc::QueueType::Rx, "peer ACK ring occupancy mismatch");
   ack.ackRanges[0].largest = 66;
   link->processAckFrame(space, ack);
   ZQUIC_CHECK_RT(app.txPending(), "full peer ACK ring did not use exceptional handoff");
-  ring = ackQueue(*link, ":peer-ack:publication");
-  ZQUIC_CHECK_RT(ring.count == 64 && ring.full == 1,
-    "peer ACK capacity refusal was not counted exactly once");
   while (app.txPending()) app.runTx();
-  ring = ackQueue(*link, ":peer-ack:publication");
-  ZQUIC_CHECK_RT(!ring.count && ring.full == 1,
-    "peer ACK fallback reclamation underflowed queue occupancy");
   ZQUIC_CHECK_RT(link->appPacketCount() == 4,
     "peer ACK pressure lost ACK coverage or reordered fallback");
   app.enterRx();
@@ -1700,22 +1633,18 @@ void testPeerAckPublications()
   ZQUIC_CHECK_RT(app.txPending(), "sparse peer ACK skipped exceptional handoff");
   while (app.txPending()) app.runTx();
   ZQUIC_CHECK_RT(!link->appPacketCount(), "sparse peer ACK lost retained packet coverage");
-  ring = ackQueue(*link, ":peer-ack:publication");
-  ZQUIC_CHECK_RT(!ring.count && ring.full == 1,
-    "sparse peer ACK was incorrectly counted as a capacity refusal");
   app.enterRx();
-  link->cancelAckRx();
   app.enterTx();
   link->recoveryStop();
 }
 
-void testCreditPublications()
+void testTargetedCreditUpdates()
 {
-  ZuTestScopeRT(testCreditPublications);
+  ZuTestScopeRT(testTargetedCreditUpdates);
   HubFixture fixture{false, false, false};
   auto &app = fixture.app;
   ZmRef<TestLink> link = new TestLink{&app};
-  // Exceed one control-service turn while keeping every stream idle on Tx.
+  // Keep enough streams idle for reset to span two Tx turns.
   enum { Streams = 70 };
   ZuArray<ZmRef<TestStream>, Streams> streams;
   for (unsigned i = 0; i < Streams; ++i) {
@@ -1725,48 +1654,35 @@ void testCreditPublications()
     streams.push(ZuMv(stream));
   }
   app.defer();
-  for (auto &stream : streams) {
-    stream->extendRxCredit(64);
-    link->requestCreditTx();
-  }
-  ZQUIC_CHECK_RT(app.txPendingQ.count_() == 1,
-    "credit extensions did not coalesce their control-send notification");
+  auto grant = [&link](const ZmRef<TestStream> &stream, uint64_t maximum) {
+    stream->extendRxCredit(maximum);
+    link->postFlowUpdate(Zquic::FlowUpdate{
+      Zquic::FrameType::MaxStreamData, uint64_t(stream->id()), maximum,
+      Zquic::StreamType::Duplex});
+  };
+  grant(streams[69], 64);
+  ZQUIC_CHECK_RT(app.txPendingQ.count_() == 1, "stream credit increase did not post once");
   app.runTx();
-  ZQUIC_CHECK_RT(streams[63]->controlQueued() && !streams[64]->controlQueued() &&
-      app.txPendingQ.count_() == 1,
-    "credit service did not yield after its bounded stream batch");
-  // Publish again after this stream was visited but before the scan completes.
-  app.enterRx();
-  streams[0]->extendRxCredit(96);
-  link->requestCreditTx();
-  ZQUIC_CHECK_RT(app.txPendingQ.count_() == 1,
-    "in-flight credit service posted a redundant control turn");
-  while (app.txPending()) app.runTx();
-  bool valid = true;
-  for (unsigned i = 0; i < Streams; ++i) {
-    Zquic::ControlFrame frame;
-    valid &= streams[i]->nextQueuedControl(frame) &&
-      frame.type == Zquic::FrameType::MaxStreamData &&
-      frame.value == (i ? 64 : 96);
-  }
-  ZQUIC_CHECK_RT(valid, "idle-stream credit service lost a published frontier");
-  app.enterRx();
-  streams[0]->extendRxCredit(128);
-  link->requestCreditTx();
-  ZQUIC_CHECK_RT(app.txPendingQ.count_() == 1,
-    "completed credit scan suppressed the next required notification");
-  while (app.txPending()) app.runTx();
   Zquic::ControlFrame latest;
+  bool valid = streams[69]->nextQueuedControl(latest) &&
+    latest.type == Zquic::FrameType::MaxStreamData &&
+    latest.streamID == uint64_t(streams[69]->id()) && latest.value == 64;
+  for (unsigned i = 0; i < 69; ++i) valid &= !streams[i]->controlQueued();
+  ZQUIC_CHECK_RT(valid && !app.txPending(),
+    "a targeted credit increase did not reach its stream in one turn");
+  app.enterRx();
+  grant(streams[0], 96);
+  grant(streams[0], 128);
+  while (app.txPending()) app.runTx();
   ZQUIC_CHECK_RT(streams[0]->nextQueuedControl(latest) && latest.value == 128,
-    "next credit publication was not consumed");
+    "successive credit updates did not retain the largest limit");
   streams[0]->controlSent(latest);
   // Hold the Tx reset while Rx publishes a new frontier. These fixture streams
   // are registered only on Tx, isolating credit service from Rx stream close.
   app.enterRx();
   bool resetDone = false;
   link->resetLink([&resetDone] { resetDone = true; });
-  streams[0]->extendRxCredit(160);
-  link->requestCreditTx();
+  grant(streams[69], 160);
   app.runTx();
   ZQUIC_CHECK_RT(!resetDone && app.txPending(),
     "runtime reset did not yield while retiring stream controls");
@@ -1774,7 +1690,7 @@ void testCreditPublications()
   // later visit, independently of the published credit frontier above.
   streams[64]->queueStopSending(23);
   while (app.txPending()) app.runTx();
-  ZQUIC_CHECK_RT(streams[0]->nextQueuedControl(latest) && latest.value == 160,
+  ZQUIC_CHECK_RT(streams[69]->nextQueuedControl(latest) && latest.value == 160,
     "queued Tx reset swallowed credit published after the Rx reset boundary");
   while (app.rxPending()) app.runRx();
   app.enterTx();
@@ -1799,12 +1715,7 @@ void testShortSendCommit()
     ZmRef<TestLink> link = new TestLink{&app};
     ZQUIC_CHECK_RT(link->ackEstablished(), "short send keys failed");
     link->resetPath();
-    TestLink::AckSnapshot outgoing;
-    outgoing.level = space;
-    outgoing.gen = 1;
-    outgoing.due = true;
-    outgoing.ranges.push(Zquic::AckRange{7, 7});
-    link->noteAckTx(outgoing);
+    link->updateAckTx(space, {7, 7}, true, true, Zquic::EcnMark::NotECT, true, 0, 0);
     app.defer();
     app.enterTx();
     bool submitted = false;
@@ -1816,7 +1727,7 @@ void testShortSendCommit()
     bool installed = false, nested = false, replaced = !reset;
     unsigned bytes = 0;
     bool sent = link->shortCommit([
-      &bytes, &installed, &nested, &replaced, &link, &app, &outgoing, reset, accept
+      &bytes, &installed, &nested, &replaced, &link, &app, reset, accept
     ](ZmRef<ZiIOBuf> packet) {
       bytes = packet->length;
       TestLink::AckSnapshot peer;
@@ -1830,9 +1741,7 @@ void testShortSendCommit()
       nested = link->deferTxFlush() && link->deferTxFlush() && !app.txPending();
       if (reset) replaced = link->resetCommit();
       else {
-	outgoing.gen = 2;
-	outgoing.ranges[0] = Zquic::AckRange{8, 8};
-	link->noteAckTx(outgoing);
+	link->updateAckTx(space, {8, 7}, true, true, Zquic::EcnMark::NotECT, true, 0, 0);
       }
       return accept;
     });
@@ -1851,11 +1760,8 @@ void testShortSendCommit()
 	  link->recoveryPathDiag().bytesTx == (accept ? bytes : 0) &&
 	  link->pendingAck(space) && app.txPendingQ.count_() == 1,
 	"short send refusal/commit lost ACK work, path accounting or flush coalescing");
-      outgoing.gen = 1;
-      ZQUIC_CHECK_RT(link->noteAckTx(outgoing) != accept,
-	"outgoing ACK completion did not follow endpoint acceptance");
-      outgoing.gen = 2;
-      link->noteAckTx(outgoing);
+      Zquic::PktBuild pending;
+      ZuCheck(link->appendPendingAck(space, pending) && pending.ackGen() == 2);
       auto before = link->txFlushQueued;
       app.runTx();
       ZQUIC_CHECK_RT(link->txFlushQueued == before + 1 && !app.txPending(),
@@ -2158,13 +2064,13 @@ void testStopSendingOwnership()
     "STOP_SENDING ownership setup failed");
 
   fixture.app.defer();
-  ZuCHECK(link->receiveFrame(frame) == 0 && stream->stopReceived() &&
+  ZuCHECK(link->receiveFrame(frame) == 0 && !stream->stopReceived() &&
       fixture.app.txPending() && !stream->txCompleteCount &&
       stream->rxError() == Zquic::StreamError::None &&
-      link->stopReceivedCount == 1,
+      link->stopReceivedCount == 0,
     "STOP_SENDING did not defer completion to Tx");
   ZuCHECK(link->receiveFrame(frame) == 0 && fixture.app.txPending() &&
-      !stream->txCompleteCount && link->stopReceivedCount == 1,
+      !stream->txCompleteCount && link->stopReceivedCount == 0,
     "duplicate STOP_SENDING queued duplicate completion");
 
   fixture.app.enterTx();
@@ -2231,29 +2137,42 @@ void testStreamRegistryOwnership()
   ZuCHECK(packet && link->receiveFrame(frame, packet) == 0,
     "peer stream ownership setup failed");
   ZmRef<TestStream> stream = link->lastDataStream;
-  ZuCHECK(stream && link->findStream(2).ptr() == stream.ptr() &&
-      fixture.app.txPending(),
-    "Rx stream was not published locally before Tx notification");
-
-  bool txPublished = false;
-  for (unsigned i = 0;
-      fixture.app.txPending() && !fixture.app.rxPending() && i < 8; ++i) {
-    fixture.app.runTx();
-    if (link->findTxStream(2).ptr() == stream.ptr()) txPublished = true;
-  }
-  ZuCHECK(txPublished && fixture.app.rxPending() &&
-      link->findTxStream(2).ptr() == stream.ptr(),
-    "Tx stream publication or retirement request was lost");
-
-  fixture.app.runRx();
-  ZuCHECK(!link->findStream(2) && fixture.app.txPending(),
-    "Rx retirement did not remove the Rx-owned stream index");
+  ZuCHECK(stream && stream->retiredRx() && !link->findStream(2) && fixture.app.txPending(),
+    "terminal peer stream was not retired on Rx");
+  fixture.app.runTx();
+  ZuCHECK(link->findTxStream(2) == stream && !fixture.app.rxPending(),
+    "Tx publication posted back to Rx");
 
   fixture.app.enterTx();
   for (unsigned i = 0; fixture.app.txPending() && i < 8; ++i)
     fixture.app.runTx();
   ZuCHECK(!fixture.app.txPending() && !link->findTxStream(2),
     "Tx retirement did not remove the Tx-owned stream index");
+
+  fixture.app.enterRx();
+  packet = streamPkt(0, 0, "", true, frame, used);
+  ZuCHECK(packet && link->receiveFrame(frame, packet) == 0 && !link->findStream(0),
+    "request FIN did not detach the receive direction");
+  auto request = link->lastDataStream;
+  frame = {};
+  frame.type = Zquic::FrameType::MaxStreamData;
+  frame.streamID = 0;
+  frame.value = 16384;
+  ZuCHECK(link->applyMaxStreamData(frame), "detached request lost response credit");
+  while (fixture.app.txPending()) fixture.app.runTx();
+  ZuCHECK(request && link->findTxStream(0) == request &&
+      request->txCreditLimit() >= frame.value && !fixture.app.rxPending(),
+    "response credit did not reach Tx after request retirement");
+  fixture.app.enterRx();
+  frame.type = Zquic::FrameType::StopSending;
+  frame.errorCode = 9;
+  ZuCHECK(link->receiveFrame(frame) == 0 && link->receiveFrame(frame) == 0,
+    "detached request lost STOP_SENDING");
+  while (fixture.app.txPending()) fixture.app.runTx();
+  while (fixture.app.rxPending()) fixture.app.runRx();
+  ZuCHECK(request->stopReceived() && link->stopReceivedCount == 1,
+    "response sender did not deliver exactly one stop callback");
+
 }
 
 void testCxnIDFrameLifecycle()
@@ -3173,7 +3092,6 @@ void testPreferredAuthenticatedFreshness()
       ZuCheck(link->authenticatedPing(secret, localCID, 3, preferred, remote));
       ZuCheck(link->migrationPromotedCount == 1);
     }
-    link->cancelAckRx();
     link->recoveryStop();
   }
 }
@@ -3428,7 +3346,7 @@ int main(int argc, char **argv)
   ZuTestCall(disabledCongestionRecovery);
   ZuTestCall(testAckPublications);
   ZuTestCall(testPeerAckPublications);
-  ZuTestCall(testCreditPublications);
+  ZuTestCall(testTargetedCreditUpdates);
   ZuTestCall(testShortSendCommit);
   ZuTestCall(testApplicationCallbacks);
   ZuTestCall(testStopSendingOwnership);

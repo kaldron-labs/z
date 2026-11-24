@@ -48,8 +48,8 @@ public:
   using Route = Cxn<Link_>;
   using Routes = CxnRoutes_<Link_>;
   enum { TombstoneMax = 64 };
-  using Tombstones = Queue<ZmQueue<CxnID,
-    ZmQueueHeapID<"Zquic.Endpoint.CxnRouter.Tombstones">>>;
+  using Tombstones = ZmQueue<CxnID,
+    ZmQueueHeapID<"Zquic.Endpoint.CxnRouter.Tombstones">>;
 
   CxnRouter() { init(); }
 
@@ -58,15 +58,7 @@ public:
       m_routes = new Routes{ZmHashParams().bits(5).loadFactor(1).cBits(3)
 	.init(typename Routes::ID{}())};
   }
-  void initQueue(Ztc::Hub *hub) {
-    m_tombstones.initQueue(hub, "quic:router", "tombstones",
-	Ztc::QueueType::Rx, TombstoneMax);
-  }
 
-  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const {
-    fn(const_cast<decltype(m_tombstones) *>(&m_tombstones));
-    return 1;
-  }
 
   bool add(const CxnID &id, uint64_t sequence, Link_ *link) {
     return add(id, sequence, link, {});
@@ -193,7 +185,6 @@ private:
   }
   void trimTombstones() {
     while (m_tombstones.count_() > TombstoneMax) {
-      m_tombstones.queueFull();
       CxnID id = m_tombstones.shift();
       if (id) m_routes->del(id);
     }
@@ -254,9 +245,8 @@ using EndpointProbeFn = ZmFn<void(bool), ZmFnHeapID<"Zquic.Endpoint.ProbeFn">>;
 using EndpointDiscFn = ZmFn<void(), ZmFnHeapID<"Zquic.Endpoint.DiscFn">>;
 using EndpointRebindFn =
   ZmFn<void(bool, ZiSockAddr, bool), ZmFnHeapID<"Zquic.Endpoint.RebindFn">>;
-ZmQueueDerive(EndpointDiscFns_, EndpointDiscFn,
+ZmQueueDerive(EndpointDiscFns, EndpointDiscFn,
   ZmQueueHeapID<"Zquic.Endpoint.DiscFns">);
-using EndpointDiscFns = Queue<EndpointDiscFns_>;
 
 class EndpointTxWait;
 class EndpointTxGate;
@@ -368,23 +358,6 @@ public:
     assert(m_pending.empty_() && m_reserved.empty_() && !m_draining && !m_posted);
   }
 
-  void initQueues(Ztc::Hub *hub, ZuCSpan prefix) {
-    m_pending.initQueue(hub, prefix, "wait", Ztc::QueueType::Tx);
-    m_reserved.initQueue(hub, prefix, "reserved", Ztc::QueueType::Tx, m_limit);
-  }
-  void joinQueues(QueueCatalog &queues) {
-    m_pending.joinQueue(queues);
-    m_reserved.joinQueue(queues);
-  }
-  void finalQueues() {
-    m_pending.finalQueue();
-    m_reserved.finalQueue();
-  }
-  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const {
-    fn(const_cast<decltype(m_pending) *>(&m_pending));
-    fn(const_cast<decltype(m_reserved) *>(&m_reserved));
-    return 2;
-  }
 
   unsigned reservations() const { return m_reserved.count_(); }
   unsigned waiting() const { return m_pending.count_(); }
@@ -397,7 +370,6 @@ public:
   void waitTx(EndpointTxWait &wait) {
     assert(m_mx->invoked(m_mx->txThread()));
     if (m_closing) { wait.reject(); return; }
-    if (reservations() >= m_limit) m_reserved.queueFull();
     wait.gate = this;
     wait.phase = EndpointTxWaitData::Pending;
     m_pending.pushNode(&wait);
@@ -504,7 +476,7 @@ private:
   void *m_physical;
   unsigned m_generation, m_limit;
   CountFn m_count;
-  Queue<EndpointTxWaitList> m_pending, m_reserved;
+  EndpointTxWaitList m_pending, m_reserved;
   struct Slot {
     EndpointTxWait *wait = nullptr;
     uint64_t serial = 0;
@@ -558,7 +530,6 @@ enum { EndpointTxQueueLimit = 4096 };
 
 struct alignas(Zm::CacheLineSize) EndpointCxnTx {
   EndpointTxGate	gate;
-  uint32_t		full = 0;
 
   EndpointCxnTx(
     ZiMultiplex *mx, void *physical, unsigned generation,
@@ -571,8 +542,6 @@ struct alignas(Zm::CacheLineSize) EndpointConfig {
   ZiMultiplex		*mx = nullptr;
   Zi::IOBufAllocator	*rxBufAllocator = nullptr;
   Zi::IOBufAllocator	*txBufAllocator = nullptr;
-  Ztc::Hub		*hub = nullptr;
-  ZuID		queueID;
 };
 
 struct alignas(Zm::CacheLineSize) EndpointTargetPub {
@@ -590,17 +559,6 @@ friend inline ZuStringT<"Zquic.Endpoint.Cxn"> ZmNHeapID(EndpointCxn *);
 
 friend Endpoint_;
 
-  class UDPQueue final : public QueueInfo {
-  public:
-    explicit UDPQueue(const EndpointCxn *cxn) : m_cxn{cxn} { }
-    ~UDPQueue() { finalQueue(); }
-    void telemetry(Ztc::QueueTelemetry &data) const override {
-      queueTelemetry(data);
-      m_cxn->udpTelemetry(data);
-    }
-  private:
-    const EndpointCxn *m_cxn;
-  };
 
 public:
   enum { EndpointTxQueueLimit = Zquic_::EndpointTxQueueLimit };
@@ -618,25 +576,10 @@ public:
   EndpointCxn(Endpoint_ *endpoint, const ZiCxnInfo &ci, unsigned generation) :
 	ZiConnection(endpoint->mx_(), ci),
 	m_config{endpoint, generation},
-	m_udp{this},
 	m_tx{endpoint->mx_(), this, generation,
 	  [this] { return unsigned(txQueue.count_()); }}
   {
-    auto hub = endpoint->queueHub();
-    QueueString prefix;
-    prefix << endpoint->queueID() << ':' << generation;
-    auto &queues = endpoint->queueCatalog();
-    // Endpoint diagnostics need queue lifetime protection even without a hub.
-    m_udp.initQueue(hub, prefix, "udp", Ztc::QueueType::Tx, EndpointTxQueueLimit);
-    m_udp.joinQueue(queues);
-    if (hub) {
-      m_tx.gate.initQueues(hub, prefix);
-      m_tx.gate.joinQueues(queues);
-    }
     m_config.endpoint->cxnAdded();
-  }
-  ~EndpointCxn() {
-    finalQueues();
   }
 
   void connected(ZiRxContext &io) override {
@@ -657,15 +600,6 @@ public:
     });
   }
 
-  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const {
-    fn(const_cast<UDPQueue *>(&m_udp));
-    return 1 + m_tx.gate.allQueues(ZuMv(fn));
-  }
-  void udpTelemetry(Ztc::QueueTelemetry &data) const {
-    data.count = txQueue.count_();
-    data.size = EndpointTxQueueLimit;
-    data.full = m_tx.full;
-  }
 
   unsigned generation() const { return m_config.generation; }
   void local(ZiSockAddr addr) { m_config.local = ZuMv(addr); }
@@ -723,7 +657,6 @@ public:
       return false;
     }
     if (!reserved && !m_tx.gate.available(unsigned(txQueue.count_()))) {
-      ++m_tx.full;
       if (blocked) *blocked = true;
       m_config.endpoint->noteTxBackPressure();
       m_config.endpoint->noteTxDrop();
@@ -747,10 +680,6 @@ public:
   }
 
 private:
-  void finalQueues() {
-    m_udp.finalQueue();
-    m_tx.gate.finalQueues();
-  }
   bool beginCloseRx() { return !m_closeState.closing.xch(1); }
   void closeTx() { m_closeState.closing = true; m_tx.gate.close(); }
   void closeRx() { m_closeState.closing = true; }
@@ -798,7 +727,6 @@ private:
   // exceptional atomic close handoff shared by Rx and Tx
   Zquic_::EndpointClose m_closeState;
 
-  UDPQueue m_udp;
 
   Zquic_::EndpointCxnTx m_tx;
 
@@ -827,18 +755,14 @@ public:
   Endpoint_(const Endpoint_ &) = delete;
   Endpoint_ &operator =(const Endpoint_ &) = delete;
 
-  bool init(ZiMultiplex *mx, RxPktAllocator *rx, TxPktAllocator *tx,
-      Ztc::Hub *hub = nullptr, uint64_t ordinal = 0) {
+  bool init(ZiMultiplex *mx, RxPktAllocator *rx, TxPktAllocator *tx) {
     ZiAssert(mx, "Zquic", (), "null endpoint multiplexer", return false);
     if (!rx || !tx || rx->mx != mx || tx->mx != mx) return false;
     if (m_config.mx) return m_config.mx == mx && m_config.rxBufAllocator == rx &&
-      m_config.txBufAllocator == tx && m_config.hub == hub;
+      m_config.txBufAllocator == tx;
     m_config.mx = mx;
     m_config.rxBufAllocator = rx;
     m_config.txBufAllocator = tx;
-    m_config.hub = hub;
-    if (hub) m_config.queueID = ZuID{} << "quic:endpoint:" << ZuBox<uint64_t>{ordinal}.hex();
-    initDiscQueue();
     return true;
   }
 
@@ -1062,13 +986,6 @@ public:
     });
   }
 
-  QueueCatalog &queueCatalog() { return m_queues; }
-  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const {
-    if (!m_config.hub) return 0;
-    fn(const_cast<EndpointDiscFns *>(&m_endpointRx.discFns));
-    return 1 + m_queues.allQueues(ZuMv(fn));
-  }
-
   bool listening() const { return m_target.ready; }
   bool connected() const { return m_target.ready; }
   const ZiSockAddr &local() const { return m_endpointRx.local; }
@@ -1076,22 +993,10 @@ public:
   PathMode::T mode() const { return m_endpointRx.mode; }
   unsigned generation() const { return m_endpointRx.generation; }
   EndpointDiag diag() const {
-    uint64_t txPending = 0;
-    uint64_t txQueued = 0;
-    uint128_t target = m_target.value;
-    if (uintptr_t(target)) {
-      // Report the active socket only; detached queues remain registered
-      // through retirement, and a probing socket is not active yet.
-      ZuID id;
-      id << m_config.queueID << ':' << unsigned(target >> 64) << ":udp";
-      m_queues.allQueues([&txPending, &txQueued, id](Ztc::Queue *queue) {
-	if (queue->telKey().p<1>() != id) return;
-	Ztc::QueueTelemetry data;
-	queue->telemetry(data);
-	if (data.count) { ++txPending; txQueued += data.count - 1; }
-      });
-    }
-    return {m_endpointRx.diag, m_endpointTx.diag, txPending, txQueued};
+    auto target = pktAllocTarget();
+    auto cxn = txCxn(target.physical, target.generation);
+    return {m_endpointRx.diag, m_endpointTx.diag,
+      cxn ? unsigned(cxn->txPending()) : 0, cxn ? cxn->txQueued() : 0};
   }
   SockDiag sockDiag() const { return m_endpointRx.sockDiag; }
   void failure() { ++m_endpointRx.diag.failures; }
@@ -1232,17 +1137,12 @@ private:
   }
 
   void cxnAdded() { ++m_endpointRx.ioCxns; }
-  Ztc::Hub *queueHub() const { return m_config.hub; }
   RxPktAllocator *endpointRxAllocator() const { return m_config.rxBufAllocator; }
-  const ZuID &queueID() const { return m_config.queueID; }
 
   template <typename ImplRef_>
   void disconnected_0(Cxn_ *cxn, ImplRef_ impl_) {
     m_config.mx->rxRun([impl = ZuMvPtr(impl_), cxn = ZmRef(cxn)]() mutable {
       auto self = static_cast<Endpoint_ *>(static_cast<Impl *>(impl));
-      // Serialize membership with Rx detach; the captured reference keeps
-      // the queues alive through the preceding Tx drain and this removal.
-      cxn->finalQueues();
       --self->m_endpointRx.ioCxns;
       self->disconnected_(cxn.ptr());
       if (!self->m_endpointRx.ioCxns && !self->m_endpointRx.pendingUDP &&
@@ -1346,7 +1246,7 @@ private:
       ++m_endpointRx.diag.failures;
   }
 
-  Cxn_ *txCxn(void *expected, unsigned generation) {
+  Cxn_ *txCxn(void *expected, unsigned generation) const {
     auto cxn = m_endpointTx.active.ptr();
     if (!cxn || cxn != expected) cxn = m_endpointTx.probe.ptr();
     if (!cxn || cxn != expected || cxn->generation() != generation) return nullptr;
@@ -1404,13 +1304,7 @@ private:
     closeCxn(ZuMv(cxn));
   }
   EndpointDiscFns takeDiscFns() {
-    // The whole callback batch is dequeued here. Its later dispatch owns the
-    // moved contents; the endpoint queue's identity remains with the endpoint.
-    // endpointDown_ may already have reopened the endpoint. Keep the same
-    // queue identity for that runtime while dequeuing this completed batch.
-    auto fns = ZuMv(m_endpointRx.discFns);
-    m_endpointRx.discFns.clean();
-    return fns;
+    return ZuMv(m_endpointRx.discFns);
   }
   void discFns() {
     if (m_endpointRx.ioCxns || m_endpointRx.pendingUDP || m_endpointRx.unbinding) return;
@@ -1424,10 +1318,6 @@ private:
   }
   void closeCxn(CxnRef cxn) {
     if (!cxn) return;
-    // A detached socket is no longer part of endpoint telemetry, even while
-    // its physical close is pending. Membership changes remain on mx Rx.
-    if (cxn != m_endpointRx.cxn && cxn != m_endpointRx.rebindCxn)
-      cxn->finalQueues();
     if (!cxn->beginCloseRx()) return;
     m_config.mx->txRun([cxn = ZuMv(cxn)]() mutable {
       cxn->closeTx();
@@ -1451,16 +1341,10 @@ private:
   const Impl *impl() const { return static_cast<const Impl *>(this); }
   Impl *impl() { return static_cast<Impl *>(this); }
 
-  void initDiscQueue() {
-    if (m_config.hub)
-      m_endpointRx.discFns.initQueue(
-	m_config.hub, m_config.queueID, "disconnect", Ztc::QueueType::Rx);
-  }
 
   // Stable after init; the preceding application/base tail has its own extent.
   Zquic_::EndpointConfig m_config;
 
-  QueueCatalog m_queues;
   Zquic_::EndpointTargetPub m_target;
 
   // Physical identity and status are Rx-written with existing advisory readers.

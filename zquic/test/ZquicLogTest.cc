@@ -26,24 +26,6 @@ static Zi::Path testPath(ZuCSpan name)
   return ZiFile::append(g_residue, name);
 }
 
-struct LogQueues {
-  unsigned count = 0;
-  Ztc::QueueTelemetry ring, fallback;
-};
-
-static LogQueues logQueues()
-{
-  LogQueues result;
-  ZquicLogger::instance()->allQueues([&result](Ztc::Queue *queue) {
-    Ztc::QueueTelemetry row;
-    queue->telemetry(row);
-    ++result.count;
-    if (row.id == "quic:qlog:ring") result.ring = row;
-    if (row.id == "quic:qlog:fallback") result.fallback = row;
-  });
-  return result;
-}
-
 static ZtString<> readFile(const Zi::Path &path)
 {
   ZtString<> data;
@@ -1952,13 +1934,9 @@ void testQLogStopDrain()
   ZquicLogParams params;
   params.enabled(true).path(testPath("ZquicLogDrain.sqlog")).ringSize(4096);
   ZquicLogger::Trace trace;
-  ZuCheck(!logQueues().count);
   ZuCheck(ZquicLogger::init(trace, params, Zquic::Vantage::Client));
   ZuCheck(ZquicLogger::start());
   ZuCheck(ZquicLogger::start());
-  auto queues = logQueues();
-  ZuCheck(queues.count == 2 && queues.ring.size >= 4096 && !queues.fallback.size &&
-    queues.ring.type == Ztc::QueueType::Tx && queues.fallback.type == Ztc::QueueType::Tx);
   ZmSemaphore held, release, stopped;
   ZmAtomic<unsigned> written = 0;
   ZmAtomic<unsigned> done = 0;
@@ -1970,10 +1948,6 @@ void testQLogStopDrain()
   for (unsigned i = 0; i < 10000; ++i)
     ZquicLogger::log(trace, [&written](auto &, ZuTime) { ++written; });
   ZuCheck(ZquicLogger::diag().ringBackPressure > 0);
-  queues = logQueues();
-  ZuCheck(queues.count == 2 && queues.ring.count && queues.ring.count <= queues.ring.size &&
-    queues.ring.full && queues.fallback.count && !queues.fallback.full);
-  unsigned full = queues.ring.full;
   ZquicLogger::stop([&done, &stopped](bool ok) {
     done = ok;
     stopped.post();
@@ -1983,14 +1957,9 @@ void testQLogStopDrain()
   ZuCheck(stopped.timedwait(Zm::now(10)) == 0);
   ZuCheck(done);
   ZuCheck(written == 10000);
-  ZuCheck(!logQueues().count);
   // The same configured trace can reopen the singleton's queues after drain.
   ZuCheck(ZquicLogger::start());
-  queues = logQueues();
-  ZuCheck(queues.count == 2 && !queues.ring.count && !queues.fallback.count &&
-    queues.ring.full >= full);
   ZuCheck(ZquicLogger::stop());
-  ZuCheck(!logQueues().count);
   ZquicLogger::final(trace);
 #endif
 }

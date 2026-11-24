@@ -59,23 +59,24 @@ inline unsigned ackRangeLowerBound(
 
 class AckTracker {
 public:
-  enum { Max = 64 };
-  enum { MaxRetained = Max + 1 };
-  enum { BuiltinRetained = 32 };
-  using RetainedRanges = ZtBuiltin<
-    ZtArray<AckRange,
-      ZtArrayHeapMax<MaxRetained,
-	ZtArrayHeapID<"Zquic.Ack.RetainedRanges">>>,
-    BuiltinRetained>;
+  enum { Max = Frame::MaxAckRanges, MaxRetained = Max + 1 };
+  using RetainedRanges = ZuArray<AckRange, MaxRetained>;
 
   bool add(uint64_t pn) {
-    if (contains(pn)) return true;
-    if (pn == m_ackHead)
-      advanceHead(pn + 1);
-    else
-      insertSparse(pn);
-    trimSparseRanges();
+    if (!contains(pn)) addNew(pn);
     return true;
+  }
+
+  // Caller has already excluded a duplicate. Return the range for the Tx post.
+  AckRange addNew(uint64_t pn) {
+    if (pn == m_ackHead) {
+      advanceHead(pn + 1);
+      trimSparseRanges();
+      return {m_ackHead - 1, m_ackBase};
+    }
+    auto range = insertSparse(pn);
+    trimSparseRanges();
+    return range;
   }
 
   bool contains(uint64_t pn) const {
@@ -84,21 +85,19 @@ public:
     return i < m_sparse.length() && m_sparse[i].first <= pn;
   }
 
+  AckRange covering(uint64_t pn) const {
+    if (pn < m_ackHead) return {m_ackHead - 1, 0};
+    unsigned n = m_sparse.length();
+    if (n && pn >= m_sparse[n - 1].first && pn <= m_sparse[n - 1].largest)
+      return m_sparse[n - 1];
+    unsigned i = findSparse(pn);
+    return i < n && m_sparse[i].first <= pn ? m_sparse[i] : AckRange{pn, pn};
+  }
+
   unsigned count() const {
-    unsigned n = 0;
-    visitRanges([&n](const AckRange &) { ++n; return true; });
-    return n;
+    return m_sparse.length() + (m_ackHead > m_ackBase);
   }
-  bool multipleRanges() const {
-    unsigned n = 0;
-    bool stop = false;
-    bool ok = visitRanges([&n, &stop](const AckRange &) {
-      if (++n < 2) return true;
-      stop = true;
-      return false;
-    });
-    return (ok || stop) && n > 1;
-  }
+  bool multipleRanges() const { return count() > 1; }
   // These dependent index APIs address the bounded ACK wire-order view, which
   // combines the implicit head with sparse storage and has no direct index.
   uint64_t first(unsigned i) const {
@@ -154,22 +153,19 @@ public:
   int snapshot(AckRange *ranges, unsigned max) const {
     if (!ranges || !max) return 0;
     if (max > Max) max = Max;
-    Frame::AckRanges retained = snapshot_(max);
-    for (unsigned i = 0, n = retained.length(); i < n; ++i)
-      ranges[i] = retained[i];
-    return int(retained.length());
+    unsigned n = 0;
+    visitSnapshot_(max, [ranges, &n](const AckRange &range) { ranges[n++] = range; });
+    return int(n);
   }
   int writeFrame(
     uint8_t *out, unsigned len, uint64_t delay = 0,
     const AckECN *ecn = nullptr) const
   {
-    Frame::AckRanges ranges = snapshot_(Max);
-    if (!ranges) return -1;
-    return ecn ?
-      FrameCodec::writeAckECN(
-	out, len, ranges.data(), ranges.length(), delay, *ecn) :
-      FrameCodec::writeAckRanges(
-	out, len, ranges.data(), ranges.length(), delay);
+    AckRange head{m_ackHead - 1, m_ackBase};
+    unsigned n = m_sparse.length();
+    unsigned skip = n > Max ? n - Max : 0;
+    return FrameCodec::writeAckECN(out, len, m_sparse.data() + skip, n - skip,
+      delay, ecn ? *ecn : AckECN{}, m_ackHead > m_ackBase && n < Max ? &head : nullptr);
   }
   void clear() {
     m_ackHead = 0;
@@ -197,7 +193,12 @@ private:
     return ackRangeLowerBound(m_sparse.cspan(), pn);
   }
 
-  void insertSparse(uint64_t pn) {
+  AckRange insertSparse(uint64_t pn) {
+    unsigned n = m_sparse.length();
+    if (n && pn == m_sparse[n - 1].largest + 1) {
+      m_sparse[n - 1].largest = pn;
+      return m_sparse[n - 1];
+    }
     AckRange range{pn, pn};
     unsigned i = findSparse(pn);
     unsigned begin = i;
@@ -208,7 +209,6 @@ private:
 	range.largest = m_sparse[begin].largest;
     }
     unsigned end = i;
-    unsigned n = m_sparse.length();
     while (end < n &&
 	!before_(range.largest, m_sparse[end].first)) {
       if (m_sparse[end].largest > range.largest)
@@ -216,13 +216,21 @@ private:
       ++end;
     }
     if (m_sparse.length() == MaxRetained && begin == end) {
-      m_sparse.splice(0, 1);
+      m_sparse.shift(1);
       ++m_retiredRanges;
       if (begin) --begin;
       if (end) --end;
     }
-    m_sparse.splice(
-      begin, end - begin, ZuSpan<const AckRange>{&range, 1});
+    if (begin == end) {
+      m_sparse.push(range);
+      if (begin == m_sparse.length() - 1) return range;
+      memmove(m_sparse.data() + begin + 1, m_sparse.data() + begin,
+        (m_sparse.length() - begin - 1) * sizeof(AckRange));
+    } else if (end > begin + 1) {
+      m_sparse.splice(begin + 1, end - begin - 1);
+    }
+    m_sparse[begin] = range;
+    return range;
   }
 
   void advanceHead(uint64_t head) {
@@ -234,30 +242,35 @@ private:
 	m_ackHead = m_sparse[consumed].largest + 1;
       ++consumed;
     }
-    if (consumed) m_sparse.splice(0, consumed);
+    if (consumed) m_sparse.shift(consumed);
   }
 
   void trimSparseRanges() {
-    unsigned total = m_sparse.length() + (m_ackHead > m_ackBase);
+    unsigned total = count();
     if (total <= MaxRetained || !m_sparse) return;
     unsigned retire = total - MaxRetained;
-    m_sparse.splice(0, retire);
+    m_sparse.shift(retire);
     m_retiredRanges += retire;
   }
 
   Frame::AckRanges snapshot_(unsigned max) const {
     Frame::AckRanges ranges;
-    unsigned total = m_sparse.length() + (m_ackHead > m_ackBase);
+    visitSnapshot_(max, [&ranges](const AckRange &range) { ranges.push(range); });
+    return ranges;
+  }
+
+  template <typename L>
+  void visitSnapshot_(unsigned max, L l) const {
+    unsigned total = count();
     unsigned skip = total > max ? total - max : 0;
-    visitRanges([&ranges, &skip](const AckRange &range) {
+    visitRanges([&l, &skip](const AckRange &range) {
       if (skip) {
 	--skip;
 	return true;
       }
-      ranges.push(range);
+      l(range);
       return true;
     });
-    return ranges;
   }
 
   template <typename L>
@@ -275,190 +288,99 @@ private:
   uint64_t	m_retiredRanges = 0;
 };
 
-class AckManager {
-public:
-  enum { ActiveAckThreshold = 2 };
+// Tx retains the newest disjoint ranges when its packet-space budget fills.
+template <unsigned Capacity> struct PendingAck {
+  using Ranges = ZuArray<AckRange, Capacity>;
+  Ranges	ranges;
+  AckECN	ecn;
+  uint64_t	gen = 0;
+  uint64_t	sentGen = 0;
+  uint64_t	forceGen = 0;
+  uint64_t	retired = 0;
+  uint64_t	largestRxTime = 0;
+  uint64_t	deadline = 0;
+  uint64_t	lastDeadline = 0;
 
-  bool received(
-    PktNumSpace::T space, uint64_t pn, uint64_t now, uint64_t maxAckDelay,
-    bool ackEliciting = true, bool immediate = false,
-    EcnMark::T ecn = EcnMark::NotECT)
-  {
-    unsigned i = space;
-    uint64_t largest = 0;
-    bool haveLargest = m_ack[i].largest(largest);
-    if (m_ack[i].contains(pn)) return false;
-    if (!m_ack[i].add(pn)) return false;
-    noteECN(i, ecn);
-    if (!haveLargest || pn >= largest) m_largestRxTime[i] = now;
-    if (ackEliciting) {
-      ++m_gen[i];
-      m_pending[i] = true;
-      noteAckEliciting(i, now, maxAckDelay, immediate);
+  bool pending() const { return gen > sentGen && ranges; }
+  bool due(uint64_t now) const {
+    return pending() && (forceGen > sentGen || gen - sentGen >= 2 || now >= deadline);
+  }
+
+  void add(AckRange range) {
+    if (range.largest < retired) return;
+    if (range.first < retired) range.first = retired;
+    unsigned n = ranges.length();
+    if (n) {
+      auto &tail = ranges[n - 1];
+      if (range.first >= tail.first && range.first <= tail.largest + 1) {
+	if (range.largest > tail.largest) tail.largest = range.largest;
+	return;
+      }
     }
-    return true;
-  }
-
-  bool ackEliciting(
-    PktNumSpace::T space, uint64_t pn, uint64_t now, uint64_t maxAckDelay,
-    bool immediate = false)
-  {
-    unsigned i = space;
-    if (!m_ack[i].contains(pn)) return false;
-    ++m_gen[i];
-    if (m_ack[i].largest() == pn) m_largestRxTime[i] = now;
-    m_pending[i] = true;
-    noteAckEliciting(i, now, maxAckDelay, immediate);
-    return true;
-  }
-
-  const AckTracker &tracker(PktNumSpace::T space) const {
-    return m_ack[space];
-  }
-  AckTracker &tracker(PktNumSpace::T space) {
-    return m_ack[space];
-  }
-  bool pending(PktNumSpace::T space) const {
-    return m_pending[space];
-  }
-  bool post(PktNumSpace::T space) {
-    unsigned i = space;
-    if (!m_pending[i] || m_postedGen[i] == m_gen[i]) return false;
-    m_postedGen[i] = m_gen[i];
-    return true;
-  }
-  bool deadlineSet(PktNumSpace::T space) const {
-    return m_deadlineSet[space];
-  }
-  bool immediate(PktNumSpace::T space) const {
-    return m_immediate[space];
-  }
-  bool ackEliciting(PktNumSpace::T space) const {
-    return m_ackEliciting[space];
-  }
-  uint64_t deadline(PktNumSpace::T space) const {
-    return m_deadline[space];
-  }
-  uint64_t largestRxTime(PktNumSpace::T space) const {
-    return m_largestRxTime[space];
-  }
-  uint64_t gen(PktNumSpace::T space) const {
-    return m_gen[space];
-  }
-  const AckECN &ackECN(PktNumSpace::T space) const {
-    return m_ecn[space];
-  }
-  bool due(PktNumSpace::T space, uint64_t now) const {
-    unsigned i = space;
-    return m_pending[i] &&
-      (m_immediate[i] || (m_deadlineSet[i] && now >= m_deadline[i]));
-  }
-  int writeFrame(
-    PktNumSpace::T space, uint8_t *out, unsigned len,
-    uint64_t delay = 0, bool ecn = false) const
-  {
-    unsigned i = space;
-    return m_ack[i].writeFrame(out, len, delay, ecn ? &m_ecn[i] : nullptr);
-  }
-  void sent(PktNumSpace::T space, uint64_t gen = U64Null) {
-    unsigned i = space;
-    if (ZuNull(gen)) gen = m_gen[i];
-    if (gen <= m_sentGen[i] || gen > m_gen[i]) return;
-    m_sentGen[i] = gen;
-    uint64_t remaining = m_gen[i] - gen;
-    if (remaining) {
-      m_activeAck[i] = remaining >= ActiveAckThreshold ?
-	ActiveAckThreshold : unsigned(remaining);
-      m_immediate[i] = remaining >= ActiveAckThreshold || m_forceGen[i] > gen;
-      m_deadlineSet[i] = !m_immediate[i];
-      m_deadline[i] = m_immediate[i] ? 0 : m_lastAckDeadline[i];
+    unsigned begin = ackRangeLowerBound(ranges.cspan(), range.first ? range.first - 1 : 0);
+    unsigned end = begin;
+    while (end < n && ranges[end].first <= range.largest + 1) {
+      if (ranges[end].first < range.first) range.first = ranges[end].first;
+      if (ranges[end].largest > range.largest) range.largest = ranges[end].largest;
+      ++end;
+    }
+    if (end > begin) {
+      ranges[begin] = range;
+      if (end > begin + 1) ranges.splice(begin + 1, end - begin - 1);
       return;
     }
-    m_pending[i] = false;
-    m_ackEliciting[i] = false;
-    m_activeAck[i] = 0;
-    m_immediate[i] = false;
-    m_deadlineSet[i] = false;
-    m_deadline[i] = 0;
+    if (n == Capacity) {
+      if (!begin) return;
+      ranges.shift(1);
+      --begin;
+      --n;
+    }
+    ranges.push(range);
+    if (begin != n) {
+      memmove(ranges.data() + begin + 1, ranges.data() + begin, (n - begin)*sizeof(AckRange));
+      ranges[begin] = range;
+    }
   }
+
+  void received(AckRange range, bool eliciting, bool immediate, EcnMark::T mark,
+      bool newest, uint64_t receivedUS, uint64_t delayUS) {
+    add(range);
+    switch (mark) {
+      case EcnMark::ECT0: ++ecn.ect0; break;
+      case EcnMark::ECT1: ++ecn.ect1; break;
+      case EcnMark::CE: ++ecn.ce; break;
+    }
+    if (newest) largestRxTime = receivedUS;
+    if (!eliciting || !ranges) return;
+    lastDeadline = receivedUS + delayUS;
+    if (gen == sentGen) deadline = lastDeadline;
+    ++gen;
+    if (immediate) forceGen = gen;
+  }
+
+  void sent(uint64_t generation) {
+    if (generation <= sentGen || generation > gen) return;
+    sentGen = generation;
+    if (gen - sentGen == 1) deadline = lastDeadline;
+  }
+
+  void retire(uint64_t largest) {
+    if (!ranges || ranges[0].first != retired || largest < retired) return;
+    auto &head = ranges[0];
+    if (largest < head.largest)
+      head.first = retired = largest + 1;
+    else {
+      retired = head.largest + 1;
+      ranges.shift(1);
+    }
+  }
+
   void clear() {
-    for (unsigned i = 0; i < PktNumSpace::N; ++i) {
-      m_ack[i].clear();
-      m_pending[i] = false;
-      m_ackEliciting[i] = false;
-      m_activeAck[i] = 0;
-      m_immediate[i] = false;
-      m_deadlineSet[i] = false;
-      m_deadline[i] = 0;
-      m_largestRxTime[i] = 0;
-      // Completion publications may still contain the previous runtime's
-      // generation. Never reuse an obligation identity across a reset.
-      m_sentGen[i] = m_postedGen[i] = m_gen[i];
-      m_forceGen[i] = 0;
-      m_lastAckDeadline[i] = 0;
-      m_ecn[i].reset();
-    }
+    ranges.clear();
+    ecn.reset();
+    sentGen = forceGen = gen;
+    retired = largestRxTime = deadline = lastDeadline = 0;
   }
-
-private:
-  void noteAckEliciting(
-    unsigned i, uint64_t now, uint64_t maxAckDelay, bool immediate)
-  {
-    m_lastAckDeadline[i] =
-      maxAckDelay > uint64_t(-1) - now ? uint64_t(-1) : now + maxAckDelay;
-    if (immediate) m_forceGen[i] = m_gen[i];
-    m_ackEliciting[i] = true;
-    if (m_activeAck[i] < ActiveAckThreshold) ++m_activeAck[i];
-    immediate = immediate || m_activeAck[i] >= ActiveAckThreshold;
-    if (immediate) {
-      m_immediate[i] = true;
-      m_deadlineSet[i] = false;
-      m_deadline[i] = 0;
-    } else if (!m_immediate[i]) {
-      uint64_t deadline =
-	maxAckDelay > uint64_t(-1) - now ? uint64_t(-1) : now + maxAckDelay;
-      if (!m_deadlineSet[i] || deadline < m_deadline[i])
-	m_deadline[i] = deadline;
-      m_deadlineSet[i] = true;
-    }
-  }
-
-  void noteECN(unsigned i, EcnMark::T ecn) {
-    switch (ecn) {
-      case EcnMark::ECT0: ++m_ecn[i].ect0; break;
-      case EcnMark::ECT1: ++m_ecn[i].ect1; break;
-      case EcnMark::CE: ++m_ecn[i].ce; break;
-    }
-  }
-
-  ZuArray<AckTracker, PktNumSpace::N> m_ack =
-    ZuArray<AckTracker, PktNumSpace::N>(PktNumSpace::N);
-  ZuArray<AckECN, PktNumSpace::N> m_ecn =
-    ZuArray<AckECN, PktNumSpace::N>(PktNumSpace::N);
-  ZuArray<bool, PktNumSpace::N> m_pending =
-    fixedArray<bool, PktNumSpace::N>();
-  ZuArray<bool, PktNumSpace::N> m_ackEliciting =
-    fixedArray<bool, PktNumSpace::N>();
-  ZuArray<unsigned, PktNumSpace::N> m_activeAck =
-    fixedArray<unsigned, PktNumSpace::N>();
-  ZuArray<bool, PktNumSpace::N> m_immediate =
-    fixedArray<bool, PktNumSpace::N>();
-  ZuArray<bool, PktNumSpace::N> m_deadlineSet =
-    fixedArray<bool, PktNumSpace::N>();
-  ZuArray<uint64_t, PktNumSpace::N> m_deadline =
-    fixedArray<uint64_t, PktNumSpace::N>();
-  ZuArray<uint64_t, PktNumSpace::N> m_largestRxTime =
-    fixedArray<uint64_t, PktNumSpace::N>();
-  ZuArray<uint64_t, PktNumSpace::N> m_gen =
-    fixedArray<uint64_t, PktNumSpace::N>();
-  ZuArray<uint64_t, PktNumSpace::N> m_postedGen =
-    fixedArray<uint64_t, PktNumSpace::N>();
-  ZuArray<uint64_t, PktNumSpace::N> m_sentGen =
-    fixedArray<uint64_t, PktNumSpace::N>();
-  ZuArray<uint64_t, PktNumSpace::N> m_forceGen =
-    fixedArray<uint64_t, PktNumSpace::N>();
-  ZuArray<uint64_t, PktNumSpace::N> m_lastAckDeadline =
-    fixedArray<uint64_t, PktNumSpace::N>();
 };
 
 class RttEstimator {
@@ -1323,12 +1245,10 @@ private:
 struct SentPktData : SentPkt, ZuObject {
   SentPktData() = default;
 };
-ZmListDerive(LostPktList_, SentPktData,
+ZmListDerive(LostPktList, SentPktData,
   ZmListNode<SentPktData, ZmListShadow<>>);
-using LostPktList = Zquic_::Queue<LostPktList_>;
-ZmListDerive(RecoveryPktList_, LostPktList::Node,
+ZmListDerive(RecoveryPktList, LostPktList::Node,
   ZmListNode<LostPktList::Node, ZmListShadow<>>);
-using RecoveryPktList = Zquic_::Queue<RecoveryPktList_>;
 
 using TxPkt = SentPkt;
 
@@ -1506,35 +1426,21 @@ using SentPktTree = ZmRBTree<RecoveryPktList::Node,
     ZmRBTreeKey<sentPktPN,
       ZmRBTreeHeapID<"Zquic.Pkt.TxSentNode">>>>;
 
-class TxPktQueue : public Zquic_::Queue<SentPktTree> {
-  using Base = Zquic_::Queue<SentPktTree>;
+class TxPktQueue : public SentPktTree {
 public:
-  void addNode(Node *node) {
-    Base::addNode(node);
-    ++m_inCount;
-  }
   NodeMvRef shift() {
     auto node = minimumPtr();
     if (!node) return {};
-    ++m_outCount;
     return delNode(node);
   }
-  void telemetry(Ztc::QueueTelemetry &data) const override {
-    Base::telemetry(data);
-    data.inCount = m_inCount;
-    data.outCount = m_outCount;
-  }
 
-private:
-  uint64_t m_inCount = 0;
-  uint64_t m_outCount = 0;
 };
 
 class RetransmitQueue {
 public:
   using Queue =
-    Zquic_::Queue<ZmQueue<SentFrameRef,
-      ZmQueueHeapID<"Zquic.Pkt.RetransmitQueue">>>;
+    ZmQueue<SentFrameRef,
+      ZmQueueHeapID<"Zquic.Pkt.RetransmitQueue">>;
 
   bool push(const SentFrameRef &frame) {
     if (frame.kind == SentFrameKind::None) return false;
@@ -1558,7 +1464,6 @@ public:
     return true;
   }
 
-  Queue *queue() const { return const_cast<Queue *>(&m_frames); }
   unsigned count() const { return m_frames.count_(); }
   unsigned dropped() const { return m_dropped; }
   bool empty() const { return !m_frames.count_(); }
@@ -1587,18 +1492,6 @@ public:
   using Queue = TxPktQueue;
   using Msg = Queue::Node;
 
-  void initQueues(Ztc::Hub *hub, ZuCSpan prefix) {
-    m_packets.initQueue(hub, prefix, "sent", Ztc::QueueType::Tx, 0);
-    m_retransmit.queue()->initQueue(hub, prefix, "retx", Ztc::QueueType::Tx, 0);
-    m_lostPkts.initQueue(hub, prefix, "lost", Ztc::QueueType::Tx, RetainedLostMax);
-    m_recovery.initQueue(hub, prefix, "recovery", Ztc::QueueType::Tx, 0);
-  }
-  template <typename L> void allQueues(L fn) const {
-    fn(const_cast<Queue *>(&m_packets));
-    fn(m_retransmit.queue());
-    fn(const_cast<LostPktList *>(&m_lostPkts));
-    fn(const_cast<RecoveryPktList *>(&m_recovery));
-  }
 
   Queue *txQueue() { return &m_packets; }
 
@@ -2161,7 +2054,6 @@ private:
     return m_outstanding.clip(frame, m_retransmit);
   }
   void trimLost() {
-    if (m_retainedLost > RetainedLostMax) m_lostPkts.queueFull();
     while (m_retainedLost > RetainedLostMax) {
       auto lost = m_lostPkts.shift();
       auto node = static_cast<Msg *>(lost);

@@ -139,14 +139,12 @@ struct LinkRxDiag {
   [[no_unique_address]] DiagCounter ackCommitsRx = 0;
   [[no_unique_address]] DiagCounter ackElicitingRx = 0;
   [[no_unique_address]] DiagCounter ackImmediateRx = 0;
-  [[no_unique_address]] DiagCounter ackSnapshotPostsRx = 0;
   [[no_unique_address]] DiagCounter streamNoDataRx = 0;
   [[no_unique_address]] DiagCounter cryptoBytesRx = 0;
   [[no_unique_address]] DiagCounter streamBytesRx = 0;
   [[no_unique_address]] DiagCounter invalidStreamFrames = 0;
   [[no_unique_address]] DiagCounter closedStreamFrames = 0;
   [[no_unique_address]] DiagCounter suspectStreamCloses = 0;
-  [[no_unique_address]] DiagCounter streamMaxClosedRx = 0;
   [[no_unique_address]] DiagCounter streamMaxInvalidRx = 0;
   [[no_unique_address]] DiagCounter streamCtlClosedRx = 0;
   [[no_unique_address]] DiagCounter streamCtlInvalidRx = 0;
@@ -185,6 +183,7 @@ struct MigrationDiag {
 };
 
 struct LinkTxDiag {
+  [[no_unique_address]] DiagCounter streamMaxClosedTx = 0;
   // Public diagnostic aggregate layout is retained for dependent API users.
   AckECN	peerAckECN[PktNumSpace::N];
   bool		ptoTimerActive = false;
@@ -197,8 +196,6 @@ struct LinkTxDiag {
   [[no_unique_address]] DiagCounter ackOnlyPacketsTx = 0;
   [[no_unique_address]] DiagCounter streamOnlyPacketsTx = 0;
   [[no_unique_address]] DiagCounter ackStreamPacketsTx = 0;
-  [[no_unique_address]] DiagCounter ackSnapshotInstallsTx = 0;
-  [[no_unique_address]] DiagCounter ackDueInstallsTx = 0;
   [[no_unique_address]] DiagCounter ackAppendTx = 0;
   [[no_unique_address]] DiagCounter ackAppendEmptyTx = 0;
   [[no_unique_address]] DiagCounter ackAppendNotDueTx = 0;

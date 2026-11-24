@@ -72,7 +72,7 @@ struct TestLink :
   using ZmNHeap<TestLink>::operator delete;
   TestLink(App *app) : Base{app} { }
   TestLink(App *app, bool isServer) : Base{app, isServer} { }
-  void flushTx_() { }
+  void flushTx_(ZiSockAddr = {}) { }
   void queueTxFlush() { }
   void ptoTimer() { }
   void queueRetransmit() { }
@@ -127,7 +127,6 @@ struct TestLink :
       });
     return geometry && longs == 1 && shorts == 1;
   }
-  uint64_t txQueueCount() const { return Base::txQueueCount_(); }
 #ifdef Zquic_DEBUG
   void growActivePath(unsigned size) { Base::forceActivePathMTU(size); }
   bool startPMTUDProbe(unsigned size) {
@@ -158,61 +157,6 @@ struct TestLink :
   Zquic::PktBudget sendBudget() { return Base::sendBudget_(); }
 #endif
 };
-
-template <typename Link>
-static uint64_t checkQueues(Link &link)
-{
-  auto linkKey = link.telKey();
-  ZtArray<ZuTuple<ZuID, Ztc::QueueType::T>> ids;
-  uint64_t packets = 0;
-  unsigned count = link.allQueues([&linkKey, &ids, &packets](Ztc::Queue *queue) {
-    auto key = queue->telKey();
-    ZQUIC_CHECK_RT(key.template p<0>() == linkKey.template p<0>(),
-      "queue identity does not name its owning hub");
-    for (const auto &id : ids)
-      ZQUIC_CHECK_RT(id.p<0>() != key.template p<1>() || id.p<1>() != key.template p<2>(),
-	"queue role ID is not unique");
-    ids.push(ZuTuple<ZuID, Ztc::QueueType::T>{
-      ZuID{key.template p<1>()}, key.template p<2>()});
-    Ztc::QueueTelemetry data;
-    data.ownerID = "dirtyOwner";
-    data.id = "dirty";
-    data.inBytes = data.outBytes = data.inCount = data.outCount = 1;
-    data.count = data.size = data.full = 1;
-    data.type = Ztc::QueueType::Thread;
-    queue->telemetry(data);
-    ZQUIC_CHECK_RT(data.ownerID == key.template p<0>() &&
-	data.id == key.template p<1>() && data.type == key.template p<2>(),
-      "queue snapshot identity differs from queue identity");
-    ZQUIC_CHECK_RT(data.id == linkKey.template p<1>() || (!data.inBytes && !data.outBytes),
-      "unsupported byte fields were not overwritten");
-    auto id = key.template p<1>();
-    if (id.length() >= 5 && !memcmp(id.data() + id.length() - 5, ":sent", 5))
-      packets += data.count;
-  });
-  ZQUIC_CHECK_RT(count >= 3 + 4*Zquic::PktNumSpace::N && count == ids.length(),
-    "link did not enumerate its actual control, writable and recovery queues");
-  unsigned repeat = 0;
-  link.allQueues([&ids, &repeat](Ztc::Queue *queue) {
-    ZQUIC_CHECK_RT(repeat < ids.length() &&
-	queue->telKey().template p<1>() == ids[repeat].p<0>() &&
-	queue->telKey().template p<2>() == ids[repeat].p<1>(),
-      "queue enumeration order is not stable");
-    ++repeat;
-  });
-  return packets;
-}
-
-static void checkTrafficTelemetry(TestLink &link)
-{
-  Ztc::LinkTelemetry data;
-  auto packets = checkQueues(link);
-  link.telemetry(data);
-  ZQUIC_CHECK_RT(data.rxCalls && data.rxBytes && data.txCalls && data.txBytes,
-    "QUIC link traffic telemetry is zero");
-  ZQUIC_CHECK_RT(packets == link.txQueueCount(),
-    "registered sent queues differ from packet-space occupancy");
-}
 
 static ZmRef<ZiIOBuf> streamPkt(
   uint64_t id, uint64_t offset, ZuBSpan payload, bool fin,
@@ -261,14 +205,10 @@ void testHandshakeStreamsAndClose()
   App app;
   ZmRef<TestLink> client = new TestLink{&app};
   ZmRef<TestLink> server = new TestLink{&app, true};
-  checkQueues(*client);
-  checkQueues(*server);
   client->receiveDatagram(17);
   server->receiveDatagram(23);
   ZQUIC_CHECK_RT(client->recordTx(29), "client Tx packet recording failed");
   ZQUIC_CHECK_RT(server->recordTx(31), "server Tx packet recording failed");
-  checkTrafficTelemetry(*client);
-  checkTrafficTelemetry(*server);
   auto c0 = client->stream(Zquic::StreamType::Duplex);
   auto c1 = client->stream(Zquic::StreamType::Simplex);
   auto s0 = server->stream(Zquic::StreamType::Duplex);

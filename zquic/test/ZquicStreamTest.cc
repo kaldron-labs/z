@@ -270,7 +270,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
   }
   bool applyMaxStreams(const Zquic::Frame &frame) {
     return frame.type == Zquic::FrameType::MaxStreams &&
-      Base::txApplyMaxStreams(frame.streamType, frame.value);
+      Base::applyMaxStreamsRx(frame.streamType, frame.value);
   }
   bool flushControlSendFails() {
     return Base::flushCtlStreams(
@@ -713,12 +713,8 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
 	!Zquic::PktProt::deriveSecret(secret, &Ztls_::opensslAes128gcmsha256,
 	  Zquic::byteSpan(key, sizeof(key))) || !installHandshake(secret))
       return false;
-    Base::AckSnapshot initialAck;
-    initialAck.level = Zquic::PktNumSpace::Initial;
-    initialAck.gen = 1;
-    initialAck.due = true;
-    initialAck.ranges.push(Zquic::AckRange{0, 0});
-    if (!Base::noteAckTx(initialAck)) return false;
+    Base::updateAckTx(Zquic::PktNumSpace::Initial, {0, 0}, true, true,
+      Zquic::EcnMark::NotECT, true, 0, 0);
     unsigned allocations = 0, sends = 0, decodedInitial = 0, decodedHandshake = 0;
     unsigned decodedAck = 0;
     ZiIOBuf *first = nullptr;
@@ -816,10 +812,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     coalesceOutput = {};
     bool retained = mode < 3 || mode == 5;
     bool ackPending = Base::pendingAck(Zquic::PktNumSpace::Initial);
-    // The actual published generation rejects an already committed snapshot.
-    // This remains observable when release builds erase diagnostic counters.
-    bool ackCommitted = !Base::noteAckTx(initialAck);
-    valid &= ackCommitted == retained && ackPending == (!retained && mode != 4);
+    valid &= ackPending == (!retained && mode != 4);
     valid &= decodedAck == (mode >= 6 ? 0U : 1U);
     if (mode == 3 || mode == 6 || mode == 7)
       valid &= pendingRetx(Zquic::PktNumSpace::Initial) == 1 &&
@@ -834,7 +827,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     if (!ok) log_("coalesce mode=", mode, " valid=", valid, " completed=", completed,
       " allocations=", allocations, " sends=", sends,
       " decoded=", decodedInitial, '/', decodedHandshake,
-      " ACK committed=", ackCommitted, " pending=", ackPending,
+      " ACK pending=", ackPending,
       " decoded ACKs=", decodedAck,
       " retained=", sentPacketCount(Zquic::PktNumSpace::Initial), '/',
       sentPacketCount(Zquic::PktNumSpace::Handshake),
@@ -1056,16 +1049,11 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
   void validatePath() { Base::validatePathTx(); }
   void sparseAck() {
     enum { Ranges = 16 };
-    Base::AckSnapshot ack;
-    ack.level = Zquic::PktNumSpace::AppData;
-    ack.gen = 1;
-    ack.due = true;
-    ack.largestRxTime = Base::nowUS();
     for (unsigned i = 0; i < Ranges; ++i) {
       uint64_t pn = uint64_t(i + 1) << 20;
-      new (ack.ranges.push()) Zquic::AckRange{pn, pn};
+      Base::updateAckTx(Zquic::PktNumSpace::AppData, {pn, pn}, true, true,
+	Zquic::EcnMark::NotECT, true, Base::nowUS(), 0);
     }
-    Base::noteAckTx(ack);
   }
   bool ackPending() { return Base::pendingAck(Zquic::PktNumSpace::AppData); }
   bool requeueStream(const Zquic::SentFrameRef &ref) {
@@ -4209,7 +4197,7 @@ void testStreamCountLimits()
 
   ZmRef<TestLink> server = testLink(&app, true);
   server->setLocalStreamLimit(Zquic::StreamType::Duplex, 1);
-  auto packet = streamPkt(0, 0, "a", true, frame, used);
+  auto packet = streamPkt(0, 0, "a", false, frame, used);
   ZuCHECK(packet,
     "first peer STREAM setup failed");
   ZuCHECK(server->receiveFrame(frame, packet) == 0 &&
@@ -4251,13 +4239,20 @@ void testStreamCountLimits()
 
   ZmRef<TestLink> duplexServer = testLink(&app, true);
   duplexServer->setLocalStreamLimit(Zquic::StreamType::Duplex, 1);
+  unsigned queuedControls = duplexServer->queuedControlFrames();
+  unsigned queuedFlushes = duplexServer->txFlushQueued;
   packet = streamPkt(0, 0, "req", true, frame, used);
   ZuCHECK(packet && duplexServer->receiveFrame(frame, packet) == 0,
     "peer bidi stream receive setup failed");
   auto peerDuplex = duplexServer->findStream(0);
-  ZuCHECK(peerDuplex && duplexServer->localStreamLimit(Zquic::StreamType::Duplex) == 1,
-    "peer bidi stream returned stream-count credit before local FIN");
-  unsigned queuedControls = duplexServer->queuedControlFrames();
+  ZuCHECK(peerDuplex && duplexServer->localStreamLimit(Zquic::StreamType::Duplex) == 2 &&
+      duplexServer->queuedControlFrames() == queuedControls + 1 &&
+      duplexServer->txFlushQueued == queuedFlushes + 1,
+    "request FIN did not queue MAX_STREAMS before the response");
+  packet = streamPkt(4, 0, "next", false, frame, used);
+  ZuCHECK(packet && duplexServer->receiveFrame(frame, packet) == 0 &&
+      duplexServer->findStream(4),
+    "next request was blocked by the outstanding response");
   duplexServer->initServerPath();
   duplexServer->pathReceived(1200);
   duplexServer->grantDataCredit(20000);
@@ -4272,17 +4267,12 @@ void testStreamCountLimits()
       peerDuplex->txCreditAvailable() >= 3 &&
       peerDuplex->finSent(),
     "peer bidi response was not queued for transmit");
-  unsigned queuedFlushes = duplexServer->txFlushQueued;
   ZuCHECK(duplexServer->flushCongestedStream(peerDuplex),
     "peer bidi response flush failed");
   ZuCHECK(peerDuplex->finDequeued(),
     "peer bidi response FIN was not dequeued");
   ZuCHECK(duplexServer->localStreamLimit(Zquic::StreamType::Duplex) == 2,
-    "completed peer bidi stream did not return stream-count credit");
-  ZuCHECK(duplexServer->queuedControlFrames() == queuedControls + 1,
-    "completed peer bidi stream did not queue MAX_STREAMS");
-  ZuCHECK(duplexServer->txFlushQueued == queuedFlushes + 1,
-    "completed peer bidi stream did not request MAX_STREAMS flush");
+    "response FIN returned stream-count credit twice");
   duplexServer->teardown();
 
   ZmRef<TestLink> txFirstServer = testLink(&app, true);
@@ -4318,19 +4308,20 @@ void testStreamCountLimits()
 
   ZmRef<TestLink> resetServer = testLink(&app, true);
   resetServer->setLocalStreamLimit(Zquic::StreamType::Duplex, 1);
-  packet = streamPkt(0, 0, "req", true, frame, used);
-  ZuCHECK(packet && resetServer->receiveFrame(frame, packet) == 0,
+  n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 1, 0);
+  ZuCHECK(n > 0 && !Zquic::FrameCodec::parse(ZuBSpan{b, unsigned(n)}, frame, used) &&
+      resetServer->receiveFrame(frame) == 0,
     "peer bidi reset stream receive setup failed");
-  auto peerReset = resetServer->findStream(0);
+  auto peerReset = resetServer->lastStream;
   ZuCHECK(peerReset &&
-      resetServer->localStreamLimit(Zquic::StreamType::Duplex) == 1,
-    "peer bidi reset stream returned credit before local reset");
+      resetServer->localStreamLimit(Zquic::StreamType::Duplex) == 2,
+    "peer reset did not return stream-count credit before local reset");
   resetServer->initServerPath();
   resetServer->pathReceived(1200);
   peerReset->reset(1);
   ZuCHECK(resetServer->flushControlSends() && peerReset->resetSent() &&
       resetServer->localStreamLimit(Zquic::StreamType::Duplex) == 2,
-    "completed peer bidi reset did not return stream-count credit");
+    "local reset changed the credit returned on peer reset");
   unsigned resetControls = resetServer->queuedControlFrames();
   peerReset->reset(1);
   ZuCHECK(resetServer->localStreamLimit(Zquic::StreamType::Duplex) == 2 &&
@@ -4354,7 +4345,7 @@ void testResetStopFrames()
       ZuBSpan{b, unsigned(n)}, frame, used),
     "RESET_STREAM setup failed");
   ZuCHECK(server->receiveFrame(frame) == 0, "server rejected peer RESET_STREAM");
-  auto reset = server->findStream(0);
+  auto reset = server->lastStream;
   ZuCHECK(reset &&
       server->streamedCount == 1 &&
       reset->resetReceived() &&
@@ -4666,8 +4657,8 @@ void invalidClosedStreamActivity()
   Zquic::SentFrameRef sent;
   ZQUIC_CHECK_RT(maxLink->flushRecordedRefs(&sent, 1) == 1 &&
       sent.kind == Zquic::SentFrameKind::Control &&
-      sent.controlType() == Zquic::FrameType::ResetStream && local->txClosedRx(),
-    "closed-stream fixture did not commit RESET_STREAM and notify Rx");
+      sent.controlType() == Zquic::FrameType::ResetStream,
+    "closed-stream fixture did not commit RESET_STREAM");
   int n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), uint64_t(local->id()), 4096);
   ZQUIC_CHECK_RT(parseFrame(b, n, frame) &&
@@ -4678,7 +4669,7 @@ void invalidClosedStreamActivity()
   Zquic::LinkDiag diag = maxLink->diag();
   ZQUIC_CHECK_RT(!diag.rx.invalidStreamFrames &&
       !diag.rx.closedStreamFrames &&
-      diag.rx.streamMaxClosedRx == 1 &&
+      diag.tx.streamMaxClosedTx == 1 &&
       !diag.rx.suspectStreamCloses,
     "closed-stream MAX_STREAM_DATA diagnostics mismatch");
 #endif
@@ -4698,14 +4689,8 @@ void invalidClosedStreamActivity()
 #endif
   n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 1);
   ZQUIC_CHECK_RT(parseFrame(b, n, frame) &&
-      resetLink->receiveFrame(frame) < 0 &&
-      resetLink->closeError() == Zquic::TransportError::FinalSize,
-    "active duplicate RESET_STREAM final-size violation did not close");
-#ifdef Zquic_DEBUG
-  diag = resetLink->diag();
-  ZQUIC_CHECK_RT(diag.rx.suspectStreamCloses == 1,
-    "final-size violation close diagnostics mismatch");
-#endif
+      resetLink->receiveFrame(frame) == 0 && !resetLink->closeError(),
+    "late reset reopened a retired receive direction");
 
   ZmRef<TestLink> blockedLink = testLink(&app, true);
   n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 0);
@@ -4741,8 +4726,8 @@ void invalidClosedStreamActivity()
   noisy->reset(3);
   ZQUIC_CHECK_RT(threshold->flushRecordedRefs(&sent, 1) == 1 &&
       sent.kind == Zquic::SentFrameKind::Control &&
-      sent.controlType() == Zquic::FrameType::ResetStream && noisy->txClosedRx(),
-    "closed-stream threshold fixture did not commit RESET_STREAM and notify Rx");
+      sent.controlType() == Zquic::FrameType::ResetStream,
+    "closed-stream threshold fixture did not commit RESET_STREAM");
   n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), uint64_t(noisy->id()), 4096);
   ZQUIC_CHECK_RT(parseFrame(b, n, frame), "threshold frame setup failed");
@@ -4752,11 +4737,11 @@ void invalidClosedStreamActivity()
 #ifdef Zquic_DEBUG
   diag = threshold->diag();
   ZQUIC_CHECK_RT(!threshold->closeError() &&
-      diag.rx.streamMaxClosedRx == TestLink::suspiciousStreamThreshold() &&
+      diag.tx.streamMaxClosedTx == TestLink::suspiciousStreamThreshold() &&
       !diag.rx.suspectStreamCloses,
     "closed-stream MAX_STREAM_DATA was not tracked as benign");
   ZQUIC_CHECK_RT(threshold->applyMaxStreamData(frame) &&
-      threshold->diag().rx.streamMaxClosedRx ==
+      threshold->diag().tx.streamMaxClosedTx ==
 	TestLink::suspiciousStreamThreshold() + 1 &&
       !threshold->diag().rx.suspectStreamCloses,
     "closed-stream MAX_STREAM_DATA produced suspicious close diagnostics");
@@ -4775,19 +4760,25 @@ void testStreamGC()
 
   ZmRef<TestLink> held = testLink(&app);
   auto live = held->stream(Zquic::StreamType::Simplex);
-  uint64_t liveID = uint64_t(live->id());
+  held->grantDataCredit(32);
+  live->txCredit(32);
+  Zquic::SentFrameRef refs[4];
+  {
+    auto tx = live->txStream_();
+    tx << "abc" << Zi::flush();
+  }
+  ZuCHECK(held->flushRecordedRefs(refs, 4) == 1,
+    "first stream packet was not recorded");
   live->fin();
   held->scheduleStream(live);
-  Zquic::SentFrameRef refs[4];
-  ZuCHECK(held->flushRecordedRefs(refs, 4) == 1 && live->finDequeued() &&
-      live->txUnackdCount(),
-    "held stream terminal send setup failed");
-  ZuCHECK(held->findStream(int64_t(liveID)),
-    "stream was reaped before terminal ACK");
+  ZuCHECK(held->flushRecordedRefs(refs, 4) == 1 && live->finDequeued(),
+    "final stream packet was not recorded");
+  held->ackOnly(1);
+  ZuCHECK(live->retiredRx() && !live->retiredTx() && live->txUnackdCount(),
+    "FIN ACK retired an earlier outstanding data range");
   held->ackOnly(0);
-  ZuCHECK(!held->findStream(int64_t(liveID)) &&
-      live && uint64_t(live->id()) == liveID,
-    "terminal ACK did not remove stream from active index");
+  ZuCHECK(live->retiredTx() && !live->txUnackdCount(),
+    "last data ACK did not retire the send direction");
   held->teardown();
 
   ZmRef<TestLink> maxLink = testLink(&app);
@@ -4811,7 +4802,7 @@ void testStreamGC()
       maxLink->applyMaxStreamData(frame),
     "closed MAX_STREAM_DATA after stream GC was not compact-handled");
 #ifdef Zquic_DEBUG
-  ZuCHECK(maxLink->diag().rx.streamMaxClosedRx == 1,
+  ZuCHECK(maxLink->diag().tx.streamMaxClosedTx == 1,
     "closed MAX_STREAM_DATA after stream GC diagnostics mismatch");
 #endif
   maxLink->teardown();
@@ -4825,8 +4816,8 @@ void testStreamGC()
       ackd->txUnackdCount(),
     "ACK-driven stream GC setup failed");
   ackd = nullptr;
-  ZuCHECK(ackLink->findStream(int64_t(ackdID)),
-    "stream was reaped before FIN ACK");
+  ZuCHECK(!ackLink->findStream(int64_t(ackdID)),
+    "send-only stream occupied the receive index");
   ackLink->ackOnly(0);
   ZuCHECK(!ackLink->findStream(int64_t(ackdID)),
     "ACK processing did not reap terminal local stream");

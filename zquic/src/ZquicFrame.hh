@@ -33,13 +33,8 @@ struct AckECN {
 };
 
 struct Frame {
-  enum { MaxAckRanges = 64 };
-  enum { BuiltinAckRanges = 32 };
-  using AckRanges = ZtBuiltin<
-    ZtArray<AckRange,
-      ZtArrayHeapMax<MaxAckRanges,
-	ZtArrayHeapID<"Zquic.Frame.AckRanges">>>,
-    BuiltinAckRanges>;
+  enum { MaxAckRanges = PktBuildMaxAckRanges };
+  using AckRanges = ZuArray<AckRange, MaxAckRanges>;
 
   FrameType::T		type = FrameType::Unknown;
   uint64_t		streamID = 0;
@@ -65,7 +60,7 @@ struct Frame {
     fin = false;
     resetToken = {};
     payload = {};
-    ackRanges = {};
+    ackRanges.clear();
     ackECN.reset();
   }
 };
@@ -87,6 +82,9 @@ struct ZquicAPI FrameCodec {
     uint8_t *, unsigned, const AckRange *, unsigned, uint64_t);
   static int writeAckECN(
     uint8_t *, unsigned, const AckRange *, unsigned, uint64_t, const AckECN &);
+  static int writeAckECN(
+    uint8_t *, unsigned, const AckRange *, unsigned, uint64_t, const AckECN &,
+    const AckRange *lowest);
   static int writeResetStream(uint8_t *, unsigned, uint64_t, uint64_t, uint64_t);
   static int writeStopSending(uint8_t *, unsigned, uint64_t, uint64_t);
   static int writeMaxData(uint8_t *, unsigned, uint64_t);

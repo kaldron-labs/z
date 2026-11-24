@@ -182,7 +182,10 @@ friend inline ZuStringT<"Zquic.TimerTest.Link"> ZmNHeapID(TimerLink *);
     event.post();
   }
 
-  void ackDelayExpired() { fired_(ackDelay); }
+  void ackDelayExpired() {
+    Base::ackDelayExpired();
+    fired_(ackDelay);
+  }
   void lossTimeExpired() { fired_(lossTime); }
   void ptoTimer() { fired_(pto); }
   void idleExpired() { fired_(idle); }
@@ -223,7 +226,7 @@ void testIsolatedAckDeadline()
   app.strict(true);
   app.rxRun([link]() { link->receiveOne(); });
   ZuCHECK(link->wait() && link->ackOwnerOK && link->ackGeneration == 1,
-    "final isolated receive did not produce an ACK on Tx after its Rx deadline");
+    "final isolated receive did not produce an ACK on Tx at its delayed ACK deadline");
   disconnect(link);
 }
 
@@ -377,19 +380,10 @@ void testTimerInventory()
   TimerApp app;
   ZmRef<TimerLink> link = new TimerLink{&app};
   Zquic::TrafficSecret secret;
-  Ztc::HubTelemetry hubData;
 
-  app.telemetry(hubData);
-  ZuCHECK(hubData.nLinks == 1 && hubData.transient == 1 &&
-      !hubData.down && !hubData.up,
-    "new QUIC link was not reflected in hub telemetry");
 
   ZuCHECK(trafficSecret(secret, 1) && link->installOneRTT(secret),
     "timer test link establish failed");
-  app.telemetry(hubData);
-  ZuCHECK(hubData.nLinks == 1 && hubData.up == 1 &&
-      !hubData.down && !hubData.transient,
-    "established QUIC link was not reflected in hub telemetry");
   link->armAll(Zm::now() + Zquic::timeUS(10000));
   bool fired = true;
   for (unsigned i = 0; i < 9; ++i) fired &= link->wait();
@@ -405,10 +399,6 @@ void testTimerInventory()
   ZuCHECK(link->pmtud == 1, "PMTUD timer did not fire once");
   ZuCHECK(link->path == 1, "path-validation timer did not fire once");
   disconnect(link);
-  app.telemetry(hubData);
-  ZuCHECK(hubData.nLinks == 1 && hubData.down == 1 &&
-      !hubData.transient && !hubData.up,
-    "closed QUIC link was not reflected in hub telemetry");
 }
 
 void testMixedSpaceDeadline()
