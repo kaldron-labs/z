@@ -533,7 +533,8 @@ public:
       return buf;
     }
 
-    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+      if (flags & Zi::SendFlags::Finish()) return false;
       buf->owner = m_link->impl();
       auto link = static_cast<Impl *>(buf->owner);
       if constexpr (AppThread)

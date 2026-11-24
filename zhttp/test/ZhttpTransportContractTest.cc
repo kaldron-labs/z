@@ -205,7 +205,8 @@ struct Tx : ZiTxStream<Tx> {
     wire << buf->cspan();
     return true;
   }
-  bool sendBuf_(ZmRef<ZiIOBuf> buffer, bool) {
+  bool sendBuf_(ZmRef<ZiIOBuf> buffer, Zi::SendFlags::T flags) {
+    if (flags & Zi::SendFlags::Finish()) return false;
     if (reject) return false;
     wire << buffer->cspan();
     return true;
@@ -326,7 +327,7 @@ struct BodyTx : public ZiTxStream<BodyTx> {
   BodyTx(unsigned, unsigned, unsigned);
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned);
-  bool sendBuf_(ZmRef<ZiIOBuf>, bool);
+  bool sendBuf_(ZmRef<ZiIOBuf>, Zi::SendFlags::T flags);
 };
 
 using BodyRx = Zhttp::BodyRx::Stream;
@@ -350,7 +351,7 @@ struct HasFinalSend : public ZuFalse { };
 template <typename Stream>
 struct HasFinalSend<Stream, decltype(
   ZuDeclVal<Stream &>().sendBuf_(
-    ZuDeclVal<ZmRef<ZiIOBuf>>(), ZuDeclVal<bool>()),
+    ZuDeclVal<ZmRef<ZiIOBuf>>(), ZuDeclVal<Zi::SendFlags::T>()),
   void())> : public ZuTrue { };
 
 template <typename Stream, typename = void>
@@ -528,7 +529,8 @@ struct AppLink {
       link->wire << buf->cspan();
       return true;
     }
-    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+      if (flags & Zi::SendFlags::Finish()) return false;
       ++link->handoffs;
       link->wire << buf->cspan();
       return true;
@@ -596,7 +598,8 @@ struct TxLink {
       link->wire << buf->cspan();
       return true;
     }
-    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+      if (flags & Zi::SendFlags::Finish()) return false;
       if (++link->sends == link->rejectAt) return false;
       link->wire << buf->cspan();
       return true;

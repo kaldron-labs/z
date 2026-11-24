@@ -230,9 +230,10 @@ struct TxTest : public ZiTxStream<TxTest> {
     allocated->skip += head;
     return allocated;
   }
-  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool flush) {
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+    if (flags & Zi::SendFlags::Finish()) return false;
     ++sends;
-    final = flush;
+    final = flags & Zi::SendFlags::Flush();
     output << buf->cspan();
     sent = ZuMv(buf);
     return sendOK;

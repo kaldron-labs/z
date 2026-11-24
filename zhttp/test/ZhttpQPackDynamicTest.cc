@@ -133,7 +133,8 @@ struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
     return true;
   }
 
-  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+    if (flags & Zi::SendFlags::Finish()) return false;
     if (!sendOK || !buf) return false;
     for (unsigned i = 0; i < buf->length; ++i) bytes.push(buf->data()[i]);
     return true;

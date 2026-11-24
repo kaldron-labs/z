@@ -16,9 +16,10 @@
 //     - return a new buffer with skip == headRoom
 //     - null rejects admission or reports lower-layer failure, not heap OOM
 //   - how buffers are sent - the sendBuf_ callback
-//     - bool sendBuf_(ZmRef<IOBuf> buf, bool flush)
+//     - bool sendBuf_(ZmRef<IOBuf> buf, SendFlags::T flags)
 //     - send buf (via lower-level protocol)
-//     - flush is false for rollover and true for flush/destruction
+//     - rollover sets no flags, flush/destruction sets Flush
+//     - a finishing flush also sets Finish, including with a null buf
 //     - return false on failure
 // - failed() is sticky; flush() returns false after failure
 // - oversized printables retain an earlier prefix for one final flush
@@ -37,6 +38,8 @@
 
 #include <zlib/ZmFn.hh>
 
+#include <zlib/ZtEnum.hh>
+
 #include <zlib/ZePlatform.hh>
 
 #include <zlib/ZiIOBuf.hh>
@@ -48,11 +51,16 @@ using ZiIsTxStream = decltype(ZiIsTxStream_(ZuDeclVal<S *>()));
 
 namespace Zi {
 
+ZtFlagsNS(ZiAPI, SendFlags, uint8_t, Flush, Finish);
+
 using TxErrorFn =
   ZmFn<bool(ZeException &), ZmFnHeapID<"Zi.TxErrorFn">>;
 
 struct Flush { };
 inline Flush flush() { return {}; }
+
+struct Finish { };
+inline Finish finish() { return {}; }
 
 // CRTP - implementation must conform to the following interface:
 #if 0
@@ -61,7 +69,7 @@ struct Impl : public TxStream<Impl> {
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom);
 
-  bool sendBuf_(ZmRef<ZiIOBuf>, bool flush);
+  bool sendBuf_(ZmRef<ZiIOBuf>, SendFlags::T flags);
 };
 #endif
 
@@ -116,16 +124,16 @@ private:
     return !m_failed;
   }
   bool ensureBuf() { return m_buf || allocBuf(); }
-  bool sendBuf(ZmRef<ZiIOBuf> buf, bool flush) {
-    if (ZuUnlikely(!buf || buf->failed() ||
-	!impl()->sendBuf_(ZuMv(buf), flush))) {
+  bool sendBuf(ZmRef<ZiIOBuf> buf, SendFlags::T flags) {
+    if (ZuUnlikely((buf ? buf->failed() : !(flags & SendFlags::Finish())) ||
+	!impl()->sendBuf_(ZuMv(buf), flags))) {
       fail();
       return false;
     }
     return !m_failed;
   }
   bool nextBuf() {
-    if (ZuUnlikely(!sendBuf(ZuMv(m_buf), false))) return false;
+    if (ZuUnlikely(!sendBuf(ZuMv(m_buf), 0))) return false;
     return allocBuf();
   }
 
@@ -220,7 +228,7 @@ private:
       append(buf->data(), buf->length);
       return;
     }
-    if (ZuUnlikely(m_buf && !sendBuf(ZuMv(m_buf), false))) return;
+    if (ZuUnlikely(m_buf && !sendBuf(ZuMv(m_buf), 0))) return;
     m_buf = ZuMv(buf);
   }
 
@@ -269,13 +277,20 @@ public:
 
   // A rejected printable may leave a valid prefix; send it once without
   // clearing failure. Rejected requests/send failures have released m_buf.
-  bool flush() {
-    if (m_buf && m_buf->length) sendBuf(ZuMv(m_buf), true);
+  bool flush(bool finish = false) {
+    SendFlags::T flags = SendFlags::Flush();
+    if (finish && !m_failed) flags |= SendFlags::Finish();
+    if (m_buf && m_buf->length) sendBuf(ZuMv(m_buf), flags);
+    else if (flags & SendFlags::Finish()) sendBuf({}, flags);
     m_buf = {};
     return !m_failed;
   }
   TxStream &operator <<(Flush) {
-    flush();
+    impl()->flush();
+    return *this;
+  }
+  TxStream &operator <<(Finish) {
+    impl()->flush(true);
     return *this;
   }
 
@@ -317,11 +332,12 @@ public:
       below.tailRoom() + tailRoom),
     m_below(below)
   {
-    if (!m_below.flush()) this->fail();
+    if (m_below.failed()) this->fail();
   }
   ~TxLayer() = default;
 
-  bool flush() {
+  bool flush(bool finish = false) {
+    if (finish) return Base::flush(true);
     bool ok = Base::flush();
     if (!m_below.flush()) { this->fail(); return false; }
     return ok;
@@ -332,14 +348,21 @@ public:
     return m_below.allocBuf(headRoom);
   }
 
-  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool flush) {
-    if (ZuUnlikely(!impl()->prepareBuf_(buf, flush))) return false;
-    m_below << ZuMv(buf);
-    if (flush) m_below << Flush{};
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, SendFlags::T flags) {
+    if (buf) {
+      if (ZuUnlikely(!impl()->prepareBuf_(buf, flags & SendFlags::Flush()))) return false;
+      m_below << ZuMv(buf);
+    }
+    if (flags & SendFlags::Finish()) return finishBelow(m_below, 0);
+    if (flags & SendFlags::Flush()) m_below << Flush{};
     return !m_below.failed();
   }
 
 private:
+  template <typename T, typename = decltype(ZuDeclVal<T &>().flush(true))>
+  static bool finishBelow(T &below, int) { return below.flush(true); }
+  static bool finishBelow(Below &, ...) { return false; }
+
   Below			&m_below;
 };
 

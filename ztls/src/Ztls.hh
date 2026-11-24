@@ -939,8 +939,9 @@ private:
       return m_link->template txAllocBuf<AppThread>(m_allocator, skip);
     }
 
-    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool)
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags)
     {
+      if (flags & Zi::SendFlags::Finish()) return false;
       if constexpr (AppThread)
 	return m_link->send(ZuMv(buf), m_gen);
       else

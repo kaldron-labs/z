@@ -2532,8 +2532,7 @@ void testStreamProducerCredit()
 	stream->finDequeued() == (callbacks == 2);
       if (callbacks == 1) {
 	auto tx = stream->txStream_();
-	stable &= tx.appendBuf(ZuMv(next));
-	stream->fin();
+	stable &= tx.appendBuf(ZuMv(next)) && tx.flush(true);
       }
     };
     auto tx = stream->txStream_();

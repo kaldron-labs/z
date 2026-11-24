@@ -222,7 +222,8 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
       ++wire->ownedCalls;
       return true;
     }
-    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+      if (flags & Zi::SendFlags::Finish()) return false;
       if (!buf || wire->transportClosed) return false;
       return wire->frameSent(buf->cspan());
     }
@@ -268,7 +269,9 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
     }
     return true;
   }
-  bool sendSource(const Zhttp::H2_::TxFrame &frame) {
+  bool sendSource(Tx &tx, const Zhttp::H2_::TxFrame &frame) {
+    if (!tx.flush()) return false;
+    if (frame.buf) return frameSent(frame.buf->cspan());
     if (!frameSent(frame.header)) return false;
     if (frame.payload && frame.payload->length) {
       lastBuf = frame.payload;

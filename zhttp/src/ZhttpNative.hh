@@ -326,7 +326,8 @@ public:
     return true;
   }
   bool appendBuf(ZmRef<ZiIOBuf> buf) {
-    if (!this->flush() || !buf || buf->failed() || !sendBuf_(ZuMv(buf), true)) {
+    if (!this->flush() || !buf || buf->failed() ||
+	!sendBuf_(ZuMv(buf), Zi::SendFlags::Flush())) {
       this->fail();
       return false;
     }
@@ -342,7 +343,8 @@ public:
     Base::operator <<(ZuFwd<V>(value));
     return *this;
   }
-  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+    if (flags & Zi::SendFlags::Finish()) return false;
     if (!m_head) {
       if (buf != m_allocated) {
 	auto own = m_link->allocTxBuf_();
@@ -2063,11 +2065,14 @@ const WriterOps &writerOps()
 
 } // namespace Native_
 
-template <typename Stream>
+template <bool FinishOnEnd = false, typename Stream>
 WriteOutcome::T invokeBodyWriter(BodyWrite write, Stream &stream)
 {
   Writer out{&stream, Native_::writerOps<Stream>()};
   auto result = write(out);
+  if constexpr (FinishOnEnd)
+    if (result == WriteOutcome::End)
+      return !out.failed() && stream.flush(true) ? result : WriteOutcome::Failed;
   if (!out.flush()) return WriteOutcome::Failed;
   return result;
 }

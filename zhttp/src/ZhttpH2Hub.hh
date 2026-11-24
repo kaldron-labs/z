@@ -849,7 +849,8 @@ class Wire : public H2::Connection<Wire<Impl, AppLink>> {
       return m_wire->impl_()->template txAllocBuf<AppThread>(
 	m_wire->impl_()->app()->txAllocator(), headRoom);
     }
-    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+      if (flags & Zi::SendFlags::Finish()) return false;
       if (!m_wire->m_controlAdmission.push()) return false;
       if constexpr (AppThread) {
 	buf->owner = m_wire->impl_();
@@ -867,12 +868,12 @@ class Wire : public H2::Connection<Wire<Impl, AppLink>> {
   };
 
 public:
-  bool sendSource(const TxFrame &frame) {
+  template <typename Tx>
+  bool sendSource(Tx &tx, const TxFrame &frame) {
     // TLS serializes the actual HTTP frame directly into its output records.
     // The protocol owns these buffers throughout the synchronous write.
-    auto tx = impl_()->txStream_(impl_()->app()->txAllocator());
     frame.each([&tx](ZuBSpan bytes) { tx << bytes; });
-    return tx.flush() && !tx.failed();
+    return !tx.failed();
   }
   bool initWire(bool server, const H2Config &config) {
     m_server = server;
@@ -2275,11 +2276,15 @@ private:
       "H2 frame drain outside Tx thread", return);
     if (m_txStopping) return;
     unsigned inspected = 0;
+    auto tx = impl_()->txStream_(impl_()->app()->txAllocator());
+    bool headersPending = false;
     while (inspected < FrameDrainBatch) {
       if (!m_headerStream) {
 	if (auto control = m_controlFrames.shift()) {
 	  ++inspected;
 	  m_controlAdmission.pop();
+	  if (!tx.flush()) { frameTxFailed(); return; }
+	  headersPending = false;
 	  if (!emitControlTx(ZuMv(control))) return;
 	  continue;
 	}
@@ -2300,6 +2305,8 @@ private:
       // Compression state changes only when the accepted DATA prefix has
       // drained. The embedded command owns its producer through this call.
       if (!headFrame(entry_->frames) && entry_->final) {
+	if (!tx.flush()) { frameTxFailed(); return; }
+	headersPending = false;
 	auto command = ZuMv(entry_->final);
 	m_frameAdmission.pop();
 	entry_->localEndQueued = false;
@@ -2381,13 +2388,16 @@ private:
 	  link->h2LocalEnd(id);
 	});
       if (pending) {
-	bool ok;
-	if (pending.buf) {
-	  auto tx = impl_()->txStream_(impl_()->app()->txAllocator());
-	  tx << ZuMv(pending.buf) << Zi::Flush{};
-	  ok = !tx.failed();
-	} else
-	  ok = impl_()->sendSource(pending);
+	auto type = pending.data()[3];
+	bool keep = !endStream &&
+	  (type == FrameType::Headers || type == FrameType::Continuation);
+	bool ok = true;
+	if (pending.buf && !headersPending)
+	  tx << ZuMv(pending.buf);
+	else
+	  ok = impl_()->sendSource(tx, pending);
+	headersPending = keep;
+	ok = ok && (keep ? !tx.failed() : tx.flush());
 	if (!ok) {
 	  if (!partial) m_frameAdmission.pop();
 	  // A failed header/continuation send leaves peer compression state
@@ -2399,6 +2409,7 @@ private:
       if (!partial) m_frameAdmission.pop();
       scheduleFrameTx(entry_);
     }
+    if (!tx.flush()) { frameTxFailed(); return; }
     frameDrain_0();
     impl_()->h2CapacityTx(!m_connectionFrames.empty_());
   }

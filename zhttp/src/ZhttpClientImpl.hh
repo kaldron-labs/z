@@ -445,7 +445,7 @@ private:
     }
     auto body = builder.body(tx);
     WriteOutcome::T outcome;
-    try { outcome = invokeBodyWriter(write, body); }
+    try { outcome = invokeBodyWriter<Message::ID == Version::H3>(write, body); }
     catch (...) { outcome = WriteOutcome::Failed; }
     bool flushed = body.flush();
     bool txFlushed = tx.flush();
@@ -521,7 +521,10 @@ private:
     if (!builder.begin(tx))
       return failTx();
     m_commit.headers = true;
-    builder.finish(tx);
+    if constexpr (Message::ID == Version::H3) {
+      if (!tx.flush(!builder.channelRequest())) return failTx();
+    } else
+      builder.finish(tx);
     if constexpr (Message::ID == Version::H1) {
       m_link->finish();
       m_commit.final = true;
@@ -538,7 +541,8 @@ private:
       app, m_app->authority(), false,
       m_requestMethod, m_target};
     TxOps ops{this};
-    return MessageTx<Message, TxOps>{ops}.fixed(builder, optional);
+    return MessageTx<Message, TxOps>{ops}.template fixed<Message::ID == Version::H3>(
+      builder, optional);
   }
 
 public:
@@ -3261,6 +3265,7 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
     });
   }
   void finish(Stream *stream) {
+    ZmAssert(this->app()->txInvoked());
     auto link = this;
     this->app()->rxInvoke(link, [
       link, stream = ZmRef(stream)
@@ -3275,7 +3280,6 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
     if (!stream || !stream->appLink || stream->localEnd) return;
     stream->localEnd = true;
     if (stream->remoteEnd) closeLater(stream, false);
-    this->send(ZuMv(stream), "", true);
   }
   void remoteEnd(Stream *stream) {
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),

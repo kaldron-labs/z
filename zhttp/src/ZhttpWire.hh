@@ -345,12 +345,13 @@ public:
     if (ZuUnlikely(m_lower.failed())) return nullptr;
     return m_lower.allocBuf(headRoom);
   }
-  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+    if (flags & Zi::SendFlags::Finish()) return false;
     if (!m_budget.add(buf->length)) {
       m_valid = false;
       return false;
     }
-    new (m_entries.push()) RetainedEntry{ZuMv(buf), final};
+    new (m_entries.push()) RetainedEntry{ZuMv(buf), bool(flags & Zi::SendFlags::Flush())};
     return true;
   }
 
@@ -378,7 +379,7 @@ public:
   bool valid() const {
     return !this->failed() && m_valid && m_budget.valid;
   }
-  template <typename Owner>
+  template <bool Finish = false, typename Owner>
   bool commitWith(RetainedTx &body, Owner &owner) {
     if constexpr (HasRetainedTCP<Owner>{} && KeepBuffers) {
       if (!seal() || !body.seal()) return false;
@@ -388,14 +389,30 @@ public:
       this->fail();
       return false;
     }
-    return commit() && body.commit();
+    if (!publish() || !body.publish()) return false;
+    return flushLower<Finish>();
   }
   bool commit() {
+    return publish() && flushLower<false>();
+  }
+
+private:
+  template <bool Finish>
+  bool flushLower() {
+    bool ok;
+    if constexpr (Finish)
+      ok = m_lower.flush(true);
+    else
+      ok = m_lower.flush();
+    if (!ok) this->fail();
+    return ok;
+  }
+
+  bool publish() {
     if (!seal()) { m_entries.length(0); return false; }
     for (unsigned i = 0, n = m_entries.length(); i < n; ++i) {
       auto &entry = m_entries[i];
       m_lower << ZuMv(entry.buf);
-      if (m_entries[i].final) m_lower << Zi::Flush{};
       if (m_lower.failed()) {
 	this->fail();
 	m_entries.length(0);
@@ -403,11 +420,9 @@ public:
       }
     }
     m_entries.length(0);
-    if (!m_lower.flush()) { this->fail(); return false; }
     return true;
   }
 
-private:
   Lower		&m_lower;
   RetainedBudget &m_budget;
   Entries	m_entries;
@@ -474,7 +489,7 @@ public:
     return true;
   }
 
-  template <typename Builder>
+  template <bool Finish = false, typename Builder>
   bool fixed(Builder &builder, bool optional) {
     auto &link = m_ops->link();
     auto native = link.transmit_(builder);
@@ -509,7 +524,7 @@ public:
       builder.finish(bodyTx);
       if (!headerTx.seal() || !bodyTx.seal())
 	return m_ops->template fail<false>();
-      if (!headerTx.commitWith(bodyTx, link))
+      if (!headerTx.template commitWith<Finish>(bodyTx, link))
 	return m_ops->template fail<false>();
       if (!m_ops->complete(builder.produced)) return false;
       link.finish();
@@ -549,7 +564,7 @@ private:
       builder.begin(tx);
     else if (!builder.begin(tx))
       return false;
-    return tx.flush();
+    return !tx.failed();
   }
 
   template <typename Builder, typename Tx>

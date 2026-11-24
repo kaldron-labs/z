@@ -3368,7 +3368,7 @@ public:
     bool appendBuf(ZmRef<ZiIOBuf> buf) {
       if (!Base::flush()) return false;
       if (buf && !buf->failed() && !buf->length) return true;
-      bool ok = sendBuf_(ZuMv(buf), false);
+      bool ok = sendBuf_(ZuMv(buf), 0);
       if (!ok) this->fail();
       return ok;
     }
@@ -3378,10 +3378,13 @@ public:
       return *this;
     }
 
-    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+      if (flags & Zi::SendFlags::Finish()) return false;
       if (m_gen != m_cxn->dataGen()) return false;
-      if constexpr (AppThread) return m_cxn->enqueue(ZuMv(buf), m_gen);
-      else return m_cxn->enqueue_(ZuMv(buf));
+      if constexpr (AppThread)
+	return m_cxn->enqueue(ZuMv(buf), m_gen);
+      else
+	return m_cxn->enqueue_(ZuMv(buf));
     }
 
   private:

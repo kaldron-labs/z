@@ -40,7 +40,7 @@ struct StreamHarness {
     ZmRef<ZiIOBuf>	buf;
     unsigned		length = 0;
     unsigned		skip = 0;
-    bool		final = false;
+    Zi::SendFlags::T	flags = 0;
   };
   using SentBufs =
     ZtArray<Sent, ZtArrayHeapID<"ZiTxStreamTest.Sent">>;
@@ -62,12 +62,12 @@ struct StreamHarness {
     return buf;
   }
 
-  void send(ZmRef<ZiIOBuf> buf, bool final) {
+  void send(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
     sent.push(Sent{
       .buf = buf,
       .length = buf ? buf->length : 0,
       .skip = buf ? buf->skip : 0,
-      .final = final
+      .flags = flags
     });
   }
 };
@@ -88,8 +88,8 @@ struct TestTxStream : public Zi::TxStream<TestTxStream> {
     return h->alloc(headRoom);
   }
 
-  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
-    h->send(ZuMv(buf), final);
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+    h->send(ZuMv(buf), flags);
     return h->sendOK;
   }
 
@@ -114,8 +114,8 @@ void testSplitAndFlush()
   ZuCheck(h.sent[1].length == 9);
   ZuCheck(h.sent[0].skip == 2);
   ZuCheck(h.sent[1].skip == 2);
-  ZuCheck(!h.sent[0].final);
-  ZuCheck(!h.sent[1].final);
+  ZuCheck(h.sent[0].flags == 0);
+  ZuCheck(h.sent[1].flags == 0);
 
   stream << Zi::flush();
 
@@ -123,7 +123,7 @@ void testSplitAndFlush()
   ZuCheck(h.sent.length() == 3);
   ZuCheck(h.sent[2].length == 2);
   ZuCheck(h.sent[2].skip == 2);
-  ZuCheck(h.sent[2].final);
+  ZuCheck(h.sent[2].flags == Zi::SendFlags::Flush());
 }
 
 void testAdoptedBuffers()
@@ -185,7 +185,7 @@ void testPrimitiveAppend()
   ZuCheck(h.sent.length() == 1);
   ZuCheck(h.sent[0].length == 3);
   ZuCheck(h.sent[0].skip == 1);
-  ZuCheck(h.sent[0].final);
+  ZuCheck(h.sent[0].flags == Zi::SendFlags::Flush());
 }
 
 void testRealPrimitiveFormatting()
@@ -199,7 +199,7 @@ void testRealPrimitiveFormatting()
     ' ' << unsigned(17) << Zi::flush();
 
   ZuCheck(h.sent.length() == 1);
-  ZuCheck(h.sent[0].final);
+  ZuCheck(h.sent[0].flags == Zi::SendFlags::Flush());
   ZuCheck(h.sent[0].length == 26);
   ZuCSpan sent = h.sent[0].buf->cspan();
   ZuCheck(sent == "1234567890123456789 -42 17");
@@ -224,7 +224,7 @@ void testFlushElidesEmptyBuffer()
   ZuCheck(h.sent.length() == 1);
   ZuCheck(h.sent[0].length == 1);
   ZuCheck(h.sent[0].skip == 1);
-  ZuCheck(h.sent[0].final);
+  ZuCheck(h.sent[0].flags == Zi::SendFlags::Flush());
 
   stream << Zi::flush();
   ZuCheck(h.allocCount == 1);
@@ -259,7 +259,7 @@ void testOversizePrintableFails()
     ZuCheck(!prefix.flush());
     ZuCheck(h.sent.length() == 1);
     ZuCheck(h.sent[0].buf->cspan() == "abc");
-    ZuCheck(h.sent[0].final);
+    ZuCheck(h.sent[0].flags == Zi::SendFlags::Flush());
     ZuCheck(!prefix.flush());
   }
   ZuCheck(h.sent.length() == 1);
@@ -340,7 +340,7 @@ void testCapacityDestruction()
   }
   ZuCheck(h.sent.length() == 1);
   ZuCheck(h.sent[0].length == 4);
-  ZuCheck(h.sent[0].final);
+  ZuCheck(h.sent[0].flags == Zi::SendFlags::Flush());
 }
 
 void testMove()
@@ -355,7 +355,7 @@ void testMove()
     ZuCheck(!h1.sent);
   }
   ZuCheck(h1.sent.length() == 1);
-  ZuCheck(h1.sent[0].final);
+  ZuCheck(h1.sent[0].flags == Zi::SendFlags::Flush());
   ZuCheck(h1.sent[0].buf->cspan() == "one");
 
   StreamHarness h2, h3;
@@ -366,11 +366,11 @@ void testMove()
     stream3 << "three";
     stream3 = ZuMv(stream2);
     ZuCheck(h3.sent.length() == 1);
-    ZuCheck(h3.sent[0].final);
+    ZuCheck(h3.sent[0].flags == Zi::SendFlags::Flush());
     ZuCheck(h3.sent[0].buf->cspan() == "three");
   }
   ZuCheck(h2.sent.length() == 1);
-  ZuCheck(h2.sent[0].final);
+  ZuCheck(h2.sent[0].flags == Zi::SendFlags::Flush());
   ZuCheck(h2.sent[0].buf->cspan() == "two");
 }
 
@@ -388,7 +388,7 @@ void testFailureState()
   ZuCheck(h.allocCount == 1);
   ZuCheck(h.sent.length() == 1);
   ZuCheck(h.sent[0].length == 4);
-  ZuCheck(!h.sent[0].final);
+  ZuCheck(h.sent[0].flags == 0);
 
   stream << "ignored" << Zi::flush();
   ZuCheck(h.allocCount == 1);
@@ -400,7 +400,7 @@ void testFailureState()
   flushStream << "flush" << Zi::flush();
   ZuCheck(flushStream.failed());
   ZuCheck(flushHarness.sent.length() == 1);
-  ZuCheck(flushHarness.sent[0].final);
+  ZuCheck(flushHarness.sent[0].flags == Zi::SendFlags::Flush());
 }
 
 template <typename Lower>
@@ -446,13 +446,24 @@ void testLayerComposition()
 
   ZuCheck(h.allocCount == 1);
   ZuCheck(h.sent.length() == 1);
-  ZuCheck(h.sent[0].final);
+  ZuCheck(h.sent[0].flags == Zi::SendFlags::Flush());
   ZuCheck(h.sent[0].skip == 8);
   ZuCheck(h.sent[0].length == 10);
   ZuCheck(inner.finals.length() == 1 && inner.finals[0]);
   ZuCheck(outer.finals.length() == 1 && outer.finals[0]);
   ZuCheck(inner.valid && outer.valid);
   ZuCheck(h.sent[0].buf->cspan() == "221payload");
+  outer << "last" << Zi::finish();
+  ZuCheck(h.sent.length() == 2 && h.sent[1].buf->cspan() == "221last" &&
+    h.sent[1].flags == (Zi::SendFlags::Flush() | Zi::SendFlags::Finish()));
+
+  StreamHarness empty;
+  {
+    TestTxStream stream{empty, 32, 0, 0};
+    stream << Zi::finish();
+  }
+  ZuCheck(empty.sent.length() == 1 && !empty.sent[0].buf &&
+    empty.sent[0].flags == (Zi::SendFlags::Flush() | Zi::SendFlags::Finish()) && !empty.allocCount);
 }
 
 

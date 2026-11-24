@@ -31,6 +31,7 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiIOContext.hh>
 #include <zlib/ZiRxStream.hh>
+#include <zlib/ZiTxStream.hh>
 #include <zlib/ZiAssert.hh>
 
 #ifdef _WIN32
@@ -79,6 +80,7 @@ static ZtArray<uint8_t> debugBuf(const void *data, unsigned length)
 ZtEnumImplNS(ZiCxnFlags);
 ZtEnumImplNS(ZiCxnType);
 ZtEnumImplNS(ZiIOState);
+ZtEnumImplNS(Zi::SendFlags);
 
 class ZiMxMgr_ {
 friend Ztc::MxMgr;

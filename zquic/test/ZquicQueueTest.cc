@@ -31,7 +31,8 @@ friend inline ZuStringT<"Zquic.QueueTest.Link"> ZmNHeapID(QueueLink *);
   using Base::disconnect_;
   using Base::reapStreamByIDTx;
   using Base::clearWritableStreams;
-  void flushTx_(ZiSockAddr = {}) { }
+  unsigned flushes = 0;
+  void flushTx_(ZiSockAddr = {}) { ++flushes; }
 };
 
 template <typename L> static void on(ZiMultiplex &mx, unsigned sid, L fn)
@@ -75,13 +76,20 @@ static void testStreamQueues()
     received &= stream->rxStream().count_() == 1 && stream->rxPending() == 1;
   });
   bool queued = false;
-  on(mx, 4, [&stream, &queued] {
+  unsigned before = 0;
+  on(mx, 4, [&link, &stream, &queued, &before] {
+    before = link->flushes;
     auto writer = stream->txStream_();
     writer << "queued" << Zi::flush();
+    writer << "again" << Zi::finish();
     for (unsigned i = 0; i < 16; ++i) stream->recordTxUnackd(i << 1, 1, false);
-    queued = stream->txRangeCount() == 1 && stream->txUnackdCount() == 16;
+    queued = stream->txRangeCount() == 2 && stream->txUnackdCount() == 16 &&
+      stream->finSent() && link->flushes == before;
   });
   ZuCheck(received && queued);
+  bool flushed = false;
+  on(mx, 4, [&link, before, &flushed] { flushed = link->flushes == before + 1; });
+  ZuCheck(flushed);
   // A completed local unidirectional stream can retire with an external ref.
   QueueLink::StreamRef retired;
   bool reaped = false;

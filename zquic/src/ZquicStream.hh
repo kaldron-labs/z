@@ -584,7 +584,15 @@ public:
 
     ~TxStream_() { this->flush(); }
     TxStream_(TxStream_ &&) = default;
-    TxStream_ &operator =(TxStream_ &&) = default;
+    TxStream_ &operator =(TxStream_ &&other) {
+      if (this != &other) {
+	flush();
+	Base::operator =(ZuMv(other));
+	m_stream = other.m_stream;
+	m_pending = ZuMv(other.m_pending);
+      }
+      return *this;
+    }
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
       auto allocator = m_stream->link()->app()->streamTxAllocator();
@@ -600,13 +608,11 @@ public:
     }
 
     bool appendBuf(ZmRef<ZiIOBuf> buf) {
-      if (!Base::flush()) return false;
-      if (buf && !buf->failed() && !buf->length) return true;
-      bool ok;
-      if constexpr (AppThread) ok = m_stream->send(ZuMv(buf));
-      else ok = m_stream->send_(ZuMv(buf));
-      if (!ok) this->fail();
-      return ok;
+      if (!flush() || !buf || buf->failed()) { this->fail(); return false; }
+      ZiAssert(buf->skip <= buf->size && buf->length <= buf->size - buf->skip,
+	"Zquic", (), "stream Tx buffer range violation", this->fail(); return false);
+      if (buf->length) m_pending = ZuMv(buf);
+      return true;
     }
     using Base::operator <<;
     TxStream_ &operator <<(ZmRef<ZiIOBuf> buf) {
@@ -614,15 +620,29 @@ public:
       return *this;
     }
 
-    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
-      ZmRef<StreamTxData> data = static_cast<StreamTxData *>(buf.ptr());
-      data->publish();
-      return m_stream->template sendOwned<AppThread>(ZuMv(data));
+    bool flush(bool finish = false) {
+      if (!Base::flush(finish)) return false;
+      if (m_pending && !sendBuf_({}, Zi::SendFlags::Flush())) { this->fail(); return false; }
+      return true;
+    }
+
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+      StreamTxOp op;
+      op.fin = flags & Zi::SendFlags::Finish();
+      if (m_pending) op.ranges.pushNode(new StreamTxView{ZuMv(m_pending)});
+      if (buf) {
+	auto data = static_cast<StreamTxData *>(buf.ptr());
+	data->publish();
+	op.ranges.pushNode(ZuMv(buf));
+      }
+      return m_stream->template sendOperation<AppThread>(ZuMv(op));
     }
 
   private:
     // immutable
     Stream	*m_stream;
+    // Last external range stays available for a finishing flush.
+    ZmRef<ZiIOBuf> m_pending;
   };
 
   auto txStream() {
@@ -978,13 +998,6 @@ private:
       return sendAdmitted(ZuMv(op));
   }
   template <bool AppThread>
-  bool sendOwned(ZmRef<StreamTxData> data) {
-    if (!data || data->failed() || !data->rangeLength) return false;
-    StreamTxOp op;
-    op.ranges.pushNode(ZuMv(data));
-    return sendOperation<AppThread>(ZuMv(op));
-  }
-  template <bool AppThread>
   bool sendBuffer(ZmRef<ZiIOBuf> buf, bool fin) {
     if (buf && buf->failed()) return false;
     if ((!buf || !buf->length) && !fin) return false;
@@ -1101,7 +1114,7 @@ public:
   void notifyTx() {
     if (m_config.link && id() >= 0) {
       m_config.link->streamWritable(ZmRef<Impl>{impl()});
-      m_config.link->flushTx_();
+      m_config.link->queueTxFlush();
     }
   }
   using PendingControl = Zquic_::PendingControl;

@@ -63,7 +63,8 @@ friend inline ZuStringT<"zimxclient.Connection"> ZmNHeapID(Connection *);
       buf->skip += headRoom;
       return buf;
     }
-    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+      if (flags & Zi::SendFlags::Finish()) return false;
       m_cxn->Tx::send(ZmRef<ZiIOBuf>::acquire(
         static_cast<ZiIOBuf *>(ZuMv(buf).release())));
       return true;

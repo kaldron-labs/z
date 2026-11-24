@@ -619,7 +619,8 @@ struct TxSink : public ZiTxStream<TxSink> {
     buf->skip += head;
     return buf;
   }
-  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+    if (flags & Zi::SendFlags::Finish()) return false;
     ++sends;
     bytes += buf->length;
     __asm__ __volatile__("" : : "g"(buf->data()), "g"(buf->length) : "memory");

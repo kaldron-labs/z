@@ -48,12 +48,13 @@ struct WireTx : public ZiTxStream<WireTx> {
     buf->skip += headRoom;
     return buf;
   }
-  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+    if (flags & Zi::SendFlags::Finish()) return false;
     ++sends;
     if (!sendOK || !buf || !buf->length) return false;
     parts.push(buf);
     bufs.push(ZuMv(buf));
-    finals.push(uint8_t(final));
+    finals.push(flags & Zi::SendFlags::Flush());
     return true;
   }
   bool flush() {

@@ -49,7 +49,8 @@ struct Sink : ZiTxStream<Sink> {
     allocated = buf;
     return buf;
   }
-  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
+    if (flags & Zi::SendFlags::Finish()) return false;
     if (reject) return false;
     data << buf->cspan();
     lastBuf = buf;

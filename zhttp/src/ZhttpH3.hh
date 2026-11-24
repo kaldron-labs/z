@@ -1418,11 +1418,6 @@ private:
     return buf.span();
   }
 
-  template <typename Stream>
-  static bool flush_(Stream &stream) {
-    return stream.flush();
-  }
-
   template <typename Bytes>
   struct Build {
     Bytes		&out;
@@ -1660,10 +1655,6 @@ private:
       impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
       return;
     }
-    if (!flush_(stream)) {
-      impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
-      return;
-    }
     if (tx && build.dynamicRef) {
       bool tracked = tx->registerSection(impl()->streamID());
       ZiAssert(tracked, "Zhttp", (),
@@ -1733,7 +1724,7 @@ public:
       fields.fields(output);
       return build.ok;
     });
-    return impl()->qpackFailure() == QPackBuildFailure::None;
+    return impl()->qpackFailure() == QPackBuildFailure::None && stream.flush();
   }
 
   template <typename Stream>
