@@ -8,6 +8,7 @@
 #define ZfixTransportFixture_HH
 
 #ifdef ZFIX_TEST_AFXDP
+#include <iostream>
 #include <errno.h>
 #include <spawn.h>
 #include <sys/wait.h>
@@ -51,7 +52,7 @@ class TransportFixture {
 public:
   explicit TransportFixture(ZiMxParams params)
 #ifdef ZFIX_TEST_AFXDP
-  : m_mx{withSender(ZuMv(params))} { }
+  : m_mx{withSender(ZuMv(params)), ZmRef{new Zutcp::MxPlugin}} { }
 #else
   : m_mx{ZuMv(params)} { }
 #endif
@@ -59,7 +60,7 @@ public:
   ZiMultiplex &mx() { return m_mx; }
 
 #ifdef ZFIX_TEST_AFXDP
-  bool init(Zutcp::InstanceParams params = {}) {
+  bool init(Zutcp::MxParams params = {}) {
     if (!resetDevice()) return false;
     unsigned index = if_nametoindex("zfixc");
     if (!index) {
@@ -72,13 +73,13 @@ public:
     auto opened = m_env->nif(&m_mx, "zfixc");
     if (opened.is<ZeException>()) return failed(opened.p<ZeException>());
     ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
-    ZmRef<Zutcp::Instance> tcp = new Zutcp::Instance;
-    auto initialized = tcp->init(&m_mx, m_env, ZuMv(xdp), ZuMv(params));
-    if (initialized.is<ZeException>()) {
+    auto tcp = static_cast<Zutcp::MxPlugin *>(m_mx.plugin());
+    try { tcp->init(&m_mx, m_env, ZuMv(xdp), ZuMv(params)); }
+    catch (ZeException &e) {
       xdp->final();
-      return failed(initialized.p<ZeException>());
+      std::cerr << e << '\n' << std::flush;
+      return false;
     }
-    m_mx.plugin(ZuMv(tcp));
     return true;
   }
 #else

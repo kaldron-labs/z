@@ -1308,7 +1308,8 @@ static bool run(const Config &c) {
     });
   auto requestHash = params.requestHash();
   ZmRef<Zpkt::Env> env = new Zpkt::Env;
-  ZiMultiplex mx{ZuMv(params)};
+  ZiMultiplex mx{ZuMv(params), c.native ?
+    ZmRef<Zutcp::MxPlugin>{new Zutcp::MxPlugin} : ZmRef<Zutcp::MxPlugin>{}};
   std::cout << "config backend=" << c.backend
     << " rx_cpu=" << c.rxCPU << " tx_cpu=" << c.txCPU
     << " app_rx_cpu=" << c.appRxCPU << " app_tx_cpu=" << c.appTxCPU
@@ -1364,18 +1365,17 @@ static bool run(const Config &c) {
       return false;
     }
     ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
-    Zutcp::Instance::Params settings{.packetCount = c.reserve,
+    Zutcp::MxPlugin::Params settings{.packetCount = c.reserve,
       .ackHoldTimeout = ZuTime{0, int32_t(c.ackHoldUS * 1000)},
       .congestionControl = c.congestionControl};
-    ZmRef<Zutcp::Instance> stack = new Zutcp::Instance;
-    auto initialized = stack->init(&mx, env, ZuMv(xdp), ZuMv(settings));
-    if (initialized.is<ZeException>()) {
+    auto stack = static_cast<Zutcp::MxPlugin *>(mx.plugin());
+    try { stack->init(&mx, env, ZuMv(xdp), ZuMv(settings)); }
+    catch (ZeException &e) {
       xdp->final();
       if (auto error = xdp->error()) ZiLogEvent(ZuMv(error));
-      ZiLogEvent(ZuMv(initialized).p<ZeException>());
+      ZiLogEvent(ZuMv(e));
       return false;
     }
-    mx.plugin(ZuMv(stack));
   }
   Zfix::HubLimits limits;
   uint64_t budget = uint64_t(c.pipeline) * 1024 + 65536;

@@ -70,14 +70,13 @@ inline bool attachAFXDP(Zpkt::Env *env, ZiMultiplex &mx, bool encrypted)
   auto opened = env->nif(&mx, "zfixio");
   if (opened.is<ZeException>()) { ZiLogEvent(ZuMv(opened).p<ZeException>()); return false; }
   ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
-  ZmRef<Zutcp::Instance> tcp = new Zutcp::Instance;
-  auto initialized = tcp->init(&mx, env, ZuMv(xdp), Zutcp::InstanceParams{.packetCount = count});
-  if (initialized.is<ZeException>()) {
+  auto tcp = static_cast<Zutcp::MxPlugin *>(mx.plugin());
+  try { tcp->init(&mx, env, ZuMv(xdp), Zutcp::MxParams{.packetCount = count}); }
+  catch (ZeException &e) {
     xdp->final();
     if (auto error = xdp->error()) ZiLogEvent(ZuMv(error));
-    ZiLogEvent(ZuMv(initialized).p<ZeException>()); return false;
+    ZiLogEvent(ZuMv(e)); return false;
   }
-  mx.plugin(ZuMv(tcp));
   // TLS requests this packet type internally. Register it once at the selected
   // capacity before its first hub; plain TCP needs only its formatting pool.
   return !encrypted ||
@@ -86,7 +85,7 @@ inline bool attachAFXDP(Zpkt::Env *env, ZiMultiplex &mx, bool encrypted)
 
 inline bool readyAFXDP(ZiMultiplex &mx)
 {
-  auto tcp = static_cast<Zutcp::Instance *>(mx.plugin());
+  auto tcp = static_cast<Zutcp::MxPlugin *>(mx.plugin());
   if (!tcp || !tcp->ready()) return false;
   std::cout << "{\"event\":\"tcp_backend\",\"backend\":\"Zutcp/AF_XDP\","
     "\"ready\":true,\"poolCount\":" << afxdpPoolCount() << "}\n" << std::flush;
