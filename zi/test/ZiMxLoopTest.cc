@@ -613,7 +613,6 @@ static void testMulticastOptions()
 struct LoopResult {
   bool		started = false;
   bool		telemetry = false;
-  bool		emptyCxns = false;
   bool		registered = false;
   bool		singleRegistration = false;
   bool		done = false;
@@ -639,10 +638,6 @@ static LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP, unsigned port)
 {
   LoopResult result;
   LoopMx mx{loopIP, port};
-  unsigned cxns = 0;
-  result.emptyCxns =
-    !static_cast<const LoopMx &>(mx).allCxns(
-      [&cxns](Ztc::Connection *) { ++cxns; }) && !cxns;
   result.started = mx.start();
 
   Ztc::MxTelemetry telemetry{};
@@ -688,7 +683,6 @@ static LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP, unsigned port)
 #define CheckTcpLoopback(result) do { \
   ZuCheck((result).started); \
   ZuCheck((result).telemetry); \
-  ZuCheck((result).emptyCxns); \
   ZuCheck((result).done); \
   ZuCheck((result).registered); \
   if ((result).failed) { \
@@ -867,7 +861,6 @@ struct MxWatchState {
   ZiMultiplex	*mx = nullptr;
   unsigned	rootAdds = 0;
   unsigned	rootDels = 0;
-  unsigned	queueSeeds = 0;
 };
 
 static void testMxWatch()
@@ -878,8 +871,6 @@ static void testMxWatch()
     {[&state](Ztc::Mx *mx_) {
       state.mx = static_cast<ZiMultiplex *>(mx_);
       ++state.rootAdds;
-      state.queueSeeds = mx_->allQueues(
-	{[](Ztc::Queue *) { }});
     }},
     {[&state](Ztc::Mx *mx_) {
       ZuCheck(mx_ == state.mx);
@@ -891,9 +882,7 @@ static void testMxWatch()
     ZuCheck(mx.start());
     ZuCheck(!mx.allocator<>());
     ZuCheck(state.rootAdds == 1);
-    ZuCheck(state.queueSeeds == mx.params().nThreads());
     ZuCheck(mx.stop());
-    mx.unwatch();
   }
   Ztc::MxMgr::unwatch();
   ZuCheck(state.rootDels == 1);

@@ -261,12 +261,6 @@ friend inline ZuStringT<"ZiRxTest.Plugin"> ZmNHeapID(RxPlugin *);
   void disconnect(ZiConnection *, bool) override { }
   void close(ZiConnection *, bool) override { }
   void wake() override { }
-  TelKey telKey() const override { return {}; }
-  void telemetry(Ztc::MxTelemetry &) const override { }
-  unsigned allCxns(AllCxnsFn) const override { return 0; }
-  unsigned allQueues(Ztc::QueueMgr::AllFn) const override { return 0; }
-  void watch(AddCxnFn, DelCxnFn) override { }
-  void unwatch() override { }
 };
 
 struct FrameAllocator : Zi::IOBufBuiltinAllocator<

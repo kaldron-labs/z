@@ -514,8 +514,7 @@ private:
 // derived class must supply connected() and disconnected() functions
 // (and probably a destructor)
 class ZiAPI ZiConnection :
-  public ZmPolymorph,
-  public Ztc::Connection
+  public ZmPolymorph
 {
   ZiConnection(const ZiConnection &) = delete;
   ZiConnection &operator =(const ZiConnection &) = delete;
@@ -564,18 +563,6 @@ public:
 
   ZiMultiplex *mx() const { return m_mx; }
   const ZiCxnInfo &info() const { return m_info; }
-  // telemetry snapshots - intentionally unclean cross-thread reads
-  uint64_t rxCalls() const { return m_rxCalls; }
-  uint64_t rxBytes() const { return m_rxBytes; }
-  uint64_t txCalls() const { return m_txCalls; }
-  uint64_t txBytes() const { return m_txBytes; }
-  // telemetry updates - must run on-thread
-  void rxCall(uint64_t n) { m_rxCalls++, m_rxBytes += n; } // Rx thread
-  void txCall(uint64_t n) { m_txCalls++, m_txBytes += n; } // Tx thread
-
-  Ztc::Connection::TelKey telKey() const override;
-  void telemetry(Ztc::CxnTelemetry &data) const override;
-
   // for ZiMxPlugin use
   void *plugin() const { return m_plugin; }
   void plugin(void *plugin) { m_plugin = plugin; }
@@ -629,8 +616,6 @@ private:
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   ZiRxContext		m_rxContext;
-  uint64_t		m_rxCalls;
-  uint64_t		m_rxBytes;
 #ifdef ZiMultiplex_IOCP
   bool			m_discPending = false;
 #endif
@@ -648,14 +633,12 @@ private:
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
   ZiTxContext		m_txContext;
-  uint64_t		m_txCalls;
-  uint64_t		m_txBytes;
   using SyncFn = ZmFn<void(), ZmFnHeapID<"Zi.Sync">>;
   SyncFn		m_sync;
 };
 
 // ZiMultiplex plugin for user-mode TCP/UDP
-class ZiMxPlugin : public ZmPolymorph, public Ztc::Mx {
+class ZiMxPlugin : public ZmPolymorph {
 friend ZiMultiplex;
 
 public:
@@ -1003,15 +986,6 @@ public:
   void pluginStarted(ZiMxPlugin::StartResult);
   void pluginStopped(ZiMxPlugin::StopResult);
 
-  // telemetry
-  unsigned allCxns(Ztc::Mx::AllCxnsFn fn) const override;
-  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override;
-  void watch(Ztc::Mx::AddCxnFn, Ztc::Mx::DelCxnFn) override;
-  void unwatch() override;
-
-private:
-  unsigned allCxns_(Ztc::Mx::AllCxnsFn fn) const;
-
 public:
 #ifdef ZiMultiplex_DEBUG
   template <typename S> void traceDump(S &s) { m_tracer.dump(s); }
@@ -1123,9 +1097,6 @@ private:
   // mutable shared
   ZmSemaphore		*m_starting = nullptr;
   ZmSemaphore		*m_stopping = nullptr;
-  ZmRWLock		m_cxnWatchLock;
-  Ztc::Mx::AddCxnFn	m_addCxnFn;
-  Ztc::Mx::DelCxnFn	m_delCxnFn;
   bool			m_pluginFailed = false;
 
   enum { Open, PluginClosed, AllocatorsClosed };

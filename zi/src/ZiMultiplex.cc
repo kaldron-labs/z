@@ -581,12 +581,7 @@ static void putTOS(WSAMSG &msg, WSABUF &control, ZiTOS tos, int level, int type)
 #endif
 
 ZiConnection::ZiConnection(ZiMultiplex *mx, const ZiCxnInfo &info) :
-  m_mx(mx), m_info(info), m_rxUp(1),
-  m_txUp(1), m_rxCalls(0), m_rxBytes(0),
-#ifdef ZiMultiplex_IOCP
-  m_rxFlags(0),
-#endif
-  m_txCalls(0), m_txBytes(0)
+  m_mx(mx), m_info(info), m_rxUp(1), m_txUp(1)
 {
   m_rxContext.cxn = m_txContext.cxn = this;
 }
@@ -1279,107 +1274,6 @@ void ZiMultiplex::executedConnect(ZiConnectFn fn, ZiCxnInfo &ci)
     s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
       << " TCP CONNECTED to " << ip << ':' << port;
   }));
-}
-
-Ztc::Connection::TelKey ZiConnection::telKey() const
-{
-  return {
-    m_mx->id(),
-    m_info.remote.ip(), m_info.remote.port(),
-    m_info.local.ip(), m_info.local.port()
-  };
-}
-
-void ZiConnection::telemetry(Ztc::CxnTelemetry &data) const
-{
-  unsigned rxBufSize = 0;
-  unsigned txBufSize = 0;
-  socklen_t l = sizeof(unsigned);
-  getsockopt(
-    m_info.socket, SOL_SOCKET, SO_RCVBUF,
-    reinterpret_cast<char *>(&rxBufSize), &l);
-  getsockopt(
-    m_info.socket, SOL_SOCKET, SO_SNDBUF,
-    reinterpret_cast<char *>(&txBufSize), &l);
-#ifdef ZiMultiplex_EPoll
-  int rxBufLen = 0;
-  int txBufLen = 0;
-  ioctl(m_info.socket, SIOCINQ, &rxBufLen);
-  ioctl(m_info.socket, SIOCOUTQ, &txBufLen);
-#endif
-#ifdef ZiMultiplex_IOCP
-  u_long rxBufLen = 0;
-  u_long txBufLen = 0; // WinDoze - txBufLen is unavailable
-  ioctlsocket(m_info.socket, FIONREAD, &rxBufLen);
-#endif
-  ZiIP mreqAddr, mreqIf;
-  uint32_t mreqIfIndex = 0;
-  const auto &mreqs = m_info.options.mreqs();
-  if (mreqs.length()) {
-    mreqAddr = mreqs[0].addr();
-    switch (mreqs[0].type()) {
-      case ZiIPType::V4:
-	mreqIf = mreqs[0].mif();
-	break;
-      case ZiIPType::V6:
-	mreqIfIndex = mreqs[0].ifIndex();
-	break;
-    }
-  }
-  data.mxID = m_mx->id();
-  data.socket = m_info.socket;
-  data.rxCalls = m_rxCalls;
-  data.rxBytes = m_rxBytes;
-  data.txCalls = m_txCalls;
-  data.txBytes = m_txBytes;
-  data.rxBufSize = rxBufSize;
-  data.rxBufLen = rxBufLen;
-  data.txBufSize = txBufSize;
-  data.txBufLen = txBufLen;
-  data.mreqAddr = mreqAddr;
-  data.mreqIf = mreqIf;
-  data.mreqIfIndex = mreqIfIndex;
-  data.mif = m_info.options.mif();
-  data.mifIndex = m_info.options.mifIndex();
-  data.ttl = m_info.options.ttl();
-  data.localIP = m_info.local.ip();
-  data.remoteIP = m_info.remote.ip();
-  data.localPort = m_info.local.port();
-  data.remotePort = m_info.remote.port();
-  data.flags = m_info.options.flags();
-  data.type = m_info.type;
-}
-
-unsigned ZiMultiplex::allCxns(Ztc::Mx::AllCxnsFn fn) const
-{
-  if (m_plugin) return m_plugin->allCxns(fn);
-  return allCxns_(ZuMv(fn));
-}
-
-unsigned ZiMultiplex::allQueues(Ztc::QueueMgr::AllFn fn) const
-{
-  unsigned n = 0;
-  if (m_plugin) n = m_plugin->allQueues(fn);
-  return ZmScheduler::allQueues(ZuMv(fn)) + n;
-}
-
-unsigned ZiMultiplex::allCxns_(Ztc::Mx::AllCxnsFn fn) const
-{
-  ZmRef<CxnHash> cxns = m_cxns;
-  if (!cxns) return 0;
-  unsigned n = cxns->count_();
-  if (!n) return 0;
-  using CxnRefs =
-    ZtArray<ZmRef<ZiConnection>, ZtArrayHeapID<"Zi.CxnRefs">>;
-  auto refs = ZmScratch(
-    ZmRef<ZiConnection>, n, CxnRefs::VHeap);
-  {
-    auto i = cxns->citer();
-    while (ZmRef<ZiConnection> cxn = i.val())
-      refs.push(ZuMv(cxn));
-  }
-  refs.all([&fn](ZmRef<ZiConnection> &cxn) { fn(cxn.ptr()); });
-  return refs.length();
 }
 
 void ZiMultiplex::listen(
@@ -2150,7 +2044,6 @@ void ZiConnection::executedRecv(unsigned n)
     return;
 #endif
 
-  m_rxCalls++, m_rxBytes += n;
   m_rxContext.buf->length += n;
   while (!m_rxContext());
 }
@@ -2448,7 +2341,6 @@ void ZiConnection::executedSend(unsigned n)
   }));
 #endif
 
-  m_txCalls++, m_txBytes += n;
 
   m_txContext.length = n;
   // the completion may synchronously call send_() for the next message
@@ -2570,10 +2462,6 @@ bool ZiMultiplex::cxnAdd(ZiConnection *cxn, Socket s)
   }
 #endif
 
-  {
-    ZmGuard<ZmRWLock> guard(m_cxnWatchLock);
-    if (m_addCxnFn) m_addCxnFn(cxn);
-  }
   return true;
 }
 
@@ -2583,28 +2471,7 @@ void ZiMultiplex::cxnDel(Socket s)
   epoll_ctl(m_epollFD, EPOLL_CTL_DEL, s, 0);
 #endif
 
-  if (ZmRef<ZiConnection> cxn = m_cxns->delVal(s)) {
-    ZmGuard<ZmRWLock> guard(m_cxnWatchLock);
-    if (m_delCxnFn) m_delCxnFn(cxn);
-  }
-}
-
-void ZiMultiplex::watch(
-    Ztc::Mx::AddCxnFn addCxnFn, Ztc::Mx::DelCxnFn delCxnFn)
-{
-  if (m_plugin) { m_plugin->watch(addCxnFn, delCxnFn); return; }
-  ZmGuard<ZmRWLock> guard(m_cxnWatchLock);
-  ZmAssert(!m_addCxnFn && !m_delCxnFn, return);
-  m_addCxnFn = ZuMv(addCxnFn);
-  m_delCxnFn = ZuMv(delCxnFn);
-}
-
-void ZiMultiplex::unwatch()
-{
-  if (m_plugin) { m_plugin->unwatch(); return; }
-  ZmGuard<ZmRWLock> guard(m_cxnWatchLock);
-  m_addCxnFn = {};
-  m_delCxnFn = {};
+  m_cxns->del(s);
 }
 
 bool ZiMultiplex::listenerAdd(Listener *listener, Socket s)
