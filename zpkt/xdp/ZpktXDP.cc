@@ -64,7 +64,9 @@ friend inline ZuStringT<"Zpkt.Nif"> ZmNHeapID(Nif *);
 public:
   using ZmNHeap<Nif>::operator new;
   using ZmNHeap<Nif>::operator delete;
-  Nif(ZiMultiplex *mx, const InterfaceCf &config, const NifInfo &info) {
+  Nif(ZiMultiplex *mx, const InterfaceCf &config, const NifInfo &info) :
+    m_spin{config.spin}
+  {
     ZmAssert_(mx && mx->state() == ZmEngineState::Stopped);
     if (!config.txSid || config.txSid > mx->params().nThreads() ||
 	config.txSid == mx->rxThread() || config.txSid == mx->txThread())
@@ -84,7 +86,6 @@ public:
     m_nifFD = fd;
     m_wakeFD = wakeFD;
     m_nifInfo = info;
-    m_spin = config.spin;
     m_txSid = config.txSid;
   }
   ~Nif() override { if (m_mx) final(); }
@@ -120,8 +121,8 @@ public:
     m_mx = nullptr;
     m_txSid = 0;
     m_nifInfo = {};
-    m_nextQueue = m_nAppTxPools = 0;
-    m_wakes = m_parking = m_rxReturned = 0;
+    m_refillNext = m_nextQueue = m_nAppTxPools = 0;
+    m_wakes = m_parking = 0;
     m_ioError = 0;
     m_txConsumed = 0;
     m_txExit = m_txExited = 1;
@@ -235,7 +236,7 @@ public:
     m_txPools = ZuMv(txPools);
     m_nAppTxPools = appTx;
     m_arena = ZuMv(arena);
-    m_rxPool->returned([this] { returned(); });
+    m_rxPool->returned([this] { signalWake(m_wakeFD, m_parking); });
     m_arena->publish(m_txPools.cspan(), m_rxPool);
     return {};
   }
@@ -306,8 +307,9 @@ private:
     ZmAssert_(m_events < 0 && unsigned(m_txExited));
     m_ioState = Closing;
     m_ingressQuiesced = false;
-    m_nextQueue = 0;
-    m_wakes = m_parking = m_rxReturned = 0;
+    m_refillNext = m_nextQueue = 0;
+    m_rxStarved = false;
+    m_wakes = m_parking = 0;
     m_ioError = 0;
     drainWake(m_wakeFD);
     if (m_ingressUncertain)
@@ -450,22 +452,46 @@ private:
     return true;
   }
 
-  void replenish(Queue &queue, unsigned budget) {
+  void postRx(Queue &queue, uint8_t *p) {
     auto &fill = queue.owner.fill();
-    auto available = fill.available();
+    auto id = m_rxPool->slot(p);
+    ZmAssert_(m_rxSlots[id] == End && fill.reserve(1) == 1);
+    m_rxSlots[id] = 0;
+    ++m_rxHeld;
+    fill.entry(0) = uint64_t(id) * m_arena->layout().chunk;
+    fill.commit();
+    ++queue.rxHeld;
+  }
+
+  void replenish(Queue &queue, unsigned budget) {
+    if (ZuUnlikely(m_rxStarved)) {
+      if (!m_rxPool->hasFree()) return;
+      // A busy queue can recycle its own loan on every turn. Give each
+      // empty queue a frame before that busy queue takes another one.
+      auto n = m_queues.length();
+      auto q = m_refillNext;
+      for (unsigned i = 0; i < n; ++i) {
+	auto &empty = *m_queues[q];
+	if (++q == n) q = 0;
+	if (!empty.quota || empty.rxHeld || !empty.owner.fill().available()) continue;
+	auto p = m_rxPool->BufPool::alloc();
+	if (!p) return;
+	postRx(empty, p);
+	m_refillNext = q;
+      }
+      m_rxStarved = false;
+    }
+    auto available = queue.owner.fill().available();
     if (budget > available) budget = available;
     auto room = queue.quota - queue.rxHeld;
     if (budget > room) budget = room;
     while (budget--) {
       auto p = m_rxPool->BufPool::alloc();
-      if (!p) break;
-      auto id = m_rxPool->slot(p);
-      ZmAssert_(m_rxSlots[id] == End && fill.reserve(1) == 1);
-      m_rxSlots[id] = 0;
-      ++m_rxHeld;
-      fill.entry(0) = uint64_t(id) * m_arena->layout().chunk;
-      fill.commit();
-      ++queue.rxHeld;
+      if (!p) {
+	if (!queue.rxHeld) m_rxStarved = true;
+	break;
+      }
+      postRx(queue, p);
     }
   }
 
@@ -505,12 +531,25 @@ private:
     signalWake(m_wakeFD, m_parking);
   }
 
-  void returned() {
-    if (m_ioState != Active || m_mx->invoked(m_mx->rxThread()) || m_rxReturned.xch(1)) return;
-    signalWake(m_wakeFD, m_parking);
+  unsigned refillQueue(unsigned n) {
+    unsigned low = End;
+    if (m_rxHeld != m_rxPool->count) {
+      auto q = m_refillNext;
+      for (unsigned i = 0; i < n; ++i) {
+	auto &queue = *m_queues[q];
+	// Posted frames still owned by the driver also supply this queue.
+	if (queue.quota && queue.rxHeld <= queue.quota / 2 &&
+	    queue.owner.fill().available()) {
+	  if (!queue.rxHeld) return q;
+	  if (low == End) low = q;
+	}
+	if (++q == n) q = 0;
+      }
+    }
+    return low;
   }
 
-  unsigned receiveQueue(unsigned q);
+  bool receiveQueue(unsigned q);
   unsigned consumeRx(Queue &, bool deliver);
   unsigned reapTx();
 
@@ -533,7 +572,7 @@ private:
   bool		m_startFailed = false, m_tcpOffload = false;
   bool		m_ingressQuiesced = true, m_ingressUncertain = false;
   ZmAtomic<unsigned> m_stopQueued{StopIdle};
-  unsigned	m_spin = 1000, m_rxRingCount = 0, m_txRingCount = 0;
+  unsigned	m_spin, m_rxRingCount = 0, m_txRingCount = 0;
   ZiMultiplex	*m_mx = nullptr;
   unsigned	m_txSid = 0;
   ZmRef<UMem>	m_arena;
@@ -548,9 +587,10 @@ private:
   unsigned	m_retireQueue = 0;
   alignas(Zm::CacheLineSize) ZmAtomic<unsigned> m_txPending{0};
   alignas(Zm::CacheLineSize) ZmAtomic<uint64_t> m_wakes{0};
-  ZmAtomic<unsigned> m_parking{0}, m_rxReturned{0};
+  ZmAtomic<unsigned> m_parking{0};
   alignas(Zm::CacheLineSize) Indices m_rxSlots;
-  unsigned	m_rxHeld = 0, m_nextQueue = 0;
+  unsigned	m_rxHeld = 0, m_nextQueue = 0, m_refillNext = 0;
+  bool		m_rxStarved = false;
   alignas(Zm::CacheLineSize) Packets m_txActive;
   unsigned	m_txHeld = 0;
   // Sender-only accounting must not invalidate shared immutable packet views.
@@ -661,7 +701,6 @@ void Nif::rx()
   auto queueCount = m_queues.length(); // frozen until the caller quiesces Rx for close
   while (ready()) {
     if (takeWake(m_wakes)) return;
-    if (m_rxReturned && m_rxReturned.xch(0)) idle = empty = 0;
     auto q = m_nextQueue++;
     if (m_nextQueue == queueCount) m_nextQueue = 0;
     if (receiveQueue(q)) { idle = empty = 0; continue; }
@@ -673,13 +712,19 @@ void Nif::rx()
     // Publish before rechecking pulses. A producer either sees this wait and
     // writes eventfd, or its already-published pulse prevents the wait entirely.
     m_parking.xch(1);
-    if (uint64_t(m_wakes) || unsigned(m_rxReturned) || !ready()) {
-      m_parking = 0;
-      continue;
-    }
+    auto refill = refillQueue(queueCount);
+    bool armed = refill != End && !m_rxPool->hasFree();
+    if (armed) m_rxPool->armReturn();
+    // A return racing the arm either published a free slot before this
+    // check or claimed the arm and will interrupt epoll.
+    bool returned = m_rxHeld < m_rxPool->count && m_rxPool->hasFree();
+    bool refillReady = refill != End && returned;
     epoll_event event;
-    auto n = epoll_wait(m_events, &event, 1, -1);
+    int n = 0;
+    if (!returned && !uint64_t(m_wakes) && ready())
+      n = epoll_wait(m_events, &event, 1, -1);
     m_parking = 0;
+    if (armed && m_rxPool->cancelReturn()) refillReady = true;
     if (n < 0) {
       if (errno == EINTR) continue;
       m_ioError = errno;
@@ -688,18 +733,25 @@ void Nif::rx()
     }
     // A delayed writer can leave stale readiness after its pulse was consumed.
     // Draining readiness never creates a pulse.
-    if (event.data.u32 == End) drainWake(m_wakeFD);
-    else m_nextQueue = event.data.u32;
+    if (n > 0) {
+      if (event.data.u32 == End) drainWake(m_wakeFD);
+      else m_nextQueue = event.data.u32;
+    }
+    if (refillReady) {
+      m_nextQueue = refill;
+      if (!m_rxStarved) m_refillNext = refill + 1 == queueCount ? 0 : refill + 1;
+    }
     idle = 0;
   }
 }
 
-unsigned Nif::receiveQueue(unsigned q)
+bool Nif::receiveQueue(unsigned q)
 {
   auto &queue = *m_queues[q];
   auto &fill = queue.owner.fill();
   if (!queue.service.rx().available() && !fill.needWakeup() &&
-      (queue.rxHeld == queue.quota || m_rxPool->used() >= m_rxPool->count)) return 0;
+      (queue.rxHeld == queue.quota || m_rxPool->used() >= m_rxPool->count)) return false;
+  const auto held = m_rxHeld;
   replenish(queue, Quantum);
   if (fill.needWakeup()) {
     pollfd wake{queue.service.fd(), POLLIN, 0};
@@ -707,21 +759,28 @@ unsigned Nif::receiveQueue(unsigned q)
   }
   auto consumed = consumeRx(queue, true);
   if (consumed) replenish(queue, Quantum);
-  return consumed;
+  return consumed || m_rxHeld != held;
 }
 
 unsigned Nif::consumeRx(Queue &queue, bool deliver)
 {
   auto &ring = queue.service.rx();
   const auto &layout = m_arena->layout();
+  unsigned limit = ring.available();
+  if (limit > Quantum) limit = Quantum;
+  if (!limit) return 0;
+  ZiRxBurst burst;
   unsigned n = 0;
-  while (n < Quantum && (!deliver || !m_wakes.load_()) && ring.reserve(1)) {
+  while (n < limit && (!deliver || !m_wakes.load_()) && ring.reserve(1)) {
     auto desc = ring.entry(0);
     ring.commit();
     ++n;
-    if (desc.addr >= layout.rxLength) continue;
+    if (ZuUnlikely(desc.addr >= layout.rxLength)) { burst.flush(); continue; }
     auto id = unsigned(desc.addr/layout.chunk);
-    if (id >= m_rxPool->count || m_rxSlots[id] == End) continue;
+    if (ZuUnlikely(id >= m_rxPool->count || m_rxSlots[id] == End)) {
+      burst.flush();
+      continue;
+    }
     --queue.rxHeld;
     --m_rxHeld;
     m_rxSlots[id] = End;
@@ -731,10 +790,11 @@ unsigned Nif::consumeRx(Queue &queue, bool deliver)
     if (!deliver || slot != id || !desc.len || desc.options ||
 	desc.len > m_rxPool->size ||
 	desc.len > layout.chunk - unsigned(desc.addr & (layout.chunk - 1))) {
+      burst.flush();
       m_rxPool->BufPool::free(origin);
       continue;
     }
-    m_receive(p, desc.len);
+    m_receive(p, desc.len, limit > 1 ? &burst : nullptr);
   }
   return n;
 }

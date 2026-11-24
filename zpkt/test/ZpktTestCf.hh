@@ -39,13 +39,13 @@ inline auto config(ZuCSpan module)
   return root;
 }
 
-inline auto config(ZuCSpan module, ZuCSpan name, unsigned sender, unsigned spin = 1000)
+inline auto config(ZuCSpan module, ZuCSpan name, unsigned sender, int64_t spin = -1)
 {
   auto root = object();
   value(root.ptr(), "module", module);
   auto nif = object(object(root.ptr(), "interfaces"), name);
   value(nif, "txSid", sender);
-  value(nif, "spin", spin);
+  if (spin >= 0) value(nif, "spin", spin);
   return root;
 }
 

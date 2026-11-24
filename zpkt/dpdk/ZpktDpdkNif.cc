@@ -540,15 +540,19 @@ unsigned Nif::receive(bool deliver)
 {
   rte_mbuf *packets[Burst];
   unsigned count = rte_eth_rx_burst(m_port, 0, packets, Burst);
+  if (!count) return 0;
+  ZiRxBurst burst;
   for (unsigned i = 0; i < count; ++i) {
     auto mbuf = packets[i];
     if (deliver && m_active && mbuf->nb_segs == 1 &&
         (mbuf->ol_flags & RTE_MBUF_F_RX_L4_CKSUM_MASK) != RTE_MBUF_F_RX_L4_CKSUM_BAD &&
 	mbuf->data_len == mbuf->pkt_len && mbuf->pkt_len &&
 	mbuf->pkt_len <= m_mtu + RTE_ETHER_HDR_LEN && m_rxPool->adopt(mbuf))
-      m_receive(rte_pktmbuf_mtod(mbuf, uint8_t *), mbuf->pkt_len);
-    else
+      m_receive(rte_pktmbuf_mtod(mbuf, uint8_t *), mbuf->pkt_len, count > 1 ? &burst : nullptr);
+    else {
+      burst.flush();
       rte_pktmbuf_free(mbuf);
+    }
   }
   return count;
 }

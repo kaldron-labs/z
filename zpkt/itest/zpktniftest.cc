@@ -235,7 +235,7 @@ static void testDpdk(const Runtime &runtime)
   bool started = mx.start();
   ZuCheckRT(started, log_("start the direct-device scheduler"));
   if (started) {
-    auto receive = [&rx](uint8_t *packet, unsigned) { rx->free(packet); };
+    auto receive = [&rx](uint8_t *packet, unsigned, ZiRxBurst *) { rx->free(packet); };
     ZmAtomic<unsigned> stops{0};
     auto stopped = [&stops] { ++stops; };
     startFailure = 1;

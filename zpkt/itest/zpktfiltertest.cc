@@ -86,7 +86,7 @@ static void testForeign()
   auto initialized = env.open(instance, &mx, config);
   auto allocated = initialized.is<void>() ? instance->alloc(rx, pools) : initialized;
   bool started = allocated.is<void>() && mx.start();
-  bool activated = started && instance->start([](uint8_t *, unsigned) { });
+  bool activated = started && instance->start([](uint8_t *, unsigned, ZiRxBurst *) { });
   error = allocated.is<ZeException>() ? allocated.p<ZeException>() : instance->error();
   auto link = Zpkt::Xdp::xdpQuery(ifindex);
   if (link.is<ZeException>()) error = link.p<ZeException>();

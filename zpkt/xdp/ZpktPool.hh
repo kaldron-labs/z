@@ -57,6 +57,9 @@ private:
 
   void init(ZmRef<UMem>, uint64_t offset, unsigned stride, unsigned prefix, unsigned first);
   void retire() { m_active = 0; }
+  bool hasFree() const { return uintptr_t(m_head); }
+  void armReturn() { m_armed.xch(1); }
+  bool cancelReturn() { return !m_armed.xch(0); } // true if a return claimed the arm
   void returned(ZmFn<void()> fn) { m_returned = ZuMv(fn); }
   void final(unsigned kernelHeld);
   unsigned first() const { return m_first; }
@@ -70,7 +73,7 @@ private:
   bool		m_tx = false;
   ZmFn<void()>	m_returned;
   alignas(Zm::CacheLineSize) Head m_head{0};
-  Count		m_used{0}, m_active{0};
+  Count		m_used{0}, m_active{0}, m_armed{0};
 };
 
 } // namespace Zpkt::Xdp

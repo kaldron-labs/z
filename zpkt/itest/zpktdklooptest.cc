@@ -48,7 +48,7 @@ static void testLoop(const Runtime &runtime)
   Transfer baTx{.source = &b, .dest = &a, .expected = small, .bytes = sizeof(small)};
 
   auto receive = [](Transfer &rx) {
-    return [&rx](uint8_t *packet, unsigned len) {
+    return [&rx](uint8_t *packet, unsigned len, ZiRxBurst *) {
       auto &dest = *rx.dest;
       rx.observed = packet != rx.packet && len == rx.bytes &&
 	!memcmp(packet, rx.expected, rx.bytes);

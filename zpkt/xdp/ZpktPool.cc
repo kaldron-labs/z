@@ -77,7 +77,7 @@ loop:
   if (m_head.cmpXch(uintptr_t(p), next) != next) goto loop;
   // Final accounting follows publication; no mapping access follows it.
   ZmAssert_(m_used--);
-  if (m_returned) m_returned();
+  if (ZuUnlikely(m_armed.load_()) && m_armed.cmpXch(0, 1)) m_returned();
 }
 
 unsigned BufPool::slot(const void *packet) const

@@ -34,7 +34,7 @@
 #include <zlib/ZePlatform.hh>
 
 #include <zlib/ZtcQueue.hh>
-#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiIOContext.hh>
 
 namespace Zpkt {
 
@@ -43,7 +43,7 @@ struct NifInfo {
   uint8_t mac[6]{};
 };
 
-using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zpkt.Receive">>;
+using RecvFn = ZmFn<void(uint8_t *, unsigned, ZiRxBurst *), ZmFnHeapID<"Zpkt.Receive">>;
 using StopFn = ZmFn<void(), ZmFnHeapID<"Zpkt.TxStopped">>;
 using StartFn = ZmFn<void(bool), ZmFnHeapID<"Zpkt.Start">>;
 

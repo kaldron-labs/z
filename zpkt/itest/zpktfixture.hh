@@ -16,7 +16,8 @@
 namespace ZpktTest {
 
 struct Interface {
-  unsigned ifindex = 0, spin = 1000, txSid = 0;
+  unsigned ifindex = 0, txSid = 0;
+  int64_t spin = -1;
 };
 
 class Environment {

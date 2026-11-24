@@ -113,7 +113,7 @@ static void testWait(const Runtime &runtime)
   ZuCheckRT(result.is<void>() && probe.fd >= 0, log_("allocate device with a real wake eventfd"));
   if (!result.is<void>() || probe.fd < 0) return;
   Receive rx{.endpoint = &endpoint};
-  result = endpoint.start([&rx](uint8_t *p, unsigned n) { rx.receive(p, n); });
+  result = endpoint.start([&rx](uint8_t *p, unsigned n, ZiRxBurst *) { rx.receive(p, n); });
   ZuCheckRT(result.is<void>(), log_(errorText(result.p<ZeException>())));
   if (!result.is<void>()) return;
 
@@ -233,7 +233,7 @@ static void testPoll(const Runtime &runtime)
   ZuCheckRT(result.is<void>(), log_(errorText(result.p<ZeException>())));
   if (!result.is<void>()) return;
   Receive rx{.endpoint = &endpoint, .wakeAt = 1};
-  result = endpoint.start([&rx](uint8_t *p, unsigned n) { rx.receive(p, n); });
+  result = endpoint.start([&rx](uint8_t *p, unsigned n, ZiRxBurst *) { rx.receive(p, n); });
   ZuCheckRT(result.is<void>(), log_(errorText(result.p<ZeException>())));
   if (!result.is<void>()) return;
 

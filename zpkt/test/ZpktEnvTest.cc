@@ -116,7 +116,7 @@ static void testNamedFactory()
   auto again = env->nif(&mx, "synthetic");
   ZuCHECK(again.is<Zpkt::Nif *>() && again.p<Zpkt::Nif *>() == nif.ptr() &&
       queries == 1 && stats->creates == 1, "cache hit makes no query or plugin call");
-  ZuCHECK(nif->start([](uint8_t *, unsigned) { }), "test device starts");
+  ZuCHECK(nif->start([](uint8_t *, unsigned, ZiRxBurst *) { }), "test device starts");
   again = env->nif(&mx, "synthetic");
   ZuCHECK(again.is<Zpkt::Nif *>() && again.p<Zpkt::Nif *>() == nif.ptr() && queries == 1,
     "lookup while running returns the same device");
@@ -262,8 +262,8 @@ static void testMalformedConfig()
     env->init(cf);
     cf = nullptr;
     auto opened = env->nif(&mx, "recovered");
-    ZuCheckRT(opened.is<Zpkt::Nif *>(),
-      log_("failed nested map construction leaves Env ready for a valid owned-map retry"));
+    ZuCheckRT(opened.is<Zpkt::Nif *>() && stats->spin == 4096,
+      log_("valid retry with omitted spin inherits the AF_XDP default"));
     if (opened.is<Zpkt::Nif *>()) {
       ZmRef<Zpkt::Nif> nif = opened.p<Zpkt::Nif *>();
       nif->final();

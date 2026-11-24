@@ -17,7 +17,7 @@
 namespace Zpkt::Xdp {
 
 struct InterfaceCf {
-  unsigned spin = 1000;
+  unsigned spin = 4096;
   unsigned txSid = 0;
 };
 ZfStruct(ZpktXDPAPI, (InterfaceCf, Cf),

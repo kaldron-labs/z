@@ -33,7 +33,7 @@ The Linux interface name is the map key:
 module libZpkt_xdp.so
 preload false
 interfaces {
-  veth0 { txSid 3 spin 1000 }
+  veth0 { txSid 3 }
 }
 ```
 
@@ -236,9 +236,10 @@ ownership lookup and active slot arrays are allocated during setup.
 
 `rx()` runs on the caller's Rx owner. It processes packets and invokes the
 receive callback until explicitly woken. On idle input it probes the mapped
-rings for configured `spin` rounds (default 1000), then blocks in epoll on packet
+rings for configured `spin` rounds (default 4096), then blocks in epoll on packet
 readiness and an internal eventfd. A round probes the configured Rx queues;
-zero spin goes directly to the wait after checking available work. Packet
+zero spin goes directly to the wait after checking available work. Receiving a
+packet or reposting a returned frame restarts the idle budget. Packet
 arrival resumes processing inside the same call, rather than returning it.
 
 `wake()` may run on any thread, including the receive callback. It records a
@@ -249,8 +250,12 @@ entry; concurrent posts are preserved. Kernel wait descriptors remain private.
 `pollTx()` services bounded completion turns on the caller's Tx owner.
 
 Allocation and return can run on other threads. Each interface Rx queue has a
-reserved share of the common ingress pool. Returning a frame off the Rx owner
-coalesces a wakeup so the active receiver can replenish FILL. Wake and drain
+reserved share of the common ingress pool. Before blocking, Rx arms a one-shot
+return notification if the pool is empty and a queue has at most half its share
+of frames still posted. It rechecks the pool after arming. The first returned
+frame restarts FILL service. After any queue runs dry, refill distributes one
+frame per empty queue in round-robin order before restocking busy queues.
+Healthy queues replenish on ordinary receive turns. Wake and drain
 the receiver and quiesce Tx and wake callers before stop.
 
 Stop withdraws ingress destinations, drains callbacks and accepted submissions,

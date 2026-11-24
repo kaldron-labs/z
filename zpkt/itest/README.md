@@ -40,9 +40,12 @@ traffic you need to retain: AF_XDP redirects all its traffic.
 * `zpktwaketest` uses the same pair. Real Rx epoll/eventfd observation verifies
   zero-spin blocking, queued/concurrent wake pulses, repeated check-to-wait races,
   packet processing without returning, and interruption during active processing
-  with a large spin count. The test also verifies that returning a held frame
-  off the Rx thread replenishes FILL without another packet. It can run with a
-  single-queue fixture pair and uses a different side of the pair for each case.
+  with a large spin count. Healthy off-owner frame returns produce no eventfd write.
+  After the receiver exhausts its FILL supply, the test returns a single frame
+  and verifies one wake, one repost and delivery of the next peer packet. With
+  queue steering enabled by the namespace fixture, it drains both queues and
+  verifies that successive sole returns restore traffic on each. It also runs
+  with a single-queue fixture pair, using a different side for each case.
 * `zpktlooptest` requires root and `ZPKT_RUN_FIXTURE=1`; it invokes the anonymous
   namespace fixture for independent client/server utility processes, full-MTU
   and smaller packets, three application wait policies and oversized input.

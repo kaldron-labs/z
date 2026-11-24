@@ -120,7 +120,7 @@ static void testWake()
   params.ifindex = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10));
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
-  Zpkt::RecvFn receive = [&pool, &packet, &held, &retain](uint8_t *p, unsigned) {
+  Zpkt::RecvFn receive = [&pool, &packet, &held, &retain](uint8_t *p, unsigned, ZiRxBurst *) {
     if (retain.xch(0)) held = p;
     else pool->free(p);
     packet.post();
@@ -235,23 +235,103 @@ static void testWake()
     });
     return count;
   };
-  retain = 1;
+  auto sendFrame = [&] {
+    return wire >= 0 && sendto(wire, bytes, sizeof(bytes), 0,
+      reinterpret_cast<sockaddr *>(&address), sizeof(address)) == sizeof(bytes);
+  };
   ZmThread idleRx{[&instance] { instance->rx(); }};
   parked.wait();
-  bool loaned = wire >= 0 && sendto(wire, bytes, sizeof(bytes), 0,
-    reinterpret_cast<sockaddr *>(&address), sizeof(address)) == sizeof(bytes);
+  retain = 1;
+  bool loaned = sendFrame();
   ZuCheckRT(loaned, log_("peer sends one frame while the receiver is parked"));
   if (loaned) {
     packet.wait();
     parked.wait();
-    auto before = posted();
+    auto writes = unsigned(wakeWrites);
     pool->free(held);
-    parked.wait();
-    ZuCheckRT(posted() == before + 1,
-      log_("off-owner frame return wakes Rx and posts FILL without another packet"));
+    ZuCheckRT(unsigned(wakeWrites) == writes,
+      log_("return above the FILL low watermark makes no eventfd write"));
   }
   instance->wake();
   idleRx.join();
+
+  unsigned queues = (instance->allQueues([](Ztc::Queue *) {}) - 2) / 2;
+  unsigned quota = pool->count / queues;
+  uint8_t *loans[8]{};
+  ZmThread starvedRx{[&instance] { instance->rx(); }};
+  parked.wait();
+  unsigned n = 0;
+  while (n < quota) {
+    retain = 1;
+    if (!sendFrame()) break;
+    packet.wait();
+    parked.wait();
+    loans[n++] = held;
+  }
+  auto spare = pool->alloc();
+  ZuCheckRT(n == quota && !spare,
+    log_("peer's FILL supply is held by the application and the ingress pool is empty"));
+  if (spare) pool->free(spare);
+  if (n) {
+    auto before = posted();
+    auto writes = unsigned(wakeWrites);
+    pool->free(loans[--n]);
+    parked.wait();
+    ZuCheckRT(unsigned(wakeWrites) == writes + 1 && posted() == before + 1,
+      log_("one off-owner return wakes the starved receiver and reposts the sole frame"));
+    bool resumed = sendFrame();
+    if (resumed) { packet.wait(); parked.wait(); }
+    ZuCheckRT(resumed, log_("peer traffic resumes on the one replenished frame"));
+  }
+  instance->wake();
+  starvedRx.join();
+  auto writes = unsigned(wakeWrites);
+  while (n) pool->free(loans[--n]);
+  ZuCheckRT(unsigned(wakeWrites) == writes,
+    log_("returning outstanding frames after Rx exits makes no wake write"));
+  if (queues == 2 && getenv("ZPKT_TEST_QUEUE_STEERING")) {
+    auto posts = [&instance, &params](unsigned q) {
+      auto fill = ZuID{} << "xdp." << ZuBoxed(params.ifindex) << '.'
+        << ZuBoxed(q) << ".fill";
+      uint64_t count = 0;
+      instance->allQueues([&](Ztc::Queue *queue) {
+        Ztc::QueueTelemetry data;
+        queue->telemetry(data);
+        if (data.id == fill) count = data.inCount;
+      });
+      return count;
+    };
+    ZmThread twoQueues{[&instance] { instance->rx(); }};
+    parked.wait();
+    for (unsigned q = 0; q < queues; ++q) {
+      bytes[13] = 0xb5 + q;
+      for (unsigned i = 0; i < quota; ++i) {
+        retain = 1;
+        if (!sendFrame()) break;
+        packet.wait();
+        parked.wait();
+        loans[n++] = held;
+      }
+    }
+    ZuCheckRT(n == pool->count, log_("both hardware queues run out of receive frames"));
+    unsigned first = 0;
+    for (unsigned i = 0; i < 2 && n; ++i) {
+      auto q0 = posts(0), q1 = posts(1);
+      pool->free(loans[--n]);
+      parked.wait();
+      unsigned q = posts(0) == q0 + 1 ? 0 : 1;
+      ZuCheckRT(q ? posts(1) == q1 + 1 && posts(0) == q0 : posts(1) == q1,
+        log_("return restores one empty queue"));
+      if (i) ZuCheckRT(q != first, log_("successive sole returns serve both empty queues"));
+      first = q;
+      bytes[13] = 0xb5 + q;
+      retain = 1;
+      if (sendFrame()) { packet.wait(); parked.wait(); loans[n++] = held; }
+    }
+    instance->wake();
+    twoQueues.join();
+    while (n) pool->free(loans[--n]);
+  }
   if (wire >= 0) close(wire);
   entered = nullptr;
   closeInstance(instance);
@@ -279,7 +359,7 @@ static void testActiveWake()
   params.ifindex = unsigned(strtoul(getenv("ZPKT_TEST_PEER_IFINDEX"), nullptr, 10));
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
-  Zpkt::RecvFn receive = [&pool, &packets, &active, &release](uint8_t *p, unsigned) {
+  Zpkt::RecvFn receive = [&pool, &packets, &active, &release](uint8_t *p, unsigned, ZiRxBurst *) {
     ++packets;
     active.post();
     release.wait();

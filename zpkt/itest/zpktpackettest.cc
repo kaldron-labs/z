@@ -272,7 +272,7 @@ static void testPackets()
   params.ifindex = ifindex;
   params.txSid = Sender;
   ZiMultiplex mx{ZiMxParams{}.scheduler(configureSender)};
-  auto receive = [&received, &rxBytes, &rx, &current](uint8_t *p, unsigned n) {
+  auto receive = [&received, &rxBytes, &rx, &current](uint8_t *p, unsigned n, ZiRxBurst *) {
     if (!received) { received = p; rxBytes = n; current->wake(); } else rx->free(p);
   };
   auto beforeInit = unsigned(routeSockets);
@@ -507,7 +507,7 @@ static void testSenderProgress()
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
   bool ready = setup(env, instance, mx, config, rx, pools,
-    [&rx](uint8_t *p, unsigned) { rx->free(p); }, error, [&stopped, &stops, &stopSid] {
+    [&rx](uint8_t *p, unsigned, ZiRxBurst *) { rx->free(p); }, error, [&stopped, &stops, &stopSid] {
       ++stops;
       stopSid = ZmSelf()->sid();
       stopped.post();
@@ -633,7 +633,7 @@ static void testLeaseRace()
   ZiMultiplex mx{ZiMxParams{}.scheduler(configureSender)};
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
-  auto receive = [&rx](uint8_t *p, unsigned) { rx->free(p); };
+  auto receive = [&rx](uint8_t *p, unsigned, ZiRxBurst *) { rx->free(p); };
   bool ready = setup(env, instance, mx, config, rx, pools, receive, error);
   ZuCheckRT(ready, log_("single-slot lease race setup: ", error));
   if (!ready) {
@@ -780,7 +780,7 @@ static void testOffloadWire()
   config.txSid = Sender;
   ZeException error;
   bool running = setup(env, instance, mx, config, rx, pools,
-    [rx](auto p, auto) { rx->free(p); }, error);
+    [rx](auto p, auto, ZiRxBurst *) { rx->free(p); }, error);
   ZuCheckRT(running, log_("start supported metadata emulation: ", error));
   if (!running) { if (instance) instance->final(); mx.stop(); close(wire); return; }
   auto packet = tx->alloc();
@@ -790,7 +790,7 @@ static void testOffloadWire()
     if (run) {
       exact &= shutdown(instance, error);
       emulatedCapability = run == 2;
-      exact &= instance->start([rx](auto p, auto) { rx->free(p); });
+      exact &= instance->start([rx](auto p, auto, ZiRxBurst *) { rx->free(p); });
     }
     bool offload = run != 1;
     exact &= instance->tcpChksumOffload() == offload;

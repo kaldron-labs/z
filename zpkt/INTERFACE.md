@@ -47,9 +47,9 @@ This seam does not replace backend BPF attachment transactions.
 ## AF_XDP
 
 Configure the multiplexer and its sender slot before construction. Select
-`libZpkt_xdp.so` in Cf and provide `interfaces { name { txSid N spin 1000 } }`.
+`libZpkt_xdp.so` in Cf and provide `interfaces { name { txSid N } }`.
 The key is the Linux interface name; `txSid` is required, nonzero and validated
-against the supplied multiplexer. `spin` defaults to 1000. AF_XDP redirects all
+against the supplied multiplexer. `spin` defaults to 4096 for Rx and the sender. AF_XDP redirects all
 interface traffic, including non-IP frames. Its sender slot is distinct from Rx
 and Tx owners. `env->nif(&mx, name)` opens synchronously using core-supplied
 metadata and retains the borrowed multiplexer and link resources until final.
@@ -96,10 +96,19 @@ drain continuation at this point. An activation failure releases any per-run
 sockets and mappings and retains the allocation for retry. Inspect `error()`
 after start or stop completes.
 
+The receive callback takes the Ethernet frame pointer, its length, and a
+borrowed `ZiRxBurst *`. A singleton has a null burst. AF_XDP and DPDK
+supply a scope only when multiple descriptors were already available in one
+dequeue. Contiguous deliveries may hand off original buffer nodes together.
+The scope drains on return from that dequeue, including a wake or discard.
+
 Call `rx()` from the receive owner. It processes frames until `wake()`
 interrupts the loop. The receiver spins up to the configured idle budget and
-then blocks on packet readiness and eventfd. A return of an ingress frame
-on another thread wakes the parked owner to replenish FILL.
+then blocks on packet readiness and eventfd. Receiving packets or reposting
+returned frames restarts that budget. If the common ingress pool is empty
+and any queue has at most half its receive supply, the first returned frame
+wakes the parked owner to replenish FILL. Empty queues have first claim on
+available frames, in round-robin order.
 
 Allocate on a Tx pool and write the complete Ethernet frame directly into
 that backing. `send(packet, length)` accepts one outstanding kernel

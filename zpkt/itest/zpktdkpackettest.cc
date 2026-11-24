@@ -38,7 +38,7 @@ static void testRing(const Runtime &runtime)
 
   uint8_t *received = nullptr;
   unsigned receivedLen = 0;
-  auto receive = [&endpoint, &received, &receivedLen](uint8_t *packet, unsigned len) {
+  auto receive = [&endpoint, &received, &receivedLen](uint8_t *packet, unsigned len, ZiRxBurst *) {
     received = packet;
     receivedLen = len;
     endpoint.device->wake();
@@ -148,7 +148,7 @@ static void testPcap(const Runtime &runtime)
   if (!allocated.is<void>()) return;
 
   bool observed = false;
-  auto started = endpoint.start([&endpoint, &observed, &input](uint8_t *packet, unsigned len) {
+  auto started = endpoint.start([&endpoint, &observed, &input](uint8_t *packet, unsigned len, ZiRxBurst *) {
     observed = len == sizeof(input) && !memcmp(packet, input, sizeof(input));
     endpoint.ingress->free(packet);
     endpoint.device->wake();

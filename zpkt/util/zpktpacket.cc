@@ -50,7 +50,7 @@ struct Options {
   unsigned	localPort = 40000, peerPort = 40001;
   unsigned	spin = 0, timeout = 1, deadline = 10;
   uint8_t	local[4]{}, peer[4]{}, mac[6]{};
-  bool		server = false;
+  bool		server = false, spinSet = false;
 };
 
 static bool number(const char *s, unsigned &out)
@@ -106,7 +106,10 @@ static bool options(int argc, char **argv, Options &out)
       case 'n': if (!number(optarg, out.count)) return false; break;
       case 'p': if (!number(optarg, out.payload)) return false; break;
       case 'f': if (!number(optarg, out.frames)) return false; break;
-      case 's': if (!number(optarg, out.spin)) return false; break;
+      case 's':
+	if (!number(optarg, out.spin)) return false;
+	out.spinSet = true;
+	break;
       case 't': if (!number(optarg, out.timeout)) return false; break;
       case 'd': if (!number(optarg, out.deadline)) return false; break;
       case 'R': out.readyFile = optarg; break;
@@ -237,7 +240,7 @@ struct Endpoint {
     };
     value(tree.ptr(), "module", ZPKT_MODULE);
     auto interface = object(object(tree.ptr(), "interfaces"), config.interface);
-    value(interface, "spin", config.spin);
+    if (config.spinSet) value(interface, "spin", config.spin);
     value(interface, "txSid", Sender);
     env->init(tree);
     auto initialized = env->nif(&mx, config.interface);
@@ -255,7 +258,7 @@ struct Endpoint {
 	auto allocated = instance->alloc(rx, pools);
 	if (allocated.is<ZeException>()) error = ZuMv(allocated).p<ZeException>();
 	else if (!mx.start()) error = ZeEXCEPT(Error, "Zpkt.Packet", "multiplexer start failed");
-	else if (!instance->start([this](uint8_t *p, unsigned n) { receive(p, n); }))
+	else if (!instance->start([this](uint8_t *p, unsigned n, ZiRxBurst *) { receive(p, n); }))
 	  error = instance->error();
       }
     }
