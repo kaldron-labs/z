@@ -32,6 +32,114 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# Exercise entrypoint discovery without network changes or the real endpoint.
+cat >"$tmp/bin/ip" <<'EOF'
+#!/bin/sh
+if [ "$1" = -d ]; then
+  printf '%s\n' "ip $*" >>"$QIR_ROUTE_LOG"
+  exit 0
+fi
+[ "$1" = -o ] || exit 99
+[ "$3" = addr ] && [ "$4" = show ] && [ "$5" = dev ] || exit 99
+[ "$7" = scope ] && [ "$8" = global ] || exit 99
+[ "$6" != missing ] || exit 1
+[ "${QIR_DISCOVERY_FAIL:-0}" = 0 ] || exit 1
+case "$2" in
+  -4) printf '%s\n' "${QIR_ADDR4:-}" ;;
+  -6) printf '%s\n' "${QIR_ADDR6:-}" ;;
+  *) exit 99 ;;
+esac
+EOF
+cat >"$tmp/bin/endpoint" <<'EOF'
+#!/bin/sh
+printf '%s|%s|%s\n' "$1" "${ZHTTP_QIR_ORIG4-unset}" "${ZHTTP_QIR_ORIG6-unset}"
+EOF
+chmod +x "$tmp/bin/ip" "$tmp/bin/endpoint"
+sed "s|/usr/local/bin/zhttpqir|$tmp/bin/endpoint|g" \
+  "$srcdir/zhttp/interop/qir_endpoint.sh" >"$tmp/entrypoint"
+
+QIR_ADDR4='2: eth0 inet 172.28.44.10/24 brd 172.28.44.255 scope global eth0'
+QIR_ADDR6='2: eth0 inet6 2001:db8::10/64 scope global'
+export QIR_ADDR4 QIR_ADDR6
+unset ZHTTP_QIR_ORIG4 ZHTTP_QIR_ORIG6 ZHTTP_QIR_IFACE
+TESTCASE=connectionmigration sh "$tmp/entrypoint" server >"$tmp/discovered"
+test "$(cat "$tmp/discovered")" = 'server|172.28.44.10|2001:db8::10'
+# IPv6 arriving before IPv4 in the address source cannot affect family selection.
+QIR_ADDR6='2: eth0 inet6 2001:db8::bad/64 scope global tentative
+2: eth0 inet6 2001:db8::dead/64 scope global deprecated
+2: eth0 inet6 2001:db8::10/64 scope global'
+export QIR_ADDR6
+TESTCASE=connectionmigration sh "$tmp/entrypoint" server >"$tmp/discovered"
+test "$(cat "$tmp/discovered")" = 'server|172.28.44.10|2001:db8::10'
+QIR_ADDR6=''
+export QIR_ADDR6
+TESTCASE=connectionmigration sh "$tmp/entrypoint" server >"$tmp/discovered"
+test "$(cat "$tmp/discovered")" = 'server|172.28.44.10|off'
+QIR_ADDR4="$QIR_ADDR4
+2: eth0 inet 172.28.44.11/24 scope global eth0"
+export QIR_ADDR4
+if TESTCASE=connectionmigration sh "$tmp/entrypoint" server >"$tmp/discovered" 2>&1; then
+  echo 'entrypoint accepted ambiguous originals' >&2
+  exit 1
+fi
+TESTCASE=connectionmigration ZHTTP_QIR_ORIG4=127.0.0.1 \
+  ZHTTP_QIR_ORIG6=off sh "$tmp/entrypoint" server >"$tmp/discovered"
+test "$(cat "$tmp/discovered")" = 'server|127.0.0.1|off'
+# Duplicate records denote one address, not an ambiguous configuration.
+QIR_ADDR4='2: eth0 inet 172.28.44.10/24 scope global eth0
+2: eth0 inet 172.28.44.10/24 scope global eth0'
+export QIR_ADDR4
+TESTCASE=connectionmigration sh "$tmp/entrypoint" server >"$tmp/discovered"
+test "$(cat "$tmp/discovered")" = 'server|172.28.44.10|off'
+for iface in missing '-eth0' 'eth0 eth1' ''; do
+  if TESTCASE=connectionmigration ZHTTP_QIR_IFACE="$iface" \
+      sh "$tmp/entrypoint" server >"$tmp/discovered" 2>&1; then
+    echo 'entrypoint accepted invalid or missing interface' >&2
+    exit 1
+  fi
+done
+if TESTCASE=connectionmigration QIR_DISCOVERY_FAIL=1 \
+    sh "$tmp/entrypoint" server >"$tmp/discovered" 2>&1; then
+  echo 'entrypoint accepted failed discovery' >&2
+  exit 1
+fi
+if TESTCASE=connectionmigration ZHTTP_QIR_ORIG4=off ZHTTP_QIR_ORIG6=off \
+    sh "$tmp/entrypoint" server >"$tmp/discovered" 2>&1; then
+  echo 'entrypoint accepted no original family' >&2
+  exit 1
+fi
+# Ordinary modes retain their binding configuration.
+TESTCASE=transfer sh "$tmp/entrypoint" server >"$tmp/discovered"
+test "$(cat "$tmp/discovered")" = 'server|unset|unset'
+
+# Runner route setup uses eth0 originals, independently of a preferred IP.
+mkdir -p "$tmp/netbin"
+for command in route ethtool nc mkdir; do
+  cat >"$tmp/netbin/$command" <<'EOF'
+#!/bin/sh
+printf '%s\n' "${0##*/} $*" >>"$QIR_ROUTE_LOG"
+EOF
+  chmod +x "$tmp/netbin/$command"
+done
+QIR_ADDR4='2: eth0 inet 193.167.100.100/24 scope global eth0'
+QIR_ADDR6='2: eth0 inet6 fd00:cafe:cafe:100::100/64 scope global'
+QIR_ROUTE_LOG="$tmp/routes"
+export QIR_ADDR4 QIR_ADDR6 QIR_ROUTE_LOG
+TESTCASE=connectionmigration ZHTTP_QIR_PREF4=192.0.2.44 \
+  PATH="$tmp/netbin:$PATH" sh "$tmp/entrypoint" server >"$tmp/discovered"
+grep -q 'gw 193.167.100.2' "$QIR_ROUTE_LOG"
+grep -q 'via fd00:cafe:cafe:100::2' "$QIR_ROUTE_LOG"
+! grep -q '192.0.2.44' "$QIR_ROUTE_LOG"
+test "$(tail -n 1 "$tmp/discovered")" = \
+  'server|193.167.100.100|fd00:cafe:cafe:100::100'
+QIR_ADDR4=''
+export QIR_ADDR4
+: >"$QIR_ROUTE_LOG"
+TESTCASE=transfer PATH="$tmp/netbin:$PATH" sh "$tmp/entrypoint" client \
+  >"$tmp/discovered"
+grep -q 'via fd00:cafe:cafe:100::2' "$QIR_ROUTE_LOG"
+grep -q 'nc -z sim 57832' "$QIR_ROUTE_LOG"
+
 # Validate the preferred-address rule without Docker or a packet capture.
 python3 - "$srcdir/zhttp/interop/qir-run.py" <<'PYTEST'
 import runpy

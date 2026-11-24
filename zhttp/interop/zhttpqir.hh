@@ -31,6 +31,13 @@ enum Case {
   RebindPort,
   RebindAddr,
   ConnectionMigration,
+  Resumption,
+  ZeroRTT,
+  ChaCha20,
+  Retry,
+  ECN,
+  MultiConnect,
+  KeyUpdate,
   Unsupported
 };
 
@@ -43,6 +50,7 @@ enum Status {
 
 enum {
   DefaultPort = 443,
+  DefaultPreferredPort = 8443,
   QIRMigrationCIDReserve = 4
 };
 
@@ -72,7 +80,9 @@ struct Env {
   Zi::Path	cert;
   Zi::Path	key;
   Zi::Path	qlogPath;
+  Zquic::ServerAddrs serverAddrs;
   unsigned	port = DefaultPort;
+  unsigned	preferredPort = DefaultPreferredPort;
 };
 
 struct Request {

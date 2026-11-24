@@ -11,8 +11,8 @@
 #include <signal.h>
 #include <string.h>
 #include <netdb.h>
+#include <arpa/inet.h>
 
-#include <zlib/ZuBox.hh>
 #include <zlib/ZuMatcher.hh>
 #include <zlib/ZuTokenizer.hh>
 #include <zlib/ZtPlatform.hh>
@@ -77,6 +77,13 @@ ZuTime qirHeartBeat(Case testCase)
     case Transfer:
     case HTTP3:
     case ConnectionMigration:
+    case Resumption:
+    case ZeroRTT:
+    case ChaCha20:
+    case Retry:
+    case ECN:
+    case MultiConnect:
+    case KeyUpdate:
     case Unsupported:
       return {};
   }
@@ -99,6 +106,9 @@ static Params qirParams(Params params, const Env &env)
   return ZuMv(params)
     .migrationMode(qirMigrationMode())
     .migCIDRes(qirMigrationCIDReserve())
+    .chachaOnly(env.testCase == ChaCha20)
+    .retryAddrValidate(env.testCase == Retry)
+    .ecn(env.testCase == ECN)
     .heartBeat(env.heartBeat);
 }
 
@@ -135,13 +145,53 @@ static void getpath_(const char *name, Zi::Path &out)
 static bool scanPort(ZuCSpan s, unsigned &port)
 {
   if (!s.length()) return false;
-  ZuBox<unsigned> box;
-  if (box.scan(s) != s.length()) return false;
-  unsigned v = box;
+  unsigned v = 0;
+  for (unsigned i = 0; i < s.length(); ++i) {
+    if (s[i] < '0' || s[i] > '9') return false;
+    unsigned digit = s[i] - '0';
+    if (v > (65535 - digit)/10) return false;
+    v = v * 10 + digit;
+  }
   if (!v) return false;
-  if (v > 65535) return false;
   port = v;
   return true;
+}
+
+// Numeric parsing deliberately bypasses ZiIP's hostname resolver.
+static bool scanAddr(const char *text, bool v6, unsigned port, ZiSockAddr &out)
+{
+  out.null();
+  if (!text || !::strcmp(text, "off")) return true;
+  if (v6) {
+    in6_addr addr;
+    if (::inet_pton(AF_INET6, text, &addr) != 1) return false;
+    out.init(ZiIP{addr}, port);
+  } else {
+    in_addr addr;
+    if (::inet_pton(AF_INET, text, &addr) != 1) return false;
+    out.init(ZiIP{addr}, port);
+  }
+  return Zquic::ServerAddrs::valid(out, v6);
+}
+
+static bool loadServerAddrs(Env &env, const char *(*getenvFn)(const char *))
+{
+  const char *prefPort = getenvFn("ZHTTP_QIR_PREF_PORT");
+  env.preferredPort = DefaultPreferredPort;
+  if (prefPort && !scanPort(ZuCSpan{prefPort}, env.preferredPort)) return false;
+  const char *orig4 = getenvFn("ZHTTP_QIR_ORIG4");
+  const char *orig6 = getenvFn("ZHTTP_QIR_ORIG6");
+  const char *pref4 = getenvFn("ZHTTP_QIR_PREF4");
+  const char *pref6 = getenvFn("ZHTTP_QIR_PREF6");
+  env.serverAddrs = {};
+  if (!scanAddr(orig4, false, env.port, env.serverAddrs.original4) ||
+      !scanAddr(orig6, true, env.port, env.serverAddrs.original6) ||
+      !scanAddr(pref4 ? pref4 : orig4, false, env.preferredPort,
+	env.serverAddrs.preferred4) ||
+      !scanAddr(pref6 ? pref6 : orig6, true, env.preferredPort,
+	env.serverAddrs.preferred6))
+    return false;
+  return bool(env.serverAddrs) && env.serverAddrs.normalize();
 }
 
 static ZuCSpan trimCRLF(ZuCSpan s)
@@ -323,6 +373,13 @@ struct HQServer : public Zquic::Server<HQServer, HQServerLink> {
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
   ZiIP localIP() const { return ZiIP("::"); }
   unsigned localPort() const { return env.port; }
+  Zquic::ServerAddrs serverAddrs() const { return env.serverAddrs; }
+  uint32_t maxEarlyData(Link *) {
+    return env.testCase == Resumption || env.testCase == ZeroRTT ? 1U<<20 : 0;
+  }
+  bool allowEarlyStream(Link *, uint64_t, bool) {
+    return env.testCase == ZeroRTT;
+  }
   void listenFailed(bool) {
     errors = 1;
     done.post();
@@ -463,20 +520,47 @@ struct HQClient : public Zquic::Client<HQClient> {
   struct Stream;
 
   HQClient(const Env &env_, Requests requests_) :
-    env{env_}, requests{ZuMv(requests_)} { }
+    env{env_}, requests{ZuMv(requests_)},
+    requestLimit{unsigned(requests.length())} { }
 
   void finish(bool ok) {
     if (!ok) errors = 1;
-    if (++doneCount >= requests.length()) done.post();
+    if (++doneCount >= requestLimit) done.post();
   }
   void fail() {
     errors = 1;
     done.post();
   }
+  bool earlyData(Link *, ZuBSpan &sessionTicket,
+      const Zquic::TransportParams *&remembered, ZuBSpan &appParams) {
+    if ((env.testCase != Resumption && env.testCase != ZeroRTT) ||
+	!ticket.length()) return false;
+    sessionTicket = ZuBSpan{ticket.data(), ticket.length()};
+    remembered = &ticketParams;
+    appParams = {};
+    return true;
+  }
+  void saveEarlyData(Link *, ZuBSpan sessionTicket,
+      const Zquic::TransportParams &params) {
+    if ((env.testCase != Resumption && env.testCase != ZeroRTT) ||
+	!sessionTicket || ticket.length()) return;
+    ticket.length(sessionTicket.length());
+    memcpy(ticket.data(), sessionTicket.data(), sessionTicket.length());
+    ticketParams = params;
+    ticketReady.post();
+  }
+  bool allowEarlyStream(Link *, uint64_t, bool) {
+    return env.testCase == ZeroRTT;
+  }
+  void earlyDataReady(Link *);
 
   Env			env;
   Requests		requests;
   ZmSemaphore		done;
+  ZmSemaphore		ticketReady;
+  ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.QIR.Ticket">> ticket;
+  Zquic::TransportParams ticketParams;
+  ZmAtomic<unsigned>	requestLimit = 0;
   ZmAtomic<unsigned>	doneCount = 0;
   ZmAtomic<unsigned>	errors = 0;
 };
@@ -514,8 +598,17 @@ struct HQClient::Link :
       link->connected_();
     });
   }
+  void handshakeConfirmed() {
+    if (app()->env.testCase != KeyUpdate) return;
+    auto link = ZmRef(this);
+    app()->txInvoke([link = ZuMv(link)]() mutable {
+      if (!link->txInitiateKeyUpdate() ||
+	  !link->sendPingProbe(Zquic::PktNumSpace::AppData))
+	link->app()->fail();
+    });
+  }
   void connected_() {
-    while (nextRequest < app()->requests.length() &&
+    while (nextRequest < app()->requestLimit &&
 	localStreamsOpened(Zquic::StreamType::Duplex) <
 	  peerStreamLimit(Zquic::StreamType::Duplex)) {
       unsigned i = nextRequest++;
@@ -543,11 +636,19 @@ struct HQClient::Link :
     if (type == Zquic::StreamType::Duplex) connected_();
   }
   void disconnected(bool) {
-    if (app()->doneCount < app()->requests.length()) app()->fail();
+    if (app()->doneCount < app()->requestLimit) app()->fail();
   }
   void connectFailed(bool) { app()->fail(); }
   void streamed(ZmRef<Stream>) { }
 };
+
+void HQClient::earlyDataReady(Link *link)
+{
+  if (env.testCase != ZeroRTT) return;
+  txRun([link = ZmRef{link}]() mutable {
+    link->connected_();
+  });
+}
 
 int HQClient::Stream::process(Zquic::RxStream &rx)
 {
@@ -867,7 +968,8 @@ struct RoleIDs { using Keys = ZuStringTL<"client", "server">; };
 struct CaseIDs {
   using Keys = ZuStringTL<
     "handshake", "transfer", "http3", "rebind-port", "rebind-addr",
-    "connectionmigration">;
+    "connectionmigration", "resumption", "zerortt", "chacha20", "retry",
+    "ecn", "multiconnect", "keyupdate">;
 };
 
 bool parseRole(ZuCSpan s, Role &role)
@@ -888,6 +990,13 @@ ZuCSpan caseName(Case testCase)
     case RebindPort: return "rebind-port";
     case RebindAddr: return "rebind-addr";
     case ConnectionMigration: return "connectionmigration";
+    case Resumption: return "resumption";
+    case ZeroRTT: return "zerortt";
+    case ChaCha20: return "chacha20";
+    case Retry: return "retry";
+    case ECN: return "ecn";
+    case MultiConnect: return "multiconnect";
+    case KeyUpdate: return "keyupdate";
     case Unsupported: return "unsupported";
   }
   return {};
@@ -908,8 +1017,15 @@ bool caseSupported(Case testCase)
     case HTTP3:
     case RebindPort:
     case RebindAddr:
-      return true;
     case ConnectionMigration:
+    case Resumption:
+    case ZeroRTT:
+    case ChaCha20:
+    case Retry:
+    case ECN:
+    case MultiConnect:
+    case KeyUpdate:
+      return true;
     case Unsupported:
       return false;
   }
@@ -928,9 +1044,16 @@ bool caseHQ(Case testCase)
     case Transfer:
     case RebindPort:
     case RebindAddr:
+    case ConnectionMigration:
+    case Resumption:
+    case ZeroRTT:
+    case ChaCha20:
+    case Retry:
+    case ECN:
+    case MultiConnect:
+    case KeyUpdate:
       return true;
     case HTTP3:
-    case ConnectionMigration:
     case Unsupported:
       return false;
   }
@@ -943,7 +1066,9 @@ int loadEnv(Role role, Env &env, const char *(*getenvFn)(const char *),
   ZuCSpan testCase = env_(getenvFn, "TESTCASE");
   if (!testCase.length()) return Usage;
   env.testCase = parseCase(testCase);
-  if (!caseSupported(env.testCase)) return UnsupportedStatus;
+  if (env.testCase == ConnectionMigration && role == Client) return Usage;
+  if (env.testCase != ConnectionMigration && !caseSupported(env.testCase))
+    return UnsupportedStatus;
   env.heartBeat = qirHeartBeat(env.testCase);
 
   setString_(env.requests, env_(getenvFn, "REQUESTS"));
@@ -963,7 +1088,12 @@ int loadEnv(Role role, Env &env, const char *(*getenvFn)(const char *),
 
   env.port = DefaultPort;
   ZuCSpan port = env_(getenvFn, "ZHTTP_QIR_PORT");
-  if (port.length() && !scanPort(port, env.port)) return Usage;
+  if (getenvFn("ZHTTP_QIR_PORT") && !scanPort(port, env.port)) return Usage;
+  env.serverAddrs = {};
+  env.preferredPort = DefaultPreferredPort;
+  if (env.testCase == ConnectionMigration && !loadServerAddrs(env, getenvFn))
+    return Usage;
+  if (!caseSupported(env.testCase)) return UnsupportedStatus;
   if (role == Client && !env.requests.length()) return Usage;
 
   return OK;
@@ -1150,15 +1280,33 @@ static int runHQClient(const Env &env, Requests requests)
 	  .keyLogPath(env.keyLog)
 	  .qlog(bool(env.qlogPath))
 	  .qlogPath(env.qlogPath), env)) && mx.start()) {
-    ZmRef<HQClient::Link> link = new HQClient::Link{&client};
-    link->connect(
-      Zquic::Host{client.requests[0].host}, client.requests[0].port, remote);
-    if (client.done.timedwait(Zm::now(timeouts().total)) != 0)
-      client.errors = 1;
-    ZmBlock<>{}([link = ZuMv(link)](auto wake) mutable {
-      link->disconnect([wake = ZuMv(wake)]() mutable { wake(); });
-    });
-    rc = client.errors ? Error : OK;
+    auto phase = [&client, remote](unsigned first, unsigned limit, bool waitTicket) {
+      client.requestLimit = limit;
+      client.doneCount = first;
+      client.errors = 0;
+      ZmRef<HQClient::Link> link = new HQClient::Link{&client};
+      link->nextRequest = first;
+      link->connect(
+	Zquic::Host{client.requests[0].host}, client.requests[0].port,
+	remote);
+      bool ok = client.done.timedwait(Zm::now(timeouts().total)) == 0 &&
+	!client.errors;
+      if (ok && waitTicket)
+	ok = client.ticketReady.timedwait(Zm::now(timeouts().total)) == 0 &&
+	  bool(client.ticket.length());
+      ZmBlock<>{}([link = ZuMv(link)](auto wake) mutable {
+	link->disconnect([wake = ZuMv(wake)]() mutable { wake(); });
+      });
+      return ok && !client.errors;
+    };
+    bool resumed = env.testCase == Resumption || env.testCase == ZeroRTT;
+    bool multi = env.testCase == MultiConnect;
+    bool ok = multi ? true : phase(0, resumed ? 1 : client.requests.length(), resumed);
+    if (ok && resumed) ok = phase(0, client.requests.length(), false);
+    if (multi)
+      for (unsigned i = 0; ok && i < client.requests.length(); ++i)
+	ok = phase(i, i + 1, false);
+    rc = ok ? OK : Error;
   }
   client.final();
   mx.stop();

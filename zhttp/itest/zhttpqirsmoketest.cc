@@ -16,6 +16,7 @@
 
 #include "ZhttpTestUtil.hh"
 #include "zhttpinteropports.hh"
+#include "zhttpqir.hh"
 
 using namespace ZuTestUtil;
 using Zhttp::Test::TempDir;
@@ -51,7 +52,8 @@ static void setenv_(const char *name, unsigned value)
 
 static pid_t startServer_(
   ZuCSpan testCase, const ZtString<> &www, const ZtString<> &cert,
-  const ZtString<> &key, const char *qlogDir, unsigned port)
+  const ZtString<> &key, const char *qlogDir, unsigned port,
+  const Zhttp::QIR::Env *env = nullptr)
 {
   int ready[2];
   if (::pipe(ready) != 0) return -1;
@@ -79,6 +81,16 @@ static pid_t startServer_(
   setenv_("ZHTTP_QIR_CERT", cert);
   setenv_("ZHTTP_QIR_KEY", key);
   setenv_("ZHTTP_QIR_PORT", port);
+  if (env) {
+    ZtString<> orig4, pref4;
+    orig4 << env->serverAddrs.original4.ip();
+    pref4 << env->serverAddrs.preferred4.ip();
+    setenv_("ZHTTP_QIR_ORIG4", orig4);
+    setenv_("ZHTTP_QIR_PREF4", pref4);
+    ::setenv("ZHTTP_QIR_ORIG6", "off", 1);
+    ::setenv("ZHTTP_QIR_PREF6", "off", 1);
+    setenv_("ZHTTP_QIR_PREF_PORT", env->preferredPort);
+  }
   ::setenv("QLOGDIR", qlogDir, 1);
   char b = 1;
   (void)::write(ready[1], &b, 1);
@@ -126,7 +138,7 @@ static void testExecutableContract()
   ZuCHECK(runStatus("../interop/zhttpqir --help", 0), "help exits 0");
   ZuCHECK(runStatus("../interop/zhttpqir", 2), "missing role exits 2");
   ZuCHECK(runStatus("../interop/zhttpqir bogus", 2), "bad role exits 2");
-  ZuCHECK(runStatus("TESTCASE=retry ../interop/zhttpqir client", 127),
+  ZuCHECK(runStatus("TESTCASE=v2 ../interop/zhttpqir client", 127),
     "unsupported testcase exits 127");
   ZuCHECK(runStatus("TESTCASE=http3 ../interop/zhttpqir client", 2),
     "supported client without requests exits 2");
@@ -156,7 +168,8 @@ static void testClientFilesystemPrep()
   ZuCHECK(runStatus(cmd, 2), "client rejects escaped output path");
 }
 
-static bool runHQSingleFile(ZuCSpan testCase, unsigned largeSize = 0)
+static bool runHQSingleFile(
+  ZuCSpan testCase, unsigned largeSize = 0, bool differentIP = false)
 {
   TempDir temp;
   if (!temp.init("ZhttpQIRHQ")) return false;
@@ -193,12 +206,21 @@ static bool runHQSingleFile(ZuCSpan testCase, unsigned largeSize = 0)
 
   unsigned port = loopbackPort(ZhttpInteropPort::QIRHQSingle);
   const char *qlogDir = static_cast<const char *>(temp.path);
+  Zhttp::QIR::Env env;
+  bool preferred = testCase == "connectionmigration";
+  if (preferred) {
+    env.port = port;
+    env.preferredPort = differentIP ? port : loopbackPort(ZhttpInteropPort::QIRHQMulti);
+    env.serverAddrs.original4 = ZiSockAddr{ZiIP{"127.0.0.1"}, uint16_t(port)};
+    env.serverAddrs.preferred4 = ZiSockAddr{
+      ZiIP{differentIP ? "127.0.0.2" : "127.0.0.1"}, uint16_t(env.preferredPort)};
+  }
   pid_t server = startServer_(
-    testCase, www, certPath, keyPath, qlogDir, port);
+    testCase, www, certPath, keyPath, qlogDir, port, preferred ? &env : nullptr);
   if (server <= 0) return false;
 
   ZtString<> cmd;
-  cmd << "TESTCASE=" << testCase <<
+  cmd << "TESTCASE=" << (preferred ? ZuCSpan{"transfer"} : testCase) <<
     " REQUESTS=https://127.0.0.1:" << port <<
     "/file.bin ZHTTP_QIR_DOWNLOADS=" << downloads <<
     " ZHTTP_QIR_CA=" << certPath <<
@@ -213,11 +235,26 @@ static bool runHQSingleFile(ZuCSpan testCase, unsigned largeSize = 0)
   return ok && stopped && cmpFile(src, dst);
 }
 
+static void testHQPreferredFile()
+{
+  ZuTestScope(testHQPreferredFile);
+  ZuCHECK(runHQSingleFile("connectionmigration", 1<<20),
+    "preferred port HQ transfer uses the original connection");
+  ZuCHECK(runHQSingleFile("connectionmigration", 1<<20, true),
+    "different-IP preferred HQ transfer completes payload and FIN");
+}
+
 static void testHQSingleFile()
 {
   ZuTestScope(testHQSingleFile);
 
   ZuCHECK(runHQSingleFile("transfer"), "transfer hq single-file");
+  ZuCHECK(runHQSingleFile("resumption"), "resumption hq two-connection transfer");
+  ZuCHECK(runHQSingleFile("zerortt"), "0-RTT hq two-connection transfer");
+  ZuCHECK(runHQSingleFile("chacha20"), "ChaCha20 hq transfer");
+  ZuCHECK(runHQSingleFile("retry"), "Retry hq transfer");
+  ZuCHECK(runHQSingleFile("ecn"), "ECN hq transfer");
+  ZuCHECK(runHQSingleFile("multiconnect"), "multi-connection hq transfer");
 }
 
 static void testHQLargeFile()
@@ -422,6 +459,7 @@ int main(int argc, char **argv)
   ZuTestCall(testH3SingleFile);
   ZuTestCall(testH3MultiFile);
   ZuTestCall(testHQSingleFile);
+  ZuTestCall(testHQPreferredFile);
   ZuTestCall(testHQLargeFile);
   ZuTestCall(testHQMultiFile);
   ZuTestCall(testHQHandshakeFile);

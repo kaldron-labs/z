@@ -8,5 +8,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/* \
   && echo /usr/local/lib >/etc/ld.so.conf.d/z.conf && ldconfig \
   && mkdir -p /logs/qlog
-EXPOSE 443/udp
+EXPOSE 443/udp 8443/udp
 ENTRYPOINT ["/usr/local/bin/qir_endpoint.sh"]

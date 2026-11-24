@@ -80,13 +80,15 @@ static void testCaseParsing()
   ZuCHECK(parseCase("rebind-addr") == RebindAddr, "rebind-addr parses");
   ZuCHECK(parseCase("connectionmigration") == ConnectionMigration,
     "connectionmigration parses");
-  ZuCHECK(parseCase("retry") == Unsupported, "retry unsupported");
-  ZuCHECK(parseCase("resumption") == Unsupported, "resumption unsupported");
-  ZuCHECK(parseCase("zerortt") == Unsupported, "zerortt unsupported");
+  ZuCHECK(parseCase("resumption") == Resumption, "resumption parses");
+  ZuCHECK(parseCase("zerortt") == ZeroRTT, "zerortt parses");
+  ZuCHECK(parseCase("retry") == Retry, "retry parses");
   ZuCHECK(parseCase("versionnegotiation") == Unsupported,
     "versionnegotiation unsupported");
-  ZuCHECK(parseCase("chacha20") == Unsupported, "chacha20 unsupported");
-  ZuCHECK(parseCase("keyupdate") == Unsupported, "keyupdate unsupported");
+  ZuCHECK(parseCase("chacha20") == ChaCha20, "chacha20 parses");
+  ZuCHECK(parseCase("keyupdate") == KeyUpdate, "keyupdate parses");
+  ZuCHECK(parseCase("ecn") == ECN, "ecn parses");
+  ZuCHECK(parseCase("multiconnect") == MultiConnect, "multiconnect parses");
   ZuCHECK(parseCase("v2") == Unsupported, "v2 unsupported");
 
   ZuCHECK(caseSupported(Handshake), "handshake supported");
@@ -94,10 +96,17 @@ static void testCaseParsing()
   ZuCHECK(caseSupported(HTTP3), "http3 supported");
   ZuCHECK(caseSupported(RebindPort), "rebind-port supported");
   ZuCHECK(caseSupported(RebindAddr), "rebind-addr supported");
-  ZuCHECK(!caseSupported(ConnectionMigration),
-    "connectionmigration initially unsupported");
+  ZuCHECK(caseSupported(ConnectionMigration),
+    "connectionmigration server supported");
+  ZuCHECK(caseSupported(Resumption) && caseSupported(ZeroRTT),
+    "ticket cases supported");
+  ZuCHECK(caseSupported(ChaCha20) && caseSupported(Retry) && caseSupported(ECN) &&
+      caseSupported(MultiConnect) && caseSupported(KeyUpdate), "fault cases supported");
   ZuCHECK(caseHQ(Handshake) && caseHQ(Transfer) && caseHQ(RebindPort) &&
-      caseHQ(RebindAddr) && !caseHQ(HTTP3),
+      caseHQ(RebindAddr) && caseHQ(ConnectionMigration) &&
+      caseHQ(Resumption) && caseHQ(ZeroRTT) && caseHQ(ChaCha20) &&
+      caseHQ(Retry) && caseHQ(ECN) && caseHQ(MultiConnect) && caseHQ(KeyUpdate) &&
+      !caseHQ(HTTP3),
     "hq testcase classification");
   ZuCHECK(caseH3(HTTP3) && !caseH3(Handshake), "h3 testcase classification");
 }
@@ -178,7 +187,7 @@ static void testEnvLoading()
   }
   {
     const TestEnvKV env[] = {
-      {"TESTCASE", "retry"},
+      {"TESTCASE", "versionnegotiation"},
       {nullptr, nullptr}
     };
     testEnv_ = env;
@@ -208,6 +217,136 @@ static void testEnvLoading()
       "client requires requests");
     ZuCHECK(loadEnv(Server, out, testGetenv, testGetpath) == OK,
       "server permits empty requests");
+  }
+}
+
+static void testPreferredEnv()
+{
+  ZuTestScope(testPreferredEnv);
+  using namespace Zhttp::QIR;
+
+  const int validStatus = OK;
+  {
+    const TestEnvKV values[] = {
+      {"TESTCASE", "connectionmigration"},
+      {"ZHTTP_QIR_ORIG4", "127.0.0.1"},
+      {nullptr, nullptr}
+    };
+    testEnv_ = values;
+    Env out;
+    ZuCHECK(loadEnv(Server, out, testGetenv, testGetpath) == validStatus,
+      "preferred server numeric original loads");
+    ZuCHECK(out.port == DefaultPort && out.preferredPort == DefaultPreferredPort,
+      "preferred defaults retain original and preferred ports");
+    ZuCHECK(out.serverAddrs.original4 == ZiSockAddr(ZiIP{"127.0.0.1"}, 443) &&
+	out.serverAddrs.preferred4 == ZiSockAddr(ZiIP{"127.0.0.1"}, 8443) &&
+	!out.serverAddrs.original6 && !out.serverAddrs.preferred6,
+      "missing preferred uses original IP; missing family absent");
+    ZuCHECK(loadEnv(Client, out, testGetenv, testGetpath) == Usage,
+      "runner connectionmigration testcase is server-only");
+  }
+  {
+    const TestEnvKV values[] = {
+      {"TESTCASE", "connectionmigration"},
+      {"ZHTTP_QIR_ORIG4", "127.0.0.1"},
+      {"ZHTTP_QIR_PREF4", "127.0.0.2"},
+      {"ZHTTP_QIR_ORIG6", "::1"},
+      {"ZHTTP_QIR_PREF6", "off"},
+      {"ZHTTP_QIR_PORT", "9443"},
+      {"ZHTTP_QIR_PREF_PORT", "9443"},
+      {nullptr, nullptr}
+    };
+    testEnv_ = values;
+    Env out;
+    ZuCHECK(loadEnv(Server, out, testGetenv, testGetpath) == validStatus &&
+	out.serverAddrs.preferred4 == ZiSockAddr(ZiIP{"127.0.0.2"}, 9443) &&
+	out.serverAddrs.original6 == ZiSockAddr(ZiIP{"::1"}, 9443) &&
+	!out.serverAddrs.preferred6,
+      "different-IP same-port alternative and omitted IPv6 preferred");
+  }
+  {
+    const TestEnvKV values[] = {
+      {"TESTCASE", "connectionmigration"},
+      {"ZHTTP_QIR_ORIG4", "off"},
+      {"ZHTTP_QIR_ORIG6", "2001:db8::1"},
+      {nullptr, nullptr}
+    };
+    testEnv_ = values;
+    Env out;
+    ZuCHECK(loadEnv(Server, out, testGetenv, testGetpath) == validStatus &&
+	!out.serverAddrs.original4 && !out.serverAddrs.preferred4 &&
+	out.serverAddrs.preferred6 == ZiSockAddr(ZiIP{"2001:db8::1"}, 8443),
+      "IPv6-only preferred configuration");
+  }
+  struct Invalid {
+    const char *name;
+    const char *value;
+  };
+  const Invalid invalid[] = {
+    {"ZHTTP_QIR_ORIG4", ""},
+    {"ZHTTP_QIR_ORIG4", "localhost"},
+    {"ZHTTP_QIR_ORIG4", "127.0.0.1:443"},
+    {"ZHTTP_QIR_ORIG4", "127.0.0.1/8"},
+    {"ZHTTP_QIR_ORIG4", "::1"},
+    {"ZHTTP_QIR_ORIG4", "0.0.0.0"},
+    {"ZHTTP_QIR_ORIG4", "224.0.0.1"},
+    {"ZHTTP_QIR_ORIG6", "127.0.0.1"},
+    {"ZHTTP_QIR_ORIG6", "[::1]"},
+    {"ZHTTP_QIR_ORIG6", "::"},
+    {"ZHTTP_QIR_ORIG6", "ff02::1"},
+    {"ZHTTP_QIR_ORIG6", "fe80::1"},
+    {"ZHTTP_QIR_ORIG6", "fe80::1%eth0"},
+    {"ZHTTP_QIR_ORIG6", "::ffff:127.0.0.1"},
+    {"ZHTTP_QIR_PREF4", "localhost"},
+    {"ZHTTP_QIR_PREF6", "::1"}, // no original6
+    {"ZHTTP_QIR_PORT", "0"},
+    {"ZHTTP_QIR_PORT", "65536"},
+    {"ZHTTP_QIR_PORT", "4294967739"},
+    {"ZHTTP_QIR_PORT", "-1"},
+    {"ZHTTP_QIR_PORT", "+443"},
+    {"ZHTTP_QIR_PORT", " 443"},
+    {"ZHTTP_QIR_PORT", "443x"},
+    {"ZHTTP_QIR_PORT", ""},
+    {"ZHTTP_QIR_PREF_PORT", ""},
+    {"ZHTTP_QIR_PREF_PORT", "0"},
+    {"ZHTTP_QIR_PREF_PORT", "65536"},
+    {"ZHTTP_QIR_PREF_PORT", "443"}, // same IP/port normalized away
+    {"ZHTTP_QIR_PREF4", "off"} // no effective alternative
+  };
+  for (const auto &item : invalid) {
+    const TestEnvKV values[] = {
+      {"TESTCASE", "connectionmigration"},
+      {item.name, item.value},
+      {"ZHTTP_QIR_ORIG4", "127.0.0.1"},
+      {nullptr, nullptr}
+    };
+    testEnv_ = values;
+    Env out;
+    ZuCHECK(loadEnv(Server, out, testGetenv, testGetpath) == Usage,
+      "invalid preferred environment rejected");
+  }
+  {
+    const TestEnvKV values[] = {
+      {"TESTCASE", "connectionmigration"},
+      {nullptr, nullptr}
+    };
+    testEnv_ = values;
+    Env out;
+    ZuCHECK(loadEnv(Server, out, testGetenv, testGetpath) == Usage,
+      "direct invocation does not discover originals");
+  }
+  {
+    const TestEnvKV values[] = {
+      {"TESTCASE", "transfer"},
+      {"ZHTTP_QIR_ORIG4", "invalid"},
+      {"ZHTTP_QIR_PREF_PORT", "invalid"},
+      {nullptr, nullptr}
+    };
+    testEnv_ = values;
+    Env out;
+    ZuCHECK(loadEnv(Server, out, testGetenv, testGetpath) == OK &&
+	!out.serverAddrs.original4 && !out.serverAddrs.preferred4,
+      "other modes ignore preferred-only environment");
   }
 }
 
@@ -385,6 +524,7 @@ int main(int argc, char **argv)
   ZuTestCall(testRoleParsing);
   ZuTestCall(testCaseParsing);
   ZuTestCall(testEnvLoading);
+  ZuTestCall(testPreferredEnv);
   ZuTestCall(testRequests);
   ZuTestCall(testURLMapping);
   ZuTestCall(testParentDirs);

@@ -36,14 +36,72 @@ Implemented:
   `zhttp/interop/qir-results/local-ngtcp2-rebind/report.md`
 - upstream QUIC Interop Runner validation for `rebind-port` and `rebind-addr`
   passing with zquic as server against `quiche` and `quic-go`
+- two-connection `resumption` and `zerortt` HQ transfers: the first connection
+  obtains a session ticket and remembered transport parameters; the second
+  resumes the session and, for `zerortt`, sends requests before the handshake
+  completes
+- `chacha20`, `retry`, `ecn`, and `keyupdate` test configurations, plus
+  `multiconnect` for the runner's handshake loss and corruption scenarios
 
-Known gaps:
+Failures in the 2026-11-22 full runner matrix:
 
-- `rebind-port` and `rebind-addr` with zquic as client pass against `ngtcp2`
-  but currently fail against `quiche`, `quic-go`, and `msquic`
-- `rebind-port` and `rebind-addr` with zquic as server currently fail against
-  `msquic`; the latest full-reference rebinding report is
-  `zhttp/interop/qir-results/local-rebind-refs/report.md`
+- With `zquic` as client, quiche's server fails `rebind-port` and
+  `rebind-addr`. The server-side captures show matched path validation on
+  the new tuple in both cases. The server transmits through the initial
+  stream credit of 1 MiB, while the client-side captures have gaps in the
+  first 257 KiB. MsQuic's server fails `rebind-addr` and logs `Send failed,
+  0x1` after the new client address appears. Both directions against ngtcp2
+  and quic-go pass both rebinding cases in that matrix.
+- With `zquic` as server, quiche, quic-go, and MsQuic clients complete the
+  transfer but send no probe to the advertised preferred port 8443 in
+  `connectionmigration`. The runner records three failures. The same
+  server passes with ngtcp2, whose client probes and uses the preferred path.
+
+The focused upstream `resumption` and `zerortt` matrix passes all 16 cells
+against `ngtcp2`, `quiche`, `quic-go`, and `msquic` with zquic in both roles.
+Zquic offers X25519 and P-256; `libZtls` also resumes a ticket after a
+group-mismatch HelloRetryRequest and rejects 0-RTT on that path. The raw TLS
+tests cover stateful and stateless retry, including a rejected CH2 binder.
+The P-256-only interoperability image forces HelloRetryRequest and verifies
+PSK selection on the resumed handshake.
+The normal image `zhttp-qir:hrr-normal-20261123` passed all 16
+`resumption`/`zerortt` cells after the TLS change.
+In that forced-retry run, five of six `resumption` pairings pass the upstream
+runner. The `zquic` server / `quic-go` client pairing times out after quic-go
+offers 0-RTT, receives HelloRetryRequest, and sends its second ClientHello.
+This matches the [Go TLS HRR binder issue](https://github.com/golang/go/issues/82210).
+The testcase report retains the failed pairing.
+
+The 2026-11-23 focused QIR runs exercise the newly exposed cases. ChaCha20,
+Retry, ECN, key update, HTTP/3, and preferred-address migration pass in both
+directions against ngtcp2 where applicable. After accepting legal five-byte
+Retry source CIDs, Retry also passes in both directions against quic-go.
+Against quiche, quic-go, and MsQuic, the core run has 19 raw successes,
+13 peer-reported unsupported cells, and four raw failures; the quic-go Retry
+fix turns one of those failures into a success. The remaining three are
+preferred-address checks where the peer clients never probe port 8443.
+The saved core and Retry reports are in
+`/home/ubuntu/zquic-qir-gaps-20261123/qir-peers-core/report.md` and
+`/home/ubuntu/zquic-qir-gaps-20261123/qir-quicgo-retry-e/report.md`.
+
+The fault run uses a separate fresh handshake per request. All four ngtcp2
+loss/corruption cells pass. With the other peers, five of twelve raw cells
+pass and seven fail under the runner's 30% loss or corruption scenario. The
+raw report is retained at
+`/home/ubuntu/zquic-qir-gaps-20261123/qir-peers-loss-e/report.md`.
+These failures need further attribution before calling the fault matrix closed:
+
+| server | client | raw failing cases | capture evidence and status |
+|---|---|---|---|
+| quiche | zquic | corruption | Client Finished packets are visible on the client side only. Quiche's log records an idle timeout on the corresponding connection. |
+| quic-go | zquic | loss | A retransmitted retirement of CID sequence 0 precedes missing STREAM data in a packet that `zquic` does not acknowledge. `zquic` now accepts the repeated retirement after the slot has been reused. |
+| quic-go | zquic | corruption | Quic-go removes the connection before the first valid client Finished reaches the server. Its log records the later Handshake packet drops. |
+| MsQuic | zquic | loss, corruption | Successive client Finished retransmissions are lost or damaged between captures. When the first valid copy reaches MsQuic, its response ends in the advertised stateless reset token. |
+| zquic | quic-go | loss, corruption | One loss trace shows a dropped coalesced server flight followed by Initial CRYPTO and a Handshake PING. The companion probe now tries retained Handshake CRYPTO before PING. |
+
+The quiche client and MsQuic client pass both fault cases with `zquic` as
+server; the quiche server passes loss with `zquic` as client. The packet
+captures, TLS key logs, and peer logs are retained beside each runner result.
 
 ## Local Tests
 
@@ -70,6 +128,7 @@ terminate the server for these cases:
 - `http3` multiple files on one connection
 - `transfer`/`hq-interop` single file
 - `transfer`/`hq-interop` multiple files on one connection
+- `resumption` and `zerortt` transfers across two connections
 
 ## Executable Contract
 
@@ -95,16 +154,71 @@ Supported and unsupported testcase behavior:
 | `http3` | `0` on successful transfer | HTTP/3 |
 | `rebind-port` | `0` on successful transfer | `hq-interop` |
 | `rebind-addr` | `0` on successful transfer | `hq-interop` |
-| `connectionmigration` | `127` | server preferred-address advertisement is unsupported; the client follows advertised preferred addresses during `transfer` |
+| `connectionmigration` | `0` server, `2` client | server advertises configured preferred bindings; the client follows advertised preferred addresses during `transfer` |
 | `versionnegotiation` | `127` | unsupported |
-| `chacha20` | `127` | unsupported |
-| `keyupdate` | `127` | unsupported |
-| `retry` | `127` | unsupported |
-| `resumption` | `127` | unsupported |
-| `zerortt` | `127` | unsupported |
+| `chacha20` | `0` on successful transfer | ChaCha20-only TLS suite selection |
+| `keyupdate` | `0` on successful transfer | client initiates a 1-RTT key update after handshake confirmation |
+| `retry` | `0` on successful transfer | server requires address validation with Retry |
+| `ecn` | `0` on successful transfer | ECN-enabled QUIC datagrams and ACK_ECN |
+| `multiconnect` | `0` on successful transfers | one fresh handshake per request for loss/corruption scenarios; no ticket reuse |
+| `resumption` | `0` on successful transfer | two `hq-interop` connections using a session ticket |
+| `zerortt` | `0` on successful transfer | two `hq-interop` connections, with early requests on the second |
 | `v2` | `127` | unsupported |
 
 Unknown testcase names return `127`.
+The upstream runner selects `multiconnect` at the endpoint for
+`handshakeloss` and `handshakecorruption`; these are separate runner scenarios
+with packet faults configured by the runner. The table describes the endpoint
+contract. Peer endpoints can still return `127` for cases they do not support.
+
+## Preferred server addresses
+
+The `connectionmigration` server configuration uses concrete original and
+preferred UDP bindings on one QUIC server. The default ports are 443 and 8443;
+`Dockerfile.interop` exposes both. Both bindings share TLS, streams, recovery,
+and CID routing. The runner selects `transfer` for the client in this case;
+invoking `zhttpqir client` with `TESTCASE=connectionmigration` returns usage
+status 2. Ordinary cases keep their existing wildcard binding behavior.
+
+| Variable | Meaning for a `connectionmigration` server |
+|---|---|
+| `ZHTTP_QIR_PORT` | Original UDP port, decimal 1–65535; default 443 |
+| `ZHTTP_QIR_PREF_PORT` | Preferred UDP port, decimal 1–65535; default 8443 |
+| `ZHTTP_QIR_ORIG4`, `ZHTTP_QIR_ORIG6` | Numeric original IP by family; `off` disables the family |
+| `ZHTTP_QIR_PREF4`, `ZHTTP_QIR_PREF6` | Numeric preferred IP; unset uses that family's original; `off` omits its preferred endpoint |
+| `ZHTTP_QIR_IFACE` | Entrypoint discovery interface; default `eth0` |
+
+Addresses must be concrete unicast values of their declared family. Hostnames,
+CIDR suffixes, bracketed addresses, embedded ports, wildcard, multicast,
+IPv4-mapped IPv6, and scoped/link-local IPv6 values are rejected. An enabled
+preferred family requires an original of that family. Equal original/preferred
+IP and port pairs are normalized away; at least one alternative must remain.
+Different-IP alternatives may use the original port. Invalid explicit values
+return usage status 2; bind or allocator failure returns runtime status 1.
+
+The entrypoint discovers each unset original independently with
+`ip -o -4|-6 addr show dev "$ZHTTP_QIR_IFACE" scope global`. It excludes tentative
+and deprecated addresses and deduplicates values. No address disables that
+family, one supplies its original, and multiple addresses fail with runtime
+status 1 and require an explicit original. Explicit originals, including `off`,
+are preserved. Discovery command/interface failure and zero enabled families
+also return runtime status 1 before exec. Interface names must be nonempty
+single arguments with no leading `-`.
+
+Direct execution of `zhttpqir server` does no interface discovery: missing
+originals are absent, so supply at least one original explicitly. For example,
+use `TESTCASE=connectionmigration ZHTTP_QIR_ORIG4=127.0.0.1
+ZHTTP_QIR_ORIG6=off ZHTTP_QIR_PORT=9443 ZHTTP_QIR_PREF_PORT=10443` with the
+certificate and www variables from the smoke example below. The client uses
+`TESTCASE=transfer` and requests the original address. Simulator routing always
+uses addresses discovered on `eth0`, independently of any configured preferred
+address; local bridge fixtures skip simulator setup.
+
+Configuration and script fixtures cover typed addresses, family/port errors,
+missing/ambiguous discovery, overrides, and IPv6 absence. The local HQ smoke
+fixture configures both a changed port and a different loopback IP. These checks
+alone do not establish reference-peer interoperability; focused packet captures
+and the final 176-cell report remain the interoperability evidence.
 
 ## Local Non-Docker Smoke
 
@@ -286,6 +400,27 @@ ecn, amplificationlimit, handshakeloss, transferloss, handshakecorruption,
 transfercorruption, ipv6, v2, rebind-port, rebind-addr and connectionmigration.
 With four peers this runs 176 cells. Use `--tests` to select a focused subset;
 a three-case smoke test does not cover the full interoperability matrix.
+
+The 2026-11-22 repair-4 image
+`sha256:78907feac7568edb6ed0421b42efbba96e70ec9f91e2e3d641d3a25b2582d653`
+passed focused `connectionmigration` against ngtcp2 with zquic in both roles.
+The server handshake advertised IPv6 port 8443 and its per-connection CID;
+packet capture showed a challenge from port 8443, a matching client response,
+the client's CID change, and a complete 2 MiB download. Focused quiche,
+quic-go and MsQuic clients sent no packet to port 8443, so the preferred-path
+proof check failed for those pairings; their server roles were reported
+unsupported. Retain these as failed and unsupported results separately. The
+full 176-cell run on this image completed with 95 succeeded, 74 unsupported,
+and 7 failed cells. Both ngtcp2 directions had no failures. The failed cells
+were zquic server/quiche client `multiplexing` and `connectionmigration`,
+zquic server/quic-go client `connectionmigration`, zquic server/MsQuic client
+`connectionmigration`, quiche server/zquic client `rebind-port` and
+`rebind-addr`, and MsQuic server/zquic client `rebind-addr`. In the full-run
+captures, each of the three failing preferred-address clients sent zero UDP
+packets to port 8443; their file downloads completed. The rebinding and
+multiplexing failures remain failures with their logs in the saved report.
+The full report is at
+`/home/ubuntu/zquic-repair4-evidence-20261122/qir-full/report.md`.
 
 If `--url` is omitted, the wrapper derives a GitHub HTTPS URL from
 `remote.origin.url` when possible and otherwise uses the repository's expected
