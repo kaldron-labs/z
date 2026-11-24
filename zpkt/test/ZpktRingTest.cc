@@ -65,7 +65,14 @@ static void testLayout()
     "cannot replace an attached view");
   uint32_t flag = XDP_RING_NEED_WAKEUP;
   memcpy(map.bytes + map.off.flags, &flag, sizeof(flag));
-  ZuCHECK(tx.needWakeup(), "driver wake flag read at queried offset");
+  ZuCHECK(tx.needWakeup() && !tx.needsKick(), "empty Tx ring needs no kick");
+  ZuCHECK(tx.reserve(1) && !tx.needsKick(), "unpublished reservation needs no kick");
+  tx.entry(0) = {0, 64, 0};
+  tx.commit();
+  ZuCHECK(tx.needsKick(), "published work and a sleeping driver require a kick");
+  flag = 0;
+  memcpy(map.bytes + map.off.flags, &flag, sizeof(flag));
+  ZuCHECK(!tx.needsKick(), "an active driver needs no kick for published work");
   tx.reset();
   ZuCHECK(!tx.count() && !tx.available() && !tx.reserve(1) && !tx.needWakeup(),
     "detached view exposes no entries");

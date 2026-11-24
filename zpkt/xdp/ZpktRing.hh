@@ -191,6 +191,7 @@ public:
     return m_flags &&
       (m_flags->load_() & XDP_RING_NEED_WAKEUP);
   }
+  bool needsKick() const { return published() && needWakeup(); }
 
 private:
   uint32_t kernelFull() const {

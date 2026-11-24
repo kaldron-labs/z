@@ -80,10 +80,11 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
   The scheduler owns thread startup, waiting and teardown. Zpkt owns no sender
   thread or semaphore. Publish initialized descriptors immediately: increment
   the pending-descriptor counter before commit and use scheduler `run()` after
-  commit only on a zero-to-one transition. The dedicated sender calls nonblocking
-  `sendto()`, observes the kernel consumer delta, spins for the configured `spin` when
-  pending work is exhausted, then atomically subtracts that delta. Use the
-  returned pending count to continue or return without losing racing publication.
+  commit only on a zero-to-one transition. The dedicated sender observes the
+  kernel consumer delta, spins for the configured `spin` when pending work is
+  exhausted, then atomically subtracts that delta. A zero result relinquishes
+  ownership. While active, recheck the published descriptors and the kernel
+  NEED_WAKEUP flag before each nonblocking `sendto()`.
   Keep a persistent consumer cursor; never count the same consumption twice.
   Tx service has no custom wake function, epoll/eventfd or wait timeout. Rx keeps
   its epoll/eventfd wake protocol. The caller remains the sole descriptor

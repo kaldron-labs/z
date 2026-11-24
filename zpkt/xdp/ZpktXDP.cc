@@ -430,16 +430,19 @@ private:
     return {};
   }
 
+  static int kickTx(Xsk &socket) {
+    if (socket.tx().needsKick() &&
+	sendto(socket.fd(), nullptr, 0, MSG_DONTWAIT, nullptr, 0) < 0 &&
+	errno != EINTR && errno != EAGAIN && errno != EBUSY && errno != ENOBUFS)
+      return errno;
+    return 0;
+  }
+
   bool drainTx() {
     if (!m_txHeld) return true;
     reapTx();
     if (!m_txHeld) return true;
-    auto &socket = m_queues[0]->service;
-    if (socket.fd() >= 0 && socket.tx().published()) {
-      if (sendto(socket.fd(), nullptr, 0, MSG_DONTWAIT, nullptr, 0) < 0 &&
-	  errno != EINTR && errno != EAGAIN && errno != EBUSY && errno != ENOBUFS)
-	m_ioError = errno;
-    }
+    if (auto error = kickTx(m_queues[0]->service)) m_ioError = error;
     if (monotonicNow() < m_drainDeadline) return false;
     // Any loan still outstanding on device failure remains accounted for.
     // Returning it without a CQ would race the kernel's pinned UMEM.
@@ -471,13 +474,6 @@ private:
     auto &socket = m_queues[0]->service;
     auto &ring = socket.tx();
     while (!unsigned(m_txExit)) {
-      if (sendto(socket.fd(), nullptr, 0, MSG_DONTWAIT, nullptr, 0) < 0 &&
-	  errno != EINTR && errno != EAGAIN && errno != EBUSY && errno != ENOBUFS) {
-	m_ioError = errno;
-	m_ioState = Closing;
-	notify();
-	return;
-      }
       auto consumed = ring.consumed();
       unsigned n = uint32_t(consumed - m_txConsumed);
       // Keep ownership during a short idle spin. The producer counts each
@@ -485,11 +481,18 @@ private:
       for (unsigned i = 0; i < m_spin && m_txPending.load_() <= n; ++i)
 	if (unsigned(m_txExit)) return;
       if (unsigned(m_txExit)) return;
-      if (!n) continue;
-      m_txConsumed = consumed;
-      // The RMW closes the last-drain race: an earlier increment keeps this
-      // invocation active; a later zero-to-one increment queues its successor.
-      if (!(m_txPending -= n)) return;
+      if (n) {
+	m_txConsumed = consumed;
+	// An earlier increment keeps us active, even before commit. A later
+	// zero-to-one increment schedules the successor after commit.
+	if (!(m_txPending -= n)) return;
+      }
+      if (auto error = kickTx(socket)) {
+	m_ioError = error;
+	m_ioState = Closing;
+	notify();
+	return;
+      }
     }
   }
 
