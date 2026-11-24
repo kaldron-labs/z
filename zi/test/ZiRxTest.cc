@@ -401,11 +401,10 @@ struct CxnHarness : ZiConnection, ZiRx<CxnHarness, 64> {
 void testConnectionFrames(bool stubs, bool synchronous, bool udp)
 {
   ZuTestScopeRT(testConnectionFrames);
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(2); })
-    .rxThread(1).txThread(2)};
-  auto plugin = new RxPlugin{&mx};
+  auto plugin = new RxPlugin{nullptr};
   ZmRef<ZiMxPlugin> transport = plugin;
-  mx.plugin(ZuMv(transport));
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(2); })
+    .rxThread(1).txThread(2), ZuMv(transport)};
   FrameAllocator app;
   NetworkAllocator net{stubs};
   CxnHarness cxn{&mx, &app, &net, udp};

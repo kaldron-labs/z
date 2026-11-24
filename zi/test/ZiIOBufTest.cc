@@ -7,14 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef _WIN32
-#include <errno.h>
-#include <signal.h>
-#include <sys/resource.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
-
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuPtr.hh>
 
@@ -281,11 +273,7 @@ friend inline ZuStringT<"ZiIOBufTest.MxPlugin"> ZmNHeapID(MxPlugin *);
   bool progressed = false, spun = false, error = false, closed = false;
 
   explicit MxPlugin(ZiMultiplex *mx, Lifecycle *lifecycle_ = nullptr) :
-    ZiMxPlugin(mx), lifecycle{lifecycle_}
-  {
-    if (lifecycle)
-      mx->threadInit([trace = lifecycle] { ++trace->workersStarted; });
-  }
+    ZiMxPlugin(mx), lifecycle{lifecycle_} { }
 
   Zi::IOBufPool *allocator(
     Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count) override
@@ -425,11 +413,10 @@ void testSyncOwnerProgress()
 {
   ZuTestScope(testSyncOwnerProgress);
   for (unsigned mode = 1; mode <= 3; ++mode) {
-    ZiMultiplex mx;
-    ZmRef<MxPlugin> transport = new MxPlugin{&mx};
+    ZmRef<MxPlugin> transport = new MxPlugin{nullptr};
     transport->syncMode = mode;
     auto state = transport.ptr();
-    mx.plugin(ZuMv(transport));
+    ZiMultiplex mx{{}, ZuMv(transport)};
     auto allocator = mx.allocator<>();
     auto buf = allocator->allocBuf(nullptr, 1);
     ZuCheck(bool(buf));
@@ -460,9 +447,8 @@ void testSyncOwnerProgress()
 void testPoolBacking(bool grow)
 {
   ZuTestScopeRT(testPoolBacking);
-  ZiMultiplex mx;
-  ZmRef<MxPlugin> transport = new MxPlugin{&mx};
-  mx.plugin(ZuMv(transport));
+  ZmRef<MxPlugin> transport = new MxPlugin{nullptr};
+  ZiMultiplex mx{{}, ZuMv(transport)};
   auto allocator = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 32>();
   auto plugin = static_cast<BufPool *>(allocator->pool.ptr());
   int owner = 0;
@@ -486,10 +472,9 @@ void testPoolBacking(bool grow)
 void testPoolAllocation()
 {
   ZuTestScope(testPoolAllocation);
-  ZiMultiplex mx;
-  ZmRef<MxPlugin> transport = new MxPlugin{&mx};
+  ZmRef<MxPlugin> transport = new MxPlugin{nullptr};
   auto state = transport.ptr();
-  mx.plugin(ZuMv(transport));
+  ZiMultiplex mx{{}, ZuMv(transport)};
   auto tx = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 32>();
   auto rx = mx.allocator<Zi::IOBufType::Rx, ZiIOBuf, 32>();
   auto plugin = state->pools[0];
@@ -612,15 +597,12 @@ void testPluginPools(unsigned protocols)
   bool tcp = protocols & FixtureTCP, udp = protocols & FixtureUDP;
   MxPlugin::Lifecycle trace;
   {
-    ZiMultiplex mx;
-    auto state = new MxPlugin{&mx, &trace};
+    auto state = new MxPlugin{nullptr, &trace};
     state->deferred = true;
     ZmRef<ZiMxPlugin> transport = state;
-    mx.plugin(ZuMv(transport));
-    ZuCheckRT(!transport && mx.plugin() == state);
-    transport = state;
-    mx.plugin(ZuMv(transport));
-    ZuCheckRT(mx.plugin() == state);
+    ZiMultiplex mx{{}, ZuMv(transport)};
+    mx.threadInit([&trace] { ++trace.workersStarted; });
+    ZuCheckRT(!transport && mx.plugin() == state && state->mx() == &mx);
 
     auto rx0 = mx.allocator<Zi::IOBufType::Rx, TestRxBuf<0>, 64>(7);
     auto repeat = mx.allocator<Zi::IOBufType::Rx, TestRxBuf<0>, 64>(7);
@@ -722,11 +704,11 @@ void testAllocationRetry(bool implicit)
   ZuTestScopeRT(testAllocationRetry);
   MxPlugin::Lifecycle trace;
   {
-    ZiMultiplex mx;
-    auto state = new MxPlugin{&mx, &trace};
+    auto state = new MxPlugin{nullptr, &trace};
     ZmRef<ZiMxPlugin> transport = state;
     state->deferred = state->failAlloc = true;
-    mx.plugin(ZuMv(transport));
+    ZiMultiplex mx{{}, ZuMv(transport)};
+    mx.threadInit([&trace] { ++trace.workersStarted; });
     auto rx = mx.allocator<Zi::IOBufType::Rx, TestRxBuf<0>, 64>(7);
     auto tx = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 32>(5);
     auto app = mx.allocator<>();
@@ -770,11 +752,11 @@ void testNeverStarted(bool explicitAlloc, bool deferred)
   ZuTestScopeRT(testNeverStarted);
   MxPlugin::Lifecycle trace;
   {
-    ZiMultiplex mx;
-    auto state = new MxPlugin{&mx, &trace};
+    auto state = new MxPlugin{nullptr, &trace};
     state->deferred = deferred;
     ZmRef<ZiMxPlugin> transport = state;
-    mx.plugin(ZuMv(transport));
+    ZiMultiplex mx{{}, ZuMv(transport)};
+    mx.threadInit([&trace] { ++trace.workersStarted; });
     auto app = mx.allocator<>();
     auto tx = mx.allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 32>(5);
     ZuCheckRT(app && tx);
@@ -790,87 +772,6 @@ void testNeverStarted(bool explicitAlloc, bool deferred)
   ZuCheckRT(trace.allocations == unsigned(explicitAlloc && deferred));
   ZuCheckRT(!trace.starts && !trace.stops && trace.finals == 1 && trace.finalLive);
 }
-
-#ifndef _WIN32
-int fatalRegistration(const char *mode)
-{
-  rlimit limit{};
-  if (::setrlimit(RLIMIT_CORE, &limit)) return 2;
-  ::alarm(15);
-  ZiMultiplex mx{ZiMxParams{}.rxQuantum(!strcmp(mode, "late-start") ? 0 : 8)}, other;
-  ZmRef<ZiMxPlugin> plugin = new MxPlugin{&mx};
-  auto state = static_cast<MxPlugin *>(plugin.ptr());
-  if (!strcmp(mode, "null")) {
-    plugin = nullptr;
-  } else if (!strcmp(mode, "different-mx")) {
-    other.plugin(ZuMv(plugin));
-    return 3;
-  } else if (!strcmp(mode, "late-app")) {
-    if (!mx.allocator<>()) return 3;
-  } else if (!strcmp(mode, "late-kernel-alloc")) {
-    if (mx.alloc().is<ZeException>()) return 3;
-  } else if (!strcmp(mode, "late-start")) {
-    if (mx.start()) { mx.stop(); return 3; }
-  } else {
-    state->deferred = true;
-    mx.plugin(ZuMv(plugin));
-    if (plugin) return 3;
-    if (strcmp(mode, "moved-from")) plugin = state;
-    if (!strcmp(mode, "switch"))
-      plugin = new MxPlugin{&mx};
-    else if (!strcmp(mode, "late-provider-error")) {
-      state->failPool = true;
-      if (mx.allocator<Zi::IOBufType::Rx>()) return 3;
-    } else if (!strcmp(mode, "late-native")) {
-      if (!mx.allocator<Zi::IOBufType::Rx>()) return 3;
-    } else if (!strcmp(mode, "late-alloc") || !strcmp(mode, "late-failed-alloc")) {
-      state->failAlloc = !strcmp(mode, "late-failed-alloc");
-      if (mx.alloc().is<ZeException>() != state->failAlloc) return 3;
-    } else if (!strcmp(mode, "late-stop")) {
-      if (!mx.start() || !mx.stop()) return 3;
-    } else if (strcmp(mode, "moved-from"))
-      return 3;
-  }
-  mx.plugin(ZuMv(plugin));
-  return 3;
-}
-
-void testFatalRegistration(const char *exe)
-{
-  ZuTestScopeRT(testFatalRegistration);
-  for (auto mode : {"null", "moved-from", "different-mx", "switch", "late-app",
-    "late-native", "late-provider-error", "late-kernel-alloc", "late-alloc",
-    "late-failed-alloc", "late-start", "late-stop"}) {
-    int output[2];
-    if (::pipe(output)) { ZuCheckRT(false, log_("pipe failed")); return; }
-    auto pid = ::fork();
-    if (!pid) {
-      ::close(output[0]);
-      if (::dup2(output[1], STDERR_FILENO) < 0) _exit(126);
-      ::close(output[1]);
-      ::execlp(exe, exe, "--fatal-registration", mode, nullptr);
-      _exit(127);
-    }
-    ::close(output[1]);
-    if (pid < 0) { ::close(output[0]); ZuCheckRT(false, log_("fork failed")); return; }
-    ZtString<> diagnostics;
-    char data[1024];
-    for (;;) {
-      auto n = ::read(output[0], data, sizeof(data));
-      if (n < 0 && errno == EINTR) continue;
-      if (n <= 0) break;
-      diagnostics << ZuCSpan{data, unsigned(n)};
-    }
-    ::close(output[0]);
-    int status = 0;
-    pid_t waited;
-    do waited = ::waitpid(pid, &status, 0); while (waited < 0 && errno == EINTR);
-    bool atSetter = diagnostics.data() && strstr(diagnostics.data(), "ZiMultiplex::attachPlugin");
-    ZuCheckRT(waited == pid && WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT && atSetter,
-      log_(mode, " status ", status, diagnostics));
-  }
-}
-#endif
 
 struct HugePrint;
 struct HugePrintFn : ZuPrintBuffer {
@@ -941,10 +842,6 @@ void testOutputFailure()
 
 int main(int argc, char **argv)
 {
-#ifndef _WIN32
-  if (argc == 3 && !strcmp(argv[1], "--fatal-registration"))
-    return fatalRegistration(argv[2]);
-#endif
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testSliceEnsureSpan);
@@ -967,8 +864,5 @@ int main(int argc, char **argv)
   ZuTestCall(testNeverStarted, false, true);
   ZuTestCall(testNeverStarted, true, true);
   ZuTestCall(testNeverStarted, true, false);
-#ifndef _WIN32
-  ZuTestCall(testFatalRegistration, argv[0]);
-#endif
   return 0;
 }
