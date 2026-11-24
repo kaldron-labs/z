@@ -443,7 +443,7 @@ protected:
   }
   bool initialTCPHeader(TCPHeader &header, bool syn, bool sampled = false) const {
     if (!m_txOrigins.localKnown || (m_txOrigins.server && !m_txOrigins.peerKnown)) return false;
-    if (!sampled && !refreshTCPRx()) return false;
+    if (!sampled && !refreshTCPRx(syn)) return false;
     header = tcpHeader(nullptr, true);
     if (!syn) {
       header.seq = uint32_t(m_txOrigins.local + 1 +
@@ -657,10 +657,12 @@ protected:
     uint64_t next = m_rxRead.next;
     return gen == dataGen() && uint64_t(m_rxRead.gen) == gen ? next : 0;
   }
-  bool refreshTCPRx() const {
+  bool refreshTCPRx(bool syn = false) const {
     uint64_t gen = m_txDataGen;
     if (ZuUnlikely(gen != dataGen() || uint64_t(m_rxRead.gen) != gen)) return false;
-    uint64_t sack = m_rxRead.sack;
+    // SYN options carry the negotiated SACK-permitted bit. Waiting for a
+    // queued SACK-block report can discard the response to a duplicate TFO SYN.
+    uint64_t sack = syn ? 0 : uint64_t(m_rxRead.sack);
     if (ZuUnlikely(sack)) {
       if (m_txSACK.gen != gen || m_txSACK.serial != sack) return false;
       m_txRxNext = m_txSACK.next;
@@ -679,7 +681,7 @@ protected:
         .tsecr = uint32_t(stamp)};
       m_txEchoECE = bool(stamp & (uint64_t(1) << 40));
     }
-    return sack == uint64_t(m_rxRead.sack) && gen == dataGen() &&
+    return (syn || sack == uint64_t(m_rxRead.sack)) && gen == dataGen() &&
       uint64_t(m_rxRead.gen) == gen;
   }
   bool tcpWindowDirty() const {
@@ -3226,9 +3228,16 @@ public:
     }
     return false;
   }
+  bool finalTxRange(const TxRange &range) const {
+    // A reserved off-shard write can still extend the tail. FIN consumes
+    // one additional sequence number in both the peer and congestion windows.
+    return m_fin && !m_finDequeued && txQueueCount() == 1 &&
+      range.dataOffset + range.length == m_txBytes && finCredit() &&
+      range.length < congestionAllowance();
+  }
   bool nextTxRange(PktBudget &, TxRange &range, bool &fin) const {
+    if (txRange(0, range)) { fin = finalTxRange(range); return true; }
     fin = false;
-    if (txRange(0, range)) return true;
     if (!finReady()) return false;
     range = {};
     range.dataOffset = m_txBytes;
@@ -3379,12 +3388,12 @@ public:
     }
 
     bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
-      if (flags & Zi::SendFlags::Finish()) return false;
       if (m_gen != m_cxn->dataGen()) return false;
+      bool finish = flags & Zi::SendFlags::Finish();
       if constexpr (AppThread)
-	return m_cxn->enqueue(ZuMv(buf), m_gen);
+	return m_cxn->enqueue(ZuMv(buf), m_gen, finish);
       else
-	return m_cxn->enqueue_(ZuMv(buf));
+	return m_cxn->enqueue_(ZuMv(buf), 0, finish);
     }
 
   private:
@@ -3525,11 +3534,18 @@ public:
   void shutdownMx(bool peer = false) {
     ZiAssert(txInvoked(), "Zutcp", (), "mx FIN initiation outside Tx", return);
     if (!mxCxn || disconnecting()) return;
+    auto &io = mxCxn->txContext();
+    if (peer && mxCxn->txUp() && !m_fin && !io.completed() && io.buf) {
+      if (!io.disconnected()) m_mxClosePeer = true;
+      io.disconnect();
+      sendMx();
+      return;
+    }
     mxCxn->txUp() = 0;
-    mxCxn->txContext().complete();
+    io.complete();
     if (!m_fin) {
-      m_mxClosePeer = peer;
-      fin(); // Existing packetizer drains admitted ranges before FIN.
+      m_mxClosePeer |= peer;
+      fin();
     }
     finishMxTx();
   }
@@ -3644,42 +3660,32 @@ public:
 
   void sendMx() {
     ZiAssert(txInvoked(), "Zutcp", (), "mx send outside Tx thread", return);
-    if (!mxCxn || disconnecting()) return;
-    if (m_fin) { mxCxn->txContext().complete(); return; }
+    if (!mxCxn || !mxCxn->txUp() || disconnecting()) return;
+    auto &context = mxCxn->txContext();
+    if (context.closed()) { mxCxn->close(); return; }
     if (m_mxTxActive) { m_mxTxPending = true; return; }
+    if (m_fin) { context.complete(); return; }
     m_mxTxActive = true;
-    auto mx = mxCxn;
-    auto &context = mx->txContext();
     while (!context.completed() && context.buf && !disconnecting()) {
       auto buf = context.buf;
       unsigned length = buf->length;
       if (buf->failed() || context.offset > length) {
 	context.length = -1;
 	context();
-	mx->close();
+	mxCxn->close();
 	break;
       }
       unsigned n = length - context.offset;
       if (n) {
 	if (txQueueCount() >= txQueueMax()) break;
-	if (!enqueue_(buf, context.offset)) {
+	if (!enqueue_(buf, context.offset, context.disconnected())) {
 	  context.length = -1;
 	  context();
-	  mx->close();
+	  mxCxn->close();
 	  break;
 	}
       }
-      context.length = int(n);
-      do {
-	if (context.completed()) break;
-      } while (!context());
-      if (context.disconnected()) { mx->disconnect(); break; }
-      if (context.completed() || !context.buf) break;
-      // Completion can install another buffer or reinitialize the same one.
-      if (context.buf == buf && (!buf->data_() || context.offset >= buf->length)) {
-	context.complete();
-	break;
-      }
+      if (!mxCxn->executedSend(n)) break;
     }
     m_mxTxActive = false;
     if (m_mxTxPending) {
@@ -3832,34 +3838,34 @@ public:
   }
 
 protected:
-  bool enqueue(ZmRef<ZiIOBuf> buf, uint64_t gen) {
-    if (!buf || buf->failed() || !buf->length) return false;
-    if (gen != dataGen()) return false;
-    if (!admitTx()) return false;
+  bool enqueue(ZmRef<ZiIOBuf> buf, uint64_t gen, bool finish = false) {
+    if (buf ? buf->failed() || !buf->length : !finish) return false;
+    if (gen != dataGen() || !admitTx(finish, bool(buf))) return false;
     // Pending admissions keep their reserved credit through reset and retire
     // it once on Tx, even when their generation no longer matches.
-    txInvoke([cxn = ZmRef<Impl>{impl()}, buf = ZuMv(buf), gen]() mutable {
-      cxn->sendAdmitted(ZuMv(buf), gen);
+    txInvoke([cxn = ZmRef<Impl>{impl()}, buf = ZuMv(buf), gen, finish]() mutable {
+      cxn->sendAdmitted(ZuMv(buf), gen, 0, finish);
     });
     return true;
   }
 public:
-  bool enqueue_(ZmRef<ZiIOBuf> buf, unsigned offset = 0) {
+  bool enqueue_(ZmRef<ZiIOBuf> buf, unsigned offset = 0, bool finish = false) {
     ZiAssert(txInvoked(), "Zutcp", (),
       "TCP connection send outside Tx thread", return false);
-    if (!admitTx()) return false;
-    return sendAdmitted(ZuMv(buf), dataGen(), offset);
+    if ((!buf && !finish) || !admitTx(finish, bool(buf))) return false;
+    return sendAdmitted(ZuMv(buf), dataGen(), offset, finish);
   }
 
 private:
-  bool admitTx() {
+  bool admitTx(bool finish, bool data) {
     uint64_t state = m_txQueueCount.load_();
     for (;;) {
       if (state & TxQueueState::Closed) return false;
-      if (state >= m_txQueueMax) {
+      if (data && state >= m_txQueueMax) {
 	return sendError("TCP connection transmit queue limit exceeded");
       }
-      uint64_t previous = m_txQueueCount.cmpXch(state + 1, state);
+      uint64_t next = (state + unsigned(data)) | (finish ? TxQueueState::Closed : 0);
+      uint64_t previous = m_txQueueCount.cmpXch(next, state);
       if (previous == state) return true;
       state = previous;
     }
@@ -3874,15 +3880,16 @@ private:
       impl()->queueTxFlush();
     }
   }
-  bool sendAdmitted(ZmRef<ZiIOBuf> buf, uint64_t gen, unsigned offset = 0) {
+  bool sendAdmitted(ZmRef<ZiIOBuf> buf, uint64_t gen, unsigned offset, bool finish) {
     ZiAssert(txInvoked(), "Zutcp", (),
       "TCP connection send_ outside Tx thread",
-      --m_txQueueCount; return false);
+      if (buf) --m_txQueueCount; return false);
     if (disconnecting() || gen != m_txDataGen || gen != dataGen()) {
-      retireTxAdmission();
+      if (buf) retireTxAdmission();
       return false;
     }
-    if (ZuUnlikely(!buf || buf->failed() || m_resetSent || offset >= buf->length)) {
+    if (!buf) { fin(); return true; }
+    if (ZuUnlikely(buf->failed() || m_resetSent || offset >= buf->length)) {
       retireTxAdmission();
       return sendError("TCP connection is closed for transmission");
     }
@@ -3910,7 +3917,10 @@ private:
     m_txRanges.add(ZuMv(node));
     m_txBytes += length;
     m_txBufferedBytes += length;
-    notifyTx();
+    if (finish)
+      fin();
+    else
+      notifyTx();
     return true;
   }
 
@@ -4263,7 +4273,7 @@ protected:
     if (!syn && data && !(control & 0x04) &&
 	(ref.offset >= m_txDataCredit.limit() || (!tlp && !rto && !fast &&
 	  ref.length + unsigned(ref.fin) > congestionAllowance()))) return false;
-    if (!refreshTCPRx()) return false;
+    if (!refreshTCPRx(syn)) return false;
     TCPHeader header;
     if (syn) {
       if (!initialTCPHeader(header, true, true)) return false;
@@ -4302,7 +4312,6 @@ protected:
       buf->skip = source->payloadOffset;
       buf->length = source->payloadLength;
       shift = source->payloadOffset - head;
-      source->fin |= ref.fin;
     } else {
       buf = alloc();
       // Internal control backing can still be held by a counted device lease.
@@ -4320,7 +4329,7 @@ protected:
     unsigned charged = unsigned(ref.length) + unsigned(ref.fin);
     auto ecn = !syn && positive && m_txECN && ref.offset >= m_txNext ?
       EcnMark::ECT0 : EcnMark::NotECT;
-    bool original = positive && !syn && !ref.fin &&
+    bool original = data && (positive || ref.fin) && !syn &&
       !control && !persist && !tlp && !rto && !fast && ref.offset == m_txNext;
     if (ZuLikely(original)) {
       // The held source and its lease retain recovery bytes across submission.
@@ -4397,6 +4406,7 @@ protected:
       schedulePTO_();
     } else if (ackCurrent) m_txTFOFinalAckSent = true;
     if (data) {
+      if (source && ref.fin) source->fin = true;
       m_txPkts.acceptedData(id, transportNow());
       if (syn) m_txTFOEnd = ref.length;
       acceptTxData(ref);
@@ -4448,7 +4458,7 @@ protected:
 	TxRange range;
 	if (txRange(0, range)) {
 	  if (!m_txDataCredit.available()) { updatePersist(); break; }
-	  auto ref = SentFrameRef::data(range, false);
+	  auto ref = SentFrameRef::data(range, finalTxRange(range));
 	  if (!send(ref, false, 0, false)) break;
 	  sent = true;
 	} else if (finReady()) {

@@ -187,7 +187,7 @@ if [[ $mode == native-zero-close || $mode == native-hub-stop ||
     tc filter add dev "$loss_dev" parent 1: protocol "$protocol" pref 1 u32 \
       match u8 6 0xff at "$protocol_offset" \
       match u16 18192 0xffff at "$((iphead + cli_offset))" \
-      match u8 0x08 0x0d at "$((iphead + 13))" flowid 1:3
+      match u8 0x08 0x0e at "$((iphead + 13))" flowid 1:3
   fi
   for side in client server; do
     dev=zutcpmlpa
@@ -436,7 +436,7 @@ if [[ $mode == rst-client || $mode == rst-server ]]; then
   tc filter add dev "$dev" parent 1: protocol "$protocol" pref 1 u32 \
     match u8 6 0xff at "$protocol_offset" \
     match u16 18192 0xffff at "$((iphead + cli_offset))" \
-    match u8 0x08 0x0d at "$((iphead + 13))" flowid 1:3
+    match u8 0x08 0x0e at "$((iphead + 13))" flowid 1:3
   tcpdump --immediate-mode -i zutcpmlpa -n -s 0 -U -w "$out/client-side.pcap" \
     'tcp port 18191' > "$out/client-side.capture" 2>&1 &
   capture_cli=$!

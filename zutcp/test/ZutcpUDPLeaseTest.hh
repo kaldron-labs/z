@@ -89,7 +89,7 @@ public:
 
 static void testUDPLeases()
 {
-  ZuTestScope(testUDPLeases);
+  ZuTestScopeRT(testUDPLeases);
   auto env = ZutcpTest::fixtureEnv();
   ZmRef<Zutcp::MxPlugin> stack = new Zutcp::MxPlugin;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
@@ -104,7 +104,7 @@ static void testUDPLeases()
   auto tx = mx.allocator<Zi::IOBufType::TxUDP, ZiIOBuf, 128>(1);
   auto app = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 128>();
   bool started = configured && tx && app && mx.start();
-  ZuCHECK(started, "start the real UDP adapter with a deterministic registered slot");
+  ZuCheckRT(started, log_("start the real UDP adapter with a deterministic registered slot"));
   if (!started) return;
   bool passed = ZmBlock<bool>{}([&mx, &stack, &device, tx, app](auto done) {
     mx.txRun([&mx, &stack, &device, tx, app, done = ZuMv(done)]() mutable {
@@ -169,9 +169,53 @@ static void testUDPLeases()
       done(ok);
     });
   });
+  for (bool graceful : {true, false}) {
+    bool callback = false;
+    bool terminal = ZmBlock<bool>{}([&](auto done) {
+      mx.txRun([&, graceful, done = ZuMv(done)]() mutable {
+        auto route = path(false);
+        ZiCxnInfo info{.type = ZiCxnType::UDP, .socket = Zi::nullSocket(),
+          .options = ZiCxnOptions{}.udp(true),
+          .local = {route.local, 2381}, .remote = {route.remote, 49252}};
+        ZmRef<UDPLeaseTest::Cxn> cxn = new UDPLeaseTest::Cxn{&mx, info};
+        auto buf = tx->allocBuf(cxn.ptr());
+        if (!buf || !buf->append("end")) { done(false); return; }
+        unsigned calls = device->calls, releases = device->pool->releases;
+        cxn->txContext().init(ZiTxFn{[&callback](ZiTxContext &io) {
+          callback = io.disconnected() && io.length == 3 && io.buf->cspan() == "end";
+          io.offset += io.length;
+          io.complete();
+          return true;
+        }}, ZuMv(buf), info.remote);
+        device->refuse = device->early = device->retire = false;
+        if (graceful) {
+          cxn->txContext().disconnect();
+          ZutcpTest::MxPlugin::udpSend(*stack, cxn, route);
+        } else ZutcpTest::MxPlugin::udpRouteThenClose(*stack, cxn);
+        // The Rx fence follows the route lookup. Its Tx fence follows routed().
+        mx.rxRun([&, cxn = ZuMv(cxn), graceful, calls, releases, done = ZuMv(done)]() mutable {
+          mx.txRun([&, cxn = ZuMv(cxn), graceful, calls, releases, done = ZuMv(done)]() mutable {
+            bool ok = !cxn->txUp() && cxn->txContext().completed() && callback == graceful &&
+              device->calls == calls + unsigned(graceful) &&
+              device->pool->releases == releases + 1 && device->pool->kernel == graceful;
+            if (!ok)
+              log_("graceful=", graceful, " up=", cxn->txUp().load_(),
+                " completed=", cxn->txContext().completed(), " callback=", callback,
+                " submissions=", device->calls - calls, " returns=", device->pool->releases - releases,
+                " kernel=", device->pool->kernel);
+            device->retire = true;
+            stack->reconcileTx();
+            cxn->rxUp() = 0;
+            done(ok && tx->allocBuf());
+          });
+        });
+      });
+    });
+    ZuCheckRT(terminal, log_("UDP terminal request submits only the graceful datagram"));
+  }
   bool stopped = mx.stop();
-  ZuCHECK(passed && stopped,
-    "UDP keeps one backing through refusal, CQ-before-callback and CQ-after-callback");
+  ZuCheckRT(passed && stopped,
+    log_("UDP keeps one backing through refusal, CQ-before-callback and CQ-after-callback"));
 }
 
 #endif /* ZutcpUDPLeaseTest_HH */

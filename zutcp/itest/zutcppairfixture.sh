@@ -529,7 +529,7 @@ if [[ $mode == tail ]]; then
   if [[ $family == 6 ]]; then protocol=ipv6 iphead=40 protocol_offset=6; fi
   tc filter add dev zutcpsa parent 1: protocol "$protocol" pref 10 u32 \
     match u8 6 0xff at "$protocol_offset" \
-    match u8 0x08 0x0f at "$((iphead + 13))" \
+    match u8 0x08 0x0e at "$((iphead + 13))" \
     match u32 "$tail_sequence" 0xffffffff at "$((iphead + 4))" flowid 1:3
   printf '%s %s\n' "$client_base" "$server_base" > "$out/wire-bases"
   printf '%s %s\n' "$producer" "$tail_offset" > "$out/tail-producer"

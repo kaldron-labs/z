@@ -725,6 +725,99 @@ static void wholeOriginal(bool accept, bool syn)
     << " RetainedNode=" << sizeof(Zutcp::TxRanges::Node) << '\n';
 }
 
+// Drive the real writer, packetizer, header codec, retransmit and cumulative ACK.
+static void packetFinish(bool exactWindow, bool empty)
+{
+  ZuTestScopeRT(packetFinish);
+  ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
+  auto &app = *appRef;
+  ZmRef<Link> link = new Link{&app};
+  Native a{app.mx()}, b{app.mx()};
+  ZmRef<Zi::IOBufPool> pool =
+    new Zpkt::Xdp::BufPool{Zi::IOBufType::TxTCP, 2, sizeof(a.bytes)};
+  app.nativeAllocator = &a; app.nativeAllocator2 = &b; app.nativePool = pool;
+  auto make = [](Native &source, ZuBSpan bytes) {
+    ZmRef<ZiIOBuf> buf = new Zi::IOBufStub<ZiIOBuf>{
+      source.bytes, sizeof(source.bytes), &source, nullptr, 0, false, true};
+    buf->skip = 256;
+    buf->append(bytes);
+    return buf;
+  };
+  const Zutcp::IPPath path{.local = ZiIP{"198.18.0.1"}, .remote = ZiIP{"198.18.0.2"},
+    .mtu = 1500};
+  unsigned packets = 0, attempts = 0;
+  bool exact = true, refuse = !empty && !exactWindow;
+  auto send = [&](auto buf) {
+    uint8_t frame[256];
+    unsigned head = Zutcp::tcpHead(path.local.type(), buf->tcp);
+    if (!head || head + buf->length > sizeof(frame)) { exact = false; return false; }
+    if (buf->length) memcpy(frame + head, buf->data(), buf->length);
+    auto wire = Zutcp::writeTCP(frame, sizeof(frame), path, buf->tcp, buf->length);
+    Zutcp::IPView ip;
+    Zutcp::TCPView tcp;
+    if (!wire || !Zutcp::readIP({frame, wire}, ip) || !Zutcp::readTCP(ip, tcp)) {
+      exact = false; return false;
+    }
+    ++attempts;
+    bool first = tcp.header.seq == 1001 && !empty;
+    bool payload = !empty && tcp.payload.length();
+    bool fin = (tcp.header.flags & 1) != 0;
+    if (payload) {
+      exact &= tcp.payload == (first ? "one" : "two") &&
+        tcp.header.seq == (first ? 1001U : 1004U) && fin == (!first && !exactWindow);
+      if (refuse && !first) return false;
+      auto source = first ? &a : &b;
+      if (!buf->retained->data()) buf->retained->adopt(source, source->bytes, sizeof(source->bytes));
+      buf->data__ = 0; buf->size = buf->skip = buf->length = 0;
+    } else exact &= fin && tcp.header.seq == (empty ? 1001U : 1007U);
+    ++packets;
+    return true;
+  };
+  if (exactWindow) link->txCredit(6);
+  auto writer = link->writer_();
+  bool admitted = empty ? writer.flush(true) :
+    writer.sendBuf_(make(a, "one"), 0) &&
+    writer.sendBuf_(make(b, "two"), Zi::SendFlags::Finish());
+  bool flushed = Zutcp::TCPStateTest::flush(*link, send);
+  if (refuse) {
+    ZuCHECK(flushed && packets == 1 && attempts == 2 && link->txNext() == 3 &&
+        !link->finDequeued() && link->txUnackdBytes() == 3 && !b.returned,
+      "provider refusal preserves the unsent final bytes and its sequence number");
+    refuse = false;
+    flushed = Zutcp::TCPStateTest::flush(*link, send);
+  }
+  if (exactWindow) {
+    ZuCHECK(flushed && packets == 2 && link->txNext() == 6 && !link->finDequeued(),
+      "a window that fits only the payload leaves its FIN pending");
+    link->extendTxCredit(7);
+    flushed = Zutcp::TCPStateTest::flush(*link, send);
+  }
+  ZuCHECK(admitted && flushed && exact && packets == (empty ? 1U : exactWindow ? 3U : 2U) &&
+      link->finDequeued() && link->txNext() == (empty ? 1U : 7U) && !link->txQueueCount(),
+    "wire FIN accompanies the final byte when eligible and otherwise uses one empty segment");
+  if (!empty && !exactWindow) {
+    Zutcp::TCPStateTest::ack(*link, 3);
+    bool retried = false;
+    link->recovery = [&] {
+      Zutcp::SentFrameRef ref;
+      retried = link->next(ref) && ref.fin && ref.offset == 3 && ref.length == 3 &&
+        link->recoveryOutput(ref, send);
+      return retried;
+    };
+    Zutcp::TCPStateTest::expireRTO(*link);
+    link->recovery = {};
+    Zutcp::TCPStateTest::ack(*link, 6);
+    ZuCHECK(retried && exact && packets == 3 && a.returned == 1 && !b.returned &&
+        link->txUnackdBytes() == 1 && !Zutcp::TCPStateTest::finDone(*link),
+      "losing the tail retransmits its original bytes and FIN, and a byte-only ACK retains FIN");
+  }
+  Zutcp::TCPStateTest::ack(*link, empty ? 1 : 7);
+  ZuCHECK(Zutcp::TCPStateTest::finDone(*link) && !link->txUnackdBytes() &&
+      !Zutcp::TCPStateTest::records(*link) && a.returned == unsigned(!empty) &&
+      b.returned == unsigned(!empty), "ACK through FIN retires each provider lease once");
+  link->finish();
+}
+
 static void originalTxOrder(unsigned scenario)
 {
   ZuTestScopeRT(originalTxOrder);
@@ -2618,18 +2711,18 @@ void testMxRxDelivery(bool reentrant)
   ZmRef<App> appRef = new App;
   auto &app = *appRef;
   ZmRef<Link> cxn = new Link{&app};
-  ZmRef<MxRxCxn> mx = new MxRxCxn{app.mx()};
+  ZmRef<MxRxCxn> mxCxn = new MxRxCxn{app.mx()};
   RxAttachAlloc allocator;
   unsigned calls = 0, depth = 0, maxDepth = 0;
   bool exact = true;
   ZmRef<ZiIOBuf> held;
-  ZmBlock<>{}([&app, cxn, mx, &allocator, &calls, &depth, &maxDepth,
+  ZmBlock<>{}([&app, cxn, mxCxn, &allocator, &calls, &depth, &maxDepth,
       &exact, &held, reentrant](auto wake) mutable {
-    app.mx()->run([&app, cxn, mx, &allocator, &calls, &depth, &maxDepth,
+    app.mx()->run([&app, cxn, mxCxn, &allocator, &calls, &depth, &maxDepth,
 	&exact, &held, reentrant, wake = ZuMv(wake)]() mutable {
-      cxn->mxCxn = mx;
-      mx->plugin(static_cast<Link::Base *>(cxn.ptr()));
-      auto &context = mx->rxContext();
+      cxn->mxCxn = mxCxn;
+      mxCxn->plugin(static_cast<Link::Base *>(cxn.ptr()));
+      auto &context = mxCxn->rxContext();
       context.buf = allocator.allocBuf(cxn.ptr());
       exact &= cxn->receive(input(app, "world", 5)) && calls == 0 &&
         !context.buf->length;
@@ -2659,7 +2752,7 @@ void testMxRxDelivery(bool reentrant)
 	if (calls == 2) context.complete();
 	return true;
       }}, ZuMv(context.buf));
-      exact &= static_cast<Link::Base *>(mx->plugin())->recvMx() == 1 &&
+      exact &= static_cast<Link::Base *>(mxCxn->plugin())->recvMx() == 1 &&
 	calls == 1;
       // True stops this delivery turn. The queued suffix must resume itself
       // without another receive, preserving the current stub or partial frame.
@@ -2678,8 +2771,8 @@ void testMxRxDelivery(bool reentrant)
     "context replacement must preserve backing handed to the application");
   held = nullptr;
   cxn->mxCxn = nullptr;
-  mx->plugin(nullptr);
-  mx->rxContext().complete();
+  mxCxn->plugin(nullptr);
+  mxCxn->rxContext().complete();
   cxn->finish();
 }
 
@@ -2689,16 +2782,16 @@ static void testMxRxRegistered()
   ZmRef<App> appRef = new App;
   auto &app = *appRef;
   ZmRef<Link> cxn = new Link{&app};
-  ZmRef<MxRxCxn> mx = new MxRxCxn{app.mx()};
+  ZmRef<MxRxCxn> mxCxn = new MxRxCxn{app.mx()};
   RxAttachAlloc allocator;
   alignas(64) uint8_t bytes[64];
   memcpy(bytes + 8, "native-mx-byte-path", 19);
   bool exact = false;
-  ZmBlock<>{}([&app, cxn, mx, &allocator, &bytes, &exact](auto wake) {
-    app.mx()->rxRun([cxn, mx, &allocator, &bytes, &exact, wake = ZuMv(wake)]() mutable {
-      cxn->mxCxn = mx;
-      mx->plugin(static_cast<Link::Base *>(cxn.ptr()));
-      mx->rxContext().init(ZiRxFn{[&allocator, &bytes, &exact](ZiRxContext &io) {
+  ZmBlock<>{}([&app, cxn, mxCxn, &allocator, &bytes, &exact](auto wake) {
+    app.mx()->rxRun([cxn, mxCxn, &allocator, &bytes, &exact, wake = ZuMv(wake)]() mutable {
+      cxn->mxCxn = mxCxn;
+      mxCxn->plugin(static_cast<Link::Base *>(cxn.ptr()));
+      mxCxn->rxContext().init(ZiRxFn{[&allocator, &bytes, &exact](ZiRxContext &io) {
 	exact = io.buf->registered() && io.buf->data_() == bytes &&
 	  io.buf->data() == bytes + 8 && io.buf->length == 19 && !allocator.returned;
 	io.complete();
@@ -2714,7 +2807,7 @@ static void testMxRxRegistered()
   });
   ZuCHECK(exact && allocator.returned == 1 && !allocator.heapReturned,
     "live receiveSegment must transfer its unique ingress backing without a payload copy");
-  cxn->mxCxn = nullptr; mx->plugin(nullptr);
+  cxn->mxCxn = nullptr; mxCxn->plugin(nullptr);
   cxn->finish();
 }
 
@@ -2816,7 +2909,7 @@ static void mappedTxQueue()
   ZmRef<App> appRef = new App;
   auto &app = *appRef;
   ZmRef<Link> cxn = new Link{&app};
-  ZmRef<MxRxCxn> mx = new MxRxCxn{app.mx()};
+  ZmRef<MxRxCxn> mxCxn = new MxRxCxn{app.mx()};
   Native a{app.mx()}, b{app.mx()};
   ZmRef<Zi::IOBufPool> pool =
     new Zpkt::Xdp::BufPool{Zi::IOBufType::TxTCP, 2, sizeof(a.bytes)};
@@ -2829,11 +2922,11 @@ static void mappedTxQueue()
     return buf;
   };
   auto first = make(a, "one"), second = make(b, "xtwo");
-  cxn->mxCxn = mx; mx->plugin(static_cast<Link::Base *>(cxn.ptr()));
+  cxn->mxCxn = mxCxn; mxCxn->plugin(static_cast<Link::Base *>(cxn.ptr()));
   cxn->txQueueMax(1);
   unsigned calls = 0;
   bool exact = true;
-  auto &context = mx->txContext();
+  auto &context = mxCxn->txContext();
   context.init(ZiTxFn{[native = cxn.ptr(), second, &calls, &exact](ZiTxContext &context) {
     auto target = native;
     ++calls;
@@ -2871,8 +2964,28 @@ static void mappedTxQueue()
   ZuCHECK(pending && resumed && exact && zero,
     "mapped Tx queue pressure preserves replacement context/offset and resumes exact local "
     "counts");
+  auto blocked = Zutcp::inlineAllocator()->allocBuf();
+  blocked->append("unaccepted");
+  unsigned abandoned = 0;
+  context.init(ZiTxFn{[&abandoned](ZiTxContext &) { ++abandoned; return true; }},
+    ZuMv(blocked));
+  context.disconnect();
+  cxn->sendMx();
+  bool armed = !context.completed() && context.buf && context.disconnected() &&
+    !cxn->finSent() && cxn->txQueueCount() == 1;
+  mxCxn->rxUp() = 0; // no kernel descriptor in this mapped queue fixture
+  context.close();
+  cxn->sendMx();
+  bool closed = ZmBlock<bool>{}([mxCxn](auto done) mutable {
+    mxCxn->mx()->txRun([mxCxn, done = ZuMv(done)]() mutable { done(!mxCxn->txUp()); });
+  });
+  cxn->dequeueTxRange(next);
+  app.runTx();
+  ZuCHECK(armed && closed && context.completed() && !context.buf && !abandoned &&
+      !cxn->txQueueCount() && !cxn->finSent(),
+    "close abandons a stalled final source before the next writable notification");
   cxn->dequeued = {};
-  cxn->mxCxn = nullptr; mx->plugin(nullptr); context.complete();
+  cxn->mxCxn = nullptr; mxCxn->plugin(nullptr); context.complete();
   cxn->finish(); cxn = nullptr;
   sent = next = {}; first = second = {};
   ZuCHECK(a.valid && b.valid && a.returned == 1 && b.returned == 1,
@@ -2885,7 +2998,7 @@ static void mappedTxActive(unsigned scenario)
   ZmRef<App> appRef = new App{ZuTime{0}, {}, false};
   auto &app = *appRef;
   ZmRef<Link> cxn = new Link{&app};
-  ZmRef<MxRxCxn> mx = new MxRxCxn{app.mx()};
+  ZmRef<MxRxCxn> mxCxn = new MxRxCxn{app.mx()};
   Native a{app.mx()}, b{app.mx()};
   ZmRef<Zi::IOBufPool> pool =
     new Zpkt::Xdp::BufPool{Zi::IOBufType::TxTCP, 2, sizeof(a.bytes)};
@@ -2900,8 +3013,8 @@ static void mappedTxActive(unsigned scenario)
   auto first = make(a, "one"), second = make(b, "xtwo");
   bool mapped = scenario != 3, accept = scenario != 2;
   if (mapped) {
-    cxn->mxCxn = mx;
-    mx->plugin(static_cast<Link::Base *>(cxn.ptr()));
+    cxn->mxCxn = mxCxn;
+    mxCxn->plugin(static_cast<Link::Base *>(cxn.ptr()));
   }
   cxn->txQueueMax(1);
   unsigned calls = 0, notices = 0, attempts = 0, bytes = 0;
@@ -2930,7 +3043,7 @@ static void mappedTxActive(unsigned scenario)
       return true;
     });
   };
-  auto &context = mx->txContext();
+  auto &context = mxCxn->txContext();
   if (mapped) {
     context.init(ZiTxFn{[native = cxn.ptr(), second, &calls, &exact,
         reentrant = scenario == 1](ZiTxContext &context) {
@@ -2986,7 +3099,7 @@ static void mappedTxActive(unsigned scenario)
       a.returned == 1 && b.returned == 1,
     "accepted originals remain retained until the real cumulative ACK returns each once");
   cxn->flushFn = {}; cxn->dequeued = {};
-  cxn->mxCxn = nullptr; mx->plugin(nullptr); context.complete();
+  cxn->mxCxn = nullptr; mxCxn->plugin(nullptr); context.complete();
   cxn->finish(); cxn = nullptr; first = second = {};
   ZuCHECK(a.valid && b.valid && a.returned == 1 && b.returned == 1,
     "mapped and generic producer cleanup cannot return accepted backing twice");
@@ -3350,13 +3463,18 @@ static void rxReadSACK(bool fill)
   ZuTestScopeRT(rxReadSACK);
   ZmRef<App> appRef = new App;
   auto &app = *appRef;
-  ZmRef<Link> link = new Link{&app};
+  ZmRef<Link> link = new Link{&app, fill};
   app.holdTx = true;
   bool tail = link->receive(input(app, "efgh", 4));
   auto waiting = Zutcp::TCPStateTest::header(*link);
   ZuCHECK(tail && !waiting.flags && app.txJobs.count_(),
     "a pending nonempty SACK report cannot be mixed with an earlier Tx snapshot");
   if (fill) {
+    bool synAck = link->output({}, [](auto buf) {
+      return (buf->tcp.flags & 0x12) == 0x12 && buf->tcp.ack == 2001 &&
+	buf->tcp.window && !buf->tcp.options.sackCount;
+    }, true);
+    ZuCHECK(synAck, "SYN-ACK carries the current ACK and window before queued SACK delivery");
     bool head = link->receive(input(app, "abcd"));
     auto common = Zutcp::TCPStateTest::header(*link);
     ZuCHECK(head && common.ack == 2009 && !common.options.sackCount,
@@ -3674,6 +3792,9 @@ int main(int argc, char **argv)
   ZuTestCall(peerEcho, 0);
   ZuTestCall(peerEcho, 1);
   ZuTestCall(peerEcho, 2);
+  ZuTestCall(packetFinish, false, false);
+  ZuTestCall(packetFinish, true, false);
+  ZuTestCall(packetFinish, false, true);
   ZuTestCall(wholeOriginal, false, false);
   ZuTestCall(wholeOriginal, true, false);
   ZuTestCall(wholeOriginal, false, true);

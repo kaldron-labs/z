@@ -39,16 +39,22 @@ public:
 
 private:
   ZiSockAddr destination(const ZiTxContext &) const;
+  const IPPath *findPath(const ZiIP &, uint64_t);
   void sendNext(ZiConnection *);
-  void routed(ZiConnection *, const ZiSockAddr &, ZuUnion<IPPath, ZeException>);
-  int submit(const ZiTxContext &, const ZiSockAddr &);
+  void routed(ZiConnection *, const ZiSockAddr &, uint64_t, ZuUnion<IPPath, ZeException>);
+  int submit(const ZiTxContext &, const ZiSockAddr &, const IPPath &);
   void sent(ZiConnection *, int);
 
   MxPlugin	*m_owner;
   ZiCxnInfo	m_info;
   int		m_membershipFD = -1; // multicast control only
-  IPPath	m_path; // Tx owner after setup
+  // Tx owner. The common same-peer lookup reads only the current slot.
+  enum { NPaths = 8 };
+  alignas(Zm::CacheLineSize)
+  uint64_t	m_generation = 0;
+  unsigned	m_pathIndex = 0, m_pathCount = 0, m_nextPath = 0;
   bool		m_sending = false;
+  IPPath	m_paths[NPaths];
 };
 
 } // Zutcp

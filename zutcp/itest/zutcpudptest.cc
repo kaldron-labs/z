@@ -5,11 +5,15 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <iostream>
+#include <linux/netlink.h>
 #include <net/if.h>
 #include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 #include <zlib/ZiLog.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmTime.hh>
 #include <zlib/Zutcp.hh>
 
 #include "ZutcpTestMxPlugin.hh"
@@ -17,6 +21,15 @@
 enum { ServerUDP = 18172, ClientUDP = 18173, ServerTCP = 18174 };
 static constexpr auto TCPData = "tcp fixture bytes"_z;
 static const ZuBSpan UDPData[] = {"first datagram", "", "a longer final datagram"};
+
+static ZmAtomic<unsigned> routeSockets{0};
+
+extern "C" __attribute__((visibility("default")))
+int socket(int domain, int type, int protocol) noexcept
+{
+  if (domain == AF_NETLINK && protocol == NETLINK_ROUTE) ++routeSockets;
+  return syscall(SYS_socket, domain, type, protocol);
+}
 
 // The transmitted IP/UDP frame must surround the caller's own payload backing.
 // Completion leaves its descriptor and payload intact through the Zi callback.
@@ -48,7 +61,7 @@ public:
     ZiConnection{mx, info}, m_exchange{exchange} { }
   void connected(ZiRxContext &) override;
   void disconnected(bool) override;
-  void write(ZuBSpan, ZiSockAddr peer = {});
+  void write(ZuBSpan, ZiSockAddr peer = {}, bool expectRefusal = false);
 
 private:
   bool received(ZiRxContext &);
@@ -137,9 +150,9 @@ bool Connection::received(ZiRxContext &io)
   return true;
 }
 
-void Connection::write(ZuBSpan payload, ZiSockAddr peer)
+void Connection::write(ZuBSpan payload, ZiSockAddr peer, bool expectRefusal)
 {
-  send(ZiTxFn{[this, payload, peer](ZiTxContext &io) {
+  send(ZiTxFn{[this, payload, peer, expectRefusal](ZiTxContext &io) {
     auto state = m_exchange;
     auto buf = state->tx->allocBuf(this);
     if (!buf || !buf->append(payload)) {
@@ -148,13 +161,15 @@ void Connection::write(ZuBSpan payload, ZiSockAddr peer)
       state->output.post();
       return false;
     }
-    io.init(ZiTxFn{[state, payload, original = buf.ptr(),
+    io.init(ZiTxFn{[state, payload, expectRefusal, original = buf.ptr(),
 	backing = buf->data_(), skip = buf->skip, size = buf->size,
 	owner = buf->owner](ZiTxContext &io) {
       if (state->udp && (!io.buf || io.buf.ptr() != original ||
 	  io.buf->data_() != backing || io.buf->skip != skip || io.buf->size != size ||
 	  io.buf->owner != owner)) ++state->errors;
-      if (io.length < 0 || unsigned(io.length) != payload.length() ||
+      if (expectRefusal) {
+	if (io.length >= 0) ++state->errors;
+      } else if (io.length < 0 || unsigned(io.length) != payload.length() ||
 	  (state->udp && !framedUDP(io.buf.ptr(), payload))) ++state->errors;
       auto output = &state->output;
       io.complete();
@@ -170,7 +185,7 @@ static bool wait(ZmSemaphore &sem)
   return sem.timedwait(Zm::now(10)) == 0;
 }
 
-static bool run(ZiMultiplex &mx, Exchange &udp, Exchange *tcp, unsigned cycle)
+static bool run(ZiMultiplex &mx, Exchange &udp, Exchange *tcp, unsigned cycle, ZiIP alternate)
 {
   auto options = ZiCxnOptions{}.udp(true);
   mx.udp(udp.callback(&mx), udp.failed(), udp.local, udp.server ? ServerUDP : ClientUDP,
@@ -195,9 +210,37 @@ static bool run(ZiMultiplex &mx, Exchange &udp, Exchange *tcp, unsigned cycle)
     }
   } else if (tcp && (!wait(tcp->opened) || !tcp->connection || tcp->errors.load_()))
     return false;
+  unsigned n = 0;
   for (auto payload : UDPData) {
     if (!udp.server) udp.connection->write(payload);
     if (!wait(udp.input) || !wait(udp.output) || udp.errors.load_()) return false;
+    if (!tcp && !cycle && n < 2) {
+      // Both sockets have a cached path. The fixture removes the client's
+      // permanent neighbor, then changes its next hop, restoring each after refusal.
+      std::cout << (n ? "route " : "neighbor ") << cycle << std::endl;
+      if (!(std::cin >> go) || go != 'g') return false;
+      if (!udp.server) {
+	udp.connection->write(payload, {}, true);
+	if (!wait(udp.output) || udp.errors.load_()) return false;
+      }
+      std::cout << "restore " << cycle << std::endl;
+      if (!(std::cin >> go) || go != 'g') return false;
+    }
+    ++n;
+  }
+  if (alternate && !tcp && !cycle && !udp.server) {
+    // Use an unbound port so these sends only exercise the client's Tx path.
+    auto probe = [&udp](const ZiIP &dest) {
+      udp.connection->write(UDPData[0], ZiSockAddr{dest, ServerUDP + 3});
+      return wait(udp.output) && !udp.errors.load_();
+    };
+    auto before = unsigned(routeSockets);
+    if (!probe(alternate) || unsigned(routeSockets) <= before) return false;
+    before = routeSockets;
+    Zm::sleep(ZuTime{0, 25000000});
+    for (unsigned i = 0; i < 4; ++i)
+      if (!probe(udp.peer) || !probe(alternate)) return false;
+    if (unsigned(routeSockets) != before) return false;
   }
   if (tcp && (!wait(tcp->input) || !wait(tcp->output) || tcp->errors.load_())) return false;
   if (!udp.retained || udp.retained->cspan() != UDPData[0]) return false;
@@ -211,8 +254,8 @@ static bool run(ZiMultiplex &mx, Exchange &udp, Exchange *tcp, unsigned cycle)
 
 int main(int argc, char **argv)
 {
-  if (argc != 6) {
-    std::cerr << "usage: zutcpudptest interface local peer server|client udp|mixed\n";
+  if (argc != 6 && argc != 7) {
+    std::cerr << "usage: zutcpudptest interface local peer server|client udp|mixed [alternate]\n";
     return 2;
   }
   auto ifindex = if_nametoindex(argv[1]);
@@ -241,7 +284,7 @@ int main(int argc, char **argv)
     if (!mx.start()) return 1;
     Exchange udp{udpRx, udpTx, local, peer, server, true};
     Exchange tcp{tcpRx, tcpTx, local, peer, server, false};
-    bool passed = run(mx, udp, mixed ? &tcp : nullptr, cycle);
+    bool passed = run(mx, udp, mixed ? &tcp : nullptr, cycle, argc == 7 ? ZiIP{argv[6]} : ZiIP{});
     bool stopped = mx.stop();
     if (!passed || !stopped) return 1;
   }

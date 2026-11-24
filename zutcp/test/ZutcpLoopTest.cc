@@ -28,7 +28,8 @@ struct TCPStateTest {
   template <typename T> static void queueOverflow(T &link) {
     auto &c = static_cast<typename T::Base &>(link);
     c.txQueueMax(1);
-    ZUTCP_CHECK_RT(c.admitTx() && !c.admitTx(), "admission capacity refusal");
+    ZUTCP_CHECK_RT(c.admitTx(false, true) && !c.admitTx(false, true),
+      "ordinary data admission refuses a full queue");
     --c.m_txQueueCount;
   }
   template <typename T> static void pathBase(T &link) {

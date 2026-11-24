@@ -43,7 +43,11 @@ conversion is connected and its end-to-end Phase 3 cases pass.
 existing connection queue: a full queue preserves the next context, dequeue
 credit resumes it, callbacks retain control of the send offset, and zero-byte
 completion adds no progress counts. The context replacement includes same-owner
-reentry. The live registered-buffer counterpart is `../itest/zutcpmxtest`.
+reentry. Closing a stalled final buffer disarms it before the next queue-credit notice.
+`ZutcpDataTest::packetFinish` checks serialized FIN and sequence numbers, exact-window
+and empty finishes, provider refusal, RTO recovery and ACK-based lease retirement.
+The UDP lease fixture closes an endpoint while its route result is in flight.
+The live registered-buffer counterpart is `../itest/zutcpmxtest`.
 
 `ZutcpRxAccountingTest` covers the bounded retained-buffer lists: newest-head /
 oldest-tail order, eviction, independent per-connection counts, application alias

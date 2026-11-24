@@ -143,7 +143,9 @@ boundaries, peer addresses, TOS, and delivery into the prepared typed Rx buffer.
 Mixed mode also transfers TCP bytes through the same multiplexers and checks
 that the typed TCP and UDP allocators share an ingress pool. Both peers close
 their UDP endpoints and repeat the exchange after restarting with the original
-allocation.
+allocation. In UDP mode the fixture removes and restores the client's permanent
+neighbor and replaces its route on a live socket. It also alternates between two resolved
+peer IPs and checks that Tx opens no additional route-query sockets.
 
 ```sh
 make -C zutcp/itest zutcpudptest

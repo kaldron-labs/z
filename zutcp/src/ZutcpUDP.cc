@@ -5,8 +5,10 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <errno.h>
+#include <linux/rtnetlink.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <zlib/ZutcpUDP.hh>
@@ -38,9 +40,13 @@ static ZeException membershipError(int error)
 }
 
 MxPlugin::UdpCxn::UdpCxn(MxPlugin *owner, const ZiCxnInfo &info, IPPath path) :
-  m_owner{owner}, m_info{info}, m_path{ZuMv(path)}
+  m_owner{owner}, m_info{info}
 {
   portKey = udpKey(info.local.ip().type(), info.local.port());
+  if (path.remote) {
+    m_paths[0] = ZuMv(path);
+    m_pathCount = m_nextPath = 1;
+  }
 }
 
 MxPlugin::UdpCxn::~UdpCxn()
@@ -127,9 +133,79 @@ ZiSockAddr MxPlugin::UdpCxn::destination(const ZiTxContext &io) const
 
 void MxPlugin::UdpCxn::send(ZiConnection *cxn)
 {
+  if (cxn->txContext().closed()) { cxn->close(); return; }
   if (m_sending) return;
   m_sending = true;
   sendNext(cxn);
+}
+
+void MxPlugin::openUDPRouteMonitor()
+{
+  // Open before publishing Up so connected UDP setup is covered as well.
+  m_udpRouteGeneration = m_udpRouteCheck = 0;
+  int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, NETLINK_ROUTE);
+  if (fd < 0) return;
+  sockaddr_nl addr{};
+  addr.nl_family = AF_NETLINK;
+  addr.nl_groups = RTMGRP_LINK | RTMGRP_NEIGH | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR |
+    RTMGRP_IPV4_ROUTE | RTMGRP_IPV6_ROUTE | RTMGRP_IPV4_RULE |
+    (1U << (RTNLGRP_IPV6_RULE - 1));
+  int group = RTNLGRP_NEXTHOP;
+  if (::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) ||
+      setsockopt(fd, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, &group, sizeof(group))) {
+    ::close(fd);
+    return;
+  }
+  m_udpRouteFD = fd;
+}
+
+uint64_t MxPlugin::udpRouteGeneration()
+{
+  // One coarse vDSO clock read per send. Service the shared subscription
+  // on demand, at most once per 10ms of active UDP output.
+  timespec ts;
+  clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
+  uint64_t now = uint64_t(ts.tv_sec) * 1000000000 + ts.tv_nsec;
+  if (now < m_udpRouteCheck) return m_udpRouteGeneration;
+  m_udpRouteCheck = now + 10000000;
+  bool changed = m_udpRouteFD < 0;
+  if (!changed) {
+    // Every subscribed message invalidates all paths, including an overrun.
+    // Discard whole datagrams without copying or parsing the route payload.
+    for (unsigned i = 0; i < 16; ++i) {
+      char byte;
+      if (::recv(m_udpRouteFD, &byte, 1, MSG_DONTWAIT) < 0) {
+	if (errno != EAGAIN && errno != EWOULDBLOCK) {
+	  changed = true;
+	  if (errno != EINTR && errno != ENOBUFS) {
+	    ::close(m_udpRouteFD);
+	    m_udpRouteFD = -1;
+	  }
+	}
+	break;
+      }
+      changed = true;
+    }
+  }
+  if (changed) ++m_udpRouteGeneration;
+  return m_udpRouteGeneration;
+}
+
+const IPPath *MxPlugin::UdpCxn::findPath(const ZiIP &peer, uint64_t generation)
+{
+  if (m_generation != generation) {
+    m_generation = generation;
+    m_pathCount = m_nextPath = 0;
+  }
+  if (!m_pathCount) return nullptr;
+  if (m_paths[m_pathIndex].remote == peer) return &m_paths[m_pathIndex];
+  for (unsigned i = 0; i < m_pathCount; ++i) {
+    if (m_paths[i].remote == peer) {
+      m_pathIndex = i;
+      return &m_paths[i];
+    }
+  }
+  return nullptr;
 }
 
 void MxPlugin::UdpCxn::sendNext(ZiConnection *cxn)
@@ -142,30 +218,41 @@ void MxPlugin::UdpCxn::sendNext(ZiConnection *cxn)
       sent(cxn, -1);
       continue;
     }
-    if (m_path.remote != dest.ip()) {
-      m_owner->rxRun([endpoint = ZmRef{this}, cxn = ZmRef{cxn}, dest]() mutable {
-	if (endpoint->retiring) return;
-	auto owner = endpoint->m_owner;
-	auto source = udpSource(endpoint->m_info.local.ip(), dest.ip(), endpoint->m_info.options);
-	auto route = resolveUDPPath(owner->m_xdp->ifindex(), {source, dest.ip(), {}, {}, 0});
-	owner->txRun([endpoint = ZuMv(endpoint), cxn = ZuMv(cxn),
-	    dest, route = ZuMv(route)]() mutable {
-	  endpoint->routed(cxn, dest, ZuMv(route));
-	});
-      });
-      return;
+    auto generation = m_owner->udpRouteGeneration();
+    if (auto path = findPath(dest.ip(), generation)) {
+      sent(cxn, submit(io, dest, *path));
+      continue;
     }
-    sent(cxn, submit(io, dest));
+    m_owner->rxRun([endpoint = ZmRef{this}, cxn = ZmRef{cxn}, dest, generation]() mutable {
+      if (endpoint->retiring) return;
+      auto owner = endpoint->m_owner;
+      auto source = udpSource(endpoint->m_info.local.ip(), dest.ip(), endpoint->m_info.options);
+      auto route = resolveUDPPath(owner->m_xdp->ifindex(), {source, dest.ip(), {}, {}, 0});
+      owner->txRun([endpoint = ZuMv(endpoint), cxn = ZuMv(cxn),
+	  dest, generation, route = ZuMv(route)]() mutable {
+	endpoint->routed(cxn, dest, generation, ZuMv(route));
+      });
+    });
+    return;
   }
   m_sending = false;
 }
 
 void MxPlugin::UdpCxn::routed(
-  ZiConnection *cxn, const ZiSockAddr &dest, ZuUnion<IPPath, ZeException> route)
+  ZiConnection *cxn, const ZiSockAddr &dest, uint64_t generation,
+  ZuUnion<IPPath, ZeException> route)
 {
-  if (cxn->txUp() && !cxn->txContext().completed()) {
-    if (route.is<IPPath>()) m_path = ZuMv(route.p<IPPath>());
-    else if (destination(cxn->txContext()) == dest) {
+  auto &io = cxn->txContext();
+  if (cxn->txUp() && io.closed()) { cxn->close(); return; }
+  if (cxn->txUp() && !io.completed() && destination(io) == dest &&
+      (m_owner->m_udpRouteFD < 0 || generation == m_owner->udpRouteGeneration())) {
+    if (route.is<IPPath>()) {
+      m_pathIndex = m_nextPath;
+      m_paths[m_pathIndex] = ZuMv(route.p<IPPath>());
+      m_nextPath = (m_nextPath + 1) % NPaths;
+      if (m_pathCount < NPaths) ++m_pathCount;
+      sent(cxn, submit(io, dest, m_paths[m_pathIndex]));
+    } else {
       m_owner->reportError(ZuMv(route.p<ZeException>()));
       sent(cxn, -1);
     }
@@ -173,7 +260,8 @@ void MxPlugin::UdpCxn::routed(
   sendNext(cxn);
 }
 
-int MxPlugin::UdpCxn::submit(const ZiTxContext &io, const ZiSockAddr &dest)
+int MxPlugin::UdpCxn::submit(
+  const ZiTxContext &io, const ZiSockAddr &dest, const IPPath &path)
 {
   // UDP is atomic: a nonzero cursor has no separate network-header reserve.
   // Reject it before framing so refusal preserves the complete producer view.
@@ -197,7 +285,7 @@ int MxPlugin::UdpCxn::submit(const ZiTxContext &io, const ZiSockAddr &dest)
   bool multicast = dest.ip().multicast();
   uint8_t hops = multicast ? (m_info.options.ttl() ? uint8_t(m_info.options.ttl()) : 1) : 64;
   uint8_t tos = io.tos.is<uint8_t>() ? io.tos.p<uint8_t>() : 0;
-  unsigned wire = writeUDP(frame, capacity, m_path,
+  unsigned wire = writeUDP(frame, capacity, path,
     m_info.local.port(), dest.port(), length, tos, hops);
   if (!wire) return -1;
   uint8_t *loop = nullptr;
@@ -224,13 +312,17 @@ void MxPlugin::UdpCxn::sent(ZiConnection *cxn, int length)
 {
   auto &io = cxn->txContext();
   auto original = io.buf;
-  auto offset = io.offset;
+  if (length >= 0) {
+    auto offset = io.offset;
+    if (cxn->executedSend(unsigned(length)) && io.buf == original && io.offset == offset)
+      io.complete(); // A datagram is atomic. Retrying the same cursor would duplicate it.
+    return;
+  }
+  bool finish = io.disconnected();
   io.length = length;
-  while (!io.completed() && !io()) { }
-  if (io.disconnected()) cxn->disconnect();
-  else if (!io.completed() && io.buf == original.ptr() &&
-      (length < 0 || !io.buf || io.offset == offset || io.offset >= io.buf->length))
-    io.complete();
+  while (!io.completed() && !io.closed() && !io()) { }
+  if (finish || io.closed() || io.disconnected()) cxn->close();
+  else if (!io.completed() && io.buf == original.ptr()) io.complete();
 }
 
 void MxPlugin::UdpCxn::close(bool peer)
@@ -379,6 +471,7 @@ void MxPlugin::sendUDP(ZiConnection *cxn)
 
 void MxPlugin::closeUDP(ZiConnection *cxn, bool peer)
 {
+  if (!cxn->txUp()) return;
   ZmRef<UdpCxn> endpoint = static_cast<UdpCxn *>(cxn->plugin());
   cxn->txUp() = 0;
   cxn->txContext().complete();

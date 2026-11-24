@@ -476,6 +476,8 @@ private:
   void received(uint8_t *, unsigned);
   void rxProgress();
   void receivedUDP(uint8_t *, unsigned, const IPView &);
+  void openUDPRouteMonitor();
+  uint64_t udpRouteGeneration();
   void sendUDP(ZiConnection *);
   void closeUDP(ZiConnection *, bool);
   bool closedPacket(const uint8_t *, const IPView &, const TCPView &);
@@ -585,6 +587,8 @@ private:
   bool				m_senderStopping = false;
   bool				m_txServicing = false, m_txDraining = false;
   uint64_t			m_dataStalls = 0, m_controlStalls = 0;
+  uint64_t			m_udpRouteGeneration = 0, m_udpRouteCheck = 0;
+  int				m_udpRouteFD = -1;
 };
 
 } // namespace Zutcp

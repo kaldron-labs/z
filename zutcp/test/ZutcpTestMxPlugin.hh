@@ -265,6 +265,13 @@ public:
     Zutcp::MxPlugin::UdpCxn endpoint{&instance, cxn->info(), ZuMv(path)};
     endpoint.send(cxn);
   }
+  static void udpRouteThenClose(Zutcp::MxPlugin &instance, ZiConnection *cxn) {
+    ZmRef<Zutcp::MxPlugin::UdpCxn> endpoint =
+      new Zutcp::MxPlugin::UdpCxn{&instance, cxn->info(), {}};
+    endpoint->send(cxn); // resolution returns on a subsequent Tx turn
+    cxn->txContext().close();
+    endpoint->send(cxn);
+  }
   static Zutcp::MxParams parameters(const Zutcp::MxPlugin &instance) {
     return instance.m_params;
   }

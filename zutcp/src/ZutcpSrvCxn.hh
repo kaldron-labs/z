@@ -55,51 +55,39 @@ public:
   bool send(ZuBSpan payload, bool fin = true) {
     if (Base::disconnecting() || Base::txAdmissionClosed() || (!payload && !fin)) return false;
     if (app()->txInvoked()) return send_(payload, fin);
+    if (!payload) return this->enqueue({}, this->dataGen(), true);
     auto tx = this->writer();
-    auto gen = tx.gen();
     tx << payload;
-    if (!tx.flush()) return false;
-    app()->txInvoke([cxn = impl(), fin, gen]() {
-      if (gen != cxn->dataGen() || cxn->disconnecting()) return;
-      if (fin) cxn->fin();
-      cxn->queueTxFlush();
-    });
-    return true;
+    return tx.flush(fin);
   }
   bool send(ZmRef<ZiIOBuf> payload, bool fin = true) {
     if (Base::disconnecting() || Base::txAdmissionClosed() || (!payload && !fin)) return false;
     if (app()->txInvoked()) return send_(ZuMv(payload), fin);
-    auto gen = this->dataGen();
-    if (payload && payload->length && !this->enqueue(ZuMv(payload), gen)) return false;
-    app()->txInvoke([cxn = impl(), fin, gen] {
-      if (gen != cxn->dataGen() || cxn->disconnecting()) return;
-      if (fin) cxn->fin();
-      cxn->queueTxFlush();
-    });
-    return true;
+    if (payload && !payload->length) {
+      if (!fin) return true;
+      payload = nullptr;
+    }
+    return this->enqueue(ZuMv(payload), this->dataGen(), fin);
   }
 
   bool send_(ZmRef<ZiIOBuf> payload, bool fin = true) {
     ZiAssert(app()->txInvoked(), "Zutcp", (),
       "retained send outside Tx thread", return false);
     if (Base::linkClosedTx() || Base::txAdmissionClosed() || (!payload && !fin)) return false;
-    if (payload && payload->length && !this->enqueue_(ZuMv(payload))) return false;
-    if (fin) this->fin();
-    queueTxFlush();
-    return true;
+    if (payload && !payload->length) {
+      if (!fin) return true;
+      payload = nullptr;
+    }
+    return this->enqueue_(ZuMv(payload), 0, fin);
   }
   bool send_(ZuBSpan payload, bool fin = true) {
     ZiAssert(app()->txInvoked(), "Zutcp", (),
       "send outside Tx thread", return false);
     if (Base::linkClosedTx() || Base::txAdmissionClosed() || (!payload && !fin)) return false;
-    if (payload) {
-      auto tx = this->writer_();
-      tx << payload;
-      if (!tx.flush()) return false;
-    }
-    if (fin) this->fin();
-    queueTxFlush();
-    return true;
+    if (!payload) return this->enqueue_({}, 0, true);
+    auto tx = this->writer_();
+    tx << payload;
+    return tx.flush(fin);
   }
 
   bool sendPkt(const ZmRef<ZiIOBuf> &) { return true; }
@@ -198,7 +186,8 @@ public:
   bool sendPersistProbe() { return sendTCPRange({}, false, 0, true); }
   bool sendTLPNew() {
     TxRange range;
-    return Base::txRange(0, range) && sendTCPRange(SentFrameRef::data(range, false));
+    return Base::txRange(0, range) &&
+      sendTCPRange(SentFrameRef::data(range, Base::finalTxRange(range)));
   }
   bool sendTLPRetx(SentFrameRef &ref) { return sendTCPRange(ref); }
   bool retransmit(bool = false, unsigned budget = 2) {

@@ -470,13 +470,13 @@ template <typename C> bool MxPlugin::publish(C *cxn, ZiConnectFn &fn, ZiCxnInfo 
 {
   ZmAssert_(rxInvoked());
   if (m_endpointDrain || !fn) return false;
-  auto mx = fn(info);
-  if (!mx) return false;
-  ZmREF(mx);
-  mx->plugin(static_cast<typename C::State *>(cxn));
-  cxn->mxCxn = mx;
-  mx->connected(mx->rxContext());
-  if (mx->rxContext().disconnected()) mx->disconnect();
+  auto mxCxn = fn(info);
+  if (!mxCxn) return false;
+  ZmREF(mxCxn);
+  mxCxn->plugin(static_cast<typename C::State *>(cxn));
+  cxn->mxCxn = mxCxn;
+  mxCxn->connected(mxCxn->rxContext());
+  if (mxCxn->rxContext().disconnected()) mxCxn->disconnect();
   else cxn->recvMx();
   return true;
 }
@@ -485,28 +485,28 @@ template <typename C, typename L> void MxPlugin::retire(C *cxn, bool peer, L &&d
 {
   ZmAssert_(rxInvoked());
   ++m_cxnRetiring;
-  ZmRef<ZiConnection> mx;
+  ZmRef<ZiConnection> mxCxn;
   cxn->retiring = true;
-  mx = ZmRef<ZiConnection>::acquire(cxn->mxCxn);
+  mxCxn = ZmRef<ZiConnection>::acquire(cxn->mxCxn);
   txRun([
-    this, cxn = ZmRef<C>{cxn}, mx = ZuMv(mx), peer, done = ZuFwd<L>(done)
+    this, cxn = ZmRef<C>{cxn}, mxCxn = ZuMv(mxCxn), peer, done = ZuFwd<L>(done)
   ]() mutable {
-    if (mx) {
-      mx->txUp() = 0;
-      mx->txContext().complete();
-      mx->plugin(nullptr);
+    if (mxCxn) {
+      mxCxn->txUp() = 0;
+      mxCxn->txContext().complete();
+      mxCxn->plugin(nullptr);
     }
     rxRun([
-      this, cxn = ZuMv(cxn), mx = ZuMv(mx), peer, done = ZuMv(done)
+      this, cxn = ZuMv(cxn), mxCxn = ZuMv(mxCxn), peer, done = ZuMv(done)
     ]() mutable {
-      if (mx) {
-	mx->rxUp() = 0;
-	mx->rxContext().complete();
+      if (mxCxn) {
+	mxCxn->rxUp() = 0;
+	mxCxn->rxContext().complete();
 	cxn->mxCxn = nullptr;
       }
       done(); // Remove cold ownership while the drain reference still protects Cxn.
       cxn->releaseCxnRx();
-      if (mx) mx->disconnected(peer);
+      if (mxCxn) mxCxn->disconnected(peer);
       cxn = nullptr;
       --m_cxnRetiring;
       cxnsDrained();
@@ -514,15 +514,15 @@ template <typename C, typename L> void MxPlugin::retire(C *cxn, bool peer, L &&d
   });
 }
 
-template <typename L> void MxPlugin::visit(ZiConnection *mx, L &&fn)
+template <typename L> void MxPlugin::visit(ZiConnection *mxCxn, L &&fn)
 {
-  if (!mx->plugin()) return;
-  switch (mx->info().type) {
+  if (!mxCxn->plugin()) return;
+  switch (mxCxn->info().type) {
     case ZiCxnType::TCPOut:
-      fn(static_cast<Zutcp_::CliCxn::State *>(mx->plugin())->impl());
+      fn(static_cast<Zutcp_::CliCxn::State *>(mxCxn->plugin())->impl());
       break;
     case ZiCxnType::TCPIn:
-      fn(static_cast<Zutcp_::SrvCxn::State *>(mx->plugin())->impl());
+      fn(static_cast<Zutcp_::SrvCxn::State *>(mxCxn->plugin())->impl());
       break;
   }
 }
@@ -934,6 +934,7 @@ void MxPlugin::start_()
     auto error = m_xdp->error();
     mx()->rxRun([this, ok, error = ZuMv(error)]() mutable {
       if (ok && m_xdp->mtu() == m_mtu) {
+	openUDPRouteMonitor();
 	m_tcpChksumOffload = m_xdp->tcpChksumOffload();
 	m_ioState = Up;
 	Engine::started(true);
@@ -999,6 +1000,7 @@ void MxPlugin::stopTx()
     return;
   }
   m_senderStopping = true;
+  if (m_udpRouteFD >= 0) { ::close(m_udpRouteFD); m_udpRouteFD = -1; }
   m_xdp->stop([this](bool ok) {
     auto error = m_xdp->error();
     mx()->txRun([this, ok, error = ZuMv(error)]() mutable {
@@ -1440,6 +1442,13 @@ void MxPlugin::send(ZiConnection *cxn)
 void MxPlugin::disconnect(ZiConnection *cxn, bool peer)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
+  auto &io = cxn->txContext();
+  if (!peer && io.closed()) { close(cxn, false); return; }
+  if (!peer && cxn->txUp() && cxn->plugin() && !io.completed() && io.buf) {
+    io.disconnect();
+    send(cxn);
+    return;
+  }
   if (cxn->info().type == ZiCxnType::UDP) { closeUDP(cxn, peer); return; }
   if (peer) { close(cxn, true); return; }
   cxn->txUp() = 0;

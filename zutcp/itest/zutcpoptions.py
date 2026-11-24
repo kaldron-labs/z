@@ -616,6 +616,11 @@ def tail_check(directory):
     probe = (out / 'tail-probe.packet').read_bytes()
     original = (out / 'tail-original.packet').read_bytes()
     delivered = list(pcap_frames(out / 'to-server.pcap'))
+    assert wire_tcp(original)['flags'] & 1 and wire_tcp(probe)['flags'] & 1
+    for _, frame in delivered:
+        packet = wire_tcp(frame)
+        if packet and packet['dport'] == 18181 and packet['flags'] & 1:
+            assert packet['body'], 'standalone FIN after an accepted final DATA segment'
     producer, tail = [int(value) for value in (out / 'tail-producer').read_text().split()]
     assert result['offset'] == tail and tail == (81600 - 1) // producer * producer
     assert result['offset'] + result['length'] == 81600

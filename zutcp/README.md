@@ -208,6 +208,11 @@ Zutcp constructs TCP wire headers over the original registered source backing.
 Native TCP requires originals within the published payload budget; oversized
 input and a reduced budget fail rather than transparently split or copy the
 source. Positive peer windows retain the whole-original send/recovery policy.
+A TCP stream finish closes admission when the final range is enqueued. The
+packetizer attaches FIN to its last data segment when the peer and congestion
+windows allow the extra sequence number. Empty finishes and windows that fit
+only the payload defer to a FIN-only segment. Loss recovery retains the final
+bytes and FIN through cumulative acknowledgement.
 Hardware zero-copy depends on the kernel and NIC driver.
 
 `MxPlugin::tcpChecksum(...)` owns software TCP checksums and offload seed
@@ -220,7 +225,7 @@ Transmit completion has four distinct boundaries:
 
 | Event | Meaning |
 | --- | --- |
-| Zi completion | The native connection admitted the range to its queue. The callback owns offset advancement and selection of the next buffer. This is not peer delivery. |
+| Zi completion | The native connection admitted the range to its queue. Ordinary callbacks advance their offset and select the next buffer. A marked final buffer drains through local acceptance. |
 | Source dequeue | Packetization removed the original from the producer queue and returned that queue's credit. Recovery can still retain its payload. |
 | Device retirement | AF_XDP CQ or the PMD relinquished its independent access to the submitted slot. This does not imply peer acknowledgment. |
 | Cumulative peer ACK | TCP retires its transport retention. SACK evidence alone does not release the original backing. |
@@ -249,6 +254,16 @@ copies the full received frame for each additional admitted destination with
 available backing. These copies preserve independent mutable receive owners.
 Unregistered or incorrectly sized native output is rejected; there is no hidden
 producer-to-wire payload-copy fallback.
+
+Each UDP endpoint retains its eight most recently inserted peer IP paths on Tx.
+Ports on the same peer share a path. The current peer takes one direct comparison,
+and a change of peer searches the bounded cache before posting a lookup to Rx.
+One rtnetlink subscription per running multiplexer covers route, neighbor,
+address, next-hop, link and policy changes. Active UDP sends check a coarse
+monotonic clock and drain notifications every 10 ms. The first send after
+an idle interval also checks. A notification or socket overrun invalidates
+every endpoint's paths by generation. If the subscription is unavailable,
+the same interval bounds reuse of resolved paths.
 
 One physical ingress reserve serves the instance. Tunable instance and
 per-connection retention limits preserve receive-service headroom; separate
