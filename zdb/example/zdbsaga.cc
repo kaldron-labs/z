@@ -21,7 +21,7 @@
 
 #include <zlib/ZiLog.hh>
 
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 
 #include <zlib/Zfb.hh>
 
@@ -284,7 +284,7 @@ static int run()
 {
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbsaga::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
 
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   ZmRef<DB> db = new DB{};

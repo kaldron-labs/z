@@ -10,7 +10,7 @@
 
 #include "../../zdb/test/ZdbTestCf.hh"
 
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 
 #include <zlib/ZiLog.hh>
 
@@ -178,11 +178,11 @@ void run()
     ZuCheck(!loaded.find("o", ZdbShard{0}));
   }
 
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
-  ZiMultiplex retryMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex retryMx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
 
   {
-    ZiMultiplex emptyMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+    ZiMultiplex emptyMx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
     Zdb empty;
     auto emptyCf = ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()};
     emptyCf.nShards = 1;
@@ -661,7 +661,7 @@ void run()
   Ztc::DBMgr::unwatch();
 
   {
-    ZiMultiplex badMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+    ZiMultiplex badMx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
     Zdb bad;
     auto badCf = ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()};
     badCf.nShards = 1;

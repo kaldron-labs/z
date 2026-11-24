@@ -34,7 +34,7 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiProgram.hh>
 
-#include <zlib/ZvThreadParams.hh>
+#include <zlib/ZiThreadParams.hh>
 
 #include <zlib/ZtcAppTypes.hh>
 #include <zlib/ZtcDB.hh>

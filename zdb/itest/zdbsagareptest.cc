@@ -11,7 +11,7 @@
 #include <zlib/ZfCf.hh>
 
 #include "../../zdb/test/ZdbTestCf.hh"
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 #include <zlib/Zdb.hh>
 
 #include "ZdbMockStore.hh"
@@ -310,7 +310,7 @@ static void policyReplication(bool fragmented)
     "3: {name: zdb, isolated: true}, 4: {name: store, isolated: true}\n"
     "}, rxThread: rx, txThread: tx}\n").p<1>();
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", fields.mx.p<const ZfCf::AnyNode *>())};
 #ifdef ZiMultiplex_DEBUG
   // Five bytes per fresh receive slot splits every replication frame, while
   // the normal pass permits complete/coalesced stream input.
@@ -450,7 +450,7 @@ static void recovery(unsigned mode)
     "  4: {name: store, isolated: true}\n"
     "}, rxThread: rx, txThread: tx}\n").p<1>();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
 
   ZmRef<zdbtest::ReplDB> leader = new zdbtest::ReplDB{};
   ZmRef<zdbtest::ReplDB> follower = new zdbtest::ReplDB{};

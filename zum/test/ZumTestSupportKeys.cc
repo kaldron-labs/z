@@ -18,7 +18,7 @@
 #include "../../zdb/test/ZdbTestCf.hh"
 #include <zlib/ZiLog.hh>
 
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 
 
 #include <zlib/zumd_admin.hh>

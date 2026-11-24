@@ -87,6 +87,7 @@ friend inline ZuStringT<"Ztls.RxStub.Provider"> ZmNHeapID(Provider *);
   unsigned			length = 0, offset = 0;
   ZmAtomic<unsigned>		emptyInitial{0}, deliveries{0}, errors{0};
   Provider(ZiMultiplex *mx, bool stub_) : ZiMxPlugin{mx}, stub{stub_} { }
+  void attach(ZiMultiplex *mx_) { mx(mx_); }
   Zi::IOBufPool *allocator(Zi::IOBufType::T type, unsigned, unsigned, unsigned) override
   {
     if (type == Zi::IOBufType::TxTCP) return txPool;
@@ -323,6 +324,8 @@ void txGenerations(Client &client, ZmRef<Client::Link> link)
 void run(bool stub, bool corrupt, bool partial, bool stale, bool txErrors = false)
 {
   ZuTestScopeRT(run);
+  ZmRef<Provider> transport = new Provider{nullptr, stub};
+  auto		  provider = transport.ptr();
   ZiMultiplex	  mx{ZiMxParams{}
       .scheduler(
 	[](auto &s)
@@ -336,10 +339,8 @@ void run(bool stub, bool corrupt, bool partial, bool stale, bool txErrors = fals
     }).thread(4, [](auto &t) { t.isolated(1); });
   })
       .rxThread(1)
-      .txThread(2)};
-  ZmRef<Provider> transport = new Provider{&mx, stub};
-  auto		  provider = transport.ptr();
-  mx.plugin(ZuMv(transport));
+      .txThread(2), ZuMv(transport)};
+  provider->attach(&mx);
   ZuCheckRT(!transport && mx.plugin() == provider);
   Client client;
   auto	 plain = Client::Link::rxAllocator(&mx);

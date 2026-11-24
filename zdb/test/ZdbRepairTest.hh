@@ -17,7 +17,7 @@
 #include <zlib/ZtString.hh>
 #include <zlib/ZfCf.hh>
 #include <zlib/ZiMultiplex.hh>
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 #include <zlib/Zdb.hh>
 #include <zlib/ZfbReflect.hh>
 
@@ -331,8 +331,8 @@ inline void repairSaga(
   ZuTestScopeRT(repairSaga);
   using DB = RepairDB;
   using M = ZdbAnySaga<RepairDB>;
-  ZiMultiplex mx{ZvMxParams("mx", mxCf)};
-  ZiMultiplex retryMx{ZvMxParams("mx", mxCf)};
+  ZiMultiplex mx{ZiMxParams_load("mx", mxCf)};
+  ZiMultiplex retryMx{ZiMxParams_load("mx", mxCf)};
   ZmRef<DB> db = new DB{};
   db->init(ZdbCf{cf}, &mx, {}, store);
   auto table = db->initTable<RepairRow>("repair_saga");

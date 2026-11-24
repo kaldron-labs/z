@@ -16,7 +16,7 @@
 #include <zlib/ZfCf.hh>
 
 #include "../../zdb/test/ZdbTestCf.hh"
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 
 #include <zlib/Zdb.hh>
 
@@ -108,7 +108,7 @@ static void run()
   ZuPtr<ZiMultiplex> previousMx;
   try {
     auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+    mx = new ZiMultiplex{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
 
 
     store = new zdbtest::Store();
@@ -206,7 +206,7 @@ static void run()
     db->final();
 
     previousMx = ZuMv(mx);
-    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+    mx = new ZiMultiplex{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
     db->init(ZdbCf{cfFields.zdb.p<const ZfCf::AnyNode *>()}, mx, ZdbHandler{
       .upFn = [](Zdb *, ZdbHost *host) {
 	ZiLOG(Info, "zdbsmoketest", ([id = host ? ZuID{host->id()} : ZuID{"unset"}](auto &s) {

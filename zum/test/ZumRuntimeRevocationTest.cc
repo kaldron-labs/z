@@ -12,7 +12,7 @@
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiLog.hh>
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 #include <zlib/ZhttpNative.hh>
 #include <zlib/ZdbMemStore.hh>
 #include <zlib/ZtlsRandom.hh>
@@ -277,7 +277,7 @@ static void runtimeRevocation()
   ZiLog::start();
   auto config = dbConfig();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())
     };
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   ZmRef<TestDB> db = new TestDB{};

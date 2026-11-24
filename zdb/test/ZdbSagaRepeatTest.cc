@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 #include <zlib/ZiLog.hh>
 
 #include "ZdbMockStore.hh"
@@ -40,7 +40,7 @@ static void execute(uint64_t repeats, bool rollback)
   ZuTestScopeRT(execute);
   auto cf = config();
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", fields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   using DB = zdbtest::LiveDB;
   ZmRef<DB> db = new DB{};
@@ -98,8 +98,8 @@ static void invalidRecovery(bool overflow)
   ZuTestScopeRT(invalidRecovery);
   auto cf = config();
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
-  ZiMultiplex retryMx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex retryMx{ZiMxParams_load("mx", fields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
   using DB = zdbtest::LiveDB;

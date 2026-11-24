@@ -186,7 +186,7 @@ static void store(unsigned count, unsigned rounds, unsigned width)
   using T = zdbtest::Order;
   auto config = RepairBench::config();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   check(mx.start());
   auto store = newStore();
   auto storeFields = ZfCf::handler<zdbtest::ConfigFields>(
@@ -319,7 +319,7 @@ static void sagas(unsigned count, unsigned rounds, unsigned width)
   using M = ZdbAnySaga<SagaDB>;
   auto config = RepairBench::config();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   auto store = newStore();
   ZmRef<SagaDB> db = new SagaDB{};
   ZmSemaphore active, completed;
@@ -387,7 +387,7 @@ static void scheduler(unsigned count, unsigned rounds)
 {
   auto config = RepairBench::config();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   check(mx.start());
   Samples samples((count + 1)*3);
   for (unsigned round = 0; round < rounds; ++round) {

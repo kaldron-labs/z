@@ -17,7 +17,7 @@
 
 #include "../../zdb/test/ZdbTestCf.hh"
 
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 
 #include <zlib/zumd_db.hh>
 #include <zlib/zumd_db_ops.hh>
@@ -663,7 +663,7 @@ static void memberRecovery()
   ZuTestScopeRT(memberRecovery);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZuCheckRT(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DB> context;
@@ -790,7 +790,7 @@ static void rekeyRecovery()
   ZuTestScopeRT(rekeyRecovery);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZuCheckRT(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DB> context;
@@ -958,7 +958,7 @@ static void invitationRecovery()
   ZuTestScopeRT(invitationRecovery);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZuCheckRT(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DB> context;
@@ -1093,7 +1093,7 @@ static void roleCreationRecovery()
   ZuTestScopeRT(roleCreationRecovery);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZuCheckRT(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DB> context;
@@ -1256,7 +1256,7 @@ static void catalogRecovery(bool fail, unsigned cut = 0)
   ZuTestScopeRT(catalogRecovery);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZuCheckRT(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DB> context;
@@ -1513,7 +1513,7 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
   ZuTestScopeRT(roleRemoval);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZuCheckRT(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DB> context;
@@ -1658,7 +1658,7 @@ static void restart()
   ZuTestScopeRT(restart);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZuCheckRT(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DB> context;
@@ -1696,7 +1696,7 @@ static void grantUpdate()
   ZuTestScopeRT(grantUpdate);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZuCheckRT(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DB> context;
@@ -1741,7 +1741,7 @@ static void sagaRecovery()
   ZuTestScopeRT(sagaRecovery);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZuCheckRT(mx.start());
   ZuGuard stopMx{[&mx] { mx.stop(); }};
   ZmRef<Zum::DB> context;

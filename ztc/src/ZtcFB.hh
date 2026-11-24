@@ -29,7 +29,7 @@
 #include <zlib/ZtcAppTypes.hh>
 #include <zlib/ZtcRAGMap.hh>
 
-#include <zlib/ZvThreadParams.hh>
+#include <zlib/ZiThreadParams.hh>
 
 // SemVer retains the packed uint32 wire representation.
 namespace Ztc {

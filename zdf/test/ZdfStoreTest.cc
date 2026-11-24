@@ -18,7 +18,7 @@
 #include <zlib/ZfCf.hh>
 
 #include "../../zdb/test/ZdbTestCf.hh"
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 
 #include <zlib/ZdbMemStore.hh>
 
@@ -107,7 +107,7 @@ int main(int argc, char **argv)
 
   try {
     auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+    mx = new ZiMultiplex{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
 
 
     db = new Zdb();

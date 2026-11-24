@@ -22,7 +22,7 @@
 
 #include "../../zdb/test/ZdbTestCf.hh"
 #include <zlib/ZfCLI.hh>
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/Zdb.hh>
 
@@ -321,7 +321,7 @@ static void exercise(unsigned mode)
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
   ZuPtr<ZiMultiplex> previousMx;
-  ZuPtr<ZiMultiplex> mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZuPtr<ZiMultiplex> mx = new ZiMultiplex{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<DB> db = new DB{};
   db->init(ZdbCf{cf}, mx, {});
   auto orders = db->initTable<zdbtest::Order>("pq_saga_order");
@@ -409,7 +409,7 @@ static void exercise(unsigned mode)
       db->final();
       db = new zdbtest::SagaDB{};
       previousMx = ZuMv(mx);
-      mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+      mx = new ZiMultiplex{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
       db->init(ZdbCf{cf}, mx, {});
       orders = db->initTable<zdbtest::Order>("pq_saga_order");
       items = db->initTable<zdbtest::Order>("pq_saga_item");
@@ -477,7 +477,7 @@ static void batches(
     ZmRef<zdbtest::SagaDB> context;
     auto start = [&db, &orders, &items, &context, &cf, &cfFields, &mx, &previousMx]() {
       previousMx = ZuMv(mx);
-      mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+      mx = new ZiMultiplex{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
       db = new DB{};
       db->init(ZdbCf{cf}, mx, {});
       orders = db->initTable<zdbtest::Order>("pq_saga_order");
@@ -668,7 +668,7 @@ static void namespaces(bool maxID)
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
   ZuPtr<ZiMultiplex> previousMx;
-  ZuPtr<ZiMultiplex> mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZuPtr<ZiMultiplex> mx = new ZiMultiplex{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<Zdb> db = new Zdb{};
   db->init(ZdbCf{cf}, mx, {});
   auto orders = db->initTable<zdbtest::Order>("pq_saga_order");
@@ -729,7 +729,7 @@ static void namespaces(bool maxID)
 	  ZuCheckRT(mx->stop());
 	  db->final();
 	  previousMx = ZuMv(mx);
-	  mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+	  mx = new ZiMultiplex{ZiMxParams_load("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
 	  db->init(ZdbCf{cf}, mx, {});
 	  orders = db->initTable<zdbtest::Order>("pq_saga_order");
 	  ZuCheckRT(mx->start());

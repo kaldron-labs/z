@@ -10,7 +10,7 @@
 
 #include "../../zdb/test/ZdbTestCf.hh"
 
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 
 #include <zlib/ZiLog.hh>
 
@@ -423,7 +423,7 @@ static void indexes()
   using namespace Zdb_;
   auto config = cf(true);
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", fields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<zdbtest::LiveDB> db =
     new zdbtest::LiveDB{};
@@ -501,7 +501,7 @@ static void registration()
   ZuCheck(reject({zdbtest::liveSagaDef()}));
   auto config = cf(true);
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", fields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   db->init(ZdbCf{fields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {}, store);
   auto orders = db->initTable<zdbtest::Order>("o");
@@ -559,7 +559,7 @@ static void tableIDs()
   ZuTestScopeRT(tableIDs);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<Zdb> db = new Zdb{};
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {}, store);
@@ -595,7 +595,7 @@ static void tableBufPolicies()
   using namespace Zdb_;
   auto config = cf(true);
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", fields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<Zdb> db = new Zdb{};
   db->init(ZdbCf{fields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {}, store);
@@ -689,7 +689,7 @@ static void collisions()
 
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZuCheck(mx.start());
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   auto storeFields = ZfCf::handler<zdbtest::ConfigFields>(
@@ -855,7 +855,7 @@ static void repairBindings()
   using namespace Zdb_;
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZuCheckRT(mx.start());
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   auto storeFields = ZfCf::handler<zdbtest::ConfigFields>(
@@ -894,7 +894,7 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
 
   auto config = cf(separate);
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
 
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<zdbtest::LiveDB> db =
@@ -1055,8 +1055,8 @@ static void recovery(
   int intentStep = cut == 1 ? 1 : cut == 5 ? 0 : cut == 6 ? 2 : -1;
   auto config = cf(separate);
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
-  ZiMultiplex retryMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex retryMx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
 
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1278,8 +1278,8 @@ static void repeatedRecovery(uint64_t repeats)
   ZuTestScopeRT(repeatedRecovery);
   auto config = cf(true);
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
-  ZiMultiplex retryMx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex retryMx{ZiMxParams_load("mx", fields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
   using DB = zdbtest::LiveDB;
@@ -1379,8 +1379,8 @@ static void recoveryQueue(bool read = false)
   ZuTestScopeRT(recoveryQueue);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
-  ZiMultiplex retryMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex retryMx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
   ZmRef<zdbtest::LiveDB> db =
@@ -1475,8 +1475,8 @@ static void recoveryError(unsigned mode)
   ZuTestScopeRT(recoveryError);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
-  ZiMultiplex retryMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex retryMx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
   ZmRef<zdbtest::LiveDB> db =
@@ -1672,7 +1672,7 @@ static void catalogStartup()
   ZuTestScope(catalogStartup);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  auto params = ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>());
+  auto params = ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>());
   ZiMultiplex runs[] = {
     ZiMultiplex{params}, ZiMultiplex{params}, ZiMultiplex{params},
     ZiMultiplex{params}, ZiMultiplex{params}, ZiMultiplex{params},
@@ -1704,7 +1704,7 @@ static void catalogCorrupt(unsigned mode)
   ZuTestScope(catalogCorrupt);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  auto params = ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>());
+  auto params = ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>());
   ZiMultiplex runs[] = {
     ZiMultiplex{params}, ZiMultiplex{params}, ZiMultiplex{params}};
   unsigned next = 0;
@@ -1727,8 +1727,8 @@ static void findFail()
   using M = ZdbAnySaga<zdbtest::LiveDB>;
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
-  ZiMultiplex retryMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex retryMx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
   ZmRef<DB> db = new DB{};
@@ -1793,7 +1793,7 @@ static void scanError(bool steps)
   ZuTestScopeRT(scanError);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
   ZmRef<zdbtest::LiveDB> db =
@@ -1829,7 +1829,7 @@ static void scanFail(bool steps, bool stopPending)
   ZuTestScopeRT(scanFail);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
   ZmRef<zdbtest::LiveDB> db =
@@ -1902,7 +1902,7 @@ static void admission()
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
   {
-    ZiMultiplex probeMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+    ZiMultiplex probeMx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
     ZmRef<DB> unregistered = new DB{};
     unregistered->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &probeMx, {},
       new zdbtest::Store{});
@@ -1915,7 +1915,7 @@ static void admission()
     ZuCheck(probeMx.stop());
     unregistered->final();
   }
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<DB> db = new DB{};
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {}, store);
@@ -1990,7 +1990,7 @@ static void requiredAdmission()
   using M = ZdbAnySaga<SagaDB>;
   auto config = cf(true);
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<SagaDB> db = new SagaDB{};
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {}, store);
@@ -2033,7 +2033,7 @@ static void payloadAdmission(unsigned size)
   using M = ZdbAnySaga<zdbtest::PayloadDB>;
   auto config = cf(true);
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<DB> db = new DB{};
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {}, store);
@@ -2094,8 +2094,8 @@ static void admissionDeactivated(bool read = false)
   ZuTestScope(admissionDeactivated);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
-  ZiMultiplex retryMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex retryMx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
   ZmRef<zdbtest::LiveDB> db =
@@ -2171,8 +2171,8 @@ static void gracefulStop(bool failed)
   ZuTestScope(gracefulStop);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
-  ZiMultiplex retryMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex retryMx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
   ZmRef<zdbtest::LiveDB> db =
@@ -2270,8 +2270,8 @@ static void recoveryCleanup(unsigned cut)
   ZuTestScope(recoveryCleanup);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
-  ZiMultiplex retryMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex retryMx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
   ZmRef<zdbtest::LiveDB> db =
@@ -2373,8 +2373,8 @@ static void recoveryPages(bool orphan)
   enum { N = Zdb_::SagaScanSize + 1 }; // cross both main and step scan pages
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
-  ZiMultiplex retryMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex retryMx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
   ZmRef<zdbtest::LiveDB> db =
@@ -2482,7 +2482,7 @@ static void rollback(
   using M = ZdbAnySaga<zdbtest::LiveDB>;
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<DB> db = new DB{};
   ZmSemaphore active;
@@ -2570,9 +2570,9 @@ static void abandonRollback()
   using M = ZdbAnySaga<zdbtest::LiveDB>;
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
-  ZiMultiplex retryMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
-  ZiMultiplex repairedMx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex retryMx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex repairedMx{ZiMxParams_load("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
   ZmRef<DB> db = new DB{};

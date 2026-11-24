@@ -29,7 +29,7 @@
 
 #include <zlib/ZtlsVault.hh>
 
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 #include <zlib/ZhttpNative.hh>
 
 #include <zlib/ZtcApp.hh>
@@ -492,7 +492,7 @@ int main(int argc, char **argv)
     Zum::String ssfIssuer = options.ssfIssuer;
     if (!ssfIssuer) ssfIssuer = ssfConfig.issuer;
     if (!ssfIssuer) ssfIssuer = options.issuer;
-    ZiMultiplex mx{ZvMxParams("mx", node(ConfigField::Mx))};
+    ZiMultiplex mx{ZiMxParams_load("mx", node(ConfigField::Mx))};
     ZmRef<DB> db = new DB{};
     db->requests = new Zum::Requests{};
     db->bootstrapRequests = new Zum::Requests{};

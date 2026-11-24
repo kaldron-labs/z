@@ -14,7 +14,7 @@
 #include <zlib/ZfCf.hh>
 
 #include "../../zdb/test/ZdbTestCf.hh"
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 
 #include <zlib/ZiLog.hh>
 
@@ -68,7 +68,7 @@ int main()
   auto leaderCfFields = ZfCf::handler<zdbtest::ConfigFields>(leaderCf).ctor();
   auto followerCf = config(followerPath, "1");
 
-  ZiMultiplex mx{ZvMxParams("mx", leaderCfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZiMxParams_load("mx", leaderCfFields.mx.p<const ZfCf::AnyNode *>())};
 #ifdef ZiMultiplex_DEBUG
   // Fresh transport slots start with a five-byte read, splitting the frame
   // header while message storage remains separate from the receive target.

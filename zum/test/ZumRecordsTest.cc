@@ -19,7 +19,7 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/ZvMxParams.hh>
+#include <zlib/ZiMxConfig.hh>
 
 #include <zlib/ZdbMemStore.hh>
 
