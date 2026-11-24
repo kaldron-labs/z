@@ -34,7 +34,7 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/ZvRingParams.hh>
+#include <zlib/ZiRingParams.hh>
 
 #include <zlib/ZhttpNative.hh>
 #include <zlib/Zws.hh>
