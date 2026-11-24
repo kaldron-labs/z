@@ -89,14 +89,12 @@ static void testUDPLeases()
 {
   ZuTestScope(testUDPLeases);
   auto env = ZutcpTest::fixtureEnv();
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
-    .rxThread(1).txThread(2)};
-  ZmRef<UDPLeaseTest::Device> device = new UDPLeaseTest::Device{&mx};
   ZmRef<Zutcp::Instance> stack = new Zutcp::Instance;
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
+    .rxThread(1).txThread(2), stack};
+  ZmRef<UDPLeaseTest::Device> device = new UDPLeaseTest::Device{&mx};
   ZmRef<Zpkt::Nif> backend = device;
   bool configured = stack->init(&mx, env, ZuMv(backend), {}).is<void>();
-  auto plugin = stack;
-  mx.plugin(ZuMv(plugin));
   auto tx = mx.allocator<Zi::IOBufType::TxUDP, ZiIOBuf, 128>(1);
   auto app = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 128>();
   bool started = configured && tx && app && mx.start();

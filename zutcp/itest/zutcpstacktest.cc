@@ -1000,12 +1000,13 @@ static void testStack()
   auto peer = unsigned(strtoul(getenv("ZPKT_RX_TEST_PEER_IFINDEX"), nullptr, 10));
   ZmRef<Zpkt::Env> env = new Zpkt::Env, freshEnv = new Zpkt::Env;
   ZiMultiplex mx{ZiMxParams{}.rxBufSize(RxCount).rxQuantum(1)
-    .scheduler([](auto &p) { p.nThreads(3).thread(3, [](auto &t) { t.isolated(true); }); })};
+    .scheduler([](auto &p) { p.nThreads(3).thread(3, [](auto &t) { t.isolated(true); }); }),
+    ZmRef{new Zutcp::Instance}};
   ZmSemaphore received;
   ZmRef<Zi::IOBuf> input[RxCount], extra;
   unsigned packets = 0;
   bool onRx = true;
-  auto instance = ZutcpTest::makeInstance(env, &mx, index, 3, {
+  auto instance = ZutcpTest::initInstance(env, &mx, index, 3, {
     .packet = [&mx, &input, &extra, &packets, &onRx, &received](ZmRef<Zi::IOBuf> buf) {
       if (buf->length < 14 || buf->data()[12] != 0x88 || buf->data()[13] != 0xb5) return;
       onRx &= mx.invoked(mx.rxThread()) && buf->registered();
@@ -1016,7 +1017,6 @@ static void testStack()
     .rxRetainFramesPerCxn = 1, .maxData = 8192, .closedTupleRingSize = 3,
     .tfoCookieCacheSize = 3}, 0);
   auto stack = instance.ptr();
-  mx.plugin(ZuMv(instance));
   const auto initializedParams = ZutcpTest::Instance::parameters(*stack);
   ZuCHECK(initializedParams.packetCount == 2 &&
       stack->txAdmission().controlCount == 2 && stack->txAdmission().reserved == 3 &&
@@ -1513,7 +1513,8 @@ static void testStack()
   for (auto &p : input) p = nullptr;
   for (auto &p : reserves) p = nullptr;
   probe.packet = nullptr;
-  auto freshStack = ZutcpTest::makeInstance(freshEnv, &mx, index, 3, {.packetCount = 2}, 0);
+  auto freshStack = ZutcpTest::initInstance(ZmRef{new Zutcp::Instance},
+    freshEnv, &mx, ZutcpTest::openXdp(freshEnv, &mx, index, 3, 0), {.packetCount = 2});
   auto conflicting = initializedParams;
   conflicting.controlBufCount = 3;
   conflicting.closedTupleRingSize = 2;

@@ -66,12 +66,12 @@ static bool wait(ZmSemaphore &event) { return !event.timedwait(Zm::now(6)); }
 struct Peer {
   Zpkt::Env *env = nullptr;
   ZmRef<Zpkt::Nif> device;
-  ZmRef<Zutcp::Instance> tcp;
+  ZmRef<Zutcp::Instance> tcp = new Zutcp::Instance;
   ZiMultiplex mx{ZiMxParams{}.rxBufSize(128).rxQuantum(16).scheduler([](auto &s) {
     s.nThreads(5)
       .thread(3, [](auto &t) { t.name("appRx"); t.isolated(true); })
       .thread(4, [](auto &t) { t.name("appTx"); t.isolated(true); });
-  })};
+  }), tcp};
   Zi::IOBufAllocator *rx = nullptr, *reconnectRx = nullptr, *udpRx = nullptr;
   Zi::IOBufAllocator *tx = nullptr, *smallTx = nullptr, *udpTx = nullptr, *app = nullptr;
 
@@ -95,7 +95,6 @@ struct Peer {
     CHECK(env->nif(&conflictingMx, link.name).is<ZeException>() && device->mx() == &mx,
       "a conflicting multiplexer preserves the originally opened device");
     auto moving = device;
-    tcp = new Zutcp::Instance;
     if (!checked(tcp->init(&mx, env, ZuMv(moving), tcpParams()), "move the initialized device into Zutcp"))
       return false;
     CHECK(!moving && tcp->init(&mx, env, ZuMv(moving), tcpParams()).is<void>(),
@@ -109,12 +108,8 @@ struct Peer {
 	"conflicting TCP init leaves a different eligible device with its caller");
       other->final();
     }
-    auto plugin = tcp;
-    mx.plugin(ZuMv(plugin));
-    auto repeated = tcp;
-    mx.plugin(ZuMv(repeated));
-    CHECK(mx.plugin() == tcp.ptr() && repeated == tcp,
-      "same initialized plugin registration is idempotent before allocating");
+    CHECK(mx.plugin() == tcp.ptr(),
+      "constructor-injected plugin retains identity after repeated initialization");
 
     if (index) rx = mx.allocator<Zi::IOBufType::Rx, StreamInput>(128);
     else rx = mx.allocator<Zi::IOBufType::Rx, TCPInput>(128);
@@ -782,8 +777,6 @@ static void testDpdk()
     "repeat init checks a supplied device's allocation before comparing ownership");
   CHECK(checksFatalHandoff("device-mx", "xdp->mx() == mx_"),
     "device handoff to a different multiplexer is fatal");
-  CHECK(checksFatalHandoff("plugin-mx", "plugin->mx() == this"),
-    "plugin registration with a different multiplexer is fatal");
   if (!checked(fixture.devices(), "initialize EAL and register two named stock ring ports")) return;
   ZuTestCallRT(noStartFinal, fixture, false);
   ZuTestCallRT(noStartFinal, fixture, true);

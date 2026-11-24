@@ -178,15 +178,14 @@ struct TCPChecksumTest {
   static void testRestartSelection() {
     ZuTestScopeRT(testRestartSelection);
     auto env = ZutcpTest::fixtureEnv();
+    ZmRef<Instance> stack = new Instance;
     ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
-      .rxThread(1).txThread(2)};
+      .rxThread(1).txThread(2), stack};
     ZmRef<Device> device = new Device{&mx};
     ZmRef<Zpkt::Nif> backend = device;
-    ZmRef<Instance> stack = new Instance;
     bool configured = stack->init(&mx, env, ZuMv(backend), {}).is<void>();
     ZuCheckRT(configured, log_("configure checksum capability fixture"));
     if (!configured) return;
-    mx.plugin(ZmRef{stack});
     unsigned runs = 0;
     bool exact = true;
     for (bool offload : {false, true, false}) {

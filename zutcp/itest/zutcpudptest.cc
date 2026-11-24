@@ -220,16 +220,15 @@ int main(int argc, char **argv)
   bool server = !strcmp(argv[4], "server"), mixed = !strcmp(argv[5], "mixed");
   if (!ifindex || !local || !peer || local.type() != peer.type()) return 2;
   ZmRef<Zpkt::Env> env = new Zpkt::Env;
+  ZmRef<Zutcp::Instance> transport = new Zutcp::Instance;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(4).thread(4, [](auto &t) { t.isolated(true); });
-  })};
+  }), transport};
   auto xdp = ZutcpTest::openXdp(env, &mx, ifindex, 4);
-  ZmRef<Zutcp::Instance> transport = new Zutcp::Instance;
   auto initialized = transport->init(&mx, env, ZuMv(xdp), {});
   if (initialized.is<ZeException>()) {
     ZiLogEvent(ZuMv(initialized.p<ZeException>())); return 1;
   }
-  mx.plugin(ZuMv(transport));
   auto udpRx = mx.allocator<Zi::IOBufType::Rx, Input<true>>();
   auto udpTx = mx.allocator<Zi::IOBufType::TxUDP>(16);
   auto tcpRx = mixed ? mx.allocator<Zi::IOBufType::Rx, Input<false>>() : nullptr;

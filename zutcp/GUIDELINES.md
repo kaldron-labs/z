@@ -1,7 +1,7 @@
 # Instance ownership boundary
 
-Applications statically construct one Instance, configure it through
-init(mx, env, ZuMv(nif), params), and install it through ZiMultiplex::plugin() before allocator
+Applications construct one Instance and inject it through the ZiMultiplex
+constructor. Initialize it through init(mx, env, ZuMv(nif), params) before allocator
 registration. Init is idempotent while stopped and fails in every other engine
 state. Start requires initialization. Start/stop use ZmEngine, including queued
 opposite requests, and report completion through ZiMxPlugin's existing callbacks.

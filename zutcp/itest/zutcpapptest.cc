@@ -168,12 +168,11 @@ static bool service(
     .scheduler([](auto &s) {
       s.nThreads(6).thread(6, [](auto &t) { t.isolated(true); });
       for (unsigned i = 1; i <= 4; ++i) s.thread(i, [](auto &t) { t.isolated(1); });
-    })};
+    }), native ? ZmRef<Zutcp::Instance>{new Zutcp::Instance} : ZmRef<Zutcp::Instance>{}};
   Zutcp::Instance *stack = nullptr;
   if (native) {
-    auto instance = ZutcpTest::makeInstance(env, &mx, interface, 6, {.rxRetainFramesPerCxn = 64});
+    auto instance = ZutcpTest::initInstance(env, &mx, interface, 6, {.rxRetainFramesPerCxn = 64});
     stack = instance.ptr();
-    mx.plugin(ZuMv(instance));
   }
 #ifdef ZUTCP_APP_TLS
   ZuCSpan alpn[] = {"zutcp-test"};

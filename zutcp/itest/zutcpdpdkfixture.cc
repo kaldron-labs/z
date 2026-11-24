@@ -204,10 +204,6 @@ int fatalHandoff(ZuCSpan scenario)
   if (scenario == "device-mx") {
     ZiMultiplex wrong;
     tcp->init(&wrong, env, ZuMv(device), tcpParams());
-  } else if (scenario == "plugin-mx") {
-    if (tcp->init(&mx, env, ZuMv(device), tcpParams()).is<ZeException>()) return 6;
-    ZiMultiplex wrong;
-    wrong.plugin(ZuMv(tcp));
   } else {
     ZpktDpdkTest::RingPort another;
     if (scenario == "repeat") {

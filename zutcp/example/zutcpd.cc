@@ -191,10 +191,11 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
   ZmRef<Zpkt::Env> env = new Zpkt::Env;
+  ZmRef<Zutcp::Instance> instance = new Zutcp::Instance;
   ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
     s.nThreads(5);
     for (unsigned i = 1; i <= 5; ++i) s.thread(i, [](auto &t) { t.isolated(true); });
-  })};
+  }), instance};
   auto opened = openNif(env, &mx, argv[1], 5);
   if (opened.is<ZeException>()) {
     ZiLogEvent(ZuMv(opened).p<ZeException>());
@@ -202,7 +203,6 @@ int main(int argc, char **argv)
     return 1;
   }
   ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
-  ZmRef<Zutcp::Instance> instance = new Zutcp::Instance;
   auto configured = instance->init(&mx, env, ZuMv(xdp), {});
   if (configured.is<ZeException>()) {
     xdp->final();
@@ -211,7 +211,6 @@ int main(int argc, char **argv)
     ZiLog::stop();
     return 1;
   }
-  mx.plugin(ZuMv(instance));
   App app{server, uint16_t(port), count, waitEOF};
   Ztcp::ServerParams params{&mx, "3", "4"};
   params.rxAllocator(AppCxn::rxAllocator(&mx)).txAllocator(AppCxn::txAllocator(&mx));

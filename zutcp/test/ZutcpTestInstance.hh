@@ -275,7 +275,7 @@ public:
   }
   static ZuUnion<void, ZeException> apply(Instance &instance, Zutcp::InstanceParams params)
   {
-    if (instance.Zutcp::Instance::mx())
+    if (instance.m_xdpEnv)
       return apply(static_cast<Zutcp::Instance &>(instance), ZuMv(params));
     auto xdp = fixtureXdp(instance.mx());
     return instance.Zutcp::Instance::init(
@@ -309,10 +309,10 @@ inline ZmRef<Zpkt::Nif> openXdp(
   return opened.p<Zpkt::Nif *>();
 }
 
-inline ZmRef<Zutcp::Instance> makeInstance(
-  Zpkt::Env *env, ZiMultiplex *mx, ZmRef<Zpkt::Nif> &&xdp, Zutcp::InstanceParams params)
+inline ZmRef<Zutcp::Instance> initInstance(
+  ZmRef<Zutcp::Instance> instance, Zpkt::Env *env, ZiMultiplex *mx,
+  ZmRef<Zpkt::Nif> &&xdp, Zutcp::InstanceParams params)
 {
-  ZmRef<Zutcp::Instance> instance = new Zutcp::Instance;
   auto result = instance->init(mx, env, ZuMv(xdp), ZuMv(params));
   if (result.is<ZeException>()) {
     xdp->final();
@@ -321,11 +321,12 @@ inline ZmRef<Zutcp::Instance> makeInstance(
   return instance;
 }
 
-inline ZmRef<Zutcp::Instance> makeInstance(
+inline ZmRef<Zutcp::Instance> initInstance(
   Zpkt::Env *env, ZiMultiplex *mx, unsigned interface, unsigned sender,
   Zutcp::InstanceParams params = {}, unsigned spin = 1000)
 {
-  return makeInstance(env, mx, openXdp(env, mx, interface, sender, spin), ZuMv(params));
+  return initInstance(ZmRef{static_cast<Zutcp::Instance *>(mx->plugin())},
+    env, mx, openXdp(env, mx, interface, sender, spin), ZuMv(params));
 }
 
 template <typename M = ZiMultiplex> struct MxStorage {

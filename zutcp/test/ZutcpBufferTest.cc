@@ -60,7 +60,6 @@ friend inline ZuStringT<"Zutcp.Test.PacketPlugin"> ZmNHeapID(PacketPlugin *);
   Zi::IOBufType::T requestedType = Zi::IOBufType::App;
   unsigned requestedSize = 0, requestedAlign = 0, requestedCount = 0, requests = 0;
 
-  explicit PacketPlugin(ZiMultiplex *mx) : ZiMxPlugin{mx} { }
   Zi::IOBufPool *allocator(
       Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count) override {
     ++requests;
@@ -110,9 +109,8 @@ friend inline ZuStringT<"Zutcp.BufferTest.App"> ZmNHeapID(App *);
 static void testAllocatorDirection()
 {
   ZuTestScope(testAllocatorDirection);
-  ZiMultiplex mx;
-  auto provider = new PacketPlugin{&mx};
-  mx.plugin(ZmRef<PacketPlugin>{provider});
+  auto provider = new PacketPlugin;
+  ZiMultiplex mx{{}, ZmRef<PacketPlugin>{provider}};
   ZmRef<App> appRef = new App{&mx};
   auto &app = *appRef;
   ZutcpTest::Params defaults{&mx};
@@ -162,12 +160,8 @@ void testTxPacketGeometry(bool registered)
 {
   ZuTestScopeRT(testTxPacketGeometry);
 
-  ZiMultiplex mx;
-  PacketPlugin *plugin = nullptr;
-  if (registered) {
-    plugin = new PacketPlugin{&mx};
-    mx.plugin(ZmRef<PacketPlugin>{plugin});
-  }
+  auto plugin = registered ? new PacketPlugin : nullptr;
+  ZiMultiplex mx{{}, ZmRef<PacketPlugin>{plugin}};
   auto allocator = ZutcpTest::pktTxAllocator<1536, 4096, "Zutcp.Test.Pkt.Tx">(&mx);
   using Heap = ZuStringT<"Zutcp.Test.Pkt.Tx">;
   if (registered) {
@@ -348,9 +342,8 @@ void testPacketAllocRoles()
 static void testRxSliceReturn()
 {
   ZuTestScopeRT(testRxSliceReturn);
-  ZiMultiplex mx;
-  auto plugin = new PacketPlugin{&mx};
-  mx.plugin(ZmRef<PacketPlugin>{plugin});
+  auto plugin = new PacketPlugin;
+  ZiMultiplex mx{{}, ZmRef<PacketPlugin>{plugin}};
   auto allocator = ZutcpTest::pktTxAllocator<>(&mx);
   auto heap = mx.allocator<Zi::IOBufType::App>();
   auto packet = allocator->allocBuf(nullptr, PacketBacking::Payload);

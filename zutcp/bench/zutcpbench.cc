@@ -254,7 +254,9 @@ struct XdpEnvOwner {
 class App : private XdpEnvOwner, public ZiMultiplex {
 public:
   explicit App(const Config &config, ZiMxParams params) :
-    ZiMultiplex{ZuMv(params)}, m_config{config} {
+    ZiMultiplex{ZuMv(params), config.native ?
+      ZmRef<Zutcp::Instance>{new Zutcp::Instance} : ZmRef<Zutcp::Instance>{}},
+    m_config{config} {
     if (config.native) {
       char name[IF_NAMESIZE];
       if (!if_indextoname(config.interface, name)) { m_failed = 1; return; }
@@ -266,7 +268,7 @@ public:
       }
       ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
       Zutcp::Instance::Params settings{.packetCount = config.reserve};
-      ZmRef<Zutcp::Instance> instance = new Zutcp::Instance;
+      auto instance = static_cast<Zutcp::Instance *>(plugin());
       auto initialized = instance->init(this, env, ZuMv(xdp), settings);
       if (initialized.is<ZeException>()) {
 	xdp->final();
@@ -275,7 +277,6 @@ public:
         m_failed = 1;
         return;
       }
-      plugin(ZuMv(instance));
       std::cout << "native_configuration control_count=" << settings.controlBufCount
 	<< " control_credits=" << settings.txControlCredits << " rx_retain="
 	<< settings.rxRetainFramesPerCxn << " max_data="

@@ -191,7 +191,8 @@ static void testCarriage(bool v6, bool tcp = false)
 
   ZmRef<Zpkt::Env> env = new Zpkt::Env;
   ZiMultiplex mx{ZiMxParams{}.rxBufSize(32).rxQuantum(8)
-    .scheduler([](auto &p) { p.nThreads(4).thread(4, [](auto &t) { t.isolated(true); }); })};
+    .scheduler([](auto &p) { p.nThreads(4).thread(4, [](auto &t) { t.isolated(true); }); }),
+    ZmRef{new Zutcp::Instance}};
   ZmSemaphore rxDone, txDone, controlDone;
   ZmRef<Zi::IOBuf> input;
   Zutcp::IPView seen;
@@ -214,9 +215,8 @@ static void testCarriage(bool v6, bool tcp = false)
       rxDone.post();
     }};
   if (tcp) params.packet = {};
-  auto instance = ZutcpTest::makeInstance(env, &mx, index, 4, ZuMv(params), 0);
+  auto instance = ZutcpTest::initInstance(env, &mx, index, 4, ZuMv(params), 0);
   auto stack = instance.ptr();
-  mx.plugin(ZuMv(instance));
   auto tx = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 2048>(4);
   bool started = mx.start();
   ZuCheckRT(started, log_("raw packet Instance starts without a kernel Zutcp socket"));

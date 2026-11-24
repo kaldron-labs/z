@@ -230,7 +230,7 @@ static int run(int argc, char **argv)
 	  .thread(1, [](auto &t) { t.isolated(1); })
 	  .thread(2, [](auto &t) { t.isolated(1); })
 	  .thread(4, [](auto &t) { t.isolated(true); }); })
-	.rxThread(1).txThread(2));
+	.rxThread(1).txThread(2), ZmRef{new Zutcp::Instance});
   auto params = ZutcpTest::Params(&mx);
   if (const char *profile = getenv("ZUTCP_TEST_CLIENT_OPTIONS")) {
     unsigned options = ZuBox<unsigned>(profile);
@@ -240,9 +240,8 @@ static int run(int argc, char **argv)
   }
   if (const char *delay = getenv("ZUTCP_TEST_TLP_DELAY_US"))
     params.tlpPeerAckDelay(Zutcp::timeUS(ZuBox<unsigned>(delay)));
-  auto instance = ZutcpTest::makeInstance(env, &mx, interface, 4, params.config());
+  auto instance = ZutcpTest::initInstance(env, &mx, interface, 4, params.config());
   auto stack = instance.ptr();
-  mx.plugin(ZuMv(instance));
   ZmRef<App> appRef = new App{stack, request};
   auto &app = *appRef;
   if (!mx.start()) {
@@ -483,7 +482,7 @@ static int run(int argc, char **argv)
 	  .thread(1, [](auto &t) { t.isolated(1); })
 	  .thread(2, [](auto &t) { t.isolated(1); })
 	  .thread(4, [](auto &t) { t.isolated(true); }); })
-	.rxThread(1).txThread(2));
+	.rxThread(1).txThread(2), ZmRef{new Zutcp::Instance});
   auto params = ZutcpTest::Params(&mx);
   if (const char *profile = getenv("ZUTCP_TEST_SERVER_OPTIONS")) {
     unsigned options = ZuBox<unsigned>(profile);
@@ -493,9 +492,8 @@ static int run(int argc, char **argv)
   }
   if (const char *delay = getenv("ZUTCP_TEST_TLP_DELAY_US"))
     params.tlpPeerAckDelay(Zutcp::timeUS(ZuBox<unsigned>(delay)));
-  auto instance = ZutcpTest::makeInstance(env, &mx, interface, 4, params.config());
+  auto instance = ZutcpTest::initInstance(env, &mx, interface, 4, params.config());
   auto stack = instance.ptr();
-  mx.plugin(ZuMv(instance));
   ZmRef<App> appRef = new App{stack, server, port, count, waitEOF};
   auto &app = *appRef;
   if (!mx.start()) {
@@ -983,7 +981,7 @@ static int run(int argc, char **argv)
     s.nThreads(4).thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
       .thread(4, [](auto &t) { t.isolated(true); });
-  }).rxThread(1).txThread(2)};
+  }).rxThread(1).txThread(2), ZmRef{new Zutcp::Instance}};
   auto xdp = ZutcpTest::openXdp(env, &mx, interface, 4);
   auto payload = Zutcp::tcpPayload(xdp->mtu(), address.type());
   auto params = ZutcpTest::Params{&mx};
@@ -991,9 +989,9 @@ static int run(int argc, char **argv)
   if (server && getenv("ZUTCP_KERNEL_READ_GATE")) params.maxData(4096);
   bool windowClient = !server && getenv("ZUTCP_KERNEL_WINDOW_CLIENT");
   if (windowClient) params.maxPayload(payload).sackPermitted(false).timestamps(true);
-  auto instance = ZutcpTest::makeInstance(env, &mx, ZuMv(xdp), params.config());
+  auto instance = ZutcpTest::initInstance(ZmRef{static_cast<Zutcp::Instance *>(mx.plugin())},
+    env, &mx, ZuMv(xdp), params.config());
   auto stack = instance.ptr();
-  mx.plugin(ZuMv(instance));
   if (server) {
     ZmRef<ServerApp> appRef = new ServerApp{stack, result, address, port, count};
     auto &app = *appRef;

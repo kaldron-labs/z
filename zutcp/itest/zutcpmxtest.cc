@@ -255,9 +255,8 @@ static ZiMxParams mxParams()
 static Zutcp::Instance *attachInstance(
     Zpkt::Env *env, ZiMultiplex &mx, unsigned ifindex, Zutcp::InstanceParams params = {})
 {
-  auto owner = ZutcpTest::makeInstance(env, &mx, ifindex, Sender, ZuMv(params));
+  auto owner = ZutcpTest::initInstance(env, &mx, ifindex, Sender, ZuMv(params));
   auto instance = owner.ptr();
-  mx.plugin(ZuMv(owner));
   return instance;
 }
 
@@ -355,7 +354,8 @@ static void testMxConnections(
   ZiIP remote = loss || window ? (v6 ? "2001:db8::21" : "198.18.0.21") :
     (v6 ? "2001:db8::11" : "198.18.0.11");
   ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
-  ZiMultiplex client{mxParams()}, server{mxParams()};
+  ZiMultiplex client{mxParams(), ZmRef{new Zutcp::Instance}};
+  ZiMultiplex server{mxParams(), ZmRef{new Zutcp::Instance}};
   ZmAtomic<unsigned> unanswered = 0, refusalResets = 0, unexpectedWire = 0;
   ZmSemaphore refusedWire, unansweredWire;
   Zutcp::PacketFn pendingPeer;
@@ -775,7 +775,8 @@ static void testConnectTimeout(bool v6)
   ZiIP local{v6 ? "2001:db8::10" : "198.18.0.10"};
   ZiIP remote{v6 ? "2001:db8::11" : "198.18.0.11"};
   ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
-  ZiMultiplex client{mxParams()}, server{mxParams()};
+  ZiMultiplex client{mxParams(), ZmRef{new Zutcp::Instance}};
+  ZiMultiplex server{mxParams(), ZmRef{new Zutcp::Instance}};
   ZmSemaphore marker, listening;
   struct PendingSyn {
     ZmSemaphore seen;
@@ -911,7 +912,8 @@ static void testUserTimeout(bool v6)
   ZiIP local{v6 ? "2001:db8::10" : "198.18.0.10"};
   ZiIP remote{v6 ? "2001:db8::11" : "198.18.0.11"};
   ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
-  ZiMultiplex client{mxParams()}, server{mxParams()};
+  ZiMultiplex client{mxParams(), ZmRef{new Zutcp::Instance}};
+  ZiMultiplex server{mxParams(), ZmRef{new Zutcp::Instance}};
   Zutcp::InstanceParams config{.rxRetainFramesPerCxn = 64, .maxCxns = 1, .maxPendingCxns = 1,
     .userTimeout = ZuTime{2}};
   auto serverConfig = config;
@@ -1011,7 +1013,8 @@ static void testGracefulFin(
     uint32_t expectedSeq = 0, expectedAck = 0, expectedEcho = 0, receivedTS = 0;
   } late;
   ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
-  ZiMultiplex client{mxParams()}, server{mxParams()};
+  ZiMultiplex client{mxParams(), ZmRef{new Zutcp::Instance}};
+  ZiMultiplex server{mxParams(), ZmRef{new Zutcp::Instance}};
   Zutcp::InstanceParams config{.rxRetainFramesPerCxn = 64, .maxCxns = 1, .maxPendingCxns = 1,
     .closedTupleRingSize = 1};
   if (finWindow) config.maxData = Message.length();
@@ -1298,7 +1301,8 @@ static void testResetPair(bool v6, bool serverFirst)
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"};
   ZiIP remote{v6 ? "2001:db8::21" : "198.18.0.21"};
   ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
-  ZiMultiplex client{mxParams()}, server{mxParams()};
+  ZiMultiplex client{mxParams(), ZmRef{new Zutcp::Instance}};
+  ZiMultiplex server{mxParams(), ZmRef{new Zutcp::Instance}};
   Zutcp::InstanceParams config{.rxRetainFramesPerCxn = 64, .maxCxns = 1, .maxPendingCxns = 1};
   auto clientStack = attachInstance(clientEnv, client, a, config);
   auto serverStack = attachInstance(serverEnv, server, b, config);
@@ -1417,7 +1421,8 @@ static void testAbortPair(bool v6, bool reject, bool serverTarget)
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"};
   ZiIP remote{v6 ? "2001:db8::21" : "198.18.0.21"};
   ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
-  ZiMultiplex client{mxParams()}, server{mxParams()};
+  ZiMultiplex client{mxParams(), ZmRef{new Zutcp::Instance}};
+  ZiMultiplex server{mxParams(), ZmRef{new Zutcp::Instance}};
   Zutcp::InstanceParams config{.rxRetainFramesPerCxn = 64, .maxCxns = 2, .maxPendingCxns = 1};
   auto clientStack = attachInstance(clientEnv, client, a, config);
   auto serverStack = attachInstance(serverEnv, server, b, config);
@@ -1881,7 +1886,8 @@ static void testNativeHistoryPair(bool v6, bool serverFirst)
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
   ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
-  ZiMultiplex client{mxParams()}, server{mxParams()};
+  ZiMultiplex client{mxParams(), ZmRef{new Zutcp::Instance}};
+  ZiMultiplex server{mxParams(), ZmRef{new Zutcp::Instance}};
   auto clientStack = attachInstance(clientEnv, client, a, {.rxRetainFramesPerCxn = 64});
   auto serverStack = attachInstance(serverEnv, server, b, {.rxRetainFramesPerCxn = 64});
   HistoryEvents cli[2];
@@ -2062,7 +2068,8 @@ static void testSharedAdmissionPair(bool v6, bool passive)
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
   ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
-  ZiMultiplex client{mxParams()}, server{mxParams()};
+  ZiMultiplex client{mxParams(), ZmRef{new Zutcp::Instance}};
+  ZiMultiplex server{mxParams(), ZmRef{new Zutcp::Instance}};
   unsigned sc = passive ? 1 : 2;
   Zutcp::InstanceParams cliParams{.maxCxns = 2, .maxPendingCxns = 1};
   if (passive) cliParams.connectTimeout = ZuTime{2};
@@ -2284,7 +2291,8 @@ static void testConservativeTuplePair(bool v6)
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
   ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
-  ZiMultiplex client{mxParams()}, server{mxParams()};
+  ZiMultiplex client{mxParams(), ZmRef{new Zutcp::Instance}};
+  ZiMultiplex server{mxParams(), ZmRef{new Zutcp::Instance}};
   auto cs = attachInstance(clientEnv, client, a, {.maxCxns = 1, .maxPendingCxns = 1});
   auto ss = attachInstance(serverEnv, server, b, {.maxCxns = 1, .maxPendingCxns = 1});
   auto &app = *cs;
@@ -2412,7 +2420,8 @@ static void testPositiveWindowPair(bool v6)
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
   ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
-  ZiMultiplex client{mxParams()}, server{mxParams()};
+  ZiMultiplex client{mxParams(), ZmRef{new Zutcp::Instance}};
+  ZiMultiplex server{mxParams(), ZmRef{new Zutcp::Instance}};
   auto cs = attachInstance(clientEnv, client, a, {.maxData = 2000});
   auto ss = attachInstance(serverEnv, server, b, {.maxData = 400});
   auto &app = *cs;
@@ -2534,7 +2543,8 @@ static void testNativeLifecyclePair(
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
   ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
-  ZiMultiplex client{mxParams()}, server{mxParams()};
+  ZiMultiplex client{mxParams(), ZmRef{new Zutcp::Instance}};
+  ZiMultiplex server{mxParams(), ZmRef{new Zutcp::Instance}};
   auto cs = attachInstance(clientEnv, client, a, {.maxCxns = 2, .maxPendingCxns = 2});
   auto ss = attachInstance(serverEnv, server, b, {.maxCxns = 2, .maxPendingCxns = 2});
   auto &app = *cs;
@@ -2822,7 +2832,8 @@ static void testPAWSPair(bool v6)
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"};
   ZiIP remote{v6 ? "2001:db8::21" : "198.18.0.21"};
   ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
-  ZiMultiplex client{mxParams()}, server{mxParams()};
+  ZiMultiplex client{mxParams(), ZmRef{new Zutcp::Instance}};
+  ZiMultiplex server{mxParams(), ZmRef{new Zutcp::Instance}};
   PAWSPeer peer, resetPeer;
   resetPeer.port = 49153;
   auto cs = attachInstance(clientEnv, client, a, {
@@ -3037,7 +3048,8 @@ static void testPassiveTuplePair(bool v6)
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
   ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
-  ZiMultiplex client{mxParams()}, server{mxParams()};
+  ZiMultiplex client{mxParams(), ZmRef{new Zutcp::Instance}};
+  ZiMultiplex server{mxParams(), ZmRef{new Zutcp::Instance}};
   auto cs = attachInstance(clientEnv, client, a, {.maxCxns = 2, .maxPendingCxns = 1,
     .closedTupleRingSize = 2});
   auto ss = attachInstance(serverEnv, server, b, {.maxCxns = 2, .maxPendingCxns = 1,
@@ -3415,7 +3427,8 @@ static void testMixedRoles(bool v6)
   ZiIP aIP{v6 ? "2001:db8::10" : "198.18.0.10"};
   ZiIP bIP{v6 ? "2001:db8::11" : "198.18.0.11"};
   ZmRef<Zpkt::Env> aEnv = new Zpkt::Env, bEnv = new Zpkt::Env;
-  ZiMultiplex a{mxParams()}, b{mxParams()};
+  ZiMultiplex a{mxParams(), ZmRef{new Zutcp::Instance}};
+  ZiMultiplex b{mxParams(), ZmRef{new Zutcp::Instance}};
   Zutcp::InstanceParams config{.rxRetainFramesPerCxn = 64,
     .maxCxns = 8, .maxPendingCxns = 8, .connectTimeout = ZuTime{1}};
   auto aStack = attachInstance(aEnv, a, aIndex, config);

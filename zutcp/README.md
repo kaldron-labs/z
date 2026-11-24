@@ -66,9 +66,9 @@ Configure the multiplexer’s Rx, Tx, and XDP sender slots before constructing i
 Retain an intrusive `Zpkt::Env` and load its configured plugin before opening a
 named Nif synchronously on that stopped multiplexer. A successful
 open exposes the interface index, MTU, and Rx queue count. Move XDP into
-`Zutcp::Instance::init` on the same multiplexer before XDP allocation or start,
-then move the initialized transport into `mx.plugin()`. The second transfer
-must precede the first allocator request, allocation, or start attempt.
+`Zutcp::Instance::init` on the same multiplexer before XDP allocation or start.
+Inject the transport into the multiplexer constructor, and finish transport
+initialization before the first allocator request, allocation, or start attempt.
 
 The loaded Cf tree contains `module libZpkt_xdp.so` and
 `interfaces { veth0 { txSid 3 } }`. Handle startup `ZeException` around the whole
@@ -77,9 +77,10 @@ application scope. Declare Env before the multiplexer so it outlives every child
 ```cpp
 ZmRef<Zpkt::Env> env = new Zpkt::Env;
 env->init(cf);
+ZmRef<Zutcp::Instance> plugin = new Zutcp::Instance;
 ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
   s.nThreads(3).thread(3, [](auto &t) { t.isolated(true); });
-})};
+}), plugin};
 auto opened = env->nif(&mx, "veth0");
 if (opened.is<ZeException>()) {
   ZiLogEvent(ZuMv(opened).p<ZeException>());
@@ -87,13 +88,11 @@ if (opened.is<ZeException>()) {
 }
 
 ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
-ZmRef<Zutcp::Instance> plugin = new Zutcp::Instance;
 auto initialized = plugin->init(&mx, env, ZuMv(xdp), {.packetCount = 2048});
 if (initialized.is<ZeException>()) {
   ZiLogEvent(ZuMv(initialized).p<ZeException>());
   return false;
 }
-mx.plugin(ZuMv(plugin));
 
 // Protocol initialization retains each typed receive handle for endpoint setup.
 auto tcpRx = mx.allocator<Zi::IOBufType::Rx, TcpRxBuf, 2048>();
