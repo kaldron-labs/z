@@ -93,6 +93,8 @@ friend inline ZuStringT<"Zquic.HeldUDP"> ZmNHeapID(HeldUDP *);
     ZiCxnInfo ci{.type = ZiCxnType::UDP, .socket = Zi::nullSocket(),
       .options = options, .local = {localIP, localPort},
       .remote = {remoteIP, remotePort}, .rxAllocator = allocator_};
+    if (!ci.local && remoteIP)
+      ci.local.init(ZiIP{"127.0.0.1"}, ZquicTestPort::Original4);
     ZmFn<> before = ZuMv(beforeBind);
     if (before) before();
     if (holdOpen) {
@@ -636,10 +638,12 @@ static void testPendingEndpointOpen()
   provider->holdOpen = false;
   bool restarted = ZmBlock<bool>{}([&endpoints](auto wake) {
     endpoints[0].readyFn = [wake = ZuMv(wake)](bool ok) mutable { wake(ok); };
-    endpoints[0].openUDP(Zquic::PathMode::ServerUnconnected,
-      ZiIP{"127.0.0.1"}, ZquicTestPort::Original4);
+    endpoints[0].openUDP(Zquic::PathMode::ClientConnected,
+      {}, 0, ZiIP{"127.0.0.1"}, ZquicTestPort::Sock);
   });
   ZuCheck(restarted && endpoints[0].generation() == 2 && endpoints[0].ready == 1);
+  ZuCheck(endpoints[0].local() == provider->connection->info().local &&
+    endpoints[0].local().port() == ZquicTestPort::Original4);
   ZmBlock<>{}([&endpoints](auto wake) {
     endpoints[0].disconnect([wake = ZuMv(wake)]() mutable { wake(); });
   });

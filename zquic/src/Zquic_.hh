@@ -1121,6 +1121,7 @@ private:
   }
 
   static ZiSockAddr cxnLocal(Cxn_ *cxn, ZiSockAddr local) {
+    if (Zi::nullSocket(cxn->info().socket)) return cxn->info().local;
     ZiSockAddr actual;
     actual.init(cxn->info().remote.ip().v6() || local.ip().v6() ?
       ZiIPType::V6 : ZiIPType::V4);
