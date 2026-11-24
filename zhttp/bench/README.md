@@ -24,3 +24,21 @@ leave it unset for timing. Run repeated baseline/current pairs with otherwise
 idle build/test workers. Retain matching libraries and the exact compiler argv
 for any baseline binary. The pre-erasure TLS/H1 backend permits only one held
 request per physical link, so use JOBS=1 for that baseline comparison.
+
+## H3 interop over AF_XDP
+
+The `zhttpmatrix` case `zhttp-zhttpd/h3/j3n10000` sends 10,000 GETs at
+concurrency three. On 2026-11-24, five interleaved release-build trials used
+zhttp and zhttpd with Zutcp on a private one-queue veth pair. QUIC Rx used its
+own thread and QUIC Tx shared the multiplexer Tx thread. Qlog was disabled.
+The table shows median requests per second from client process elapsed time.
+
+| Transport | Before | After |
+| --- | ---: | ---: |
+| AF_XDP | 17,061 | 18,108 |
+| Kernel UDP control | 19,221 | 19,163 |
+
+The AF_XDP baseline used 1,000 idle polls. The new configuration used the
+4,096-poll default for both Rx and the sender at both endpoints. Reposting a
+returned frame also restarted the Rx budget. The comparison measures the two
+changes together. [AF_XDP configuration](../../zpkt/INTERFACE.md#af_xdp)
