@@ -76,6 +76,26 @@ struct AckSnapshot {
   AckECN		ecn;
   Frame::AckRanges	ranges;
 };
+struct RxAckUpdate {
+  AckRange		range;
+  uint64_t		receivedUS;
+  EcnMark::T		mark;
+  bool			eliciting;
+  bool			immediate;
+  bool			newest;
+};
+
+// Rx can pair the next ready packet with this ordinary update. Two eliciting
+// packets already make an ACK due. A forced ACK always ends the pair.
+struct RxAckBurst {
+  RxAckUpdate		first;
+  ZiSockAddr		local;
+  ZiSockAddr		addr;
+  uint64_t		key = 0;
+  uint64_t		delay = 0;
+  PktNumSpace::T	level = PktNumSpace::N;
+  bool			more = false;
+};
 struct RxAckMeta {
   bool		ackEliciting = false;
   bool		immediateAck = false;
@@ -622,7 +642,14 @@ public:
     return rxStreamBlocked_(frame);
   }
   bool receiveStreamsBlocked(const Frame &frame) {
-    return validateStreamsBlocked(frame);
+    if (frame.type != FrameType::StreamsBlocked) return false;
+    auto &limit = m_linkRx.localLimit[frame.streamType];
+    if (frame.value > limit.limit()) return false;
+    if (frame.value == limit.limit()) {
+      limit.peerBlocked = true;
+      advertiseStreamCreditRx(frame.streamType);
+    }
+    return true;
   }
   bool frameLegal(
     PktNumSpace::T level, const Frame &frame, bool earlyData = false) const {
@@ -656,13 +683,16 @@ public:
     if (closedStreamID(id)) return nullptr;
     Zquic::StreamType::T type = StreamID::uni(id);
     uint64_t opened = StreamID::ordinal(id) + 1;
-    if (!m_linkRx.localLimit[type].allowsTo(opened)) return nullptr;
+    auto &limit = m_linkRx.localLimit[type];
+    if (!limit.allowsTo(opened)) return nullptr;
 
     StreamRef stream = newStream(int64_t(id));
     if (!stream) return nullptr;
-    if (!peerOpenedStreamID(id))
-      ZiAssert(m_linkRx.localLimit[type].openTo(opened), "Zquic",
+    if (opened > limit.opened()) {
+      ZiAssert(limit.openTo(opened), "Zquic",
 	(), "peer stream count advanced past local limit", return nullptr);
+      advertiseStreamCreditRx(type);
+    }
     impl()->streamed(stream);
     scheduleStreamWritable(stream);
     return stream;
@@ -3340,6 +3370,8 @@ protected:
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC runtime reset outside Rx thread", return);
     ++m_linkRx.rxRuntimeGen;
+    m_linkRx.ackBurst.level = PktNumSpace::N;
+    m_linkRx.ackBurst.more = false;
     for (auto &pending : m_linkRx.openQueuedPending) pending = false;
     for (auto &gen : m_linkRx.txCryptoGen) gen = 0;
     m_linkRx.txPeerParamsGen = 0;
@@ -3754,6 +3786,8 @@ protected:
   }
   void beginDisconnectRx(bool peer, Zquic_::LinkDiscFn l) {
     disconnecting_(true);
+    m_linkRx.ackBurst.level = PktNumSpace::N;
+    m_linkRx.ackBurst.more = false;
     auto mx = app()->mx();
     bool live = mx && mx->running() && app()->txThread();
     if (live)
@@ -4847,7 +4881,7 @@ protected:
     for (auto &limit : m_linkRx.peerLimit) limit = StreamLimit{MaxStreamCount};
     for (auto &queued : m_linkRx.queued) queued = 0;
     for (auto &pending : m_linkRx.openQueuedPending) pending = false;
-    for (auto &limit : m_linkRx.localLimit) limit = StreamLimit{MaxStreamCount};
+    for (auto &limit : m_linkRx.localLimit) limit = LocalStreamLimit{};
     l();
   }
 
@@ -5609,22 +5643,72 @@ protected:
     });
   }
 
-  void postAckRange(PktNumSpace::T level, AckRange range, bool eliciting, bool immediate,
-      EcnMark::T mark, bool newest, ZiSockAddr addr) {
-    app()->txRun([link = impl(), level, range, eliciting, immediate, mark, newest,
-	addr = ZuMv(addr), now = nowUS(), delay = localMaxAckDelayUS(),
-	runtime = m_linkRx.rxRuntimeGen, key = m_linkRx.rxKeyGeneration]() mutable {
+  template <typename ...Updates>
+  void postAckRanges(PktNumSpace::T level, ZiSockAddr addr, uint64_t key,
+      uint64_t delay, Updates ...updates) {
+    app()->txRun([link = impl(), level, addr = ZuMv(addr), key, delay,
+	runtime = m_linkRx.rxRuntimeGen, updates...]() mutable {
       if (runtime != link->txRuntime() || link->disconnecting_() || link->linkClosedTx_() ||
 	  link->m_linkTx.txSpaceDiscarded[level]) return;
       if (level == PktNumSpace::AppData) {
 	if (!link->txInstallPeerKeyUpdate(key)) return;
 	link->m_linkTx.ackAddr = addr;
       }
-      link->updateAckTx(level, range, eliciting, immediate, mark, newest, now, delay);
+      (link->updateAckTx(level, updates.range, updates.eliciting, updates.immediate,
+	updates.mark, updates.newest, updates.receivedUS, delay), ...);
       if (link->pendingAck(level)) link->flushTx_(ZuMv(addr));
       if (level == PktNumSpace::AppData && runtime == link->txRuntime())
 	link->armPendingAck();
     });
+  }
+
+  bool heldAckRx() const { return m_linkRx.ackBurst.level != PktNumSpace::N; }
+
+  void flushAckRx() {
+    auto &burst = m_linkRx.ackBurst;
+    if (!heldAckRx()) return;
+    auto level = burst.level;
+    burst.level = PktNumSpace::N;
+    postAckRanges(level, ZuMv(burst.addr), burst.key, burst.delay, burst.first);
+  }
+
+  void beginAckRx(const ZiSockAddr &local, bool more) {
+    auto &burst = m_linkRx.ackBurst;
+    if (heldAckRx() && burst.local != local) flushAckRx();
+    // A malformed or ACK-free second datagram must also release its predecessor.
+    burst.more = more && !heldAckRx();
+    if (burst.more) burst.local = local;
+  }
+
+  void endAckRx() {
+    auto &burst = m_linkRx.ackBurst;
+    if (!burst.more) flushAckRx();
+    burst.more = false;
+  }
+
+  void postAckRange(PktNumSpace::T level, AckRange range, bool eliciting, bool immediate,
+      EcnMark::T mark, bool newest, ZiSockAddr addr) {
+    Zquic_::RxAckUpdate update{range, nowUS(), mark, eliciting, immediate, newest};
+    auto delay = localMaxAckDelayUS();
+    auto key = m_linkRx.rxKeyGeneration;
+    auto &burst = m_linkRx.ackBurst;
+    if (heldAckRx()) {
+      if (burst.level == level && burst.addr == addr && burst.key == key && burst.delay == delay) {
+	burst.level = PktNumSpace::N;
+	postAckRanges(level, ZuMv(addr), key, delay, burst.first, update);
+	return;
+      }
+      flushAckRx();
+    }
+    if (burst.more && delay && !immediate && level == PktNumSpace::AppData) {
+      burst.level = level;
+      burst.addr = ZuMv(addr);
+      burst.key = key;
+      burst.delay = delay;
+      burst.first = update;
+      return;
+    }
+    postAckRanges(level, ZuMv(addr), key, delay, update);
   }
 
   void noteAck(
@@ -10041,7 +10125,7 @@ protected:
 	  blockedCreditRx(frame);
 	  break;
 	case FrameType::StreamsBlocked:
-	  if (!validateStreamsBlocked(frame) ||
+	  if (!receiveStreamsBlocked(frame) ||
 	      !handleControl(level, frame, addr)) {
 	    return false;
 	  }
@@ -10194,12 +10278,6 @@ private:
   bool canLocalSend(uint64_t id) const {
     return !StreamID::uni(id) || localInitiated(id, m_config.isServer);
   }
-  bool peerOpenedStreamID(uint64_t id) const {
-    if (id > uint64_t(INT64_MAX) || localInitiated(id, m_config.isServer))
-      return false;
-    Zquic::StreamType::T type = StreamID::uni(id);
-    return StreamID::ordinal(id) < m_linkRx.localLimit[type].opened();
-  }
   bool closedStreamID(uint64_t id) const {
     if (id > uint64_t(INT64_MAX)) return false;
     unsigned i = unsigned(id & 3);
@@ -10279,11 +10357,6 @@ private:
     stream = findOrAccept(frame.streamID);
     return stream && frame.value <= stream->rxCreditLimit();
   }
-  bool validateStreamsBlocked(const Frame &frame) const {
-    return frame.type == FrameType::StreamsBlocked &&
-      frame.value <= m_linkRx.localLimit[frame.streamType].limit();
-  }
-
   bool rxStreamBlocked_(const Frame &frame) {
     if (frame.type == FrameType::StreamDataBlocked &&
 	frame.streamID <= uint64_t(INT64_MAX)) {
@@ -10466,6 +10539,15 @@ private:
     postFlowUpdate(FlowUpdate{
       FrameType::MaxStreamData, uint64_t(stream->id()), maximum, Zquic::StreamType::Duplex});
   }
+  void advertiseStreamCreditRx(Zquic::StreamType::T type) {
+    auto &limit = m_linkRx.localLimit[type];
+    if (limit.earned == limit.limit() ||
+	(!limit.peerBlocked && limit.opened() < limit.limit() - limit.lowWater))
+      return;
+    limit.extend(limit.earned);
+    limit.peerBlocked = false;
+    postFlowUpdate(FlowUpdate{FrameType::MaxStreams, 0, limit.earned, type});
+  }
   bool returnStreamCreditRx(const StreamRef &stream) {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream credit return outside Rx thread", return false);
@@ -10475,13 +10557,11 @@ private:
     if (localInitiated(id, m_config.isServer)) return false;
     if (!stream->rxComplete() && !stream->resetReceived()) return false;
     Zquic::StreamType::T type = StreamID::uni(id);
-    StreamLimit &limit = m_linkRx.localLimit[type];
-    if (limit.limit() >= MaxStreamCount) return false;
-    uint64_t next = limit.limit() + 1;
-    limit.extend(next);
+    auto &limit = m_linkRx.localLimit[type];
+    if (limit.earned >= MaxStreamCount) return false;
+    ++limit.earned;
     stream->markCreditReturned();
-    postFlowUpdate(
-      FlowUpdate{FrameType::MaxStreams, 0, limit.limit(), type});
+    advertiseStreamCreditRx(type);
     return true;
   }
 
@@ -10560,7 +10640,7 @@ private:
     if (localInitiated(id, m_config.isServer)) return true;
     if (stream->creditReturned()) return true;
     Zquic::StreamType::T type = StreamID::uni(id);
-    return m_linkRx.localLimit[type].limit() >= MaxStreamCount;
+    return m_linkRx.localLimit[type].earned >= MaxStreamCount;
   }
   StreamRef newStream(int64_t id) {
     auto node = new Streams::Node{impl(), id};
@@ -11028,6 +11108,19 @@ private:
   TimerStorage m_timers;
 
   // Rx thread exclusive
+  struct LocalStreamLimit : StreamLimit {
+    LocalStreamLimit() : StreamLimit{MaxStreamCount} { }
+    void set(uint64_t window) {
+      StreamLimit::set(window);
+      earned = window;
+      lowWater = window >> 1;
+      peerBlocked = false;
+    }
+
+    uint64_t	earned = MaxStreamCount;
+    uint64_t	lowWater = MaxStreamCount >> 1;
+    bool	peerBlocked = false;
+  };
   struct alignas(Zm::CacheLineSize) RxStorage {
     Zquic_::LinkDiscFns discFns;
     ZmRef<StreamCloseWork> discWork;
@@ -11035,11 +11128,8 @@ private:
     bool			statelessReset = false;
     FlowCredit		rxDataCredit;
     uint64_t		rxDataRetired = 0;
-    ZuArray<StreamLimit, Zquic::StreamType::N>
-			localLimit = {
-      StreamLimit(MaxStreamCount),
-      StreamLimit(MaxStreamCount)
-    };
+    ZuArray<LocalStreamLimit, Zquic::StreamType::N>
+			localLimit = fixedArray<LocalStreamLimit, Zquic::StreamType::N>();
     ZuArray<StreamLimit, Zquic::StreamType::N> peerLimit = {
       StreamLimit(MaxStreamCount), StreamLimit(MaxStreamCount)
     };
@@ -11085,6 +11175,7 @@ private:
 			rxLargestPN =
 			  fixedArray<uint64_t, PktNumSpace::N>();
     AckTracker		seenPackets[PktNumSpace::N];
+    Zquic_::RxAckBurst	ackBurst;
     ZiSockAddr		rxPathLocal;
     ZiSockAddr		rxPathRemote;
     uint64_t		rxPathBytes = 0;

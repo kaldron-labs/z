@@ -83,6 +83,9 @@ public:
     Zquic::Link<PublishApp, PublishLink, PublishStream>;
   using Base::Base;
   using Base::ackSentTx;
+  using Base::beginAckRx;
+  using Base::endAckRx;
+  using Base::heldAckRx;
   using Base::drainPeerAcksTx;
   using Base::awaitPeerAckTx;
   using Base::resetLink;
@@ -322,6 +325,60 @@ void testOrdinaryPublication()
   ZuCheck(f.app.rxPosts() == rxPosts && f.app.txPosts() == txPosts + 256);
 }
 
+void testReceiveBurst()
+{
+  ZuTestScope(testReceiveBurst);
+  PublishFixture f;
+  auto link = f.link;
+  ZuCHECK(f.ready, "receive burst fixture did not start");
+  unsigned before = f.app.txPosts();
+  ZuCheck(f.rx([link] {
+    link->beginAckRx({}, true);
+    link->receive(1);
+    link->endAckRx();
+    if (!link->heldAckRx()) return false;
+    link->beginAckRx({}, false);
+    link->receive(2);
+    link->endAckRx();
+    return !link->heldAckRx();
+  }));
+  ZuCheck(f.app.txPosts() == before + 1);
+  ZuCheck(f.tx([link] { return link->encode(2); }));
+
+  // Even when more traffic is queued, a dropped datagram ends the held pair.
+  ZuCheck(f.rx([link] {
+    link->beginAckRx({}, true);
+    link->receive(3);
+    link->endAckRx();
+    link->beginAckRx({}, true);
+    link->endAckRx();
+    return !link->heldAckRx();
+  }));
+  ZuCheck(f.app.txPosts() == before + 2);
+  ZuCheck(f.tx([link] { return link->encode(3); }));
+
+  ZuCheck(f.rx([link] {
+    link->beginAckRx({}, true);
+    link->receive(4);
+    link->endAckRx();
+    link->beginAckRx(ZiSockAddr{ZiIP{"127.0.0.2"}, 443}, false);
+    link->receive(5);
+    link->endAckRx();
+    return !link->heldAckRx();
+  }));
+  ZuCheck(f.app.txPosts() == before + 4);
+  ZuCheck(f.tx([link] { return link->encode(5); }));
+
+  // A gap forces a standalone handoff even at the head of a ready burst.
+  ZuCheck(f.rx([link] {
+    link->beginAckRx({}, true);
+    link->receive(7);
+    link->endAckRx();
+    return !link->heldAckRx();
+  }));
+  ZuCheck(f.app.txPosts() == before + 5);
+}
+
 void testPeerAckParking()
 {
   ZuTestScopeRT(testPeerAckParking);
@@ -549,6 +606,7 @@ int main(int argc, char **argv)
   ZuTestCall(testProbingAckMetadata);
   ZuTestCall(testConcurrentCompletion);
   ZuTestCall(testOrdinaryPublication);
+  ZuTestCall(testReceiveBurst);
   ZuTestCall(testPeerAckParking);
   ZuTestCall(testPeerAckPressure);
   ZuTestCall(testECNFeedback);

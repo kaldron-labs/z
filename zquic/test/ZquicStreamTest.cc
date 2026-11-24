@@ -4329,6 +4329,53 @@ void testStreamCountLimits()
   resetServer->teardown();
 }
 
+void testStreamCreditBatches()
+{
+  ZuTestScope(testStreamCreditBatches);
+
+  App app;
+  auto server = testLink(&app, true);
+  auto type = Zquic::StreamType::Duplex;
+  server->setLocalStreamLimit(type, 8);
+  const unsigned flushes = server->txFlushQueued;
+  Zquic::Frame frame;
+  unsigned used = 0;
+  for (unsigned id : {0U, 4U, 8U}) {
+    auto packet = streamPkt(id, 0, "a", true, frame, used);
+    ZuCHECK(packet && server->receiveFrame(frame, packet) == 0 &&
+	server->lastStream->creditReturned(),
+      "request FIN did not earn stream credit on Rx");
+  }
+  ZuCHECK(server->localStreamLimit(type) == 8 && server->txFlushQueued == flushes,
+    "ample advertised stream allowance still woke Tx");
+
+  auto packet = streamPkt(12, 0, "a", false, frame, used);
+  ZuCHECK(packet && server->receiveFrame(frame, packet) == 0 &&
+      server->localStreamLimit(type) == 11 && server->txFlushQueued == flushes + 1,
+    "opening a stream at low water did not publish the three earned credits");
+
+  Zquic::Frame blocked;
+  blocked.type = Zquic::FrameType::StreamsBlocked;
+  blocked.streamType = type;
+  blocked.value = 11;
+  ZuCHECK(server->receiveStreamsBlocked(blocked) && server->txFlushQueued == flushes + 1,
+    "blocked peer without earned credit triggered an empty update");
+  packet = streamPkt(12, 1, {}, true, frame, used);
+  ZuCHECK(packet && server->receiveFrame(frame, packet) == 0 &&
+      server->localStreamLimit(type) == 12 && server->txFlushQueued == flushes + 2,
+    "blocked peer did not get the next earned credit immediately");
+
+  packet = streamPkt(16, 0, "a", true, frame, used);
+  ZuCHECK(packet && server->receiveFrame(frame, packet) == 0 &&
+      server->receiveStreamsBlocked(blocked) && server->txFlushQueued == flushes + 2,
+    "stale STREAMS_BLOCKED bypassed the low-water mark");
+  blocked.value = 12;
+  ZuCHECK(server->receiveStreamsBlocked(blocked) && server->localStreamLimit(type) == 13 &&
+      server->txFlushQueued == flushes + 3,
+    "current STREAMS_BLOCKED did not publish already earned credit");
+  server->teardown();
+}
+
 void testResetStopFrames()
 {
   ZuTestScope(testResetStopFrames);
@@ -5583,6 +5630,7 @@ int main(int argc, char **argv)
   ZuTestCall(testControlInvalidation);
   ZuTestCall(testPeerStreamAcceptance);
   ZuTestCall(testStreamCountLimits);
+  ZuTestCall(testStreamCreditBatches);
   ZuTestCall(testResetStopFrames);
   ZuTestCall(testLocalResetStopSend);
   ZuTestCall(testMaxBlockedValidate);

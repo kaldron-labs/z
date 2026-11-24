@@ -1520,10 +1520,20 @@ private:
 public:
   void endpointPacket(ZmRef<RxPkt> pkt) {
     if (Base::disconnecting_()) return;
-    app()->rxInvoke(impl(), [link = impl(), pkt = ZuMv(pkt)]() mutable {
-      if (!link->disconnecting_()) link->received_(ZuMv(pkt));
+    if (app()->rxThread() == app()->mx()->rxThread()) {
+      received_(ZuMv(pkt));
+      return;
+    }
+    auto sequence = Endpoint::packetSequence();
+    app()->rxInvoke(impl(), [link = impl(), sequence, pkt = ZuMv(pkt)]() mutable {
+      if (!link->disconnecting_()) {
+	link->beginAckRx(pkt->local, link->Endpoint::morePackets(sequence));
+	link->received_(ZuMv(pkt));
+	link->endAckRx();
+      }
       return link;
     });
+    Endpoint::postedPacket(sequence);
   }
   void endpointReady(Endpoint *ep) {
     if (Base::disconnecting_()) return;

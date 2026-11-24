@@ -254,10 +254,12 @@ static void testSustainedDrain()
 	bounded &= full.txPending == 1 && full.txQueued == Limit - 1 &&
 	  !tx.packet(round*Limit + Limit + 1, rx.local());
 	auto rejected = tx.diag();
+	// Only installing the head attempts sendmsg. The remaining admissions
+	// leave the blocked datagram armed for the next writable notification.
 	bounded &= rejected.tx.submittedTx == uint64_t(round + 1)*Limit &&
 	  rejected.tx.submittedBytes == uint64_t(round + 1)*Limit*sizeof(unsigned) &&
 	  rejected.tx.txBackPressure == round + 1 && rejected.tx.txDropped == round + 1 &&
-	  sendProbe.blocked >= Limit && sendProbe.sent == 0;
+	  sendProbe.blocked == 1 && sendProbe.sent == 0;
 	uint64_t start = nanosecs();
 	uint64_t cpuStart = nanosecs(CLOCK_THREAD_CPUTIME_ID);
 	// This task and another endpoint must run after the bounded drain turn.

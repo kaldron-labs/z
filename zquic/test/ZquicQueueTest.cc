@@ -81,9 +81,14 @@ static void testStreamQueues()
     before = link->flushes;
     auto writer = stream->txStream_();
     writer << "queued" << Zi::flush();
+    auto head = writer.allocBuf(writer.headRoom());
+    auto body = writer.allocBuf(writer.headRoom());
+    if (!head || !body || !head->append("head") || !body->append("body")) return;
+    writer << ZuMv(head) << ZuMv(body);
+    if (stream->txRangeCount() != 1 || stream->finSent()) return;
     writer << "again" << Zi::finish();
     for (unsigned i = 0; i < 16; ++i) stream->recordTxUnackd(i << 1, 1, false);
-    queued = stream->txRangeCount() == 2 && stream->txUnackdCount() == 16 &&
+    queued = stream->txRangeCount() == 4 && stream->txUnackdCount() == 16 &&
       stream->finSent() && link->flushes == before;
   });
   ZuCheck(received && queued);

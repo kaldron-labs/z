@@ -1000,6 +1000,12 @@ public:
   }
   SockDiag sockDiag() const { return m_endpointRx.sockDiag; }
   void failure() { ++m_endpointRx.diag.failures; }
+
+  // Multiplexer Rx captures the sequence before dispatch. QUIC Rx may
+  // combine only with work for which the later dispatch has already returned.
+  uint64_t packetSequence() const { return m_endpointRx.diag.datagramsRx; }
+  void postedPacket(uint64_t sequence) { m_postedRx.store_(sequence); }
+  bool morePackets(uint64_t sequence) const { return m_postedRx.load_() > sequence; }
   PktAllocTarget pktAllocTarget() const {
     uint128_t target = m_target.value;
     return {m_config.txBufAllocator, const_cast<Endpoint_ *>(this),
@@ -1347,6 +1353,7 @@ private:
   Zquic_::EndpointConfig m_config;
 
   Zquic_::EndpointTargetPub m_target;
+  alignas(Zm::CacheLineSize) ZmAtomic<uint64_t> m_postedRx = 0;
 
   // Physical identity and status are Rx-written with existing advisory readers.
   struct alignas(Zm::CacheLineSize) RxStorage {

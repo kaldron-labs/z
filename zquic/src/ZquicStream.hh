@@ -608,10 +608,11 @@ public:
     }
 
     bool appendBuf(ZmRef<ZiIOBuf> buf) {
-      if (!flush() || !buf || buf->failed()) { this->fail(); return false; }
+      if (!Base::flush() || !buf || buf->failed()) { this->fail(); return false; }
       ZiAssert(buf->skip <= buf->size && buf->length <= buf->size - buf->skip,
 	"Zquic", (), "stream Tx buffer range violation", this->fail(); return false);
-      if (buf->length) m_pending = ZuMv(buf);
+      if (!buf->length) return true;
+      if (!stage(new StreamTxView{ZuMv(buf)})) { this->fail(); return false; }
       return true;
     }
     using Base::operator <<;
@@ -622,27 +623,34 @@ public:
 
     bool flush(bool finish = false) {
       if (!Base::flush(finish)) return false;
-      if (m_pending && !sendBuf_({}, Zi::SendFlags::Flush())) { this->fail(); return false; }
+      if (!submit(false)) { this->fail(); return false; }
       return true;
     }
 
     bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
-      StreamTxOp op;
-      op.fin = flags & Zi::SendFlags::Finish();
-      if (m_pending) op.ranges.pushNode(new StreamTxView{ZuMv(m_pending)});
       if (buf) {
-	auto data = static_cast<StreamTxData *>(buf.ptr());
-	data->publish();
-	op.ranges.pushNode(ZuMv(buf));
+	static_cast<StreamTxData *>(buf.ptr())->publish();
+	if (!stage(ZuMv(buf))) return false;
       }
-      return m_stream->template sendOperation<AppThread>(ZuMv(op));
+      return submit(flags & Zi::SendFlags::Finish());
     }
 
   private:
-    // immutable
-    Stream	*m_stream;
-    // Last external range stays available for a finishing flush.
-    ZmRef<ZiIOBuf> m_pending;
+    bool stage(ZmRef<ZiIOBuf> buf) {
+      if (m_pending.count_() >= m_stream->txQueueMax() && !submit(false))
+	return false;
+      m_pending.pushNode(ZuMv(buf));
+      return true;
+    }
+
+    bool submit(bool finish) {
+      if (!m_pending.count_() && !finish) return true;
+      return m_stream->template sendOperation<AppThread>(
+	StreamTxOp{ZuMv(m_pending), finish});
+    }
+
+    Stream		*m_stream;
+    StreamTxRanges	m_pending; // owned by this writer until submission
   };
 
   auto txStream() {

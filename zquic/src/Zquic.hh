@@ -1353,11 +1353,17 @@ friend ZmEngine<App>;
 
 public:
   void endpointPacket(Endpoint *ep, ZmRef<RxPkt> pkt) {
-    this->rxInvoke([this, slot = ep->slot(), runtime = m_runtimeGeneration,
-	pkt = ZuMv(pkt)]() mutable {
+    if (this->rxInvoked()) {
+      received_(ep->slot(), ZuMv(pkt), false);
+      return;
+    }
+    auto sequence = ep->packetSequence();
+    this->rxRun([this, slot = ep->slot(), runtime = m_runtimeGeneration,
+	sequence, pkt = ZuMv(pkt)]() mutable {
       if (runtime != m_runtimeGeneration) return;
-      received_(slot, ZuMv(pkt));
+      received_(slot, ZuMv(pkt), m_endpoints[slot]->morePackets(sequence));
     });
+    ep->postedPacket(sequence);
   }
   void endpointReady(Endpoint *ep) {
     this->rxRun([this, slot = ep->slot(), runtime = m_runtimeGeneration,
@@ -1424,8 +1430,13 @@ private:
     return nullptr;
   }
 private:
-  void received_(unsigned slot, ZmRef<RxPkt> pkt) {
+  void flushHeldAck() {
+    if (auto link = ZuMv(m_ackLink)) link->flushAckRx();
+  }
+
+  void received_(unsigned slot, ZmRef<RxPkt> pkt, bool more) {
     if (this->state() != ZmEngineState::Running) {
+      flushHeldAck();
       m_endpoints[slot]->failure();
       this->app()->datagramDropped();
       return;
@@ -1433,16 +1444,27 @@ private:
     CxnID routedDCID;
     ResetToken resetToken;
     Link *link = routePacket(pkt, &routedDCID, &resetToken);
+    if (m_ackLink && m_ackLink.ptr() != link) flushHeldAck();
     if (!link) {
       sendStatelessReset(pkt, resetToken);
       m_endpoints[slot]->failure();
       this->app()->datagramDropped();
       return;
     }
-    if (link->receivedRouted(ZuMv(pkt), routedDCID))
+    link->beginAckRx(pkt->local, more);
+    bool ok = link->receivedRouted(ZuMv(pkt), routedDCID);
+    link->endAckRx();
+    if (ok) {
+      if (link->heldAckRx()) {
+	if (!m_ackLink) m_ackLink = link;
+      } else
+	m_ackLink = nullptr;
       link->installRoutes(m_routes);
-    else
+    } else {
+      link->flushAckRx();
+      m_ackLink = nullptr;
       link->disconnect();
+    }
   }
 
   Link *routePacket(
@@ -1653,6 +1675,7 @@ private:
   }
 
   void stop_0() {		// Rx thread - disconnect links
+    flushHeldAck();
     m_stopCount = m_links->count_();
     if (!m_stopCount) {
       m_routes.clear();
@@ -1926,6 +1949,7 @@ private:
   ZmRef<LinkTable>	m_links = new LinkTable{
     ZmHashParams().bits(5).loadFactor(1).cBits(3).init(LinkTable::ID{}())};
   CxnRouter<Link>	m_routes;
+  LinkRef		m_ackLink;
   ZiSockAddr		m_localAddr;
   AddrValidationDiag	m_addrValidationDiag;
   Ztls::TicketKey *m_ticketKey	= nullptr;
