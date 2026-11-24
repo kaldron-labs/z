@@ -67,9 +67,7 @@ friend inline ZuStringT<"zimxserver.Connection"> ZmNHeapID(Connection *);
       return buf;
     }
     bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
-      if (flags & Zi::SendFlags::Finish()) return false;
-      m_cxn->Tx::send(ZmRef<ZiIOBuf>::acquire(
-        static_cast<ZiIOBuf *>(ZuMv(buf).release())));
+      m_cxn->Tx::send(ZuMv(buf), flags & Zi::SendFlags::Finish());
       return true;
     }
   private:
@@ -132,11 +130,11 @@ public:
 
   // Reserve the maximum decimal length plus constant HTTP framing, then
   // generate payload and prepend framing in this final wire allocation.
-  bool sendHeader(ZiTxContext &) {
+  bool sendHeader(ZiTxContext &io) {
     enum { DecDigits = 10 }; // uint32_t decimal width
     enum { HeadRoom = sizeof(ResponseStart) + sizeof(ResponseEnd) - 2 + DecDigits };
     auto buf = m_allocator->allocBuf(nullptr, 0, info().mps);
-    if (ZuUnlikely(!buf)) { disconnect(); return true; }
+    if (ZuUnlikely(!buf)) { io.close(); return true; }
     buf->skip += HeadRoom;
     unsigned len = createContent(buf);
     ZtString<ZtStringBuiltin<DecDigits + 1>> digits;
@@ -150,12 +148,12 @@ public:
     m_sendTime = Zm::now();
     m_sendBytes = m_sendRemaining = buf->length;
     Output out{this, m_allocator->capacity()};
-    out << ZuMv(buf);
-    if (!out.flush()) disconnect();
-    return true;
+    out << ZuMv(buf) << Zi::finish();
+    if (!out) io.close();
+    return false;
   }
   void sent(ZmRef<ZiIOBuf> buf, bool ok) {
-    if (!ok) { disconnect(); return; }
+    if (!ok) { close(); return; }
     // Output may split a response at the physical connection's MPS. The
     // producer sets the full byte count before its first synchronous send.
     m_sendRemaining -= buf->length;
@@ -163,7 +161,6 @@ public:
     m_completedTime = Zm::now();
     Global::timeInterval(2).add(m_completedTime - m_sendTime);
     Global::sent(m_sendBytes);
-    disconnect();
   }
 
 private:

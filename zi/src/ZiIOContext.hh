@@ -30,7 +30,7 @@ class ZiConnection;
 
 using ZiTOS = ZuUnion<void, uint8_t>;	// IP TOS raw byte
 
-ZtFlagsNS(ZiAPI, ZiIOState, uint8_t, Disconnect);
+ZtFlagsNS(ZiAPI, ZiIOState, uint8_t, Disconnect, Close, Partial);
 
 struct ZiRxContext {
   ZiConnection	*cxn = nullptr;	// connection - set by ZiMultiplex
@@ -91,16 +91,17 @@ struct ZiTxContext {
 
   template <typename L>
   void init(L &&l, ZmRef<Zi::IOBuf> buf_) {
+    if (ZuUnlikely(state)) return; // the final send cannot be replaced
     ZmAssert(buf_);
     fn = ZuFwd<L>(l);
     buf = ZuMv(buf_);
     offset = 0;
     length = 0;
-    state = 0;
     tos = {};
   }
   template <typename L, typename Addr>
   void init(L &&l, ZmRef<Zi::IOBuf> buf_, Addr &&addr_, ZiTOS tos_ = {}) {
+    if (ZuUnlikely(state)) return;
     init(ZuFwd<L>(l), ZuMv(buf_));
     addr = ZuFwd<Addr>(addr_);
     tos = tos_;
@@ -109,7 +110,12 @@ struct ZiTxContext {
   bool initialized() const { return bool(buf); }
   ZiAPI void complete();
   bool completed() const { return !fn; }
-  void disconnect() { complete(); state |= ZiIOState::Disconnect(); }
+  // Mark this buffer final. Short writes keep its callback, backing and cursor.
+  // With no buffer the Tx owner dispatches graceful disconnect immediately.
+  void disconnect() { if (!closed()) state |= ZiIOState::Disconnect(); }
+  // Publish immediate close before disarming or waking a sync waiter.
+  void close() { state = ZiIOState::Close(); complete(); }
+  bool closed() const { return state & ZiIOState::Close(); }
   bool disconnected() const { return state & ZiIOState::Disconnect(); }
 
   bool operator()();

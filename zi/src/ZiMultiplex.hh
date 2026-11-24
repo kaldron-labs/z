@@ -564,6 +564,8 @@ public:
   ZiMultiplex *mx() const { return m_mx; }
   const ZiCxnInfo &info() const { return m_info; }
   // for ZiMxPlugin use
+  // Tx owner: deliver locally accepted bytes and select the next send, if any.
+  bool executedSend(unsigned n);
   void *plugin() const { return m_plugin; }
   void plugin(void *plugin) { m_plugin = plugin; }
   ZmAtomic<unsigned> &rxUp() { return m_rxUp; }
@@ -581,6 +583,7 @@ private:
 #endif
 #ifdef ZiMultiplex_IOCP
   void overlappedRecv(int status, unsigned n, ZeError e);
+  void overlappedSend(int status, unsigned n, ZeError e);
 #endif
   void errorRecv(int status, ZeError e);
   void executedRecv(unsigned n);
@@ -588,7 +591,6 @@ private:
   void send();
   bool allocatorOK();
   void errorSend(int status, ZeError e);
-  void executedSend(unsigned n);
   void syncDone();
 
   void disconnect(bool peer);
@@ -633,6 +635,13 @@ private:
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
   ZiTxContext		m_txContext;
+#ifdef ZiMultiplex_IOCP
+  ZmRef<Zi::IOBuf>	m_txPending; // kernel backing until final-send retirement
+  Zi_Overlapped		m_txOverlapped;
+  TRANSMIT_PACKETS_ELEMENT m_txElement;
+  bool			m_txNativeDisconnected = false;
+  bool			m_txClosePeer = false;
+#endif
   using SyncFn = ZmFn<void(), ZmFnHeapID<"Zi.Sync">>;
   SyncFn		m_sync;
 };
@@ -774,7 +783,7 @@ friend Accept;
 	ZiCxnType::TCPIn, Zi::nullSocket(), listener->info().options}
     {
       m_overlapped.init(
-	Zi_Overlapped::Executed::Member<&Accept::executed>::fn(this));
+	Zi_Overlapped::Executed{this, ZmFnPtr<&Accept::executed>{}});
     }
 
     ZmRef<Listener> listener() const { return m_listener; }
@@ -825,7 +834,7 @@ friend Connect_;
       m_mx(mx), m_fn(fn), m_failFn(failFn), m_info{ZuFwd<Args>(args)...} {
 #ifdef ZiMultiplex_IOCP
       m_overlapped.init(
-	  Zi_Overlapped::Executed::Member<&Connect_::executed>::fn(this));
+	Zi_Overlapped::Executed{this, ZmFnPtr<&Connect_::executed>{}});
 #endif
     }
 
@@ -864,7 +873,7 @@ friend Connect_;
   using Connect = ConnectHash::Node;
 #else
 
-  ZuDerive(Connect, (Connect_));
+  using Connect = Connect_;
 #endif
 
   ZmHashDerive(CxnHash, ZmRef<ZiConnection>,

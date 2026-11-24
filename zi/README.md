@@ -199,7 +199,13 @@ is `count`, `size`, `align`, `headRoom`, and `tailRoom`. Allocators retain their
 pools through the last registered return. Tx allocation returns immediately and
 can return null when the pool is exhausted.
 
-Graceful disconnect drains pending output. Abrupt close abandons it. Both finish
+On a connection-backed TCP stream, `out << payload << Zi::finish()` marks the
+last buffer for graceful disconnect. Earlier queue entries drain in order. An
+empty finish marks the last pending entry, or disconnects immediately when idle.
+An ordinary flush keeps the connection available for subsequent writes.
+
+At the physical Tx context, `io.disconnect()` drains the current final buffer.
+`io.close()` abandons its unsent suffix. Both finish
 connection operations and release I/O contexts before reporting closure. Stop
 drains I/O while retaining the registered allocators. Return dependent buffers
 before teardown so plugin finalization can release its backing while allocator

@@ -36,12 +36,13 @@ to connection error/teardown handling.
 
 `ZiTxContext::length` retains the latest signed send result, including callbacks
 that select subsequent output without a buffer installed. `offset` tracks partial
-send progress independently of the buffer descriptor. `state` holds the packed
-disconnect flag; it has no data-completion or retained-range flags.
-`complete()` clears the current callback and buffer and releases connection sync
-waiters. A backend that retains backing after local completion must hold its own
-buffer reference or provider lease until retirement; Zi does not save a second Tx
-context for that purpose.
+send progress independently of the buffer descriptor. On Tx, `io.disconnect()`
+marks the current buffer final and preserves its callback and unsent suffix
+through short writes and backpressure. `io.close()` abandons the suffix and
+disarms the context. Both requests are terminal for that connection. A pending
+`sync()` returns on local acceptance of the final buffer, explicit close or a
+terminal send error. The transport holds any backing or provider lease needed
+after local acceptance until its own retirement.
 
 `ZmPQRx` is Rx-owned in its entirety. `ZmPQTx` is Tx-owned in its entirety.
 A class with both facilities keeps each base subobject on its owner.

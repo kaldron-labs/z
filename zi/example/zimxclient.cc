@@ -64,9 +64,7 @@ friend inline ZuStringT<"zimxclient.Connection"> ZmNHeapID(Connection *);
       return buf;
     }
     bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
-      if (flags & Zi::SendFlags::Finish()) return false;
-      m_cxn->Tx::send(ZmRef<ZiIOBuf>::acquire(
-        static_cast<ZiIOBuf *>(ZuMv(buf).release())));
+      m_cxn->Tx::send(ZuMv(buf), flags & Zi::SendFlags::Finish());
       return true;
     }
   private:
@@ -93,7 +91,7 @@ public:
     // std::cout << Request << std::flush;
     Output out{this, m_allocator->capacity()};
     out << Request;
-    if (!out.flush()) disconnect();
+    if (!out.flush()) close();
   }
 
   void sending(ZiTxContext &) {
@@ -102,7 +100,7 @@ public:
   }
 
   void sent(ZmRef<ZiIOBuf>, bool ok) {
-    if (!ok) { disconnect(); return; }
+    if (!ok) { close(); return; }
     Global::sent(sizeof(Request) - 1);
     Global::timeInterval(1).add(Zm::now() - m_sendTime);
   }

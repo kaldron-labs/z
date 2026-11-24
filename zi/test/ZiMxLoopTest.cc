@@ -144,14 +144,6 @@ public:
   {
     return m_done.timedwait(Zm::now(seconds)) == 0;
   }
-  bool waitDisconnections(unsigned n, int seconds)
-  {
-    ZuTime timeout = Zm::now(seconds);
-    while (m_disconnects.load_() < n)
-      if (m_discDone.timedwait(timeout) != 0) return false;
-    return true;
-  }
-
   void repeatDisconnects()
   {
     if (m_clientCxn) {
@@ -234,7 +226,7 @@ private:
       ++m_peerDisconnects;
     else
       ++m_localDisconnects;
-    m_discDone.post();
+
   }
 
 private:
@@ -242,7 +234,6 @@ private:
   TxAllocator *m_tx = allocator<Zi::IOBufType::TxTCP, ZiIOBuf, 4>();
   ZmAtomic<unsigned> m_registered = 0;
 	  ZmSemaphore		m_done;
-	  ZmSemaphore		m_discDone;
 	  ZmScheduler::Timer	m_retryTimer;
   ZiIP			m_loopIP;
 	  unsigned		m_listenPort = 0;
@@ -419,7 +410,7 @@ bool LoopCxn::sendClient(ZiTxContext &io)
   auto buf = m_owner->txAllocator()->allocBuf(
     this, 0, info().mps);
   if (ZuUnlikely(!buf)) {
-    m_owner->markIOFailure(); io.disconnect(); return true;
+    m_owner->markIOFailure(); io.close(); return true;
   }
   buf->append(ZuBSpan{Msg, sizeof(Msg)});
   io.init(
@@ -432,7 +423,7 @@ bool LoopCxn::sendClientDone(ZiTxContext &io)
 {
   if (io.length < 0) {
     m_owner->markIOFailure();
-    io.disconnect();
+    io.close();
     return true;
   }
   if ((io.offset += io.length) < io.buf->length) return true;
@@ -468,12 +459,13 @@ bool LoopCxn::sendServer(ZiTxContext &io)
   auto buf = m_owner->txAllocator()->allocBuf(
     this, 0, info().mps);
   if (ZuUnlikely(!buf)) {
-    m_owner->markIOFailure(); io.disconnect(); return true;
+    m_owner->markIOFailure(); io.close(); return true;
   }
   buf->append(ZuBSpan{Msg, sizeof(Msg)});
   io.init(
     ZiTxFn{this, ZmFnPtr<&LoopCxn::sendServerDone>{}},
     ZuMv(buf));
+  io.disconnect();
   return true;
 }
 
@@ -481,12 +473,12 @@ bool LoopCxn::sendServerDone(ZiTxContext &io)
 {
   if (io.length < 0) {
     m_owner->markIOFailure();
-    io.disconnect();
+    io.close();
     return true;
   }
   if ((io.offset += io.length) < io.buf->length) return true;
 
-  io.disconnect();
+  io.complete();
   return true;
 }
 
@@ -524,7 +516,7 @@ bool UdpTOSCxn::send_(ZiTxContext &io)
   auto buf = m_owner->txAllocator()->allocBuf(
     this, 0, info().mps);
   if (ZuUnlikely(!buf)) {
-    m_owner->ioFailure(); io.disconnect(); return true;
+    m_owner->ioFailure(); io.close(); return true;
   }
   buf->append(ZuBSpan{Msg, sizeof(Msg)});
   io.init(
@@ -538,7 +530,7 @@ bool UdpTOSCxn::sendDone_(ZiTxContext &io)
 {
   if (io.length < 0) {
     m_owner->ioFailure();
-    io.disconnect();
+    io.close();
     return true;
   }
   if ((io.offset += io.length) < io.buf->length) return true;
@@ -622,7 +614,6 @@ struct LoopResult {
   bool		mpsOK = false;
   bool		clientDisc = false;
   bool		serverDisc = false;
-  bool		waitDisc = false;
   unsigned	disconnects = 0;
   unsigned	peerDisconnects = 0;
   unsigned	localDisconnects = 0;
@@ -667,15 +658,11 @@ static LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP, unsigned port)
   result.mpsOK = mx.mpsOK_();
   result.clientDisc = mx.clientDisc_();
   result.serverDisc = mx.serverDisc_();
-  unsigned disconnects = result.disconnects = mx.disconnects_();
-  result.peerDisconnects = mx.peerDisconnects_();
-  result.localDisconnects = mx.localDisconnects_();
   mx.repeatDisconnects();
-  result.waitDisc = mx.waitDisconnections(disconnects + 4, 5);
+  mx.stop(); // drain both owners before counting notifications
   result.disconnects = mx.disconnects_();
   result.peerDisconnects = mx.peerDisconnects_();
   result.localDisconnects = mx.localDisconnects_();
-  mx.stop();
   result.singleRegistration = mx.singleRegistration_();
   return result;
 }
@@ -694,10 +681,9 @@ static LoopResult runTcpLoopbackAndTelemetry(ZiIP loopIP, unsigned port)
   ZuCheck((result).mpsOK); \
   ZuCheck((result).clientDisc); \
   ZuCheck((result).serverDisc); \
-  ZuCheck((result).waitDisc); \
-  ZuCheck((result).disconnects >= 4); \
+  ZuCheck((result).disconnects == 2); \
   ZuCheck((result).peerDisconnects == 0); \
-  ZuCheck((result).localDisconnects >= 4); \
+  ZuCheck((result).localDisconnects == 2); \
 } while (0)
 
 static void testTcpLoopbackIPv4()
@@ -889,6 +875,129 @@ static void testMxWatch()
 }
 
 #ifdef linux
+// Exercise the native nonblocking send with the receiver held idle. A Tx
+// fence after setup observes the cursor once sendmsg has returned EAGAIN.
+struct DrainCxn : public ZiConnection {
+  DrainCxn(ZiMultiplex *mx, const ZiCxnInfo &info) : ZiConnection{mx, info} { }
+  ZmSemaphore up, down;
+  unsigned accepted = 0, callbacks = 0, errors = 0, teardowns = 0;
+  bool ordered = true, replaced = false;
+  ZmRef<ZiIOBuf> extra;
+  void connected(ZiRxContext &io) override {
+    io.init(ZiRxFn{[](ZiRxContext &) { return true; }}, info().rxAllocator->allocBuf());
+    up.post();
+  }
+  void disconnected(bool) override { ++teardowns; down.post(); }
+
+  bool sent(ZiTxContext &io) {
+    ++callbacks;
+    if (io.length < 0) { ++errors; io.close(); return true; }
+    ordered &= io.offset == accepted && io.disconnected();
+    io.offset += unsigned(io.length);
+    accepted = io.offset;
+    io.init(ZiTxFn{[this](ZiTxContext &) { replaced = true; return true; }}, io.buf);
+    send_(ZiTxFn{[this](ZiTxContext &) { replaced = true; return true; }});
+    // A callback which directly promotes another buffer cannot extend the
+    // final send or replace its suffix on the next writable notification.
+    io.buf = extra;
+    io.offset = 0;
+    io.fn = ZiTxFn{[this](ZiTxContext &) { replaced = true; return true; }};
+    io.complete();
+    return true;
+  }
+};
+
+static void testNativeDrain()
+{
+  ZuTestScopeRT(testNativeDrain);
+  enum { Length = 1 << 20 };
+  enum { Drain, PeerFinish, Close, Error, IdleFinish, IdleClose };
+  for (unsigned mode = Drain; mode <= IdleClose; ++mode) {
+    ZiMultiplex mx{ZiMxParams{}.txBufSize(4096)};
+    auto rx = mx.allocator<Zi::IOBufType::Rx>();
+    auto tx = mx.allocator<Zi::IOBufType::TxTCP>();
+    auto buf = tx->allocBuf(nullptr, Length);
+    for (unsigned i = 0; i < Length; ++i) buf->data()[i] = uint8_t(i);
+    bool started = mx.start();
+    ZuCheckRT(started);
+    if (!started) return;
+    ZmSemaphore listening, connected;
+    ZmRef<DrainCxn> cxn;
+    uint16_t port = 0;
+    mx.listen([&port, &listening](const ZiListenInfo &info) {
+      port = info.port; listening.post();
+    }, [&listening](bool) { listening.post(); }, [&mx, &cxn, &connected](
+	const ZiCxnInfo &info) -> ZiConnection * {
+      cxn = new DrainCxn{&mx, info};
+      connected.post();
+      return cxn;
+    }, ZiIP{"127.0.0.1"}, 0, 1, rx);
+    int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    timeval timeout{5, 0};
+    if (fd >= 0) setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    bool ready = !listening.timedwait(Zm::now(5)) && port && fd >= 0;
+    ZiSockAddr addr{ZiIP{"127.0.0.1"}, port};
+    ready = ready && !::connect(fd, addr.sa(), addr.len()) &&
+      !connected.timedwait(Zm::now(5)) && !cxn->up.timedwait(Zm::now(5));
+    ZuCheckRT(ready);
+    if (!ready) { if (fd >= 0) ::close(fd); mx.stop(); return; }
+
+    if (mode == IdleFinish || mode == IdleClose) {
+      cxn->send(ZiTxFn{[mode](ZiTxContext &io) {
+	io.disconnect();
+	if (mode == IdleClose) io.close();
+	return false;
+      }});
+      uint8_t byte;
+      ZuCheckRT(!::recv(fd, &byte, 1, 0));
+      ZuCheckRT(!cxn->down.timedwait(Zm::now(5)) && cxn->teardowns == 1);
+      ::close(fd);
+      mx.stop();
+      continue;
+    }
+    cxn->extra = tx->allocBuf(nullptr, 1);
+    ZmSemaphore stalled;
+    bool pending = false;
+    mx.txRun([&cxn, &buf, &pending, &stalled] {
+      cxn->send_(ZiTxFn{[&cxn, &buf](ZiTxContext &io) {
+	io.init(ZiTxFn{cxn.ptr(), ZmFnPtr<&DrainCxn::sent>{}}, buf);
+	io.disconnect();
+	return false; // final setup must drive the send
+      }});
+      auto &io = cxn->txContext();
+      pending = io.disconnected() && io.buf == buf && io.offset && io.offset < Length;
+      stalled.post();
+    });
+    ZuCheckRT(!stalled.timedwait(Zm::now(5)) && pending);
+    if (mode == PeerFinish) ::shutdown(fd, SHUT_WR);
+    if (mode == Close) cxn->close();
+    if (mode == Error) {
+      // Force the retry on this same socket to fail with EPIPE.
+      mx.txRun([&cxn] { ::shutdown(cxn->info().socket, SHUT_WR); });
+    }
+    ZmThread waiter{[&cxn] { cxn->sync(); }};
+    unsigned received = 0;
+    bool sequence = true;
+    uint8_t block[8192];
+    ssize_t n;
+    while ((n = ::recv(fd, block, sizeof(block), 0)) > 0) {
+      for (ssize_t i = 0; i < n; ++i)
+	if (block[i] != uint8_t(received + i)) sequence = false;
+      received += unsigned(n);
+    }
+    bool done = !cxn->down.timedwait(Zm::now(5));
+    if (!done) cxn->close();
+    waiter.join();
+    ::close(fd);
+    mx.stop();
+    ZuCheckRT(done && cxn->teardowns == 1 && cxn->callbacks && cxn->ordered);
+    ZuCheckRT(!cxn->replaced && cxn->txContext().completed() && !cxn->txContext().buf);
+    ZuCheckRT(sequence && received == cxn->accepted && !n);
+    ZuCheckRT(mode <= PeerFinish ? received == Length : received && received < Length);
+    ZuCheckRT(cxn->errors == unsigned(mode == Error));
+  }
+}
+
 static void testNativeStartFailure()
 {
   ZuTestScopeRT(testNativeStartFailure);
@@ -961,6 +1070,7 @@ int main(int argc, char **argv)
   ZuTestMain();
 #ifdef linux
   ZuTestCall(testNativeStartFailure);
+  ZuTestCall(testNativeDrain);
 #endif
   ZuTestCall(testMulticastOptions);
   ZuTestCall(testTcpLoopbackIPv4);

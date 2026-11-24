@@ -69,11 +69,40 @@ void testCompleteAndDisconnect()
   ZuCheck(io.completed());
 }
 
+static void testTxTerminal()
+{
+  ZuTestScope(testTxTerminal);
+  ZiMultiplex mx;
+  auto allocator = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 8>();
+  auto first = allocator->allocBuf();
+  auto later = allocator->allocBuf();
+  *first << "data";
+  ZiTxContext io;
+  io.init(ZiTxFn{[](ZiTxContext &) { return true; }}, first);
+  io.offset = 1;
+  io.disconnect();
+  io.disconnect();
+  io.init(ZiTxFn{[](ZiTxContext &) { return false; }}, later);
+  io.complete();
+  ZuCheck(io.disconnected() && !io.closed() && !io.completed());
+  ZuCheck(io.buf == first && io.offset == 1 && io());
+  io.close();
+  io.close();
+  io.disconnect();
+  ZuCheck(io.closed() && !io.disconnected() && io.completed() && !io.buf);
+  ZiTxContext idle;
+  idle.disconnect();
+  ZuCheck(idle.disconnected() && idle.completed() && !idle.buf);
+  idle.close();
+  ZuCheck(idle.closed() && idle.completed());
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testInitAndCallback);
   ZuTestCall(testCompleteAndDisconnect);
+  ZuTestCall(testTxTerminal);
   return 0;
 }

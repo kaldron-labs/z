@@ -75,9 +75,9 @@ struct TxHarness : public FakeConnection, public ZiTx<TxHarness> {
     io();
   }
 
-  void queue(ZmRef<ZiIOBuf> buf)
+  void queue(ZmRef<ZiIOBuf> buf, bool finish = false)
   {
-    ZiTx<TxHarness>::send(ZuMv(buf));
+    ZiTx<TxHarness>::send(ZuMv(buf), finish);
   }
 };
 
@@ -156,6 +156,42 @@ static void testSendFailureDrainsQueue()
   ZuCheck(tx.io.completed());
 }
 
+static void testFinish()
+{
+  ZuTestScope(testFinish);
+
+  for (bool empty : {false, true}) {
+    TxHarness tx;
+    tx.queue(mkBuf('A', 3));
+    tx.queue(mkBuf('B', 2), !empty);
+    if (empty) tx.queue({}, true);
+    tx.queue(mkBuf('C', 1));
+    ZuCheck(!tx.io.disconnected() && tx.txQueue.count_() == 2 &&
+	tx.sentCount == 1 && tx.sentOrder[0] == 'C' && !tx.sentOK[0]);
+    tx.step(1);
+    ZuCheck(!tx.io.disconnected() && tx.io.offset == 1);
+    tx.step(2);
+    ZuCheck(tx.io.disconnected() && !tx.io.offset && tx.io.buf->length == 2);
+    tx.step(1);
+    ZuCheck(tx.io.disconnected() && !tx.io.completed() && tx.io.offset == 1);
+    tx.step(1);
+    ZuCheck(tx.io.completed() && tx.io.disconnected() && tx.txQueue.empty_() &&
+	tx.sentCount == 3 && tx.sentOrder[2] == 'B' && tx.sentOK[2]);
+  }
+
+  TxHarness active;
+  active.queue(mkBuf('A', 3));
+  active.step(1);
+  active.queue({}, true);
+  ZuCheck(active.io.disconnected() && active.io.offset == 1 && active.io.buf->length == 3);
+  active.step(2);
+  ZuCheck(active.io.completed() && active.sentCount == 1 && active.sentOK[0]);
+
+  TxHarness idle;
+  idle.queue({}, true);
+  ZuCheck(idle.io.disconnected() && idle.io.completed() && idle.txQueue.empty_());
+}
+
 static void testAbortQueuedAndHeadCases()
 {
   ZuTestScope(testAbortQueuedAndHeadCases);
@@ -215,6 +251,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testFifoPartialSend);
   ZuTestCall(testSendFailureDrainsQueue);
+  ZuTestCall(testFinish);
   ZuTestCall(testAbortQueuedAndHeadCases);
   return 0;
 }

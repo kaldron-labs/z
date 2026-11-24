@@ -249,6 +249,7 @@ public:
     if (!m_disconnectEx) { WSASetLastError(WSASYSNOTREADY); return FALSE; }
     return (*m_disconnectEx)(s, overlapped, flags, reserved);
   }
+  LPFN_TRANSMITPACKETS transmitPackets() const { return m_transmitPackets; }
   INT recvMsg(
       SOCKET s, LPWSAMSG msg, LPDWORD count, LPWSAOVERLAPPED overlapped,
       LPWSAOVERLAPPED_COMPLETION_ROUTINE completion) {
@@ -270,6 +271,7 @@ private:
   PAcceptEx		m_acceptEx;
   PGetAcceptExSockaddrs	m_getAcceptExSockaddrs;
   PDisconnectEx		m_disconnectEx;
+  LPFN_TRANSMITPACKETS	m_transmitPackets = nullptr;
   PWSARecvMsg		m_recvMsg;
   PWSASendMsg		m_sendMsg;
 };
@@ -291,6 +293,7 @@ ZiMultiplex_WSExt::ZiMultiplex_WSExt()
     static GUID acceptExGUID = WSAID_ACCEPTEX;
     static GUID getAcceptExSockaddrsGUID = WSAID_GETACCEPTEXSOCKADDRS;
     static GUID disconnectExGUID = WSAID_DISCONNECTEX;
+    static GUID transmitPacketsGUID = WSAID_TRANSMITPACKETS;
     static GUID recvMsgGUID = WSAID_WSARECVMSG;
     static GUID sendMsgGUID = WSAID_WSASENDMSG;
 
@@ -321,7 +324,13 @@ ZiMultiplex_WSExt::ZiMultiplex_WSExt()
 	n != sizeof(PDisconnectEx))
       goto error;
 
-	if (WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER,
+    if (WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER,
+		 &transmitPacketsGUID, sizeof(GUID),
+		 &m_transmitPackets, sizeof(m_transmitPackets), &n, 0, 0) ||
+	n != sizeof(m_transmitPackets))
+      m_transmitPackets = nullptr;
+
+    if (WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER,
 		 &recvMsgGUID, sizeof(GUID),
 		 &m_recvMsg, sizeof(PWSARecvMsg), &n, 0, 0) ||
 	n != sizeof(PWSARecvMsg))
@@ -1081,8 +1090,8 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
     return;
   }
 
-  if (!!localIP || localPort) {
 #ifndef _WIN32
+  if (!!localIP || localPort) {
     if (!localIP) localIP = wildcard(ipType);
     ZiSockAddr local(localIP, localPort);
     if (::bind(s, local.sa(), local.len()) < 0) {
@@ -1093,6 +1102,7 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
       return;
     }
 #else
+  { // ConnectEx requires a bound socket, including for an ephemeral port
     if (!localIP) localIP = wildcard(ipType);
     ZiSockAddr local(localIP, localPort);
     if (::bind(s, local.sa(), local.len())) {
@@ -1117,15 +1127,14 @@ void ZiMultiplex::connect_(ZiConnectFn fn, ZiFailFn failFn,
       this, fn, failFn,
       ZiCxnType::TCPOut, s, options,
       ZiSockAddr{localIP, localPort}, remote, ~uint32_t(0), rxAllocator);
-  using Executed = Zi_Overlapped::Executed;
   Zi_Overlapped &overlapped = request->overlapped();
-  overlapped.init(Executed::Member<&Connect::executed>::fn(request));
   ZeError e;
   if (ZuLikely(ConnectEx(s, remote.sa(), remote.len(), 0, 0, 0,
 	  (OVERLAPPED *)&overlapped) ||
 	(e = WSAGetLastError()).errNo() == WSA_IO_PENDING))
     return;
   delete request;
+  ::closesocket(s);
   Error("ConnectEx", Zi::IOError, e);
   failFn(false);
   return;
@@ -1781,7 +1790,7 @@ void ZiConnection::recv()
 	size = m_rxContext.buf->size,
 	offset = m_rxContext.buf->length,
 	buffered = n,
-	overlapped,
+	overlapped = &overlapped
       ](auto &s) {
 	s << "FD: " << ZuBoxed(socket).fmt<ZuFmt::Right<3>>()
 	  << " WSARecv(" << len << ") size: " << size
@@ -1793,7 +1802,7 @@ void ZiConnection::recv()
 #endif
 
   m_rxFlags = 0;
-  overlapped.init(Executed::Member<&ZiConnection::overlappedRecv>::fn(this));
+  overlapped.init(Executed{this, ZmFnPtr<&ZiConnection::overlappedRecv>{}});
   m_rxPending = ZuMv(m_rxContext.buf);
   ZeError e;
   DWORD n;
@@ -2061,11 +2070,15 @@ void ZiConnection::send(ZiTxFn fn)
 void ZiConnection::send_(ZiTxFn fn)
 {
   ZiAssert(m_mx->invoked(m_mx->txThread()), "ZiMultiplex", (), "Tx owner", return);
-  if (fn(m_txContext)) send();
+  if (ZuUnlikely(m_txContext.state || !m_txUp.load_())) return;
+  bool ready = fn(m_txContext);
+  if (ready || m_txContext.state) send();
 }
 
 void ZiTxContext::complete()
 {
+  if (ZuUnlikely(disconnected() && length >= 0 && (!cxn || cxn->txUp()) &&
+      ((state & ZiIOState::Partial()) || (buf && offset < buf->length)))) return;
   fn = {};
   buf = nullptr;
   if (cxn && this == &cxn->txContext()) cxn->syncDone();
@@ -2106,9 +2119,21 @@ void ZiConnection::send()
 
   if (ZuUnlikely(!m_txUp.load_())) { m_txContext.complete(); return; }
 
-  if (ZuLikely(m_txContext.completed())) return;
+  if (ZuUnlikely(m_txContext.closed())) { close_1(false); return; }
+  if (m_txContext.completed() || !m_txContext.buf ||
+      (m_txContext.disconnected() && m_txContext.offset >= m_txContext.buf->length)) {
+    if (m_txContext.disconnected()) {
+      m_txContext.complete();
+      disconnect_1(false);
+    }
+    return;
+  }
 
   if (auto plugin = m_mx->plugin()) { plugin->send(this); return; }
+
+#ifdef ZiMultiplex_IOCP
+  if (m_txPending) return;
+#endif
 
   unsigned n;
 
@@ -2187,6 +2212,31 @@ retry:
 	<< " WSASendMsg(" << len << "): " << n;
     }));
   } else {
+    if (m_txContext.disconnected() && len) {
+      // TransmitPackets accepts at most INT_MAX - 1 bytes per operation.
+      // Send any larger prefix normally so TF_DISCONNECT goes on the tail.
+      constexpr unsigned maxBytes = 0x7ffffffe;
+      if (len > maxBytes)
+	wsaBuf.len = maxBytes;
+      else if (auto transmit = ZiMultiplex_WSExt::instance()->transmitPackets()) {
+	m_txElement.dwElFlags = TP_ELEMENT_MEMORY;
+	m_txElement.cLength = len;
+	m_txElement.pBuffer = buf;
+	m_txPending = m_txContext.buf;
+	using Executed = Zi_Overlapped::Executed;
+	m_txOverlapped.init(Executed{this, ZmFnPtr<&ZiConnection::overlappedSend>{}});
+	if (transmit(m_info.socket, &m_txElement, 1, 0,
+	      reinterpret_cast<OVERLAPPED *>(&m_txOverlapped), TF_DISCONNECT) ||
+	    (e = WSAGetLastError()).errNo() == WSA_IO_PENDING)
+	  return; // immediate success also delivers an IOCP completion
+	m_txOverlapped.clear();
+	m_txPending = nullptr;
+	if (e.errNo() != WSAEOPNOTSUPP) {
+	  errorSend(Zi::IOError, e);
+	  return;
+	}
+      }
+    }
     if (ZuUnlikely(WSASend(m_info.socket, &wsaBuf, 1, &n_, 0,
 	    0, 0) == SOCKET_ERROR)) {
       e = WSAGetLastError();
@@ -2243,8 +2293,13 @@ retry:
       putTOS(msg, control, sizeof(control), m_txContext.tos,
 	IPPROTO_IP, IP_TOS);
     n_ = ::sendmsg(m_info.socket, &msg, 0);
-  }
-  else
+  } else if (ZuUnlikely(m_txContext.disconnected())) {
+    iovec iov{buf, len};
+    msghdr msg{};
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    n_ = ::sendmsg(m_info.socket, &msg, MSG_MORE);
+  } else
     n_ = ::send(m_info.socket, buf, len, 0);
   if (ZuUnlikely(n_ < 0)) e = errno;
 
@@ -2285,17 +2340,7 @@ retry:
 #ifdef ZiMultiplex_FILTER
 executed:
 #endif
-  executedSend(n);
-
-  if (ZuLikely(m_txContext.completed())) {
-    if (m_txContext.disconnected()) disconnect(false);
-    return;
-  }
-
-  if (ZuLikely(m_txContext.offset >= m_txContext.buf->length)) {
-    m_txContext.complete();
-    return;
-  }
+  if (!executedSend(n)) return;
 
   buf = m_txContext.buf->data() + m_txContext.offset;
   len = m_txContext.buf->length - m_txContext.offset;
@@ -2308,13 +2353,41 @@ executed:
   goto retry;
 }
 
+#ifdef ZiMultiplex_IOCP
+void ZiConnection::overlappedSend(int status, unsigned n, ZeError e)
+{
+  m_mx->txRun([cxn = ZmRef(this), status, n, e]() {
+    cxn->m_txPending = nullptr;
+    if (!cxn->m_txUp.load_()) {
+      // close_1 disarmed the callback. Rx can now retire the socket.
+      cxn->m_mx->rxRun([cxn, peer = cxn->m_txClosePeer]() {
+	cxn->close_2(peer);
+      });
+      return;
+    }
+    if (status != Zi::OK) {
+      cxn->errorSend(status, e);
+      return;
+    }
+    cxn->m_txNativeDisconnected = true;
+    if (!cxn->executedSend(n)) return;
+    // Winsock has already disconnected. An unaccepted suffix cannot be retried.
+    if (n < cxn->m_txElement.cLength)
+      cxn->errorSend(Zi::IOError, ZeError{WSAECONNABORTED});
+    else
+      cxn->close_1(false);
+  });
+}
+#endif
+
 void ZiConnection::errorSend(int status, ZeError e)
 {
+  bool datagramError = m_info.options.udp() && status == Zi::IOError &&
+    (e.errNo() == ZiECONNREFUSED || e.errNo() == ZiECONNRESET) && !m_txContext.state;
+  if (!datagramError) m_txContext.state = ZiIOState::Close();
   m_txContext.length = -1;
-  m_txContext();
-  if (m_info.options.udp() && status == Zi::IOError &&
-      (e.errNo() == ZiECONNREFUSED || e.errNo() == ZiECONNRESET))
-    return;
+  if (!m_txContext.completed()) m_txContext();
+  if (datagramError && !m_txContext.state) return;
   bool peer = status == Zi::IOError &&
     (e.errNo() == ZiENOTCONN || e.errNo() == ZiECONNRESET);
   close_1(peer);
@@ -2329,7 +2402,7 @@ void ZiConnection::errorSend(int status, ZeError e)
       status, e);
 }
 
-void ZiConnection::executedSend(unsigned n)
+bool ZiConnection::executedSend(unsigned n)
 {
   ZiDEBUG(m_mx, "executedSend()");
 
@@ -2344,9 +2417,44 @@ void ZiConnection::executedSend(unsigned n)
 #endif
 
 
-  m_txContext.length = n;
-  // the completion may synchronously call send_() for the next message
-  while (!m_txContext());
+  auto &io = m_txContext;
+  auto original = io.buf.ptr();
+  unsigned accepted = io.offset + n;
+  bool final = io.disconnected();
+  io.length = n;
+  if (ZuUnlikely(final && accepted < io.buf->length)) {
+    // A completion can move or replace the public buffer and callback. Keep
+    // the original suffix and sync waiter until the transport accepts it.
+    auto backing = io.buf;
+    auto callback = io.fn;
+    io.state |= ZiIOState::Partial();
+    while (!io() && !io.closed() && io.buf == original && io.fn == callback) { }
+    if (!m_txUp.load_()) return false;
+    if (io.closed()) { close_1(false); return false; }
+    io.state = ZiIOState::Disconnect();
+    io.buf = ZuMv(backing);
+    io.fn = ZuMv(callback);
+    io.offset = accepted;
+    return true;
+  }
+  // An ordinary completion can promote and mark the next queued buffer.
+  while (!io.completed() && !io() && (!final || io.buf.ptr() == original)) { }
+  if (!m_txUp.load_()) return false;
+  if (ZuUnlikely(io.closed())) { close_1(false); return false; }
+  if (ZuUnlikely(final)) {
+    // The transport accepted the entire original range. Drop any replacement
+    // installed by its completion before dispatching the graceful teardown.
+    io.buf = nullptr;
+    io.complete();
+    disconnect_1(false);
+    return false;
+  }
+  if (ZuUnlikely(io.disconnected()) && io.buf.ptr() == original && io.length == int(n))
+    io.offset = accepted;
+  if (!io.completed() && io.buf && io.offset < io.buf->length) return true;
+  io.complete();
+  if (ZuUnlikely(io.disconnected())) disconnect_1(false);
+  return false;
 }
 
 bool ZiMultiplex::initSocket(Socket s, const ZiCxnOptions &options)
@@ -2555,15 +2663,18 @@ void ZiConnection::disconnect(bool peer)
 void ZiConnection::disconnect_1(bool peer)
 {
   if (auto plugin = m_mx->plugin()) { plugin->disconnect(this, peer); return; }
-  if (!m_txUp.load_()) {
-    m_mx->rxRun([cxn = ZmRef(this), peer]() {
-      cxn->notifyDisconnected(peer);
-    });
+  // A peer FIN closes its sending half. Our marked suffix can still drain.
+  if (m_txContext.disconnected() && !m_txContext.completed()) {
+    if (peer) send(); // EOF and writability can share one epoll event
     return;
   }
-  
+#ifdef ZiMultiplex_IOCP
+  if (m_txPending) return; // TF_DISCONNECT is already in flight
+  if (m_txNativeDisconnected) { close_1(peer); return; }
+#endif
+  if (!m_txUp.load_()) return;
   m_txUp = false;
-
+  m_txContext.complete();
   m_mx->rxRun([cxn = ZmRef(this), peer]() { cxn->disconnect_2(peer); });
 }
 
@@ -2592,8 +2703,7 @@ void ZiConnection::disconnect_2(bool peer)
   Zi_Overlapped &overlapped = m_discOverlapped;
   ZeError e;
   m_discPeer = peer;
-  overlapped.init(
-      Executed::Member<&ZiConnection::overlappedDisconnect>::fn(this));
+  overlapped.init(Executed{this, ZmFnPtr<&ZiConnection::overlappedDisconnect>{}});
   if (ZuLikely(DisconnectEx(m_info.socket, (OVERLAPPED *)&overlapped, 0, 0) ||
 	(e = WSAGetLastError()).errNo() == WSA_IO_PENDING))
     return;
@@ -2697,13 +2807,18 @@ void ZiConnection::close(bool peer)
 void ZiConnection::close_1(bool peer)
 {
   if (auto plugin = m_mx->plugin()) { plugin->close(this, peer); return; }
-  if (!m_txUp.load_()) {
-    m_mx->rxRun([cxn = ZmRef(this), peer]() {
-      cxn->notifyDisconnected(peer);
-    });
-    return;
+#ifdef ZiMultiplex_IOCP
+  if (m_txPending) {
+    if (!m_txUp.load_()) return;
+    m_txUp = false;
+    m_txClosePeer = peer;
+    m_txContext.complete();
+    CancelIoEx(reinterpret_cast<HANDLE>(m_info.socket),
+      reinterpret_cast<OVERLAPPED *>(&m_txOverlapped));
+    return; // the completion is also delivered if cancellation lost the race
   }
-  
+#endif
+  if (!m_txUp.load_()) return;
   m_txUp = false;
 
   m_txContext.complete();
@@ -3077,7 +3192,7 @@ void ZiMultiplex::rx()
 	Error("GetQueuedCompletionStatus", Zi::IOError, e);
 	return;
       }
-      overlapped->complete(Zi::IOError, 0, e);
+      overlapped->complete(Zi::IOError, len, e);
     } else {
       ZiDEBUG(this, ([overlapped](auto &s) {
 	s << "wait() overlapped: " <<
