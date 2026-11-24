@@ -184,7 +184,9 @@ static bool certificate(Context &server, const Ztls::PK::Key &key)
   return true;
 }
 
-static bool exchange(Peer &client, Peer &server, Flight &c, Flight &s, bool retry)
+static bool exchange(
+  Peer &client, Peer &server, Flight &c, Flight &s, bool retry,
+  const void *cookieKey = nullptr, bool rejectBinder = false)
 {
   if (!accepted(c.drive(client, RawHandshakeOp::Start)) || !c.valid() ||
     rawReadEpoch(&server.tls) != Initial)
@@ -194,10 +196,11 @@ static bool exchange(Peer &client, Peer &server, Flight &c, Flight &s, bool retr
   if (hello.length() <= 3 ||
     s.drive(server, RawHandshakeOp::Input, Initial, {hello.data(), 3}) != Ztls_ErrorInProgress ||
     !s.valid() || s.result.length || rawReadEpoch(&server.tls) != Initial || server.traffic[0] ||
-    server.traffic[1] ||
-    !accepted(
-      s.drive(server, RawHandshakeOp::Input, Initial, {hello.data() + 3, hello.length() - 3})) ||
-    !s.valid())
+    server.traffic[1])
+    return false;
+  int status =
+    s.drive(server, RawHandshakeOp::Input, Initial, {hello.data() + 3, hello.length() - 3});
+  if (!(cookieKey ? status == Ztls_ErrorStatelessRetry : accepted(status)) || !s.valid())
     return false;
 
   if (retry) {
@@ -205,8 +208,23 @@ static bool exchange(Peer &client, Peer &server, Flight &c, Flight &s, bool retr
       rawReadEpoch(&server.tls) != Initial ||
       !accepted(c.drive(client, RawHandshakeOp::Input, Initial, s.bytes(Initial))) ||
       !c.valid() || !c.startsWith(Initial, Ztls_HsTypeCliHello) ||
-      c.result.offsets[1] != c.result.length || rawReadEpoch(&client.tls) != Initial ||
-      !accepted(s.drive(server, RawHandshakeOp::Input, Initial, c.bytes(Initial))) || !s.valid())
+      c.result.offsets[1] != c.result.length || rawReadEpoch(&client.tls) != Initial)
+      return false;
+    if (cookieKey) {
+      auto ctx = server.tls.ctx;
+      server.tls.initialize(ctx, true, &server);
+      server.tls.handshakeProps.server.cookie.key = cookieKey;
+      server.tls.handshakeProps.server.retryUsesCookie = 1;
+      server.tls.handshakeProps.server.enforceRetry = 1;
+    }
+    if (rejectBinder) {
+      c.storage[c.result.offsets[Initial + 1] - 1] ^= 1;
+      return Ztls_ErrorToAlert(
+	s.drive(server, RawHandshakeOp::Input, Initial, c.bytes(Initial))) ==
+	Ztls_AlertDecryptError;
+    }
+    if (!accepted(s.drive(server, RawHandshakeOp::Input, Initial, c.bytes(Initial))) ||
+      !s.valid())
       return false;
   }
 
@@ -271,8 +289,9 @@ static void handshake(bool compressed = false)
 #endif
 
   Ticket ticket;
-  for (unsigned pass = 0; pass < 3; ++pass) {
-    bool retry = pass == 2;
+  uint8_t cookieKey[Ztls_MaxDigestSize]{};
+  for (unsigned pass = 0; pass < 6; ++pass) {
+    bool retry = pass >= 2, cookie = pass == 3 || pass == 5, rejectBinder = pass >= 4;
     Peer client, server;
     client.ticket = &ticket;
     client.tls.initialize(&clientContext, false, &client);
@@ -283,18 +302,31 @@ static void handshake(bool compressed = false)
       client.tls.handshakeProps.client.maxEarlyDataSize = &earlyLimit;
     }
     server.tls.handshakeProps.server.enforceRetry = retry;
+    if (cookie) {
+      server.tls.handshakeProps.server.cookie.key = cookieKey;
+      server.tls.handshakeProps.server.retryUsesCookie = 1;
+    }
 
     Flight c, s;
-    bool   complete = exchange(client, server, c, s, retry);
+    bool complete = exchange(
+      client, server, c, s, retry, cookie ? cookieKey : nullptr, rejectBinder);
     ZuCheckRT(
       complete,
       ZuTestUtil::log_(
 	"raw exchange pass ", pass, ": client status ", c.result.status, ", server status ",
 	s.result.status));
     if (!complete) return;
+    if (rejectBinder) {
+      ZuCheckRT(!earlyLimit &&
+	client.tls.handshakeProps.client.earlyDataAcceptance == EarlyDataAcceptance::Rejected);
+      continue;
+    }
     ZuCheckRT(
-      ticket.length() && bool(isPskHandshake(&client.tls)) == (pass == 1) &&
-      bool(isPskHandshake(&server.tls)) == (pass == 1));
+      ticket.length() && bool(isPskHandshake(&client.tls)) == bool(pass) &&
+      bool(isPskHandshake(&server.tls)) == bool(pass));
+    if (retry)
+      ZuCheckRT(!earlyLimit &&
+	client.tls.handshakeProps.client.earlyDataAcceptance == EarlyDataAcceptance::Rejected);
 
     unsigned active = (1U << Handshake) | (1U << Application);
     ZuCheckRT(

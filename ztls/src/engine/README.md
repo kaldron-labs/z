@@ -64,6 +64,13 @@ storage. The driver writes complete handshake messages directly into the
 supplied span and returns the five boundaries for the four epoch slots.
 The 0-RTT slot is empty. A terminal output failure leaves the failed
 flight unpublished and the caller retires the handshake.
+On a stateless HelloRetryRequest, the raw driver returns the Initial
+HelloRetryRequest range with `Ztls_ErrorStatelessRetry`; the caller sends it
+and recreates the connection for ClientHello2 using the same cookie key.
+Ticket resumption is available after stateful or stateless HelloRetryRequest.
+The retry transcript is retained while the ticket replaces the empty early
+secret before validating the second ClientHello binder. Early data is rejected
+after either retry.
 
 The raw driver reports traffic secrets through the handshake callback.
 Zquic owns packet protection, epoch retirement, and packet key updates.

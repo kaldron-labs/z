@@ -1226,7 +1226,10 @@ struct RawHandshakeResult {
 
 // The caller supplies ordered CRYPTO bytes at one epoch and owns the output span.
 // Offsets delimit Initial, 0-RTT, Handshake, and Application, in that order.
-// In-progress or suspended signing can still produce complete output ranges.
+// In-progress, stateless retry, or suspended signing can still produce complete
+// output ranges. On Ztls_ErrorStatelessRetry, send the Initial range containing
+// HelloRetryRequest, then discard this connection and handle ClientHello2 with
+// a fresh connection using the same cookie key.
 Ztls_Extern RawHandshakeResult rawHandshake(
   Ztls::Cxn *, HandshakeProps *, RawHandshakeOp::T, size_t inputEpoch, ZuBSpan input,
   Bytes output);

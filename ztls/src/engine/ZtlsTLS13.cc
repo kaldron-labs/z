@@ -3969,7 +3969,15 @@ static int tryPSKHandshake(
   goto Exit;
 
 Found:
-  if (!isSecondFlight && (ret = keyScheduleExtract(tls->keySchedule, secret)) != 0) goto Exit;
+  if (isSecondFlight) {
+    // HRR initialized the early secret without a ticket. Replace that secret,
+    // retaining the message_hash(CH1) || HRR transcript for the CH2 binder.
+    if (tls->ctx->preSharedKey.identity.data() == NULL &&
+      (ret = keyScheduleSelectCipher(tls->keySchedule, tls->cipherSuite, 1, secret)) != 0)
+      goto Exit;
+  } else if ((ret = keyScheduleExtract(tls->keySchedule, secret)) != 0) {
+    goto Exit;
+  }
   if ((ret = deriveEmptySecret(
 	 tls->keySchedule, binderKey,
 	 tls->ctx->preSharedKey.secret.data() != NULL ? "ext binder" : "res binder")) != 0)
@@ -4317,11 +4325,7 @@ srvHandleHello(Ztls::Cxn *tls, MessageEmitter *emitter, Bytes message, Handshake
       keySchedCh1hashPrefix(tls->keySchedule);
       keyScheduleUpdateHash(
 	tls->keySchedule, ch->cookie.ch1Hash.data(), ch->cookie.ch1Hash.length(), 0);
-      keyScheduleExtract(
-	tls->keySchedule, tls->ctx->preSharedKey.secret
-	// this argument will be a zero-length vector unless external PSK is used, and that's
-	// fine; we never resume when sending HRR
-      );
+      keyScheduleExtract(tls->keySchedule, tls->ctx->preSharedKey.secret);
       // ... reusing sendbuf to rebuild HRR for hash calculation
       size_t hrrStart = emitter->buf->off;
       Ztls_EmitHelloRetryRequest(
@@ -4358,10 +4362,7 @@ srvHandleHello(Ztls::Cxn *tls, MessageEmitter *emitter, Bytes message, Handshake
 	!isECHHandshake(tls, NULL, NULL, NULL);
       if (!retryUsesCookie) {
 	keySchedPostCh1hash(tls->keySchedule);
-	keyScheduleExtract(
-	  tls->keySchedule, tls->ctx->preSharedKey.secret
-	  // see comment above
-	);
+	keyScheduleExtract(tls->keySchedule, tls->ctx->preSharedKey.secret);
       }
       size_t echConfirmOff = 0;
       Ztls_EmitHelloRetryRequest(
@@ -4436,7 +4437,7 @@ srvHandleHello(Ztls::Cxn *tls, MessageEmitter *emitter, Bytes message, Handshake
   if (ch->psk.hashEnd != 0 &&
     (ch->psk.keModes & ((1u << Ztls_PSKKeModePSK) | (1u << Ztls_PSKKeModePSKDHE))) != 0 &&
     !tls->ctx->requireCliAuth &&
-    ((!isSecondFlight && tls->ctx->encryptTicket != NULL) ||
+    (tls->ctx->encryptTicket != NULL ||
       tls->ctx->preSharedKey.identity.data() != NULL)) {
     if ((ret = tryPSKHandshake(
 	   tls, &pskIndex, &acceptEarlyData, ch,
@@ -5492,6 +5493,7 @@ RawHandshakeResult rawHandshake(
   switch (result.status) {
   case 0:
   case Ztls_ErrorInProgress:
+  case Ztls_ErrorStatelessRetry:
   case Ztls_ErrorAsyncOperation:
     result.length = result.offsets[4];
     return result;
