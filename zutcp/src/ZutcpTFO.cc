@@ -129,7 +129,6 @@ bool TFOCache::store(const TFOCookieKey &key, ZuBSpan input)
     node = &m_slots[m_free];
     m_free = node->freeNext;
   } else {
-    ++m_full;
     node = m_order.shift();
     m_index->delNode(node);
   }
@@ -167,7 +166,6 @@ void TFOCache::final()
   m_index = nullptr;
   m_slots.null();
   m_free = unsigned(-1);
-  m_full = 0;
 }
 
 bool TFOCache::resize(unsigned capacity)

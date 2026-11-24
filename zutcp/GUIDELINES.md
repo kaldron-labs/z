@@ -28,13 +28,10 @@ owns outgoing/accepted protocol records, listener endpoints, admission, secrets,
 history and native pools. Internal listeners own only local bind/options,
 pending/live membership and listener drain state.
 
-MxPlugin implements ZiMxPlugin and its inherited Ztc::Mx interface, not Ztc::Hub.
-One Cxn base supplies connection identity, application association and intrusive
-ownership membership; CliCxn and SrvCxn share the Cxn_ protocol implementation.
-MxPlugin owns one m_cxns list, m_cxnCount and m_cxnsLock. allCxns() snapshots
-published application connections from that list, filtering pending and retiring
-entries, then invokes callbacks without holding the membership lock. There is no
-separate observation list or connection-manager object.
+MxPlugin implements ZiMxPlugin. Cxn supplies connection identity, application
+association and intrusive list membership. CliCxn and SrvCxn share the Cxn_
+protocol implementation. Rx owns the list of pending, published and retiring
+connections through their drain.
 
 Connection admission counters and limit checks belong directly to MxPlugin.
 Cxn carries its admitted/pending/closing flags; there are no separate admission
@@ -51,12 +48,6 @@ opaque owner pointers or duplicate bound-local-address fields are maintained.
 Dispatch preserves exact-local then wildcard lookup, and unbind removes only
 the requesting endpoint's own node before its owner drains. Accepted connections
 share their listener's binding and retain the existing TCP tuple routing.
-
-allQueues() delegates directly to the packet device's queue enumeration. It does not
-traverse connections or listeners, or expose protocol bookkeeping as transport
-queues. Do not add queue containers, indexes, registries or tracking caches.
-Queue callbacks borrow the device's queue views. Finish each callback before
-device teardown.
 
 Destination route/static-neighbor lookup runs synchronously on mx Rx during
 outbound and passive setup. It is intentional bounded blocking netlink work,

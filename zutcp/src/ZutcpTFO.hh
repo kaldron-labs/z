@@ -27,7 +27,6 @@
 
 #include <zlib/ZiIP.hh>
 
-#include <zlib/ZutcpQueue.hh>
 
 namespace Zutcp {
 
@@ -80,7 +79,7 @@ inline const TFOCookieKey &tfoCacheKey(const TFOCacheEntry &entry) { return entr
 
 // Rx-owned, including stopped-state resize. Hash and FIFO share preallocated slots.
 // No cookie/connection references or timers are retained; find copies a Tx snapshot.
-class ZutcpAPI TFOCache : public QueueTelemetry<"tfo-cookies", Ztc::QueueType::Rx> {
+class ZutcpAPI TFOCache {
   ZmHashDerive(IndexBase, TFOCacheEntry,
     (ZmHashNode<TFOCacheEntry,
       ZmHashKey<tfoCacheKey,
@@ -101,12 +100,6 @@ public:
   TFOCache &operator =(const TFOCache &) = delete;
   unsigned capacity() const { return unsigned(m_slots.length()); }
   unsigned count() const { return m_order.count_(); }
-  void telemetry(Ztc::QueueTelemetry &data) const override {
-    queueTelemetry(data);
-    data.count = count();
-    data.size = capacity();
-    data.full = m_full;
-  }
   bool store(const TFOCookieKey &, ZuBSpan);
   bool find(const TFOCookieKey &, TFOCookie &) const;
   bool erase(const TFOCookieKey &);
@@ -117,7 +110,7 @@ private:
   Slots m_slots;
   ZmRef<Index> m_index;
   Order m_order;
-  unsigned	m_free = unsigned(-1), m_full = 0;
+  unsigned	m_free = unsigned(-1);
 };
 
 } // namespace Zutcp

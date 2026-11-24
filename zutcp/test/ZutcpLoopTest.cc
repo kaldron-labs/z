@@ -89,7 +89,7 @@ struct TestLink :
   friend inline ZuStringT<"Zutcp.Loop.Link"> ZmNHeapID(TestLink *);
   using ZmNHeap<TestLink>::operator new;
   using ZmNHeap<TestLink>::operator delete;
-  TestLink(App *app) : Base{app, false, ZuID{"client"}} { configLocalParams(app); Base::resetPath(); }
+  TestLink(App *app) : Base{app, false} { configLocalParams(app); Base::resetPath(); }
   TestLink(App *app, bool isServer) : Base{app, isServer} { configLocalParams(app); Base::resetPath(); }
   void flushTx() { }
   void queueTxFlush() { }
@@ -144,55 +144,6 @@ struct TestLink :
 #endif
 };
 
-template <typename Link>
-void queueTelemetry(
-  Link &link, Ztc::QueueTelemetry &rx, Ztc::QueueTelemetry &tx)
-{
-  Ztc::Queue *queues[8] = {};
-  unsigned count = 0;
-  auto linkKey = link.telKey();
-  unsigned n = link.allQueues([&queues, &count, &linkKey, &rx, &tx](Ztc::Queue *queue) {
-    auto key = queue->telKey();
-    ZUTCP_CHECK_RT(key.template p<0>() == linkKey.template p<1>(),
-      "actual queue owner is the containing connection");
-    Ztc::QueueTelemetry data;
-    data.count = data.size = data.full = 999;
-    data.inBytes = data.outBytes = data.inCount = data.outCount = 999;
-    queue->telemetry(data);
-    ZUTCP_CHECK_RT(data.ownerID == key.template p<0>() &&
-      data.id == key.template p<1>() && data.type == key.template p<2>(),
-      "actual queue key and normalized telemetry agree");
-    ZUTCP_CHECK_RT(data.full != 999 && data.inCount != 999 && data.outCount != 999,
-      "optional unsupported metrics overwrite caller storage");
-    if (data.id == "reassembly") rx = data;
-    if (data.id == "sent") tx = data;
-    if (count < 8) queues[count] = queue;
-    ++count;
-  });
-  ZUTCP_CHECK_RT(n == 8 && count == n, "all eight actual core queues enumerated");
-  count = 0;
-  link.allQueues([&queues, &count](Ztc::Queue *queue) {
-    ZUTCP_CHECK_RT(count < 8 && queues[count] == queue,
-      "enumeration returns persistent actual queue objects, not temporary adapters");
-    ++count;
-  });
-}
-
-template <typename Link> void checkQueues(Link &link)
-{
-  Ztc::QueueTelemetry rx, tx;
-  queueTelemetry(link, rx, tx);
-}
-
-void checkTrafficTelemetry(TestLink &link)
-{
-  Ztc::QueueTelemetry rx, tx;
-  queueTelemetry(link, rx, tx);
-  ZUTCP_CHECK_RT(!rx.count, "contiguous traffic leaves no reassembly backlog");
-  ZUTCP_CHECK_RT(tx.count == link.txQueueCount(),
-    "sent recovery queue reports actual packet occupancy");
-}
-
 ZuBSpan bytes_(const uint8_t *data, unsigned len)
 {
   return ZuBSpan{data, len};
@@ -220,24 +171,19 @@ static ZmRef<ZiIOBuf> dataPkt(
 
 using namespace LoopTest;
 
-void testLinkStateAndTelemetry()
+void testLinkState()
 {
-  ZuTestScopeRT(testLinkStateAndTelemetry);
+  ZuTestScopeRT(testLinkState);
 
   ZmRef<App> appRef = new App;
   auto &app = *appRef;
   ZmRef<TestLink> client = new TestLink{&app};
   ZmRef<TestLink> server = new TestLink{&app, true};
-  checkQueues(*client);
-  checkQueues(*server);
-  checkTrafficTelemetry(*client);
-  checkTrafficTelemetry(*server);
   ZUTCP_CHECK_RT(!client->isServer() && server->isServer(), "connection role mismatch");
   {
     auto tx = client->writer_();
     tx << "request-body" << Zi::flush();
   }
-  checkTrafficTelemetry(*client);
   ZUTCP_CHECK_RT(client->txBytes() == 12 && client->txRangeCount() == 1,
     "loop stream Tx accounting mismatch");
 
@@ -476,32 +422,22 @@ void testDatagramPayloadHeadroom(unsigned headroom)
     buf->length == 3 && (!headroom || !buf->data_()[0]));
 }
 
-void testQueueFullTelemetry()
+void testQueueFull()
 {
-  ZuTestScopeRT(testQueueFullTelemetry);
+  ZuTestScopeRT(testQueueFull);
   ZmRef<App> appRef = new App;
   auto &app = *appRef;
   ZmRef<TestLink> link = new TestLink{&app};
   Zutcp::TCPStateTest::queueOverflow(*link);
-  unsigned found = 0;
-  link->allQueues([&found](Ztc::Queue *queue) {
-    Ztc::QueueTelemetry data;
-    queue->telemetry(data);
-    if (data.id == "admission") {
-      ZUTCP_CHECK_RT(data.full == 1 && !data.count && data.size,
-        "real capacity refusal survives queue drain without counting other errors");
-      ++found;
-    }
-  });
-  ZuCheckRT(found == 1);
+
 }
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testLinkStateAndTelemetry);
-  ZuTestCall(testQueueFullTelemetry);
+  ZuTestCall(testLinkState);
+  ZuTestCall(testQueueFull);
   ZuTestCall(splitReorderedData);
   ZuTestCall(testRecoveryFlowAndPMTUD);
   ZuTestCall(testDatagramPayloadHeadroom, 0);

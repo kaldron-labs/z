@@ -277,14 +277,12 @@ without resizing these indexes. This configures initial geometry, not a capacity
 limit. Server membership still uses the concrete connection's heap; naming its
 hash does not enable allocation of the inner intrusive node.
 
-## Connection ownership and queue telemetry
+## Connection ownership
 
 `Cxn` is the common connection identity and lifecycle interface. `CliCxn` and
 `SrvCxn` share TCP behavior through the internal `Cxn_` implementation.
 `MxPlugin` owns one intrusive list containing pending, published and retiring
-connections. `allCxns()` filters pending and retiring entries, takes temporary
-application connection references under `m_cxnsLock`, then invokes callbacks
-without holding the lock. No separate observation list or manager is maintained.
+connections. Rx owns list insertion and removal.
 
 MxPlugin also owns admission counters and checks limits before connection
 construction. Cxn carries admitted, pending and closing flags directly. Failed
@@ -296,14 +294,7 @@ Clients and listeners embed their local binding nodes. MxPlugin holds the
 non-owning endpoint hash directly, with no separate binding-record allocations.
 Packet dispatch finds the exact local address first, then the family wildcard;
 accepted connections share their listener's binding and use its tuple routing.
-Unbinding removes the endpoint's own node before owner teardown. Embedded hash
-telemetry is available through the framework's `HashMgr::capture()` operation.
-
-`MxPlugin::allQueues()` delegates to `Zpkt::Nif::allQueues()`, exposing its
-Rx, fill, Tx and completion rings. It does not traverse connections or listeners.
-Callbacks borrow the rings; finish enumeration before shutting down their owning
-XDP instance. Queue pointers must not escape the callback. Fields are advisory
-cold reads, and unsupported optional normalized metrics remain zero.
+Unbinding removes the endpoint’s own node before teardown.
 
 ## Source and verification
 

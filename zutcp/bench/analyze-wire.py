@@ -231,8 +231,7 @@ def analyze(directory, helper, reset_validator=None):
         if result['backend'] == 'native':
             stopped = one_line(lines, 'native_stopped ')
             check(all(int(stopped[k]) == 0 for k in
-                      ('running', 'cxns', 'tx_queued')) and
-                  int(stopped['queues']) >= 0, 'native application connection/Tx drain')
+                      ('running', 'cxns', 'tx_outstanding' if 'tx_outstanding' in stopped else 'tx_queued')), 'native application connection/Tx drain')
         outputs[role] = {'result': result, 'connections': connections}
     report['application'] = outputs
     bridge = settings.get('capture_topology') == 'bridge'

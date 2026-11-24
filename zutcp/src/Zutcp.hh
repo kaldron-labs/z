@@ -29,7 +29,6 @@
 #include <zlib/ZmList.hh>
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmRef.hh>
-#include <zlib/ZmRWLock.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmTime.hh>
 
@@ -39,7 +38,6 @@
 
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiMultiplex.hh>
-#include <zlib/ZtcMx.hh>
 
 #include <zlib/Zpkt.hh>
 #include <zlib/ZpktEnv.hh>
@@ -49,7 +47,6 @@
 #include <zlib/ZutcpIP.hh>
 #include <zlib/ZutcpISN.hh>
 #include <zlib/ZutcpOptions.hh>
-#include <zlib/ZutcpQueue.hh>
 #include <zlib/ZutcpTFO.hh>
 
 namespace Zutcp_ {
@@ -156,8 +153,7 @@ struct CxnAdmission {
 using ClosedTupleKey = ZuTuple<ZiSockAddr, ZiSockAddr>; // local, remote
 
 // One identity and ownership membership for every native TCP connection.
-// MxPlugin mutates membership/publication on Rx under m_cxnsLock; telemetry
-// takes lifetime references under that lock before invoking callbacks.
+// Rx owns membership and publishes the application connection.
 struct ZutcpAPI Cxn : public ZmPolymorph {
   enum { Admitted = 1, Pending = 2, Closing = 4 };
 
@@ -230,7 +226,7 @@ struct ClosedTupleStats {
 
 // Rx-owned fixed slot ring. The intrusive FIFO preserves closure order while
 // the hash indexes those same slots. Evidence updates never refresh FIFO order.
-class ZutcpAPI ClosedTuples : public QueueTelemetry<"closed-tuples", Ztc::QueueType::Rx> {
+class ZutcpAPI ClosedTuples {
   ZmHashDerive(IndexBase, ClosedTuple,
     (ZmHashNode<ClosedTuple,
       ZmHashKey<closedTupleKey,
@@ -255,15 +251,6 @@ public:
   void resize(unsigned); // stopped, preserve newest records in order
   void final();
   ClosedTupleStats stats() const;
-  void telemetry(Ztc::QueueTelemetry &data) const override
-  {
-    queueTelemetry(data);
-    data.count = m_order.count_();
-    data.size = m_slots.length();
-    data.inCount = m_inserted;
-    data.outCount = m_evicted;
-    data.full = m_full;
-  }
 
 private:
   void append(const ClosedTuple &);
@@ -272,7 +259,6 @@ private:
   ZmRef<Index>	m_index;
   Order		m_order;
   uint64_t	m_nextID = 0, m_inserted = 0, m_evicted = 0;
-  unsigned	m_full = 0;
 };
 
 struct ClientPorts {
@@ -466,12 +452,6 @@ public:
   void disconnect(ZiConnection *, bool) override;
   void close(ZiConnection *, bool) override;
 
-  TelKey telKey() const override { return {mx()->id()}; }
-  void telemetry(Ztc::MxTelemetry &) const override;
-  unsigned allCxns(AllCxnsFn) const override;
-  unsigned allQueues(Ztc::QueueMgr::AllFn) const override;
-  void watch(AddCxnFn, DelCxnFn) override;
-  void unwatch() override;
 
 private:
   Zi::IOBufPool *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override;
@@ -567,14 +547,8 @@ private:
   ZuUnion<void, Allocators>	m_allocators;
 
   // One native connection list; pending and retiring entries remain owned.
-  mutable ZmRWLock		m_cxnsLock;
   Cxn				*m_cxns = nullptr;
-  unsigned			m_cxnCount = 0;
   Zutcp_::Listener		*m_listeners = nullptr;
-
-  mutable ZmRWLock		m_watchLock;
-  AddCxnFn			m_addCxn;
-  DelCxnFn			m_delCxn;
 
   // Physical I/O stays published until the endpoint owner drain completes.
   alignas(Zm::CacheLineSize)

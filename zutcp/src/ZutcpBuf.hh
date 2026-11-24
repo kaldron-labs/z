@@ -29,7 +29,6 @@
 #include <zlib/ZiTxStream.hh>
 
 #include <zlib/ZutcpAlloc.hh>
-#include <zlib/ZutcpQueue.hh>
 
 namespace Zutcp_ {
 
@@ -40,7 +39,7 @@ struct BufNode : public ZiIOBuf {
   using ZiIOBuf::ZiIOBuf;
 };
 
-using Reader = Zutcp::Queue<ZiRxStream<ZiRxQueue>, "reader", Ztc::QueueType::Rx>;
+using Reader = ZiRxStream<ZiRxQueue>;
 
 template <
   unsigned Size = BufSize,

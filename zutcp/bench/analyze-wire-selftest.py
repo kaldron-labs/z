@@ -116,7 +116,7 @@ with tempfile.TemporaryDirectory(prefix='zutcp-bench-analyzer-selftest-') as tem
             f'result role={role} backend={"native" if native else "kernel"} exact=1 '
             'connections=1 pipeline=1 warmup=1 measured_per_connection=2 workload=order '
             f'burst_size=1 burst_us=1000 received_fix_bytes={size}\n' +
-            ('native_stopped running=0 cxns=0 queues=2 tx_queued=0\n' if native else '') +
+            ('native_stopped running=0 cxns=0 tx_outstanding=0\n' if native else '') +
             (f'application_bytes request_frame={request // 3} response_frame={response // 3} '
              f'measured_request={request // 3 * 2} measured_response={response // 3 * 2}\n'
              if role == 'client' else ''))
@@ -131,7 +131,7 @@ with tempfile.TemporaryDirectory(prefix='zutcp-bench-analyzer-selftest-') as tem
     (directory / 'capture.log').write_text('0 packets dropped by kernel\n')
     path = directory / 'client' / 'output'
     valid = path.read_text()
-    for bad in (valid.replace('tx_queued=0', 'tx_queued=1'),
+    for bad in (valid.replace('tx_outstanding=0', 'tx_outstanding=1'),
                 valid.replace('plugin_actual=1', 'plugin_actual=0'),
                 valid.replace('received_fix_bytes=', 'received_fix_bytes=1'),
                 valid.replace('application_bursts=3', 'application_bursts=2')):

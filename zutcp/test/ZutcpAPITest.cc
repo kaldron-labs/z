@@ -18,7 +18,6 @@
 #include <zlib/ZmList.hh>
 #include <zlib/ZmRef.hh>
 
-#include <zlib/ZtcHub.hh>
 
 #include <zlib/Zutcp.hh>
 
@@ -238,10 +237,7 @@ void testPluginShape()
   ZuTestScope(testPluginShape);
   ZuCHECK((ZuIsBase<Zutcp::MxPlugin, ZiMxPlugin>{}),
     "MxPlugin implements the existing multiplexer plugin interface");
-  ZuCHECK((ZuIsBase<Zutcp::MxPlugin, Ztc::Mx>{}),
-    "MxPlugin exposes multiplexer telemetry through ZiMxPlugin");
-  ZuCHECK((!ZuIsBase<Zutcp::MxPlugin, Ztc::Hub>{}),
-    "MxPlugin has no separate hub telemetry or lifecycle owner");
+
 }
 
 void testLinkStateOwnership()
@@ -540,53 +536,31 @@ void testHashSizing(bool tuned)
   }
   {
     Zutcp::EndpointIndex::Node endpointNodes[128];
-    ZiMultiplex mx{ZiMxParams{}.rxBufSize(8)};
-    // The supplied-pool fixture embeds the real MxPlugin endpoint index.
-    ZmRef<ZutcpTest::MxPlugin> stack = new ZutcpTest::MxPlugin{&mx};
+    Zutcp::EndpointIndex endpoints{ZmHashParams{}.bits(5).loadFactor(1).cBits(3)
+      .init(ids[0])};
     Zutcp_::TupleRouter<HashMember> router;
     ZmRef<Zutcp_::ServerLinkTable> membership = new Zutcp_::ServerLinkTable{
-      ZmHashParams{}.bits(5).loadFactor(1).cBits(3).init("Zutcp.ServerLinks")};
-    using Routes = Zutcp_::TupleRoutes<HashMember>;
-    Zutcp::EndpointIndex *endpoints = nullptr;
-    Routes *routes = nullptr;
-    Zutcp_::ServerLinks *links = nullptr;
-    // capture() also visits embedded tables. Their containing owners stay alive
-    // for this entire scope; never take an independent reference to a member.
-    Ztc::HashMgr::capture([&endpoints, &routes, &links](Ztc::Hash *table) {
-      auto id = table->telKey().p<0>();
-      if (id == ids[0]) endpoints = dynamic_cast<Zutcp::EndpointIndex *>(table);
-      else if (id == ids[1]) routes = dynamic_cast<Routes *>(table);
-      else if (id == ids[2]) links = dynamic_cast<Zutcp_::ServerLinks *>(table);
-      return false;
-    }, [](ZuSpan<const Ztc::HashTelemetry>) { });
-    bool found = endpoints && routes && links;
-    auto geometry = [tuned](auto &table, unsigned count) {
-      Ztc::HashTelemetry data;
-      table->telemetry(data);
-      // These owner-local tables use ZmNoLock; configured cBits add no stripes.
-      return data.bits == (tuned ? 8 : 5) && !data.cBits &&
-	data.loadFactor == 1 && data.count == count && !data.resized;
-    };
-    ZuCHECK(found && geometry(endpoints, 0) && geometry(routes, 0) && geometry(links, 0),
-      "private endpoint, routing and membership constructors honor named hash settings");
-    if (found && tuned) {
+      ZmHashParams{}.bits(5).loadFactor(1).cBits(3).init(ids[2])};
+    auto capacity = tuned ? 256U : 32U;
+    ZuCHECK(endpoints.size() == capacity && membership->size() == capacity &&
+	!router.count(), "endpoint and membership tables use their named hash settings");
+    if (tuned) {
+      bool routed = true;
       for (unsigned i = 0; i < 128; ++i) {
 	ZiSockAddr local{ZiIP{"198.18.0.1"}, uint16_t(20000 + i)};
 	ZiSockAddr peer{ZiIP{"198.18.0.2"}, uint16_t(30000 + i)};
 	endpointNodes[i].bindAddr = local;
-	endpoints->addNode(&endpointNodes[i]);
-	routes->add(Zutcp_::TupleRoute<HashMember>{{local, peer}, nullptr});
-	links->addNode(new HashMember);
+	endpoints.addNode(&endpointNodes[i]);
+	auto member = new HashMember;
+	membership->addNode(member);
+	routed &= router.add({local, peer}, member) && router.find({local, peer}) == member;
       }
-      Ztc::HashTelemetry data;
-      endpoints->telemetry(data);
-      ZuCHECK(data.shadow && geometry(endpoints, 128) && geometry(routes, 128) &&
-	  geometry(links, 128),
-	"128 embedded endpoint, tuple and membership nodes require no hash resize");
+      ZuCHECK(routed && router.count() == 128 && endpoints.count_() == 128 &&
+	  membership->count_() == 128 && endpoints.size() == capacity &&
+	  membership->size() == capacity, "the configured tables retain all 128 members");
+      router.clear();
+      endpoints.clean();
     }
-    if (endpoints) endpoints->clean();
-    if (routes) routes->clean();
-    if (links) links->clean();
   }
   // HashMgr has no removal API; restore the previously effective settings.
   if (tuned)

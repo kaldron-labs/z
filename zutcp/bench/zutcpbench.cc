@@ -30,8 +30,6 @@
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTime.hh>
-#include <zlib/ZtcQueue.hh>
-#include <zlib/ZtcHeap.hh>
 
 #include <zlib/ZtArray.hh>
 
@@ -640,39 +638,13 @@ bool App::report()
       << ZuBoxed(double(n * request)/seconds).fp<3>() << " response_bytes_per_second="
       << ZuBoxed(double(n * response)/seconds).fp<3>() << "\n";
   }
-  unsigned sid = 0;
-  ZmScheduler::allQueues([&sid](Ztc::Queue *queue) {
-    Ztc::QueueTelemetry data;
-    queue->telemetry(data);
-    std::cout << "scheduler_queue sid=" << ++sid << " published=" << data.inCount
-      << " consumed=" << data.outCount << " published_bytes=" << data.inBytes
-      << " consumed_bytes=" << data.outBytes << " pending=" << data.count
-      << " full=" << data.full << " includes_setup_warmup=1\n";
-  });
-  Ztc::HeapMgr::all([](Ztc::Heap *heap) {
-    auto id = heap->telKey().p<0>();
-    if (id.length() < 6 || memcmp(id.data(), "Zutcp.", 6)) return;
-    Ztc::HeapTelemetry data;
-    heap->telemetry(data);
-    std::cout << "heap id=";
-    std::cout.write(id.data(), id.length());
-    std::cout << " size=" << data.size << " alignment=" << data.alignment
-      << " partition=" << data.partition << " requests=" << data.cacheAllocs + data.heapAllocs
-      << " returns=" << data.cacheFrees + data.heapFrees << " live=" << data.allocated()
-      << " includes_setup_warmup=1 before_finalization=1\n";
-  });
   if (m_config.native) {
-    unsigned cxns = 0;
-    allCxns([&cxns](Ztc::Connection *) { ++cxns; });
-    uint64_t queued = 0;
-    unsigned queues = allQueues([&queued](Ztc::Queue *queue) {
-      Ztc::QueueTelemetry data;
-      queue->telemetry(data);
-      if (data.type == Ztc::QueueType::Tx) queued += data.count;
-    });
+    auto stack = static_cast<Zutcp::MxPlugin *>(plugin());
+    auto cxns = stack->cxnAdmission().total;
+    auto outstanding = stack->txAdmission().outstanding;
     std::cout << "native_stopped running=" << unsigned(running()) << " cxns=" << cxns
-      << " queues=" << queues << " tx_queued=" << queued << "\n";
-    ok &= !running() && !cxns && !queued;
+      << " tx_outstanding=" << outstanding << "\n";
+    ok &= !running() && !cxns && !outstanding;
   }
   return ok;
 }

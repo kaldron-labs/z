@@ -28,7 +28,6 @@
 #include <zlib/ZmHeap.hh>
 
 #include <zlib/ZutcpAlloc.hh>
-#include <zlib/ZutcpQueue.hh>
 
 namespace Zutcp {
 
@@ -980,14 +979,13 @@ struct SentPktNode : public ZuObject {
   BytePktTree::Node byteNode; // non-owning, non-reference-counted intrusive index hook
 };
 
-using TxPktQueue = Queue<
-  ZmPQueue<TxPkt,
+using TxPktQueue = ZmPQueue<TxPkt,
     ZmPQueueNode<SentPktNode,
       ZmPQueueHeapID<"Zutcp.Pkt.TxSentNode",
 	ZmPQueueBits<3,
-	  ZmPQueueLevels<4>>>>>, "sent", Ztc::QueueType::Tx, true, false>;
+	  ZmPQueueLevels<4>>>>>;
 
-class RetransmitQueue : public QueueTelemetry<"retransmit", Ztc::QueueType::Tx> {
+class RetransmitQueue {
 public:
   using Queue =
     ZmQueue<SentFrameRef,
@@ -1038,10 +1036,6 @@ public:
     return !batch.remaining;
   }
 
-  void telemetry(Ztc::QueueTelemetry &data) const override {
-    queueTelemetry(data);
-    data.count = m_frames.count_();
-  }
   unsigned count() const { return m_frames.count_(); }
   unsigned dropped() const { return m_dropped; }
   bool empty() const { return !m_frames.count_(); }
@@ -1069,34 +1063,7 @@ class PktTxSpace :
 public:
   enum { RetainedLostMax = 1024 };
   using Queue = TxPktQueue;
-  class LostPNs : public Zutcp::Queue<
-    ZmQueue<uint64_t, ZmQueueHeapID<"Zutcp.Pkt.TxLostPNs">>,
-    "lost", Ztc::QueueType::Tx> {
-    using Base = Zutcp::Queue<
-      ZmQueue<uint64_t, ZmQueueHeapID<"Zutcp.Pkt.TxLostPNs">>,
-      "lost", Ztc::QueueType::Tx>;
-  public:
-    using Base::Base;
-    void overflow() { ++m_full; }
-    void telemetry(Ztc::QueueTelemetry &data) const override {
-      Base::telemetry(data);
-      data.size = RetainedLostMax;
-      data.full = m_full;
-    }
-  private:
-    unsigned m_full = 0;
-  };
-  void queueOwner(const ZuID &id) {
-    m_packets.queueOwner(id);
-    m_retransmit.queueOwner(id);
-    m_lostPNs.queueOwner(id);
-  }
-  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const {
-    fn(const_cast<TxPktQueue *>(&m_packets));
-    fn(const_cast<RetransmitQueue *>(&m_retransmit));
-    fn(const_cast<LostPNs *>(&m_lostPNs));
-    return 3;
-  }
+  using LostPNs = ZmQueue<uint64_t, ZmQueueHeapID<"Zutcp.Pkt.TxLostPNs">>;
   using Tx = ZmPQTx<PktTxSpace, Queue>;
   using Msg = Queue::Node;
   using Span = Queue::Span;
@@ -1646,7 +1613,6 @@ private:
       if (!p.lost || p.ackd) continue;
       unlinkByte(p);
       (void)m_packets.del(pn);
-      m_lostPNs.overflow();
       --m_retainedLost;
     }
   }

@@ -14,7 +14,6 @@
 #include <zlib/ZmQueue.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmRef.hh>
-#include <zlib/ZtcHeap.hh>
 
 #include <zlib/ZtArray.hh>
 
@@ -676,35 +675,6 @@ static void peerEcho(unsigned scenario)
 }
 
 // Named-heap deltas over the existing whole-original send/ACK/refusal scenario.
-// Count application requests (cache plus heap), not just arena provisioning.
-static constexpr const char *txHeapIDs[] = {
-  "Zutcp.TxUnackdRange", "Zutcp.Connection.TxUnackdRanges",
-  "Zutcp.Connection.TxUnackdIndex", "Zutcp.Connection.TxRanges",
-  "Zutcp.Pkt.TxSentNode", "Zutcp.Pkt.OutstandingRange",
-  "Zutcp.Pkt.RetransmitQueue"};
-struct TxHeapSample {
-  using Keys = ZuStringTL<
-    "Zutcp.TxUnackdRange", "Zutcp.Connection.TxUnackdRanges",
-    "Zutcp.Connection.TxUnackdIndex", "Zutcp.Connection.TxRanges",
-    "Zutcp.Pkt.TxSentNode", "Zutcp.Pkt.OutstandingRange",
-    "Zutcp.Pkt.RetransmitQueue">;
-  uint64_t allocs[7]{}, frees[7]{};
-};
-static TxHeapSample txHeapSample()
-{
-  TxHeapSample sample;
-  Ztc::HeapMgr::all([&sample](Ztc::Heap *heap) {
-    static constexpr auto matcher = ZuMatcher<TxHeapSample>();
-    int i = matcher.exact(heap->telKey().p<0>());
-    if (i < 0) return;
-    Ztc::HeapTelemetry data;
-    heap->telemetry(data);
-    sample.allocs[i] += data.cacheAllocs + data.heapAllocs;
-    sample.frees[i] += data.cacheFrees + data.heapFrees;
-  });
-  return sample;
-}
-
 static void wholeOriginal(bool accept, bool syn)
 {
   ZuTestScopeRT(wholeOriginal);
@@ -719,7 +689,6 @@ static void wholeOriginal(bool accept, bool syn)
   ZmRef<ZiIOBuf> original = new Zi::IOBufStub<ZiIOBuf>{
     a.bytes, sizeof(a.bytes), &a, nullptr, 64, false, true};
   original->skip = 256;
-  auto heapBefore = txHeapSample();
   bool admitted = link->enqueue_(original);
   Zutcp::TxRange range;
   bool selected = link->txRange(0, range);
@@ -751,11 +720,6 @@ static void wholeOriginal(bool accept, bool syn)
   }
   link->finish(); link = nullptr; ref = {}; range = {}; original = nullptr;
   ZuCHECK(a.valid && a.returned == 1, "all refusal/accepted/fallback owners drain backing once");
-  auto heapAfter = txHeapSample();
-  for (unsigned i = 0; i < 7; ++i)
-    std::cout << "# whole-original accept=" << accept << " syn=" << syn << ' '
-      << txHeapIDs[i] << " alloc=" << heapAfter.allocs[i] - heapBefore.allocs[i]
-      << " free=" << heapAfter.frees[i] - heapBefore.frees[i] << '\n';
   std::cout << "# metadata sizes SentPkt=" << sizeof(Zutcp::SentPkt)
     << " SentNode=" << sizeof(Zutcp::TxPktQueue::Node)
     << " RetainedNode=" << sizeof(Zutcp::TxRanges::Node) << '\n';
@@ -1116,6 +1080,77 @@ static void ackHoldCoalesce()
     "an old generation request cannot clear the new generation's pending ACK tag");
   app.holdTx = false; app.runTx();
   ZuCheck(!Zutcp::TCPStateTest::postedACK(*link));
+  link->finish();
+}
+
+static void ackPosting()
+{
+  ZuTestScope(ackPosting);
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
+  ZmRef<Link> link = new Link{&app};
+  app.holdTx = true;
+  bool received = link->receive(input(app, "a")) && link->receive(input(app, "b", 1));
+  ZuCHECK(received && app.txJobs.count_() == 1,
+    "two in-order segments share one Tx post for their peer ACKs and delayed reply");
+  app.runTx();
+  ZuCHECK(Zutcp::TCPStateTest::heldACK(*link) &&
+      Zutcp::TCPStateTest::peerSequence(*link) == 1,
+    "Tx retains the ACK deadline and the last peer window sequence");
+  bool tail = link->receive(input(app, "f", 5));
+  app.runTx();
+  auto before = Zutcp::TCPStateTest::header(*link);
+  auto serial = Zutcp::TCPStateTest::echoSerial(*link);
+  bool pure = link->receive(input(app, {}, 2));
+  unsigned jobs = app.txJobs.count_();
+  app.runTx();
+  auto after = Zutcp::TCPStateTest::header(*link);
+  ZuCHECK(tail && pure && jobs == 1 && before.options.sackCount == 1 &&
+      after.options.sackCount == 1 && serial && Zutcp::TCPStateTest::echoSerial(*link) == serial,
+    "a pure ACK across an unchanged receive gap posts only its peer ACK");
+  link->finish();
+}
+
+static void ackBatchOrder()
+{
+  ZuTestScope(ackBatchOrder);
+  ZmRef<App> appRef = new App;
+  auto &app = *appRef;
+  ZmRef<Link> link = new Link{&app};
+  app.holdTx = true;
+  constexpr unsigned n = Zutcp::TCPAckBatch::Capacity;
+  for (unsigned i = 1; i <= n + 1; ++i)
+    Zutcp::TCPStateTest::peer(*link, 0, 4096, i);
+  auto first = app.txJobs.shift();
+  if (first) first();
+  ZuCHECK(app.txJobs.count_() == 1 && Zutcp::TCPStateTest::peerSequence(*link) == n,
+    "a full batch leaves its overflow ACK queued in order");
+  Zutcp::TCPStateTest::peer(*link, 0, 0, n + 2);
+  Zutcp::TCPStateTest::peer(*link, 0, 4096, n + 3, {}, 0x50);
+  Zutcp::TCPStateTest::peer(*link, 0, 8192, n + 4);
+  auto overflow = app.txJobs.shift();
+  if (overflow) overflow();
+  bool ordered = Zutcp::TCPStateTest::peerSequence(*link) == n + 1;
+  auto closed = app.txJobs.shift();
+  if (closed) closed();
+  bool zero = !Zutcp::TCPStateTest::peerLimit(*link);
+  auto reopened = app.txJobs.shift();
+  if (reopened) reopened();
+  bool open = Zutcp::TCPStateTest::peerLimit(*link) == 4096;
+  app.runTx();
+  ZuCHECK(ordered && zero && open && Zutcp::TCPStateTest::peerLimit(*link) == 8192,
+    "batch reuse preserves zero-window, exceptional-header and subsequent update order");
+  Zutcp::TCPStateTest::peer(*link, 0, 1, n + 5);
+  auto stale = app.txJobs.shift();
+  app.holdTx = false;
+  Zutcp::TCPStateTest::stage(*link);
+  app.holdTx = true;
+  Zutcp::TCPStateTest::peer(*link, 0, 321, 1);
+  if (stale) stale();
+  app.runTx();
+  ZuCHECK(Zutcp::TCPStateTest::peerSequence(*link) == 1 &&
+      Zutcp::TCPStateTest::peerLimit(*link) == 321,
+    "a queued batch from the previous incarnation cannot consume the new ACK");
   link->finish();
 }
 
@@ -2633,10 +2668,10 @@ void testMxRxDelivery(bool reentrant)
     }, app.mx()->rxThread());
   });
   ZuCHECK(exact && calls == 2 && maxDepth == 1 && !depth &&
-      mx->rxBytes() == 10 && mx->rxCalls() == 2 && cxn->rxRetired() == 10 &&
+      cxn->rxRetired() == 10 &&
       cxn->reader().empty(),
     "mx receive exact=", exact, " calls=", calls, " maxDepth=", maxDepth,
-    " depth=", depth, " bytes=", mx->rxBytes(), " rxCalls=", mx->rxCalls(),
+    " depth=", depth,
     " retired=", cxn->rxRetired(), " queued=", cxn->reader().length());
   ZuCHECK(!reentrant || (held && held->length == 5 &&
       !memcmp(held->data(), "hello", 5)),
@@ -2824,8 +2859,7 @@ static void mappedTxQueue()
   bool resumed = dequeued && calls == 2 && context.completed() && cxn->txQueueCount() == 1 &&
     cxn->txRange(0, next) && next.length == 3 && next.dataOffset == 3 &&
     next.storage->data + next.offset == b.bytes + 257 &&
-    !memcmp(next.storage->data + next.offset, "two", 3) &&
-    mx->txBytes() == 6 && mx->txCalls() == 2;
+    !memcmp(next.storage->data + next.offset, "two", 3);
   auto empty = Zutcp::inlineAllocator()->allocBuf();
   context.init(ZiTxFn{[&exact](ZiTxContext &context) {
     exact &= !context.length;
@@ -2833,7 +2867,7 @@ static void mappedTxQueue()
     return true;
   }}, empty);
   cxn->sendMx();
-  bool zero = context.completed() && mx->txBytes() == 6 && mx->txCalls() == 2;
+  bool zero = context.completed();
   ZuCHECK(pending && resumed && exact && zero,
     "mapped Tx queue pressure preserves replacement context/offset and resumes exact local "
     "counts");
@@ -2944,8 +2978,7 @@ static void mappedTxActive(unsigned scenario)
       !app.txJobs.count_() && !cxn->txQueueCount() && !cxn->txRangeCount() &&
       cxn->txNext() == 6 && Zutcp::TCPStateTest::records(*cxn) == 2 &&
       !a.returned && !b.returned &&
-      (!mapped || (calls == 2 && context.completed() &&
-        mx->txBytes() == 6 && mx->txCalls() == 2)),
+      (!mapped || (calls == 2 && context.completed())),
     "mapped continuations and generic notices preserve exact bytes and accepted frontier");
   Zutcp::TCPStateTest::ack(*cxn, 6);
   ZuCHECK(cxn->txAckd() == 6 && !cxn->txUnackdBytes() &&
@@ -3254,6 +3287,7 @@ static void finACK(bool heldReader, bool stale)
   local.kind = Zutcp::SentFrameKind::Data; local.fin = true;
   bool setup = Zutcp::TCPStateTest::record(*link, local);
   bool peer = link->receive(input(app, "end", 0, 1, 0x11));
+  app.holdTx = stale; // Withhold EOF delivery from Tx across generation replacement.
   if (!heldReader) { unsigned n = consume(*link); setup &= n == 3 && link->retireRx(n); }
   unsigned attempts = 0;
   bool refused = link->output({}, [&attempts](
@@ -3268,9 +3302,9 @@ static void finACK(bool heldReader, bool stale)
   });
   if (stale) {
     Zutcp::TCPStateTest::reset(*link);
-    app.holdRx = false; app.runRx();
-    ZuCHECK(accepted && !link->finishes && !link->completions,
-      "old accepted final-ACK handoff cannot finish a replacement generation");
+    app.holdTx = false; app.runTx();
+    ZuCHECK(accepted && !app.rxJobs.count_() && !link->finishes && !link->completions,
+      "stale EOF delivery cannot finish a replacement connection");
   } else if (heldReader) {
     ZuCHECK(accepted && !link->finishes && !link->completions,
       "accepted ACK alone cannot finish while the application still holds its Reader");
@@ -3394,8 +3428,8 @@ static void finACKBeforeNotice()
   ZuCHECK(setup && peer && sent && header.ack == 2005 && !app.rxJobs.count_(),
     "existing Tx work can ACK the atomic final frontier before the queued peer-FIN event");
   app.holdTx = false; app.runTx();
-  ZuCHECK(app.rxJobs.count_() == 1 && !link->finishes,
-    "peer-FIN event detects the already accepted non-RST ACK and publishes completion once");
+  ZuCHECK(!app.rxJobs.count_() && !link->finishes,
+    "Tx retains accepted peer-FIN coverage until EOF without posting back to Rx");
   unsigned n = consume(*link);
   bool retired = n == 3 && link->retireRx(n);
   app.holdRx = false; app.runRx(); app.runTx();
@@ -3660,6 +3694,8 @@ int main(int argc, char **argv)
   ZuTestCall(ackHoldTimer, false);
   ZuTestCall(ackHoldTimer, true);
   ZuTestCall(ackHoldCoalesce);
+  ZuTestCall(ackPosting);
+  ZuTestCall(ackBatchOrder);
   ZuTestCall(ackHoldByteBound);
   ZuTestCall(synAllocationRetry);
   ZuTestCall(handshakeRTT, false, 0);

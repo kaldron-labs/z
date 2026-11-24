@@ -6,7 +6,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZutcpLib.hh Zutcp.hh ZutcpAlloc.hh ZutcpChecksum.hh ZutcpIP.hh \
-	ZutcpISN.hh ZutcpOptions.hh ZutcpTFO.hh ZutcpQueue.hh
+	ZutcpISN.hh ZutcpOptions.hh ZutcpTFO.hh
 noinst_HEADERS = ZutcpTypes.hh ZutcpBuf.hh ZutcpPQueue.hh Zutcp_.hh \
 	ZutcpCxn.hh ZutcpCliCxn.hh ZutcpSrvCxn.hh ZutcpPath.hh ZutcpSock.hh \
 	ZutcpConnectionUtil.hh ZutcpSched.hh ZutcpRecovery.hh ZutcpDiag.hh ZutcpUDP.hh

@@ -129,7 +129,6 @@ public:
     if (Engine::stopping()) Engine::stopped();
   }
   unsigned pollTx() override { return 0; }
-  unsigned allQueues(Ztc::QueueMgr::AllFn) const override { return 0; }
   void status() override { }
 
   Zi::IOBufPool *reserves[2]{}, *rxPool = nullptr;
@@ -448,12 +447,7 @@ public:
       Passive::endpointDatagram(ZuMv(data));
     });
   }
-  template <typename F> unsigned allLinks_(F &&fn) const {
-    unsigned count = 0;
-    auto iter = m_members->citer();
-    while (auto node = iter()) { fn(static_cast<Link *>(node)); ++count; }
-    return count;
-  }
+  unsigned linkCount_() const { return m_members->count_(); }
   ZmRef<Zutcp::PacketBuf> allocTxPkt_(bool control = false) {
     return Endpoint::allocTxPkt(control);
   }

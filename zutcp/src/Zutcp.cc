@@ -57,7 +57,6 @@ ClosedTuple ClosedTuples::remember(ClosedTuple record)
     node = m_order.shift();
     m_index->delNode(node); // remove old key before overwriting the slot
     ++m_evicted;
-    ++m_full;
   }
   if (!++m_nextID) ++m_nextID;
   record.id = m_nextID;
@@ -110,7 +109,6 @@ void ClosedTuples::final()
   m_index = nullptr;
   m_slots.null();
   m_nextID = m_inserted = m_evicted = 0;
-  m_full = 0;
 }
 
 ClosedTupleStats ClosedTuples::stats() const
@@ -396,12 +394,10 @@ using Zutcp_::Listener;
 void MxPlugin::addCxn(Cxn *cxn)
 {
   ZmAssert_(rxInvoked());
-  ZmGuard guard(m_cxnsLock);
   cxn->ownerPrev = &m_cxns;
   cxn->ownerNext = m_cxns;
   if (m_cxns) m_cxns->ownerPrev = &cxn->ownerNext;
   m_cxns = cxn;
-  ++m_cxnCount;
   ++m_cxnObjects;
 }
 
@@ -434,14 +430,10 @@ void MxPlugin::stopCxns()
 void MxPlugin::delCxn(Cxn *cxn)
 {
   ZmAssert_(rxInvoked());
-  {
-    ZmGuard guard(m_cxnsLock);
-    if (cxn->ownerNext) cxn->ownerNext->ownerPrev = cxn->ownerPrev;
-    *cxn->ownerPrev = cxn->ownerNext;
-    cxn->ownerNext = nullptr;
-    cxn->ownerPrev = nullptr;
-    --m_cxnCount;
-  }
+  if (cxn->ownerNext) cxn->ownerNext->ownerPrev = cxn->ownerPrev;
+  *cxn->ownerPrev = cxn->ownerNext;
+  cxn->ownerNext = nullptr;
+  cxn->ownerPrev = nullptr;
   ZmDEREF(cxn);
 }
 
@@ -482,14 +474,7 @@ template <typename C> bool MxPlugin::publish(C *cxn, ZiConnectFn &fn, ZiCxnInfo 
   if (!mx) return false;
   ZmREF(mx);
   mx->plugin(static_cast<typename C::State *>(cxn));
-  {
-    ZmGuard guard(m_cxnsLock);
-    cxn->mxCxn = mx;
-  }
-  {
-    ZmReadGuard guard(m_watchLock);
-    if (m_addCxn) m_addCxn(mx);
-  }
+  cxn->mxCxn = mx;
   mx->connected(mx->rxContext());
   if (mx->rxContext().disconnected()) mx->disconnect();
   else cxn->recvMx();
@@ -501,11 +486,8 @@ template <typename C, typename L> void MxPlugin::retire(C *cxn, bool peer, L &&d
   ZmAssert_(rxInvoked());
   ++m_cxnRetiring;
   ZmRef<ZiConnection> mx;
-  {
-    ZmGuard guard(m_cxnsLock);
-    cxn->retiring = true;
-    mx = ZmRef<ZiConnection>::acquire(cxn->mxCxn);
-  }
+  cxn->retiring = true;
+  mx = ZmRef<ZiConnection>::acquire(cxn->mxCxn);
   txRun([
     this, cxn = ZmRef<C>{cxn}, mx = ZuMv(mx), peer, done = ZuFwd<L>(done)
   ]() mutable {
@@ -520,12 +502,7 @@ template <typename C, typename L> void MxPlugin::retire(C *cxn, bool peer, L &&d
       if (mx) {
 	mx->rxUp() = 0;
 	mx->rxContext().complete();
-	{
-	  ZmGuard guard(m_cxnsLock);
-	  cxn->mxCxn = nullptr;
-	}
-	ZmReadGuard guard(m_watchLock);
-	if (m_delCxn) m_delCxn(mx.ptr());
+	cxn->mxCxn = nullptr;
       }
       done(); // Remove cold ownership while the drain reference still protects Cxn.
       cxn->releaseCxnRx();
@@ -563,7 +540,7 @@ void MxPlugin::final()
   ZmAssert_(state() == ZmEngineState::Stopped && !unsigned(m_wakeUsers));
   ZmAssert_(!m_txServicing && !m_txPending);
   ZmAssert_(!m_endpoints.count_() && !m_udpBindings.count_());
-  ZmAssert_(!m_cxns && !m_cxnCount && !m_listeners && !m_cxnRetiring && !m_cxnObjects);
+  ZmAssert_(!m_cxns && !m_listeners && !m_cxnRetiring && !m_cxnObjects);
   ZmAssert_(!m_cxnTotal && !m_cxnPending && !m_cxnClosing);
   if (m_xdp) m_xdp->final();
   m_xdp = nullptr;
@@ -586,7 +563,6 @@ void MxPlugin::final()
   m_controlCredits = DefaultTxControlCredits;
   m_tcpClock = {};
   m_error = {};
-  unwatch();
   mx(nullptr);
 }
 
@@ -724,8 +700,6 @@ void MxPlugin::init(
   }
   m_closed.resize(config.closedTupleRingSize);
   m_tfoCookies.resize(config.tfoCookieCacheSize);
-  m_closed.queueOwner(mx_->id());
-  m_tfoCookies.queueOwner(mx_->id());
   Zi::IOBufPool *reserves[] = {packets.ptr(), controls.ptr()};
   xdp->reserveTxPools(reserves);
   new (m_allocators.new_<1>()) Allocators{mx_, packets, controls};
@@ -1494,40 +1468,4 @@ void MxPlugin::close(ZiConnection *cxn, bool peer)
     });
   });
 }
-void MxPlugin::telemetry(Ztc::MxTelemetry &data) const { mx()->telemetry(data); }
-
-unsigned MxPlugin::allCxns(AllCxnsFn fn) const
-{
-  ZtArray<ZmRef<ZiConnection>, ZtArrayHeapID<"Zutcp.Mx.CxnRefs">> refs;
-  {
-    ZmReadGuard guard(m_cxnsLock);
-    refs.size(m_cxnCount);
-    for (auto cxn = m_cxns; cxn; cxn = cxn->ownerNext)
-      if (cxn->mxCxn && !cxn->retiring)
-        new (refs.push()) ZmRef<ZiConnection>{cxn->mxCxn};
-  }
-  for (auto &cxn : refs) fn(cxn.ptr());
-  return refs.length();
-}
-
-unsigned MxPlugin::allQueues(Ztc::QueueMgr::AllFn fn) const
-{
-  return m_xdp ? m_xdp->allQueues(ZuMv(fn)) : 0;
-}
-
-void MxPlugin::watch(AddCxnFn add, DelCxnFn del)
-{
-  ZmGuard guard(m_watchLock);
-  ZmAssert_(!m_addCxn && !m_delCxn);
-  m_addCxn = ZuMv(add);
-  m_delCxn = ZuMv(del);
-}
-
-void MxPlugin::unwatch()
-{
-  ZmGuard guard(m_watchLock);
-  m_addCxn = {};
-  m_delCxn = {};
-}
-
 } // namespace Zutcp

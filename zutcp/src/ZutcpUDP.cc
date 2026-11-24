@@ -110,7 +110,6 @@ bool MxPlugin::UdpCxn::receive(
   io.addr = peer;
   io.tos = tos;
   io.flags = 0;
-  cxn->rxCall(length);
   while (!io.completed() && !io()) { }
   if (io.disconnected()) cxn->disconnect();
   else if (!io.completed() && (!io.buf || io.buf.ptr() == stub)) {
@@ -226,7 +225,6 @@ void MxPlugin::UdpCxn::sent(ZiConnection *cxn, int length)
   auto &io = cxn->txContext();
   auto original = io.buf;
   auto offset = io.offset;
-  if (length >= 0) cxn->txCall(unsigned(length));
   io.length = length;
   while (!io.completed() && !io()) { }
   if (io.disconnected()) cxn->disconnect();

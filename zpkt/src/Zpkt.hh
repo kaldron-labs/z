@@ -162,7 +162,7 @@ public:
   virtual void rx() = 0; // Rx owner, until wake() or device failure
   virtual void wake() = 0;
   virtual unsigned pollTx() = 0;
-  virtual unsigned allQueues(Ztc::QueueMgr::AllFn) const = 0;
+  virtual unsigned allQueues(Ztc::QueueMgr::AllFn) const { return 0; }
 
 protected:
   Nif() = default;

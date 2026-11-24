@@ -42,8 +42,7 @@ struct MxEvents {
   // Fixture control reads owner state only after the corresponding handoff.
   alignas(Zm::CacheLineSize) unsigned connected = 0, disconnected = 0;
   unsigned received = 0, peerClosed = 0, bytes = 0;
-  unsigned added = 0, removed = 0;
-  bool observed = true, holdRx = false, retainInput = false, valid = true;
+  bool holdRx = false, retainInput = false, valid = true;
   ZmRef<ZiIOBuf> retained;
   alignas(Zm::CacheLineSize) const uint8_t *firstTx = nullptr;
   unsigned firstTxSize = 0, firstPayloadOffset = 0, txCalls = 0;
@@ -221,25 +220,6 @@ private:
   MxEvents *m_events;
 };
 
-static void observe(ZiMultiplex &mx, MxEvents &events)
-{
-  mx.watch(Ztc::Mx::AddCxnFn{[&mx, &events](Ztc::Connection *base) {
-    auto cxn = static_cast<ZiConnection *>(base);
-    unsigned count = 0;
-    unsigned n = mx.allCxns([&count, cxn](Ztc::Connection *found) {
-      if (found == cxn) ++count;
-    });
-    events.observed &= mx.invoked(mx.rxThread()) && cxn->plugin() && cxn->up() &&
-      n == 1 && count == 1;
-    ++events.added;
-  }}, Ztc::Mx::DelCxnFn{[&mx, &events](Ztc::Connection *base) {
-    auto cxn = static_cast<ZiConnection *>(base);
-    events.observed &= mx.invoked(mx.rxThread()) && !cxn->plugin() && !cxn->up() &&
-      mx.allCxns([](Ztc::Connection *) { }) == 0;
-    ++events.removed;
-  }});
-}
-
 enum { Sender = 4 };
 
 static ZiMxParams mxParams()
@@ -304,40 +284,6 @@ static bool extraInitial(
       done(wire && stack->sendPacket(packet, nullptr, &layout));
     });
   });
-}
-
-using QueueSamples = ZtArray<Ztc::QueueTelemetry,
-  ZtArrayHeapID<"Zutcp.MxTest.QueueSamples">>;
-
-static bool queueCoverage(const QueueSamples &rows, const ZuID &mxID)
-{
-  static constexpr const char *rings[] = {".rx", ".fill", ".tx", ".cq"};
-  unsigned seen[4] = {};
-  for (unsigned at = 0; at < rows.length(); ++at) {
-    const auto &row = rows[at];
-    constexpr auto prefix = "xdp."_z;
-    if (row.ownerID != mxID || row.id.length() < prefix.length() ||
-	memcmp(row.id.data(), prefix.data(), prefix.length())) return false;
-    for (unsigned before = 0; before < at; ++before) {
-      const auto &other = rows[before];
-      if (row.ownerID == other.ownerID && row.id == other.id && row.type == other.type)
-	return false;
-    }
-    bool found = false;
-    for (unsigned i = 0; i < 4; ++i) {
-      unsigned length = strlen(rings[i]);
-      if (row.id.length() < length ||
-	  memcmp(row.id.data() + row.id.length() - length, rings[i], length)) continue;
-      if (!row.size ||
-	  row.type != (i == 0 || i == 3 ? Ztc::QueueType::Rx : Ztc::QueueType::Tx))
-	return false;
-      ++seen[i];
-      found = true;
-      break;
-    }
-    if (!found) return false;
-  }
-  return seen[0] && seen[1] == seen[0] && seen[2] == seen[0] && seen[3] == seen[0];
 }
 
 enum { PassiveTotal = 1, PassivePending = 2 };
@@ -439,8 +385,6 @@ static void testMxConnections(
     if (!started) { client.stop(); server.stop(); return; }
     MxEvents cli, srv;
     cli.holdRx = srv.holdRx = window;
-    observe(client, cli);
-    observe(server, srv);
     ZmRef<MxCxn> cliCxn, srvCxn;
     ZmSemaphore listening, failed;
     ZmSemaphore extraBound;
@@ -493,8 +437,7 @@ static void testMxConnections(
       ZuCHECK(sent && input && cli.txValid && srv.txValid && cli.valid && srv.valid &&
 	  cli.detached && srv.detached && cli.beforeCQ && srv.beforeCQ &&
 	  cli.bytes == (window ? 0 : Message.length()) &&
-	  srv.bytes == (window ? 0 : Message.length()) &&
-	  cliCxn->txCalls() == 1 && srvCxn->txCalls() == 1,
+	  srv.bytes == (window ? 0 : Message.length()),
 	"Tx/Rx contexts must exchange exact bytes and release detached metadata before CQ");
     }
     if (connected) {
@@ -593,8 +536,7 @@ static void testMxConnections(
 	ZuCHECK(sent && input && cli.txValid && srv.txValid && cli.valid && srv.valid &&
   	  cli.detached && srv.detached && cli.beforeCQ && srv.beforeCQ &&
   	  cli.destroyed == 2 && srv.destroyed == 2 &&
-  	  cli.bytes == (Message.length()<<1) && srv.bytes == (Message.length()<<1) &&
-  	  cliCxn->txCalls() == 2 && srvCxn->txCalls() == 2,
+	  cli.bytes == (Message.length()<<1) && srv.bytes == (Message.length()<<1),
   	"a second live send reuses the original one-slot backing after cumulative byte ACK");
 	if (passiveLimit) {
 	  // DATA orders receive processing after the extra Initial. A further
@@ -632,35 +574,6 @@ static void testMxConnections(
 	}
       }
     }
-    if (connected) {
-      unsigned connections = 0, queues = 0;
-      auto count = client.allCxns([&connections, &cliCxn](Ztc::Connection *cxn) {
-	if (cxn == cliCxn.ptr()) ++connections;
-      });
-      bool queueKeys = true;
-      QueueSamples samples;
-      auto n = clientStack->allQueues([&queues, &queueKeys, &samples](Ztc::Queue *queue) {
-	Ztc::QueueTelemetry data;
-	queue->telemetry(data);
-	auto key = queue->telKey();
-	queueKeys &= data.ownerID == key.template p<0>() && data.id == key.template p<1>() &&
-	  data.type == key.template p<2>();
-	new (samples.push()) Ztc::QueueTelemetry{data};
-	++queues;
-      });
-      bool onTx = ZmBlock<bool>{}([&client, cliCxn](auto done) {
-	client.txRun([&client, cliCxn, done = ZuMv(done)]() mutable {
-	  unsigned found = 0;
-	  auto n = client.allCxns([&found, cliCxn](Ztc::Connection *cxn) {
-	    if (cxn == cliCxn.ptr()) ++found;
-	  });
-	  done(n == 1 && found == 1);
-	});
-      });
-      ZuCHECK(count == 1 && connections == 1 && n == queues && queueKeys && onTx &&
-          queueCoverage(samples, client.id()),
-	"connection enumeration filters pending owners; queue enumeration exposes only XDP rings");
-    }
     if (connected && !stopActive) {
       // Fresh-stub notifications exercise the plugin-to-native pointer dispatch.
       ZmBlock<>{}([&client, cliCxn](auto done) mutable {
@@ -675,34 +588,14 @@ static void testMxConnections(
       });
       ZuCHECK(stillConnected && !srv.disconnected,
 	"stopListening must preserve its established connection");
-      QueueSamples retiredQueues;
-      unsigned visited = 0;
-      bool queueValid = true, acceptedClosed = false, serverStopped = false;
-      bool closed = false;
-      auto count = serverStack->allQueues([
-	&visited, &queueValid, &retiredQueues, &acceptedClosed, &srv,
-	&cli, cliCxn, &closed
-      ](Ztc::Queue *queue) {
-	if (!visited++) {
-	  cliCxn->close();
-	  closed = wait(cli.closed);
-	  acceptedClosed = wait(srv.closed);
-	}
-	Ztc::QueueTelemetry data;
-	queue->telemetry(data);
-	auto key = queue->telKey();
-	queueValid &= key.p<0>() == data.ownerID && key.p<1>() == data.id &&
-	  key.p<2>() == data.type && data.type >= 0 && data.type < Ztc::QueueType::N;
-	new (retiredQueues.push()) Ztc::QueueTelemetry{data};
-      });
-      // Ring enumeration permits connection retirement inside the callback.
-      // Finish enumeration before stopping the XDP instance owning the rings.
-      serverStopped = server.stop();
+      cliCxn->close();
+      bool closed = wait(cli.closed);
+      bool acceptedClosed = wait(srv.closed);
+      bool serverStopped = server.stop();
       ZuCHECK(closed && cli.valid && cli.disconnected == 1,
 	"close must drain native work and clear both pointers before Zi notification");
-      ZuCHECK(acceptedClosed && serverStopped && srv.valid && srv.disconnected == 1 &&
-	  count == visited && queueValid && queueCoverage(retiredQueues, server.id()),
-	"XDP rings remain observable while a connection retires, then full stop completes");
+      ZuCHECK(acceptedClosed && serverStopped && srv.valid && srv.disconnected == 1,
+	"the peer retires its accepted connection and completes stop");
     }
     if (connected && stopActive && !passiveLimit) {
       client.connect(ZiConnectFn{[&unexpected](const ZiCxnInfo &) -> ZiConnection * {
@@ -760,13 +653,6 @@ static void testMxConnections(
 	  old.rxNext == restartHistory.rxNext,
 	"restart with a fresh client port must preserve the first tuple's retained evidence");
     }
-    bool empty = client.allCxns([](Ztc::Connection *) { }) == 0 &&
-      server.allCxns([](Ztc::Connection *) { }) == 0;
-    ZuCHECK(empty && cli.observed && srv.observed &&
-	cli.added == 1 && cli.removed == 1 && srv.added == 1 && srv.removed == 1,
-      "watch callbacks and stopped enumeration must reflect exactly one retired association");
-    client.unwatch();
-    server.unwatch();
     cliCxn = nullptr;
     srvCxn = nullptr;
     alarm(0);
@@ -823,8 +709,6 @@ static void testConnectTimeout(bool v6)
   ZuCHECK(started, "connect policy fixture must start both constrained instances");
   if (!started) { client.stop(); server.stop(); alarm(0); return; }
   MxEvents cli, srv;
-  observe(client, cli);
-  observe(server, srv);
   ZmRef<MxCxn> cliCxn, srvCxn;
   ZmAtomic<unsigned> failures = 0, retryFailures = 0, listenFailures = 0;
   bool released = false, clientHistory = false;
@@ -903,8 +787,6 @@ static void testConnectTimeout(bool v6)
       !endServer.total && !endServer.pending && failures == 1 && !unsigned(retryFailures) &&
       cli.disconnected == unsigned(connected) && srv.disconnected == unsigned(connected),
     "timeout and replacement teardown must leave no slots or repeated failure notifications");
-  client.unwatch();
-  server.unwatch();
   cliCxn = nullptr;
   srvCxn = nullptr;
   alarm(0);
@@ -935,8 +817,6 @@ static void testUserTimeout(bool v6)
   ZuCHECK(started, "user timeout fixture must start a sender and zero-window receiver");
   if (!started) { client.stop(); server.stop(); alarm(0); return; }
   MxEvents cli, srv;
-  observe(client, cli);
-  observe(server, srv);
   ZmRef<MxCxn> cliCxn, srvCxn;
   ZmSemaphore listening;
   ZmAtomic<unsigned> failures = 0;
@@ -973,8 +853,6 @@ static void testUserTimeout(bool v6)
       (!connected || (cli.destroyed == 1 && !cli.detached &&
 	cli.disconnected == 1 && srv.disconnected == 1 && !srv.bytes)) && !unsigned(failures),
     "owner teardown must return the unsent original slot with no repeated notifications");
-  client.unwatch();
-  server.unwatch();
   cliCxn = nullptr;
   srvCxn = nullptr;
   alarm(0);
@@ -1052,8 +930,6 @@ static void testGracefulFin(
   MxEvents cli, srv;
   cli.holdRx = serverFirst;
   srv.holdRx = !serverFirst;
-  observe(client, cli);
-  observe(server, srv);
   ZmRef<MxCxn> cliCxn, srvCxn;
   ZmSemaphore listening;
   ZmAtomic<unsigned> failures = 0;
@@ -1218,8 +1094,6 @@ static void testGracefulFin(
   bool stopped = client.stop() && server.stop();
   ZuCHECK(stopped && !unsigned(failures) && cli.disconnected == unsigned(connected) &&
       srv.disconnected == unsigned(connected), "graceful close and final stop must notify once");
-  client.unwatch();
-  server.unwatch();
   cliCxn = nullptr;
   srvCxn = nullptr;
   alarm(0);
@@ -1872,7 +1746,7 @@ static bool historyUnbound(ZiMultiplex &mx, ZmRef<HistoryCli> cxn)
 static unsigned historyLinks(HistoryServer &app)
 {
   return ZmBlock<unsigned>{}([&app](auto done) {
-    app.rxRun([&app, done]() mutable { done(app.allLinks_([](Ztc::Link *) {})); });
+    app.rxRun([&app, done]() mutable { done(app.linkCount_()); });
   });
 }
 static bool historyMarker(const char *name, const Zutcp::ClosedTuple &record)
@@ -3410,22 +3284,6 @@ static void testPassiveTuple(bool v6)
     directory));
 }
 
-// Read actual queues through the normalized telemetry interface. The samples
-// below are assertions in the test, never a production queue registry.
-static bool mixedQueues(ZiMultiplex &mx)
-{
-  QueueSamples rows;
-  bool valid = true;
-  unsigned count = mx.plugin()->allQueues([&rows, &valid](Ztc::Queue *queue) {
-    Ztc::QueueTelemetry row;
-    queue->telemetry(row);
-    auto key = queue->telKey();
-    valid &= key.p<0>() == row.ownerID && key.p<1>() == row.id && key.p<2>() == row.type;
-    new (rows.push()) Ztc::QueueTelemetry{row};
-  });
-  return valid && count == rows.length() && queueCoverage(rows, mx.id());
-}
-
 static void testMixedRoles(bool v6)
 {
   ZuTestScopeRT(testMixedRoles);
@@ -3505,8 +3363,8 @@ static void testMixedRoles(bool v6)
       wait(outgoingB[0].established) && wait(incomingB.established);
     auto activeA = admission(a, aStack), activeB = admission(b, bStack);
     ZuCheckRT(connected && !unsigned(failures) && activeA.total == 2 && activeB.total == 2 &&
-        !activeA.pending && !activeB.pending && mixedQueues(a) && mixedQueues(b), log_(
-      "one MxPlugin owns incoming and outgoing flows while enumerating only XDP rings"));
+        !activeA.pending && !activeB.pending, log_(
+      "one MxPlugin owns incoming and outgoing flows"));
     if (!connected) { a.stop(); b.stop(); break; }
 
     ZmSemaphore duplicateDone;
@@ -3566,8 +3424,7 @@ static void testMixedRoles(bool v6)
       callbacks &= incomingA[i].connected == 1 && incomingA[i].disconnected == 1 && incomingA[i].valid &&
         outgoingB[i].connected == 1 && outgoingB[i].disconnected == 1 && outgoingB[i].valid;
     ZuCheckRT(stopped && callbacks && !emptyA.total && !emptyA.pending &&
-        !emptyB.total && !emptyB.pending &&
-        !a.allCxns([](Ztc::Connection *) {}) && !b.allCxns([](Ztc::Connection *) {}), log_(
+        !emptyB.total && !emptyB.pending, log_(
       "mixed-role stop drains all associations and slots with exactly one terminal callback each"));
     ZuCheckRT(stopped && retainedRx && retainedTx->data() == txAddress &&
         retainedRx->data() == rxAddress && retainedTx->length == Message.length() &&

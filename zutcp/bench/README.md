@@ -71,11 +71,8 @@ on the complete validated response on Rx. It is RTT, not one-way latency. Local
 `ZiTx` completion is never called a peer acknowledgment. The client requests
 ordinary FIN after the last exact response. The server waits for that EOF and
 uses the ordinary peer-close drain. Both await normal disconnect
-before stopping. The application stopped record uses the existing generic mx
-connection enumeration and normalized queue telemetry: running state, actual
-connection count, queue count and queued Tx work. Private native integration
-fixtures separately verify admission, retained backing and physical pool drains;
-the application benchmark does not inspect Zutcp protocol state.
+before stopping. The native stopped record reports the running flag, admitted
+connections and outstanding Tx submissions after the owner drains.
 
 ## Scheduler placement
 
@@ -176,27 +173,7 @@ a bounded application pipeline. The existing mx `rxBufSize` setting means socket
 bytes for kernel TCP and ingress frame count for MxPlugin: kernel runs request 1 MiB
 socket buffers; native runs request `BENCH_RESERVE` ingress frames. These units
 are reported explicitly rather than passing a byte count as a native frame count.
-Actual kernel socket buffers and
-native default retention/control/reserve settings and normalized stopped queue
-telemetry are reported separately. Do not add a dummy kernel pool or label unlike backing
-mechanisms equal. Larger pipelines must retain all refusal/stall observations.
-
-Owners are released after stop and before reporting generic connection/Tx-queue
-drain. No additional queue registry or telemetry cache is maintained.
-After stop, `scheduler_queue` reports each scheduler slot's existing publication
-and consumption counters, bytes, pending entries and full observations. These
-include setup, warmup and shutdown; direct owner calls and polling are excluded.
-Publication totals use the ring's existing relaxed load/store statistics, which
-can lose increments under concurrent publishers. Consumption totals come from
-the single owner. Do not infer lost work from a small counter discrepancy; use
-actual pending state and application/wire validation for drain acceptance.
-The base scheduler enumeration is distinct from native device queue telemetry.
-`heap` rows report existing `Zutcp.*` named-heap counters by object size and
-partition. Requests/returns include cache and heap operations. Output producers
-use the dedicated `Zutcp.Bench.Output` tag with the same allocation type, size
-and alignment for both backends. Reporting precedes finalization, so retained
-configuration/history and benchmark result storage may still be live. These
-counts describe application requests, not allocator arena size or RSS.
+The benchmark reports actual kernel socket buffers and native reserve settings.
 Client `samples.csv` contains preallocated bounded raw RTT samples (at most two
 million across connections). Sorting/reporting/files occur after owner shutdown.
 Summaries include p50/p99/max, throughput and separate request/response FIX bytes,

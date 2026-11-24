@@ -110,10 +110,6 @@ void testClosedTupleRing()
   ZuCHECK(!ring.find(a.key, found) && !ring.update(a) && ring.find(b.key, found) &&
       ring.stats().count == 3 && ring.stats().evicted == 1,
     "late evidence cannot refresh closure FIFO or survive oldest-slot overwrite");
-  Ztc::QueueTelemetry telemetry;
-  ring.telemetry(telemetry);
-  ZuCHECK(telemetry.size == 3 && telemetry.count == 3 && telemetry.full == 1,
-    "closed tuple capacity overwrite increments normalized full");
   auto replacement = ring.remember(closedTuple(2, true));
   ZuCHECK(replacement.id != b.id && !ring.update(b) && ring.stats().count == 3,
     "a newly closed incarnation replaces the matching tuple with a new identity");

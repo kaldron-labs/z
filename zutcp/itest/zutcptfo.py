@@ -89,6 +89,19 @@ def reverse_key(key):
     return key[2:] + key[:2]
 
 
+def check_synacks(flow, attempts, expected_ack, client_fin_time):
+    for index, p in enumerate(attempts):
+        assert p['wire_seq'] == flow['server_isn'] and not p['body']
+        if p['wire_ack'] == expected_ack:
+            continue
+        # A late retry can also cover the FIN delivered after the SYN data.
+        assert (index > 0 and client_fin_time is not None and
+                client_fin_time <= p['time'] and
+                p['wire_ack'] == (expected_ack + 1) & MASK32), (
+                    'unexpected SYN-ACK acknowledgment', flow['key'], index,
+                    p['wire_ack'], expected_ack, p['time'], client_fin_time)
+
+
 def check(directory):
     profile_path = directory / 'tfo-profile'
     profile = profile_path.read_text().strip() if profile_path.exists() else 'authorized'
@@ -115,16 +128,13 @@ def check(directory):
         assert flows[0]['key'][0] == flow['key'][0]
         assert flows[0]['key'][2:] == flow['key'][2:]
     for index, flow in enumerate(flows):
-        reverse = flow['key'][2:] + flow['key'][:2]
+        reverse = reverse_key(flow['key'])
         for p in captured:
             if p['side'] == 'client' and p['key'] == reverse and p['flags'] & 0x17 == 0x12:
-                accepted = (p['wire_ack'] - flow['client_isn'] - 1) & MASK32
-                if accepted in (0, len(request)):
-                    flow['synack'].append(p)
+                flow['synack'].append(p)
         assert flow['synack']
         flow['server_isn'] = flow['synack'][0]['wire_seq']
         for p in flow['synack']:
-            assert p['wire_seq'] == flow['server_isn']
             if profile == 'response-loss' and index == 1:
                 assert p['cookie'] in (None, flows[0]['synack'][0]['cookie'])
             elif profile == 'disabled-service' or (index == 1 and profile in (
@@ -132,7 +142,6 @@ def check(directory):
                 assert p['cookie'] is None
             else:
                 assert p['cookie'] is not None and len(p['cookie']) == 16
-            assert not p['body']
     if profile == 'stale':
         assert flows[0]['synack'][0]['cookie'] != flows[1]['synack'][0]['cookie']
         assert flows[1]['synack'][0]['cookie'] == flows[2]['synack'][0]['cookie']
@@ -153,7 +162,7 @@ def check(directory):
             syn_data = early_sent and not fallback_syn and not ordinary_retry
             assert p['body'] == (request if syn_data else b'')
             assert not p['flags'] & 1
-        assert all(p['wire_ack'] == expected_ack for p in flow['synack'])
+        client_fin_time = None
         for side, expected, key, base in (
                 ('server', request, flow['key'], flow['client_isn'] + 1),
                 ('client', b'echo: ' + request, reverse_key(flow['key']),
@@ -172,6 +181,10 @@ def check(directory):
                     seen[first:first + len(data)] = b'\1' * len(data)
                 if p['flags'] & 1:
                     assert first + len(data) == len(expected)
+                    if (side == 'server' and profile == 'response-loss' and index == 1
+                            and client_fin_time is None):
+                        assert p['flags'] & 16
+                        client_fin_time = p['time']
                     fin = True
                 peer_base = flow['server_isn'] + 1 if side == 'server' else (
                     flow['client_isn'] + 1)
@@ -183,11 +196,31 @@ def check(directory):
                 seen[:] = b'\1' * len(expected)
             assert all(seen) and fin and acknowledged, (
                 'stream coverage/FIN/terminalACK', index, side, profile)
+        check_synacks(flow, flow['synack'], expected_ack, client_fin_time)
         evidence.append({'connection': index + 1, 'early_sent': early_sent, 'early': early,
                          'fallback_syn': fallback_syn,
                          'syns': len(flow['syn']), 'synacks': len(flow['synack']),
                          'cookie': (flow['syn'][0]['cookie'] or b'').hex(),
                          'bytes': len(request)})
+        if profile == 'response-loss' and index == 1:
+            source = [p for p in packets(directory, source='server')
+                      if p['flags'] & 0x17 == 0x12 and p['key'] == reverse_key(flow['key'])]
+            assert len(source) >= 2
+            check_synacks(flow, source, expected_ack, client_fin_time)
+            assert source[0]['cookie'] == cookie
+            assert all(p['cookie'] in (None, cookie) for p in source[1:])
+            # Identical retries are possible. Both server attempts must precede
+            # the first delivery, and the fault filter must have recorded a drop.
+            response_time = flow['synack'][0]['time']
+            assert source[0]['time'] < source[1]['time'] <= response_time
+            assert re.search(r'dropped [1-9][0-9]*', (directory / 'tfo-fault').read_text())
+            retries = flow['syn'][1:]
+            winner = 'client-retry' if retries and retries[0]['time'] < response_time else (
+                'server-response')
+            evidence[index].update(response_source_synacks=len(source),
+                                   dropped_synack_time=source[0]['time'],
+                                   recovered_synack_time=response_time,
+                                   ordinary_syn_retries=len(retries), recovery_first=winner)
     if profile == 'setup-loss':
         source = [p for p in packets(directory, source='client')
                   if p['flags'] & 0x17 == 2 and p['key'] == flows[1]['key'] and
@@ -202,30 +235,6 @@ def check(directory):
         fault = (directory / 'tfo-fault').read_text()
         assert re.search(r'dropped [1-9][0-9]*', fault)
         evidence[1]['source_syns'] = len(source)
-    if profile == 'response-loss':
-        flow = flows[1]
-        source = [p for p in packets(directory, source='server')
-                  if p['flags'] & 0x17 == 0x12 and p['key'] == reverse_key(flow['key'])]
-        assert len(source) >= 2
-        first = source[0]
-        accepted_ack = (flow['client_isn'] + 1 + len(request)) & MASK32
-        assert first['cookie'] == flows[0]['synack'][0]['cookie']
-        assert first['wire_ack'] == accepted_ack and not first['body']
-        assert first['time'] < flow['synack'][0]['time']
-        # Standard SYNACK retransmissions may be byte-identical. Drop counters and
-        # source/destination time order, rather than an inner ID, prove the lost attempt.
-        assert all(p['wire_seq'] == flow['server_isn'] and
-                   p['key'] == reverse_key(flow['key']) and p['wire_ack'] == accepted_ack
-                   for p in source)
-        assert re.search(r'dropped [1-9][0-9]*', (directory / 'tfo-fault').read_text())
-        retries = flow['syn'][1:]
-        response_time = flow['synack'][0]['time']
-        winner = 'client-retry' if retries and retries[0]['time'] < response_time else (
-            'server-response')
-        evidence[1].update(response_source_synacks=len(source),
-                           dropped_synack_time=first['time'],
-                           recovered_synack_time=flow['synack'][0]['time'],
-                           ordinary_syn_retries=len(retries), recovery_first=winner)
     if profile == 'setup-duplicate':
         assert len(flows[1]['syn']) > len({p['tcp'] for p in flows[1]['syn']})
         assert 'duplicate 100%' in (directory / 'tfo-fault').read_text()

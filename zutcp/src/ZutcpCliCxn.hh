@@ -35,22 +35,10 @@ public:
   friend Endpoint;
 
   CliCxn(App *app) : Base{app, false} { }
-  CliCxn(App *app, ZuID id) : Base{app, false, ZuMv(id)} {
-  }
   CliCxn(App *app, Host server, uint16_t port) :
     Base{app, false}, m_server{ZuMv(server)}, m_port{port} {
   }
-  CliCxn(App *app, ZuID id, Host server, uint16_t port) :
-    Base{app, false, ZuMv(id)},
-    m_server{ZuMv(server)}, m_port{port} {
-  }
   ~CliCxn() = default;
-
-  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
-    unsigned count = Base::allQueues(fn) + Endpoint::endpointQueues(fn);
-    fn(const_cast<CloseWaiters *>(&m_closeWaiters));
-    return count + 1;
-  }
 
   void connect() {
     ZiAssert(app() && app()->mx(), "Zutcp", (),
@@ -74,7 +62,6 @@ public:
   }
 
 protected:
-  void up_() { connect(); }
 
 public:
 
@@ -692,13 +679,8 @@ private:
   bool			m_endpointAttemptRx = false;
   bool			m_closeDrainPending = false, m_closeDrainNotify = false;
   uint64_t		m_closeDrainedGen = U64Null;
-  class CloseWaiters : public Queue<
-    ZmQueue<CloseFn, ZmQueueHeapID<"Zutcp.CliCxn.CloseWaiters">>,
-    "close-waiters", Ztc::QueueType::Rx> {
-  public:
-    CloseWaiters(const ZuID &owner) { this->queueOwner(owner); }
-  };
-  CloseWaiters		m_closeWaiters{Base::queueOwnerID()};
+  using CloseWaiters = ZmQueue<CloseFn, ZmQueueHeapID<"Zutcp.CliCxn.CloseWaiters">>;
+  CloseWaiters		m_closeWaiters;
 
 };
 

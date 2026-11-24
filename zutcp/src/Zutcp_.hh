@@ -24,8 +24,8 @@
 
 #include <zlib/ZePlatform.hh>
 
+#include <zlib/ZmQueue.hh>
 #include <zlib/Zutcp.hh>
-#include <zlib/ZutcpQueue.hh>
 
 namespace Zutcp {
 
@@ -128,9 +128,7 @@ friend inline ZuStringT<"Zutcp.ServerLinkTable"> ZmNHeapID(ServerLinkTable *);
 };
 
 using EndpointDiscFn = ZmFn<void(), ZmFnHeapID<"Zutcp.Endpoint.DiscFn">>;
-using EndpointDiscFns = Zutcp::Queue<
-  ZmQueue<EndpointDiscFn, ZmQueueHeapID<"Zutcp.Endpoint.DiscFns">>,
-  "endpoint-close", Ztc::QueueType::Rx>;
+using EndpointDiscFns = ZmQueue<EndpointDiscFn, ZmQueueHeapID<"Zutcp.Endpoint.DiscFns">>;
 
 // Native endpoint membership and submission. This owns no kernel socket or
 // ZiConnection. The endpoint owner drains setup and posted Tx work before release.
@@ -153,9 +151,6 @@ public:
     if (m_mx) return m_mx == mx && m_instance == stack;
     m_mx = mx;
     m_instance = stack;
-    m_queueID = ZuID{} << "endpoint-close:" << ZuBoxPtr(this).hex<false>();
-    m_discFns.queueOwner(mx->id());
-    m_discFns.queueName(m_queueID);
     return true;
   }
 
@@ -217,11 +212,6 @@ public:
     });
   }
 
-  unsigned endpointQueues(Ztc::QueueMgr::AllFn fn) const {
-    if (!m_mx) return 0;
-    fn(const_cast<EndpointDiscFns *>(&m_discFns));
-    return 1;
-  }
   bool listening() const { return m_listening; }
   bool connected() const { return m_connected; }
   const ZiSockAddr &local() const { return bindAddr; }
@@ -392,7 +382,6 @@ private:
   // Stable configuration; publish before setup/packet servicing.
   ZiMultiplex *m_mx = nullptr;
   MxPlugin *m_instance = nullptr;
-  ZuID m_queueID;
   ZiIPType::T m_family = ZiIPType::Null;
   unsigned m_payloadLimit = 0;
   PathMode::T m_mode = PathMode::ServerUnconnected;

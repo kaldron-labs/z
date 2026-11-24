@@ -20,7 +20,6 @@
 #include <zlib/ZmScratch.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZiLog.hh>
-#include <zlib/ZtcHub.hh>
 #include <zlib/ZutcpTypes.hh>
 #include <zlib/ZutcpBuf.hh>
 #include <zlib/ZutcpPQueue.hh>
@@ -158,6 +157,22 @@ struct alignas(Zm::CacheLineSize) PeerAckView {
   }
 };
 
+// Rx appends ordinary peer ACKs while their Tx callback is still queued.
+struct TCPAckBatch {
+  struct Entry {
+    uint32_t seq, ack, tsecr;
+    uint16_t window;
+    uint8_t flags;
+    bool timestamp : 1, data : 1;
+  };
+  enum : unsigned { Capacity = 8, CountBits = 4, CountMask = (1U << CountBits) - 1,
+    Reading = ~0U };
+  // Low bits give the published prefix length. Upper bits hold the byte
+  // threshold for a delayed reply requested after receive-state publication.
+  ZmAtomic<unsigned> state{0};
+  Entry entries[Capacity];
+};
+
 // Rx publishes monotonic acceptance/credit. A stale limit only narrows the
 // advertised window; it cannot grant credit beyond Rx's current limit.
 struct alignas(Zm::CacheLineSize) RxReadView {
@@ -182,33 +197,13 @@ enum { TxFlushBatch = 64 };
 enum { RecoveryScanBatch = 256 };
 enum { SuspiciousDataThreshold = 8 };
 enum { DefaultTxQueueMax = 4096 };
-enum { MxEOF = 1, MxFINAck = 2, MxFinishPosted = 4 };
 
 template <typename App, typename Impl, typename TxBufAlloc_>
 class Cxn_ :
   public Zutcp_::ServerLinks::Node,
-  public Ztc::Link,
   public ZmPQRx<Cxn_<App, Impl, TxBufAlloc_>,
     DataRxPQueue, ZmPQRxGapIgnore<>> {
 friend struct TCPStateTest;
-
-  class TxAdmissions : public ZmAtomic<uint64_t>,
-    public QueueTelemetry<"admission", Ztc::QueueType::Tx> {
-  public:
-    TxAdmissions() : ZmAtomic<uint64_t>{0} { }
-    using ZmAtomic<uint64_t>::operator =;
-    void capacity(const unsigned &limit) { m_limit = &limit; }
-    void overflow() { ++m_full; } // only the exceptional multi-producer refusal
-    void telemetry(Ztc::QueueTelemetry &data) const override {
-      queueTelemetry(data);
-      data.count = load_() & TxQueueState::CountMask;
-      data.size = m_limit ? *m_limit : 0;
-      data.full = m_full;
-    }
-  private:
-    const unsigned *m_limit = nullptr;
-    unsigned m_full = 0;
-  };
 
 public:
   using Cxn::mxCxn;
@@ -221,20 +216,10 @@ public:
   unsigned dataMPS() const { return unsigned(m_writeMPS); }
 
   Cxn_(App *app, bool isServer = false) :
-    Cxn_{app, isServer, ZuID{} << "tcp:" <<
-      ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>()} { }
-  Cxn_(App *app, bool isServer, ZuID id) :
-    m_app{app}, m_id{ZuMv(id)}, m_isServer{isServer} {
+    m_app{app}, m_isServer{isServer} {
     m_txRead.reset(m_txDataGen);
     m_rxRead.reset(m_rxDataGen);
     m_peerAckView.reset(m_rxDataGen);
-    m_rx.queueOwner(m_id);
-    m_rxQueue.queueOwner(m_id);
-    m_txQueueCount.queueOwner(m_id);
-    m_txQueueCount.capacity(m_txQueueMax);
-    m_txRanges.queueOwner(m_id);
-    m_txUnackd.queueOwner(m_id);
-    m_txPkts.queueOwner(m_id);
     initLinkState(LinkState::Starting);
   }
   ~Cxn_() {
@@ -252,30 +237,6 @@ public:
   void earlyDataRejected() { }
 
   App *app() const { return m_app; }
-  TelKey telKey() const override {
-    return {app()->mx()->id(), m_id};
-  }
-  void telemetry(Ztc::LinkTelemetry &data) const override {
-    data.hubID = app()->mx()->id();
-    data.id = m_id;
-    data.rxCalls = m_rxDiag.datagramsRx;
-    data.txCalls = m_txDiag.packetsTx;
-    data.rxBytes = m_rxDiag.bytesRx;
-    data.txBytes = m_txDiag.bytesTx;
-    data.reconnects = 0;
-    data.type = Ztc::LinkType::TCP;
-    data.state = telState(publicLinkState());
-  }
-  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override {
-    fn(const_cast<Reader *>(&m_rx));
-    fn(const_cast<DataRxPQueue *>(&m_rxQueue));
-    fn(const_cast<TxAdmissions *>(&m_txQueueCount));
-    fn(const_cast<TxRanges *>(&m_txRanges));
-    fn(const_cast<DataTxPQueue *>(&m_txUnackd));
-    return 5 + m_txPkts.allQueues(ZuMv(fn));
-  }
-  void up() override { impl()->up_(); }
-  void down() override { (void)impl()->disconnect(); }
 
   bool isServer() const { return m_isServer; }
   bool closed() const {
@@ -328,7 +289,6 @@ protected:
 public:
 
 protected:
-  void up_() { }
 
   void closeState(uint64_t errorCode = 0, bool application = false) {
     ZiAssert(rxInvoked(), "Zutcp", (),
@@ -643,28 +603,14 @@ protected:
     if (ZuNull(next)) return;
     auto serial = sentSerial != U64Null ? sentSerial : m_txRxSerial;
     bool dsack = header.options.dsack(header.ack);
-    if (!(header.flags & 0x04)) {
-      if (next > m_txPeerFinAck) m_txPeerFinAck = next;
-      if (m_txPeerFinEnd != U64Null) finishPeerFinTx();
-    }
+    if (!(header.flags & 0x04) && next > m_txPeerFinAck) m_txPeerFinAck = next;
     if (!dsack) return;
     app()->rxRun([link = impl(), serial, gen = m_txDataGen] {
       if (gen != link->dataGen() || gen != link->m_rxDataGen || link->disconnecting()) return;
       link->m_rxSACK.sent(serial, true);
     });
   }
-  void finishPeerFinTx() {
-    if (m_txPeerFinEnd == U64Null || m_txPeerFinAck != m_txPeerFinEnd ||
-	m_txPeerFinPosted) return;
-    m_txPeerFinPosted = true;
-    app()->rxRun([link = impl(), next = m_txPeerFinEnd, gen = m_txDataGen] {
-      if (gen != link->dataGen() || gen != link->m_rxDataGen || link->disconnecting() ||
-	  link->m_rxAborting || !link->finReceived() ||
-	  next != link->m_rxState.finalSize() + 1) return;
-      link->m_mxRxFinish |= MxFINAck;
-      link->finishMxRx();
-    });
-  }
+
   bool normalizeTCPRx(const TCPHeader &wire, TCPHeader &header) const {
     ZiAssert(rxInvoked(), "Zutcp", (), "TCP normalization outside Rx", return false);
     header = wire;
@@ -743,14 +689,21 @@ protected:
     return uint64_t(m_rxRead.next) > m_txLastAckSentNext ||
       uint64_t(m_rxRead.limit) > m_txLastAckSentLimit;
   }
-  void publishTCPEcho(bool peer = false) {
+  void publishTCPEcho() {
     auto options = rxTCPOptions();
     bool ece = m_rxECE;
     auto next = rxByteNext(), limit = m_rxDataCredit.limit();
     uint64_t gen = m_rxDataGen;
     uint64_t stamp = uint64_t(options.tsecr) | (uint64_t(options.flags) << 32) |
       (uint64_t(ece) << 40);
-    if (ZuUnlikely(options.sackCount)) {
+    if (ZuUnlikely(options.sackCount) &&
+	(m_rxRead.sack.load_() != m_rxWindowSerial || !m_rxWindowSerial ||
+	 next != m_rxRead.next.load_() || limit != m_rxRead.limit.load_() ||
+	 stamp != m_rxRead.stamp.load_() || options.sackCount != m_rxSACKCount ||
+	 memcmp(options.sack, m_rxSACKBlocks, options.sackCount * sizeof(SACKBlock)))) {
+      m_rxBatchOpen = false;
+      m_rxSACKCount = options.sackCount;
+      memcpy(m_rxSACKBlocks, options.sack, options.sackCount * sizeof(SACKBlock));
       uint64_t serial = ++m_rxWindowSerial;
       // A Tx reader cannot combine SACK edges from one report with another
       // report's cumulative ACK. The uncommon report remains one value event.
@@ -768,23 +721,52 @@ protected:
     if (m_rxRead.limit.load_() != limit) m_rxRead.limit = limit;
     if (m_rxRead.next.load_() != next) m_rxRead.next = next;
     if (!options.sackCount && m_rxRead.sack.load_()) m_rxRead.sack = 0;
-    if (peer && (app()->maxIdleTimeout() || *app()->heartBeat()))
-      app()->txRun([link = impl()] {
-        if (!link->disconnecting()) link->notePeerPktTx();
-      });
   }
   void receiveTCP(const TCPHeader &header, bool incomingData = false) {
-
-    publishTCPEcho();
-    if (ZuLikely(publishPeerAck(header))) return;
-    app()->txRun([link = impl(), header, incomingData, gen = dataGen()] {
+    if (!(header.flags & 0x10)) return;
+    if (app()->congestionControl()) {
+      if (!(header.flags & ~0x18U) && !header.options.sackCount &&
+	  !(header.options.flags & ~TCPOptions::TS) && establishedRx() &&
+	  batchPeerAck(header, incomingData)) return;
+    } else if (publishPeerAck(header)) return;
+    // A full-header callback is an ordering boundary for later peer ACKs.
+    m_rxBatchOpen = false;
+    app()->txRun([link = impl(), header, incomingData, gen = m_rxDataGen] {
       if (gen != link->dataGen() || gen != link->m_txDataGen || link->disconnecting()) return;
-      if (header.flags & 0x10) link->applyTCP(header, incomingData);
+      link->applyTCP(header, incomingData);
     });
   }
+  bool batchPeerAck(const TCPHeader &header, bool data) {
+    unsigned state = m_ackBatch.state, n = state & TCPAckBatch::CountMask;
+    if (n >= TCPAckBatch::Capacity || (n && !m_rxBatchOpen)) return false;
+    m_ackBatch.entries[n] = {header.seq, header.ack, header.options.tsecr,
+      header.window, header.flags, bool(header.options.flags & TCPOptions::TS), data};
+    // If Tx sealed the prefix, it cannot read the unpublished slot. Order
+    // this event after that callback using the ordinary full-header post.
+    if (n) return m_ackBatch.state.cmpXch(state + 1, state) == state;
+    m_ackBatch.state = 1;
+    m_rxBatchOpen = true;
+    app()->txRun([link = impl(), gen = m_rxDataGen] {
+      link->consumeAckBatch(gen);
+    });
+    return true;
+  }
+  void consumeAckBatch(uint64_t gen) {
+    unsigned state = m_ackBatch.state.xch(TCPAckBatch::Reading);
+    unsigned n = state & TCPAckBatch::CountMask;
+    for (unsigned i = 0; i < n; ++i) {
+      if (gen != m_txDataGen || gen != dataGen() || disconnecting()) break;
+      const auto &e = m_ackBatch.entries[i];
+      applyTCP({.seq = e.seq, .ack = e.ack, .window = e.window, .flags = e.flags,
+	.options = {.flags = e.timestamp ? unsigned(TCPOptions::TS) : 0U, .tsecr = e.tsecr}},
+	e.data);
+    }
+    m_ackBatch.state = 0;
+    unsigned threshold = state >> TCPAckBatch::CountBits;
+    if (threshold && gen == m_txDataGen && gen == dataGen() && !disconnecting())
+      serviceTCPAck(true, false, threshold);
+  }
   bool publishPeerAck(const TCPHeader &header) {
-    if (ZuUnlikely(app()->congestionControl())) return false;
-    if (!(header.flags & 0x10)) return false;
     auto next = tcpPosition(header.ack, m_rxPeerAck);
     bool advancing = !ZuNull(next) && next > m_rxPeerAck;
     bool ordered = !m_rxPeerKnown || int32_t(header.seq - m_rxPeerSeq) >= 0;
@@ -998,7 +980,7 @@ protected:
     ZiAssert(txInvoked(), "Zutcp", (),
       "TCP path diagnostic snapshot outside Tx thread", return {});
     auto diag = m_path.diag();
-    // Advisory telemetry permits an unclean read of the Rx-owned counter.
+    // The public snapshot reads this Rx-owned counter without synchronization.
     diag.bytesRx = m_pathBytesRx;
     return diag;
   }
@@ -1369,7 +1351,7 @@ protected:
     m_rxAckHoldEligible = false;
     m_closedKeyRx = {};
     m_closedSavedRx = false;
-    m_mxRxFinish = 0;
+    m_mxEOF = false;
     m_mxRxClosing = false;
     m_rxAborting = false;
     m_rxDelivered = m_rxAdmitted = 0;
@@ -1383,6 +1365,7 @@ protected:
     m_rxDataCredit = {};
     m_rxRetired = 0;
     m_rxWindowSerial = 0;
+    m_rxBatchOpen = false;
     app()->txInvoke(impl(), [link = impl(), gen]() mutable {
       if (link->disconnecting()) return link;
       link->resetTx_(gen);
@@ -1428,7 +1411,6 @@ protected:
     m_txPeerVersion = 0;
     m_txPeerFinEnd = U64Null;
     m_txPeerFinAck = 0;
-    m_txPeerFinPosted = false;
     m_txRxNext = m_txRxLimit = m_txRxSerial = m_txLastAckSentNext = 0;
     m_txLastAckSentLimit = 0;
     m_windowDirty = m_txWindowSet = m_peerWindowZero = false;
@@ -2320,7 +2302,7 @@ protected:
       default: break;
     }
     updateCloseTimers();
-    finishPeerFinTx();
+    finishMxTx();
   }
 
   void cancelDataRto() {
@@ -2925,21 +2907,6 @@ private:
   // packet remains in flight to clock Initial PTO progress.
   enum { PTOFallbackProbeDelayNS = 100000000 };
 
-  static Ztc::LinkState::T telState(LinkState::T state) {
-    switch (state) {
-      case LinkState::Starting:
-      case LinkState::Handshaking:
-	return Ztc::LinkState::Connecting;
-      case LinkState::Established:
-	return Ztc::LinkState::Up;
-      case LinkState::Closing:
-      case LinkState::Draining:
-	return Ztc::LinkState::Disconnecting;
-      default:
-	return Ztc::LinkState::Down;
-    }
-  }
-
   LinkState::T publicLinkState() const {
     return LinkState::T(m_publicLinkState.load_());
   }
@@ -3050,7 +3017,6 @@ private:
   }
 
 protected:
-  const ZuID &queueOwnerID() const { return m_id; }
   uint64_t sentPktCount() const { return m_txPkts.count(); }
 
 public:
@@ -3568,24 +3534,24 @@ public:
 private:
   // Shared native/plugin graceful retirement checkpoints.
   void finishNativeRx() {
-    if (disconnecting() || m_rxAborting ||
+    if (m_mxEOF || disconnecting() || m_rxAborting ||
 	!finReceived() || !rxComplete() || !m_rx.empty()) return;
-    m_mxRxFinish |= MxEOF;
+    m_mxEOF = true;
     finishMxRx();
   }
-  void finishMxRx() {
-    if (
-	m_mxRxFinish != (MxEOF | MxFINAck)) return;
-    m_mxRxFinish |= MxFinishPosted;
-    app()->txRun([cxn = impl(), gen = m_rxDataGen] {
-      if (gen != cxn->m_txDataGen || cxn->disconnecting()) return;
+  void finishMxRx(bool shutdown = false) {
+    app()->txRun([cxn = impl(), gen = m_rxDataGen, shutdown] {
+      if (gen != cxn->m_txDataGen || gen != cxn->dataGen() || cxn->disconnecting()) return;
       cxn->m_mxPeerFinished = true;
-      cxn->finishMxTx();
+      if (shutdown) cxn->shutdownMx(true);
+      else cxn->finishMxTx();
     });
   }
   void finishMxTx() {
-    if ( disconnecting() || m_mxFinishing ||
-	!m_finAckd || m_txUnackd.count_() || !m_mxPeerFinished) return;
+    if (!m_mxPeerFinished || disconnecting() || m_mxFinishing || !m_finAckd ||
+	m_txDataGen != dataGen() ||
+	m_txPeerFinEnd == U64Null || m_txPeerFinAck != m_txPeerFinEnd ||
+	m_txUnackd.count_()) return;
     m_mxFinishing = true;
     // Both byte directions are complete; the last peer-FIN ACK was accepted.
     // Role-specific close uses the existing owner drain and common closed history.
@@ -3632,7 +3598,6 @@ public:
 	m_rx.advance(length);
       }
       if (!retireRx(length)) { result = -1; break; }
-      cxn->rxCall(length);
       result = 1;
       bool stop = context();
       if (mxCxn != cxn) break;
@@ -3640,8 +3605,8 @@ public:
       if (stop) break;
     }
     m_mxRxActive = false;
-    if (mxCxn && rxComplete() && m_rx.empty() && !(m_mxRxFinish & MxEOF)) {
-      m_mxRxFinish |= MxEOF;
+    if (mxCxn && rxComplete() && m_rx.empty() && !m_mxEOF) {
+      m_mxEOF = true;
       auto cxn = mxCxn;
       auto &context = cxn->rxContext();
       bool handled = false;
@@ -3654,13 +3619,8 @@ public:
 	else handled = context.completed();
       }
       context.complete();
-      if (!handled) {
-	cxn->rxUp() = 0;
-	app()->txRun([cxn = impl(), gen = m_rxDataGen] {
-	  if (gen == cxn->m_txDataGen && !cxn->disconnecting()) cxn->shutdownMx(true);
-	});
-      }
-      finishMxRx();
+      if (!handled) cxn->rxUp() = 0;
+      finishMxRx(!handled);
     }
     bool pending = m_mxRxPending;
     m_mxRxPending = false;
@@ -3705,7 +3665,6 @@ public:
 	  mx->close();
 	  break;
 	}
-	mx->txCall(n);
       }
       context.length = int(n);
       do {
@@ -3895,7 +3854,6 @@ private:
     for (;;) {
       if (state & TxQueueState::Closed) return false;
       if (state >= m_txQueueMax) {
-	m_txQueueCount.overflow();
 	return sendError("TCP connection transmit queue limit exceeded");
       }
       uint64_t previous = m_txQueueCount.cmpXch(state + 1, state);
@@ -4081,6 +4039,7 @@ public:
 	tcp.seq == uint32_t(ackBefore) &&
 	payload.length() <= tcpReceiveWindow() && d.ecn != EcnMark::CE &&
 	!(flags & 0x80);
+    publishTCPEcho();
     receiveTCP(tcp, bool(payload.length()));
     bool early = syn && m_rxOrigins.server && m_rxTFOAllow;
     bool data = payload.length() || (flags & 0x01);
@@ -4107,10 +4066,14 @@ public:
       }
     }
     m_rxTFOAllow = false;
-    if (!syn) receiveECN(tcp, d.ecn, payload.length());
+    bool echoChanged = !syn && receiveECN(tcp, d.ecn, payload.length());
     ++m_rxDiag.packetsRx;
     m_rxDiag.dataBytesRx += payload.length();
-    publishTCPEcho(true);
+    if (data || echoChanged) publishTCPEcho();
+    if (app()->maxIdleTimeout() || *app()->heartBeat())
+      app()->txRun([link = impl()] {
+	if (!link->disconnecting()) link->notePeerPktTx();
+      });
     if (syn && m_rxOrigins.server) {
       app()->txRun([link = impl(), gen = m_rxDataGen] {
 	if (gen == link->m_txDataGen && !link->disconnecting()) link->sendSyn();
@@ -4199,39 +4162,42 @@ protected:
     return true;
   }
   void requestTCPAck(bool hold = false, bool covered = false) {
-    // This gate enrolls Tx work; the ACK itself is published independently.
-    // Exchange orders publication against clearing the gate on Tx: a skipped
-    // request is visible to that consumer, or a new request queues a consumer.
+    // Join an outstanding peer-ACK callback only after the receive frontier
+    // is published. An urgent reply always retains its own wire opportunity.
+    auto ackThreshold = hold ? 2 * localMSSOfferRx() : 0;
+    if (ackThreshold && m_rxBatchOpen) {
+      unsigned state = m_ackBatch.state;
+      unsigned requested = (ackThreshold << TCPAckBatch::CountBits) |
+	(state & TCPAckBatch::CountMask);
+      if (state && state != TCPAckBatch::Reading &&
+	  m_ackBatch.state.cmpXch(requested, state) == state) return;
+    }
+    m_rxBatchOpen = false;
     auto tag = (m_rxDataGen<<1) | 1;
     ZmAtomic_release();
     if (m_ackRequest.xch(tag) == tag && hold) return;
-    auto ackThreshold = hold ? 2 * localMSSOfferRx() : 0;
     app()->txRun([link = impl(), gen = m_rxDataGen, hold, covered, ackThreshold] {
       if (gen != link->dataGen() || gen != link->m_txDataGen || link->disconnecting()) return;
       // An old incarnation must never clear a new incarnation's notification.
       link->m_ackRequest.cmpXch(gen<<1, (gen<<1) | 1);
-      link->refreshTCPRx();
-      auto ackTarget = link->rxTCPNextTx();
-      if ((hold || (covered && ackTarget <= link->m_txPeerFinAck)) &&
-	ackTarget && ackTarget <= link->m_txLastAckSentNext &&
-	!link->m_ackPending && !link->tcpWindowDirty()) {
-	return;
-      }
-      auto timeout = link->app()->ackHoldTimeout();
-      bool dueBytes = hold && ackThreshold &&
-	ackTarget >= link->m_txLastAckSentNext &&
-	ackTarget - link->m_txLastAckSentNext >= ackThreshold;
-      bool delayed = hold && !dueBytes && timeout > ZuTime{0} && link->establishedTx() &&
-	(!link->m_ackPending || link->m_ackHoldPending);
-      link->m_ackPending = true;
-      if (delayed) {
-	link->m_ackHoldPending = true;
-	link->scheduleAckDelayTimer(link->transportNow() + timeout);
-      } else {
-	link->m_ackHoldPending = false;
-      }
-      link->flushTx();
+      link->serviceTCPAck(hold, covered, ackThreshold);
     });
+  }
+  void serviceTCPAck(bool hold, bool covered, unsigned ackThreshold) {
+    refreshTCPRx();
+    auto ackTarget = rxTCPNextTx();
+    if ((hold || (covered && ackTarget <= m_txPeerFinAck)) &&
+	ackTarget && ackTarget <= m_txLastAckSentNext &&
+	!m_ackPending && !tcpWindowDirty()) return;
+    auto timeout = app()->ackHoldTimeout();
+    bool dueBytes = hold && ackThreshold && ackTarget >= m_txLastAckSentNext &&
+      ackTarget - m_txLastAckSentNext >= ackThreshold;
+    bool delayed = hold && !dueBytes && timeout > ZuTime{0} && establishedTx() &&
+      (!m_ackPending || m_ackHoldPending);
+    m_ackPending = true;
+    m_ackHoldPending = delayed;
+    if (delayed) scheduleAckDelayTimer(transportNow() + timeout);
+    impl()->flushTx();
   }
   bool earlyRange(TxRange &range) const {
     if (m_tcpSynSent || m_txTFOFallback || m_txOrigins.server ||
@@ -4456,6 +4422,7 @@ protected:
       m_ackPending = m_windowDirty = m_ackHoldPending = false;
     }
     updateCongestionDiag();
+    if (ZuUnlikely(m_mxPeerFinished)) finishMxTx();
     return true;
   }
 public:
@@ -4564,7 +4531,6 @@ protected:
   // Immutable configuration, separate from inherited Rx queue state.
   alignas(Zm::CacheLineSize)
   App			*m_app = nullptr;
-  const ZuID		m_id;
   bool			m_isServer = false;
 
   unsigned		m_txQueueMax = DefaultTxQueueMax;
@@ -4572,7 +4538,7 @@ protected:
 
   // Shared producer admission; do not invalidate read-mostly publication state.
   alignas(Zm::CacheLineSize)
-  TxAdmissions		m_txQueueCount;
+  ZmAtomic<uint64_t>	m_txQueueCount{0};
 
   // Shared publication, read by application producers and both I/O owners.
   // Reset invalidates posted byte work before either owner clears its state.
@@ -4581,15 +4547,17 @@ protected:
   ZmAtomic<unsigned>	m_writeMPS{0};
   ZmAtomic<uint64_t>	m_writeCredit{0};
   ZmAtomic<unsigned>	m_disconnecting = 0;
-  // Advisory public/telemetry snapshot; protocol code uses owner-local state.
+  // Public state snapshot. Protocol code uses owner-local state.
   ZmAtomic<unsigned>	m_publicLinkState = unsigned(LinkState::Closed);
   ZmAtomic<uint64_t>	m_publicCloseError = 0;
 
   TxReadView		m_txRead;
   RxReadView		m_rxRead;
   PeerAckView		m_peerAckView;
+  alignas(Zm::CacheLineSize)
+  TCPAckBatch		m_ackBatch;
 
-  // Contended notification gates, isolated from all three publication views.
+  // Contended notification gates, isolated from the publication views.
   alignas(Zm::CacheLineSize)
   ZmAtomic<uint64_t>	m_ackRequest = 0;
   alignas(Zm::CacheLineSize)
@@ -4624,8 +4592,11 @@ protected:
   uint64_t		m_rxAdmitted = 0;
   uint64_t		m_rxRetired = 0;
   uint64_t		m_rxWindowSerial = 0;
+  SACKBlock		m_rxSACKBlocks[TCPOptions::MaxSACKBlocks];
+  unsigned		m_rxSACKCount = 0;
+  bool			m_rxBatchOpen = false;
   bool			m_mxRxActive = false, m_mxRxPending = false;
-  uint8_t		m_mxRxFinish = 0;
+  bool			m_mxEOF = false;
   bool			m_mxRxClosing = false;
   ClosedTupleKey	m_closedKeyRx;
   bool			m_closedSavedRx = false;
@@ -4664,7 +4635,6 @@ protected:
   uint64_t		m_txNext = 0, m_txAckd = 0, m_txRttFence = 0;
   uint64_t		m_txPeerFinEnd = U64Null;
   uint64_t		m_txPeerFinAck = 0;
-  bool			m_txPeerFinPosted = false;
   bool			m_txECN = false;
   mutable bool		m_txEchoECE = false;
   bool			m_txCWR = false, m_txECNResponse = false;

@@ -16,7 +16,6 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuMatcher.hh>
-#include <zlib/ZtcHeap.hh>
 
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmSemaphore.hh>
@@ -39,58 +38,6 @@ using namespace ZuTestUtil;
 
 enum { RxCount = 4, Head = 14 + 40 + 60, Payload = 32,
   WireSize = Head + Payload, Repeats = 1 }; // exact fixture workload
-
-struct MetaTotals {
-  enum { Count = 16 };
-  using Keys = ZuStringTL<
-    "Zutcp.Data.Tx", "Zutcp.Connection.TxRanges", "Zutcp.Pkt.TxSentNode",
-    "Zutcp.Pkt.OutstandingRange", "Zutcp.Pkt.OutstandingFlow", "Zutcp.OutstandingFlows",
-    "Zutcp.Pkt.OutstandingExact", "Zutcp.OutstandingExact", "Zutcp.Pkt.RetransmitQueue",
-    "Zutcp.Pkt.AckdFrame", "Zutcp.AckdFrameHash", "Zutcp.TxUnackdRange",
-    "Zutcp.Connection.TxUnackdRanges", "Zutcp.Connection.TxUnackdIndex",
-    "Zutcp.Pkt.TxLostPNs", "Zutcp.Recovery.FrameUpdates">;
-  uint64_t requests[Count]{}, returns[Count]{}, bytes[Count]{}, returnedBytes[Count]{};
-};
-
-static MetaTotals metaTotals()
-{
-  MetaTotals result;
-  Ztc::HeapMgr::all([&result](Ztc::Heap *heap) {
-    static constexpr auto matcher = ZuMatcher<MetaTotals>();
-    int i = matcher.exact(heap->telKey().p<0>());
-    if (i < 0) return;
-    Ztc::HeapTelemetry data;
-    heap->telemetry(data);
-    uint64_t allocated = data.cacheAllocs + data.heapAllocs;
-    uint64_t freed = data.cacheFrees + data.heapFrees;
-    result.requests[i] += allocated;
-    result.returns[i] += freed;
-    result.bytes[i] += allocated * data.size;
-    result.returnedBytes[i] += freed * data.size;
-  });
-  return result;
-}
-
-static void reportMeta(unsigned mode, const char *phase,
-    const MetaTotals &before, const MetaTotals &after)
-{
-  static constexpr const char *ids[] = {
-    "Zutcp.Data.Tx", "Zutcp.Connection.TxRanges", "Zutcp.Pkt.TxSentNode",
-    "Zutcp.Pkt.OutstandingRange", "Zutcp.Pkt.OutstandingFlow", "Zutcp.OutstandingFlows",
-    "Zutcp.Pkt.OutstandingExact", "Zutcp.OutstandingExact", "Zutcp.Pkt.RetransmitQueue",
-    "Zutcp.Pkt.AckdFrame", "Zutcp.AckdFrameHash", "Zutcp.TxUnackdRange",
-    "Zutcp.Connection.TxUnackdRanges", "Zutcp.Connection.TxUnackdIndex",
-    "Zutcp.Pkt.TxLostPNs", "Zutcp.Recovery.FrameUpdates"};
-  for (unsigned i = 0; i < MetaTotals::Count; ++i) {
-    auto allocations = after.requests[i] - before.requests[i];
-    auto frees = after.returns[i] - before.returns[i];
-    if (!allocations && !frees && (i < 11 || i > 13)) continue;
-    std::cout << "# metadata mode=" << mode << " phase=" << phase << " id=" << ids[i]
-      << " requests=" << allocations << " returns=" << frees
-      << " bytes=" << after.bytes[i] - before.bytes[i]
-      << " returnedBytes=" << after.returnedBytes[i] - before.returnedBytes[i] << '\n';
-  }
-}
 
 struct Probe {
   ZiMultiplex *mx;
@@ -635,8 +582,7 @@ struct IdleProgress {
 // Fill instance DATA admission with the sender gated, then refuse the first
 // original on another connection. Its producer never submits another byte.
 static void checkIdleRefusal(ZiMultiplex &mx, Zutcp::MxPlugin *stack,
-    Zi::IOBufAllocator *tx, Zi::IOBufAllocator *small, int wire, unsigned scenario,
-    MetaTotals *samples = nullptr)
+    Zi::IOBufAllocator *tx, Zi::IOBufAllocator *small, int wire, unsigned scenario)
 {
   ZmRef<WriterCxn> cxn = new WriterCxn{stack};
   ZmSemaphore owner, entered, release;
@@ -645,11 +591,10 @@ static void checkIdleRefusal(ZiMultiplex &mx, Zutcp::MxPlugin *stack,
   mx.run([&entered, &release] { entered.post(); release.wait(); }, 3);
   entered.wait();
   bool refused = false;
-  mx.txRun([&mx, stack, tx, small, cxn, scenario, samples, &refused, &owner] {
+  mx.txRun([&mx, stack, tx, small, cxn, scenario, &refused, &owner] {
     cxn->prepareTx();
     cxn->offerAck = scenario == 3;
     cxn->extendTxCredit(8);
-    if (samples) samples[0] = metaTotals();
     auto writer = cxn->writer_();
     auto original = writer.allocBuf(writer.headRoom());
     if (!original) { owner.post(); return; }
@@ -661,7 +606,6 @@ static void checkIdleRefusal(ZiMultiplex &mx, Zutcp::MxPlugin *stack,
       cxn->recovering = true;
       primed = cxn->sendNext(stack);
     }
-    if (samples) samples[1] = metaTotals();
     ZmRef<ZiIOBuf> fill[5];
     for (unsigned i = 0; i < 3; ++i) fill[i] = tx->allocBuf(&mx, Payload);
     fill[3] = small->allocBuf(&mx, Payload);
@@ -691,7 +635,6 @@ static void checkIdleRefusal(ZiMultiplex &mx, Zutcp::MxPlugin *stack,
       cxn->submitted == unsigned(recovery) &&
       (!recovery || cxn->recoveryPending()) &&
       stack->txAdmission().outstanding == (scenario == 3 ? 6 : 5);
-    if (samples) samples[2] = metaTotals();
     if (scenario == 4) std::cout << "# recovery queued=" << queued << " primed=" << primed
       << " full=" << full << " attempted=" << attempted << " refused=" << cxn->refused
       << " queuedCount=" << cxn->txQueueCount() << " sent=" << cxn->submitted
@@ -733,9 +676,8 @@ static void checkIdleRefusal(ZiMultiplex &mx, Zutcp::MxPlugin *stack,
   ZuCheckRT(progress.resumed && exact,
     log_("CQ resumes idle refused output, while reset/close cancels old work; scenario ",
       scenario, " completed ", progress.resumed, " peer bytes ", exact));
-  mx.txRun([cxn, samples, &owner] {
+  mx.txRun([cxn, &owner] {
     cxn->resume = {};
-    if (samples) samples[3] = metaTotals();
     owner.post();
   });
   owner.wait();
@@ -878,24 +820,21 @@ static void checkSourceRetirement(ZiMultiplex &mx, Zutcp::MxPlugin *stack, int w
     ZuCheckRT(ready, log_("open retained DATA/FIN endpoint"));
     mx.run([&entered, &release] { entered.post(); release.wait(); }, 3);
     entered.wait();
-    MetaTotals baseline, admitted, attempted, drained;
     ZmRef<Zutcp::PacketBuf> other, returned;
     uint8_t *origin = nullptr;
     bool submitted = false, blocked = false, preserved = false;
     auto family = v6 ? ZiIPType::V6 : ZiIPType::V4;
     mx.txRun([cxn, stack, v6, family, ackFirst, fin, &endpoint, &path, &other, &origin,
-	&submitted, &blocked, &preserved, &baseline, &admitted, &attempted, &owner] {
+	&submitted, &blocked, &preserved, &owner] {
       cxn->prepareTx(v6);
       cxn->offerAck = false;
       cxn->extendTxCredit(8);
-      baseline = metaTotals();
       auto writer = cxn->writer_();
       auto packet = writer.allocBuf(writer.headRoom());
       if (packet) {
 	packet->append(reinterpret_cast<const uint8_t *>("retire--"), 8);
 	submitted = writer.appendBuf(ZuMv(packet)) && cxn->sourceOutput(endpoint, path, fin);
       }
-      admitted = metaTotals();
       if (submitted) {
 	auto &source = *cxn->retry.range.storage;
 	origin = source.data;
@@ -911,7 +850,6 @@ static void checkSourceRetirement(ZiMultiplex &mx, Zutcp::MxPlugin *stack, int w
 	    !memcmp(frame, snapshot, length);
 	preserved &= cxn->sourceEncodes == before + 3 &&
 	  stack->txAdmission().outstanding == 1;
-	attempted = metaTotals();
 	other = stack->allocPacket(cxn.ptr(), family);
 	if (other) {
 	  auto a = uintptr_t(origin), b = uintptr_t(other->data_());
@@ -984,11 +922,6 @@ static void checkSourceRetirement(ZiMultiplex &mx, Zutcp::MxPlugin *stack, int w
     endpoint.disconnect([&owner] { owner.post(); });
     owner.wait();
     cxn = nullptr;
-    mx.txRun([&drained, &owner] { drained = metaTotals(); owner.post(); });
-    owner.wait();
-    reportMeta(mode, "admission", baseline, admitted);
-    reportMeta(mode, "three-refusals", admitted, attempted);
-    reportMeta(mode, "teardown", attempted, drained);
   }
 }
 
@@ -1282,16 +1215,8 @@ static void testStack()
   ZuCheckRT(pressure.kernelOnly,
     log_("CQ restores admission while transport recovery still owns control backing"));
 
-  MetaTotals recoverySamples[5];
   for (unsigned scenario = 0; scenario < 5; ++scenario)
-    checkIdleRefusal(mx, stack, tx, small, wire, scenario,
-      scenario == 4 ? recoverySamples : nullptr);
-  mx.txRun([&recoverySamples, &owner] { recoverySamples[4] = metaTotals(); owner.post(); });
-  owner.wait();
-  reportMeta(8, "recovery-admission", recoverySamples[0], recoverySamples[1]);
-  reportMeta(8, "loss-and-refusals", recoverySamples[1], recoverySamples[2]);
-  reportMeta(8, "completion-retry", recoverySamples[2], recoverySamples[3]);
-  reportMeta(8, "recovery-teardown", recoverySamples[3], recoverySamples[4]);
+    checkIdleRefusal(mx, stack, tx, small, wire, scenario);
   checkFinalACK(mx, stack, wire, false);
   checkFinalACK(mx, stack, wire, true);
   checkSourceRetirement(mx, stack, wire);

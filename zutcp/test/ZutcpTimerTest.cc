@@ -606,18 +606,9 @@ void testTimerInventory()
   ZmRef<TimerApp> appRef = new TimerApp;
   auto &app = *appRef;
   ZmRef<TimerLink> link = new TimerLink{&app};
-  Ztc::LinkTelemetry linkData;
-
-  link->telemetry(linkData);
-  ZuCHECK(linkData.state == Ztc::LinkState::Connecting &&
-      linkData.type == Ztc::LinkType::TCP && linkData.hubID == app.mx()->id(),
-    "new connection telemetry reports its state and owning multiplexer");
-
   ZuCHECK(link->establish(),
     "timer test link establish failed");
-  link->telemetry(linkData);
-  ZuCHECK(linkData.state == Ztc::LinkState::Up && link->established(),
-    "established connection telemetry follows protocol state");
+  ZuCheck(link->established());
   link->armAll(app.transportNow() + Zutcp::timeUS(10000));
   bool fired = true;
   for (unsigned i = 0; i < 6; ++i) fired &= link->wait();
@@ -632,9 +623,7 @@ void testTimerInventory()
   ZmBlock<>{}([link](auto done) {
     link->disconnect_(false, [done = ZuMv(done)]() mutable { done(); });
   });
-  link->telemetry(linkData);
-  ZuCHECK(linkData.state == Ztc::LinkState::Down && link->closed(),
-    "drained connection telemetry reports the closed protocol state");
+  ZuCheck(link->closed());
 }
 
 void testTimerCancel()

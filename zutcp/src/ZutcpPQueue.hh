@@ -23,7 +23,6 @@
 #include <zlib/ZtArray.hh>
 
 #include <zlib/ZutcpOptions.hh>
-#include <zlib/ZutcpQueue.hh>
 
 namespace Zutcp {
 
@@ -184,7 +183,7 @@ struct TxUnackdRange {
   void write(const I &) { }
 };
 
-class TxUnackdRanges : public QueueTelemetry<"unacknowledged", Ztc::QueueType::Tx> {
+class TxUnackdRanges {
 public:
   enum { Max = 128 }; // preserved former public capacity
   // Ordinary focused cases had a 95th percentile of two retained ranges;
@@ -210,11 +209,6 @@ public:
   };
 
   explicit TxUnackdRanges(uint64_t = 0) { }
-  void telemetry(Ztc::QueueTelemetry &data) const override {
-    queueTelemetry(data);
-    data.count = count_();
-  }
-
   ZmPQResult::T add(const TxUnackdRange &range) {
     if (range.fin && range.bytes == uint64_t(-1))
       return ZmPQResult::Invalid;
@@ -457,14 +451,13 @@ private:
 #endif
 };
 
-using DataRxPQueue = Queue<
-  ZmPQueue<DataRx,
+using DataRxPQueue = ZmPQueue<DataRx,
     ZmPQueueNode<DataRx,
       ZmPQueueHeapID<"Zutcp.Connection.RxQueue",
 	ZmPQueueFn<DataRxPQueueFn,
 	  ZmPQueueOverwrite<false,
 	    ZmPQueueBits<2,
-	      ZmPQueueLevels<2>>>>>>>, "reassembly", Ztc::QueueType::Rx, true>;
+	      ZmPQueueLevels<2>>>>>>>;
 
 
 // Queue coordinates change as bytes are packetized. Shared storage keeps the
@@ -496,11 +489,11 @@ struct TxStoredRange : public TxBacking {
   }
   template <typename I> void write(const I &) { }
 };
-using TxRanges = Queue<ZmPQueue<TxStoredRange,
+using TxRanges = ZmPQueue<TxStoredRange,
   ZmPQueueNode<TxStoredRange,
     ZmPQueueHeapID<"Zutcp.Connection.TxRanges",
       ZmPQueueFn<ZmPQueueDefaultFn<TxStoredRange>,
-	ZmPQueueBits<2, ZmPQueueLevels<3>>>>>>, "pending", Ztc::QueueType::Tx, true>;
+	ZmPQueueBits<2, ZmPQueueLevels<3>>>>>>;
 
 using DataTxPQueue = TxUnackdRanges;
 

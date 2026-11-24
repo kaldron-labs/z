@@ -14,7 +14,6 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmBlock.hh>
-#include <zlib/ZtcHeap.hh>
 
 #include <zlib/Zutcp.hh>
 #include <zlib/ZutcpUDP.hh>
@@ -262,18 +261,6 @@ static void testCompletionRetries()
     log_("ordinary owner work runs between completion retry batches under repeated refusal"));
 }
 
-static uint64_t heapAllocs(ZuCSpan id)
-{
-  uint64_t total = 0;
-  Ztc::HeapMgr::all([id, &total](Ztc::Heap *heap) {
-    if (heap->telKey().p<0>() != id) return;
-    Ztc::HeapTelemetry data;
-    heap->telemetry(data);
-    total += data.cacheAllocs + data.heapAllocs;
-  });
-  return total;
-}
-
 class MulticastCxn : public ZmNHeap<MulticastCxn>, public ZiConnection {
 friend inline ZuStringT<"Zutcp.Test.Multicast"> ZmNHeapID(MulticastCxn *);
 public:
@@ -363,18 +350,16 @@ bool ZutcpTest::MxPlugin::multicast(
   wireLength = length;
   memcpy(expectedFrame, frame, length);
   unsigned allocations = pool->allocCalls, returned = pool->returns;
-  auto snapshots = heapAllocs("Zutcp.UDP.RxMatches");
   if (mode == 5) pool->available = false;
   stack.received(frame, length);
   pool->available = true;
-  snapshots = heapAllocs("Zutcp.UDP.RxMatches") - snapshots;
   unsigned expected = count;
   if (mode == 3 || mode == 4 || mode == 5) expected = 1;
   bool copied = count == 2 && mode != 3 && mode != 5;
   std::cout << "# multicast family=" << (v6 ? 6 : 4) << " mode=" << mode
     << " deliveries=" << calls << " copies=" << copies
-    << " copyBytes=" << copyBytes << " snapshots=" << snapshots << '\n';
-  bool passed = (count > 1 || !snapshots) && length && calls == expected && exact &&
+    << " copyBytes=" << copyBytes << '\n';
+  bool passed = length && calls == expected && exact &&
     copies == unsigned(copied) && copyBytes == (copied ? length : 0) &&
     raw == unsigned(mode == 0 || mode == 4) &&
     pool->allocCalls - allocations == unsigned(count == 2 && mode != 3) &&
