@@ -149,10 +149,10 @@ static RawOpts rawOptions(const Argv &args, unsigned first = 0)
   return options;
 }
 
-ZuUnion<void, ZeException> EAL::init(const EALParams &params)
+void EAL::init(const EALParams &params)
 {
   if (attempted.xch(1))
-    return ZeEXCEPT(Error, Log, "DPDK EAL initialization has already been attempted");
+    throw ZeEXCEPT(Error, Log, "DPDK EAL initialization has already been attempted");
   m_state = Attempted;
 
   ZfCLI::OutArgv out;
@@ -162,7 +162,7 @@ ZuUnion<void, ZeException> EAL::init(const EALParams &params)
   auto named = rawOptions(out.argv, 1);
   for (unsigned i = 0; i < Options::N; ++i) {
     if (raw.arg[i] && named.arg[i])
-      return ZeEXCEPT(Error, Log, ([option = Options::names[i]](auto &s) {
+      throw ZeEXCEPT(Error, Log, ([option = Options::names[i]](auto &s) {
 	s << "DPDK EAL option --" << option << " supplied both as a named parameter and in args";
       }));
   }
@@ -171,14 +171,14 @@ ZuUnion<void, ZeException> EAL::init(const EALParams &params)
   cpu_set_t affinity;
   if (autoLcore) {
     if (sched_getaffinity(0, sizeof(affinity), &affinity) < 0)
-      return ZeEXCEPT(Error, Log, ([error = ZeLastError](auto &s) {
+      throw ZeEXCEPT(Error, Log, ([error = ZeLastError](auto &s) {
 	s << "could not read the DPDK EAL initializing thread's affinity: " << error;
       }));
     int cpu = sched_getcpu();
     if (cpu < 0 || cpu >= CPU_SETSIZE || !CPU_ISSET(cpu, &affinity)) {
       for (cpu = 0; cpu < CPU_SETSIZE && !CPU_ISSET(cpu, &affinity); ++cpu) { }
       if (cpu == CPU_SETSIZE)
-	return ZeEXCEPT(Error, Log, "no allowed CPU for the DPDK EAL main lcore");
+	throw ZeEXCEPT(Error, Log, "no allowed CPU for the DPDK EAL main lcore");
     }
     ZeString mapping;
     if (!raw.remap) {
@@ -209,18 +209,17 @@ ZuUnion<void, ZeException> EAL::init(const EALParams &params)
   if (autoLcore && sched_setaffinity(0, sizeof(affinity), &affinity) < 0)
     affinityError = errno;
   if (result < 0)
-    return ZeEXCEPT(Error, Log, ([ealError](auto &s) {
+    throw ZeEXCEPT(Error, Log, ([ealError](auto &s) {
       s << "rte_eal_init failed: " << rte_strerror(ealError);
     }));
   if (affinityError)
-    return ZeEXCEPT(Error, Log, ([affinityError](auto &s) {
+    throw ZeEXCEPT(Error, Log, ([affinityError](auto &s) {
       s << "could not restore the DPDK EAL initializing thread's affinity: "
 	<< ZeError{affinityError};
     }));
 
   m_ports = new Ports{};
   m_state = Ready;
-  return {};
 }
 
 } // namespace Zpkt::Dpdk

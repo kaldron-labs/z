@@ -166,13 +166,15 @@ static void testDpdkPools()
     params.iova = IOVA::VA;
     EAL ownedEAL;
     auto eal = &ownedEAL;
-    auto result = eal->init(params);
-    ZuCHECK(!result.is<ZeException>() && eal->ready(), "initialize EAL explicitly");
-    if (result.is<ZeException>()) ZiLogEvent(ZuMv(result.p<ZeException>()));
-    else {
+    try {
+      eal->init(params);
+      ZuCHECK(eal->ready(), "initialize EAL explicitly");
       ZuTestCall(testGeometry);
       ZuTestCall(testLeases);
       ZuTestCall(testRollback);
+    } catch (ZeException &e) {
+      ZiLogEvent(ZuMv(e));
+      ZuCHECK(false, "initialize EAL explicitly");
     }
   }
   ZtString<> runtime{dir};

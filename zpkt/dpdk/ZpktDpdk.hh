@@ -159,7 +159,8 @@ public:
   EAL() = default;
 
   // Device instances and their retained backing must retire before EAL cleanup.
-  ZuUnion<void, ZeException> init(const EALParams &);
+  // Initialization throws ZeException; an attempted EAL cannot be initialized again.
+  void init(const EALParams &);
   bool ready() const { return m_state == Ready; }
 
 private:

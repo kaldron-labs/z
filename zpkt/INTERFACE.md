@@ -56,14 +56,16 @@ metadata and retains the borrowed multiplexer and link resources until final.
 
 ## Shared allocation
 
-In applications using Zutcp, move the initialized, unallocated, never-started
-Nif into TCP with `tcp->init(mx, env, ZuMv(nif), params)`. TCP borrows Env and
-consumes the Nif reference only after validation succeeds. Failure preserves the
-caller's reference and finalization obligation. An identical stopped repeat may
+In applications using Zutcp, inject a `Zutcp::MxPlugin` into the multiplexer
+constructor. Move the initialized, unallocated, never-started Nif into TCP with
+`tcp->init(mx, env, ZuMv(nif), params)` before requesting allocator handles.
+Initialization throws `ZeException` on failure. TCP borrows Env and consumes the
+Nif reference only after validation succeeds. Failure preserves the caller's
+reference and finalization obligation. An identical stopped repeat may
 pass an empty reference, but Env, multiplexer and TCP configuration must match.
 After success, TCP owns Nif lifecycle calls; TCP final clears its borrowed Env
-pointer and never finalizes Env. Move TCP
-into the same multiplexer and request its allocator handles. `mx.alloc()`
+pointer and never finalizes Env. Request allocator handles from that same
+multiplexer. `mx.alloc()`
 allocates before start when the application needs native Tx buffers early.
 Otherwise `mx.start()` performs that allocation.
 

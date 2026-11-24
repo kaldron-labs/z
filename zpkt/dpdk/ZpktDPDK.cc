@@ -51,8 +51,7 @@ public:
 	}
       }
     }
-    auto result = m_eal.init(params);
-    if (result.is<ZeException>()) throw ZuMv(result).p<ZeException>();
+    m_eal.init(params);
   }
 
   ZuUnion<Zpkt::Nif *, ZeException> nif(

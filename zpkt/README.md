@@ -119,7 +119,8 @@ interfaces {
 The plugin owns EAL directly and initializes it during construction. The `eal`
 child uses existing EALParams field metadata; absent fields keep existing defaults.
 An empty `interfaces {}` map is valid for EAL/pool-only work. Native EAL still
-permits one process-wide initialization attempt. Final Env reference release
+permits one process-wide initialization attempt. `Dpdk::EAL::init` throws
+`ZeException` on failure. Final Env reference release
 destroys its plugin and EAL after all children have retired.
 
 The Linux key `route0` must resolve. Its queried geometry and routing identity

@@ -88,9 +88,14 @@ static ZeException cleanupCase()
     EALParams params;
     params.noPCI = params.noHuge = params.noShconf = params.noTelemetry = true;
     affinityFailure = 1;
-    auto result = eal.init(params);
-    if (affinityFailure || !result.is<ZeException>() || eal.ready() ||
-	!strstr(errorText(result.p<ZeException>()).ndata(), "restore"))
+    ZeException failure;
+    try { eal.init(params); }
+    catch (ZeException &e) {
+      failure = e;
+      std::cerr << e << '\n' << std::flush;
+    }
+    if (affinityFailure || !failure || eal.ready() ||
+	!strstr(errorText(failure).ndata(), "restore"))
       return caseError("post-native-init affinity restoration failure was not injected");
   }
   if (cleanupCalls != 1)
@@ -98,7 +103,10 @@ static ZeException cleanupCase()
   if (sched_setaffinity(0, sizeof(before), &before) < 0)
     return caseError("cannot restore test affinity", ZeLastError);
   EAL replacement;
-  if (!replacement.init({}).is<ZeException>())
+  bool rejected = false;
+  try { replacement.init({}); }
+  catch (ZeException &e) { std::cerr << e << '\n' << std::flush; rejected = true; }
+  if (!rejected)
     return caseError("destroying an EAL owner allowed another native initialization attempt");
   return {};
 }
@@ -181,21 +189,34 @@ static ZeException runCase(ZuCSpan scenario)
       params.lcores = "0";
       params.args = {"--huge-unlink", "--lcores=0"};
     }
-    auto result = eal->init(params);
-    if (!result.is<ZeException>() || eal->ready() ||
-	!strstr(errorText(result.p<ZeException>()).ndata(), "named parameter and in args"))
+    ZeException failure;
+    try { eal->init(params); }
+    catch (ZeException &e) {
+      failure = e;
+      std::cerr << e << '\n' << std::flush;
+    }
+    if (!failure || eal->ready() ||
+	!strstr(errorText(failure).ndata(), "named parameter and in args"))
       return caseError("duplicate options did not produce the wrapper's structured error");
-    if (!eal->init({}).is<ZeException>() || eal->ready())
+    bool rejected = false;
+    try { eal->init({}); }
+    catch (ZeException &e) { std::cerr << e << '\n' << std::flush; rejected = true; }
+    if (!rejected || eal->ready())
       return caseError("a failed initialization allowed a second attempt");
     return {};
   }
 
   if (scenario == "native-error") {
     params.maxSIMDBits = 1U;
-    auto result = eal->init(params);
-    if (!result.is<ZeException>() || eal->ready() ||
-	!strstr(errorText(result.p<ZeException>()).ndata(), "rte_eal_init failed"))
-      return caseError("native SIMD validation failure was not returned");
+    ZeException failure;
+    try { eal->init(params); }
+    catch (ZeException &e) {
+      failure = e;
+      std::cerr << e << '\n' << std::flush;
+    }
+    if (!failure || eal->ready() ||
+	!strstr(errorText(failure).ndata(), "rte_eal_init failed"))
+      return caseError("native SIMD validation failure was not thrown");
     return {};
   }
 
@@ -230,11 +251,18 @@ static ZeException runCase(ZuCSpan scenario)
     return caseError("unknown test case");
   }
 
-  auto result = eal->init(params);
-  if (result.is<ZeException>()) return ZuMv(result).p<ZeException>();
+  try { eal->init(params); }
+  catch (ZeException &e) {
+    auto failure = e;
+    std::cerr << e << '\n' << std::flush;
+    return failure;
+  }
   if (!eal->ready() || rte_lcore_count() != 1 || rte_get_main_lcore() != mainLcore)
     return caseError("EAL did not enable exactly one main lcore");
-  if (!eal->init({}).is<ZeException>() || !eal->ready())
+  bool rejected = false;
+  try { eal->init({}); }
+  catch (ZeException &e) { std::cerr << e << '\n' << std::flush; rejected = true; }
+  if (!rejected || !eal->ready())
     return caseError("a second EAL init did not preserve the initialized state");
   cpu_set_t after;
   if (sched_getaffinity(0, sizeof(after), &after) < 0)
