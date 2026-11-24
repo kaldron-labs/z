@@ -66,13 +66,13 @@ Rx, Tx and XDP Tx; application work shares Rx/Tx. Client CPUs are 0/1/4 and
 server CPUs are 2/3/6. The kernel configuration leaves XDP Tx idle.
 
 The Linux x86-64 Clang build uses `-O3 -g -DNDEBUG`, without ASan/LSan or `-pg`.
-The final scoped validation passes 311 Zutcp and 11 Zxdp unit cases, 117 native
+The final scoped validation passes 311 Zutcp and 11 Zpkt unit cases, 117 native
 integration cases, 36 independent Linux-peer cases, fresh passive smoke and
 benchmark self-test. The campaign validates all 4,256,000 measured replies,
 96 endpoint drains, 288 empty scheduler queues and 480 telemetry CSVs.
 No hash table resized and no non-scheduler queue reported full.
 
-The frozen 14-ELF sets differ only in `libZutcp`; the application and `libZxdp`
+The frozen 14-ELF sets differ only in `libZutcp`; the application and `libZpkt`
 are byte-identical. Shared ACK state and owner boundaries passed compiled layout
 inspection. Both concrete connection types grew by 128 bytes in the latest
 combined change.

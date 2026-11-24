@@ -8,7 +8,7 @@ EXTRA_DIST = TESTING.md DEPENDENCIES.md GUIDELINES.md z.config .lsan-suppression
 	scripts/toml-to-json
 SUBDIRS = zu zm zt ze zf zi
 if LINUX
-SUBDIRS += zxdp
+SUBDIRS += zpkt
 endif
 SUBDIRS += zpb zfb zv zrl
 if LINUX
@@ -39,7 +39,7 @@ endif
 
 DIST_SUBDIRS = zu zm zt ze zf zi
 if LINUX
-DIST_SUBDIRS += zxdp zutcp
+DIST_SUBDIRS += zpkt zutcp
 endif
 DIST_SUBDIRS += zpb zfb zv zrl zdbus ztcp ztls zfix zquic \
 	zhttp zws zgrpc zrest zjrpc zmcp zdb ztc \

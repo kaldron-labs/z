@@ -253,9 +253,9 @@ static ZiMxParams mxParams()
 }
 
 static Zutcp::Instance *attachInstance(
-    ZiMultiplex &mx, unsigned ifindex, Zutcp::InstanceParams params = {})
+    Zpkt::Env *env, ZiMultiplex &mx, unsigned ifindex, Zutcp::InstanceParams params = {})
 {
-  auto owner = ZutcpTest::makeInstance(&mx, ifindex, Sender, ZuMv(params));
+  auto owner = ZutcpTest::makeInstance(env, &mx, ifindex, Sender, ZuMv(params));
   auto instance = owner.ptr();
   mx.plugin(ZuMv(owner));
   return instance;
@@ -348,12 +348,13 @@ static void testMxConnections(
 {
   ZuTestScope(testMxConnections);
   alarm(35);
-  unsigned a = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_IFINDEX")};
-  unsigned b = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_PEER_IFINDEX")};
+  unsigned a = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
+  unsigned b = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   ZiIP local = loss || window ? (v6 ? "2001:db8::20" : "198.18.0.20") :
     (v6 ? "2001:db8::10" : "198.18.0.10");
   ZiIP remote = loss || window ? (v6 ? "2001:db8::21" : "198.18.0.21") :
     (v6 ? "2001:db8::11" : "198.18.0.11");
+  ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
   ZiMultiplex client{mxParams()}, server{mxParams()};
   ZmAtomic<unsigned> unanswered = 0, refusalResets = 0, unexpectedWire = 0;
   ZmSemaphore refusedWire, unansweredWire;
@@ -408,8 +409,8 @@ static void testMxConnections(
     config.maxCxns = passiveLimit == PassivePending ? 3 : 1;
     config.maxPendingCxns = 1;
   }
-  auto clientStack = attachInstance(client, a, config);
-  auto serverStack = attachInstance(server, b, config);
+  auto clientStack = attachInstance(clientEnv, client, a, config);
+  auto serverStack = attachInstance(serverEnv, server, b, config);
   auto clientRx = client.allocator<Zi::IOBufType::Rx>();
   auto serverRx = server.allocator<Zi::IOBufType::Rx>();
   auto clientTx = loss || window ? client.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 1400>(1) :
@@ -423,8 +424,8 @@ static void testMxConnections(
     if (turn) {
       auto conflicting = config;
       conflicting.maxCxns = 1;
-      ZuCHECK(clientStack->init(&client, {}, config).is<void>() &&
-          clientStack->init(&client, {}, ZuMv(conflicting)).is<ZeException>() &&
+      ZuCHECK(clientStack->init(&client, clientEnv, {}, config).is<void>() &&
+          clientStack->init(&client, clientEnv, {}, ZuMv(conflicting)).is<ZeException>() &&
           clientStack->cxnAdmission().maxCxns == config.maxCxns,
         "stopped restart preserves the original TCP configuration and rejects changes");
     }
@@ -464,7 +465,7 @@ static void testMxConnections(
 	cli.connected == 1 && srv.connected == 1 && !cli.received && !srv.received,
       "connect/accept must publish both pointers before callbacks with native tuples and owners");
     if (connected) {
-      auto repeated = clientStack->init(&client, {}, config);
+      auto repeated = clientStack->init(&client, clientEnv, {}, config);
       ZuCHECK(repeated.is<ZeException>() && clientStack->ready() && cliCxn->plugin() &&
 	  cli.connected == 1 && !cli.disconnected,
 	"running init is rejected without disturbing the live plugin, connection or callbacks");
@@ -769,10 +770,11 @@ static void testConnectTimeout(bool v6)
 {
   ZuTestScope(testConnectTimeout);
   alarm(35);
-  unsigned a = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_IFINDEX")};
-  unsigned b = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_PEER_IFINDEX")};
+  unsigned a = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
+  unsigned b = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   ZiIP local{v6 ? "2001:db8::10" : "198.18.0.10"};
   ZiIP remote{v6 ? "2001:db8::11" : "198.18.0.11"};
+  ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
   ZiMultiplex client{mxParams()}, server{mxParams()};
   ZmSemaphore marker, listening;
   struct PendingSyn {
@@ -797,14 +799,14 @@ static void testConnectTimeout(bool v6)
 	syn.seen.post();
     } else if (syn.localBase != base) ++syn.errors;
   };
-  auto clientStack = attachInstance(client, a, config);
+  auto clientStack = attachInstance(clientEnv, client, a, config);
   serverConfig.packet = [&marker](ZmRef<Zi::IOBuf> buf) {
     Zutcp::IPView ip;
     Zutcp::TCPView tcp;
     if (Zutcp::readIP(buf->cspan(), ip) && Zutcp::readTCP(ip, tcp) &&
 	  tcp.header.dstPort == 18199) marker.post();
   };
-  auto serverStack = attachInstance(server, b, serverConfig);
+  auto serverStack = attachInstance(serverEnv, server, b, serverConfig);
   auto clientRx = client.allocator<Zi::IOBufType::Rx>();
   auto serverRx = server.allocator<Zi::IOBufType::Rx>();
   auto clientTx = client.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
@@ -904,18 +906,19 @@ static void testUserTimeout(bool v6)
 {
   ZuTestScope(testUserTimeout);
   alarm(35);
-  unsigned a = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_IFINDEX")};
-  unsigned b = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_PEER_IFINDEX")};
+  unsigned a = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
+  unsigned b = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   ZiIP local{v6 ? "2001:db8::10" : "198.18.0.10"};
   ZiIP remote{v6 ? "2001:db8::11" : "198.18.0.11"};
+  ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
   ZiMultiplex client{mxParams()}, server{mxParams()};
   Zutcp::InstanceParams config{.rxRetainFramesPerCxn = 64, .maxCxns = 1, .maxPendingCxns = 1,
     .userTimeout = ZuTime{2}};
   auto serverConfig = config;
   serverConfig.maxData = 0;
   serverConfig.userTimeout = ZuTime{0};
-  auto clientStack = attachInstance(client, a, config);
-  auto serverStack = attachInstance(server, b, serverConfig);
+  auto clientStack = attachInstance(clientEnv, client, a, config);
+  auto serverStack = attachInstance(serverEnv, server, b, serverConfig);
   auto clientRx = client.allocator<Zi::IOBufType::Rx>();
   auto serverRx = server.allocator<Zi::IOBufType::Rx>();
   auto clientTx = client.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
@@ -993,8 +996,8 @@ static void testGracefulFin(
 {
   ZuTestScope(testGracefulFin);
   alarm(35);
-  unsigned a = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_IFINDEX")};
-  unsigned b = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_PEER_IFINDEX")};
+  unsigned a = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
+  unsigned b = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   bool bridged = getenv("ZUTCP_FIN_DIR");
   ZiIP local{v6 ? (bridged ? "2001:db8::20" : "2001:db8::10") :
     (bridged ? "198.18.0.20" : "198.18.0.10")};
@@ -1007,6 +1010,7 @@ static void testGracefulFin(
     bool valid = false, timestamps = false;
     uint32_t expectedSeq = 0, expectedAck = 0, expectedEcho = 0, receivedTS = 0;
   } late;
+  ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
   ZiMultiplex client{mxParams()}, server{mxParams()};
   Zutcp::InstanceParams config{.rxRetainFramesPerCxn = 64, .maxCxns = 1, .maxPendingCxns = 1,
     .closedTupleRingSize = 1};
@@ -1026,8 +1030,8 @@ static void testGracefulFin(
     ++late.responses;
     late.event.post();
   };
-  auto clientStack = attachInstance(client, a, config);
-  auto serverStack = attachInstance(server, b, serverConfig);
+  auto clientStack = attachInstance(clientEnv, client, a, config);
+  auto serverStack = attachInstance(serverEnv, server, b, serverConfig);
   auto clientRx = client.allocator<Zi::IOBufType::Rx>();
   auto serverRx = server.allocator<Zi::IOBufType::Rx>();
   auto clientTx = client.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
@@ -1289,14 +1293,15 @@ static void testResetPair(bool v6, bool serverFirst)
 {
   ZuTestScope(testResetPair);
   alarm(35);
-  unsigned a = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_IFINDEX")};
-  unsigned b = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_PEER_IFINDEX")};
+  unsigned a = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
+  unsigned b = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"};
   ZiIP remote{v6 ? "2001:db8::21" : "198.18.0.21"};
+  ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
   ZiMultiplex client{mxParams()}, server{mxParams()};
   Zutcp::InstanceParams config{.rxRetainFramesPerCxn = 64, .maxCxns = 1, .maxPendingCxns = 1};
-  auto clientStack = attachInstance(client, a, config);
-  auto serverStack = attachInstance(server, b, config);
+  auto clientStack = attachInstance(clientEnv, client, a, config);
+  auto serverStack = attachInstance(serverEnv, server, b, config);
   auto clientRx = client.allocator<Zi::IOBufType::Rx>();
   auto serverRx = server.allocator<Zi::IOBufType::Rx>();
   auto clientTx = client.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
@@ -1407,14 +1412,15 @@ static void testAbortPair(bool v6, bool reject, bool serverTarget)
 {
   ZuTestScope(testAbortPair);
   alarm(35);
-  unsigned a = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_IFINDEX")};
-  unsigned b = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_PEER_IFINDEX")};
+  unsigned a = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
+  unsigned b = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"};
   ZiIP remote{v6 ? "2001:db8::21" : "198.18.0.21"};
+  ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
   ZiMultiplex client{mxParams()}, server{mxParams()};
   Zutcp::InstanceParams config{.rxRetainFramesPerCxn = 64, .maxCxns = 2, .maxPendingCxns = 1};
-  auto clientStack = attachInstance(client, a, config);
-  auto serverStack = attachInstance(server, b, config);
+  auto clientStack = attachInstance(clientEnv, client, a, config);
+  auto serverStack = attachInstance(serverEnv, server, b, config);
   auto clientRx = client.allocator<Zi::IOBufType::Rx>();
   auto serverRx = server.allocator<Zi::IOBufType::Rx>();
   auto clientTx = client.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);
@@ -1870,13 +1876,14 @@ static void testNativeHistoryPair(bool v6, bool serverFirst)
 {
   ZuTestScope(testNativeHistoryPair);
   alarm(35);
-  unsigned a = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_IFINDEX")};
-  unsigned b = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_PEER_IFINDEX")};
+  unsigned a = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
+  unsigned b = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
+  ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
   ZiMultiplex client{mxParams()}, server{mxParams()};
-  auto clientStack = attachInstance(client, a, {.rxRetainFramesPerCxn = 64});
-  auto serverStack = attachInstance(server, b, {.rxRetainFramesPerCxn = 64});
+  auto clientStack = attachInstance(clientEnv, client, a, {.rxRetainFramesPerCxn = 64});
+  auto serverStack = attachInstance(serverEnv, server, b, {.rxRetainFramesPerCxn = 64});
   HistoryEvents cli[2];
   auto &clientApp = *clientStack;
   ZmRef<HistoryServer> serverAppRef = new HistoryServer{serverStack, v6};
@@ -2050,17 +2057,18 @@ static void testSharedAdmissionPair(bool v6, bool passive)
 {
   ZuTestScope(testSharedAdmissionPair);
   alarm(40);
-  unsigned a = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_IFINDEX")};
-  unsigned b = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_PEER_IFINDEX")};
+  unsigned a = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
+  unsigned b = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
+  ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
   ZiMultiplex client{mxParams()}, server{mxParams()};
   unsigned sc = passive ? 1 : 2;
   Zutcp::InstanceParams cliParams{.maxCxns = 2, .maxPendingCxns = 1};
   if (passive) cliParams.connectTimeout = ZuTime{2};
-  auto cs = attachInstance(client, a, cliParams);
+  auto cs = attachInstance(clientEnv, client, a, cliParams);
   ZmSemaphore initial;
-  auto ss = attachInstance(server, b, {
+  auto ss = attachInstance(serverEnv, server, b, {
     .packet = [&initial](ZmRef<ZiIOBuf> packet) {
       Zutcp::IPView ip;
       Zutcp::TCPView tcp;
@@ -2271,13 +2279,14 @@ static void testConservativeTuplePair(bool v6)
 {
   ZuTestScope(testConservativeTuplePair);
   alarm(35);
-  unsigned a = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_IFINDEX")};
-  unsigned b = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_PEER_IFINDEX")};
+  unsigned a = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
+  unsigned b = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
+  ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
   ZiMultiplex client{mxParams()}, server{mxParams()};
-  auto cs = attachInstance(client, a, {.maxCxns = 1, .maxPendingCxns = 1});
-  auto ss = attachInstance(server, b, {.maxCxns = 1, .maxPendingCxns = 1});
+  auto cs = attachInstance(clientEnv, client, a, {.maxCxns = 1, .maxPendingCxns = 1});
+  auto ss = attachInstance(serverEnv, server, b, {.maxCxns = 1, .maxPendingCxns = 1});
   auto &app = *cs;
   ZmRef<HistoryServer> listenerRef = new HistoryServer{ss, v6};
   auto &listener = *listenerRef;
@@ -2398,13 +2407,14 @@ static void testPositiveWindowPair(bool v6)
 {
   ZuTestScope(testPositiveWindowPair);
   alarm(35);
-  unsigned a = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_IFINDEX")};
-  unsigned b = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_PEER_IFINDEX")};
+  unsigned a = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
+  unsigned b = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
+  ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
   ZiMultiplex client{mxParams()}, server{mxParams()};
-  auto cs = attachInstance(client, a, {.maxData = 2000});
-  auto ss = attachInstance(server, b, {.maxData = 400});
+  auto cs = attachInstance(clientEnv, client, a, {.maxData = 2000});
+  auto ss = attachInstance(serverEnv, server, b, {.maxData = 400});
   auto &app = *cs;
   ZmRef<HistoryServer> listenerRef = new HistoryServer{ss, v6};
   auto &listener = *listenerRef;
@@ -2519,13 +2529,14 @@ static void testNativeLifecyclePair(
 {
   ZuTestScope(testNativeLifecyclePair);
   alarm(35);
-  unsigned a = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_IFINDEX")};
-  unsigned b = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_PEER_IFINDEX")};
+  unsigned a = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
+  unsigned b = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
+  ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
   ZiMultiplex client{mxParams()}, server{mxParams()};
-  auto cs = attachInstance(client, a, {.maxCxns = 2, .maxPendingCxns = 2});
-  auto ss = attachInstance(server, b, {.maxCxns = 2, .maxPendingCxns = 2});
+  auto cs = attachInstance(clientEnv, client, a, {.maxCxns = 2, .maxPendingCxns = 2});
+  auto ss = attachInstance(serverEnv, server, b, {.maxCxns = 2, .maxPendingCxns = 2});
   auto &app = *cs;
   ZmRef<HistoryServer> firstListenerRef = new HistoryServer{ss, v6};
   auto &firstListener = *firstListenerRef;
@@ -2806,19 +2817,20 @@ static void testPAWSPair(bool v6)
   ZuTestScope(testPAWSPair);
   alarm(45);
   static constexpr auto Accepted = "reuse-mx-byte-path!"_z;
-  unsigned a = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_IFINDEX")};
-  unsigned b = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_PEER_IFINDEX")};
+  unsigned a = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
+  unsigned b = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"};
   ZiIP remote{v6 ? "2001:db8::21" : "198.18.0.21"};
+  ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
   ZiMultiplex client{mxParams()}, server{mxParams()};
   PAWSPeer peer, resetPeer;
   resetPeer.port = 49153;
-  auto cs = attachInstance(client, a, {
+  auto cs = attachInstance(clientEnv, client, a, {
     .packet = [&peer, &resetPeer](ZmRef<ZiIOBuf> buf) {
       peer.received(buf);
       resetPeer.received(ZuMv(buf));
     }});
-  auto ss = attachInstance(server, b);
+  auto ss = attachInstance(serverEnv, server, b);
   ZmRef<HistoryServer> listenerRef = new HistoryServer{ss, v6};
   auto &listener = *listenerRef;
   listener.events[0].expected = Accepted;
@@ -3020,14 +3032,15 @@ static void testPassiveTuplePair(bool v6)
 {
   ZuTestScope(testPassiveTuplePair);
   alarm(45);
-  unsigned a = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_IFINDEX")};
-  unsigned b = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_PEER_IFINDEX")};
+  unsigned a = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
+  unsigned b = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   const char *remoteText = v6 ? "2001:db8::21" : "198.18.0.21";
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"}, remote{remoteText};
+  ZmRef<Zpkt::Env> clientEnv = new Zpkt::Env, serverEnv = new Zpkt::Env;
   ZiMultiplex client{mxParams()}, server{mxParams()};
-  auto cs = attachInstance(client, a, {.maxCxns = 2, .maxPendingCxns = 1,
+  auto cs = attachInstance(clientEnv, client, a, {.maxCxns = 2, .maxPendingCxns = 1,
     .closedTupleRingSize = 2});
-  auto ss = attachInstance(server, b, {.maxCxns = 2, .maxPendingCxns = 1,
+  auto ss = attachInstance(serverEnv, server, b, {.maxCxns = 2, .maxPendingCxns = 1,
     .closedTupleRingSize = 2});
   auto &app = *cs;
   ZmRef<HistoryServer> listenerRef = new HistoryServer{ss, v6};
@@ -3397,15 +3410,16 @@ static void testMixedRoles(bool v6)
 {
   ZuTestScopeRT(testMixedRoles);
   alarm(50);
-  unsigned aIndex = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_IFINDEX")};
-  unsigned bIndex = ZuBox<unsigned>{getenv("ZXDP_RX_TEST_PEER_IFINDEX")};
+  unsigned aIndex = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
+  unsigned bIndex = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   ZiIP aIP{v6 ? "2001:db8::10" : "198.18.0.10"};
   ZiIP bIP{v6 ? "2001:db8::11" : "198.18.0.11"};
+  ZmRef<Zpkt::Env> aEnv = new Zpkt::Env, bEnv = new Zpkt::Env;
   ZiMultiplex a{mxParams()}, b{mxParams()};
   Zutcp::InstanceParams config{.rxRetainFramesPerCxn = 64,
     .maxCxns = 8, .maxPendingCxns = 8, .connectTimeout = ZuTime{1}};
-  auto aStack = attachInstance(a, aIndex, config);
-  auto bStack = attachInstance(b, bIndex, config);
+  auto aStack = attachInstance(aEnv, a, aIndex, config);
+  auto bStack = attachInstance(bEnv, b, bIndex, config);
   auto aRx = a.allocator<Zi::IOBufType::Rx>();
   auto bRx = b.allocator<Zi::IOBufType::Rx>();
   auto aTx = a.allocator<Zi::IOBufType::TxTCP, MxTxBuf, 128>(1);

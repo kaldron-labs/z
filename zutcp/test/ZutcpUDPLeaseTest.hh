@@ -44,6 +44,7 @@ friend inline ZuStringT<"Zutcp.UDPTest.Device"> ZmNHeapID(Device *);
 
   using ZmNHeap<Device>::operator new;
   using ZmNHeap<Device>::operator delete;
+  using Xdp::Xdp;
   ZmRef<Zi::IOBufPool> bufPool(Zi::IOBufType::T type, unsigned count, unsigned size,
     unsigned head, unsigned tail, unsigned align) override
   {
@@ -87,18 +88,18 @@ public:
 static void testUDPLeases()
 {
   ZuTestScope(testUDPLeases);
+  auto env = ZutcpTest::fixtureEnv();
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
     .rxThread(1).txThread(2)};
-  ZmRef<UDPLeaseTest::Device> device = new UDPLeaseTest::Device;
-  bool opened = device->init(&mx, {}).is<void>();
+  ZmRef<UDPLeaseTest::Device> device = new UDPLeaseTest::Device{&mx};
   ZmRef<Zutcp::Instance> stack = new Zutcp::Instance;
-  ZmRef<Zxdp::Instance> backend = device;
-  bool configured = stack->init(&mx, ZuMv(backend), {}).is<void>();
+  ZmRef<Zpkt::Nif> backend = device;
+  bool configured = stack->init(&mx, env, ZuMv(backend), {}).is<void>();
   auto plugin = stack;
   mx.plugin(ZuMv(plugin));
   auto tx = mx.allocator<Zi::IOBufType::TxUDP, ZiIOBuf, 128>(1);
   auto app = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 128>();
-  bool started = opened && configured && tx && app && mx.start();
+  bool started = configured && tx && app && mx.start();
   ZuCHECK(started, "start the real UDP adapter with a deterministic registered slot");
   if (!started) return;
   bool passed = ZmBlock<bool>{}([&mx, &stack, &device, tx, app](auto done) {

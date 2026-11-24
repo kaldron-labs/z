@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-[[ ${ZXDP_RUN_FIXTURE:-0} == 1 ]]
+[[ ${ZPKT_RUN_FIXTURE:-0} == 1 ]]
 [[ $(readlink /proc/self/ns/net) != $(readlink /proc/1/ns/net) ]]
 family=$1
 out=$2

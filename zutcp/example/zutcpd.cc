@@ -152,6 +152,29 @@ static void usage()
   exit(1);
 }
 
+static ZuUnion<Zpkt::Nif *, ZeException> openNif(
+  Zpkt::Env *env, ZiMultiplex *mx, ZuCSpan name, unsigned sender, unsigned spin = 1000)
+{
+  using Node = ZfCf::AnyNode;
+  auto root = ZfCf::newNode<Node::Object>(nullptr);
+  auto interfaces = ZfCf::newNode<Node::Object>(root.ptr());
+  auto nif = ZfCf::newNode<Node::Object>(interfaces.ptr());
+  auto value = [](Node *parent, ZuCSpan key, auto value) {
+    Node::String text;
+    text << value;
+    parent->data<Node::Object>().push(Node::Field{
+      key, ZfCf::newNode<Node::String>(parent, ZuMv(text))});
+  };
+  value(root.ptr(), "module", ZUTCP_XDP_MODULE);
+  value(nif.ptr(), "txSid", sender);
+  value(nif.ptr(), "spin", spin);
+  interfaces->data.push(Node::Field{name, ZuMv(nif)});
+  root->data.push(Node::Field{"interfaces", ZuMv(interfaces)});
+  try { env->init(root.ptr()); }
+  catch (ZeException &e) { return ZuMv(e); }
+  return env->nif(mx, name);
+}
+
 int main(int argc, char **argv)
 {
   bool waitEOF = argc > 4 && !strcmp(argv[argc - 1], "--wait-eof");
@@ -167,21 +190,23 @@ int main(int argc, char **argv)
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
+  ZmRef<Zpkt::Env> env = new Zpkt::Env;
   ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
     s.nThreads(5);
     for (unsigned i = 1; i <= 5; ++i) s.thread(i, [](auto &t) { t.isolated(true); });
   })};
-  auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
-  Zxdp::Params xdpParams{Zxdp::Xdp::Params{.ifindex = interface, .txSid = 5}};
-  auto opened = xdp->init(&mx, xdpParams);
+  auto opened = openNif(env, &mx, argv[1], 5);
   if (opened.is<ZeException>()) {
     ZiLogEvent(ZuMv(opened).p<ZeException>());
     ZiLog::stop();
     return 1;
   }
+  ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
   ZmRef<Zutcp::Instance> instance = new Zutcp::Instance;
-  auto configured = instance->init(&mx, ZuMv(xdp), {});
+  auto configured = instance->init(&mx, env, ZuMv(xdp), {});
   if (configured.is<ZeException>()) {
+    xdp->final();
+    if (auto error = xdp->error()) ZiLogEvent(ZuMv(error));
     ZiLogEvent(ZuMv(configured).p<ZeException>());
     ZiLog::stop();
     return 1;

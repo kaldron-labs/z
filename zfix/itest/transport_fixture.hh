@@ -21,7 +21,9 @@
 #ifdef ZFIX_TEST_AFXDP
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/Zutcp.hh>
-#include <zlib/Zxdp.hh>
+#include <zlib/Zpkt.hh>
+#include <zlib/ZpktEnv.hh>
+#include "ZpktTestCf.hh"
 #include "afxdp_wire.hh"
 #endif
 
@@ -64,13 +66,18 @@ public:
       ZuTestUtil::log_("# missing AF_XDP fixture veth zfixc");
       return false;
     }
-    auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
-    auto opened = xdp->init(&m_mx, Zxdp::Params{Zxdp::Xdp::Params{
-      .ifindex = index, .txSid = m_mx.params().nThreads()}});
+    auto cf = ZpktTest::config(ZFIX_XDP_MODULE, "zfixc", m_mx.params().nThreads());
+    try { m_env->init(cf.ptr()); }
+    catch (ZeException &e) { return failed(e); }
+    auto opened = m_env->nif(&m_mx, "zfixc");
     if (opened.is<ZeException>()) return failed(opened.p<ZeException>());
+    ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
     ZmRef<Zutcp::Instance> tcp = new Zutcp::Instance;
-    auto initialized = tcp->init(&m_mx, ZuMv(xdp), ZuMv(params));
-    if (initialized.is<ZeException>()) return failed(initialized.p<ZeException>());
+    auto initialized = tcp->init(&m_mx, m_env, ZuMv(xdp), ZuMv(params));
+    if (initialized.is<ZeException>()) {
+      xdp->final();
+      return failed(initialized.p<ZeException>());
+    }
     m_mx.plugin(ZuMv(tcp));
     return true;
   }
@@ -107,7 +114,7 @@ private:
     unsigned threads = original.nThreads();
     scheduler.nThreads(threads + 1);
     for (unsigned i = 0; i <= threads; ++i) scheduler.thread(i) = original.thread(i);
-    scheduler.thread(threads + 1).isolated(true).name("zxdpTx");
+    scheduler.thread(threads + 1).isolated(true).name("zpktTx");
     return params;
   }
 
@@ -119,6 +126,9 @@ private:
   }
 #endif
 
+#ifdef ZFIX_TEST_AFXDP
+  ZmRef<Zpkt::Env> m_env = new Zpkt::Env;
+#endif
   ZiMultiplex m_mx;
 };
 

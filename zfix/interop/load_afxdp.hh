@@ -16,7 +16,9 @@
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/Zutcp.hh>
-#include <zlib/Zxdp.hh>
+#include <zlib/Zpkt.hh>
+#include <zlib/ZpktEnv.hh>
+#include "ZpktTestCf.hh"
 
 namespace ZfixLoad {
 
@@ -49,7 +51,7 @@ template <typename Alloc> Zi::IOBufAllocator *afxdpAllocator(ZiMultiplex *mx)
   }(static_cast<Alloc *>(nullptr));
 }
 
-inline bool attachAFXDP(ZiMultiplex &mx, bool encrypted)
+inline bool attachAFXDP(Zpkt::Env *env, ZiMultiplex &mx, bool encrypted)
 {
   auto count = afxdpPoolCount();
   if (!count) {
@@ -62,13 +64,17 @@ inline bool attachAFXDP(ZiMultiplex &mx, bool encrypted)
     ZiLOG(Error, "zfix", "AF_XDP peers require afxdp-fixture.sh and the zfixio veth");
     return false;
   }
-  auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
-  auto opened = xdp->init(&mx, Zxdp::Params{Zxdp::Xdp::Params{
-    .ifindex = index, .txSid = mx.params().nThreads()}});
+  auto cf = ZpktTest::config(ZFIX_XDP_MODULE, "zfixio", mx.params().nThreads());
+  try { env->init(cf.ptr()); }
+  catch (ZeException &e) { ZiLogEvent(e); return false; }
+  auto opened = env->nif(&mx, "zfixio");
   if (opened.is<ZeException>()) { ZiLogEvent(ZuMv(opened).p<ZeException>()); return false; }
+  ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
   ZmRef<Zutcp::Instance> tcp = new Zutcp::Instance;
-  auto initialized = tcp->init(&mx, ZuMv(xdp), Zutcp::InstanceParams{.packetCount = count});
+  auto initialized = tcp->init(&mx, env, ZuMv(xdp), Zutcp::InstanceParams{.packetCount = count});
   if (initialized.is<ZeException>()) {
+    xdp->final();
+    if (auto error = xdp->error()) ZiLogEvent(ZuMv(error));
     ZiLogEvent(ZuMv(initialized).p<ZeException>()); return false;
   }
   mx.plugin(ZuMv(tcp));

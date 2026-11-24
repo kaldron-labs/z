@@ -567,6 +567,7 @@ void Instance::final()
   ZmAssert_(!m_cxnTotal && !m_cxnPending && !m_cxnClosing);
   if (m_xdp) m_xdp->final();
   m_xdp = nullptr;
+  m_xdpEnv = nullptr;
   m_packetRx.null();
   m_allocators.null();
   m_ingress = m_packets = m_control = m_requestedTx = nullptr;
@@ -643,18 +644,18 @@ TxAdmission Instance::txAdmission() const
 }
 
 ZuUnion<void, ZeException> Instance::init(
-  ZiMultiplex *mx_, ZmRef<Zxdp::Instance> &&xdp, Params config)
+  ZiMultiplex *mx_, Zpkt::Env *xdpEnv, ZmRef<Zpkt::Nif> &&xdp, Params config)
 {
-  ZmAssert_(mx_);
+  ZmAssert_(mx_ && xdpEnv);
   ZmAssert_(!xdp || !xdp->allocated());
   ZmAssert_(!xdp || (xdp->mx() == mx_ && xdp->ifindex() && !xdp->everStarted()));
-  ZmAssert_(!mx() || mx() == mx_);
   ZmAssert_(m_xdp || xdp);
   if (state() != ZmEngineState::Stopped || mx_->state() != ZmEngineState::Stopped)
     return ZeEXCEPT(Error, "Zutcp", "finish multiplexer stop before initialization");
   if (config.heartBeat == ZuTime{0}) config.heartBeat = {};
   if (m_xdp) {
-    if ((!xdp || xdp.ptr() == m_xdp.ptr()) && config == m_params) return {};
+    if (xdpEnv == m_xdpEnv && mx_ == mx() &&
+	(!xdp || xdp.ptr() == m_xdp.ptr()) && config == m_params) return {};
     return ZeEXCEPT(Error, "Zutcp", "conflicting repeated TCP initialization");
   }
   if (!config.rtoParams.valid())
@@ -736,6 +737,7 @@ ZuUnion<void, ZeException> Instance::init(
   m_control = ZuMv(controls);
   m_params = ZuMv(config);
   mx(mx_);
+  m_xdpEnv = xdpEnv;
   m_xdp = ZuMv(xdp);
   return {};
 }

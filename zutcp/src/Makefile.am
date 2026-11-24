@@ -1,7 +1,7 @@
 METASOURCES = AUTO
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I${top_srcdir}/zi/src \
-	-I$(top_srcdir)/zxdp/src \
+	-I$(top_srcdir)/zpkt/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
@@ -17,7 +17,7 @@ libZutcp_la_SOURCES = ZutcpISN.cc ZutcpOptions.cc ZutcpTFO.cc ZutcpLib.cc ZutcpT
 	ZutcpAlloc.cc ZutcpChecksum.cc Zutcp.cc ZutcpIP.cc ZutcpUDP.cc \
 	ZutcpDiag.cc
 libZutcp_la_LIBADD = \
-	$(top_builddir)/zxdp/src/libZxdp.la \
+	$(top_builddir)/zpkt/src/libZpkt.la \
 	$(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la \

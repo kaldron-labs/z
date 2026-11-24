@@ -86,17 +86,17 @@ sanitized or debug builds; record compiler, CPU, affinity and heap tuning.
   and the Docker QUIC Interop Runner. [Autobahn](zws/interop/autobahn/README.md)
   is opt-in and uses port 9001 outside the allocations below.
 
-## Zxdp packet tests
+## Zpkt packet tests
 
 After a top-level `make -j8`, run the unprivileged synthetic-ring, pool and
-ownership suite with `make -C zxdp/test test`. Actual AF_XDP/BPF coverage needs
-the anonymous-namespace setup in [Zxdp integration tests](../zxdp/itest/README.md),
-followed by `make -C zxdp/itest test` inside that fixture. Missing privileges or
+ownership suite with `make -C zpkt/test test`. Actual AF_XDP/BPF coverage needs
+the anonymous-namespace setup in [Zpkt integration tests](../zpkt/itest/README.md),
+followed by `make -C zpkt/itest test` inside that fixture. Missing privileges or
 fixture variables produce visible skips; skips do not establish packet coverage.
-`ZXDP_RUN_FIXTURE=1` enables the separate-process packet fixture tests.
+`ZPKT_RUN_FIXTURE=1` enables the separate-process packet fixture tests.
 
-The independently usable [packet helper](../zxdp/util/README.md) runs veth
-request/reply with `sudo -n ./zxdp/util/zxdpfixture.sh`. Its `wait`, `spin` and
+The independently usable [packet helper](../zpkt/util/README.md) runs veth
+request/reply with `sudo -n ./zpkt/util/zpktfixture.sh`. Its `wait`, `spin` and
 `ll` modes cover indefinite waits, finite spin/wait and low-latency polling.
 Use `--count 10000 --timer-ms 1` for timer progress during sustained traffic.
 Logs and configuration remain in the printed artifact directory on either result.

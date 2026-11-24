@@ -139,7 +139,7 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
   explicit WriterCxn(WriterApp *app) : Base{app} { }
   ZmFn<bool()> resume;
   bool flushTx() { return resume ? resume() : false; }
-  bool recoveryPending() const { return Base::txDiag().retransmitPending; }
+  bool recoveryPending() const { return Base::m_txPkts.retransmitPending(); }
   void resumeTx() override {
     resuming = true;
     Base::resumeTx();
@@ -996,15 +996,16 @@ static void testStack()
 {
   ZuTestScopeRT(testStack);
   alarm(30); // a lost wake/lifecycle transition must fail the fixture
-  auto index = unsigned(strtoul(getenv("ZXDP_RX_TEST_IFINDEX"), nullptr, 10));
-  auto peer = unsigned(strtoul(getenv("ZXDP_RX_TEST_PEER_IFINDEX"), nullptr, 10));
+  auto index = unsigned(strtoul(getenv("ZPKT_RX_TEST_IFINDEX"), nullptr, 10));
+  auto peer = unsigned(strtoul(getenv("ZPKT_RX_TEST_PEER_IFINDEX"), nullptr, 10));
+  ZmRef<Zpkt::Env> env = new Zpkt::Env, freshEnv = new Zpkt::Env;
   ZiMultiplex mx{ZiMxParams{}.rxBufSize(RxCount).rxQuantum(1)
     .scheduler([](auto &p) { p.nThreads(3).thread(3, [](auto &t) { t.isolated(true); }); })};
   ZmSemaphore received;
   ZmRef<Zi::IOBuf> input[RxCount], extra;
   unsigned packets = 0;
   bool onRx = true;
-  auto instance = ZutcpTest::makeInstance(&mx, index, 3, {
+  auto instance = ZutcpTest::makeInstance(env, &mx, index, 3, {
     .packet = [&mx, &input, &extra, &packets, &onRx, &received](ZmRef<Zi::IOBuf> buf) {
       if (buf->length < 14 || buf->data()[12] != 0x88 || buf->data()[13] != 0xb5) return;
       onRx &= mx.invoked(mx.rxThread()) && buf->registered();
@@ -1512,7 +1513,7 @@ static void testStack()
   for (auto &p : input) p = nullptr;
   for (auto &p : reserves) p = nullptr;
   probe.packet = nullptr;
-  auto freshStack = ZutcpTest::makeInstance(&mx, index, 3, {.packetCount = 2}, 0);
+  auto freshStack = ZutcpTest::makeInstance(freshEnv, &mx, index, 3, {.packetCount = 2}, 0);
   auto conflicting = initializedParams;
   conflicting.controlBufCount = 3;
   conflicting.closedTupleRingSize = 2;
@@ -1632,7 +1633,7 @@ static void testStack()
 int main(int argc, char **argv)
 {
   parse(argc, argv);
-  if (geteuid() || !getenv("ZXDP_RX_TEST_IFINDEX") || !getenv("ZXDP_RX_TEST_PEER_IFINDEX")) {
+  if (geteuid() || !getenv("ZPKT_RX_TEST_IFINDEX") || !getenv("ZPKT_RX_TEST_PEER_IFINDEX")) {
     std::cout << "1..0 # SKIP requires privileged fixture-owned single-queue pair\n";
     return 0;
   }

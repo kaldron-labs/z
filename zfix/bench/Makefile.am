@@ -18,13 +18,15 @@ noinst_PROGRAMS = nativecodec dispatchcodec binarycodec txbodycodec
 if LINUX
 noinst_PROGRAMS += zfixbench
 zfixbench_SOURCES = zfixbench.cc
-zfixbench_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src \
+zfixbench_CPPFLAGS = -DZFIX_XDP_MODULE='"$(abs_top_builddir)/zpkt/xdp/.libs/libZpkt_xdp.so"' \
+	-DZFIX_DPDK_MODULE='"$(abs_top_builddir)/zpkt/dpdk/.libs/libZpkt_dpdk.so"' \
+	$(AM_CPPFLAGS) -I$(top_srcdir)/zi/src \
 	-I$(top_srcdir)/ztcp/src -I$(top_srcdir)/ztls/src \
-	-I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zxdp/src
+	-I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zpkt/src
 zfixbench_LDADD = $(top_builddir)/zfix/src/libZfix.la \
 	$(top_builddir)/ztls/src/libZtls.la \
 	$(top_builddir)/ztcp/src/libZtcp.la $(top_builddir)/zutcp/src/libZutcp.la \
-	$(top_builddir)/zxdp/src/libZxdp.la $(top_builddir)/zi/src/libZi.la \
+	$(top_builddir)/zpkt/src/libZpkt.la $(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/zfix/src/libZfixFmt.la $(top_builddir)/zf/src/libZf.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \

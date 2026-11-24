@@ -12,6 +12,8 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/Zutcp.hh>
 
+#include "ZutcpTestInstance.hh"
+
 enum { ServerUDP = 18172, ClientUDP = 18173, ServerTCP = 18174 };
 static constexpr auto TCPData = "tcp fixture bytes"_z;
 static const ZuBSpan UDPData[] = {"first datagram", "", "a longer final datagram"};
@@ -217,17 +219,13 @@ int main(int argc, char **argv)
   ZiIP local{argv[2]}, peer{argv[3]};
   bool server = !strcmp(argv[4], "server"), mixed = !strcmp(argv[5], "mixed");
   if (!ifindex || !local || !peer || local.type() != peer.type()) return 2;
+  ZmRef<Zpkt::Env> env = new Zpkt::Env;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(4).thread(4, [](auto &t) { t.isolated(true); });
   })};
-  auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
-  Zxdp::Params config{Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{}};
-  config.p<Zxdp::Xdp::Params>().ifindex = ifindex;
-  config.p<Zxdp::Xdp::Params>().txSid = 4;
-  auto opened = xdp->init(&mx, config);
-  if (opened.is<ZeException>()) { ZiLogEvent(ZuMv(opened.p<ZeException>())); return 1; }
+  auto xdp = ZutcpTest::openXdp(env, &mx, ifindex, 4);
   ZmRef<Zutcp::Instance> transport = new Zutcp::Instance;
-  auto initialized = transport->init(&mx, ZuMv(xdp), {});
+  auto initialized = transport->init(&mx, env, ZuMv(xdp), {});
   if (initialized.is<ZeException>()) {
     ZiLogEvent(ZuMv(initialized.p<ZeException>())); return 1;
   }

@@ -2,11 +2,14 @@ METASOURCES = AUTO
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
 	-I$(top_srcdir)/zi/src -I$(top_srcdir)/zi/test \
-	-I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zxdp/src @Z_CPPFLAGS@
+	-I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zpkt/src \
+	-I$(top_srcdir)/zutcp/test -I$(top_srcdir)/zpkt/test \
+	-DZUTCP_XDP_MODULE='"$(abs_top_builddir)/zpkt/xdp/.libs/libZpkt_xdp.so"' \
+	-DZUTCP_TEST_PLUGIN='"$(abs_top_builddir)/zpkt/test/.libs/libZpktTestPlugin.so"' @Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 LDADD = $(top_builddir)/zi/test/libZiTest.la \
-	$(top_builddir)/zutcp/src/libZutcp.la $(top_builddir)/zxdp/src/libZxdp.la \
+	$(top_builddir)/zutcp/src/libZutcp.la $(top_builddir)/zpkt/src/libZpkt.la \
 	$(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
@@ -37,8 +40,9 @@ if DPDK
 noinst_PROGRAMS += zutcpdpdktest
 zutcpdpdktest_SOURCES = zutcpdpdktest.cc zutcpdpdkfixture.hh zutcpdpdkfixture.cc
 zutcpdpdktest_CPPFLAGS = $(AM_CPPFLAGS) $(DPDK_CFLAGS) \
-	-I$(top_srcdir)/zxdp/itest -I$(top_srcdir)/ztcp/src
-zutcpdpdktest_LDADD = $(top_builddir)/zxdp/itest/libZxdpDpdkFixture.la \
+	-I$(top_srcdir)/zpkt/itest -I$(top_srcdir)/zpkt/dpdk -I$(top_srcdir)/ztcp/src
+zutcpdpdktest_LDFLAGS = $(AM_LDFLAGS) -Wl,--no-as-needed -Wl,$(abs_top_builddir)/zpkt/dpdk/.libs/libZpkt_dpdk.so -Wl,-rpath,$(abs_top_builddir)/zpkt/dpdk/.libs -Wl,--as-needed
+zutcpdpdktest_LDADD = $(top_builddir)/zpkt/itest/libZpktDpdkFixture.la \
 	$(LDADD) $(top_builddir)/ztcp/src/libZtcp.la $(DPDK_LIBS) -lrte_net_ring
 endif
 

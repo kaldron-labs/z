@@ -91,9 +91,9 @@ file I/O, asynchronous DNS resolution, logging integration and allocation tuning
 
 [`ZiMultiplex`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh) is Z's I/O reactor (epoll / IOCP); it supports plugin replacement of the kernel TCP/IP + UDP stack.
 
-[`Zutcp`](https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh) is a user-mode TCP/IP stack running on raw Ethernet [`Zxdp`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh) that can be plugged into Z's reactor [`ZiMultiplex`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh) (**work in progress**)
+[`Zutcp`](https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh) is a user-mode TCP/IP stack running on raw Ethernet [`Zpkt`](https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh) that can be plugged into Z's reactor [`ZiMultiplex`](https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh) (**work in progress**)
 
-[`Zxdp`](https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh) encapsulates AF_XDP for zero-copy DMA rx/tx of raw Ethernet packets. Planned work will add DPDK, NVIDIA (Mellanox) `libibverbs` and AMD (SolarFlare) `ef_vi`.
+[`Zpkt`](https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh) provides raw Ethernet packet I/O through loadable AF_XDP and DPDK backends, with explicit environment ownership and named network interfaces.
 
 ### Compile-time strings, matching and reflection
 
@@ -222,8 +222,8 @@ and [BDE striped hash maps](https://bloomberg.github.io/bde-resources/doxygen/bd
 | [ze](ze/README.md) | Framework error handling: platform errors, event and log vocabulary; Zi supplies asynchronous log sinks |
 | [zf](zf/README.md) | Structured metadata and format adapters |
 | [zi](zi/README.md) | Framework I/O: files, sockets, DNS, multiplexing, pooled buffers, shared-memory rings and heap tuning |
-| [zxdp](zxdp/README.md) | Linux AF_XDP packet I/O: registered arenas and raw packet pools |
-| [zutcp](zutcp/README.md) | User-mode TCP/IP stack over Zxdp on Linux, integrated with ZiMultiplex; implementation in progress |
+| [zpkt](zpkt/README.md) | Linux packet I/O with AF_XDP/DPDK plugins, registered arenas and raw packet pools |
+| [zutcp](zutcp/README.md) | User-mode TCP/IP stack over Zpkt on Linux, integrated with ZiMultiplex; implementation in progress |
 | [zv](zv/README.md) | Framework server-side utilities: configuration trees, TOML/YAML and runtime parameter binding |
 | [zpb](zpb/README.md) | Protobuf implementation: native codec and schema compiler |
 | [zfb](zfb/README.md) | Flatbuffers: native codec and schema compiler |

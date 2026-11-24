@@ -19,7 +19,6 @@
 #include <rte_ethdev.h>
 #include <rte_mbuf.h>
 
-#include <zlib/ZxdpDpdk.hh>
 
 #include "zutcpdpdkfixture.hh"
 
@@ -87,7 +86,7 @@ Result Fixture::network()
 
 Result Fixture::devices()
 {
-  auto result = runtime.init();
+  auto result = runtime.init(false);
   if (result.is<ZeException>()) return result;
   for (unsigned i = 0; i < 2; ++i) {
     result = ports[i].init(Links[i].ring, 256, Links[i].address);
@@ -98,25 +97,14 @@ Result Fixture::devices()
 
 Result Fixture::startWire(Zi::IOBufPool *a, Zi::IOBufPool *b)
 {
-  return wire.start({&ports[0], ZxdpDpdkTest::native(a)},
-    {&ports[1], ZxdpDpdkTest::native(b)});
+  return wire.start({&ports[0], ZpktDpdkTest::native(a)},
+    {&ports[1], ZpktDpdkTest::native(b)});
 }
 
 void Fixture::drain()
 {
   wire.stop();
   for (auto &port : ports) port.drain();
-}
-
-Zxdp::Params deviceParams(const char *port, unsigned ifindex)
-{
-  Zxdp::Params result{Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Dpdk::Params>{}>{}};
-  auto &params = result.p<Zxdp::Dpdk::Params>();
-  params.name = port;
-  params.ifindex = ifindex;
-  params.spin = 4;
-  params.rxInterval = 100;
-  return result;
 }
 
 Zutcp::Instance::Params tcpParams()
@@ -168,7 +156,7 @@ rte_mempool *rte_pktmbuf_pool_create(
     rte_errno = ENOSYS;
     return nullptr;
   }
-  if (!strncmp(name, "zxdp_", 5)) {
+  if (!strncmp(name, "zpkt_", 5)) {
     unsigned remaining = poolFailure;
     if (remaining) {
       --poolFailure;
@@ -202,34 +190,34 @@ int fatalHandoff(ZuCSpan scenario)
 {
   rlimit noCore{0, 0};
   if (setrlimit(RLIMIT_CORE, &noCore)) return 2;
-  using namespace Zxdp::Dpdk;
-  EALParams ealParams{};
-  ealParams.noPCI = ealParams.noHuge = ealParams.noShconf = ealParams.noTelemetry = true;
-  auto eal = EAL::instance();
-  if (eal->init(ealParams).is<ZeException>()) return 3;
-  auto ifindex = if_nametoindex(Links[0].name);
-  ZxdpDpdkTest::RingPort port;
+  ZpktDpdkTest::Runtime runtime;
+  if (runtime.init().is<ZeException>()) return 3;
+  auto env = runtime.env();
+  auto ifindex = if_nametoindex("zdpfatal");
+  ZpktDpdkTest::RingPort port;
   if (!ifindex || port.init("fatal", 64, Links[0].address).is<ZeException>()) return 4;
   ZiMultiplex mx;
-  auto device = Zxdp::instance(Zxdp::Type::Dpdk);
-  if (device->init(&mx, deviceParams(port.name(), ifindex)).is<ZeException>()) return 5;
+  auto opened = env->nif(&mx, "zdpfatal");
+  if (opened.is<ZeException>()) return 5;
+  ZmRef<Zpkt::Nif> device = opened.p<Zpkt::Nif *>();
   ZmRef<Zutcp::Instance> tcp = new Zutcp::Instance;
   if (scenario == "device-mx") {
     ZiMultiplex wrong;
-    tcp->init(&wrong, ZuMv(device), tcpParams());
+    tcp->init(&wrong, env, ZuMv(device), tcpParams());
   } else if (scenario == "plugin-mx") {
-    if (tcp->init(&mx, ZuMv(device), tcpParams()).is<ZeException>()) return 6;
+    if (tcp->init(&mx, env, ZuMv(device), tcpParams()).is<ZeException>()) return 6;
     ZiMultiplex wrong;
     wrong.plugin(ZuMv(tcp));
   } else {
-    ZxdpDpdkTest::RingPort another;
+    ZpktDpdkTest::RingPort another;
     if (scenario == "repeat") {
-      auto secondIfindex = if_nametoindex(Links[1].name);
+      auto secondIfindex = if_nametoindex("zdpfirst");
       if (!secondIfindex || another.init("first", 64, Links[1].address).is<ZeException>())
 	return 6;
-      auto first = Zxdp::instance(Zxdp::Type::Dpdk);
-      if (first->init(&mx, deviceParams(another.name(), secondIfindex)).is<ZeException>() ||
-	  tcp->init(&mx, ZuMv(first), tcpParams()).is<ZeException>()) return 6;
+      auto firstResult = env->nif(&mx, "zdpfirst");
+      if (firstResult.is<ZeException>()) return 6;
+      ZmRef<Zpkt::Nif> first = firstResult.p<Zpkt::Nif *>();
+      if (tcp->init(&mx, env, ZuMv(first), tcpParams()).is<ZeException>()) return 6;
     }
     auto rx = device->bufPool(Zi::IOBufType::Rx, 8, 1514);
     auto tx = device->bufPool(Zi::IOBufType::TxTCP, 8, 128);
@@ -237,7 +225,7 @@ int fatalHandoff(ZuCSpan scenario)
     pools.pushNode(tx.ptr());
     if (device->alloc(rx, pools).is<ZeException>() || !device->allocated() ||
 	device->everStarted() || device->mx() != &mx || device->ifindex() != ifindex) return 6;
-    tcp->init(&mx, ZuMv(device), tcpParams());
+    tcp->init(&mx, env, ZuMv(device), tcpParams());
   }
   return 7;
 }

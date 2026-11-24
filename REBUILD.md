@@ -65,13 +65,13 @@ IMPORTANT: Phase 4 is frozen once it has completed
 
 # Phase 5 - depends on Phase 1 (Linux only)
 
-1. build `zxdp` and run its unit tests (`make -C zxdp/test test`)
-2. run the [Zxdp integration tests](zxdp/itest/README.md) with the documented
+1. build `zpkt` and run its unit tests (`make -C zpkt/test test`)
+2. run the [Zpkt integration tests](zpkt/itest/README.md) with the documented
    private network fixtures and include DPDK coverage when enabled
    - root cause diagnose and repair any defects
 
 IMPORTANT: Phase 5 is frozen once it has completed
-- subsequent phases should NOT modify `zxdp`
+- subsequent phases should NOT modify `zpkt`
 
 # Phase 6 - depends on Phases 2, 3, 5 (Linux only)
 

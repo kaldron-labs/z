@@ -1,5 +1,10 @@
 # Zfix independent interoperability fixtures
 
+AF_XDP native peer state retains an intrusive Env through disconnect and
+multiplexer finalization. The private peer loads `libZpkt_xdp.so` from its configured
+build-tree path, supplies `zfixio` as the Linux configuration key, and transfers
+the initialized Nif to TCP together with a borrowed Env pointer.
+
 Recorded managed repair verification passed the codec/load/SDK checks and
 all 258 process cases; see [STATUS.md](../STATUS.md) for its captured source and scope.
 Earlier recorded passing counts below belong to their recorded snapshots.

@@ -34,7 +34,7 @@ LT_LANG([C++])
 AS_CASE([$host_os], [linux*], [z_linux=yes], [z_linux=no])
 AM_CONDITIONAL([LINUX], [test "$z_linux" = yes])
 AS_IF([test "$z_linux" = yes], [
-  AC_MSG_CHECKING([for Zxdp AF_XDP and BPF kernel headers])
+  AC_MSG_CHECKING([for Zpkt AF_XDP and BPF kernel headers])
   AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
 #include <sys/socket.h>
 #include <sys/syscall.h>
@@ -73,7 +73,7 @@ AS_IF([test "$z_linux" = yes], [
     (void)BPF_OBJ_GET_INFO_BY_FD; (void)BPF_MAP_CREATE; (void)BPF_PROG_LOAD;
   ]])], [AC_MSG_RESULT([yes])], [
     AC_MSG_RESULT([no])
-    AC_MSG_ERROR([Linux headers with AF_XDP ring flags/options, BPF XSK maps, expected-FD XDP attachment and SO_NETNS_COOKIE are required for Zxdp])
+    AC_MSG_ERROR([Linux headers with AF_XDP ring flags/options, BPF XSK maps, expected-FD XDP attachment and SO_NETNS_COOKIE are required for Zpkt])
   ])
 ])
 AS_IF([test "$z_linux" = yes], [
@@ -349,11 +349,13 @@ AM_CONDITIONAL([GTK], [test ".$with_gtk" = ".yes"])
 CPPFLAGS=`echo $CPPFLAGS | perl -pe 's/-I(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$I{$1}++ ? "" : "-I${1}${2}"/ge;'`
 LDFLAGS=`echo $LDFLAGS | perl -pe 's|/[^/]+/\.\./|/|g; s/-L(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$L{$1}++ ? "" : "-L${1}${2}"/ge; s/(-Wl,-R,|-R)(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$R{$2}++ ? "" : "${1}${2}${3}"/ge'`
 
-for i in zu zm zt ze zf zi zxdp zutcp zpb zfb zv zdbus ztcp ztls zfix zquic zhttp zgrpc zrest zjrpc zmcp zws zdb zdb_pq zdb_sqlite ztc zum zdf zrl zgtk zdash; do {
+for i in zu zm zt ze zf zi zpkt zutcp zpb zfb zv zdbus ztcp ztls zfix zquic zhttp zgrpc zrest zjrpc zmcp zws zdb zdb_pq zdb_sqlite ztc zum zdf zrl zgtk zdash; do {
   case $i in
-    zxdp|zutcp) test "$z_linux" = yes || continue;;
+    zpkt|zutcp) test "$z_linux" = yes || continue;;
   esac
-  for j in src ext; do {
+  z_srcdirs="src ext"
+  if test "$i" = zpkt; then z_srcdirs="$z_srcdirs xdp dpdk"; fi
+  for j in $z_srcdirs; do {
     if test -d $i/$j -a ! -e $i/$j/AC_PACKAGE_NAME; then (
       cd $i/$j;
       if test ".$mingw" != ".yes"; then
@@ -374,8 +376,8 @@ AC_CONFIG_FILES([Makefile \
 	zi/Makefile zi/src/Makefile zi/test/Makefile zi/itest/Makefile \
 	zi/example/Makefile])
 AS_IF([test "$z_linux" = yes], [
-  AC_CONFIG_FILES([zxdp/Makefile zxdp/src/Makefile zxdp/test/Makefile \
-	zxdp/util/Makefile zxdp/itest/Makefile \
+  AC_CONFIG_FILES([zpkt/Makefile zpkt/src/Makefile zpkt/xdp/Makefile zpkt/dpdk/Makefile zpkt/test/Makefile \
+	zpkt/util/Makefile zpkt/itest/Makefile \
 	zutcp/Makefile zutcp/src/Makefile zutcp/test/Makefile \
 	zutcp/util/Makefile zutcp/itest/Makefile zutcp/example/Makefile \
 	zutcp/interop/Makefile zutcp/bench/Makefile])

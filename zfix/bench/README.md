@@ -1,5 +1,10 @@
 # Zfix measurements
 
+Native benchmark CLI options are translated into ZfCf trees for Env. `native`
+selects `libZpkt_xdp.so`; `dpdk` selects `libZpkt_dpdk.so`, whose plugin owns EAL.
+The benchmark links common Zpkt only. Its Linux routing key and native `port` are
+independent, and a missing module reports the ordinary structured loader error.
+
 The current codec supports ordinary SOH-delimited fields and declared dual-tag
 Binary String/Bytes fields. `nativecodec` keeps the ordinary complete-frame
 workload for regression comparison; `binarycodec` measures body serialization and
@@ -413,7 +418,7 @@ The [2026-11-15 native TCP milestone](../../zutcp/bench/MILESTONE.md) records
 the matched kernel/native results and their measurement conditions.
 
 `zfixbench` drives managed `Zfix::Client` and `Zfix::Server` sessions through
-`Zfix::TCP`, `Ztcp`, `Zi`, and either kernel TCP or `Zutcp`/`Zxdp`. It uses the
+`Zfix::TCP`, `Ztcp`, `Zi`, and either kernel TCP or `Zutcp`/`Zpkt`. It uses the
 same role/backend positional CLI as `zutcpbench`, with an additional DPDK
 backend when configured with `--with-dpdk=yes`:
 

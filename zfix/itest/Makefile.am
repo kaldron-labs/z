@@ -51,10 +51,12 @@ LDADD = $(top_builddir)/zfix/src/libZfix.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
 if LINUX
-AFXDP_CPPFLAGS = $(AM_CPPFLAGS) -DZFIX_TEST_AFXDP \
-	-I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zxdp/src
+AFXDP_CPPFLAGS = -I$(top_srcdir)/zpkt/test \
+	-DZFIX_XDP_MODULE='"$(abs_top_builddir)/zpkt/xdp/.libs/libZpkt_xdp.so"' \
+	$(AM_CPPFLAGS) -DZFIX_TEST_AFXDP \
+	-I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zpkt/src
 AFXDP_LDADD = $(top_builddir)/zutcp/src/libZutcp.la \
-	$(top_builddir)/zxdp/src/libZxdp.la $(LDADD)
+	$(top_builddir)/zpkt/src/libZpkt.la $(LDADD)
 AFXDP_TCP_TESTS = afxdp_tcp_test afxdp_ingress_tcp_test afxdp_raw_tcp_test \
 	afxdp_reset_tcp_test afxdp_session_tcp_test afxdp_recovery_tcp_test
 AFXDP_TLS_TESTS = afxdp_tls_test afxdp_ingress_tls_test afxdp_raw_tls_test \

@@ -132,7 +132,7 @@ def observe_reorder(directory, source_device):
     import os
     import socket
     import time
-    assert os.environ.get('ZXDP_RUN_FIXTURE') == '1'
+    assert os.environ.get('ZPKT_RUN_FIXTURE') == '1'
     assert os.readlink('/proc/self/ns/net') != os.readlink('/proc/1/ns/net')
     rx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
     first = reply = original = higher = None
@@ -189,7 +189,7 @@ def observe(directory, device, mode):
     import os
     import socket
     import time
-    assert os.environ.get('ZXDP_RUN_FIXTURE') == '1'
+    assert os.environ.get('ZPKT_RUN_FIXTURE') == '1'
     assert os.readlink('/proc/self/ns/net') != os.readlink('/proc/1/ns/net')
     if mode == 'reorder':
         return observe_reorder(directory, device)

@@ -61,7 +61,7 @@ is recorded for its author in
 
 ## Driver boundary
 
-This establishes the independently testable Ztls prerequisite. No Zutcp or Zxdp
+This establishes the independently testable Ztls prerequisite. No Zutcp or Zpkt
 module is present to execute the subsequent driver phase-2 gate. Zutcp/veth and
 physical mlx5 verification remain later implementation gates. These kernel/fake
 provider results do not establish NIC zero-copy selection or physical-NIC

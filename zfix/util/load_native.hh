@@ -53,6 +53,9 @@ struct NativeCheckpoint {
 };
 
 struct NativeState {
+#ifdef ZFIX_LOAD_AFXDP
+  ZmRef<Zpkt::Env> env = new Zpkt::Env;
+#endif
   const Options		&options;
   Ports			ports;
   Rows<Result>		results;

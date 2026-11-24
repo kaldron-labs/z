@@ -1,4 +1,4 @@
-# Zxdp DPDK implementation plan
+# Zpkt DPDK implementation plan
 
 This plan assumes the initialization and ownership changes in [Zutcp repair 3](../zutcp/zutcp_repair3.md) have landed. DPDK extends that interface. The repair owns the coordinated AF_XDP, TCP, multiplexer and example migrations.
 
@@ -15,7 +15,7 @@ Device init discovers the link. Allocator requests collect typed pool objects.
 Explicit mx.alloc(), or implicit allocation on first start, provisions the
 complete set. Start activates queues and installs callbacks. Stop drains the
 run. The device owns its allocated native backing until finalization. Direct
-device allocation is reserved for standalone Zxdp tests.
+device allocation is reserved for standalone Zpkt tests.
 
 Direct Tx is mx/Zutcp Tx -> rte_eth_tx_burst -> PMD/NIC. Rx polling and completion
 service use the existing single Rx/Tx owners. No DPDK sender thread or EAL packet
@@ -34,7 +34,7 @@ DPDK_CFLAGS/DPDK_LIBS. Keep them out of disabled builds. In z.config add -K to
 usage/getopts, default DPDK=yes on Linux and pass --with-dpdk through both compiler
 branches. MinGW disables DPDK. Preserve all existing wrapper options.
 
-Create installed ZxdpDpdk.hh and ZxdpDpdk.cc for Zxdp::Dpdk::EAL/EALParams.
+Create installed ZpktDpdk.hh and ZpktDpdk.cc for Zpkt::Dpdk::EAL/EALParams.
 Use the exact owned aggregate EALParams and enum declarations in the brief's
 “Adopted explicit EAL parameters” section; that declaration is normative input
 to this plan, not an invitation to redesign it. It covers lcores/main lcore,
@@ -62,9 +62,9 @@ initializing thread's intended affinity and never assume CPU zero is allowed.
 Explicit mappings remain under application control. No packet work is launched
 merely because EAL workers were configured.
 
-## 2. Zxdp selection and API
+## 2. Zpkt selection and API
 
-In Zxdp.hh extend Type to Xdp, Dpdk and Params to
+In Zpkt.hh extend Type to Xdp, Dpdk and Params to
 ZuUnion<Xdp::Params, Dpdk::Params>. Preserve current macro and in-place union
 construction conventions. Add:
 
@@ -80,7 +80,7 @@ namespace Dpdk {
 
 These parameter types and Type::Dpdk need only framework headers and remain
 expressible in disabled builds. EAL/concrete DPDK definitions and linking are
-conditional. Zxdp::instance(Type::Dpdk) throws a structured ZeException when
+conditional. Zpkt::instance(Type::Dpdk) throws a structured ZeException when
 support was not built or EAL is not ready, consistent with its ZmRef return
 signature. It never substitutes Xdp. Construct the private Dpdk::Instance when
 available; keep the Xdp factory behavior unchanged.
@@ -97,7 +97,7 @@ unverified copy-capable PMD.
 
 ## 3. Private pools, device ownership and packet service
 
-Create private ZxdpDpdkInstance.hh/.cc and ZxdpDpdkPool.hh/.cc. Implement
+Create private ZpktDpdkInstance.hh/.cc and ZpktDpdkPool.hh/.cc. Implement
 bufPool(type, count, size, headRoom, tailRoom, align) by forwarding the immutable
 role to Zi::IOBufPool_ and retaining the requested geometry. At this point
 native packet slots are unavailable. The device's alloc(rxPool, txPools) receives
@@ -190,7 +190,7 @@ require accurate snapshots or new hot-path synchronization.
 
 ## 4. Zutcp integration through the repaired device interface
 
-The application selects DPDK at the Zxdp factory. Put the port name, Linux
+The application selects DPDK at the Zpkt factory. Put the port name, Linux
 routing ifindex and idle interval on the Dpdk device parameters. TCP retains
 its transport settings, including packet/control counts, credits, limits and
 the application packet callback. Use the initialized device's interface
@@ -203,10 +203,10 @@ link has matching MAC and MTU. It uses the repair's proposed ownership API.
 
 ```cpp
 ZiMultiplex mx{mxParams};
-auto xdp = Zxdp::instance(Zxdp::Type::Dpdk);
-Zxdp::Params params(
-  Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Dpdk::Params>{}>{});
-auto &device = params.p<Zxdp::Dpdk::Params>();
+auto xdp = Zpkt::instance(Zpkt::Type::Dpdk);
+Zpkt::Params params(
+  Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Dpdk::Params>{}>{});
+auto &device = params.p<Zpkt::Dpdk::Params>();
 device.name = "net_ring0";
 device.ifindex = routeIfindex;
 auto opened = xdp->init(&mx, params);
@@ -292,18 +292,18 @@ simulated wire, not a production backend copy. Stop peer producers before
 draining queues and releasing remaining mbufs/rings.
 
 Provide private shared ring/pcap setup, independent peer progress and cleanup in
-zxdp/itest/zxdpdkfixture.hh/.cc. Set fixed software device names/MACs and build
+zpkt/itest/zpktdkfixture.hh/.cc. Set fixed software device names/MACs and build
 pcap input/output for byte verification. Run EAL initialization variants in fresh
 subprocesses; do not rely on reinitializing process-global EAL between test cases.
 No physical NIC/VFIO binding is required for software acceptance.
 
 | Existing scope | New DPDK driver | Required adaptation |
 | --- | --- | --- |
-| Pool allocation/lifetime | ZxdpDpdkPoolTest | mbuf identity, geometry, exhaustion/return, retained backing |
-| Device open/alloc/start/stop/final | ZxdpDpdkInstanceTest | explicit EAL, open without pools, typed pool set at alloc, structured failures, reuse after final |
-| Native packet I/O | zxdpdkpackettest | direct submission, Rx pool provenance, exact bytes, independent retirement |
-| Wake/service | zxdpdkwaketest | counted wakes, sustained Rx and configurable bounded idle; no Xdp sender assertion |
-| Loopback transfer | zxdpdklooptest | independent software peer, normal send/receive and teardown |
+| Pool allocation/lifetime | ZpktDpdkPoolTest | mbuf identity, geometry, exhaustion/return, retained backing |
+| Device open/alloc/start/stop/final | ZpktDpdkInstanceTest | explicit EAL, open without pools, typed pool set at alloc, structured failures, reuse after final |
+| Native packet I/O | zpktdkpackettest | direct submission, Rx pool provenance, exact bytes, independent retirement |
+| Wake/service | zpktdkwaketest | counted wakes, sustained Rx and configurable bounded idle; no Xdp sender assertion |
+| Loopback transfer | zpktdklooptest | independent software peer, normal send/receive and teardown |
 | BPF classifier/filter | no DPDK copy | remains Xdp-specific |
 
 In Zutcp add zutcpdpdktest.cc with its private fixture helper
@@ -342,27 +342,27 @@ benchmarks cover the kernel TCP and Zutcp/AF_XDP paths.
 
 Create:
 
-* zxdp/src/ZxdpDpdk.hh, zxdp/src/ZxdpDpdk.cc
-* zxdp/src/ZxdpDpdkInstance.hh, zxdp/src/ZxdpDpdkInstance.cc
-* zxdp/src/ZxdpDpdkPool.hh, zxdp/src/ZxdpDpdkPool.cc
-* zxdp/test/ZxdpDpdkPoolTest.cc, zxdp/test/ZxdpDpdkInstanceTest.cc
-* zxdp/itest/zxdpdkfixture.hh, zxdp/itest/zxdpdkfixture.cc
-* zxdp/itest/zxdpdkpackettest.cc, zxdp/itest/zxdpdkwaketest.cc,
-  zxdp/itest/zxdpdklooptest.cc
+* zpkt/src/ZpktDpdk.hh, zpkt/src/ZpktDpdk.cc
+* zpkt/src/ZpktDpdkInstance.hh, zpkt/src/ZpktDpdkInstance.cc
+* zpkt/src/ZpktDpdkPool.hh, zpkt/src/ZpktDpdkPool.cc
+* zpkt/test/ZpktDpdkPoolTest.cc, zpkt/test/ZpktDpdkInstanceTest.cc
+* zpkt/itest/zpktdkfixture.hh, zpkt/itest/zpktdkfixture.cc
+* zpkt/itest/zpktdkpackettest.cc, zpkt/itest/zpktdkwaketest.cc,
+  zpkt/itest/zpktdklooptest.cc
 * zutcp/itest/zutcpdpdktest.cc, zutcp/itest/zutcpdpdkfixture.hh,
   zutcp/itest/zutcpdpdkfixture.cc
 
 Modify:
 
 * configure.ac, z.config: optional dependency, flags and feature conditional.
-* zxdp/src/Zxdp.hh, zxdp/src/Zxdp.cc: selector/union/factory/status, Xdp override.
-* zxdp/src/Makefile.am: conditionally install EAL header, compile private DPDK
+* zpkt/src/Zpkt.hh, zpkt/src/Zpkt.cc: selector/union/factory/status, Xdp override.
+* zpkt/src/Makefile.am: conditionally install EAL header, compile private DPDK
   sources, apply DPDK flags/linking only when enabled; keep Zi dependency.
-* zxdp/test/Makefile.am, zxdp/itest/Makefile.am: conditional programs/fixture builds.
+* zpkt/test/Makefile.am, zpkt/itest/Makefile.am: conditional programs/fixture builds.
 * zutcp/itest/Makefile.am: conditional DPDK driver/fixture; Ztcp is a test consumer
   dependency, not a new libZutcp dependency.
-* zxdp/README.md, zxdp/GUIDELINES.md, zxdp/INTERFACE.md,
-  zxdp/test/README.md, zxdp/itest/README.md: actual API/setup/test commands.
+* zpkt/README.md, zpkt/GUIDELINES.md, zpkt/INTERFACE.md,
+  zpkt/test/README.md, zpkt/itest/README.md: actual API/setup/test commands.
 * zutcp/README.md, zutcp/GUIDELINES.md, zutcp/itest/README.md,
   zutcp/util/README.md: typed static DPDK bootstrap and existing routing model.
 
@@ -428,13 +428,13 @@ After Phase 1 passes, build `zdbus` and `ztls`. Run `make -C zdbus/test test`
 and `make -C ztls/test test`. Phase 3 can run alongside Phase 2. Freeze both
 modules when Phase 3 passes.
 
-### Phase 4 — Zxdp and Zutcp
+### Phase 4 — Zpkt and Zutcp
 
-After Phases 2 and 3 pass, build `zxdp` and `zutcp` and run their unit suites.
+After Phases 2 and 3 pass, build `zpkt` and `zutcp` and run their unit suites.
 Apply the DPDK checkpoints in order. Validate `--with-dpdk=no`,
 `--with-dpdk=yes` with supported `libdpdk`, and configuration failure for
 explicit `yes` when `libdpdk` is absent. In the final enabled build, run
-`make -C zxdp/test test` and `make -C zutcp/test test` and run the new DPDK
+`make -C zpkt/test test` and `make -C zutcp/test test` and run the new DPDK
 integration programs through their documented software and namespace fixtures.
 Rerun the applicable AF_XDP drivers from the
 [Zutcp integration README](../../zutcp/itest/README.md).
@@ -456,7 +456,7 @@ build outputs it uses are stable. Serialize reconfiguration and rebuilds that
 write to the same build tree. Start the Zutcp/AF_XDP runs and transport
 comparisons after Phase 4 passes.
 
-1. Build and run the equivalent Zfix suite using `zutcp` through the `zxdp`
+1. Build and run the equivalent Zfix suite using `zutcp` through the `zpkt`
    AF_XDP backend.
 2. Build and run the Zfix interoperability and benchmark fixtures for kernel
    TCP and Zutcp/AF_XDP. Report latency and throughput for one connection and

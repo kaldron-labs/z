@@ -1,10 +1,10 @@
 # Zutcp execution evidence
 
-The objective remains the entire `zutcp_plan.md`. The independent Zxdp veth gate
+The objective remains the entire `zutcp_plan.md`. The independent Zpkt veth gate
 has **passed**, including current release and ZDEBUG ASan/LSan suites, current
 Memcheck checks and successful clean full-tree builds with zero warnings/errors.
 [independent-gate-passed.json](independent-gate-passed.json) records its scope;
-the [gate ledger](zxdp-gate.md) maps its eight requirements to evidence.
+the [gate ledger](zpkt-gate.md) maps its eight requirements to evidence.
 
 Zutcp now exists as the verified 67-file working-source copy and case-preserving
 rename. The original Zquic bytes remain unchanged. The verbatim archive, rename
@@ -61,7 +61,7 @@ baseline files was changed by this implementation.
 
 ## Implemented and checked so far
 
-* Linux-only Zxdp Autotools traversal and library/test targets, independently of
+* Linux-only Zpkt Autotools traversal and library/test targets, independently of
   any Zutcp source or build target.
 * Private SWSR ring views driven by queried UAPI offsets, checked mapping
   bounds/alignment, release/acquire publication, complete vector reservation,
@@ -72,7 +72,7 @@ baseline files was changed by this implementation.
   with setup failure reporting, and bounded descriptor-capacity calculations.
 * Complete-batch mapping/pool activation with the required non-sharded ZmHeap
   payload-overlay slist, null exhaustion and off-thread recycling. No Zi provider
-  inheritance or pending allocator list lives in Zxdp.
+  inheritance or pending allocator list lives in Zpkt.
 * Instance provisioning requires mx and enforces its physical ingress count.
   Identical batches preserve pool identity/free lists and held bytes. Changed
   batches fail busy with retained backing and retire old pools after release.
@@ -126,7 +126,7 @@ baseline files was changed by this implementation.
 
 `verification.json` identifies the verified source hashes, exact configuration,
 successful top-level `make -j8` with zero warnings, and test commands/results.
-`zxdp-tests.txt` records eight programs / thirty-two TAP subtests. The eight final
+`zpkt-tests.txt` records eight programs / thirty-two TAP subtests. The eight final
 `*-memcheck.txt` files record zero errors and zero lost allocations. Framework
 allocations still reachable at process exit are reported separately by Memcheck.
 
@@ -317,7 +317,7 @@ sustained-readiness/timer and build-mode checks remain required.
 
 ## Remaining required work
 
-1. Finish independent Zxdp: delayed completion timing, sustained-load
+1. Finish independent Zpkt: delayed completion timing, sustained-load
    fairness and further wait races, and full pressure/coexistence/lifecycle coverage. The normalized
    Nif packet path and basic close/restart/final pair now work. Verify the remaining
    pending-DMA and physical behavior, and complete release/sanitizer gates.

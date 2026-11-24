@@ -1,6 +1,12 @@
 # Native TCP and UDP integration tests
 
-These Linux tests exercise actual Instance/Zxdp packet I/O, standard TCP headers
+Native fixtures retain an intrusive Env before their multiplexer, configure the
+selected module through ZfCf, and acquire initialized Nifs by Linux name. DPDK
+EAL lives in the plugin; dummy Linux interfaces provide routing identity while
+independently named ring/pcap ports provide the simulated wire. Build-tree module
+paths are supplied per target. Stop/drain and buffer-return ordering is unchanged.
+
+These Linux tests exercise actual Instance/Zpkt packet I/O, standard TCP headers
 and raw application bytes. They require usable AF_XDP/BPF, sudo/root, network
 namespaces, iproute2, ethtool, tcpdump, Python3 and Perl/prove. Missing privileges
 or fixture variables produce visible skips; a skip is not native acceptance.
@@ -10,9 +16,10 @@ Physical Ethernet operation remains unverified in the current environment.
 
 ## Build and run
 
-Use [the repair plan](../../arc/zutcp/zutcp_repair3.md)'s scoped Clang release rebuild and
-freeze restrictions. Rebuild the listed dependency libraries before `zutcp/src`
-and its consumers, sharing one make jobserver with total concurrency 8. The
+Follow [the plugin plan's rebuild scope](../../zpkt_plugin_plan.md#rebuild-protocol-and-scope)
+and REBUILD through Phase 7 in the current configuration. Rebuild the allowed
+configured dependencies before `zutcp/src` and its consumers, sharing one make
+jobserver with total concurrency 8. The
 commands below illustrate directory targets; when run concurrently they must
 inherit that jobserver rather than create independent -j8 pools. Build the five
 native drivers explicitly to avoid requiring optional application consumers:
@@ -28,7 +35,7 @@ sudo -n unshare --net bash zutcp/util/zutcpfixture.sh \
 ```
 
 Compilation runs unprivileged. The launcher creates anonymous private veth/dummy
-links and exports the existing `ZXDP_*` fixture variables. The mapping fixture
+links and exports the existing `ZPKT_*` fixture variables. The mapping fixture
 adds private routes and static neighbors and disables checksum offload. Native
 addresses are not assigned to kernel interfaces. Each subprocess fixture owns
 and cleans its extra namespaces/links. No private `review_context` script is
@@ -48,7 +55,7 @@ Ztls application drivers below. Use explicit native targets while developing TCP
   filters affect actual packets; capture/checker evidence establishes the intended
   fault, byte progress, recovery and FIN completion. It does not use kernel TCP
   as a native fallback.
-- `zutcppooltest` checks Zi allocators backed by one shared Zxdp arena:
+- `zutcppooltest` checks Zi allocators backed by one shared Zpkt arena:
   factory geometry, registered backing, borrowed/native views, allocation versus
   kernel leases, exhaustion, retirement and safe return/reuse. Allocation is
   immediate; producers do not queue for grants from a depleted pool.
@@ -113,9 +120,10 @@ kernel interoperability.
 Ztcp and Ztls respectively. They exercise selected kernel/native backend pairs
 after TCP functional completion. Neither library is a Zutcp dependency. Build
 only those explicit drivers when their libraries already match the Zi build.
-Ztcp belongs to the allowed rebuild set; do not rebuild Ztls, Zdbus or another
-unlisted module to enable optional coverage. Record missing optional prerequisites
-separately from passed native/Ztcp checks.
+Ztcp, configured Ztls and configured Zdbus belong to the allowed dependency
+closure. Preserve the current configuration gates; do not enable optional
+libraries to extend coverage. Record missing optional prerequisites separately
+from passed native/Ztcp checks.
 
 ```sh
 make -C zutcp/itest -j8 zutcpapptest zutcptlsapptest
@@ -140,29 +148,29 @@ allocation.
 ```sh
 make -C zutcp/itest zutcpudptest
 sudo -n unshare --mount --net --propagation private \
-  env ZXDP_RUN_FIXTURE=1 bash zutcp/itest/zutcpudpfixture.sh 4 mixed
+  env ZPKT_RUN_FIXTURE=1 bash zutcp/itest/zutcpudpfixture.sh 4 mixed
 sudo -n unshare --mount --net --propagation private \
-  env ZXDP_RUN_FIXTURE=1 bash zutcp/itest/zutcpudpfixture.sh 6 udp
+  env ZPKT_RUN_FIXTURE=1 bash zutcp/itest/zutcpudpfixture.sh 6 udp
 ```
 
 The runner accepts either address family with either mode.
 
 ## DPDK software ports
 
-Configure the Clang release build with libdpdk 25.11 or later and its stock
-`net_ring` PMD. Build the enabled dependency closure from the repository root,
-then run the integration driver with privileges to create a private network
-namespace.
+Use the current configuration with libdpdk 25.11 or later and its stock
+`net_ring` PMD. Build only the allowed configured dependency closure through
+zfix, sharing the eight-job make jobserver, then run the driver with privileges
+to create a private network namespace.
 
 ```sh
-./z.config -c -L /usr/local
-make -j8
+make -C zutcp/itest -j8 zutcpdpdktest
 sudo -n prove -v zutcp/itest/zutcpdpdktest
 ```
 
 `zutcpdpdktest` creates its own namespace with `iproute2`. It opens `net_ring_zutcp0`
-and `net_ring_zutcp1` and gives each its own Linux dummy interface with a matching
-MAC and MTU. Static IPv4 and IPv6 routes and permanent neighbors provide the
+and `net_ring_zutcp1` and uses independently named Linux dummy interfaces for core geometry and
+routing. The plugin trusts the configured association and supplied metadata; it
+performs no Linux/native MTU or MAC agreement check. Static IPv4 and IPv6 routes and permanent neighbors provide the
 control-plane lookup. The independent software wire copies each Tx frame into a
 slot from the destination's DPDK ingress pool. Setup failures fail TAP.
 
@@ -173,7 +181,9 @@ native ingress pool on retained packets and stops without injecting a wake
 packet. Separate EAL processes verify fatal ownership violations. Allocation and
 activation failure cases exercise rollback, frozen-registry retry, smaller Tx
 requests, retained Tx backing through failure and restart, and same-port reuse
-after finalization.
+after finalization. Interposed allocation and activation failures are verified
+through the loaded module with `preload false`. Each caller retains Env until
+TCP and all Nif references have retired.
 
 Before starting its forwarding wire, the driver holds a real ring-PMD mbuf while
 three connection/endpoint attempts change ACK/window/options. Eight profiles

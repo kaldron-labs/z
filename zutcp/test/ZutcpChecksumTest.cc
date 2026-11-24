@@ -146,6 +146,7 @@ struct TCPChecksumTest {
 
     using ZmNHeap<Device>::operator new;
     using ZmNHeap<Device>::operator delete;
+    using Xdp::Xdp;
     bool tcpChksumOffload() override { ++queries; return ready() && offload; }
     bool send(uint8_t *frame, unsigned wire) override {
       ++calls;
@@ -176,13 +177,13 @@ struct TCPChecksumTest {
 
   static void testRestartSelection() {
     ZuTestScopeRT(testRestartSelection);
+    auto env = ZutcpTest::fixtureEnv();
     ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
       .rxThread(1).txThread(2)};
-    ZmRef<Device> device = new Device;
-    ZmRef<Zxdp::Instance> backend = device;
+    ZmRef<Device> device = new Device{&mx};
+    ZmRef<Zpkt::Nif> backend = device;
     ZmRef<Instance> stack = new Instance;
-    bool configured = device->init(&mx, {}).is<void>() &&
-      stack->init(&mx, ZuMv(backend), {}).is<void>();
+    bool configured = stack->init(&mx, env, ZuMv(backend), {}).is<void>();
     ZuCheckRT(configured, log_("configure checksum capability fixture"));
     if (!configured) return;
     mx.plugin(ZmRef{stack});

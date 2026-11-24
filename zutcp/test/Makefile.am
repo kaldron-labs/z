@@ -3,12 +3,15 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
 	-I$(top_srcdir)/zi/src \
 	-I$(top_srcdir)/zi/test \
-	-I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zxdp/src \
+	-I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zpkt/src \
+	-I$(top_srcdir)/zpkt/test -I$(top_srcdir)/zpkt/xdp \
+	-DZUTCP_TEST_PLUGIN='"$(abs_top_builddir)/zpkt/test/.libs/libZpktTestPlugin.so"' \
+	-DZUTCP_XDP_MODULE='"$(abs_top_builddir)/zpkt/xdp/.libs/libZpkt_xdp.so"' \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 LDADD = $(top_builddir)/zi/test/libZiTest.la \
-	$(top_builddir)/zutcp/src/libZutcp.la $(top_builddir)/zxdp/src/libZxdp.la \
+	$(top_builddir)/zutcp/src/libZutcp.la $(top_builddir)/zpkt/src/libZpkt.la \
 	$(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la \
@@ -52,3 +55,8 @@ EXTRA_DIST = README.md
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)
+
+ZutcpDataTest_LDFLAGS = $(AM_LDFLAGS) -Wl,$(abs_top_builddir)/zpkt/xdp/.libs/libZpkt_xdp.so \
+	-Wl,-rpath,$(abs_top_builddir)/zpkt/xdp/.libs
+ZutcpHandshakeTest_LDFLAGS = $(AM_LDFLAGS) -Wl,$(abs_top_builddir)/zpkt/xdp/.libs/libZpkt_xdp.so \
+	-Wl,-rpath,$(abs_top_builddir)/zpkt/xdp/.libs

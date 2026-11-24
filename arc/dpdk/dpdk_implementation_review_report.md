@@ -8,7 +8,7 @@ verification remain future work; no further Goldfish audit is claimed.
 
 The original three fresh-context reviews completed with 13 Major findings,
 consolidated into eight actions. Their original line references apply to
-[the reviewed snapshot](review_context/zxdp-dpdk-readiness/reviewed_concepts_brief.md).
+[the reviewed snapshot](review_context/zpkt-dpdk-readiness/reviewed_concepts_brief.md).
 The generic report filenames now document a separate I/O repair; this scoped
 report preserves the DPDK review without replacing those artifacts.
 
@@ -68,7 +68,7 @@ report preserves the DPDK review without replacing those artifacts.
 * `codebase-1-5` — Major: Dependency integration still requires build-policy choices.
 
 Raw normalized per-lens reports, findings.json and approved external snapshots
-remain in review_context/zxdp-dpdk-readiness. Their assumptions must be interpreted
+remain in review_context/zpkt-dpdk-readiness. Their assumptions must be interpreted
 under the binding corrections above. The selected architecture is unchanged.
 
 ## Work performed on resume
@@ -166,7 +166,7 @@ netlink via ip. Those failed attempts are not counted as passing verification.
 Final checks:
 
 * Top-level `make -j8`: passed.
-* `make -C zxdp/test test`: passed, 4 programs / 14 top-level TAP tests.
+* `make -C zpkt/test test`: passed, 4 programs / 14 top-level TAP tests.
 * Native packet/filter/wake tests under sudo in an anonymous two-queue-veth
   namespace: passed, 3 programs / 7 top-level TAP tests.
 * `git diff --check`: passed.
@@ -199,7 +199,7 @@ half-pool partition, additional application knob or backing-based TCP receive
 accounting is needed. Later exhaustion from application retention and resulting
 packet loss are acceptable.
 
-The earlier replacement-first PMD example assumed zxdp would configure every
+The earlier replacement-first PMD example assumed zpkt would configure every
 mbuf as an initial descriptor. That choice was never proposed and does not
 establish an outstanding design question. A3 is closed.
 
@@ -232,12 +232,12 @@ Suggested coverage mapping, within the existing AF_XDP scope:
 
 | Existing test | DPDK counterpart | Adaptation |
 | --- | --- | --- |
-| ZxdpPoolTest | ZxdpDpdkPoolTest | Native mbuf allocation/return, configured geometry, exhaustion and retained backing. |
-| ZxdpInstanceTest | ZxdpDpdkInstanceTest | Explicit EAL prerequisite, init failures, mandatory Tx provisioning and close/recreate. |
-| zxdppackettest | zxdpdpdkpackettest | Direct submission, received bytes, backing lifetime, exhaustion and draining through ring/pcap peers. |
-| zxdpwaketest | zxdpdpdkwaketest | Active receive, counted wake and bounded idle wait; omit AF_XDP sender-thread assertions. |
-| zxdplooptest | zxdpdpdklooptest | Software peer progress through the normal backend path. |
-| ZxdpClassifierTest / zxdpfiltertest | no DPDK copy | The current BPF classifier and Xdp netmask filter are backend-specific. |
+| ZpktPoolTest | ZpktDpdkPoolTest | Native mbuf allocation/return, configured geometry, exhaustion and retained backing. |
+| ZpktInstanceTest | ZpktDpdkInstanceTest | Explicit EAL prerequisite, init failures, mandatory Tx provisioning and close/recreate. |
+| zpktpackettest | zpktdpdkpackettest | Direct submission, received bytes, backing lifetime, exhaustion and draining through ring/pcap peers. |
+| zpktwaketest | zpktdpdkwaketest | Active receive, counted wake and bounded idle wait; omit AF_XDP sender-thread assertions. |
+| zpktlooptest | zpktdpdklooptest | Software peer progress through the normal backend path. |
+| ZpktClassifierTest / zpktfiltertest | no DPDK copy | The current BPF classifier and Xdp netmask filter are backend-specific. |
 
 The relevant Zutcp native fixture must additionally select DPDK and exercise
 start/stop/restart with the same pool and endpoint ownership contract. Do not
@@ -246,21 +246,21 @@ claim ring or pcap results validate physical NIC DMA or driver refill behavior.
 ### A1/A2: concrete proposed file boundary and build checkpoints
 
 Modify `configure.ac` and `z.config` for the adopted optional dependency. Modify
-`zxdp/src/Makefile.am`, `zxdp/test/Makefile.am` and
-`zxdp/itest/Makefile.am` for conditional sources, flags, libraries and tests.
+`zpkt/src/Makefile.am`, `zpkt/test/Makefile.am` and
+`zpkt/itest/Makefile.am` for conditional sources, flags, libraries and tests.
 Keep generated Autotools outputs consistent with repository practice.
 
-Create public `zxdp/src/ZxdpDpdk.hh` and its implementation
-`zxdp/src/ZxdpDpdk.cc` for EAL configuration/lifetime. Create private
-`zxdp/src/ZxdpDpdkInstance.hh/.cc` and `zxdp/src/ZxdpDpdkPool.hh/.cc` for the
-instance and native mbuf pools. Modify `zxdp/src/Zxdp.hh` and `Zxdp.cc` for
+Create public `zpkt/src/ZpktDpdk.hh` and its implementation
+`zpkt/src/ZpktDpdk.cc` for EAL configuration/lifetime. Create private
+`zpkt/src/ZpktDpdkInstance.hh/.cc` and `zpkt/src/ZpktDpdkPool.hh/.cc` for the
+instance and native mbuf pools. Modify `zpkt/src/Zpkt.hh` and `Zpkt.cc` for
 selection, parameter union, factory dispatch and status(). Keep AF_XDP internals
 in place. Concrete DPDK declarations are built only when enabled.
 
 Create the five DPDK test sources named in the coverage table, plus private
-`zxdp/itest/zxdpdpdkfixture.hh/.cc` shared by the three integration drivers.
-Update `zxdp/test/README.md`, `zxdp/itest/README.md`, `zxdp/README.md`,
-`zxdp/INTERFACE.md` and `zxdp/GUIDELINES.md` with actual setup and guarantees.
+`zpkt/itest/zpktdpdkfixture.hh/.cc` shared by the three integration drivers.
+Update `zpkt/test/README.md`, `zpkt/itest/README.md`, `zpkt/README.md`,
+`zpkt/INTERFACE.md` and `zpkt/GUIDELINES.md` with actual setup and guarantees.
 
 Modify `zutcp/src/ZutcpMx.hh/.cc` for backend selection and initial/restart pool
 provisioning; `zutcp/src/ZutcpIP.hh/.cc` where routing/device metadata currently
@@ -327,7 +327,7 @@ entries. Substituting DPDK does not require adding dynamic ARP/ND or a new route
 resolver. Zutcp retains Linux control-plane identity; the application/fixture
 associates it with the named DPDK port and configures matching addresses/MAC/MTU.
 The Linux control-plane interface need not be the physical PMD-owned device.
-Zxdp handles packet I/O and has no routing or neighbor-resolution responsibility.
+Zpkt handles packet I/O and has no routing or neighbor-resolution responsibility.
 
 Recorded this as adopted in concepts_brief.md, replacing the open dynamic
 neighbor/exception-path discussion. The earlier application resolver, ISN scope
@@ -347,7 +347,7 @@ Three fresh-context, read-only reviewers completed: implementation-readiness,
 codebase-details and style. Each read its required persona/standard and target
 context; none failed or reported unavailable required material. Their normalized
 reports and the stable reviewed snapshot are in
-`review_context/zxdp-dpdk-readiness/final-*.md` and
+`review_context/zpkt-dpdk-readiness/final-*.md` and
 `final_review_snapshot.md`; machine-readable traceability is in
 `final_findings.json`. This is the one final re-audit following the original
 resolution cycle, not a claim of convergence.
@@ -436,7 +436,7 @@ Application transfers use Ztcp/ZiMultiplex; private protocol probes retain the
 actual protocol and independent wire assertions through native test facilities.
 
 allQueues() traverses existing internal objects to expose normalized telemetry
-for the actual Zutcp and Zxdp queues, delegating Zxdp enumeration through its
+for the actual Zutcp and Zpkt queues, delegating Zpkt enumeration through its
 existing interface. It implies no additional queue container, index, registry,
 cache or tracking mechanism. Preserve existing traversal lifetime rules.
 

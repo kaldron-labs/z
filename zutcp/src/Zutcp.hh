@@ -41,7 +41,8 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZtcMx.hh>
 
-#include <zlib/Zxdp.hh>
+#include <zlib/Zpkt.hh>
+#include <zlib/ZpktEnv.hh>
 
 #include <zlib/ZutcpAlloc.hh>
 #include <zlib/ZutcpChecksum.hh>
@@ -325,7 +326,7 @@ public:
   ~Instance() override;
 
   // Takes ownership of the initialized XDP instance on the first successful call.
-  ZuUnion<void, ZeException> init(ZiMultiplex *, ZmRef<Zxdp::Instance> &&, Params params);
+  ZuUnion<void, ZeException> init(ZiMultiplex *, Zpkt::Env *, ZmRef<Zpkt::Nif> &&, Params params);
   void rx() override;
   void wake() override;
 
@@ -557,7 +558,8 @@ private:
   uint64_t			m_txCapacity = 0;
   unsigned			m_controlCredits = DefaultTxControlCredits;
 
-  ZmRef<Zxdp::Instance>		m_xdp;
+  Zpkt::Env			*m_xdpEnv = nullptr;
+  ZmRef<Zpkt::Nif>		m_xdp;
   ZmRef<Zi::IOBufPool>		m_ingress;
   ZmRef<Zi::IOBufPool>		m_packets, m_control;
   ZmRef<Zi::IOBufPool>		m_requestedTx;

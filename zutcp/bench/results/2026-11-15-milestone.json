@@ -69,7 +69,7 @@
     "hash_resize_rows": 0,
     "non_scheduler_full": 0,
     "zutcp_unit_tests": 311,
-    "zxdp_unit_tests": 11,
+    "zpkt_unit_tests": 11,
     "native_integration_tests": 117,
     "linux_peer_tests": 36,
     "benchmark_selftest": true
@@ -96,7 +96,7 @@
       "libZtls-10.0.0.so": "d363fbfa366c26d8a4a1dbf92071d870ad0240787df7637009f7fff60bd89db0",
       "libZu-10.0.0.so": "67e00a6565fe3e7cea22c67010a2887319901851865917530fcc5945c041d083",
       "libZutcp-10.0.0.so": "20ede4bb4b341bd4bd65b75e759f10bd2c76f8cc7ce7f39beb14fa3803e26dd8",
-      "libZxdp-10.0.0.so": "29dd9abb873ea37640e5d3aae49938a4e79370253c91559d18da697bb7c1cdd8",
+      "libZpkt-10.0.0.so": "29dd9abb873ea37640e5d3aae49938a4e79370253c91559d18da697bb7c1cdd8",
       "zfixbench.bin": "f9e1d34c2ea6696fc0003730710723e6abe93cfc71cd3d0ca33de54581815130"
     },
     "candidate": {
@@ -112,7 +112,7 @@
       "libZtls-10.0.0.so": "d363fbfa366c26d8a4a1dbf92071d870ad0240787df7637009f7fff60bd89db0",
       "libZu-10.0.0.so": "67e00a6565fe3e7cea22c67010a2887319901851865917530fcc5945c041d083",
       "libZutcp-10.0.0.so": "e7119c9321ac53465851cb4f2b4d6092866b8f2de029fe37d3b51126b28f2559",
-      "libZxdp-10.0.0.so": "29dd9abb873ea37640e5d3aae49938a4e79370253c91559d18da697bb7c1cdd8",
+      "libZpkt-10.0.0.so": "29dd9abb873ea37640e5d3aae49938a4e79370253c91559d18da697bb7c1cdd8",
       "zfixbench.bin": "f9e1d34c2ea6696fc0003730710723e6abe93cfc71cd3d0ca33de54581815130"
     }
   },
@@ -184,17 +184,17 @@
     "zutcp/test/ZutcpTFOTest.cc": "f6efcde402f5f8e4e68c23beab738b72d21a30b4374d1d84d4b541c068c87fb9",
     "zutcp/test/ZutcpTimerTest.cc": "f24417e901bfc391c1b56c9693531f57d553c6305f78fd5c73d6080adc269f2d",
     "zutcp/util/zutcppair.cc": "09071e2d89acf5c3cb184f85ae03c2132b09066804475e4c9f0fa6d7bd0bc49a",
-    "zxdp/itest/zxdpfiltertest.cc": "26480a8604414bcf4c3bf1d63079109751f6527ffe1e9eedf08b432fee72c0ac",
-    "zxdp/itest/zxdppackettest.cc": "63d0ea5210ccf8361dd96689e5ace81df739b292bf38020aa76ec56e2a3966ec",
-    "zxdp/itest/zxdpwaketest.cc": "d0f3d3d38dd6977eedcdd6b607096a52709950aa6a4f164919e3beee088f2686",
-    "zxdp/src/Zxdp.cc": "ef432728826302bb0390fef1f2003f6f6dc660f0be4457bda5b1c068b2069541",
-    "zxdp/src/Zxdp.hh": "de79ec8be1345988da21c366332ad9578c7c1b35dc0e8ad074122fb81ad10d68",
-    "zxdp/src/ZxdpRing.hh": "0fc0b40b4409ee11ace274f2e41988f685c9b2d177eddc385b101ad7dd39d933",
-    "zxdp/src/ZxdpUMem.cc": "72944fee336cc0e1ecf0c078435210e50dab9a860a936d41120d983cf273720f",
-    "zxdp/src/ZxdpUMem.hh": "c0d3374dc3313711285f5e1765f3cdd42fa113e14c7f6340fe21ca24522f976f",
-    "zxdp/test/ZxdpPoolTest.cc": "559399965eb7bce0151c9232a0af1e661419a1d2b827555fad6c96a8de801266",
-    "zxdp/test/ZxdpRingTest.cc": "8ba9f015d9bcab7c154247c8f56fa166866388776909520efd8443bcbaaa4150",
-    "zxdp/util/zxdppacket.cc": "6c5e141b7ebcf3dff5430d424a2959d4bccda76edbbbf6b5573454025d2880ea"
+    "zpkt/itest/zpktfiltertest.cc": "26480a8604414bcf4c3bf1d63079109751f6527ffe1e9eedf08b432fee72c0ac",
+    "zpkt/itest/zpktpackettest.cc": "63d0ea5210ccf8361dd96689e5ace81df739b292bf38020aa76ec56e2a3966ec",
+    "zpkt/itest/zpktwaketest.cc": "d0f3d3d38dd6977eedcdd6b607096a52709950aa6a4f164919e3beee088f2686",
+    "zpkt/src/Zpkt.cc": "ef432728826302bb0390fef1f2003f6f6dc660f0be4457bda5b1c068b2069541",
+    "zpkt/src/Zpkt.hh": "de79ec8be1345988da21c366332ad9578c7c1b35dc0e8ad074122fb81ad10d68",
+    "zpkt/src/ZpktRing.hh": "0fc0b40b4409ee11ace274f2e41988f685c9b2d177eddc385b101ad7dd39d933",
+    "zpkt/src/ZpktUMem.cc": "72944fee336cc0e1ecf0c078435210e50dab9a860a936d41120d983cf273720f",
+    "zpkt/src/ZpktUMem.hh": "c0d3374dc3313711285f5e1765f3cdd42fa113e14c7f6340fe21ca24522f976f",
+    "zpkt/test/ZpktPoolTest.cc": "559399965eb7bce0151c9232a0af1e661419a1d2b827555fad6c96a8de801266",
+    "zpkt/test/ZpktRingTest.cc": "8ba9f015d9bcab7c154247c8f56fa166866388776909520efd8443bcbaaa4150",
+    "zpkt/util/zpktpacket.cc": "6c5e141b7ebcf3dff5430d424a2959d4bccda76edbbbf6b5573454025d2880ea"
   },
   "observations": [
     {

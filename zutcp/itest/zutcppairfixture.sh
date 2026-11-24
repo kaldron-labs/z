@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Scope every network object to this private parent and two task-owned children.
-[[ ${ZXDP_RUN_FIXTURE:-0} == 1 ]]
+[[ ${ZPKT_RUN_FIXTURE:-0} == 1 ]]
 [[ $(readlink /proc/self/ns/net) != $(readlink /proc/1/ns/net) ]]
 family=$1
 mode=$2
@@ -427,12 +427,12 @@ if [[ $mode == loss ]]; then
     grep -q 'listening on' "$out/bootstrap-$side.capture"
   done
 fi
-request=$(python3 -c 'print("native-zxdp-" * 600, end="")')
+request=$(python3 -c 'print("native-zpkt-" * 600, end="")')
 if [[ $mode == tfo ]]; then
   request=$(python3 -c 'print("tfo-original-" * 20, end="")')
 fi
 if [[ $mode == options || $mode == ecn || $mode == tail || $mode == sack-holes || $mode == sack-reneging ]]; then
-  request=$(python3 -c 'print("native-zxdp-" * 6800, end="")')
+  request=$(python3 -c 'print("native-zpkt-" * 6800, end="")')
 fi
 if [[ $mode == sack-holes || $mode == sack-reneging ]]; then
   python3 "$root/zutcp/itest/zutcpoptions.py" fault "$out" "$mode" zutcpca zutcpsa \

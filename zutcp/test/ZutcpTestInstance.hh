@@ -8,6 +8,9 @@
 #define ZutcpTestInstance_HH
 
 #include <string.h>
+#include <net/if.h>
+
+#include "ZpktTestCf.hh"
 
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmBlock.hh>
@@ -50,15 +53,11 @@ friend inline ZuStringT<"Zutcp.Test.Pool"> ZmNHeapID(Pool *);
   void free(uint8_t *ptr) override { ++returns; Heap::free(ptr, size); }
 };
 
-class Xdp : public ZmNHeap<Xdp>, public Zxdp::Instance {
+class Xdp : public ZmNHeap<Xdp>, public Zpkt::Nif {
 friend inline ZuStringT<"Zutcp.Test.Xdp"> ZmNHeapID(Xdp *);
 public:
-  explicit Xdp(bool deferred = false) : m_deferred{deferred} { }
-  ZuUnion<void, ZeException> init(ZiMultiplex *mx, const Zxdp::Params &) override {
-    ++opens;
-    m_mx = mx;
-    return {};
-  }
+  explicit Xdp(ZiMultiplex *mx, bool deferred = false)
+  : m_mx{mx}, m_deferred{deferred} { ++opens; }
   ZmRef<Zi::IOBufPool> bufPool(Zi::IOBufType::T type, unsigned count, unsigned size,
     unsigned head, unsigned tail, unsigned align) override
   {
@@ -84,12 +83,12 @@ public:
     m_allocated = true;
     return {};
   }
-  bool start(Zxdp::RecvFn rx, Zxdp::StopFn tx) override {
+  bool start(Zpkt::RecvFn rx, Zpkt::StopFn tx) override {
     return ZmBlock<bool>{}([this, rx = ZuMv(rx), tx = ZuMv(tx)](auto done) mutable {
       start(ZuMv(rx), ZuMv(tx), ZuMv(done));
     });
   }
-  void start(Zxdp::RecvFn rx, Zxdp::StopFn tx, Zxdp::StartFn done) override {
+  void start(Zpkt::RecvFn rx, Zpkt::StopFn tx, Zpkt::StartFn done) override {
     m_receive = ZuMv(rx);
     m_txStopped = ZuMv(tx);
     Engine::start([done = ZuMv(done)](bool ok) { if (done) done(ok); });
@@ -102,6 +101,7 @@ public:
     rxPool = nullptr;
     txPools.null();
     reserves[0] = reserves[1] = nullptr;
+    retireNif();
   }
   ZeException error() const override { return {}; }
   ZiMultiplex *mx() const override { return m_mx; }
@@ -151,17 +151,15 @@ private:
   }
 
   ZiMultiplex *m_mx = nullptr;
-  Zxdp::RecvFn m_receive;
-  Zxdp::StopFn m_txStopped;
+  Zpkt::RecvFn m_receive;
+  Zpkt::StopFn m_txStopped;
   ZmSemaphore m_event;
   bool m_allocated = false, m_started = false, m_deferred;
 };
 
-inline ZmRef<Zxdp::Instance> fixtureXdp(ZiMultiplex *mx, bool deferred = false)
+inline ZmRef<Zpkt::Nif> fixtureXdp(ZiMultiplex *mx, bool deferred = false)
 {
-  ZmRef<Zxdp::Instance> xdp = new Xdp{deferred};
-  ZmAssert_(xdp->init(mx, {}).is<void>());
-  return xdp;
+  return new Xdp{mx, deferred};
 }
 
 // Fluent setup is test syntax over the actual policy value. It has no transport
@@ -246,10 +244,19 @@ private:
   ErrorFn m_error;
 };
 
+inline ZmRef<Zpkt::Env> fixtureEnv()
+{
+  ZmRef<Zpkt::Env> env = new Zpkt::Env;
+  auto cf = ZpktTest::config(ZUTCP_TEST_PLUGIN);
+  env->init(cf.ptr());
+  return env;
+}
+
 // Use the production handoff for deterministic fixtures and native drivers.
 class Instance : public Zutcp::Instance {
 public:
-  explicit Instance(ZiMultiplex *mx) : m_fixtureMx{mx} { }
+  explicit Instance(ZiMultiplex *mx) : m_fixtureEnv{fixtureEnv()}, m_fixtureMx{mx} { }
+  ~Instance() override { final(); }
   static bool multicast(Instance &, unsigned, bool, unsigned &);
   ZiMultiplex *mx() const { return m_fixtureMx; }
   using Zutcp::Instance::final;
@@ -264,14 +271,15 @@ public:
   static ZuUnion<void, ZeException> apply(
     Zutcp::Instance &instance, Zutcp::InstanceParams params)
   {
-    return instance.init(instance.mx(), {}, ZuMv(params));
+    return instance.init(instance.mx(), instance.m_xdpEnv, {}, ZuMv(params));
   }
   static ZuUnion<void, ZeException> apply(Instance &instance, Zutcp::InstanceParams params)
   {
     if (instance.Zutcp::Instance::mx())
       return apply(static_cast<Zutcp::Instance &>(instance), ZuMv(params));
     auto xdp = fixtureXdp(instance.mx());
-    return instance.Zutcp::Instance::init(instance.mx(), ZuMv(xdp), ZuMv(params));
+    return instance.Zutcp::Instance::init(
+      instance.mx(), instance.m_fixtureEnv, ZuMv(xdp), ZuMv(params));
   }
   bool init(const ZutcpTest::Params &params) {
     auto result = params.mx() == mx() ? apply(*this, params.config()) :
@@ -284,34 +292,40 @@ public:
   }
 
 private:
+  ZmRef<Zpkt::Env> m_fixtureEnv;
   ZiMultiplex *m_fixtureMx;
 };
 
-inline ZmRef<Zxdp::Instance> openXdp(
-  ZiMultiplex *mx, unsigned interface, unsigned sender, unsigned spin = 1000)
+inline ZmRef<Zpkt::Nif> openXdp(
+  Zpkt::Env *env, ZiMultiplex *mx, unsigned interface, unsigned sender, unsigned spin = 1000)
 {
-  auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
-  Zxdp::Params xdpParams{Zxdp::Xdp::Params{
-    .ifindex = interface, .spin = spin, .txSid = sender}};
-  auto opened = xdp->init(mx, xdpParams);
+  char name[IF_NAMESIZE];
+  if (!if_indextoname(interface, name))
+    throw ZeEXCEPT(Error, "ZutcpTest", "missing Linux interface");
+  auto cf = ZpktTest::config(ZUTCP_XDP_MODULE, static_cast<const char *>(name), sender, spin);
+  env->init(cf.ptr());
+  auto opened = env->nif(mx, static_cast<const char *>(name));
   if (opened.is<ZeException>()) throw ZuMv(opened).p<ZeException>();
-  return xdp;
+  return opened.p<Zpkt::Nif *>();
 }
 
 inline ZmRef<Zutcp::Instance> makeInstance(
-  ZiMultiplex *mx, ZmRef<Zxdp::Instance> &&xdp, Zutcp::InstanceParams params)
+  Zpkt::Env *env, ZiMultiplex *mx, ZmRef<Zpkt::Nif> &&xdp, Zutcp::InstanceParams params)
 {
   ZmRef<Zutcp::Instance> instance = new Zutcp::Instance;
-  auto result = instance->init(mx, ZuMv(xdp), ZuMv(params));
-  if (result.is<ZeException>()) throw ZuMv(result).p<ZeException>();
+  auto result = instance->init(mx, env, ZuMv(xdp), ZuMv(params));
+  if (result.is<ZeException>()) {
+    xdp->final();
+    throw ZuMv(result).p<ZeException>();
+  }
   return instance;
 }
 
 inline ZmRef<Zutcp::Instance> makeInstance(
-  ZiMultiplex *mx, unsigned interface, unsigned sender, Zutcp::InstanceParams params = {},
-  unsigned spin = 1000)
+  Zpkt::Env *env, ZiMultiplex *mx, unsigned interface, unsigned sender,
+  Zutcp::InstanceParams params = {}, unsigned spin = 1000)
 {
-  return makeInstance(mx, openXdp(mx, interface, sender, spin), ZuMv(params));
+  return makeInstance(env, mx, openXdp(env, mx, interface, sender, spin), ZuMv(params));
 }
 
 template <typename M = ZiMultiplex> struct MxStorage {

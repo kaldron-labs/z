@@ -43,8 +43,8 @@ static bool mac(unsigned index, uint8_t *out)
 static void testRoute(bool v6)
 {
   ZuTestScopeRT(testRoute);
-  unsigned index = strtoul(getenv("ZXDP_RX_TEST_PEER_IFINDEX"), nullptr, 10);
-  unsigned other = strtoul(getenv("ZXDP_RX_TEST_IFINDEX"), nullptr, 10);
+  unsigned index = strtoul(getenv("ZPKT_RX_TEST_PEER_IFINDEX"), nullptr, 10);
+  unsigned other = strtoul(getenv("ZPKT_RX_TEST_IFINDEX"), nullptr, 10);
   ZiIP source{v6 ? "2001:db8::2" : "198.18.0.2"};
   ZiIP destination{v6 ? "2001:db8::1" : "198.18.0.1"};
   ZiIP wildcard{v6 ? "::" : "0.0.0.0"};
@@ -167,9 +167,9 @@ static void testCarriage(bool v6, bool tcp = false)
   ZuTestScopeRT(testCarriage);
   alarm(30);
   unsigned index = if_nametoindex(tcp ? (v6 ? "zitcp6a" : "zitcp4a") :
-    (v6 ? "zip6a" : "zxdprxa"));
+    (v6 ? "zip6a" : "zpktrxa"));
   unsigned peer = if_nametoindex(tcp ? (v6 ? "zitcp6b" : "zitcp4b") :
-    (v6 ? "zip6b" : "zxdprxb"));
+    (v6 ? "zip6b" : "zpktrxb"));
   Zutcp::IPPath path{
     ZiIP{tcp ? (v6 ? "2001:db8:7::1" : "198.18.4.1") : (v6 ? "2001:db8:6::1" : "198.18.0.1")},
     ZiIP{tcp ? (v6 ? "2001:db8:7::2" : "198.18.4.2") : (v6 ? "2001:db8:6::2" : "198.18.0.2")},
@@ -189,6 +189,7 @@ static void testCarriage(bool v6, bool tcp = false)
   ZuCheckRT(bound, log_("independent raw-IP fixture peer configured, IPv", v6 ? 6 : 4));
   if (!bound) { if (fd >= 0) close(fd); alarm(0); return; }
 
+  ZmRef<Zpkt::Env> env = new Zpkt::Env;
   ZiMultiplex mx{ZiMxParams{}.rxBufSize(32).rxQuantum(8)
     .scheduler([](auto &p) { p.nThreads(4).thread(4, [](auto &t) { t.isolated(true); }); })};
   ZmSemaphore rxDone, txDone, controlDone;
@@ -213,7 +214,7 @@ static void testCarriage(bool v6, bool tcp = false)
       rxDone.post();
     }};
   if (tcp) params.packet = {};
-  auto instance = ZutcpTest::makeInstance(&mx, index, 4, ZuMv(params), 0);
+  auto instance = ZutcpTest::makeInstance(env, &mx, index, 4, ZuMv(params), 0);
   auto stack = instance.ptr();
   mx.plugin(ZuMv(instance));
   auto tx = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 2048>(4);
@@ -321,7 +322,7 @@ static void testCarriage(bool v6, bool tcp = false)
       offset += 20;
     }
     for (unsigned i = 0; valid && i < n; ++i) valid &= bytes[offset + i] == pattern(i, n);
-    ZuCheckRT(valid, log_("Zxdp emits ", tcp ? "TCP/IP" : "direct IP",
+    ZuCheckRT(valid, log_("Zpkt emits ", tcp ? "TCP/IP" : "direct IP",
       " with exact payload, length ", n));
   }
   input = nullptr;

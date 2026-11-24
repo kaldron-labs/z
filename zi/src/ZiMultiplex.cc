@@ -2861,6 +2861,7 @@ ZiMultiplex::ZiMultiplex(ZiMxParams mxParams, ZmRef<ZiMxPlugin> plugin) :
   m_yield(mxParams.yield())
 #endif
 {
+  if (m_plugin) m_plugin->m_mx = this;
   m_listeners =
     new ListenerHash(ZmHashParams().bits(4).loadFactor(1).cBits(4).
 	init(mxParams.listenerHash()));

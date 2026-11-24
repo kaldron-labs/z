@@ -85,7 +85,7 @@ static void kernelClientReorderV6() { exchange(true, "kernel-client", "reorder")
 int main(int argc, char **argv)
 {
   parse(argc, argv);
-  if (geteuid() || !getenv("ZXDP_RUN_FIXTURE")) {
+  if (geteuid() || !getenv("ZPKT_RUN_FIXTURE")) {
     std::cout << "1..0 # SKIP requires privileged private namespace fixture\n";
     return 0;
   }

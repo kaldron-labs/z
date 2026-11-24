@@ -43,7 +43,7 @@ The directory contracts below are the architectural index. Source contracts iden
 | [zum](./zum/EGM.md) | Zum groups the service-side authentication library, persistent authorization daemon, management CLI, and a native-client/resource-server example. It builds on Zhttp/Zrest, Ztls, Zdb, Vault and the framework scheduler; daemon telemetry uses Ztc. The existing [README.md](./zum/README.md) describes deployment and provisioning. |
 | [zv](./zv/EGM.md) | Configuration file I/O and runtime parameter adaptation. |
 | [zws](./zws/EGM.md) | WebSocket framing and HTTP transport adaptation, with command-line client/server programs and a loopback benchmark. |
-| [zxdp](./zxdp/EGM.md) | Linux AF_XDP raw packet service and packet validation utilities. Application protocol adaptation and scheduling remain outside the library; its boundary covers arenas, packet allocation/return, kernel rings, receive/wake, and retirement. |
+| [zpkt](./zpkt/EGM.md) | Linux AF_XDP raw packet service and packet validation utilities. Application protocol adaptation and scheduling remain outside the library; its boundary covers arenas, packet allocation/return, kernel rings, receive/wake, and retirement. |
 
 ## Global Invariants
 

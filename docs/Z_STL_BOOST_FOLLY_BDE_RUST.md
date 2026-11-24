@@ -112,7 +112,7 @@ horizontally to compare columns.
   - [Logging and assertions](#logging-and-assertions)
   - [Resource tuning](#resource-tuning)
   - [I/O telemetry](#io-telemetry)
-- [Zxdp - Linux AF_XDP packet I/O](#zxdp---linux-af_xdp-packet-io)
+- [Zpkt - Linux AF_XDP packet I/O](#zpkt---linux-af_xdp-packet-io)
   - [Registered packet storage](#registered-packet-storage)
   - [Raw packet I/O and service](#raw-packet-io-and-service)
 - [Zutcp - User-mode TCP/IP stack](#zutcp---user-mode-tcpip-stack)
@@ -4671,11 +4671,11 @@ The STL has no C++23 socket/event-loop API.
 </tbody>
 </table>
 
-# Zxdp - Linux AF_XDP packet I/O
+# Zpkt - Linux AF_XDP packet I/O
 
 ## Registered packet storage
 
-Sources: [module guide](../zxdp/README.md), [public headers](https://github.com/kaldron-labs/z/blob/main/zxdp/src/).
+Sources: [module guide](../zpkt/README.md), [public headers](https://github.com/kaldron-labs/z/blob/main/zpkt/src/).
 Linux-only; excluded from Windows builds.
 
 <table>
@@ -4689,7 +4689,7 @@ Linux-only; excluded from Windows builds.
 </thead>
 <tbody>
 <tr valign="top">
-  <td><a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/ZxdpAlloc.hh"><code>Zxdp::PoolParams</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/ZxdpAlloc.hh"><code>BufPool</code></a><br>➕ caller-owned intrusive pools over registered Rx/Tx arenas<br>➕ exhaustion returns null without replacement allocation<br>➕ allocation and kernel leases independently protect backing</td>
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/ZpktAlloc.hh"><code>Zpkt::PoolParams</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/ZpktAlloc.hh"><code>BufPool</code></a><br>➕ caller-owned intrusive pools over registered Rx/Tx arenas<br>➕ exhaustion returns null without replacement allocation<br>➕ allocation and kernel leases independently protect backing</td>
   <td>N/A</td>
   <td>Partial: <a href="https://github.com/boostorg/pool/blob/master/include/boost/pool/pool.hpp">Boost.Pool</a></td>
   <td>Partial: <a href="https://docs.rs/xsk-rs/latest/xsk_rs/umem/struct.Umem.html"><code>xsk_rs::Umem</code></a>, <a href="https://docs.rs/xdp/latest/xdp/"><code>xdp</code></a></td>
@@ -4710,13 +4710,13 @@ Linux-only; excluded from Windows builds.
 </thead>
 <tbody>
 <tr valign="top">
-  <td><a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh"><code>Zxdp::Params</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh"><code>Instance</code></a><br>➕ direct AF_XDP packet submission and receive over one interface<br>➕ optional destination-mask steering with host-stack coexistence<br>➖ Linux AF_XDP and suitable kernel/driver support required</td>
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh"><code>Zpkt::Params</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh"><code>Instance</code></a><br>➕ direct AF_XDP packet submission and receive over one interface<br>➕ optional destination-mask steering with host-stack coexistence<br>➖ Linux AF_XDP and suitable kernel/driver support required</td>
   <td>N/A</td>
   <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a></td>
   <td>Partial: <a href="https://docs.rs/xsk-rs/latest/xsk_rs/socket/struct.Socket.html"><code>xsk_rs::Socket</code></a>, <a href="https://docs.rs/xdp/latest/xdp/"><code>xdp</code></a></td>
 </tr>
 <tr valign="top">
-  <td><a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L62"><code>Zxdp::Instance::rx</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L65"><code>wake</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L66"><code>pollTx</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh#L70"><code>close</code></a><br>➕ configurable spin-before-epoll receive service and explicit wake<br>➕ bounded Tx retirement with retryable kernel-safe close</td>
+  <td><a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh#L62"><code>Zpkt::Instance::rx</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh#L65"><code>wake</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh#L66"><code>pollTx</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh#L70"><code>close</code></a><br>➕ configurable spin-before-epoll receive service and explicit wake<br>➕ bounded Tx retirement with retryable kernel-safe close</td>
   <td>N/A</td>
   <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a></td>
   <td>Partial: <a href="https://docs.rs/xsk-rs/latest/xsk_rs/"><code>xsk-rs</code></a></td>
@@ -4750,7 +4750,7 @@ BDE supplies general utilities; the NTF socket APIs below use OS networking.
 </thead>
 <tbody>
 <tr valign="top">
-  <td>Planned user-mode stack:<br><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh"><code>Zutcp::Stack</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh"><code>StackParams</code></a><br>➕ user-mode TCP/IP stack over <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh">Zxdp</a>, integrated with <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh">ZiMultiplex</a> and ordinary <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh">Zi</a> application interfaces<br>➕ protocol Rx/Tx work runs on the mx owners<br>➖ requires a configured interface and raw packet privileges</td>
+  <td>Planned user-mode stack:<br><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh"><code>Zutcp::Stack</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpMx.hh"><code>StackParams</code></a><br>➕ user-mode TCP/IP stack over <a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh">Zpkt</a>, integrated with <a href="https://github.com/kaldron-labs/z/blob/main/zi/src/ZiMultiplex.hh">ZiMultiplex</a> and ordinary <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh">Zi</a> application interfaces<br>➕ protocol Rx/Tx work runs on the mx owners<br>➖ requires a configured interface and raw packet privileges</td>
   <td>No TCP/IP stack.</td>
   <td>No user-mode stack; <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/overview/basics.html"><code>Boost.Asio</code></a> wraps OS sockets.</td>
   <td>No user-mode stack; <a href="https://github.com/facebook/folly/blob/main/folly/io/async/AsyncSocket.h"><code>folly::AsyncSocket</code></a> wraps OS sockets.</td>
@@ -4758,7 +4758,7 @@ BDE supplies general utilities; the NTF socket APIs below use OS networking.
   <td>User-mode TCP/IP: <a href="https://docs.rs/smoltcp/latest/smoltcp/"><code>smoltcp</code></a>; device integration required.</td>
 </tr>
 <tr valign="top">
-  <td>Planned user-mode packet storage:<br><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpAlloc.hh"><code>Zutcp::Allocator</code></a> and packet geometry<br>➕ <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh">Zi</a> providers over caller-owned <a href="https://github.com/kaldron-labs/z/blob/main/zxdp/src/Zxdp.hh">Zxdp</a> pools, with in-place wire construction<br>➕ separate control capacity and bounded ingress retention</td>
+  <td>Planned user-mode packet storage:<br><a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/ZutcpAlloc.hh"><code>Zutcp::Allocator</code></a> and packet geometry<br>➕ <a href="https://github.com/kaldron-labs/z/blob/main/zutcp/src/Zutcp.hh">Zi</a> providers over caller-owned <a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh">Zpkt</a> pools, with in-place wire construction<br>➕ separate control capacity and bounded ingress retention</td>
   <td>No TCP/IP stack.</td>
   <td>Buffer utilities only; <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/overview/basics.html"><code>Boost.Asio</code></a> supplies no user-mode stack.</td>
   <td>Buffer utility only: <a href="https://github.com/facebook/folly/blob/main/folly/io/IOBuf.h"><code>folly::IOBuf</code></a>; no TCP/IP stack.</td>

@@ -222,6 +222,7 @@ static int run(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
+  ZmRef<Zpkt::Env> env = new Zpkt::Env;
   ZiMultiplex mx(
       ZiMxParams()
 	.scheduler([](auto &s) {
@@ -239,7 +240,7 @@ static int run(int argc, char **argv)
   }
   if (const char *delay = getenv("ZUTCP_TEST_TLP_DELAY_US"))
     params.tlpPeerAckDelay(Zutcp::timeUS(ZuBox<unsigned>(delay)));
-  auto instance = ZutcpTest::makeInstance(&mx, interface, 4, params.config());
+  auto instance = ZutcpTest::makeInstance(env, &mx, interface, 4, params.config());
   auto stack = instance.ptr();
   mx.plugin(ZuMv(instance));
   ZmRef<App> appRef = new App{stack, request};
@@ -474,6 +475,7 @@ static int run(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
+  ZmRef<Zpkt::Env> env = new Zpkt::Env;
   ZiMultiplex mx(
       ZiMxParams()
 	.scheduler([](auto &s) {
@@ -491,7 +493,7 @@ static int run(int argc, char **argv)
   }
   if (const char *delay = getenv("ZUTCP_TEST_TLP_DELAY_US"))
     params.tlpPeerAckDelay(Zutcp::timeUS(ZuBox<unsigned>(delay)));
-  auto instance = ZutcpTest::makeInstance(&mx, interface, 4, params.config());
+  auto instance = ZutcpTest::makeInstance(env, &mx, interface, 4, params.config());
   auto stack = instance.ptr();
   mx.plugin(ZuMv(instance));
   ZmRef<App> appRef = new App{stack, server, port, count, waitEOF};
@@ -976,19 +978,20 @@ static int run(int argc, char **argv)
     return 1;
   }
   Result result;
+  ZmRef<Zpkt::Env> env = new Zpkt::Env;
   ZiMultiplex mx{ZiMxParams().scheduler([](auto &s) {
     s.nThreads(4).thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
       .thread(4, [](auto &t) { t.isolated(true); });
   }).rxThread(1).txThread(2)};
-  auto xdp = ZutcpTest::openXdp(&mx, interface, 4);
+  auto xdp = ZutcpTest::openXdp(env, &mx, interface, 4);
   auto payload = Zutcp::tcpPayload(xdp->mtu(), address.type());
   auto params = ZutcpTest::Params{&mx};
   options(params);
   if (server && getenv("ZUTCP_KERNEL_READ_GATE")) params.maxData(4096);
   bool windowClient = !server && getenv("ZUTCP_KERNEL_WINDOW_CLIENT");
   if (windowClient) params.maxPayload(payload).sackPermitted(false).timestamps(true);
-  auto instance = ZutcpTest::makeInstance(&mx, ZuMv(xdp), params.config());
+  auto instance = ZutcpTest::makeInstance(env, &mx, ZuMv(xdp), params.config());
   auto stack = instance.ptr();
   mx.plugin(ZuMv(instance));
   if (server) {
@@ -1114,7 +1117,7 @@ int main(int argc, char **argv)
   if (argc > 1 && !strcmp(argv[1], "--protocol-pair"))
     return ProtocolPair::run(argc - 1, argv + 1);
   parse(argc, argv);
-  if (geteuid() || !getenv("ZXDP_RUN_FIXTURE")) {
+  if (geteuid() || !getenv("ZPKT_RUN_FIXTURE")) {
     std::cout << "1..0 # SKIP requires privileged private namespace fixture\n";
     return 0;
   }

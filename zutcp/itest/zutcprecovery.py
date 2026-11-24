@@ -376,7 +376,7 @@ def selector_evidence(directory, frontier=None):
 
 def inject(filename):
     """Inject an interior standard TCP ACK from a real receiver header."""
-    if (os.environ.get('ZXDP_RUN_FIXTURE') != '1' or
+    if (os.environ.get('ZPKT_RUN_FIXTURE') != '1' or
             os.readlink('/proc/self/ns/net') == os.readlink('/proc/1/ns/net')):
         raise RuntimeError('requires the private native packet fixture')
     out = Path(filename)
@@ -720,7 +720,7 @@ def fin_window_packet(frame, origins):
 
 def fin_window_probe(directory, interface):
     out = Path(directory)
-    assert os.environ.get('ZXDP_RUN_FIXTURE') == '1'
+    assert os.environ.get('ZPKT_RUN_FIXTURE') == '1'
     assert os.readlink('/proc/self/ns/net') != os.readlink('/proc/1/ns/net')
     initiator = int((out / 'fin-window-role').read_text())
     origins = WireOrigins()
@@ -971,7 +971,7 @@ def tcp_sacks(tcp, base):
 
 def abort_inject(directory, interface):
     out = Path(directory)
-    assert os.environ.get('ZXDP_RUN_FIXTURE') == '1'
+    assert os.environ.get('ZPKT_RUN_FIXTURE') == '1'
     assert os.readlink('/proc/self/ns/net') != os.readlink('/proc/1/ns/net')
     victim = int((out / 'abort-victim').read_text())
     rx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
@@ -1217,7 +1217,7 @@ def conservative_tuple(directory):
 
 def positive_window_probe(directory, interface):
     out = Path(directory)
-    assert os.environ.get('ZXDP_RUN_FIXTURE') == '1'
+    assert os.environ.get('ZPKT_RUN_FIXTURE') == '1'
     assert os.readlink('/proc/self/ns/net') != os.readlink('/proc/1/ns/net')
     rx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
     rx.bind((interface, 0))

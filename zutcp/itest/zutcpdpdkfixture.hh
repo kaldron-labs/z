@@ -9,11 +9,11 @@
 
 #include <zlib/Zutcp.hh>
 
-#include "zxdpdkfixture.hh"
+#include "zpktdkfixture.hh"
 
 namespace ZutcpDpdkTest {
 
-using Result = ZxdpDpdkTest::Result;
+using Result = ZpktDpdkTest::Result;
 
 struct Link {
   const char *ring, *name, *mac;
@@ -31,9 +31,9 @@ inline constexpr Link Links[] = {
 };
 
 struct Fixture {
-  ZxdpDpdkTest::Runtime runtime;
-  ZxdpDpdkTest::RingPort ports[2];
-  ZxdpDpdkTest::Wire wire;
+  ZpktDpdkTest::Runtime runtime;
+  ZpktDpdkTest::RingPort ports[2];
+  ZpktDpdkTest::Wire wire;
   unsigned ifindex[2]{};
 
   Result network();
@@ -42,7 +42,7 @@ struct Fixture {
   void drain();
 };
 
-Zxdp::Params deviceParams(const char *port, unsigned ifindex);
+
 Zutcp::Instance::Params tcpParams();
 void failAllocation(unsigned call);
 bool allocationFailed();

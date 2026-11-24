@@ -91,7 +91,7 @@ static ZiMxParams muxParams() {
 #endif
     .scheduler([](auto &s) {
 #ifdef ZFIX_LOAD_AFXDP
-    s.nThreads(5).thread(5, [](auto &t) { t.isolated(true).name("zxdpTx"); });
+    s.nThreads(5).thread(5, [](auto &t) { t.isolated(true).name("zpktTx"); });
 #else
     s.nThreads(4);
 #endif
@@ -104,7 +104,7 @@ template <typename Net> static int server(const Options &options, Ports ports) {
   NativeState state{options, ZuMv(ports), true};
   ZiMultiplex mx{muxParams()};
 #ifdef ZFIX_LOAD_AFXDP
-  if (!attachAFXDP(mx, Net::Encrypted)) return 1;
+  if (!attachAFXDP(state.env, mx, Net::Encrypted)) return 1;
 #endif
   auto deadline = Zm::now(options.deadline); auto start = monotonic();
   using Hub = NativeHub<Net, false>;
@@ -177,7 +177,7 @@ template <typename Net> static int client(const Options &options, Ports ports) {
   NativeHub<Net, true> hub{&state};
   ZiMultiplex mx{muxParams()};
 #ifdef ZFIX_LOAD_AFXDP
-  if (!attachAFXDP(mx, Net::Encrypted)) return 1;
+  if (!attachAFXDP(state.env, mx, Net::Encrypted)) return 1;
 #endif
   auto deadline = Zm::now(options.deadline);
   typename Net::ClientParams params{&mx, "3", "4"};

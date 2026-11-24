@@ -1,0 +1,11 @@
+METASOURCES = AUTO
+SUBDIRS = src xdp
+if DPDK
+SUBDIRS += dpdk
+endif
+SUBDIRS += test util itest
+
+.PHONY: test
+test: all
+	$(MAKE) $(AM_MAKEFLAGS) -C test test
+	$(MAKE) $(AM_MAKEFLAGS) -C itest test

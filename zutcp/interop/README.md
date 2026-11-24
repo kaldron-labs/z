@@ -9,7 +9,7 @@ same Instance-owned protocol/pool state; there is no kernel socket fallback.
 
 Build `zutcp/util` and `zutcp/interop` after the required lower modules. Run
 `make -C zutcp/interop test` under the repository's privileged private-network
-fixture launcher with `ZXDP_RUN_FIXTURE=1`. An intentionally unavailable
+fixture launcher with `ZPKT_RUN_FIXTURE=1`. An intentionally unavailable
 privileged environment produces a visible driver skip; such a skip is not
 interoperability acceptance.
 

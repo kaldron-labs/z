@@ -1,5 +1,11 @@
 # Zutcp unit tests
 
+The shared fixture constructs its synthetic Nif with a multiplexer and loads an
+initialized Env through the test plugin. TCP receives that borrowed Env alongside
+the Nif handoff. Handoff tests preserve the caller reference on failure, consume
+it on success, and reject changed Env or TCP configuration on an empty-reference
+repeat. Pool-only tests directly construct private backend pools.
+
 ## Repair verification — 2026-11-18
 
 Verified the single-Instance repair and subsequent connection/endpoint/lifecycle
@@ -7,9 +13,9 @@ consolidation on Linux x86-64 with the configured Clang debug build, without
 sanitizers or a clean build. Rebuilt the scoped libraries, unit binaries, native
 drivers, examples, benchmark and Zfix benchmark under one eight-job make jobserver.
 
-- All unit suites passed for zu, zm, zt, ze, zf, zi, zv, zxdp, ztcp, zutcp and
-  zfix, including Zfix schema checks. Zutcp: 315 checks; Zxdp: 14 checks.
-- Privileged private-network runs passed: 110 Zutcp native cases, eight Zxdp
+- All unit suites passed for zu, zm, zt, ze, zf, zi, zv, zpkt, ztcp, zutcp and
+  zfix, including Zfix schema checks. Zutcp: 315 checks; Zpkt: 14 checks.
+- Privileged private-network runs passed: 110 Zutcp native cases, eight Zpkt
   native cases, eight Ztcp/Ztls application cases and 36 independent kernel-peer
   interoperability cases. Native tests cover both IP families, simultaneous
   client/listener roles, setup failure, listener isolation, restart, retained
@@ -57,7 +63,7 @@ views, off-thread final replacement, repeated heap growth, immediate backing reu
 and exactly one provider return. `testPacketAllocRoles` checks the same transition
 with ordinary heap-backed source packets.
 
-Live client/server coverage now runs through Instance/Zxdp in `../itest/zutcppairtest`.
+Live client/server coverage now runs through Instance/Zpkt in `../itest/zutcppairtest`.
 The former kernel-loopback runtime and completed-socket-queue cases were retired
 and archived with the native-endpoint checkpoint. Native multi-connection, idle,
 pressure and stale owner-work equivalents remain open; current green tests do not
@@ -124,7 +130,7 @@ cover unsent/duplicate ACKs, early Short input and staged reply resumption, both
 reset timings, multi-batch publication and late response evidence beyond the PN
 sample bound. Native end-to-end coverage remains in `../itest/zutcppairtest`.
 
-The live client/server setup uses this plaintext codec through Zxdp. Current
+The live client/server setup uses this plaintext codec through Zpkt. Current
 runtime acceptance lives in `../itest/zutcppairtest`. The archived loopback
 runtime covered additional multi-client and ownership regressions;
 those cases still need native equivalents. Certificate provisioning and

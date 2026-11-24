@@ -163,6 +163,7 @@ static bool service(
 {
   AppState state{native};
   ZiIP peer{peerText};
+  ZmRef<Zpkt::Env> env = new Zpkt::Env;
   ZiMultiplex mx{ZiMxParams{}.rxBufSize(128).rxThread(1).txThread(2)
     .scheduler([](auto &s) {
       s.nThreads(6).thread(6, [](auto &t) { t.isolated(true); });
@@ -170,7 +171,7 @@ static bool service(
     })};
   Zutcp::Instance *stack = nullptr;
   if (native) {
-    auto instance = ZutcpTest::makeInstance(&mx, interface, 6, {.rxRetainFramesPerCxn = 64});
+    auto instance = ZutcpTest::makeInstance(env, &mx, interface, 6, {.rxRetainFramesPerCxn = 64});
     stack = instance.ptr();
     mx.plugin(ZuMv(instance));
   }
@@ -276,7 +277,7 @@ int main(int argc, char **argv)
     return !ok;
   }
   parse(argc, argv);
-  if (geteuid() || !getenv("ZXDP_RUN_FIXTURE")) {
+  if (geteuid() || !getenv("ZPKT_RUN_FIXTURE")) {
     std::cout << "1..0 # SKIP requires private namespace fixture\n";
     return 0;
   }

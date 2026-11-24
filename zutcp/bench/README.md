@@ -1,5 +1,11 @@
 # Short FIX comparison (OQ7)
 
+The native benchmark retains an Env through multiplexer destruction. Parsed CLI
+options become a ZfCf interface map and use the dynamic `libZpkt_xdp.so` loader.
+The executable links the common library and receives its build-tree module path
+through per-target CPPFLAGS. Installed applications configure an installed soname
+or explicit module path.
+
 The [2026-11-15 performance milestone](MILESTONE.md) records the managed
 `zfix/bench/zfixbench` comparison, including kernel-relative results, validation
 and remaining tail-latency work. The direct Zi benchmark described here is a
@@ -89,7 +95,7 @@ synchronously on mx Rx during setup; sid 3 remains the XDP sender slot.
 
 ## Registration and build scope
 
-`Makefile.am` links only the existing Zu/Zm/Zt/Ze/Zf/Zi/Zxdp/Zutcp libraries.
+`Makefile.am` links only the existing Zu/Zm/Zt/Ze/Zf/Zi/Zpkt/Zutcp libraries.
 `configure.ac` registers `zutcp/bench/Makefile`, and the module traversal includes
 `bench`. Build the explicit directory after its library closure. No dependent
 library or application fixture run is introduced.

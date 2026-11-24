@@ -64,12 +64,14 @@ platform/toolchain rather than separate Z packages.
 
 Zutcp links OpenSSL libcrypto directly through `CRYPTO_LIBS` for HMAC-SHA256
 initial sequence numbers and Fast Open cookies. It does not depend on Ztls or
-libssl. Its framework closure is Zu, Zm, Zt, Ze, Zf, Zi and Zxdp.
+libssl. Its framework closure is Zu, Zm, Zt, Ze, Zf, Zi and Zpkt.
 
 ## Linux packet I/O
 
-[Zxdp](../zxdp/README.md) uses Linux AF_XDP and BPF directly, without libxdp or
-libbpf. Kernel headers must provide AF_XDP UMEM/ring offsets and need-wakeup
+[Zpkt](../zpkt/README.md) provides the common packet interface in `libZpkt`. Its
+`libZpkt_xdp` plugin uses Linux AF_XDP and BPF directly, without libxdp or
+libbpf; the optional `libZpkt_dpdk` plugin requires DPDK 25.11 or newer.
+Kernel headers must provide AF_XDP UMEM/ring offsets and need-wakeup
 flags, XDP capability queries, BPF XSK maps, expected-FD XDP attachment protection
 and socket network-namespace cookies. The running kernel must enable those
 facilities and permit the setup operations. Driver-supported zero-copy is queried
@@ -80,8 +82,8 @@ The scoped packet fixtures need root privileges (normally through sudo),
 network namespaces and their own veth/dummy links. Physical tests additionally
 need caller-provisioned interfaces, queue steering, addressing and static kernel
 neighbors on two hosts; the helper does not reconfigure those interfaces.
-See [packet setup](../zxdp/util/README.md) and
-[privileged tests](../zxdp/itest/README.md). Zutcp adds standard TCP over that
+See [packet setup](../zpkt/util/README.md) and
+[privileged tests](../zpkt/itest/README.md). Zutcp adds standard TCP over that
 packet service; see its [kernel/native quickstart](../zutcp/util/README.md).
 Native and independent-kernel fixtures also require ethtool, tcpdump and Python3.
 

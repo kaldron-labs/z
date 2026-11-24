@@ -502,7 +502,7 @@
       "libZtls-10.0.0.so": "d363fbfa366c26d8a4a1dbf92071d870ad0240787df7637009f7fff60bd89db0",
       "libZu-10.0.0.so": "67e00a6565fe3e7cea22c67010a2887319901851865917530fcc5945c041d083",
       "libZutcp-10.0.0.so": "c0be580c032f43c7a356399f8d5f5a796822266b341da4b0bf025a9146396e67",
-      "libZxdp-10.0.0.so": "29dd9abb873ea37640e5d3aae49938a4e79370253c91559d18da697bb7c1cdd8",
+      "libZpkt-10.0.0.so": "29dd9abb873ea37640e5d3aae49938a4e79370253c91559d18da697bb7c1cdd8",
       "zfixbench.bin": "df65a5dd5d8ebafff07ce7fad59a66c99a540b0ea5d8871fba65c2a25f799a4f"
     },
     "benchmark_source_sha256": "4cddfb7f74dbdd566f647c32fc13926a8ff1742faf362f5be0d63fc4c6fbfd60",

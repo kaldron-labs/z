@@ -14,7 +14,9 @@ using raw kernel sockets continue to use the kernel until adapted to Zi/Ztcp. `z
 ## Select the transport before requesting allocators
 
 The application configures the XDP sender slot before constructing the
-multiplexer. Initialize XDP on that stopped multiplexer, move it into Zutcp,
+multiplexer. Retain an intrusive `Zpkt::Env` before that multiplexer, initialize
+it from the selected module Cf, and open an initialized Nif with
+`env->nif(&mx, name)`. Move its reference into `tcp->init(&mx, env, ZuMv(nif), params)`
 and move the initialized Zutcp plugin into the multiplexer before requesting
 any allocators. The [application integration example](../README.md#application-integration)
 shows both transfers and the structured error checks.
@@ -43,16 +45,19 @@ The [FIX benchmark](../bench/README.md) uses the mapped ZiConnection application
 
 Stop application work and listeners, drain callbacks, then stop mx. Return all
 dependent buffers before destroying mx. The multiplexer finalizes Zutcp, which
-finalizes the packet device and releases the backing.
+finalizes the packet device and releases the backing. Release external Nif
+references and finalize Env before releasing its final reference. TCP borrows
+Env and never calls its final operation.
 
-For DPDK, initialize EAL explicitly and select `Zxdp::Type::Dpdk`. The
-device parameters carry the DPDK port name, the Linux routing-interface
-index, and the optional idle interval. Use a control-plane link with the
-same MTU and MAC as the port. Install routes with that output interface and
-permanent neighbors for the next hops. Keep the same stopped device/plugin
-handoffs and typed Tx and per-endpoint Rx allocation. The existing utility
-commands use AF_XDP with the topology shown below. The DPDK bootstrap and
-software fixture use matching dummy control-plane links.
+For DPDK, select `libZpkt_dpdk.so` through Env's `module` configuration. Its
+Plugin owns and initializes EAL from the `eal` child. Each `interfaces` map key
+names the Linux routing Nif; the entry's required `port` names the independent
+native Ethernet port and `rxInterval` optionally controls idle waits. Env queries
+the Linux identity and geometry once. Configure routes and permanent neighbors
+on that link; the backend trusts the configured pairing without Linux/native
+MTU/MAC equality checks. Keep the same stopped Nif/TCP handoff and typed Tx and
+per-endpoint Rx allocation. The utility commands below select AF_XDP. Native
+software fixtures create dummy kernel Nifs even for simulated packet service.
 See the [DPDK bootstrap](../README.md#dpdk-device-selection) and
 [DPDK test commands](../itest/README.md#dpdk-software-fixture).
 
@@ -63,9 +68,11 @@ release tree, configure and build this explicit closure unprivileged:
 
 ```sh
 ./z.config -c -L /chosen/install/prefix
-for module in zu zm zt ze zf zi zv zxdp ztcp zutcp; do
+for module in zu zm zt ze zf zi zv zpkt ztcp zutcp; do
   make -C "$module/src" -j8 || exit
 done
+make -C zpkt/xdp -j8
+# Build zpkt/dpdk here as well when DPDK is enabled in this configuration.
 make -C zi/test -j8 libZiTest.la
 make -C zutcp/util -j8
 make -C zutcp/example -j8
@@ -89,7 +96,7 @@ sudo -n unshare --net bash zutcp/util/zutcpfixture.sh \
 
 This uses the existing configured build; it does not configure or rebuild libraries
 under sudo. The outer launcher creates only private fixture links and exports the
-existing `ZXDP_*` fixture variables. Each interoperability case creates its own
+existing `ZPKT_*` fixture variables. Each interoperability case creates its own
 endpoint namespaces, static neighbors and routes, then cleans them up. No local
 `review_context` file is needed. Success requires the actual native endpoint and
 real Linux kernel peer, exact request/echo and FIN/drain, with recorded backend,
@@ -106,7 +113,7 @@ sudo -n unshare --net bash zutcp/util/zutcpfixture.sh \
     zutcppairtest zutcppooltest zutcpstacktest zutcpiptest zutcpmxtest'
 ```
 
-The same launcher can run existing `zxdp/test` and `zxdp/itest` targets. A skipped
+The same launcher can run existing `zpkt/test` and `zpkt/itest` targets. A skipped
 privileged case is not a successful native/backend test. Required fixture tools
 include sudo/root, unshare, iproute2, ethtool, tcpdump, Bash, Python3 and Perl/prove.
 The kernel must supply usable AF_XDP/BPF and namespace facilities; see

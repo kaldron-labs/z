@@ -224,24 +224,53 @@ private:
 
 using Owners = ZtArray<ZmRef<Cxn>, ZtArrayHeapID<"Zutcp.Bench.Owners">>;
 
-class App : public ZiMultiplex {
+static ZuUnion<Zpkt::Nif *, ZeException> openNif(
+  Zpkt::Env *env, ZiMultiplex *mx, ZuCSpan name, unsigned sender, unsigned spin = 1000)
+{
+  using Node = ZfCf::AnyNode;
+  auto root = ZfCf::newNode<Node::Object>(nullptr);
+  auto interfaces = ZfCf::newNode<Node::Object>(root.ptr());
+  auto nif = ZfCf::newNode<Node::Object>(interfaces.ptr());
+  auto value = [](Node *parent, ZuCSpan key, auto value) {
+    Node::String text;
+    text << value;
+    parent->data<Node::Object>().push(Node::Field{
+      key, ZfCf::newNode<Node::String>(parent, ZuMv(text))});
+  };
+  value(root.ptr(), "module", ZUTCP_XDP_MODULE);
+  value(nif.ptr(), "txSid", sender);
+  value(nif.ptr(), "spin", spin);
+  interfaces->data.push(Node::Field{name, ZuMv(nif)});
+  root->data.push(Node::Field{"interfaces", ZuMv(interfaces)});
+  try { env->init(root.ptr()); }
+  catch (ZeException &e) { return ZuMv(e); }
+  return env->nif(mx, name);
+}
+
+struct XdpEnvOwner {
+  ZmRef<Zpkt::Env> env = new Zpkt::Env;
+};
+
+class App : private XdpEnvOwner, public ZiMultiplex {
 public:
   explicit App(const Config &config, ZiMxParams params) :
     ZiMultiplex{ZuMv(params)}, m_config{config} {
     if (config.native) {
-      auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
-      Zxdp::Params xdpParams{Zxdp::Xdp::Params{
-        .ifindex = config.interface, .spin = config.spin, .txSid = 3}};
-      auto opened = xdp->init(this, xdpParams);
+      char name[IF_NAMESIZE];
+      if (!if_indextoname(config.interface, name)) { m_failed = 1; return; }
+      auto opened = openNif(env, this, static_cast<const char *>(name), 3, config.spin);
       if (opened.is<ZeException>()) {
         ZiLogEvent(ZuMv(opened).p<ZeException>());
         m_failed = 1;
         return;
       }
+      ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
       Zutcp::Instance::Params settings{.packetCount = config.reserve};
       ZmRef<Zutcp::Instance> instance = new Zutcp::Instance;
-      auto initialized = instance->init(this, ZuMv(xdp), settings);
+      auto initialized = instance->init(this, env, ZuMv(xdp), settings);
       if (initialized.is<ZeException>()) {
+	xdp->final();
+	if (auto error = xdp->error()) ZiLogEvent(ZuMv(error));
         ZiLogEvent(ZuMv(initialized).p<ZeException>());
         m_failed = 1;
         return;

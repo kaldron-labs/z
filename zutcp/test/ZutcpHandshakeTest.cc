@@ -17,6 +17,7 @@
 #include <zlib/Zutcp.hh>
 
 #include "ZutcpTestInstance.hh"
+#include "ZpktPool.hh"
 
 using namespace ZuTestUtil;
 
@@ -1114,8 +1115,8 @@ static void testEarlyWriterReadiness(unsigned scenario)
   ZmRef<EarlyBacking> backing = new EarlyBacking;
   Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP, ZiIOBuf, 512> allocator{
     app.mx(), backing};
-  auto factory = Zxdp::instance(Zxdp::Type::Xdp);
-  auto pool = factory->bufPool(Zi::IOBufType::TxTCP, 1, sizeof(backing->bytes));
+  ZmRef<Zi::IOBufPool> pool =
+    new Zpkt::Xdp::BufPool{Zi::IOBufType::TxTCP, 1, sizeof(backing->bytes)};
   app.testTx = &allocator; app.testPool = pool;
   ZmRef<GateCxn> link = new GateCxn{&app};
   Zutcp::TCPStateTest::stageEarly(*link);

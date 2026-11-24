@@ -55,14 +55,16 @@ AFXDP_TARGETS = afxdp-programs
 EXTRA_PROGRAMS = afxdp_zfix afxdp_zfixd
 EXTRA_LTLIBRARIES = libZfixLoadAFXDP.la
 libZfixLoadAFXDP_la_SOURCES = ../util/load_native.cc
-libZfixLoadAFXDP_la_CPPFLAGS = $(AM_CPPFLAGS) -DZFIX_LOAD_AFXDP \
+libZfixLoadAFXDP_la_CPPFLAGS = -I$(top_srcdir)/zpkt/test \
+	-DZFIX_XDP_MODULE='"$(abs_top_builddir)/zpkt/xdp/.libs/libZpkt_xdp.so"' \
+	$(AM_CPPFLAGS) -DZFIX_LOAD_AFXDP \
 	-I$(top_srcdir)/zfix/src -I$(top_srcdir)/ztcp/src -I$(top_srcdir)/ztls/src \
-	-I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zxdp/src
+	-I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zpkt/src
 AFXDP_LDADD = libZfixLoadAFXDP.la $(top_builddir)/zfix/util/libZfixLoadFIX.la \
 	$(top_builddir)/zfix/util/libZfixLoad.la $(top_builddir)/zfix/src/libZfix.la \
 	$(top_builddir)/zfix/src/libZfixFmt.la $(top_builddir)/ztls/src/libZtls.la \
 	$(top_builddir)/ztcp/src/libZtcp.la $(top_builddir)/zutcp/src/libZutcp.la \
-	$(top_builddir)/zxdp/src/libZxdp.la $(top_builddir)/zi/src/libZi.la \
+	$(top_builddir)/zpkt/src/libZpkt.la $(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@

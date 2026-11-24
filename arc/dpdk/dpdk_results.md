@@ -38,7 +38,7 @@ With a pkg-config search path containing the baseline dependencies and omitting
 `libdpdk.pc`, explicit `--with-dpdk=yes` failed at the DPDK dependency check.
 
 Checkpoint 1 passed both complete top-level Clang release builds.
-The disabled `libZxdp` had no DPDK dynamic dependency. The enabled Zxdp
+The disabled `libZpkt` had no DPDK dynamic dependency. The enabled Zpkt
 unit target passed 15 top-level TAP tests across five programs, including
 the explicit EAL subprocess driver. The independent Release QuickFIX SDK
 built with Clang under the same eight-slot jobserver as the enabled build.
@@ -55,7 +55,7 @@ across IPv4 and IPv6 TCP, UDP and mixed traffic.
 
 The baseline AF_XDP regression run passed 89 tests across the five native
 Zutcp drivers and eight more across the Ztcp and Ztls application drivers.
-The standalone Zxdp packet, classifier, wake and loopback runs passed nine
+The standalone Zpkt packet, classifier, wake and loopback runs passed nine
 top-level TAP tests. A separate Zfix AF_XDP diagnostic covered 76 canonical
 TCP and TLS process cases with the pinned Debug QuickFIX SDK.
 
@@ -66,8 +66,8 @@ are under `/home/ubuntu/rebuild-evidence/dpdk-20261119`.
 
 | Check | TAP files | TAP tests | Result |
 | --- | ---: | ---: | --- |
-| Disabled Zxdp with the DPDK selector | 4 | 14 | Pass |
-| Enabled Zxdp unit target | 6 | 17 | Pass |
+| Disabled Zpkt with the DPDK selector | 4 | 14 | Pass |
+| Enabled Zpkt unit target | 6 | 17 | Pass |
 | DPDK packet, wake and loop drivers | 3 | 8 | Pass |
 | Final Zutcp unit target | 22 | 319 | Pass |
 | Zutcp DPDK integration | 1 | 1 | Pass, 133 nested TAP assertions |

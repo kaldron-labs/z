@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Plain, managed FIX over Zi kernel TCP or Zutcp/Zxdp.
+// Plain, managed FIX over Zi kernel TCP or Zutcp/Zpkt.
 #include "config.h"
 
 #include <net/if.h>
@@ -41,9 +41,6 @@
 #include <zlib/ZfixClient.hh>
 #include <zlib/ZfixServer.hh>
 #include <zlib/Zutcp.hh>
-#ifdef HAVE_DPDK
-#include <zlib/ZxdpDpdk.hh>
-#endif
 
 namespace FixBench {
 
@@ -1294,7 +1291,7 @@ static bool run(const Config &c) {
   bool afxdp = !strcmp(c.backend, "native");
   unsigned senderSid = 3;
   ZmSchedTParams sender;
-  sender.isolated(true).name("zxdpTx");
+  sender.isolated(true).name("zpktTx");
   ZmBitmap senderCPU;
   senderCPU.set(c.xdpTxCPU < 0 ? c.rxCPU : unsigned(c.xdpTxCPU));
   sender.cpuset(senderCPU);
@@ -1310,6 +1307,7 @@ static bool run(const Config &c) {
       s.thread(senderSid) = sender;
     });
   auto requestHash = params.requestHash();
+  ZmRef<Zpkt::Env> env = new Zpkt::Env;
   ZiMultiplex mx{ZuMv(params)};
   std::cout << "config backend=" << c.backend
     << " rx_cpu=" << c.rxCPU << " tx_cpu=" << c.txCPU
@@ -1327,41 +1325,53 @@ static bool run(const Config &c) {
     << " congestion_control=" << unsigned(!c.native || c.congestionControl)
     << " offer_rate=" << c.offers.rate << " pending_cap=" << c.offers.cap << '\n';
   if (c.native) {
-    Zxdp::Params xdpParams{Zxdp::Xdp::Params{
-      .ifindex = c.interface, .spin = c.spin, .txSid = senderSid}};
-#ifdef HAVE_DPDK
-    if (!afxdp) {
+    using Node = ZfCf::AnyNode;
+    auto root = ZfCf::newNode<Node::Object>(nullptr);
+    auto interfaces = ZfCf::newNode<Node::Object>(root.ptr());
+    auto nif = ZfCf::newNode<Node::Object>(interfaces.ptr());
+    auto value = [](Node *parent, ZuCSpan key, auto value) {
+      Node::String text;
+      text << value;
+      parent->data<Node::Object>().push(Node::Field{
+	key, ZfCf::newNode<Node::String>(parent, ZuMv(text))});
+    };
+    value(root.ptr(), "module", afxdp ? ZFIX_XDP_MODULE : ZFIX_DPDK_MODULE);
+    value(nif.ptr(), "spin", c.spin);
+    if (afxdp) value(nif.ptr(), "txSid", senderSid);
+    else {
       constexpr auto port = "net_af_packet0"_z;
-      Zxdp::Dpdk::EALParams ealParams{};
-      ealParams.noPCI = ealParams.noHuge = ealParams.noShconf = ealParams.noTelemetry = true;
-      ealParams.iova = Zxdp::Dpdk::IOVA::VA;
-      ealParams.vdev.push(
-        Zxdp::Dpdk::EALParams::String{} << port << ",iface=" << c.interfaceName);
-      auto eal = Zxdp::Dpdk::EAL::instance();
-      auto initialized = eal->init(ealParams);
-      if (initialized.is<ZeException>()) {
-	ZiLogEvent(ZuMv(initialized).p<ZeException>());
-	return false;
-      }
-      Zxdp::Dpdk::Params dpdkParams;
-      dpdkParams.name = port;
-      dpdkParams.ifindex = c.interface;
-      dpdkParams.spin = c.spin;
-      xdpParams = ZuMv(dpdkParams);
+      value(nif.ptr(), "port", port);
+      auto eal = ZfCf::newNode<Node::Object>(root.ptr());
+      for (auto flag : {"noPCI", "noHuge", "noShconf", "noTelemetry"})
+	value(eal.ptr(), flag, "true");
+      value(eal.ptr(), "iova", "va");
+      auto vdev = ZfCf::newNode<Node::Array>(eal.ptr());
+      Node::String native;
+      native << port << ",iface=" << c.interfaceName;
+      vdev->data.push(ZfCf::newNode<Node::String>(vdev.ptr(), ZuMv(native)));
+      eal->data.push(Node::Field{"vdev", ZuMv(vdev)});
+      root->data.push(Node::Field{"eal", ZuMv(eal)});
     }
-#endif
-    auto xdp = Zxdp::instance(afxdp ? Zxdp::Type::Xdp : Zxdp::Type::Dpdk);
-    auto opened = xdp->init(&mx, xdpParams);
+    char name[IF_NAMESIZE];
+    if (!if_indextoname(c.interface, name)) return false;
+    interfaces->data.push(Node::Field{static_cast<const char *>(name), ZuMv(nif)});
+    root->data.push(Node::Field{"interfaces", ZuMv(interfaces)});
+    try { env->init(root.ptr()); }
+    catch (ZeException &e) { ZiLogEvent(e); return false; }
+    auto opened = env->nif(&mx, static_cast<const char *>(name));
     if (opened.is<ZeException>()) {
       ZiLogEvent(ZuMv(opened).p<ZeException>());
       return false;
     }
+    ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
     Zutcp::Instance::Params settings{.packetCount = c.reserve,
       .ackHoldTimeout = ZuTime{0, int32_t(c.ackHoldUS * 1000)},
       .congestionControl = c.congestionControl};
     ZmRef<Zutcp::Instance> stack = new Zutcp::Instance;
-    auto initialized = stack->init(&mx, ZuMv(xdp), ZuMv(settings));
+    auto initialized = stack->init(&mx, env, ZuMv(xdp), ZuMv(settings));
     if (initialized.is<ZeException>()) {
+      xdp->final();
+      if (auto error = xdp->error()) ZiLogEvent(ZuMv(error));
       ZiLogEvent(ZuMv(initialized).p<ZeException>());
       return false;
     }
@@ -1547,12 +1557,7 @@ int main(int argc, char **argv) {
   c.backend = argv[2];
   c.native = !strcmp(c.backend, "native");
   if (!strcmp(c.backend, "dpdk")) {
-#ifdef HAVE_DPDK
     c.native = true;
-#else
-    std::cerr << "DPDK support is disabled in this build\n";
-    return 2;
-#endif
   } else if (!c.native && strcmp(c.backend, "kernel")) return 2;
   c.interfaceName = argv[3];
   c.interface = if_nametoindex(c.interfaceName); c.address = ZiIP{argv[4]};

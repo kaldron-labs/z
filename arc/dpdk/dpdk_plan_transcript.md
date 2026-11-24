@@ -4,7 +4,7 @@ Selected excerpts from the DPDK planning conversation.
 
 ## User
 
-$egm:egm-brainstorm in `Zxdp.hh` virtualize `Zxdp::Instance` API, add `ZtEnumNS(uint8_t, Backend, AF_XDP, DPDK);`; add `Backend::T backend` to `Zxdp::Params`; virtualize `Zxdp::Instance` (deletes `InstanceData *m_data`, `rx` etc. become pure virtual), add a factory function `ZmRef<Instance> instance(const Params &params);` to create an instance and return it (takes `Params`, switches on `backend`, creates the appropriate derived instance); add `DPDK` alongside `AF_XDP` in `zxdp` (the `AF_XDP` implementation is a great reference for `DPDK`); add `DPDK` tests using software loopback pcap ring per `dpdk_loopback.md`
+$egm:egm-brainstorm in `Zpkt.hh` virtualize `Zpkt::Instance` API, add `ZtEnumNS(uint8_t, Backend, AF_XDP, DPDK);`; add `Backend::T backend` to `Zpkt::Params`; virtualize `Zpkt::Instance` (deletes `InstanceData *m_data`, `rx` etc. become pure virtual), add a factory function `ZmRef<Instance> instance(const Params &params);` to create an instance and return it (takes `Params`, switches on `backend`, creates the appropriate derived instance); add `DPDK` alongside `AF_XDP` in `zpkt` (the `AF_XDP` implementation is a great reference for `DPDK`); add `DPDK` tests using software loopback pcap ring per `dpdk_loopback.md`
 
 ## Assistant
 
@@ -150,19 +150,19 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
 
 ## Activity
 
-    $ git status --short; git config user.name; rg --files -g 'Zxdp.hh' -g '*dpdk*' -g 'GUIDELINES.md' -g 'AGENTS.md' -g 'BUILD.md'
+    $ git status --short; git config user.name; rg --files -g 'Zpkt.hh' -g '*dpdk*' -g 'GUIDELINES.md' -g 'AGENTS.md' -g 'BUILD.md'
      M docs/Z_STL_BOOST_FOLLY_BDE_RUST.md
      M gtags.conf
-     M zxdp/README.md
-     M zxdp/itest/zxdppackettest.cc
-     M zxdp/itest/zxdpwaketest.cc
-     M zxdp/src/Zxdp.cc
-     M zxdp/src/Zxdp.hh
-     M zxdp/util/zxdppacket.cc
+     M zpkt/README.md
+     M zpkt/itest/zpktpackettest.cc
+     M zpkt/itest/zpktwaketest.cc
+     M zpkt/src/Zpkt.cc
+     M zpkt/src/Zpkt.hh
+     M zpkt/util/zpktpacket.cc
     Huw Rogers
     AGENTS.md
-    zxdp/src/Zxdp.hh
-    zxdp/GUIDELINES.md
+    zpkt/src/Zpkt.hh
+    zpkt/GUIDELINES.md
     zquic/GUIDELINES.md
     docs/BUILD.md
     docs/GUIDELINES.md
@@ -172,7 +172,7 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
 
 ## Activity
 
-    $ cat docs/GUIDELINES.md zxdp/GUIDELINES.md
+    $ cat docs/GUIDELINES.md zpkt/GUIDELINES.md
     # Z framework engineering principles
     
     Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
@@ -232,7 +232,7 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
       - conformance policing is a non-goal
       - elide all excessive correctness and validation in favor of performance
       - this principle applied to all protocols and formats for maximum resilience
-    # Zxdp implementation rules
+    # Zpkt implementation rules
     
     Follow the repository guidance in ../AGENTS.md and the caller-supplied
     [interface contract](INTERFACE.md). The contract supersedes earlier plans.
@@ -269,7 +269,7 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
 
 ## Activity
 
-    $ cat zxdp/src/Zxdp.hh dpdk_loopback.md
+    $ cat zpkt/src/Zpkt.hh dpdk_loopback.md
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -278,11 +278,11 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
     
     // Raw AF_XDP arena, pool and packet facilities.
     
-    #ifndef Zxdp_HH
-    #define Zxdp_HH
+    #ifndef Zpkt_HH
+    #define Zpkt_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stdint.h>
@@ -293,14 +293,14 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
     #include <zlib/ZmPolymorph.hh>
     #include <zlib/ZtString.hh>
     #include <zlib/ZePlatform.hh>
-    #include <zlib/ZxdpAlloc.hh>
+    #include <zlib/ZpktAlloc.hh>
     
-    namespace Zxdp {
+    namespace Zpkt {
     
-    using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zxdp.Receive">>;
+    using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zpkt.Receive">>;
     // Canonical backing and retired submission count. Keep repeated submissions
     // immutable until all completions; close may coalesce their remaining counts.
-    using CompleteFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zxdp.Complete">>;
+    using CompleteFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zpkt.Complete">>;
     
     struct Params {
       unsigned interface = 0; // network-interface index in the current namespace
@@ -314,7 +314,7 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
     
     // The caller drives Rx/Tx on their respective single owners. Allocation/free
     // may run on other threads. Backing stays owned by the caller through completion.
-    class ZxdpAPI Instance : public ZmPolymorph {
+    class ZpktAPI Instance : public ZmPolymorph {
     friend struct InstanceData;
     
     public:
@@ -351,8 +351,8 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
       InstanceData *m_data;
     };
     
-    } // namespace Zxdp
-    #endif /* Zxdp_HH */
+    } // namespace Zpkt
+    #endif /* Zpkt_HH */
     # Codex conversation
     
     ## User
@@ -594,19 +594,19 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
 
 ## Activity
 
-    $ cat zxdp/README.md; rg -n 'Instance|Params|rx\(|tx\(|alloc|free|init|final' zxdp/src/Zxdp.cc; rg --files zxdp; rg -n '^#' docs/CPP.md docs/IO.md docs/BUILD.md
-    # Zxdp: Linux AF_XDP packet I/O
+    $ cat zpkt/README.md; rg -n 'Instance|Params|rx\(|tx\(|alloc|free|init|final' zpkt/src/Zpkt.cc; rg --files zpkt; rg -n '^#' docs/CPP.md docs/IO.md docs/BUILD.md
+    # Zpkt: Linux AF_XDP packet I/O
     
-    Zxdp supplies raw AF_XDP packet arenas, intrusive pools and kernel ring service.
+    Zpkt supplies raw AF_XDP packet arenas, intrusive pools and kernel ring service.
     The [interface contract](INTERFACE.md) defines its boundary. The caller supplies
     transport state, application adaptation and scheduling.
-    Include `<zlib/Zxdp.hh>` and link `libZxdp` and its framework dependencies.
+    Include `<zlib/Zpkt.hh>` and link `libZpkt` and its framework dependencies.
     For Zi provider and transport integration see [Zutcp](../zutcp/README.md).
     Both modules are Linux-only and are excluded from Windows builds.
     
     ## Interface
     
-    Include `Zxdp.hh`. Create an `Instance` with named `Params` members:
+    Include `Zpkt.hh`. Create an `Instance` with named `Params` members:
     
     * `interface`: network-interface index in the current network namespace.
     * `netmask`: optional destination IPv4/IPv6 CIDR. An empty mask selects all
@@ -678,14 +678,14 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
     
     ## Verification
     
-    Build the configured tree with `make -j8`; run `make -C zxdp/test test` for
+    Build the configured tree with `make -j8`; run `make -C zpkt/test test` for
     unprivileged tests. See [integration tests](itest/README.md) for scoped privileged
     kernel tests and [utilities](util/README.md) for independent packet processes.
     The implementation targets Linux AF_XDP with single-frame packets fitting one
     kernel chunk. Physical NIC zero-copy requires driver support and separate hardware
     validation; veth verifies software-copy operation only.
     34:struct InstanceData : public ZmNHeap<InstanceData>, public Instance {
-    35:friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
+    35:friend inline ZuStringT<"Zpkt.Instance"> ZmNHeapID(InstanceData *);
     63:  InstanceData(Params params) : Instance{this}, txPools{params.txPools}, rxPool{params.rxPool},
     66:  ~InstanceData() override {
     71:  bool init(ZuCSpan mask, ZtString<> &error) {
@@ -717,35 +717,35 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
     396:  uint8_t *returned[InstanceData::Quantum];
     399:  auto n = ring.reserve(InstanceData::Quantum);
     420:      slot.active = InstanceData::End;
-    zxdp/util/zxdppacket.cc
-    zxdp/util/Makefile.am
-    zxdp/util/zxdpfixture.sh
-    zxdp/src/ZxdpUMem.hh
-    zxdp/src/ZxdpAlloc.hh
-    zxdp/src/Zxdp.cc
-    zxdp/src/ZxdpRetire.cc
-    zxdp/src/Makefile.am
-    zxdp/src/ZxdpRing.hh
-    zxdp/src/ZxdpBPF.cc
-    zxdp/src/ZxdpLib.cc
-    zxdp/src/ZxdpLib.hh
-    zxdp/src/ZxdpRetire.hh
-    zxdp/src/ZxdpUMem.cc
-    zxdp/src/ZxdpAlloc.cc
-    zxdp/src/ZxdpBPF.hh
-    zxdp/src/Zxdp.hh
-    zxdp/itest/zxdplog.hh
-    zxdp/itest/Makefile.am
-    zxdp/itest/zxdplooptest.cc
-    zxdp/itest/zxdpfiltertest.cc
-    zxdp/itest/zxdppackettest.cc
-    zxdp/itest/zxdpwaketest.cc
-    zxdp/Makefile.am
-    zxdp/test/ZxdpRingTest.cc
-    zxdp/test/Makefile.am
-    zxdp/test/ZxdpClassifierTest.cc
-    zxdp/test/ZxdpInstanceTest.cc
-    zxdp/test/ZxdpPoolTest.cc
+    zpkt/util/zpktpacket.cc
+    zpkt/util/Makefile.am
+    zpkt/util/zpktfixture.sh
+    zpkt/src/ZpktUMem.hh
+    zpkt/src/ZpktAlloc.hh
+    zpkt/src/Zpkt.cc
+    zpkt/src/ZpktRetire.cc
+    zpkt/src/Makefile.am
+    zpkt/src/ZpktRing.hh
+    zpkt/src/ZpktBPF.cc
+    zpkt/src/ZpktLib.cc
+    zpkt/src/ZpktLib.hh
+    zpkt/src/ZpktRetire.hh
+    zpkt/src/ZpktUMem.cc
+    zpkt/src/ZpktAlloc.cc
+    zpkt/src/ZpktBPF.hh
+    zpkt/src/Zpkt.hh
+    zpkt/itest/zpktlog.hh
+    zpkt/itest/Makefile.am
+    zpkt/itest/zpktlooptest.cc
+    zpkt/itest/zpktfiltertest.cc
+    zpkt/itest/zpktpackettest.cc
+    zpkt/itest/zpktwaketest.cc
+    zpkt/Makefile.am
+    zpkt/test/ZpktRingTest.cc
+    zpkt/test/Makefile.am
+    zpkt/test/ZpktClassifierTest.cc
+    zpkt/test/ZpktInstanceTest.cc
+    zpkt/test/ZpktPoolTest.cc
     docs/BUILD.md:1:# Build, test, and development
     docs/BUILD.md:5:## Build system
     docs/BUILD.md:7:### Module layout
@@ -779,8 +779,8 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
 
 ## Activity
 
-    $ ls -l zxdp/INTERFACE.md; sed -n '1,120p' zxdp/src/ZxdpAlloc.hh; sed -n '1,100p' zxdp/src/Zxdp.cc; tail -n 65 dpdk_loopback.md
-    -rw-r--r-- 1 count0 count0 2993 Nov 16 15:04 zxdp/INTERFACE.md
+    $ ls -l zpkt/INTERFACE.md; sed -n '1,120p' zpkt/src/ZpktAlloc.hh; sed -n '1,100p' zpkt/src/Zpkt.cc; tail -n 65 dpdk_loopback.md
+    -rw-r--r-- 1 count0 count0 2993 Nov 16 15:04 zpkt/INTERFACE.md
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -789,11 +789,11 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
     
     // Caller-owned intrusive packet pools over registered arena regions.
     
-    #ifndef ZxdpAlloc_HH
-    #define ZxdpAlloc_HH
+    #ifndef ZpktAlloc_HH
+    #define ZpktAlloc_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stdint.h>
@@ -802,7 +802,7 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
     #include <zlib/ZmPlatform.hh>
     #include <zlib/ZmRef.hh>
     
-    namespace Zxdp {
+    namespace Zpkt {
     
     class UMem;
     class BufPool;
@@ -816,8 +816,8 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
     
     // Keep pool objects alive through instance close and final packet return.
     // Freeze the list/count/size while bound. Exhaustion never allocates backing.
-    class ZxdpAPI BufPool : public ZmNHeap<BufPool>, public PoolParams {
-    friend inline ZuStringT<"Zxdp.Pool"> ZmNHeapID(BufPool *);
+    class ZpktAPI BufPool : public ZmNHeap<BufPool>, public PoolParams {
+    friend inline ZuStringT<"Zpkt.Pool"> ZmNHeapID(BufPool *);
     friend class UMem;
     friend struct InstanceData;
     
@@ -853,8 +853,8 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
       Count        m_used{0}, m_active{0};
     };
     
-    } // namespace Zxdp
-    #endif /* ZxdpAlloc_HH */
+    } // namespace Zpkt
+    #endif /* ZpktAlloc_HH */
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -870,16 +870,16 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
     #include <poll.h>
     #include <zlib/ZmAssert.hh>
     #include <zlib/ZtArray.hh>
-    #include <zlib/Zxdp.hh>
-    #include <zlib/ZxdpBPF.hh>
-    #include <zlib/ZxdpUMem.hh>
-    #include <zlib/ZxdpRetire.hh>
+    #include <zlib/Zpkt.hh>
+    #include <zlib/ZpktBPF.hh>
+    #include <zlib/ZpktUMem.hh>
+    #include <zlib/ZpktRetire.hh>
     
-    namespace Zxdp {
+    namespace Zpkt {
     
     // One kernel ring set per hardware Rx queue, sharing one UMEM registration.
     struct Queue : public ZmNHeap<Queue> {
-    friend inline ZuStringT<"Zxdp.Queue"> ZmNHeapID(Queue *);
+    friend inline ZuStringT<"Zpkt.Queue"> ZmNHeapID(Queue *);
       Xsk        socket;
       KernelRetirement retirement;
       unsigned    rxHeld = 0, quota = 0;
@@ -889,14 +889,14 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
     };
     
     struct InstanceData : public ZmNHeap<InstanceData>, public Instance {
-    friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
+    friend inline ZuStringT<"Zpkt.Instance"> ZmNHeapID(InstanceData *);
       // Bound each service/retirement turn independently of arena capacity.
       enum { Quantum = 64, End = unsigned(-1) };
       enum { Cold, Active, Closing, Closed };
-      using Indices = ZtArray<unsigned, ZtArrayHeapID<"Zxdp.RxSlots">>;
-      using Packets = ZtArray<uint8_t *, ZtArrayHeapID<"Zxdp.TxActive">>;
+      using Indices = ZtArray<unsigned, ZtArrayHeapID<"Zpkt.RxSlots">>;
+      using Packets = ZtArray<uint8_t *, ZtArrayHeapID<"Zpkt.TxActive">>;
     
-      using Queues = ZtArray<Queue *, ZtArrayHeapID<"Zxdp.Queues">>;
+      using Queues = ZtArray<Queue *, ZtArrayHeapID<"Zpkt.Queues">>;
       BufPool    *txPools, *rxPool;
       RecvFn    receive;
       CompleteFn    completed;
@@ -1024,7 +1024,7 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
 
 ## Activity
 
-    $ cat zxdp/INTERFACE.md
+    $ cat zpkt/INTERFACE.md
     # Backend boundary
     
     This is the implementation contract supplied by the caller. It supersedes the
@@ -1082,7 +1082,7 @@ I’m using the EGM brainstorm skill to inspect the current API and loopback pla
 
 ## Assistant
 
-The main contract issue is packet ownership: `Zxdp.hh` currently exposes `txCompleted`, while [INTERFACE.md](/home/count0/src/z/zxdp/INTERFACE.md) explicitly forbids it and requires separate caller and submission leases. There are also existing uncommitted AF_XDP changes that the design must account for.
+The main contract issue is packet ownership: `Zpkt.hh` currently exposes `txCompleted`, while [INTERFACE.md](/home/count0/src/z/zpkt/INTERFACE.md) explicitly forbids it and requires separate caller and submission leases. There are also existing uncommitted AF_XDP changes that the design must account for.
 
 What packet ownership and completion behavior must DPDK preserve across `send()`, `pollTx()`, pool return, and `close()`?
 
@@ -1090,7 +1090,7 @@ I’m starting with clarification because the [brainstorm skill](/home/count0/.c
 
 ## User
 
-that was an outdated `zxdp`, the codebase has been pulled and merged
+that was an outdated `zpkt`, the codebase has been pulled and merged
 
 ## Assistant
 
@@ -1098,8 +1098,8 @@ I’ll reread the merged API and ownership contract, then use that as the brains
 
 ## Activity
 
-    $ cat zxdp/GUIDELINES.md; rg -n 'InstanceData|Instance::|txCompleted|complete|lease' zxdp/src/Zxdp.cc zxdp/src/ZxdpAlloc.hh; rg -n 'dpdk|DPDK' configure.ac z.config zxdp/src/Makefile.am
-    # Zxdp implementation rules
+    $ cat zpkt/GUIDELINES.md; rg -n 'InstanceData|Instance::|txCompleted|complete|lease' zpkt/src/Zpkt.cc zpkt/src/ZpktAlloc.hh; rg -n 'dpdk|DPDK' configure.ac z.config zpkt/src/Makefile.am
+    # Zpkt implementation rules
     
     Follow the repository guidance in ../AGENTS.md and the caller-supplied
     [interface contract](INTERFACE.md). The contract supersedes earlier plans.
@@ -1130,7 +1130,7 @@ I’ll reread the merged API and ownership contract, then use that as the brains
       run on any thread. Keep thread-exclusive mutable state on separate cache lines.
     * The application assigns a sender `txSid` in its `ZmScheduler` and configures
       that slot with `Params::txThread` (`ZmSchedTParams`, isolated by default).
-      The scheduler owns thread startup, waiting and teardown. Zxdp owns no sender
+      The scheduler owns thread startup, waiting and teardown. Zpkt owns no sender
       thread or semaphore. Publish initialized descriptors immediately: increment
       the pending-descriptor counter before commit and use scheduler `run()` after
       commit only on a zero-to-one transition. The dedicated sender calls nonblocking
@@ -1156,42 +1156,42 @@ I’ll reread the merged API and ownership contract, then use that as the brains
       must interrupt spinning and blocking promptly, including under continuous
       traffic and at the transition into the wait. Internal batches do not cause
       `rx()` to return on their own. The caller owns scheduling and lifecycle retries.
-    zxdp/src/ZxdpAlloc.hh:26:struct InstanceData;
-    zxdp/src/ZxdpAlloc.hh:39:friend struct InstanceData;
-    zxdp/src/ZxdpAlloc.hh:55:  // Tx owner, with the caller allocation lease held. True only after all
-    zxdp/src/Zxdp.cc:38:struct InstanceData : public ZmNHeap<InstanceData>, public Instance {
-    zxdp/src/Zxdp.cc:39:friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(InstanceData *);
-    zxdp/src/Zxdp.cc:74:  InstanceData(Params params) : Instance{this}, txPools{params.txPools}, rxPool{params.rxPool},
-    zxdp/src/Zxdp.cc:78:  ~InstanceData() override {
-    zxdp/src/Zxdp.cc:306:        // owns every submitted backing lease.
-    zxdp/src/Zxdp.cc:318:ZmRef<Instance> Instance::create(Params params, ZtString<> &error)
-    zxdp/src/Zxdp.cc:321:  ZmRef<InstanceData> instance = new InstanceData{ZuMv(params)};
-    zxdp/src/Zxdp.cc:325:  if (!instance->close(cleanup) && instance->state != InstanceData::Closed) {
-    zxdp/src/Zxdp.cc:333:Instance::~Instance() = default;
-    zxdp/src/Zxdp.cc:334:unsigned Instance::allQueues(Ztc::QueueMgr::AllFn fn) const
-    zxdp/src/Zxdp.cc:346:bool Instance::ready() const { return m_data->state == InstanceData::Active; }
-    zxdp/src/Zxdp.cc:347:unsigned Instance::ifindex() const { return m_data->interface; }
-    zxdp/src/Zxdp.cc:348:unsigned Instance::mtu() const { return m_data->link.mtu; }
-    zxdp/src/Zxdp.cc:349:bool Instance::zeroCopy() const {
-    zxdp/src/Zxdp.cc:353:ZuBSpan Instance::mac() const { return m_data->link.mac; }
-    zxdp/src/Zxdp.cc:354:ZuUnion<void, ZeException> Instance::close()
-    zxdp/src/Zxdp.cc:363:bool Instance::stopSender() { return m_data->stopSender(); }
-    zxdp/src/Zxdp.cc:365:bool Instance::send(uint8_t *packet, unsigned length, const CommitFn &commit)
-    zxdp/src/Zxdp.cc:368:bool Instance::send_(uint8_t *packet, unsigned length, const CommitFn &commit)
-    zxdp/src/Zxdp.cc:383:  // Its accepted publication precedes the descriptor release store below.
-    zxdp/src/Zxdp.cc:398:void Instance::wake() { m_data->notify(); }
-    zxdp/src/Zxdp.cc:400:void Instance::rx()
-    zxdp/src/Zxdp.cc:424:      m_data->state = InstanceData::Closing;
-    zxdp/src/Zxdp.cc:429:    if (event.data.u32 == InstanceData::End) m_data->drainWake();
-    zxdp/src/Zxdp.cc:435:unsigned InstanceData::receiveQueue(unsigned q)
-    zxdp/src/Zxdp.cc:483:unsigned Instance::pollTx()
-    zxdp/src/Zxdp.cc:488:  auto n = ring.reserve(InstanceData::Quantum);
-    zxdp/src/Zxdp.cc:512:    slot.active = InstanceData::End;
+    zpkt/src/ZpktAlloc.hh:26:struct InstanceData;
+    zpkt/src/ZpktAlloc.hh:39:friend struct InstanceData;
+    zpkt/src/ZpktAlloc.hh:55:  // Tx owner, with the caller allocation lease held. True only after all
+    zpkt/src/Zpkt.cc:38:struct InstanceData : public ZmNHeap<InstanceData>, public Instance {
+    zpkt/src/Zpkt.cc:39:friend inline ZuStringT<"Zpkt.Instance"> ZmNHeapID(InstanceData *);
+    zpkt/src/Zpkt.cc:74:  InstanceData(Params params) : Instance{this}, txPools{params.txPools}, rxPool{params.rxPool},
+    zpkt/src/Zpkt.cc:78:  ~InstanceData() override {
+    zpkt/src/Zpkt.cc:306:        // owns every submitted backing lease.
+    zpkt/src/Zpkt.cc:318:ZmRef<Instance> Instance::create(Params params, ZtString<> &error)
+    zpkt/src/Zpkt.cc:321:  ZmRef<InstanceData> instance = new InstanceData{ZuMv(params)};
+    zpkt/src/Zpkt.cc:325:  if (!instance->close(cleanup) && instance->state != InstanceData::Closed) {
+    zpkt/src/Zpkt.cc:333:Instance::~Instance() = default;
+    zpkt/src/Zpkt.cc:334:unsigned Instance::allQueues(Ztc::QueueMgr::AllFn fn) const
+    zpkt/src/Zpkt.cc:346:bool Instance::ready() const { return m_data->state == InstanceData::Active; }
+    zpkt/src/Zpkt.cc:347:unsigned Instance::ifindex() const { return m_data->interface; }
+    zpkt/src/Zpkt.cc:348:unsigned Instance::mtu() const { return m_data->link.mtu; }
+    zpkt/src/Zpkt.cc:349:bool Instance::zeroCopy() const {
+    zpkt/src/Zpkt.cc:353:ZuBSpan Instance::mac() const { return m_data->link.mac; }
+    zpkt/src/Zpkt.cc:354:ZuUnion<void, ZeException> Instance::close()
+    zpkt/src/Zpkt.cc:363:bool Instance::stopSender() { return m_data->stopSender(); }
+    zpkt/src/Zpkt.cc:365:bool Instance::send(uint8_t *packet, unsigned length, const CommitFn &commit)
+    zpkt/src/Zpkt.cc:368:bool Instance::send_(uint8_t *packet, unsigned length, const CommitFn &commit)
+    zpkt/src/Zpkt.cc:383:  // Its accepted publication precedes the descriptor release store below.
+    zpkt/src/Zpkt.cc:398:void Instance::wake() { m_data->notify(); }
+    zpkt/src/Zpkt.cc:400:void Instance::rx()
+    zpkt/src/Zpkt.cc:424:      m_data->state = InstanceData::Closing;
+    zpkt/src/Zpkt.cc:429:    if (event.data.u32 == InstanceData::End) m_data->drainWake();
+    zpkt/src/Zpkt.cc:435:unsigned InstanceData::receiveQueue(unsigned q)
+    zpkt/src/Zpkt.cc:483:unsigned Instance::pollTx()
+    zpkt/src/Zpkt.cc:488:  auto n = ring.reserve(InstanceData::Quantum);
+    zpkt/src/Zpkt.cc:512:    slot.active = InstanceData::End;
     ✗ (1) • 0ms
 
 ## Activity
 
-    $ git status --short; cat zxdp/src/Zxdp.hh; cat zxdp/INTERFACE.md
+    $ git status --short; cat zpkt/src/Zpkt.hh; cat zpkt/INTERFACE.md
      M docs/Z_STL_BOOST_FOLLY_BDE_RUST.md
      M gtags.conf
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
@@ -1202,11 +1202,11 @@ I’ll reread the merged API and ownership contract, then use that as the brains
     
     // Raw AF_XDP arena, pool and packet facilities.
     
-    #ifndef Zxdp_HH
-    #define Zxdp_HH
+    #ifndef Zpkt_HH
+    #define Zpkt_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stdint.h>
@@ -1219,14 +1219,14 @@ I’ll reread the merged API and ownership contract, then use that as the brains
     #include <zlib/ZtcQueue.hh>
     #include <zlib/ZtString.hh>
     #include <zlib/ZePlatform.hh>
-    #include <zlib/ZxdpAlloc.hh>
+    #include <zlib/ZpktAlloc.hh>
     
-    namespace Zxdp {
+    namespace Zpkt {
     
     using CommitFn = ZmFn<bool()>;
     
-    using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zxdp.Receive">>;
-    using StopFn = ZmFn<void(), ZmFnHeapID<"Zxdp.TxStopped">>;
+    using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zpkt.Receive">>;
+    using StopFn = ZmFn<void(), ZmFnHeapID<"Zpkt.TxStopped">>;
     
     struct Params {
       unsigned interface = 0; // network-interface index in the current namespace
@@ -1244,7 +1244,7 @@ I’ll reread the merged API and ownership contract, then use that as the brains
     // The caller drives Rx/Tx on their respective single owners. Allocation/free
     // may run on other threads. Allocation holds backing until explicit pool return;
     // an accepted send also holds it until kernel completion or safe close.
-    class ZxdpAPI Instance : public ZmPolymorph {
+    class ZpktAPI Instance : public ZmPolymorph {
     friend struct InstanceData;
     
     public:
@@ -1290,8 +1290,8 @@ I’ll reread the merged API and ownership contract, then use that as the brains
       InstanceData *m_data;
     };
     
-    } // namespace Zxdp
-    #endif /* Zxdp_HH */
+    } // namespace Zpkt
+    #endif /* Zpkt_HH */
     # Backend boundary
     
     This is the implementation contract supplied by the caller. It supersedes the
@@ -1455,7 +1455,7 @@ I’ll derive the DPDK fields from its port and EAL APIs, including the software
 
 ## Activity
 
-    $ sed -n '1,130p' zxdp/src/ZxdpUMem.hh; sed -n '1,105p' docs/CPP.md; cat zxdp/src/Makefile.am
+    $ sed -n '1,130p' zpkt/src/ZpktUMem.hh; sed -n '1,105p' docs/CPP.md; cat zpkt/src/Makefile.am
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -1464,11 +1464,11 @@ I’ll derive the DPDK fields from its port and EAL APIs, including the software
     
     // Private shared packet arena layout, registration and mapping lifetime.
     
-    #ifndef ZxdpUMem_HH
-    #define ZxdpUMem_HH
+    #ifndef ZpktUMem_HH
+    #define ZpktUMem_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stddef.h>
@@ -1483,10 +1483,10 @@ I’ll derive the DPDK fields from its port and EAL APIs, including the software
     #include <zlib/ZtArray.hh>
     #include <zlib/ZtString.hh>
     
-    #include <zlib/Zxdp.hh>
-    #include <zlib/ZxdpRing.hh>
+    #include <zlib/Zpkt.hh>
+    #include <zlib/ZpktRing.hh>
     
-    namespace Zxdp {
+    namespace Zpkt {
     
     struct ArenaLayout {
       size_t length = 0, rxLength = 0, txLength = 0;
@@ -1500,8 +1500,8 @@ I’ll derive the DPDK fields from its port and EAL APIs, including the software
       bool pending = false;
     };
     
-    class ZxdpAPI UMem : public ZmNHeap<UMem>, public ZmObject {
-    friend inline ZuStringT<"Zxdp.UMem"> ZmNHeapID(UMem *);
+    class ZpktAPI UMem : public ZmNHeap<UMem>, public ZmObject {
+    friend inline ZuStringT<"Zpkt.UMem"> ZmNHeapID(UMem *);
     
     public:
       ~UMem();
@@ -1514,8 +1514,8 @@ I’ll derive the DPDK fields from its port and EAL APIs, including the software
     
     private:
       UMem() = default;
-      using Pages = ZtArray<BufPool *, ZtArrayHeapID<"Zxdp.Pages">>;
-      using Slots = ZtArray<TxSlot, ZtArrayHeapID<"Zxdp.TxSlots">>;
+      using Pages = ZtArray<BufPool *, ZtArrayHeapID<"Zpkt.Pages">>;
+      using Slots = ZtArray<TxSlot, ZtArrayHeapID<"Zpkt.TxSlots">>;
       uint8_t    *m_data = nullptr;
       ArenaLayout    m_layout;
       Pages        m_pages;
@@ -1526,7 +1526,7 @@ I’ll derive the DPDK fields from its port and EAL APIs, including the software
     // Private kernel registration/binding. Quiesce Rx/Tx service before close.
     // Descriptor mappings never own application packet lifetime.
     // Handle closure alone does not prove retirement of outstanding device DMA.
-    class ZxdpAPI Xsk {
+    class ZpktAPI Xsk {
       friend class KernelRetirement;
     
     public:
@@ -1580,9 +1580,9 @@ I’ll derive the DPDK fields from its port and EAL APIs, including the software
       CompRing        m_comp;
     };
     
-    } // namespace Zxdp
+    } // namespace Zpkt
     
-    #endif /* ZxdpUMem_HH */
+    #endif /* ZpktUMem_HH */
     # C++ language and portability
     
     Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
@@ -1693,13 +1693,13 @@ I’ll derive the DPDK fields from its port and EAL APIs, including the software
         -I$(top_srcdir)/zt/src @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
-    pkginclude_HEADERS = ZxdpLib.hh Zxdp.hh ZxdpAlloc.hh
-    noinst_HEADERS = ZxdpRing.hh ZxdpUMem.hh ZxdpBPF.hh ZxdpRetire.hh
-    lib_LTLIBRARIES = libZxdp.la
-    libZxdp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZXDP_EXPORTS
-    libZxdp_la_SOURCES = ZxdpLib.cc Zxdp.cc ZxdpAlloc.cc ZxdpUMem.cc ZxdpBPF.cc \
-        ZxdpRetire.cc
-    libZxdp_la_LIBADD = $(top_builddir)/zt/src/libZt.la \
+    pkginclude_HEADERS = ZpktLib.hh Zpkt.hh ZpktAlloc.hh
+    noinst_HEADERS = ZpktRing.hh ZpktUMem.hh ZpktBPF.hh ZpktRetire.hh
+    lib_LTLIBRARIES = libZpkt.la
+    libZpkt_la_CPPFLAGS = $(AM_CPPFLAGS) -DZPKT_EXPORTS
+    libZpkt_la_SOURCES = ZpktLib.cc Zpkt.cc ZpktAlloc.cc ZpktUMem.cc ZpktBPF.cc \
+        ZpktRetire.cc
+    libZpkt_la_LIBADD = $(top_builddir)/zt/src/libZt.la \
         $(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
         @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
     ✓ • 0ms
@@ -1731,7 +1731,7 @@ I’ll keep `txPools` and singular `rxPool` as the provisioning inputs, and reco
 
     file changes: Completed · 1 changes
     Add: /home/count0/src/z/concepts_brief.md
-    # Zxdp AF_XDP and DPDK backends
+    # Zpkt AF_XDP and DPDK backends
     
     * **Author:** Huw Rogers
     * **Date:** 2026-11-16
@@ -1739,7 +1739,7 @@ I’ll keep `txPools` and singular `rxPool` as the provisioning inputs, and reco
     
     ## Overview
     
-    Make `Zxdp::Instance` a virtual interface implemented by AF_XDP and DPDK.
+    Make `Zpkt::Instance` a virtual interface implemented by AF_XDP and DPDK.
     Remove the base class's `InstanceData *m_data`; make backend operations pure
     virtual. Add `ZtEnumNS(uint8_t, Backend, AF_XDP, DPDK)` and `Backend::T backend`
     to `Params`. Add the namespace factory `ZmRef<Instance> instance(const Params
@@ -1784,7 +1784,7 @@ I’ll keep `txPools` and singular `rxPool` as the provisioning inputs, and reco
     ## Goals vs. Non-Goals
     
     * **In-Scope Goals:** Virtual Instance API; backend enum and factory; tagged
-      interface parameters; AF_XDP and DPDK implementations in zxdp; migration of
+      interface parameters; AF_XDP and DPDK implementations in zpkt; migration of
       affected callers; DPDK software tests using the arrangements documented in
       `dpdk_loopback.md`; preservation of packet ownership and service contracts.
     * **Out-of-Scope Non-Goals:** A transport stack or application runtime;
@@ -1818,7 +1818,7 @@ I’ll keep `txPools` and singular `rxPool` as the provisioning inputs, and reco
     References: [DPDK ring driver](https://doc.dpdk.org/guides/nics/ring.html),
     [DPDK PCAP/ring drivers](https://doc.dpdk.org/guides-25.03/nics/pcap_ring.html),
     [EAL parameters](https://doc.dpdk.org/guides-25.11/linux_gsg/linux_eal_parameters.html),
-    and the repository's `dpdk_loopback.md` and `zxdp/INTERFACE.md`.
+    and the repository's `dpdk_loopback.md` and `zpkt/INTERFACE.md`.
 
 ## Assistant
 
@@ -2102,33 +2102,33 @@ I’ll run the Goldfish reviews against the working brief, then fold their findi
 
 ## Activity
 
-    $ rg -n 'Zxdp::Instance::create|\.ifindex\(|->ifindex\(|\.interface\s*=' zxdp zutcp zquic --glob '*.{hh,cc}'; sed -n '318,400p' zxdp/src/Zxdp.cc; sed -n '1,145p' zxdp/src/ZxdpAlloc.cc; sed -n '1,110p' docs/BUILD.md
+    $ rg -n 'Zpkt::Instance::create|\.ifindex\(|->ifindex\(|\.interface\s*=' zpkt zutcp zquic --glob '*.{hh,cc}'; sed -n '318,400p' zpkt/src/Zpkt.cc; sed -n '1,145p' zpkt/src/ZpktAlloc.cc; sed -n '1,110p' docs/BUILD.md
     zutcp/util/zutcppair.cc:434:  auto stack = new Zutcp::Stack{&mx, {.interface = interface, .txSid = 4}};
-    zxdp/util/zxdppacket.cc:87:      case 'i': out.interface = optarg; break;
-    zxdp/util/zxdppacket.cc:211:    Zxdp::Params params{.interface = index, .txPools = &tx, .rxPool = &rx,
-    zxdp/util/zxdppacket.cc:223:    instance = Zxdp::Instance::create(ZuMv(params), error);
-    zxdp/src/Zxdp.cc:99:    arena = UMem::create(Params{.interface = interface, .txPools = txPools, .rxPool = rxPool},
-    zxdp/src/Zxdp.cc:283:    if (attachment.ifindex()) return false;
-    zxdp/src/ZxdpRetire.cc:30:  m_ifindex = socket.ifindex();
-    zutcp/src/ZutcpMx.cc:1051:  m_backend = Zxdp::Instance::create({.interface = m_interface, .netmask = m_netmask,
-    zxdp/itest/zxdpfiltertest.cc:87:  Zxdp::Params params{.interface = ifindex, .rxPool = &rx,
-    zxdp/itest/zxdpfiltertest.cc:96:  auto instance = Zxdp::Instance::create(ZuMv(params), error);
-    zxdp/test/ZxdpInstanceTest.cc:16:  ZuCHECK(!Zxdp::Instance::create({}, error) && !!error,
-    zxdp/test/ZxdpInstanceTest.cc:19:  ZuCHECK(!Zxdp::Instance::create({.rxPool = &rx,
-    zxdp/itest/zxdppackettest.cc:140:  Zxdp::Params params{.interface = ifindex,
-    zxdp/itest/zxdppackettest.cc:152:  auto instance = Zxdp::Instance::create(ZuMv(params), error);
-    zxdp/itest/zxdppackettest.cc:345:    .interface = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10)),
-    zxdp/itest/zxdppackettest.cc:360:  auto instance = Zxdp::Instance::create(ZuMv(params), error);
-    zxdp/itest/zxdppackettest.cc:471:    .interface = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10)),
-    zxdp/itest/zxdppackettest.cc:481:  auto instance = Zxdp::Instance::create(ZuMv(params), error);
-    zxdp/itest/zxdpwaketest.cc:93:    auto instance = Zxdp::Instance::create(params, error);
-    zxdp/itest/zxdpwaketest.cc:113:    .interface = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10)),
-    zxdp/itest/zxdpwaketest.cc:239:    .interface = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10)),
+    zpkt/util/zpktpacket.cc:87:      case 'i': out.interface = optarg; break;
+    zpkt/util/zpktpacket.cc:211:    Zpkt::Params params{.interface = index, .txPools = &tx, .rxPool = &rx,
+    zpkt/util/zpktpacket.cc:223:    instance = Zpkt::Instance::create(ZuMv(params), error);
+    zpkt/src/Zpkt.cc:99:    arena = UMem::create(Params{.interface = interface, .txPools = txPools, .rxPool = rxPool},
+    zpkt/src/Zpkt.cc:283:    if (attachment.ifindex()) return false;
+    zpkt/src/ZpktRetire.cc:30:  m_ifindex = socket.ifindex();
+    zutcp/src/ZutcpMx.cc:1051:  m_backend = Zpkt::Instance::create({.interface = m_interface, .netmask = m_netmask,
+    zpkt/itest/zpktfiltertest.cc:87:  Zpkt::Params params{.interface = ifindex, .rxPool = &rx,
+    zpkt/itest/zpktfiltertest.cc:96:  auto instance = Zpkt::Instance::create(ZuMv(params), error);
+    zpkt/test/ZpktInstanceTest.cc:16:  ZuCHECK(!Zpkt::Instance::create({}, error) && !!error,
+    zpkt/test/ZpktInstanceTest.cc:19:  ZuCHECK(!Zpkt::Instance::create({.rxPool = &rx,
+    zpkt/itest/zpktpackettest.cc:140:  Zpkt::Params params{.interface = ifindex,
+    zpkt/itest/zpktpackettest.cc:152:  auto instance = Zpkt::Instance::create(ZuMv(params), error);
+    zpkt/itest/zpktpackettest.cc:345:    .interface = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10)),
+    zpkt/itest/zpktpackettest.cc:360:  auto instance = Zpkt::Instance::create(ZuMv(params), error);
+    zpkt/itest/zpktpackettest.cc:471:    .interface = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10)),
+    zpkt/itest/zpktpackettest.cc:481:  auto instance = Zpkt::Instance::create(ZuMv(params), error);
+    zpkt/itest/zpktwaketest.cc:93:    auto instance = Zpkt::Instance::create(params, error);
+    zpkt/itest/zpktwaketest.cc:113:    .interface = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10)),
+    zpkt/itest/zpktwaketest.cc:239:    .interface = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10)),
     zutcp/example/zutcpserver.cc:166:  mx.plugin(new Zutcp::Stack{&mx, {.interface = interface, .txSid = 4}});
     zutcp/example/zutcpclient.cc:184:  mx.plugin(new Zutcp::Stack{&mx, {.interface = interface, .txSid = 4}});
-    zutcp/itest/zutcppooltest.cc:62:    .interface = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10)),
-    zutcp/itest/zutcppooltest.cc:72:  auto instance = Zxdp::Instance::create(ZuMv(params), error);
-    zutcp/itest/zutcppooltest.cc:214:    .interface = unsigned(strtoul(getenv("ZXDP_RX_TEST_IFINDEX"), nullptr, 10)),
+    zutcp/itest/zutcppooltest.cc:62:    .interface = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10)),
+    zutcp/itest/zutcppooltest.cc:72:  auto instance = Zpkt::Instance::create(ZuMv(params), error);
+    zutcp/itest/zutcppooltest.cc:214:    .interface = unsigned(strtoul(getenv("ZPKT_RX_TEST_IFINDEX"), nullptr, 10)),
     zutcp/itest/zutcpapptest.cc:152:    stack = new Zutcp::Stack{&mx, {.interface = interface, .txSid = 6}};
     zutcp/itest/zutcpiptest.cc:182:  Zutcp::StackParams params{.interface = index,
     zutcp/itest/zutcpstacktest.cc:322:  ZmRef<Zutcp::Stack> stack = new Zutcp::Stack{&mx, {.interface = index,
@@ -2203,7 +2203,7 @@ I’ll run the Goldfish reviews against the working brief, then fold their findi
       ZtString<> error;
       if (m_data->close(error)) return {};
       if (!error) return ZeException{};
-      return ZeEXCEPT(Error, "Zxdp", ([error = ZuMv(error)](auto &s) {
+      return ZeEXCEPT(Error, "Zpkt", ([error = ZuMv(error)](auto &s) {
         s << error;
       }));
     }
@@ -2252,10 +2252,10 @@ I’ll run the Goldfish reviews against the working brief, then fold their findi
     // This code is licensed by the MIT license (see LICENSE for details)
     
     #include <zlib/ZmAssert.hh>
-    #include <zlib/ZxdpAlloc.hh>
-    #include <zlib/ZxdpUMem.hh>
+    #include <zlib/ZpktAlloc.hh>
+    #include <zlib/ZpktUMem.hh>
     
-    namespace Zxdp {
+    namespace Zpkt {
     
     BufPool::BufPool(unsigned n, unsigned bytes) {
       count = n;
@@ -2337,7 +2337,7 @@ I’ll run the Goldfish reviews against the working brief, then fold their findi
       return m_arena->data() + m_offset + (uint64_t(id)<<m_shift) + m_prefix;
     }
     
-    } // namespace Zxdp
+    } // namespace Zpkt
     # Build, test, and development
     
     Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
@@ -2453,7 +2453,7 @@ I’ll run the Goldfish reviews against the working brief, then fold their findi
 
 ## Activity
 
-    $ sed -n '1030,1100p' zutcp/src/ZutcpMx.cc; sed -n '1,115p' zxdp/test/ZxdpInstanceTest.cc; rg -n 'libdpdk|dpdk' /usr/lib/x86_64-linux-gnu/pkgconfig /usr/local/lib/pkgconfig /usr/include/dpdk/rte_version.h
+    $ sed -n '1030,1100p' zutcp/src/ZutcpMx.cc; sed -n '1,115p' zpkt/test/ZpktInstanceTest.cc; rg -n 'libdpdk|dpdk' /usr/lib/x86_64-linux-gnu/pkgconfig /usr/local/lib/pkgconfig /usr/include/dpdk/rte_version.h
     void Stack::start()
     {
       mx()->rxRun([this] { start_(); });
@@ -2475,7 +2475,7 @@ I’ll run the Goldfish reviews against the working brief, then fold their findi
         mx()->pluginStarted(ZeEXCEPT(Error, "Zutcp", "retained packet pools are busy"));
         return;
       }
-      m_backend = Zxdp::Instance::create({.interface = m_interface, .netmask = m_netmask,
+      m_backend = Zpkt::Instance::create({.interface = m_interface, .netmask = m_netmask,
         .txPools = &m_providers->pool, .rxPool = &m_ingress->pool,
         .rx = [this](uint8_t *p, unsigned n) { received(p, n); },
         .spin = m_spin, .scheduler = mx(), .txSid = m_txSid,
@@ -2532,7 +2532,7 @@ I’ll run the Goldfish reviews against the working brief, then fold their findi
     // This code is licensed by the MIT license (see LICENSE for details)
     
     #include <zlib/ZuTestUtil.hh>
-    #include <zlib/Zxdp.hh>
+    #include <zlib/Zpkt.hh>
     
     using namespace ZuTestUtil;
     
@@ -2540,10 +2540,10 @@ I’ll run the Goldfish reviews against the working brief, then fold their findi
     {
       ZuTestScope(testCreation);
       ZtString<> error;
-      ZuCHECK(!Zxdp::Instance::create({}, error) && !!error,
+      ZuCHECK(!Zpkt::Instance::create({}, error) && !!error,
         "missing named creation parameters fail without kernel resources");
-      Zxdp::BufPool rx{2, 1514};
-      ZuCHECK(!Zxdp::Instance::create({.rxPool = &rx,
+      Zpkt::BufPool rx{2, 1514};
+      ZuCHECK(!Zpkt::Instance::create({.rxPool = &rx,
           .rx = [](uint8_t *, unsigned) { }}, error) && !rx.ready(),
         "failed setup leaves caller-owned pools unbound");
     }
@@ -2594,56 +2594,56 @@ Four lenses have completed. Their proposals converge on reusing the existing poo
 
 ## Activity
 
-    $ rg --files /tmp/zxdp-brainstorm-review; sed -n '1,180p' /tmp/zxdp-brainstorm-review/design.md
-    /tmp/zxdp-brainstorm-review/egm-codebase-details.md
-    /tmp/zxdp-brainstorm-review/egm-design.md
-    /tmp/zxdp-brainstorm-review/egm-zoom-out.md
-    /tmp/zxdp-brainstorm-review/egm-comprehension.md
-    sed: can't read /tmp/zxdp-brainstorm-review/design.md: No such file or directory
+    $ rg --files /tmp/zpkt-brainstorm-review; sed -n '1,180p' /tmp/zpkt-brainstorm-review/design.md
+    /tmp/zpkt-brainstorm-review/egm-codebase-details.md
+    /tmp/zpkt-brainstorm-review/egm-design.md
+    /tmp/zpkt-brainstorm-review/egm-zoom-out.md
+    /tmp/zpkt-brainstorm-review/egm-comprehension.md
+    sed: can't read /tmp/zpkt-brainstorm-review/design.md: No such file or directory
     ✗ (2) • 0ms
 
 ## Activity
 
-    $ cat /tmp/zxdp-brainstorm-review/egm-design.md /tmp/zxdp-brainstorm-review/egm-comprehension.md
+    $ cat /tmp/zpkt-brainstorm-review/egm-design.md /tmp/zpkt-brainstorm-review/egm-comprehension.md
     Architecture review supports the chosen virtual boundary, but the following decisions should be resolved before implementation. These are proposed resolutions, not author approvals.
     
     1. **Blocker — Architecture / packet ownership: `net_ring` loopback conflicts with dedicated Rx backing.**
-    Evidence: `concepts_brief.md:24–26,79–82`; `zxdp/INTERFACE.md:14,17–29`; `zxdp/src/ZxdpAlloc.cc:55–60`. The official ring PMD enqueues/dequeues original mbuf pointers and ignores its configured Rx mempool. Consequently, ordinary loopback returns Tx backing, which cannot safely be returned through the dedicated `rxPool`. [DPDK v25.11 ring implementation, lines 72–98 and 146–155](https://github.com/DPDK/dpdk/blob/v25.11/drivers/net/ring/rte_eth_ring.c#L72).
+    Evidence: `concepts_brief.md:24–26,79–82`; `zpkt/INTERFACE.md:14,17–29`; `zpkt/src/ZpktAlloc.cc:55–60`. The official ring PMD enqueues/dequeues original mbuf pointers and ignores its configured Rx mempool. Consequently, ordinary loopback returns Tx backing, which cannot safely be returned through the dedicated `rxPool`. [DPDK v25.11 ring implementation, lines 72–98 and 146–155](https://github.com/DPDK/dpdk/blob/v25.11/drivers/net/ring/rte_eth_ring.c#L72).
     **Mitigation:** Specify the ring test arrangement and ownership treatment explicitly. A fixture can consume transmitted mbufs and inject separately constructed Rx-pool packets; any fixture copy must be identified as test machinery. Do not silently copy in the production backend or treat Tx-origin pointers as Rx-pool allocations. Use PCAP input to independently exercise production Rx provisioning.
     
     2. **Blocker — Architecture / admission: the commit hook requires backend-owned reservation.**
-    Evidence: `concepts_brief.md:35–39`; `zxdp/INTERFACE.md:35–45`; `zxdp/src/Zxdp.cc:378–394`. DPDK Tx burst can accept fewer packets than requested. Calling the hook immediately before burst therefore cannot guarantee acceptance. [Official ethdev API](https://doc.dpdk.org/api/rte__ethdev_8h.html).
+    Evidence: `concepts_brief.md:35–39`; `zpkt/INTERFACE.md:35–45`; `zpkt/src/Zpkt.cc:378–394`. DPDK Tx burst can accept fewer packets than requested. Calling the hook immediately before burst therefore cannot guarantee acceptance. [Official ethdev API](https://doc.dpdk.org/api/rte__ethdev_8h.html).
     **Mitigation:** Define acceptance as reservation/publication into a bounded, preallocated backend submission queue, serviced by the existing scheduler sender slot. Reserve metadata and submission capacity before invoking the hook; retain unsent entries after a short burst. Define post-acceptance device failure through existing instance failure/close behavior. This adds internal provisioning derived from pool counts, without duplicate public sizing.
     
     3. **Blocker — Architecture / retirement: count-based cleanup is insufficient to identify packet leases.**
-    Evidence: `concepts_brief.md:35–39,74–76`; `zxdp/src/Zxdp.cc:483–515`; `zxdp/src/ZxdpUMem.hh:38–43`. DPDK cleanup may be unsupported and reports counts, not packet identities. [Official ethdev API](https://doc.dpdk.org/api/rte__ethdev_8h.html).
+    Evidence: `concepts_brief.md:35–39,74–76`; `zpkt/src/Zpkt.cc:483–515`; `zpkt/src/ZpktUMem.hh:38–43`. DPDK cleanup may be unsupported and reports counts, not packet identities. [Official ethdev API](https://doc.dpdk.org/api/rte__ethdev_8h.html).
     **Mitigation:** Choose a concrete direct-slot retirement mechanism, such as preallocated external-buffer shared-info callbacks, and assign its execution/thread ownership. DPDK invokes that callback when all attached mbufs detach. [Official mbuf API](https://doc.dpdk.org/api/rte__mbuf_8h.html). Keep the external-buffer submission lifetime distinct from the caller lease, so retained caller ownership does not prevent observing driver release. Specify how callback retirement reaches Tx-owned `pending`/active bookkeeping without cross-shard mutation. Test retirement with no further sends and no incoming traffic.
     
     4. **Major — Architecture / teardown: software queues require explicit draining.**
-    Evidence: `concepts_brief.md:37,79–82`; `zxdp/src/Zxdp.cc:239–291`; `zxdp/src/Zxdp.hh:85–89`. The ring PMD close path frees owned ring storage without dequeuing and freeing its queued mbufs. [DPDK v25.11 ring close implementation](https://github.com/DPDK/dpdk/blob/v25.11/drivers/net/ring/rte_eth_ring.c#L267).
+    Evidence: `concepts_brief.md:37,79–82`; `zpkt/src/Zpkt.cc:239–291`; `zpkt/src/Zpkt.hh:85–89`. The ring PMD close path frees owned ring storage without dequeuing and freeing its queued mbufs. [DPDK v25.11 ring close implementation](https://github.com/DPDK/dpdk/blob/v25.11/drivers/net/ring/rte_eth_ring.c#L267).
     **Mitigation:** Specify which component owns and drains each software ring before port/ring destruction. Close must separately resolve backend submission entries, PMD-held mbufs and fixture/peer-held mbufs. Preserve backing through final caller return; do not infer retirement from port closure. Include close with an undrained ring and repeated create/close in acceptance tests.
     
     5. **Major — Resource economics / idle receive: blocking cannot depend only on the wake eventfd.**
-    Evidence: `concepts_brief.md:41–44`; `zxdp/INTERFACE.md:81–97`; `zxdp/src/Zxdp.cc:400–432`. Rx interrupts are optional in DPDK. [Official ethdev API](https://doc.dpdk.org/api/rte__ethdev_8h.html).
+    Evidence: `concepts_brief.md:41–44`; `zpkt/INTERFACE.md:81–97`; `zpkt/src/Zpkt.cc:400–432`. Rx interrupts are optional in DPDK. [Official ethdev API](https://doc.dpdk.org/api/rte__ethdev_8h.html).
     **Mitigation:** Define the supported wait strategy for each initial PMD and its CPU cost. A wake-only indefinite wait prevents discovering subsequent packets. If a polling fallback is required, explicitly resolve its relationship to the spin-then-block contract and latency priorities. Test packet arrival after entering idle independently of explicit wake pulses; preserve counted wakes under continuous traffic.
     
     6. **Major — Resource economics / capacity: physical pool count and descriptor count need a sizing equation.**
-    Evidence: `concepts_brief.md:24–26,43–44`; `zxdp/src/ZxdpUMem.cc:48–99`; `zxdp/src/ZxdpAlloc.hh:34–35`. Device descriptor limits can adjust requested counts. [Official descriptor adjustment API](https://doc.dpdk.org/api/rte__ethdev_8h.html).
+    Evidence: `concepts_brief.md:24–26,43–44`; `zpkt/src/ZpktUMem.cc:48–99`; `zpkt/src/ZpktAlloc.hh:34–35`. Device descriptor limits can adjust requested counts. [Official descriptor adjustment API](https://doc.dpdk.org/api/rte__ethdev_8h.html).
     **Mitigation:** Derive descriptor counts and bounded mbuf/shared-info/submission metadata from the existing pool inputs. Document actual setup memory, headroom/alignment and minimum usable pool sizes. Distinguish descriptors from packet credits; reject unsatisfiable configurations during setup. Specify behavior when caller-held Rx packets exhaust the pool, and prevent driver caches from stranding all usable credits. No new public sizing fields are necessary.
     
     7. **Major — Architecture / abstraction completeness: virtualizing `Instance` leaves allocator coupling unresolved.**
-    Evidence: `concepts_brief.md:9–13,30–33`; `zxdp/src/ZxdpAlloc.hh:60–70`; `zxdp/src/ZxdpAlloc.cc:19–29,51,59,83–90`; `zxdp/src/ZxdpUMem.cc:27–40`. `BufPool` depends directly on AF_XDP `UMem` layout and lease state. A derived DPDK instance alone cannot provide its storage semantics.
+    Evidence: `concepts_brief.md:9–13,30–33`; `zpkt/src/ZpktAlloc.hh:60–70`; `zpkt/src/ZpktAlloc.cc:19–29,51,59,83–90`; `zpkt/src/ZpktUMem.cc:27–40`. `BufPool` depends directly on AF_XDP `UMem` layout and lease state. A derived DPDK instance alone cannot provide its storage semantics.
     **Mitigation:** Define the shared arena/slot lifetime boundary alongside the virtual instance boundary. Keep pool allocation/free and direct-slot writable queries allocation-free and constant-time; avoid a second unrelated allocator implementation. Also specify DPDK meanings for `ifindex()`, `zeroCopy()`, queue telemetry and `netmask`, which are currently tied to Linux link/BPF behavior.
     
-    **Read manifest:** Read persona `agents/design_critic.md`; target `concepts_brief.md`; standards `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zxdp/GUIDELINES.md`; `docs/BUILD.md` and applicable ownership, storage, allocation, framework and liveness sections of `docs/AUDIT.md`; `zxdp/INTERFACE.md`; all six requested source/header files (`Zxdp`, `ZxdpAlloc`, `ZxdpUMem`); and `dpdk_loopback.md`, focusing on its final usable guidance at lines 195–254. The latter also contains captured tool output and embedded webpage noise. All requested files were accessible. No files changed; no builds or tests run.
+    **Read manifest:** Read persona `agents/design_critic.md`; target `concepts_brief.md`; standards `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zpkt/GUIDELINES.md`; `docs/BUILD.md` and applicable ownership, storage, allocation, framework and liveness sections of `docs/AUDIT.md`; `zpkt/INTERFACE.md`; all six requested source/header files (`Zpkt`, `ZpktAlloc`, `ZpktUMem`); and `dpdk_loopback.md`, focusing on its final usable guidance at lines 195–254. The latter also contains captured tool output and embedded webpage noise. All requested files were accessible. No files changed; no builds or tests run.
     No blocker to continued concept development. These are requirements for resolving the brief’s acknowledged design questions, not requests to revisit confirmed author choices.
     
     1. **Major — UX & Developer Ergonomics: failure and cleanup need one actionable workflow.**
-    Evidence: `concepts_brief.md:46–49`; current `Zxdp.hh:55–57,85–89` distinguishes null creation failure, a non-ready handle retaining pending rollback, successful close, pending retirement, and close errors. Removing the error argument without defining its replacement leaves callers unable to diagnose failure or safely retain cleanup responsibility.
+    Evidence: `concepts_brief.md:46–49`; current `Zpkt.hh:55–57,85–89` distinguishes null creation failure, a non-ready handle retaining pending rollback, successful close, pending retirement, and close errors. Removing the error argument without defining its replacement leaves callers unable to diagnose failure or safely retain cleanup responsibility.
     **Ergonomic requirement:** preserve the requested one-argument factory, but specify how callers obtain the failure cause and distinguish each lifecycle outcome. Include a short creation-failure/close example showing retained-handle ownership and retry scheduling.
     
     2. **Major — UX & Developer Ergonomics: backend-neutral accessors and filtering need explicit meanings.**
-    Evidence: current `Zxdp.hh:63–66` exposes `ifindex()`, `mtu()`, `zeroCopy()` and `mac()`; `Zxdp.cc:93,347–353` derives these from Linux link/AF_XDP state. The brief mentions the complete API but does not individually resolve these operations or `Params::netmask`. Official documentation describes ring ports as software FIFOs exposed through Ethernet APIs; treating their identity or copying behavior as equivalent to a Linux AF_XDP interface would be an unsupported inference. [Ring PMD](https://doc.dpdk.org/guides/nics/ring.html)
+    Evidence: current `Zpkt.hh:63–66` exposes `ifindex()`, `mtu()`, `zeroCopy()` and `mac()`; `Zpkt.cc:93,347–353` derives these from Linux link/AF_XDP state. The brief mentions the complete API but does not individually resolve these operations or `Params::netmask`. Official documentation describes ring ports as software FIFOs exposed through Ethernet APIs; treating their identity or copying behavior as equivalent to a Linux AF_XDP interface would be an unsupported inference. [Ring PMD](https://doc.dpdk.org/guides/nics/ring.html)
     **Ergonomic requirement:** document each accessor’s meaning and unavailable value for AF_XDP, ring and pcap; specify filtering behavior for nonempty masks on DPDK. Avoid silently ignoring configuration or presenting a DPDK port identifier as a Linux interface index.
     
     3. **Major — UX & Developer Ergonomics: publish the initialization boundary alongside the selector.**
@@ -2651,10 +2651,10 @@ Four lenses have completed. Their proposals converge on reusing the existing poo
     **Ergonomic requirement:** define whether `If_DPDK` selects an existing port or requests its creation, who initializes/cleans up EAL, and how multiple instances coexist. Show one minimal ring example from initialization through scheduler service and teardown. Keep ring provisioning solely pool-driven as directed.
     
     4. **Nit — UX & Developer Ergonomics: make cold-path provisioning failures corrective.**
-    Evidence: `concepts_brief.md:43–44` promises driver-aware provisioning without public duplicate sizing; current `ZxdpUMem.cc:40,56` has broad pool-size/busy errors.
+    Evidence: `concepts_brief.md:43–44` promises driver-aware provisioning without public duplicate sizing; current `ZpktUMem.cc:40,56` has broad pool-size/busy errors.
     **Ergonomic requirement:** when a selected driver cannot satisfy pool-derived provisioning, report the backend/device, offending pool/count/size and supported constraint. This needs cold-path diagnostics, not additional hot-path checks or public sizing knobs.
     
-    **Read manifest:** persona `agents/comprehension.md`; complete target `concepts_brief.md`; complete requested standards `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zxdp/GUIDELINES.md`; `zxdp/INTERFACE.md`; selected source files `Zxdp.hh/.cc`, `ZxdpAlloc.hh/.cc`, `ZxdpUMem.hh/.cc`; `dpdk_loopback.md:195–254` and earlier conversation/provenance inspection; complete `docs/BUILD.md`; relevant `docs/AUDIT.md` scope/repair procedure and applicable lifecycle/storage/concurrency guidance. All requested standards were accessible and read. No edits or builds.
+    **Read manifest:** persona `agents/comprehension.md`; complete target `concepts_brief.md`; complete requested standards `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zpkt/GUIDELINES.md`; `zpkt/INTERFACE.md`; selected source files `Zpkt.hh/.cc`, `ZpktAlloc.hh/.cc`, `ZpktUMem.hh/.cc`; `dpdk_loopback.md:195–254` and earlier conversation/provenance inspection; complete `docs/BUILD.md`; relevant `docs/AUDIT.md` scope/repair procedure and applicable lifecycle/storage/concurrency guidance. All requested standards were accessible and read. No edits or builds.
     ✓ • 0ms
 
 ## Assistant
@@ -2663,17 +2663,17 @@ Six lenses are complete; the final lens is checking whether the proposed abstrac
 
 ## Activity
 
-    $ git status --short; wc -l concepts_brief.md; rg --files /tmp/zxdp-brainstorm-review
+    $ git status --short; wc -l concepts_brief.md; rg --files /tmp/zpkt-brainstorm-review
      M docs/Z_STL_BOOST_FOLLY_BDE_RUST.md
      M gtags.conf
     88 concepts_brief.md
-    /tmp/zxdp-brainstorm-review/egm-codebase-details.md
-    /tmp/zxdp-brainstorm-review/egm-design.md
-    /tmp/zxdp-brainstorm-review/egm-zoom-out.md
-    /tmp/zxdp-brainstorm-review/egm-comprehension.md
-    /tmp/zxdp-brainstorm-review/egm-implementation-readiness.md
-    /tmp/zxdp-brainstorm-review/egm-structural.md
-    /tmp/zxdp-brainstorm-review/egm-inventive-catalyst.md
+    /tmp/zpkt-brainstorm-review/egm-codebase-details.md
+    /tmp/zpkt-brainstorm-review/egm-design.md
+    /tmp/zpkt-brainstorm-review/egm-zoom-out.md
+    /tmp/zpkt-brainstorm-review/egm-comprehension.md
+    /tmp/zpkt-brainstorm-review/egm-implementation-readiness.md
+    /tmp/zpkt-brainstorm-review/egm-structural.md
+    /tmp/zpkt-brainstorm-review/egm-inventive-catalyst.md
     ✓ • 0ms
 
 ## Assistant
@@ -2702,14 +2702,14 @@ All seven reviews are complete, with no failed reviewers. I’m checking the con
     | `egm-inventive-catalyst` | completed | No false compromise detected; advisory reservation/release patterns and costs. |
     
     Raw per-lens reports and deduplicated findings are under
-    `/tmp/zxdp-brainstorm-review/`. Review completion does not certify DPDK feasibility;
+    `/tmp/zpkt-brainstorm-review/`. Review completion does not certify DPDK feasibility;
     the receive wait and driver-release proofs remain explicit design gates.
     ✓ • 0ms
 
 ## Activity
 
     $ cat concepts_brief.md
-    # Zxdp AF_XDP and DPDK backends
+    # Zpkt AF_XDP and DPDK backends
     
     * **Author:** Huw Rogers
     * **Date:** 2026-11-16
@@ -2717,7 +2717,7 @@ All seven reviews are complete, with no failed reviewers. I’m checking the con
     
     ## Overview
     
-    Make `Zxdp::Instance` a virtual interface implemented by AF_XDP and DPDK.
+    Make `Zpkt::Instance` a virtual interface implemented by AF_XDP and DPDK.
     Remove the base class's `InstanceData *m_data`; make backend operations pure
     virtual. Add `ZtEnumNS(uint8_t, Backend, AF_XDP, DPDK)` and `Backend::T backend`
     to `Params`. Add the namespace factory `ZmRef<Instance> instance(const Params
@@ -2740,7 +2740,7 @@ All seven reviews are complete, with no failed reviewers. I’m checking the con
     
     The objective is to let callers use AF_XDP or DPDK through the same raw-packet
     boundary while preserving the merged AF_XDP behavior. This is a backend extension,
-    not a transport stack. The baseline contract is [zxdp/INTERFACE.md](zxdp/INTERFACE.md):
+    not a transport stack. The baseline contract is [zpkt/INTERFACE.md](zpkt/INTERFACE.md):
     separate caller and submission leases, a borrowed synchronous commit hook,
     scheduler sender service, counted receive wakes, queue telemetry and retryable
     shutdown. Backend-specific mechanisms may differ; these ownership guarantees may not.
@@ -2784,8 +2784,8 @@ All seven reviews are complete, with no failed reviewers. I’m checking the con
     3. **Shared backing — major.** Factor the smallest backend-neutral arena/slot
        lifetime component beneath the existing `BufPool`. Today it retains `UMem`
        and directly accesses its layout and `TxSlot`; a virtual instance alone does
-       not remove this coupling ([ZxdpAlloc.hh](zxdp/src/ZxdpAlloc.hh),
-       [ZxdpAlloc.cc](zxdp/src/ZxdpAlloc.cc)). Keep direct slot lookup, the existing
+       not remove this coupling ([ZpktAlloc.hh](zpkt/src/ZpktAlloc.hh),
+       [ZpktAlloc.cc](zpkt/src/ZpktAlloc.cc)). Keep direct slot lookup, the existing
        payload-overlay recycling list and allocation-free packet operations. Keep
        XSK registration and DPDK registration private to each backend. Pool-held
        backing must survive instance close until the last caller packet returns.
@@ -2816,7 +2816,7 @@ All seven reviews are complete, with no failed reviewers. I’m checking the con
        native operation and cleanup status, with runtime errors still surfaced by
        `close()`. The precise diagnostic convention and a minimal caller example must
        be settled before caller migration. Do not add a completion callback or silently
-       discard a partially initialized instance ([current factory](zxdp/src/Zxdp.cc)).
+       discard a partially initialized instance ([current factory](zpkt/src/Zpkt.cc)).
     
     7. **Receive idle behavior — major, unresolved feasibility gate.** Preserve one
        Rx owner, counted preposted/concurrent wakes, prompt interruption under load,
@@ -2850,7 +2850,7 @@ All seven reviews are complete, with no failed reviewers. I’m checking the con
     ## Goals vs. Non-Goals
     
     * **In-Scope Goals:** Virtual Instance API; backend enum and namespace factory;
-      tagged interface parameters; AF_XDP and DPDK implementations in zxdp; migration
+      tagged interface parameters; AF_XDP and DPDK implementations in zpkt; migration
       of affected callers; pool-driven provisioning; software DPDK tests; preservation
       of admission, ownership, service and shutdown contracts.
     * **Out-of-Scope Non-Goals:** A transport stack or application runtime; duplicate
@@ -2890,7 +2890,7 @@ All seven reviews are complete, with no failed reviewers. I’m checking the con
     2. **AF_XDP first:** Introduce the virtual boundary, enum, tagged parameters,
        namespace factory and shared backing seam together with every affected caller.
        Preserve AF_XDP behavior before adding DPDK. Search all factory/interface users,
-       including Zutcp, zxdp utility/unit/integration tests and Zutcp pool integration.
+       including Zutcp, zpkt utility/unit/integration tests and Zutcp pool integration.
        Propagate the intentional API/ABI break without shims and rebuild dependents.
     3. **DPDK implementation:** Add the narrow selector and pool-derived resources,
        admission/service path, retirement handoff and retryable teardown. Add the
@@ -2942,7 +2942,7 @@ All seven reviews are complete, with no failed reviewers. I’m checking the con
     | `egm-inventive-catalyst` | completed | No false compromise detected; advisory reservation/release patterns and costs. |
     
     Raw per-lens reports and deduplicated findings are under
-    `/tmp/zxdp-brainstorm-review/`. Review completion does not certify DPDK feasibility;
+    `/tmp/zpkt-brainstorm-review/`. Review completion does not certify DPDK feasibility;
     the receive wait and driver-release proofs remain explicit design gates.
     ✓ • 0ms
 
@@ -2952,27 +2952,27 @@ All seven reviews are complete, with no failed reviewers. I’m checking the con
 
 ## Activity
 
-    $ rg -n 'Read manifest|[Rr]ead' /tmp/zxdp-brainstorm-review/*.md; git diff --stat
-    /tmp/zxdp-brainstorm-review/egm-zoom-out.md:7:3. **Major: avoid reproducing AF_XDP’s sender machinery mechanically.** DPDK `rte_eth_tx_burst()` may accept fewer packets than requested; placing the commit hook immediately before that call cannot promise no refusal after true. A bounded preallocated descriptor admission queue is a plausible bridge, with PMD retries owned by the sender. That is a meaningful extra ownership stage and must be justified explicitly rather than hidden behind the virtual API. **Resolution:** define acceptance as admission to a capacity-reserved internal queue, derive capacity from the authored pools, and state when its submission lease ends. Preserve the caller Tx owner versus sender separation, shutdown barrier, and asynchronous error path. Reuse the existing scheduler slot and lease accounting concepts; add no sender thread or application runtime. Evidence: `Zxdp.cc:172–205,295–318,366–395`, [official `rte_eth_tx_burst()` contract](https://doc.dpdk.org/api/rte__ethdev_8h.html). The external-buffer release callback offers a potential direct-slot retirement mechanism, subject to driver reclamation/close verification: [official mbuf API](https://doc.dpdk.org/api/rte__mbuf_8h.html).
-    /tmp/zxdp-brainstorm-review/egm-zoom-out.md:11:Read manifest: complete `concepts_brief.md`; persona `agents/zoom_out.md`; complete requested standards `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zxdp/GUIDELINES.md`; complete `zxdp/INTERFACE.md`, `Zxdp.hh`, `Zxdp.cc`, `ZxdpAlloc.hh/.cc`, `ZxdpUMem.hh/.cc`; `dpdk_loopback.md:195–254` substantive guidance, with earlier conversation/provenance inspected (long embedded source excerpts narrowed); relevant `docs/BUILD.md` module/testing/dependency guidance and `docs/AUDIT.md` repair/ownership/reuse guidance. Additional searches covered zxdp tests, Zutcp integration, Zi wake implementations, and repository DPDK symbols. All four requested standards were accessible and read. No edits or builds.
-    /tmp/zxdp-brainstorm-review/egm-implementation-readiness.md:2:Evidence: `Zxdp.hh:57–60`, `Zxdp.cc:318–334` deliberately return a non-ready handle when initialization cleanup remains pending. `zutcp/src/ZutcpMx.cc:1051–1070` retains that handle and enters asynchronous shutdown. The proposed one-argument factory must not reduce failure to null or destroy partially initialized backend resources.
-    /tmp/zxdp-brainstorm-review/egm-implementation-readiness.md:3:**Migration requirement:** keep the author’s exact namespace factory; specify how its result exposes initialization failure and retains retryable cleanup ownership. Include a failed-init/rollback-pending/retry-close test before migrating callers. This is already identified in the brief; it needs a concrete design resolution.
-    /tmp/zxdp-brainstorm-review/egm-implementation-readiness.md:21:Read manifest: persona; `concepts_brief.md`; all of `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zxdp/GUIDELINES.md`, `zxdp/INTERFACE.md`, and all six requested source files. Read `dpdk_loopback.md:195–254`; inspected earlier conversation/activity provenance, including its embedded search output, without treating it as current code evidence. Read `docs/BUILD.md`; applied `docs/AUDIT.md` scope/repair procedure. Additionally inspected factory callers, `zxdp/src/Makefile.am`, and relevant configure declarations. No requested standard was inaccessible. Read-only; no edits or builds.
-    /tmp/zxdp-brainstorm-review/egm-design.md:13:**Mitigation:** Choose a concrete direct-slot retirement mechanism, such as preallocated external-buffer shared-info callbacks, and assign its execution/thread ownership. DPDK invokes that callback when all attached mbufs detach. [Official mbuf API](https://doc.dpdk.org/api/rte__mbuf_8h.html). Keep the external-buffer submission lifetime distinct from the caller lease, so retained caller ownership does not prevent observing driver release. Specify how callback retirement reaches Tx-owned `pending`/active bookkeeping without cross-shard mutation. Test retirement with no further sends and no incoming traffic.
-    /tmp/zxdp-brainstorm-review/egm-design.md:31:**Read manifest:** Read persona `agents/design_critic.md`; target `concepts_brief.md`; standards `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zxdp/GUIDELINES.md`; `docs/BUILD.md` and applicable ownership, storage, allocation, framework and liveness sections of `docs/AUDIT.md`; `zxdp/INTERFACE.md`; all six requested source/header files (`Zxdp`, `ZxdpAlloc`, `ZxdpUMem`); and `dpdk_loopback.md`, focusing on its final usable guidance at lines 195–254. The latter also contains captured tool output and embedded webpage noise. All requested files were accessible. No files changed; no builds or tests run.
-    /tmp/zxdp-brainstorm-review/egm-structural.md:1:Read-only review complete. Preserve the author’s virtual interface, explicit backend/tagged selector, pool-driven provisioning and singular `rxPool`.
-    /tmp/zxdp-brainstorm-review/egm-structural.md:5:**Proposed requirement:** define the storage/lease boundary as part of this concept, including who owns backing after instance close, how direct slot identity reaches backend metadata, and how final pool return works on any thread. Share backend-independent recycling and lease invariants without forcing DPDK through AF_XDP layout or duplicating the entire allocator. No additional public sizing is needed.
-    /tmp/zxdp-brainstorm-review/egm-structural.md:13:**Proposed requirement:** accompany the completion design with an owner map for producer, driver service, retirement, `writable()` and any-thread final return. Specify the bounded handoff where those owners differ; do not make shared locks or packet searches the default adaptation. Treat this as resolving an acknowledged question, not evidence the proposed backend is infeasible.
-    /tmp/zxdp-brainstorm-review/egm-structural.md:19:**Read manifest:** persona `agents/structural.md`; complete `concepts_brief.md`, `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zxdp/GUIDELINES.md`, `docs/BUILD.md`, `docs/AUDIT.md`, `zxdp/INTERFACE.md`, `Zxdp.hh/.cc`, `ZxdpAlloc.hh/.cc`, `ZxdpUMem.hh/.cc`; `dpdk_loopback.md` opening provenance and substantive lines 195–254. Earlier embedded web/activity dumps were treated as provenance, not project requirements. All requested standards were accessible and read. No edits or builds.
-    /tmp/zxdp-brainstorm-review/egm-comprehension.md:4:Evidence: `concepts_brief.md:46–49`; current `Zxdp.hh:55–57,85–89` distinguishes null creation failure, a non-ready handle retaining pending rollback, successful close, pending retirement, and close errors. Removing the error argument without defining its replacement leaves callers unable to diagnose failure or safely retain cleanup responsibility.
-    /tmp/zxdp-brainstorm-review/egm-comprehension.md:19:**Read manifest:** persona `agents/comprehension.md`; complete target `concepts_brief.md`; complete requested standards `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zxdp/GUIDELINES.md`; `zxdp/INTERFACE.md`; selected source files `Zxdp.hh/.cc`, `ZxdpAlloc.hh/.cc`, `ZxdpUMem.hh/.cc`; `dpdk_loopback.md:195–254` and earlier conversation/provenance inspection; complete `docs/BUILD.md`; relevant `docs/AUDIT.md` scope/repair procedure and applicable lifecycle/storage/concurrency guidance. All requested standards were accessible and read. No edits or builds.
-    /tmp/zxdp-brainstorm-review/egm-codebase-details.md:9:Evidence: `concepts_brief.md:46–49,74–77`; existing construction preserves both the original failure and rollback-pending handle (`zxdp/src/Zxdp.cc:318–331`). Runtime failure records `ioError`, changes readiness and wakes Rx (`:180–190,419–425`), with text delivered during close (`:285–289`).
-    /tmp/zxdp-brainstorm-review/egm-codebase-details.md:10:**Risk:** A null factory result or `ready()==false` alone leaves operators unable to distinguish invalid selection, unavailable PMD, EAL failure, device loss and incomplete rollback.
-    /tmp/zxdp-brainstorm-review/egm-codebase-details.md:25:**Read manifest:** Persona `agents/codebase_details.md`; complete `concepts_brief.md`, `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zxdp/GUIDELINES.md`, `zxdp/INTERFACE.md`, `zxdp/src/Zxdp.hh`, `zxdp/src/Zxdp.cc`, `zxdp/src/ZxdpAlloc.hh`, `zxdp/src/ZxdpAlloc.cc`, `zxdp/src/ZxdpUMem.hh`, `zxdp/src/ZxdpUMem.cc`, `docs/BUILD.md`. Read `docs/AUDIT.md` repair guidance and relevant allocation/logging/telemetry/liveness sections. Read `dpdk_loopback.md` substantive answer at lines 195–254 and inspected preceding transcript provenance; large embedded historical output was truncated. Additional targeted read: `zxdp/src/ZxdpRing.hh:30–81,175–217`. Official DPDK ring and statistics references opened.
-    /tmp/zxdp-brainstorm-review/egm-inventive-catalyst.md:3:Two actionable design options merit evaluation; these are advisory resolutions to acknowledged questions, not defects already committed by the brief:
-    /tmp/zxdp-brainstorm-review/egm-inventive-catalyst.md:17:**Pattern: Extraction + Preliminary Action.** Investigate preallocated per-slot external-buffer shared information and mbuf metadata, with an internal release callback mapped directly to the slot. Keep arena lifetime independent of instance lifetime so caller-held packets survive close. Publish any completion event to the Tx owner before mutating Tx-owned pending lists; an arbitrary-thread callback must not edit those lists.
-    /tmp/zxdp-brainstorm-review/egm-inventive-catalyst.md:19:**Secondary tradeoffs:** external-buffer/refcount and DMA-registration requirements; preallocated mbuf/shared-info memory; driver capability restrictions; callback thread context and orderly teardown require explicit proof. A private release callback does not change the rejected public transmit-completion callback choice.
-    /tmp/zxdp-brainstorm-review/egm-inventive-catalyst.md:25:**Read manifest:** persona read; complete target brief; complete `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zxdp/GUIDELINES.md`; complete `zxdp/INTERFACE.md`, `Zxdp.hh/.cc`, `ZxdpAlloc.hh/.cc`, `ZxdpUMem.hh/.cc`; `dpdk_loopback.md` final lines 195–254 read, earlier conversation/tool provenance inspected; `docs/BUILD.md` read; `docs/AUDIT.md` relevant repair, storage, heap, ownership, control-flow and liveness guidance read. No files changed or builds run.
+    $ rg -n 'Read manifest|[Rr]ead' /tmp/zpkt-brainstorm-review/*.md; git diff --stat
+    /tmp/zpkt-brainstorm-review/egm-zoom-out.md:7:3. **Major: avoid reproducing AF_XDP’s sender machinery mechanically.** DPDK `rte_eth_tx_burst()` may accept fewer packets than requested; placing the commit hook immediately before that call cannot promise no refusal after true. A bounded preallocated descriptor admission queue is a plausible bridge, with PMD retries owned by the sender. That is a meaningful extra ownership stage and must be justified explicitly rather than hidden behind the virtual API. **Resolution:** define acceptance as admission to a capacity-reserved internal queue, derive capacity from the authored pools, and state when its submission lease ends. Preserve the caller Tx owner versus sender separation, shutdown barrier, and asynchronous error path. Reuse the existing scheduler slot and lease accounting concepts; add no sender thread or application runtime. Evidence: `Zpkt.cc:172–205,295–318,366–395`, [official `rte_eth_tx_burst()` contract](https://doc.dpdk.org/api/rte__ethdev_8h.html). The external-buffer release callback offers a potential direct-slot retirement mechanism, subject to driver reclamation/close verification: [official mbuf API](https://doc.dpdk.org/api/rte__mbuf_8h.html).
+    /tmp/zpkt-brainstorm-review/egm-zoom-out.md:11:Read manifest: complete `concepts_brief.md`; persona `agents/zoom_out.md`; complete requested standards `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zpkt/GUIDELINES.md`; complete `zpkt/INTERFACE.md`, `Zpkt.hh`, `Zpkt.cc`, `ZpktAlloc.hh/.cc`, `ZpktUMem.hh/.cc`; `dpdk_loopback.md:195–254` substantive guidance, with earlier conversation/provenance inspected (long embedded source excerpts narrowed); relevant `docs/BUILD.md` module/testing/dependency guidance and `docs/AUDIT.md` repair/ownership/reuse guidance. Additional searches covered zpkt tests, Zutcp integration, Zi wake implementations, and repository DPDK symbols. All four requested standards were accessible and read. No edits or builds.
+    /tmp/zpkt-brainstorm-review/egm-implementation-readiness.md:2:Evidence: `Zpkt.hh:57–60`, `Zpkt.cc:318–334` deliberately return a non-ready handle when initialization cleanup remains pending. `zutcp/src/ZutcpMx.cc:1051–1070` retains that handle and enters asynchronous shutdown. The proposed one-argument factory must not reduce failure to null or destroy partially initialized backend resources.
+    /tmp/zpkt-brainstorm-review/egm-implementation-readiness.md:3:**Migration requirement:** keep the author’s exact namespace factory; specify how its result exposes initialization failure and retains retryable cleanup ownership. Include a failed-init/rollback-pending/retry-close test before migrating callers. This is already identified in the brief; it needs a concrete design resolution.
+    /tmp/zpkt-brainstorm-review/egm-implementation-readiness.md:21:Read manifest: persona; `concepts_brief.md`; all of `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zpkt/GUIDELINES.md`, `zpkt/INTERFACE.md`, and all six requested source files. Read `dpdk_loopback.md:195–254`; inspected earlier conversation/activity provenance, including its embedded search output, without treating it as current code evidence. Read `docs/BUILD.md`; applied `docs/AUDIT.md` scope/repair procedure. Additionally inspected factory callers, `zpkt/src/Makefile.am`, and relevant configure declarations. No requested standard was inaccessible. Read-only; no edits or builds.
+    /tmp/zpkt-brainstorm-review/egm-design.md:13:**Mitigation:** Choose a concrete direct-slot retirement mechanism, such as preallocated external-buffer shared-info callbacks, and assign its execution/thread ownership. DPDK invokes that callback when all attached mbufs detach. [Official mbuf API](https://doc.dpdk.org/api/rte__mbuf_8h.html). Keep the external-buffer submission lifetime distinct from the caller lease, so retained caller ownership does not prevent observing driver release. Specify how callback retirement reaches Tx-owned `pending`/active bookkeeping without cross-shard mutation. Test retirement with no further sends and no incoming traffic.
+    /tmp/zpkt-brainstorm-review/egm-design.md:31:**Read manifest:** Read persona `agents/design_critic.md`; target `concepts_brief.md`; standards `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zpkt/GUIDELINES.md`; `docs/BUILD.md` and applicable ownership, storage, allocation, framework and liveness sections of `docs/AUDIT.md`; `zpkt/INTERFACE.md`; all six requested source/header files (`Zpkt`, `ZpktAlloc`, `ZpktUMem`); and `dpdk_loopback.md`, focusing on its final usable guidance at lines 195–254. The latter also contains captured tool output and embedded webpage noise. All requested files were accessible. No files changed; no builds or tests run.
+    /tmp/zpkt-brainstorm-review/egm-structural.md:1:Read-only review complete. Preserve the author’s virtual interface, explicit backend/tagged selector, pool-driven provisioning and singular `rxPool`.
+    /tmp/zpkt-brainstorm-review/egm-structural.md:5:**Proposed requirement:** define the storage/lease boundary as part of this concept, including who owns backing after instance close, how direct slot identity reaches backend metadata, and how final pool return works on any thread. Share backend-independent recycling and lease invariants without forcing DPDK through AF_XDP layout or duplicating the entire allocator. No additional public sizing is needed.
+    /tmp/zpkt-brainstorm-review/egm-structural.md:13:**Proposed requirement:** accompany the completion design with an owner map for producer, driver service, retirement, `writable()` and any-thread final return. Specify the bounded handoff where those owners differ; do not make shared locks or packet searches the default adaptation. Treat this as resolving an acknowledged question, not evidence the proposed backend is infeasible.
+    /tmp/zpkt-brainstorm-review/egm-structural.md:19:**Read manifest:** persona `agents/structural.md`; complete `concepts_brief.md`, `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zpkt/GUIDELINES.md`, `docs/BUILD.md`, `docs/AUDIT.md`, `zpkt/INTERFACE.md`, `Zpkt.hh/.cc`, `ZpktAlloc.hh/.cc`, `ZpktUMem.hh/.cc`; `dpdk_loopback.md` opening provenance and substantive lines 195–254. Earlier embedded web/activity dumps were treated as provenance, not project requirements. All requested standards were accessible and read. No edits or builds.
+    /tmp/zpkt-brainstorm-review/egm-comprehension.md:4:Evidence: `concepts_brief.md:46–49`; current `Zpkt.hh:55–57,85–89` distinguishes null creation failure, a non-ready handle retaining pending rollback, successful close, pending retirement, and close errors. Removing the error argument without defining its replacement leaves callers unable to diagnose failure or safely retain cleanup responsibility.
+    /tmp/zpkt-brainstorm-review/egm-comprehension.md:19:**Read manifest:** persona `agents/comprehension.md`; complete target `concepts_brief.md`; complete requested standards `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zpkt/GUIDELINES.md`; `zpkt/INTERFACE.md`; selected source files `Zpkt.hh/.cc`, `ZpktAlloc.hh/.cc`, `ZpktUMem.hh/.cc`; `dpdk_loopback.md:195–254` and earlier conversation/provenance inspection; complete `docs/BUILD.md`; relevant `docs/AUDIT.md` scope/repair procedure and applicable lifecycle/storage/concurrency guidance. All requested standards were accessible and read. No edits or builds.
+    /tmp/zpkt-brainstorm-review/egm-codebase-details.md:9:Evidence: `concepts_brief.md:46–49,74–77`; existing construction preserves both the original failure and rollback-pending handle (`zpkt/src/Zpkt.cc:318–331`). Runtime failure records `ioError`, changes readiness and wakes Rx (`:180–190,419–425`), with text delivered during close (`:285–289`).
+    /tmp/zpkt-brainstorm-review/egm-codebase-details.md:10:**Risk:** A null factory result or `ready()==false` alone leaves operators unable to distinguish invalid selection, unavailable PMD, EAL failure, device loss and incomplete rollback.
+    /tmp/zpkt-brainstorm-review/egm-codebase-details.md:25:**Read manifest:** Persona `agents/codebase_details.md`; complete `concepts_brief.md`, `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zpkt/GUIDELINES.md`, `zpkt/INTERFACE.md`, `zpkt/src/Zpkt.hh`, `zpkt/src/Zpkt.cc`, `zpkt/src/ZpktAlloc.hh`, `zpkt/src/ZpktAlloc.cc`, `zpkt/src/ZpktUMem.hh`, `zpkt/src/ZpktUMem.cc`, `docs/BUILD.md`. Read `docs/AUDIT.md` repair guidance and relevant allocation/logging/telemetry/liveness sections. Read `dpdk_loopback.md` substantive answer at lines 195–254 and inspected preceding transcript provenance; large embedded historical output was truncated. Additional targeted read: `zpkt/src/ZpktRing.hh:30–81,175–217`. Official DPDK ring and statistics references opened.
+    /tmp/zpkt-brainstorm-review/egm-inventive-catalyst.md:3:Two actionable design options merit evaluation; these are advisory resolutions to acknowledged questions, not defects already committed by the brief:
+    /tmp/zpkt-brainstorm-review/egm-inventive-catalyst.md:17:**Pattern: Extraction + Preliminary Action.** Investigate preallocated per-slot external-buffer shared information and mbuf metadata, with an internal release callback mapped directly to the slot. Keep arena lifetime independent of instance lifetime so caller-held packets survive close. Publish any completion event to the Tx owner before mutating Tx-owned pending lists; an arbitrary-thread callback must not edit those lists.
+    /tmp/zpkt-brainstorm-review/egm-inventive-catalyst.md:19:**Secondary tradeoffs:** external-buffer/refcount and DMA-registration requirements; preallocated mbuf/shared-info memory; driver capability restrictions; callback thread context and orderly teardown require explicit proof. A private release callback does not change the rejected public transmit-completion callback choice.
+    /tmp/zpkt-brainstorm-review/egm-inventive-catalyst.md:25:**Read manifest:** persona read; complete target brief; complete `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zpkt/GUIDELINES.md`; complete `zpkt/INTERFACE.md`, `Zpkt.hh/.cc`, `ZpktAlloc.hh/.cc`, `ZpktUMem.hh/.cc`; `dpdk_loopback.md` final lines 195–254 read, earlier conversation/tool provenance inspected; `docs/BUILD.md` read; `docs/AUDIT.md` relevant repair, storage, heap, ownership, control-flow and liveness guidance read. No files changed or builds run.
      docs/Z_STL_BOOST_FOLLY_BDE_RUST.md | 67 +++++++++++++++++++++-----------------
      gtags.conf                         |  2 +-
      2 files changed, 39 insertions(+), 30 deletions(-)
@@ -2985,12 +2985,12 @@ All seven reviews are complete, with no failed reviewers. I’m checking the con
 
 ## Activity
 
-    $ ls -l /tmp/zxdp-brainstorm-review/consolidated.md concepts_brief.md; tail -n 3 /tmp/zxdp-brainstorm-review/egm-structural.md
-    ls: cannot access '/tmp/zxdp-brainstorm-review/consolidated.md': No such file or directory
+    $ ls -l /tmp/zpkt-brainstorm-review/consolidated.md concepts_brief.md; tail -n 3 /tmp/zpkt-brainstorm-review/egm-structural.md
+    ls: cannot access '/tmp/zpkt-brainstorm-review/consolidated.md': No such file or directory
     -rw-r--r-- 1 count0 count0 15266 Nov 16 19:53 concepts_brief.md
     **Proposed requirement:** reuse backend-parameterized ownership/lifecycle cases and reserve PMD-specific fixtures for driver behavior. Document the DPDK version and required PMDs. Follow `BUILD.md`’s distinction between isolated `test` cases and environment-dependent `itest` cases.
     
-    **Read manifest:** persona `agents/structural.md`; complete `concepts_brief.md`, `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zxdp/GUIDELINES.md`, `docs/BUILD.md`, `docs/AUDIT.md`, `zxdp/INTERFACE.md`, `Zxdp.hh/.cc`, `ZxdpAlloc.hh/.cc`, `ZxdpUMem.hh/.cc`; `dpdk_loopback.md` opening provenance and substantive lines 195–254. Earlier embedded web/activity dumps were treated as provenance, not project requirements. All requested standards were accessible and read. No edits or builds.
+    **Read manifest:** persona `agents/structural.md`; complete `concepts_brief.md`, `docs/GUIDELINES.md`, `docs/CPP.md`, `docs/IO.md`, `zpkt/GUIDELINES.md`, `docs/BUILD.md`, `docs/AUDIT.md`, `zpkt/INTERFACE.md`, `Zpkt.hh/.cc`, `ZpktAlloc.hh/.cc`, `ZpktUMem.hh/.cc`; `dpdk_loopback.md` opening provenance and substantive lines 195–254. Earlier embedded web/activity dumps were treated as provenance, not project requirements. All requested standards were accessible and read. No edits or builds.
     ✓ • 0ms
 
 ## Activity
@@ -3038,20 +3038,20 @@ It lets the caller publish its own state immediately before the packet becomes v
 
 The sequence is:
 
-1. Zxdp checks the packet and reserves submission capacity.
+1. Zpkt checks the packet and reserves submission capacity.
 2. It calls `commit()`.
-3. If the hook returns `false`, Zxdp cancels admission without acquiring a submission lease.
-4. If it returns `true`, Zxdp publishes the submission with no further refusal.
+3. If the hook returns `false`, Zpkt cancels admission without acquiring a submission lease.
+4. If it returns `true`, Zpkt publishes the submission with no further refusal.
 
 The hook runs synchronously inside `send()`. It is optional and is not a transmit-completion callback.
 
-The DPDK concern is that `rte_eth_tx_burst()` can accept fewer packets than requested. A reserved internal queue would let Zxdp honor the hook’s promise while retrying driver submission afterward.
+The DPDK concern is that `rte_eth_tx_burst()` can accept fewer packets than requested. A reserved internal queue would let Zpkt honor the hook’s promise while retrying driver submission afterward.
 
 Noted that the updated zpicotls is installed locally.
 
 ## User
 
-why does `zxdp` need that? why can't the caller just run the commit block before calling send?
+why does `zpkt` need that? why can't the caller just run the commit block before calling send?
 
 ## Assistant
 
@@ -3071,7 +3071,7 @@ what's the DPDK issue with send and `commitFn`?
 
 ## Assistant
 
-AF_XDP lets Zxdp reserve a descriptor **before** calling `commitFn`. Once the hook returns true, publishing that descriptor cannot fail.
+AF_XDP lets Zpkt reserve a descriptor **before** calling `commitFn`. Once the hook returns true, publishing that descriptor cannot fail.
 
 DPDK’s `rte_eth_tx_burst()` combines admission and submission. Even for one packet, it may return `0` because the queue is full. It offers no equivalent portable reservation step. [DPDK API](https://doc.dpdk.org/api-25.11/rte__ethdev_8h.html)
 
@@ -3080,7 +3080,7 @@ That leaves an ordering problem:
 - Call `commitFn` first: it may commit caller state, then DPDK refuses the packet.
 - Submit first: the packet may become visible before caller state is committed.
 
-The proposed internal queue resolves this by reserving its capacity before the hook. After true, Zxdp accepts responsibility for the packet and retries DPDK submission as needed. That preserves the existing contract, at the cost of another bounded queue.
+The proposed internal queue resolves this by reserving its capacity before the hook. After true, Zpkt accepts responsibility for the packet and retries DPDK submission as needed. That preserves the existing contract, at the cost of another bounded queue.
 
 ## User
 
@@ -3096,7 +3096,7 @@ I’ll check where Zutcp uses the hook and whether it can safely move that work 
     # Current Phase 8 execution boundary
     
     The live protocol uses standard
-    TCP headers/options and raw application bytes over Stack/Zxdp. Endpoint ownership
+    TCP headers/options and raw application bytes over Stack/Zpkt. Endpoint ownership
     uses TCP tuples; accepted byte history, canonical backing and owner handoffs
     remain authoritative. Intermediate packet/frame codecs and peer packet-number
     acknowledgments are deleted. Providers reserve the maximum standard Ethernet,
@@ -3116,7 +3116,7 @@ I’ll check where Zutcp uses the hook and whether it can safely move that work 
     
     # Historical Phase 1 execution boundary
     
-    The live transport now uses Stack/Zxdp with TCP-aligned IP carriage. The native
+    The live transport now uses Stack/Zpkt with TCP-aligned IP carriage. The native
     endpoint tests exercise the client/server cutover and working pairs. Do not restore a kernel UDP mode,
     fallback or separate backend. Cold interface/route/static-neighbor queries remain
     control work outside Rx/Tx.
@@ -3144,7 +3144,7 @@ I’ll check where Zutcp uses the hook and whether it can safely move that work 
     independently gates physical reuse. Historical frame metadata cannot resurrect
     ACKed native byte work or assemble retired payload storage.
     
-    Phase 1 is stripping plus IP/Zxdp wiring and regression testing. No new recovery,
+    Phase 1 is stripping plus IP/Zpkt wiring and regression testing. No new recovery,
     congestion, flow-control or packetization behavior belongs in that phase. Broader
     pressure/fairness/lifecycle/observation matrices are later work, not extra exit
     gates. See the current boundary above.
@@ -3188,7 +3188,7 @@ I’ll check where Zutcp uses the hook and whether it can safely move that work 
     conservative capacity. Charge only accepted sends and release only on CQ or
     successful kernel retirement, independently of transport caller leases. This
     requires no class ledger, packet search or completion callback. Keep the policy
-    in Zutcp; do not add reserved credits or priority parameters to Zxdp.
+    in Zutcp; do not add reserved credits or priority parameters to Zpkt.
     
     Large ACKs that cannot piggyback are sent from control backing before native
     data. Refusal leaves ACK state pending; preserve successful control work in the
@@ -3298,7 +3298,7 @@ I’ll check where Zutcp uses the hook and whether it can safely move that work 
     The live endpoint and final-packet recovery lease integration are implemented;
     the retained protocol regression suite is the Phase 1 acceptance gate. Keep payload ownership and
     endpoint routing in the transport; there is no packet codec or route lookup in
-    Zxdp. `resolveIPPath` queries kernel route/static-neighbor state during cold
+    Zpkt. `resolveIPPath` queries kernel route/static-neighbor state during cold
     control setup only. Never run its blocking request/reply on packet Rx/Tx owners.
     It constrains lookup to the configured interface, preserves an explicit local
     source and publishes the resulting path only on complete success. It does not
@@ -3349,7 +3349,7 @@ I’ll check where Zutcp uses the hook and whether it can safely move that work 
     Native endpoint wiring is implemented; complete the remaining ownership,
     admission/control and owner/race gates. The copied migration guidance below is
     historical.
-    Keep Zi types, adapter state and mx scheduler integration in Zutcp. Zxdp owns
+    Keep Zi types, adapter state and mx scheduler integration in Zutcp. Zpkt owns
     its required configurable spin-before-epoll `rx()` and interrupting `wake()`.
     Delegate the plugin hooks to that pair; use the raw named-parameter pool/callback
     interface in the updated plan.
@@ -3835,24 +3835,24 @@ I’ll check where Zutcp uses the hook and whether it can safely move that work 
     succeeds, then copy authenticated plaintext back into the original packet. This
     copy permits old/next-key retry after a failed authentication; STREAM slices
     still retain the original packet backing.
-    zutcp/src/Zutcp_.hh:206:    const IPPath *path = nullptr, const Zxdp::CommitFn &commit = {})
+    zutcp/src/Zutcp_.hh:206:    const IPPath *path = nullptr, const Zpkt::CommitFn &commit = {})
     zutcp/src/Zutcp_.hh:211:      return send_(ZuMv(buf), ZuMv(addr), ecn, generation, path, true, commit);
     zutcp/src/Zutcp_.hh:212:    // A commit hook borrows its caller's stack; only direct owner sends may use it.
     zutcp/src/Zutcp_.hh:213:    if (commit) return false;
-    zutcp/src/Zutcp_.hh:278:    const Zxdp::CommitFn &commit = {})
+    zutcp/src/Zutcp_.hh:278:    const Zpkt::CommitFn &commit = {})
     zutcp/src/Zutcp_.hh:301:    if (!m_stack->sendPacket(buf, static_cast<PacketBuf *>(buf.ptr())->retained, commit)) {
-    zutcp/src/Zutcp.hh:934:      const Zxdp::CommitFn &commit = {}) {
+    zutcp/src/Zutcp.hh:934:      const Zpkt::CommitFn &commit = {}) {
     zutcp/src/Zutcp.hh:935:    return Endpoint::send(ZuMv(buf), ZuMv(addr), ecn, priority, &path, commit);
     zutcp/src/ZutcpRecovery.hh:375:  void commit(NewReno &cc) {
-    zutcp/src/ZutcpCliCxn.hh:385:      [this](auto buf, EcnMark::T ecn, const Zxdp::CommitFn &commit) {
+    zutcp/src/ZutcpCliCxn.hh:385:      [this](auto buf, EcnMark::T ecn, const Zpkt::CommitFn &commit) {
     zutcp/src/ZutcpCliCxn.hh:387:    return Endpoint::send(ZuMv(buf), Endpoint::remote(), ecn, true, nullptr, commit);
     zutcp/src/ZutcpMx.cc:1302:  sendPacket(packet);
     zutcp/src/ZutcpMx.cc:1362:  if (sendPacket(packet) && record.timestamps)
     zutcp/src/ZutcpMx.cc:1384:bool Stack::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease,
-    zutcp/src/ZutcpMx.cc:1385:    const Zxdp::CommitFn &commit)
+    zutcp/src/ZutcpMx.cc:1385:    const Zpkt::CommitFn &commit)
     zutcp/src/ZutcpMx.cc:1399:  if (!m_backend->send(buf->data(), buf->length, commit)) return false;
     zutcp/src/ZutcpMx.hh:278:  bool sendPacket(const ZmRef<Zi::IOBuf> &, PacketLease * = nullptr,
-    zutcp/src/ZutcpMx.hh:279:    const Zxdp::CommitFn &commit = {});
+    zutcp/src/ZutcpMx.hh:279:    const Zpkt::CommitFn &commit = {});
     zutcp/src/ZutcpConnection.hh:2701:    if (ZuUnlikely(app()->congestionControl())) work.growth.commit(m_congestion);
     zutcp/src/ZutcpConnection.hh:3309:  bool commitTxRange(TxRange &range, uint32_t length) {
     zutcp/src/ZutcpConnection.hh:3316:  bool commitTxRange(
@@ -3860,10 +3860,10 @@ I’ll check where Zutcp uses the hook and whether it can safely move that work 
     zutcp/src/ZutcpConnection.hh:3805:    // Out-of-order input consumes no service reserve and commits no ACK.
     zutcp/src/ZutcpConnection.hh:4195:    // owner finishes its committed SYN recovery before processing the event.
     zutcp/src/ZutcpConnection.hh:4330:    // before the current original has committed its recovery accounting.
-    zutcp/src/ZutcpConnection.hh:4429:    Zxdp::CommitFn commit{&context, [](Commit *c) {
+    zutcp/src/ZutcpConnection.hh:4429:    Zpkt::CommitFn commit{&context, [](Commit *c) {
     zutcp/src/ZutcpConnection.hh:4436:    bool sent = send(buf, ecn, commit);
     zutcp/src/ZutcpConnection.hh:4516:    if (!commitTxRange(consumed, ref.range, ref.length)) { failTCPBudget(); return false; }
-    zutcp/src/ZutcpSrvCxn.hh:195:      [this](auto buf, EcnMark::T ecn, const Zxdp::CommitFn &commit) {
+    zutcp/src/ZutcpSrvCxn.hh:195:      [this](auto buf, EcnMark::T ecn, const Zpkt::CommitFn &commit) {
     zutcp/src/ZutcpSrvCxn.hh:197:    return app()->sendPktRaw(ZuMv(buf), m_peerAddr, ecn, true, m_txIP, commit);
     ✓ • 0ms
 
@@ -4075,7 +4075,7 @@ I’ll check where Zutcp uses the hook and whether it can safely move that work 
         } context{this, &ref, runtime, m_txDataGen, sentAck, syn};
         // Borrowed only for synchronous submission. Successful reservation calls
         // this immediately before the backend's irreversible descriptor publication.
-        Zxdp::CommitFn commit{&context, [](Commit *c) {
+        Zpkt::CommitFn commit{&context, [](Commit *c) {
           auto link = c->link;
           if (c->runtime != link->m_txRuntimeGen || c->gen != link->m_txDataGen ||
           c->gen != link->dataGen() || link->disconnecting()) return false;
@@ -4198,7 +4198,7 @@ I’ll check where Zutcp uses the hook and whether it can safely move that work 
       bool send(
         ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
         EcnMark::T ecn = EcnMark::NotECT, bool priority = false,
-        const IPPath *path = nullptr, const Zxdp::CommitFn &commit = {})
+        const IPPath *path = nullptr, const Zpkt::CommitFn &commit = {})
       {
         if (!buf || !m_mx || unsigned(m_gate)) return false;
         unsigned generation = m_generation;
@@ -4221,7 +4221,7 @@ I’ll check where Zutcp uses the hook and whether it can safely move that work 
     
       bool send_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr, EcnMark::T ecn,
         unsigned generation, const IPPath *supplied, bool direct,
-        const Zxdp::CommitFn &commit = {})
+        const Zpkt::CommitFn &commit = {})
       {
         ZiAssert(endpointTxInvoked(), "Zutcp", (), "native send outside Tx", return false);
         ++m_txDiag.sendCalls;
@@ -4269,7 +4269,7 @@ I’ll check where Zutcp uses the hook and whether it can safely move that work 
     }
     
     bool Stack::sendPacket(const ZmRef<Zi::IOBuf> &buf, PacketLease *lease,
-        const Zxdp::CommitFn &commit)
+        const Zpkt::CommitFn &commit)
     {
       ZmAssert_(mx()->invoked(mx()->txThread()));
       if (!ready() || !buf || !buf->registered() || !buf->length ||
@@ -4632,7 +4632,7 @@ publishTxCommit(...);
 finishRecoveryBookkeeping(...);
 ```
 
-So the hook is required by **Zutcp’s current cross-thread publication scheme**, rather than inherently by packet I/O. Changing that scheme could simplify Zxdp and avoid adding a DPDK submission queue solely to support `commitFn`.
+So the hook is required by **Zutcp’s current cross-thread publication scheme**, rather than inherently by packet I/O. Changing that scheme could simplify Zpkt and avoid adding a DPDK submission queue solely to support `commitFn`.
 
 ## User
 
@@ -4650,7 +4650,7 @@ I’ll update the brief to remove frontier-based ACK rejection as a requirement 
     
     The objective is to let callers use AF_XDP or DPDK through the same raw-packet
     boundary while preserving the merged AF_XDP behavior. This is a backend extension,
-    not a transport stack. The baseline contract is [zxdp/INTERFACE.md](zxdp/INTERFACE.md):
+    not a transport stack. The baseline contract is [zpkt/INTERFACE.md](zpkt/INTERFACE.md):
     separate caller and submission leases, a borrowed synchronous commit hook,
     scheduler sender service, counted receive wakes, queue telemetry and retryable
     shutdown. Backend-specific mechanisms may differ; these ownership guarantees may not.
@@ -4694,8 +4694,8 @@ I’ll update the brief to remove frontier-based ACK rejection as a requirement 
     3. **Shared backing — major.** Factor the smallest backend-neutral arena/slot
        lifetime component beneath the existing `BufPool`. Today it retains `UMem`
        and directly accesses its layout and `TxSlot`; a virtual instance alone does
-       not remove this coupling ([ZxdpAlloc.hh](zxdp/src/ZxdpAlloc.hh),
-       [ZxdpAlloc.cc](zxdp/src/ZxdpAlloc.cc)). Keep direct slot lookup, the existing
+       not remove this coupling ([ZpktAlloc.hh](zpkt/src/ZpktAlloc.hh),
+       [ZpktAlloc.cc](zpkt/src/ZpktAlloc.cc)). Keep direct slot lookup, the existing
        payload-overlay recycling list and allocation-free packet operations. Keep
        XSK registration and DPDK registration private to each backend. Pool-held
        backing must survive instance close until the last caller packet returns.
@@ -4706,7 +4706,7 @@ I’ll update the brief to remove frontier-based ACK rejection as a requirement 
        adjusted device limits, alignment/headroom and minimum useful Rx capacity at
     
     * **In-Scope Goals:** Virtual Instance API; backend enum and namespace factory;
-      tagged interface parameters; AF_XDP and DPDK implementations in zxdp; migration
+      tagged interface parameters; AF_XDP and DPDK implementations in zpkt; migration
       of affected callers; pool-driven provisioning; software DPDK tests; preservation
       of admission, ownership, service and shutdown contracts.
     * **Out-of-Scope Non-Goals:** A transport stack or application runtime; duplicate
@@ -4746,7 +4746,7 @@ I’ll update the brief to remove frontier-based ACK rejection as a requirement 
     2. **AF_XDP first:** Introduce the virtual boundary, enum, tagged parameters,
        namespace factory and shared backing seam together with every affected caller.
        Preserve AF_XDP behavior before adding DPDK. Search all factory/interface users,
-       including Zutcp, zxdp utility/unit/integration tests and Zutcp pool integration.
+       including Zutcp, zpkt utility/unit/integration tests and Zutcp pool integration.
        Propagate the intentional API/ABI break without shims and rebuild dependents.
     3. **DPDK implementation:** Add the narrow selector and pool-derived resources,
        admission/service path, retirement handoff and retryable teardown. Add the
@@ -4785,7 +4785,7 @@ I’ll update the brief to remove frontier-based ACK rejection as a requirement 
         s = s[:a] + '''1. **Admission — revised after author clarification.** Use plain
            `bool send(packet, length)`: true means the backend accepted the packet;
            false leaves caller ownership intact and acquires no submission lease.
-           Remove `CommitFn` from Zxdp and its propagation through Zutcp. On successful
+           Remove `CommitFn` from Zpkt and its propagation through Zutcp. On successful
            return, Zutcp completes its Tx-owner send bookkeeping; incoming ACKs mark
            bytes acknowledged without rejection against the published Tx frontier.
            Serialize ACK effects that touch Tx-owned recovery state on the Tx owner,
@@ -4820,7 +4820,7 @@ Updated the [brief](/home/count0/src/z/concepts_brief.md) accordingly. No source
 ## User
 
 so this is a side project. write a small plan to `zutcp_fix.md` to
-1. change the `zxdp` API to `bool send(...)` (no `commitFn`)
+1. change the `zpkt` API to `bool send(...)` (no `commitFn`)
 2. delete the unnecessary frontier validation of peer ACKs in `zutcp` Rx (and delete any associated tests that require that validation)
 3. publish the ACK from tx with an atomic write after `send` if it returns true
 
@@ -4830,7 +4830,7 @@ I’ll write a short plan to `zutcp_fix.md`, checking the current ACK publicatio
 
 ## Activity
 
-    $ test -e zutcp_fix.md && cat zutcp_fix.md; sed -n '548,585p' zutcp/src/ZutcpConnection.hh; rg -n 'frontier|future ACK|future ack|beyond.*(next|sent|frontier)|unsent|commit hook|CommitFn|publishTxCommit|sentAck' zutcp/test zutcp/itest zxdp/test zxdp/itest zutcp/src/ZutcpConnection.hh
+    $ test -e zutcp_fix.md && cat zutcp_fix.md; sed -n '548,585p' zutcp/src/ZutcpConnection.hh; rg -n 'frontier|future ACK|future ack|beyond.*(next|sent|frontier)|unsent|commit hook|CommitFn|publishTxCommit|sentAck' zutcp/test zutcp/itest zpkt/test zpkt/itest zutcp/src/ZutcpConnection.hh
           scheduleCxnTimer("pacing", CxnTimer::Pace, intervalUS(m_pacer.nextSendTime()),
         ZmScheduler::Advance, &m_paceTimer);
           return false;
@@ -4880,20 +4880,20 @@ I’ll write a short plan to `zutcp_fix.md`, checking the current ACK publicatio
     zutcp/src/ZutcpConnection.hh:4369:    const uint64_t sentAck = app()->nativeTx() && ackCurrent &&
     zutcp/src/ZutcpConnection.hh:4424:      uint64_t runtime, gen, sentAck;
     zutcp/src/ZutcpConnection.hh:4426:    } context{this, &ref, runtime, m_txDataGen, sentAck, syn};
-    zutcp/src/ZutcpConnection.hh:4429:    Zxdp::CommitFn commit{&context, [](Commit *c) {
+    zutcp/src/ZutcpConnection.hh:4429:    Zpkt::CommitFn commit{&context, [](Commit *c) {
     zutcp/src/ZutcpConnection.hh:4433:      link->publishTxCommit(*c->ref, c->syn, c->sentAck);
     zutcp/src/ZutcpConnection.hh:4475:    sentTCPTx(header, sentAck, sentRxSerial);
-    zxdp/itest/zxdppackettest.cc:198:  Zxdp::CommitFn commitFn{&commit, ZmFnPtr<&CommitProbe::commit>{}};
-    zxdp/itest/zxdppackettest.cc:202:    log_("invalid submissions neither invoke the commit hook nor publish a descriptor"));
-    zxdp/itest/zxdppackettest.cc:214:    log_("commit hook precedes descriptor and lease publication; accepted backing cannot resubmit"));
-    zutcp/itest/zutcpstacktest.cc:87:    [this, stack](auto packet, auto, const Zxdp::CommitFn &commit) {
-    zutcp/itest/zutcpstacktest.cc:100:      [this, stack, payload](auto packet, auto, const Zxdp::CommitFn &commit) {
-    zutcp/itest/zutcpstacktest.cc:107:      const Zxdp::CommitFn &commit, bool control = false) {
-    zutcp/itest/zutcpstacktest.cc:128:      [this, stack](auto packet, auto, const Zxdp::CommitFn &commit) {
-    zutcp/itest/zutcpstacktest.cc:144:      [this, stack](auto packet, auto, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpHandshakeTest.cc:141:      const Zutcp::IPPath &, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpHandshakeTest.cc:202:      [this](auto buf, auto, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpHandshakeTest.cc:254:      [this](auto buf, auto, const Zxdp::CommitFn &commit) {
+    zpkt/itest/zpktpackettest.cc:198:  Zpkt::CommitFn commitFn{&commit, ZmFnPtr<&CommitProbe::commit>{}};
+    zpkt/itest/zpktpackettest.cc:202:    log_("invalid submissions neither invoke the commit hook nor publish a descriptor"));
+    zpkt/itest/zpktpackettest.cc:214:    log_("commit hook precedes descriptor and lease publication; accepted backing cannot resubmit"));
+    zutcp/itest/zutcpstacktest.cc:87:    [this, stack](auto packet, auto, const Zpkt::CommitFn &commit) {
+    zutcp/itest/zutcpstacktest.cc:100:      [this, stack, payload](auto packet, auto, const Zpkt::CommitFn &commit) {
+    zutcp/itest/zutcpstacktest.cc:107:      const Zpkt::CommitFn &commit, bool control = false) {
+    zutcp/itest/zutcpstacktest.cc:128:      [this, stack](auto packet, auto, const Zpkt::CommitFn &commit) {
+    zutcp/itest/zutcpstacktest.cc:144:      [this, stack](auto packet, auto, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpHandshakeTest.cc:141:      const Zutcp::IPPath &, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpHandshakeTest.cc:202:      [this](auto buf, auto, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpHandshakeTest.cc:254:      [this](auto buf, auto, const Zpkt::CommitFn &commit) {
     zutcp/itest/zutcprecovery.py:342:def selector_evidence(directory, frontier=None):
     zutcp/itest/zutcprecovery.py:352:    if frontier is not None:
     zutcp/itest/zutcprecovery.py:357:            assert base in bases and relative == frontier and wire == (base + relative) & MASK32
@@ -4939,128 +4939,128 @@ I’ll write a short plan to `zutcp_fix.md`, checking the current ACK publicatio
     zutcp/test/ZutcpDataTest.cc:52:    c.publishTxCommit(ref, false);
     zutcp/test/ZutcpDataTest.cc:239:  template <typename T> static bool frontiers(T &link,
     zutcp/test/ZutcpDataTest.cc:346:    c.publishTxCommit(ref, false);
-    zutcp/test/ZutcpDataTest.cc:541:      }, [send = ZuMv(send)](auto buf, auto, const Zxdp::CommitFn &commit) mutable {
-    zutcp/test/ZutcpDataTest.cc:658:      auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:702:    auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:710:      auto, const Zxdp::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:541:      }, [send = ZuMv(send)](auto buf, auto, const Zpkt::CommitFn &commit) mutable {
+    zutcp/test/ZutcpDataTest.cc:658:      auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:702:    auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:710:      auto, const Zpkt::CommitFn &commit) {
     zutcp/test/ZutcpDataTest.cc:728:    uint64_t next = 0, ack = 0, sentAck = 0;
     zutcp/test/ZutcpDataTest.cc:729:    ZuCHECK(Zutcp::TCPStateTest::frontiers(*link, next, ack, sentAck) && !next,
     zutcp/test/ZutcpDataTest.cc:730:      "refused output does not publish an ACK-admissible frontier");
-    zutcp/test/ZutcpDataTest.cc:735:    sent = link->output(ref, [&a, &attempts](auto buf, const Zxdp::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:735:    sent = link->output(ref, [&a, &attempts](auto buf, const Zpkt::CommitFn &commit) {
     zutcp/test/ZutcpDataTest.cc:744:    uint64_t next = 0, ack = 0, sentAck = 0;
     zutcp/test/ZutcpDataTest.cc:745:    ZuCHECK(Zutcp::TCPStateTest::frontiers(*link, next, ack, sentAck) && !next,
     zutcp/test/ZutcpDataTest.cc:746:      "reset before commit leaves the replacement generation frontier empty");
-    zutcp/test/ZutcpDataTest.cc:784:      &beforeRecovery, &received, &immediate](auto buf, const Zxdp::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:784:      &beforeRecovery, &received, &immediate](auto buf, const Zpkt::CommitFn &commit) {
     zutcp/test/ZutcpDataTest.cc:785:    uint64_t next = 0, ack = 0, sentAck = 0;
     zutcp/test/ZutcpDataTest.cc:786:    unpublished = Zutcp::TCPStateTest::frontiers(*link, next, ack, sentAck) && !next;
     zutcp/test/ZutcpDataTest.cc:791:    beforeRecovery = Zutcp::TCPStateTest::frontiers(*link, next, ack, sentAck) &&
-    zutcp/test/ZutcpDataTest.cc:826:  bool refused = !link->output({}, [link, &unchanged](auto buf, const Zxdp::CommitFn &) {
+    zutcp/test/ZutcpDataTest.cc:826:  bool refused = !link->output({}, [link, &unchanged](auto buf, const Zpkt::CommitFn &) {
     zutcp/test/ZutcpDataTest.cc:829:      Zutcp::TCPStateTest::frontiers(*link, next, ack, sent) && !sent &&
-    zutcp/test/ZutcpDataTest.cc:836:      auto buf, const Zxdp::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:836:      auto buf, const Zpkt::CommitFn &commit) {
     zutcp/test/ZutcpDataTest.cc:843:      Zutcp::TCPStateTest::frontiers(*link, next, ack, sent) && sent == 5;
-    zutcp/test/ZutcpDataTest.cc:871:    auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:873:      reentry = link->output(ref, [](auto, const Zxdp::CommitFn &commit) { return commit(); });
-    zutcp/test/ZutcpDataTest.cc:879:    auto, const Zxdp::CommitFn &commit) { return commit(); });
+    zutcp/test/ZutcpDataTest.cc:871:    auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:873:      reentry = link->output(ref, [](auto, const Zpkt::CommitFn &commit) { return commit(); });
+    zutcp/test/ZutcpDataTest.cc:879:    auto, const Zpkt::CommitFn &commit) { return commit(); });
     zutcp/test/ZutcpDataTest.cc:920:    "future ACKs are rejected directly without retaining packets or scheduling replay");
     zutcp/test/ZutcpDataTest.cc:924:    "future ACK and replaced-generation input cannot deliver payload or corrupt the live owner");
-    zutcp/test/ZutcpDataTest.cc:995:    bool sent = link->output({}, [](auto, const Zxdp::CommitFn &commit) { return commit(); });
-    zutcp/test/ZutcpDataTest.cc:1003:    link->output({}, [](auto, const Zxdp::CommitFn &commit) { return commit(); });
-    zutcp/test/ZutcpDataTest.cc:1035:      auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:1083:  auto send = [&attempts, &wire](auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:1090:    auto, const Zxdp::CommitFn &) { ++attempts; return false; }, true);
+    zutcp/test/ZutcpDataTest.cc:995:    bool sent = link->output({}, [](auto, const Zpkt::CommitFn &commit) { return commit(); });
+    zutcp/test/ZutcpDataTest.cc:1003:    link->output({}, [](auto, const Zpkt::CommitFn &commit) { return commit(); });
+    zutcp/test/ZutcpDataTest.cc:1035:      auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:1083:  auto send = [&attempts, &wire](auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:1090:    auto, const Zpkt::CommitFn &) { ++attempts; return false; }, true);
     zutcp/test/ZutcpDataTest.cc:1144:  bool unsent = !Zutcp::TCPStateTest::handshakeACK(*link, ack) &&
-    zutcp/test/ZutcpDataTest.cc:1149:      auto buf, const Zxdp::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:1149:      auto buf, const Zpkt::CommitFn &commit) {
     zutcp/test/ZutcpDataTest.cc:1158:  ZuCHECK(unsent && sent && exposed && resetBound && qualified &&
     zutcp/test/ZutcpDataTest.cc:1161:    "committed empty/TFO SYN qualifies the peer immediately; unsent or excess RST ACK does not");
-    zutcp/test/ZutcpDataTest.cc:1163:    bool fallback = link->output({}, [](auto, const Zxdp::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:1163:    bool fallback = link->output({}, [](auto, const Zpkt::CommitFn &commit) {
     zutcp/test/ZutcpDataTest.cc:1299:  bool unsent = state.fill(queue, 10, options);
     zutcp/test/ZutcpDataTest.cc:1303:  ZuCHECK(recorded && first && old && unsent && cleared &&
     zutcp/test/ZutcpDataTest.cc:1431:    "ACK commit together; live stale evidence cannot advance either frontier");
-    zutcp/test/ZutcpDataTest.cc:1469:  bool sent = link->output(ref, [&attempts](auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:1482:    auto, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:1505:  auto accept = [&attempts](auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:1515:      auto, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:1530:  bool refused = !link->output(second, [](auto, const Zxdp::CommitFn &) { return false; });
-    zutcp/test/ZutcpDataTest.cc:1534:      auto buf, const Zxdp::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:1469:  bool sent = link->output(ref, [&attempts](auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:1482:    auto, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:1505:  auto accept = [&attempts](auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:1515:      auto, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:1530:  bool refused = !link->output(second, [](auto, const Zpkt::CommitFn &) { return false; });
+    zutcp/test/ZutcpDataTest.cc:1534:      auto buf, const Zpkt::CommitFn &commit) {
     zutcp/test/ZutcpDataTest.cc:1931:    "frontier equality during bounded ACK retirement cannot bypass remaining live records");
-    zutcp/test/ZutcpDataTest.cc:1945:  bool refused = !link->output({}, [](auto, const Zxdp::CommitFn &) { return false; });
-    zutcp/test/ZutcpDataTest.cc:1950:        auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:1988:  auto accept = [&attempts](auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:1995:      auto, const Zxdp::CommitFn &) { ++attempts; return false; });
-    zutcp/test/ZutcpDataTest.cc:2056:    setup &= link->output(refs[i], [](auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:2070:    auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:2150:      auto, const Zxdp::CommitFn &) { ++attempts; return false; });
-    zutcp/test/ZutcpDataTest.cc:2155:    auto, const Zxdp::CommitFn &) { ++attempts; return false; });
-    zutcp/test/ZutcpDataTest.cc:2157:    auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:2161:      auto, const Zxdp::CommitFn &) { ++attempts; return false; });
-    zutcp/test/ZutcpDataTest.cc:2167:    if (scenario != 0) second = link->output(refs[0], [&attempts](auto, const Zxdp::CommitFn &) {
+    zutcp/test/ZutcpDataTest.cc:1945:  bool refused = !link->output({}, [](auto, const Zpkt::CommitFn &) { return false; });
+    zutcp/test/ZutcpDataTest.cc:1950:        auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:1988:  auto accept = [&attempts](auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:1995:      auto, const Zpkt::CommitFn &) { ++attempts; return false; });
+    zutcp/test/ZutcpDataTest.cc:2056:    setup &= link->output(refs[i], [](auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:2070:    auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:2150:      auto, const Zpkt::CommitFn &) { ++attempts; return false; });
+    zutcp/test/ZutcpDataTest.cc:2155:    auto, const Zpkt::CommitFn &) { ++attempts; return false; });
+    zutcp/test/ZutcpDataTest.cc:2157:    auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:2161:      auto, const Zpkt::CommitFn &) { ++attempts; return false; });
+    zutcp/test/ZutcpDataTest.cc:2167:    if (scenario != 0) second = link->output(refs[0], [&attempts](auto, const Zpkt::CommitFn &) {
     zutcp/test/ZutcpDataTest.cc:2178:      "accepted old-generation output cannot publish history or frontiers into replacement "
     zutcp/test/ZutcpDataTest.cc:2513:    "next contiguous input must advance the ACK frontier while Reader holds its prefix");
     zutcp/test/ZutcpDataTest.cc:2548:    "Rx::rcvd queue insertion must advance the ACK frontier before dequeue");
     zutcp/test/ZutcpDataTest.cc:2556:    "queued contiguous input must preserve admission credit and the cumulative frontier");
     zutcp/test/ZutcpDataTest.cc:2565:    "dequeue must join the held prefix without duplicate admission or frontier regression");
-    zutcp/test/ZutcpDataTest.cc:2675:        &bytes, &exact, &observed](auto buf, const Zxdp::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:2675:        &bytes, &exact, &observed](auto buf, const Zpkt::CommitFn &commit) {
     zutcp/test/ZutcpDataTest.cc:2741:    "mapped continuations and generic notices preserve exact bytes and accepted frontier");
-    zutcp/test/ZutcpDataTest.cc:2798:      auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:2804:      auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:2811:      auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:2819:      auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:2934:      auto, const Zxdp::CommitFn &) { ++attempts; return false; });
-    zutcp/test/ZutcpDataTest.cc:2936:    [&attempts](auto, const Zxdp::CommitFn &) { ++attempts; return false; });
-    zutcp/test/ZutcpDataTest.cc:2939:      auto buf, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:2942:      [&attempts](auto, const Zxdp::CommitFn &) { ++attempts; return false; });
-    zutcp/test/ZutcpDataTest.cc:2944:    auto, const Zxdp::CommitFn &) { ++attempts; return false; });
-    zutcp/test/ZutcpDataTest.cc:2955:      [&attempts](auto, const Zxdp::CommitFn &) { ++attempts; return false; });
-    zutcp/test/ZutcpDataTest.cc:2974:    [&attempts](auto, const Zxdp::CommitFn &) { ++attempts; return false; });
-    zutcp/test/ZutcpDataTest.cc:3035:      auto, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:3065:      auto, const Zxdp::CommitFn &) { ++attempts; return false; });
-    zutcp/test/ZutcpDataTest.cc:3070:      auto, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:3152:  bool early = link->output({}, [&attempts, &sent, accepted](auto, const Zxdp::CommitFn &commit) {
-    zutcp/test/ZutcpDataTest.cc:3162:      auto, const Zxdp::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:2798:      auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:2804:      auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:2811:      auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:2819:      auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:2934:      auto, const Zpkt::CommitFn &) { ++attempts; return false; });
+    zutcp/test/ZutcpDataTest.cc:2936:    [&attempts](auto, const Zpkt::CommitFn &) { ++attempts; return false; });
+    zutcp/test/ZutcpDataTest.cc:2939:      auto buf, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:2942:      [&attempts](auto, const Zpkt::CommitFn &) { ++attempts; return false; });
+    zutcp/test/ZutcpDataTest.cc:2944:    auto, const Zpkt::CommitFn &) { ++attempts; return false; });
+    zutcp/test/ZutcpDataTest.cc:2955:      [&attempts](auto, const Zpkt::CommitFn &) { ++attempts; return false; });
+    zutcp/test/ZutcpDataTest.cc:2974:    [&attempts](auto, const Zpkt::CommitFn &) { ++attempts; return false; });
+    zutcp/test/ZutcpDataTest.cc:3035:      auto, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:3065:      auto, const Zpkt::CommitFn &) { ++attempts; return false; });
+    zutcp/test/ZutcpDataTest.cc:3070:      auto, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:3152:  bool early = link->output({}, [&attempts, &sent, accepted](auto, const Zpkt::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:3162:      auto, const Zpkt::CommitFn &commit) {
     zutcp/test/ZutcpDataTest.cc:3169:  // An unchanged frontier from a later duplicate is evidence of a lost ACK.
-    zutcp/test/ZutcpDataTest.cc:3173:      auto, const Zxdp::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:3173:      auto, const Zpkt::CommitFn &commit) {
     zutcp/test/ZutcpDataTest.cc:3178:    "a retransmitted FIN forces another ACK despite accepted final-frontier coverage");
-    zutcp/test/ZutcpDataTest.cc:3194:      auto buf, const Zxdp::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:3194:      auto buf, const Zpkt::CommitFn &commit) {
     zutcp/test/ZutcpDataTest.cc:3200:    "existing Tx work can ACK the atomic final frontier before the queued peer-FIN event");
-    zutcp/test/ZutcpDataTest.cc:3223:  bool sent = link->output(local, [&repeated](auto buf, const Zxdp::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:3223:  bool sent = link->output(local, [&repeated](auto buf, const Zpkt::CommitFn &commit) {
     zutcp/test/ZutcpDataTest.cc:3228:  uint64_t next = 0, ack = 0, sentAck = 0;
     zutcp/test/ZutcpDataTest.cc:3229:  bool visible = Zutcp::TCPStateTest::frontiers(*link, next, ack, sentAck);
     zutcp/test/ZutcpDataTest.cc:3231:      repeated.flags == 0x11 && visible && next == 1 && !ack && sentAck < 4 &&
-    zutcp/test/ZutcpDataTest.cc:3244:  bool refused = link->output({}, [&attempts, &final](auto buf, const Zxdp::CommitFn &) {
-    zutcp/test/ZutcpDataTest.cc:3253:  bool accepted = link->output({}, [&attempts, &final](auto buf, const Zxdp::CommitFn &commit) {
+    zutcp/test/ZutcpDataTest.cc:3244:  bool refused = link->output({}, [&attempts, &final](auto buf, const Zpkt::CommitFn &) {
+    zutcp/test/ZutcpDataTest.cc:3253:  bool accepted = link->output({}, [&attempts, &final](auto buf, const Zpkt::CommitFn &commit) {
     zutcp/test/ZutcpDataTest.cc:3289:      Zutcp::TCPStateTest::frontiers(*link, next, ack, sent) &&
     zutcp/test/ZutcpDataTest.cc:3300:      !Zutcp::TCPStateTest::frontiers(*link, next, ack, sent),
     zutcp/test/ZutcpDataTest.cc:3303:  ZuCHECK(Zutcp::TCPStateTest::frontiers(*link, next, ack, sent) &&
     zutcp/test/ZutcpDataTest.cc:3319:  bool visible = Zutcp::TCPStateTest::frontiers(*link, next, ack, sent);
     zutcp/test/ZutcpDataTest.cc:3324:  visible = Zutcp::TCPStateTest::frontiers(*link, next, ack, sent);
     zutcp/test/ZutcpDataTest.cc:3326:    "ACK retirement and duplicate ACK expose monotonic frontiers without Rx jobs");
-    zutcp/test/ZutcpDataTest.cc:3330:  bool refused = link->output({}, [](auto, const Zxdp::CommitFn &) { return false; });
+    zutcp/test/ZutcpDataTest.cc:3330:  bool refused = link->output({}, [](auto, const Zpkt::CommitFn &) { return false; });
     zutcp/test/ZutcpDataTest.cc:3331:  visible = Zutcp::TCPStateTest::frontiers(*link, next, ack, sent);
-    zutcp/test/ZutcpDataTest.cc:3333:  bool accepted = link->output({}, [](auto, const Zxdp::CommitFn &commit) { return commit(); });
+    zutcp/test/ZutcpDataTest.cc:3333:  bool accepted = link->output({}, [](auto, const Zpkt::CommitFn &commit) { return commit(); });
     zutcp/test/ZutcpDataTest.cc:3334:  visible = Zutcp::TCPStateTest::frontiers(*link, next, ack, sent);
     zutcp/test/ZutcpDataTest.cc:3354:  ZuCHECK(recorded && !Zutcp::TCPStateTest::frontiers(*link, next, ack, sent),
     zutcp/test/ZutcpDataTest.cc:3357:  ZuCHECK(Zutcp::TCPStateTest::frontiers(*link, next, ack, sent) &&
-    zutcp/test/ZutcpDataTest.cc:3371:  bool ordinary = link->output({}, [](auto, const Zxdp::CommitFn &commit) { return commit(); });
-    zutcp/test/ZutcpDataTest.cc:3377:  bool first = link->output({}, [](auto, const Zxdp::CommitFn &commit) { return commit(); });
-    zutcp/test/ZutcpDataTest.cc:3385:  bool second = link->output({}, [](auto, const Zxdp::CommitFn &commit) { return commit(); });
+    zutcp/test/ZutcpDataTest.cc:3371:  bool ordinary = link->output({}, [](auto, const Zpkt::CommitFn &commit) { return commit(); });
+    zutcp/test/ZutcpDataTest.cc:3377:  bool first = link->output({}, [](auto, const Zpkt::CommitFn &commit) { return commit(); });
+    zutcp/test/ZutcpDataTest.cc:3385:  bool second = link->output({}, [](auto, const Zpkt::CommitFn &commit) { return commit(); });
     ✓ • 0ms
 
 ## Activity
 
     file changes: Completed · 1 changes
     Add: /home/count0/src/z/zutcp_fix.md
-    # Simplify Zxdp send and Zutcp ACK publication
+    # Simplify Zpkt send and Zutcp ACK publication
     
     Implement this separately from the DPDK backend work.
     
     1. **Remove the send commit hook.**
-       Change `Zxdp::Instance::send` to
+       Change `Zpkt::Instance::send` to
        `bool send(uint8_t *packet, unsigned length)`. Delete `CommitFn`, the hook
        invocation and its propagation through `Stack::sendPacket`, endpoint sends,
        client/server adapters and test senders. True means accepted submission;
        false acquires no submission lease and leaves backing with the caller.
        Preserve the independent caller/submission leases and existing completion
-       and close behavior. Update `zxdp/INTERFACE.md`, module guidance and comments
+       and close behavior. Update `zpkt/INTERFACE.md`, module guidance and comments
        that currently require the hook.
     
     2. **Remove peer-ACK frontier validation from Zutcp Rx.**
@@ -5090,11 +5090,11 @@ I’ll write a short plan to `zutcp_fix.md`, checking the current ACK publicatio
     
     4. **Verify the smaller contract.**
        Adapt hook-based test doubles and remove hook-only tests in
-       `zxdp/itest/zxdppackettest.cc`. Verify accepted/refused send ownership,
+       `zpkt/itest/zpktpackettest.cc`. Verify accepted/refused send ownership,
        ACK publication only after successful return, immediate peer ACK handling,
        generation changes and retransmission. Search for remaining `CommitFn`
        references. Rebuild dependencies and affected modules according to
-       `docs/BUILD.md`; run zxdp/Zutcp unit tests and affected integration tests.
+       `docs/BUILD.md`; run zpkt/Zutcp unit tests and affected integration tests.
        The updated zpicotls is already installed locally.
 
 ## Assistant
@@ -5112,7 +5112,7 @@ I’ll treat `zutcp_fix.md` as implemented, mark the commit-hook issue resolved 
 ## Activity
 
     $ sed -n '1,155p' concepts_brief.md; sed -n '170,240p' concepts_brief.md
-    # Zxdp AF_XDP and DPDK backends
+    # Zpkt AF_XDP and DPDK backends
     
     * **Author:** Huw Rogers
     * **Date:** 2026-11-16
@@ -5120,7 +5120,7 @@ I’ll treat `zutcp_fix.md` as implemented, mark the commit-hook issue resolved 
     
     ## Overview
     
-    Make `Zxdp::Instance` a virtual interface implemented by AF_XDP and DPDK.
+    Make `Zpkt::Instance` a virtual interface implemented by AF_XDP and DPDK.
     Remove the base class's `InstanceData *m_data`; make backend operations pure
     virtual. Add `ZtEnumNS(uint8_t, Backend, AF_XDP, DPDK)` and `Backend::T backend`
     to `Params`. Add the namespace factory `ZmRef<Instance> instance(const Params
@@ -5143,7 +5143,7 @@ I’ll treat `zutcp_fix.md` as implemented, mark the commit-hook issue resolved 
     
     The objective is to let callers use AF_XDP or DPDK through the same raw-packet
     boundary while preserving the merged AF_XDP behavior. This is a backend extension,
-    not a transport stack. The baseline contract is [zxdp/INTERFACE.md](zxdp/INTERFACE.md):
+    not a transport stack. The baseline contract is [zpkt/INTERFACE.md](zpkt/INTERFACE.md):
     separate caller and submission leases, scheduler sender service, counted receive
     wakes, queue telemetry and retryable shutdown. The author has superseded the
     commit-hook requirement: use plain `bool send(packet, length)` and remove
@@ -5169,7 +5169,7 @@ I’ll treat `zutcp_fix.md` as implemented, mark the commit-hook issue resolved 
     1. **Admission — revised after author clarification.** Use plain
        `bool send(packet, length)`: true means the backend accepted the packet;
        false leaves caller ownership intact and acquires no submission lease.
-       Remove `CommitFn` from Zxdp and its propagation through Zutcp. On successful
+       Remove `CommitFn` from Zpkt and its propagation through Zutcp. On successful
        return, Zutcp completes its Tx-owner send bookkeeping; incoming ACKs mark
        bytes acknowledged without rejection against the published Tx frontier.
        Serialize ACK effects that touch Tx-owned recovery state on the Tx owner,
@@ -5194,8 +5194,8 @@ I’ll treat `zutcp_fix.md` as implemented, mark the commit-hook issue resolved 
     3. **Shared backing — major.** Factor the smallest backend-neutral arena/slot
        lifetime component beneath the existing `BufPool`. Today it retains `UMem`
        and directly accesses its layout and `TxSlot`; a virtual instance alone does
-       not remove this coupling ([ZxdpAlloc.hh](zxdp/src/ZxdpAlloc.hh),
-       [ZxdpAlloc.cc](zxdp/src/ZxdpAlloc.cc)). Keep direct slot lookup, the existing
+       not remove this coupling ([ZpktAlloc.hh](zpkt/src/ZpktAlloc.hh),
+       [ZpktAlloc.cc](zpkt/src/ZpktAlloc.cc)). Keep direct slot lookup, the existing
        payload-overlay recycling list and allocation-free packet operations. Keep
        XSK registration and DPDK registration private to each backend. Pool-held
        backing must survive instance close until the last caller packet returns.
@@ -5226,7 +5226,7 @@ I’ll treat `zutcp_fix.md` as implemented, mark the commit-hook issue resolved 
        native operation and cleanup status, with runtime errors still surfaced by
        `close()`. The precise diagnostic convention and a minimal caller example must
        be settled before caller migration. Do not add a completion callback or silently
-       discard a partially initialized instance ([current factory](zxdp/src/Zxdp.cc)).
+       discard a partially initialized instance ([current factory](zpkt/src/Zpkt.cc)).
     
     7. **Receive idle behavior — major, unresolved feasibility gate.** Preserve one
        Rx owner, counted preposted/concurrent wakes, prompt interruption under load,
@@ -5260,7 +5260,7 @@ I’ll treat `zutcp_fix.md` as implemented, mark the commit-hook issue resolved 
     ## Goals vs. Non-Goals
     
     * **In-Scope Goals:** Virtual Instance API; backend enum and namespace factory;
-      tagged interface parameters; AF_XDP and DPDK implementations in zxdp; migration
+      tagged interface parameters; AF_XDP and DPDK implementations in zpkt; migration
       of affected callers; pool-driven provisioning; software DPDK tests; preservation
       of admission, ownership, service and shutdown contracts.
     * **Out-of-Scope Non-Goals:** A transport stack or application runtime; duplicate
@@ -5288,7 +5288,7 @@ I’ll treat `zutcp_fix.md` as implemented, mark the commit-hook issue resolved 
        Migrate Zutcp to boolean send, remove frontier-based ACK rejection and hook
        propagation, and preserve the other AF_XDP contracts before adding DPDK.
        Search all factory/interface users,
-       including Zutcp, zxdp utility/unit/integration tests and Zutcp pool integration.
+       including Zutcp, zpkt utility/unit/integration tests and Zutcp pool integration.
        Propagate the intentional API/ABI break without shims and rebuild dependents.
     3. **DPDK implementation:** Add the narrow selector and pool-derived resources,
        admission/service path, retirement handoff and retryable teardown. Add the
@@ -5435,11 +5435,11 @@ Three relevant patterns:
 
 As a concrete application example, F-Stack’s ordinary transmit path copies its BSD packet into DPDK mbufs, submits those, and frees unaccepted mbufs. That separates its transport storage from driver storage. [F-Stack implementation](https://github.com/F-Stack/f-stack/blob/dev/lib/ff_dpdk_if.c)
 
-For **Zxdp’s existing caller-owned, zero-copy backing**, pattern 3 looks like the closest fit: the internal release callback drops the submission lease; explicit pool return drops the caller lease. This is standard DPDK machinery—the work is connecting it to Zxdp’s existing slot accounting and service ownership.
+For **Zpkt’s existing caller-owned, zero-copy backing**, pattern 3 looks like the closest fit: the internal release callback drops the submission lease; explicit pool return drops the caller lease. This is standard DPDK machinery—the work is connecting it to Zpkt’s existing slot accounting and service ownership.
 
 ## User
 
-no, if DPDK uses "mbufs" then those are the backing storage supplied to the pools via implementing `Zi::IOBufPlugin`; this is pattern 1. when `zutcp` sends into `zxdp` (implemented as DPDK), the buffer it sends will already be an mbuf.
+no, if DPDK uses "mbufs" then those are the backing storage supplied to the pools via implementing `Zi::IOBufPlugin`; this is pattern 1. when `zutcp` sends into `zpkt` (implemented as DPDK), the buffer it sends will already be an mbuf.
 
 ## Assistant
 
@@ -5497,8 +5497,8 @@ I had the storage boundary wrong. I’ll update the brief so DPDK mbufs supply t
     3. **Shared backing — major.** Factor the smallest backend-neutral arena/slot
        lifetime component beneath the existing `BufPool`. Today it retains `UMem`
        and directly accesses its layout and `TxSlot`; a virtual instance alone does
-       not remove this coupling ([ZxdpAlloc.hh](zxdp/src/ZxdpAlloc.hh),
-       [ZxdpAlloc.cc](zxdp/src/ZxdpAlloc.cc)). Keep direct slot lookup, the existing
+       not remove this coupling ([ZpktAlloc.hh](zpkt/src/ZpktAlloc.hh),
+       [ZpktAlloc.cc](zpkt/src/ZpktAlloc.cc)). Keep direct slot lookup, the existing
        payload-overlay recycling list and allocation-free packet operations. Keep
        XSK registration and DPDK registration private to each backend. Pool-held
        backing must survive instance close until the last caller packet returns.
@@ -5629,7 +5629,7 @@ I had the storage boundary wrong. I’ll update the brief so DPDK mbufs supply t
            ordinary backend integration, not a new asynchronous ownership mechanism.
         
         3. **Pool backing — native to each backend.** Implement DPDK-backed provisioning
-           through `Zi::IOBufPlugin` so buffers passed from Zutcp to Zxdp already identify
+           through `Zi::IOBufPlugin` so buffers passed from Zutcp to Zpkt already identify
            their mbufs. Keep AF_XDP registered storage in its backend. Remove AF_XDP-only
            assumptions from shared pool interfaces as needed; do not force mbufs through
            XDP arena geometry or wrap unrelated external backing at send time. Preserve
@@ -5650,7 +5650,7 @@ I had the storage boundary wrong. I’ll update the brief so DPDK mbufs supply t
 
 ## Assistant
 
-Yes. The DPDK `Zi::IOBufPlugin` supplies mbuf-backed storage from allocation onward. Zutcp constructs the packet there, and Zxdp submits that existing mbuf directly.
+Yes. The DPDK `Zi::IOBufPlugin` supplies mbuf-backed storage from allocation onward. Zutcp constructs the packet there, and Zpkt submits that existing mbuf directly.
 
 That removes the external-buffer attachment and callback adapter I proposed. The remaining work is connecting native mbuf reclamation to `pollTx()` and `writable()`, while preserving any caller-held reference.
 
@@ -5725,15 +5725,15 @@ For this design, the proposed lifecycle is:
 
 1. The application initializes EAL, making the desired devices available.
 2. `If_DPDK` selects a device.
-3. `Zxdp::instance()` configures its queues using `txPools` and `rxPool`, then starts it.
+3. `Zpkt::instance()` configures its queues using `txPools` and `rxPool`, then starts it.
 4. Instance close retires that instance’s resources.
 5. The application cleans up EAL after all DPDK users finish.
 
-The remaining decision is whether Zxdp owns that process-wide initialization or expects the application to do it. My proposal was application-owned EAL, with `If_DPDK` selecting an already available device.
+The remaining decision is whether Zpkt owns that process-wide initialization or expects the application to do it. My proposal was application-owned EAL, with `If_DPDK` selecting an already available device.
 
 ## User
 
-`Zxdp` DPDK should just use a `ZmSingleton` `InstanceMgr`, and it's `Instance` initialization should call an idempotent `init`; the destructor can call `rte_eal_cleanup`. use the appropriate `ZmCleanup` level
+`Zpkt` DPDK should just use a `ZmSingleton` `InstanceMgr`, and it's `Instance` initialization should call an idempotent `init`; the destructor can call `rte_eal_cleanup`. use the appropriate `ZmCleanup` level
 
 ## Assistant
 
@@ -5741,7 +5741,7 @@ I’ll check the repository’s singleton cleanup ordering, then record `Instanc
 
 ## Activity
 
-    $ rg -n 'ZmCleanup|ZmSingleton' docs/FRAMEWORK.md zm/src/ZmCleanup.hh zm/src/ZmSingleton.hh; cat zm/src/ZmCleanup.hh; rg -n 'ZmCleanup::|ZmCleanupLevel|ZmCleanupLevel\(' zxdp zi/src zm/src --glob '*.{hh,cc}'
+    $ rg -n 'ZmCleanup|ZmSingleton' docs/FRAMEWORK.md zm/src/ZmCleanup.hh zm/src/ZmSingleton.hh; cat zm/src/ZmCleanup.hh; rg -n 'ZmCleanup::|ZmCleanupLevel|ZmCleanupLevel\(' zpkt zi/src zm/src --glob '*.{hh,cc}'
     zm/src/ZmSingleton.hh:9:// ZmSingleton<T>::instance() returns T * pointer
     zm/src/ZmSingleton.hh:11:// ZmSingleton<T, ZmSingletonNoCtor<>>::instance() can return null
     zm/src/ZmSingleton.hh:18:// auto &v = *ZmSingleton<T>::instance(); // if T is unique
@@ -6021,7 +6021,7 @@ I’ll check the repository’s singleton cleanup ordering, then record `Instanc
     197:   and repeated close/recreate with shared EAL. Build/test according to
     216:[EAL parameters](https://doc.dpdk.org/guides-25.11/linux_gsg/linux_eal_parameters.html),
     233:| `egm-implementation-readiness` | completed | Atomic caller migration, retained rollback, EAL restart safety. |
-    244:`/tmp/zxdp-brainstorm-review/`. Review completion does not certify DPDK feasibility;
+    244:`/tmp/zpkt-brainstorm-review/`. Review completion does not certify DPDK feasibility;
     ✓ • 0ms
 
 ## Activity
@@ -6199,7 +6199,7 @@ I’ll check which threads EAL creates and how that relates to using `ZmSchedule
 - **Worker threads:** EAL normally creates a thread for each configured worker “lcore.” Applications can dispatch packet-processing functions onto them. Core assignment controls affinity to reduce scheduling overhead and preserve cache locality.
 - **Support threads:** DPDK also uses threads for facilities such as interrupt handling and multiprocess coordination. [EAL documentation](https://doc.dpdk.org/guides-25.11/prog_guide/env_abstraction_layer.html)
 
-**Zxdp can keep packet processing on `ZmScheduler` threads.** DPDK supports application-created pthreads; `rte_thread_register()` gives such a thread a DPDK lcore identity, including access to per-lcore facilities such as mempool caches. Registration does not create a thread. [Thread API](https://doc.dpdk.org/api-25.11/rte__lcore_8h.html#rte_thread_register)
+**Zpkt can keep packet processing on `ZmScheduler` threads.** DPDK supports application-created pthreads; `rte_thread_register()` gives such a thread a DPDK lcore identity, including access to per-lcore facilities such as mempool caches. Registration does not create a thread. [Thread API](https://doc.dpdk.org/api-25.11/rte__lcore_8h.html#rte_thread_register)
 
 For our integration, the approach would be to configure EAL without additional worker lcores, use the existing scheduler’s Rx/Tx owners, and register those threads as needed. EAL still has a main-lcore configuration and may create internal support threads.
 
@@ -6207,7 +6207,7 @@ My earlier wording made core assignment sound like DPDK must own our packet-proc
 
 ## User
 
-for `AF_XDP` we needed to create a `zxdp`-owned `txThread` so that the kernel drains the tx ring on a different core than tx submission. DPDK will have a similar need. will that thread be created by DPDK's EAL?
+for `AF_XDP` we needed to create a `zpkt`-owned `txThread` so that the kernel drains the tx ring on a different core than tx submission. DPDK will have a similar need. will that thread be created by DPDK's EAL?
 
 ## Assistant
 
@@ -6226,14 +6226,14 @@ There is also a difference from AF_XDP: `rte_eth_tx_burst()` runs the driver’s
 If we want that driver work on a separate core, the arrangement is:
 
 ```text
-Zutcp Tx owner → software submission ring → Zxdp Tx service → DPDK/NIC
+Zutcp Tx owner → software submission ring → Zpkt Tx service → DPDK/NIC
 ```
 
 That service can run on the existing `ZmScheduler` sender slot, registered with DPDK, or on an explicitly launched EAL worker. **Using the existing scheduler slot would preserve the current thread-ownership model.** The software ring would then serve the deliberate core separation, independently of the removed commit hook.
 
 ## User
 
-we want to implement `zxdp` for DPDK in the most direct way, i.e. `Zutcp Tx owner → DPDK/NIC`; but we also need to provide for loopback testing without a NIC
+we want to implement `zpkt` for DPDK in the most direct way, i.e. `Zutcp Tx owner → DPDK/NIC`; but we also need to provide for loopback testing without a NIC
 
 ## Assistant
 
@@ -6300,11 +6300,11 @@ We do not need a public field for every EAL option. The manager can establish de
 
 ## User
 
-we should reverse the previous decision to initialize EAL idempotently on-demand behind the scenes. there are too many configuration parameters that might need to be controlled by the application, and they should not all be expressed as environment variables. the app should explicitly initialize EAL with a specific configuration before instantiating a `Zxdp::Instance`. `Zxdp::instance` for DPDK can discover EAL via `ZmSingleton`, but it must require it to have been previously initialized and configured. EAL should be `Zxdp::DPDK`-encapsulated. the destructor can finalize EAL. It's no longer an `InstanceMgr` because it only exists for DPDK, not AF_XDP
+we should reverse the previous decision to initialize EAL idempotently on-demand behind the scenes. there are too many configuration parameters that might need to be controlled by the application, and they should not all be expressed as environment variables. the app should explicitly initialize EAL with a specific configuration before instantiating a `Zpkt::Instance`. `Zpkt::instance` for DPDK can discover EAL via `ZmSingleton`, but it must require it to have been previously initialized and configured. EAL should be `Zpkt::DPDK`-encapsulated. the destructor can finalize EAL. It's no longer an `InstanceMgr` because it only exists for DPDK, not AF_XDP
 
 ## Assistant
 
-I’ll replace implicit initialization with an explicitly configured `Zxdp::DPDK` singleton. DPDK instance creation will require it to be initialized already; its destructor will finalize EAL.
+I’ll replace implicit initialization with an explicitly configured `Zpkt::DPDK` singleton. DPDK instance creation will require it to be initialized already; its destructor will finalize EAL.
 
 ## Activity
 
@@ -6353,7 +6353,7 @@ I’ll replace implicit initialization with an explicitly configured `Zxdp::DPDK
        native operation and cleanup status, with runtime errors still surfaced by
        `close()`. The precise diagnostic convention and a minimal caller example must
        be settled before caller migration. Do not add a completion callback or silently
-       discard a partially initialized instance ([current factory](zxdp/src/Zxdp.cc)).
+       discard a partially initialized instance ([current factory](zpkt/src/Zpkt.cc)).
     
     7. **Receive idle behavior — major, unresolved feasibility gate.** Preserve one
        Rx owner, counted preposted/concurrent wakes, prompt interruption under load,
@@ -6384,16 +6384,16 @@ I’ll replace implicit initialization with an explicitly configured `Zxdp::DPDK
         a=s.index('5. **EAL ownership')
         b=s.index('\n6. **Factory failure', a)
         s=s[:a]+'''5. **EAL ownership and device selection — resolved.** Encapsulate EAL in
-           `Zxdp::DPDK`, managed by
+           `Zpkt::DPDK`, managed by
            `ZmSingleton<DPDK, ZmSingletonCleanup<ZmCleanup::Platform>>` within namespace
-           `Zxdp`. This is DPDK-specific infrastructure, not a shared `InstanceMgr`.
+           `Zpkt`. This is DPDK-specific infrastructure, not a shared `InstanceMgr`.
            The application explicitly initializes it with its chosen EAL configuration
-           before creating any DPDK-backed `Zxdp::Instance`. Configuration must be
+           before creating any DPDK-backed `Zpkt::Instance`. Configuration must be
            available through an explicit API; do not require applications to express
            EAL options through environment variables. The precise configuration API
            remains to design.
         
-           `Zxdp::instance()` discovers `Zxdp::DPDK` through `ZmSingleton` and requires
+           `Zpkt::instance()` discovers `Zpkt::DPDK` through `ZmSingleton` and requires
            prior successful explicit initialization. Construction/discovery of the
            singleton must not implicitly initialize EAL. If uninitialized, DPDK instance
            creation fails with a diagnostic directing the caller to initialize it first;
@@ -6407,7 +6407,7 @@ I’ll replace implicit initialization with an explicitly configured `Zxdp::DPDK
            cleanup (`zm/src/ZmGlobal.cc`, `zm/src/ZmCleanup.hh`). Instances, pools and held
            mbufs must be retired before EAL cleanup; do not rely on ordering within one
            cleanup level. Application control of initialization does not transfer final
-           EAL cleanup responsibility out of `Zxdp::DPDK`.
+           EAL cleanup responsibility out of `Zpkt::DPDK`.
         
            `If_DPDK::name` holds the DPDK Ethernet device name. Resolve it once with
            `rte_eth_dev_get_port_by_name()` during instance initialization and retain
@@ -6417,7 +6417,7 @@ I’ll replace implicit initialization with an explicitly configured `Zxdp::DPDK
            and absent device on the cold path.
         ''' +s[b:]
         s=s.replace('   and repeated close/recreate with the singleton-managed EAL.', '   instance creation before explicit EAL initialization, and repeated\n   close/recreate with explicitly initialized singleton-managed EAL.')
-        s=s.replace('through `Zi::IOBufPlugin`, and singleton-managed EAL ownership. Application-owned\nEAL recommendations and their hook-preservation/admission-queue and external-\nbuffer-adapter proposals are superseded by the decisions above.', 'through `Zi::IOBufPlugin`. EAL is now explicitly initialized by the application\nthrough singleton-managed `Zxdp::DPDK`, whose destructor owns final cleanup.\nEarlier implicit `InstanceMgr` initialization, hook-preservation/admission-queue\nand external-buffer-adapter proposals are superseded by the decisions above.')
+        s=s.replace('through `Zi::IOBufPlugin`, and singleton-managed EAL ownership. Application-owned\nEAL recommendations and their hook-preservation/admission-queue and external-\nbuffer-adapter proposals are superseded by the decisions above.', 'through `Zi::IOBufPlugin`. EAL is now explicitly initialized by the application\nthrough singleton-managed `Zpkt::DPDK`, whose destructor owns final cleanup.\nEarlier implicit `InstanceMgr` initialization, hook-preservation/admission-queue\nand external-buffer-adapter proposals are superseded by the decisions above.')
         p.write_text(s)
         PY
     ✓ • 0ms
@@ -6426,7 +6426,7 @@ I’ll replace implicit initialization with an explicitly configured `Zxdp::DPDK
 
 Updated the [brief](/home/count0/src/z/concepts_brief.md):
 
-- `Zxdp::DPDK` encapsulates EAL, replacing `InstanceMgr`.
+- `Zpkt::DPDK` encapsulates EAL, replacing `InstanceMgr`.
 - The application explicitly initializes it with configuration.
 - DPDK instance creation discovers the singleton and fails if it is uninitialized.
 - Its destructor finalizes EAL at `ZmCleanup::Platform`.
@@ -6442,7 +6442,7 @@ recap the remaining issues
 
 Remaining design decisions:
 
-1. **DPDK initialization API:** Define how the application supplies EAL configuration to `Zxdp::DPDK`.
+1. **DPDK initialization API:** Define how the application supplies EAL configuration to `Zpkt::DPDK`.
 2. **Receive waiting:** Define idle packet detection and counted `wake()` behavior for supported PMDs.
 3. **Factory errors:** Define diagnostics and pending rollback ownership with `instance(const Params &)`.
 4. **API semantics:** Define DPDK behavior for `ifindex()`, `zeroCopy()`, netmask filtering and queue telemetry.
@@ -6460,7 +6460,7 @@ I’ll inspect the existing parameter types in Z and propose a `DPDKParams` stru
 
 ## Activity
 
-    $ cat docs/STYLE.md; rg -n 'struct .*Params|class .*Params' zm/src/ZmScheduler.hh zi/src/ZiMultiplex.hh zi/src/ZiMxParams.hh zutcp/src/ZutcpMx.hh zxdp/src/Zxdp.hh; sed -n '1,200p' zi/src/ZiMxParams.hh
+    $ cat docs/STYLE.md; rg -n 'struct .*Params|class .*Params' zm/src/ZmScheduler.hh zi/src/ZiMultiplex.hh zi/src/ZiMxParams.hh zutcp/src/ZutcpMx.hh zpkt/src/Zpkt.hh; sed -n '1,200p' zi/src/ZiMxParams.hh
     # Code layout and naming
     
     Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
@@ -6679,7 +6679,7 @@ I’ll inspect the existing parameter types in Z and propose a `DPDKParams` stru
     - `stop()` - stop running (should be idempotent)
     - `operator *()` - test for "null" sentinel (used with non-pointer types)
     rg: zi/src/ZiMxParams.hh: No such file or directory (os error 2)
-    zxdp/src/Zxdp.hh:33:struct Params {
+    zpkt/src/Zpkt.hh:33:struct Params {
     zm/src/ZmScheduler.hh:50:class ZmSchedTParams : public ZmThreadParams {
     zm/src/ZmScheduler.hh:61:struct ZmAPI ZmSchedParams {
     zutcp/src/ZutcpMx.hh:61:struct StackParams {
@@ -6980,7 +6980,7 @@ I’ll inspect the existing parameter types in Z and propose a `DPDKParams` stru
 
 ## Assistant
 
-The nearby `Zxdp::Params` and `Zutcp::StackParams` use aggregate structs, while `ZiMxParams` uses fluent setters. I’ll propose an aggregate with named EAL settings and an owned argument list for options added by newer DPDK versions, so the wrapper can pass the full configuration.
+The nearby `Zpkt::Params` and `Zutcp::StackParams` use aggregate structs, while `ZiMxParams` uses fluent setters. I’ll propose an aggregate with named EAL settings and an owned argument list for options added by newer DPDK versions, so the wrapper can pass the full configuration.
 
 ## Activity
 
@@ -7156,14 +7156,14 @@ The nearby `Zxdp::Params` and `Zutcp::StackParams` use aggregate structs, while 
         s=p.read_text()
         section='''### Proposed explicit EAL parameters (not yet adopted)
         
-        Use an aggregate `Zxdp::DPDKParams`, following nearby `Zxdp::Params` and
+        Use an aggregate `Zpkt::DPDKParams`, following nearby `Zpkt::Params` and
         `Zutcp::StackParams`: public named members with defaults and designated
         initializers. This follows the current struct style rule; the fluent alternative
         is exemplified by `ZiMxParams`. Own strings and lists so the application can build
         configuration from files or generated values without borrowed-storage hazards.
         
         ```cpp
-        namespace Zxdp {
+        namespace Zpkt {
         
         ZtEnumNS(int8_t, DPDKProc, Default, Primary, Secondary, Auto);
         ZtEnumNS(int8_t, DPDKIOVA, Default, PA, VA);
@@ -7172,7 +7172,7 @@ The nearby `Zxdp::Params` and `Zutcp::StackParams` use aggregate structs, while 
         ZtEnumNS(int8_t, DPDKTraceMode, Default, Overwrite, Discard);
         
         struct DPDKParams {
-          using Strings = ZtArray<ZtString<>, ZtArrayHeapID<"Zxdp.DPDKParams">>;
+          using Strings = ZtArray<ZtString<>, ZtArrayHeapID<"Zpkt.DPDKParams">>;
           using UInt = ZuUnion<void, unsigned>;
           using Address = ZuUnion<void, uintptr_t>;
         
@@ -7224,7 +7224,7 @@ The nearby `Zxdp::Params` and `Zutcp::StackParams` use aggregate structs, while 
           Strings args;
         };
         
-        } // namespace Zxdp
+        } // namespace Zpkt
         ```
         
         The named members cover ordinary runtime, device, memory and diagnostic choices.
@@ -7238,7 +7238,7 @@ The nearby `Zxdp::Params` and `Zutcp::StackParams` use aggregate structs, while 
         option: reject duplicate/conflicting sources during cold initialization rather
         than silently overriding either. Retain DPDK's own validation of native options.
         
-        Defaults preserve EAL defaults except for the agreed Zxdp execution policy:
+        Defaults preserve EAL defaults except for the agreed Zpkt execution policy:
         no extra EAL packet workers by default. Empty `lcores` selects a suitable single
         main lcore from the initializing thread's allowed CPUs; explicit mappings let
         applications control placement. The implementation must preserve the caller's
@@ -7249,15 +7249,15 @@ The nearby `Zxdp::Params` and `Zutcp::StackParams` use aggregate structs, while 
         Proposed call (return/error type to be settled with the factory error convention):
         
         ```cpp
-        auto dpdk = ZmSingleton<Zxdp::DPDK,
+        auto dpdk = ZmSingleton<Zpkt::DPDK,
           ZmSingletonCleanup<ZmCleanup::Platform>>::instance();
-        auto result = dpdk->init(Zxdp::DPDKParams{
+        auto result = dpdk->init(Zpkt::DPDKParams{
           .noPCI = true,
           .vdev = {"net_ring0"},
           .noHuge = true,
           .noShconf = true
         });
-        // Check result before constructing a DPDK-backed Zxdp::Instance.
+        // Check result before constructing a DPDK-backed Zpkt::Instance.
         ```
         
         `DPDK::init(const DPDKParams &)` constructs private writable argv storage,
@@ -7279,14 +7279,14 @@ The nearby `Zxdp::Params` and `Zutcp::StackParams` use aggregate structs, while 
 
 ## Assistant
 
-Proposed [`Zxdp::DPDKParams` in the brief](/home/count0/src/z/concepts_brief.md), following the aggregate style of `Zxdp::Params` and `Zutcp::StackParams`.
+Proposed [`Zpkt::DPDKParams` in the brief](/home/count0/src/z/concepts_brief.md), following the aggregate style of `Zpkt::Params` and `Zutcp::StackParams`.
 
 It contains named fields for CPU mapping, device discovery, virtual devices, memory/NUMA settings, process isolation and diagnostics. Strings and arrays own their storage; optional numeric values use `ZuUnion<void, unsigned>` to distinguish unspecified from zero.
 
 Example:
 
 ```cpp
-dpdk->init(Zxdp::DPDKParams{
+dpdk->init(Zpkt::DPDKParams{
   .noPCI = true,
   .vdev = {"net_ring0"},
   .noHuge = true,
@@ -7445,7 +7445,7 @@ explain 1
         a=s.index('4. **Shared contract validation:**')
         b=s.index('\n## Reviewer Status',a)
         s=s[:a]+'''4. **Validation — scope resolved.** Mirror the scope of existing AF_XDP
-           testing for DPDK. Use the current zxdp unit and integration tests as the
+           testing for DPDK. Use the current zpkt unit and integration tests as the
            coverage reference and provide corresponding NIC-free DPDK cases through
            software ring/pcap PMDs. Adapt test fixtures and expected backend details;
            do not expand this feature into a broader validation project. Build and run
@@ -7647,7 +7647,7 @@ I’ll mark the receive policy as adopted and add a parameter for the idle wait 
         p=Path('concepts_brief.md')
         s=p.read_text()
         s=s.replace('7. **Receive idle behavior — proposed resolution, awaiting adoption.**', '7. **Receive idle behavior — adopted.**')
-        s=s.replace('     bounded timeout where no packet-arrival FD/interrupt exists. Start with a\n     short timeout and back off to a small cap (proposed starting values 1–50 us,\n     measured rather than promised scheduling precision). Each timeout probes Rx;\n     any packet immediately restores active service.', '     bounded timeout where no packet-arrival FD/interrupt exists. Add\n     `unsigned rxInterval = 50;` to `Zxdp::Params`, expressed in microseconds.\n     It is the configured maximum interval between idle receive probes; back off\n     from a short initial wait to that interval. A value of zero disables timed\n     parking and keeps polling. Treat timeout values as requested durations, not\n     guarantees of OS scheduling precision. Each timeout probes Rx; any packet\n     immediately restores active service.')
+        s=s.replace('     bounded timeout where no packet-arrival FD/interrupt exists. Start with a\n     short timeout and back off to a small cap (proposed starting values 1–50 us,\n     measured rather than promised scheduling precision). Each timeout probes Rx;\n     any packet immediately restores active service.', '     bounded timeout where no packet-arrival FD/interrupt exists. Add\n     `unsigned rxInterval = 50;` to `Zpkt::Params`, expressed in microseconds.\n     It is the configured maximum interval between idle receive probes; back off\n     from a short initial wait to that interval. A value of zero disables timed\n     parking and keeps polling. Treat timeout values as requested durations, not\n     guarantees of OS scheduling precision. Each timeout probes Rx; any packet\n     immediately restores active service.')
         s=s.replace('   This chooses bounded discovery delay', '   `Params::spin` controls the short-idle probe budget; `Params::rxInterval`\n   controls the microsecond idle-wait cap. These are per-instance settings, not\n   EAL initialization settings. The interval name/default and zero semantics\n   above are concrete implementation choices for the adopted policy.\n\n   This chooses bounded discovery delay')
         p.write_text(s)
         PY
@@ -7705,7 +7705,7 @@ Only netmask filtering remains to settle.
 
 ## User
 
-`Zxdp::Instance` is being updated to provide a factory member function: `ZmRef<Zi::IOBufPool> bufPool(...);` which will be implemented by `Zxdp::BufPool` `AF_XDP` differently than for DPDK. `Zxdp::BufPool` will become an `AF_XDP`-specific internal that derives from, and implements `Zi::IOBufPool`; DPDK will have an equivalent buf pool factory function and implementation
+`Zpkt::Instance` is being updated to provide a factory member function: `ZmRef<Zi::IOBufPool> bufPool(...);` which will be implemented by `Zpkt::BufPool` `AF_XDP` differently than for DPDK. `Zpkt::BufPool` will become an `AF_XDP`-specific internal that derives from, and implements `Zi::IOBufPool`; DPDK will have an equivalent buf pool factory function and implementation
 
 ## Assistant
 
@@ -7713,12 +7713,12 @@ I’ll update the brief to use `Instance::bufPool(...)` as the pool factory, ret
 
 ## Activity
 
-    $ rg -n 'IOBufPool|bufPool\(|struct Params|class .*BufPool' zi/src/ZiIOBuf.hh zxdp/src/Zxdp.hh zxdp/src/ZxdpAlloc.hh; rg -n 'BufPool|pool|shared backing|shared backing seam|provider boundary' concepts_brief.md
-    rg: zxdp/src/ZxdpAlloc.hh: No such file or directory (os error 2)
-    zxdp/src/Zxdp.hh:33:struct Params {
-    zxdp/src/Zxdp.hh:36:  Zi::IOBufPool *txPools = nullptr;
-    zxdp/src/Zxdp.hh:37:  Zi::IOBufPool *rxPool = nullptr;
-    zxdp/src/Zxdp.hh:56:  static ZmRef<Zi::IOBufPool> bufPool(unsigned count, unsigned size,
+    $ rg -n 'IOBufPool|bufPool\(|struct Params|class .*BufPool' zi/src/ZiIOBuf.hh zpkt/src/Zpkt.hh zpkt/src/ZpktAlloc.hh; rg -n 'BufPool|pool|shared backing|shared backing seam|provider boundary' concepts_brief.md
+    rg: zpkt/src/ZpktAlloc.hh: No such file or directory (os error 2)
+    zpkt/src/Zpkt.hh:33:struct Params {
+    zpkt/src/Zpkt.hh:36:  Zi::IOBufPool *txPools = nullptr;
+    zpkt/src/Zpkt.hh:37:  Zi::IOBufPool *rxPool = nullptr;
+    zpkt/src/Zpkt.hh:56:  static ZmRef<Zi::IOBufPool> bufPool(unsigned count, unsigned size,
     zi/src/ZiIOBuf.hh:452:struct IOBufPool;
     zi/src/ZiIOBuf.hh:493:  void wait(IOBufPool *, GrantFn);
     zi/src/ZiIOBuf.hh:504:  IOBufPool *m_provider = nullptr;
@@ -7747,7 +7747,7 @@ I’ll update the brief to use `Instance::bufPool(...)` as the pool factory, ret
     369:* **Not recommended:** Duplicate the pool allocator or force DPDK through XDP page
     370:  geometry. Use native backend backing behind the pool/provider boundary and share
     386:   namespace factory and backend pool/provider boundary together with every affected caller.
-    390:   including Zutcp, zxdp utility/unit/integration tests and Zutcp pool integration.
+    390:   including Zutcp, zpkt utility/unit/integration tests and Zutcp pool integration.
     392:3. **DPDK implementation:** Add the narrow selector and pool-derived resources,
     411:mbufs are allocations from the dedicated Rx pool. Preserve native mbuf ownership
     430:| `egm-zoom-out` | completed | Small shared backing seam; narrow selector; reuse scheduler and pools. |
@@ -7757,7 +7757,7 @@ I’ll update the brief to use `Instance::bufPool(...)` as the pool factory, ret
 
 ## Activity
 
-    $ cat zxdp/src/Zxdp.hh; sed -n '580,615p' zi/src/ZiIOBuf.hh; sed -n '50,100p' concepts_brief.md
+    $ cat zpkt/src/Zpkt.hh; sed -n '580,615p' zi/src/ZiIOBuf.hh; sed -n '50,100p' concepts_brief.md
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -7766,11 +7766,11 @@ I’ll update the brief to use `Instance::bufPool(...)` as the pool factory, ret
     
     // Raw AF_XDP arena, pool and packet facilities.
     
-    #ifndef Zxdp_HH
-    #define Zxdp_HH
+    #ifndef Zpkt_HH
+    #define Zpkt_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stdint.h>
@@ -7785,10 +7785,10 @@ I’ll update the brief to use `Instance::bufPool(...)` as the pool factory, ret
     #include <zlib/ZePlatform.hh>
     #include <zlib/ZiIOBuf.hh>
     
-    namespace Zxdp {
+    namespace Zpkt {
     
-    using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zxdp.Receive">>;
-    using StopFn = ZmFn<void(), ZmFnHeapID<"Zxdp.TxStopped">>;
+    using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zpkt.Receive">>;
+    using StopFn = ZmFn<void(), ZmFnHeapID<"Zpkt.TxStopped">>;
     
     struct Params {
       unsigned interface = 0; // network-interface index in the current namespace
@@ -7806,7 +7806,7 @@ I’ll update the brief to use `Instance::bufPool(...)` as the pool factory, ret
     // The caller drives Rx/Tx on their respective single owners. Allocation/free
     // may run on other threads. Allocation holds backing until explicit pool return;
     // an accepted send also holds it until kernel completion or safe close.
-    class ZxdpAPI Instance : public ZmPolymorph {
+    class ZpktAPI Instance : public ZmPolymorph {
     friend struct InstanceData;
     
     public:
@@ -7852,8 +7852,8 @@ I’ll update the brief to use `Instance::bufPool(...)` as the pool factory, ret
       InstanceData *m_data;
     };
     
-    } // namespace Zxdp
-    #endif /* Zxdp_HH */
+    } // namespace Zpkt
+    #endif /* Zpkt_HH */
       }
     };
     
@@ -7928,7 +7928,7 @@ I’ll update the brief to use `Instance::bufPool(...)` as the pool factory, ret
        ordinary backend integration, not a new asynchronous ownership mechanism.
     
     3. **Pool backing — implementation work, native to each backend.** Implement DPDK-backed provisioning
-       through `Zi::IOBufPlugin` so buffers passed from Zutcp to Zxdp already identify
+       through `Zi::IOBufPlugin` so buffers passed from Zutcp to Zpkt already identify
        their mbufs. Keep AF_XDP registered storage in its backend. Remove AF_XDP-only
        assumptions from shared pool interfaces as needed; do not force mbufs through
        XDP arena geometry or wrap unrelated external backing at send time. Preserve
@@ -7952,7 +7952,7 @@ I’ll update the brief to use `Instance::bufPool(...)` as the pool factory, ret
         s=s.replace('`Zi::IOBufPlugin`', '`Zi::IOBufPool`')
         a=s.index('3. **Pool backing — implementation work')
         b=s.index('\n4. **Capacity',a)
-        s=s[:a]+'''3. **Pool backing — adopted backend factory boundary.** `Zxdp::Instance`
+        s=s[:a]+'''3. **Pool backing — adopted backend factory boundary.** `Zpkt::Instance`
            provides a pool factory member:
         
            ```cpp
@@ -7961,7 +7961,7 @@ I’ll update the brief to use `Instance::bufPool(...)` as the pool factory, ret
         
            Follow the evolving pool-factory API for count, size, headroom, tailroom and
            alignment. Both backends return the common `Zi::IOBufPool` interface.
-           `Zxdp::BufPool` becomes an AF_XDP-specific internal deriving from and
+           `Zpkt::BufPool` becomes an AF_XDP-specific internal deriving from and
            implementing `Zi::IOBufPool`, with UMEM-backed allocation and lifetime rules.
            DPDK provides its own factory implementation and internal pool implementation
            using native mbuf backing. Public callers hold `ZmRef<Zi::IOBufPool>` and
@@ -7975,7 +7975,7 @@ I’ll update the brief to use `Instance::bufPool(...)` as the pool factory, ret
            until the final caller return. This supersedes earlier shared-arena proposals.
         ''' + s[b:]
         s=s.replace('* **Not recommended:** Duplicate the pool allocator or force DPDK through XDP page\n  geometry. Use native backend backing behind the pool/provider boundary and share\n  only backend-independent lifetime rules.', '* **Superseded:** A common UMEM/DPDK arena allocator. The adopted common boundary\n  is `Zi::IOBufPool` with separate AF_XDP and DPDK factory implementations and\n  native backing; do not force mbufs through AF_XDP page geometry.')
-        s=s.replace('   namespace factory and backend pool/provider boundary together with every affected caller.', '   namespace factory and `Zi::IOBufPool` factory boundary together with every\n   affected caller. Keep `Zxdp::BufPool` private to AF_XDP and implement the DPDK\n   pool separately.')
+        s=s.replace('   namespace factory and backend pool/provider boundary together with every affected caller.', '   namespace factory and `Zi::IOBufPool` factory boundary together with every\n   affected caller. Keep `Zpkt::BufPool` private to AF_XDP and implement the DPDK\n   pool separately.')
         p.write_text(s)
         PY
     ✓ • 0ms
@@ -7985,7 +7985,7 @@ I’ll update the brief to use `Instance::bufPool(...)` as the pool factory, ret
 Recorded in the [brief](/home/count0/src/z/concepts_brief.md):
 
 - `Instance::bufPool(...)` returns `ZmRef<Zi::IOBufPool>`.
-- `Zxdp::BufPool` becomes an internal AF_XDP implementation.
+- `Zpkt::BufPool` becomes an internal AF_XDP implementation.
 - DPDK provides its own mbuf-backed pool implementation.
 - Callers use the common `Zi::IOBufPool` interface.
 
@@ -7993,42 +7993,42 @@ This supersedes the earlier shared-arena proposal. Netmask filtering remains the
 
 ## User
 
-`zxdp` has been updated. `AF_XDP`-specific code has been moved into a sub-namespace `Zxdp::Xdp`; DPDK should occupy `Zxdp::Dpdk`; read `Zxdp.hh` and the other changed files in `zxdp/src`, and update the plan accordingly
+`zpkt` has been updated. `AF_XDP`-specific code has been moved into a sub-namespace `Zpkt::Xdp`; DPDK should occupy `Zpkt::Dpdk`; read `Zpkt.hh` and the other changed files in `zpkt/src`, and update the plan accordingly
 
 ## Assistant
 
-I’ll read the updated public API and changed files in `zxdp/src`, then revise the brief around `Zxdp::Xdp` and `Zxdp::Dpdk`.
+I’ll read the updated public API and changed files in `zpkt/src`, then revise the brief around `Zpkt::Xdp` and `Zpkt::Dpdk`.
 
 ## Activity
 
-    $ git status --short; git log -5 --oneline -- zxdp/src; rg --files zxdp/src; cat zxdp/src/Zxdp.hh; cat zxdp/GUIDELINES.md
+    $ git status --short; git log -5 --oneline -- zpkt/src; rg --files zpkt/src; cat zpkt/src/Zpkt.hh; cat zpkt/GUIDELINES.md
      M gtags.conf
      M zutcp/src/ZutcpMx.cc
-     M zxdp/INTERFACE.md
-     M zxdp/itest/zxdppackettest.cc
-     M zxdp/src/EGM.md
-     M zxdp/src/Zxdp.cc
-     M zxdp/src/Zxdp.hh
+     M zpkt/INTERFACE.md
+     M zpkt/itest/zpktpackettest.cc
+     M zpkt/src/EGM.md
+     M zpkt/src/Zpkt.cc
+     M zpkt/src/Zpkt.hh
     ?? cscope.out
-    3892a86f Refactor Zxdp backends around intrusive Zi buffer pools
-    8f618590 Simplify Zxdp submission and Zutcp ACK publication
+    3892a86f Refactor Zpkt backends around intrusive Zi buffer pools
+    8f618590 Simplify Zpkt submission and Zutcp ACK publication
     c98822c6 Merge origin/work into main
-    dab270d8 zxdp: restore pool leases and remove transmit completion callback
+    dab270d8 zpkt: restore pool leases and remove transmit completion callback
     76fdf49b Reach the native TCP latency and throughput milestone
-    zxdp/src/ZxdpUMem.hh
-    zxdp/src/Zxdp.cc
-    zxdp/src/ZxdpRetire.cc
-    zxdp/src/Makefile.am
-    zxdp/src/ZxdpRing.hh
-    zxdp/src/ZxdpBPF.cc
-    zxdp/src/ZxdpLib.cc
-    zxdp/src/ZxdpLib.hh
-    zxdp/src/ZxdpRetire.hh
-    zxdp/src/ZxdpUMem.cc
-    zxdp/src/ZxdpPool.cc
-    zxdp/src/ZxdpBPF.hh
-    zxdp/src/ZxdpPool.hh
-    zxdp/src/Zxdp.hh
+    zpkt/src/ZpktUMem.hh
+    zpkt/src/Zpkt.cc
+    zpkt/src/ZpktRetire.cc
+    zpkt/src/Makefile.am
+    zpkt/src/ZpktRing.hh
+    zpkt/src/ZpktBPF.cc
+    zpkt/src/ZpktLib.cc
+    zpkt/src/ZpktLib.hh
+    zpkt/src/ZpktRetire.hh
+    zpkt/src/ZpktUMem.cc
+    zpkt/src/ZpktPool.cc
+    zpkt/src/ZpktBPF.hh
+    zpkt/src/ZpktPool.hh
+    zpkt/src/Zpkt.hh
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -8037,11 +8037,11 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     // Raw AF_XDP arena, pool and packet facilities.
     
-    #ifndef Zxdp_HH
-    #define Zxdp_HH
+    #ifndef Zpkt_HH
+    #define Zpkt_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stdint.h>
@@ -8061,12 +8061,12 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     #include <zlib/ZtcQueue.hh>
     #include <zlib/ZiIOBuf.hh>
     
-    namespace Zxdp {
+    namespace Zpkt {
     
-    using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zxdp.Receive">>;
-    using StopFn = ZmFn<void(), ZmFnHeapID<"Zxdp.TxStopped">>;
+    using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zpkt.Receive">>;
+    using StopFn = ZmFn<void(), ZmFnHeapID<"Zpkt.TxStopped">>;
     
-    ZtEnumNS(ZxdpAPI, Type, uint8_t, Xdp);
+    ZtEnumNS(ZpktAPI, Type, uint8_t, Xdp);
     
     struct Params_ {
       Zi::IOBufPoolList txPools;
@@ -8090,7 +8090,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     // The caller drives Rx/Tx on their respective single owners. Allocation/free
     // may run on other threads. Allocation holds backing until explicit pool return;
     // an accepted send also holds it until kernel completion or safe close.
-    class ZxdpAPI Instance : public ZmPolymorph {
+    class ZpktAPI Instance : public ZmPolymorph {
     public:
       ~Instance() override = default;
       Instance(const Instance &) = delete;
@@ -8126,11 +8126,11 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       Instance() = default;
     };
     
-    ZxdpExtern ZmRef<Instance> instance(Type::T);
+    ZpktExtern ZmRef<Instance> instance(Type::T);
     
-    } // namespace Zxdp
-    #endif /* Zxdp_HH */
-    # Zxdp implementation rules
+    } // namespace Zpkt
+    #endif /* Zpkt_HH */
+    # Zpkt implementation rules
     
     Follow the repository guidance in ../AGENTS.md and the caller-supplied
     [interface contract](INTERFACE.md). The contract supersedes earlier plans.
@@ -8164,7 +8164,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       run on any thread. Keep thread-exclusive mutable state on separate cache lines.
     * The application assigns a sender `txSid` in its `ZmScheduler` and configures
       that slot with `Xdp::Params::txThread` (`ZmSchedTParams`, isolated by default).
-      The scheduler owns thread startup, waiting and teardown. Zxdp owns no sender
+      The scheduler owns thread startup, waiting and teardown. Zpkt owns no sender
       thread or semaphore. Publish initialized descriptors immediately: increment
       the pending-descriptor counter before commit and use scheduler `run()` after
       commit only on a zero-to-one transition. The dedicated sender calls nonblocking
@@ -8194,7 +8194,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
 
 ## Activity
 
-    $ cat zxdp/src/ZxdpPool.hh zxdp/src/ZxdpPool.cc zxdp/src/ZxdpUMem.hh zxdp/src/Makefile.am
+    $ cat zpkt/src/ZpktPool.hh zpkt/src/ZpktPool.cc zpkt/src/ZpktUMem.hh zpkt/src/Makefile.am
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -8203,11 +8203,11 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     // Caller-owned intrusive packet pools over registered arena regions.
     
-    #ifndef ZxdpPool_HH
-    #define ZxdpPool_HH
+    #ifndef ZpktPool_HH
+    #define ZpktPool_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stdint.h>
@@ -8219,7 +8219,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     #include <zlib/ZiIOBuf.hh>
     
-    namespace Zxdp::Xdp {
+    namespace Zpkt::Xdp {
     
     class UMem;
     class BufPool;
@@ -8228,7 +8228,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     // Keep pool objects alive through instance close and final packet return.
     // Freeze the list/count/size while bound. Exhaustion never allocates backing.
     class BufPool final : public ZmNHeap<BufPool>, public Zi::IOBufPool {
-    friend inline ZuStringT<"Zxdp.Pool"> ZmNHeapID(BufPool *);
+    friend inline ZuStringT<"Zpkt.Pool"> ZmNHeapID(BufPool *);
     friend class UMem;
     friend class Instance;
     
@@ -8267,8 +8267,8 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       Count        m_used{0}, m_active{0};
     };
     
-    } // namespace Zxdp::Xdp
-    #endif /* ZxdpPool_HH */
+    } // namespace Zpkt::Xdp
+    #endif /* ZpktPool_HH */
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -8277,10 +8277,10 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     #include <zlib/ZmAssert.hh>
     
-    #include <zlib/ZxdpPool.hh>
-    #include <zlib/ZxdpUMem.hh>
+    #include <zlib/ZpktPool.hh>
+    #include <zlib/ZpktUMem.hh>
     
-    namespace Zxdp::Xdp {
+    namespace Zpkt::Xdp {
     
     BufPool::BufPool(unsigned n, unsigned bytes) {
       count = n;
@@ -8362,7 +8362,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       return m_arena->data() + m_offset + (uint64_t(id)<<m_shift) + m_prefix;
     }
     
-    } // namespace Zxdp::Xdp
+    } // namespace Zpkt::Xdp
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -8371,11 +8371,11 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     // Private shared packet arena layout, registration and mapping lifetime.
     
-    #ifndef ZxdpUMem_HH
-    #define ZxdpUMem_HH
+    #ifndef ZpktUMem_HH
+    #define ZpktUMem_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stddef.h>
@@ -8393,11 +8393,11 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     #include <zlib/ZePlatform.hh>
     
-    #include <zlib/Zxdp.hh>
-    #include <zlib/ZxdpRing.hh>
-    #include <zlib/ZxdpPool.hh>
+    #include <zlib/Zpkt.hh>
+    #include <zlib/ZpktRing.hh>
+    #include <zlib/ZpktPool.hh>
     
-    namespace Zxdp::Xdp {
+    namespace Zpkt::Xdp {
     
     struct ArenaLayout {
       size_t length = 0, rxLength = 0, txLength = 0;
@@ -8411,8 +8411,8 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       bool pending = false;
     };
     
-    class ZxdpAPI UMem : public ZmNHeap<UMem>, public ZmObject {
-    friend inline ZuStringT<"Zxdp.UMem"> ZmNHeapID(UMem *);
+    class ZpktAPI UMem : public ZmNHeap<UMem>, public ZmObject {
+    friend inline ZuStringT<"Zpkt.UMem"> ZmNHeapID(UMem *);
     
     public:
       ~UMem();
@@ -8426,8 +8426,8 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     private:
       UMem() = default;
-      using Pages = ZtArray<BufPool *, ZtArrayHeapID<"Zxdp.Pages">>;
-      using Slots = ZtArray<TxSlot, ZtArrayHeapID<"Zxdp.TxSlots">>;
+      using Pages = ZtArray<BufPool *, ZtArrayHeapID<"Zpkt.Pages">>;
+      using Slots = ZtArray<TxSlot, ZtArrayHeapID<"Zpkt.TxSlots">>;
       uint8_t    *m_data = nullptr;
       ArenaLayout    m_layout;
       Pages        m_pages;
@@ -8438,7 +8438,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     // Private kernel registration/binding. Quiesce Rx/Tx service before close.
     // Descriptor mappings never own application packet lifetime.
     // Handle closure alone does not prove retirement of outstanding device DMA.
-    class ZxdpAPI Xsk {
+    class ZpktAPI Xsk {
       friend class KernelRetirement;
     
     public:
@@ -8491,22 +8491,22 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       CompRing        m_comp;
     };
     
-    } // namespace Zxdp::Xdp
+    } // namespace Zpkt::Xdp
     
-    #endif /* ZxdpUMem_HH */
+    #endif /* ZpktUMem_HH */
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
         -I$(top_srcdir)/zi/src @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
-    pkginclude_HEADERS = ZxdpLib.hh Zxdp.hh
-    noinst_HEADERS = ZxdpPool.hh ZxdpRing.hh ZxdpUMem.hh ZxdpBPF.hh ZxdpRetire.hh
-    lib_LTLIBRARIES = libZxdp.la
-    libZxdp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZXDP_EXPORTS
-    libZxdp_la_SOURCES = ZxdpLib.cc Zxdp.cc ZxdpPool.cc ZxdpUMem.cc ZxdpBPF.cc \
-        ZxdpRetire.cc
-    libZxdp_la_LIBADD = $(top_builddir)/zi/src/libZi.la \
+    pkginclude_HEADERS = ZpktLib.hh Zpkt.hh
+    noinst_HEADERS = ZpktPool.hh ZpktRing.hh ZpktUMem.hh ZpktBPF.hh ZpktRetire.hh
+    lib_LTLIBRARIES = libZpkt.la
+    libZpkt_la_CPPFLAGS = $(AM_CPPFLAGS) -DZPKT_EXPORTS
+    libZpkt_la_SOURCES = ZpktLib.cc Zpkt.cc ZpktPool.cc ZpktUMem.cc ZpktBPF.cc \
+        ZpktRetire.cc
+    libZpkt_la_LIBADD = $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la \
         $(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
@@ -8515,7 +8515,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
 
 ## Activity
 
-    $ cat zxdp/src/Zxdp.cc
+    $ cat zpkt/src/Zpkt.cc
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -8540,13 +8540,13 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     #include <zlib/ZePlatform.hh>
     
-    #include <zlib/Zxdp.hh>
-    #include <zlib/ZxdpBPF.hh>
-    #include <zlib/ZxdpUMem.hh>
-    #include <zlib/ZxdpRetire.hh>
-    #include <zlib/ZxdpPool.hh>
+    #include <zlib/Zpkt.hh>
+    #include <zlib/ZpktBPF.hh>
+    #include <zlib/ZpktUMem.hh>
+    #include <zlib/ZpktRetire.hh>
+    #include <zlib/ZpktPool.hh>
     
-    namespace Zxdp {
+    namespace Zpkt {
     
     ZtEnumImplNS(Type);
     
@@ -8554,7 +8554,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     // One kernel ring set per hardware Rx queue, sharing one UMEM registration.
     struct Queue : public ZmNHeap<Queue> {
-    friend inline ZuStringT<"Zxdp.Queue"> ZmNHeapID(Queue *);
+    friend inline ZuStringT<"Zpkt.Queue"> ZmNHeapID(Queue *);
       using Retirement = KernelRetirement;
       Xsk        socket;
       Retirement    retirement;
@@ -8564,8 +8564,8 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       ~Queue() { ZmAssert_(socket.fd() < 0); }
     };
     
-    class Instance final : public ZmNHeap<Instance>, public Zxdp::Instance {
-    friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(Instance *);
+    class Instance final : public ZmNHeap<Instance>, public Zpkt::Instance {
+    friend inline ZuStringT<"Zpkt.Instance"> ZmNHeapID(Instance *);
     
     public:
       using ZmNHeap<Instance>::operator new;
@@ -8589,12 +8589,12 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       void wake() override { notify(); }
       unsigned pollTx() override;
       unsigned allQueues(Ztc::QueueMgr::AllFn) const override;
-      ZuUnion<void, ZeException> init(const Zxdp::Params &params) override {
+      ZuUnion<void, ZeException> init(const Zpkt::Params &params) override {
         if (m_state != Cold)
-          return ZeEXCEPT(Error, "Zxdp", "AF_XDP instance has already been initialized");
+          return ZeEXCEPT(Error, "Zpkt", "AF_XDP instance has already been initialized");
         m_state = Closing;
         if (!params.is<Params>())
-          return ZeEXCEPT(Error, "Zxdp", "AF_XDP instance requires XDP parameters");
+          return ZeEXCEPT(Error, "Zpkt", "AF_XDP instance requires XDP parameters");
         const auto &config = params.p<Params>();
         m_ifindex = config.ifindex;
         m_rxPool = dynamic_cast<BufPool *>(config.rxPool.ptr());
@@ -8610,10 +8610,10 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
           while (auto pool = pools()) m_txPools[i++] = static_cast<Zi::IOBufPool *>(pool);
         }
         if (!m_ifindex || !m_rxPool || !m_receive) {
-          return ZeEXCEPT(Error, "Zxdp", "interface, Rx pool and receive callback are required");
+          return ZeEXCEPT(Error, "Zpkt", "interface, Rx pool and receive callback are required");
         }
         if (!m_scheduler || !m_txSid || m_txSid > m_scheduler->params().nThreads()) {
-          return ZeEXCEPT(Error, "Zxdp", "AF_XDP requires a scheduler and assigned Tx slot");
+          return ZeEXCEPT(Error, "Zpkt", "AF_XDP requires a scheduler and assigned Tx slot");
         }
         auto parsed = parseFilter(config.netmask);
         if (parsed.is<ZeException>()) return ZuMv(parsed).p<ZeException>();
@@ -8622,9 +8622,9 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
         if (queried.is<ZeException>()) return ZuMv(queried).p<ZeException>();
         m_link = ZuMv(queried).p<LinkState>();
         if (m_link.occupied())
-          return ZeEXCEPT(Error, "Zxdp", "interface has an unrelated XDP program");
+          return ZeEXCEPT(Error, "Zpkt", "interface has an unrelated XDP program");
         if (!m_link.rxQueues || m_rxPool->count < m_link.rxQueues) {
-          return ZeEXCEPT(Error, "Zxdp", "Rx pool must provision every interface queue");
+          return ZeEXCEPT(Error, "Zpkt", "Rx pool must provision every interface queue");
         }
         auto created = UMem::create(config.txPools, m_rxPool.ptr(), m_link.mtu);
         if (created.is<ZeException>()) return ZuMv(created).p<ZeException>();
@@ -8637,7 +8637,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
         };
         auto r = round(layout.rxCount/m_link.rxQueues + !!(layout.rxCount%m_link.rxQueues));
         auto t = round(layout.txCount);
-        if (!r || !t) { return ZeEXCEPT(Error, "Zxdp", "AF_XDP ring capacity overflow"); }
+        if (!r || !t) { return ZeEXCEPT(Error, "Zpkt", "AF_XDP ring capacity overflow"); }
         m_rxSlots.length(m_rxPool->count);
         m_rxActive.length(m_rxPool->count);
         m_txActive.length(layout.txCount);
@@ -8645,18 +8645,18 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
         m_queues.length(m_link.rxQueues);
         for (auto &queue : m_queues) queue = nullptr;
         m_events = epoll_create1(EPOLL_CLOEXEC);
-        if (m_events < 0) { return ZeEXCEPT(Error, "Zxdp", ([error = ZeLastError](auto &out) {
+        if (m_events < 0) { return ZeEXCEPT(Error, "Zpkt", ([error = ZeLastError](auto &out) {
         out << "AF_XDP epoll creation failed: " << error;
           })); }
         m_wakeFD = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-        if (m_wakeFD < 0) { return ZeEXCEPT(Error, "Zxdp", ([error = ZeLastError](auto &out) {
+        if (m_wakeFD < 0) { return ZeEXCEPT(Error, "Zpkt", ([error = ZeLastError](auto &out) {
         out << "AF_XDP wake eventfd creation failed: " << error;
           })); }
         epoll_event wakeEvent{};
         wakeEvent.events = EPOLLIN;
         wakeEvent.data.u32 = End;
         if (epoll_ctl(m_events, EPOLL_CTL_ADD, m_wakeFD, &wakeEvent)) {
-          return ZeEXCEPT(Error, "Zxdp", ([error = ZeLastError](auto &out) {
+          return ZeEXCEPT(Error, "Zpkt", ([error = ZeLastError](auto &out) {
         out << "AF_XDP wake registration failed: " << error;
           }));
         }
@@ -8683,7 +8683,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
           event.events = EPOLLIN;
           event.data.u32 = i;
           if (epoll_ctl(m_events, EPOLL_CTL_ADD, queue->socket.fd(), &event)) {
-        return ZeEXCEPT(Error, "Zxdp", ([error = ZeLastError](auto &out) {
+        return ZeEXCEPT(Error, "Zpkt", ([error = ZeLastError](auto &out) {
         out << "AF_XDP readiness registration failed: " << error;
           }));
           }
@@ -8752,7 +8752,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
         m_program.reset();
         m_state = Closed;
         if (m_ioError) {
-          return ZeEXCEPT(Error, "Zxdp", ([error = ZeError{int(m_ioError)}](auto &out) {
+          return ZeEXCEPT(Error, "Zpkt", ([error = ZeError{int(m_ioError)}](auto &out) {
         out << "AF_XDP I/O failed: " << error;
           }));
         }
@@ -8867,10 +8867,10 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
       enum { Quantum = 64, End = unsigned(-1) };
       enum { Cold, Active, Closing, Closed };
-      using Indices = ZtArray<unsigned, ZtArrayHeapID<"Zxdp.RxSlots">>;
-      using Packets = ZtArray<uint8_t *, ZtArrayHeapID<"Zxdp.TxActive">>;
-      using Queues = ZtArray<Queue *, ZtArrayHeapID<"Zxdp.Queues">>;
-      using Pools = ZtArray<ZmRef<Zi::IOBufPool>, ZtArrayHeapID<"Zxdp.Pools">>;
+      using Indices = ZtArray<unsigned, ZtArrayHeapID<"Zpkt.RxSlots">>;
+      using Packets = ZtArray<uint8_t *, ZtArrayHeapID<"Zpkt.TxActive">>;
+      using Queues = ZtArray<Queue *, ZtArrayHeapID<"Zpkt.Queues">>;
+      using Pools = ZtArray<ZmRef<Zi::IOBufPool>, ZtArrayHeapID<"Zpkt.Pools">>;
       Pools        m_txPools;
       using RxPool = ZmRef<BufPool>;
       RxPool    m_rxPool;
@@ -9080,44 +9080,44 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       }
     }
     
-    } // namespace Zxdp
+    } // namespace Zpkt
     ✓ • 0ms
 
 ## Activity
 
-    $ git show --stat --oneline 3892a86f -- zxdp/src; git diff -- zxdp/src; cat zxdp/INTERFACE.md; cat zxdp/src/EGM.md
-    3892a86f Refactor Zxdp backends around intrusive Zi buffer pools
-     zxdp/src/EGM.md                        |  26 +-
-     zxdp/src/Makefile.am                   |  15 +-
-     zxdp/src/Zxdp.cc                       | 624 ++++++++++++++++++---------------
-     zxdp/src/Zxdp.hh                       |  96 ++---
-     zxdp/src/ZxdpBPF.cc                    | 317 +++++++++--------
-     zxdp/src/ZxdpBPF.hh                    |  53 +--
-     zxdp/src/{ZxdpAlloc.cc => ZxdpPool.cc} |   9 +-
-     zxdp/src/{ZxdpAlloc.hh => ZxdpPool.hh} |  46 ++-
-     zxdp/src/ZxdpRetire.cc                 |  43 +--
-     zxdp/src/ZxdpRetire.hh                 |  20 +-
-     zxdp/src/ZxdpRing.hh                   |  17 +-
-     zxdp/src/ZxdpUMem.cc                   | 210 ++++++-----
-     zxdp/src/ZxdpUMem.hh                   |  32 +-
+    $ git show --stat --oneline 3892a86f -- zpkt/src; git diff -- zpkt/src; cat zpkt/INTERFACE.md; cat zpkt/src/EGM.md
+    3892a86f Refactor Zpkt backends around intrusive Zi buffer pools
+     zpkt/src/EGM.md                        |  26 +-
+     zpkt/src/Makefile.am                   |  15 +-
+     zpkt/src/Zpkt.cc                       | 624 ++++++++++++++++++---------------
+     zpkt/src/Zpkt.hh                       |  96 ++---
+     zpkt/src/ZpktBPF.cc                    | 317 +++++++++--------
+     zpkt/src/ZpktBPF.hh                    |  53 +--
+     zpkt/src/{ZpktAlloc.cc => ZpktPool.cc} |   9 +-
+     zpkt/src/{ZpktAlloc.hh => ZpktPool.hh} |  46 ++-
+     zpkt/src/ZpktRetire.cc                 |  43 +--
+     zpkt/src/ZpktRetire.hh                 |  20 +-
+     zpkt/src/ZpktRing.hh                   |  17 +-
+     zpkt/src/ZpktUMem.cc                   | 210 ++++++-----
+     zpkt/src/ZpktUMem.hh                   |  32 +-
      13 files changed, 798 insertions(+), 710 deletions(-)
-    diff --git a/zxdp/src/EGM.md b/zxdp/src/EGM.md
+    diff --git a/zpkt/src/EGM.md b/zpkt/src/EGM.md
     index 8887dfaf..d4f0b32f 100644
-    --- a/zxdp/src/EGM.md
-    +++ b/zxdp/src/EGM.md
+    --- a/zpkt/src/EGM.md
+    +++ b/zpkt/src/EGM.md
     @@ -6,7 +6,7 @@ Linux AF_XDP packet allocation, receive/transmit service, XDP program attachment
     
      ## Interface
     
-    -- [Zxdp.hh](./Zxdp.hh): `Params` is a tagged union; `Xdp::Params` selects interface index, optional destination CIDR, intrusive Tx pools, dedicated Rx pool, receive callback, and spin count. `instance(Type::Xdp)` selects a cold polymorphic `Instance` exposing union-dispatched `init(const Params &)` after in-place payload construction with `Params::New<Params::Index<Xdp::Params>{}>{}`, readiness/interface/MTU/MAC/zero-copy queries, `send`, `rx`, `wake`, `pollTx`, and retryable `close`; there is no transmit-completion callback.
-    +- [Zxdp.hh](./Zxdp.hh): `Params` is a tagged union; `Xdp::Params` selects interface index, optional destination CIDR, intrusive Tx pools, dedicated Rx pool, receive callback, and spin count. `instance(Type::Xdp)` selects a cold polymorphic `Instance` exposing union-dispatched `init(const Params &)` after in-place payload construction with `Params::New<Params::Index<Xdp::Params>{}>{}`, readiness/MTU/MAC/zero-copy queries, `send`, `rx`, `wake`, `pollTx`, and retryable `close`; there is no transmit-completion callback.
-     - [ZxdpPool.hh](./ZxdpPool.hh): internal `Xdp::BufPool` implements `Zi::IOBufPool`; callers obtain owning pool references through the selected instance's virtual `bufPool`.
-     - [Makefile.am](./Makefile.am): exports `libZxdp.la` and installs `ZxdpLib.hh` and `Zxdp.hh`; pool, ring, arena, BPF, and retirement headers are private. `init` and `warmup` have empty implementations in [ZxdpLib.cc](./ZxdpLib.cc).
-     - Internal `Xdp::Ring` views manage checked reservations; `Xdp::UMem` and `Xdp::Xsk` manage backing and socket registration; `Xdp::KernelRetirement` reports `Error`, `Pending`, or `Done`; `Xdp::Filter`, `Xdp::BPFProgram`, and `Xdp::BPFAttach` implement selection and attachment. [ZxdpRing.hh](./ZxdpRing.hh), [ZxdpUMem.hh](./ZxdpUMem.hh), [ZxdpRetire.hh](./ZxdpRetire.hh), [ZxdpBPF.hh](./ZxdpBPF.hh)
-    diff --git a/zxdp/src/Zxdp.cc b/zxdp/src/Zxdp.cc
+    -- [Zpkt.hh](./Zpkt.hh): `Params` is a tagged union; `Xdp::Params` selects interface index, optional destination CIDR, intrusive Tx pools, dedicated Rx pool, receive callback, and spin count. `instance(Type::Xdp)` selects a cold polymorphic `Instance` exposing union-dispatched `init(const Params &)` after in-place payload construction with `Params::New<Params::Index<Xdp::Params>{}>{}`, readiness/interface/MTU/MAC/zero-copy queries, `send`, `rx`, `wake`, `pollTx`, and retryable `close`; there is no transmit-completion callback.
+    +- [Zpkt.hh](./Zpkt.hh): `Params` is a tagged union; `Xdp::Params` selects interface index, optional destination CIDR, intrusive Tx pools, dedicated Rx pool, receive callback, and spin count. `instance(Type::Xdp)` selects a cold polymorphic `Instance` exposing union-dispatched `init(const Params &)` after in-place payload construction with `Params::New<Params::Index<Xdp::Params>{}>{}`, readiness/MTU/MAC/zero-copy queries, `send`, `rx`, `wake`, `pollTx`, and retryable `close`; there is no transmit-completion callback.
+     - [ZpktPool.hh](./ZpktPool.hh): internal `Xdp::BufPool` implements `Zi::IOBufPool`; callers obtain owning pool references through the selected instance's virtual `bufPool`.
+     - [Makefile.am](./Makefile.am): exports `libZpkt.la` and installs `ZpktLib.hh` and `Zpkt.hh`; pool, ring, arena, BPF, and retirement headers are private. `init` and `warmup` have empty implementations in [ZpktLib.cc](./ZpktLib.cc).
+     - Internal `Xdp::Ring` views manage checked reservations; `Xdp::UMem` and `Xdp::Xsk` manage backing and socket registration; `Xdp::KernelRetirement` reports `Error`, `Pending`, or `Done`; `Xdp::Filter`, `Xdp::BPFProgram`, and `Xdp::BPFAttach` implement selection and attachment. [ZpktRing.hh](./ZpktRing.hh), [ZpktUMem.hh](./ZpktUMem.hh), [ZpktRetire.hh](./ZpktRetire.hh), [ZpktBPF.hh](./ZpktBPF.hh)
+    diff --git a/zpkt/src/Zpkt.cc b/zpkt/src/Zpkt.cc
     index 2f470ab3..157f4de8 100644
-    --- a/zxdp/src/Zxdp.cc
-    +++ b/zxdp/src/Zxdp.cc
+    --- a/zpkt/src/Zpkt.cc
+    +++ b/zpkt/src/Zpkt.cc
     @@ -60,7 +60,6 @@ public:
        ZmRef<Zi::IOBufPool> bufPool(
          unsigned count, unsigned size, unsigned headRoom, unsigned tailRoom, unsigned align) override;
@@ -9144,10 +9144,10 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
          if (unsigned(m_txExited)) return true;
          if (m_scheduler->state() == ZmEngineState::Stopped) {
            m_txPending = 0;
-    diff --git a/zxdp/src/Zxdp.hh b/zxdp/src/Zxdp.hh
+    diff --git a/zpkt/src/Zpkt.hh b/zpkt/src/Zpkt.hh
     index 93849401..7d19bbcc 100644
-    --- a/zxdp/src/Zxdp.hh
-    +++ b/zxdp/src/Zxdp.hh
+    --- a/zpkt/src/Zpkt.hh
+    +++ b/zpkt/src/Zpkt.hh
     @@ -72,23 +72,25 @@ public:
        // Initialize once. Retain the handle after failure and close it to finish
        // rollback. Configuration may expire on return; pool references are retained.
@@ -9182,14 +9182,14 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     This is the implementation contract supplied by the caller. It supersedes the
     earlier expanded interface in this module.
     
-    Select the cold backend with `Zxdp::instance(Zxdp::Type::Xdp)`. `Instance` is
+    Select the cold backend with `Zpkt::instance(Zpkt::Type::Xdp)`. `Instance` is
     a polymorphic interface; its virtual `init(const Params &)` dispatches a tagged
     union of backend configurations. Construct its payload in place:
     
     ```cpp
-    Zxdp::Params config(
-      Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-    auto &params = config.p<Zxdp::Xdp::Params>();
+    Zpkt::Params config(
+      Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+    auto &params = config.p<Zpkt::Xdp::Params>();
     ```
     
     `Xdp::Params` inherits common `Params_` fields
@@ -9205,7 +9205,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     * One unlinked `ZmRef<Zi::IOBufPool>` Rx pool, with its own dedicated Rx arena.
     * Raw packet receive callback.
     
-    Zxdp depends on Zi. `instance->bufPool(count, size, headRoom, tailRoom, align)`
+    Zpkt depends on Zi. `instance->bufPool(count, size, headRoom, tailRoom, align)`
     returns `ZmRef<Zi::IOBufPool>` implementing allocation/return over registered
     arena slots. The concrete implementation is internal; generic Zi pools cannot
     provide the required arena bookkeeping. Headroom and tailroom default to zero,
@@ -9305,7 +9305,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     races at epoll entry, continued receive processing after packet readiness, and
     wake during active callbacks. Full transport integration and hardware DMA
     validation remain separate work.
-    # Zxdp raw packet service
+    # Zpkt raw packet service
     
     ## Overview
     
@@ -9313,34 +9313,34 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     ## Interface
     
-    - [Zxdp.hh](./Zxdp.hh): `Params` is a tagged union; `Xdp::Params` selects interface index, optional destination CIDR, intrusive Tx pools, dedicated Rx pool, receive callback, and spin count. `instance(Type::Xdp)` selects a cold polymorphic `Instance` exposing union-dispatched `init(const Params &)` after in-place payload construction with `Params::New<Params::Index<Xdp::Params>{}>{}`, readiness/MTU/MAC/zero-copy queries, `send`, `rx`, `wake`, `pollTx`, and retryable `close`; there is no transmit-completion callback.
-    - [ZxdpPool.hh](./ZxdpPool.hh): internal `Xdp::BufPool` implements `Zi::IOBufPool`; callers obtain owning pool references through the selected instance's virtual `bufPool`.
-    - [Makefile.am](./Makefile.am): exports `libZxdp.la` and installs `ZxdpLib.hh` and `Zxdp.hh`; pool, ring, arena, BPF, and retirement headers are private. `init` and `warmup` have empty implementations in [ZxdpLib.cc](./ZxdpLib.cc).
-    - Internal `Xdp::Ring` views manage checked reservations; `Xdp::UMem` and `Xdp::Xsk` manage backing and socket registration; `Xdp::KernelRetirement` reports `Error`, `Pending`, or `Done`; `Xdp::Filter`, `Xdp::BPFProgram`, and `Xdp::BPFAttach` implement selection and attachment. [ZxdpRing.hh](./ZxdpRing.hh), [ZxdpUMem.hh](./ZxdpUMem.hh), [ZxdpRetire.hh](./ZxdpRetire.hh), [ZxdpBPF.hh](./ZxdpBPF.hh)
+    - [Zpkt.hh](./Zpkt.hh): `Params` is a tagged union; `Xdp::Params` selects interface index, optional destination CIDR, intrusive Tx pools, dedicated Rx pool, receive callback, and spin count. `instance(Type::Xdp)` selects a cold polymorphic `Instance` exposing union-dispatched `init(const Params &)` after in-place payload construction with `Params::New<Params::Index<Xdp::Params>{}>{}`, readiness/MTU/MAC/zero-copy queries, `send`, `rx`, `wake`, `pollTx`, and retryable `close`; there is no transmit-completion callback.
+    - [ZpktPool.hh](./ZpktPool.hh): internal `Xdp::BufPool` implements `Zi::IOBufPool`; callers obtain owning pool references through the selected instance's virtual `bufPool`.
+    - [Makefile.am](./Makefile.am): exports `libZpkt.la` and installs `ZpktLib.hh` and `Zpkt.hh`; pool, ring, arena, BPF, and retirement headers are private. `init` and `warmup` have empty implementations in [ZpktLib.cc](./ZpktLib.cc).
+    - Internal `Xdp::Ring` views manage checked reservations; `Xdp::UMem` and `Xdp::Xsk` manage backing and socket registration; `Xdp::KernelRetirement` reports `Error`, `Pending`, or `Done`; `Xdp::Filter`, `Xdp::BPFProgram`, and `Xdp::BPFAttach` implement selection and attachment. [ZpktRing.hh](./ZpktRing.hh), [ZpktUMem.hh](./ZpktUMem.hh), [ZpktRetire.hh](./ZpktRetire.hh), [ZpktBPF.hh](./ZpktBPF.hh)
     
     ## Invariants
     
-    - `Instance` requires separate single Rx and Tx owners. Allocation/free may run elsewhere. Accepted sends hold a kernel lease independently of the caller allocation lease; backing is recycled only after both end. Bytes remain immutable until kernel retirement. Rejection acquires no kernel lease; only one descriptor may be pending per slot. [Zxdp.hh](./Zxdp.hh), [Zxdp.cc](./Zxdp.cc), [ZxdpPool.cc](./ZxdpPool.cc)
-    - Initialization retains its own reference per pool through close; intrusive membership remains only in the caller configuration list. Retain a pool reference for packets that outlive the instance, and freeze links/count/size while bound. `Xdp::BufPool` destruction asserts no used slots. `Xdp::UMem::create` requires unused pools, an owning Tx list, supported power-of-two page geometry and bounded fitting counts/sizes. [ZxdpPool.hh](./ZxdpPool.hh), [ZxdpUMem.cc](./ZxdpUMem.cc)
-    - Before `Instance::close`, wake/join Rx and quiesce Tx and wake callers. Retain the selected instance after init failure until rollback and close finish. `Xdp::KernelRetirement` requires original/probe objects and packet holds until `Done`; an `Error` does not authorize release. Closing an XSK descriptor alone does not establish DMA retirement. [Zxdp.hh](./Zxdp.hh), [ZxdpRetire.hh](./ZxdpRetire.hh), [ZxdpUMem.hh](./ZxdpUMem.hh)
-    - `Instance::init` requires interface, Rx pool, callback, no pre-existing XDP program, and enough Rx buffers for all queues. `Xdp::Ring::mapLength` requires safe aligned nonoverlapping offsets and a power-of-two count; mapping lifetime is external and reservations cannot overlap. [Zxdp.cc](./Zxdp.cc), [ZxdpRing.hh](./ZxdpRing.hh)
+    - `Instance` requires separate single Rx and Tx owners. Allocation/free may run elsewhere. Accepted sends hold a kernel lease independently of the caller allocation lease; backing is recycled only after both end. Bytes remain immutable until kernel retirement. Rejection acquires no kernel lease; only one descriptor may be pending per slot. [Zpkt.hh](./Zpkt.hh), [Zpkt.cc](./Zpkt.cc), [ZpktPool.cc](./ZpktPool.cc)
+    - Initialization retains its own reference per pool through close; intrusive membership remains only in the caller configuration list. Retain a pool reference for packets that outlive the instance, and freeze links/count/size while bound. `Xdp::BufPool` destruction asserts no used slots. `Xdp::UMem::create` requires unused pools, an owning Tx list, supported power-of-two page geometry and bounded fitting counts/sizes. [ZpktPool.hh](./ZpktPool.hh), [ZpktUMem.cc](./ZpktUMem.cc)
+    - Before `Instance::close`, wake/join Rx and quiesce Tx and wake callers. Retain the selected instance after init failure until rollback and close finish. `Xdp::KernelRetirement` requires original/probe objects and packet holds until `Done`; an `Error` does not authorize release. Closing an XSK descriptor alone does not establish DMA retirement. [Zpkt.hh](./Zpkt.hh), [ZpktRetire.hh](./ZpktRetire.hh), [ZpktUMem.hh](./ZpktUMem.hh)
+    - `Instance::init` requires interface, Rx pool, callback, no pre-existing XDP program, and enough Rx buffers for all queues. `Xdp::Ring::mapLength` requires safe aligned nonoverlapping offsets and a power-of-two count; mapping lifetime is external and reservations cannot overlap. [Zpkt.cc](./Zpkt.cc), [ZpktRing.hh](./ZpktRing.hh)
     
     ## Side Effects
     
-    - `Instance::init` provisions arenas/bookkeeping, epoll/eventfd, BPF maps/programs and queue sockets; `Xdp::UMem::create` mmaps writable backing; `Xdp::Xsk::prepare` opens AF_XDP sockets and maps rings. Kernel calls can fail; the library does not acquire privileges. [Zxdp.cc](./Zxdp.cc), [ZxdpUMem.cc](./ZxdpUMem.cc)
-    - `Xdp::BufPool::init` overlays freelist links on payload backing. `send` publishes the submitted arena address, records canonical backing plus wire offset, and may kick the kernel. `pollTx` consumes at most 64 CQ entries, matches pending slots by wire offset excluding bit zero (the Linux generic-Tx destructor tag), releases matched kernel leases, and returns the number retired. Unmatched entries are consumed without incrementing that result. [ZxdpPool.cc](./ZxdpPool.cc), [Zxdp.cc](./Zxdp.cc)
-    - `Instance::rx` services queues, spins then blocks in epoll, and invokes receive callbacks on arena bytes. The backend wake notifier records a persistent wake pulse and writes eventfd; one pulse ends one receive invocation, including preposted pulses. [Zxdp.cc](./Zxdp.cc)
-    - `Xdp::classifierCode` supports destination IPv4/IPv6 filtering through two VLAN headers. Nonmatching/truncated filtered frames pass; selected frames redirect by Rx queue with a drop fallback. An empty filter selects all traffic. Attachment uses guarded program identity and driver-to-SKB fallback only on explicit unsupported-operation rejection; detach preserves foreign programs. [ZxdpBPF.cc](./ZxdpBPF.cc)
-    - `Instance::close` removes destinations and retires one queue per call before bounded buffer return and descriptor/program cleanup. `Xdp::KernelRetirement::retry` probes rebinding with an empty observer: busy remains pending, successful binding establishes retirement. Arena destruction unmaps backing. [Zxdp.cc](./Zxdp.cc), [ZxdpRetire.cc](./ZxdpRetire.cc), [ZxdpUMem.cc](./ZxdpUMem.cc)
+    - `Instance::init` provisions arenas/bookkeeping, epoll/eventfd, BPF maps/programs and queue sockets; `Xdp::UMem::create` mmaps writable backing; `Xdp::Xsk::prepare` opens AF_XDP sockets and maps rings. Kernel calls can fail; the library does not acquire privileges. [Zpkt.cc](./Zpkt.cc), [ZpktUMem.cc](./ZpktUMem.cc)
+    - `Xdp::BufPool::init` overlays freelist links on payload backing. `send` publishes the submitted arena address, records canonical backing plus wire offset, and may kick the kernel. `pollTx` consumes at most 64 CQ entries, matches pending slots by wire offset excluding bit zero (the Linux generic-Tx destructor tag), releases matched kernel leases, and returns the number retired. Unmatched entries are consumed without incrementing that result. [ZpktPool.cc](./ZpktPool.cc), [Zpkt.cc](./Zpkt.cc)
+    - `Instance::rx` services queues, spins then blocks in epoll, and invokes receive callbacks on arena bytes. The backend wake notifier records a persistent wake pulse and writes eventfd; one pulse ends one receive invocation, including preposted pulses. [Zpkt.cc](./Zpkt.cc)
+    - `Xdp::classifierCode` supports destination IPv4/IPv6 filtering through two VLAN headers. Nonmatching/truncated filtered frames pass; selected frames redirect by Rx queue with a drop fallback. An empty filter selects all traffic. Attachment uses guarded program identity and driver-to-SKB fallback only on explicit unsupported-operation rejection; detach preserves foreign programs. [ZpktBPF.cc](./ZpktBPF.cc)
+    - `Instance::close` removes destinations and retires one queue per call before bounded buffer return and descriptor/program cleanup. `Xdp::KernelRetirement::retry` probes rebinding with an empty observer: busy remains pending, successful binding establishes retirement. Arena destruction unmaps backing. [Zpkt.cc](./Zpkt.cc), [ZpktRetire.cc](./ZpktRetire.cc), [ZpktUMem.cc](./ZpktUMem.cc)
     
     ## Verification
     
-    From a configured repository root, run `make -j8 && make -C zxdp/test test`. Kernel integration requires the separate fixture environment described in [utility contracts](../util/EGM.md). No commands were executed for this documentation change.
+    From a configured repository root, run `make -j8 && make -C zpkt/test test`. Kernel integration requires the separate fixture environment described in [utility contracts](../util/EGM.md). No commands were executed for this documentation change.
     ✓ • 0ms
 
 ## Activity
 
-    $ cat zxdp/src/ZxdpPool.hh zxdp/src/ZxdpPool.cc zxdp/src/ZxdpUMem.hh zxdp/src/Makefile.am
+    $ cat zpkt/src/ZpktPool.hh zpkt/src/ZpktPool.cc zpkt/src/ZpktUMem.hh zpkt/src/Makefile.am
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -9349,11 +9349,11 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     // Caller-owned intrusive packet pools over registered arena regions.
     
-    #ifndef ZxdpPool_HH
-    #define ZxdpPool_HH
+    #ifndef ZpktPool_HH
+    #define ZpktPool_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stdint.h>
@@ -9365,7 +9365,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     #include <zlib/ZiIOBuf.hh>
     
-    namespace Zxdp::Xdp {
+    namespace Zpkt::Xdp {
     
     class UMem;
     class BufPool;
@@ -9374,7 +9374,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     // Keep pool objects alive through instance close and final packet return.
     // Freeze the list/count/size while bound. Exhaustion never allocates backing.
     class BufPool final : public ZmNHeap<BufPool>, public Zi::IOBufPool {
-    friend inline ZuStringT<"Zxdp.Pool"> ZmNHeapID(BufPool *);
+    friend inline ZuStringT<"Zpkt.Pool"> ZmNHeapID(BufPool *);
     friend class UMem;
     friend class Instance;
     
@@ -9413,8 +9413,8 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       Count        m_used{0}, m_active{0};
     };
     
-    } // namespace Zxdp::Xdp
-    #endif /* ZxdpPool_HH */
+    } // namespace Zpkt::Xdp
+    #endif /* ZpktPool_HH */
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -9423,10 +9423,10 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     #include <zlib/ZmAssert.hh>
     
-    #include <zlib/ZxdpPool.hh>
-    #include <zlib/ZxdpUMem.hh>
+    #include <zlib/ZpktPool.hh>
+    #include <zlib/ZpktUMem.hh>
     
-    namespace Zxdp::Xdp {
+    namespace Zpkt::Xdp {
     
     BufPool::BufPool(unsigned n, unsigned bytes) {
       count = n;
@@ -9508,7 +9508,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       return m_arena->data() + m_offset + (uint64_t(id)<<m_shift) + m_prefix;
     }
     
-    } // namespace Zxdp::Xdp
+    } // namespace Zpkt::Xdp
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -9517,11 +9517,11 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     // Private shared packet arena layout, registration and mapping lifetime.
     
-    #ifndef ZxdpUMem_HH
-    #define ZxdpUMem_HH
+    #ifndef ZpktUMem_HH
+    #define ZpktUMem_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stddef.h>
@@ -9539,11 +9539,11 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     #include <zlib/ZePlatform.hh>
     
-    #include <zlib/Zxdp.hh>
-    #include <zlib/ZxdpRing.hh>
-    #include <zlib/ZxdpPool.hh>
+    #include <zlib/Zpkt.hh>
+    #include <zlib/ZpktRing.hh>
+    #include <zlib/ZpktPool.hh>
     
-    namespace Zxdp::Xdp {
+    namespace Zpkt::Xdp {
     
     struct ArenaLayout {
       size_t length = 0, rxLength = 0, txLength = 0;
@@ -9557,8 +9557,8 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       bool pending = false;
     };
     
-    class ZxdpAPI UMem : public ZmNHeap<UMem>, public ZmObject {
-    friend inline ZuStringT<"Zxdp.UMem"> ZmNHeapID(UMem *);
+    class ZpktAPI UMem : public ZmNHeap<UMem>, public ZmObject {
+    friend inline ZuStringT<"Zpkt.UMem"> ZmNHeapID(UMem *);
     
     public:
       ~UMem();
@@ -9572,8 +9572,8 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     private:
       UMem() = default;
-      using Pages = ZtArray<BufPool *, ZtArrayHeapID<"Zxdp.Pages">>;
-      using Slots = ZtArray<TxSlot, ZtArrayHeapID<"Zxdp.TxSlots">>;
+      using Pages = ZtArray<BufPool *, ZtArrayHeapID<"Zpkt.Pages">>;
+      using Slots = ZtArray<TxSlot, ZtArrayHeapID<"Zpkt.TxSlots">>;
       uint8_t    *m_data = nullptr;
       ArenaLayout    m_layout;
       Pages        m_pages;
@@ -9584,7 +9584,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     // Private kernel registration/binding. Quiesce Rx/Tx service before close.
     // Descriptor mappings never own application packet lifetime.
     // Handle closure alone does not prove retirement of outstanding device DMA.
-    class ZxdpAPI Xsk {
+    class ZpktAPI Xsk {
       friend class KernelRetirement;
     
     public:
@@ -9637,22 +9637,22 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       CompRing        m_comp;
     };
     
-    } // namespace Zxdp::Xdp
+    } // namespace Zpkt::Xdp
     
-    #endif /* ZxdpUMem_HH */
+    #endif /* ZpktUMem_HH */
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
         -I$(top_srcdir)/zi/src @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
-    pkginclude_HEADERS = ZxdpLib.hh Zxdp.hh
-    noinst_HEADERS = ZxdpPool.hh ZxdpRing.hh ZxdpUMem.hh ZxdpBPF.hh ZxdpRetire.hh
-    lib_LTLIBRARIES = libZxdp.la
-    libZxdp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZXDP_EXPORTS
-    libZxdp_la_SOURCES = ZxdpLib.cc Zxdp.cc ZxdpPool.cc ZxdpUMem.cc ZxdpBPF.cc \
-        ZxdpRetire.cc
-    libZxdp_la_LIBADD = $(top_builddir)/zi/src/libZi.la \
+    pkginclude_HEADERS = ZpktLib.hh Zpkt.hh
+    noinst_HEADERS = ZpktPool.hh ZpktRing.hh ZpktUMem.hh ZpktBPF.hh ZpktRetire.hh
+    lib_LTLIBRARIES = libZpkt.la
+    libZpkt_la_CPPFLAGS = $(AM_CPPFLAGS) -DZPKT_EXPORTS
+    libZpkt_la_SOURCES = ZpktLib.cc Zpkt.cc ZpktPool.cc ZpktUMem.cc ZpktBPF.cc \
+        ZpktRetire.cc
+    libZpkt_la_LIBADD = $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la \
         $(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
@@ -9661,7 +9661,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
 
 ## Activity
 
-    $ cat zxdp/src/ZxdpRetire.hh zxdp/src/ZxdpRetire.cc zxdp/src/ZxdpBPF.hh; git show 3892a86f -- zxdp/src/ZxdpRing.hh
+    $ cat zpkt/src/ZpktRetire.hh zpkt/src/ZpktRetire.cc zpkt/src/ZpktBPF.hh; git show 3892a86f -- zpkt/src/ZpktRing.hh
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -9670,22 +9670,22 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     // Private kernel queue-retirement observation; never publishes packet frames.
     
-    #ifndef ZxdpRetire_HH
-    #define ZxdpRetire_HH
+    #ifndef ZpktRetire_HH
+    #define ZpktRetire_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <zlib/ZuUnion.hh>
     
     #include <zlib/ZePlatform.hh>
     
-    #include <zlib/ZxdpUMem.hh>
+    #include <zlib/ZpktUMem.hh>
     
-    namespace Zxdp::Xdp {
+    namespace Zpkt::Xdp {
     
-    class ZxdpAPI KernelRetirement {
+    class ZpktAPI KernelRetirement {
     friend class Instance;
     
     public:
@@ -9712,9 +9712,9 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       Xsk        m_probe;
     };
     
-    } // namespace Zxdp::Xdp
+    } // namespace Zpkt::Xdp
     
-    #endif /* ZxdpRetire_HH */
+    #endif /* ZpktRetire_HH */
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -9725,16 +9725,16 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     #include <zlib/ZePlatform.hh>
     
-    #include <zlib/ZxdpRetire.hh>
+    #include <zlib/ZpktRetire.hh>
     
-    namespace Zxdp::Xdp {
+    namespace Zpkt::Xdp {
     
     KernelRetirement::~KernelRetirement() { ZmAssert_(!waiting()); }
     
     ZuUnion<int, ZeException> KernelRetirement::begin(Xsk &socket)
     {
       if (m_socket || !socket.bound())
-        return ZeEXCEPT(Error, "Zxdp",
+        return ZeEXCEPT(Error, "Zpkt",
           "kernel retirement requires a live bound socket and unused observer");
       // Same arena, no parallel payload allocation. The observer's small private
       // rings remain empty for its entire lifetime, even after a successful bind.
@@ -9742,7 +9742,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       if (prepared.is<ZeException>()) return ZuMv(prepared).p<ZeException>();
       if (m_probe.namespaceID() != socket.namespaceID()) {
         m_probe.close();
-        return ZeEXCEPT(Error, "Zxdp",
+        return ZeEXCEPT(Error, "Zpkt",
           "kernel retirement observer belongs to a different network namespace");
       }
       m_socket = &socket;
@@ -9754,7 +9754,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     ZuUnion<int, ZeException> KernelRetirement::retry()
     {
-      if (!m_socket) return ZeEXCEPT(Error, "Zxdp", "kernel retirement has not begun");
+      if (!m_socket) return ZeEXCEPT(Error, "Zpkt", "kernel retirement has not begun");
       if (done()) return int(Done);
       // Linux assigns pools under RTNL and refuses an occupied queue. Its deferred
       // pool release disables driver zero-copy before clearing that queue identity.
@@ -9778,7 +9778,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       m_ifindex = m_queue = 0;
     }
     
-    } // namespace Zxdp::Xdp
+    } // namespace Zpkt::Xdp
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -9787,11 +9787,11 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     // Private mask classifier and guarded interface attachment.
     
-    #ifndef ZxdpBPF_HH
-    #define ZxdpBPF_HH
+    #ifndef ZpktBPF_HH
+    #define ZpktBPF_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stdint.h>
@@ -9804,18 +9804,18 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     #include <zlib/ZePlatform.hh>
     
-    namespace Zxdp::Xdp {
+    namespace Zpkt::Xdp {
     
     struct Filter {
       uint32_t    address[4]{};
       uint32_t    mask[4]{};
       unsigned    family = 0; // zero selects all interface traffic
     };
-    using BPFCode = ZtArray<bpf_insn, ZtArrayHeapID<"Zxdp.BPF.Code">>;
-    ZxdpAPI ZuUnion<Filter, ZeException> parseFilter(ZuCSpan);
-    ZxdpAPI ZuUnion<BPFCode, ZeException> classifierCode(int xsk, const Filter &);
+    using BPFCode = ZtArray<bpf_insn, ZtArrayHeapID<"Zpkt.BPF.Code">>;
+    ZpktAPI ZuUnion<Filter, ZeException> parseFilter(ZuCSpan);
+    ZpktAPI ZuUnion<BPFCode, ZeException> classifierCode(int xsk, const Filter &);
     
-    class ZxdpAPI BPFProgram {
+    class ZpktAPI BPFProgram {
     public:
       BPFProgram() = default;
       ~BPFProgram();
@@ -9838,11 +9838,11 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       uint32_t    drvID = 0, skbID = 0, hwID = 0, progID = 0;
       bool occupied() const { return drvID || skbID || hwID || progID; }
     };
-    ZxdpAPI ZuUnion<LinkState, ZeException> queryLink(unsigned ifindex);
-    ZxdpAPI ZuUnion<void, ZeException> setXDP(
+    ZpktAPI ZuUnion<LinkState, ZeException> queryLink(unsigned ifindex);
+    ZpktAPI ZuUnion<void, ZeException> setXDP(
       unsigned ifindex, int fd, unsigned flags, int expected, bool *unsupported = nullptr);
     
-    class ZxdpAPI BPFAttach {
+    class ZpktAPI BPFAttach {
     public:
       BPFAttach() = default;
       ~BPFAttach();
@@ -9860,26 +9860,26 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       int        m_fd = -1;
     };
     
-    } // namespace Zxdp::Xdp
-    #endif /* ZxdpBPF_HH */
+    } // namespace Zpkt::Xdp
+    #endif /* ZpktBPF_HH */
     commit 3892a86fbfba3c2817ec1e371ff546c509455225
     Author: Huw Rogers <hrogers@kaldron.io>
     Date:   Tue Nov 17 00:10:19 2026 +0000
     
-        Refactor Zxdp backends around intrusive Zi buffer pools
+        Refactor Zpkt backends around intrusive Zi buffer pools
     
         - Rename Zi IOBufPlugin to IOBufPool and propagate the breaking pool API.
         - Select polymorphic backends with instance(Type::Xdp) and tagged parameters.
-        - Isolate AF_XDP implementation and concrete buffer pools inside Zxdp::Xdp.
-        - Propagate structured Ze exceptions through Zxdp and Zutcp fallible APIs.
+        - Isolate AF_XDP implementation and concrete buffer pools inside Zpkt::Xdp.
+        - Propagate structured Ze exceptions through Zpkt and Zutcp fallible APIs.
         - Align framework usage, include groups, ownership, tests, and documentation.
         - Specify structured error contracts and the permitted use of ZeString captures.
         - Validate with Clang debug builds, unit suites, native and kernel interop tests.
     
-    diff --git a/zxdp/src/ZxdpRing.hh b/zxdp/src/ZxdpRing.hh
+    diff --git a/zpkt/src/ZpktRing.hh b/zpkt/src/ZpktRing.hh
     index f246ae5c..1e2e16c2 100644
-    --- a/zxdp/src/ZxdpRing.hh
-    +++ b/zxdp/src/ZxdpRing.hh
+    --- a/zpkt/src/ZpktRing.hh
+    +++ b/zpkt/src/ZpktRing.hh
     @@ -20,12 +20,17 @@
      #include <linux/if_xdp.h>
     
@@ -9892,8 +9892,8 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     +
      #include <zlib/ZtcQueue.hh>
     
-    -namespace Zxdp {
-    +namespace Zxdp::Xdp {
+    -namespace Zpkt {
+    +namespace Zpkt::Xdp {
     +
     +using RingQueueType = Ztc::QueueType::T;
     
@@ -9922,15 +9922,15 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
      using FillRing = Ring<uint64_t, true>;
      using CompRing = Ring<uint64_t, false>;
     
-    -} // namespace Zxdp
-    +} // namespace Zxdp::Xdp
+    -} // namespace Zpkt
+    +} // namespace Zpkt::Xdp
     
-     #endif /* ZxdpRing_HH */
+     #endif /* ZpktRing_HH */
     ✓ • 0ms
 
 ## Activity
 
-    $ cat zxdp/src/ZxdpUMem.cc
+    $ cat zpkt/src/ZpktUMem.cc
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -9949,9 +9949,9 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     #include <zlib/ZePlatform.hh>
     
-    #include <zlib/ZxdpUMem.hh>
+    #include <zlib/ZpktUMem.hh>
     
-    namespace Zxdp::Xdp {
+    namespace Zpkt::Xdp {
     
     static unsigned power2(unsigned n)
     {
@@ -9970,7 +9970,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
       const Zi::IOBufPoolList &txPools, Zi::IOBufPool *rxPool, unsigned mtu)
     {
-      auto fail = [](const char *text) { return ZeEXCEPT(Error, "Zxdp", text); };
+      auto fail = [](const char *text) { return ZeEXCEPT(Error, "Zpkt", text); };
       // Linux copy-mode Rx adds NET_IP_ALIGN before the Ethernet header.
       enum { RxAlign = 2 };
       auto rx = dynamic_cast<BufPool *>(rxPool);
@@ -10023,7 +10023,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       auto mem = mmap(nullptr, layout.length, PROT_READ | PROT_WRITE,
         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
       if (mem == MAP_FAILED) {
-        return ZeEXCEPT(Error, "Zxdp", ([error = ZeLastError](auto &out) {
+        return ZeEXCEPT(Error, "Zpkt", ([error = ZeLastError](auto &out) {
           out << "AF_XDP arena mmap failed: " << error;
         }));
       }
@@ -10070,7 +10070,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     
     static ZeException socketFailed(const char *operation)
     {
-      return ZeEXCEPT(Error, "Zxdp", ([operation, error = ZeLastError](auto &out) {
+      return ZeEXCEPT(Error, "Zpkt", ([operation, error = ZeLastError](auto &out) {
         out << operation << ": " << error;
       }));
     }
@@ -10080,12 +10080,12 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     {
       size_t length;
       if (!R::mapLength(off, count, length))
-        return ZeEXCEPT(Error, "Zxdp", "invalid AF_XDP kernel ring offsets or mapping length");
+        return ZeEXCEPT(Error, "Zpkt", "invalid AF_XDP kernel ring offsets or mapping length");
       auto mem = mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, offset);
       if (mem == MAP_FAILED) return socketFailed("AF_XDP ring mmap");
       m_maps[i] = {mem, length};
       if (!ring.init(mem, length, off, count))
-        return ZeEXCEPT(Error, "Zxdp", "invalid AF_XDP mapped ring state");
+        return ZeEXCEPT(Error, "Zpkt", "invalid AF_XDP mapped ring state");
       return {};
     }
     
@@ -10107,7 +10107,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     {
       if (m_fd >= 0 || !arena || !rxCount || !txCount ||
           (rxCount & (rxCount - 1)) || (txCount & (txCount - 1)))
-        return ZeEXCEPT(Error, "Zxdp", "invalid or already open AF_XDP registration/binding");
+        return ZeEXCEPT(Error, "Zpkt", "invalid or already open AF_XDP registration/binding");
       m_fd = socket(AF_XDP, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
       if (m_fd < 0) return socketFailed("AF_XDP socket");
       m_arena = ZuMv(arena);
@@ -10122,7 +10122,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
         return fail("AF_XDP socket namespace query");
       if (namespaceLength != sizeof(m_namespace)) {
         close();
-        return ZeEXCEPT(Error, "Zxdp", "AF_XDP kernel lacks socket namespace identity");
+        return ZeEXCEPT(Error, "Zpkt", "AF_XDP kernel lacks socket namespace identity");
       }
       const auto &layout = m_arena->layout();
       xdp_umem_reg reg{};
@@ -10153,7 +10153,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
         return fail("AF_XDP ring offset query");
       if (length < sizeof(offsets)) {
         close();
-        return ZeEXCEPT(Error, "Zxdp", "AF_XDP kernel lacks required ring offset/flags ABI");
+        return ZeEXCEPT(Error, "Zpkt", "AF_XDP kernel lacks required ring offset/flags ABI");
       }
       auto mapped = map(0, m_fill, offsets.fr, rxCount, XDP_UMEM_PGOFF_FILL_RING);
       if (mapped.is<void>()) mapped = map(1, m_comp, offsets.cr, txCount,
@@ -10173,7 +10173,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     {
       m_retryBind = false;
       if (m_fd < 0 || m_bound || !ifindex || ifindex > INT_MAX)
-        return ZeEXCEPT(Error, "Zxdp", "invalid or already bound AF_XDP socket");
+        return ZeEXCEPT(Error, "Zpkt", "invalid or already bound AF_XDP socket");
       sockaddr_xdp address{};
       address.sxdp_family = AF_XDP;
       address.sxdp_ifindex = ifindex;
@@ -10201,7 +10201,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       }
       if (length < sizeof(options)) {
         close();
-        return ZeEXCEPT(Error, "Zxdp", "AF_XDP kernel lacks capability flags");
+        return ZeEXCEPT(Error, "Zpkt", "AF_XDP kernel lacks capability flags");
       }
       m_zeroCopy = options.flags & XDP_OPTIONS_ZEROCOPY;
       return {};
@@ -10228,30 +10228,30 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
       m_arena = nullptr;
     }
     
-    } // namespace Zxdp::Xdp
+    } // namespace Zpkt::Xdp
     ✓ • 0ms
 
 ## Activity
 
-    $ git show 3892a86f -- zxdp/src/ZxdpBPF.cc
+    $ git show 3892a86f -- zpkt/src/ZpktBPF.cc
     commit 3892a86fbfba3c2817ec1e371ff546c509455225
     Author: Huw Rogers <hrogers@kaldron.io>
     Date:   Tue Nov 17 00:10:19 2026 +0000
     
-        Refactor Zxdp backends around intrusive Zi buffer pools
+        Refactor Zpkt backends around intrusive Zi buffer pools
     
         - Rename Zi IOBufPlugin to IOBufPool and propagate the breaking pool API.
         - Select polymorphic backends with instance(Type::Xdp) and tagged parameters.
-        - Isolate AF_XDP implementation and concrete buffer pools inside Zxdp::Xdp.
-        - Propagate structured Ze exceptions through Zxdp and Zutcp fallible APIs.
+        - Isolate AF_XDP implementation and concrete buffer pools inside Zpkt::Xdp.
+        - Propagate structured Ze exceptions through Zpkt and Zutcp fallible APIs.
         - Align framework usage, include groups, ownership, tests, and documentation.
         - Specify structured error contracts and the permitted use of ZeString captures.
         - Validate with Clang debug builds, unit suites, native and kernel interop tests.
     
-    diff --git a/zxdp/src/ZxdpBPF.cc b/zxdp/src/ZxdpBPF.cc
+    diff --git a/zpkt/src/ZpktBPF.cc b/zpkt/src/ZpktBPF.cc
     index 6300360f..d6d05722 100644
-    --- a/zxdp/src/ZxdpBPF.cc
-    +++ b/zxdp/src/ZxdpBPF.cc
+    --- a/zpkt/src/ZpktBPF.cc
+    +++ b/zpkt/src/ZpktBPF.cc
     @@ -16,11 +16,17 @@
      #include <linux/if_link.h>
      #include <linux/if_arp.h>
@@ -10264,10 +10264,10 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     +
     +#include <zlib/ZePlatform.hh>
     +
-     #include <zlib/ZxdpBPF.hh>
+     #include <zlib/ZpktBPF.hh>
     
-    -namespace Zxdp {
-    +namespace Zxdp::Xdp {
+    -namespace Zpkt {
+    +namespace Zpkt::Xdp {
     
      static int bpfCall(unsigned command, bpf_attr &attr)
      {
@@ -10283,7 +10283,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     -  error = operation;
     -  error << ": " << strerror(errorNo);
     -  return false;
-    +  return ZeEXCEPT(Error, "Zxdp", ([error](auto &out) {
+    +  return ZeEXCEPT(Error, "Zpkt", ([error](auto &out) {
     +    out << Operation << ": " << error;
     +  }));
      }
@@ -10300,14 +10300,14 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
        char address[INET6_ADDRSTRLEN];
     -  if (!n || n >= sizeof(address)) { error = "invalid network mask address"; return false; }
     +  if (!n || n >= sizeof(address))
-    +    return ZeEXCEPT(Error, "Zxdp", "invalid network mask address");
+    +    return ZeEXCEPT(Error, "Zpkt", "invalid network mask address");
        memcpy(address, text.data(), n);
        address[n] = 0;
        Filter result;
        if (inet_pton(AF_INET, address, result.address) == 1) result.family = 4;
        else if (inet_pton(AF_INET6, address, result.address) == 1) result.family = 6;
     -  else { error = "invalid network mask address"; return false; }
-    +  else return ZeEXCEPT(Error, "Zxdp", "invalid network mask address");
+    +  else return ZeEXCEPT(Error, "Zpkt", "invalid network mask address");
        unsigned bits = result.family == 4 ? 32 : 128;
        if (slash) {
          auto length = unsigned(text.length()) - n - 1;
@@ -10317,7 +10317,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     -      error = "invalid network mask prefix"; return false;
     -    }
     +    Zu_nscan<ZuFmt::Default>::atou(prefix, slash + 1, length) != length || prefix > bits)
-    +      return ZeEXCEPT(Error, "Zxdp", "invalid network mask prefix");
+    +      return ZeEXCEPT(Error, "Zpkt", "invalid network mask prefix");
          bits = prefix;
        }
        auto words = result.family == 4 ? 1U : 4U;
@@ -10342,7 +10342,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     -    out = ZuMv(m_code);
     -    return true;
     +    if (!m_valid)
-    +      return ZeEXCEPT(Error, "Zxdp", "invalid or overflowing XDP instruction program");
+    +      return ZeEXCEPT(Error, "Zpkt", "invalid or overflowing XDP instruction program");
     +    return ZuMv(m_code);
        }
     
@@ -10356,7 +10356,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
      {
     -  error = {};
     -  if (xsk < 0) { error = "invalid XSK map descriptor"; return false; }
-    +  if (xsk < 0) return ZeEXCEPT(Error, "Zxdp", "invalid XSK map descriptor");
+    +  if (xsk < 0) return ZeEXCEPT(Error, "Zpkt", "invalid XSK map descriptor");
        Builder b;
        auto pass = b.label();
        b.mov(9, 1);
@@ -10384,7 +10384,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     -    return false;
     -  };
     +  if (m_fd >= 0 || !queues)
-    +    return ZeEXCEPT(Error, "Zxdp", "invalid XDP program configuration");
+    +    return ZeEXCEPT(Error, "Zpkt", "invalid XDP program configuration");
     +  auto fail = [this](ZeException error) { reset(); return error; };
        bpf_attr attr{};
        attr.map_type = BPF_MAP_TYPE_XSKMAP;
@@ -10400,9 +10400,9 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     +  const auto &code = built.p<BPFCode>();
        // Bounded cold-load diagnostics, independent of packet service storage.
        enum { VerifierLogSize = 128<<10 };
-       ZtArray<char, ZtArrayHeapID<"Zxdp.Verifier">> log;
+       ZtArray<char, ZtArrayHeapID<"Zpkt.Verifier">> log;
     @@ -243,42 +243,44 @@ bool BPFProgram::load(unsigned queues, const Filter &filter, ZtString<> &error)
-       memcpy(attr.prog_name, "zxdp_mask", sizeof("zxdp_mask"));
+       memcpy(attr.prog_name, "zpkt_mask", sizeof("zpkt_mask"));
        m_fd = bpfCall(BPF_PROG_LOAD, attr);
        if (m_fd < 0) {
     -    failed(error, "XDP program load");
@@ -10411,7 +10411,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     +    ZeString verifier{ZuCSpan{log.data(), strnlen(log.data(), log.length())}};
          reset();
     -    return false;
-    +    return ZeEXCEPT(Error, "Zxdp", ([error, verifier = ZuMv(verifier)](auto &out) {
+    +    return ZeEXCEPT(Error, "Zpkt", ([error, verifier = ZuMv(verifier)](auto &out) {
     +      out << "XDP program load: " << error << '\n' << verifier;
     +    }));
        }
@@ -10567,7 +10567,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     +    auto error = ZeLastError;
     +    return fail(failed<"rtnetlink request">(error), error);
     +  }
-       ZtArray<uint8_t, ZtArrayHeapID<"Zxdp.Netlink">> buffer;
+       ZtArray<uint8_t, ZtArrayHeapID<"Zpkt.Netlink">> buffer;
        for (;;) {
          // Query the next datagram's exact extent. Link attributes have no fixed
     @@ -393,9 +401,10 @@ static bool transact(
@@ -10677,7 +10677,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     -    return false;
     -  }
     +      (expected < 0 ? (!initial || replace || fd < 0) : (!replace || initial)))
-    +    return ZeEXCEPT(Error, "Zxdp",
+    +    return ZeEXCEPT(Error, "Zpkt",
     +      "XDP attachment requires no-replace or expected program ownership");
        LinkRequest request;
        request.header.nlmsg_len = NLMSG_LENGTH(sizeof(ifinfomsg));
@@ -10713,12 +10713,12 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     -    return false;
     -  }
     +  if (m_ifindex || program.fd() < 0 || !program.id())
-    +    return ZeEXCEPT(Error, "Zxdp", "invalid or already active XDP attachment");
+    +    return ZeEXCEPT(Error, "Zpkt", "invalid or already active XDP attachment");
     +  auto queried = queryLink(ifindex);
     +  if (queried.is<ZeException>()) return ZuMv(queried).p<ZeException>();
     +  auto state = queried.p<LinkState>();
     +  if (state.occupied())
-    +    return ZeEXCEPT(Error, "Zxdp", "packet interface already has an unrelated XDP program");
+    +    return ZeEXCEPT(Error, "Zpkt", "packet interface already has an unrelated XDP program");
        m_fd = fcntl(program.fd(), F_DUPFD_CLOEXEC, 0);
     -  if (m_fd < 0) return failed(error, "retain XDP program FD");
     +  if (m_fd < 0) return failed<"retain XDP program FD">(ZeLastError);
@@ -10737,7 +10737,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     +  auto rollback = [this](ZeException cause) -> ZuUnion<void, ZeException> {
     +    auto cleanup = detach();
     +    if (cleanup.is<ZeException>() && m_ifindex)
-    +      return ZeEXCEPT(Error, "Zxdp", ([cause = ZuMv(cause),
+    +      return ZeEXCEPT(Error, "Zpkt", ([cause = ZuMv(cause),
     +    cleanup = ZuMv(cleanup).p<ZeException>()](auto &out) {
     +    out << cause << "; XDP rollback pending: " << cleanup;
     +      }));
@@ -10764,7 +10764,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     -    error = "XDP attachment identity changed during setup";
          reset();
     -    return false;
-    +    return ZeEXCEPT(Error, "Zxdp", "XDP attachment identity changed during setup");
+    +    return ZeEXCEPT(Error, "Zpkt", "XDP attachment identity changed during setup");
        }
     -  return true;
     +  return {};
@@ -10791,7 +10791,7 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     -    error = "XDP attachment ownership lost; foreign program preserved";
          reset();
     -    return false;
-    +    return ZeEXCEPT(Error, "Zxdp", "XDP attachment ownership lost; foreign program preserved");
+    +    return ZeEXCEPT(Error, "Zpkt", "XDP attachment ownership lost; foreign program preserved");
        }
     -  if (!setXDP(m_ifindex, -1, m_mode | XDP_FLAGS_REPLACE, m_fd, error)) {
     -    auto saved = ZuMv(error);
@@ -10814,19 +10814,19 @@ I’ll read the updated public API and changed files in `zxdp/src`, then revise 
     +  return {};
      }
     
-    -} // namespace Zxdp
-    +} // namespace Zxdp::Xdp
+    -} // namespace Zpkt
+    +} // namespace Zpkt::Xdp
     ✓ • 0ms
 
 ## Assistant
 
 The refactor already provides the virtual interface and pool boundary. Creation now selects a cold backend with `instance(Type::Xdp)`, followed by `init()` with tagged backend parameters; `close()` explicitly distinguishes completion, pending retirement and failure.
 
-I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL configuration separate under `Zxdp::Dpdk`.
+I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL configuration separate under `Zpkt::Dpdk`.
 
 ## Activity
 
-    $ sed -n '1,115p' docs/GUIDELINES.md; rg -n 'ZeException|ZeEXCEPT|ZeString|error' docs/FRAMEWORK.md | head -20; sed -n '170,310p' concepts_brief.md; sed -n '1030,1085p' zutcp/src/ZutcpMx.cc; sed -n '1,105p' zxdp/test/ZxdpInstanceTest.cc
+    $ sed -n '1,115p' docs/GUIDELINES.md; rg -n 'ZeException|ZeEXCEPT|ZeString|error' docs/FRAMEWORK.md | head -20; sed -n '170,310p' concepts_brief.md; sed -n '1030,1085p' zutcp/src/ZutcpMx.cc; sed -n '1,105p' zpkt/test/ZpktInstanceTest.cc
     # Z framework engineering principles
     
     Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
@@ -10914,7 +10914,7 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
          or release the core. Use it only within a bounded short-idle phase.
        * On extended idle, park in the kernel on the internal wake eventfd with a
          bounded timeout where no packet-arrival FD/interrupt exists. Add
-         `unsigned rxInterval = 50;` to `Zxdp::Params`, expressed in microseconds.
+         `unsigned rxInterval = 50;` to `Zpkt::Params`, expressed in microseconds.
          It is the configured maximum interval between idle receive probes; back off
          from a short initial wait to that interval. A value of zero disables timed
          parking and keeps polling. Treat timeout values as requested durations, not
@@ -10982,14 +10982,14 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
     
     ### Adopted explicit EAL parameters
     
-    Use an aggregate `Zxdp::DPDKParams`, following nearby `Zxdp::Params` and
+    Use an aggregate `Zpkt::DPDKParams`, following nearby `Zpkt::Params` and
     `Zutcp::StackParams`: public named members with defaults and designated
     initializers. This follows the current struct style rule; the fluent alternative
     is exemplified by `ZiMxParams`. Own strings and lists so the application can build
     configuration from files or generated values without borrowed-storage hazards.
     
     ```cpp
-    namespace Zxdp {
+    namespace Zpkt {
     
     ZtEnumNS(int8_t, DPDKProc, Default, Primary, Secondary, Auto);
     ZtEnumNS(int8_t, DPDKIOVA, Default, PA, VA);
@@ -10998,7 +10998,7 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
     ZtEnumNS(int8_t, DPDKTraceMode, Default, Overwrite, Discard);
     
     struct DPDKParams {
-      using Strings = ZtArray<ZtString<>, ZtArrayHeapID<"Zxdp.DPDKParams">>;
+      using Strings = ZtArray<ZtString<>, ZtArrayHeapID<"Zpkt.DPDKParams">>;
       using UInt = ZuUnion<void, unsigned>;
       using Address = ZuUnion<void, uintptr_t>;
     
@@ -11063,11 +11063,11 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
         return;
       }
       // A backend initializes once. Retain closed telemetry until this next start.
-      if (m_backendInit) m_backend = Zxdp::instance(Zxdp::Type::Xdp);
+      if (m_backendInit) m_backend = Zpkt::instance(Zpkt::Type::Xdp);
       m_backendInit = true;
-      Zxdp::Params config(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-      auto &params = config.p<Zxdp::Xdp::Params>();
+      Zpkt::Params config(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+      auto &params = config.p<Zpkt::Xdp::Params>();
       params.ifindex = m_interface;
       params.netmask = m_netmask;
       params.rxPool = m_ingress->pool;
@@ -11114,17 +11114,17 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
     
     #include <zlib/ZiIOBuf.hh>
     
-    #include <zlib/Zxdp.hh>
+    #include <zlib/Zpkt.hh>
     
     using namespace ZuTestUtil;
     
     static void testCreation()
     {
       ZuTestScope(testCreation);
-      auto instance = Zxdp::instance(Zxdp::Type::Xdp);
+      auto instance = Zpkt::instance(Zpkt::Type::Xdp);
       ZuCHECK(instance && !instance->ready(), "selected backend starts cold");
-      Zxdp::Params missing(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
+      Zpkt::Params missing(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
       auto result = instance->init(missing);
       ZuCHECK(result.is<ZeException>() && !!result.p<ZeException>(),
         "missing initialization parameters fail without kernel resources");
@@ -11139,7 +11139,7 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
     static void testPoolFactory()
     {
       ZuTestScope(testPoolFactory);
-      auto factory = Zxdp::instance(Zxdp::Type::Xdp);
+      auto factory = Zpkt::instance(Zpkt::Type::Xdp);
       auto rx = factory->bufPool(2, 1514);
       auto tx = factory->bufPool(1, 128);
       auto control = factory->bufPool(1, 64);
@@ -11147,24 +11147,24 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
       ZuCHECK(closed.is<bool>() && closed.p<bool>(), "cold instance closes without initialization");
       closed = factory->close();
       ZuCHECK(closed.is<bool>() && closed.p<bool>(), "cold close is idempotent");
-      Zxdp::Params empty(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
+      Zpkt::Params empty(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
       ZuCHECK(factory->init(empty).is<ZeException>(), "cold close prevents later initialization");
       factory = nullptr;
       ZuCHECK(rx && tx && control && rx->count == 2 && tx->size == 128 &&
           !rx->ready() && !tx->ready() && !control->ready(),
         "unbound pools survive their factory instance independently");
     
-      auto instance = Zxdp::instance(Zxdp::Type::Xdp);
-      Zxdp::Params config(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-      auto &params = config.p<Zxdp::Xdp::Params>();
+      auto instance = Zpkt::instance(Zpkt::Type::Xdp);
+      Zpkt::Params config(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+      auto &params = config.p<Zpkt::Xdp::Params>();
       params.rxPool = rx;
       params.txPools.pushNode(tx.ptr());
       params.txPools.pushNode(control.ptr());
       params.rx = [](uint8_t *, unsigned) { };
       auto unbound = instance->init(config); // zero interface fails without privileges
-      const auto &configured = config.p<Zxdp::Xdp::Params>();
+      const auto &configured = config.p<Zpkt::Xdp::Params>();
       ZuCHECK(unbound.is<ZeException>() && !instance->ready() && !rx->ready(),
         "a different backend accepts factory pools but rejects incomplete configuration");
       auto pools = configured.txPools.citer();
@@ -11191,40 +11191,40 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
 
 ## Activity
 
-    $ cat > /tmp/update_zxdp_brief.py <<'PY'
+    $ cat > /tmp/update_zpkt_brief.py <<'PY'
         from pathlib import Path
         p = Path('concepts_brief.md')
         old = p.read_text()
         a = old.index('### Adopted explicit EAL parameters')
         b = old.index('## Goals vs. Non-Goals', a)
         eal = old[a:b]
-        eal = eal.replace('`Zxdp::DPDKParams`', '`Zxdp::Dpdk::EALParams`')
-        eal = eal.replace('`Zxdp::Params` and', '`Zxdp::Params_` and')
-        eal = eal.replace('namespace Zxdp {', 'namespace Zxdp::Dpdk {')
-        eal = eal.replace('} // namespace Zxdp', '} // namespace Zxdp::Dpdk')
+        eal = eal.replace('`Zpkt::DPDKParams`', '`Zpkt::Dpdk::EALParams`')
+        eal = eal.replace('`Zpkt::Params` and', '`Zpkt::Params_` and')
+        eal = eal.replace('namespace Zpkt {', 'namespace Zpkt::Dpdk {')
+        eal = eal.replace('} // namespace Zpkt', '} // namespace Zpkt::Dpdk')
         for oldname, newname in [('DPDKProc','Proc'),('DPDKIOVA','IOVA'),('DPDKHugeUnlink','HugeUnlink'),('DPDKVFIOIntr','VFIOIntr'),('DPDKTraceMode','TraceMode')]:
             eal = eal.replace(oldname,newname)
         for name, values in [('Proc','Default, Primary, Secondary, Auto'),('IOVA','Default, PA, VA'),('HugeUnlink','Default, Existing, Always, Never'),('VFIOIntr','Default, Legacy, MSI, MSIX'),('TraceMode','Default, Overwrite, Discard')]:
-            eal = eal.replace(f'ZtEnumNS(int8_t, {name}, {values});', f'ZtEnumNS(ZxdpAPI, {name}, int8_t, {values});')
+            eal = eal.replace(f'ZtEnumNS(int8_t, {name}, {values});', f'ZtEnumNS(ZpktAPI, {name}, int8_t, {values});')
         eal = eal.replace('struct DPDKParams', 'struct EALParams')
-        eal = eal.replace('auto dpdk = ZmSingleton<Zxdp::DPDK,', 'auto eal = ZmSingleton<Zxdp::Dpdk::EAL,')
-        eal = eal.replace('auto result = dpdk->init(Zxdp::DPDKParams{', 'auto result = eal->init(Zxdp::Dpdk::EALParams{')
+        eal = eal.replace('auto dpdk = ZmSingleton<Zpkt::DPDK,', 'auto eal = ZmSingleton<Zpkt::Dpdk::EAL,')
+        eal = eal.replace('auto result = dpdk->init(Zpkt::DPDKParams{', 'auto result = eal->init(Zpkt::Dpdk::EALParams{')
         eal = eal.replace('`DPDK::init(const DPDKParams &)`', '`Dpdk::EAL::init(const Dpdk::EALParams &)`')
         eal = eal.replace('Adopted initialization call (use the established fatal-log or `ZeException`\nresult convention as appropriate):', 'Initialization returns `ZuUnion<void, ZeException>`, following the current\nstructured error convention. The application checks success before backend\nselection and pool creation:')
-        header = '''# Zxdp AF_XDP and DPDK backends
+        header = '''# Zpkt AF_XDP and DPDK backends
         
         * **Author:** Huw Rogers
         * **Date:** 2026-11-16
         * **Updated:** 2026-11-17
-        * **Status:** Decisions reconciled with the current `zxdp/src` refactor. Seven
+        * **Status:** Decisions reconciled with the current `zpkt/src` refactor. Seven
           historical brainstorming reviews completed; this update is source reconciliation,
           not another review or an implementation/test run.
         
         ## Overview
         
         Add DPDK alongside the existing AF_XDP backend using the current polymorphic
-        `Zxdp::Instance`. AF_XDP implementation types live in `Zxdp::Xdp`; DPDK types
-        will live in `Zxdp::Dpdk`. Extend the existing `Type` selector and tagged
+        `Zpkt::Instance`. AF_XDP implementation types live in `Zpkt::Xdp`; DPDK types
+        will live in `Zpkt::Dpdk`. Extend the existing `Type` selector and tagged
         `Params` union rather than recreating the earlier Backend/If design.
         
         The direct DPDK path is `Zutcp Tx owner → rte_eth_tx_burst() → DPDK/NIC`.
@@ -11234,17 +11234,17 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
         
         ## Current source baseline
         
-        Read `Zxdp.hh`, `Zxdp.cc`, `ZxdpPool.hh/.cc`, `ZxdpUMem.hh/.cc`,
-        `ZxdpRetire.hh/.cc`, `ZxdpBPF.hh` and the BPF implementation changes,
-        `ZxdpRing.hh` changes, `Makefile.am` and `src/EGM.md`. Also read the updated
-        `zxdp/GUIDELINES.md` and `zxdp/INTERFACE.md`. The baseline includes commit
+        Read `Zpkt.hh`, `Zpkt.cc`, `ZpktPool.hh/.cc`, `ZpktUMem.hh/.cc`,
+        `ZpktRetire.hh/.cc`, `ZpktBPF.hh` and the BPF implementation changes,
+        `ZpktRing.hh` changes, `Makefile.am` and `src/EGM.md`. Also read the updated
+        `zpkt/GUIDELINES.md` and `zpkt/INTERFACE.md`. The baseline includes commit
         `3892a86f` and the current uncommitted API edits; preserve those edits.
         
         The refactor already supplies:
         
         * Cold `instance(Type::Xdp)` selection and a pure virtual base, without `m_data`.
         * `Params_` for common settings, `Xdp::Params` for AF_XDP settings, and a tagged
-          `Zxdp::Params` union populated in place.
+          `Zpkt::Params` union populated in place.
         * Virtual `bufPool(count, size, headRoom, tailRoom, align)` returning
           `ZmRef<Zi::IOBufPool>`. Cold factory instances and pool nodes have independent
           lifetimes; pools can precede instance initialization.
@@ -11258,8 +11258,8 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
           retirement pending, and the exception branch is an error. An error never
           authorizes freeing backing that remains in use.
         * Internal `Xdp::Instance`, `Xdp::BufPool`, `Xdp::UMem`, `Xdp::Xsk`, ring, BPF
-          and retirement types. `ZxdpPool.hh` replaces the old `ZxdpAlloc.hh`.
-        * A Zi dependency in `src/Makefile.am`; only `Zxdp.hh` and `ZxdpLib.hh` are
+          and retirement types. `ZpktPool.hh` replaces the old `ZpktAlloc.hh`.
+        * A Zi dependency in `src/Makefile.am`; only `Zpkt.hh` and `ZpktLib.hh` are
           currently installed, while pool/UMEM/ring/BPF/retirement headers are private.
         
         The send/ACK simplification from `zutcp_fix.md` is present in the baseline;
@@ -11271,12 +11271,12 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
         
         ### Backend selection and instance parameters
         
-        Extend the existing declarations in `Zxdp.hh` using its current enum macro form:
+        Extend the existing declarations in `Zpkt.hh` using its current enum macro form:
         
         ```cpp
-        namespace Zxdp {
+        namespace Zpkt {
         
-        ZtEnumNS(ZxdpAPI, Type, uint8_t, Xdp, Dpdk);
+        ZtEnumNS(ZpktAPI, Type, uint8_t, Xdp, Dpdk);
         
         // Existing Params_ retains its owning Tx list, Rx reference, callback,
         // spin, scheduler and txStopped fields.
@@ -11288,19 +11288,19 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
         }
         ZuDerive(Params, (ZuUnion<Xdp::Params, Dpdk::Params>));
         
-        } // namespace Zxdp
+        } // namespace Zpkt
         ```
         
         Use `instance(Type::Dpdk)` to obtain `Dpdk::Instance`, then allocate pools,
         populate backend parameters in place, and call `init(config)`. For example:
         
         ```cpp
-        auto backend = Zxdp::instance(Zxdp::Type::Dpdk);
+        auto backend = Zpkt::instance(Zpkt::Type::Dpdk);
         auto tx = backend->bufPool(txCount, packetSize);
         auto rx = backend->bufPool(rxCount, packetSize);
-        Zxdp::Params config(
-          Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Dpdk::Params>{}>{});
-        auto &params = config.p<Zxdp::Dpdk::Params>();
+        Zpkt::Params config(
+          Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Dpdk::Params>{}>{});
+        auto &params = config.p<Zpkt::Dpdk::Params>();
         params.name = "net_ring0";
         params.txPools.pushNode(tx.ptr());
         params.rxPool = rx;
@@ -11325,9 +11325,9 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
         ### Explicit EAL ownership
         
         Move the previously adopted DPDK-only configuration and lifecycle under
-        `Zxdp::Dpdk`: call the process-wide wrapper `Dpdk::EAL` and its configuration
+        `Zpkt::Dpdk`: call the process-wide wrapper `Dpdk::EAL` and its configuration
         `Dpdk::EALParams`. This avoids colliding with per-instance `Dpdk::Params`.
-        These names replace the earlier `Zxdp::DPDK` and `Zxdp::DPDKParams` spellings;
+        These names replace the earlier `Zpkt::DPDK` and `Zpkt::DPDKParams` spellings;
         the adopted fields and explicit initialization policy are unchanged.
         
         Use `ZmSingleton<Dpdk::EAL, ZmSingletonCleanup<ZmCleanup::Platform>>`.
@@ -11410,7 +11410,7 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
         ### Filtering boundary
         
         The current refactor places `netmask` solely in `Xdp::Params`, with its parser
-        and BPF classifier in `Zxdp::Xdp`. Preserve that separation; do not automatically
+        and BPF classifier in `Zpkt::Xdp`. Preserve that separation; do not automatically
         move filtering into `Params_` or depend on Xdp helpers from Dpdk. The earlier
         open filtering question is now narrower: whether DPDK should expose a separate
         selection facility at all. No DPDK mask setting has been adopted, so the proposed
@@ -11447,10 +11447,10 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
            and internals in their existing namespace. Add the adopted status operation.
         2. Add the public Dpdk EAL configuration/wrapper and private backend/pool
            implementations, with repository-prefixed source/header names (for example
-           `ZxdpDpdk.hh/.cc` and `ZxdpDpdkPool.hh/.cc`). Export only caller-required
+           `ZpktDpdk.hh/.cc` and `ZpktDpdkPool.hh/.cc`). Export only caller-required
            EAL configuration/API declarations; keep concrete mbuf internals private.
         3. Add the DPDK dependency through configure/pkg-config conventions and extend
-           `zxdp/src/Makefile.am`, preserving its existing Zi dependency and installed
+           `zpkt/src/Makefile.am`, preserving its existing Zi dependency and installed
            versus private header boundary. Do not repeat the completed Zi pool migration.
         4. Implement pool-derived queue setup, direct Tx, native reclamation, receive,
            counted wakes, stopTx and structured retryable close. Update affected callers
@@ -11466,12 +11466,12 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
         clarifications and source refactor: design, codebase-details, zoom-out,
         comprehension, implementation-readiness, structural and inventive-catalyst.
         No reviewer failures or retries occurred. Raw reports are under
-        `/tmp/zxdp-brainstorm-review/`; findings about the obsolete factory, commit hook,
+        `/tmp/zpkt-brainstorm-review/`; findings about the obsolete factory, commit hook,
         external buffers, shared arenas and EAL ownership are historical and superseded.
         This reconciled brief is authoritative for the current plan. No new review,
         build or test run was performed for this documentation update.
         
-        References: `zxdp/INTERFACE.md`, `zxdp/GUIDELINES.md`, `zxdp/src/EGM.md`,
+        References: `zpkt/INTERFACE.md`, `zpkt/GUIDELINES.md`, `zpkt/src/EGM.md`,
         `dpdk_loopback.md`, and the current source files listed in the baseline section.
         Official DPDK references used during brainstorming:
         [ethdev](https://doc.dpdk.org/api-25.11/rte__ethdev_8h.html),
@@ -11482,29 +11482,29 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
         '''
         p.write_text(header + eal + footer)
         PY
-        python /tmp/update_zxdp_brief.py
+        python /tmp/update_zpkt_brief.py
     ✓ • 0ms
 
 ## Activity
 
-    $ rg -n 'DPDKParams|Zxdp::DPDK|InstanceMgr|If_DPDK|stopSender|instance\(const|m_data|EALParams|ZmSingleton|netmask|status\(' concepts_brief.md; sed -n '240,365p' concepts_brief.md; git status --short
+    $ rg -n 'DPDKParams|Zpkt::DPDK|InstanceMgr|If_DPDK|stopSender|instance\(const|m_data|EALParams|ZmSingleton|netmask|status\(' concepts_brief.md; sed -n '240,365p' concepts_brief.md; git status --short
     32:* Cold `instance(Type::Xdp)` selection and a pure virtual base, without `m_data`.
     55:the adopted `status()` operation still needs adding.
     106:`Xdp::Params` keeps `ifindex`, `netmask`, `txSid` and `txThread`.
     109:privately. Do not add the obsolete `Backend`, `If_AF_XDP`, `If_DPDK`, `If`,
     110:`Params::backend`, `Params::interface`, or `instance(const Params &)` APIs.
     116:`Dpdk::EALParams`. This avoids colliding with per-instance `Dpdk::Params`.
-    117:These names replace the earlier `Zxdp::DPDK` and `Zxdp::DPDKParams` spellings;
+    117:These names replace the earlier `Zpkt::DPDK` and `Zpkt::DPDKParams` spellings;
     120:Use `ZmSingleton<Dpdk::EAL, ZmSingletonCleanup<ZmCleanup::Platform>>`.
     121:The application explicitly calls `init(const EALParams &)` and checks its
     166:* Add the previously adopted pure virtual `void status()` and implement it in
     199:The current refactor places `netmask` solely in `Xdp::Params`, with its parser
-    208:Use an aggregate `Zxdp::Dpdk::EALParams`, following nearby `Zxdp::Params_` and
+    208:Use an aggregate `Zpkt::Dpdk::EALParams`, following nearby `Zpkt::Params_` and
     223:struct EALParams {
-    224:  using Strings = ZtArray<ZtString<>, ZtArrayHeapID<"Zxdp.DPDKParams">>;
-    303:auto eal = ZmSingleton<Zxdp::Dpdk::EAL,
+    224:  using Strings = ZtArray<ZtString<>, ZtArrayHeapID<"Zpkt.DPDKParams">>;
+    303:auto eal = ZmSingleton<Zpkt::Dpdk::EAL,
     304:  ZmSingletonCleanup<ZmCleanup::Platform>>::instance();
-    305:auto result = eal->init(Zxdp::Dpdk::EALParams{
+    305:auto result = eal->init(Zpkt::Dpdk::EALParams{
     314:`Dpdk::EAL::init(const Dpdk::EALParams &)` constructs private writable argv storage,
     337:* Implicit EAL initialization in an InstanceMgr was rejected in favor of explicit
       bool noHuge = false;
@@ -11543,7 +11543,7 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
       Strings args;
     };
     
-    } // namespace Zxdp::Dpdk
+    } // namespace Zpkt::Dpdk
     ```
     
     The named members cover ordinary runtime, device, memory and diagnostic choices.
@@ -11557,7 +11557,7 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
     option: reject duplicate/conflicting sources during cold initialization rather
     than silently overriding either. Retain DPDK's own validation of native options.
     
-    Defaults preserve EAL defaults except for the agreed Zxdp execution policy:
+    Defaults preserve EAL defaults except for the agreed Zpkt execution policy:
     no extra EAL packet workers by default. Empty `lcores` selects a suitable single
     main lcore from the initializing thread's allowed CPUs; explicit mappings let
     applications control placement. The implementation must preserve the caller's
@@ -11570,15 +11570,15 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
     selection and pool creation:
     
     ```cpp
-    auto eal = ZmSingleton<Zxdp::Dpdk::EAL,
+    auto eal = ZmSingleton<Zpkt::Dpdk::EAL,
       ZmSingletonCleanup<ZmCleanup::Platform>>::instance();
-    auto result = eal->init(Zxdp::Dpdk::EALParams{
+    auto result = eal->init(Zpkt::Dpdk::EALParams{
       .noPCI = true,
       .vdev = {"net_ring0"},
       .noHuge = true,
       .noShconf = true
     });
-    // Check result before constructing a DPDK-backed Zxdp::Instance.
+    // Check result before constructing a DPDK-backed Zpkt::Instance.
     ```
     
     `Dpdk::EAL::init(const Dpdk::EALParams &)` constructs private writable argv storage,
@@ -11620,10 +11620,10 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
        and internals in their existing namespace. Add the adopted status operation.
     2. Add the public Dpdk EAL configuration/wrapper and private backend/pool
        implementations, with repository-prefixed source/header names (for example
-       `ZxdpDpdk.hh/.cc` and `ZxdpDpdkPool.hh/.cc`). Export only caller-required
+       `ZpktDpdk.hh/.cc` and `ZpktDpdkPool.hh/.cc`). Export only caller-required
        EAL configuration/API declarations; keep concrete mbuf internals private.
     3. Add the DPDK dependency through configure/pkg-config conventions and extend
-       `zxdp/src/Makefile.am`, preserving its existing Zi dependency and installed
+       `zpkt/src/Makefile.am`, preserving its existing Zi dependency and installed
        versus private header boundary. Do not repeat the completed Zi pool migration.
     4. Implement pool-derived queue setup, direct Tx, native reclamation, receive,
        counted wakes, stopTx and structured retryable close. Update affected callers
@@ -11635,11 +11635,11 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
     
      M gtags.conf
      M zutcp/src/ZutcpMx.cc
-     M zxdp/INTERFACE.md
-     M zxdp/itest/zxdppackettest.cc
-     M zxdp/src/EGM.md
-     M zxdp/src/Zxdp.cc
-     M zxdp/src/Zxdp.hh
+     M zpkt/INTERFACE.md
+     M zpkt/itest/zpktpackettest.cc
+     M zpkt/src/EGM.md
+     M zpkt/src/Zpkt.cc
+     M zpkt/src/Zpkt.hh
     ?? cscope.out
     ✓ • 0ms
 
@@ -11648,11 +11648,11 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
     $ python - <<'PY'
         from pathlib import Path
         p=Path('concepts_brief.md')
-        s=p.read_text().replace('ZtArrayHeapID<"Zxdp.DPDKParams">', 'ZtArrayHeapID<"Zxdp.Dpdk.EALParams">')
+        s=p.read_text().replace('ZtArrayHeapID<"Zpkt.DPDKParams">', 'ZtArrayHeapID<"Zpkt.Dpdk.EALParams">')
         assert 'ZuUnion<Xdp::Params, Dpdk::Params>' in s
         assert 'ZuUnion<bool, ZeException>' in s
         assert 'stopSender()' not in s
-        assert 'namespace Zxdp::Dpdk::Dpdk' not in s
+        assert 'namespace Zpkt::Dpdk::Dpdk' not in s
         assert s.count('```') % 2 == 0
         p.write_text(s)
         print('Brief checked: namespace/type names, lifecycle signatures and code fences.')
@@ -11665,7 +11665,7 @@ I’ll extend that shape with `Type::Dpdk` and `Dpdk::Params`, and keep EAL conf
 Read the updated API and changed backend files, then reconciled the [plan](/home/count0/src/z/concepts_brief.md):
 
 - Add `Type::Dpdk` and `Dpdk::Params` to the existing cold factory/tagged-init API.
-- Place DPDK implementation and EAL configuration under `Zxdp::Dpdk`.
+- Place DPDK implementation and EAL configuration under `Zpkt::Dpdk`.
 - Follow the owning pool-list, structured init/close results and `stopTx()` contracts.
 - Treat the virtual interface, pool separation and send/ACK changes as completed.
 - Preserve the adopted direct Tx and configurable idle-wait policies.
@@ -11678,7 +11678,7 @@ $egm:egm-review
 
 ## Assistant
 
-I’m using the EGM review skill on `concepts_brief.md`, with the updated zxdp files as the baseline.
+I’m using the EGM review skill on `concepts_brief.md`, with the updated zpkt files as the baseline.
 
 ## Assistant
 
@@ -11929,7 +11929,7 @@ I’ll run the implementation-readiness review. I’ll first check the plan’s 
 
 Proposed review configuration:
 
-- **Target:** [implementation staging, lines 347–365](/home/count0/src/z/concepts_brief.md:347), with the preceding design and current zxdp files as context.
+- **Target:** [implementation staging, lines 347–365](/home/count0/src/z/concepts_brief.md:347), with the preceding design and current zpkt files as context.
 - **Reviewers:** implementation readiness, codebase details and style.
 - **Additional context:** linked official DPDK [ethdev](https://doc.dpdk.org/api-25.11/rte__ethdev_8h.html), [mbuf](https://doc.dpdk.org/api-25.11/rte__mbuf_8h.html), [ring source](https://github.com/DPDK/dpdk/blob/v25.11/drivers/net/ring/rte_eth_ring.c), [power intrinsics](https://doc.dpdk.org/api-25.11/rte__power__intrinsics_8h.html) and [EAL options](https://doc.dpdk.org/guides-25.11/linux_gsg/linux_eal_parameters.html).
 
@@ -12320,32 +12320,32 @@ I’ll include the approved DPDK sources and run the three implementation-readin
 
 ## Activity
 
-    $ mkdir -p review_context/zxdp-dpdk-readiness
+    $ mkdir -p review_context/zpkt-dpdk-readiness
     ✓ • 0ms
 
 ## Activity
 
-    $ curl -L -s --fail --max-time 30 --output review_context/zxdp-dpdk-readiness/power.html 'https://doc.dpdk.org/api-25.11/rte__power__intrinsics_8h.html'
+    $ curl -L -s --fail --max-time 30 --output review_context/zpkt-dpdk-readiness/power.html 'https://doc.dpdk.org/api-25.11/rte__power__intrinsics_8h.html'
     ✓ • 128ms
 
 ## Activity
 
-    $ curl -L -s --fail --max-time 30 --output review_context/zxdp-dpdk-readiness/ring.c 'https://raw.githubusercontent.com/DPDK/dpdk/v25.11/drivers/net/ring/rte_eth_ring.c'
+    $ curl -L -s --fail --max-time 30 --output review_context/zpkt-dpdk-readiness/ring.c 'https://raw.githubusercontent.com/DPDK/dpdk/v25.11/drivers/net/ring/rte_eth_ring.c'
     ✓ • 139ms
 
 ## Activity
 
-    $ curl -L -s --fail --max-time 30 --output review_context/zxdp-dpdk-readiness/eal.html 'https://doc.dpdk.org/guides-25.11/linux_gsg/linux_eal_parameters.html'
+    $ curl -L -s --fail --max-time 30 --output review_context/zpkt-dpdk-readiness/eal.html 'https://doc.dpdk.org/guides-25.11/linux_gsg/linux_eal_parameters.html'
     ✓ • 171ms
 
 ## Activity
 
-    $ curl -L -s --fail --max-time 30 --output review_context/zxdp-dpdk-readiness/mbuf.html 'https://doc.dpdk.org/api-25.11/rte__mbuf_8h.html'
+    $ curl -L -s --fail --max-time 30 --output review_context/zpkt-dpdk-readiness/mbuf.html 'https://doc.dpdk.org/api-25.11/rte__mbuf_8h.html'
     ✓ • 277ms
 
 ## Activity
 
-    $ curl -L -s --fail --max-time 30 --output review_context/zxdp-dpdk-readiness/ethdev.html 'https://doc.dpdk.org/api-25.11/rte__ethdev_8h.html'
+    $ curl -L -s --fail --max-time 30 --output review_context/zpkt-dpdk-readiness/ethdev.html 'https://doc.dpdk.org/api-25.11/rte__ethdev_8h.html'
     ✓ • 377ms
 
 ## Activity
@@ -12359,7 +12359,7 @@ I’ll include the approved DPDK sources and run the three implementation-readin
             if l.startswith('## Key Decisions') or l.startswith('## Reviewer Status'): print(n,l)
         print('lines',len(s.splitlines()))
         for name in ('ethdev.html','mbuf.html','ring.c','power.html','eal.html'):
-         p=Path('review_context/zxdp-dpdk-readiness')/name
+         p=Path('review_context/zpkt-dpdk-readiness')/name
          print(name,p.stat().st_size if p.exists() else 'MISSING')
         PY
     347 ## Key Decisions & Staging for Next Steps
@@ -12379,7 +12379,7 @@ I’ll include the approved DPDK sources and run the three implementation-readin
         from html.parser import HTMLParser
         import re
         root=Path.cwd()
-        d=root/'review_context/zxdp-dpdk-readiness'
+        d=root/'review_context/zpkt-dpdk-readiness'
         class Text(HTMLParser):
          def __init__(self): super().__init__(); self.hidden=0; self.parts=[]
          def handle_starttag(self,t,a):
@@ -12394,7 +12394,7 @@ I’ll include the approved DPDK sources and run the three implementation-readin
          parser=Text(); parser.feed((d/(name+'.html')).read_text())
          text=re.sub(r'\n[ \t]*\n+', '\n\n', ''.join(parser.parts))
          (d/(name+'.txt')).write_text(text)
-        (d/'reading_list.md').write_text('''# Review context\n\nTarget: /home/count0/src/z/concepts_brief.md\nImplementation target: lines 347–365 (Key Decisions & Staging for Next Steps).\nRead the full target as design context, but report readiness findings against the implementation target with related design references where needed.\n\nRepository standards (read all): docs/GUIDELINES.md, docs/CPP.md, docs/STYLE.md, docs/FRAMEWORK.md relevant sections, docs/BUILD.md, docs/IO.md, docs/AUDIT.md relevant sections, zxdp/GUIDELINES.md, zxdp/INTERFACE.md. All relative paths are under /home/count0/src/z.\n\nSelected baseline files: zxdp/src/Zxdp.hh, Zxdp.cc, ZxdpPool.hh, ZxdpPool.cc, ZxdpUMem.hh, ZxdpUMem.cc, ZxdpRing.hh, ZxdpBPF.hh, ZxdpBPF.cc, ZxdpRetire.hh, ZxdpRetire.cc, Makefile.am, EGM.md (all under zxdp/src). Relevant consumers: zi/src/ZiIOBuf.hh, zutcp/src/ZutcpMx.hh, zutcp/src/ZutcpMx.cc. Build inputs: configure.ac, z.config. Tests/context: zxdp/test/Makefile.am, zxdp/test/ZxdpInstanceTest.cc, zxdp/itest/Makefile.am, zxdp/itest/zxdppackettest.cc, zxdp/itest/zxdpwaketest.cc, dpdk_loopback.md. Read source sections relevant to your lens. Do not bulk-read irrelevant guidance.\n\nApproved external sources saved in this directory: ethdev.html/.txt, mbuf.html/.txt, power.html/.txt, eal.html/.txt, ring.c. Raw HTML and raw upstream source are preserved; .txt files are mechanically extracted readable copies. Use relevant sections; no need to read the entire ethdev reference. No additional external URLs have been approved for context.\n\nSource URLs: https://doc.dpdk.org/api-25.11/rte__ethdev_8h.html ; https://doc.dpdk.org/api-25.11/rte__mbuf_8h.html ; https://doc.dpdk.org/api-25.11/rte__power__intrinsics_8h.html ; https://doc.dpdk.org/guides-25.11/linux_gsg/linux_eal_parameters.html ; https://github.com/DPDK/dpdk/blob/v25.11/drivers/net/ring/rte_eth_ring.c (raw fetched from raw.githubusercontent.com).\n''')
+        (d/'reading_list.md').write_text('''# Review context\n\nTarget: /home/count0/src/z/concepts_brief.md\nImplementation target: lines 347–365 (Key Decisions & Staging for Next Steps).\nRead the full target as design context, but report readiness findings against the implementation target with related design references where needed.\n\nRepository standards (read all): docs/GUIDELINES.md, docs/CPP.md, docs/STYLE.md, docs/FRAMEWORK.md relevant sections, docs/BUILD.md, docs/IO.md, docs/AUDIT.md relevant sections, zpkt/GUIDELINES.md, zpkt/INTERFACE.md. All relative paths are under /home/count0/src/z.\n\nSelected baseline files: zpkt/src/Zpkt.hh, Zpkt.cc, ZpktPool.hh, ZpktPool.cc, ZpktUMem.hh, ZpktUMem.cc, ZpktRing.hh, ZpktBPF.hh, ZpktBPF.cc, ZpktRetire.hh, ZpktRetire.cc, Makefile.am, EGM.md (all under zpkt/src). Relevant consumers: zi/src/ZiIOBuf.hh, zutcp/src/ZutcpMx.hh, zutcp/src/ZutcpMx.cc. Build inputs: configure.ac, z.config. Tests/context: zpkt/test/Makefile.am, zpkt/test/ZpktInstanceTest.cc, zpkt/itest/Makefile.am, zpkt/itest/zpktpackettest.cc, zpkt/itest/zpktwaketest.cc, dpdk_loopback.md. Read source sections relevant to your lens. Do not bulk-read irrelevant guidance.\n\nApproved external sources saved in this directory: ethdev.html/.txt, mbuf.html/.txt, power.html/.txt, eal.html/.txt, ring.c. Raw HTML and raw upstream source are preserved; .txt files are mechanically extracted readable copies. Use relevant sections; no need to read the entire ethdev reference. No additional external URLs have been approved for context.\n\nSource URLs: https://doc.dpdk.org/api-25.11/rte__ethdev_8h.html ; https://doc.dpdk.org/api-25.11/rte__mbuf_8h.html ; https://doc.dpdk.org/api-25.11/rte__power__intrinsics_8h.html ; https://doc.dpdk.org/guides-25.11/linux_gsg/linux_eal_parameters.html ; https://github.com/DPDK/dpdk/blob/v25.11/drivers/net/ring/rte_eth_ring.c (raw fetched from raw.githubusercontent.com).\n''')
         print('Saved approved source snapshots and review reading list.')
         PY
     Saved approved source snapshots and review reading list.
@@ -12414,7 +12414,7 @@ I’ll include the approved DPDK sources and run the three implementation-readin
 
 ## Activity
 
-    $ cat /home/count0/.codex/plugins/cache/egm/egm/0.1.1/skills/egm-resolve/SKILL.md; git status --short; rg -n 'RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE|rte_eth_tx_done_cleanup|rte_eth_tx_burst|rte_eth_rx_queue_setup|rte_pktmbuf_pool_create' review_context/zxdp-dpdk-readiness/ethdev.txt | head -25
+    $ cat /home/count0/.codex/plugins/cache/egm/egm/0.1.1/skills/egm-resolve/SKILL.md; git status --short; rg -n 'RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE|rte_eth_tx_done_cleanup|rte_eth_tx_burst|rte_eth_rx_queue_setup|rte_pktmbuf_pool_create' review_context/zpkt-dpdk-readiness/ethdev.txt | head -25
     ---
     name: egm-resolve
     license: Apache-2.0
@@ -12604,7 +12604,7 @@ I’ll include the approved DPDK sources and run the three implementation-readin
         declined items, and remaining unaddressed issues.
      M gtags.conf
     ?? cscope.out
-    ?? review_context/zxdp-dpdk-readiness/
+    ?? review_context/zpkt-dpdk-readiness/
     367:#define RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE   RTE_BIT64(16)
     1175:int rte_eth_rx_queue_setup (uint16_t port_id, uint16_t rx_queue_id, uint16_t nb_rx_desc, unsigned int socket_id, const struct rte_eth_rxconf *rx_conf, struct rte_mempool *mb_pool)
     1455:int rte_eth_tx_done_cleanup (uint16_t port_id, uint16_t queue_id, uint32_t free_cnt)
@@ -12642,17 +12642,17 @@ The style review is complete. It found one scope ambiguity: “mirror AF_XDP tes
 
 ## Activity
 
-    $ nl -ba concepts_brief.md | sed -n '347,365p'; sed -n '8640,8715p' review_context/zxdp-dpdk-readiness/ethdev.txt; sed -n '584,615p' zi/src/ZiIOBuf.hh; cat zxdp/test/Makefile.am zxdp/itest/Makefile.am
+    $ nl -ba concepts_brief.md | sed -n '347,365p'; sed -n '8640,8715p' review_context/zpkt-dpdk-readiness/ethdev.txt; sed -n '584,615p' zi/src/ZiIOBuf.hh; cat zpkt/test/Makefile.am zpkt/itest/Makefile.am
        347    ## Key Decisions & Staging for Next Steps
        348
        349    1. Extend `Type` with Dpdk and `Params` with `Dpdk::Params`. Keep `Xdp::Params`
        350       and internals in their existing namespace. Add the adopted status operation.
        351    2. Add the public Dpdk EAL configuration/wrapper and private backend/pool
        352       implementations, with repository-prefixed source/header names (for example
-       353       `ZxdpDpdk.hh/.cc` and `ZxdpDpdkPool.hh/.cc`). Export only caller-required
+       353       `ZpktDpdk.hh/.cc` and `ZpktDpdkPool.hh/.cc`). Export only caller-required
        354       EAL configuration/API declarations; keep concrete mbuf internals private.
        355    3. Add the DPDK dependency through configure/pkg-config conventions and extend
-       356       `zxdp/src/Makefile.am`, preserving its existing Zi dependency and installed
+       356       `zpkt/src/Makefile.am`, preserving its existing Zi dependency and installed
        357       versus private header boundary. Do not repeat the completed Zi pool migration.
        358    4. Implement pool-derived queue setup, direct Tx, native reclamation, receive,
        359       counted wakes, stopTx and structured retryable close. Update affected callers
@@ -12773,20 +12773,20 @@ The style review is complete. It found one scope ambiguity: “mirror AF_XDP tes
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
-        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zxdp/src @Z_CPPFLAGS@
+        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zpkt/src @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@
-    LDADD = $(top_builddir)/zxdp/src/libZxdp.la \
+    LDADD = $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
         $(top_builddir)/zu/src/libZu.la \
         @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-    noinst_PROGRAMS = ZxdpRingTest ZxdpPoolTest ZxdpInstanceTest ZxdpClassifierTest
-    ZxdpRingTest_SOURCES = ZxdpRingTest.cc
-    ZxdpPoolTest_SOURCES = ZxdpPoolTest.cc
-    ZxdpInstanceTest_SOURCES = ZxdpInstanceTest.cc
-    ZxdpClassifierTest_SOURCES = ZxdpClassifierTest.cc
+    noinst_PROGRAMS = ZpktRingTest ZpktPoolTest ZpktInstanceTest ZpktClassifierTest
+    ZpktRingTest_SOURCES = ZpktRingTest.cc
+    ZpktPoolTest_SOURCES = ZpktPoolTest.cc
+    ZpktInstanceTest_SOURCES = ZpktInstanceTest.cc
+    ZpktClassifierTest_SOURCES = ZpktClassifierTest.cc
     EXTRA_DIST = README.md
     
     .PHONY: test
@@ -12795,22 +12795,22 @@ The style review is complete. It found one scope ambiguity: “mirror AF_XDP tes
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
-        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zxdp/src \
-        -DZXDP_FIXTURE='"$(abs_top_srcdir)/zxdp/util/zxdpfixture.sh"' \
-        -DZXDP_PACKET='"$(abs_top_builddir)/zxdp/util/zxdppacket"' @Z_CPPFLAGS@
+        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zpkt/src \
+        -DZPKT_FIXTURE='"$(abs_top_srcdir)/zpkt/util/zpktfixture.sh"' \
+        -DZPKT_PACKET='"$(abs_top_builddir)/zpkt/util/zpktpacket"' @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@
-    LDADD = $(top_builddir)/zxdp/src/libZxdp.la \
+    LDADD = $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
         $(top_builddir)/zu/src/libZu.la \
         @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-    noinst_PROGRAMS = zxdppackettest zxdpfiltertest zxdplooptest zxdpwaketest
-    zxdppackettest_SOURCES = zxdppackettest.cc
-    zxdpwaketest_SOURCES = zxdpwaketest.cc
-    zxdpfiltertest_SOURCES = zxdpfiltertest.cc
-    zxdplooptest_SOURCES = zxdplooptest.cc zxdplog.hh
+    noinst_PROGRAMS = zpktpackettest zpktfiltertest zpktlooptest zpktwaketest
+    zpktpackettest_SOURCES = zpktpackettest.cc
+    zpktwaketest_SOURCES = zpktwaketest.cc
+    zpktfiltertest_SOURCES = zpktfiltertest.cc
+    zpktlooptest_SOURCES = zpktlooptest.cc zpktlog.hh
     
     .PHONY: test
     test: $(noinst_PROGRAMS)
@@ -12881,7 +12881,7 @@ All three reviewers have completed. None found a blocker requiring a change to t
        672      m_spin{params.spin},
        673      m_txSid{params.txSid},
        674      m_netmask{params.netmask}, m_packet{ZuMv(params.packet)},
-       675      m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+       675      m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
        676      m_ingress{new Allocator{m_backend->bufPool(
        677        mx->rxBufSize() ? mx->rxBufSize() : ZiIOBuf_DefltCount, m_mtu + 14)}},
        678      m_rxAllocator{mx, m_ingress},
@@ -12902,7 +12902,7 @@ All three reviewers have completed. None found a blocker requiring a change to t
         34    AS_CASE([$host_os], [linux*], [z_linux=yes], [z_linux=no])
         35    AM_CONDITIONAL([LINUX], [test "$z_linux" = yes])
         36    AS_IF([test "$z_linux" = yes], [
-        37      AC_MSG_CHECKING([for Zxdp AF_XDP and BPF kernel headers])
+        37      AC_MSG_CHECKING([for Zpkt AF_XDP and BPF kernel headers])
         38      AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
         39    #include <sys/socket.h>
         40    #include <sys/syscall.h>
@@ -12941,7 +12941,7 @@ All three reviewers have completed. None found a blocker requiring a change to t
         73        (void)BPF_OBJ_GET_INFO_BY_FD; (void)BPF_MAP_CREATE; (void)BPF_PROG_LOAD;
         74      ]])], [AC_MSG_RESULT([yes])], [
         75        AC_MSG_RESULT([no])
-        76        AC_MSG_ERROR([Linux headers with AF_XDP ring flags/options, BPF XSK maps, expected-FD XDP attachment and SO_NETNS_COOKIE are required for Zxdp])
+        76        AC_MSG_ERROR([Linux headers with AF_XDP ring flags/options, BPF XSK maps, expected-FD XDP attachment and SO_NETNS_COOKIE are required for Zpkt])
         77      ])
         78    ])
         79    AS_IF([test "$z_linux" = yes], [
@@ -12952,30 +12952,30 @@ All three reviewers have completed. None found a blocker requiring a change to t
 
 ## Activity
 
-    $ cat > /tmp/write_zxdp_review.py <<'PY'
+    $ cat > /tmp/write_zpkt_review.py <<'PY'
         from pathlib import Path
         import json
         root=Path('/home/count0/src/z')
-        d=root/'review_context/zxdp-dpdk-readiness'
+        d=root/'review_context/zpkt-dpdk-readiness'
         findings=[
-        ('readiness-1-1','egm-implementation-readiness','Major','349–364','Exact change boundary is missing','Example filenames and unbounded “affected callers” do not provide the exact Create/Modify/Delete inventory required by the standard. Include public/private headers, implementations, configure inputs, consumers, tests and fixtures.','Implementation-readiness standard:29–35; zxdp/src/Makefile.am:7–12','A1'),
-        ('readiness-1-2','egm-implementation-readiness','Major','349–364','Numbered steps do not establish buildable checkpoints','Adding the selector, union alternative and pure virtual status before implementations/build wiring can leave an unbuildable intermediate state. Define complete file groups and build/test acceptance for each phase.','Implementation-readiness standard:20–23; zxdp/src/Zxdp.hh:62–92; zxdp/src/Zxdp.cc:49–74,557–562','A2'),
-        ('readiness-1-3','egm-implementation-readiness','Major','358–360; design 149–150','Pool-derived provisioning lacks an executable capacity rule','Specify queue count, descriptor requests/distribution, adjusted-limit handling, Rx replacement reserve and setup rejection conditions. Assigning all Rx backing to descriptors can leave no replacements for retained packets; adjusted driver minimums may exceed pool capacity. Preserve the adopted absence of public sizing knobs.','ethdev.txt:5219,5255–5257,12031–12042; zxdp/src/Zxdp.cc:108–125,149–152','A3'),
+        ('readiness-1-1','egm-implementation-readiness','Major','349–364','Exact change boundary is missing','Example filenames and unbounded “affected callers” do not provide the exact Create/Modify/Delete inventory required by the standard. Include public/private headers, implementations, configure inputs, consumers, tests and fixtures.','Implementation-readiness standard:29–35; zpkt/src/Makefile.am:7–12','A1'),
+        ('readiness-1-2','egm-implementation-readiness','Major','349–364','Numbered steps do not establish buildable checkpoints','Adding the selector, union alternative and pure virtual status before implementations/build wiring can leave an unbuildable intermediate state. Define complete file groups and build/test acceptance for each phase.','Implementation-readiness standard:20–23; zpkt/src/Zpkt.hh:62–92; zpkt/src/Zpkt.cc:49–74,557–562','A2'),
+        ('readiness-1-3','egm-implementation-readiness','Major','358–360; design 149–150','Pool-derived provisioning lacks an executable capacity rule','Specify queue count, descriptor requests/distribution, adjusted-limit handling, Rx replacement reserve and setup rejection conditions. Assigning all Rx backing to descriptors can leave no replacements for retained packets; adjusted driver minimums may exceed pool capacity. Preserve the adopted absence of public sizing knobs.','ethdev.txt:5219,5255–5257,12031–12042; zpkt/src/Zpkt.cc:108–125,149–152','A3'),
         ('readiness-1-4','egm-implementation-readiness','Major','358–360; design 123–129,159–163','Port retirement and instance recreation lack a lifecycle decision','EAL persistence does not specify port ownership. Choose stop/reconfigure/reuse or explicit close/remove/recreate, for normal close and partial-init rollback; define safe backing retirement and a same-device recreate case. Device close is irreversible, and ring close frees its owned rings.','ethdev.txt:6143–6178,6231–6255; ring.c:284–305','A4'),
-        ('readiness-1-5','egm-implementation-readiness','Major','358–359; design 135–152,178–190','Receive representation needs an explicit segment policy','RecvFn exposes a contiguous byte range, while DPDK may return chained mbufs. Specify single-segment/scatter setup, oversize/unsupported chain release, and a negative test. Passing pkt_len with only the first segment pointer is unsafe; flattening adds an unadopted copy.','zxdp/src/Zxdp.hh:35; ethdev.txt:12905–12913; zxdp/src/Zxdp.cc:503–510','A5'),
-        ('readiness-1-6','egm-implementation-readiness','Major','361–364','Coverage inheritance needs an explicit DPDK test mapping','Name the DPDK test files and inherited assertions. Replace sender-thread assertions with direct-owner submission checks. Specify peer topology/progress, dedicated Rx provenance, queued-mbuf draining, and the EAL/pool/rejection/wake/idle/rollback/recreate case mapping within existing scope.','zxdppackettest.cc:201–238,284–325; zxdpwaketest.cc:174–193,218–239; ring.c:78–105,156–165; standard:36–37','A6'),
-        ('codebase-1-1','egm-codebase-details','Major','349–364','Exact change boundary is unspecified','The standard requires exact paths and actions. The plan leaves public EAL/private filenames, caller scope and fixture/test locations to the implementer. Explicitly identify installed versus private headers. This is one manifest gap, not a claim that proposed files should already exist.','zxdp/src/Makefile.am:7–12; zxdp/test/Makefile.am:13–17; zxdp/itest/Makefile.am:17–21','A1'),
-        ('codebase-1-2','egm-codebase-details','Major','358–360; design 17–20','Caller changes omit the existing AF_XDP-only selection boundary','Zutcp already uses the current union/pool API, but initial construction and restart hardcode Type::Xdp. StackParams has Linux interface/netmask/sender settings and pool sizing uses interfaceMTU. Define whether DPDK selection through Zutcp is included. If included, specify selection/configuration, cold MTU/pool setup and restart; if deferred, explicitly limit the deliverable to standalone Zxdp DPDK service.','zutcp/src/ZutcpMx.hh:75–83; ZutcpMx.cc:646–651,669–682,1046–1058','A7'),
-        ('codebase-1-3','egm-codebase-details','Major','358–359; design 124–129','Port retirement and instance recreation need an explicit lifecycle decision','Specify exclusive port ownership, normal close, failed-init rollback and reuse/recreation. Mapping Zxdp close directly to rte_eth_dev_close removes a port needed on restart, while stop alone does not specify queue/backing retirement. Direct Tx remains feasible.','ethdev.txt:6156–6173,6231–6257; ring.c:284–305; zutcp/src/ZutcpMx.cc:1046–1047','A4'),
-        ('codebase-1-4','egm-codebase-details','Major','361–364','Mirror coverage does not specify necessary fixture adaptations','Current wake gates intercept only infinite epoll waits; bounded DPDK waits can bypass them or hang copied tests. Packet tests use AF_PACKET peers and AF_XDP sendto interposition. Specify replacement peer/provenance/drain arrangement and deterministic gates for the actual wait primitive; retain contract assertions without AF_XDP sender assumptions.','zxdp/itest/zxdpwaketest.cc:73–81,174–183,317–322; zxdppackettest.cc:53–78,100–120; ring.c:78–105,156–160','A6'),
-        ('codebase-1-5','egm-codebase-details','Major','355–357','Dependency integration still requires build-policy choices','Specify libdpdk pkg-config/version requirements, required versus optional policy, behavior when absent, feature definitions/Automake conditionals, and compile/link propagation to implementation and fixtures. Existing configure/build files only gate AF_XDP on Linux; z.config has no DPDK option. Add a wrapper option only if the chosen policy needs it.','configure.ac:34–78,382–411; zxdp/src/Makefile.am:1–17; z.config:3–59','A8'),
+        ('readiness-1-5','egm-implementation-readiness','Major','358–359; design 135–152,178–190','Receive representation needs an explicit segment policy','RecvFn exposes a contiguous byte range, while DPDK may return chained mbufs. Specify single-segment/scatter setup, oversize/unsupported chain release, and a negative test. Passing pkt_len with only the first segment pointer is unsafe; flattening adds an unadopted copy.','zpkt/src/Zpkt.hh:35; ethdev.txt:12905–12913; zpkt/src/Zpkt.cc:503–510','A5'),
+        ('readiness-1-6','egm-implementation-readiness','Major','361–364','Coverage inheritance needs an explicit DPDK test mapping','Name the DPDK test files and inherited assertions. Replace sender-thread assertions with direct-owner submission checks. Specify peer topology/progress, dedicated Rx provenance, queued-mbuf draining, and the EAL/pool/rejection/wake/idle/rollback/recreate case mapping within existing scope.','zpktpackettest.cc:201–238,284–325; zpktwaketest.cc:174–193,218–239; ring.c:78–105,156–165; standard:36–37','A6'),
+        ('codebase-1-1','egm-codebase-details','Major','349–364','Exact change boundary is unspecified','The standard requires exact paths and actions. The plan leaves public EAL/private filenames, caller scope and fixture/test locations to the implementer. Explicitly identify installed versus private headers. This is one manifest gap, not a claim that proposed files should already exist.','zpkt/src/Makefile.am:7–12; zpkt/test/Makefile.am:13–17; zpkt/itest/Makefile.am:17–21','A1'),
+        ('codebase-1-2','egm-codebase-details','Major','358–360; design 17–20','Caller changes omit the existing AF_XDP-only selection boundary','Zutcp already uses the current union/pool API, but initial construction and restart hardcode Type::Xdp. StackParams has Linux interface/netmask/sender settings and pool sizing uses interfaceMTU. Define whether DPDK selection through Zutcp is included. If included, specify selection/configuration, cold MTU/pool setup and restart; if deferred, explicitly limit the deliverable to standalone Zpkt DPDK service.','zutcp/src/ZutcpMx.hh:75–83; ZutcpMx.cc:646–651,669–682,1046–1058','A7'),
+        ('codebase-1-3','egm-codebase-details','Major','358–359; design 124–129','Port retirement and instance recreation need an explicit lifecycle decision','Specify exclusive port ownership, normal close, failed-init rollback and reuse/recreation. Mapping Zpkt close directly to rte_eth_dev_close removes a port needed on restart, while stop alone does not specify queue/backing retirement. Direct Tx remains feasible.','ethdev.txt:6156–6173,6231–6257; ring.c:284–305; zutcp/src/ZutcpMx.cc:1046–1047','A4'),
+        ('codebase-1-4','egm-codebase-details','Major','361–364','Mirror coverage does not specify necessary fixture adaptations','Current wake gates intercept only infinite epoll waits; bounded DPDK waits can bypass them or hang copied tests. Packet tests use AF_PACKET peers and AF_XDP sendto interposition. Specify replacement peer/provenance/drain arrangement and deterministic gates for the actual wait primitive; retain contract assertions without AF_XDP sender assumptions.','zpkt/itest/zpktwaketest.cc:73–81,174–183,317–322; zpktpackettest.cc:53–78,100–120; ring.c:78–105,156–160','A6'),
+        ('codebase-1-5','egm-codebase-details','Major','355–357','Dependency integration still requires build-policy choices','Specify libdpdk pkg-config/version requirements, required versus optional policy, behavior when absent, feature definitions/Automake conditionals, and compile/link propagation to implementation and fixtures. Existing configure/build files only gate AF_XDP on Linux; z.config has no DPDK option. Add a wrapper option only if the chosen policy needs it.','configure.ac:34–78,382–411; zpkt/src/Makefile.am:1–17; z.config:3–59','A8'),
         ('codebase-1-6','egm-codebase-details','Major','349–364','Numbered tasks lack stable phase checkpoints','These are ordered topics rather than buildable phases. Group public declarations with required overrides and factory dispatch, and integrate dependency detection with linked DPDK code. State per-phase verification.','Public/implementation/build changes are separated in target steps 1–3; tests appear only in step 5','A2'),
-        ('style-1-1','egm-style','Major','361–363','Inherited testing scope is ambiguous','CALIBRATE: “Mirror existing AF_XDP unit/integration coverage” includes classifier/filter targets, but the design adopts no DPDK filtering facility. Say “Mirror applicable backend behavior; exclude AF_XDP classifier/filter cases unless DPDK filtering is explicitly added.” Keep the existing validation scope.','concepts_brief.md:197–204; zxdp/test/Makefile.am; zxdp/itest/Makefile.am','A6'),
+        ('style-1-1','egm-style','Major','361–363','Inherited testing scope is ambiguous','CALIBRATE: “Mirror existing AF_XDP unit/integration coverage” includes classifier/filter targets, but the design adopts no DPDK filtering facility. Say “Mirror applicable backend behavior; exclude AF_XDP classifier/filter cases unless DPDK filtering is explicitly added.” Keep the existing validation scope.','concepts_brief.md:197–204; zpkt/test/Makefile.am; zpkt/itest/Makefile.am','A6'),
         ]
         reads={
-        'egm-implementation-readiness':'''Persona and mandatory readiness standard, complete; full target and context manifest; docs/GUIDELINES.md, CPP.md, STYLE.md, BUILD.md, IO.md, complete; relevant FRAMEWORK.md and AUDIT.md sections; zxdp/GUIDELINES.md and INTERFACE.md, complete. All selected zxdp baseline files were read in full or in relevant source sections. Consumers: zi/src/ZiIOBuf.hh pool contract and zutcp/src/ZutcpMx.hh/.cc provisioning, service and lifecycle. Configure/wrapper and selected test infrastructure plus final loopback guidance. Approved ethdev/mbuf/power/EAL text snapshots and ring source sections. No missing/inaccessible required sources.''',
-        'egm-codebase-details':'''Persona and mandatory readiness standard; full target and context manifest; docs/GUIDELINES.md, CPP.md, STYLE.md, BUILD.md, IO.md and relevant FRAMEWORK.md/AUDIT.md sections; zxdp/GUIDELINES.md and INTERFACE.md. Relevant declarations, lifetime, allocation, send/Rx/wake/reclamation, telemetry, BPF and build sections in every selected zxdp baseline file. Zi pool contract, Zutcp initial/restart selection/provisioning/shutdown, listed build and test infrastructure, loopback guidance and approved external snapshots. No missing mandatory sources.''',
-        'egm-style':'''Persona, full target and context manifest; docs/GUIDELINES.md, STYLE.md and BUILD.md; zxdp/test/Makefile.am and zxdp/itest/Makefile.am, complete. dpdk_loopback.md output was partially truncated and not relied upon for the finding. No inaccessible sources. No separate standard was mapped to this editorial lens.'''
+        'egm-implementation-readiness':'''Persona and mandatory readiness standard, complete; full target and context manifest; docs/GUIDELINES.md, CPP.md, STYLE.md, BUILD.md, IO.md, complete; relevant FRAMEWORK.md and AUDIT.md sections; zpkt/GUIDELINES.md and INTERFACE.md, complete. All selected zpkt baseline files were read in full or in relevant source sections. Consumers: zi/src/ZiIOBuf.hh pool contract and zutcp/src/ZutcpMx.hh/.cc provisioning, service and lifecycle. Configure/wrapper and selected test infrastructure plus final loopback guidance. Approved ethdev/mbuf/power/EAL text snapshots and ring source sections. No missing/inaccessible required sources.''',
+        'egm-codebase-details':'''Persona and mandatory readiness standard; full target and context manifest; docs/GUIDELINES.md, CPP.md, STYLE.md, BUILD.md, IO.md and relevant FRAMEWORK.md/AUDIT.md sections; zpkt/GUIDELINES.md and INTERFACE.md. Relevant declarations, lifetime, allocation, send/Rx/wake/reclamation, telemetry, BPF and build sections in every selected zpkt baseline file. Zi pool contract, Zutcp initial/restart selection/provisioning/shutdown, listed build and test infrastructure, loopback guidance and approved external snapshots. No missing mandatory sources.''',
+        'egm-style':'''Persona, full target and context manifest; docs/GUIDELINES.md, STYLE.md and BUILD.md; zpkt/test/Makefile.am and zpkt/itest/Makefile.am, complete. dpdk_loopback.md output was partially truncated and not relied upon for the finding. No inaccessible sources. No separate standard was mapped to this editorial lens.'''
         }
         for lens in reads:
          entries=[f for f in findings if f[1]==lens]
@@ -12992,15 +12992,15 @@ All three reviewers have completed. None found a blocker requiring a change to t
         ('A4','Port stop, retirement and reuse','readiness-1-4, codebase-1-3','Choose and document port ownership and the normal-close/rollback/recreate sequence separately from EAL lifetime.','Expand stage 4 with a resource ownership/lifecycle table. It must state stop/reuse versus destructive close/recreate and the event that releases every queue-held mbuf. Add same-device recreate within existing lifecycle test scope.'),
         ('A5','Contiguous receive policy','readiness-1-5','Specify how native mbuf segments fit the contiguous RecvFn contract without adding an implicit copy.','Add an explicit single-segment/scatter setup and rejection/release policy to stage 4, plus a corresponding unsupported/oversize input assertion.'),
         ('A6','Concrete DPDK fixture and coverage mapping','readiness-1-6, codebase-1-4, style-1-1','Map applicable current AF_XDP behavior to named DPDK files/cases; adapt peer, pool provenance, wait gates and draining.','Replace stage 5 with an exact mapping table. Exclude Xdp classifier tests while Dpdk filtering remains unadopted; replace sender assertions with direct-owner checks; gate the actual timed wait rather than epoll_wait(timeout=-1). Keep the approved test scope.'),
-        ('A7','Explicit consumer scope','codebase-1-2','State whether the deliverable includes selecting Dpdk through Zutcp and how initial/restart pool provisioning works.','Replace “update affected callers” with the chosen scope and exact consumer changes. If included, document backend selection/configuration and cold device geometry before pool creation. If deferred, state standalone zxdp DPDK scope explicitly. This requires a scope decision, not automatic restoration of any rejected architecture.'),
+        ('A7','Explicit consumer scope','codebase-1-2','State whether the deliverable includes selecting Dpdk through Zutcp and how initial/restart pool provisioning works.','Replace “update affected callers” with the chosen scope and exact consumer changes. If included, document backend selection/configuration and cold device geometry before pool creation. If deferred, state standalone zpkt DPDK scope explicitly. This requires a scope decision, not automatic restoration of any rejected architecture.'),
         ('A8','DPDK dependency policy','codebase-1-5','Choose supported libdpdk version and required/optional behavior, absent-backend behavior, feature definitions and flags.','Expand stage 3 with exact configure policy and compile/link propagation to implementation and tests. Include z.config only if the selected policy needs a wrapper option.')
         ]
-        report='''# Implementation Readiness Review\n\n**Target:** [concepts_brief.md](concepts_brief.md), lines 347–365.\n**Context:** Full design and current source baseline, plus approved external snapshots in [review context](review_context/zxdp-dpdk-readiness/reading_list.md).\n**Preset:** Implementation plan only (Stage 9), round 1.\n**Verdict:** Not yet implementation-ready under the selected standard. The target is a staging outline that needs an executable file/phase plan. No Blockers or Nits were reported; 13 Major findings consolidate to 8 action items.\n\nThe reviewers found no need to reverse the adopted native mbuf backing, direct Tx path, explicit EAL initialization or receive policy. Readiness findings concern the detail needed to execute those decisions, not a claim that DPDK is infeasible.\n\n## Reviewer Status\n\n| Reviewer | Status | Findings |\n| --- | --- | --- |\n| egm-implementation-readiness | completed | 6 Major |\n| egm-codebase-details | completed | 6 Major |\n| egm-style | completed | 1 Major |\n\nAll ran in fresh parent-conversation contexts. No failed reviewers, retries or inaccessible mandatory standards. Read manifests accompany the per-lens reports. Parent-turn isolation does not establish exclusion of host instruction files.\n\n## Consolidated Actions\n\n'''
+        report='''# Implementation Readiness Review\n\n**Target:** [concepts_brief.md](concepts_brief.md), lines 347–365.\n**Context:** Full design and current source baseline, plus approved external snapshots in [review context](review_context/zpkt-dpdk-readiness/reading_list.md).\n**Preset:** Implementation plan only (Stage 9), round 1.\n**Verdict:** Not yet implementation-ready under the selected standard. The target is a staging outline that needs an executable file/phase plan. No Blockers or Nits were reported; 13 Major findings consolidate to 8 action items.\n\nThe reviewers found no need to reverse the adopted native mbuf backing, direct Tx path, explicit EAL initialization or receive policy. Readiness findings concern the detail needed to execute those decisions, not a claim that DPDK is infeasible.\n\n## Reviewer Status\n\n| Reviewer | Status | Findings |\n| --- | --- | --- |\n| egm-implementation-readiness | completed | 6 Major |\n| egm-codebase-details | completed | 6 Major |\n| egm-style | completed | 1 Major |\n\nAll ran in fresh parent-conversation contexts. No failed reviewers, retries or inaccessible mandatory standards. Read manifests accompany the per-lens reports. Parent-turn isolation does not establish exclusion of host instruction files.\n\n## Consolidated Actions\n\n'''
         for id,title,ids,desc,edit in actions:
          report+=f'### {id}: {title} — Major\n\n{desc}\n\n**Sources:** {ids}.\n\n**Required plan change:** {edit}\n\n'
         report+='## Traceability\n\n| Original finding | Consolidated action |\n| --- | --- |\n'
         for f in findings: report+=f'| {f[0]} | {f[7]} |\n'
-        report+='''\n## Evidence and limits\n\nPer-lens findings: [readiness](review_context/zxdp-dpdk-readiness/egm-implementation-readiness.md), [codebase](review_context/zxdp-dpdk-readiness/egm-codebase-details.md), [style](review_context/zxdp-dpdk-readiness/egm-style.md). The root normalized the reviewer findings into these artifacts and deduplicated overlaps; reviewer IDs and severities are preserved.\n\nApproved official pages/source were downloaded as raw snapshots and readable HTML extractions before dispatch. See the context manifest for their origins. Native source inspection confirmed current Zutcp hardcodes Xdp at construction and restart, test infrastructure assumes Xdp-specific waits/sender service, and DPDK distinguishes restartable stop from destructive close.\n\nNo source or target-plan changes were made during this round. No builds or tests were run. This is one review round, not a convergence claim. Author decisions are required to settle the missing plan details before applying a complete implementation-ready rewrite.\n'''
+        report+='''\n## Evidence and limits\n\nPer-lens findings: [readiness](review_context/zpkt-dpdk-readiness/egm-implementation-readiness.md), [codebase](review_context/zpkt-dpdk-readiness/egm-codebase-details.md), [style](review_context/zpkt-dpdk-readiness/egm-style.md). The root normalized the reviewer findings into these artifacts and deduplicated overlaps; reviewer IDs and severities are preserved.\n\nApproved official pages/source were downloaded as raw snapshots and readable HTML extractions before dispatch. See the context manifest for their origins. Native source inspection confirmed current Zutcp hardcodes Xdp at construction and restart, test infrastructure assumes Xdp-specific waits/sender service, and DPDK distinguishes restartable stop from destructive close.\n\nNo source or target-plan changes were made during this round. No builds or tests were run. This is one review round, not a convergence claim. Author decisions are required to settle the missing plan details before applying a complete implementation-ready rewrite.\n'''
         (root/'implementation_readiness_report.md').write_text(report)
         annotated='''# Goldfish Annotated Review Report\n\n**Target:** [concepts_brief.md](concepts_brief.md), lines 347–365, with full design context.\n**Status:** Round 1 completed; resolution pending.\n\nAll 13 findings are Major; no Blockers or Nits. All three reviewers completed. The findings are valid gaps between a concept/staging brief and the selected zero-design-choice implementation-plan standard. They are categorized **PROPOSE FIX**; none is contested, escalated or declined. This classification does not approve a new architecture or authorize automatic selection of missing scope/lifecycle/build policies.\n\n## Prioritized Findings & AI Suggestions\n\n'''
         for f in findings:
@@ -13012,7 +13012,7 @@ All three reviewers have completed. None found a blocker requiring a change to t
         print('Wrote implementation_readiness_report.md, goldfish_review_report.md and three per-lens reports.')
         print('13 original Major findings; 8 deduplicated action items; 0 Blockers; target unchanged.')
         PY
-        python /tmp/write_zxdp_review.py
+        python /tmp/write_zpkt_review.py
     Wrote implementation_readiness_report.md, goldfish_review_report.md and three per-lens reports.
     13 original Major findings; 8 deduplicated action items; 0 Blockers; target unchanged.
     ✓ • 0ms
@@ -13047,7 +13047,7 @@ Zutcp currently hardcodes `Type::Xdp` at construction and restart, and derives p
 Which scope should the implementation plan use?
 
 1. **Include Zutcp integration:** add backend selection, DPDK configuration and pool provisioning for startup/restart.
-2. **Zxdp only:** implement the DPDK backend and corresponding software tests; leave Zutcp integration for separate work.
+2. **Zpkt only:** implement the DPDK backend and corresponding software tests; leave Zutcp integration for separate work.
 
 ## User
 
@@ -13075,7 +13075,7 @@ For DPDK, this sizing should obtain the MTU from the selected DPDK port instead.
 
 ## User
 
-why does `Zxdp::Instance` provide `mtu` if MTU is an input to it via the pools?
+why does `Zpkt::Instance` provide `mtu` if MTU is an input to it via the pools?
 
 ## Assistant
 
@@ -13083,7 +13083,7 @@ The pool specifies **buffer capacity**, while `Instance::mtu()` reports the devi
 
 Currently, AF_XDP initialization queries the interface MTU and checks that the supplied pools can accommodate its frames. The pools do not configure the interface MTU.
 
-The awkward part is initialization order: Zutcp queries MTU before creating pools, then Zxdp queries it again during `init()`. The accessor currently exposes the latter result only after initialization. That duplicates device discovery; it does not make pool size the MTU input.
+The awkward part is initialization order: Zutcp queries MTU before creating pools, then Zpkt queries it again during `init()`. The accessor currently exposes the latter result only after initialization. That duplicates device discovery; it does not make pool size the MTU input.
 
 ## User
 
@@ -13786,52 +13786,52 @@ I’ll trace `slot()` callers and its introduction to distinguish the current us
 
 ## Activity
 
-    $ rg -n 'slot\(|NoSlot|RxFrames|RxAccount' zutcp/src/ZutcpMx.cc zutcp/src/ZutcpMx.hh zutcp/src/ZutcpIP.hh zxdp/src/ZxdpPool.cc zxdp/src/Zxdp.cc zi/src/ZiIOBuf.hh
+    $ rg -n 'slot\(|NoSlot|RxFrames|RxAccount' zutcp/src/ZutcpMx.cc zutcp/src/ZutcpMx.hh zutcp/src/ZutcpIP.hh zpkt/src/ZpktPool.cc zpkt/src/Zpkt.cc zi/src/ZiIOBuf.hh
     zi/src/ZiIOBuf.hh:584:  enum { NoSlot = unsigned(-1) };
     zi/src/ZiIOBuf.hh:599:  virtual unsigned slot(const void *) const { return NoSlot; }
     zi/src/ZiIOBuf.hh:601:  virtual bool owns(const void *ptr) const { return slot(ptr) != NoSlot; }
     zutcp/src/ZutcpMx.hh:329:  bool retainRx(Zi::IOBuf *, RxAccount *);
-    zxdp/src/Zxdp.cc:223:      auto &slot = m_arena->txSlot(*pool, pool->slot(p));
-    zxdp/src/Zxdp.cc:279:      auto id = m_rxPool->slot(p);
-    zxdp/src/Zxdp.cc:413:  auto id = pool->slot(packet);
-    zxdp/src/Zxdp.cc:414:  if (id == BufPool::NoSlot) return false;
-    zxdp/src/Zxdp.cc:504:    auto slot = m_rxPool->slot(p);
-    zxdp/src/Zxdp.cc:531:    auto id = pool->slot(p);
-    zxdp/src/Zxdp.cc:532:    if (id == BufPool::NoSlot) continue;
-    zxdp/src/Zxdp.cc:545:      m_arena->txSlot(*owner, owner->slot(moved)).active = slot.active;
+    zpkt/src/Zpkt.cc:223:      auto &slot = m_arena->txSlot(*pool, pool->slot(p));
+    zpkt/src/Zpkt.cc:279:      auto id = m_rxPool->slot(p);
+    zpkt/src/Zpkt.cc:413:  auto id = pool->slot(packet);
+    zpkt/src/Zpkt.cc:414:  if (id == BufPool::NoSlot) return false;
+    zpkt/src/Zpkt.cc:504:    auto slot = m_rxPool->slot(p);
+    zpkt/src/Zpkt.cc:531:    auto id = pool->slot(p);
+    zpkt/src/Zpkt.cc:532:    if (id == BufPool::NoSlot) continue;
+    zpkt/src/Zpkt.cc:545:      m_arena->txSlot(*owner, owner->slot(moved)).active = slot.active;
     zutcp/src/ZutcpMx.cc:690:  m_ingress->rxFrames = new RxFrames{m_ingress->pool->count, m_ingress->pool->count};
     zutcp/src/ZutcpMx.cc:1202:bool Stack::retainRx(Zi::IOBuf *buf, RxAccount *account)
     zutcp/src/ZutcpMx.cc:1206:  return m_ingress->rxFrames->retain(m_ingress->pool->slot(buf->data_()), account);
-    zxdp/src/ZxdpPool.cc:52:  if (m_tx) m_arena->txSlot(*this, slot(reinterpret_cast<void *>(p))).refs = 1;
-    zxdp/src/ZxdpPool.cc:58:  auto id = slot(packet);
-    zxdp/src/ZxdpPool.cc:59:  ZmAssert_(id != NoSlot);
-    zxdp/src/ZxdpPool.cc:72:unsigned BufPool::slot(const void *packet) const
-    zxdp/src/ZxdpPool.cc:74:  if (!m_arena) return NoSlot;
-    zxdp/src/ZxdpPool.cc:77:  if (address < begin) return NoSlot;
-    zxdp/src/ZxdpPool.cc:81:  return id < count && within < size ? unsigned(id) : NoSlot;
-    zxdp/src/ZxdpPool.cc:83:bool BufPool::owns(const void *packet) const { return slot(packet) != NoSlot; }
-    zxdp/src/ZxdpPool.cc:86:  auto id = slot(packet);
-    zxdp/src/ZxdpPool.cc:87:  return m_tx && id != NoSlot && unsigned(m_arena->txSlot(*this, id).refs) == 1;
+    zpkt/src/ZpktPool.cc:52:  if (m_tx) m_arena->txSlot(*this, slot(reinterpret_cast<void *>(p))).refs = 1;
+    zpkt/src/ZpktPool.cc:58:  auto id = slot(packet);
+    zpkt/src/ZpktPool.cc:59:  ZmAssert_(id != NoSlot);
+    zpkt/src/ZpktPool.cc:72:unsigned BufPool::slot(const void *packet) const
+    zpkt/src/ZpktPool.cc:74:  if (!m_arena) return NoSlot;
+    zpkt/src/ZpktPool.cc:77:  if (address < begin) return NoSlot;
+    zpkt/src/ZpktPool.cc:81:  return id < count && within < size ? unsigned(id) : NoSlot;
+    zpkt/src/ZpktPool.cc:83:bool BufPool::owns(const void *packet) const { return slot(packet) != NoSlot; }
+    zpkt/src/ZpktPool.cc:86:  auto id = slot(packet);
+    zpkt/src/ZpktPool.cc:87:  return m_tx && id != NoSlot && unsigned(m_arena->txSlot(*this, id).refs) == 1;
     ✓ • 0ms
 
 ## Activity
 
-    zxdp/src/Zxdp.cc:223:      auto &slot = m_arena->txSlot(*pool, pool->slot(p));
-    zxdp/src/Zxdp.cc:279:      auto id = m_rxPool->slot(p);
-    zxdp/src/Zxdp.cc:413:  auto id = pool->slot(packet);
-    zxdp/src/Zxdp.cc:504:    auto slot = m_rxPool->slot(p);
-    zxdp/src/Zxdp.cc:531:    auto id = pool->slot(p);
-    zxdp/src/Zxdp.cc:545:      m_arena->txSlot(*owner, owner->slot(moved)).active = slot.active;
-    zxdp/test/ZxdpPoolTest.cc:77:    geometry &= p && tx->slot(p) == i && tx->slot(p + 54) == i &&
-    zxdp/test/ZxdpPoolTest.cc:233:      auto id = tx->slot(p);
+    zpkt/src/Zpkt.cc:223:      auto &slot = m_arena->txSlot(*pool, pool->slot(p));
+    zpkt/src/Zpkt.cc:279:      auto id = m_rxPool->slot(p);
+    zpkt/src/Zpkt.cc:413:  auto id = pool->slot(packet);
+    zpkt/src/Zpkt.cc:504:    auto slot = m_rxPool->slot(p);
+    zpkt/src/Zpkt.cc:531:    auto id = pool->slot(p);
+    zpkt/src/Zpkt.cc:545:      m_arena->txSlot(*owner, owner->slot(moved)).active = slot.active;
+    zpkt/test/ZpktPoolTest.cc:77:    geometry &= p && tx->slot(p) == i && tx->slot(p + 54) == i &&
+    zpkt/test/ZpktPoolTest.cc:233:      auto id = tx->slot(p);
     zutcp/src/ZutcpAlloc.cc:112:  if (rxFrames) rxFrames->returned(pool->slot(packet));
     zutcp/src/ZutcpMx.cc:1206:  return m_ingress->rxFrames->retain(m_ingress->pool->slot(buf->data_()), account);
     zi/test/ZiRxTest.cc:419:      cxn.valid &= cxn.slot() && !cxn.headers;
     zi/test/ZiRxTest.cc:432:    cxn.valid &= cxn.retained == nullptr && cxn.slot();
     zi/test/ZiRxTest.cc:486:      cxn.valid &= plugin->rearms == rearms + 1 && cxn.slot();
-    3892a86f Refactor Zxdp backends around intrusive Zi buffer pools
+    3892a86f Refactor Zpkt backends around intrusive Zi buffer pools
     76fdf49b Reach the native TCP latency and throughput milestone
-    fec7a2c4 Complete native TCP over AF_XDP and audit Zi, Zxdp and Zutcp
+    fec7a2c4 Complete native TCP over AF_XDP and audit Zi, Zpkt and Zutcp
     c2c5ad07 ZiMultiplex - additional APIs for ZiMxPlugin
     b7afd877 Repair I/O buffer ownership and transport recovery
     3892a86fb (Huw Rogers        2026-11-17 00:10:19 +0000 583) struct ZiAPI IOBufPool_ : public ZmPolymorph {
@@ -14023,12 +14023,12 @@ I’ll trace `slot()` callers and its introduction to distinguish the current us
     Author: Huw Rogers <hrogers@kaldron.io>
     Date:   Tue Nov 17 00:10:19 2026 +0000
     
-        Refactor Zxdp backends around intrusive Zi buffer pools
+        Refactor Zpkt backends around intrusive Zi buffer pools
     
         - Rename Zi IOBufPlugin to IOBufPool and propagate the breaking pool API.
         - Select polymorphic backends with instance(Type::Xdp) and tagged parameters.
-        - Isolate AF_XDP implementation and concrete buffer pools inside Zxdp::Xdp.
-        - Propagate structured Ze exceptions through Zxdp and Zutcp fallible APIs.
+        - Isolate AF_XDP implementation and concrete buffer pools inside Zpkt::Xdp.
+        - Propagate structured Ze exceptions through Zpkt and Zutcp fallible APIs.
         - Align framework usage, include groups, ownership, tests, and documentation.
         - Specify structured error contracts and the permitted use of ZeString captures.
         - Validate with Clang debug builds, unit suites, native and kernel interop tests.
@@ -14384,8 +14384,8 @@ I’ll trace `slot()` callers and its introduction to distinguish the current us
     // by the builder before the sent record can be discarded on refusal.
     struct PacketBuf : public Zi::IOBuf {
       PacketLease *retained = nullptr;
-    ./zxdp/src/ZxdpPool.cc:72:unsigned BufPool::slot(const void *packet) const
-    ./zxdp/src/ZxdpPool.hh:51:  unsigned slot(const void *) const override;
+    ./zpkt/src/ZpktPool.cc:72:unsigned BufPool::slot(const void *packet) const
+    ./zpkt/src/ZpktPool.hh:51:  unsigned slot(const void *) const override;
     ./zi/src/ZiIOBuf.hh:599:  virtual unsigned slot(const void *) const { return NoSlot; }
     ✓ • 0ms
 
@@ -14399,7 +14399,7 @@ Its production users are:
 - **Zutcp buffer return:** [`Allocator::free()`](/home/count0/src/z/zutcp/src/ZutcpAlloc.cc:107) publishes that index to an Rx-owner return list before freeing the backing. Rx later removes the retained-frame charge.
 - **AF_XDP internals:** send, completion, receive and teardown use slot indices to address preallocated bookkeeping directly.
 
-It was added to **`Zi::IOBufPool` in commit `3892a86f`**, when the refactor replaced concrete `Zxdp::BufPool` access with the generic pool interface. `slot()` already existed on the concrete pool; promoting it preserved those existing callers.
+It was added to **`Zi::IOBufPool` in commit `3892a86f`**, when the refactor replaced concrete `Zpkt::BufPool` access with the generic pool interface. `slot()` already existed on the concrete pool; promoting it preserved those existing callers.
 
 So its public-interface purpose is specifically **Zutcp’s physical receive-buffer accounting**. Generic Zi allocation does not itself require it, apart from the default `owns()` implementation. It exposes backend buffer identity across the abstraction boundary; that is the design dependency to assess.
 
@@ -14722,17 +14722,17 @@ I treated the current implementation as justification for the API, but it crosse
     $ sed -n '22,58p' concepts_brief.md; sed -n '145,178p' concepts_brief.md; sed -n '365,400p' concepts_brief.md; rg -n 'IOBufWait|waitBuf|provider\(|writable|txWritable' zi/src/ZiIOBuf.hh zutcp/src/ZutcpMx.hh zutcp/src/ZutcpMx.cc zutcp/src/Zutcp.hh zutcp/src/ZutcpConnection.hh | head -45
     ## Current source baseline
     
-    Read `Zxdp.hh`, `Zxdp.cc`, `ZxdpPool.hh/.cc`, `ZxdpUMem.hh/.cc`,
-    `ZxdpRetire.hh/.cc`, `ZxdpBPF.hh` and the BPF implementation changes,
-    `ZxdpRing.hh` changes, `Makefile.am` and `src/EGM.md`. Also read the updated
-    `zxdp/GUIDELINES.md` and `zxdp/INTERFACE.md`. The baseline includes commit
+    Read `Zpkt.hh`, `Zpkt.cc`, `ZpktPool.hh/.cc`, `ZpktUMem.hh/.cc`,
+    `ZpktRetire.hh/.cc`, `ZpktBPF.hh` and the BPF implementation changes,
+    `ZpktRing.hh` changes, `Makefile.am` and `src/EGM.md`. Also read the updated
+    `zpkt/GUIDELINES.md` and `zpkt/INTERFACE.md`. The baseline includes commit
     `3892a86f` and the current uncommitted API edits; preserve those edits.
     
     The refactor already supplies:
     
     * Cold `instance(Type::Xdp)` selection and a pure virtual base, without `m_data`.
     * `Params_` for common settings, `Xdp::Params` for AF_XDP settings, and a tagged
-      `Zxdp::Params` union populated in place.
+      `Zpkt::Params` union populated in place.
     * Virtual `bufPool(count, size, headRoom, tailRoom, align)` returning
       `ZmRef<Zi::IOBufPool>`. Cold factory instances and pool nodes have independent
       lifetimes; pools can precede instance initialization.
@@ -14746,8 +14746,8 @@ I treated the current implementation as justification for the API, but it crosse
       retirement pending, and the exception branch is an error. An error never
       authorizes freeing backing that remains in use.
     * Internal `Xdp::Instance`, `Xdp::BufPool`, `Xdp::UMem`, `Xdp::Xsk`, ring, BPF
-      and retirement types. `ZxdpPool.hh` replaces the old `ZxdpAlloc.hh`.
-    * A Zi dependency in `src/Makefile.am`; only `Zxdp.hh` and `ZxdpLib.hh` are
+      and retirement types. `ZpktPool.hh` replaces the old `ZpktAlloc.hh`.
+    * A Zi dependency in `src/Makefile.am`; only `Zpkt.hh` and `ZpktLib.hh` are
       currently installed, while pool/UMEM/ring/BPF/retirement headers are private.
     
     The send/ACK simplification from `zutcp_fix.md` is present in the baseline;
@@ -14799,10 +14799,10 @@ I treated the current implementation as justification for the API, but it crosse
        and internals in their existing namespace. Add the adopted status operation.
     2. Add the public Dpdk EAL configuration/wrapper and private backend/pool
        implementations, with repository-prefixed source/header names (for example
-       `ZxdpDpdk.hh/.cc` and `ZxdpDpdkPool.hh/.cc`). Export only caller-required
+       `ZpktDpdk.hh/.cc` and `ZpktDpdkPool.hh/.cc`). Export only caller-required
        EAL configuration/API declarations; keep concrete mbuf internals private.
     3. Add the DPDK dependency through configure/pkg-config conventions and extend
-       `zxdp/src/Makefile.am`, preserving its existing Zi dependency and installed
+       `zpkt/src/Makefile.am`, preserving its existing Zi dependency and installed
        versus private header boundary. Do not repeat the completed Zi pool migration.
     4. Implement pool-derived queue setup, direct Tx, native reclamation, receive,
        counted wakes, stopTx and structured retryable close. Add DPDK selection and
@@ -14819,12 +14819,12 @@ I treated the current implementation as justification for the API, but it crosse
     clarifications and source refactor: design, codebase-details, zoom-out,
     comprehension, implementation-readiness, structural and inventive-catalyst.
     No reviewer failures or retries occurred. Raw reports are under
-    `/tmp/zxdp-brainstorm-review/`; findings about the obsolete factory, commit hook,
+    `/tmp/zpkt-brainstorm-review/`; findings about the obsolete factory, commit hook,
     external buffers, shared arenas and EAL ownership are historical and superseded.
     This reconciled brief is authoritative for the current plan. No new review,
     build or test run was performed for this documentation update.
     
-    References: `zxdp/INTERFACE.md`, `zxdp/GUIDELINES.md`, `zxdp/src/EGM.md`,
+    References: `zpkt/INTERFACE.md`, `zpkt/GUIDELINES.md`, `zpkt/src/EGM.md`,
     zutcp/src/ZutcpConnection.hh:4363:      (*source->backing && !app()->txWritable(*source)) ||
     zutcp/src/Zutcp.hh:411:    auto provider = static_cast<Allocator *>(allocator->provider());
     zutcp/src/Zutcp.hh:414:  bool txWritable(const TxBacking &source) {
@@ -15021,20 +15021,20 @@ I’ll resume the implementation review with your correction as the baseline. I�
     
     This follow-up implements waiter removal; it does not claim implementation of
     all other repair-plan sections or a new Goldfish re-audit.
-    # Zxdp AF_XDP and DPDK backends
+    # Zpkt AF_XDP and DPDK backends
     
     * **Author:** Huw Rogers
     * **Date:** 2026-11-16
     * **Updated:** 2026-11-17
-    * **Status:** Decisions reconciled with the current `zxdp/src` refactor. Seven
+    * **Status:** Decisions reconciled with the current `zpkt/src` refactor. Seven
       historical brainstorming reviews completed; this update is source reconciliation,
       not another review or an implementation/test run.
     
     ## Overview
     
     Add DPDK alongside the existing AF_XDP backend using the current polymorphic
-    `Zxdp::Instance`. AF_XDP implementation types live in `Zxdp::Xdp`; DPDK types
-    will live in `Zxdp::Dpdk`. Extend the existing `Type` selector and tagged
+    `Zpkt::Instance`. AF_XDP implementation types live in `Zpkt::Xdp`; DPDK types
+    will live in `Zpkt::Dpdk`. Extend the existing `Type` selector and tagged
     `Params` union rather than recreating the earlier Backend/If design.
     
     The direct DPDK path is `Zutcp Tx owner → rte_eth_tx_burst() → DPDK/NIC`.
@@ -15044,17 +15044,17 @@ I’ll resume the implementation review with your correction as the baseline. I�
     
     ## Current source baseline
     
-    Read `Zxdp.hh`, `Zxdp.cc`, `ZxdpPool.hh/.cc`, `ZxdpUMem.hh/.cc`,
-    `ZxdpRetire.hh/.cc`, `ZxdpBPF.hh` and the BPF implementation changes,
-    `ZxdpRing.hh` changes, `Makefile.am` and `src/EGM.md`. Also read the updated
-    `zxdp/GUIDELINES.md` and `zxdp/INTERFACE.md`. The baseline includes commit
+    Read `Zpkt.hh`, `Zpkt.cc`, `ZpktPool.hh/.cc`, `ZpktUMem.hh/.cc`,
+    `ZpktRetire.hh/.cc`, `ZpktBPF.hh` and the BPF implementation changes,
+    `ZpktRing.hh` changes, `Makefile.am` and `src/EGM.md`. Also read the updated
+    `zpkt/GUIDELINES.md` and `zpkt/INTERFACE.md`. The baseline includes commit
     `3892a86f` and the current uncommitted API edits; preserve those edits.
     
     The refactor already supplies:
     
     * Cold `instance(Type::Xdp)` selection and a pure virtual base, without `m_data`.
     * `Params_` for common settings, `Xdp::Params` for AF_XDP settings, and a tagged
-      `Zxdp::Params` union populated in place.
+      `Zpkt::Params` union populated in place.
     * Virtual `bufPool(count, size, headRoom, tailRoom, align)` returning
       `ZmRef<Zi::IOBufPool>`. Cold factory instances and pool nodes have independent
       lifetimes; pools can precede instance initialization.
@@ -15068,8 +15068,8 @@ I’ll resume the implementation review with your correction as the baseline. I�
       retirement pending, and the exception branch is an error. An error never
       authorizes freeing backing that remains in use.
     * Internal `Xdp::Instance`, `Xdp::BufPool`, `Xdp::UMem`, `Xdp::Xsk`, ring, BPF
-      and retirement types. `ZxdpPool.hh` replaces the old `ZxdpAlloc.hh`.
-    * A Zi dependency in `src/Makefile.am`; only `Zxdp.hh` and `ZxdpLib.hh` are
+      and retirement types. `ZpktPool.hh` replaces the old `ZpktAlloc.hh`.
+    * A Zi dependency in `src/Makefile.am`; only `Zpkt.hh` and `ZpktLib.hh` are
       currently installed, while pool/UMEM/ring/BPF/retirement headers are private.
     
     The send/ACK simplification from `zutcp_fix.md` is present in the baseline;
@@ -15081,12 +15081,12 @@ I’ll resume the implementation review with your correction as the baseline. I�
     
     ### Backend selection and instance parameters
     
-    Extend the existing declarations in `Zxdp.hh` using its current enum macro form:
+    Extend the existing declarations in `Zpkt.hh` using its current enum macro form:
     
     ```cpp
-    namespace Zxdp {
+    namespace Zpkt {
     
-    ZtEnumNS(ZxdpAPI, Type, uint8_t, Xdp, Dpdk);
+    ZtEnumNS(ZpktAPI, Type, uint8_t, Xdp, Dpdk);
     
     // Existing Params_ retains its owning Tx list, Rx reference, callback,
     // spin, scheduler and txStopped fields.
@@ -15098,19 +15098,19 @@ I’ll resume the implementation review with your correction as the baseline. I�
     }
     ZuDerive(Params, (ZuUnion<Xdp::Params, Dpdk::Params>));
     
-    } // namespace Zxdp
+    } // namespace Zpkt
     ```
     
     Use `instance(Type::Dpdk)` to obtain `Dpdk::Instance`, then allocate pools,
     populate backend parameters in place, and call `init(config)`. For example:
     
     ```cpp
-    auto backend = Zxdp::instance(Zxdp::Type::Dpdk);
+    auto backend = Zpkt::instance(Zpkt::Type::Dpdk);
     auto tx = backend->bufPool(txCount, packetSize);
     auto rx = backend->bufPool(rxCount, packetSize);
-    Zxdp::Params config(
-      Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Dpdk::Params>{}>{});
-    auto &params = config.p<Zxdp::Dpdk::Params>();
+    Zpkt::Params config(
+      Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Dpdk::Params>{}>{});
+    auto &params = config.p<Zpkt::Dpdk::Params>();
     params.name = "net_ring0";
     params.txPools.pushNode(tx.ptr());
     params.rxPool = rx;
@@ -15136,7 +15136,7 @@ I’ll resume the implementation review with your correction as the baseline. I�
     
     Include DPDK selection and pool provisioning through Zutcp, for initial startup
     and restart. Update `zutcp/src/ZutcpMx.hh` and `zutcp/src/ZutcpMx.cc`; do not
-    limit this work to standalone Zxdp service.
+    limit this work to standalone Zpkt service.
     
 
     
@@ -15145,9 +15145,9 @@ I’ll resume the implementation review with your correction as the baseline. I�
     ### Explicit EAL ownership
     
     Move the previously adopted DPDK-only configuration and lifecycle under
-    `Zxdp::Dpdk`: call the process-wide wrapper `Dpdk::EAL` and its configuration
+    `Zpkt::Dpdk`: call the process-wide wrapper `Dpdk::EAL` and its configuration
     `Dpdk::EALParams`. This avoids colliding with per-instance `Dpdk::Params`.
-    These names replace the earlier `Zxdp::DPDK` and `Zxdp::DPDKParams` spellings;
+    These names replace the earlier `Zpkt::DPDK` and `Zpkt::DPDKParams` spellings;
     the adopted fields and explicit initialization policy are unchanged.
     
     Use `ZmSingleton<Dpdk::EAL, ZmSingletonCleanup<ZmCleanup::Platform>>`.
@@ -15239,10 +15239,10 @@ I’ll resume the implementation review with your correction as the baseline. I�
        and internals in their existing namespace. Add the adopted status operation.
     2. Add the public Dpdk EAL configuration/wrapper and private backend/pool
        implementations, with repository-prefixed source/header names (for example
-       `ZxdpDpdk.hh/.cc` and `ZxdpDpdkPool.hh/.cc`). Export only caller-required
+       `ZpktDpdk.hh/.cc` and `ZpktDpdkPool.hh/.cc`). Export only caller-required
        EAL configuration/API declarations; keep concrete mbuf internals private.
     3. Add the DPDK dependency through configure/pkg-config conventions and extend
-       `zxdp/src/Makefile.am`, preserving its existing Zi dependency and installed
+       `zpkt/src/Makefile.am`, preserving its existing Zi dependency and installed
        versus private header boundary. Do not repeat the completed Zi pool migration.
     4. Implement pool-derived queue setup, direct Tx, native reclamation, receive,
        counted wakes, stopTx and structured retryable close. Add DPDK selection and
@@ -15259,12 +15259,12 @@ I’ll resume the implementation review with your correction as the baseline. I�
     clarifications and source refactor: design, codebase-details, zoom-out,
     comprehension, implementation-readiness, structural and inventive-catalyst.
     No reviewer failures or retries occurred. Raw reports are under
-    `/tmp/zxdp-brainstorm-review/`; findings about the obsolete factory, commit hook,
+    `/tmp/zpkt-brainstorm-review/`; findings about the obsolete factory, commit hook,
     external buffers, shared arenas and EAL ownership are historical and superseded.
     This reconciled brief is authoritative for the current plan. No new review,
     build or test run was performed for this documentation update.
     
-    References: `zxdp/INTERFACE.md`, `zxdp/GUIDELINES.md`, `zxdp/src/EGM.md`,
+    References: `zpkt/INTERFACE.md`, `zpkt/GUIDELINES.md`, `zpkt/src/EGM.md`,
     `dpdk_loopback.md`, and the current source files listed in the baseline section.
     Official DPDK references used during brainstorming:
     [ethdev](https://doc.dpdk.org/api-25.11/rte__ethdev_8h.html),
@@ -15276,11 +15276,11 @@ I’ll resume the implementation review with your correction as the baseline. I�
 
 ## Activity
 
-    $ git status --short; git log -3 --oneline; sed -n '570,630p' zi/src/ZiIOBuf.hh; cat zxdp/src/Zxdp.hh
+    $ git status --short; git log -3 --oneline; sed -n '570,630p' zi/src/ZiIOBuf.hh; cat zpkt/src/Zpkt.hh
      M TODO.md
      M gtags.conf
     ?? cscope.out
-    ?? review_context/zxdp-dpdk-readiness/
+    ?? review_context/zpkt-dpdk-readiness/
     6a1dbab7 Remove obsolete I/O pool queries and receive slot accounting
     63c7af84 Specify key identifiers in TLS test certificate profiles
     50b3785d Propagate shared I/O buffers through protocol dependents
@@ -15344,11 +15344,11 @@ I’ll resume the implementation review with your correction as the baseline. I�
     
     // Raw AF_XDP arena, pool and packet facilities.
     
-    #ifndef Zxdp_HH
-    #define Zxdp_HH
+    #ifndef Zpkt_HH
+    #define Zpkt_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stdint.h>
@@ -15368,12 +15368,12 @@ I’ll resume the implementation review with your correction as the baseline. I�
     #include <zlib/ZtcQueue.hh>
     #include <zlib/ZiIOBuf.hh>
     
-    namespace Zxdp {
+    namespace Zpkt {
     
-    using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zxdp.Receive">>;
-    using StopFn = ZmFn<void(), ZmFnHeapID<"Zxdp.TxStopped">>;
+    using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zpkt.Receive">>;
+    using StopFn = ZmFn<void(), ZmFnHeapID<"Zpkt.TxStopped">>;
     
-    ZtEnumNS(ZxdpAPI, Type, uint8_t, Xdp);
+    ZtEnumNS(ZpktAPI, Type, uint8_t, Xdp);
     
     struct Params_ {
       Zi::IOBufPoolList txPools;
@@ -15397,7 +15397,7 @@ I’ll resume the implementation review with your correction as the baseline. I�
     // The caller drives Rx/Tx on their respective single owners. Allocation/free
     // may run on other threads. Allocation holds backing until explicit pool return;
     // an accepted send also holds it until kernel completion or safe close.
-    class ZxdpAPI Instance : public ZmPolymorph {
+    class ZpktAPI Instance : public ZmPolymorph {
     public:
       ~Instance() override = default;
       Instance(const Instance &) = delete;
@@ -15433,10 +15433,10 @@ I’ll resume the implementation review with your correction as the baseline. I�
       Instance() = default;
     };
     
-    ZxdpExtern ZmRef<Instance> instance(Type::T);
+    ZpktExtern ZmRef<Instance> instance(Type::T);
     
-    } // namespace Zxdp
-    #endif /* Zxdp_HH */
+    } // namespace Zpkt
+    #endif /* Zpkt_HH */
     ✓ • 0ms
 
 ## Activity
@@ -15462,15 +15462,15 @@ I’ll resume the implementation review with your correction as the baseline. I�
      zutcp/test/ZutcpRxAccountingTest.cc | 169 ++++++++++--------------------------
      zutcp/test/ZutcpRxAdmissionTest.cc  |   5 +-
      zutcp/util/zutcppair.cc             |   4 +-
-     zxdp/GUIDELINES.md                  |   4 +-
-     zxdp/INTERFACE.md                   |   7 --
-     zxdp/itest/zxdpfiltertest.cc        |   2 +-
-     zxdp/itest/zxdppackettest.cc        |  50 +++++------
-     zxdp/itest/zxdpwaketest.cc          |   2 +-
-     zxdp/src/ZxdpPool.cc                |   6 --
-     zxdp/src/ZxdpPool.hh                |  16 ++--
-     zxdp/test/ZxdpInstanceTest.cc       |   5 +-
-     zxdp/test/ZxdpPoolTest.cc           |  40 +++++----
+     zpkt/GUIDELINES.md                  |   4 +-
+     zpkt/INTERFACE.md                   |   7 --
+     zpkt/itest/zpktfiltertest.cc        |   2 +-
+     zpkt/itest/zpktpackettest.cc        |  50 +++++------
+     zpkt/itest/zpktwaketest.cc          |   2 +-
+     zpkt/src/ZpktPool.cc                |   6 --
+     zpkt/src/ZpktPool.hh                |  16 ++--
+     zpkt/test/ZpktInstanceTest.cc       |   5 +-
+     zpkt/test/ZpktPoolTest.cc           |  40 +++++----
      29 files changed, 284 insertions(+), 720 deletions(-)
         if (ZuUnlikely(mps < size_)) return nullptr;
         auto data = static_cast<uint8_t *>(VHeap::alloc(size_));
@@ -15544,7 +15544,7 @@ I’ll resume the implementation review with your correction as the baseline. I�
       {
         uint32_t ps = capacity();
     zutcp/src/ZutcpMx.cc:377:    .rxRetainFramesPerCxn(config.rxRetainFramesPerCxn)
-    zutcp/src/ZutcpMx.cc:662:  uint64_t count = uint64_t(result.p<Zxdp::Xdp::LinkState>().rxQueues) *
+    zutcp/src/ZutcpMx.cc:662:  uint64_t count = uint64_t(result.p<Zpkt::Xdp::LinkState>().rxQueues) *
     zutcp/src/ZutcpMx.cc:817:  if (!config.rxRetainFramesPerCxn)
     zutcp/src/ZutcpConnection.hh:213:    m_rxQueue.queueOwner(m_id);
     zutcp/src/ZutcpConnection.hh:248:    fn(const_cast<DataRxPQueue *>(&m_rxQueue));
@@ -15597,15 +15597,15 @@ I’ll resume the implementation review with your correction as the baseline. I�
     compatibility aliases or preservation of the APIs marked for deletion. No
     source or target-document changes were made, and no builds or tests were run.
     
-    review_context/zxdp-dpdk-readiness/power.txt
-    review_context/zxdp-dpdk-readiness/mbuf.html
-    review_context/zxdp-dpdk-readiness/eal.txt
-    review_context/zxdp-dpdk-readiness/ethdev.txt
-    review_context/zxdp-dpdk-readiness/power.html
-    review_context/zxdp-dpdk-readiness/mbuf.txt
-    review_context/zxdp-dpdk-readiness/ring.c
-    review_context/zxdp-dpdk-readiness/eal.html
-    review_context/zxdp-dpdk-readiness/ethdev.html
+    review_context/zpkt-dpdk-readiness/power.txt
+    review_context/zpkt-dpdk-readiness/mbuf.html
+    review_context/zpkt-dpdk-readiness/eal.txt
+    review_context/zpkt-dpdk-readiness/ethdev.txt
+    review_context/zpkt-dpdk-readiness/power.html
+    review_context/zpkt-dpdk-readiness/mbuf.txt
+    review_context/zpkt-dpdk-readiness/ring.c
+    review_context/zpkt-dpdk-readiness/eal.html
+    review_context/zpkt-dpdk-readiness/ethdev.html
     ✓ • 0ms
 
 ## Assistant
@@ -15614,9 +15614,9 @@ The current code has already been repaired: `Zi::IOBufPool` now exposes geometry
 
 ## Activity
 
-    $ sed -n '630,710p' zutcp/src/ZutcpMx.cc; sed -n '720,770p' zutcp/src/ZutcpMx.cc; sed -n '375,415p' zutcp/src/Zutcp.hh; sed -n '1,120p' zxdp/src/ZxdpPool.hh; pkg-config --modversion libdpdk; python - <<'PY'
+    $ sed -n '630,710p' zutcp/src/ZutcpMx.cc; sed -n '720,770p' zutcp/src/ZutcpMx.cc; sed -n '375,415p' zutcp/src/Zutcp.hh; sed -n '1,120p' zpkt/src/ZpktPool.hh; pkg-config --modversion libdpdk; python - <<'PY'
         from pathlib import Path
-        p=Path('review_context/zxdp-dpdk-readiness')
+        p=Path('review_context/zpkt-dpdk-readiness')
         print('\n'.join(x.name for x in p.iterdir()))
         PY
         });
@@ -15647,11 +15647,11 @@ The current code has already been repaired: `Zi::IOBufPool` now exposes geometry
     static unsigned ingressCount(ZiMultiplex *mx, unsigned interface)
     {
       if (mx->rxBufSize()) return mx->rxBufSize();
-      auto result = Zxdp::Xdp::queryLink(interface);
+      auto result = Zpkt::Xdp::queryLink(interface);
       if (result.is<ZeException>()) throw ZuMv(result.p<ZeException>());
       // Idle queues retain their FILL allocations. Each active queue needs room
       // beyond one connection's default retained list before its oldest can return.
-      uint64_t count = uint64_t(result.p<Zxdp::Xdp::LinkState>().rxQueues) *
+      uint64_t count = uint64_t(result.p<Zpkt::Xdp::LinkState>().rxQueues) *
         (uint64_t(DefaultRxRetainPerCxn) + mx->rxQuantum());
       if (count > UINT_MAX) throw ZeEXCEPT(Error, "Zutcp", "Rx pool count overflow");
       return count > ZiIOBuf_DefltCount ? unsigned(count) : ZiIOBuf_DefltCount;
@@ -15678,7 +15678,7 @@ The current code has already been repaired: `Zi::IOBufPool` now exposes geometry
       m_spin{params.spin},
       m_txSid{params.txSid},
       m_netmask{params.netmask}, m_packet{ZuMv(params.packet)},
-      m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+      m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
       m_ingress{new Allocator{m_backend->bufPool(
         ingressCount(mx, m_interface), m_mtu + 14)}},
       m_rxAllocator{mx, m_ingress},
@@ -15800,11 +15800,11 @@ The current code has already been repaired: `Zi::IOBufPool` now exposes geometry
     
     // Caller-owned intrusive packet pools over registered arena regions.
     
-    #ifndef ZxdpPool_HH
-    #define ZxdpPool_HH
+    #ifndef ZpktPool_HH
+    #define ZpktPool_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stdint.h>
@@ -15816,7 +15816,7 @@ The current code has already been repaired: `Zi::IOBufPool` now exposes geometry
     
     #include <zlib/ZiIOBuf.hh>
     
-    namespace Zxdp::Xdp {
+    namespace Zpkt::Xdp {
     
     class UMem;
     class BufPool;
@@ -15825,7 +15825,7 @@ The current code has already been repaired: `Zi::IOBufPool` now exposes geometry
     // Keep pool objects alive through instance close and final packet return.
     // Freeze the list/count/size while bound. Exhaustion never allocates backing.
     class BufPool final : public ZmNHeap<BufPool>, public Zi::IOBufPool {
-    friend inline ZuStringT<"Zxdp.Pool"> ZmNHeapID(BufPool *);
+    friend inline ZuStringT<"Zpkt.Pool"> ZmNHeapID(BufPool *);
     friend class UMem;
     friend class Instance;
     
@@ -15862,8 +15862,8 @@ The current code has already been repaired: `Zi::IOBufPool` now exposes geometry
       Count        m_used{0}, m_active{0};
     };
     
-    } // namespace Zxdp::Xdp
-    #endif /* ZxdpPool_HH */
+    } // namespace Zpkt::Xdp
+    #endif /* ZpktPool_HH */
     Package libdpdk was not found in the pkg-config search path.
     Perhaps you should add the directory containing `libdpdk.pc'
     to the PKG_CONFIG_PATH environment variable
@@ -15921,7 +15921,7 @@ The current code has already been repaired: `Zi::IOBufPool` now exposes geometry
         assert anchor in s
         s=s.replace(anchor,section+anchor,1)
         p.write_text(s)
-        ctx=Path('review_context/zxdp-dpdk-readiness')
+        ctx=Path('review_context/zpkt-dpdk-readiness')
         import json
         f=json.loads((ctx/'findings.json').read_text())
         groups={}
@@ -15930,7 +15930,7 @@ The current code has already been repaired: `Zi::IOBufPool` now exposes geometry
          out+=f'### {action}\n\n'
          for x in items:
           out+=f"* `{x['id']}` — {x['severity']}: {x['title']}.\n"
-        out+='''\nRaw normalized per-lens reports, findings.json and approved external snapshots\nremain in review_context/zxdp-dpdk-readiness. Their assumptions must be interpreted\nunder the binding corrections above. The selected architecture is unchanged.\n\n## Work performed on resume\n\nRead the current Zi pool interface, Xdp pool internals, Zutcp retained-buffer\nqueue and allocation/provider paths, source history and\nprior review artifacts. Corrected the brief's obsolete writable/interface\nassumptions. No C++ source edits, builds or tests were performed.\n'''
+        out+='''\nRaw normalized per-lens reports, findings.json and approved external snapshots\nremain in review_context/zpkt-dpdk-readiness. Their assumptions must be interpreted\nunder the binding corrections above. The selected architecture is unchanged.\n\n## Work performed on resume\n\nRead the current Zi pool interface, Xdp pool internals, Zutcp retained-buffer\nqueue and allocation/provider paths, source history and\nprior review artifacts. Corrected the brief's obsolete writable/interface\nassumptions. No C++ source edits, builds or tests were performed.\n'''
         Path('dpdk_implementation_review_report.md').write_text(out)
         print('Updated the DPDK brief and wrote dpdk_implementation_review_report.md; preserved other review artifacts.')
         PY
@@ -15941,7 +15941,7 @@ The current code has already been repaired: `Zi::IOBufPool` now exposes geometry
 
 Resumed the review and corrected the [brief](/home/count0/src/z/concepts_brief.md). The unwanted pool APIs are already removed from the current code; they will not return as DPDK requirements. Progress is recorded in the [DPDK review report](/home/count0/src/z/dpdk_implementation_review_report.md).
 
-Next is dependency policy. I propose requiring **`libdpdk >= 25.11` for Linux zxdp builds**, detected through pkg-config, with a clear configuration failure if unavailable and no new enable/disable switch.
+Next is dependency policy. I propose requiring **`libdpdk >= 25.11` for Linux zpkt builds**, detected through pkg-config, with a clear configuration failure if unavailable and no new enable/disable switch.
 
 Should I adopt that, or make DPDK optional at build time?
 
@@ -16177,7 +16177,7 @@ I’ll use the existing PostgreSQL dependency pattern for optional DPDK support,
 
 ## Activity
 
-    $ sed -n '338,355p' configure.ac; rg -n 'HAVE_|#define|LIBPQ' config.h.in zxdp/src/ZxdpLib.hh zi/src/ZiLib.hh | head -30; cat zxdp/src/ZxdpLib.hh
+    $ sed -n '338,355p' configure.ac; rg -n 'HAVE_|#define|LIBPQ' config.h.in zpkt/src/ZpktLib.hh zi/src/ZiLib.hh | head -30; cat zpkt/src/ZpktLib.hh
     AM_CONDITIONAL([HAVE_QUICKFIX], [test "x$z_have_quickfix" = "xyes"])
     
     # postgres libpq (optional)
@@ -16221,11 +16221,11 @@ I’ll use the existing PostgreSQL dependency pattern for optional DPDK support,
     zi/src/ZiLib.hh:54:#define ZiECONNREFUSED WSAECONNREFUSED
     zi/src/ZiLib.hh:55:#define ZiENOBUFS WSAENOBUFS
     zi/src/ZiLib.hh:56:#define ZiEADDRINUSE WSAEADDRINUSE
-    zxdp/src/ZxdpLib.hh:10:#define ZxdpLib_HH
-    zxdp/src/ZxdpLib.hh:17:#define ZxdpAPI ZuExport_API
-    zxdp/src/ZxdpLib.hh:18:#define ZxdpExplicit ZuExport_Explicit
-    zxdp/src/ZxdpLib.hh:20:#define ZxdpAPI ZuImport_API
-    zxdp/src/ZxdpLib.hh:21:#define ZxdpExplicit ZuImport_Explicit
+    zpkt/src/ZpktLib.hh:10:#define ZpktLib_HH
+    zpkt/src/ZpktLib.hh:17:#define ZpktAPI ZuExport_API
+    zpkt/src/ZpktLib.hh:18:#define ZpktExplicit ZuExport_Explicit
+    zpkt/src/ZpktLib.hh:20:#define ZpktAPI ZuImport_API
+    zpkt/src/ZpktLib.hh:21:#define ZpktExplicit ZuImport_Explicit
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -16234,40 +16234,40 @@ I’ll use the existing PostgreSQL dependency pattern for optional DPDK support,
     
     // Z AF_XDP library
     
-    #ifndef ZxdpLib_HH
-    #define ZxdpLib_HH
+    #ifndef ZpktLib_HH
+    #define ZpktLib_HH
     
     #include <zlib/ZuLib.hh>
     
     #ifdef _WIN32
     
-    #ifdef ZXDP_EXPORTS
-    #define ZxdpAPI ZuExport_API
-    #define ZxdpExplicit ZuExport_Explicit
+    #ifdef ZPKT_EXPORTS
+    #define ZpktAPI ZuExport_API
+    #define ZpktExplicit ZuExport_Explicit
     #else
-    #define ZxdpAPI ZuImport_API
-    #define ZxdpExplicit ZuImport_Explicit
+    #define ZpktAPI ZuImport_API
+    #define ZpktExplicit ZuImport_Explicit
     #endif
-    #define ZxdpExtern extern ZxdpAPI
+    #define ZpktExtern extern ZpktAPI
     
     #else
     
-    #define ZxdpAPI ZuExport_API
-    #define ZxdpExplicit ZuExport_Explicit
-    #define ZxdpExtern extern ZxdpAPI
+    #define ZpktAPI ZuExport_API
+    #define ZpktExplicit ZuExport_Explicit
+    #define ZpktExtern extern ZpktAPI
     
     #endif
     
-    namespace Zxdp {
+    namespace Zpkt {
     
-      inline constexpr const char Log[] = "Zxdp";
+      inline constexpr const char Log[] = "Zpkt";
     
-      ZxdpExtern void init(); // idempotent
-      ZxdpExtern void warmup();
+      ZpktExtern void init(); // idempotent
+      ZpktExtern void warmup();
     
     }
     
-    #endif /* ZxdpLib_HH */
+    #endif /* ZpktLib_HH */
     ✓ • 0ms
 
 ## Activity
@@ -16289,14 +16289,14 @@ I’ll use the existing PostgreSQL dependency pattern for optional DPDK support,
         
         Mirror `z.config`'s PostgreSQL behavior: DPDK defaults to yes in the wrapper,
         add `-K` (build without DPDK), and pass `--with-dpdk=$DPDK` through both compiler
-        branches. Keep the existing Linux-only zxdp traversal. Disabling DPDK leaves
+        branches. Keep the existing Linux-only zpkt traversal. Disabling DPDK leaves
         AF_XDP builds and tests available and adds no DPDK headers or link requirement.
         Guard DPDK-dependent declarations, implementation and fixture build entries
         consistently. Explicit DPDK selection in a disabled build must report that support
         was not built; it must not select AF_XDP. No runtime allocation fallback or
         compatibility shim is introduced by this optional build dependency.
         
-        Changes belong in `configure.ac`, `z.config`, `zxdp/src/Makefile.am` and the
+        Changes belong in `configure.ac`, `z.config`, `zpkt/src/Makefile.am` and the
         DPDK test/fixture Makefiles identified in the exact file manifest. Validate both
         enabled and disabled configurations, including requested-but-missing libdpdk.
         
@@ -16323,13 +16323,13 @@ Adopt that policy?
 
 ## User
 
-explain this; `zxdp` does not tx oversized or chained packets; is this about rx?
+explain this; `zpkt` does not tx oversized or chained packets; is this about rx?
 
 ## Assistant
 
 Yes, this is specifically about **Rx**.
 
-DPDK may return a packet spanning multiple mbufs when receive scatter is enabled. Zxdp’s receive callback accepts one contiguous pointer and length, so it cannot represent such a chain directly.
+DPDK may return a packet spanning multiple mbufs when receive scatter is enabled. Zpkt’s receive callback accepts one contiguous pointer and length, so it cannot represent such a chain directly.
 
 The proposed policy is:
 
@@ -16469,7 +16469,7 @@ I’ll continue with port lifecycle: how an instance releases its queues while l
 
 ## Activity
 
-    $ sed -n '6120,6270p' review_context/zxdp-dpdk-readiness/ethdev.txt; sed -n '105,125p' review_context/zxdp-dpdk-readiness/ring.c; sed -n '265,305p' review_context/zxdp-dpdk-readiness/ring.c; cat dpdk_implementation_review_report.md | head -65
+    $ sed -n '6120,6270p' review_context/zpkt-dpdk-readiness/ethdev.txt; sed -n '105,125p' review_context/zpkt-dpdk-readiness/ring.c; sed -n '265,305p' review_context/zpkt-dpdk-readiness/ring.c; cat dpdk_implementation_review_report.md | head -65
     Device RTE_ETH_DEV_NOLIVE_MAC_ADDR flag causes MAC address to be set before PMD port start callback function is invoked.
     
     All device queues (except form deferred start queues) status should be RTE_ETH_QUEUE_STATE_STARTED after start.
@@ -16690,7 +16690,7 @@ I’ll continue with port lifecycle: how an instance releases its queues while l
     
     The original three fresh-context reviews completed with 13 Major findings,
     consolidated into eight actions. Their original line references apply to
-    [the reviewed snapshot](review_context/zxdp-dpdk-readiness/reviewed_concepts_brief.md).
+    [the reviewed snapshot](review_context/zpkt-dpdk-readiness/reviewed_concepts_brief.md).
     The generic report filenames now document a separate I/O repair; this scoped
     report preserves the DPDK review without replacing those artifacts.
     
@@ -17007,7 +17007,7 @@ It is not a proposed new mode or API. “No Tx queue when no Tx pools are suppli
 
 ## User
 
-delete those tests and that provision. `txPools` must contain at least one tx pool. similarly for DPDK. "Request Rx descriptors for half the Rx buffers, leaving the remainder available for replacement and retention." - what? what does "descriptor" mean in this? DPDK `IOBufPool`s are instantiated by apps calling `mx->allocator(...)`. they have a count and size. for DPDK that means a pool of `count` mbufs, each sized to `size` clamped to MTU. the rx pool will always be requested at or above MTU. as packets are received, they are placed in those mbufs, the `Zxdp::Instance`'s `RecvFn` is called, and `zutcp` allocates a `IOBuf` to reference them, which it then processes. verify this flow
+delete those tests and that provision. `txPools` must contain at least one tx pool. similarly for DPDK. "Request Rx descriptors for half the Rx buffers, leaving the remainder available for replacement and retention." - what? what does "descriptor" mean in this? DPDK `IOBufPool`s are instantiated by apps calling `mx->allocator(...)`. they have a count and size. for DPDK that means a pool of `count` mbufs, each sized to `size` clamped to MTU. the rx pool will always be requested at or above MTU. as packets are received, they are placed in those mbufs, the `Zpkt::Instance`'s `RecvFn` is called, and `zutcp` allocates a `IOBuf` to reference them, which it then processes. verify this flow
 
 ## User
 
@@ -17019,25 +17019,25 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
 
 ## Activity
 
-    $ rg -n 'bufPool\(|rxPool|txPools|allocator\(|received\(|RecvFn|m_receive|RxAllocator' zutcp/src/ZutcpMx.cc zutcp/src/ZutcpAlloc.hh zi/src/ZiIOBuf.hh zxdp/itest/zxdpwaketest.cc zxdp/test/ZxdpInstanceTest.cc; rg -n 'zxdpfiltertest|Rx.only|receive.only|empty Tx|no Tx' zxdp --glob '*.md'; cat zxdp/GUIDELINES.md; sed -n '45,74p' docs/FRAMEWORK.md
-    zxdp/test/ZxdpInstanceTest.cc:39:  auto rx = factory->bufPool(2, 1514);
-    zxdp/test/ZxdpInstanceTest.cc:40:  auto tx = factory->bufPool(1, 128);
-    zxdp/test/ZxdpInstanceTest.cc:41:  auto control = factory->bufPool(1, 64);
-    zxdp/test/ZxdpInstanceTest.cc:57:  params.rxPool = rx;
-    zxdp/test/ZxdpInstanceTest.cc:58:  params.txPools.pushNode(tx.ptr());
-    zxdp/test/ZxdpInstanceTest.cc:59:  params.txPools.pushNode(control.ptr());
-    zxdp/test/ZxdpInstanceTest.cc:65:  auto pools = configured.txPools.citer();
-    zxdp/test/ZxdpInstanceTest.cc:66:  ZuCHECK(configured.rxPool.ptr() == rx.ptr() && configured.txPools.count_() == 2 &&
-    zxdp/test/ZxdpInstanceTest.cc:67:      configured.txPools.headPtr() == tx.ptr() && pools() == tx.ptr() &&
+    $ rg -n 'bufPool\(|rxPool|txPools|allocator\(|received\(|RecvFn|m_receive|RxAllocator' zutcp/src/ZutcpMx.cc zutcp/src/ZutcpAlloc.hh zi/src/ZiIOBuf.hh zpkt/itest/zpktwaketest.cc zpkt/test/ZpktInstanceTest.cc; rg -n 'zpktfiltertest|Rx.only|receive.only|empty Tx|no Tx' zpkt --glob '*.md'; cat zpkt/GUIDELINES.md; sed -n '45,74p' docs/FRAMEWORK.md
+    zpkt/test/ZpktInstanceTest.cc:39:  auto rx = factory->bufPool(2, 1514);
+    zpkt/test/ZpktInstanceTest.cc:40:  auto tx = factory->bufPool(1, 128);
+    zpkt/test/ZpktInstanceTest.cc:41:  auto control = factory->bufPool(1, 64);
+    zpkt/test/ZpktInstanceTest.cc:57:  params.rxPool = rx;
+    zpkt/test/ZpktInstanceTest.cc:58:  params.txPools.pushNode(tx.ptr());
+    zpkt/test/ZpktInstanceTest.cc:59:  params.txPools.pushNode(control.ptr());
+    zpkt/test/ZpktInstanceTest.cc:65:  auto pools = configured.txPools.citer();
+    zpkt/test/ZpktInstanceTest.cc:66:  ZuCHECK(configured.rxPool.ptr() == rx.ptr() && configured.txPools.count_() == 2 &&
+    zpkt/test/ZpktInstanceTest.cc:67:      configured.txPools.headPtr() == tx.ptr() && pools() == tx.ptr() &&
     zutcp/src/ZutcpAlloc.hh:104:struct ZutcpAPI RxAllocator : public ZmNHeap<RxAllocator>, public Zi::IOBufPool {
     zutcp/src/ZutcpAlloc.hh:105:friend inline ZuStringT<"Zutcp.RxAllocator"> ZmNHeapID(RxAllocator *);
     zutcp/src/ZutcpAlloc.hh:106:  using ZmNHeap<RxAllocator>::operator new;
     zutcp/src/ZutcpAlloc.hh:107:  using ZmNHeap<RxAllocator>::operator delete;
     zutcp/src/ZutcpAlloc.hh:110:  RxAllocator(Allocator *, unsigned head, unsigned count, unsigned align);
-    zxdp/itest/zxdpwaketest.cc:124:  auto pool = backend->bufPool(8, 1514); // two queues, four receive slots each
-    zxdp/itest/zxdpwaketest.cc:131:  params.rxPool = pool;
-    zxdp/itest/zxdpwaketest.cc:253:  auto pool = backend->bufPool(8, 1514);
-    zxdp/itest/zxdpwaketest.cc:262:  params.rxPool = pool;
+    zpkt/itest/zpktwaketest.cc:124:  auto pool = backend->bufPool(8, 1514); // two queues, four receive slots each
+    zpkt/itest/zpktwaketest.cc:131:  params.rxPool = pool;
+    zpkt/itest/zpktwaketest.cc:253:  auto pool = backend->bufPool(8, 1514);
+    zpkt/itest/zpktwaketest.cc:262:  params.rxPool = pool;
     zutcp/src/ZutcpMx.cc:690:  m_ingress{new Allocator{m_backend->bufPool(
     zutcp/src/ZutcpMx.cc:693:  m_packets{new Allocator{m_backend->bufPool(
     zutcp/src/ZutcpMx.cc:695:  m_control{new Allocator{m_backend->bufPool(
@@ -17051,10 +17051,10 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
     zutcp/src/ZutcpMx.cc:1342:  if (lease) lease->adopt(buf->allocator(), backing, size);
     zi/src/ZiIOBuf.hh:138:  IOBufAllocator *allocator() const;
     zi/src/ZiIOBuf.hh:467:inline IOBufAllocator *IOBuf_::allocator() const {
-    zxdp/README.md:94:no Tx submissions. Linux exposes no separate CQ reservation-refusal counter;
-    zxdp/itest/README.md:16:* `zxdpfiltertest` uses `ZXDP_TEST_IFINDEX`. Kernel program test runs verify
-    zxdp/INTERFACE.md:81:no intentional accumulation delay and no Tx wait timeout.
-    # Zxdp implementation rules
+    zpkt/README.md:94:no Tx submissions. Linux exposes no separate CQ reservation-refusal counter;
+    zpkt/itest/README.md:16:* `zpktfiltertest` uses `ZPKT_TEST_IFINDEX`. Kernel program test runs verify
+    zpkt/INTERFACE.md:81:no intentional accumulation delay and no Tx wait timeout.
+    # Zpkt implementation rules
     
     Follow the repository guidance in ../AGENTS.md and the caller-supplied
     [interface contract](INTERFACE.md). The contract supersedes earlier plans.
@@ -17086,7 +17086,7 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
       run on any thread. Keep thread-exclusive mutable state on separate cache lines.
     * The application assigns a sender `txSid` in its `ZmScheduler` and configures
       that slot with `Xdp::Params::txThread` (`ZmSchedTParams`, isolated by default).
-      The scheduler owns thread startup, waiting and teardown. Zxdp owns no sender
+      The scheduler owns thread startup, waiting and teardown. Zpkt owns no sender
       thread or semaphore. Publish initialized descriptors immediately: increment
       the pending-descriptor counter before commit and use scheduler `run()` after
       commit only on a zero-to-one transition. The dedicated sender calls nonblocking
@@ -17146,11 +17146,11 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
 
 ## Activity
 
-    $ git status --short; cat zxdp/itest/zxdpfiltertest.cc; cat zxdp/itest/Makefile.am; sed -n '70,150p' zxdp/src/Zxdp.cc; sed -n '1180,1310p' zutcp/src/ZutcpMx.cc
+    $ git status --short; cat zpkt/itest/zpktfiltertest.cc; cat zpkt/itest/Makefile.am; sed -n '70,150p' zpkt/src/Zpkt.cc; sed -n '1180,1310p' zutcp/src/ZutcpMx.cc
      M TODO.md
      M gtags.conf
     ?? cscope.out
-    ?? review_context/zxdp-dpdk-readiness/
+    ?? review_context/zpkt-dpdk-readiness/
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -17174,8 +17174,8 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
     
     #include <zlib/ZiIOBuf.hh>
     
-    #include <zlib/Zxdp.hh>
-    #include <zlib/ZxdpBPF.hh>
+    #include <zlib/Zpkt.hh>
+    #include <zlib/ZpktBPF.hh>
     
     using namespace ZuTestUtil;
     
@@ -17202,12 +17202,12 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
         {"128.0.0.1/1", "192.0.2.1", "127.0.0.1", 4}
       };
       for (auto test : cases) {
-        auto parsed = Zxdp::Xdp::parseFilter(test.mask);
-        Zxdp::Xdp::BPFProgram program;
+        auto parsed = Zpkt::Xdp::parseFilter(test.mask);
+        Zpkt::Xdp::BPFProgram program;
         bool loaded = false;
         if (parsed.is<ZeException>()) error = parsed.p<ZeException>();
         else {
-          auto result = program.load(2, parsed.p<Zxdp::Xdp::Filter>());
+          auto result = program.load(2, parsed.p<Zpkt::Xdp::Filter>());
           loaded = result.is<void>();
           if (!loaded) error = result.p<ZeException>();
         }
@@ -17232,7 +17232,7 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
             log_("kernel mask distinguishes destination and bounds with VLAN depth ", tags));
         }
       }
-      Zxdp::Xdp::BPFProgram program;
+      Zpkt::Xdp::BPFProgram program;
       auto unmasked = program.load(2, {});
       if (unmasked.is<ZeException>()) error = unmasked.p<ZeException>();
       ZuCheckRT(unmasked.is<void>(), log_("kernel accepts unmasked classifier: ", error));
@@ -17246,9 +17246,9 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
     static void testForeign()
     {
       ZuTestScopeRT(testForeign);
-      auto ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
-      Zxdp::Xdp::BPFProgram foreign;
-      Zxdp::Xdp::BPFAttach attachment;
+      auto ifindex = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10));
+      Zpkt::Xdp::BPFProgram foreign;
+      Zpkt::Xdp::BPFAttach attachment;
       ZeException error;
       auto attachedResult = foreign.load(2, {});
       if (attachedResult.is<void>()) attachedResult = attachment.attach(ifindex, foreign);
@@ -17256,11 +17256,11 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
       if (!attached) error = attachedResult.p<ZeException>();
       ZuCheckRT(attached, log_("fixture attaches an independent owner: ", error));
       if (!attached) return;
-      auto instance = Zxdp::instance(Zxdp::Type::Xdp);
+      auto instance = Zpkt::instance(Zpkt::Type::Xdp);
       auto rx = instance->bufPool(8, 1514);
-      Zxdp::Params config(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-      auto &params = config.p<Zxdp::Xdp::Params>();
+      Zpkt::Params config(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+      auto &params = config.p<Zpkt::Xdp::Params>();
       params.ifindex = ifindex;
       params.rxPool = rx;
       params.rx = [](uint8_t *, unsigned) { };
@@ -17273,12 +17273,12 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
       if (!started) { attachment.detach(); return; }
       auto initialized = instance->init(config);
       if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
-      auto link = Zxdp::Xdp::queryLink(ifindex);
+      auto link = Zpkt::Xdp::queryLink(ifindex);
       if (link.is<ZeException>()) error = link.p<ZeException>();
       ZuCheckRT(initialized.is<ZeException>() && !instance->ready() &&
-          link.is<Zxdp::Xdp::LinkState>() &&
-          (link.p<Zxdp::Xdp::LinkState>().drvID == foreign.id() ||
-        link.p<Zxdp::Xdp::LinkState>().skbID == foreign.id()),
+          link.is<Zpkt::Xdp::LinkState>() &&
+          (link.p<Zpkt::Xdp::LinkState>().drvID == foreign.id() ||
+        link.p<Zpkt::Xdp::LinkState>().skbID == foreign.id()),
         log_("creation refuses an occupied interface and preserves its program"));
       if (instance) {
         for (;;) {
@@ -17296,7 +17296,7 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
     int main(int argc, char **argv)
     {
       parse(argc, argv);
-      if (geteuid() || !getenv("ZXDP_TEST_IFINDEX")) {
+      if (geteuid() || !getenv("ZPKT_TEST_IFINDEX")) {
         std::cout << "1..0 # SKIP requires privileged fixture-owned interface\n";
         return 0;
       }
@@ -17307,22 +17307,22 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
-        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zxdp/src \
-        -DZXDP_FIXTURE='"$(abs_top_srcdir)/zxdp/util/zxdpfixture.sh"' \
-        -DZXDP_PACKET='"$(abs_top_builddir)/zxdp/util/zxdppacket"' @Z_CPPFLAGS@
+        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zpkt/src \
+        -DZPKT_FIXTURE='"$(abs_top_srcdir)/zpkt/util/zpktfixture.sh"' \
+        -DZPKT_PACKET='"$(abs_top_builddir)/zpkt/util/zpktpacket"' @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@
-    LDADD = $(top_builddir)/zxdp/src/libZxdp.la \
+    LDADD = $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
         $(top_builddir)/zu/src/libZu.la \
         @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-    noinst_PROGRAMS = zxdppackettest zxdpfiltertest zxdplooptest zxdpwaketest
-    zxdppackettest_SOURCES = zxdppackettest.cc
-    zxdpwaketest_SOURCES = zxdpwaketest.cc
-    zxdpfiltertest_SOURCES = zxdpfiltertest.cc
-    zxdplooptest_SOURCES = zxdplooptest.cc zxdplog.hh
+    noinst_PROGRAMS = zpktpackettest zpktfiltertest zpktlooptest zpktwaketest
+    zpktpackettest_SOURCES = zpktpackettest.cc
+    zpktwaketest_SOURCES = zpktwaketest.cc
+    zpktfiltertest_SOURCES = zpktfiltertest.cc
+    zpktlooptest_SOURCES = zpktlooptest.cc zpktlog.hh
     
     .PHONY: test
     test: $(noinst_PROGRAMS)
@@ -17331,12 +17331,12 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
       void wake() override { notify(); }
       unsigned pollTx() override;
       unsigned allQueues(Ztc::QueueMgr::AllFn) const override;
-      ZuUnion<void, ZeException> init(const Zxdp::Params &params) override {
+      ZuUnion<void, ZeException> init(const Zpkt::Params &params) override {
         if (m_state != Cold)
-          return ZeEXCEPT(Error, "Zxdp", "AF_XDP instance has already been initialized");
+          return ZeEXCEPT(Error, "Zpkt", "AF_XDP instance has already been initialized");
         m_state = Closing;
         if (!params.is<Params>())
-          return ZeEXCEPT(Error, "Zxdp", "AF_XDP instance requires XDP parameters");
+          return ZeEXCEPT(Error, "Zpkt", "AF_XDP instance requires XDP parameters");
         const auto &config = params.p<Params>();
         m_ifindex = config.ifindex;
         m_rxPool = dynamic_cast<BufPool *>(config.rxPool.ptr());
@@ -17352,10 +17352,10 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
           while (auto pool = pools()) m_txPools[i++] = static_cast<Zi::IOBufPool *>(pool);
         }
         if (!m_ifindex || !m_rxPool || !m_receive) {
-          return ZeEXCEPT(Error, "Zxdp", "interface, Rx pool and receive callback are required");
+          return ZeEXCEPT(Error, "Zpkt", "interface, Rx pool and receive callback are required");
         }
         if (!m_scheduler || !m_txSid || m_txSid > m_scheduler->params().nThreads()) {
-          return ZeEXCEPT(Error, "Zxdp", "AF_XDP requires a scheduler and assigned Tx slot");
+          return ZeEXCEPT(Error, "Zpkt", "AF_XDP requires a scheduler and assigned Tx slot");
         }
         auto parsed = parseFilter(config.netmask);
         if (parsed.is<ZeException>()) return ZuMv(parsed).p<ZeException>();
@@ -17364,9 +17364,9 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
         if (queried.is<ZeException>()) return ZuMv(queried).p<ZeException>();
         m_link = ZuMv(queried).p<LinkState>();
         if (m_link.occupied())
-          return ZeEXCEPT(Error, "Zxdp", "interface has an unrelated XDP program");
+          return ZeEXCEPT(Error, "Zpkt", "interface has an unrelated XDP program");
         if (!m_link.rxQueues || m_rxPool->count < m_link.rxQueues) {
-          return ZeEXCEPT(Error, "Zxdp", "Rx pool must provision every interface queue");
+          return ZeEXCEPT(Error, "Zpkt", "Rx pool must provision every interface queue");
         }
         auto created = UMem::create(config.txPools, m_rxPool.ptr(), m_link.mtu);
         if (created.is<ZeException>()) return ZuMv(created).p<ZeException>();
@@ -17379,7 +17379,7 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
         };
         auto r = round(layout.rxCount/m_link.rxQueues + !!(layout.rxCount%m_link.rxQueues));
         auto t = round(layout.txCount);
-        if (!r || !t) { return ZeEXCEPT(Error, "Zxdp", "AF_XDP ring capacity overflow"); }
+        if (!r || !t) { return ZeEXCEPT(Error, "Zpkt", "AF_XDP ring capacity overflow"); }
         m_rxSlots.length(m_rxPool->count);
         m_rxActive.length(m_rxPool->count);
         m_txActive.length(layout.txCount);
@@ -17387,18 +17387,18 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
         m_queues.length(m_link.rxQueues);
         for (auto &queue : m_queues) queue = nullptr;
         m_events = epoll_create1(EPOLL_CLOEXEC);
-        if (m_events < 0) { return ZeEXCEPT(Error, "Zxdp", ([error = ZeLastError](auto &out) {
+        if (m_events < 0) { return ZeEXCEPT(Error, "Zpkt", ([error = ZeLastError](auto &out) {
         out << "AF_XDP epoll creation failed: " << error;
           })); }
         m_wakeFD = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-        if (m_wakeFD < 0) { return ZeEXCEPT(Error, "Zxdp", ([error = ZeLastError](auto &out) {
+        if (m_wakeFD < 0) { return ZeEXCEPT(Error, "Zpkt", ([error = ZeLastError](auto &out) {
         out << "AF_XDP wake eventfd creation failed: " << error;
           })); }
         epoll_event wakeEvent{};
         wakeEvent.events = EPOLLIN;
         wakeEvent.data.u32 = End;
         if (epoll_ctl(m_events, EPOLL_CTL_ADD, m_wakeFD, &wakeEvent)) {
-          return ZeEXCEPT(Error, "Zxdp", ([error = ZeLastError](auto &out) {
+          return ZeEXCEPT(Error, "Zpkt", ([error = ZeLastError](auto &out) {
         out << "AF_XDP wake registration failed: " << error;
           }));
         }
@@ -17543,7 +17543,7 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
 
 ## Activity
 
-    $ sed -n '1125,1195p' zutcp/src/ZutcpMx.cc; sed -n '95,140p' zutcp/src/ZutcpAlloc.hh; sed -n '545,615p' zi/src/ZiIOBuf.hh; sed -n '480,525p' zxdp/src/Zxdp.cc; sed -n '270,295p' zxdp/src/Zxdp.cc; sed -n '1,110p' zxdp/test/ZxdpInstanceTest.cc
+    $ sed -n '1125,1195p' zutcp/src/ZutcpMx.cc; sed -n '95,140p' zutcp/src/ZutcpAlloc.hh; sed -n '545,615p' zi/src/ZiIOBuf.hh; sed -n '480,525p' zpkt/src/Zpkt.cc; sed -n '270,295p' zpkt/src/Zpkt.cc; sed -n '1,110p' zpkt/test/ZpktInstanceTest.cc
     void Stack::senderStopped()
     {
       ZmAssert_(mx()->invoked(mx()->txThread()));
@@ -17555,7 +17555,7 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
     void Stack::wake()
     {
       ++m_wakeUsers;
-      Zxdp::Instance *p = m_current;
+      Zpkt::Instance *p = m_current;
       if (p) p->wake();
       --m_wakeUsers;
     }
@@ -17793,17 +17793,17 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
     
     #include <zlib/ZiIOBuf.hh>
     
-    #include <zlib/Zxdp.hh>
+    #include <zlib/Zpkt.hh>
     
     using namespace ZuTestUtil;
     
     static void testCreation()
     {
       ZuTestScope(testCreation);
-      auto instance = Zxdp::instance(Zxdp::Type::Xdp);
+      auto instance = Zpkt::instance(Zpkt::Type::Xdp);
       ZuCHECK(instance && !instance->ready(), "selected backend starts cold");
-      Zxdp::Params missing(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
+      Zpkt::Params missing(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
       auto result = instance->init(missing);
       ZuCHECK(result.is<ZeException>() && !!result.p<ZeException>(),
         "missing initialization parameters fail without kernel resources");
@@ -17818,7 +17818,7 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
     static void testPoolFactory()
     {
       ZuTestScope(testPoolFactory);
-      auto factory = Zxdp::instance(Zxdp::Type::Xdp);
+      auto factory = Zpkt::instance(Zpkt::Type::Xdp);
       auto rx = factory->bufPool(2, 1514);
       auto tx = factory->bufPool(1, 128);
       auto control = factory->bufPool(1, 64);
@@ -17826,23 +17826,23 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
       ZuCHECK(closed.is<bool>() && closed.p<bool>(), "cold instance closes without initialization");
       closed = factory->close();
       ZuCHECK(closed.is<bool>() && closed.p<bool>(), "cold close is idempotent");
-      Zxdp::Params empty(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
+      Zpkt::Params empty(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
       ZuCHECK(factory->init(empty).is<ZeException>(), "cold close prevents later initialization");
       factory = nullptr;
       ZuCHECK(rx && tx && control && rx->count == 2 && tx->size == 128,
         "unbound pools survive their factory instance independently");
     
-      auto instance = Zxdp::instance(Zxdp::Type::Xdp);
-      Zxdp::Params config(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-      auto &params = config.p<Zxdp::Xdp::Params>();
+      auto instance = Zpkt::instance(Zpkt::Type::Xdp);
+      Zpkt::Params config(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+      auto &params = config.p<Zpkt::Xdp::Params>();
       params.rxPool = rx;
       params.txPools.pushNode(tx.ptr());
       params.txPools.pushNode(control.ptr());
       params.rx = [](uint8_t *, unsigned) { };
       auto unbound = instance->init(config); // zero interface fails without privileges
-      const auto &configured = config.p<Zxdp::Xdp::Params>();
+      const auto &configured = config.p<Zpkt::Xdp::Params>();
       ZuCHECK(unbound.is<ZeException>() && !instance->ready(),
         "a different backend accepts factory pools but rejects incomplete configuration");
       auto pools = configured.txPools.citer();
@@ -17869,7 +17869,7 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
 
 ## Activity
 
-    $ cat zxdp/test/ZxdpPoolTest.cc; sed -n '95,155p' zxdp/itest/zxdpwaketest.cc; sed -n '240,285p' zxdp/itest/zxdpwaketest.cc; rg -n '^##|^###' docs/AUDIT.md; git diff --stat
+    $ cat zpkt/test/ZpktPoolTest.cc; sed -n '95,155p' zpkt/itest/zpktwaketest.cc; sed -n '240,285p' zpkt/itest/zpktwaketest.cc; rg -n '^##|^###' docs/AUDIT.md; git diff --stat
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -17893,14 +17893,14 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
     
     #include <zlib/ZiIOBuf.hh>
     
-    #include <zlib/ZxdpUMem.hh>
-    #include <zlib/Zxdp.hh>
-    #include <zlib/ZxdpPool.hh>
+    #include <zlib/ZpktUMem.hh>
+    #include <zlib/Zpkt.hh>
+    #include <zlib/ZpktPool.hh>
     
     using namespace ZuTestUtil;
     
     struct PlainPool : ZmNHeap<PlainPool>, Zi::IOBufPool {
-    friend inline ZuStringT<"Zxdp.Test.PlainPool"> ZmNHeapID(PlainPool *);
+    friend inline ZuStringT<"Zpkt.Test.PlainPool"> ZmNHeapID(PlainPool *);
       uint8_t *alloc() override { return nullptr; }
       void free(uint8_t *) override { }
     };
@@ -17908,7 +17908,7 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
     static void testPools()
     {
       ZuTestScope(testPools);
-      auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+      auto backend = Zpkt::instance(Zpkt::Type::Xdp);
       auto rx = backend->bufPool(3, 1514);
       auto tx = backend->bufPool(5, 1514);
       auto control = backend->bufPool(1, 128);
@@ -17917,11 +17917,11 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
       pools.pushNode(tx.ptr());
       pools.pushNode(control.ptr());
       pools.pushNode(empty.ptr());
-      auto created = Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500);
-      ZuCHECK(created.is<ZmRef<Zxdp::Xdp::UMem>>(),
+      auto created = Zpkt::Xdp::UMem::create(pools, rx.ptr(), 1500);
+      ZuCHECK(created.is<ZmRef<Zpkt::Xdp::UMem>>(),
         "intrusive caller-owned pool list provisions the arena");
       if (created.is<ZeException>()) return;
-      auto arena = ZuMv(created.p<ZmRef<Zxdp::Xdp::UMem>>());
+      auto arena = ZuMv(created.p<ZmRef<Zpkt::Xdp::UMem>>());
       auto heapPool = backend->bufPool(0, 0);
       ZuCHECK(!(uintptr_t(heapPool.ptr()) % Zm::CacheLineSize),
         "framework heap preserves pool cacheline alignment");
@@ -17929,12 +17929,12 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
       bool isolated = true;
       uintptr_t previous = 0;
       for (unsigned i = 0; i < tx->count; ++i) {
-        auto address = uintptr_t(&arena->txSlot(*static_cast<Zxdp::Xdp::BufPool *>(tx.ptr()), i));
+        auto address = uintptr_t(&arena->txSlot(*static_cast<Zpkt::Xdp::BufPool *>(tx.ptr()), i));
         isolated &= !(address % Zm::CacheLineSize) &&
           (!i || address - previous >= Zm::CacheLineSize);
         previous = address;
       }
-      auto address = uintptr_t(&arena->txSlot(*static_cast<Zxdp::Xdp::BufPool *>(control.ptr()), 0));
+      auto address = uintptr_t(&arena->txSlot(*static_cast<Zpkt::Xdp::BufPool *>(control.ptr()), 0));
       isolated &= !(address % Zm::CacheLineSize) && address - previous >= Zm::CacheLineSize;
       ZuCHECK(isolated,
         "actual arena slot array isolates adjacent metadata, including the pool boundary");
@@ -17958,7 +17958,7 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
       ZmThread releaser{[&tx, &held] { for (auto p : held) tx->free(p + 54); }};
       releaser.join();
       auto late = tx->alloc();
-      arena->retire(pools, static_cast<Zxdp::Xdp::BufPool *>(rx.ptr()));
+      arena->retire(pools, static_cast<Zpkt::Xdp::BufPool *>(rx.ptr()));
       arena = nullptr;
       ZuCHECK(late && !tx->alloc() && late[54],
         "retired pools retain mappings through application-held packets");
@@ -17972,38 +17972,38 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
     static void testInvalid()
     {
       ZuTestScope(testInvalid);
-      auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+      auto backend = Zpkt::instance(Zpkt::Type::Xdp);
       auto rx = backend->bufPool(2, 1514);
       auto tx = backend->bufPool(1, 128);
       Zi::IOBufPoolList pools;
       pools.pushNode(tx.ptr());
       rx->count = 0;
-      ZuCHECK(Zxdp::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
+      ZuCHECK(Zpkt::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
         "empty Rx reserve rejected");
       rx->count = 2;
       rx->size = 1500;
-      ZuCHECK(Zxdp::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
+      ZuCHECK(Zpkt::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
         "Rx fits complete Ethernet frame");
       rx->size = 1514;
       auto extra = backend->bufPool(1, 128);
       pools.pushNode(extra.ptr());
       tx->count = unsigned(-1);
-      ZuCHECK(Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
+      ZuCHECK(Zpkt::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
         "kernel arena count overflow rejected before mapping");
       pools.clean();
       ZmRef<PlainPool> plain = new PlainPool;
       plain->count = 2;
       plain->size = 1514;
       pools.pushNode(plain.ptr());
-      ZuCHECK(Zxdp::Xdp::UMem::create({}, plain.ptr(), 1500).is<ZeException>() &&
-          Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
+      ZuCHECK(Zpkt::Xdp::UMem::create({}, plain.ptr(), 1500).is<ZeException>() &&
+          Zpkt::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
         "generic Zi pools cannot supply raw registered arena slots");
     }
     
     static void testZiAllocator()
     {
       ZuTestScope(testZiAllocator);
-      auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+      auto backend = Zpkt::instance(Zpkt::Type::Xdp);
       auto rx = backend->bufPool(2, 1514);
       auto tx = backend->bufPool(2, 128);
       tx->align = 256;
@@ -18011,10 +18011,10 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
       tx->tailRoom = 11;
       Zi::IOBufPoolList pools;
       pools.pushNode(tx.ptr());
-      auto created = Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500);
-      ZuCHECK(created.is<ZmRef<Zxdp::Xdp::UMem>>(), "Zi pool geometry provisions registered backing");
+      auto created = Zpkt::Xdp::UMem::create(pools, rx.ptr(), 1500);
+      ZuCHECK(created.is<ZmRef<Zpkt::Xdp::UMem>>(), "Zi pool geometry provisions registered backing");
       if (created.is<ZeException>()) return;
-      auto arena = ZuMv(created.p<ZmRef<Zxdp::Xdp::UMem>>());
+      auto arena = ZuMv(created.p<ZmRef<Zpkt::Xdp::UMem>>());
       Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP> allocator{nullptr, tx};
       auto buf = allocator.allocBuf(nullptr, 32);
       auto second = allocator.allocBuf(nullptr, 32);
@@ -18025,37 +18025,37 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
           !allocator.allocBuf(nullptr, 1),
         "Zi metadata preserves native slot alignment, exact headroom and bounded admission");
       if (buf) memset(buf->data(), 0x5a, buf->length);
-      arena->retire(pools, static_cast<Zxdp::Xdp::BufPool *>(rx.ptr()));
+      arena->retire(pools, static_cast<Zpkt::Xdp::BufPool *>(rx.ptr()));
       arena = nullptr;
       ZuCHECK(buf && buf->data()[31] == 0x5a && !tx->alloc(),
         "registered metadata retains its original backing after arena retirement");
       second = nullptr;
       buf = nullptr;
-      auto reprovisioned = Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500);
-      ZuCHECK(reprovisioned.is<ZmRef<Zxdp::Xdp::UMem>>(),
+      auto reprovisioned = Zpkt::Xdp::UMem::create(pools, rx.ptr(), 1500);
+      ZuCHECK(reprovisioned.is<ZmRef<Zpkt::Xdp::UMem>>(),
         "Zi final return permits reprovisioning the original pools");
-      if (reprovisioned.is<ZmRef<Zxdp::Xdp::UMem>>())
-        reprovisioned.p<ZmRef<Zxdp::Xdp::UMem>>()->retire(
-          pools, static_cast<Zxdp::Xdp::BufPool *>(rx.ptr()));
+      if (reprovisioned.is<ZmRef<Zpkt::Xdp::UMem>>())
+        reprovisioned.p<ZmRef<Zpkt::Xdp::UMem>>()->retire(
+          pools, static_cast<Zpkt::Xdp::BufPool *>(rx.ptr()));
     }
     
     static void testPoolGeometry()
     {
       ZuTestScope(testPoolGeometry);
-      auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+      auto backend = Zpkt::instance(Zpkt::Type::Xdp);
       enum { RxSize = 1514, TxSize = 128 }; // full Ethernet receive and small Tx fixtures
       auto rx = backend->bufPool(2, RxSize, 0, 0, 512);
       auto tx = backend->bufPool(1, TxSize);
       Zi::IOBufPoolList pools;
       pools.pushNode(tx.ptr());
-      auto created = Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500);
-      ZuCHECK(created.is<ZmRef<Zxdp::Xdp::UMem>>(), "requested Rx alignment fits registered chunks");
+      auto created = Zpkt::Xdp::UMem::create(pools, rx.ptr(), 1500);
+      ZuCHECK(created.is<ZmRef<Zpkt::Xdp::UMem>>(), "requested Rx alignment fits registered chunks");
       if (created.is<ZeException>()) return;
-      auto arena = ZuMv(created.p<ZmRef<Zxdp::Xdp::UMem>>());
+      auto arena = ZuMv(created.p<ZmRef<Zpkt::Xdp::UMem>>());
       auto first = rx->alloc(), second = rx->alloc();
       ZuCHECK(first && second && !(uintptr_t(first) & 511) && !(uintptr_t(second) & 511),
         "every Rx slot honors the requested alignment beyond the kernel's default headroom");
-      arena->retire(pools, static_cast<Zxdp::Xdp::BufPool *>(rx.ptr()));
+      arena->retire(pools, static_cast<Zpkt::Xdp::BufPool *>(rx.ptr()));
       if (first) rx->free(first);
       if (second) rx->free(second);
       arena = nullptr;
@@ -18075,12 +18075,12 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
         rx->tailRoom = geometry.rxTail;
         tx->headRoom = geometry.txHead;
         tx->tailRoom = geometry.txTail;
-        auto result = Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500);
+        auto result = Zpkt::Xdp::UMem::create(pools, rx.ptr(), 1500);
         ZuCHECK(result.is<ZeException>() && !rx->alloc() && !tx->alloc(),
           "bad alignment or header/trailer reserves fail before either pool activates");
-        if (result.is<ZmRef<Zxdp::Xdp::UMem>>()) {
-          result.p<ZmRef<Zxdp::Xdp::UMem>>()->retire(
-            pools, static_cast<Zxdp::Xdp::BufPool *>(rx.ptr()));
+        if (result.is<ZmRef<Zpkt::Xdp::UMem>>()) {
+          result.p<ZmRef<Zpkt::Xdp::UMem>>()->retire(
+            pools, static_cast<Zpkt::Xdp::BufPool *>(rx.ptr()));
           return;
         }
       }
@@ -18089,16 +18089,16 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
     static void testContention()
     {
       ZuTestScope(testContention);
-      auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+      auto backend = Zpkt::instance(Zpkt::Type::Xdp);
       enum { Slots = 64, Threads = 6, Turns = 30000 }; // bounded contention fixture
       auto rx = backend->bufPool(2, 1514);
       auto tx = backend->bufPool(Slots, 128);
       Zi::IOBufPoolList pools;
       pools.pushNode(tx.ptr());
-      auto created = Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500);
-      ZuCHECK(created.is<ZmRef<Zxdp::Xdp::UMem>>(), "contention fixture provisioned");
+      auto created = Zpkt::Xdp::UMem::create(pools, rx.ptr(), 1500);
+      ZuCHECK(created.is<ZmRef<Zpkt::Xdp::UMem>>(), "contention fixture provisioned");
       if (created.is<ZeException>()) return;
-      auto arena = ZuMv(created.p<ZmRef<Zxdp::Xdp::UMem>>());
+      auto arena = ZuMv(created.p<ZmRef<Zpkt::Xdp::UMem>>());
       auto origin = tx->alloc();
       uintptr_t begin = uintptr_t(origin);
       tx->free(origin);
@@ -18140,8 +18140,8 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
       ZuTestCall(testPoolGeometry);
       ZuTestCall(testContention);
     }
-    static ZmRef<Zxdp::Instance> createInstance(
-      const Zxdp::Params &params, ZeException &error)
+    static ZmRef<Zpkt::Instance> createInstance(
+      const Zpkt::Params &params, ZeException &error)
     {
       auto deadline = Zm::now() + ZuTime{2};
       unsigned attempts = 0;
@@ -18149,7 +18149,7 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
         ++attempts;
         wakeFD = -1;
         captureWake = true;
-        auto instance = Zxdp::instance(Zxdp::Type::Xdp);
+        auto instance = Zpkt::instance(Zpkt::Type::Xdp);
         auto initialized = instance->init(params);
         if (initialized.is<ZeException>()) error = initialized.p<ZeException>();
         else error = {};
@@ -18168,14 +18168,14 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
     {
       ZuTestScopeRT(testWake);
       alarm(20); // a missing wake fails the fixture; time does not establish success
-      auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+      auto backend = Zpkt::instance(Zpkt::Type::Xdp);
       auto pool = backend->bufPool(8, 1514); // two queues, four receive slots each
       ZeException error;
       ZmSemaphore packet;
-      Zxdp::Params config(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-      auto &params = config.p<Zxdp::Xdp::Params>();
-      params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
+      Zpkt::Params config(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+      auto &params = config.p<Zpkt::Xdp::Params>();
+      params.ifindex = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10));
       params.rxPool = pool;
       params.rx = [&pool, &packet](uint8_t *p, unsigned) {
         pool->free(p);
@@ -18213,16 +18213,16 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
     {
       ZuTestScopeRT(testActiveWake);
       alarm(20);
-      auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+      auto backend = Zpkt::instance(Zpkt::Type::Xdp);
       auto pool = backend->bufPool(8, 1514);
       ZeException error;
       ZmSemaphore active, release;
-      Zxdp::Instance *current = nullptr;
+      Zpkt::Instance *current = nullptr;
       unsigned packets = 0;
-      Zxdp::Params config(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-      auto &params = config.p<Zxdp::Xdp::Params>();
-      params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
+      Zpkt::Params config(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+      auto &params = config.p<Zpkt::Xdp::Params>();
+      params.ifindex = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10));
       params.rxPool = pool;
       params.rx = [&pool, &packets, &active, &release](uint8_t *p, unsigned) {
         ++packets;
@@ -18270,7 +18270,7 @@ I’ll verify the AF_XDP allocation and receive path as the reference for DPDK. 
 
 ## Assistant
 
-The AF_XDP flow matches what you described: Zxdp obtains backing from the Rx pool, supplies it to the kernel, calls `RecvFn` with the received bytes, and Zutcp creates an `IOBuf` referring to those bytes.
+The AF_XDP flow matches what you described: Zpkt obtains backing from the Rx pool, supplies it to the kernel, calls `RecvFn` with the received bytes, and Zutcp creates an `IOBuf` referring to those bytes.
 
 A DPDK descriptor is a driver queue entry that refers to an mbuf; it is separate from the mbuf itself. The proposed half-pool split was an arbitrary policy, and I’m withdrawing it.
 
@@ -18278,7 +18278,7 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
 
 ## Activity
 
-    $ sed -n '1,31p' docs/AUDIT.md; sed -n '85,112p' docs/AUDIT.md; cat zxdp/itest/README.md; cat zxdp/util/README.md | head -95; sed -n '1,105p' zutcp/src/ZutcpAlloc.cc; sed -n '30,105p' zxdp/src/ZxdpUMem.cc
+    $ sed -n '1,31p' docs/AUDIT.md; sed -n '85,112p' docs/AUDIT.md; cat zpkt/itest/README.md; cat zpkt/util/README.md | head -95; sed -n '1,105p' zutcp/src/ZutcpAlloc.cc; sed -n '30,105p' zpkt/src/ZpktUMem.cc
     # Audit flags and fixes
     
     Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
@@ -18338,13 +18338,13 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     - Red Flag: disorderly structs
       Problem: disordered members induce unnecessary padding due to alignment
       Fix: strike a balance between organizing members into logical groups and ordering by size from largest-to-smallest; immutable members should still come first, followed by mutable shared members, then groups of thread-exclusive members
-    # Zxdp kernel integration
+    # Zpkt kernel integration
     
     Build the tree with `make -j8`. The TAP programs skip privileged cases unless
     explicitly supplied fixture interfaces. Never supply an interface carrying
     traffic you need to retain: an absent mask selects all its traffic.
     
-    * `zxdppackettest` uses `ZXDP_TEST_IFINDEX` and `ZXDP_TEST_PEER_IFINDEX`, a
+    * `zpktpackettest` uses `ZPKT_TEST_IFINDEX` and `ZPKT_TEST_PEER_IFINDEX`, a
       fixture-owned two-queue veth pair. An independent raw packet socket verifies
       transmitted bytes and injects unmasked Ethernet reception. The test requires
       actual CQ completion, small Tx-pool transmission, kernel retirement during
@@ -18353,20 +18353,20 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
       including concurrent submission during kernel drain and shutdown while the sender
       callback is active. Tx uses scheduler `run()` and nonblocking `sendto()`; CQ completion remains
       distinct from descriptor consumption.
-    * `zxdpfiltertest` uses `ZXDP_TEST_IFINDEX`. Kernel program test runs verify
+    * `zpktfiltertest` uses `ZPKT_TEST_IFINDEX`. Kernel program test runs verify
       IPv4/IPv6 masks, high-bit addresses, truncated headers, zero/one/two VLAN tags
       and absent-mask behavior. A separate attachment checks foreign-owner protection.
-    * `zxdpwaketest` uses the same pair. Real Rx epoll/eventfd observation verifies
+    * `zpktwaketest` uses the same pair. Real Rx epoll/eventfd observation verifies
       zero-spin blocking, queued/concurrent wake pulses, repeated check-to-wait races,
       packet processing without returning, and interruption during active processing
       with a large spin count. It can also run with a single-queue fixture pair.
-    * `zxdplooptest` requires root and `ZXDP_RUN_FIXTURE=1`; it invokes the anonymous
+    * `zpktlooptest` requires root and `ZPKT_RUN_FIXTURE=1`; it invokes the anonymous
       namespace fixture for independent client/server utility processes, full-MTU
       and smaller packets, three application wait policies and oversized input.
     
     ```
-    sudo -n env ZXDP_RUN_FIXTURE=1 ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 \
-      ./zxdp/itest/zxdplooptest
+    sudo -n env ZPKT_RUN_FIXTURE=1 ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 \
+      ./zpkt/itest/zpktlooptest
     ```
     
     The tests drive the raw `rx()`/`wake()` pair and Tx completion service. Close retries
@@ -18376,7 +18376,7 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     physical NIC DMA requires a hardware run.
     # Standalone packet utility
     
-    `zxdppacket` runs a raw Ethernet/IPv4/UDP client or server using the public packet
+    `zpktpacket` runs a raw Ethernet/IPv4/UDP client or server using the public packet
     API. The main thread runs the library receive loop; a separate utility Tx owner
     drives completions and the application deadline. Packets are built directly in
     Tx backing; the independent peer
@@ -18387,9 +18387,9 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     Build with top-level `make -j8`, then run the scoped fixture:
     
     ```
-    sudo -n bash zxdp/util/zxdpfixture.sh --count 32 --payload 1472 --mode wait
-    sudo -n bash zxdp/util/zxdpfixture.sh --count 32 --payload 129 --mode spin
-    sudo -n bash zxdp/util/zxdpfixture.sh --count 32 --payload 128 --mode ll
+    sudo -n bash zpkt/util/zpktfixture.sh --count 32 --payload 1472 --mode wait
+    sudo -n bash zpkt/util/zpktfixture.sh --count 32 --payload 129 --mode spin
+    sudo -n bash zpkt/util/zpktfixture.sh --count 32 --payload 128 --mode ll
     ```
     
     The fixture creates an anonymous network namespace and its own veth pair. It
@@ -18474,7 +18474,7 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
       const Zi::IOBufPoolList &txPools, Zi::IOBufPool *rxPool, unsigned mtu)
     {
-      auto fail = [](const char *text) { return ZeEXCEPT(Error, "Zxdp", text); };
+      auto fail = [](const char *text) { return ZeEXCEPT(Error, "Zpkt", text); };
       // Linux copy-mode Rx adds NET_IP_ALIGN before the Ethernet header.
       enum { RxAlign = 2 };
       auto rx = dynamic_cast<BufPool *>(rxPool);
@@ -18527,7 +18527,7 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
       auto mem = mmap(nullptr, layout.length, PROT_READ | PROT_WRITE,
         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
       if (mem == MAP_FAILED) {
-        return ZeEXCEPT(Error, "Zxdp", ([error = ZeLastError](auto &out) {
+        return ZeEXCEPT(Error, "Zpkt", ([error = ZeLastError](auto &out) {
           out << "AF_XDP arena mmap failed: " << error;
         }));
       }
@@ -18544,7 +18544,7 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
 
 ## Activity
 
-    $ sed -n '12830,12955p' review_context/zxdp-dpdk-readiness/ethdev.txt; sed -n '5160,5260p' review_context/zxdp-dpdk-readiness/ethdev.txt; sed -n '1,115p' zxdp/src/Zxdp.cc; sed -n '1,80p' zxdp/src/ZxdpRetire.hh
+    $ sed -n '12830,12955p' review_context/zpkt-dpdk-readiness/ethdev.txt; sed -n '5160,5260p' review_context/zpkt-dpdk-readiness/ethdev.txt; sed -n '1,115p' zpkt/src/Zpkt.cc; sed -n '1,80p' zpkt/src/ZpktRetire.hh
     
     
     
@@ -18796,13 +18796,13 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     
     #include <zlib/ZePlatform.hh>
     
-    #include <zlib/Zxdp.hh>
-    #include <zlib/ZxdpBPF.hh>
-    #include <zlib/ZxdpUMem.hh>
-    #include <zlib/ZxdpRetire.hh>
-    #include <zlib/ZxdpPool.hh>
+    #include <zlib/Zpkt.hh>
+    #include <zlib/ZpktBPF.hh>
+    #include <zlib/ZpktUMem.hh>
+    #include <zlib/ZpktRetire.hh>
+    #include <zlib/ZpktPool.hh>
     
-    namespace Zxdp {
+    namespace Zpkt {
     
     ZtEnumImplNS(Type);
     
@@ -18810,7 +18810,7 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     
     // One kernel ring set per hardware Rx queue, sharing one UMEM registration.
     struct Queue : public ZmNHeap<Queue> {
-    friend inline ZuStringT<"Zxdp.Queue"> ZmNHeapID(Queue *);
+    friend inline ZuStringT<"Zpkt.Queue"> ZmNHeapID(Queue *);
       using Retirement = KernelRetirement;
       Xsk        socket;
       Retirement    retirement;
@@ -18820,8 +18820,8 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
       ~Queue() { ZmAssert_(socket.fd() < 0); }
     };
     
-    class Instance final : public ZmNHeap<Instance>, public Zxdp::Instance {
-    friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(Instance *);
+    class Instance final : public ZmNHeap<Instance>, public Zpkt::Instance {
+    friend inline ZuStringT<"Zpkt.Instance"> ZmNHeapID(Instance *);
     
     public:
       using ZmNHeap<Instance>::operator new;
@@ -18845,12 +18845,12 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
       void wake() override { notify(); }
       unsigned pollTx() override;
       unsigned allQueues(Ztc::QueueMgr::AllFn) const override;
-      ZuUnion<void, ZeException> init(const Zxdp::Params &params) override {
+      ZuUnion<void, ZeException> init(const Zpkt::Params &params) override {
         if (m_state != Cold)
-          return ZeEXCEPT(Error, "Zxdp", "AF_XDP instance has already been initialized");
+          return ZeEXCEPT(Error, "Zpkt", "AF_XDP instance has already been initialized");
         m_state = Closing;
         if (!params.is<Params>())
-          return ZeEXCEPT(Error, "Zxdp", "AF_XDP instance requires XDP parameters");
+          return ZeEXCEPT(Error, "Zpkt", "AF_XDP instance requires XDP parameters");
         const auto &config = params.p<Params>();
         m_ifindex = config.ifindex;
         m_rxPool = dynamic_cast<BufPool *>(config.rxPool.ptr());
@@ -18866,10 +18866,10 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
           while (auto pool = pools()) m_txPools[i++] = static_cast<Zi::IOBufPool *>(pool);
         }
         if (!m_ifindex || !m_rxPool || !m_receive) {
-          return ZeEXCEPT(Error, "Zxdp", "interface, Rx pool and receive callback are required");
+          return ZeEXCEPT(Error, "Zpkt", "interface, Rx pool and receive callback are required");
         }
         if (!m_scheduler || !m_txSid || m_txSid > m_scheduler->params().nThreads()) {
-          return ZeEXCEPT(Error, "Zxdp", "AF_XDP requires a scheduler and assigned Tx slot");
+          return ZeEXCEPT(Error, "Zpkt", "AF_XDP requires a scheduler and assigned Tx slot");
         }
         auto parsed = parseFilter(config.netmask);
         if (parsed.is<ZeException>()) return ZuMv(parsed).p<ZeException>();
@@ -18878,9 +18878,9 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
         if (queried.is<ZeException>()) return ZuMv(queried).p<ZeException>();
         m_link = ZuMv(queried).p<LinkState>();
         if (m_link.occupied())
-          return ZeEXCEPT(Error, "Zxdp", "interface has an unrelated XDP program");
+          return ZeEXCEPT(Error, "Zpkt", "interface has an unrelated XDP program");
         if (!m_link.rxQueues || m_rxPool->count < m_link.rxQueues) {
-          return ZeEXCEPT(Error, "Zxdp", "Rx pool must provision every interface queue");
+          return ZeEXCEPT(Error, "Zpkt", "Rx pool must provision every interface queue");
         }
         auto created = UMem::create(config.txPools, m_rxPool.ptr(), m_link.mtu);
         if (created.is<ZeException>()) return ZuMv(created).p<ZeException>();
@@ -18895,22 +18895,22 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     
     // Private kernel queue-retirement observation; never publishes packet frames.
     
-    #ifndef ZxdpRetire_HH
-    #define ZxdpRetire_HH
+    #ifndef ZpktRetire_HH
+    #define ZpktRetire_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <zlib/ZuUnion.hh>
     
     #include <zlib/ZePlatform.hh>
     
-    #include <zlib/ZxdpUMem.hh>
+    #include <zlib/ZpktUMem.hh>
     
-    namespace Zxdp::Xdp {
+    namespace Zpkt::Xdp {
     
-    class ZxdpAPI KernelRetirement {
+    class ZpktAPI KernelRetirement {
     friend class Instance;
     
     public:
@@ -18937,24 +18937,24 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
       Xsk        m_probe;
     };
     
-    } // namespace Zxdp::Xdp
+    } // namespace Zpkt::Xdp
     
-    #endif /* ZxdpRetire_HH */
+    #endif /* ZpktRetire_HH */
     ✓ • 0ms
 
 ## Activity
 
     file changes: Completed · 5 changes
-    Update { move_path: None }: /home/count0/src/z/zxdp/itest/zxdpfiltertest.cc
+    Update { move_path: None }: /home/count0/src/z/zpkt/itest/zpktfiltertest.cc
     @@ -107,2 +107,3 @@
        auto rx = instance->bufPool(8, 1514);
     +  auto tx = instance->bufPool(1, 128);
-       Zxdp::Params config(
+       Zpkt::Params config(
     @@ -111,2 +112,3 @@
        params.ifindex = ifindex;
     +  params.txPools.pushNode(tx.ptr());
        params.rxPool = rx;
-    Update { move_path: None }: /home/count0/src/z/zxdp/itest/zxdpwaketest.cc
+    Update { move_path: None }: /home/count0/src/z/zpkt/itest/zpktwaketest.cc
     @@ -124,2 +124,3 @@
        auto pool = backend->bufPool(8, 1514); // two queues, four receive slots each
     +  auto tx = backend->bufPool(1, 128);
@@ -18971,58 +18971,58 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
        params.rxPool = pool;
     +  params.txPools.pushNode(tx.ptr());
        params.rx = [&pool, &packets, &active, &release](uint8_t *p, unsigned) {
-    Update { move_path: None }: /home/count0/src/z/zxdp/src/Zxdp.cc
+    Update { move_path: None }: /home/count0/src/z/zpkt/src/Zpkt.cc
     @@ -93,4 +93,4 @@
          }
     -    if (!m_ifindex || !m_rxPool || !m_receive) {
-    -      return ZeEXCEPT(Error, "Zxdp", "interface, Rx pool and receive callback are required");
+    -      return ZeEXCEPT(Error, "Zpkt", "interface, Rx pool and receive callback are required");
     +    if (!m_ifindex || !m_txPools.length() || !m_rxPool || !m_receive) {
-    +      return ZeEXCEPT(Error, "Zxdp", "interface, Tx pools, Rx pool and receive callback are required");
+    +      return ZeEXCEPT(Error, "Zpkt", "interface, Tx pools, Rx pool and receive callback are required");
          }
-    Update { move_path: None }: /home/count0/src/z/zxdp/src/ZxdpUMem.cc
+    Update { move_path: None }: /home/count0/src/z/zpkt/src/ZpktUMem.cc
     @@ -79,2 +79,3 @@
        }
     +  if (!layout.txCount) return fail("at least one nonempty Tx pool is required");
        if (layout.chunk > unsigned(page)) return fail("packet exceeds AF_XDP chunk size");
-    Update { move_path: None }: /home/count0/src/z/zxdp/test/ZxdpPoolTest.cc
+    Update { move_path: None }: /home/count0/src/z/zpkt/test/ZpktPoolTest.cc
     @@ -107,4 +107,6 @@
        pools.pushNode(tx.ptr());
-    +  ZuCHECK(Zxdp::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
+    +  ZuCHECK(Zpkt::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
     +    "an Rx pool without a Tx pool is rejected");
        rx->count = 0;
-    -  ZuCHECK(Zxdp::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
-    +  ZuCHECK(Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
+    -  ZuCHECK(Zpkt::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
+    +  ZuCHECK(Zpkt::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
          "empty Rx reserve rejected");
     @@ -112,3 +114,3 @@
        rx->size = 1500;
-    -  ZuCHECK(Zxdp::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
-    +  ZuCHECK(Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
+    -  ZuCHECK(Zpkt::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
+    +  ZuCHECK(Zpkt::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
          "Rx fits complete Ethernet frame");
 
 ## Activity
 
     file changes: Completed · 4 changes
-    Update { move_path: None }: /home/count0/src/z/zxdp/GUIDELINES.md
+    Update { move_path: None }: /home/count0/src/z/zpkt/GUIDELINES.md
     @@ -9,3 +9,4 @@
        optional destination network mask,
     -  owning intrusive `Zi::IOBufPoolList` Tx list with count, size and alignment,
     +  owning intrusive `Zi::IOBufPoolList` with at least one nonempty Tx pool
     +  supplying count, size and alignment,
        one dedicated unlinked `ZmRef<Zi::IOBufPool>` Rx pool, receive callback.
-    Update { move_path: None }: /home/count0/src/z/zxdp/INTERFACE.md
+    Update { move_path: None }: /home/count0/src/z/zpkt/INTERFACE.md
     @@ -22,3 +22,3 @@
        all traffic on the interface.
     -* An owning `Zi::IOBufPoolList` of Tx pools. Each pool supplies
     +* An owning `Zi::IOBufPoolList` containing at least one nonempty Tx pool. Each pool supplies
        count, packet size and alignment. Provision the Tx arena from that list and
-    Update { move_path: None }: /home/count0/src/z/zxdp/src/Zxdp.cc
+    Update { move_path: None }: /home/count0/src/z/zpkt/src/Zpkt.cc
     @@ -94,3 +94,4 @@
          if (!m_ifindex || !m_txPools.length() || !m_rxPool || !m_receive) {
-    -      return ZeEXCEPT(Error, "Zxdp", "interface, Tx pools, Rx pool and receive callback are required");
-    +      return ZeEXCEPT(Error, "Zxdp",
+    -      return ZeEXCEPT(Error, "Zpkt", "interface, Tx pools, Rx pool and receive callback are required");
+    +      return ZeEXCEPT(Error, "Zpkt",
     +	"interface, Tx pools, Rx pool and receive callback are required");
          }
-    Update { move_path: None }: /home/count0/src/z/zxdp/src/Zxdp.hh
+    Update { move_path: None }: /home/count0/src/z/zpkt/src/Zpkt.hh
     @@ -40,3 +40,3 @@
      struct Params_ {
     -  Zi::IOBufPoolList txPools;
@@ -19031,24 +19031,24 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
 
 ## Activity
 
-    $ git diff --check; git diff --stat; rg -n -i 'error:|warning:|failed|no rule' /tmp/zxdp-required-tx-build.log | head -15; sed -n '1,110p' zxdp/util/zxdpfixture.sh
+    $ git diff --check; git diff --stat; rg -n -i 'error:|warning:|failed|no rule' /tmp/zpkt-required-tx-build.log | head -15; sed -n '1,110p' zpkt/util/zpktfixture.sh
      TODO.md                      | 3 +++
      gtags.conf                   | 2 +-
-     zxdp/GUIDELINES.md           | 3 ++-
-     zxdp/INTERFACE.md            | 2 +-
-     zxdp/itest/zxdpfiltertest.cc | 2 ++
-     zxdp/itest/zxdpwaketest.cc   | 4 ++++
-     zxdp/src/Zxdp.cc             | 5 +++--
-     zxdp/src/Zxdp.hh             | 2 +-
-     zxdp/src/ZxdpUMem.cc         | 1 +
-     zxdp/test/ZxdpPoolTest.cc    | 6 ++++--
+     zpkt/GUIDELINES.md           | 3 ++-
+     zpkt/INTERFACE.md            | 2 +-
+     zpkt/itest/zpktfiltertest.cc | 2 ++
+     zpkt/itest/zpktwaketest.cc   | 4 ++++
+     zpkt/src/Zpkt.cc             | 5 +++--
+     zpkt/src/Zpkt.hh             | 2 +-
+     zpkt/src/ZpktUMem.cc         | 1 +
+     zpkt/test/ZpktPoolTest.cc    | 6 ++++--
      10 files changed, 22 insertions(+), 8 deletions(-)
     #!/usr/bin/env bash
     # (c) Copyright 2026 Huw Rogers; MIT license (see LICENSE).
     set -euo pipefail
     
     script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
-    utility="$script_dir/zxdppacket"
+    utility="$script_dir/zpktpacket"
     output=
     count=32
     payload=128
@@ -19056,9 +19056,9 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     physical=false
     
     usage() {
-      echo 'usage: zxdpfixture.sh [--output NEW_DIR --utility PATH --count N --payload N]' >&2
+      echo 'usage: zpktfixture.sh [--output NEW_DIR --utility PATH --count N --payload N]' >&2
       echo '  [--mode wait|spin|ll]' >&2
-      echo '  --physical --output NEW_DIR -- [zxdppacket arguments]' >&2
+      echo '  --physical --output NEW_DIR -- [zpktpacket arguments]' >&2
       exit 2
     }
     while (($#)); do
@@ -19093,13 +19093,13 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     [[ $# == 0 && $count =~ ^[1-9][0-9]*$ && $payload =~ ^[1-9][0-9]*$ ]] || usage
     case "$mode" in wait|spin|ll) ;; *) usage;; esac
     [[ $(id -u) == 0 ]] || { echo 'fixture requires network-namespace setup privileges' >&2; exit 1; }
-    if [[ ${ZXDP_FIXTURE_INNER:-0} != 1 ]]; then
+    if [[ ${ZPKT_FIXTURE_INNER:-0} != 1 ]]; then
       if [[ -z $output ]]; then
-        output=$(mktemp -d /tmp/zxdp-fixture-parent.XXXXXX)/run
+        output=$(mktemp -d /tmp/zpkt-fixture-parent.XXXXXX)/run
       fi
       # The entire resource-owning shell runs inside this anonymous namespace.
       # No named namespace, host route, interface, neighbor or attachment is changed.
-      exec unshare --net env ZXDP_FIXTURE_INNER=1 "$0" --output "$output" \
+      exec unshare --net env ZPKT_FIXTURE_INNER=1 "$0" --output "$output" \
         --utility "$utility" --count "$count" --payload "$payload" --mode "$mode"
     fi
     
@@ -19117,7 +19117,7 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
         wait "$server_pid" 2>/dev/null || true
       fi
       printf 'fixture_exit=%s\n' "$result" >> "$output/state.txt"
-      echo "Zxdp fixture artifacts: $output"
+      echo "Zpkt fixture artifacts: $output"
       exit "$result"
     }
     trap cleanup EXIT
@@ -19125,20 +19125,20 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     trap 'exit 143' TERM
     printf 'backend=veth\nnamespace=anonymous\nmode=%s\ncount=%s\npayload=%s\n' \
       "$mode" "$count" "$payload" > "$output/state.txt"
-    printf 'owned_links=zxdpp0,zxdpp1\nreserved_endpoints=192.0.2.1:40000,192.0.2.2:40001/udp\n' \
+    printf 'owned_links=zpktp0,zpktp1\nreserved_endpoints=192.0.2.1:40000,192.0.2.2:40001/udp\n' \
       >> "$output/state.txt"
-    ip link add zxdpp0 numrxqueues 1 numtxqueues 1 type veth \
-      peer name zxdpp1 numrxqueues 1 numtxqueues 1
-    ip addr add 192.0.2.1/32 dev zxdpp0
-    ip addr add 192.0.2.2/32 dev zxdpp1
-    ip link set zxdpp0 up
-    ip link set zxdpp1 up
-    client_mac=$(ip -o link show dev zxdpp0 | awk '{for(i=1;i<=NF;i++)
+    ip link add zpktp0 numrxqueues 1 numtxqueues 1 type veth \
+      peer name zpktp1 numrxqueues 1 numtxqueues 1
+    ip addr add 192.0.2.1/32 dev zpktp0
+    ip addr add 192.0.2.2/32 dev zpktp1
+    ip link set zpktp0 up
+    ip link set zpktp1 up
+    client_mac=$(ip -o link show dev zpktp0 | awk '{for(i=1;i<=NF;i++)
       if($i=="link/ether") print $(i+1)}')
-    server_mac=$(ip -o link show dev zxdpp1 | awk '{for(i=1;i<=NF;i++)
+    server_mac=$(ip -o link show dev zpktp1 | awk '{for(i=1;i<=NF;i++)
       if($i=="link/ether") print $(i+1)}')
-    ip neigh add 192.0.2.2 lladdr "$server_mac" nud permanent dev zxdpp0
-    ip neigh add 192.0.2.1 lladdr "$client_mac" nud permanent dev zxdpp1
+    ip neigh add 192.0.2.2 lladdr "$server_mac" nud permanent dev zpktp0
+    ip neigh add 192.0.2.1 lladdr "$client_mac" nud permanent dev zpktp1
     ip -details link show > "$output/links.txt"
     ip addr show > "$output/addresses.txt"
     ip neigh show > "$output/neighbors.txt"
@@ -19149,7 +19149,7 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     esac
     common=(--count "$count" --payload "$payload" --frames 2 --deadline 15 "${wait_args[@]}")
     timeout --signal=TERM --kill-after=2s 25s "$utility" server \
-      --interface zxdpp1 --peer-mac "$client_mac" \
+      --interface zpktp1 --peer-mac "$client_mac" \
       --local-ip 192.0.2.2 --peer-ip 192.0.2.1 --local-port 40001 --peer-port 40000 \
       --ready-file "$output/server.ready" "${common[@]}" > "$output/server.log" 2>&1 &
     server_pid=$!
@@ -19157,15 +19157,15 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
 
 ## Activity
 
-    $ tail -n 8 /tmp/zxdp-required-tx-build.log; sed -n '1,100p' zxdp/itest/zxdplooptest.cc; rg -n 'numrxqueues|ZXDP_TEST_IFINDEX|zxdpwaketest|zxdpfiltertest' scripts zxdp/util zutcp/itest --glob '*.sh' | head -40
-    libtool: link: clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd -o .libs/ZutcpPQueueTest ZutcpPQueueTest.o  ../../zi/test/.libs/libZiTest.a ../../zutcp/src/.libs/libZutcp.so /home/count0/src/z/zxdp/src/.libs/libZxdp.so -lcrypto ../../zxdp/src/.libs/libZxdp.so /home/count0/src/z/zi/src/.libs/libZi.so ../../zi/src/.libs/libZi.so /home/count0/src/z/zf/src/.libs/libZf.so ../../zf/src/.libs/libZf.so /home/count0/src/z/ze/src/.libs/libZe.so ../../ze/src/.libs/libZe.so /home/count0/src/z/zt/src/.libs/libZt.so ../../zt/src/.libs/libZt.so /home/count0/src/z/zm/src/.libs/libZm.so ../../zm/src/.libs/libZm.so /home/count0/src/z/zu/src/.libs/libZu.so ../../zu/src/.libs/libZu.so -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
-    libtool: link: clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd -o .libs/ZutcpLoopTest ZutcpLoopTest.o  ../../zi/test/.libs/libZiTest.a ../../zutcp/src/.libs/libZutcp.so /home/count0/src/z/zxdp/src/.libs/libZxdp.so -lcrypto ../../zxdp/src/.libs/libZxdp.so /home/count0/src/z/zi/src/.libs/libZi.so ../../zi/src/.libs/libZi.so /home/count0/src/z/zf/src/.libs/libZf.so ../../zf/src/.libs/libZf.so /home/count0/src/z/ze/src/.libs/libZe.so ../../ze/src/.libs/libZe.so /home/count0/src/z/zt/src/.libs/libZt.so ../../zt/src/.libs/libZt.so /home/count0/src/z/zm/src/.libs/libZm.so ../../zm/src/.libs/libZm.so /home/count0/src/z/zu/src/.libs/libZu.so ../../zu/src/.libs/libZu.so -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
-    libtool: link: clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd -o .libs/ZutcpRuntimeTest ZutcpRuntimeTest.o  ../../zi/test/.libs/libZiTest.a ../../zutcp/src/.libs/libZutcp.so /home/count0/src/z/zxdp/src/.libs/libZxdp.so -lcrypto ../../zxdp/src/.libs/libZxdp.so /home/count0/src/z/zi/src/.libs/libZi.so ../../zi/src/.libs/libZi.so /home/count0/src/z/zf/src/.libs/libZf.so ../../zf/src/.libs/libZf.so /home/count0/src/z/ze/src/.libs/libZe.so ../../ze/src/.libs/libZe.so /home/count0/src/z/zt/src/.libs/libZt.so ../../zt/src/.libs/libZt.so /home/count0/src/z/zm/src/.libs/libZm.so ../../zm/src/.libs/libZm.so /home/count0/src/z/zu/src/.libs/libZu.so ../../zu/src/.libs/libZu.so -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
-    libtool: link: clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd -o .libs/ZutcpLogTest ZutcpLogTest.o  ../../zi/test/.libs/libZiTest.a ../../zutcp/src/.libs/libZutcp.so /home/count0/src/z/zxdp/src/.libs/libZxdp.so -lcrypto ../../zxdp/src/.libs/libZxdp.so /home/count0/src/z/zi/src/.libs/libZi.so ../../zi/src/.libs/libZi.so /home/count0/src/z/zf/src/.libs/libZf.so ../../zf/src/.libs/libZf.so /home/count0/src/z/ze/src/.libs/libZe.so ../../ze/src/.libs/libZe.so /home/count0/src/z/zt/src/.libs/libZt.so ../../zt/src/.libs/libZt.so /home/count0/src/z/zm/src/.libs/libZm.so ../../zm/src/.libs/libZm.so /home/count0/src/z/zu/src/.libs/libZu.so ../../zu/src/.libs/libZu.so -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
-    /bin/sh ../../libtool  --tag=CXX   --mode=link clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd  -o ZutcpRxAccountingTest ZutcpRxAccountingTest.o ../../zi/test/libZiTest.la ../../zutcp/src/libZutcp.la ../../zxdp/src/libZxdp.la ../../zi/src/libZi.la ../../zf/src/libZf.la ../../ze/src/libZe.la ../../zt/src/libZt.la ../../zm/src/libZm.la ../../zu/src/libZu.la -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
-    libtool: link: clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd -o .libs/ZutcpRxAccountingTest ZutcpRxAccountingTest.o  ../../zi/test/.libs/libZiTest.a ../../zutcp/src/.libs/libZutcp.so /home/count0/src/z/zxdp/src/.libs/libZxdp.so -lcrypto ../../zxdp/src/.libs/libZxdp.so /home/count0/src/z/zi/src/.libs/libZi.so ../../zi/src/.libs/libZi.so /home/count0/src/z/zf/src/.libs/libZf.so ../../zf/src/.libs/libZf.so /home/count0/src/z/ze/src/.libs/libZe.so ../../ze/src/.libs/libZe.so /home/count0/src/z/zt/src/.libs/libZt.so ../../zt/src/.libs/libZt.so /home/count0/src/z/zm/src/.libs/libZm.so ../../zm/src/.libs/libZm.so /home/count0/src/z/zu/src/.libs/libZu.so ../../zu/src/.libs/libZu.so -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
-    /bin/sh ../../libtool  --tag=CXX   --mode=link clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd  -o ZutcpTimerTest ZutcpTimerTest.o ../../zi/test/libZiTest.la ../../zutcp/src/libZutcp.la ../../zxdp/src/libZxdp.la ../../zi/src/libZi.la ../../zf/src/libZf.la ../../ze/src/libZe.la ../../zt/src/libZt.la ../../zm/src/libZm.la ../../zu/src/libZu.la -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
-    libtool: link: clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd -o .libs/ZutcpTimerTest ZutcpTimerTest.o  ../../zi/test/.libs/libZiTest.a ../../zutcp/src/.libs/libZutcp.so /home/count0/src/z/zxdp/src/.libs/libZxdp.so -lcrypto ../../zxdp/src/.libs/libZxdp.so /home/count0/src/z/zi/src/.libs/libZi.so ../../zi/src/.libs/libZi.so /home/count0/src/z/zf/src/.libs/libZf.so ../../zf/src/.libs/libZf.so /home/count0/src/z/ze/src/.libs/libZe.so ../../ze/src/.libs/libZe.so /home/count0/src/z/zt/src/.libs/libZt.so ../../zt/src/.libs/libZt.so /home/count0/src/z/zm/src/.libs/libZm.so ../../zm/src/.libs/libZm.so /home/count0/src/z/zu/src/.libs/libZu.so ../../zu/src/.libs/libZu.so -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
+    $ tail -n 8 /tmp/zpkt-required-tx-build.log; sed -n '1,100p' zpkt/itest/zpktlooptest.cc; rg -n 'numrxqueues|ZPKT_TEST_IFINDEX|zpktwaketest|zpktfiltertest' scripts zpkt/util zutcp/itest --glob '*.sh' | head -40
+    libtool: link: clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd -o .libs/ZutcpPQueueTest ZutcpPQueueTest.o  ../../zi/test/.libs/libZiTest.a ../../zutcp/src/.libs/libZutcp.so /home/count0/src/z/zpkt/src/.libs/libZpkt.so -lcrypto ../../zpkt/src/.libs/libZpkt.so /home/count0/src/z/zi/src/.libs/libZi.so ../../zi/src/.libs/libZi.so /home/count0/src/z/zf/src/.libs/libZf.so ../../zf/src/.libs/libZf.so /home/count0/src/z/ze/src/.libs/libZe.so ../../ze/src/.libs/libZe.so /home/count0/src/z/zt/src/.libs/libZt.so ../../zt/src/.libs/libZt.so /home/count0/src/z/zm/src/.libs/libZm.so ../../zm/src/.libs/libZm.so /home/count0/src/z/zu/src/.libs/libZu.so ../../zu/src/.libs/libZu.so -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
+    libtool: link: clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd -o .libs/ZutcpLoopTest ZutcpLoopTest.o  ../../zi/test/.libs/libZiTest.a ../../zutcp/src/.libs/libZutcp.so /home/count0/src/z/zpkt/src/.libs/libZpkt.so -lcrypto ../../zpkt/src/.libs/libZpkt.so /home/count0/src/z/zi/src/.libs/libZi.so ../../zi/src/.libs/libZi.so /home/count0/src/z/zf/src/.libs/libZf.so ../../zf/src/.libs/libZf.so /home/count0/src/z/ze/src/.libs/libZe.so ../../ze/src/.libs/libZe.so /home/count0/src/z/zt/src/.libs/libZt.so ../../zt/src/.libs/libZt.so /home/count0/src/z/zm/src/.libs/libZm.so ../../zm/src/.libs/libZm.so /home/count0/src/z/zu/src/.libs/libZu.so ../../zu/src/.libs/libZu.so -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
+    libtool: link: clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd -o .libs/ZutcpRuntimeTest ZutcpRuntimeTest.o  ../../zi/test/.libs/libZiTest.a ../../zutcp/src/.libs/libZutcp.so /home/count0/src/z/zpkt/src/.libs/libZpkt.so -lcrypto ../../zpkt/src/.libs/libZpkt.so /home/count0/src/z/zi/src/.libs/libZi.so ../../zi/src/.libs/libZi.so /home/count0/src/z/zf/src/.libs/libZf.so ../../zf/src/.libs/libZf.so /home/count0/src/z/ze/src/.libs/libZe.so ../../ze/src/.libs/libZe.so /home/count0/src/z/zt/src/.libs/libZt.so ../../zt/src/.libs/libZt.so /home/count0/src/z/zm/src/.libs/libZm.so ../../zm/src/.libs/libZm.so /home/count0/src/z/zu/src/.libs/libZu.so ../../zu/src/.libs/libZu.so -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
+    libtool: link: clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd -o .libs/ZutcpLogTest ZutcpLogTest.o  ../../zi/test/.libs/libZiTest.a ../../zutcp/src/.libs/libZutcp.so /home/count0/src/z/zpkt/src/.libs/libZpkt.so -lcrypto ../../zpkt/src/.libs/libZpkt.so /home/count0/src/z/zi/src/.libs/libZi.so ../../zi/src/.libs/libZi.so /home/count0/src/z/zf/src/.libs/libZf.so ../../zf/src/.libs/libZf.so /home/count0/src/z/ze/src/.libs/libZe.so ../../ze/src/.libs/libZe.so /home/count0/src/z/zt/src/.libs/libZt.so ../../zt/src/.libs/libZt.so /home/count0/src/z/zm/src/.libs/libZm.so ../../zm/src/.libs/libZm.so /home/count0/src/z/zu/src/.libs/libZu.so ../../zu/src/.libs/libZu.so -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
+    /bin/sh ../../libtool  --tag=CXX   --mode=link clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd  -o ZutcpRxAccountingTest ZutcpRxAccountingTest.o ../../zi/test/libZiTest.la ../../zutcp/src/libZutcp.la ../../zpkt/src/libZpkt.la ../../zi/src/libZi.la ../../zf/src/libZf.la ../../ze/src/libZe.la ../../zt/src/libZt.la ../../zm/src/libZm.la ../../zu/src/libZu.la -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
+    libtool: link: clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd -o .libs/ZutcpRxAccountingTest ZutcpRxAccountingTest.o  ../../zi/test/.libs/libZiTest.a ../../zutcp/src/.libs/libZutcp.so /home/count0/src/z/zpkt/src/.libs/libZpkt.so -lcrypto ../../zpkt/src/.libs/libZpkt.so /home/count0/src/z/zi/src/.libs/libZi.so ../../zi/src/.libs/libZi.so /home/count0/src/z/zf/src/.libs/libZf.so ../../zf/src/.libs/libZf.so /home/count0/src/z/ze/src/.libs/libZe.so ../../ze/src/.libs/libZe.so /home/count0/src/z/zt/src/.libs/libZt.so ../../zt/src/.libs/libZt.so /home/count0/src/z/zm/src/.libs/libZm.so ../../zm/src/.libs/libZm.so /home/count0/src/z/zu/src/.libs/libZu.so ../../zu/src/.libs/libZu.so -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
+    /bin/sh ../../libtool  --tag=CXX   --mode=link clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd  -o ZutcpTimerTest ZutcpTimerTest.o ../../zi/test/libZiTest.la ../../zutcp/src/libZutcp.la ../../zpkt/src/libZpkt.la ../../zi/src/libZi.la ../../zf/src/libZf.la ../../ze/src/libZe.la ../../zt/src/libZt.la ../../zm/src/libZm.la ../../zu/src/libZu.la -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
+    libtool: link: clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd -o .libs/ZutcpTimerTest ZutcpTimerTest.o  ../../zi/test/.libs/libZiTest.a ../../zutcp/src/.libs/libZutcp.so /home/count0/src/z/zpkt/src/.libs/libZpkt.so -lcrypto ../../zpkt/src/.libs/libZpkt.so /home/count0/src/z/zi/src/.libs/libZi.so ../../zi/src/.libs/libZi.so /home/count0/src/z/zf/src/.libs/libZf.so ../../zf/src/.libs/libZf.so /home/count0/src/z/ze/src/.libs/libZe.so ../../ze/src/.libs/libZe.so /home/count0/src/z/zt/src/.libs/libZt.so ../../zt/src/.libs/libZt.so /home/count0/src/z/zm/src/.libs/libZm.so ../../zm/src/.libs/libZm.so /home/count0/src/z/zu/src/.libs/libZu.so ../../zu/src/.libs/libZu.so -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -19185,7 +19185,7 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     
     #include <zlib/ZiPlatform.hh>
     
-    #include "zxdplog.hh"
+    #include "zpktlog.hh"
     
     using namespace ZuTestUtil;
     
@@ -19193,7 +19193,7 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     {
       // The fixture's result is a single bounded summary line.
       char bytes[4096];
-      return ZxdpTest::readLog(path, bytes) && strstr(bytes, text);
+      return ZpktTest::readLog(path, bytes) && strstr(bytes, text);
     }
     
     static int fixture(const char *output, const char *mode, const char *payload,
@@ -19207,7 +19207,7 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
         int fd = open(log, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
         if (fd < 0 || dup2(fd, STDOUT_FILENO) < 0 || dup2(fd, STDERR_FILENO) < 0) _exit(126);
         close(fd);
-        execl("/bin/bash", "bash", ZXDP_FIXTURE, "--utility", ZXDP_PACKET,
+        execl("/bin/bash", "bash", ZPKT_FIXTURE, "--utility", ZPKT_PACKET,
           "--output", output, "--count", count, "--payload", payload, "--mode", mode,
           static_cast<char *>(nullptr));
         _exit(127);
@@ -19220,11 +19220,11 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     static void testProcesses()
     {
       ZuTestScopeRT(testProcesses);
-      char directory[] = "/tmp/zxdp-loop.XXXXXX";
+      char directory[] = "/tmp/zpkt-loop.XXXXXX";
       auto parent = mkdtemp(directory);
       ZuCheckRT(!!parent, log_("private fixture artifact parent created"));
       if (!parent) return;
-      auto beforeA = if_nametoindex("zxdpp0"), beforeB = if_nametoindex("zxdpp1");
+      auto beforeA = if_nametoindex("zpktp0"), beforeB = if_nametoindex("zpktp1");
       const char *modes[] = {"wait", "spin", "ll"};
       const char *payloads[] = {"1472", "129", "128"};
       for (unsigned i = 0; i < 3; ++i) {
@@ -19240,7 +19240,7 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
         contains(server, "PASS role=server packets=32 completions=32") &&
         contains(state, "fixture_exit=0"),
         log_(modes[i], " separate processes verify all payloads and kernel completions"));
-        ZuCheckRT(if_nametoindex("zxdpp0") == beforeA && if_nametoindex("zxdpp1") == beforeB,
+        ZuCheckRT(if_nametoindex("zpktp0") == beforeA && if_nametoindex("zpktp1") == beforeB,
         log_(modes[i], " namespace cleanup preserves the caller's interfaces"));
       }
       Zi::Path output, server;
@@ -19255,15 +19255,15 @@ I also checked my earlier “Rx-only tests” claim: the filter case tests faile
     int main(int argc, char **argv)
     {
       parse(argc, argv);
-      if (geteuid() || !getenv("ZXDP_RUN_FIXTURE")) {
-        std::cout << "1..0 # SKIP requires root and ZXDP_RUN_FIXTURE=1 for scoped namespace setup\n";
+      if (geteuid() || !getenv("ZPKT_RUN_FIXTURE")) {
+        std::cout << "1..0 # SKIP requires root and ZPKT_RUN_FIXTURE=1 for scoped namespace setup\n";
         return 0;
       }
       ZuTestMain();
       ZuTestCall(testProcesses);
     }
-    zxdp/util/zxdpfixture.sh:85:ip link add zxdpp0 numrxqueues 1 numtxqueues 1 type veth \
-    zxdp/util/zxdpfixture.sh:86:  peer name zxdpp1 numrxqueues 1 numtxqueues 1
+    zpkt/util/zpktfixture.sh:85:ip link add zpktp0 numrxqueues 1 numtxqueues 1 type veth \
+    zpkt/util/zpktfixture.sh:86:  peer name zpktp1 numrxqueues 1 numtxqueues 1
     zutcp/itest/zutcpappfixture.sh:38:ip link add zutcpac numrxqueues 1 numtxqueues 1 type veth \
     zutcp/itest/zutcpappfixture.sh:39:  peer name zutcpas numrxqueues 1 numtxqueues 1
     zutcp/itest/zutcppairfixture.sh:149:ip link add zutcpca numrxqueues 1 numtxqueues 1 type veth peer name zutcpa
@@ -19282,21 +19282,21 @@ One sizing discrepancy remains in the current code: `Stack::allocator()` clamps 
 
 ## Activity
 
-    $ cat > /tmp/zxdp-required-tx-native.sh <<'SH'
+    $ cat > /tmp/zpkt-required-tx-native.sh <<'SH'
         #!/bin/bash
         set -euo pipefail
         cd /home/count0/src/z
         ip link add zxreqa numrxqueues 2 numtxqueues 2 type veth peer name zxreqb numrxqueues 2 numtxqueues 2
         ip link set zxreqa up
         ip link set zxreqb up
-        export ZXDP_TEST_IFINDEX=$(cat /sys/class/net/zxreqa/ifindex)
-        export ZXDP_TEST_PEER_IFINDEX=$(cat /sys/class/net/zxreqb/ifindex)
-        timeout 60s prove zxdp/itest/zxdppackettest zxdp/itest/zxdpfiltertest zxdp/itest/zxdpwaketest
+        export ZPKT_TEST_IFINDEX=$(cat /sys/class/net/zxreqa/ifindex)
+        export ZPKT_TEST_PEER_IFINDEX=$(cat /sys/class/net/zxreqb/ifindex)
+        timeout 60s prove zpkt/itest/zpktpackettest zpkt/itest/zpktfiltertest zpkt/itest/zpktwaketest
         SH
-        chmod +x /tmp/zxdp-required-tx-native.sh
+        chmod +x /tmp/zpkt-required-tx-native.sh
         python - <<'PY'
         from pathlib import Path
-        for name in ('zxdp/src/Zxdp.cc','zxdp/src/Zxdp.hh','zxdp/src/ZxdpUMem.cc','zxdp/itest/zxdpfiltertest.cc','zxdp/itest/zxdpwaketest.cc','zxdp/test/ZxdpPoolTest.cc'):
+        for name in ('zpkt/src/Zpkt.cc','zpkt/src/Zpkt.hh','zpkt/src/ZpktUMem.cc','zpkt/itest/zpktfiltertest.cc','zpkt/itest/zpktwaketest.cc','zpkt/test/ZpktPoolTest.cc'):
          p=Path(name)
          for i,line in enumerate(p.read_text().splitlines(),1):
           if len(line.expandtabs(8))>98 and ('Tx pools' in line or 'nonempty Tx' in line):
@@ -19306,22 +19306,22 @@ One sizing discrepancy remains in the current code: `Stack::allocator()` clamps 
 
 ## Activity
 
-    $ make -C zxdp/test -j8 > /tmp/zxdp-required-tx-unit-build.log 2>&1
+    $ make -C zpkt/test -j8 > /tmp/zpkt-required-tx-unit-build.log 2>&1
     ✓ • 0ms
 
 ## Activity
 
-    $ make -C zxdp/test test
-    make: Entering directory '/home/count0/src/z/zxdp/test'
-    prove ZxdpRingTest ZxdpPoolTest ZxdpInstanceTest ZxdpClassifierTest
-    ZxdpRingTest ............ ok
-    ZxdpClassifierTest ...... ok
-    ZxdpInstanceTest ........ ok
-    ZxdpPoolTest ............ ok
+    $ make -C zpkt/test test
+    make: Entering directory '/home/count0/src/z/zpkt/test'
+    prove ZpktRingTest ZpktPoolTest ZpktInstanceTest ZpktClassifierTest
+    ZpktRingTest ............ ok
+    ZpktClassifierTest ...... ok
+    ZpktInstanceTest ........ ok
+    ZpktPoolTest ............ ok
     All tests successful.
     Files=4, Tests=14, 85ms wallclock (20ms usr + 10ms sys = 30ms CPU)
     Result: PASS
-    make: Leaving directory '/home/count0/src/z/zxdp/test'
+    make: Leaving directory '/home/count0/src/z/zpkt/test'
     ✓ • 2ms
 
 ## Activity
@@ -19392,39 +19392,39 @@ One sizing discrepancy remains in the current code: `Stack::allocator()` clamps 
         '''
         p.write_text(s)
         PY
-        make -j8 > /tmp/zxdp-required-tx-build.log 2>&1
+        make -j8 > /tmp/zpkt-required-tx-build.log 2>&1
     ✓ • 2m 08s
 
 ## Activity
 
-    $ sudo -n unshare --net /tmp/zxdp-required-tx-native.sh
+    $ sudo -n unshare --net /tmp/zpkt-required-tx-native.sh
     cat: /sys/class/net/zxreqa/ifindex: No such file or directory
     cat: /sys/class/net/zxreqb/ifindex: No such file or directory
     fixture provides two Rx queues: invalid packet interface index: Invalid argument
     coalesced sender fixture: interface, Tx pools, Rx pool and receive callback are required
     single-slot lease race setup: interface, Tx pools, Rx pool and receive callback are required
-    zxdp/itest/zxdppackettest ...
+    zpkt/itest/zpktpackettest ...
     Dubious, test returned 3 (wstat 768, 0x300)
     Failed 3/3 subtests
     fixture attaches an independent owner: invalid packet interface index: Invalid argument
-    zxdp/itest/zxdpfiltertest ...
+    zpkt/itest/zpktfiltertest ...
     Dubious, test returned 1 (wstat 256, 0x100)
     Failed 1/2 subtests
     zero-spin receive instance starts: interface, Tx pools, Rx pool and receive callback are required
     long-spin receive instance starts: interface, Tx pools, Rx pool and receive callback are required
-    zxdp/itest/zxdpwaketest .....
+    zpkt/itest/zpktwaketest .....
     Dubious, test returned 2 (wstat 512, 0x200)
     Failed 2/2 subtests
     
     Test Summary Report
     -------------------
-    zxdp/itest/zxdppackettest (Wstat: 768 (exited 3) Tests: 3 Failed: 3)
+    zpkt/itest/zpktpackettest (Wstat: 768 (exited 3) Tests: 3 Failed: 3)
       Failed tests:  1-3
       Non-zero exit status: 3
-    zxdp/itest/zxdpfiltertest (Wstat: 256 (exited 1) Tests: 2 Failed: 1)
+    zpkt/itest/zpktfiltertest (Wstat: 256 (exited 1) Tests: 2 Failed: 1)
       Failed test:  2
       Non-zero exit status: 1
-    zxdp/itest/zxdpwaketest  (Wstat: 512 (exited 2) Tests: 2 Failed: 2)
+    zpkt/itest/zpktwaketest  (Wstat: 512 (exited 2) Tests: 2 Failed: 2)
       Failed tests:  1-2
       Non-zero exit status: 2
     Files=3, Tests=7, 4070ms wallclock (10ms usr + 0ms sys = 10ms CPU)
@@ -19433,31 +19433,31 @@ One sizing discrepancy remains in the current code: `Stack::allocator()` clamps 
 
 ## Assistant
 
-The four zxdp unit programs passed. My first native fixture run failed before exercising the changes because it read interface indices from host sysfs. I’ll correct the temporary fixture to query the new namespace directly and rerun it.
+The four zpkt unit programs passed. My first native fixture run failed before exercising the changes because it read interface indices from host sysfs. I’ll correct the temporary fixture to query the new namespace directly and rerun it.
 
 ## Activity
 
     $ python - <<'PY'
         from pathlib import Path
-        p=Path('/tmp/zxdp-required-tx-native.sh')
-        s=p.read_text().replace('export ZXDP_TEST_IFINDEX=$(cat /sys/class/net/zxreqa/ifindex)', "ZXDP_TEST_IFINDEX=$(ip -o link show dev zxreqa | cut -d: -f1)\nexport ZXDP_TEST_IFINDEX").replace('export ZXDP_TEST_PEER_IFINDEX=$(cat /sys/class/net/zxreqb/ifindex)', "ZXDP_TEST_PEER_IFINDEX=$(ip -o link show dev zxreqb | cut -d: -f1)\nexport ZXDP_TEST_PEER_IFINDEX")
+        p=Path('/tmp/zpkt-required-tx-native.sh')
+        s=p.read_text().replace('export ZPKT_TEST_IFINDEX=$(cat /sys/class/net/zxreqa/ifindex)', "ZPKT_TEST_IFINDEX=$(ip -o link show dev zxreqa | cut -d: -f1)\nexport ZPKT_TEST_IFINDEX").replace('export ZPKT_TEST_PEER_IFINDEX=$(cat /sys/class/net/zxreqb/ifindex)', "ZPKT_TEST_PEER_IFINDEX=$(ip -o link show dev zxreqb | cut -d: -f1)\nexport ZPKT_TEST_PEER_IFINDEX")
         p.write_text(s)
         PY
     ✓ • 0ms
 
 ## Activity
 
-    $ sudo -n unshare --net /tmp/zxdp-required-tx-native.sh
+    $ sudo -n unshare --net /tmp/zpkt-required-tx-native.sh
     single-slot lease race setup: AF_XDP interface/queue bind: Device or resource busy
-    zxdp/itest/zxdppackettest ...
+    zpkt/itest/zpktpackettest ...
     Dubious, test returned 1 (wstat 256, 0x100)
     Failed 1/3 subtests
-    zxdp/itest/zxdpfiltertest ... ok
-    zxdp/itest/zxdpwaketest ..... ok
+    zpkt/itest/zpktfiltertest ... ok
+    zpkt/itest/zpktwaketest ..... ok
     
     Test Summary Report
     -------------------
-    zxdp/itest/zxdppackettest (Wstat: 256 (exited 1) Tests: 3 Failed: 1)
+    zpkt/itest/zpktpackettest (Wstat: 256 (exited 1) Tests: 3 Failed: 1)
       Failed test:  3
       Non-zero exit status: 1
     Files=3, Tests=7, 486ms wallclock (20ms usr + 0ms sys = 20ms CPU)
@@ -19466,7 +19466,7 @@ The four zxdp unit programs passed. My first native fixture run failed before ex
 
 ## Activity
 
-    $ sed -n '425,535p' zxdp/itest/zxdppackettest.cc; rg -n 'testPacket|testSend|testLease|single.slot|usleep|retry|bind' zxdp/itest/zxdppackettest.cc; tail -n 4 /tmp/zxdp-required-tx-build.log; git diff --check; git diff -- zxdp/src/Zxdp.cc zxdp/src/ZxdpUMem.cc zxdp/itest/zxdpwaketest.cc
+    $ sed -n '425,535p' zpkt/itest/zpktpackettest.cc; rg -n 'testPacket|testSend|testLease|single.slot|usleep|retry|bind' zpkt/itest/zpktpackettest.cc; tail -n 4 /tmp/zpkt-required-tx-build.log; git diff --check; git diff -- zpkt/src/Zpkt.cc zpkt/src/ZpktUMem.cc zpkt/itest/zpktwaketest.cc
       bool tail = last && publish(1);
       unsigned callbacks = 0;
       bool ordered = true;
@@ -19515,14 +19515,14 @@ The four zxdp unit programs passed. My first native fixture run failed before ex
     {
       ZuTestScopeRT(testLeaseRace);
       enum { Turns = 96 }; // 32 returns before CQ, after CQ, and concurrent with CQ
-      auto instance = Zxdp::instance(Zxdp::Type::Xdp);
+      auto instance = Zpkt::instance(Zpkt::Type::Xdp);
       auto rx = instance->bufPool(RxSlots, 1514);
       auto tx = instance->bufPool(1, 64);
       ZeException error;
-      Zxdp::Params config(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-      auto &params = config.p<Zxdp::Xdp::Params>();
-      params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
+      Zpkt::Params config(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+      auto &params = config.p<Zpkt::Xdp::Params>();
+      params.ifindex = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10));
       params.rxPool = rx;
       params.rx = [&rx](uint8_t *p, unsigned) { rx->free(p); };
       params.txPools.pushNode(tx.ptr());
@@ -19602,21 +19602,21 @@ The four zxdp unit programs passed. My first native fixture run failed before ex
     make[2]: Entering directory '/home/count0/src/z'
     make[2]: Leaving directory '/home/count0/src/z'
     make[1]: Leaving directory '/home/count0/src/z'
-    diff --git a/zxdp/itest/zxdpwaketest.cc b/zxdp/itest/zxdpwaketest.cc
+    diff --git a/zpkt/itest/zpktwaketest.cc b/zpkt/itest/zpktwaketest.cc
     index 3a9198fa..08410c6d 100644
-    --- a/zxdp/itest/zxdpwaketest.cc
-    +++ b/zxdp/itest/zxdpwaketest.cc
+    --- a/zpkt/itest/zpktwaketest.cc
+    +++ b/zpkt/itest/zpktwaketest.cc
     @@ -122,6 +122,7 @@ static void testWake()
        alarm(20); // a missing wake fails the fixture; time does not establish success
-       auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+       auto backend = Zpkt::instance(Zpkt::Type::Xdp);
        auto pool = backend->bufPool(8, 1514); // two queues, four receive slots each
     +  auto tx = backend->bufPool(1, 128);
        ZeException error;
        ZmSemaphore packet;
-       Zxdp::Params config(
+       Zpkt::Params config(
     @@ -129,6 +130,7 @@ static void testWake()
-       auto &params = config.p<Zxdp::Xdp::Params>();
-       params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
+       auto &params = config.p<Zpkt::Xdp::Params>();
+       params.ifindex = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10));
        params.rxPool = pool;
     +  params.txPools.pushNode(tx.ptr());
        params.rx = [&pool, &packet](uint8_t *p, unsigned) {
@@ -19624,40 +19624,40 @@ The four zxdp unit programs passed. My first native fixture run failed before ex
          packet.post();
     @@ -251,6 +253,7 @@ static void testActiveWake()
        alarm(20);
-       auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+       auto backend = Zpkt::instance(Zpkt::Type::Xdp);
        auto pool = backend->bufPool(8, 1514);
     +  auto tx = backend->bufPool(1, 128);
        ZeException error;
        ZmSemaphore active, release;
-       Zxdp::Instance *current = nullptr;
+       Zpkt::Instance *current = nullptr;
     @@ -260,6 +263,7 @@ static void testActiveWake()
-       auto &params = config.p<Zxdp::Xdp::Params>();
-       params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
+       auto &params = config.p<Zpkt::Xdp::Params>();
+       params.ifindex = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10));
        params.rxPool = pool;
     +  params.txPools.pushNode(tx.ptr());
        params.rx = [&pool, &packets, &active, &release](uint8_t *p, unsigned) {
          ++packets;
          active.post();
-    diff --git a/zxdp/src/Zxdp.cc b/zxdp/src/Zxdp.cc
+    diff --git a/zpkt/src/Zpkt.cc b/zpkt/src/Zpkt.cc
     index 157f4de8..ae90d131 100644
-    --- a/zxdp/src/Zxdp.cc
-    +++ b/zxdp/src/Zxdp.cc
+    --- a/zpkt/src/Zpkt.cc
+    +++ b/zpkt/src/Zpkt.cc
     @@ -91,8 +91,9 @@ public:
            unsigned i = 0;
            while (auto pool = pools()) m_txPools[i++] = static_cast<Zi::IOBufPool *>(pool);
          }
     -    if (!m_ifindex || !m_rxPool || !m_receive) {
-    -      return ZeEXCEPT(Error, "Zxdp", "interface, Rx pool and receive callback are required");
+    -      return ZeEXCEPT(Error, "Zpkt", "interface, Rx pool and receive callback are required");
     +    if (!m_ifindex || !m_txPools.length() || !m_rxPool || !m_receive) {
-    +      return ZeEXCEPT(Error, "Zxdp",
+    +      return ZeEXCEPT(Error, "Zpkt",
     +    "interface, Tx pools, Rx pool and receive callback are required");
          }
          if (!m_scheduler || !m_txSid || m_txSid > m_scheduler->params().nThreads()) {
-           return ZeEXCEPT(Error, "Zxdp", "AF_XDP requires a scheduler and assigned Tx slot");
-    diff --git a/zxdp/src/ZxdpUMem.cc b/zxdp/src/ZxdpUMem.cc
+           return ZeEXCEPT(Error, "Zpkt", "AF_XDP requires a scheduler and assigned Tx slot");
+    diff --git a/zpkt/src/ZpktUMem.cc b/zpkt/src/ZpktUMem.cc
     index 75483fb6..b08519f1 100644
-    --- a/zxdp/src/ZxdpUMem.cc
-    +++ b/zxdp/src/ZxdpUMem.cc
+    --- a/zpkt/src/ZpktUMem.cc
+    +++ b/zpkt/src/ZpktUMem.cc
     @@ -77,6 +77,7 @@ ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
            txBytes += length;
          }
@@ -19670,17 +19670,17 @@ The four zxdp unit programs passed. My first native fixture run failed before ex
 
 ## Activity
 
-    $ sudo -n unshare --net /tmp/zxdp-required-tx-native.sh
+    $ sudo -n unshare --net /tmp/zpkt-required-tx-native.sh
     single-slot lease race setup: AF_XDP interface/queue bind: Device or resource busy
-    zxdp/itest/zxdppackettest ...
+    zpkt/itest/zpktpackettest ...
     Dubious, test returned 1 (wstat 256, 0x100)
     Failed 1/3 subtests
-    zxdp/itest/zxdpfiltertest ... ok
-    zxdp/itest/zxdpwaketest ..... ok
+    zpkt/itest/zpktfiltertest ... ok
+    zpkt/itest/zpktwaketest ..... ok
     
     Test Summary Report
     -------------------
-    zxdp/itest/zxdppackettest (Wstat: 256 (exited 1) Tests: 3 Failed: 1)
+    zpkt/itest/zpktpackettest (Wstat: 256 (exited 1) Tests: 3 Failed: 1)
       Failed test:  3
       Non-zero exit status: 1
     Files=3, Tests=7, 454ms wallclock (20ms usr + 10ms sys = 30ms CPU)
@@ -19697,19 +19697,19 @@ I’ll continue without approval prompts. The build, unit suite, and native filt
 
 ## Activity
 
-    $ git status --short; sed -n '1,115p' zxdp/itest/zxdppackettest.cc; rg -n 'ZuTest.*(filter|name|case)|--.*test|test.*name|case.*t|option' zu/src/ZuTest* docs/FRAMEWORK.md | head -45; rg -n 'ZXDP|testLeaseRace|ZuTestCall' zxdp/itest/zxdppackettest.cc; sed -n '35,100p' zxdp/itest/zxdpwaketest.cc; sed -n '200,253p' zxdp/src/Zxdp.cc; git diff -- zxdp/test/ZxdpPoolTest.cc
+    $ git status --short; sed -n '1,115p' zpkt/itest/zpktpackettest.cc; rg -n 'ZuTest.*(filter|name|case)|--.*test|test.*name|case.*t|option' zu/src/ZuTest* docs/FRAMEWORK.md | head -45; rg -n 'ZPKT|testLeaseRace|ZuTestCall' zpkt/itest/zpktpackettest.cc; sed -n '35,100p' zpkt/itest/zpktwaketest.cc; sed -n '200,253p' zpkt/src/Zpkt.cc; git diff -- zpkt/test/ZpktPoolTest.cc
      M TODO.md
      M gtags.conf
-     M zxdp/GUIDELINES.md
-     M zxdp/INTERFACE.md
-     M zxdp/itest/zxdpfiltertest.cc
-     M zxdp/itest/zxdpwaketest.cc
-     M zxdp/src/Zxdp.cc
-     M zxdp/src/Zxdp.hh
-     M zxdp/src/ZxdpUMem.cc
-     M zxdp/test/ZxdpPoolTest.cc
+     M zpkt/GUIDELINES.md
+     M zpkt/INTERFACE.md
+     M zpkt/itest/zpktfiltertest.cc
+     M zpkt/itest/zpktwaketest.cc
+     M zpkt/src/Zpkt.cc
+     M zpkt/src/Zpkt.hh
+     M zpkt/src/ZpktUMem.cc
+     M zpkt/test/ZpktPoolTest.cc
     ?? cscope.out
-    ?? review_context/zxdp-dpdk-readiness/
+    ?? review_context/zpkt-dpdk-readiness/
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -19748,8 +19748,8 @@ I’ll continue without approval prompts. The build, unit suite, and native filt
     #include <zlib/ZiIOBuf.hh>
     #include <zlib/ZtcQueue.hh>
     
-    #include <zlib/Zxdp.hh>
-    #include <zlib/ZxdpBPF.hh>
+    #include <zlib/Zpkt.hh>
+    #include <zlib/ZpktBPF.hh>
     
     using namespace ZuTestUtil;
     
@@ -19790,7 +19790,7 @@ I’ll continue without approval prompts. The build, unit suite, and native filt
       return n;
     }
     
-    static bool shutdown(ZmRef<Zxdp::Instance> &instance, ZeException &error)
+    static bool shutdown(ZmRef<Zpkt::Instance> &instance, ZeException &error)
     {
       if (!instance) return true;
       auto deadline = Zm::now() + ZuTime{10};
@@ -19809,18 +19809,18 @@ I’ll continue without approval prompts. The build, unit suite, and native filt
     static void testPackets()
     {
       ZuTestScopeRT(testPackets);
-      unsigned ifindex = strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10);
-      unsigned peer = strtoul(getenv("ZXDP_TEST_PEER_IFINDEX"), nullptr, 10);
+      unsigned ifindex = strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10);
+      unsigned peer = strtoul(getenv("ZPKT_TEST_PEER_IFINDEX"), nullptr, 10);
       ZeException error;
-      Zxdp::Xdp::LinkState local, remote;
-      auto localResult = Zxdp::Xdp::queryLink(ifindex);
+      Zpkt::Xdp::LinkState local, remote;
+      auto localResult = Zpkt::Xdp::queryLink(ifindex);
       bool queried = false;
       if (localResult.is<ZeException>()) error = localResult.p<ZeException>();
       else {
-        local = localResult.p<Zxdp::Xdp::LinkState>();
-        auto remoteResult = Zxdp::Xdp::queryLink(peer);
+        local = localResult.p<Zpkt::Xdp::LinkState>();
+        auto remoteResult = Zpkt::Xdp::queryLink(peer);
         if (remoteResult.is<ZeException>()) error = remoteResult.p<ZeException>();
-        else { remote = remoteResult.p<Zxdp::Xdp::LinkState>(); queried = true; }
+        else { remote = remoteResult.p<Zpkt::Xdp::LinkState>(); queried = true; }
       }
       ZuCheckRT(queried && local.rxQueues == 2, log_("fixture provides two Rx queues: ", error));
       if (!queried) return;
@@ -19862,17 +19862,17 @@ I’ll continue without approval prompts. The build, unit suite, and native filt
     zu/src/ZuTest.hh:283:#define ZuTestCallRT_(name, fn, ...) \
     zu/src/ZuTest.cc:125:    indent_(); std::cout << "# Subtest: " << scope->name << '\n';
     zu/src/ZuTest.cc:160:bool ZuTestMgr::check_(ZuTest_Step *step, bool ok, const char *name)
-    100:  unsigned ifindex = strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10);
-    101:  unsigned peer = strtoul(getenv("ZXDP_TEST_PEER_IFINDEX"), nullptr, 10);
-    347:  params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
+    100:  unsigned ifindex = strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10);
+    101:  unsigned peer = strtoul(getenv("ZPKT_TEST_PEER_IFINDEX"), nullptr, 10);
+    347:  params.ifindex = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10));
     469:static void testLeaseRace()
     471:  ZuTestScopeRT(testLeaseRace);
-    480:  params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
-    558:  if (geteuid() || !getenv("ZXDP_TEST_IFINDEX") || !getenv("ZXDP_TEST_PEER_IFINDEX")) {
+    480:  params.ifindex = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10));
+    558:  if (geteuid() || !getenv("ZPKT_TEST_IFINDEX") || !getenv("ZPKT_TEST_PEER_IFINDEX")) {
     563:  ZuTestCall(testPackets);
     564:  ZuTestCall(testSenderProgress);
     565:  ZuTestCall(testLeaseRace);
-    #include <zlib/Zxdp.hh>
+    #include <zlib/Zpkt.hh>
     
     using namespace ZuTestUtil;
     
@@ -19921,7 +19921,7 @@ I’ll continue without approval prompts. The build, unit suite, and native filt
       return syscall(SYS_epoll_wait, fd, events, count, timeout);
     }
     
-    static void closeInstance(ZmRef<Zxdp::Instance> &instance)
+    static void closeInstance(ZmRef<Zpkt::Instance> &instance)
     {
       for (;;) {
         auto result = instance->close();
@@ -19932,8 +19932,8 @@ I’ll continue without approval prompts. The build, unit suite, and native filt
     
     // Kernel queue release can outlast a completed close. Retry from this test's
     // control caller with the same drained pool, never from packet service.
-    static ZmRef<Zxdp::Instance> createInstance(
-      const Zxdp::Params &params, ZeException &error)
+    static ZmRef<Zpkt::Instance> createInstance(
+      const Zpkt::Params &params, ZeException &error)
     {
       auto deadline = Zm::now() + ZuTime{2};
       unsigned attempts = 0;
@@ -19976,7 +19976,7 @@ I’ll continue without approval prompts. The build, unit suite, and native filt
         m_program.reset();
         m_state = Closed;
         if (m_ioError) {
-          return ZeEXCEPT(Error, "Zxdp", ([error = ZeError{int(m_ioError)}](auto &out) {
+          return ZeEXCEPT(Error, "Zpkt", ([error = ZeError{int(m_ioError)}](auto &out) {
         out << "AF_XDP I/O failed: " << error;
           }));
         }
@@ -19992,24 +19992,24 @@ I’ll continue without approval prompts. The build, unit suite, and native filt
           return true;
         }
         // The Tx producer is quiescent. This FIFO barrier drains queued sends;
-    diff --git a/zxdp/test/ZxdpPoolTest.cc b/zxdp/test/ZxdpPoolTest.cc
+    diff --git a/zpkt/test/ZpktPoolTest.cc b/zpkt/test/ZpktPoolTest.cc
     index 35aab624..e8987f0d 100644
-    --- a/zxdp/test/ZxdpPoolTest.cc
-    +++ b/zxdp/test/ZxdpPoolTest.cc
+    --- a/zpkt/test/ZpktPoolTest.cc
+    +++ b/zpkt/test/ZpktPoolTest.cc
     @@ -105,12 +105,14 @@ static void testInvalid()
        auto tx = backend->bufPool(1, 128);
        Zi::IOBufPoolList pools;
        pools.pushNode(tx.ptr());
     -  rx->count = 0;
-       ZuCHECK(Zxdp::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
+       ZuCHECK(Zpkt::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
     +    "an Rx pool without a Tx pool is rejected");
     +  rx->count = 0;
-    +  ZuCHECK(Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
+    +  ZuCHECK(Zpkt::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
          "empty Rx reserve rejected");
        rx->count = 2;
        rx->size = 1500;
-    -  ZuCHECK(Zxdp::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
-    +  ZuCHECK(Zxdp::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
+    -  ZuCHECK(Zpkt::Xdp::UMem::create({}, rx.ptr(), 1500).is<ZeException>(),
+    +  ZuCHECK(Zpkt::Xdp::UMem::create(pools, rx.ptr(), 1500).is<ZeException>(),
          "Rx fits complete Ethernet frame");
        rx->size = 1514;
        auto extra = backend->bufPool(1, 128);
@@ -20017,7 +20017,7 @@ I’ll continue without approval prompts. The build, unit suite, and native filt
 
 ## Activity
 
-    $ rg -n 'parse\(|filter|usage|argc|argv|--|getopt' zu/src/ZuTestUtil.hh zu/src/ZuTest.cc zu/src/ZuTest.hh | head -65; sed -n '1,90p' zu/src/ZuTestUtil.hh; sed -n '1,88p' zu/src/ZuTest.cc; rg -n '^all:|^SUBDIRS' zxdp/Makefile.am zxdp/Makefile; id -u
+    $ rg -n 'parse\(|filter|usage|argc|argv|--|getopt' zu/src/ZuTestUtil.hh zu/src/ZuTest.cc zu/src/ZuTest.hh | head -65; sed -n '1,90p' zu/src/ZuTestUtil.hh; sed -n '1,88p' zu/src/ZuTest.cc; rg -n '^all:|^SUBDIRS' zpkt/Makefile.am zpkt/Makefile; id -u
     zu/src/ZuTest.hh:16:// usage:
     zu/src/ZuTestUtil.hh:40:inline void usage(ZuCSpan name)
     zu/src/ZuTestUtil.hh:49:bool parse(int argc, char **argv)
@@ -20195,9 +20195,9 @@ I’ll continue without approval prompts. The build, unit suite, and native filt
       }
       if (mallocd) ::free(steps);
       m_finalized = true;
-    zxdp/Makefile:356:SUBDIRS = src test util itest
-    zxdp/Makefile:357:all: all-recursive
-    zxdp/Makefile.am:2:SUBDIRS = src test util itest
+    zpkt/Makefile:356:SUBDIRS = src test util itest
+    zpkt/Makefile:357:all: all-recursive
+    zpkt/Makefile.am:2:SUBDIRS = src test util itest
     1000
     ✓ • 0ms
 
@@ -20207,7 +20207,7 @@ The packet failure occurs when the last subtest immediately rebinds after the pr
 
 ## Activity
 
-    $ rg -n -A7 -B3 'auto initialized = instance->init' zxdp/itest/zxdppackettest.cc; sed -n '1,100p' docs/IO.md; sed -n '1,60p' docs/CPP.md
+    $ rg -n -A7 -B3 'auto initialized = instance->init' zpkt/itest/zpktpackettest.cc; sed -n '1,100p' docs/IO.md; sed -n '1,60p' docs/CPP.md
     146-  bool started = scheduler.start();
     147-  ZuCheckRT(started);
     148-  if (!started) { close(wire); return; }
@@ -20408,7 +20408,7 @@ The packet failure occurs when the last subtest immediately rebinds after the pr
 ## Activity
 
     file changes: Completed · 1 changes
-    Update { move_path: None }: /home/count0/src/z/zxdp/itest/zxdppackettest.cc
+    Update { move_path: None }: /home/count0/src/z/zpkt/itest/zpktpackettest.cc
     @@ -490,5 +490,17 @@
        if (!started) return;
     -  auto initialized = instance->init(config);
@@ -20427,21 +20427,21 @@ The packet failure occurs when the last subtest immediately rebinds after the pr
     +    if (!shutdown(instance, cleanup)) { error = ZuMv(cleanup); break; }
     +    if (Zm::now() >= setupDeadline) break;
     +    poll(nullptr, 0, 1);
-    +    instance = Zxdp::instance(Zxdp::Type::Xdp);
+    +    instance = Zpkt::instance(Zpkt::Type::Xdp);
     +  }
        ZuCheckRT(ready, log_("single-slot lease race setup: ", error));
 
 ## Activity
 
-    $ make -j8 > /tmp/zxdp-required-tx-rebuild.log 2>&1
+    $ make -j8 > /tmp/zpkt-required-tx-rebuild.log 2>&1
     ✓ • 4.76s
 
 ## Activity
 
-    $ sudo -n unshare --net /tmp/zxdp-required-tx-native.sh
-    zxdp/itest/zxdppackettest ... ok
-    zxdp/itest/zxdpfiltertest ... ok
-    zxdp/itest/zxdpwaketest ..... ok
+    $ sudo -n unshare --net /tmp/zpkt-required-tx-native.sh
+    zpkt/itest/zpktpackettest ... ok
+    zpkt/itest/zpktfiltertest ... ok
+    zpkt/itest/zpktwaketest ..... ok
     All tests successful.
     Files=3, Tests=7, 582ms wallclock (20ms usr + 0ms sys = 20ms CPU)
     Result: PASS
@@ -20449,7 +20449,7 @@ The packet failure occurs when the last subtest immediately rebinds after the pr
 
 ## Assistant
 
-The build and all targeted checks now pass: four zxdp unit programs and three native packet/filter/wake programs. The packet fixture’s bounded setup retry resolved the rebind failure; production teardown is unchanged. I’m recording those results and the verified receive flow.
+The build and all targeted checks now pass: four zpkt unit programs and three native packet/filter/wake programs. The packet fixture’s bounded setup retry resolved the rebind failure; production teardown is unchanged. I’m recording those results and the verified receive flow.
 
 ## Activity
 
@@ -20457,31 +20457,31 @@ The build and all targeted checks now pass: four zxdp unit programs and three na
         from pathlib import Path
         p=Path('dpdk_implementation_review_report.md')
         s=p.read_text()
-        s+='''\n## Mandatory Tx provisioning and receive-flow verification\n\nImplemented the requested nonempty Tx requirement for AF_XDP instance and arena\ninitialization. The DPDK plan carries the same requirement. Existing filter/wake\nfixtures now supply a Tx pool; there was no dedicated successful Rx-only feature\ntest to retain or delete. Missing-Tx provisioning is now rejected in the pool\nunit suite. Independent filter and wake behavior coverage remains intact.\n\nThe packet integration run exposed a repeatable asynchronous rebind race before\nits final lease subtest. Its main-thread setup now follows the wake fixture's\nexisting bounded init/close/retry pattern; production teardown and packet service\nwere not changed for that race. The initial temporary namespace harness also\nused host sysfs for interface indices; the corrected harness uses namespace\nnetlink via ip. Those failed attempts are not counted as passing verification.\n\nFinal checks:\n\n* Top-level `make -j8`: passed.\n* `make -C zxdp/test test`: passed, 4 programs / 14 top-level TAP tests.\n* Native packet/filter/wake tests under sudo in an anonymous two-queue-veth\n  namespace: passed, 3 programs / 7 top-level TAP tests.\n* `git diff --check`: passed.\n\nFlow verified by source inspection: backend Rx pool backing is posted to the\nkernel/driver, completed reception calls RecvFn with the backing pointer/length,\nZutcp constructs IOBuf metadata referencing those bytes, and final release\nreturns through the original Rx allocator/ingress pool. DPDK will mirror this\nusing native mbufs; no DPDK implementation or runtime validation exists yet.\nThe driver descriptor references the backing; it is not another application\npacket buffer. The half-pool split remains withdrawn.\n'''
+        s+='''\n## Mandatory Tx provisioning and receive-flow verification\n\nImplemented the requested nonempty Tx requirement for AF_XDP instance and arena\ninitialization. The DPDK plan carries the same requirement. Existing filter/wake\nfixtures now supply a Tx pool; there was no dedicated successful Rx-only feature\ntest to retain or delete. Missing-Tx provisioning is now rejected in the pool\nunit suite. Independent filter and wake behavior coverage remains intact.\n\nThe packet integration run exposed a repeatable asynchronous rebind race before\nits final lease subtest. Its main-thread setup now follows the wake fixture's\nexisting bounded init/close/retry pattern; production teardown and packet service\nwere not changed for that race. The initial temporary namespace harness also\nused host sysfs for interface indices; the corrected harness uses namespace\nnetlink via ip. Those failed attempts are not counted as passing verification.\n\nFinal checks:\n\n* Top-level `make -j8`: passed.\n* `make -C zpkt/test test`: passed, 4 programs / 14 top-level TAP tests.\n* Native packet/filter/wake tests under sudo in an anonymous two-queue-veth\n  namespace: passed, 3 programs / 7 top-level TAP tests.\n* `git diff --check`: passed.\n\nFlow verified by source inspection: backend Rx pool backing is posted to the\nkernel/driver, completed reception calls RecvFn with the backing pointer/length,\nZutcp constructs IOBuf metadata referencing those bytes, and final release\nreturns through the original Rx allocator/ingress pool. DPDK will mirror this\nusing native mbufs; no DPDK implementation or runtime validation exists yet.\nThe driver descriptor references the backing; it is not another application\npacket buffer. The half-pool split remains withdrawn.\n'''
         p.write_text(s)
         PY
         git diff --check
         python - <<'PY'
         from pathlib import Path
-        for name in ('/tmp/zxdp-required-tx-build.log','/tmp/zxdp-required-tx-rebuild.log'):
+        for name in ('/tmp/zpkt-required-tx-build.log','/tmp/zpkt-required-tx-rebuild.log'):
          p=Path(name)
          bad=[x for x in p.read_text().splitlines() if 'warning:' in x or 'error:' in x]
          print(p.name, 'no compiler warnings/errors' if not bad else '\n'.join(bad[:10]))
         PY
         git diff --stat
-    zxdp-required-tx-build.log no compiler warnings/errors
-    zxdp-required-tx-rebuild.log no compiler warnings/errors
+    zpkt-required-tx-build.log no compiler warnings/errors
+    zpkt-required-tx-rebuild.log no compiler warnings/errors
      TODO.md                      |  3 +++
      gtags.conf                   |  2 +-
-     zxdp/GUIDELINES.md           |  3 ++-
-     zxdp/INTERFACE.md            |  2 +-
-     zxdp/itest/zxdpfiltertest.cc |  2 ++
-     zxdp/itest/zxdppackettest.cc | 18 +++++++++++++++---
-     zxdp/itest/zxdpwaketest.cc   |  4 ++++
-     zxdp/src/Zxdp.cc             |  5 +++--
-     zxdp/src/Zxdp.hh             |  2 +-
-     zxdp/src/ZxdpUMem.cc         |  1 +
-     zxdp/test/ZxdpPoolTest.cc    |  6 ++++--
+     zpkt/GUIDELINES.md           |  3 ++-
+     zpkt/INTERFACE.md            |  2 +-
+     zpkt/itest/zpktfiltertest.cc |  2 ++
+     zpkt/itest/zpktpackettest.cc | 18 +++++++++++++++---
+     zpkt/itest/zpktwaketest.cc   |  4 ++++
+     zpkt/src/Zpkt.cc             |  5 +++--
+     zpkt/src/Zpkt.hh             |  2 +-
+     zpkt/src/ZpktUMem.cc         |  1 +
+     zpkt/test/ZpktPoolTest.cc    |  6 ++++--
      11 files changed, 37 insertions(+), 11 deletions(-)
     ✓ • 0ms
 
@@ -20509,21 +20509,21 @@ I’ll rename `Zutcp::Stack` to `Zutcp::Instance`, update its declarations and c
 
      M TODO.md
      M gtags.conf
-     M zxdp/GUIDELINES.md
-     M zxdp/INTERFACE.md
-     M zxdp/itest/zxdpfiltertest.cc
-     M zxdp/itest/zxdppackettest.cc
-     M zxdp/itest/zxdpwaketest.cc
-     M zxdp/src/Zxdp.cc
-     M zxdp/src/Zxdp.hh
-     M zxdp/src/ZxdpUMem.cc
-     M zxdp/test/ZxdpPoolTest.cc
+     M zpkt/GUIDELINES.md
+     M zpkt/INTERFACE.md
+     M zpkt/itest/zpktfiltertest.cc
+     M zpkt/itest/zpktpackettest.cc
+     M zpkt/itest/zpktwaketest.cc
+     M zpkt/src/Zpkt.cc
+     M zpkt/src/Zpkt.hh
+     M zpkt/src/ZpktUMem.cc
+     M zpkt/test/ZpktPoolTest.cc
     ?? cscope.out
-    ?? review_context/zxdp-dpdk-readiness/
+    ?? review_context/zpkt-dpdk-readiness/
     # Current Phase 8 execution boundary
     
     The live protocol uses standard
-    TCP headers/options and raw application bytes over Stack/Zxdp. Endpoint ownership
+    TCP headers/options and raw application bytes over Stack/Zpkt. Endpoint ownership
     uses TCP tuples; accepted byte history, canonical backing and owner handoffs
     remain authoritative. Intermediate packet/frame codecs and peer packet-number
     acknowledgments are deleted. Providers reserve the maximum standard Ethernet,
@@ -20540,8 +20540,8 @@ I’ll rename `Zutcp::Stack` to `Zutcp::Instance`, update its declarations and c
     generation checks and the independent receive-window and RST qualification.
     
     Native providers implement `Zi::IOBufPool` over storage injected from a selected
-    `Zxdp::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
-    to Zxdp. Configuration owns its pool list; initialization retains independent
+    `Zpkt::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
+    to Zpkt. Configuration owns its pool list; initialization retains independent
     backend references so configuration-list membership can expire after `init()`.
     Tx buffer allocation failure drops the connection; producers do not wait for
     pool grants. Alignment changes physical stride without inflating logical buffer capacity.
@@ -20556,7 +20556,7 @@ I’ll rename `Zutcp::Stack` to `Zutcp::Instance`, update its declarations and c
     
     # Historical Phase 1 execution boundary
     
-    The live transport now uses Stack/Zxdp with TCP-aligned IP carriage. The native
+    The live transport now uses Stack/Zpkt with TCP-aligned IP carriage. The native
     endpoint tests exercise the client/server cutover and working pairs. Do not restore a kernel UDP mode,
     fallback or separate backend. Cold interface/route/static-neighbor queries remain
     control work outside Rx/Tx.
@@ -20584,7 +20584,7 @@ I’ll rename `Zutcp::Stack` to `Zutcp::Instance`, update its declarations and c
     independently gates physical reuse. Historical frame metadata cannot resurrect
     ACKed native byte work or assemble retired payload storage.
     
-    Phase 1 is stripping plus IP/Zxdp wiring and regression testing. No new recovery,
+    Phase 1 is stripping plus IP/Zpkt wiring and regression testing. No new recovery,
     congestion, flow-control or packetization behavior belongs in that phase. Broader
     pressure/fairness/lifecycle/observation matrices are later work, not extra exit
     gates. See the current boundary above.
@@ -20628,7 +20628,7 @@ I’ll rename `Zutcp::Stack` to `Zutcp::Instance`, update its declarations and c
     conservative capacity. Charge only accepted sends and release only on CQ or
     successful kernel retirement, independently of transport caller leases. This
     requires no class ledger, packet search or completion callback. Keep the policy
-    in Zutcp; do not add reserved credits or priority parameters to Zxdp.
+    in Zutcp; do not add reserved credits or priority parameters to Zpkt.
     
     Large ACKs that cannot piggyback are sent from control backing before native
     data. Refusal leaves ACK state pending; preserve successful control work in the
@@ -20659,7 +20659,7 @@ I’ll rename `Zutcp::Stack` to `Zutcp::Instance`, update its declarations and c
     service so an empty FILL ring can be replenished.
     
     Pool clients use only allocation/return and geometry. Keep slot/address
-    calculations and allocation/completion bookkeeping internal to Zxdp. Retained
+    calculations and allocation/completion bookkeeping internal to Zpkt. Retained
     transmit backing needs no writable query; preserve kernel/caller leases through
     completion and teardown.
     
@@ -20735,7 +20735,7 @@ I’ll rename `Zutcp::Stack` to `Zutcp::Instance`, update its declarations and c
     The live endpoint and final-packet recovery lease integration are implemented;
     the retained protocol regression suite is the Phase 1 acceptance gate. Keep payload ownership and
     endpoint routing in the transport; there is no packet codec or route lookup in
-    Zxdp. `resolveIPPath` queries kernel route/static-neighbor state during cold
+    Zpkt. `resolveIPPath` queries kernel route/static-neighbor state during cold
     control setup only. Never run its blocking request/reply on packet Rx/Tx owners.
     It constrains lookup to the configured interface, preserves an explicit local
     source and publishes the resulting path only on complete success. It does not
@@ -20786,7 +20786,7 @@ I’ll rename `Zutcp::Stack` to `Zutcp::Instance`, update its declarations and c
     Native endpoint wiring is implemented; complete the remaining ownership,
     admission/control and owner/race gates. The copied migration guidance below is
     historical.
-    Keep Zi types, adapter state and mx scheduler integration in Zutcp. Zxdp owns
+    Keep Zi types, adapter state and mx scheduler integration in Zutcp. Zpkt owns
     its required configurable spin-before-epoll `rx()` and interrupting `wake()`.
     Delegate the plugin hooks to that pair; use the raw named-parameter pool/callback
     interface in the updated plan.
@@ -21404,7 +21404,7 @@ I’ll rename `Zutcp::Stack` to `Zutcp::Instance`, update its declarations and c
     zutcp/bench/zutcpbench.cc:234:      Zutcp::StackConfig settings;
     zutcp/bench/zutcpbench.cc:341:  Zutcp::Stack    *m_stack = nullptr; // owned by the existing plugin binding
     zutcp/test/ZutcpDataTest.cc:483:  bool ioActive() const { return false; } // Controlled owners have no raw Stack/endpoint.
-    zutcp/test/README.md:36:Live client/server coverage now runs through Stack/Zxdp in `../itest/zutcppairtest`.
+    zutcp/test/README.md:36:Live client/server coverage now runs through Stack/Zpkt in `../itest/zutcppairtest`.
     zutcp/test/README.md:160:Production writers now allocate registered backing through Stack and first
     zutcp/itest/zutcpiptest.cc:187:  Zutcp::StackParams params{.interface = index,
     zutcp/itest/zutcpiptest.cc:205:  ZmRef<Zutcp::Stack> stack = new Zutcp::Stack{&mx, ZuMv(params)};
@@ -21413,8 +21413,8 @@ I’ll rename `Zutcp::Stack` to `Zutcp::Instance`, update its declarations and c
     zutcp/test/ZutcpAPITest.cc:662:      Zutcp::StackConfig{}.congestionControl && app.congestionControl(),
     zutcp/test/ZutcpAPITest.cc:699:    ZmRef<Zutcp::Stack> stack = new Zutcp::Stack{&mx,
     zutcp/test/ZutcpConnectionStateTest.cc:149:  // The one Stack-owned primitive is deliberately independent of any backend.
-    zutcp/GUIDELINES.md:4:TCP headers/options and raw application bytes over Stack/Zxdp. Endpoint ownership
-    zutcp/GUIDELINES.md:37:The live transport now uses Stack/Zxdp with TCP-aligned IP carriage. The native
+    zutcp/GUIDELINES.md:4:TCP headers/options and raw application bytes over Stack/Zpkt. Endpoint ownership
+    zutcp/GUIDELINES.md:37:The live transport now uses Stack/Zpkt with TCP-aligned IP carriage. The native
     zutcp/GUIDELINES.md:44:`ZiMultiplex::allocator` from Zutcp, directly or through a helper. Stack owns its
     zutcp/GUIDELINES.md:51:detachment. Native writers now allocate through Stack's local producer adapter
     zutcp/GUIDELINES.md:99:owns controlBufCount (256) and txControlCredits (64), applied to Stack under the
@@ -21480,10 +21480,10 @@ I’ll rename `Zutcp::Stack` to `Zutcp::Instance`, update its declarations and c
     zutcp/itest/zutcpmxtest.cc:3135:  ZmRef<Zutcp::Stack> ss = new Zutcp::Stack{&server, {.interface = b, .txSid = 4}};
     zutcp/itest/zutcpmxtest.cc:3248:  // Only the active Stack evicts its record; passive history remains authoritative.
     zutcp/itest/zutcpmxtest.cc:3440:    "a surviving listener on the same Stack must exchange fresh exact bytes after pending stop");
-    zutcp/itest/README.md:3:These Linux tests exercise actual Stack/Zxdp packet I/O, standard TCP headers
+    zutcp/itest/README.md:3:These Linux tests exercise actual Stack/Zpkt packet I/O, standard TCP headers
     zutcp/itest/README.md:64:- `zutcpmxtest` installs real Stack plugins on two Zi multiplexers and checks
     zutcp/README.md:70:`Zutcp::Stack` implements `ZiMxPlugin`. Register it on a stopped multiplexer
-    zutcp/README.md:135:Concrete registered pools remain internal to Zxdp. Stack selects that backend
+    zutcp/README.md:135:Concrete registered pools remain internal to Zpkt. Stack selects that backend
     zutcp/README.md:146:pool references independently of configuration-list membership. Stack retains
     zutcp/README.md:173:Before constructing the Stack or server, applications can configure the existing
     zutcp/itest/zutcpapptest.cc:155:  ZmRef<Zutcp::Stack> stack;
@@ -21708,7 +21708,7 @@ I’ll rename `Zutcp::Stack` to `Zutcp::Instance`, update its declarations and c
       unsigned    m_interface, m_mtu, m_spin, m_txSid;
       Zi::Name    m_netmask;
       PacketFn    m_packet;
-      alignas(Zm::CacheLineSize) ZmRef<Zxdp::Instance> m_backend;
+      alignas(Zm::CacheLineSize) ZmRef<Zpkt::Instance> m_backend;
       bool m_backendInit = false;
       ZmRef<Allocator> m_ingress;
       StackConfig m_config;
@@ -21722,7 +21722,7 @@ I’ll rename `Zutcp::Stack` to `Zutcp::Instance`, update its declarations and c
       unsigned m_controlCredits = DefaultTxControlCredits;
     
       // Shared publication and ordered lifecycle handoffs.
-      alignas(Zm::CacheLineSize) ZmAtomic<Zxdp::Instance *> m_current{nullptr};
+      alignas(Zm::CacheLineSize) ZmAtomic<Zpkt::Instance *> m_current{nullptr};
       ZmAtomic<unsigned> m_state{Stopped};
       bool m_startFailure = false;
       ZeException m_error;
@@ -22075,15 +22075,15 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
      zutcp/test/ZutcpRuntimeTest.cc         |   2 +-
      zutcp/util/README.md                   |  20 +--
      zutcp/util/zutcppair.cc                |  10 +-
-     zxdp/GUIDELINES.md                     |   3 +-
-     zxdp/INTERFACE.md                      |   2 +-
-     zxdp/itest/zxdpfiltertest.cc           |   2 +
-     zxdp/itest/zxdppackettest.cc           |  18 ++-
-     zxdp/itest/zxdpwaketest.cc             |   4 +
-     zxdp/src/Zxdp.cc                       |   5 +-
-     zxdp/src/Zxdp.hh                       |   2 +-
-     zxdp/src/ZxdpUMem.cc                   |   1 +
-     zxdp/test/ZxdpPoolTest.cc              |   6 +-
+     zpkt/GUIDELINES.md                     |   3 +-
+     zpkt/INTERFACE.md                      |   2 +-
+     zpkt/itest/zpktfiltertest.cc           |   2 +
+     zpkt/itest/zpktpackettest.cc           |  18 ++-
+     zpkt/itest/zpktwaketest.cc             |   4 +
+     zpkt/src/Zpkt.cc                       |   5 +-
+     zpkt/src/Zpkt.hh                       |   2 +-
+     zpkt/src/ZpktUMem.cc                   |   1 +
+     zpkt/test/ZpktPoolTest.cc              |   6 +-
      43 files changed, 343 insertions(+), 317 deletions(-)
     ✓ • 88ms
 
@@ -22128,15 +22128,15 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
      zutcp/test/ZutcpRuntimeTest.cc         |   2 +-
      zutcp/util/README.md                   |  20 +--
      zutcp/util/zutcppair.cc                |  10 +-
-     zxdp/GUIDELINES.md                     |   3 +-
-     zxdp/INTERFACE.md                      |   2 +-
-     zxdp/itest/zxdpfiltertest.cc           |   2 +
-     zxdp/itest/zxdppackettest.cc           |  18 ++-
-     zxdp/itest/zxdpwaketest.cc             |   4 +
-     zxdp/src/Zxdp.cc                       |   5 +-
-     zxdp/src/Zxdp.hh                       |   2 +-
-     zxdp/src/ZxdpUMem.cc                   |   1 +
-     zxdp/test/ZxdpPoolTest.cc              |   6 +-
+     zpkt/GUIDELINES.md                     |   3 +-
+     zpkt/INTERFACE.md                      |   2 +-
+     zpkt/itest/zpktfiltertest.cc           |   2 +
+     zpkt/itest/zpktpackettest.cc           |  18 ++-
+     zpkt/itest/zpktwaketest.cc             |   4 +
+     zpkt/src/Zpkt.cc                       |   5 +-
+     zpkt/src/Zpkt.hh                       |   2 +-
+     zpkt/src/ZpktUMem.cc                   |   1 +
+     zpkt/test/ZpktPoolTest.cc              |   6 +-
      43 files changed, 343 insertions(+), 317 deletions(-)
     ✓ • 0ms
 
@@ -22333,7 +22333,7 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
        CxnSlot reserveCxn();
        void establishedCxn(CxnSlot &);
     @@ -390,7 +390,7 @@ private:
-       alignas(Zm::CacheLineSize) ZmRef<Zxdp::Instance> m_backend;
+       alignas(Zm::CacheLineSize) ZmRef<Zpkt::Instance> m_backend;
        bool m_backendInit = false;
        ZmRef<Allocator> m_ingress;
     -  StackConfig m_config;
@@ -22447,7 +22447,7 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
     $ sed -n '1,160p' zutcp/itest/README.md
     # Native TCP integration tests
     
-    These Linux tests exercise actual Instance/Zxdp packet I/O, standard TCP headers
+    These Linux tests exercise actual Instance/Zpkt packet I/O, standard TCP headers
     and raw application bytes. They require usable AF_XDP/BPF, sudo/root, network
     namespaces, iproute2, ethtool, tcpdump, Python3 and Perl/prove. Missing privileges
     or fixture variables produce visible skips; a skip is not native acceptance.
@@ -22457,7 +22457,7 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
     
     ## Build and run
     
-    Build the configured Zi/Zxdp/Zutcp dependency closure first, then `zutcp/src`,
+    Build the configured Zi/Zpkt/Zutcp dependency closure first, then `zutcp/src`,
     `zutcp/util` and `zutcp/example`, using `make -C DIRECTORY -j8`. Build the five
     native drivers explicitly to avoid building optional application consumers:
     
@@ -22473,7 +22473,7 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
     ```
     
     Compilation runs unprivileged. The launcher creates anonymous private veth/dummy
-    links and exports the existing `ZXDP_*` fixture variables. The mapping fixture
+    links and exports the existing `ZPKT_*` fixture variables. The mapping fixture
     adds private routes and static neighbors and disables checksum offload. Native
     addresses are not assigned to kernel interfaces. Each subprocess fixture owns
     and cleans its extra namespaces/links. No private `review_context` script is
@@ -22491,7 +22491,7 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
       filters affect actual packets; capture/checker evidence establishes the intended
       fault, byte progress, recovery and FIN completion. It does not use kernel TCP
       as a native fallback.
-    - `zutcppooltest` checks the Zutcp-owned Zi provider against real Zxdp arenas:
+    - `zutcppooltest` checks the Zutcp-owned Zi provider against real Zpkt arenas:
       factory geometry, registered backing, borrowed/native views, allocation versus
       kernel leases, exhaustion, retirement and safe return/reuse. Allocation is
       immediate; producers do not queue for grants from a depleted pool.
@@ -22853,8 +22853,8 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
 ## Activity
 
     $ tail -n 5 /tmp/zutcp-instance-rename-build.log
-    libtool: compile:  clang++ -DHAVE_CONFIG_H -I. -I../.. -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zi/src -I../../zxdp/src -D_REENTRANT -D_GNU_SOURCE -DZUTCP_EXPORTS -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT libZutcp_la-ZutcpLog.lo -MD -MP -MF .deps/libZutcp_la-ZutcpLog.Tpo -c ZutcpLog.cc  -fPIC -DPIC -o .libs/libZutcp_la-ZutcpLog.o
-    libtool: compile:  clang++ -DHAVE_CONFIG_H -I. -I../.. -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zi/src -I../../zxdp/src -D_REENTRANT -D_GNU_SOURCE -DZUTCP_EXPORTS -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT libZutcp_la-ZutcpMx.lo -MD -MP -MF .deps/libZutcp_la-ZutcpMx.Tpo -c ZutcpMx.cc  -fPIC -DPIC -o .libs/libZutcp_la-ZutcpMx.o
+    libtool: compile:  clang++ -DHAVE_CONFIG_H -I. -I../.. -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zi/src -I../../zpkt/src -D_REENTRANT -D_GNU_SOURCE -DZUTCP_EXPORTS -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT libZutcp_la-ZutcpLog.lo -MD -MP -MF .deps/libZutcp_la-ZutcpLog.Tpo -c ZutcpLog.cc  -fPIC -DPIC -o .libs/libZutcp_la-ZutcpLog.o
+    libtool: compile:  clang++ -DHAVE_CONFIG_H -I. -I../.. -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zi/src -I../../zpkt/src -D_REENTRANT -D_GNU_SOURCE -DZUTCP_EXPORTS -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT libZutcp_la-ZutcpMx.lo -MD -MP -MF .deps/libZutcp_la-ZutcpMx.Tpo -c ZutcpMx.cc  -fPIC -DPIC -o .libs/libZutcp_la-ZutcpMx.o
     mv -f .deps/libZutcp_la-ZutcpAlloc.Tpo .deps/libZutcp_la-ZutcpAlloc.Plo
     mv -f .deps/libZutcp_la-ZutcpDiag.Tpo .deps/libZutcp_la-ZutcpDiag.Plo
     mv -f .deps/libZutcp_la-ZutcpConnection.Tpo .deps/libZutcp_la-ZutcpConnection.Plo
@@ -22876,11 +22876,11 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
         -I$(top_srcdir)/zi/src -I$(top_srcdir)/zi/test \
-        -I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zxdp/src @Z_CPPFLAGS@
+        -I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zpkt/src @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@
     LDADD = $(top_builddir)/zi/test/libZiTest.la \
-        $(top_builddir)/zutcp/src/libZutcp.la $(top_builddir)/zxdp/src/libZxdp.la \
+        $(top_builddir)/zutcp/src/libZutcp.la $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
@@ -22930,11 +22930,11 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
     zfixbench_SOURCES = zfixbench.cc
     zfixbench_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src \
         -I$(top_srcdir)/ztcp/src -I$(top_srcdir)/ztls/src \
-        -I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zxdp/src
+        -I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zpkt/src
     zfixbench_LDADD = $(top_builddir)/zfix/src/libZfix.la \
         $(top_builddir)/ztls/src/libZtls.la \
         $(top_builddir)/ztcp/src/libZtcp.la $(top_builddir)/zutcp/src/libZutcp.la \
-        $(top_builddir)/zxdp/src/libZxdp.la $(top_builddir)/zi/src/libZi.la \
+        $(top_builddir)/zpkt/src/libZpkt.la $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zfix/src/libZfixFmt.la $(top_builddir)/zf/src/libZf.la \
         $(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
         $(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
@@ -23019,7 +23019,7 @@ I’ll rename the related public types and accessor too: `InstanceParams`, `Inst
 
     $ tail -n 3 /tmp/zutcp-instance-rename-build.log; rg -n 'error:|warning:' /tmp/zutcp-instance-rename-build.log
     depbase=`echo ZutcpCongestionTest.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
-    clang++ -DHAVE_CONFIG_H -I. -I../..  -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zi/src -I../../zi/test -I../../zutcp/src -I../../zxdp/src -D_REENTRANT -D_GNU_SOURCE  -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT ZutcpCongestionTest.o -MD -MP -MF $depbase.Tpo -c -o ZutcpCongestionTest.o ZutcpCongestionTest.cc &&\
+    clang++ -DHAVE_CONFIG_H -I. -I../..  -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zi/src -I../../zi/test -I../../zutcp/src -I../../zpkt/src -D_REENTRANT -D_GNU_SOURCE  -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT ZutcpCongestionTest.o -MD -MP -MF $depbase.Tpo -c -o ZutcpCongestionTest.o ZutcpCongestionTest.cc &&\
     mv -f $depbase.Tpo $depbase.Po
     ✗ (1) • 0ms
 
@@ -23190,8 +23190,8 @@ The class and related APIs are renamed, and all code references have been update
 ## Activity
 
     $ tail -n 2 /tmp/zutcp-instance-rename-build.log
-    /bin/sh ../../libtool  --tag=CXX   --mode=link clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd  -o ZutcpRxAccountingTest ZutcpRxAccountingTest.o ../../zi/test/libZiTest.la ../../zutcp/src/libZutcp.la ../../zxdp/src/libZxdp.la ../../zi/src/libZi.la ../../zf/src/libZf.la ../../ze/src/libZe.la ../../zt/src/libZt.la ../../zm/src/libZm.la ../../zu/src/libZu.la -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
-    libtool: link: clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd -o .libs/ZutcpRxAccountingTest ZutcpRxAccountingTest.o  ../../zi/test/.libs/libZiTest.a ../../zutcp/src/.libs/libZutcp.so /home/count0/src/z/zxdp/src/.libs/libZxdp.so -lcrypto ../../zxdp/src/.libs/libZxdp.so /home/count0/src/z/zi/src/.libs/libZi.so ../../zi/src/.libs/libZi.so /home/count0/src/z/zf/src/.libs/libZf.so ../../zf/src/.libs/libZf.so /home/count0/src/z/ze/src/.libs/libZe.so ../../ze/src/.libs/libZe.so /home/count0/src/z/zt/src/.libs/libZt.so ../../zt/src/.libs/libZt.so /home/count0/src/z/zm/src/.libs/libZm.so ../../zm/src/.libs/libZm.so /home/count0/src/z/zu/src/.libs/libZu.so ../../zu/src/.libs/libZu.so -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
+    /bin/sh ../../libtool  --tag=CXX   --mode=link clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd  -o ZutcpRxAccountingTest ZutcpRxAccountingTest.o ../../zi/test/libZiTest.la ../../zutcp/src/libZutcp.la ../../zpkt/src/libZpkt.la ../../zi/src/libZi.la ../../zf/src/libZf.la ../../ze/src/libZe.la ../../zt/src/libZt.la ../../zm/src/libZm.la ../../zu/src/libZu.la -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
+    libtool: link: clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -rdynamic -Wl,--compress-debug-sections=zstd -o .libs/ZutcpRxAccountingTest ZutcpRxAccountingTest.o  ../../zi/test/.libs/libZiTest.a ../../zutcp/src/.libs/libZutcp.so /home/count0/src/z/zpkt/src/.libs/libZpkt.so -lcrypto ../../zpkt/src/.libs/libZpkt.so /home/count0/src/z/zi/src/.libs/libZi.so ../../zi/src/.libs/libZi.so /home/count0/src/z/zf/src/.libs/libZf.so ../../zf/src/.libs/libZf.so /home/count0/src/z/ze/src/.libs/libZe.so ../../ze/src/.libs/libZe.so /home/count0/src/z/zt/src/.libs/libZt.so ../../zt/src/.libs/libZt.so /home/count0/src/z/zm/src/.libs/libZm.so ../../zm/src/.libs/libZm.so /home/count0/src/z/zu/src/.libs/libZu.so ../../zu/src/.libs/libZu.so -ldl -lcares -lpcre -lck -lhwloc -lpthread -lrt -latomic -lbfd -liberty -lm
     ✓ • 0ms
 
 ## Activity
@@ -23231,17 +23231,17 @@ The class and related APIs are renamed, and all code references have been update
      M zutcp/test/ZutcpRuntimeTest.cc
      M zutcp/util/README.md
      M zutcp/util/zutcppair.cc
-     M zxdp/GUIDELINES.md
-     M zxdp/INTERFACE.md
-     M zxdp/itest/zxdpfiltertest.cc
-     M zxdp/itest/zxdppackettest.cc
-     M zxdp/itest/zxdpwaketest.cc
-     M zxdp/src/Zxdp.cc
-     M zxdp/src/Zxdp.hh
-     M zxdp/src/ZxdpUMem.cc
-     M zxdp/test/ZxdpPoolTest.cc
+     M zpkt/GUIDELINES.md
+     M zpkt/INTERFACE.md
+     M zpkt/itest/zpktfiltertest.cc
+     M zpkt/itest/zpktpackettest.cc
+     M zpkt/itest/zpktwaketest.cc
+     M zpkt/src/Zpkt.cc
+     M zpkt/src/Zpkt.hh
+     M zpkt/src/ZpktUMem.cc
+     M zpkt/test/ZpktPoolTest.cc
     ?? cscope.out
-    ?? review_context/zxdp-dpdk-readiness/
+    ?? review_context/zpkt-dpdk-readiness/
     ✓ • 0ms
 
 ## Activity
@@ -23269,10 +23269,10 @@ The class and related APIs are renamed, and all code references have been update
 ## Activity
 
     $ ps -eo comm,args | rg '^clang.*zutcp|^clang.*Zutcp'
-    clang++         clang++ -DHAVE_CONFIG_H -I. -I../.. -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zi/src -I../../zi/test -I../../zutcp/src -I../../zxdp/src -D_REENTRANT -D_GNU_SOURCE -I../../ztcp/src -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT zutcpapptest-zutcpapptest.o -MD -MP -MF .deps/zutcpapptest-zutcpapptest.Tpo -c -o zutcpapptest-zutcpapptest.o zutcpapptest.cc
-    clang++         clang++ -DHAVE_CONFIG_H -I. -I../.. -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zi/src -I../../zi/test -I../../zutcp/src -I../../zxdp/src -D_REENTRANT -D_GNU_SOURCE -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT zutcpstacktest.o -MD -MP -MF .deps/zutcpstacktest.Tpo -c -o zutcpstacktest.o zutcpstacktest.cc
-    clang++         clang++ -DHAVE_CONFIG_H -I. -I../.. -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zi/src -I../../zi/test -I../../zutcp/src -I../../zxdp/src -D_REENTRANT -D_GNU_SOURCE -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT zutcpmxtest.o -MD -MP -MF .deps/zutcpmxtest.Tpo -c -o zutcpmxtest.o zutcpmxtest.cc
-    clang++         clang++ -DHAVE_CONFIG_H -I. -I../.. -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zi/src -I../../zi/test -I../../zutcp/src -I../../zxdp/src -D_REENTRANT -D_GNU_SOURCE -DZUTCP_APP_TLS -I../../ztls/src -I../../zdbus/src -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT zutcptlsapptest-zutcpapptest.o -MD -MP -MF .deps/zutcptlsapptest-zutcpapptest.Tpo -c -o zutcptlsapptest-zutcpapptest.o zutcpapptest.cc
+    clang++         clang++ -DHAVE_CONFIG_H -I. -I../.. -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zi/src -I../../zi/test -I../../zutcp/src -I../../zpkt/src -D_REENTRANT -D_GNU_SOURCE -I../../ztcp/src -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT zutcpapptest-zutcpapptest.o -MD -MP -MF .deps/zutcpapptest-zutcpapptest.Tpo -c -o zutcpapptest-zutcpapptest.o zutcpapptest.cc
+    clang++         clang++ -DHAVE_CONFIG_H -I. -I../.. -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zi/src -I../../zi/test -I../../zutcp/src -I../../zpkt/src -D_REENTRANT -D_GNU_SOURCE -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT zutcpstacktest.o -MD -MP -MF .deps/zutcpstacktest.Tpo -c -o zutcpstacktest.o zutcpstacktest.cc
+    clang++         clang++ -DHAVE_CONFIG_H -I. -I../.. -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zi/src -I../../zi/test -I../../zutcp/src -I../../zpkt/src -D_REENTRANT -D_GNU_SOURCE -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT zutcpmxtest.o -MD -MP -MF .deps/zutcpmxtest.Tpo -c -o zutcpmxtest.o zutcpmxtest.cc
+    clang++         clang++ -DHAVE_CONFIG_H -I. -I../.. -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zi/src -I../../zi/test -I../../zutcp/src -I../../zpkt/src -D_REENTRANT -D_GNU_SOURCE -DZUTCP_APP_TLS -I../../ztls/src -I../../zdbus/src -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT zutcptlsapptest-zutcpapptest.o -MD -MP -MF .deps/zutcptlsapptest-zutcpapptest.Tpo -c -o zutcptlsapptest-zutcpapptest.o zutcpapptest.cc
     ✓ • 0ms
 
 ## Activity
@@ -23303,9 +23303,9 @@ All 23 Zutcp unit-test programs passed (321 tests). The full build is still comp
 
     $ tail -n 6 /tmp/zutcp-instance-rename-native.log; tail -n 1 /tmp/zutcp-instance-rename-build.log
     zutcpstacktest .......... ok
-    2026/11/17 16:08:46.877035047 203351 ERROR [Zxdp] Zxdp::Xdp::socketFailed() AF_XDP interface/queue bind: Device or resource busy
+    2026/11/17 16:08:46.877035047 203351 ERROR [Zpkt] Zpkt::Xdp::socketFailed() AF_XDP interface/queue bind: Device or resource busy
     zutcpiptest ............. ok
-    clang++ -DHAVE_CONFIG_H -I. -I../..  -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zfix/src -D_REENTRANT -D_GNU_SOURCE  -I../../zi/src -I../../ztcp/src -I../../ztls/src -I../../zutcp/src -I../../zxdp/src -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT zfixbench-zfixbench.o -MD -MP -MF .deps/zfixbench-zfixbench.Tpo -c -o zfixbench-zfixbench.o `test -f 'zfixbench.cc' || echo './'`zfixbench.cc
+    clang++ -DHAVE_CONFIG_H -I. -I../..  -I../../zu/src -I../../zm/src -I../../zt/src -I../../ze/src -I../../zf/src -I../../zfix/src -D_REENTRANT -D_GNU_SOURCE  -I../../zi/src -I../../ztcp/src -I../../ztls/src -I../../zutcp/src -I../../zpkt/src -D__x86_64__ -DCK_USE_CC_BUILTINS=1 -DZ_VMAJOR=10 -DZ_VMINOR=0 -DZ_VPATCH=0 -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -g -DZDEBUG -MT zfixbench-zfixbench.o -MD -MP -MF .deps/zfixbench-zfixbench.Tpo -c -o zfixbench-zfixbench.o `test -f 'zfixbench.cc' || echo './'`zfixbench.cc
     ✓ • 0ms
 
 ## Activity
@@ -23327,7 +23327,7 @@ All 23 Zutcp unit-test programs passed (321 tests). The full build is still comp
 
     $ rg -n 'warning:|error:' /tmp/zutcp-instance-rename-build.log; tail -n 6 /tmp/zutcp-instance-rename-native.log; nm -D -C zutcp/src/.libs/libZutcp.so | rg 'Zutcp::Stack'
     zutcpstacktest .......... ok
-    2026/11/17 16:08:46.877035047 203351 ERROR [Zxdp] Zxdp::Xdp::socketFailed() AF_XDP interface/queue bind: Device or resource busy
+    2026/11/17 16:08:46.877035047 203351 ERROR [Zpkt] Zpkt::Xdp::socketFailed() AF_XDP interface/queue bind: Device or resource busy
     zutcpiptest ............. ok
     ✗ (1) • 0ms
 
@@ -23339,7 +23339,7 @@ The full build passed without warnings. Native raw-I/O and IP tests also passed;
 
     $ tail -n 8 /tmp/zutcp-instance-rename-native.log
     zutcpstacktest .......... ok
-    2026/11/17 16:08:46.877035047 203351 ERROR [Zxdp] Zxdp::Xdp::socketFailed() AF_XDP interface/queue bind: Device or resource busy
+    2026/11/17 16:08:46.877035047 203351 ERROR [Zpkt] Zpkt::Xdp::socketFailed() AF_XDP interface/queue bind: Device or resource busy
     zutcpiptest ............. ok
     ✓ • 0ms
 
@@ -23365,7 +23365,7 @@ The full build passed without warnings. Native raw-I/O and IP tests also passed;
 
     $ tail -n 10 /tmp/zutcp-instance-rename-native.log; git diff --check
     zutcpstacktest .......... ok
-    2026/11/17 16:08:46.877035047 203351 ERROR [Zxdp] Zxdp::Xdp::socketFailed() AF_XDP interface/queue bind: Device or resource busy
+    2026/11/17 16:08:46.877035047 203351 ERROR [Zpkt] Zpkt::Xdp::socketFailed() AF_XDP interface/queue bind: Device or resource busy
     zutcpiptest ............. ok
     ✓ • 0ms
 
@@ -23378,7 +23378,7 @@ The full build passed without warnings. Native raw-I/O and IP tests also passed;
 
     $ tail -n 8 /tmp/zutcp-instance-rename-native.log
     zutcpstacktest .......... ok
-    2026/11/17 16:08:46.877035047 203351 ERROR [Zxdp] Zxdp::Xdp::socketFailed() AF_XDP interface/queue bind: Device or resource busy
+    2026/11/17 16:08:46.877035047 203351 ERROR [Zpkt] Zpkt::Xdp::socketFailed() AF_XDP interface/queue bind: Device or resource busy
     zutcpiptest ............. ok
     zutcpmxtest ............. ok
     All tests successful.
@@ -23736,17 +23736,17 @@ I’ll resume the implementation review, checking the current code against the a
      M zutcp/test/ZutcpRuntimeTest.cc
      M zutcp/util/README.md
      M zutcp/util/zutcppair.cc
-     M zxdp/GUIDELINES.md
-     M zxdp/INTERFACE.md
-     M zxdp/itest/zxdpfiltertest.cc
-     M zxdp/itest/zxdppackettest.cc
-     M zxdp/itest/zxdpwaketest.cc
-     M zxdp/src/Zxdp.cc
-     M zxdp/src/Zxdp.hh
-     M zxdp/src/ZxdpUMem.cc
-     M zxdp/test/ZxdpPoolTest.cc
+     M zpkt/GUIDELINES.md
+     M zpkt/INTERFACE.md
+     M zpkt/itest/zpktfiltertest.cc
+     M zpkt/itest/zpktpackettest.cc
+     M zpkt/itest/zpktwaketest.cc
+     M zpkt/src/Zpkt.cc
+     M zpkt/src/Zpkt.hh
+     M zpkt/src/ZpktUMem.cc
+     M zpkt/test/ZpktPoolTest.cc
     ?? cscope.out
-    ?? review_context/zxdp-dpdk-readiness/
+    ?? review_context/zpkt-dpdk-readiness/
     dpdk.md
     dpdk_implementation_review_report.md
     dpdk_implementation_review_report.md
@@ -23759,7 +23759,7 @@ I’ll resume the implementation review, checking the current code against the a
     
     The original three fresh-context reviews completed with 13 Major findings,
     consolidated into eight actions. Their original line references apply to
-    [the reviewed snapshot](review_context/zxdp-dpdk-readiness/reviewed_concepts_brief.md).
+    [the reviewed snapshot](review_context/zpkt-dpdk-readiness/reviewed_concepts_brief.md).
     The generic report filenames now document a separate I/O repair; this scoped
     report preserves the DPDK review without replacing those artifacts.
     
@@ -23820,7 +23820,7 @@ I’ll resume the implementation review, checking the current code against the a
     * `codebase-1-5` — Major: Dependency integration still requires build-policy choices.
     
     Raw normalized per-lens reports, findings.json and approved external snapshots
-    remain in review_context/zxdp-dpdk-readiness. Their assumptions must be interpreted
+    remain in review_context/zpkt-dpdk-readiness. Their assumptions must be interpreted
     under the binding corrections above. The selected architecture is unchanged.
     
     ## Work performed on resume
@@ -23918,7 +23918,7 @@ I’ll resume the implementation review, checking the current code against the a
     Final checks:
     
     * Top-level `make -j8`: passed.
-    * `make -C zxdp/test test`: passed, 4 programs / 14 top-level TAP tests.
+    * `make -C zpkt/test test`: passed, 4 programs / 14 top-level TAP tests.
     * Native packet/filter/wake tests under sudo in an anonymous two-queue-veth
       namespace: passed, 3 programs / 7 top-level TAP tests.
     * `git diff --check`: passed.
@@ -24369,8 +24369,8 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
 
 ## Activity
 
-    $ rg -n '^#|descriptor|queue|allocator|Phase|Task' concepts_brief.md | tail -n 100; sed -n '1,190p' zxdp/src/Zxdp.hh; sed -n '670,800p' zutcp/src/ZutcpMx.cc
-    1:# Zxdp AF_XDP and DPDK backends
+    $ rg -n '^#|descriptor|queue|allocator|Phase|Task' concepts_brief.md | tail -n 100; sed -n '1,190p' zpkt/src/Zpkt.hh; sed -n '670,800p' zutcp/src/ZutcpMx.cc
+    1:# Zpkt AF_XDP and DPDK backends
     10:## Overview
     22:## Current source baseline
     58:## Analysis and adopted design
@@ -24421,11 +24421,11 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     
     // Raw AF_XDP arena, pool and packet facilities.
     
-    #ifndef Zxdp_HH
-    #define Zxdp_HH
+    #ifndef Zpkt_HH
+    #define Zpkt_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stdint.h>
@@ -24445,12 +24445,12 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     #include <zlib/ZtcQueue.hh>
     #include <zlib/ZiIOBuf.hh>
     
-    namespace Zxdp {
+    namespace Zpkt {
     
-    using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zxdp.Receive">>;
-    using StopFn = ZmFn<void(), ZmFnHeapID<"Zxdp.TxStopped">>;
+    using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zpkt.Receive">>;
+    using StopFn = ZmFn<void(), ZmFnHeapID<"Zpkt.TxStopped">>;
     
-    ZtEnumNS(ZxdpAPI, Type, uint8_t, Xdp);
+    ZtEnumNS(ZpktAPI, Type, uint8_t, Xdp);
     
     struct Params_ {
       Zi::IOBufPoolList txPools; // at least one nonempty Tx pool is required
@@ -24474,7 +24474,7 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     // The caller drives Rx/Tx on their respective single owners. Allocation/free
     // may run on other threads. Allocation holds backing until explicit pool return;
     // an accepted send also holds it until kernel completion or safe close.
-    class ZxdpAPI Instance : public ZmPolymorph {
+    class ZpktAPI Instance : public ZmPolymorph {
     public:
       ~Instance() override = default;
       Instance(const Instance &) = delete;
@@ -24510,10 +24510,10 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
       Instance() = default;
     };
     
-    ZxdpExtern ZmRef<Instance> instance(Type::T);
+    ZpktExtern ZmRef<Instance> instance(Type::T);
     
-    } // namespace Zxdp
-    #endif /* Zxdp_HH */
+    } // namespace Zpkt
+    #endif /* Zpkt_HH */
       if (!count) throw ZeEXCEPT(Error, "Zutcp", "empty native packet pool");
       return count;
     }
@@ -24533,7 +24533,7 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
       m_spin{params.spin},
       m_txSid{params.txSid},
       m_netmask{params.netmask}, m_packet{ZuMv(params.packet)},
-      m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+      m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
       m_ingress{new Allocator{m_backend->bufPool(
         ingressCount(mx, m_interface), m_mtu + 14)}},
       m_rxAllocator{mx, m_ingress},
@@ -24840,10 +24840,10 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
        and internals in their existing namespace. Add the adopted status operation.
     2. Add the public Dpdk EAL configuration/wrapper and private backend/pool
        implementations, with repository-prefixed source/header names (for example
-       `ZxdpDpdk.hh/.cc` and `ZxdpDpdkPool.hh/.cc`). Export only caller-required
+       `ZpktDpdk.hh/.cc` and `ZpktDpdkPool.hh/.cc`). Export only caller-required
        EAL configuration/API declarations; keep concrete mbuf internals private.
     3. Add the DPDK dependency through configure/pkg-config conventions and extend
-       `zxdp/src/Makefile.am`, preserving its existing Zi dependency and installed
+       `zpkt/src/Makefile.am`, preserving its existing Zi dependency and installed
        versus private header boundary. Do not repeat the completed Zi pool migration.
     4. Implement pool-derived queue setup, direct Tx, native reclamation, receive,
        counted wakes, stopTx and structured retryable close. Add DPDK selection and
@@ -24860,12 +24860,12 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     clarifications and source refactor: design, codebase-details, zoom-out,
     comprehension, implementation-readiness, structural and inventive-catalyst.
     No reviewer failures or retries occurred. Raw reports are under
-    `/tmp/zxdp-brainstorm-review/`; findings about the obsolete factory, commit hook,
+    `/tmp/zpkt-brainstorm-review/`; findings about the obsolete factory, commit hook,
     external buffers, shared arenas and EAL ownership are historical and superseded.
     This reconciled brief is authoritative for the current plan. No new review,
     build or test run was performed for this documentation update.
     
-    References: `zxdp/INTERFACE.md`, `zxdp/GUIDELINES.md`, `zxdp/src/EGM.md`,
+    References: `zpkt/INTERFACE.md`, `zpkt/GUIDELINES.md`, `zpkt/src/EGM.md`,
     `dpdk_loopback.md`, and the current source files listed in the baseline section.
     Official DPDK references used during brainstorming:
     [ethdev](https://doc.dpdk.org/api-25.11/rte__ethdev_8h.html),
@@ -25080,32 +25080,32 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
 
 ## Activity
 
-    $ ls zxdp/src; sed -n '1,180p' zxdp/src/ZxdpUMem.cc; sed -n '1,160p' zxdp/src/ZxdpBufPool.hh
+    $ ls zpkt/src; sed -n '1,180p' zpkt/src/ZpktUMem.cc; sed -n '1,160p' zpkt/src/ZpktBufPool.hh
     EGM.md
     Makefile
     Makefile.am
     Makefile.in
-    Zxdp.cc
-    Zxdp.hh
-    ZxdpBPF.cc
-    ZxdpBPF.hh
-    ZxdpLib.cc
-    ZxdpLib.hh
-    ZxdpPool.cc
-    ZxdpPool.hh
-    ZxdpRetire.cc
-    ZxdpRetire.hh
-    ZxdpRing.hh
-    ZxdpUMem.cc
-    ZxdpUMem.hh
-    libZxdp.la
-    libZxdp_la-Zxdp.lo
-    libZxdp_la-ZxdpAlloc.lo
-    libZxdp_la-ZxdpBPF.lo
-    libZxdp_la-ZxdpLib.lo
-    libZxdp_la-ZxdpPool.lo
-    libZxdp_la-ZxdpRetire.lo
-    libZxdp_la-ZxdpUMem.lo
+    Zpkt.cc
+    Zpkt.hh
+    ZpktBPF.cc
+    ZpktBPF.hh
+    ZpktLib.cc
+    ZpktLib.hh
+    ZpktPool.cc
+    ZpktPool.hh
+    ZpktRetire.cc
+    ZpktRetire.hh
+    ZpktRing.hh
+    ZpktUMem.cc
+    ZpktUMem.hh
+    libZpkt.la
+    libZpkt_la-Zpkt.lo
+    libZpkt_la-ZpktAlloc.lo
+    libZpkt_la-ZpktBPF.lo
+    libZpkt_la-ZpktLib.lo
+    libZpkt_la-ZpktPool.lo
+    libZpkt_la-ZpktRetire.lo
+    libZpkt_la-ZpktUMem.lo
     zlib
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
@@ -25125,9 +25125,9 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     
     #include <zlib/ZePlatform.hh>
     
-    #include <zlib/ZxdpUMem.hh>
+    #include <zlib/ZpktUMem.hh>
     
-    namespace Zxdp::Xdp {
+    namespace Zpkt::Xdp {
     
     static unsigned power2(unsigned n)
     {
@@ -25146,7 +25146,7 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
       const Zi::IOBufPoolList &txPools, Zi::IOBufPool *rxPool, unsigned mtu)
     {
-      auto fail = [](const char *text) { return ZeEXCEPT(Error, "Zxdp", text); };
+      auto fail = [](const char *text) { return ZeEXCEPT(Error, "Zpkt", text); };
       // Linux copy-mode Rx adds NET_IP_ALIGN before the Ethernet header.
       enum { RxAlign = 2 };
       auto rx = dynamic_cast<BufPool *>(rxPool);
@@ -25200,7 +25200,7 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
       auto mem = mmap(nullptr, layout.length, PROT_READ | PROT_WRITE,
         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
       if (mem == MAP_FAILED) {
-        return ZeEXCEPT(Error, "Zxdp", ([error = ZeLastError](auto &out) {
+        return ZeEXCEPT(Error, "Zpkt", ([error = ZeLastError](auto &out) {
           out << "AF_XDP arena mmap failed: " << error;
         }));
       }
@@ -25247,7 +25247,7 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     
     static ZeException socketFailed(const char *operation)
     {
-      return ZeEXCEPT(Error, "Zxdp", ([operation, error = ZeLastError](auto &out) {
+      return ZeEXCEPT(Error, "Zpkt", ([operation, error = ZeLastError](auto &out) {
         out << operation << ": " << error;
       }));
     }
@@ -25257,12 +25257,12 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     {
       size_t length;
       if (!R::mapLength(off, count, length))
-        return ZeEXCEPT(Error, "Zxdp", "invalid AF_XDP kernel ring offsets or mapping length");
+        return ZeEXCEPT(Error, "Zpkt", "invalid AF_XDP kernel ring offsets or mapping length");
       auto mem = mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, offset);
       if (mem == MAP_FAILED) return socketFailed("AF_XDP ring mmap");
       m_maps[i] = {mem, length};
       if (!ring.init(mem, length, off, count))
-        return ZeEXCEPT(Error, "Zxdp", "invalid AF_XDP mapped ring state");
+        return ZeEXCEPT(Error, "Zpkt", "invalid AF_XDP mapped ring state");
       return {};
     }
     
@@ -25284,10 +25284,10 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     {
       if (m_fd >= 0 || !arena || !rxCount || !txCount ||
           (rxCount & (rxCount - 1)) || (txCount & (txCount - 1)))
-        return ZeEXCEPT(Error, "Zxdp", "invalid or already open AF_XDP registration/binding");
+        return ZeEXCEPT(Error, "Zpkt", "invalid or already open AF_XDP registration/binding");
       m_fd = socket(AF_XDP, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
       if (m_fd < 0) return socketFailed("AF_XDP socket");
-    sed: can't read zxdp/src/ZxdpBufPool.hh: No such file or directory
+    sed: can't read zpkt/src/ZpktBufPool.hh: No such file or directory
     ✗ (2) • 0ms
 
 ## Activity
@@ -25296,21 +25296,21 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
 
 ## Activity
 
-    $ sed -n '1,110p' concepts_brief.md; sed -n '480,530p' concepts_brief.md; sed -n '1,145p' zxdp/src/ZxdpPool.hh; rg -n 'descriptor|rxQueue|rxCount|ringCount' zxdp/src/Zxdp.cc | head -n 35
-    # Zxdp AF_XDP and DPDK backends
+    $ sed -n '1,110p' concepts_brief.md; sed -n '480,530p' concepts_brief.md; sed -n '1,145p' zpkt/src/ZpktPool.hh; rg -n 'descriptor|rxQueue|rxCount|ringCount' zpkt/src/Zpkt.cc | head -n 35
+    # Zpkt AF_XDP and DPDK backends
     
     * **Author:** Huw Rogers
     * **Date:** 2026-11-16
     * **Updated:** 2026-11-17
-    * **Status:** Decisions reconciled with the current `zxdp/src` refactor. Seven
+    * **Status:** Decisions reconciled with the current `zpkt/src` refactor. Seven
       historical brainstorming reviews completed; this update is source reconciliation,
       not another review or an implementation/test run.
     
     ## Overview
     
     Add DPDK alongside the existing AF_XDP backend using the current polymorphic
-    `Zxdp::Instance`. AF_XDP implementation types live in `Zxdp::Xdp`; DPDK types
-    will live in `Zxdp::Dpdk`. Extend the existing `Type` selector and tagged
+    `Zpkt::Instance`. AF_XDP implementation types live in `Zpkt::Xdp`; DPDK types
+    will live in `Zpkt::Dpdk`. Extend the existing `Type` selector and tagged
     `Params` union rather than recreating the earlier Backend/If design.
     
     The direct DPDK path is `Zutcp Tx owner → rte_eth_tx_burst() → DPDK/NIC`.
@@ -25320,10 +25320,10 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     
     ## Current source baseline
     
-    Read `Zxdp.hh`, `Zxdp.cc`, `ZxdpPool.hh/.cc`, `ZxdpUMem.hh/.cc`,
-    `ZxdpRetire.hh/.cc`, `ZxdpBPF.hh` and the BPF implementation changes,
-    `ZxdpRing.hh` changes, `Makefile.am` and `src/EGM.md`. Also read the updated
-    `zxdp/GUIDELINES.md` and `zxdp/INTERFACE.md`. The baseline includes commit
+    Read `Zpkt.hh`, `Zpkt.cc`, `ZpktPool.hh/.cc`, `ZpktUMem.hh/.cc`,
+    `ZpktRetire.hh/.cc`, `ZpktBPF.hh` and the BPF implementation changes,
+    `ZpktRing.hh` changes, `Makefile.am` and `src/EGM.md`. Also read the updated
+    `zpkt/GUIDELINES.md` and `zpkt/INTERFACE.md`. The baseline includes commit
     `3892a86f` and the subsequent shared-buffer and pool-interface repairs.
     Preserve current source and unrelated working-tree edits.
     
@@ -25331,7 +25331,7 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     
     * Cold `instance(Type::Xdp)` selection and a pure virtual base, without `m_data`.
     * `Params_` for common settings, `Xdp::Params` for AF_XDP settings, and a tagged
-      `Zxdp::Params` union populated in place.
+      `Zpkt::Params` union populated in place.
     * Virtual `bufPool(count, size, headRoom, tailRoom, align)` returning
       `ZmRef<Zi::IOBufPool>`. Cold factory instances and pool nodes have independent
       lifetimes; pools can precede instance initialization.
@@ -25345,8 +25345,8 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
       retirement pending, and the exception branch is an error. An error never
       authorizes freeing backing that remains in use.
     * Internal `Xdp::Instance`, `Xdp::BufPool`, `Xdp::UMem`, `Xdp::Xsk`, ring, BPF
-      and retirement types. `ZxdpPool.hh` replaces the old `ZxdpAlloc.hh`.
-    * A Zi dependency in `src/Makefile.am`; only `Zxdp.hh` and `ZxdpLib.hh` are
+      and retirement types. `ZpktPool.hh` replaces the old `ZpktAlloc.hh`.
+    * A Zi dependency in `src/Makefile.am`; only `Zpkt.hh` and `ZpktLib.hh` are
       currently installed, while pool/UMEM/ring/BPF/retirement headers are private.
     
     The send/ACK simplification from `zutcp_fix.md` is present in the baseline;
@@ -25358,12 +25358,12 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     
     ### Backend selection and instance parameters
     
-    Extend the existing declarations in `Zxdp.hh` using its current enum macro form:
+    Extend the existing declarations in `Zpkt.hh` using its current enum macro form:
     
     ```cpp
-    namespace Zxdp {
+    namespace Zpkt {
     
-    ZtEnumNS(ZxdpAPI, Type, uint8_t, Xdp, Dpdk);
+    ZtEnumNS(ZpktAPI, Type, uint8_t, Xdp, Dpdk);
     
     // Existing Params_ retains its owning Tx list, Rx reference, callback,
     // spin, scheduler and txStopped fields.
@@ -25375,19 +25375,19 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     }
     ZuDerive(Params, (ZuUnion<Xdp::Params, Dpdk::Params>));
     
-    } // namespace Zxdp
+    } // namespace Zpkt
     ```
     
     Use `instance(Type::Dpdk)` to obtain `Dpdk::Instance`, then allocate pools,
     populate backend parameters in place, and call `init(config)`. For example:
     
     ```cpp
-    auto backend = Zxdp::instance(Zxdp::Type::Dpdk);
+    auto backend = Zpkt::instance(Zpkt::Type::Dpdk);
     auto tx = backend->bufPool(txCount, txSize); // configured size; clamp on allocation
     auto rx = backend->bufPool(rxCount, rxSize); // established for MTU-sized packets
-    Zxdp::Params config(
-      Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Dpdk::Params>{}>{});
-    auto &params = config.p<Zxdp::Dpdk::Params>();
+    Zpkt::Params config(
+      Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Dpdk::Params>{}>{});
+    auto &params = config.p<Zpkt::Dpdk::Params>();
     params.name = "net_ring0";
     params.txPools.pushNode(tx.ptr());
     params.rxPool = rx;
@@ -25418,10 +25418,10 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
        and internals in their existing namespace. Add the adopted status operation.
     2. Add the public Dpdk EAL configuration/wrapper and private backend/pool
        implementations, with repository-prefixed source/header names (for example
-       `ZxdpDpdk.hh/.cc` and `ZxdpDpdkPool.hh/.cc`). Export only caller-required
+       `ZpktDpdk.hh/.cc` and `ZpktDpdkPool.hh/.cc`). Export only caller-required
        EAL configuration/API declarations; keep concrete mbuf internals private.
     3. Add the DPDK dependency through configure/pkg-config conventions and extend
-       `zxdp/src/Makefile.am`, preserving its existing Zi dependency and installed
+       `zpkt/src/Makefile.am`, preserving its existing Zi dependency and installed
        versus private header boundary. Do not repeat the completed Zi pool migration.
     4. Implement pool-derived queue setup, direct Tx, native reclamation, receive,
        counted wakes, stopTx and structured retryable close. Add DPDK selection and
@@ -25438,12 +25438,12 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     clarifications and source refactor: design, codebase-details, zoom-out,
     comprehension, implementation-readiness, structural and inventive-catalyst.
     No reviewer failures or retries occurred. Raw reports are under
-    `/tmp/zxdp-brainstorm-review/`; findings about the obsolete factory, commit hook,
+    `/tmp/zpkt-brainstorm-review/`; findings about the obsolete factory, commit hook,
     external buffers, shared arenas and EAL ownership are historical and superseded.
     This reconciled brief is authoritative for the current plan. No new review,
     build or test run was performed for this documentation update.
     
-    References: `zxdp/INTERFACE.md`, `zxdp/GUIDELINES.md`, `zxdp/src/EGM.md`,
+    References: `zpkt/INTERFACE.md`, `zpkt/GUIDELINES.md`, `zpkt/src/EGM.md`,
     `dpdk_loopback.md`, and the current source files listed in the baseline section.
     Official DPDK references used during brainstorming:
     [ethdev](https://doc.dpdk.org/api-25.11/rte__ethdev_8h.html),
@@ -25459,11 +25459,11 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     
     // Caller-owned intrusive packet pools over registered arena regions.
     
-    #ifndef ZxdpPool_HH
-    #define ZxdpPool_HH
+    #ifndef ZpktPool_HH
+    #define ZpktPool_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stdint.h>
@@ -25475,7 +25475,7 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     
     #include <zlib/ZiIOBuf.hh>
     
-    namespace Zxdp::Xdp {
+    namespace Zpkt::Xdp {
     
     class UMem;
     class BufPool;
@@ -25484,7 +25484,7 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     // Keep pool objects alive through instance close and final packet return.
     // Freeze the list/count/size while bound. Exhaustion never allocates backing.
     class BufPool final : public ZmNHeap<BufPool>, public Zi::IOBufPool {
-    friend inline ZuStringT<"Zxdp.Pool"> ZmNHeapID(BufPool *);
+    friend inline ZuStringT<"Zpkt.Pool"> ZmNHeapID(BufPool *);
     friend class UMem;
     friend class Instance;
     
@@ -25521,8 +25521,8 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
       Count        m_used{0}, m_active{0};
     };
     
-    } // namespace Zxdp::Xdp
-    #endif /* ZxdpPool_HH */
+    } // namespace Zpkt::Xdp
+    #endif /* ZpktPool_HH */
     109:    if (!m_link.rxQueues || m_rxPool->count < m_link.rxQueues) {
     121:    auto r = round(layout.rxCount/m_link.rxQueues + !!(layout.rxCount%m_link.rxQueues));
     128:    m_queues.length(m_link.rxQueues);
@@ -25536,7 +25536,7 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
 
 ## Activity
 
-    $ sed -n '232,292p' concepts_brief.md; rg -n 'provenance|ring|pcap' dpdk_implementation_review_report.md concepts_brief.md | tail -n 25; sed -n '1,130p' /home/count0/.codex/plugins/cache/egm/egm/0.1.1/skills/egm-resolve/SKILL.md; sed -n '1,135p' zxdp/src/Zxdp.cc
+    $ sed -n '232,292p' concepts_brief.md; rg -n 'provenance|ring|pcap' dpdk_implementation_review_report.md concepts_brief.md | tail -n 25; sed -n '1,130p' /home/count0/.codex/plugins/cache/egm/egm/0.1.1/skills/egm-resolve/SKILL.md; sed -n '1,135p' zpkt/src/Zpkt.cc
     Derive queue/descriptor and preallocated bookkeeping capacity from `txPools` and
     `rxPool`, honoring driver constraints. Do not add duplicate public sizing knobs.
     Keep backend-private direct packet identity and allocation-free packet service. Backend-native
@@ -25777,13 +25777,13 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     
     #include <zlib/ZePlatform.hh>
     
-    #include <zlib/Zxdp.hh>
-    #include <zlib/ZxdpBPF.hh>
-    #include <zlib/ZxdpUMem.hh>
-    #include <zlib/ZxdpRetire.hh>
-    #include <zlib/ZxdpPool.hh>
+    #include <zlib/Zpkt.hh>
+    #include <zlib/ZpktBPF.hh>
+    #include <zlib/ZpktUMem.hh>
+    #include <zlib/ZpktRetire.hh>
+    #include <zlib/ZpktPool.hh>
     
-    namespace Zxdp {
+    namespace Zpkt {
     
     ZtEnumImplNS(Type);
     
@@ -25791,7 +25791,7 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     
     // One kernel ring set per hardware Rx queue, sharing one UMEM registration.
     struct Queue : public ZmNHeap<Queue> {
-    friend inline ZuStringT<"Zxdp.Queue"> ZmNHeapID(Queue *);
+    friend inline ZuStringT<"Zpkt.Queue"> ZmNHeapID(Queue *);
       using Retirement = KernelRetirement;
       Xsk        socket;
       Retirement    retirement;
@@ -25801,8 +25801,8 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
       ~Queue() { ZmAssert_(socket.fd() < 0); }
     };
     
-    class Instance final : public ZmNHeap<Instance>, public Zxdp::Instance {
-    friend inline ZuStringT<"Zxdp.Instance"> ZmNHeapID(Instance *);
+    class Instance final : public ZmNHeap<Instance>, public Zpkt::Instance {
+    friend inline ZuStringT<"Zpkt.Instance"> ZmNHeapID(Instance *);
     
     public:
       using ZmNHeap<Instance>::operator new;
@@ -25826,12 +25826,12 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
       void wake() override { notify(); }
       unsigned pollTx() override;
       unsigned allQueues(Ztc::QueueMgr::AllFn) const override;
-      ZuUnion<void, ZeException> init(const Zxdp::Params &params) override {
+      ZuUnion<void, ZeException> init(const Zpkt::Params &params) override {
         if (m_state != Cold)
-          return ZeEXCEPT(Error, "Zxdp", "AF_XDP instance has already been initialized");
+          return ZeEXCEPT(Error, "Zpkt", "AF_XDP instance has already been initialized");
         m_state = Closing;
         if (!params.is<Params>())
-          return ZeEXCEPT(Error, "Zxdp", "AF_XDP instance requires XDP parameters");
+          return ZeEXCEPT(Error, "Zpkt", "AF_XDP instance requires XDP parameters");
         const auto &config = params.p<Params>();
         m_ifindex = config.ifindex;
         m_rxPool = dynamic_cast<BufPool *>(config.rxPool.ptr());
@@ -25847,11 +25847,11 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
           while (auto pool = pools()) m_txPools[i++] = static_cast<Zi::IOBufPool *>(pool);
         }
         if (!m_ifindex || !m_txPools.length() || !m_rxPool || !m_receive) {
-          return ZeEXCEPT(Error, "Zxdp",
+          return ZeEXCEPT(Error, "Zpkt",
         "interface, Tx pools, Rx pool and receive callback are required");
         }
         if (!m_scheduler || !m_txSid || m_txSid > m_scheduler->params().nThreads()) {
-          return ZeEXCEPT(Error, "Zxdp", "AF_XDP requires a scheduler and assigned Tx slot");
+          return ZeEXCEPT(Error, "Zpkt", "AF_XDP requires a scheduler and assigned Tx slot");
         }
         auto parsed = parseFilter(config.netmask);
         if (parsed.is<ZeException>()) return ZuMv(parsed).p<ZeException>();
@@ -25860,9 +25860,9 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
         if (queried.is<ZeException>()) return ZuMv(queried).p<ZeException>();
         m_link = ZuMv(queried).p<LinkState>();
         if (m_link.occupied())
-          return ZeEXCEPT(Error, "Zxdp", "interface has an unrelated XDP program");
+          return ZeEXCEPT(Error, "Zpkt", "interface has an unrelated XDP program");
         if (!m_link.rxQueues || m_rxPool->count < m_link.rxQueues) {
-          return ZeEXCEPT(Error, "Zxdp", "Rx pool must provision every interface queue");
+          return ZeEXCEPT(Error, "Zpkt", "Rx pool must provision every interface queue");
         }
         auto created = UMem::create(config.txPools, m_rxPool.ptr(), m_link.mtu);
         if (created.is<ZeException>()) return ZuMv(created).p<ZeException>();
@@ -25875,7 +25875,7 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
         };
         auto r = round(layout.rxCount/m_link.rxQueues + !!(layout.rxCount%m_link.rxQueues));
         auto t = round(layout.txCount);
-        if (!r || !t) { return ZeEXCEPT(Error, "Zxdp", "AF_XDP ring capacity overflow"); }
+        if (!r || !t) { return ZeEXCEPT(Error, "Zpkt", "AF_XDP ring capacity overflow"); }
         m_rxSlots.length(m_rxPool->count);
         m_rxActive.length(m_rxPool->count);
         m_txActive.length(layout.txCount);
@@ -25883,11 +25883,11 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
         m_queues.length(m_link.rxQueues);
         for (auto &queue : m_queues) queue = nullptr;
         m_events = epoll_create1(EPOLL_CLOEXEC);
-        if (m_events < 0) { return ZeEXCEPT(Error, "Zxdp", ([error = ZeLastError](auto &out) {
+        if (m_events < 0) { return ZeEXCEPT(Error, "Zpkt", ([error = ZeLastError](auto &out) {
         out << "AF_XDP epoll creation failed: " << error;
           })); }
         m_wakeFD = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-        if (m_wakeFD < 0) { return ZeEXCEPT(Error, "Zxdp", ([error = ZeLastError](auto &out) {
+        if (m_wakeFD < 0) { return ZeEXCEPT(Error, "Zpkt", ([error = ZeLastError](auto &out) {
     ✓ • 0ms
 
 ## Activity
@@ -25906,13 +25906,13 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
         -I$(top_srcdir)/zi/src @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
-    pkginclude_HEADERS = ZxdpLib.hh Zxdp.hh
-    noinst_HEADERS = ZxdpPool.hh ZxdpRing.hh ZxdpUMem.hh ZxdpBPF.hh ZxdpRetire.hh
-    lib_LTLIBRARIES = libZxdp.la
-    libZxdp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZXDP_EXPORTS
-    libZxdp_la_SOURCES = ZxdpLib.cc Zxdp.cc ZxdpPool.cc ZxdpUMem.cc ZxdpBPF.cc \
-        ZxdpRetire.cc
-    libZxdp_la_LIBADD = $(top_builddir)/zi/src/libZi.la \
+    pkginclude_HEADERS = ZpktLib.hh Zpkt.hh
+    noinst_HEADERS = ZpktPool.hh ZpktRing.hh ZpktUMem.hh ZpktBPF.hh ZpktRetire.hh
+    lib_LTLIBRARIES = libZpkt.la
+    libZpkt_la_CPPFLAGS = $(AM_CPPFLAGS) -DZPKT_EXPORTS
+    libZpkt_la_SOURCES = ZpktLib.cc Zpkt.cc ZpktPool.cc ZpktUMem.cc ZpktBPF.cc \
+        ZpktRetire.cc
+    libZpkt_la_LIBADD = $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la \
         $(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
@@ -25920,20 +25920,20 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
-        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zxdp/src @Z_CPPFLAGS@
+        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zpkt/src @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@
-    LDADD = $(top_builddir)/zxdp/src/libZxdp.la \
+    LDADD = $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
         $(top_builddir)/zu/src/libZu.la \
         @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-    noinst_PROGRAMS = ZxdpRingTest ZxdpPoolTest ZxdpInstanceTest ZxdpClassifierTest
-    ZxdpRingTest_SOURCES = ZxdpRingTest.cc
-    ZxdpPoolTest_SOURCES = ZxdpPoolTest.cc
-    ZxdpInstanceTest_SOURCES = ZxdpInstanceTest.cc
-    ZxdpClassifierTest_SOURCES = ZxdpClassifierTest.cc
+    noinst_PROGRAMS = ZpktRingTest ZpktPoolTest ZpktInstanceTest ZpktClassifierTest
+    ZpktRingTest_SOURCES = ZpktRingTest.cc
+    ZpktPoolTest_SOURCES = ZpktPoolTest.cc
+    ZpktInstanceTest_SOURCES = ZpktInstanceTest.cc
+    ZpktClassifierTest_SOURCES = ZpktClassifierTest.cc
     EXTRA_DIST = README.md
     
     .PHONY: test
@@ -25942,22 +25942,22 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
-        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zxdp/src \
-        -DZXDP_FIXTURE='"$(abs_top_srcdir)/zxdp/util/zxdpfixture.sh"' \
-        -DZXDP_PACKET='"$(abs_top_builddir)/zxdp/util/zxdppacket"' @Z_CPPFLAGS@
+        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zpkt/src \
+        -DZPKT_FIXTURE='"$(abs_top_srcdir)/zpkt/util/zpktfixture.sh"' \
+        -DZPKT_PACKET='"$(abs_top_builddir)/zpkt/util/zpktpacket"' @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@
-    LDADD = $(top_builddir)/zxdp/src/libZxdp.la \
+    LDADD = $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
         $(top_builddir)/zu/src/libZu.la \
         @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-    noinst_PROGRAMS = zxdppackettest zxdpfiltertest zxdplooptest zxdpwaketest
-    zxdppackettest_SOURCES = zxdppackettest.cc
-    zxdpwaketest_SOURCES = zxdpwaketest.cc
-    zxdpfiltertest_SOURCES = zxdpfiltertest.cc
-    zxdplooptest_SOURCES = zxdplooptest.cc zxdplog.hh
+    noinst_PROGRAMS = zpktpackettest zpktfiltertest zpktlooptest zpktwaketest
+    zpktpackettest_SOURCES = zpktpackettest.cc
+    zpktwaketest_SOURCES = zpktwaketest.cc
+    zpktfiltertest_SOURCES = zpktfiltertest.cc
+    zpktlooptest_SOURCES = zpktlooptest.cc zpktlog.hh
     
     .PHONY: test
     test: $(noinst_PROGRAMS)
@@ -26002,7 +26002,7 @@ DPDK is still unimplemented. The remaining review work concerns queue provisioni
     
     #include <zlib/ZiMultiplex.hh>
     
-    #include <zlib/Zxdp.hh>
+    #include <zlib/Zpkt.hh>
     
     #include <zlib/ZutcpAlloc.hh>
     #include <zlib/ZutcpIP.hh>
@@ -26152,12 +26152,12 @@ Two details need explicit treatment. Some hardware PMDs allocate a replacement m
         
         | Existing test | DPDK counterpart | Adaptation |
         | --- | --- | --- |
-        | ZxdpPoolTest | ZxdpDpdkPoolTest | Native mbuf allocation/return, configured geometry, exhaustion and retained backing. |
-        | ZxdpInstanceTest | ZxdpDpdkInstanceTest | Explicit EAL prerequisite, init failures, mandatory Tx provisioning and close/recreate. |
-        | zxdppackettest | zxdpdpdkpackettest | Direct submission, received bytes, backing lifetime, exhaustion and draining through ring/pcap peers. |
-        | zxdpwaketest | zxdpdpdkwaketest | Active receive, counted wake and bounded idle wait; omit AF_XDP sender-thread assertions. |
-        | zxdplooptest | zxdpdpdklooptest | Software peer progress through the normal backend path. |
-        | ZxdpClassifierTest / zxdpfiltertest | no DPDK copy | The current BPF classifier and Xdp netmask filter are backend-specific. |
+        | ZpktPoolTest | ZpktDpdkPoolTest | Native mbuf allocation/return, configured geometry, exhaustion and retained backing. |
+        | ZpktInstanceTest | ZpktDpdkInstanceTest | Explicit EAL prerequisite, init failures, mandatory Tx provisioning and close/recreate. |
+        | zpktpackettest | zpktdpdkpackettest | Direct submission, received bytes, backing lifetime, exhaustion and draining through ring/pcap peers. |
+        | zpktwaketest | zpktdpdkwaketest | Active receive, counted wake and bounded idle wait; omit AF_XDP sender-thread assertions. |
+        | zpktlooptest | zpktdpdklooptest | Software peer progress through the normal backend path. |
+        | ZpktClassifierTest / zpktfiltertest | no DPDK copy | The current BPF classifier and Xdp netmask filter are backend-specific. |
         
         The relevant Zutcp native fixture must additionally select DPDK and exercise
         start/stop/restart with the same pool and endpoint ownership contract. Do not
@@ -26166,21 +26166,21 @@ Two details need explicit treatment. Some hardware PMDs allocate a replacement m
         ### A1/A2: concrete proposed file boundary and build checkpoints
         
         Modify `configure.ac` and `z.config` for the adopted optional dependency. Modify
-        `zxdp/src/Makefile.am`, `zxdp/test/Makefile.am` and
-        `zxdp/itest/Makefile.am` for conditional sources, flags, libraries and tests.
+        `zpkt/src/Makefile.am`, `zpkt/test/Makefile.am` and
+        `zpkt/itest/Makefile.am` for conditional sources, flags, libraries and tests.
         Keep generated Autotools outputs consistent with repository practice.
         
-        Create public `zxdp/src/ZxdpDpdk.hh` and its implementation
-        `zxdp/src/ZxdpDpdk.cc` for EAL configuration/lifetime. Create private
-        `zxdp/src/ZxdpDpdkInstance.hh/.cc` and `zxdp/src/ZxdpDpdkPool.hh/.cc` for the
-        instance and native mbuf pools. Modify `zxdp/src/Zxdp.hh` and `Zxdp.cc` for
+        Create public `zpkt/src/ZpktDpdk.hh` and its implementation
+        `zpkt/src/ZpktDpdk.cc` for EAL configuration/lifetime. Create private
+        `zpkt/src/ZpktDpdkInstance.hh/.cc` and `zpkt/src/ZpktDpdkPool.hh/.cc` for the
+        instance and native mbuf pools. Modify `zpkt/src/Zpkt.hh` and `Zpkt.cc` for
         selection, parameter union, factory dispatch and status(). Keep AF_XDP internals
         in place. Concrete DPDK declarations are built only when enabled.
         
         Create the five DPDK test sources named in the coverage table, plus private
-        `zxdp/itest/zxdpdpdkfixture.hh/.cc` shared by the three integration drivers.
-        Update `zxdp/test/README.md`, `zxdp/itest/README.md`, `zxdp/README.md`,
-        `zxdp/INTERFACE.md` and `zxdp/GUIDELINES.md` with actual setup and guarantees.
+        `zpkt/itest/zpktdpdkfixture.hh/.cc` shared by the three integration drivers.
+        Update `zpkt/test/README.md`, `zpkt/itest/README.md`, `zpkt/README.md`,
+        `zpkt/INTERFACE.md` and `zpkt/GUIDELINES.md` with actual setup and guarantees.
         
 
         
@@ -26279,9 +26279,9 @@ why would the PMD post all N to Rx descriptors?
 
 ## Assistant
 
-It wouldn’t choose that automatically. `zxdp` supplies the descriptor count when configuring the Rx queue; the PMD populates those descriptors with mbufs.
+It wouldn’t choose that automatically. `zpkt` supplies the descriptor count when configuring the Rx queue; the PMD populates those descriptors with mbufs.
 
-Posting all `N` would result from `zxdp` choosing that count. Nothing requires that choice. My concern assumed a configuration we had never proposed, so it should not have been raised as an outstanding issue.
+Posting all `N` would result from `zpkt` choosing that count. Nothing requires that choice. My concern assumed a configuration we had never proposed, so it should not have been raised as an outstanding issue.
 
 ## User
 
@@ -26311,7 +26311,7 @@ right, so again, what is the question?
 
 ## Assistant
 
-There is no outstanding question. The PMD uses the entire Rx pool, and `zxdp` derives queue sizing subject to driver requirements. Later pool exhaustion and packet loss are acceptable.
+There is no outstanding question. The PMD uses the entire Rx pool, and `zpkt` derives queue sizing subject to driver requirements. Later pool exhaustion and packet loss are acceptable.
 
 A3 should be closed as routine implementation detail.
 
@@ -26359,7 +26359,7 @@ I’ll record the fixture solution as adopted, use “dequeue” for an individu
     dpdk_implementation_review_report.md:230:For two communicating native endpoints, a fixture peer copies wire bytes from
     dpdk_implementation_review_report.md:235:software peer fixture; production DPDK send/receive stays direct.
     dpdk_implementation_review_report.md:252:The relevant Zutcp native fixture must additionally select DPDK and exercise
-    dpdk_implementation_review_report.md:271:`zxdp/itest/zxdpdpdkfixture.hh/.cc` shared by the three integration drivers.
+    dpdk_implementation_review_report.md:271:`zpkt/itest/zpktdpdkfixture.hh/.cc` shared by the three integration drivers.
     dpdk_implementation_review_report.md:278:`Makefile.am`/README for the backend-specific fixture. Modify only the
     dpdk_implementation_review_report.md:291:3. Add software ring/pcap fixtures and mapped backend integration tests. Verify
     dpdk_implementation_review_report.md:292:   Rx-pool provenance, direct Tx and accepted-work draining in those fixtures.
@@ -26410,7 +26410,7 @@ I’ll record the fixture solution as adopted, use “dequeue” for an individu
         accounting is needed. Later exhaustion from application retention and resulting
         packet loss are acceptable.
         
-        The earlier replacement-first PMD example assumed zxdp would configure every
+        The earlier replacement-first PMD example assumed zpkt would configure every
         mbuf as an initial descriptor. That choice was never proposed and does not
         establish an outstanding design question. A3 is closed.
         
@@ -26475,7 +26475,7 @@ I’ll finish the consumer integration details, incorporate the file and test ma
     
     Include DPDK selection and pool provisioning through Zutcp, for initial startup
     and restart. Update `zutcp/src/ZutcpMx.hh` and `zutcp/src/ZutcpMx.cc`; do not
-    limit this work to standalone Zxdp service.
+    limit this work to standalone Zpkt service.
     
 
     
@@ -26493,21 +26493,21 @@ I’ll finish the consumer integration details, incorporate the file and test ma
     
     Mirror `z.config`'s PostgreSQL behavior: DPDK defaults to yes in the wrapper,
     add `-K` (build without DPDK), and pass `--with-dpdk=$DPDK` through both compiler
-    branches. Keep the existing Linux-only zxdp traversal. Disabling DPDK leaves
+    branches. Keep the existing Linux-only zpkt traversal. Disabling DPDK leaves
     AF_XDP builds and tests available and adds no DPDK headers or link requirement.
     Guard DPDK-dependent declarations, implementation and fixture build entries
     consistently. Explicit DPDK selection in a disabled build must report that support
     was not built; it must not select AF_XDP. No runtime allocation fallback or
     compatibility shim is introduced by this optional build dependency.
     
-    Changes belong in `configure.ac`, `z.config`, `zxdp/src/Makefile.am` and the
+    Changes belong in `configure.ac`, `z.config`, `zpkt/src/Makefile.am` and the
     DPDK test/fixture Makefiles identified in the exact file manifest. Validate both
     enabled and disabled configurations, including requested-but-missing libdpdk.
     
     ### Explicit EAL ownership
     
     Move the previously adopted DPDK-only configuration and lifecycle under
-    `Zxdp::Dpdk`: call the process-wide wrapper `Dpdk::EAL` and its configuration
+    `Zpkt::Dpdk`: call the process-wide wrapper `Dpdk::EAL` and its configuration
     `Dpdk::EALParams`. This avoids colliding with per-instance `Dpdk::Params`.
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
@@ -26650,19 +26650,19 @@ I’ll finish the consumer integration details, incorporate the file and test ma
     zutcp/src/ZutcpMx.hh:334:  bool resolvePath(IPPath, RouteFn);
     zutcp/src/ZutcpMx.hh:384:  // m_interface calls requireTCPSecrets(); their live operations are const.
     zutcp/src/ZutcpMx.hh:387:  unsigned    m_interface, m_mtu, m_spin, m_txSid;
-    zutcp/src/ZutcpMx.hh:390:  alignas(Zm::CacheLineSize) ZmRef<Zxdp::Instance> m_backend;
+    zutcp/src/ZutcpMx.hh:390:  alignas(Zm::CacheLineSize) ZmRef<Zpkt::Instance> m_backend;
     zutcp/src/ZutcpMx.hh:391:  bool m_backendInit = false;
     zutcp/src/ZutcpMx.cc:647:static unsigned requireMTU(ZiMultiplex *mx, unsigned interface)
     zutcp/src/ZutcpMx.cc:649:  if (!mx) throw ZeEXCEPT(Error, "Zutcp", "packet interface requires a multiplexer");
     zutcp/src/ZutcpMx.cc:650:  auto result = interfaceMTU(interface);
     zutcp/src/ZutcpMx.cc:655:static unsigned ingressCount(ZiMultiplex *mx, unsigned interface)
-    zutcp/src/ZutcpMx.cc:658:  auto result = Zxdp::Xdp::queryLink(interface);
+    zutcp/src/ZutcpMx.cc:658:  auto result = Zpkt::Xdp::queryLink(interface);
     zutcp/src/ZutcpMx.cc:674:static unsigned requireTCPSecrets(ISN &isn, TFOKey &tfo, unsigned interface)
     zutcp/src/ZutcpMx.cc:676:  if (!isn.init(interface))
     zutcp/src/ZutcpMx.cc:680:  return interface;
     zutcp/src/ZutcpMx.cc:684:: ZiMxPlugin{mx}, m_interface{requireTCPSecrets(m_isn, m_tfoKey, params.interface)},
     zutcp/src/ZutcpMx.cc:685:  m_mtu{requireMTU(mx, params.interface)},
-    zutcp/src/ZutcpMx.cc:689:  m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+    zutcp/src/ZutcpMx.cc:689:  m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
     zutcp/src/ZutcpMx.cc:690:  m_ingress{new Allocator{m_backend->bufPool(
     zutcp/src/ZutcpMx.cc:691:    ingressCount(mx, m_interface), m_mtu + 14)}},
     zutcp/src/ZutcpMx.cc:693:  m_packets{new Allocator{m_backend->bufPool(
@@ -26677,7 +26677,7 @@ I’ll finish the consumer integration details, incorporate the file and test ma
     zutcp/src/ZutcpMx.cc:980:bool Instance::resolvePath(IPPath path, RouteFn done)
     zutcp/src/ZutcpMx.cc:993:    auto result = resolveIPPath(m_interface, ZuMv(path));
     zutcp/src/ZutcpMx.cc:1022:  // A backend initializes once. Retain closed telemetry until this next start.
-    zutcp/src/ZutcpMx.cc:1023:  if (m_backendInit) m_backend = Zxdp::instance(Zxdp::Type::Xdp);
+    zutcp/src/ZutcpMx.cc:1023:  if (m_backendInit) m_backend = Zpkt::instance(Zpkt::Type::Xdp);
     zutcp/src/ZutcpMx.cc:1024:  m_backendInit = true;
     zutcp/src/ZutcpMx.cc:1028:  params.ifindex = m_interface;
     zutcp/src/ZutcpMx.cc:1040:  auto initialized = m_backend->init(config);
@@ -26706,11 +26706,11 @@ I’ll finish the consumer integration details, incorporate the file and test ma
 ## Activity
 
     $ sed -n '235,330p' dpdk_implementation_review_report.md; sed -n '1,100p' /home/count0/.codex/plugins/cache/egm/egm/0.1.1/skills/egm-review-loop/SKILL.md
-    | ZxdpInstanceTest | ZxdpDpdkInstanceTest | Explicit EAL prerequisite, init failures, mandatory Tx provisioning and close/recreate. |
-    | zxdppackettest | zxdpdpdkpackettest | Direct submission, received bytes, backing lifetime, exhaustion and draining through ring/pcap peers. |
-    | zxdpwaketest | zxdpdpdkwaketest | Active receive, counted wake and bounded idle wait; omit AF_XDP sender-thread assertions. |
-    | zxdplooptest | zxdpdpdklooptest | Software peer progress through the normal backend path. |
-    | ZxdpClassifierTest / zxdpfiltertest | no DPDK copy | The current BPF classifier and Xdp netmask filter are backend-specific. |
+    | ZpktInstanceTest | ZpktDpdkInstanceTest | Explicit EAL prerequisite, init failures, mandatory Tx provisioning and close/recreate. |
+    | zpktpackettest | zpktdpdkpackettest | Direct submission, received bytes, backing lifetime, exhaustion and draining through ring/pcap peers. |
+    | zpktwaketest | zpktdpdkwaketest | Active receive, counted wake and bounded idle wait; omit AF_XDP sender-thread assertions. |
+    | zpktlooptest | zpktdpdklooptest | Software peer progress through the normal backend path. |
+    | ZpktClassifierTest / zpktfiltertest | no DPDK copy | The current BPF classifier and Xdp netmask filter are backend-specific. |
     
     The relevant Zutcp native fixture must additionally select DPDK and exercise
     start/stop/restart with the same pool and endpoint ownership contract. Do not
@@ -26719,21 +26719,21 @@ I’ll finish the consumer integration details, incorporate the file and test ma
     ### A1/A2: concrete proposed file boundary and build checkpoints
     
     Modify `configure.ac` and `z.config` for the adopted optional dependency. Modify
-    `zxdp/src/Makefile.am`, `zxdp/test/Makefile.am` and
-    `zxdp/itest/Makefile.am` for conditional sources, flags, libraries and tests.
+    `zpkt/src/Makefile.am`, `zpkt/test/Makefile.am` and
+    `zpkt/itest/Makefile.am` for conditional sources, flags, libraries and tests.
     Keep generated Autotools outputs consistent with repository practice.
     
-    Create public `zxdp/src/ZxdpDpdk.hh` and its implementation
-    `zxdp/src/ZxdpDpdk.cc` for EAL configuration/lifetime. Create private
-    `zxdp/src/ZxdpDpdkInstance.hh/.cc` and `zxdp/src/ZxdpDpdkPool.hh/.cc` for the
-    instance and native mbuf pools. Modify `zxdp/src/Zxdp.hh` and `Zxdp.cc` for
+    Create public `zpkt/src/ZpktDpdk.hh` and its implementation
+    `zpkt/src/ZpktDpdk.cc` for EAL configuration/lifetime. Create private
+    `zpkt/src/ZpktDpdkInstance.hh/.cc` and `zpkt/src/ZpktDpdkPool.hh/.cc` for the
+    instance and native mbuf pools. Modify `zpkt/src/Zpkt.hh` and `Zpkt.cc` for
     selection, parameter union, factory dispatch and status(). Keep AF_XDP internals
     in place. Concrete DPDK declarations are built only when enabled.
     
     Create the five DPDK test sources named in the coverage table, plus private
-    `zxdp/itest/zxdpdpdkfixture.hh/.cc` shared by the three integration drivers.
-    Update `zxdp/test/README.md`, `zxdp/itest/README.md`, `zxdp/README.md`,
-    `zxdp/INTERFACE.md` and `zxdp/GUIDELINES.md` with actual setup and guarantees.
+    `zpkt/itest/zpktdpdkfixture.hh/.cc` shared by the three integration drivers.
+    Update `zpkt/test/README.md`, `zpkt/itest/README.md`, `zpkt/README.md`,
+    `zpkt/INTERFACE.md` and `zpkt/GUIDELINES.md` with actual setup and guarantees.
     
 
     
@@ -26903,11 +26903,11 @@ I’ll finish the consumer integration details, incorporate the file and test ma
       m_rxWakeQueued = 0;
       m_error = {};
       // A backend initializes once. Retain closed telemetry until this next start.
-      if (m_backendInit) m_backend = Zxdp::instance(Zxdp::Type::Xdp);
+      if (m_backendInit) m_backend = Zpkt::instance(Zpkt::Type::Xdp);
       m_backendInit = true;
-      Zxdp::Params config(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-      auto &params = config.p<Zxdp::Xdp::Params>();
+      Zpkt::Params config(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+      auto &params = config.p<Zpkt::Xdp::Params>();
       params.ifindex = m_interface;
       params.netmask = m_netmask;
       params.rxPool = m_ingress->pool;
@@ -27096,7 +27096,7 @@ I’ll finish the consumer integration details, incorporate the file and test ma
     ### Filtering boundary
     
     The current refactor places `netmask` solely in `Xdp::Params`, with its parser
-    and BPF classifier in `Zxdp::Xdp`. Preserve that separation; do not automatically
+    and BPF classifier in `Zpkt::Xdp`. Preserve that separation; do not automatically
     move filtering into `Params_` or depend on Xdp helpers from Dpdk. The earlier
     open filtering question is now narrower: whether DPDK should expose a separate
     selection facility at all. No DPDK mask setting has been adopted, so the proposed
@@ -27104,7 +27104,7 @@ I’ll finish the consumer integration details, incorporate the file and test ma
     
     ### Adopted explicit EAL parameters
     
-    Use an aggregate `Zxdp::Dpdk::EALParams`, following nearby `Zxdp::Params_` and
+    Use an aggregate `Zpkt::Dpdk::EALParams`, following nearby `Zpkt::Params_` and
     `Zutcp::StackParams`: public named members with defaults and designated
     initializers. This follows the current struct style rule; the fluent alternative
     is exemplified by `ZiMxParams`. Own strings and lists so the application can build
@@ -27232,11 +27232,11 @@ I’ll finish the consumer integration details, incorporate the file and test ma
     static unsigned ingressCount(ZiMultiplex *mx, unsigned interface)
     {
       if (mx->rxBufSize()) return mx->rxBufSize();
-      auto result = Zxdp::Xdp::queryLink(interface);
+      auto result = Zpkt::Xdp::queryLink(interface);
       if (result.is<ZeException>()) throw ZuMv(result.p<ZeException>());
       // Idle queues retain their FILL allocations. Each active queue needs room
       // beyond one connection's default retained list before its oldest can return.
-      uint64_t count = uint64_t(result.p<Zxdp::Xdp::LinkState>().rxQueues) *
+      uint64_t count = uint64_t(result.p<Zpkt::Xdp::LinkState>().rxQueues) *
         (uint64_t(DefaultRxRetainPerCxn) + mx->rxQuantum());
       if (count > UINT_MAX) throw ZeEXCEPT(Error, "Zutcp", "Rx pool count overflow");
       return count > ZiIOBuf_DefltCount ? unsigned(count) : ZiIOBuf_DefltCount;
@@ -27293,7 +27293,7 @@ The remaining integration gap is routing: Zutcp currently queries MTU, routes an
         owned device name, configured MTU, physical Rx mbuf count, Rx idle interval and
         path resolver in the Dpdk alternative. This is a source API change: update all
         repository callers without compatibility aliases. These are Zutcp's inputs for
-        constructing native pools; Zxdp continues to receive the resulting txPools and
+        constructing native pools; Zpkt continues to receive the resulting txPools and
         rxPool rather than duplicate public ring-sizing settings.
         
         For DPDK, the application supplies a resolver returning
@@ -27302,7 +27302,7 @@ The remaining integration gap is routing: Zutcp currently queries MTU, routes an
         the initialized backend and constrain path MTU to the configured instance MTU.
         The application may use static routes/neighbors or an external control plane.
         Do not introduce ARP/ND, assume a companion Linux interface, or add routing to
-        Zxdp. Existing AF_XDP resolution continues through `resolveIPPath(ifindex, ...)`.
+        Zpkt. Existing AF_XDP resolution continues through `resolveIPPath(ifindex, ...)`.
         
         Invoke the resolver on an existing non-I/O multiplexer worker, following the
         current cold path. Require an eligible worker during DPDK setup rather than
@@ -27321,7 +27321,7 @@ The remaining integration gap is routing: Zutcp currently queries MTU, routes an
         validates established geometry before publishing readiness.
         
         On restart, recreate the same selected backend and rebuild the matching tagged
-        Zxdp parameters from retained instance configuration. Reuse the configured pools
+        Zpkt parameters from retained instance configuration. Reuse the configured pools
         only after prior backend retirement; reject restart while incompatible retained
         backing prevents reuse. Preserve current asynchronous close and route draining.
         Keep TCP secrets for the Zutcp instance lifetime across restart. Their current
@@ -27647,12 +27647,12 @@ I’ll check both Zutcp’s neighbor lookup and how the AF_XDP filter handles AR
 
 ## Activity
 
-    $ rg -n 'ARP|arp|PASS|0x0806|0x86dd|ICMP|icmp|ETH_P' zxdp/src/ZxdpBPF.cc zxdp/src/ZxdpBPF.hh; sed -n '110,195p' zxdp/src/ZxdpBPF.cc; rg -n 'neigh|ARP|static neighbor' zutcp/util/zutcpfixture.sh zutcp/util/README.md zutcp/itest/zutcpipfixture.sh
-    zxdp/src/ZxdpBPF.cc:15:#include <arpa/inet.h>
-    zxdp/src/ZxdpBPF.cc:17:#include <linux/if_arp.h>
-    zxdp/src/ZxdpBPF.cc:185:    b.jump(BPF_JNE | BPF_K, 2, 0, filter.family == 4 ? 0x0800 : 0x86dd, pass);
-    zxdp/src/ZxdpBPF.cc:203:  if (filter.family) { b.imm(0, XDP_PASS); b.exit(); }
-    zxdp/src/ZxdpBPF.cc:318:  if (info->ifi_type != ARPHRD_ETHER) {
+    $ rg -n 'ARP|arp|PASS|0x0806|0x86dd|ICMP|icmp|ETH_P' zpkt/src/ZpktBPF.cc zpkt/src/ZpktBPF.hh; sed -n '110,195p' zpkt/src/ZpktBPF.cc; rg -n 'neigh|ARP|static neighbor' zutcp/util/zutcpfixture.sh zutcp/util/README.md zutcp/itest/zutcpipfixture.sh
+    zpkt/src/ZpktBPF.cc:15:#include <arpa/inet.h>
+    zpkt/src/ZpktBPF.cc:17:#include <linux/if_arp.h>
+    zpkt/src/ZpktBPF.cc:185:    b.jump(BPF_JNE | BPF_K, 2, 0, filter.family == 4 ? 0x0800 : 0x86dd, pass);
+    zpkt/src/ZpktBPF.cc:203:  if (filter.family) { b.imm(0, XDP_PASS); b.exit(); }
+    zpkt/src/ZpktBPF.cc:318:  if (info->ifi_type != ARPHRD_ETHER) {
         insn.src_reg = src;
         insn.off = off;
         insn.imm = imm;
@@ -27688,7 +27688,7 @@ I’ll check both Zutcp’s neighbor lookup and how the AF_XDP filter handles AR
       ZuUnion<BPFCode, ZeException> finish() {
         for (auto label : m_labels) if (label != Marked) { m_valid = false; break; }
         if (!m_valid)
-          return ZeEXCEPT(Error, "Zxdp", "invalid or overflowing XDP instruction program");
+          return ZeEXCEPT(Error, "Zpkt", "invalid or overflowing XDP instruction program");
         return ZuMv(m_code);
       }
     
@@ -27696,7 +27696,7 @@ I’ll check both Zutcp’s neighbor lookup and how the AF_XDP filter handles AR
       // Linux's instruction limit also bounds chain indices and patched offsets.
       ZuAssert(BPF_MAXINSNS <= SHRT_MAX);
       enum { Marked = -2 };
-      using Labels = ZtArray<int, ZtArrayHeapID<"Zxdp.BPF.Labels">>;
+      using Labels = ZtArray<int, ZtArrayHeapID<"Zpkt.BPF.Labels">>;
       BPFCode    m_code;
       Labels    m_labels;
       bool        m_valid = true;
@@ -27704,7 +27704,7 @@ I’ll check both Zutcp’s neighbor lookup and how the AF_XDP filter handles AR
     
     ZuUnion<BPFCode, ZeException> classifierCode(int xsk, const Filter &filter)
     {
-      if (xsk < 0) return ZeEXCEPT(Error, "Zxdp", "invalid XSK map descriptor");
+      if (xsk < 0) return ZeEXCEPT(Error, "Zpkt", "invalid XSK map descriptor");
       Builder b;
       auto pass = b.label();
       b.mov(9, 1);
@@ -27739,13 +27739,13 @@ I’ll check both Zutcp’s neighbor lookup and how the AF_XDP filter handles AR
           b.emit(BPF_ALU | BPF_MOV | BPF_K, 3, 0, 0, filter.address[i]);
           b.jump(BPF_JNE | BPF_X, 2, 3, 0, pass);
         }
-    zutcp/itest/zutcpipfixture.sh:13:ip neighbor replace 198.18.0.1 lladdr "$zutcp_test_mac" nud permanent dev zxdprxb
-    zutcp/itest/zutcpipfixture.sh:14:ip -6 neighbor replace 2001:db8::1 lladdr "$zutcp_test_mac" nud permanent dev zxdprxb
+    zutcp/itest/zutcpipfixture.sh:13:ip neighbor replace 198.18.0.1 lladdr "$zutcp_test_mac" nud permanent dev zpktrxb
+    zutcp/itest/zutcpipfixture.sh:14:ip -6 neighbor replace 2001:db8::1 lladdr "$zutcp_test_mac" nud permanent dev zpktrxb
     zutcp/itest/zutcpipfixture.sh:15:# Cold route-query fixtures: direct, missing-neighbor, dynamic-neighbor and gateway.
-    zutcp/itest/zutcpipfixture.sh:18:ip neighbor replace 198.18.0.4 lladdr "$zutcp_test_mac" nud reachable dev zxdprxb
-    zutcp/itest/zutcpipfixture.sh:22:ip -6 neighbor replace 2001:db8::4 lladdr "$zutcp_test_mac" nud reachable dev zxdprxb
-    zutcp/itest/zutcpipfixture.sh:29:ip neighbor replace 198.18.0.6 lladdr "$zutcp_peer_mac" nud permanent dev zxdprxa
-    zutcp/itest/zutcpipfixture.sh:30:ip -6 neighbor replace 2001:db8::6 lladdr "$zutcp_peer_mac" nud permanent dev zxdprxa
+    zutcp/itest/zutcpipfixture.sh:18:ip neighbor replace 198.18.0.4 lladdr "$zutcp_test_mac" nud reachable dev zpktrxb
+    zutcp/itest/zutcpipfixture.sh:22:ip -6 neighbor replace 2001:db8::4 lladdr "$zutcp_test_mac" nud reachable dev zpktrxb
+    zutcp/itest/zutcpipfixture.sh:29:ip neighbor replace 198.18.0.6 lladdr "$zutcp_peer_mac" nud permanent dev zpktrxa
+    zutcp/itest/zutcpipfixture.sh:30:ip -6 neighbor replace 2001:db8::6 lladdr "$zutcp_peer_mac" nud permanent dev zpktrxa
     zutcp/util/README.md:102:endpoint namespaces, static neighbors and routes, then cleans them up. No local
     zutcp/util/README.md:170:explicit appropriate IPv4/IPv6 routes and resolved static neighbors (including a
     zutcp/util/README.md:171:next-hop neighbor when routed). Zutcp performs interface-constrained cold kernel
@@ -27764,7 +27764,7 @@ I should have separated the shared missing dynamic-neighbor support from the DPD
 
 ## User
 
-ARP and routing are `zutcp` concerns, not `zxdp`. `zutcp`/`zxdp` currently runs over AF_XDP and `veth`. How do the current `zutcp` client/server tests choose IP addresses and map them to MAC addresses?
+ARP and routing are `zutcp` concerns, not `zpkt`. `zutcp`/`zpkt` currently runs over AF_XDP and `veth`. How do the current `zutcp` client/server tests choose IP addresses and map them to MAC addresses?
 
 ## Assistant
 
@@ -27781,26 +27781,26 @@ I’ll trace the client/server fixtures to show where they set IP addresses, rou
     # Run only inside a fresh anonymous network namespace; all links die with it.
     # The packet/mapping fixtures require loopback, a two-queue and a one-queue pair.
     ip link set lo up
-    ip link add zxdpa numrxqueues 2 numtxqueues 2 type veth \
-      peer name zxdpb numrxqueues 2 numtxqueues 2
-    ip link set zxdpa up
-    ip link set zxdpb up
-    ip link add zxdpdummy type dummy
-    ip link add zxdprxa numrxqueues 1 numtxqueues 1 type veth \
-      peer name zxdprxb numrxqueues 1 numtxqueues 1
-    ip link set zxdprxa up
-    ip link set zxdprxb up
-    export ZXDP_TEST_IFINDEX="$(ip -o link show dev zxdpa | cut -d: -f1)"
-    export ZXDP_TEST_PEER_IFINDEX="$(ip -o link show dev zxdpb | cut -d: -f1)"
-    export ZXDP_TEST_GENERIC_IFINDEX="$(ip -o link show dev zxdpdummy | cut -d: -f1)"
-    export ZXDP_RX_TEST_IFINDEX="$(ip -o link show dev zxdprxa | cut -d: -f1)"
-    export ZXDP_RX_TEST_PEER_IFINDEX="$(ip -o link show dev zxdprxb | cut -d: -f1)"
-    export ZXDP_RUN_FIXTURE=1
+    ip link add zpkta numrxqueues 2 numtxqueues 2 type veth \
+      peer name zpktb numrxqueues 2 numtxqueues 2
+    ip link set zpkta up
+    ip link set zpktb up
+    ip link add zpktdummy type dummy
+    ip link add zpktrxa numrxqueues 1 numtxqueues 1 type veth \
+      peer name zpktrxb numrxqueues 1 numtxqueues 1
+    ip link set zpktrxa up
+    ip link set zpktrxb up
+    export ZPKT_TEST_IFINDEX="$(ip -o link show dev zpkta | cut -d: -f1)"
+    export ZPKT_TEST_PEER_IFINDEX="$(ip -o link show dev zpktb | cut -d: -f1)"
+    export ZPKT_TEST_GENERIC_IFINDEX="$(ip -o link show dev zpktdummy | cut -d: -f1)"
+    export ZPKT_RX_TEST_IFINDEX="$(ip -o link show dev zpktrxa | cut -d: -f1)"
+    export ZPKT_RX_TEST_PEER_IFINDEX="$(ip -o link show dev zpktrxb | cut -d: -f1)"
+    export ZPKT_RUN_FIXTURE=1
     exec "$@"
     #!/usr/bin/env bash
     set -euo pipefail
     # Scope every network object to this private parent and two task-owned children.
-    [[ ${ZXDP_RUN_FIXTURE:-0} == 1 ]]
+    [[ ${ZPKT_RUN_FIXTURE:-0} == 1 ]]
     [[ $(readlink /proc/self/ns/net) != $(readlink /proc/1/ns/net) ]]
     family=$1
     mode=$2
@@ -27971,20 +27971,20 @@ I’ll trace the client/server fixtures to show where they set IP addresses, rou
     74:    std::cout << "1..0 # SKIP requires privileged private namespace fixture\n";
     #!/usr/bin/env bash
     set -euo pipefail
-    [[ ${ZXDP_RUN_FIXTURE:-0} == 1 ]]
+    [[ ${ZPKT_RUN_FIXTURE:-0} == 1 ]]
     [[ $(readlink /proc/self/ns/net) != $(readlink /proc/1/ns/net) ]]
-    a_mac=$(ip -o link show dev zxdprxa | sed -n 's/.*link\/ether \([^ ]*\).*/\1/p')
-    b_mac=$(ip -o link show dev zxdprxb | sed -n 's/.*link\/ether \([^ ]*\).*/\1/p')
-    ip route add 198.18.0.11/32 dev zxdprxa
-    ip route add 198.18.0.10/32 dev zxdprxb
-    ip -6 route add 2001:db8::11/128 dev zxdprxa
-    ip -6 route add 2001:db8::10/128 dev zxdprxb
-    ip neigh replace 198.18.0.11 lladdr "$b_mac" nud permanent dev zxdprxa
-    ip neigh replace 198.18.0.10 lladdr "$a_mac" nud permanent dev zxdprxb
-    ip -6 neigh replace 2001:db8::11 lladdr "$b_mac" nud permanent dev zxdprxa
-    ip -6 neigh replace 2001:db8::10 lladdr "$a_mac" nud permanent dev zxdprxb
-    ethtool -K zxdprxa tx off tso off gso off gro off >/dev/null
-    ethtool -K zxdprxb tx off tso off gso off gro off >/dev/null
+    a_mac=$(ip -o link show dev zpktrxa | sed -n 's/.*link\/ether \([^ ]*\).*/\1/p')
+    b_mac=$(ip -o link show dev zpktrxb | sed -n 's/.*link\/ether \([^ ]*\).*/\1/p')
+    ip route add 198.18.0.11/32 dev zpktrxa
+    ip route add 198.18.0.10/32 dev zpktrxb
+    ip -6 route add 2001:db8::11/128 dev zpktrxa
+    ip -6 route add 2001:db8::10/128 dev zpktrxb
+    ip neigh replace 198.18.0.11 lladdr "$b_mac" nud permanent dev zpktrxa
+    ip neigh replace 198.18.0.10 lladdr "$a_mac" nud permanent dev zpktrxb
+    ip -6 neigh replace 2001:db8::11 lladdr "$b_mac" nud permanent dev zpktrxa
+    ip -6 neigh replace 2001:db8::10 lladdr "$a_mac" nud permanent dev zpktrxb
+    ethtool -K zpktrxa tx off tso off gso off gro off >/dev/null
+    ethtool -K zpktrxb tx off tso off gso off gro off >/dev/null
     export ZUTCP_MX_FIXTURE=1
     exec "$@"
     ✓ • 0ms
@@ -28082,7 +28082,7 @@ Zutcp’s outbound connection setup reads those routes and neighbor entries thro
 
 The multiplexer tests use the same static-mapping approach with `.10` / `.11` addresses in [zutcpmxfixture.sh](/home/count0/src/z/zutcp/itest/zutcpmxfixture.sh:5).
 
-This is Zutcp/fixture configuration. It does not require ARP or routing functionality in Zxdp, and adding DPDK does not itself require adding dynamic ARP.
+This is Zutcp/fixture configuration. It does not require ARP or routing functionality in Zpkt, and adding DPDK does not itself require adding dynamic ARP.
 
 ## User
 
@@ -28092,7 +28092,7 @@ substituting DPDK for AF_XDP would not invalidate this, right?
 
 Right. Fixed IPs, Linux routes and static IP-to-MAC mappings remain valid when substituting DPDK.
 
-The fixture must associate the Linux routing interface with the corresponding DPDK port. Zxdp then sends the Ethernet frames Zutcp constructs. No dynamic ARP, application-supplied resolver or routing functionality in Zxdp is required.
+The fixture must associate the Linux routing interface with the corresponding DPDK port. Zpkt then sends the Ethernet frames Zutcp constructs. No dynamic ARP, application-supplied resolver or routing functionality in Zpkt is required.
 
 ## User
 
@@ -28136,12 +28136,12 @@ I’ll resolve the review item using Linux routes and static neighbor mappings, 
     clarifications and source refactor: design, codebase-details, zoom-out,
     comprehension, implementation-readiness, structural and inventive-catalyst.
     No reviewer failures or retries occurred. Raw reports are under
-    `/tmp/zxdp-brainstorm-review/`; findings about the obsolete factory, commit hook,
+    `/tmp/zpkt-brainstorm-review/`; findings about the obsolete factory, commit hook,
     external buffers, shared arenas and EAL ownership are historical and superseded.
     This reconciled brief is authoritative for the current plan. No new review,
     build or test run was performed for this documentation update.
     
-    References: `zxdp/INTERFACE.md`, `zxdp/GUIDELINES.md`, `zxdp/src/EGM.md`,
+    References: `zpkt/INTERFACE.md`, `zpkt/GUIDELINES.md`, `zpkt/src/EGM.md`,
     `dpdk_loopback.md`, and the current source files listed in the baseline section.
     Official DPDK references used during brainstorming:
     [ethdev](https://doc.dpdk.org/api-25.11/rte__ethdev_8h.html),
@@ -28165,9 +28165,9 @@ I’ll resolve the review item using Linux routes and static neighbor mappings, 
         for AF_XDP. The application/fixture chooses endpoint IP addresses, configures
         Linux routes and installs permanent next-hop IP-to-MAC neighbor entries.
         Zutcp queries those routes and static neighbors through its existing cold
-        netlink path, then constructs the Ethernet frames passed to Zxdp. Replies may
+        netlink path, then constructs the Ethernet frames passed to Zpkt. Replies may
         use the return path derived from received Ethernet framing as they do today.
-        Routing and neighbor resolution belong to Zutcp, not Zxdp.
+        Routing and neighbor resolution belong to Zutcp, not Zpkt.
         
         Keep a Linux routing-interface identity in Zutcp configuration and associate it
         explicitly with the selected named DPDK port. The fixture supplies this mapping;
@@ -28218,7 +28218,7 @@ I’ll resolve the review item using Linux routes and static neighbor mappings, 
         resolver. Zutcp retains Linux control-plane identity; the application/fixture
         associates it with the named DPDK port and configures matching addresses/MAC/MTU.
         The Linux control-plane interface need not be the physical PMD-owned device.
-        Zxdp handles packet I/O and has no routing or neighbor-resolution responsibility.
+        Zpkt handles packet I/O and has no routing or neighbor-resolution responsibility.
         
         Recorded this as adopted in concepts_brief.md, replacing the open dynamic
         neighbor/exception-path discussion. The earlier application resolver, ISN scope
@@ -28240,7 +28240,7 @@ I’ll resolve the review item using Linux routes and static neighbor mappings, 
 
 Resolved in [the brief](/home/count0/src/z/concepts_brief.md) and [review report](/home/count0/src/z/dpdk_implementation_review_report.md).
 
-DPDK preserves Zutcp’s Linux routes and static neighbor mappings. Fixtures associate the Linux routing interface with the named DPDK port. No dynamic ARP/ND, new resolver or routing functionality in Zxdp is required.
+DPDK preserves Zutcp’s Linux routes and static neighbor mappings. Fixtures associate the Linux routing interface with the named DPDK port. No dynamic ARP/ND, new resolver or routing functionality in Zpkt is required.
 
 A7 is closed.
 
@@ -28254,7 +28254,7 @@ I’ll run the final readiness review against the updated brief, treating the re
 
 ## Activity
 
-    $ sed -n '175,250p' /home/count0/.codex/plugins/cache/egm/egm/0.1.1/skills/egm-review-loop/SKILL.md; cat /home/count0/.codex/plugins/cache/egm/egm/0.1.1/resources/document_standards/implementation-readiness-standard.md; ls review_context/zxdp-dpdk-readiness
+    $ sed -n '175,250p' /home/count0/.codex/plugins/cache/egm/egm/0.1.1/skills/egm-review-loop/SKILL.md; cat /home/count0/.codex/plugins/cache/egm/egm/0.1.1/resources/document_standards/implementation-readiness-standard.md; ls review_context/zpkt-dpdk-readiness
     *   **Cap**: 5 rounds.
     *   **Churn**: A new finding is at the scope of an applied fix, and reverting
         that fix would resolve it.
@@ -28381,21 +28381,21 @@ I’ll run the final readiness review against the updated brief, treating the re
      M docs/Z_STL_BOOST_FOLLY_BDE_RUST.md
      M gtags.conf
     ?? cscope.out
-    ?? review_context/zxdp-dpdk-readiness/
+    ?? review_context/zpkt-dpdk-readiness/
     ✓ • 0ms
 
 ## Activity
 
-    $ cat review_context/zxdp-dpdk-readiness/reading_list.md; sed -n '1,75p' /home/count0/.codex/plugins/cache/egm/egm/0.1.1/agents/implementation_readiness.md; sed -n '1,55p' /home/count0/.codex/plugins/cache/egm/egm/0.1.1/agents/codebase_details.md; sed -n '1,55p' /home/count0/.codex/plugins/cache/egm/egm/0.1.1/agents/style.md
+    $ cat review_context/zpkt-dpdk-readiness/reading_list.md; sed -n '1,75p' /home/count0/.codex/plugins/cache/egm/egm/0.1.1/agents/implementation_readiness.md; sed -n '1,55p' /home/count0/.codex/plugins/cache/egm/egm/0.1.1/agents/codebase_details.md; sed -n '1,55p' /home/count0/.codex/plugins/cache/egm/egm/0.1.1/agents/style.md
     # Review context
     
     Target: /home/count0/src/z/concepts_brief.md
     Implementation target: lines 347–365 (Key Decisions & Staging for Next Steps).
     Read the full target as design context, but report readiness findings against the implementation target with related design references where needed.
     
-    Repository standards (read all): docs/GUIDELINES.md, docs/CPP.md, docs/STYLE.md, docs/FRAMEWORK.md relevant sections, docs/BUILD.md, docs/IO.md, docs/AUDIT.md relevant sections, zxdp/GUIDELINES.md, zxdp/INTERFACE.md. All relative paths are under /home/count0/src/z.
+    Repository standards (read all): docs/GUIDELINES.md, docs/CPP.md, docs/STYLE.md, docs/FRAMEWORK.md relevant sections, docs/BUILD.md, docs/IO.md, docs/AUDIT.md relevant sections, zpkt/GUIDELINES.md, zpkt/INTERFACE.md. All relative paths are under /home/count0/src/z.
     
-    Selected baseline files: zxdp/src/Zxdp.hh, Zxdp.cc, ZxdpPool.hh, ZxdpPool.cc, ZxdpUMem.hh, ZxdpUMem.cc, ZxdpRing.hh, ZxdpBPF.hh, ZxdpBPF.cc, ZxdpRetire.hh, ZxdpRetire.cc, Makefile.am, EGM.md (all under zxdp/src). Relevant consumers: zi/src/ZiIOBuf.hh, zutcp/src/ZutcpMx.hh, zutcp/src/ZutcpMx.cc. Build inputs: configure.ac, z.config. Tests/context: zxdp/test/Makefile.am, zxdp/test/ZxdpInstanceTest.cc, zxdp/itest/Makefile.am, zxdp/itest/zxdppackettest.cc, zxdp/itest/zxdpwaketest.cc, dpdk_loopback.md. Read source sections relevant to your lens. Do not bulk-read irrelevant guidance.
+    Selected baseline files: zpkt/src/Zpkt.hh, Zpkt.cc, ZpktPool.hh, ZpktPool.cc, ZpktUMem.hh, ZpktUMem.cc, ZpktRing.hh, ZpktBPF.hh, ZpktBPF.cc, ZpktRetire.hh, ZpktRetire.cc, Makefile.am, EGM.md (all under zpkt/src). Relevant consumers: zi/src/ZiIOBuf.hh, zutcp/src/ZutcpMx.hh, zutcp/src/ZutcpMx.cc. Build inputs: configure.ac, z.config. Tests/context: zpkt/test/Makefile.am, zpkt/test/ZpktInstanceTest.cc, zpkt/itest/Makefile.am, zpkt/itest/zpktpackettest.cc, zpkt/itest/zpktwaketest.cc, dpdk_loopback.md. Read source sections relevant to your lens. Do not bulk-read irrelevant guidance.
     
     Approved external sources saved in this directory: ethdev.html/.txt, mbuf.html/.txt, power.html/.txt, eal.html/.txt, ring.c. Raw HTML and raw upstream source are preserved; .txt files are mechanically extracted readable copies. Use relevant sections; no need to read the entire ethdev reference. No additional external URLs have been approved for context.
     
@@ -28576,7 +28576,7 @@ I’ll run the final readiness review against the updated brief, treating the re
 
 ## Activity
 
-    $ cp concepts_brief.md review_context/zxdp-dpdk-readiness/final_review_snapshot.md; wc -l concepts_brief.md
+    $ cp concepts_brief.md review_context/zpkt-dpdk-readiness/final_review_snapshot.md; wc -l concepts_brief.md
     649 concepts_brief.md
     ✓ • 0ms
 
@@ -28584,11 +28584,11 @@ I’ll run the final readiness review against the updated brief, treating the re
 
     $ python3 - <<'PY'
         from pathlib import Path
-        p=Path('review_context/zxdp-dpdk-readiness/reading_list.md')
+        p=Path('review_context/zpkt-dpdk-readiness/reading_list.md')
         s=p.read_text().replace('Implementation target: lines 347–365 (Key Decisions & Staging for Next Steps).', 'Implementation target: lines 503–629 of final_review_snapshot.md (staging, file boundary, test mapping and consumer integration).')
-        s=s.replace('Target: /home/count0/src/z/concepts_brief.md','Target: /home/count0/src/z/review_context/zxdp-dpdk-readiness/final_review_snapshot.md')
+        s=s.replace('Target: /home/count0/src/z/concepts_brief.md','Target: /home/count0/src/z/review_context/zpkt-dpdk-readiness/final_review_snapshot.md')
         s+='''\nFinal review context: all design requirements are in the target itself. Routine PMD-specific queue sizing is implementation work; the entire Rx pool is available to the PMD. Existing static Linux routes/neighbors and fixture port association are the selected control plane. Audit executable omissions or contradictions without demanding a different architecture, ARP feature or arbitrary descriptor partition. Do not read prior reports or conversation history.\n'''
-        Path('review_context/zxdp-dpdk-readiness/final_reading_list.md').write_text(s)
+        Path('review_context/zpkt-dpdk-readiness/final_reading_list.md').write_text(s)
         PY
     ✓ • 0ms
 
@@ -28610,9 +28610,9 @@ I’ll run the final readiness review against the updated brief, treating the re
     ### Explicit EAL ownership
     
     Move the previously adopted DPDK-only configuration and lifecycle under
-    `Zxdp::Dpdk`: call the process-wide wrapper `Dpdk::EAL` and its configuration
+    `Zpkt::Dpdk`: call the process-wide wrapper `Dpdk::EAL` and its configuration
     `Dpdk::EALParams`. This avoids colliding with per-instance `Dpdk::Params`.
-    These names replace the earlier `Zxdp::DPDK` and `Zxdp::DPDKParams` spellings;
+    These names replace the earlier `Zpkt::DPDK` and `Zpkt::DPDKParams` spellings;
     the adopted fields and explicit initialization policy are unchanged.
     
     Use `ZmSingleton<Dpdk::EAL, ZmSingletonCleanup<ZmCleanup::Platform>>`.
@@ -28631,23 +28631,23 @@ I’ll run the final readiness review against the updated brief, treating the re
     ### Port ownership and draining — adopted
     ### Adopted explicit EAL parameters
     
-    Use an aggregate `Zxdp::Dpdk::EALParams`, following nearby `Zxdp::Params_` and
+    Use an aggregate `Zpkt::Dpdk::EALParams`, following nearby `Zpkt::Params_` and
     `Zutcp::InstanceParams`: public named members with defaults and designated
     initializers. This follows the current struct style rule; the fluent alternative
     is exemplified by `ZiMxParams`. Own strings and lists so the application can build
     configuration from files or generated values without borrowed-storage hazards.
     
     ```cpp
-    namespace Zxdp::Dpdk {
+    namespace Zpkt::Dpdk {
     
-    ZtEnumNS(ZxdpAPI, Proc, int8_t, Default, Primary, Secondary, Auto);
-    ZtEnumNS(ZxdpAPI, IOVA, int8_t, Default, PA, VA);
-    ZtEnumNS(ZxdpAPI, HugeUnlink, int8_t, Default, Existing, Always, Never);
-    ZtEnumNS(ZxdpAPI, VFIOIntr, int8_t, Default, Legacy, MSI, MSIX);
-    ZtEnumNS(ZxdpAPI, TraceMode, int8_t, Default, Overwrite, Discard);
+    ZtEnumNS(ZpktAPI, Proc, int8_t, Default, Primary, Secondary, Auto);
+    ZtEnumNS(ZpktAPI, IOVA, int8_t, Default, PA, VA);
+    ZtEnumNS(ZpktAPI, HugeUnlink, int8_t, Default, Existing, Always, Never);
+    ZtEnumNS(ZpktAPI, VFIOIntr, int8_t, Default, Legacy, MSI, MSIX);
+    ZtEnumNS(ZpktAPI, TraceMode, int8_t, Default, Overwrite, Discard);
     
     struct EALParams {
-      using Strings = ZtArray<ZtString<>, ZtArrayHeapID<"Zxdp.Dpdk.EALParams">>;
+      using Strings = ZtArray<ZtString<>, ZtArrayHeapID<"Zpkt.Dpdk.EALParams">>;
       using UInt = ZuUnion<void, unsigned>;
       using Address = ZuUnion<void, uintptr_t>;
     
@@ -28699,7 +28699,7 @@ I’ll run the final readiness review against the updated brief, treating the re
       Strings args;
     };
     
-    } // namespace Zxdp::Dpdk
+    } // namespace Zpkt::Dpdk
     ```
     
     The named members cover ordinary runtime, device, memory and diagnostic choices.
@@ -28713,7 +28713,7 @@ I’ll run the final readiness review against the updated brief, treating the re
     option: reject duplicate/conflicting sources during cold initialization rather
     than silently overriding either. Retain DPDK's own validation of native options.
     
-    Defaults preserve EAL defaults except for the agreed Zxdp execution policy:
+    Defaults preserve EAL defaults except for the agreed Zpkt execution policy:
     no extra EAL packet workers by default. Empty `lcores` selects a suitable single
     main lcore from the initializing thread's allowed CPUs; explicit mappings let
     applications control placement. The implementation must preserve the caller's
@@ -28726,15 +28726,15 @@ I’ll run the final readiness review against the updated brief, treating the re
     selection and pool creation:
     
     ```cpp
-    auto eal = ZmSingleton<Zxdp::Dpdk::EAL,
+    auto eal = ZmSingleton<Zpkt::Dpdk::EAL,
       ZmSingletonCleanup<ZmCleanup::Platform>>::instance();
-    auto result = eal->init(Zxdp::Dpdk::EALParams{
+    auto result = eal->init(Zpkt::Dpdk::EALParams{
       .noPCI = true,
       .vdev = {"net_ring0"},
       .noHuge = true,
       .noShconf = true
     });
-    // Check result before constructing a DPDK-backed Zxdp::Instance.
+    // Check result before constructing a DPDK-backed Zpkt::Instance.
     ```
     
     `Dpdk::EAL::init(const Dpdk::EALParams &)` constructs private writable argv storage,
@@ -28868,7 +28868,7 @@ I’ll run the final readiness review against the updated brief, treating the re
 
 ## Activity
 
-    44398a5d Rename Zutcp Stack to Instance and require Zxdp Tx pools
+    44398a5d Rename Zutcp Stack to Instance and require Zpkt Tx pools
     6a1dbab7 Remove obsolete I/O pool queries and receive slot accounting
     63c7af84 Specify key identifiers in TLS test certificate profiles
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
@@ -28879,11 +28879,11 @@ I’ll run the final readiness review against the updated brief, treating the re
     
     // Raw AF_XDP arena, pool and packet facilities.
     
-    #ifndef Zxdp_HH
-    #define Zxdp_HH
+    #ifndef Zpkt_HH
+    #define Zpkt_HH
     
-    #ifndef ZxdpLib_HH
-    #include <zlib/ZxdpLib.hh>
+    #ifndef ZpktLib_HH
+    #include <zlib/ZpktLib.hh>
     #endif
     
     #include <stdint.h>
@@ -28903,12 +28903,12 @@ I’ll run the final readiness review against the updated brief, treating the re
     #include <zlib/ZtcQueue.hh>
     #include <zlib/ZiIOBuf.hh>
     
-    namespace Zxdp {
+    namespace Zpkt {
     
-    using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zxdp.Receive">>;
-    using StopFn = ZmFn<void(), ZmFnHeapID<"Zxdp.TxStopped">>;
+    using RecvFn = ZmFn<void(uint8_t *, unsigned), ZmFnHeapID<"Zpkt.Receive">>;
+    using StopFn = ZmFn<void(), ZmFnHeapID<"Zpkt.TxStopped">>;
     
-    ZtEnumNS(ZxdpAPI, Type, uint8_t, Xdp);
+    ZtEnumNS(ZpktAPI, Type, uint8_t, Xdp);
     
     struct Params_ {
       Zi::IOBufPoolList txPools; // at least one nonempty Tx pool is required
@@ -28932,7 +28932,7 @@ I’ll run the final readiness review against the updated brief, treating the re
     // The caller drives Rx/Tx on their respective single owners. Allocation/free
     // may run on other threads. Allocation holds backing until explicit pool return;
     // an accepted send also holds it until kernel completion or safe close.
-    class ZxdpAPI Instance : public ZmPolymorph {
+    class ZpktAPI Instance : public ZmPolymorph {
     public:
       ~Instance() override = default;
       Instance(const Instance &) = delete;
@@ -28968,10 +28968,10 @@ I’ll run the final readiness review against the updated brief, treating the re
       Instance() = default;
     };
     
-    ZxdpExtern ZmRef<Instance> instance(Type::T);
+    ZpktExtern ZmRef<Instance> instance(Type::T);
     
-    } // namespace Zxdp
-    #endif /* Zxdp_HH */
+    } // namespace Zpkt
+    #endif /* Zpkt_HH */
     
     struct InstanceParams {
       unsigned interface = 0;
@@ -29302,7 +29302,7 @@ I’ll run the final readiness review against the updated brief, treating the re
     $ python3 - <<'PY'
         from pathlib import Path
         import json
-        root=Path('review_context/zxdp-dpdk-readiness')
+        root=Path('review_context/zpkt-dpdk-readiness')
         reports={
         'final-style.md':'''# Final style reviewer\n\nStatus: completed. Required persona, context list, full snapshot and relevant source/guidance sections were read; none unavailable. Read-only; no prior reports used.\n\nNo Major or Blocker findings. Nit, snapshot line 629: undefined historical A7 reference in the standalone brief; delete the final sentence naming A7 because the section already specifies its contract. Required future implementation and verification are distinguished from existing DPDK behavior. Software-PMD evidence limits are calibrated.\n'''}
         for name,body in reports.items(): (root/name).write_text(body)
@@ -29321,7 +29321,7 @@ I’ll run the final readiness review against the updated brief, treating the re
         codebase-details and style. Each read its required persona/standard and target
         context; none failed or reported unavailable required material. Their normalized
         reports and the stable reviewed snapshot are in
-        `review_context/zxdp-dpdk-readiness/final-*.md` and
+        `review_context/zpkt-dpdk-readiness/final-*.md` and
         `final_review_snapshot.md`; machine-readable traceability is in
         `final_findings.json`. This is the one final re-audit following the original
         resolution cycle, not a claim of convergence.
@@ -29386,7 +29386,7 @@ I’ll trace the current AF_XDP allocation path and distinguish the configured r
 
 ## Activity
 
-    $ sed -n '736,765p' zutcp/src/ZutcpMx.cc; sed -n '45,87p' zi/src/ZiIOBuf.hh; sed -n '556,610p' zi/src/ZiIOBuf.hh; rg -n 'allocator\(|size|pool->size' zi/src/ZiMultiplex.hh | tail -n 25; rg -n 'bufPool|BufPool::alloc' zxdp/src/Zxdp.cc zxdp/src/ZxdpPool.cc
+    $ sed -n '736,765p' zutcp/src/ZutcpMx.cc; sed -n '45,87p' zi/src/ZiIOBuf.hh; sed -n '556,610p' zi/src/ZiIOBuf.hh; rg -n 'allocator\(|size|pool->size' zi/src/ZiMultiplex.hh | tail -n 25; rg -n 'bufPool|BufPool::alloc' zpkt/src/Zpkt.cc zpkt/src/ZpktPool.cc
       ZmREF(p);
       m_txCapacity += p->pool->count;
       p->nextProvider = m_providers;
@@ -29523,15 +29523,15 @@ I’ll trace the current AF_XDP allocation path and distinguish the configured r
     772:    unsigned size, unsigned align, unsigned count) = 0;
     1031:  Zi::IOBufAllocator *allocator(unsigned count = ZiIOBuf_DefltCount) {
     1041:      this, m_plugin->allocator(Type, Size, Align, count));
-    zxdp/src/ZxdpPool.cc:41:uint8_t *BufPool::alloc()
-    zxdp/src/Zxdp.cc:60:  ZmRef<Zi::IOBufPool> bufPool(
-    zxdp/src/Zxdp.cc:278:      auto p = m_rxPool->BufPool::alloc();
-    zxdp/src/Zxdp.cc:387:ZmRef<Zi::IOBufPool> Instance::bufPool(
+    zpkt/src/ZpktPool.cc:41:uint8_t *BufPool::alloc()
+    zpkt/src/Zpkt.cc:60:  ZmRef<Zi::IOBufPool> bufPool(
+    zpkt/src/Zpkt.cc:278:      auto p = m_rxPool->BufPool::alloc();
+    zpkt/src/Zpkt.cc:387:ZmRef<Zi::IOBufPool> Instance::bufPool(
     ✓ • 0ms
 
 ## Activity
 
-    $ sed -n '29,83p' zxdp/src/ZxdpPool.cc; sed -n '35,72p' zxdp/src/ZxdpUMem.cc; rg -n 'IOBufPoolAllocator|plugin\(\)->allocator|m_plugin->allocator' zi/src/ZiMultiplex.hh zi/src/ZiMultiplex.cc
+    $ sed -n '29,83p' zpkt/src/ZpktPool.cc; sed -n '35,72p' zpkt/src/ZpktUMem.cc; rg -n 'IOBufPoolAllocator|plugin\(\)->allocator|m_plugin->allocator' zi/src/ZiMultiplex.hh zi/src/ZiMultiplex.cc
       m_first = first;
       m_tx = offset >= m_arena->layout().rxLength;
       m_head = 0;
@@ -29592,7 +29592,7 @@ I’ll trace the current AF_XDP allocation path and distinguish the configured r
     ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
       const Zi::IOBufPoolList &txPools, Zi::IOBufPool *rxPool, unsigned mtu)
     {
-      auto fail = [](const char *text) { return ZeEXCEPT(Error, "Zxdp", text); };
+      auto fail = [](const char *text) { return ZeEXCEPT(Error, "Zpkt", text); };
       // Linux copy-mode Rx adds NET_IP_ALIGN before the Ethernet header.
       enum { RxAlign = 2 };
       auto rx = dynamic_cast<BufPool *>(rxPool);
@@ -29659,8 +29659,8 @@ I’ll adopt registration-time clamping, update the brief to match the current A
     dpdk_implementation_review_report.md:100:buffer exceeding MTU; do not clamp the configuration itself. Queue provisioning
     dpdk_implementation_review_report.md:147:The current Stack::allocator still clamps bytes before bufPool; the intended
     dpdk_implementation_review_report.md:148:allocation-time-only clamping must be carried through DPDK/Zutcp integration
-    dpdk_implementation_review_report.md:234:| ZxdpPoolTest | ZxdpDpdkPoolTest | Native mbuf allocation/return, configured geometry, exhaustion and retained backing. |
-    dpdk_implementation_review_report.md:260:`zxdp/itest/zxdpdpdkfixture.hh/.cc` shared by the three integration drivers.
+    dpdk_implementation_review_report.md:234:| ZpktPoolTest | ZpktDpdkPoolTest | Native mbuf allocation/return, configured geometry, exhaustion and retained backing. |
+    dpdk_implementation_review_report.md:260:`zpkt/itest/zpktdpdkfixture.hh/.cc` shared by the three integration drivers.
     dpdk_implementation_review_report.md:300:uses application-supplied DPDK path resolution, explicitly configured geometry,
     dpdk_implementation_review_report.md:348:Three fresh-context, read-only reviewers completed: implementation-readiness,
     dpdk_implementation_review_report.md:357:**Result: not implementation-ready.** Three consolidated Major findings remain.
@@ -29676,8 +29676,8 @@ I’ll adopt registration-time clamping, update the brief to match the current A
     concepts_brief.md:241:   count of native mbufs; allocation applies the MTU constraint. Rx uses the
     concepts_brief.md:300:smaller or larger than MTU. MTU clamping occurs during buffer allocation, so
     concepts_brief.md:302:requests; do not substitute pool-configuration-time clamping or force every
-    concepts_brief.md:540:`zxdp/itest/zxdpdpdkfixture.hh/.cc` shared by the three integration drivers.
-    concepts_brief.md:571:| ZxdpPoolTest | ZxdpDpdkPoolTest | Native mbuf allocation/return, configured geometry, exhaustion and retained backing. |
+    concepts_brief.md:540:`zpkt/itest/zpktdpdkfixture.hh/.cc` shared by the three integration drivers.
+    concepts_brief.md:571:| ZpktPoolTest | ZpktDpdkPoolTest | Native mbuf allocation/return, configured geometry, exhaustion and retained backing. |
     ✓ • 0ms
 
 ## Activity
@@ -29788,7 +29788,7 @@ I’ll adopt registration-time clamping, update the brief to match the current A
         remain open. Documentation only; no production change or runtime test required.
         '''
         p.write_text(s)
-        p=Path('review_context/zxdp-dpdk-readiness/final_findings.json')
+        p=Path('review_context/zpkt-dpdk-readiness/final_findings.json')
         s=json.loads(p.read_text())
         for f in s['findings']:
          if f['id']=='final-M1': f['disposition']='closed by author decision: registration-time pool clamping, matching current AF_XDP'
@@ -29955,7 +29955,7 @@ I’ll trace the caller and show what it uses the result for.
 
 It calls `resolvePath()` when opening an outbound client connection, before sending the first SYN.
 
-Because Zutcp sends complete Ethernet frames through Zxdp, it needs the source IP, local MAC, next-hop MAC and route MTU. `resolvePath()` reads those from Linux routes and static neighbor entries, then stores the result for packet construction. See [the caller](/home/count0/src/z/zutcp/src/Zutcp_.hh:159).
+Because Zutcp sends complete Ethernet frames through Zpkt, it needs the source IP, local MAC, next-hop MAC and route MTU. `resolvePath()` reads those from Linux routes and static neighbor entries, then stores the result for packet construction. See [the caller](/home/count0/src/z/zutcp/src/Zutcp_.hh:159).
 
 This does not ask Linux to establish the TCP connection. It queries the kernel’s configured routing information.
 
@@ -29983,7 +29983,7 @@ The lookup is independent of the packet backend. Its current worker dispatch nee
 
 ## User
 
-`zutcp` generally uses the same rx and tx threads as the multiplexer it is plugged into - the "I/O threads". meanwhile `zxdp` (AF_XDP mode) has a single tx thread for dequeuing from the tx ring. DPDK must need a similar thread, it can be configured in a similar way
+`zutcp` generally uses the same rx and tx threads as the multiplexer it is plugged into - the "I/O threads". meanwhile `zpkt` (AF_XDP mode) has a single tx thread for dequeuing from the tx ring. DPDK must need a similar thread, it can be configured in a similar way
 
 ## Assistant
 
@@ -29991,8 +29991,8 @@ I’ll check what the AF_XDP sender thread does and whether DPDK needs an equiva
 
 ## Activity
 
-    $ rg -n 'sendto|sendmsg|sender|kick|serviceTx|txThread' zxdp/src/Zxdp.cc zxdp/src/ZxdpUMem.cc | head -n 45; sed -n '450,525p' zxdp/src/Zxdp.cc
-    zxdp/src/Zxdp.cc:296:      if (sendto(socket.fd(), nullptr, 0, MSG_DONTWAIT, nullptr, 0) < 0 &&
+    $ rg -n 'sendto|sendmsg|sender|kick|serviceTx|txThread' zpkt/src/Zpkt.cc zpkt/src/ZpktUMem.cc | head -n 45; sed -n '450,525p' zpkt/src/Zpkt.cc
+    zpkt/src/Zpkt.cc:296:      if (sendto(socket.fd(), nullptr, 0, MSG_DONTWAIT, nullptr, 0) < 0 &&
         // Publish before rechecking pulses. A producer either sees this wait and
         // writes eventfd, or its already-published pulse prevents the wait entirely.
         m_parking.xch(1);
@@ -30172,7 +30172,7 @@ I’ll record route resolution on the multiplexer’s Rx thread and remove the s
         changed by recording this decision.
         '''
         p.write_text(s)
-        p=Path('review_context/zxdp-dpdk-readiness/final_findings.json'); s=json.loads(p.read_text())
+        p=Path('review_context/zpkt-dpdk-readiness/final_findings.json'); s=json.loads(p.read_text())
         for f in s['findings']:
          if f['id']=='final-M2': f['disposition']='route-worker subpoint closed: execute on multiplexer Rx; concrete backend parameter declaration remains open'
         p.write_text(json.dumps(s,indent=2)+'\n')
@@ -30817,7 +30817,7 @@ I’ll trace the responsibilities of `Hub` and `Instance`, and how `nativeInstan
 
 They serve different scopes:
 
-- **`Instance`** is the `ZiMultiplex` plugin. It owns the Zxdp backend, native buffer pools, packet I/O, endpoint registry and shared TCP resources such as connection admission, ISN generation and closed-tuple history.
+- **`Instance`** is the `ZiMultiplex` plugin. It owns the Zpkt backend, native buffer pools, packet I/O, endpoint registry and shared TCP resources such as connection admission, ISN generation and closed-tuple history.
 - **`Hub<App>`** is the application-facing CRTP base used by `Client` and `Server`. It manages their lifecycle, connection/link configuration, callbacks and telemetry.
 
 `Hub::init_()` discovers the multiplexer’s plugin with `dynamic_cast<Instance *>(mx->plugin())` and stores a pointer. [`nativeInstance()`](/home/count0/src/z/zutcp/src/Zutcp.hh:374) exposes that pointer so connection code can access those shared services—for example, reserve a connection slot or generate an initial sequence number.
@@ -31355,7 +31355,7 @@ I’ll trace their uses, fold the necessary internal behavior into `Instance`, a
     # Current Phase 8 execution boundary
     
     The live protocol uses standard
-    TCP headers/options and raw application bytes over Instance/Zxdp. Endpoint ownership
+    TCP headers/options and raw application bytes over Instance/Zpkt. Endpoint ownership
     uses TCP tuples; accepted byte history, canonical backing and owner handoffs
     remain authoritative. Intermediate packet/frame codecs and peer packet-number
     acknowledgments are deleted. Providers reserve the maximum standard Ethernet,
@@ -31372,8 +31372,8 @@ I’ll trace their uses, fold the necessary internal behavior into `Instance`, a
     generation checks and the independent receive-window and RST qualification.
     
     Native providers implement `Zi::IOBufPool` over storage injected from a selected
-    `Zxdp::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
-    to Zxdp. Configuration owns its pool list; initialization retains independent
+    `Zpkt::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
+    to Zpkt. Configuration owns its pool list; initialization retains independent
     backend references so configuration-list membership can expire after `init()`.
     Tx buffer allocation failure drops the connection; producers do not wait for
     pool grants. Alignment changes physical stride without inflating logical buffer capacity.
@@ -31975,7 +31975,7 @@ I’ll trace their uses, fold the necessary internal behavior into `Instance`, a
      M zutcp/test/README.md
      D zutcp/test/ZutcpLogTest.cc
     ?? cscope.out
-    ?? review_context/zxdp-dpdk-readiness/
+    ?? review_context/zpkt-dpdk-readiness/
     ✓ • 0ms
 
 ## Assistant
@@ -32126,7 +32126,7 @@ I’ll write `zutcp_repair3.md` as a repair plan to complete before DPDK, with t
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I${top_srcdir}/zi/src \
-        -I$(top_srcdir)/zxdp/src \
+        -I$(top_srcdir)/zpkt/src \
         @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
@@ -32143,7 +32143,7 @@ I’ll write `zutcp_repair3.md` as a repair plan to complete before DPDK, with t
         ZutcpAlloc.cc ZutcpMx.cc ZutcpIP.cc \
         ZutcpDiag.cc
     libZutcp_la_LIBADD = \
-        $(top_builddir)/zxdp/src/libZxdp.la \
+        $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la \
@@ -32155,12 +32155,12 @@ I’ll write `zutcp_repair3.md` as a repair plan to complete before DPDK, with t
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
         -I$(top_srcdir)/zi/src \
         -I$(top_srcdir)/zi/test \
-        -I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zxdp/src \
+        -I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zpkt/src \
         @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@
     LDADD = $(top_builddir)/zi/test/libZiTest.la \
-        $(top_builddir)/zutcp/src/libZutcp.la $(top_builddir)/zxdp/src/libZxdp.la \
+        $(top_builddir)/zutcp/src/libZutcp.la $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la \
@@ -32252,7 +32252,7 @@ I’ll write `zutcp_repair3.md` as a repair plan to complete before DPDK, with t
     #include <zlib/ZiMultiplex.hh>
     #include <zlib/ZtcHub.hh>
     
-    #include <zlib/Zxdp.hh>
+    #include <zlib/Zpkt.hh>
     
     #if defined(ZDEBUG) && !defined(Zutcp_DEBUG)
     #define Zutcp_DEBUG    // enable testing / debugging
@@ -32300,7 +32300,7 @@ I’ll write `zutcp_repair3.md` as a repair plan to complete before DPDK, with t
     # Zutcp: User-mode TCP/IP stack
     
     Zutcp is a Linux user-mode TCP/IP stack integrated with `ZiMultiplex`, using
-    [Zxdp](../zxdp/README.md) for raw AF_XDP packet I/O. It targets short FIX order,
+    [Zpkt](../zpkt/README.md) for raw AF_XDP packet I/O. It targets short FIX order,
     execution and market-data messages while keeping the existing Zi connection,
     allocator and application framing interfaces.
     
@@ -32376,7 +32376,7 @@ I’ll write `zutcp_repair3.md` as a repair plan to complete before DPDK, with t
     Ztls dependency. Ordinary `ZiIP` addresses and `ZiResolver` remain available.
     Zutcp uses cold kernel route and static-neighbor queries constrained to the
     configured interface. With a destination mask, unmatched traffic stays with the
-    host stack; without a mask Zxdp selects the whole interface.
+    host stack; without a mask Zpkt selects the whole interface.
     
     Each connection owns one ordered bidirectional byte flow: reassembly, delivery,
     receive-credit retirement, retained transmit backing, recovery and close state.
@@ -32708,11 +32708,11 @@ I’ll write `zutcp_repair3.md` as a repair plan to complete before DPDK, with t
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
         -I$(top_srcdir)/zi/src \
-        -I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zxdp/src \
+        -I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zpkt/src \
         @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@
-    LDADD = $(top_builddir)/zutcp/src/libZutcp.la $(top_builddir)/zxdp/src/libZxdp.la \
+    LDADD = $(top_builddir)/zutcp/src/libZutcp.la $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la \
@@ -32725,7 +32725,7 @@ I’ll write `zutcp_repair3.md` as a repair plan to complete before DPDK, with t
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
-        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zxdp/src \
+        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zpkt/src \
         @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@
@@ -32738,7 +32738,7 @@ I’ll write `zutcp_repair3.md` as a repair plan to complete before DPDK, with t
         @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
     zutcppair_SOURCES = zutcppair.cc
     zutcppair_LDADD = $(top_builddir)/zutcp/src/libZutcp.la \
-        $(top_builddir)/zxdp/src/libZxdp.la $(top_builddir)/zi/src/libZi.la \
+        $(top_builddir)/zpkt/src/libZpkt.la $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
         $(top_builddir)/zu/src/libZu.la \
@@ -32913,7 +32913,7 @@ I’ll write `zutcp_repair3.md` as a repair plan to complete before DPDK, with t
         scripts/toml-to-json
     SUBDIRS = zu zm zt ze zf zi
     if LINUX
-    SUBDIRS += zxdp zutcp
+    SUBDIRS += zpkt zutcp
     endif
     SUBDIRS += zpb zfb zv zrl
     if LINUX
@@ -33604,7 +33604,7 @@ I’ll make that a hard boundary in the plan: applications use Ztcp and ZiMultip
      M zutcp/test/README.md
      D zutcp/test/ZutcpLogTest.cc
     ?? cscope.out
-    ?? review_context/zxdp-dpdk-readiness/
+    ?? review_context/zpkt-dpdk-readiness/
     ✓ • 0ms
 
 ## Activity
@@ -33724,7 +33724,7 @@ I’ll make that a hard boundary in the plan: applications use Ztcp and ZiMultip
         Complete connection setup on Rx before the first SYN. Preserve generation checks,
         error propagation and endpoint teardown safety when simplifying asynchronous
         setup bookkeeping; remove counters only when no remaining setup operation needs
-        them. Do not add ARP/ND or routing to Zxdp.
+        them. Do not add ARP/ND or routing to Zpkt.
         
         ## 4. Migrate consumers without losing coverage
         
@@ -33790,7 +33790,7 @@ I’ll make that a hard boundary in the plan: applications use Ztcp and ZiMultip
           and probe placement only as required; preserve independent wire checks.
         
         Update docs: zutcp/README.md, GUIDELINES.md, test/README.md, itest/README.md,
-        util/README.md, bench/README.md, interop/README.md and zxdp/INTERFACE.md only
+        util/README.md, bench/README.md, interop/README.md and zpkt/INTERFACE.md only
         where it describes a concrete Zutcp application API. Add generic plugin setup
         instructions to zi/README.md. Update concepts_brief.md and the DPDK review report
         to use this repaired baseline after implementation, not to claim it is done now.
@@ -33837,7 +33837,7 @@ I’ll make that a hard boundary in the plan: applications use Ztcp and ZiMultip
 
     $ python3 - <<'PY'
         from pathlib import Path
-        paths=['zutcp/itest/zutcpappfixture.sh','zutcp/itest/zutcpmxlossfixture.sh','zutcp/itest/zutcpoptions.py','zutcp/itest/zutcptfo.py','zutcp/test/ZutcpTestAlloc.hh','zutcp/bench/Makefile.am','zi/README.md','zutcp/interop/zutcpkernelfixture.sh','zxdp/INTERFACE.md']
+        paths=['zutcp/itest/zutcpappfixture.sh','zutcp/itest/zutcpmxlossfixture.sh','zutcp/itest/zutcpoptions.py','zutcp/itest/zutcptfo.py','zutcp/test/ZutcpTestAlloc.hh','zutcp/bench/Makefile.am','zi/README.md','zutcp/interop/zutcpkernelfixture.sh','zpkt/INTERFACE.md']
         for path in paths:
          if not Path(path).is_file(): print('Missing:',path)
         p=Path('zutcp_repair3.md')
@@ -33936,7 +33936,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
      M zutcp/util/zutcppair.cc
     ?? cscope.out
     ?? review_context/zutcp-repair3-consumers/
-    ?? review_context/zxdp-dpdk-readiness/
+    ?? review_context/zpkt-dpdk-readiness/
     ?? zutcp/itest/zutcpmxtest.conservative-tuple-v4.1/
     ?? zutcp/itest/zutcpmxtest.conservative-tuple-v4/
     ?? zutcp/itest/zutcpmxtest.conservative-tuple-v6.1/
@@ -34064,7 +34064,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     ?? zutcp/itest/zutcppairtest.v6-tfo-matrix.1/
     ?? zutcp/itest/zutcppairtest.v6-wait-eof.1/
     ?? zutcp/test/ZutcpTestInstance.hh
-    44398a5d Rename Zutcp Stack to Instance and require Zxdp Tx pools
+    44398a5d Rename Zutcp Stack to Instance and require Zpkt Tx pools
     6a1dbab7 Remove obsolete I/O pool queries and receive slot accounting
     63c7af84 Specify key identifiers in TLS test certificate profiles
     50b3785d Propagate shared I/O buffers through protocol dependents
@@ -34125,7 +34125,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     
     #include <zlib/ZiMultiplex.hh>
     
-    #include <zlib/Zxdp.hh>
+    #include <zlib/Zpkt.hh>
     
     #include <zlib/ZutcpAlloc.hh>
     #include <zlib/ZutcpIP.hh>
@@ -34317,7 +34317,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         data.size = m_slots.length();
         data.inCount = m_inserted;
         data.outCount = m_evicted;
-    concepts_brief.md:6:* **Status:** Decisions reconciled with the current `zxdp/src` refactor. Seven
+    concepts_brief.md:6:* **Status:** Decisions reconciled with the current `zpkt/src` refactor. Seven
     concepts_brief.md:10:## Overview
     concepts_brief.md:22:## Current source baseline
     concepts_brief.md:58:## Analysis and adopted design
@@ -34621,7 +34621,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
       unsigned    m_interface, m_mtu, m_spin, m_txSid;
       Zi::Name    m_netmask;
       PacketFn    m_packet;
-      alignas(Zm::CacheLineSize) ZmRef<Zxdp::Instance> m_backend;
+      alignas(Zm::CacheLineSize) ZmRef<Zpkt::Instance> m_backend;
       bool m_backendInit = false;
       ZmRef<Allocator> m_ingress;
     # Instance ownership boundary
@@ -34636,7 +34636,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     
     Instance implements ZiMxPlugin and its inherited Ztc::Mx interface, not Ztc::Hub.
     allQueues() traverses existing internal objects to expose normalized queue
-    telemetry, including Zxdp's existing allQueues(). Do not add queue containers,
+    telemetry, including Zpkt's existing allQueues(). Do not add queue containers,
     indexes, registries or tracking caches. Existing object-lifetime references during
     enumeration protect callbacks that request asynchronous connection closure.
     
@@ -34649,7 +34649,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     # Current Phase 8 execution boundary
     
     The live protocol uses standard
-    TCP headers/options and raw application bytes over Instance/Zxdp. Endpoint ownership
+    TCP headers/options and raw application bytes over Instance/Zpkt. Endpoint ownership
     uses TCP tuples; accepted byte history, canonical backing and owner handoffs
     remain authoritative. Intermediate packet/frame codecs and peer packet-number
     acknowledgments are deleted. Providers reserve the maximum standard Ethernet,
@@ -34666,8 +34666,8 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     generation checks and the independent receive-window and RST qualification.
     
     Native providers implement `Zi::IOBufPool` over storage injected from a selected
-    `Zxdp::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
-    to Zxdp. Configuration owns its pool list; initialization retains independent
+    `Zpkt::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
+    to Zpkt. Configuration owns its pool list; initialization retains independent
     backend references so configuration-list membership can expire after `init()`.
     Tx buffer allocation failure drops the connection; producers do not wait for
     pool grants. Alignment changes physical stride without inflating logical buffer capacity.
@@ -34682,7 +34682,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     
     # Historical Phase 1 execution boundary
     
-    The live transport now uses Instance/Zxdp with TCP-aligned IP carriage. The native
+    The live transport now uses Instance/Zpkt with TCP-aligned IP carriage. The native
     endpoint tests exercise the client/server cutover and working pairs. Do not restore a kernel UDP mode,
     fallback or separate backend. Cold interface/route/static-neighbor queries remain
     control work outside Rx/Tx.
@@ -34710,7 +34710,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     independently gates physical reuse. Historical frame metadata cannot resurrect
     ACKed native byte work or assemble retired payload storage.
     
-    Phase 1 is stripping plus IP/Zxdp wiring and regression testing. No new recovery,
+    Phase 1 is stripping plus IP/Zpkt wiring and regression testing. No new recovery,
     congestion, flow-control or packetization behavior belongs in that phase. Broader
     pressure/fairness/lifecycle/observation matrices are later work, not extra exit
     gates. See the current boundary above.
@@ -34813,7 +34813,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     
     ## User
     
-    $egm:egm-brainstorm in `Zxdp.hh` virtualize `Zxdp::Instance` API, add `ZtEnumNS(uint8_t, Backend, AF_XDP, DPDK);`; add `Backend::T backend` to `Zxdp::Params`; virtualize `Zxdp::Instance` (deletes `InstanceData *m_data`, `rx` etc. become pure virtual), add a factory function `ZmRef<Instance> instance(const Params &params);` to create an instance and return it (takes `Params`, switches on `backend`, creates the appropriate derived instance); add `DPDK` alongside `AF_XDP` in `zxdp` (the `AF_XDP` implementation is a great reference for `DPDK`); add `DPDK` tests using software loopback pcap ring per `dpdk_loopback.md`
+    $egm:egm-brainstorm in `Zpkt.hh` virtualize `Zpkt::Instance` API, add `ZtEnumNS(uint8_t, Backend, AF_XDP, DPDK);`; add `Backend::T backend` to `Zpkt::Params`; virtualize `Zpkt::Instance` (deletes `InstanceData *m_data`, `rx` etc. become pure virtual), add a factory function `ZmRef<Instance> instance(const Params &params);` to create an instance and return it (takes `Params`, switches on `backend`, creates the appropriate derived instance); add `DPDK` alongside `AF_XDP` in `zpkt` (the `AF_XDP` implementation is a great reference for `DPDK`); add `DPDK` tests using software loopback pcap ring per `dpdk_loopback.md`
     
     ## Assistant
     
@@ -34863,18 +34863,18 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     732:Instance::Instance(ZiMultiplex *mx, InstanceParams params)
     733:: ZiMxPlugin{mx}, m_interface{requireTCPSecrets(m_isn, m_tfoKey, params.interface)},
     734:  m_mtu{requireMTU(mx, params.interface)},
-    738:  m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+    738:  m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
     740:    ingressCount(mx, m_interface), m_mtu + 14)}},
     768:Instance::Instance(ZiMultiplex *mx, unsigned mtu, ZmRef<Zi::IOBufPool> ingress,
     770:: ZiMxPlugin{mx}, m_interface{requireTCPSecrets(m_isn, m_tfoKey, 1)},
-    771:  m_mtu{mtu}, m_spin{0}, m_txSid{0}, m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+    771:  m_mtu{mtu}, m_spin{0}, m_txSid{0}, m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
     810:Zi::IOBufPool *Instance::allocator(
     860:ZuUnion<void, ZeException> Instance::configure(const InstanceConfig &config)
     1060:ZuUnion<IPPath, ZeException> Instance::resolve(ZiIP remote, ZiIP local)
     1064:  return resolveIPPath(m_interface, IPPath{local, remote, {}, {}, 0});
-    1085:  if (m_backendInit) m_backend = Zxdp::instance(Zxdp::Type::Xdp);
-    1088:    Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-    1089:  auto &params = config.p<Zxdp::Xdp::Params>();
+    1085:  if (m_backendInit) m_backend = Zpkt::instance(Zpkt::Type::Xdp);
+    1088:    Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+    1089:  auto &params = config.p<Zpkt::Xdp::Params>();
     1090:  params.ifindex = m_interface;
     1402:  if (lease) lease->adopt(buf->allocator(), backing, size);
     ### final-M2 — define Zutcp backend configuration concretely
@@ -34912,7 +34912,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     actual protocol and independent wire assertions through native test facilities.
     
     allQueues() traverses existing internal objects to expose normalized telemetry
-    for the actual Zutcp and Zxdp queues, delegating Zxdp enumeration through its
+    for the actual Zutcp and Zpkt queues, delegating Zpkt enumeration through its
     existing interface. It implies no additional queue container, index, registry,
     cache or tracking mechanism. Preserve existing traversal lifetime rules.
     
@@ -34940,8 +34940,8 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     zutcp/README.md:119:   and backend close. Socket closure alone does not establish kernel retirement.
     zutcp/README.md:135:in-process backend-switching facility.
     zutcp/README.md:145:TCP Fast Open is disabled in ordinary plugin application use. Private backend
-    zutcp/README.md:155:pool obtained from the selected `Zxdp::Instance` backend's `bufPool()` factory.
-    zutcp/README.md:156:Concrete registered pools remain internal to Zxdp. Instance selects that backend
+    zutcp/README.md:155:pool obtained from the selected `Zpkt::Instance` backend's `bufPool()` factory.
+    zutcp/README.md:156:Concrete registered pools remain internal to Zpkt. Instance selects that backend
     zutcp/README.md:163:// Populate params, then call backend->init(config).
     zutcp/README.md:166:Configuration owns the Tx pool list and Rx reference; the initialized backend retains its own
     zutcp/README.md:186:backend. This includes the final FIN ACK. The sender barrier and socket retirement
@@ -34954,19 +34954,19 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
 
 ## Activity
 
-    $ sed -n '80,190p' concepts_brief.md; sed -n '550,674p' concepts_brief.md; cat zxdp/src/Makefile.am; sed -n '1,75p' z.config; sed -n '330,365p' configure.ac; rg -n '^##|PASS|Result:|complete|accepted' review_context/zutcp-repair3-consumers/*.md | tail -n 25
+    $ sed -n '80,190p' concepts_brief.md; sed -n '550,674p' concepts_brief.md; cat zpkt/src/Makefile.am; sed -n '1,75p' z.config; sed -n '330,365p' configure.ac; rg -n '^##|PASS|Result:|complete|accepted' review_context/zutcp-repair3-consumers/*.md | tail -n 25
     ```
     
     Use `instance(Type::Dpdk)` to obtain `Dpdk::Instance`, then allocate pools,
     populate backend parameters in place, and call `init(config)`. For example:
     
     ```cpp
-    auto backend = Zxdp::instance(Zxdp::Type::Dpdk);
+    auto backend = Zpkt::instance(Zpkt::Type::Dpdk);
     auto tx = backend->bufPool(txCount, txSize); // effective size after registration-time MTU clamp
     auto rx = backend->bufPool(rxCount, rxSize); // established for MTU-sized packets
-    Zxdp::Params config(
-      Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Dpdk::Params>{}>{});
-    auto &params = config.p<Zxdp::Dpdk::Params>();
+    Zpkt::Params config(
+      Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Dpdk::Params>{}>{});
+    auto &params = config.p<Zpkt::Dpdk::Params>();
     params.name = "net_ring0";
     params.txPools.pushNode(tx.ptr());
     params.rxPool = rx;
@@ -35006,7 +35006,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     
     Ztc::Mx::allQueues() is an observational traversal of existing internal objects
     that exposes normalized telemetry for their actual queues, including queues
-    within Zxdp through its existing allQueues(). No extra queue container, index,
+    within Zpkt through its existing allQueues(). No extra queue container, index,
     registry or tracking cache is permitted. Preserve existing callback/owner lifetime
     rules; telemetry does not create a second transport owner.
     
@@ -35021,7 +35021,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     
     Include DPDK selection and pool provisioning through Zutcp, for initial startup
     and restart. Update `zutcp/src/ZutcpMx.hh` and `zutcp/src/ZutcpMx.cc`; do not
-    limit this work to standalone Zxdp service.
+    limit this work to standalone Zpkt service.
     
 
     
@@ -35039,23 +35039,23 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     
     Mirror `z.config`'s PostgreSQL behavior: DPDK defaults to yes in the wrapper,
     add `-K` (build without DPDK), and pass `--with-dpdk=$DPDK` through both compiler
-    branches. Keep the existing Linux-only zxdp traversal. Disabling DPDK leaves
+    branches. Keep the existing Linux-only zpkt traversal. Disabling DPDK leaves
     AF_XDP builds and tests available and adds no DPDK headers or link requirement.
     Guard DPDK-dependent declarations, implementation and fixture build entries
     consistently. Explicit DPDK selection in a disabled build must report that support
     was not built; it must not select AF_XDP. No runtime allocation fallback or
     compatibility shim is introduced by this optional build dependency.
     
-    Changes belong in `configure.ac`, `z.config`, `zxdp/src/Makefile.am` and the
+    Changes belong in `configure.ac`, `z.config`, `zpkt/src/Makefile.am` and the
     DPDK test/fixture Makefiles identified in the exact file manifest. Validate both
     enabled and disabled configurations, including requested-but-missing libdpdk.
     
     ### Explicit EAL ownership
     
     Move the previously adopted DPDK-only configuration and lifecycle under
-    `Zxdp::Dpdk`: call the process-wide wrapper `Dpdk::EAL` and its configuration
+    `Zpkt::Dpdk`: call the process-wide wrapper `Dpdk::EAL` and its configuration
     `Dpdk::EALParams`. This avoids colliding with per-instance `Dpdk::Params`.
-    These names replace the earlier `Zxdp::DPDK` and `Zxdp::DPDKParams` spellings;
+    These names replace the earlier `Zpkt::DPDK` and `Zpkt::DPDKParams` spellings;
        initial/restart provisioning in `zutcp/src/ZutcpMx.hh/.cc`. Change the
        Use the current union initialization and owning pool APIs without shims.
     5. Mirror existing AF_XDP unit/integration coverage using ring/pcap fixtures
@@ -35066,21 +35066,21 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     ## Implementation file boundary and build checkpoints
     
     Modify `configure.ac` and `z.config` for the adopted optional dependency. Modify
-    `zxdp/src/Makefile.am`, `zxdp/test/Makefile.am` and
-    `zxdp/itest/Makefile.am` for conditional sources, flags, libraries and tests.
+    `zpkt/src/Makefile.am`, `zpkt/test/Makefile.am` and
+    `zpkt/itest/Makefile.am` for conditional sources, flags, libraries and tests.
     Keep generated Autotools outputs consistent with repository practice.
     
-    Create public `zxdp/src/ZxdpDpdk.hh` and its implementation
-    `zxdp/src/ZxdpDpdk.cc` for EAL configuration/lifetime. Create private
-    `zxdp/src/ZxdpDpdkInstance.hh/.cc` and `zxdp/src/ZxdpDpdkPool.hh/.cc` for the
-    instance and native mbuf pools. Modify `zxdp/src/Zxdp.hh` and `Zxdp.cc` for
+    Create public `zpkt/src/ZpktDpdk.hh` and its implementation
+    `zpkt/src/ZpktDpdk.cc` for EAL configuration/lifetime. Create private
+    `zpkt/src/ZpktDpdkInstance.hh/.cc` and `zpkt/src/ZpktDpdkPool.hh/.cc` for the
+    instance and native mbuf pools. Modify `zpkt/src/Zpkt.hh` and `Zpkt.cc` for
     selection, parameter union, factory dispatch and status(). Keep AF_XDP internals
     in place. Concrete DPDK declarations are built only when enabled.
     
     Create the five DPDK test sources named in the coverage table, plus private
-    `zxdp/itest/zxdpdpdkfixture.hh/.cc` shared by the three integration drivers.
-    Update `zxdp/test/README.md`, `zxdp/itest/README.md`, `zxdp/README.md`,
-    `zxdp/INTERFACE.md` and `zxdp/GUIDELINES.md` with actual setup and guarantees.
+    `zpkt/itest/zpktdpdkfixture.hh/.cc` shared by the three integration drivers.
+    Update `zpkt/test/README.md`, `zpkt/itest/README.md`, `zpkt/README.md`,
+    `zpkt/INTERFACE.md` and `zpkt/GUIDELINES.md` with actual setup and guarantees.
     
 
     
@@ -35094,12 +35094,12 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     
     | Existing test | DPDK counterpart | Adaptation |
     | --- | --- | --- |
-    | ZxdpPoolTest | ZxdpDpdkPoolTest | Native mbuf allocation/return, configured geometry, exhaustion and retained backing. |
-    | ZxdpInstanceTest | ZxdpDpdkInstanceTest | Explicit EAL prerequisite, init failures, mandatory Tx provisioning and close/recreate. |
-    | zxdppackettest | zxdpdpdkpackettest | Direct submission, received bytes, backing lifetime, exhaustion and draining through ring/pcap peers. |
-    | zxdpwaketest | zxdpdpdkwaketest | Active receive, counted wake and bounded idle wait; omit AF_XDP sender-thread assertions. |
-    | zxdplooptest | zxdpdpdklooptest | Software peer progress through the normal backend path. |
-    | ZxdpClassifierTest / zxdpfiltertest | no DPDK copy | The current BPF classifier and Xdp netmask filter are backend-specific. |
+    | ZpktPoolTest | ZpktDpdkPoolTest | Native mbuf allocation/return, configured geometry, exhaustion and retained backing. |
+    | ZpktInstanceTest | ZpktDpdkInstanceTest | Explicit EAL prerequisite, init failures, mandatory Tx provisioning and close/recreate. |
+    | zpktpackettest | zpktdpdkpackettest | Direct submission, received bytes, backing lifetime, exhaustion and draining through ring/pcap peers. |
+    | zpktwaketest | zpktdpdkwaketest | Active receive, counted wake and bounded idle wait; omit AF_XDP sender-thread assertions. |
+    | zpktlooptest | zpktdpdklooptest | Software peer progress through the normal backend path. |
+    | ZpktClassifierTest / zpktfiltertest | no DPDK copy | The current BPF classifier and Xdp netmask filter are backend-specific. |
     
     The relevant Zutcp native fixture must additionally select DPDK and exercise
     start/stop/restart with the same pool and endpoint ownership contract. Do not
@@ -35111,9 +35111,9 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     for AF_XDP. The application/fixture chooses endpoint IP addresses, configures
     Linux routes and installs permanent next-hop IP-to-MAC neighbor entries.
     Zutcp queries those routes and static neighbors through its existing cold
-    netlink path, then constructs the Ethernet frames passed to Zxdp. Replies may
+    netlink path, then constructs the Ethernet frames passed to Zpkt. Replies may
     use the return path derived from received Ethernet framing as they do today.
-    Routing and neighbor resolution belong to Zutcp, not Zxdp.
+    Routing and neighbor resolution belong to Zutcp, not Zpkt.
     
     Keep a Linux routing-interface identity in Zutcp configuration and associate it
     explicitly with the selected named DPDK port. The fixture supplies this mapping;
@@ -35167,13 +35167,13 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         -I$(top_srcdir)/zi/src @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
-    pkginclude_HEADERS = ZxdpLib.hh Zxdp.hh
-    noinst_HEADERS = ZxdpPool.hh ZxdpRing.hh ZxdpUMem.hh ZxdpBPF.hh ZxdpRetire.hh
-    lib_LTLIBRARIES = libZxdp.la
-    libZxdp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZXDP_EXPORTS
-    libZxdp_la_SOURCES = ZxdpLib.cc Zxdp.cc ZxdpPool.cc ZxdpUMem.cc ZxdpBPF.cc \
-        ZxdpRetire.cc
-    libZxdp_la_LIBADD = $(top_builddir)/zi/src/libZi.la \
+    pkginclude_HEADERS = ZpktLib.hh Zpkt.hh
+    noinst_HEADERS = ZpktPool.hh ZpktRing.hh ZpktUMem.hh ZpktBPF.hh ZpktRetire.hh
+    lib_LTLIBRARIES = libZpkt.la
+    libZpkt_la_CPPFLAGS = $(AM_CPPFLAGS) -DZPKT_EXPORTS
+    libZpkt_la_SOURCES = ZpktLib.cc Zpkt.cc ZpktPool.cc ZpktUMem.cc ZpktBPF.cc \
+        ZpktRetire.cc
+    libZpkt_la_LIBADD = $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la \
         $(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
@@ -35304,7 +35304,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     another application networking API. The app constructs and configures
     Zutcp::Instance and statically installs it through the existing ZiMultiplex::plugin() setter. Application connection and
     transfer code uses Ztcp/Ztls through ZiMultiplex, not Zutcp connection classes
-    or protocol state. The modules zu, zm, zt, ze, zf, zi, zv, zxdp, ztcp and zfix
+    or protocol state. The modules zu, zm, zt, ze, zf, zi, zv, zpkt, ztcp and zfix
     are frozen: do not modify their source, headers, tests, build inputs or docs.
     Rebuilding them does not authorize repairs in them. No dynamic module loading
     or string-option configuration belongs
@@ -35368,7 +35368,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
       Ztc::Mx::allQueues() provides telemetry visibility of queues that already exist.
       Iterate Instance's own internal objects and expose their queues through the
       normalized queue telemetry interface, including connection/listener queues and
-      queues within Zxdp. Delegate Zxdp enumeration to its existing allQueues().
+      queues within Zpkt. Delegate Zpkt enumeration to its existing allQueues().
       Visit each queue once and return the number passed to the callback. This is
       observation, not queue management. No additional container, index,
       registry, cache or other queue-tracking structure is permitted. Preserve
@@ -35399,7 +35399,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     Complete connection setup on Rx before the first SYN. Preserve generation checks,
     error propagation and endpoint teardown safety when simplifying asynchronous
     setup bookkeeping; remove counters only when no remaining setup operation needs
-    them. Do not add ARP/ND or routing to Zxdp.
+    them. Do not add ARP/ND or routing to Zpkt.
     
     Migrate zutcp/itest/zutcpiptest.cc with the resolver. Consume its direct success
     and structured failure results inside an Rx continuation, assert Rx ownership,
@@ -35422,7 +35422,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     
     Instance implements ZiMxPlugin and its inherited Ztc::Mx interface, not Ztc::Hub.
     allQueues() traverses existing internal objects to expose normalized queue
-    telemetry, including Zxdp's existing allQueues(). Do not add queue containers,
+    telemetry, including Zpkt's existing allQueues(). Do not add queue containers,
     indexes, registries or tracking caches. Existing object-lifetime references during
     enumeration protect callbacks that request asynchronous connection closure.
     
@@ -35435,7 +35435,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     # Current Phase 8 execution boundary
     
     The live protocol uses standard
-    TCP headers/options and raw application bytes over Instance/Zxdp. Endpoint ownership
+    TCP headers/options and raw application bytes over Instance/Zpkt. Endpoint ownership
     uses TCP tuples; accepted byte history, canonical backing and owner handoffs
     remain authoritative. Intermediate packet/frame codecs and peer packet-number
     acknowledgments are deleted. Providers reserve the maximum standard Ethernet,
@@ -35452,8 +35452,8 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     generation checks and the independent receive-window and RST qualification.
     
     Native providers implement `Zi::IOBufPool` over storage injected from a selected
-    `Zxdp::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
-    to Zxdp. Configuration owns its pool list; initialization retains independent
+    `Zpkt::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
+    to Zpkt. Configuration owns its pool list; initialization retains independent
     backend references so configuration-list membership can expire after `init()`.
     Tx buffer allocation failure drops the connection; producers do not wait for
     pool grants. Alignment changes physical stride without inflating logical buffer capacity.
@@ -35468,7 +35468,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     
     # Historical Phase 1 execution boundary
     
-    The live transport now uses Instance/Zxdp with TCP-aligned IP carriage. The native
+    The live transport now uses Instance/Zpkt with TCP-aligned IP carriage. The native
     endpoint tests exercise the client/server cutover and working pairs. Do not restore a kernel UDP mode,
     fallback or separate backend. Cold interface/route/static-neighbor queries remain
     control work outside Rx/Tx.
@@ -35509,7 +35509,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
       m_spin{params.spin},
       m_txSid{params.txSid},
       m_netmask{params.netmask}, m_packet{ZuMv(params.packet)},
-      m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+      m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
       m_ingress{new Allocator{m_backend->bufPool(
         ingressCount(mx, m_interface), m_mtu + 14)}},
       m_rxAllocator{mx, m_ingress},
@@ -35577,11 +35577,11 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
       m_rxWakeQueued = 0;
       m_error = {};
       // A backend initializes once. Retain closed telemetry until this next start.
-      if (m_backendInit) m_backend = Zxdp::instance(Zxdp::Type::Xdp);
+      if (m_backendInit) m_backend = Zpkt::instance(Zpkt::Type::Xdp);
       m_backendInit = true;
-      Zxdp::Params config(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-      auto &params = config.p<Zxdp::Xdp::Params>();
+      Zpkt::Params config(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+      auto &params = config.p<Zpkt::Xdp::Params>();
       params.ifindex = m_interface;
       params.netmask = m_netmask;
       params.rxPool = m_ingress->pool;
@@ -35616,12 +35616,12 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     2026-11-17 22:25:34.989879793 +0000 concepts_brief.md
     2026-11-17 22:25:59.653568895 +0000 dpdk_implementation_review_report.md
     2026-11-17 13:12:16.419095538 +0000 dpdk.md
-    # Zxdp AF_XDP and DPDK backends
+    # Zpkt AF_XDP and DPDK backends
     
     * **Author:** Huw Rogers
     * **Date:** 2026-11-16
     * **Updated:** 2026-11-17
-    * **Status:** Decisions reconciled with the current `zxdp/src` refactor. Seven
+    * **Status:** Decisions reconciled with the current `zpkt/src` refactor. Seven
       historical brainstorming reviews completed; this update is source reconciliation,
       not another review or an implementation/test run.
     
@@ -35635,7 +35635,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     
     The original three fresh-context reviews completed with 13 Major findings,
     consolidated into eight actions. Their original line references apply to
-    [the reviewed snapshot](review_context/zxdp-dpdk-readiness/reviewed_concepts_brief.md).
+    [the reviewed snapshot](review_context/zpkt-dpdk-readiness/reviewed_concepts_brief.md).
     The generic report filenames now document a separate I/O repair; this scoped
     report preserves the DPDK review without replacing those artifacts.
     privately. Do not add the obsolete `Backend`, `If_AF_XDP`, `If_DPDK`, `If`,
@@ -35659,7 +35659,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     
     Ztc::Mx::allQueues() is an observational traversal of existing internal objects
     that exposes normalized telemetry for their actual queues, including queues
-    within Zxdp through its existing allQueues(). No extra queue container, index,
+    within Zpkt through its existing allQueues(). No extra queue container, index,
     registry or tracking cache is permitted. Preserve existing callback/owner lifetime
     rules; telemetry does not create a second transport owner.
     
@@ -35686,11 +35686,11 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     static unsigned ingressCount(ZiMultiplex *mx, unsigned interface)
     {
       if (mx->rxBufSize()) return mx->rxBufSize();
-      auto result = Zxdp::Xdp::queryLink(interface);
+      auto result = Zpkt::Xdp::queryLink(interface);
       if (result.is<ZeException>()) throw ZuMv(result.p<ZeException>());
       // Idle queues retain their FILL allocations. Each active queue needs room
       // beyond one connection's default retained list before its oldest can return.
-      uint64_t count = uint64_t(result.p<Zxdp::Xdp::LinkState>().rxQueues) *
+      uint64_t count = uint64_t(result.p<Zpkt::Xdp::LinkState>().rxQueues) *
         (uint64_t(DefaultRxRetainPerCxn) + mx->rxQuantum());
       if (count > UINT_MAX) throw ZeEXCEPT(Error, "Zutcp", "Rx pool count overflow");
       return count > ZiIOBuf_DefltCount ? unsigned(count) : ZiIOBuf_DefltCount;
@@ -35705,7 +35705,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
       unsigned    m_interface, m_mtu, m_spin, m_txSid;
       Zi::Name    m_netmask;
       PacketFn    m_packet;
-      alignas(Zm::CacheLineSize) ZmRef<Zxdp::Instance> m_backend;
+      alignas(Zm::CacheLineSize) ZmRef<Zpkt::Instance> m_backend;
       bool m_backendInit = false;
       ZmRef<Allocator> m_ingress;
       InstanceConfig m_config;
@@ -35719,7 +35719,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
       unsigned m_controlCredits = DefaultTxControlCredits;
     
       // Shared publication and ordered lifecycle handoffs.
-      alignas(Zm::CacheLineSize) ZmAtomic<Zxdp::Instance *> m_current{nullptr};
+      alignas(Zm::CacheLineSize) ZmAtomic<Zpkt::Instance *> m_current{nullptr};
       ZmAtomic<unsigned> m_state{Stopped};
       bool m_startFailure = false;
       ZeException m_error;
@@ -35744,7 +35744,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I${top_srcdir}/zi/src \
-        -I$(top_srcdir)/zxdp/src \
+        -I$(top_srcdir)/zpkt/src \
         @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
@@ -35760,7 +35760,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         ZutcpAlloc.cc ZutcpMx.cc ZutcpIP.cc \
         ZutcpDiag.cc
     libZutcp_la_LIBADD = \
-        $(top_builddir)/zxdp/src/libZxdp.la \
+        $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la \
@@ -35777,20 +35777,20 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
-        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zxdp/src @Z_CPPFLAGS@
+        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zpkt/src @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@
-    LDADD = $(top_builddir)/zxdp/src/libZxdp.la \
+    LDADD = $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
         $(top_builddir)/zu/src/libZu.la \
         @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-    noinst_PROGRAMS = ZxdpRingTest ZxdpPoolTest ZxdpInstanceTest ZxdpClassifierTest
-    ZxdpRingTest_SOURCES = ZxdpRingTest.cc
-    ZxdpPoolTest_SOURCES = ZxdpPoolTest.cc
-    ZxdpInstanceTest_SOURCES = ZxdpInstanceTest.cc
-    ZxdpClassifierTest_SOURCES = ZxdpClassifierTest.cc
+    noinst_PROGRAMS = ZpktRingTest ZpktPoolTest ZpktInstanceTest ZpktClassifierTest
+    ZpktRingTest_SOURCES = ZpktRingTest.cc
+    ZpktPoolTest_SOURCES = ZpktPoolTest.cc
+    ZpktInstanceTest_SOURCES = ZpktInstanceTest.cc
+    ZpktClassifierTest_SOURCES = ZpktClassifierTest.cc
     EXTRA_DIST = README.md
     
     .PHONY: test
@@ -35799,22 +35799,22 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
-        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zxdp/src \
-        -DZXDP_FIXTURE='"$(abs_top_srcdir)/zxdp/util/zxdpfixture.sh"' \
-        -DZXDP_PACKET='"$(abs_top_builddir)/zxdp/util/zxdppacket"' @Z_CPPFLAGS@
+        -I$(top_srcdir)/zi/src -I$(top_srcdir)/zpkt/src \
+        -DZPKT_FIXTURE='"$(abs_top_srcdir)/zpkt/util/zpktfixture.sh"' \
+        -DZPKT_PACKET='"$(abs_top_builddir)/zpkt/util/zpktpacket"' @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@
-    LDADD = $(top_builddir)/zxdp/src/libZxdp.la \
+    LDADD = $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
         $(top_builddir)/zu/src/libZu.la \
         @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
-    noinst_PROGRAMS = zxdppackettest zxdpfiltertest zxdplooptest zxdpwaketest
-    zxdppackettest_SOURCES = zxdppackettest.cc
-    zxdpwaketest_SOURCES = zxdpwaketest.cc
-    zxdpfiltertest_SOURCES = zxdpfiltertest.cc
-    zxdplooptest_SOURCES = zxdplooptest.cc zxdplog.hh
+    noinst_PROGRAMS = zpktpackettest zpktfiltertest zpktlooptest zpktwaketest
+    zpktpackettest_SOURCES = zpktpackettest.cc
+    zpktwaketest_SOURCES = zpktwaketest.cc
+    zpktfiltertest_SOURCES = zpktfiltertest.cc
+    zpktlooptest_SOURCES = zpktlooptest.cc zpktlog.hh
     
     .PHONY: test
     test: $(noinst_PROGRAMS)
@@ -35823,11 +35823,11 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
         -I$(top_srcdir)/zi/src -I$(top_srcdir)/zi/test \
-        -I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zxdp/src @Z_CPPFLAGS@
+        -I$(top_srcdir)/zutcp/src -I$(top_srcdir)/zpkt/src @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@
     LDADD = $(top_builddir)/zi/test/libZiTest.la \
-        $(top_builddir)/zutcp/src/libZutcp.la $(top_builddir)/zxdp/src/libZxdp.la \
+        $(top_builddir)/zutcp/src/libZutcp.la $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
@@ -35904,7 +35904,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
 
 ## Activity
 
-    # Zxdp implementation rules
+    # Zpkt implementation rules
     
     Follow the repository guidance in ../AGENTS.md and the caller-supplied
     [interface contract](INTERFACE.md). The contract supersedes earlier plans.
@@ -35937,7 +35937,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
       run on any thread. Keep thread-exclusive mutable state on separate cache lines.
     * The application assigns a sender `txSid` in its `ZmScheduler` and configures
       that slot with `Xdp::Params::txThread` (`ZmSchedTParams`, isolated by default).
-      The scheduler owns thread startup, waiting and teardown. Zxdp owns no sender
+      The scheduler owns thread startup, waiting and teardown. Zpkt owns no sender
       thread or semaphore. Publish initialized descriptors immediately: increment
       the pending-descriptor counter before commit and use scheduler `run()` after
       commit only on a zero-to-one transition. The dedicated sender calls nonblocking
@@ -36060,7 +36060,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         
         struct InstanceParams {
           unsigned interface = 0; // Linux route/static-neighbor control plane for both
-          Zxdp::Type::T type = Zxdp::Type::Xdp;
+          Zpkt::Type::T type = Zpkt::Type::Xdp;
           DpdkParams dpdk;
           ZuCSpan netmask; // Xdp selection only
           PacketFn packet;
@@ -36125,7 +36125,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         
         struct InstanceParams {
           unsigned interface = 0; // Linux route/static-neighbor control plane for both
-          Zxdp::Type::T type = Zxdp::Type::Xdp;
+          Zpkt::Type::T type = Zpkt::Type::Xdp;
           DpdkParams dpdk;
           ZuCSpan netmask; // Xdp selection only
           PacketFn packet;
@@ -36167,7 +36167,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
 ## Activity
 
     $ cat > dpdk_plan.md <<'EOF'
-        # Zxdp DPDK implementation plan
+        # Zpkt DPDK implementation plan
         
         Status: finalized against the repaired Zutcp working tree. DPDK remains
         unimplemented. This is the execution plan; concepts_brief.md retains the adopted
@@ -36184,7 +36184,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         code uses Ztcp/Ztls through ZiMultiplex. Do not introduce module loading or redo
         this repair. Preserve all existing working-tree changes and their test artifacts.
         
-        Zxdp already has the cold instance(Type::Xdp) factory, virtual bufPool/init/send/
+        Zpkt already has the cold instance(Type::Xdp) factory, virtual bufPool/init/send/
         rx/wake/pollTx/stopTx/close/allQueues, the Params tagged union and private Xdp
         pools/UMEM. Extend those interfaces. No InstanceData, commitFn, external-buffer
         attachment adapter, shared UMEM/mbuf allocator, Rx-only instance or intermediate
@@ -36208,7 +36208,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         usage/getopts, default DPDK=yes on Linux and pass --with-dpdk through both compiler
         branches. MinGW disables DPDK. Preserve all existing wrapper options.
         
-        Create installed ZxdpDpdk.hh and ZxdpDpdk.cc for Zxdp::Dpdk::EAL/EALParams.
+        Create installed ZpktDpdk.hh and ZpktDpdk.cc for Zpkt::Dpdk::EAL/EALParams.
         Use the exact owned aggregate EALParams and enum declarations in the brief's
         “Adopted explicit EAL parameters” section; that declaration is normative input
         to this plan, not an invitation to redesign it. It covers lcores/main lcore,
@@ -36237,9 +36237,9 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         Explicit mappings remain under application control. No packet work is launched
         merely because EAL workers were configured.
         
-        ## 2. Zxdp selection and API
+        ## 2. Zpkt selection and API
         
-        In Zxdp.hh extend Type to Xdp, Dpdk and Params to
+        In Zpkt.hh extend Type to Xdp, Dpdk and Params to
         ZuUnion<Xdp::Params, Dpdk::Params>. Preserve current macro and in-place union
         construction conventions. Add:
         
@@ -36254,7 +36254,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         
         These parameter types and Type::Dpdk need only framework headers and remain
         expressible in disabled builds. EAL/concrete DPDK definitions and linking are
-        conditional. Zxdp::instance(Type::Dpdk) throws a structured ZeException when
+        conditional. Zpkt::instance(Type::Dpdk) throws a structured ZeException when
         support was not built or EAL is not ready, consistent with its ZmRef return
         signature. It never substitutes Xdp. Construct the private Dpdk::Instance when
         available; keep the Xdp factory behavior unchanged.
@@ -36270,7 +36270,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         
         ## 3. Private pools, device ownership and packet service
         
-        Create private ZxdpDpdkInstance.hh/.cc and ZxdpDpdkPool.hh/.cc. BufPool derives
+        Create private ZpktDpdkInstance.hh/.cc and ZpktDpdkPool.hh/.cc. BufPool derives
         from Zi::IOBufPool and provides native mbuf backing; its effective count/size/
         headroom/tailroom/alignment are the supplied geometry. Defer physical pool setup
         until instance init so stopped configuration, including control count changes,
@@ -36355,7 +36355,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         
         struct InstanceParams {
           unsigned interface = 0; // Linux control-plane interface, in both modes
-          Zxdp::Type::T type = Zxdp::Type::Xdp;
+          Zpkt::Type::T type = Zpkt::Type::Xdp;
           DpdkParams dpdk;
           ZuCSpan netmask; // Xdp selection only
           PacketFn packet;
@@ -36387,7 +36387,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         so default allocBuf() calls need no new per-call MTU limit. Do not add generic
         pool queries or an allocation-time size API.
         
-        In start_(), select the matching Zxdp parameter union alternative. Populate
+        In start_(), select the matching Zpkt parameter union alternative. Populate
         common rxPool/txPools/rx callback/spin/scheduler/txStopped identically; add Xdp's
         ifindex/netmask/txSid or Dpdk's name/rxInterval in its branch. Retain independent
         pool references and let temporary configuration-list membership expire as today.
@@ -36422,18 +36422,18 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         draining queues and releasing remaining mbufs/rings.
         
         Provide private shared ring/pcap setup, independent peer progress and cleanup in
-        zxdp/itest/zxdpdpdkfixture.hh/.cc. Set fixed software device names/MACs and build
+        zpkt/itest/zpktdpdkfixture.hh/.cc. Set fixed software device names/MACs and build
         pcap input/output for byte verification. Run EAL initialization variants in fresh
         subprocesses; do not rely on reinitializing process-global EAL between test cases.
         No physical NIC/VFIO binding is required for software acceptance.
         
         | Existing scope | New DPDK driver | Required adaptation |
         | --- | --- | --- |
-        | Pool allocation/lifetime | ZxdpDpdkPoolTest | mbuf identity, geometry, exhaustion/return, retained backing |
-        | Instance init/close | ZxdpDpdkInstanceTest | explicit EAL, mandatory Tx, structured failures, close/recreate |
-        | Native packet I/O | zxdpdpdkpackettest | direct submission, Rx pool provenance, exact bytes, independent retirement |
-        | Wake/service | zxdpdpdkwaketest | counted wakes, sustained Rx and configurable bounded idle; no Xdp sender assertion |
-        | Loopback transfer | zxdpdpdklooptest | independent software peer, normal send/receive and teardown |
+        | Pool allocation/lifetime | ZpktDpdkPoolTest | mbuf identity, geometry, exhaustion/return, retained backing |
+        | Instance init/close | ZpktDpdkInstanceTest | explicit EAL, mandatory Tx, structured failures, close/recreate |
+        | Native packet I/O | zpktdpdkpackettest | direct submission, Rx pool provenance, exact bytes, independent retirement |
+        | Wake/service | zpktdpdkwaketest | counted wakes, sustained Rx and configurable bounded idle; no Xdp sender assertion |
+        | Loopback transfer | zpktdpdklooptest | independent software peer, normal send/receive and teardown |
         | BPF classifier/filter | no DPDK copy | remains Xdp-specific |
         
         In Zutcp add zutcpdpdktest.cc with its private fixture helper
@@ -36452,28 +36452,28 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         
         Create:
         
-        * zxdp/src/ZxdpDpdk.hh, zxdp/src/ZxdpDpdk.cc
-        * zxdp/src/ZxdpDpdkInstance.hh, zxdp/src/ZxdpDpdkInstance.cc
-        * zxdp/src/ZxdpDpdkPool.hh, zxdp/src/ZxdpDpdkPool.cc
-        * zxdp/test/ZxdpDpdkPoolTest.cc, zxdp/test/ZxdpDpdkInstanceTest.cc
-        * zxdp/itest/zxdpdpdkfixture.hh, zxdp/itest/zxdpdpdkfixture.cc
-        * zxdp/itest/zxdpdpdkpackettest.cc, zxdp/itest/zxdpdpdkwaketest.cc,
-          zxdp/itest/zxdpdpdklooptest.cc
+        * zpkt/src/ZpktDpdk.hh, zpkt/src/ZpktDpdk.cc
+        * zpkt/src/ZpktDpdkInstance.hh, zpkt/src/ZpktDpdkInstance.cc
+        * zpkt/src/ZpktDpdkPool.hh, zpkt/src/ZpktDpdkPool.cc
+        * zpkt/test/ZpktDpdkPoolTest.cc, zpkt/test/ZpktDpdkInstanceTest.cc
+        * zpkt/itest/zpktdpdkfixture.hh, zpkt/itest/zpktdpdkfixture.cc
+        * zpkt/itest/zpktdpdkpackettest.cc, zpkt/itest/zpktdpdkwaketest.cc,
+          zpkt/itest/zpktdpdklooptest.cc
         * zutcp/itest/zutcpdpdktest.cc, zutcp/itest/zutcpdpdkfixture.hh,
           zutcp/itest/zutcpdpdkfixture.cc
         
         Modify:
         
         * configure.ac, z.config: optional dependency, flags and feature conditional.
-        * zxdp/src/Zxdp.hh, zxdp/src/Zxdp.cc: selector/union/factory/status, Xdp override.
-        * zxdp/src/Makefile.am: conditionally install EAL header, compile private DPDK
+        * zpkt/src/Zpkt.hh, zpkt/src/Zpkt.cc: selector/union/factory/status, Xdp override.
+        * zpkt/src/Makefile.am: conditionally install EAL header, compile private DPDK
           sources, apply DPDK flags/linking only when enabled; keep Zi dependency.
-        * zxdp/test/Makefile.am, zxdp/itest/Makefile.am: conditional programs/fixture builds.
+        * zpkt/test/Makefile.am, zpkt/itest/Makefile.am: conditional programs/fixture builds.
         * zutcp/src/ZutcpMx.hh, zutcp/src/ZutcpMx.cc: settings and initial/restart branches.
         * zutcp/itest/Makefile.am: conditional DPDK driver/fixture; Ztcp is a test consumer
           dependency, not a new libZutcp dependency.
-        * zxdp/README.md, zxdp/GUIDELINES.md, zxdp/INTERFACE.md,
-          zxdp/test/README.md, zxdp/itest/README.md: actual API/setup/test commands.
+        * zpkt/README.md, zpkt/GUIDELINES.md, zpkt/INTERFACE.md,
+          zpkt/test/README.md, zpkt/itest/README.md: actual API/setup/test commands.
         * zutcp/README.md, zutcp/GUIDELINES.md, zutcp/itest/README.md,
           zutcp/util/README.md: typed static DPDK bootstrap and existing routing model.
 
@@ -36529,7 +36529,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         [dpdk_plan.md](dpdk_plan.md) is the authoritative execution plan. It contains
         exact backend/consumer declarations, initial/restart construction, EAL/pool/port
         ownership, file create/modify lists, named tests and commands. Its four buildable
-        checkpoints are dependency/EAL support, the complete Zxdp backend, software
+        checkpoints are dependency/EAL support, the complete Zpkt backend, software
         fixtures, then repaired Zutcp integration. Do not repeat Zutcp repair3,
         introduce a loader or modify Zi/Ztcp for this work.
         
@@ -36570,7 +36570,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         [dpdk_plan.md](dpdk_plan.md) is the authoritative execution plan. It contains
         exact backend/consumer declarations, initial/restart construction, EAL/pool/port
         ownership, file create/modify lists, named tests and commands. Its four buildable
-        checkpoints are dependency/EAL support, the complete Zxdp backend, software
+        checkpoints are dependency/EAL support, the complete Zpkt backend, software
         fixtures, then repaired Zutcp integration. Do not repeat Zutcp repair3,
         introduce a loader or modify Zi/Ztcp for this work.
         
@@ -36649,7 +36649,7 @@ I’ll read the repaired Zutcp implementation, reconcile the DPDK plan with its 
         claim is made beyond the recorded review cycle.
         '''
         p.write_text(s)
-        p=Path('review_context/zxdp-dpdk-readiness/final_findings.json'); d=json.loads(p.read_text())
+        p=Path('review_context/zpkt-dpdk-readiness/final_findings.json'); d=json.loads(p.read_text())
         d['result']='snapshot findings resolved in dpdk_plan.md; implementation unstarted'
         for f in d['findings']:
          if f['id']=='final-M2': f['disposition']='closed: repaired Rx resolver and exact dpdk_plan.md section 4 declarations/initial/restart branches'
@@ -36823,7 +36823,7 @@ The shared workspace changed during the final checks: the repaired implementatio
     
     Instance implements ZiMxPlugin and its inherited Ztc::Mx interface, not Ztc::Hub.
     allQueues() traverses existing internal objects to expose normalized queue
-    telemetry, including Zxdp's existing allQueues(). Do not add queue containers,
+    telemetry, including Zpkt's existing allQueues(). Do not add queue containers,
     indexes, registries or tracking caches. Existing object-lifetime references during
     enumeration protect callbacks that request asynchronous connection closure.
     
@@ -36836,7 +36836,7 @@ The shared workspace changed during the final checks: the repaired implementatio
     # Current Phase 8 execution boundary
     
     The live protocol uses standard
-    TCP headers/options and raw application bytes over Instance/Zxdp. Endpoint ownership
+    TCP headers/options and raw application bytes over Instance/Zpkt. Endpoint ownership
     uses TCP tuples; accepted byte history, canonical backing and owner handoffs
     remain authoritative. Intermediate packet/frame codecs and peer packet-number
     acknowledgments are deleted. Providers reserve the maximum standard Ethernet,
@@ -36853,12 +36853,12 @@ The shared workspace changed during the final checks: the repaired implementatio
     generation checks and the independent receive-window and RST qualification.
     
     Native providers implement `Zi::IOBufPool` over storage injected from a selected
-    `Zxdp::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
-    to Zxdp. Configuration owns its pool list; initialization retains independent
+    `Zpkt::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
+    to Zpkt. Configuration owns its pool list; initialization retains independent
     backend references so configuration-list membership can expire after `init()`.
     # Native TCP integration tests
     
-    These Linux tests exercise actual Instance/Zxdp packet I/O, standard TCP headers
+    These Linux tests exercise actual Instance/Zpkt packet I/O, standard TCP headers
     and raw application bytes. They require usable AF_XDP/BPF, sudo/root, network
     namespaces, iproute2, ethtool, tcpdump, Python3 and Perl/prove. Missing privileges
     or fixture variables produce visible skips; a skip is not native acceptance.
@@ -36886,7 +36886,7 @@ The shared workspace changed during the final checks: the repaired implementatio
     ```
     
     Compilation runs unprivileged. The launcher creates anonymous private veth/dummy
-    links and exports the existing `ZXDP_*` fixture variables. The mapping fixture
+    links and exports the existing `ZPKT_*` fixture variables. The mapping fixture
     adds private routes and static neighbors and disables checksum offload. Native
     addresses are not assigned to kernel interfaces. Each subprocess fixture owns
     ✓ • 0ms
@@ -36931,7 +36931,7 @@ The shared workspace changed during the final checks: the repaired implementatio
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I${top_srcdir}/zi/src \
-        -I$(top_srcdir)/zxdp/src \
+        -I$(top_srcdir)/zpkt/src \
         @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
@@ -36947,7 +36947,7 @@ The shared workspace changed during the final checks: the repaired implementatio
         ZutcpAlloc.cc Zutcp.cc ZutcpIP.cc \
         ZutcpDiag.cc
     libZutcp_la_LIBADD = \
-        $(top_builddir)/zxdp/src/libZxdp.la \
+        $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la \
@@ -37036,7 +37036,7 @@ The shared workspace changed during the final checks: the repaired implementatio
     : ZiMxPlugin{mx}, m_params{ZuMv(params)},
       m_mtu{requireMTU(mx, requireTCPSecrets(m_isn, m_tfoKey, m_params.interface))},
       m_netmask{m_params.netmask},
-      m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+      m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
       m_ingress{new Allocator{m_backend->bufPool(
         ingressCount(mx, m_params.interface), m_mtu + 14)}},
       m_rxAllocator{mx, m_ingress},
@@ -37057,7 +37057,7 @@ The shared workspace changed during the final checks: the repaired implementatio
         if (!ready() || this->mx()->invoked(this->mx()->rxThread()) ||
     zutcp/src/Zutcp.cc:762:  auto configured = configure(m_params);
     zutcp/src/Zutcp.cc:863:ZuUnion<void, ZeException> Instance::configure(const InstanceParams &config)
-    zutcp/src/Zutcp.cc:1098:  Zxdp::Params config(
+    zutcp/src/Zutcp.cc:1098:  Zpkt::Params config(
     zutcp/src/Zutcp.hh:324:  ZuUnion<void, ZeException> configure(const InstanceParams &);
     zutcp/src/Zutcp.hh:325:  const InstanceParams &config() const { return m_params; }
     ✓ • 0ms
@@ -37149,7 +37149,7 @@ The shared workspace changed during the final checks: the repaired implementatio
       unsigned m_controlCredits = DefaultTxControlCredits;
     
       // Shared publication and ordered lifecycle handoffs.
-      alignas(Zm::CacheLineSize) ZmAtomic<Zxdp::Instance *> m_current{nullptr};
+      alignas(Zm::CacheLineSize) ZmAtomic<Zpkt::Instance *> m_current{nullptr};
       ZmAtomic<unsigned> m_state{Stopped};
       bool m_startFailure = false;
       ZeException m_error;
@@ -37170,7 +37170,7 @@ The shared workspace changed during the final checks: the repaired implementatio
         import re
         source=Path('zutcp/src/Zutcp.hh').read_text()
         base=re.search(r'struct InstanceParams \{.*?\n\};',source,re.S).group()
-        base=base.replace('  unsigned interface = 0;', '  unsigned interface = 0; // Linux control-plane interface in both modes\n  Zxdp::Type::T type = Zxdp::Type::Xdp;\n  DpdkParams dpdk;',1)
+        base=base.replace('  unsigned interface = 0;', '  unsigned interface = 0; // Linux control-plane interface in both modes\n  Zpkt::Type::T type = Zpkt::Type::Xdp;\n  DpdkParams dpdk;',1)
         block='''struct DpdkParams {
           ZtString<> name;
           unsigned rxInterval = 50; // microseconds; zero polls
@@ -37271,7 +37271,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     
     Instance implements ZiMxPlugin and its inherited Ztc::Mx interface, not Ztc::Hub.
     allQueues() traverses existing internal objects to expose normalized queue
-    telemetry, including Zxdp's existing allQueues(). Do not add queue containers,
+    telemetry, including Zpkt's existing allQueues(). Do not add queue containers,
     indexes, registries or tracking caches. Existing object-lifetime references during
     enumeration protect callbacks that request asynchronous connection closure.
     
@@ -37284,7 +37284,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     # Current Phase 8 execution boundary
     
     The live protocol uses standard
-    TCP headers/options and raw application bytes over Instance/Zxdp. Endpoint ownership
+    TCP headers/options and raw application bytes over Instance/Zpkt. Endpoint ownership
     uses TCP tuples; accepted byte history, canonical backing and owner handoffs
     remain authoritative. Intermediate packet/frame codecs and peer packet-number
     acknowledgments are deleted. Providers reserve the maximum standard Ethernet,
@@ -37301,8 +37301,8 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     generation checks and the independent receive-window and RST qualification.
     
     Native providers implement `Zi::IOBufPool` over storage injected from a selected
-    `Zxdp::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
-    to Zxdp. Configuration owns its pool list; initialization retains independent
+    `Zpkt::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
+    to Zpkt. Configuration owns its pool list; initialization retains independent
     backend references so configuration-list membership can expire after `init()`.
     Tx buffer allocation failure drops the connection; producers do not wait for
     pool grants. Alignment changes physical stride without inflating logical buffer capacity.
@@ -37317,7 +37317,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     
     # Historical Phase 1 execution boundary
     
-    The live transport now uses Instance/Zxdp with TCP-aligned IP carriage. The native
+    The live transport now uses Instance/Zpkt with TCP-aligned IP carriage. The native
     endpoint tests exercise the client/server cutover and working pairs. Do not restore a kernel UDP mode,
     fallback or separate backend. Cold interface/route/static-neighbor queries remain
     control work outside Rx/Tx.
@@ -37357,7 +37357,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     
     struct InstanceParams {
       unsigned interface = 0; // Linux control-plane interface in both modes
-      Zxdp::Type::T type = Zxdp::Type::Xdp;
+      Zpkt::Type::T type = Zpkt::Type::Xdp;
       DpdkParams dpdk;
       ZuCSpan netmask;
       PacketFn packet;
@@ -37409,7 +37409,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     so default allocBuf() calls need no new per-call MTU limit. Do not add generic
     pool queries or an allocation-time size API.
     
-    In start_(), select the matching Zxdp parameter union alternative. Populate
+    In start_(), select the matching Zpkt parameter union alternative. Populate
     common rxPool/txPools/rx callback/spin/scheduler/txStopped identically; add Xdp's
     ifindex/netmask/txSid or Dpdk's name/rxInterval in its branch. Retain independent
     pool references and let temporary configuration-list membership expire as today.
@@ -37437,7 +37437,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     concepts_brief.md:631:Preserve the existing Zutcp control-plane arrangement when substituting DPDK
     concepts_brief.md:632:for AF_XDP. The application/fixture chooses endpoint IP addresses, configures
     concepts_brief.md:634:Zutcp queries those routes and static neighbors through its existing cold
-    concepts_brief.md:637:Routing and neighbor resolution belong to Zutcp, not Zxdp.
+    concepts_brief.md:637:Routing and neighbor resolution belong to Zutcp, not Zpkt.
     concepts_brief.md:639:Keep a Linux routing-interface identity in Zutcp configuration and associate it
     concepts_brief.md:641:the Linux control-plane interface need not be the physical device owned by the
     concepts_brief.md:645:No packet forwarding through that control-plane interface is needed for static
@@ -37457,7 +37457,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     dpdk_plan.md:32:## 1. Optional dependency and explicit EAL
     dpdk_plan.md:34:In configure.ac, add --with-dpdk=yes|no following --with-pq. Only explicit yes
     dpdk_plan.md:69:merely because EAL workers were configured.
-    dpdk_plan.md:71:## 2. Zxdp selection and API
+    dpdk_plan.md:71:## 2. Zpkt selection and API
     dpdk_plan.md:81:    unsigned rxInterval = 50;  // maximum idle park in microseconds; zero polls
     dpdk_plan.md:97:classify the configured PMD's data path, not just the Dpdk selector. Software
     dpdk_plan.md:102:## 3. Private pools, device ownership and packet service
@@ -37500,7 +37500,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I${top_srcdir}/zi/src \
-        -I$(top_srcdir)/zxdp/src \
+        -I$(top_srcdir)/zpkt/src \
         @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
@@ -37516,7 +37516,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
         ZutcpAlloc.cc Zutcp.cc ZutcpIP.cc \
         ZutcpDiag.cc
     libZutcp_la_LIBADD = \
-        $(top_builddir)/zxdp/src/libZxdp.la \
+        $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la \
@@ -37604,7 +37604,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     af1bfb2c Merge remote-tracking branch 'origin/main' into HEAD
     7a9b6683 Repair zquic ownership, atomic ACK publication and bounded teardown
     e0503997 formatting cleanup
-    44398a5d Rename Zutcp Stack to Instance and require Zxdp Tx pools
+    44398a5d Rename Zutcp Stack to Instance and require Zpkt Tx pools
     //  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
     //  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
     
@@ -37646,7 +37646,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     #include <zlib/ZiMultiplex.hh>
     #include <zlib/ZtcMx.hh>
     
-    #include <zlib/Zxdp.hh>
+    #include <zlib/Zpkt.hh>
     
     #include <zlib/ZutcpAlloc.hh>
     #include <zlib/ZutcpIP.hh>
@@ -37967,14 +37967,14 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     733:: ZiMxPlugin{mx}, m_params{ZuMv(params)},
     734:  m_mtu{requireMTU(mx, requireTCPSecrets(m_isn, m_tfoKey, m_params.interface))},
     735:  m_netmask{m_params.netmask},
-    736:  m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+    736:  m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
     738:    ingressCount(mx, m_params.interface), m_mtu + 14)}},
     741:    requirePackets(m_params.packetCount), m_mtu + 14, 14 + 40 + 60)}},
     760:  m_params.netmask = m_netmask;
     762:  auto configured = configure(m_params);
     771:Instance::Instance(ZiMultiplex *mx, unsigned mtu, ZmRef<Zi::IOBufPool> ingress,
     773:: ZiMxPlugin{mx}, m_params{.interface = requireTCPSecrets(m_isn, m_tfoKey, 1), .spin = 0},
-    774:  m_mtu{mtu}, m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+    774:  m_mtu{mtu}, m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
     813:Zi::IOBufPool *Instance::allocator(
     837:ZuUnion<void, ZeException> Instance::configureControl(unsigned count, unsigned credits)
     863:ZuUnion<void, ZeException> Instance::configure(const InstanceParams &config)
@@ -37991,7 +37991,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     1071:ZuUnion<IPPath, ZeException> Instance::resolve(ZiIP remote, ZiIP local)
     1075:  return resolveIPPath(m_params.interface, IPPath{local, remote, {}, {}, 0});
     1087:void Instance::start_()
-    1096:  if (m_backendInit) m_backend = Zxdp::instance(Zxdp::Type::Xdp);
+    1096:  if (m_backendInit) m_backend = Zpkt::instance(Zpkt::Type::Xdp);
     1101:  params.ifindex = m_params.interface;
     1105:  params.spin = m_params.spin;
     1107:  params.txSid = m_params.txSid;
@@ -38006,7 +38006,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     : ZiMxPlugin{mx}, m_params{ZuMv(params)},
       m_mtu{requireMTU(mx, requireTCPSecrets(m_isn, m_tfoKey, m_params.interface))},
       m_netmask{m_params.netmask},
-      m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+      m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
       m_ingress{new Allocator{m_backend->bufPool(
         ingressCount(mx, m_params.interface), m_mtu + 14)}},
       m_rxAllocator{mx, m_ingress},
@@ -38044,7 +38044,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     Instance::Instance(ZiMultiplex *mx, unsigned mtu, ZmRef<Zi::IOBufPool> ingress,
       ZmRef<Zi::IOBufPool> packets, ZmRef<Zi::IOBufPool> control)
     : ZiMxPlugin{mx}, m_params{.interface = requireTCPSecrets(m_isn, m_tfoKey, 1), .spin = 0},
-      m_mtu{mtu}, m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+      m_mtu{mtu}, m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
       m_ingress{new Allocator{ZuMv(ingress)}}, m_rxAllocator{mx, m_ingress},
       m_packets{new Allocator{ZuMv(packets)}}, m_control{new Allocator{ZuMv(control)}},
       m_packetAllocator{mx, m_packets}, m_dataAllocator{mx, m_packets},
@@ -38292,11 +38292,11 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
       m_rxWakeQueued = 0;
       m_error = {};
       // A backend initializes once. Retain closed telemetry until this next start.
-      if (m_backendInit) m_backend = Zxdp::instance(Zxdp::Type::Xdp);
+      if (m_backendInit) m_backend = Zpkt::instance(Zpkt::Type::Xdp);
       m_backendInit = true;
-      Zxdp::Params config(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-      auto &params = config.p<Zxdp::Xdp::Params>();
+      Zpkt::Params config(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+      auto &params = config.p<Zpkt::Xdp::Params>();
       params.ifindex = m_params.interface;
       params.netmask = m_netmask;
       params.rxPool = m_ingress->pool;
@@ -38388,7 +38388,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
       unsigned            m_mtu;
       Zi::Name            m_netmask;
       alignas(Zm::CacheLineSize)
-      ZmRef<Zxdp::Instance>        m_backend;
+      ZmRef<Zpkt::Instance>        m_backend;
       bool                m_backendInit = false;
       ZmRef<Allocator>        m_ingress;
       PacketAllocator        m_rxAllocator;
@@ -38402,7 +38402,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     
       // Shared publication and ordered lifecycle handoffs.
       alignas(Zm::CacheLineSize)
-      ZmAtomic<Zxdp::Instance *>    m_current{nullptr};
+      ZmAtomic<Zpkt::Instance *>    m_current{nullptr};
       ZmAtomic<unsigned>        m_state{Stopped};
       bool                m_startFailure = false;
       ZeException            m_error;
@@ -38586,7 +38586,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     zutcp/util/README.md:179:next-hop neighbor when routed). Zutcp performs interface-constrained cold kernel
     zutcp/util/README.md:180:route/neighbor queries; it does not implement ARP/ND or a parallel routing service.
     zutcp/util/README.md:184:Use the optional `InstanceParams::netmask` only for the intended destination scope;
-    zutcp/itest/README.md:3:These Linux tests exercise actual Instance/Zxdp packet I/O, standard TCP headers
+    zutcp/itest/README.md:3:These Linux tests exercise actual Instance/Zpkt packet I/O, standard TCP headers
     zutcp/itest/README.md:5:namespaces, iproute2, ethtool, tcpdump, Python3 and Perl/prove. Missing privileges
     zutcp/itest/README.md:8:provider lifetime, interface ownership, routes, static neighbors and sudo setup.
     zutcp/itest/README.md:32:adds private routes and static neighbors and disables checksum offload. Native
@@ -38754,14 +38754,14 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
     
     #include <zlib/ZiMultiplex.hh>
     
-    #include <zlib/Zxdp.hh>
+    #include <zlib/Zpkt.hh>
     
     #include <zlib/ZutcpAlloc.hh>
     #include <zlib/Zutcp.hh>
     
     using namespace ZuTestUtil;
     
-    static ZuUnion<bool, ZeException> closeInstance(ZmRef<Zxdp::Instance> &instance)
+    static ZuUnion<bool, ZeException> closeInstance(ZmRef<Zpkt::Instance> &instance)
     {
       auto limit = Zm::now() + ZuTime{10};
       do {
@@ -38781,7 +38781,7 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
       // Provider ownership is deliberately independent of backend ownership. Zi's
       // adapter owns the provider; the raw receive callback exchanges addresses only.
       ZiMultiplex mx;
-      auto instance = Zxdp::instance(Zxdp::Type::Xdp);
+      auto instance = Zpkt::instance(Zpkt::Type::Xdp);
       ZmRef<Zutcp::Allocator> provider = new Zutcp::Allocator{
         instance->bufPool(2, PacketSize, Head, Tail)};
       ZmRef<Zutcp::Allocator> control = new Zutcp::Allocator{instance->bufPool(1, 128)};
@@ -38793,10 +38793,10 @@ I’ll compare the current Zutcp interfaces with the DPDK plan and update the af
       auto rx = instance->bufPool(RxCount, PacketSize);
       unsigned completed = 0;
       uint8_t *canonical = nullptr;
-      Zxdp::Params config(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-      auto &params = config.p<Zxdp::Xdp::Params>();
-      params.ifindex = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
+      Zpkt::Params config(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+      auto &params = config.p<Zpkt::Xdp::Params>();
+      params.ifindex = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10));
       params.rxPool = rx;
       params.rx = [&rx](uint8_t *p, unsigned) { rx->free(p); };
       params.txPools.pushNode(provider->pool.ptr());
@@ -38848,7 +38848,7 @@ Zutcp now exposes `params()` for its unified `InstanceParams`; `configure()` upd
     
     struct InstanceParams {
       unsigned interface = 0; // Linux control-plane interface in both modes
-      Zxdp::Type::T type = Zxdp::Type::Xdp;
+      Zpkt::Type::T type = Zpkt::Type::Xdp;
       DpdkParams dpdk;
       ZuCSpan netmask;
       PacketFn packet;
@@ -38930,7 +38930,7 @@ Zutcp now exposes `params()` for its unified `InstanceParams`; `configure()` upd
     so default allocBuf() calls need no new per-call MTU limit. Do not add generic
     pool queries or an allocation-time size API.
     
-    In start_(), select the matching Zxdp parameter union alternative. Populate
+    In start_(), select the matching Zpkt parameter union alternative. Populate
     common rxPool/txPools/rx callback/spin/scheduler/txStopped identically; add Xdp's
     ifindex/netmask/txSid or Dpdk's name/rxInterval in its branch. Retain independent
     pool references and let temporary configuration-list membership expire as today.
@@ -38969,7 +38969,7 @@ Zutcp now exposes `params()` for its unified `InstanceParams`; `configure()` upd
     
     #include <zlib/ZiLog.hh>
     
-    #include <zlib/ZxdpBPF.hh>
+    #include <zlib/ZpktBPF.hh>
     
     #include <zlib/ZutcpIP.hh>
     #include <zlib/Zutcp.hh>
@@ -39003,7 +39003,7 @@ Zutcp now exposes `params()` for its unified `InstanceParams`; `configure()` upd
     concepts_brief.md:153:The table's configured size remains the requested size; Zutcp constrains the
     concepts_brief.md:237:`AC_ARG_WITH([dpdk], ...)` and `--with-dpdk=yes|no` in `configure.ac`.
     concepts_brief.md:238:Like the existing pq configure block, only an explicit yes enables the dependency
-    concepts_brief.md:253:Changes belong in `configure.ac`, `z.config`, `zxdp/src/Makefile.am` and the
+    concepts_brief.md:253:Changes belong in `configure.ac`, `z.config`, `zpkt/src/Makefile.am` and the
     concepts_brief.md:280:`Dpdk::EAL` owns its configured device registrations. Each DPDK instance acquires
     concepts_brief.md:300:is retired/reconfigured/finalized.
     concepts_brief.md:303:the device or finalize EAL. The next instance can configure/start the same named
@@ -39031,7 +39031,7 @@ Zutcp now exposes `params()` for its unified `InstanceParams`; `configure()` upd
     # Zutcp: User-mode TCP/IP stack
     
     Zutcp is a Linux user-mode TCP/IP stack integrated with `ZiMultiplex`, using
-    [Zxdp](../zxdp/README.md) for raw AF_XDP packet I/O. It targets short FIX order,
+    [Zpkt](../zpkt/README.md) for raw AF_XDP packet I/O. It targets short FIX order,
     execution and market-data messages while keeping the existing Zi connection,
     allocator and application framing interfaces.
     
@@ -39107,7 +39107,7 @@ Zutcp now exposes `params()` for its unified `InstanceParams`; `configure()` upd
         import re,hashlib,json
         source=Path('zutcp/src/Zutcp.hh').read_text()
         base=re.search(r'struct InstanceParams \{.*?\n\};',source,re.S).group()
-        base,n=re.subn(r'^(  unsigned\s+interface = 0;)$',r'\1 // Linux control-plane interface in both modes\n  Zxdp::Type::T type = Zxdp::Type::Xdp;\n  DpdkParams dpdk;',base,count=1,flags=re.M)
+        base,n=re.subn(r'^(  unsigned\s+interface = 0;)$',r'\1 // Linux control-plane interface in both modes\n  Zpkt::Type::T type = Zpkt::Type::Xdp;\n  DpdkParams dpdk;',base,count=1,flags=re.M)
         assert n==1
         block='''struct DpdkParams {
           ZtString<> name;
@@ -39177,7 +39177,7 @@ Zutcp now exposes `params()` for its unified `InstanceParams`; `configure()` upd
         p.write_text(s)
         paths=['zutcp/src/Zutcp.hh','zutcp/src/Zutcp.cc','zutcp/src/ZutcpAlloc.hh','zutcp/src/ZutcpAlloc.cc','zutcp/src/Makefile.am','zutcp/GUIDELINES.md','zutcp/test/ZutcpTestInstance.hh']
         record={p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths}
-        Path('review_context/zxdp-dpdk-readiness/aligned_zutcp_source.json').write_text(json.dumps(record,indent=2)+'\n')
+        Path('review_context/zpkt-dpdk-readiness/aligned_zutcp_source.json').write_text(json.dumps(record,indent=2)+'\n')
         PY
         git diff --check
     ✓ • 0ms
@@ -39201,14 +39201,14 @@ Zutcp now exposes `params()` for its unified `InstanceParams`; `configure()` upd
         for path in paths[:2]:
          s=Path(path).read_text(); proposed=re.search(r'struct InstanceParams \{.*?\n\};',s,re.S).group()
          blocks.append(normalized(proposed))
-         old=re.sub(r'^  Zxdp::Type::T type = Zxdp::Type::Xdp;\n|^  DpdkParams dpdk;\n','',proposed,flags=re.M)
+         old=re.sub(r'^  Zpkt::Type::T type = Zpkt::Type::Xdp;\n|^  DpdkParams dpdk;\n','',proposed,flags=re.M)
          assert normalized(old)==normalized(current),path
          assert 'instance(m_params.type)' in s or 'm_params.type for initial' in s,path
          assert 'ZutcpMx.' not in s,path
         assert blocks[0]==blocks[1]
         assert 'const InstanceParams &params() const' in source
         assert 'ZuUnion<void, ZeException> configure(const InstanceParams &);' in source
-        record=json.loads(Path('review_context/zxdp-dpdk-readiness/aligned_zutcp_source.json').read_text())
+        record=json.loads(Path('review_context/zpkt-dpdk-readiness/aligned_zutcp_source.json').read_text())
         for path,digest in record.items():
          assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,('source changed during alignment',path)
         print('PASS: current source fields/defaults preserved, both plan declarations agree, params/configure and restart references match, source unchanged during alignment, links/fences valid.')
@@ -39243,7 +39243,7 @@ Zutcp now exposes `params()` for its unified `InstanceParams`; `configure()` upd
     so default allocBuf() calls need no new per-call MTU limit. Do not add generic
     pool queries or an allocation-time size API.
     
-    In start_(), select the matching Zxdp parameter union alternative. Populate
+    In start_(), select the matching Zpkt parameter union alternative. Populate
     common rxPool/txPools/rx callback/spin/scheduler/txStopped identically; add Xdp's
     ifindex/netmask/txSid or Dpdk's name/rxInterval in its branch. Retain independent
     pool references and let temporary configuration-list membership expire as today.
@@ -39303,7 +39303,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
 
 ## Activity
 
-    $ cat review_context/zxdp-dpdk-readiness/aligned_zutcp_source.json; sed -n '1,70p' zutcp/GUIDELINES.md; sed -n '175,288p' dpdk_plan.md; cat zutcp/src/Makefile.am
+    $ cat review_context/zpkt-dpdk-readiness/aligned_zutcp_source.json; sed -n '1,70p' zutcp/GUIDELINES.md; sed -n '175,288p' dpdk_plan.md; cat zutcp/src/Makefile.am
     {
       "zutcp/src/Zutcp.hh": "0ea39f8718deb45c13728b0c3cfebf45c0cab7728a724fb5b9dd230bb36f24a9",
       "zutcp/src/Zutcp.cc": "7b25d2dd40291b7bdff5f35e935824eaa329c598b35f5f78e1108f9adad71405",
@@ -39326,7 +39326,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     
     Instance implements ZiMxPlugin and its inherited Ztc::Mx interface, not Ztc::Hub.
     allQueues() traverses existing internal objects to expose normalized queue
-    telemetry, including Zxdp's existing allQueues(). Do not add queue containers,
+    telemetry, including Zpkt's existing allQueues(). Do not add queue containers,
     indexes, registries or tracking caches. Existing object-lifetime references during
     enumeration protect callbacks that request asynchronous connection closure.
     
@@ -39339,7 +39339,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     # Current Phase 8 execution boundary
     
     The live protocol uses standard
-    TCP headers/options and raw application bytes over Instance/Zxdp. Endpoint ownership
+    TCP headers/options and raw application bytes over Instance/Zpkt. Endpoint ownership
     uses TCP tuples; accepted byte history, canonical backing and owner handoffs
     remain authoritative. Intermediate packet/frame codecs and peer packet-number
     acknowledgments are deleted. Providers reserve the maximum standard Ethernet,
@@ -39356,8 +39356,8 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     generation checks and the independent receive-window and RST qualification.
     
     Native providers implement `Zi::IOBufPool` over storage injected from a selected
-    `Zxdp::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
-    to Zxdp. Configuration owns its pool list; initialization retains independent
+    `Zpkt::Instance` backend's `bufPool()` factory. Keep concrete pool classes internal
+    to Zpkt. Configuration owns its pool list; initialization retains independent
     backend references so configuration-list membership can expire after `init()`.
     Tx buffer allocation failure drops the connection; producers do not wait for
     pool grants. Alignment changes physical stride without inflating logical buffer capacity.
@@ -39372,7 +39372,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     
     # Historical Phase 1 execution boundary
     
-    The live transport now uses Instance/Zxdp with TCP-aligned IP carriage. The native
+    The live transport now uses Instance/Zpkt with TCP-aligned IP carriage. The native
     endpoint tests exercise the client/server cutover and working pairs. Do not restore a kernel UDP mode,
     fallback or separate backend. Cold interface/route/static-neighbor queries remain
     control work outside Rx/Tx.
@@ -39399,7 +39399,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     
     struct InstanceParams {
       unsigned    interface = 0; // Linux control-plane interface in both modes
-      Zxdp::Type::T type = Zxdp::Type::Xdp;
+      Zpkt::Type::T type = Zpkt::Type::Xdp;
       DpdkParams dpdk;
       ZuCSpan    netmask;
       PacketFn    packet;
@@ -39467,7 +39467,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     so default allocBuf() calls need no new per-call MTU limit. Do not add generic
     pool queries or an allocation-time size API.
     
-    In start_(), select the matching Zxdp parameter union alternative. Populate
+    In start_(), select the matching Zpkt parameter union alternative. Populate
     common rxPool/txPools/rx callback/spin/scheduler/txStopped identically; add Xdp's
     ifindex/netmask/txSid or Dpdk's name/rxInterval in its branch. Retain independent
     pool references and let temporary configuration-list membership expire as today.
@@ -39494,7 +39494,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     METASOURCES = AUTO
     AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
         -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I${top_srcdir}/zi/src \
-        -I$(top_srcdir)/zxdp/src \
+        -I$(top_srcdir)/zpkt/src \
         @Z_CPPFLAGS@
     AM_CXXFLAGS = @Z_CXXFLAGS@
     AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
@@ -39510,7 +39510,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
         ZutcpAlloc.cc Zutcp.cc ZutcpIP.cc \
         ZutcpDiag.cc
     libZutcp_la_LIBADD = \
-        $(top_builddir)/zxdp/src/libZxdp.la \
+        $(top_builddir)/zpkt/src/libZpkt.la \
         $(top_builddir)/zi/src/libZi.la \
         $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
         $(top_builddir)/zt/src/libZt.la \
@@ -39635,7 +39635,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     #include <zlib/ZiMultiplex.hh>
     #include <zlib/ZtcMx.hh>
     
-    #include <zlib/Zxdp.hh>
+    #include <zlib/Zpkt.hh>
     
     #include <zlib/ZutcpAlloc.hh>
     #include <zlib/ZutcpIP.hh>
@@ -39770,14 +39770,14 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     704:static unsigned ingressCount(ZiMultiplex *mx, unsigned interface)
     732:Instance::Instance(ZiMultiplex *mx)
     744:Instance::Instance(ZiMultiplex *mx, unsigned mtu, ZmRef<Zi::IOBufPool> ingress,
-    747:  m_mtu{mtu}, m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+    747:  m_mtu{mtu}, m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
     785:Zi::IOBufPool *Instance::allocator(
     877:      auto mtu = requireMTU(mx(), config.interface);
-    879:      auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+    879:      auto backend = Zpkt::instance(Zpkt::Type::Xdp);
     881:    ingressCount(mx(), config.interface), mtu + 14)};
     1065:ZuUnion<IPPath, ZeException> Instance::resolve(ZiIP remote, ZiIP local)
     1082:void Instance::start_()
-    1091:  if (m_backendInit) m_backend = Zxdp::instance(Zxdp::Type::Xdp);
+    1091:  if (m_backendInit) m_backend = Zpkt::instance(Zpkt::Type::Xdp);
     1128:void Instance::stopRx()
     1149:void Instance::stopTx()
     1434:    ZmScheduler::ServiceFn{this, ZmFnPtr<&Instance::pollTx>{}} :
@@ -39847,7 +39847,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     Instance::Instance(ZiMultiplex *mx, unsigned mtu, ZmRef<Zi::IOBufPool> ingress,
       ZmRef<Zi::IOBufPool> packets, ZmRef<Zi::IOBufPool> control)
     : ZiMxPlugin{mx}, m_params{.interface = requireTCPSecrets(m_isn, m_tfoKey, 1), .spin = 0},
-      m_mtu{mtu}, m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+      m_mtu{mtu}, m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
       m_ingress{new Allocator{ZuMv(ingress)}},
       m_packets{new Allocator{ZuMv(packets)}}, m_control{new Allocator{ZuMv(control)}},
       m_endpoints{new EndpointBindings{ZmHashParams{}.bits(5).loadFactor(1).cBits(3)
@@ -39979,7 +39979,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
         try {
           auto mtu = requireMTU(mx(), config.interface);
           requireTCPSecrets(m_isn, m_tfoKey, config.interface);
-          auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+          auto backend = Zpkt::instance(Zpkt::Type::Xdp);
           ZmRef<Allocator> ingress = new Allocator{backend->bufPool(
         ingressCount(mx(), config.interface), mtu + 14)};
           ZmRef<Allocator> packets = new Allocator{backend->bufPool(
@@ -40062,11 +40062,11 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
       m_rxWakeQueued = 0;
       m_error = {};
       // A backend initializes once. Retain closed telemetry until this next start.
-      if (m_backendInit) m_backend = Zxdp::instance(Zxdp::Type::Xdp);
+      if (m_backendInit) m_backend = Zpkt::instance(Zpkt::Type::Xdp);
       m_backendInit = true;
-      Zxdp::Params config(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-      auto &params = config.p<Zxdp::Xdp::Params>();
+      Zpkt::Params config(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+      auto &params = config.p<Zpkt::Xdp::Params>();
       params.ifindex = m_params.interface;
       params.netmask = m_netmask;
       params.rxPool = m_ingress->pool;
@@ -40167,7 +40167,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
       unsigned            m_mtu = 0;
       Zi::Name            m_netmask;
       alignas(Zm::CacheLineSize)
-      ZmRef<Zxdp::Instance>        m_backend;
+      ZmRef<Zpkt::Instance>        m_backend;
       bool                m_backendInit = false;
       ZmRef<Allocator>        m_ingress;
       ZmRef<Allocator>        m_packets;
@@ -40178,7 +40178,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     
       // Shared publication and ordered lifecycle handoffs.
       alignas(Zm::CacheLineSize)
-      ZmAtomic<Zxdp::Instance *>    m_current{nullptr};
+      ZmAtomic<Zpkt::Instance *>    m_current{nullptr};
       ZmAtomic<unsigned>        m_state{Stopped};
       bool                m_startFailure = false;
       ZeException            m_error;
@@ -40231,7 +40231,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     connection setup, constrained to the configured interface. This bounded blocking
     netlink setup work finishes before the first SYN or SYNACK; there is no resolver
     worker. With a destination mask, unmatched traffic stays with the
-    host stack; without a mask Zxdp selects the whole interface.
+    host stack; without a mask Zpkt selects the whole interface.
     
     In the application bootstrap, initialize Instance before installing the plugin.
     Handle its structured initialization result before registering allocators or
@@ -40367,7 +40367,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     zutcp/src/Zutcp.cc:727:  if (!tfo.init())
     zutcp/src/Zutcp.cc:735:    .init("Zutcp.Endpoints")}}
     zutcp/src/Zutcp.cc:746:: ZiMxPlugin{mx}, m_params{.interface = requireTCPSecrets(m_isn, m_tfoKey, 1), .spin = 0},
-    zutcp/src/Zutcp.cc:747:  m_mtu{mtu}, m_backend{Zxdp::instance(Zxdp::Type::Xdp)},
+    zutcp/src/Zutcp.cc:747:  m_mtu{mtu}, m_backend{Zpkt::instance(Zpkt::Type::Xdp)},
     zutcp/src/Zutcp.cc:751:    .init("Zutcp.Endpoints")}}
     zutcp/src/Zutcp.cc:768:  m_backend = nullptr;
     zutcp/src/Zutcp.cc:804:  auto p = new Allocator{m_backend->bufPool(count, unsigned(bytes), head, 0, align)};
@@ -40382,7 +40382,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     zutcp/src/Zutcp.cc:922:  return m_cxnSlots.reserve(m_params.maxCxns, m_params.maxPendingCxns);
     zutcp/src/Zutcp.cc:1020:      key.init(local.ip(), nextPort);
     zutcp/src/Zutcp.cc:1069:  return resolveIPPath(m_params.interface, IPPath{local, remote, {}, {}, 0});
-    zutcp/src/Zutcp.cc:1091:  if (m_backendInit) m_backend = Zxdp::instance(Zxdp::Type::Xdp);
+    zutcp/src/Zutcp.cc:1091:  if (m_backendInit) m_backend = Zpkt::instance(Zpkt::Type::Xdp);
     zutcp/src/Zutcp.cc:1092:  m_backendInit = true;
     zutcp/src/Zutcp.cc:1096:  params.ifindex = m_params.interface;
     concepts_brief.md:118:connections together. The app statically constructs/configures Instance and
@@ -40396,7 +40396,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     concepts_brief.md:214:InstanceConfig; keep constructor validation/control-credit setup ordering. DPDK uses dpdk.name/rxInterval; Xdp keeps
     concepts_brief.md:246:`AC_ARG_WITH([dpdk], ...)` and `--with-dpdk=yes|no` in `configure.ac`.
     concepts_brief.md:247:Like the existing pq configure block, only an explicit yes enables the dependency
-    concepts_brief.md:262:Changes belong in `configure.ac`, `z.config`, `zxdp/src/Makefile.am` and the
+    concepts_brief.md:262:Changes belong in `configure.ac`, `z.config`, `zpkt/src/Makefile.am` and the
     concepts_brief.md:276:structured result before selecting an instance. Singleton discovery/construction
     concepts_brief.md:289:`Dpdk::EAL` owns its configured device registrations. Each DPDK instance acquires
     concepts_brief.md:309:is retired/reconfigured/finalized.
@@ -40406,11 +40406,11 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
     concepts_brief.md:398:the configured per-connection maximum are popped from the tail. Preserve separate
     concepts_brief.md:409:Rx pool buffers are always MTU-sized. Application-configured Tx buffer sizes
     concepts_brief.md:503:  // Discovery and device construction; repeats retain their order.
-    concepts_brief.md:582:// Check result before constructing a DPDK-backed Zxdp::Instance.
+    concepts_brief.md:582:// Check result before constructing a DPDK-backed Zpkt::Instance.
     concepts_brief.md:585:`Dpdk::EAL::init(const Dpdk::EALParams &)` constructs private writable argv storage,
     concepts_brief.md:621:exact backend/consumer declarations, initial/restart construction, EAL/pool/port
     concepts_brief.md:641:for AF_XDP. The application/fixture chooses endpoint IP addresses, configures
-    concepts_brief.md:644:netlink path, then constructs the Ethernet frames passed to Zxdp. Replies may
+    concepts_brief.md:644:netlink path, then constructs the Ethernet frames passed to Zpkt. Replies may
     concepts_brief.md:652:represent the DPDK link. Source MAC/MTU used for packet construction must match
     concepts_brief.md:658:corresponding Linux routes/permanent neighbors, and configure the associated
     concepts_brief.md:661:fixtures, recorded/generated Ethernet addresses and configured neighbors must
@@ -40473,7 +40473,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
         try {
           auto mtu = requireMTU(mx(), config.interface);
           requireTCPSecrets(m_isn, m_tfoKey, config.interface);
-          auto backend = Zxdp::instance(Zxdp::Type::Xdp);
+          auto backend = Zpkt::instance(Zpkt::Type::Xdp);
           ZmRef<Allocator> ingress = new Allocator{backend->bufPool(
         ingressCount(mx(), config.interface), mtu + 14)};
           ZmRef<Allocator> packets = new Allocator{backend->bufPool(
@@ -40542,11 +40542,11 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
       m_rxWakeQueued = 0;
       m_error = {};
       // A backend initializes once. Retain closed telemetry until this next start.
-      if (m_backendInit) m_backend = Zxdp::instance(Zxdp::Type::Xdp);
+      if (m_backendInit) m_backend = Zpkt::instance(Zpkt::Type::Xdp);
       m_backendInit = true;
-      Zxdp::Params config(
-        Zxdp::Params::New<Zxdp::Params::Index<Zxdp::Xdp::Params>{}>{});
-      auto &params = config.p<Zxdp::Xdp::Params>();
+      Zpkt::Params config(
+        Zpkt::Params::New<Zpkt::Params::Index<Zpkt::Xdp::Params>{}>{});
+      auto &params = config.p<Zpkt::Xdp::Params>();
       params.ifindex = m_params.interface;
       params.netmask = m_netmask;
       params.rxPool = m_ingress->pool;
@@ -40629,7 +40629,7 @@ I’ll check the latest Zutcp interfaces and startup, allocation and teardown pa
       unsigned            m_mtu = 0;
       Zi::Name            m_netmask;
       alignas(Zm::CacheLineSize)
-      ZmRef<Zxdp::Instance>        m_backend;
+      ZmRef<Zpkt::Instance>        m_backend;
       bool                m_backendInit = false;
       ZmRef<Allocator>        m_ingress;
     // All protocol configuration, ledgers and history live in the real Instance base.
@@ -40706,7 +40706,7 @@ The setup API has changed substantially: `Instance` is now constructed with only
         import re,json,hashlib
         source=Path('zutcp/src/Zutcp.hh').read_text()
         base=re.search(r'struct InstanceParams \{.*?\n\};',source,re.S).group()
-        base,n=re.subn(r'^(  unsigned\s+interface = 0;)$',r'\1 // Linux control-plane interface in both modes\n  Zxdp::Type::T type = Zxdp::Type::Xdp;\n  DpdkParams dpdk;',base,count=1,flags=re.M)
+        base,n=re.subn(r'^(  unsigned\s+interface = 0;)$',r'\1 // Linux control-plane interface in both modes\n  Zpkt::Type::T type = Zpkt::Type::Xdp;\n  DpdkParams dpdk;',base,count=1,flags=re.M)
         assert n==1
         block='''struct DpdkParams {
           ZtString<> name;
@@ -40784,7 +40784,7 @@ The setup API has changed substantially: `Instance` is now constructed with only
         ZmRef<Zutcp::Instance> plugin = new Zutcp::Instance{&mx};
         auto initialized = plugin->init({
           .interface = routeIfindex,
-          .type = Zxdp::Type::Dpdk,
+          .type = Zpkt::Type::Dpdk,
           .dpdk = {.name = "net_ring0", .rxInterval = 50}
         });
         // Check initialized; only success permits mx.plugin(plugin) and allocator setup.
@@ -40862,7 +40862,7 @@ The setup API has changed substantially: `Instance` is now constructed with only
         p.write_text(s)
         paths=['zutcp/src/Zutcp.hh','zutcp/src/Zutcp.cc','zutcp/src/ZutcpAlloc.hh','zutcp/src/ZutcpAlloc.cc','zutcp/src/Makefile.am','zutcp/GUIDELINES.md','zutcp/test/ZutcpTestInstance.hh']
         record={p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths}
-        Path('review_context/zxdp-dpdk-readiness/aligned_zutcp_source.json').write_text(json.dumps(record,indent=2)+'\n')
+        Path('review_context/zpkt-dpdk-readiness/aligned_zutcp_source.json').write_text(json.dumps(record,indent=2)+'\n')
         PY
         git diff --check
     ✓ • 0ms
@@ -40887,9 +40887,9 @@ The setup API has changed substantially: `Instance` is now constructed with only
     code uses Ztcp/Ztls through ZiMultiplex. Do not introduce module loading or redo
     this repair. Preserve all existing working-tree changes and their test artifacts.
     
-    Zxdp already has the cold instance(Type::Xdp) factory, virtual bufPool/init/send/
-    `ZxdpRing.hh` changes, `Makefile.am` and `src/EGM.md`. Also read the updated
-    `zxdp/GUIDELINES.md` and `zxdp/INTERFACE.md`. The baseline includes the shared-buffer/pool-interface repairs and the current
+    Zpkt already has the cold instance(Type::Xdp) factory, virtual bufPool/init/send/
+    `ZpktRing.hh` changes, `Makefile.am` and `src/EGM.md`. Also read the updated
+    `zpkt/GUIDELINES.md` and `zpkt/INTERFACE.md`. The baseline includes the shared-buffer/pool-interface repairs and the current
     Zutcp.hh/Zutcp.cc implementation with unified InstanceParams, explicit
     init(Params) resource setup, lazy internal allocators and a direct Rx-owned resolver.
     Preserve current source and unrelated working-tree edits.
@@ -40913,7 +40913,7 @@ The setup API has changed substantially: `Instance` is now constructed with only
     
     Ztc::Mx::allQueues() is an observational traversal of existing internal objects
     that exposes normalized telemetry for their actual queues, including queues
-    within Zxdp through its existing allQueues(). No extra queue container, index,
+    within Zpkt through its existing allQueues(). No extra queue container, index,
     registry or tracking cache is permitted. Preserve existing callback/owner lifetime
     rules; telemetry does not create a second transport owner.
     
@@ -40926,11 +40926,11 @@ The setup API has changed substantially: `Instance` is now constructed with only
     
     | Existing scope | New DPDK driver | Required adaptation |
     | --- | --- | --- |
-    | Pool allocation/lifetime | ZxdpDpdkPoolTest | mbuf identity, geometry, exhaustion/return, retained backing |
-    | Instance init/close | ZxdpDpdkInstanceTest | explicit EAL, mandatory Tx, structured failures, close/recreate |
-    | Native packet I/O | zxdpdpdkpackettest | direct submission, Rx pool provenance, exact bytes, independent retirement |
-    | Wake/service | zxdpdpdkwaketest | counted wakes, sustained Rx and configurable bounded idle; no Xdp sender assertion |
-    | Loopback transfer | zxdpdpdklooptest | independent software peer, normal send/receive and teardown |
+    | Pool allocation/lifetime | ZpktDpdkPoolTest | mbuf identity, geometry, exhaustion/return, retained backing |
+    | Instance init/close | ZpktDpdkInstanceTest | explicit EAL, mandatory Tx, structured failures, close/recreate |
+    | Native packet I/O | zpktdpdkpackettest | direct submission, Rx pool provenance, exact bytes, independent retirement |
+    | Wake/service | zpktdpdkwaketest | counted wakes, sustained Rx and configurable bounded idle; no Xdp sender assertion |
+    | Loopback transfer | zpktdpdklooptest | independent software peer, normal send/receive and teardown |
     | BPF classifier/filter | no DPDK copy | remains Xdp-specific |
     
     In Zutcp add zutcpdpdktest.cc with its private fixture helper
@@ -40961,7 +40961,7 @@ The setup API has changed substantially: `Instance` is now constructed with only
         s=s.replace('normal close and failed-init rollback, same-port recreation and Zutcp restart, retained backend identity and accepted idle updates through stopped init,', 'normal close and failed-init rollback, same-port recreation and Zutcp restart,\nretained backend identity and accepted idle updates through stopped init,')
         p.write_text(s)
         p=Path('concepts_brief.md'); s=p.read_text()
-        s=s.replace('`zxdp/GUIDELINES.md` and `zxdp/INTERFACE.md`. The baseline includes the shared-buffer/pool-interface repairs and the current', '`zxdp/GUIDELINES.md` and `zxdp/INTERFACE.md`. The baseline includes the\nshared-buffer/pool-interface repairs and the current')
+        s=s.replace('`zpkt/GUIDELINES.md` and `zpkt/INTERFACE.md`. The baseline includes the shared-buffer/pool-interface repairs and the current', '`zpkt/GUIDELINES.md` and `zpkt/INTERFACE.md`. The baseline includes the\nshared-buffer/pool-interface repairs and the current')
         s=s.replace('connections together. The app constructs Instance with the mx, calls init(Params), checks its result\nand installs it through the existing ZiMultiplex::plugin() setter before allocator\nregistration. Instance implements\nZiMxPlugin and thereby Ztc::Mx, not Ztc::Hub;', 'connections together. The app constructs Instance with the mx, calls init(Params),\nchecks its result and installs it through the existing ZiMultiplex::plugin()\nsetter before allocator registration. Instance implements ZiMxPlugin and thereby\nZtc::Mx, not Ztc::Hub;')
         p.write_text(s)
         p=Path('dpdk_implementation_review_report.md'); s=p.read_text()
@@ -41003,7 +41003,7 @@ The setup API has changed substantially: `Instance` is now constructed with only
         for p in files[:2]:
          s=p.read_text(); proposed=re.search(r'struct InstanceParams \{.*?\n\};',s,re.S).group()
          blocks.append(norm(proposed))
-         restored=re.sub(r'^  Zxdp::Type::T type = Zxdp::Type::Xdp;\n|^  DpdkParams dpdk;\n','',proposed,flags=re.M)
+         restored=re.sub(r'^  Zpkt::Type::T type = Zpkt::Type::Xdp;\n|^  DpdkParams dpdk;\n','',proposed,flags=re.M)
          assert norm(restored)==norm(base),p
         assert blocks[0]==blocks[1]
         assert 'explicit Instance(ZiMultiplex *);' in source
@@ -41014,7 +41014,7 @@ The setup API has changed substantially: `Instance` is now constructed with only
         assert 'instance(config.type)' in plan and 'instance(m_params.type)' in plan
         assert 'if (!buf) return nullptr;' in plan
         assert 'zutcp/test/ZutcpTestInstance.hh' in plan
-        record=json.loads(Path('review_context/zxdp-dpdk-readiness/aligned_zutcp_source.json').read_text())
+        record=json.loads(Path('review_context/zpkt-dpdk-readiness/aligned_zutcp_source.json').read_text())
         for path,digest in record.items():
          assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,('source changed during alignment',path)
         print('PASS: constructor/init/lazy-allocator source references, proposed fields/defaults, first-init/restart selection, fixture file boundary, links, fences and stable source fingerprints.')

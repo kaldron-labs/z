@@ -1,19 +1,24 @@
 # Instance ownership boundary
 
 Applications statically construct one Instance, configure it through
-init(Params params), and install it through ZiMultiplex::plugin() before allocator
+init(mx, env, ZuMv(nif), params), and install it through ZiMultiplex::plugin() before allocator
 registration. Init is idempotent while stopped and fails in every other engine
 state. Start requires initialization. Start/stop use ZmEngine, including queued
 opposite requests, and report completion through ZiMxPlugin's existing callbacks.
 Stop retains configuration and history; final is idempotent, runs only after
 stop and releases configuration, pools, secrets and retained history. Destruction
-also calls final. Keep one Zxdp instance across stop/start; its own engine drains
+also calls final. Keep one Zpkt instance across stop/start; its own engine drains
 packet service and backing access before reporting stopped. There is no initialized flag
 or restart-time replacement.
 
-The application opens the selected AF_XDP or DPDK device before transferring
-ownership. With DPDK, initialize EAL explicitly and supply the Linux control-plane
-link's ifindex. Route and permanent-neighbor resolution use that interface.
+The application retains an intrusive Zpkt::Env, initializes its selected module
+from configuration, and opens the named Linux Nif through env->nif(mx, name).
+DPDK EAL belongs to its plugin; the configuration maps a Linux name to a native
+port. TCP borrows Env and consumes the Nif reference only after successful init.
+An identical stopped repeat may pass an empty Nif reference; Env, multiplexer and
+TCP configuration must match. TCP final clears its borrowed Env pointer and never
+finalizes Env. Keep Env alive until all children and external Nif references have
+retired. Route and permanent-neighbor resolution use the queried Linux identity.
 Keep transport configuration and allocator registration independent of the
 selected packet device.
 There is no configure() method or public params() accessor. Transfer code uses Ztcp/Ztls
@@ -62,7 +67,7 @@ teardown; test contexts cannot reintroduce a second production owner or mode.
 # Current Phase 8 execution boundary
 
 The live protocol uses standard
-TCP headers/options and raw application bytes over Instance/Zxdp. Endpoint ownership
+TCP headers/options and raw application bytes over Instance/Zpkt. Endpoint ownership
 uses TCP tuples; accepted byte history, canonical backing and owner handoffs
 remain authoritative. Intermediate packet/frame codecs and peer packet-number
 acknowledgments are deleted. Providers reserve the maximum standard Ethernet,
@@ -104,7 +109,7 @@ Phase 8 wire changes supersede their references to intermediate framing.
 
 # Historical Phase 1 execution boundary
 
-The live transport now uses Instance/Zxdp with TCP-aligned IP carriage. The native
+The live transport now uses Instance/Zpkt with TCP-aligned IP carriage. The native
 endpoint tests exercise the client/server cutover and working pairs. Do not restore a kernel UDP mode,
 fallback or separate backend. Cold interface/route/static-neighbor queries remain
 control work outside Rx/Tx.
@@ -132,7 +137,7 @@ returns the caller lease before producer callbacks, while kernel retirement
 independently gates physical reuse. Historical frame metadata cannot resurrect
 ACKed native byte work or assemble retired payload storage.
 
-Phase 1 is stripping plus IP/Zxdp wiring and regression testing. No new recovery,
+Phase 1 is stripping plus IP/Zpkt wiring and regression testing. No new recovery,
 congestion, flow-control or packetization behavior belongs in that phase. Broader
 pressure/fairness/lifecycle/observation matrices are later work, not extra exit
 gates. See the current boundary above.
@@ -175,7 +180,7 @@ uses total outstanding < capacity. Provisioned physical Tx counts supply the
 conservative capacity. Charge only accepted sends and release only on CQ or
 successful kernel retirement, independently of transport caller leases. This
 requires no class ledger, packet search or completion callback. Keep the policy
-in Zutcp; do not add reserved credits or priority parameters to Zxdp.
+in Zutcp; do not add reserved credits or priority parameters to Zpkt.
 
 Large ACKs that cannot piggyback are sent from control backing before native
 data. Refusal leaves ACK state pending; preserve successful control work in the
@@ -206,8 +211,8 @@ cap or final-release accounting service. Final ingress return still wakes receiv
 service so an empty FILL ring can be replenished.
 
 Pool clients use only allocation/return and geometry. Keep slot/address
-calculations and allocation/completion bookkeeping internal to Zxdp. Before
-rewriting retained transmit headers, check Zxdp's existing submission state through
+calculations and allocation/completion bookkeeping internal to Zpkt. Before
+rewriting retained transmit headers, check Zpkt's existing submission state through
 `txReady()` on the Tx owner, then encode and synchronously submit on that same
 owner. The gated AF_XDP recovery fixture demonstrates that raw duplicate-send
 refusal alone occurs too late to protect outstanding header bytes. This query
@@ -282,9 +287,9 @@ UDP header or transport shim. `writeTCP` builds the TCP base header over payload
 already at `tcpHead(type)`, with protocol 6 and source/destination ports.
 `Instance::tcpChecksum(...)` owns software TCP checksum calculation and hardware
 pseudo-header seed preparation; `writeTCP` initially leaves the field zero.
-Instance reads `Zxdp::Instance::tcpChksumOffload()` after device activation during
+Instance reads `Zpkt::Nif::tcpChksumOffload()` after device activation during
 start, caches the active state for that run, and refreshes it on restart. Every
-TCP submission uses plain device `send()`. Zxdp discovers/enables offload and
+TCP submission uses plain device `send()`. Zpkt discovers/enables offload and
 supplies native submission flags/lengths; it performs no software checksum.
 `readTCP` parses borrowed option/payload spans without software checksum
 validation. The optional validation in Instance remains under `#if 0` and guards
@@ -293,7 +298,7 @@ belong to the connection; this codec alone does not establish TCP interoperabili
 The live endpoint and final-packet recovery lease integration are implemented;
 the retained protocol regression suite is the Phase 1 acceptance gate. Keep payload ownership and
 endpoint routing in the transport; there is no packet codec or route lookup in
-Zxdp. `resolveIPPath` queries kernel route/static-neighbor state during cold
+Zpkt. `resolveIPPath` queries kernel route/static-neighbor state during cold
 control setup only. Never run its blocking request/reply on packet Rx/Tx owners.
 It constrains lookup to the configured interface, preserves an explicit local
 source and publishes the resulting path only on complete success. It does not
@@ -341,7 +346,7 @@ establishment does not create a candidate path or validation exchange.
 Native endpoint wiring is implemented; complete the remaining ownership,
 admission/control and owner/race gates. The copied migration guidance below is
 historical.
-Keep Zi types, adapter state and mx scheduler integration in Zutcp. Zxdp owns
+Keep Zi types, adapter state and mx scheduler integration in Zutcp. Zpkt owns
 its required configurable spin-before-epoll `rx()` and interrupting `wake()`.
 Delegate the plugin hooks to that pair; use the raw named-parameter pool/callback
 interface in the updated plan.

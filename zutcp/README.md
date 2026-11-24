@@ -1,7 +1,7 @@
 # Zutcp: User-mode TCP/IP stack
 
 Zutcp is a Linux user-mode TCP and UDP transport integrated with `ZiMultiplex`, using
-[Zxdp](../zxdp/README.md) for AF_XDP or DPDK packet I/O. It targets short FIX order,
+[Zpkt](../zpkt/README.md) for AF_XDP or DPDK packet I/O. It targets short FIX order,
 execution and market-data messages while keeping the existing Zi connection,
 allocator and application framing interfaces.
 
@@ -63,26 +63,32 @@ segment-lifetime assumptions; it does not create an unlimited wire epoch.
 ## Application integration
 
 Configure the multiplexer’s Rx, Tx, and XDP sender slots before constructing it.
-Open the XDP instance synchronously on that stopped multiplexer. A successful
+Retain an intrusive `Zpkt::Env` and load its configured plugin before opening a
+named Nif synchronously on that stopped multiplexer. A successful
 open exposes the interface index, MTU, and Rx queue count. Move XDP into
 `Zutcp::Instance::init` on the same multiplexer before XDP allocation or start,
 then move the initialized transport into `mx.plugin()`. The second transfer
 must precede the first allocator request, allocation, or start attempt.
 
+The loaded Cf tree contains `module libZpkt_xdp.so` and
+`interfaces { veth0 { txSid 3 } }`. Handle startup `ZeException` around the whole
+application scope. Declare Env before the multiplexer so it outlives every child.
+
 ```cpp
+ZmRef<Zpkt::Env> env = new Zpkt::Env;
+env->init(cf);
 ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
   s.nThreads(3).thread(3, [](auto &t) { t.isolated(true); });
 })};
-auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
-Zxdp::Params xdpParams{Zxdp::Xdp::Params{.ifindex = ifindex, .txSid = 3}};
-auto opened = xdp->init(&mx, xdpParams);
+auto opened = env->nif(&mx, "veth0");
 if (opened.is<ZeException>()) {
   ZiLogEvent(ZuMv(opened).p<ZeException>());
   return false;
 }
 
+ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
 ZmRef<Zutcp::Instance> plugin = new Zutcp::Instance;
-auto initialized = plugin->init(&mx, ZuMv(xdp), {.packetCount = 2048});
+auto initialized = plugin->init(&mx, env, ZuMv(xdp), {.packetCount = 2048});
 if (initialized.is<ZeException>()) {
   ZiLogEvent(ZuMv(initialized).p<ZeException>());
   return false;
@@ -111,36 +117,26 @@ mx.udp(udpReady, udpFailed, localIP, udpPort, {}, 0, udpRx, ZiCxnOptions{}.udp(t
 
 ### DPDK device selection
 
-Initialize [DPDK EAL](../zxdp/README.md#dpdk) before creating the device. Set up a
-Linux control-plane link whose MAC and MTU match the DPDK port. Configure routes
-and permanent neighbors for the peer or next hop on that link.
+Select `libZpkt_dpdk.so` through the same Env loader. Its configuration contains
+an `eal` object using the existing EAL field names and an owned interface map:
 
-```cpp
-ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2)};
-auto device = Zxdp::instance(Zxdp::Type::Dpdk);
-Zxdp::Params config{Zxdp::Dpdk::Params{
-  .name = "net_ring0", .ifindex = routeIfindex, .rxInterval = 50}};
-auto opened = device->init(&mx, config);
-if (opened.is<ZeException>()) {
-  ZiLogEvent(ZuMv(opened).p<ZeException>());
-  return false;
-}
-ZmRef<Zutcp::Instance> plugin = new Zutcp::Instance;
-auto initialized = plugin->init(&mx, ZuMv(device), {.packetCount = 2048});
-if (initialized.is<ZeException>()) {
-  ZiLogEvent(ZuMv(initialized).p<ZeException>());
-  return false;
-}
-mx.plugin(ZuMv(plugin));
-auto tcpRx = mx.allocator<Zi::IOBufType::Rx, TcpRxBuf, 2048>();
-auto udpRx = mx.allocator<Zi::IOBufType::Rx, UdpRxBuf, 2048>();
-auto tcpTx = mx.allocator<Zi::IOBufType::TxTCP>(2048);
-auto udpTx = mx.allocator<Zi::IOBufType::TxUDP>(512);
-if (!tcpRx || !udpRx || !tcpTx || !udpTx || !mx.start()) return false;
+```text
+module libZpkt_dpdk.so
+interfaces { route0 { port net_ring0 rxInterval 50 } }
 ```
 
-DPDK uses the two existing I/O owners. The control-plane link supplies route
-and neighbor identity. DPDK owns packet access to the Ethernet port.
+Configure routes and permanent neighbors for the peer or next hop on `route0`.
+`env->nif(&mx, "route0")` queries that kernel interface once and opens the
+independently named native port. The plugin trusts this association; Linux and
+native MTU/MAC equality is not required. Plugin construction initializes EAL;
+releasing the final Env reference destroys it after child retirement.
+
+The TCP handoff and allocator setup are identical to AF_XDP. An identical stopped
+repeat may pass an empty Nif reference and must retain the same Env, multiplexer
+and TCP configuration. A failed handoff preserves the caller's Nif reference.
+Stop and drain children while their schedulers run, return buffers, finalize the
+multiplexer/TCP, release external Nif references, and finalize Env. Env has no
+start/stop API. TCP finalization does not finalize or release its borrowed Env.
 
 ### Shared allocation and endpoint setup
 
@@ -215,7 +211,7 @@ Hardware zero-copy depends on the kernel and NIC driver.
 
 `Instance::tcpChecksum(...)` owns software TCP checksums and offload seed
 preparation. Start caches the device's active `tcpChksumOffload()` result after
-activation, refreshing it on restart. Zxdp enables device offload and installs
+activation, refreshing it on restart. Zpkt enables device offload and installs
 native submission metadata; all output uses plain `send()`. Software Rx checksum
 validation remains disabled; its optional check is guarded by the cached state.
 
@@ -302,7 +298,7 @@ accepted connections share their listener's binding and use its tuple routing.
 Unbinding removes the endpoint's own node before owner teardown. Embedded hash
 telemetry is available through the framework's `HashMgr::capture()` operation.
 
-`Instance::allQueues()` delegates to `Zxdp::Instance::allQueues()`, exposing its
+`Instance::allQueues()` delegates to `Zpkt::Nif::allQueues()`, exposing its
 Rx, fill, Tx and completion rings. It does not traverse connections or listeners.
 Callbacks borrow the rings; finish enumeration before shutting down their owning
 XDP instance. Queue pointers must not escape the callback. Fields are advisory
@@ -312,7 +308,7 @@ cold reads, and unsupported optional normalized metrics remain zero.
 
 Include `<zlib/Zutcp.hh>` for the transport. Connection and endpoint
 implementations remain in private source-tree headers. IP framing and route helpers
-live in `ZutcpIP.hh`. Link `libZutcp`, `libZxdp` and their framework
+live in `ZutcpIP.hh`. Link `libZutcp`, `libZpkt` and their framework
 dependencies. Both modules are Linux-only and are excluded from Windows builds.
 
 The module uses `src`, `test`, `util`, `itest`, `example`, `interop` and `bench`.

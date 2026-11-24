@@ -175,7 +175,7 @@ def reneging_fault(directory, client_port, server_port):
     import socket
     import subprocess
     import time
-    assert os.environ.get('ZXDP_RUN_FIXTURE') == '1'
+    assert os.environ.get('ZPKT_RUN_FIXTURE') == '1'
     assert os.readlink('/proc/self/ns/net') != os.readlink('/proc/1/ns/net')
     out = Path(directory)
     rx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
@@ -327,7 +327,7 @@ def sack_fault(directory, mode, client_port, server_port):
     import socket
     import subprocess
     import time
-    assert os.environ.get('ZXDP_RUN_FIXTURE') == '1'
+    assert os.environ.get('ZPKT_RUN_FIXTURE') == '1'
     assert os.readlink('/proc/self/ns/net') != os.readlink('/proc/1/ns/net')
     assert mode in ('sack-holes', 'sack-reneging')
     if mode == 'sack-reneging':
@@ -529,7 +529,7 @@ def tail_fault(directory):
     import socket
     import time
     out = Path(directory)
-    assert os.environ.get('ZXDP_RUN_FIXTURE') == '1'
+    assert os.environ.get('ZPKT_RUN_FIXTURE') == '1'
     assert os.readlink('/proc/self/ns/net') != os.readlink('/proc/1/ns/net')
     rx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
     # Bounded fixture observation reserve: the request/echo burst also charges skb metadata.

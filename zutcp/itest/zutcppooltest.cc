@@ -26,10 +26,11 @@
 
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/Zxdp.hh>
+#include <zlib/Zpkt.hh>
 
 #include <zlib/ZutcpAlloc.hh>
 #include <zlib/Zutcp.hh>
+#include "ZutcpTestInstance.hh"
 
 using namespace ZuTestUtil;
 
@@ -37,15 +38,12 @@ static void testProvider()
 {
   ZuTestScopeRT(testProvider);
   enum { PacketSize = 1514, Head = 42, Tail = 8, Payload = 42, RxCount = 8 };
+  ZmRef<Zpkt::Env> env = new Zpkt::Env;
   ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
     s.nThreads(3).thread(3, [](auto &t) { t.isolated(true); });
   })};
-  auto instance = Zxdp::instance(Zxdp::Type::Xdp);
-  auto index = unsigned(strtoul(getenv("ZXDP_TEST_IFINDEX"), nullptr, 10));
-  Zxdp::Params config{Zxdp::Xdp::Params{.ifindex = index, .txSid = 3}};
-  auto initialized = instance->init(&mx, config);
-  ZuCheckRT(initialized.is<void>());
-  if (initialized.is<ZeException>()) return;
+  auto index = unsigned(strtoul(getenv("ZPKT_TEST_IFINDEX"), nullptr, 10));
+  auto instance = ZutcpTest::openXdp(env, &mx, index, 3);
   auto provider = instance->bufPool(Zi::IOBufType::TxTCP, 2, PacketSize, Head, Tail);
   auto control = instance->bufPool(Zi::IOBufType::TxUDP, 1, 128);
   Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP> allocator{&mx, provider};
@@ -139,30 +137,28 @@ static void testProvider()
 static void testAllocatedHandoff(bool repeat)
 {
   ZuTestScopeRT(testAllocatedHandoff);
-  auto index = getenv(repeat ? "ZXDP_RX_TEST_PEER_IFINDEX" : "ZXDP_RX_TEST_IFINDEX");
+  auto index = getenv(repeat ? "ZPKT_RX_TEST_PEER_IFINDEX" : "ZPKT_RX_TEST_IFINDEX");
   auto pid = fork();
   if (!pid) {
     const rlimit limit{0, 0};
     setrlimit(RLIMIT_CORE, &limit);
-    ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
+    ZmRef<Zpkt::Env> env = new Zpkt::Env;
+  ZiMultiplex mx{ZiMxParams{}.rxThread(1).txThread(2).scheduler([](auto &s) {
       s.nThreads(3).thread(3, [](auto &t) { t.isolated(true); });
     })};
-    Zxdp::Params params{Zxdp::Xdp::Params{
-      .ifindex = unsigned(strtoul(index, nullptr, 10)), .txSid = 3}};
+    auto nativeIndex = unsigned(strtoul(index, nullptr, 10));
     Zutcp::Instance tcp;
+    auto xdp = ZutcpTest::openXdp(env, &mx, nativeIndex, 3);
     if (repeat) {
-      auto initial = Zxdp::instance(Zxdp::Type::Xdp);
-      if (!initial->init(&mx, params).is<void>() ||
-          !tcp.init(&mx, ZuMv(initial), {}).is<void>()) _exit(2);
+      ZmRef<Zpkt::Nif> initial = xdp;
+      if (!tcp.init(&mx, env, ZuMv(initial), {}).is<void>()) _exit(2);
     }
-    auto xdp = Zxdp::instance(Zxdp::Type::Xdp);
-    if (!xdp->init(&mx, params).is<void>()) _exit(3);
     auto rx = xdp->bufPool(Zi::IOBufType::Rx, 8, xdp->mtu() + 14);
     auto tx = xdp->bufPool(Zi::IOBufType::TxTCP, 8, xdp->mtu() + 14);
     Zi::IOBufPoolList pools;
     pools.pushNode(tx.ptr());
     if (!xdp->alloc(rx, pools).is<void>() || !xdp->allocated() || xdp->everStarted()) _exit(4);
-    tcp.init(&mx, ZuMv(xdp), {});
+    tcp.init(&mx, env, ZuMv(xdp), {});
     _exit(5);
   }
   int status = 0;
@@ -173,12 +169,12 @@ static void testAllocatedHandoff(bool repeat)
 int main(int argc, char **argv)
 {
   parse(argc, argv);
-  if (geteuid() || !getenv("ZXDP_TEST_IFINDEX") || !getenv("ZXDP_RX_TEST_IFINDEX")) {
+  if (geteuid() || !getenv("ZPKT_TEST_IFINDEX") || !getenv("ZPKT_RX_TEST_IFINDEX")) {
     std::cout << "1..0 # SKIP requires privileged fixture-owned interface\n";
     return 0;
   }
   ZuTestMain();
   ZuTestCall(testProvider);
   ZuTestCall(testAllocatedHandoff, false);
-  if (getenv("ZXDP_RX_TEST_PEER_IFINDEX")) ZuTestCall(testAllocatedHandoff, true);
+  if (getenv("ZPKT_RX_TEST_PEER_IFINDEX")) ZuTestCall(testAllocatedHandoff, true);
 }

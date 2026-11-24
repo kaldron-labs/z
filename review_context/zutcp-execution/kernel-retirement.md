@@ -1,6 +1,6 @@
 # Kernel queue retirement
 
-`ZxdpRetire.hh/.cc` implements a private observation step for pending kernel
+`ZpktRetire.hh/.cc` implements a private observation step for pending kernel
 packet holds. Nif close now uses this step through its Rx/Tx continuations.
 Physical-NIC DMA acceptance and delayed completion timing remain open.
 

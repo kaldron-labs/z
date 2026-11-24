@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-[[ ${ZXDP_RUN_FIXTURE:-0} == 1 && ${ZUTCP_MX_FIXTURE:-0} == 1 ]]
+[[ ${ZPKT_RUN_FIXTURE:-0} == 1 && ${ZUTCP_MX_FIXTURE:-0} == 1 ]]
 [[ $(readlink /proc/self/ns/net) != $(readlink /proc/1/ns/net) ]]
 family=$1
 out=$2
@@ -58,8 +58,8 @@ ip neigh replace 198.18.0.21 lladdr "$b_mac" nud permanent dev zutcpmla
 ip neigh replace 198.18.0.20 lladdr "$a_mac" nud permanent dev zutcpmlb
 ip -6 neigh replace 2001:db8::21 lladdr "$b_mac" nud permanent dev zutcpmla
 ip -6 neigh replace 2001:db8::20 lladdr "$a_mac" nud permanent dev zutcpmlb
-export ZXDP_RX_TEST_IFINDEX="$(ip -o link show zutcpmla | cut -d: -f1)"
-export ZXDP_RX_TEST_PEER_IFINDEX="$(ip -o link show zutcpmlb | cut -d: -f1)"
+export ZPKT_RX_TEST_IFINDEX="$(ip -o link show zutcpmla | cut -d: -f1)"
+export ZPKT_RX_TEST_PEER_IFINDEX="$(ip -o link show zutcpmlb | cut -d: -f1)"
 netemStats() {
   tc -s qdisc show dev "$1" | awk '
     $1 == "qdisc" { selected = ($2 == "netem" && $3 == "30:") }

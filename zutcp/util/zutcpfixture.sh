@@ -6,19 +6,19 @@ set -euo pipefail
 # Run only inside a fresh anonymous network namespace; all links die with it.
 # The packet/mapping fixtures require loopback, a two-queue and a one-queue pair.
 ip link set lo up
-ip link add zxdpa numrxqueues 2 numtxqueues 2 type veth \
-  peer name zxdpb numrxqueues 2 numtxqueues 2
-ip link set zxdpa up
-ip link set zxdpb up
-ip link add zxdpdummy type dummy
-ip link add zxdprxa numrxqueues 1 numtxqueues 1 type veth \
-  peer name zxdprxb numrxqueues 1 numtxqueues 1
-ip link set zxdprxa up
-ip link set zxdprxb up
-export ZXDP_TEST_IFINDEX="$(ip -o link show dev zxdpa | cut -d: -f1)"
-export ZXDP_TEST_PEER_IFINDEX="$(ip -o link show dev zxdpb | cut -d: -f1)"
-export ZXDP_TEST_GENERIC_IFINDEX="$(ip -o link show dev zxdpdummy | cut -d: -f1)"
-export ZXDP_RX_TEST_IFINDEX="$(ip -o link show dev zxdprxa | cut -d: -f1)"
-export ZXDP_RX_TEST_PEER_IFINDEX="$(ip -o link show dev zxdprxb | cut -d: -f1)"
-export ZXDP_RUN_FIXTURE=1
+ip link add zpkta numrxqueues 2 numtxqueues 2 type veth \
+  peer name zpktb numrxqueues 2 numtxqueues 2
+ip link set zpkta up
+ip link set zpktb up
+ip link add zpktdummy type dummy
+ip link add zpktrxa numrxqueues 1 numtxqueues 1 type veth \
+  peer name zpktrxb numrxqueues 1 numtxqueues 1
+ip link set zpktrxa up
+ip link set zpktrxb up
+export ZPKT_TEST_IFINDEX="$(ip -o link show dev zpkta | cut -d: -f1)"
+export ZPKT_TEST_PEER_IFINDEX="$(ip -o link show dev zpktb | cut -d: -f1)"
+export ZPKT_TEST_GENERIC_IFINDEX="$(ip -o link show dev zpktdummy | cut -d: -f1)"
+export ZPKT_RX_TEST_IFINDEX="$(ip -o link show dev zpktrxa | cut -d: -f1)"
+export ZPKT_RX_TEST_PEER_IFINDEX="$(ip -o link show dev zpktrxb | cut -d: -f1)"
+export ZPKT_RUN_FIXTURE=1
 exec "$@"
