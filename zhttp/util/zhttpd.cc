@@ -684,12 +684,17 @@ void Zhttpd::Application::done(
   if (m_impl) m_impl->state.done = ZuMv(fn);
 }
 
+static const char *txThreadID(const Zhttpd::Options &options)
+{
+  return options.http3 && !options.http && !options.https ? "2" : "4";
+}
+
 bool Zhttpd::Application::startMultiplex()
 {
   if (!m_impl || m_impl->mxStarted || !m_impl->mx.start()) return false;
   m_impl->mxStarted = true;
   m_impl->state.mx = &m_impl->mx;
-  m_impl->state.txThread = m_impl->mx.sid("4");
+  m_impl->state.txThread = m_impl->mx.sid(txThreadID(m_impl->state.options));
   m_impl->state.fileThread = m_impl->mx.sid("5");
   return true;
 }
@@ -700,7 +705,7 @@ bool Zhttpd::Application::initServer()
   auto &state = m_impl->state;
   auto &options = state.options;
   state.mx = &m_impl->mx;
-  state.txThread = m_impl->mx.sid("4");
+  state.txThread = m_impl->mx.sid(txThreadID(m_impl->state.options));
   state.fileThread = m_impl->mx.sid("5");
   auto config = Zhttp::ServerConfig()
     .localIP(ZiIP(options.addr))
@@ -742,7 +747,7 @@ bool Zhttpd::Application::initServer()
     return false;
   }});
   m_impl->serverInited = m_impl->app.init(
-    Zhttp::HubConfig{&m_impl->mx, "3", "4"},
+    Zhttp::HubConfig{&m_impl->mx, "3", txThreadID(state.options)},
     ZuMv(config));
   return m_impl->serverInited;
 }
@@ -863,7 +868,7 @@ int main(int argc, char **argv)
 
   ZiMultiplex mx(mxParams(options));
   state.mx = &mx;
-  state.txThread = mx.sid("4");
+  state.txThread = mx.sid(txThreadID(state.options));
   state.fileThread = mx.sid("5");
   App app{&state};
   app.txErrorFn(ZiTxErrorFn{[](ZeException &e) {
@@ -916,7 +921,7 @@ int main(int argc, char **argv)
 #endif
   }
   bool serverInited = app.init(
-    Zhttp::HubConfig{&mx, "3", "4"},
+    Zhttp::HubConfig{&mx, "3", txThreadID(state.options)},
     ZuMv(serverConfig));
   if (!serverInited) {
     ZiLOG(Error, "zhttpd", "HTTP server initialization failed");

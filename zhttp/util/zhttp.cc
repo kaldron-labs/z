@@ -865,7 +865,7 @@ int main(int argc, char **argv)
 
   Client app;
   bool appInited = app.init(
-    Zhttp::HubConfig{&mx, "3", "4"}, 1, clientConfig,
+    Zhttp::HubConfig{&mx, "3", policy == Zhttp::ProtoPolicy::ForceH3 ? "2" : "4"}, 1, clientConfig,
     Zhttp::TCPConfig{},
     Zhttp::H2Config{}.tls([&options](auto &tls) {
       tls.caPath(options.ca);

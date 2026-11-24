@@ -1642,16 +1642,17 @@ private:
 	ZiLOG(Error, "Zhttp", "failed to finalize H3 QPACK prefix");
 	return;
     }
-    bool submitted = true;
-    section.eachRange(start, [&stream, &fields, &submitted](
-	uint64_t offset, unsigned length) {
-      if (!submitted) return;
-      auto buf = stream.allocBuf(stream.headRoom());
-      if (!buf) { submitted = false; return; }
-      buf->append(fields.buf()->data() + unsigned(offset), length);
-      submitted = stream.appendBuf(ZuMv(buf));
+    // Close QPACK's reserved prefix gaps in the original header allocation.
+    // Its leading headroom can be skipped without moving the first range.
+    unsigned end = start;
+    section.eachRange(start, [&](uint64_t offset, unsigned length) {
+      if (end != offset) memmove(fields.data() + end, fields.data() + offset, length);
+      end += length;
     });
-    if (!submitted) {
+    auto buf = fields.buf();
+    buf->skip += start;
+    buf->length = end - start;
+    if (!stream.appendBuf(ZuMv(buf))) {
       impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
       return;
     }
@@ -1724,7 +1725,7 @@ public:
       fields.fields(output);
       return build.ok;
     });
-    return impl()->qpackFailure() == QPackBuildFailure::None && stream.flush();
+    return impl()->qpackFailure() == QPackBuildFailure::None && stream.flush(true);
   }
 
   template <typename Stream>
@@ -1805,7 +1806,10 @@ class Response : public Builder_<Impl, HasBody, Streaming> {
 
 public:
   template <typename Stream>
-  void begin(Stream &stream) { Base::beginResponse_(stream); }
+  bool begin(Stream &stream) {
+    Base::beginResponse_(stream);
+    return this->qpackFailure() == QPackBuildFailure::None;
+  }
 };
 
 template <typename Link, typename StreamRef, typename = void>
@@ -2213,14 +2217,22 @@ public:
     auto impl = streamImpl();
     auto native = impl->h3Native();
     auto stream = impl->h3Stream();
-    if (native && stream) native->finish(stream);
+    if (native && stream)
+      native->app()->txInvoke([native = ZmRef(native), stream = ZmRef(stream)] {
+	stream->fin();
+	native->finish(stream);
+      });
   }
   void streamTxReset() {
     auto stream_ = streamImpl()->h3Stream();
     if (!stream_) return;
     auto stream = ZmRef(stream_);
-    stream_->link()->app()->txRun([stream = ZuMv(stream)]() mutable {
-      stream->stop(H3::RequestCancelled);
+    auto app = stream_->link()->app();
+    bool fromRx = app->rxInvoked();
+    if (fromRx) stream->stopRequestedRx(H3::RequestCancelled);
+    app->txRun([stream = ZuMv(stream), fromRx]() mutable {
+      if (fromRx) stream->sendStopTx(H3::RequestCancelled);
+      else stream->stop(H3::RequestCancelled);
       stream->quicReset(H3::RequestCancelled);
     });
   }
@@ -2231,8 +2243,10 @@ private:
     auto stream = streamImpl()->h3Stream();
     if (!stream) return;
     auto tx = [stream]() {
-      if constexpr (OnOwner) return stream->txStream_();
-      else return stream->txStream();
+      if constexpr (OnOwner)
+	return stream->txStream_();
+      else
+	return stream->txStream();
     }();
     auto body = H3::dataStream(tx);
     ZuFwd<L>(l)(body);

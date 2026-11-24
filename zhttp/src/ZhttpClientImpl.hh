@@ -447,7 +447,6 @@ private:
     WriteOutcome::T outcome;
     try { outcome = invokeBodyWriter<Message::ID == Version::H3>(write, body); }
     catch (...) { outcome = WriteOutcome::Failed; }
-    bool flushed = body.flush();
     bool txFlushed = tx.flush();
     uint64_t produced = body.produced();
     if (produced > UINT64_MAX - m_commit.produced) outcome = WriteOutcome::Failed;
@@ -455,7 +454,7 @@ private:
       m_commit.produced += produced;
       m_commit.committed = m_commit.produced;
     }
-    if (!flushed || !txFlushed || !body.valid()) outcome = WriteOutcome::Failed;
+    if (!txFlushed || !body.valid()) outcome = WriteOutcome::Failed;
     switch (outcome) {
       case WriteOutcome::End:
 	closeProducer();
@@ -2999,41 +2998,15 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
   }
 
   void flowBlocked(
-      Zquic::FrameType::T type, uint64_t,
-      Zquic::StreamType::T streamType, uint64_t) {
-    switch (type) {
-      case Zquic::FrameType::DataBlocked:
-	dataBlockedTx = true;
-	break;
-      case Zquic::FrameType::StreamDataBlocked:
-	break;
-      case Zquic::FrameType::StreamsBlocked:
-	if (streamType == Zquic::StreamType::Duplex)
-	  streamsBlockedTx = true;
-	break;
-      default:
-	break;
-    }
-    capacityTx();
+      Zquic::FrameType::T type, uint64_t, Zquic::StreamType::T, uint64_t) {
+    if (type == Zquic::FrameType::DataBlocked) dataCapacityTx(true);
   }
   void flowCredit(
-      Zquic::FrameType::T type, uint64_t,
-      Zquic::StreamType::T) {
-    switch (type) {
-      case Zquic::FrameType::MaxData:
-	dataBlockedTx = false;
-	break;
-      case Zquic::FrameType::MaxStreamData:
-	break;
-      default:
-	break;
-    }
-    capacityTx();
+      Zquic::FrameType::T type, uint64_t, Zquic::StreamType::T) {
+    if (type == Zquic::FrameType::MaxData) dataCapacityTx(false);
   }
   void streamCredit(Zquic::StreamType::T type) {
-    if (type != Zquic::StreamType::Duplex) return;
-    streamsBlockedTx = false;
-    capacityTx();
+    if (type == Zquic::StreamType::Duplex) publishCapacityRx();
   }
 
   void add(ZmRef<AppLink> appLink) {
@@ -3053,15 +3026,9 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
       "H3 logical stream admission outside Rx thread", return);
     queue_(waiting, waitingLive, QueueSlot::Waiting, ZuMv(appLink));
-    this->app()->txRun([link = ZmRef(this)]() mutable {
-      if (link->drainingTx) return;
-      auto stream = link->stream(Zquic::StreamType::Duplex);
-      link->capacityTx();
-      if (!stream) return;
-      link->app()->rxRun([
-	link = ZuMv(link), stream = ZuMv(stream)
-      ]() mutable { link->streamed(ZuMv(stream)); });
-    });
+    auto stream = this->stream(Zquic::StreamType::Duplex);
+    if (stream) streamed(ZuMv(stream));
+    else publishCapacityRx();
   }
   void opened(ZmRef<AppLink> appLink, StreamRef stream) {
     stream->appLink = appLink;
@@ -3084,11 +3051,7 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
     if (goawayPosted) { goawayStream = 0; return; }
     goawayPosted = true;
     goawayStream = 0;
-    // Fence already-posted stream opens before refusing unpublished streams.
-    this->app()->txRun([link = ZmRef(this)]() mutable {
-      link->drainingTx = true;
-      link->app()->rxRun([link = ZuMv(link)]() mutable { link->goaway_0(); });
-    });
+    goaway_0();
   }
   void goaway_0() {
     if (down || finalizing) { goawayPosted = false; return; }
@@ -3148,13 +3111,11 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
     h3.link_ = this;
     ZiTxErrorFn txError = h3.txError;
     auto link = ZmRef(this);
+    auto streams = H3Cxn::openLocalStreams(*link, txError);
     this->app()->txRun([
-      link, limits, extendedConnect, txError = ZuMv(txError)
+      link, limits, extendedConnect, streams = ZuMv(streams)
     ]() mutable {
       bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);
-      typename H3Cxn::LocalStreams streams;
-      if (ok)
-	streams = H3Cxn::openLocalStreams(*link, txError);
       link->app()->rxRun([
 	link = ZuMv(link), limits, extendedConnect, ok,
 	streams = ZuMv(streams)
@@ -3318,9 +3279,10 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
     if (stream->appLink.ptr() != appLink.ptr()) return;
     bool stopRx = !stream->remoteEnd;
     bool resetTx = !stream->localEnd;
+    if (stopRx) stream->stopRequestedRx(H3::RequestCancelled);
     if (stopRx || resetTx)
       this->app()->txRun([stream, stopRx, resetTx]() mutable {
-	if (stopRx) stream->stop(H3::RequestCancelled);
+	if (stopRx) stream->sendStopTx(H3::RequestCancelled);
 	if (resetTx && !stream->txCompleted())
 	  stream->quicReset(H3::RequestCancelled);
       });
@@ -3349,8 +3311,9 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
     if (draining) {
       appLink->result_(ResultCode::Unprocessed);
       appLink->connectFailed_(false);
+      stream->stopRequestedRx(H3::RequestCancelled);
       this->app()->txRun([stream = ZuMv(stream)]() mutable {
-	stream->stop(H3::RequestCancelled);
+	stream->sendStopTx(H3::RequestCancelled);
 	stream->quicReset(H3::RequestCancelled);
       });
       drainGoaway_0();
@@ -3372,6 +3335,7 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
     if (!stream) return;
     if (stream->appLink)
       stream->appLink->nativeError_(ErrorDomain::H3Stop, error);
+    finish_(stream);
     (void)stream->process(stream->rxStream());
     this->app()->txRun([stream = ZuMv(stream), error]() mutable {
       stream->quicReset(error);
@@ -3381,8 +3345,9 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
     if (stream && stream->appLink)
       stream->appLink->nativeError_(ErrorDomain::H3Error, error);
     closeLater(stream, false);
+    stream->stopRequestedRx(error);
     this->app()->txRun([stream = ZuMv(stream), error]() mutable {
-      stream->stop(error);
+      stream->sendStopTx(error);
       stream->quicReset(error);
     });
   }
@@ -3453,11 +3418,18 @@ public:
     Base::disconnect();
   }
 
-  void capacityTx() {
-    bool saturated = drainingTx || dataBlockedTx || streamsBlockedTx;
-    this->app()->rxRun([
-      link = ZmRef(this), saturated]() mutable {
-      link->app()->capacity(link->id, link->generation, saturated);
+  void publishCapacityRx() {
+    bool saturated = draining || dataBlockedRx || this->localStreamsBlocked(Zquic::StreamType::Duplex);
+    if (saturated == saturatedRx) return;
+    saturatedRx = saturated;
+    this->app()->capacity(id, generation, saturated);
+  }
+  void dataCapacityTx(bool blocked) {
+    if (blocked == dataBlockedTx) return;
+    dataBlockedTx = blocked;
+    this->app()->rxRun([link = ZmRef(this), blocked] {
+      link->dataBlockedRx = blocked;
+      link->publishCapacityRx();
     });
   }
 
@@ -3467,18 +3439,13 @@ public:
     this->app()->rxRun([
       link = ZmRef(this), stream = ZmRef(stream), peer
     ]() mutable {
-      // Keep native handles through already-accepted Tx turns. Parser
-      // completion queues producer invalidation before this Tx fence.
-      auto app = link->app();
-      app->txRun([link = ZuMv(link), stream = ZuMv(stream), peer]() mutable {
-	link->app()->rxRun([
-	  link = ZuMv(link), stream = ZuMv(stream), peer
-	]() mutable {
-	  if (!stream->appLink) return;
-	  auto appLink = ZuMv(stream->appLink);
-	  link->removeStream_(stream);
-	  appLink->disconnected_(peer);
-	});
+      auto appLink = stream->appLink;
+      if (!appLink) return;
+      appLink->afterRequestWrites([link = ZuMv(link), stream = ZuMv(stream), peer]() mutable {
+        if (!stream->appLink) return;
+        auto owner = ZuMv(stream->appLink);
+        link->removeStream_(stream);
+        owner->disconnected_(peer);
       });
     });
   }
@@ -3623,14 +3590,15 @@ public:
   bool			connectFailing = false;
   bool			failTransient = false;
 
+  bool			dataBlockedRx = false;
+  bool			saturatedRx = false;
+
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
   H3::QPackTxTable	h3Tx;
   bool			h3PeerCapTx = false;
   QPackSeedState::T	h3SeedStateTx = QPackSeedState::Unseeded;
-  bool			drainingTx = false;
   bool			dataBlockedTx = false;
-  bool			streamsBlockedTx = false;
 };
 
 } // namespace H3_
@@ -3748,6 +3716,25 @@ public:
     if (m_app->quicConfig().migrateOnOpen()) requestMigration();
     m_app->connected(*impl(), info);
   }
+  template <typename L>
+  void afterRequestWrites(L done) {
+    // External producers can dispatch directly to Tx. Their last accepted
+    // turn must precede the disconnect callback.
+    m_app->txRun([app = m_app, done = ZuMv(done)]() mutable {
+      app->rxRun(ZuMv(done));
+    });
+  }
+  void requestWritesStarted() { m_writesDrained = false; }
+  void requestWritesDrained() {
+    m_writesDrained = true;
+    if (auto done = ZuMv(m_writesDone)) done();
+  }
+  template <typename L>
+  void afterPoolWrites(L done) {
+    if (m_writesDrained) done();
+    else m_writesDone = ZmFn<void()>{ZuMv(done)};
+  }
+
   void disconnected_(bool peer) {
     ZmRef<NativeLink> native = ZuMv(m_native);
     m_stream = nullptr;
@@ -3814,6 +3801,8 @@ private:
     return false;
   }
 
+  ZmFn<void()>          m_writesDone;
+  bool                  m_writesDrained = true;
   App			*m_app = nullptr;
   ZmRef<NativeLink>	m_native;
   NativeStream		*m_stream = nullptr;
@@ -3938,10 +3927,18 @@ public:
       }});
       owner()->poolConnect(*this, *m_request);
     }
+    template <typename L>
+    void afterRequestWrites(L done) {
+      // An early reset can close the transport before the parser completes.
+      if (m_sent && !m_complete) m_session.fail();
+      this->afterPoolWrites(ZuMv(done));
+    }
     void sendRequest() {
       if (!m_request) return;
       m_session.bind(m_request);
       m_session.reset();
+      if constexpr (Message::ID == Version::H3)
+	this->requestWritesStarted();
       m_sent = true;
       owner()->poolSend(*this, *m_request, Message::ID);
       auto link = ZmRef(this);
@@ -4046,10 +4043,13 @@ public:
 	  link = ZuMv(link), commit, generation, ok]() mutable {
 	  if (link->m_generation != generation) return;
 	  auto request = link->m_request;
-	  if (!request) return;
-	  link->owner()->poolTxCommitted(*link, *request, commit);
-	  bool reuse = ok && link->reusable();
-	  link->owner()->poolComplete(*link, *request, ok, reuse);
+	  if (request) {
+            link->owner()->poolTxCommitted(*link, *request, commit);
+            bool reuse = ok && link->reusable();
+            link->owner()->poolComplete(*link, *request, ok, reuse);
+          }
+	  if constexpr (Message::ID == Version::H3)
+	    link->requestWritesDrained();
 	});
       });
     }

@@ -200,7 +200,8 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
 	  unsigned n = (state->streamTurn == StreamTurn::StalledTrailers ||
 	    state->streamTurn == StreamTurn::StopTrailers ||
 	    state->streamTurn == StreamTurn::ResetTrailers) ? TrailerBytes : 1;
-	  if (state->streamTurn == StreamTurn::QueueTrailers) n = 128;
+	  if (state->streamTurn == StreamTurn::QueueTrailers &&
+	      state->expectedTransport == Zhttp::Transport::TLS) n = 128;
 	  for (unsigned i = 0; i < n; ++i) body << 'x';
 	  if (state->streamTurn == StreamTurn::QueueTrailers &&
 	      state->expectedTransport == Zhttp::Transport::TLS) {
@@ -541,7 +542,12 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
       using HdrCatalog = Zhttp::DefltHdrCatalog;
       using Base::reset;
 
-      void status(unsigned value) { status_ = value; }
+      void status(unsigned value) {
+	status_ = value;
+	if (value == 200 && state->streamTurn == StreamTurn::QueueTrailers &&
+	    state->expectedTransport == Zhttp::Transport::QUIC)
+	  state->queueReady.post();
+      }
       bool bodyInfo(Zhttp::BodyType::T, uint64_t) { return true; }
       template <typename Key>
       void header(Zhttp::FieldSection::T, ZuSpan<uint8_t>) { }
@@ -596,8 +602,12 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
 	if (complete) {
 	  auto body = builder.body(tx, builder.contentLength);
 	  if (builder.contentLength) body << 'x';
-	  body.flush();
-	  builder.finish(tx);
+	  if constexpr (Profile::HTTPVersion == Zhttp::Version::H3)
+	    body.flush(true);
+	  else {
+	    body.flush();
+	    builder.finish(tx);
+	  }
 	  link->finish();
 	}
       });
@@ -780,6 +790,12 @@ void activeStop()
 	app.queuedResponses() == QueuedResponseCount,
       log_("one active producer holds more pending responses than a cleanup turn"));
   }
+  if constexpr (StreamResult == StreamTurn::QueueTrailers &&
+      Profile::HTTPVersion == Zhttp::Version::H3)
+    // Once HEADERS has drained, a single DATA range fills the only slot.
+    // The trailer command requests the next slot in the same Tx callback.
+    ZuCheckRT(state.queueReady.timedwait(Zm::now(10)) == 0,
+      log_("client received HEADERS before the one-slot trailer admission test"));
   if constexpr (StreamResult == StreamTurn::HighTurns) {
     HeapCounts open = streamHeapCounts();
     ZuCheckRT(open.emitter == heapBase.emitter + 1 &&

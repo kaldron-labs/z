@@ -357,9 +357,7 @@ static bool sendH3Request_(const Request &request, StreamRef stream)
     request, stream->link()->h3, uint64_t(stream->id())};
   auto tx = stream->txStream_();
   if (!builder.begin(tx)) return false;
-  builder.finish(tx);
-  tx.flush();
-  return !tx.failed() && stream->link()->send_(stream, ZuBSpan{}, true);
+  return tx.flush(true);
 }
 
 struct HQServerLink;
@@ -582,7 +580,7 @@ struct HQClient::Link :
   using Base = Zquic::CliLink<HQClient, HQClient::Link, HQClient::Stream>;
   using Base::Base;
 
-  unsigned nextRequest = 0; // Tx owns stream admission and request ordering.
+  unsigned nextRequest = 0; // Rx owns stream admission and request ordering.
 
   HQClient::Stream *streamFor(uint64_t streamID) {
     return findStream(int64_t(streamID));
@@ -593,10 +591,7 @@ struct HQClient::Link :
       app()->fail();
       return;
     }
-    auto link = ZmRef(this);
-    app()->txInvoke([link = ZuMv(link)]() mutable {
-      link->connected_();
-    });
+    connected_();
   }
   void handshakeConfirmed() {
     if (app()->env.testCase != KeyUpdate) return;
@@ -645,9 +640,7 @@ struct HQClient::Link :
 void HQClient::earlyDataReady(Link *link)
 {
   if (env.testCase != ZeroRTT) return;
-  txRun([link = ZmRef{link}]() mutable {
-    link->connected_();
-  });
+  rxInvoke([link = ZmRef{link}]() mutable { link->connected_(); });
 }
 
 int HQClient::Stream::process(Zquic::RxStream &rx)
@@ -786,26 +779,18 @@ struct H3Client::Link :
     ZiTxErrorFn txError = h3.txError;
     unsigned requests = app()->requests.length();
     auto link = ZmRef(this);
-    app()->txInvoke([link, txError = ZuMv(txError), requests]() mutable {
+    auto streams = H3Cxn::openLocalStreams(*link, txError);
+    app()->txInvoke([link, streams = ZuMv(streams), requests]() mutable {
       auto limits = Zhttp::H3::Params{}.qpackLimits();
       bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);
-      H3Cxn::LocalStreams streams;
-      if (ok) streams = H3Cxn::openLocalStreams(*link, txError);
-      ok = ok && bool(streams);
-      link->app()->rxInvoke([
-	link, streams = ZuMv(streams), ok
-      ]() mutable {
-	if (!ok || !link->h3.openLocal(*link, ZuMv(streams))) {
-	  link->app()->fail();
-	}
+      link->app()->rxInvoke([link, streams = ZuMv(streams), ok, requests]() mutable {
+        if (!ok || !link->h3.openLocal(*link, ZuMv(streams))) {
+          link->app()->fail();
+          return;
+        }
+        for (unsigned i = 0; i < requests; ++i)
+          link->opened(i, link->stream(Zquic::StreamType::Duplex));
       });
-      if (!ok) return;
-      for (unsigned i = 0; i < requests; ++i) {
-	auto stream = link->stream(Zquic::StreamType::Duplex);
-	link->app()->rxInvoke([
-	  link, stream = ZuMv(stream), i
-	]() mutable { link->opened(i, ZuMv(stream)); });
-      }
     });
   }
   void opened(unsigned i, ZmRef<Stream> stream) {

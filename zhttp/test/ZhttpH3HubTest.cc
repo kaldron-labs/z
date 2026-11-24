@@ -325,16 +325,18 @@ void StreamClient::connected(
   link.parser.bind(link);
   if (link.mode == StreamClientLink::Mode::Malformed) {
     static constexpr uint8_t dataBeforeHeaders[] = {0, 0};
-    auto tx = link.txStream();
-    tx << dataBeforeHeaders << Zi::flush();
-    link.finish();
+    this->txRun([link = &link] {
+      auto tx = link->txStream_();
+      tx << dataBeforeHeaders << Zi::finish();
+      link->finish();
+    });
     return;
   }
   if (link.mode == StreamClientLink::Mode::REST) {
     this->txRun([link = &link, state = state]() {
       RequestBuilder builder;
       auto tx = link->transmit_(builder);
-      if (!builder.begin(tx)) {
+      if (!builder.begin(tx) || !tx.flush(true)) {
 	++state->errors;
 	state->response.post();
 	return;
@@ -548,11 +550,11 @@ struct StreamServerSession {
 	    Zhttp::H3::putVar(header, 1024);
 	    tx << ZuBSpan{header};
 	    for (unsigned i = 0; i < 256; ++i) tx << ZuCSpan{"pong"};
-	    if (!tx.flush()) ++link->app()->state->errors;
+	    if (!tx.flush(true)) ++link->app()->state->errors;
 	  } else {
 	    auto body = builder.body(tx);
 	    body << ZuCSpan{"pong"};
-	    body.flush();
+	    if (!body.flush(true)) ++link->app()->state->errors;
 	  }
 	  link->finish();
 	});

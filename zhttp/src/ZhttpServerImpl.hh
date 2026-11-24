@@ -1285,25 +1285,9 @@ class ServerHub :
 public:
   using Link = SrvLink<App, AppLink>;
   using Base = Zquic::Server<ServerHub, Link>;
-  using StopFn =
-    ZmFn<void(bool), ZmFnHeapID<"Zhttp.H3.ServerStop">>;
-
   App *user() { return static_cast<App *>(this); }
   const App *user() const { return static_cast<const App *>(this); }
 
-  bool stop() {
-    return ZmBlock<bool>{}(
-      [this](auto wake) { stop(StopFn{ZuMv(wake)}); });
-  }
-  template <typename Done>
-  void stop(Done &&done) {
-    StopFn fn{ZuFwd<Done>(done)};
-    this->rxRun([this, fn = ZuMv(fn)]() mutable {
-      disconnectAppLinks_([this, fn = ZuMv(fn)]() mutable {
-	Base::stop([fn = ZuMv(fn)](bool ok) mutable { fn(ok); });
-      });
-    });
-  }
   void final() {
     this->clearFaults();
     Base::final();
@@ -1328,14 +1312,9 @@ public:
     return new Link{this, info.peer.ip(), info.peer.port()};
   }
 
-private:
-  template <typename Done>
-  void disconnectAppLinks_(Done &&done) {
-    this->allLinks(
-      [](ZmRef<Link> link) {
-	link->disconnectAppLinks(false);
-      },
-      ZuFwd<Done>(done));
+  void stopLink(Link *link) {
+    link->disconnectAppLinks(false);
+    link->disconnect();
   }
 };
 
@@ -1408,7 +1387,7 @@ struct ServerStream :
     stopOnAck = false;
     if (ok)
       this->link()->app()->txRun([stream = ZmRef(this)]() mutable {
-	stream->stop(H3::NoError);
+	stream->sendStopTx(H3::NoError);
       });
   }
   void postFinal() {
@@ -1480,13 +1459,11 @@ struct SrvLink :
     h3.link_ = this;
     ZiTxErrorFn txError = h3.txError;
     auto link = ZmRef(this);
+    auto streams = H3Cxn::openLocalStreams(*link, txError);
     this->app()->txRun([
-      link, limits, extendedConnect, txError = ZuMv(txError)
+      link, limits, extendedConnect, streams = ZuMv(streams)
     ]() mutable {
       bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);
-      typename H3Cxn::LocalStreams streams;
-      if (ok)
-	streams = H3Cxn::openLocalStreams(*link, txError);
       link->app()->rxRun([
 	link = ZuMv(link), limits, extendedConnect, ok,
 	streams = ZuMv(streams)
@@ -1535,22 +1512,22 @@ struct SrvLink :
     if (!stream) return;
     (void)stream->process(stream->rxStream());
     closeLater(stream, true);
+    stream->stopRequestedRx(error);
     this->app()->txRun([stream = ZuMv(stream), error]() mutable {
-      stream->stop(error);
+      stream->sendStopTx(error);
       stream->quicReset(error);
     });
   }
   void h3StreamError(StreamRef stream, uint64_t error) {
     closeLater(stream, false);
+    stream->stopRequestedRx(error);
     this->app()->txRun([stream = ZuMv(stream), error]() mutable {
-      stream->stop(error);
+      stream->sendStopTx(error);
       stream->quicReset(error);
     });
   }
   void h3RequestRejected(StreamRef stream, uint64_t error) {
-    this->app()->txRun([stream = ZuMv(stream), error]() mutable {
-      stream->stop(error);
-    });
+    stream->stopRx(error);
   }
   void finish(Stream *stream, bool ordinary = false) {
     auto link = this;
@@ -1569,16 +1546,17 @@ struct SrvLink :
     if (ordinary && !stream->remoteEnd) {
       closeLater(stream, false);
       stream->discardRx();
-      this->app()->txRun([link = this, stream = ZuMv(stream)]() mutable {
-	// FIN remains ordered behind all accepted output. Stop the request
-	// only after its acknowledgement proves the response reached the peer.
-	stream->stopOnAck = true;
-	link->send_(stream, "", true);
+      stream->stopRequestedRx(H3::NoError);
+      this->app()->txRun([stream = ZuMv(stream)]() mutable {
+	// The final response may already have been acknowledged on Tx.
+	if (!stream->txCompleted())
+	  stream->stopOnAck = true;
+	else if (stream->txError() == Zquic::StreamError::None)
+	  stream->sendStopTx(H3::NoError);
       });
       return;
     }
     if (stream->remoteEnd) closeLater(stream, false);
-    this->send(ZuMv(stream), "", true);
   }
   void remoteEnd(Stream *stream) {
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
@@ -2141,10 +2119,22 @@ private:
 	  } reset{self};
 	  self->provider = &provider;
 	  using R = decltype(self->Base::begin(*encode.tx));
-	  if constexpr (ZuIsSame<R, void>{}) self->Base::begin(*encode.tx);
-	  else encode.ok = self->Base::begin(*encode.tx);
+	  if constexpr (ZuIsSame<R, void>{})
+	    self->Base::begin(*encode.tx);
+	  else
+	    encode.ok = self->Base::begin(*encode.tx);
 	});
-      return encode.ok;
+      return encode.ok && this->validHeaders();
+    }
+
+    template <typename Tx>
+    bool finishHeaders(Tx &tx, bool end = true) {
+      if constexpr (Profile::HTTPVersion == Version::H3)
+	return tx.flush(end);
+      else {
+	this->finish(tx);
+	return !tx.failed();
+      }
     }
   };
 
@@ -2169,8 +2159,7 @@ private:
       ResponseTx<Profile, Builder, false, false> empty{
 	server, builder};
       auto tx = link_->transmit_(empty);
-      empty.begin(tx);
-      empty.finish(tx);
+      if (!empty.begin(tx) || !empty.finishHeaders(tx)) return false;
       link_->finish();
       return true;
     }
@@ -2185,8 +2174,7 @@ private:
     ResponseTx<Profile, Builder, true, true> response{
       this, builder, true};
     auto tx = link.transmit_(response);
-    response.begin(tx);
-    response.finish(tx);
+    if (!response.begin(tx) || !response.finishHeaders(tx)) return false;
     link.finish();
     return true;
   }
@@ -2201,10 +2189,10 @@ private:
 	!Server_::bodyAllowed_(method, status)) {
       ResponseTx<Profile, Builder, false, false> response{
 	this, builder, Server_::contentLengthForbidden(method, status)};
-	auto tx = link.transmit_(response);
-      response.begin(tx);
-      response.finish(tx);
-      if (!builder.streamResponse()) link.finish();
+      auto tx = link.transmit_(response);
+      bool end = status >= 200 && !builder.streamResponse();
+      if (!response.begin(tx) || !response.finishHeaders(tx, end)) return false;
+      if (end) link.finish();
       return true;
     }
     ZiAssert(!BodyPolicy::streaming(policy), "Zhttp", (),
@@ -2213,7 +2201,8 @@ private:
     ServerTxOps<Profile, Link_, Builder> ops{
       this, &link, &retainedBytes};
     MessageTx<MessageTraits<Profile>, decltype(ops)> tx{ops};
-    return tx.fixed(response, BodyPolicy::optional(policy));
+    return tx.template fixed<Profile::HTTPVersion == Version::H3>(
+      response, BodyPolicy::optional(policy));
   }
 
   template <typename Driver>
@@ -2344,17 +2333,14 @@ private:
       bool beginHeaders;
       if (!Server_::streamEnter(state, beginHeaders)) return false;
       auto tx = streamMessageTx(*link, response, tcpHeader, 0);
-      if (beginHeaders) response.begin(tx);
-      if (beginHeaders && !response.validHeaders()) {
+      if (beginHeaders && !response.begin(tx)) {
 	failed_(server->stats().tx.responseBuildFailures);
 	return true;
       }
       auto body = response.body(tx);
-      WriteOutcome::T outcome = invokeBodyWriter(
+      WriteOutcome::T outcome = invokeBodyWriter<Profile::HTTPVersion == Version::H3>(
 	ZuFwd<Write>(write), body);
-      bool flushed = body.flush();
-      bool txFlushed = tx.flush();
-      bool txOK = flushed && txFlushed && body.valid();
+      bool txOK = tx.flush() && body.valid();
       if (!txOK) outcome = WriteOutcome::Failed;
 	switch (outcome) {
 	case WriteOutcome::End:

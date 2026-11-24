@@ -216,16 +216,18 @@ private:
     head->parked = TCPHeader::Input;
     io.complete();
   }
+  template <typename Impl> static bool fail(TCPHeader *head, ZiTxContext &io) {
+    auto impl = owner<Impl>(head);
+    auto state = head->state;
+    auto cxn = head->connection;
+    io.close();
+    impl->sent(ZmRef<ZiIOBuf>{head}, false);
+    cleanup(impl, *state, cxn.ptr());
+    return true;
+  }
   template <typename Impl> static bool produce(TCPHeader *head, ZiTxContext &io) {
     if (io.buf) {
-      if (io.length < 0) {
-	auto impl = owner<Impl>(head);
-	auto state = head->state;
-	io.complete();
-	impl->sent(ZmRef<ZiIOBuf>{head}, false);
-	cleanup(impl, *state, head->connection.ptr());
-	return true;
-      }
+      if (io.length < 0) return fail<Impl>(head, io);
       io.offset += io.length;
       if (io.offset < io.buf->length) return true;
       io.buf = nullptr;
@@ -255,7 +257,7 @@ private:
       head->endIO();
       impl->sent(held, true);
       head->postEnd();
-      select(impl, state->pending.shift(), io);
+      if (!io.state && io.completed()) select(impl, state->pending.shift(), io);
       return true;
     }
     if (head->first) {
@@ -264,7 +266,7 @@ private:
     } else {
       auto &entry = head->entries[head->cursor++];
       io.buf = owner<Impl>(head)->wireTCP_(entry.buf);
-      if (!io.buf) { io.disconnect(); return true; }
+      if (!io.buf) return fail<Impl>(head, io);
     }
     io.offset = 0;
     io.length = 0;
@@ -789,29 +791,34 @@ public:
     m_tcp.inBytes.store_(m_tcp.inBytes.load_() + bytes);
     header->connection = m_tcp.cxn;
     header->state = &m_tcp.io;
-    header->connection->send(ZiTxFn{ZuMv(header), [](TCPHeader *header, ZiTxContext &io) {
-      if (!io.cxn->up() || header->ioEnded.load_()) {
-	header->endIO(); header->postEnd(); return false;
+    auto mx = header->mx;
+    mx->txInvoke([header = ZuMv(header)] {
+      auto cxn = header->connection.ptr();
+      auto &io = cxn->txContext();
+      if (!cxn->up() || io.state || header->ioEnded.load_()) {
+	header->endIO();
+	header->postEnd();
+	return;
       }
-      auto impl = TCPTxOps::owner<Impl>(header);
-      auto &queue = header->state->pending;
-      queue.pushNode(header);
+      header->state->pending.pushNode(header.ptr());
       ++header->state->count;
-      if (io.completed()) TCPTxOps::select(impl, queue.shift(), io);
-      return true;
-    }});
+      if (io.completed()) {
+	cxn->send_(ZiTxFn{header.ptr(), [](TCPHeader *head, ZiTxContext &io) {
+	  TCPTxOps::select(TCPTxOps::owner<Impl>(head), head->state->pending.shift(), io);
+	  return true;
+	}});
+      }
+    });
     return true;
   }
   template <typename T = Traits, typename = ZuIfT<T::ID == Transport::TCP>>
   void cleanupTCP_(ZmRef<ZiConnection> cxn) {
     ++m_tcp.count; // cleanup must retire before disconnected drain completes
-    cxn->send(ZiTxFn{[
-      link = ZmRef(impl()), cxn = ZuMv(cxn)
-    ](ZiTxContext &io) mutable {
-      (void)cxn; // retain the exact physical connection through cleanup
-      io.complete();
-      TCPTxOps::cleanup(link.ptr(), link->m_tcp.io, io.cxn);
-      auto mx = link->app()->mx();
+    auto mx = cxn->mx();
+    mx->txRun([link = ZmRef(impl()), cxn = ZuMv(cxn)]() mutable {
+      cxn->txContext().close();
+      TCPTxOps::cleanup(link.ptr(), link->m_tcp.io, cxn.ptr());
+      auto mx = cxn->mx();
       // Let this callback release its physical Cxn before acknowledging cleanup.
       mx->txRun([link = ZuMv(link)]() mutable {
 	auto app = link->app();
@@ -820,8 +827,7 @@ public:
 	  impl->retireTCP(ZuMv(link));
 	});
       });
-      return false;
-    }});
+    });
   }
   template <typename T = Traits, typename = ZuIfT<T::ID == Transport::TCP>>
   ZmRef<ZiIOBuf> wireTCP_(ZmRef<ZiIOBuf> source) {

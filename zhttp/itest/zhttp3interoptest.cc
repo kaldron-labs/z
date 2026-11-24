@@ -199,13 +199,6 @@ void sendH1Response(Stream &stream, ZuCSpan body)
 }
 
 template <typename Stream>
-void flushH3Message(Stream &stream)
-{
-  auto ref = stream.link()->findStream(stream.id());
-  if (ref) stream.link()->send(ref, "", true);
-}
-
-template <typename Stream>
 void sendH3Response(Stream &stream, ZuCSpan body)
 {
   auto ref = stream.link()->findStream(stream.id());
@@ -227,10 +220,9 @@ void sendH3Response(Stream &stream, ZuCSpan body)
     if (body_) {
       auto bodyTx = builder.body(tx);
       bodyTx << body_;
-      bodyTx.flush();
-    }
-    builder.finish(tx);
-    link->send_(ref, "", true);
+      bodyTx.flush(true);
+    } else
+      tx.flush(true);
   });
 }
 
@@ -453,8 +445,7 @@ void sendH3Request(Stream &stream, ZuCSpan body)
     };
     builder.streamID_ = uint64_t(ref->id());
     builder.begin(tx);
-    builder.finish(tx);
-    link->send_(ref, "", true);
+    tx.flush(true);
   });
 }
 
@@ -639,11 +630,10 @@ struct H3ServerLink :
     h3.link_ = this;
     ZiTxErrorFn txError = h3.txError;
     auto link = ZmRef(this);
-    app()->txInvoke([link, txError = ZuMv(txError)]() mutable {
+    auto streams = H3Cxn::openLocalStreams(*link, txError);
+    app()->txInvoke([link, streams = ZuMv(streams)]() mutable {
       auto limits = Zhttp::H3::Params{}.qpackLimits();
       bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);
-      H3Cxn::LocalStreams streams;
-      if (ok) streams = H3Cxn::openLocalStreams(*link, txError);
       link->app()->rxInvoke([
 	link = ZuMv(link), streams = ZuMv(streams), ok
       ]() mutable {
@@ -904,13 +894,11 @@ struct H3Client::Link :
     h3.link_ = this;
     ZiTxErrorFn txError = h3.txError;
     auto link = ZmRef(this);
-    app()->txInvoke([link, txError = ZuMv(txError)]() mutable {
+    auto streams = H3Cxn::openLocalStreams(*link, txError);
+    auto request = link->stream(Zquic::StreamType::Duplex);
+    app()->txInvoke([link, streams = ZuMv(streams), request = ZuMv(request)]() mutable {
       auto limits = Zhttp::H3::Params{}.qpackLimits();
       bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);
-      H3Cxn::LocalStreams streams;
-      ZmRef<Stream> request;
-      if (ok) streams = H3Cxn::openLocalStreams(*link, txError);
-      if (ok && streams) request = link->stream(Zquic::StreamType::Duplex);
       link->app()->rxInvoke([
 	link = ZuMv(link), streams = ZuMv(streams),
 	request = ZuMv(request), ok

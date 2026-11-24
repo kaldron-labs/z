@@ -357,7 +357,9 @@ and invoke it again when ready; the application must dispatch retained calls to
 the response Tx shard itself. Immediate sequential turns and zero-byte turns
 are valid. Queue refusal or an invalid Tx stream fails the response.
 
-`End` emits the native final boundary. `Abort` intentionally terminates the
+`End` emits the native final boundary. H3 submits a bodyless message's
+HEADERS with QUIC FIN. When a body writer ends, its last DATA carries FIN.
+An open streaming writer flushes the bytes ready in each producer turn. `Abort` intentionally terminates the
 stream: H1 closes the connection without draining, while H2 and H3 reset only
 the logical stream. A streaming Builder must not emit `content-length`.
 `ResBuilder::close()` invalidates application producer state and requires the
@@ -383,8 +385,8 @@ A `true` trailer result admits the terminal section behind all accepted DATA,
 including data waiting for flow-control credit. It seals producer admission;
 `close()` runs once outside an active body callback, while the existing response
 queue retains the response until its completion notification. Compression runs
-when the DATA prefix is eligible: H2 sends HEADERS with END_STREAM; H3 sends
-HEADERS followed by FIN. H1, fixed-body and invalidated emitters return `false`
+when the DATA prefix is eligible. H2 sends HEADERS with END_STREAM. H3
+submits the trailing HEADERS with QUIC FIN. H1, fixed-body and invalidated emitters return `false`
 without calling the provider. A rendering or queue failure terminates the
 producer through its existing result path. The result means admission, not
 transport delivery. A trailers-only response uses the ordinary no-body path.

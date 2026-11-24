@@ -341,8 +341,12 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
 	if (complete) {
 	  auto body = builder.body(tx, 1);
 	  body << 'x';
-	  body.flush();
-	  builder.finish(tx);
+	  if constexpr (Profile::HTTPVersion == Zhttp::Version::H3)
+	    body.flush(true);
+	  else {
+	    body.flush();
+	    builder.finish(tx);
+	  }
 	  link->finish();
 	}
       });

@@ -2626,8 +2626,8 @@ void testBuilderQueryPath()
   custom.customTarget = true;
   CaptureTxStream customStream;
   custom.begin(customStream);
-  ZuCHECK(customStream.original && customStream.ownedBuffers > 1,
-    "unknown-length QPACK fields must send owned output buffers across prefix gaps");
+  ZuCHECK(customStream.original && customStream.ownedBuffers == 1,
+    "unknown-length QPACK fields must share the original HEADERS allocation across prefix gaps");
   ZuCHECK(headersPayload(customStream.bytes, payload),
     "custom printable target did not emit a valid HEADERS frame");
   sawPath = false;
