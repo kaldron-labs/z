@@ -50,7 +50,8 @@ inline void setenv(ZuCSpan key_, const wchar_t *value) {
 inline void unsetenv(const char *key) {
   _putenv_s(key, "");
 }
-inline auto getpath(const char *key) {
+inline auto getpath(const char *name) {
+  ZuCSpan key_{name};
   auto key = ZtScratch(EnvWScratch, key_.length());
   key = key_;
   return _wgetenv(key);
