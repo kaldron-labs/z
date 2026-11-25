@@ -7,19 +7,17 @@
 #include <string.h>
 
 #include <zlib/ZuBase64.hh>
-#include <zlib/ZuHex.hh>
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZtArray.hh>
 
 #include <zlib/ZtlsAge.hh>
 #include <zlib/ZtlsKEM.hh>
-#include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsPK.hh>
 
 #include "ZiTestResidue.hh"
-#include "ZtlsAgeSSHVectors.hh"
-#include "ZtlsAgeVectors.hh"
+
+#include "ZtlsTestKeys.hh"
 
 using namespace ZuTestUtil;
 using Bytes = ZtBArray<ZtArrayHeapID<"Ztls.Age.Test">>;
@@ -27,68 +25,44 @@ using Chars = ZtCArray<ZtArrayHeapID<"Ztls.Age.Test">>;
 
 static void nativeKeys()
 {
-  ZuTestScope(nativeKeys);
-  constexpr auto identity =
-    "AGE-SECRET-KEY-1GFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPQ4EGAEX"_z;
-  constexpr auto recipient = "age1zvkyg2lqzraa2lnjvqej32nkuu0ues2s82hzrye869xeexvn73equnujwj"_z;
-  uint8_t	 secret[32], pub[32];
-  char		 text
-    [sizeof("AGE-SECRET-KEY-1GFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPQ4EGAEX") - 1];
-  auto sk = ZtlsAge::decodeIdentity(ZtlsAgeKeyType::X25519, identity, secret);
-  ZuCheck(!sk.template is<ZeException>());
-  if (sk.template is<ZeException>()) return;
-  ZuCheck(sk.template p<size_t>() == sizeof(secret));
-  auto encoded = ZtlsAge::encodeIdentity(ZtlsAgeKeyType::X25519, secret, {text, sizeof(text)});
-  ZuCheck(!encoded.template is<ZeException>());
-  if (!encoded.template is<ZeException>()) {
-    ZuCSpan actual{text, encoded.template p<size_t>()};
-    ZuCheck(actual == identity);
+  ZuTestScopeRT(nativeKeys);
+  for (bool hybrid : {false, true}) {
+    auto type = hybrid ? ZtlsAgeKeyType::Hybrid : ZtlsAgeKeyType::X25519;
+    Chars identity;
+    uint8_t seed[32], decoded[32];
+    char text[128];
+    ZuGuard clear{[&]() {
+      ZuClear(identity); ZuClear(seed, sizeof(seed)); ZuClear(decoded, sizeof(decoded));
+      ZuClear(text, sizeof(text));
+    }};
+    ZuCheckRT(ZtlsTestKeys::load(hybrid ? "hybrid.identity" : "alice.identity", identity), return);
+    ZuCheckRT(ZtlsTestKeys::read(hybrid ? "hybrid" : "alice", seed), return);
+    auto sk = ZtlsAge::decodeIdentity(type, identity, decoded);
+    ZuCheckRT(!sk.is<ZeException>() && sk.p<size_t>() == sizeof(seed), return);
+    ZuCheckRT(!memcmp(seed, decoded, sizeof(seed)));
+    auto encoded = ZtlsAge::encodeIdentity(type, seed, {text, sizeof(text)});
+    ZuCheckRT(!encoded.is<ZeException>(), return);
+    ZuCheckRT((ZuCSpan{text, encoded.p<size_t>()} == ZuCSpan{identity}));
+    identity[identity.length() - 1] ^= 1;
+    ZuCheckRT(ZtlsAge::decodeIdentity(type, identity, decoded).is<ZeException>());
   }
+  Chars recipient, badPadding;
+  uint8_t pub[32], expected[32];
+  ZuCheckRT(ZtlsTestKeys::load("alice.recipient", recipient), return);
+  ZuCheckRT(ZtlsTestKeys::read("alice.pub", expected), return);
   auto pk = ZtlsAge::decodeRecipient(ZtlsAgeKeyType::X25519, recipient, pub);
-  ZuCheck(!pk.template is<ZeException>());
-  if (pk.template is<ZeException>()) return;
-  ZuCheck(pk.template p<size_t>() == sizeof(pub));
-  encoded = ZtlsAge::encodeRecipient(ZtlsAgeKeyType::X25519, pub, {text, sizeof(text)});
-  ZuCheck(!encoded.template is<ZeException>());
-  if (!encoded.template is<ZeException>()) {
-    ZuCSpan actual{text, encoded.template p<size_t>()};
-    ZuCheck(actual == recipient);
-  }
-  ZuCSpan bad{"age1zvkyg2lqzraa2lnjvqej32nkuu0ues2s82hzrye869xeexvn73equnujwx"};
-  ZuCheck(ZtlsAge::decodeRecipient(ZtlsAgeKeyType::X25519, bad, pub).template is<ZeException>());
-  ZuCheck(
-    ZtlsAge::decodeIdentity(
-      ZtlsAgeKeyType::X25519,
-      "AGE-SECRET-KEY-1GFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPQ4EGAEx"_z, secret)
-      .template is<ZeException>());
-  // The checksum is valid, but the last data symbol has nonzero pad bits.
-  ZuCheck(
-    ZtlsAge::decodeIdentity(
-      ZtlsAgeKeyType::X25519,
-      "AGE-SECRET-KEY-1GFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPPG0UGY5"_z, secret)
-      .template is<ZeException>());
-  ZuClear(secret, sizeof(secret));
-}
-
-static void hybridKey()
-{
-  ZuTestScope(hybridKey);
-  constexpr auto identity =
-    "AGE-SECRET-KEY-PQ-1XX76JRALNLXDMEW0CRK45QMCCH4X06SE84UN3VPM33W6HWDX0H3SK3ZQFR"_z;
-  uint8_t seed[Ztls::PK::HybridSeedSize];
-  auto	  decoded = ZtlsAge::decodeIdentity(ZtlsAgeKeyType::Hybrid, identity, seed);
-  ZuCheck(!decoded.template is<ZeException>());
-  if (decoded.template is<ZeException>()) return;
-  ZuCheck(decoded.template p<size_t>() == sizeof(seed));
-  char text
-    [sizeof("AGE-SECRET-KEY-PQ-1XX76JRALNLXDMEW0CRK45QMCCH4X06SE84UN3VPM33W6HWDX0H3SK3ZQFR") - 1];
-  auto encoded = ZtlsAge::encodeIdentity(ZtlsAgeKeyType::Hybrid, seed, {text, sizeof(text)});
-  ZuCheck(!encoded.template is<ZeException>());
-  if (!encoded.template is<ZeException>()) {
-    ZuCSpan actual{text, encoded.template p<size_t>()};
-    ZuCheck(actual == identity);
-  }
-  ZuClear(seed, sizeof(seed));
+  ZuCheckRT(!pk.is<ZeException>() && pk.p<size_t>() == sizeof(pub), return);
+  ZuCheckRT(!memcmp(pub, expected, sizeof(pub)));
+  char text[128];
+  auto encoded = ZtlsAge::encodeRecipient(ZtlsAgeKeyType::X25519, pub, {text, sizeof(text)});
+  ZuCheckRT(!encoded.is<ZeException>(), return);
+  ZuCheckRT((ZuCSpan{text, encoded.p<size_t>()} == ZuCSpan{recipient}));
+  recipient[0] = 'A';
+  ZuCheckRT(ZtlsAge::decodeRecipient(ZtlsAgeKeyType::X25519, recipient, pub).is<ZeException>());
+  // Valid checksum, nonzero padding bits.
+  ZuCheckRT(ZtlsTestKeys::load("bad-padding.identity", badPadding), return);
+  ZuCheckRT(ZtlsAge::decodeIdentity(ZtlsAgeKeyType::X25519, badPadding, pub).is<ZeException>());
+  ZuClear(badPadding);
 }
 
 static void scryptFile()
@@ -316,52 +290,36 @@ static void malformedFile()
 static void testkit()
 {
   ZuTestScopeRT(testkit);
-  auto	  path = ZiTestResidue::file("testkit.age");
-  ZtlsAge age;
-  for (auto &vector : ZtlsAgeVectors) {
-    ZuBSpan encoded{vector.encoded};
-    Bytes   data;
-    data.length(ZuBase64::declen(encoded.length()));
-    data.length(ZuBase64::decode(data, encoded));
-    size_t start = 0;
-    while (start + 1 < data.length() && (data[start] != '\n' || data[start + 1] != '\n')) ++start;
-    ZuCheckRT(start + 1 < data.length());
-    if (start + 1 == data.length()) return;
-    start += 2;
-    {
-      ZiFile output{path, ZiFile::Write | ZiFile::GC, 0600};
-      ZuCheckRT(output);
-      ZuCheckRT(output.write(data.data() + start, data.length() - start) == Zi::OK);
-    }
-    uint8_t	      seed[Ztls::PK::HybridSeedSize];
-    ZuGuard	      clear{[&seed]() { ZuClear(seed, sizeof(seed)); }};
-    ZtlsAge::Identity identity;
-    if (*vector.passphrase)
-      identity = ZtlsAge::ScryptIdentity{ZuBSpan{vector.passphrase}};
-    else {
-      bool hybrid =
-	!memcmp(vector.identity, "AGE-SECRET-KEY-PQ-", sizeof("AGE-SECRET-KEY-PQ-") - 1);
-      auto decoded = ZtlsAge::decodeIdentity(
-	hybrid ? ZtlsAgeKeyType::Hybrid : ZtlsAgeKeyType::X25519, ZuCSpan{vector.identity}, seed);
-      ZuCheckRT(!decoded.template is<ZeException>());
-      if (decoded.template is<ZeException>()) return;
-      identity = hybrid ? ZtlsAge::Identity{ZtlsAge::HybridIdentity{seed}} :
-			  ZtlsAge::Identity{ZtlsAge::X25519Identity{seed}};
-    }
+  uint8_t x[32], pq[32];
+  ZuGuard clear{[&]() { ZuClear(x, sizeof(x)); ZuClear(pq, sizeof(pq)); }};
+  ZuCheckRT(ZtlsTestKeys::read("alice", x), return);
+  ZuCheckRT(ZtlsTestKeys::read("hybrid", pq), return);
+  ZtlsAge::Identity identities[] = {ZtlsAge::X25519Identity{x}, ZtlsAge::HybridIdentity{pq},
+    ZtlsAge::ScryptIdentity{ZuBSpan{"password"}}};
+  enum { X, PQ, Scrypt };
+  struct Case { const char *name; unsigned identity; bool success; };
+  const Case cases[] = {
+    {"x25519", X, true}, {"scrypt", Scrypt, true}, {"hybrid", PQ, true},
+    {"hybrid_and_x25519", PQ, true}, {"x25519_grease", X, true},
+    {"scrypt_and_x25519", Scrypt, false}, {"hmac_not_canonical", X, false},
+    {"x25519_not_canonical_share", X, false}, {"scrypt_work_factor_23", Scrypt, false},
+    {"scrypt_not_canonical_salt", Scrypt, false}, {"hybrid_not_canonical_enc", PQ, false},
+    {"stream_no_final", X, false}, {"x25519_multiple_recipients", X, true},
+    {"x25519_low_order", X, false}, {"hybrid_low_order", PQ, false},
+    {"stanza_empty_body", X, true}, {"stanza_empty_last_line", X, true},
+    {"stanza_valid_characters", X, true}, {"hybrid_grease", PQ, true}
+  };
+  for (auto &c : cases) {
+    Zi::Path name;
+    name << c.name << ".age";
+    ZiFile input{ZtlsTestKeys::path(name), ZiFile::ReadOnly | ZiFile::GC};
+    ZuCheckRT(input, return);
     Bytes recovered;
-    recovered.length(data.length() - start);
-    ZiFile input{path, ZiFile::ReadOnly | ZiFile::GC};
-    ZuCheckRT(input);
-    auto result = age.decrypt(input, {&identity, 1}, recovered);
-    ZuCheckRT(result.template is<ZeException>() != vector.success);
-    if (!vector.success || result.template is<ZeException>()) continue;
-    uint8_t actual[Ztls::MD<Ztls::SHA256>::Size];
-    uint8_t expected[sizeof(actual)];
-    ZuCheckRT(ZuHex::decode(expected, ZuCSpan{vector.hash}) == sizeof(expected));
-    Ztls::MD<Ztls::SHA256> hash;
-    hash.update({recovered.data(), result.template p<size_t>()});
-    hash.finish(actual);
-    ZuCheckRT(!memcmp(actual, expected, sizeof(actual)));
+    recovered.length(input.size());
+    auto result = ZtlsAge{}.decrypt(input, {&identities[c.identity], 1}, recovered);
+    ZuCheckRT(result.is<ZeException>() != c.success);
+    if (c.success && !result.is<ZeException>())
+      ZuCheckRT((ZuCSpan{recovered.data(), result.p<size_t>()} == "test payload"_z));
   }
 }
 
@@ -370,18 +328,8 @@ static void testkit()
 static void stanzaArgs()
 {
   ZuTestScopeRT(stanzaArgs);
-  const auto &vector = ZtlsAgeVectors[0];
-  Bytes	      decoded;
-  ZuBSpan     encoded{vector.encoded};
-  decoded.length(ZuBase64::declen(encoded.length()));
-  decoded.length(ZuBase64::decode(decoded, encoded));
-  unsigned start = 0;
-  while (start + 1 < decoded.length() && (decoded[start] != '\n' || decoded[start + 1] != '\n'))
-    ++start;
-  start += 2;
-  ZuCheckRT(start < decoded.length());
-  if (start >= decoded.length()) return;
-  Bytes	   original{decoded.data() + start, decoded.length() - start};
+  Bytes original;
+  ZuCheckRT(ZtlsTestKeys::load("x25519.age", original), return);
   unsigned arg = 0;
   while (arg < original.length() && original[arg] != '\n') ++arg;
   arg += sizeof("\n-> X25519 ") - 1;
@@ -389,8 +337,7 @@ static void stanzaArgs()
   if (arg >= original.length()) return;
   uint8_t seed[Ztls::X25519KeySize];
   ZuGuard clear{[&seed]() { ZuClear(seed, sizeof(seed)); }};
-  ZuCheckRT(!ZtlsAge::decodeIdentity(ZtlsAgeKeyType::X25519, ZuCSpan{vector.identity}, seed)
-      .template is<ZeException>());
+  ZuCheckRT(ZtlsTestKeys::read("alice", seed), return);
   ZtlsAge::Identity identity = ZtlsAge::X25519Identity{seed};
   auto		    path = ZiTestResidue::file("stanza-args.age");
   for (unsigned pass = 0; pass < 3; ++pass) {
@@ -547,50 +494,17 @@ static void sshEDFile()
   ZuClear(recovered, sizeof(recovered));
 }
 
-static void openSSHKey()
-{
-  ZuTestScopeRT(openSSHKey);
-  char pem[] =
-    "-----BEGIN OPENSSH PRIVATE KEY-----\n"
-    "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\n"
-    "QyNTUxOQAAACCUnC67IDwnZNFWZIjRzGbGFPfs1KbFB8/KdZeVJ9ghRgAAAJjRLja70S42\n"
-    "uwAAAAtzc2gtZWQyNTUxOQAAACCUnC67IDwnZNFWZIjRzGbGFPfs1KbFB8/KdZeVJ9ghRg\n"
-    "AAAECGvsfwfKj6rcbG98C5s/iK1KMx0lj5fX2hMVaJyfNz1pScLrsgPCdk0VZkiNHMZsYU\n"
-    "9+zUpsUHz8p1l5Un2CFGAAAADmNvdW50MEBiYXJvcXVlAQIDBAUGBw==\n"
-    "-----END OPENSSH PRIVATE KEY-----\n";
-  constexpr auto pub =
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJScLrsgPCdk0VZkiNHMZsYU9+zUpsUHz8p1l5Un2CFG"_z;
-  uint8_t publicKey[128], expected[128];
-  auto	  loaded = ZtlsAge::loadOpenSSH({pem, sizeof(pem) - 1}, publicKey);
-  ZuCheckRT(!loaded.template is<ZeException>());
-  if (loaded.template is<ZeException>()) return;
-  auto key = ZuMv(loaded).template p<ZtlsAge::SshKey>();
-  ZuCheckRT(dynamic_cast<Ztls::PK::Ed25519Private *>(key.key.ptr()));
-  bool cleared = true;
-  for (auto c : pem) cleared &= !c;
-  ZuCheckRT(cleared);
-  auto parsed = ZtlsAge::decodeSSHRecipient(pub, expected);
-  ZuCheckRT(!parsed.template is<ZeException>());
-  if (!parsed.template is<ZeException>())
-    ZuCheckRT(
-      key.publicKey ==
-      parsed.template p<ZtlsAge::Recipient>()
-	.template p<ZtlsAge::SshED25519Recipient>()
-	.publicKey);
-}
-
 static void sshReference()
 {
   ZuTestScopeRT(sshReference);
-  auto		 path = ZiTestResidue::file("ssh-reference.age");
-  constexpr auto plain = "Ztls SSH reference fixture\n"_z;
-  ZtlsAge	 age;
-  for (auto &vector : ZtlsAgeSSHVectors) {
-    Chars privateKey;
-    privateKey.length(strlen(vector.privateKey));
-    memcpy(privateKey.data(), vector.privateKey, privateKey.length());
+  constexpr auto plain = "test payload"_z;
+  ZtlsAge age;
+  for (bool rsa : {true, false}) {
+    Chars privateKey, publicLine;
+    ZuCheckRT(ZtlsTestKeys::load(rsa ? "rsa.openssh" : "ed.openssh", privateKey), return);
+    ZuCheckRT(ZtlsTestKeys::load(rsa ? "rsa.pub" : "ed.pub", publicLine), return);
     Bytes publicKey;
-    publicKey.length(strlen(vector.publicKey));
+    publicKey.length(publicLine.length());
     auto loaded = ZtlsAge::loadOpenSSH(privateKey, publicKey);
     ZuCheckRT(!loaded.template is<ZeException>());
     if (loaded.template is<ZeException>()) return;
@@ -600,10 +514,9 @@ static void sshReference()
     ZuCheckRT(cleared);
     Bytes blob;
     blob.length(publicKey.length());
-    auto decoded = ZtlsAge::decodeSSHRecipient(ZuCSpan{vector.publicKey}, blob);
+    auto decoded = ZtlsAge::decodeSSHRecipient(publicLine, blob);
     ZuCheckRT(!decoded.template is<ZeException>());
     if (decoded.template is<ZeException>()) return;
-    bool	rsa = vector.name[0] == 'r';
     const auto &recipient = decoded.template p<ZtlsAge::Recipient>();
     ZuBSpan	expected = rsa ? recipient.template p<ZtlsAge::SshRSARecipient>().publicKey :
 				 recipient.template p<ZtlsAge::SshED25519Recipient>().publicKey;
@@ -618,19 +531,10 @@ static void sshReference()
       ZuCheckRT(sk);
       identity = ZtlsAge::SshED25519Identity{key.publicKey, sk};
     }
-    ZuBSpan encoded{vector.cipher};
-    Bytes   cipher;
-    cipher.length(ZuBase64::declen(encoded.length()));
-    cipher.length(ZuBase64::decode(cipher, encoded));
-    {
-      ZiFile output{path, ZiFile::Write | ZiFile::GC, 0600};
-      ZuCheckRT(output);
-      ZuCheckRT(output.write(cipher.data(), cipher.length()) == Zi::OK);
-    }
+    ZiFile input{ZtlsTestKeys::path(rsa ? "rsa.age" : "ed.age"), ZiFile::ReadOnly | ZiFile::GC};
+    ZuCheckRT(input, return);
     Bytes recovered;
-    recovered.length(cipher.length());
-    ZiFile input{path, ZiFile::ReadOnly | ZiFile::GC};
-    ZuCheckRT(input);
+    recovered.length(input.size());
     auto result = age.decrypt(input, {&identity, 1}, recovered);
     ZuCheckRT(!result.template is<ZeException>());
     if (result.template is<ZeException>()) return;
@@ -643,8 +547,8 @@ int main()
 {
   ZiTestResidue::init("ZtlsAgeTest");
   ZuTestMain();
+  ZuCheck(ZtlsTestKeys::init(), return 1);
   ZuTestCall_("nativeKeys", nativeKeys);
-  ZuTestCall_("hybridKey", hybridKey);
   ZuTestCall_("scryptFile", scryptFile);
   ZuTestCall_("recipientFiles", recipientFiles);
   ZuTestCall_("malformedFile", malformedFile);
@@ -652,6 +556,5 @@ int main()
   ZuTestCall_("stanzaArgs", stanzaArgs);
   ZuTestCall_("sshRSAFile", sshRSAFile);
   ZuTestCall_("sshEDFile", sshEDFile);
-  ZuTestCall_("openSSHKey", openSSHKey);
   ZuTestCall_("sshReference", sshReference);
 }

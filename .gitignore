@@ -193,3 +193,7 @@ zhttp/itest/zhttpserverstreamtest.ZhttpServerStop-*/
 !/docs/**/*.ndjson
 
 review_context
+
+# Locally generated Ztls interoperability keys and reference files.
+/ztls/test/.ztls-test-keys*/
+/ztls/test/ZtlsTestKeygen

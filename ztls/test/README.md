@@ -1,19 +1,21 @@
 # Ztls tests
 
-`make -C ztls/test test` runs the TAP tests, including `ZtlsKEMTest`,
-`ZtlsX25519Test`, `ZtlsHybridTest`, and `ZtlsHPKETest`. The hybrid test checks the
-MLKEM768-X25519 public key, encapsulated key and shared secret against
-the first independent HPKE-PQ vector for KEM 0x647a. The HPKE test
-checks recipient opening against that vector and sender round trips.
-`ZtlsAgeTest` includes nineteen local [CCTV age testkit](https://github.com/C2SP/CCTV/tree/4448f2097b2daa812c91a26141f9f36c2096b9ca/age/testdata)
-vectors covering X25519, scrypt, hybrid, unknown stanzas, mixed
-hybrid/classical headers, forbidden scrypt mixing, non-canonical encodings,
-low-order shares, recipient selection, scrypt work bounds, stream termination,
-and liberal handling of well-formed unknown stanzas. The vectors are
-embedded in `ZtlsAgeVectors.hh`, so the TAP suite needs no network or age CLI.
-`ZtlsAgeSSHVectors.hh` embeds two reference-age-v1.3.2 ciphertexts with
-unencrypted OpenSSH RSA and Ed25519 test identities. The TAP suite checks
-SSH key loading and decryption of those independently produced files.
+The first run of `ZtlsX25519Test`, `ZtlsHybridTest`, `ZtlsHPKETest`, or
+`ZtlsAgeTest` runs `ZtlsTestKeygen` to create the X25519, hybrid, RSA and
+Ed25519 test identities. The Go fixture helper uses those keys to produce
+independent reference outputs for key agreement, HPKE, age and OpenSSH.
+First use requires Go 1.25 or later and the modules pinned in
+`keyfixture/go.mod`. For offline setup, populate the Go module cache in
+advance with `go -C ztls/test/keyfixture mod download`.
+
+The helper publishes the complete fixture set in the build directory under
+`.ztls-test-keys-v1/`. Subsequent runs read it directly. Removing that
+directory generates fresh keys on the next run. The age tests cover nineteen
+reference cases, including hybrid/classical headers, recipient selection,
+unknown stanzas, non-canonical encodings, low-order shares, scrypt limits
+and stream termination. They also decrypt reference-age ciphertexts with
+locally generated RSA and Ed25519 identities in OpenSSH format.
+
 `ZtlsVaultTest` is the vault TAP entry point. It covers the application API,
 the in-memory `Ephemeral` store, the JSON `File` aggregate, and `Indirect` with
 both stores. The encrypted-file test independently opens the account-hash
@@ -38,7 +40,7 @@ openssl pkey -in "$dir/openssl-private.pem" -pubout -out "$dir/openssl-public.pe
 ./ztls/test/ZtlsKEMTest --load "$dir/openssl-private.pem" "$dir/openssl-public.pem"
 ```
 
-`ZtlsX25519Test` covers RFC 7748 vectors and RFC 8410 DER/PEM
+`ZtlsX25519Test` checks X25519 agreement against Go and covers RFC 8410 DER/PEM
 round-trips. To check X25519 PEM interoperability in both directions:
 
 ```sh

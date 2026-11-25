@@ -24,7 +24,7 @@ libZtlsVaultFixture_la_SOURCES = ZtlsVaultFixture.cc
 libZtlsVaultFixture_la_CPPFLAGS = $(AM_CPPFLAGS) -DZtlsExports=1
 libZtlsVaultFixture_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version -rpath $(abs_builddir)
 libZtlsVaultFixture_la_LIBADD = $(top_builddir)/ztls/src/libZtls.la
-noinst_HEADERS = ZtlsTestHandshake.hh ZtlsTestPorts.hh
+noinst_HEADERS = ZtlsTestKeys.hh ZtlsTestHandshake.hh ZtlsTestPorts.hh
 ZtlsCryptoTest_SOURCES = ZtlsCryptoTest.cc
 ZtlsCryptoFailTest_SOURCES = ZtlsCryptoFailTest.cc
 ZtlsInitTest_SOURCES = ZtlsInitTest.cc
@@ -35,7 +35,15 @@ ZtlsX25519Test_SOURCES = ZtlsX25519Test.cc
 ZtlsKEMTest_SOURCES = ZtlsKEMTest.cc
 ZtlsHybridTest_SOURCES = ZtlsHybridTest.cc
 ZtlsHPKETest_SOURCES = ZtlsHPKETest.cc
-ZtlsAgeTest_SOURCES = ZtlsAgeTest.cc ZtlsAgeVectors.hh ZtlsAgeSSHVectors.hh
+ZtlsAgeTest_SOURCES = ZtlsAgeTest.cc
+EXTRA_PROGRAMS = ZtlsTestKeygen
+ZtlsTestKeygen_SOURCES = ZtlsTestKeygen.cc
+ZtlsAgeTest$(EXEEXT) ZtlsX25519Test$(EXEEXT) ZtlsHybridTest$(EXEEXT) ZtlsHPKETest$(EXEEXT): ZtlsTestKeygen$(EXEEXT)
+AM_CPPFLAGS += -DZtlsFixtureGo='"$(if $(GO),$(GO),go)"' \
+	-DZtlsFixtureDir='"$(abs_builddir)/.ztls-test-keys-v1"' \
+	-DZtlsFixtureSource='"$(abs_srcdir)/keyfixture"' \
+	-DZtlsFixtureKeygen='"$(abs_builddir)/ZtlsTestKeygen$(EXEEXT)"'
+EXTRA_DIST = keyfixture/main.go keyfixture/age.go keyfixture/go.mod keyfixture/go.sum
 ZtlsVaultTest_SOURCES = ZtlsVaultTest.cc
 if LINUX
 ZtlsVaultTest_CPPFLAGS = $(AM_CPPFLAGS) -DZtlsVaultFixturePath='"$(abs_builddir)/.libs/libZtlsVaultFixture.so"'
