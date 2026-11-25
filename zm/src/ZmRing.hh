@@ -709,7 +709,7 @@ public:
 
   int open(unsigned flags) {
     flags &= (Read | Write);
-    if (m_flags &Shadow) {
+    if (m_flags & Shadow) {
       if (m_flags & (Read | Write)) {
 	if ((m_flags & (Read | Write)) == flags) return Zu::OK;
 	return Zu::IOError;
@@ -749,7 +749,7 @@ public:
     m_flags |= flags;
     if (!open_()) {
       m_flags &= ~(Read | Write);
-      if (!(m_flags &Shadow)) {
+      if (!(m_flags & Shadow)) {
 	closeCtrl();
 	closeData();
 	m_headBlocker.close();
@@ -759,7 +759,7 @@ public:
       m_size = 0;
       return Zu::IOError;
     }
-    if (flags &Write) {
+    if (flags & Write) {
       eof(false);
       gc();
     }
@@ -770,7 +770,7 @@ public:
     if (closed()) return;
     m_size = 0;
     close_();
-    if (!(m_flags &Shadow)) {
+    if (!(m_flags & Shadow)) {
       closeCtrl();
       closeData();
       m_headBlocker.close();
@@ -780,7 +780,7 @@ public:
   }
 
   int reset() {
-    if (ZuUnlikely(closed() || (m_flags &Shadow))) return Zu::IOError;
+    if (ZuUnlikely(closed() || (m_flags & Shadow))) return Zu::IOError;
     auto flags = (m_flags & (Read | Write));
     close_();
     m_flags &= ~(Read | Write);
@@ -858,7 +858,7 @@ private:
     head &= ~Mask32();
     tail &= ~Mask32();
     if (ZuUnlikely(head == tail)) return false; // empty
-    bool wrapped = (head ^ tail) &Wrapped32();
+    bool wrapped = (head ^ tail) & Wrapped32();
     head &= ~Wrapped32();
     tail &= ~Wrapped32();
     if (wrapped) head += this->size();
@@ -869,7 +869,7 @@ private:
 
   void writeAssert() {
     ZmAssert(ctrl());
-    ZmAssert(m_flags &Write);
+    ZmAssert(m_flags & Write);
   }
 
   unsigned alignAssert(unsigned size) {
@@ -890,13 +890,13 @@ private:
 
 #define ZmRing_push_get_head_tail_swsr() \
     uint32_t head = this->head().load_(); \
-    if (ZuUnlikely(head &EndOfFile32())) return nullptr; \
+    if (ZuUnlikely(head & EndOfFile32())) return nullptr; \
     uint32_t tail = this->tail() /* acquire */
 #define ZmRing_push_get_head_tail_swmr() ZmRing_push_get_head_tail_swsr()
 #define ZmRing_push_get_head_tail_mwsr() \
     uint32_t head = this->head().load_(); \
-    if (ZuUnlikely(head &Locked32())) goto retry; \
-    if (ZuUnlikely(head &EndOfFile32())) return nullptr; \
+    if (ZuUnlikely(head & Locked32())) goto retry; \
+    if (ZuUnlikely(head & EndOfFile32())) return nullptr; \
     uint32_t tail = this->tail() /* acquire */
 #define ZmRing_push_get_head_tail_mwmr() ZmRing_push_get_head_tail_mwsr()
 
@@ -971,7 +971,7 @@ private:
   void wakeReaders(uint32_t head) {
     if constexpr (!MW_ && !MR_) {
       head = (head & ~Waiting32()) | uint32_t(Flags>>32);
-      if (ZuUnlikely(this->head().xch(head) &Waiting32()))
+      if (ZuUnlikely(this->head().xch(head) & Waiting32()))
 	m_headBlocker.wake(this->head());
     } else {
       wakeReaders_<Flags>(
@@ -983,11 +983,11 @@ private:
   template <uint64_t Flags = 0, bool MR_ = MR, typename = ZuIfT<MR_>>
   void wakeReaders_(ZmAtomic<uint64_t> *hdrPtr) {
     uint64_t rdrMask;
-    if constexpr (Flags &EndOfFile())
+    if constexpr (Flags & EndOfFile())
       rdrMask = 0;
     else
       rdrMask = this->rdrMask().load_();
-    if (ZuUnlikely((hdrPtr->xch(Flags | rdrMask)) &Waiting())) {
+    if (ZuUnlikely((hdrPtr->xch(Flags | rdrMask)) & Waiting())) {
       auto &hdrPtr32 =
 	reinterpret_cast<ZmAtomic<uint32_t> *>(hdrPtr)[Flags32Offset];
       m_headBlocker.wake(hdrPtr32);
@@ -995,10 +995,10 @@ private:
   }
   // MWSR
   template <uint64_t Flags = 0, bool MR_ = MR,
-    uint64_t RdrMask_ = !(Flags &EndOfFile()),
+    uint64_t RdrMask_ = !(Flags & EndOfFile()),
     typename = ZuIfT<!MR_>>
   void wakeReaders_(ZmAtomic<uint64_t> *hdrPtr) {
-    if (ZuUnlikely(hdrPtr->xch(Flags | RdrMask_) &Waiting())) {
+    if (ZuUnlikely(hdrPtr->xch(Flags | RdrMask_) & Waiting())) {
       auto &hdrPtr32 =
 	reinterpret_cast<ZmAtomic<uint32_t> *>(hdrPtr)[Flags32Offset];
       m_headBlocker.wake(hdrPtr32);
@@ -1149,7 +1149,7 @@ public:
       writeAssert();
   retry:
       uint32_t head = this->head().load_();
-      if (head &Locked32()) goto retry;
+      if (head & Locked32()) goto retry;
       if (eof) {
 	if (this->head().cmpXch(
 	      head | Locked32() | EndOfFile32(), head) != head)
@@ -1182,7 +1182,7 @@ public:
 private:
   int writeStatus_() const {
     uint32_t head = this->head().load_();
-    if (ZuUnlikely(head &EndOfFile32())) return Zu::EndOfFile;
+    if (ZuUnlikely(head & EndOfFile32())) return Zu::EndOfFile;
     head &= ~(Wrapped32() | Mask32());
     uint32_t tail = this->tail() & ~(Wrapped32() | Mask32());
     if (head < tail) return tail - head;
@@ -1198,11 +1198,11 @@ public:
   template <bool MR_ = MR, typename = void>
   int writeStatus() const {
     if constexpr (!MR_) {
-      ZmAssert(m_flags &Write);
+      ZmAssert(m_flags & Write);
       if (ZuUnlikely(closed())) return Zu::IOError;
       return writeStatus_();
     } else {
-      ZmAssert(m_flags &Write);
+      ZmAssert(m_flags & Write);
       if (ZuUnlikely(closed())) return Zu::IOError;
       if (ZuUnlikely(!rdrMask())) return Zu::NotReady;
       return writeStatus_();
@@ -1221,7 +1221,7 @@ private:
   void readAssert() {
     if constexpr (!MR_) {
       ZmAssert(ctrl());
-      ZmAssert(m_flags &Read);
+      ZmAssert(m_flags & Read);
     } else {
       readAssert<false>();
       ZmAssert(rdrID() >= 0);
@@ -1238,7 +1238,7 @@ private:
 
 #define ZmRing_shift_get_head() \
     uint32_t head = this->head(); /* acquire */ \
-    if constexpr (MW) if (head &Locked32()) goto retry; \
+    if constexpr (MW) if (head & Locked32()) goto retry; \
     /**/ZmRing_bp(this, shift1)
 
 #define ZmRing_shift_get_hdr() \
@@ -1254,7 +1254,7 @@ private:
 
 #define ZmRing_shift_retry_swsr() \
     do { \
-      if (ZuUnlikely(head &EndOfFile32())) return nullptr; \
+      if (ZuUnlikely(head & EndOfFile32())) return nullptr; \
       if constexpr (!Wait) return nullptr; \
       if (ZuUnlikely(!params().ll)) { \
 	if (!waitSpin(this->head(), head)) goto retry; \
@@ -1270,7 +1270,7 @@ private:
     } while (0)
 #define ZmRing_shift_retry_swmr() \
     do { \
-      if (ZuUnlikely(hdr &EndOfFile())) return nullptr; \
+      if (ZuUnlikely(hdr & EndOfFile())) return nullptr; \
       if constexpr (!Wait) return nullptr; \
       if (ZuUnlikely(!params().ll)) { \
 	if (!waitSpin(*hdrPtr, hdr)) goto retry; \
@@ -1309,7 +1309,7 @@ private:
     rdrTail(tail); \
     if ((*reinterpret_cast<ZmAtomic<uint64_t> *>( \
 	&(data())[tail_ & ~Wrapped32()]) &= \
-	  ~(uint64_t(1)<<rdrID())) &RdrMask()) \
+	  ~(uint64_t(1)<<rdrID())) & RdrMask()) \
       return
 #define ZmRing_move_tail_mwsr(msgSize) \
     *reinterpret_cast<ZmAtomic<uint64_t> *>( \
@@ -1323,7 +1323,7 @@ private:
 
   void wakeWriters(uint32_t tail) {
     tail &= ~Waiting32();
-    if (ZuUnlikely(this->tail().xch(tail) &Waiting32()))
+    if (ZuUnlikely(this->tail().xch(tail) & Waiting32()))
       m_tailBlocker.wake(this->tail());
   }
 
@@ -1426,7 +1426,7 @@ public:
 private:
   int readStatus_(uint32_t tail) const {
     uint32_t head = this->head(); /* acquire */
-    bool eof = head &EndOfFile32();
+    bool eof = head & EndOfFile32();
     head &= ~Mask32();
     if ((head ^ tail) == Wrapped32()) return size();
     head &= ~Wrapped32();
@@ -1447,11 +1447,11 @@ public:
   template <bool MR_ = MR, typename = void>
   int readStatus() const {
     if constexpr (!MR_) {
-      ZmAssert(m_flags &Read);
+      ZmAssert(m_flags & Read);
       if (ZuUnlikely(closed())) return Zu::IOError;
       return readStatus_(this->tail().load_() & ~Mask32());
     } else {
-      ZmAssert(m_flags &Read);
+      ZmAssert(m_flags & Read);
       if (ZuUnlikely(closed())) return Zu::IOError;
       return readStatus_(rdrTail());
     }
@@ -1538,7 +1538,7 @@ inline int RingExt<Ring, MW, true>::attach()	// MR attach
   enum { Read = Ring::Read };
 
   ZmAssert(ring()->ctrl());
-  ZmAssert(ring()->flags() &Read);
+  ZmAssert(ring()->flags() & Read);
 
   if (rdrID() >= 0) return Zu::OK;
 
@@ -1613,7 +1613,7 @@ inline void RingExt<Ring, MW, true>::detach()	// MR detach
   enum { Read = Ring::Read };
 
   ZmAssert(ring()->ctrl());
-  ZmAssert(ring()->flags() &Read);
+  ZmAssert(ring()->flags() & Read);
 
   if (rdrID() < 0) return;
 
