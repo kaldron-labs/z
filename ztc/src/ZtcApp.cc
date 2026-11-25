@@ -66,7 +66,6 @@ using HeapSamples = Samples<HeapTelemetry, "Ztc.App.HeapSamples">;
 using HashSamples = Samples<HashTelemetry, "Ztc.App.HashSamples">;
 using ThreadSamples = Samples<ThreadTelemetry, "Ztc.App.ThreadSamples">;
 using MxSamples = Samples<MxTelemetry, "Ztc.App.MxSamples">;
-using CxnSamples = Samples<CxnTelemetry, "Ztc.App.CxnSamples">;
 using QueueSamples = Samples<QueueTelemetry, "Ztc.App.QueueSamples">;
 using HubSamples = Samples<HubTelemetry, "Ztc.App.HubSamples">;
 using LinkSamples = Samples<LinkTelemetry, "Ztc.App.LinkSamples">;
@@ -122,7 +121,6 @@ struct PendingData {
   HashSamples		hashes;
   ThreadSamples		threads;
   MxSamples		mxs;
-  CxnSamples		cxns;
   QueueSamples		queues;
   HubSamples		hubs;
   LinkSamples		links;
@@ -695,7 +693,6 @@ void warmSamples()
   HashSamples{}.size(1);
   ThreadSamples{}.size(1);
   MxSamples{}.size(1);
-  CxnSamples{}.size(1);
   QueueSamples{}.size(1);
   HubSamples{}.size(1);
   LinkSamples{}.size(1);
@@ -1301,8 +1298,6 @@ void App::warmIndices()
   delete new App_::Pending_;
   App_::indexWarm(m_state->pending, App_::PendingKey{});
   App_::indexWarm(m_mxIdx, ZuID{});
-  App_::indexWarm(m_mxQueueIdx,
-    QueueKey{ZuID{}, ZuID{}, QueueType::T{}});
   App_::indexWarm(m_hubIdx, HubKey{LinkType::T{}, ZuID{}});
   App_::indexWarm(m_linkIdx, ChildKey{ZuID{}, ZuID{}});
   App_::indexWarm(m_poolIdx, ChildKey{ZuID{}, ZuID{}});
@@ -1334,7 +1329,6 @@ bool App::clearIndices(unsigned budget)
     clear(m_poolIdx) &&
     clear(m_linkIdx) &&
     clear(m_hubIdx) &&
-    clear(m_mxQueueIdx) &&
     clear(m_mxIdx);
 }
 
@@ -1389,8 +1383,6 @@ void App::mxAdded(Ztc::Mx *mx_)
     if (unnamed.length() > 1) return;
   }
   App_::indexAdd(m_mxIdx, ZuMv(id), mx_);
-  mx_->allQueues(
-    {[this](Ztc::Queue *queue) { mxQueueAdded(queue); }});
 }
 
 void App::mxDeleted(Ztc::Mx *mx_)
@@ -1403,31 +1395,11 @@ void App::mxDeleted(Ztc::Mx *mx_)
     unnamed.splice(pos, 1);
     if (pos) return;
   }
-  mx_->allQueues(
-    {[this](Ztc::Queue *queue) { mxQueueDeleted(queue); }});
   App_::indexDel(m_mxIdx, id, mx_);
   if (!id && unnamed.length()) {
     auto replacement = unnamed[0];
     App_::indexAdd(m_mxIdx, ZuMv(id), replacement);
-    replacement->allQueues(
-      {[this](Ztc::Queue *queue) { mxQueueAdded(queue); }});
   }
-}
-
-void App::mxQueueAdded(Ztc::Queue *queue)
-{
-  auto key = queue->telKey();
-  QueueKey owned{key.p<0>(), key.p<1>(), key.p<2>()};
-  if (auto mx_ = m_mxIdx.findVal(key.p<0>()))
-    App_::indexAdd(m_mxQueueIdx, ZuMv(owned), mx_);
-}
-
-void App::mxQueueDeleted(Ztc::Queue *queue)
-{
-  auto key = queue->telKey();
-  QueueKey owned{key.p<0>(), key.p<1>(), key.p<2>()};
-  if (auto mx_ = m_mxQueueIdx.findVal(owned))
-    App_::indexDel(m_mxQueueIdx, owned, mx_);
 }
 
 void App::hubAdded(Ztc::Hub *hub)
@@ -2091,10 +2063,6 @@ bool App::snapshot_0(
 	auto capture = [pending](Ztc::Mx *mx) {
 	  auto data = new (pending->mxs.push()) MxTelemetry;
 	  mx->telemetry(*data);
-	  mx->allCxns({[pending](Ztc::Connection *cxn) {
-	    auto data = new (pending->cxns.push()) CxnTelemetry;
-	    cxn->telemetry(*data);
-	  }});
 	};
 	if (filter.all()) {
 	  auto i = m_mxIdx.citer();
@@ -2115,11 +2083,6 @@ bool App::snapshot_0(
     case Group::Queue: {
       auto collect = [this, pending, &filter]
 	  <unsigned TypeMode, unsigned OwnerMode, unsigned IDMode>() {
-	MxMgr::guard([this, pending, &filter]() {
-	  pending->queues.size(m_mxQueueIdx.count_());
-	  App_::captureQueues<TypeMode, OwnerMode, IDMode>(
-	    pending->queues, filter, m_mxQueueIdx);
-	});
 	HubMgr::guard([this, pending, &filter]() {
 	  pending->queues.size(
 	    pending->queues.length() +
@@ -2315,15 +2278,7 @@ void App::snapshot_1(uint64_t seqNo)
       done = sendBatch(TelemetryBody::ThreadTelemetry, pending->threads);
       break;
     case Group::Mx:
-      while (budget && pending->stage < 2) {
-	bool stageDone = pending->stage ?
-	  sendBatch(TelemetryBody::CxnTelemetry, pending->cxns) :
-	  sendBatch(TelemetryBody::MxTelemetry, pending->mxs);
-	if (!stageDone) break;
-	++pending->stage;
-	pending->offset = 0;
-      }
-      done = pending->stage == 2;
+      done = sendBatch(TelemetryBody::MxTelemetry, pending->mxs);
       break;
     case Group::Queue:
       done = sendBatch(TelemetryBody::QueueTelemetry, pending->queues);

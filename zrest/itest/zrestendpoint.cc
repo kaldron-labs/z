@@ -405,7 +405,7 @@ AuditSnapshot audit(ZiMultiplex &mx)
     else if (id == "Zrest.Input") result.input += n;
     else if (id == "Zrest.SSE.Buffer") result.sse += n;
   }});
-  mx.allQueues(Ztc::QueueMgr::AllFn{[&result](Ztc::Queue *queue) {
+  mx.ZmScheduler::allQueues(Ztc::QueueMgr::AllFn{[&result](Ztc::Queue *queue) {
     Ztc::QueueTelemetry data;
     queue->telemetry(data);
     if (data.type != Ztc::QueueType::Thread) return;

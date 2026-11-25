@@ -425,7 +425,7 @@ bool RawHTTPCxn::send_(ZiTxContext &io)
 bool RawHTTPCxn::sent_(ZiTxContext &io)
 {
   if (io.length < 0) {
-    io.disconnect();
+    io.close();
     return true;
   }
   io.offset += io.length;

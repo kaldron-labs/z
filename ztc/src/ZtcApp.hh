@@ -201,8 +201,6 @@ private:
   using ChildKey = ZuTuple<ZuID, ZuID>;
 
   using MxIdx = Index<ZuID, Ztc::Mx, "Ztc.App.MxIdx">;
-  using MxQueueIdx =
-    Index<QueueKey, Ztc::Mx, "Ztc.App.MxQueueIdx">;
   using HubIdx = Index<HubKey, Ztc::Hub, "Ztc.App.HubIdx">;
   using LinkIdx = Index<ChildKey, Ztc::Link, "Ztc.App.LinkIdx">;
   using PoolIdx = Index<ChildKey, Ztc::Pool, "Ztc.App.PoolIdx">;
@@ -270,8 +268,6 @@ private:
 
   void mxAdded(Ztc::Mx *);
   void mxDeleted(Ztc::Mx *);
-  void mxQueueAdded(Ztc::Queue *);
-  void mxQueueDeleted(Ztc::Queue *);
   void hubAdded(Ztc::Hub *);
   void hubDeleted(Ztc::Hub *);
   void idxLinkAdded(Ztc::Link *);
@@ -291,7 +287,6 @@ private:
   AppCf				m_cf;
   App_::State			*m_state = nullptr;
   MxIdx				m_mxIdx;
-  MxQueueIdx			m_mxQueueIdx;
   HubIdx			m_hubIdx;
   LinkIdx			m_linkIdx;
   PoolIdx			m_poolIdx;

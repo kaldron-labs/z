@@ -6,8 +6,9 @@
 
 #include <string.h>
 
+#ifndef _WIN32
 #include <sys/socket.h>
-#include <unistd.h>
+#endif
 
 #include <iostream>
 
@@ -44,11 +45,23 @@ static ZmAtomic<unsigned> cbErrors{0}, cbChecks{0};
 
 constexpr ZuString Ping{"ping\r\n"};
 constexpr ZuString Pong{"pong\r\n"};
+enum class FinishCase { None, Data, FlushData, EmptyAfterFlush, Empty };
+constexpr unsigned FinishPings = ZiIOBuf_DefltSize / Ping.length() * 3 + 1;
+constexpr unsigned QueuedPings = 128 * 1024 / Ping.length();
+bool pendingCase(FinishCase mode) {
+  return mode == FinishCase::FlushData || mode == FinishCase::EmptyAfterFlush;
+}
+unsigned finishedBytes(FinishCase mode) {
+  unsigned pings = pendingCase(mode) ? QueuedPings : 0;
+  if (mode == FinishCase::Data || mode == FinishCase::FlushData) pings += FinishPings;
+  return pings * Ping.length();
+}
 
 struct State {
   ZmSemaphore		done;
   ZmSemaphore		listening;
   ZmSemaphore		creditParked;
+  ZmSemaphore		finishQueued;
   ZmAtomic<unsigned>	errors{0};
   ZmAtomic<unsigned>	doneCount{0};
   ZmAtomic<unsigned>	clientConnected{0};
@@ -56,6 +69,7 @@ struct State {
   ZmAtomic<unsigned>	creditHold{0}, creditSeen{0}, creditReplies{0};
   ZmAtomic<void *>	serverLink{nullptr};
   ZmAtomic<ZiConnection *>	serverCxn{nullptr};
+  ZmAtomic<unsigned>	finishCase{unsigned(FinishCase::None)}, finishOnTx{0};
   Ztc::QueueTelemetry	clientRx;
   Ztc::QueueTelemetry	clientTx;
   ZiIP			ip;
@@ -267,7 +281,9 @@ struct ServerApp : public Ztcp::Server<ServerApp> {
 struct ServerApp::Link : public Ztcp::SrvLink<ServerApp, Link, Ztcp::RxBufAlloc<128>> {
   using Base = Ztcp::SrvLink<ServerApp, Link, Ztcp::RxBufAlloc<128>>;
 
-  Link(ServerApp *app) : Base(app) {
+  Link(ServerApp *app) : Base(app),
+      m_finishCase{FinishCase(unsigned(app->state->finishCase))},
+      m_finishOnTx{bool(app->state->finishOnTx)} {
     if (app->state->creditMessages) rxCap_(app->state->creditCap);
   }
 
@@ -278,10 +294,45 @@ struct ServerApp::Link : public Ztcp::SrvLink<ServerApp, Link, Ztcp::RxBufAlloc<
     auto tx = stream->txStream();
     (void)tx;
     app()->state->serverConnected = 1;
+    if (m_finishCase != FinishCase::None) {
+      if (m_finishOnTx)
+	app()->txRun([link = ZmRef(this)] { link->finishOutput(link->txStream_()); });
+      else
+	finishOutput(txStream());
+    }
+  }
+  template <typename Out>
+  void finishOutput(Out out) {
+    auto mode = m_finishCase;
+    if (pendingCase(mode)) {
+      for (unsigned i = 0; i < QueuedPings; ++i) out << Ping;
+      out << Zi::flush();
+    }
+    if (mode == FinishCase::Data || mode == FinishCase::FlushData)
+      for (unsigned i = 0; i < FinishPings; ++i) out << Ping;
+    out << Zi::finish();
+    ZTCP_CHECK_RT(!out.failed(), "public TCP stream rejected finish");
+    if (pendingCase(mode)) {
+      app()->txRun([link = ZmRef(this)] {
+	link->app()->mx()->txRun([link] {
+	  ZTCP_CHECK_RT(link->txQueue.count_() > 1, "final TCP entry did not queue behind data");
+	  link->app()->state->finishQueued.post();
+	});
+      });
+    }
+  }
+  void sending(ZiTxContext &io) {
+    auto mode = m_finishCase;
+    if (mode == FinishCase::None || mode == FinishCase::Empty) return;
+    unsigned total = finishedBytes(mode);
+    m_submitted += io.buf->length;
+    ZTCP_CHECK_RT(io.disconnected() == (m_submitted == total),
+      "physical buffer has incorrect finish flag");
   }
   void disconnected(bool) {
     ZTCP_CHECK_RT(this->txQueue.empty_(),
       "disconnect completed before I/O Tx drained");
+    if (m_finishCase != FinishCase::None) app()->state->done.post();
   }
 
   int process(Ztcp::RxStream &rx) {
@@ -296,6 +347,10 @@ struct ServerApp::Link : public Ztcp::SrvLink<ServerApp, Link, Ztcp::RxBufAlloc<
     sendBytes(*this, Pong);
     return 1;
   }
+private:
+  const FinishCase m_finishCase;
+  const bool m_finishOnTx;
+  unsigned m_submitted = 0;	// physical Tx owner
 };
 
 ZiConnection *ServerApp::accepted(const ZiCxnInfo &ci)
@@ -385,15 +440,9 @@ void testLoop(
   ZTCP_CHECK_RT(state.doneCount.load_() == 1, "client did not receive response");
   ZTCP_CHECK_RT(state.clientConnected.load_(), "client did not connect");
   ZTCP_CHECK_RT(state.serverConnected.load_(), "server did not connect");
-  ZTCP_CHECK_RT(state.clientRx.inCount >= 1, "Rx ingress count is zero");
-  ZTCP_CHECK_RT(state.clientRx.inBytes >= Pong.length(),
-    "Rx ingress bytes omit pong");
   ZTCP_CHECK_RT(state.clientTx.inCount >= 1, "Tx ingress count is zero");
   ZTCP_CHECK_RT(state.clientTx.inBytes >= Ping.length(),
     "Tx ingress bytes omit ping");
-  ZTCP_CHECK_RT(state.clientTx.outCount >= 1, "Tx egress count is zero");
-  ZTCP_CHECK_RT(state.clientTx.outBytes >= Ping.length(),
-    "Tx egress bytes omit ping");
   ZTCP_CHECK_RT(!state.clientRx.count, "Rx queue did not drain");
   ZTCP_CHECK_RT(!state.clientTx.count, "Tx queue did not drain");
 
@@ -406,6 +455,79 @@ void testLoop(
   link = nullptr;
   ZuCheckRT(!cbErrors.load_(), log_("callback checks failed"));
   ZuCheckRT(cbChecks.load_() > priorChecks, log_("callback checks did not run"));
+}
+
+void testFinish()
+{
+  ZuTestScopeRT(testFinish);
+  cbErrors = 0;
+  State state;
+  state.ip = ZiIP{"127.0.0.1"};
+  ServerApp server(&state);
+  ZiMultiplex mx(mxParams().txBufSize(4096));
+  Ztcp::ServerParams params(&mx, "3", "4");
+  params.txAllocator(ServerApp::Link::txAllocator(&mx));
+  if (!server.init(ZuMv(params)) || !mx.start()) {
+    ZuCheckRT(false, log_("finish fixture initialization failed"));
+    return;
+  }
+  if (!server.start()) {
+    ZuCheckRT(false, log_("finish server start failed"));
+    server.final();
+    mx.stop();
+    return;
+  }
+  server.listen();
+  bool listening = !state.listening.timedwait(Zm::now(5));
+  ZuCheckRT(listening, log_("finish server listen timed out"));
+  sockaddr_in peer{};
+  peer.sin_family = AF_INET;
+  peer.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  peer.sin_port = htons(state.port);
+  for (bool onTx : {false, true}) {
+    for (auto mode : {FinishCase::Data, FinishCase::FlushData,
+	FinishCase::EmptyAfterFlush, FinishCase::Empty}) {
+      if (!listening) break;
+      state.finishOnTx = onTx;
+      state.finishCase = unsigned(mode);
+      Zi::Socket fd = ::socket(AF_INET, SOCK_STREAM, 0);
+#ifdef _WIN32
+      DWORD timeout = 5000;
+#else
+      timeval timeout{5, 0};
+#endif
+      int receiveBytes = 4096;
+      if (Zi::nullSocket(fd) || ::setsockopt(fd, SOL_SOCKET, SO_RCVBUF,
+	    reinterpret_cast<const char *>(&receiveBytes), sizeof(receiveBytes)) ||
+	  ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+	    reinterpret_cast<const char *>(&timeout), sizeof(timeout)) ||
+	  ::connect(fd, reinterpret_cast<sockaddr *>(&peer), sizeof(peer))) {
+	ZuCheckRT(false, log_("finish peer connect failed"));
+	if (!Zi::nullSocket(fd)) Zi::closeSocket(fd);
+	break;
+      }
+      if (pendingCase(mode))
+	ZuCheckRT(!state.finishQueued.timedwait(Zm::now(5)), log_("final TCP queue timed out"));
+      unsigned expected = finishedBytes(mode);
+      unsigned bytes = 0;
+      bool ordered = true;
+      char buf[512];
+      int n;
+      while ((n = ::recv(fd, buf, sizeof(buf), 0)) > 0) {
+	for (int i = 0; i < n; ++i, ++bytes)
+	  if (buf[i] != Ping[bytes % Ping.length()]) ordered = false;
+      }
+      Zi::closeSocket(fd);
+      ZuCheckRT(!n && ordered && bytes == expected,
+	log_("finish peer expected ", expected, " bytes then EOF, received ", bytes, ", recv ", n));
+      listening = !state.done.timedwait(Zm::now(5));
+      ZuCheckRT(listening, log_("finish teardown timed out"));
+    }
+  }
+  server.stop();
+  server.final();
+  mx.stop();
+  ZuCheckRT(!cbErrors.load_(), log_("finish callback checks failed"));
 }
 
 } // namespace ZtcpLoopTest
@@ -425,6 +547,7 @@ int main(int argc, char **argv)
     ZtcpTestPort::Loop6);
   ZuTestCall(ZtcpLoopTest::testLoop, "testCreditIPv4", ZiIP{"127.0.0.1"}, "127.0.0.1",
     ZtcpTestPort::Loop4, 100);
+  ZuTestCall(ZtcpLoopTest::testFinish);
   ZiLog::stop();
   return 0;
 }

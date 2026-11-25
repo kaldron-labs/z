@@ -23,8 +23,9 @@ The dashboard module observes its outgoing request frames: expansion and EOS
 leave the original seven detail requests in place, a late publisher adds seven,
 and collector replacement establishes fourteen new ones without sending
 unsubscribe requests for routes already removed by agent disconnection.
-Controlled publishers supply connections, links, pools and two databases with
-hosts and tables, so every tree branch is populated through the real transport.
+Controlled publishers supply multiplexers, links with queues, pools and two
+databases with hosts and tables. The live test populates every tree branch
+through the real transport.
 A wildcard heap snapshot must include both publishers before aggregate EOS;
 retiring one publisher must leave the other wildcard leg delivering snapshots.
 An unsolicited empty snapshot EOS must leave publisher discovery and delivery

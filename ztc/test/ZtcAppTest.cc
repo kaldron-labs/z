@@ -257,8 +257,8 @@ static void appTest()
   ZuCheck(threads.valid && threads.frames);
   auto mxs = snapshot(SeqNo + 4, Ztc::Group::Mx, "ztc-app-test");
   ZuCheck(mxs.valid && mxs.frames == 1);
-  auto queues = snapshot(SeqNo + 5, Ztc::Group::Queue, "*:*:*");
-  ZuCheck(queues.valid && queues.frames);
+  auto queues = snapshot(SeqNo + 5, Ztc::Group::Queue, "*:ztc-app-test:*");
+  ZuCheck(queues.valid && !queues.frames);
   auto hubs = snapshot(SeqNo + 6, Ztc::Group::Hub, "*:*");
   ZuCheck(hubs.valid);
   auto dbs = snapshot(SeqNo + 7, Ztc::Group::DB, "*");

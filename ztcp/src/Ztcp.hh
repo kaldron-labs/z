@@ -259,12 +259,6 @@ friend Cxn;
     data.rxBytes = 0;
     data.txBytes = 0;
     data.reconnects = 0;
-    if (Cxn *cxn = m_cxn) {
-      data.rxCalls = cxn->rxCalls();
-      data.txCalls = cxn->txCalls();
-      data.rxBytes = cxn->rxBytes();
-      data.txBytes = cxn->txBytes();
-    }
     data.type = Ztc::LinkType::TCP;
     data.state = state_();
   }
@@ -365,15 +359,13 @@ private:
       // Retire the old physical output on I/O Tx before publishing B. This
       // neither flushes A nor waits for its disconnect callbacks. Delayed A
       // send setups must reject the closed socket before touching the queue.
-      auto old_ = old.ptr();
-      old_->send(ZiTxFn{[
+      auto mx = old->mx();
+      mx->txRun([
 	impl = ZmRef(this->impl()), cxn = ZuMv(old)
-      ](ZiTxContext &io) {
-	io.complete();
-	impl->Tx::txQueue.clean();
-	(void)cxn;
-	return false;
-      }});
+      ] {
+	cxn->txContext().close();
+	impl->Tx::resetTxQueue();
+      });
     }
     m_cxn = ZuMv(cxn);
     m_cxn->rxCurrent(true);
@@ -406,7 +398,7 @@ private:
 	mx->txRun([
 	  impl = ZuMv(impl), cxn = ZuMv(cxn), peer
 	]() mutable {
-	  if (impl->closing_() == cxn.ptr()) impl->Tx::txQueue.clean();
+	  if (impl->closing_() == cxn.ptr()) impl->Tx::resetTxQueue();
 	  auto app = impl->app();
 	  app->rxRun([
 	    impl = ZuMv(impl), cxn = ZuMv(cxn), peer
@@ -534,13 +526,11 @@ public:
     }
 
     bool sendBuf_(ZmRef<ZiIOBuf> buf, Zi::SendFlags::T flags) {
-      if (flags & Zi::SendFlags::Finish()) return false;
-      buf->owner = m_link->impl();
-      auto link = static_cast<Impl *>(buf->owner);
+      bool finish = flags & Zi::SendFlags::Finish();
       if constexpr (AppThread)
-	return link->send(ZuMv(buf));
+	return m_link->send(ZuMv(buf), finish);
       else
-	return link->send_(ZuMv(buf));
+	return m_link->send_(ZuMv(buf), finish);
     }
 
   private:
@@ -561,49 +551,43 @@ public:
     return TxStream_<false>{*this};
   }
 
-  bool send(ZmRef<ZiIOBuf> buf) {
-    if (ZuUnlikely(!buf || buf->failed() || !buf->length || m_disconnecting.load_()))
+  bool send(ZmRef<ZiIOBuf> buf, bool finish = false) {
+    if (ZuUnlikely((buf ? buf->failed() || !buf->length : !finish) || m_disconnecting.load_()))
       return tcpTxError_(
 	"TCP connection is closed for transmission");
-    buf->owner = impl();
-    app()->txInvoke([buf = ZuMv(buf)]() mutable {
-      auto link = static_cast<Impl *>(buf->owner);
-      link->send_(ZuMv(buf));
+    app()->txInvoke([this, buf = ZuMv(buf), finish]() mutable {
+      send_(ZuMv(buf), finish);
     });
     return true;
   }
 
 protected:
-  bool send_(ZmRef<ZiIOBuf> buf) { // direct call from within tx thread
+  bool send_(ZmRef<ZiIOBuf> buf, bool finish = false) { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Ztcp", (),
       "TCP send_ outside Tx thread", return false);
-    if (ZuUnlikely(!buf || buf->failed() || !buf->length ||
+    if (ZuUnlikely((buf ? buf->failed() || !buf->length : !finish) ||
 	m_disconnecting.load_() || !m_txCxn)) {
       queueTxError_(m_txCxn, "TCP connection is closed for transmission");
       return false;
     }
-    buf->owner = impl();
-    auto length = buf->length;
-    m_txInCount.store_(m_txInCount.load_() + 1);
-    m_txInBytes.store_(m_txInBytes.load_() + length);
-    m_txCxn->send(ZiTxFn::mvFn(ZuMv(buf), [](ZmRef<ZiIOBuf> buf, ZiTxContext &io) {
-      auto cxn = static_cast<Cxn *>(io.cxn);
-      if (ZuUnlikely(!cxn->up())) return false;
-      auto link = Tx::impl(buf);
-      if (auto count = link->Tx::txQueue.count_();
-	  ZuUnlikely(count && count >= link->maxQueueLen())) {
-	cxn->close();
-	link->tcpTxError_("TCP transmit queue full");
-	return false;
-      }
-      // ZiTx admission runs inline on this physical connection's I/O Tx thread.
-      link->Tx::send(cxn, ZuMv(buf));
-      return false;
-    }));
+    if (buf) {
+      m_txInCount.store_(m_txInCount.load_() + 1);
+      m_txInBytes.store_(m_txInBytes.load_() + buf->length);
+    }
+    if (finish) {
+      auto cxn = ZuMv(m_txCxn);
+      Tx::send(cxn.ptr(), ZuMv(buf), true);
+    } else
+      Tx::send(m_txCxn.ptr(), ZuMv(buf));
     return true;
   }
 
 public:
+  void txQueueFull(ZiTxContext &io, ZmRef<ZiIOBuf>) {
+    io.close();
+    tcpTxError_("TCP transmit queue full");
+  }
+
   void sent(ZmRef<ZiIOBuf>, bool ok) {
     // ZiConnection::errorSend already closes the failed physical socket.
     // A diagnostic callback cannot authorize closing a different successor.
@@ -676,12 +660,11 @@ private:
   }
 
   void rxQueueTelemetry_(Ztc::QueueTelemetry &data) const {
-    Cxn *cxn = m_cxn;
     data.ownerID = app()->telKey().template p<1>();
     data.id = m_id;
-    data.inBytes = cxn ? cxn->rxBytes() : 0;
+    data.inBytes = 0;
     data.outBytes = 0;
-    data.inCount = cxn ? cxn->rxCalls() : 0;
+    data.inCount = 0;
     data.outCount = 0;
     data.count = m_rxStream.count_();
     data.size = 0;
@@ -690,13 +673,12 @@ private:
   }
 
   void txQueueTelemetry_(Ztc::QueueTelemetry &data) const {
-    Cxn *cxn = m_cxn;
     data.ownerID = app()->telKey().template p<1>();
     data.id = m_id;
     data.inCount = m_txInCount.load_();
     data.inBytes = m_txInBytes.load_();
-    data.outBytes = cxn ? cxn->txBytes() : 0;
-    data.outCount = cxn ? cxn->txCalls() : 0;
+    data.outBytes = 0;
+    data.outCount = 0;
     data.count = Tx::txQueue.count_();
     data.size = 0;
     data.full = 0;

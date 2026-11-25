@@ -18,8 +18,6 @@
 
 #include <zlib/Zfb.hh>
 
-#include <zlib/ZiMultiplex.hh>
-
 #include <zlib/ZtcHeap.hh>
 #include <zlib/ZtcHash.hh>
 #include <zlib/ZtcThread.hh>
@@ -46,9 +44,6 @@ inline ZuCSpan ZfVFieldTypeID(ZuSemVer *) { return "SemVer"; }
 namespace ZmThreadPriority {
   Zfb::AsEnum<"Ztc.fbs.ThreadPriority"> Zfb_Fmt(Map *);
 }
-namespace ZiCxnFlags {
-  Zfb::AsEnum<"Ztc.fbs.CxnFlags"> Zfb_Fmt(Map *);
-}
 
 namespace Ztc {
 
@@ -58,7 +53,6 @@ namespace RAG {
 
 ZtEnumNS(ZtcAPI, EngineState, int8_t,
   Stopped, Starting, Running, Stopping, StartPending, StopPending);
-ZtEnumNS(ZtcAPI, CxnType, int8_t, TCPIn, TCPOut, UDP);
 
 ZuAssert(EngineState::Stopped == ZmEngineState::Stopped);
 ZuAssert(EngineState::Starting == ZmEngineState::Starting);
@@ -66,12 +60,8 @@ ZuAssert(EngineState::Running == ZmEngineState::Running);
 ZuAssert(EngineState::Stopping == ZmEngineState::Stopping);
 ZuAssert(EngineState::StartPending == ZmEngineState::StartPending);
 ZuAssert(EngineState::StopPending == ZmEngineState::StopPending);
-ZuAssert(CxnType::TCPIn == ZiCxnType::TCPIn);
-ZuAssert(CxnType::TCPOut == ZiCxnType::TCPOut);
-ZuAssert(CxnType::UDP == ZiCxnType::UDP);
 
 namespace EngineState { Zfb::AsEnum<"Ztc.fbs.EngineState"> Zfb_Fmt(Map *); }
-namespace CxnType { Zfb::AsEnum<"Ztc.fbs.CxnType"> Zfb_Fmt(Map *); }
 
 namespace LinkType {
   Zfb::AsEnum<"Ztc.fbs.LinkType"> Zfb_Fmt(Map *);
@@ -184,36 +174,6 @@ Zfb::AsTable<"Ztc.fbs.ThreadTelemetry"> Zfb_Fmt(ThreadTelemetry *);
 ZuAssert((ZuIsSame<
   ZuStructKeyT<Zfb::View<ThreadTelemetry>>::Types,
   decltype(ZuDeclVal<const Thread &>().telKey())::Types>{}));
-
-ZfStruct(ZtcAPI, (CxnTelemetry, FB),
-  (mxID,	(Ctor<0>, Keys<0>),			String),
-  (remoteIP,	(Ctor<17>, Keys<0>),			UDT),
-  (remotePort,	(Ctor<19>, Keys<0>),			UInt16),
-  (localIP,	(Ctor<16>, Keys<0>),			UDT),
-  (localPort,	(Ctor<18>, Keys<0>),			UInt16),
-  (socket,	(Ctor<1>),				UInt64),
-  (rxCalls,	(Ctor<2>, Mutable, Series, Delta),	UInt64),
-  (rxBytes,	(Ctor<3>, Mutable, Series, Delta),	UInt64),
-  (txCalls,	(Ctor<4>, Mutable, Series, Delta),	UInt64),
-  (txBytes,	(Ctor<5>, Mutable, Series, Delta),	UInt64),
-  (rxBufSize,	(Ctor<6>),				UInt32),
-  (rxBufLen,	(Ctor<7>, Mutable, Series),		UInt32),
-  (txBufSize,	(Ctor<8>),				UInt32),
-  (txBufLen,	(Ctor<9>, Mutable, Series),		UInt32),
-  (mreqAddr,	(Ctor<10>),				UDT),
-  (mreqIf,	(Ctor<11>),				UDT),
-  (mreqIfIndex,	(Ctor<12>),				UInt32),
-  (mif,		(Ctor<13>),				UDT),
-  (mifIndex,	(Ctor<14>),				UInt32),
-  (ttl,		(Ctor<15>),				UInt32),
-  (flags,	(Ctor<20>, Flags<ZiCxnFlags::Map>),	UInt8),
-  (type,	(Ctor<21>, Enum<CxnType::Map>),		Int8),
-  ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),	Int8));
-Zfb::AsTable<"Ztc.fbs.CxnTelemetry"> Zfb_Fmt(CxnTelemetry *);
-
-ZuAssert((ZuIsSame<
-  ZuStructKeyT<Zfb::View<CxnTelemetry>>::Types,
-  decltype(ZuDeclVal<const Connection &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (MxTelemetry, FB),
   (id,		(Ctor<0>, Keys<0>),				String),

@@ -324,8 +324,6 @@ void telemetryUnions()
     Ztc::HashTelemetry{}));
   ZuCheck(unionValue(Ztc::TelemetryBody::ThreadTelemetry,
     Ztc::ThreadTelemetry{}));
-  ZuCheck(unionValue(Ztc::TelemetryBody::CxnTelemetry,
-    Ztc::CxnTelemetry{}));
   ZuCheck(unionValue(Ztc::TelemetryBody::MxTelemetry,
     Ztc::MxTelemetry{}));
   ZuCheck(unionValue(Ztc::TelemetryBody::QueueTelemetry,
@@ -393,16 +391,6 @@ void rag()
   ZuCheck(queue.rag() == Ztc::RAG::Amber);
   queue.count = 8;
   ZuCheck(queue.rag() == Ztc::RAG::Red);
-
-  Ztc::CxnTelemetry cxn;
-  ZuCheck(cxn.rag() == Ztc::RAG::Red);
-  cxn.rxBufSize = cxn.txBufSize = 100;
-  cxn.rxBufLen = cxn.txBufLen = 49;
-  ZuCheck(cxn.rag() == Ztc::RAG::Green);
-  cxn.rxBufLen = 50;
-  ZuCheck(cxn.rag() == Ztc::RAG::Amber);
-  cxn.rxBufLen = 80;
-  ZuCheck(cxn.rag() == Ztc::RAG::Red);
 
   Ztc::MxTelemetry mx;
   mx.state = ZmEngineState::Stopped;
@@ -596,56 +584,6 @@ void telemetryValues()
 	fbo.get<Ztc::ZfField(QueueTelemetry, count)>() == data.count);
     ZuCheck(fbo && fbo.get<Ztc::ZfField(QueueTelemetry, size)>() == data.size &&
       fbo.get<Ztc::ZfField(QueueTelemetry, full)>() == data.full);
-  }
-  {
-    Ztc::CxnTelemetry data;
-    data.mxID = "mx";
-    data.socket = uint64_t(0xabcdef0123456789);
-    data.rxCalls = uint64_t(0x100000021);
-    data.rxBytes = uint64_t(0x200000022);
-    data.txCalls = uint64_t(0x300000023);
-    data.txBytes = uint64_t(0x400000024);
-    data.rxBufSize = uint32_t(0x80000021);
-    data.rxBufLen = uint32_t(0x70000022);
-    data.txBufSize = uint32_t(0x80000023);
-    data.txBufLen = uint32_t(0x70000024);
-    data.mreqAddr = ZiIP{"239.1.2.3"};
-    data.mreqIf = ZiIP{"10.1.2.3"};
-    data.mreqIfIndex = uint32_t(0x80000025);
-    data.mif = ZiIP{"10.2.3.4"};
-    data.mifIndex = uint32_t(0x80000026);
-    data.ttl = uint32_t(0x80000027);
-    data.localIP = ZiIP{"127.0.0.1"};
-    data.remoteIP = ZiIP{"127.0.0.2"};
-    data.localPort = uint16_t(50001);
-    data.remotePort = uint16_t(50002);
-    data.flags = 5;
-    data.type = ZiCxnType::TCPOut;
-    Ztc::Builder fbb{allocFrame()};
-    fbb.finish(
-      Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, data));
-    auto fbo = Zfb::verify<Ztc::CxnTelemetry>(fbb.span()) ?
-      Zfb::view<Ztc::CxnTelemetry>(fbb.span()) : Zfb::View<Ztc::CxnTelemetry>{};
-    auto loaded = Zfb::handler<Ztc::CxnTelemetry>(fbo).ctor();
-    ZuCheck(fbo && fbo.get<Ztc::ZfField(CxnTelemetry, socket)>() == data.socket &&
-      fbo.get<Ztc::ZfField(CxnTelemetry, rxCalls)>() == data.rxCalls &&
-	fbo.get<Ztc::ZfField(CxnTelemetry, rxBytes)>() == data.rxBytes &&
-      fbo.get<Ztc::ZfField(CxnTelemetry, txCalls)>() == data.txCalls &&
-	fbo.get<Ztc::ZfField(CxnTelemetry, txBytes)>() == data.txBytes);
-    ZuCheck(fbo && fbo.get<Ztc::ZfField(CxnTelemetry, rxBufSize)>() == data.rxBufSize &&
-      fbo.get<Ztc::ZfField(CxnTelemetry, rxBufLen)>() == data.rxBufLen &&
-      fbo.get<Ztc::ZfField(CxnTelemetry, txBufSize)>() == data.txBufSize &&
-      fbo.get<Ztc::ZfField(CxnTelemetry, txBufLen)>() == data.txBufLen);
-    ZuCheck(loaded.mreqAddr == data.mreqAddr && loaded.mreqIf == data.mreqIf &&
-      loaded.mif == data.mif && loaded.localIP == data.localIP &&
-      loaded.remoteIP == data.remoteIP);
-    ZuCheck(fbo && fbo.get<Ztc::ZfField(CxnTelemetry, mreqIfIndex)>() == data.mreqIfIndex &&
-      fbo.get<Ztc::ZfField(CxnTelemetry, mifIndex)>() == data.mifIndex &&
-	fbo.get<Ztc::ZfField(CxnTelemetry, ttl)>() == data.ttl &&
-      fbo.get<Ztc::ZfField(CxnTelemetry, localPort)>() == data.localPort &&
-      fbo.get<Ztc::ZfField(CxnTelemetry, remotePort)>() == data.remotePort &&
-	fbo.get<Ztc::ZfField(CxnTelemetry, flags)>() == data.flags &&
-      int(fbo.get<Ztc::ZfField(CxnTelemetry, type)>()) == int(data.type));
   }
   {
     Ztc::MxTelemetry data;

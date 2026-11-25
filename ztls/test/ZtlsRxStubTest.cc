@@ -193,12 +193,6 @@ friend inline ZuStringT<"Ztls.RxStub.Provider"> ZmNHeapID(Provider *);
       cxn->disconnected(peer);
     });
   }
-  TelKey telKey() const override { return {}; }
-  void telemetry(Ztc::MxTelemetry &) const override { }
-  unsigned allCxns(AllCxnsFn) const override { return 0; }
-  unsigned allQueues(Ztc::QueueMgr::AllFn) const override { return 0; }
-  void watch(AddCxnFn, DelCxnFn) override { }
-  void unwatch() override { }
 };
 
 struct Client : Ztls::Client<Client> {

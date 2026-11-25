@@ -50,14 +50,14 @@ Zfb::AsTable<"Ztc.fbs.Shutdown"> Zfb_Fmt(Shutdown *);
 
 namespace TelemetryBody {
   enum {
-    None, HeapTelemetry, HashTelemetry, ThreadTelemetry, CxnTelemetry,
+    None, HeapTelemetry, HashTelemetry, ThreadTelemetry,
     MxTelemetry, QueueTelemetry, HubTelemetry, LinkTelemetry, PoolTelemetry,
     DBTelemetry, DBHostTelemetry, DBTableTelemetry, AppTelemetry, Shutdown,
     AlertTelemetry
   };
 }
 ZuDerive(TelemetryValue, (ZuUnion<void,
-  HeapTelemetry, HashTelemetry, ThreadTelemetry, CxnTelemetry,
+  HeapTelemetry, HashTelemetry, ThreadTelemetry,
   MxTelemetry, QueueTelemetry, HubTelemetry, LinkTelemetry, PoolTelemetry,
   DBTelemetry, DBHostTelemetry, DBTableTelemetry, AppTelemetry, Shutdown,
   AlertTelemetry>));
@@ -65,7 +65,6 @@ Zfb::AsUnion<"Ztc.fbs.TelemetryBody",
   Zfb::Alt<"HeapTelemetry", HeapTelemetry>,
   Zfb::Alt<"HashTelemetry", HashTelemetry>,
   Zfb::Alt<"ThreadTelemetry", ThreadTelemetry>,
-  Zfb::Alt<"CxnTelemetry", CxnTelemetry>,
   Zfb::Alt<"MxTelemetry", MxTelemetry>,
   Zfb::Alt<"QueueTelemetry", QueueTelemetry>,
   Zfb::Alt<"HubTelemetry", HubTelemetry>,

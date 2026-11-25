@@ -197,7 +197,7 @@ struct PacketSink {
   PacketSink &operator <<(ZuBSpan span) {
     // Foreign/replayed WS output is serialized into destination storage.
     auto copy = packetStorage();
-    ZmAssert(copy->append(span));
+    ZmAssert_(copy->append(span));
     parts.push(ZuMv(copy));
     return *this;
   }

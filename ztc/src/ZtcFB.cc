@@ -22,8 +22,6 @@ ZfStructImpl(HashTelemetry);
 ZfStructImpl(HashTelemetry, FB);
 ZfStructImpl(ThreadTelemetry);
 ZfStructImpl(ThreadTelemetry, FB);
-ZfStructImpl(CxnTelemetry);
-ZfStructImpl(CxnTelemetry, FB);
 ZfStructImpl(MxTelemetry);
 ZfStructImpl(MxTelemetry, FB);
 ZfStructImpl(QueueTelemetry);
@@ -51,7 +49,6 @@ ZfStructImpl(Msg, FB);
 ZtEnumImplNS(Group);
 ZtEnumImplNS(AckStatus);
 ZtEnumImplNS(EngineState);
-ZtEnumImplNS(CxnType);
 ZtEnumImplNS(QueueType);
 
 } // namespace Ztc

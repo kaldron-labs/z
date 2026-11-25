@@ -24,7 +24,7 @@ using namespace ZuTestUtil;
 namespace Telemetry {
 using TypeList = ZuTypeList<
   Ztc::HeapTelemetry, Ztc::HashTelemetry, Ztc::ThreadTelemetry,
-  Ztc::MxTelemetry, Ztc::CxnTelemetry, Ztc::QueueTelemetry,
+  Ztc::MxTelemetry, Ztc::QueueTelemetry,
   Ztc::HubTelemetry, Ztc::LinkTelemetry, Ztc::DBTableTelemetry,
   Ztc::DBHostTelemetry, Ztc::DBTelemetry, Ztc::AppTelemetry,
   Ztc::AlertTelemetry, Ztc::PoolTelemetry>;
@@ -166,7 +166,7 @@ private:
       int rag = Ztc::RAG::Off;
       unsigned groups = 0;
       unsigned otherGroups = 0;
-      bool cxn = false;
+      bool mx = false;
       bool link = false;
       unsigned dbLeaves = 0;
     } rows{src.row};
@@ -188,6 +188,8 @@ private:
 	return false;
       }
       if (indices[0] != rows->root) return false;
+      if (depth == 3 && indices[1] == 3 && key == "fixture-mx")
+	rows->mx = !gtk_tree_model_iter_has_child(model, iter);
       if (depth == 4) {
 	if (indices[1] == 0) {
 	  GtkTreeIter parent;
@@ -205,7 +207,6 @@ private:
 	  }
 	  return false;
 	}
-	if (indices[1] == 3 && key == "fixture-mx") rows->cxn = true;
 	if (indices[1] == 6 && key == "fixture-hub") rows->link = true;
 	return false;
       }
@@ -213,7 +214,7 @@ private:
 	  (key == "fixture-db" || key == "fixture-db2")) ++rows->dbLeaves;
       return false;
     }, &rows);
-    if (!rows.baseFound || rows.groups != 255 || !rows.cxn || !rows.link ||
+    if (!rows.baseFound || rows.groups != 255 || !rows.mx || !rows.link ||
 	rows.dbLeaves != 4) return false;
     switch (m_livePhase) {
       case 0: {
@@ -338,12 +339,6 @@ private:
       data.tid = 123;
     } else if constexpr (ZuIsSame<T, Ztc::MxTelemetry>{}) {
       data.id = "mx";
-    } else if constexpr (ZuIsSame<T, Ztc::CxnTelemetry>{}) {
-      data.mxID = "mx";
-      data.remoteIP = "192.0.2.1";
-      data.remotePort = 443;
-      data.localIP = "192.0.2.2";
-      data.localPort = 54321;
     } else if constexpr (ZuIsSame<T, Ztc::QueueTelemetry>{}) {
       data.ownerID = "owner";
       data.id = "queue";
@@ -457,7 +452,6 @@ private:
       {"0:2:0", "123", "", "", "", ""},
       {"0:3", "multiplexers", "", "", "", ""},
       {"0:3:0", "mx", "", "", "", ""},
-      {"0:3:0:0", "mx", "192.0.2.1", "443", "192.0.2.2", "54,321"},
       {"0:4", "queues", "id", "type", "", ""},
       {"0:4:0", "owner", "queue", "Tx", "", ""},
       {"0:5", "pools", "id", "", "", ""},
@@ -683,8 +677,7 @@ private:
 	    if constexpr (ZuIsSame<T, Ztc::HeapTelemetry>{}) return Group::Heap;
 	    else if constexpr (ZuIsSame<T, Ztc::HashTelemetry>{}) return Group::Hash;
 	    else if constexpr (ZuIsSame<T, Ztc::ThreadTelemetry>{}) return Group::Thread;
-	    else if constexpr (ZuIsSame<T, Ztc::MxTelemetry>{} ||
-	      ZuIsSame<T, Ztc::CxnTelemetry>{}) return Group::Mx;
+	    else if constexpr (ZuIsSame<T, Ztc::MxTelemetry>{}) return Group::Mx;
 	    else if constexpr (ZuIsSame<T, Ztc::QueueTelemetry>{}) return Group::Queue;
 	    else if constexpr (ZuIsSame<T, Ztc::DBTelemetry>{} ||
 	      ZuIsSame<T, Ztc::DBHostTelemetry>{} ||
@@ -751,7 +744,6 @@ private:
 	  break;
 	}
 	// Children create placeholder parents before the real parent records.
-	send(sample<Ztc::CxnTelemetry>());
 	send(sample<Ztc::LinkTelemetry>());
 	ZuUnroll::all<Telemetry::TypeList>([&send]<typename T>() {
 	  if constexpr (!ZuIsSame<T, Ztc::AppTelemetry>{} &&

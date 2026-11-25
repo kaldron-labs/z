@@ -75,8 +75,6 @@ friend inline ZuStringT<"ZdbFBTest.Plugin"> ZmNHeapID(Plugin *);
   Zi::IOBufType::T reqType = Zi::IOBufType::App;
   unsigned reqSize = 0, reqAlign = 0, reqCount = 0;
 
-  explicit Plugin(ZiMultiplex *mx) : ZiMxPlugin{mx} { }
-
   Zi::IOBufPool *allocator(
     Zi::IOBufType::T type, unsigned size, unsigned align, unsigned count) override
   {
@@ -101,21 +99,14 @@ friend inline ZuStringT<"ZdbFBTest.Plugin"> ZmNHeapID(Plugin *);
   void disconnect(ZiConnection *, bool) override { }
   void close(ZiConnection *, bool) override { }
   void wake() override { }
-  TelKey telKey() const override { return {}; }
-  void telemetry(Ztc::MxTelemetry &) const override { }
-  unsigned allCxns(AllCxnsFn) const override { return 0; }
-  unsigned allQueues(Ztc::QueueMgr::AllFn) const override { return 0; }
-  void watch(AddCxnFn, DelCxnFn) override { }
-  void unwatch() override { }
 };
 
 static void poolAllocation()
 {
   ZuTestScope(poolAllocation);
-  ZiMultiplex mx;
-  auto plugin = new Plugin{&mx};
-  ZmRef<ZiMxPlugin> transport = plugin;
-  mx.plugin(ZuMv(transport));
+  ZmRef<Plugin> transport = new Plugin;
+  auto plugin = transport.ptr();
+  ZiMultiplex mx{{}, ZuMv(transport)};
   auto alloc = tableBufAllocFn<Small>(&mx);
   ZuCheck(plugin->reqType == Zi::IOBufType::TxTCP);
   ZuCheck(plugin->reqSize == ZdbBuf_Size<Small>{});

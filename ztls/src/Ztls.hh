@@ -482,12 +482,6 @@ public:
     data.rxBytes = 0;
     data.txBytes = 0;
     data.reconnects = 0;
-    if (Cxn *cxn = m_cxn) {
-      data.rxCalls = cxn->rxCalls();
-      data.txCalls = cxn->txCalls();
-      data.rxBytes = cxn->rxBytes();
-      data.txBytes = cxn->txBytes();
-    }
     data.type = Ztc::LinkType::TLS;
     data.state = state_();
   }
@@ -555,15 +549,11 @@ private:
       // Retire the old physical output on I/O Tx before publishing B. This
       // neither flushes A nor waits for its disconnect callbacks. Delayed A
       // send setups must reject the closed socket before touching the queue.
-      auto old_ = old.ptr();
-      old_->send(
-	ZiTxFn{[impl = ZmRef(this->impl()), cxn = ZuMv(old)](ZiTxContext &io)
-      {
-	io.complete();
-	impl->Tx::txQueue.clean();
-	(void)cxn;
-	return false;
-      }});
+      auto mx = old->mx();
+      mx->txRun([impl = ZmRef(this->impl()), cxn = ZuMv(old)] {
+	cxn->txContext().close();
+	impl->Tx::resetTxQueue();
+      });
     }
     m_cxn = ZuMv(cxn);
     m_closePending = m_peerClosed = false;
@@ -1300,13 +1290,12 @@ private:
 
   void txQueueTelemetry(Ztc::QueueTelemetry &data) const
   {
-    Cxn *cxn = m_cxn;
     data.ownerID = app()->telKey().template p<1>();
     data.id = m_id;
     data.inCount = m_txInCount;
     data.inBytes = m_txInBytes;
-    data.outCount = cxn ? cxn->txCalls() : 0;
-    data.outBytes = cxn ? cxn->txBytes() : 0;
+    data.outCount = 0;
+    data.outBytes = 0;
     data.count = Tx::txQueue.count_();
     data.size = 0;
     data.full = 0;

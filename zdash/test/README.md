@@ -13,7 +13,7 @@ and expansion intact. A new connection generation with the same publisher
 start time preserves them too; a changed start time retires the old subtree.
 Populated
 telemetry checks every row's key columns and grouping labels, including heap
-identity fields, both socket endpoints, enum names, hexadecimal hash addresses,
+identity fields, enum names, hexadecimal hash addresses,
 database RAG and GTK path round trips. Two databases with matching child IDs
 check separate grouping, child-created placeholders, repeated updates and
 source teardown. Heaps are grouped by ID; each arena shows partition, size,
@@ -21,7 +21,7 @@ alignment and sharding. Two arenas sharing an ID must reuse one group, and
 updates and sorted ID insertion preserve the selected arena's iterator.
 Field headings appear once on `heaps`; ID subgroup rows contain only the ID.
 `vshift` is not a key field.
-Connections and links also arrive before their parent records. Later heap
+Links also arrive before their parent records. Later heap
 insertion checks sorted sibling paths, persistent iterators, selection and
 expansion; DB updates check RAG transitions with the heap branch collapsed.
 Model notification callbacks verify GTK thread affinity.

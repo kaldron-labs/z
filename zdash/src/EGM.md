@@ -8,8 +8,8 @@ GTK telemetry dashboard with OAuth authentication, WebSocket subscriptions, and 
 
 - Installed module ABI exposes `Module::run(ModuleSession&)`, `FactoryFn`, and lookup symbol `ZdashModule`; ModuleHost/ModuleSession expose thread-specific requests, GTK callbacks, widgets, and session control. [zdash_module.hh:Module] [zdash_module.hh:ModuleHost] [zdash_module.hh:ModuleSession]
 - OAuth configuration supplies issuer/client identity, scope, callback port, timeout, and loopback testing; loadConfig reads and parses a bounded configuration file. [zdash_oauth.hh:Config] [zdash_oauth.hh:loadConfig]
-- Subscription frames use Ztc envelopes; reply acceptance matches subscription, source generation, publisher and group. Source containers hold application, alert, heap/hash/thread/queue, connection, engine, and database telemetry. [zdash.cc:requestFrame] [zdash.cc:accepts] [zdash.cc:Containers]
-- GTK Model/View/Details expose hierarchical telemetry keys and printable detail fields, with grouping for heaps, sockets, links, and databases. [zdash.cc:Model] [zdash.cc:View] [zdash.cc:Details]
+- Subscription frames use Ztc envelopes; reply acceptance matches subscription, source generation, publisher and group. Source containers hold application, alert, heap/hash/thread/queue, multiplexer, engine, and database telemetry. [zdash.cc:requestFrame] [zdash.cc:accepts] [zdash.cc:Containers]
+- GTK Model/View/Details expose hierarchical telemetry keys and printable detail fields, with grouping for heaps, links, and databases. [zdash.cc:Model] [zdash.cc:View] [zdash.cc:Details]
 - `zdash` accepts config, WebSocket URL, device ID, CA, browser-suppression, and help options; normal sessions use an OAuth lease, while ZDASH_TEST loads a module factory. The build installs zdash, zdash_module.hh, and zdash.glade. [zdash.cc:main] [zdash.cc:Options] [Makefile.am:bin_PROGRAMS] [Makefile.am:dist_pkgdata_DATA]
 
 ## Invariants

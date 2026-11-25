@@ -338,7 +338,7 @@ The dashboard maintains an `App` inventory subscription across devices and
 automatically subscribes to the configured detail groups for each publisher.
 An empty dashboard is expected until an agent and publisher are active. Groups
 appear when their first real records arrive. Expand populated branches to browse
-heaps, hash tables, threads, multiplexers/connections, queues, pools,
+heaps, hash tables, threads, multiplexers, queues, pools,
 engines/links and databases/hosts/tables.
 Heaps are grouped by ID, with individual arena rows beneath each ID showing
 partition, size, alignment and sharding. Selecting an arena shows its full

@@ -50,9 +50,6 @@ ZuAssert((ZuIsSame<
   Ztc::MxMgr::AllFn::HeapID,
   Ztc::AllFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  Ztc::Mx::AllCxnsFn::HeapID,
-  Ztc::AllFnHeapID::HeapID>{}));
-ZuAssert((ZuIsSame<
   Ztc::MxMgr::AddFn::HeapID,
   Ztc::WatchFnHeapID::HeapID>{}));
 

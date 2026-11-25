@@ -181,8 +181,7 @@ static bool accepts(const Subscription &sub, Ztc::MsgView msg)
 	case TelemetryBody::HeapTelemetry: return sub.group == Group::Heap;
 	case TelemetryBody::HashTelemetry: return sub.group == Group::Hash;
 	case TelemetryBody::ThreadTelemetry: return sub.group == Group::Thread;
-	case TelemetryBody::MxTelemetry:
-	case TelemetryBody::CxnTelemetry: return sub.group == Group::Mx;
+	case TelemetryBody::MxTelemetry: return sub.group == Group::Mx;
 	case TelemetryBody::QueueTelemetry: return sub.group == Group::Queue;
 	case TelemetryBody::HubTelemetry:
 	case TelemetryBody::LinkTelemetry:
@@ -265,7 +264,7 @@ ZfStruct(, (Options, CLI),
 namespace Telemetry {
 using TypeList = ZuTypeList<
   Ztc::HeapTelemetry, Ztc::HashTelemetry, Ztc::ThreadTelemetry,
-  Ztc::MxTelemetry, Ztc::CxnTelemetry, Ztc::QueueTelemetry,
+  Ztc::MxTelemetry, Ztc::QueueTelemetry,
   Ztc::HubTelemetry, Ztc::LinkTelemetry, Ztc::DBTableTelemetry,
   Ztc::DBHostTelemetry, Ztc::DBTelemetry, Ztc::AppTelemetry,
   Ztc::AlertTelemetry, Ztc::PoolTelemetry>;
@@ -520,8 +519,7 @@ template <typename T> using TelItem = Telemetry::Item<T>;
 using Heap = Leaf<4, TelItem<Ztc::HeapTelemetry>>;
 using HashTbl = Leaf<3, TelItem<Ztc::HashTelemetry>>;
 using Thread = Leaf<3, TelItem<Ztc::ThreadTelemetry>>;
-using Socket = Leaf<4, TelItem<Ztc::CxnTelemetry>>;
-using Mx = Parent<3, TelItem<Ztc::MxTelemetry>, Socket>;
+using Mx = Leaf<3, TelItem<Ztc::MxTelemetry>>;
 using Queue = Leaf<3, TelItem<Ztc::QueueTelemetry>>;
 using Pool = Leaf<3, TelItem<Ztc::PoolTelemetry>>;
 using Link = Leaf<4, TelItem<Ztc::LinkTelemetry>>;
@@ -630,7 +628,7 @@ struct Root : public ZGtk::TreeHierarchy::Parent<Root, 0, App> { };
 
 // map telemetry items to corresponding tree nodes
 using RowTypes = ZuTypeList<
-  Heap, HashTbl, Thread, Mx, Socket, Queue, Engine, Link,
+  Heap, HashTbl, Thread, Mx, Queue, Engine, Link,
   DBTable, DBHost, DB, App, void, Pool>;
 ZuAssert(RowTypes::N == Telemetry::TypeList::N);
 template <typename Item>
@@ -668,7 +666,6 @@ using Iter = ZuUnion<
   Engine *,		// app->engines->[engine]
 
   // app great-grandchildren
-  Socket *,		// app->mxs->mx->[socket]
   Link *,		// app->engines->engine->[link]
 
   DB *,		// app->dbs->[db] (*)
@@ -711,7 +708,6 @@ public:
       (ZuIsSame<T, Queue>{}) ||
       (ZuIsSame<T, Pool>{}) ||
       (ZuIsSame<T, Engine>{}) ||
-      (ZuIsSame<T, Socket>{}) ||
       (ZuIsSame<T, Link>{}) ||
       (ZuIsSame<T, DBHostParent>{} || ZuIsSame<T, DBTableParent>{}) ||
       (ZuIsSame<T, DBHost>{}) ||
@@ -742,8 +738,6 @@ public:
       return static_cast<PoolParent *>(ptr);
     } else if constexpr (ZuIsSame<T, Engine>{}) {
       return static_cast<EngineParent *>(ptr);
-    } else if constexpr (ZuIsSame<T, Socket>{}) {
-      return static_cast<Mx *>(ptr);
     } else if constexpr (ZuIsSame<T, Link>{}) {
       return static_cast<Engine *>(ptr);
     } else if constexpr (ZuIsSame<T, DBHostParent>{} || ZuIsSame<T, DBTableParent>{}) {
@@ -1854,7 +1848,6 @@ private:
       ZDashLoad(HashTelemetry)
       ZDashLoad(ThreadTelemetry)
       ZDashLoad(MxTelemetry)
-      ZDashLoad(CxnTelemetry)
       ZDashLoad(QueueTelemetry)
       ZDashLoad(HubTelemetry)
       ZDashLoad(LinkTelemetry)
@@ -1942,18 +1935,6 @@ private:
   void addGtkRow(Source *src, TelItem<Ztc::MxTelemetry> *item) {
     addGtkRow_(appItem_(src), item,
 	[](GtkTree::App *_) -> GtkTree::MxParent & { return _->mxs(); });
-  }
-  void addGtkRow(Source *src, TelItem<Ztc::CxnTelemetry> *item) {
-    ZuTypeIndex<Ztc::MxTelemetry, Telemetry::TypeList> i;
-    auto &mxContainer = src->telemetry.p<i>();
-    auto mxItem = mxContainer.findPtr(ZuFwdTuple(item->value.mxID));
-    if (!mxItem) {
-      mxItem = new TelItem<Ztc::MxTelemetry>;
-      mxItem->value.id = item->value.mxID;
-      mxContainer.add(mxItem);
-      addGtkRow(src, mxItem);
-    }
-    m_gtkModel->add(new GtkTree::Socket{item}, GtkTree::row(mxItem));
   }
   void addGtkRow(Source *src, TelItem<Ztc::QueueTelemetry> *item) {
     addGtkRow_(appItem_(src), item,

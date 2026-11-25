@@ -45,6 +45,14 @@ struct DB : public Ztc::DB {
   mutable Host host;
   mutable Table table;
 };
+struct Queue : public Ztc::Queue {
+  TelKey telKey() const override { return {"fixture-hub", "link", Ztc::QueueType::Rx}; }
+  void telemetry(Ztc::QueueTelemetry &data) const override {
+    data.ownerID = "fixture-hub";
+    data.id = "link";
+    data.type = Ztc::QueueType::Rx;
+  }
+};
 struct Link : public Ztc::Link {
   TelKey telKey() const override { return {"fixture-hub", "link"}; }
   void telemetry(Ztc::LinkTelemetry &data) const override {
@@ -52,9 +60,10 @@ struct Link : public Ztc::Link {
     data.id = "link";
     data.type = Ztc::LinkType::TCP;
   }
-  unsigned allQueues(Ztc::QueueMgr::AllFn) const override { return 0; }
+  unsigned allQueues(Ztc::QueueMgr::AllFn fn) const override { fn(&queue); return 1; }
   void up() override { }
   void down() override { }
+  mutable Queue queue;
 };
 struct Pool : public Ztc::Pool {
   TelKey telKey() const override { return {"fixture-hub", "pool"}; }
@@ -79,26 +88,10 @@ struct Hub : public Ztc::Hub {
   mutable Link link;
   mutable Pool pool;
 };
-struct Cxn : public Ztc::Connection {
-  TelKey telKey() const override {
-    return {"fixture-mx", ZiIP{"192.0.2.1"}, 443, ZiIP{"192.0.2.2"}, 54321};
-  }
-  void telemetry(Ztc::CxnTelemetry &data) const override {
-    data.mxID = "fixture-mx";
-    data.remoteIP = "192.0.2.1";
-    data.remotePort = 443;
-    data.localIP = "192.0.2.2";
-    data.localPort = 54321;
-    data.rxBufSize = data.txBufSize = 1024;
-  }
-};
 class Mx : public ZiMultiplex {
 public:
   Mx() : ZiMultiplex{ZiMxParams{}.scheduler(
       [](auto &s) { s.id("fixture-mx"); })} { }
-  unsigned allCxns(Ztc::Mx::AllCxnsFn fn) const override { fn(&m_cxn); return 1; }
-private:
-  mutable Cxn m_cxn;
 };
 struct Sources {
   Sources(bool enabled_) : enabled{enabled_} {

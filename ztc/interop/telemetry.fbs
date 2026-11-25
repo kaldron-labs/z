@@ -19,7 +19,7 @@ table Ack {
   interval:uint = 4294967295;
 }
 table Shutdown {}
-union TelemetryBody { Shutdown = 14 }
+union TelemetryBody { Shutdown = 13 }
 table Telemetry { id:string; seq_no:ulong; value:TelemetryBody; }
 table EOS { id:string; seq_no:ulong = 18446744073709551615; }
 table Error {

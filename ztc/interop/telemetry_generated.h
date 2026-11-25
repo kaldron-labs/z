@@ -41,7 +41,7 @@ struct MsgBuilder;
 
 enum class TelemetryBody : uint8_t {
   NONE = 0,
-  Shutdown = 14,
+  Shutdown = 13,
   MIN = NONE,
   MAX = Shutdown
 };
