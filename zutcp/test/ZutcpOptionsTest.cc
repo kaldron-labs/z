@@ -36,7 +36,7 @@ static void testSYNVector()
 {
   ZuTestScope(testSYNVector);
   const uint8_t expected[] = {
-    2,4,5,0xb4, 3,3,7, 4,2, 8,10,1,2,3,4,0,0,0,0, 0
+    1,1,8,10,1,2,3,4,0,0,0,0, 2,4,5,0xb4, 3,3,7, 4,2, 0,0,0
   };
   TCPOptions offers{.flags = TCPOptions::MSS | TCPOptions::WS |
     TCPOptions::SACKPermitted | TCPOptions::TS, .mss = 1460, .scale = 7, .tsval = 0x01020304};
@@ -44,13 +44,13 @@ static void testSYNVector()
   memset(wire, 0xa5, sizeof(wire));
   int n = offers.encode(wire + 1, sizeof(expected), true);
   TCPOptions decoded;
-  ZuCHECK(n == 20 && offers.encodedLength(true) == 20 &&
-      !memcmp(wire + 1, expected, sizeof(expected)) && wire[0] == 0xa5 && wire[21] == 0xa5 &&
+  ZuCHECK(n == 24 && offers.encodedLength(true) == 24 &&
+      !memcmp(wire + 1, expected, sizeof(expected)) && wire[0] == 0xa5 && wire[25] == 0xa5 &&
       decoded.decode({wire + 1, unsigned(n)}, true) == n && sameOptions(offers, decoded),
     "independent standard SYN option bytes and unaligned receive must preserve each field");
   TCPOptions zero{.flags = offers.flags};
   n = zero.encode(wire, sizeof(wire), true);
-  ZuCHECK(n == 20 && decoded.decode({wire, unsigned(n)}, true) == n &&
+  ZuCHECK(n == 24 && decoded.decode({wire, unsigned(n)}, true) == n &&
       sameOptions(zero, decoded) && decoded.flags == offers.flags,
     "advertised MSS, WS and timestamp zero must remain present rather than absent");
   TCPOptions empty;
@@ -64,15 +64,15 @@ static void testACKVector()
 {
   ZuTestScope(testACKVector);
   const uint8_t expected[] = {
-    8,10,1,2,3,4,0xa1,0xa2,0xa3,0xa4, 5,26,
-    0,0,0,150,0,0,0,200, 0,0,0,100,0,0,1,44, 0,0,1,144,0,0,1,244
+    1,1,8,10,1,2,3,4,0xa1,0xa2,0xa3,0xa4, 5,26,
+    0,0,0,150,0,0,0,200, 0,0,0,100,0,0,1,44, 0,0,1,144,0,0,1,244, 0,0
   };
   TCPOptions ack{.flags = TCPOptions::TS, .sackCount = 3,
     .tsval = 0x01020304, .tsecr = 0xa1a2a3a4, .sack = {{150,200},{100,300},{400,500}}};
   uint8_t wire[40];
   TCPOptions decoded;
   int n = ack.encode(wire, sizeof(wire), false);
-  ZuCHECK(n == 36 && !memcmp(wire, expected, sizeof(expected)) &&
+  ZuCHECK(n == 40 && !memcmp(wire, expected, sizeof(expected)) &&
       decoded.decode({wire, unsigned(n)}, false) == n && sameOptions(ack, decoded) &&
       decoded.dsack(50),
     "TS plus three ordered SACK blocks must retain the first duplicate block on the wire");
@@ -88,6 +88,30 @@ static void testACKVector()
   ZuCHECK(n == 36 && wire[0] == 5 && wire[1] == 34 && !wire[34] && !wire[35] &&
       decoded.decode({wire, unsigned(n)}, false) == n && sameOptions(ack, decoded),
     "four explicit SACK blocks fit alone, including EOL padding, without reordering");
+}
+
+static void testTimestampPrefixes()
+{
+  ZuTestScope(testTimestampPrefixes);
+  uint8_t wire[] = {1,1,8,10,1,2,3,4,5,6,7,8, 0,0};
+  TCPOptions expected{.flags = TCPOptions::TS, .tsval = 0x01020304, .tsecr = 0x05060708};
+  TCPOptions original{.flags = TCPOptions::MSS, .mss = 1234};
+  bool exact = true, padded = true, refused = true;
+  for (unsigned start : {0U, 2U}) {
+    auto decoded = original;
+    unsigned length = 12 - start;
+    exact &= decoded.decode({wire + start, length}, false) == int(length) &&
+      sameOptions(decoded, expected);
+    wire[12] = 0;
+    padded &= decoded.decode({wire + start, length + 2}, false) == int(length + 2) &&
+      sameOptions(decoded, expected);
+    wire[12] = 5; // truncated SACK after a complete timestamp
+    decoded = original;
+    refused &= decoded.decode({wire + start, length + 2}, false) == -1 &&
+      sameOptions(original, decoded);
+  }
+  ZuCHECK(exact && padded, "both timestamp prefixes decode both words with or without EOL");
+  ZuCHECK(refused, "malformed trailing options leave the destination unchanged");
 }
 
 static void testTransactionalBounds()
@@ -372,9 +396,9 @@ static void testTFOBudget()
 {
   ZuTestScope(testTFOBudget);
   const uint8_t expected[40] = {
-    2,4,5,0xb4, 3,3,7, 4,2, 8,10,1,2,3,4,0xaa,0xbb,0xcc,0xdd,
+    1,1,8,10,1,2,3,4,0xaa,0xbb,0xcc,0xdd, 2,4,5,0xb4, 3,3,7, 4,2,
     34,18,0xa0,0xa1,0xa2,0xa3,0xa4,0xa5,0xa6,0xa7,
-    0xa8,0xa9,0xaa,0xab,0xac,0xad,0xae,0xaf, 0,0,0
+    0xa8,0xa9,0xaa,0xab,0xac,0xad,0xae,0xaf, 0
   };
   TCPOptions full{.flags = TCPOptions::MSS | TCPOptions::WS | TCPOptions::SACKPermitted |
     TCPOptions::TS | TCPOptions::TFO, .mss = 1460, .scale = 7,
@@ -410,6 +434,7 @@ int main(int argc, char **argv)
   ZuTestCall(testTimestampReuse);
   ZuTestCall(testSYNVector);
   ZuTestCall(testACKVector);
+  ZuTestCall(testTimestampPrefixes);
   ZuTestCall(testTransactionalBounds);
   ZuTestCall(testOptionFraming);
   ZuTestCall(testOptionNegotiation);

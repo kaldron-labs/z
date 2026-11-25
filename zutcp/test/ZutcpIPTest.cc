@@ -280,12 +280,12 @@ static void testTCPOptions()
 static void testTCPOptionWire()
 {
   ZuTestScope(testTCPOptionWire);
-  const uint8_t expected[] = {8,10,1,2,3,4,0,0,0,0,0,0};
+  const uint8_t expected[] = {1,1,8,10,1,2,3,4,0xa1,0xa2,0xa3,0xa4};
   for (bool ipv6 : {false, true}) {
     auto route = path(ipv6);
     Zutcp::TCPHeader header{.srcPort = 12345, .dstPort = 443, .seq = 7,
       .ack = 9, .window = 400, .flags = 0x18,
-      .options = {.flags = Zutcp::TCPOptions::TS, .tsval = 0x01020304}};
+      .options = {.flags = Zutcp::TCPOptions::TS, .tsval = 0x01020304, .tsecr = 0xa1a2a3a4}};
     uint8_t frame[1600];
     memset(frame, 0xa5, sizeof(frame));
     unsigned base = Zutcp::tcpHead(route.local.type());
@@ -301,7 +301,7 @@ static void testTCPOptionWire()
     ZuCHECK(parsed && head == base + sizeof(expected) && frame[base - 8] == 0x80 &&
 	!memcmp(frame + base, expected, sizeof(expected)) &&
 	tcp.header.options.flags == Zutcp::TCPOptions::TS &&
-	tcp.header.options.tsval == 0x01020304 && !tcp.header.options.tsecr &&
+	tcp.header.options.tsval == 0x01020304 && tcp.header.options.tsecr == 0xa1a2a3a4 &&
 	tcp.payload.data() == original && tcp.payload.length() == 5 &&
 	!memcmp(original, "abcde", 5),
       "actual option bytes, data offset and checksum must retain the original payload address");

@@ -10,6 +10,10 @@
 
 namespace Zutcp {
 
+// NOP, NOP, TS, length. TSval and TSecr start on TCP header word boundaries.
+static constexpr uint8_t timestampPrefix[] = {1, 1, 8, 10};
+enum { TimestampBytes = 12 };
+
 static uint32_t get32(const uint8_t *in)
 {
   return (uint32_t(in[0])<<24) | (uint32_t(in[1])<<16) |
@@ -26,6 +30,7 @@ static void put32(uint8_t *out, uint32_t value)
 
 int TCPOptions::encodedLength(bool syn) const
 {
+  if (flags == TS && !sackCount) return TimestampBytes;
   if ((flags & ~(MSS | WS | SACKPermitted | TS | TFO)) ||
       sackCount > MaxSACKBlocks || ((flags & WS) && scale > MaxScale)) return -1;
   if (syn ? sackCount : (flags & (MSS | WS | SACKPermitted | TFO))) return -1;
@@ -35,7 +40,7 @@ int TCPOptions::encodedLength(bool syn) const
   if (flags & MSS) length += 4;
   if (flags & WS) length += 3;
   if (flags & SACKPermitted) length += 2;
-  if (flags & TS) length += 10;
+  if (flags & TS) length += TimestampBytes;
   if (flags & TFO) length += 2 + unsigned(tfoLength);
   if (sackCount) length += 2 + (unsigned(sackCount)<<3);
   for (unsigned i = 0; i < sackCount; ++i)
@@ -49,6 +54,13 @@ int TCPOptions::encode(uint8_t *out, unsigned capacity, bool syn) const
   int length = encodedLength(syn);
   if (length < 0 || unsigned(length) > capacity) return -1;
   unsigned offset = 0;
+  if (flags & TS) {
+    memcpy(out, timestampPrefix, sizeof(timestampPrefix));
+    put32(out + 4, tsval);
+    put32(out + 8, tsecr);
+    if (length == TimestampBytes) return length;
+    offset = TimestampBytes;
+  }
   if (flags & MSS) {
     out[offset++] = 2;
     out[offset++] = 4;
@@ -63,13 +75,6 @@ int TCPOptions::encode(uint8_t *out, unsigned capacity, bool syn) const
   if (flags & SACKPermitted) {
     out[offset++] = 4;
     out[offset++] = 2;
-  }
-  if (flags & TS) {
-    out[offset++] = 8;
-    out[offset++] = 10;
-    put32(out + offset, tsval);
-    put32(out + offset + 4, tsecr);
-    offset += 8;
   }
   if (flags & TFO) {
     out[offset++] = 34;
@@ -95,6 +100,20 @@ int TCPOptions::decode(ZuBSpan bytes, bool syn)
   if (bytes.length() > MaxBytes) return -1;
   TCPOptions result;
   unsigned offset = 0;
+  if (bytes.length() >= TimestampBytes &&
+      !memcmp(bytes.data(), timestampPrefix, sizeof(timestampPrefix)))
+    offset = TimestampBytes;
+  else if (bytes.length() >= 10 && bytes[0] == 8 && bytes[1] == 10)
+    offset = 10;
+  if (offset) {
+    result.flags = TS;
+    result.tsval = get32(bytes.data() + offset - 8);
+    result.tsecr = get32(bytes.data() + offset - 4);
+    if (offset == bytes.length() || !bytes[offset]) {
+      *this = result;
+      return int(bytes.length());
+    }
+  }
   while (offset < bytes.length()) {
     unsigned kind = bytes[offset++];
     if (!kind) break;

@@ -519,7 +519,7 @@ static bool heldChecksum(
   unsigned l3 = v6 ? 40 : 20, segment = length - 14 - l3;
   auto ip = frame + 14;
   auto tcp = ip + l3;
-  unsigned options = mode & 1 ? (ack == 100 ? 20 : 28) : 0;
+  unsigned options = mode & 1 ? (ack == 100 ? 24 : 32) : 0;
   unsigned encoded = v6 ? (unsigned(ip[4])<<8) | ip[5] :
     ((unsigned(ip[2])<<8) | ip[3]) - l3;
   unsigned sum = heldSum(ip + (v6 ? 8 : 12), v6 ? 32 : 8) + segment + 6 +

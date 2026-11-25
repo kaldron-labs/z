@@ -437,7 +437,7 @@ void testRxSACKOrder()
   ZuCHECK(options.sackCount == 3 && options.sack[0].left == 40 &&
       options.sack[1].left == 130 && options.sack[2].left == 100 &&
       options.flags == Zutcp::TCPOptions::TS && !options.tsval && options.tsecr == 99 &&
-      options.encodedLength(false) == 36 && node && node->data().data_() == original,
+      options.encodedLength(false) == 40 && node && node->data().data_() == original,
     "TS limits reporting to three blocks without changing echo fields or accepted backing");
   state.duplicate(2, 5, 1);
   bool reported = state.fill(queue, 6, options);
