@@ -13,8 +13,12 @@
 #include <zlib/ZmLib.hh>
 #endif
 
-#include <zlib/ZmPlatform.hh>
 #include <zlib/ZuTime.hh>
+
+#include <zlib/ZmPlatform.hh>
+#ifdef _WIN32
+#include <zlib/ZmTime.hh>
+#endif
 
 class
 #ifndef _WIN32
