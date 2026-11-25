@@ -27,7 +27,9 @@ Backend headers and the core query header are private.
 
 Initialize an intrusive Env from a ZfCf tree. Initialization loads owned typed
 configuration; it creates no named device. The Cf tree can be released after init.
-The Linux interface name is the map key:
+Both plugins use the Linux interface name as the map key. For AF_XDP, select
+a sender slot (`txSid`) distinct from the multiplexer's Rx and Tx slots. For
+DPDK, map that same key to a native port as shown in the [DPDK example](#dpdk).
 
 ```text
 module libZpkt_xdp.so
@@ -138,7 +140,7 @@ continuously. Ring forwards mbuf pointers and pcap copies bytes. With AF_PACKET,
 the native ingress data room also accommodates the PMD's `framesz` packet capacity,
 defaulting to 2,048 bytes. The supplied Linux MTU bounds the caller's frame size.
 See [DPDK lifecycle](INTERFACE.md#dpdk-lifecycle) and
-[software acceptance commands](itest/README.md#dpdk-software-fixtures).
+[software acceptance commands](itest/README.md#dpdk-software-drivers).
 
 ## AF_XDP allocation
 
@@ -157,7 +159,7 @@ if (allocated.is<ZeException>()) {
   return 1;
 }
 if (!mx.start()) return 1;
-if (!xdp->start([&rx](uint8_t *packet, unsigned length) {
+if (!xdp->start([&rx](uint8_t *packet, unsigned length, ZiRxBurst *) {
   // Consume the raw Ethernet frame, then return its slot.
   rx->free(packet);
 })) {
@@ -202,7 +204,7 @@ lease past CQ and resubmit the same backing, then return it when transport recov
 permits. `pollTx()` returns the number of kernel submissions retired and releases
 their kernel leases; there is no completion callback or application packet object.
 
-## Arenas and service
+## AF_XDP arenas and service
 
 `Nif::allQueues()` enumerates the actual RX, FILL, TX and completion ring
 objects as `Ztc::Queue`. The installed Zutcp plugin forwards these through the

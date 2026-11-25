@@ -68,12 +68,18 @@ libssl. Its framework closure is Zu, Zm, Zt, Ze, Zf, Zi and Zpkt.
 
 ## Linux packet I/O
 
-[Zpkt](../zpkt/README.md) provides the common packet interface in `libZpkt`. Its
-`libZpkt_xdp` plugin uses Linux AF_XDP and BPF directly, without libxdp or
-libbpf; the optional `libZpkt_dpdk` plugin requires DPDK 25.11 or newer.
-Kernel headers must provide AF_XDP UMEM/ring offsets and need-wakeup
+Applications link the common packet interface in `libZpkt`. Each `Zpkt::Env`
+loads one backend from the configured module path. [Zpkt module configuration](../zpkt/README.md#modules-and-named-interfaces)
+
+- `libZpkt_xdp.so` builds on Linux and uses the kernel AF_XDP and BPF APIs directly.
+- `libZpkt_dpdk.so` additionally requires `libdpdk >= 25.11` via pkg-config.
+  The Linux `z.config` wrapper enables DPDK by default. Use `-K` to omit it.
+  Direct `configure` builds enable DPDK with `--with-dpdk=yes`.
+  The selected DPDK port requires its corresponding poll-mode driver.
+
+Linux build headers must provide AF_XDP UMEM/ring offsets and need-wakeup
 flags, XDP capability queries, BPF XSK maps, expected-FD XDP attachment protection
-and socket network-namespace cookies. The running kernel must enable those
+and socket network-namespace cookies. To run the AF_XDP plugin, the kernel must enable those
 facilities and permit the setup operations. Driver-supported zero-copy is queried
 at runtime; veth exercises software copy mode.
 

@@ -112,9 +112,9 @@ horizontally to compare columns.
   - [Logging and assertions](#logging-and-assertions)
   - [Resource tuning](#resource-tuning)
   - [I/O telemetry](#io-telemetry)
-- [Zpkt - Linux AF_XDP packet I/O](#zpkt---linux-af_xdp-packet-io)
-  - [Registered packet storage](#registered-packet-storage)
-  - [Raw packet I/O and service](#raw-packet-io-and-service)
+- [Zpkt - Linux raw Ethernet packet I/O](#zpkt---linux-raw-ethernet-packet-io)
+  - [Packet interfaces and buffer ownership](#packet-interfaces-and-buffer-ownership)
+  - [AF_XDP and DPDK plugins](#af_xdp-and-dpdk-plugins)
 - [Zutcp - User-mode TCP/IP stack](#zutcp---user-mode-tcpip-stack)
   - [User-mode TCP/IP stack](#user-mode-tcpip-stack)
   - [TCP connection and recovery](#tcp-connection-and-recovery)
@@ -4671,33 +4671,13 @@ The STL has no C++23 socket/event-loop API.
 </tbody>
 </table>
 
-# Zpkt - Linux AF_XDP packet I/O
+# Zpkt - Linux raw Ethernet packet I/O
 
-## Registered packet storage
+Applications link `libZpkt` and select a packet plugin at runtime. Both plugins
+deliver complete Ethernet frames through the same interface. Zutcp uses that
+interface to implement TCP/IP. [Module guide and configuration examples](../zpkt/README.md)
 
-Sources: [module guide](../zpkt/README.md), [public headers](https://github.com/kaldron-labs/z/blob/main/zpkt/src/).
-Linux-only; excluded from Windows builds.
-
-<table>
-<thead>
-<tr>
-  <th scope="col" width="340" align="left">Z&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
-  <th scope="col" width="240" align="left">STL&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
-  <th scope="col" width="240" align="left">Boost&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
-  <th scope="col" width="280" align="left">Rust&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
-</tr>
-</thead>
-<tbody>
-<tr valign="top">
-  <td><a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/ZpktAlloc.hh"><code>Zpkt::PoolParams</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/ZpktAlloc.hh"><code>BufPool</code></a><br>➕ caller-owned intrusive pools over registered Rx/Tx arenas<br>➕ exhaustion returns null without replacement allocation<br>➕ allocation and kernel leases independently protect backing</td>
-  <td>N/A</td>
-  <td>Partial: <a href="https://github.com/boostorg/pool/blob/master/include/boost/pool/pool.hpp">Boost.Pool</a></td>
-  <td>Partial: <a href="https://docs.rs/xsk-rs/latest/xsk_rs/umem/struct.Umem.html"><code>xsk_rs::Umem</code></a>, <a href="https://docs.rs/xdp/latest/xdp/"><code>xdp</code></a></td>
-</tr>
-</tbody>
-</table>
-
-## Raw packet I/O and service
+## Packet interfaces and buffer ownership
 
 <table>
 <thead>
@@ -4705,24 +4685,58 @@ Linux-only; excluded from Windows builds.
   <th scope="col" width="340" align="left">Z&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
   <th scope="col" width="240" align="left">STL&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
   <th scope="col" width="240" align="left">Boost&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
+  <th scope="col" width="240" align="left">Folly&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
+  <th scope="col" width="240" align="left">BDE/NTF&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
   <th scope="col" width="280" align="left">Rust&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</th>
 </tr>
 </thead>
 <tbody>
 <tr valign="top">
-  <td><a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh"><code>Zpkt::Params</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh"><code>Instance</code></a><br>➕ direct AF_XDP packet submission and receive over one interface<br>➕ optional destination-mask steering with host-stack coexistence<br>➖ Linux AF_XDP and suitable kernel/driver support required</td>
+  <td><a href="../zpkt/src/ZpktEnv.hh"><code>Zpkt::Env</code></a> loads the configured module through its <a href="../zpkt/src/ZpktPlugin.hh"><code>ZpktPlugin</code> factory</a>. <code>env->nif(mx, name)</code> opens a named Linux interface on a stopped multiplexer. Repeating the lookup on the same multiplexer returns the same Nif.</td>
   <td>N/A</td>
-  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a></td>
-  <td>Partial: <a href="https://docs.rs/xsk-rs/latest/xsk_rs/socket/struct.Socket.html"><code>xsk_rs::Socket</code></a>, <a href="https://docs.rs/xdp/latest/xdp/"><code>xdp</code></a></td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_dll.html">Boost.DLL</a> loads a factory symbol.</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/libloading/latest/libloading/"><code>libloading</code></a> loads libraries and symbols.</td>
 </tr>
 <tr valign="top">
-  <td><a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh#L62"><code>Zpkt::Instance::rx</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh#L65"><code>wake</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh#L66"><code>pollTx</code></a>, <a href="https://github.com/kaldron-labs/z/blob/main/zpkt/src/Zpkt.hh#L70"><code>close</code></a><br>➕ configurable spin-before-epoll receive service and explicit wake<br>➕ bounded Tx retirement with retryable kernel-safe close</td>
+  <td><a href="../zpkt/src/Zpkt.hh"><code>Nif::bufPool</code> and <code>alloc</code></a> provision one Rx pool and a list of Tx pools with caller-specified capacity, headroom and alignment. Each plugin supplies the native backing for the same <a href="../zi/src/ZiIOBuf.hh"><code>Zi::IOBufPool</code></a> interface.</td>
+  <td>Partial: <code>std::pmr::synchronized_pool_resource</code> pools memory blocks.</td>
+  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/libs/pool/doc/html/index.html">Boost.Pool</a> pools memory blocks.</td>
+  <td>Partial: <a href="https://github.com/meta/folly/blob/main/folly/io/IOBuf.h"><code>folly::IOBuf</code></a> shares buffer storage.</td>
+  <td>Partial: <a href="https://github.com/bloomberg/bde/blob/main/groups/bdl/bdlbb/bdlbb_pooledblobbufferfactory.h"><code>bdlbb::PooledBlobBufferFactory</code></a> supplies pooled buffers.</td>
+  <td>Backend-specific: AF_XDP UMEM frames or DPDK mbufs.</td>
+</tr>
+<tr valign="top">
+  <td><a href="../zpkt/src/Zpkt.hh"><code>Zpkt::Nif</code></a> runs <code>rx()</code> on the Rx owner until a wake or error. The callback recipient owns each frame until it returns the frame to the Rx pool. The Tx owner checks <code>txReady()</code> before rewriting a retained frame, submits it with <code>send()</code> and retires submissions with <code>pollTx()</code>.</td>
   <td>N/A</td>
-  <td>Partial: <a href="https://www.boost.org/doc/libs/latest/doc/html/boost_asio/reference.html">Boost.Asio</a></td>
-  <td>Partial: <a href="https://docs.rs/xsk-rs/latest/xsk_rs/"><code>xsk-rs</code></a></td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>N/A</td>
+  <td>Partial: <a href="https://docs.rs/xsk-rs/latest/xsk_rs/"><code>xsk-rs</code></a> exposes AF_XDP sockets, UMEM and queues. <a href="https://docs.rs/dpdk-stdlib-sys/latest/dpdk_sys/"><code>dpdk-stdlib-sys</code></a> provides native DPDK bindings with its <code>bindgen</code> feature.</td>
 </tr>
 </tbody>
 </table>
+
+An accepted send holds a separate reference to the packet. Keep its bytes
+immutable until retirement. The caller can return its allocation earlier, but
+the pool can reuse the slot only after both references are released. A stopped
+Nif keeps its pools for restart. Keep the scheduler running through stop, return outstanding buffers, then
+call `Env::final()` to finalize its interfaces and plugin. [Lifecycle and ownership](../zpkt/INTERFACE.md)
+
+## AF_XDP and DPDK plugins
+
+| Facility | AF_XDP (`libZpkt_xdp.so`) | DPDK (`libZpkt_dpdk.so`) |
+| --- | --- | --- |
+| Interface selection | The map key names the Linux interface. While active, the BPF program redirects all ingress frames, including IPv4, IPv6 and ARP, to AF_XDP sockets by Rx queue. | The map key names the Linux interface that supplies the MTU and MAC. The required `port` field names the DPDK Ethernet device, claimed exclusively until Nif finalization. The plugin initializes DPDK's process-wide Environment Abstraction Layer (EAL). |
+| Packet storage and queues | One registered UMEM backs all pools. Each interface queue has Rx and FILL rings. Queue zero carries Tx and completions. | Native mbuf pools back one Rx queue and one Tx queue. An accepted send gives the poll-mode driver a reference to the submitted mbuf. |
+| Scheduling | Rx spins (`spin` defaults to 4096), then waits in epoll. A required `txSid` assigns a sender slot distinct from the multiplexer’s Rx and Tx owners. | Uses the existing Rx and Tx owners. After `spin` empty probes (default 1000), Rx parks for up to `rxInterval` microseconds (default 50). Zero interval selects continuous polling. |
+| Build | Built on Linux using the kernel AF_XDP and BPF interfaces directly. | Requires `libdpdk >= 25.11`. On Linux, `z.config` enables it by default and `-K` disables it. Direct `configure` builds opt in with `--with-dpdk=yes`. |
+
+Query `zeroCopy()` for the active copy mode and `tcpChksumOffload()` after each
+start for the enabled TCP checksum mode. With offload active, the caller supplies
+the TCP pseudo-header seed. Otherwise it supplies the complete checksum.
+[AF_XDP implementation](../zpkt/xdp/ZpktXDP.cc) · [DPDK implementation](../zpkt/dpdk/ZpktDpdkNif.cc)
 
 # Zutcp - User-mode TCP/IP stack
 

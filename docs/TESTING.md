@@ -88,12 +88,18 @@ sanitized or debug builds; record compiler, CPU, affinity and heap tuning.
 
 ## Zpkt packet tests
 
-After a top-level `make -j8`, run the unprivileged synthetic-ring, pool and
-ownership suite with `make -C zpkt/test test`. Actual AF_XDP/BPF coverage needs
-the anonymous-namespace setup in [Zpkt integration tests](../zpkt/itest/README.md),
-followed by `make -C zpkt/itest test` inside that fixture. Missing privileges or
-fixture variables produce visible skips; skips do not establish packet coverage.
-`ZPKT_RUN_FIXTURE=1` enables the separate-process packet fixture tests.
+After a top-level `make -j8`, run `make -C zpkt/test test` for the plugin loader,
+AF_XDP rings, pools and ownership. DPDK-enabled builds also exercise EAL
+initialization and native mbuf pools. [Zpkt unit tests](../zpkt/test/README.md)
+
+- **AF_XDP** kernel tests need a private veth fixture and the interface indices
+  it creates. The active plugin redirects all ingress on the selected interface.
+  `ZPKT_RUN_FIXTURE=1` enables the separate-process loop test. Check TAP for
+  skipped cases when fixture variables or privileges are missing. [AF_XDP fixtures](../zpkt/itest/README.md#af_xdp)
+- **DPDK** integration tests run with root and iproute2 to create private dummy
+  Linux interfaces. The `net_ring` and `net_pcap` software drivers exercise
+  mbuf ownership, packet bytes, wakeups and restart without a physical NIC or
+  hugepages. [DPDK fixture commands](../zpkt/itest/README.md#dpdk-software-drivers)
 
 The independently usable [packet helper](../zpkt/util/README.md) runs veth
 request/reply with `sudo -n ./zpkt/util/zpktfixture.sh`. Its `wait`, `spin` and
@@ -103,12 +109,9 @@ Logs and configuration remain in the printed artifact directory on either result
 
 Run these suites in configured release and Clang `-D` builds with
 `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1`; change build modes with a top-level
-clean rebuild. Run Memcheck under a non-ASan build. The Nif driver isolates its
-expected fatal-Tx cases in child processes. Run its successful `--kernel-probe`
-directly under Memcheck as well, because default Memcheck does not follow exec
-children. Veth results record copy mode and establish no physical zero-copy or
-latency claim. Physical comparison and profiling use matching Clang release
-builds, with the selected interfaces, peers, affinity and actual mode recorded.
+clean rebuild. Run Memcheck under a non-ASan build. Veth exercises copy mode.
+For physical NIC comparisons, use matching Clang release builds and record the
+interfaces, peers, affinity and actual copy mode.
 
 ## Zutcp TCP tests
 
