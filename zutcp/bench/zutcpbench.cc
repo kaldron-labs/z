@@ -10,16 +10,16 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sched.h>
-#include <sys/socket.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <iostream>
 
+#include <zlib/ZuArray.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuStream.hh>
-#include <zlib/ZuArray.hh>
 #include <zlib/ZuTime.hh>
 
 #include <zlib/ZmAtomic.hh>
@@ -33,13 +33,16 @@
 
 #include <zlib/ZtArray.hh>
 
-#include <zlib/ZePlatform.hh>
+#include <zlib/ZfCf.hh>
 
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiRx.hh>
 #include <zlib/ZiTx.hh>
+
+#include <zlib/ZpktEnv.hh>
+#include <zlib/ZpktNif.hh>
 
 #include <zlib/Zutcp.hh>
 
@@ -161,25 +164,27 @@ static bool selftest()
 }
 
 struct Config {
-  bool server = false, native = false, ll = false;
-  int xdpTxCPU = -1;
-  unsigned interface = 0, messages = 10000, warmup = 1000, pipeline = 1;
-  unsigned connections = 1, reserve = 4096, timeout = 1;
-  ZuBox<unsigned> spin, rxSpin, txSpin;
-  unsigned workload = Workload::Order, burstSize = 0, burstUS = 1000, quietUS = 0;
-  unsigned socketBytes = 1<<20, rxCPU = 0, txCPU = 0;
-  ZiIP address;
-  const char *samples = nullptr;
+  using Spin = ZuBox<unsigned>;
+  bool		server = false, native = false, ll = false;
+  int		xdpTxCPU = -1;
+  unsigned	interface = 0, messages = 10000, warmup = 1000, pipeline = 1;
+  unsigned	connections = 1, reserve = 4096, timeout = 1;
+  Spin		spin, rxSpin, txSpin;
+  unsigned	workload = Workload::Order, burstSize = 0, burstUS = 1000, quietUS = 0;
+  unsigned	socketBytes = 1<<20, rxCPU = 0, txCPU = 0;
+  ZiIP		address;
+  const char	*samples = nullptr;
 };
 
 struct Result {
-  ZuTime begin, end; // Rx, read by main after owner stop
-  uint64_t bytes = 0;
-  unsigned bursts = 0, lateBursts = 0, pipelinePeak = 0;
-  unsigned received = 0, rxCPU = ~0U, rxSocketBytes = 0, txSocketBytes = 0;
-  bool native = false;
-  alignas(Zm::CacheLineSize) uint64_t accepted = 0; // Tx
-  unsigned txCPU = ~0U; // Tx
+  ZuTime		begin, end; // Rx, read by main after owner stop
+  uint64_t	bytes = 0;
+  unsigned	bursts = 0, lateBursts = 0, pipelinePeak = 0;
+  unsigned	received = 0, rxCPU = ~0U, rxSocketBytes = 0, txSocketBytes = 0;
+  bool		native = false;
+  alignas(Zm::CacheLineSize)
+  uint64_t	accepted = 0; // Tx
+  unsigned	txCPU = ~0U; // Tx
 };
 using Results = ZtArray<Result, ZtArrayHeapID<"Zutcp.Bench.Results">>;
 class App;
@@ -211,15 +216,18 @@ private:
   using Timer = ZmScheduler::Timer;
   App		*m_app;
   const unsigned	m_id;
-  const unsigned	m_pipeline, m_burstSize, m_burstUS;
-  alignas(Zm::CacheLineSize) Times m_times; // Rx: one timestamp per admitted application request
+  const unsigned	m_pipeline, m_burstSize;
+  const ZuTime	m_burstInterval;
+  alignas(Zm::CacheLineSize)
+  Times		m_times; // Rx: one timestamp per admitted application request
   unsigned	m_offered = 0, m_received = 0, m_limit = 0; // Rx
   unsigned	m_burstRemaining = 0; // Rx: application offer tokens only
   uint64_t	m_burstSerial = 0; // Rx: invalidates queued prior-phase callbacks
   bool		m_burstArmed = false, m_stopping = false; // Rx
   ZuTime		m_nextBurst;
   Timer		m_burstTimer; // existing scheduler, same Rx owner
-  alignas(Zm::CacheLineSize) unsigned m_accepted = 0; // Tx
+  alignas(Zm::CacheLineSize)
+  unsigned	m_accepted = 0; // Tx
 };
 
 using Owners = ZtArray<ZmRef<Cxn>, ZtArrayHeapID<"Zutcp.Bench.Owners">>;
@@ -250,7 +258,7 @@ static ZuUnion<Zpkt::Nif *, ZeException> openNif(
 }
 
 struct XdpEnvOwner {
-  ZmRef<Zpkt::Env> env = new Zpkt::Env;
+  ZmRef<Zpkt::Env>	env = new Zpkt::Env;
 };
 
 class App : private XdpEnvOwner, public ZiMultiplex {
@@ -398,9 +406,11 @@ private:
 Cxn::Cxn(App *app, const ZiCxnInfo &info, unsigned id) :
   ZiConnection{app, info}, m_app{app}, m_id{id},
   m_pipeline{!id && !app->config().server && app->config().quietUS ? 1 : app->config().pipeline},
-  m_burstSize{!id && !app->config().server && app->config().quietUS ? 1 : app->config().burstSize},
-  m_burstUS{!id && !app->config().server && app->config().quietUS ?
-    app->config().quietUS : app->config().burstUS} {
+  m_burstSize{!id && !app->config().server && app->config().quietUS ?
+    1 : app->config().burstSize},
+  m_burstInterval{ZuTime::Nano{uint64_t(
+    !id && !app->config().server && app->config().quietUS ?
+      app->config().quietUS : app->config().burstUS) * 1000}} {
   m_times.length(m_pipeline);
 }
 
@@ -471,7 +481,7 @@ void Cxn::beginPhase()
   cancelBurst();
   m_burstRemaining = m_burstSize;
   if (m_burstSize) {
-    m_nextBurst = Zm::now() + ZuTime{ZuTime::Nano{uint64_t(m_burstUS) * 1000}};
+    m_nextBurst = Zm::now() + m_burstInterval;
     ++m_app->result(m_id).bursts;
   }
 }
@@ -483,7 +493,7 @@ void Cxn::scheduleBurst()
   if (m_nextBurst <= now) {
     ++m_app->result(m_id).lateBursts;
     // Do not replay a backlog of missed application bursts on an I/O owner.
-    m_nextBurst = now + ZuTime{ZuTime::Nano{uint64_t(m_burstUS) * 1000}};
+    m_nextBurst = now + m_burstInterval;
   }
   m_burstArmed = true;
   mx()->add(&m_burstTimer, m_nextBurst, ZmScheduler::Update,
@@ -493,7 +503,7 @@ void Cxn::scheduleBurst()
 	m_burstArmed = false;
 	if (m_stopping || !up()) return;
 	m_burstRemaining = m_burstSize;
-	m_nextBurst = Zm::now() + ZuTime{ZuTime::Nano{uint64_t(m_burstUS) * 1000}};
+	m_nextBurst = Zm::now() + m_burstInterval;
 	++m_app->result(m_id).bursts;
 	fill();
       });
