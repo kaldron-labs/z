@@ -276,7 +276,9 @@ struct Endpoint {
     if (!failed) {
       if (!config.server) nextSeq = 1;
       auto deadline = Zm::now() + ZuTime{config.deadline};
-      ZmThread service{[this, deadline] {
+      const ZuTime probeInterval{int64_t(config.timeout / 1000),
+        int32_t(config.timeout % 1000) * 1000000};
+      ZmThread service{[this, deadline, probeInterval] {
         while (!failed && (received != config.count || completed != config.count)) {
           auto work = instance->pollTx();
           completed += work;
@@ -293,8 +295,7 @@ struct Endpoint {
           // Kernel completions have no application notification. Probe at
           // the configured interval, or earlier when Rx posts new work.
           if (!work && config.timeout) {
-            auto probe = now + ZuTime{int64_t(config.timeout / 1000),
-              int32_t(config.timeout % 1000) * 1000000};
+            auto probe = now + probeInterval;
             txNotice.timedwait(probe < deadline ? probe : deadline);
           }
         }
