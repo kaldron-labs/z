@@ -1134,28 +1134,6 @@ private:
       });
   }
 
-  bool sendZeroRTTPkt(ZuBSpan payload, ZiSockAddr addr) {
-    ZiAssert(app()->txInvoked(), "Zquic", (),
-      "QUIC client 0-RTT send outside Tx thread", return false);
-    PktBuild build;
-    if (!buildPayload_(PktNumSpace::AppData, build, payload)) return false;
-    return sendZeroRTTPkt(build, ZuMv(addr), payload);
-  }
-
-  bool sendZeroRTTPkt(
-    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
-    const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
-    if (!Endpoint::connected()) return false;
-    typename Base::TxPktRefs refs;
-    const typename Base::TxPktRefs *recordRefs = nullptr;
-    if (recordRef) {
-      refs.add(*recordRef);
-      recordRefs = &refs;
-    }
-    return sendZeroRTTPkt(
-      payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting);
-  }
-
   bool sendZeroRTTPkt(
     PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const Base::TxPktRefs *recordRefs, bool ackEliciting) {

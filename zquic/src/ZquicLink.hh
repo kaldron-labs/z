@@ -1275,6 +1275,7 @@ protected:
   bool queueHandshakeDone() {
     return queueControl(ControlFrame::handshakeDone());
   }
+  bool handshakeDoneQueued() const { return m_linkTx.handshakeDoneControl.queued; }
   bool queueResetStream_(
     uint64_t streamID, uint64_t appError, uint64_t finalSize) {
     return queueControl(ControlFrame::resetStream(
@@ -3676,7 +3677,7 @@ protected:
     uint64_t packetsBefore = txPackets();
     while (processed < MaxBatch &&
 	(!pto || txPackets() - packetsBefore < maxPackets) &&
-	nextRetransmit_(level, ref, onlySpace)) {
+	nextRetransmit_(level, ref, onlySpace, establishedTx())) {
       ++processed;
       PktBuild build;
       if (ref.kind == SentFrameKind::Crypto) {
@@ -3690,8 +3691,7 @@ protected:
 	sent = true;
 	continue;
       }
-      if (level != PktNumSpace::AppData || !establishedTx())
-	continue;
+      if (level != PktNumSpace::AppData) continue;
       if (!pto && !congestionAllowance_()) {
 	requeueRetransmit_(level, ref);
 	break;
@@ -5780,11 +5780,13 @@ protected:
       pn == m_linkRx.rxLargestPN[level], ZuMv(addr));
   }
 
-  bool appendPendingAck(PktNumSpace::T level, PktBuild &build, bool ackOnly = false) {
+  bool appendPendingAck(
+    PktNumSpace::T level, PktBuild &build, bool ackOnly = false, bool includeReported = false)
+  {
     ZiAssert(txInvoked_(), "Zquic", (), "QUIC ACK append outside Tx thread", return false);
     ++m_linkTx.txDiag.ackAppendTx;
-    return m_linkTx.withAck(level, [this, level, &build, ackOnly](const auto &ack) {
-      if (!ack.pending()) {
+    return m_linkTx.withAck(level, [this, level, &build, ackOnly, includeReported](const auto &ack) {
+      if (!ack.pending() && !(includeReported && ack.ranges)) {
 	++m_linkTx.txDiag.ackAppendEmptyTx;
 	return true;
       }
@@ -7134,12 +7136,14 @@ protected:
 
   bool nextRetransmit_(
     PktNumSpace::T &level, SentFrameRef &ref,
-    PktNumSpace::T onlySpace = PktNumSpace::N) {
+    PktNumSpace::T onlySpace = PktNumSpace::N, bool appDataReady = true) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC retransmit selection outside Tx thread", return false);
     for (unsigned i = 0; i < PktNumSpace::N; ++i) {
       PktNumSpace::T l = PktNumSpace::T(i);
       if (onlySpace < PktNumSpace::N && l != onlySpace) continue;
+      // Keep early STREAM recovery queued until it can be sent with 1-RTT keys.
+      if (l == PktNumSpace::AppData && !appDataReady) continue;
       if (m_linkTx.txSpaceDiscarded[l]) continue;
       do {
 	if (!m_linkTx.txPkts[l].nextRetransmit(ref)) goto nextSpace;
@@ -7247,7 +7251,8 @@ nextSpace:
     ControlFrame frame = controlFrame(ref);
     if (!controlStillValid_(frame)) return false;
     build.reset();
-    if (!appendPendingAck(PktNumSpace::AppData, build)) return false;
+    if (!appendPendingAck(
+	  PktNumSpace::AppData, build, false, frame.type == FrameType::HandshakeDone)) return false;
     int n = frame.write(build.scratch(), build.scratchAvail());
     if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
     if (frame.type == FrameType::PathChallenge) build.markPathValidation();
@@ -9196,7 +9201,7 @@ protected:
       m_linkTx.coalesceAckEliciting = ackEliciting;
       m_linkTx.coalesceNeedsMin = !m_config.isServer || ackEliciting;
     }
-    if (type != PktType::ZeroRTT && payload.ack(level)) {
+    if (payload.ack(level)) {
       if (level == PktNumSpace::Initial && m_linkTx.coalesceInitial &&
 	  m_linkTx.coalescePN == pn)
 	m_linkTx.coalesceAckGen = payload.ackGen();
@@ -9304,6 +9309,9 @@ protected:
       PktKeyLevel::Handshake : PktKeyLevel::ZeroRTT;
     constexpr PktNumSpace::T level = Type == PktType::Handshake ?
       PktNumSpace::Handshake : PktNumSpace::AppData;
+    if constexpr (Type == PktType::ZeroRTT) {
+      if (m_config.isServer || txSecretInstalled_(level) || payload.ack(level)) return false;
+    }
     PktSendScope scope{this};
     uint64_t runtime = scope.runtime;
     if (!txKeySecretInstalled_(keyLevel)) {
@@ -11035,11 +11043,16 @@ private:
       .application = snapshot.application};
     m_linkTx.txLinkState = snapshot.state;
   }
+  template <bool ResumeEarlyRecovery = false>
   void publishLinkSnapshotTx() {
     LinkStateSnapshot snapshot = linkSnapshotRx();
-    app()->txRun([link = impl(), snapshot]() mutable {
-      if (link->disconnecting_()) return;
+    app()->txRun([link = impl(), snapshot, runtime = m_linkRx.rxRuntimeGen] {
+      if (link->disconnecting_() || runtime != link->txRuntime()) return;
       link->applyLinkSnapshotTx(snapshot);
+      if constexpr (ResumeEarlyRecovery)
+	if (link->establishedTx() &&
+	    link->m_linkTx.txPkts[PktNumSpace::AppData].retransmitPending())
+	  link->queueRetransmit();
     });
   }
   void logLinkStateRx(LinkState::T state) {
@@ -11086,7 +11099,7 @@ private:
     if (m_linkRx.rxLinkState != LinkState::Handshaking) return false;
     logLinkStateRx(LinkState::Established);
     linkStateRx(LinkState::Established);
-    publishLinkSnapshotTx();
+    publishLinkSnapshotTx<true>();
     return true;
   }
 

@@ -535,7 +535,7 @@ private:
     bool sent = Base::flushCtlStreamsBatch(
 	addr,
 	[this](PktBuild &build) {
-	  return appendPendingAck(PktNumSpace::AppData, build);
+	  return appendPendingAck(PktNumSpace::AppData, build, false, Base::handshakeDoneQueued());
 	},
 	[this](
 	    PktBuild &build, ZiSockAddr addr_,
@@ -697,35 +697,6 @@ private:
       });
   }
 
-  bool sendZeroRTTPkt(ZuBSpan payload, ZiSockAddr addr) {
-    ZiAssert(app()->txInvoked(), "Zquic", (),
-      "QUIC server 0-RTT send outside Tx thread", return false);
-    PktBuild build;
-    if (!buildPayload_(PktNumSpace::AppData, build, payload)) return false;
-    return sendZeroRTTPkt(build, ZuMv(addr), payload);
-  }
-
-  bool sendZeroRTTPkt(
-    PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
-    const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
-    typename Base::TxPktRefs refs;
-    const typename Base::TxPktRefs *recordRefs = nullptr;
-    if (recordRef) {
-      refs.add(*recordRef);
-      recordRefs = &refs;
-    }
-    return Base::template sendProtLongPkt<Zquic::PktType::ZeroRTT>(
-      CIDSel::Peer, CIDSel::Local,
-      Base::txPNLength(PktNumSpace::AppData),
-      payload, ZuMv(addr), recordFrame, recordRefs,
-      ackEliciting,
-      [this]() { return Base::allocPktTx(); },
-      [this, recordRefs](auto buf, ZiSockAddr addr_) {
-	return sendShortBuf(
-	  ZuMv(buf), ZuMv(addr_), recordRefs, EcnMark::NotECT);
-      });
-  }
-
   bool sendShortPkt(ZuBSpan payload, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Short send outside Tx thread", return false);
@@ -855,7 +826,8 @@ private:
     if (!Base::flushCtlStreams(
 	ZuMv(addr),
 	[this](PktBuild &build) {
-	  return appendPendingAck(PktNumSpace::AppData, build);
+	  // A standalone early ACK can arrive before the client has 1-RTT keys.
+	  return appendPendingAck(PktNumSpace::AppData, build, false, true);
 	},
 	[this](
 	    PktBuild &build, ZiSockAddr addr_,

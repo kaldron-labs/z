@@ -176,6 +176,7 @@ struct TestClient : public Zquic::Client<TestClient> {
   Zquic::TransportParams ticketParams;
   ZmSemaphore ticketReady;
   ZmAtomic<unsigned> holdOneRTT = 0; // while checking the original 0-RTT STREAM ACK
+  ZmAtomic<unsigned> holdEarlyFinished = 0;
   bool earlyData(Link *, ZuBSpan &session, const Zquic::TransportParams *&params,
       ZuBSpan &application) {
     if (!ticket) return false;
@@ -219,6 +220,15 @@ struct TestClient : public Zquic::Client<TestClient> {
 
   bool sendPkt(const ZmRef<ZiIOBuf> &buf) {
     if (holdOneRTT && buf && buf->length && !Zquic::Pkt::isLong(buf->cspan())) return false;
+    if (holdEarlyFinished && buf) {
+      auto packet = buf->cspan();
+      while (packet && Zquic::Pkt::isLong(packet)) {
+	Zquic::LongHdr h;
+	if (Zquic::Pkt::parseLong(packet, h) < 0) break;
+	if (h.type == Zquic::PktType::Handshake) return false;
+	packet.offset(h.pnOffset + unsigned(h.length));
+      }
+    }
     if (pendingMigDrop && buf && buf->length &&
 	!Zquic::Pkt::isLong(buf->cspan())) {
       --pendingMigDrop;
@@ -379,6 +389,7 @@ struct TestServer :
     if (!dropNextShort) return true;
     dropNextShort = 0;
     ++droppedShort;
+    dropEvent.post();
     return false;
   }
   bool sendFrame(const Zquic::SentFrameRef &ref) {
@@ -3077,7 +3088,15 @@ void testRetryAddrValidate(bool forceFailure = false)
   waitDisconnect(server);
 
   client.holdOneRTT = 1;
+  client.holdEarlyFinished = 1;
+  unsigned droppedShort = server.droppedShort;
+  server.dropNextShort = 1;
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
+  // Simulate a standalone 1-RTT ACK that never reaches the client.
+  bool droppedEarlyAck = server.dropEvent.wait(
+    [&server, droppedShort] { return server.droppedShort > droppedShort; }, Zm::now(5));
+  client.holdEarlyFinished = 0;
+  ZuCHECK(droppedEarlyAck, "server did not submit an ACK before the client Finished");
   ZmRef<TestServer::Link> serverLink2;
   bool established2 = waitEstablished(clientLink, server, serverLink2, 1);
   if (!established2) {
@@ -3121,7 +3140,7 @@ void testRetryAddrValidate(bool forceFailure = false)
   }, Zm::now(5));
   client.holdOneRTT = 0;
   ZuCHECK(acked && serverLink2->earlyBytes == 7,
-    "resumed 0-RTT STREAM must arrive once and drain through a 1-RTT acknowledgment");
+    "HANDSHAKE_DONE must repeat the lost 0-RTT ACK and drain the original STREAM");
   earlyStream = nullptr;
   clientClosed = clientLink->close();
   server.stop();

@@ -1215,11 +1215,25 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     return Base::rejectZeroRTTTx(Zquic::ZeroRTTReason::TLSRejected);
   }
   bool canTxZeroRTT() const { return Base::canTxZeroRTT_(); }
-  bool sendZeroRTTProbe(ZmRef<ZiIOBuf> &sent) {
+  bool tryRecovery() {
+    return Base::template retransmitFrames<false>(false, 2, Zquic::PktNumSpace::N,
+      [](Zquic::PktNumSpace::T, Zquic::PktBuild &, const Zquic::SentFrameRef &) {
+	return true;
+      }, [] { return false; });
+  }
+  bool establishAfterEarlyData(const Zquic::TrafficSecret &secret) {
+    if (!Base::startHandshake() || !Base::txInstallSecret(Zquic::PktNumSpace::AppData, secret))
+      return false;
+    Base::establish_();
+    return Base::establishedTx();
+  }
+  bool sendZeroRTTProbe(ZmRef<ZiIOBuf> &sent, bool includeAck = false) {
     uint8_t ping[1];
     int n = Zquic::FrameCodec::writePing(ping, sizeof(ping));
     if (n != 1) return false;
     Zquic::PktBuild payload;
+    if (includeAck && (!writePendingAck(payload) || !payload.ack(Zquic::PktNumSpace::AppData)))
+      return false;
     if (!payload.add(Zquic::byteSpan(ping, unsigned(n)))) return false;
     return Base::template sendProtLongPkt<Zquic::PktType::ZeroRTT>(
       Base::CIDSel::Peer, Base::CIDSel::Local,
@@ -5009,6 +5023,9 @@ void testZeroRTTProtectedSend()
     "0-RTT send succeeded without early keys");
   ZuCHECK(link->installZeroRTTTx(secret),
     "0-RTT Tx key install failed");
+  ZuCHECK(link->receiveMarked(0, Zquic::EcnMark::NotECT) &&
+      !link->sendZeroRTTProbe(sent, true) && !sent,
+    "0-RTT packetization accepted an AppData ACK");
   ZuCHECK(link->sendZeroRTTProbe(sent) && sent && sent->length,
     "0-RTT protected send failed");
 
@@ -5178,8 +5195,13 @@ void testZeroRTTEarlyStreamPolicy()
   ZuCHECK(link->canTxZeroRTT(), "0-RTT Tx key missing before rejection");
   ZuCHECK(link->rejectZeroRTT() == 1 &&
       !link->canTxZeroRTT() &&
-      link->retransmits == 1 &&
-      link->nextRetransmitRef(level, retx) &&
+      link->retransmits == 1,
+    "0-RTT rejection did not queue STREAM recovery");
+  ZuCHECK(!link->tryRecovery() &&
+      link->establishAfterEarlyData(secret) &&
+      link->retransmits == 2,
+    "early STREAM recovery did not wait for and resume at 1-RTT");
+  ZuCHECK(link->nextRetransmitRef(level, retx) &&
       level == Zquic::PktNumSpace::AppData &&
       retx.kind == Zquic::SentFrameKind::Stream &&
       retx.streamID == uint64_t(stream->id()) &&
