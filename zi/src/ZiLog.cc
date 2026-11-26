@@ -181,7 +181,7 @@ void ZiLog::start__()
   m_ring.init(ZmRingParams{m_ringBufSize});
   {
     int r;
-    if ((r = m_ring.open(Ring::Read | Ring::Write)) != Zu::OK) // idempotent
+    if ((r = m_ring.open(Ring::Read | Ring::Write)) != Zi::OK) // idempotent
       throw Zu::IOResult{r};
   }
   m_thread = ZmThread{[this]() { work_(); },
@@ -239,7 +239,7 @@ shift:
     if (void *ptr = m_ring.shift()) {
       m_ring.shift2(Fn::invoke(ptr, this));
     } else {
-      if (m_ring.readStatus() == Zu::EndOfFile) break;
+      if (m_ring.readStatus() == Zi::EndOfFile) break;
     }
   }
 }

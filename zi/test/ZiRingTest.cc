@@ -146,18 +146,18 @@ void testOpenExisting()
   Zi::Name name = ZiTestResidue::uniqueName("existing");
   ZiTestResidue::addShm(name);
   Ring opener{ZiRingParams{name, 0}};
-  ZuCheck(opener.open(Ring::Write) != Zu::OK);
+  ZuCheck(opener.open(Ring::Write) != Zi::OK);
   ZuCheck(opener.closed());
 
   Ring creator{ZiRingParams{name, 8192}};
-  ZuCheck(creator.open(Ring::Write) == Zu::OK);
+  ZuCheck(creator.open(Ring::Write) == Zi::OK);
   unsigned size = creator.size();
   ZuCheck(size >= 8192);
-  ZuCheck(creator.reset() == Zu::OK);
-  ZuCheck(opener.open(Ring::Write) == Zu::OK);
+  ZuCheck(creator.reset() == Zi::OK);
+  ZuCheck(opener.open(Ring::Write) == Zi::OK);
   ZuCheck(opener.size() == size);
   Ring initial{ZiRingParams{name, 0}.initial(4096)};
-  ZuCheck(initial.open(Ring::Write) == Zu::OK);
+  ZuCheck(initial.open(Ring::Write) == Zi::OK);
   ZuCheck(initial.size() == size);
   initial.close();
   opener.close();
@@ -166,12 +166,12 @@ void testOpenExisting()
   name = ZiTestResidue::uniqueName("initial");
   ZiTestResidue::addShm(name);
   initial.init(ZiRingParams{name, 0}.initial(6000));
-  ZuCheck(initial.open(Ring::Write) == Zu::OK);
+  ZuCheck(initial.open(Ring::Write) == Zi::OK);
   size = initial.size();
   ZuCheck(size >= 6000);
-  ZuCheck(initial.reset() == Zu::OK);
+  ZuCheck(initial.reset() == Zi::OK);
   opener.init(ZiRingParams{name, 0});
-  ZuCheck(opener.open(Ring::Read) == Zu::OK);
+  ZuCheck(opener.open(Ring::Read) == Zi::OK);
   ZuCheck(opener.size() == size);
   opener.close();
   initial.close();
@@ -312,11 +312,11 @@ template <typename Ring>
 bool App<Ring>::main()
 {
   if (reset) {
-    if (ring.open(0) != Zu::OK) {
+    if (ring.open(0) != Zi::OK) {
       fail("open failed: ", name);
       return false;
     }
-    if (ring.reset() != Zu::OK) {
+    if (ring.reset() != Zi::OK) {
       fail("reset failed: ", name);
       ring.close();
       return false;
@@ -334,7 +334,7 @@ bool App<Ring>::main()
 template <typename Ring>
 bool App<Ring>::run()
 {
-  if (ring.open(0) != Zu::OK) {
+  if (ring.open(0) != Zi::OK) {
     fail("open failed: ", name);
     return false;
   }
@@ -354,7 +354,7 @@ bool App<Ring>::run()
       w.join();
       if (!noEOF) {
 	Ring writer{ring};
-	if (writer.open(Ring::Write) != Zu::OK)
+	if (writer.open(Ring::Write) != Zi::OK)
 	  fail("writer open failed while sending eof: ", name);
 	else {
 	  writer.eof();
@@ -387,12 +387,12 @@ void App<Ring>::reader()
   log("reader started");
   if (!write) start = Zm::now();
   Ring reader{ring};
-  if (reader.open(Ring::Read) != Zu::OK) {
+  if (reader.open(Ring::Read) != Zi::OK) {
     fail("reader open failed: ", name);
     end = Zm::now();
     return;
   }
-  if (reader.attach() != Zu::OK) {
+  if (reader.attach() != Zi::OK) {
     fail("reader attach failed: ", name);
     end = Zm::now();
     reader.close();
@@ -426,7 +426,7 @@ void App<Ring>::reader()
       readTime.add(readEnd -= readStart);
     } else {
       int k = reader.readStatus();
-      if (k == Zu::EndOfFile) {
+      if (k == Zi::EndOfFile) {
 	log("reader EOF before message ", ZuBoxed(j));
       } else if (!k)
 	log("ring empty");
@@ -450,11 +450,11 @@ void App<Ring>::reader()
 	break;
       }
       int k = reader.readStatus();
-      if (k == Zu::EndOfFile) {
+      if (k == Zi::EndOfFile) {
 	log("reader EOF");
 	break;
       }
-      if (k && k != Zu::NotReady) {
+      if (k && k != Zi::NotReady) {
 	fail("reader status while waiting for EOF: ", ZuBoxed(k));
 	break;
       }
@@ -500,7 +500,7 @@ void App<Ring>::writer()
   log("writer started");
   start = Zm::now();
   Ring writer{ring};
-  if (writer.open(Ring::Write) != Zu::OK) {
+  if (writer.open(Ring::Write) != Zi::OK) {
     fail("writer open failed: ", name);
     end = Zm::now();
     return;
@@ -517,11 +517,11 @@ void App<Ring>::writer()
       writeTime.add(writeEnd -= writeStart);
     } else {
       int k = writer.writeStatus();
-      if (k == Zu::EndOfFile) {
+      if (k == Zi::EndOfFile) {
 	end = Zm::now();
 	log("writer EOF");
 	break;
-      } else if (k == Zu::NotReady) {
+      } else if (k == Zi::NotReady) {
 	log("no readers");
       } else if (k >= static_cast<int>(sizeof(Msg)))
 	log("writer OK!");

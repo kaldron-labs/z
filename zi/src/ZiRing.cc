@@ -24,10 +24,13 @@ namespace ZiRing_ {
 #ifdef linux
 
 Blocker::Blocker() { }
-Blocker::Blocker(const Blocker &blocker) { }
+Blocker::Blocker(const Blocker &blocker) : m_timeout{blocker.m_timeout} { }
 Blocker::~Blocker() { }
 
-bool Blocker::open(bool, const Params &) { return true; }
+bool Blocker::open(bool, const Params &params) {
+  m_timeout = ZuTime{ZuTime::Nano{int128_t(params.timeout) * 1000000}};
+  return true;
+}
 void Blocker::close() { }
 
 int Blocker::wait(
@@ -36,12 +39,11 @@ int Blocker::wait(
 {
   // The ring spins before registering Waiting with its full-width CAS.
   if (ZuUnlikely(params.timeout)) {
-    ZuTime out{ZuTime::Nano{int128_t(params.timeout) * 1000000}};
     while (addr == val) {
       if (syscall(SYS_futex, reinterpret_cast<volatile int *>(&addr),
-	    FUTEX_WAIT, int(val), &out, 0, 0) < 0) {
-	if (errno == ETIMEDOUT) return Zu::NotReady;
-	if (errno == EAGAIN) return Zu::OK;
+	    FUTEX_WAIT, int(val), &m_timeout, 0, 0) < 0) {
+	if (errno == ETIMEDOUT) return Zi::NotReady;
+	if (errno == EAGAIN) return Zi::OK;
       }
     }
   } else {
@@ -49,7 +51,7 @@ int Blocker::wait(
       syscall(SYS_futex, reinterpret_cast<volatile int *>(&addr),
 	  FUTEX_WAIT, int(val), 0, 0, 0);
   }
-  return Zu::OK;
+  return Zi::OK;
 }
 
 void Blocker::wake(ZmAtomic<uint32_t> &addr)
@@ -113,15 +115,15 @@ int Blocker::wait(
   // The ring has already registered Waiting after its configured spin.
   DWORD timeout = params.timeout ? params.timeout : INFINITE;
   while (addr == val) {
-    if (ZuUnlikely(!m_sem)) return Zu::IOError;
+    if (ZuUnlikely(!m_sem)) return Zi::IOError;
     DWORD r = WaitForSingleObject(m_sem, timeout);
     switch (int(r)) {
-      case WAIT_OBJECT_0:	return Zu::OK;
-      case WAIT_TIMEOUT:	return Zu::NotReady;
+      case WAIT_OBJECT_0:	return Zi::OK;
+      case WAIT_TIMEOUT:	return Zi::NotReady;
     }
-    return Zu::IOError;
+    return Zi::IOError;
   }
-  return Zu::OK;
+  return Zi::OK;
 }
 
 void Blocker::wake(ZmAtomic<uint32_t> &addr)

@@ -26,6 +26,7 @@
 #endif
 
 #include <zlib/ZmRing.hh>
+#include <zlib/ZuTime.hh>
 
 #include <zlib/ZiPlatform.hh>
 #include <zlib/ZiFile.hh>
@@ -62,6 +63,9 @@ public:
   void wake(ZmAtomic<uint32_t> &addr);
 
 protected:
+#ifdef linux
+  ZuTime		m_timeout;
+#endif
 #ifdef _WIN32
   HANDLE		m_sem;
 #endif
