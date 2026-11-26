@@ -68,12 +68,11 @@ struct InitialSecret {
 };
 
 struct InitialKeyMaterial {
-  ZuBArray<InitialSecret::SecretLen>
-		initial =
-		  ZuBArray<InitialSecret::SecretLen>(
-		    InitialSecret::SecretLen, true);
-  InitialSecret	client;
-  InitialSecret	server;
+  using InitialBytes = ZuBArray<InitialSecret::SecretLen>;
+
+  InitialBytes		initial = InitialBytes(InitialSecret::SecretLen, true);
+  InitialSecret		client;
+  InitialSecret		server;
 
   void clear() {
     memset(initial.data(), 0, initial.length());
@@ -145,12 +144,12 @@ struct ZquicAPI PktProtState {
   void clear();
   bool valid() const { return installed; }
 
-  Ztls_::AeadContext	*aead = nullptr;
-  Ztls_::CipherContext *hp = nullptr;
-  TrafficSecret		secret;
-  PktNumSpace::T	level = PktNumSpace::Initial;
-  bool			tx = false;
-  bool			installed = false;
+  Ztls_::AeadContext		*aead = nullptr;
+  Ztls_::CipherContext		*hp = nullptr;
+  TrafficSecret			secret;
+  PktNumSpace::T		level = PktNumSpace::Initial;
+  bool				tx = false;
+  bool				installed = false;
 };
 
 struct ZquicAPI PktProt {
@@ -283,9 +282,9 @@ ZuDerive(Delivery,
   ZtArrayHeapMax<MaxBufSize,
     ZtArrayHeapID<"Zquic.CryptoDelivery">>>));
   struct TxRange {
-    ZmRef<ZiIOBuf> data;
-    uint64_t offset;
-    unsigned begin, length;
+    ZmRef<ZiIOBuf>	data;
+    uint64_t		offset;
+    unsigned		begin, length;
   };
   using TxRanges = ZtArray<TxRange, ZtArrayHeapID<"Zquic.CryptoTx.Ranges">>;
 
@@ -457,51 +456,44 @@ private:
   static int collectedExtensionsCB(
     Ztls::Cxn *, Ztls_::RawExtension *);
 
-  bool				m_isServer = false;
-  bool				m_earlyDataEnabled = false;
-  EarlyDataState::T		m_earlyDataState = EarlyDataState::Disabled;
-  bool				m_oneRTTReady = false;
-  ZuArray<bool, PktNumSpace::N>	m_secretInstalled =
-				  fixedArray<bool, PktNumSpace::N>();
-  ZuArray<TrafficSecret, PktNumSpace::N>
-				m_txTrafficSecrets =
-				  ZuArray<TrafficSecret, PktNumSpace::N>(
-				    PktNumSpace::N);
-  ZuArray<TrafficSecret, PktNumSpace::N>
-				m_rxTrafficSecrets =
-				  ZuArray<TrafficSecret, PktNumSpace::N>(
-				    PktNumSpace::N);
-  TrafficSecret 		m_txEarlySecret;
-  TrafficSecret 		m_rxEarlySecret;
-  ZuArray<uint64_t, PktKeyLevel::N>
-				m_txKeyGen =
-				  fixedArray<uint64_t, PktKeyLevel::N>();
-  ZuArray<PktProtState, PktNumSpace::N>
-				m_rxProt =
-				  ZuArray<PktProtState, PktNumSpace::N>(
-				    PktNumSpace::N);
-  PktProtState			m_rxEarlyProt;
-  ParamString			m_alpn;
-  Host				m_serverName;
-  ParamString			m_keyLogPath;
-  ZquicLogger::Trace		*m_qlogTrace = nullptr;
-  void				*m_saveSessionTicketArg = nullptr;
-  void				(*m_saveSessionTicket)(void *, ZuBSpan) = nullptr;
-  InitialKeyMaterial 		m_initialKeys;
-  CryptoDiag			m_diag;
-  TransportParams 		m_localParams;
-  TransportParams 		m_peerParams;
-  bool				m_peerParamsSet = false;
-  uint64_t			m_peerParamsGen = 0;
-  Ztls_::Context 		m_tlsCtx{};
-  Ztls::Cxn			m_tls;
-  Ztls_::RawExtension 		m_tlsExtensions[2]{};
-  TLSTransportParams 		m_tlsParams;
-  Ztls_::Bytes			m_alpnVec{};
-  size_t			m_maxEarlyData = 0;
-  int				m_tlsResult = Ztls_ErrorInProgress;
-  bool				m_tlsKeyUpdateRejected = false;
-  bool				m_tlsFailed = false;
+  using SecretFlags = ZuArray<bool, PktNumSpace::N>;
+  using TrafficSecrets = ZuArray<TrafficSecret, PktNumSpace::N>;
+  using KeyGenerations = ZuArray<uint64_t, PktKeyLevel::N>;
+  using PktProtStates = ZuArray<PktProtState, PktNumSpace::N>;
+
+  bool			m_isServer = false;
+  bool			m_earlyDataEnabled = false;
+  EarlyDataState::T	m_earlyDataState = EarlyDataState::Disabled;
+  bool			m_oneRTTReady = false;
+  SecretFlags		m_secretInstalled = fixedArray<bool, PktNumSpace::N>();
+  TrafficSecrets	m_txTrafficSecrets{PktNumSpace::N};
+  TrafficSecrets	m_rxTrafficSecrets{PktNumSpace::N};
+  TrafficSecret		m_txEarlySecret;
+  TrafficSecret		m_rxEarlySecret;
+  KeyGenerations	m_txKeyGen = fixedArray<uint64_t, PktKeyLevel::N>();
+  PktProtStates		m_rxProt{PktNumSpace::N};
+  PktProtState		m_rxEarlyProt;
+  ParamString		m_alpn;
+  Host			m_serverName;
+  ParamString		m_keyLogPath;
+  ZquicLogger::Trace	*m_qlogTrace = nullptr;
+  void			*m_saveSessionTicketArg = nullptr;
+  void			(*m_saveSessionTicket)(void *, ZuBSpan) = nullptr;
+  InitialKeyMaterial	m_initialKeys;
+  CryptoDiag		m_diag;
+  TransportParams	m_localParams;
+  TransportParams	m_peerParams;
+  bool			m_peerParamsSet = false;
+  uint64_t		m_peerParamsGen = 0;
+  Ztls_::Context	m_tlsCtx{};
+  Ztls::Cxn		m_tls;
+  Ztls_::RawExtension	m_tlsExtensions[2]{};
+  TLSTransportParams	m_tlsParams;
+  Ztls_::Bytes		m_alpnVec{};
+  size_t		m_maxEarlyData = 0;
+  int			m_tlsResult = Ztls_ErrorInProgress;
+  bool			m_tlsKeyUpdateRejected = false;
+  bool			m_tlsFailed = false;
   Ztls::CertStore	*m_certStore = nullptr;
   Ztls::VerifyCert	*m_verify = nullptr;
   Ztls::PK::Key		m_key;
