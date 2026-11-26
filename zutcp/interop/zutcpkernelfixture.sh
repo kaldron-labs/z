@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 [[ ${ZPKT_RUN_FIXTURE:-0} == 1 ]]
-[[ $(readlink /proc/self/ns/net) != $(readlink /proc/1/ns/net) ]]
+[[ $(readlink /proc/self/ns/net) != "$(readlink /proc/1/ns/net)" ]]
 family=$1
 direction=$2
 out=$3

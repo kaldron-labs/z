@@ -336,7 +336,7 @@ void testDeferredByteReset()
   HubFixture fixture;
   ZmRef<TestLink> cxn = new TestLink{&fixture.app};
   auto alloc = [&fixture]() {
-    auto buf = fixture.app.dataTxAllocator()->allocBuf();
+    auto buf = fixture.app.txAllocator()->allocBuf();
     memcpy(buf->data(), "bytes", 5);
     buf->length = 5;
     return buf;
@@ -463,6 +463,14 @@ void testInitValidate()
       .errorFn(ZutcpTest::Params::ErrorFn{[&errors](ZeException) { ++errors; }});
     ZuCHECK(!app.init(ZuMv(params)) && errors == 1,
       "unset, zero and negative connect deadlines must fail before initialization");
+  }
+  for (auto interval : {ZuTime{}, ZuTime{0}, ZuTime{-1}}) {
+    ZmRef<HubApp> app = new HubApp{&mx};
+    unsigned errors = 0;
+    auto params = ZutcpTest::Params{&mx}.txRetry(0, interval)
+      .errorFn(ZutcpTest::Params::ErrorFn{[&errors](ZeException) { ++errors; }});
+    ZuCHECK(!app->init(ZuMv(params)) && errors == 1,
+      "timed retries require a positive interval even with zero immediate retries");
   }
   for (bool finWait : {false, true}) for (auto timeout : {ZuTime{}, ZuTime{0}, ZuTime{-1}}) {
     ZmRef<HubApp> appRef = new HubApp{&mx};

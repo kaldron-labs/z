@@ -145,58 +145,6 @@ void MxPlugin::UdpCxn::send(ZiConnection *cxn)
   sendNext(cxn);
 }
 
-void MxPlugin::openUDPRouteMonitor()
-{
-  // Open before publishing Up so connected UDP setup is covered as well.
-  m_udpRouteGeneration = m_udpRouteCheck = 0;
-  int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, NETLINK_ROUTE);
-  if (fd < 0) return;
-  sockaddr_nl addr{};
-  addr.nl_family = AF_NETLINK;
-  addr.nl_groups = RTMGRP_LINK | RTMGRP_NEIGH | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR |
-    RTMGRP_IPV4_ROUTE | RTMGRP_IPV6_ROUTE | RTMGRP_IPV4_RULE |
-    (1U << (RTNLGRP_IPV6_RULE - 1));
-  int group = RTNLGRP_NEXTHOP;
-  if (::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) ||
-      setsockopt(fd, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, &group, sizeof(group))) {
-    ::close(fd);
-    return;
-  }
-  m_udpRouteFD = fd;
-}
-
-uint64_t MxPlugin::udpRouteGeneration()
-{
-  // One coarse vDSO clock read per send. Service the shared subscription
-  // on demand, at most once per 10ms of active UDP output.
-  timespec ts;
-  clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
-  uint64_t now = uint64_t(ts.tv_sec) * 1000000000 + ts.tv_nsec;
-  if (now < m_udpRouteCheck) return m_udpRouteGeneration;
-  m_udpRouteCheck = now + 10000000;
-  bool changed = m_udpRouteFD < 0;
-  if (!changed) {
-    // Every subscribed message invalidates all paths, including an overrun.
-    // Discard whole datagrams without copying or parsing the route payload.
-    for (unsigned i = 0; i < 16; ++i) {
-      char byte;
-      if (::recv(m_udpRouteFD, &byte, 1, MSG_DONTWAIT) < 0) {
-	if (errno != EAGAIN && errno != EWOULDBLOCK) {
-	  changed = true;
-	  if (errno != EINTR && errno != ENOBUFS) {
-	    ::close(m_udpRouteFD);
-	    m_udpRouteFD = -1;
-	  }
-	}
-	break;
-      }
-      changed = true;
-    }
-  }
-  if (changed) ++m_udpRouteGeneration;
-  return m_udpRouteGeneration;
-}
-
 const IPPath *MxPlugin::UdpCxn::findPath(const ZiIP &peer, uint64_t generation)
 {
   if (m_generation != generation) {
@@ -301,7 +249,7 @@ int MxPlugin::UdpCxn::submit(
     if (loop) memcpy(loop, frame, wire);
   }
   bool sent = m_owner->submitPacket(frame, wire, false);
-  if (sent) m_owner->submittedPacket();
+  if (sent) m_owner->submittedPackets(1);
   if (loop) {
     if (sent)
       m_owner->rxRun([owner = m_owner, loop, wire] {
@@ -348,6 +296,58 @@ void MxPlugin::UdpCxn::releaseCxnRx()
 {
   m_owner->releaseCxn(*this);
   m_owner->cxnRetired();
+}
+
+void MxPlugin::openUDPRouteMonitor()
+{
+  // Open before publishing Up so connected UDP setup is covered as well.
+  m_udpRouteGeneration = m_udpRouteCheck = 0;
+  int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, NETLINK_ROUTE);
+  if (fd < 0) return;
+  sockaddr_nl addr{};
+  addr.nl_family = AF_NETLINK;
+  addr.nl_groups = RTMGRP_LINK | RTMGRP_NEIGH | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR |
+    RTMGRP_IPV4_ROUTE | RTMGRP_IPV6_ROUTE | RTMGRP_IPV4_RULE |
+    (1U << (RTNLGRP_IPV6_RULE - 1));
+  int group = RTNLGRP_NEXTHOP;
+  if (::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) ||
+      setsockopt(fd, SOL_NETLINK, NETLINK_ADD_MEMBERSHIP, &group, sizeof(group))) {
+    ::close(fd);
+    return;
+  }
+  m_udpRouteFD = fd;
+}
+
+uint64_t MxPlugin::udpRouteGeneration()
+{
+  // One coarse vDSO clock read per send. Service the shared subscription
+  // on demand, at most once per 10ms of active UDP output.
+  timespec ts;
+  clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
+  uint64_t now = uint64_t(ts.tv_sec) * 1000000000 + ts.tv_nsec;
+  if (now < m_udpRouteCheck) return m_udpRouteGeneration;
+  m_udpRouteCheck = now + 10000000;
+  bool changed = m_udpRouteFD < 0;
+  if (!changed) {
+    // Every subscribed message invalidates all paths, including an overrun.
+    // Discard whole datagrams without copying or parsing the route payload.
+    for (unsigned i = 0; i < 16; ++i) {
+      char byte;
+      if (::recv(m_udpRouteFD, &byte, 1, MSG_DONTWAIT) < 0) {
+	if (errno != EAGAIN && errno != EWOULDBLOCK) {
+	  changed = true;
+	  if (errno != EINTR && errno != ENOBUFS) {
+	    ::close(m_udpRouteFD);
+	    m_udpRouteFD = -1;
+	  }
+	}
+	break;
+      }
+      changed = true;
+    }
+  }
+  if (changed) ++m_udpRouteGeneration;
+  return m_udpRouteGeneration;
 }
 
 void MxPlugin::udp(

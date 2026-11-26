@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Called by run-compare.sh inside its fresh network namespace.
 set -euo pipefail
-[[ $(readlink /proc/self/ns/net) != $(readlink /proc/1/ns/net) ]]
+[[ $(readlink /proc/self/ns/net) != "$(readlink /proc/1/ns/net)" ]]
 [[ $# == 16 ]]
 binary=$1 backend=$2 family=$3 out=$4
 crx=$5 ctx=$6 srx=$7 stx=$8
@@ -29,6 +29,13 @@ topology=${BENCH_TOPOLOGY:-direct}
 [[ $topology == direct || $topology == bridge ]]
 recovery=${BENCH_RECOVERY:-none}
 case $recovery in none|loss|reorder) ;; *) exit 2 ;; esac
+if [[ $backend == dpdk ]]; then
+  if [[ $topology != direct || $capture != 0 || $recovery != none ]]; then
+    echo "DPDK net_ring does not traverse the veth capture or fault-injection path" >&2
+    exit 2
+  fi
+  topology=ring
+fi
 if [[ $recovery != none ]]; then
   [[ $topology == bridge && $capture == 1 && $connections == 1 && $warmup == 0 ]]
   [[ $pipeline =~ ^[0-9]+$ && $messages =~ ^[0-9]+$ ]]
@@ -68,7 +75,10 @@ trap 'exit 1' INT TERM
 trap 'printf "benchmark fixture failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 ip netns add "$cli"; cli_made=1
 ip netns add "$srv"; srv_made=1
-if [[ $topology == bridge ]]; then
+if [[ $topology == ring ]]; then
+  ip -n "$cli" link add zbenchc address 02:00:00:00:87:01 type dummy
+  ip -n "$srv" link add zbenchs address 02:00:00:00:87:02 type dummy
+elif [[ $topology == bridge ]]; then
   ip link add zbenchbr type bridge
   bridge_made=1
   ip link add zbenchca numrxqueues 1 numtxqueues 1 type veth \
@@ -86,22 +96,16 @@ else
   ip link add zbenchc numrxqueues 1 numtxqueues 1 type veth \
     peer name zbenchs numrxqueues 1 numtxqueues 1
 fi
-ip link set zbenchc netns "$cli"
-ip link set zbenchs netns "$srv"
+if [[ $topology != ring ]]; then
+  ip link set zbenchc netns "$cli"
+  ip link set zbenchs netns "$srv"
+fi
 for ns in "$cli" "$srv"; do ip -n "$ns" link set lo up; done
 ip -n "$cli" link set zbenchc up
 ip -n "$srv" link set zbenchs up
 cmac=$(ip -n "$cli" -o link show zbenchc | sed -n 's/.*link\/ether \([^ ]*\).*/\1/p')
 smac=$(ip -n "$srv" -o link show zbenchs | sed -n 's/.*link\/ether \([^ ]*\).*/\1/p')
-control= croute=zbenchc sroute=zbenchs
-if [[ $backend == dpdk ]]; then
-  # The PMD restores the veth MAC at startup, which flushes its neighbors.
-  control=zbenchctl croute=zbenchctl sroute=zbenchctl
-  ip -n "$cli" link add "$control" address "$cmac" type dummy
-  ip -n "$srv" link add "$control" address "$smac" type dummy
-  ip -n "$cli" link set "$control" up
-  ip -n "$srv" link set "$control" up
-fi
+croute=zbenchc sroute=zbenchs
 ip -n "$cli" addr add 198.18.87.1/32 dev "$croute"
 ip -n "$srv" addr add 198.18.87.2/32 dev "$sroute"
 ip -n "$cli" -6 addr add 2001:db8:87::1/128 dev "$croute" nodad
@@ -125,7 +129,9 @@ snapshot() {
   for side in client server; do
     local ns=$cli dev=zbenchc
     if [[ $side == server ]]; then ns=$srv dev=zbenchs; fi
-    ip netns exec "$ns" ethtool -S "$dev" > "$out/$side/device.$phase"
+    if [[ $topology != ring ]]; then
+      ip netns exec "$ns" ethtool -S "$dev" > "$out/$side/device.$phase"
+    fi
     ip netns exec "$ns" nstat -az > "$out/$side/netstat.$phase"
   done
   if [[ $recovery != none ]]; then
@@ -135,22 +141,13 @@ snapshot() {
 for side in client server; do
   ns=$cli dev=zbenchc
   if [[ $side == server ]]; then ns=$srv dev=zbenchs; fi
-  ip netns exec "$ns" ethtool -K "$dev" tx off tso off gso off gro off >/dev/null
-  ip netns exec "$ns" ethtool -k "$dev" > "$out/$side/offload"
-  ip netns exec "$ns" ethtool -l "$dev" > "$out/$side/channels"
+  if [[ $topology != ring ]]; then
+    ip netns exec "$ns" ethtool -K "$dev" tx off tso off gso off gro off >/dev/null
+    ip netns exec "$ns" ethtool -k "$dev" > "$out/$side/offload"
+    ip netns exec "$ns" ethtool -l "$dev" > "$out/$side/channels"
+  fi
   ip netns exec "$ns" sysctl net.ipv4.tcp_sack net.ipv4.tcp_timestamps \
     net.ipv4.tcp_window_scaling net.ipv4.tcp_ecn > "$out/$side/kernel-options"
-  if [[ $backend == dpdk ]]; then
-    # AF_PACKET receives before the IP input hook. Suppress kernel TCP replies.
-    ip netns exec "$ns" nft -f - <<EOF
-table inet zbench {
-  chain input {
-    type filter hook input priority filter; policy accept;
-    iifname "$dev" meta l4proto tcp drop
-  }
-}
-EOF
-  fi
 done
 if [[ $topology == bridge ]]; then
   for dev in zbenchca zbenchsa; do
@@ -168,12 +165,13 @@ printf '%s\n' "backend=$backend" "family=$family" "build_label=$label" "topology
   "performance_comparison=$matched" \
   "capture=$capture" "messages=$messages" "warmup=$warmup" "pipeline=$pipeline" \
   "connections=$connections" "reserve_requested=$reserve" "spin=$spin" \
+  "rx_spin=${BENCH_RX_SPIN:-default}" "tx_spin=${BENCH_TX_SPIN:-default}" \
   "scheduler_ll=${BENCH_LL:-0}" \
   "workload=${BENCH_WORKLOAD:-order}" "burst_size=${BENCH_BURST_SIZE:-0}" \
   "ack_hold_us=${BENCH_ACK_HOLD_US:-25000}" \
   "offer_rate=${BENCH_OFFER_RATE:-0}" "pending_cap=${BENCH_PENDING_CAP:-0}" \
   "recovery=$recovery" \
-  "burst_interval_us=${BENCH_BURST_US:-1000}" \
+  "burst_interval_us=${BENCH_BURST_US:-1000}" "quiet_interval_us=${BENCH_QUIET_US:-0}" \
   "client_cpus=$crx,$ctx" "server_cpus=$srx,$stx" \
   "client_app_cpus=$carx,$catx" "server_app_cpus=$sarx,$satx" \
   "app_colocate=${BENCH_APP_COLOCATE:-0}" > "$out/settings"
@@ -246,11 +244,32 @@ fi
 
 address=198.18.87.2
 if [[ $family == 6 ]]; then address=2001:db8:87::2; fi
+if [[ $topology == ring ]]; then
+  pair_status=0
+  env "RUNTIME_DIRECTORY=$out" "BENCH_RING_CLIENT_NETNS=/run/netns/$cli" \
+    "BENCH_RING_SERVER_NETNS=/run/netns/$srv" "BENCH_RING_CLIENT_OUTPUT=$out/client/output" \
+    "BENCH_RING_SERVER_OUTPUT=$out/server/output" \
+    "BENCH_RING_SERVER_RX_CPU=$srx" "BENCH_RING_SERVER_TX_CPU=$stx" \
+    /usr/bin/time -v -o "$out/time" timeout 150 \
+    "$binary" pair dpdk zbenchc "$address" "$messages" "$warmup" \
+    "$pipeline" "$connections" "$reserve" "$crx" "$ctx" "$spin" "$out/client/samples.csv" \
+    > "$out/output" 2> "$out/errors" || pair_status=$?
+  printf 'pair=%s\n' "$pair_status" > "$out/exit-status"
+  ((pair_status == 0))
+  snapshot after
+  for side in client server; do
+    grep -q '^config backend=dpdk pmd=net_ring ' "$out/$side/output"
+    grep -q "^result role=$side backend=dpdk exact=1 " "$out/$side/output"
+  done
+  printf '%s\n' "observation=complete topology=ring build=$label backend=dpdk" \
+    "performance_comparison=$matched" > "$out/complete"
+  exit 0
+fi
 # cd gives each role its own ordinary gmon.out; GMON_OUT_PREFIX also separates PIDs
 # on runtimes which implement it. No clock or transport behavior is changed.
 ip netns exec "$srv" sh -c 'cd "$1"; shift; exec "$@"' sh "$out/server" \
   env "GMON_OUT_PREFIX=$out/server/gmon" "RUNTIME_DIRECTORY=$out/server" \
-  "BENCH_DPDK_CONTROL_LINK=$control" "BENCH_APP_RX_CPU=$sarx" \
+  "BENCH_APP_RX_CPU=$sarx" \
   "BENCH_APP_TX_CPU=$satx" /usr/bin/time -v -o "$out/server/time" \
   timeout 150 "$binary" server "$server_backend" zbenchs "$address" "$messages" "$warmup" \
   "$pipeline" "$connections" "$reserve" "$srx" "$stx" "$spin" \
@@ -263,7 +282,7 @@ done
 grep -q '^ready=1$' "$out/server/output"
 ip netns exec "$cli" sh -c 'cd "$1"; shift; exec "$@"' sh "$out/client" \
   env "GMON_OUT_PREFIX=$out/client/gmon" "RUNTIME_DIRECTORY=$out/client" \
-  "BENCH_DPDK_CONTROL_LINK=$control" "BENCH_APP_RX_CPU=$carx" \
+  "BENCH_APP_RX_CPU=$carx" \
   "BENCH_APP_TX_CPU=$catx" /usr/bin/time -v -o "$out/client/time" \
   timeout 150 "$binary" client "$client_backend" zbenchc "$address" "$messages" "$warmup" \
   "$pipeline" "$connections" "$reserve" "$crx" "$ctx" "$spin" "$out/client/samples.csv" \

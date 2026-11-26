@@ -30,6 +30,7 @@ namespace Zutcp {
 enum { DefaultControlBufCount = 256 };
 enum { DefaultTxControlCredits = 64 };
 enum { DefaultRxRetainPerCxn = 256 };
+enum { TCPHeadRoom = 14 + 40 + 60 }; // Ethernet + IPv6 + TCP with options
 
 // The caller allocation lease lives in an existing recovery/source node,
 // independently of copied SentPkt metadata and the raw kernel lease. Owners drain
@@ -55,9 +56,15 @@ private:
 // Internal packet adapters and retained source nodes use this wire metadata.
 // The handoff is Tx-owned, valid for one synchronous submission, and cleared
 // by the builder before the sent record can be discarded on refusal.
+struct TxRetry {
+  bool spin = false; // permit immediate retries on this submission
+  bool refused = false; // ready device refused with no outstanding completions
+};
+
 struct PacketBuf : public Zi::IOBuf {
   PacketLease *retained = nullptr;
   TCPHeader tcp;
+  TxRetry retry;
   using Zi::IOBuf::IOBuf;
 };
 

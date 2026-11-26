@@ -561,6 +561,11 @@ private:
   }
   bool flushTx(ZiSockAddr) { return flushTx(); }
 
+  TxBatchResult txBatch() {
+    return Endpoint::txBatch(Endpoint::remote(), nullptr,
+      [this](const IPPath &path) { return Base::sendTCPBatch(path); });
+  }
+
   void queueTxFlush() {
     app()->txRun([link = impl()]() mutable {
       if (link->disconnecting()) return;

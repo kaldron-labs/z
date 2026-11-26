@@ -250,6 +250,11 @@ private:
   }
   bool flushTx(ZiSockAddr) { return flushTx(); }
 
+  TxBatchResult txBatch() {
+    return impl()->withTxBatch(m_peerAddr, m_txIP,
+      [this](const IPPath &path) { return Base::sendTCPBatch(path); });
+  }
+
   bool received_(Datagram d) {
     if (m_rxPeerAddr && d.addr != m_rxPeerAddr) return true;
     if (!Base::handshakeStartedRx()) {

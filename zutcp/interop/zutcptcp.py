@@ -614,16 +614,46 @@ def reorder_closed_replies(directory, packets, report, request):
     return evidence
 
 
+def loss_closed_reply(packets, request_size):
+    resets = [p for p in packets if p['flags'] & 4]
+    if not resets:
+        return
+    first = min((p for p in packets if p['side'] == 'server' and p['flags'] & 0x12 == 2),
+                key=lambda p: p['time'])
+    flow = sorted((p for p in packets if same_flow(p, first) or same_flow(p, first, True)),
+                  key=lambda p: p['time'])
+    fin, retry, ack, duplicate, reset = flow[-5:]
+    assert len(resets) == 1 and resets[0] is reset, 'unexpected reset in loss capture'
+    assert all(same_flow(p, first, True) and p['side'] == 'client' and
+               p['flags'] == 0x11 and not p['payload'] for p in (fin, retry))
+    assert fin['seq'] == retry['seq']
+    assert fin['ack'] == retry['ack'] == (first['seq'] + request_size + 2) & MASK32
+    assert all(same_flow(p, first) and p['side'] == 'server' and
+               p['flags'] == 0x10 and not p['payload'] and
+               p['ack'] == (fin['seq'] + 1) & MASK32 and
+               p['seq'] == fin['ack'] for p in (ack, duplicate))
+    assert ack['frame'] == duplicate['frame']
+    assert fin['time'] < retry['time'] < ack['time'] < duplicate['time'] < reset['time']
+    assert same_flow(reset, first, True) and reset['side'] == 'client'
+    assert reset['flags'] == 0x04 and reset['seq'] == duplicate['ack']
+    assert not (reset['ack'] or reset['window'] or reset['options'] or reset['payload'])
+    # Both FINs preceded the first ACK. The second copy reached the closed peer.
+    return {'fin_time': fin['time'], 'fin_retransmit_time': retry['time'],
+            'first_ack_time': ack['time'], 'duplicate_ack_time': duplicate['time'],
+            'reset_time': reset['time'], 'reset_wire_seq': reset['seq']}
+
+
 def check(directory, direction, family, profile='baseline'):
     request = (directory / 'request').read_bytes()
     count = 2 if profile in ('repeat', 'tfo', 'tfo-fallback') else 1
     assert (directory / 'client.out').read_bytes() == (b'echo: ' + request) * count
+    loss_native_client = profile == 'loss' and direction == 'native-client'
     packets = []
     for side in ('server', 'client'):
         capture_log = (directory / ('to-' + side + '.capture')).read_text()
         assert '0 packets dropped by kernel' in capture_log
         for stamp, frame in capture(directory / ('to-' + side + '.pcap')):
-            packet = tcp(frame, profile in ('reset', 'reorder'))
+            packet = tcp(frame, loss_native_client or profile in ('reset', 'reorder'))
             if packet is None:
                 continue
             assert packet['family'] == family
@@ -635,6 +665,10 @@ def check(directory, direction, family, profile='baseline'):
         if profile == 'reorder':
             report['selected']['post_close_host_resets'] = reorder_closed_replies(
                 directory, packets, report, request)
+        elif loss_native_client:
+            closed_reply = loss_closed_reply(packets, len(request))
+            if closed_reply:
+                report['selected']['post_close_host_reset'] = closed_reply
     else:
         starts = {}
         for p in sorted(packets, key=lambda p: p['time']):

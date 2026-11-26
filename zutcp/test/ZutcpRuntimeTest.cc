@@ -174,6 +174,220 @@ struct RetryCxn : Zutcp::Cxn {
   void resumeTx() override { ++calls; retry(); }
 };
 
+struct BatchDevice : ZmNHeap<BatchDevice>, ZutcpTest::Xdp {
+friend inline ZuStringT<"Zutcp.Test.BatchDevice"> ZmNHeapID(BatchDevice *);
+  using ZmNHeap<BatchDevice>::operator new;
+  using ZmNHeap<BatchDevice>::operator delete;
+  using Xdp::Xdp;
+
+  Zutcp::MxPlugin *stack = nullptr;
+  unsigned pending = 0, limit = 0, offered = 0, polls = 0, observed = 0;
+  unsigned nextByte = 0;
+  bool retireAll = false, exact = true, checkScalar = false;
+
+  void checksumOffload(bool enabled) { tcpChksumOffload(enabled); }
+
+  void check(const Zpkt::TxPacket &packet) {
+    Zutcp::IPView ip;
+    Zutcp::TCPView tcp;
+    bool decoded = Zutcp::readIP({packet.data, packet.length}, ip) && Zutcp::readTCP(ip, tcp);
+    if (!decoded) { exact = false; return; }
+    exact &= tcp.header.seq == nextByte && tcp.payload.length() == 8;
+    if (tcpChksumOffload()) {
+      // Read the IPv4 pseudo-header's address words directly from the frame.
+      const auto addresses = packet.data + 14 + 12;
+      unsigned seed = ip.payload.length() + 6;
+      for (unsigned i = 0; i < 8; i += 2)
+	seed += (unsigned(addresses[i]) << 8) | addresses[i + 1];
+      seed = (seed & 0xffff) + (seed >> 16);
+      auto segment = ip.payload.data();
+      exact &= seed == ((unsigned(segment[16]) << 8) | segment[17]);
+    } else exact &= !Zutcp::MxPlugin::tcpChecksum(ip.local, ip.remote, ip.payload);
+    for (auto byte : tcp.payload) exact &= byte == uint8_t(nextByte >> 3);
+    nextByte += 8;
+  }
+  bool send(uint8_t *packet, unsigned length) override {
+    if (checkScalar) check({packet, length});
+    ++pending;
+    return true;
+  }
+  unsigned send(ZuSpan<const Zpkt::TxPacket> packets) override {
+    offered = packets.length();
+    unsigned accepted = offered < limit ? offered : limit;
+    for (unsigned i = 0; i < accepted; ++i) check(packets[i]);
+    pending += accepted;
+    return accepted;
+  }
+  unsigned pollTx() override {
+    if (!retireAll) return 0;
+    retireAll = false;
+    observed = stack->txAdmission().outstanding;
+    ++polls;
+    unsigned retired = pending;
+    pending = 0;
+    return retired;
+  }
+};
+
+struct BatchCxn : ZmNHeap<BatchCxn>,
+  Zutcp::Cxn_<Zutcp::MxPlugin, BatchCxn, Zutcp::TxBufAlloc<>> {
+friend inline ZuStringT<"Zutcp.Test.BatchCxn"> ZmNHeapID(BatchCxn *);
+  using Base = Zutcp::Cxn_<Zutcp::MxPlugin, BatchCxn, Zutcp::TxBufAlloc<>>;
+  using ZmNHeap<BatchCxn>::operator new;
+  using ZmNHeap<BatchCxn>::operator delete;
+  using Base::txNext;
+  explicit BatchCxn(Zutcp::MxPlugin *app) : Base{app, true} { }
+  void prepareRx() {
+    Base::configLocalParams(app());
+    Base::startHandshake();
+    Base::setTCPOriginsRx({.local = UINT32_MAX, .peer = UINT32_MAX,
+      .localKnown = true, .peerKnown = true, .server = true});
+    Base::establish();
+  }
+  void prepareTx(const Zutcp::IPPath &path) {
+    Base::initServerPathTx({path.local, 18181}, {path.remote, 18182});
+    Base::extendTxCredit(80);
+  }
+  Zutcp::TxBatchResult batch(const Zutcp::IPPath &path) { return Base::sendTCPBatch(path); }
+  bool wireFlush(const Zutcp::IPPath &path) {
+    return Base::flushTCP([this, &path](
+	const Zutcp::SentFrameRef &ref, bool syn, uint8_t control, bool persist) {
+      return Base::sendTCP(ref, syn, control,
+	[this, &path] { return app()->allocPacket(this, path.local.type(), true); },
+	[this, &path](auto buf, Zutcp::EcnMark::T ecn) {
+	  auto wire = Zutcp::writeTCP(
+	    buf->data_(), buf->size, path, buf->tcp, buf->length, Zutcp::ecnBits(ecn));
+	  if (!wire) return false;
+	  buf->skip = 0;
+	  buf->length = wire;
+	  Zutcp::TCPLayout layout{14, uint16_t(Zutcp::ipHead(path.local.type()))};
+	  return app()->sendPacket(buf, nullptr, &layout, &buf->retry);
+	}, persist);
+    });
+  }
+  unsigned limitCongestion(unsigned bytes) {
+    auto charge = Base::congestionAllowance() - bytes;
+    Base::m_congestion.sent(charge);
+    return charge;
+  }
+  void releaseCongestion(unsigned bytes) { Base::m_congestion.release(bytes); }
+  bool flushTx() { return false; } // The test explicitly controls each flush.
+  bool retransmit(bool = false, unsigned = 2) { return false; }
+  void queueRetransmit() { }
+  void pto() { }
+  bool sendSyn() { return false; }
+  int process(Zutcp::Reader &) { return 0; }
+  void clearRx() { Base::resetLink(); }
+};
+
+static void checkPartialBatch(bool offload)
+{
+  auto env = ZutcpTest::fixtureEnv();
+  ZmRef<Zutcp::MxPlugin> stack = new Zutcp::MxPlugin;
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
+    .rxThread(1).txThread(2), stack};
+  ZmRef<BatchDevice> device = new BatchDevice{&mx};
+  device->checksumOffload(offload);
+  device->stack = stack.ptr();
+  ZmRef<Zpkt::Nif> backend = device;
+  stack->init(&mx, env, ZuMv(backend), {});
+  bool started = mx.start();
+  ZuCheckRT(started, log_("start deterministic partial-batch fixture"));
+  if (!started) return;
+
+  ZmRef<BatchCxn> cxn = new BatchCxn{stack.ptr()};
+  Zutcp::IPPath path{.local = ZiIP{"198.18.0.1"}, .remote = ZiIP{"198.18.0.2"}, .mtu = 1500};
+  ZmBlock<>{}([&mx, cxn](auto done) {
+    mx.rxRun([&mx, cxn, done] {
+      cxn->prepareRx();
+      mx.txRun([done]() mutable { done(); });
+    });
+  });
+
+  auto passed = ZmBlock<bool>{}([&mx, stack, cxn, device, &path](auto done) {
+    mx.txRun([&mx, stack, cxn, device, &path, done]() mutable {
+      cxn->prepareTx(path);
+      bool queued = true;
+      for (unsigned i = 0; i < 10; ++i) {
+	auto buf = stack->txAllocator()->allocBuf(cxn.ptr(), 8);
+	if (!buf) { queued = false; break; }
+	memset(buf->data(), uint8_t(i), 8);
+	queued &= cxn->enqueue_(ZuMv(buf));
+      }
+      bool filled = true;
+      for (unsigned i = 0; i < 63; ++i) {
+	auto buf = stack->allocPacket(&mx, ZiIPType::V4);
+	if (!buf) { filled = false; break; }
+	buf->length = 60;
+	buf->skip = 0;
+	memset(buf->data(), 0, 60);
+	filled &= stack->sendPacket(buf);
+      }
+      device->limit = 8;
+      device->retireAll = true;
+      auto prefix = cxn->batch(path);
+      bool partial = prefix.offered == 10 && prefix.accepted == 8 && prefix.blocked &&
+	device->exact && device->polls == 1 && device->observed == 71 &&
+	!stack->txAdmission().outstanding && cxn->txNext() == 64 && cxn->txRangeCount() == 2;
+      device->limit = 2;
+      auto suffix = cxn->batch(path);
+      device->retireAll = true;
+      stack->reconcileTx();
+      bool drained = suffix.accepted == 2 && device->exact && cxn->txNext() == 80 &&
+	!cxn->txRangeCount() && !stack->txAdmission().outstanding;
+      done(queued && filled && partial && drained);
+    });
+  });
+  ZuCheckRT(passed, log_("count 71 before polling once and resubmit the ordered suffix; offload=",
+    offload));
+
+  auto window = ZmBlock<bool>{}([&mx, stack, cxn, device, &path](auto done) {
+    mx.txRun([stack, cxn, device, &path, done]() mutable {
+      if (cxn->txNext() != 80) { done(false); return; }
+      for (unsigned i = 10; i < 12; ++i) {
+	auto buf = stack->txAllocator()->allocBuf(cxn.ptr(), 8);
+	if (!buf) { done(false); return; }
+	// The synthetic heap pool requires the scalar lease to return its base address.
+	buf->skip = Zutcp::tcpHead(path.local.type());
+	memset(buf->data(), uint8_t(i), 8);
+	if (!cxn->enqueue_(ZuMv(buf))) { done(false); return; }
+      }
+      device->checkScalar = true;
+      cxn->extendTxCredit(81);
+      unsigned charge = cxn->limitCongestion(7);
+      auto batch = cxn->batch(path);
+      bool limited = !batch.offered && !cxn->wireFlush(path) &&
+	cxn->txNext() == 80 && cxn->txRangeCount() == 2;
+      cxn->releaseCongestion(charge);
+      batch = cxn->batch(path);
+      bool first = !batch.offered && cxn->wireFlush(path) &&
+	cxn->txNext() == 88 && cxn->txRangeCount() == 1;
+      cxn->extendTxCredit(96);
+      bool second = cxn->wireFlush(path) && cxn->txNext() == 96 &&
+	!cxn->txRangeCount() && device->exact;
+      device->retireAll = true;
+      stack->reconcileTx();
+      done(limited && first && second && !stack->txAdmission().outstanding);
+    });
+  });
+  ZuCheckRT(window, log_("a one-byte peer window admits one whole original with enough congestion credit"));
+
+  ZmBlock<>{}([&mx, cxn](auto done) {
+    mx.rxRun([&mx, cxn, done] {
+      cxn->clearRx();
+      mx.txRun([done]() mutable { done(); });
+    });
+  });
+  ZuCheckRT(mx.stop(), log_("stop after all batch admissions retire"));
+}
+
+static void testPartialBatch()
+{
+  ZuTestScopeRT(testPartialBatch);
+  checkPartialBatch(false);
+  checkPartialBatch(true);
+}
+
 static void testCompletionRetries()
 {
   ZuTestScopeRT(testCompletionRetries);
@@ -584,7 +798,7 @@ static void testStoppedPlugin()
   ZuCheck(first);
   if (!first) return;
   auto capacity = stack.txAdmission().capacity;
-  auto allocator = stack.dataTxAllocator();
+  auto allocator = stack.txAllocator();
   Zutcp::ClosedTuple record{.key = {ZiSockAddr{ZiIP{"198.18.0.1"}, 18191},
     ZiSockAddr{ZiIP{"198.18.0.2"}, 18192}}, .txNext = 20, .rxNext = 30, .fin = true};
   record = stack.rememberClosed(record);
@@ -593,7 +807,7 @@ static void testStoppedPlugin()
   catch (ZeException &e) { std::cerr << e << '\n' << std::flush; }
   Zutcp::ClosedTuple retained;
   ZuCHECK(first && repeated &&
-      stack.txAdmission().capacity == capacity && stack.dataTxAllocator() == allocator &&
+      stack.txAdmission().capacity == capacity && stack.txAllocator() == allocator &&
       stack.closedTuple(record.key, retained) && retained.id == record.id,
     "repeated stopped init preserves allocator identity, capacity and closed tuple evidence");
   Endpoint endpoint;
@@ -668,7 +882,7 @@ static void testHandoff()
   auto udpTx = mx.allocator<Zi::IOBufType::TxUDP, ZiIOBuf, 768>(35);
   ZuCheck(rx && tcpTx && udpTx);
   if (!rx || !tcpTx || !udpTx) return;
-  ZuCheck(!tcpTx->allocBuf() && !udpTx->allocBuf() && !instance->dataTxAllocator()->allocBuf());
+  ZuCheck(!tcpTx->allocBuf() && !udpTx->allocBuf() && !instance->txAllocator()->allocBuf());
   fixture->failAlloc = true;
   ZuCheck(mx.alloc().is<ZeException>() && !fixture->allocated() && !fixture->starts);
   ZuCheck(fixture->rxPool == rx->pool && fixture->txPools.length() == 2 &&
@@ -678,10 +892,12 @@ static void testHandoff()
   ZuCheck(mx.alloc().is<void>() && fixture->allocCalls == 2);
   auto native = tcpTx->allocBuf();
   auto udp = udpTx->allocBuf();
-  auto data = instance->dataTxAllocator()->allocBuf();
-  auto control = instance->control()->alloc();
+  auto data = instance->txAllocator()->allocBuf();
+  auto txCtrlPool = instance->txCtrlPool();
+  ZuCheck(txCtrlPool->size == 114 && txCtrlPool->headRoom == 114 && !txCtrlPool->tailRoom);
+  auto control = txCtrlPool->alloc();
   ZuCheck(native && udp && data && control);
-  if (control) instance->control()->free(control);
+  if (control) txCtrlPool->free(control);
   if (!native) return;
   auto address = native->data();
   *address = 0x54;
@@ -760,6 +976,7 @@ int main(int argc, char **argv)
   ZuTestCall(testBurstQuantum);
   ZuTestCall(testListenPublication);
   ZuTestCall(testCompletionRetries);
+  ZuTestCall(testPartialBatch);
   ZuTestCall(testMulticast);
   ZuTestCall(testLoopCopies);
   ZuTestCall(testStoppedPlugin);

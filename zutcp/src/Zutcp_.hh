@@ -246,6 +246,34 @@ public:
     return true;
   }
 
+public:
+  template <typename Run>
+  TxBatchResult txBatch(const ZiSockAddr &addr, const IPPath *supplied, Run run) {
+    ZiAssert(endpointTxInvoked(), "Zutcp", (), "native send outside Tx", return {});
+    const auto &path = supplied ? *supplied : m_txPath;
+    if (unsigned(m_gate) || !m_txOpen || unsigned(m_generation) != m_txGeneration ||
+	path.remote != addr.ip() || !addr.port()) return {};
+    auto result = run(path);
+    m_txDiag.sendCalls += result.offered;
+    m_txDiag.directCalls += result.offered;
+    m_txDiag.submittedTx += result.accepted;
+    m_txDiag.datagramsTx += result.accepted;
+    m_txDiag.submittedBytes += result.bytes;
+    m_txDiag.bytesTx += result.bytes;
+    auto refused = result.offered - result.accepted;
+    m_txDiag.txBackPressure += refused;
+    m_txDiag.txDropped += refused;
+    return result;
+  }
+
+protected:
+  bool admitReceive(const ZiSockAddr &peer, unsigned bytes) {
+    if (!m_open || unsigned(m_gate) || (m_remote && peer != m_remote)) return false;
+    ++m_rxDiag.datagramsRx;
+    m_rxDiag.bytesRx += bytes;
+    return true;
+  }
+
 private:
   void install(unsigned generation, IPPath path) {
     ZiSockAddr remote = m_mode == PathMode::ClientConnected ? m_remote : ZiSockAddr{};
@@ -290,10 +318,7 @@ private:
     const TCPHeader &tcp)
   {
     auto self = static_cast<Endpoint_ *>(owner);
-    if (!self->m_open || unsigned(self->m_gate) ||
-	(self->m_remote && peer != self->m_remote)) return;
-    ++self->m_rxDiag.datagramsRx;
-    self->m_rxDiag.bytesRx += buf->length;
+    if (!self->admitReceive(peer, buf->length)) return;
     Datagram datagram{ZuMv(buf), ZuMv(peer), ecnMarkFromTOS(uint8_t(ecn))};
     datagram.local = ZuMv(local);
     datagram.tcp = tcp;
@@ -307,7 +332,8 @@ private:
     ++m_txDiag.sendCalls;
     if (direct) ++m_txDiag.directCalls; else ++m_txDiag.asyncCalls;
     const auto &path = supplied ? *supplied : m_txPath;
-    auto header = static_cast<PacketBuf *>(buf.ptr())->tcp;
+    auto packet = static_cast<PacketBuf *>(buf.ptr());
+    auto header = packet->tcp;
     unsigned head = tcpHead(path.local.type(), header);
     if (unsigned(m_gate) || !m_txOpen || generation != m_txGeneration ||
 	!buf->registered() || !head || buf->skip != head ||
@@ -315,7 +341,7 @@ private:
       ++m_txDiag.txDropped;
       return false;
     }
-    auto lease = static_cast<PacketBuf *>(buf.ptr())->retained;
+    auto lease = packet->retained;
     if (lease && **lease && !m_instance->txReady(buf->data_())) {
       ++m_txDiag.txBackPressure;
       ++m_txDiag.txDropped;
@@ -331,7 +357,7 @@ private:
     // Native endpoint output is built with PacketBuf metadata, including the
     // retained source node's borrowed wire view.
     Zutcp::TCPLayout layout{14, uint16_t(ipHead(path.local.type()))};
-    if (!m_instance->sendPacket(buf, static_cast<PacketBuf *>(buf.ptr())->retained, &layout)) {
+    if (!m_instance->sendPacket(buf, lease, &layout, &packet->retry)) {
       buf->skip = head;
       buf->length = bytes;
       ++m_txDiag.txBackPressure;
@@ -414,7 +440,11 @@ public:
   void endpointDatagram(Datagram d) {
     if (!d.buf || !impl()->inputActive()) return;
     ClosedTupleKey tuple{d.local, d.addr};
-    if (auto link = m_routes.find(tuple)) { deliver(link, ZuMv(d)); return; }
+    if (auto link = m_routes.find(tuple)) {
+      impl()->cacheRoute(tuple, link);
+      deliver(link, ZuMv(d));
+      return;
+    }
     if (impl()->stack()->recoverClosed(d)) return;
     if ((d.tcp.flags & 0x17) != 0x02) { impl()->stack()->resetUnmatched(d); return; }
     if (impl()->accepting()) prepareSYN(ZuMv(d));
@@ -424,15 +454,18 @@ public:
   bool initialPending() const { return m_pending->count_(); }
   void initialDone() { }
 
+protected:
+  void cacheRoute(const ClosedTupleKey &, Link *) { }
+  void deliver(Link *link, Datagram d) {
+    if (!link->acceptsLiveTCP(d) && impl()->stack()->recoverClosed(d)) return;
+    (void)link->receivedRouted(ZuMv(d));
+  }
+
 private:
   Impl *impl() { return static_cast<Impl *>(this); }
   bool tupleClaimed(const ClosedTupleKey &tuple, bool pending = true) const {
     return (pending && m_pending->findPtr(tuple)) ||
       static_cast<const Impl *>(this)->tupleClaimedLive(tuple);
-  }
-  void deliver(Link *link, Datagram d) {
-    if (!link->acceptsLiveTCP(d) && impl()->stack()->recoverClosed(d)) return;
-    (void)link->receivedRouted(ZuMv(d));
   }
   bool qualifyReuse(const Datagram &d, PendingInitial &pending) {
     auto stack = impl()->stack();

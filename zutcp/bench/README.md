@@ -148,18 +148,34 @@ physical interface selection or physical-NIC/zero-copy advantage claim.
 
 For custom rows, shared overrides are `BENCH_WORKLOAD`, `BENCH_BURST_SIZE`,
 `BENCH_BURST_US`, `BENCH_ACK_HOLD_US`, `BENCH_MESSAGES`, `BENCH_WARMUP`, `BENCH_PIPELINE`,
-`BENCH_CONNECTIONS`, `BENCH_RESERVE`, `BENCH_SPIN`, `BENCH_CLIENT_RX_CPU`,
+`BENCH_CONNECTIONS`, `BENCH_RESERVE`, `BENCH_SPIN`, `BENCH_RX_SPIN`, `BENCH_TX_SPIN`,
+`BENCH_CLIENT_RX_CPU`,
 `BENCH_CLIENT_TX_CPU`, `BENCH_SERVER_RX_CPU`, `BENCH_SERVER_TX_CPU`,
 `BENCH_FAMILIES` and `BENCH_BACKENDS`. Defaults select four CPUs in the allowed
 affinity set, reusing CPUs when fewer are available. Explicit placement is
 recommended. Both modes use the same three-thread scheduler, Rx=1, Tx=2, queue
 65536, wait timeout 1 ms, Rx quantum 8, scheduler quantum 1 us, low-latency mode
-false and selected spin count. `BENCH_LL=1` selects continuous scheduler-ring
+false and inherited spin budgets. `BENCH_SPIN` sets the scheduler budget.
+`BENCH_RX_SPIN` and `BENCH_TX_SPIN` set the AF_XDP receive and sender budgets.
+AF_XDP Rx defaults to `(Zi_DefltSpin<<2)` (16,384). The scheduler and AF_XDP
+Tx default to `Zi_DefltSpin` (4,096).
+`BENCH_LL=1` selects continuous scheduler-ring
 spinning for both backends; the default is `0`. The startup config line records
 the effective `ll` value. `BENCH_CLIENT_XDP_TX_CPU` and
 `BENCH_SERVER_XDP_TX_CPU` pin sid 3, defaulting to the endpoint's Rx CPU.
 Assign all six endpoint slots explicit CPUs for continuous-spin comparisons.
 These environment settings are read once at initialization.
+
+Use `BENCH_BACKENDS=dpdk` with `zfixbench` to run a `net_ring` pair. The
+pair uses dummy interfaces in private namespaces for routes and permanent
+neighbors. Veth packet capture and traffic-control fault injection require
+a veth backend. See the [managed FIX benchmark](../../zfix/bench/README.md#managed-plain-fix-over-tcp).
+
+With multiple connections, set `BENCH_QUIET_US` to give the first client
+connection a depth-one pipeline and one offer per specified interval.
+Other connections use the configured workload. The client reports
+`quiet_measurement` for replies on the quiet connection while another
+connection is still measuring.
 First Rx/Tx turns record actual CPUs. Kernel
 `TCP_NODELAY` is set/read back. Native retains its immediate whole-original sender.
 `BENCH_ACK_HOLD_US` configures native cumulative ACK hold once at startup; it

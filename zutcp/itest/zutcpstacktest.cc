@@ -1069,7 +1069,7 @@ static void testStack()
   catch (ZeException &e) {
     ZiLogEvent(ZuMv(e));
   }
-  ZuCheckRT(appReady && app.dataTxAllocator() == stack->dataTxAllocator(),
+  ZuCheckRT(appReady && app.txAllocator() == stack->txAllocator(),
     log_("protocol owners use their MxPlugin's native producer adapter"));
   auto tx = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 128>(3);
   auto small = mx.allocator<Zi::IOBufType::TxTCP, Zi::IOBuf, 64>(1);
@@ -1229,9 +1229,9 @@ static void testStack()
     reserves[0] = tx->allocBuf(&mx, Payload);
     reserves[1] = tx->allocBuf(&mx, Payload);
     // Acquire the control provider through its native raw pool, independently.
-    auto ctl = stack->control()->alloc();
+    auto ctl = stack->txCtrlPool()->alloc();
     isolated = packet && reserves[0] && reserves[1] && !tx->allocBuf(&mx, 1) && ctl;
-    if (ctl) stack->control()->free(ctl);
+    if (ctl) stack->txCtrlPool()->free(ctl);
     if (packet) {
       sentOrigin = packet->data_();
       memset(sentOrigin, 0, packet->skip + packet->length);

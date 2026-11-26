@@ -49,7 +49,7 @@ void testRetainedTx()
   ZmRef<TestConnection> cxn = new TestConnection{&app};
   cxn->txCredit(4);
   cxn->txQueueMax(1);
-  auto buf = app.dataTxAllocator()->allocBuf();
+  auto buf = app.txAllocator()->allocBuf();
   memcpy(buf->data(), "abcdef", 6);
   buf->length = 6;
   ZuCHECK(cxn->enqueue_(buf) && !cxn->enqueue_(buf) && cxn->txQueueCount() == 1,
@@ -95,7 +95,7 @@ void testRuntimeReset()
     cxn->rxBytes() == 3 && cxn->rxPending() == 1,
     "reset setup must retain delivered bytes and an out-of-order final range");
   cxn->txCredit(16);
-  auto tx = app.dataTxAllocator()->allocBuf();
+  auto tx = app.txAllocator()->allocBuf();
   memcpy(tx->data(), "old", 3);
   tx->length = 3;
   ZuCHECK(cxn->enqueue_(tx) && cxn->recordTxUnackd(0, 2, false),
@@ -119,7 +119,7 @@ void testRuntimeReset()
     consume(cxn->reader(), "new") && cxn->retireRx(3),
     "reused Rx must accept offset zero after the previous queue advanced");
   cxn->txCredit(16);
-  auto freshTx = app.dataTxAllocator()->allocBuf();
+  auto freshTx = app.txAllocator()->allocBuf();
   memcpy(freshTx->data(), "new", 3);
   freshTx->length = 3;
   ZuCHECK(cxn->enqueue_(freshTx), "reused Tx must accept a new source range");

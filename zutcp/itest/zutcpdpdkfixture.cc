@@ -222,7 +222,7 @@ int fatalHandoff(ZuCSpan scenario)
     Zi::IOBufPoolList pools;
     pools.pushNode(tx.ptr());
     if (device->alloc(rx, pools).is<ZeException>() || !device->allocated() ||
-	device->everStarted() || device->mx() != &mx || device->ifindex() != ifindex) return 6;
+	device->state() != ZmEngineState::Stopped || device->mx() != &mx || device->ifindex() != ifindex) return 6;
     tcp->init(&mx, env, ZuMv(device), tcpParams());
   }
   return 7;

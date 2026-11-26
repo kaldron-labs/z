@@ -142,13 +142,13 @@ struct TCPChecksumTest {
 
   struct Device : ZmNHeap<Device>, ZutcpTest::Xdp {
   friend inline ZuStringT<"Zutcp.ChecksumTest.Device"> ZmNHeapID(Device *);
-    bool offload = false, refuse = false, exact = true;
-    unsigned queries = 0, pending = 0, calls = 0;
+    bool offload = false, exact = true;
+    unsigned pending = 0, calls = 0, refusals = 0;
 
     using ZmNHeap<Device>::operator new;
     using ZmNHeap<Device>::operator delete;
     using Xdp::Xdp;
-    bool tcpChksumOffload() override { ++queries; return ready() && offload; }
+    void advertise(bool enabled) { tcpChksumOffload(enabled); }
     bool send(uint8_t *frame, unsigned wire) override {
       ++calls;
       IPView ip;
@@ -169,14 +169,14 @@ struct TCPChecksumTest {
 	while (pseudo>>16) pseudo = (pseudo & 0xffff) + (pseudo>>16);
 	exact &= actual == pseudo;
       } else exact &= !Zutcp::MxPlugin::tcpChecksum(ip.local, ip.remote, ip.payload);
-      if (refuse) return false;
+      if (refusals) { --refusals; return false; }
       ++pending;
       return true;
     }
     unsigned pollTx() override { unsigned n = pending; pending = 0; return n; }
   };
 
-  static void testRestartSelection() {
+  static void testRestartSelection(unsigned retries) {
     ZuTestScopeRT(testRestartSelection);
     auto env = ZutcpTest::fixtureEnv();
     ZmRef<MxPlugin> stack = new MxPlugin;
@@ -185,7 +185,7 @@ struct TCPChecksumTest {
     ZmRef<Device> device = new Device{&mx};
     ZmRef<Zpkt::Nif> backend = device;
     bool configured = false;
-    try { stack->init(&mx, env, ZuMv(backend), {}); configured = true; }
+    try { stack->init(&mx, env, ZuMv(backend), {.txRetries = retries}); configured = true; }
     catch (ZeException &e) {
       std::cerr << e << '\n' << std::flush;
     }
@@ -195,10 +195,12 @@ struct TCPChecksumTest {
     bool exact = true;
     for (bool offload : {false, true, false}) {
       device->offload = offload;
+      device->advertise(offload);
       if (!mx.start()) { exact = false; break; }
       ++runs;
+      device->advertise(!offload); // TCP must use the mode sampled at startup.
       ZmSemaphore done;
-      mx.txRun([&mx, stack, device, &done, &exact] {
+      mx.txRun([&mx, stack, device, &done, &exact, retries] {
 	for (bool v6 : {false, true}) for (unsigned payload : {0U, 1U, 1400U}) {
 	  IPPath path{.local = ZiIP{v6 ? "2001:db8::1" : "192.0.2.1"},
 	    .remote = ZiIP{v6 ? "2001:db8::2" : "192.0.2.2"}, .mtu = 1500};
@@ -210,19 +212,34 @@ struct TCPChecksumTest {
 	  packet->skip = 0; packet->length = wire;
 	  TCPLayout layout{14, uint16_t(ipHead(path.local.type()))};
 	  auto field = packet->data_() + layout.tcp + 16;
-	  device->refuse = true;
-	  exact &= wire && !stack->sendPacket(packet, nullptr, &layout) &&
+	  const bool idle = !stack->txAdmission().outstanding;
+	  TxRetry retry{.spin = true};
+	  auto calls = device->calls;
+	  device->refusals = retries + 1;
+	  exact &= wire && !stack->sendPacket(packet, nullptr, &layout, &retry) &&
+	    retry.refused == idle && device->calls == calls + 1 + (idle ? retries : 0) &&
 	    !field[0] && !field[1] && packet->length == wire;
-	  device->refuse = false;
-	  exact &= stack->sendPacket(packet, nullptr, &layout) && !packet->data_();
+	  if (idle) {
+	    retry.spin = false;
+	    device->refusals = 1;
+	    calls = device->calls;
+	    exact &= !stack->sendPacket(packet, nullptr, &layout, &retry) &&
+	      retry.refused && device->calls == calls + 1 && packet->length == wire;
+	  }
+	  // A fresh spin-enabled submission can succeed inside the same call.
+	  retry.spin = true;
+	  device->refusals = idle ? retries : 0;
+	  calls = device->calls;
+	  exact &= stack->sendPacket(packet, nullptr, &layout, &retry) &&
+	    !retry.refused && device->calls == calls + 1 + (idle ? retries : 0) && !packet->data_();
 	}
 	done.post();
       });
       done.wait();
       mx.stop();
-      exact &= device->queries == runs && !device->pending;
+      exact &= !device->pending;
     }
-    ZuCheckRT(exact && device->exact && runs == 3 && device->calls == 36,
+    ZuCheckRT(exact && device->exact && runs == 3,
       log_("start caches active offload once per run; restart switches software/seed paths, "
 	"refusal restores checksum and acceptance detaches backing for IPv4/IPv6"));
   }
@@ -238,5 +255,6 @@ int main(int argc, char **argv)
   ZuTestCall(Zutcp::TCPChecksumTest::testSums);
   ZuTestCall(Zutcp::TCPChecksumTest::testTCP);
   ZuTestCall(Zutcp::TCPChecksumTest::testBounds);
-  ZuTestCall(Zutcp::TCPChecksumTest::testRestartSelection);
+  ZuTestCall(Zutcp::TCPChecksumTest::testRestartSelection, 0);
+  ZuTestCall(Zutcp::TCPChecksumTest::testRestartSelection, 3);
 }

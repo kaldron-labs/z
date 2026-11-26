@@ -87,7 +87,7 @@ struct Peer {
 	device->mx() == &mx && device->ifindex() == fixture.ifindex[index] &&
 	device->mtu() == 1500 && device->rxQueues() == 1 &&
 	device->mac() == ZuBSpan{link.address.addr_bytes, 6} &&
-	!device->allocated() && !device->everStarted()),
+	!device->allocated() && device->state() == ZmEngineState::Stopped),
       "discover Linux identity and native Ethernet geometry before either handoff [", index, "]");
     auto repeatedNif = env->nif(&mx, link.name);
     CHECK(repeatedNif.is<Zpkt::Nif *>() && repeatedNif.p<Zpkt::Nif *>() == device.ptr(),

@@ -58,7 +58,7 @@ class Xdp : public ZmNHeap<Xdp>, public Zpkt::Nif {
 friend inline ZuStringT<"Zutcp.Test.Xdp"> ZmNHeapID(Xdp *);
 public:
   explicit Xdp(ZiMultiplex *mx, bool deferred = false)
-  : m_mx{mx}, m_deferred{deferred} { ++opens; }
+  : Zpkt::Nif{mx, {.ifindex = 1, .mtu = 1500, .rxQueues = 1}}, m_deferred{deferred} { ++opens; }
   ZmRef<Zi::IOBufPool> bufPool(Zi::IOBufType::T type, unsigned count, unsigned size,
     unsigned head, unsigned tail, unsigned align) override
   {
@@ -84,49 +84,30 @@ public:
     m_allocated = true;
     return {};
   }
-  bool start(Zpkt::RecvFn rx, Zpkt::StopFn tx) override {
-    return ZmBlock<bool>{}([this, rx = ZuMv(rx), tx = ZuMv(tx)](auto done) mutable {
-      start(ZuMv(rx), ZuMv(tx), ZuMv(done));
-    });
-  }
-  void start(Zpkt::RecvFn rx, Zpkt::StopFn tx, Zpkt::StartFn done) override {
-    m_receive = ZuMv(rx);
-    m_txStopped = ZuMv(tx);
-    Engine::start([done = ZuMv(done)](bool ok) { if (done) done(ok); });
-  }
   void final() override {
-    if (!m_mx) return;
+    if (!mx()) return;
     ++finals;
-    m_mx = nullptr;
-    m_allocated = m_started = false;
+    resetInfo();
+    m_allocated = false;
     rxPool = nullptr;
     txPools.null();
     reserves[0] = reserves[1] = nullptr;
-    retireNif();
+    final_();
   }
-  ZeException error() const override { return {}; }
-  ZiMultiplex *mx() const override { return m_mx; }
-  unsigned ifindex() const override { return m_mx ? 1 : 0; }
-  unsigned rxQueues() const override { return 1; }
   bool allocated() const override { return m_allocated; }
-  bool everStarted() const override { return m_started; }
   bool ready() const override { return state() == ZmEngineState::Running; }
-  unsigned mtu() const override { return 1500; }
-  bool zeroCopy() const override { return false; }
-  ZuBSpan mac() const override { return {}; }
   void receive(ZuBSpan bytes, ZiRxBurst *burst = nullptr) {
     auto packet = rxPool->alloc();
     ZmAssert_(packet && bytes.length() <= rxPool->size);
     memcpy(packet, bytes.data(), bytes.length());
-    m_receive(packet, bytes.length(), burst);
+    recv(packet, bytes.length(), burst);
   }
   bool txReady(uint8_t *) const override { return ready(); }
   bool send(uint8_t *, unsigned) override { return false; }
-  bool tcpChksumOffload() override { return false; }
+  unsigned send(ZuSpan<const Zpkt::TxPacket>) override { return 0; }
   void rx() override { m_event.wait(); }
   void wake() override {
     m_event.post();
-    if (Engine::stopping()) Engine::stopped();
   }
   unsigned pollTx() override { return 0; }
   void status() override { }
@@ -139,22 +120,18 @@ public:
 private:
   void start_() override {
     ++starts;
-    m_started = true;
-    if (failStart) { m_receive = {}; m_txStopped = {}; }
+
+    if (failStart) clearCallbacks();
     Engine::started(!failStart);
   }
   void stop_() override {
     ++stops;
-    m_receive = {};
-    if (auto stopped = ZuMv(m_txStopped)) stopped();
+    finishCallbacks();
     Engine::stopped(true);
   }
 
-  ZiMultiplex *m_mx = nullptr;
-  Zpkt::RecvFn m_receive;
-  Zpkt::StopFn m_txStopped;
   ZmSemaphore m_event;
-  bool m_allocated = false, m_started = false, m_deferred;
+  bool m_allocated = false, m_deferred;
 };
 
 inline ZmRef<Zpkt::Nif> fixtureXdp(ZiMultiplex *mx, bool deferred = false)
@@ -181,6 +158,11 @@ public:
     m_config.congestionControl = value; return ZuMv(*this);
   }
   bool congestionControl() const { return m_config.congestionControl; }
+  Params &&txRetry(unsigned retries, ZuTime interval) {
+    m_config.txRetries = retries;
+    m_config.txBackoff = interval;
+    return ZuMv(*this);
+  }
   Params &&maxData(uint64_t value) { m_config.maxData = value; return ZuMv(*this); }
   uint64_t maxData() const { return m_config.maxData; }
   Params &&maxCxns(unsigned value) { m_config.maxCxns = value; return ZuMv(*this); }
@@ -313,7 +295,8 @@ inline ZmRef<Zpkt::Nif> openXdp(
   char name[IF_NAMESIZE];
   if (!if_indextoname(interface, name))
     throw ZeEXCEPT(Error, "ZutcpTest", "missing Linux interface");
-  auto cf = ZpktTest::config(ZUTCP_XDP_MODULE, static_cast<const char *>(name), sender, spin);
+  auto cf = ZpktTest::config(
+    ZUTCP_XDP_MODULE, static_cast<const char *>(name), sender, spin, spin);
   env->init(cf.ptr());
   auto opened = env->nif(mx, static_cast<const char *>(name));
   if (opened.is<ZeException>()) throw ZuMv(opened).p<ZeException>();

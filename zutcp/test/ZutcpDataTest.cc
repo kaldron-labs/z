@@ -445,6 +445,11 @@ struct TCPStateTest {
     c.app()->mx()->cancel(&c.m_paceTimer);
     c.cxnTimer(CxnTimer::Pace);
   }
+  template <typename T> static void fireTxRetry(T &link) {
+    auto &c = core(link);
+    c.app()->mx()->cancel(&c.m_txRetryTimer);
+    c.cxnTimer(CxnTimer::TxRetry);
+  }
   template <typename T> static void release(T &link) {
     auto &c = core(link);
     c.delTimers();
@@ -483,12 +488,12 @@ friend inline ZuStringT<"Zutcp.DataTest.App"> ZmNHeapID(App *);
   }
 
   App(ZuTime ackHold = ZuTime{0, 25000000}, ZuTime heartBeat = {},
-      bool congestionControl = true) {
+      bool congestionControl = true, unsigned retries = 1, ZuTime backoff = Zutcp::MxParams{}.txBackoff) {
     rx = ZutcpTest::pktRxAllocator(&multiplex);
     control = multiplex.allocator<Zi::IOBufType::TxTCP, Zutcp::PacketBuf, Zutcp::BufSize>();
     ZmAssert_(Base::init(ZutcpTest::Params{&multiplex}.maxData(4096)
       .timestamps(false).ackHoldTimeout(ackHold).heartBeat(heartBeat)
-      .congestionControl(congestionControl)));
+      .congestionControl(congestionControl).txRetry(retries, backoff)));
     ZmAssert_(multiplex.start());
   }
   ~App() { multiplex.stop(); }
@@ -498,7 +503,7 @@ friend inline ZuStringT<"Zutcp.DataTest.App"> ZmNHeapID(App *);
   ZuTime transportNow() const {
     ++clockCalls;
     if (auto fn = ZuMv(clockFn)) fn();
-    return clock;
+    return *clock ? clock : Zm::now();
   }
   Zi::IOBufPool *txPool(Zi::IOBufAllocator *a) const {
     if (a && (a == nativeAllocator || a == nativeAllocator2)) return nativePool;
@@ -1504,7 +1509,7 @@ static void emptySACK()
   auto add = [&app, &queue](uint64_t offset) {
     auto buf = packet(app, "abc");
     queue.add(new Zutcp::DataRxPQueue::Node{
-      buf, buf->data(), 3, app.dataRxAllocator(), nullptr, offset});
+      buf, buf->data(), 3, Zutcp::inlineAllocator(), nullptr, offset});
   };
   add(30);
   state.accepted(30);
@@ -2225,6 +2230,85 @@ static void repeatDataBatch()
   ZuCHECK(recorded && partial && retained && returned && !Zutcp::TCPStateTest::records(*link),
     "frontier equality during bounded ACK retirement cannot bypass remaining live records");
   link->finish(); link = nullptr;
+}
+
+static void idleTxRetry(unsigned retries, bool accept)
+{
+  ZuTestScope(idleTxRetry);
+  ZuTime interval{0, 2000000};
+  ZmRef<App> app = new App{ZuTime{0, 25000000}, {}, false, retries, interval};
+  ZmRef<Link> link = new Link{app.ptr()};
+  Native source{app->mx()};
+  ZmRef<Zi::IOBufPool> pool =
+    new Zpkt::Xdp::BufPool{Zi::IOBufType::TxTCP, 1, sizeof(source.bytes)};
+  auto ref = retained(source, *pool);
+  unsigned submissions = 0;
+  bool ready = false, spinOnce = true;
+  link->flushFn = [&, link = link.ptr()] {
+    return link->output(ref, [&](auto buf) {
+      spinOnce &= buf->retry.spin == !submissions;
+      ++submissions;
+      buf->retry.refused = !ready;
+      return ready;
+    });
+  };
+  ZuCheck(!link->flushTx() && submissions == 1);
+  // Stay refused for more timer intervals than the initial spin budget.
+  for (unsigned i = 0; i < retries + 4; ++i) {
+    Zutcp::TCPStateTest::fireTxRetry(*link);
+    ZuCheck(!link->flushTx() && submissions == i + 1 && !link->txNext());
+    ready = accept && i == retries + 3;
+    app->clock += interval;
+    Zutcp::TCPStateTest::fireTxRetry(*link);
+    ZuCheck(submissions == i + 2);
+  }
+  ZuCheck(spinOnce && link->txNext() == (accept ? ref.length : 0));
+  link->finish(); // cancel an armed retry when the device is still refusing
+  app->clock += interval;
+  Zutcp::TCPStateTest::fireTxRetry(*link);
+  ZuCheck(submissions == retries + 5);
+  link->flushFn = {}; link = nullptr; ref = {};
+  ZuCheck(source.valid && source.returned == 1);
+}
+
+static void scheduledIdleTxRetry()
+{
+  ZuTestScope(scheduledIdleTxRetry);
+  ZmRef<App> app = new App{ZuTime{0, 25000000}, {}, false};
+  ZmRef<Link> link = new Link{app.ptr()};
+  Native source{app->mx()};
+  ZmRef<Zi::IOBufPool> pool =
+    new Zpkt::Xdp::BufPool{Zi::IOBufType::TxTCP, 1, sizeof(source.bytes)};
+  auto ref = retained(source, *pool);
+  ZmSemaphore accepted, done;
+  unsigned submissions = 0;
+  bool spacing = true;
+  ZuTime previous;
+  app->clock = ZuTime{}; // use the scheduler's clock for this case
+  link->flushFn = [&, cxn = link.ptr()] {
+    bool sent = cxn->output(ref, [&](auto buf) {
+      auto now = Zm::now();
+      if (submissions) spacing &= now >= previous + app->txBackoff();
+      previous = now;
+      buf->retry.refused = ++submissions < 5;
+      return !buf->retry.refused;
+    });
+    if (sent) accepted.post();
+    return sent;
+  };
+  app->mx()->txRun([cxn = link.ptr()] { cxn->flushTx(); });
+  ZuCheck(!accepted.timedwait(Zm::now(5)));
+  bool delivered = false;
+  app->mx()->txRun([&] {
+    delivered = submissions == 5 && spacing && link->txNext() == ref.length;
+    link->flushFn = {};
+    link->finish();
+    done.post();
+  });
+  done.wait();
+  ZuCheck(delivered);
+  link = nullptr; ref = {};
+  ZuCheck(source.valid && source.returned == 1);
 }
 
 static void repeatDataACKIntent()
@@ -3895,6 +3979,10 @@ int main(int argc, char **argv)
   ZuTestCall(repeatDataRecovery, false);
   ZuTestCall(repeatDataRecovery, true);
   ZuTestCall(repeatDataBatch);
+  ZuTestCall(idleTxRetry, 0, true);
+  ZuTestCall(idleTxRetry, 1, false);
+  ZuTestCall(idleTxRetry, 3, true);
+  ZuTestCall(scheduledIdleTxRetry);
   ZuTestCall(repeatDataACKIntent);
   ZuTestCall(noCCAdmission);
   ZuTestCall(noCCRecovery, false);

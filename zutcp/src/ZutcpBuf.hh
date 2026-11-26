@@ -91,6 +91,7 @@ struct TxBacking : public PacketBuf {
   uint32_t size = 0;
   uint32_t payloadOffset = 0, payloadLength = 0;
   uint32_t preparedLength = 0; // consumed queue prefix, including send-refused recovery work
+  bool inBackoff = false; // this original exhausted its immediate attempts
   bool fin = false; // FIN attached to this original packet also retains its backing
 
   TxBacking() : PacketBuf{nullptr, 0, nullptr, nullptr, 0, true, false} { }

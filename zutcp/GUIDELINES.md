@@ -71,8 +71,12 @@ silent out-of-window rejection and no reflection of accepted peer resets.
 Counted device completion resumes refused connection work through one coalesced
 Tx wait membership per connection. Wait membership owns no reference and is
 bounded by connection admission. Retire at most 64 waiters per owner turn, with
-recovery attempted before fresh output. Repeated refusal can re-enroll but does
-not create timer polling or retries without completion evidence. Cancel wait
+recovery attempted before fresh output. Repeated refusal can re-enroll. If a ready device
+refuses an original DATA submission with zero outstanding completions, retry
+the prepared packet immediately up to `MxParams::txRetries` times on the Tx
+owner. After continued refusal, make one further attempt per `txBackoff`
+interval for as long as the original remains eligible and the device refuses
+it. Zero immediate retries enters backoff directly. Cancel the timer and wait
 membership during Tx reset and teardown before releasing the owner. Internal
 control backing held by device leases uses this same continuation; exhausted
 application source pools retain the connection-failure policy.
@@ -254,7 +258,8 @@ ID/limit utilities, child owner pointers, stream lifecycle logging or a
 self-selection/refcount step in packetization. Bootstrap CIDs remain fixed for the connection; CID rotation and sequence metadata
 are removed.
 
-Use `dataRxAllocator()`/`dataTxAllocator()` for connection byte storage. Parsed
+Use `inlineAllocator()` for receive byte views and `txAllocator()` for connection
+transmit byte storage. Parsed
 `Frame` has no sequence/ID field or CID rotation controls.
 Data recovery identity consists of wire offset, length and FIN, independently of
 buffer coordinates or CID/control metadata. Remove obsolete stream diagnostics

@@ -91,6 +91,8 @@ struct MxParams {
   unsigned		packetCount = ZiIOBuf_DefltCount;
 
   unsigned		controlBufCount = DefaultControlBufCount;
+  unsigned		txRetries = 1; // immediate retries after an idle refusal
+  ZuTime		txBackoff{0, 1000000}; // 1ms between subsequent device attempts
   unsigned		txControlCredits = DefaultTxControlCredits;
   unsigned		rxRetainFramesPerCxn = DefaultRxRetainPerCxn;
   uint64_t		maxData = DefaultMaxData;
@@ -104,6 +106,7 @@ struct MxParams {
   ZuTime		finWaitTimeout{DefaultFinWaitTimeout};
   ZuTime		ackHoldTimeout{0, 25000000};
   bool			congestionControl = true;
+  bool			txBatch = false;
   uint64_t		maxIdleTimeout = 0;
   ZuTime		heartBeat;
   unsigned		maxPayload = DefaultMaxPayload;
@@ -133,6 +136,11 @@ ZmHashDerive(EndpointIndex, Endpoint,
       ZmHashShadow<ZmHashID<"Zutcp.Endpoints", ZmHashHeapID<"">>>>>));
 
 // Tx-owned runtime snapshot, or cold control access while stopped.
+struct TxBatchResult {
+  unsigned	offered = 0, accepted = 0, bytes = 0;
+  bool		blocked = false;
+};
+
 struct TxAdmission {
   uint64_t	capacity = 0, dataStalls = 0, controlStalls = 0;
   unsigned	reserved = 0, outstanding = 0, controlCount = 0;
@@ -161,7 +169,7 @@ struct ZutcpAPI Cxn : public ZmPolymorph {
   Cxn			**ownerPrev = nullptr;
   ZiConnection		*mxCxn = nullptr;
   bool			retiring = false;
-  uint8_t			admission = 0; // Rx-owned, independent of list membership
+  uint8_t		admission = 0; // Rx-owned, independent of list membership
 
   // Tx-owned retry membership; independent of Rx ownership/publication.
   Cxn			*txWaitNext = nullptr;
@@ -292,17 +300,28 @@ private:
   bool		m_known = false;
 };
 
-class ZutcpAPI MxPlugin : public ZmNHeap<MxPlugin>, public ZiMxPlugin,
+ZuDerive(RxAllocator, (Zi::IOBufPoolAllocator<Zi::IOBufType::Rx>));
+ZuDerive(TxAllocator, (Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP,
+    PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Pkt.Tx">>));
+ZuDerive(TxCtrlAllocator, (Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP,
+    PacketBuf, TCPHeadRoom, ZiIOBuf_Align, ZuStringT<"Zutcp.Control.Tx">>));
+
+class ZutcpAPI MxPlugin :
+  public ZmNHeap<MxPlugin>,
+  public ZiMxPlugin,
   private ZmEngine<MxPlugin> {
 friend inline ZuStringT<"Zutcp.MxPlugin"> ZmNHeapID(MxPlugin *);
-friend class ZutcpTest::MxPlugin;
+
 friend class ZmEngine<MxPlugin>;
+
 friend class Zutcp_::CliCxn;
 friend class Zutcp_::SrvCxn;
 friend class Zutcp_::Listener;
-  using Engine = ZmEngine<MxPlugin>;
+
+friend class ZutcpTest::MxPlugin;
 
 public:
+  using Engine = ZmEngine<MxPlugin>;
   using Engine::state;
   using Engine::running;
   using Engine::stopping;
@@ -310,134 +329,42 @@ public:
 
   MxPlugin();
   ~MxPlugin() override;
-
   // Takes ownership of the initialized XDP instance on the first successful call.
   void init(ZiMultiplex *, Zpkt::Env *, ZmRef<Zpkt::Nif> &&, Params params);
-  void rx() override;
-  void wake() override;
 
-  // Native phase-1 entry: complete contiguous Ethernet packet on mx Tx.
-  // Acceptance detaches backing; refusal leaves the buffer unchanged.
-  bool txReady(uint8_t *packet) const { return ready() && m_xdp->txReady(packet); }
-  bool sendPacket(const ZmRef<Zi::IOBuf> &, PacketLease * = nullptr,
-    const Zutcp::TCPLayout * = nullptr);
-  // Read-only checksum including the current field: zero validates a segment.
-  static unsigned tcpChecksum(const ZiIP &, const ZiIP &, ZuBSpan);
-  // Finalize software checksum or prepare a pseudo-header seed for offload.
-  static bool tcpChecksum(uint8_t *, unsigned, TCPLayout, bool offload = false);
-  void reconcileTx(); // Tx owner: retire kernel leases before retained header changes
-  void waitTx(Cxn *); // coalesce refused connection work until CQ returns capacity
-  void cancelTxWait(Cxn *);
-  ZmRef<PacketBuf> allocPacket(void *owner, ZiIPType::T, bool control = false);
-
-  ZuTime transportNow() const { return Zm::now(); }
   bool ioActive() const { return state() != ZmEngineState::Stopped; }
-  unsigned rxThread() const { return mx()->rxThread(); }
-  unsigned txThread() const { return mx()->txThread(); }
-  bool rxInvoked() const { return mx()->invoked(rxThread()); }
-  bool txInvoked() const { return mx()->invoked(txThread()); }
+  bool ready() const;
+  void reportError(ZeException);
 
-  template <typename ...Args> void rxRun(Args &&...args)
-  {
+  unsigned rxThread() const { return mx()->rxThread(); }
+  bool rxInvoked() const { return mx()->invoked(rxThread()); }
+  template <typename ...Args>
+  void rxRun(Args &&...args) {
     mx()->run(ZuFwd<Args>(args)..., rxThread());
   }
-
-  template <typename ...Args> void rxInvoke(Args &&...args)
-  {
+  template <typename ...Args>
+  void rxInvoke(Args &&...args) {
     mx()->invoke(ZuFwd<Args>(args)..., rxThread());
   }
 
-  template <typename ...Args> void txRun(Args &&...args)
-  {
+  unsigned txThread() const { return mx()->txThread(); }
+  bool txInvoked() const { return mx()->invoked(txThread()); }
+  template <typename ...Args>
+  void txRun(Args &&...args) {
     mx()->run(ZuFwd<Args>(args)..., txThread());
   }
-
-  template <typename ...Args> void txInvoke(Args &&...args)
-  {
+  template <typename ...Args>
+  void txInvoke(Args &&...args) {
     mx()->invoke(ZuFwd<Args>(args)..., txThread());
   }
-
-  template <typename L> void txPost(L &&fn)
-  {
+  template <typename L>
+  void txPost(L &&fn) {
     ZmAssert_(txInvoked());
     mx()->push(ZuFwd<L>(fn), txThread());
   }
 
-  bool sackPermitted() const { return m_params.sackPermitted; }
-  bool windowScale() const { return m_params.windowScale; }
-  bool timestamps() const { return m_params.timestamps; }
-  bool ecn() const { return m_params.ecn && m_params.congestionControl; }
-  bool congestionControl() const { return m_params.congestionControl; }
-  uint64_t maxData() const { return m_params.maxData; }
-  unsigned maxCxns() const { return m_params.maxCxns; }
-  unsigned maxPendingCxns() const { return m_params.maxPendingCxns; }
-  unsigned closedTupleRingSize() const { return m_params.closedTupleRingSize; }
-  unsigned tfoCookieCacheSize() const { return m_params.tfoCookieCacheSize; }
-  ZuTime connectTimeout() const { return m_params.connectTimeout; }
-  ZuTime userTimeout() const { return m_params.userTimeout; }
-  ZuTime closeDrainTimeout() const { return m_params.closeDrainTimeout; }
-  ZuTime finWaitTimeout() const { return m_params.finWaitTimeout; }
-  uint64_t maxIdleTimeout() const { return m_params.maxIdleTimeout; }
-  ZuTime heartBeat() const { return m_params.heartBeat; }
-  unsigned maxPayload() const { return m_params.maxPayload; }
-  unsigned controlBufCount() const { return m_params.controlBufCount; }
-  unsigned txControlCredits() const { return m_params.txControlCredits; }
-  unsigned rxRetainFramesPerCxn() const { return m_params.rxRetainFramesPerCxn; }
-  const RtoParams &rtoParams() const { return m_params.rtoParams; }
-  ZuTime tlpPeerAckDelay() const { return m_params.tlpPeerAckDelay; }
-  ZuTime ackHoldTimeout() const { return m_params.ackHoldTimeout; }
-
-  void retainRx(ZiIOBuf *packet, Zi::IOQueue &retained)
-  {
-    if (retained.headPtr() == packet) return;
-    retained.unshiftNode(packet);
-    while (retained.count_() > m_params.rxRetainFramesPerCxn) retained.pop();
-  }
-
-  Zi::IOBufPool *txPool(Zi::IOBufAllocator *allocator) const
-  {
-    if (!allocator || allocator->mx != mx() || allocator->type != Zi::IOBufType::TxTCP)
-      return nullptr;
-    return allocator->pool.ptr();
-  }
-
-  void reportError(ZeException);
-  CxnAdmission cxnAdmission() const;
-  bool reserveCxn(); // before constructing an owner
-  void cancelCxn(); // release a reservation that acquired no owner
-  void admitCxn(Cxn &); // attach an existing reservation
-  void establishedCxn(Cxn &);
-  void closingCxn(Cxn &);
-  void releaseCxn(Cxn &);
-
-  bool chooseISN(const ZiSockAddr &, const ZiSockAddr &, uint32_t &) const;
-  bool tfoCookie(const ZiIP &, const ZiSockAddr &, TFOCookie &) const;
-  void saveTFOCookie(const ZiIP &, const ZiSockAddr &, const TFOCookie &);
-  bool issueTFO(const ZiSockAddr &, const ZiIP &, TFOCookie &) const;
-  bool validTFO(const ZiSockAddr &, const ZiIP &, const TFOCookie &) const;
-
-  // Live owners qualify their current window/PAWS first, then offer stale input.
-  bool recoverClosed(const Datagram &);
-  void resetUnmatched(const Datagram &);
-  bool tcpTimestamp(ZuTime, uint32_t &);
-  ClosedTuple rememberClosed(ClosedTuple);
-  bool closedTuple(const ClosedTupleKey &, ClosedTuple &) const;
-  bool updateClosed(const ClosedTuple &);
-  ClosedTupleStats closedTupleStats() const;
-
-  TxAdmission txAdmission() const;
-  bool ready() const;
-  unsigned mtu() const { return m_mtu; }
-  Zi::IOBufPool *control() const { return m_control; }
-  Zi::IOBufAllocator *dataRxAllocator() const;
-  Zi::IOBufAllocator *dataTxAllocator() { return &m_allocators.p<1>().data; }
-
-  // Rx-owned native endpoint registry. Port zero selects an unused local port.
-  // Exact local addresses take precedence over a same-family wildcard.
-  ZuUnion<void, ZeException> bind(EndpointIndex::Node &, const ZiSockAddr &remote = {});
-  bool unbind(EndpointIndex::Node &);
-  // Rx-owned, direct route/static-neighbor lookup before protocol setup.
-  ZuUnion<IPPath, ZeException> resolve(ZiIP remote, ZiIP local = {});
+  void wake() override;
+  void rx() override;
 
   // Zi connections share the existing native transport owners.
   void listen(ZiListenFn, ZiFailFn, ZiConnectFn, ZiIP, uint16_t, unsigned,
@@ -447,148 +374,281 @@ public:
     Zi::IOBufAllocator *, ZiCxnOptions) override;
   void udp(ZiConnectFn, ZiFailFn, ZiIPType::T, ZiIP, uint16_t, ZiIP, uint16_t,
     Zi::IOBufAllocator *, ZiCxnOptions) override;
+
   void recv(ZiConnection *) override;
   void send(ZiConnection *) override;
   void disconnect(ZiConnection *, bool) override;
   void close(ZiConnection *, bool) override;
 
+  bool sackPermitted() const { return m_params.sackPermitted; }
+  bool windowScale() const { return m_params.windowScale; }
+  bool timestamps() const { return m_params.timestamps; }
+  bool ecn() const { return m_params.ecn && m_params.congestionControl; }
+  bool congestionControl() const { return m_params.congestionControl; }
+  bool txBatch() const { return m_params.txBatch; }
+
+  uint64_t maxData() const { return m_params.maxData; }
+  unsigned maxPayload() const { return m_params.maxPayload; }
+  unsigned maxCxns() const { return m_params.maxCxns; }
+  unsigned maxPendingCxns() const { return m_params.maxPendingCxns; }
+  unsigned closedTupleRingSize() const { return m_params.closedTupleRingSize; }
+  unsigned tfoCookieCacheSize() const { return m_params.tfoCookieCacheSize; }
+
+  ZuTime connectTimeout() const { return m_params.connectTimeout; }
+  ZuTime userTimeout() const { return m_params.userTimeout; }
+  ZuTime closeDrainTimeout() const { return m_params.closeDrainTimeout; }
+  ZuTime finWaitTimeout() const { return m_params.finWaitTimeout; }
+  uint64_t maxIdleTimeout() const { return m_params.maxIdleTimeout; }
+  ZuTime heartBeat() const { return m_params.heartBeat; }
+
+  const RtoParams &rtoParams() const { return m_params.rtoParams; }
+  ZuTime tlpPeerAckDelay() const { return m_params.tlpPeerAckDelay; }
+  ZuTime ackHoldTimeout() const { return m_params.ackHoldTimeout; }
+
+  unsigned rxRetainFramesPerCxn() const { return m_params.rxRetainFramesPerCxn; }
+  unsigned controlBufCount() const { return m_params.controlBufCount; }
+  unsigned txControlCredits() const { return m_params.txControlCredits; }
+  unsigned txRetries() const { return m_params.txRetries; }
+  ZuTime txBackoff() const { return m_params.txBackoff; }
+
+  ZuTime transportNow() const { return Zm::now(); }
+  bool tcpTimestamp(ZuTime, uint32_t &);
+  bool chooseISN(const ZiSockAddr &, const ZiSockAddr &, uint32_t &) const;
+
+  bool tfoCookie(const ZiIP &, const ZiSockAddr &, TFOCookie &) const;
+  void saveTFOCookie(const ZiIP &, const ZiSockAddr &, const TFOCookie &);
+  bool issueTFO(const ZiSockAddr &, const ZiIP &, TFOCookie &) const;
+  bool validTFO(const ZiSockAddr &, const ZiIP &, const TFOCookie &) const;
+
+  CxnAdmission cxnAdmission() const;
+  bool reserveCxn(); // before constructing an owner
+  void cancelCxn(); // release a reservation that acquired no owner
+  void admitCxn(Cxn &); // attach an existing reservation
+  void establishedCxn(Cxn &);
+  void closingCxn(Cxn &);
+  void releaseCxn(Cxn &);
+
+  // Rx-owned native endpoint registry. Port zero selects an unused local port.
+  // Exact local addresses take precedence over a same-family wildcard.
+  ZuUnion<void, ZeException> bind(EndpointIndex::Node &, const ZiSockAddr &remote = {});
+  bool unbind(EndpointIndex::Node &);
+  // Rx-owned, direct route/static-neighbor lookup before protocol setup.
+  ZuUnion<IPPath, ZeException> resolve(ZiIP remote, ZiIP local = {});
+
+  ClosedTuple rememberClosed(ClosedTuple);
+  bool closedTuple(const ClosedTupleKey &, ClosedTuple &) const;
+  bool updateClosed(const ClosedTuple &);
+  ClosedTupleStats closedTupleStats() const;
+  // Live owners qualify their current window/PAWS first, then offer stale input.
+  bool recoverClosed(const Datagram &);
+  void resetUnmatched(const Datagram &);
+
+  unsigned mtu() const { return m_mtu; }
+  Zi::IOBufPool *txCtrlPool() const { return m_control; }
+  Zi::IOBufAllocator *txAllocator() { return &m_allocators.p<1>().tx; }
+  Zi::IOBufPool *txPool(Zi::IOBufAllocator *allocator) const {
+    if (!allocator || allocator->mx != mx() || allocator->type != Zi::IOBufType::TxTCP)
+      return nullptr;
+    return allocator->pool.ptr();
+  }
+
+  void retainRx(ZiIOBuf *packet, Zi::IOQueue &retained) {
+    if (retained.headPtr() == packet) return;
+    retained.unshiftNode(packet);
+    while (retained.count_() > m_params.rxRetainFramesPerCxn) retained.pop();
+  }
+
+  ZmRef<PacketBuf> allocPacket(void *owner, ZiIPType::T, bool control = false);
+  // Native phase-1 entry: complete contiguous Ethernet packet on mx Tx.
+  // Acceptance detaches backing; refusal leaves the buffer unchanged.
+  bool txReady(uint8_t *packet) const { return ready() && m_xdp->txReady(packet); }
+  bool sendPacket(const ZmRef<Zi::IOBuf> &, PacketLease * = nullptr,
+    const Zutcp::TCPLayout * = nullptr, TxRetry *retry = nullptr);
+
+  unsigned txDataSlots() const;
+  unsigned submitPackets(ZuSpan<const Zpkt::TxPacket>, const TCPLayout &, TxRetry &);
+  void submittedPackets(unsigned count, Cxn *waiter = nullptr);
+
+  TxAdmission txAdmission() const;
+  void reconcileTx(); // Tx owner: retire kernel leases before retained header changes
+  void waitTx(Cxn *); // coalesce refused connection work until CQ returns capacity
+  void cancelTxWait(Cxn *);
+
+  // Read-only checksum including the current field: zero validates a segment.
+  static unsigned tcpChecksum(const ZiIP &, const ZiIP &, ZuBSpan);
+  // Finalize software checksum or prepare a pseudo-header seed for offload.
+  static bool tcpChecksum(uint8_t *, unsigned, TCPLayout, bool offload = false);
 
 private:
-  Zi::IOBufPool *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override;
-  bool deferredBacking() const override { return true; }
-  AllocResult alloc(Zi::IOBufPool *, const Zi::IOBufPoolList &) override;
+  enum { Down, Up, Closing }; // physical I/O publication, not the control FSM
+  enum { DrainIdle, DrainQueued, DrainActive };
+  class UdpCxn;
+
   void start() override;
   void stop() override;
   void final() override;
 
-  enum { Down, Up, Closing }; // physical I/O publication, not the control FSM
-  enum { DrainIdle, DrainQueued, DrainActive };
-
-  Zi::IOBufPool *ingress(unsigned count, unsigned align);
   template <typename L> bool spawn(L &&fn) {
     mx()->rxRun(ZuFwd<L>(fn));
     return true;
   }
   void start_();
   void stop_();
-  void stopTx();
   void stopEndpoints();
+  void stopTx();
+
+  Zi::IOBufPool *allocator(Zi::IOBufType::T, unsigned, unsigned, unsigned) override;
+  bool deferredBacking() const override { return true; }
+  AllocResult alloc(Zi::IOBufPool *, const Zi::IOBufPoolList &) override;
+  Zi::IOBufPool *ingress(unsigned count, unsigned align);
+
+  void addCxn(Cxn *);
+  void delCxn(Cxn *);
+  void delListener(Zutcp_::Listener *);
+  void stopLinks(const Zutcp_::Listener *, bool);
+  void stopCxns();
+  bool tupleClaimed(const Zutcp_::Listener *, const ClosedTupleKey &) const;
+
+  void cxnAdded() { ++m_cxnObjects; }
+  void cxnRetired(ZiFailFn = {}, bool = false);
+  void cxnsDrained();
+  template <typename C> bool publish(C *, ZiConnectFn &, ZiCxnInfo);
+  template <typename C, typename L> void retire(C *, bool, L &&);
+  template <typename L> static void visit(ZiConnection *, L &&);
+
   void received(uint8_t *, unsigned, ZiRxBurst *);
   void rxProgress();
-  void receivedUDP(uint8_t *, unsigned, const IPView &, ZiRxBurst *);
-  void openUDPRouteMonitor();
-  uint64_t udpRouteGeneration();
-  void sendUDP(ZiConnection *);
-  void closeUDP(ZiConnection *, bool);
+
+  void cachePassive(const ClosedTupleKey &, Zutcp_::SrvCxn *);
+  void invalidatePassive(Zutcp_::SrvCxn *);
+  void invalidatePassive();
+
   bool closedPacket(const uint8_t *, const IPView &, const TCPView &);
   void replyClosed(ClosedTuple, IPPath);
   void resetReply(const TCPHeader &, unsigned, IPPath);
   void replyControl(TCPHeader, IPPath);
-  void resumeTx();
-  void scheduleTxResume();
-  bool submitPacket(uint8_t *, unsigned, bool control, const Zutcp::TCPLayout * = nullptr);
-  void submittedPacket();
+
+  bool submitPacket(
+    uint8_t *, unsigned,
+    bool control, const Zutcp::TCPLayout * = nullptr,
+    TxRetry *retry = nullptr);
   void pollTx();
   void txService(bool);
-  void addCxn(Cxn *);
-  void delCxn(Cxn *);
-  void delListener(Zutcp_::Listener *);
-  void stopCxns();
-  void stopLinks(const Zutcp_::Listener *, bool);
-  bool tupleClaimed(const Zutcp_::Listener *, const ClosedTupleKey &) const;
-  void cxnsDrained();
-  void cxnAdded() { ++m_cxnObjects; }
-  void cxnRetired(ZiFailFn = {}, bool = false);
-  template <typename C> bool publish(C *, ZiConnectFn &, ZiCxnInfo);
-  template <typename C, typename L> void retire(C *, bool, L &&);
-  template <typename L> static void visit(ZiConnection *, L &&);
+
+  void scheduleTxResume();
+  void resumeTx();
+
+  void receivedUDP(uint8_t *, unsigned, const IPView &, ZiRxBurst *);
+  void sendUDP(ZiConnection *);
+  void closeUDP(ZiConnection *, bool);
+  bool publishUDP(UdpCxn *, ZiConnectFn &, ZiCxnInfo);
+  void retireUDP(UdpCxn *, bool);
+
+  void openUDPRouteMonitor();
+  uint64_t udpRouteGeneration();
 
   struct UdpBinding { unsigned portKey = 0; };
   static unsigned udpPortKey(const UdpBinding &binding) { return binding.portKey; }
   ZmHashDerive(UdpBindings, UdpBinding,
     (ZmHashNode<UdpBinding, ZmHashKey<udpPortKey,
       ZmHashShadow<ZmHashID<"Zutcp.UDP.Bindings", ZmHashHeapID<"">>>>>));
-  class UdpCxn;
-  bool publishUDP(UdpCxn *, ZiConnectFn &, ZiCxnInfo);
-  void retireUDP(UdpCxn *, bool);
-
-  using PacketAllocator = Zi::IOBufPoolAllocator<Zi::IOBufType::Rx>;
-  using NativeTxAllocator = Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP,
-    PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Pkt.Tx">>;
-  using NativeDataAllocator = Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP,
-    PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Data.Tx">>;
-  using NativeControlAllocator = Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP,
-    PacketBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZuStringT<"Zutcp.Control.Tx">>;
 
   struct Allocators {
-    NativeTxAllocator		packet;
-    NativeDataAllocator		data;
-    NativeControlAllocator	control;
+    TxAllocator		tx;
+    TxCtrlAllocator	control;
 
     Allocators(ZiMultiplex *mx, Zi::IOBufPool *packets, Zi::IOBufPool *controls) :
-      packet{mx, packets}, data{mx, packets}, control{mx, controls} { }
+      tx{mx, packets}, control{mx, controls} { }
   };
 
-  // Configuration is fixed while running; init creates interface-bound resources.
-  // Live secret operations are const after initialization.
-  ISN				m_isn;
-  TFOKey			m_tfoKey;
-  MxParams		m_params;
-  unsigned			m_mtu = 0, m_ingressCount = 0;
-  // Published before Up; immutable on both packet owners for each run.
-  bool				m_tcpChksumOffload = false;
-  uint64_t			m_txCapacity = 0;
-  unsigned			m_controlCredits = DefaultTxControlCredits;
+  // Configuration and handshake secrets are fixed while running.
+  MxParams				m_params;
+  ISN					m_isn;
+  TFOKey				m_tfoKey;
 
-  Zpkt::Env			*m_xdpEnv = nullptr;
-  ZmRef<Zpkt::Nif>		m_xdp;
-  ZmRef<Zi::IOBufPool>		m_ingress;
-  ZmRef<Zi::IOBufPool>		m_packets, m_control;
-  ZmRef<Zi::IOBufPool>		m_requestedTx;
-  ZuUnion<void, PacketAllocator>	m_packetRx;
-  ZuUnion<void, Allocators>	m_allocators;
+  // Native interface and capabilities published before packet service starts.
+  Zpkt::Env				*m_xdpEnv = nullptr;
+  ZmRef<Zpkt::Nif>			m_xdp;
+  unsigned				m_mtu = 0;
+  bool					m_tcpChksumOffload = false;
 
-  // One native connection list; pending and retiring entries remain owned.
-  Cxn				*m_cxns = nullptr;
-  Zutcp_::Listener		*m_listeners = nullptr;
+  // Registered backing and native packet allocators.
+  unsigned				m_ingressCount = 0;
+  ZmRef<Zi::IOBufPool>			m_ingress;
+  ZmRef<Zi::IOBufPool>			m_packets;
+  ZmRef<Zi::IOBufPool>			m_control;
+  ZmRef<Zi::IOBufPool>			m_requestedTx;
+  ZuUnion<void, RxAllocator>		m_packetRx;
+  ZuUnion<void, Allocators>		m_allocators;
 
-  // Physical I/O stays published until the endpoint owner drain completes.
+  // Device submission capacity and reserved control credits.
+  uint64_t				m_txCapacity = 0;
+  unsigned				m_controlCredits = DefaultTxControlCredits;
+
+  // Start, stop and endpoint drain state.
   alignas(Zm::CacheLineSize)
-  ZmAtomic<unsigned>		m_ioState{Down};
-  bool				m_startFailed = false;
-  ZeException			m_error;
+  ZmAtomic<unsigned>			m_ioState{Down};
+  ZmAtomic<unsigned>			m_endpointDrain{DrainIdle};
+  bool					m_startFailed = false;
+  ZeException				m_error;
 
-  // Wake callers write these atomics; keep them off the publication/read line.
+  // Wake callers update this counter independently of lifecycle readers.
   alignas(Zm::CacheLineSize)
-  ZmAtomic<unsigned>		m_wakeUsers{0};
+  ZmAtomic<unsigned>			m_wakeUsers{0};
 
-  // Rx-owned protocol, endpoint and connection state.
-  alignas(Zm::CacheLineSize)
-  TFOCache			m_tfoCookies;
-  EndpointIndex			m_endpoints;
-  UdpBindings			m_udpBindings;
-  unsigned			m_nextPort = ClientPorts::First;
-  unsigned			m_nextUdpPort = ClientPorts::First;
-  uint64_t			m_cxnRefused = 0;
-  unsigned			m_cxnTotal = 0, m_cxnPending = 0, m_cxnClosing = 0;
-  ClosedTuples			m_closed;
-  unsigned			m_cxnObjects = 0, m_cxnRetiring = 0;
-  unsigned			m_rxPackets = 0;
-  ZmAtomic<unsigned>		m_endpointDrain{DrainIdle};
+  struct PassiveRoute {
+    ClosedTupleKey		key;
+    Zutcp_::SrvCxn		*link = nullptr;
+  };
+  enum { PassiveCacheSize = 32 };
+  static unsigned passiveIndex(const ClosedTupleKey &key) {
+    return key.hash() >> (32 - 5);
+  }
 
-  // Tx-owned timestamp and completion service.
+  // Rx endpoint lookup and packet dispatch.
   alignas(Zm::CacheLineSize)
-  TCPClock			m_tcpClock;
-  unsigned			m_txPending = 0;
-  Cxn				*m_txWait = nullptr;
-  Cxn				**m_txWaitTail = &m_txWait;
-  unsigned			m_txWaitCount = 0, m_txResumeBudget = 0;
-  bool				m_txResumeQueued = false;
-  bool				m_senderStopping = false;
-  bool				m_txServicing = false, m_txDraining = false;
-  uint64_t			m_dataStalls = 0, m_controlStalls = 0;
-  uint64_t			m_udpRouteGeneration = 0, m_udpRouteCheck = 0;
-  int				m_udpRouteFD = -1;
+  PassiveRoute				m_passive[PassiveCacheSize];
+  EndpointIndex				m_endpoints;
+  UdpBindings				m_udpBindings;
+  unsigned				m_nextPort = ClientPorts::First;
+  unsigned				m_nextUdpPort = ClientPorts::First;
+  unsigned				m_rxPackets = 0;
+
+  // Rx connections, listeners and admission.
+  Cxn					*m_cxns = nullptr;
+  Zutcp_::Listener			*m_listeners = nullptr;
+  unsigned				m_cxnObjects = 0;
+  unsigned				m_cxnRetiring = 0;
+  unsigned				m_cxnTotal = 0;
+  unsigned				m_cxnPending = 0;
+  unsigned				m_cxnClosing = 0;
+  uint64_t				m_cxnRefused = 0;
+
+  // Rx closed tuples and cached Fast Open cookies.
+  ClosedTuples				m_closed;
+  TFOCache				m_tfoCookies;
+
+  // Tx timestamp generation and completion accounting.
+  alignas(Zm::CacheLineSize)
+  TCPClock				m_tcpClock;
+  unsigned				m_txPending = 0;
+  uint64_t				m_dataStalls = 0;
+  uint64_t				m_controlStalls = 0;
+
+  // Tx waiters, completion service and shutdown.
+  Cxn					*m_txWait = nullptr;
+  Cxn					**m_txWaitTail = &m_txWait;
+  unsigned				m_txWaitCount = 0;
+  unsigned				m_txResumeBudget = 0;
+  bool					m_txResumeQueued = false;
+  bool					m_txServicing = false;
+  bool					m_txDraining = false;
+  bool					m_senderStopping = false;
+
+  // Tx UDP route monitoring.
+  int					m_udpRouteFD = -1;
+  uint64_t				m_udpRouteGeneration = 0;
+  uint64_t				m_udpRouteCheck = 0;
 };
 
 } // namespace Zutcp

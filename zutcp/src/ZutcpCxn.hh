@@ -52,7 +52,8 @@ ZtEnumStruct(ZutcpAPI, CxnTimer, int8_t,
   Pace,
   Idle,
   HeartBeat,
-  PMTUD);
+  PMTUD,
+  TxRetry);
 
 ZtEnumStruct(ZutcpAPI, TcpCloseState, int8_t,
   Open, CloseWait, FinWait1, FinWait2, Closing, LastAck, TimeWait, Closed);
@@ -230,6 +231,7 @@ public:
   void clearCallbacks() { }
   void closedRx(bool) { }
   void retireLinkRoutes() { }
+  enum { BatchTx = false };
   bool earlyData() const { return false; }
   uint32_t maxEarlyData() const { return 0; }
   bool allowEarlyStream(uint64_t, bool) const { return false; }
@@ -1936,6 +1938,7 @@ protected:
     cancelIdleTimer();
     cancelHBTimer();
     cancelPMTUDTimer();
+    cancelTimer(CxnTimer::TxRetry, &m_txRetryTimer);
   }
   void delTimers() {
     ZiAssert(txInvoked(), "Zutcp", (),
@@ -1947,7 +1950,7 @@ protected:
     m_closeDrainTimerOut = m_finWaitTimerOut = ZuTime{};
     m_ackDelayTimerOut = ZuTime{};
     m_ackHoldPending = false;
-    m_pmtudTimerOut = ZuTime{};
+    m_pmtudTimerOut = m_txRetryOut = ZuTime{};
     m_lossTimerOut = ZuTime{};
     m_ptoTimerOut = ZuTime{};
     m_ptoTimerRes = ZuTime{};
@@ -1972,12 +1975,13 @@ protected:
     app()->mx()->del(&m_idleTimer);
     app()->mx()->del(&m_heartBeatTimer);
     app()->mx()->del(&m_pmtudTimer);
+    app()->mx()->del(&m_txRetryTimer);
   }
   bool timersActive() const {
     return m_connectTimer || m_userTimer || m_closeDrainTimer || m_finWaitTimer ||
       m_ackDelayTimer || m_lossTimer || m_ptoTimer ||
       m_rtoTimer || m_persistTimer || m_paceTimer ||
-      m_idleTimer || m_heartBeatTimer || m_pmtudTimer;
+      m_idleTimer || m_heartBeatTimer || m_pmtudTimer || m_txRetryTimer;
   }
 
   void lossTime() {
@@ -2829,6 +2833,7 @@ private:
       case CxnTimer::Pace: return {&m_paceTimer, &m_paceTimerOut};
       case CxnTimer::Idle: return {&m_idleTimer, &m_idleTimerOut};
       case CxnTimer::HeartBeat: return {&m_heartBeatTimer, &m_heartBeatTimerOut};
+      case CxnTimer::TxRetry: return {&m_txRetryTimer, &m_txRetryOut};
       default: return {&m_pmtudTimer, &m_pmtudTimerOut};
     }
   }
@@ -2902,6 +2907,12 @@ protected:
       case CxnTimer::HeartBeat:
 	m_heartBeatTimerOut = ZuTime{};
 	heartBeatTick();
+	break;
+      case CxnTimer::TxRetry:
+	if (m_txDataGen == dataGen() && !linkClosedTx()) {
+	  app()->waitTx(this);
+	  if (!txWaitPrev) impl()->flushTx();
+	}
 	break;
       case CxnTimer::PMTUD:
 	pmtudTimeout();
@@ -3362,7 +3373,7 @@ public:
     using Base = Zi::TxStream<Writer<AppThread>>;
 
   public:
-    Writer(Cxn_ &cxn) : Writer{cxn, cxn.app()->dataTxAllocator()} { }
+    Writer(Cxn_ &cxn) : Writer{cxn, cxn.app()->txAllocator()} { }
 
     uint64_t frameMax() const { return m_cxn->txFrameMax(); }
     uint64_t gen() const { return m_gen; }
@@ -3819,7 +3830,7 @@ private:
 	return false;
       auto data = frame.payload.data() + payloadOffset;
       ZmRef<RxMsg> node = new RxMsg{
-	packet, data, unsigned(length64), app()->dataRxAllocator(),
+	packet, data, unsigned(length64), inlineAllocator(),
 	this, spans[i].first};
       Rx::rcvd(ZuMv(node));
     }
@@ -4253,6 +4264,19 @@ protected:
     }
     updateUserTimeout_();
   }
+  static void detachTxOriginal(TxBacking &source) {
+    auto pending = source.pending.ptr();
+    pending->data__ = 0;
+    pending->size = pending->skip = pending->length = 0;
+    source.pending = nullptr;
+  }
+
+  void backoffTx(TxBacking &source) {
+    source.inBackoff = true;
+    scheduleCxnTimer("idle Tx retry", CxnTimer::TxRetry, transportNow() + app()->txBackoff(),
+      ZmScheduler::Update, &m_txRetryTimer);
+  }
+
   void waitForTx(bool syn = false) {
     m_txWaitGen = m_txRuntimeGen;
     app()->waitTx(this);
@@ -4346,6 +4370,7 @@ protected:
     bool original = data && (positive || ref.fin) && !syn &&
       !control && !persist && !tlp && !rto && !fast && ref.offset == m_txNext;
     if (ZuLikely(original)) {
+      if (ZuUnlikely(*m_txRetryOut)) return false;
       // The held source and its lease retain recovery bytes across submission.
       // Packet IDs are reserved before publishing; no nested DATA can use one.
       if (ZuUnlikely(m_txPkts.txQueue()->has(id))) return false;
@@ -4358,6 +4383,7 @@ protected:
     if (tlp) m_tlpReserved = true;
     if (rto) m_rtoReserved = true;
     uint64_t gen = m_txDataGen;
+    buf->retry = {.spin = original && source && !source->inBackoff};
     bool sent = send(buf, ecn);
     if (sent && runtime == m_txRuntimeGen && gen == m_txDataGen &&
 	gen == dataGen() && !disconnecting()) {
@@ -4379,14 +4405,12 @@ protected:
       if (rto) { m_rtoReserved = false; if (sent) --m_rtoAllowance; }
     }
     bindPacketLease(buf.ptr(), nullptr);
-    if (source && source->pending && !buf->data_()) {
-      auto pending = source->pending.ptr();
-      pending->data__ = 0;
-      pending->size = pending->skip = pending->length = 0;
-      source->pending = nullptr;
-    }
+    if (source && source->pending && !buf->data_()) detachTxOriginal(*source);
     if (runtime != m_txRuntimeGen) return sent;
     if (ZuUnlikely(!sent)) {
+      if (buf->retry.refused && original && source &&
+	  gen == m_txDataGen && gen == dataGen() && !disconnecting())
+	backoffTx(*source);
       waitForTx(syn);
       if (original) m_txPublishing = false;
       else if (data) {
@@ -4419,39 +4443,45 @@ protected:
       m_synDeadline = transportNow() + delay;
       schedulePTO_();
     } else if (ackCurrent) m_txTFOFinalAckSent = true;
-    if (data) {
-      if (source && ref.fin) source->fin = true;
-      m_txPkts.acceptedData(id, transportNow());
-      if (syn) m_txTFOEnd = ref.length;
-      acceptTxData(ref);
-      if (ZuUnlikely(app()->congestionControl()) && positive && !syn) {
-	auto srtt = m_rtt.smoothed();
-	m_pacer.sent(nowUS(), head + unsigned(ref.length), m_congestion.cwnd(),
-	  *srtt ? uint64_t(srtt.microsecs()) : 0);
-	if (ecn == EcnMark::ECT0) m_txECTSent = transportNow();
-	if (header.flags & 0x80) m_txCWR = false;
-      }
-      if (ref.offset + ref.length > m_txDataCredit.used()) {
-	if (syn) m_txDataCredit.advertise(ref.length);
-	consumeTxCredit(ref.length, true);
-      }
-      if (source && source->preparedLength < source->payloadLength) {
-	TxRange consumed;
-	if (!commitTxRange(consumed, ref.range, ref.length)) { failTCPBudget(); return false; }
-      }
-      if (ref.fin && !m_finDequeued) m_finDequeued = true;
-      m_txDiag.dataBytesTx += ref.length;
-    }
+    if (data && !commitTCPData(id, ref, source, header, head, ecn, syn)) return false;
     if (header.flags & 0x04) m_tcpResetSent = true;
-    if (ackCurrent) {
-      if (sentRxNext > m_txLastAckSentNext) m_txLastAckSentNext = sentRxNext;
-      if (sentRxLimit > m_txLastAckSentLimit) m_txLastAckSentLimit = sentRxLimit;
-      m_ackPending = m_windowDirty = m_ackHoldPending = false;
-    }
+    if (ackCurrent) commitTCPAck(sentRxNext, sentRxLimit);
     updateCongestionDiag();
     if (ZuUnlikely(m_mxPeerFinished)) finishMxTx();
     return true;
   }
+  bool commitTCPData(uint64_t id, const SentFrameRef &ref, TxBacking *source,
+    const TCPHeader &header, unsigned head, EcnMark::T ecn, bool syn) {
+    if (source && ref.fin) source->fin = true;
+    m_txPkts.acceptedData(id, transportNow());
+    if (syn) m_txTFOEnd = ref.length;
+    acceptTxData(ref);
+    if (ZuUnlikely(app()->congestionControl()) && ref.length && !syn) {
+      auto srtt = m_rtt.smoothed();
+      m_pacer.sent(nowUS(), head + unsigned(ref.length), m_congestion.cwnd(),
+	*srtt ? uint64_t(srtt.microsecs()) : 0);
+      if (ecn == EcnMark::ECT0) m_txECTSent = transportNow();
+      if (header.flags & 0x80) m_txCWR = false;
+    }
+    if (ref.offset + ref.length > m_txDataCredit.used()) {
+      if (syn) m_txDataCredit.advertise(ref.length);
+      consumeTxCredit(ref.length, true);
+    }
+    if (source && source->preparedLength < source->payloadLength) {
+      TxRange consumed;
+      if (!commitTxRange(consumed, ref.range, ref.length)) { failTCPBudget(); return false; }
+    }
+    if (ref.fin && !m_finDequeued) m_finDequeued = true;
+    m_txDiag.dataBytesTx += ref.length;
+    return true;
+  }
+
+  void commitTCPAck(uint64_t next, uint64_t limit) {
+    if (next > m_txLastAckSentNext) m_txLastAckSentNext = next;
+    if (limit > m_txLastAckSentLimit) m_txLastAckSentLimit = limit;
+    m_ackPending = m_windowDirty = m_ackHoldPending = false;
+  }
+
 public:
   void resumeTx() override {
     ZiAssert(txInvoked(), "Zutcp", (), "TCP retry outside Tx thread", return);
@@ -4464,11 +4494,143 @@ public:
     finishMxTx();
   }
 protected:
+  TxBatchResult sendTCPBatch(const IPPath &path) {
+    if (m_txPublishing || m_fin || m_mxPeerFinished || m_txCWR ||
+	m_peerWindowZero || !m_txOrigins.localKnown || !m_txOrigins.peerKnown ||
+	m_tlpSending || m_rtoSending || m_fastSending || *m_txRetryOut || !establishedTx() ||
+	disconnecting() || !app()->ready() ||
+	(!m_txOrigins.server && !m_txTFOFinalAckSent)) return {};
+    // When pacing charges a positive interval, the next packet must wait
+    // for the scalar send's newly established deadline.
+    if (app()->congestionControl()) {
+      auto srtt = m_rtt.smoothed();
+      if ((*srtt && srtt.microsecs() > 0) || !pacingReady()) return {};
+    }
+    unsigned slots = app()->txDataSlots();
+    if (slots < 2 || !refreshTCPRx()) return {};
+    uint64_t gen = m_txDataGen;
+    auto header = tcpHeader(nullptr, true);
+    header.flags |= 0x08; // PSH, as for an original sent by sendTCP
+    header.srcPort = m_path.local().port();
+    header.dstPort = m_path.remote().port();
+    if (header.options.dsack(header.ack)) return {};
+    auto head = tcpHead(path.local.type(), header);
+    if (!head) return {};
+    unsigned options = head - tcpHead(path.local.type());
+    unsigned payloadLimit = tcpPayloadLimit(options, false);
+    auto ecn = m_txECN ? EcnMark::ECT0 : EcnMark::NotECT;
+    unsigned limit = slots < TxFlushBatch ? slots : TxFlushBatch;
+    auto allowance = congestionAllowance();
+    uint64_t next = m_txNext, right = m_txDataCredit.limit();
+    uint64_t firstID = m_txID;
+    uint64_t rxNext = m_txRxNext, rxLimit = m_txRxLimit, rxSerial = m_txRxSerial;
+    uint64_t sentAck = tcpPosition(uint32_t(header.ack - m_txOrigins.peer - 1), rxNext);
+
+    ZmAssert_(unsigned(TxFlushBatch) <= unsigned(Zpkt::MaxTxBatch));
+    Zpkt::TxPacket packets[TxFlushBatch];
+    SentFrameRef originals[TxFlushBatch];
+    unsigned count = 0;
+    m_txPublishing = true;
+    {
+      auto iter = m_txRanges.citer();
+      while (count < limit && next < right) {
+	auto node = iter();
+	if (!node) break;
+	const auto &stored = node->data();
+	auto bytes = stored.bytes;
+	auto source = static_cast<TxBacking *>(node);
+	if (!bytes || stored.dataOffset != next || bytes > allowance ||
+	    bytes > payloadLimit || !source->native || !source->data || !source->pending ||
+	    *source->backing || source->preparedLength || source->inBackoff ||
+	    stored.offset != source->payloadOffset || bytes != source->payloadLength ||
+	    source->payloadOffset < head || m_txPkts.txQueue()->has(firstID + count)) break;
+	// Stop before two candidates can overwrite the same backing's header.
+	bool duplicate = false;
+	for (unsigned j = 0; j < count; ++j)
+	  if (originals[j].range.storage->data == source->data) { duplicate = true; break; }
+	if (duplicate) break;
+	originals[count++] = SentFrameRef::data(TxRange{node, stored.offset, bytes, next}, false);
+	next += bytes;
+	allowance -= bytes;
+      }
+    }
+    if (count < 2) {
+      m_txPublishing = false;
+      return {};
+    }
+    unsigned prepared = 0;
+    for (; prepared < count; ++prepared) {
+      const auto &ref = originals[prepared];
+      auto source = ref.range.storage.ptr();
+      unsigned shift = source->payloadOffset - head;
+      auto wire = source->data + shift;
+      header.seq = uint32_t(m_txOrigins.local + 1 + ref.offset);
+      unsigned length = writeTCP(wire, source->size - shift, path, header, ref.length, ecnBits(ecn));
+      if (!length) break;
+      packets[prepared] = {wire, length};
+    }
+    // A single eligible original uses the direct scalar path.
+    if (prepared < 2 || gen != dataGen() || disconnecting()) {
+      m_txPublishing = false;
+      return {};
+    }
+    count = prepared;
+    TCPLayout layout{14, uint16_t(ipHead(path.local.type()))};
+    TxRetry retry{.spin = true};
+    unsigned accepted = app()->submitPackets({packets, count}, layout, retry);
+    TxBatchResult result{.offered = count, .accepted = accepted, .blocked = accepted < count};
+    if (!accepted) {
+      if (retry.refused && gen == dataGen() && !disconnecting())
+	backoffTx(*originals[0].range.storage);
+      waitForTx();
+      m_txPublishing = false;
+      return result;
+    }
+    if (!ZuNull(sentAck) && gen == dataGen() && !disconnecting() &&
+	sentAck > m_txRead.sentAck.load_()) m_txRead.sentAck = sentAck;
+
+    m_txID += accepted;
+    for (unsigned i = 0; i < accepted; ++i) {
+      const auto &ref = originals[i];
+      auto source = ref.range.storage.ptr();
+      source->backing.adopt(source->native, source->data, source->size);
+      detachTxOriginal(*source);
+      uint64_t id = firstID + i;
+      bool recorded = recordTxPkt(id, unsigned(ref.length), ref, header, ecn);
+      ZmAssert_(recorded);
+      sentTCPTx(header, sentAck, rxSerial);
+      m_path.sent(unsigned(ref.length) + options);
+      noteAckElicitTx();
+      ++m_txDiag.packetsTx;
+      m_txDiag.bytesTx += ref.length;
+      if (!commitTCPData(id, ref, source, header, head, ecn, false)) result.blocked = true;
+      result.bytes += unsigned(ref.length);
+    }
+    m_txTFOFinalAckSent = true;
+    commitTCPAck(rxNext, rxLimit);
+    updateCongestionDiag();
+    if (result.blocked) m_txWaitGen = m_txRuntimeGen;
+    // Enroll a refused suffix before a synchronous poll can retire the prefix.
+    app()->submittedPackets(accepted, result.blocked ? this : nullptr);
+    m_txPublishing = false;
+    return result;
+  }
+
   template <typename Send>
   bool flushTCP(Send send) {
     bool sent = false;
     if (establishedTx()) {
-      for (unsigned i = 0; i < TxFlushBatch; ++i) {
+      unsigned i = 0;
+      if constexpr (Impl::BatchTx) {
+	if (txRangeCount() > 1 && app()->txBatch()) {
+	  auto result = impl()->txBatch();
+	  sent = result.accepted;
+	  i = result.accepted;
+	  if (i == TxFlushBatch && txRangeCount()) impl()->queueTxFlush();
+	  if (result.blocked) i = TxFlushBatch;
+	}
+      }
+      for (; i < TxFlushBatch; ++i) {
 	TxRange range;
 	if (txRange(0, range)) {
 	  if (!m_txDataCredit.available()) { updatePersist(); break; }
@@ -4733,7 +4895,7 @@ protected:
   ZmScheduler::Timer	m_idleTimer;
   ZmScheduler::Timer	m_heartBeatTimer;
   // Active-path timers owned by this Cxn_; callbacks run on Tx.
-  ZmScheduler::Timer	m_pmtudTimer;
+  ZmScheduler::Timer	m_pmtudTimer, m_txRetryTimer;
 
   // Tx-owned logical deadlines and packet state, separate from timer nodes.
   alignas(Zm::CacheLineSize)
@@ -4755,7 +4917,7 @@ protected:
   ZuTime		m_idleBase;
   ZuTime		m_heartBeatTimerOut;
   ZuTime		m_heartBeatBase;
-  ZuTime		m_pmtudTimerOut;
+  ZuTime		m_pmtudTimerOut, m_txRetryOut;
   LinkTxDiag		m_txDiag;
   NewReno		m_congestion;
   uint64_t		m_txRuntimeGen = 0, m_txWaitGen = 0;

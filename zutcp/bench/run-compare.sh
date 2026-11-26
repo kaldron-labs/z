@@ -28,7 +28,7 @@ for family in ${BENCH_FAMILIES:-4 6}; do
     unshare -n -- bash "$script/private-veth.sh" "$binary" "$backend" "$family" \
       "$out/$family-$backend" "$crx" "$ctx" "$srx" "$stx" \
       "${BENCH_MESSAGES:-10000}" "${BENCH_WARMUP:-1000}" "${BENCH_PIPELINE:-1}" \
-      "${BENCH_CONNECTIONS:-1}" "${BENCH_RESERVE:-4096}" "${BENCH_SPIN:-1000}" \
+      "${BENCH_CONNECTIONS:-1}" "${BENCH_RESERVE:-4096}" "${BENCH_SPIN:-default}" \
       "$label" "${BENCH_CAPTURE:-0}"
   done
 done

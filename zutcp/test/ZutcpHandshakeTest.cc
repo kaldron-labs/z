@@ -86,8 +86,8 @@ friend inline ZuStringT<"Zutcp.HandshakeTest.GateApp"> ZmNHeapID(GateApp *);
   Zi::IOBufAllocator *testTx = nullptr;
   Zi::IOBufPool *testPool = nullptr;
 
-  Zi::IOBufAllocator *dataTxAllocator() {
-    return testTx ? testTx : ZutcpTest::Context<GateMx>::dataTxAllocator();
+  Zi::IOBufAllocator *txAllocator() {
+    return testTx ? testTx : ZutcpTest::Context<GateMx>::txAllocator();
   }
   Zi::IOBufPool *txPool(Zi::IOBufAllocator *allocator) const {
     if (allocator && allocator == testTx) return testPool;

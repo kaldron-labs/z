@@ -158,7 +158,7 @@ static void testAllocatedHandoff(bool repeat)
     auto tx = xdp->bufPool(Zi::IOBufType::TxTCP, 8, xdp->mtu() + 14);
     Zi::IOBufPoolList pools;
     pools.pushNode(tx.ptr());
-    if (!xdp->alloc(rx, pools).is<void>() || !xdp->allocated() || xdp->everStarted()) _exit(4);
+    if (!xdp->alloc(rx, pools).is<void>() || !xdp->allocated() || xdp->state() != ZmEngineState::Stopped) _exit(4);
     tcp.init(&mx, env, ZuMv(xdp), {});
     _exit(5);
   }

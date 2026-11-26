@@ -1040,7 +1040,8 @@ static void testGracefulFin(
       auto replay = [&client, clientStack, path, c, s](bool data, bool pureAck) {
 	return ZmBlock<bool>{}([&client, clientStack, path, c, s, data, pureAck](auto done) {
 	  client.txRun([clientStack, path, c, s, data, pureAck, done]() mutable {
-	    auto packet = clientStack->allocPacket(clientStack, path.local.type(), true);
+	    unsigned bytes = data ? unsigned(Message.length()) : 0;
+	    auto packet = clientStack->allocPacket(clientStack, path.local.type(), !bytes);
 	    if (!packet) { done(false); return; }
 	    uint32_t seq = s.rxNext - 1;
 	    if (data || pureAck) seq -= Message.length();
@@ -1048,8 +1049,10 @@ static void testGracefulFin(
 	      .seq = seq, .ack = s.txNext, .window = uint16_t(pureAck ? 65535 : 0),
 	      .flags = uint8_t(pureAck ? 0x10 : data ? 0x18 : 0x11),
 	      .options = replayOptions(s, c)};
-	    if (!reserveOptions(packet.ptr(), tcp)) { done(false); return; }
-	    unsigned bytes = data ? unsigned(Message.length()) : 0;
+	    if (!reserveOptions(packet.ptr(), tcp) || bytes > packet->avail()) {
+	      done(false);
+	      return;
+	    }
 	    if (bytes) memcpy(packet->data(), Message.data(), bytes);
 	    unsigned wire = Zutcp::writeTCP(packet->data_(), packet->size, path, tcp, bytes);
 	    packet->skip = 0;
@@ -2322,7 +2325,7 @@ static void testPositiveWindowPair(bool v6)
   // the original 1000 bytes even though this peer advertised only 400.
   auto packet = ZmBlock<ZmRef<ZiIOBuf>>{}([&client, &app, stack = cs](auto done) {
     client.txRun([&app, stack, done]() mutable {
-      auto buf = app.dataTxAllocator()->allocBuf(stack, 0, 1000);
+      auto buf = app.txAllocator()->allocBuf(stack, 0, 1000);
       if (buf && buf->avail() >= 1000) {
 	memcpy(buf->data(), Message.data(), 1000);
 	buf->length = 1000;
@@ -2634,8 +2637,9 @@ static bool passiveWire(
 {
   return ZmBlock<bool>{}([&mx, stack, path, d = ZuMv(d)](auto done) mutable {
     mx.txRun([stack, path, d = ZuMv(d), done]() mutable {
-      auto buf = stack->allocPacket(stack, path.local.type(), true);
-      if (!buf || !d.buf || !reserveOptions(buf.ptr(), d.tcp) ||
+      if (!d.buf) { done(false); return; }
+      auto buf = stack->allocPacket(stack, path.local.type(), !d.buf->length);
+      if (!buf || !reserveOptions(buf.ptr(), d.tcp) ||
 	  buf->avail() < d.buf->length) { done(false); return; }
       memcpy(buf->data(), d.buf->data(), d.buf->length);
       unsigned n = Zutcp::writeTCP(buf->data_(), buf->size, path, d.tcp, d.buf->length);

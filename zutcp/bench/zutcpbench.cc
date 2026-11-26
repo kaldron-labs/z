@@ -164,8 +164,9 @@ struct Config {
   bool server = false, native = false, ll = false;
   int xdpTxCPU = -1;
   unsigned interface = 0, messages = 10000, warmup = 1000, pipeline = 1;
-  unsigned connections = 1, reserve = 4096, spin = 1000, timeout = 1;
-  unsigned workload = Workload::Order, burstSize = 0, burstUS = 1000;
+  unsigned connections = 1, reserve = 4096, timeout = 1;
+  ZuBox<unsigned> spin, rxSpin, txSpin;
+  unsigned workload = Workload::Order, burstSize = 0, burstUS = 1000, quietUS = 0;
   unsigned socketBytes = 1<<20, rxCPU = 0, txCPU = 0;
   ZiIP address;
   const char *samples = nullptr;
@@ -210,6 +211,7 @@ private:
   using Timer = ZmScheduler::Timer;
   App		*m_app;
   const unsigned	m_id;
+  const unsigned	m_pipeline, m_burstSize, m_burstUS;
   alignas(Zm::CacheLineSize) Times m_times; // Rx: one timestamp per admitted application request
   unsigned	m_offered = 0, m_received = 0, m_limit = 0; // Rx
   unsigned	m_burstRemaining = 0; // Rx: application offer tokens only
@@ -223,7 +225,8 @@ private:
 using Owners = ZtArray<ZmRef<Cxn>, ZtArrayHeapID<"Zutcp.Bench.Owners">>;
 
 static ZuUnion<Zpkt::Nif *, ZeException> openNif(
-  Zpkt::Env *env, ZiMultiplex *mx, ZuCSpan name, unsigned sender, unsigned spin)
+  Zpkt::Env *env, ZiMultiplex *mx, ZuCSpan name, unsigned sender,
+  ZuBox<unsigned> rxSpin, ZuBox<unsigned> txSpin)
 {
   using Node = ZfCf::AnyNode;
   auto root = ZfCf::newNode<Node::Object>(nullptr);
@@ -237,7 +240,8 @@ static ZuUnion<Zpkt::Nif *, ZeException> openNif(
   };
   value(root.ptr(), "module", ZUTCP_XDP_MODULE);
   value(nif.ptr(), "txSid", sender);
-  value(nif.ptr(), "spin", spin);
+  if (*rxSpin) value(nif.ptr(), "rxSpin", rxSpin.val());
+  if (*txSpin) value(nif.ptr(), "txSpin", txSpin.val());
   interfaces->data.push(Node::Field{name, ZuMv(nif)});
   root->data.push(Node::Field{"interfaces", ZuMv(interfaces)});
   try { env->init(root.ptr()); }
@@ -258,7 +262,8 @@ public:
     if (config.native) {
       char name[IF_NAMESIZE];
       if (!if_indextoname(config.interface, name)) { m_failed = 1; return; }
-      auto opened = openNif(env, this, static_cast<const char *>(name), 3, config.spin);
+      auto opened = openNif(
+	env, this, static_cast<const char *>(name), 3, config.rxSpin, config.txSpin);
       if (opened.is<ZeException>()) {
         ZiLogEvent(ZuMv(opened).p<ZeException>());
         m_failed = 1;
@@ -297,6 +302,7 @@ public:
     if (!config.server) {
       m_samples.length(uint64_t(config.messages) * config.connections);
       memset(m_samples.data(), 0, m_samples.length() * sizeof(uint64_t));
+      if (config.quietUS) m_quietSamples.length(config.messages);
     }
   }
   ~App() { shutdown(); }
@@ -304,8 +310,17 @@ public:
   Zi::IOBufAllocator *frames() const { return m_frames; }
   Zi::IOBufAllocator *output() const { return m_output; }
   Result &result(unsigned id) { return m_results[id]; }
+  void measurementStarted(unsigned id, ZuTime now) {
+    m_results[id].begin = now;
+    if (id && m_config.quietUS) ++m_busy;
+  }
+  void measurementEnded(unsigned id, ZuTime now) {
+    m_results[id].end = now;
+    if (id && m_config.quietUS) --m_busy;
+  }
   void sample(unsigned id, unsigned sequence, uint64_t nanos) {
     m_samples[uint64_t(id) * m_config.messages + sequence] = nanos;
+    if (!id && m_busy) m_quietSamples[m_quietCount++] = nanos;
   }
   void failure(const char *reason = "unspecified", unsigned id = ~0U,
       unsigned sequence = 0, unsigned detail = 0) {
@@ -372,20 +387,25 @@ private:
   Alloc		*m_network = nullptr, *m_frames = nullptr, *m_output = nullptr;
   Results		m_results;
   Owners		m_owners; // bounded App ownership through mx stop
-  Samples		m_samples;
+  Samples		m_samples, m_quietSamples;
   ZmSemaphore	m_ready, m_done;
   Flag		m_failed = 0;
   unsigned	m_created = 0, m_closed = 0; // Rx
+  unsigned	m_busy = 0, m_quietCount = 0; // Rx, read after owner stop
   bool		m_shutdown = false; // main: explicit shutdown and destructor share one stop
 };
 
 Cxn::Cxn(App *app, const ZiCxnInfo &info, unsigned id) :
-  ZiConnection{app, info}, m_app{app}, m_id{id} {
-  m_times.length(app->config().pipeline);
+  ZiConnection{app, info}, m_app{app}, m_id{id},
+  m_pipeline{!id && !app->config().server && app->config().quietUS ? 1 : app->config().pipeline},
+  m_burstSize{!id && !app->config().server && app->config().quietUS ? 1 : app->config().burstSize},
+  m_burstUS{!id && !app->config().server && app->config().quietUS ?
+    app->config().quietUS : app->config().burstUS} {
+  m_times.length(m_pipeline);
 }
 
 Zi::IOBufAllocator *Cxn::rxAllocator() const { return m_app->frames(); }
-unsigned Cxn::maxQueueLen() const { return m_app->config().pipeline + 1; }
+unsigned Cxn::maxQueueLen() const { return m_pipeline + 1; }
 
 void Cxn::connected(ZiRxContext &io)
 {
@@ -417,7 +437,7 @@ void Cxn::connected(ZiRxContext &io)
     m_limit = m_app->config().warmup;
     if (!m_limit) {
       m_limit = m_app->config().messages;
-      m_app->result(m_id).begin = Zm::now();
+      m_app->measurementStarted(m_id, Zm::now());
     }
     beginPhase();
     fill();
@@ -449,10 +469,9 @@ void Cxn::cancelBurst()
 void Cxn::beginPhase()
 {
   cancelBurst();
-  auto &config = m_app->config();
-  m_burstRemaining = config.burstSize;
-  if (config.burstSize) {
-    m_nextBurst = Zm::now() + ZuTime{ZuTime::Nano{uint64_t(config.burstUS) * 1000}};
+  m_burstRemaining = m_burstSize;
+  if (m_burstSize) {
+    m_nextBurst = Zm::now() + ZuTime{ZuTime::Nano{uint64_t(m_burstUS) * 1000}};
     ++m_app->result(m_id).bursts;
   }
 }
@@ -464,7 +483,7 @@ void Cxn::scheduleBurst()
   if (m_nextBurst <= now) {
     ++m_app->result(m_id).lateBursts;
     // Do not replay a backlog of missed application bursts on an I/O owner.
-    m_nextBurst = now + ZuTime{ZuTime::Nano{uint64_t(m_app->config().burstUS) * 1000}};
+    m_nextBurst = now + ZuTime{ZuTime::Nano{uint64_t(m_burstUS) * 1000}};
   }
   m_burstArmed = true;
   mx()->add(&m_burstTimer, m_nextBurst, ZmScheduler::Update,
@@ -473,9 +492,8 @@ void Cxn::scheduleBurst()
 	if (m_burstSerial != serial) return;
 	m_burstArmed = false;
 	if (m_stopping || !up()) return;
-	m_burstRemaining = m_app->config().burstSize;
-	m_nextBurst = Zm::now() +
-	  ZuTime{ZuTime::Nano{uint64_t(m_app->config().burstUS) * 1000}};
+	m_burstRemaining = m_burstSize;
+	m_nextBurst = Zm::now() + ZuTime{ZuTime::Nano{uint64_t(m_burstUS) * 1000}};
 	++m_app->result(m_id).bursts;
 	fill();
       });
@@ -484,17 +502,16 @@ void Cxn::scheduleBurst()
 
 void Cxn::fill()
 {
-  auto &config = m_app->config();
-  while (!m_stopping && m_offered < m_limit && m_offered - m_received < config.pipeline &&
-      (!config.burstSize || m_burstRemaining)) {
-    if (config.burstSize) --m_burstRemaining;
-    m_times[m_offered % config.pipeline] = Zm::now();
+  while (!m_stopping && m_offered < m_limit && m_offered - m_received < m_pipeline &&
+      (!m_burstSize || m_burstRemaining)) {
+    if (m_burstSize) --m_burstRemaining;
+    m_times[m_offered % m_pipeline] = Zm::now();
     offer(++m_offered);
     auto &peak = m_app->result(m_id).pipelinePeak;
     if (m_offered - m_received > peak) peak = m_offered - m_received;
     if (m_app->failed()) return;
   }
-  if (config.burstSize && !m_burstRemaining) scheduleBurst();
+  if (m_burstSize && !m_burstRemaining) scheduleBurst();
 }
 
 int Cxn::frame(const ZiRxContext &, ZiIOBuf *buf)
@@ -520,19 +537,19 @@ int Cxn::received(const ZiRxContext &, ZmRef<ZiIOBuf> buf)
   else {
     ZuTime now = Zm::now();
     if (sequence > config.warmup &&
-	now <= m_times[(sequence - 1) % config.pipeline]) {
+	now <= m_times[(sequence - 1) % m_pipeline]) {
       m_app->failure("rx-time", m_id, sequence); return -1;
     }
     if (sequence > config.warmup)
       m_app->sample(m_id, sequence - config.warmup - 1,
-	uint64_t((now - m_times[(sequence - 1) % config.pipeline]).nanosecs()));
+	uint64_t((now - m_times[(sequence - 1) % m_pipeline]).nanosecs()));
     if (sequence == config.warmup) {
-      result.begin = now;
+      m_app->measurementStarted(m_id, now);
       m_limit = config.warmup + config.messages;
       beginPhase();
     }
     if (sequence == config.warmup + config.messages) {
-      result.end = now;
+      m_app->measurementEnded(m_id, now);
       stopBurst();
       disconnect(); // All exact echoed requests have arrived; normal FIN/drain.
     } else fill();
@@ -600,7 +617,8 @@ bool App::report()
     << m_config.connections << " pipeline=" << m_config.pipeline << " warmup="
     << m_config.warmup << " measured_per_connection=" << m_config.messages << " workload="
     << workloadName(m_config.workload) << " burst_size=" << m_config.burstSize
-    << " burst_us=" << m_config.burstUS << " received_fix_bytes="
+    << " burst_us=" << m_config.burstUS << " quiet_us=" << m_config.quietUS
+    << " received_fix_bytes="
     << bytes << "\n";
   if (!m_config.server && ok) {
     if (m_config.samples) {
@@ -632,6 +650,15 @@ bool App::report()
       << m_samples[(n - 1)/2] << " p99_ns="
       << m_samples[((n - 1) * 99)/100] << " max_ns="
       << m_samples[n - 1] << "\n";
+    if (m_config.quietUS) {
+      if (!m_quietCount) return false;
+      qsort(m_quietSamples.data(), m_quietCount, sizeof(uint64_t), compare);
+      unsigned last = m_quietCount - 1;
+      std::cout << "quiet_measurement samples=" << m_quietCount
+	<< " p50_ns=" << m_quietSamples[last/2]
+	<< " p99_ns=" << m_quietSamples[(last * uint64_t(99))/100]
+	<< " p999_ns=" << m_quietSamples[(last * uint64_t(999))/1000] << "\n";
+    }
     std::cout << "application_bytes request_frame=" << request << " response_frame=" << response
       << " measured_request=" << (n * request) << " measured_response="
       << (n * response) << " request_bytes_per_second="
@@ -653,9 +680,9 @@ bool App::report()
 static void usage()
 {
   std::cerr << "zutcpbench server|client kernel|native INTERFACE ADDRESS MESSAGES WARMUP "
-    "PIPELINE CONNECTIONS RESERVE RX_CPU TX_CPU SPIN [SAMPLES.csv]\n"
+    "PIPELINE CONNECTIONS RESERVE RX_CPU TX_CPU SPIN|default [SAMPLES.csv]\n"
     "Environment: BENCH_WORKLOAD=order|marketdata|updates BENCH_BURST_SIZE=0 "
-    "BENCH_BURST_US=1000 BENCH_LL=0|1\n"
+    "BENCH_BURST_US=1000 BENCH_LL=0|1 BENCH_RX_SPIN=N BENCH_TX_SPIN=N\n"
     "zutcpbench --selftest\n";
   exit(2);
 }
@@ -679,8 +706,15 @@ int main(int argc, char **argv)
   config.reserve = unsigned(ZuBox<unsigned>{argv[9]});
   config.rxCPU = unsigned(ZuBox<unsigned>{argv[10]});
   config.txCPU = unsigned(ZuBox<unsigned>{argv[11]});
-  // Last positional argument is the explicit scheduler spin count for BOTH modes.
-  config.spin = unsigned(ZuBox<unsigned>{argv[12]});
+  if (strcmp(argv[12], "default")) config.spin = unsigned(ZuBox<unsigned>{argv[12]});
+  if (auto value = getenv("BENCH_RX_SPIN")) {
+    config.rxSpin = ZuBox<unsigned>{value};
+    if (!*config.rxSpin) usage();
+  }
+  if (auto value = getenv("BENCH_TX_SPIN")) {
+    config.txSpin = ZuBox<unsigned>{value};
+    if (!*config.txSpin) usage();
+  }
   if (auto value = getenv("BENCH_LL")) {
     if (strcmp(value, "0") && strcmp(value, "1")) usage();
     config.ll = *value == '1';
@@ -703,11 +737,13 @@ int main(int argc, char **argv)
   if (auto value = getenv("BENCH_BURST_SIZE"))
     config.burstSize = unsigned(ZuBox<unsigned>{value});
   if (auto value = getenv("BENCH_BURST_US")) config.burstUS = unsigned(ZuBox<unsigned>{value});
+  if (auto value = getenv("BENCH_QUIET_US")) config.quietUS = unsigned(ZuBox<unsigned>{value});
   if (!config.interface || !config.messages || !config.pipeline || !config.connections ||
       config.connections > MaxCxns || config.warmup > MaxSamples ||
       uint64_t(config.messages) * config.connections > MaxSamples ||
       config.pipeline > MaxPipeline || config.burstSize > MaxPipeline ||
       (config.burstSize && (!config.burstUS || config.burstUS > MaxBurstUS)) ||
+      (config.quietUS && (config.quietUS > MaxBurstUS || config.connections < 2)) ||
       config.reserve < MinReserve || config.reserve > MaxReserve) usage();
   ZiLog::init("zutcpbench");
   ZiLog::level(0);
@@ -720,8 +756,9 @@ int main(int argc, char **argv)
       ZmBitmap rx, tx, sender;
       rx.set(config.rxCPU); tx.set(config.txCPU);
       sender.set(config.xdpTxCPU < 0 ? config.rxCPU : unsigned(config.xdpTxCPU));
+      if (*config.spin) s.spin(config.spin.val());
       s.nThreads(3).queueSize(1<<16).ll(config.ll).quantum(ZuTime{ZuTime::Nano{1000}})
-	.spin(config.spin).timeout(config.timeout)
+	.timeout(config.timeout)
 	.thread(1, [&rx](auto &t) { t.isolated(true).cpuset(rx); })
 	.thread(2, [&tx](auto &t) { t.isolated(true).cpuset(tx); })
 	.thread(3, [&sender](auto &t) { t.isolated(true).cpuset(sender); });
@@ -730,7 +767,13 @@ int main(int argc, char **argv)
     << config.rxCPU << " tx_cpu=" << config.txCPU
     << " xdp_tx_cpu=" << (config.xdpTxCPU < 0 ? int(config.rxCPU) : config.xdpTxCPU)
     << " scheduler_threads=3 rx_thread=1 tx_thread=2 xdp_tx_sid=3 native_xdp_sender_threads="
-    << unsigned(config.native) << " spin=" << config.spin << " timeout_ms="
+    << unsigned(config.native) << " spin="
+    << (*config.spin ? config.spin.val() : ZmSchedParams{}.spin())
+    << " rx_spin=" << (config.native ? int64_t(*config.rxSpin ? config.rxSpin.val() :
+      (Zi_DefltSpin<<2)) : -1)
+    << " tx_spin=" << (config.native ? int64_t(*config.txSpin ? config.txSpin.val() :
+      Zi_DefltSpin) : -1)
+    << " spin_inherited=" << unsigned(!*config.spin) << " timeout_ms="
     << config.timeout << " quantum_ns=1000 ll=" << unsigned(config.ll)
     << " queue=65536 kernel_socket_bytes_requested="
     << (config.native ? 0 : config.socketBytes) << " native_rx_frames_requested="

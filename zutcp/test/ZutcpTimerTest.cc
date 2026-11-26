@@ -261,7 +261,7 @@ friend inline ZuStringT<"Zutcp.TimerTest.Link"> ZmNHeapID(TimerLink *);
   bool armPersist() {
     Base::txCredit(0);
     Zutcp::TCPStateTest::zeroWindow(*this);
-    return Base::enqueue_(app()->dataTxAllocator()->allocBuf(nullptr, 1));
+    return Base::enqueue_(app()->txAllocator()->allocBuf(nullptr, 1));
   }
   bool sendPersistProbe() { recordFire(persist); return true; }
   bool establish() {
@@ -301,7 +301,7 @@ friend inline ZuStringT<"Zutcp.TimerTest.Link"> ZmNHeapID(TimerLink *);
   void deliverFinWait() { Base::cxnTimer(Zutcp::CxnTimer::FinWait); }
   bool peerData(unsigned offset, unsigned length, bool fin) {
     Base::rxCredit(128);
-    auto packet = app()->dataTxAllocator()->allocBuf(nullptr, length);
+    auto packet = app()->txAllocator()->allocBuf(nullptr, length);
     if (!packet) return false;
     memset(packet->data(), 0x6b, length);
     Zutcp::ByteData frame{.offset = offset, .length = length,

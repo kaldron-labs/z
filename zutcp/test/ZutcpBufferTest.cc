@@ -141,7 +141,7 @@ static void testAllocatorDirection()
   ZuCHECK(initialized && !provider->requests,
     "transport initialization makes no request to the mx allocator factory");
   if (!initialized) return;
-  ZuCHECK(app.dataTxAllocator() && !provider->requests,
+  ZuCHECK(app.txAllocator() && !provider->requests,
     "MxPlugin owns producer storage independently of the mx factory");
   auto application = mx.allocator<Zi::IOBufType::TxTCP>();
   ZuCHECK(application && provider->requests == 1 &&
