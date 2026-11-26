@@ -9,106 +9,55 @@
 #endif
 
 #include <errno.h>
-#include <net/if.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <sys/epoll.h>
-#include <sys/eventfd.h>
-#include <unistd.h>
-#include <poll.h>
 #include <time.h>
-
-#include <zlib/ZuBox.hh>
-#include <zlib/ZuArray.hh>
-#include <zlib/ZuTime.hh>
+#include <unistd.h>
 
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmBlock.hh>
-#include <zlib/ZmLock.hh>
-#include <zlib/ZmGuard.hh>
-
-#include <zlib/ZtArray.hh>
-
-#include <zlib/ZePlatform.hh>
-
-#include <zlib/ZiLog.hh>
-#include <zlib/ZiMultiplex.hh>
 
 #include <zlib/Zpkt.hh>
-#include <zlib/ZpktNif.hh>
+
 namespace Zpkt {
 
-template <typename Fn>
-void DeviceEngine::control(Fn fn)
+ZtEnumImplNS(NifFlags);
+
+Nif::Nif(ZiMultiplex *mx, const NifInfo &info) :
+  m_mx{mx}, m_ifindex{info.ifindex}, m_mtu{info.mtu}, m_rxQueues{info.rxQueues}
 {
-  // Bind per-run callbacks to the engine transition, then run backend work
-  // and application completions after releasing the device control lock.
-  Work work;
-  {
-    ZmGuard guard(m_controlLock);
-    m_work = &work;
-    fn(work);
-    m_work = nullptr;
-  }
-  work.retired = {};
-  while (work.completions.length()) {
-    auto done = work.completions.shift();
-    done.fn(done.ok);
-  }
-  if (work.start) work.start();
-  if (work.wake) static_cast<Nif *>(this)->wake();
+  memcpy(m_mac, info.mac, sizeof(m_mac));
 }
 
-auto DeviceEngine::completion(StartFn fn)
+void Nif::resetInfo()
 {
-  return [this, fn = ZuMv(fn)](bool ok) mutable {
-    if (fn) m_work->completions.push(Completion{ZuMv(fn), ok});
-  };
+  m_mx = nullptr;
+  m_flags = 0;
+  m_ifindex = m_mtu = m_rxQueues = 0;
+  memset(m_mac, 0, sizeof(m_mac));
+  m_tcpChksumOffload = false;
 }
 
-void DeviceEngine::start(RunFns run, StartFn done)
+void Nif::startRun()
 {
-  control([this, &run, &done](Work &work) {
-    int state_ = state();
-    if (state_ == ZmEngineState::Stopped || state_ == ZmEngineState::Stopping) {
-      work.retired = ZuMv(m_nextRun);
-      m_nextRun = ZuMv(run);
-    }
-    Base::start(completion(ZuMv(done)));
-  });
+  m_receive = ZuMv(m_next.receive);
+  m_txStopped = ZuMv(m_next.txStopped);
+  start_();
 }
 
-bool DeviceEngine::stop()
+void DeviceEngine::start_() { static_cast<Nif *>(this)->startRun(); }
+
+void DeviceEngine::stop_() { static_cast<Nif *>(this)->stop_(); }
+
+bool Nif::stop()
 {
   return ZmBlock<bool>{}([this](auto done) { stop(ZuMv(done)); });
 }
 
-void DeviceEngine::stop(StartFn done)
+void Nif::stop(StartFn done)
 {
-  control([this, &done](Work &) { Base::stop(completion(ZuMv(done))); });
+  Callbacks canceled;
+  Engine::stop(ZuMv(done), [this, &canceled] { canceled = ZuMv(m_next); });
 }
-
-void DeviceEngine::started(bool ok)
-{
-  control([this, ok](Work &) { Base::started(ok); });
-}
-
-void DeviceEngine::stopped(bool ok)
-{
-  control([this, ok](Work &work) {
-    if (state() == ZmEngineState::Stopping) work.retired = ZuMv(m_nextRun);
-    Base::stopped(ok);
-  });
-}
-
-DeviceEngine::RunFns DeviceEngine::takeRunFns()
-{
-  ZmGuard guard(m_controlLock);
-  return ZuMv(m_nextRun);
-}
-
-void DeviceEngine::start_() { static_cast<Nif *>(this)->start_(); }
-void DeviceEngine::stop_() { static_cast<Nif *>(this)->stop_(); }
 
 bool Nif::start(RecvFn receive, StopFn txStopped)
 {
@@ -119,8 +68,9 @@ bool Nif::start(RecvFn receive, StopFn txStopped)
 
 void Nif::start(RecvFn receive, StopFn txStopped, StartFn completion)
 {
-  m_everStarted = 1;
-  Engine::start({ZuMv(receive), ZuMv(txStopped)}, ZuMv(completion));
+  Engine::start(ZuMv(completion), [&] {
+    m_next = {ZuMv(receive), ZuMv(txStopped)};
+  });
 }
 
 ZuTime Nif::monotonicNow()
@@ -130,32 +80,37 @@ ZuTime Nif::monotonicNow()
   return ZuTime{now};
 }
 
-void Nif::signalWake(int fd, const ZmAtomic<unsigned> &parking)
+void Nif::wake()
 {
-  if (!parking) return;
+  ++m_wakes;
+  wake_();
+}
+
+void Nif::closeWake()
+{
+  if (m_wakeFD >= 0) ::close(m_wakeFD);
+  m_wakeFD = -1;
+}
+
+void Nif::wake_()
+{
+  if (!m_blocking) return;
   uint64_t one = 1;
-  while (::write(fd, &one, sizeof(one)) < 0) {
+  while (::write(m_wakeFD, &one, sizeof(one)) < 0) {
     if (errno == EINTR) continue;
     ZmAssert_(errno == EAGAIN);
     break;
   }
 }
 
-void Nif::drainWake(int fd)
+void Nif::ackWake()
 {
   uint64_t value;
-  while (::read(fd, &value, sizeof(value)) < 0) {
+  while (::read(m_wakeFD, &value, sizeof(value)) < 0) {
     if (errno == EINTR) continue;
     ZmAssert_(errno == EAGAIN);
     break;
   }
-}
-
-bool Nif::takeWake(ZmAtomic<uint64_t> &wakes)
-{
-  if (!wakes) return false;
-  --wakes; // only the Rx owner consumes pulses
-  return true;
 }
 
 } // namespace Zpkt

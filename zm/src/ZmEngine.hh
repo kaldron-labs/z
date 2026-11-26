@@ -52,13 +52,15 @@ class ZmEngine {
   auto engineImpl_() const { return static_cast<const Impl *>(this); }
   auto engineImpl_() { return static_cast<Impl *>(this); }
 
+public:
+  using CtrlFn = ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
+
 private:
   using Lock = ZmPRWLock;
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
 
   struct HeapID : public ZuStringT<"ZmEngine"> { };
-  using CtrlFn = ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
   ZmQueueDerive(CtrlFnRing, CtrlFn, ZmQueueHeapID_<HeapID>);
 
 public:
@@ -78,11 +80,16 @@ public:
   // in state() before callbacks run; only Stopped permits final/destruction.
   // A superseded opposite request completes when the current operation
   // settles, with whether its requested state was attained.
-  void start(CtrlFn);	// async
+  void start(CtrlFn fn) { start(ZuMv(fn), [] {}); }
+  // Bind arguments to a newly admitted start under the state lock. Repeated
+  // requests join the existing operation and keep its original arguments.
+  template <typename L> void start(CtrlFn, L &&admit);
   // Retains stopFn until the implementation completes via stopped(ok).
   // Stop is best effort: completion leaves Stopped even when ok is false.
   // Only a separately queued start advances to Starting and invokes start_.
-  void stop(CtrlFn);
+  void stop(CtrlFn fn) { stop(ZuMv(fn), [] {}); }
+  // Move a canceled restart's arguments out under the same lock.
+  template <typename L> void stop(CtrlFn, L &&cancel);
 
   bool start();		// sync
   bool stop();
@@ -128,7 +135,8 @@ private:
 };
 
 template <typename Impl>
-inline void ZmEngine<Impl>::start(CtrlFn startFn)
+template <typename L>
+inline void ZmEngine<Impl>::start(CtrlFn startFn, L &&admit)
 {
   using namespace ZmEngineState;
   bool ok;
@@ -138,7 +146,7 @@ inline void ZmEngine<Impl>::start(CtrlFn startFn)
 
     if (m_state == Running) { // idempotent
       guard.unlock();
-      startFn(true);
+      if (startFn) startFn(true);
       return;
     }
 
@@ -146,9 +154,11 @@ inline void ZmEngine<Impl>::start(CtrlFn startFn)
 
     switch (m_state.load_()) {
       case Stopped:
+	admit();
 	m_state = Starting;
 	break;
       case Stopping:
+	admit();
 	m_state = StartPending;
 	guard.unlock();
 	engineImpl_()->stateChanged();
@@ -218,7 +228,8 @@ inline void ZmEngine<Impl>::started(bool ok)
 }
 
 template <typename Impl>
-inline void ZmEngine<Impl>::stop(CtrlFn stopFn)
+template <typename L>
+inline void ZmEngine<Impl>::stop(CtrlFn stopFn, L &&cancel)
 {
   using namespace ZmEngineState;
 
@@ -227,7 +238,7 @@ inline void ZmEngine<Impl>::stop(CtrlFn stopFn)
 
     if (m_state == Stopped) { // idempotent
       guard.unlock();
-      stopFn(true);
+      if (stopFn) stopFn(true);
       return;
     }
 
@@ -243,6 +254,7 @@ inline void ZmEngine<Impl>::stop(CtrlFn stopFn)
 	engineImpl_()->stateChanged();
 	return;
       case StartPending:
+	cancel();
 	m_state = Stopping;
 	guard.unlock();
 	engineImpl_()->stateChanged();

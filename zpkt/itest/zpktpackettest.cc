@@ -435,6 +435,20 @@ static void testPackets()
   }
   ZuCheckRT(progressed,
     log_("successive zero-to-one publications each drain without orphaning their final packet"));
+  if (auto suffix = control->alloc()) {
+    if (recycled) {
+      memcpy(suffix, expected, 64);
+      Zpkt::TxPacket batch[]{{recycled, Bytes}, {recycled, Bytes}, {suffix, 64}};
+      auto prefix = instance->send(batch);
+      bool preserved = instance->txReady(suffix) && !memcmp(suffix, expected, 64);
+      auto firstDone = waitTx(instance, prefix, Zm::now() + ZuTime{10});
+      auto retried = instance->send({batch + 2, 1});
+      auto suffixDone = waitTx(instance, retried, Zm::now() + ZuTime{10});
+      ZuCheckRT(prefix == 1 && preserved && firstDone == 1 && retried == 1 && suffixDone == 1,
+	log_("ordered AF_XDP submission stops at a duplicate and preserves the later entry"));
+    }
+    control->free(suffix);
+  } else ZuCheckRT(false, log_("allocate the vector suffix from the control pool"));
   // Send independent raw Ethernet traffic back. No IP/TCP/UDP selection exists
   // for all traffic, so the experimental EtherType must reach the raw callback.
   memcpy(observed, local.mac, 6);
@@ -730,7 +744,7 @@ static void testNeverStarted()
   Zi::IOBufPoolList pools;
   pools.pushNode(tx.ptr());
   auto allocated = instance->alloc(rx, pools);
-  bool ready = allocated.is<void>() && instance->allocated() && !instance->everStarted();
+  bool ready = allocated.is<void>() && instance->allocated() && instance->state() == ZmEngineState::Stopped;
   ZuCheckRT(ready);
   if (!ready) { if (instance) instance->final(); return; }
   int fd = registrationFD;

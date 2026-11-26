@@ -42,9 +42,15 @@
 #include <zlib/ZuInt.hh>
 #include <zlib/ZuTraits.hh>
 
+#include <zlib/ZmPlatform.hh>
+
 #include <zlib/ZePlatform.hh>
 
 #include <zlib/ZtString.hh>
+
+#ifndef Zi_DefltSpin
+#define Zi_DefltSpin Zm_DefltSpin
+#endif
 
 namespace Zi {
 

@@ -99,7 +99,7 @@ static void testNamedFactory()
   ZiMultiplex mx, other;
   ZmRef<Zpkt::Env> env = new Zpkt::Env;
   env->nifQueryFn(query);
-  auto cf = ZpktTest::config(path("libZpktTestPlugin.so"), "synthetic", 3, 4321);
+  auto cf = ZpktTest::config(path("libZpktTestPlugin.so"), "synthetic", 3, 4321, 0);
   env->init(cf);
   cf = nullptr;
   auto opened = env->nif(&mx, "synthetic");
@@ -109,7 +109,7 @@ static void testNamedFactory()
   ZuCHECK(nif->env() == env.ptr() && nif->name() == "synthetic"_z &&
       nif->mx() == &mx && nif->state() == ZmEngineState::Stopped && !nif->allocated(),
     "Env owns a fully initialized stopped child with a raw parent pointer");
-  ZuCHECK(queries == 1 && stats->creates == 1 && stats->spin == 4321 &&
+  ZuCHECK(queries == 1 && stats->creates == 1 && stats->rxSpin == 4321 && !stats->txSpin &&
       stats->info.ifindex == metadata.ifindex && stats->info.mtu == metadata.mtu &&
       stats->info.rxQueues == metadata.rxQueues && !memcmp(stats->info.mac, metadata.mac, 6),
     "owned config and unmodified synthetic kernel metadata reach the module");
@@ -188,7 +188,7 @@ static void testFinalFailure()
   for (auto name : {"first", "second"}) {
     auto child = ZpktTest::object(interfaces, name);
     ZpktTest::value(child, "txSid", 3);
-    ZpktTest::value(child, "spin", 1000);
+    ZpktTest::value(child, "rxSpin", 1000);
   }
   env->init(cf);
   cf = nullptr;
@@ -239,14 +239,15 @@ static void testMalformedConfig()
     if (scenario == 2) {
       auto prior = ZpktTest::object(interfaces, "prior");
       ZpktTest::value(prior, "txSid", 3);
-      ZpktTest::value(prior, "spin", 1000);
+      ZpktTest::value(prior, "rxSpin", 1000);
     }
     auto invalid = ZpktTest::object(interfaces, "invalid");
+    auto field = scenario == 2 ? "txSpin" : scenario ? "rxSpin" : "txSid";
     if (scenario) {
       ZpktTest::value(invalid, "txSid", 3);
-      ZpktTest::value(invalid, "spin", "not-an-integer");
+      ZpktTest::value(invalid, field, "not-an-integer");
     } else {
-      ZpktTest::value(invalid, "spin", 1000);
+      ZpktTest::value(invalid, "rxSpin", 1000);
     }
     ZmRef<Zpkt::Env> env = new Zpkt::Env;
     env->nifQueryFn(query);
@@ -255,15 +256,16 @@ static void testMalformedConfig()
     try { env->init(cf); }
     catch (const ZeException &error) { failure = error; }
     auto message = errorText(failure);
-    ZuCheckRT(failure && strstr(message.ndata(), scenario ? "spin" : "txSid") &&
+    ZuCheckRT(failure && strstr(message.ndata(), field) &&
 	stats->pluginDestroys == destroyed && env->final().is<void>(),
       log_("nested typed configuration failure preserves its field diagnostic: ", message));
     cf = ZpktTest::config(path("libZpktTestPlugin.so"), "recovered", 3);
     env->init(cf);
     cf = nullptr;
     auto opened = env->nif(&mx, "recovered");
-    ZuCheckRT(opened.is<Zpkt::Nif *>() && stats->spin == 4096,
-      log_("valid retry with omitted spin inherits the AF_XDP default"));
+    ZuCheckRT(opened.is<Zpkt::Nif *>() &&
+	stats->rxSpin == (Zi_DefltSpin<<2) && stats->txSpin == Zi_DefltSpin,
+      log_("valid retry with omitted polling budgets inherits the AF_XDP defaults"));
     if (opened.is<Zpkt::Nif *>()) {
       ZmRef<Zpkt::Nif> nif = opened.p<Zpkt::Nif *>();
       nif->final();

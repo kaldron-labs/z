@@ -11,20 +11,23 @@
 
 #include <zlib/ZpktXDPLib.hh>
 #include <zlib/ZmHash.hh>
+#include <zlib/ZfCf.hh>
+#include <zlib/ZiPlatform.hh>
 #include <zlib/ZpktEnv.hh>
-#include <zlib/ZpktCf.hh>
 
 namespace Zpkt::Xdp {
 
-struct InterfaceCf {
-  unsigned spin = 4096;
-  unsigned txSid = 0;
+struct NifCf {
+  unsigned	rxSpin = (Zi_DefltSpin<<2);
+  unsigned	txSpin = Zi_DefltSpin;
+  unsigned	txSid = 0;
 };
-ZfStruct(ZpktXDPAPI, (InterfaceCf, Cf),
-  (spin, (Mutable),			UInt32),
-  (txSid, (Mutable, Required, (Range<1, UINT_MAX>)), UInt32));
+ZfStruct(ZpktXDPAPI, (NifCf, Cf),
+  (rxSpin,	(Mutable),				UInt32),
+  (txSpin,	(Mutable),				UInt32),
+  (txSid,	(Mutable, Required, (Range<1, UINT_MAX>)),	UInt32));
 
-using InterfaceMap = ZmHashKV<CfString, InterfaceCf,
+using InterfaceMap = ZmHashKV<CfString, NifCf,
   ZmHashHeapID<"Zpkt.Xdp.Interfaces", ZmHashLock<ZmNoLock>>>;
 class Interfaces : public ZmNHeap<Interfaces>, public InterfaceMap {
 friend inline ZuStringT<"Zpkt.Xdp.Interfaces"> ZmNHeapID(Interfaces *);
@@ -32,7 +35,7 @@ public:
   using ZmNHeap<Interfaces>::operator new;
   using ZmNHeap<Interfaces>::operator delete;
 };
-inline CfMap ZfCf_Fmt(Interfaces *);
+inline ZfCf::AsMap<ZfFieldTC::UDT> ZfCf_Fmt(Interfaces *);
 
 struct PluginCf {
   ZmRef<Interfaces> interfaces;

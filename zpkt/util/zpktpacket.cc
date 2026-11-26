@@ -240,7 +240,10 @@ struct Endpoint {
     };
     value(tree.ptr(), "module", ZPKT_MODULE);
     auto interface = object(object(tree.ptr(), "interfaces"), config.interface);
-    if (config.spinSet) value(interface, "spin", config.spin);
+    if (config.spinSet) {
+      value(interface, "rxSpin", config.spin);
+      value(interface, "txSpin", config.spin);
+    }
     value(interface, "txSid", Sender);
     env->init(tree);
     auto initialized = env->nif(&mx, config.interface);

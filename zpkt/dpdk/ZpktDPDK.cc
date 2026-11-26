@@ -18,7 +18,7 @@
 
 namespace Zpkt::Dpdk {
 
-ZfStructImpl(InterfaceCf, Cf);
+ZfStructImpl(NifCf, Cf);
 ZfStructImpl(PluginCf, Cf);
 
 class Plugin final : public ZmNHeap<Plugin>, public Zpkt::Plugin {

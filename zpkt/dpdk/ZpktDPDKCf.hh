@@ -12,25 +12,25 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmNoLock.hh>
 #include <zlib/ZfCf.hh>
+#include <zlib/ZiPlatform.hh>
 #include <zlib/ZpktEnv.hh>
-#include <zlib/ZpktCf.hh>
 #include "ZpktDPDKLib.hh"
 
 namespace Zpkt::Dpdk {
 
-struct InterfaceCf {
+struct NifCf {
   CfString	port;
-  unsigned	spin = 1000;
+  unsigned	spin = Zi_DefltSpin;
   unsigned	rxInterval = 50;
 };
 
-ZfStruct(ZpktDPDKAPI, (InterfaceCf, Cf),
+ZfStruct(ZpktDPDKAPI, (NifCf, Cf),
   (port,	(Mutable, Required),	String),
   (spin,	(Mutable),		UInt32),
   (rxInterval,	(Mutable),		UInt32));
 
 class Interfaces : public ZmNHeap<Interfaces>, public
-    ZmHashKV<CfString, InterfaceCf,
+    ZmHashKV<CfString, NifCf,
       ZmHashHeapID<"Zpkt.Dpdk.Interfaces", ZmHashLock<ZmNoLock>>> {
 friend inline ZuStringT<"Zpkt.Dpdk.Interfaces"> ZmNHeapID(Interfaces *);
 
@@ -38,7 +38,7 @@ public:
   using ZmNHeap<Interfaces>::operator new;
   using ZmNHeap<Interfaces>::operator delete;
 };
-inline CfMap ZfCf_Fmt(Interfaces *);
+inline ZfCf::AsMap<ZfFieldTC::UDT> ZfCf_Fmt(Interfaces *);
 
 struct PluginCf {
   ZmRef<Interfaces> interfaces;

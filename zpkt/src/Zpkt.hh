@@ -23,8 +23,6 @@
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmEngine.hh>
 #include <zlib/ZmFn.hh>
-#include <zlib/ZmPLock.hh>
-#include <zlib/ZmQueue.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmPolymorph.hh>
 
@@ -38,6 +36,10 @@
 
 namespace Zpkt {
 
+ZuDerive(CfString, (ZtString<ZtStringHeapID<"Zpkt.CfString">>));
+
+ZtFlagsNS(ZpktAPI, NifFlags, uint64_t, ZeroCopy);
+
 struct NifInfo {
   unsigned ifindex = 0, mtu = 0, rxQueues = 0;
   uint8_t mac[6]{};
@@ -45,88 +47,70 @@ struct NifInfo {
 
 using RecvFn = ZmFn<void(uint8_t *, unsigned, ZiRxBurst *), ZmFnHeapID<"Zpkt.Receive">>;
 using StopFn = ZmFn<void(), ZmFnHeapID<"Zpkt.TxStopped">>;
-using StartFn = ZmFn<void(bool), ZmFnHeapID<"Zpkt.Start">>;
-
 class Env;
-
 class Nif;
 
-class ZpktAPI DeviceEngine : private ZmEngine<DeviceEngine> {
-  using Base = ZmEngine<DeviceEngine>;
-  friend Base;
+// Engine control wakes use ZmEngine's inline stop poll. Scheduler wakes on
+// the public Nif interrupt the receive owner independently.
+class ZpktAPI DeviceEngine : protected ZmEngine<DeviceEngine> {
+  friend ZmEngine<DeviceEngine>;
   friend class Nif;
-
-public:
-  using Base::state;
-  using Base::running;
-  using Base::stopping;
-  using Base::lock;
-  bool stop();
-  void stop(StartFn);
-  bool stopped() { return Base::stopped(); }
-
-protected:
-  struct RunFns {
-    RecvFn receive;
-    StopFn txStopped;
-  };
-
-  void start(StartFn completion) { start({}, ZuMv(completion)); }
-  void start(RunFns, StartFn);
-  void started(bool ok);
-  void stopped(bool ok);
-  RunFns takeRunFns();
-
-private:
-  DeviceEngine() = default;
-
-  struct Completion {
-    StartFn	fn;
-    bool	ok = false;
-  };
-  ZmQueueDerive(Completions, Completion, ZmQueueHeapID<"Zpkt.Control">);
-  using SpawnFn = ZmFn<void(), ZmFnHeapID<"Zpkt.Control">>;
-  struct Work {
-    Completions	completions;
-    RunFns	retired;
-    SpawnFn	start;
-    bool	wake = false;
-  };
-
-  template <typename Fn> void control(Fn);
-  auto completion(StartFn);
-  template <typename Fn> bool spawn(Fn &&fn) {
-    m_work->start = ZuFwd<Fn>(fn);
-    return true;
-  }
-  void wake() { m_work->wake = true; }
   void start_();
   void stop_();
-
-  ZmPLock	m_controlLock;
-  Work		*m_work = nullptr;
-  RunFns	m_nextRun;
 };
+
+using StartFn = ZmEngine<DeviceEngine>::CtrlFn;
+
+struct TxPacket {
+  uint8_t	*data;
+  unsigned	length;
+};
+
+enum { MaxTxBatch = 64 };
 
 // The caller drives Rx/Tx on their respective single owners. Allocation/free
 // may run on other threads. Allocation holds backing until explicit pool return;
 // an accepted send also holds it until kernel completion or safe close.
-class ZpktAPI Nif : public ZmPolymorph, public DeviceEngine {
+class ZpktAPI Nif : public ZmPolymorph, protected DeviceEngine {
 friend class DeviceEngine;
 friend class Env;
 
-protected:
-  using Engine = DeviceEngine;
-
-public:
-  ~Nif() override = default;
-  Env *env() const { return m_env; }
-  ZuCSpan name() const { return m_name; }
   Nif(const Nif &) = delete;
   Nif &operator =(const Nif &) = delete;
 
+public:
+  using Engine = DeviceEngine;
+  using Engine::state;
+  using Engine::running;
+  using Engine::stopping;
+  using Engine::lock;
+
+protected:
+  Nif(ZiMultiplex *, const NifInfo &);
+public:
+  ~Nif() override = default;
+
+  Env *env() const { return m_env; }
+  ZiMultiplex *mx() const { return m_mx; }
+  ZuCSpan name() const { return m_name; }
+  unsigned ifindex() const { return m_ifindex; }
+  unsigned mtu() const { return m_mtu; }
+  unsigned rxQueues() const { return m_rxQueues; }
+  ZuBSpan mac() const { return m_mac; }
+
+  bool zeroCopy() const { return m_flags & NifFlags::ZeroCopy(); }
+  // Active TCP checksum offload configuration, queried after start.
+  bool tcpChksumOffload() const { return ready() && m_tcpChksumOffload; }
+
+  bool start(RecvFn, StopFn txStopped = {});
+  void start(RecvFn, StopFn txStopped, StartFn completion);
+  bool stop();
+  void stop(StartFn);
+  ZeException error() const { return m_error; } // inspect after start, stop or final
+
   // Pools retain backing independently of the device.
-  virtual ZmRef<Zi::IOBufPool> bufPool(Zi::IOBufType::T type, unsigned count, unsigned size,
+  virtual ZmRef<Zi::IOBufPool> bufPool(
+    Zi::IOBufType::T type, unsigned count, unsigned size,
     unsigned headRoom = 0, unsigned tailRoom = 0,
     unsigned align = ZiIOBuf_DefltAlign) = 0;
   // Internal Tx reserves can participate without joining the caller's intrusive list.
@@ -135,21 +119,12 @@ public:
   virtual ZuUnion<void, ZeException> alloc(
     Zi::IOBufPool *rxPool, const Zi::IOBufPoolList &txPools) = 0;
 
-  virtual bool start(RecvFn, StopFn txStopped = {});
-  virtual void start(RecvFn, StopFn txStopped, StartFn completion);
   // Stop drains service. While stopped, final releases device and backing resources.
   virtual void final() = 0;
-  virtual ZeException error() const = 0; // inspect after start, stop or final
-
-  virtual ZiMultiplex *mx() const = 0;
-  virtual unsigned ifindex() const = 0;
-  virtual unsigned rxQueues() const = 0;
   virtual bool allocated() const = 0;
-  virtual bool everStarted() const { return m_everStarted; }
   virtual bool ready() const = 0;
-  virtual unsigned mtu() const = 0;
-  virtual bool zeroCopy() const = 0;
-  virtual ZuBSpan mac() const = 0;
+
+  virtual void rx() = 0; // Rx owner, until wake() or device failure
 
   // Tx owner: encode only when no prior submission owns this slot. This
   // reserves nothing; encode and send on the same owner without resubmission.
@@ -157,33 +132,97 @@ public:
   // False acquires no kernel lease. After true, keep bytes immutable until
   // kernel retirement. One descriptor may be outstanding for each slot.
   virtual bool send(uint8_t *packet, unsigned length) = 0;
-  // Active TCP checksum offload configuration, queried after start.
-  virtual bool tcpChksumOffload() = 0;
-  virtual void rx() = 0; // Rx owner, until wake() or device failure
-  virtual void wake() = 0;
+  // Tx owner: accepts exactly the leading entries up to MaxTxBatch.
+  // Refused entries retain their caller leases and can be resubmitted.
+  virtual unsigned send(ZuSpan<const TxPacket>) = 0;
   virtual unsigned pollTx() = 0;
+
+  virtual void status() = 0;
+
+  virtual void wake();
   virtual unsigned allQueues(Ztc::QueueMgr::AllFn) const { return 0; }
 
 protected:
-  Nif() = default;
-  void retireNif();
-  void resetRun() { takeRunFns(); m_everStarted = 0; }
+  void rxQueues(unsigned count) { m_rxQueues = count; }
+  void zeroCopy(bool on) {
+    constexpr auto bit = NifFlags::ZeroCopy();
+    if (on) m_flags |= bit;
+    else m_flags &= ~bit;
+  }
+  void tcpChksumOffload(bool on) { m_tcpChksumOffload = on; }
+  bool configuredTCPChksumOffload() const { return m_tcpChksumOffload; }
+
+  void resetInfo();
+  void final_();
+  void error(ZeException e) { m_error = ZuMv(e); }
+  bool failed() const { return bool(m_error); }
+
+  bool receiving() const { return bool(m_receive); }
+  void recv(uint8_t *packet, unsigned length, ZiRxBurst *burst) {
+    m_receive(packet, length, burst);
+  }
+  void clearCallbacks() { m_receive = {}; m_txStopped = {}; }
+  void notifyTxStopped() { if (m_txStopped) m_txStopped(); }
+  void finishCallbacks() {
+    auto txStopped = ZuMv(m_txStopped);
+    m_receive = {};
+    if (txStopped) txStopped();
+  }
 
   static ZuTime monotonicNow();
-  static void signalWake(int fd, const ZmAtomic<unsigned> &parking);
-  static void drainWake(int fd);
-  static bool takeWake(ZmAtomic<uint64_t> &wakes);
+  int wakeFD() const { return m_wakeFD; }
+  void wakeFD(int fd) { m_wakeFD = fd; }
+  void closeWake();
+  void wake_(); // interrupt a kernel wait without consuming a scheduler turn
+  void ackWake();
+  void resetWake() { m_wakes = m_blocking = 0; }
+  bool wakePending() const { return bool(m_wakes); }
+  bool wakePendingRelaxed() const { return m_wakes.load_(); }
+  bool woken() {
+    if (!m_wakes) return false;
+    --m_wakes;
+    return true;
+  }
+  void startBlocking() { m_blocking.xch(1); }
+  void stopBlocking() { m_blocking = 0; }
 
 private:
   virtual void start_() = 0;
   virtual void stop_() = 0;
 
-  Env		*m_env = nullptr;
-  ZtString<ZtStringHeapID<"Zpkt.CfString">> m_name;
-  ZmAtomic<unsigned> m_everStarted{0};
+  void startRun();
+  void env(Env *env, ZuCSpan name) { m_env = env; m_name = name; }
+  void env(Env *env) { m_env = env; }
 
-public:
-  virtual void status() = 0;
+  struct Callbacks {
+    RecvFn		receive;
+    StopFn		txStopped;
+  };
+
+  ZiMultiplex		*m_mx;
+  uint64_t		m_flags = 0;
+  unsigned		m_ifindex;
+  unsigned		m_mtu;
+  unsigned		m_rxQueues;
+  uint8_t		m_mac[6];
+  bool			m_tcpChksumOffload = false;
+
+  ZeException		m_error;
+  RecvFn		m_receive;
+  StopFn		m_txStopped;
+
+  int			m_wakeFD = -1;
+
+  // Only the receive owner consumes wakes. Publish blocking before its last
+  // check so a concurrent producer either prevents the wait or interrupts it.
+  alignas(Zm::CacheLineSize)
+  ZmAtomic<uint64_t>	m_wakes{0};
+  ZmAtomic<unsigned>	m_blocking{0};
+
+  Env			*m_env = nullptr;
+  CfString		m_name;
+
+  Callbacks		m_next;
 };
 
 } // namespace Zpkt

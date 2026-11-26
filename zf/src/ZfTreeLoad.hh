@@ -429,7 +429,12 @@ struct Map {
   O *alloc() const
   {
     auto o = new O();
-    load_<ZfFieldFilter::Load>(*o);
+    try {
+      load_<ZfFieldFilter::Load>(*o);
+    } catch (...) {
+      delete o;
+      throw;
+    }
     return o;
   }
 

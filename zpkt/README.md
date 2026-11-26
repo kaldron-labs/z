@@ -72,8 +72,9 @@ one cache miss and passes trusted `NifInfo` to its backend. A same-name/multiple
 lookup returns the same pointer without querying or reopening, including while
 running; a different multiplexer returns a structured error. The caller acquires
 its own reference immediately. AF_XDP redirects all interface traffic, including
-non-IP frames. Its `spin` controls idle probes before Rx blocks or the sender
-returns to its scheduler; `txSid` is required and nonzero.
+non-IP frames. `rxSpin` controls idle probes before Rx blocks, and `txSpin`
+controls idle probes before the sender returns to its scheduler. Rx defaults to
+`(Zi_DefltSpin<<2)` and Tx defaults to `Zi_DefltSpin`. `txSid` is required and nonzero.
 
 Env setup and teardown are caller-serialized. It owns a name-keyed tree of Nif
 references; children have raw Env backpointers. Env has no engine or start/stop.

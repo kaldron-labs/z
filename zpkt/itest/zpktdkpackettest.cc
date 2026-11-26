@@ -132,6 +132,108 @@ static void testRing(const Runtime &runtime)
     log_("off-owner final return restores receiver pool capacity"));
 }
 
+static void testPrefix(const Runtime &runtime)
+{
+  ZuTestScopeRT(testPrefix);
+  RingPort port;
+  auto attached = port.init("prefix", 4, {{0x02, 0, 0, 0, 0, 2}});
+  ZuCheckRT(attached.is<void>(), log_(errorText(attached.p<ZeException>())));
+  if (!attached.is<void>()) return;
+  Device endpoint;
+  auto allocated = endpoint.init(runtime, port.name(), 6);
+  ZuCheckRT(allocated.is<void>(), log_(errorText(allocated.p<ZeException>())));
+  if (!allocated.is<void>()) return;
+  unsigned received = 0;
+  bool ordered = true;
+  auto started = endpoint.start([&endpoint, &received, &ordered](
+      uint8_t *packet, unsigned length, ZiRxBurst *burst) {
+    uint8_t expected[64];
+    frame(expected, 0xb0 + received);
+    ordered &= burst && length == sizeof(expected) && !memcmp(packet, expected, sizeof(expected));
+    endpoint.ingress->free(packet);
+    if (++received == 3) endpoint.device->wake();
+  });
+  ZuCheckRT(started.is<void>(), log_(errorText(started.p<ZeException>())));
+  if (!started.is<void>()) return;
+
+  enum { Count = 3, Size = 64 };
+  uint8_t *blockers[Count]{}, *backing[Count]{};
+  Zpkt::TxPacket packets[Count]{};
+  bool available = true;
+  for (unsigned i = 0; i < Count; ++i) {
+    blockers[i] = endpoint.tx->alloc();
+    backing[i] = endpoint.tx->alloc();
+    if (!blockers[i] || !backing[i]) { available = false; break; }
+    packets[i] = {backing[i] + i, Size};
+    frame({blockers[i], Size}, i);
+    frame({packets[i].data, Size}, i + Count);
+  }
+  ZuCheckRT(available, log_("fixture has room for all caller leases"));
+  if (available)
+    for (unsigned k = 0; k <= Count; ++k) {
+      const unsigned filled = Count - k;
+      unsigned accepted = 0, retired = 0, retried = 0;
+      bool prefilled = true, ready = true, bytes = true;
+      endpoint.onTx([&endpoint, &blockers, &packets, &prefilled, &accepted, &ready, filled, k] {
+	for (unsigned i = 0; i < filled; ++i)
+	  prefilled &= endpoint.device->send(blockers[i], Size);
+	accepted = endpoint.device->send(packets);
+	for (unsigned i = 0; i < Count; ++i)
+	  ready &= endpoint.device->txReady(packets[i].data) == (i >= k);
+      });
+      rte_mbuf *held[Count]{};
+      for (unsigned i = 0; i < Count; ++i) {
+	auto mbuf = held[i] = port.take();
+	auto expected = i < filled ? blockers[i] : packets[i - filled].data;
+	bytes &= mbuf && rte_pktmbuf_mtod(mbuf, uint8_t *) == expected &&
+	  rte_pktmbuf_pkt_len(mbuf) == Size;
+      }
+      if (k > 1 && held[Count - 1]) {
+	rte_pktmbuf_free(held[Count - 1]);
+	held[Count - 1] = nullptr;
+	endpoint.onTx([&endpoint, &retired] { retired = endpoint.device->pollTx(); });
+	ZuCheckRT(retired == 1, log_("the last accepted slot can retire ahead of the prefix"));
+      }
+      for (auto mbuf : held) if (mbuf) rte_pktmbuf_free(mbuf);
+      endpoint.onTx([&endpoint, &packets, &retired, &retried, k] {
+	retired += endpoint.device->pollTx();
+	retried = endpoint.device->send({packets + k, Count - k});
+      });
+      for (unsigned i = k; i < Count; ++i) {
+	auto mbuf = port.take();
+	uint8_t expected[Size];
+	frame(expected, i + Count);
+	bytes &= mbuf && rte_pktmbuf_mtod(mbuf, uint8_t *) == packets[i].data &&
+	  rte_pktmbuf_pkt_len(mbuf) == Size && !memcmp(packets[i].data, expected, Size);
+	if (mbuf) rte_pktmbuf_free(mbuf);
+      }
+      unsigned suffixRetired = 0;
+      endpoint.onTx([&endpoint, &suffixRetired] { suffixRetired = endpoint.device->pollTx(); });
+      ZuCheckRT(prefilled && k == accepted && ready && bytes && retired == Count &&
+	  retried == Count - k && suffixRetired == retried,
+	log_("ring acceptance boundary ", k, " preserves original order and suffix leases"));
+    }
+  for (auto p : blockers) if (p) endpoint.tx->free(p);
+  for (auto p : backing) if (p) endpoint.tx->free(p);
+  bool injected = true;
+  for (unsigned i = 0; i < 3; ++i) {
+    uint8_t input[Size];
+    frame(input, 0xb0 + i);
+    injected &= port.inject(native(endpoint.ingress), input);
+  }
+  if (injected) {
+    ZmSemaphore done;
+    endpoint.mx.rxRun([&endpoint, &done] {
+      endpoint.device->rx();
+      done.post();
+    });
+    done.wait();
+  }
+  ZuCheckRT(injected && ordered && received == 3,
+    log_("a three-packet Rx dequeue delivers every packet in order within the burst scope"));
+  ZuCheckRT(endpoint.stop(), log_("stop after all prefix submissions retire"));
+}
+
 static void testPcap(const Runtime &runtime)
 {
   ZuTestScopeRT(testPcap);
@@ -196,5 +298,6 @@ int main(int argc, char **argv)
   ZuCHECK(result.is<void>(), errorText(result.p<ZeException>()));
   if (!result.is<void>()) return 1;
   ZuTestCall(testRing, runtime);
+  ZuTestCall(testPrefix, runtime);
   ZuTestCall(testPcap, runtime);
 }

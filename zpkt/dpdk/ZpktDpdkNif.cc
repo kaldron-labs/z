@@ -19,6 +19,7 @@
 #include <rte_errno.h>
 #include <rte_kvargs.h>
 #include <rte_mbuf.h>
+#include <rte_prefetch.h>
 
 #include <zlib/ZuBox.hh>
 #include <zlib/ZmAssert.hh>
@@ -83,7 +84,7 @@ static int afPacketMinRxSize(const rte_device *device)
 
 Nif::~Nif()
 {
-  if (m_mx) final();
+  if (mx()) final();
 }
 
 ZmRef<Zi::IOBufPool> Nif::bufPool(
@@ -93,8 +94,8 @@ ZmRef<Zi::IOBufPool> Nif::bufPool(
   return new BufPool{type, count, size, headRoom, tailRoom, align};
 }
 
-Nif::Nif(EAL &eal, ZiMultiplex *mx, const InterfaceCf &config, const NifInfo &nifInfo)
-: m_eal{eal}
+Nif::Nif(EAL &eal, ZiMultiplex *mx, const NifCf &config, const NifInfo &nifInfo)
+: Zpkt::Nif{mx, nifInfo}, m_eal{eal}
 {
   if (!mx || mx->state() != ZmEngineState::Stopped)
     throw ZeEXCEPT(Error, "Zpkt.Dpdk", "construct with a stopped multiplexer");
@@ -122,16 +123,14 @@ Nif::Nif(EAL &eal, ZiMultiplex *mx, const InterfaceCf &config, const NifInfo &ni
     int fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (fd < 0) throw deviceError("create Rx wake eventfd", errno);
 
-    m_nifInfo = nifInfo;
+    rxQueues(1);
     m_port = port;
-    m_tcpOffload = bool(info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_TCP_CKSUM);
-    m_wakeFD = fd;
-    m_mtu = nifInfo.mtu;
-    memcpy(m_mac.addr_bytes, nifInfo.mac, sizeof(nifInfo.mac));
+    tcpChksumOffload(bool(info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_TCP_CKSUM));
+    wakeFD(fd);
     m_ring = info.driver_name && !strcmp(info.driver_name, "net_ring");
     m_pcap = pcap;
     m_afPacketMinRxSize = minRxSize;
-    m_mx = mx;
+    zeroCopy(m_ring);
   } catch (...) {
     m_eal.release(port);
     throw;
@@ -140,7 +139,7 @@ Nif::Nif(EAL &eal, ZiMultiplex *mx, const InterfaceCf &config, const NifInfo &ni
 
 void Nif::reserveTxPools(ZuSpan<Zi::IOBufPool *const> pools)
 {
-  ZmAssert_(m_mx && Engine::state() == ZmEngineState::Stopped && !allocated());
+  ZmAssert_(mx() && Engine::state() == ZmEngineState::Stopped && !allocated());
   m_reserves.null();
   for (auto pool : pools) {
     auto native = dynamic_cast<BufPool *>(pool);
@@ -152,7 +151,7 @@ void Nif::reserveTxPools(ZuSpan<Zi::IOBufPool *const> pools)
 
 Nif::Result Nif::alloc(Zi::IOBufPool *rxPool, const Zi::IOBufPoolList &txPools)
 {
-  if (!m_mx || Engine::state() != ZmEngineState::Stopped)
+  if (!mx() || Engine::state() != ZmEngineState::Stopped)
     return ZeEXCEPT(Error, "Zpkt.Dpdk", "initialize and stop the device before allocation");
   if (allocated()) {
     auto iter = txPools.citer();
@@ -169,7 +168,7 @@ Nif::Result Nif::alloc(Zi::IOBufPool *rxPool, const Zi::IOBufPoolList &txPools)
 
   auto ingress = dynamic_cast<BufPool *>(rxPool);
   if (!ingress || ingress->type != Zi::IOBufType::Rx ||
-      ingress->size < m_mtu + RTE_ETHER_HDR_LEN || !ingress->count)
+      ingress->size < mtu() + RTE_ETHER_HDR_LEN || !ingress->count)
     return deviceError("invalid ingress pool or frame geometry", EINVAL);
 
   Pools tx;
@@ -222,8 +221,7 @@ void Nif::final()
 {
   ZmAssert_(Engine::state() == ZmEngineState::Stopped);
   ZmGuard guard(m_queueLock);
-  resetRun();
-  if (!m_mx) return;
+  if (!mx()) return;
   // A failed stop or an outstanding native reference does not permit backing
   // release. Retry the stop with the scheduler already quiescent.
   if (m_started) {
@@ -242,28 +240,24 @@ void Nif::final()
   m_reserves.null();
   m_pending.null();
   m_eal.release(m_port);
-  ::close(m_wakeFD);
-  m_wakeFD = m_rxFD = -1;
+  closeWake();
+  m_rxFD = -1;
   m_port = NoPort;
-  m_mx = nullptr;
+  resetInfo();
   m_config = {};
-  m_nifInfo = {};
-  m_mac = {};
-  m_mtu = m_appTx = m_afPacketMinRxSize = 0;
+  m_appTx = m_afPacketMinRxSize = 0;
   m_ring = m_pcap = false;
-  m_error = {};
-  retireNif();
+  error({});
+  final_();
 }
 
 void Nif::start_()
 {
-  auto run = takeRunFns();
-  m_receive = ZuMv(run.receive);
-  m_txStopped = ZuMv(run.txStopped);
-  m_error = {};
-  if (!allocated() || !m_mx->running() || !m_receive) {
-    m_error = ZeEXCEPT(
-      Error, "Zpkt.Dpdk", "start requires allocated pools, a running mux and Rx callback");
+
+  error({});
+  if (!allocated() || !mx()->running() || !receiving()) {
+    error(ZeEXCEPT(
+      Error, "Zpkt.Dpdk", "start requires allocated pools, a running mux and Rx callback"));
   } else {
     auto result = activate();
     if (result.is<void>()) {
@@ -271,10 +265,9 @@ void Nif::start_()
       Engine::started(true);
       return;
     }
-    m_error = ZuMv(result).p<ZeException>();
+    error(ZuMv(result).p<ZeException>());
   }
-  m_receive = {};
-  m_txStopped = {};
+  clearCallbacks();
   Engine::started(false);
 }
 
@@ -294,7 +287,7 @@ Nif::Result Nif::activate()
     return deviceError("query queue capabilities", -rc);
 
   rte_eth_conf config{};
-  config.rxmode.mtu = m_mtu;
+  config.rxmode.mtu = mtu();
   config.txmode.offloads = info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_TCP_CKSUM;
   config.rxmode.offloads = info.rx_offload_capa & RTE_ETH_RX_OFFLOAD_TCP_CKSUM;
   // Try arrival interrupts where available. Software PMDs may also accept
@@ -314,7 +307,7 @@ Nif::Result Nif::activate()
     rc = rte_eth_dev_configure(m_port, 1, 1, &config);
   }
   if (rc) return deviceError("configure Ethernet port", -rc);
-  m_tcpOffload = bool(config.txmode.offloads & RTE_ETH_TX_OFFLOAD_TCP_CKSUM);
+  tcpChksumOffload(bool(config.txmode.offloads & RTE_ETH_TX_OFFLOAD_TCP_CKSUM));
   auto rx = info.default_rxconf;
   unsigned rxCount = m_rxPool->count;
   if (!m_ring && !m_pcap) {
@@ -355,20 +348,20 @@ Nif::Result Nif::activate()
   m_rxFD = config.intr_conf.rxq ? rte_eth_dev_rx_intr_ctl_q_get_fd(m_port, 0) : -1;
   m_txCleanup = 0;
   m_stopDeadline = {};
-  m_wakes = m_parking = m_rxReturned = 0;
+  m_rxReturned = 0;
+  resetWake();
   m_rxDepthRequested = m_rxDepth = 0;
-  m_stopping = 0;
-  drainWake(m_wakeFD);
+  ackWake();
   return {};
 }
 
 void Nif::stop_()
 {
   m_active = 0;
-  signalWake(m_wakeFD, m_parking);
+  wake();
   // Even if stop originates in an Rx callback, clear callbacks only after
   // that invocation and its containing receive burst have returned.
-  m_mx->rxRun([this] { quiesceRx(m_ring && m_started ? m_rxPool->count : 0); });
+  mx()->rxRun([this] { quiesceRx(m_ring && m_started ? m_rxPool->count : 0); });
 }
 
 void Nif::quiesceRx(unsigned left)
@@ -378,11 +371,11 @@ void Nif::quiesceRx(unsigned left)
     // stops publishing, one ingress-pool capacity covers all posted buffers.
     auto count = receive(false);
     if (count && count < left) {
-      m_mx->push([this, left = left - count] { quiesceRx(left); }, m_mx->rxThread());
+      mx()->push([this, left = left - count] { quiesceRx(left); }, mx()->rxThread());
       return;
     }
   }
-  m_mx->txRun([this] {
+  mx()->txRun([this] {
     m_stopDeadline = monotonicNow() + ZuTime{2};
     retire();
   });
@@ -394,14 +387,14 @@ void Nif::retire()
     cleanTx();
     reapTx(Burst);
     if (m_pendingCount && monotonicNow() < m_stopDeadline) {
-      m_mx->push([this] { retire(); }, m_mx->txThread());
+      mx()->push([this] { retire(); }, mx()->txThread());
       return;
     }
   }
   {
     ZmGuard guard(m_queueLock);
     if (m_started) {
-      if (int rc = rte_eth_dev_stop(m_port)) m_error = deviceError("stop Ethernet port", -rc);
+      if (int rc = rte_eth_dev_stop(m_port)) error(deviceError("stop Ethernet port", -rc));
       else m_started = false;
     }
     m_rxFD = -1;
@@ -415,25 +408,15 @@ void Nif::finishStop(unsigned left)
   auto budget = RTE_MIN(left, unsigned(Burst));
   reapTx(budget);
   if (left > budget) {
-    m_mx->push([this, left = left - budget] { finishStop(left); }, m_mx->txThread());
+    mx()->push([this, left = left - budget] { finishStop(left); }, mx()->txThread());
     return;
   }
-  if (!m_error && m_pendingCount)
-    m_error = deviceError("Ethernet Tx still owns submitted buffers after stop", ETIMEDOUT);
-  if (!m_error && m_txCleanup < 0 && m_txCleanup != -ENOTSUP && m_txCleanup != -EAGAIN)
-    m_error = deviceError("service Ethernet Tx completions", -m_txCleanup);
-  auto txStopped = ZuMv(m_txStopped);
-  m_receive = {};
-  if (txStopped) txStopped();
-  Engine::stopped(!m_error);
-}
-
-void Nif::wake()
-{
-  if (m_wakeFD < 0) return;
-  ++m_wakes;
-  signalWake(m_wakeFD, m_parking);
-  if (Engine::stopping() && !m_stopping.cmpXch(1, 0)) Engine::stopped();
+  if (!failed() && m_pendingCount)
+    error(deviceError("Ethernet Tx still owns submitted buffers after stop", ETIMEDOUT));
+  if (!failed() && m_txCleanup < 0 && m_txCleanup != -ENOTSUP && m_txCleanup != -EAGAIN)
+    error(deviceError("service Ethernet Tx completions", -m_txCleanup));
+  finishCallbacks();
+  Engine::stopped(!failed());
 }
 
 bool Nif::txReady(uint8_t *packet) const
@@ -445,17 +428,53 @@ bool Nif::txReady(uint8_t *packet) const
 
 bool Nif::send(uint8_t *packet, unsigned length)
 {
-  if (!ready() || !packet || !length || length > m_mtu + RTE_ETHER_HDR_LEN) return false;
+  if (!ready() || m_pendingCount == m_pending.length()) return false;
+  auto slot = prepareTx(packet, length);
+  if (!slot) return false;
+  auto mbuf = slot->mbuf;
+  if (!rte_eth_tx_burst(m_port, 0, &mbuf, 1)) {
+    refuseTx(slot);
+    return false;
+  }
+  m_pending[m_pendingCount++] = slot;
+  return true;
+}
+
+unsigned Nif::send(ZuSpan<const TxPacket> packets)
+{
+  if (!ready()) return 0;
+  unsigned count = RTE_MIN(packets.length(), uint64_t(MaxTxBatch));
+  count = RTE_MIN(count, m_pending.length() - m_pendingCount);
+  if (!count) return 0;
+  rte_mbuf *mbufs[MaxTxBatch];
+  auto slots = m_pending.data() + m_pendingCount;
+  unsigned prepared = 0;
+  for (; prepared < count; ++prepared) {
+    const auto &packet = packets[prepared];
+    auto slot = prepareTx(packet.data, packet.length);
+    if (!slot) break;
+    slots[prepared] = slot;
+    mbufs[prepared] = slot->mbuf;
+  }
+  if (!prepared) return 0;
+  unsigned accepted = rte_eth_tx_burst(m_port, 0, mbufs, prepared);
+  m_pendingCount += accepted;
+  while (prepared > accepted) refuseTx(slots[--prepared]);
+  return accepted;
+}
+
+ZuInline Slot *Nif::prepareTx(uint8_t *packet, unsigned length)
+{
+  if (!packet || !length || length > mtu() + RTE_ETHER_HDR_LEN) return nullptr;
   auto slot = m_txIndex.find(packet);
   if (!slot || length > slot->pool->size - unsigned(packet - slot->packet) ||
-      m_pendingCount == m_pending.length()) return false;
-  if (!slot->submit()) return false;
+      !slot->submit()) return nullptr;
   auto mbuf = slot->mbuf;
   mbuf->ol_flags &= ~RTE_MBUF_F_TX_OFFLOAD_MASK;
   mbuf->tx_offload = 0;
   mbuf->data_off = packet - static_cast<uint8_t *>(mbuf->buf_addr);
   mbuf->data_len = mbuf->pkt_len = length;
-  if (m_tcpOffload) {
+  if (configuredTCPChksumOffload()) {
     // The caller supplies the pseudo-header seed. Only native mbuf metadata
     // belongs here; no checksum traversal or modification of caller bytes.
     rte_net_hdr_lens head{};
@@ -476,15 +495,16 @@ bool Nif::send(uint8_t *packet, unsigned length)
       mbuf->data_len = mbuf->pkt_len = head.l2_len + size;
     }
   }
-  if (!rte_eth_tx_burst(m_port, 0, &mbuf, 1)) {
-    mbuf->ol_flags &= ~RTE_MBUF_F_TX_OFFLOAD_MASK;
-    mbuf->tx_offload = 0;
-    rte_pktmbuf_free_seg(mbuf);
-    slot->releaseSubmission();
-    return false;
-  }
-  m_pending[m_pendingCount++] = slot;
-  return true;
+  return slot;
+}
+
+ZuInline void Nif::refuseTx(Slot *slot)
+{
+  auto mbuf = slot->mbuf;
+  mbuf->ol_flags &= ~RTE_MBUF_F_TX_OFFLOAD_MASK;
+  mbuf->tx_offload = 0;
+  rte_pktmbuf_free_seg(mbuf);
+  slot->releaseSubmission();
 }
 
 void Nif::cleanTx()
@@ -520,7 +540,7 @@ unsigned Nif::pollTx()
   if (!ready() || !m_pendingCount) return 0;
   cleanTx();
   auto retired = reapTx(Burst);
-  if (!m_pendingCount || retired || !m_mx->stopping()) {
+  if (!m_pendingCount || retired || !mx()->stopping()) {
     m_stopDeadline = {};
   } else {
     // Some PMDs only release their last descriptors when deactivated.
@@ -530,7 +550,7 @@ unsigned Nif::pollTx()
     if (!m_stopDeadline) m_stopDeadline = now + ZuTime{2};
     else if (now >= m_stopDeadline) {
       m_active = 0;
-      signalWake(m_wakeFD, m_parking);
+      wake();
     }
   }
   return retired;
@@ -544,11 +564,16 @@ unsigned Nif::receive(bool deliver)
   ZiRxBurst burst;
   for (unsigned i = 0; i < count; ++i) {
     auto mbuf = packets[i];
+    if (deliver && i + 1 < count) {
+      auto next = packets[i + 1];
+      rte_prefetch0(next);
+      rte_prefetch0(rte_pktmbuf_mtod(next, const void *));
+    }
     if (deliver && m_active && mbuf->nb_segs == 1 &&
         (mbuf->ol_flags & RTE_MBUF_F_RX_L4_CKSUM_MASK) != RTE_MBUF_F_RX_L4_CKSUM_BAD &&
 	mbuf->data_len == mbuf->pkt_len && mbuf->pkt_len &&
-	mbuf->pkt_len <= m_mtu + RTE_ETHER_HDR_LEN && m_rxPool->adopt(mbuf))
-      m_receive(rte_pktmbuf_mtod(mbuf, uint8_t *), mbuf->pkt_len, count > 1 ? &burst : nullptr);
+	mbuf->pkt_len <= mtu() + RTE_ETHER_HDR_LEN && m_rxPool->adopt(mbuf))
+      recv(rte_pktmbuf_mtod(mbuf, uint8_t *), mbuf->pkt_len, count > 1 ? &burst : nullptr);
     else {
       burst.flush();
       rte_pktmbuf_free(mbuf);
@@ -559,23 +584,24 @@ unsigned Nif::receive(bool deliver)
 
 void Nif::returned()
 {
-  if (m_active && !m_mx->invoked(m_mx->rxThread()) && !m_rxReturned.xch(1))
-    signalWake(m_wakeFD, m_parking);
+  if (m_active && !mx()->invoked(mx()->rxThread()) && !m_rxReturned.xch(1))
+    wake_();
 }
 
-unsigned Nif::park(unsigned delay)
+unsigned Nif::block(unsigned delay)
 {
   unsigned count = 0;
-  m_parking.xch(1);
-  if (m_active && !m_wakes && !m_rxReturned) {
+  startBlocking();
+  if (m_active && !wakePending() && !m_rxReturned) {
     bool interrupt = m_rxFD >= 0 && !rte_eth_dev_rx_intr_enable(m_port, 0);
     // The last probe after arming closes the packet/interrupt race.
-    if (interrupt && !m_wakes && m_active) count = receive(true);
-    if (!count && m_active && !m_wakes && !m_rxReturned) {
-      pollfd fds[] = {{m_wakeFD, POLLIN, 0}, {m_rxFD, POLLIN, 0}};
+    if (interrupt && !wakePending() && m_active) count = receive(true);
+    if (!count && m_active && !wakePending() && !m_rxReturned) {
+      pollfd fds[] = {{wakeFD(), POLLIN, 0}, {m_rxFD, POLLIN, 0}};
       timespec timeout{time_t(delay / 1000000), long(delay % 1000000) * 1000};
-      if (ppoll(fds, interrupt ? 2 : 1, &timeout, nullptr) > 0 &&
-	  (fds[1].revents & POLLIN)) {
+      ppoll(fds, interrupt ? 2 : 1, &timeout, nullptr);
+      if (fds[0].revents & POLLIN) ackWake();
+      if (fds[1].revents & POLLIN) {
 	uint64_t value;
 	// Linux ethdev exposes the receive interrupt vector's eventfd.
 	if (::read(m_rxFD, &value, sizeof(value)) < 0 && errno != EINTR && errno != EAGAIN)
@@ -584,8 +610,7 @@ unsigned Nif::park(unsigned delay)
     }
     if (interrupt) rte_eth_dev_rx_intr_disable(m_port, 0);
   }
-  m_parking.xch(0);
-  drainWake(m_wakeFD);
+  stopBlocking();
   return count;
 }
 
@@ -594,7 +619,7 @@ void Nif::rx()
   unsigned spin = m_config.spin;
   unsigned initial = RTE_MIN(m_config.rxInterval, 4U), delay = initial;
   while (ready()) {
-    if (takeWake(m_wakes)) return;
+    if (woken()) return;
     if (m_rxDepthRequested.load_() && m_rxDepthRequested.xch(0)) {
       int count = rte_eth_rx_queue_count(m_port, 0);
       m_rxDepth.store_(count > 0 ? unsigned(count) : 0);
@@ -606,7 +631,7 @@ void Nif::rx()
     }
     if (spin) { --spin; continue; }
     if (!delay) continue;
-    if (park(delay)) {
+    if (block(delay)) {
       spin = m_config.spin;
       delay = initial;
     } else {
@@ -619,12 +644,14 @@ void Nif::status()
 {
   ZmGuard guard(m_queueLock);
   char mac[RTE_ETHER_ADDR_FMT_SIZE];
-  rte_ether_format_addr(mac, sizeof(mac), &m_mac);
+  rte_ether_addr address;
+  memcpy(address.addr_bytes, Nif::mac().data(), sizeof(address.addr_bytes));
+  rte_ether_format_addr(mac, sizeof(mac), &address);
   ZiLOG(Info, "Zpkt.Dpdk", ([
-    name = m_config.port, state = state(), index = ifindex(), mtu = m_mtu,
+    name = m_config.port, state = state(), index = ifindex(), mtu = mtu(),
     address = ZuCArray<RTE_ETHER_ADDR_FMT_SIZE>{mac},
     mode = m_ring ? "zero-copy" : (m_pcap || m_afPacketMinRxSize) ? "copy" : "unverified",
-    started = m_started, rxDesc = m_rxDesc, txDesc = m_txDesc, tcpOffload = m_tcpOffload
+    started = m_started, rxDesc = m_rxDesc, txDesc = m_txDesc, tcpOffload = configuredTCPChksumOffload()
   ](auto &out) {
     out << "DPDK " << name << " state " << ZuBoxed(state)
       << " ifindex " << ZuBoxed(index) << " MTU " << ZuBoxed(mtu)
@@ -676,7 +703,7 @@ unsigned Nif::allQueues(Ztc::QueueMgr::AllFn fn) const
   if (!m_started || !m_active) return 0;
   rte_eth_stats stats{};
   bool haveStats = !rte_eth_stats_get(m_port, &stats);
-  auto owner = ZuID{m_mx->id()};
+  auto owner = ZuID{mx()->id()};
   auto name = ZuID{} << "dpdk." << m_config.port << '.';
   // The application Rx owner samples dataplane depth on its next turn.
   auto depth = m_rxDepth.load_();

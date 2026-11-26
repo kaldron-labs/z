@@ -20,8 +20,6 @@
 
 namespace Zpkt {
 
-ZuDerive(CfString, (ZtString<ZtStringHeapID<"Zpkt.CfString">>));
-
 struct PluginLoadCf {
   CfString	module;
   bool		preload = false;
@@ -37,13 +35,15 @@ class ZpktAPI Env : public ZmNHeap<Env>, public ZmPolymorph {
 friend inline ZuStringT<"Zpkt.Env"> ZmNHeapID(Env *);
 friend class Nif;
 
+  Env(const Env &) = delete;
+  Env &operator =(const Env &) = delete;
+
 public:
   using ZmNHeap<Env>::operator new;
   using ZmNHeap<Env>::operator delete;
+
   Env();
   ~Env() override;
-  Env(const Env &) = delete;
-  Env &operator =(const Env &) = delete;
 
   void init(const ZfCf::AnyNode *);
   ZuUnion<Nif *, ZeException> nif(ZiMultiplex *, ZuCSpan);
@@ -51,10 +51,12 @@ public:
   void nifQueryFn(NifQueryFn fn) { ZmAssert_(fn); m_nifQueryFn = fn; }
 
 private:
-  void retire(Nif *);
   using Nifs = ZmRBTreeKV<CfString, ZmRef<Nif>,
     ZmRBTreeUnique<true, ZmRBTreeLock<ZmNoLock,
       ZmRBTreeHeapID<"Zpkt.Env.Nifs">>>>;
+
+  void retire(Nif *);
+
   ZmRef<Plugin>	m_plugin;
   Nifs		m_nifs;
   NifQueryFn	m_nifQueryFn;

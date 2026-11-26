@@ -13,6 +13,13 @@
 #include <zlib/ZmLib.hh>
 #endif
 
+// The scheduler is below Zi. Honor the I/O spin override in a whole-tree build.
+#ifdef Zi_DefltSpin
+#define Zm_DefltSpin Zi_DefltSpin
+#else
+#define Zm_DefltSpin 4096
+#endif
+
 #ifndef _WIN32
 #include <unistd.h>
 #include <signal.h>

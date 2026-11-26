@@ -17,7 +17,7 @@ namespace ZpktTest {
 
 struct Interface {
   unsigned ifindex = 0, txSid = 0;
-  int64_t spin = -1;
+  int64_t rxSpin = -1;
 };
 
 class Environment {
@@ -30,7 +30,7 @@ public:
       return ZeEXCEPT(Error, "Zpkt.Test", "resolve fixture Linux interface");
     if (!m_loaded) {
       auto cf = config(ZPKT_XDP_MODULE, static_cast<const char *>(name),
-	params.txSid, params.spin);
+	params.txSid, params.rxSpin);
       m_env->init(cf.ptr());
       m_loaded = true;
     }

@@ -38,7 +38,7 @@ public:
   using ZmNHeap<Nif>::operator new;
   using ZmNHeap<Nif>::operator delete;
 
-  Nif(EAL &, ZiMultiplex *, const InterfaceCf &, const NifInfo &);
+  Nif(EAL &, ZiMultiplex *, const NifCf &, const NifInfo &);
   ~Nif() override;
 
   ZmRef<Zi::IOBufPool> bufPool(
@@ -47,23 +47,15 @@ public:
   void reserveTxPools(ZuSpan<Zi::IOBufPool *const>) override;
   ZuUnion<void, ZeException> alloc(Zi::IOBufPool *, const Zi::IOBufPoolList &) override;
   void final() override;
-  ZeException error() const override { return m_error; }
   void status() override;
 
-  ZiMultiplex *mx() const override { return m_mx; }
-  unsigned ifindex() const override { return m_nifInfo.ifindex; }
-  unsigned rxQueues() const override { return m_mx ? 1 : 0; }
   bool allocated() const override { return !!m_rxPool; }
   bool ready() const override { return Engine::state() == ZmEngineState::Running && m_active; }
-  unsigned mtu() const override { return m_mtu; }
-  bool zeroCopy() const override { return m_ring; }
-  ZuBSpan mac() const override { return m_mac.addr_bytes; }
 
   bool txReady(uint8_t *) const override;
   bool send(uint8_t *, unsigned) override;
-  bool tcpChksumOffload() override { return ready() && m_tcpOffload; }
+  unsigned send(ZuSpan<const TxPacket>) override;
   void rx() override;
-  void wake() override;
   unsigned pollTx() override;
   unsigned allQueues(Ztc::QueueMgr::AllFn) const override;
 
@@ -79,33 +71,26 @@ private:
   void quiesceRx(unsigned left);
   void retire();
   void finishStop(unsigned left);
+  Slot *prepareTx(uint8_t *, unsigned);
+  static void refuseTx(Slot *);
   unsigned reapTx(unsigned budget);
   void cleanTx();
   unsigned receive(bool deliver);
-  unsigned park(unsigned delay);
+  unsigned block(unsigned delay);
   void returned();
 
   EAL &		m_eal;
-  ZiMultiplex	*m_mx = nullptr;
-  InterfaceCf	m_config;
-  NifInfo	m_nifInfo;
-  rte_ether_addr m_mac{};
-  unsigned	m_mtu = 0, m_appTx = 0, m_afPacketMinRxSize = 0;
+  NifCf		m_config;
+  unsigned	m_appTx = 0, m_afPacketMinRxSize = 0;
   uint16_t	m_port = NoPort;
   bool		m_ring = false, m_pcap = false;
-  bool		m_tcpOffload = false;
-  int		m_wakeFD = -1;
 
   ZmRef<BufPool>	m_rxPool;
   Pools		m_txPools, m_reserves;
   AddressIndex	m_txIndex;
-  ZeException	m_error;
 
-  RecvFn	m_receive;
-  StopFn	m_txStopped;
-  ZmAtomic<unsigned> m_stopping{0}, m_active{0};
-  alignas(Zm::CacheLineSize) ZmAtomic<uint64_t> m_wakes{0};
-  ZmAtomic<unsigned> m_parking{0}, m_rxReturned{0};
+  ZmAtomic<unsigned> m_active{0};
+  ZmAtomic<unsigned> m_rxReturned{0};
   mutable ZmAtomic<unsigned> m_rxDepthRequested{0};
   ZmAtomic<unsigned> m_rxDepth{0};
   int		m_rxFD = -1;

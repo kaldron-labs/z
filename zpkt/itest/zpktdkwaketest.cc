@@ -215,7 +215,7 @@ static void testWait(const Runtime &runtime)
       rx.done.wait();
     }
     ZuCheckRT(rx.count == offered && probe.calls == before,
-    log_("remaining sustained traffic resumes immediately without parking"));
+    log_("remaining sustained traffic resumes immediately without blocking"));
   }
   ZuCheckRT(endpoint.stop(), log_("idle stop does not depend on arrival of another packet"));
 }

@@ -94,7 +94,7 @@ static void testFactory()
   ZmRef<Zpkt::Nif> nif = opened.p<Zpkt::Nif *>();
   ZuCheckRT((nif->env() == env.ptr() && nif->mx() == &mx &&
       nif->state() == ZmEngineState::Stopped && !nif->allocated() && !nif->ready() &&
-      !nif->everStarted() && nif->ifindex() == info.ifindex && nif->mtu() == info.mtu &&
+      nif->ifindex() == info.ifindex && nif->mtu() == info.mtu &&
       nif->rxQueues() == info.rxQueues && nif->mac() == ZuBSpan{info.mac, 6} &&
       unsigned(nifQueries) == requests + 1 && fdCount() == resources + 2),
     log_("factory publishes trusted geometry once with only stopped native descriptors"));
@@ -181,7 +181,7 @@ static void testDpdk(const Runtime &runtime)
   NifOwner owner{device};
   ZuCheckRT(device->mx() == &mx && device->mtu() == 1500 &&
       device->mac().length() == 6 && device->rxQueues() == 1 && device->ifindex() &&
-      !device->allocated() && !device->ready() && !device->everStarted() && device->zeroCopy(),
+      !device->allocated() && !device->ready() && device->state() == ZmEngineState::Stopped && device->zeroCopy(),
     log_("factory returns initialized, unallocated, stopped ring device with Linux identity"));
   auto repeated = env->nif(&mx, "net_ring_packet"_z);
   ZuCheckRT(repeated.is<Zpkt::Nif *>() && repeated.p<Zpkt::Nif *>() == device.ptr(),
@@ -247,7 +247,7 @@ static void testDpdk(const Runtime &runtime)
     log_(  "failed PMD activation leaves the native allocation and caller-held slot intact"));
     startFailure = 0;
     bool ready = device->start(receive, stopped);
-    ZuCheckRT(ready && device->ready() && device->everStarted() && intact(),
+    ZuCheckRT(ready && device->ready() && intact(),
     log_(  "the same pool addresses survive activation retry"));
     ZuCheckRT(device->stop() && stops == 1 && !device->ready() && device->allocated() &&
 	intact() && env->nif(&otherMx, "competing"_z).is<ZeException>(),
@@ -289,6 +289,22 @@ static void testDpdk(const Runtime &runtime)
 	ZuCheckRT(stopResults == 2 && startResult == 1 && !canceledRuns &&
 	  device->state() == ZmEngineState::Stopped);
       }
+    }
+    ZmSemaphore nextStarted;
+    ZmAtomic<unsigned> starts{0};
+    auto queueRestart = [&] {
+      device->start(receive, stopped, [&](bool ok) { starts += ok; });
+      device->start(receive, [&] { stops += 100; }, [&](bool ok) {
+	starts += ok;
+	nextStarted.post();
+      });
+    };
+    bool active = device->start(receive, queueRestart);
+    ZuCheckRT(active);
+    if (active) {
+      ZuCheckRT(device->stop() && !nextStarted.timedwait(Zm::now(5)) && starts == 2);
+      ZuCheckRT(device->ready() && device->stop() && stops == 3,
+	log_("a repeated start joins the queued restart and keeps its original callbacks"));
     }
     ZuCheckRT(mx.stop(), log_("stop direct-device scheduler after the device quiesces"));
   }

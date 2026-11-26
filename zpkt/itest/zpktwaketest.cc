@@ -125,7 +125,7 @@ static void testWake()
     else pool->free(p);
     packet.post();
   };
-  params.spin = 0;
+  params.rxSpin = 0;
   params.txSid = 3;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.thread(3, [](auto &t) { t.isolated(true); });
@@ -365,7 +365,7 @@ static void testActiveWake()
     release.wait();
     pool->free(p);
   };
-  params.spin = unsigned(-1);
+  params.rxSpin = unsigned(-1);
   params.txSid = 3;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.thread(3, [](auto &t) { t.isolated(true); });

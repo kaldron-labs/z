@@ -28,6 +28,7 @@
 
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmObject.hh>
+#include <zlib/ZmPlatform.hh>
 #include <zlib/ZmNoLock.hh>
 #include <zlib/ZmLock.hh>
 #include <zlib/ZmSemaphore.hh>
@@ -198,7 +199,7 @@ private:
   ZuTime	m_quantum{ZuTime::Nano{1000}}; // 1us
 
   unsigned	m_queueSize = 131072;
-  unsigned	m_spin = 1000;
+  unsigned	m_spin = Zm_DefltSpin;
   unsigned	m_timeout = 1;	// milliseconds
 
   Thread	*m_threads = nullptr;

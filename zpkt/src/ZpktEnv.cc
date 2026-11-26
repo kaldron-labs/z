@@ -75,8 +75,7 @@ ZuUnion<Nif *, ZeException> Env::nif(ZiMultiplex *mx, ZuCSpan name)
     return ZeEXCEPT(Error, "Zpkt", ([name = ZeString{name}](auto &s) {
       s << "null plugin Nif for interface \"" << name << '"';
     }));
-  nif->m_env = this;
-  nif->m_name = name;
+  nif->env(this, name);
   m_nifs.add(CfString{name}, nif);
   return nif.ptr();
 }
@@ -85,10 +84,10 @@ void Env::retire(Nif *nif)
 {
   if (auto node = m_nifs.findPtr(nif->name()))
     if (node->val().ptr() == nif) m_nifs.delNode(node);
-  nif->m_env = nullptr;
+  nif->env(nullptr);
 }
 
-void Nif::retireNif()
+void Nif::final_()
 {
   if (m_env) m_env->retire(this);
 }

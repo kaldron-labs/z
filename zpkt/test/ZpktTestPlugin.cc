@@ -16,7 +16,7 @@
 #include "ZpktTestPlugin.hh"
 
 namespace Zpkt::Xdp {
-ZfStructImpl(InterfaceCf, Cf);
+ZfStructImpl(NifCf, Cf);
 ZfStructImpl(PluginCf, Cf);
 }
 
@@ -29,7 +29,7 @@ friend inline ZuStringT<"Zpkt.Test.Nif"> ZmNHeapID(Nif *);
 public:
   using ZmNHeap<Nif>::operator new;
   using ZmNHeap<Nif>::operator delete;
-  Nif(ZiMultiplex *mx, const Zpkt::NifInfo &info) : m_mx{mx}, m_info{info} { }
+  Nif(ZiMultiplex *mx, const Zpkt::NifInfo &info) : Zpkt::Nif{mx, info} { }
   ~Nif() override { ++stats.destroys; }
   ZmRef<Zi::IOBufPool> bufPool(Zi::IOBufType::T, unsigned, unsigned,
     unsigned, unsigned, unsigned) override { return nullptr; }
@@ -42,39 +42,28 @@ public:
       ++stats.finalAttempts;
       if (stats.failFinals) {
 	--stats.failFinals;
-	m_error = ZeEXCEPT(Error, "ZpktTest", "injected child finalization failure");
+	error(ZeEXCEPT(Error, "ZpktTest", "injected child finalization failure"));
 	return;
       }
       ++stats.finals;
       stats.lastChildFinal = ++stats.events;
-      retireNif();
+      final_();
     }
-    m_error = {};
-    m_mx = nullptr;
+    error({});
+    resetInfo();
   }
-  ZeException error() const override { return m_error; }
-  ZiMultiplex *mx() const override { return m_mx; }
-  unsigned ifindex() const override { return m_info.ifindex; }
-  unsigned rxQueues() const override { return m_info.rxQueues; }
   bool allocated() const override { return false; }
   bool ready() const override { return running(); }
-  unsigned mtu() const override { return m_info.mtu; }
-  bool zeroCopy() const override { return false; }
-  ZuBSpan mac() const override { return m_info.mac; }
   bool txReady(uint8_t *) const override { return false; }
   bool send(uint8_t *, unsigned) override { return false; }
-  bool tcpChksumOffload() override { return false; }
+  unsigned send(ZuSpan<const Zpkt::TxPacket>) override { return 0; }
   void rx() override { }
-  void wake() override { if (Engine::stopping()) Engine::stopped(); }
   unsigned pollTx() override { return 0; }
   unsigned allQueues(Ztc::QueueMgr::AllFn) const override { return 0; }
   void status() override { }
 private:
   void start_() override { Engine::started(true); }
-  void stop_() override { Engine::stopped(true); }
-  ZiMultiplex *m_mx;
-  Zpkt::NifInfo m_info;
-  ZeException m_error;
+  void stop_() override { clearCallbacks(); Engine::stopped(true); }
 };
 
 class Plugin final : public ZmNHeap<Plugin>, public Zpkt::Plugin {
@@ -95,9 +84,10 @@ public:
     ++stats.creates;
     auto node = m_cf.interfaces->find(name);
     if (!node) return ZeEXCEPT(Error, "ZpktTest", "unknown configured interface");
-    stats.spin = node->val().spin;
+    stats.rxSpin = node->val().rxSpin;
+    stats.txSpin = node->val().txSpin;
     stats.info = info;
-    if (!stats.spin) return ZeEXCEPT(Error, "ZpktTest", "injected device construction failure");
+    if (!stats.rxSpin) return ZeEXCEPT(Error, "ZpktTest", "injected device construction failure");
     return static_cast<Zpkt::Nif *>(new Nif{mx, info});
   }
   ZuUnion<void, ZeException> final() override {

@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmHash.hh>
 #include <zlib/ZfCf.hh>
 #include <zlib/ZfCLI.hh>
 #include <zlib/ZfTOML.hh>
@@ -23,6 +24,16 @@ ZfStruct(, Config,
   (value, (Mutable, CLI::Long<"value">, (Range<0U, Config::Max>)), UInt32),
   (spin, (Mutable, CLI::Long<"spin">), UInt32),
   (role, (Mutable, CLI::Long<"role">), String));
+
+struct ConfigMap : ZmNHeap<ConfigMap>, ZmHashKV<ZtString<>, Config> {
+  friend inline ZuStringT<"ZfTest.ConfigMap"> ZmNHeapID(ConfigMap *);
+  inline static unsigned released = 0;
+  ~ConfigMap() { released = count_(); }
+};
+
+inline ZfCf::AsMap<ZfFieldTC::UDT> ZfCf_Fmt(ConfigMap *);
+inline ZfTOML::AsMap<ZfFieldTC::UDT> ZfTOML_Fmt(ConfigMap *);
+inline ZfYAML::AsMap<ZfFieldTC::UDT> ZfYAML_Fmt(ConfigMap *);
 
 template <typename Scan, typename Handler>
 static void config(Scan scan, Handler handler, ZuCSpan valid, ZuCSpan invalid)
@@ -45,6 +56,22 @@ static void config(Scan scan, Handler handler, ZuCSpan valid, ZuCSpan invalid)
   }
   ZuCheck(rejected);
   ZuCheck(value.value == Config::Max);
+}
+
+template <typename Scan, typename Handler>
+static void mapAlloc(Scan scan, Handler handler, ZuCSpan invalid)
+{
+  ZuTestScope(mapAlloc);
+  auto parsed = scan(invalid);
+  ConfigMap::released = 0;
+  bool rejected = false;
+  try {
+    delete handler(parsed.template p<1>().ptr()).alloc();
+  } catch (const ZeException &) {
+    rejected = true;
+  }
+  ZuCheck(rejected);
+  ZuCHECK(ConfigMap::released == 1, "failed allocation destroys the partially loaded map");
 }
 
 static void cli()
@@ -77,5 +104,17 @@ int main(int argc, char **argv)
     [](ZuCSpan s) { return ZfYAML::scan(s); },
     [](auto node) { return ZfYAML::handler<Config, ZuFacet::Core>(node); },
     "value: 8\n", "value: 9\n");
+  ZuTestCall(mapAlloc,
+    [](ZuCSpan s) { return ZfCf::scan(s); },
+    [](auto node) { return ZfCf::handler<ConfigMap, ZuFacet::Core>(node); },
+    "one: {value: 8}, two: {value: 9}");
+  ZuTestCall(mapAlloc,
+    [](ZuCSpan s) { return ZfTOML::scan(s); },
+    [](auto node) { return ZfTOML::handler<ConfigMap, ZuFacet::Core>(node); },
+    "one = {value = 8}\ntwo = {value = 9}\n");
+  ZuTestCall(mapAlloc,
+    [](ZuCSpan s) { return ZfYAML::scan(s); },
+    [](auto node) { return ZfYAML::handler<ConfigMap, ZuFacet::Core>(node); },
+    "one: {value: 8}\ntwo: {value: 9}\n");
   ZuTestCall(cli);
 }

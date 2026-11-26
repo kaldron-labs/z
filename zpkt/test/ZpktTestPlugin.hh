@@ -13,7 +13,7 @@ namespace ZpktTest {
 struct Stats {
   unsigned queries = 0, creates = 0, finals = 0, destroys = 0;
   unsigned pluginFinals = 0, pluginDestroys = 0;
-  unsigned spin = 0;
+  unsigned rxSpin = 0, txSpin = 0;
   unsigned failFinals = 0, finalAttempts = 0;
   unsigned events = 0, lastChildFinal = 0, pluginFinalOrder = 0;
   Zpkt::NifInfo info;

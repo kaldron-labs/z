@@ -21,7 +21,7 @@ There is no separate Nif initialization method. Creation failure publishes no
 child or cache entry and preserves structured errors.
 
 The recipient immediately acquires a `ZmRef<Nif>` from a successful result.
-A new Nif is initialized, stopped, unallocated and never started. Env owns a
+A new Nif is initialized, stopped and unallocated. Env owns a
 unique-name `ZmRBTree` of child references; each child retains a raw Env pointer.
 A same-name/multiplexer hit returns the existing pointer without query, reopening
 or backend calls, even while running. A different multiplexer returns an error
@@ -49,7 +49,9 @@ This seam does not replace backend BPF attachment transactions.
 Configure the multiplexer and its sender slot before construction. Select
 `libZpkt_xdp.so` in Cf and provide `interfaces { name { txSid N } }`.
 The key is the Linux interface name; `txSid` is required, nonzero and validated
-against the supplied multiplexer. `spin` defaults to 4096 for Rx and the sender. AF_XDP redirects all
+against the supplied multiplexer. `rxSpin` controls the receive loop and `txSpin`
+controls the sender loop. Rx defaults to `(Zi_DefltSpin<<2)` (16,384), and Tx
+defaults to `Zi_DefltSpin` (4,096). AF_XDP redirects all
 interface traffic, including non-IP frames. Its sender slot is distinct from Rx
 and Tx owners. `env->nif(&mx, name)` opens synchronously using core-supplied
 metadata and retains the borrowed multiplexer and link resources until final.
@@ -57,7 +59,7 @@ metadata and retains the borrowed multiplexer and link resources until final.
 ## Shared allocation
 
 In applications using Zutcp, inject a `Zutcp::MxPlugin` into the multiplexer
-constructor. Move the initialized, unallocated, never-started Nif into TCP with
+constructor. Move the initialized, stopped, unallocated Nif into TCP with
 `tcp->init(mx, env, ZuMv(nif), params)` before requesting allocator handles.
 Initialization throws `ZeException` on failure. TCP borrows Env and consumes the
 Nif reference only after validation succeeds. Failure preserves the caller's
@@ -68,6 +70,14 @@ pointer and never finalizes Env. Request allocator handles from that same
 multiplexer. `mx.alloc()`
 allocates before start when the application needs native Tx buffers early.
 Otherwise `mx.start()` performs that allocation.
+
+Configure TCP retries in the `Zutcp::MxParams` passed to `tcp->init()`.
+For both backends, `txRetries` sets the number of immediate retries on the
+shared TX thread after an idle device refuses original TCP data (default 1).
+After these attempts, retry once per `txBackoff` interval while idle refusals
+continue. The interval is a positive `ZuTime`, default 1 ms. Zero `txRetries`
+skips the spin phase. Timed retries have no count limit and end on acceptance
+or connection teardown.
 
 Standalone XDP tests may call `xdp->alloc(rxPool, txPools)` directly. Create
 the pools with
@@ -112,7 +122,12 @@ available frames, in round-robin order.
 
 Allocate on a Tx pool and write the complete Ethernet frame directly into
 that backing. `send(packet, length)` accepts one outstanding kernel
-submission per slot. The sender uses nonblocking `sendto()` on the assigned
+submission per slot. The Tx owner can submit up to `Zpkt::MaxTxBatch` frames
+with `send(ZuSpan<const Zpkt::TxPacket>)`. The returned count accepts exactly
+that many leading entries. The caller retains the remaining entries in
+resubmittable form. DPDK makes one PMD call for the prepared prefix. AF_XDP
+publishes descriptors in order and stops at the first refusal.
+The AF_XDP sender uses nonblocking `sendto()` on the assigned
 multiplexer slot. The producer increments a descriptor count before publish
 and schedules the sender on the zero-to-one transition. Descriptor consumption
 tracks pending work. `pollTx()` separately retires kernel leases on the Tx
@@ -179,7 +194,7 @@ repeated list values preserve order. EAL retains one process-wide attempt and
 its existing cleanup behavior, including native success before a later startup
 failure. Independent EAL cases use fresh processes.
 
-Each interface entry has required nonempty native `port`, optional `spin` (1000)
+Each interface entry has required nonempty native `port`, optional `spin` (`Zi_DefltSpin`)
 and `rxInterval` (50 microseconds). The map key must resolve to a Linux Nif.
 Env supplies that Linux identity and geometry; the backend resolves only `port`
 through native DPDK APIs and discovers backend capabilities. It trusts the

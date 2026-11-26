@@ -77,7 +77,7 @@ public:
   Wire(const Wire &) = delete;
   Wire &operator =(const Wire &) = delete;
 
-  Result start(End, End);
+  Result start(End, End, ZmThreadParams = {});
 
   // Disable Rx production while continuing to retire all accepted Tx.
   void quiesce();

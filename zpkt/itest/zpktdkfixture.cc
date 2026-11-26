@@ -107,6 +107,7 @@ Result Runtime::init(bool isolated)
     {"competing", "net_ring_packet", 50, 0, "02:00:00:00:00:04"},
     {"zdpcomp", "net_ring_zutcp0", 100, 4, "02:00:00:00:91:03"},
     {"net_ring_packet", "net_ring_packet", 50, 0, "02:00:00:00:00:01"},
+    {"net_ring_prefix", "net_ring_prefix", 50, 0, "02:00:00:00:00:02"},
     {"net_pcap_zpkt0", "net_pcap_zpkt0", 50, 0, "02:00:00:00:00:01"},
     {"net_ring_wait", "net_ring_wait", 37, 7, "02:00:00:00:00:01"},
     {"net_ring_poll", "net_ring_poll", 0, 0, "02:00:00:00:00:02"},
@@ -214,7 +215,7 @@ void RingPort::drain()
   while (auto packet = take()) rte_pktmbuf_free(packet);
 }
 
-Result Wire::start(End a, End b)
+Result Wire::start(End a, End b, ZmThreadParams params)
 {
   if (!a.port || !a.ingress || !b.port || !b.ingress || m_mode != Idle)
     return error("bad wire fixture endpoints", EINVAL);
@@ -246,7 +247,7 @@ Result Wire::start(End a, End b)
       progressed |= transfer(b, a);
       if (!progressed) Zm::yield();
     }
-  });
+  }, ZuMv(params));
   if (rc) {
     m_mode = Idle;
     return error("start software wire peer", EAGAIN);
