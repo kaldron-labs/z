@@ -36,6 +36,7 @@ class ZpktXDPAPI BufPool final : public ZmNHeap<BufPool>, public Zi::IOBufPool {
 friend inline ZuStringT<"Zpkt.Pool"> ZmNHeapID(BufPool *);
 friend class UMem;
 friend class Nif;
+friend struct PoolTest;
 
 public:
   using ZmNHeap<BufPool>::operator new;

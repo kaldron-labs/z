@@ -761,10 +761,10 @@ static void testLoopCopies()
 	unsigned copies = pool->copies, bytes = pool->bytes, received = deliveries;
 	Zutcp::IPPath path{.local = ZiIP{v6 ? "2001:db8::1" : "198.18.0.1"},
 	  .remote = ZiIP{v6 ? (mode ? "ff02::1234" : "2001:db8::2") :
-	    (mode ? "239.18.0.1" : "198.18.0.2")}, .mtu = 1500};
+	    (mode ? "239.146.0.1" : "198.18.0.2")}, .mtu = 1500};
 	ZiCxnInfo info{.type = ZiCxnType::UDP, .socket = Zi::nullSocket(),
 	  .options = ZiCxnOptions{}.udp(true).multicast(mode != 0).loopBack(mode >= 2),
-	  .local = {path.local, 18192}, .remote = {path.remote, 18191}};
+	  .local = {path.local, 18192}, .remote = mode ? ZiSockAddr{} : ZiSockAddr{path.remote, 18191}};
 	ZmRef<MulticastCxn> cxn = new MulticastCxn{&mx, info};
 	auto packet = tx->allocBuf(cxn.ptr());
 	bool valid = packet && packet->append("data");
@@ -775,13 +775,19 @@ static void testLoopCopies()
 	  callback = io.length == (mode == 3 ? int(Zi::IOError) : 4) && io.buf && io.buf->cspan() == "data";
 	  io.complete();
 	  return true;
-	}}, ZuMv(packet), info.remote);
+	}}, ZuMv(packet), ZiSockAddr{path.remote, 18191});
 	device->refuse = mode == 3;
 	pool->available = mode != 4;
-	ZutcpTest::MxPlugin::udpSend(*stack, cxn.ptr(), path);
+	ZutcpTest::MxPlugin::udpSend(*stack, cxn.ptr(), mode ? Zutcp::IPPath{} : path);
 	pool->available = true;
 	stack->reconcileTx();
 	valid &= callback && pool->source == frame;
+	if (mode) {
+	  const uint8_t mac4[] = {0x01, 0x00, 0x5e, 0x12, 0x00, 0x01};
+	  const uint8_t mac6[] = {0x33, 0x33, 0x00, 0x00, 0x12, 0x34};
+	  valid &= !memcmp(pool->expected, v6 ? mac6 : mac4, 6) &&
+	    !memcmp(pool->expected + 6, device->mac().data(), 6);
+	}
 	mx.rxRun([pool, &deliveries, mode, v6, allocs, frees, copies, bytes, received, valid,
 	    done = ZuMv(done)]() mutable {
 	  unsigned copied = unsigned(mode == 2 || mode == 3);

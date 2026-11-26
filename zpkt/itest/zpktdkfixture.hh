@@ -33,7 +33,7 @@ public:
   Runtime(const Runtime &) = delete;
   Runtime &operator =(const Runtime &) = delete;
 
-  Result init(bool isolated = true);
+  Result init(bool isolated = true, const char *module = nullptr);
   Zpkt::Env *env() const { return m_env; }
   const char *dir() const { return m_dir; }
 

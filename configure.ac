@@ -354,7 +354,7 @@ for i in zu zm zt ze zf zi zpkt zutcp zpb zfb zv zdbus ztcp ztls zfix zquic zhtt
     zpkt|zutcp) test "$z_linux" = yes || continue;;
   esac
   z_srcdirs="src ext"
-  if test "$i" = zpkt; then z_srcdirs="$z_srcdirs xdp dpdk"; fi
+  if test "$i" = zpkt; then z_srcdirs="$z_srcdirs afp xdp dpdk"; fi
   for j in $z_srcdirs; do {
     if test -d $i/$j -a ! -e $i/$j/AC_PACKAGE_NAME; then (
       cd $i/$j;
@@ -376,7 +376,8 @@ AC_CONFIG_FILES([Makefile \
 	zi/Makefile zi/src/Makefile zi/test/Makefile zi/itest/Makefile \
 	zi/example/Makefile])
 AS_IF([test "$z_linux" = yes], [
-  AC_CONFIG_FILES([zpkt/Makefile zpkt/src/Makefile zpkt/xdp/Makefile zpkt/dpdk/Makefile zpkt/test/Makefile \
+  AC_CONFIG_FILES([zpkt/Makefile zpkt/src/Makefile zpkt/afp/Makefile zpkt/xdp/Makefile \
+	zpkt/dpdk/Makefile zpkt/test/Makefile \
 	zpkt/util/Makefile zpkt/itest/Makefile \
 	zutcp/Makefile zutcp/src/Makefile zutcp/test/Makefile \
 	zutcp/util/Makefile zutcp/itest/Makefile zutcp/example/Makefile \

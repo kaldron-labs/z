@@ -10,8 +10,10 @@
 #include <new>
 
 #include <rte_errno.h>
+#include <rte_malloc.h>
 #include <rte_mbuf_pool_ops.h>
 #include <rte_memzone.h>
+#include <rte_ring.h>
 
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuBox.hh>
@@ -23,29 +25,164 @@
 
 namespace Zpkt::Dpdk {
 
-static_assert(RTE_MEMPOOL_ALIGN >= 64 && !(RTE_PKTMBUF_HEADROOM % RTE_MEMPOOL_ALIGN));
-#ifndef RTE_MBUF_REFCNT_ATOMIC
-#error DPDK mbuf reference counting must be atomic for Zpkt
+static_assert(Zm::CacheLineSize >= 64);
+
+static int makeRing(rte_ring *&ring, unsigned count, int socket, unsigned flags)
+{
+  if (!count || count > (RTE_RING_SZ_MASK>>1)) return -EINVAL;
+  auto capacity = rte_align32pow2(count + 1);
+  auto bytes = rte_ring_get_memsize(capacity);
+  if (bytes < 0) return int(bytes);
+  ring = static_cast<rte_ring *>(
+    rte_zmalloc_socket("zpkt_ring", size_t(bytes), RTE_CACHE_LINE_SIZE, socket));
+  if (!ring) return -ENOMEM;
+  auto rc = rte_ring_init(ring, "zpkt_ring", capacity, flags);
+  if (rc < 0) {
+    rte_free(ring);
+    ring = nullptr;
+  }
+  return rc;
+}
+
+struct TxPoolState {
+  rte_ring	*returned = nullptr, *available = nullptr;
+  TxReturns	*ready = nullptr;
+  bool		online = false;
+  alignas(Zm::CacheLineSize) unsigned scheduled = 0;
+};
+
+static auto *txState(const rte_mempool *pool)
+{
+  return static_cast<TxPoolState *>(pool->pool_data);
+}
+
+static int txPoolAlloc(rte_mempool *pool)
+{
+  auto mem = rte_zmalloc_socket(
+    "zpkt_tx_state", sizeof(TxPoolState), alignof(TxPoolState), pool->socket_id);
+  if (!mem) return -ENOMEM;
+  auto state = new (mem) TxPoolState;
+  state->ready = static_cast<TxReturns *>(pool->pool_config);
+  auto rc = makeRing(state->returned, pool->size, pool->socket_id, RING_F_SC_DEQ);
+  if (!rc) rc = makeRing(state->available, pool->size, pool->socket_id, 0);
+  if (rc < 0) {
+    rte_free(state->returned);
+    rte_free(state);
+    return rc;
+  }
+  pool->pool_data = state;
+  return 0;
+}
+
+static void txPoolFree(rte_mempool *pool)
+{
+  if (auto state = txState(pool)) {
+    rte_free(state->available);
+    rte_free(state->returned);
+    rte_free(state);
+  }
+}
+
+static int txPoolEnqueue(rte_mempool *pool, void *const *objects, unsigned n)
+{
+  if (!n) return 0;
+  auto state = txState(pool);
+  auto ready = state->online ? state->ready : nullptr;
+  if (ready) ready->enter();
+  ZmAssert_(rte_ring_mp_enqueue_bulk(state->returned, objects, n, nullptr) == n);
+  if (ready) {
+#ifdef ZPKT_DPDK_TEST
+    ZpktTestDpdkReturns(ReturnPoint::Published, n);
 #endif
-
-bool Slot::submit()
-{
-  if (leases.cmpXch(Caller | Submitted, Caller) != Caller) return false;
-  rte_mbuf_refcnt_update(mbuf, 1);
-  return true;
+    if (!__atomic_exchange_n(&state->scheduled, 1, __ATOMIC_ACQ_REL)) ready->push(pool);
+    ready->leave();
+  }
+  return 0;
 }
 
-bool Slot::retired() const
+static int txPoolDequeue(rte_mempool *pool, void **objects, unsigned n)
 {
-  if (rte_mbuf_refcnt_read(mbuf) != 1) return false;
-  __atomic_thread_fence(__ATOMIC_ACQUIRE);
-  return true;
+  return rte_ring_sc_dequeue_bulk(txState(pool)->returned, objects, n, nullptr) == n ?
+    0 : -ENOENT;
 }
 
-void Slot::releaseSubmission()
+static unsigned txPoolCount(const rte_mempool *pool)
 {
-  ZmAssert_(retired());
-  release(Submitted);
+  return rte_ring_count(txState(pool)->returned);
+}
+
+static int setTxOps(rte_mempool *pool, TxReturns *ready)
+{
+  static const rte_mempool_ops ops{
+    .name = "zpkt_tx_returns",
+    .alloc = txPoolAlloc,
+    .free = txPoolFree,
+    .enqueue = txPoolEnqueue,
+    .dequeue = txPoolDequeue,
+    .get_count = txPoolCount
+  };
+  static const int registered = rte_mempool_register_ops(&ops);
+  if (registered < 0) return registered;
+  return rte_mempool_set_ops_byname(pool, ops.name, ready);
+}
+
+TxReturns::~TxReturns() { reset(); }
+
+int TxReturns::init(unsigned count, int socket)
+{
+  ZmAssert_(!m_ready);
+  return makeRing(m_ready, count, socket, RING_F_SC_DEQ);
+}
+
+void TxReturns::reset()
+{
+  if (m_ready) {
+    ZmAssert_(!active() && rte_ring_empty(m_ready));
+    rte_free(m_ready);
+    m_ready = nullptr;
+  }
+}
+
+void TxReturns::push(rte_mempool *pool)
+{
+#ifdef ZPKT_DPDK_TEST
+  ZpktTestDpdkReturns(ReturnPoint::QueuePush, 1);
+#endif
+  ZmAssert_(!rte_ring_mp_enqueue(m_ready, pool));
+}
+
+rte_mempool *TxReturns::shift()
+{
+  void *object;
+  if (!m_ready || rte_ring_sc_dequeue(m_ready, &object)) return nullptr;
+#ifdef ZPKT_DPDK_TEST
+  ZpktTestDpdkReturns(ReturnPoint::QueuePop, 1);
+#endif
+  return static_cast<rte_mempool *>(object);
+}
+
+void TxReturns::settle(rte_mempool *pool)
+{
+  auto state = txState(pool);
+  if (!rte_ring_empty(state->returned)) {
+    push(pool);
+    return;
+  }
+  // A return that publishes before the clear is visible to this recheck.
+  // Otherwise the returning thread or this consumer claims the pool anew.
+#ifdef ZPKT_DPDK_TEST
+  ZpktTestDpdkReturns(ReturnPoint::BeforeClear, 0);
+#endif
+  __atomic_exchange_n(&state->scheduled, 0, __ATOMIC_ACQ_REL);
+#ifdef ZPKT_DPDK_TEST
+  ZpktTestDpdkReturns(ReturnPoint::AfterClear, 0);
+#endif
+  if (!rte_ring_empty(state->returned) &&
+      !__atomic_exchange_n(&state->scheduled, 1, __ATOMIC_ACQ_REL))
+    push(pool);
+#ifdef ZPKT_DPDK_TEST
+  ZpktTestDpdkReturns(ReturnPoint::AfterRecheck, 0);
+#endif
 }
 
 void Slot::release(unsigned lease)
@@ -167,17 +304,33 @@ BufPool::Prepared::Prepared(Prepared &&other) noexcept
   *this = ZuMv(other);
 }
 
-BufPool::Prepared::~Prepared()
+BufPool::Prepared::~Prepared() { reset(); }
+
+void BufPool::Prepared::reset()
 {
-  if (m_pool) rte_mempool_free(m_pool);
+  if (!m_pool) return;
+  if (m_tx)
+    if (auto state = txState(m_pool)) {
+      // Also restores the seeded prefix if allocation fails before publication.
+      state->online = false;
+      void *objects[32];
+      while (auto count = rte_ring_dequeue_burst(state->available, objects, 32, nullptr))
+	rte_mempool_put_bulk(m_pool, objects, count);
+      ZmAssert_(rte_mempool_avail_count(m_pool) == m_pool->populated_size);
+    }
+  rte_mempool_free(m_pool);
+  m_pool = nullptr;
+  m_tx = false;
 }
 
 BufPool::Prepared &BufPool::Prepared::operator =(Prepared &&other) noexcept
 {
   if (this == &other) return *this;
-  if (m_pool) rte_mempool_free(m_pool);
+  reset();
   m_pool = other.m_pool;
+  m_tx = other.m_tx;
   other.m_pool = nullptr;
+  other.m_tx = false;
   m_index = ZuMv(other.m_index);
   return *this;
 }
@@ -197,7 +350,7 @@ BufPool::~BufPool() { ZmAssert_(final()); }
 
 static int alignedPool(
   rte_mempool *&pool, const char *name, unsigned count, unsigned room,
-  unsigned align, int socket)
+  unsigned align, int socket, TxReturns *returns)
 {
   // Use direct mbufs with standard native headroom. Padding the private area
   // aligns every packet's first byte, and padding the object stride keeps
@@ -215,7 +368,8 @@ static int alignedPool(
   pool = rte_mempool_create_empty(name, count, elt + stride - bytes, 0,
     sizeof(rte_pktmbuf_pool_private), socket, flags);
   if (!pool) return rte_errno ? -rte_errno : -ENOMEM;
-  auto rc = rte_mempool_set_ops_byname(pool, rte_mbuf_best_mempool_ops(), nullptr);
+  auto rc = returns ? setTxOps(pool, returns) :
+    rte_mempool_set_ops_byname(pool, rte_mbuf_best_mempool_ops(), nullptr);
   if (rc < 0) return rc;
   rte_pktmbuf_pool_private layout{};
   layout.mbuf_data_room_size = uint16_t(room);
@@ -235,62 +389,116 @@ static int alignedPool(
   return 0;
 }
 
-int BufPool::prepare(Prepared &dest, int socket, unsigned minDataSize)
+static int nativeTxPool(
+  rte_mempool *&pool, const char *name, unsigned count, unsigned room, unsigned priv,
+  int socket, TxReturns *returns)
+{
+  pool = rte_mempool_create_empty(name, count, sizeof(rte_mbuf) + priv + room, 0,
+    sizeof(rte_pktmbuf_pool_private), socket, 0);
+  if (!pool) return rte_errno ? -rte_errno : -ENOMEM;
+  auto rc = setTxOps(pool, returns);
+  if (rc < 0) return rc;
+  rte_pktmbuf_pool_private layout{};
+  layout.mbuf_data_room_size = uint16_t(room);
+  layout.mbuf_priv_size = uint16_t(priv);
+  rte_pktmbuf_pool_init(pool, &layout);
+  rc = rte_mempool_populate_default(pool);
+  if (rc < 0) return rc;
+  if (unsigned(rc) != count) return -ENOMEM;
+  rte_mempool_obj_iter(pool, rte_pktmbuf_init, nullptr);
+  return 0;
+}
+
+int BufPool::prepare(Prepared &dest, int socket, unsigned minDataSize, TxReturns *returns)
 {
   if (native() || dest.native()) return -EBUSY;
   if (type != Zi::IOBufType::Rx && type != Zi::IOBufType::TxTCP && type != Zi::IOBufType::TxUDP)
     return -EINVAL;
-  auto dataSize = RTE_MAX(size, minDataSize);
-  if (!count || count > INT_MAX || !size || dataSize > UINT16_MAX - RTE_PKTMBUF_HEADROOM ||
+  if ((type != Zi::IOBufType::Rx) != bool(returns)) return -EINVAL;
+  constexpr unsigned mask = Zm::CacheLineSize - 1;
+  auto extent = RTE_MAX(size, minDataSize);
+  if (!count || count > INT_MAX || !size || extent > UINT_MAX - mask ||
       headRoom > size || tailRoom > size - headRoom ||
       !align || align > (1U<<16) || (align & (align - 1))) return -EINVAL;
+  auto dataSize = (extent + mask) & ~mask;
+  if (dataSize > UINT16_MAX - RTE_PKTMBUF_HEADROOM) return -EINVAL;
 
   Prepared backing;
-  if (int rc = backing.init(*this, socket, dataSize)) return rc;
+  if (int rc = backing.init(*this, socket, dataSize, returns)) return rc;
   dest = ZuMv(backing);
   return 0;
 }
 
-int BufPool::Prepared::init(BufPool &pool, int socket, unsigned dataSize)
+int BufPool::Prepared::init(BufPool &pool, int socket, unsigned dataSize, TxReturns *returns)
 {
   ZmAssert_(!m_pool);
   static ZmAtomic<unsigned> ids{0};
   ZuCArray<RTE_MEMPOOL_NAMESIZE> name;
   name << "zpkt_" << ZuBoxed(ids++);
   auto room = dataSize + unsigned(RTE_PKTMBUF_HEADROOM);
-  if (pool.align <= RTE_MEMPOOL_ALIGN) {
-    constexpr unsigned priv = (sizeof(Slot) + RTE_MEMPOOL_ALIGN - 1) & ~RTE_MEMPOOL_ALIGN_MASK;
-    m_pool = rte_pktmbuf_pool_create(name.terminate(), pool.count, 0, priv, uint16_t(room), socket);
-    if (!m_pool) return rte_errno ? -rte_errno : -ENOMEM;
+  auto alignment = RTE_MAX(pool.align, unsigned(Zm::CacheLineSize));
+  m_tx = bool(returns);
+  if (alignment <= RTE_MEMPOOL_ALIGN) {
+    constexpr auto prefix = sizeof(rte_mbuf) + RTE_PKTMBUF_HEADROOM + sizeof(Slot);
+    constexpr unsigned priv = sizeof(Slot) + ((-prefix) & RTE_MEMPOOL_ALIGN_MASK);
+    static_assert(!(priv % RTE_MBUF_PRIV_ALIGN));
+    if (returns) {
+      auto rc = nativeTxPool(m_pool, name.terminate(), pool.count, room, priv, socket, returns);
+      if (rc < 0) return rc;
+    } else {
+      m_pool = rte_pktmbuf_pool_create(
+	name.terminate(), pool.count, 0, priv, uint16_t(room), socket);
+      if (!m_pool) return rte_errno ? -rte_errno : -ENOMEM;
+    }
   } else {
-    auto rc = alignedPool(m_pool, name.terminate(), pool.count, room, pool.align, socket);
+    auto rc = alignedPool(m_pool, name.terminate(), pool.count, room, alignment, socket, returns);
     if (rc < 0) return rc;
   }
   struct Init {
     BufPool *pool;
+    unsigned alignment;
     bool aligned = true;
-  } init{&pool};
+  } init{&pool, alignment};
   rte_mempool_obj_iter(m_pool, [](rte_mempool *, void *opaque, void *obj, unsigned) {
     auto &init = *static_cast<Init *>(opaque);
     auto m = static_cast<rte_mbuf *>(obj);
     auto p = rte_pktmbuf_mtod(m, uint8_t *);
-    auto align = RTE_MAX(init.pool->align, 1U<<LineShift);
-    init.aligned &= !(uintptr_t(p) & (align - 1));
+    init.aligned &= !(uintptr_t(p) & (init.alignment - 1));
     new (slot(m)) Slot{.pool = init.pool, .mbuf = m, .packet = p};
   }, &init);
   if (!init.aligned) return -EINVAL;
-  return m_index.init({&m_pool, 1});
+  if (int rc = m_index.init({&m_pool, 1})) return rc;
+  if (returns) {
+    auto available = txState(m_pool)->available;
+    for (unsigned left = pool.count; left;) {
+      void *objects[32];
+      unsigned count = RTE_MIN(left, 32U);
+      if (int rc = rte_mempool_get_bulk(m_pool, objects, count)) return rc;
+      ZmAssert_(rte_ring_enqueue_bulk(available, objects, count, nullptr) == count);
+      left -= count;
+    }
+  }
+  return 0;
 }
 
 void BufPool::publish(Prepared &&backing)
 {
   ZmAssert_(!native() && backing.native());
   m_backing = ZuMv(backing);
+  if (type != Zi::IOBufType::Rx) txState(native())->online = true;
+}
+
+unsigned BufPool::available() const
+{
+  auto pool = native();
+  if (!pool) return 0;
+  return type == Zi::IOBufType::Rx ? rte_mempool_avail_count(pool) :
+    rte_ring_count(txState(pool)->available);
 }
 
 bool BufPool::final()
 {
-  if (native() && rte_mempool_in_use_count(native())) return false;
+  if (native() && available() != count) return false;
   m_returned = {};
   m_backing = {};
   return true;
@@ -308,8 +516,16 @@ uint8_t *BufPool::alloc()
 {
   auto pool = native();
   if (ZuUnlikely(!pool)) return nullptr;
-  auto m = rte_pktmbuf_alloc(pool);
-  if (ZuUnlikely(!m)) return nullptr;
+  rte_mbuf *m;
+  if (type == Zi::IOBufType::Rx) {
+    m = rte_pktmbuf_alloc(pool);
+    if (ZuUnlikely(!m)) return nullptr;
+  } else {
+    void *object;
+    if (ZuUnlikely(rte_ring_dequeue(txState(pool)->available, &object))) return nullptr;
+    m = static_cast<rte_mbuf *>(object);
+    resetTx(m);
+  }
   auto s = slot(m);
   ZmAssert_(!unsigned(s->leases));
   s->leases = Slot::Caller;
@@ -325,8 +541,12 @@ void BufPool::free(uint8_t *packet)
 
 void BufPool::recycle(rte_mbuf *m)
 {
-  rte_pktmbuf_free(m);
-  if (m_returned) m_returned();
+  if (type == Zi::IOBufType::Rx) {
+    rte_pktmbuf_free(m);
+    if (m_returned) m_returned();
+  } else {
+    ZmAssert_(!rte_ring_enqueue(txState(m->pool)->available, m));
+  }
 }
 
 } // namespace Zpkt::Dpdk

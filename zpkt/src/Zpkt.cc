@@ -22,9 +22,16 @@ namespace Zpkt {
 
 ZtEnumImplNS(NifFlags);
 
-Nif::Nif(ZiMultiplex *mx, const NifInfo &info) :
-  m_mx{mx}, m_ifindex{info.ifindex}, m_mtu{info.mtu}, m_rxQueues{info.rxQueues}
+Nif::Nif(ZiMultiplex *mx, const NifInfo &info) : m_mx{mx}
 {
+  nifInfo(info);
+}
+
+void Nif::nifInfo(const NifInfo &info)
+{
+  m_ifindex = info.ifindex;
+  m_mtu = info.mtu;
+  m_rxQueues = info.rxQueues;
   memcpy(m_mac, info.mac, sizeof(m_mac));
 }
 

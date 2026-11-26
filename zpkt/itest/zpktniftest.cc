@@ -88,6 +88,9 @@ static void testFactory()
   }
   ZiMultiplex wrong;
   auto resources = fdCount(), requests = unsigned(nifQueries);
+  ZuCheckRT(!env->loopback() && env->nif(&mx, "_loop").is<ZeException>() &&
+      unsigned(nifQueries) == requests && fdCount() == resources,
+    log_("loaded AF_XDP reports no backend loopback and performs no host lookup"));
   auto opened = env->nif(&mx, name);
   ZuCheckRT(opened.is<Zpkt::Nif *>(), log_("named factory opens AF_XDP after source Cf release"));
   if (opened.is<ZeException>()) return;
@@ -134,22 +137,18 @@ static ZmAtomic<unsigned> startFailure{0};
 static ZuCArray<RTE_MEMPOOL_NAMESIZE> provisional;
 
 extern "C" __attribute__((visibility("default")))
-rte_mempool *rte_pktmbuf_pool_create(
-  const char *name, unsigned count, unsigned cache, uint16_t priv, uint16_t room, int socket)
+int rte_mempool_set_ops_byname(rte_mempool *pool, const char *name, void *config)
 {
-  static const auto create = reinterpret_cast<decltype(&rte_pktmbuf_pool_create)>(
-    dlsym(RTLD_NEXT, "rte_pktmbuf_pool_create"));
+  static const auto setOps = reinterpret_cast<decltype(&rte_mempool_set_ops_byname)>(
+    dlsym(RTLD_NEXT, "rte_mempool_set_ops_byname"));
   if (unsigned remaining = poolFailure) {
-    if (!strncmp(name, "zpkt_", 5)) {
+    if (!strcmp(name, "zpkt_tx_returns")) {
       --poolFailure;
-      if (remaining == 1) {
-	rte_errno = ENOMEM;
-	return nullptr;
-      }
-      provisional = ZuCSpan{name};
+      if (remaining == 1) return -ENOMEM;
+      provisional = ZuCSpan{pool->name};
     }
   }
-  return create(name, count, cache, priv, room, socket);
+  return setOps(pool, name, config);
 }
 
 extern "C" __attribute__((visibility("default")))
@@ -170,19 +169,22 @@ static void testDpdk(const Runtime &runtime)
   if (!attached.is<void>()) return;
   auto env = runtime.env();
   ZiMultiplex mx, otherMx;
+  auto requests = unsigned(nifQueries);
   auto missing = env->nif(&mx, "missing"_z);
   ZuCheckRT(missing.is<ZeException>(), log_("missing native port publishes no device"));
   auto badLinux = env->nif(&mx, "zpkt_absent"_z);
-  ZuCheckRT(badLinux.is<ZeException>(), log_("missing Linux key returns core query error"));
+  ZuCheckRT(badLinux.is<ZeException>() && unsigned(nifQueries) == requests,
+    log_("missing configured DPDK key fails without host lookup"));
   auto opened = env->nif(&mx, "net_ring_packet"_z);
   ZuCheckRT(opened.is<Zpkt::Nif *>(), log_(errorText(opened.p<ZeException>())));
   if (!opened.is<Zpkt::Nif *>()) return;
   ZmRef<Zpkt::Nif> device = opened.p<Zpkt::Nif *>();
   NifOwner owner{device};
   ZuCheckRT(device->mx() == &mx && device->mtu() == 1500 &&
-      device->mac().length() == 6 && device->rxQueues() == 1 && device->ifindex() &&
+      device->mac().length() == 6 && device->rxQueues() == 1 && !device->ifindex() &&
+      unsigned(nifQueries) == requests &&
       !device->allocated() && !device->ready() && device->state() == ZmEngineState::Stopped && device->zeroCopy(),
-    log_("factory returns initialized, unallocated, stopped ring device with Linux identity"));
+    log_("factory returns initialized, unallocated, stopped ring device with native geometry"));
   auto repeated = env->nif(&mx, "net_ring_packet"_z);
   ZuCheckRT(repeated.is<Zpkt::Nif *>() && repeated.p<Zpkt::Nif *>() == device.ptr(),
     log_("same-name lookup retains the initialized device"));
@@ -327,10 +329,8 @@ static void testDpdk(const Runtime &runtime)
   next->final();
   ZuCheckRT(!next->mx() && !small->alloc(), log_("final after allocation without start"));
 
-  // This dummy Linux Nif deliberately has a different name and MAC from the
-  // same native ring port. The plugin consumes the core's metadata unchanged.
-  constexpr uint8_t expectedMAC[] = {2, 0, 0, 0, 0, 4};
-  auto requests = unsigned(nifQueries);
+  // The configured selector has a different MAC from its native ring port.
+  constexpr uint8_t expectedMAC[] = {2, 0, 0, 0, 0, 1};
   auto independent = env->nif(&mx, "competing"_z);
   ZuCheckRT(independent.is<Zpkt::Nif *>(),
     log_("independent Linux key selects the configured native port after retirement"));
@@ -339,11 +339,11 @@ static void testDpdk(const Runtime &runtime)
   NifOwner pairedOwner{paired};
   auto cached = env->nif(&mx, "competing"_z);
   ZuCheckRT((paired->name() == "competing"_z &&
-      paired->ifindex() == if_nametoindex("competing") && paired->mtu() == 1500 &&
+      !paired->ifindex() && paired->mtu() == 1500 &&
       paired->mac() == ZuBSpan{expectedMAC, sizeof(expectedMAC)} &&
-      unsigned(nifQueries) == requests + 1 && cached.is<Zpkt::Nif *>() &&
+      unsigned(nifQueries) == requests && cached.is<Zpkt::Nif *>() &&
       cached.p<Zpkt::Nif *>() == paired.ptr()),
-    log_("one core query forwards independent Linux identity unchanged and cache hit makes none"));
+    log_("configured selector and cache expose the native port without a host query"));
   paired->final();
 }
 

@@ -16,8 +16,9 @@
 static ZmAtomic<unsigned> nextHop{10};
 
 namespace Zutcp {
-ZuUnion<IPPath, ZeException> resolveUDPPath(unsigned, IPPath route)
+ZuUnion<IPPath, ZeException> resolveIPPath(unsigned, IPPath route)
 {
+  ZmAssert_(!route.remote.multicast());
   auto result = path(route.remote.v6());
   result.remote = route.remote;
   result.remoteMAC[5] = nextHop.load_();
@@ -71,7 +72,7 @@ struct Fixture {
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
     .rxThread(1).txThread(2), stack};
   ZmRef<Device> device = new Device{&mx};
-  Zi::IOBufAllocator *tx = nullptr, *app = nullptr;
+  Zi::IOBufAllocator *rx = nullptr, *tx = nullptr, *app = nullptr;
   ZmAtomic<unsigned> loops{0};
 
   bool start(unsigned retries, ZuTime backoff) {
@@ -80,9 +81,10 @@ struct Fixture {
     config.txBackoff = backoff;
     config.packet = [this](ZmRef<ZiIOBuf>) { ++loops; };
     stack->init(&mx, env, ZmRef<Zpkt::Nif>{device}, ZuMv(config));
+    rx = mx.allocator<Zi::IOBufType::Rx, ZiIOBuf, 128>(8);
     tx = mx.allocator<Zi::IOBufType::TxUDP, ZiIOBuf, 128>(8);
     app = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 128>();
-    return tx && app && mx.start();
+    return rx && tx && app && mx.start();
   }
   template <typename Fn> void onTx(Fn fn) {
     ZmBlock<>{}([&](auto done) {
@@ -331,8 +333,29 @@ static void testUDPTimer()
   if (!started) return;
   auto route = path(false);
   route.remote = ZiIP{"239.18.0.1"};
-  auto cxn = f.open(route);
-  bool ok = !!cxn;
+  ZmRef<UDPLeaseTest::Cxn> cxn;
+  bool rejected = false;
+  ZmBlock<>{}([&](auto done) {
+    f.mx.rxRun([&, done = ZuMv(done)]() mutable {
+      auto connect = [&cxn, &f](const ZiCxnInfo &info) {
+	cxn = new UDPLeaseTest::Cxn{&f.mx, info};
+	return cxn.ptr();
+      };
+      ZiCxnOptions options;
+      options.udp(true).multicast(true).loopBack(true);
+      ZiIP any{in_addr{}};
+      f.mx.udp_(ZiConnectFn{connect}, ZiFailFn{[&rejected](bool) { rejected = true; }},
+	any, 2381, route.remote, 49252, f.rx, options);
+      options.mif(route.local);
+      f.mx.udp_(ZiConnectFn{connect}, ZiFailFn{[](bool) {}},
+	any, 2381, route.remote, 49252, f.rx, options);
+      done();
+    });
+  });
+  ZuCheckRT(rejected && cxn && cxn->info().local.ip() == route.local,
+    log_("multicast setup uses an explicit source and bypasses the route resolver"));
+  if (!cxn) { f.mx.stop(); return; }
+  bool ok = true;
   f.onTx([&] {
     ZutcpTest::MxPlugin::udpRouteEpoch(*f.stack);
     f.device->refuse = true;

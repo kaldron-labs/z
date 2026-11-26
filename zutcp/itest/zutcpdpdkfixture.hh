@@ -16,16 +16,16 @@ namespace ZutcpDpdkTest {
 using Result = ZpktDpdkTest::Result;
 
 struct Link {
-  const char *ring, *name, *mac;
+  const char *ring, *name, *selector, *mac;
   const char *ip, *route, *ip6, *route6;
   rte_ether_addr address;
 };
 
 inline constexpr Link Links[] = {
-  {"zutcp0", "zdpdka", "02:00:00:00:91:01",
+  {"loopa", "zdpdka", "_loop", "02:00:00:00:91:01",
     "198.18.91.1", "198.18.91.1/32", "2001:db8:91::1", "2001:db8:91::1/128",
     {{0x02, 0, 0, 0, 0x91, 1}}},
-  {"zutcp1", "zdpdkb", "02:00:00:00:91:02",
+  {"zutcp1", "zdpdkb", "zdpdkb", "02:00:00:00:91:02",
     "198.18.91.2", "198.18.91.2/32", "2001:db8:91::2", "2001:db8:91::2/128",
     {{0x02, 0, 0, 0, 0x91, 2}}}
 };
@@ -43,7 +43,7 @@ struct Fixture {
 };
 
 
-Zutcp::MxPlugin::Params tcpParams();
+Zutcp::MxPlugin::Params tcpParams(unsigned routingIfindex);
 void failAllocation(unsigned call);
 bool allocationFailed();
 bool allocationRolledBack();

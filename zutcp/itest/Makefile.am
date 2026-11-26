@@ -16,7 +16,7 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = zutcppairtest zutcppooltest zutcpstacktest zutcpiptest zutcpmxtest zutcpapptest \
-	zutcptlsapptest
+	zutcptlsapptest zutcpafptest
 EXTRA_PROGRAMS = zutcpudptest
 zutcppairtest_SOURCES = zutcppairtest.cc
 zutcppooltest_SOURCES = zutcppooltest.cc
@@ -31,10 +31,16 @@ zutcptlsapptest_CPPFLAGS = $(AM_CPPFLAGS) -DZUTCP_APP_TLS \
 	-I$(top_srcdir)/ztls/src -I$(top_srcdir)/zdbus/src
 zutcptlsapptest_LDADD = $(LDADD) $(top_builddir)/ztls/src/libZtls.la \
 	$(top_builddir)/zdbus/src/libZdbus.la
+zutcpafptest_SOURCES = zutcpafptest.cc
+zutcpafptest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/ztcp/src \
+	-DZUTCP_AFP_MODULE='"$(abs_top_builddir)/zpkt/afp/.libs/libZpkt_afp.so"' \
+	-DZUTCP_AFP_FIXTURE='"$(abs_top_srcdir)/zutcp/itest/zutcpafpfixture.sh"' \
+	-DZUTCP_AFP_PROGRAM='"$(abs_builddir)/zutcpafptest"'
+zutcpafptest_LDADD = $(LDADD) $(top_builddir)/ztcp/src/libZtcp.la
 zutcpudptest_SOURCES = zutcpudptest.cc
 EXTRA_DIST = README.md zutcpipfixture.sh zutcppairfixture.sh zutcpmxfixture.sh \
 	zutcpappfixture.sh zutcpmxlossfixture.sh zutcprecovery.py zutcpoptions.py zutcptfo.py \
-	zutcpudpfixture.sh
+	zutcpudpfixture.sh zutcpafpfixture.sh
 
 if DPDK
 noinst_PROGRAMS += zutcpdpdktest

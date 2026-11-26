@@ -22,6 +22,8 @@ struct Interface {
 
 class Environment {
 public:
+  explicit Environment(const char *module = ZPKT_XDP_MODULE) : m_module{module} { }
+
   ZuUnion<void, ZeException> open(
     ZmRef<Zpkt::Nif> &nif, ZiMultiplex *mx, const Interface &params)
   {
@@ -29,7 +31,7 @@ public:
     if (!if_indextoname(params.ifindex, name))
       return ZeEXCEPT(Error, "Zpkt.Test", "resolve fixture Linux interface");
     if (!m_loaded) {
-      auto cf = config(ZPKT_XDP_MODULE, static_cast<const char *>(name),
+      auto cf = config(m_module, static_cast<const char *>(name),
 	params.txSid, params.rxSpin);
       m_env->init(cf.ptr());
       m_loaded = true;
@@ -41,6 +43,7 @@ public:
   }
 
 private:
+  const char *m_module;
   ZmRef<Zpkt::Env> m_env = new Zpkt::Env;
   bool m_loaded = false;
 };

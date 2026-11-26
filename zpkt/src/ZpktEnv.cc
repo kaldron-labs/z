@@ -55,6 +55,12 @@ void Env::init(const ZfCf::AnyNode *cf)
   m_plugin = ZuMv(plugin);
 }
 
+bool Env::loopback() const
+{
+  ZmAssert_(m_plugin);
+  return m_plugin->loopback();
+}
+
 ZuUnion<Nif *, ZeException> Env::nif(ZiMultiplex *mx, ZuCSpan name)
 {
   ZmAssert_(m_plugin);
@@ -66,9 +72,16 @@ ZuUnion<Nif *, ZeException> Env::nif(ZiMultiplex *mx, ZuCSpan name)
     }));
   }
   ZmAssert_(mx && mx->state() == ZmEngineState::Stopped);
-  auto info = m_nifQueryFn(name);
-  if (info.is<ZeException>()) return ZuMv(info).p<ZeException>();
-  auto result = m_plugin->nif(mx, name, info.p<NifInfo>());
+  NifInfo info;
+  if (name == "_loop"_z) {
+    if (!loopback())
+      return ZeEXCEPT(Error, "Zpkt", "backend loopback (_loop) is unsupported");
+  } else if (m_plugin->hostNifInfo()) {
+    auto queried = m_nifQueryFn(name);
+    if (queried.is<ZeException>()) return ZuMv(queried).p<ZeException>();
+    info = queried.p<NifInfo>();
+  }
+  auto result = m_plugin->nif(mx, name, info);
   if (result.is<ZeException>()) return ZuMv(result).p<ZeException>();
   ZmRef<Nif> nif = result.p<Nif *>();
   if (!nif)

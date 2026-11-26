@@ -42,6 +42,11 @@
 #include <zlib/ZpktPool.hh>
 #include <zlib/ZpktTx.hh>
 
+#ifdef ZPKT_XDP_TEST
+extern "C" void ZpktTestXdpDesc(const xdp_desc &);
+extern "C" void ZpktTestXdpPublish(unsigned, uint32_t, bool);
+#endif
+
 namespace Zpkt {
 namespace Xdp {
 ZfStructImpl(NifCf, Cf);
@@ -227,6 +232,9 @@ public:
 
 private:
   BufPool *txPool(const uint8_t *, unsigned &id) const;
+  Zu::IO::Result admitTx(uint8_t *, unsigned, uint8_t *&, TxSlot *&) const;
+  void prepareTx(TxRing &, unsigned, uint8_t *, unsigned, uint8_t *, TxSlot &);
+  void publishTx(TxRing &, unsigned);
   void start_() override {
 
     error({});
@@ -631,20 +639,24 @@ Zu::IO::Result Nif::txReady(uint8_t *packet) const
   return slot.pending ? Zi::NotReady : Zi::OK;
 }
 
-Zu::IO::Result Nif::send(uint8_t *packet, unsigned length)
+ZuInline Zu::IO::Result Nif::admitTx(
+  uint8_t *packet, unsigned length, uint8_t *&canonical, TxSlot *&slot) const
 {
   if (!ready()) return Zi::IOError;
   unsigned id;
   auto pool = txPool(packet, id);
-  auto canonical = pool->backing(id);
+  canonical = pool->backing(id);
   auto wire = unsigned(packet - canonical);
   if (!length || length > pool->size - wire) return Zi::IOError;
-  auto &slot = m_arena->txSlot(*pool, id);
-  ZmAssert_(slot.refs.load_() > unsigned(slot.pending));
-  if (slot.pending) return Zi::NotReady;
-  auto &ring = m_queues[0]->service.tx();
-  if (m_txHeld == ring.count() || !ring.reserve(1)) return Zi::NotReady;
-  slot.wire = wire;
+  slot = &m_arena->txSlot(*pool, id);
+  ZmAssert_(slot->refs.load_() > unsigned(slot->pending));
+  return slot->pending ? Zi::NotReady : Zi::OK;
+}
+
+ZuInline void Nif::prepareTx(
+  TxRing &ring, unsigned i, uint8_t *packet, unsigned length, uint8_t *canonical, TxSlot &slot)
+{
+  slot.wire = unsigned(packet - canonical);
   slot.active = m_txHeld;
   m_txActive[m_txHeld++] = canonical;
   slot.pending = true;
@@ -659,19 +671,66 @@ Zu::IO::Result Nif::send(uint8_t *packet, unsigned length)
       options = XDP_TX_METADATA;
     }
   }
-  ring.entry(0) = {address, length, options};
-  bool idle = !m_txPending++;
-  ring.commit();
+  auto &entry = ring.entry(i);
+  entry = {address, length, options};
+#ifdef ZPKT_XDP_TEST
+  ZpktTestXdpDesc(entry);
+#endif
+}
+
+ZuInline void Nif::publishTx(TxRing &ring, unsigned count)
+{
+  auto idle = !m_txPending.xchAdd(count);
+  ring.commit(count);
   if (idle) mx()->run([this] { serveTx(); }, m_txSid);
+#ifdef ZPKT_XDP_TEST
+  Ztc::QueueTelemetry data;
+  ring.telemetry(data);
+  ZpktTestXdpPublish(count, uint32_t(data.inCount), idle);
+#endif
+}
+
+Zu::IO::Result Nif::send(uint8_t *packet, unsigned length)
+{
+  uint8_t *canonical;
+  TxSlot *slot;
+  auto result = admitTx(packet, length, canonical, slot);
+  if (result != Zi::OK) return result;
+  auto &ring = m_queues[0]->service.tx();
+  if (m_txHeld == ring.count() || !ring.reserve(1)) return Zi::NotReady;
+  prepareTx(ring, 0, packet, length, canonical, *slot);
+  publishTx(ring, 1);
   return Zi::OK;
 }
 
 unsigned Nif::send(ZuSpan<const TxPacket> packets)
 {
   unsigned count = packets.length() < MaxTxBatch ? packets.length() : MaxTxBatch;
-  unsigned accepted = 0;
-  while (accepted < count && send(packets[accepted].data, packets[accepted].length) == Zi::OK)
-    ++accepted;
+  if (!count || send(packets[0].data, packets[0].length) != Zi::OK) return 0;
+  auto &ring = m_queues[0]->service.tx();
+  unsigned accepted = 1, target = 2;
+  while (accepted < count) {
+    auto wanted = count - accepted;
+    if (wanted > target) wanted = target;
+    auto available = m_txActive.length() - m_txHeld;
+    auto outstanding = ring.count() - m_txHeld;
+    if (available > outstanding) available = outstanding;
+    auto reserved = ring.reserveUpTo(available < wanted ? available : wanted);
+    if (!reserved) break;
+    unsigned n = 0;
+    for (; n < reserved; ++n) {
+      const auto &packet = packets[accepted + n];
+      uint8_t *canonical;
+      TxSlot *slot;
+      if (admitTx(packet.data, packet.length, canonical, slot) != Zi::OK) break;
+      prepareTx(ring, n, packet.data, packet.length, canonical, *slot);
+    }
+    if (n) publishTx(ring, n);
+    else ring.commit(0);
+    accepted += n;
+    if (n < wanted) break;
+    if (target < MaxTxBatch) target <<= 1;
+  }
   return accepted;
 }
 

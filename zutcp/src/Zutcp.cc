@@ -441,11 +441,14 @@ void MxPlugin::init(
 {
   ZmAssert_(mx_ && xdpEnv);
   ZmAssert_(!xdp || !xdp->allocated());
-  ZmAssert_(!xdp || (xdp->mx() == mx_ && xdp->ifindex() && xdp->state() == ZmEngineState::Stopped));
+  ZmAssert_(!xdp || (xdp->mx() == mx_ && xdp->state() == ZmEngineState::Stopped));
   ZmAssert_(m_xdp || xdp);
   if (state() != ZmEngineState::Stopped || mx_->state() != ZmEngineState::Stopped)
     throw ZeEXCEPT(Error, "Zutcp", "finish multiplexer stop before initialization");
   if (config.heartBeat == ZuTime{0}) config.heartBeat = {};
+  if (!config.routingIfindex) config.routingIfindex = (xdp ? xdp.ptr() : m_xdp.ptr())->ifindex();
+  if (!config.routingIfindex)
+    throw ZeEXCEPT(Error, "Zutcp", "a Linux routing interface is required");
   if (m_xdp) {
     if (xdpEnv == m_xdpEnv && mx_ == mx() &&
 	(!xdp || xdp.ptr() == m_xdp.ptr()) && config == m_params) return;
@@ -497,7 +500,7 @@ void MxPlugin::init(
     throw ZeEXCEPT(Error, "Zutcp", "invalid control reserve");
   auto mtu = xdp->mtu(), queues = xdp->rxQueues();
   if (mtu < 40 + 60 + 1 || mtu > UINT_MAX - 14 || !queues)
-    throw ZeEXCEPT(Error, "Zutcp", "invalid XDP link geometry");
+    throw ZeEXCEPT(Error, "Zutcp", "invalid packet device geometry");
   // Each queue needs enough ingress backing to let a connection return its
   // oldest retained frame while continuing to receive.
   uint64_t ingressCount = mx_->rxBufSize();
@@ -512,7 +515,7 @@ void MxPlugin::init(
     Zi::IOBufType::TxTCP, config.controlBufCount, TCPHeadRoom, TCPHeadRoom);
   if (!packets || !controls)
     throw ZeEXCEPT(Error, "Zutcp", "cannot create TCP data and control pools");
-  if (!m_isn.init(xdp->ifindex()) || !m_tfoKey.init()) {
+  if (!m_isn.init(config.routingIfindex) || !m_tfoKey.init()) {
     m_isn.~ISN(); new (&m_isn) ISN;
     m_tfoKey.~TFOKey(); new (&m_tfoKey) TFOKey;
     throw ZeEXCEPT(Error, "Zutcp", "secure TCP sequence or cookie initialization failed");
@@ -997,7 +1000,13 @@ ZuUnion<IPPath, ZeException> MxPlugin::resolve(ZiIP remote, ZiIP local)
 {
   ZmAssert_(rxInvoked());
   if (!ready()) return ZeEXCEPT(Error, "Zutcp", "packet service unavailable during route setup");
-  return resolveIPPath(m_xdp->ifindex(), IPPath{local, remote, {}, {}, m_mtu});
+  auto result = resolveIPPath(m_params.routingIfindex, IPPath{local, remote, {}, {}, 0});
+  if (result.is<IPPath>()) {
+    auto &resolved = result.p<IPPath>();
+    memcpy(resolved.localMAC, m_xdp->mac().data(), sizeof(resolved.localMAC));
+    if (resolved.mtu > m_mtu) resolved.mtu = m_mtu;
+  }
+  return result;
 }
 
 // TCP timestamps, initial sequence numbers and Fast Open cookies

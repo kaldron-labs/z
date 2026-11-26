@@ -89,6 +89,7 @@ struct RtoParams {
 struct MxParams {
   PacketFn		packet;
   unsigned		packetCount = ZiIOBuf_DefltCount;
+  unsigned		routingIfindex = 0; // defaults to the packet device's host index
 
   unsigned		controlBufCount = DefaultControlBufCount;
   unsigned		txRetries = 1; // immediate retries after an idle refusal
@@ -546,6 +547,7 @@ private:
   bool publishUDP(UdpCxn *, ZiConnectFn &, ZiCxnInfo);
   void retireUDP(UdpCxn *, bool);
 
+  IPPath multicastPath(ZiIP local, ZiIP group, const ZiCxnOptions &) const;
   void openUDPRouteMonitor();
   uint64_t udpRouteGeneration();
 

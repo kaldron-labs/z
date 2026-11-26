@@ -1,5 +1,5 @@
 METASOURCES = AUTO
-SUBDIRS = src xdp
+SUBDIRS = src afp xdp
 if DPDK
 SUBDIRS += dpdk
 endif

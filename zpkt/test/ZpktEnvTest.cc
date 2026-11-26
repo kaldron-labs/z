@@ -102,6 +102,11 @@ static void testNamedFactory()
   auto cf = ZpktTest::config(path("libZpktTestPlugin.so"), "synthetic", 3, 4321, 0);
   env->init(cf);
   cf = nullptr;
+  auto unsupported = env->nif(&mx, "_loop");
+  ZuCHECK(!env->loopback() && unsupported.is<ZeException>() &&
+      strstr(errorText(unsupported.p<ZeException>()).ndata(), "unsupported") &&
+      !queries && !stats->creates,
+    "unsupported backend loopback skips host lookup and plugin open");
   auto opened = env->nif(&mx, "synthetic");
   ZuCHECK(opened.is<Zpkt::Nif *>(), "mock query survives init and no kernel interface is needed");
   if (opened.is<ZeException>()) return;
@@ -293,6 +298,15 @@ static void testNativeModule(ZuCSpan module, bool dpdk)
   } catch (const ZeException &error) {
     ZuCheckRT(false, log_("native module startup failed: ", errorText(error)));
     return;
+  }
+  queries = 0;
+  env->nifQueryFn(query);
+  ZuCheckRT(env->loopback() == dpdk, log_("loaded plugin advertises loopback before any open"));
+  if (!dpdk) {
+    ZiMultiplex mx;
+    auto refused = env->nif(&mx, "_loop");
+    ZuCheckRT(refused.is<ZeException>() && !queries,
+      log_("unsupported loopback skips the host query"));
   }
   cf = nullptr;
   auto finalized = env->final();

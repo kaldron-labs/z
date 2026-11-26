@@ -46,6 +46,7 @@ public:
   ~Env() override;
 
   void init(const ZfCf::AnyNode *);
+  bool loopback() const;
   ZuUnion<Nif *, ZeException> nif(ZiMultiplex *, ZuCSpan);
   ZuUnion<void, ZeException> final();
   void nifQueryFn(NifQueryFn fn) { ZmAssert_(fn); m_nifQueryFn = fn; }

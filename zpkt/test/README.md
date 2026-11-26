@@ -1,16 +1,21 @@
 # Zpkt isolated tests
 
-Build the configured dependency source layers, common `zpkt/src`, `zpkt/xdp`
+Build the configured dependency source layers, common `zpkt/src`, `zpkt/afp`, `zpkt/xdp`
 and configured `zpkt/dpdk` before the default `zpkt/test` target, then run
-`make -C zpkt/test test`. Follow the scoped [rebuild protocol](../../zpkt_plugin_plan.md#rebuild-protocol-and-scope)
+`make -C zpkt/test test`. Follow the [scoped rebuild](../../zpkt_rebuild.md)
 with one eight-job jobserver. These TAP programs need no network privileges:
 
-* `ZpktRingTest`: queried layouts, capacity, descriptor/cursor wrap, reservations,
+* `ZpktRingTest`: queried layouts, capacity, descriptor/cursor wrap, exact and partial reservations,
   cancellation and release/acquire publication between concurrent kernel peers.
 * `ZpktPoolTest`: intrusive configuration, count/size layout, independent
   reserves, exhaustion, advanced pointer return, retained mapping lifetime,
   malformed configuration, direct Zi metadata allocation/return over native slots,
-  and contended payload-overlay recycling.
+  cache-line sizing with and without private Tx metadata, and contended payload-overlay recycling.
+* `ZpktAfpPoolTest`: cache-line geometry, logical extents, transactional allocation
+  and rollback, and caller/submission leases with off-owner returns.
+* `ZpktAfpInstanceTest`: runs production socket admission and lifecycle with
+  injected syscall results. Covers burst delivery, VLAN auxdata, wake/stop,
+  qdisc policy, Tx pressure and telemetry without raw-socket privileges.
 * `ZpktOffloadTest`: bounded TCP header classification, VLAN/IP/TCP options,
   padding, malformed input, unaligned metadata placement, generic-netlink scalar
   reply parsing and private arena-prefix geometry including full-page fallback.
@@ -18,7 +23,8 @@ with one eight-job jobserver. These TAP programs need no network privileges:
   refusal, without opening a Linux interface.
 * `ZpktEnvTest`: actual module loading, missing module/symbol, null/throwing factory
   and construction failure, successful module residency, owned Cf lifetime,
-  query substitution surviving init, metadata forwarding, query-error isolation,
+  query substitution surviving init, metadata forwarding, early loopback capability
+  and structured rejection without host lookup, query-error isolation,
   name-keyed idempotence while stopped/running, conflicting multiplexer, failed
   creation without caching, child retirement/recreation, tree reference ownership,
   idempotent finalization and last-reference Plugin destruction. It checks
@@ -68,10 +74,10 @@ with regular memory and software ports.
   by a later initialization error and cleanup. Empty, overlong and embedded-NUL
   configured ports are rejected before EAL consumes its one process-wide attempt;
   a valid empty-interface Plugin can still initialize in the same fresh child.
-  Device lifecycle assertions live
-  in privileged `../itest/zpktniftest`, using Env and real dummy Linux interfaces.
-* `ZpktDpdkPoolTest` checks native mbuf identity, offset lookup, pool geometry,
-  exhaustion, caller and device leases, and rollback of provisional allocations.
+  Device lifecycle assertions live in privileged `../itest/zpktniftest`,
+  which opens DPDK ports through Env.
+* `ZpktDpdkPoolTest` checks direct mbuf identity, offset lookup, cache-line pool
+  geometry, exhaustion, independent leases, retransmission and rollback.
 
 After a DPDK-enabled build, run both programs from the repository root.
 

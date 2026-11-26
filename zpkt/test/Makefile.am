@@ -12,6 +12,17 @@ LDADD = $(top_builddir)/zpkt/src/libZpkt.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = ZpktEnvTest ZpktOffloadTest ZpktRingTest ZpktPoolTest ZpktInstanceTest ZpktClassifierTest
+noinst_PROGRAMS += ZpktAfpPoolTest ZpktAfpInstanceTest
+ZpktAfpPoolTest_SOURCES = ZpktAfpPoolTest.cc
+ZpktAfpPoolTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zpkt/afp
+ZpktAfpPoolTest_LDADD = $(top_builddir)/zpkt/afp/libZpktAfpCore.la $(LDADD)
+ZpktAfpPoolTest_LDFLAGS = $(AM_LDFLAGS) -Wl,--wrap=posix_memalign
+ZpktAfpInstanceTest_SOURCES = ZpktAfpInstanceTest.cc ../afp/ZpktAFP.cc
+ZpktAfpInstanceTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zpkt/afp \
+	-DZPKT_AFP_MODULE='"$(abs_top_builddir)/zpkt/afp/.libs/libZpkt_afp.so"'
+ZpktAfpInstanceTest_LDADD = $(top_builddir)/zpkt/afp/libZpktAfpCore.la $(LDADD)
+AFP_WRAPPED = socket bind eventfd setsockopt getsockopt recvmmsg sendmmsg poll write
+ZpktAfpInstanceTest_LDFLAGS = $(AM_LDFLAGS) $(foreach sym,$(AFP_WRAPPED),-Xlinker --wrap=$(sym))
 ZpktOffloadTest_SOURCES = ZpktOffloadTest.cc
 ZpktRingTest_SOURCES = ZpktRingTest.cc
 ZpktPoolTest_SOURCES = ZpktPoolTest.cc

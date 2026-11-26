@@ -4,7 +4,11 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// The application, framing and dispatch are identical for both transport choices.
+// The application, framing and dispatch are shared by all transport choices.
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <limits.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -41,8 +45,12 @@
 #include <zlib/ZiRx.hh>
 #include <zlib/ZiTx.hh>
 
+#include <zlib/Zpkt.hh>
 #include <zlib/ZpktEnv.hh>
-#include <zlib/ZpktNif.hh>
+
+#ifdef HAVE_DPDK
+#include <zlib/ZvCf.hh>
+#endif
 
 #include <zlib/Zutcp.hh>
 
@@ -56,6 +64,7 @@ using Times = ZtArray<ZuTime, ZtArrayHeapID<"Zutcp.Bench.Times">>;
 
 namespace Workload { enum { Order, MarketData, Updates, N }; }
 namespace Frame { enum { Order, Execution, Request, Snapshot, Update, Feedback, N }; }
+namespace Backend { enum { Kernel, Xdp, Afp, Dpdk }; }
 
 // Fixed representative FIX application records, not a FIX session engine.
 // MaxFrame bounds the six short records, including the largest execution report.
@@ -165,15 +174,19 @@ static bool selftest()
 
 struct Config {
   using Spin = ZuBox<unsigned>;
-  bool		server = false, native = false, ll = false;
-  int		xdpTxCPU = -1;
-  unsigned	interface = 0, messages = 10000, warmup = 1000, pipeline = 1;
+  bool		server = false, ll = false, txBatch = false;
+  int		xdpTxCPU = -1, afpBypass = -1;
+  unsigned	backend = Backend::Kernel, messages = 10000, warmup = 1000, pipeline = 1;
   unsigned	connections = 1, reserve = 4096, timeout = 1;
   Spin		spin, rxSpin, txSpin;
   unsigned	workload = Workload::Order, burstSize = 0, burstUS = 1000, quietUS = 0;
   unsigned	socketBytes = 1<<20, rxCPU = 0, txCPU = 0;
   ZiIP		address;
+  const char	*backendName = "kernel", *interface = nullptr, *routeInterface = nullptr;
+  const char	*dpdkConfig = nullptr;
   const char	*samples = nullptr;
+
+  bool native() const { return backend != Backend::Kernel; }
 };
 
 struct Result {
@@ -232,61 +245,98 @@ private:
 
 using Owners = ZtArray<ZmRef<Cxn>, ZtArrayHeapID<"Zutcp.Bench.Owners">>;
 
-static ZuUnion<Zpkt::Nif *, ZeException> openNif(
-  Zpkt::Env *env, ZiMultiplex *mx, ZuCSpan name, unsigned sender,
-  ZuBox<unsigned> rxSpin, ZuBox<unsigned> txSpin)
+using Node = ZfCf::AnyNode;
+
+static void value(Node *parent, ZuCSpan key, auto value)
 {
-  using Node = ZfCf::AnyNode;
+  Node::String text;
+  text << value;
+  parent->data<Node::Object>().push(Node::Field{
+    key, ZfCf::newNode<Node::String>(parent, ZuMv(text))});
+}
+
+static void initEnv(Zpkt::Env *env, const Config &cf, Zpkt::CfString &module)
+{
+#ifdef HAVE_DPDK
+  if (cf.backend == Backend::Dpdk) {
+    auto loaded = ZvCf::load(cf.dpdkConfig);
+    auto root = loaded.p<1>().ptr();
+    if (!root || !root->has<Node::Object>())
+      throw ZeEXCEPT(Error, "zutcpbench", "BENCH_DPDK_CONFIG must contain an Env configuration");
+    bool haveModule = false;
+    for (const auto &field : root->data<Node::Object>())
+      if (field.p<0>() == "module"_z) { haveModule = true; break; }
+    // ZvCf allocated this tree for this invocation. Supply the build-tree
+    // module when the file only describes EAL and its interface mappings.
+    if (!haveModule) value(const_cast<Node *>(root), "module", ZUTCP_DPDK_MODULE);
+    Zpkt::PluginLoadCf config;
+    ZfCf::handler<Zpkt::PluginLoadCf>(root).update(config);
+    module = ZuMv(config.module);
+    env->init(root);
+    return;
+  }
+#endif
+
   auto root = ZfCf::newNode<Node::Object>(nullptr);
   auto interfaces = ZfCf::newNode<Node::Object>(root.ptr());
   auto nif = ZfCf::newNode<Node::Object>(interfaces.ptr());
-  auto value = [](Node *parent, ZuCSpan key, auto value) {
-    Node::String text;
-    text << value;
-    parent->data<Node::Object>().push(Node::Field{
-      key, ZfCf::newNode<Node::String>(parent, ZuMv(text))});
-  };
-  value(root.ptr(), "module", ZUTCP_XDP_MODULE);
-  value(nif.ptr(), "txSid", sender);
-  if (*rxSpin) value(nif.ptr(), "rxSpin", rxSpin.val());
-  if (*txSpin) value(nif.ptr(), "txSpin", txSpin.val());
-  interfaces->data.push(Node::Field{name, ZuMv(nif)});
+  bool xdp = cf.backend == Backend::Xdp;
+  module = xdp ? ZUTCP_XDP_MODULE : ZUTCP_AFP_MODULE;
+  value(root.ptr(), "module", module);
+  if (*cf.rxSpin) value(nif.ptr(), "rxSpin", cf.rxSpin.val());
+  if (xdp) {
+    value(nif.ptr(), "txSid", 3);
+    if (*cf.txSpin) value(nif.ptr(), "txSpin", cf.txSpin.val());
+  } else if (cf.afpBypass >= 0) {
+    value(nif.ptr(), "qdiscBypass", cf.afpBypass ? "true" : "false");
+  }
+  interfaces->data.push(Node::Field{cf.interface, ZuMv(nif)});
   root->data.push(Node::Field{"interfaces", ZuMv(interfaces)});
-  try { env->init(root.ptr()); }
-  catch (ZeException &e) { return ZuMv(e); }
-  return env->nif(mx, name);
+  env->init(root.ptr());
 }
 
-struct XdpEnvOwner {
+struct PacketEnvOwner {
   ZmRef<Zpkt::Env>	env = new Zpkt::Env;
 };
 
-class App : private XdpEnvOwner, public ZiMultiplex {
+class App : private PacketEnvOwner, public ZiMultiplex {
 public:
   explicit App(const Config &config, ZiMxParams params) :
-    ZiMultiplex{ZuMv(params), config.native ?
+    ZiMultiplex{ZuMv(params), config.native() ?
       ZmRef<Zutcp::MxPlugin>{new Zutcp::MxPlugin} : ZmRef<Zutcp::MxPlugin>{}},
     m_config{config} {
-    if (config.native) {
-      char name[IF_NAMESIZE];
-      if (!if_indextoname(config.interface, name)) { m_failed = 1; return; }
-      auto opened = openNif(
-	env, this, static_cast<const char *>(name), 3, config.rxSpin, config.txSpin);
-      if (opened.is<ZeException>()) {
-        ZiLogEvent(ZuMv(opened).p<ZeException>());
-        m_failed = 1;
-        return;
-      }
-      ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
-      Zutcp::MxPlugin::Params settings{.packetCount = config.reserve};
+    if (config.native()) {
+      ZmRef<Zpkt::Nif> nif;
+      Zutcp::MxPlugin::Params settings{.packetCount = config.reserve, .txBatch = config.txBatch};
       auto instance = static_cast<Zutcp::MxPlugin *>(plugin());
-      try { instance->init(this, env, ZuMv(xdp), settings); }
-      catch (ZeException &e) {
-	xdp->final();
-	if (auto error = xdp->error()) ZiLogEvent(ZuMv(error));
-        ZiLogEvent(ZuMv(e));
-        m_failed = 1;
-        return;
+      try {
+	initEnv(env, config, m_module);
+	ZuCSpan name = config.interface;
+	if (name == "_loop"_z && !env->loopback())
+	  throw ZeEXCEPT(Error, "zutcpbench", "the loaded packet backend lacks loopback");
+	auto route = config.routeInterface;
+	if (!route && config.backend == Backend::Dpdk && name != "_loop"_z)
+	  route = config.interface;
+	if (route && !(settings.routingIfindex = if_nametoindex(route)))
+	  throw ZeEXCEPT(Error, "zutcpbench", ([route = ZeString{route}](auto &out) {
+	    out << "failed to resolve routing interface " << route;
+	  }));
+	auto opened = env->nif(this, name);
+	if (opened.is<ZeException>()) throw ZuMv(opened).p<ZeException>();
+	nif = opened.p<Zpkt::Nif *>();
+	if (!settings.routingIfindex) settings.routingIfindex = nif->ifindex();
+	auto openedNif = nif.ptr();
+	instance->init(this, env, ZuMv(nif), settings);
+	m_nif = openedNif;
+	m_routeIfindex = settings.routingIfindex;
+      } catch (ZeException &e) {
+	if (nif) {
+	  nif->final();
+	  if (auto error = nif->error()) ZiLogEvent(ZuMv(error));
+	}
+	ZiLogEvent(ZuMv(e));
+	m_failed = 1;
+	return;
       }
       std::cout << "native_configuration control_count=" << settings.controlBufCount
 	<< " control_credits=" << settings.txControlCredits << " rx_retain="
@@ -356,6 +406,20 @@ public:
   }
   bool run() {
     if (failed() || !start()) return false;
+    if (m_nif) {
+      ZuCArray<18> mac;
+      for (auto octet : m_nif->mac()) {
+	if (mac.length()) mac << ':';
+	mac << ZuBoxed(unsigned(octet)).hex<false, ZuFmt::Right<2>>();
+      }
+      std::cout << "packet_backend module=" << m_module << " selected_interface="
+	<< m_config.interface << " packet_ifindex=" << m_nif->ifindex()
+	<< " routing_ifindex=" << m_routeIfindex << " mac=" << mac << " mtu=" << m_nif->mtu()
+	<< " rx_queues=" << m_nif->rxQueues() << " zero_copy=" << unsigned(m_nif->zeroCopy())
+	<< " tcp_checksum_offload=" << unsigned(m_nif->tcpChksumOffload()) << '\n';
+      m_nif->status();
+      packetDrops("activation");
+    }
     if (m_config.server) {
       listen(ZiListenFn{this, ZmFnPtr<&App::listening>{}},
 	ZiFailFn{this, ZmFnPtr<&App::failedConnect>{}},
@@ -368,7 +432,12 @@ public:
 	  ZiFailFn{this, ZmFnPtr<&App::failedConnect>{}}, ZiIP{}, 0,
 	  m_config.address, Port, m_network, ZiCxnOptions{});
     }
-    return !m_done.timedwait(Zm::now(120)) && !failed();
+    bool completed = !m_done.timedwait(Zm::now(120)) && !failed();
+    if (m_nif) {
+      packetDrops("through_exchange");
+      if (m_config.backend == Backend::Afp) m_nif->status();
+    }
+    return completed;
   }
   void shutdown() {
     if (m_shutdown) return;
@@ -389,9 +458,29 @@ public:
   }
   bool report(); // Called only after shutdown and its owner barriers.
 private:
+  void packetDrops(const char *interval) {
+    uint64_t full = 0;
+    unsigned rxQueues = 0;
+    m_nif->allQueues([&full, &rxQueues](Ztc::Queue *queue) {
+      Ztc::QueueTelemetry data;
+      queue->telemetry(data);
+      if (data.type != Ztc::QueueType::Rx) return;
+      full += data.full;
+      ++rxQueues;
+    });
+    if (!rxQueues) return;
+    const char *source = m_config.backend == Backend::Xdp ? "XDP_STATISTICS.rx_ring_full" :
+      m_config.backend == Backend::Afp ? "PACKET_STATISTICS.tp_drops" : "rte_eth_stats.imissed";
+    std::cout << "packet_drops source=" << source << " interval=" << interval
+      << " cumulative_rx_full=" << full << "\n";
+  }
+
   using Alloc = Zi::IOBufAllocator;
   using Flag = ZmAtomic<unsigned>;
   Config		m_config;
+  Zpkt::Nif		*m_nif = nullptr; // owned by the transport plugin after init
+  Zpkt::CfString	m_module;
+  unsigned		m_routeIfindex = 0;
   Alloc		*m_network = nullptr, *m_frames = nullptr, *m_output = nullptr;
   Results		m_results;
   Owners		m_owners; // bounded App ownership through mx stop
@@ -422,7 +511,7 @@ void Cxn::connected(ZiRxContext &io)
   auto &result = m_app->result(m_id);
   result.rxCPU = unsigned(sched_getcpu());
   result.native = bool(plugin());
-  if (result.native != m_app->config().native ||
+  if (result.native != m_app->config().native() ||
       result.native != Zi::nullSocket(info().socket)) {
     m_app->failure(); io.disconnect(); return;
   }
@@ -605,6 +694,7 @@ bool App::report()
       out << "completion failed=" << failed << " created=" << created
 	<< " closed=" << closed << " expected=" << expected;
     }));
+  if (!m_results.length()) return false;
   uint64_t bytes = 0;
   ZuTime begin, end;
   for (unsigned i = 0; i < m_config.connections; ++i) {
@@ -617,13 +707,13 @@ bool App::report()
       << r.txSocketBytes << " pipeline_peak=" << r.pipelinePeak << " application_bursts="
       << r.bursts << " late_bursts=" << r.lateBursts << " received=" << r.received
       << " accepted=" << r.accepted << "\n";
-    ok &= r.native == m_config.native &&
+    ok &= r.native == m_config.native() &&
       r.rxCPU == m_config.rxCPU && r.txCPU == m_config.txCPU;
     if (*r.begin && (!*begin || r.begin < begin)) begin = r.begin;
     if (*r.end && (!*end || r.end > end)) end = r.end;
   }
   std::cout << "result role=" << (m_config.server ? "server" : "client") << " backend="
-    << (m_config.native ? "native" : "kernel") << " exact=" << unsigned(ok) << " connections="
+    << m_config.backendName << " exact=" << unsigned(ok) << " connections="
     << m_config.connections << " pipeline=" << m_config.pipeline << " warmup="
     << m_config.warmup << " measured_per_connection=" << m_config.messages << " workload="
     << workloadName(m_config.workload) << " burst_size=" << m_config.burstSize
@@ -675,7 +765,7 @@ bool App::report()
       << ZuBoxed(double(n * request)/seconds).fp<3>() << " response_bytes_per_second="
       << ZuBoxed(double(n * response)/seconds).fp<3>() << "\n";
   }
-  if (m_config.native) {
+  if (m_config.native()) {
     auto stack = static_cast<Zutcp::MxPlugin *>(plugin());
     auto cxns = stack->cxnAdmission().total;
     auto outstanding = stack->txAdmission().outstanding;
@@ -689,10 +779,13 @@ bool App::report()
 
 static void usage()
 {
-  std::cerr << "zutcpbench server|client kernel|native INTERFACE ADDRESS MESSAGES WARMUP "
+  std::cerr << "zutcpbench server|client kernel|native|xdp|afp|dpdk INTERFACE ADDRESS "
+    "MESSAGES WARMUP "
     "PIPELINE CONNECTIONS RESERVE RX_CPU TX_CPU SPIN|default [SAMPLES.csv]\n"
     "Environment: BENCH_WORKLOAD=order|marketdata|updates BENCH_BURST_SIZE=0 "
-    "BENCH_BURST_US=1000 BENCH_LL=0|1 BENCH_RX_SPIN=N BENCH_TX_SPIN=N\n"
+    "BENCH_BURST_US=1000 BENCH_LL=0|1 BENCH_RX_SPIN=N BENCH_TX_SPIN=N BENCH_TX_BATCH=0|1\n"
+    "Packet backends: BENCH_AFP_QDISC_BYPASS=0|1 BENCH_DPDK_CONFIG=/path "
+    "BENCH_ROUTE_INTERFACE=NAME\n"
     "zutcpbench --selftest\n";
   exit(2);
 }
@@ -705,9 +798,37 @@ int main(int argc, char **argv)
   Config config;
   config.server = !strcmp(argv[1], "server");
   if (!config.server && strcmp(argv[1], "client")) usage();
-  config.native = !strcmp(argv[2], "native");
-  if (!config.native && strcmp(argv[2], "kernel")) usage();
-  config.interface = if_nametoindex(argv[3]);
+  config.backendName = argv[2];
+  config.interface = argv[3];
+  if (!strcmp(argv[2], "native") || !strcmp(argv[2], "xdp")) config.backend = Backend::Xdp;
+  else if (!strcmp(argv[2], "afp")) config.backend = Backend::Afp;
+  else if (!strcmp(argv[2], "dpdk")) {
+#ifdef HAVE_DPDK
+    config.backend = Backend::Dpdk;
+    config.dpdkConfig = getenv("BENCH_DPDK_CONFIG");
+    if (!config.dpdkConfig || !*config.dpdkConfig) {
+      std::cerr << "dpdk requires BENCH_DPDK_CONFIG\n";
+      return 2;
+    }
+#else
+    std::cerr << "zutcpbench was built without DPDK support\n";
+    return 2;
+#endif
+  } else if (strcmp(argv[2], "kernel")) usage();
+  if (config.native()) {
+    if (!*config.interface) usage();
+    config.routeInterface = getenv("BENCH_ROUTE_INTERFACE");
+    if (auto value = getenv("BENCH_TX_BATCH")) {
+      if (strcmp(value, "0") && strcmp(value, "1")) usage();
+      config.txBatch = *value == '1';
+    }
+  }
+  if (config.backend == Backend::Afp) {
+    if (auto value = getenv("BENCH_AFP_QDISC_BYPASS")) {
+      if (strcmp(value, "0") && strcmp(value, "1")) usage();
+      config.afpBypass = *value == '1';
+    }
+  }
   config.address = ZiIP{argv[4]};
   config.messages = unsigned(ZuBox<unsigned>{argv[5]});
   config.warmup = unsigned(ZuBox<unsigned>{argv[6]});
@@ -748,7 +869,7 @@ int main(int argc, char **argv)
     config.burstSize = unsigned(ZuBox<unsigned>{value});
   if (auto value = getenv("BENCH_BURST_US")) config.burstUS = unsigned(ZuBox<unsigned>{value});
   if (auto value = getenv("BENCH_QUIET_US")) config.quietUS = unsigned(ZuBox<unsigned>{value});
-  if (!config.interface || !config.messages || !config.pipeline || !config.connections ||
+  if (!config.messages || !config.pipeline || !config.connections ||
       config.connections > MaxCxns || config.warmup > MaxSamples ||
       uint64_t(config.messages) * config.connections > MaxSamples ||
       config.pipeline > MaxPipeline || config.burstSize > MaxPipeline ||
@@ -760,7 +881,7 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
   ZiMxParams params;
-  params.rxBufSize(config.native ? config.reserve : config.socketBytes)
+  params.rxBufSize(config.native() ? config.reserve : config.socketBytes)
     .txBufSize(config.socketBytes).rxQuantum(8)
     .rxThread(1).txThread(2).scheduler([&config](auto &s) {
       ZmBitmap rx, tx, sender;
@@ -773,21 +894,25 @@ int main(int argc, char **argv)
 	.thread(2, [&tx](auto &t) { t.isolated(true).cpuset(tx); })
 	.thread(3, [&sender](auto &t) { t.isolated(true).cpuset(sender); });
     });
-  std::cout << "config backend=" << (config.native ? "native" : "kernel") << " rx_cpu="
+  bool xdp = config.backend == Backend::Xdp;
+  std::cout << "config backend=" << config.backendName << " selected_interface="
+    << config.interface << " rx_cpu="
     << config.rxCPU << " tx_cpu=" << config.txCPU
     << " xdp_tx_cpu=" << (config.xdpTxCPU < 0 ? int(config.rxCPU) : config.xdpTxCPU)
     << " scheduler_threads=3 rx_thread=1 tx_thread=2 xdp_tx_sid=3 native_xdp_sender_threads="
-    << unsigned(config.native) << " spin="
+    << unsigned(xdp) << " spin="
     << (*config.spin ? config.spin.val() : ZmSchedParams{}.spin())
-    << " rx_spin=" << (config.native ? int64_t(*config.rxSpin ? config.rxSpin.val() :
+    << " rx_spin=" << (xdp || config.backend == Backend::Afp ?
+      int64_t(*config.rxSpin ? config.rxSpin.val() :
       (Zi_DefltSpin<<2)) : -1)
-    << " tx_spin=" << (config.native ? int64_t(*config.txSpin ? config.txSpin.val() :
-      Zi_DefltSpin) : -1)
+    << " tx_spin=" << (xdp ? int64_t(*config.txSpin ? config.txSpin.val() : Zi_DefltSpin) : -1)
+    << " tx_batch=" << unsigned(config.txBatch)
+    << " afp_qdisc_bypass_override=" << config.afpBypass
     << " spin_inherited=" << unsigned(!*config.spin) << " timeout_ms="
     << config.timeout << " quantum_ns=1000 ll=" << unsigned(config.ll)
     << " queue=65536 kernel_socket_bytes_requested="
-    << (config.native ? 0 : config.socketBytes) << " native_rx_frames_requested="
-    << (config.native ? config.reserve : 0) << " reserve_requested=" << config.reserve
+    << (config.native() ? 0 : config.socketBytes) << " native_rx_frames_requested="
+    << (config.native() ? config.reserve : 0) << " reserve_requested=" << config.reserve
     << " kernel_allocator_count_is_not_a_pool_limit=1\n";
   rusage before{}, after{};
   getrusage(RUSAGE_SELF, &before);

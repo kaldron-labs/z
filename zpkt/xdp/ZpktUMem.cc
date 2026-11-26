@@ -20,18 +20,36 @@
 
 namespace Zpkt::Xdp {
 
-static unsigned poolPrefix(const Zi::IOBufPool &pool, bool metadata)
+static bool validGeometry(const Zi::IOBufPool &pool, unsigned page)
 {
-  if (!metadata) return 0;
-  unsigned bytes = power2(sizeof(xsk_tx_metadata));
-  return pool.align > bytes ? pool.align : bytes;
+  return pool.align && !(pool.align & (pool.align - 1)) && pool.align <= page &&
+    pool.size && pool.size <= page && pool.headRoom <= pool.size &&
+    pool.tailRoom <= pool.size - pool.headRoom;
 }
 
-static unsigned poolStride(const Zi::IOBufPool &pool, bool metadata)
+static unsigned poolAlign(const Zi::IOBufPool &pool)
 {
-  unsigned size = pool.size + poolPrefix(pool, metadata);
-  if (size < pool.align) size = pool.align;
-  return power2(size < 64 ? 64 : size);
+  return pool.align > Zm::CacheLineSize ? pool.align : Zm::CacheLineSize;
+}
+
+static unsigned txPrefix(const Zi::IOBufPool &pool, bool metadata)
+{
+  if (!metadata) return 0;
+  auto mask = poolAlign(pool) - 1;
+  return (sizeof(xsk_tx_metadata) + mask) & ~size_t(mask);
+}
+
+static unsigned poolStride(
+  const Zi::IOBufPool &pool, unsigned offset, unsigned prefix, unsigned page)
+{
+  constexpr unsigned mask = Zm::CacheLineSize - 1;
+  if (pool.size > UINT_MAX - offset || pool.size + offset > UINT_MAX - mask)
+    return 0;
+  auto extent = (pool.size + offset + mask) & ~mask;
+  if (prefix > page || extent > page - prefix) return 0;
+  auto size = extent + prefix;
+  auto align = poolAlign(pool);
+  return power2(size < align ? align : size);
 }
 
 ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
@@ -46,50 +64,43 @@ ZuUnion<ZmRef<UMem>, ZeException> UMem::create(
     return fail("unsupported AF_XDP page size");
   if (!rx || rx->type != Zi::IOBufType::Rx || !rx->count || rx->ready() || rx->used())
     return fail("one unused, nonempty Rx pool is required");
-  if (!rx->align || (rx->align & (rx->align - 1)) || rx->align > unsigned(page) ||
-      rx->headRoom > rx->size || rx->tailRoom > rx->size - rx->headRoom)
+  if (!validGeometry(*rx, page))
     return fail("invalid Rx pool geometry");
-  unsigned prefix = rx->align > XDP_PACKET_HEADROOM ? rx->align : XDP_PACKET_HEADROOM;
-  if (!mtu || rx->size < mtu + 14 || uint64_t(rx->size) + prefix + RxAlign > unsigned(page))
+  auto rxMask = poolAlign(*rx) - 1;
+  auto prefix = (XDP_PACKET_HEADROOM + rxMask) & ~rxMask;
+  auto chunk = poolStride(*rx, RxAlign, prefix, page);
+  if (!mtu || rx->size < uint64_t(mtu) + 14 || !chunk)
     return fail("Rx packet size does not fit the interface and one AF_XDP chunk");
   // Keep logical capacities/alignment unchanged. A physical metadata prefix is
   // reserved only for an advertised offload and only when every pool still fits
   // a kernel chunk. Otherwise this arena uses caller software checksums.
-  if (metadata) for (const auto &pool : txPools) {
-    if (!pool || uint64_t(pool->size) + poolPrefix(*pool, true) > uint64_t(page)) {
+  for (const auto &node : txPools) {
+    auto pool = dynamic_cast<BufPool *>(node.ptr());
+    if (!pool ||
+	(pool->type != Zi::IOBufType::TxTCP && pool->type != Zi::IOBufType::TxUDP) ||
+	pool->ready() || pool->used() || !validGeometry(*pool, page))
+      return fail("invalid or busy Tx pool");
+    if (metadata && !poolStride(*pool, 0, txPrefix(*pool, true), page))
       metadata = false;
-      break;
-    }
   }
   ArenaLayout layout;
   layout.txMetadata = metadata ? sizeof(xsk_tx_metadata) : 0;
   layout.prefix = prefix;
-  layout.chunk = power2(rx->size + layout.prefix + RxAlign);
-  if (layout.chunk < 2048) layout.chunk = 2048;
+  layout.chunk = chunk < 2048 ? 2048 : chunk;
   layout.rxCount = rx->count;
   uint64_t txBytes = 0;
-  {
-    for (const auto &node : txPools) {
-      auto pool = dynamic_cast<BufPool *>(node.ptr());
-      if (!pool ||
-	(pool->type != Zi::IOBufType::TxTCP && pool->type != Zi::IOBufType::TxUDP) ||
-	pool->ready() || pool->used() || !pool->size ||
-	pool->size > unsigned(page) || pool->headRoom > pool->size ||
-	pool->tailRoom > pool->size - pool->headRoom || !pool->align ||
-	(pool->align & (pool->align - 1)) || pool->align > unsigned(page))
-	return fail("invalid or busy Tx pool");
-      if (pool->count > UINT32_MAX - layout.txCount) return fail("Tx count overflow");
-      layout.txCount += pool->count;
-      auto stride = poolStride(*pool, metadata);
-      if (stride > layout.chunk) layout.chunk = stride;
-      auto bytes = uint64_t(pool->count) * stride;
-      auto length = (bytes + page - 1) & ~(uint64_t(page) - 1);
-      if (length > SIZE_MAX - txBytes) return fail("Tx arena size overflow");
-      txBytes += length;
-    }
+  for (const auto &pool : txPools) {
+    if (pool->count > UINT32_MAX - layout.txCount) return fail("Tx count overflow");
+    layout.txCount += pool->count;
+    auto stride = poolStride(*pool, 0, txPrefix(*pool, metadata), page);
+    if (!stride) return fail("packet exceeds AF_XDP chunk size");
+    if (stride > layout.chunk) layout.chunk = stride;
+    auto bytes = uint64_t(pool->count) * stride;
+    auto length = (bytes + page - 1) & ~(uint64_t(page) - 1);
+    if (length > SIZE_MAX - txBytes) return fail("Tx arena size overflow");
+    txBytes += length;
   }
   if (!layout.txCount) return fail("at least one nonempty Tx pool is required");
-  if (layout.chunk > unsigned(page)) return fail("packet exceeds AF_XDP chunk size");
   auto rxBytes = uint64_t(rx->count) * layout.chunk;
   rxBytes = (rxBytes + page - 1) & ~(uint64_t(page) - 1);
   if (rxBytes > SIZE_MAX - txBytes) return fail("Rx arena size overflow");
@@ -123,10 +134,10 @@ void UMem::publish(ZuSpan<const ZmRef<Zi::IOBufPool>> txPools, BufPool *rx)
   unsigned first = 0;
   for (const auto &node : txPools) {
     auto pool = static_cast<BufPool *>(node.ptr());
-    bool metadata = m_layout.txMetadata;
-    auto stride = poolStride(*pool, metadata);
+    auto prefix = txPrefix(*pool, m_layout.txMetadata);
+    auto stride = poolStride(*pool, 0, prefix, page);
     auto bytes = (uint64_t(pool->count) * stride + page - 1) & ~(uint64_t(page) - 1);
-    pool->init(this, offset, stride, poolPrefix(*pool, metadata), first);
+    pool->init(this, offset, stride, prefix, first);
     for (auto i = offset>>m_pageShift; i < (offset + bytes)>>m_pageShift; ++i)
       m_pages[i] = pool;
     first += pool->count;

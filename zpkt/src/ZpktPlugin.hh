@@ -20,6 +20,9 @@
 namespace Zpkt {
 
 struct ZpktAPI Plugin : public ZmPolymorph {
+  virtual bool loopback() const { return false; }
+  // Backends that supply native interface geometry skip the host query.
+  virtual bool hostNifInfo() const { return true; }
   virtual ZuUnion<Nif *, ZeException> nif(
     ZiMultiplex *, ZuCSpan name, const NifInfo &) = 0;
   virtual ZuUnion<void, ZeException> final() = 0;

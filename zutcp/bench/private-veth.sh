@@ -16,7 +16,7 @@ messages=$9 warmup=${10} pipeline=${11} connections=${12}
 reserve=${13} spin=${14} label=${15} capture=${16}
 client_backend=$backend server_backend=$backend matched=1
 case $backend in
-  kernel|native|dpdk) ;;
+  kernel|native|afp|dpdk) ;;
   native-client) client_backend=native server_backend=kernel ;;
   native-server) client_backend=kernel server_backend=native ;;
   *) exit 2 ;;
@@ -29,6 +29,7 @@ topology=${BENCH_TOPOLOGY:-direct}
 [[ $topology == direct || $topology == bridge ]]
 recovery=${BENCH_RECOVERY:-none}
 case $recovery in none|loss|reorder) ;; *) exit 2 ;; esac
+if [[ $backend == afp && $capture == 1 ]]; then topology=bridge; fi
 if [[ $backend == dpdk ]]; then
   if [[ $topology != direct || $capture != 0 || $recovery != none ]]; then
     echo "DPDK net_ring does not traverse the veth capture or fault-injection path" >&2
@@ -118,6 +119,25 @@ ip -n "$cli" neigh replace 198.18.87.2 lladdr "$smac" nud permanent dev "$croute
 ip -n "$srv" neigh replace 198.18.87.1 lladdr "$cmac" nud permanent dev "$sroute"
 ip -n "$cli" -6 neigh replace 2001:db8:87::2 lladdr "$smac" nud permanent dev "$croute"
 ip -n "$srv" -6 neigh replace 2001:db8:87::1 lladdr "$cmac" nud permanent dev "$sroute"
+client_address=198.18.87.1 server_address=198.18.87.2 protocol=ip
+if [[ $family == 6 ]]; then
+  client_address=2001:db8:87::1 server_address=2001:db8:87::2 protocol=ip6
+fi
+if [[ $backend == afp ]]; then
+  isolate_input() {
+    local ns=$1 dev=$2 peer=$3 address=$4 port=$5
+    ip netns exec "$ns" nft -f - <<EOF
+table inet zbench_afp {
+  chain input {
+    type filter hook input priority filter; policy accept;
+    iifname "$dev" $protocol saddr $peer $protocol daddr $address tcp $port 18187 counter drop
+  }
+}
+EOF
+  }
+  isolate_input "$cli" "$croute" "$server_address" "$client_address" sport
+  isolate_input "$srv" "$sroute" "$client_address" "$server_address" dport
+fi
 snapshot() {
   local phase=$1
   ip -n "$cli" -s -s link show zbenchc > "$out/client/link.$phase"
@@ -242,8 +262,7 @@ if [[ $recovery != none ]]; then
   [[ -f $out/fault-monitor-ready ]]
 fi
 
-address=198.18.87.2
-if [[ $family == 6 ]]; then address=2001:db8:87::2; fi
+address=$server_address
 if [[ $topology == ring ]]; then
   pair_status=0
   env "RUNTIME_DIRECTORY=$out" "BENCH_RING_CLIENT_NETNS=/run/netns/$cli" \
@@ -367,6 +386,52 @@ for side in client server; do
   if [[ $side == server ]]; then expected=$server_backend; fi
   grep -q "^result role=$side backend=$expected exact=1 " "$out/$side/output"
 done
+if [[ $backend == afp ]]; then
+  ip netns exec "$cli" nft list chain inet zbench_afp input > "$out/client/afp-input"
+  ip netns exec "$srv" nft list chain inet zbench_afp input > "$out/server/afp-input"
+  for side in client server; do
+    grep -Eq 'counter packets [1-9][0-9]* bytes [1-9][0-9]* drop' "$out/$side/afp-input"
+  done
+  if [[ $capture == 1 ]]; then
+    for side in client server; do
+      grep -q '^0 packets dropped by kernel$' "$out/capture-$side.log"
+    done
+    python3 -B - "$script/../interop" "$out" "$client_address" "$server_address" \
+      "$connections" <<'PY'
+from pathlib import Path
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from zutcptcp import capture, tcp
+
+directory, client, server, connections = sys.argv[2:]
+directions = []
+for side, source, target in (("client", server, client), ("server", client, server)):
+    syns, fins, acks = set(), {}, {}
+    for when, frame in capture(Path(directory) / f"to-{side}.pcap"):
+        packet = tcp(frame)
+        assert packet, "expected TCP"
+        assert (packet["source"], packet["target"]) == (source, target), "wrong capture direction"
+        sport, dport = packet["sport"], packet["dport"]
+        assert (sport if side == "client" else dport) == 18187, "wrong capture port"
+        flow = dport if side == "client" else sport
+        if packet["flags"] & 2:
+            syns.add(flow)
+        if packet["flags"] & 1:
+            end = (packet["seq"] + len(packet["payload"]) + 1) & 0xffffffff
+            assert fins.setdefault(flow, (end, when))[0] == end, "conflicting FIN"
+        if packet["flags"] & 16:
+            acks[(flow, packet["ack"])] = when
+    assert syns == fins.keys() and len(syns) == int(connections), "incomplete TCP lifecycle"
+    directions.append((syns, fins, acks))
+assert directions[0][0] == directions[1][0], "mismatched TCP flows"
+for own, peer in (directions, directions[::-1]):
+    for flow, (end, when) in own[1].items():
+        assert peer[2].get((flow, end), -1) >= when, "missing FIN acknowledgment"
+print("peer checksums valid and no resets through close")
+PY
+  fi
+fi
 printf '%s\n' "observation=complete topology=$topology build=$label backend=$backend" \
   "performance_comparison=$matched" > "$out/complete"
 

@@ -40,7 +40,6 @@ struct IPPath {
 // interface and its static next-hop neighbor. Preserve an explicit local IP;
 // otherwise use the kernel-selected source. Publish only on success. No ARP/ND.
 ZutcpAPI ZuUnion<IPPath, ZeException> resolveIPPath(unsigned interface, IPPath);
-ZutcpAPI ZuUnion<IPPath, ZeException> resolveUDPPath(unsigned interface, IPPath);
 
 struct IPView {
   ZiIP		local, remote;

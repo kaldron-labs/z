@@ -54,8 +54,11 @@ public:
     m_eal.init(params);
   }
 
+  bool loopback() const override { return true; }
+  bool hostNifInfo() const override { return false; }
+
   ZuUnion<Zpkt::Nif *, ZeException> nif(
-    ZiMultiplex *mx, ZuCSpan name, const NifInfo &info) override
+    ZiMultiplex *mx, ZuCSpan name, const NifInfo &) override
   {
     auto entry = m_config.interfaces->find(name);
     if (!entry)
@@ -63,7 +66,7 @@ public:
 	s << "unknown configured interface \"" << name << "\"";
       }));
     try {
-      return static_cast<Zpkt::Nif *>(new Nif{m_eal, mx, entry->val(), info});
+      return static_cast<Zpkt::Nif *>(new Nif{m_eal, mx, entry->val(), name == "_loop"_z});
     } catch (ZeException error) {
       auto detail = error.fn();
       error.l = ZeMsgFn{[

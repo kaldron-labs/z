@@ -19,4 +19,11 @@ EXTRA_DIST = README.md run-compare.sh run-matrix.sh private-veth.sh \
 EXTRA_DIST += bench-recovery.py bench-recovery-selftest.py
 EXTRA_DIST += MILESTONE.md results/2026-11-15-milestone.json
 
-zutcpbench_CPPFLAGS = $(AM_CPPFLAGS) -DZUTCP_XDP_MODULE='"$(abs_top_builddir)/zpkt/xdp/.libs/libZpkt_xdp.so"'
+zutcpbench_CPPFLAGS = $(AM_CPPFLAGS) \
+	-DZUTCP_XDP_MODULE='"$(abs_top_builddir)/zpkt/xdp/.libs/libZpkt_xdp.so"' \
+	-DZUTCP_AFP_MODULE='"$(abs_top_builddir)/zpkt/afp/.libs/libZpkt_afp.so"'
+if DPDK
+zutcpbench_CPPFLAGS += -I$(top_srcdir)/zv/src \
+	-DZUTCP_DPDK_MODULE='"$(abs_top_builddir)/zpkt/dpdk/.libs/libZpkt_dpdk.so"'
+zutcpbench_LDADD += $(top_builddir)/zv/src/libZv.la
+endif

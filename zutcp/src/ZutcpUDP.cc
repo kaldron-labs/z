@@ -25,11 +25,25 @@ static unsigned udpKey(ZiIPType::T family, uint16_t port)
   return (unsigned(family)<<16) | port;
 }
 
-static ZiIP udpSource(ZiIP local, ZiIP destination, const ZiCxnOptions &options)
+IPPath MxPlugin::multicastPath(ZiIP local, ZiIP group, const ZiCxnOptions &options) const
 {
-  if (destination.multicast() && options.multicast() &&
-      options.mif() && !options.mif().wildcard()) return options.mif();
-  return local.multicast() ? ZiIP{} : local;
+  if (options.multicast() && !options.mif().wildcard()) local = options.mif();
+  if (local.type() != group.type() || local.wildcard() || local.multicast()) return {};
+
+  IPPath path{.local = local, .remote = group, .mtu = m_mtu};
+  memcpy(path.localMAC, m_xdp->mac().data(), sizeof(path.localMAC));
+  if (group.v6()) {
+    path.remoteMAC[0] = path.remoteMAC[1] = 0x33;
+    memcpy(path.remoteMAC + 2, group.in6Addr().s6_addr + 12, 4);
+  } else {
+    uint32_t ip = ZuBE(group.inAddr().s_addr);
+    path.remoteMAC[0] = 0x01;
+    path.remoteMAC[2] = 0x5e;
+    path.remoteMAC[3] = (ip >> 16) & 0x7f;
+    path.remoteMAC[4] = uint8_t(ip >> 8);
+    path.remoteMAC[5] = uint8_t(ip);
+  }
+  return path;
 }
 
 static ZeException membershipError(int error)
@@ -43,7 +57,7 @@ MxPlugin::UdpCxn::UdpCxn(MxPlugin *owner, const ZiCxnInfo &info, IPPath path) :
   m_owner{owner}, m_info{info}
 {
   portKey = udpKey(info.local.ip().type(), info.local.port());
-  if (path.remote) {
+  if (path.remote && !path.remote.multicast()) {
     m_paths[0] = ZuMv(path);
     m_pathCount = m_nextPath = 1;
   }
@@ -60,7 +74,7 @@ ZuUnion<void, ZeException> MxPlugin::UdpCxn::join()
   auto v6 = m_info.local.ip().v6();
   m_membershipFD = ::socket(v6 ? AF_INET6 : AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
   if (m_membershipFD < 0) return membershipError(errno);
-  auto ifindex = m_owner->m_xdp->ifindex();
+  auto ifindex = m_owner->m_params.routingIfindex;
   for (const auto &membership : m_info.options.mreqs()) {
     int result;
     if (v6) {
@@ -172,6 +186,12 @@ void MxPlugin::UdpCxn::sendNext(ZiConnection *cxn)
       sent(cxn, -1);
       continue;
     }
+    if (dest.ip().multicast()) {
+      auto path = m_owner->multicastPath(m_info.local.ip(), dest.ip(), m_info.options);
+      if (!path.local) sent(cxn, -1);
+      else if (!sendPath(cxn, dest, path)) return;
+      continue;
+    }
     auto generation = m_owner->udpRouteGeneration();
     if (auto path = findPath(dest.ip(), generation)) {
       if (!sendPath(cxn, dest, *path)) return;
@@ -181,8 +201,8 @@ void MxPlugin::UdpCxn::sendNext(ZiConnection *cxn)
 	head = io.buf.ptr(), dest, generation]() mutable {
       if (endpoint->retiring) return;
       auto owner = endpoint->m_owner;
-      auto source = udpSource(endpoint->m_info.local.ip(), dest.ip(), endpoint->m_info.options);
-      auto route = resolveUDPPath(owner->m_xdp->ifindex(), {source, dest.ip(), {}, {}, 0});
+      auto local = endpoint->m_info.local.ip();
+      auto route = owner->resolve(dest.ip(), local.multicast() ? ZiIP{} : local);
       owner->txRun([endpoint = ZuMv(endpoint), cxn = ZuMv(cxn),
 	  head, dest, generation, route = ZuMv(route)]() mutable {
 	endpoint->routed(cxn, head, dest, generation, ZuMv(route));
@@ -422,21 +442,25 @@ void MxPlugin::udp(
       (local && local.type() != family) ||
       (remote && (remote.type() != family || !remotePort || remote.wildcard())) ||
       (options.multicast() && (!options.multicastValid(family) || options.ttl() > 255 ||
-	(options.mifIndex() && options.mifIndex() != m_xdp->ifindex())))) {
+	(options.mifIndex() && options.mifIndex() != m_params.routingIfindex)))) {
     if (fail) fail(false);
     return;
   }
 
   IPPath path{};
   if (remote) {
-    auto source = udpSource(local, remote, options);
-    auto route = resolveUDPPath(m_xdp->ifindex(), {source, remote, {}, {}, 0});
-    if (route.is<ZeException>()) {
-      reportError(ZuMv(route.p<ZeException>()));
-      if (fail) fail(true);
-      return;
+    if (remote.multicast()) {
+      path = multicastPath(local, remote, options);
+      if (!path.local) { if (fail) fail(false); return; }
+    } else {
+      auto route = resolve(remote, local.multicast() ? ZiIP{} : local);
+      if (route.is<ZeException>()) {
+        reportError(ZuMv(route.p<ZeException>()));
+        if (fail) fail(true);
+        return;
+      }
+      path = ZuMv(route.p<IPPath>());
     }
-    path = ZuMv(route.p<IPPath>());
     if (!local || local.wildcard()) local = path.local;
   } else if (!local) local = udpWildcard(family);
 

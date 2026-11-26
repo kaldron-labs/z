@@ -32,8 +32,8 @@ namespace Zpkt::Xdp {
 
 using RingQueueType = Ztc::QueueType::T;
 
-// A reservation is bounded and atomic as a vector: commit publishes all entries,
-// cancel publishes none. Descriptor publication never retires packet backing.
+// Commit publishes a reservation, or its initialized prefix for a producer.
+// Cancellation publishes nothing. Publication never retires packet backing.
 template <typename Entry, bool Producer> class Ring : public Ztc::Queue {
 public:
   using Atomic = ZmAtomic<uint32_t>;
@@ -169,8 +169,19 @@ public:
     return n;
   }
 
+  template <bool P = Producer, typename = ZuIfT<P && Producer>>
+  unsigned reserveUpTo(unsigned limit) {
+    ZmAssert_(!m_pending);
+    if (!m_count || !limit) return 0;
+    auto space = m_count - unsigned(m_cursor - m_peer);
+    if (space < limit) space = available();
+    if (space < limit) { ++m_full; limit = space; }
+    m_pending = limit;
+    return limit;
+  }
+
   // A consumer cannot change a published descriptor. A producer must initialize
-  // every reserved entry before commit; wraparound is handled by this index.
+  // every committed entry; wraparound is handled by this index.
   decltype(auto) entry(unsigned i) {
     ZmAssert_(i < m_pending);
     auto &entry = m_entries[(m_cursor + i) & (m_count - 1)];
@@ -178,12 +189,12 @@ public:
     else return static_cast<const Entry &>(entry);
   }
 
-  void commit() {
-    if (!m_pending) return;
-    m_cursor += m_pending;
-    m_pending = 0;
-    if constexpr (Producer) *m_prod = m_cursor;
-    else *m_cons = m_cursor;
+  void commit() { commit_(m_pending); }
+
+  template <bool P = Producer, typename = ZuIfT<P && Producer>>
+  void commit(unsigned n) {
+    ZmAssert_(n <= m_pending);
+    commit_(n);
   }
   void cancel() { m_pending = 0; }
 
@@ -194,6 +205,14 @@ public:
   bool needsKick() const { return published() && needWakeup(); }
 
 private:
+  void commit_(unsigned n) {
+    m_pending = 0;
+    if (!n) return;
+    m_cursor += n;
+    if constexpr (Producer) *m_prod = m_cursor;
+    else *m_cons = m_cursor;
+  }
+
   uint32_t kernelFull() const {
     if (m_fd < 0) return 0;
     xdp_statistics stats{};

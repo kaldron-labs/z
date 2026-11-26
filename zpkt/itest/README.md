@@ -17,7 +17,10 @@ traffic you need to retain: AF_XDP redirects all its traffic.
   including concurrent submission during kernel drain and shutdown while the sender
   callback is active. Use `ZPKT_PACKET_CASE=leases` for caller/CQ return ordering
   and restart. `ZPKT_PACKET_CASE=unstarted` checks finalization after allocation
-  without activation. Use a fresh pair for each case because Linux releases a
+  without activation. `ZPKT_PACKET_CASE=vector` uses the private test module
+  to observe ordered producer commits, first-frame handoff, prefix admission,
+  capacity pressure and retry.
+  Use a fresh pair for each case because Linux releases a
   finalized registration's device pools asynchronously.
   `ZPKT_PACKET_CASE=metadata` checks real kernel UMEM metadata registration.
   `ZPKT_METADATA_CASE=0` uses the current ABI; `1` injects explicit-flag rejection
@@ -67,10 +70,10 @@ Use DPDK 25.11 or newer with the stock `net_ring` and `net_pcap` PMDs installed.
 The fixtures initialize EAL with PCI, hugepages, shared configuration and
 telemetry disabled. The programs create their own named ports, rings and capture
 files. Each Runtime owns an intrusive Env whose loaded DPDK plugin owns EAL.
-The typed configuration is retained before ports open. Ring and pcap tests
-create dummy kernel Nifs in a private network namespace; root and iproute2 are
-required. Named lookup queries core geometry and opens the independently selected
-native port. Setup failures appear in TAP diagnostics.
+The typed configuration is retained before ports open. The fixtures use a
+private network namespace and require root and iproute2. Named lookup opens
+the selected native port and takes geometry from ethdev. Setup failures appear
+in TAP diagnostics.
 
 ```sh
 make -C zpkt/itest -j8
@@ -78,20 +81,38 @@ sudo -n prove ./zpkt/itest/zpktdkpackettest ./zpkt/itest/zpktdkwaketest \
   ./zpkt/itest/zpktdklooptest ./zpkt/itest/zpktniftest
 ```
 
-* `zpktniftest` checks named DPDK creation, core-query failure, absent native
+* `zpktniftest` checks named DPDK creation without host lookup, absent native
   ports, independent Linux/native names, same-name lookup and multiplexer
   conflicts. It preserves transactional pool allocation, interposed allocation
   and activation failure, native port claims, retained backing, restart,
   deferred engine requests and replacement retirement.
 * `zpktdkpackettest` checks direct submission identity including packet
-  headroom offsets, refusal on a full ring, caller and PMD leases, one-time
-  retirement and exact Rx pool provenance. Its pcap case verifies input and
-  output bytes and the PMD's copy classification.
+  headroom offsets, refusal on a full ring, caller and PMD leases, return
+  order across pools, exact-once retirement and zero slot visits on an empty
+  poll. Test-only callbacks gate return publication and pool scheduling races.
+  The pcap case verifies immediate driver returns, wire bytes and copy mode.
 * `zpktdkwaketest` observes real `ppoll` calls on the internal eventfd. It
   checks preposted and concurrent pulses, the configured idle backoff bound,
   off-owner pool return wakes, sustained input, and polling with a zero
   interval.
-* `zpktdklooptest` transfers full-MTU and short frames between named ring
-  ports. An independent peer copies each transmitted frame into a destination
+* `zpktdklooptest` queries loopback before creation, opens `_loop` without
+  performing an OS lookup, and verifies its Env cache and native port claim.
+  It transfers full-MTU and short frames over a ring pair. An independent
+  peer copies each transmitted frame into a destination
   ingress-pool mbuf to simulate the wire and releases the original Tx reference.
   The test checks bytes, retirement and teardown in both directions.
+
+## AF_PACKET
+
+Build `zpkt/afp` and the integration targets, then run the privileged wire
+fixture. It loads `libZpkt_afp.so` through Env and uses isolated veth
+endpoints. It checks bidirectional Ethernet exchange at peer ingress with
+bypass enabled and disabled, outgoing suppression, and restart.
+
+```sh
+sudo -n env ZPKT_RUN_FIXTURE=1 prove ./zpkt/itest/zpktafp_test
+```
+
+The fixture checks the software socket path. For a loader smoke test with
+the installed module on the library search path, run
+`ZPKT_NATIVE_MODULE=libZpkt_afp.so prove ./zpkt/test/ZpktEnvTest`.

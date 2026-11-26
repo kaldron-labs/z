@@ -1,7 +1,7 @@
 # Zutcp: User-mode TCP/IP stack
 
 Zutcp is a Linux user-mode TCP and UDP transport integrated with `ZiMultiplex`, using
-[Zpkt](../zpkt/README.md) for AF_XDP or DPDK packet I/O. It targets short FIX order,
+[Zpkt](../zpkt/README.md) for AF_PACKET, AF_XDP or DPDK packet I/O. It targets short FIX order,
 execution and market-data messages while keeping the existing Zi connection,
 allocator and application framing interfaces.
 
@@ -127,10 +127,12 @@ interfaces { route0 { port net_ring0 rxInterval 50 } }
 ```
 
 Configure routes and permanent neighbors for the peer or next hop on `route0`.
-`env->nif(&mx, "route0")` queries that kernel interface once and opens the
-independently named native port. The plugin trusts this association; Linux and
-native MTU/MAC equality is not required. Plugin construction initializes EAL;
-releasing the final Env reference destroys it after child retirement.
+`env->nif(&mx, "route0")` opens the configured DPDK port and reads its MTU and
+MAC. Set `MxParams::routingIfindex` to the Linux interface index for `route0`
+when handing the device to Zutcp. The software fixture selects `_loop` for one
+ring port and a separately named port for its peer. Each endpoint uses its own
+Linux routing interface. Plugin construction initializes EAL. Releasing the
+final Env reference destroys it after child retirement.
 
 The TCP handoff and allocator setup are identical to AF_XDP. An identical stopped
 repeat may pass an empty Nif reference and must retain the same Env, multiplexer
@@ -161,8 +163,10 @@ XDP, which releases the registration, arena, and device resources. This also
 happens when the multiplexer never starts. Stop and restart retain allocation
 and TCP history. The plugin’s binding to the multiplexer is permanent.
 
-Zutcp uses the injected XDP interface for route and static-neighbor resolution.
-This bounded netlink work runs on mx Rx during connection setup. A destination
+Zutcp uses `MxParams::routingIfindex` for route and static-neighbor resolution,
+defaulting to the packet device's Linux index when available. This bounded
+netlink work runs on mx Rx during connection setup. Wire paths use the packet
+device's MAC and the smaller of its MTU and the resolved path MTU. A destination
 mask configured on XDP leaves unmatched traffic to the host stack.
 
 ### Using kernel TCP
@@ -255,11 +259,16 @@ available backing. These copies preserve independent mutable receive owners.
 Unregistered or incorrectly sized native output is rejected; there is no hidden
 producer-to-wire payload-copy fallback.
 
-Each UDP endpoint retains its eight most recently inserted peer IP paths on Tx.
+Multicast Tx uses the selected Nif's MAC and MTU and derives the destination
+Ethernet MAC from the group IP. It requires a concrete local source IP or the
+IPv4 multicast interface address option. Connected setup rejects a multicast
+peer without a source. An unconnected send reports an error for that datagram.
+
+Each UDP endpoint retains its eight most recently inserted unicast peer IP paths on Tx.
 Ports on the same peer share a path. The current peer takes one direct comparison,
 and a change of peer searches the bounded cache before posting a lookup to Rx.
 One rtnetlink subscription per running multiplexer covers route, neighbor,
-address, next-hop, link and policy changes. Active UDP sends check a coarse
+address, next-hop, link and policy changes. Active unicast UDP sends check a coarse
 monotonic clock and drain notifications every 10 ms. The first send after
 an idle interval also checks. A notification or socket overrun invalidates
 every endpoint's paths by generation. If the subscription is unavailable,

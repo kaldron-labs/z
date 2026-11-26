@@ -1,16 +1,16 @@
 # Zpkt: Linux packet I/O
 
-Zpkt supplies raw Ethernet packet service over AF_XDP and optional DPDK.
+Zpkt supplies raw Ethernet packet service over AF_XDP, AF_PACKET and optional DPDK.
 The [interface contract](INTERFACE.md) defines its boundary. The caller supplies
 transport state, application adaptation and scheduling.
 Include `<zlib/Zpkt.hh>` for device operations and `<zlib/ZpktEnv.hh>` for
 application-owned construction. Link common `libZpkt`, `libZi` and their framework
-dependencies. Load `libZpkt_xdp.so` or `libZpkt_dpdk.so` through Env configuration;
+dependencies. Load `libZpkt_xdp.so`, `libZpkt_afp.so` or `libZpkt_dpdk.so` through Env configuration.
 production callers have no direct native-backend linkage.
 For Zi provider and transport integration see [Zutcp](../zutcp/README.md) and its
 [kernel/native quickstart](../zutcp/util/README.md), including sudo, interface
 ownership, routes and static neighbors.
-Both modules are Linux-only and are excluded from Windows builds.
+The packet backends are Linux-only.
 
 The package and API naming change is breaking. Rebuild callers against the
 `Zpkt` headers and namespace, select `libZpkt_xdp.so` or `libZpkt_dpdk.so` in
@@ -20,14 +20,14 @@ loaders resolve the `ZpktPlugin` initialization entry point.
 ## Modules and named interfaces
 
 Common code in `src` builds versioned `libZpkt`. The module-specific source
-directories `xdp` and optional `dpdk` build unversioned libtool modules
-`libZpkt_xdp.so` and `libZpkt_dpdk.so` in the existing library installation directory.
+directories `xdp`, `afp` and optional `dpdk` build unversioned libtool modules
+in the existing library installation directory.
 The installed headers are `ZpktLib.hh`, `Zpkt.hh`, `ZpktPlugin.hh` and `ZpktEnv.hh`.
 Backend headers and the core query header are private.
 
 Initialize an intrusive Env from a ZfCf tree. Initialization loads owned typed
 configuration; it creates no named device. The Cf tree can be released after init.
-Both plugins use the Linux interface name as the map key. For AF_XDP, select
+Plugins use the Linux interface name as the map key. For AF_XDP, select
 a sender slot (`txSid`) distinct from the multiplexer's Rx and Tx slots. For
 DPDK, map that same key to a native port as shown in the [DPDK example](#dpdk).
 
@@ -67,8 +67,11 @@ auto queues = xdp->rxQueues();
 ```
 
 The factory returns an initialized, stopped, unallocated Nif. `ifindex()`, `mtu()`,
-`mac()` and `rxQueues()` expose its geometry. Env queries the Linux interface on
-one cache miss and passes trusted `NifInfo` to its backend. A same-name/multiplexer
+`mac()` and `rxQueues()` expose its geometry. Env supplies host geometry to
+AF_XDP and AF_PACKET on a cache miss. DPDK obtains it from the native port.
+`env->loopback()` reports backend support for the reserved name `_loop`
+before any open. Only DPDK supports it, using a configured `net_ring` port.
+A same-name/multiplexer
 lookup returns the same pointer without querying or reopening, including while
 running; a different multiplexer returns a structured error. The caller acquires
 its own reference immediately. AF_XDP redirects all interface traffic, including
@@ -97,6 +100,24 @@ plain function pointer of type `ZuUnion<NifInfo, ZeException> (*)(ZuCSpan)` duri
 serialized setup. It defaults to the real core query and survives init. A hit
 calls neither query nor plugin. A query error propagates without backend creation.
 
+## AF_PACKET
+
+```text
+module libZpkt_afp.so
+interfaces {
+  veth0 { rxSpin 0 }
+  shaped0 { qdiscBypass false }
+}
+```
+
+AFP needs `CAP_NET_RAW` in the interface's network namespace. It receives
+raw Ethernet using nonblocking `recvmmsg()` and transmits with `sendmmsg()`.
+The caller computes TCP checksums. `qdiscBypass` defaults to true and is
+applied for each run. Set it to false to use the Linux egress scheduler.
+`status()` reports the effective setting, kernel drops and software discards.
+On the Tx owner, `pollTx()` retires accepted sends after the kernel copy.
+See [AF_PACKET lifecycle](INTERFACE.md#af_packet-lifecycle).
+
 ## DPDK
 
 On Linux, `z.config` enables DPDK when configuring the tree. It requires
@@ -115,7 +136,7 @@ eal {
   vdev [ "net_af_packet0,iface=veth0" ]
 }
 interfaces {
-  route0 { port net_af_packet0 spin 1000 rxInterval 50 }
+  veth0 { port net_af_packet0 spin 1000 rxInterval 50 }
 }
 ```
 
@@ -126,20 +147,20 @@ permits one process-wide initialization attempt. `Dpdk::EAL::init` throws
 `ZeException` on failure. Final Env reference release
 destroys its plugin and EAL after all children have retired.
 
-The Linux key `route0` must resolve. Its queried geometry and routing identity
-are independent of the nonempty native `port` name. DPDK resolves that native
-Ethernet port exclusively, trusts the configured association, and performs no
-second Linux query or Linux/native MTU/MAC equality check. Ring and pcap fixtures
-create real dummy Linux Nifs even when packet service uses a simulated wire.
+DPDK claims the configured native Ethernet port and queries its MAC and MTU.
+A `_loop` entry selects a `net_ring` port without a host lookup. When a
+transport needs Linux routes or neighbors, provision a real routing interface
+for that endpoint independently of packet selection.
 A build without DPDK reports the normal loader error for a missing DPDK module.
 
 DPDK uses the multiplexer’s existing Rx and Tx owners. It submits native mbufs
-directly with one driver reference per accepted send. Caller backing stays valid
+directly with one driver reference per accepted send. The owner retires each
+submission using the exact pointer returned through its Tx mempool. Caller backing stays valid
 while its allocation lease is held. The same pools survive stop and restart.
 `rxInterval` caps idle parks in microseconds and defaults to 50; zero polls
 continuously. Ring forwards mbuf pointers and pcap copies bytes. With AF_PACKET,
 the native ingress data room also accommodates the PMD's `framesz` packet capacity,
-defaulting to 2,048 bytes. The supplied Linux MTU bounds the caller's frame size.
+defaulting to 2,048 bytes. The native port MTU bounds the caller's frame size.
 See [DPDK lifecycle](INTERFACE.md#dpdk-lifecycle) and
 [software acceptance commands](itest/README.md#dpdk-software-drivers).
 
@@ -183,15 +204,16 @@ own that ordering, including when they allocate and never start. `final()` is
 idempotent while stopped and the destructor also calls it.
 
 Allocate with `txPool.alloc()`, construct the complete Ethernet packet directly
-in that backing and call `xdp->send(packet, length)`. A false return leaves
-ownership with the caller. A true return publishes a descriptor and holds a kernel
-lease; keep bytes immutable until kernel retirement. Explicitly return the caller's
+in that backing and call `xdp->send(packet, length)`. `Zi::OK` publishes a
+descriptor and holds a kernel lease. Keep bytes immutable until retirement.
+Refusal leaves ownership with the caller. Explicitly return the caller's
 allocation lease with `pool.free(packet)`. Recycling waits for both leases to end,
 so return may precede CQ. Kernel completion does not prove successful wire delivery.
 Exhaustion returns null and never allocates a replacement.
-A shared pending-descriptor counter coalesces sender work. The producer increments
-it before descriptor commit and schedules the assigned slot with `run()` after
-commit on a zero-to-one transition. That slot calls nonblocking `sendto()`, tracks
+A vector send publishes the first packet immediately and grows group targets from
+two through 64 by doubling. Each group adds its pending count and commits the
+producer index once. A group whose addition observes zero schedules the assigned
+slot after commit. That slot calls nonblocking `sendto()`, tracks
 kernel consumer progress, and spins for `spin` idle rounds before returning to
 the scheduler. Atomic subtraction of consumed descriptors preserves a concurrent
 publication. No Tx epoll, eventfd or wait timeout is used; Rx retains its separate
@@ -270,9 +292,9 @@ the same cleanup path and returns its originating error through `error()`.
 
 ## Verification
 
-Build the configured dependency source layers before zpkt's `src`, `xdp`,
-configured `dpdk`, and dependent targets; run `make -C zpkt/test test` for
-unprivileged tests. For this refactor follow the restricted [rebuild protocol](../zpkt_plugin_plan.md#rebuild-protocol-and-scope)
+Build the configured dependency source layers before zpkt's `src`, `afp`,
+`xdp`, configured `dpdk`, and dependent targets. Run `make -C zpkt/test test` for
+unprivileged tests. Follow the [scoped rebuild](../zpkt_rebuild.md)
 with one eight-job jobserver; do not traverse unrelated modules. See [integration tests](itest/README.md) for scoped privileged
 kernel tests and [utilities](util/README.md) for independent packet processes.
 The implementation targets Linux AF_XDP with single-frame packets fitting one

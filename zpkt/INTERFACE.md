@@ -13,12 +13,22 @@ plugin is published.
 
 `Env::nif(ZiMultiplex *, ZuCSpan name)` returns
 `ZuUnion<Nif *, ZeException>`. It requires initialized Env and caller-serialized
-setup. On a name miss, the multiplexer must be stopped. Core `nifQuery` resolves
-the Linux name and obtains `NifInfo` containing ifindex, MTU, MAC and Rx queue
-count. Env passes this metadata unchanged to `Plugin::nif(mx, name, info)`. The
-backend consumes its owned configuration and opens resources during construction.
+setup. On a name miss, the multiplexer must be stopped. The Linux interface
+name keys the configuration and the Env cache. For backends using host
+geometry, core `nifQuery` resolves that name to `NifInfo` containing ifindex,
+MTU, MAC and Rx queue count. Env passes that metadata to
+`Plugin::nif(mx, name, info)`. DPDK resolves the configured native port and
+supplies its own geometry. The backend opens resources during construction.
 There is no separate Nif initialization method. Creation failure publishes no
 child or cache entry and preserves structured errors.
+
+After initialization and before device creation, `Env::loopback() const` queries
+`Plugin::loopback() const`. Its default is false, as used by AF_XDP and
+AF_PACKET. DPDK returns true and accepts `_loop` for a configured `net_ring`
+port. The exact name `_loop` bypasses host resolution in either case.
+Unsupported backends return a structured error. A supported backend obtains
+the geometry from its port. The cache and multiplexer rules apply to
+`_loop`, and `lo` is an ordinary host name.
 
 The recipient immediately acquires a `ZmRef<Nif>` from a successful result.
 A new Nif is initialized, stopped and unallocated. Env owns a
@@ -72,7 +82,7 @@ allocates before start when the application needs native Tx buffers early.
 Otherwise `mx.start()` performs that allocation.
 
 Configure TCP retries in the `Zutcp::MxParams` passed to `tcp->init()`.
-For both backends, `txRetries` sets the number of immediate retries on the
+For each backend, `txRetries` sets the number of immediate retries on the
 shared TX thread after an idle device refuses original TCP data (default 1).
 After these attempts, retry once per `txBackoff` interval while idle refusals
 continue. The interval is a positive `ZuTime`, default 1 ms. Zero `txRetries`
@@ -87,6 +97,13 @@ Tx list may contain multiple pools per role, each with independent geometry.
 A transport can also supply internal Tx reserves with `reserveTxPools()`
 before backing allocation. XDP retains pool references without changing the
 caller list's membership.
+
+Each pool has its own requested logical capacity, including the small transport
+control pool. The canonical data base meets the cache-line, caller and native
+alignment requirements. The physical data extent includes any required
+protocol or native offset and is rounded to a multiple of `Zm::CacheLineSize`.
+Private headers and padding preserve that alignment between slots.
+Packet access, validation and interior pointer lookup use the logical geometry.
 
 XDP maps one contiguous arena and registers it with one AF_XDP socket.
 Linux requires a bound UMEM owner and separate FILL/CQ pairs for distinct
@@ -107,8 +124,8 @@ sockets and mappings and retains the allocation for retry. Inspect `error()`
 after start or stop completes.
 
 The receive callback takes the Ethernet frame pointer, its length, and a
-borrowed `ZiRxBurst *`. A singleton has a null burst. AF_XDP and DPDK
-supply a scope only when multiple descriptors were already available in one
+borrowed `ZiRxBurst *`. A singleton has a null burst. Backends supply a burst
+scope when multiple frames were already available in one
 dequeue. Contiguous deliveries may hand off original buffer nodes together.
 The scope drains on return from that dequeue, including a wake or discard.
 
@@ -125,11 +142,17 @@ that backing. `send(packet, length)` accepts one outstanding kernel
 submission per slot. The Tx owner can submit up to `Zpkt::MaxTxBatch` frames
 with `send(ZuSpan<const Zpkt::TxPacket>)`. The returned count accepts exactly
 that many leading entries. The caller retains the remaining entries in
-resubmittable form. DPDK makes one PMD call for the prepared prefix. AF_XDP
-publishes descriptors in order and stops at the first refusal.
+resubmittable form. DPDK makes one PMD call for the prepared prefix and
+AF_PACKET makes one nonblocking `sendmmsg()` call for its prepared prefix,
+retrying an interruption before progress while running. AF_XDP publishes the
+first frame through the scalar path and hands it off before preparing frame
+two. Each call starts at one, then admits groups with targets 2, 4, 8, 16,
+32 and 64, bounded by remaining input and capacity. It publishes a short
+group immediately and ends at the first refusal or capacity shortfall.
 The AF_XDP sender uses nonblocking `sendto()` on the assigned
-multiplexer slot. The producer increments a descriptor count before publish
-and schedules the sender on the zero-to-one transition. Descriptor consumption
+multiplexer slot. Each nonempty group adds its count once, release-publishes
+its producer index once, and schedules the sender after publication if the
+addition observed zero pending descriptors. Descriptor consumption
 tracks pending work. `pollTx()` separately retires kernel leases on the Tx
 owner. The caller returns its own allocation lease with the original pool.
 Recycling waits for both leases.
@@ -142,8 +165,8 @@ netlink XSK checksum capability, provisions a private Tx metadata prefix and
 registers its length with UMEM. It reports true only with successful metadata
 registration, native zero-copy service and current driver capability. Copy mode,
 unsupported registration and pools requiring a full-page frame report false.
-DPDK reports its enabled setting after configuration fallback. All frames use
-plain `send()`.
+DPDK reports its enabled setting after configuration fallback. AF_PACKET
+always reports false. All frames use plain `send()`.
 
 When offload is false, supply a completed TCP checksum. When true, TCP frames
 must contain the pseudo-header seed; DPDK derives native header lengths/flags
@@ -202,13 +225,13 @@ its existing cleanup behavior, including native success before a later startup
 failure. Independent EAL cases use fresh processes.
 
 Each interface entry has required nonempty native `port`, optional `spin` (`Zi_DefltSpin`)
-and `rxInterval` (50 microseconds). The map key must resolve to a Linux Nif.
-Env supplies that Linux identity and geometry; the backend resolves only `port`
-through native DPDK APIs and discovers backend capabilities. It trusts the
-configured pairing and performs no Linux query or MTU/MAC agreement check.
-The opened port remains exclusive through device finalization. Successful named
-lookup exposes the supplied Linux MTU/MAC/routing identity and DPDK's selected
-single Rx queue before pools exist. Repeat lookup is owned by Env's tree.
+and `rxInterval` (50 microseconds). For a host name, the map selects the native
+port even when the PMD owns the interface and it is absent from Linux. DPDK
+takes MTU and MAC from that port and exposes its ifindex when supplied by the PMD.
+It configures a single Rx queue. Applications that use Linux routing provision
+their routing interface separately when needed. A configured `_loop` entry
+must select a `net_ring` port. The opened port remains exclusive through
+device finalization. Repeat lookup is owned by Env's tree.
 
 Provision the common Rx pool and each distinct Tx pool as one unit.
 If native allocation fails, retry with the same pool collection. Direct
@@ -219,10 +242,13 @@ may be smaller than an MTU. The PMD can use every Rx mbuf.
 Start configures one contiguous-frame Rx queue and one Tx queue. Run `rx()`
 and `pollTx()` on their single owners. Call `send()` on the Tx owner with a
 pointer within its native backing. Rejected sends preserve caller bytes and
-ownership. Accepted sends hold one driver reference until retirement. Keep
-bytes immutable until then. The same `txReady(packet)` Tx-owner contract applies
-before re-encoding retained backing. `pollTx()` counts each retired submission once,
-including when the application retains a separate recovery allocation lease.
+ownership. The driver receives the original direct mbuf with one native
+reference. Cacheless Tx mempool operations publish the exact returned mbufs
+to the Tx owner, which retires their submission leases. An empty poll examines
+no packet slots. Driver cleanup can make progress on an idle port. The same
+`txReady(packet)` Tx-owner contract applies before re-encoding retained
+backing. `pollTx()` counts each retired submission once. A retained caller
+lease keeps the original bytes and address available for retransmission.
 
 The Rx owner checks counted wakes between bursts. It spins through the
 configured number of empty probes, then uses a receive interrupt fd when
@@ -241,3 +267,54 @@ inside its callback. DPDK counters are available only as supplied by the PMD.
 `status()` reports the backend, opened device, link geometry, copy mode and
 the current queue setup. Ring uses direct mbuf forwarding. Pcap uses copies
 and supports finite capture input in this lifecycle.
+
+## AF_PACKET lifecycle
+
+Select `libZpkt_afp.so` and configure the host interface under `interfaces`.
+`rxSpin` defaults to `(Zi_DefltSpin << 2)` and zero proceeds directly to
+the readiness wait. `qdiscBypass` defaults to true. Set it to false to use
+the normal kernel egress scheduler. The plugin requires raw-socket
+permission in the interface's network namespace. It opens a dormant
+protocol-zero socket during named creation and reports one logical Rx queue.
+AF_PACKET uses the caller's Rx and Tx owners and copies packet bytes.
+
+Allocation retains one Rx pool and the distinct Tx and reserve pools as one
+transaction. Receive vectors use the entire logical extent from the canonical
+base. Rx pools must hold the interface MTU plus the Ethernet header. Receive
+and transmit lengths exclude the FCS and include any complete VLAN headers.
+Returned pointers may name any accessible byte in a slot.
+
+Start configures the nonblocking service socket and eventfd before enabling
+ingress. Requested bypass is applied before the active bind on every run.
+An unsupported bypass option falls back to the default qdisc path.
+Other setup errors roll back activation and leave pools available for retry.
+
+Rx uses `recvmmsg()` in bursts bounded by 32, the receive quantum and
+available slots. It suppresses outgoing frames and restores VLAN tags
+reported in packet auxdata. A public wake during delivery lets the active
+burst finish, then returns before the next dequeue. Stop releases the
+undelivered suffix. When slots run out, the next off-owner return wakes the
+receiver to replenish capacity. Public wake pulses are counted separately.
+
+Tx provisional leases keep duplicate slots out of the prepared prefix.
+`sendmmsg()` accepts the leading entries counted by the syscall and releases
+the remaining provisional leases. Temporary socket pressure reports
+`Zi::NotReady` in scalar sends. An oversize frame reports `Zi::IOError`
+and leaves the service running. Accepted frames hold a logical submission
+lease until `pollTx()` even though the kernel has already copied their bytes.
+Retirement permits rewriting and retransmission of caller-held backing.
+
+Stop and fatal error teardown close admission, interrupt and quiesce Rx,
+retire Tx on its owner and invoke `txStopped` there. Stop completes after the
+callback and any admitted wake writers finish and the run descriptors close.
+Use asynchronous stop from a receive callback. A restart opens a fresh
+service socket and eventfd and reuses the allocated pools. Return every
+caller-held slot before finalization.
+
+Active callback-scoped views are named `afp.<ifindex>.rx` and
+`afp.<ifindex>.tx`. Rx counts callback deliveries and exposes the kernel
+drop total in its `full` field, saturated to that field's width. Tx counts
+accepted and retired frames and bytes and samples pending occupancy.
+`PACKET_STATISTICS` resets on read, so status and queue views sample through
+one serialized per-run accumulator. Status reports software discards,
+requested and effective bypass, and any unsupported-option fallback.

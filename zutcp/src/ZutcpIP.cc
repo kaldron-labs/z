@@ -90,7 +90,7 @@ static void routeAttr(nlmsghdr *request, unsigned type, const void *data, unsign
 }
 
 static ZuUnion<IPPath, ZeException> resolvePath(
-  int fd, unsigned interface, IPPath path, bool multicast)
+  int fd, unsigned interface, IPPath path)
 {
   auto family = path.remote.type() == ZiIPType::V4 ? AF_INET : AF_INET6;
   unsigned bytes = family == AF_INET ? sizeof(in_addr) : sizeof(in6_addr);
@@ -116,8 +116,7 @@ static ZuUnion<IPPath, ZeException> resolvePath(
     return ZeEXCEPT(Error, "Zutcp", "missing route result");
   }
   route = reinterpret_cast<rtmsg *>(NLMSG_DATA(answer));
-  if (route->rtm_family != family ||
-      (route->rtm_type != RTN_UNICAST && !(multicast && route->rtm_type == RTN_MULTICAST))) {
+  if (route->rtm_family != family || route->rtm_type != RTN_UNICAST) {
     return ZeEXCEPT(Error, "Zutcp", "unusable route on configured interface");
   }
   uint8_t nextHop[16];
@@ -164,18 +163,6 @@ static ZuUnion<IPPath, ZeException> resolvePath(
     }
     path.local = source;
   }
-  if (multicast) {
-    if (family == AF_INET) {
-      auto ip = static_cast<const uint8_t *>(destination);
-      const uint8_t mac[] = {0x01, 0x00, 0x5e, uint8_t(ip[1] & 0x7f), ip[2], ip[3]};
-      memcpy(path.remoteMAC, mac, sizeof(mac));
-    } else {
-      auto ip = static_cast<const uint8_t *>(destination);
-      const uint8_t mac[] = {0x33, 0x33, ip[12], ip[13], ip[14], ip[15]};
-      memcpy(path.remoteMAC, mac, sizeof(mac));
-    }
-    return path;
-  }
   memset(request, 0, sizeof(request));
   header->nlmsg_len = NLMSG_LENGTH(sizeof(ndmsg));
   header->nlmsg_type = RTM_GETNEIGH;
@@ -209,7 +196,7 @@ static ZuUnion<IPPath, ZeException> resolvePath(
   return path;
 }
 
-static ZuUnion<IPPath, ZeException> resolvePath(unsigned interface, IPPath path, bool udp)
+ZuUnion<IPPath, ZeException> resolveIPPath(unsigned interface, IPPath path)
 {
   if ((path.remote.type() != ZiIPType::V4 && path.remote.type() != ZiIPType::V6) ||
       path.remote.wildcard() ||
@@ -233,24 +220,13 @@ static ZuUnion<IPPath, ZeException> resolvePath(unsigned interface, IPPath path,
   int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
   if (fd < 0) return osError("route query socket", errno);
   timeval timeout{1, 0};
-  bool multicast = udp && path.remote.multicast();
   ZuUnion<IPPath, ZeException> result;
   if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)))
     result = osError("route query timeout", errno);
   else
-    result = resolvePath(fd, interface, ZuMv(path), multicast);
+    result = resolvePath(fd, interface, ZuMv(path));
   close(fd);
   return result;
-}
-
-ZuUnion<IPPath, ZeException> resolveIPPath(unsigned interface, IPPath path)
-{
-  return resolvePath(interface, ZuMv(path), false);
-}
-
-ZuUnion<IPPath, ZeException> resolveUDPPath(unsigned interface, IPPath path)
-{
-  return resolvePath(interface, ZuMv(path), true);
 }
 
 static unsigned get16(const uint8_t *p) { return (unsigned(p[0])<<8) | p[1]; }

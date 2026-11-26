@@ -145,6 +145,7 @@ public:
 
 protected:
   void rxQueues(unsigned count) { m_rxQueues = count; }
+  void nifInfo(const NifInfo &);
   void zeroCopy(bool on) {
     constexpr auto bit = NifFlags::ZeroCopy();
     if (on) m_flags |= bit;

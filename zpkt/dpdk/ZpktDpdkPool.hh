@@ -27,13 +27,19 @@
 
 #include <zlib/ZiIOBuf.hh>
 
+#ifdef ZPKT_DPDK_TEST
+namespace Zpkt::Dpdk::ReturnPoint {
+enum { Published = 1, BeforeClear, AfterClear, AfterRecheck, QueuePush, QueuePop, Visit, Wait };
+}
+extern "C" void ZpktTestDpdkReturns(unsigned point, unsigned count);
+#endif
+
 namespace Zpkt::Dpdk {
 
 class ZpktDPDKAPI BufPool;
 
-// One guard ref protects the native slot while either lease is held. Only
-// the PMD's submission uses a second native ref, so even a retained caller
-// lease cannot hide the moment the PMD gives up its own ref.
+// The PMD receives the sole native reference. Caller and submission leases
+// independently protect the slot from application reuse.
 struct ZpktDPDKAPI Slot {
   enum { Caller = 1, Submitted = 2 };
 
@@ -42,10 +48,31 @@ struct ZpktDPDKAPI Slot {
   uint8_t	*packet;
   ZmAtomic<unsigned> leases{0};
 
-  bool submit();
-  bool retired() const;
-  void releaseSubmission();
+  bool submit() { return leases.cmpXch(Caller | Submitted, Caller) == Caller; }
   void release(unsigned lease);
+};
+
+// One ready queue per Nif. A queued pool owns its notification claim until
+// its returns are drained or the claim is transferred to the queue tail.
+class ZpktDPDKAPI TxReturns {
+public:
+  TxReturns() = default;
+  ~TxReturns();
+  TxReturns(const TxReturns &) = delete;
+  TxReturns &operator =(const TxReturns &) = delete;
+
+  int init(unsigned count, int socket);
+  void reset();
+  void enter() { ++m_active; }
+  void leave() { --m_active; }
+  bool active() const { return bool(m_active); }
+  void push(rte_mempool *);
+  rte_mempool *shift();
+  void settle(rte_mempool *);
+
+private:
+  rte_ring	*m_ready = nullptr;
+  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> m_active{0};
 };
 
 // Each populated 4 KiB page indexes its packet start addresses by cache
@@ -98,11 +125,14 @@ public:
     Prepared &operator =(const Prepared &) = delete;
 
     rte_mempool *native() const { return m_pool; }
-    int init(BufPool &, int socket, unsigned dataSize);
+    int init(BufPool &, int socket, unsigned dataSize, TxReturns *);
     Slot *find(const void *packet) const { return m_index.find(packet); }
 
   private:
+    void reset();
+
     rte_mempool	*m_pool = nullptr;
+    bool	m_tx = false;
     AddressIndex m_index;
   };
 
@@ -111,12 +141,18 @@ public:
     unsigned headRoom, unsigned tailRoom, unsigned align);
   ~BufPool() override;
 
-  int prepare(Prepared &, int socket, unsigned minDataSize = 0);
+  int prepare(Prepared &, int socket, unsigned minDataSize = 0, TxReturns * = nullptr);
   void publish(Prepared &&);
   bool final();
 
   rte_mempool *native() const { return m_backing.native(); }
   static Slot *slot(rte_mbuf *mbuf) { return static_cast<Slot *>(rte_mbuf_to_priv(mbuf)); }
+  static void resetTx(rte_mbuf *mbuf) {
+    rte_mbuf_refcnt_set(mbuf, 1);
+    mbuf->ol_flags = 0;
+    rte_pktmbuf_reset(mbuf);
+  }
+  unsigned available() const;
   void returned(ZmFn<void()> fn) { m_returned = ZuMv(fn); }
   bool adopt(rte_mbuf *);
 

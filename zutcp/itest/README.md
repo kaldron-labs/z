@@ -7,17 +7,18 @@ independently named ring/pcap ports provide the simulated wire. Build-tree modul
 paths are supplied per target. Stop/drain and buffer-return ordering is unchanged.
 
 These Linux tests exercise actual MxPlugin/Zpkt packet I/O, standard TCP headers
-and raw application bytes. They require usable AF_XDP/BPF, sudo/root, network
-namespaces, iproute2, ethtool, tcpdump, Python3 and Perl/prove. Missing privileges
-or fixture variables produce visible skips; a skip is not native acceptance.
+and raw application bytes. They require sudo/root, network namespaces, iproute2,
+ethtool, tcpdump, Python3 and Perl/prove. AF_XDP cases require usable AF_XDP/BPF.
+AFP cases require nftables. Missing privileges or fixture variables produce
+visible skips.
 See the [kernel/native quickstart](../util/README.md) for application integration,
 provider lifetime, interface ownership, routes, static neighbors and sudo setup.
 Physical Ethernet operation remains unverified in the current environment.
 
 ## Build and run
 
-Follow [the plugin plan's rebuild scope](../../zpkt_plugin_plan.md#rebuild-protocol-and-scope)
-and REBUILD through Phase 7 in the current configuration. Rebuild the allowed
+Follow [the repository rebuild](../../REBUILD.md#phase-6) through Phase 7 in
+the current configuration. Rebuild the allowed
 configured dependencies before `zutcp/src` and its consumers, sharing one make
 jobserver with total concurrency 8. The
 commands below illustrate directory targets; when run concurrently they must
@@ -36,10 +37,9 @@ sudo -n unshare --net bash zutcp/util/zutcpfixture.sh \
 
 Compilation runs unprivileged. The launcher creates anonymous private veth/dummy
 links and exports the existing `ZPKT_*` fixture variables. The mapping fixture
-adds private routes and static neighbors and disables checksum offload. Native
-addresses are not assigned to kernel interfaces. Each subprocess fixture owns
-and cleans its extra namespaces/links. No private `review_context` script is
-required. Tests retain failure diagnostics through the Zi residue helper.
+adds private routes and static neighbors and disables checksum offload. Each
+subprocess fixture owns and cleans its extra namespaces and links. Tests retain
+failure diagnostics through the Zi residue helper.
 
 The ordinary directory `make test` target also includes the optional Ztcp and
 Ztls application drivers below. Use explicit native targets while developing TCP.
@@ -157,6 +157,26 @@ sudo -n unshare --mount --net --propagation private \
 
 The runner accepts either address family with either mode.
 
+## AF_PACKET TCP
+
+`zutcpafptest` opens interfaces through the public Zpkt Env and registers typed
+Ztcp allocators through ZiMultiplex. It transfers distinct 4,096-byte streams in
+both directions over IPv4 and IPv6 using the AFP socket backend.
+
+```sh
+make -C zutcp/itest zutcpafptest
+sudo -n env ZPKT_RUN_FIXTURE=1 prove -v zutcp/itest/zutcpafptest
+```
+
+Each exchange gives the client and server their own namespaces and veth
+interfaces. Counted nftables input rules match the test interface, address
+pair and server port 18187. AFP receives packets before the input rules drop
+them, and both rule counters must advance. The fixture disables offloads and
+captures both directions at peer ingress. It verifies IP and TCP checksums,
+exact wire payloads, both FIN acknowledgments and zero TCP resets.
+TAP diagnostics report the rule counts and verified byte totals. Failed
+exchanges retain their captures and endpoint logs.
+
 ## DPDK software ports
 
 Use the current configuration with libdpdk 25.11 or later and its stock
@@ -169,12 +189,13 @@ make -C zutcp/itest -j8 zutcpdpdktest
 sudo -n prove -v zutcp/itest/zutcpdpdktest
 ```
 
-`zutcpdpdktest` creates its own namespace with `iproute2`. It opens `net_ring_zutcp0`
-and `net_ring_zutcp1` and uses independently named Linux dummy interfaces for core geometry and
-routing. The plugin trusts the configured association and supplied metadata; it
-performs no Linux/native MTU or MAC agreement check. Static IPv4 and IPv6 routes and permanent neighbors provide the
-control-plane lookup. The independent software wire copies each Tx frame into a
-slot from the destination's DPDK ingress pool. Setup failures fail TAP.
+`zutcpdpdktest` creates its own namespace with `iproute2`. It opens `net_ring_loopa`
+through `_loop` and opens `net_ring_zutcp1` through the separate peer name `zdpdkb`.
+Static IPv4 and IPv6 routes and permanent neighbors live on Linux dummy links
+with different MACs and MTUs from the ports. The driver verifies that Zutcp uses
+the configured routing links and the native wire geometry. The independent
+software wire copies each frame into a slot from the destination's DPDK Rx pool.
+Setup failures fail TAP.
 
 The driver uses real ZiMultiplex/Zutcp ownership transfers and Ztcp stream
 callbacks. It runs TCP-only, UDP-only and mixed traffic for both address families,
@@ -192,7 +213,7 @@ three connection/endpoint attempts change ACK/window/options. Eight profiles
 cover both families, TS/SACK and ordinary DATA/DATA+FIN references. FIN is retained
 through the actual send/recovery protocol history and cumulative ACK covers its
 extra sequence position. It verifies unchanged whole-frame bytes,
-callback entry, native reference count and admission, then same-slot recovery
+callback entry, the PMD's sole native reference and admission, then same-slot recovery
 with independent checksum/header/payload checks. Both ACK/driver-retirement
 orders return the slot once. A held-PMD shutdown case releases the reference
 only after MxPlugin Closing is observed, then verifies stop/restart and retirement.

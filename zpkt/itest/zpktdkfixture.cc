@@ -82,7 +82,7 @@ template <typename ...Args> static Result ip(Args... args)
   return {};
 }
 
-Result Runtime::init(bool isolated)
+Result Runtime::init(bool isolated, const char *module)
 {
   if (isolated && unshare(CLONE_NEWNET)) return error("isolate dummy kernel Nifs", errno);
 
@@ -91,7 +91,7 @@ Result Runtime::init(bool isolated)
     *m_dir = 0;
     return error("create test directory", errno);
   }
-  auto cf = ZpktTest::config(ZPKT_DPDK_MODULE);
+  auto cf = ZpktTest::config(module ? module : ZPKT_DPDK_MODULE);
   auto eal = ZpktTest::object(cf.ptr(), "eal");
   for (auto flag : {"noPCI", "noHuge", "noShconf", "noTelemetry"})
     ZpktTest::value(eal, flag, "true");
@@ -111,6 +111,7 @@ Result Runtime::init(bool isolated)
     {"net_pcap_zpkt0", "net_pcap_zpkt0", 50, 0, "02:00:00:00:00:01"},
     {"net_ring_wait", "net_ring_wait", 37, 7, "02:00:00:00:00:01"},
     {"net_ring_poll", "net_ring_poll", 0, 0, "02:00:00:00:00:02"},
+    {"_loop", "net_ring_loopa", 50, 0, nullptr},
     {"net_ring_loopa", "net_ring_loopa", 50, 0, "02:00:00:00:00:01"},
     {"net_ring_loopb", "net_ring_loopb", 50, 0, "02:00:00:00:00:02"},
     {"zdpdka", "net_ring_zutcp0", 100, 4, "02:00:00:00:91:01"},
@@ -119,7 +120,7 @@ Result Runtime::init(bool isolated)
     {"zdpfirst", "net_ring_first", 100, 4, "02:00:00:00:91:02"}
   };
   for (const auto &entry : entries) {
-    if (!if_nametoindex(entry.name)) {
+    if (entry.mac && !if_nametoindex(entry.name)) {
       auto added = ip("link", "add", entry.name, "type", "dummy");
       if (added.is<ZeException>()) return added;
       added = ip("link", "set", entry.name, "address", entry.mac, "mtu", "1500", "up");

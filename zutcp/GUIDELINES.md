@@ -12,13 +12,16 @@ packet service and backing access before reporting stopped. There is no initiali
 or restart-time replacement.
 
 The application retains an intrusive Zpkt::Env, initializes its selected module
-from configuration, and opens the named Linux Nif through env->nif(mx, name).
-DPDK EAL belongs to its plugin; the configuration maps a Linux name to a native
-port. TCP borrows Env and consumes the Nif reference only after successful init.
+from configuration, and opens the named Nif through env->nif(mx, name).
+DPDK EAL belongs to its plugin. Its configuration maps names to native ports and
+supports the reserved `_loop` name for a software ring. TCP borrows Env and
+consumes the Nif reference only after successful init.
 An identical stopped repeat may pass an empty Nif reference; Env, multiplexer and
 TCP configuration must match. TCP final clears its borrowed Env pointer and never
 finalizes Env. Keep Env alive until all children and external Nif references have
-retired. Route and permanent-neighbor resolution use the queried Linux identity.
+retired. Set `MxParams::routingIfindex` when the packet device has a separate
+Linux routing interface. Route and permanent-neighbor queries use that interface.
+Wire paths use the packet device's local MAC and honor both MTU limits.
 Keep transport configuration and allocator registration independent of the
 selected packet device.
 There is no configure() method or public params() accessor. Transfer code uses Ztcp/Ztls

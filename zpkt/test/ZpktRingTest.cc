@@ -131,6 +131,55 @@ static void testWrap()
   exercise<uint64_t>();
 }
 
+static void testPartial()
+{
+  ZuTestScopeRT(testPartial);
+  Mapping map;
+  constexpr uint32_t seed = UINT32_MAX - 1;
+  map.seed(seed);
+  Zpkt::Xdp::TxRing prod;
+  Zpkt::Xdp::RxRing cons;
+  ZuCheckRT(prod.init(map.bytes, sizeof(map.bytes), map.off, 8) &&
+      cons.init(map.bytes, sizeof(map.bytes), map.off, 8), log_("attach wrapping ring peers"));
+  ZuCheckRT(!prod.reserveUpTo(0) && prod.reserveUpTo(6) == 6,
+    log_("reserve six across the physical ring and wrapping cursor"));
+  for (unsigned i = 0; i < 3; ++i) prod.entry(i) = {100 + i, 40 + i, i};
+  ZuCheckRT(!cons.available() && prod.consumed() == seed,
+    log_("the old producer index is visible before commit"));
+  prod.commit(3);
+  uint32_t cursor;
+  memcpy(&cursor, map.bytes + map.off.producer, sizeof(cursor));
+  ZuCheckRT(cursor == 1 && cons.reserve(8) == 3,
+    log_("partial commit publishes exactly three across rollover"));
+  bool entries = true;
+  for (unsigned i = 0; i < 3; ++i) {
+    const auto &entry = cons.entry(i);
+    entries &= entry.addr == 100 + i && entry.len == 40 + i && entry.options == i;
+  }
+  ZuCheckRT(entries, log_("peer receives the three intact descriptors"));
+  cons.cancel();
+  ZuCheckRT(prod.reserve(5) == 5, log_("unused reservation tail is available immediately"));
+  prod.commit(0);
+  ZuCheckRT(cons.available() == 3 && prod.reserve(3) == 3,
+    log_("zero commit leaves the producer index unchanged"));
+  for (unsigned i = 0; i < 3; ++i) prod.entry(i) = {103 + i, 43 + i, i};
+  prod.commit();
+  ZuCheckRT(!prod.reserve(6) && prod.reserveUpTo(6) == 2,
+    log_("exact reservation fails and partial reservation takes the two free entries"));
+  for (unsigned i = 0; i < 2; ++i) prod.entry(i) = {106 + i, 46 + i, i};
+  prod.commit(2);
+  ZuCheckRT(!prod.reserveUpTo(1) && cons.reserve(8) == 8,
+    log_("partial reservation on a full ring publishes nothing"));
+  entries = true;
+  for (unsigned i = 0; i < 8; ++i)
+    entries &= cons.entry(i).addr == 100 + i && cons.entry(i).len == 40 + i;
+  ZuCheckRT(entries, log_("replacement entries occupy the discarded tail in order"));
+  cons.commit();
+  ZuCheckRT(prod.reserveUpTo(6) == 6,
+    log_("a partial reservation refreshes its peer cursor when needed"));
+  prod.commit(0);
+}
+
 static void testProgress()
 {
   ZuTestScope(testProgress);
@@ -268,6 +317,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testLayout);
   ZuTestCall(testWrap);
+  ZuTestCall(testPartial);
   ZuTestCall(testProgress);
   ZuTestCall(testPublication);
   ZuTestCall(testTelemetry);

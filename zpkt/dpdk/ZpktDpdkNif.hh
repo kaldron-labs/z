@@ -38,7 +38,7 @@ public:
   using ZmNHeap<Nif>::operator new;
   using ZmNHeap<Nif>::operator delete;
 
-  Nif(EAL &, ZiMultiplex *, const NifCf &, const NifInfo &);
+  Nif(EAL &, ZiMultiplex *, const NifCf &, bool loopback);
   ~Nif() override;
 
   ZmRef<Zi::IOBufPool> bufPool(
@@ -62,7 +62,6 @@ public:
 private:
   using Result = ZuUnion<void, ZeException>;
   using Pools = ZtArray<ZmRef<BufPool>, ZtArrayHeapID<"Zpkt.Dpdk.Pools">>;
-  using Pending = ZtArray<BufPool::Slot *, ZtArrayHeapID<"Zpkt.Dpdk.TxPending">>;
   enum { Burst = 32, NoPort = RTE_MAX_ETHPORTS };
 
   void start_() override;
@@ -70,10 +69,10 @@ private:
   Result activate();
   void quiesceRx(unsigned left);
   void retire();
-  void finishStop(unsigned left);
+  void finishStop();
   Zu::IO::Result prepareTx(uint8_t *, unsigned, Slot *&);
   static void refuseTx(Slot *);
-  unsigned reapTx(unsigned budget);
+  unsigned drainTx(unsigned budget);
   void cleanTx();
   unsigned receive(bool deliver);
   unsigned block(unsigned delay);
@@ -85,6 +84,7 @@ private:
   uint16_t	m_port = NoPort;
   bool		m_ring = false, m_pcap = false;
 
+  TxReturns	m_txReturns;
   ZmRef<BufPool>	m_rxPool;
   Pools		m_txPools, m_reserves;
   AddressIndex	m_txIndex;
@@ -95,8 +95,8 @@ private:
   ZmAtomic<unsigned> m_rxDepth{0};
   int		m_rxFD = -1;
 
-  alignas(Zm::CacheLineSize) Pending m_pending;
-  unsigned	m_pendingCount = 0, m_reapCursor = 0;
+  alignas(Zm::CacheLineSize) unsigned m_txOutstanding = 0;
+  unsigned	m_txCapacity = 0;
   int		m_txCleanup = 0;
   ZuTime	m_stopDeadline;
 

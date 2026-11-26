@@ -215,7 +215,7 @@ def analyze(directory, helper, reset_validator=None):
               list(range(int(settings['connections']))),
               'application connection IDs/count')
         for c in connections:
-            check(int(c['plugin_actual']) == (result['backend'] == 'native'), 'actual backend')
+            check(int(c['plugin_actual']) == (result['backend'] != 'kernel'), 'actual backend')
             check(int(c['received']) == int(c['accepted']) ==
                   int(settings['messages']) + int(settings['warmup']), 'application counts')
             if role == 'client':
@@ -228,7 +228,7 @@ def analyze(directory, helper, reset_validator=None):
             if result['backend'] == 'kernel':
                 check(int(c['kernel_rcvbuf_actual']) > 0 and int(c['kernel_sndbuf_actual']) > 0,
                       'kernel socket readback')
-        if result['backend'] == 'native':
+        if result['backend'] != 'kernel':
             stopped = one_line(lines, 'native_stopped ')
             check(all(int(stopped[k]) == 0 for k in
                       ('running', 'cxns', 'tx_outstanding' if 'tx_outstanding' in stopped else 'tx_queued')), 'native application connection/Tx drain')

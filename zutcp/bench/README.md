@@ -1,19 +1,20 @@
 # Short FIX comparison (OQ7)
 
-The native benchmark retains an Env through multiplexer destruction. Parsed CLI
-options become a ZfCf interface map and use the dynamic `libZpkt_xdp.so` loader.
-The executable links the common library and receives its build-tree module path
-through per-target CPPFLAGS. Installed applications configure an installed soname
-or explicit module path.
+The packet backends retain an Env through multiplexer destruction. The
+executable links common Zpkt and loads the chosen module through Env.
+The build supplies the module paths. Installed applications can configure the
+installed SONAME or an explicit path.
 
 The [2026-11-15 performance milestone](MILESTONE.md) records the managed
 `zfix/bench/zfixbench` comparison, including kernel-relative results, validation
 and remaining tail-latency work. The direct Zi benchmark described here is a
 separate application fixture.
 
-One `ZiMultiplex` / `ZiConnection` / `ZiRx` / `ZiTx` application supplies both
-choices. `kernel` leaves the plugin unset and uses ordinary TCP sockets. `native`
-installs the existing `Zutcp::MxPlugin` before registration of application allocators.
+One `ZiMultiplex` / `ZiConnection` / `ZiRx` / `ZiTx` application drives each
+backend. `kernel` leaves the plugin unset and uses ordinary TCP sockets.
+`native` or `xdp` selects AF_XDP, `afp` selects AF_PACKET, and `dpdk`
+selects a configured DPDK PMD in a DPDK-enabled build. Packet backends install
+`Zutcp::MxPlugin` before registration of application allocators.
 Each run has two endpoints of the selected kind. Independent real-kernel-peer
 interoperability is covered separately in `zutcp/interop`.
 
@@ -87,7 +88,7 @@ slots, excluding the scheduler's control/timer thread.
 The direct Zi benchmark pins Rx/Tx using its positional CPU arguments. Both
 benchmarks accept `BENCH_CLIENT_XDP_TX_CPU` and `BENCH_SERVER_XDP_TX_CPU` for
 sid 3, defaulting to the endpoint's Rx CPU. With all three slots
-isolated there is no general worker. Native route/static-neighbor lookup runs
+isolated there is no general worker. Route and static-neighbor lookup runs
 synchronously on mx Rx during setup; sid 3 remains the XDP sender slot.
 
 ## Registration and build scope
@@ -143,15 +144,76 @@ evidence is not complete merely because the executable builds.
 namespaces, and cleans up child processes/links on exit. Both scripts refuse
 existing output paths. Only task-owned veth settings/neighbors are changed.
 They record effective offloads, kernel options, before/after link/device/network
-counters, wrapper and real ELF hashes, and workload/configuration. There is no
-physical interface selection or physical-NIC/zero-copy advantage claim.
+counters, wrapper and real ELF hashes, and workload configuration. These
+observations describe software paths.
+
+Add `afp` to `BENCH_BACKENDS` for the AFP copy-path smoke tests. The default
+requests qdisc bypass. Repeat with `BENCH_AFP_QDISC_BYPASS=0` for ordinary kernel
+egress scheduling. Each namespace installs a counted nftables input rule
+matching the test interface, peer and local addresses and TCP port 18187.
+Both counters must advance. With `BENCH_CAPTURE=1` the fixture captures each
+direction at the intermediate bridge and verifies checksums, matching SYN and
+FIN flows, and zero resets. Use `analyze-wire.py` to reconstruct and compare the
+exact application stream. Performance runs use the same isolation with capture
+disabled.
+
+```sh
+sudo -n env BENCH_BACKENDS='kernel native afp' BENCH_FAMILIES='4 6' \
+  BENCH_MESSAGES=100 BENCH_WARMUP=10 BENCH_CAPTURE=1 \
+  ./zutcp/bench/run-compare.sh "$PWD/zutcp/bench/zutcpbench" "$PWD/logs/veth-check" check
+```
+
+The managed FIX executable also supports the private DPDK ring pair selected
+by `BENCH_BACKENDS=dpdk`. The two packet ports share an Env. One opens `_loop`
+and its peer opens a separate configured name. Each transport still resolves
+routes and neighbors through its private kernel interface. The reported CPU
+includes both endpoints and the wire worker.
+
+## Physical endpoints
+
+Run one process per role on the intended hosts. Use the same positional CLI
+for each backend.
+
+```text
+zutcpbench server|client BACKEND INTERFACE SERVER_ADDRESS MESSAGES WARMUP PIPELINE CONNECTIONS RESERVE RX_CPU TX_CPU SPIN|default [SAMPLES.csv]
+```
+
+Use the local OS interface name for `INTERFACE`, including when that name
+keys a DPDK native port. In DPDK mode, set `BENCH_DPDK_CONFIG` to a ZfCf
+file containing the EAL settings and an `interfaces` entry keyed by that
+name. Set `BENCH_ROUTE_INTERFACE` to the actual Linux routing interface
+if it has a different name. The PMD supplies MAC and MTU. Provision the
+routes and static neighbors before the run and verify their next hops.
+For AFP, install flow-specific input rules like the private fixture's rules
+in each endpoint namespace before startup.
+
+This configuration maps the positional interface name `enp5s0` to its
+native DPDK PCI port.
+
+```text
+{
+  eal: { allow: ["0000:05:00.0"], filePrefix: "zutcp-server" },
+  interfaces: { enp5s0: { port: "0000:05:00.0", rxInterval: 0 } }
+}
+```
+
+Verify exact peer exchange on the selected link before timing. Record
+interface, module, active copy mode or PMD, MTU, queue/offload settings and
+the service CPU assignments at each endpoint. Include the XDP sender CPU
+and the requested and effective AFP bypass settings. Use the same
+workload, link speed, message sizes and CPU budget across backends.
+Run the timed commands without capture, using `/usr/bin/time -v` separately
+at each endpoint for whole-process CPU usage. Use the per-run packet drop
+samples as best-effort counters and retain their source and sampling interval.
+
+## Shared run options
 
 For custom rows, shared overrides are `BENCH_WORKLOAD`, `BENCH_BURST_SIZE`,
 `BENCH_BURST_US`, `BENCH_ACK_HOLD_US`, `BENCH_MESSAGES`, `BENCH_WARMUP`, `BENCH_PIPELINE`,
 `BENCH_CONNECTIONS`, `BENCH_RESERVE`, `BENCH_SPIN`, `BENCH_RX_SPIN`, `BENCH_TX_SPIN`,
 `BENCH_CLIENT_RX_CPU`,
 `BENCH_CLIENT_TX_CPU`, `BENCH_SERVER_RX_CPU`, `BENCH_SERVER_TX_CPU`,
-`BENCH_FAMILIES` and `BENCH_BACKENDS`. Defaults select four CPUs in the allowed
+`BENCH_FAMILIES`, `BENCH_BACKENDS` and `BENCH_AFP_QDISC_BYPASS`. Defaults select four CPUs in the allowed
 affinity set, reusing CPUs when fewer are available. Explicit placement is
 recommended. Both modes use the same three-thread scheduler, Rx=1, Tx=2, queue
 65536, wait timeout 1 ms, Rx quantum 8, scheduler quantum 1 us, low-latency mode

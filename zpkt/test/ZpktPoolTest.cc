@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
+#include <linux/bpf.h>
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuLib.hh>
@@ -29,6 +30,33 @@
 
 using namespace ZuTestUtil;
 
+namespace Zpkt::Xdp {
+struct PoolTest {
+  static bool check(
+    BufPool &pool, UMem &arena, unsigned stride, unsigned prefix, unsigned alignment)
+  {
+    enum { Slots = 3 };
+    ZmAssert_(pool.count == Slots);
+    uint8_t *held[Slots]{};
+    bool valid = pool.stride() == stride && pool.m_prefix == prefix;
+    for (unsigned i = 0; i < Slots; ++i) {
+      auto p = held[i] = pool.alloc();
+      if (!p) { valid = false; continue; }
+      valid &= !(uintptr_t(p) % alignment) &&
+	(!i || (held[i - 1] && p - held[i - 1] == stride)) &&
+	arena.pool(p) == &pool && pool.slot(p) == i &&
+	pool.slot(p + pool.size - 1) == i;
+      if (pool.size < stride || i + 1 == Slots)
+	valid &= pool.slot(p + pool.size) == BufPool::NoSlot;
+      p[pool.size - 1] = i;
+    }
+    valid &= !pool.alloc();
+    for (auto p : held) if (p) pool.free(p + pool.size - 1);
+    return valid;
+  }
+};
+} // Zpkt::Xdp
+
 struct PlainPool : ZmNHeap<PlainPool>, Zi::IOBufPool {
 friend inline ZuStringT<"Zpkt.Test.PlainPool"> ZmNHeapID(PlainPool *);
   PlainPool() : Zi::IOBufPool{Zi::IOBufType::TxTCP} { }
@@ -37,13 +65,13 @@ friend inline ZuStringT<"Zpkt.Test.PlainPool"> ZmNHeapID(PlainPool *);
 };
 
 static auto createArena(
-  const Zi::IOBufPoolList &pools, Zi::IOBufPool *rx, unsigned mtu)
+  const Zi::IOBufPoolList &pools, Zi::IOBufPool *rx, unsigned mtu, bool metadata = false)
 {
   ZtArray<ZmRef<Zi::IOBufPool>> refs;
   refs.size(pools.count_());
   auto iter = pools.citer();
   while (auto pool = iter()) new (refs.push()) ZmRef<Zi::IOBufPool>{pool};
-  auto result = Zpkt::Xdp::UMem::create(refs.cspan(), rx, mtu, false);
+  auto result = Zpkt::Xdp::UMem::create(refs.cspan(), rx, mtu, metadata);
   if (result.is<ZmRef<Zpkt::Xdp::UMem>>())
     result.p<ZmRef<Zpkt::Xdp::UMem>>()->publish(
       refs.cspan(), static_cast<Zpkt::Xdp::BufPool *>(rx));
@@ -240,6 +268,64 @@ static void testPoolGeometry()
   }
 }
 
+static void testCacheGeometry()
+{
+  ZuTestScope(testCacheGeometry);
+  enum { Line = Zm::CacheLineSize, Slots = 3, MinimumMTU = 32 };
+  const unsigned sizes[] = {Line - 1, Line, Line + 1};
+  const unsigned alignments[] = {8, Line << 2};
+  for (bool metadata : {false, true}) for (auto align : alignments) for (auto size : sizes) {
+    auto rx = createPool(Zi::IOBufType::Rx, Slots, size, 1, 2, align);
+    auto tx = createPool(Zi::IOBufType::TxTCP, Slots, size, 3, 4, align);
+    auto control = createPool(Zi::IOBufType::TxUDP, Slots, size, size, 0, align);
+    Zi::IOBufPoolList pools;
+    pools.pushNode(tx.ptr());
+    pools.pushNode(control.ptr());
+    auto created = createArena(pools, rx.ptr(), MinimumMTU, metadata);
+    ZuCHECK(created.is<ZmRef<Zpkt::Xdp::UMem>>(),
+      "provision Rx, TxTCP and exact-capacity control Tx pools");
+    if (created.is<ZeException>()) continue;
+    auto arena = ZuMv(created.p<ZmRef<Zpkt::Xdp::UMem>>());
+    auto rxPool = static_cast<Zpkt::Xdp::BufPool *>(rx.ptr());
+    auto txPool = static_cast<Zpkt::Xdp::BufPool *>(tx.ptr());
+    auto ctlPool = static_cast<Zpkt::Xdp::BufPool *>(control.ptr());
+    auto effective = align > Line ? align : unsigned(Line);
+    auto rxPrefix = (XDP_PACKET_HEADROOM + effective - 1) & ~(effective - 1);
+    auto txPrefix = metadata ? effective : 0;
+    auto extent = (size + Line - 1) & ~(Line - 1);
+    auto txExtent = extent + txPrefix;
+    auto txStride = Zpkt::Xdp::power2(txExtent < effective ? effective : txExtent);
+    const auto &layout = arena->layout();
+    ZuCHECK(layout.txMetadata == (metadata ? sizeof(xsk_tx_metadata) : 0) &&
+	layout.prefix == rxPrefix &&
+	Zpkt::Xdp::PoolTest::check(*rxPool, *arena, layout.chunk, rxPrefix, effective) &&
+	Zpkt::Xdp::PoolTest::check(*txPool, *arena, txStride, txPrefix, effective) &&
+	Zpkt::Xdp::PoolTest::check(*ctlPool, *arena, txStride, txPrefix, effective),
+      "every base and stride honor physical alignment with metadata on and off");
+    ZuCHECK(rx->size == size && tx->size == size && control->size == size &&
+	rx->headRoom == 1 && rx->tailRoom == 2 && tx->headRoom == 3 &&
+	tx->tailRoom == 4 && control->headRoom == size,
+      "logical capacity, headroom and tailroom exclude physical padding");
+    arena->retire(pools, rxPool);
+  }
+
+  unsigned page = sysconf(_SC_PAGESIZE);
+  auto rx = createPool(Zi::IOBufType::Rx, Slots, 1514);
+  auto tx = createPool(Zi::IOBufType::TxTCP, Slots, page - (Line << 2) + 1, 0, 0, Line << 2);
+  Zi::IOBufPoolList pools;
+  pools.pushNode(tx.ptr());
+  auto created = createArena(pools, rx.ptr(), 1500, true);
+  ZuCHECK(created.is<ZmRef<Zpkt::Xdp::UMem>>(),
+    "a Tx pool that cannot fit an aligned metadata prefix still fits without offload");
+  if (created.is<ZeException>()) return;
+  auto arena = ZuMv(created.p<ZmRef<Zpkt::Xdp::UMem>>());
+  auto txPool = static_cast<Zpkt::Xdp::BufPool *>(tx.ptr());
+  ZuCHECK(!arena->layout().txMetadata &&
+      Zpkt::Xdp::PoolTest::check(*txPool, *arena, page, 0, Line << 2),
+    "fallback publishes the geometry computed without the oversized metadata prefix");
+  arena->retire(pools, static_cast<Zpkt::Xdp::BufPool *>(rx.ptr()));
+}
+
 static void testContention()
 {
   ZuTestScope(testContention);
@@ -291,5 +377,6 @@ int main(int argc, char **argv)
   ZuTestCall(testInvalid);
   ZuTestCall(testZiAllocator);
   ZuTestCall(testPoolGeometry);
+  ZuTestCall(testCacheGeometry);
   ZuTestCall(testContention);
 }

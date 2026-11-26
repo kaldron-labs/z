@@ -11,11 +11,18 @@
 #include <rte_mbuf.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmAssert.hh>
 
 #include "zpktdkfixture.hh"
 
 using namespace ZuTestUtil;
 using namespace ZpktDpdkTest;
+
+static ZuUnion<Zpkt::NifInfo, ZeException> unexpectedQuery(ZuCSpan)
+{
+  ZmAssert_(false);
+  return ZeEXCEPT(Error, "Zpkt.DpdkTest", "unexpected host query");
+}
 
 struct Transfer {
   Device	*source, *dest;
@@ -29,6 +36,9 @@ struct Transfer {
 static void testLoop(const Runtime &runtime)
 {
   ZuTestScopeRT(testLoop);
+  auto env = runtime.env();
+  env->nifQueryFn(unexpectedQuery);
+  ZuCheckRT(env->loopback(), log_("loaded DPDK advertises loopback before any open"));
   RingPort aPort, bPort;
   auto aa = aPort.init("loopa", 64, {{0x02, 0, 0, 0, 0, 1}});
   auto ba = bPort.init("loopb", 64, {{0x02, 0, 0, 0, 0, 2}});
@@ -37,10 +47,16 @@ static void testLoop(const Runtime &runtime)
   if (!aa.is<void>() || !ba.is<void>()) return;
 
   Device a, b;
-  auto ar = a.init(runtime, aPort.name()), br = b.init(runtime, bPort.name());
+  auto ar = a.init(runtime, "_loop"), br = b.init(runtime, bPort.name());
   ZuCheckRT(ar.is<void>(), log_(errorText(ar.p<ZeException>())));
   ZuCheckRT(br.is<void>(), log_(errorText(br.p<ZeException>())));
   if (!ar.is<void>() || !br.is<void>()) return;
+  auto duplicate = env->nif(&a.mx, "_loop");
+  ZuCheckRT(duplicate.is<Zpkt::Nif *>() && duplicate.p<Zpkt::Nif *>() == a.device.ptr() &&
+      env->nif(&b.mx, "_loop").is<ZeException>() && !a.device->ifindex() &&
+      a.device->mtu() == 1500 && a.device->mac()[5] == 1 &&
+      env->nif(&a.mx, aPort.name()).is<ZeException>(),
+    log_("reserved name preserves the cache and publishes native ring geometry"));
   uint8_t large[1514], small[64];
   for (unsigned i = 0; i < sizeof(large); ++i) large[i] = uint8_t(0x56 ^ i);
   for (unsigned i = 0; i < sizeof(small); ++i) small[i] = uint8_t(0xab ^ i);

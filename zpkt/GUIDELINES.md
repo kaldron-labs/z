@@ -13,16 +13,25 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
   returns the existing Nif without querying or reopening, including while running.
   Env has no engine or start/stop API. Stop/drain children and return buffers
   before Env finalization; release external child references before Env destruction.
-* Core Nif query and shared rtnetlink transport belong in `src`. AF_XDP-only
-  sockets, UMEM, BPF attachment and pools belong in `xdp`; DPDK native resources,
-  EAL and pools belong in `dpdk`. These module-specific source directories build
-  `libZpkt_xdp` and optional `libZpkt_dpdk` after common `libZpkt`.
+* Core Nif query and shared rtnetlink transport belong in `src`. Keep
+  AF_XDP sockets, UMEM, BPF attachment and pools in `xdp`, AF_PACKET sockets
+  and pools in `afp`, and DPDK native resources, EAL and pools in `dpdk`.
+  Build the loadable modules after common `libZpkt`.
+* Treat `_loop` as backend-provided loopback. Check capability before any
+  host lookup. AF_XDP and AF_PACKET use the core-supplied host geometry.
+  DPDK selects the configured port and takes geometry from ethdev.
+* Align every pool's canonical packet bases and physical data extent to the
+  target cache line. Respect stronger caller/native alignment and keep the
+  logical capacity, headroom, tailroom and wire lengths independent of padding.
 * Production callers link common Zpkt and load their chosen backend by module
   path. Backend-private tests may link one backend explicitly. Module code remains
   resident after the initialization entry point has been invoked.
-* DPDK uses the existing Rx and Tx owners. Keep caller and driver leases
-  distinct. Account for completion only when the driver relinquishes its
-  mbuf reference. Stop with the scheduler running so its owners can quiesce.
+* DPDK uses the existing Rx and Tx owners. Keep caller and submission leases
+  distinct. Let the PMD return the sole native reference and deliver returned
+  mbuf identities to the Tx owner through the cacheless mempool. Drain the
+  indicated pools without walking outstanding slots. Stop with the scheduler
+  running and leave the return state alive until outstanding submissions and
+  active return callbacks are drained.
 * The stock ring PMD leaves its rings with the fixture. The fixture copies
   across its simulated wire into an mbuf from the destination's Rx pool.
   Quiesce the software producer before draining that queue.
@@ -78,9 +87,10 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
 * The application assigns a sender `txSid` in its multiplexer configuration and
   configures the slot through its scheduler parameters.
   The scheduler owns thread startup, waiting and teardown. Zpkt owns no sender
-  thread or semaphore. Publish initialized descriptors immediately: increment
-  the pending-descriptor counter before commit and use scheduler `run()` after
-  commit only on a zero-to-one transition. The dedicated sender observes the
+  thread or semaphore. Publish frame one before preparing frame two. Double
+  subsequent group targets up to 64 and publish every initialized prefix
+  immediately. For each group, add the pending count before commit and call
+  scheduler `run()` after commit only if the addition observed zero. The dedicated sender observes the
   kernel consumer delta, spins for the configured `spin` when pending work is
   exhausted, then atomically subtracts that delta. A zero result relinquishes
   ownership. While active, recheck the published descriptors and the kernel
@@ -108,3 +118,16 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
   must interrupt spinning and blocking promptly, including under continuous
   traffic and at the transition into the wait. Internal batches do not cause
   `rx()` to return on their own. The caller owns scheduling and lifecycle retries.
+
+## AF_PACKET
+
+* Use bounded nonblocking socket vectors with independently retainable pool
+  slots and no per-packet allocations. Advertise copy mode and leave TCP
+  checksum computation to the caller. Apply the bypass policy on a dormant
+  socket before each active bind.
+* Close notification writer admission before teardown. Quiesce Rx, retire
+  accepted Tx leases on the Tx owner and run its stopped callback, then close
+  the run descriptors after the last admitted writer finishes. A callback
+  that requests stop must return to its owner.
+* Accumulate resetting packet socket drop counters under the same cold lock
+  used for sampling and socket close. Keep software discards separate.

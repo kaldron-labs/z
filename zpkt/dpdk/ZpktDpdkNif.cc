@@ -84,7 +84,10 @@ static int afPacketMinRxSize(const rte_device *device)
 
 Nif::~Nif()
 {
-  if (mx()) final();
+  if (mx()) {
+    final();
+    ZmAssert_(!mx());
+  }
 }
 
 ZmRef<Zi::IOBufPool> Nif::bufPool(
@@ -94,8 +97,8 @@ ZmRef<Zi::IOBufPool> Nif::bufPool(
   return new BufPool{type, count, size, headRoom, tailRoom, align};
 }
 
-Nif::Nif(EAL &eal, ZiMultiplex *mx, const NifCf &config, const NifInfo &nifInfo)
-: Zpkt::Nif{mx, nifInfo}, m_eal{eal}
+Nif::Nif(EAL &eal, ZiMultiplex *mx, const NifCf &config, bool loopback)
+: Zpkt::Nif{mx, {}}, m_eal{eal}
 {
   if (!mx || mx->state() != ZmEngineState::Stopped)
     throw ZeEXCEPT(Error, "Zpkt.Dpdk", "construct with a stopped multiplexer");
@@ -107,8 +110,17 @@ Nif::Nif(EAL &eal, ZiMultiplex *mx, const NifCf &config, const NifInfo &nifInfo)
     rte_eth_dev_info info{};
     if (int rc = rte_eth_dev_info_get(port, &info))
       throw deviceError("query Ethernet port", -rc);
-    if (!info.max_rx_queues || !info.max_tx_queues || !nifInfo.mtu ||
-	unsigned(nifInfo.mtu) + RTE_ETHER_HDR_LEN + RTE_PKTMBUF_HEADROOM > UINT16_MAX)
+    bool ring = info.driver_name && !strcmp(info.driver_name, "net_ring");
+    if (loopback && !ring)
+      throw deviceError("backend loopback requires a net_ring port", ENOTSUP);
+    uint16_t portMtu;
+    rte_ether_addr portMac{};
+    if (int rc = rte_eth_dev_get_mtu(port, &portMtu))
+      throw deviceError("query Ethernet port MTU", -rc);
+    if (int rc = rte_eth_macaddr_get(port, &portMac))
+      throw deviceError("query Ethernet port MAC", -rc);
+    if (!info.max_rx_queues || !info.max_tx_queues || !portMtu ||
+	unsigned(portMtu) + RTE_ETHER_HDR_LEN + RTE_PKTMBUF_HEADROOM > UINT16_MAX)
       throw deviceError("unsupported Ethernet port geometry", EINVAL);
     bool pcap = info.driver_name && !strcmp(info.driver_name, "net_pcap");
     if (pcap && infinitePcap(info.device))
@@ -123,11 +135,13 @@ Nif::Nif(EAL &eal, ZiMultiplex *mx, const NifCf &config, const NifInfo &nifInfo)
     int fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (fd < 0) throw deviceError("create Rx wake eventfd", errno);
 
-    rxQueues(1);
+    NifInfo geometry{info.if_index, portMtu, 1, {}};
+    memcpy(geometry.mac, portMac.addr_bytes, sizeof(geometry.mac));
+    nifInfo(geometry);
     m_port = port;
     tcpChksumOffload(bool(info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_TCP_CKSUM));
     wakeFD(fd);
-    m_ring = info.driver_name && !strcmp(info.driver_name, "net_ring");
+    m_ring = ring;
     m_pcap = pcap;
     m_afPacketMinRxSize = minRxSize;
     zeroCopy(m_ring);
@@ -200,13 +214,15 @@ Nif::Result Nif::alloc(Zi::IOBufPool *rxPool, const Zi::IOBufPoolList &txPools)
   ZtArray<rte_mempool *, ZtArrayHeapID<"Zpkt.Dpdk.NativePools">> native;
   backing.length(tx.length());
   for (unsigned i = 0; i < tx.length(); ++i) {
-    if (int rc = tx[i]->prepare(backing[i], socket))
+    if (int rc = tx[i]->prepare(backing[i], socket, 0, &m_txReturns))
       return deviceError("allocate DPDK Tx backing", -rc);
     native.push(backing[i].native());
   }
   AddressIndex index;
   if (int rc = index.init(native.cspan())) return deviceError("index DPDK Tx backing", -rc);
-  m_pending.length(unsigned(capacity));
+  if (int rc = m_txReturns.init(tx.length(), socket))
+    return deviceError("allocate DPDK Tx return queue", -rc);
+  m_txCapacity = unsigned(capacity);
   m_txIndex = ZuMv(index);
   m_appTx = appTx;
   m_rxPool = ingress;
@@ -225,20 +241,35 @@ void Nif::final()
   // A failed stop or an outstanding native reference does not permit backing
   // release. Retry the stop with the scheduler already quiescent.
   if (m_started) {
-    int rc = rte_eth_dev_stop(m_port);
-    ZmAssert_(!rc);
+    if (int rc = rte_eth_dev_stop(m_port)) {
+      error(deviceError("stop Ethernet port for finalization", -rc));
+      return;
+    }
     m_started = false;
   }
-  m_reapCursor = 0;
-  reapTx(m_pendingCount);
-  ZmAssert_(!m_pendingCount);
+  drainTx(UINT_MAX);
+  if (m_txOutstanding || m_txReturns.active()) {
+    error(deviceError("Ethernet Tx returns remain active", EBUSY));
+    return;
+  }
+  drainTx(UINT_MAX); // consume announcements from the last exiting publisher
+  if (m_rxPool && m_rxPool->available() != m_rxPool->count) {
+    error(deviceError("Ethernet Rx buffers remain in use", EBUSY));
+    return;
+  }
+  for (const auto &pool : m_txPools)
+    if (pool->available() != pool->count) {
+      error(deviceError("Ethernet Tx buffers remain in use", EBUSY));
+      return;
+    }
   m_txIndex.reset();
   if (m_rxPool) ZmAssert_(m_rxPool->final());
   for (auto &pool : m_txPools) ZmAssert_(pool->final());
   m_rxPool = nullptr;
   m_txPools.null();
   m_reserves.null();
-  m_pending.null();
+  m_txReturns.reset();
+  m_txCapacity = 0;
   m_eal.release(m_port);
   closeWake();
   m_rxFD = -1;
@@ -279,9 +310,10 @@ Nif::Result Nif::activate()
       return deviceError("retire the prior Ethernet run", -rc);
     m_started = false;
   }
-  m_reapCursor = 0;
-  reapTx(m_pendingCount);
-  if (m_pendingCount) return deviceError("prior Tx submissions remain outstanding", EBUSY);
+  drainTx(UINT_MAX);
+  if (m_txOutstanding || m_txReturns.active())
+    return deviceError("prior Tx submissions remain outstanding", EBUSY);
+  drainTx(UINT_MAX);
   rte_eth_dev_info info{};
   if (int rc = rte_eth_dev_info_get(m_port, &info))
     return deviceError("query queue capabilities", -rc);
@@ -319,7 +351,7 @@ Nif::Result Nif::activate()
     rxCount -= rearm;
   }
   auto rxDesc = descriptors(rxCount, info.rx_desc_lim);
-  auto txDesc = descriptors(m_pending.length(), info.tx_desc_lim);
+  auto txDesc = descriptors(m_txCapacity, info.tx_desc_lim);
   if ((rc = rte_eth_dev_adjust_nb_rx_tx_desc(m_port, &rxDesc, &txDesc)))
     return deviceError("adjust Ethernet descriptors", -rc);
   if (!rxDesc || !txDesc || rxDesc > rxCount)
@@ -383,10 +415,13 @@ void Nif::quiesceRx(unsigned left)
 
 void Nif::retire()
 {
-  if (m_pendingCount) {
-    cleanTx();
-    reapTx(Burst);
-    if (m_pendingCount && monotonicNow() < m_stopDeadline) {
+  if (m_txOutstanding) {
+    auto retired = drainTx(Burst);
+    if (m_txOutstanding && retired < Burst) {
+      cleanTx();
+      drainTx(Burst - retired);
+    }
+    if (m_txOutstanding && monotonicNow() < m_stopDeadline) {
       mx()->push([this] { retire(); }, mx()->txThread());
       return;
     }
@@ -399,19 +434,25 @@ void Nif::retire()
     }
     m_rxFD = -1;
   }
-  m_reapCursor = 0;
-  finishStop(m_pendingCount);
+  finishStop();
 }
 
-void Nif::finishStop(unsigned left)
+void Nif::finishStop()
 {
-  auto budget = RTE_MIN(left, unsigned(Burst));
-  reapTx(budget);
-  if (left > budget) {
-    mx()->push([this, left = left - budget] { finishStop(left); }, mx()->txThread());
+  const bool quiesced = !m_txOutstanding && !m_txReturns.active();
+  auto retired = drainTx(Burst);
+  if (retired < Burst && m_txOutstanding && !m_txReturns.active())
+    retired += drainTx(Burst - retired);
+  // A last publisher may announce the pool after the drain observes it empty.
+  // A clean run needs a drain begun with no outstanding work and no publishers.
+  if (retired == Burst || m_txReturns.active() || (!m_txOutstanding && !quiesced)) {
+#ifdef ZPKT_DPDK_TEST
+    if (m_txReturns.active()) ZpktTestDpdkReturns(ReturnPoint::Wait, 0);
+#endif
+    mx()->push([this] { finishStop(); }, mx()->txThread());
     return;
   }
-  if (!failed() && m_pendingCount)
+  if (!failed() && m_txOutstanding)
     error(deviceError("Ethernet Tx still owns submitted buffers after stop", ETIMEDOUT));
   if (!failed() && m_txCleanup < 0 && m_txCleanup != -ENOTSUP && m_txCleanup != -EAGAIN)
     error(deviceError("service Ethernet Tx completions", -m_txCleanup));
@@ -440,7 +481,7 @@ Zu::IO::Result Nif::send(uint8_t *packet, unsigned length)
     refuseTx(slot);
     return Zi::NotReady;
   }
-  m_pending[m_pendingCount++] = slot;
+  ++m_txOutstanding;
   return Zi::OK;
 }
 
@@ -448,21 +489,20 @@ unsigned Nif::send(ZuSpan<const TxPacket> packets)
 {
   if (!ready()) return 0;
   unsigned count = RTE_MIN(packets.length(), uint64_t(MaxTxBatch));
-  count = RTE_MIN(count, m_pending.length() - m_pendingCount);
+  count = RTE_MIN(count, m_txCapacity - m_txOutstanding);
   if (!count) return 0;
   rte_mbuf *mbufs[MaxTxBatch];
-  auto slots = m_pending.data() + m_pendingCount;
   unsigned prepared = 0;
   for (; prepared < count; ++prepared) {
     const auto &packet = packets[prepared];
-    auto &slot = slots[prepared];
+    Slot *slot;
     if (prepareTx(packet.data, packet.length, slot) != Zi::OK) break;
     mbufs[prepared] = slot->mbuf;
   }
   if (!prepared) return 0;
   unsigned accepted = rte_eth_tx_burst(m_port, 0, mbufs, prepared);
-  m_pendingCount += accepted;
-  while (prepared > accepted) refuseTx(slots[--prepared]);
+  m_txOutstanding += accepted;
+  while (prepared > accepted) refuseTx(BufPool::slot(mbufs[--prepared]));
   return accepted;
 }
 
@@ -472,14 +512,13 @@ ZuInline Zu::IO::Result Nif::prepareTx(uint8_t *packet, unsigned length, Slot *&
   ZmAssert_(slot);
   if (!length || length > mtu() + RTE_ETHER_HDR_LEN ||
       length > slot->pool->size - unsigned(packet - slot->packet)) return Zi::IOError;
-  if (m_pendingCount == m_pending.length()) return Zi::NotReady;
+  if (m_txOutstanding == m_txCapacity) return Zi::NotReady;
   if (!slot->submit()) {
     ZmAssert_(slot->leases.load_() & Slot::Caller);
     return Zi::NotReady;
   }
   auto mbuf = slot->mbuf;
-  mbuf->ol_flags &= ~RTE_MBUF_F_TX_OFFLOAD_MASK;
-  mbuf->tx_offload = 0;
+  BufPool::resetTx(mbuf);
   mbuf->data_off = packet - static_cast<uint8_t *>(mbuf->buf_addr);
   mbuf->data_len = mbuf->pkt_len = length;
   if (configuredTCPChksumOffload()) {
@@ -509,10 +548,8 @@ ZuInline Zu::IO::Result Nif::prepareTx(uint8_t *packet, unsigned length, Slot *&
 ZuInline void Nif::refuseTx(Slot *slot)
 {
   auto mbuf = slot->mbuf;
-  mbuf->ol_flags &= ~RTE_MBUF_F_TX_OFFLOAD_MASK;
-  mbuf->tx_offload = 0;
-  rte_pktmbuf_free_seg(mbuf);
-  slot->releaseSubmission();
+  BufPool::resetTx(mbuf);
+  slot->release(Slot::Submitted);
 }
 
 void Nif::cleanTx()
@@ -524,31 +561,40 @@ void Nif::cleanTx()
   m_txCleanup = rc < 0 ? rc : 0;
 }
 
-unsigned Nif::reapTx(unsigned budget)
+unsigned Nif::drainTx(unsigned budget)
 {
   unsigned retired = 0;
-  if (budget > m_pendingCount) budget = m_pendingCount;
-  // PMDs need not return mbuf references in submission order.
-  while (budget--) {
-    auto slot = m_pending[m_reapCursor];
-    if (slot->retired()) {
-      m_pending[m_reapCursor] = m_pending[--m_pendingCount];
-      slot->releaseSubmission();
-      ++retired;
-    } else {
-      ++m_reapCursor;
+  while (retired < budget) {
+    auto pool = m_txReturns.shift();
+    if (!pool) break;
+    void *objects[Burst];
+    unsigned count = RTE_MIN(rte_mempool_avail_count(pool),
+      RTE_MIN(unsigned(Burst), budget - retired));
+    if (count) {
+      ZmAssert_(!rte_mempool_get_bulk(pool, objects, count));
+      ZmAssert_(count <= m_txOutstanding);
+      m_txOutstanding -= count;
+      retired += count;
+#ifdef ZPKT_DPDK_TEST
+      ZpktTestDpdkReturns(ReturnPoint::Visit, count);
+#endif
+      for (unsigned i = 0; i < count; ++i)
+	BufPool::slot(static_cast<rte_mbuf *>(objects[i]))->release(Slot::Submitted);
     }
-    if (m_reapCursor == m_pendingCount) m_reapCursor = 0;
+    m_txReturns.settle(pool);
   }
   return retired;
 }
 
 unsigned Nif::pollTx()
 {
-  if (!ready() || !m_pendingCount) return 0;
-  cleanTx();
-  auto retired = reapTx(Burst);
-  if (!m_pendingCount || retired || !mx()->stopping()) {
+  if (!ready() || !m_txOutstanding) return 0;
+  auto retired = drainTx(Burst);
+  if (m_txOutstanding && retired < Burst) {
+    cleanTx();
+    retired += drainTx(Burst - retired);
+  }
+  if (!m_txOutstanding || retired || !mx()->stopping()) {
     m_stopDeadline = {};
   } else {
     // Some PMDs only release their last descriptors when deactivated.

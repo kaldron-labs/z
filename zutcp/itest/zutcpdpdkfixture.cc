@@ -16,10 +16,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <rte_errno.h>
 #include <rte_ethdev.h>
 #include <rte_mbuf.h>
-
 
 #include "zutcpdpdkfixture.hh"
 
@@ -63,12 +61,13 @@ template <typename ...Args> static Result ip(Args... args)
 Result Fixture::network()
 {
   if (unshare(CLONE_NEWNET) < 0) return error("create isolated fixture network", errno);
+  const char *routingMAC[] = {"02:00:00:91:ff:01", "02:00:00:91:ff:02"};
   for (unsigned i = 0; i < 2; ++i) {
     const auto &link = Links[i];
     const auto &peer = Links[i ^ 1];
     auto result = ip("link", "add", link.name, "type", "dummy");
     if (result.is<ZeException>()) return result;
-    result = ip("link", "set", "dev", link.name, "address", link.mac, "mtu", "1500", "up");
+    result = ip("link", "set", "dev", link.name, "address", routingMAC[i], "mtu", "1600", "up");
     if (result.is<ZeException>()) return result;
     result = ip("route", "add", peer.route, "dev", link.name);
     if (result.is<ZeException>()) return result;
@@ -108,9 +107,10 @@ void Fixture::drain()
   for (auto &port : ports) port.drain();
 }
 
-Zutcp::MxPlugin::Params tcpParams()
+Zutcp::MxPlugin::Params tcpParams(unsigned routingIfindex)
 {
   Zutcp::MxPlugin::Params params{};
+  params.routingIfindex = routingIfindex;
   params.packetCount = 128;
   params.controlBufCount = 32;
   params.txControlCredits = 16;
@@ -148,27 +148,20 @@ bool portStopped(const char *name)
 }
 
 extern "C" __attribute__((visibility("default")))
-rte_mempool *rte_pktmbuf_pool_create(
-  const char *name, unsigned count, unsigned cache, uint16_t priv, uint16_t room, int socket)
+int rte_mempool_set_ops_byname(rte_mempool *pool, const char *name, void *config)
 {
-  static const auto create = reinterpret_cast<decltype(&rte_pktmbuf_pool_create)>(
-    dlsym(RTLD_NEXT, "rte_pktmbuf_pool_create"));
-  if (!create) {
-    rte_errno = ENOSYS;
-    return nullptr;
-  }
-  if (!strncmp(name, "zpkt_", 5)) {
+  static const auto setOps = reinterpret_cast<decltype(&rte_mempool_set_ops_byname)>(
+    dlsym(RTLD_NEXT, "rte_mempool_set_ops_byname"));
+  if (!setOps) return -ENOSYS;
+  if (!strcmp(name, "zpkt_tx_returns")) {
     unsigned remaining = poolFailure;
     if (remaining) {
       --poolFailure;
-      if (remaining == 1) {
-	rte_errno = ENOMEM;
-	return nullptr;
-      }
-      snprintf(provisional, sizeof(provisional), "%s", name);
+      if (remaining == 1) return -ENOMEM;
+      snprintf(provisional, sizeof(provisional), "%s", pool->name);
     }
   }
-  return create(name, count, cache, priv, room, socket);
+  return setOps(pool, name, config);
 }
 
 extern "C" __attribute__((visibility("default")))
@@ -204,7 +197,7 @@ int fatalHandoff(ZuCSpan scenario)
   ZmRef<Zutcp::MxPlugin> tcp = new Zutcp::MxPlugin;
   if (scenario == "device-mx") {
     ZiMultiplex wrong;
-    tcp->init(&wrong, env, ZuMv(device), tcpParams());
+    tcp->init(&wrong, env, ZuMv(device), tcpParams(ifindex));
   } else {
     ZpktDpdkTest::RingPort another;
     if (scenario == "repeat") {
@@ -214,7 +207,7 @@ int fatalHandoff(ZuCSpan scenario)
       auto firstResult = env->nif(&mx, "zdpfirst");
       if (firstResult.is<ZeException>()) return 6;
       ZmRef<Zpkt::Nif> first = firstResult.p<Zpkt::Nif *>();
-      try { tcp->init(&mx, env, ZuMv(first), tcpParams()); }
+      try { tcp->init(&mx, env, ZuMv(first), tcpParams(secondIfindex)); }
       catch (ZeException &e) { std::cerr << e << '\n' << std::flush; return 6; }
     }
     auto rx = device->bufPool(Zi::IOBufType::Rx, 8, 1514);
@@ -222,8 +215,9 @@ int fatalHandoff(ZuCSpan scenario)
     Zi::IOBufPoolList pools;
     pools.pushNode(tx.ptr());
     if (device->alloc(rx, pools).is<ZeException>() || !device->allocated() ||
-	device->state() != ZmEngineState::Stopped || device->mx() != &mx || device->ifindex() != ifindex) return 6;
-    tcp->init(&mx, env, ZuMv(device), tcpParams());
+	device->state() != ZmEngineState::Stopped || device->mx() != &mx ||
+	device->ifindex()) return 6;
+    tcp->init(&mx, env, ZuMv(device), tcpParams(ifindex));
   }
   return 7;
 }
