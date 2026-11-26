@@ -31,6 +31,13 @@ zfixbench_LDADD = $(top_builddir)/zfix/src/libZfix.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+if DPDK
+zfixbench_CPPFLAGS += $(DPDK_CFLAGS) -I$(top_srcdir)/zpkt/itest
+zfixbench_LDADD += $(top_builddir)/zpkt/itest/libZpktDpdkFixture.la $(DPDK_LIBS) -lrte_net_ring
+zfixbench_LDFLAGS = $(AM_LDFLAGS) -Wl,--no-as-needed \
+	-Wl,$(abs_top_builddir)/zpkt/dpdk/.libs/libZpkt_dpdk.so \
+	-Wl,-rpath,$(abs_top_builddir)/zpkt/dpdk/.libs -Wl,--as-needed
+endif
 endif
 dispatchcodec_SOURCES = dispatchcodec.cc
 dispatchcodec_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src

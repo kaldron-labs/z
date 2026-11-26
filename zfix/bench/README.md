@@ -418,22 +418,25 @@ The [2026-11-15 native TCP milestone](../../zutcp/bench/MILESTONE.md) records
 the matched kernel/native results and their measurement conditions.
 
 `zfixbench` drives managed `Zfix::Client` and `Zfix::Server` sessions through
-`Zfix::TCP`, `Ztcp`, `Zi`, and either kernel TCP or `Zutcp`/`Zpkt`. It uses the
-same role/backend positional CLI as `zutcpbench`, with an additional DPDK
-backend when configured with `--with-dpdk=yes`:
+`Zfix::TCP`, `Ztcp`, `Zi`, and either kernel TCP or `Zutcp`/`Zpkt`. Kernel and
+AF_XDP use the same role/backend positional CLI as `zutcpbench`:
 
 ```sh
-zfix/bench/zfixbench server|client kernel|native|dpdk INTERFACE ADDRESS MESSAGES \
-  WARMUP PIPELINE CONNECTIONS RESERVE RX_CPU TX_CPU SPIN [SAMPLES.csv]
+zfix/bench/zfixbench server|client kernel|native INTERFACE ADDRESS MESSAGES \
+  WARMUP PIPELINE CONNECTIONS RESERVE RX_CPU TX_CPU SPIN|default [SAMPLES.csv]
 zfix/bench/zfixbench --selftest
 ```
 
 `BENCH_BACKENDS='kernel native dpdk'` selects the three backends in
-`zutcp/bench/run-compare.sh`. The DPDK case uses the `net_af_packet` PMD
-over the same private veth topology as the other cases. The fixture puts the
-routes and permanent neighbors on a matching dummy link because startup of the
-PMD flushes the veth's neighbor table. It requires `nft` to keep the namespace's
-kernel TCP stack from responding to traffic owned by Zutcp.
+`zutcp/bench/run-compare.sh` when configured with `--with-dpdk=yes`. For DPDK,
+the launcher runs both endpoints in one process with two `net_ring` ports.
+Each endpoint keeps its own Rx and Tx owners and gets routes and permanent
+neighbors from a dummy interface in a private network namespace. A software
+wire transfers frames between the rings into the receiving port's mbuf pool.
+The pair log records the wire worker's CPU. Timing and CPU usage include the
+software wire. The run records combined process usage in `time` and retains
+the separate endpoint outputs. Veth capture and fault injection apply to the
+kernel TCP and AF_XDP backends.
 
 `RESERVE` sets the native ingress, TCP packet, and application Tx pool counts
 per endpoint. Size it above both the total pipeline window and the aggregate
@@ -449,6 +452,9 @@ zero burst size sends as pipeline credit permits.
 `congestion_control` in the configuration line. `0` disables native congestion
 control and pacing while retaining receiver flow control and retransmission.
 Kernel endpoints retain their normal congestion control and report `1`.
+
+`BENCH_TX_BATCH=1` enables the experimental Zutcp ready-packet TX path. It is
+off by default. The configuration line reports the effective `tx_batch` setting.
 
 Each endpoint configures exactly three scheduler slots: sid 1 owns Rx, sid 2
 owns Tx, and isolated sid 3 services XDP transmission. Managed application
@@ -531,14 +537,22 @@ separate: they include reporting and teardown, whose work differs by backend.
 
 `BENCH_CLIENT_XDP_TX_CPU` and `BENCH_SERVER_XDP_TX_CPU` select the CPU for each
 endpoint's sid 3. Each value is read once at startup and must name an allowed
-CPU. Without an override, sid 3 is explicitly assigned the corresponding Rx
-CPU. The config line reports `scheduler_threads=3`, `xdp_tx_sid=3`,
+CPU. By default, the sender prefers an allowed SMT sibling of Rx, then
+another allowed CPU outside the endpoint's Rx and Tx CPUs. It can share the
+Tx CPU when that is the only alternative. A single-CPU affinity mask requires
+an explicit override. The config line reports `scheduler_threads=3`, `xdp_tx_sid=3`,
 `native_xdp_sender_threads`, and `xdp_tx_cpu`. Verify actual affinity separately
 when profiling. XDP transmission uses scheduler `run()` on sid 3; there is no
 additional sender pthread or sender semaphore. A pending-descriptor counter
-coalesces zero-to-one notifications; sid 3 calls nonblocking `sendto()` and uses
-`BENCH_SPIN` for idle probing before returning to the scheduler. There is no Tx
-wait timeout or Tx epoll/eventfd. Native Rx retains its epoll/eventfd mechanism.
+coalesces zero-to-one notifications. Sid 3 calls nonblocking `sendto()`.
+`BENCH_RX_SPIN` and `BENCH_TX_SPIN` independently set AF_XDP polling budgets
+and appear as `rx_spin` and `tx_spin` in the config line. `BENCH_SPIN` sets
+the scheduler budget and also the packet polling budget for DPDK runs. The
+config line reports the scheduler budget as `spin` and whether it was
+inherited as `spin_inherited`. AF_XDP Rx defaults to `(Zi_DefltSpin<<2)` (16,384).
+The scheduler, DPDK, and AF_XDP Tx default to `Zi_DefltSpin` (4,096).
+The sender returns to the scheduler after its idle budget.
+Native Rx retains its epoll/eventfd mechanism.
 Record separate sender CPU assignments in comparisons.
 
 The managed corpus uses the same representative order/execution, market-data

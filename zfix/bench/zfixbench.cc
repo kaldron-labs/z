@@ -8,13 +8,16 @@
 #include "config.h"
 
 #include <net/if.h>
+#include <fcntl.h>
 #include <sched.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
 #include <time.h>
+#include <unistd.h>
 
+#include <fstream>
 #include <iostream>
 
 #include <zlib/ZuArray.hh>
@@ -29,6 +32,7 @@
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTime.hh>
+#include <zlib/ZmTopology.hh>
 #include <zlib/ZtcQueue.hh>
 #include <zlib/ZtcHeap.hh>
 #include <zlib/ZtcHash.hh>
@@ -41,6 +45,10 @@
 #include <zlib/ZfixClient.hh>
 #include <zlib/ZfixServer.hh>
 #include <zlib/Zutcp.hh>
+
+#ifdef HAVE_DPDK
+#include "zpktdkfixture.hh"
+#endif
 
 namespace FixBench {
 
@@ -232,20 +240,37 @@ using Queue = ZmList<Zfix::TxBody::Ref, ZmListHeapID<"Zfix.Bench.Queue">>;
 
 struct Config {
   bool server = false, native = false, appColocate = true, ll = false,
-    congestionControl = true, allocationTuning = false;
+    congestionControl = true, allocationTuning = false, txBatch = false;
   int xdpTxCPU = -1;
+  ZuBox<unsigned> spin, rxSpin, txSpin;
   unsigned interface = 0, messages = 0, warmup = 0, pipeline = 0,
-    connections = 0, reserve = 0, rxCPU = 0, txCPU = 0, spin = 0,
+    connections = 0, reserve = 0, rxCPU = 0, txCPU = 0,
     appRxCPU = 0, appTxCPU = 0,
     workload = 0, burstSize = 0, burstUS = 1000, ackHoldUS = 25000,
     queueSize = DefaultQueueSize, hashBits = 0;
   ZiIP address;
   const char *backend = "kernel", *interfaceName = nullptr, *addressText = nullptr;
   const char *samples = nullptr;
+  std::ostream *output = &std::cout;
   const char *telemetryDir = nullptr;
   const char *telemetryPeerDir = nullptr;
   OfferSchedule offers;
 };
+
+static int xdpSenderCPU(const cpu_set_t &allowed, unsigned rx, unsigned tx) {
+  auto topology = ZmTopology::hwloc();
+  auto pu = hwloc_get_pu_obj_by_os_index(topology, rx);
+  auto core = pu ? hwloc_get_ancestor_obj_by_type(topology, HWLOC_OBJ_CORE, pu) : nullptr;
+  if (core)
+    for (int cpu = hwloc_bitmap_first(core->cpuset);
+	 cpu >= 0 && cpu < CPU_SETSIZE; cpu = hwloc_bitmap_next(core->cpuset, cpu))
+      if (unsigned(cpu) != rx && unsigned(cpu) != tx && CPU_ISSET(cpu, &allowed)) return cpu;
+  for (unsigned offset = 1; offset < CPU_SETSIZE; ++offset) {
+    unsigned cpu = (rx + offset)%CPU_SETSIZE;
+    if (cpu != tx && CPU_ISSET(cpu, &allowed)) return int(cpu);
+  }
+  return tx != rx && tx < CPU_SETSIZE && CPU_ISSET(tx, &allowed) ? int(tx) : -1;
+}
 
 // Cold traffic-only policy, identical for kernel and native endpoints. These
 // counts cover observed object peaks; backing fallback remains enabled.
@@ -371,14 +396,14 @@ static bool drainedTelemetry(const Config &c, const ZiMultiplex &mx) {
 
 // Main only, after stop has joined all workers. These are existing whole-run
 // ring counters; full is not a count of scheduler overflow-queue posts or a peak.
-static void queueReport(const ZmScheduler &scheduler) {
-  scheduler.ZmScheduler::allQueues([&scheduler, sid = 0U](Ztc::Queue *queue) mutable {
+static void queueReport(const ZmScheduler &scheduler, std::ostream &out = std::cout) {
+  scheduler.ZmScheduler::allQueues([&scheduler, &out, sid = 0U](Ztc::Queue *queue) mutable {
     Ztc::QueueTelemetry data;
     queue->telemetry(data);
     ++sid; // base allQueues visits scheduler slots in ascending order
     uint64_t overflowIn, overflowOut;
     scheduler.queue(sid).stats(overflowIn, overflowOut);
-    std::cout << "scheduler_queue sid=" << sid << " id=" << data.id
+    out << "scheduler_queue sid=" << sid << " id=" << data.id
       << " in_count=" << data.inCount << " in_bytes=" << data.inBytes
       << " out_count=" << data.outCount << " out_bytes=" << data.outBytes
       << " count=" << data.count << " size=" << data.size
@@ -447,7 +472,7 @@ struct State {
     auto micros = [](const timeval &time) {
       return uint64_t(time.tv_sec) * 1000000 + uint64_t(time.tv_usec);
     };
-    std::cout << "traffic_usage user_us="
+    *config.output << "traffic_usage user_us="
       << micros(usageEnd.ru_utime) - micros(usageStart.ru_utime)
       << " system_us=" << micros(usageEnd.ru_stime) - micros(usageStart.ru_stime)
       << " voluntary=" << usageEnd.ru_nvcsw - usageStart.ru_nvcsw
@@ -464,7 +489,7 @@ struct State {
 
   void drain(unsigned n) {
     for (unsigned i = 0; i < n; ++i) drained.wait();
-    std::cout << "drain role=" << (config.server ? "server" : "client")
+    *config.output << "drain role=" << (config.server ? "server" : "client")
       << " expected=" << n << " stopped=" << closed.load_() << '\n';
   }
 };
@@ -870,7 +895,7 @@ struct ServerHub : Zfix::Server<ServerHub, Dictionary, Zfix::TCP> {
   unsigned localPort() const { return Port; }
   unsigned nAccepts() const { return state->config.connections; }
   void listening(const ZiListenInfo &) {
-    std::cout << "ready=1\n" << std::flush; state->ready.post();
+    *state->config.output << "ready=1\n" << std::flush; state->ready.post();
   }
   void listenFailed(bool) { state->fail("listen"); state->ready.post(); }
   ZiConnection *accepted(const ZiCxnInfo &info);
@@ -918,13 +943,13 @@ static int compare(const void *a, const void *b) {
   return (x > y) - (x < y);
 }
 
-static void quantiles(const char *name, Samples &values) {
+static void quantiles(const char *name, Samples &values, std::ostream &out = std::cout) {
   qsort(values.data(), values.length(), sizeof(uint64_t), compare);
   uint64_t n = values.length(), over1 = 0, over10 = 0, over100 = 0;
   for (auto value : values) {
     over1 += value > 1000000; over10 += value > 10000000; over100 += value > 100000000;
   }
-  std::cout << "latency metric=" << name << " samples=" << n
+  out << "latency metric=" << name << " samples=" << n
     << " p50_ns=" << values[(n - 1)/2]
     << " p99_ns=" << values[((n - 1) * 99)/100]
     << " p999_ns=" << values[((n - 1) * 999)/1000]
@@ -937,7 +962,7 @@ static bool reportOffers(const Config &c, State &state, auto &links, bool ok) {
   if (state.failTime && (!observed || state.failTime < observed)) observed = state.failTime;
   if (!observed) observed = monotonic();
   int64_t offset = int64_t(Zm::now().nanosecs()) - int64_t(monotonic());
-  std::cout << "offer_clock clock=monotonic origin_ns=" << state.origin
+  (*c.output) << "offer_clock clock=monotonic origin_ns=" << state.origin
     << " observed_ns=" << observed << " realtime_offset_begin_ns=" << state.clockOffset
     << " realtime_offset_end_ns=" << offset << '\n';
   uint64_t finish = state.origin;
@@ -952,7 +977,7 @@ static bool reportOffers(const Config &c, State &state, auto &links, bool ok) {
     }
     unsigned due = state.origin && observed >= state.origin ?
       c.offers.due(observed - state.origin) : 0;
-    std::cout << "offer_progress id=" << i << " planned=" << c.messages << " due=" << due
+    (*c.output) << "offer_progress id=" << i << " planned=" << c.messages << " due=" << due
       << " admitted=" << admitted << " completed=" << completed
       << " unadmitted=" << c.messages - admitted << " uncompleted=" << c.messages - completed
       << " pending=" << (due > admitted ? due - admitted : 0)
@@ -991,11 +1016,11 @@ static bool reportOffers(const Config &c, State &state, auto &links, bool ok) {
 	values[k] = !metric ? v.admitted - due :
 	  metric == 1 ? v.completed - v.admitted : v.completed - due;
       }
-    quantiles(!metric ? "admission" : metric == 1 ? "service" : "loaded", values);
+    quantiles(!metric ? "admission" : metric == 1 ? "service" : "loaded", values, *c.output);
   }
   uint64_t n = values.length();
   double seconds = double(finish - state.origin)/1e9;
-  std::cout << "measurement mode=scheduled clock=monotonic samples=" << n
+  (*c.output) << "measurement mode=scheduled clock=monotonic samples=" << n
     << " envelope_seconds=" << ZuBoxed(seconds).fp<9>() << " requests_per_second="
     << ZuBoxed(double(n)/seconds).fp<3>() << " p50_ns=" << values[(n - 1)/2]
     << " p99_ns=" << values[((n - 1) * 99)/100]
@@ -1016,7 +1041,7 @@ static bool report(const Config &c, State &state, auto &links) {
       link->completed == c.warmup + c.messages &&
       link->native == c.native &&
       link->rxCPU == c.appRxCPU && link->txCPU == c.appTxCPU;
-    std::cout << "connection id=" << i << " plugin_actual=" << unsigned(link->native)
+    (*c.output) << "connection id=" << i << " plugin_actual=" << unsigned(link->native)
       << " rx_cpu_requested=" << c.rxCPU << " tx_cpu_requested=" << c.txCPU
       << " app_rx_cpu_actual=" << link->rxCPU
       << " app_tx_cpu_actual=" << link->txCPU
@@ -1027,7 +1052,7 @@ static bool report(const Config &c, State &state, auto &links) {
     if (*link->begin && (!*begin || link->begin < begin)) begin = link->begin;
     if (*link->end && (!*end || link->end > end)) end = link->end;
   }
-  std::cout << "result role=" << (c.server ? "server" : "client") << " backend="
+  (*c.output) << "result role=" << (c.server ? "server" : "client") << " backend="
     << c.backend << " exact=" << unsigned(ok)
     << " connections=" << c.connections << " pipeline=" << c.pipeline
     << " warmup=" << c.warmup << " measured_per_connection=" << c.messages
@@ -1056,7 +1081,7 @@ static bool report(const Config &c, State &state, auto &links) {
   uint64_t n = state.samples.length();
   double seconds = double((end - begin).nanosecs())/1e9;
   if (!*begin || !*end || seconds <= 0 || !state.samples[0]) return false;
-  std::cout << "measurement samples=" << n << " envelope_seconds="
+  (*c.output) << "measurement samples=" << n << " envelope_seconds="
     << ZuBoxed(seconds).fp<9>() << " requests_per_second="
     << ZuBoxed(double(n)/seconds).fp<3>() << " p50_ns="
     << state.samples[(n - 1)/2] << " p99_ns="
@@ -1248,7 +1273,7 @@ static bool calibrate(const Config &c) {
   ZiMxParams params;
   params.rxBufSize(1<<20).txBufSize(1<<20).rxQuantum(8).rxThread(1).txThread(2)
     .scheduler([&c](auto &s) {
-      s.nThreads(3).queueSize(c.queueSize).ll(c.ll).spin(c.spin)
+      s.nThreads(3).queueSize(c.queueSize).ll(c.ll).spin(c.spin.val())
 	.quantum(ZuTime{ZuTime::Nano{1000}});
       unsigned cpus[] = {c.rxCPU, c.txCPU, unsigned(c.xdpTxCPU)};
       for (unsigned i = 0; i < 3; ++i) {
@@ -1261,7 +1286,7 @@ static bool calibrate(const Config &c) {
   Calibration calibration{c, scheduler};
   std::cout << "calibration_config scheduler_threads=3 rx_sid=1 tx_sid=2 sender_sid=3"
     << " io_owner=ZiMultiplex rx_quantum=8 queue_size=" << scheduler.ring(1).size()
-    << " scheduler_quantum_ns=1000 spin=" << c.spin
+    << " scheduler_quantum_ns=1000 spin=" << c.spin.val()
     << " ll=" << unsigned(c.ll) << " turn=" << c.pipeline
     << " rx_cpu=" << c.rxCPU << " tx_cpu=" << c.txCPU << " sender_cpu=" << c.xdpTxCPU
     << " offer_rate=" << c.offers.rate << " pending_cap=" << c.offers.cap << '\n';
@@ -1286,80 +1311,78 @@ static bool calibrate(const Config &c) {
   return calibration.report() && stopped;
 }
 
-static bool run(const Config &c) {
-  State state{c};
+static ZiMxParams endpointParams(const Config &c) {
   bool afxdp = !strcmp(c.backend, "native");
   unsigned senderSid = 3;
   ZmSchedTParams sender;
   sender.isolated(true).name("zpktTx");
-  ZmBitmap senderCPU;
-  senderCPU.set(c.xdpTxCPU < 0 ? c.rxCPU : unsigned(c.xdpTxCPU));
-  sender.cpuset(senderCPU);
+  if (afxdp) {
+    ZmBitmap senderCPU;
+    senderCPU.set(unsigned(c.xdpTxCPU));
+    sender.cpuset(senderCPU);
+  }
   ZiMxParams params;
   params.rxBufSize(c.native ? c.reserve : 1<<20).txBufSize(1<<20)
     .rxQuantum(8).rxThread(1).txThread(2).scheduler([&c, &sender, senderSid](auto &s) {
       ZmBitmap rx, tx;
       rx.set(c.rxCPU); tx.set(c.txCPU);
+      if (*c.spin) s.spin(c.spin.val());
       s.nThreads(senderSid).queueSize(c.queueSize).ll(c.ll)
-        .quantum(ZuTime{ZuTime::Nano{1000}}).spin(c.spin)
+        .quantum(ZuTime{ZuTime::Nano{1000}})
         .thread(1, [&rx](auto &t) { t.isolated(true).cpuset(rx); })
         .thread(2, [&tx](auto &t) { t.isolated(true).cpuset(tx); });
       s.thread(senderSid) = sender;
     });
-  auto requestHash = params.requestHash();
-  ZmRef<Zpkt::Env> env = new Zpkt::Env;
-  ZiMultiplex mx{ZuMv(params), c.native ?
-    ZmRef<Zutcp::MxPlugin>{new Zutcp::MxPlugin} : ZmRef<Zutcp::MxPlugin>{}};
-  std::cout << "config backend=" << c.backend
+  return params;
+}
+
+static bool initEndpoint(const Config &c, ZiMultiplex &mx, Zpkt::Env *env, bool sharedEnv) {
+  bool afxdp = c.native && !sharedEnv;
+  unsigned senderSid = 3;
+  ZiMxParams defaults;
+  auto requestHash = defaults.requestHash();
+  *c.output << "config backend=" << c.backend
+    << " pmd=" << (sharedEnv ? "net_ring" : afxdp ? "af_xdp" : "none")
     << " rx_cpu=" << c.rxCPU << " tx_cpu=" << c.txCPU
     << " app_rx_cpu=" << c.appRxCPU << " app_tx_cpu=" << c.appTxCPU
     << " app_colocate=" << unsigned(c.appColocate)
     << " scheduler_threads=" << senderSid << " xdp_tx_sid=" << senderSid
     << " queue_size=" << mx.ring(1).size()
     << " native_xdp_sender_threads=" << unsigned(afxdp)
-    << " xdp_tx_cpu=" << (afxdp ? (c.xdpTxCPU < 0 ? int(c.rxCPU) : c.xdpTxCPU) : -1)
+    << " xdp_tx_cpu=" << (afxdp ? c.xdpTxCPU : -1)
     << " rx_thread=1 tx_thread=2 app_rx_thread=" << (c.appColocate ? 1 : 3)
     << " app_tx_thread=" << (c.appColocate ? 2 : 4)
-    << " spin=" << c.spin << " ll=" << unsigned(c.ll)
+    << " spin=" << (*c.spin ? c.spin.val() : ZmSchedParams{}.spin())
+    << " spin_inherited=" << unsigned(!*c.spin) << " ll=" << unsigned(c.ll)
+    << " rx_spin=" << (afxdp ? int64_t(*c.rxSpin ? c.rxSpin.val() : (Zi_DefltSpin<<2)) : -1)
+    << " tx_spin=" << (afxdp ? int64_t(*c.txSpin ? c.txSpin.val() : Zi_DefltSpin) : -1)
     << " allocation_tuning=" << unsigned(c.allocationTuning) << " hash_bits=" << c.hashBits
     << " request_hash=" << requestHash
     << " congestion_control=" << unsigned(!c.native || c.congestionControl)
+    << " tx_batch=" << unsigned(c.native && c.txBatch)
     << " offer_rate=" << c.offers.rate << " pending_cap=" << c.offers.cap << '\n';
   if (c.native) {
-    using Node = ZfCf::AnyNode;
-    auto root = ZfCf::newNode<Node::Object>(nullptr);
-    auto interfaces = ZfCf::newNode<Node::Object>(root.ptr());
-    auto nif = ZfCf::newNode<Node::Object>(interfaces.ptr());
-    auto value = [](Node *parent, ZuCSpan key, auto value) {
-      Node::String text;
-      text << value;
-      parent->data<Node::Object>().push(Node::Field{
-	key, ZfCf::newNode<Node::String>(parent, ZuMv(text))});
-    };
-    value(root.ptr(), "module", afxdp ? ZFIX_XDP_MODULE : ZFIX_DPDK_MODULE);
-    value(nif.ptr(), "spin", c.spin);
-    if (afxdp) value(nif.ptr(), "txSid", senderSid);
-    else {
-      constexpr auto port = "net_af_packet0"_z;
-      value(nif.ptr(), "port", port);
-      auto eal = ZfCf::newNode<Node::Object>(root.ptr());
-      for (auto flag : {"noPCI", "noHuge", "noShconf", "noTelemetry"})
-	value(eal.ptr(), flag, "true");
-      value(eal.ptr(), "iova", "va");
-      auto vdev = ZfCf::newNode<Node::Array>(eal.ptr());
-      Node::String native;
-      native << port << ",iface=" << c.interfaceName;
-      vdev->data.push(ZfCf::newNode<Node::String>(vdev.ptr(), ZuMv(native)));
-      eal->data.push(Node::Field{"vdev", ZuMv(vdev)});
-      root->data.push(Node::Field{"eal", ZuMv(eal)});
+    if (!sharedEnv) {
+      using Node = ZfCf::AnyNode;
+      auto root = ZfCf::newNode<Node::Object>(nullptr);
+      auto interfaces = ZfCf::newNode<Node::Object>(root.ptr());
+      auto nif = ZfCf::newNode<Node::Object>(interfaces.ptr());
+      auto value = [](Node *parent, ZuCSpan key, auto value) {
+	Node::String text;
+	text << value;
+	parent->data<Node::Object>().push(Node::Field{
+	  key, ZfCf::newNode<Node::String>(parent, ZuMv(text))});
+      };
+      value(root.ptr(), "module", ZFIX_XDP_MODULE);
+      value(nif.ptr(), "txSid", senderSid);
+      if (*c.rxSpin) value(nif.ptr(), "rxSpin", c.rxSpin.val());
+      if (*c.txSpin) value(nif.ptr(), "txSpin", c.txSpin.val());
+      interfaces->data.push(Node::Field{c.interfaceName, ZuMv(nif)});
+      root->data.push(Node::Field{"interfaces", ZuMv(interfaces)});
+      try { env->init(root.ptr()); }
+      catch (ZeException &e) { ZiLogEvent(e); return false; }
     }
-    char name[IF_NAMESIZE];
-    if (!if_indextoname(c.interface, name)) return false;
-    interfaces->data.push(Node::Field{static_cast<const char *>(name), ZuMv(nif)});
-    root->data.push(Node::Field{"interfaces", ZuMv(interfaces)});
-    try { env->init(root.ptr()); }
-    catch (ZeException &e) { ZiLogEvent(e); return false; }
-    auto opened = env->nif(&mx, static_cast<const char *>(name));
+    auto opened = env->nif(&mx, c.interfaceName);
     if (opened.is<ZeException>()) {
       ZiLogEvent(ZuMv(opened).p<ZeException>());
       return false;
@@ -1367,7 +1390,7 @@ static bool run(const Config &c) {
     ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
     Zutcp::MxPlugin::Params settings{.packetCount = c.reserve,
       .ackHoldTimeout = ZuTime{0, int32_t(c.ackHoldUS * 1000)},
-      .congestionControl = c.congestionControl};
+      .congestionControl = c.congestionControl, .txBatch = c.txBatch};
     auto stack = static_cast<Zutcp::MxPlugin *>(mx.plugin());
     try { stack->init(&mx, env, ZuMv(xdp), ZuMv(settings)); }
     catch (ZeException &e) {
@@ -1377,6 +1400,40 @@ static bool run(const Config &c) {
       return false;
     }
   }
+  return true;
+}
+
+#ifdef HAVE_DPDK
+struct RingRun {
+  ZpktDpdkTest::RingPort ports[2];
+  ZpktDpdkTest::Wire wire;
+  ZmSemaphore ready, drained;
+  ZmAtomic<unsigned> drainCount{0};
+  bool finished[2]{}, listening = false;
+  rte_mempool *serverPool = nullptr;
+  ZmThreadParams wireThread;
+
+  void retire(bool server) {
+    if (finished[server]) return;
+    finished[server] = true;
+    if (++drainCount == 2) {
+      wire.quiesce();
+      drained.post();
+    } else drained.wait();
+  }
+};
+#else
+struct RingRun;
+#endif
+
+static bool run(const Config &c, State &state, ZiMultiplex &mx,
+    RingRun *ring = nullptr, State *peer = nullptr) {
+#ifdef HAVE_DPDK
+  auto ringRx = ring ? mx.allocator<Zi::IOBufType::Rx>(c.reserve) : nullptr;
+  if (ring && !ringRx) return false;
+#else
+  (void)ring;
+#endif
   Zfix::HubLimits limits;
   uint64_t budget = uint64_t(c.pipeline) * 1024 + 65536;
   limits.submit.bytes = budget * c.connections;
@@ -1392,15 +1449,30 @@ static bool run(const Config &c) {
     if (!hub.start()) { mx.stop(); return false; }
     if (c.telemetryDir) state.trafficStart();
     hub.listen();
-    if (!state.ready.timedwait(Zm::now(30)) && !state.failed.load_()) {
+    bool listening = !state.ready.timedwait(Zm::now(30)) && !state.failed.load_();
+#ifdef HAVE_DPDK
+    if (ring) {
+      if (listening) {
+        ring->serverPool = ZpktDpdkTest::native(ringRx->pool.ptr());
+        ring->listening = bool(ring->serverPool);
+      }
+      ring->ready.post();
+    }
+#endif
+    if (listening) {
       ok = !c.telemetryDir || telemetryBarrier(state, mx);
       if (ok) ok = !state.done.timedwait(Zm::now(120));
     }
+    if (peer && (!ok || state.failed.load_())) peer->fail("ring-server");
     // The server stop barrier revokes listener admission and drains accepted
     // transports. FIX owner callbacks finish afterwards on the live scheduler.
     hub.stop();
     state.drain(state.created.load_());
-    hub.final(); stopped = mx.stop();
+    hub.final();
+#ifdef HAVE_DPDK
+    if (ring) ring->retire(true);
+#endif
+    stopped = mx.stop();
     if (stopped) ok = drainedTelemetry(c, mx) && ok;
     ok = report(c, state, hub.links) && ok;
   } else {
@@ -1410,6 +1482,16 @@ static bool run(const Config &c) {
     if (!hub.init(Zfix::TCP::ClientParams{&mx, c.appColocate ? "1" : "3",
           c.appColocate ? "2" : "4"}) || !mx.start()) return false;
     if (!hub.start()) { mx.stop(); return false; }
+#ifdef HAVE_DPDK
+    if (ring) {
+      auto wired = ring->wire.start({&ring->ports[0], ZpktDpdkTest::native(ringRx->pool.ptr())},
+        {&ring->ports[1], ring->serverPool}, ring->wireThread);
+      if (wired.is<ZeException>()) {
+        ZiLogEvent(wired.p<ZeException>());
+        hub.stop(); hub.final(); mx.stop(); return false;
+      }
+    }
+#endif
     for (unsigned i = 0; i < c.connections; ++i)
       links[i] = new ClientHub::Link{&hub, i};
     if (c.telemetryDir) state.trafficStart();
@@ -1420,6 +1502,7 @@ static bool run(const Config &c) {
 	for (const auto &link : hub->links) if (link) link->logout();
       });
     if (ok) ok = !state.done.timedwait(Zm::now(120));
+    if (peer && (!ok || state.failed.load_())) peer->fail("ring-client");
     if (c.offers.rate) {
       if (!state.stopTime) state.stopTime = monotonic();
       if (!ok) state.fail("deadline");
@@ -1432,14 +1515,118 @@ static bool run(const Config &c) {
     // A failed attempt also retires through fixStoppedRx. Consume every
     // initiated link's terminal post, including links already stopped.
     state.drain(c.connections);
-    hub.stop(); hub.final(); stopped = mx.stop();
+    hub.stop(); hub.final();
+#ifdef HAVE_DPDK
+    if (ring) ring->retire(false);
+#endif
+    stopped = mx.stop();
     if (stopped) ok = drainedTelemetry(c, mx) && ok;
     ok = report(c, state, links) && ok;
   }
-  if (stopped) queueReport(mx);
+  if (stopped) queueReport(mx, *c.output);
   state.trafficReport();
   return ok && stopped;
 }
+
+#ifdef HAVE_DPDK
+static bool enterNetwork(const char *path) {
+  int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) return false;
+  int rc = setns(fd, CLONE_NEWNET);
+  ::close(fd);
+  return rc == 0;
+}
+
+static bool runRingPair(Config &client, Config &server, const char *clientNetns,
+    const char *serverNetns, const char *clientOutput, const char *serverOutput) {
+  std::ofstream clientFile{clientOutput}, serverFile{serverOutput};
+  if (!clientFile || !serverFile) return false;
+  client.output = &clientFile;
+  server.output = &serverFile;
+  ZmRef<Zpkt::Env> env = new Zpkt::Env;
+  RingRun ring;
+  int wireCPU = -1;
+  cpu_set_t allowed;
+  if (!sched_getaffinity(0, sizeof(allowed), &allowed)) {
+    for (unsigned cpu = 0; cpu < CPU_SETSIZE; ++cpu)
+      if (CPU_ISSET(cpu, &allowed) && cpu != client.rxCPU && cpu != client.txCPU &&
+	  cpu != server.rxCPU && cpu != server.txCPU) {
+	wireCPU = int(cpu);
+	ZmBitmap cpuset;
+	cpuset.set(cpu);
+	ring.wireThread.cpuset(cpuset);
+	break;
+      }
+  }
+  std::cout << "pair_config pmd=net_ring wire_cpu=" << wireCPU << '\n';
+  {
+    using Node = ZfCf::AnyNode;
+    auto root = ZfCf::newNode<Node::Object>(nullptr);
+    auto object = [](Node *parent, ZuCSpan name) {
+      auto child = ZfCf::newNode<Node::Object>(parent);
+      auto ptr = child.ptr();
+      parent->data<Node::Object>().push(Node::Field{name, ZuMv(child)});
+      return ptr;
+    };
+    auto value = [](Node *parent, ZuCSpan name, const auto &input) {
+      Node::String text;
+      text << input;
+      parent->data<Node::Object>().push(Node::Field{
+	name, ZfCf::newNode<Node::String>(parent, ZuMv(text))});
+    };
+    value(root.ptr(), "module", ZFIX_DPDK_MODULE);
+    auto interfaces = object(root.ptr(), "interfaces");
+    for (const auto *c : {&client, &server}) {
+      auto nif = object(interfaces, c->interfaceName);
+      value(nif, "port", c->server ? "net_ring_zfix_server" : "net_ring_zfix_client");
+      if (*c->spin) value(nif, "spin", c->spin.val());
+    }
+    auto eal = object(root.ptr(), "eal");
+    for (auto flag : {"noPCI", "noHuge", "noShconf", "noTelemetry"})
+      value(eal, flag, "true");
+    value(eal, "iova", "va");
+    try { env->init(root.ptr()); }
+    catch (const ZeException &e) { ZiLogEvent(e); return false; }
+  }
+  constexpr unsigned RingSize = 4096;
+  if (auto r = ring.ports[0].init("zfix_client", RingSize, {{2, 0, 0, 0, 0x87, 1}});
+      r.is<ZeException>()) { ZiLogEvent(r.p<ZeException>()); return false; }
+  if (auto r = ring.ports[1].init("zfix_server", RingSize, {{2, 0, 0, 0, 0x87, 2}});
+      r.is<ZeException>()) { ZiLogEvent(r.p<ZeException>()); return false; }
+  State clientState{client}, serverState{server};
+  ZiMultiplex clientMx{endpointParams(client), ZmRef<Zutcp::MxPlugin>{new Zutcp::MxPlugin}};
+  ZiMultiplex serverMx{endpointParams(server), ZmRef<Zutcp::MxPlugin>{new Zutcp::MxPlugin}};
+  auto endpoint = [&env, &ring](
+      Config &c, State &state, State &peer, ZiMultiplex &mx, const char *netns) {
+    if (!enterNetwork(netns) || !(c.interface = if_nametoindex(c.interfaceName))) {
+      state.fail("ring-control-interface");
+      return false;
+    }
+    if (!initEndpoint(c, mx, env.ptr(), true)) return false;
+    return run(c, state, mx, &ring, &peer);
+  };
+  bool serverOK = false;
+  ZmThread serverThread;
+  if (serverThread.run([&endpoint, &ring, &clientState, &server, &serverState,
+      &serverMx, &serverOK, serverNetns] {
+    serverOK = endpoint(server, serverState, clientState, serverMx, serverNetns);
+    if (!serverOK) clientState.fail("ring-server");
+    ring.ready.post();
+    ring.retire(true);
+  })) return false;
+  // The server has opened its Nif before the client accesses Env. Both
+  // multiplexers remain owned here and finalize serially after the join.
+  ring.ready.wait();
+  bool clientOK = ring.listening &&
+    endpoint(client, clientState, serverState, clientMx, clientNetns);
+  if (!clientOK) serverState.fail("ring-client");
+  ring.retire(false);
+  bool joined = serverThread.join() == 0;
+  ring.wire.stop();
+  for (auto &port : ring.ports) port.drain();
+  return clientOK && serverOK && joined && bool(clientFile) && bool(serverFile);
+}
+#endif
 
 } // FixBench
 
@@ -1553,17 +1740,20 @@ int main(int argc, char **argv) {
   Config c;
   if (!queueConfig(c)) return 2;
   c.server = !strcmp(argv[1], "server");
-  if (!c.server && strcmp(argv[1], "client")) return 2;
+  bool pair = !strcmp(argv[1], "pair");
+  if (!pair && !c.server && strcmp(argv[1], "client")) return 2;
   c.backend = argv[2];
   c.native = !strcmp(c.backend, "native");
-  if (!strcmp(c.backend, "dpdk")) {
+  if (pair) {
+#ifdef HAVE_DPDK
+    if (strcmp(c.backend, "dpdk")) return 2;
     c.native = true;
+#else
+    return 2;
+#endif
   } else if (!c.native && strcmp(c.backend, "kernel")) return 2;
   c.interfaceName = argv[3];
   c.interface = if_nametoindex(c.interfaceName); c.address = ZiIP{argv[4]};
-  if (!strcmp(c.backend, "dpdk"))
-    if (auto link = getenv("BENCH_DPDK_CONTROL_LINK"); link && *link)
-      c.interface = if_nametoindex(link);
   c.addressText = argv[4];
   c.messages = unsigned(ZuBox<unsigned>{argv[5]});
   c.warmup = unsigned(ZuBox<unsigned>{argv[6]});
@@ -1573,7 +1763,15 @@ int main(int argc, char **argv) {
   c.rxCPU = unsigned(ZuBox<unsigned>{argv[10]});
   c.txCPU = unsigned(ZuBox<unsigned>{argv[11]});
   c.appRxCPU = c.rxCPU; c.appTxCPU = c.txCPU;
-  c.spin = unsigned(ZuBox<unsigned>{argv[12]});
+  if (strcmp(argv[12], "default")) c.spin = unsigned(ZuBox<unsigned>{argv[12]});
+  if (auto value = getenv("BENCH_RX_SPIN")) {
+    c.rxSpin = ZuBox<unsigned>{value};
+    if (!*c.rxSpin) return 2;
+  }
+  if (auto value = getenv("BENCH_TX_SPIN")) {
+    c.txSpin = ZuBox<unsigned>{value};
+    if (!*c.txSpin) return 2;
+  }
   if (auto value = getenv("BENCH_LL")) {
     if (strcmp(value, "0") && strcmp(value, "1")) return 2;
     c.ll = *value == '1';
@@ -1584,6 +1782,15 @@ int main(int argc, char **argv) {
     if (c.xdpTxCPU < 0 || c.xdpTxCPU >= CPU_SETSIZE ||
         sched_getaffinity(0, sizeof(allowed), &allowed) ||
         !CPU_ISSET(c.xdpTxCPU, &allowed)) return 2;
+  } else if (!strcmp(c.backend, "native")) {
+    cpu_set_t allowed;
+    if (c.rxCPU >= CPU_SETSIZE || sched_getaffinity(0, sizeof(allowed), &allowed) ||
+	!CPU_ISSET(c.rxCPU, &allowed)) return 2;
+    c.xdpTxCPU = xdpSenderCPU(allowed, c.rxCPU, c.txCPU);
+    if (c.xdpTxCPU < 0) {
+      std::cerr << "AF_XDP sender needs a second allowed CPU or an explicit CPU override\n";
+      return 2;
+    }
   }
   if (argc == 14) c.samples = argv[13];
   if (auto value = getenv("BENCH_WORKLOAD")) {
@@ -1611,6 +1818,10 @@ int main(int argc, char **argv) {
     if (strcmp(value, "0") && strcmp(value, "1")) return 2;
     c.congestionControl = *value == '1';
   }
+  if (auto value = getenv("BENCH_TX_BATCH")) {
+    if (strcmp(value, "0") && strcmp(value, "1")) return 2;
+    c.txBatch = *value == '1';
+  }
   if (auto value = getenv("BENCH_APP_RX_CPU"))
     c.appRxCPU = unsigned(ZuBox<unsigned>{value});
   if (auto value = getenv("BENCH_APP_TX_CPU"))
@@ -1621,7 +1832,7 @@ int main(int argc, char **argv) {
     c.appColocate = true;
   }
   if (c.appColocate) { c.appRxCPU = c.rxCPU; c.appTxCPU = c.txCPU; }
-  if (!c.interface || !c.messages || !c.connections || c.connections > MaxCxns ||
+  if ((!pair && !c.interface) || !c.messages || !c.connections || c.connections > MaxCxns ||
       !c.pipeline || c.pipeline > MaxPipeline || c.reserve < MinReserve ||
       c.reserve > MaxReserve || uint64_t(c.messages) * c.connections > MaxSamples ||
       c.warmup > MaxSamples || c.burstSize > MaxPipeline || c.ackHoldUS >= 500000 ||
@@ -1634,7 +1845,35 @@ int main(int argc, char **argv) {
   tuneAllocations(c);
   ZiLog::init("zfixbench"); ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2"))); ZiLog::start();
-  bool ok = run(c);
+  bool ok = false;
+#ifdef HAVE_DPDK
+  if (pair) {
+    auto clientNetns = getenv("BENCH_RING_CLIENT_NETNS");
+    auto serverNetns = getenv("BENCH_RING_SERVER_NETNS");
+    auto clientOutput = getenv("BENCH_RING_CLIENT_OUTPUT");
+    auto serverOutput = getenv("BENCH_RING_SERVER_OUTPUT");
+    auto serverRx = getenv("BENCH_RING_SERVER_RX_CPU");
+    auto serverTx = getenv("BENCH_RING_SERVER_TX_CPU");
+    Config server = c;
+    server.server = true;
+    server.interfaceName = "zbenchs";
+    server.samples = nullptr;
+    if (c.telemetryDir) {
+      std::cerr << "DPDK ring pairs record combined process CPU usage\n";
+    } else if (clientNetns && serverNetns && clientOutput && serverOutput && serverRx && serverTx) {
+      server.appRxCPU = server.rxCPU = unsigned(ZuBox<unsigned>{serverRx});
+      server.appTxCPU = server.txCPU = unsigned(ZuBox<unsigned>{serverTx});
+      ok = runRingPair(c, server, clientNetns, serverNetns, clientOutput, serverOutput);
+    }
+  } else
+#endif
+  {
+    FixBench::State state{c};
+    auto env = ZmRef{new Zpkt::Env};
+    ZiMultiplex mx{endpointParams(c), c.native ?
+      ZmRef<Zutcp::MxPlugin>{new Zutcp::MxPlugin} : ZmRef<Zutcp::MxPlugin>{}};
+    ok = initEndpoint(c, mx, env.ptr(), false) && run(c, state, mx);
+  }
   ZiLog::stop();
   return ok ? 0 : 1;
 }
