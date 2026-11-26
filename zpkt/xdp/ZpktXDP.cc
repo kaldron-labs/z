@@ -136,8 +136,8 @@ public:
   bool ready() const override {
     return Engine::state() == ZmEngineState::Running && m_ioState == Active;
   }
-  bool txReady(uint8_t *) const override;
-  bool send(uint8_t *, unsigned) override;
+  Zu::IO::Result txReady(uint8_t *) const override;
+  Zu::IO::Result send(uint8_t *, unsigned) override;
   unsigned send(ZuSpan<const TxPacket>) override;
   void rx() override;
   unsigned pollTx() override { return ready() ? reapTx() : 0; }
@@ -226,6 +226,7 @@ public:
   }
 
 private:
+  BufPool *txPool(const uint8_t *, unsigned &id) const;
   void start_() override {
 
     error({});
@@ -611,29 +612,38 @@ unsigned Nif::allQueues(Ztc::QueueMgr::AllFn fn) const
   }
   return count;
 }
-bool Nif::txReady(uint8_t *packet) const
+ZuInline BufPool *Nif::txPool(const uint8_t *packet, unsigned &id) const
 {
-  if (!ready() || !packet) return false;
   auto pool = m_arena->pool(packet);
-  if (!pool || pool == m_rxPool.ptr()) return false;
-  auto id = pool->slot(packet);
-  return id != BufPool::NoSlot && !m_arena->txSlot(*pool, id).pending;
+  ZmAssert_(pool && pool != m_rxPool.ptr());
+  id = pool->slot(packet);
+  ZmAssert_(id != BufPool::NoSlot);
+  return pool;
 }
 
-bool Nif::send(uint8_t *packet, unsigned length)
+Zu::IO::Result Nif::txReady(uint8_t *packet) const
 {
-  if (!ready() || !packet || !length) return false;
-  auto pool = m_arena->pool(packet);
-  if (!pool || pool == m_rxPool.ptr()) return false;
-  auto id = pool->slot(packet);
-  if (id == BufPool::NoSlot) return false;
+  if (!ready()) return Zi::IOError;
+  unsigned id;
+  auto pool = txPool(packet, id);
+  const auto &slot = m_arena->txSlot(*pool, id);
+  ZmAssert_(slot.refs.load_() > unsigned(slot.pending));
+  return slot.pending ? Zi::NotReady : Zi::OK;
+}
+
+Zu::IO::Result Nif::send(uint8_t *packet, unsigned length)
+{
+  if (!ready()) return Zi::IOError;
+  unsigned id;
+  auto pool = txPool(packet, id);
   auto canonical = pool->backing(id);
   auto wire = unsigned(packet - canonical);
-  if (length > pool->size - wire) return false;
+  if (!length || length > pool->size - wire) return Zi::IOError;
   auto &slot = m_arena->txSlot(*pool, id);
-  if (slot.pending) return false;
+  ZmAssert_(slot.refs.load_() > unsigned(slot.pending));
+  if (slot.pending) return Zi::NotReady;
   auto &ring = m_queues[0]->service.tx();
-  if (m_txHeld == ring.count() || !ring.reserve(1)) return false;
+  if (m_txHeld == ring.count() || !ring.reserve(1)) return Zi::NotReady;
   slot.wire = wire;
   slot.active = m_txHeld;
   m_txActive[m_txHeld++] = canonical;
@@ -653,14 +663,14 @@ bool Nif::send(uint8_t *packet, unsigned length)
   bool idle = !m_txPending++;
   ring.commit();
   if (idle) mx()->run([this] { serveTx(); }, m_txSid);
-  return true;
+  return Zi::OK;
 }
 
 unsigned Nif::send(ZuSpan<const TxPacket> packets)
 {
   unsigned count = packets.length() < MaxTxBatch ? packets.length() : MaxTxBatch;
   unsigned accepted = 0;
-  while (accepted < count && send(packets[accepted].data, packets[accepted].length))
+  while (accepted < count && send(packets[accepted].data, packets[accepted].length) == Zi::OK)
     ++accepted;
   return accepted;
 }

@@ -72,7 +72,7 @@ static void testLoop(const Runtime &runtime)
     if (!tx.packet) return;
     memcpy(tx.packet, tx.expected, tx.bytes);
     tx.source->onTx([&tx] {
-      tx.sent = tx.source->device->send(tx.packet, tx.bytes);
+      tx.sent = tx.source->device->send(tx.packet, tx.bytes) == Zi::OK;
     });
   };
   send(ab);

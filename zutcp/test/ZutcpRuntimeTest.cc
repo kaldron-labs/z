@@ -157,7 +157,9 @@ friend inline ZuStringT<"Zutcp.Test.RetryDevice"> ZmNHeapID(RetryDevice *);
   using ZmNHeap<RetryDevice>::operator delete;
   using Xdp::Xdp;
   unsigned pending = 0, completed = 0;
-  bool send(uint8_t *, unsigned) override { ++pending; return true; }
+  ZmAtomic<unsigned> down{0};
+  bool ready() const override { return !down && Xdp::ready(); }
+  Zu::IO::Result send(uint8_t *, unsigned) override { ++pending; return Zi::OK; }
   unsigned pollTx() override {
     auto n = completed;
     completed = 0;
@@ -171,7 +173,8 @@ struct RetryCxn : Zutcp::Cxn {
   void abortRx() override { }
   Zutcp::ClosedTupleKey closedKeyRx() const override { return {}; }
   bool established() const override { return true; }
-  void resumeTx() override { ++calls; retry(); }
+  void resumeTx(Zu::IO::Result result) override { last = result; ++calls; retry(); }
+  Zu::IO::Result last = Zi::OK;
 };
 
 struct BatchDevice : ZmNHeap<BatchDevice>, ZutcpTest::Xdp {
@@ -206,10 +209,10 @@ friend inline ZuStringT<"Zutcp.Test.BatchDevice"> ZmNHeapID(BatchDevice *);
     for (auto byte : tcp.payload) exact &= byte == uint8_t(nextByte >> 3);
     nextByte += 8;
   }
-  bool send(uint8_t *packet, unsigned length) override {
+  Zu::IO::Result send(uint8_t *packet, unsigned length) override {
     if (checkScalar) check({packet, length});
     ++pending;
-    return true;
+    return Zi::OK;
   }
   unsigned send(ZuSpan<const Zpkt::TxPacket> packets) override {
     offered = packets.length();
@@ -466,7 +469,39 @@ static void testCompletionRetries()
     turn.post();
   });
   turn.wait();
+  // The provider can disappear while a whole list awaits the last device lease.
+  // With no CQ, the first poll observing failure must arrange every remaining turn.
+  unsigned terminalMarker = 0;
+  mx.txRun([&, stack, device] {
+    auto packet = stack->allocPacket(&mx, ZiIPType::V4);
+    ZmAssert_(packet);
+    memset(packet->data_(), 0, 64);
+    packet->skip = 0;
+    packet->length = 64;
+    ZmAssert_(stack->sendPacket(packet));
+    for (unsigned i = 0; i < Count; ++i) {
+      cxns[i].retry = [&, i] {
+        if (!i) mx.txRun([&] {
+          for (auto &c : cxns) terminalMarker += c.last == Zi::IOError;
+        });
+        if (i + 1 == Count) last.post();
+      };
+      stack->waitTx(&cxns[i]);
+    }
+    device->down = 1;
+  });
+  bool terminal = !last.timedwait(Zm::now(5));
+  mx.txRun([&] {
+    for (auto &c : cxns) {
+      terminal &= c.calls == 3 && c.last == Zi::IOError && !c.txWaitPrev;
+      stack->cancelTxWait(&c);
+    }
+    turn.post();
+  });
+  turn.wait();
   bool stopped = mx.stop();
+  ZuCheckRT(terminal && terminalMarker == 64 && stopped,
+    log_("provider-down drains all 130 waiters in bounded turns with no CQ"));
   std::cout << "# retry owner marker calls=" << markerCalls[0] << ',' << markerCalls[1]
     << " delay_ns=" << markerNS[0] << ',' << markerNS[1] << '\n';
   ZuCheckRT(accepted && reached && first && second && stopped,
@@ -686,12 +721,12 @@ friend inline ZuStringT<"Zutcp.Test.LoopDevice"> ZmNHeapID(LoopDevice *);
     ingress = new LoopPool{type, count, size, head, tail, align, true};
     return ingress;
   }
-  bool send(uint8_t *p, unsigned n) override {
+  Zu::IO::Result send(uint8_t *p, unsigned n) override {
     ingress->source = p;
     ingress->length = n;
     memcpy(ingress->expected, p, n);
     if (!refuse) ++completions;
-    return !refuse;
+    return refuse ? Zi::IOError : Zi::OK;
   }
   unsigned pollTx() override { unsigned n = completions; completions = 0; return n; }
 };
@@ -737,7 +772,7 @@ static void testLoopCopies()
 	auto frame = packet->data() - Zutcp::udpHead(path.local.type());
 	bool callback = false;
 	cxn->txContext().init(ZiTxFn{[&callback, mode](ZiTxContext &io) {
-	  callback = io.length == (mode == 3 ? -1 : 4) && io.buf && io.buf->cspan() == "data";
+	  callback = io.length == (mode == 3 ? int(Zi::IOError) : 4) && io.buf && io.buf->cspan() == "data";
 	  io.complete();
 	  return true;
 	}}, ZuMv(packet), info.remote);

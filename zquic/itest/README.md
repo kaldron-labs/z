@@ -50,3 +50,9 @@ where host perf permissions permit. Do not compare the measured debug drain
 turn with a release throughput result or infer protocol pacing from it.
 Runtime output uses admission, congestion credit and bounded batching;
 `Pacer` remains a helper without runtime integration.
+
+On Linux, `zquicnativeudpqueuetest` sends two protected short-header packets
+through one QUIC endpoint and a published Zutcp UDP adapter. A scripted Zpkt
+provider refuses the first submission. The test checks the parked queue, releases
+capacity, compares both accepted UDP payloads with the original ciphertext in
+order, and checks completion, reservation retirement and backing release.

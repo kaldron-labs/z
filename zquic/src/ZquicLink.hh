@@ -3634,8 +3634,7 @@ protected:
   void streamFrame(
     uint64_t, uint64_t, ZuBSpan, bool) { }
   void retiredLocalCID(uint64_t, const CxnID &) { }
-  void refreshPromotedRoutes() { }
-  void localCIDsIssued() { }
+  bool bindLocalCID(LinkCID &) { return true; }
   void migrationCIDsReady() { impl()->queueTxFlush(); }
   void migrationCIDReady() { }
   void flowCredit(
@@ -3892,22 +3891,23 @@ protected:
     setRuntimeCIDs_(initialDCID, localSCID, peerCID, initialDCID, initialDCID);
   }
 
-  void setRuntimeCIDs_(
+  bool setRuntimeCIDs_(
     const CxnID &initialDCID,
     const CxnID &localSCID,
     const CxnID &peerCID,
     const CxnID &origDCID,
-    const CxnID &groupID) {
+    const CxnID &groupID, const ResetToken &token = {}) {
     m_linkRx.origDCID = origDCID;
     m_linkRx.groupID = groupID;
     m_linkRx.initialDCID = initialDCID;
     m_linkRx.localSCID = localSCID;
     m_linkRx.peerCID = peerCID;
-    addLocalCID_(localSCID, 0);
-    addPeerCID_(peerCID, 0);
+    if (localSCID && !addLocalCID_(localSCID, 0, token)) return false;
+    if (peerCID && !addPeerCID_(peerCID, 0)) return false;
     if (auto cid = findCID(m_linkRx.peerCIDs, peerCID))
       cid->associated = true;
     publishActivePeerCID();
+    return true;
   }
 
   void setPeerCIDFromHdrSCID(const LongHdr &h) {
@@ -3938,10 +3938,11 @@ protected:
       addPeerCID_(m_linkRx.peerCID, 0, token);
   }
 
+  template <bool Issue = false>
   bool addLocalCID_(
     const CxnID &id, uint64_t sequence,
     const ResetToken &resetToken = {}) {
-    if (!addCID(m_linkRx.localCIDs, id, sequence, resetToken, true)) return false;
+    if (!addCID<Issue>(m_linkRx.localCIDs, id, sequence, resetToken, true)) return false;
     if (sequence > m_linkRx.localCIDSequence)
       m_linkRx.localCIDSequence = sequence;
     publishLocalCID(*findLocalCID(sequence));
@@ -4064,9 +4065,7 @@ protected:
       ResetToken token;
       if (!CxnIDGen::random(id) || !token.generate()) return false;
       uint64_t seq = m_linkRx.localCIDSequence + 1;
-      if (!addLocalCID_(id, seq, token)) continue;
-      // Bind the route on Rx before a concurrent Tx flush can advertise it.
-      impl()->localCIDsIssued();
+      if (!addLocalCID_<true>(id, seq, token)) continue;
       queueControl(ControlFrame::newCxnID(seq, 0, id, token));
       ++active;
     }
@@ -4171,7 +4170,6 @@ protected:
 	  o.logCIDUpdated(event, time);
       }));
     }
-    if (committed) impl()->refreshPromotedRoutes();
     app()->txRun([
       link = impl(), attemptID, id, sequence, committed
     ]() mutable {
@@ -4222,12 +4220,17 @@ protected:
       ZuTime{ZuTime::Nano{timeout.nanosecs() * PathValidPTOFactor}};
   }
   template <typename Routes>
-  void installLocalCIDRoutes_(Routes &routes) {
-    for (auto &cid : m_linkRx.localCIDs) {
-      if (cid.state != CxnState::Active || cid.associated) continue;
-      if (!routes.add(cid.id, cid.sequence, impl(), cid.resetToken)) continue;
-      cid.associated = true;
-      ZquicLOG(app()->qlogTrace(), ([
+  bool bindLocalCIDRoutes_(Routes &routes) {
+    Zquic_::CxnRouteTrace<Impl>::bindLocals();
+    for (auto &cid : m_linkRx.localCIDs)
+      if (!bindLocalCIDRoute_(routes, cid)) return false;
+    return true;
+  }
+  template <typename Routes>
+  bool bindLocalCIDRoute_(Routes &routes, LinkCID &cid) {
+    if (!routes.add(cid.id, cid.sequence, impl(), cid.resetToken)) return false;
+    cid.associated = true;
+    ZquicLOG(app()->qlogTrace(), ([
 	action = CIDAction::RouteBound,
 	reason = CIDReason::RouteInstall,
 	cxnID = cid.id,
@@ -4237,7 +4240,7 @@ protected:
 	associated = cid.associated,
 	resetToken = cid.resetToken.valid(),
 	linkInfo = linkInfo_()
-      ](auto &o, ZuTime time) {
+    ](auto &o, ZuTime time) {
 	CIDEvt event{
 	  .cxnID = cxnID,
 	  .linkInfo = linkInfo,
@@ -4251,8 +4254,8 @@ protected:
 	  .resetToken = resetToken};
 
 	o.logCIDUpdated(event, time);
-      }));
-    }
+    }));
+    return true;
   }
   template <typename Routes>
   void retireLocalCIDRoutes_(Routes &routes) {
@@ -4362,13 +4365,14 @@ protected:
     const LinkCID *cid = findCID(m_linkRx.localCIDs, id);
     return cid && cid->state == CxnState::Active;
   }
-  template <typename CIDs>
+  template <bool Issue = false, typename CIDs>
   bool addCID(
     CIDs &cids, const CxnID &id, uint64_t sequence,
     const ResetToken &resetToken, bool local) {
     if (!id) return false;
     if (!local && !peerCIDTokenUnique(cids, id, resetToken)) return false;
     if (auto cid = findCID(cids, sequence)) {
+      if constexpr (Issue) return false;
       if (!(cid->id == id)) return false;
       if (resetToken.valid() && cid->resetToken.valid() &&
 	  !(cid->resetToken == resetToken))
@@ -4403,6 +4407,7 @@ protected:
       return true;
     }
     if (auto cid = findCID(cids, id)) {
+      if constexpr (Issue) return false;
       if (cid->sequence != sequence) return false;
       if (resetToken.valid() && cid->resetToken.valid() &&
 	  !(cid->resetToken == resetToken))
@@ -4445,12 +4450,15 @@ protected:
     uint64_t limit = local ?
       LocalCIDLimit :
       m_linkRx.transportParams.activeCxnIDLimit;
-    if (active >= limit)
-      return false;
-    if (!slot && cids.length() < limit)
-      slot = cids.push();
-    if (!slot) return false;
-    *slot = LinkCID{id, sequence, resetToken, CxnState::Active, false};
+    if (active >= limit || (!slot && cids.length() >= limit)) return false;
+    LinkCID candidate{id, sequence, resetToken, CxnState::Active, false};
+    // A fresh local slot and its sequence become visible only after Rx binds it.
+    if constexpr (Issue) {
+      if (!slot && !cids.ensure(cids.length() + 1)) return false;
+      if (!impl()->bindLocalCID(candidate)) return false;
+    }
+    if (slot) *slot = candidate;
+    else if (!(slot = cids.push(candidate))) return false;
     ZquicLOG(app()->qlogTrace(), ([
       action = CIDAction::Issued,
       reason = resetToken.valid() ? CIDReason::ResetToken : CIDReason::None,

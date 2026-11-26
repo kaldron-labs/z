@@ -419,25 +419,29 @@ void Nif::finishStop(unsigned left)
   Engine::stopped(!failed());
 }
 
-bool Nif::txReady(uint8_t *packet) const
+Zu::IO::Result Nif::txReady(uint8_t *packet) const
 {
-  if (!ready() || !packet) return false;
+  if (!ready()) return Zi::IOError;
   auto slot = m_txIndex.find(packet);
-  return slot && slot->leases.load_() == Slot::Caller;
+  ZmAssert_(slot);
+  unsigned leases = slot->leases.load_();
+  ZmAssert_(leases & Slot::Caller);
+  return leases & Slot::Submitted ? Zi::NotReady : Zi::OK;
 }
 
-bool Nif::send(uint8_t *packet, unsigned length)
+Zu::IO::Result Nif::send(uint8_t *packet, unsigned length)
 {
-  if (!ready() || m_pendingCount == m_pending.length()) return false;
-  auto slot = prepareTx(packet, length);
-  if (!slot) return false;
+  if (!ready()) return Zi::IOError;
+  Slot *slot;
+  auto result = prepareTx(packet, length, slot);
+  if (result != Zi::OK) return result;
   auto mbuf = slot->mbuf;
   if (!rte_eth_tx_burst(m_port, 0, &mbuf, 1)) {
     refuseTx(slot);
-    return false;
+    return Zi::NotReady;
   }
   m_pending[m_pendingCount++] = slot;
-  return true;
+  return Zi::OK;
 }
 
 unsigned Nif::send(ZuSpan<const TxPacket> packets)
@@ -451,9 +455,8 @@ unsigned Nif::send(ZuSpan<const TxPacket> packets)
   unsigned prepared = 0;
   for (; prepared < count; ++prepared) {
     const auto &packet = packets[prepared];
-    auto slot = prepareTx(packet.data, packet.length);
-    if (!slot) break;
-    slots[prepared] = slot;
+    auto &slot = slots[prepared];
+    if (prepareTx(packet.data, packet.length, slot) != Zi::OK) break;
     mbufs[prepared] = slot->mbuf;
   }
   if (!prepared) return 0;
@@ -463,12 +466,17 @@ unsigned Nif::send(ZuSpan<const TxPacket> packets)
   return accepted;
 }
 
-ZuInline Slot *Nif::prepareTx(uint8_t *packet, unsigned length)
+ZuInline Zu::IO::Result Nif::prepareTx(uint8_t *packet, unsigned length, Slot *&slot)
 {
-  if (!packet || !length || length > mtu() + RTE_ETHER_HDR_LEN) return nullptr;
-  auto slot = m_txIndex.find(packet);
-  if (!slot || length > slot->pool->size - unsigned(packet - slot->packet) ||
-      !slot->submit()) return nullptr;
+  slot = m_txIndex.find(packet);
+  ZmAssert_(slot);
+  if (!length || length > mtu() + RTE_ETHER_HDR_LEN ||
+      length > slot->pool->size - unsigned(packet - slot->packet)) return Zi::IOError;
+  if (m_pendingCount == m_pending.length()) return Zi::NotReady;
+  if (!slot->submit()) {
+    ZmAssert_(slot->leases.load_() & Slot::Caller);
+    return Zi::NotReady;
+  }
   auto mbuf = slot->mbuf;
   mbuf->ol_flags &= ~RTE_MBUF_F_TX_OFFLOAD_MASK;
   mbuf->tx_offload = 0;
@@ -495,7 +503,7 @@ ZuInline Slot *Nif::prepareTx(uint8_t *packet, unsigned length)
       mbuf->data_len = mbuf->pkt_len = head.l2_len + size;
     }
   }
-  return slot;
+  return Zi::OK;
 }
 
 ZuInline void Nif::refuseTx(Slot *slot)

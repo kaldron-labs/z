@@ -18,7 +18,7 @@
 namespace Zu {
 
 namespace IO {
-  enum { OK = 0, EndOfFile = -1, IOError = -2, NotReady = -3 };
+  enum Result { OK = 0, EndOfFile = -1, IOError = -2, NotReady = -3 };
 
   inline const char *ioResult(int i) {
     static const char *names[] = { "OK", "EndOfFile", "IOError", "NotReady" };

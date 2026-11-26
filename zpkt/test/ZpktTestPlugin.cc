@@ -54,8 +54,8 @@ public:
   }
   bool allocated() const override { return false; }
   bool ready() const override { return running(); }
-  bool txReady(uint8_t *) const override { return false; }
-  bool send(uint8_t *, unsigned) override { return false; }
+  Zu::IO::Result txReady(uint8_t *) const override { return Zi::IOError; }
+  Zu::IO::Result send(uint8_t *, unsigned) override { return Zi::IOError; }
   unsigned send(ZuSpan<const Zpkt::TxPacket>) override { return 0; }
   void rx() override { }
   unsigned pollTx() override { return 0; }

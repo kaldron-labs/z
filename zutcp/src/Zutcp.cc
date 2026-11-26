@@ -896,6 +896,7 @@ template <typename C, typename L> void MxPlugin::retire(C *cxn, bool peer, L &&d
   txRun([
     this, cxn = ZmRef<C>{cxn}, mxCxn = ZuMv(mxCxn), peer, done = ZuFwd<L>(done)
   ]() mutable {
+    if constexpr (ZuIsSame<C, UdpCxn>{}) cxn->cancelTx();
     if (mxCxn) {
       mxCxn->txUp() = 0;
       mxCxn->txContext().complete();
@@ -1297,7 +1298,7 @@ bool MxPlugin::sendPacket(
   if (!ready() || !buf || !buf->registered() || !buf->length ||
       buf->skip > buf->size || buf->length > buf->size - buf->skip) return false;
   bool control = buf->allocator_ == &m_allocators.p<1>().control;
-  if (!submitPacket(buf->data(), buf->length, control, layout, retry)) return false;
+  if (submitPacket(buf->data(), buf->length, control, layout, retry) != Zi::OK) return false;
   // Transfer the caller lease to recovery when requested. The independent
   // kernel lease ends at CQ; neither lease retains submitted Zi metadata.
   auto backing = buf->data_();
@@ -1313,38 +1314,39 @@ bool MxPlugin::sendPacket(
   return true;
 }
 
-bool MxPlugin::submitPacket(
+Zu::IO::Result MxPlugin::submitPacket(
   uint8_t *packet, unsigned length, bool control, const Zutcp::TCPLayout *layout, TxRetry *retry)
 {
   ZmAssert_(mx()->invoked(mx()->txThread()));
-  if (!ready()) return false;
+  if (!ready()) return Zi::IOError;
   uint64_t limit = control ? m_txCapacity : m_txCapacity - m_controlCredits;
   // Reconcile only when completion credit is required for this admission.
   if (m_txPending >= limit) reconcileTx();
   if (m_txPending >= limit) {
     if (control) ++m_controlStalls; else ++m_dataStalls;
-    return false;
+    return m_xdp->ready() ? Zi::NotReady : Zi::IOError;
   }
   unsigned previous = 0;
   if (layout) {
-    if (layout->tcp > length || length - layout->tcp < 20) return false;
+    if (layout->tcp > length || length - layout->tcp < 20) return Zi::IOError;
     previous = (unsigned(packet[layout->tcp + 16])<<8) | packet[layout->tcp + 17];
-    if (!tcpChecksum(packet, length, *layout, m_tcpChksumOffload)) return false;
+    if (!tcpChecksum(packet, length, *layout, m_tcpChksumOffload)) return Zi::IOError;
   }
-  if (m_xdp->send(packet, length)) return true;
-  if (retry && !m_txPending) {
+  auto result = m_xdp->send(packet, length);
+  if (retry && !m_txPending && result == Zi::NotReady) {
     unsigned left = retry->spin ? m_params.txRetries : 0;
-    while (ready() && m_xdp->ready()) {
-      if (!left) { retry->refused = true; break; }
+    while (left && result == Zi::NotReady) {
       --left;
-      if (m_xdp->send(packet, length)) return true;
+      result = ready() ? m_xdp->send(packet, length) : Zi::IOError;
     }
+    retry->refused = result == Zi::NotReady;
   }
+  if (result == Zi::OK) return result;
   if (layout) {
     packet[layout->tcp + 16] = previous>>8;
     packet[layout->tcp + 17] = previous;
   }
-  return false;
+  return result;
 }
 
 unsigned MxPlugin::txDataSlots() const
@@ -1420,12 +1422,18 @@ void MxPlugin::pollTx()
   ZmAssert_(mx()->invoked(mx()->txThread()));
   if (!ready() && !m_txDraining) { txService(false); return; }
   reconcileTx();
-  if (m_txDraining && (!m_txPending || !m_xdp->ready())) {
+  bool providerUp = m_xdp->ready();
+  if (m_txDraining && (!m_txPending || !providerUp)) {
     m_txDraining = false;
     stopTx();
     return;
   }
-  if (!m_txPending || !m_xdp->ready()) txService(false);
+  if (!providerUp && m_txWaitCount) {
+    m_txResumeFailed = true;
+    m_txResumeBudget = m_txWaitCount;
+    scheduleTxResume();
+  }
+  if (!m_txPending || !providerUp) txService(false);
 }
 
 void MxPlugin::reconcileTx()
@@ -1444,7 +1452,7 @@ void MxPlugin::reconcileTx()
 
 void MxPlugin::waitTx(Cxn *cxn)
 {
-  if (!ready() || !m_txPending || cxn->txWaitPrev) return;
+  if (!ready() || !m_txPending || cxn->txWaitPrev || !m_xdp->ready()) return;
   ZmAssert_(txInvoked());
   cxn->txWaitNext = nullptr;
   cxn->txWaitPrev = m_txWaitTail;
@@ -1477,15 +1485,17 @@ void MxPlugin::resumeTx()
 {
   ZmAssert_(txInvoked());
   m_txResumeQueued = false;
-  if (!ready()) { m_txResumeBudget = 0; return; }
+  if (!ready()) { m_txResumeBudget = 0; m_txResumeFailed = false; return; }
   enum { Batch = 64 };
+  auto result = m_txResumeFailed || !m_xdp->ready() ? Zi::IOError : Zi::OK;
   for (unsigned i = 0; i < Batch && m_txResumeBudget && m_txWait; ++i) {
     --m_txResumeBudget;
     auto cxn = m_txWait;
     cancelTxWait(cxn);
-    cxn->resumeTx();
+    cxn->resumeTx(result);
   }
   if (!m_txWait) m_txResumeBudget = 0;
+  if (!m_txResumeBudget) m_txResumeFailed = false;
   scheduleTxResume();
 }
 
@@ -1542,6 +1552,11 @@ void MxPlugin::connect(
 
 bool MxPlugin::publishUDP(UdpCxn *endpoint, ZiConnectFn &fn, ZiCxnInfo info)
 {
+  admitCxn(*endpoint);
+  establishedCxn(*endpoint);
+  addCxn(endpoint);
+  ZmREF(endpoint);
+  m_udpBindings.addNode(endpoint);
   return publish(endpoint, fn, ZuMv(info));
 }
 

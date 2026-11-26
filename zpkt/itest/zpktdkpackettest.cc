@@ -65,13 +65,17 @@ static void testRing(const Runtime &runtime)
   bool sent = false, full = false, duplicate = false;
   unsigned premature = 0;
   endpoint.onTx([&endpoint, offset, second, &sent, &full, &duplicate, &premature] {
-    sent = endpoint.device->txReady(offset) && endpoint.device->send(offset, 64);
-    duplicate = !endpoint.device->txReady(offset) && !endpoint.device->send(offset, 64);
-    full = endpoint.device->txReady(second) && !endpoint.device->send(second, 64);
+    sent = endpoint.device->txReady(offset) == Zi::OK &&
+      endpoint.device->send(offset, endpoint.tx->size) == Zi::IOError &&
+      endpoint.device->send(offset, 64) == Zi::OK;
+    duplicate = endpoint.device->txReady(offset) == Zi::NotReady &&
+      endpoint.device->send(offset, 64) == Zi::NotReady;
+    full = endpoint.device->txReady(second) == Zi::OK &&
+      endpoint.device->send(second, 64) == Zi::NotReady;
     premature = endpoint.device->pollTx();
   });
   ZuCheckRT(sent && full && duplicate && !premature && !memcmp(second, b, sizeof(b)),
-    log_("one outstanding submission per slot and full-ring false send preserve caller bytes"));
+    log_("one outstanding submission per slot and full-ring refusal preserve caller bytes"));
 
   // The fixture independently dequeues and retires the PMD's reference.
   auto mbuf = port.take();
@@ -95,7 +99,10 @@ static void testRing(const Runtime &runtime)
   if (reused) endpoint.tx->free(reused);
 
   bool accepted = false;
-  endpoint.onTx([&endpoint, second, &accepted] { accepted = endpoint.device->txReady(second) && endpoint.device->send(second, 64); });
+  endpoint.onTx([&endpoint, second, &accepted] {
+    accepted = endpoint.device->txReady(second) == Zi::OK &&
+      endpoint.device->send(second, 64) == Zi::OK;
+  });
   mbuf = port.take();
   ZuCheckRT(accepted && mbuf && rte_pktmbuf_mtod(mbuf, uint8_t *) == second,
     log_("the refused packet can be resubmitted without reacquiring its caller lease"));
@@ -107,7 +114,6 @@ static void testRing(const Runtime &runtime)
   ZuCheckRT(retired == 1 && !extra && !memcmp(second, b, sizeof(b)) &&
       rte_mempool_avail_count(native(endpoint.tx)) == 1,
     log_("completion leaves a retained caller lease and contents valid"));
-  endpoint.tx->free(second);
 
   auto ingress = native(endpoint.ingress);
   uint8_t *injected = nullptr;
@@ -127,6 +133,10 @@ static void testRing(const Runtime &runtime)
     log_("receive transfers the exact backing pointer and bytes without copying"));
   ZuCheckRT(endpoint.stop() && received && !memcmp(received, a, sizeof(a)),
     log_("retained Rx bytes survive stopped queues"));
+  ZuCheckRT(endpoint.device->txReady(second) == Zi::IOError &&
+      endpoint.device->send(second, 64) == Zi::IOError,
+    log_("stopped DPDK provider rejects retained backing terminally"));
+  endpoint.tx->free(second);
   if (received) endpoint.ingress->free(received);
   ZuCheckRT(rte_mempool_avail_count(ingress) == 2,
     log_("off-owner final return restores receiver pool capacity"));
@@ -176,10 +186,10 @@ static void testPrefix(const Runtime &runtime)
       bool prefilled = true, ready = true, bytes = true;
       endpoint.onTx([&endpoint, &blockers, &packets, &prefilled, &accepted, &ready, filled, k] {
 	for (unsigned i = 0; i < filled; ++i)
-	  prefilled &= endpoint.device->send(blockers[i], Size);
+	  prefilled &= endpoint.device->send(blockers[i], Size) == Zi::OK;
 	accepted = endpoint.device->send(packets);
 	for (unsigned i = 0; i < Count; ++i)
-	  ready &= endpoint.device->txReady(packets[i].data) == (i >= k);
+	  ready &= endpoint.device->txReady(packets[i].data) == (i >= k ? Zi::OK : Zi::NotReady);
       });
       rte_mbuf *held[Count]{};
       for (unsigned i = 0; i < Count; ++i) {
@@ -275,7 +285,7 @@ static void testPcap(const Runtime &runtime)
     auto packet = endpoint.tx->alloc();
     if (!packet) return;
     memcpy(packet, output, sizeof(output));
-    accepted = endpoint.device->send(packet, sizeof(output));
+    accepted = endpoint.device->send(packet, sizeof(output)) == Zi::OK;
     endpoint.tx->free(packet);
     retired = endpoint.device->pollTx();
   });

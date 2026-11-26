@@ -12,7 +12,9 @@
 #include <poll.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <linux/if_ether.h>
@@ -273,7 +275,10 @@ static void testPackets()
   params.txSid = Sender;
   ZiMultiplex mx{ZiMxParams{}.scheduler(configureSender)};
   auto receive = [&received, &rxBytes, &rx, &current](uint8_t *p, unsigned n, ZiRxBurst *) {
-    if (!received) { received = p; rxBytes = n; current->wake(); } else rx->free(p);
+    // Ignore unrelated link traffic while waiting for the fixture's raw frame.
+    if (!received && n >= 14 && p[12] == 0x88 && p[13] == 0xb5) {
+      received = p; rxBytes = n; current->wake();
+    } else rx->free(p);
   };
   auto beforeInit = unsigned(routeSockets);
   auto initialized = env.open(instance, &mx, config);
@@ -367,14 +372,29 @@ static void testPackets()
   auto output = packet + 1; // odd offsets exercise generic-kernel CQ address tagging
   uint8_t expected[Bytes];
   memcpy(expected, output, Bytes);
-  ZuCheckRT(!instance->send(nullptr, Bytes) &&
-      !instance->send(packet, tx->size + 1) &&
-      !instance->send(packet + 1, tx->size) && !instance->pollTx() && unsigned(xdpKicks) == kicks,
+  auto child = fork();
+  if (!child) {
+    struct rlimit limit{};
+    setrlimit(RLIMIT_CORE, &limit);
+    instance->send(nullptr, Bytes);
+    _exit(1);
+  }
+  int status = 0;
+  pid_t waited = -1;
+  if (child > 0)
+    do waited = waitpid(child, &status, 0); while (waited < 0 && errno == EINTR);
+  ZuCheckRT(child > 0 && waited == child && WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT,
+    log_("null backing passed to a live provider triggers the internal assertion"));
+  ZuCheckRT(instance->send(packet, tx->size + 1) == Zi::IOError &&
+      instance->send(packet + 1, tx->size) == Zi::IOError &&
+      !instance->pollTx() && unsigned(xdpKicks) == kicks,
     log_("invalid submissions leave caller backing unchanged "
       "without a kernel lease or sender kick"));
   gateSender = 1;
-  bool submitted = instance->txReady(output) && instance->send(output, Bytes);
-  ZuCheckRT(submitted && !instance->txReady(output) && !instance->send(output, Bytes),
+  bool submitted = instance->txReady(output) == Zi::OK &&
+    instance->send(output, Bytes) == Zi::OK;
+  ZuCheckRT(submitted && instance->txReady(output) == Zi::NotReady &&
+      instance->send(output, Bytes) == Zi::NotReady,
     log_("accepted submission holds a kernel lease and cannot resubmit before retirement"));
   if (submitted) tx->free(packet);
   auto spare = tx->alloc();
@@ -427,7 +447,7 @@ static void testPackets()
   bool progressed = resumed && yielded && recycled;
   for (unsigned i = 0; i < 3 && progressed; ++i) {
     memcpy(recycled, expected, Bytes);
-    bool sent = instance->send(recycled, Bytes);
+    bool sent = instance->send(recycled, Bytes) == Zi::OK;
     ZmSemaphore afterPacket;
     mx.run([&afterPacket] { afterPacket.post(); }, Sender);
     progressed = sent && !afterPacket.timedwait(Zm::now() + ZuTime{10});
@@ -440,7 +460,7 @@ static void testPackets()
       memcpy(suffix, expected, 64);
       Zpkt::TxPacket batch[]{{recycled, Bytes}, {recycled, Bytes}, {suffix, 64}};
       auto prefix = instance->send(batch);
-      bool preserved = instance->txReady(suffix) && !memcmp(suffix, expected, 64);
+      bool preserved = instance->txReady(suffix) == Zi::OK && !memcmp(suffix, expected, 64);
       auto firstDone = waitTx(instance, prefix, Zm::now() + ZuTime{10});
       auto retried = instance->send({batch + 2, 1});
       auto suffixDone = waitTx(instance, retried, Zm::now() + ZuTime{10});
@@ -470,7 +490,7 @@ static void testPackets()
   auto pending = control->alloc();
   ZmAssert_(pending);
   memcpy(pending, observed, 64);
-  bool queued = instance->send(pending, 64);
+  bool queued = instance->send(pending, 64) == Zi::OK;
   if (queued) control->free(pending);
   ZuCheckRT(queued, log_("small Tx pool supplies independent registered packet backing"));
   // Stop must finish the accepted submission even without an application CQ poll.
@@ -482,7 +502,12 @@ static void testPackets()
     log_("stop drains the pending completion and releases active queues: ", error));
   if (queued) pending = control->alloc();
   ZuCheckRT(pending, log_("completed backing returns to the original pool after stop"));
-  if (pending) control->free(pending);
+  if (pending) {
+    ZuCheckRT(instance->txReady(pending) == Zi::IOError &&
+	instance->send(pending, 64) == Zi::IOError,
+      log_("stopped AF_XDP provider rejects retained backing terminally"));
+    control->free(pending);
+  }
   if (received) {
     ZuCheckRT(!memcmp(received, observed, Bytes),
       log_("application-held receive bytes survive stop"));
@@ -543,7 +568,7 @@ static void testSenderProgress()
       memcpy(p + 6, instance->mac().data(), 6);
       p[12] = 0x88; p[13] = 0xb5;
       p[14] = accepted;
-      bool sent = instance->send(p, Bytes);
+      bool sent = instance->send(p, Bytes) == Zi::OK;
       tx->free(p); // only the independent kernel lease remains after acceptance
       if (!sent) return false;
       ++accepted;
@@ -677,7 +702,7 @@ static void testLeaseRace()
     memset(p, 0xff, 6);
     memcpy(p + 6, instance->mac().data(), 6);
     p[12] = 0x88; p[13] = 0xb5;
-    bool accepted = instance->send(p, 64);
+    bool accepted = instance->send(p, 64) == Zi::OK;
     returned = p;
     unsigned order = turns%3;
     if (order != 1) {
@@ -714,7 +739,7 @@ static void testLeaseRace()
       memset(p, 0xff, 6);
       memcpy(p + 6, instance->mac().data(), 6);
       p[12] = 0x88; p[13] = 0xb5;
-      sent = instance->send(p, 64);
+      sent = instance->send(p, 64) == Zi::OK;
       tx->free(p);
     }
     if (sent) completed = waitTx(instance, 1, Zm::now() + ZuTime{10});
@@ -836,10 +861,10 @@ static void testOffloadWire()
       unsigned pseudo = foldWire(wireSum(ip + (family == 4 ? 12 : 8), family == 4 ? 8 : 32) +
 	segment + 6);
       wire16(tcp + 16, offload ? pseudo : foldWire(pseudo + wireSum(tcp, segment)) ^ 0xffff);
-      bool sent = instance->send(packet, length);
+      bool sent = instance->send(packet, length) == Zi::OK;
       uint8_t saved[2048 + sizeof(xsk_tx_metadata)];
       memcpy(saved, packet - sizeof(xsk_tx_metadata), length + sizeof(xsk_tx_metadata));
-      exact &= sent && !instance->send(packet, length) &&
+      exact &= sent && instance->send(packet, length) == Zi::NotReady &&
 	!memcmp(saved, packet - sizeof(xsk_tx_metadata), length + sizeof(xsk_tx_metadata));
       bool received = false;
       uint8_t observed[2048];
@@ -859,7 +884,7 @@ static void testOffloadWire()
     // be ignored when the descriptor's metadata option is clear.
     memset(packet, 0x5e, 64); memset(packet, 0xff, 6); packet[6] = 2;
     wire16(packet + 12, 0x88b5);
-    bool sent = instance->send(packet, 64);
+    bool sent = instance->send(packet, 64) == Zi::OK;
     uint8_t observed[2048];
     bool raw = false;
     for (unsigned attempt = 0; sent && attempt < 16 && !raw; ++attempt) {

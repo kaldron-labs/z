@@ -18,7 +18,7 @@ struct alignas(Zm::CacheLineSize) SrvSharedState {
 
 struct alignas(Zm::CacheLineSize) SrvRxStorage {
   ServerBootstrap	bootstrap;
-  InitialInfo		initialInfo;
+  bool			originalRouted = false;
 };
 
 struct alignas(Zm::CacheLineSize) SrvTxStorage {
@@ -285,22 +285,16 @@ private:
   using InitialKeyDir = Base::InitialKeyDir;
   using CIDSel = Base::CIDSel;
 
-  void acceptInitialInfo(const InitialInfo &info) {
-    m_srvRx.initialInfo = info;
-  }
-
-  bool initRuntimeCrypto(const LongHdr &h, unsigned datagramLen) {
-    if (h.type != PktType::Initial ||
-	!m_srvRx.bootstrap.acceptInitial(m_srvRx.initialInfo, h, datagramLen)) {
+  bool acceptInitial(const InitialInfo &info, CxnRouter<Impl> &routes) {
+    auto &bootstrap = m_srvRx.bootstrap;
+    if (!bootstrap.acceptInitial(info, info.header, info.datagramLength)) {
       Base::packetParseFailure();
       return false;
     }
-    Base::setRuntimeCIDs_(
-      m_srvRx.bootstrap.initialDCID(), m_srvRx.bootstrap.localInitialSCID(),
-      m_srvRx.bootstrap.clientInitialSCID(),
-      m_srvRx.bootstrap.origDCID(), m_srvRx.bootstrap.origDCID());
-    Base::addLocalCID_(
-      m_srvRx.bootstrap.localInitialSCID(), 0, m_srvRx.bootstrap.statelessResetToken());
+    if (!Base::setRuntimeCIDs_(
+	  bootstrap.initialDCID(), bootstrap.localInitialSCID(), bootstrap.clientInitialSCID(),
+	  bootstrap.origDCID(), bootstrap.origDCID(), bootstrap.statelessResetToken()))
+      return false;
     if (!Base::loadSrvParams(m_srvRx.bootstrap)) return false;
     Base::configLocalParams(app());
     const auto &addrs = app()->runtimeServerAddrs();
@@ -313,11 +307,15 @@ private:
 	  !Base::addLocalCID_(preferred.cid, 1, preferred.resetToken))
 	return false;
       Base::setPreferredAddress_(preferred);
-      // Register sequence 1 before TLS can publish the transport parameter.
-      app()->refreshLinkRoutes(impl());
-      auto cid = Base::findLocalCID(1);
-      if (!cid || !cid->associated) return false;
     }
+    if (!impl()->bindBootstrapRoutes(routes)) return false;
+    Base::initServerPath_(info.local, info.peer);
+    auto target = app()->pktAllocTarget(info.endpointSlot, info.runtimeGeneration);
+    app()->txInvoke(impl(), [link = impl(), peer = info.peer, target]() mutable {
+      link->m_srvTx.peerAddr = ZuMv(peer);
+      link->m_srvTx.activeTarget = target;
+      return link;
+    });
     if (!Base::deriveInitial_()) return false;
     uint32_t maxEarlyData = app()->maxEarlyData(impl());
     if (!Base::initTLS_(CryptoConfig{
@@ -951,8 +949,6 @@ private:
   }
 
   bool received_(ZmRef<RxPkt> pkt, const CxnID *routedDCID = nullptr) {
-    if (!Base::handshakeStartedRx() && pkt)
-      Base::initServerPath_(m_srvRx.initialInfo.local, pkt->addr);
     Base::rxPacket(
       ZuMv(pkt),
       [this](const ZmRef<RxPkt> &pkt_, unsigned packetOffset,
@@ -971,21 +967,7 @@ private:
     const ZmRef<RxPkt> &pkt, unsigned packetOffset, unsigned packetLen, const LongHdr &h) {
     return Base::receiveProtLongPkt(
       InitialKeyDir::Client, pkt, packetOffset, packetLen, h,
-      [this](const LongHdr &h, const ZmRef<RxPkt> &pkt_) {
-	if (!Base::handshakeStartedRx()) {
-	  ZiSockAddr peerAddr = pkt_->addr;
-	  auto target = app()->pktAllocTarget(
-	    m_srvRx.initialInfo.endpointSlot, m_srvRx.initialInfo.runtimeGeneration);
-	  app()->txInvoke(impl(), [link = impl(), peerAddr, target]() mutable {
-	    link->m_srvTx.peerAddr = ZuMv(peerAddr);
-	    link->m_srvTx.activeTarget = target;
-	    return link;
-	  });
-	  if (!initRuntimeCrypto(h, pkt_->length)) return false;
-	  app()->refreshLinkRoutes(impl());
-	}
-	return true;
-      },
+      [](const LongHdr &, const ZmRef<RxPkt> &) { return true; },
       [this](
 	  PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<RxPkt> &packetBuf,
@@ -1113,24 +1095,7 @@ private:
 	link->pktPressureResume();
       });
   }
-  void refreshPromotedRoutes() {
-    if (app()->rxInvoked()) {
-      app()->refreshLinkRoutes(impl());
-      return;
-    }
-    app()->rxRun([link = impl()]() mutable {
-      link->app()->refreshLinkRoutes(link);
-    });
-  }
-  void localCIDsIssued() {
-    if (app()->rxInvoked()) {
-      app()->refreshLinkRoutes(impl());
-      return;
-    }
-    app()->rxRun([link = impl()]() mutable {
-      link->app()->refreshLinkRoutes(link);
-    });
-  }
+protected:
   void migrationCIDsReady() {
     app()->rxRun([link = impl()]() mutable {
       link->app()->txRun([link]() mutable {
@@ -1144,22 +1109,36 @@ private:
     return received_(ZuMv(d), &routedDCID);
   }
 
-protected:
-  void installRoutes(CxnRouter<Impl> &routes) {
-    routes.add(m_srvRx.bootstrap.origDCID(), 0, impl());
-    Base::installLocalCIDRoutes_(routes);
+  bool bindLocalCID(typename Base::LinkCID &cid) {
+    return Base::bindLocalCIDRoute_(app()->m_routes, cid);
+  }
+  bool bindBootstrapRoutes(CxnRouter<Impl> &routes) {
+    const auto &bootstrap = m_srvRx.bootstrap;
+    if (bootstrap.origDCID() != bootstrap.localInitialSCID()) {
+      if (!routes.add(bootstrap.origDCID(), 0, impl())) return false;
+      m_srvRx.originalRouted = true;
+    }
+    return Base::bindLocalCIDRoutes_(routes);
   }
 
 private:
+  void rollbackRoutes(CxnRouter<Impl> &routes) {
+    if (m_srvRx.originalRouted) {
+      routes.retire(m_srvRx.bootstrap.origDCID());
+      m_srvRx.originalRouted = false;
+    }
+    Base::retireLocalCIDRoutes_(routes);
+  }
   void retireRoutes(CxnRouter<Impl> &routes) {
-    routes.tombstone(m_srvRx.bootstrap.origDCID());
+    if (m_srvRx.originalRouted) {
+      routes.tombstone(m_srvRx.bootstrap.origDCID());
+      m_srvRx.originalRouted = false;
+    }
     Base::tombstoneLocalCIDRoutes_(routes);
   }
 
   void retiredLocalCID(uint64_t, const CxnID &id) {
-    app()->rxRun([app = app(), id]() mutable {
-      app->tombstoneRoute(id);
-    });
+    app()->tombstoneRoute(id);
   }
 
   // shared

@@ -171,6 +171,28 @@ struct TestClient : public Zquic::Client<TestClient> {
   TestEvent rxEvent;
   ZmAtomic<unsigned> rxCallbacks = 0;
 
+  bool resumeEarly = false;
+  Zquic::TokenBytes ticket;
+  Zquic::TransportParams ticketParams;
+  ZmSemaphore ticketReady;
+  ZmAtomic<unsigned> holdOneRTT = 0; // while checking the original 0-RTT STREAM ACK
+  bool earlyData(Link *, ZuBSpan &session, const Zquic::TransportParams *&params,
+      ZuBSpan &application) {
+    if (!ticket) return false;
+    session = {ticket.data(), ticket.length()};
+    params = &ticketParams;
+    application = {};
+    return true;
+  }
+  void saveEarlyData(Link *, ZuBSpan session, const Zquic::TransportParams &params) {
+    if (!resumeEarly || !session || ticket) return;
+    ticket.length(session.length());
+    memcpy(ticket.data(), session.data(), session.length());
+    ticketParams = params;
+    ticketReady.post();
+  }
+  bool allowEarlyStream(Link *, uint64_t, bool) { return resumeEarly; }
+  void earlyDataReady(Link *);
   bool holdMigCID = false; // immutable fixture policy before init
   bool keepMigTuple = false; // immutable fixture policy before init
   bool dropMigChallenge = false; // immutable after init
@@ -196,6 +218,7 @@ struct TestClient : public Zquic::Client<TestClient> {
   }
 
   bool sendPkt(const ZmRef<ZiIOBuf> &buf) {
+    if (holdOneRTT && buf && buf->length && !Zquic::Pkt::isLong(buf->cspan())) return false;
     if (pendingMigDrop && buf && buf->length &&
 	!Zquic::Pkt::isLong(buf->cspan())) {
       --pendingMigDrop;
@@ -238,6 +261,16 @@ struct TestClient : public Zquic::Client<TestClient> {
   }
 };
 struct TestServerLink;
+struct RouteCounts {
+  unsigned packets = 0, probes = 0, inserts = 0, walks = 0;
+};
+template <> struct Zquic_::CxnRouteTrace<TestServerLink> {
+  static inline thread_local RouteCounts counts;
+  static void shortPacket() { ++counts.packets; }
+  static void probe() { ++counts.probes; }
+  static void insert() { ++counts.inserts; }
+  static void bindLocals() { ++counts.walks; }
+};
 struct TestServerStream;
 struct TestServer :
     public Zquic::Server<TestServer, TestServerLink> {
@@ -247,10 +280,16 @@ struct TestServer :
 
   Zquic::ServerAddrs addrs;
   Zquic::ServerAddrs serverAddrs() const { return addrs; }
+  bool repeatInitial = false; // copy and redispatch the first accepted Initial on Rx
+  Link *bootstrapCollision = nullptr; // Rx-owned sibling retaining the conflicting CID
+  bool issuanceCollisions = false; // Rx-owned after start
   bool resetFixture = false; // immutable dedicated socket fixture policy
   bool resetInstalled = false; // Rx-owned test record installation
   Zquic::CxnID resetCID{"resetcid"};
   Zquic::ResetToken resetToken{"0123456789abcdef"};
+  bool resumeEarly = false;
+  uint32_t maxEarlyData(Link *) { return resumeEarly ? 1U<<20 : 0; }
+  bool allowEarlyStream(Link *, uint64_t, bool) { return resumeEarly; }
   bool retryMode = false;
   bool retryAddrValidate() const { return retryMode || Base::retryAddrValidate(); }
 
@@ -561,6 +600,14 @@ friend inline ZuStringT<"Zquic.Runtime.CliLink"> ZmNHeapID(Link *);
   Zquic::PreferredAddress peerPreferred() const {
     return Base::crypto_().peerParams().preferredAddress;
   }
+  bool receivedCID(const Zquic_::LinkCID &expected) {
+    return ZmBlock<bool>{}([this, expected](auto wake) {
+      app()->rxRun([this, expected, wake = ZuMv(wake)]() mutable {
+	auto cid = Base::peerCID_(expected.sequence);
+	wake(cid && cid->id == expected.id && cid->resetToken == expected.resetToken);
+      });
+    });
+  }
   bool spareCID() {
     return ZmBlock<bool>{}([this](auto wake) {
       app()->rxRun([link = ZmRef<Link>{this}, wake = ZuMv(wake)]() mutable {
@@ -652,10 +699,80 @@ friend inline ZuStringT<"Zquic.Runtime.SrvLink"> ZmNHeapID(TestServerLink *);
     return !sent && heldWait && heldWait->busy() && Base::pktAllocationPending();
   }
   bool heldWaitBusy() const { return heldWait && heldWait->busy(); }
-  void installRoutes(Zquic::CxnRouter<TestServerLink> &routes) {
-    Base::installRoutes(routes);
-    if (!app()->resetFixture || app()->resetInstalled) return;
-    if (!routes.add(app()->resetCID, Zquic::U64Null, this, app()->resetToken)) return;
+  Zquic::RxPkt *repeat = nullptr; // identity of the retained replay on Rx
+  ZmAtomic<unsigned> repeatedInitials = 0;
+  bool receivedRouted(ZmRef<Zquic::RxPkt> pkt, const Zquic::CxnID &dcid) {
+    if (pkt.ptr() == repeat) {
+      ++repeatedInitials;
+      repeat = nullptr;
+    } else if (app()->repeatInitial) {
+      app()->repeatInitial = false;
+      auto owner = app()->pktAllocTarget(pkt->local).owner;
+      auto ep = static_cast<TestServer::Endpoint *>(static_cast<TestServer::Endpoint::Base *>(owner));
+      ZmRef<Zquic::RxPkt> copy{app()->rxPktAllocator()->allocBuf(nullptr, 0)};
+      if (ep && copy) {
+	copy->append(pkt->cspan());
+	copy->addr = pkt->addr;
+	copy->local = pkt->local;
+	copy->ecn = pkt->ecn;
+	repeat = copy.ptr();
+	app()->rxRun([ep, copy = ZuMv(copy)]() mutable { ep->endpointPacket(ZuMv(copy)); });
+      }
+    }
+    return Base::receivedRouted(ZuMv(pkt), dcid);
+  }
+  Zquic::CxnRouter<TestServerLink> *router = nullptr; // fixture server owns the router
+  ZmAtomic<unsigned> earlyBytes = 0;
+  void streamData(ZmRef<Stream> stream, uint64_t offset, ZuBSpan data, bool fin) {
+    if (stream->earlyData()) earlyBytes += data.length();
+    Base::streamData(ZuMv(stream), offset, data, fin);
+  }
+  unsigned collisions = 0, cidReady = 0;
+  void migrationCIDsReady() {
+    ++cidReady;
+    Base::migrationCIDsReady();
+  }
+  bool bindLocalCID(Base::LinkCID &candidate) {
+    if (app()->issuanceCollisions && (!collisions || candidate.sequence == 2)) {
+      // Force a generated ID collision while preserving the new sequence/token.
+      ++collisions;
+      auto conflict = candidate;
+      conflict.id = Base::findLocalCID(0)->id;
+      return Base::bindLocalCID(conflict);
+    }
+    return Base::bindLocalCID(candidate);
+  }
+  bool retryIssuance(Zquic_::LinkCID &second) {
+    auto first = Base::findLocalCID(1);
+    if (collisions != 5 || cidReady || !first || !first->associated ||
+	Base::findLocalCID(2) || !routeMatches(*first)) return false;
+    auto saved = *first;
+    app()->issuanceCollisions = false;
+    Base::scheduleMigrationCIDs();
+    auto replacement = Base::findLocalCID(2);
+    first = Base::findLocalCID(1);
+    if (cidReady != 1 || !first || first->id != saved.id ||
+	!routeMatches(saved) || !replacement || !routeMatches(*replacement)) return false;
+    second = *replacement;
+    return true;
+  }
+  bool routeMatches(const Base::LinkCID &cid) const {
+    Zquic::ResetToken token;
+    return router->find(cid.id) == this && router->resetToken(cid.id, token) &&
+      token == cid.resetToken;
+  }
+  bool survivedBootstrapCollision(const Zquic::CxnID &original) {
+    return !router->find(original) && routeMatches(*Base::findLocalCID(0));
+  }
+  bool bindBootstrapRoutes(Zquic::CxnRouter<TestServerLink> &routes) {
+    router = &routes;
+    if (auto sibling = app()->bootstrapCollision) {
+      Base::findLocalCID(0)->id = sibling->Base::findLocalCID(0)->id;
+      app()->bootstrapCollision = nullptr;
+    }
+    if (!Base::bindBootstrapRoutes(routes)) return false;
+    if (!app()->resetFixture || app()->resetInstalled) return true;
+    if (!routes.add(app()->resetCID, Zquic::U64Null, this, app()->resetToken)) return false;
     // Test-only installation of the router's existing Retired+token state.
     // Production retirement deletes/tombstones routes; its policy is unchanged.
     // The key/table are untouched and this single record lives until server stop.
@@ -667,6 +784,7 @@ friend inline ZuStringT<"Zquic.Runtime.SrvLink"> ZmNHeapID(TestServerLink *);
       reset.link = nullptr;
       app()->resetInstalled = true;
     });
+    return true;
   }
   ZiSockAddr originalPeer;
   bool retireUnusedPreferred() {
@@ -689,6 +807,7 @@ friend inline ZuStringT<"Zquic.Runtime.SrvLink"> ZmNHeapID(TestServerLink *);
     // The bounded local table may reuse the retired sequence-one slot.
     preferred = Base::findLocalCID(1);
     auto replacement = Base::findLocalCID(2);
+    if (!Base::receiveRetireCxnID_(retire) || router->find(preferredID)) return false;
     return original && original->id == originalID && original->associated &&
       original->state == Zquic::CxnState::Active &&
       (!preferred || (preferred->state == Zquic::CxnState::Retired && !preferred->associated)) &&
@@ -850,6 +969,12 @@ ZmRef<TestServer::Link> TestServer::accepted(const Zquic::InitialInfo &info)
   ++acceptedCount;
   acceptedEvent.post();
   return link_;
+}
+
+void TestClient::earlyDataReady(Link *link)
+{
+  auto stream = link->stream(Zquic::StreamType::Duplex);
+  if (stream) link->send(stream, "resumed", true);
 }
 
 int TestClient::Stream::process(Zquic::RxStream &)
@@ -1553,6 +1678,14 @@ void testEndpointOpen()
   ZuCHECK(!diag(serverLink).failures(),
     "runtime server failure diagnostics mismatch");
 
+  auto routeCounts = [&server]() {
+    return ZmBlock<RouteCounts>{}([&server](auto wake) {
+      server.rxRun([wake = ZuMv(wake)]() mutable {
+	wake(Zquic_::CxnRouteTrace<TestServerLink>::counts);
+      });
+    });
+  };
+  auto routeStart = routeCounts();
   auto clientDuplex = openStream(clientLink, Zquic::StreamType::Duplex);
   auto clientUni = openStream(clientLink, Zquic::StreamType::Simplex);
   ZuCHECK(clientLink->send(clientDuplex, "client-bidi") &&
@@ -1602,6 +1735,43 @@ void testEndpointOpen()
     [&server]() { server.dropNextShort = 1; }, true);
   ZuTestCall(testOwnedStreamAPI, serverLink, clientLink,
     [&server]() { server.dropNextShort = 1; }, false);
+
+
+  auto routeEnd = routeCounts();
+  unsigned packets = routeEnd.packets - routeStart.packets;
+  unsigned probes = routeEnd.probes - routeStart.probes;
+  unsigned writes = routeEnd.inserts - routeStart.inserts;
+  unsigned walks = routeEnd.walks - routeStart.walks;
+  std::cout << "# established server short datagrams=" << packets << " probes=" << probes
+    << " route inserts=" << writes << " local CID walks=" << walks << '\n';
+  ZuCHECK(packets && probes == packets && !writes && !walks,
+    "established ACK/STREAM dispatch must do one probe and zero CID maintenance");
+
+  // A separate Initial binds an original DCID, then collides on its local CID.
+  // Wait for the failed link's normal disconnect before checking the live sibling.
+  ZmBlock<>{}([serverLink](auto wake) {
+    serverLink->app()->rxRun([serverLink, wake = ZuMv(wake)]() mutable {
+      serverLink->app()->bootstrapCollision = serverLink.ptr();
+      wake();
+    });
+  });
+  Zquic::CxnID original{"failinit"};
+  uint8_t initial[Zquic::MinUDPPayload] = {};
+  int n = Zquic::Pkt::writeInitial(initial, sizeof(initial), original,
+    Zquic::CxnID{"clientid"}, 0, 1);
+  int fd = socket(AF_INET, SOCK_DGRAM, 0);
+  auto dest = server.local();
+  bool sent = fd >= 0 && n > 0 &&
+    sendto(fd, initial, sizeof(initial), 0, dest.sa(), dest.len()) == sizeof(initial);
+  if (fd >= 0) ::close(fd);
+  auto failed = sent ? server.waitLink(1, Zm::now(5)) : nullptr;
+  bool drained = failed && failed->waitDisconnected(Zm::now(5));
+  bool rollback = ZmBlock<bool>{}([serverLink, original](auto wake) {
+    serverLink->app()->rxRun([serverLink, original, wake = ZuMv(wake)]() mutable {
+      wake(serverLink->survivedBootstrapCollision(original));
+    });
+  });
+  ZuCHECK(drained && rollback, "bootstrap failure disturbed its sibling or leaked a route");
 
 
 	ZuCHECK(clientLink->close(), "runtime client disconnect did not complete");
@@ -1718,6 +1888,7 @@ void testHandshakeCryptoLoss()
 	      .thread(4, [](auto &t) { t.isolated(1); }); })
 	  .rxThread(1).txThread(2));
     TestServer server;
+    server.repeatInitial = true;
     ZQUIC_CHECK_RT(server.init(
 	Zquic::ServerParams(&mx, "3", "4")
 	  .certPath(temp.certPath.cspan())
@@ -1771,6 +1942,8 @@ void testHandshakeCryptoLoss()
 	  "server", diag(serverLink), serverLink->crypto().diag());
     }
     ZQUIC_CHECK_RT(established, "loss runtime handshake did not recover");
+    ZQUIC_CHECK_RT(serverLink && serverLink->repeatedInitials == 1 && server.acceptedCount == 1,
+      "repeated Initial did not return the accepted link");
     ZQUIC_CHECK_RT(dropHandshake ? server.droppedHandshake == 4 :
 	server.droppedInitial == 1,
       "loss runtime did not drop selected long-header packet");
@@ -2026,6 +2199,7 @@ void testMigrationLoss()
       .scheduler([](auto &s) { s.nThreads(5); })
       .rxThread(1).txThread(2)};
   TestServer server;
+  server.issuanceCollisions = true;
   bool serverInit = server.init(
     Zquic::ServerParams(&mx, "3", "4")
       .certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan())
@@ -2072,6 +2246,16 @@ void testMigrationLoss()
     bool established = waitEstablished(clientLink, server, serverLink);
     ZQUIC_CHECK_RT(established, "migration loss UDP handshake failed");
     if (!established) return;
+    Zquic_::LinkCID second;
+    bool issued = ZmBlock<bool>{}([serverLink, &second](auto wake) {
+      serverLink->app()->rxRun([serverLink, &second, wake = ZuMv(wake)]() mutable {
+	wake(serverLink->retryIssuance(second));
+      });
+    });
+    ZQUIC_CHECK_RT(issued, "failed bind changed sequence, committed routes or ready count");
+    ZQUIC_CHECK_RT(issued && client.rxEvent.wait(
+      [clientLink, second] { return clientLink->receivedCID(second); }, Zm::now(10)),
+      "replacement CID and token did not reach the peer");
     bool spare = client.rxEvent.wait(
       [&clientLink]() { return clientLink->spareCID(); }, Zm::now(10));
     ZQUIC_CHECK_RT(spare, "migration loss peer did not supply a spare CID");
@@ -2765,6 +2949,8 @@ void testRetryAddrValidate(bool forceFailure = false)
 	.rxThread(1).txThread(2));
 
   TestServer server;
+  server.resumeEarly = !forceFailure;
+  server.repeatInitial = !forceFailure;
   if (forceFailure) {
     server.dropNextInitial = UINT_MAX;
     server.dropNextHandshake = UINT_MAX;
@@ -2789,6 +2975,7 @@ void testRetryAddrValidate(bool forceFailure = false)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "retry runtime server init failed");
   TestClient client;
+  client.resumeEarly = !forceFailure;
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4")
 	.caPath(temp.certPath.cspan())
@@ -2868,8 +3055,8 @@ void testRetryAddrValidate(bool forceFailure = false)
   ZuCHECK(av.retrySent >= 1 && av.retryAccepted == 1 &&
       av.retryRejected >= 1,
     "retry runtime address-validation diagnostics mismatch");
-  ZuCHECK(server.acceptedCount == 1,
-    "retry runtime server accepted before validated Initial");
+  ZuCHECK(server.acceptedCount == 1 && serverLink->repeatedInitials == 1,
+    "repeated validated Initial did not reuse its Retry SCID route");
   const auto &params = clientLink->crypto().peerParams();
   ZuCHECK(params.origDCID.length() >= Zquic::MinCIDLength &&
       params.initialSCID.length() >= Zquic::MinCIDLength &&
@@ -2882,12 +3069,14 @@ void testRetryAddrValidate(bool forceFailure = false)
       return clientLink->receivedNewToken();
     }, Zm::now(10)), "retry runtime NEW_TOKEN was not exchanged");
 
+  ZuCHECK(!client.ticketReady.timedwait(Zm::now(5)), "initial TLS session ticket missing");
   unsigned retryPkts = server.retryPkts;
   bool clientClosed = clientLink->close();
   ZuCHECK(clientClosed && !clientLink->cxn(),
     "retry runtime first connection did not close");
   waitDisconnect(server);
 
+  client.holdOneRTT = 1;
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
   ZmRef<TestServer::Link> serverLink2;
   bool established2 = waitEstablished(clientLink, server, serverLink2, 1);
@@ -2922,6 +3111,18 @@ void testRetryAddrValidate(bool forceFailure = false)
       !diag(serverLink2).failures(),
     "retry runtime NEW_TOKEN reconnect diagnostics mismatch");
 
+  auto earlyStream = findStream(clientLink, 0);
+  bool acked = earlyStream && earlyStream->txEvent.wait([clientLink, earlyStream] {
+    return ZmBlock<bool>{}([clientLink, earlyStream](auto wake) {
+      clientLink->app()->txRun([earlyStream, wake = ZuMv(wake)]() mutable {
+	wake(earlyStream->finSent() && earlyStream->txDrained());
+      });
+    });
+  }, Zm::now(5));
+  client.holdOneRTT = 0;
+  ZuCHECK(acked && serverLink2->earlyBytes == 7,
+    "resumed 0-RTT STREAM must arrive once and drain through a 1-RTT acknowledgment");
+  earlyStream = nullptr;
   clientClosed = clientLink->close();
   server.stop();
   ZuCHECK(clientClosed && !clientLink->cxn() &&

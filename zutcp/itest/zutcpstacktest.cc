@@ -87,9 +87,9 @@ friend inline ZuStringT<"Zutcp.StackTest.Writer"> ZmNHeapID(WriterCxn *);
   ZmFn<bool()> resume;
   bool flushTx() { return resume ? resume() : false; }
   bool recoveryPending() const { return Base::m_txPkts.retransmitPending(); }
-  void resumeTx() override {
+  void resumeTx(Zu::IO::Result result) override {
     resuming = true;
-    Base::resumeTx();
+    Base::resumeTx(result);
     resuming = false;
   }
   void queueTxFlush(ZiSockAddr = {}) { }

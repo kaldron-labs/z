@@ -178,7 +178,7 @@ struct ZutcpAPI Cxn : public ZmPolymorph {
   ~Cxn() override { ZmAssert_(!admission && !txWaitPrev); }
 
   virtual void abortRx() = 0;
-  virtual void resumeTx() { }
+  virtual void resumeTx(Zu::IO::Result) { }
   virtual ClosedTupleKey closedKeyRx() const = 0;
   virtual bool established() const = 0;
   virtual const Zutcp_::Listener *listener() const { return nullptr; }
@@ -461,7 +461,9 @@ public:
   ZmRef<PacketBuf> allocPacket(void *owner, ZiIPType::T, bool control = false);
   // Native phase-1 entry: complete contiguous Ethernet packet on mx Tx.
   // Acceptance detaches backing; refusal leaves the buffer unchanged.
-  bool txReady(uint8_t *packet) const { return ready() && m_xdp->txReady(packet); }
+  Zu::IO::Result txReady(uint8_t *packet) const {
+    return ready() ? m_xdp->txReady(packet) : Zi::IOError;
+  }
   bool sendPacket(const ZmRef<Zi::IOBuf> &, PacketLease * = nullptr,
     const Zutcp::TCPLayout * = nullptr, TxRetry *retry = nullptr);
 
@@ -528,7 +530,7 @@ private:
   void resetReply(const TCPHeader &, unsigned, IPPath);
   void replyControl(TCPHeader, IPPath);
 
-  bool submitPacket(
+  Zu::IO::Result submitPacket(
     uint8_t *, unsigned,
     bool control, const Zutcp::TCPLayout * = nullptr,
     TxRetry *retry = nullptr);
@@ -640,7 +642,7 @@ private:
   Cxn					**m_txWaitTail = &m_txWait;
   unsigned				m_txWaitCount = 0;
   unsigned				m_txResumeBudget = 0;
-  bool					m_txResumeQueued = false;
+  bool					m_txResumeQueued = false, m_txResumeFailed = false;
   bool					m_txServicing = false;
   bool					m_txDraining = false;
   bool					m_senderStopping = false;

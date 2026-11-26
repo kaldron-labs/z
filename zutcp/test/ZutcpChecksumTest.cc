@@ -149,13 +149,13 @@ struct TCPChecksumTest {
     using ZmNHeap<Device>::operator delete;
     using Xdp::Xdp;
     void advertise(bool enabled) { tcpChksumOffload(enabled); }
-    bool send(uint8_t *frame, unsigned wire) override {
+    Zu::IO::Result send(uint8_t *frame, unsigned wire) override {
       ++calls;
       IPView ip;
       TCPView tcp;
       bool parsed = readIP({frame, wire}, ip) && readTCP(ip, tcp);
       exact &= parsed;
-      if (!parsed) return false;
+      if (!parsed) return Zi::IOError;
       auto segment = ip.payload.data();
       unsigned actual = (unsigned(segment[16])<<8) | segment[17];
       if (offload) {
@@ -169,9 +169,9 @@ struct TCPChecksumTest {
 	while (pseudo>>16) pseudo = (pseudo & 0xffff) + (pseudo>>16);
 	exact &= actual == pseudo;
       } else exact &= !Zutcp::MxPlugin::tcpChecksum(ip.local, ip.remote, ip.payload);
-      if (refusals) { --refusals; return false; }
+      if (refusals) { --refusals; return Zi::NotReady; }
       ++pending;
-      return true;
+      return Zi::OK;
     }
     unsigned pollTx() override { unsigned n = pending; pending = 0; return n; }
   };

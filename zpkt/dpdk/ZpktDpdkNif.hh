@@ -52,8 +52,8 @@ public:
   bool allocated() const override { return !!m_rxPool; }
   bool ready() const override { return Engine::state() == ZmEngineState::Running && m_active; }
 
-  bool txReady(uint8_t *) const override;
-  bool send(uint8_t *, unsigned) override;
+  Zu::IO::Result txReady(uint8_t *) const override;
+  Zu::IO::Result send(uint8_t *, unsigned) override;
   unsigned send(ZuSpan<const TxPacket>) override;
   void rx() override;
   unsigned pollTx() override;
@@ -71,7 +71,7 @@ private:
   void quiesceRx(unsigned left);
   void retire();
   void finishStop(unsigned left);
-  Slot *prepareTx(uint8_t *, unsigned);
+  Zu::IO::Result prepareTx(uint8_t *, unsigned, Slot *&);
   static void refuseTx(Slot *);
   unsigned reapTx(unsigned budget);
   void cleanTx();

@@ -90,10 +90,10 @@ static void testProvider()
       memcpy(retainedBytes, canonical, sizeof(retainedBytes));
       memcpy(ctl->data(), retainedBytes, sizeof(retainedBytes));
       auto heldOrigin = ctl->data_();
-      bool held = instance->send(ctl->data(), ctl->length);
+      bool held = instance->send(ctl->data(), ctl->length) == Zi::OK;
       ZuCheckRT(held,
         log_("XDP accepts retained control backing"));
-      bool accepted = instance->send(buf->data(), buf->length);
+      bool accepted = instance->send(buf->data(), buf->length) == Zi::OK;
       if (accepted) {
         buf->data__ = 0;
         buf->size = buf->skip = buf->length = 0;
@@ -113,7 +113,7 @@ static void testProvider()
       ZuCheckRT(completed == 2 && recycled && recycled->data_() == canonical &&
           ctl->data_() == heldOrigin && !memcmp(ctl->data(), retainedBytes, 64),
         log_("CQ recycles the originating pool slot without a metadata callback"));
-      ZuCheckRT(instance->send(ctl->data(), ctl->length),
+      ZuCheckRT(instance->send(ctl->data(), ctl->length) == Zi::OK,
         log_("retained backing can be resubmitted unchanged after CQ retirement"));
       other = nullptr;
       bool stopped = instance->stop();

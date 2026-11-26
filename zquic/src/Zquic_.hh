@@ -42,6 +42,14 @@ ZmHashDeriveT((Link_), CxnRoutes_, Cxn<Link_>,
     ZmHashKey<Cxn_IDAxor<Link_>,
 	ZmHashHeapID<"Zquic.Endpoint.CxnRouter">>>));
 
+// Specialized by the server dispatch fixture. Normal routers carry no counters.
+template <typename Link> struct CxnRouteTrace {
+  static void shortPacket() { }
+  static void probe() { }
+  static void insert() { }
+  static void bindLocals() { }
+};
+
 template <typename Link_>
 class CxnRouter {
 public:
@@ -67,15 +75,9 @@ public:
     const CxnID &id, uint64_t sequence, Link_ *link,
     const ResetToken &resetToken) {
     if (!id || !link) return false;
-    if (auto route = m_routes->find(id)) {
-      if (route->state == CxnState::Tombstone) return false;
-      if (route->state != CxnState::Active) addLength(id.length());
-      route->sequence = sequence;
-      route->link = link;
-      route->resetToken = resetToken;
-      route->state = CxnState::Active;
-      return true;
-    }
+    // Each CID has one binding for its lifetime, including its tombstone.
+    if (m_routes->find(id)) return false;
+    CxnRouteTrace<Link_>::insert();
     m_routes->add(Route{id, sequence, link, resetToken, CxnState::Active});
     addLength(id.length());
     return true;
@@ -89,6 +91,7 @@ public:
   Link_ *matchShort(
       ZuBSpan packet, CxnID *id = nullptr,
       ResetToken *resetToken = nullptr) const {
+    CxnRouteTrace<Link_>::shortPacket();
     if (resetToken) *resetToken = {};
     const Route *route = matchShortRoute(packet, !resetToken);
     if (!route) return nullptr;
@@ -200,6 +203,7 @@ private:
 	continue;
       }
       CxnID id{ZuBSpan{packet.data() + 1, max}};
+      CxnRouteTrace<Link_>::probe();
 #ifdef ZDEBUG
       ++m_shortProbes;
 #endif

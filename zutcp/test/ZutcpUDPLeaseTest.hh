@@ -7,215 +7,349 @@
 #ifndef ZutcpUDPLeaseTest_HH
 #define ZutcpUDPLeaseTest_HH
 
-#include <iostream>
+#include <zlib/ZiTx.hh>
 
-#include "ZutcpTestMxPlugin.hh"
+#include "ZutcpTestUDPDevice.hh"
+
+// Supply deterministic next-hop changes to the adapter's real asynchronous
+// resolver handoff. The private-network integration tests use the kernel.
+static ZmAtomic<unsigned> nextHop{10};
+
+namespace Zutcp {
+ZuUnion<IPPath, ZeException> resolveUDPPath(unsigned, IPPath route)
+{
+  auto result = path(route.remote.v6());
+  result.remote = route.remote;
+  result.remoteMAC[5] = nextHop.load_();
+  return result;
+}
+}
 
 namespace UDPLeaseTest {
 
-// Reuse requires both leases to retire, independently of callback/CQ order.
-struct Pool : ZmNHeap<Pool>, ZutcpTest::Pool {
-friend inline ZuStringT<"Zutcp.UDPTest.Pool"> ZmNHeapID(Pool *);
-  uint8_t *backing = nullptr;
-  unsigned releases = 0;
-  bool caller = false, kernel = false;
-
-  using ZmNHeap<Pool>::operator new;
-  using ZmNHeap<Pool>::operator delete;
-  using ZutcpTest::Pool::Pool;
-  ~Pool() override { if (backing) Heap::free(backing, size); }
-  uint8_t *alloc() override {
-    if (!available || caller || kernel) return nullptr;
-    if (!backing) backing = static_cast<uint8_t *>(Heap::alloc(size));
-    caller = true;
-    return backing;
-  }
-  void free(uint8_t *p) override {
-    ZmAssert_(p == backing && caller);
-    caller = false;
-    ++releases;
-  }
-};
-
-struct Device : ZmNHeap<Device>, ZutcpTest::Xdp {
-friend inline ZuStringT<"Zutcp.UDPTest.Device"> ZmNHeapID(Device *);
-  ZmRef<Pool> pool;
-  uint8_t *wire = nullptr;
-  unsigned calls = 0, length = 0, completions = 0;
-  bool refuse = false, early = false, retire = false;
-
-  using ZmNHeap<Device>::operator new;
-  using ZmNHeap<Device>::operator delete;
-  using Xdp::Xdp;
-  ZmRef<Zi::IOBufPool> bufPool(Zi::IOBufType::T type, unsigned count, unsigned size,
-    unsigned head, unsigned tail, unsigned align) override
-  {
-    if (type != Zi::IOBufType::TxUDP)
-      return Xdp::bufPool(type, count, size, head, tail, align);
-    pool = new Pool{type, count, size, head, tail, align, true};
-    return pool;
-  }
-  bool txReady(uint8_t *) const override {
-    return ready() && pool && pool->caller && !pool->kernel;
-  }
-  bool send(uint8_t *p, unsigned n) override {
-    ++calls;
-    wire = p;
-    length = n;
-    if (refuse || !pool->caller || pool->kernel) return false;
-    pool->kernel = true;
-    if (early) { pool->kernel = false; ++completions; }
-    return true;
-  }
-  unsigned pollTx() override {
-    if (retire && pool->kernel) { pool->kernel = false; ++completions; }
-    unsigned n = completions;
-    completions = 0;
-    return n;
-  }
-};
-
-class Cxn : public ZmNHeap<Cxn>, public ZiConnection {
+class Cxn : public ZmNHeap<Cxn>, public ZiConnection, public ZiTx<Cxn> {
 friend inline ZuStringT<"Zutcp.UDPTest.Cxn"> ZmNHeapID(Cxn *);
 public:
   using ZmNHeap<Cxn>::operator new;
   using ZmNHeap<Cxn>::operator delete;
   Cxn(ZiMultiplex *mx, const ZiCxnInfo &info) : ZiConnection{mx, info} { }
   void connected(ZiRxContext &) override { }
-  void disconnected(bool) override { }
+  void disconnected(bool) override {
+    mx()->txRun([cxn = ZmRef{this}] {
+      cxn->resetTxQueue();
+      cxn->closed.post();
+    });
+  }
+  void sending(ZiTxContext &io) {
+    io.addr = info().remote;
+    io.tos = ZiTOS{uint8_t(0xab)};
+  }
+  void sent(ZmRef<ZiIOBuf> buf, bool ok) {
+    auto &io = txContext();
+    ZmAssert_(buf.ptr() == io.buf.ptr());
+    results.push(io.length);
+    if (ok) {
+      ZmAssert_(buf->length == 1 && io.length == 1);
+      bytes.push(buf->data()[0]);
+    }
+    completed.post();
+  }
+  void enqueue(Zi::IOBufAllocator *tx, char value, bool finish = false) {
+    auto buf = tx->allocBuf(this);
+    ZmAssert_(buf && buf->append(ZuSpan{&value, 1U}));
+    ZiTx<Cxn>::send(ZuMv(buf), finish);
+  }
+
+  ZtArray<int> results;
+  ZtArray<uint8_t> bytes;
+  ZmSemaphore completed, closed;
 };
 
+struct Fixture {
+  ZmRef<Zpkt::Env> env = ZutcpTest::fixtureEnv();
+  ZmRef<Zutcp::MxPlugin> stack = new Zutcp::MxPlugin;
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
+    .rxThread(1).txThread(2), stack};
+  ZmRef<Device> device = new Device{&mx};
+  Zi::IOBufAllocator *tx = nullptr, *app = nullptr;
+  ZmAtomic<unsigned> loops{0};
+
+  bool start(unsigned retries, ZuTime backoff) {
+    Zutcp::MxParams config;
+    config.txRetries = retries;
+    config.txBackoff = backoff;
+    config.packet = [this](ZmRef<ZiIOBuf>) { ++loops; };
+    stack->init(&mx, env, ZmRef<Zpkt::Nif>{device}, ZuMv(config));
+    tx = mx.allocator<Zi::IOBufType::TxUDP, ZiIOBuf, 128>(8);
+    app = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 128>();
+    return tx && app && mx.start();
+  }
+  template <typename Fn> void onTx(Fn fn) {
+    ZmBlock<>{}([&](auto done) {
+      mx.txRun([&fn, done = ZuMv(done)]() mutable { fn(); done(); });
+    });
+  }
+  void fence() {
+    ZmBlock<>{}([this](auto done) {
+      mx.rxRun([this, done = ZuMv(done)]() mutable { mx.txRun(ZuMv(done)); });
+    });
+  }
+  ZmRef<Cxn> open(Zutcp::IPPath route, bool cached = true) {
+    return ZmBlock<ZmRef<Cxn>>{}([&](auto done) {
+      mx.rxRun([&, done = ZuMv(done)]() mutable {
+        ZiCxnInfo info{.type = ZiCxnType::UDP, .socket = Zi::nullSocket(),
+          .options = ZiCxnOptions{}.udp(true), .local = {route.local, 2381},
+          .remote = {route.remote, 49252}};
+        ZmRef<Cxn> cxn = new Cxn{&mx, info};
+        bool ok = ZutcpTest::MxPlugin::publishUDP(*stack,
+          ZiConnectFn{[&cxn](const ZiCxnInfo &) { return cxn.ptr(); }},
+          info, cached ? route : Zutcp::IPPath{});
+        done(ok ? ZuMv(cxn) : ZmRef<Cxn>{});
+      });
+    });
+  }
+  bool expire(Cxn *cxn) { return ZutcpTest::MxPlugin::expireUDP(*stack, cxn); }
+  void retire() {
+    device->retire = true;
+    stack->reconcileTx();
+    device->retire = false;
+  }
+  bool wire(unsigned i, const Zutcp::IPPath &route, char value) {
+    if (i >= device->frames.length()) return false;
+    const auto &bytes = device->frames[i];
+    Zutcp::IPView ip;
+    Zutcp::UDPView udp;
+    return Zutcp::readIP({bytes.data(), bytes.length()}, ip) && ip.local == route.remote &&
+      ip.tos == 0xab && ip.ecn == 3 && Zutcp::readUDP(ip, udp) &&
+      udp.dstPort == 49252 && udp.payload.length() == 1 && udp.payload[0] == value;
+  }
+};
 } // UDPLeaseTest
 
 static void testUDPLeases()
 {
+  using UDPLeaseTest::Fixture;
   ZuTestScopeRT(testUDPLeases);
-  auto env = ZutcpTest::fixtureEnv();
-  ZmRef<Zutcp::MxPlugin> stack = new Zutcp::MxPlugin;
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(3); })
-    .rxThread(1).txThread(2), stack};
-  ZmRef<UDPLeaseTest::Device> device = new UDPLeaseTest::Device{&mx};
-  ZmRef<Zpkt::Nif> backend = device;
-  bool configured = false;
-  try { stack->init(&mx, env, ZuMv(backend), {}); configured = true; }
-  catch (ZeException &e) {
-    std::cerr << e << '\n' << std::flush;
-  }
-  auto tx = mx.allocator<Zi::IOBufType::TxUDP, ZiIOBuf, 128>(1);
-  auto app = mx.allocator<Zi::IOBufType::App, ZiIOBuf, 128>();
-  bool started = configured && tx && app && mx.start();
-  ZuCheckRT(started, log_("start the real UDP adapter with a deterministic registered slot"));
+  Fixture f;
+  bool started = f.start(2, ZuTime{60});
+  ZuCheckRT(started, log_("start UDP adapter with independent registered slots"));
   if (!started) return;
-  bool passed = ZmBlock<bool>{}([&mx, &stack, &device, tx, app](auto done) {
-    mx.txRun([&mx, &stack, &device, tx, app, done = ZuMv(done)]() mutable {
-      bool ok = true;
-      for (bool ipv6 : {false, true}) {
-        auto route = path(ipv6);
-        ZiCxnInfo info{.type = ZiCxnType::UDP, .socket = Zi::nullSocket(),
-          .options = ZiCxnOptions{}.udp(true),
-          .local = {route.local, 2381}, .remote = {route.remote, 49252}};
-        ZmRef<UDPLeaseTest::Cxn> cxn = new UDPLeaseTest::Cxn{&mx, info};
-        for (unsigned mode = 0; mode < 5; ++mode) {
-          device->refuse = mode == 0;
-          device->early = mode == 1;
-          device->retire = false;
-          bool unsupported = mode >= 3;
-          auto buf = (mode == 3 ? app : tx)->allocBuf(cxn.ptr());
-          if (!buf || !buf->append("abcde")) { ok = false; break; }
-          auto original = buf.ptr();
-          auto backing = buf->data_();
-          auto skip = buf->skip;
-          unsigned calls = device->calls, releases = device->pool->releases;
-          auto &io = cxn->txContext();
-          bool callback = false;
-          io.init(ZiTxFn{[&ok, &callback, &device, tx, original, backing, skip,
-              unsupported, mode, size = buf->size, owner = buf->owner](ZiTxContext &io) {
-            callback = true;
-            bool refused = mode == 0 || unsupported;
-            ok &= io.length == (refused ? -1 : 5) && io.buf.ptr() == original &&
-              io.buf->data_() == backing && io.buf->skip == skip &&
-              io.buf->length == 5 && io.buf->size == size && io.buf->owner == owner &&
-              io.buf->cspan() == "abcde" &&
-              io.offset == unsigned(mode == 4);
-            if (mode != 3) {
-              ok &= device->pool->caller && !tx->allocBuf();
-              ok &= device->pool->kernel == (mode == 2);
-            }
-            io.complete();
-            return true;
-          }}, ZuMv(buf), info.remote, ZiTOS{uint8_t(0xab)});
-          io.offset = unsigned(mode == 4);
-          ZutcpTest::MxPlugin::udpSend(*stack, cxn.ptr(), route);
-          ok &= callback && device->calls == calls + !unsupported;
-          if (mode == 3) continue;
-          ok &= !device->pool->caller && device->pool->releases == releases + 1;
-          if (mode == 1 || mode == 2) {
-            Zutcp::IPView ip;
-            Zutcp::UDPView udp;
-            ok &= Zutcp::readIP({device->wire, device->length}, ip) &&
-              Zutcp::readUDP(ip, udp) && ip.tos == 0xab &&
-              udp.payload.data() == backing + skip && udp.payload == "abcde";
-          }
-          if (mode == 2) ok &= !tx->allocBuf();
-          device->retire = true;
-          stack->reconcileTx();
-          auto returned = tx->allocBuf();
-          ok &= returned && returned->data_() == backing;
-          returned = nullptr;
-        }
-        cxn->txUp() = 0;
-        cxn->rxUp() = 0;
-      }
-      done(ok);
+  f.onTx([&] { ZutcpTest::MxPlugin::udpRouteEpoch(*f.stack); });
+
+  for (bool ipv6 : {false, true}) {
+    auto route = path(ipv6);
+    auto cxn = f.open(route);
+    bool ok = !!cxn;
+    if (!ok) break;
+    unsigned i = 0;
+    f.onTx([&] {
+      f.device->early = ipv6;
+      f.device->refuse = true;
+      auto calls = f.device->calls;
+      i = f.device->frames.length();
+      cxn->enqueue(f.tx, 'A');
+      auto head = cxn->txContext().buf.ptr();
+      cxn->enqueue(f.tx, 'B');
+      f.stack->send(cxn);
+      ok &= head && cxn->txContext().buf == head && cxn->txQueue.count_() == 2 &&
+        !cxn->results.length() && f.device->calls == calls + 3;
+      ok &= f.expire(cxn) && f.expire(cxn) && f.device->calls == calls + 5;
+      f.device->refuse = false;
+      ok &= f.expire(cxn) && !f.expire(cxn);
+      ok &= f.device->frames.length() == i+2 && cxn->results.length() == 2 &&
+        cxn->bytes.length() == 2 && cxn->bytes[0] == 'A' && cxn->bytes[1] == 'B' &&
+        f.wire(i, route, 'A') && f.wire(i+1, route, 'B') && !cxn->txQueue.count_() &&
+        f.device->pool->balanced() == ipv6;
+      f.retire();
+      ok &= f.device->pool->balanced();
     });
-  });
-  for (bool graceful : {true, false}) {
-    bool callback = false;
-    bool terminal = ZmBlock<bool>{}([&](auto done) {
-      mx.txRun([&, graceful, done = ZuMv(done)]() mutable {
-        auto route = path(false);
-        ZiCxnInfo info{.type = ZiCxnType::UDP, .socket = Zi::nullSocket(),
-          .options = ZiCxnOptions{}.udp(true),
-          .local = {route.local, 2381}, .remote = {route.remote, 49252}};
-        ZmRef<UDPLeaseTest::Cxn> cxn = new UDPLeaseTest::Cxn{&mx, info};
-        auto buf = tx->allocBuf(cxn.ptr());
-        if (!buf || !buf->append("end")) { done(false); return; }
-        unsigned calls = device->calls, releases = device->pool->releases;
-        cxn->txContext().init(ZiTxFn{[&callback](ZiTxContext &io) {
-          callback = io.disconnected() && io.length == 3 && io.buf->cspan() == "end";
-          io.offset += io.length;
-          io.complete();
-          return true;
-        }}, ZuMv(buf), info.remote);
-        device->refuse = device->early = device->retire = false;
-        if (graceful) {
-          cxn->txContext().disconnect();
-          ZutcpTest::MxPlugin::udpSend(*stack, cxn, route);
-        } else ZutcpTest::MxPlugin::udpRouteThenClose(*stack, cxn);
-        // The Rx fence follows the route lookup. Its Tx fence follows routed().
-        mx.rxRun([&, cxn = ZuMv(cxn), graceful, calls, releases, done = ZuMv(done)]() mutable {
-          mx.txRun([&, cxn = ZuMv(cxn), graceful, calls, releases, done = ZuMv(done)]() mutable {
-            bool ok = !cxn->txUp() && cxn->txContext().completed() && callback == graceful &&
-              device->calls == calls + unsigned(graceful) &&
-              device->pool->releases == releases + 1 && device->pool->kernel == graceful;
-            if (!ok)
-              log_("graceful=", graceful, " up=", cxn->txUp().load_(),
-                " completed=", cxn->txContext().completed(), " callback=", callback,
-                " submissions=", device->calls - calls, " returns=", device->pool->releases - releases,
-                " kernel=", device->pool->kernel);
-            device->retire = true;
-            stack->reconcileTx();
-            cxn->rxUp() = 0;
-            done(ok && tx->allocBuf());
-          });
-        });
-      });
-    });
-    ZuCheckRT(terminal, log_("UDP terminal request submits only the graceful datagram"));
+    ZuCheckRT(ok, log_("idle refusal preserves FIFO, leases, ECN and retry budget for IPv",
+      ipv6 ? 6 : 4));
+    cxn->close();
+    ZuCheckRT(!cxn->closed.timedwait(Zm::now(5)), log_("published endpoint closes"));
   }
-  bool stopped = mx.stop();
-  ZuCheckRT(passed && stopped,
-    log_("UDP keeps one backing through refusal, CQ-before-callback and CQ-after-callback"));
+
+  // Start with idle backoff, then put another endpoint's accepted frame in flight.
+  // Its final completion wakes this head, which must fall back to the timer again.
+  auto route = path(false);
+  auto a = f.open(route, false);
+  auto b = f.open(path(true));
+  bool transitions = a && b;
+  f.onTx([&] {
+    f.device->early = false;
+    f.device->refuse = true;
+    a->enqueue(f.tx, 'a');
+  });
+  f.fence();
+  unsigned before = 0;
+  f.onTx([&] {
+    f.device->refuse = false;
+    b->enqueue(f.tx, 'x');
+    f.device->refuse = true;
+    before = f.device->calls;
+    transitions &= f.expire(a) && f.device->calls == before + 1 && !f.expire(a);
+    f.retire();
+  });
+  f.onTx([&] {
+    transitions &= f.device->calls == before + 2 && !a->results.length();
+    // Invalidate the cached path while parked. The resumed datagram must use
+    // the result of a new lookup, and the async submission may itself park.
+    nextHop = 42;
+    ZutcpTest::MxPlugin::udpRouteEpoch(*f.stack, true);
+    transitions &= f.expire(a);
+  });
+  f.fence();
+  f.onTx([&] {
+    f.device->refuse = false;
+    transitions &= f.expire(a) && a->bytes.length() == 1 &&
+      f.device->frames[f.device->frames.length()-1][5] == 42 && f.wire(f.device->frames.length()-1, route, 'a');
+    f.retire();
+  });
+  ZuCheckRT(transitions, log_("resumed route lookup and last completion select one wake source"));
+
+  // Drop provider readiness without stopping the multiplexer or delivering a CQ.
+  f.onTx([&] {
+    f.device->refuse = true;
+    a->enqueue(f.tx, 't'); // timer
+    a->enqueue(f.tx, 'u');
+    f.device->refuse = false;
+    b->enqueue(f.tx, 'o'); // unrelated outstanding submission
+  });
+  f.fence(); // b may need a new route for the current epoch
+  f.onTx([&] {
+    f.device->refuse = true;
+    b->enqueue(f.tx, 'w'); // waits on o
+    b->enqueue(f.tx, 'z');
+    f.device->down = 1;
+  });
+  bool down = !b->completed.timedwait(Zm::now(5)); // previous x
+  down &= !b->completed.timedwait(Zm::now(5)); // previous o
+  down &= !b->completed.timedwait(Zm::now(5)); // provider-down terminal wake
+  f.onTx([&] {
+    down &= f.expire(a) && a->results.length() == 2 && a->results[1] == Zi::IOError &&
+      b->results.length() == 3 && b->results[2] == Zi::IOError &&
+      !a->txQueue.count_() && !b->txQueue.count_();
+    f.device->down = 0;
+    f.retire();
+  });
+  ZuCheckRT(down, log_("provider loss fails both parked heads once and releases successors"));
+
+  // Queue a counted completion wake then close the physical connection in the
+  // same turn. A fresh endpoint can send independently of that queued resume.
+  bool closed = true;
+  f.onTx([&] {
+    f.device->refuse = false;
+    b->enqueue(f.tx, 'o');
+    f.device->refuse = true;
+    a->enqueue(f.tx, 'c');
+    f.retire();
+    before = f.device->calls;
+    a->close();
+  });
+  closed &= !a->closed.timedwait(Zm::now(5));
+  a = f.open(route, false);
+  f.onTx([&] { f.device->refuse = false; a->enqueue(f.tx, 'f', true); });
+  closed &= !a->closed.timedwait(Zm::now(5));
+  f.onTx([&] {
+    closed &= f.device->calls == before+1 && a->bytes.length() == 1 && a->bytes[0] == 'f';
+    f.retire();
+  });
+  ZuCheckRT(closed, log_("close cancels queued resume and rebind delivers the graceful final head"));
+
+  bool invalid = true;
+  f.onTx([&] {
+    before = f.device->calls;
+    for (bool cursor : {false, true}) {
+      auto buf = (cursor ? f.tx : f.app)->allocBuf(b.ptr());
+      ZmAssert_(buf && buf->append("abcde"));
+      auto start = buf->data();
+      bool called = false;
+      auto &io = b->txContext();
+      io.init(ZiTxFn{[&](ZiTxContext &io) {
+        called = io.length < 0 && io.buf->data() == start && io.buf->cspan() == "abcde" &&
+          io.offset == unsigned(cursor);
+        io.complete();
+        return true;
+      }}, ZuMv(buf), b->info().remote);
+      io.offset = unsigned(cursor);
+      f.stack->send(b);
+      invalid &= called;
+    }
+    invalid &= f.device->calls == before && f.device->pool->balanced();
+  });
+  ZuCheckRT(invalid, log_("invalid allocator and cursor fail with producer bytes intact"));
+
+  // Reuse one caller-held buffer while the device still owns the first frame.
+  // A new TOS would change its headers if the pre-write check ran too late.
+  ZmRef<ZiIOBuf> held;
+  unsigned callbacks = 0;
+  bool busy = true;
+  auto submit = [&](uint8_t tos) {
+    b->txContext().init(ZiTxFn{[&](ZiTxContext &io) {
+      busy &= io.buf == held && io.buf->cspan() == "q" && io.length == 1;
+      ++callbacks;
+      io.complete();
+      return true;
+    }}, held, b->info().remote, ZiTOS{tos});
+    f.stack->send(b);
+  };
+  f.onTx([&] {
+    before = f.device->calls;
+    held = f.tx->allocBuf(b.ptr());
+    ZmAssert_(held && held->append("q"));
+    submit(0);
+    auto &first = f.device->frames[f.device->frames.length()-1];
+    auto wire = held->data() - Zutcp::udpHead(b->info().remote.ip().type());
+    submit(0xab);
+    busy &= callbacks == 1 && f.device->calls == before+1 &&
+      !memcmp(first.data(), wire, first.length());
+    f.retire();
+  });
+  f.onTx([&] {
+    busy &= callbacks == 2 && f.device->calls == before+2 &&
+      f.wire(f.device->frames.length()-1, path(true), 'q');
+    held = nullptr;
+    f.retire();
+    busy &= f.device->pool->balanced();
+  });
+  ZuCheckRT(busy, log_("prior device lease protects headers until completion"));
+
+  // The receive owner's stop retirement must cancel an armed retry timer.
+  f.onTx([&] { f.device->refuse = true; b->enqueue(f.tx, 's'); });
+  bool stopped = f.mx.stop();
+  ZuCheckRT(stopped && !b->txUp() && b->txContext().completed() && f.device->pool->balanced(),
+    log_("multiplexer stop retires timer-backed endpoint"));
+}
+
+static void testUDPTimer()
+{
+  using UDPLeaseTest::Fixture;
+  ZuTestScopeRT(testUDPTimer);
+  Fixture f;
+  bool started = f.start(0, ZuTime{0, 5000000});
+  ZuCheckRT(started, log_("start UDP timer fixture"));
+  if (!started) return;
+  auto route = path(false);
+  route.remote = ZiIP{"239.18.0.1"};
+  auto cxn = f.open(route);
+  bool ok = !!cxn;
+  f.onTx([&] {
+    ZutcpTest::MxPlugin::udpRouteEpoch(*f.stack);
+    f.device->refuse = true;
+    cxn->enqueue(f.tx, 'm', true);
+    ok &= f.device->calls == 1 && !cxn->results.length();
+    f.device->refuse = false;
+  });
+  ok &= !cxn->completed.timedwait(Zm::now(5)) && !cxn->closed.timedwait(Zm::now(5));
+  f.fence();
+  f.onTx([&] {
+    ok &= f.device->calls == 2 && f.device->frames.length() == 1 && f.loops == 1 &&
+      f.wire(0, route, 'm');
+    f.retire();
+    ok &= f.device->pool->balanced();
+  });
+  bool stopped = f.mx.stop();
+  ZuCheckRT(ok && stopped, log_("real timer retries idle graceful send and loops it back once"));
 }
 
 #endif /* ZutcpUDPLeaseTest_HH */

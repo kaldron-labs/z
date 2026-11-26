@@ -102,8 +102,10 @@ public:
     memcpy(packet, bytes.data(), bytes.length());
     recv(packet, bytes.length(), burst);
   }
-  bool txReady(uint8_t *) const override { return ready(); }
-  bool send(uint8_t *, unsigned) override { return false; }
+  Zu::IO::Result txReady(uint8_t *) const override { return ready() ? Zi::OK : Zi::IOError; }
+  Zu::IO::Result send(uint8_t *, unsigned) override {
+    return ready() ? Zi::NotReady : Zi::IOError;
+  }
   unsigned send(ZuSpan<const Zpkt::TxPacket>) override { return 0; }
   void rx() override { m_event.wait(); }
   void wake() override {
@@ -246,13 +248,30 @@ public:
   static void udpSend(Zutcp::MxPlugin &instance, ZiConnection *cxn, Zutcp::IPPath path) {
     Zutcp::MxPlugin::UdpCxn endpoint{&instance, cxn->info(), ZuMv(path)};
     endpoint.send(cxn);
+    ZmAssert_(!endpoint.m_sending); // the copy-volume fixture completes synchronously
   }
-  static void udpRouteThenClose(Zutcp::MxPlugin &instance, ZiConnection *cxn) {
+  static bool publishUDP(Zutcp::MxPlugin &instance, ZiConnectFn connected,
+    ZiCxnInfo info, Zutcp::IPPath path) {
+    ZmAssert_(instance.rxInvoked());
     ZmRef<Zutcp::MxPlugin::UdpCxn> endpoint =
-      new Zutcp::MxPlugin::UdpCxn{&instance, cxn->info(), {}};
-    endpoint->send(cxn); // resolution returns on a subsequent Tx turn
-    cxn->txContext().close();
-    endpoint->send(cxn);
+      new Zutcp::MxPlugin::UdpCxn{&instance, info, ZuMv(path)};
+    if (!instance.reserveCxn()) return false;
+    if (instance.publishUDP(endpoint, connected, ZuMv(info))) return true;
+    endpoint->close(false);
+    return false;
+  }
+  // Synthetic routes change only when the fixture advances their generation.
+  static void udpRouteEpoch(Zutcp::MxPlugin &instance, bool advance = false) {
+    ZmAssert_(instance.txInvoked());
+    instance.m_udpRouteCheck = UINT64_MAX;
+    if (advance) ++instance.m_udpRouteGeneration;
+  }
+  static bool expireUDP(Zutcp::MxPlugin &instance, ZiConnection *cxn) {
+    ZmAssert_(instance.txInvoked());
+    auto ep = static_cast<Zutcp::MxPlugin::UdpCxn *>(cxn->plugin());
+    if (!ep || !instance.mx()->del(&ep->m_retryTimer)) return false;
+    ep->retryTx();
+    return true;
   }
   static Zutcp::MxParams parameters(const Zutcp::MxPlugin &instance) {
     return instance.m_params;

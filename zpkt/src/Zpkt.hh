@@ -16,6 +16,7 @@
 #include <stdint.h>
 
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuIOResult.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuTime.hh>
 #include <zlib/ZuUnion.hh>
@@ -128,10 +129,10 @@ public:
 
   // Tx owner: encode only when no prior submission owns this slot. This
   // reserves nothing; encode and send on the same owner without resubmission.
-  virtual bool txReady(uint8_t *packet) const = 0;
-  // False acquires no kernel lease. After true, keep bytes immutable until
-  // kernel retirement. One descriptor may be outstanding for each slot.
-  virtual bool send(uint8_t *packet, unsigned length) = 0;
+  virtual Zu::IO::Result txReady(uint8_t *packet) const = 0;
+  // OK acquires the device lease. Keep bytes immutable until retirement.
+  // NotReady indicates temporary pressure. IOError indicates terminal failure.
+  virtual Zu::IO::Result send(uint8_t *packet, unsigned length) = 0;
   // Tx owner: accepts exactly the leading entries up to MaxTxBatch.
   // Refused entries retain their caller leases and can be resubmitted.
   virtual unsigned send(ZuSpan<const TxPacket>) = 0;

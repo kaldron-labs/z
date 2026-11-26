@@ -342,7 +342,7 @@ private:
       return false;
     }
     auto lease = packet->retained;
-    if (lease && **lease && !m_instance->txReady(buf->data_())) {
+    if (lease && **lease && m_instance->txReady(buf->data_()) != Zi::OK) {
       ++m_txDiag.txBackPressure;
       ++m_txDiag.txDropped;
       return false;

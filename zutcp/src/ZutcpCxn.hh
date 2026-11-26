@@ -4483,7 +4483,8 @@ protected:
   }
 
 public:
-  void resumeTx() override {
+  void resumeTx(Zu::IO::Result result) override {
+    if (result != Zi::OK) return; // provider teardown owns terminal TCP shutdown
     ZiAssert(txInvoked(), "Zutcp", (), "TCP retry outside Tx thread", return);
     if (m_txWaitGen != m_txRuntimeGen || m_txDataGen != dataGen() ||
 	disconnecting() || linkClosedTx()) return;

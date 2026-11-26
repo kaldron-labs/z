@@ -13,8 +13,18 @@ LDADD = $(top_builddir)/zquic/src/libZquic.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = zquictxqueuetest
 zquictxqueuetest_SOURCES = zquictxqueuetest.cc
+if LINUX
+noinst_PROGRAMS += zquicnativeudpqueuetest
+zquicnativeudpqueuetest_SOURCES = zquicnativeudpqueuetest.cc
+zquicnativeudpqueuetest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zutcp/src \
+	-I$(top_srcdir)/zutcp/test -I$(top_srcdir)/zpkt/src -I$(top_srcdir)/zpkt/test \
+	-DZUTCP_TEST_PLUGIN='"$(abs_top_builddir)/zpkt/test/.libs/libZpktTestPlugin.so"' \
+	-DZUTCP_XDP_MODULE='"$(abs_top_builddir)/zpkt/xdp/.libs/libZpkt_xdp.so"'
+zquicnativeudpqueuetest_LDADD = $(top_builddir)/zutcp/src/libZutcp.la \
+	$(top_builddir)/zpkt/src/libZpkt.la $(LDADD)
+endif
 EXTRA_DIST = README.md
 
 .PHONY: test
 test: all
-	prove ./zquictxqueuetest
+	prove $(noinst_PROGRAMS)

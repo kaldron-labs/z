@@ -157,13 +157,20 @@ and configured head/tail room. Every accepted descriptor selects fresh metadata
 options; refusal leaves caller bytes and the prefix unchanged. DPDK clears
 stale mbuf flags on refusal/reuse. No software fallback exists inside Zpkt.
 
-Before rewriting headers in retained backing, call `txReady(packet)` on the Tx
-owner. It checks the existing slot's outstanding-submission state without taking
-a lease or reserving ring capacity. A true result permits encoding followed by
-synchronous `send()` on that same owner, with no intervening submission of the
-slot. Other threads may return their caller leases but cannot submit the slot.
-`send()` still owns admission and may refuse for ring/device pressure. Bytes
-remain immutable after acceptance until `pollTx()` retires the submission.
+Call `txReady(packet)` on the Tx owner before rewriting headers in retained
+backing. It checks the existing submission lease and reserves no capacity.
+Both scalar operations return `Zu::IO::Result`. Compare their results explicitly.
+
+| Result | `txReady(packet)` | `send(packet, length)` |
+| --- | --- | --- |
+| `Zi::OK` | The caller may write the frame. | The provider acquired its submission lease. |
+| `Zi::NotReady` | A prior submission still holds the slot. | A prior submission or device capacity prevents acceptance. |
+| `Zi::IOError` | The provider is down. | Terminal error, including a down provider or invalid frame extent. |
+
+Supply an address within caller-held Tx backing from this provider. A bad backing
+address violates an internal invariant and triggers a fatal assertion. Submit on
+the same owner, and keep accepted bytes immutable until retirement. Refusal
+acquires no submission lease. The vector overload returns the accepted prefix count.
 
 ## Stop and finalization
 

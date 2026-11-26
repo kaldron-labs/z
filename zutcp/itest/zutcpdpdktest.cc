@@ -598,7 +598,8 @@ static void heldOwnership(Peers &pair)
 	&snapshot, &refused, exact, slot, packet, &owner] {
       auto pending = peer.tcp->txAdmission().outstanding;
       auto calls = cxn->encodes;
-      refused = !peer.device->txReady(frame) && exact && pending == 1 && rte_mbuf_refcnt_read(packet) == 2 &&
+      refused = peer.device->txReady(frame) == Zi::NotReady && exact && pending == 1 &&
+	rte_mbuf_refcnt_read(packet) == 2 &&
 	slot->leases.load_() == (Zpkt::Dpdk::Slot::Caller | Zpkt::Dpdk::Slot::Submitted);
       for (unsigned attempt = 1; refused && attempt <= 3; ++attempt) {
 	auto view = frame;

@@ -13,6 +13,7 @@ namespace Zutcp {
 
 class MxPlugin::UdpCxn :
   public ZmNHeap<UdpCxn>, public Cxn, public UdpBindings::Node {
+friend class ZutcpTest::MxPlugin;
 friend inline ZuStringT<"Zutcp.UDP.Cxn"> ZmNHeapID(UdpCxn *);
 
 public:
@@ -30,6 +31,8 @@ public:
   bool receive(uint8_t *, unsigned, unsigned, const ZiSockAddr &, uint8_t, ZiRxBurst *);
   void send(ZiConnection *);
   void close(bool);
+  void cancelTx();
+  void resumeTx(Zu::IO::Result) override;
 
   void abortRx() override { close(false); }
   ClosedTupleKey closedKeyRx() const override { return {}; }
@@ -41,7 +44,10 @@ private:
   ZiSockAddr destination(const ZiTxContext &) const;
   const IPPath *findPath(const ZiIP &, uint64_t);
   void sendNext(ZiConnection *);
-  void routed(ZiConnection *, const ZiSockAddr &, uint64_t, ZuUnion<IPPath, ZeException>);
+  void routed(ZiConnection *, ZiIOBuf *, const ZiSockAddr &, uint64_t, ZuUnion<IPPath, ZeException>);
+  void backoff(ZuTime deadline);
+  void retryTx();
+  bool sendPath(ZiConnection *, const ZiSockAddr &, const IPPath &);
   int submit(const ZiTxContext &, const ZiSockAddr &, const IPPath &);
   void sent(ZiConnection *, int);
 
@@ -54,6 +60,8 @@ private:
   uint64_t	m_generation = 0;
   unsigned	m_pathIndex = 0, m_pathCount = 0, m_nextPath = 0;
   bool		m_sending = false;
+  ZiIOBuf	*m_parked = nullptr; // borrowed from the active Tx context
+  ZmScheduler::Timer m_retryTimer;
   IPPath	m_paths[NPaths];
 };
 

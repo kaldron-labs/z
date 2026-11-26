@@ -390,7 +390,8 @@ in `README.md`.
   the endpoint receives the original `io.buf`.
 - `PktTxBufAllocator` defaults to the `"Zutcp.Pkt.Tx"` heap for transmit
   packetization and packet protection output. Each endpoint retains its own
-  allocator; active output belongs to `ZiTxContext::buf` until kernel retirement.
+  allocator. The active Zi context retains the caller lease until local completion.
+  An accepted native submission has a separate lease until device retirement.
 - `StreamTxBufAlloc` defaults to the `"Zutcp.Stream.TxBuf"` heap for
   application stream bytes that must be retained for ACK, loss,
   retransmission, reset, cancellation, or teardown handling.
@@ -413,6 +414,14 @@ retained plaintext and packet records above this boundary. Priority admission
 inserts immediately after the active head, newest priority first among pending
 packets. Ordinary submissions remain FIFO. Address and ECN stay immutable while
 queued and are installed afresh for every selected head.
+
+Native UDP keeps a temporarily refused datagram in the active Zi context. Check
+slot writability before framing. On `Zi::NotReady`, use the device completion
+waiter while submissions are outstanding. An idle sender gets `txRetries`
+immediate retries of its prepared frame, then one attempt per `txBackoff`.
+Retry on mx Tx with the current route. Report the payload length on acceptance
+and `Zi::IOError` on provider failure. A close cancels the waiter and timer
+before releasing the head.
 
 Posted output snapshots only raw physical identity and generation. Compare that
 identity on Tx without dereferencing or retaining the old connection; obtain the

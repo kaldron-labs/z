@@ -600,7 +600,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
     return Base::receiveRetireCxnID_(frame);
   }
   void installLocalCIDRoutes(TestCIDRoutes &routes) {
-    Base::installLocalCIDRoutes_(routes);
+    Base::bindLocalCIDRoutes_(routes);
   }
   void retireLocalCIDRoutes(TestCIDRoutes &routes) {
     Base::retireLocalCIDRoutes_(routes);

@@ -360,4 +360,5 @@ int main(int argc, char **argv)
   ZuTestCall(testTCPOptionWire);
   ZuTestCall(testUDP);
   ZuTestCall(testUDPLeases);
+  ZuTestCall(testUDPTimer);
 }

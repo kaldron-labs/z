@@ -174,17 +174,18 @@ void MxPlugin::UdpCxn::sendNext(ZiConnection *cxn)
     }
     auto generation = m_owner->udpRouteGeneration();
     if (auto path = findPath(dest.ip(), generation)) {
-      sent(cxn, submit(io, dest, *path));
+      if (!sendPath(cxn, dest, *path)) return;
       continue;
     }
-    m_owner->rxRun([endpoint = ZmRef{this}, cxn = ZmRef{cxn}, dest, generation]() mutable {
+    m_owner->rxRun([endpoint = ZmRef{this}, cxn = ZmRef{cxn},
+	head = io.buf.ptr(), dest, generation]() mutable {
       if (endpoint->retiring) return;
       auto owner = endpoint->m_owner;
       auto source = udpSource(endpoint->m_info.local.ip(), dest.ip(), endpoint->m_info.options);
       auto route = resolveUDPPath(owner->m_xdp->ifindex(), {source, dest.ip(), {}, {}, 0});
       owner->txRun([endpoint = ZuMv(endpoint), cxn = ZuMv(cxn),
-	  dest, generation, route = ZuMv(route)]() mutable {
-	endpoint->routed(cxn, dest, generation, ZuMv(route));
+	  head, dest, generation, route = ZuMv(route)]() mutable {
+	endpoint->routed(cxn, head, dest, generation, ZuMv(route));
       });
     });
     return;
@@ -193,25 +194,78 @@ void MxPlugin::UdpCxn::sendNext(ZiConnection *cxn)
 }
 
 void MxPlugin::UdpCxn::routed(
-  ZiConnection *cxn, const ZiSockAddr &dest, uint64_t generation,
+  ZiConnection *cxn, ZiIOBuf *head, const ZiSockAddr &dest, uint64_t generation,
   ZuUnion<IPPath, ZeException> route)
 {
   auto &io = cxn->txContext();
   if (cxn->txUp() && io.closed()) { cxn->close(); return; }
-  if (cxn->txUp() && !io.completed() && destination(io) == dest &&
+  if (cxn->txUp() && !io.completed() && io.buf == head && destination(io) == dest &&
       (m_owner->m_udpRouteFD < 0 || generation == m_owner->udpRouteGeneration())) {
     if (route.is<IPPath>()) {
       m_pathIndex = m_nextPath;
       m_paths[m_pathIndex] = ZuMv(route.p<IPPath>());
       m_nextPath = (m_nextPath + 1) % NPaths;
       if (m_pathCount < NPaths) ++m_pathCount;
-      sent(cxn, submit(io, dest, m_paths[m_pathIndex]));
+      if (!sendPath(cxn, dest, m_paths[m_pathIndex])) return;
     } else {
       m_owner->reportError(ZuMv(route.p<ZeException>()));
       sent(cxn, -1);
     }
   }
   sendNext(cxn);
+}
+
+// Return false while the current head owns a future wakeup.
+bool MxPlugin::UdpCxn::sendPath(ZiConnection *cxn, const ZiSockAddr &dest, const IPPath &path)
+{
+  auto &io = cxn->txContext();
+  int result = submit(io, dest, path);
+  if (result == Zi::NotReady) {
+    m_parked = io.buf.ptr();
+    // Admission may have synchronously retired the last submission.
+    m_owner->waitTx(this);
+    if (!txWaitPrev) backoff(Zm::now() + m_owner->txBackoff());
+    return false;
+  }
+  sent(cxn, result);
+  return true;
+}
+
+void MxPlugin::UdpCxn::backoff(ZuTime deadline)
+{
+  m_owner->mx()->add(&m_retryTimer, deadline, ZmScheduler::Update,
+    [endpoint = ZmRef{this}, deadline](auto &&arm) {
+      return arm([endpoint, deadline] {
+	if (!endpoint->m_parked) return;
+	// The scheduler coalesces near deadlines within its timer quantum.
+	if (Zm::now() < deadline) endpoint->backoff(deadline);
+	else endpoint->retryTx();
+      });
+    }, m_owner->txThread());
+}
+
+void MxPlugin::UdpCxn::retryTx()
+{
+  if (m_parked) resumeTx(m_owner->m_xdp->ready() ? Zi::OK : Zi::IOError);
+}
+
+void MxPlugin::UdpCxn::resumeTx(Zu::IO::Result result)
+{
+  if (!m_parked) return;
+  auto cxn = mxCxn;
+  if (!cxn || !cxn->txUp() || cxn->plugin() != this) return;
+  auto &io = cxn->txContext();
+  if (io.closed()) { cxn->close(); return; }
+  if (io.buf.ptr() != m_parked) m_parked = nullptr;
+  else if (result == Zi::IOError) sent(cxn, result);
+  sendNext(cxn);
+}
+
+void MxPlugin::UdpCxn::cancelTx()
+{
+  m_owner->cancelTxWait(this);
+  if (m_parked) m_owner->mx()->del(&m_retryTimer);
+  m_parked = nullptr;
 }
 
 int MxPlugin::UdpCxn::submit(
@@ -233,7 +287,12 @@ int MxPlugin::UdpCxn::submit(
   if (!head || offset < head) return -1;
   auto frame = buf->data_() + offset - head;
   unsigned capacity = buf->size - (offset - head);
-  if (!m_owner->txReady(frame)) return -1;
+  auto writable = m_owner->txReady(frame);
+  if (writable == Zi::NotReady) {
+    m_owner->reconcileTx();
+    writable = m_owner->txReady(frame);
+  }
+  if (writable != Zi::OK) return writable;
   // Header framing uses provider headroom. Zi still owns the unchanged producer
   // descriptor and caller lease; the backend acquires its independent lease.
   bool multicast = dest.ip().multicast();
@@ -248,10 +307,11 @@ int MxPlugin::UdpCxn::submit(
     loop = m_owner->m_ingress->alloc();
     if (loop) memcpy(loop, frame, wire);
   }
-  bool sent = m_owner->submitPacket(frame, wire, false);
-  if (sent) m_owner->submittedPackets(1);
+  TxRetry retry{.spin = !m_parked};
+  auto result = m_owner->submitPacket(frame, wire, false, nullptr, &retry);
+  if (result == Zi::OK) m_owner->submittedPackets(1);
   if (loop) {
-    if (sent)
+    if (result == Zi::OK)
       m_owner->rxRun([owner = m_owner, loop, wire] {
 	IPView ip;
 	if (owner->ready() && readIP({loop, wire}, ip)) owner->receivedUDP(loop, wire, ip, nullptr);
@@ -259,11 +319,12 @@ int MxPlugin::UdpCxn::submit(
       });
     else m_owner->m_ingress->free(loop);
   }
-  return sent ? int(length) : -1;
+  return result == Zi::OK ? int(length) : int(result);
 }
 
 void MxPlugin::UdpCxn::sent(ZiConnection *cxn, int length)
 {
+  m_parked = nullptr;
   auto &io = cxn->txContext();
   auto original = io.buf;
   if (length >= 0) {
@@ -411,11 +472,6 @@ void MxPlugin::udp(
     return;
   }
   if (!reserveCxn()) { if (fail) fail(false); return; }
-  admitCxn(*endpoint);
-  establishedCxn(*endpoint);
-  addCxn(endpoint);
-  ZmREF(endpoint.ptr());
-  m_udpBindings.addNode(endpoint.ptr());
   if (!publishUDP(endpoint, connected, ZuMv(info))) endpoint->close(false);
 }
 
@@ -480,6 +536,7 @@ void MxPlugin::closeUDP(ZiConnection *cxn, bool peer)
 {
   if (!cxn->txUp()) return;
   ZmRef<UdpCxn> endpoint = static_cast<UdpCxn *>(cxn->plugin());
+  if (endpoint) endpoint->cancelTx();
   cxn->txUp() = 0;
   cxn->txContext().complete();
   if (endpoint)

@@ -60,7 +60,14 @@ void testCxnRouter()
   TestRouteLink link2;
   Zquic::CxnRouter<TestRouteLink> router;
   Zquic::CxnID cid{"server01"};
-  ZuCHECK(router.add(cid, 0, &link1), "CID add failed");
+  Zquic::ResetToken first{"0123456789abcdef"}, conflict{"fedcba9876543210"}, saved;
+  ZuCHECK(router.add(cid, 0, &link1, first), "CID add failed");
+  ZuCHECK(!router.add(cid, 1, &link2, conflict) && router.find(cid) == &link1 &&
+      router.resetToken(cid, saved) && saved == first && router.count() == 1,
+    "conflicting binding replaced an active CID owner or token");
+  uint64_t seq = Zquic::U64Null;
+  router.all([&seq](const auto &entry) { seq = entry.sequence; });
+  ZuCHECK(!seq, "conflicting binding changed the active route sequence");
   ZuCHECK(router.find(cid) == &link1 && router.active() == 1,
     "CID lookup mismatch");
   ZuCHECK(router.retire(cid), "CID retire failed");

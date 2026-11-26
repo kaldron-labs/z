@@ -1346,10 +1346,6 @@ friend ZmEngine<App>;
   void tombstoneRoute(const CxnID &id) {
     m_routes.tombstone(id);
   }
-  void refreshLinkRoutes(Link *link) {
-    if (this->state() == ZmEngineState::Running && link)
-      link->installRoutes(m_routes);
-  }
 
 public:
   template <typename Packets>
@@ -1456,7 +1452,6 @@ private:
 	if (!m_ackLink) m_ackLink = link;
       } else
 	m_ackLink = nullptr;
-      link->installRoutes(m_routes);
     } else {
       link->flushAckRx();
       m_ackLink = nullptr;
@@ -1548,16 +1543,18 @@ private:
 	time);
     }));
     Link *ptr = link.ptr();
-    ptr->acceptInitialInfo(info);
     if (!addLink(ZuMv(link))) return nullptr;
-    return ptr;
+    if (ptr->acceptInitial(info, m_routes)) return ptr;
+    ptr->rollbackRoutes(m_routes);
+    ptr->disconnect();
+    return nullptr;
   }
 
   bool addLink(LinkRef link) {
     if (!link) return false;
     if (this->state() != ZmEngineState::Running) return false;
     Link *ptr = link.ptr();
-    if (m_links->findPtr(ptr)) return true;
+    if (m_links->findPtr(ptr)) return false;
     m_links->addNode(ZmRef<LinkTable::Node>{ZuMv(link)});
     return true;
   }

@@ -182,11 +182,15 @@ struct Endpoint {
         sum(p + 34, config.payload + 8)) & 65535;
       put16(p + 40, check ? check : 65535);
     }
-    if (instance->send(pending, config.payload + 42)) {
+    auto result = instance->send(pending, config.payload + 42);
+    if (result == Zi::OK) {
       tx->free(pending); // allocation lease ends; kernel retirement permits reuse
       pending = nullptr;
       sequence = 0;
       ++sent;
+    } else if (result == Zi::IOError) {
+      failed = 1;
+      instance->wake();
     }
   }
 
