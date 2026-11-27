@@ -11,7 +11,7 @@
 #include <zlib/ZfixFmt.hh>
 int main(int argc, char **argv) {
   unsigned n = argc > 1 ? atoi(argv[1]) : 1;
-  constexpr auto text = "49=CLIENT\1" "56=SERVER\1" "34=7\1" "11=42\1" "150=F\1"_z;
+  constexpr char text[] = "49=CLIENT\1" "56=SERVER\1" "34=7\1" "11=42\1" "150=F\1";
   unsigned sum = 0;
   for (unsigned i = 0; i < n; ++i) {
     Zfix::Fmt::FieldPos pos;

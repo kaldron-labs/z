@@ -7,14 +7,13 @@
 #ifndef zheaptune_HH
 #define zheaptune_HH
 
-#include <zlib/ZuString.hh>
 #include <zlib/ZtcHeap.hh>
 #include <zlib/ZfStruct.hh>
 #include <zlib/ZtArray.hh>
 
 namespace HeapTest {
 
-inline constexpr auto header = "id,partition,vshift,cacheSize,cpuset\n"_z;
+inline constexpr char header[] = "id,partition,vshift,cacheSize,cpuset\n";
 
 struct Report : public Ztc::HeapTelemetry {
   uint8_t phase = 0;

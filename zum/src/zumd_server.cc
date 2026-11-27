@@ -1402,7 +1402,7 @@ void Server::userInfo_1(
     const Work &work, AppServer app, String authorization, ServerFn complete)
 {
   ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
-  static constexpr auto prefix = "Bearer "_z;
+  const ZuCSpan prefix = "Bearer ";
   if (authorization.length() <= prefix.length() ||
       !ZuICmp<ZuCSpan>::equals(
         ZuCSpan{authorization.data(), prefix.length()}, prefix)) {

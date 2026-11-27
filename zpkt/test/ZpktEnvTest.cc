@@ -20,7 +20,7 @@ static Zpkt::NifInfo metadata{731, 9000, 7, {2, 3, 4, 5, 6, 7}};
 static ZuUnion<Zpkt::NifInfo, ZeException> query(ZuCSpan name)
 {
   ++queries;
-  if (name == "query-error"_z) return ZeEXCEPT(Error, "ZpktTest", "injected kernel query error");
+  if (name == "query-error") return ZeEXCEPT(Error, "ZpktTest", "injected kernel query error");
   return metadata;
 }
 
@@ -68,12 +68,12 @@ static void testLoader()
 	failure.file && failure.function && strstr(text.ndata(), messages[scenario]), log_(
       "loader failure preserves original structured event and diagnostic: ", text));
     if (scenario < 3) {
-      ZuCheckRT(failure.component == "Zpkt"_z && strstr(text.ndata(), file), log_(
+      ZuCheckRT(failure.component == "Zpkt" && strstr(text.ndata(), file), log_(
 	"loader errors retain module path and loader context"));
       if (scenario == 1) ZuCheckRT(strstr(text.ndata(), ZpktPluginFnSym), log_(
 	"missing entry point retains symbol context"));
     } else {
-      ZuCheckRT(failure.component == "ZpktTest"_z &&
+      ZuCheckRT(failure.component == "ZpktTest" &&
 	strstr(ZtString<>{failure.file}.ndata(), "ZpktTestPlugin.cc"), log_(
 	"factory exceptions preserve originating plugin context"));
     }
@@ -111,7 +111,7 @@ static void testNamedFactory()
   ZuCHECK(opened.is<Zpkt::Nif *>(), "mock query survives init and no kernel interface is needed");
   if (opened.is<ZeException>()) return;
   ZmRef<Zpkt::Nif> nif = opened.p<Zpkt::Nif *>();
-  ZuCHECK(nif->env() == env.ptr() && nif->name() == "synthetic"_z &&
+  ZuCHECK(nif->env() == env.ptr() && nif->name() == "synthetic" &&
       nif->mx() == &mx && nif->state() == ZmEngineState::Stopped && !nif->allocated(),
     "Env owns a fully initialized stopped child with a raw parent pointer");
   ZuCHECK(queries == 1 && stats->creates == 1 && stats->rxSpin == 4321 && !stats->txSpin &&
@@ -208,7 +208,7 @@ static void testFinalFailure()
   second = nullptr;
   stats->failFinals = 1;
   auto failed = env->final();
-  ZuCHECK(failed.is<ZeException>() && failed.p<ZeException>().component == "ZpktTest"_z &&
+  ZuCHECK(failed.is<ZeException>() && failed.p<ZeException>().component == "ZpktTest" &&
       strstr(errorText(failed.p<ZeException>()).ndata(), "injected child finalization failure") &&
       first->env() == env.ptr() && first->mx() == &mx &&
       stats->finalAttempts == 1 && !stats->finals && !stats->destroys && !stats->pluginFinals,
@@ -321,7 +321,7 @@ static void runTests()
   ZuTestScopeRT(runTests);
   if (auto module = getenv("ZPKT_NATIVE_MODULE")) {
     auto dpdk = getenv("ZPKT_NATIVE_DPDK");
-    ZuTestCallRT(testNativeModule, ZuCSpan{module}, dpdk && ZuCSpan{dpdk} == "1"_z);
+    ZuTestCallRT(testNativeModule, ZuCSpan{module}, dpdk && ZuCSpan{dpdk} == "1");
     return;
   }
   ZuTestCallRT(testLoader);

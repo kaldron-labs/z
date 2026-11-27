@@ -521,8 +521,8 @@ static void client()
         firstSub.load_() != secondSub.load_(),
         "signal subscriptions were not registered");
 
-      constexpr auto matchRule =
-        "type='signal',interface='org.example.ZdbusTest'"_z;
+      constexpr char matchRule[] =
+        "type='signal',interface='org.example.ZdbusTest'";
       cli.addMatch(matchRule, [&matched](Zdbus_::CallResult result) {
         if (result && result.info.type ==
             Zdbus_::MessageType::MethodReturn &&

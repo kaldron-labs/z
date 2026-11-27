@@ -157,7 +157,7 @@ int main(int argc, char **argv)
     Zjrpc::WSClient<App, ExampleCatalog> client;
     Zws::URI uri;
     auto text = ZtScratch(TextScratch, options.host.length() +
-	ZuBox<unsigned>{options.port}.length() + ZuStringT<"ws://:/rpc">{}().length());
+	ZuBox<unsigned>{options.port}.length() + (sizeof("ws://:/rpc") - 1));
     text << "ws://" << options.host << ':' << options.port << "/rpc";
     bool started = Zws::URI::parse(uri, text).ok() && client.init(
 	Zhttp::HubConfig{&mx}, Zhttp::TCPConfig{},

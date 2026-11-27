@@ -297,7 +297,7 @@ struct Request : public Zrest::ReqBuilder<Impl, Call> {
   template <typename Emit> void operation(Emit &&emit) const {
     emit(Method_, [this](auto &&emit) {
       emit([this](auto &s) {
-	s << ZuStringT<"/">{}() << this->queryObject(this->object.ptr());
+	s << "/" << this->queryObject(this->object.ptr());
       });
     });
   }

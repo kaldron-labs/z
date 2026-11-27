@@ -97,8 +97,8 @@ Code::T httpCode(unsigned status)
 
 bool contentType(ZuCSpan value)
 {
-  constexpr auto bare = "application/grpc"_z;
-  constexpr auto proto = "application/grpc+proto"_z;
+  constexpr char bare[] = "application/grpc";
+  constexpr char proto[] = "application/grpc+proto";
   return value == bare || value == proto;
 }
 

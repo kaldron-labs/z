@@ -823,9 +823,9 @@ static void serviceKeys()
   client.stop();
 
   // Collision found with ZuCSpan::hash(), checked against the active framework.
-  constexpr auto left = "collision-1018"_z;
-  constexpr auto right = "collision-2000"_z;
-  ZuCheckRT(ZuCSpan{left}.hash() == ZuCSpan{right}.hash() && left != right);
+  constexpr char left[] = "collision-1018";
+  constexpr char right[] = "collision-2000";
+  ZuCheckRT(ZuCSpan{left}.hash() == ZuCSpan{right}.hash() && ZuCSpan{left} != right);
   client.resource = keyJWKS(Zum::String{keyJWK(a, left)} << ',' << keyJWK(b, right));
   ZuCheckRT(client.start());
   ZuCheckRT(client.verify(keyJWT(rng, a, left)) == Zum::ServiceError::OK);

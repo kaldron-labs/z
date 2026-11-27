@@ -348,8 +348,8 @@ void testSocketSendRecv()
   ZuCHECK(!state.failed.load_(), "socket path hit fail callback");
 }
 
-constexpr auto BudgetPayload = "WXYZ"_z;
-constexpr unsigned BudgetLength = BudgetPayload.length();
+constexpr char BudgetPayload[] = "WXYZ";
+constexpr unsigned BudgetLength = (sizeof(BudgetPayload) - 1);
 
 // One byte of logical output per turn, as a transport using a small Tx budget.
 struct BudgetSender {
@@ -505,7 +505,7 @@ void testSocketBackpressure()
       n += unsigned(r);
     }
     ZuCheckRT(n == BudgetLength &&
-      !memcmp(received.data(), BudgetPayload.data(), BudgetLength),
+      !memcmp(received.data(), BudgetPayload, BudgetLength),
     log_("bounded writable payload mismatch"));
     closeSocket_(peerSocket);
     ZuCheckRT(waitFor(closed), log_("peer EOF was not dispatched"));

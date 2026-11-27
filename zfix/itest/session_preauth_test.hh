@@ -127,9 +127,9 @@ static void nativePreauth(unsigned mode, bool alert)
       state.oldDecisions.load_() == 1 && state.authenticated.trywait() != 0);
     if (alert) {
       // A real fatal handshake_failure alert, before either side authenticates.
-      constexpr auto Failure = "\x15\x03\x03\x00\x02\x02\x28"_z;
-      ZuCheck(::send(raw, Failure.data(), Failure.length(), MSG_NOSIGNAL) ==
-	ssize_t(Failure.length()));
+      constexpr char Failure[] = "\x15\x03\x03\x00\x02\x02\x28";
+      ZuCheck(::send(raw, Failure, (sizeof(Failure) - 1), MSG_NOSIGNAL) ==
+	ssize_t((sizeof(Failure) - 1)));
     } else { ::close(raw); raw = -1; }
     stoppedB = state.stoppedServer.timedwait(Zm::now(5)) == 0;
     ZuCheck(stoppedB && state.serverStops.load_() == 1);

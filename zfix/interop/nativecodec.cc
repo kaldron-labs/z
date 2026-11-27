@@ -55,9 +55,9 @@ struct SignedOrder {
 ZfStruct(, (SignedOrder, FIX), (order, , UDT),
   (signature, ((FIX::Sig<93, 89>), Required), Bytes));
 using SignedMsg = Zfix::MT<SignedOrder, "D">;
-static constexpr auto XMLPayload = "RTRF<8=FIX.4.4\1" "9=5\1" "35=D\1" "10=999\1\0=\xff>"_z;
-static constexpr auto AuthPayload = "user\0credential\1" "35=A\1" "10=999\1=\xff"_z;
-static constexpr auto SigPayload = "S\0\1=\xff"_z;
+static constexpr char XMLPayload[] = "RTRF<8=FIX.4.4\1" "9=5\1" "35=D\1" "10=999\1\0=\xff>";
+static constexpr char AuthPayload[] = "user\0credential\1" "35=A\1" "10=999\1=\xff";
+static constexpr char SigPayload[] = "S\0\1=\xff";
 
 static ZuSpan<char> binaryGrow(void *owner, unsigned used, unsigned needed)
 {

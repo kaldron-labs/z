@@ -224,10 +224,10 @@ static void utility(const Options &options) {
   heapPath << options.report << ".heap-tuning";
   Zi::Path originalHeap = Zt::getpath("Z_HEAPTUNE");
   Zt::setenv("Z_HEAPTUNE", heapPath.data());
-  constexpr auto marker = "owned heap configuration sentinel\n"_z;
+  constexpr char marker[] = "owned heap configuration sentinel\n";
   {
     ZiFile heap{heapPath, ZiFile::Write | ZiFile::GC};
-    ZuCheckRT(heap && heap.write(marker.data(), marker.length()) == Zi::OK);
+    ZuCheckRT(heap && heap.write(marker, (sizeof(marker) - 1)) == Zi::OK);
   }
   Zi::Path original = Zt::getpath("Z_HASHTUNE");
   Zt::unsetenv("Z_HASHTUNE");
@@ -252,8 +252,8 @@ static void utility(const Options &options) {
   {
     ZiFile heap{heapPath, ZiFile::ReadOnly | ZiFile::GC};
     ZtString<> contents;
-    contents.length(marker.length());
-    ZuCheckRT(heap && heap.size() == marker.length() &&
+    contents.length((sizeof(marker) - 1));
+    ZuCheckRT(heap && heap.size() == (sizeof(marker) - 1) &&
       heap.read(contents.data(), contents.length()) == contents.length() &&
       contents == marker);
   }

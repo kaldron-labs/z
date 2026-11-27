@@ -35,7 +35,7 @@ using OrderFIXFields = ZuTypeConcat<SessionFields<Order>, ZfFields_Order>;
 OrderFIXFields ZuFields_(Order *, ZuFacet::FIX *);
 ZfStructImpl(Order); ZfStructImpl(Order, FIX);
 using Entry = MT<Order, "D">;
-constexpr auto Wire = "8=FIX.4.4\1" "9=12\1" "35=D\1" "11=abc\1" "10=171\1"_z;
+constexpr char Wire[] = "8=FIX.4.4\1" "9=12\1" "35=D\1" "11=abc\1" "10=171\1";
 static TxBody::Ref body(bool admin = false) {
   Fmt::Error error;
   if (!admin) return TxBody::encode<Entry>(Order{"abc"}, 99, error);
@@ -75,7 +75,7 @@ struct Harness : public WireTx<Harness> {
     if (++sends == refuseAt) return false;
     if (packetize) {
       auto prefix = recordAlloc(0), tail = recordAlloc(0);
-      prefix->append("wire prefix"_z); tail->append("wire tag"_z);
+      prefix->append("wire prefix"); tail->append("wire tag");
       packetized_(buf.ptr(), tail);
       records.push(ZuMv(prefix)); records.push(ZuMv(tail));
     } else records.push(ZuMv(buf));
@@ -151,7 +151,7 @@ static void records() {
   ZuTestScope(records);
   Harness h; ZuCheck(h.open_(1, h.geometry()));
   ZuCheck(h.admit_(body(), {1, 1, 1}, frame())); h.flush();
-  unsigned count = Wire.length() / 5 + !!(Wire.length() % 5);
+  unsigned count = (sizeof(Wire) - 1) / 5 + !!((sizeof(Wire) - 1) % 5);
   ZuCheck(h.records.length() == count);
   ZtString<ZtStringHeapID<"Zfix.WireTest">> joined;
   for (unsigned i = 0; i < count; ++i) {
@@ -434,13 +434,13 @@ static void statistics() {
   ZuCheck(s.queuedBytes == h.bytes_() && s.peakBytes == s.queuedBytes);
   h.flush(); h.finish(0); h.finish(0); // Duplicate completion is inert.
   s = h.stats_();
-  ZuCheck(s.published == 1 && s.bytes == Wire.length() && s.completed == 1 && !s.failed);
+  ZuCheck(s.published == 1 && s.bytes == (sizeof(Wire) - 1) && s.completed == 1 && !s.failed);
   ZuCheck(!s.queuedBytes && !s.queuedCount);
   h.close_(1); ZuCheck(h.open_(2));
   ZuCheck(h.admit_(native, {1, 2, 1, true}, bytes)); h.flush(); h.close_(2);
   s = h.stats_();
   ZuCheck(s.admitted == 2 && s.published == 2 && s.replays == 1 && s.failed == 1);
-  ZuCheck(s.bytes == 2 * Wire.length() && s.completed == 1 && s.refused == 1);
+  ZuCheck(s.bytes == 2 * (sizeof(Wire) - 1) && s.completed == 1 && s.refused == 1);
   ZuCheck(h.open_(3));
   ZuCheck(h.admit_(native, {1, 3, 2}, bytes)); h.close_(3);
   s = h.stats_();

@@ -436,9 +436,9 @@ using BinaryBMsg = MT<BinaryB, "J", ZuFacet::FIX, Discrim<150, "B">>;
 static void binarySame()
 {
   ZuTestScopeRT(binarySame);
-  constexpr auto Pair = "212=30\1" "213=150=A\1" "11=FAKE\1" "35=X\1" "10=000\1" "TAIL\1"_z;
-  constexpr auto Payload = "150=A\1" "11=FAKE\1" "35=X\1" "10=000\1" "TAIL"_z;
-  ZuAssert(Payload.length() == 30);
+  constexpr char Pair[] = "212=30\1" "213=150=A\1" "11=FAKE\1" "35=X\1" "10=000\1" "TAIL\1";
+  constexpr char Payload[] = "150=A\1" "11=FAKE\1" "35=X\1" "10=000\1" "TAIL";
+  ZuAssert((sizeof(Payload) - 1) == 30);
   using Same = MTList<BinaryAMsg, BinarySameB>;
   for (bool before : {false, true}) {
     Text fields;
@@ -478,7 +478,7 @@ static void binaryCandidates()
 	ZuCheck(object.id == "real" && object.text == "selected-B" && object.kind == "B");
 	ZuCheck(object.data.data() == reinterpret_cast<const uint8_t *>(
 	  parsed.view.content.data() + unsigned(parsed.view.content.find("213=")) + 4));
-	ZuCheck(object.data == ZuBSpan{"150=A\1XX"_z});
+	ZuCheck(object.data == ZuBSpan{"150=A\1XX"});
       } else ZuCheck(false);
       return {};
     });
@@ -508,12 +508,12 @@ static void binaryPairSelectors()
   ZuCheck(!error && calls == 1);
   using PayloadA = MT<BinaryA, "P", ZuFacet::FIX, Discrim<213, "A\1\0B">>;
   using PayloadB = MT<BinaryB, "P", ZuFacet::FIX, Discrim<213, "Z\1\0Q">>;
-  wire = packet("150=B\1" "212=4\1" "213=Z\1\0Q\1" "11=real\1" "58=bytes\1"_z, "P");
+  wire = packet("150=B\1" "212=4\1" "213=Z\1\0Q\1" "11=real\1" "58=bytes\1", "P");
   parsed = frame(wire); calls = 0;
   error = dispatch<MTList<PayloadA, PayloadB>>(parsed.view,
     [&calls, &parsed](auto *entry, const auto &object) -> Error {
       if constexpr (ZuIsSame<ZuDecay<decltype(*entry)>, PayloadB>{}) {
-	++calls; ZuCheck(object.data == ZuBSpan{"Z\1\0Q"_z});
+	++calls; ZuCheck(object.data == ZuBSpan{"Z\1\0Q"});
 	ZuCheck(object.data.data() == reinterpret_cast<const uint8_t *>(
 	  parsed.view.content.data() + unsigned(parsed.view.content.find("213=")) + 4));
       } else ZuCheck(false);

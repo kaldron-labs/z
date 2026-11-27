@@ -190,7 +190,7 @@ namespace ZfCfError {
 
 using AnyNode = ZfCf::AnyNode;
 
-constexpr auto Component = "ZfCf"_z;
+constexpr char Component[] = "ZfCf";
 
 inline ZeString fullKey(const AnyNode *node, ZuCSpan key = {}) {
   ZeString s;

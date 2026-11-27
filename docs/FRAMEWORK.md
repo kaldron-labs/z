@@ -45,6 +45,11 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
     - `ZtString` and `ZtArray` can be tagged with a compile-time `ZmNHeapID`
     - certain types with specific heap IDs are re-used throughout the framework:
       - `ZeString`: `ZtString` with heap ID for error messages, logs and diagnostics
+- Reserve `ZuString` and the `_z` suffix for compile-time operations such as
+  template arguments, metadata and compile-time matching. Pass plain string
+  literals to run-time APIs and comparisons, for example `name == "_loop"`.
+  Use a `constexpr char name[]` for a named literal used at run time, and use
+  the appropriate span when a view or an explicit byte count is required.
 
 ### Errors and events
 

@@ -85,7 +85,7 @@ bool parse(const Zi::Path &path, Rows &rows, bool tuning = false) {
   ZtString<> data;
   if (!read(path, data) || !data || data[data.length() - 1] != '\n')
     return false;
-  if (tuning && data.cspan().prefix(header) != header.length())
+  if (tuning && data.cspan().prefix(header) != sizeof(header) - 1)
     return false;
   ZfCSV::Reader<T, ZuFacet::Core> reader;
   bool ok = true;
@@ -476,7 +476,7 @@ void cases(const Zi::Path &exe) {
   };
   runCase(exe, {"cold"});
   runCase(exe, {"volume", "fixed", 100, 7});
-  runCase(exe, {"header", "fixed", 100, 3, nullptr, header.data()});
+  runCase(exe, {"header", "fixed", 100, 3, nullptr, header});
   runCase(exe, {"zero", "fixed", 100, 3, nullptr,
     "id,partition,vshift,cacheSize,cpuset\n\"HT.fixed\",0,0,0,\n"});
   runCase(exe, {"headroom-zero", "fixed", 100, 3, "0"});

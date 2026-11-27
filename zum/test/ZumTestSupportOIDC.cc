@@ -1286,20 +1286,20 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     db->requests, context, rng, Zum::Bytes{oidcGrant}, Zum::User{oidcUser},
     Zum::IDVec{oidcRoles}, Zum::Evidence{oidcLoginEvidence}, readAction,
     oidcAuthTime);
-  constexpr auto oidcCodePrefix = "https://app/cb?code="_z;
-  constexpr auto oidcCodeSuffix = "&state=oidc-return"_z;
+  constexpr char oidcCodePrefix[] = "https://app/cb?code=";
+  constexpr char oidcCodeSuffix[] = "&state=oidc-return";
   ZuCheckRT(oidcAuthorized.error == Zum::AuthorizeIssue::OK &&
     oidcAuthorized.location.length() >
-      oidcCodePrefix.length() + oidcCodeSuffix.length() &&
-    (ZuCSpan{oidcAuthorized.location.data(), oidcCodePrefix.length()} ==
+      (sizeof(oidcCodePrefix) - 1) + (sizeof(oidcCodeSuffix) - 1) &&
+    (ZuCSpan{oidcAuthorized.location.data(), (sizeof(oidcCodePrefix) - 1)} ==
       oidcCodePrefix) &&
     (ZuCSpan{oidcAuthorized.location.data() +
-      oidcAuthorized.location.length() - oidcCodeSuffix.length(),
-      oidcCodeSuffix.length()} == oidcCodeSuffix));
+      oidcAuthorized.location.length() - (sizeof(oidcCodeSuffix) - 1),
+      (sizeof(oidcCodeSuffix) - 1)} == oidcCodeSuffix));
   Zum::String oidcCode{ZuCSpan{
-    oidcAuthorized.location.data() + oidcCodePrefix.length(),
-    oidcAuthorized.location.length() - oidcCodePrefix.length() -
-      oidcCodeSuffix.length()}};
+    oidcAuthorized.location.data() + (sizeof(oidcCodePrefix) - 1),
+    oidcAuthorized.location.length() - (sizeof(oidcCodePrefix) - 1) -
+      (sizeof(oidcCodeSuffix) - 1)}};
   auto delegatedCode = loadGrant(context, ZuBSpan{oidcGrant});
   ZuCheckRT(delegatedCode.authoritySource == Zum::UserSource::External &&
     delegatedCode.authorityProviderID == 8 &&
@@ -1473,11 +1473,11 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
 	wake(ZuMv(reply));
       });
   });
-  constexpr auto consentMarker = "name=id value=\""_z;
+  constexpr char consentMarker[] = "name=id value=\"";
   int consentOffset = ssoReply.body.find<"name=id value=\"">();
   Zum::String consentID;
   if (consentOffset >= 0) {
-    unsigned begin = unsigned(consentOffset) + consentMarker.length();
+    unsigned begin = unsigned(consentOffset) + (sizeof(consentMarker) - 1);
     unsigned end = begin;
     while (end < ssoReply.body.length() && ssoReply.body[end] != '"') ++end;
     if (end < ssoReply.body.length())
@@ -1580,11 +1580,11 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     providerServer.login(9, Zum::String{logoutCookie}, [wake = ZuMv(wake)](
 	Zum::ServerReply reply) mutable { wake(ZuMv(reply)); });
   });
-  constexpr auto csrfMarker = "name=csrf value=\""_z;
+  constexpr char csrfMarker[] = "name=csrf value=\"";
   int csrfOffset = loginPage.body.find<"name=csrf value=\"">();
   Zum::String logoutCSRF;
   if (csrfOffset >= 0) {
-    unsigned begin = unsigned(csrfOffset) + csrfMarker.length();
+    unsigned begin = unsigned(csrfOffset) + (sizeof(csrfMarker) - 1);
     unsigned end = begin;
     while (end < loginPage.body.length() && loginPage.body[end] != '"') ++end;
     if (end < loginPage.body.length())

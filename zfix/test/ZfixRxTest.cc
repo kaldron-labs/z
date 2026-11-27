@@ -336,7 +336,7 @@ static void rejects()
   ZuCheck(r.send(4, "D", "11=bad\1") == RxResult::Accepted);
   ZuCheck(r.expected_() == 5 && r.business.length() == 1 && r.business[0] == 0 &&
     r.rejected.length() == 3);
-  ZuCheck(r.send(5, "Z", "9999=opaque\1"_z) == RxResult::Accepted);
+  ZuCheck(r.send(5, "Z", "9999=opaque\1") == RxResult::Accepted);
   ZuCheck(r.expected_() == 6 && r.rejected.length() == 6);
   ZuCheck(r.rejected[3] == 5 && r.rejected[4] == 35 && r.rejected[5] == 11);
 }

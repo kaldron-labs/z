@@ -58,7 +58,7 @@ template <bool AppThread = false, typename Link> auto writer(Link &link) {
 }
 
 
-constexpr auto Wire = "8=FIX.4.4\1" "9=13\1" "35=D\1" "58=ABCD\1" "10=155\1"_z;
+constexpr char Wire[] = "8=FIX.4.4\1" "9=13\1" "35=D\1" "58=ABCD\1" "10=155\1";
 struct Payload {
   ZuBSpan text, bytes, signature;
 };
@@ -1017,14 +1017,14 @@ static void replacement(bool late = false, bool refuse = false,
 	  bool retired = swapWait(s.oldRetired); ZuCheck(retired);
 	  ZuCheck(!s.staleCloses.load_());
 	} else if (bReady && oldClosed) {
-	  unsigned half = Wire.length()/2;
-	  run->b->write({Wire.data(), half});
+	  unsigned half = (sizeof(Wire) - 1)/2;
+	  run->b->write({Wire, half});
 	  bool prefix = swapWait(s.prefix); ZuCheck(prefix);
 	  run->server.release();
 	  bool retired = swapWait(s.oldRetired); ZuCheck(retired);
 	  ZuCheck(!s.staleCloses.load_());
 	  if (prefix && retired) {
-	    run->b->write({Wire.data() + half, unsigned(Wire.length()) - half});
+	    run->b->write({Wire + half, unsigned((sizeof(Wire) - 1)) - half});
 	    bool response = swapWait(s.response); ZuCheck(response && s.replies.load_() == 1);
 	  }
 	}
@@ -1206,9 +1206,10 @@ static void resetTxPolicy()
 	  if (bReady && error && oldClosed && retired) {
 	    timeval timeout{5, 0};
 	    ZuCheck(!setsockopt(b, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)));
-	    ZuCheck(::send(b, Wire.data(), Wire.length(), MSG_NOSIGNAL) == ssize_t(Wire.length()));
+	    ZuCheck(::send(b, Wire, sizeof(Wire) - 1, MSG_NOSIGNAL) ==
+	      ssize_t(sizeof(Wire) - 1));
 	    ZtArray<uint8_t, ZtArrayHeapID<"Zfix.TransportSwap.Response">> response;
-	    response.length(Wire.length());
+	    response.length((sizeof(Wire) - 1));
 	    unsigned received = 0;
 	    while (received < response.length()) {
 	      auto n = ::recv(b, response.data() + received, response.length() - received, 0);

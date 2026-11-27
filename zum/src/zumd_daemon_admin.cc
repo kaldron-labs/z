@@ -3016,7 +3016,7 @@ static void adminQueryApp(const ZmRef<ZmPolymorph> &work,
 
 bool Daemon::adminTargetApp(ZuCSpan target, AppID &appID)
 {
-  constexpr auto prefix = "/admin/apps/"_z;
+  const ZuCSpan prefix = "/admin/apps/";
   if (target.prefix(prefix) != prefix.length()) return false;
   target.offset(prefix.length());
   auto slash = target.find<"/">();
@@ -4600,7 +4600,7 @@ void Daemon::adminRequest_3(
 void Daemon::adminRequest_1(
     const Work &work, String authorization, AdminAuthFn complete)
 {
-  static constexpr auto prefix = "Bearer "_z;
+  const ZuCSpan prefix = "Bearer ";
   if (authorization.length() <= prefix.length() ||
       ZuCSpan{authorization}.prefix(prefix) != prefix.length()) {
     complete(false, Principal{});

@@ -228,6 +228,12 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
   Fix: use Z's built-in hash functions, e.g. `ZuSpan::hash`; XOR the `uint32_t` hash codes to hash together multiple data members.
 
 ### Framework fit
+- Red Flag: using `ZuString` or the `_z` suffix for text consumed solely at run time.
+  Problem: this introduces a structural compile-time string type into an ordinary
+  run-time operation.
+  Fix: use a plain literal, such as `name == "_loop"`, or a named character
+  array and the appropriate span. Preserve byte lengths for binary data.
+  Pass a span when a `ZtString` must copy the bytes into writable storage.
 - Red Flag: reimplementing lower-level Z Framework capabilities.
   Problem: duplicate code misses established semantics, optimizations, and maintenance paths.
   Fix: use the existing foundational libraries: `zu`, `zm`, `zt`, `zf`, `ze`, `zi`

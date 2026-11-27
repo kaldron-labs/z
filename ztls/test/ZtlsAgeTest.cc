@@ -319,7 +319,7 @@ static void testkit()
     auto result = ZtlsAge{}.decrypt(input, {&identities[c.identity], 1}, recovered);
     ZuCheckRT(result.is<ZeException>() != c.success);
     if (c.success && !result.is<ZeException>())
-      ZuCheckRT((ZuCSpan{recovered.data(), result.p<size_t>()} == "test payload"_z));
+      ZuCheckRT((ZuCSpan{recovered.data(), result.p<size_t>()} == "test payload"));
   }
 }
 
@@ -395,13 +395,13 @@ static bool sshLine(ZuCSpan type, ZuBSpan blob)
   auto result = ZtlsAge::decodeSSHRecipient(line, decoded);
   if (result.template is<ZeException>()) return false;
   const auto &recipient = result.template p<ZtlsAge::Recipient>();
-  ZuBSpan     parsed = type == "ssh-rsa"_z ?
+  ZuBSpan     parsed = type == "ssh-rsa" ?
     recipient.template p<ZtlsAge::SshRSARecipient>().publicKey :
     recipient.template p<ZtlsAge::SshED25519Recipient>().publicKey;
   if (parsed != blob) return false;
   if (unsigned tail = blob.length() % 3) {
-    constexpr auto alphabet =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"_z;
+    constexpr char alphabet[] =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     unsigned pos = type.length() + 1 + encoded.length() - (4 - tail);
     char     c = line[pos];
     line[pos] = alphabet[ZuBase64::lookup(c) + 1];
@@ -426,13 +426,13 @@ static void sshRSAFile()
   sshString(blob, ZuBSpan{"ssh-rsa"});
   sshString(blob, exponent, true);
   sshString(blob, modulus, true);
-  ZuCheckRT(sshLine("ssh-rsa"_z, blob));
+  ZuCheckRT(sshLine("ssh-rsa", blob));
   Bytes	  shortBlob;
   uint8_t smallExponent = 3, smallModulus[2] = {1, 1};
   sshString(shortBlob, ZuBSpan{"ssh-rsa"});
   sshString(shortBlob, {&smallExponent, 1});
   sshString(shortBlob, smallModulus);
-  ZuCheckRT(sshLine("ssh-rsa"_z, shortBlob));
+  ZuCheckRT(sshLine("ssh-rsa", shortBlob));
   ZtlsAge::Recipient recipient = ZtlsAge::SshRSARecipient{blob};
   ZtlsAge::Identity  identity = ZtlsAge::SshRSAIdentity{blob, &key};
   uint8_t	     plain[37], recovered[sizeof(plain)];
@@ -469,7 +469,7 @@ static void sshEDFile()
   Bytes blob;
   sshString(blob, ZuBSpan{"ssh-ed25519"});
   sshString(blob, publicKey);
-  ZuCheckRT(sshLine("ssh-ed25519"_z, blob));
+  ZuCheckRT(sshLine("ssh-ed25519", blob));
   ZtlsAge::Recipient recipient = ZtlsAge::SshED25519Recipient{blob};
   ZtlsAge::Identity  identity = ZtlsAge::SshED25519Identity{blob, &key};
   uint8_t	     plain[37], recovered[sizeof(plain)];
@@ -497,7 +497,7 @@ static void sshEDFile()
 static void sshReference()
 {
   ZuTestScopeRT(sshReference);
-  constexpr auto plain = "test payload"_z;
+  constexpr char plain[] = "test payload";
   ZtlsAge age;
   for (bool rsa : {true, false}) {
     Chars privateKey, publicLine;
@@ -538,8 +538,8 @@ static void sshReference()
     auto result = age.decrypt(input, {&identity, 1}, recovered);
     ZuCheckRT(!result.template is<ZeException>());
     if (result.template is<ZeException>()) return;
-    ZuCheckRT(result.template p<size_t>() == plain.length());
-    ZuCheckRT(!memcmp(recovered.data(), plain.data(), plain.length()));
+    ZuCheckRT(result.template p<size_t>() == (sizeof(plain) - 1));
+    ZuCheckRT(!memcmp(recovered.data(), plain, (sizeof(plain) - 1)));
   }
 }
 

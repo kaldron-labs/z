@@ -166,7 +166,7 @@ namespace ZfTOMLError {
 
 using AnyNode = ZfTOML::AnyNode;
 
-constexpr auto Component = "ZfTOML"_z;
+constexpr char Component[] = "ZfTOML";
 
 ZfExtern ZuCSpan reason(uint8_t code);
 

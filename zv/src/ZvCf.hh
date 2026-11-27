@@ -20,7 +20,7 @@
 
 namespace ZvCfError {
 
-constexpr auto Component = "ZvCf"_z;
+constexpr char Component[] = "ZvCf";
 
 template <ZuString Op>
 inline auto fileError(

@@ -66,7 +66,7 @@ public:
 	s << "unknown configured interface \"" << name << "\"";
       }));
     try {
-      return static_cast<Zpkt::Nif *>(new Nif{m_eal, mx, entry->val(), name == "_loop"_z});
+      return static_cast<Zpkt::Nif *>(new Nif{m_eal, mx, entry->val(), name == "_loop"});
     } catch (ZeException error) {
       auto detail = error.fn();
       error.l = ZeMsgFn{[

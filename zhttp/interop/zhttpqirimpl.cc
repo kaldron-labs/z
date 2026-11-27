@@ -27,17 +27,17 @@
 
 namespace Zhttp::QIR {
 
-static constexpr auto DefaultWWW = "/www"_z;
-static constexpr auto DefaultDownloads = "/downloads"_z;
-static constexpr auto DefaultCA = "/certs/ca.pem"_z;
-static constexpr auto DefaultCert = "/certs/cert.pem"_z;
-static constexpr auto DefaultKey = "/certs/priv.key"_z;
-static constexpr auto Scheme = "https://"_z;
-static constexpr auto HQGet = "GET "_z;
-static constexpr auto HQALPN = "hq-interop"_z;
-static constexpr auto H3ALPN = "h3"_z;
-static constexpr auto QIRMigrationModeName = "active"_z;
-static constexpr auto QIRMigrationCIDReserveName = "4"_z;
+static constexpr char DefaultWWW[] = "/www";
+static constexpr char DefaultDownloads[] = "/downloads";
+static constexpr char DefaultCA[] = "/certs/ca.pem";
+static constexpr char DefaultCert[] = "/certs/cert.pem";
+static constexpr char DefaultKey[] = "/certs/priv.key";
+static constexpr char Scheme[] = "https://";
+static constexpr char HQGet[] = "GET ";
+static constexpr char HQALPN[] = "hq-interop";
+static constexpr char H3ALPN[] = "h3";
+static constexpr char QIRMigrationModeName[] = "active";
+static constexpr char QIRMigrationCIDReserveName[] = "4";
 // Rebind tests emulate transparent NAT remapping; a 1s PING restores path
 // progress before the simulator's 5s rebind cadence can compound stalls.
 static constexpr ZuTime QIRRebindHeartBeat{1};
@@ -92,12 +92,12 @@ ZuTime qirHeartBeat(Case testCase)
 
 const char *qirMigrationModeArg()
 {
-  return QIRMigrationModeName.data();
+  return QIRMigrationModeName;
 }
 
 const char *qirMigrationCIDReserveArg()
 {
-  return QIRMigrationCIDReserveName.data();
+  return QIRMigrationCIDReserveName;
 }
 
 template <typename Params>
@@ -1104,7 +1104,7 @@ PathStatus mapURL(ZuCSpan url, const Zi::Path &downloads, Request &request)
   if (!url.match(Scheme)) return PathBadScheme;
   setString_(request.url, url);
 
-  unsigned i = Scheme.length(), n = url.length();
+  unsigned i = (sizeof(Scheme) - 1), n = url.length();
   unsigned hostStart = i;
   while (i < n && url[i] != '/' && url[i] != ':' &&
       url[i] != '?' && url[i] != '#')
@@ -1134,7 +1134,7 @@ PathStatus parseHQRequest(ZuCSpan line, HqRequest &request)
 {
   line = trimCRLF(line);
   if (!line.match(HQGet)) return PathEscape;
-  ZuCSpan path{line.data() + HQGet.length(), line.length() - HQGet.length()};
+  ZuCSpan path{line.data() + (sizeof(HQGet) - 1), line.length() - (sizeof(HQGet) - 1)};
   if (!path.length()) return PathEmpty;
   if (path[path.length() - 1] == '/') return PathDir;
   if (pathEscape(path)) return PathEscape;

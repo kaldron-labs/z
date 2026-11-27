@@ -228,7 +228,7 @@ template <typename T, typename Rows>
 static bool readRows(const Zi::Path &path, Rows &rows, bool tuning = false) {
   ZtString<> data;
   if (!read(path, data) || !data || data[data.length() - 1] != '\n') return false;
-  if (tuning && data.cspan().prefix(header) != header.length()) return false;
+  if (tuning && data.cspan().prefix(header) != sizeof(header) - 1) return false;
   ZfCSV::Reader<T, ZuFacet::Core> reader;
   bool ok = true;
   auto emit = [&rows, &ok, tuning](const auto &scan) {
@@ -435,7 +435,7 @@ static void cases(const Zi::Path &exe) {
   };
   test({"cold"});
   test({"linear", "linear"});
-  test({"header", "chained", 100, 3, nullptr, header.data()});
+  test({"header", "chained", 100, 3, nullptr, header});
   test({"defaults", "chained", 100, 3, nullptr, "id,bits,loadFactor,cBits\nHS.table,8,1,3\n"});
   test({"quoted-id", "quoted"});
   test({"grown", "chained", 125, 3, nullptr, "id,bits,loadFactor,cBits\nHS.table,2,1,3\n"});

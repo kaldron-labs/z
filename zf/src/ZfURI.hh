@@ -208,7 +208,7 @@ using Config = decltype(ZfURI_Config(ZuDeclVal<Facet *>()));
 
 namespace ZfURIError {
 
-  constexpr auto Component = "ZfURI"_z;
+  constexpr char Component[] = "ZfURI";
 
   inline auto nullPath() {
     return [](auto &s) { s << "null URI path component"; };

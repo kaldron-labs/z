@@ -303,15 +303,15 @@ static void factory()
     wide.epoch = wide.connection = wide.probe = UINT64_MAX - 1;
     auto largest = controlBody(SessionAction::SendProbe, wide, s, 17, {}, e,
       Limits::FrameBytes);
-    constexpr auto Expected = "Zfix/340282366920938463463374607431768211454/"
-      "18446744073709551614/18446744073709551614/18446744073709551614"_z;
+    constexpr char Expected[] = "Zfix/340282366920938463463374607431768211454/"
+      "18446744073709551614/18446744073709551614/18446744073709551614";
     ZuCheck(largest && !e && !loadArchive(request, largest->body()) && request.testReqID == Expected);
-    constexpr auto Opaque = "0001 abc/xyz"_z;
+    constexpr char Opaque[] = "0001 abc/xyz";
     auto echo = controlBody(SessionAction::Echo, event, s, 17, Opaque, e, Limits::FrameBytes);
     Session::HeartBt hb;
     ZuCheck(echo && !loadArchive(hb, echo->body()) && hb.testReqID == Opaque);
-    auto empty = controlBody(SessionAction::Echo, event, s, 17, ""_z, e, Limits::FrameBytes);
-    ZuCheck(empty && empty->body() == "112=\1"_z);
+    auto empty = controlBody(SessionAction::Echo, event, s, 17, "", e, Limits::FrameBytes);
+    ZuCheck(empty && empty->body() == "112=\1");
     ZuCheck(!controlBody(SessionAction::Echo, event, s, 17, {}, e,
       Limits::FrameBytes) && e.tag == 112);
   }

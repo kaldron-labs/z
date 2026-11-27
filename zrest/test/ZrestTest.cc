@@ -1346,16 +1346,16 @@ static void signatureBodyTest()
 {
   ZuTestScope(signatureBody);
   using namespace Zrest::BodyPolicy;
-  constexpr auto json = "{\"value\":\"value\"}"_z;
-  constexpr auto jsonMAC =
-    "e540aa8e4aae142d0b1573f0b498000e7f2684cdd9475b3e11fd85d3d85f52d7"_z;
-  constexpr auto uri = "value=value"_z;
-  constexpr auto uriMAC =
-    "7c2580adc51aafd297b694dd5344eaf55def703686af74af2a5d6182843b91a6"_z;
+  constexpr char json[] = "{\"value\":\"value\"}";
+  constexpr char jsonMAC[] =
+    "e540aa8e4aae142d0b1573f0b498000e7f2684cdd9475b3e11fd85d3d85f52d7";
+  constexpr char uri[] = "value=value";
+  constexpr char uriMAC[] =
+    "7c2580adc51aafd297b694dd5344eaf55def703686af74af2a5d6182843b91a6";
   // Response URI serialization retains its existing leading query separator.
-  constexpr auto resURI = "?value=value"_z;
-  constexpr auto resMAC =
-    "3e6231fbb426de4e74270f9d3ed748c6731f77ad2d2bf4a00daa8daed0c5f9eb"_z;
+  constexpr char resURI[] = "?value=value";
+  constexpr char resMAC[] =
+    "3e6231fbb426de4e74270f9d3ed748c6731f77ad2d2bf4a00daa8daed0c5f9eb";
   ZuTestCall((authBodyCase<AuthReq<JSON>, AuthReqParser<JSON>>), json, jsonMAC);
   ZuTestCall((authBodyCase<AuthRes<JSON>, AuthResParser<JSON>>), json, jsonMAC);
   ZuTestCall((authBodyCase<AuthReq<URI>, AuthReqParser<URI>>), uri, uriMAC);
@@ -1397,8 +1397,8 @@ static void signatureQueryTest()
   object->signature = "stale";
   AuthQuery<> builder;
   auto wire = authTarget(builder, object.ptr());
-  constexpr auto expectedMAC =
-    "2b6cfd23550f01510e85b3057d81e11eda17b8e9ccc3a3019249ed3f893af62a"_z;
+  constexpr char expectedMAC[] =
+    "2b6cfd23550f01510e85b3057d81e11eda17b8e9ccc3a3019249ed3f893af62a";
   ZuCheck(builder.covered == "/signed?value=value");
   ZuCheck(authMAC(builder.covered) == expectedMAC);
   ZuCheck(object->signature == "stale");

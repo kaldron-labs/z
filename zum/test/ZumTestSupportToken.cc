@@ -1102,13 +1102,13 @@ void zumtest::prepareToken(ZmRef<RuntimeDB> db,
   auto finished = finishAuthorization(db->requests, db, rng,
     Zum::Bytes{authorized.result.ceremonyID}, ZuMv(requestAssertion),
     readAction, 210, "issuer/oauth2/9", 9, true);
-  constexpr auto codePrefix = "https://app/cb?code="_z;
-  constexpr auto codeSuffix = "&state=return"_z;
+  constexpr char codePrefix[] = "https://app/cb?code=";
+  constexpr char codeSuffix[] = "&state=return";
   ZuCheck(finished.error == Zum::AuthorizeIssue::OK &&
-    finished.location.length() > codePrefix.length() + codeSuffix.length() &&
-    (ZuCSpan{finished.location.data(), codePrefix.length()} == codePrefix) &&
+    finished.location.length() > (sizeof(codePrefix) - 1) + (sizeof(codeSuffix) - 1) &&
+    (ZuCSpan{finished.location.data(), (sizeof(codePrefix) - 1)} == codePrefix) &&
     (ZuCSpan{finished.location.data() + finished.location.length() -
-      codeSuffix.length(), codeSuffix.length()} == codeSuffix));
+      (sizeof(codeSuffix) - 1), (sizeof(codeSuffix) - 1)} == codeSuffix));
   ZuCheck(logged(
     Zum::String{} << " event=" << int(Zum::AuditEvent::Authentication) << " ",
     Zum::String{} << " outcome=" << int(Zum::AuditOutcome::Success) << " ",
@@ -1144,8 +1144,8 @@ void zumtest::prepareToken(ZmRef<RuntimeDB> db,
     Zum::String{} << " subject=" << Zum::auditID(passkeyHandle) << " ",
     Zum::String{} << " target=" << Zum::auditID(ZuBSpan{"credential"}) << " "));
   state.browserCode = Zum::String{ZuCSpan{
-    finished.location.data() + codePrefix.length(),
-    finished.location.length() - codePrefix.length() - codeSuffix.length()}};
+    finished.location.data() + (sizeof(codePrefix) - 1),
+    finished.location.length() - (sizeof(codePrefix) - 1) - (sizeof(codeSuffix) - 1)}};
   auto &browserCode = state.browserCode;
   Zum::Bytes codeID, codeDigest;
   ZuCheck(Zum::opaqueParse(browserCode, codeID, codeDigest));

@@ -27,10 +27,10 @@ static void vector()
 {
   ZuTestScope(vector);
   // RFC 8439 section 2.8.2.
-  constexpr auto input =
+  constexpr char input[] =
     "Ladies and Gentlemen of the class of '99: If I could offer you only one tip "
-    "for the future, sunscreen would be it."_z;
-  uint8_t key[32], nonce[12], aad[12], expected[input.length() + 16];
+    "for the future, sunscreen would be it.";
+  uint8_t key[32], nonce[12], aad[12], expected[(sizeof(input) - 1) + 16];
   for (unsigned i = 0; i < sizeof(key); ++i) key[i] = 0x80 + i;
   ZuCheck(decode(nonce, "070000004041424344454647"));
   ZuCheck(decode(aad, "50515253c0c1c2c3c4c5c6c7"));
@@ -51,27 +51,27 @@ static void vector()
   ZuCheck(filled({output + sizeof(expected), 8}, 0xa5));
   // Exact in-place decrypt and unused output tail.
   ZuCheck(dec.open(nonce, aad, {output, sizeof(expected)}, output));
-  ZuCheck(!memcmp(output, input.data(), input.length()));
+  ZuCheck(!memcmp(output, input, (sizeof(input) - 1)));
   ZuCheck(filled({output + sizeof(expected), 8}, 0xa5));
   // Repeated messages retain key/direction while resetting the nonce state.
-  memcpy(output, input.data(), input.length());
-  ZuCheck(enc.seal(nonce, aad, {output, input.length()}, output));
+  memcpy(output, input, (sizeof(input) - 1));
+  ZuCheck(enc.seal(nonce, aad, {output, (sizeof(input) - 1)}, output));
   ZuCheck(!memcmp(output, expected, sizeof(expected)));
-  ZuCheck(dec.open(nonce, aad, expected, {output, input.length()}));
-  ZuCheck(!memcmp(output, input.data(), input.length()));
+  ZuCheck(dec.open(nonce, aad, expected, {output, (sizeof(input) - 1)}));
+  ZuCheck(!memcmp(output, input, (sizeof(input) - 1)));
   // Wrong AAD fails, clears all provisional plaintext, and invalidates dec.
   aad[0] ^= 1;
   memset(output, 0xa5, sizeof(output));
   ZuCheck(!dec.open(nonce, aad, expected, output));
-  ZuCheck(filled({output, input.length()}, 0));
-  ZuCheck(filled({output + input.length(), sizeof(output) - input.length()}, 0xa5));
+  ZuCheck(filled({output, (sizeof(input) - 1)}, 0));
+  ZuCheck(filled({output + (sizeof(input) - 1), sizeof(output) - (sizeof(input) - 1)}, 0xa5));
   aad[0] ^= 1;
   ZuCheck(!dec.open(nonce, aad, expected, output));
   ZuCheck(dec.init(false, key));
   memcpy(output, expected, sizeof(expected));
   output[sizeof(expected) - 1] ^= 1;
   ZuCheck(!dec.open(nonce, aad, {output, sizeof(expected)}, output));
-  ZuCheck(filled({output, input.length()}, 0));
+  ZuCheck(filled({output, (sizeof(input) - 1)}, 0));
   ZuCheck(dec.init(false, key));
   ZuCheck(dec.open(nonce, aad, expected, output));
 }

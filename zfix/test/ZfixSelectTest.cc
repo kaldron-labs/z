@@ -176,7 +176,7 @@ using PaddedLength = MT<BinaryOrder, "J", ZuFacet::FIX, Discrim<212, "0004">>;
 static void binaryUnmodelled()
 {
   ZuTestScope(binaryUnmodelled);
-  constexpr auto Payload = "9000=B\1" "150=FAKE\1" "35=Z\1" "10=000\1"_z;
+  constexpr char Payload[] = "9000=B\1" "150=FAKE\1" "35=Z\1" "10=000\1";
   BinaryOrder object{{}, "id", ZuBSpan{Payload}};
   Error error; Limits limits; limits.parseBytes = 0;
   auto body = TxBody::encode<BinarySelected>(object, 1, error, limits);
@@ -194,7 +194,7 @@ static void binaryUnmodelled()
   unsigned called = 0;
   auto parsed = frame(wire->cspan());
   error = dispatch<MTList<BinarySelected>>(parsed.view,
-    [&called, &parsed, payloadBytes = Payload.length()](
+    [&called, &parsed, payloadBytes = (sizeof(Payload) - 1)](
 	auto *, const BinaryOrder &value) -> Error {
       ++called; ZuCheck(value.id == "id" && value.data.length() == payloadBytes);
       ZuCheck(value.data.data() == reinterpret_cast<const uint8_t *>(
@@ -205,7 +205,7 @@ static void binaryUnmodelled()
   // A key-shaped token inside the advertised payload cannot satisfy restore.
   auto storage = ZtScratch(PrintBuf, body->body().length());
   Sink onlyPair{{storage.data(), unsigned(body->body().length())}};
-  saveBinary<ZfField(BinaryOrder, data)>(onlyPair, ZuBSpan{"9000=A\1"_z});
+  saveBinary<ZfField(BinaryOrder, data)>(onlyPair, ZuBSpan{"9000=A\1"});
   onlyPair << "11=id\1";
   auto missing = TxBody::restore<BinarySelected>(onlyPair.data(), 1, error);
   ZuCheck(!missing && error.code == ErrorCode::Required && error.tag == 9000);
@@ -217,8 +217,8 @@ static void binaryPairKeys()
 {
   ZuTestScope(binaryPairKeys);
   Error error;
-  constexpr auto SelectedData = "A\1\0B"_z;
-  constexpr auto OtherData = "Z\1\0B"_z;
+  constexpr char SelectedData[] = "A\1\0B";
+  constexpr char OtherData[] = "Z\1\0B";
   BinaryOrder object{{}, "id", ZuBSpan{SelectedData}};
   auto payload = TxBody::encode<PayloadSelected>(object, 1, error);
   ZuCheck(payload && !error);
@@ -227,7 +227,7 @@ static void binaryPairKeys()
   if (!payload) return;
   auto padded = TxBody::encode<PaddedLength>(object, 1, error);
   ZuCheck(!padded && error.code == ErrorCode::Unresolved && error.tag == 212);
-  auto restored = TxBody::restore<PaddedLength>("212=0004\1" "213=A\1\0B\1" "11=id\1"_z,
+  auto restored = TxBody::restore<PaddedLength>("212=0004\1" "213=A\1\0B\1" "11=id\1",
     1, error);
   ZuCheck(restored && !error);
   auto raw = RawOutput::encode(frameBuf(), payload, config(), context(), error);
@@ -274,18 +274,18 @@ static void binaryGroupSelector()
   Error error;
   // Root membership ends the group before its required tail. Neither this
   // misplaced key nor the key-like bytes inside the pair can satisfy restore.
-  constexpr auto misplaced = "453=1\1" "448=p\1" "212=8\1" "213=9000=A\1X\1"
-    "9000=B\1" "452=7\1" "11=end\1"_z;
+  constexpr char misplaced[] = "453=1\1" "448=p\1" "212=8\1" "213=9000=A\1X\1"
+    "9000=B\1" "452=7\1" "11=end\1";
   auto invalid = TxBody::restore<GroupSelected>(misplaced, 1, error);
   ZuCheck(!invalid && error.code == ErrorCode::Required && error.tag == 452);
-  constexpr auto missing = "453=1\1" "448=p\1" "212=8\1" "213=9000=B\1X\1"
-    "452=7\1" "11=end\1"_z;
+  constexpr char missing[] = "453=1\1" "448=p\1" "212=8\1" "213=9000=B\1X\1"
+    "452=7\1" "11=end\1";
   invalid = TxBody::restore<GroupSelected>(missing, 1, error);
   ZuCheck(!invalid && error.code == ErrorCode::Required && error.tag == 9000);
   // The real root key may follow the last entry immediately, without a footer
   // field separating it from the group. Archive bytes retain the exact pair.
-  constexpr auto valid = "453=1\1" "448=p\1" "212=8\1" "213=9000=A\1X\1"
-    "452=7\1" "9000=B\1" "11=end\1"_z;
+  constexpr char valid[] = "453=1\1" "448=p\1" "212=8\1" "213=9000=A\1X\1"
+    "452=7\1" "9000=B\1" "11=end\1";
   auto restored = TxBody::restore<GroupSelected>(valid, 2, error);
   ZuCheck(restored && !error && restored->body() == valid);
 }

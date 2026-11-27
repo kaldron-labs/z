@@ -22,7 +22,7 @@
 
 namespace ZvYAMLError {
 
-constexpr auto Component = "ZvYAML"_z;
+constexpr char Component[] = "ZvYAML";
 
 template <ZuString Op>
 inline auto fileError(const Zi::Path &path, ZeError error) {

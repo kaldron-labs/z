@@ -74,8 +74,8 @@ template <typename O> static bool run(
 {
   using Buffer = ZtArray<uint8_t, ZtArrayHeapID<"Zfix.TxBodyBench">>;
   Buffer payload; payload.length(size, false);
-  constexpr auto Pattern = "A\1" "35=X\1" "10=000\1" "\0=\xff"_z;
-  for (unsigned i = 0; i < size; ++i) payload[i] = Pattern[i % Pattern.length()];
+  constexpr char Pattern[] = "A\1" "35=X\1" "10=000\1" "\0=\xff";
+  for (unsigned i = 0; i < size; ++i) payload[i] = Pattern[i % (sizeof(Pattern) - 1)];
   O object; object.data = ZuBSpan{payload};
   Samples encodeNs{count}, clockNs{count};
   TxBody::Ref body;

@@ -46,13 +46,13 @@ SignedFIXFields ZuFields_(Signed *, ZuFacet::FIX *);
 using Entry = MT<Signed, "D">;
 using SigField = ZfField(Signed, signature);
 
-static constexpr auto Payload = "A\1\0=B"_z;
-static constexpr auto Body = "11=abc\1" "212=5\1" "213=A\1\0=B\1"_z;
-static constexpr auto Covered = "35=D\1" "49=CLIENT\1" "56=SERVER\1" "34=7\1"
-  "52=20261027-12:34:56\1" "11=abc\1" "212=5\1" "213=A\1\0=B\1"_z;
+static constexpr char Payload[] = "A\1\0=B";
+static constexpr char Body[] = "11=abc\1" "212=5\1" "213=A\1\0=B\1";
+static constexpr char Covered[] = "35=D\1" "49=CLIENT\1" "56=SERVER\1" "34=7\1"
+  "52=20261027-12:34:56\1" "11=abc\1" "212=5\1" "213=A\1\0=B\1";
 // Independently calculated with Python hmac.new(b"secret", Covered, sha256).
-static constexpr auto Known =
-  "fab44f856331f9c892d2a748799191a98746b67514cb44652676429d7c3684c3"_z;
+static constexpr char Known[] =
+  "fab44f856331f9c892d2a748799191a98746b67514cb44652676429d7c3684c3";
 
 static TxConfig config()
 {
@@ -152,7 +152,7 @@ static void signing()
   auto direct = RawOutput::fromFrame(body, finalContext, raw->frame(), error);
   ZuCheck(direct && signer.calls == 2 && direct->frame().ptr() == raw->frame().ptr());
 
-  Text supplied{Body};
+  Text supplied{ZuCSpan{Body}};
   auto scratch = ZtScratch(PrintBuf, wire->length);
   Sink pair{{scratch.data(), unsigned(wire->length)}};
   pair << supplied; saveBinary<SigField>(pair, received.signature);
@@ -187,9 +187,10 @@ static void tampering()
   uint8_t digest[Ztls::HMAC<>::Size]; mac(Covered, digest);
   // Recompute outer BodyLength/CheckSum, so every altered frame still parses.
   auto check = [](ZuCSpan covered, ZuBSpan signature) {
-    constexpr auto Envelope = "8=FIX.4.4\1" "9=4294967295\1" "10=255\1"_z;
-    constexpr auto Pair = "93=4294967295\1" "89=\1"_z;
-    auto capacity = covered.length() + signature.length() + Envelope.length() + Pair.length();
+    constexpr char Envelope[] = "8=FIX.4.4\1" "9=4294967295\1" "10=255\1";
+    constexpr char Pair[] = "93=4294967295\1" "89=\1";
+    auto capacity = covered.length() + signature.length() +
+      sizeof(Envelope) - 1 + sizeof(Pair) - 1;
     auto bytes = ZtScratch(PrintBuf, capacity);
     FrameWriter writer{{bytes.data(), unsigned(capacity)}, "FIX.4.4"};
     writer.body() << covered; saveBinary<SigField>(writer.body(), signature);
@@ -198,9 +199,9 @@ static void tampering()
     auto parsed = frame(output.data);
     return parsed.state == FrameState::Complete && !verify(parsed.view);
   };
-  Text altered{Covered}; altered[altered.length() - 2] ^= 1;
+  Text altered{ZuCSpan{Covered}}; altered[altered.length() - 2] ^= 1;
   ZuCheck(check(altered, digest)); // binary payload
-  altered = Covered; altered[unsigned(altered.find("CLIENT"))] = 'X';
+  altered = ZuCSpan{Covered}; altered[unsigned(altered.find("CLIENT"))] = 'X';
   ZuCheck(check(altered, digest)); // covered peer identity
   digest[0] ^= 1;
   ZuCheck(check(Covered, digest)); // signature
@@ -238,8 +239,8 @@ static void policies()
   MessageHandler<OptionalSigned> input{frame(wire->cspan()).view};
   auto received = input.ctor();
   ZuCheck(input.valid() && !received.signature.length());
-  for (auto payload : {ZuCSpan{""_z}, ZuCSpan{"\0\1\xff"_z},
-      ZuCSpan{"variable signature bytes"_z}}) {
+  for (auto payload : {ZuCSpan{""}, ZuCSpan{"\0\1\xff", 3},
+      ZuCSpan{"variable signature bytes"}}) {
     VariableSign signer{ZuBSpan{payload}};
     wire = txFrame(frameBuf(), *body, config(), context(), error, {}, signer);
     ZuCheck(wire && !error);
@@ -666,8 +667,8 @@ static void configuredGroups()
   object.rows.push(SessionRow{"GROUP", 99, ZuBSpan{Payload}});
   Error error;
   auto body = TxBody::encode<GroupedEntry>(object, 1, error);
-  ZuCheck(body && !error && body->body().find("49=GROUP\1"_z) >= 0 &&
-    body->body().find("34=99\1"_z) >= 0);
+  ZuCheck(body && !error && body->body().find("49=GROUP\1") >= 0 &&
+    body->body().find("34=99\1") >= 0);
   if (!body) return;
   HmacSign signer;
   auto wire = txFrame(frameBuf(), *body, config(), context(), error, {}, signer);

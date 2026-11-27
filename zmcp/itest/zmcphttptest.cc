@@ -500,7 +500,7 @@ struct LegacyApp : public Zhttp::Server<LegacyApp, LegacyParser<LegacyApp>,
   using HTTP::disconnected;
   using ResBuilderQ = Zmcp::HTTPBuilderQ<Catalog>;
 
-  static constexpr auto SessionID = "legacy-session"_z;
+  static constexpr char SessionID[] = "legacy-session";
 
   ZmSemaphore listening_;
   Zmcp::Peer<Catalog> peer;

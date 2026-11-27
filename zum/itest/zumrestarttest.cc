@@ -1703,7 +1703,7 @@ static void grantUpdate()
   auto db = startDB(cf, mx, context);
   ZuCheckRT(bool(db));
   if (!db) return;
-  constexpr auto id = "grant-update-001"_z;
+  constexpr char id[] = "grant-update-001";
   ZuCheckRT(insertRecord(context->grants, Zum::Grant{
     .id = Zum::Bytes{ZuBSpan{id}}, .roleIDs = Zum::IDVec{1},
     .scope = "before"}));

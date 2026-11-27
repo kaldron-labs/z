@@ -76,16 +76,16 @@ template <typename O, bool Indexed>
 static bool run(ZuCSpan mode, ZuCSpan phase, unsigned size, unsigned count, unsigned warmup)
 {
   constexpr bool Plain = ZuIsSame<O, TextValue>{};
-  constexpr auto Hostile = "A\1" "35=X\1" "10=000\1" "\0=\xff"_z;
+  constexpr char Hostile[] = "A\1" "35=X\1" "10=000\1" "\0=\xff";
   // Literal extents cover the largest decimal fields and both binary prefixes.
-  constexpr auto Metadata = "11=18446744073709551615\1" "212=4294967295\1"
-    "213=\1" "5000=4294967295\1"_z;
-  static constexpr auto Suffix = "5000=7\1"_z;
+  constexpr char Metadata[] = "11=18446744073709551615\1" "212=4294967295\1"
+    "213=\1" "5000=4294967295\1";
+  static constexpr char Suffix[] = "5000=7\1";
   Buffer payload, storage;
   payload.length(size, false);
   for (unsigned i = 0; i < size; ++i)
-    payload[i] = Plain ? uint8_t('A' + i % 26) : uint8_t(Hostile[i % Hostile.length()]);
-  unsigned capacity = size + Metadata.length();
+    payload[i] = Plain ? uint8_t('A' + i % 26) : uint8_t(Hostile[i % (sizeof(Hostile) - 1)]);
+  unsigned capacity = size + (sizeof(Metadata) - 1);
   storage.length(capacity, false);
   Limits limits;
   limits.frameBytes = capacity;
@@ -107,7 +107,7 @@ static bool run(ZuCSpan mode, ZuCSpan phase, unsigned size, unsigned count, unsi
   };
   auto direct = [size](ZuCSpan wire, const O &value) {
     auto bytes = ZuBSpan{value.data};
-    auto expected = wire.data() + wire.length() - Suffix.length() - 1 - size;
+    auto expected = wire.data() + wire.length() - (sizeof(Suffix) - 1) - 1 - size;
     return bytes.length() == size && bytes.data() ==
       reinterpret_cast<const uint8_t *>(expected);
   };

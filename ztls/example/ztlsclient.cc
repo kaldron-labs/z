@@ -21,14 +21,14 @@
 
 #include <iostream>
 
-static constexpr auto Request =
+static constexpr char Request[] =
   "GET / HTTP/1.1\r\n"
-  "Host: "_z;
-static constexpr auto Request2 =
+  "Host: ";
+static constexpr char Request2[] =
   "\r\n"
   "User-Agent: ztlsclient/1.0\r\n"
   "Accept: */*\r\n"
-  "\r\n"_z;
+  "\r\n";
 
 ZuDerive(HeaderString, (ZtString<ZtStringHeapID<"Ztls.Example.Header">>));
 

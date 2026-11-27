@@ -29,8 +29,8 @@ namespace zhttplifecycletest_ {
 
 using namespace Zhttp::Test;
 
-constexpr ZuString Ping{"ping"};
-constexpr ZuString Pong{"pong"};
+constexpr char Ping[] = "ping";
+constexpr char Pong[] = "pong";
 
 struct State {
   LifeTrace		trace;

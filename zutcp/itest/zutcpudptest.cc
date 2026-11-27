@@ -19,7 +19,7 @@
 #include "ZutcpTestMxPlugin.hh"
 
 enum { ServerUDP = 18172, ClientUDP = 18173, ServerTCP = 18174 };
-static constexpr auto TCPData = "tcp fixture bytes"_z;
+static constexpr char TCPData[] = "tcp fixture bytes";
 static const ZuBSpan UDPData[] = {"first datagram", "", "a longer final datagram"};
 
 static ZmAtomic<unsigned> routeSockets{0};
@@ -130,15 +130,15 @@ bool Connection::received(ZiRxContext &io)
   } else {
     if (!io.buf || !io.buf->length) return true;
     if (!dynamic_cast<Input<false> *>(io.buf.ptr()) || io.buf->allocator() != state->rx ||
-	io.buf->length > TCPData.length() - m_streamBytes ||
-	memcmp(io.buf->data(), TCPData.data() + m_streamBytes, io.buf->length)) {
+	io.buf->length > (sizeof(TCPData) - 1) - m_streamBytes ||
+	memcmp(io.buf->data(), TCPData + m_streamBytes, io.buf->length)) {
       ++state->errors;
       io.disconnect();
       state->input.post();
       return true;
     }
     m_streamBytes += io.buf->length;
-    if (m_streamBytes != TCPData.length()) {
+    if (m_streamBytes != (sizeof(TCPData) - 1)) {
       io.buf = state->rx->allocBuf(this);
       return true;
     }

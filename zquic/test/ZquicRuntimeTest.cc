@@ -2319,7 +2319,7 @@ void testMigrationLoss()
     auto stream = openStream(serverLink);
     Zquic_CheckRT_1(stream, "migration loss stream open failed");
     if (!stream) return;
-    constexpr auto payload = "migration-loss-recovered"_z;
+    const ZuCSpan payload = "migration-loss-recovered";
     bool sent = ZmBlock<bool>{}([&server, stream, payload](auto wake) {
       server.txRun([&server, stream, payload, wake = ZuMv(wake)]() mutable {
 	server.dropNextShort = 1;

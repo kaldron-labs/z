@@ -90,7 +90,7 @@ struct App {
     if constexpr (Key{}() == "authorization") {
       if (!options->token) return;
       auto value = ZtScratch(TextScratch,
-	options->token.length() + ZuStringT<"Bearer ">{}().length());
+	options->token.length() + (sizeof("Bearer ") - 1));
       value << "Bearer " << options->token;
       l(value);
     }
@@ -174,7 +174,7 @@ int main(int argc, char **argv)
     Zmcp::WSClient<App, ExampleCatalog> client;
     Zws::URI uri;
     auto text = ZtScratch(TextScratch, options.host.length() +
-	ZuBox<unsigned>{options.port}.length() + ZuStringT<"ws://:/mcp">{}().length());
+	ZuBox<unsigned>{options.port}.length() + (sizeof("ws://:/mcp") - 1));
     text << "ws://" << options.host << ':' << options.port << "/mcp";
     bool started = Zws::URI::parse(uri, text).ok() && client.init(
 	Zhttp::HubConfig{&mx}, Zhttp::TCPConfig{},

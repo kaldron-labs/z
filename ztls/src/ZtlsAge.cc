@@ -33,11 +33,11 @@ ZtEnumImplStruct(AgeKeyType);
 
 enum { X25519KeySize = 32, ChecksumSize = 6 };
 
-static constexpr auto PubX25519 = "age"_z;
-static constexpr auto PubHybrid = "age1pq"_z;
-static constexpr auto SecX25519 = "age-secret-key-"_z;
-static constexpr auto SecHybrid = "age-secret-key-pq-"_z;
-static constexpr auto Alphabet = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"_z;
+static constexpr char PubX25519[] = "age";
+static constexpr char PubHybrid[] = "age1pq";
+static constexpr char SecX25519[] = "age-secret-key-";
+static constexpr char SecHybrid[] = "age-secret-key-pq-";
+static constexpr char Alphabet[] = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
 static uint32_t step(uint32_t sum, unsigned value)
 {
@@ -68,8 +68,8 @@ static uint32_t hrpSum(ZuCSpan hrp)
 static int digit(char c)
 {
   c = lower(c);
-  auto p = static_cast<const char *>(memchr(Alphabet.data(), c, Alphabet.length()));
-  return p ? int(p - Alphabet.data()) : -1;
+  auto p = static_cast<const char *>(memchr(Alphabet, c, (sizeof(Alphabet) - 1)));
+  return p ? int(p - Alphabet) : -1;
 }
 
 static ZuUnion<size_t, ZeException>
@@ -236,8 +236,8 @@ enum {
   ScryptMaxLogN = 18,
   ScryptMaxMemory = 512 << 20
 };
-static constexpr auto Version = "age-encryption.org/v1\n"_z;
-static constexpr auto ScryptLabel = "age-encryption.org/v1/scrypt"_z;
+static constexpr char Version[] = "age-encryption.org/v1\n";
+static constexpr char ScryptLabel[] = "age-encryption.org/v1/scrypt";
 struct Stanza {
   enum { Scrypt, X25519, Hybrid, SshRSA, SshED };
   using Keys = ZuStringTL<
@@ -248,13 +248,13 @@ static constexpr auto ScryptArg = ZuType<Stanza::Scrypt, Stanza::Keys>{}();
 static constexpr auto X25519Arg = ZuType<Stanza::X25519, Stanza::Keys>{}();
 static constexpr auto HybridArg = ZuType<Stanza::Hybrid, Stanza::Keys>{}();
 static constexpr auto SshRSAArg = ZuType<Stanza::SshRSA, Stanza::Keys>{}();
-static constexpr auto SshRSALabel = "age-encryption.org/v1/ssh-rsa"_z;
+static constexpr char SshRSALabel[] = "age-encryption.org/v1/ssh-rsa";
 static constexpr auto SshEDArg = ZuType<Stanza::SshED, Stanza::Keys>{}();
-static constexpr auto SshEDLabel = "age-encryption.org/v1/ssh-ed25519"_z;
-static constexpr auto X25519Info = "age-encryption.org/v1/X25519"_z;
-static constexpr auto HybridInfo = "age-encryption.org/mlkem768x25519"_z;
-static constexpr auto HeaderInfo = "header"_z;
-static constexpr auto PayloadInfo = "payload"_z;
+static constexpr char SshEDLabel[] = "age-encryption.org/v1/ssh-ed25519";
+static constexpr char X25519Info[] = "age-encryption.org/v1/X25519";
+static constexpr char HybridInfo[] = "age-encryption.org/mlkem768x25519";
+static constexpr char HeaderInfo[] = "header";
+static constexpr char PayloadInfo[] = "payload";
 ZuDerive(AgeHeaderScratch, (ZtBArray<ZtArrayHeapID<"Ztls.Age.Header", ZtArraySharded<true>>>));
 
 static bool unb64(ZuCSpan text, ZuSpan<uint8_t> output)
@@ -326,8 +326,8 @@ try {
     size_t start = cursor;
     while (cursor < n && authorizedKey[cursor] > ' ') ++cursor;
     ZuCSpan type{authorizedKey.data() + start, cursor - start};
-    bool    rsa = type == "ssh-rsa"_z;
-    bool    ed = type == "ssh-ed25519"_z;
+    bool    rsa = type == "ssh-rsa";
+    bool    ed = type == "ssh-ed25519";
     if (!rsa && !ed) continue;
     while (cursor < n && authorizedKey[cursor] <= ' ') ++cursor;
     start = cursor;
@@ -367,19 +367,19 @@ Age::loadOpenSSH(ZuSpan<char> privateKey, ZuSpan<uint8_t> publicKey)
 try {
   ZuGuard clear{[&privateKey]() { ZuClear(privateKey); }};
   if (privateKey.length() > HeaderMaxSize) return invalidOpenSSH();
-  constexpr auto begin = "-----BEGIN OPENSSH PRIVATE KEY-----"_z;
-  constexpr auto end = "-----END OPENSSH PRIVATE KEY-----"_z;
+  constexpr char begin[] = "-----BEGIN OPENSSH PRIVATE KEY-----";
+  constexpr char end[] = "-----END OPENSSH PRIVATE KEY-----";
   size_t	 start = 0, finish = 0, n = privateKey.length();
-  while (start + begin.length() <= n &&
-    memcmp(privateKey.data() + start, begin.data(), begin.length()))
+  while (start + (sizeof(begin) - 1) <= n &&
+    memcmp(privateKey.data() + start, begin, (sizeof(begin) - 1)))
     ++start;
-  if (start + begin.length() > n) return invalidOpenSSH();
-  start += begin.length();
+  if (start + (sizeof(begin) - 1) > n) return invalidOpenSSH();
+  start += (sizeof(begin) - 1);
   finish = start;
   while (
-    finish + end.length() <= n && memcmp(privateKey.data() + finish, end.data(), end.length()))
+    finish + (sizeof(end) - 1) <= n && memcmp(privateKey.data() + finish, end, (sizeof(end) - 1)))
     ++finish;
-  if (finish + end.length() > n) return invalidOpenSSH();
+  if (finish + (sizeof(end) - 1) > n) return invalidOpenSSH();
   unsigned encodedLength = 0;
   for (size_t i = start; i < finish; ++i) {
     auto c = privateKey[i];
@@ -470,10 +470,10 @@ static bool write(ZiFile &file, ZuBSpan data)
 
 static bool scryptKey(ZuBSpan passphrase, ZuBSpan salt, unsigned logN, ZuSpan<uint8_t> output)
 {
-  uint8_t fullSalt[ScryptLabel.length() + SaltSize];
+  uint8_t fullSalt[(sizeof(ScryptLabel) - 1) + SaltSize];
   ZuGuard clear{[&fullSalt]() { ZuClear(fullSalt, sizeof(fullSalt)); }};
-  memcpy(fullSalt, ScryptLabel.data(), ScryptLabel.length());
-  memcpy(fullSalt + ScryptLabel.length(), salt.data(), SaltSize);
+  memcpy(fullSalt, ScryptLabel, (sizeof(ScryptLabel) - 1));
+  memcpy(fullSalt + (sizeof(ScryptLabel) - 1), salt.data(), SaltSize);
   return Ztls::KDF::scrypt(
     passphrase, fullSalt, uint64_t{1} << logN, 8, 1, ScryptMaxMemory, output);
 }
@@ -1023,7 +1023,8 @@ try {
     }
   }
   if (
-    header.length() < Version.length() || memcmp(header.data(), Version.data(), Version.length()))
+    header.length() < sizeof(Version) - 1 ||
+    memcmp(header.data(), Version, sizeof(Version) - 1))
     return ZeEXCEPT(Error, "ZtlsAge", "unsupported age version");
   uint8_t candidate[FileKeySize];
   ZuGuard clear{[&candidate]() { ZuClear(candidate, sizeof(candidate)); }};
@@ -1032,7 +1033,7 @@ try {
   uint8_t expected[KeySize];
   ZuGuard clearMac{[&expected]() { ZuClear(expected, sizeof(expected)); }};
   if (!unb64(macText, expected)) return ZeEXCEPT(Error, "ZtlsAge", "invalid header MAC");
-  size_t   cursor = Version.length();
+  size_t   cursor = (sizeof(Version) - 1);
   unsigned stanzas = 0;
   bool	   scrypt = false, found = false;
   while (cursor < macStart) {

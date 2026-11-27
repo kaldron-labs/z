@@ -17,7 +17,7 @@ using namespace ZuTestUtil;
 
 static bool matches(ZuBSpan input, ZuCSpan hex)
 {
-  constexpr auto Digits = "0123456789abcdef"_z;
+  constexpr char Digits[] = "0123456789abcdef";
   if (hex.length() != (input.length() << 1)) return false;
   for (unsigned i = 0, n = input.length(); i < n; ++i) {
     auto byte = input[i];

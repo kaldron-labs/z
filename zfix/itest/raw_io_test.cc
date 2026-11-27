@@ -337,8 +337,8 @@ static void loopback(bool pause, bool stop, bool quota, unsigned payload = 4) {
   state.text = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
     ZiIOBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
   state.text->ensure(payload);
-  constexpr auto Bits = "ABCD"_z;
-  for (unsigned i = 0; i < payload; ++i) state.text->data()[i] = Bits[i % Bits.length()];
+  constexpr char Bits[] = "ABCD";
+  for (unsigned i = 0; i < payload; ++i) state.text->data()[i] = Bits[i % (sizeof(Bits) - 1)];
   state.text->length = payload;
   SrvHub server{&state}; CliHub client{&state};
   ZfixTest::TransportFixture transport{ZiMxParams{}.scheduler([](auto &s) {
@@ -469,7 +469,7 @@ struct SwapPeer : Base {
   void request() {
     this->app()->rxRun([this] {
       Fmt::Error error;
-      if (!this->template send<Entry>(Packet{"req", "ABCD"_z}, 101, routing(),
+      if (!this->template send<Entry>(Packet{"req", "ABCD"}, 101, routing(),
 	  context(this->rawConnection()), true, error)) state()->fail();
     });
   }
@@ -477,7 +477,7 @@ struct SwapPeer : Base {
   bool fixRawRx(ZmRef<RawInput> msg, Fmt::Limits limits) {
     Fmt::MessageHandler<Packet> handler{msg->frame, limits}; auto p = handler.ctor();
     if (!this->app()->rxInvoked() || !handler.valid() ||
-	msg->connection != this->rawConnection() || p.data != "ABCD"_z ||
+	msg->connection != this->rawConnection() || p.data != "ABCD" ||
 	p.value != (Client ? "res" : "req") || p.seqNo != 17) {
       state()->fail(); return true;
     }

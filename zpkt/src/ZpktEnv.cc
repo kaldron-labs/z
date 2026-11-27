@@ -73,7 +73,7 @@ ZuUnion<Nif *, ZeException> Env::nif(ZiMultiplex *mx, ZuCSpan name)
   }
   ZmAssert_(mx && mx->state() == ZmEngineState::Stopped);
   NifInfo info;
-  if (name == "_loop"_z) {
+  if (name == "_loop") {
     if (!loopback())
       return ZeEXCEPT(Error, "Zpkt", "backend loopback (_loop) is unsupported");
   } else if (m_plugin->hostNifInfo()) {

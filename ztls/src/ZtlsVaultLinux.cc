@@ -40,13 +40,13 @@ namespace SS {
 
 namespace VaultLinux_ {
 
-constexpr auto Destination = "org.freedesktop.secrets"_z;
-constexpr auto ServicePath = "/org/freedesktop/secrets"_z;
-constexpr auto ServiceIF = "org.freedesktop.Secret.Service"_z;
-constexpr auto CollectionIF = "org.freedesktop.Secret.Collection"_z;
-constexpr auto ItemIF = "org.freedesktop.Secret.Item"_z;
-constexpr auto SessionIF = "org.freedesktop.Secret.Session"_z;
-constexpr auto PromptIF = "org.freedesktop.Secret.Prompt"_z;
+constexpr char Destination[] = "org.freedesktop.secrets";
+constexpr char ServicePath[] = "/org/freedesktop/secrets";
+constexpr char ServiceIF[] = "org.freedesktop.Secret.Service";
+constexpr char CollectionIF[] = "org.freedesktop.Secret.Collection";
+constexpr char ItemIF[] = "org.freedesktop.Secret.Item";
+constexpr char SessionIF[] = "org.freedesktop.Secret.Session";
+constexpr char PromptIF[] = "org.freedesktop.Secret.Prompt";
 enum { TimeoutSeconds = 5 };
 
 class KeyRing_ : public ZmNHeap<KeyRing_>, public VaultStore {

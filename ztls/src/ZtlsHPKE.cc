@@ -20,7 +20,7 @@ using ScratchHeap = ZmVHeap<"Ztls.HPKE.Scratch">;
 
 enum { HashSize = 32, KeySize = 32, NonceSize = 12, ContextSize = 1 + 2 * HashSize };
 
-constexpr auto	  Version = "HPKE-v1"_z;
+constexpr char	  Version[] = "HPKE-v1";
 constexpr uint8_t Suite[] = {'H', 'P', 'K', 'E', 0x64, 0x7a, 0x00, 0x01, 0x00, 0x03};
 // LabeledExtract("", "psk_id_hash", "") for this fixed suite.
 constexpr uint8_t PskIDHash[HashSize] = {0x36, 0xb5, 0xff, 0x55, 0x87, 0xa0, 0x30, 0x0f, 0xc5,
@@ -35,13 +35,13 @@ struct KeyNonce {
 static bool
 extract(KDF::HKDF &kdf, ZuBSpan salt, ZuCSpan label, ZuBSpan ikm, ZuSpan<uint8_t> output)
 {
-  size_t prefix = Version.length() + sizeof(Suite) + label.length();
+  size_t prefix = (sizeof(Version) - 1) + sizeof(Suite) + label.length();
   if (ikm.length() > UINT_MAX - prefix) return false;
   unsigned n = unsigned(prefix + ikm.length());
   auto	   buf = ZmScratch(uint8_t, n, ScratchHeap);
   auto	   p = buf.data();
-  memcpy(p, Version.data(), Version.length());
-  p += Version.length();
+  memcpy(p, Version, (sizeof(Version) - 1));
+  p += (sizeof(Version) - 1);
   memcpy(p, Suite, sizeof(Suite));
   p += sizeof(Suite);
   memcpy(p, label.data(), label.length());
@@ -53,7 +53,7 @@ extract(KDF::HKDF &kdf, ZuBSpan salt, ZuCSpan label, ZuBSpan ikm, ZuSpan<uint8_t
 static bool
 expand(KDF::HKDF &kdf, ZuBSpan prk, ZuCSpan label, ZuBSpan info, ZuSpan<uint8_t> output)
 {
-  size_t prefix = 2 + Version.length() + sizeof(Suite) + label.length();
+  size_t prefix = 2 + (sizeof(Version) - 1) + sizeof(Suite) + label.length();
   if (info.length() > UINT_MAX - prefix) return false;
   unsigned n = unsigned(prefix + info.length());
   auto	   buf = ZmScratch(uint8_t, n, ScratchHeap);
@@ -61,8 +61,8 @@ expand(KDF::HKDF &kdf, ZuBSpan prk, ZuCSpan label, ZuBSpan info, ZuSpan<uint8_t>
   p[0] = uint8_t(output.length() >> 8);
   p[1] = uint8_t(output.length());
   p += 2;
-  memcpy(p, Version.data(), Version.length());
-  p += Version.length();
+  memcpy(p, Version, (sizeof(Version) - 1));
+  p += (sizeof(Version) - 1);
   memcpy(p, Suite, sizeof(Suite));
   p += sizeof(Suite);
   memcpy(p, label.data(), label.length());

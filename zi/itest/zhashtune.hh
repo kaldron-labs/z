@@ -7,14 +7,13 @@
 #ifndef zhashtune_HH
 #define zhashtune_HH
 
-#include <zlib/ZuString.hh>
 #include <zlib/ZtcHash.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZfStruct.hh>
 
 namespace HashTest {
 
-inline constexpr auto header = "id,bits,loadFactor,cBits\n"_z;
+inline constexpr char header[] = "id,bits,loadFactor,cBits\n";
 
 struct Report : public Ztc::HashTelemetry {
   uint8_t phase = 0;

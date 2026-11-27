@@ -45,8 +45,8 @@ inline unsigned testPort()
 
 using namespace Zhttp::Test;
 
-constexpr ZuString Ping{"ping"};
-constexpr ZuString Pong{"pong"};
+constexpr char Ping[] = "ping";
+constexpr char Pong[] = "pong";
 
 struct State {
   LifeTrace		trace;
@@ -440,7 +440,7 @@ struct UpgradeSession {
       state->fail();
       return -1;
     }
-    if (!replied && offset == Ping.length()) {
+    if (!replied && offset == (sizeof(Ping) - 1)) {
       replied = true;
       stream.txStream([](auto &tx) {
 	tx << Pong;
@@ -567,7 +567,7 @@ struct UpgradeClient :
       state->fail();
       return -1;
     }
-    if (offset == Pong.length()) stream.end();
+    if (offset == (sizeof(Pong) - 1)) stream.end();
     return 1;
   }
   template <typename Link>

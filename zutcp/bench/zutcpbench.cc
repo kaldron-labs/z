@@ -126,9 +126,9 @@ static unsigned message(char *output, unsigned sequence, unsigned kind = Frame::
 // Return the complete frame size or INT_MAX for a partial header/frame.
 static int frameLength(const uint8_t *data, unsigned length)
 {
-  constexpr auto prefix = "8=FIX.4.4\0019="_z;
-  unsigned n = prefix.length();
-  if (memcmp(data, prefix.data(), length < n ? length : n)) return -1;
+  constexpr char prefix[] = "8=FIX.4.4\0019=";
+  unsigned n = (sizeof(prefix) - 1);
+  if (memcmp(data, prefix, length < n ? length : n)) return -1;
   if (length <= n) return INT_MAX;
   unsigned body = 0, digits = 0;
   while (n < length && data[n] != 1) {
@@ -265,7 +265,7 @@ static void initEnv(Zpkt::Env *env, const Config &cf, Zpkt::CfString &module)
       throw ZeEXCEPT(Error, "zutcpbench", "BENCH_DPDK_CONFIG must contain an Env configuration");
     bool haveModule = false;
     for (const auto &field : root->data<Node::Object>())
-      if (field.p<0>() == "module"_z) { haveModule = true; break; }
+      if (field.p<0>() == "module") { haveModule = true; break; }
     // ZvCf allocated this tree for this invocation. Supply the build-tree
     // module when the file only describes EAL and its interface mappings.
     if (!haveModule) value(const_cast<Node *>(root), "module", ZUTCP_DPDK_MODULE);
@@ -312,10 +312,10 @@ public:
       try {
 	initEnv(env, config, m_module);
 	ZuCSpan name = config.interface;
-	if (name == "_loop"_z && !env->loopback())
+	if (name == "_loop" && !env->loopback())
 	  throw ZeEXCEPT(Error, "zutcpbench", "the loaded packet backend lacks loopback");
 	auto route = config.routeInterface;
-	if (!route && config.backend == Backend::Dpdk && name != "_loop"_z)
+	if (!route && config.backend == Backend::Dpdk && name != "_loop")
 	  route = config.interface;
 	if (route && !(settings.routingIfindex = if_nametoindex(route)))
 	  throw ZeEXCEPT(Error, "zutcpbench", ([route = ZeString{route}](auto &out) {
@@ -724,8 +724,8 @@ bool App::report()
     if (m_config.samples) {
       ZiFile file{m_config.samples, ZiFile::Write | ZiFile::GC};
       if (!file) return false;
-      constexpr auto header = "connection,sequence,rtt_ns\n"_z;
-      if (file.write(header.data(), header.length()) != Zi::OK) return false;
+      constexpr char header[] = "connection,sequence,rtt_ns\n";
+      if (file.write(header, (sizeof(header) - 1)) != Zi::OK) return false;
       // Two unsigned fields, uint64 nanoseconds and CSV delimiters fit in64 bytes.
       enum { CSVLineSize = 64 };
       for (unsigned i = 0; i < m_config.connections; ++i)

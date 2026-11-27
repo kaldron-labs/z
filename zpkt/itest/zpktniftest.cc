@@ -170,12 +170,12 @@ static void testDpdk(const Runtime &runtime)
   auto env = runtime.env();
   ZiMultiplex mx, otherMx;
   auto requests = unsigned(nifQueries);
-  auto missing = env->nif(&mx, "missing"_z);
+  auto missing = env->nif(&mx, "missing");
   ZuCheckRT(missing.is<ZeException>(), log_("missing native port publishes no device"));
-  auto badLinux = env->nif(&mx, "zpkt_absent"_z);
+  auto badLinux = env->nif(&mx, "zpkt_absent");
   ZuCheckRT(badLinux.is<ZeException>() && unsigned(nifQueries) == requests,
     log_("missing configured DPDK key fails without host lookup"));
-  auto opened = env->nif(&mx, "net_ring_packet"_z);
+  auto opened = env->nif(&mx, "net_ring_packet");
   ZuCheckRT(opened.is<Zpkt::Nif *>(), log_(errorText(opened.p<ZeException>())));
   if (!opened.is<Zpkt::Nif *>()) return;
   ZmRef<Zpkt::Nif> device = opened.p<Zpkt::Nif *>();
@@ -185,12 +185,12 @@ static void testDpdk(const Runtime &runtime)
       unsigned(nifQueries) == requests &&
       !device->allocated() && !device->ready() && device->state() == ZmEngineState::Stopped && device->zeroCopy(),
     log_("factory returns initialized, unallocated, stopped ring device with native geometry"));
-  auto repeated = env->nif(&mx, "net_ring_packet"_z);
+  auto repeated = env->nif(&mx, "net_ring_packet");
   ZuCheckRT(repeated.is<Zpkt::Nif *>() && repeated.p<Zpkt::Nif *>() == device.ptr(),
     log_("same-name lookup retains the initialized device"));
-  ZuCheckRT(env->nif(&otherMx, "net_ring_packet"_z).is<ZeException>() && device->mx() == &mx,
+  ZuCheckRT(env->nif(&otherMx, "net_ring_packet").is<ZeException>() && device->mx() == &mx,
     log_("different multiplexer lookup preserves original initialization"));
-  auto busy = env->nif(&mx, "competing"_z);
+  auto busy = env->nif(&mx, "competing");
   ZuCheckRT(busy.is<ZeException>() &&
       strstr(errorText(busy.p<ZeException>()).ndata(), rte_strerror(EBUSY)),
     log_("a different configured key cannot acquire an owned native port"));
@@ -252,7 +252,7 @@ static void testDpdk(const Runtime &runtime)
     ZuCheckRT(ready && device->ready() && intact(),
     log_(  "the same pool addresses survive activation retry"));
     ZuCheckRT(device->stop() && stops == 1 && !device->ready() && device->allocated() &&
-	intact() && env->nif(&otherMx, "competing"_z).is<ZeException>(),
+	intact() && env->nif(&otherMx, "competing").is<ZeException>(),
     log_(  "idle stop preserves the allocation and the exclusive port claim"));
     bool restarted = device->start(receive, stopped);
     ZuCheckRT(restarted && device->ready() && intact(),
@@ -315,13 +315,13 @@ static void testDpdk(const Runtime &runtime)
   ZuCheckRT(!device->mx() && !device->allocated() &&
       !rx->alloc() && !tx->alloc() && !small->alloc(),
     log_("final retires native backing and releases the port"));
-  auto recreated = env->nif(&mx, "net_ring_packet"_z);
+  auto recreated = env->nif(&mx, "net_ring_packet");
   ZuCheckRT(recreated.is<Zpkt::Nif *>() && recreated.p<Zpkt::Nif *>() != device.ptr(),
     log_("successful finalization permits a new device for the same name"));
   if (!recreated.is<Zpkt::Nif *>()) return;
   ZmRef<Zpkt::Nif> next = recreated.p<Zpkt::Nif *>();
   device->final();
-  auto current = env->nif(&mx, "net_ring_packet"_z);
+  auto current = env->nif(&mx, "net_ring_packet");
   ZuCheckRT(current.is<Zpkt::Nif *>() && current.p<Zpkt::Nif *>() == next.ptr(),
     log_("old finalized device cannot retire its replacement"));
   ZuCheckRT(next->alloc(rx, pools).is<void>(),
@@ -331,14 +331,14 @@ static void testDpdk(const Runtime &runtime)
 
   // The configured selector has a different MAC from its native ring port.
   constexpr uint8_t expectedMAC[] = {2, 0, 0, 0, 0, 1};
-  auto independent = env->nif(&mx, "competing"_z);
+  auto independent = env->nif(&mx, "competing");
   ZuCheckRT(independent.is<Zpkt::Nif *>(),
     log_("independent Linux key selects the configured native port after retirement"));
   if (independent.is<ZeException>()) return;
   ZmRef<Zpkt::Nif> paired = independent.p<Zpkt::Nif *>();
   NifOwner pairedOwner{paired};
-  auto cached = env->nif(&mx, "competing"_z);
-  ZuCheckRT((paired->name() == "competing"_z &&
+  auto cached = env->nif(&mx, "competing");
+  ZuCheckRT((paired->name() == "competing" &&
       !paired->ifindex() && paired->mtu() == 1500 &&
       paired->mac() == ZuBSpan{expectedMAC, sizeof(expectedMAC)} &&
       unsigned(nifQueries) == requests && cached.is<Zpkt::Nif *>() &&

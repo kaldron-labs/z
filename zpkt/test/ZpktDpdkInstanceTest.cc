@@ -136,7 +136,7 @@ static ZeException configCase(ZuCSpan scenario)
   catch (const ZeException &error) { failure = error; }
   ZeException presentation = failure;
   auto message = presentation ? errorText(presentation) : ZtString<>{};
-  if (!failure || failure.component != "Zpkt.Dpdk"_z ||
+  if (!failure || failure.component != "Zpkt.Dpdk" ||
       !strstr(message.ndata(), "invalid configured DPDK port") ||
       !strstr(message.ndata(), "dummy") || nativeInitialized)
     return caseError("invalid port configuration was not rejected before native EAL initialization");

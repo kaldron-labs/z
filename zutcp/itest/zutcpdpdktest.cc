@@ -26,7 +26,7 @@ using namespace ZutcpDpdkTest;
 
 enum { TCPPort = 18210, UDPPortA = 18211, UDPPortB = 18212 };
 
-static constexpr auto TCPData = "DPDK carries the exact Ztcp byte stream"_z;
+static constexpr char TCPData[] = "DPDK carries the exact Ztcp byte stream";
 static const ZuBSpan UDPData[] = {"first datagram", "", "a longer final datagram"};
 
 // The transmitted IP/UDP frame must surround the caller's own payload backing.
@@ -276,8 +276,8 @@ bool Connection::received(ZiRxContext &io)
     if (i >= sizeof(UDPData)/sizeof(UDPData[0]) || buf->cspan() != UDPData[i] ||
 	io.addr != state->remote || !io.tos.is<uint8_t>() || io.tos.p<uint8_t>() != 0x28)
       ++state->errors;
-  } else if (buf->length > TCPData.length() - m_bytes ||
-      memcmp(buf->data(), TCPData.data() + m_bytes, buf->length)) {
+  } else if (buf->length > (sizeof(TCPData) - 1) - m_bytes ||
+      memcmp(buf->data(), TCPData + m_bytes, buf->length)) {
     ++state->errors;
   } else {
     m_bytes += buf->length;
@@ -285,7 +285,7 @@ bool Connection::received(ZiRxContext &io)
   if (buf && !state->retained) state->retained = io.buf;
   io.buf = state->rx->allocBuf(this);
   m_stub = io.buf.ptr();
-  if (state->udp || m_bytes == TCPData.length() || state->errors) state->input.post();
+  if (state->udp || m_bytes == (sizeof(TCPData) - 1) || state->errors) state->input.post();
   return true;
 }
 
@@ -345,14 +345,14 @@ friend inline ZuStringT<"Zutcp.DpdkTest.ZtcpLink"> ZmNHeapID(Link *);
   void connected(Ztcp::Connected) { ++app()->connections; }
   void disconnected(bool) { app()->retired.post(); }
   int process(Ztcp::RxStream &rx) {
-    if (rx.length() < TCPData.length()) return 0;
+    if (rx.length() < (sizeof(TCPData) - 1)) return 0;
     unsigned offset = 0;
-    rx.each(TCPData.length(), [server = app(), &offset](auto bytes) {
-      if (memcmp(bytes.data(), TCPData.data() + offset, bytes.length())) ++server->errors;
+    rx.each((sizeof(TCPData) - 1), [server = app(), &offset](auto bytes) {
+      if (memcmp(bytes.data(), TCPData + offset, bytes.length())) ++server->errors;
       offset += bytes.length();
       return bytes.length();
     });
-    rx.advance(TCPData.length());
+    rx.advance((sizeof(TCPData) - 1));
     ++app()->messages;
     auto tx = txStream();
     tx << TCPData << Zi::flush();

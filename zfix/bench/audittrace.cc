@@ -23,7 +23,6 @@
 
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuStream.hh>
-#include <zlib/ZuString.hh>
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__GLIBC__) || defined(__ILP32__)
 #error audittrace requires Linux x64 glibc
@@ -107,24 +106,24 @@ __attribute__((destructor)) static void finish() {
   if (!path || !*path) return;
   int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
   if (fd < 0) return;
-  static constexpr auto Prefix =
+  static constexpr char Prefix[] =
     "{\"scope\":\"LD_AUDIT main-namespace PLT entries from preinit through exit hook;"
     " excludes direct/inlined/custom allocator internal calls; attempts not "
-    "success; copy sums can include nested calls\",\"allocAttempts\":"_z;
-  static constexpr auto Requested = ",\"requestedBytes\":"_z;
-  static constexpr auto Overflows = ",\"requestOverflows\":"_z;
-  static constexpr auto Free = ",\"freeCalls\":"_z;
-  static constexpr auto Copy = ",\"copyCalls\":"_z;
-  static constexpr auto Copied = ",\"copyBytes\":"_z;
-  static constexpr auto AsanCopy = ",\"asanCopyCalls\":"_z;
-  static constexpr auto AsanCopied = ",\"asanCopyBytes\":"_z;
-  static constexpr auto End = "}\n"_z;
+    "success; copy sums can include nested calls\",\"allocAttempts\":";
+  static constexpr char Requested[] = ",\"requestedBytes\":";
+  static constexpr char Overflows[] = ",\"requestOverflows\":";
+  static constexpr char Free[] = ",\"freeCalls\":";
+  static constexpr char Copy[] = ",\"copyCalls\":";
+  static constexpr char Copied[] = ",\"copyBytes\":";
+  static constexpr char AsanCopy[] = ",\"asanCopyCalls\":";
+  static constexpr char AsanCopied[] = ",\"asanCopyBytes\":";
+  static constexpr char End[] = "}\n";
   // A uint64 needs at most 20 decimal digits. Literal extents plus that bound
   // keep exit-hook formatting entirely on the stack, outside allocator hooks.
   char buffer[
-    Prefix.length() + Requested.length() + Overflows.length() + Free.length() +
-    Copy.length() + Copied.length() + AsanCopy.length() + AsanCopied.length() +
-    End.length() + 8 * 20];
+    (sizeof(Prefix) - 1) + (sizeof(Requested) - 1) + (sizeof(Overflows) - 1) +
+    (sizeof(Free) - 1) + (sizeof(Copy) - 1) + (sizeof(Copied) - 1) +
+    (sizeof(AsanCopy) - 1) + (sizeof(AsanCopied) - 1) + (sizeof(End) - 1) + 8 * 20];
   ZuStream out{ZuSpan{buffer, sizeof(buffer)}};
   auto value = [](const uint64_t &v) {
     return ZuBox<uint64_t>{__atomic_load_n(&v, __ATOMIC_RELAXED)};

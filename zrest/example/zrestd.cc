@@ -790,7 +790,7 @@ static bool formContentType(ZuCSpan value)
 
 static bool cookieValue(ZuCSpan cookies, OAuthString &value)
 {
-  static constexpr auto name = "__Host-zrest_auth="_z;
+  const ZuCSpan name = "__Host-zrest_auth=";
   while (cookies) {
     while (cookies && cookies[0] == ' ') cookies.offset(1);
     int end = cookies.find([](char c) { return c == ';'; });
@@ -1210,7 +1210,7 @@ void App::authorize(
   state.application->sessionExpiries.add(
     ExpiryKey{transaction.expires, key});
   state.application->sessions.add(ZuMv(key), ZuMv(transaction));
-  static constexpr auto page =
+  static constexpr char page[] =
     "<!doctype html><html><head><meta charset=\"utf-8\">"
     "<title>Authorize ping</title></head><body><main>"
     "<h1>Authorize ping</h1><form method=\"post\">"
@@ -1219,7 +1219,7 @@ void App::authorize(
     "type=\"password\" autocomplete=\"current-password\" required></label>"
     "<button name=\"decision\" value=\"approve\" type=\"submit\">"
     "Approve</button><button name=\"decision\" value=\"deny\" "
-    "type=\"submit\">Deny</button></form></main></body></html>"_z;
+    "type=\"submit\">Deny</button></form></main></body></html>";
   ZmRef<Text> response = new Text{};
   response->value = page;
   response->cookie << "__Host-zrest_auth=" << session <<

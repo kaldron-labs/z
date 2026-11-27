@@ -404,8 +404,8 @@ static void clientToPeer()
     ZuCHECK(waitFor(otherDone) && otherOK.load_() == 1,
       "unknown named libdbus error was not retained");
 
-    constexpr auto matchRule =
-      "type='signal',interface='org.example.ZdbusPeer'"_z;
+    constexpr char matchRule[] =
+      "type='signal',interface='org.example.ZdbusPeer'";
     cli.addMatch(matchRule,
       [&matchOK, &matchDone](Zdbus_::CallResult result) {
         if (result && result.info.type ==

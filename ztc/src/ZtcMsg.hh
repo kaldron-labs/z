@@ -42,7 +42,7 @@ namespace HubError {
   };
 }
 
-inline constexpr auto Protocol = "ztc"_z;
+inline constexpr char Protocol[] = "ztc";
 
 struct Shutdown { };
 ZfStruct(ZtcAPI, (Shutdown, FB));

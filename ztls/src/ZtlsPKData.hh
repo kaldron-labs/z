@@ -17,7 +17,6 @@
 #endif
 
 #include <zlib/ZuSpan.hh>
-#include <zlib/ZuString.hh>
 
 #include <zlib/ZfASN1.hh>
 #include <zlib/ZfStruct.hh>
@@ -30,12 +29,12 @@ enum { DERBufSize = 3 << 10 }; // BufSize reduced by 3/4 for base64
 using namespace ZfASN1::Encoding;
 
 namespace OIDs {
-  constexpr auto PKCS1RSA = "\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01"_z;
-  constexpr auto ECUnrestricted = "\x2a\x86\x48\xce\x3d\x02\x01"_z;
-  constexpr auto ED25519 = "\x2b\x65\x70"_z;
-  constexpr auto X25519 = "\x2b\x65\x6e"_z;
-  constexpr auto MLKEM768 = "\x60\x86\x48\x01\x65\x03\x04\x04\x02"_z;
-  constexpr auto ECGroupSecp256r1 = "\x2a\x86\x48\xce\x3d\x03\x01\x07"_z;
+  constexpr char PKCS1RSA[] = "\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01";
+  constexpr char ECUnrestricted[] = "\x2a\x86\x48\xce\x3d\x02\x01";
+  constexpr char ED25519[] = "\x2b\x65\x70";
+  constexpr char X25519[] = "\x2b\x65\x6e";
+  constexpr char MLKEM768[] = "\x60\x86\x48\x01\x65\x03\x04\x04\x02";
+  constexpr char ECGroupSecp256r1[] = "\x2a\x86\x48\xce\x3d\x03\x01\x07";
 }
 
 namespace Data {

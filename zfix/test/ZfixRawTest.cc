@@ -38,7 +38,7 @@ using RoutingFIXFields = ZuTypeConcat<SessionFields<RoutingValue>, ZfFields_Rout
 RoutingFIXFields ZuFields_(RoutingValue *, ZuFacet::FIX *);
 ZfStructImpl(RoutingValue); ZfStructImpl(RoutingValue, FIX);
 using RoutingLogon = MT<RoutingValue, "A">;
-constexpr auto Wire = "8=FIX.4.4\1" "9=12\1" "35=D\1" "11=abc\1" "10=171\1"_z;
+constexpr char Wire[] = "8=FIX.4.4\1" "9=12\1" "35=D\1" "11=abc\1" "10=171\1";
 static auto buffer(ZuCSpan bytes) {
   auto b = frameBuf();
   b->append(bytes); return b;
@@ -52,7 +52,7 @@ static void controls() {
   ZuCheck(body && !error && body->msgType() == "A" && body->administrative() && body->id() == 42);
   auto restored = TxBody::restoreRaw<CustomLogon>("9999=private\1" "11=abc\1", 77, false, error);
   ZuCheck(restored && !error && !restored->administrative() && restored->id() == 77);
-  ZuCheck(restored->body() == "9999=private\1" "11=abc\1"_z);
+  ZuCheck(restored->body() == "9999=private\1" "11=abc\1");
 }
 static void routingFields() {
   ZuTestScope(routingFields);
@@ -86,7 +86,7 @@ static void opaque() {
   auto two = buffer(Wire); two->append(Wire);
   ZuCheck(!RawOutput::fromFrame(body, {0, 1, 0}, two,
     error) && error.code == Fmt::ErrorCode::Envelope);
-  auto shortFrame = buffer({Wire.data(), Wire.length() - 1});
+  auto shortFrame = buffer({Wire, (sizeof(Wire) - 1) - 1});
   ZuCheck(!RawOutput::fromFrame(body, {0, 1, 0}, shortFrame,
     error) && error.code == Fmt::ErrorCode::Truncated);
   bytes->data()[bytes->length - 2] = '2';
@@ -96,7 +96,7 @@ static void opaque() {
 static void limits() {
   ZuTestScope(limits);
   Fmt::Error error; auto body = TxBody::encode<Order>(Value{"abc"}, 1, error);
-  Fmt::Limits l; l.frameBytes = Wire.length() - 1;
+  Fmt::Limits l; l.frameBytes = (sizeof(Wire) - 1) - 1;
   ZuCheck(!RawOutput::fromFrame(body, {0, 1, 0}, buffer(Wire), error,
     l) && error.code == Fmt::ErrorCode::Size);
   ZuCheck(!RawOutput::fromFrame({}, {}, buffer(Wire),

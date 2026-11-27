@@ -384,7 +384,7 @@ ZuDerive(Auto, Auto_);
 
 // Versioned, length-delimited plaintext inside the authenticated age file.
 constexpr uint8_t SecretsMagic[] = {'Z', 'V', 'L', 'T', 1};
-constexpr auto	  PassphraseKey = "vault/passphrase"_z;
+constexpr char	  PassphraseKey[] = "vault/passphrase";
 enum {
   PassphraseBytes = 32,
   PassphraseSize = ZuBase64::enclen(PassphraseBytes),

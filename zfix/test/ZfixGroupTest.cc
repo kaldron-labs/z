@@ -159,8 +159,8 @@ static void delimiter()
   DynamicBody body;
   body.entries.push(Dynamic{});
   body.entries.push(Dynamic{});
-  constexpr auto Wire = "7002=2\1" "452=0\1" "452=0\1"_z;
-  char bytes[Wire.length() + sizeof("448=0\1") - 1];
+  constexpr char Wire[] = "7002=2\1" "452=0\1" "452=0\1";
+  char bytes[(sizeof(Wire) - 1) + sizeof("448=0\1") - 1];
   Sink same{{bytes, sizeof(bytes)}};
   ZuCheck(save(same, body) && same.data() == Wire);
   body.entries[0].optional = new Optional{};
@@ -171,11 +171,11 @@ static void delimiter()
 static void nested()
 {
   ZuTestScope(nested);
-  constexpr auto Wire =
+  constexpr char Wire[] =
     "11=order\1" "453=2\1"
     "448=A\1" "447=B\1" "452=1\1" "802=2\1"
       "523=sub1\1" "803=10\1" "523=sub2\1" "803=11\1"
-    "448=C\1" "447=D\1" "452=2\1" "802=0\1"_z;
+    "448=C\1" "447=D\1" "452=2\1" "802=0\1";
   Body body;
   auto e = load(body, Wire);
   ZuCheck(!e);
@@ -183,18 +183,18 @@ static void nested()
   ZuCheck(body.parties[0].id == "A" && body.parties[1].id == "C");
   ZuCheck(body.parties[0].subs.length() == 2 && !body.parties[1].subs.length());
   ZuCheck(body.parties[0].subs[1].id == "sub2");
-  char bytes[Wire.length()];
+  char bytes[(sizeof(Wire) - 1)];
   Sink out{{bytes, sizeof(bytes)}};
   ZuCheck(save(out, body));
   ZuCheck(out.data() == Wire && out.flush());
-  e = update(body, "453=0\1"_z);
+  e = update(body, "453=0\1");
   ZuCheck(!e && !body.parties.length());
   ZuCheck(body.id == "order");
   Sink zero{{bytes, sizeof(bytes)}};
   ZuCheck(save(zero, body));
-  ZuCheck(zero.data() == "11=order\1" "453=0\1"_z);
+  ZuCheck(zero.data() == "11=order\1" "453=0\1");
   ZuCheck(!load(body, Wire));
-  ZuCheck(!load(body, "11=missing-group\1"_z));
+  ZuCheck(!load(body, "11=missing-group\1"));
   ZuCheck(!body.parties.length());
 }
 
@@ -204,22 +204,22 @@ static void scopes()
   Dual d;
   auto e = load(d,
     "453=1\1" "448=A\1" "447=B\1" "452=1\1"
-    "7000=1\1" "448=C\1" "447=D\1" "452=2\1"_z);
+    "7000=1\1" "448=C\1" "447=D\1" "452=2\1");
   ZuCheck(!e);
   ZuCheck(d.first.length() == 1 && d.second.length() == 1);
   ZuCheck(d.first[0].id == "A" && d.second[0].id == "C");
   Inferred inferred;
-  e = load(inferred, "7000=2\1" "999=unknown\1" "452=1\1" "452=2\1" "11=end\1"_z);
+  e = load(inferred, "7000=2\1" "999=unknown\1" "452=1\1" "452=2\1" "11=end\1");
   ZuCheck(!e);
   ZuCheck(inferred.entries.length() == 2 && inferred.entries[1].value == 2);
   ZuCheck(!inferred.entries[0].optional && inferred.id == "end");
   Skipped skipped;
-  e = load(skipped, "453=1\1" "448=A\1" "447=B\1" "452=1\1" "11=end\1"_z);
+  e = load(skipped, "453=1\1" "448=A\1" "447=B\1" "452=1\1" "11=end\1");
   ZuCheck(!e && !skipped.parties.length() && skipped.id == "end");
-  e = load(skipped, "453=1\1" "448=A\1" "447=B\1" "452=bad\1"_z);
+  e = load(skipped, "453=1\1" "448=A\1" "447=B\1" "452=bad\1");
   ZuCheck(!e && !skipped.parties.length());
   Shared shared;
-  e = load(shared, "453=1\1" "448=A\1" "447=B\1" "452=1\1" "452=9\1"_z);
+  e = load(shared, "453=1\1" "448=A\1" "447=B\1" "452=1\1" "452=9\1");
   ZuCheck(!e && shared.role == 9 && shared.parties[0].role == 1);
 }
 
@@ -227,29 +227,29 @@ static void malformed()
 {
   ZuTestScope(malformed);
   Body b;
-  auto e = load(b, "453=2\1" "448=A\1" "447=B\1" "452=1\1"_z);
+  auto e = load(b, "453=2\1" "448=A\1" "447=B\1" "452=1\1");
   ZuCheck(e.code == ErrorCode::Group);
-  e = load(b, "453=0\1" "448=A\1"_z);
+  e = load(b, "453=0\1" "448=A\1");
   ZuCheck(e.code == ErrorCode::Group);
-  e = load(b, "453=1\1" "448=A\1" "447=B\1" "452=1\1" "448=C\1"_z);
+  e = load(b, "453=1\1" "448=A\1" "447=B\1" "452=1\1" "448=C\1");
   ZuCheck(e.code == ErrorCode::Group);
-  e = load(b, "453=1\1" "448=A\1" "447=B\1" "447=C\1" "452=1\1"_z);
+  e = load(b, "453=1\1" "448=A\1" "447=B\1" "447=C\1" "452=1\1");
   ZuCheck(e.code == ErrorCode::Duplicate && e.tag == 447);
-  e = load(b, "453=1\1" "448=A\1" "452=1\1" "447=B\1"_z);
+  e = load(b, "453=1\1" "448=A\1" "452=1\1" "447=B\1");
   ZuCheck(e.code == ErrorCode::Group);
-  e = load(b, "453=-1\1"_z);
+  e = load(b, "453=-1\1");
   ZuCheck(e.code == ErrorCode::Size);
-  e = load(b, "453=1\1" "448=A\1" "447=B\1"_z);
+  e = load(b, "453=1\1" "448=A\1" "447=B\1");
   ZuCheck(e.code == ErrorCode::Required && e.tag == 452);
-  e = load(b, "453=2\1" "448=A\1" "447=B\1" "452=1\1" "447=D\1" "452=2\1"_z);
+  e = load(b, "453=2\1" "448=A\1" "447=B\1" "452=1\1" "447=D\1" "452=2\1");
   ZuCheck(bool(e));
 }
 
 static void limits()
 {
   ZuTestScope(limits);
-  constexpr auto Wire = "453=1\1" "448=A\1" "447=B\1" "452=1\1" "802=1\1"
-    "523=sub\1" "803=10\1"_z;
+  constexpr char Wire[] = "453=1\1" "448=A\1" "447=B\1" "452=1\1" "802=1\1"
+    "523=sub\1" "803=10\1";
   Body body;
   Limits cfg;
   cfg.groupEntries = 1;
@@ -263,7 +263,7 @@ static void limits()
   ZuCheck(load(body, Wire, cfg).code == ErrorCode::Size);
   cfg.parseBytes = Limits::ParseBytes;
   ZuCheck(!load(body, Wire, cfg));
-  char bytes[Wire.length() + sizeof("11=\1") - 1];
+  char bytes[(sizeof(Wire) - 1) + sizeof("11=\1") - 1];
   cfg.groupEntries = 1;
   Sink countOut{{bytes, sizeof(bytes)}, cfg};
   ZuCheck(!save(countOut, body) && countOut.error().code == ErrorCode::Size);
@@ -288,13 +288,13 @@ ZfStruct(, (SignedBody, FIX), (rows, (FIX::ID<-453>), UDT));
 static void signedGroups()
 {
   ZuTestScope(signedGroups);
-  constexpr auto Wire = "-453=2\1" "-11=7\1" "-11=8\1"_z;
+  constexpr char Wire[] = "-453=2\1" "-11=7\1" "-11=8\1";
   SignedBody body;
   auto error = load(body, Wire);
   ZuCheck(!error && body.rows.length() == 2);
   if (body.rows.length() == 2)
     ZuCheck(body.rows[0].value == 7 && body.rows[1].value == 8);
-  char bytes[Wire.length()];
+  char bytes[(sizeof(Wire) - 1)];
   Sink out{{bytes, sizeof(bytes)}};
   ZuCheck(save(out, body) && out.data() == Wire);
 }
@@ -347,28 +347,28 @@ ZfStruct(, (BinaryOnly, FIX), (entries, (FIX::ID<6000>), UDT));
 static void binaryGroups()
 {
   ZuTestScope(binaryGroups);
-  constexpr auto Wire = "6000=2\1" "95=3\1" "96=A\1B\1" "7000=2\1"
+  constexpr char Wire[] = "6000=2\1" "95=3\1" "96=A\1B\1" "7000=2\1"
     "212=6\1" "213=95=9\1X\1" "212=0\1" "213=\1"
     "4200=5\1" "4201=95=9\1\1" "5000=first\1"
     "95=1\1" "96=Z\1" "7000=0\1" "4200=0\1" "4201=\1" "5000=end\1"
-    "95=3\1" "96=P\0Q\1" "9100=9\1"_z;
+    "95=3\1" "96=P\0Q\1" "9100=9\1";
   BinaryOuter value, copy;
   ZuCheck(!load(value, Wire) && value.entries.length() == 2 && value.end == 9);
   if (value.entries.length() != 2) return;
   const auto &first = value.entries[0]; const auto &second = value.entries[1];
   ZuCheck(first.details.length() == 2 && !second.details.length());
   if (first.details.length() != 2) return;
-  ZuCheck(first.key.data() == reinterpret_cast<const uint8_t *>(Wire.data() + 15) &&
+  ZuCheck(first.key.data() == reinterpret_cast<const uint8_t *>(Wire + 15) &&
     first.key.length() == 3 && first.tail == "first");
   ZuCheck(first.details[0].data.data() == reinterpret_cast<const uint8_t *>(
-    Wire.data() + unsigned(ZuCSpan{Wire}.find("213=95")) + 4));
-  ZuCheck(first.details[0].data == ZuBSpan{"95=9\1X"_z});
+    Wire + unsigned(ZuCSpan{Wire}.find("213=95")) + 4));
+  ZuCheck(first.details[0].data == ZuBSpan{"95=9\1X"});
   ZuCheck(first.details[1].data.data() == reinterpret_cast<const uint8_t *>(
-    Wire.data() + unsigned(ZuCSpan{Wire}.find("213=\1")) + 4) && !first.details[1].data.length());
-  ZuCheck(first.extra.data() == Wire.data() + unsigned(ZuCSpan{Wire}.find("4201=95")) + 5);
+    Wire + unsigned(ZuCSpan{Wire}.find("213=\1")) + 4) && !first.details[1].data.length());
+  ZuCheck(first.extra.data() == Wire + unsigned(ZuCSpan{Wire}.find("4201=95")) + 5);
   ZuCheck(first.extra.length() == 5 && second.tail == "end");
   ZuCheck(value.parent.data() == reinterpret_cast<const uint8_t *>(
-    Wire.data() + unsigned(ZuCSpan{Wire}.find("96=P")) + 3) && value.parent.length() == 3);
+    Wire + unsigned(ZuCSpan{Wire}.find("96=P")) + 3) && value.parent.length() == 3);
   Indexed<BinaryOuter, ZuFacet::FIX> indexed{Wire};
   ZuCheck(indexed.load(copy) && copy.entries.length() == 2);
   if (copy.entries.length() != 2 || copy.entries[0].details.length() != 2) return;
@@ -377,8 +377,8 @@ static void binaryGroups()
     copy.entries[0].details[1].data.data() == first.details[1].data.data() &&
     copy.entries[0].extra.data() == first.extra.data() &&
     copy.parent.data() == value.parent.data());
-  auto bytes = ZtScratch(PrintBuf, Wire.length());
-  Sink out{{bytes.data(), unsigned(Wire.length())}};
+  auto bytes = ZtScratch(PrintBuf, (sizeof(Wire) - 1));
+  Sink out{{bytes.data(), unsigned((sizeof(Wire) - 1))}};
   ZuCheck(save(out, value) && out.data() == Wire);
   BinarySkipped skipped;
   ZuCheck(!load(skipped, Wire) && !skipped.entries.length() && skipped.end == 9);
@@ -405,24 +405,24 @@ static void binaryGroupErrors()
       skipIndex.error().code == code && skipIndex.error().tag == tag &&
       skipIndex.error().offset == offset;
   };
-  constexpr auto Bad = "6000=1\1" "95=1\1" "96=A\1" "7000=1\1"
-    "212=1\1" "213=XX\1" "5000=tail\1"_z;
+  constexpr char Bad[] = "6000=1\1" "95=1\1" "96=A\1" "7000=1\1"
+    "212=1\1" "213=XX\1" "5000=tail\1";
   ZuCheck(malformed(Bad, ErrorCode::Length, 213, unsigned(ZuCSpan{Bad}.find("213=XX")) + 5));
-  constexpr auto Count = "6000=1\1" "95=1\1" "96=A\1" "7000=1\1"
-    "212=x\1" "213=A\1" "5000=tail\1"_z;
+  constexpr char Count[] = "6000=1\1" "95=1\1" "96=A\1" "7000=1\1"
+    "212=x\1" "213=A\1" "5000=tail\1";
   ZuCheck(malformed(Count, ErrorCode::Value, 212, unsigned(ZuCSpan{Count}.find("212=x")) + 4));
-  constexpr auto Duplicate = "6000=1\1" "95=1\1" "96=A\1" "7000=0\1"
-    "4200=1\1" "4201=X\1" "4200=1\1" "4201=Y\1" "5000=tail\1"_z;
+  constexpr char Duplicate[] = "6000=1\1" "95=1\1" "96=A\1" "7000=0\1"
+    "4200=1\1" "4201=X\1" "4200=1\1" "4201=Y\1" "5000=tail\1";
   auto duplicateOffset = unsigned(ZuCSpan{Duplicate}.find("4200=1\1" "4201=Y"));
   ZuCheck(malformed(Duplicate, ErrorCode::Duplicate, 4200, duplicateOffset));
   BinaryOnly only, copy;
-  constexpr auto Zero = "6000=0\1" "95=1\1" "96=A\1"_z;
+  constexpr char Zero[] = "6000=0\1" "95=1\1" "96=A\1";
   auto error = load(only, Zero);
   Indexed<BinaryOnly, ZuFacet::FIX> zero{Zero}; zero.load(copy);
   ZuCheck(error.code == ErrorCode::Group && error.tag == 95 && error.offset == 7);
   ZuCheck(zero.error().code == error.code && zero.error().tag == error.tag &&
     zero.error().offset == error.offset);
-  constexpr auto Excess = "6000=1\1" "95=1\1" "96=A\1" "5000=x\1" "95=1\1" "96=B\1"_z;
+  constexpr char Excess[] = "6000=1\1" "95=1\1" "96=A\1" "5000=x\1" "95=1\1" "96=B\1";
   error = load(only, Excess);
   Indexed<BinaryOnly, ZuFacet::FIX> excess{Excess}; excess.load(copy);
   ZuCheck(error.code == ErrorCode::Group && error.tag == 95 && error.offset == 24);

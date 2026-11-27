@@ -253,8 +253,8 @@ bool loadCerts(Ztls_::Context *ctx, const char *path)
 
   Ztls_::CertificateChain chain;
 
-  constexpr auto begin = "-----BEGIN CERTIFICATE-----"_z;
-  constexpr auto end = "-----END CERTIFICATE-----"_z;
+  constexpr char begin[] = "-----BEGIN CERTIFICATE-----";
+  constexpr char end[] = "-----END CERTIFICATE-----";
   auto		 cursor = pem.data(), limit = cursor + pem.length(), body = cursor;
   unsigned	 encoded = 0, padding = 0;
   bool		 inCert = false, malformed = false;
@@ -263,7 +263,7 @@ bool loadCerts(Ztls_::Context *ctx, const char *path)
     auto nl = static_cast<uint8_t *>(memchr(cursor, '\n', limit - cursor));
     cursor = nl ? nl + 1 : limit;
     if (!inCert) {
-      if (cursor - line >= begin.length() && !memcmp(line, begin.data(), begin.length())) {
+      if (cursor - line >= (sizeof(begin) - 1) && !memcmp(line, begin, (sizeof(begin) - 1))) {
 	inCert = true;
 	malformed = false;
 	body = cursor;
@@ -271,7 +271,7 @@ bool loadCerts(Ztls_::Context *ctx, const char *path)
       }
       continue;
     }
-    if (cursor - line >= end.length() && !memcmp(line, end.data(), end.length())) {
+    if (cursor - line >= (sizeof(end) - 1) && !memcmp(line, end, (sizeof(end) - 1))) {
       inCert = false;
       if (malformed) return false;
       if (!encoded) continue;

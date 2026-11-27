@@ -19,10 +19,10 @@ static void vector()
 {
   ZuTestScope(vector);
   uint8_t seed[HybridSeedSize], enc[HybridCiphertextSize];
-  constexpr auto info = "fixture info"_z;
-  constexpr auto aad = "fixture aad"_z;
-  constexpr auto expected = "test payload"_z;
-  uint8_t ct[expected.length() + Ztls::HPKE::TagSize], plain[expected.length()];
+  constexpr char info[] = "fixture info";
+  constexpr char aad[] = "fixture aad";
+  constexpr char expected[] = "test payload";
+  uint8_t ct[(sizeof(expected) - 1) + Ztls::HPKE::TagSize], plain[(sizeof(expected) - 1)];
   ZuCheck(ZtlsTestKeys::read("hybrid", seed), return);
   ZuCheck(ZtlsTestKeys::read("hpke.enc", enc), return);
   ZuCheck(ZtlsTestKeys::read("hpke.ct", ct), return);
@@ -31,7 +31,7 @@ static void vector()
   ZuCheck(!r.template is<ZeException>());
   if (!r.template is<ZeException>()) {
     ZuCheck(r.template p<0>() == sizeof(plain));
-    ZuCheck(!memcmp(plain, expected.data(), sizeof(plain)));
+    ZuCheck(!memcmp(plain, expected, sizeof(plain)));
   }
   ZuClear(seed, sizeof(seed));
   ZuClear(plain, sizeof(plain));

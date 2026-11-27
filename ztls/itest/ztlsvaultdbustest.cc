@@ -36,11 +36,11 @@ namespace VaultDBusTest_ {
 
 using namespace Ztls_::SS;
 
-constexpr auto ServicePath = "/org/freedesktop/secrets"_z;
-constexpr auto SessionPath = "/org/freedesktop/secrets/session/test"_z;
-constexpr auto CollectionPath = "/org/freedesktop/secrets/collection/test"_z;
-constexpr auto ItemPath = "/org/freedesktop/secrets/collection/test/1"_z;
-constexpr auto PromptObjPath = "/org/freedesktop/secrets/prompt/test"_z;
+constexpr char ServicePath[] = "/org/freedesktop/secrets";
+constexpr char SessionPath[] = "/org/freedesktop/secrets/session/test";
+constexpr char CollectionPath[] = "/org/freedesktop/secrets/collection/test";
+constexpr char ItemPath[] = "/org/freedesktop/secrets/collection/test/1";
+constexpr char PromptObjPath[] = "/org/freedesktop/secrets/prompt/test";
 
 struct PeerState {
   Text							key;

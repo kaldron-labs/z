@@ -200,10 +200,10 @@ static void pkceTest()
 {
   ZuTestScope(pkce);
 
-  static constexpr auto verifier =
-    "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"_z;
-  static constexpr auto expected =
-    "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"_z;
+  static constexpr char verifier[] =
+    "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+  static constexpr char expected[] =
+    "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
   ZuBArray<Ztls::MD<>::Size> digest(Ztls::MD<>::Size, false);
   Ztls::MD<> md;
   md.update(ZuBSpan{verifier});

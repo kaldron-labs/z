@@ -380,11 +380,11 @@ static void file()
   rejectType.close();
   rejectType.final();
 
-  constexpr auto duplicates =
-    R"({"version":1,"accounts":{"a":{"global/token":"YQ=="},"a":{"global/token":"Yg==","global/token":"Yw=="}}})"_z;
+  constexpr char duplicates[] =
+    R"({"version":1,"accounts":{"a":{"global/token":"YQ=="},"a":{"global/token":"Yg==","global/token":"Yw=="}}})";
   ZuCheckRT(
     invalid.open(aggregate, ZiFile::Write | ZiFile::NoFollow | ZiFile::GC, 0600) == Zi::OK);
-  ZuCheckRT(invalid.write(duplicates.data(), duplicates.length()) == Zi::OK);
+  ZuCheckRT(invalid.write(duplicates, (sizeof(duplicates) - 1)) == Zi::OK);
   invalid.close();
   cf.account = "a";
   Ztls::Vault duplicateVault;

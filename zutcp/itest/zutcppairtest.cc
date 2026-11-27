@@ -277,8 +277,8 @@ static int run(int argc, char **argv)
 	Zi::Path path;
 	path << directory << "/tfo-first-complete";
 	ZiFile marker{path, ZiFile::Write | ZiFile::GC};
-	constexpr auto ready = "ready\n"_z;
-	if (!marker || marker.write(ready.data(), ready.length()) != Zi::OK ||
+	constexpr char ready[] = "ready\n";
+	if (!marker || marker.write(ready, (sizeof(ready) - 1)) != Zi::OK ||
 	    marker.close() != Zi::OK) { app.setError("TFO fixture marker failed"); break; }
 	Zi::Path next;
 	next << directory << "/tfo-next";

@@ -103,7 +103,7 @@ struct App {
     if (context.transport() && options->token) {
       auto authorization = headers.template get<Authorization>();
       auto expected = ZtScratch(TextScratch,
-	options->token.length() + ZuStringT<"Bearer ">{}().length());
+	options->token.length() + (sizeof("Bearer ") - 1));
       expected << "Bearer " << options->token;
       if (authorization.count != 1 || authorization.value != expected) {
 	completion->complete(Zjrpc::Reply<AddUnauthorized>{});

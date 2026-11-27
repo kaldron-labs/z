@@ -1000,9 +1000,9 @@ static bool reportOffers(const Config &c, State &state, auto &links, bool ok) {
   if (c.samples) {
     ZiFile file{c.samples, ZiFile::Write | ZiFile::GC};
     if (!file) return false;
-    constexpr auto header =
-      "connection,sequence,scheduled_ns,admitted_ns,completed_ns,status\n"_z;
-    if (file.write(header.data(), header.length()) != Zi::OK) return false;
+    constexpr char header[] =
+      "connection,sequence,scheduled_ns,admitted_ns,completed_ns,status\n";
+    if (file.write(header, (sizeof(header) - 1)) != Zi::OK) return false;
     for (unsigned i = 0; i < c.connections; ++i)
       for (unsigned j = 0; j < c.messages; ++j) {
 	const auto &v = state.offers[uint64_t(i) * c.messages + j];
@@ -1079,8 +1079,8 @@ static bool report(const Config &c, State &state, auto &links) {
   if (c.samples) {
     ZiFile file{c.samples, ZiFile::Write | ZiFile::GC};
     if (!file) return false;
-    constexpr auto header = "connection,sequence,rtt_ns\n"_z;
-    if (file.write(header.data(), header.length()) != Zi::OK) return false;
+    constexpr char header[] = "connection,sequence,rtt_ns\n";
+    if (file.write(header, (sizeof(header) - 1)) != Zi::OK) return false;
     for (unsigned i = 0; i < c.connections; ++i)
       for (unsigned j = 0; j < c.messages; ++j) {
         ZuArray<char, 64> line;
@@ -1235,9 +1235,9 @@ struct Calibration {
     if (c.samples) {
       ZiFile file{c.samples, ZiFile::Write | ZiFile::GC};
       if (!file) return false;
-      constexpr auto header =
-	"connection,sequence,scheduled_ns,observed_ns,recorded_ns,status\n"_z;
-      if (file.write(header.data(), header.length()) != Zi::OK) return false;
+      constexpr char header[] =
+	"connection,sequence,scheduled_ns,observed_ns,recorded_ns,status\n";
+      if (file.write(header, (sizeof(header) - 1)) != Zi::OK) return false;
       for (unsigned i = 0; i < c.connections; ++i)
 	for (unsigned j = 0; j < c.messages; ++j) {
 	  const auto &sample = samples[uint64_t(i) * c.messages + j];
@@ -1391,7 +1391,7 @@ static void initDpdkEnv(const Config &c, Zpkt::Env *env, PacketEndpoint &packet)
     throw ZeEXCEPT(Error, "zfixbench", "BENCH_DPDK_CONFIG must contain an Env configuration");
   bool haveModule = false;
   for (const auto &field : root->data<CfNode::Object>())
-    if (field.p<0>() == "module"_z) { haveModule = true; break; }
+    if (field.p<0>() == "module") { haveModule = true; break; }
   // The loader allocates the underlying tree for this invocation.
   if (!haveModule) cfValue(const_cast<CfNode *>(root), "module", ZFIX_DPDK_MODULE);
   Zpkt::PluginLoadCf load;
@@ -1472,10 +1472,10 @@ static bool initEndpoint(
     }
 #endif
     ZuCSpan selector = packetSelector(c, sharedEnv);
-    if (selector == "_loop"_z && !sharedEnv && !env->loopback())
+    if (selector == "_loop" && !sharedEnv && !env->loopback())
       throw ZeEXCEPT(Error, "zfixbench", "the loaded packet backend lacks loopback");
     auto route = sharedEnv ? c.interfaceName : c.routeInterface;
-    if (!route && c.dpdk() && selector != "_loop"_z) route = c.interfaceName;
+    if (!route && c.dpdk() && selector != "_loop") route = c.interfaceName;
     if (route && !(packet.routeIfindex = if_nametoindex(route)))
       throw ZeEXCEPT(Error, "zfixbench", ([route = ZeString{route}](auto &out) {
 	out << "failed to resolve routing interface " << route;

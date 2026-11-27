@@ -174,11 +174,11 @@ using BinaryEntry = MT<BinaryRequest, "n">;
 static void binaryRetention()
 {
   ZuTestScope(binaryRetention);
-  constexpr auto XML = "<RTRF>49=FAKE\1" "34=999\1" "52=bad\1"
-    "8=FIX.4.4\1" "35=D\1" "10=000\1" "</RTRF>"_z;
-  constexpr auto Replay = "8=FIX.4.4\1" "35=D\1" "10=000\1"
-    "8=FIX.4.4\1" "35=8\1" "10=001\1"_z;
-  constexpr auto Signature = "\0\1\xff"_z;
+  constexpr char XML[] = "<RTRF>49=FAKE\1" "34=999\1" "52=bad\1"
+    "8=FIX.4.4\1" "35=D\1" "10=000\1" "</RTRF>";
+  constexpr char Replay[] = "8=FIX.4.4\1" "35=D\1" "10=000\1"
+    "8=FIX.4.4\1" "35=8\1" "10=001\1";
+  const ZuCSpan Signature{"\0\1\xff", 3};
   Fmt::Error error;
   auto buf = frameBuf();
   TxFrame writer{buf, "FIX.4.4"};

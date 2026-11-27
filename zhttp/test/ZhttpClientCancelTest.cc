@@ -886,12 +886,12 @@ bool serveOutOfOrder(ServerSockets &sockets, App &app)
   }
   int fd0 = aKey ? b : a;
   int fd1 = aKey ? a : b;
-  static constexpr auto response =
+  static constexpr char response[] =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok"_z;
+    "ok";
   bool ok = sendResponse(fd1, response);
   sockets.close(fd1);
   if (ok) ok = app.archiveDone.timedwait(Zm::now(10)) == 0;
@@ -905,12 +905,12 @@ bool serve(ServerSockets &sockets)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr auto response =
+  static constexpr char response[] =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok"_z;
+    "ok";
   bool ok = readRequest(fd) && sendResponse(fd, response);
   sockets.close(fd);
   return ok;
@@ -921,12 +921,12 @@ bool serve(ServerSockets &sockets, ZuCSpan target, ZuCSpan authority)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr auto response =
+  static constexpr char response[] =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok"_z;
+    "ok";
   bool ok = readRequest(fd, target, authority) &&
     sendResponse(fd, response);
   sockets.close(fd);
@@ -938,12 +938,12 @@ bool serveBody(ServerSockets &sockets)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr auto response =
+  static constexpr char response[] =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 5\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "abcde"_z;
+    "abcde";
   bool ok = readRequest(fd) && sendResponse(fd, response);
   sockets.close(fd);
   return ok;
@@ -954,11 +954,11 @@ bool serveRequestBody(ServerSockets &sockets, ZuCSpan body)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr auto response =
+  static constexpr char response[] =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 0\r\n"
     "Connection: close\r\n"
-    "\r\n"_z;
+    "\r\n";
   bool ok = readRequestBody(fd, body) && sendResponse(fd, response);
   sockets.close(fd);
   return ok;
@@ -966,12 +966,12 @@ bool serveRequestBody(ServerSockets &sockets, ZuCSpan body)
 
 bool serveTwo(ServerSockets &sockets)
 {
-  static constexpr auto response =
+  static constexpr char response[] =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok"_z;
+    "ok";
   bool ok = true;
   for (unsigned i = 0; i < 2; ++i) {
     int fd = sockets.accept();
@@ -992,17 +992,17 @@ bool serveRedirect(ServerSockets &sockets, bool follow)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr auto redirect =
+  static constexpr char redirect[] =
     "HTTP/1.1 302 Found\r\n"
     "Location: /next\r\n"
     "Content-Length: 0\r\n"
-    "\r\n"_z;
-  static constexpr auto response =
+    "\r\n";
+  static constexpr char response[] =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok"_z;
+    "ok";
   bool ok = readRequest(fd) && sendResponse(fd, redirect);
   if (ok && follow)
     ok = readRequest(fd) && sendResponse(fd, response);
@@ -1015,12 +1015,12 @@ bool serveCrossOriginRedirect(ServerSockets &sockets)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr auto redirect =
+  static constexpr char redirect[] =
     "HTTP/1.1 302 Found\r\n"
     "Location: http://example.com/next\r\n"
     "Content-Length: 0\r\n"
     "Connection: close\r\n"
-    "\r\n"_z;
+    "\r\n";
   bool ok = readRequest(fd) && sendResponse(fd, redirect);
   sockets.close(fd);
   return ok;
@@ -1031,7 +1031,7 @@ bool servePipeline(ServerSockets &sockets)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr auto responses =
+  static constexpr char responses[] =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "\r\n"
@@ -1040,7 +1040,7 @@ bool servePipeline(ServerSockets &sockets)
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok"_z;
+    "ok";
   bool ok = readRequests(fd, 2) && sendResponse(fd, responses);
   sockets.close(fd);
   return ok;
@@ -1065,17 +1065,17 @@ bool serveWaves(ServerSockets &sockets)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr auto response =
+  static constexpr char response[] =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "\r\n"
-    "ok"_z;
-  static constexpr auto finalResponse =
+    "ok";
+  static constexpr char finalResponse[] =
     "HTTP/1.1 201 Created\r\n"
     "Content-Length: 2\r\n"
     "Connection: close\r\n"
     "\r\n"
-    "ok"_z;
+    "ok";
   bool ok = readRequest(fd) && sendResponse(fd, response) &&
     readRequest(fd) && sendResponse(fd, finalResponse);
   sockets.close(fd);
@@ -1087,11 +1087,11 @@ bool serveIdleStop(ServerSockets &sockets, ZmSemaphore &idle)
   int fd = sockets.accept();
   sockets.closeListener();
   if (fd < 0) return false;
-  static constexpr auto response =
+  static constexpr char response[] =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 2\r\n"
     "\r\n"
-    "ok"_z;
+    "ok";
   bool ok = readRequest(fd) && sendResponse(fd, response);
   idle.post();
   uint8_t byte;
@@ -1151,15 +1151,15 @@ bool serveLimitedCombinations(
   }
   int fd0 = aKey ? b : a;
   int fd1 = aKey ? a : b;
-  static constexpr auto response =
+  static constexpr char response[] =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 0\r\n"
-    "\r\n"_z;
-  static constexpr auto closeResponse =
+    "\r\n";
+  static constexpr char closeResponse[] =
     "HTTP/1.1 200 OK\r\n"
     "Content-Length: 0\r\n"
     "Connection: close\r\n"
-    "\r\n"_z;
+    "\r\n";
   ready.post();
   bool ok = release0.timedwait(Zm::now(10)) == 0 &&
     sendResponse(fd0, closeResponse);
@@ -2987,7 +2987,7 @@ void poolRetainedMessageOverride()
     return;
   }
 
-  static constexpr auto Body = "abcde"_z;
+  static constexpr char Body[] = "abcde";
   ZmAtomic<unsigned> overrideOK = 0;
   ServerSockets overrideSockets{overrideFD};
   ZmThread overrideServer{[&overrideSockets, &overrideOK]() {
@@ -2997,7 +2997,7 @@ void poolRetainedMessageOverride()
   ZiMultiplex mx{mxParams()};
   auto defaults = Zhttp::Config()
     .links(1).concurrency(1).linkMax(1)
-    .retainedBodyMax(Body.length()).retainedMessageMax(Body.length() - 1)
+    .retainedBodyMax((sizeof(Body) - 1)).retainedMessageMax((sizeof(Body) - 1) - 1)
     .secure(false).protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   App app;
@@ -3038,7 +3038,7 @@ void poolRetainedMessageOverride()
     "the larger retained-message pool sends its fixed request body");
   ZuCHECK(defaulted && !defaulted->ok() &&
       overridden && overridden->ok() &&
-      overridden->requestBodyProduced == Body.length(),
+      overridden->requestBodyProduced == (sizeof(Body) - 1),
     "the retained-message override changes behavior only in its pool");
 
   app.final();

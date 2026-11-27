@@ -82,11 +82,12 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
 
 ### Constant literals
 - when a constant literal is integral or boolean and does not need to be wider than `int`, use `enum { X = 42 };` in favor of `static constexpr T = 42`
-- Declare a compile-time string as `constexpr auto name = "text"_z`; do not
-  declare a `constexpr ZuSpan`/`ZuCSpan`. `ZuString` preserves the literal's
-  extent in its type, whereas a span is a non-owning run-time view. For a
-  heterogeneous collection of literals, use a `constexpr` array of C-string
-  pointers and construct a span only at the use boundary.
+- When an operation needs a structural compile-time string, declare it as
+  `constexpr auto name = "text"_z`. For a named literal consumed at run time,
+  use `constexpr char name[] = "text"`. Reserve `ZuSpan` and `ZuCSpan` for
+  non-owning run-time views. For a heterogeneous collection of literals, use
+  a `constexpr` array of C-string pointers and construct a span only at the
+  use boundary.
 
 ## Use of STL and other dependencies
 - minimize use of STL, BUT

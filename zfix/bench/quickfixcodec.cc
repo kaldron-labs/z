@@ -11,7 +11,7 @@
 #include "codec.hh"
 
 struct QuickfixCodec {
-  static constexpr auto	Name = "quickfix"_z;
+  static constexpr char	Name[] = "quickfix";
   FIX::DataDictionary	dictionary{QUICKFIX_DICT_PATH};
   std::string		storage;
 

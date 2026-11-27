@@ -85,9 +85,9 @@ using Network = Zfix::TLS;
 #else
 using Network = Zfix::TCP;
 #endif
-static constexpr auto SignedPayload =
+static constexpr char SignedPayload[] =
   "8=FIX.4.4\1" "9=13\1" "35=D\1" "58=ABCD\1" "10=155\1" "\0"
-  "8=FIX.4.4\1" "9=13\1" "35=8\1" "58=ABCD\1" "10=143\1"_z;
+  "8=FIX.4.4\1" "9=13\1" "35=8\1" "58=ABCD\1" "10=143\1";
 
 template <typename O>
 static bool verifySignature(const Fmt::FrameView &frame, ZuBSpan signature) {
@@ -341,7 +341,7 @@ template <typename Impl> struct Peer {
     if (client && state()->scenario == Scenario::PrepareRefused) return {};
     if (!state()->trace && !state()->signing) return body;
     SessionString auth;
-    auth << body->body() << "95=" << ZuBoxed(SignedPayload.length()) << '\1' <<
+    auth << body->body() << "95=" << ZuBoxed((sizeof(SignedPayload) - 1)) << '\1' <<
       "96=" << SignedPayload << '\1';
     if (state()->trace)
       auth << "553=trace-user\1" "554=trace-secret\1" "10001=auth-private\1";

@@ -43,18 +43,18 @@ static ZmAtomic<unsigned> cbErrors{0}, cbChecks{0};
   } \
 } while (0)
 
-constexpr ZuString Ping{"ping\r\n"};
-constexpr ZuString Pong{"pong\r\n"};
+constexpr char Ping[] = "ping\r\n";
+constexpr char Pong[] = "pong\r\n";
 enum class FinishCase { None, Data, FlushData, EmptyAfterFlush, Empty };
-constexpr unsigned FinishPings = ZiIOBuf_DefltSize / Ping.length() * 3 + 1;
-constexpr unsigned QueuedPings = 128 * 1024 / Ping.length();
+constexpr unsigned FinishPings = ZiIOBuf_DefltSize / (sizeof(Ping) - 1) * 3 + 1;
+constexpr unsigned QueuedPings = 128 * 1024 / (sizeof(Ping) - 1);
 bool pendingCase(FinishCase mode) {
   return mode == FinishCase::FlushData || mode == FinishCase::EmptyAfterFlush;
 }
 unsigned finishedBytes(FinishCase mode) {
   unsigned pings = pendingCase(mode) ? QueuedPings : 0;
   if (mode == FinishCase::Data || mode == FinishCase::FlushData) pings += FinishPings;
-  return pings * Ping.length();
+  return pings * (sizeof(Ping) - 1);
 }
 
 struct State {
@@ -441,7 +441,7 @@ void testLoop(
   ZTCP_CHECK_RT(state.clientConnected.load_(), "client did not connect");
   ZTCP_CHECK_RT(state.serverConnected.load_(), "server did not connect");
   ZTCP_CHECK_RT(state.clientTx.inCount >= 1, "Tx ingress count is zero");
-  ZTCP_CHECK_RT(state.clientTx.inBytes >= Ping.length(),
+  ZTCP_CHECK_RT(state.clientTx.inBytes >= (sizeof(Ping) - 1),
     "Tx ingress bytes omit ping");
   ZTCP_CHECK_RT(!state.clientRx.count, "Rx queue did not drain");
   ZTCP_CHECK_RT(!state.clientTx.count, "Tx queue did not drain");
@@ -515,7 +515,7 @@ void testFinish()
       int n;
       while ((n = ::recv(fd, buf, sizeof(buf), 0)) > 0) {
 	for (int i = 0; i < n; ++i, ++bytes)
-	  if (buf[i] != Ping[bytes % Ping.length()]) ordered = false;
+	  if (buf[i] != Ping[bytes % (sizeof(Ping) - 1)]) ordered = false;
       }
       Zi::closeSocket(fd);
       ZuCheckRT(!n && ordered && bytes == expected,

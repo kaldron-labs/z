@@ -24,7 +24,7 @@ namespace Ztls_ {
 
 namespace VaultWindows_ {
 
-constexpr auto TargetPrefix = "ZtlsVault:"_z;
+constexpr char TargetPrefix[] = "ZtlsVault:";
 
 class KeyRing_ : public ZmNHeap<KeyRing_>, public VaultStore {
   friend inline ZuStringT<"Ztls.Vault.KeyRing"> ZmNHeapID(KeyRing_ *);
@@ -84,13 +84,13 @@ private:
     if (m_program.length() > limit/2 || m_account.length() > limit/2 ||
       key.length() > limit/2)
       return ZeEXCEPT(Error, "ZtlsVault", "native target too long");
-    uint64_t length = TargetPrefix.length() + 2 + ZuHex::enclen(m_program.length()) +
+    uint64_t length = (sizeof(TargetPrefix) - 1) + 2 + ZuHex::enclen(m_program.length()) +
       ZuHex::enclen(m_account.length()) + ZuHex::enclen(key.length());
     if (length > limit) return ZeEXCEPT(Error, "ZtlsVault", "native target too long");
     auto     text = ZtScratch(Ztls::VaultScratch, length);
     auto     out = text.data();
-    uint64_t pos = TargetPrefix.length();
-    ::memcpy(out, TargetPrefix.data(), pos);
+    uint64_t pos = (sizeof(TargetPrefix) - 1);
+    ::memcpy(out, TargetPrefix, pos);
     pos += ZuHex::encode({out + pos, length - pos}, m_program);
     out[pos++] = ':';
     pos += ZuHex::encode({out + pos, length - pos}, m_account);

@@ -561,7 +561,7 @@ struct App {
   }
 
   static bool cookieValue(ZuBSpan cookies, Ztc::HubString &value) {
-    static constexpr auto name = "__Host-ztc_session="_z;
+    const ZuCSpan name = "__Host-ztc_session=";
     while (cookies) {
       while (cookies && cookies[0] == ' ') cookies.offset(1);
       int end = cookies.find([](char c) { return c == ';'; });

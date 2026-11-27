@@ -926,9 +926,9 @@ static void compatibility()
     auto message = loadException([&]() {
       ZfCf::handler<CfRequired>(scan.p<1>()).ctor();
     });
-    constexpr auto prefix = "\"required\" missing at:\n"_z;
-    ZuCheck(ZuCSpan{message}.prefix(prefix) == prefix.length());
-    ZuCheck(message.length() > prefix.length());
+    constexpr char prefix[] = "\"required\" missing at:\n";
+    ZuCheck(ZuCSpan{message}.prefix(prefix) == (sizeof(prefix) - 1));
+    ZuCheck(message.length() > (sizeof(prefix) - 1));
   }
   {
     auto scan = ZfCf::scan("nested: 42");

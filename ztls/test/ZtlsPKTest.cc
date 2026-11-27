@@ -281,10 +281,10 @@ void pemChain()
     ZiFile::remove(path);
   }};
   Ztls_::Context ctx{};
-  constexpr auto first = "-----BEGIN CERTIFICATE-----\nYQ==\n-----END CERTIFICATE-----\n"_z;
-  constexpr auto last = "-----BEGIN CERTIFICATE-----\nYg==\n-----END CERTIFICATE-----\n"_z;
+  constexpr char first[] = "-----BEGIN CERTIFICATE-----\nYQ==\n-----END CERTIFICATE-----\n";
+  constexpr char last[] = "-----BEGIN CERTIFICATE-----\nYg==\n-----END CERTIFICATE-----\n";
   for (unsigned i = 0; i < ZtlsCertChainBuiltin; ++i)
-    ZuCheckRT(file.write(first.data(), first.length()) == Zi::OK);
+    ZuCheckRT(file.write(first, (sizeof(first) - 1)) == Zi::OK);
   file.close();
   ZuCheckRT(Ztls::loadCerts(&ctx, path.data()));
   ZuCheckRT(ctx.certificates.length() == ZtlsCertChainBuiltin);
@@ -308,7 +308,7 @@ void pemChain()
     return true;
   };
   ZuCheckRT(intact());
-  ZuCheckRT(append("-----BEGIN CERTIFICATE-----\n!\n-----END CERTIFICATE-----\n"_z));
+  ZuCheckRT(append("-----BEGIN CERTIFICATE-----\n!\n-----END CERTIFICATE-----\n"));
   ZuCheckRT(!Ztls::loadCerts(&ctx, path.data()));
   ZuCheckRT(intact());
   ZuCheckRT(file.open(path, ZiFile::WriteOnly) == Zi::OK);
@@ -335,7 +335,7 @@ void testRSA(Ztls::Random &rng)
   ZuCheckRT(!publicResult.template is<ZeException>());
   if (publicResult.template is<ZeException>()) return;
   auto		 pub = ZuMv(publicResult).template p<ZmRef<Ztls::PK::RSAPublic>>();
-  constexpr auto label = "age-encryption.org/v1/ssh-rsa"_z;
+  constexpr char label[] = "age-encryption.org/v1/ssh-rsa";
   auto		 encrypted = pub->oaepEncrypt(secret, label, ciphertext);
   ZuCheckRT(!encrypted.template is<ZeException>());
   if (encrypted.template is<ZeException>()) return;

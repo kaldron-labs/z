@@ -117,7 +117,7 @@ ZfStructImpl(Envelope, DataFIX);
 static void nested()
 {
   ZuTestScope(nested);
-  constexpr auto Wire = "1000=7\1" "55=123\1"_z;
+  constexpr char Wire[] = "1000=7\1" "55=123\1";
   auto text = handler<Envelope, ZuFacet::TextFIX>(Wire);
   auto a = text.ctor();
   ZuCheck(text.valid() && a.marker == 7 && a.choice.is<TextMsg>());
@@ -125,34 +125,34 @@ static void nested()
   auto number = handler<Envelope, ZuFacet::NumFIX>(Wire);
   ZuCheck(number.load(a));
   ZuCheck(a.choice.is<NumMsg>() && a.choice.p<NumMsg>().value == 123);
-  char bytes[Wire.length()];
+  char bytes[(sizeof(Wire) - 1)];
   Sink out{{bytes, sizeof(bytes)}};
   ZuCheck(save<ZuFacet::NumFIX>(out, a) && out.flush());
   ZuCheck(out.data() == Wire);
   Sink wrong{{bytes, sizeof(bytes)}};
   ZuCheck(!save<ZuFacet::TextFIX>(wrong, a));
   ZuCheck(wrong.error().code == ErrorCode::Unresolved);
-  constexpr auto Text = "1000=1\1" "58=ABCD\1"_z;
+  constexpr char Text[] = "1000=1\1" "58=ABCD\1";
   auto data = handler<Envelope, ZuFacet::DataFIX>(Text);
   auto b = data.ctor();
   ZuCheck(data.valid() && b.choice.is<DataMsg>());
-  ZuCheck(b.choice.p<DataMsg>().data == ZuCSpan{"ABCD"_z});
+  ZuCheck(b.choice.p<DataMsg>().data == ZuCSpan{"ABCD"});
 }
 
 static void selection()
 {
   ZuTestScope(selection);
-  constexpr auto Wire = "55=123\1"_z;
+  constexpr char Wire[] = "55=123\1";
   auto h = handler<Choice>(Wire);
   auto a = h.ctor();
   ZuCheck(h.valid() && a.is<ParseView>());
-  ZuCheck(a.p<ParseView>().input.data() == Wire.data());
+  ZuCheck(a.p<ParseView>().input.data() == Wire);
   ZuCheck(!resolve<TextMsg>(a));
   ZuCheck(a.is<TextMsg>() && a.p<TextMsg>().value == "123");
   auto b = handler<Choice>(Wire).ctor();
   ZuCheck(!resolve<NumMsg>(b));
   ZuCheck(b.is<NumMsg>() && b.p<NumMsg>().value == 123);
-  char bytes[Wire.length()];
+  char bytes[(sizeof(Wire) - 1)];
   Sink out{{bytes, sizeof(bytes)}};
   ZuCheck(save(out, b) && out.flush());
   ZuCheck(out.data() == Wire);
@@ -177,10 +177,10 @@ static void lifetime()
   ZuCheck(c.p<TextMsg>().value == "new");
   backing[3] = 'x';
   ZuCheck(c.p<TextMsg>().value == "new");
-  constexpr auto TextWire = "58=ABCD\1"_z;
+  constexpr char TextWire[] = "58=ABCD\1";
   auto selected = handler<Choice>(TextWire).ctor();
   ZuCheck(!resolve<DataMsg>(selected));
-  ZuCheck(selected.p<DataMsg>().data == ZuCSpan{"ABCD"_z});
+  ZuCheck(selected.p<DataMsg>().data == ZuCSpan{"ABCD"});
 }
 
 static void errors()
@@ -224,8 +224,8 @@ static void construction()
   auto noView = handler<Immediate>("55=8\1");
   ZuCheck(!noView.load(immediate) && noView.error().code == ErrorCode::Unresolved);
   auto explicit_ = handler<Explicit>("raw-but-not-pass-through").ctor();
-  constexpr auto Wire = "55=explicit\1"_z;
-  char output[Wire.length()];
+  constexpr char Wire[] = "55=explicit\1";
+  char output[(sizeof(Wire) - 1)];
   Sink out{{output, sizeof(output)}};
   ZuCheck(save(out, explicit_) && out.flush());
   ZuCheck(out.data() == Wire);
@@ -273,12 +273,12 @@ ZfStructRender(, BinaryEnvelope, BinaryBytesFIX, marker, choice, after);
 static void binarySelection()
 {
   ZuTestScope(binarySelection);
-  constexpr auto Wire = "1000=7\1" "212=5\1" "213=A\1\0=B\1" "5000=9\1"_z;
+  constexpr char Wire[] = "1000=7\1" "212=5\1" "213=A\1\0=B\1" "5000=9\1";
   auto text = handler<BinaryEnvelope, ZuFacet::BinaryTextFIX>(Wire);
   auto value = text.ctor();
   ZuCheck(text.valid() && value.marker == 7 && value.after == 9 &&
     value.choice.is<BinaryTextAlt>());
-  ZuCheck(value.choice.p<BinaryTextAlt>().data.data() == Wire.data() + 17 &&
+  ZuCheck(value.choice.p<BinaryTextAlt>().data.data() == Wire + 17 &&
     value.choice.p<BinaryTextAlt>().data.length() == 5);
   Indexed<BinaryEnvelope, ZuFacet::BinaryTextFIX> indexed{Wire};
   BinaryEnvelope copy;
@@ -288,14 +288,14 @@ static void binarySelection()
   auto bytes = handler<BinaryEnvelope, ZuFacet::BinaryBytesFIX>(Wire);
   ZuCheck(bytes.load(value) && value.choice.is<BinaryBytesAlt>() && value.after == 9);
   ZuCheck(value.choice.p<BinaryBytesAlt>().data.data() ==
-    reinterpret_cast<const uint8_t *>(Wire.data() + 17));
-  auto storage = ZtScratch(PrintBuf, Wire.length());
-  Sink out{{storage.data(), unsigned(Wire.length())}};
+    reinterpret_cast<const uint8_t *>(Wire + 17));
+  auto storage = ZtScratch(PrintBuf, (sizeof(Wire) - 1));
+  Sink out{{storage.data(), unsigned((sizeof(Wire) - 1))}};
   ZuCheck(save<ZuFacet::BinaryBytesFIX>(out, value) && out.data() == Wire);
-  Sink wrong{{storage.data(), unsigned(Wire.length())}};
+  Sink wrong{{storage.data(), unsigned((sizeof(Wire) - 1))}};
   ZuCheck(!save<ZuFacet::BinaryTextFIX>(wrong, value) &&
     wrong.error().code == ErrorCode::Unresolved);
-  constexpr auto Bad = "1000=7\1" "212=1\1" "213=XX\1"_z;
+  constexpr char Bad[] = "1000=7\1" "212=1\1" "213=XX\1";
   auto bad = handler<BinaryEnvelope, ZuFacet::BinaryBytesFIX>(Bad);
   bad.load(value);
   Indexed<BinaryEnvelope, ZuFacet::BinaryBytesFIX> badIndex{Bad}; badIndex.load(copy);
@@ -307,24 +307,24 @@ static void binarySelection()
 static void binaryDeferred()
 {
   ZuTestScope(binaryDeferred);
-  constexpr auto Wire = "212=5\1" "213=A\1\0=B\1"_z;
+  constexpr char Wire[] = "212=5\1" "213=A\1\0=B\1";
   auto bytes = handler<BinaryChoice>(Wire).ctor();
-  ZuCheck(bytes.is<ParseView>() && bytes.p<ParseView>().input.data() == Wire.data());
+  ZuCheck(bytes.is<ParseView>() && bytes.p<ParseView>().input.data() == Wire);
   ZuCheck(!resolve<BinaryBytesAlt>(bytes) && bytes.is<BinaryBytesAlt>());
   ZuCheck(bytes.p<BinaryBytesAlt>().data.data() ==
-    reinterpret_cast<const uint8_t *>(Wire.data() + 10));
+    reinterpret_cast<const uint8_t *>(Wire + 10));
   auto text = handler<BinaryChoice>(Wire).ctor();
   ZuCheck(!resolve<BinaryTextAlt>(text) && text.is<BinaryTextAlt>());
-  ZuCheck(text.p<BinaryTextAlt>().data.data() == Wire.data() + 10 &&
+  ZuCheck(text.p<BinaryTextAlt>().data.data() == Wire + 10 &&
     text.p<BinaryTextAlt>().data.length() == 5);
   auto owned = handler<BinaryChoice>(Wire).ctor();
   ZuCheck(!resolve<BinaryOwnedAlt>(owned) && owned.is<BinaryOwnedAlt>());
   ZuCheck(ZuBSpan{owned.p<BinaryOwnedAlt>().data} == bytes.p<BinaryBytesAlt>().data);
   ZuCheck(owned.p<BinaryOwnedAlt>().data.data() != bytes.p<BinaryBytesAlt>().data.data());
-  auto storage = ZtScratch(PrintBuf, Wire.length());
-  Sink out{{storage.data(), unsigned(Wire.length())}};
+  auto storage = ZtScratch(PrintBuf, (sizeof(Wire) - 1));
+  Sink out{{storage.data(), unsigned((sizeof(Wire) - 1))}};
   ZuCheck(save(out, owned) && out.data() == Wire);
-  constexpr auto Bad = "212=1\1" "213=XX\1"_z;
+  constexpr char Bad[] = "212=1\1" "213=XX\1";
   auto bad = handler<BinaryChoice>(Bad).ctor();
   auto error = resolve<BinaryBytesAlt>(bad);
   ZuCheck(error.code == ErrorCode::Length && error.tag == 213 && error.offset == 11);

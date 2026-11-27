@@ -33,12 +33,12 @@ using namespace ZuTestUtil;
 
 #ifdef ZUTCP_APP_TLS
 namespace AppIO = Ztls;
-constexpr auto Protocol = "Ztls"_z;
-constexpr auto Program = "zutcptlsapptest"_z;
+constexpr char Protocol[] = "Ztls";
+constexpr char Program[] = "zutcptlsapptest";
 #else
 namespace AppIO = Ztcp;
-constexpr auto Protocol = "Ztcp"_z;
-constexpr auto Program = "zutcpapptest"_z;
+constexpr char Protocol[] = "Ztcp";
+constexpr char Program[] = "zutcpapptest";
 #endif
 
 struct AppState {
@@ -243,7 +243,7 @@ static void testApp(bool v6, bool native)
   auto child = fork();
   if (!child) {
     execl("/bin/bash", "bash", "./zutcpappfixture.sh", v6 ? "6" : "4",
-      directory.data(), Protocol.data(), native ? "native" : "kernel",
+      directory.data(), Protocol, native ? "native" : "kernel",
       static_cast<char *>(nullptr));
     _exit(127);
   }
@@ -261,7 +261,7 @@ int main(int argc, char **argv)
 {
   if (argc == 5 && (!strcmp(argv[1], "--server") || !strcmp(argv[1], "--client") ||
       !strcmp(argv[1], "--kernel-server") || !strcmp(argv[1], "--kernel-client"))) {
-    ZiLog::init(Program.data());
+    ZiLog::init(Program);
     ZiLog::level(0);
     ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
     ZiLog::start();
@@ -280,7 +280,7 @@ int main(int argc, char **argv)
     std::cout << "1..0 # SKIP requires private namespace fixture\n";
     return 0;
   }
-  ZiTestResidue::init(Program.data());
+  ZiTestResidue::init(Program);
   ZuTestMain();
   ZuTestCall(testApp, false, true);
   ZuTestCall(testApp, true, true);

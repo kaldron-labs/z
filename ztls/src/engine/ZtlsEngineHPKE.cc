@@ -22,13 +22,12 @@
 // IN THE SOFTWARE.
 #include <stdlib.h>
 
-#include <zlib/ZuString.hh>
 
 #include <zlib/ZtlsEngine.hh>
 
 namespace Ztls_ {
 
-static constexpr auto hpkeV1Label = "HPKE-v1"_z;
+static constexpr char hpkeV1Label[] = "HPKE-v1";
 
 static int buildSuiteID(Buffer *buf, const HpkeKem *kem, const HpkeSuite *cipher)
 {
@@ -60,7 +59,7 @@ static int labeledExtract(
 
   bufferInitTx(&labeledIkm, labeledIkmInline, sizeof(labeledIkmInline));
 
-  Ztls_BufferPushv(&labeledIkm, hpkeV1Label.data(), hpkeV1Label.length());
+  Ztls_BufferPushv(&labeledIkm, hpkeV1Label, (sizeof(hpkeV1Label) - 1));
   if ((ret = buildSuiteID(&labeledIkm, kem, cipher)) != 0) goto Exit;
   Ztls_BufferPushv(&labeledIkm, label, strlen(label));
   Ztls_BufferPushv(&labeledIkm, ikm.data(), ikm.length());
@@ -87,7 +86,7 @@ static int labeledExpand(
   bufferInitTx(&labeledInfo, labeledInfoInline, sizeof(labeledInfoInline));
 
   Ztls_BufferPush16(&labeledInfo, (uint16_t)outlen);
-  Ztls_BufferPushv(&labeledInfo, hpkeV1Label.data(), hpkeV1Label.length());
+  Ztls_BufferPushv(&labeledInfo, hpkeV1Label, (sizeof(hpkeV1Label) - 1));
   if ((ret = buildSuiteID(&labeledInfo, kem, cipher)) != 0) goto Exit;
   Ztls_BufferPushv(&labeledInfo, label, strlen(label));
   Ztls_BufferPushv(&labeledInfo, info.data(), info.length());

@@ -50,8 +50,8 @@ static bool contains(ZuCSpan text, ZuCSpan term) {
 static ZmRef<ZiIOBuf> wire(ZuCSpan type, ZuCSpan content) {
   ZmRef<ZiIOBuf> b = ZfixTest::Allocator<Zi::IOBufBuiltinAllocator<Zi::IOBufType::App,
     ZiIOBuf, ZiIOBuf_DefltSize>>::get()->allocBuf();
-  constexpr auto Envelope = "8=FIX.4.4\1" "9=4294967295\1" "35=\1" "10=255\1"_z;
-  b->ensure(type.length() + content.length() + Envelope.length());
+  constexpr char Envelope[] = "8=FIX.4.4\1" "9=4294967295\1" "35=\1" "10=255\1";
+  b->ensure(type.length() + content.length() + sizeof(Envelope) - 1);
   ZuSpan<char> storage{b->data(), b->size};
   Fmt::FrameWriter out{storage, "FIX.4.4"};
   out.body() << "35=" << type << '\1' << content;
@@ -138,7 +138,7 @@ ZfStruct(, (BinaryBody, FIX),
 static void binary() {
   ZuTestScope(binary);
   WireTrace trace{{.bytes = 64 << 10}};
-  constexpr auto content = "212=14\1" "213=A\1\0=11=FAKE\1" "\xffZ\1" "11=real\1"_z;
+  constexpr char content[] = "212=14\1" "213=A\1\0=11=FAKE\1" "\xffZ\1" "11=real\1";
   auto b = wire("n", content);
   auto resolve = [](void *, ZuCSpan, int32_t tag) { return traceField<BinaryBody>(tag); };
   auto record = trace.capture_(ZuCSpan{b->cspan()}, {}, resolve);
@@ -176,7 +176,7 @@ ZfStruct(, (RawReplay, FIX), (data, (FIX::ID<95>, FIX::Binary<96>), Bytes));
 static void authentication() {
   ZuTestScope(authentication);
   WireTrace trace{{.bytes = 64 << 10}};
-  constexpr auto Credentials = "95=10\1" "96=secret\1\0=X\1"_z;
+  constexpr char Credentials[] = "95=10\1" "96=secret\1\0=X\1";
   auto b = wire("A", Credentials);
   auto record = trace.capture_(ZuCSpan{b->cspan()}, {});
   ZuCheck(record && contains(record->data().text(), "95=<redacted>") &&
@@ -212,7 +212,7 @@ static void interpretations() {
   builtin.merge(application);
   ZuCheck(!builtin.ambiguous);
   WireTrace trace{{.bytes = 64 << 10}};
-  auto b = wire("0", "93=5\1" "89=A\1\0=B\1"_z);
+  auto b = wire("0", "93=5\1" "89=A\1\0=B\1");
   auto record = trace.capture_(ZuCSpan{b->cspan()}, {},
     [](void *, ZuCSpan, int32_t tag) { return traceField<Session::HeartBt>(tag); });
   ZuCheck(contains(record->data().text(), "93=5\\x0189=A\\x01\\x00=B\\x01") &&
@@ -220,7 +220,7 @@ static void interpretations() {
     !contains(record->data().text(), "<malformed>"));
   auto ambiguous = traceField<AmbigMessage>(212);
   ZuCheck(ambiguous.known && ambiguous.ambiguous);
-  b = wire("n", "6000=1\1" "212=3\1" "214=A\1B\1"_z);
+  b = wire("n", "6000=1\1" "212=3\1" "214=A\1B\1");
   record = trace.capture_(ZuCSpan{b->cspan()}, {},
     [](void *, ZuCSpan, int32_t tag) { return traceField<AmbigMessage>(tag); });
   ZuCheck(contains(record->data().text(), "<opaque>") &&

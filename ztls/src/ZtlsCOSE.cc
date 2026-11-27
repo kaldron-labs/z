@@ -114,21 +114,21 @@ bool validPK(ZuBSpan publicKey)
 
 bool jwk(ZuBSpan key, ZuSpan<char> out, unsigned &length)
 {
-  static constexpr auto prefix = "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\""_z;
-  static constexpr auto middle = "\",\"y\":\""_z;
-  static constexpr auto suffix = "\"}"_z;
+  static constexpr char prefix[] = "{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"";
+  static constexpr char middle[] = "\",\"y\":\"";
+  static constexpr char suffix[] = "\"}";
   length = 0;
   if (key.length() != PublicKeySize || key[0] != 4 || out.length() < JWKSize) return false;
   char *p = out.data();
-  memcpy(p, prefix.data(), prefix.length());
-  p += prefix.length();
+  memcpy(p, prefix, (sizeof(prefix) - 1));
+  p += (sizeof(prefix) - 1);
   p += ZuBase64URL::encode({p, unsigned(out.end() - p)}, {key.data() + 1, CoordinateSize});
-  memcpy(p, middle.data(), middle.length());
-  p += middle.length();
+  memcpy(p, middle, (sizeof(middle) - 1));
+  p += (sizeof(middle) - 1);
   p += ZuBase64URL::encode(
     {p, unsigned(out.end() - p)}, {key.data() + 1 + CoordinateSize, CoordinateSize});
-  memcpy(p, suffix.data(), suffix.length());
-  p += suffix.length();
+  memcpy(p, suffix, (sizeof(suffix) - 1));
+  p += (sizeof(suffix) - 1);
   length = unsigned(p - out.data());
   return length == JWKSize;
 }

@@ -50,7 +50,7 @@ struct MxEvents {
   bool baseKnown = false, txValid = true, detached = true, beforeCQ = false;
 };
 
-static constexpr auto SmallMessage = "native-mx-byte-path"_z;
+static constexpr char SmallMessage[] = "native-mx-byte-path";
 static ZuCSpan Message{SmallMessage};
 
 static bool reserveOptions(Zutcp::PacketBuf *packet, const Zutcp::TCPHeader &header)
@@ -2712,7 +2712,7 @@ static void testPAWSPair(bool v6)
 {
   ZuTestScope(testPAWSPair);
   alarm(45);
-  static constexpr auto Accepted = "reuse-mx-byte-path!"_z;
+  static constexpr char Accepted[] = "reuse-mx-byte-path!";
   unsigned a = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_IFINDEX")};
   unsigned b = ZuBox<unsigned>{getenv("ZPKT_RX_TEST_PEER_IFINDEX")};
   ZiIP local{v6 ? "2001:db8::20" : "198.18.0.20"};
@@ -2788,14 +2788,15 @@ static void testPAWSPair(bool v6)
   });
   ZuCHECK(old && !bytes,
     "in-window old-TS DATA must elicit current echo without publishing bytes");
-  arm(Base + Accepted.length(), 0x10);
+  arm(Base + (sizeof(Accepted) - 1), 0x10);
   bool wrapped = old && send(0,Accepted,false,0x10) &&
     wait(listener.events[0].input) && wait(peer.ack);
-  arm(Base + Accepted.length(), 0x10);
-  bool laterOld = wrapped && send(Accepted.length(),Message,false,InitialTS) && wait(peer.ack);
-  bool ended = laterOld && send(Accepted.length(),{},true,0x11) &&
+  arm(Base + (sizeof(Accepted) - 1), 0x10);
+  bool laterOld = wrapped &&
+    send(sizeof(Accepted) - 1, Message, false, InitialTS) && wait(peer.ack);
+  bool ended = laterOld && send((sizeof(Accepted) - 1),{},true,0x11) &&
     wait(listener.events[0].eof);
-  ZuCHECK(wrapped && laterOld && ended && listener.events[0].bytes == Accepted.length() &&
+  ZuCHECK(wrapped && laterOld && ended && listener.events[0].bytes == (sizeof(Accepted) - 1) &&
       !unsigned(listener.events[0].errors),
     "wrapped-new TS DATA and FIN must reuse rejected byte positions "
     "and deliver only exact admitted bytes");
@@ -2806,7 +2807,7 @@ static void testPAWSPair(bool v6)
   auto buf = Zutcp::inlineAllocator()->allocBuf();
   Zutcp::Datagram ack{ZuMv(buf), {local,49152}};
   ack.local = {remote,18191};
-  ack.tcp = header(Base + Accepted.length() + 1, 0x12);
+  ack.tcp = header(Base + (sizeof(Accepted) - 1) + 1, 0x12);
   ack.tcp.ack += unsigned(Message.length()) + 1;
   ack.tcp.options.tsecr = lastTS;
   bool closed = replied && passiveWire(client, cs, forward, ZuMv(ack)) &&
@@ -2819,7 +2820,7 @@ static void testPAWSPair(bool v6)
     });
   });
   ZuCHECK(closed && !peerErrors && record.id && record.timestamps && record.fin &&
-      record.rxNext == Base + Accepted.length() + 1 &&
+      record.rxNext == Base + (sizeof(Accepted) - 1) + 1 &&
       record.txNext == uint32_t(initial.seq + 1 + Message.length() + 1) &&
       listener.events[0].connected == 1 && listener.events[0].disconnected == 1 &&
       listener.events[0].completed == 1 && !admission(server, ss).total,
@@ -3046,7 +3047,7 @@ static void testPassiveTuplePair(bool v6)
     ZiSockAddr{remote, 19991}}});
   auto activeAbsent = closedRecord(client, cs, clientOld.key);
   auto retained = closedRecord(server, ss, oldKey);
-  static constexpr auto ReuseMessage = "reuse-mx-byte-path!"_z;
+  static constexpr char ReuseMessage[] = "reuse-mx-byte-path!";
   ZuCSpan reuseMessage{ReuseMessage};
   cli[2].expected = reuseMessage;
   ZmBlock<>{}([&server, &listener, reuseMessage](auto done) {

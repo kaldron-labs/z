@@ -688,7 +688,7 @@ private:
 	  if (!subID) { m_failed = true; return; }
 	  Ztc::Builder builder{Frame{allocFrame()}};
 	  auto builderNested = builder.startNested();
-	  auto device = "test-a"_z;
+	  auto device = "test-a";
 	  auto id = builder.string("publisher");
 	  auto value = Zfb::save(builder, data);
 	  auto tel = Ztc::saveTelemetry(builder, id, 0,
@@ -718,7 +718,7 @@ private:
 		unsigned(Ztc::Group::Hash));
 	    Ztc::Builder ack{Frame{allocFrame()}};
 	    auto ackNested = ack.startNested();
-	    auto device = "test-a"_z;
+	    auto device = "test-a";
 	    auto body = Zfb::save(ack, Ztc::Ack{
 		ZuID{"publisher"}, 0, 1000, uint8_t(Ztc::AckStatus::Failed)});
 	    ack.finish(Ztc::saveMsg(ack, ackNested, Ztc::Body::Ack,
@@ -774,7 +774,7 @@ private:
       case 10: { // Source-attributed EOS is still only a snapshot boundary.
 	Ztc::Builder builder{Frame{allocFrame()}};
 	auto builderNested = builder.startNested();
-	auto device = "test-a"_z;
+	auto device = "test-a";
 	auto eos = Zfb::save(builder, Ztc::EOS{ZuID{"publisher"}, 123});
 	builder.finish(Ztc::saveMsg(builder, builderNested, Ztc::Body::EOS,
 	  eos, 1, device, 2));
@@ -783,7 +783,7 @@ private:
       case 13: { // Explicit transport loss preserves objects and selection.
 	Ztc::Builder builder{Frame{allocFrame()}};
 	auto builderNested = builder.startNested();
-	auto device = "test-a"_z;
+	auto device = "test-a";
 	auto error = Zfb::save(builder, Ztc::Error{
 	  Ztc::ErrorMessage{"agent disconnected"}, ZuID{"publisher"},
 	  0, int(Ztc::HubError::AgentGone)});
@@ -796,7 +796,7 @@ private:
 	telemetry("test-a", 2, Ztc::RAG::Red); // obsolete transport generation
 	Ztc::Builder builder{Frame{allocFrame()}};
 	auto builderNested = builder.startNested();
-	auto device = "test-a"_z;
+	auto device = "test-a";
 	auto id = builder.string("publisher");
 	auto heap = sample<Ztc::HeapTelemetry>();
 	heap.heapAllocs = 1379;

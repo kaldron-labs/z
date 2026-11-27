@@ -156,7 +156,7 @@ namespace ZfYAMLError {
 
 using AnyNode = ZfYAML::AnyNode;
 
-constexpr auto Component = "ZfYAML"_z;
+constexpr char Component[] = "ZfYAML";
 
 ZfExtern ZuCSpan reason(uint8_t code);
 
