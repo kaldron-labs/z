@@ -216,3 +216,47 @@ callback entry, the PMD's sole native reference and admission, then same-slot re
 with independent checksum/header/payload checks. Both ACK/driver-retirement
 orders return the slot once. A held-PMD shutdown case releases the reference
 only after MxPlugin Closing is observed, then verifies stop/restart and retirement.
+
+## Mellanox TCP and UDP
+
+Build `zutcpmlxtest` in the current mlx enabled configuration. Cable a Mellanox
+Ethernet interface to an independent kernel peer. Use dedicated fixture links
+and place the peer interface in an existing named Linux network namespace.
+On the mlx interface configure `198.18.17.1/24`. On the peer interface configure
+`198.18.17.2/24`. Use a 1500-byte MTU and permanent neighbors pointing at the
+opposite interface MAC. Zutcp resolves the route on the mlx interface. The
+permanent neighbor lets the kernel peer reply while the backend owns mlx
+ingress.
+
+For example, on a host where both fixture interfaces are already assigned to
+their intended namespaces, set `MLX_IFACE`, `PEER_IFACE`, `PEER_NS`,
+`MLX_MAC`, and `PEER_MAC` to the provisioned names and link addresses:
+
+```sh
+sudo ip link set dev "$MLX_IFACE" mtu 1500 up
+sudo ip addr replace 198.18.17.1/24 dev "$MLX_IFACE"
+sudo ip neigh replace 198.18.17.2 lladdr "$PEER_MAC" nud permanent dev "$MLX_IFACE"
+sudo ip -n "$PEER_NS" link set dev "$PEER_IFACE" mtu 1500 up
+sudo ip -n "$PEER_NS" addr replace 198.18.17.2/24 dev "$PEER_IFACE"
+sudo ip -n "$PEER_NS" neigh replace 198.18.17.1 lladdr "$MLX_MAC" nud permanent dev "$PEER_IFACE"
+make -C zutcp/itest zutcpmlxtest
+sudo -n env ZPKT_MLX_IFACE="$MLX_IFACE" ZPKT_MLX_PEER_IFACE="$PEER_IFACE" \
+  ZPKT_MLX_PEER_NETNS="$PEER_NS" prove -v zutcp/itest/zutcpmlxtest
+```
+
+The driver opens the physical mlx Nif through Env and registers typed TCP and
+UDP allocators on one Zutcp multiplexer. The peer opens native TCP and UDP
+sockets on port zero in its namespace and uses the assigned ports. The first TCP
+exchange applies a drop filter to the fixture's accepted socket, observes two
+copies of the request with the same TCP sequence on the peer's Ethernet
+interface, then removes the filter so a retry can reach the kernel TCP socket.
+Checks cover exact request and reply bytes, the original Tx buffer, caller
+checksum mode, and backing addresses through a second exchange after restart.
+
+The fixture needs RDMA device access, locked memory for the registered pools,
+permission to enter the peer namespace, and `CAP_NET_ADMIN` and `CAP_NET_RAW`
+for the ingress guard and capture. With all three `ZPKT_MLX_*` variables absent
+it reports a TAP skip and exits successfully. A partial fixture configuration or a failure on configured links
+fails TAP. Record the output of `ethtool -i "$MLX_IFACE"`,
+`pkg-config --modversion libibverbs libmlx5`, `ip link show "$MLX_IFACE"`, and
+`taskset -pc $$` with physical results.

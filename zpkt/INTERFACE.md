@@ -5,7 +5,8 @@
 The application constructs and retains `ZmRef<Zpkt::Env>` before creating any Nif.
 `env->init(cf)` loads the configured `module` and invokes its C-linkage
 `ZpktPlugin(cf)` entry point, which returns a fully initialized Plugin. The plugin
-owns typed, name-keyed interface configuration; DPDK Plugin directly owns EAL.
+owns typed, name-keyed interface configuration. The DPDK plugin directly owns EAL,
+and the mlx plugin directly owns its private `Mlx::Env`.
 Initialization creates no named Nif. Source Cf storage may be released afterward.
 The module remains resident after any entry-point invocation, including failure.
 Startup-only configuration/loading throws `ZeException`; no partially initialized
@@ -363,3 +364,27 @@ accepted and retired frames and bytes and samples pending occupancy.
 `PACKET_STATISTICS` resets on read, so status and queue views sample through
 one serialized per-run accumulator. Status reports software discards,
 requested and effective bypass, and any unsupported-option fallback.
+
+## Mellanox
+
+Select `libZpkt_mlx.so` from an mlx enabled Linux build. Configure
+`interfaces { enp1s0 { rxDepth 512 txDepth 512 } }` with the Linux interface
+name as the key. Both depths default to 512 and must be positive. The backend
+resolves the name's ifindex to an Ethernet port on a supported mlx5 device at
+open. The plugin owns shared verbs contexts and opens them on demand. Each
+physical Nif owns its protection domain and claims ingress until finalization.
+Keep the application Env alive until the Nif is finalized and all external
+references have been released. Shared contexts close after the last child retires.
+
+Start creates one raw packet Rx queue and one Tx queue. It posts the Rx ring and
+installs catch-all Ethernet steering before reporting ready. The selected port
+and provider must support that steering. Physical packet buffers are registered
+and remain valid across runs. Each accepted send signals a completion and
+retains its submission lease until completion or safe queue teardown.
+`tcpChksumOffload()` reports false. Supply a completed TCP checksum.
+
+Configure `interfaces { _loop { rxDepth 64 txDepth 64 } }` to enable the
+reserved test interface. Opening `_loop` skips host lookup. The software queue
+copies each accepted frame into the same Nif's Rx pool and retires the Tx
+lease through `pollTx()`. It reports ifindex 0, MTU 1500, one Rx queue, and
+copy mode. The loop can run on a machine with no Mellanox device.

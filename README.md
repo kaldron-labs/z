@@ -257,7 +257,7 @@ make install
 ```
 
 This builds without GTK or PostgreSQL, retaining SQLite. The wrapper defaults
-to GCC and an x64 Linux build; `-L` selects Clang and `-M` selects MinGW.
+to GCC and an x64 Linux build; `-L` selects Clang and `-m` selects MinGW. On Linux, `-M` enables Mellanox support.
 Its current defaults are not an ARM configuration recipe. Run `./z.config -h`
 for options and use platform-appropriate configure/compiler flags when needed.
 Installation may require permission to write the selected prefix.

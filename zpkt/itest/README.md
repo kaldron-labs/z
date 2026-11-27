@@ -127,3 +127,30 @@ sudo -n env ZPKT_RUN_FIXTURE=1 prove ./zpkt/itest/zpktafp_test
 The fixture checks the software socket path. For a loader smoke test with
 the installed module on the library search path, run
 `ZPKT_NATIVE_MODULE=libZpkt_afp.so prove ./zpkt/test/ZpktEnvTest`.
+
+## Mellanox physical wire
+
+Build `zpktmlx_test` with mlx enabled. Use a dedicated Ethernet port exposed
+as an mlx5 RDMA device and a separate cabled Ethernet peer. The mlx interface
+stays in the test process's network namespace. Move the peer into a private
+named Linux network namespace. Bring up both interfaces with MTU 1500.
+Provision IPv4 addresses and permanent neighbor entries on both ends for
+kernel socket checks. Use test links that can be claimed for the entire run.
+
+```sh
+sudo -n env ZPKT_MLX_IFACE=enp1s0 ZPKT_MLX_PEER_IFACE=enp2s0 \
+  ZPKT_MLX_PEER_NETNS=mlx-peer prove ./zpkt/itest/zpktmlx_test
+```
+
+The test needs access to the mlx uverbs device, sufficient locked memory,
+permission to enter the peer namespace, and the raw socket and ingress
+privileges in [dependencies](../../docs/DEPENDENCIES.md#linux-packet-io).
+With all three variables absent the test reports a TAP skip and exits successfully. A partial or
+unusable fixture fails. The test reports the Rx burst depth and the mean of
+16 single-frame round trips across the software owners and cabled peer, with
+process CPU time per exchange. The timing includes fixture scheduling and
+packet capture. Record the mlx device and MTU with `ip -details link show`,
+the driver and firmware with `ethtool -i`, and the receive miss counters
+with `ethtool -S` where exposed. Collect driver counters before and after
+the packet test and record unavailable counters as such. Record CPU
+affinity with `taskset -pc $$` in the launching shell.

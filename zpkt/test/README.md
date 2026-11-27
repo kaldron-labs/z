@@ -84,3 +84,15 @@ After a DPDK-enabled build, run both programs from the repository root.
 ```sh
 prove ./zpkt/test/ZpktDpdkInstanceTest ./zpkt/test/ZpktDpdkPoolTest
 ```
+
+## Mellanox software loopback
+
+With an mlx enabled build, `ZpktMlxTest` loads the mlx module through common
+Zpkt and opens the configured `_loop` interface. Run it as an unprivileged user
+with `prove ./zpkt/test/ZpktMlxTest`. It requires the mlx userspace libraries and
+uses a software queue for packet delivery. The suite covers exact frame bytes,
+accepted-prefix backpressure, off-owner Rx replenishment, idle Tx completion,
+pool backing across restart, and removal of the finalized Nif from Env.
+It also checks RDMA netlink port matching and uses a simulated provider to
+exercise registration rollback, raw QP attributes, notification and completion
+handling, and safe retention when QP teardown fails.

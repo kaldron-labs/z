@@ -84,6 +84,17 @@ loads one backend from the configured module path. [Zpkt module configuration](.
   support and `CAP_NET_ADMIN` as AFP. Bifurcated ports also require PMD
   flow isolation and a wildcard Ethernet flow with a queue action.
 
+- `libZpkt_mlx.so` requires `libibverbs` and `libmlx5` via pkg-config.
+  Install rdma-core v65.0 into `/usr/local` using the
+  [upstream source release](https://github.com/linux-rdma/rdma-core/releases/tag/v65.0).
+  Select the installed pkg-config metadata with
+  `PKG_CONFIG_PATH=/usr/local/lib/pkgconfig` when configuring.
+  Use `z.config -M` or `configure --with-mlx=yes` to enable the module.
+  A physical port requires the kernel mlx5 RDMA driver, access to its uverbs
+  device, sufficient locked memory, `CAP_NET_RAW` for raw packet QPs, and
+  `CAP_NET_ADMIN` for the ingress claim. The software `_loop` requires the
+  userspace libraries and runs without a NIC or network privileges.
+
 Linux build headers must provide AF_XDP UMEM/ring offsets and need-wakeup
 flags, XDP capability queries, BPF XSK maps, expected-FD XDP attachment protection
 and socket network-namespace cookies. To run the AF_XDP plugin, the kernel must enable those

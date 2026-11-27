@@ -318,6 +318,43 @@ AS_CASE([$with_dpdk],
   [AC_MSG_ERROR([--with-dpdk requires yes or no])])
 AM_CONDITIONAL([DPDK], [test "$with_dpdk" = yes])
 
+# Mellanox (optional, Linux only)
+AC_ARG_WITH([mlx],
+  AS_HELP_STRING([--with-mlx=yes|no], [Build with Mellanox support (default: no)]), [],
+  [with_mlx=no])
+AS_CASE([$with_mlx],
+  [yes], [
+    AS_IF([test "$z_linux" != yes], [AC_MSG_ERROR([Mellanox support requires Linux])])
+    PKG_CHECK_MODULES([MLX], [libibverbs libmlx5])
+    z_save_CPPFLAGS=$CPPFLAGS
+    z_save_LIBS=$LIBS
+    CPPFLAGS="$CPPFLAGS $MLX_CFLAGS"
+    LIBS="$MLX_LIBS $LIBS"
+    AC_MSG_CHECKING([for mlx5 Direct Verbs raw packet APIs])
+    AC_LINK_IFELSE([AC_LANG_PROGRAM([[
+#include <infiniband/mlx5dv.h>
+    ]], [[
+      ibv_qp_init_attr_ex attr{};
+      mlx5dv_qp_init_attr dv{};
+      attr.qp_type = IBV_QPT_RAW_PACKET;
+      attr.comp_mask = IBV_QP_INIT_ATTR_PD | IBV_QP_INIT_ATTR_SEND_OPS_FLAGS;
+      attr.send_ops_flags = IBV_QP_EX_WITH_SEND;
+      auto *qp = mlx5dv_create_qp(nullptr, &attr, &dv);
+      if (qp) {
+        auto *ex = ibv_qp_to_qp_ex(qp);
+        ibv_wr_start(ex);
+        ibv_wr_send(ex);
+        return ibv_wr_complete(ex);
+      }
+    ]])], [AC_MSG_RESULT([yes])],
+      [AC_MSG_FAILURE([mlx5 Direct Verbs raw packet APIs unavailable])])
+    CPPFLAGS=$z_save_CPPFLAGS
+    LIBS=$z_save_LIBS
+  ],
+  [no], [MLX_CFLAGS=; MLX_LIBS=],
+  [AC_MSG_ERROR([--with-mlx requires yes or no])])
+AM_CONDITIONAL([MLX], [test "$with_mlx" = yes])
+
 # sqlite3 (enabled by default)
 AC_ARG_WITH([sqlite],
   AS_HELP_STRING([--without-sqlite], [Build without SQLite3]), [],
@@ -354,7 +391,7 @@ for i in zu zm zt ze zf zi zpkt zutcp zpb zfb zv zdbus ztcp ztls zfix zquic zhtt
     zpkt|zutcp) test "$z_linux" = yes || continue;;
   esac
   z_srcdirs="src ext"
-  if test "$i" = zpkt; then z_srcdirs="$z_srcdirs afp xdp dpdk"; fi
+  if test "$i" = zpkt; then z_srcdirs="$z_srcdirs afp xdp dpdk mlx"; fi
   for j in $z_srcdirs; do {
     if test -d $i/$j -a ! -e $i/$j/AC_PACKAGE_NAME; then (
       cd $i/$j;
@@ -377,7 +414,7 @@ AC_CONFIG_FILES([Makefile \
 	zi/example/Makefile])
 AS_IF([test "$z_linux" = yes], [
   AC_CONFIG_FILES([zpkt/Makefile zpkt/src/Makefile zpkt/afp/Makefile zpkt/xdp/Makefile \
-	zpkt/dpdk/Makefile zpkt/test/Makefile \
+	zpkt/dpdk/Makefile zpkt/mlx/Makefile zpkt/test/Makefile \
 	zpkt/util/Makefile zpkt/itest/Makefile \
 	zutcp/Makefile zutcp/src/Makefile zutcp/test/Makefile \
 	zutcp/util/Makefile zutcp/itest/Makefile zutcp/example/Makefile \

@@ -28,6 +28,18 @@ ZpktRingTest_SOURCES = ZpktRingTest.cc
 ZpktPoolTest_SOURCES = ZpktPoolTest.cc
 ZpktInstanceTest_SOURCES = ZpktInstanceTest.cc
 ZpktClassifierTest_SOURCES = ZpktClassifierTest.cc
+if MLX
+noinst_PROGRAMS += ZpktMlxTest
+ZpktMlxTest_SOURCES = ZpktMlxTest.cc ../mlx/ZpktMlx.cc \
+	../mlx/ZpktMlxQueue.cc ../mlx/ZpktMlxPool.cc
+ZpktMlxTest_CPPFLAGS = $(AM_CPPFLAGS) $(MLX_CFLAGS) -I$(top_srcdir)/zpkt/mlx \
+	-DZPKT_MLX_MODULE='"$(abs_top_builddir)/zpkt/mlx/.libs/libZpkt_mlx.so"'
+MLX_WRAPPED = ibv_reg_mr ibv_dereg_mr ibv_query_device ibv_create_comp_channel \
+	ibv_destroy_comp_channel ibv_create_cq ibv_destroy_cq ibv_get_cq_event ibv_ack_cq_events \
+	mlx5dv_create_qp ibv_qp_to_qp_ex ibv_modify_qp ibv_destroy_qp
+ZpktMlxTest_LDFLAGS = $(AM_LDFLAGS) $(foreach sym,$(MLX_WRAPPED),-Xlinker --wrap=$(sym))
+ZpktMlxTest_LDADD = $(LDADD) $(MLX_LIBS)
+endif
 if DPDK
 noinst_PROGRAMS += ZpktDpdkPoolTest ZpktDpdkInstanceTest
 ZpktDpdkPoolTest_SOURCES = ZpktDpdkPoolTest.cc

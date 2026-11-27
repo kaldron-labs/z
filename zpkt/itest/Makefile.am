@@ -44,6 +44,13 @@ zpktwaketest_LDFLAGS = $(AM_LDFLAGS) $(XDP_PRIVATE_LINK)
 zpktfiltertest_LDFLAGS = $(AM_LDFLAGS) $(XDP_PRIVATE_LINK)
 zpktlooptest_SOURCES = zpktlooptest.cc zpktlog.hh
 
+if MLX
+noinst_PROGRAMS += zpktmlx_test
+zpktmlx_test_SOURCES = zpktmlx_test.cc
+zpktmlx_test_CPPFLAGS = $(AM_CPPFLAGS) \
+	-DZPKT_MLX_MODULE='"$(abs_top_builddir)/zpkt/mlx/.libs/libZpkt_mlx.so"'
+endif
+
 if DPDK
 noinst_LTLIBRARIES += libZpktDpdkFixture.la libZpktTestDpdk.la
 libZpktDpdkFixture_la_SOURCES = zpktdkfixture.cc zpktdkfixture.hh

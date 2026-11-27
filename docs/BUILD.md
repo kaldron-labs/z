@@ -75,7 +75,7 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
 
 ## Quick commands
 
-- `./z.config /opt/z` configures the build with a prefix; use `./z.config -h` for options. Common flags include `-c` to rerun `autoreconf`, `-d` for debug, `-L` for clang, `-G` to disable Gtk, `-P` to disable PostgreSQL, and `-M` for MinGW.
+- `./z.config /opt/z` configures the build with a prefix; use `./z.config -h` for options. Common flags include `-c` to rerun `autoreconf`, `-d` for debug, `-L` for clang, `-G` to disable Gtk, `-P` to disable PostgreSQL, and `-m` for MinGW. On Linux, `-M` enables Mellanox support.
 - `make -j8` builds all enabled modules plus their test binaries.
 - `make install` installs libraries/headers into the configured prefix.
 - `make test` runs tests.

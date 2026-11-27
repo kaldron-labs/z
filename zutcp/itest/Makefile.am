@@ -42,6 +42,13 @@ EXTRA_DIST = README.md zutcpipfixture.sh zutcppairfixture.sh zutcpmxfixture.sh \
 	zutcpappfixture.sh zutcpmxlossfixture.sh zutcprecovery.py zutcpoptions.py zutcptfo.py \
 	zutcpudpfixture.sh zutcpafpfixture.sh
 
+if MLX
+noinst_PROGRAMS += zutcpmlxtest
+zutcpmlxtest_SOURCES = zutcpmlxtest.cc
+zutcpmlxtest_CPPFLAGS = $(AM_CPPFLAGS) \
+	-DZUTCP_MLX_MODULE='"$(abs_top_builddir)/zpkt/mlx/.libs/libZpkt_mlx.so"'
+endif
+
 if DPDK
 noinst_PROGRAMS += zutcpdpdktest
 zutcpdpdktest_SOURCES = zutcpdpdktest.cc zutcpdpdkfixture.hh zutcpdpdkfixture.cc

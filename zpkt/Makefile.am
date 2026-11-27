@@ -3,6 +3,9 @@ SUBDIRS = src afp xdp
 if DPDK
 SUBDIRS += dpdk
 endif
+if MLX
+SUBDIRS += mlx
+endif
 SUBDIRS += test util itest
 
 .PHONY: test
