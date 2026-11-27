@@ -121,6 +121,10 @@ Follow the repository guidance in ../AGENTS.md and the caller-supplied
 
 ## AF_PACKET
 
+* Claim the named interface's entire ingress during open. Keep the socket-owned
+  nftables drop policy through stop and restart and release it on finalization.
+  Fail the open if the claim cannot be established.
+
 * Use bounded nonblocking socket vectors with independently retainable pool
   slots and no per-packet allocations. Advertise copy mode and leave TCP
   checksum computation to the caller. Apply the bypass policy on a dormant

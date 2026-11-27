@@ -45,6 +45,7 @@
 #ifdef ZPKT_XDP_TEST
 extern "C" void ZpktTestXdpDesc(const xdp_desc &);
 extern "C" void ZpktTestXdpPublish(unsigned, uint32_t, bool);
+extern "C" bool ZpktTestXdpCQ();
 #endif
 
 namespace Zpkt {
@@ -150,8 +151,9 @@ public:
 
   void reserveTxPools(ZuSpan<Zi::IOBufPool *const> pools) override {
     ZmAssert_(mx() && Engine::state() == ZmEngineState::Stopped && !allocated());
-    m_txReserves.length(pools.length());
-    for (unsigned i = 0; i < pools.length(); ++i) m_txReserves[i] = pools[i];
+    auto n = pools.length();
+    m_txReserves.length(n);
+    for (unsigned i = 0; i < n; ++i) m_txReserves[i] = pools[i];
   }
 
   ZuUnion<void, ZeException> alloc(
@@ -192,14 +194,17 @@ public:
     if (created.is<ZeException>()) return ZuMv(created).p<ZeException>();
     auto arena = ZuMv(created).p<ZmRef<UMem>>();
     const auto &layout = arena->layout();
-    auto r = power2(layout.rxCount/rxQueues() + !!(layout.rxCount%rxQueues()));
+    auto n = rxQueues();
+    auto quota = layout.rxCount/n;
+    auto extra = layout.rxCount%n;
+    auto r = power2(quota + !!extra);
     auto t = power2(layout.txCount);
     if (!r || !t) return ZeEXCEPT(Error, "Zpkt", "AF_XDP ring capacity overflow");
     Queues queues;
-    queues.length(rxQueues());
-    for (unsigned i = 0; i < queues.length(); ++i) {
+    queues.length(n);
+    for (unsigned i = 0; i < n; ++i) {
       auto queue = queues[i] = new Queue;
-      queue->quota = layout.rxCount/rxQueues() + (i < layout.rxCount%rxQueues());
+      queue->quota = quota + (i < extra);
       auto opened = queue->owner.owner(arena, ifindex(), i, r, i ? 2 : t,
 	i ? queues[0]->owner.fd() : -1);
       if (opened.is<ZeException>()) {
@@ -207,7 +212,7 @@ public:
 	return opened;
       }
     }
-    for (unsigned i = 0; i < queues.length(); ++i) {
+    for (unsigned i = 0; i < n; ++i) {
       auto &owner = queues[i]->owner;
       auto id = ZuID{} << "xdp." << ZuBoxed(ifindex()) << '.' << ZuBoxed(i) << '.';
       owner.fill().identify(ZuID{mx()->id()}, ZuID{id} << "fill", Ztc::QueueType::Tx);
@@ -244,6 +249,26 @@ private:
       Engine::started(false);
       return;
     }
+    if (m_txHeld) {
+      mx()->txRun([this] { resumeStart(); });
+      return;
+    }
+    activate();
+  }
+
+  void resumeStart() {
+    ZmAssert_(mx()->invoked(mx()->txThread()));
+    // A stopped run may still have a kernel loan. Only the Tx owner reads
+    // its retained CQ, and each continuation handles at most one quantum.
+    if (m_txHeld && cqReady()) reapTx();
+    if (m_txHeld && cqReady()) {
+      mx()->txRun([this] { resumeStart(); });
+      return;
+    }
+    activate();
+  }
+
+  void activate() {
     auto result = open();
     if (result.is<void>()) { Engine::started(true); return; }
     error(ZuMv(result).p<ZeException>());
@@ -257,27 +282,35 @@ private:
     wake();
     m_drainDeadline = monotonicNow() + ZuTime{2};
     if (unsigned(m_txExited)) {
-      retire();
+      mx()->rxRun([this] { retireRx(); });
       return;
     }
-    // The caller's Tx owner is quiescent. Drain already queued sender work
-    // before the stop continuation takes responsibility for TX/CQ.
+    // Fence all earlier sender work before the mux owners retire their rings.
     m_txExit = 1;
     mx()->run([this] {
       m_txExited = 1;
       notifyTxStopped();
-      retire();
+      mx()->rxRun([this] { retireRx(); });
     }, m_txSid);
   }
 
-  void retire() {
+  void retireRx() {
+    ZmAssert_(mx()->invoked(mx()->rxThread()));
     if (!m_ingressQuiesced) {
       auto result = quiesceIngress();
       if (result.is<ZeException>() && !failed()) error(ZuMv(result).p<ZeException>());
     }
-    bool rxDone = drainRx();
-    if (!drainTx() || !rxDone) {
-      mx()->run([this] { retire(); }, m_txSid);
+    if (!drainRx()) {
+      mx()->rxRun([this] { retireRx(); });
+      return;
+    }
+    mx()->txRun([this] { retireTx(); });
+  }
+
+  void retireTx() {
+    ZmAssert_(mx()->invoked(mx()->txThread()));
+    if (!drainTx()) {
+      mx()->txRun([this] { retireTx(); });
       return;
     }
     auto result = close();
@@ -301,11 +334,8 @@ private:
     ackWake();
     if (m_ingressUncertain)
       return ZeEXCEPT(Error, "Zpkt", "AF_XDP ingress retirement could not be proved");
-    if (m_txHeld) {
-      while (m_queues[0]->owner.comp().available()) reapTx();
-      if (m_txHeld)
-	return ZeEXCEPT(Error, "Zpkt", "previous AF_XDP Tx loans remain outstanding");
-    }
+    if (m_txHeld)
+      return ZeEXCEPT(Error, "Zpkt", "previous AF_XDP Tx loans remain outstanding");
     auto detached = m_attachment.detach();
     if (detached.is<ZeException>()) return detached;
     auto programs = xdpQuery(ifindex(), m_nifFD);
@@ -431,7 +461,11 @@ private:
     if (!m_txHeld) return true;
     reapTx();
     if (!m_txHeld) return true;
-    if (auto error = kickTx(m_queues[0]->service)) m_ioError = error;
+    auto &service = m_queues[0]->service;
+    // A refused restart has no service socket. Preserve the unresolved
+    // loan for a later activation rather than waiting on a closed run.
+    if (service.fd() < 0) return true;
+    if (auto error = kickTx(service)) m_ioError = error;
     if (monotonicNow() < m_drainDeadline) return false;
     // Any loan still outstanding on device failure remains accounted for.
     // Returning it without a CQ would race the kernel's pinned UMEM.
@@ -529,6 +563,12 @@ private:
 
   bool receiveQueue(unsigned q);
   unsigned consumeRx(Queue &, bool deliver);
+  bool cqReady() {
+#ifdef ZPKT_XDP_TEST
+    if (!ZpktTestXdpCQ()) return false;
+#endif
+    return m_queues[0]->owner.comp().available();
+  }
   unsigned reapTx();
 
 
@@ -840,6 +880,9 @@ unsigned Nif::consumeRx(Queue &queue, bool deliver)
 
 unsigned Nif::reapTx()
 {
+#ifdef ZPKT_XDP_TEST
+  if (!ZpktTestXdpCQ()) return 0;
+#endif
   unsigned count = 0;
   auto &ring = m_queues[0]->owner.comp();
   auto n = ring.reserve(Quantum);

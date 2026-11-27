@@ -126,13 +126,15 @@ template <typename Argv>
 static RawOpts rawOptions(const Argv &args, unsigned first = 0)
 {
   RawOpts options;
-  for (unsigned i = first; i < args.length(); ++i) {
+  auto n = args.length();
+  for (unsigned i = first; i < n; ++i) {
     const auto &token = args[i];
     if (token == "--") break;
-    if (!token.length() || token[0] != '-') continue;
+    auto length = token.length();
+    if (!length || token[0] != '-') continue;
     const char *begin = token.data();
     const char *split = strchr(begin, '=');
-    if (!split && token.length() > 2 && token[1] != '-') split = begin + 2;
+    if (!split && length > 2 && token[1] != '-') split = begin + 2;
     auto name = canonicalName(split ? ZuCSpan{begin, unsigned(split - begin)} : ZuCSpan{token});
     if (name == "remap-lcore-ids") options.remap = true;
     int id = CLI::longOptionID(name);
@@ -142,7 +144,7 @@ static RawOpts rawOptions(const Argv &args, unsigned first = 0)
     const char *value = "";
     if (split)
       value = *split == '=' ? split + 1 : split;
-    else if (takesValue && i + 1 < args.length())
+    else if (takesValue && i + 1 < n)
       value = args[++i].ndata();
     if (id >= 0 && !options.arg[id]) options.arg[id] = value;
   }

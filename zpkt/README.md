@@ -75,7 +75,14 @@ A same-name/multiplexer
 lookup returns the same pointer without querying or reopening, including while
 running; a different multiplexer returns a structured error. The caller acquires
 its own reference immediately. AF_XDP redirects all interface traffic, including
-non-IP frames. `rxSpin` controls idle probes before Rx blocks, and `txSpin`
+non-IP frames. It first tries native XDP, which runs the redirect in the network
+driver's receive path before the normal Linux socket buffer (`sk_buff`) is built.
+If the driver lacks native support, generic XDP runs the redirect on an existing
+`sk_buff` before IP processing. Generic XDP copies frames into AF_XDP's UMEM.
+Native XDP can also use copy mode. Zero-copy requires separate driver and queue
+support and a socket bound in zero-copy mode. [Linux AF_XDP documentation](https://docs.kernel.org/networking/af_xdp.html)
+
+`rxSpin` controls idle probes before Rx blocks, and `txSpin`
 controls idle probes before the sender returns to its scheduler. Rx defaults to
 `(Zi_DefltSpin<<2)` and Tx defaults to `Zi_DefltSpin`. `txSid` is required and nonzero.
 
@@ -110,7 +117,12 @@ interfaces {
 }
 ```
 
-AFP needs `CAP_NET_RAW` in the interface's network namespace. It receives
+Opening an AFP interface takes over its entire ingress until successful
+finalization, including while the Nif is stopped. The backend installs a
+device-specific nftables drop policy after the packet tap and before kernel
+protocol processing. Opening requires `CAP_NET_RAW` and `CAP_NET_ADMIN` in
+the user namespace governing the network namespace. Keep the interface name
+stable while open. AFP receives
 raw Ethernet using nonblocking `recvmmsg()` and transmits with `sendmmsg()`.
 The caller computes TCP checksums. `qdiscBypass` defaults to true and is
 applied for each run. Set it to false to use the Linux egress scheduler.

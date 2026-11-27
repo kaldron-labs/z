@@ -66,6 +66,7 @@ static ZmAtomic<int> budgetResult{0};
 static ZmSemaphore afterEntered, afterRelease;
 static ZmAtomic<unsigned> xdpSockets{0}, xdpBinds{0}, xdpRegistrations{0};
 static ZmAtomic<unsigned> routeSockets{0};
+static ZmAtomic<unsigned> holdCQ{0};
 static int registrationFD = -1;
 static unsigned failServiceBind = 0;
 static bool failRegistration = false;
@@ -128,6 +129,12 @@ void ZpktTestXdpPublish(unsigned count, uint32_t producer, bool idle)
     state.firstHandoff = handedOff && yielded && idle &&
       state.nDescriptors == 1 && count == 1;
   } else if (state.nGroups == 2) state.nextHandoff = idle;
+}
+
+extern "C" __attribute__((visibility("default")))
+bool ZpktTestXdpCQ()
+{
+  return !holdCQ;
 }
 
 extern "C" __attribute__((visibility("default")))
@@ -757,7 +764,7 @@ static void testSenderProgress()
 {
   ZuTestScopeRT(testSenderProgress);
   enum { Budget = 32, Initial = 80, More = 16, Total = Initial + More + 1 };
-  ZpktTest::Environment env;
+  ZpktTest::Environment env{ZPKT_XDP_TEST_MODULE};
   ZmRef<Zpkt::Nif> instance;
   auto rx = ZpktTest::pool(Zi::IOBufType::Rx, RxSlots, 1514);
   auto tx = ZpktTest::pool(Zi::IOBufType::TxTCP, Initial + More, 128);
@@ -785,7 +792,7 @@ static void testSenderProgress()
     return;
   }
   unsigned accepted = 0, retired = 0;
-  auto publish = [&instance, &tx, &accepted](unsigned count) {
+  auto publish = [&instance, &tx, &accepted](unsigned count, uint8_t **loan = nullptr) {
     Zpkt::TxPacket frames[Zpkt::MaxTxBatch];
     while (count) {
       auto n = count > Zpkt::MaxTxBatch ? unsigned(Zpkt::MaxTxBatch) : count;
@@ -801,6 +808,7 @@ static void testSenderProgress()
 	frames[allocated++] = {p, Bytes};
       }
       auto sent = instance->send({frames, allocated});
+      if (loan && sent) *loan = frames[0].data;
       for (unsigned i = 0; i < allocated; ++i) tx->free(frames[i].data);
       accepted += sent;
       if (sent != n) return false;
@@ -869,7 +877,9 @@ static void testSenderProgress()
   bool final = progressed && publish(3) && await(senderEntered);
   ZmSemaphore stopComplete;
   ZmAtomic<unsigned> stopResult{0};
-  if (final) instance->stop([&stopComplete, &stopResult](bool ok) {
+  unsigned completeSid = 0;
+  if (final) instance->stop([&stopComplete, &stopResult, &completeSid](bool ok) {
+    completeSid = ZmSelf()->sid();
     stopResult = ok ? 2 : 1;
     stopComplete.post();
   });
@@ -879,12 +889,51 @@ static void testSenderProgress()
   senderRelease.post();
   afterRelease.post();
   bool exited = final && !earlyStop && await(stopped) && await(stopComplete) && stopResult == 2;
-  ZuCheckRT(exited && stops == 1 && stopSid == Sender,
-    log_("shutdown waits for the active sendto callback and its FIFO sender barrier"));
+  ZuCheckRT(exited && stops == 1 && stopSid == Sender && completeSid == mx.txThread(),
+    log_("shutdown fences the active sender and completes on mux Tx"));
   bool closed = shutdown(instance, error);
   ZuCheckRT(closed,
     log_("shutdown retires the final unpolled vector's CQ leases: ", error));
   ZmAssert_(closed);
+
+  auto receive = [&rx](uint8_t *p, unsigned, ZiRxBurst *) { rx->free(p); };
+  bool restarted = instance->start(receive);
+  ZuCheckRT(restarted);
+  if (restarted) {
+    // Leave an actual completion in the persistent CQ until after the stop
+    // deadline and one restart attempt. The test only hides it from the reader.
+    holdCQ = 1;
+    bool submitted = false;
+    uint8_t *loan = nullptr;
+    mx.txRun([&publish, &submitted, &done, &loan] {
+      submitted = publish(1, &loan);
+      done.post();
+    });
+    done.wait();
+    bool stoppedOK = instance->stop();
+    uint8_t *held[Initial + More];
+    unsigned nHeld = 0;
+    while (nHeld < Initial + More) {
+      auto p = tx->alloc();
+      if (!p) break;
+      held[nHeld++] = p;
+    }
+    ZuCheckRT(submitted && !stoppedOK && nHeld == Initial + More - 1,
+      log_("stop deadline leaves the unobserved kernel loan accounted for"));
+    bool refused = !instance->start(receive);
+    auto early = tx->alloc();
+    ZuCheckRT(refused && instance->allocated() && !early,
+      log_("restart refuses an unresolved loan and preserves the arena"));
+    if (early) tx->free(early);
+    holdCQ = 0;
+    restarted = refused ? instance->start(receive) : instance->ready();
+    auto returned = tx->alloc();
+    ZuCheckRT(restarted && instance->allocated() && returned && returned == loan,
+      log_("restart retires the retained CQ entry before opening service"));
+    if (returned) tx->free(returned);
+    for (unsigned i = 0; i < nHeld; ++i) tx->free(held[i]);
+    ZuCheckRT(shutdown(instance, error), log_("stop after retained CQ restart: ", error));
+  }
   if (instance) instance->final();
   ZuCheckRT(mx.stop());
 }

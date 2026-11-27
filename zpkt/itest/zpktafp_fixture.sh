@@ -11,6 +11,8 @@ fi
   exit 1
 }
 ip link add zafp0 type veth peer name zafp1
+ip link set zafp0 address 02:00:00:00:00:01
+ip addr add 198.18.7.1/24 dev zafp0
 for name in zafp0 zafp1; do
   sysctl -qw "net.ipv6.conf.$name.disable_ipv6=1"
   ip link set "$name" up

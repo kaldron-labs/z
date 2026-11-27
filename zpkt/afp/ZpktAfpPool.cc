@@ -181,12 +181,14 @@ PoolSet::Result PoolSet::alloc(
   if (allocated()) {
     if (rxPool == m_rx.ptr() && txPools.count_() == m_appTx &&
 	reserves.length() == m_tx.length() - m_appTx) {
-      auto it = txPools.citer();
       bool same = true;
-      while (auto pool = it()) {
-	bool found = false;
-	for (unsigned i = 0; i < m_appTx; ++i) found |= pool == m_tx[i].ptr();
-	same &= found;
+      {
+	auto it = txPools.citer();
+	while (auto pool = it()) {
+	  bool found = false;
+	  for (unsigned i = 0; i < m_appTx; ++i) found |= pool == m_tx[i].ptr();
+	  same &= found;
+	}
       }
       for (unsigned i = 0; i < reserves.length(); ++i)
 	same &= reserves[i].ptr() == m_tx[m_appTx + i].ptr();
@@ -212,9 +214,11 @@ PoolSet::Result PoolSet::alloc(
     tx.push(ZmRef<BufPool>{pool});
     return true;
   };
-  auto it = txPools.citer();
-  while (auto pool = it())
-    if (!add(dynamic_cast<BufPool *>(pool))) return poolError("invalid AFP Tx pool", EINVAL);
+  {
+    auto it = txPools.citer();
+    while (auto pool = it())
+      if (!add(dynamic_cast<BufPool *>(pool))) return poolError("invalid AFP Tx pool", EINVAL);
+  }
   unsigned appTx = tx.length();
   for (const auto &pool : reserves)
     if (!add(pool.ptr())) return poolError("invalid or duplicate AFP Tx reserve", EINVAL);
@@ -236,11 +240,7 @@ PoolSet::Result PoolSet::alloc(
     auto rhs = static_cast<const Range *>(b)->begin;
     return (lhs > rhs) - (lhs < rhs);
   });
-  auto completions = static_cast<Completion *>(calloc(capacity, sizeof(Completion)));
-  if (!completions) return poolError("allocate AFP Tx completions", ENOMEM);
-
-  m_completions = completions;
-  m_capacity = unsigned(capacity);
+  m_completions.length(capacity);
   m_appTx = appTx;
   m_rx = ingress;
   m_tx = ZuMv(tx);
@@ -259,9 +259,8 @@ bool PoolSet::final()
   m_index.null();
   m_rx = nullptr;
   m_tx.null();
-  m_capacity = m_appTx = 0;
-  ::free(m_completions);
-  m_completions = nullptr;
+  m_appTx = 0;
+  m_completions.null();
   return true;
 }
 

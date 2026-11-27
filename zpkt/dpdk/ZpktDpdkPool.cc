@@ -20,6 +20,7 @@
 #include <zlib/ZuHash.hh>
 
 #include <zlib/ZmAssert.hh>
+#include <zlib/ZmAtomic.hh>
 
 #include "ZpktDpdkPool.hh"
 
@@ -48,7 +49,7 @@ struct TxPoolState {
   rte_ring	*returned = nullptr, *available = nullptr;
   TxReturns	*ready = nullptr;
   bool		online = false;
-  alignas(Zm::CacheLineSize) unsigned scheduled = 0;
+  alignas(Zm::CacheLineSize) ZmAtomic<unsigned> scheduled{0};
 };
 
 static auto *txState(const rte_mempool *pool)
@@ -94,7 +95,9 @@ static int txPoolEnqueue(rte_mempool *pool, void *const *objects, unsigned n)
 #ifdef ZPKT_DPDK_TEST
     ZpktTestDpdkReturns(ReturnPoint::Published, n);
 #endif
-    if (!__atomic_exchange_n(&state->scheduled, 1, __ATOMIC_ACQ_REL)) ready->push(pool);
+    // The scheduling exchange acquires; publish the return before it.
+    ZmAtomic_release();
+    if (!state->scheduled.xch(1)) ready->push(pool);
     ready->leave();
   }
   return 0;
@@ -173,12 +176,12 @@ void TxReturns::settle(rte_mempool *pool)
 #ifdef ZPKT_DPDK_TEST
   ZpktTestDpdkReturns(ReturnPoint::BeforeClear, 0);
 #endif
-  __atomic_exchange_n(&state->scheduled, 0, __ATOMIC_ACQ_REL);
+  ZmAtomic_release();
+  state->scheduled.xch(0);
 #ifdef ZPKT_DPDK_TEST
   ZpktTestDpdkReturns(ReturnPoint::AfterClear, 0);
 #endif
-  if (!rte_ring_empty(state->returned) &&
-      !__atomic_exchange_n(&state->scheduled, 1, __ATOMIC_ACQ_REL))
+  if (!rte_ring_empty(state->returned) && !state->scheduled.xch(1))
     push(pool);
 #ifdef ZPKT_DPDK_TEST
   ZpktTestDpdkReturns(ReturnPoint::AfterRecheck, 0);

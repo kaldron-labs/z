@@ -37,7 +37,8 @@ libZpktTestXdp_la_LIBADD = $(LDADD)
 zpktwaketest_SOURCES = zpktwaketest.cc zpktfixture.hh
 zpktfiltertest_SOURCES = zpktfiltertest.cc
 zpktpackettest_LDFLAGS = $(AM_LDFLAGS) $(XDP_PRIVATE_LINK) \
-	-Wl,--export-dynamic-symbol=ZpktTestXdpDesc -Wl,--export-dynamic-symbol=ZpktTestXdpPublish
+	-Wl,--export-dynamic-symbol=ZpktTestXdpDesc -Wl,--export-dynamic-symbol=ZpktTestXdpPublish \
+	-Wl,--export-dynamic-symbol=ZpktTestXdpCQ
 zpktpackettest_DEPENDENCIES = libZpktTestXdp.la $(filter %.la,$(LDADD))
 zpktwaketest_LDFLAGS = $(AM_LDFLAGS) $(XDP_PRIVATE_LINK)
 zpktfiltertest_LDFLAGS = $(AM_LDFLAGS) $(XDP_PRIVATE_LINK)

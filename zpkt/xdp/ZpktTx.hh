@@ -13,6 +13,10 @@
 #include <zlib/ZpktXDPLib.hh>
 #endif
 
+#ifndef ZpktXDPGenlReplySize
+#define ZpktXDPGenlReplySize 8192
+#endif
+
 #include <stdint.h>
 #include <linux/if_xdp.h>
 

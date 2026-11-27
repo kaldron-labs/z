@@ -87,7 +87,7 @@ static uint64_t request(int fd, unsigned family, unsigned command, unsigned sequ
     reinterpret_cast<sockaddr *>(&peer), sizeof(peer));
   while (n < 0 && errno == EINTR);
   if (n != int(message.header.nlmsg_len)) return 0;
-  alignas(nlmsghdr) uint8_t reply[8192];
+  alignas(nlmsghdr) uint8_t reply[ZpktXDPGenlReplySize];
   do n = recv(fd, reply, sizeof(reply), MSG_TRUNC);
   while (n < 0 && errno == EINTR);
   if (n <= 0 || unsigned(n) > sizeof(reply)) return 0;

@@ -107,7 +107,10 @@ sudo -n prove ./zpkt/itest/zpktdkpackettest ./zpkt/itest/zpktdkwaketest \
 Build `zpkt/afp` and the integration targets, then run the privileged wire
 fixture. It loads `libZpkt_afp.so` through Env and uses isolated veth
 endpoints. It checks bidirectional Ethernet exchange at peer ingress with
-bypass enabled and disabled, outgoing suppression, and restart.
+bypass enabled and disabled, outgoing suppression, and restart. An independent
+UDP socket checks host delivery before open and after finalization, and
+suppression while the AFP interface is open, running and stopped. A competing
+Env attempts to claim the same interface.
 
 ```sh
 sudo -n env ZPKT_RUN_FIXTURE=1 prove ./zpkt/itest/zpktafp_test

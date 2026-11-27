@@ -37,6 +37,11 @@ Nif::Nif(ZiMultiplex *mx, const NifCf &config, const NifInfo &info) :
   if (!ifindex() || ifindex() > INT_MAX || !mtu())
     throw deviceError("invalid AF_PACKET interface geometry", EINVAL);
   if (int err = openSocket()) throw deviceError("open dormant AF_PACKET socket", err);
+  m_ingressFD = openIngress(ifindex());
+  if (m_ingressFD < 0) {
+    ::close(m_fd);
+    throw deviceError("claim AF_PACKET nftables ingress", -m_ingressFD);
+  }
   rxQueues(1);
 }
 
@@ -111,6 +116,8 @@ void Nif::final()
   m_reserves.null();
   if (m_fd >= 0) { ::close(m_fd); m_fd = -1; }
   ZmAssert_(!(uint64_t(m_gate) & (Ready | Armed | FinishWaiting | WriterMask)) && wakeFD() < 0);
+  ::close(m_ingressFD); // releases the socket-owned nftables table and ingress hook
+  m_ingressFD = -1;
   resetInfo();
   error({});
   final_();
@@ -428,9 +435,9 @@ unsigned Nif::receive()
     bytes += lengths[i];
   }
   burst.flush();
-  m_rxPackets.store_(m_rxPackets.load_() + delivered);
-  m_rxBytes.store_(m_rxBytes.load_() + bytes);
-  m_rxDiscard.store_(m_rxDiscard.load_() + received - delivered);
+  m_rxPackets += delivered;
+  m_rxBytes += bytes;
+  m_rxDiscard += received - delivered;
   return received;
 }
 
@@ -523,8 +530,8 @@ unsigned Nif::send(ZuSpan<const TxPacket> packets, Zu::IO::Result &result)
       bytes += length;
     }
     m_pending.store_(pending + accepted);
-    m_txAccepted.store_(m_txAccepted.load_() + accepted);
-    m_txBytes.store_(m_txBytes.load_() + bytes);
+    m_txAccepted += accepted;
+    m_txBytes += bytes;
     result = Zi::OK;
   } else if (err == EAGAIN || err == EWOULDBLOCK || err == ENOBUFS || (!err && ready())) {
     result = Zi::NotReady;
@@ -546,8 +553,8 @@ unsigned Nif::pollTx()
     completion[i].slot->release(Slot::Submitted);
   }
   m_pending.store_(0);
-  m_txRetired.store_(m_txRetired.load_() + pending);
-  m_txRetiredBytes.store_(m_txRetiredBytes.load_() + bytes);
+  m_txRetired += pending;
+  m_txRetiredBytes += bytes;
   return pending;
 }
 
@@ -580,7 +587,7 @@ void Nif::status()
   }
   ZiLOG(Info, "Zpkt.Afp", ([
     name = CfString{name()}, index, mtu, active, state = this->state(),
-    requested = m_config.qdiscBypass, bypass, drops, discards = m_rxDiscard.load_()
+    requested = m_config.qdiscBypass, bypass, drops, discards = m_rxDiscard
   ](auto &out) {
     out << "AF_PACKET " << name << " ifindex " << ZuBoxed(index) << " MTU " << ZuBoxed(mtu)
       << " state " << ZuBoxed(state) << " mode copy";
@@ -613,15 +620,15 @@ unsigned Nif::allQueues(Ztc::QueueMgr::AllFn fn) const
     rx.data.type = Ztc::QueueType::Rx;
     tx.data.type = Ztc::QueueType::Tx;
     rx.data.size = m_pools.rx()->count;
-    rx.data.outCount = m_rxPackets.load_();
-    rx.data.outBytes = m_rxBytes.load_();
+    rx.data.outCount = m_rxPackets;
+    rx.data.outBytes = m_rxBytes;
     rx.data.full = drops > UINT32_MAX ? UINT32_MAX : unsigned(drops);
     tx.data.size = m_pools.txCapacity();
     tx.data.count = m_pending.load_();
-    tx.data.inCount = m_txAccepted.load_();
-    tx.data.inBytes = m_txBytes.load_();
-    tx.data.outCount = m_txRetired.load_();
-    tx.data.outBytes = m_txRetiredBytes.load_();
+    tx.data.inCount = m_txAccepted;
+    tx.data.inBytes = m_txBytes;
+    tx.data.outCount = m_txRetired;
+    tx.data.outBytes = m_txRetiredBytes;
   }
   fn(&rx);
   fn(&tx);

@@ -65,6 +65,7 @@ private:
   void start_() override;
   void stop_() override;
   Result activate();
+  static int openIngress(unsigned ifindex); // owner socket or negative errno
   int openSocket();
   int bindSocket(unsigned protocol);
   void closeRun();
@@ -102,12 +103,10 @@ private:
     iovec	iov[MaxTxBatch]{};
     Slot	*slots[MaxTxBatch];
   };
-  using Counter = ZmAtomic<uint64_t>;
-
   NifCf			m_config;
   PoolSet		m_pools;
   PoolSet::PoolRefs	m_reserves;
-  int			m_fd = -1;
+  int			m_fd = -1, m_ingressFD = -1;
   unsigned		m_bypass = BypassOff;
   mutable ZmLock	m_observe;
   mutable uint64_t	m_drops = 0;
@@ -120,11 +119,11 @@ private:
   bool			m_errorRecorded = false; // Rx owner
 
   alignas(Zm::CacheLineSize) RxVectors m_rx;
-  Counter		m_rxPackets{0}, m_rxBytes{0}, m_rxDiscard{0};
+  uint64_t		m_rxPackets = 0, m_rxBytes = 0, m_rxDiscard = 0;
 
   alignas(Zm::CacheLineSize) TxVectors m_tx;
   ZmAtomic<unsigned>	m_pending{0};
-  Counter		m_txAccepted{0}, m_txBytes{0}, m_txRetired{0}, m_txRetiredBytes{0};
+  uint64_t		m_txAccepted = 0, m_txBytes = 0, m_txRetired = 0, m_txRetiredBytes = 0;
 };
 
 } // namespace Zpkt::Afp

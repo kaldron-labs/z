@@ -123,8 +123,8 @@ public:
   bool final();
   bool allocated() const { return bool(m_rx); }
   BufPool *rx() const { return m_rx.ptr(); }
-  unsigned txCapacity() const { return m_capacity; }
-  Completion *completions() const { return m_completions; }
+  unsigned txCapacity() const { return unsigned(m_completions.length()); }
+  Completion *completions() { return m_completions.data(); }
   Slot *findTx(const void *) const;
 
 private:
@@ -133,12 +133,13 @@ private:
     BufPool	*pool;
   };
   using Index = ZtArray<Range, ZtArrayHeapID<"Zpkt.Afp.AddressIndex">>;
+  using Completions = ZtArray<Completion, ZtArrayHeapID<"Zpkt.Afp.Completions">>;
 
   ZmRef<BufPool>	m_rx;
   PoolRefs		m_tx;
   Index			m_index;
-  unsigned		m_appTx = 0, m_capacity = 0;
-  Completion		*m_completions = nullptr;
+  Completions		m_completions;
+  unsigned		m_appTx = 0;
 };
 
 } // namespace Zpkt::Afp

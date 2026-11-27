@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <arpa/inet.h>
+#include <poll.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -117,6 +119,61 @@ static Frame makeFrame(Endpoint &src, Endpoint &dst, unsigned length, unsigned t
   return frame;
 }
 
+static void testIngress()
+{
+  ZuTestScopeRT(testIngress);
+  Endpoint peer;
+  bool ready = peer.init("zafp1", false) && peer.start();
+  ZuCheckRT(ready, log_("open wire peer"));
+  if (!ready) return;
+  int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+  sockaddr_in dst{};
+  dst.sin_family = AF_INET;
+  dst.sin_port = htons(19001);
+  inet_pton(AF_INET, "198.18.7.1", &dst.sin_addr);
+  bool bound = fd >= 0 && !bind(fd, reinterpret_cast<sockaddr *>(&dst), sizeof(dst));
+  ZuCheckRT(bound, log_("bind independent host UDP receiver"));
+  if (bound) {
+    // IPv4/UDP, 198.18.7.2 -> 198.18.7.1:19001, one payload byte, Ethernet padding.
+    Frame probe{ShortFrame, {
+      2,0,0,0,0,1, 0,0,0,0,0,0, 8,0,
+      0x45,0,0,29, 0,0,0,0, 64,17,0xe0,0xa8, 198,18,7,2, 198,18,7,1,
+      0x4a,0x38,0x4a,0x39, 0,9,0,0, 'Z'}};
+    memcpy(probe.bytes + 6, peer.nif->mac().data(), 6);
+    auto delivered = [&](bool expected) {
+      if (!peer.send(probe)) return false;
+      pollfd item{fd, POLLIN, 0};
+      int n = poll(&item, 1, expected ? 1000 : 100);
+      if (!expected) return !n;
+      char byte = 0;
+      return n == 1 && recv(fd, &byte, 1, MSG_DONTWAIT) == 1 && byte == 'Z';
+    };
+    ZuCheckRT(delivered(true), log_("Linux receives on the unclaimed veth"));
+    Endpoint owner;
+    bool opened = owner.init("zafp0", true);
+    ZuCheckRT(opened && delivered(false), log_("open suppresses kernel UDP before start"));
+    if (opened) {
+      Endpoint contender;
+      ZuCheckRT(!contender.init("zafp0", true) && delivered(false),
+        log_("a second Env cannot displace the first interface claim"));
+      bool running = owner.start();
+      ZuCheckRT(running && delivered(false) && owner.receive(probe),
+        log_("AFP receives the UDP frame while the kernel socket stays empty"));
+      if (running) {
+        ZuCheckRT(owner.nif->stop() && delivered(false), log_("stop retains the claim"));
+      }
+      auto held = owner.tx->alloc();
+      owner.nif->final();
+      ZuCheckRT(held && !!owner.nif->error() && delivered(false),
+        log_("a held buffer keeps the claim across refused finalization"));
+      if (held) owner.tx->free(held);
+      owner.nif->final();
+      ZuCheckRT(delivered(true), log_("final restores kernel UDP delivery"));
+    }
+  }
+  if (fd >= 0) close(fd);
+}
+
 static void testWire()
 {
   ZuTestScopeRT(testWire);
@@ -160,5 +217,6 @@ int main(int argc, char **argv)
   }
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(testIngress);
   ZuTestCall(testWire);
 }

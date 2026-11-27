@@ -26,6 +26,7 @@
 
 #include <zlib/ZpktEnv.hh>
 #include "ZpktTestCf.hh"
+#include "ZpktAfpNif.hh"
 
 using namespace ZuTestUtil;
 
@@ -91,6 +92,15 @@ extern "C" int __real_setsockopt(int, int, int, const void *, socklen_t);
 extern "C" int __real_getsockopt(int, int, int, void *, socklen_t *);
 extern "C" int __real_poll(pollfd *, nfds_t, int);
 extern "C" ssize_t __real_write(int, const void *, size_t);
+
+// The fixture supplies packet devices with synthetic ifindices. The private
+// veth fixture exercises the real nftables transaction and kernel traffic.
+int Zpkt::Afp::Nif::openIngress(unsigned ifindex)
+{
+  if (ifindex != 17) return -ENODEV;
+  int fd = __real_eventfd(0, EFD_CLOEXEC);
+  return fd < 0 ? -errno : fd;
+}
 
 extern "C" int __wrap_socket(int domain, int type, int protocol)
 {
@@ -606,11 +616,31 @@ static void vlanAndTelemetry()
   p.drops = 9;
   unsigned samples = p.statsReads;
   bool sampled = statusContains(e.nif.ptr(), "kernel drops 12", "software discards 4");
-  ZuCHECK(p.statsReads == samples + 1 && queues() == 2 && rx.full == 12 && sampled,
+  ZuCHECK(p.statsReads == samples + 1 && queues() == 2 && p.statsReads == samples + 2 &&
+      rx.full == 12 && sampled,
     "status and queue observers share kernel drops, with software discards reported separately");
+
+  Zpkt::TxPacket frames[5];
+  unsigned frameBytes = 0;
+  for (unsigned i = 0; i < 5; ++i) {
+    frames[i] = {e.packet(), Control - i};
+    frameBytes += Control - i;
+  }
+  bool accepted = e.onTx([&e, &frames] { return e.nif->send(frames) == 5; });
+  ZuCHECK(accepted && queues() == 2 && tx.count == 5 && tx.inCount == 5 &&
+      tx.inBytes == frameBytes && !tx.outCount && !tx.outBytes,
+    "Tx telemetry records accepted frames through completion capacity");
+  bool retired = e.onTx([&e] { return e.nif->pollTx() == 5 && !e.nif->pollTx(); });
+  ZuCHECK(retired && queues() == 2 && !tx.count && tx.inCount == 5 &&
+      tx.outCount == 5 && tx.inBytes == frameBytes && tx.outBytes == frameBytes,
+    "each accepted frame and byte retires exactly once");
+  for (const auto &frame : frames) e.tx->free(frame.data);
+
   ZuCHECK(e.nif->stop() && queues() == 0 && e.nif->start(e.discard()) &&
-      queues() == 2 && !rx.full && !rx.outCount && !p.unsound,
-    "stopped queues disappear and restart resets statistics");
+      queues() == 2 && !rx.full && !rx.outCount && !rx.outBytes &&
+      !tx.count && !tx.inCount && !tx.inBytes && !tx.outCount && !tx.outBytes &&
+      statusContains(e.nif.ptr(), "kernel drops 0", "software discards 0") && !p.unsound,
+    "stopped queues disappear and restart resets Rx and Tx statistics");
 }
 
 static void fatalStop()

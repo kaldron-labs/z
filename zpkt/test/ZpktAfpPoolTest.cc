@@ -134,8 +134,12 @@ static void transaction()
   ZuCHECK(tcp->used() == 1 && slot->submit(), "retained caller can retransmit after retirement");
   slot->release(Slot::Submitted);
   tcp->free(reused);
-  ZuCHECK(pools.final() && !rx->alloc() && !tcp->alloc() && !udp->alloc(),
+  ZuCHECK(pools.final() && !pools.completions() && !pools.txCapacity() &&
+      !rx->alloc() && !tcp->alloc() && !udp->alloc(),
     "all backing is retired after callers release their final leases");
+  ZuCHECK(!pools.alloc(rx.ptr(), list, reserves, 1500).is<ZeException>() &&
+      pools.completions() && pools.txCapacity() == 4 && pools.final(),
+    "a finalized pool set can provision a new completion store");
 }
 
 int main(int argc, char **argv)

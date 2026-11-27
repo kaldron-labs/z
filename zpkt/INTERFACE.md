@@ -66,6 +66,14 @@ interface traffic, including non-IP frames. Its sender slot is distinct from Rx
 and Tx owners. `env->nif(&mx, name)` opens synchronously using core-supplied
 metadata and retains the borrowed multiplexer and link resources until final.
 
+Zpkt tries native (driver-mode) XDP first. On a physical NIC this runs in the
+driver's receive path before it builds an `sk_buff` for the network stack.
+When the driver reports native attachment is unsupported, Zpkt tries generic
+(SKB-mode) XDP, which runs after Linux has built the `sk_buff`. Both redirect
+before IP and TCP processing. Generic mode copies into AF_XDP UMEM. Native mode
+supports copying as well as zero-copy when the driver and bound queue support it.
+[Linux AF_XDP documentation](https://docs.kernel.org/networking/af_xdp.html)
+
 ## Shared allocation
 
 In applications using Zutcp, inject a `Zutcp::MxPlugin` into the multiplexer
@@ -273,9 +281,16 @@ and supports finite capture input in this lifecycle.
 Select `libZpkt_afp.so` and configure the host interface under `interfaces`.
 `rxSpin` defaults to `(Zi_DefltSpin << 2)` and zero proceeds directly to
 the readiness wait. `qdiscBypass` defaults to true. Set it to false to use
-the normal kernel egress scheduler. The plugin requires raw-socket
-permission in the interface's network namespace. It opens a dormant
-protocol-zero socket during named creation and reports one logical Rx queue.
+the normal kernel egress scheduler. Named creation opens a dormant protocol-zero
+socket and claims the configured interface with a socket-owned nftables
+`netdev` ingress chain whose default policy drops every frame after the packet
+tap. This prevents host protocol delivery, including ARP, IPv4 and IPv6.
+The interface name must stay stable until finalization. Opening requires
+`CAP_NET_RAW`, `CAP_NET_ADMIN` and kernel support for owned nftables tables.
+A failed claim fails the open. The claim spans start, stop and restart.
+Successful finalization closes the owner socket and releases the chain.
+The kernel also releases it when the last owner socket reference closes on
+process exit. AFP reports one logical Rx queue.
 AF_PACKET uses the caller's Rx and Tx owners and copies packet bytes.
 
 Allocation retains one Rx pool and the distinct Tx and reserve pools as one
