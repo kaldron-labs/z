@@ -17,6 +17,7 @@ pkginclude_HEADERS = \
 	ZiTxStream.hh ZiFileTxStream.hh ZiRxStream.hh ZiEventLoop.hh \
 	ZiResolver.hh ZiHeapTune.hh ZiHashTune.hh \
 	ZtcHub.hh ZtcLink.hh ZtcMx.hh ZtcPool.hh
+noinst_HEADERS = ZiMxEpoll.hh ZiMxIOCP.hh
 lib_LTLIBRARIES = libZi.la
 libZi_la_SOURCES = \
 	ZiLib.cc ZiPlatform.cc \
@@ -26,6 +27,12 @@ libZi_la_SOURCES = \
 	ZiRing.cc ZiLog.cc ZiEventLoop.cc ZiDaemon.cc ZiPIDFile.cc \
 	ZiResolver.cc ZtcHub.cc \
 	ZtcLink.cc ZtcPool.cc
+if LINUX
+libZi_la_SOURCES += ZiMxEpoll.cc
+endif
+if MINGW
+libZi_la_SOURCES += ZiMxIOCP.cc
+endif
 libZi_la_LIBADD = $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \

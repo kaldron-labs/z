@@ -843,6 +843,66 @@ static void testEndpointRxAllocators()
   ZuCheck(buf && buf->builtin());
 }
 
+class StopCxn : public ZmNHeap<StopCxn>, public ZiConnection {
+friend inline ZuStringT<"ZiMxLoopTest.StopCxn"> ZmNHeapID(StopCxn *);
+
+public:
+  StopCxn(ZiMultiplex *mx, const ZiCxnInfo &info, ZmSemaphore &ready) :
+    ZiConnection{mx, info}, m_ready{ready} { }
+
+  void connected(ZiRxContext &io) override {
+    auto buf = info().rxAllocator->allocBuf(this);
+    if (buf) io.init(ZiRxFn{[](ZiRxContext &) { return true; }}, ZuMv(buf));
+    else io.disconnect();
+    // Run after the backend has had a chance to submit the first receive.
+    mx()->rxRun([this] { m_ready.post(); });
+  }
+
+  void disconnected(bool) override { ++m_disconnected; }
+
+  unsigned disconnects() const { return m_disconnected; }
+
+private:
+  ZmSemaphore	&m_ready;
+  unsigned	m_disconnected = 0;
+};
+
+static void testStopAndRestart()
+{
+  ZuTestScopeRT(testStopAndRestart);
+  ZiMultiplex mx;
+  auto plugin = mx.plugin();
+  auto rx = mx.allocator<Zi::IOBufType::Rx>();
+  ZuCheckRT(plugin && plugin->mx() == &mx && rx);
+  if (!plugin || !rx) return;
+
+  const ZiIP loopback{"127.0.0.1"};
+  for (unsigned i = 0; i != 2; ++i) {
+    ZmSemaphore ready;
+    ZmRef<StopCxn> incoming, outgoing;
+    auto fail = [&ready](bool) { ready.post(); };
+    bool started = mx.start();
+    ZuCheckRT(started);
+    if (!started) return;
+    mx.listen([&mx, &ready, &outgoing, fail, rx](const ZiListenInfo &info) {
+      mx.connect([&mx, &ready, &outgoing](const ZiCxnInfo &ci) -> ZiConnection * {
+	outgoing = new StopCxn{&mx, ci, ready};
+	return outgoing;
+      }, fail, info.ip, 0, info.ip, info.port, rx);
+    }, fail, [&mx, &ready, &incoming](const ZiCxnInfo &ci) -> ZiConnection * {
+      incoming = new StopCxn{&mx, ci, ready};
+      return incoming;
+    }, loopback, 0, 4, rx);
+    auto deadline = Zm::now(5);
+    bool connected = !ready.timedwait(deadline) && !ready.timedwait(deadline);
+    ZuCheckRT(connected);
+    ZuCheckRT(mx.stop());
+    ZuCheckRT(mx.plugin() == plugin && plugin->mx() == &mx);
+    ZuCheckRT(incoming && incoming->disconnects() == 1 && !incoming->up());
+    ZuCheckRT(outgoing && outgoing->disconnects() == 1 && !outgoing->up());
+  }
+}
+
 struct MxWatchState {
   ZiMultiplex	*mx = nullptr;
   unsigned	rootAdds = 0;
@@ -1079,6 +1139,7 @@ int main(int argc, char **argv)
   ZuTestCall(testUdpTOSMappedIPv4);
   ZuTestCall(testUdpMPSIPv6);
   ZuTestCall(testEndpointRxAllocators);
+  ZuTestCall(testStopAndRestart);
   ZuTestCall(testMxWatch);
   ZuTestCall(testWakeBurst);
   return 0;

@@ -70,28 +70,10 @@
 #include <zlib/ZmBackTracer.hh>
 #endif
 
-#ifdef _WIN32
-#define ZiMultiplex_IOCP	// Windows I/O completion ports
-#endif
-
-#ifdef linux
-#define ZiMultiplex_EPoll	// Linux epoll
-#endif
-
 #ifdef ZiMultiplex_DEBUG
 #define ZiDEBUG(mx, e) do { if ((mx)->debug()) ZiLOG(Debug, "ZiMultiplex", (e)); } while (0)
 #else
 #define ZiDEBUG(mx, e) (void())
-#endif
-
-#ifdef ZiMultiplex_IOCP
-#define ZiMultiplex__AcceptHeap 1
-#define ZiMultiplex__ConnectHash 0
-#endif
-
-#ifdef ZiMultiplex_EPoll
-#define ZiMultiplex__AcceptHeap 0
-#define ZiMultiplex__ConnectHash 1
 #endif
 
 class ZiConnection;
@@ -479,36 +461,6 @@ using ZiListenFn = ZmFn<void(const ZiListenInfo &),
 using ZiConnectFn = ZmFn<ZiConnection *(const ZiCxnInfo &),
   ZmFnHeapID<"ZiMultiplex.ConnectFn">>;
 
-#ifdef ZiMultiplex_IOCP
-// overlapped I/O structure for a single request (Windows IOCP) - internal
-class Zi_Overlapped {
-public:
-  using Executed = ZmFn<void(int, unsigned, ZeError),
-    ZmFnHeapID<"ZiMultiplex.OverlappedFn">>;
-
-  Zi_Overlapped() { }
-  ~Zi_Overlapped() { }
-
-  template <typename Executed>
-  void init(Executed &&executed) {
-    memset(&m_wsaOverlapped, 0, sizeof(WSAOVERLAPPED));
-    m_executed = ZuFwd<Executed>(executed);
-  }
-
-  void complete(int status, unsigned len, ZeError e) {
-    auto executed = ZuMv(m_executed);
-    executed(status, len, e); // Note: may destroy this object
-  }
-
-  bool pending() const { return !!m_executed; }
-  void clear() { m_executed = {}; }
-
-private:
-  WSAOVERLAPPED		m_wsaOverlapped;
-  Executed		m_executed;
-};
-#endif
-
 // connection class - must be derived from and instantiated by caller
 // when listen() or connect() completion is called with an OK status;
 // derived class must supply connected() and disconnected() functions
@@ -519,7 +471,8 @@ class ZiAPI ZiConnection :
   ZiConnection(const ZiConnection &) = delete;
   ZiConnection &operator =(const ZiConnection &) = delete;
 
-friend ZiMultiplex;
+friend class ZiMxEpoll;
+friend class ZiMxIOCP;
 friend struct ZiTxContext;
 
 public:
@@ -574,42 +527,27 @@ public:
   ZiTxContext &txContext() { return m_txContext; } // Tx thread exclusive
 
 private:
-  void connected();
-
-#ifdef ZiMultiplex_EPoll
-  bool recv();
-#else
-  void recv();
-#endif
-#ifdef ZiMultiplex_IOCP
-  void overlappedRecv(int status, unsigned n, ZeError e);
-  void overlappedSend(int status, unsigned n, ZeError e);
-#endif
-  void errorRecv(int status, ZeError e);
+  void errorRecv(const char *op, int status, ZeError e);
   void executedRecv(unsigned n);
 
   void send();
   bool allocatorOK();
-  void errorSend(int status, ZeError e);
+  void errorSend(const char *op, int status, ZeError e);
   void syncDone();
 
   void disconnect(bool peer);
   void disconnect_1(bool peer);
-  void disconnect_2(bool peer);
   void close(bool peer);
   void close_1(bool peer);
-  void close_2(bool peer);
-#ifdef ZiMultiplex_IOCP
-  void overlappedDisconnect(int status, unsigned n, ZeError e);
-#endif
-  void errorDisconnect(int status, ZeError e, bool peer);
-  void executedDisconnect(bool peer);
   void notifyDisconnected(bool peer);
 
-  // immutable
+  ZmPolymorph *backend() const { return m_backend; }
+  void backend(ZmRef<ZmPolymorph> state) { m_backend = ZuMv(state); }
+
   ZiMultiplex		*m_mx;
   ZiCxnInfo		m_info;
   void			*m_plugin = nullptr;
+  ZmRef<ZmPolymorph>	m_backend; // published by the transport before connected()
 
   // mutable shared
   ZmAtomic<unsigned>	m_rxUp;
@@ -618,35 +556,15 @@ private:
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   ZiRxContext		m_rxContext;
-#ifdef ZiMultiplex_IOCP
-  bool			m_discPending = false;
-#endif
-#ifdef ZiMultiplex_IOCP
-  ZmRef<Zi::IOBuf>	m_rxPending; // actual outstanding kernel receive hold
-  Zi_Overlapped		m_discOverlapped;
-  Zi_Overlapped		m_rxOverlapped;
-  WSABUF		m_rxWSABuf;
-  WSAMSG		m_rxMsg;
-  uint8_t		m_rxControl[WSA_CMSG_SPACE(sizeof(int))];
-  DWORD			m_rxFlags;		// flags for WSARecv()
-  bool			m_discPeer = false;
-#endif
 
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
   ZiTxContext		m_txContext;
-#ifdef ZiMultiplex_IOCP
-  ZmRef<Zi::IOBuf>	m_txPending; // kernel backing until final-send retirement
-  Zi_Overlapped		m_txOverlapped;
-  TRANSMIT_PACKETS_ELEMENT m_txElement;
-  bool			m_txNativeDisconnected = false;
-  bool			m_txClosePeer = false;
-#endif
   using SyncFn = ZmFn<void(), ZmFnHeapID<"Zi.Sync">>;
   SyncFn		m_sync;
 };
 
-// ZiMultiplex plugin for user-mode TCP/UDP
+// ZiMultiplex transport plugin
 class ZiMxPlugin : public ZmPolymorph {
 friend ZiMultiplex;
 
@@ -660,6 +578,9 @@ public:
   ZiMultiplex *mx() const { return m_mx; }
 
 protected:
+  // Kernel socket transports use the built-in allocator for I/O buffers.
+  virtual bool kernel() const { return false; }
+
   // The multiplexer alone drives allocator registration and the plugin lifecycle.
   // type will be one of Rx, TxUDP, TxTCP
   virtual Zi::IOBufPool *allocator(
@@ -670,10 +591,12 @@ protected:
   virtual bool deferredBacking() const { return false; }
   virtual AllocResult alloc(Zi::IOBufPool *, const Zi::IOBufPoolList &) { return {}; }
 
-  // Rx thread idempotent start/stop
-
+  // Called by the scheduler control thread. Implementations may dispatch to Rx.
   virtual void start() = 0;		// callback: started
   virtual void stop() = 0;		// callback: stopped
+
+  // Release wake resources after scheduler workers have stopped.
+  virtual void stopped() { }
 
   // Called once after the last stop, or at teardown before the first start.
   virtual void final() { }
@@ -721,6 +644,7 @@ public:
 
 protected:
   void mx(ZiMultiplex *mx_) { m_mx = mx_; }
+  virtual void mxBound() { }
 
 private:
   ZiMultiplex	*m_mx = nullptr;
@@ -728,157 +652,8 @@ private:
 
 class ZiAPI ZiMultiplex : public ZmScheduler, public Ztc::Mx {
 friend ZiConnection;
-
-  class Listener_;
-  class Accept;
-  class Connect_;
-
-  class Listener_ : public ZuObject {
-  friend ZiMultiplex;
-  friend Accept;
-
-    using Socket = Zi::Socket;
-
-  public:
-    static Zi::Socket SocketAxor(const Listener_ &l) {
-      return l.info().socket;
-    }
-
-  protected:
-    template <typename ...Args>
-    Listener_(ZiMultiplex *mx, ZiConnectFn acceptFn, Args &&...args) :
-	m_mx(mx), m_acceptFn(ZuMv(acceptFn)),
-	m_info{ZuFwd<Args>(args)...}, m_up(1) { }
-
-  private:
-    ZiMultiplex *mx() const { return m_mx; }
-    const ZiConnectFn &acceptFn() const { return m_acceptFn; }
-    bool up() const { return m_up; }
-    void down() { m_up = 0; }
-    const ZiListenInfo &info() const { return m_info; }
-
-    ZiMultiplex		*m_mx;
-    ZiConnectFn		m_acceptFn;
-    ZiListenInfo	m_info;
-    bool		m_up;
-  };
-  ZmHashDerive(ListenerHash, Listener_,
-    (ZmHashNode<Listener_,
-      ZmHashKey<Listener_::SocketAxor,
-	ZmHashHeapID<"ZiMultiplex.Listener",
-	  ZmHashSharded<true>>>>));
-  using Listener = ListenerHash::Node;
-
-#if ZiMultiplex__AcceptHeap
-  // heap-allocated asynchronous accept, exclusively used by IOCP
-  class Accept;
-friend Accept;
-  class Accept : public ZmNHeap<Accept> {
-  friend inline ZuStringT<"ZiMultiplex.Accept"> ZmNHeapID(Accept *);
-
-  friend ZiMultiplex;
-
-    Accept(Listener *listener) :
-      m_listener(listener), m_info{
-	ZiCxnType::TCPIn, Zi::nullSocket(), listener->info().options}
-    {
-      m_overlapped.init(
-	Zi_Overlapped::Executed{this, ZmFnPtr<&Accept::executed>{}});
-    }
-
-    ZmRef<Listener> listener() const { return m_listener; }
-    ZiCxnInfo &info() { return m_info; }
-    Zi_Overlapped &overlapped() { return m_overlapped; }
-    void *buf() { return (void *)&m_buf[0]; }
-
-    void executed(int status, unsigned n, ZeError e) {
-      m_listener->mx()->overlappedAccept(this, status, n, e);
-      delete this;
-    }
-
-    ZmRef<Listener>	m_listener;
-    ZiCxnInfo		m_info;
-    Zi_Overlapped	m_overlapped;
-
-    alignas(16)
-    char		m_buf[(ZiSockAddr::MaxLen + 16) * 2];
-  };
-
-#endif
-
-  // heap-allocated non-blocking / asynchronous connect
-#if ZiMultiplex__ConnectHash
-  class Connect_ : public ZuObject
-#else
-  class Connect_;
-friend Connect_;
-  class Connect_ : public ZmNHeap<Connect_>, public ZuObject
-#endif
-  {
-  friend inline ZuStringT<"ZiMultiplex.Connect"> ZmNHeapID(Connect_ *);
-
-  friend ZiMultiplex;
-
-    using Socket = Zi::Socket;
-
-#ifdef ZiMultiplex__ConnectHash
-  public:
-    static Zi::Socket SocketAxor(const Connect_ &c) {
-      return c.info().socket;
-    }
-#endif
-
-  protected:
-    template <typename ...Args> Connect_(
-	ZiMultiplex *mx, ZiConnectFn fn, ZiFailFn failFn, Args &&...args) :
-      m_mx(mx), m_fn(fn), m_failFn(failFn), m_info{ZuFwd<Args>(args)...} {
-#ifdef ZiMultiplex_IOCP
-      m_overlapped.init(
-	Zi_Overlapped::Executed{this, ZmFnPtr<&Connect_::executed>{}});
-#endif
-    }
-
-  private:
-    void fail(bool transient) { m_failFn(transient); }
-
-    const ZiConnectFn &fn() const { return m_fn; }
-#ifdef ZiMultiplex_EPoll
-    ZiConnectFn takeFn() { return ZuMv(m_fn); }
-#endif
-    const ZiCxnInfo &info() const { return m_info; }
-    ZiCxnInfo &info() { return m_info; }
-
-#ifdef ZiMultiplex_IOCP
-    Zi_Overlapped &overlapped() { return m_overlapped; }
-
-    void executed(int status, unsigned n, ZeError e) {
-      m_mx->overlappedConnect(this, status, n, e);
-      delete this;
-    }
-#endif
-
-    ZiMultiplex		*m_mx;
-    ZiConnectFn		m_fn;
-    ZiFailFn		m_failFn;
-    ZiCxnInfo		m_info;
-#ifdef ZiMultiplex_IOCP
-    Zi_Overlapped	m_overlapped;
-#endif
-  };
-#if ZiMultiplex__ConnectHash
-  ZmHashDerive(ConnectHash, Connect_,
-    (ZmHashNode<Connect_,
-      ZmHashKey<Connect_::SocketAxor,
-	ZmHashHeapID<"ZiMultiplex.Connect">>>));
-  using Connect = ConnectHash::Node;
-#else
-
-  using Connect = Connect_;
-#endif
-
-  ZmHashDerive(CxnHash, ZmRef<ZiConnection>,
-    (ZmHashKey<ZiConnection::SocketAxor,
-	ZmHashHeapID<"ZiMultiplex.Connection">>));
+friend class ZiMxEpoll;
+friend class ZiMxIOCP;
 
 public:
   using Socket = Zi::Socket;
@@ -943,14 +718,13 @@ public:
     auto Grow = ZmGrow>
   Zi::IOBufAllocator *allocator(unsigned count = ZiIOBuf_DefltCount) {
     if (m_registration == AllocatorsClosed) return nullptr;
-    m_registration = PluginClosed;
     ZmAssert(state() == ZmEngineState::Stopped);
     Zi::IOBufAllocator *a = nullptr;
     if constexpr (
 	Type == Zi::IOBufType::Rx ||
 	Type == Zi::IOBufType::TxUDP ||
 	Type == Zi::IOBufType::TxTCP) {
-      if (m_plugin) {
+      if (!m_kernel) {
 	auto pool = bufPool(Type, Size, Align, count);
 	if (!pool) return nullptr;
 	a = new Zi::IOBufPoolAllocator<Type, Buf, Size, Align, HeapID, VHMaxSize, Grow>(
@@ -1015,9 +789,6 @@ public:
   unsigned rxBufSize() const { return m_rxBufSize; }
   unsigned txBufSize() const { return m_txBufSize; }
   unsigned rxQuantum() const { return m_rxQuantum; }
-#ifdef ZiMultiplex_EPoll
-  unsigned epollMaxFDs() const { return m_epollMaxFDs; }
-#endif
 
   TelKey telKey() const override { return {id()}; }
   void telemetry(Ztc::MxTelemetry &data) const override;
@@ -1037,78 +808,36 @@ private:
   bool start__() override;
   bool stop__() override;
 
-  void stop_0();	// Rx thread - disconnect all connections
-  void stop_1();	// Rx thread - stop connecting / listening / accepting
-  void stop_2();	// App thread - clean up
+  static ZmRef<ZiMxPlugin> defltPlugin(const ZiMxParams &);
+  static ZiIP wildcard(ZiIPType::T);
+  static bool cxnType(ZiIP, ZiIP, ZiIPType::T &);
 
-  void busy() { ZmScheduler::busy(); }
-  void idle() { ZmScheduler::idle(); }
-
-  void rx();			// handle I/O completions (IOCP) or
-				// readiness notifications (epoll, ports, etc.)
-  void wake();			// wake up rx(), cause it to return
-  void wakeRx();		// re-run rx() after wake()
-
-
-#ifdef ZiMultiplex_EPoll
-  void connect(Connect *);
-#endif
-#ifdef ZiMultiplex_IOCP
-  void overlappedConnect(Connect *, int status, unsigned, ZeError e);
-#endif
-  void executedConnect(ZiConnectFn, ZiCxnInfo &);
-
-  void accept(Listener *);
-#ifdef ZiMultiplex_IOCP
-  void overlappedAccept(Accept *, int status, unsigned n, ZeError e);
-#endif
-
-  void disconnected(ZiConnection *cxn);
-
-#ifdef ZiMultiplex_EPoll
-  bool epollRecv(ZiConnection *, int s, uint32_t events);
-#endif
-
-  bool initSocket(Socket, const ZiCxnOptions &);
-
-  bool cxnAdd(ZiConnection *, Socket);
-  void cxnDel(Socket);
-
-  bool listenerAdd(Listener *, Socket);
-  void listenerDel(Socket);
-
-  bool connectAdd(Connect *, Socket);
-#ifdef ZiMultiplex_EPoll
-  void completedConnect(Connect *);
-#endif
-  void connectDel(Socket);
-
-#ifdef ZiMultiplex_EPoll
-  bool readWake();
-  void writeWake();
-#endif
+  void rx() { if (m_polling) m_plugin->rx(); }
+  void wake();
+  void wakeRx();
 
 #ifdef ZiMultiplex_DEBUG
   void traceCapture() { m_tracer.capture(1); }
+  using DebugBuf = ZtArray<uint8_t, ZtArrayHeapID<"ZiMultiplex.DebugBuf">>;
+  static DebugBuf debugBuf(const void *, unsigned);
 #endif
 
   // immutable
-  ZmRef<ZiMxPlugin>	m_plugin = 0;
+  const ZmRef<ZiMxPlugin> m_plugin;
+  const bool		m_kernel;
   unsigned		m_rxThread = 0;
   unsigned		m_txThread = 0;
   unsigned		m_rxBufSize = 0; // setsockopt SO_RCVBUF option
   unsigned		m_txBufSize = 0; // setsockopt SO_SNDBUF option
   unsigned		m_rxQuantum = ZiMxParams::RxQuantum;
-#ifdef ZiMultiplex_EPoll
-  unsigned		m_epollMaxFDs = 0;
-#endif
 
   // mutable shared
   ZmSemaphore		*m_starting = nullptr;
   ZmSemaphore		*m_stopping = nullptr;
   bool			m_pluginFailed = false;
+  ZmAtomic<unsigned>	m_polling = 0;
 
-  enum { Open, PluginClosed, AllocatorsClosed };
+  enum { Open, AllocatorsClosed };
   ZmAtomic<unsigned>	m_registration = Open;
   bool			m_allocated = false;
 
@@ -1121,25 +850,10 @@ private:
 #endif
 
   // Rx thread exclusive
-#ifdef ZiMultiplex_IOCP
-  alignas(Zm::CacheLineSize)
-  HANDLE		m_completionPort = INVALID_HANDLE_VALUE;
-#endif
-#ifdef ZiMultiplex_EPoll
-  alignas(Zm::CacheLineSize)
-  int			m_epollFD = -1;
-  int			m_wakeFD = -1;
-#endif
   // Registration is stopped-only; the app serializes it with lifecycle changes.
   Zi::IOBufAllocatorList m_allocators;
   ZmRef<Zi::IOBufPool>	m_rxPool;
   Zi::IOBufPoolList	m_txPools;
-  ZmRef<ListenerHash>	m_listeners;
-#if ZiMultiplex__ConnectHash
-  ZmRef<ConnectHash>	m_connects;
-#endif
-  ZmRef<CxnHash>	m_cxns;	// connections
-  unsigned		m_nAccepts = 0; // total #accepts for all listeners
 #ifdef ZiMultiplex_FILTER
   FilterFn		m_rxFilter;
 #endif
