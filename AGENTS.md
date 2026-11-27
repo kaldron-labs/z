@@ -1,28 +1,37 @@
-# Repository guidance map
+# Working in Z
 
-Read only the documents and sections relevant to the task. These documents are
-repository policy and take precedence over generic C++ preferences. Before code
-changes, read `docs/GUIDELINES.md` and applicable task-specific guidance below.
-Also read the affected module's `docs/GUIDELINES.md` when present (for example,
-`zquic/GUIDELINES.md`); it supplies additional library-specific rules.
+## Before writing or reviewing code
 
-Use this map to select guidance as the task develops. Do not concatenate the
-guidance corpus into a temporary manual or bulk-read it as a prerequisite.
-Read relevant sections directly; expand when the task requires additional
-guidance.
+1. Read [docs/GUIDELINES.md](docs/GUIDELINES.md) for Z's engineering priorities.
+   For C++ source, headers, examples, and tests, also read the relevant sections
+   of [docs/CPP.md](docs/CPP.md) and [docs/STYLE.md](docs/STYLE.md). These are
+   repository rules and take precedence over generic C++ conventions and
+   conflicting examples in nearby code.
+2. Read the relevant sections of each affected module's `GUIDELINES.md` if
+   present, checking the module root and its `docs/` directory. For example,
+   see [zpkt](zpkt/GUIDELINES.md), [zquic](zquic/GUIDELINES.md), and
+   [zutcp](zutcp/GUIDELINES.md). Repeat this check when adding a module to scope.
+3. Use the table to open task-specific rules before making the relevant
+   implementation decisions. Read the relevant sections directly in each guide.
 
-| Document | Read when | Contents |
-| --- | --- | --- |
-| [GUIDELINES.md](docs/GUIDELINES.md) | Designing or changing code | Engineering principles, performance priorities, supported targets |
-| [BUILD.md](docs/BUILD.md) | Configuring, building, testing, debugging, or preparing a PR | Module layout, commands, dependencies, verification, contribution conventions |
-| [CPP.md](docs/CPP.md) | Writing or reviewing C++ | Language rules, templates, constraints, enums, STL policy, portability |
-| [STYLE.md](docs/STYLE.md) | Editing declarations, headers, or implementation | Header skeleton, indentation, layout, class shape, naming, accessors |
-| [FRAMEWORK.md](docs/FRAMEWORK.md) | Choosing or using framework facilities | Types, strings, storage, formatting, metadata, concurrency, timers, I/O, tests, persistence |
-| [IO.md](docs/IO.md) | Changing I/O or cross-shard behavior | Rx/Tx ownership, dispatch, handoffs, lifetime, teardown |
-| [AUDIT.md](docs/AUDIT.md) | Auditing, reviewing, or repairing flagged code | Audit scope, repair procedure, red/amber flags, problems and fixes |
+## Find the applicable rules
 
-Modules use short prefixes (`zu`, `zm`, `zt`, `ze`, `zf`, `zi`, `zdb`, etc.).
-Library code lives in `<module>/src`; unit tests in `<module>/test`.
-See `docs/BUILD.md` for other directory roles. Top-level build inputs are
-`configure.ac`, `Makefile.am`, and `m4/`; `z.config` centralizes configuration.
-See [README.md](README.md) for platform setup and `scripts/` for utilities.
+| When the task involves | Open |
+| --- | --- |
+| Choosing types, containers, strings, storage or ownership, errors, callbacks, metadata, synchronization, timers, or persistence | [docs/FRAMEWORK.md](docs/FRAMEWORK.md). Before choosing an STL or third-party facility, check the [API comparison](docs/Z_STL_BOOST_FOLLY_BDE_RUST.md#contents) for a Z equivalent. |
+| Changing I/O, Rx/Tx ownership, dispatch, cross-shard handoffs, lifetime, or teardown | [docs/IO.md](docs/IO.md) and the relevant I/O sections of [docs/FRAMEWORK.md](docs/FRAMEWORK.md#io-and-system-integration). |
+| Changing build files, placing code or tests, configuring, building, debugging, or preparing a PR | [docs/BUILD.md](docs/BUILD.md). See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for toolchains, libraries, and optional peers. |
+| Writing or running tests, setting up fixtures, or checking interoperability and benchmarks | [docs/TESTING.md](docs/TESTING.md) and the affected test directory's README when present. |
+| Reviewing code for repository policy violations, auditing, or fixing flagged code | [docs/AUDIT.md](docs/AUDIT.md), especially the sections that match the change. |
+
+Library code lives in `<module>/src` and unit tests in `<module>/test`.
+Top-level build inputs are `configure.ac`, `Makefile.am`, and `m4/`.
+`z.config` centralizes configuration. See [README.md](README.md) for platform setup.
+
+## Before handing back code
+
+Review the final diff against the applicable repository and module rules.
+Check the changed declarations and naming, choices of Z APIs and types, and
+any ownership or allocation changes against the corresponding guide.
+Use [docs/TESTING.md](docs/TESTING.md) to select checks for the affected
+behavior. Report the checks run and any required verification still pending.
