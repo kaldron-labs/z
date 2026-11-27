@@ -112,7 +112,7 @@ calls neither query nor plugin. A query error propagates without backend creatio
 ```text
 module libZpkt_afp.so
 interfaces {
-  veth0 { rxSpin 0 }
+  veth0 { rxSpin 0 rxBufferBytes 1048576 }
   shaped0 { qdiscBypass false }
 }
 ```
@@ -124,6 +124,8 @@ protocol processing. Opening requires `CAP_NET_RAW` and `CAP_NET_ADMIN` in
 the user namespace governing the network namespace. Keep the interface name
 stable while open. AFP receives
 raw Ethernet using nonblocking `recvmmsg()` and transmits with `sendmmsg()`.
+Set `rxBufferBytes` for the socket backlog in kernel-accounted bytes. The
+default is 1 MiB. Each start verifies the effective size before enabling Rx.
 The caller computes TCP checksums. `qdiscBypass` defaults to true and is
 applied for each run. Set it to false to use the Linux egress scheduler.
 `status()` reports the effective setting, kernel drops and software discards.
@@ -145,7 +147,7 @@ eal {
   noHuge true
   noShconf true
   noTelemetry true
-  vdev [ "net_af_packet0,iface=veth0" ]
+  vdev [ "net_af_packet0,iface=veth0,qpairs=1,framecnt=1024,framesz=2048,blocksz=4096" ]
 }
 interfaces {
   veth0 { port net_af_packet0 spin 1000 rxInterval 50 }
@@ -160,6 +162,11 @@ permits one process-wide initialization attempt. `Dpdk::EAL::init` throws
 destroys its plugin and EAL after all children have retired.
 
 DPDK claims the configured native Ethernet port and queries its MAC and MTU.
+Bifurcated hardware uses an explicit whole-interface Ethernet flow to Rx
+queue 0 and a netdev ingress guard. The `net_af_packet` PMD uses the same
+guard as native AF_PACKET and its own fixed-slot capture ring. Set `framecnt`
+in the vdev configuration to absorb the required burst. Hardware and socket
+guards use the PMD's host ifindex and require `CAP_NET_ADMIN`.
 A `_loop` entry selects a `net_ring` port without a host lookup. When a
 transport needs Linux routes or neighbors, provision a real routing interface
 for that endpoint independently of packet selection.

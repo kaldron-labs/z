@@ -19,6 +19,7 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
+#include <zlib/ZpktNif.hh>
 #include "ZpktAfpNif.hh"
 
 namespace Zpkt::Afp {
@@ -36,8 +37,10 @@ Nif::Nif(ZiMultiplex *mx, const NifCf &config, const NifInfo &info) :
   ZmAssert_(mx && mx->state() == ZmEngineState::Stopped);
   if (!ifindex() || ifindex() > INT_MAX || !mtu())
     throw deviceError("invalid AF_PACKET interface geometry", EINVAL);
+  if (!config.rxBufferBytes || config.rxBufferBytes > INT_MAX - 1U)
+    throw deviceError("invalid AF_PACKET rxBufferBytes", EINVAL);
   if (int err = openSocket()) throw deviceError("open dormant AF_PACKET socket", err);
-  m_ingressFD = openIngress(ifindex());
+  m_ingressFD = nifClaimIngress(ifindex());
   if (m_ingressFD < 0) {
     ::close(m_fd);
     throw deviceError("claim AF_PACKET nftables ingress", -m_ingressFD);
@@ -146,6 +149,22 @@ Nif::Result Nif::activate()
   if (fd < 0) return deviceError("create AFP run eventfd", errno);
   wakeFD(fd);
 
+  // Linux doubles the requested SO_RCVBUF for socket accounting and silently
+  // caps normal requests at rmem_max. Verify the budget before enabling Rx.
+  int requested = (m_config.rxBufferBytes + 1) / 2;
+  int effective = 0;
+  socklen_t size = sizeof(effective);
+  if (setsockopt(m_fd, SOL_SOCKET, SO_RCVBUF, &requested, sizeof(requested)) < 0 ||
+      getsockopt(m_fd, SOL_SOCKET, SO_RCVBUF, &effective, &size) < 0)
+    return deviceError("size AF_PACKET receive queue", errno);
+  if (effective < int(m_config.rxBufferBytes)) {
+    if (setsockopt(m_fd, SOL_SOCKET, SO_RCVBUFFORCE, &requested, sizeof(requested)) < 0 ||
+        getsockopt(m_fd, SOL_SOCKET, SO_RCVBUF, &effective, &size) < 0)
+      return deviceError("enforce AF_PACKET rxBufferBytes", errno);
+    if (effective < int(m_config.rxBufferBytes))
+      return deviceError("insufficient AF_PACKET receive queue", ENOBUFS);
+  }
+
   int one = 1;
   if (::setsockopt(m_fd, SOL_PACKET, PACKET_AUXDATA, &one, sizeof(one)) < 0)
     return deviceError("enable PACKET_AUXDATA", errno);
@@ -184,6 +203,7 @@ Nif::Result Nif::activate()
   m_rxPackets = m_rxBytes = m_rxDiscard = 0;
   m_txAccepted = m_txBytes = m_txRetired = m_txRetiredBytes = 0;
   m_drops = 0;
+  m_rxBufferBytes = effective;
   m_bypass = bypass;
   m_gate = ((m_gate.load_() & RunMask) + RunStep) | Ready;
   return {};
@@ -338,24 +358,6 @@ void Nif::waitRx(bool depleted)
   stopBlocking();
 }
 
-static unsigned etherType(const uint8_t *data)
-{
-  return (unsigned(data[0])<<8) | data[1];
-}
-
-bool Nif::wireLength(const uint8_t *data, unsigned length) const
-{
-  if (length < ETH_HLEN) return false;
-  unsigned header = ETH_HLEN;
-  auto type = etherType(data + header - 2);
-  while (type == ETH_P_8021Q || type == ETH_P_8021AD) {
-    if (length - header < 4) return false;
-    header += 4;
-    type = etherType(data + header - 2);
-  }
-  return length - header <= mtu();
-}
-
 unsigned Nif::rxLength(unsigned i) const
 {
   const auto &msg = m_rx.msg[i];
@@ -390,7 +392,7 @@ unsigned Nif::rxLength(unsigned i) const
     data[15] = uint8_t(aux.tp_vlan_tci);
     length += 4;
   }
-  return wireLength(data, length) ? length : 0;
+  return frameFitsMTU(data, length, mtu()) ? length : 0;
 }
 
 unsigned Nif::receive()
@@ -498,7 +500,7 @@ unsigned Nif::send(ZuSpan<const TxPacket> packets, Zu::IO::Result &result)
     if (slot->leases.load_() & Slot::Submitted) { result = Zi::NotReady; break; }
     unsigned offset = uintptr_t(frame.data) - uintptr_t(slot->packet());
     if (offset >= slot->pool->size || frame.length > slot->pool->size - offset ||
-	!wireLength(frame.data, frame.length))
+	!frameFitsMTU(frame.data, frame.length, mtu()))
       break;
     bool submitted = slot->submit();
     ZmAssert_(submitted);
@@ -574,7 +576,7 @@ uint64_t Nif::sampleDrops() const
 
 void Nif::status()
 {
-  unsigned index, mtu, bypass;
+  unsigned index, mtu, bypass, rxBufferBytes;
   bool active;
   uint64_t drops;
   {
@@ -582,12 +584,13 @@ void Nif::status()
     index = ifindex();
     mtu = this->mtu();
     bypass = m_bypass;
+    rxBufferBytes = m_rxBufferBytes;
     active = ready();
     drops = sampleDrops();
   }
   ZiLOG(Info, "Zpkt.Afp", ([
     name = CfString{name()}, index, mtu, active, state = this->state(),
-    requested = m_config.qdiscBypass, bypass, drops, discards = m_rxDiscard
+    requested = m_config.qdiscBypass, bypass, drops, rxBufferBytes, discards = m_rxDiscard
   ](auto &out) {
     out << "AF_PACKET " << name << " ifindex " << ZuBoxed(index) << " MTU " << ZuBoxed(mtu)
       << " state " << ZuBoxed(state) << " mode copy";
@@ -595,6 +598,7 @@ void Nif::status()
       out << " Rx queues 1 Tx queues 1 qdiscBypass requested " << (requested ? "on" : "off")
 	<< " effective " << (bypass == BypassOn ? "on" : "off")
 	<< (bypass == BypassUnsupported ? " (PACKET_QDISC_BYPASS unsupported)" : "")
+	<< " Rx socket buffer bytes " << ZuBoxed(rxBufferBytes)
 	<< " kernel drops " << ZuBoxed(drops) << " software discards " << ZuBoxed(discards);
   }));
 }

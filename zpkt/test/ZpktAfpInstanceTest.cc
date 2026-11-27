@@ -26,7 +26,7 @@
 
 #include <zlib/ZpktEnv.hh>
 #include "ZpktTestCf.hh"
-#include "ZpktAfpNif.hh"
+#include <zlib/ZpktNif.hh>
 
 using namespace ZuTestUtil;
 
@@ -50,6 +50,8 @@ struct Probe {
   ZmAtomic<unsigned> sendCalls{0}, recvCalls{0}, pollCalls{0};
   ZmAtomic<unsigned> unsound{0};
   unsigned	rxCount = 0, rxCursor = 0;
+  int		rxSocketBytes = 0;
+  bool		clampBuffer = false, denyForce = false;
   bool		expectBypass = true;
   WireFrame	frames[12];
   ZmSemaphore	writerEntered, writerRelease, pollEntered, pollRelease, txEntered, txRelease;
@@ -95,7 +97,7 @@ extern "C" ssize_t __real_write(int, const void *, size_t);
 
 // The fixture supplies packet devices with synthetic ifindices. The private
 // veth fixture exercises the real nftables transaction and kernel traffic.
-int Zpkt::Afp::Nif::openIngress(unsigned ifindex)
+int Zpkt::nifClaimIngress(unsigned ifindex)
 {
   if (ifindex != 17) return -ENODEV;
   int fd = __real_eventfd(0, EFD_CLOEXEC);
@@ -144,6 +146,12 @@ extern "C" int __wrap_setsockopt(int fd, int level, int option, const void *data
 {
   auto p = active.load_();
   if (!p || fd != p->socket) return __real_setsockopt(fd, level, option, data, length);
+  if (level == SOL_SOCKET && (option == SO_RCVBUF || option == SO_RCVBUFFORCE)) {
+    if (option == SO_RCVBUFFORCE && p->denyForce) { errno = EPERM; return -1; }
+    p->rxSocketBytes = option == SO_RCVBUF && p->clampBuffer ?
+      4096 : 2 * *static_cast<const int *>(data);
+    return 0;
+  }
   if (level != SOL_PACKET || length != sizeof(int) || *static_cast<const int *>(data) != 1)
     ++p->unsound;
   if (option == PACKET_QDISC_BYPASS) {
@@ -157,6 +165,10 @@ extern "C" int __wrap_getsockopt(int fd, int level, int option, void *data, sock
 {
   auto p = active.load_();
   if (!p || fd != p->socket) return __real_getsockopt(fd, level, option, data, length);
+  if (level == SOL_SOCKET && option == SO_RCVBUF) {
+    *static_cast<int *>(data) = p->rxSocketBytes;
+    return 0;
+  }
   if (level != SOL_PACKET || option != PACKET_STATISTICS ||
       *length < sizeof(tpacket_stats)) { ++p->unsound; errno = EINVAL; return -1; }
   ++p->statsReads;
@@ -330,6 +342,16 @@ static void loader()
 static void activation()
 {
   ZuTestScope(activation);
+  {
+    Endpoint e;
+    if (!e.init(false)) { ZuCHECK(false, "initialize receive buffer fixture"); return; }
+    e.probe.clampBuffer = e.probe.denyForce = true;
+    ZuCHECK(!e.nif->start(e.discard()) && !e.probe.activeBinds,
+      "failure to obtain the requested kernel backlog precedes the active bind");
+    e.probe.denyForce = false;
+    ZuCHECK(e.nif->start(e.discard()) && e.probe.rxSocketBytes == (1 << 20) && e.nif->stop(),
+      "restart verifies the requested byte budget on its new socket");
+  }
   {
     Endpoint e;
     bool opened = e.init();

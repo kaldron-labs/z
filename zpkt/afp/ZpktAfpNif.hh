@@ -65,7 +65,6 @@ private:
   void start_() override;
   void stop_() override;
   Result activate();
-  static int openIngress(unsigned ifindex); // owner socket or negative errno
   int openSocket();
   int bindSocket(unsigned protocol);
   void closeRun();
@@ -84,7 +83,6 @@ private:
   void waitRx(bool depleted);
   unsigned receive();
   unsigned rxLength(unsigned i) const;
-  bool wireLength(const uint8_t *, unsigned) const;
   Slot *txSlot(uint8_t *) const;
   unsigned send(ZuSpan<const TxPacket>, Zu::IO::Result &);
   uint64_t sampleDrops() const; // caller holds m_observe
@@ -107,7 +105,7 @@ private:
   PoolSet		m_pools;
   PoolSet::PoolRefs	m_reserves;
   int			m_fd = -1, m_ingressFD = -1;
-  unsigned		m_bypass = BypassOff;
+  unsigned		m_bypass = BypassOff, m_rxBufferBytes = 0;
   mutable ZmLock	m_observe;
   mutable uint64_t	m_drops = 0;
 

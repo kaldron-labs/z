@@ -8,7 +8,7 @@ pkginclude_HEADERS = ZpktLib.hh Zpkt.hh ZpktPlugin.hh ZpktEnv.hh
 noinst_HEADERS = ZpktNif.hh
 lib_LTLIBRARIES = libZpkt.la
 libZpkt_la_CPPFLAGS = $(AM_CPPFLAGS) -DZPKT_EXPORTS
-libZpkt_la_SOURCES = ZpktLib.cc Zpkt.cc ZpktNif.cc ZpktEnv.cc
+libZpkt_la_SOURCES = ZpktLib.cc Zpkt.cc ZpktNif.cc ZpktIngress.cc ZpktEnv.cc
 libZpkt_la_LIBADD = $(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la \

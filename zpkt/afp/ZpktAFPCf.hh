@@ -22,10 +22,12 @@ namespace Zpkt::Afp {
 
 struct NifCf {
   unsigned	rxSpin = (Zi_DefltSpin<<2);
+  unsigned	rxBufferBytes = 1U << 20; // Linux socket accounting budget
   bool		qdiscBypass = true;
 };
 ZfStruct(, (NifCf, Cf),
   (rxSpin,	(Mutable),	UInt32),
+  (rxBufferBytes, (Mutable),	UInt32),
   (qdiscBypass,	(Mutable),	Bool));
 
 using InterfaceMap = ZmHashKV<CfString, NifCf,

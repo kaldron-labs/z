@@ -13,6 +13,7 @@
 #include <zlib/ZpktLib.hh>
 #endif
 
+#include <linux/if_ether.h>
 #include <linux/rtnetlink.h>
 
 #include <zlib/ZtArray.hh>
@@ -20,7 +21,22 @@
 
 namespace Zpkt {
 
+// VLAN tags extend the Ethernet header outside the L3 MTU.
+inline bool frameFitsMTU(const uint8_t *data, unsigned length, unsigned mtu)
+{
+  unsigned header = ETH_HLEN;
+  if (length < header) return false;
+  for (;;) {
+    unsigned type = (unsigned(data[header - 2]) << 8) | data[header - 1];
+    if (type != ETH_P_8021Q && type != ETH_P_8021AD) return length - header <= mtu;
+    if (length - header < 4) return false;
+    header += 4;
+  }
+}
+
 using NifReply = ZtArray<uint8_t, ZtArrayHeapID<"Zpkt.Nif.Reply">>;
+// Last close of the returned socket retires the netdev ingress guard.
+ZpktAPI int nifClaimIngress(unsigned ifindex); // owner fd or negative errno
 ZpktAPI ZuUnion<int, ZeException> nifOpen();
 ZpktAPI ZuUnion<NifInfo, ZeException> nifQuery(ZuCSpan name);
 ZpktAPI ZuUnion<void, ZeException> nifTransact(

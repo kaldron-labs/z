@@ -14,10 +14,12 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <rte_bus.h>
 #include <rte_dev.h>
 #include <rte_devargs.h>
 #include <rte_errno.h>
 #include <rte_kvargs.h>
+#include <rte_flow.h>
 #include <rte_mbuf.h>
 #include <rte_prefetch.h>
 
@@ -26,6 +28,7 @@
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZpktNif.hh>
 #include "ZpktDpdk.hh"
 #include "ZpktDpdkNif.hh"
 #include <rte_net.h>
@@ -47,39 +50,61 @@ static uint16_t descriptors(unsigned count, const rte_eth_desc_lim &limits)
   return uint16_t(count);
 }
 
-static bool infinitePcap(const rte_device *device)
+static int pcapInput(const rte_device *device)
 {
   auto args = device ? rte_dev_devargs(device) : nullptr;
-  if (!args || !args->args) return false;
+  if (!args || !args->args) return EINVAL;
   auto values = rte_kvargs_parse(args->args, nullptr);
-  if (!values) return false;
+  if (!values) return EINVAL;
   auto value = rte_kvargs_get(values, "infinite_rx");
-  bool enabled = rte_kvargs_count(values, "infinite_rx") == 1 && value && atoi(value) > 0;
+  bool live = rte_kvargs_count(values, "iface") || rte_kvargs_count(values, "rx_iface") ||
+    rte_kvargs_count(values, "rx_iface_in");
+  int err = live || (value && atoi(value) > 0) ? ENOTSUP : 0;
   rte_kvargs_free(values);
-  return enabled;
+  return err;
 }
 
-static int afPacketMinRxSize(const rte_device *device)
+static int afPacketGeometry(const rte_device *device, unsigned mtu, unsigned &frames)
 {
-  // The PMD exposes framesz through its devargs. Its default is private.
-  constexpr unsigned slotHeader = TPACKET2_HDRLEN - sizeof(sockaddr_ll);
-  constexpr unsigned defaultFrameSize = 2048;
+  // net_af_packet creates PACKET_RX_RING at probe. rx_queue_setup ignores nb_desc.
+  constexpr unsigned header = TPACKET2_HDRLEN - sizeof(sockaddr_ll);
+  unsigned frameSize = 2048;
+  frames = 512;
   auto args = device ? rte_dev_devargs(device) : nullptr;
-  if (!args || !args->args) return defaultFrameSize - slotHeader;
+  if (!args || !args->args) return -EINVAL;
   auto values = rte_kvargs_parse(args->args, nullptr);
   if (!values) return -EINVAL;
-  const char *value = nullptr;
-  for (unsigned i = 0; i < values->count; ++i)
-    if (!strcmp(values->pairs[i].key, "framesz")) value = values->pairs[i].value;
-  char *end = nullptr;
-  errno = 0;
-  auto frameSize = value ? strtoul(value, &end, 10) : defaultFrameSize;
-  bool invalid = errno == ERANGE || (value && (end == value || *end)) ||
-    frameSize <= slotHeader;
+  bool invalid = false;
+  for (unsigned i = 0; i < values->count; ++i) {
+    const auto &pair = values->pairs[i];
+    bool size = !strcmp(pair.key, "framesz");
+    if (!size && strcmp(pair.key, "framecnt")) continue;
+    char *end = nullptr;
+    errno = 0;
+    auto n = strtoul(pair.value, &end, 10);
+    if (errno || *end || !n || n > INT_MAX) { invalid = true; break; }
+    (size ? frameSize : frames) = n;
+  }
   rte_kvargs_free(values);
-  if (invalid) return -EINVAL;
-  auto dataSize = frameSize - slotHeader;
+  // TPACKET_V2 aligns the network header after sockaddr_ll and link headroom.
+  if (invalid || frameSize < TPACKET_ALIGN(TPACKET2_HDRLEN + 16) + mtu) return -EINVAL;
+  auto dataSize = frameSize - header;
   return dataSize <= UINT16_MAX - RTE_PKTMBUF_HEADROOM ? int(dataSize) : -EOVERFLOW;
+}
+
+static bool dedicatedPCI(const rte_device *device)
+{
+  // A missing PMD ifindex alone does not establish that Linux has no Rx path.
+  auto bus = device ? rte_dev_bus(device) : nullptr;
+  if (!bus || strcmp(rte_bus_name(bus), "pci")) return false;
+  char path[PATH_MAX], target[PATH_MAX];
+  snprintf(path, sizeof(path), "/sys/bus/pci/devices/%s/driver", rte_dev_name(device));
+  auto n = readlink(path, target, sizeof(target) - 1);
+  if (n <= 0) return false;
+  target[n] = 0;
+  const char *name = strrchr(target, '/');
+  return name && (!strcmp(name, "/vfio-pci") || !strcmp(name, "/igb_uio") ||
+    !strcmp(name, "/uio_pci_generic"));
 }
 
 Nif::~Nif()
@@ -123,14 +148,26 @@ Nif::Nif(EAL &eal, ZiMultiplex *mx, const NifCf &config, bool loopback)
 	unsigned(portMtu) + RTE_ETHER_HDR_LEN + RTE_PKTMBUF_HEADROOM > UINT16_MAX)
       throw deviceError("unsupported Ethernet port geometry", EINVAL);
     bool pcap = info.driver_name && !strcmp(info.driver_name, "net_pcap");
-    if (pcap && infinitePcap(info.device))
-      throw deviceError("pcap infinite Rx retains backing across queue stop", ENOTSUP);
+    if (pcap)
+      if (int err = pcapInput(info.device))
+        throw deviceError("net_pcap requires finite file Rx; use net_af_packet for sized live Rx", err);
     int minRxSize = 0;
     if (info.driver_name && !strcmp(info.driver_name, "net_af_packet")) {
-      minRxSize = afPacketMinRxSize(info.device);
-      if (minRxSize < 0) throw deviceError("invalid AF_PACKET framesz", -minRxSize);
+      if (info.max_rx_queues != 1)
+        throw deviceError("net_af_packet requires qpairs=1 for whole-interface ingress", EINVAL);
+      minRxSize = afPacketGeometry(info.device, portMtu, m_captureFrames);
+      if (minRxSize < 0) throw deviceError("invalid AF_PACKET capture ring geometry", -minRxSize);
     }
-    // Copy owned configuration before acquiring the final native descriptor.
+    auto bus = info.device ? rte_dev_bus(info.device) : nullptr;
+    bool virtualPort = bus && !strcmp(rte_bus_name(bus), "vdev");
+    // Software-only ethdevs (e.g. memif) have no hardware Rx queues to steer.
+    if (!ring && !pcap && (minRxSize || info.if_index || !virtualPort) &&
+        !dedicatedPCI(info.device)) {
+      if (!info.if_index)
+        throw deviceError("cannot identify host interface for exclusive DPDK ingress", ENODEV);
+      m_ingressFD = nifClaimIngress(info.if_index);
+      if (m_ingressFD < 0) throw deviceError("claim DPDK netdev ingress", -m_ingressFD);
+    }
     m_config = config;
     int fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     if (fd < 0) throw deviceError("create Rx wake eventfd", errno);
@@ -146,6 +183,7 @@ Nif::Nif(EAL &eal, ZiMultiplex *mx, const NifCf &config, bool loopback)
     m_afPacketMinRxSize = minRxSize;
     zeroCopy(m_ring);
   } catch (...) {
+    if (m_ingressFD >= 0) close(m_ingressFD);
     m_eal.release(port);
     throw;
   }
@@ -240,12 +278,9 @@ void Nif::final()
   if (!mx()) return;
   // A failed stop or an outstanding native reference does not permit backing
   // release. Retry the stop with the scheduler already quiescent.
-  if (m_started) {
-    if (int rc = rte_eth_dev_stop(m_port)) {
-      error(deviceError("stop Ethernet port for finalization", -rc));
-      return;
-    }
-    m_started = false;
+  if (auto result = stopPort(); result.is<ZeException>()) {
+    error(ZuMv(result).p<ZeException>());
+    return;
   }
   drainTx(UINT_MAX);
   if (m_txOutstanding || m_txReturns.active()) {
@@ -270,6 +305,7 @@ void Nif::final()
   m_reserves.null();
   m_txReturns.reset();
   m_txCapacity = 0;
+  if (m_ingressFD >= 0) { close(m_ingressFD); m_ingressFD = -1; }
   m_eal.release(m_port);
   closeWake();
   m_rxFD = -1;
@@ -305,11 +341,7 @@ void Nif::start_()
 Nif::Result Nif::activate()
 {
   ZmGuard guard(m_queueLock);
-  if (m_started) {
-    if (int rc = rte_eth_dev_stop(m_port))
-      return deviceError("retire the prior Ethernet run", -rc);
-    m_started = false;
-  }
+  if (auto result = stopPort(); result.is<ZeException>()) return result;
   drainTx(UINT_MAX);
   if (m_txOutstanding || m_txReturns.active())
     return deviceError("prior Tx submissions remain outstanding", EBUSY);
@@ -318,6 +350,13 @@ Nif::Result Nif::activate()
   if (int rc = rte_eth_dev_info_get(m_port, &info))
     return deviceError("query queue capabilities", -rc);
 
+  bool steer = m_ingressFD >= 0 && !m_afPacketMinRxSize;
+  if (steer && !m_isolated) {
+    rte_flow_error detail{};
+    if (int rc = rte_flow_isolate(m_port, 1, &detail))
+      return deviceError("isolate Ethernet ingress before queue configuration", -rc);
+    m_isolated = true;
+  }
   rte_eth_conf config{};
   config.rxmode.mtu = mtu();
   config.txmode.offloads = info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_TCP_CKSUM;
@@ -325,6 +364,8 @@ Nif::Result Nif::activate()
   // Try arrival interrupts where available. Software PMDs may also accept
   // this setting and supply no interrupt fd.
   config.intr_conf.rxq = m_config.rxInterval && !m_ring && !m_pcap && !m_afPacketMinRxSize;
+  if (m_captureFrames && !m_rxPool->available())
+    return deviceError("need a free buffer to drain the prior PACKET_RX_RING", EBUSY);
   int rc = rte_eth_dev_configure(m_port, 1, 1, &config);
   if ((rc == -ENOTSUP || rc == -EINVAL) && config.intr_conf.rxq) {
     config.intr_conf.rxq = 0;
@@ -342,7 +383,7 @@ Nif::Result Nif::activate()
   tcpChksumOffload(bool(config.txmode.offloads & RTE_ETH_TX_OFFLOAD_TCP_CKSUM));
   auto rx = info.default_rxconf;
   unsigned rxCount = m_rxPool->count;
-  if (!m_ring && !m_pcap) {
+  if (!m_ring && !m_pcap && !m_afPacketMinRxSize) {
     // Descriptor-based PMDs can allocate replacements before returning the
     // consumed descriptors. Leave a rearm batch in the same ingress mempool.
     unsigned rearm = RTE_MAX(unsigned(rx.rx_free_thresh), unsigned(Burst));
@@ -375,6 +416,34 @@ Nif::Result Nif::activate()
   }
 
   m_started = true;
+  if (steer) {
+    rte_flow_attr attr{};
+    attr.ingress = 1;
+    rte_flow_item pattern[] = {{.type = RTE_FLOW_ITEM_TYPE_ETH}, {.type = RTE_FLOW_ITEM_TYPE_END}};
+    rte_flow_action_queue queue{0};
+    rte_flow_action actions[] = {{RTE_FLOW_ACTION_TYPE_QUEUE, &queue}, {RTE_FLOW_ACTION_TYPE_END}};
+    rte_flow_error detail{};
+    rc = rte_flow_validate(m_port, &attr, pattern, actions, &detail);
+    if (!rc) {
+      m_flow = rte_flow_create(m_port, &attr, pattern, actions, &detail);
+      if (!m_flow) rc = rte_errno ? -rte_errno : -EIO;
+    }
+    if (rc) {
+      auto failure = deviceError("claim all Ethernet ingress on Rx queue 0", -rc);
+      if (auto rollback = stopPort(); rollback.is<ZeException>())
+        ZiLogEvent(rollback.p<ZeException>());
+      return failure;
+    }
+  }
+  // net_af_packet leaves the socket tap attached from EAL probe through port
+  // stop. Discard queued copies from before this run (including before open).
+  for (unsigned left = m_captureFrames; left;) {
+    rte_mbuf *stale[Burst];
+    unsigned n = rte_eth_rx_burst(m_port, 0, stale, RTE_MIN(left, unsigned(Burst)));
+    if (!n) break;
+    rte_pktmbuf_free_bulk(stale, n);
+    left -= n;
+  }
   m_rxDesc = rxDesc;
   m_txDesc = txDesc;
   m_rxFD = config.intr_conf.rxq ? rte_eth_dev_rx_intr_ctl_q_get_fd(m_port, 0) : -1;
@@ -384,6 +453,21 @@ Nif::Result Nif::activate()
   resetWake();
   m_rxDepthRequested = m_rxDepth = 0;
   ackWake();
+  return {};
+}
+
+Nif::Result Nif::stopPort()
+{
+  if (m_flow) {
+    rte_flow_error detail{};
+    if (int rc = rte_flow_destroy(m_port, m_flow, &detail))
+      return deviceError("withdraw Ethernet ingress rule", -rc);
+    m_flow = nullptr;
+  }
+  if (m_started) {
+    if (int rc = rte_eth_dev_stop(m_port)) return deviceError("stop Ethernet port", -rc);
+    m_started = false;
+  }
   return {};
 }
 
@@ -428,10 +512,8 @@ void Nif::retire()
   }
   {
     ZmGuard guard(m_queueLock);
-    if (m_started) {
-      if (int rc = rte_eth_dev_stop(m_port)) error(deviceError("stop Ethernet port", -rc));
-      else m_started = false;
-    }
+    if (auto result = stopPort(); result.is<ZeException>())
+      error(ZuMv(result).p<ZeException>());
     m_rxFD = -1;
   }
   finishStop();
@@ -510,8 +592,9 @@ ZuInline Zu::IO::Result Nif::prepareTx(uint8_t *packet, unsigned length, Slot *&
 {
   slot = m_txIndex.find(packet);
   ZmAssert_(slot);
-  if (!length || length > mtu() + RTE_ETHER_HDR_LEN ||
-      length > slot->pool->size - unsigned(packet - slot->packet)) return Zi::IOError;
+  if (!length || length > slot->pool->size - unsigned(packet - slot->packet) ||
+      (length > mtu() + RTE_ETHER_HDR_LEN && !frameFitsMTU(packet, length, mtu())))
+    return Zi::IOError;
   if (m_txOutstanding == m_txCapacity) return Zi::NotReady;
   if (!slot->submit()) {
     ZmAssert_(slot->leases.load_() & Slot::Caller);
@@ -623,11 +706,23 @@ unsigned Nif::receive(bool deliver)
       rte_prefetch0(next);
       rte_prefetch0(rte_pktmbuf_mtod(next, const void *));
     }
+    auto data = rte_pktmbuf_mtod(mbuf, uint8_t *);
+    // net_af_packet can reinsert a stripped VLAN tag in mbuf headroom.
+    // Deliver the complete frame at the canonical caller-owned slot address.
+    if (m_captureFrames && mbuf->data_off == RTE_PKTMBUF_HEADROOM - RTE_VLAN_HLEN &&
+        mbuf->pool == m_rxPool->native() && mbuf->nb_segs == 1 &&
+        mbuf->pkt_len <= m_rxPool->size) {
+      memmove(data + RTE_VLAN_HLEN, data, mbuf->pkt_len);
+      mbuf->data_off += RTE_VLAN_HLEN;
+      data += RTE_VLAN_HLEN;
+    }
     if (deliver && m_active && mbuf->nb_segs == 1 &&
         (mbuf->ol_flags & RTE_MBUF_F_RX_L4_CKSUM_MASK) != RTE_MBUF_F_RX_L4_CKSUM_BAD &&
 	mbuf->data_len == mbuf->pkt_len && mbuf->pkt_len &&
-	mbuf->pkt_len <= mtu() + RTE_ETHER_HDR_LEN && m_rxPool->adopt(mbuf))
-      recv(rte_pktmbuf_mtod(mbuf, uint8_t *), mbuf->pkt_len, count > 1 ? &burst : nullptr);
+	mbuf->pkt_len <= m_rxPool->size &&
+        (mbuf->pkt_len <= mtu() + RTE_ETHER_HDR_LEN || frameFitsMTU(data, mbuf->pkt_len, mtu())) &&
+        m_rxPool->adopt(mbuf))
+      recv(data, mbuf->pkt_len, count > 1 ? &burst : nullptr);
     else {
       burst.flush();
       rte_pktmbuf_free(mbuf);
@@ -705,12 +800,16 @@ void Nif::status()
     name = m_config.port, state = state(), index = ifindex(), mtu = mtu(),
     address = ZuCArray<RTE_ETHER_ADDR_FMT_SIZE>{mac},
     mode = m_ring ? "zero-copy" : (m_pcap || m_afPacketMinRxSize) ? "copy" : "unverified",
+    guarded = m_ingressFD >= 0, catchAll = !!m_flow, captureFrames = m_captureFrames,
     started = m_started, rxDesc = m_rxDesc, txDesc = m_txDesc, tcpOffload = configuredTCPChksumOffload()
   ](auto &out) {
     out << "DPDK " << name << " state " << ZuBoxed(state)
       << " ifindex " << ZuBoxed(index) << " MTU " << ZuBoxed(mtu)
       << " MAC " << address << " mode " << mode
       << " TCP checksum " << (tcpOffload ? "offload" : "offload unavailable");
+    if (guarded) out << " netdev ingress guarded";
+    if (catchAll) out << " Ethernet catch-all to queue 0";
+    if (captureFrames) out << " PACKET_RX_RING frames " << ZuBoxed(captureFrames);
     if (started)
       out << " Rx queues 1 (" << ZuBoxed(rxDesc) << " requested descriptors)"
         " Tx queues 1 (" << ZuBoxed(txDesc) << " requested descriptors)";
@@ -720,14 +819,14 @@ void Nif::status()
 struct QueueView : public Ztc::Queue {
   ZuID		owner, id;
   rte_eth_stats	stats{};
-  unsigned	depth;
+  unsigned	depth, captureFrames;
   uint16_t	port;
   Ztc::QueueType::T type;
   bool		haveStats;
 
   QueueView(ZuID owner_, ZuID id_, uint16_t port_, Ztc::QueueType::T type_,
-    const rte_eth_stats &stats_, bool haveStats_, unsigned depth_ = 0)
-  : owner{owner_}, id{id_}, stats{stats_}, depth{depth_}, port{port_}, type{type_},
+    const rte_eth_stats &stats_, bool haveStats_, unsigned depth_ = 0, unsigned captureFrames_ = 0)
+  : owner{owner_}, id{id_}, stats{stats_}, depth{depth_}, captureFrames{captureFrames_}, port{port_}, type{type_},
     haveStats{haveStats_} { }
 
   TelKey telKey() const override { return {owner, id, type}; }
@@ -736,7 +835,8 @@ struct QueueView : public Ztc::Queue {
     data.ownerID = owner; data.id = id; data.type = type;
     if (type == Ztc::QueueType::Rx) {
       rte_eth_rxq_info info{};
-      if (!rte_eth_rx_queue_info_get(port, 0, &info)) data.size = info.nb_desc;
+      if (captureFrames) data.size = captureFrames;
+      else if (!rte_eth_rx_queue_info_get(port, 0, &info)) data.size = info.nb_desc;
       data.count = depth;
       if (haveStats) {
 	data.outCount = stats.ipackets;
@@ -762,7 +862,7 @@ unsigned Nif::allQueues(Ztc::QueueMgr::AllFn fn) const
   // The application Rx owner samples dataplane depth on its next turn.
   auto depth = m_rxDepth.load_();
   m_rxDepthRequested.store_(1);
-  QueueView rx{owner, ZuID{name} << "rx", m_port, Ztc::QueueType::Rx, stats, haveStats, depth};
+  QueueView rx{owner, ZuID{name} << "rx", m_port, Ztc::QueueType::Rx, stats, haveStats, depth, m_captureFrames};
   QueueView tx{owner, ZuID{name} << "tx", m_port, Ztc::QueueType::Tx, stats, haveStats};
   fn(&rx);
   fn(&tx);

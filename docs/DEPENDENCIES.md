@@ -72,10 +72,17 @@ Applications link the common packet interface in `libZpkt`. Each `Zpkt::Env`
 loads one backend from the configured module path. [Zpkt module configuration](../zpkt/README.md#modules-and-named-interfaces)
 
 - `libZpkt_xdp.so` builds on Linux and uses the kernel AF_XDP and BPF APIs directly.
+- `libZpkt_afp.so` uses the Linux packet socket and nftables netdev ingress
+  APIs directly. The headers and running kernel must support socket-owned
+  nftables tables (`NFT_TABLE_F_OWNER`). Interface open requires
+  `CAP_NET_RAW` and `CAP_NET_ADMIN` in the governing user namespace.
 - `libZpkt_dpdk.so` additionally requires `libdpdk >= 25.11` via pkg-config.
   The Linux `z.config` wrapper enables DPDK by default. Use `-K` to omit it.
   Direct `configure` builds enable DPDK with `--with-dpdk=yes`.
   The selected DPDK port requires its corresponding poll-mode driver.
+  Bifurcated hardware and `net_af_packet` use the same kernel nftables ingress
+  support and `CAP_NET_ADMIN` as AFP. Bifurcated ports also require PMD
+  flow isolation and a wildcard Ethernet flow with a queue action.
 
 Linux build headers must provide AF_XDP UMEM/ring offsets and need-wakeup
 flags, XDP capability queries, BPF XSK maps, expected-FD XDP attachment protection

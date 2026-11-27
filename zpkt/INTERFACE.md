@@ -241,6 +241,29 @@ their routing interface separately when needed. A configured `_loop` entry
 must select a `net_ring` port. The opened port remains exclusive through
 device finalization. Repeat lookup is owned by Env's tree.
 
+A dedicated PCI function bound to VFIO or UIO has no Linux networking receive
+queue. On bifurcated ports such as mlx5, open takes the socket-owned nftables
+netdev guard on the PMD's ifindex. Start enables flow isolation before queue
+configuration, starts the queues, then validates and creates an ingress
+Ethernet wildcard with the sole action of delivery to queue 0. Installation
+failure prevents readiness. Stop destroys the run's flow before stopping the
+port. A failed removal retains the handle for retry. The netdev guard spans
+all runs and releases on successful finalization. This also suppresses host
+protocol processing of multicast copies and traffic during setup or teardown.
+Probe the port and open the Nif in the same network namespace. Keep the
+guarded netdev name stable. Hardware coverage is scoped to traffic
+delivered to that physical function, VF or representor.
+
+The `net_af_packet` PMD takes the same guard on its underlying Linux ifindex.
+Configure its single PACKET_RX_RING with EAL vdev arguments `qpairs=1`,
+`framecnt`, `framesz` and `blocksz`. The PMD allocates the ring at probe
+and leaves it attached while stopped. Start drains stale frames before
+delivery. Its socket ring buffers arrivals while the application Rx pool is
+exhausted. Rx queue telemetry reports the capture capacity in frames.
+`net_ring` and finite pcap-file input have no live host Rx path. The pcap PMD
+opens live captures with a fixed library buffer policy. Select `net_af_packet`
+for configurable live capture. [DPDK AF_PACKET PMD](https://doc.dpdk.org/guides/nics/af_packet.html)
+
 Provision the common Rx pool and each distinct Tx pool as one unit.
 If native allocation fails, retry with the same pool collection. Direct
 standalone allocation is idempotent for that collection. Backing has native
@@ -292,6 +315,13 @@ Successful finalization closes the owner socket and releases the chain.
 The kernel also releases it when the last owner socket reference closes on
 process exit. AFP reports one logical Rx queue.
 AF_PACKET uses the caller's Rx and Tx owners and copies packet bytes.
+
+Set `rxBufferBytes` to the desired Linux receive socket memory budget (default
+1 MiB). Every start sets and reads back the budget before activating the socket.
+If Linux caps the request, AFP tries the privileged override and fails start
+if it cannot obtain the budget. The budget includes kernel per-frame overhead.
+The socket can queue additional valid frames while the caller holds all pool
+slots. Socket overflow and software discards are counted separately.
 
 Allocation retains one Rx pool and the distinct Tx and reserve pools as one
 transaction. Receive vectors use the entire logical extent from the canonical

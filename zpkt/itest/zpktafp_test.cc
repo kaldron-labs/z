@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include "config.h"
 #include <arpa/inet.h>
 #include <poll.h>
 #include <stdlib.h>
@@ -43,16 +44,29 @@ struct Endpoint {
     if (mx.running()) mx.stop();
   }
 
-  bool init(const char *name, bool bypass) {
+  bool init(const char *name, bool bypass, bool dpdk = false) {
     auto module = getenv("ZPKT_AFP_MODULE_PATH");
     auto cf = ZpktTest::object();
-    ZpktTest::value(cf.ptr(), "module", module ? module : ZPKT_AFP_MODULE);
+    ZpktTest::value(cf.ptr(), "module", dpdk ? ZPKT_DPDK_MODULE : module ? module : ZPKT_AFP_MODULE);
     auto entry = ZpktTest::object(ZpktTest::object(cf.ptr(), "interfaces"), name);
-    ZpktTest::value(entry, "rxSpin", "0");
-    if (!bypass) ZpktTest::value(entry, "qdiscBypass", "false");
+    if (dpdk) {
+      using Node = ZpktTest::Node;
+      auto eal = ZpktTest::object(cf.ptr(), "eal");
+      for (auto key : {"noPCI", "noHuge", "noShconf", "noTelemetry"})
+        ZpktTest::value(eal, key, "true");
+      auto devices = ZfCf::newNode<Node::Array>(eal);
+      devices->data.push(ZfCf::newNode<Node::String>(
+        devices.ptr(), "net_af_packet0,iface=zafp0,framecnt=64,framesz=2048,blocksz=4096"));
+      eal->data<Node::Object>().push(Node::Field{"vdev", ZuMv(devices)});
+      ZpktTest::value(entry, "port", "net_af_packet0");
+    } else {
+      ZpktTest::value(entry, "rxSpin", "0");
+      ZpktTest::value(entry, "rxBufferBytes", "262144");
+      if (!bypass) ZpktTest::value(entry, "qdiscBypass", "false");
+    }
     try { env->init(cf.ptr()); }
     catch (const ZeException &err) { log(err); return false; }
-    if (env->loopback()) return false;
+    if (env->loopback() != dpdk) return false;
     auto result = env->nif(&mx, name);
     if (result.is<ZeException>()) { log(result.p<ZeException>()); return false; }
     nif = result.p<Zpkt::Nif *>();
@@ -98,12 +112,16 @@ struct Endpoint {
     return ok;
   }
 
-  bool receive(const Frame &frame) {
+  unsigned receiveBurst() {
     received = 0;
     ZmBlock<>{}([this](auto done) {
       mx.rxRun([this, done]() mutable { nif->rx(); done(); });
     });
-    return received == 1 && input[0].length == frame.length &&
+    return received;
+  }
+
+  bool receive(const Frame &frame) {
+    return receiveBurst() == 1 && input[0].length == frame.length &&
       !memcmp(input[0].bytes, frame.bytes, frame.length);
   }
 };
@@ -119,7 +137,7 @@ static Frame makeFrame(Endpoint &src, Endpoint &dst, unsigned length, unsigned t
   return frame;
 }
 
-static void testIngress()
+static void testIngress(bool dpdk)
 {
   ZuTestScopeRT(testIngress);
   Endpoint peer;
@@ -150,7 +168,7 @@ static void testIngress()
     };
     ZuCheckRT(delivered(true), log_("Linux receives on the unclaimed veth"));
     Endpoint owner;
-    bool opened = owner.init("zafp0", true);
+    bool opened = owner.init("zafp0", true, dpdk);
     ZuCheckRT(opened && delivered(false), log_("open suppresses kernel UDP before start"));
     if (opened) {
       Endpoint contender;
@@ -159,6 +177,38 @@ static void testIngress()
       bool running = owner.start();
       ZuCheckRT(running && delivered(false) && owner.receive(probe),
         log_("AFP receives the UDP frame while the kernel socket stays empty"));
+      if (running && dpdk) {
+        Frame tagged = probe;
+        tagged.bytes[12] = 0x81;
+        tagged.bytes[13] = tagged.bytes[14] = 0;
+        tagged.bytes[15] = 7;
+        tagged.bytes[16] = 0x88;
+        tagged.bytes[17] = 0xb5;
+        ZuCheckRT(peer.send(tagged) && owner.receive(tagged),
+          log_("capture delivers the intact VLAN-tagged frame at the caller slot"));
+        // Leave Rx idle. The 64-slot kernel ring buffers eight times the
+        // eight-slot application pool. One additional frame must overflow it.
+        bool posted = true;
+        for (unsigned i = 0; i < 65; ++i) posted &= peer.send(probe);
+        pollfd item{fd, POLLIN, 0};
+        bool suppressed = poll(&item, 1, 100) == 0;
+        unsigned drops = 0, capacity = 0;
+        owner.nif->allQueues([&](Ztc::Queue *q) {
+          if (q->telKey().p<2>() != Ztc::QueueType::Rx) return;
+          Ztc::QueueTelemetry t;
+          q->telemetry(t);
+          drops = t.full;
+          capacity = t.size;
+        });
+        ZuCheckRT(posted && suppressed && capacity == 64 && drops == 1,
+          log_("capture ring absorbs its configured depth before reporting a drop"));
+        if (posted && drops == 1) {
+          unsigned count = 0;
+          while (count < 64) count += owner.receiveBurst();
+          ZuCheckRT(count == 64 && delivered(false) && owner.receive(probe),
+            log_("drain all queued frames and accept the next datagram"));
+        }
+      }
       if (running) {
         ZuCheckRT(owner.nif->stop() && delivered(false), log_("stop retains the claim"));
       }
@@ -217,6 +267,9 @@ int main(int argc, char **argv)
   }
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testIngress);
+  ZuTestCall(testIngress, false);
+#ifdef HAVE_DPDK
+  ZuTestCall(testIngress, true);
+#endif
   ZuTestCall(testWire);
 }

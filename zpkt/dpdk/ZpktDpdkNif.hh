@@ -67,6 +67,7 @@ private:
   void start_() override;
   void stop_() override;
   Result activate();
+  Result stopPort();
   void quiesceRx(unsigned left);
   void retire();
   void finishStop();
@@ -84,6 +85,10 @@ private:
   uint16_t	m_port = NoPort;
   bool		m_ring = false, m_pcap = false;
 
+  int		m_ingressFD = -1;
+  unsigned	m_captureFrames = 0;
+  bool		m_isolated = false;
+  rte_flow	*m_flow = nullptr;
   TxReturns	m_txReturns;
   ZmRef<BufPool>	m_rxPool;
   Pools		m_txPools, m_reserves;

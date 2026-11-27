@@ -91,6 +91,11 @@ sudo -n prove ./zpkt/itest/zpktdkpackettest ./zpkt/itest/zpktdkwaketest \
   order across pools, exact-once retirement and zero slot visits on an empty
   poll. Test-only callbacks gate return publication and pool scheduling races.
   The pcap case verifies immediate driver returns, wire bytes and copy mode.
+  A ring ethdev with interposed hardware steering calls checks whole-port
+  flow validation, install failure, handle retention on destroy failure and restart.
+  Physical mlx5 acceptance additionally needs an independent Ethernet peer,
+  unicast, multicast, broadcast, VLAN and non-IP probes, and a kernel receiver
+  that resumes delivery after finalization.
 * `zpktdkwaketest` observes real `ppoll` calls on the internal eventfd. It
   checks preposted and concurrent pulses, the configured idle backoff bound,
   off-owner pool return wakes, sustained input, and polling with a zero
@@ -110,7 +115,10 @@ endpoints. It checks bidirectional Ethernet exchange at peer ingress with
 bypass enabled and disabled, outgoing suppression, and restart. An independent
 UDP socket checks host delivery before open and after finalization, and
 suppression while the AFP interface is open, running and stopped. A competing
-Env attempts to claim the same interface.
+Env attempts to claim the same interface. In a DPDK build the same probe runs
+against `net_af_packet`, including a competing native AFP open. A burst of 65
+valid frames into an idle 64-frame ring must yield 64 deliveries, one overflow,
+and continued delivery after draining.
 
 ```sh
 sudo -n env ZPKT_RUN_FIXTURE=1 prove ./zpkt/itest/zpktafp_test

@@ -5,11 +5,13 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <dlfcn.h>
+#include <net/if.h>
 #include <string.h>
 #include <unistd.h>
 #include <iostream>
 
 #include <rte_ethdev.h>
+#include <rte_flow.h>
 #include <rte_mbuf.h>
 
 #include <zlib/ZuTestUtil.hh>
@@ -65,6 +67,116 @@ int rte_eth_dev_stop(uint16_t port)
     dlsym(RTLD_NEXT, "rte_eth_dev_stop"));
   if (auto mbuf = returnAtStop.xch(nullptr)) rte_pktmbuf_free(mbuf);
   return stop(port);
+}
+
+// Exercise bifurcated-port lifecycle on a real ethdev queue and private netdev.
+// Only the hardware match/action API and PMD identity are supplied by this test.
+static unsigned flowPort = RTE_MAX_ETHPORTS, flowIndex, creates, destroys;
+static bool isolated, rejectCreate, rejectDestroy;
+static rte_flow *flowHandle() { return reinterpret_cast<rte_flow *>(&flowPort); }
+
+extern "C" __attribute__((visibility("default")))
+int rte_eth_dev_info_get(uint16_t port, rte_eth_dev_info *info)
+{
+  static const auto get = reinterpret_cast<decltype(&rte_eth_dev_info_get)>(
+    dlsym(RTLD_NEXT, "rte_eth_dev_info_get"));
+  int rc = get(port, info);
+  if (!rc && port == flowPort) {
+    info->driver_name = "net_mlx5";
+    info->if_index = flowIndex;
+  }
+  return rc;
+}
+
+extern "C" __attribute__((visibility("default")))
+int rte_flow_isolate(uint16_t port, int set, rte_flow_error *)
+{
+  if (port != flowPort || set != 1) return -ENOTSUP;
+  isolated = true;
+  return 0;
+}
+
+extern "C" __attribute__((visibility("default")))
+int rte_flow_validate(uint16_t port, const rte_flow_attr *attr,
+    const rte_flow_item *pattern, const rte_flow_action *actions, rte_flow_error *)
+{
+  auto q = static_cast<const rte_flow_action_queue *>(actions[0].conf);
+  return port == flowPort && isolated && attr->ingress && !attr->egress && !attr->transfer &&
+    !attr->group && pattern[0].type == RTE_FLOW_ITEM_TYPE_ETH && !pattern[0].spec &&
+    !pattern[0].mask && pattern[1].type == RTE_FLOW_ITEM_TYPE_END &&
+    actions[0].type == RTE_FLOW_ACTION_TYPE_QUEUE && q && !q->index &&
+    actions[1].type == RTE_FLOW_ACTION_TYPE_END ? 0 : -EINVAL;
+}
+
+extern "C" __attribute__((visibility("default")))
+rte_flow *rte_flow_create(uint16_t port, const rte_flow_attr *attr,
+    const rte_flow_item *pattern, const rte_flow_action *actions, rte_flow_error *err)
+{
+  if (rejectCreate || rte_flow_validate(port, attr, pattern, actions, err)) {
+    rte_errno = ENOTSUP;
+    return nullptr;
+  }
+  ++creates;
+  return flowHandle();
+}
+
+extern "C" __attribute__((visibility("default")))
+int rte_flow_destroy(uint16_t port, rte_flow *flow, rte_flow_error *)
+{
+  if (port != flowPort || flow != flowHandle()) return -EINVAL;
+  if (rejectDestroy) return -EBUSY;
+  ++destroys;
+  return 0;
+}
+
+static void testLivePcap(const Runtime &runtime)
+{
+  ZuTestScopeRT(testLivePcap);
+  const char *name = "net_pcap_zpkt0";
+  bool attached = !rte_eal_hotplug_add("vdev", name, "iface=net_ring_packet");
+  ZuCheckRT(attached, log_("attach live pcap to private dummy interface"));
+  if (!attached) return;
+  ZiMultiplex mx;
+  auto opened = runtime.env()->nif(&mx, name);
+  ZuCheckRT(opened.is<ZeException>(), log_("reject live pcap with uncontrollable capture size"));
+  if (opened.is<Zpkt::Nif *>()) {
+    ZmRef<Zpkt::Nif> nif = opened.p<Zpkt::Nif *>();
+    nif->final();
+  }
+  ZuCheckRT(!rte_eal_hotplug_remove("vdev", name), log_("release test pcap port"));
+}
+
+static void testSteering(const Runtime &runtime)
+{
+  ZuTestScopeRT(testSteering);
+  RingPort port;
+  auto attached = port.init("packet", 128, {{2,0,0,0,0,1}});
+  uint16_t id;
+  bool setup = attached.is<void>() && !rte_eth_dev_get_port_by_name(port.name(), &id);
+  ZuCheckRT(setup, log_("create ethdev for hardware steering fixture"));
+  if (!setup) return;
+  flowIndex = if_nametoindex("net_ring_packet");
+  flowPort = id;
+  Device endpoint;
+  auto opened = endpoint.init(runtime, port.name(), 128);
+  ZuCheckRT(opened.is<void>(), log_("claim private host interface for simulated mlx5"));
+  if (opened.is<void>()) {
+    auto discard = [&endpoint](uint8_t *p, unsigned, ZiRxBurst *) { endpoint.ingress->free(p); };
+    rejectCreate = true;
+    ZuCheckRT(endpoint.start(discard).is<ZeException>() && !endpoint.device->ready() && !creates,
+      log_("failed catch-all prevents activation"));
+    rejectCreate = false;
+    ZuCheckRT(endpoint.start(discard).is<void>() && creates == 1,
+      log_("retry publishes queue zero after catch-all installation"));
+    rejectDestroy = true;
+    ZuCheckRT(!endpoint.stop() && !destroys, log_("failed removal retains flow ownership"));
+    rejectDestroy = false;
+    ZuCheckRT(endpoint.start(discard).is<void>() && destroys == 1 && creates == 2,
+      log_("restart first retires the retained handle"));
+    ZuCheckRT(endpoint.stop() && destroys == 2, log_("stop removes only this run's flow"));
+    endpoint.device->final();
+  }
+  flowPort = RTE_MAX_ETHPORTS;
 }
 
 static void frame(ZuSpan<uint8_t> bytes, unsigned seed)
@@ -643,8 +755,10 @@ int main(int argc, char **argv)
   auto result = runtime.init(true, ZPKT_DPDK_TEST_MODULE);
   ZuCHECK(result.is<void>(), errorText(result.p<ZeException>()));
   if (!result.is<void>()) return 1;
+  ZuTestCall(testSteering, runtime);
   ZuTestCall(testRing, runtime);
   ZuTestCall(testPrefix, runtime);
+  ZuTestCall(testLivePcap, runtime);
   ZuTestCall(testPcap, runtime);
   ZuTestCall(testManyReturns, runtime);
   ZuTestCall(testReturnRace, runtime, BeforeClear, false);

@@ -17,9 +17,9 @@
 #include <unistd.h>
 
 #include <zlib/ZmAssert.hh>
-#include "ZpktAfpNif.hh"
+#include <zlib/ZpktNif.hh>
 
-namespace Zpkt::Afp {
+namespace Zpkt {
 
 namespace {
 struct Batch {
@@ -63,6 +63,7 @@ struct Batch {
 
 int install(int fd, unsigned ifindex, const char *device)
 {
+  // Keep the existing AFP table identity so both plugins contend for the same netdev.
   char table[32];
   snprintf(table, sizeof(table), "zpkt_afp_%u", ifindex);
   constexpr unsigned subsystem = NFNL_SUBSYS_NFTABLES << 8;
@@ -112,7 +113,7 @@ int install(int fd, unsigned ifindex, const char *device)
 }
 } // namespace
 
-int Nif::openIngress(unsigned ifindex)
+int nifClaimIngress(unsigned ifindex)
 {
   char device[IF_NAMESIZE];
   if (!if_indextoname(ifindex, device)) return -errno;
@@ -125,4 +126,4 @@ int Nif::openIngress(unsigned ifindex)
   return fd;
 }
 
-} // namespace Zpkt::Afp
+} // namespace Zpkt
