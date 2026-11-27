@@ -6,7 +6,7 @@
 
 #include <zlib/ZpktPlugin.hh>
 
-#include "ZpktAFPCf.hh"
+#include "ZpktAfpCf.hh"
 #include "ZpktAfpNif.hh"
 
 namespace Zpkt::Afp {

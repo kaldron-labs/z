@@ -6,8 +6,8 @@
 
 // Configuration for the AF_PACKET plugin.
 
-#ifndef ZpktAFPCf_HH
-#define ZpktAFPCf_HH
+#ifndef ZpktAfpCf_HH
+#define ZpktAfpCf_HH
 
 #ifndef ZpktLib_HH
 #include <zlib/ZpktLib.hh>
@@ -47,4 +47,4 @@ ZfStruct(, (PluginCf, Cf),
   (interfaces, (Mutable, Required), UDT));
 
 } // namespace Zpkt::Afp
-#endif /* ZpktAFPCf_HH */
+#endif /* ZpktAfpCf_HH */

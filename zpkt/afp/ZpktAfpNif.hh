@@ -19,7 +19,7 @@
 #include <zlib/ZmLock.hh>
 #include <zlib/Zpkt.hh>
 
-#include "ZpktAFPCf.hh"
+#include "ZpktAfpCf.hh"
 #include "ZpktAfpPool.hh"
 
 namespace Zpkt::Afp {

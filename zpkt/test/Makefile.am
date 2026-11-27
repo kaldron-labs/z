@@ -17,7 +17,7 @@ ZpktAfpPoolTest_SOURCES = ZpktAfpPoolTest.cc
 ZpktAfpPoolTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zpkt/afp
 ZpktAfpPoolTest_LDADD = $(top_builddir)/zpkt/afp/libZpktAfpCore.la $(LDADD)
 ZpktAfpPoolTest_LDFLAGS = $(AM_LDFLAGS) -Wl,--wrap=posix_memalign
-ZpktAfpInstanceTest_SOURCES = ZpktAfpInstanceTest.cc ../afp/ZpktAFP.cc
+ZpktAfpInstanceTest_SOURCES = ZpktAfpInstanceTest.cc ../afp/ZpktAfp.cc
 ZpktAfpInstanceTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zpkt/afp \
 	-DZPKT_AFP_MODULE='"$(abs_top_builddir)/zpkt/afp/.libs/libZpkt_afp.so"'
 ZpktAfpInstanceTest_LDADD = $(top_builddir)/zpkt/afp/libZpktAfpCore.la $(LDADD)
