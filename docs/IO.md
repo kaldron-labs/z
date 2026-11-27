@@ -2,6 +2,13 @@
 
 Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
 
+## I/O errors
+All low-level I/O operations that can succeed, fail transiently and/or fail
+permanently should return plain `int` and use `Zi::OK`, `Zi::IOError`, `Zi::NotReady`,
+and the other enum values in `Zu::IO`; such functions should have a trailing
+optional parameter `ZeError *e = nullptr` for callers to retrieve the
+`ZeError` if desired.
+
 ## I/O sharding
 Every data member involved in I/O rx/tx should have one owning shard:
 
