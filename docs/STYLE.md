@@ -159,6 +159,8 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
 - Flabuffers schema files are snake-case.
 - Conventional control filenames such as `Makefile.am`, `README.md`,
   `Dockerfile.*`, and `.gitignore` retain their conventional casing.
+- Source filenames must be unique within their directory under
+  case-insensitive comparison.
 - Native names mandated by an external tool or protocol retain their spelling;
   this includes PostgreSQL extension/control/SQL names, generated files,
   imported fixtures, and FlatBuffers schema filenames and contract fields.

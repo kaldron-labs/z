@@ -48,7 +48,7 @@ if DPDK
 noinst_LTLIBRARIES += libZpktDpdkFixture.la libZpktTestDpdk.la
 libZpktDpdkFixture_la_SOURCES = zpktdkfixture.cc zpktdkfixture.hh
 libZpktDpdkFixture_la_CPPFLAGS = $(AM_CPPFLAGS) $(DPDK_CFLAGS) -I$(top_srcdir)/zpkt/dpdk
-libZpktTestDpdk_la_SOURCES = ../dpdk/ZpktDPDK.cc ../dpdk/ZpktDpdk.cc \
+libZpktTestDpdk_la_SOURCES = ../dpdk/ZpktDpdkPlugin.cc ../dpdk/ZpktDpdk.cc \
 	../dpdk/ZpktDpdkNif.cc ../dpdk/ZpktDpdkPool.cc
 libZpktTestDpdk_la_CPPFLAGS = $(AM_CPPFLAGS) $(DPDK_CFLAGS) -DZPKT_DPDK_TEST -DZPKT_DPDK_EXPORTS
 libZpktTestDpdk_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version -rpath $(abs_builddir)/.libs

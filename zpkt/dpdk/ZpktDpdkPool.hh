@@ -9,8 +9,8 @@
 #ifndef ZpktDpdkPool_HH
 #define ZpktDpdkPool_HH
 
-#ifndef ZpktDPDKLib_HH
-#include "ZpktDPDKLib.hh"
+#ifndef ZpktDpdkLib_HH
+#include "ZpktDpdkLib.hh"
 #endif
 
 #include <stdint.h>

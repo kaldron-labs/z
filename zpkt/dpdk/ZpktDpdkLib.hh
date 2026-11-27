@@ -6,8 +6,8 @@
 
 // Zpkt DPDK plugin exports
 
-#ifndef ZpktDPDKLib_HH
-#define ZpktDPDKLib_HH
+#ifndef ZpktDpdkLib_HH
+#define ZpktDpdkLib_HH
 
 #include <zlib/ZpktLib.hh>
 
@@ -30,4 +30,4 @@
 
 #endif
 
-#endif /* ZpktDPDKLib_HH */
+#endif /* ZpktDpdkLib_HH */

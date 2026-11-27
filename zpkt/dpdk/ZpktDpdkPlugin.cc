@@ -12,7 +12,7 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZpktPlugin.hh>
 
-#include "ZpktDPDKCf.hh"
+#include "ZpktDpdkCf.hh"
 #include "ZpktDpdk.hh"
 #include "ZpktDpdkNif.hh"
 

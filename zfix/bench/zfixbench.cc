@@ -52,7 +52,7 @@
 #include <rte_ethdev.h>
 #include <rte_lcore.h>
 #include <zlib/ZvCf.hh>
-#include "ZpktDPDKCf.hh"
+#include "ZpktDpdkCf.hh"
 #include "zpktdkfixture.hh"
 #endif
 

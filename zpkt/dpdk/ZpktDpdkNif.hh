@@ -9,8 +9,8 @@
 #ifndef ZpktDpdkNif_HH
 #define ZpktDpdkNif_HH
 
-#ifndef ZpktDPDKLib_HH
-#include "ZpktDPDKLib.hh"
+#ifndef ZpktDpdkLib_HH
+#include "ZpktDpdkLib.hh"
 #endif
 
 #include <stdint.h>
@@ -25,7 +25,7 @@
 #include <zlib/ZtArray.hh>
 #include <zlib/Zpkt.hh>
 #include "ZpktDpdkPool.hh"
-#include "ZpktDPDKCf.hh"
+#include "ZpktDpdkCf.hh"
 
 namespace Zpkt::Dpdk {
 

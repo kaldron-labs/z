@@ -6,15 +6,15 @@
 
 // Owned DPDK plugin configuration.
 
-#ifndef ZpktDPDKCf_HH
-#define ZpktDPDKCf_HH
+#ifndef ZpktDpdkCf_HH
+#define ZpktDpdkCf_HH
 
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmNoLock.hh>
 #include <zlib/ZfCf.hh>
 #include <zlib/ZiPlatform.hh>
 #include <zlib/ZpktEnv.hh>
-#include "ZpktDPDKLib.hh"
+#include "ZpktDpdkLib.hh"
 
 namespace Zpkt::Dpdk {
 
@@ -48,4 +48,4 @@ ZfStruct(ZpktDPDKAPI, (PluginCf, Cf),
   (interfaces, (Mutable, Required),	UDT));
 
 } // namespace Zpkt::Dpdk
-#endif /* ZpktDPDKCf_HH */
+#endif /* ZpktDpdkCf_HH */
