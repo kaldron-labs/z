@@ -22,7 +22,7 @@ static Zutcp::SentFrameRef dataRef(uint64_t offset, uint32_t length)
 }
 
 
-#define ZUTCP_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+#define ZUTCP_CHECK_RT_1(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 static Zutcp::TxPkt txPkt(
   uint64_t pn, unsigned bytes = 100, bool ackEliciting = true)

@@ -240,7 +240,7 @@ static void testExchange(bool ipv6)
     }
   }
   ZuCheckRT(verified, log_("AFP IPv", ipv6 ? 6 : 4,
-    " exact duplex exchange, valid checksums, nft isolation and graceful close. Logs ", directory));
+    " exact duplex exchange, valid checksums, zero TCP resets and graceful close. Logs ", directory));
 }
 
 int main(int argc, char **argv)

@@ -905,7 +905,7 @@ template <typename C, typename L> void MxPlugin::retire(C *cxn, bool peer, L &&d
       mxCxn->txContext().complete();
       mxCxn->plugin(nullptr);
     }
-    rxRun([
+    auto finishRx = [
       this, cxn = ZuMv(cxn), mxCxn = ZuMv(mxCxn), peer, done = ZuMv(done)
     ]() mutable {
       if (mxCxn) {
@@ -919,7 +919,11 @@ template <typename C, typename L> void MxPlugin::retire(C *cxn, bool peer, L &&d
       cxn = nullptr;
       --m_cxnRetiring;
       cxnsDrained();
-    });
+    };
+    if constexpr (ZuIsSame<C, UdpCxn>{}) {
+      // Drain retry callbacks already queued on Tx before releasing on Rx.
+      txRun([this, finishRx = ZuMv(finishRx)]() mutable { rxRun(ZuMv(finishRx)); });
+    } else rxRun(ZuMv(finishRx));
   });
 }
 

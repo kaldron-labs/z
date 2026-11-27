@@ -149,9 +149,7 @@ observations describe software paths.
 
 Add `afp` to `BENCH_BACKENDS` for the AFP copy-path smoke tests. The default
 requests qdisc bypass. Repeat with `BENCH_AFP_QDISC_BYPASS=0` for ordinary kernel
-egress scheduling. Each namespace installs a counted nftables input rule
-matching the test interface, peer and local addresses and TCP port 18187.
-Both counters must advance. With `BENCH_CAPTURE=1` the fixture captures each
+egress scheduling. Each AFP endpoint claims its own veth ingress on open. With `BENCH_CAPTURE=1` the fixture captures each
 direction at the intermediate bridge and verifies checksums, matching SYN and
 FIN flows, and zero resets. Use `analyze-wire.py` to reconstruct and compare the
 exact application stream. Performance runs use the same isolation with capture

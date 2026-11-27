@@ -22,7 +22,7 @@
 using namespace ZuTestUtil;
 using namespace ZutcpDpdkTest;
 
-#define CHECK(condition, ...) ZuCheckRT((condition), log_(__VA_ARGS__))
+#define ZUTCP_CHECK_1(condition, ...) ZuCheckRT((condition), log_(__VA_ARGS__))
 
 enum { TCPPort = 18210, UDPPortA = 18211, UDPPortB = 18212 };
 
@@ -58,7 +58,7 @@ struct StreamInput : Ztcp_::RxQueue::Node { using Ztcp_::RxQueue::Node::Node; };
 static bool checked(Result result, const char *description)
 {
   bool ok = result.is<void>();
-  CHECK(ok, description, " [", ZpktDpdkTest::errorText(result.p<ZeException>()), "]");
+  ZUTCP_CHECK_1(ok, description, " [", ZpktDpdkTest::errorText(result.p<ZeException>()), "]");
   return ok;
 }
 
@@ -83,23 +83,24 @@ struct Peer {
     auto opened = env->nif(&mx, link.selector);
     if (opened.is<ZeException>()) return checked(opened.p<ZeException>(), "open named device");
     device = opened.p<Zpkt::Nif *>();
-    CHECK((device->name() == ZuCSpan{link.selector} && fixture.ifindex[index] &&
+    ZUTCP_CHECK_1((device->name() == ZuCSpan{link.selector} && fixture.ifindex[index] &&
 	device->mx() == &mx && !device->ifindex() &&
 	device->mtu() == 1500 && device->rxQueues() == 1 &&
 	device->mac() == ZuBSpan{link.address.addr_bytes, 6} &&
 	!device->allocated() && device->state() == ZmEngineState::Stopped),
       "resolve native Ethernet geometry with a distinct Linux routing interface [", index, "]");
     auto repeatedNif = env->nif(&mx, link.selector);
-    CHECK(repeatedNif.is<Zpkt::Nif *>() && repeatedNif.p<Zpkt::Nif *>() == device.ptr(),
+    ZUTCP_CHECK_1(repeatedNif.is<Zpkt::Nif *>() && repeatedNif.p<Zpkt::Nif *>() == device.ptr(),
       "identical named lookup returns the existing device");
     ZiMultiplex conflictingMx;
-    CHECK(env->nif(&conflictingMx, link.selector).is<ZeException>() && device->mx() == &mx,
+    ZUTCP_CHECK_1(
+      env->nif(&conflictingMx, link.selector).is<ZeException>() && device->mx() == &mx,
       "a conflicting multiplexer preserves the originally opened device");
     auto moving = device;
     bool noRoute = false;
     try { tcp->init(&mx, env, ZuMv(moving), tcpParams(0)); }
     catch (ZeException &) { noRoute = true; }
-    CHECK(noRoute && moving.ptr() == device.ptr(),
+    ZUTCP_CHECK_1(noRoute && moving.ptr() == device.ptr(),
       "a native device without a Linux ifindex requires explicit routing configuration");
     if (!noRoute) return false;
     auto params = tcpParams(fixture.ifindex[index]);
@@ -110,12 +111,13 @@ struct Peer {
     catch (ZeException &e) {
       std::cerr << e << '\n' << std::flush;
     }
-    CHECK(!moving && repeated,
+    ZUTCP_CHECK_1(!moving && repeated,
       "moved-from repeated TCP init identifies the owned device");
     bool routingChanged = false;
     try { tcp->init(&mx, env, ZuMv(moving), tcpParams(fixture.ifindex[index ^ 1])); }
     catch (ZeException &) { routingChanged = true; }
-    CHECK(routingChanged, "repeated initialization rejects a different routing interface");
+    ZUTCP_CHECK_1(routingChanged,
+      "repeated initialization rejects a different routing interface");
     if (!index) {
       auto alt = env->nif(&mx, Links[1].selector);
       if (alt.is<ZeException>()) return checked(alt.p<ZeException>(), "open another device");
@@ -126,12 +128,12 @@ struct Peer {
         std::cerr << e << '\n' << std::flush;
         rejected = true;
       }
-      CHECK(rejected && other &&
+      ZUTCP_CHECK_1(rejected && other &&
 	  other->mx() == &mx,
 	"conflicting TCP init leaves a different eligible device with its caller");
       other->final();
     }
-    CHECK(mx.plugin() == tcp.ptr(),
+    ZUTCP_CHECK_1(mx.plugin() == tcp.ptr(),
       "constructor-injected plugin retains identity after repeated initialization");
 
     if (index) rx = mx.allocator<Zi::IOBufType::Rx, StreamInput>(128);
@@ -143,18 +145,18 @@ struct Peer {
     udpTx = mx.allocator<Zi::IOBufType::TxUDP>(16);
     app = mx.allocator<Zi::IOBufType::App>();
     if (!rx || !reconnectRx || !udpRx || !tx || !smallTx || !udpTx || !app) {
-      CHECK(false, "register every typed handle before the first allocation attempt");
+      ZUTCP_CHECK_1(false, "register every typed handle before the first allocation attempt");
       return false;
     }
     auto stub = rx->allocBuf();
     auto udpStub = udpRx->allocBuf();
-    CHECK(rx != reconnectRx && rx != udpRx && rx->pool == reconnectRx->pool &&
+    ZUTCP_CHECK_1(rx != reconnectRx && rx != udpRx && rx->pool == reconnectRx->pool &&
 	udpRx->pool == rx->pool && rx->pool->type == Zi::IOBufType::Rx &&
 	stub && stub->registered() && !stub->data_() && udpStub && !udpStub->data_() &&
 	dynamic_cast<UDPInput *>(udpStub.ptr()) && !tx->allocBuf() && !smallTx->allocBuf() &&
 	!udpTx->allocBuf(),
       "typed Rx stubs share backingless ingress and Tx remains deferred");
-    CHECK(tx->pool != smallTx->pool && tx->pool != udpTx->pool &&
+    ZUTCP_CHECK_1(tx->pool != smallTx->pool && tx->pool != udpTx->pool &&
 	tx->pool->type == Zi::IOBufType::TxTCP && smallTx->pool->type == Zi::IOBufType::TxTCP &&
 	udpTx->pool->type == Zi::IOBufType::TxUDP && tx->size == device->mtu() + 14 &&
 	smallTx->size == 192 + 114 && smallTx->headRoom == 114 && smallTx->pool->align == 256,
@@ -595,7 +597,7 @@ static void heldOwnership(Peers &pair)
     });
     owner.wait();
     bool ready = opened && wait(endpoint.ready);
-    CHECK(ready, "open retained endpoint profile ", mode);
+    ZUTCP_CHECK_1(ready, "open retained endpoint profile ", mode);
     if (!ready) { finish(); return; }
     bool prepared = false, accepted = false;
     uint8_t *frame = nullptr;
@@ -615,7 +617,8 @@ static void heldOwnership(Peers &pair)
       return packet;
     };
     auto packet = accepted ? take() : nullptr;
-    CHECK(prepared && accepted && packet, "submit through TCP/endpoint into the actual PMD");
+    ZUTCP_CHECK_1(prepared && accepted && packet,
+      "submit through TCP/endpoint into the actual PMD");
     if (!packet) { finish(); return; }
     auto slot = Zpkt::Dpdk::BufPool::slot(packet);
     auto pool = slot->pool;
@@ -643,7 +646,8 @@ static void heldOwnership(Peers &pair)
       owner.post();
     });
     owner.wait();
-    CHECK(refused, "held PMD bytes/refcount/admission survive changed ACK/window/options");
+    ZUTCP_CHECK_1(refused,
+      "held PMD bytes/refcount/admission survive changed ACK/window/options");
     rte_pktmbuf_free(packet);
     auto retired = [&peer, &owner]() {
       bool idle = false;
@@ -696,7 +700,7 @@ static void heldOwnership(Peers &pair)
       bool stopped = peer.mx.stop();
       release.join();
       bool restarted = peer.mx.start();
-      CHECK(stopped && observed && restarted && !peer.device->error(),
+      ZUTCP_CHECK_1(stopped && observed && restarted && !peer.device->error(),
 	"stop drains the held PMD submission unchanged and restarts on the same arena");
     } else if (packet) rte_pktmbuf_free(packet);
     bool second = retired();
@@ -711,7 +715,7 @@ static void heldOwnership(Peers &pair)
       owner.post();
     });
     owner.wait();
-    CHECK(recovery && second && before && returned,
+    ZUTCP_CHECK_1(recovery && second && before && returned,
       "same backing recovers after PMD release and returns once; ACK-before-CQ ", bool(mode & 1));
     if (!finished) finish();
   }
@@ -815,14 +819,15 @@ static void testDpdk()
   ZuTestScopeRT(testDpdk);
   Fixture fixture;
   if (!checked(fixture.network(), "set up two dummy links in an isolated network namespace")) return;
-  CHECK(checksFatalHandoff("allocated", "!xdp || !xdp->allocated()"),
+  ZUTCP_CHECK_1(checksFatalHandoff("allocated", "!xdp || !xdp->allocated()"),
     "separate EAL process aborts specifically on preallocated handoff");
-  CHECK(checksFatalHandoff("repeat", "!xdp || !xdp->allocated()"),
+  ZUTCP_CHECK_1(checksFatalHandoff("repeat", "!xdp || !xdp->allocated()"),
     "repeat init checks a supplied device's allocation before comparing ownership");
-  CHECK(checksFatalHandoff("device-mx", "xdp->mx() == mx_"),
+  ZUTCP_CHECK_1(checksFatalHandoff("device-mx", "xdp->mx() == mx_"),
     "device handoff to a different multiplexer is fatal");
   if (!checked(fixture.devices(), "initialize EAL and register two named stock ring ports")) return;
-  CHECK(fixture.runtime.env()->loopback(), "the loaded DPDK Env supports backend loopback");
+  ZUTCP_CHECK_1(fixture.runtime.env()->loopback(),
+    "the loaded DPDK Env supports backend loopback");
   ZuTestCallRT(noStartFinal, fixture, false);
   ZuTestCallRT(noStartFinal, fixture, true);
   ZmRef<Zpkt::Nif> device;
@@ -836,17 +841,17 @@ static void testDpdk()
     plugin = a.tcp;
     failAllocation(2);
     auto failure = a.mx.alloc();
-    CHECK(failure.is<ZeException>() && allocationRolledBack() && !device->allocated() &&
+    ZUTCP_CHECK_1(failure.is<ZeException>() && allocationRolledBack() && !device->allocated() &&
 	a.mx.state() == ZmEngineState::Stopped && !a.tx->allocBuf(),
       "partial native allocation failure frees provisional resources through the mux");
-    CHECK((!a.mx.allocator<Zi::IOBufType::Rx, TCPInput>(128) &&
+    ZUTCP_CHECK_1((!a.mx.allocator<Zi::IOBufType::Rx, TCPInput>(128) &&
 	!a.mx.allocator<Zi::IOBufType::TxTCP>() && !a.mx.allocator<Zi::IOBufType::App>() &&
 	a.app->allocBuf()),
       "failed allocation freezes new registrations while existing App storage remains available");
     failAllocation(0);
     if (!checked(a.mx.alloc(), "retry allocation with the frozen pool collection")) return;
     auto nativeIngress = ZpktDpdkTest::native(a.rx->pool);
-    CHECK(nativeIngress && a.mx.alloc().is<void>() &&
+    ZUTCP_CHECK_1(nativeIngress && a.mx.alloc().is<void>() &&
 	ZpktDpdkTest::native(a.rx->pool) == nativeIngress && !b.device->allocated(),
       "repeated stopped alloc reuses A's backing and B still awaits implicit allocation");
     auto hold = a.smallTx->allocBuf(nullptr, 16);
@@ -860,38 +865,39 @@ static void testDpdk()
     };
     failActivation();
     bool activated = a.mx.start();
-    CHECK(!activated && activationFailed() && device->allocated() && !device->ready() &&
+    ZUTCP_CHECK_1(!activated && activationFailed() && device->allocated() && !device->ready() &&
 	a.mx.state() == ZmEngineState::Stopped && portStopped(fixture.ports[0].name()) && intact(),
       "failure after native start deactivates both queues and preserves caller-held Tx backing");
     if (activated || !activationFailed()) return;
     for (bool v6 : {false, true}) for (unsigned cycle = 0; cycle < 3; ++cycle) {
       bool startA = a.mx.start();
       bool startB = b.mx.start();
-      CHECK(startA && startB && a.device->ready() && b.device->ready() &&
+      ZUTCP_CHECK_1(startA && startB && a.device->ready() && b.device->ready() &&
 	  a.device->allocated() && b.device->allocated() && intact(),
 	"start/restart both plugins with retained backing [IPv", v6 ? 6 : 4, ", cycle ", cycle, "]");
       if (!startA || !startB) return;
-      if (!cycle) CHECK(a.path(0, v6) && b.path(1, v6),
+      if (!cycle) ZUTCP_CHECK_1(a.path(0, v6) && b.path(1, v6),
 	"route and static neighbor use the Linux links with native MAC and MTU [IPv",
 	v6 ? 6 : 4, "]");
       if (!v6 && !cycle) ZuTestCallRT(heldOwnership, pair);
       ZuTestCallRT(traffic, pair, cycle != 1, cycle != 0, cycle == 0, v6);
       auto other = fixture.runtime.env()->nif(&a.mx, "net_ring_loopa");
-      CHECK(a.mx.state() == ZmEngineState::Stopped && b.mx.state() == ZmEngineState::Stopped &&
+      ZUTCP_CHECK_1(a.mx.state() == ZmEngineState::Stopped &&
+	  b.mx.state() == ZmEngineState::Stopped &&
 	  a.device->allocated() && b.device->allocated() && intact() &&
 	  other.is<ZeException>(),
 	"stop preserves native pool addresses and exclusive port use [", cycle, "]");
     }
     hold = nullptr;
     auto recycled = a.smallTx->allocBuf();
-    CHECK(recycled && recycled->data_() == address,
+    ZUTCP_CHECK_1(recycled && recycled->data_() == address,
       "returning the caller-held buffer makes that exact slot reusable");
   }
-  CHECK(device && plugin && !device->mx() && !plugin->mx() && !device->allocated(),
+  ZUTCP_CHECK_1(device && plugin && !device->mx() && !plugin->mx() && !device->allocated(),
     "mux destruction finalizes both instances after the last stop");
   ZiMultiplex next;
   auto fresh = fixture.runtime.env()->nif(&next, Links[0].selector);
-  CHECK(fresh.is<Zpkt::Nif *>(),
+  ZUTCP_CHECK_1(fresh.is<Zpkt::Nif *>(),
     "a fresh device can claim the port after mux finalization");
   if (fresh.is<Zpkt::Nif *>()) fresh.p<Zpkt::Nif *>()->final();
 }

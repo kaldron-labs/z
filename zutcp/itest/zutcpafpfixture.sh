@@ -28,9 +28,9 @@ trap 'printf "AFP fixture failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2
 trap 'exit 1' INT TERM
 
 if [[ $family == 4 ]]; then
-  client_addr=198.18.7.1 server_addr=198.18.7.2 prefix=32 nft_family=ip
+  client_addr=198.18.7.1 server_addr=198.18.7.2 prefix=32
 else
-  client_addr=2001:db8:7::1 server_addr=2001:db8:7::2 prefix=128 nft_family=ip6
+  client_addr=2001:db8:7::1 server_addr=2001:db8:7::2 prefix=128
 fi
 ip netns add "$client_ns"
 ip netns add "$server_ns"
@@ -57,18 +57,10 @@ ip -"$family" -n "$server_ns" neigh add "$client_addr" lladdr "$client_mac" nud 
 
 for side in client server; do
   if [[ $side == client ]]; then
-    ns=$client_ns dev=$client_dev local=$client_addr peer=$server_addr port=sport
+    ns=$client_ns dev=$client_dev local=$client_addr peer=$server_addr
   else
-    ns=$server_ns dev=$server_dev local=$server_addr peer=$client_addr port=dport
+    ns=$server_ns dev=$server_dev local=$server_addr peer=$client_addr
   fi
-  ip netns exec "$ns" nft -f - <<RULES
-table inet zutcp_afp {
-  chain input {
-    type filter hook input priority filter; policy accept;
-    iifname "$dev" $nft_family saddr $peer $nft_family daddr $local tcp $port 18187 counter drop
-  }
-}
-RULES
   ip netns exec "$ns" tcpdump --immediate-mode -B 8192 -Q in -nn -s 2048 -U -i "$dev" \
     -w "$out/to-$side.pcap" "tcp port 18187 and src host $peer and dst host $local" \
     > "$out/to-$side.capture" 2>&1 &
@@ -99,8 +91,6 @@ wait "$server_pid"; server_pid=
 sleep .05
 stop_capture
 
-ip netns exec "$client_ns" nft -j list chain inet zutcp_afp input > "$out/client-nft.json"
-ip netns exec "$server_ns" nft -j list chain inet zutcp_afp input > "$out/server-nft.json"
 PYTHONDONTWRITEBYTECODE=1 python3 - "$(dirname "$0")" "$out" <<'PY'
 import json
 import sys
@@ -113,10 +103,6 @@ out = Path(sys.argv[2])
 payload_size = 4096
 streams = {}
 for side, byte in (('server', ord('a')), ('client', ord('A'))):
-    rules = json.loads((out / (side + '-nft.json')).read_text())['nftables']
-    counters = [expr['counter'] for item in rules if 'rule' in item
-                for expr in item['rule']['expr'] if 'counter' in expr]
-    assert len(counters) == 1 and counters[0]['packets'] > 0, (side, counters)
     footer = (out / ('to-' + side + '.capture')).read_text().splitlines()
     assert '0 packets dropped by kernel' in footer, (side, footer)
     path = out / ('to-' + side + '.pcap')
@@ -129,14 +115,13 @@ for side, byte in (('server', ord('a')), ('client', ord('A'))):
     origin = stream['tcp_origins'][0]
     assert origin['syns'] and origin['synacks'] and origin['final_acks'], origin
     assert len(stream['first_seen_offsets']) > 1, stream
-    streams[side] = {**stream, 'kernel_input_drop': counters[0], 'tcp_resets': 0}
+    streams[side] = {**stream, 'tcp_resets': 0}
 for side, peer in (('client', 'server'), ('server', 'client')):
     fins = [event['time'] for event in streams[side]['controls'] if event['type'] == 'fin']
     assert fins and any(ack['next'] == payload_size + 1 and ack['time'] >= min(fins)
                         for ack in streams[peer]['acks']), ('missing FIN ACK', side)
 (out / 'wire-evidence.json').write_text(json.dumps(streams, indent=2) + '\n')
-summary = [f"{side} input drops {stream['kernel_input_drop']['packets']}, "
-           f"verified payload bytes {stream['payload_bytes_covered']}"
+summary = [f"{side} verified payload bytes {stream['payload_bytes_covered']}"
            for side, stream in streams.items()]
 (out / 'wire-summary').write_text(' | '.join(summary) + ' | FINs acknowledged, zero RSTs\n')
 PY

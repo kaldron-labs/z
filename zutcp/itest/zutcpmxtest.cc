@@ -3447,34 +3447,34 @@ struct DirectMxFixture {
   void		(*run)();
 };
 
-#define DirectMxCase(fn, ...) {#fn, [] { ZuTestMain(); ZuTestCall(fn, __VA_ARGS__); }}
+#define DirectMxCase_1(fn, ...) {#fn, [] { ZuTestMain(); ZuTestCall(fn, __VA_ARGS__); }}
 static const DirectMxFixture DirectMxCases[] = {
-  DirectMxCase(testMixedRoles, false),
-  DirectMxCase(testMixedRoles, true),
-  DirectMxCase(testMxConnections, false, false),
-  DirectMxCase(testMxConnections, true, false),
-  DirectMxCase(testMxConnections, false, true),
-  DirectMxCase(testMxConnections, true, true),
-  DirectMxCase(testMxConnections, false, true, false, false, false, true),
-  DirectMxCase(testMxConnections, true, true, false, false, false, true),
-  DirectMxCase(testMxConnections, false, true, false, false, false, false, PassiveTotal),
-  DirectMxCase(testMxConnections, true, true, false, false, false, false, PassiveTotal),
-  DirectMxCase(testMxConnections, false, true, false, false, false, false, PassivePending),
-  DirectMxCase(testMxConnections, true, true, false, false, false, false, PassivePending),
-  DirectMxCase(testConnectTimeout, false),
-  DirectMxCase(testConnectTimeout, true),
-  DirectMxCase(testUserTimeout, false),
-  DirectMxCase(testUserTimeout, true),
-  DirectMxCase(testGracefulFin, false, false),
-  DirectMxCase(testGracefulFin, true, false),
-  DirectMxCase(testGracefulFin, false, true),
-  DirectMxCase(testGracefulFin, true, true),
-  DirectMxCase(testGracefulFin, false, false, true),
-  DirectMxCase(testGracefulFin, true, false, true),
-  DirectMxCase(testGracefulFin, false, true, true),
-  DirectMxCase(testGracefulFin, true, true, true),
+  DirectMxCase_1(testMixedRoles, false),
+  DirectMxCase_1(testMixedRoles, true),
+  DirectMxCase_1(testMxConnections, false, false),
+  DirectMxCase_1(testMxConnections, true, false),
+  DirectMxCase_1(testMxConnections, false, true),
+  DirectMxCase_1(testMxConnections, true, true),
+  DirectMxCase_1(testMxConnections, false, true, false, false, false, true),
+  DirectMxCase_1(testMxConnections, true, true, false, false, false, true),
+  DirectMxCase_1(testMxConnections, false, true, false, false, false, false, PassiveTotal),
+  DirectMxCase_1(testMxConnections, true, true, false, false, false, false, PassiveTotal),
+  DirectMxCase_1(testMxConnections, false, true, false, false, false, false, PassivePending),
+  DirectMxCase_1(testMxConnections, true, true, false, false, false, false, PassivePending),
+  DirectMxCase_1(testConnectTimeout, false),
+  DirectMxCase_1(testConnectTimeout, true),
+  DirectMxCase_1(testUserTimeout, false),
+  DirectMxCase_1(testUserTimeout, true),
+  DirectMxCase_1(testGracefulFin, false, false),
+  DirectMxCase_1(testGracefulFin, true, false),
+  DirectMxCase_1(testGracefulFin, false, true),
+  DirectMxCase_1(testGracefulFin, true, true),
+  DirectMxCase_1(testGracefulFin, false, false, true),
+  DirectMxCase_1(testGracefulFin, true, false, true),
+  DirectMxCase_1(testGracefulFin, false, true, true),
+  DirectMxCase_1(testGracefulFin, true, true, true),
 };
-#undef DirectMxCase
+#undef DirectMxCase_1
 
 static void testDirectMxCases()
 {

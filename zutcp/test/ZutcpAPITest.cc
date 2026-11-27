@@ -26,7 +26,7 @@
 
 using namespace ZuTestUtil;
 
-#define ZUTCP_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+#define ZUTCP_CHECK_RT_1(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 
 using TxBufAlloc = Zutcp::TxBufAlloc<>;

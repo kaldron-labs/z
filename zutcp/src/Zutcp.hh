@@ -13,6 +13,10 @@
 #include <zlib/ZutcpLib.hh>
 #endif
 
+#ifndef ZutcpPassiveCacheSize
+#define ZutcpPassiveCacheSize 32
+#endif
+
 #include <stdint.h>
 
 #include <zlib/ZuSpan.hh>
@@ -604,9 +608,10 @@ private:
     ClosedTupleKey		key;
     Zutcp_::SrvCxn		*link = nullptr;
   };
-  enum { PassiveCacheSize = 32 };
+  enum { PassiveCacheSize = ZutcpPassiveCacheSize };
+  static_assert(PassiveCacheSize > 0);
   static unsigned passiveIndex(const ClosedTupleKey &key) {
-    return key.hash() >> (32 - 5);
+    return (uint64_t(key.hash()) * PassiveCacheSize) >> 32;
   }
 
   // Rx endpoint lookup and packet dispatch.

@@ -361,4 +361,6 @@ int main(int argc, char **argv)
   ZuTestCall(testUDP);
   ZuTestCall(testUDPLeases);
   ZuTestCall(testUDPTimer);
+  ZuTestCall(testUDPRetire);
+  ZuTestCall(testUDPCompletionChain);
 }

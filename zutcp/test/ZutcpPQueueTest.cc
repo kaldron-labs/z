@@ -25,7 +25,7 @@ static Zutcp::SentFrameRef dataRef(uint64_t offset, uint32_t length)
 }
 
 
-#define ZUTCP_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+#define ZUTCP_CHECK_RT_1(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 void fill_(ZiIOBuf *buf, ZuBSpan data)
 {
@@ -98,7 +98,7 @@ void testOutOfOrderDrain()
     q.add(new Zutcp::DataRxPQueue::Node{
       packet, packet->data(), packet->length, allocator, nullptr, uint64_t(i)});
   }
-  ZUTCP_CHECK_RT(!q.dequeue(), "out-of-order queue drained before gap was filled");
+  ZUTCP_CHECK_RT_1(!q.dequeue(), "out-of-order queue drained before gap was filled");
 
   auto head = packet_("x");
   q.add(new Zutcp::DataRxPQueue::Node{
@@ -106,11 +106,11 @@ void testOutOfOrderDrain()
 
   unsigned drained = 0;
   while (auto node = q.dequeue()) {
-    ZUTCP_CHECK_RT(node->data().key() == drained,
+    ZUTCP_CHECK_RT_1(node->data().key() == drained,
       "out-of-order queue drained in wrong order");
     ++drained;
   }
-  ZUTCP_CHECK_RT(drained == 32 && !q.count_() && q.head() == 32 && q.verify(),
+  ZUTCP_CHECK_RT_1(drained == 32 && !q.count_() && q.head() == 32 && q.verify(),
     "out-of-order queue did not drain completely");
 }
 
@@ -167,11 +167,11 @@ void testTxPktAckDelete()
     p.ackEliciting = true;
     p.inFlight = true;
     p.addFrame(dataRef((pn - 10) * 10, 10));
-    ZUTCP_CHECK_RT(tracker.add(p), "sent packet add failed");
+    ZUTCP_CHECK_RT_1(tracker.add(p), "sent packet add failed");
   }
 
   Zutcp::PktAckBatch ack;
-  ZUTCP_CHECK_RT(tracker.ackBytesBatch(20, ack, 8) && ack.ackd == 2 &&
+  ZUTCP_CHECK_RT_1(tracker.ackBytesBatch(20, ack, 8) && ack.ackd == 2 &&
       tracker.count() == 1 && tracker.bytesInFlight() == 100,
     "cumulative byte ACK removes only the two fully covered transmission nodes");
 }
@@ -182,11 +182,11 @@ void testTxPktLossRetain()
 
   Zutcp::SentPktTracker tracker;
   for (uint64_t pn = 10; pn < 15; ++pn)
-    ZUTCP_CHECK_RT(tracker.add(txPkt(pn)), "lost packet add failed");
+    ZUTCP_CHECK_RT_1(tracker.add(txPkt(pn)), "lost packet add failed");
   for (uint64_t pn = 10; pn < 15; ++pn)
-    ZUTCP_CHECK_RT(tracker.lose(pn), "lost packet setup failed");
+    ZUTCP_CHECK_RT_1(tracker.lose(pn), "lost packet setup failed");
 
-  ZUTCP_CHECK_RT(tracker.count() == 5 &&
+  ZUTCP_CHECK_RT_1(tracker.count() == 5 &&
       tracker.lost() == 5 &&
       tracker.retainedLost() == 5 &&
       tracker.retransmitPending() == 5,
@@ -205,11 +205,11 @@ void testTxPktRetainedLostAck()
     p.ackEliciting = true;
     p.inFlight = true;
     p.addFrame(dataRef((pn - 10) * 10, 10));
-    ZUTCP_CHECK_RT(tracker.add(p), "sent packet add failed");
+    ZUTCP_CHECK_RT_1(tracker.add(p), "sent packet add failed");
   }
 
   Zutcp::PktAckBatch ack;
-  ZUTCP_CHECK_RT(tracker.lose(10) &&
+  ZUTCP_CHECK_RT_1(tracker.lose(10) &&
       tracker.ackBytesBatch(20, ack, 8) && ack.ackd == 1 &&
       tracker.lost() == 1 &&
       tracker.ackd() == 1 &&
@@ -287,10 +287,10 @@ void testTxUnackdFragmentation()
   Zutcp::DataTxPQueue q{0};
   constexpr unsigned Ranges = Zutcp::DataTxPQueue::Max << 1;
   for (unsigned i = 0; i < Ranges; ++i)
-    ZUTCP_CHECK_RT(q.add(Zutcp::TxUnackdRange{uint64_t(i) << 1, 1}) ==
+    ZUTCP_CHECK_RT_1(q.add(Zutcp::TxUnackdRange{uint64_t(i) << 1, 1}) ==
 	ZmPQResult::Inserted,
       "fragmented stream range insert failed");
-  ZUTCP_CHECK_RT(q.count_() == Ranges &&
+  ZUTCP_CHECK_RT_1(q.count_() == Ranges &&
       q.length_() == Ranges &&
       q.find(0) &&
       q.find((uint64_t(Ranges - 1) << 1)) &&
@@ -298,7 +298,7 @@ void testTxUnackdFragmentation()
       q.verify(),
     "fragmented stream ranges did not grow beyond former capacity");
 
-  ZUTCP_CHECK_RT(q.add(Zutcp::TxUnackdRange{1, 1}) == ZmPQResult::Inserted &&
+  ZUTCP_CHECK_RT_1(q.add(Zutcp::TxUnackdRange{1, 1}) == ZmPQResult::Inserted &&
       q.count_() == Ranges - 1 &&
       q.length_() == Ranges + 1 &&
       q.find(0)->length() == 3 &&
@@ -306,7 +306,7 @@ void testTxUnackdFragmentation()
     "fragmented stream ranges did not coalesce around an inserted bridge");
 
   unsigned spans = 0;
-  ZUTCP_CHECK_RT(q.spans(0, 8, [&spans](const auto &) {
+  ZUTCP_CHECK_RT_1(q.spans(0, 8, [&spans](const auto &) {
 	++spans;
 	return true;
       }) &&
@@ -319,7 +319,7 @@ void testTxUnackdBoundaries()
   ZuTestScopeRT(testTxUnackdBoundaries);
 
   Zutcp::DataTxPQueue q{0};
-  ZUTCP_CHECK_RT(q.add(Zutcp::TxUnackdRange{uint64_t(-1), 1}) ==
+  ZUTCP_CHECK_RT_1(q.add(Zutcp::TxUnackdRange{uint64_t(-1), 1}) ==
 	ZmPQResult::Invalid &&
       q.add(Zutcp::TxUnackdRange{0, uint64_t(-1), true}) ==
 	ZmPQResult::Invalid &&
@@ -331,19 +331,19 @@ void testTxUnackdBoundaries()
     "stream range endpoint overflow was not rejected");
 
   for (unsigned i = 0; i <= Zutcp::DataTxPQueue::BuiltinRanges; ++i)
-    ZUTCP_CHECK_RT(q.add(Zutcp::TxUnackdRange{uint64_t(i) << 1, 1}) ==
+    ZUTCP_CHECK_RT_1(q.add(Zutcp::TxUnackdRange{uint64_t(i) << 1, 1}) ==
 	ZmPQResult::Inserted,
       "stream range inline/heap transition insert failed");
-  ZUTCP_CHECK_RT(q.count_() == Zutcp::DataTxPQueue::BuiltinRanges + 1 &&
+  ZUTCP_CHECK_RT_1(q.count_() == Zutcp::DataTxPQueue::BuiltinRanges + 1 &&
       q.verify(),
     "stream range inline/heap transition lost retained ranges");
 #ifdef ZDEBUG
-  ZUTCP_CHECK_RT(q.promotions() == 1 && q.indexed(),
+  ZUTCP_CHECK_RT_1(q.promotions() == 1 && q.indexed(),
     "fragmented stream ranges did not promote exactly once");
-  ZUTCP_CHECK_RT(q.clear(0, 1) && q.indexed() && q.promotions() == 1,
+  ZUTCP_CHECK_RT_1(q.clear(0, 1) && q.indexed() && q.promotions() == 1,
     "indexed stream ranges demoted before full clear");
   q.clear();
-  ZUTCP_CHECK_RT(!q.indexed(),
+  ZUTCP_CHECK_RT_1(!q.indexed(),
     "full stream-range clear retained indexed representation");
 #endif
 }
@@ -360,7 +360,7 @@ void testTxUnackdRandomized()
     unsigned offset = (random >> 8) % 480;
     unsigned length = ((random >> 24) & 31) + 1;
     if (random & 1) {
-      ZUTCP_CHECK_RT(q.add(Zutcp::TxUnackdRange{offset, length}) ==
+      ZUTCP_CHECK_RT_1(q.add(Zutcp::TxUnackdRange{offset, length}) ==
 	  ZmPQResult::Inserted,
 	"randomized stream range insert failed");
       for (unsigned i = offset; i < offset + length; ++i)
@@ -371,7 +371,7 @@ void testTxUnackdRandomized()
 	changed = changed || expected[i];
 	expected[i] = false;
       }
-      ZUTCP_CHECK_RT(q.clear(offset, length) == changed,
+      ZUTCP_CHECK_RT_1(q.clear(offset, length) == changed,
 	"randomized stream range clear result mismatch");
     }
     if (operation & 15) continue;
@@ -385,7 +385,7 @@ void testTxUnackdRandomized()
       }
       inRange = expected[i];
     }
-    ZUTCP_CHECK_RT(q.spans(0, 512, [&observed](const auto &range) {
+    ZUTCP_CHECK_RT_1(q.spans(0, 512, [&observed](const auto &range) {
 	for (uint64_t i = range.key(), n = i + range.length(); i < n; ++i)
 	  observed[i] = true;
 	return true;
@@ -393,7 +393,7 @@ void testTxUnackdRandomized()
     bool equal = true;
     for (unsigned i = 0; i < 512; ++i)
       equal = equal && observed[i] == expected[i];
-    ZUTCP_CHECK_RT(equal && q.length_() == expectedLength &&
+    ZUTCP_CHECK_RT_1(equal && q.length_() == expectedLength &&
 	q.count_() == expectedCount && q.verify(),
       "randomized stream range model mismatch");
   }

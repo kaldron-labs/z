@@ -15,6 +15,8 @@
 
 #include <zlib/ZmBlock.hh>
 
+#include <zlib/ZtArray.hh>
+
 #include <zlib/Zutcp.hh>
 #include <zlib/ZutcpUDP.hh>
 
@@ -523,6 +525,8 @@ public:
   const unsigned *raw = nullptr;
 };
 
+enum { McastAtLimit = 7, McastOverLimit = 8 };
+
 bool ZutcpTest::MxPlugin::multicast(
   MxPlugin &stack, unsigned mode, bool v6, unsigned &raw)
 {
@@ -537,26 +541,47 @@ bool ZutcpTest::MxPlugin::multicast(
   info.options.udp(true).multicast(true);
   if (v6) info.options.mreq(ZiMReq{group, 1U});
   else info.options.mreq(ZiMReq{group, ZiIP{in_addr{}}});
-  ZmRef<UdpCxn> endpoints[2];
-  ZmRef<MulticastCxn> connections[2];
-  unsigned count = mode == 0 ? 0 : mode == 1 ? 1 : 2;
+  unsigned key = (unsigned(group.type())<<16) | info.local.port();
+  ZtArray<ZmRef<UdpCxn>> endpoints;
+  ZtArray<ZmRef<MulticastCxn>> connections;
+  unsigned count = mode < 2 ? mode : 2;
+  if (mode >= McastAtLimit) count = ZutcpUDPMcastMatchMax + (mode == McastOverLimit);
   for (unsigned i = 0; i < count; ++i) {
-    connections[i] = new MulticastCxn{mx, info};
-    connections[i]->rxUp() = 1;
-    endpoints[i] = new UdpCxn{&stack, info, {}};
-    endpoints[i]->mxCxn = connections[i].ptr();
-    stack.m_udpBindings.addNode(endpoints[i].ptr());
-  }
-  MulticastCxn *first = nullptr, *last = nullptr;
-  if (count) {
-    auto i = stack.m_udpBindings.citer(((unsigned(group.type()) << 16) | 18191U));
-    while (auto node = i()) {
-      auto cxn = static_cast<MulticastCxn *>(static_cast<UdpCxn *>(node)->mxCxn);
-      if (!first) first = cxn;
-      last = cxn;
+    auto cxn = connections.push(ZmRef{new MulticastCxn{mx, info}})->ptr();
+    cxn->rxUp() = 1;
+    auto endpoint = endpoints.push(ZmRef{new UdpCxn{&stack, info, {}}})->ptr();
+    if (mode == 4) {
+      if (!stack.reserveCxn()) return false;
+      ZiConnectFn connected{[cxn](const ZiCxnInfo &) { return cxn; }};
+      if (!stack.Zutcp::MxPlugin::publishUDP(endpoint, connected, info)) return false;
+    } else {
+      endpoint->mxCxn = cxn;
+      stack.m_udpBindings.addNode(endpoint);
     }
   }
-  ZmRef<ZiIOBuf> held[2];
+  ZtArray<MulticastCxn *> order;
+  {
+    auto i = stack.m_udpBindings.citer(key);
+    while (auto node = i())
+      order.push(static_cast<MulticastCxn *>(static_cast<UdpCxn *>(node)->mxCxn));
+  }
+  auto cleanup = [&stack, &endpoints, &connections, mode, key] {
+    for (const auto &cxn : connections) cxn->rxContext().complete();
+    if (mode == 4) {
+      for (const auto &endpoint : endpoints) endpoint->close(false);
+    } else {
+      auto i = stack.m_udpBindings.iter(key);
+      while (auto node = i()) {
+	static_cast<UdpCxn *>(node)->mxCxn = nullptr;
+	i.del();
+      }
+    }
+  };
+  if (order.length() != count) { cleanup(); return false; }
+  unsigned captured = count <= ZutcpUDPMcastMatchMax ? count : ZutcpUDPMcastMatchMax;
+  ZtArray<ZmRef<ZiIOBuf>> held;
+  held.length(count);
+  ZtArray<MulticastCxn *> delivered;
   unsigned calls = 0, copies = 0, copyBytes = 0, wireLength = 0;
   uint8_t *origin = nullptr;
   uint8_t expectedFrame[14 + 40 + 8 + 4];
@@ -569,27 +594,32 @@ bool ZutcpTest::MxPlugin::multicast(
       !memcmp(io.buf->data_(), expectedFrame, wireLength);
     if (io.buf->data_() != origin) { ++copies; copyBytes += wireLength; }
   };
-  auto arm = [&allocator, &held, &calls, &inspect](MulticastCxn *cxn, unsigned slot) {
-    cxn->rxContext().init(ZiRxFn{[&held, &calls, &inspect, slot](ZiRxContext &io) {
+  auto arm = [allocator, &held, &delivered, &calls, &inspect](
+      MulticastCxn *cxn, unsigned slot) {
+    auto receive = [cxn, slot, &held, &delivered, &calls, &inspect](ZiRxContext &io) {
       inspect(io);
       held[slot] = io.buf;
+      delivered.push(cxn);
       io.buf->data()[0] = 'X';
       ++calls;
       io.complete();
       return true;
-    }}, allocator->allocBuf(cxn));
+    };
+    cxn->rxContext().init(ZiRxFn{ZuMv(receive)}, allocator->allocBuf(cxn));
   };
-  if (count) arm(first, 0);
-  if (count == 2 && mode != 6) arm(last, 1);
-  if (mode == 3) first->rxContext().complete();
+  for (unsigned i = 0; i < count; ++i)
+    if (mode != 6 || i != 1) arm(order[i], i);
+  if (mode == 3) order[0]->rxContext().complete();
   if (mode == 4 || mode == 6) {
+    auto first = order[0], last = order[1];
     first->rxContext().init(ZiRxFn{
-      [&held, &calls, &inspect, &arm, last, mode](ZiRxContext &io) {
+      [first, last, mode, &held, &delivered, &calls, &inspect, &arm](ZiRxContext &io) {
 	inspect(io);
 	held[0] = io.buf;
+	delivered.push(first);
 	io.buf->data()[0] = 'X';
 	++calls;
-	if (mode == 4) last->rxUp() = 0;
+	if (mode == 4) static_cast<UdpCxn *>(last->plugin())->close(false);
 	else arm(last, 1);
 	io.complete();
 	return true;
@@ -607,18 +637,27 @@ bool ZutcpTest::MxPlugin::multicast(
   if (mode == 5) pool->available = false;
   stack.received(frame, length, expectedBurst);
   pool->available = true;
-  unsigned expected = count;
+  unsigned expected = captured;
   if (mode == 3 || mode == 4 || mode == 5) expected = 1;
-  bool copied = count == 2 && mode != 3 && mode != 5;
+  unsigned expectedCopies = captured && mode != 3 && mode != 5 ? captured - 1 : 0;
+  unsigned expectedAllocs = captured && mode != 3 ? captured - 1 : 0;
   std::cout << "# multicast family=" << (v6 ? 6 : 4) << " mode=" << mode
     << " deliveries=" << calls << " copies=" << copies
     << " copyBytes=" << copyBytes << '\n';
   bool passed = length && calls == expected && exact &&
-    copies == unsigned(copied) && copyBytes == (copied ? length : 0) &&
+    copies == expectedCopies && copyBytes == expectedCopies * length &&
     raw == unsigned(mode == 0 || mode == 4) &&
-    pool->allocCalls - allocations == unsigned(count == 2 && mode != 3) &&
-    (!copied || (held[0] && held[0]->data_() != frame)) &&
-    (expected != 2 || held[0]->data_() != held[1]->data_());
+    pool->allocCalls - allocations == expectedAllocs;
+  if (passed) {
+    for (unsigned i = 0; i < expected; ++i) {
+      unsigned slot = i + unsigned(mode == 3 || mode == 5);
+      bool original = slot + 1 == captured;
+      passed &= delivered[i] == order[slot] && held[slot] &&
+	(held[slot]->data_() == frame) == original;
+      if (i && held[slot] && held[slot - 1])
+	passed &= held[slot]->data_() != held[slot - 1]->data_();
+    }
+  }
   if (mode == 1) {
     // An unrelated Ethernet frame must publish preceding UDP work before its
     // raw callback. Even when it is the last descriptor, no later UDP callback
@@ -638,13 +677,9 @@ bool ZutcpTest::MxPlugin::multicast(
       receiver->rawAtDelivery == prior && !receiver->rxContext().burst;
     ++returned; // raw ingress lease
   }
-  held[0] = held[1] = nullptr;
-  for (unsigned i = 0; i < count; ++i) {
-    connections[i]->rxContext().complete();
-    stack.m_udpBindings.delNode(endpoints[i].ptr());
-    endpoints[i]->mxCxn = nullptr;
-  }
-  return passed && pool->returns - returned == 1 + unsigned(copied);
+  held.length(0);
+  cleanup();
+  return passed && pool->returns - returned == 1 + expectedCopies;
 }
 
 static void checkMulticast(unsigned mode, bool v6)
@@ -672,15 +707,16 @@ static void checkMulticast(unsigned mode, bool v6)
       done(ZutcpTest::MxPlugin::multicast(*owner, mode, v6, raw));
     });
   });
-  mx.stop();
-  ZuCheckRT(passed,
+  bool stopped = mx.stop();
+  ZuCheckRT(passed && stopped,
     log_("multicast snapshots preserve mutable backing and live recipient admission"));
 }
 
 static void testMulticast()
 {
   ZuTestScopeRT(testMulticast);
-  for (unsigned mode = 0; mode < 7; ++mode) {
+  for (unsigned mode = 0; mode <= McastOverLimit; ++mode) {
+    if (ZutcpUDPMcastMatchMax == 1 && mode >= 2 && mode <= 6) continue;
     checkMulticast(mode, false);
     checkMulticast(mode, true);
   }

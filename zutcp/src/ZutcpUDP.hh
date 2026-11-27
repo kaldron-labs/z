@@ -7,7 +7,28 @@
 #ifndef ZutcpUDP_HH
 #define ZutcpUDP_HH
 
+#ifndef ZutcpUDPPathCacheSize
+#define ZutcpUDPPathCacheSize 8
+#endif
+
+#ifndef ZutcpUDPRouteRxBudget
+#define ZutcpUDPRouteRxBudget 16
+#endif
+
+#ifndef ZutcpUDPMcastMatchMax
+// Inline snapshot of endpoint references on the UDP Rx stack.
+#define ZutcpUDPMcastMatchMax 64
+#endif
+
+#include <zlib/ZuAssert.hh>
+
+#include <zlib/ZmScheduler.hh>
+
 #include <zlib/Zutcp.hh>
+
+ZuAssert(ZutcpUDPPathCacheSize >= 2);
+ZuAssert(ZutcpUDPRouteRxBudget > 0);
+ZuAssert(ZutcpUDPMcastMatchMax > 0 && ZutcpUDPMcastMatchMax < 65535);
 
 namespace Zutcp {
 
@@ -51,17 +72,19 @@ private:
   int submit(const ZiTxContext &, const ZiSockAddr &, const IPPath &);
   void sent(ZiConnection *, int);
 
+  using Timer = ZmScheduler::Timer;
+
   MxPlugin	*m_owner;
   ZiCxnInfo	m_info;
   int		m_membershipFD = -1; // multicast control only
   // Tx owner. The common same-peer lookup reads only the current slot.
-  enum { NPaths = 8 };
+  enum { NPaths = ZutcpUDPPathCacheSize };
   alignas(Zm::CacheLineSize)
   uint64_t	m_generation = 0;
   unsigned	m_pathIndex = 0, m_pathCount = 0, m_nextPath = 0;
   bool		m_sending = false;
   ZiIOBuf	*m_parked = nullptr; // borrowed from the active Tx context
-  ZmScheduler::Timer m_retryTimer;
+  Timer		m_retryTimer;
   IPPath	m_paths[NPaths];
 };
 

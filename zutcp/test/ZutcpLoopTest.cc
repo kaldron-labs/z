@@ -21,14 +21,14 @@
 
 using namespace ZuTestUtil;
 
-#define ZUTCP_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+#define ZUTCP_CHECK_RT_1(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 namespace Zutcp {
 struct TCPStateTest {
   template <typename T> static void queueOverflow(T &link) {
     auto &c = static_cast<typename T::Base &>(link);
     c.txQueueMax(1);
-    ZUTCP_CHECK_RT(c.admitTx(false, true) && !c.admitTx(false, true),
+    ZUTCP_CHECK_RT_1(c.admitTx(false, true) && !c.admitTx(false, true),
       "ordinary data admission refuses a full queue");
     --c.m_txQueueCount;
   }
@@ -180,16 +180,16 @@ void testLinkState()
   auto &app = *appRef;
   ZmRef<TestLink> client = new TestLink{&app};
   ZmRef<TestLink> server = new TestLink{&app, true};
-  ZUTCP_CHECK_RT(!client->isServer() && server->isServer(), "connection role mismatch");
+  ZUTCP_CHECK_RT_1(!client->isServer() && server->isServer(), "connection role mismatch");
   {
     auto tx = client->writer_();
     tx << "request-body" << Zi::flush();
   }
-  ZUTCP_CHECK_RT(client->txBytes() == 12 && client->txRangeCount() == 1,
+  ZUTCP_CHECK_RT_1(client->txBytes() == 12 && client->txRangeCount() == 1,
     "loop stream Tx accounting mismatch");
 
   client->closeForTest(Zutcp::TransportError::NoError);
-  ZUTCP_CHECK_RT(client->closed() && !client->closeError(),
+  ZUTCP_CHECK_RT_1(client->closed() && !client->closeError(),
     "loop graceful close failed");
 }
 

@@ -19,7 +19,7 @@
 
 using namespace ZuTestUtil;
 
-#define ZUTCP_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+#define ZUTCP_CHECK_RT_1(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 
 struct PacketBacking : ZmNHeap<PacketBacking>, Zi::IOBufPool {
@@ -159,26 +159,26 @@ void testTxPacketGeometry(bool registered)
   auto allocator = ZutcpTest::pktTxAllocator<1536, 4096, "Zutcp.Test.Pkt.Tx">(&mx);
   using Heap = ZuStringT<"Zutcp.Test.Pkt.Tx">;
   if (registered) {
-    ZUTCP_CHECK_RT((dynamic_cast<Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP,
+    ZUTCP_CHECK_RT_1((dynamic_cast<Zi::IOBufPoolAllocator<Zi::IOBufType::TxTCP,
       Zutcp_::BufNode, 1536, ZiIOBuf_Align, Heap, 4096> *>(allocator)),
       "plugin allocator must preserve Tx node, geometry and heap policy");
-    ZUTCP_CHECK_RT(plugin->requestedType == Zi::IOBufType::TxTCP &&
+    ZUTCP_CHECK_RT_1(plugin->requestedType == Zi::IOBufType::TxTCP &&
       plugin->requestedSize == 1536 && plugin->requestedAlign == ZiIOBuf_Align &&
       plugin->requestedCount == ZiIOBuf_DefltCount,
       "packet allocator factory request changed");
   } else {
-    ZUTCP_CHECK_RT((dynamic_cast<Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTCP,
+    ZUTCP_CHECK_RT_1((dynamic_cast<Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxTCP,
       Zutcp_::BufNode, 1536, ZiIOBuf_Align, Heap, 4096> *>(allocator)),
       "builtin allocator must preserve Tx node, geometry and heap policy");
   }
   int owner;
   auto buf = allocator->allocBuf(&owner, 0, PacketBacking::Payload);
-  ZUTCP_CHECK_RT(bool(buf), "packet allocation failed");
+  ZUTCP_CHECK_RT_1(bool(buf), "packet allocation failed");
   if (!buf) return;
   auto data = buf->data();
   auto skip = registered ? PacketBacking::Head : 0;
   auto tail = registered ? PacketBacking::Tail : 0;
-  ZUTCP_CHECK_RT(buf->allocator() == allocator && buf->owner == &owner &&
+  ZUTCP_CHECK_RT_1(buf->allocator() == allocator && buf->owner == &owner &&
     buf->builtin() == !registered && buf->registered() == registered &&
     buf->skip == skip && buf->size == skip + PacketBacking::Payload + tail &&
     Zutcp::txPktCapacity(buf) == PacketBacking::Payload,
@@ -187,11 +187,11 @@ void testTxPacketGeometry(bool registered)
   for (unsigned i = 0; i < sizeof(expected); ++i) expected[i] = uint8_t(i ^ 0x6d);
   memcpy(data, expected, sizeof(expected));
   buf->length = PacketBacking::Payload;
-  ZUTCP_CHECK_RT(!memcmp(data, expected, sizeof(expected)) && buf->avail() == tail,
+  ZUTCP_CHECK_RT_1(!memcmp(data, expected, sizeof(expected)) && buf->avail() == tail,
     "packet construction changed bytes or reserved tailroom");
   buf = nullptr;
   if (registered)
-    ZUTCP_CHECK_RT(plugin->backing->intact && plugin->backing->acquired == 1 &&
+    ZUTCP_CHECK_RT_1(plugin->backing->intact && plugin->backing->acquired == 1 &&
       plugin->backing->released == 1, "registered packet must retire once with guards intact");
 }
 
@@ -341,7 +341,7 @@ static void testRxSliceReturn()
   auto allocator = ZutcpTest::pktTxAllocator<>(&mx);
   auto heap = mx.allocator<Zi::IOBufType::App>();
   auto packet = allocator->allocBuf(nullptr, PacketBacking::Payload);
-  ZUTCP_CHECK_RT(packet && packet->registered(), "registered fixture allocation failed");
+  ZUTCP_CHECK_RT_1(packet && packet->registered(), "registered fixture allocation failed");
   if (!packet) return;
   memset(packet->data(), 0x6d, PacketBacking::Payload);
   {
@@ -350,7 +350,7 @@ static void testRxSliceReturn()
     packet = nullptr;
     ++first->skip;
     --first->length;
-    ZUTCP_CHECK_RT(first->ensure(64) && !first->registered() &&
+    ZUTCP_CHECK_RT_1(first->ensure(64) && !first->registered() &&
 	first->length == 31 && first->span()[0] == 0x6d && !plugin->backing->released,
       "replacing one alias must preserve its view and keep the other alias alive");
     bool copied = false;
@@ -359,15 +359,15 @@ static void testRxSliceReturn()
 	second->length == 32 && second->span()[31] == 0x6d;
     }};
     worker.join();
-    ZUTCP_CHECK_RT(copied && plugin->backing->released == 1 && plugin->backing->intact,
+    ZUTCP_CHECK_RT_1(copied && plugin->backing->released == 1 && plugin->backing->intact,
       "off-owner replacement of the final alias must return backing immediately once");
-    ZUTCP_CHECK_RT(first->ensure(128) && second->ensure(128),
+    ZUTCP_CHECK_RT_1(first->ensure(128) && second->ensure(128),
       "already heap-backed slices must support subsequent growth");
   }
-  ZUTCP_CHECK_RT(plugin->backing->released == 1,
+  ZUTCP_CHECK_RT_1(plugin->backing->released == 1,
     "heap descriptor destruction must not return original backing again");
   packet = allocator->allocBuf(nullptr, PacketBacking::Payload);
-  ZUTCP_CHECK_RT(packet && plugin->backing->acquired == 2,
+  ZUTCP_CHECK_RT_1(packet && plugin->backing->acquired == 2,
     "returned backing must be immediately reusable");
   if (!packet) return;
   memset(packet->data(), 0x6d, PacketBacking::Payload);
@@ -375,7 +375,7 @@ static void testRxSliceReturn()
     ZmRef<TestDataRx> slice = new TestDataRx{packet, packet->data(), 32, heap, nullptr, 0};
     packet = nullptr;
   }
-  ZUTCP_CHECK_RT(plugin->backing->released == 2 && plugin->backing->intact,
+  ZUTCP_CHECK_RT_1(plugin->backing->released == 2 && plugin->backing->intact,
     "a slice destroyed without growth must return backing once");
 }
 

@@ -14,11 +14,13 @@
 // Supply deterministic next-hop changes to the adapter's real asynchronous
 // resolver handoff. The private-network integration tests use the kernel.
 static ZmAtomic<unsigned> nextHop{10};
+static ZmAtomic<unsigned> routeLookups{0};
 
 namespace Zutcp {
 ZuUnion<IPPath, ZeException> resolveIPPath(unsigned, IPPath route)
 {
   ZmAssert_(!route.remote.multicast());
+  ++routeLookups;
   auto result = path(route.remote.v6());
   result.remote = route.remote;
   result.remoteMAC[5] = nextHop.load_();
@@ -36,6 +38,7 @@ public:
   Cxn(ZiMultiplex *mx, const ZiCxnInfo &info) : ZiConnection{mx, info} { }
   void connected(ZiRxContext &) override { }
   void disconnected(bool) override {
+    ++disconnects;
     mx()->txRun([cxn = ZmRef{this}] {
       cxn->resetTxQueue();
       cxn->closed.post();
@@ -64,6 +67,7 @@ public:
   ZtArray<int> results;
   ZtArray<uint8_t> bytes;
   ZmSemaphore completed, closed;
+  unsigned disconnects = 0;
 };
 
 struct Fixture {
@@ -373,6 +377,147 @@ static void testUDPTimer()
   });
   bool stopped = f.mx.stop();
   ZuCheckRT(ok && stopped, log_("real timer retries idle graceful send and loops it back once"));
+}
+
+static void testUDPRetire()
+{
+  using UDPLeaseTest::Fixture;
+  ZuTestScopeRT(testUDPRetire);
+  Fixture f;
+  bool started = f.start(0, ZuTime{60});
+  ZuCheckRT(started, log_("start UDP retirement fixture"));
+  if (!started) return;
+  f.onTx([&f] { ZutcpTest::MxPlugin::udpRouteEpoch(*f.stack); });
+
+  auto timer = f.open(path(false));
+  ZuCheckRT(timer, log_("open cached endpoint for queued retry retirement"));
+  if (!timer) { f.mx.stop(); return; }
+  bool ok = true;
+  unsigned before = 0;
+  ZmSemaphore rxClosed, timerMarker;
+  bool beforeRelease = false, sendDisabled = false;
+  f.onTx([&f, &timer, &ok, &before, &rxClosed, &timerMarker, &beforeRelease, &sendDisabled] {
+    f.device->refuse = true;
+    timer->enqueue(f.tx, 't');
+    before = f.device->calls;
+    f.mx.rxRun([&timer, &rxClosed] {
+      ZutcpTest::MxPlugin::closeUDPRx(timer);
+      rxClosed.post();
+    });
+    // Rx has queued Tx teardown. Post the real timer callback behind it
+    // while Tx is still held in this turn.
+    bool closing = !rxClosed.timedwait(Zm::now(5));
+    auto disarmed = closing ? ZutcpTest::MxPlugin::postUDPRetry(timer) : ZmFn<bool()>{};
+    ok &= bool(disarmed);
+    f.mx.txRun([
+      &f, &timer, &timerMarker, &beforeRelease, &sendDisabled, disarmed = ZuMv(disarmed)
+    ]() mutable {
+      sendDisabled = !timer->txUp() && !timer->plugin() && timer->txContext().completed() &&
+	disarmed && disarmed();
+      disarmed = {};
+      f.mx.rxRun([&timer, &timerMarker, &beforeRelease] {
+	beforeRelease = !timer->disconnects;
+	timerMarker.post();
+      });
+    });
+  });
+  ok &= !timerMarker.timedwait(Zm::now(5)) && beforeRelease && sendDisabled;
+  ok &= !timer->closed.timedwait(Zm::now(5));
+  f.onTx([&f, &timer, &before, &ok] {
+    ok &= f.device->calls == before && !timer->results.length();
+    f.device->refuse = false;
+  });
+  ZuCheckRT(ok,
+    log_("Tx drains posted retry before Rx disconnect without another send or timer rearm"));
+
+  auto routed = f.open(path(false), false);
+  ZuCheckRT(routed, log_("open uncached endpoint for queued route reply retirement"));
+  if (!routed) { f.mx.stop(); return; }
+  ZmSemaphore replyPosted;
+  bool routeOK = true;
+  unsigned lookups = routeLookups;
+  f.onTx([&f, &routed, &before, &lookups, &replyPosted, &routeOK] {
+    before = f.device->calls;
+    routed->enqueue(f.tx, 'r');
+    f.mx.rxRun([&replyPosted] { replyPosted.post(); });
+    routeOK &= !replyPosted.timedwait(Zm::now(5)) && routeLookups == lookups + 1 &&
+      f.device->calls == before;
+    routed->close();
+  });
+  routeOK &= !routed->closed.timedwait(Zm::now(5));
+  f.onTx([&f, &routed, &before, &routeOK] {
+    routeOK &= f.device->calls == before && !routed->results.length() &&
+      !routed->txUp() && !routed->plugin() && routed->txContext().completed();
+  });
+  bool stopped = f.mx.stop();
+  ZuCheckRT(ok && stopped && timer->disconnects == 1 && f.device->pool->balanced(),
+    log_("posted retry retirement finishes exactly once and returns backing"));
+  ZuCheckRT(routeOK && stopped && routed->disconnects == 1,
+    log_("close discards in-flight route reply and reports disconnect exactly once"));
+}
+
+struct UDPCompletionChain {
+  enum { Callbacks = 128 };
+  ZiMultiplex *mx;
+  unsigned calls = 0, markerAt = 0;
+  int result = 0;
+  ZmSemaphore finished, marker;
+
+  ZiTxFn callback() {
+    return [this](ZiTxContext &io) {
+      if (++calls == 1) {
+	result = io.length;
+	mx->txRun([this] { markerAt = calls; marker.post(); });
+      }
+      if (calls < Callbacks) {
+	io.init(callback(), io.buf);
+	return false;
+      }
+      io.complete();
+      finished.post();
+      return true;
+    };
+  }
+};
+
+static void checkUDPCompletion(bool immediateError)
+{
+  UDPLeaseTest::Fixture f;
+  bool started = f.start(0, ZuTime{60});
+  ZuCheckRT(started, log_("start UDP completion measurement"));
+  if (!started) return;
+  auto cxn = f.open(path(false));
+  ZuCheckRT(cxn, log_("open endpoint for UDP completion measurement"));
+  if (!cxn) { f.mx.stop(); return; }
+  UDPCompletionChain chain{&f.mx};
+  f.onTx([&f, &cxn, &chain, immediateError] {
+    ZutcpTest::MxPlugin::udpRouteEpoch(*f.stack);
+    auto buf = (immediateError ? f.app : f.tx)->allocBuf(cxn.ptr());
+    ZmAssert_(buf && buf->append("a"));
+    cxn->txContext().init(chain.callback(), ZuMv(buf), cxn->info().remote);
+    f.stack->send(cxn);
+  });
+  bool passed = !chain.finished.timedwait(Zm::now(5)) && !chain.marker.timedwait(Zm::now(5));
+  f.onTx([&f, &cxn, &chain, &passed, immediateError] {
+    passed &= chain.calls == chain.Callbacks && chain.markerAt && chain.markerAt <= chain.calls &&
+      chain.result == (immediateError ? -1 : 1) && cxn->txContext().completed() &&
+      f.device->calls == unsigned(!immediateError);
+    f.retire();
+  });
+  cxn->close();
+  bool closed = !cxn->closed.timedwait(Zm::now(5));
+  bool stopped = f.mx.stop();
+  log("UDP ", immediateError ? "error" : "success", " Tx marker at callback ", chain.markerAt,
+    " of ", chain.calls);
+  ZuCheckRT(passed && closed && stopped,
+    log_("measure Tx owner progress across replacement callbacks"));
+}
+
+static void testUDPCompletionChain()
+{
+  ZuTestScopeRT(testUDPCompletionChain);
+  checkUDPCompletion(false);
+  checkUDPCompletion(true);
 }
 
 #endif /* ZutcpUDPLeaseTest_HH */

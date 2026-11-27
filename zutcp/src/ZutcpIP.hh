@@ -13,6 +13,10 @@
 #include <zlib/ZutcpLib.hh>
 #endif
 
+#ifndef ZutcpRouteReplySize
+#define ZutcpRouteReplySize 4096
+#endif
+
 #include <stdint.h>
 
 #include <zlib/ZuSpan.hh>

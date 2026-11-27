@@ -9,7 +9,7 @@ paths are supplied per target. Stop/drain and buffer-return ordering is unchange
 These Linux tests exercise actual MxPlugin/Zpkt packet I/O, standard TCP headers
 and raw application bytes. They require sudo/root, network namespaces, iproute2,
 ethtool, tcpdump, Python3 and Perl/prove. AF_XDP cases require usable AF_XDP/BPF.
-AFP cases require nftables. Missing privileges or fixture variables produce
+AFP cases require kernel nftables netdev ingress and owned-table support. Missing privileges or fixture variables produce
 visible skips.
 See the [kernel/native quickstart](../util/README.md) for application integration,
 provider lifetime, interface ownership, routes, static neighbors and sudo setup.
@@ -169,12 +169,11 @@ sudo -n env ZPKT_RUN_FIXTURE=1 prove -v zutcp/itest/zutcpafptest
 ```
 
 Each exchange gives the client and server their own namespaces and veth
-interfaces. Counted nftables input rules match the test interface, address
-pair and server port 18187. AFP receives packets before the input rules drop
-them, and both rule counters must advance. The fixture disables offloads and
+interfaces. Each AFP endpoint owns its interface's ingress for the lifetime
+of the open Nif. The fixture disables offloads and
 captures both directions at peer ingress. It verifies IP and TCP checksums,
 exact wire payloads, both FIN acknowledgments and zero TCP resets.
-TAP diagnostics report the rule counts and verified byte totals. Failed
+TAP diagnostics report the verified byte totals. Failed
 exchanges retain their captures and endpoint logs.
 
 ## DPDK software ports

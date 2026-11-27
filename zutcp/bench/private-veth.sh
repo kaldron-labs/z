@@ -119,24 +119,9 @@ ip -n "$cli" neigh replace 198.18.87.2 lladdr "$smac" nud permanent dev "$croute
 ip -n "$srv" neigh replace 198.18.87.1 lladdr "$cmac" nud permanent dev "$sroute"
 ip -n "$cli" -6 neigh replace 2001:db8:87::2 lladdr "$smac" nud permanent dev "$croute"
 ip -n "$srv" -6 neigh replace 2001:db8:87::1 lladdr "$cmac" nud permanent dev "$sroute"
-client_address=198.18.87.1 server_address=198.18.87.2 protocol=ip
+client_address=198.18.87.1 server_address=198.18.87.2
 if [[ $family == 6 ]]; then
-  client_address=2001:db8:87::1 server_address=2001:db8:87::2 protocol=ip6
-fi
-if [[ $backend == afp ]]; then
-  isolate_input() {
-    local ns=$1 dev=$2 peer=$3 address=$4 port=$5
-    ip netns exec "$ns" nft -f - <<EOF
-table inet zbench_afp {
-  chain input {
-    type filter hook input priority filter; policy accept;
-    iifname "$dev" $protocol saddr $peer $protocol daddr $address tcp $port 18187 counter drop
-  }
-}
-EOF
-  }
-  isolate_input "$cli" "$croute" "$server_address" "$client_address" sport
-  isolate_input "$srv" "$sroute" "$client_address" "$server_address" dport
+  client_address=2001:db8:87::1 server_address=2001:db8:87::2
 fi
 snapshot() {
   local phase=$1
@@ -387,11 +372,6 @@ for side in client server; do
   grep -q "^result role=$side backend=$expected exact=1 " "$out/$side/output"
 done
 if [[ $backend == afp ]]; then
-  ip netns exec "$cli" nft list chain inet zbench_afp input > "$out/client/afp-input"
-  ip netns exec "$srv" nft list chain inet zbench_afp input > "$out/server/afp-input"
-  for side in client server; do
-    grep -Eq 'counter packets [1-9][0-9]* bytes [1-9][0-9]* drop' "$out/$side/afp-input"
-  done
   if [[ $capture == 1 ]]; then
     for side in client server; do
       grep -q '^0 packets dropped by kernel$' "$out/capture-$side.log"

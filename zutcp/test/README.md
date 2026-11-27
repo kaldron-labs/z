@@ -46,7 +46,11 @@ completion adds no progress counts. The context replacement includes same-owner
 reentry. Closing a stalled final buffer disarms it before the next queue-credit notice.
 `ZutcpDataTest::packetFinish` checks serialized FIN and sequence numbers, exact-window
 and empty finishes, provider refusal, RTO recovery and ACK-based lease retirement.
-The UDP lease fixture closes an endpoint while its route result is in flight.
+The UDP lease fixture closes endpoints with a queued route reply and with an
+already-posted retry callback. Shard markers check the retirement order,
+exactly-once disconnect and absence of further sends or timer rearming. The
+same fixture measures when ordinary Tx work runs during a finite chain of
+replacement completion callbacks on success and immediate error.
 The live registered-buffer counterpart is `../itest/zutcpmxtest`.
 
 `ZutcpRxAccountingTest` covers the bounded retained-buffer lists: newest-head /
@@ -91,7 +95,10 @@ and fatal handoffs. The actual MxPlugin owns policy, admission and retained tupl
 deterministic clock/dispatch and selected allocation/packet hooks. They do not
 recreate Hub/Client/Server transport owners or a production no-instance mode.
 Runtime multicast diagnostics compare complete frames before recipient mutation
-and count distinct copied backing. `testLoopCopies` observes complete frames at
+and count distinct copied backing. The fixture checks binding traversal order
+at the configured match cap and with one additional match. It also checks closing
+or rearming a later recipient during delivery, copy exhaustion and frame returns.
+`testLoopCopies` observes complete frames at
 ingress-pool return, including a loopback clone discarded on send refusal. It
 separates unicast, disabled loopback, accepted/refused sends and ingress exhaustion
 for both IP families; fixture comparison copies are excluded from reported volume.

@@ -273,6 +273,18 @@ public:
     ep->retryTx();
     return true;
   }
+  static void closeUDPRx(ZiConnection *cxn) {
+    auto endpoint = static_cast<Zutcp::MxPlugin::UdpCxn *>(cxn->plugin());
+    endpoint->close(false);
+  }
+  static ZmFn<bool()> postUDPRetry(ZiConnection *cxn) {
+    auto endpoint = static_cast<Zutcp::MxPlugin::UdpCxn *>(cxn->plugin());
+    if (!endpoint || !endpoint->m_parked) return {};
+    endpoint->backoff(Zm::now());
+    return [endpoint = ZmRef{endpoint}, mx = cxn->mx()] {
+      return !mx->del(&endpoint->m_retryTimer);
+    };
+  }
   static Zutcp::MxParams parameters(const Zutcp::MxPlugin &instance) {
     return instance.m_params;
   }

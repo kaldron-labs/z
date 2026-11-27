@@ -11,6 +11,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <zlib/ZuArray.hh>
+
 #include <zlib/ZutcpUDP.hh>
 
 namespace Zutcp {
@@ -197,14 +199,12 @@ void MxPlugin::UdpCxn::sendNext(ZiConnection *cxn)
       if (!sendPath(cxn, dest, *path)) return;
       continue;
     }
-    m_owner->rxRun([endpoint = ZmRef{this}, cxn = ZmRef{cxn},
-	head = io.buf.ptr(), dest, generation]() mutable {
+    m_owner->rxRun([endpoint = this, cxn, head = io.buf.ptr(), dest, generation] {
       if (endpoint->retiring) return;
       auto owner = endpoint->m_owner;
       auto local = endpoint->m_info.local.ip();
       auto route = owner->resolve(dest.ip(), local.multicast() ? ZiIP{} : local);
-      owner->txRun([endpoint = ZuMv(endpoint), cxn = ZuMv(cxn),
-	  head, dest, generation, route = ZuMv(route)]() mutable {
+      owner->txRun([endpoint, cxn, head, dest, generation, route = ZuMv(route)]() mutable {
 	endpoint->routed(cxn, head, dest, generation, ZuMv(route));
       });
     });
@@ -254,12 +254,12 @@ bool MxPlugin::UdpCxn::sendPath(ZiConnection *cxn, const ZiSockAddr &dest, const
 void MxPlugin::UdpCxn::backoff(ZuTime deadline)
 {
   m_owner->mx()->add(&m_retryTimer, deadline, ZmScheduler::Update,
-    [endpoint = ZmRef{this}, deadline](auto &&arm) {
-      return arm([endpoint, deadline] {
-	if (!endpoint->m_parked) return;
+    [this, deadline](auto &&arm) {
+      return arm([this, deadline] {
+	if (!m_parked) return;
 	// The scheduler coalesces near deadlines within its timer quantum.
-	if (Zm::now() < deadline) endpoint->backoff(deadline);
-	else endpoint->retryTx();
+	if (Zm::now() < deadline) backoff(deadline);
+	else retryTx();
       });
     }, m_owner->txThread());
 }
@@ -284,7 +284,7 @@ void MxPlugin::UdpCxn::resumeTx(Zu::IO::Result result)
 void MxPlugin::UdpCxn::cancelTx()
 {
   m_owner->cancelTxWait(this);
-  if (m_parked) m_owner->mx()->del(&m_retryTimer);
+  m_owner->mx()->del(&m_retryTimer);
   m_parked = nullptr;
 }
 
@@ -412,7 +412,7 @@ uint64_t MxPlugin::udpRouteGeneration()
   if (!changed) {
     // Every subscribed message invalidates all paths, including an overrun.
     // Discard whole datagrams without copying or parsing the route payload.
-    for (unsigned i = 0; i < 16; ++i) {
+    for (unsigned i = 0; i < ZutcpUDPRouteRxBudget; ++i) {
       char byte;
       if (::recv(m_udpRouteFD, &byte, 1, MSG_DONTWAIT) < 0) {
 	if (errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -519,19 +519,18 @@ void MxPlugin::receivedUDP(uint8_t *frame, unsigned length, const IPView &ip, Zi
       }
       if (match && match->receive(frame, offset, udp.payload.length(), peer, ip.tos, burst)) return;
     } else {
-      ZmRef<UdpCxn> first;
-      ZtArray<ZmRef<UdpCxn>, ZtArrayHeapID<"Zutcp.UDP.RxMatches">> matches;
+      ZuArray<ZmRef<UdpCxn>, ZutcpUDPMcastMatchMax> matches;
       {
 	auto i = m_udpBindings.citer(key);
 	while (auto node = i()) {
 	  auto endpoint = static_cast<UdpCxn *>(node);
 	  if (!endpoint->accepts(ip.local, peer)) continue;
-	  if (!first) first = endpoint;
-	  else new (matches.push()) ZmRef{endpoint};
+	  new (matches.push()) ZmRef{endpoint};
+	  if (matches.length() == matches.N) break;
 	}
       }
-      for (unsigned j = 0, n = first ? 1 + matches.length() : 0; j < n; ++j) {
-	auto endpoint = j ? matches[j - 1].ptr() : first.ptr();
+      for (unsigned j = 0, n = matches.length(); j < n; ++j) {
+	auto endpoint = matches[j].ptr();
 	if (j + 1 == n) {
 	  if (endpoint->receive(frame, offset, udp.payload.length(), peer, ip.tos, burst)) return;
 	} else if (endpoint->rxBuf()) {

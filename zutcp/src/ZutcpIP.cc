@@ -98,7 +98,7 @@ static ZuUnion<IPPath, ZeException> resolvePath(
     static_cast<const void *>(&path.remote.inAddr()) : &path.remote.in6Addr();
   // Each request has one protocol address plus one interface attribute at most.
   alignas(nlmsghdr) uint8_t request[NLMSG_SPACE(sizeof(rtmsg)) + RTA_SPACE(16) + RTA_SPACE(4)]{};
-  alignas(nlmsghdr) uint8_t reply[4096];
+  alignas(nlmsghdr) uint8_t reply[ZutcpRouteReplySize];
   auto header = reinterpret_cast<nlmsghdr *>(request);
   header->nlmsg_len = NLMSG_LENGTH(sizeof(rtmsg));
   header->nlmsg_type = RTM_GETROUTE;
@@ -219,7 +219,7 @@ ZuUnion<IPPath, ZeException> resolveIPPath(unsigned interface, IPPath path)
   memcpy(path.localMAC, link.ifr_hwaddr.sa_data, sizeof(path.localMAC));
   int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
   if (fd < 0) return osError("route query socket", errno);
-  timeval timeout{1, 0};
+  timeval timeout{.tv_usec = 1000}; // 1 ms per netlink receive
   ZuUnion<IPPath, ZeException> result;
   if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)))
     result = osError("route query timeout", errno);
@@ -448,12 +448,13 @@ bool readUDP(const IPView &ip, UDPView &view)
     return false;
   auto udp = ip.payload.data();
   unsigned length = get16(udp + 4);
-  if (length < 8 || length > ip.payload.length() || !get16(udp + 2)) return false;
+  uint16_t dstPort = get16(udp + 2);
+  if (length < 8 || length > ip.payload.length() || !dstPort) return false;
   if (!get16(udp + 6)) {
     if (family == ZiIPType::V6) return false;
   } else if (checksum(sum(udp, length,
       transportSum(ip.local, ip.remote, length, IPPROTO_UDP)))) return false;
-  view = {uint16_t(get16(udp)), uint16_t(get16(udp + 2)), {udp + 8, length - 8}};
+  view = {uint16_t(get16(udp)), dstPort, {udp + 8, length - 8}};
   return true;
 }
 
