@@ -14,7 +14,7 @@
 
 using namespace ZuTestUtil;
 
-#define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+#define Zquic_CheckRT_1(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 static bool trafficSecret(Zquic::TrafficSecret &secret, uint8_t seed)
 {
@@ -259,14 +259,14 @@ void testTimerReservation()
       }, app.rxThread());
     ready &= !handedOff.timedwait(Zm::now(10));
     resume.post();
-    ZQUIC_CHECK_RT(ready, "scheduler did not hand off reserved PTO");
+    Zquic_CheckRT_1(ready, "scheduler did not hand off reserved PTO");
     ZmBlock<>{}([&app](auto wake) { app.txRun(ZuMv(wake)); });
     if (mode != 1)
-      ZQUIC_CHECK_RT(!link->pto, "stale or early reservation ran PTO");
+      Zquic_CheckRT_1(!link->pto, "stale or early reservation ran PTO");
     if (mode == 2) {
       app.txRun([link]() { link->armPTO(Zm::now() + Zquic::timeUS(10000)); });
     }
-    ZQUIC_CHECK_RT(link->wait() && link->pto == 1,
+    Zquic_CheckRT_1(link->wait() && link->pto == 1,
       "reserved PTO did not expire exactly once");
     app.mx()->del(&sentinel);
     disconnect(link);
@@ -300,12 +300,12 @@ void testFlightReservation()
     ready &= !handedOff.timedwait(Zm::now(10));
     resume.post();
     ZmBlock<>{}([&app](auto wake) { app.txRun(ZuMv(wake)); });
-    ZQUIC_CHECK_RT(ready && sent && retired,
+    Zquic_CheckRT_1(ready && sent && retired,
       "flight did not retire before the handed-off recovery callbacks");
-    ZQUIC_CHECK_RT(!link->pto && !link->lossTime,
+    Zquic_CheckRT_1(!link->pto && !link->lossTime,
       "retired flight ran recovery from an old reservation");
     if (mode == 1)
-      ZQUIC_CHECK_RT(link->wait() && link->pto == 1 && !link->lossTime,
+      Zquic_CheckRT_1(link->wait() && link->pto == 1 && !link->lossTime,
 	"new flight did not retain its PTO after full ACK suppression");
     app.mx()->del(&sentinel);
     disconnect(link);

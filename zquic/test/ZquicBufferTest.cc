@@ -11,7 +11,7 @@
 
 using namespace ZuTestUtil;
 
-#define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+#define Zquic_CheckRT_1(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 ZuAssert((ZuIsBase<Zquic_::TxPkt, ZiIOBuf>{}));
 ZuAssert((ZuIsBase<Zquic::RxPkt, ZiIOBuf>{}));
@@ -86,32 +86,32 @@ void testTxPacketGeometry(bool registered)
   auto allocator = Zquic::pktTxAllocator<1536, 4096, "Zquic.Test.Pkt.Tx">(&mx);
   using Heap = ZuStringT<"Zquic.Test.Pkt.Tx">;
   if (registered) {
-    ZQUIC_CHECK_RT((dynamic_cast<Zi::IOBufPoolAllocator<Zi::IOBufType::TxUDP,
+    Zquic_CheckRT_1((dynamic_cast<Zi::IOBufPoolAllocator<Zi::IOBufType::TxUDP,
       Zquic_::TxPkt, 1536, ZiIOBuf_Align, Heap, 4096> *>(allocator)),
       "plugin allocator must preserve Tx node, geometry and heap policy");
-    ZQUIC_CHECK_RT(plugin->requestedType == Zi::IOBufType::TxUDP &&
+    Zquic_CheckRT_1(plugin->requestedType == Zi::IOBufType::TxUDP &&
       plugin->requestedSize == 1536 && plugin->requestedAlign == ZiIOBuf_Align &&
       plugin->requestedCount == ZiIOBuf_DefltCount,
       "packet allocator factory request changed");
   } else {
-    ZQUIC_CHECK_RT((dynamic_cast<Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxUDP,
+    Zquic_CheckRT_1((dynamic_cast<Zi::IOBufBuiltinAllocator<Zi::IOBufType::TxUDP,
       Zquic_::TxPkt, 1536, ZiIOBuf_Align, Heap, 4096> *>(allocator)),
       "builtin allocator must preserve Tx node, geometry and heap policy");
   }
   int owner;
   auto buf = allocator->allocBuf(&owner, 0, PacketBacking::Payload);
-  ZQUIC_CHECK_RT(bool(buf), "packet allocation failed");
+  Zquic_CheckRT_1(bool(buf), "packet allocation failed");
   if (!buf) return;
   auto pkt = static_cast<Zquic_::TxPkt *>(buf.ptr());
   auto data = buf->data();
   auto skip = registered ? PacketBacking::Head : 0;
   auto tail = registered ? PacketBacking::Tail : 0;
-  ZQUIC_CHECK_RT(buf->allocator() == allocator && buf->owner == &owner &&
+  Zquic_CheckRT_1(buf->allocator() == allocator && buf->owner == &owner &&
     buf->builtin() == !registered && buf->registered() == registered &&
     buf->skip == skip && buf->size == skip + PacketBacking::Payload + tail &&
     Zquic::txPktCapacity(buf) == PacketBacking::Payload,
     "packet storage must retain allocator identity and MPS-clamped geometry");
-  ZQUIC_CHECK_RT(pkt->ecn == Zquic::EcnMark::NotECT,
+  Zquic_CheckRT_1(pkt->ecn == Zquic::EcnMark::NotECT,
     "Tx packet metadata was not constructed");
   ZiSockAddr addr{ZiIP{"127.0.0.1"}, 4433};
   pkt->addr = addr;
@@ -119,14 +119,14 @@ void testTxPacketGeometry(bool registered)
   uint8_t cid[8] = {0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08};
   Zquic::InitialKeyMaterial keys;
   bool derived = Zquic::InitialCrypto::derive(keys, Zquic::CxnID{ZuBSpan{cid, sizeof(cid)}});
-  ZQUIC_CHECK_RT(derived, "test packet key derivation failed");
+  Zquic_CheckRT_1(derived, "test packet key derivation failed");
   if (!derived) return;
   uint8_t plaintext[PacketBacking::Payload - Zquic::InitialSecret::TagLen];
   for (unsigned i = 0; i < sizeof(plaintext); ++i) plaintext[i] = uint8_t(i ^ 0x6d);
   int encrypted = Zquic::InitialCrypto::encrypt(
     data, Zquic::txPktCapacity(buf), keys.client, 2, "packet header",
     ZuBSpan{plaintext, sizeof(plaintext)});
-  ZQUIC_CHECK_RT(encrypted == PacketBacking::Payload,
+  Zquic_CheckRT_1(encrypted == PacketBacking::Payload,
     "packet protection must write directly into allocator-provided storage");
   if (encrypted != PacketBacking::Payload) return;
   uint8_t ciphertext[PacketBacking::Payload];
@@ -135,24 +135,24 @@ void testTxPacketGeometry(bool registered)
   auto packet = buf.ptr();
   Zi::IOQueue queue;
   queue.pushNode(ZuMv(buf));
-  ZQUIC_CHECK_RT(queue.count_() == 1 && queue.headPtr() == packet,
+  Zquic_CheckRT_1(queue.count_() == 1 && queue.headPtr() == packet,
     "Tx queue must retain the packet node directly");
   buf = queue.shift();
-  ZQUIC_CHECK_RT(buf.ptr() == packet && buf->data() == data && buf->skip == skip &&
+  Zquic_CheckRT_1(buf.ptr() == packet && buf->data() == data && buf->skip == skip &&
     buf->allocator() == allocator && buf->owner == &owner &&
     pkt->addr == addr && pkt->ecn == Zquic::EcnMark::ECT1,
     "queueing changed packet backing or destination metadata");
-  ZQUIC_CHECK_RT(!memcmp(data, ciphertext, sizeof(ciphertext)) && buf->avail() == tail,
+  Zquic_CheckRT_1(!memcmp(data, ciphertext, sizeof(ciphertext)) && buf->avail() == tail,
     "queueing changed encrypted packet bytes or reserved tailroom");
   uint8_t decrypted[sizeof(plaintext)];
   int plainLength = Zquic::InitialCrypto::decrypt(
     decrypted, sizeof(decrypted), keys.client, 2, "packet header", buf->cspan());
-  ZQUIC_CHECK_RT(plainLength == sizeof(plaintext) &&
+  Zquic_CheckRT_1(plainLength == sizeof(plaintext) &&
     !memcmp(decrypted, plaintext, sizeof(plaintext)),
     "queued protected packet must authenticate and recover its original plaintext");
   buf = nullptr;
   if (registered)
-    ZQUIC_CHECK_RT(plugin->backing->intact && plugin->backing->acquired == 1 &&
+    Zquic_CheckRT_1(plugin->backing->intact && plugin->backing->acquired == 1 &&
       plugin->backing->released == 1, "registered packet must retire once with guards intact");
 }
 
@@ -265,16 +265,16 @@ void testPktBuildMetadata()
   uint8_t byte = 0x5a;
   Zquic::PktBuild build;
   for (unsigned i = 0; i < Zquic::PlainVec::Max; ++i)
-    ZQUIC_CHECK_RT(build.add(ZuBSpan{&byte, 1}),
+    Zquic_CheckRT_1(build.add(ZuBSpan{&byte, 1}),
       "packet plaintext vector append failed");
-  ZQUIC_CHECK_RT(build.count() == Zquic::PlainVec::Max &&
+  Zquic_CheckRT_1(build.count() == Zquic::PlainVec::Max &&
       build.bytes() == Zquic::PlainVec::Max &&
       !build.add(ZuBSpan{&byte, 1}) &&
       !build.pad(1),
     "packet plaintext vector capacity was not enforced");
 
   build.reset();
-  ZQUIC_CHECK_RT(build.scratchAvail() == Zquic::PktBuildScratchSize &&
+  Zquic_CheckRT_1(build.scratchAvail() == Zquic::PktBuildScratchSize &&
       build.padTo(Zquic::MinUDPPayload) &&
       build.count() == 1 &&
       build.bytes() == Zquic::MinUDPPayload &&
@@ -283,7 +283,7 @@ void testPktBuildMetadata()
     "QUIC Initial minimum padding metadata mismatch");
 
   build.reset();
-  ZQUIC_CHECK_RT(build.padForProtSample(1, 16) &&
+  Zquic_CheckRT_1(build.padForProtSample(1, 16) &&
       build.count() == 1 &&
       build.bytes() == 3,
     "packet protection sample padding metadata mismatch");
@@ -300,13 +300,13 @@ void testRxPacketGeometry(bool registered)
   auto allocator = Zquic::pktRxAllocator(&mx);
   auto appAllocator = mx.allocator<Zi::IOBufType::App>();
   auto buf = allocator->allocBuf();
-  ZQUIC_CHECK_RT(dynamic_cast<Zquic::RxPkt *>(buf.ptr()),
+  Zquic_CheckRT_1(dynamic_cast<Zquic::RxPkt *>(buf.ptr()),
     "Rx allocator must construct packet metadata with either backing provider");
   ZmRef<Zquic::RxPkt> pkt{ZuMv(buf)};
-  ZQUIC_CHECK_RT(!pkt->addr && !pkt->local && pkt->ecn == Zquic::EcnMark::NotECT,
+  Zquic_CheckRT_1(!pkt->addr && !pkt->local && pkt->ecn == Zquic::EcnMark::NotECT,
     "Rx packet metadata was not initialized");
   if (registered) {
-    ZQUIC_CHECK_RT(!pkt->data_() && !plugin->backing->acquired,
+    Zquic_CheckRT_1(!pkt->data_() && !plugin->backing->acquired,
       "arming plugin Rx must allocate only metadata");
     auto backing = plugin->backing->alloc();
     pkt->data__ = uintptr_t(backing) | ZiIOBuf::Registered;
@@ -322,7 +322,7 @@ void testRxPacketGeometry(bool registered)
   auto payload = pkt->data();
   ZmRef<ZiIOBuf> handoff{ZuMv(pkt)};
   pkt = ZuMv(handoff);
-  ZQUIC_CHECK_RT(pkt.ptr() == original && pkt->data() == payload &&
+  Zquic_CheckRT_1(pkt.ptr() == original && pkt->data() == payload &&
       pkt->refCount() == 1 && pkt->addr.port() == 4433 &&
       pkt->local.port() == 4434 && pkt->ecn == Zquic::EcnMark::CE,
     "packet handoff must move the original reference, backing and receive metadata");
@@ -330,11 +330,11 @@ void testRxPacketGeometry(bool registered)
     Zquic::StreamRxData slice{pkt, payload, PacketBacking::Payload,
       appAllocator, nullptr, 0};
     pkt = nullptr;
-    ZQUIC_CHECK_RT(slice.packet.ptr() == original && slice.span().data() == payload &&
+    Zquic_CheckRT_1(slice.packet.ptr() == original && slice.span().data() == payload &&
         slice.span()[0] == 0x42 && (!registered || !plugin->backing->released),
       "STREAM delivery must retain provider backing without a payload copy");
   }
-  ZQUIC_CHECK_RT(!registered || (plugin->backing->released == 1 && plugin->backing->intact),
+  Zquic_CheckRT_1(!registered || (plugin->backing->released == 1 && plugin->backing->intact),
     "last STREAM slice must return the original pool slot exactly once");
 }
 

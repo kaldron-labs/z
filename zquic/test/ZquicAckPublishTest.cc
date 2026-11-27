@@ -502,19 +502,21 @@ void testPeerAckParking()
 void testPeerAckPressure()
 {
   ZuTestScopeRT(testPeerAckPressure);
+  constexpr unsigned slots = ZquicAckPubSlots;
+  constexpr unsigned packets = slots + 960;
   for (bool cc : {false, true}) {
     PublishFixture f{cc};
     auto link = f.link;
-    ZuCheckRT(f.ready && f.tx([link] { return link->packets(1024); }),
+    ZuCheckRT(f.ready && f.tx([link] { return link->packets(packets); }),
       log_("peer ACK pressure fixture did not start"));
     ZmSemaphore held, resume;
     f.app.txRun([&held, &resume] { held.post(); resume.wait(); });
     bool ready = !held.timedwait(Zm::now(10));
     f.rx([link] {
-      for (unsigned pn = 1; pn <= 64; ++pn) link->peerAck(pn, pn);
+      for (unsigned pn = 1; pn <= slots; ++pn) link->peerAck(pn, pn);
       // The full ring falls back before the large, bounded-retirement ACK.
-      link->peerAck(65, 1008);
-      link->peerAck(1009, 1024);
+      link->peerAck(slots + 1, packets - 16);
+      link->peerAck(packets - 15, packets);
       return true;
     });
     resume.post();
@@ -605,9 +607,12 @@ void testAckBeforeRecovery()
 void testDeferredReset()
 {
   ZuTestScope(testDeferredReset);
+  constexpr unsigned firstAck = 900;
+  constexpr unsigned lastSingle = firstAck + ZquicAckPubSlots;
+  constexpr unsigned packets = lastSingle + 60;
   PublishFixture f;
   auto link = f.link;
-  ZuCHECK(f.ready && f.tx([link] { return link->packets(1024); }),
+  ZuCHECK(f.ready && f.tx([link] { return link->packets(packets); }),
     "deferred ACK reset fixture did not start");
   unsigned deferred = 0;
   ZmSemaphore held, resume, received, reset;
@@ -621,9 +626,9 @@ void testDeferredReset()
   f.app.mx()->add(&sentinel, Zm::now() + Zquic::timeUS(30000),
     ZmScheduler::Update, [link, &deferred, &received, &reset](auto &&arm) {
       return arm([link, &deferred, &received, &reset] {
-	link->peerAck(1, 900);
-	for (unsigned pn = 901; pn <= 964; ++pn) link->peerAck(pn, pn);
-	link->peerAck(965, 1024);
+	link->peerAck(1, firstAck);
+	for (unsigned pn = firstAck + 1; pn <= lastSingle; ++pn) link->peerAck(pn, pn);
+	link->peerAck(lastSingle + 1, packets);
 	// Recovery callbacks are already queued before these fallback posts.
 	// They begin a bounded ACK retirement; reset overtakes its continuation.
 	link->app()->txRun([link, &deferred] { deferred = link->deferredPeerAcks_(); });

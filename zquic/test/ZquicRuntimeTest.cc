@@ -32,7 +32,7 @@
 
 using namespace ZuTestUtil;
 
-#define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+#define Zquic_CheckRT_1(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 
 #ifdef linux
@@ -329,7 +329,7 @@ struct TestServer :
   ZmAtomic<unsigned> droppedHandshake = 0;
   ZmAtomic<unsigned> droppedCoalescedFlight = 0;
   bool initialProbeAfterDrop = false; // Tx thread
-  ZmAtomic<unsigned> firstHandshakeAfterInitialProbe = 0;
+  ZmAtomic<unsigned> hsAfterInitialProbe = 0;
   ZmAtomic<unsigned> dropNextShort = 0;
   ZmAtomic<unsigned> droppedShort = 0;
   ZmAtomic<unsigned> shortPkts = 0;
@@ -375,8 +375,8 @@ struct TestServer :
 	  packet.length() >= Zquic::MinUDPPayload)
 	initialProbeAfterDrop = true;
       if (h.type == Zquic::PktType::Handshake && initialProbeAfterDrop &&
-	  !firstHandshakeAfterInitialProbe)
-	firstHandshakeAfterInitialProbe = unsigned(h.length);
+	  !hsAfterInitialProbe)
+	hsAfterInitialProbe = unsigned(h.length);
       if (h.type == Zquic::PktType::Handshake && dropNextHandshake) {
 	--dropNextHandshake;
 	++droppedHandshake;
@@ -1232,7 +1232,7 @@ void testOwnedStreamAPI(const Sender &sender, const Receiver &receiver,
   uint8_t expected[N];
   for (unsigned i = 0; i < N; ++i) expected[i] = uint8_t('a' + i%23);
   auto output = openStream(sender);
-  ZQUIC_CHECK_RT(output, "owned stream did not open");
+  Zquic_CheckRT_1(output, "owned stream did not open");
   if (!output) return;
   static ZiMultiplex mx;
   static auto allocator = Zquic::plaintextAllocator<
@@ -1256,7 +1256,7 @@ void testOwnedStreamAPI(const Sender &sender, const Receiver &receiver,
       wake(ok);
     });
   });
-  ZQUIC_CHECK_RT(accepted && !backing, "owned buffer API admission/caller release failed");
+  Zquic_CheckRT_1(accepted && !backing, "owned buffer API admission/caller release failed");
   auto checkInput = [receiver](const auto &stream, const uint8_t *bytes, unsigned size) {
     auto id = stream->id();
     return receiver->streamEvent.wait([receiver, id, bytes, size]() {
@@ -1278,7 +1278,7 @@ void testOwnedStreamAPI(const Sender &sender, const Receiver &receiver,
       });
     }, Zm::now(10));
   };
-  ZQUIC_CHECK_RT(checkInput(output, expected, N), "owned protected bytes changed");
+  Zquic_CheckRT_1(checkInput(output, expected, N), "owned protected bytes changed");
   bool completed = output->txEvent.wait([sender, output]() {
     return ZmBlock<bool>{}([sender, output](auto wake) {
       sender->app()->txRun([output, wake = ZuMv(wake)]() mutable {
@@ -1286,16 +1286,16 @@ void testOwnedStreamAPI(const Sender &sender, const Receiver &receiver,
       });
     });
   }, Zm::now(10));
-  ZQUIC_CHECK_RT(completed, "owned buffer FIN/ACK did not drain");
+  Zquic_CheckRT_1(completed, "owned buffer FIN/ACK did not drain");
   auto borrowedStream = openStream(sender);
-  ZQUIC_CHECK_RT(borrowedStream, "borrowed stream did not open");
+  Zquic_CheckRT_1(borrowedStream, "borrowed stream did not open");
   if (!borrowedStream) return;
   uint8_t borrowed[Borrowed], saved[Borrowed];
   for (unsigned i=0; i<Borrowed; ++i) borrowed[i] = saved[i] = uint8_t(i%251);
-  ZQUIC_CHECK_RT(sender->send(borrowedStream, ZuBSpan{borrowed, Borrowed}),
+  Zquic_CheckRT_1(sender->send(borrowedStream, ZuBSpan{borrowed, Borrowed}),
     "borrowed span API admission failed");
   memset(borrowed, 0xa5, sizeof(borrowed)); // public call must have acquired ownership
-  ZQUIC_CHECK_RT(checkInput(borrowedStream, saved, Borrowed),
+  Zquic_CheckRT_1(checkInput(borrowedStream, saved, Borrowed),
     "caller overwrite changed borrowed-span delivery");
 }
 
@@ -1360,7 +1360,7 @@ void testResetBindingSource()
   ZuTestScopeRT(testResetBindingSource);
   TempDir temp;
   bool cert = temp.init();
-  ZQUIC_CHECK_RT(cert, "stateless reset source certificate generation failed");
+  Zquic_CheckRT_1(cert, "stateless reset source certificate generation failed");
   if (!cert) return;
   ZiMultiplex mx{ZiMxParams().scheduler([](auto &s) { s.nThreads(5); })
     .rxThread(1).txThread(2)};
@@ -1379,25 +1379,25 @@ void testResetBindingSource()
     .caPath(temp.certPath.cspan()).migrationMode(Zquic::MigrationMode::Disabled)
     .alpn(ZuSpan<ZuCSpan>{"h3"}));
   bool mxStarted = mx.start();
-  ZQUIC_CHECK_RT(serverInit && clientInit && mxStarted,
+  Zquic_CheckRT_1(serverInit && clientInit && mxStarted,
     "stateless reset source fixture initialization failed");
   if (!mxStarted) { client.final(); server.final(); return; }
   bool ready = serverInit && clientInit && server.start();
-  ZQUIC_CHECK_RT(ready, "stateless reset source server startup failed");
+  Zquic_CheckRT_1(ready, "stateless reset source server startup failed");
   ZmRef<TestClient::Link> link;
   ZmRef<TestServer::Link> peer;
   if (ready) {
     link = new TestClient::Link{&client};
     link->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
     bool established = waitEstablished(link, server, peer);
-    ZQUIC_CHECK_RT(established, "stateless reset route fixture handshake failed");
+    Zquic_CheckRT_1(established, "stateless reset route fixture handshake failed");
     if (established) {
       bool installed = ZmBlock<bool>{}([&server](auto wake) {
 	server.rxRun([&server, wake = ZuMv(wake)]() mutable {
 	  wake(server.resetInstalled);
 	});
       });
-      ZQUIC_CHECK_RT(installed &&
+      Zquic_CheckRT_1(installed &&
 	resetBindingSource(server.addrs.original4, server.resetCID, server.resetToken) &&
 	resetBindingSource(server.addrs.original6, server.resetCID, server.resetToken),
 	"stateless reset response used a different original source binding");
@@ -1424,7 +1424,7 @@ void testServerBindings()
     " builtin backing grows; finite providers impose their own shared bound");
   TempDir temp;
   bool cert = temp.init();
-  ZQUIC_CHECK_RT(cert, "shared listener certificate generation failed");
+  Zquic_CheckRT_1(cert, "shared listener certificate generation failed");
   if (!cert) return;
   ZiMultiplex mx{ZiMxParams().scheduler([](auto &s) { s.nThreads(5); })
     .rxThread(1).txThread(2)};
@@ -1435,24 +1435,24 @@ void testServerBindings()
   bool init = server.init(Zquic::ServerParams{&mx, "3", "4"}
     .certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan())
     .addrValidationSecret(secret).alpn(ZuSpan<ZuCSpan>{"h3"}));
-  ZQUIC_CHECK_RT(init, "shared listener server initialization failed");
+  Zquic_CheckRT_1(init, "shared listener server initialization failed");
   if (!init) return;
   bool started = mx.start();
-  ZQUIC_CHECK_RT(started, "shared listener multiplexer start failed");
+  Zquic_CheckRT_1(started, "shared listener multiplexer start failed");
   if (!started) { server.final(); return; }
 
   // An invalid explicit configuration opens no socket and reports typed failure.
   server.addrs.original4 = ZiSockAddr{ZiIP{"127.0.0.1"}, ZquicTestPort::Original4};
-  ZQUIC_CHECK_RT(!server.start() && !server.listening(),
+  Zquic_CheckRT_1(!server.start() && !server.listening(),
     "invalid explicit bindings started the server");
   server.addrs.preferred4 = ZiSockAddr{ZiIP{"127.0.0.1"}, ZquicTestPort::Preferred4};
   // A bind failure after opening the original must drain it before start fails.
   int occupied = socket(AF_INET, SOCK_DGRAM, 0);
   bool blocked = occupied >= 0 && !bind(occupied, server.addrs.preferred4.sa(),
     server.addrs.preferred4.len());
-  ZQUIC_CHECK_RT(blocked, "shared listener failed to reserve conflicting fixture socket");
+  Zquic_CheckRT_1(blocked, "shared listener failed to reserve conflicting fixture socket");
   if (blocked)
-    ZQUIC_CHECK_RT(!server.start() && !server.connected(),
+    Zquic_CheckRT_1(!server.start() && !server.connected(),
       "partial listener bind failure did not drain startup");
   if (occupied >= 0) close(occupied);
 
@@ -1461,7 +1461,7 @@ void testServerBindings()
   Zquic_::PktAllocTarget previous[4];
   for (unsigned attempt = 0; attempt < 2; ++attempt) {
     bool ready = server.start();
-    ZQUIC_CHECK_RT(ready && server.listening() && server.endpointCount() == 4 &&
+    Zquic_CheckRT_1(ready && server.listening() && server.endpointCount() == 4 &&
       server.local() == server.addrs.original4,
       "four bindings did not become ready together");
     if (!ready) break;
@@ -1480,7 +1480,7 @@ void testServerBindings()
 	  wake(rejected);
 	});
       });
-      ZQUIC_CHECK_RT(staleRejected,
+      Zquic_CheckRT_1(staleRejected,
 	"stale physical output snapshot selected a replacement server socket");
       for (unsigned slot = 0; slot < 4; ++slot) {
 	Zquic_::EndpointTxWait wait;
@@ -1492,12 +1492,12 @@ void testServerBindings()
 	      }, previous[slot]);
 	  });
 	});
-	ZQUIC_CHECK_RT(cancelled && !wait.busy(),
+	Zquic_CheckRT_1(cancelled && !wait.busy(),
 	  "stale endpoint admission consumed replacement socket credit");
 	auto d = ZmBlock<Zquic::EndpointDiag>{}([&server, slot](auto wake) {
 	  server.endpointDiag(slot, ZuMv(wake));
 	});
-	ZQUIC_CHECK_RT(d.tx.txDropped == 1 && !d.tx.submittedTx,
+	Zquic_CheckRT_1(d.tx.txDropped == 1 && !d.tx.submittedTx,
 	  "stale submission was not charged to its original physical slot");
       }
     }
@@ -1506,10 +1506,10 @@ void testServerBindings()
     auto frozen = server.runtimeServerAddrs();
     auto preferred = server.addrs.preferred4;
     server.addrs.preferred4.null();
-    ZQUIC_CHECK_RT(server.runtimeServerAddrs().preferred4 == preferred,
+    Zquic_CheckRT_1(server.runtimeServerAddrs().preferred4 == preferred,
       "running address configuration changed before restart");
     server.addrs.preferred4 = preferred;
-    ZQUIC_CHECK_RT(connectionlessSource(frozen.original4, false) &&
+    Zquic_CheckRT_1(connectionlessSource(frozen.original4, false) &&
       connectionlessSource(frozen.original6, false),
       "Version Negotiation response used a different source binding");
     ZmBlock<>{}([&server](auto wake) {
@@ -1518,7 +1518,7 @@ void testServerBindings()
 	wake();
       });
     });
-    ZQUIC_CHECK_RT(connectionlessSource(frozen.original4, true) &&
+    Zquic_CheckRT_1(connectionlessSource(frozen.original4, true) &&
       connectionlessSource(frozen.original6, true),
       "Retry response used a different source binding");
     ZmBlock<>{}([&server](auto wake) {
@@ -1527,12 +1527,12 @@ void testServerBindings()
 	wake();
       });
     });
-    ZQUIC_CHECK_RT(server.stop() && !server.listening(),
+    Zquic_CheckRT_1(server.stop() && !server.listening(),
       "shared listeners remained ready after shutdown drain");
   }
   // Default mode allocates no additional adapter and still accepts ephemeral binds.
   server.addrs = {};
-  ZQUIC_CHECK_RT(server.start() && server.endpointCount() == 1,
+  Zquic_CheckRT_1(server.start() && server.endpointCount() == 1,
     "restart did not restore the single-endpoint default");
   server.stop();
   server.final();
@@ -1886,7 +1886,7 @@ void testHandshakeCryptoLoss()
   ZuTestScopeRT(testHandshakeCryptoLoss);
 
   TempDir temp;
-  ZQUIC_CHECK_RT(temp.init(), "loss runtime temporary TLS certificate failed");
+  Zquic_CheckRT_1(temp.init(), "loss runtime temporary TLS certificate failed");
 
   for (unsigned dropHandshake = 0; dropHandshake < 2; ++dropHandshake) {
     ZiMultiplex mx(
@@ -1900,7 +1900,7 @@ void testHandshakeCryptoLoss()
 	  .rxThread(1).txThread(2));
     TestServer server;
     server.repeatInitial = true;
-    ZQUIC_CHECK_RT(server.init(
+    Zquic_CheckRT_1(server.init(
 	Zquic::ServerParams(&mx, "3", "4")
 	  .certPath(temp.certPath.cspan())
 	  .keyPath(temp.keyPath.cspan())
@@ -1911,7 +1911,7 @@ void testHandshakeCryptoLoss()
 	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
       "loss runtime server init failed");
     TestClient client;
-    ZQUIC_CHECK_RT(client.init(
+    Zquic_CheckRT_1(client.init(
 	Zquic::ClientParams(&mx, "3", "4")
 	  .caPath(temp.certPath.cspan())
 	  .maxData(32768)
@@ -1921,12 +1921,12 @@ void testHandshakeCryptoLoss()
 	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
       "loss runtime client init failed");
     bool mxStarted = mx.start();
-    ZQUIC_CHECK_RT(mxStarted, "loss runtime multiplexer start failed");
+    Zquic_CheckRT_1(mxStarted, "loss runtime multiplexer start failed");
     if (!mxStarted) { client.final(); server.final(); return; }
 
-    ZQUIC_CHECK_RT(server.start(), "loss runtime server listen failed");
+    Zquic_CheckRT_1(server.start(), "loss runtime server listen failed");
     bool listening = server.listening();
-    ZQUIC_CHECK_RT(listening, "loss runtime server did not listen");
+    Zquic_CheckRT_1(listening, "loss runtime server did not listen");
 	    if (!server.listening()) {
 	      server.stop();
 	      client.final();
@@ -1952,21 +1952,21 @@ void testHandshakeCryptoLoss()
 	dumpDiag(
 	  "server", diag(serverLink), serverLink->crypto().diag());
     }
-    ZQUIC_CHECK_RT(established, "loss runtime handshake did not recover");
-    ZQUIC_CHECK_RT(serverLink && serverLink->repeatedInitials == 1 && server.acceptedCount == 1,
+    Zquic_CheckRT_1(established, "loss runtime handshake did not recover");
+    Zquic_CheckRT_1(serverLink && serverLink->repeatedInitials == 1 && server.acceptedCount == 1,
       "repeated Initial did not return the accepted link");
-    ZQUIC_CHECK_RT(dropHandshake ? server.droppedHandshake == 4 :
+    Zquic_CheckRT_1(dropHandshake ? server.droppedHandshake == 4 :
 	server.droppedInitial == 1,
       "loss runtime did not drop selected long-header packet");
-    ZQUIC_CHECK_RT(dropHandshake ? server.handshakePkts > server.droppedHandshake :
+    Zquic_CheckRT_1(dropHandshake ? server.handshakePkts > server.droppedHandshake :
 	server.initialPkts > server.droppedInitial,
       "loss runtime did not send selected packet after deliberate loss");
     if (!dropHandshake) {
-      ZQUIC_CHECK_RT(server.droppedCoalescedFlight,
+      Zquic_CheckRT_1(server.droppedCoalescedFlight,
 	"loss runtime did not drop a coalesced Initial and Handshake flight");
       // The peer has sent no Handshake packet to ACK at the first probe.
       // A padded PING alone has four protected bytes preceding the tag.
-      ZQUIC_CHECK_RT(server.firstHandshakeAfterInitialProbe > Zquic::InitialSecret::TagLen + 4,
+      Zquic_CheckRT_1(server.hsAfterInitialProbe > Zquic::InitialSecret::TagLen + 4,
 	"first companion Handshake probe did not carry retained CRYPTO");
     }
     auto ready = [](const auto &link) {
@@ -1978,16 +1978,16 @@ void testHandshakeCryptoLoss()
       });
     };
     bool clientReady = ready(clientLink), serverReady = ready(serverLink);
-    ZQUIC_CHECK_RT(clientReady && serverReady,
+    Zquic_CheckRT_1(clientReady && serverReady,
       "loss runtime did not recover application traffic keys");
 #ifdef Zquic_DEBUG
-    ZQUIC_CHECK_RT(serverLink && diag(serverLink).tx.retransmittedFrames,
+    Zquic_CheckRT_1(serverLink && diag(serverLink).tx.retransmittedFrames,
       "loss runtime did not retransmit dropped handshake data");
 #endif
 
     bool clientClosed = clientLink->close();
     server.stop();
-    ZQUIC_CHECK_RT(clientClosed && !clientLink->cxn() && !server.connected(),
+    Zquic_CheckRT_1(clientClosed && !clientLink->cxn() && !server.connected(),
       "loss runtime endpoints remained connected after close");
     waitDisconnect(server);
     clientLink = nullptr;
@@ -2004,7 +2004,7 @@ void testTLSOutputFailure()
 
   TempDir temp;
   if (!temp.init()) {
-    ZQUIC_CHECK_RT(false, "TLS output failure fixture certificate failed");
+    Zquic_CheckRT_1(false, "TLS output failure fixture certificate failed");
     return;
   }
 
@@ -2018,10 +2018,10 @@ void testTLSOutputFailure()
     server.init(Zquic::ServerParams(&mx, "3", "4")
       .certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan())
       .alpn(ZuSpan<ZuCSpan>{"h3"}));
-  ZQUIC_CHECK_RT(initialized, "TLS output failure fixture init failed");
+  Zquic_CheckRT_1(initialized, "TLS output failure fixture init failed");
   if (!initialized) return;
   bool started = mx.start();
-  ZQUIC_CHECK_RT(started, "TLS output failure multiplexer start failed");
+  Zquic_CheckRT_1(started, "TLS output failure multiplexer start failed");
   if (!started) { server.final(); return; }
 
   if (server.start() && server.listening()) {
@@ -2030,7 +2030,7 @@ void testTLSOutputFailure()
     Zquic::CryptoOffsets offsets;
     bool generated = client.initTLS(Zquic::CryptoConfig{.alpn = "h3"}) &&
       client.handleTLSMessage(hello.ptr(), offsets, 0, {}) > 1;
-    ZQUIC_CHECK_RT(generated, "TLS output failure fixture ClientHello failed");
+    Zquic_CheckRT_1(generated, "TLS output failure fixture ClientHello failed");
     if (generated) for (bool deferred : {false, true}) {
       ZmRef<TestServerLink> link = new TestServerLink{&server};
       bool admitted = ZmBlock<bool>{}([link, hello, deferred](auto wake) {
@@ -2047,9 +2047,9 @@ void testTLSOutputFailure()
 	  }
 	});
       });
-      ZQUIC_CHECK_RT(admitted, "TLS output failure fixture input failed");
+      Zquic_CheckRT_1(admitted, "TLS output failure fixture input failed");
       bool closed = admitted && link->waitDisconnected(Zm::now(10));
-      ZQUIC_CHECK_RT(closed &&
+      Zquic_CheckRT_1(closed &&
 	  link->closeError() == Zquic::TransportError::InternalError,
 	"TLS output failure did not retire the failed handshake");
       bool rejected = ZmBlock<bool>{}([link, hello](auto wake) {
@@ -2061,7 +2061,7 @@ void testTLSOutputFailure()
 	       handled == crypto.diag().tlsMessagesHandled);
 	});
       });
-      ZQUIC_CHECK_RT(rejected && !diag(link).tx.cryptoBytesTx,
+      Zquic_CheckRT_1(rejected && !diag(link).tx.cryptoBytesTx,
 	"failed TLS output was published or TLS resumed");
       if (!closed) {
 	link->disconnect();
@@ -2070,7 +2070,7 @@ void testTLSOutputFailure()
       waitThread(mx, server.rxThread());
     }
   } else {
-    ZQUIC_CHECK_RT(false, "TLS output failure fixture could not listen");
+    Zquic_CheckRT_1(false, "TLS output failure fixture could not listen");
   }
   server.stop();
   waitDisconnect(server);
@@ -2106,7 +2106,7 @@ void testHandshakeKeyRetirement()
   ZuTestScopeRT(testHandshakeKeyRetirement);
 
   TempDir temp;
-  ZQUIC_CHECK_RT(temp.init(), "key retirement TLS certificate failed");
+  Zquic_CheckRT_1(temp.init(), "key retirement TLS certificate failed");
   ZiMultiplex mx(
     ZiMxParams().scheduler([](auto &s) {
       s.nThreads(5)
@@ -2116,7 +2116,7 @@ void testHandshakeKeyRetirement()
 	.thread(4, [](auto &t) { t.isolated(1); });
     }).rxThread(1).txThread(2));
   TestServer server;
-  ZQUIC_CHECK_RT(server.init(
+  Zquic_CheckRT_1(server.init(
       Zquic::ServerParams(&mx, "3", "4")
 	.certPath(temp.certPath.cspan())
 	.keyPath(temp.keyPath.cspan())
@@ -2124,16 +2124,16 @@ void testHandshakeKeyRetirement()
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "key retirement server init failed");
   TestClient client;
-  ZQUIC_CHECK_RT(client.init(
+  Zquic_CheckRT_1(client.init(
       Zquic::ClientParams(&mx, "3", "4")
 	.caPath(temp.certPath.cspan())
 	.maxData(32768).maxStreamData(8192).maxStreamsDuplex(8)
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "key retirement client init failed");
   bool started = mx.start();
-  ZQUIC_CHECK_RT(started, "key retirement mx start failed");
+  Zquic_CheckRT_1(started, "key retirement mx start failed");
   if (!started) { client.final(); server.final(); return; }
-  ZQUIC_CHECK_RT(server.start() && server.listening(),
+  Zquic_CheckRT_1(server.start() && server.listening(),
     "key retirement server listen failed");
   if (!server.listening()) {
     server.stop(); client.final(); server.final(); mx.stop(); return;
@@ -2144,29 +2144,29 @@ void testHandshakeKeyRetirement()
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
   ZmRef<TestServer::Link> serverLink;
   bool established = waitEstablished(clientLink, server, serverLink);
-  ZQUIC_CHECK_RT(established, "key retirement handshake failed");
+  Zquic_CheckRT_1(established, "key retirement handshake failed");
   if (established) {
-    ZQUIC_CHECK_RT(server.handshakeDoneEvent.wait(
+    Zquic_CheckRT_1(server.handshakeDoneEvent.wait(
       [&server]() { return bool(server.heldHandshakeDone); }, Zm::now(10)),
       "key retirement did not hold HANDSHAKE_DONE");
     waitThread(mx, server.rxThread());
-    ZQUIC_CHECK_RT(!handshakeKeysLive(serverLink),
+    Zquic_CheckRT_1(!handshakeKeysLive(serverLink),
       "server retained Handshake keys pending HANDSHAKE_DONE acknowledgment");
-    ZQUIC_CHECK_RT(handshakeKeysLive(clientLink) == 3,
+    Zquic_CheckRT_1(handshakeKeysLive(clientLink) == 3,
       "client discarded Handshake keys before confirmation");
-    ZQUIC_CHECK_RT(staleKeysStayRetired(serverLink),
+    Zquic_CheckRT_1(staleKeysStayRetired(serverLink),
       "stale TLS snapshot restored retired server Handshake keys");
 
     server.holdHandshakeDone = false;
     auto stream = openStream(serverLink);
-    ZQUIC_CHECK_RT(stream && serverLink->send(stream, "confirm"),
+    Zquic_CheckRT_1(stream && serverLink->send(stream, "confirm"),
       "key retirement confirmation flush failed");
-    ZQUIC_CHECK_RT(clientLink->waitStreams(1, Zm::now(10)),
+    Zquic_CheckRT_1(clientLink->waitStreams(1, Zm::now(10)),
       "key retirement protected response did not arrive");
-    ZQUIC_CHECK_RT(client.rxEvent.wait([&clientLink] {
+    Zquic_CheckRT_1(client.rxEvent.wait([&clientLink] {
       return !handshakeKeysLive(clientLink);
     }, Zm::now(10)), "client retained Handshake keys after HANDSHAKE_DONE");
-    ZQUIC_CHECK_RT(staleKeysStayRetired(clientLink),
+    Zquic_CheckRT_1(staleKeysStayRetired(clientLink),
       "stale TLS snapshot restored retired client Handshake keys");
 
     bool rejected = ZmBlock<bool>{}([clientLink, serverLink](auto wake) {
@@ -2176,14 +2176,14 @@ void testHandshakeKeyRetirement()
 	     !serverLink->crypto().tlsReady() && !serverLink->tlsFlightBytes);
       });
     });
-    ZQUIC_CHECK_RT(rejected, "QUIC accepted a TLS KeyUpdate");
-    ZQUIC_CHECK_RT(client.rxEvent.wait([clientLink] {
+    Zquic_CheckRT_1(rejected, "QUIC accepted a TLS KeyUpdate");
+    Zquic_CheckRT_1(client.rxEvent.wait([clientLink] {
       return clientLink->closeError() == 0x010a;
     }, Zm::now(10)), "peer did not receive QUIC crypto error 0x010a");
   }
   bool closed = clientLink->close();
   server.stop();
-  ZQUIC_CHECK_RT(closed && !server.connected(),
+  Zquic_CheckRT_1(closed && !server.connected(),
     "key retirement endpoints remained connected");
   waitDisconnect(server);
   clientLink = nullptr;
@@ -2200,7 +2200,7 @@ void testMigrationLoss()
 
   TempDir temp;
   bool cert = temp.init();
-  ZQUIC_CHECK_RT(cert, "migration loss certificate failed");
+  Zquic_CheckRT_1(cert, "migration loss certificate failed");
   if (!cert) return;
   ZtString<> serverQLog = temp.pathOf("migration-server.sqlog");
   ZtString<> clientQLog = temp.pathOf("migration-client.sqlog");
@@ -2218,7 +2218,7 @@ void testMigrationLoss()
       .migrationMode(Zquic::MigrationMode::Active).migCIDRes(2)
       .maxData(32768).maxStreamData(8192).maxStreamsDuplex(8)
       .alpn(ZuSpan<ZuCSpan>{"h3"}));
-  ZQUIC_CHECK_RT(serverInit, "migration loss server init failed");
+  Zquic_CheckRT_1(serverInit, "migration loss server init failed");
   if (!serverInit) { mx.stop(); return; }
   TestClient client;
   client.dropMigChallenge = true; // immutable before init and publication
@@ -2229,13 +2229,13 @@ void testMigrationLoss()
       .migrationMode(Zquic::MigrationMode::Active).migCIDRes(2)
       .maxData(32768).maxStreamData(8192).maxStreamsDuplex(8)
       .alpn(ZuSpan<ZuCSpan>{"h3"}));
-  ZQUIC_CHECK_RT(clientInit, "migration loss client init failed");
+  Zquic_CheckRT_1(clientInit, "migration loss client init failed");
   bool started = mx.start();
-  ZQUIC_CHECK_RT(started, "migration loss multiplexer start failed");
+  Zquic_CheckRT_1(started, "migration loss multiplexer start failed");
   if (!started) { client.final(); server.final(); return; }
 
   bool serverStart = server.start();
-  ZQUIC_CHECK_RT(serverStart, "migration loss server start failed");
+  Zquic_CheckRT_1(serverStart, "migration loss server start failed");
 
 
   ZmRef<TestClient::Link> clientLink;
@@ -2243,7 +2243,7 @@ void testMigrationLoss()
   auto exercise = [&client, &server, &clientLink, &serverLink, serverStart, clientInit]() {
     if (!serverStart || !clientInit) return;
     bool listening = server.listening(); // start() completed the engine startup
-    ZQUIC_CHECK_RT(listening, "migration loss server did not listen");
+    Zquic_CheckRT_1(listening, "migration loss server did not listen");
     if (!listening) return;
     clientLink = new TestClient::Link{&client};
     clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
@@ -2255,7 +2255,7 @@ void testMigrationLoss()
       });
     };
     bool established = waitEstablished(clientLink, server, serverLink);
-    ZQUIC_CHECK_RT(established, "migration loss UDP handshake failed");
+    Zquic_CheckRT_1(established, "migration loss UDP handshake failed");
     if (!established) return;
     Zquic_::LinkCID second;
     bool issued = ZmBlock<bool>{}([serverLink, &second](auto wake) {
@@ -2263,13 +2263,13 @@ void testMigrationLoss()
 	wake(serverLink->retryIssuance(second));
       });
     });
-    ZQUIC_CHECK_RT(issued, "failed bind changed sequence, committed routes or ready count");
-    ZQUIC_CHECK_RT(issued && client.rxEvent.wait(
+    Zquic_CheckRT_1(issued, "failed bind changed sequence, committed routes or ready count");
+    Zquic_CheckRT_1(issued && client.rxEvent.wait(
       [clientLink, second] { return clientLink->receivedCID(second); }, Zm::now(10)),
       "replacement CID and token did not reach the peer");
     bool spare = client.rxEvent.wait(
       [&clientLink]() { return clientLink->spareCID(); }, Zm::now(10));
-    ZQUIC_CHECK_RT(spare, "migration loss peer did not supply a spare CID");
+    Zquic_CheckRT_1(spare, "migration loss peer did not supply a spare CID");
     if (!spare) return;
     auto state = [&clientLink]() {
       return ZmBlock<Zquic::MigrationResult>{}([&clientLink](auto wake) {
@@ -2277,14 +2277,14 @@ void testMigrationLoss()
       });
     };
     auto before = state();
-    ZQUIC_CHECK_RT(before.active.local.port(),
+    Zquic_CheckRT_1(before.active.local.port(),
       "migration loss initial UDP port is empty");
     bool requested = ZmBlock<bool>{}([&client, &clientLink](auto wake) {
       client.txRun([clientLink, wake = ZuMv(wake)]() mutable {
 	wake(clientLink->migrateLocal(ZiIP{"127.0.0.1"}));
       });
     });
-    ZQUIC_CHECK_RT(requested, "migration loss local rebind was rejected");
+    Zquic_CheckRT_1(requested, "migration loss local rebind was rejected");
     Zquic::MigrationResult after;
     bool promoted = clientLink->migrationEvent.wait([&after, &clientLink]() {
       after = ZmBlock<Zquic::MigrationResult>{}([&clientLink](auto wake) {
@@ -2294,14 +2294,14 @@ void testMigrationLoss()
       });
       return after.state == Zquic::MigrationState::Promoted;
     }, Zm::now(10));
-    ZQUIC_CHECK_RT(client.migChallengeDrops == 1,
+    Zquic_CheckRT_1(client.migChallengeDrops == 1,
       "migration loss did not withhold exactly one candidate challenge");
-    ZQUIC_CHECK_RT(promoted && after.success && after.active.validated &&
+    Zquic_CheckRT_1(promoted && after.success && after.active.validated &&
 	after.active.local.port() &&
 	after.active.local.port() != before.active.local.port() &&
 	after.active.remote == before.active.remote,
       "migration loss did not validate the rebound UDP path");
-    ZQUIC_CHECK_RT(server.acceptedCount == 1 &&
+    Zquic_CheckRT_1(server.acceptedCount == 1 &&
 	clientLink->connectedCount == 1 && accepted() == serverLink,
       "migration loss replaced the established QUIC connection");
     if (!promoted) return;
@@ -2312,12 +2312,12 @@ void testMigrationLoss()
       return state.active.validated &&
 	state.active.remote.port() == after.active.local.port();
     }, Zm::now(10));
-    ZQUIC_CHECK_RT(serverPromoted,
+    Zquic_CheckRT_1(serverPromoted,
       "migration loss server did not validate its own candidate challenge");
     if (!serverPromoted) return;
 
     auto stream = openStream(serverLink);
-    ZQUIC_CHECK_RT(stream, "migration loss stream open failed");
+    Zquic_CheckRT_1(stream, "migration loss stream open failed");
     if (!stream) return;
     constexpr auto payload = "migration-loss-recovered"_z;
     bool sent = ZmBlock<bool>{}([&server, stream, payload](auto wake) {
@@ -2330,7 +2330,7 @@ void testMigrationLoss()
 	wake(ok);
       });
     });
-    ZQUIC_CHECK_RT(sent, "migration loss direct stream serialization failed");
+    Zquic_CheckRT_1(sent, "migration loss direct stream serialization failed");
     auto id = stream->id();
     bool received = clientLink->streamEvent.wait([&client, &clientLink, id, payload]() {
       auto incoming = findStream(clientLink, id);
@@ -2353,19 +2353,19 @@ void testMigrationLoss()
 	});
       });
     }, Zm::now(10));
-    ZQUIC_CHECK_RT(received,
+    Zquic_CheckRT_1(received,
       "migration loss changed or failed to deliver protected stream bytes");
-    ZQUIC_CHECK_RT(server.droppedShort == 1,
+    Zquic_CheckRT_1(server.droppedShort == 1,
       "migration loss did not exercise the additional server short drop");
   };
   exercise();
 
   if (clientLink) closeClient(clientLink);
   if (serverStart) {
-    ZQUIC_CHECK_RT(server.stop(), "migration loss server stop failed");
+    Zquic_CheckRT_1(server.stop(), "migration loss server stop failed");
     waitDisconnect(server);
   }
-  ZQUIC_CHECK_RT(!clientLink || (!clientLink->cxn() &&
+  Zquic_CheckRT_1(!clientLink || (!clientLink->cxn() &&
       !clientLink->earlyDisconnects && clientLink->disconnectedCount == 1),
     "migration loss client completion preceded physical retirement");
   clientLink = nullptr;
@@ -2375,7 +2375,7 @@ void testMigrationLoss()
   server.final();
 #ifdef Zquic_DEBUG
   auto sizes = challengeSizes(readFile(clientQLog.cspan()));
-  ZQUIC_CHECK_RT(sizes.p<0>() >= 2 && sizes.p<1>(),
+  Zquic_CheckRT_1(sizes.p<0>() >= 2 && sizes.p<1>(),
     "initial and recovered active PATH_CHALLENGE packets must each reach 1200 bytes; "
     "count=", sizes.p<0>(), " valid=", sizes.p<1>());
 #endif
@@ -2387,7 +2387,7 @@ void testPreferredBindings(bool v6, bool differentIP, bool keepTuple)
   ZuTestScopeRT(testPreferredBindings);
   TempDir temp;
   bool cert = temp.init();
-  ZQUIC_CHECK_RT(cert, "preferred listener certificate generation failed");
+  Zquic_CheckRT_1(cert, "preferred listener certificate generation failed");
   if (!cert) return;
   ZiMultiplex mx{ZiMxParams().scheduler([](auto &s) { s.nThreads(5); })
     .rxThread(1).txThread(2)};
@@ -2404,7 +2404,7 @@ void testPreferredBindings(bool v6, bool differentIP, bool keepTuple)
     .migrationMode(Zquic::MigrationMode::Disabled).migCIDRes(0)
     .maxData(32768).maxStreamData(8192).maxStreamsDuplex(8)
     .alpn(ZuSpan<ZuCSpan>{"h3"}));
-  ZQUIC_CHECK_RT(serverInit, "preferred server initialization failed");
+  Zquic_CheckRT_1(serverInit, "preferred server initialization failed");
   if (!serverInit) return;
   TestClient client, stationary;
 #ifdef linux
@@ -2421,12 +2421,12 @@ void testPreferredBindings(bool v6, bool differentIP, bool keepTuple)
     .caPath(temp.certPath.cspan()).migrationMode(Zquic::MigrationMode::Disabled)
     .maxData(32768).maxStreamData(8192).maxStreamsDuplex(8)
     .alpn(ZuSpan<ZuCSpan>{"h3"}));
-  ZQUIC_CHECK_RT(clientInit && stationaryInit, "preferred client initialization failed");
+  Zquic_CheckRT_1(clientInit && stationaryInit, "preferred client initialization failed");
   bool mxStarted = mx.start();
-  ZQUIC_CHECK_RT(mxStarted, "preferred multiplexer start failed");
+  Zquic_CheckRT_1(mxStarted, "preferred multiplexer start failed");
   if (!mxStarted) { client.final(); stationary.final(); server.final(); return; }
   bool ready = server.start();
-  ZQUIC_CHECK_RT(ready, "preferred listeners did not become ready");
+  Zquic_CheckRT_1(ready, "preferred listeners did not become ready");
   unsigned heldQueued = 1;
   auto originalTarget = server.pktAllocTarget(original);
   Zquic_::EndpointTxGate heldGate{&mx, originalTarget.physical,
@@ -2440,12 +2440,12 @@ void testPreferredBindings(bool v6, bool differentIP, bool keepTuple)
     fixed = new TestClient::Link{&stationary};
     fixed->connect(Zquic::Host{v6 ? "::1" : "127.0.0.1"}, original.port());
     bool fixedOK = waitEstablished(fixed, server, fixedPeer);
-    ZQUIC_CHECK_RT(fixedOK, "stationary client handshake failed");
+    Zquic_CheckRT_1(fixedOK, "stationary client handshake failed");
     if (!fixedOK) return;
     moving = new TestClient::Link{&client};
     moving->connect(Zquic::Host{v6 ? "::1" : "127.0.0.1"}, original.port());
     bool movingOK = waitEstablished(moving, server, movingPeer, 1);
-    ZQUIC_CHECK_RT(movingOK, "moving client handshake failed");
+    Zquic_CheckRT_1(movingOK, "moving client handshake failed");
     if (!movingOK) return;
     bool heldClient = moving->migrationEvent.wait([moving]() {
       return ZmBlock<bool>{}([moving](auto wake) {
@@ -2454,7 +2454,7 @@ void testPreferredBindings(bool v6, bool differentIP, bool keepTuple)
 	});
       });
     }, Zm::now(10));
-    ZQUIC_CHECK_RT(heldClient, "client preferred migration did not reach fixture checkpoint");
+    Zquic_CheckRT_1(heldClient, "client preferred migration did not reach fixture checkpoint");
     if (!heldClient) return;
     bool armed = ZmBlock<bool>{}([movingPeer, &heldGate](auto wake) {
       movingPeer->app()->txRun([movingPeer, &heldGate, wake = ZuMv(wake)]() mutable {
@@ -2467,7 +2467,7 @@ void testPreferredBindings(bool v6, bool differentIP, bool keepTuple)
       });
     });
     waitThread(mx, movingPeer->app()->txThread());
-    ZQUIC_CHECK_RT(armed && waiting,
+    Zquic_CheckRT_1(armed && waiting,
       "original endpoint did not retain the protocol capacity waiter before migration");
     if (!armed || !waiting) return;
     ZmBlock<>{}([moving](auto wake) {
@@ -2484,7 +2484,7 @@ void testPreferredBindings(bool v6, bool differentIP, bool keepTuple)
       });
     };
     auto a = advertisement(moving), b = advertisement(fixed);
-    ZQUIC_CHECK_RT(a && b && a.select(original.ip()) == preferred &&
+    Zquic_CheckRT_1(a && b && a.select(original.ip()) == preferred &&
       a.cid != b.cid && a.resetToken != b.resetToken,
       "TLS preferred endpoints or per-connection CID/token isolation failed");
     bool routed = ZmBlock<bool>{}([movingPeer, a](auto wake) {
@@ -2492,7 +2492,7 @@ void testPreferredBindings(bool v6, bool differentIP, bool keepTuple)
 	wake(movingPeer->preferredRouted(a));
       });
     });
-    ZQUIC_CHECK_RT(routed, "advertised sequence-1 CID was not registered on the same link");
+    Zquic_CheckRT_1(routed, "advertised sequence-1 CID was not registered on the same link");
     Zquic::MigrationResult moved;
     bool promoted = moving->migrationEvent.wait([&moved, moving]() {
       moved = ZmBlock<Zquic::MigrationResult>{}([moving](auto wake) {
@@ -2520,14 +2520,14 @@ void testPreferredBindings(bool v6, bool differentIP, bool keepTuple)
 	" candidatePort=", current.candidate.remote.port(),
 	" endpointFailures=", endpoints.failures());
     }
-    ZQUIC_CHECK_RT(promoted && moved.active.remote == preferred,
+    Zquic_CheckRT_1(promoted && moved.active.remote == preferred,
       "client did not validate the advertised preferred endpoint");
 #ifdef linux
-    ZQUIC_CHECK_RT(!keepTuple || reuseTuple.binds == 1,
+    Zquic_CheckRT_1(!keepTuple || reuseTuple.binds == 1,
       "unchanged-tuple fixture did not bind its exact retained source tuple");
 #endif
     if (!promoted) return;
-    ZQUIC_CHECK_RT(!keepTuple || moved.active.local == movingPeer->originalPeer,
+    Zquic_CheckRT_1(!keepTuple || moved.active.local == movingPeer->originalPeer,
       "preferred fixture changed the client's original source tuple");
     // Non-probing traffic qualifies the server's already validated candidate.
     // Exercise retained payload/FIN with one dropped protected datagram.
@@ -2539,7 +2539,7 @@ void testPreferredBindings(bool v6, bool differentIP, bool keepTuple)
       });
       return state.active.local == preferred && state.active.validated;
     }, Zm::now(10));
-    ZQUIC_CHECK_RT(serverPromoted,
+    Zquic_CheckRT_1(serverPromoted,
       "server did not promote after its proof and qualifying input");
     if (!serverPromoted) return;
     bool replaced = ZmBlock<bool>{}([fixedPeer](auto wake) {
@@ -2547,7 +2547,7 @@ void testPreferredBindings(bool v6, bool differentIP, bool keepTuple)
 	wake(fixedPeer->retireUnusedPreferred());
       });
     });
-    ZQUIC_CHECK_RT(replaced,
+    Zquic_CheckRT_1(replaced,
       "disabled server with zero spare reserve failed to route the preferred CID replacement");
     // Retirement on the stationary connection must not affect its migrated peer.
     ZuTestCall(testOwnedStreamAPI, movingPeer, moving,
@@ -2562,12 +2562,12 @@ void testPreferredBindings(bool v6, bool differentIP, bool keepTuple)
 	wake(!heldGate.waiting() && !heldGate.reservations() && !heldGate.available());
       });
     });
-    ZQUIC_CHECK_RT(released && emptyGate,
+    Zquic_CheckRT_1(released && emptyGate,
       "preferred promotion did not cancel the old-target waiter with owner acknowledgement");
     // Closing a migrated link must leave shared original listeners available.
     closeClient(moving);
     waitDisconnect(server);
-    ZQUIC_CHECK_RT(server.listening() && fixed->established() &&
+    Zquic_CheckRT_1(server.listening() && fixed->established() &&
       server.acceptedCount == 2 && moving->connectedCount == 1 && fixed->connectedCount == 1,
       "preferred migration or disconnect replaced a connection/shared listener");
     ZuTestCall(testOwnedStreamAPI, fixed, fixedPeer,
@@ -2575,7 +2575,7 @@ void testPreferredBindings(bool v6, bool differentIP, bool keepTuple)
     auto fixedPath = ZmBlock<Zquic::MigrationResult>{}([fixedPeer](auto wake) {
       fixedPeer->migrationState(ZuMv(wake));
     });
-    ZQUIC_CHECK_RT(fixedPath.active.local == original,
+    Zquic_CheckRT_1(fixedPath.active.local == original,
       "disabled stationary client left its original server binding");
   };
   exercise();
@@ -2601,7 +2601,7 @@ void testPreferredStop(bool atCommit)
   ZuTestScopeRT(testPreferredStop);
   TempDir temp;
   bool cert = temp.init();
-  ZQUIC_CHECK_RT(cert, "preferred shutdown certificate generation failed");
+  Zquic_CheckRT_1(cert, "preferred shutdown certificate generation failed");
   if (!cert) return;
   ZiMultiplex mx{ZiMxParams().scheduler([](auto &s) { s.nThreads(5); })
     .rxThread(1).txThread(2)};
@@ -2625,7 +2625,7 @@ void testPreferredStop(bool atCommit)
     .caPath(temp.certPath.cspan()).migrationMode(Zquic::MigrationMode::Disabled)
     .alpn(ZuSpan<ZuCSpan>{"h3"}));
   bool started = mx.start();
-  ZQUIC_CHECK_RT(serverInit && movingInit && fixedInit && started,
+  Zquic_CheckRT_1(serverInit && movingInit && fixedInit && started,
     "preferred shutdown fixture initialization failed");
   ZmRef<TestClient::Link> moving, fixed, fresh4, fresh6;
   ZmRef<TestServer::Link> movingPeer, fixedPeer, freshPeer4, freshPeer6;
@@ -2634,18 +2634,18 @@ void testPreferredStop(bool atCommit)
     serverInit, movingInit, fixedInit, started, atCommit]() {
     if (!serverInit || !movingInit || !fixedInit || !started) return;
     bool ready = server.start();
-    ZQUIC_CHECK_RT(ready, "preferred shutdown listeners did not start");
+    Zquic_CheckRT_1(ready, "preferred shutdown listeners did not start");
     if (!ready) return;
     unsigned generation = server.endpointGeneration();
     fixed = new TestClient::Link{&fixedApp};
     fixed->connect(Zquic::Host{"::1"}, server.addrs.original6.port());
     bool fixedConnected = waitEstablished(fixed, server, fixedPeer);
-    ZQUIC_CHECK_RT(fixedConnected, "preferred shutdown stationary client did not establish");
+    Zquic_CheckRT_1(fixedConnected, "preferred shutdown stationary client did not establish");
     if (!fixedConnected) return;
     moving = new TestClient::Link{&movingApp};
     moving->connect(Zquic::Host{"127.0.0.1"}, server.addrs.original4.port());
     bool connected = waitEstablished(moving, server, movingPeer, 1);
-    ZQUIC_CHECK_RT(connected, "preferred shutdown clients did not establish");
+    Zquic_CheckRT_1(connected, "preferred shutdown clients did not establish");
     if (!connected) return;
     ZuTestCall(testOwnedStreamAPI, fixed, fixedPeer, [] { }, false);
     bool held = moving->migrationEvent.wait([moving]() {
@@ -2655,7 +2655,7 @@ void testPreferredStop(bool atCommit)
 	});
       });
     }, Zm::now(10));
-    ZQUIC_CHECK_RT(held, "preferred shutdown did not hold client migration");
+    Zquic_CheckRT_1(held, "preferred shutdown did not hold client migration");
     if (!held) return;
     ZmBlock<>{}([moving](auto wake) {
       moving->app()->txRun([moving, wake = ZuMv(wake)]() mutable {
@@ -2671,7 +2671,7 @@ void testPreferredStop(bool atCommit)
 	  });
 	});
       }, Zm::now(10));
-      ZQUIC_CHECK_RT(promoted, "preferred shutdown client failed to validate");
+      Zquic_CheckRT_1(promoted, "preferred shutdown client failed to validate");
       if (!promoted) return;
       // Fresh non-probing input completes the server's promotion conditions;
       // an earlier ACK-only packet may already have completed them. The
@@ -2688,24 +2688,24 @@ void testPreferredStop(bool atCommit)
       });
       return checkpoint.state != Zquic::MigrationState::Idle;
     }, Zm::now(10));
-    ZQUIC_CHECK_RT(stoppedAtPath && checkpoint.state == (atCommit ?
+    Zquic_CheckRT_1(stoppedAtPath && checkpoint.state == (atCommit ?
       Zquic::MigrationState::Promoted : Zquic::MigrationState::Validating) &&
       checkpoint.active.local == server.addrs.original4 &&
       checkpoint.candidate.local == server.addrs.preferred4,
       "server shutdown missed the outstanding preferred candidate");
-    ZQUIC_CHECK_RT(server.stop(), "preferred candidate shutdown did not complete");
+    Zquic_CheckRT_1(server.stop(), "preferred candidate shutdown did not complete");
     waitDisconnect(server);
     bool drained = !server.listening() && !server.connected() &&
       movingPeer->disconnectedCount == 1 && fixedPeer->disconnectedCount == 1;
     for (unsigned slot = 0; slot < 4; ++slot)
       drained &= !server.pktAllocTarget(slot, generation).physical;
-    ZQUIC_CHECK_RT(drained, "candidate shutdown left a shared listener or link alive");
+    Zquic_CheckRT_1(drained, "candidate shutdown left a shared listener or link alive");
     closeClient(moving);
     closeClient(fixed);
     server.clearLinks();
     server.stopOnMigration = 0;
     ready = server.start();
-    ZQUIC_CHECK_RT(ready && server.endpointCount() == 4 &&
+    Zquic_CheckRT_1(ready && server.endpointCount() == 4 &&
       server.endpointGeneration() != generation,
       "preferred candidate shutdown did not permit four-listener restart");
     if (!ready) return;
@@ -2730,7 +2730,7 @@ void testPreferredStop(bool atCommit)
     bool connected4 = waitEstablished(fresh4, server, freshPeer4, 2);
     fresh6->connect(Zquic::Host{"::1"}, server.addrs.original6.port());
     bool connected6 = waitEstablished(fresh6, server, freshPeer6, 3);
-    ZQUIC_CHECK_RT(connected4 && connected6 && server.acceptedCount == 4 &&
+    Zquic_CheckRT_1(connected4 && connected6 && server.acceptedCount == 4 &&
       server.listening() && noPromotion,
       "delayed candidate work disrupted replacement listeners or connection routing");
     if (connected4) ZuTestCall(testOwnedStreamAPI, fresh4, freshPeer4, [] { }, false);
@@ -3189,7 +3189,7 @@ void testRejectedTokenQLog()
   ZuTestScopeRT(testRejectedTokenQLog);
 
   TempDir temp;
-  ZQUIC_CHECK_RT(temp.init(), "rejected-token runtime temporary TLS certificate failed");
+  Zquic_CheckRT_1(temp.init(), "rejected-token runtime temporary TLS certificate failed");
   ZtString<> qlogPath = temp.pathOf("rejected-token.sqlog");
   ZtString<> policyQlogPath = temp.pathOf("policy-token.sqlog");
   unlink(qlogPath.data());
@@ -3210,7 +3210,7 @@ void testRejectedTokenQLog()
 	.rxThread(1).txThread(2));
 
   TestServer server;
-  ZQUIC_CHECK_RT(server.init(
+  Zquic_CheckRT_1(server.init(
       Zquic::ServerParams(&mx, "3", "4")
 	.certPath(temp.certPath.cspan())
 	.keyPath(temp.keyPath.cspan())
@@ -3231,7 +3231,7 @@ void testRejectedTokenQLog()
   TestClient client;
   client.tokenSecret = secret;
   client.tokenNow = uint64_t(Zm::now().sec());
-  ZQUIC_CHECK_RT(client.init(
+  Zquic_CheckRT_1(client.init(
 	Zquic::ClientParams(&mx, "3", "4")
 	  .caPath(temp.certPath.cspan())
 	  .maxData(32768)
@@ -3258,14 +3258,14 @@ void testRejectedTokenQLog()
 	.addrValidationSecret(secret)
 	.addrValidationLifetime(60)
 	.alpn(ZuSpan<ZuCSpan>{"h3"}));
-  ZQUIC_CHECK_RT(policyInit, "rejected-token policy server init failed");
+  Zquic_CheckRT_1(policyInit, "rejected-token policy server init failed");
   if (!policyInit) { client.final(); server.final(); policyServer.final(); return; }
   bool mxStarted = mx.start();
-  ZQUIC_CHECK_RT(mxStarted, "rejected-token runtime multiplexer start failed");
+  Zquic_CheckRT_1(mxStarted, "rejected-token runtime multiplexer start failed");
   if (!mxStarted) { client.final(); server.final(); policyServer.final(); return; }
 
-  ZQUIC_CHECK_RT(server.start(), "rejected-token runtime server listen failed");
-  ZQUIC_CHECK_RT(server.listening(),
+  Zquic_CheckRT_1(server.start(), "rejected-token runtime server listen failed");
+  Zquic_CheckRT_1(server.listening(),
     "rejected-token runtime server did not listen");
 	  if (!server.listening()) {
 	    server.stop();
@@ -3289,7 +3289,7 @@ void testRejectedTokenQLog()
       dumpDiag(
 	"server", diag(serverLink), serverLink->crypto().diag());
   }
-  ZQUIC_CHECK_RT(established,
+  Zquic_CheckRT_1(established,
     "rejected-token runtime initial handshake did not establish");
 	  if (!established || !serverLink) {
 	    drainFailedHandshake(clientLink, server);
@@ -3302,11 +3302,11 @@ void testRejectedTokenQLog()
 	    mx.stop();
 	    return;
 	  }
-  ZQUIC_CHECK_RT(client.rxEvent.wait([&clientLink]() {
+  Zquic_CheckRT_1(client.rxEvent.wait([&clientLink]() {
       return clientLink->receivedNewToken();
     }, Zm::now(10)), "rejected-token runtime NEW_TOKEN was not exchanged");
   bool clientClosed = clientLink->close();
-  ZQUIC_CHECK_RT(clientClosed && !clientLink->cxn(),
+  Zquic_CheckRT_1(clientClosed && !clientLink->cxn(),
     "rejected-token runtime initial connection did not close");
   waitDisconnect(server);
 
@@ -3332,19 +3332,19 @@ void testRejectedTokenQLog()
 	dumpDiag(
 	  "server", diag(serverLink), serverLink->crypto().diag());
     }
-    ZQUIC_CHECK_RT(established, "rejected-token runtime handshake did not establish");
+    Zquic_CheckRT_1(established, "rejected-token runtime handshake did not establish");
 	    if (!established || !serverLink) {
 	      break;
     }
     ++accepted;
     bool clientClosed = clientLink->close();
-    ZQUIC_CHECK_RT(clientClosed && !clientLink->cxn(),
+    Zquic_CheckRT_1(clientClosed && !clientLink->cxn(),
       "rejected-token runtime connection did not close");
     waitDisconnect(server);
   }
   closeClient(clientLink);
   server.stop();
-  ZQUIC_CHECK_RT(!server.connected(),
+  Zquic_CheckRT_1(!server.connected(),
     "rejected-token runtime server remained connected");
   waitDisconnect(server);
   serverLink = nullptr;
@@ -3353,23 +3353,23 @@ void testRejectedTokenQLog()
 
   mx.stop();
   bool policyMxStarted = mx.start();
-  ZQUIC_CHECK_RT(policyMxStarted,
+  Zquic_CheckRT_1(policyMxStarted,
     "rejected-token policy multiplexer start failed");
   if (!policyMxStarted) {
     clientLink = nullptr;
     client.final(); policyServer.final(); return;
   }
-  ZQUIC_CHECK_RT(policyServer.start(), "rejected-token policy server listen failed");
-  ZQUIC_CHECK_RT(policyServer.listening(),
+  Zquic_CheckRT_1(policyServer.start(), "rejected-token policy server listen failed");
+  Zquic_CheckRT_1(policyServer.listening(),
     "rejected-token policy server did not listen");
   client.tokenNow = uint64_t(Zm::now().sec());
   client.tokenRewrite = TestClient::TokenPolicy;
   clientLink->connect(Zquic::Host{"127.0.0.1"}, policyServer.local().port());
   ZmRef<TestServer::Link> policyLink;
   established = waitEstablished(clientLink, policyServer, policyLink);
-  ZQUIC_CHECK_RT(established, "rejected-token policy handshake did not establish");
+  Zquic_CheckRT_1(established, "rejected-token policy handshake did not establish");
   clientClosed = clientLink->close();
-  ZQUIC_CHECK_RT(clientClosed && !clientLink->cxn(),
+  Zquic_CheckRT_1(clientClosed && !clientLink->cxn(),
     "rejected-token policy connection did not close");
   policyServer.stop();
   waitDisconnect(policyServer);
@@ -3382,21 +3382,21 @@ void testRejectedTokenQLog()
 #ifdef Zquic_DEBUG
   ZtString<> qlog = readFile(qlogPath.cspan());
   ZtString<> policyQlog = readFile(policyQlogPath.cspan());
-  ZQUIC_CHECK_RT(qlog, "rejected-token runtime qlog output missing");
-  ZQUIC_CHECK_RT(policyQlog, "rejected-token policy qlog output missing");
-  ZQUIC_CHECK_RT(qlog.find<"zquic:token_rejected">() >= 0,
+  Zquic_CheckRT_1(qlog, "rejected-token runtime qlog output missing");
+  Zquic_CheckRT_1(policyQlog, "rejected-token policy qlog output missing");
+  Zquic_CheckRT_1(qlog.find<"zquic:token_rejected">() >= 0,
     "rejected-token runtime qlog missing token_rejected");
-  ZQUIC_CHECK_RT(qlog.find<"malformed">() >= 0,
+  Zquic_CheckRT_1(qlog.find<"malformed">() >= 0,
     "rejected-token runtime qlog missing malformed reason");
-  ZQUIC_CHECK_RT(qlog.find<"auth">() >= 0,
+  Zquic_CheckRT_1(qlog.find<"auth">() >= 0,
     "rejected-token runtime qlog missing auth reason");
-  ZQUIC_CHECK_RT(qlog.find<"expired">() >= 0,
+  Zquic_CheckRT_1(qlog.find<"expired">() >= 0,
     "rejected-token runtime qlog missing expired reason");
-  ZQUIC_CHECK_RT(qlog.find<"address">() >= 0,
+  Zquic_CheckRT_1(qlog.find<"address">() >= 0,
     "rejected-token runtime qlog missing address reason");
-  ZQUIC_CHECK_RT(qlog.find<"kind">() >= 0,
+  Zquic_CheckRT_1(qlog.find<"kind">() >= 0,
     "rejected-token runtime qlog missing kind reason");
-  ZQUIC_CHECK_RT(policyQlog.find<"new_token_policy">() >= 0,
+  Zquic_CheckRT_1(policyQlog.find<"new_token_policy">() >= 0,
     "rejected-token runtime qlog missing NEW_TOKEN policy reason");
 #endif
 

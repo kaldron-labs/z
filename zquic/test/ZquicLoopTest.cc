@@ -14,7 +14,7 @@
 
 using namespace ZuTestUtil;
 
-#define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+#define Zquic_CheckRT_1(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 
 class App : public Zquic::Hub<App> {
@@ -189,16 +189,16 @@ void testHandshakeStreamsAndClose()
   Zquic::CxnID dcid{"client01"};
   Zquic::Crypto clientCrypto;
   Zquic::Crypto serverCrypto;
-  ZQUIC_CHECK_RT(clientCrypto.init(Zquic::CryptoConfig{false, false, "h3"}) &&
+  Zquic_CheckRT_1(clientCrypto.init(Zquic::CryptoConfig{false, false, "h3"}) &&
       serverCrypto.init(Zquic::CryptoConfig{true, false, "h3"}),
     "loop crypto init failed");
-  ZQUIC_CHECK_RT(
+  Zquic_CheckRT_1(
     clientCrypto.deriveInitial(dcid) && serverCrypto.deriveInitial(dcid),
     "loop Initial key derivation failed");
 
   clientCrypto.installSecret(Zquic::PktNumSpace::AppData, "client-app");
   serverCrypto.installSecret(Zquic::PktNumSpace::AppData, "server-app");
-  ZQUIC_CHECK_RT(
+  Zquic_CheckRT_1(
     clientCrypto.completeHandshake() && serverCrypto.completeHandshake(),
     "loop 1-RTT readiness failed");
 
@@ -207,22 +207,22 @@ void testHandshakeStreamsAndClose()
   ZmRef<TestLink> server = new TestLink{&app, true};
   client->receiveDatagram(17);
   server->receiveDatagram(23);
-  ZQUIC_CHECK_RT(client->recordTx(29), "client Tx packet recording failed");
-  ZQUIC_CHECK_RT(server->recordTx(31), "server Tx packet recording failed");
+  Zquic_CheckRT_1(client->recordTx(29), "client Tx packet recording failed");
+  Zquic_CheckRT_1(server->recordTx(31), "server Tx packet recording failed");
   auto c0 = client->stream(Zquic::StreamType::Duplex);
   auto c1 = client->stream(Zquic::StreamType::Simplex);
   auto s0 = server->stream(Zquic::StreamType::Duplex);
-  ZQUIC_CHECK_RT(c0->id() == 0 && c1->id() == 2 && s0->id() == 1,
+  Zquic_CheckRT_1(c0->id() == 0 && c1->id() == 2 && s0->id() == 1,
     "loop stream IDs mismatch");
   {
     auto tx = c0->txStream_();
     tx << "request-body" << Zi::flush();
   }
-  ZQUIC_CHECK_RT(c0->txBytes() == 12,
+  Zquic_CheckRT_1(c0->txBytes() == 12,
     "loop stream Tx accounting mismatch");
 
   client->closeForTest(Zquic::TransportError::NoError);
-  ZQUIC_CHECK_RT(client->closed() && !client->closeError(),
+  Zquic_CheckRT_1(client->closed() && !client->closeError(),
     "loop graceful close failed");
 }
 

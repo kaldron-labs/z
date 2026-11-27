@@ -12,7 +12,7 @@
 
 using namespace ZuTestUtil;
 
-#define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+#define Zquic_CheckRT_1(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 struct LayoutApp : Zquic::Hub<LayoutApp> { };
 struct LayoutLink;
@@ -54,25 +54,25 @@ void testOwnerStorage()
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(4); })
     .rxThread(1).txThread(2)};
   LayoutApp app;
-  ZQUIC_CHECK_RT(app.init(Zquic::HubParams(&mx, "3", "4")), "layout app initialization failed");
+  Zquic_CheckRT_1(app.init(Zquic::HubParams(&mx, "3", "4")), "layout app initialization failed");
   {
     ZmRef<LayoutLink> links[16];
     for (auto &link : links) {
       link = new LayoutLink{&app};
-      ZQUIC_CHECK_RT(!(uintptr_t(link.ptr()) % Zm::CacheLineSize) && isolated(*link),
+      Zquic_CheckRT_1(!(uintptr_t(link.ptr()) % Zm::CacheLineSize) && isolated(*link),
 	"allocated link owner storage is not isolated");
-      ZQUIC_CHECK_RT(uintptr_t(&link->applicationTail) >=
+      Zquic_CheckRT_1(uintptr_t(&link->applicationTail) >=
 	  uintptr_t(static_cast<LayoutLink::Base *>(link.ptr())) + sizeof(LayoutLink::Base),
 	"application tail reused link owner storage");
       auto membership = static_cast<Zquic_::ServerLinks::Node::Ext *>(link.ptr());
-      ZQUIC_CHECK_RT(uintptr_t(membership) >=
+      Zquic_CheckRT_1(uintptr_t(membership) >=
 	  uintptr_t(static_cast<Zquic_::EndpointLink *>(link.ptr())) +
 	    sizeof(Zquic_::EndpointLink),
 	"endpoint membership shares the link reference count's cache line");
       ZmRef<LayoutStream> stream = new LayoutLink::Streams::Node{link.ptr(), 0};
-      ZQUIC_CHECK_RT(!(uintptr_t(stream.ptr()) % Zm::CacheLineSize) && isolated(*stream),
+      Zquic_CheckRT_1(!(uintptr_t(stream.ptr()) % Zm::CacheLineSize) && isolated(*stream),
 	"allocated stream owner storage is not isolated");
-      ZQUIC_CHECK_RT(uintptr_t(&stream->applicationTail) >=
+      Zquic_CheckRT_1(uintptr_t(&stream->applicationTail) >=
 	  uintptr_t(static_cast<LayoutStream::Base *>(stream.ptr())) + sizeof(LayoutStream::Base),
 	"application tail reused stream owner storage");
       auto txHash = static_cast<Zquic::TxStreams::Node::Ext *>(stream.ptr());
@@ -80,14 +80,14 @@ void testOwnerStorage()
       auto rx = static_cast<LayoutStream::Rx *>(stream.ptr());
       auto node = static_cast<LayoutLink::Streams::Node *>(stream.ptr());
       auto rxHash = static_cast<LayoutLink::Streams::Node::Ext *>(node);
-      ZQUIC_CHECK_RT(uintptr_t(txHash) >=
+      Zquic_CheckRT_1(uintptr_t(txHash) >=
 	  uintptr_t(static_cast<Zquic::StreamData *>(stream.ptr())) +
 	    sizeof(Zquic::StreamData),
 	"Tx stream registry shares the stream reference count's cache line");
-      ZQUIC_CHECK_RT(uintptr_t(rx)/Zm::CacheLineSize >
+      Zquic_CheckRT_1(uintptr_t(rx)/Zm::CacheLineSize >
 	  (uintptr_t(txQueue) + sizeof(*txQueue) - 1)/Zm::CacheLineSize,
 	"Rx stream base shares a cache line with Tx intrusive links");
-      ZQUIC_CHECK_RT(uintptr_t(rxHash)/Zm::CacheLineSize >
+      Zquic_CheckRT_1(uintptr_t(rxHash)/Zm::CacheLineSize >
 	  (uintptr_t(&stream->applicationTail) + sizeof(stream->applicationTail) - 1)/
 	    Zm::CacheLineSize,
 	"Rx stream registry shares the application tail's cache line");

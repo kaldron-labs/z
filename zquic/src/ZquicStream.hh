@@ -10,6 +10,10 @@
 #error "include zlib/Zquic.hh before this header"
 #endif
 
+#ifndef ZquicStreamDefltTxQueueMax
+#define ZquicStreamDefltTxQueueMax 4096
+#endif
+
 namespace Zquic_ {
 
 // Match the ordinary writable-stream turn budget for terminal cleanup work.
@@ -135,7 +139,7 @@ template <typename, typename, typename>
 friend class SrvLink;
 
 public:
-  enum { DefltTxQueueMax = 4096 };
+  enum { DefltTxQueueMax = ZquicStreamDefltTxQueueMax };
 
   using Self = Stream<Link_, Impl>;
   using Link = Link_;
@@ -438,7 +442,7 @@ public:
       }));
   }
   void request(const RxQueueSpan &, const RxQueueSpan &) { }
-  void scheduleDequeue() { rxRun_([stream = ZmRef<Self>{impl()}]() {
+  void scheduleDequeue() { rxRun([stream = ZmRef<Self>{impl()}]() {
     stream->dequeueRx();
   }); }
   void rescheduleDequeue() { scheduleDequeue(); }
@@ -510,14 +514,15 @@ public:
       // Return producer credit after this packetizer turn has committed flow
       // credit, FIN and recovery metadata. Recovery retains the plaintext until
       // ACK independently of the now-empty application queue.
-      if constexpr (!ZuIsSame<decltype(&Impl::txDequeued_), void (Self::*)()>{}) {
-	if (m_config.link) m_config.link->app()->txRun([
-	  link = ZmRef<Link>{m_config.link}, stream = ZmRef<Impl>{impl()}
-	]() mutable {
-	  if (!link->disconnecting_() && !stream->retiredTx() && !stream->resetSent() &&
-	      stream->txError() == StreamError::None)
-	    stream->txDequeued_();
-	});
+      if constexpr (hasTxDequeued()) {
+	auto link = m_config.link;
+	if (link && !retiredTx() && !link->disconnecting_()) {
+	  link->app()->txRun([link, stream = impl()] {
+	    if (!link->disconnecting_() && !stream->retiredTx() && !stream->resetSent() &&
+		stream->txError() == StreamError::None)
+	      stream->txDequeued_();
+	  });
+	}
       }
     }
     return true;
@@ -698,7 +703,7 @@ public:
   void stopRx(uint64_t appError) {
     ZiAssert(rxInvoked_(), "Zquic", (), "QUIC stream stop outside Rx thread", return);
     if (stopRequestedRx(appError))
-      txInvoke_([stream = ZmRef<Impl>{impl()}, appError] { stream->sendStopTx(appError); });
+      txInvoke([stream = ZmRef<Impl>{impl()}, appError] { stream->sendStopTx(appError); });
   }
   bool stopRequestedRx(uint64_t appError) {
     if (m_streamRx.localStop) return false;
@@ -709,7 +714,7 @@ public:
   void stop(uint64_t appError) {
     ZiAssert(txInvoked_(), "Zquic", (), "QUIC stream stop outside Tx thread", return);
     if (m_streamTx.retired || m_streamTx.stopSent) return;
-    rxRun_([stream = ZmRef<Impl>{impl()}, appError] { stream->stopRequestedRx(appError); });
+    rxRun([stream = ZmRef<Impl>{impl()}, appError] { stream->stopRequestedRx(appError); });
     sendStopTx(appError);
   }
   void sendStopTx(uint64_t appError) {
@@ -802,6 +807,9 @@ public:
   void txDequeued_() { }
 
 private:
+  static constexpr bool hasTxDequeued() {
+    return !ZuIsSame<decltype(&Impl::txDequeued_), void (Self::*)()>{};
+  }
   static void setError_(uint64_t &appError, StreamError::T &error,
       StreamError::T next, uint64_t nextAppError) {
     if (error == StreamError::Reset ||
@@ -998,7 +1006,7 @@ private:
     }
     if constexpr (AppThread) {
       // A single dispatch transfers all owned ranges and their final FIN intent.
-      txInvoke_([stream = ZmRef<Impl>{impl()}, op = ZuMv(op)]() mutable {
+      txInvoke([stream = ZmRef<Impl>{impl()}, op = ZuMv(op)]() mutable {
 	stream->sendAdmitted(ZuMv(op));
       });
       return true;
@@ -1105,14 +1113,14 @@ public:
   }
 
   template <typename L>
-  void txInvoke_(L &&l) {
+  void txInvoke(L &&l) {
     ZiAssert(m_config.link && m_config.link->app() && m_config.link->app()->mx(),
       "Zquic", (), "QUIC stream Tx invoke before app initialization",
       return);
     m_config.link->app()->txInvoke(ZuFwd<L>(l));
   }
   template <typename L>
-  void rxRun_(L &&l) {
+  void rxRun(L &&l) {
     ZiAssert(m_config.link && m_config.link->app() && m_config.link->app()->mx(),
       "Zquic", (), "QUIC stream Rx run before app initialization",
       return);

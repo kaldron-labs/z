@@ -11,7 +11,7 @@
 
 using namespace ZuTestUtil;
 
-#define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+#define Zquic_CheckRT_1(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 static int putParam(uint8_t *out, unsigned len, uint64_t id, ZuBSpan value)
 {
@@ -161,50 +161,50 @@ void testVarIntAndPktNumBounds()
   uint8_t b[16];
   for (auto c : cases) {
     memset(b, 0, sizeof(b));
-    ZQUIC_CHECK_RT(Zquic::VarInt::length(c.value) == c.length,
+    Zquic_CheckRT_1(Zquic::VarInt::length(c.value) == c.length,
       "varint boundary length mismatch");
     int n = Zquic::VarInt::encode(b, sizeof(b), c.value);
-    ZQUIC_CHECK_RT(n == int(c.length), "varint boundary encode length mismatch");
+    Zquic_CheckRT_1(n == int(c.length), "varint boundary encode length mismatch");
     uint64_t v = 0;
     unsigned used = 0;
-    ZQUIC_CHECK_RT(!Zquic::VarInt::decode(Zquic::byteSpan(b, c.length), v, used) &&
+    Zquic_CheckRT_1(!Zquic::VarInt::decode(Zquic::byteSpan(b, c.length), v, used) &&
 	v == c.value && used == c.length,
       "varint boundary decode mismatch");
     if (c.length > 1)
-      ZQUIC_CHECK_RT(Zquic::VarInt::decode(Zquic::byteSpan(b, c.length - 1), v, used) < 0,
+      Zquic_CheckRT_1(Zquic::VarInt::decode(Zquic::byteSpan(b, c.length - 1), v, used) < 0,
 	"truncated varint was accepted");
   }
   uint64_t v = 0;
   unsigned used = 0;
-  ZQUIC_CHECK_RT(Zquic::VarInt::decode({}, v, used) < 0,
+  Zquic_CheckRT_1(Zquic::VarInt::decode({}, v, used) < 0,
     "empty varint was accepted");
-  ZQUIC_CHECK_RT(!Zquic::VarInt::length(1ULL<<62) &&
+  Zquic_CheckRT_1(!Zquic::VarInt::length(1ULL<<62) &&
       Zquic::VarInt::encode(b, sizeof(b), 1ULL<<62) < 0,
     "oversize varint was accepted");
   unsigned o = 1;
   b[0] = 0xaa;
-  ZQUIC_CHECK_RT(!Zquic::VarInt::put(b, sizeof(b), 16384, o) && o == 5 &&
+  Zquic_CheckRT_1(!Zquic::VarInt::put(b, sizeof(b), 16384, o) && o == 5 &&
       b[0] == 0xaa,
     "varint put offset handling mismatch");
 
-  ZQUIC_CHECK_RT(Zquic::PktNumber::encodedLength(1, 0) == 1 &&
+  Zquic_CheckRT_1(Zquic::PktNumber::encodedLength(1, 0) == 1 &&
       Zquic::PktNumber::encodedLength(1ULL<<7, 0) == 2 &&
       Zquic::PktNumber::encodedLength(1ULL<<15, 0) == 3 &&
       Zquic::PktNumber::encodedLength(1ULL<<23, 0) == 4,
     "packet number encoded length boundaries mismatch");
-  ZQUIC_CHECK_RT(Zquic::PktNumber::encode(b, sizeof(b), 0x123456U, 3) == 3 &&
+  Zquic_CheckRT_1(Zquic::PktNumber::encode(b, sizeof(b), 0x123456U, 3) == 3 &&
       b[0] == 0x12 && b[1] == 0x34 && b[2] == 0x56,
     "packet number encode mismatch");
-  ZQUIC_CHECK_RT(Zquic::PktNumber::encode(b, sizeof(b), 1, 0) < 0 &&
+  Zquic_CheckRT_1(Zquic::PktNumber::encode(b, sizeof(b), 1, 0) < 0 &&
       Zquic::PktNumber::encode(b, sizeof(b), 1, 5) < 0 &&
       Zquic::PktNumber::encode(b, 2, 1, 3) < 0,
     "invalid packet number encode accepted");
-  ZQUIC_CHECK_RT(Zquic::PktNumber::decode(0xa82f30eaULL, 0x9b32, 16) ==
+  Zquic_CheckRT_1(Zquic::PktNumber::decode(0xa82f30eaULL, 0x9b32, 16) ==
       0xa82f9b32ULL,
     "packet number decode near expected mismatch");
-  ZQUIC_CHECK_RT(Zquic::PktNumber::decode(0xff, 0x00, 8) == 0x100,
+  Zquic_CheckRT_1(Zquic::PktNumber::decode(0xff, 0x00, 8) == 0x100,
     "packet number decode forward wrap mismatch");
-  ZQUIC_CHECK_RT(Zquic::PktNumber::decode(0x100, 0xff, 8) == 0xff,
+  Zquic_CheckRT_1(Zquic::PktNumber::decode(0x100, 0xff, 8) == 0xff,
     "packet number decode backward wrap mismatch");
 }
 
@@ -277,14 +277,14 @@ void testFramesAndParams()
   uint8_t b[256];
   int l = Zquic::FrameCodec::writeStream(
     b, sizeof(b), 0, 3, "hello", true);
-  ZQUIC_CHECK_RT(l > 0, "STREAM write failed");
+  Zquic_CheckRT_1(l > 0, "STREAM write failed");
   Zquic::Frame f;
   unsigned used = 0;
-  ZQUIC_CHECK_RT(!Zquic::FrameCodec::parse(
+  Zquic_CheckRT_1(!Zquic::FrameCodec::parse(
     ZuBSpan{b, unsigned(l)}, f, used),
     "STREAM parse failed");
-  ZQUIC_CHECK_RT(f.type == Zquic::FrameType::Stream, "STREAM type mismatch");
-  ZQUIC_CHECK_RT(f.streamID == 0 && f.offset == 3 && f.length == 5 && f.fin,
+  Zquic_CheckRT_1(f.type == Zquic::FrameType::Stream, "STREAM type mismatch");
+  Zquic_CheckRT_1(f.streamID == 0 && f.offset == 3 && f.length == 5 && f.fin,
     "STREAM fields mismatch");
 
   Zquic::TransportParams p;
@@ -294,20 +294,20 @@ void testFramesAndParams()
   p.statelessResetToken = Zquic::ResetToken{"0123456789abcdef"};
   p.statelessResetTokenPresent = true;
   l = p.encode(b, sizeof(b));
-  ZQUIC_CHECK_RT(l > 0, "transport parameter encode failed");
+  Zquic_CheckRT_1(l > 0, "transport parameter encode failed");
   Zquic::TransportParams q;
-  ZQUIC_CHECK_RT(!q.decode(ZuBSpan{b, unsigned(l)}),
+  Zquic_CheckRT_1(!q.decode(ZuBSpan{b, unsigned(l)}),
     "transport parameter decode failed");
-  ZQUIC_CHECK_RT(q.maxUDPPayloadSize == 1400 && q.initialMaxData == 1000,
+  Zquic_CheckRT_1(q.maxUDPPayloadSize == 1400 && q.initialMaxData == 1000,
     "transport parameter values mismatch");
-  ZQUIC_CHECK_RT(q.initialSCID == p.initialSCID, "transport parameter CID mismatch");
-  ZQUIC_CHECK_RT(q.statelessResetTokenPresent &&
+  Zquic_CheckRT_1(q.initialSCID == p.initialSCID, "transport parameter CID mismatch");
+  Zquic_CheckRT_1(q.statelessResetTokenPresent &&
       q.statelessResetToken == p.statelessResetToken,
     "transport parameter stateless reset token mismatch");
 
   l = Zquic::FrameCodec::writeAck(b, sizeof(b), 10, 0, 3);
-  ZQUIC_CHECK_RT(l > 0, "ACK write failed");
-  ZQUIC_CHECK_RT(!Zquic::FrameCodec::parse(
+  Zquic_CheckRT_1(l > 0, "ACK write failed");
+  Zquic_CheckRT_1(!Zquic::FrameCodec::parse(
     ZuBSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::Ack && f.offset == 10 && f.length == 3 &&
     f.ackRanges.length() == 1 &&
@@ -316,16 +316,16 @@ void testFramesAndParams()
     "ACK parse mismatch");
 
   l = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 4, 7, 99);
-  ZQUIC_CHECK_RT(l > 0, "RESET_STREAM write failed");
-  ZQUIC_CHECK_RT(!Zquic::FrameCodec::parse(
+  Zquic_CheckRT_1(l > 0, "RESET_STREAM write failed");
+  Zquic_CheckRT_1(!Zquic::FrameCodec::parse(
     ZuBSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::ResetStream &&
     f.streamID == 4 && f.errorCode == 7 && f.length == 99,
     "RESET_STREAM parse mismatch");
 
   l = Zquic::FrameCodec::writeMaxStreamData(b, sizeof(b), 4, 4096);
-  ZQUIC_CHECK_RT(l > 0, "MAX_STREAM_DATA write failed");
-  ZQUIC_CHECK_RT(!Zquic::FrameCodec::parse(
+  Zquic_CheckRT_1(l > 0, "MAX_STREAM_DATA write failed");
+  Zquic_CheckRT_1(!Zquic::FrameCodec::parse(
     ZuBSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::MaxStreamData &&
     f.streamID == 4 && f.value == 4096,
@@ -333,24 +333,24 @@ void testFramesAndParams()
 
   l = Zquic::FrameCodec::writeStreamsBlocked(
     b, sizeof(b), Zquic::StreamType::Simplex, 11);
-  ZQUIC_CHECK_RT(l > 0, "STREAMS_BLOCKED write failed");
-  ZQUIC_CHECK_RT(!Zquic::FrameCodec::parse(
+  Zquic_CheckRT_1(l > 0, "STREAMS_BLOCKED write failed");
+  Zquic_CheckRT_1(!Zquic::FrameCodec::parse(
     ZuBSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::StreamsBlocked &&
     f.streamType == Zquic::StreamType::Simplex && f.value == 11,
     "STREAMS_BLOCKED parse mismatch");
 
   l = Zquic::FrameCodec::writePathChallenge(b, sizeof(b), "12345678");
-  ZQUIC_CHECK_RT(l > 0, "PATH_CHALLENGE write failed");
-  ZQUIC_CHECK_RT(!Zquic::FrameCodec::parse(
+  Zquic_CheckRT_1(l > 0, "PATH_CHALLENGE write failed");
+  Zquic_CheckRT_1(!Zquic::FrameCodec::parse(
     ZuBSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::PathChallenge && f.payload == "12345678",
     "PATH_CHALLENGE parse mismatch");
 
   l = Zquic::FrameCodec::writeConnectionClose(
     b, sizeof(b), Zquic::TransportError::FrameEncoding);
-  ZQUIC_CHECK_RT(l > 0, "CONNECTION_CLOSE write failed");
-  ZQUIC_CHECK_RT(!Zquic::FrameCodec::parse(
+  Zquic_CheckRT_1(l > 0, "CONNECTION_CLOSE write failed");
+  Zquic_CheckRT_1(!Zquic::FrameCodec::parse(
     ZuBSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::ConnectionClose &&
     f.errorCode == Zquic::TransportError::FrameEncoding &&
@@ -359,24 +359,24 @@ void testFramesAndParams()
 
   unsigned o = 0;
   b[o++] = 0x03;
-  ZQUIC_CHECK_RT(Zquic::VarInt::encode(b + o, sizeof(b) - o, 10) == 1,
+  Zquic_CheckRT_1(Zquic::VarInt::encode(b + o, sizeof(b) - o, 10) == 1,
     "ACK ECN largest encode failed"); o += 1;
-  ZQUIC_CHECK_RT(Zquic::VarInt::encode(b + o, sizeof(b) - o, 0) == 1,
+  Zquic_CheckRT_1(Zquic::VarInt::encode(b + o, sizeof(b) - o, 0) == 1,
     "ACK ECN delay encode failed"); o += 1;
-  ZQUIC_CHECK_RT(Zquic::VarInt::encode(b + o, sizeof(b) - o, 1) == 1,
+  Zquic_CheckRT_1(Zquic::VarInt::encode(b + o, sizeof(b) - o, 1) == 1,
     "ACK ECN range count encode failed"); o += 1;
-  ZQUIC_CHECK_RT(Zquic::VarInt::encode(b + o, sizeof(b) - o, 2) == 1,
+  Zquic_CheckRT_1(Zquic::VarInt::encode(b + o, sizeof(b) - o, 2) == 1,
     "ACK ECN first range encode failed"); o += 1;
-  ZQUIC_CHECK_RT(Zquic::VarInt::encode(b + o, sizeof(b) - o, 1) == 1,
+  Zquic_CheckRT_1(Zquic::VarInt::encode(b + o, sizeof(b) - o, 1) == 1,
     "ACK ECN gap encode failed"); o += 1;
-  ZQUIC_CHECK_RT(Zquic::VarInt::encode(b + o, sizeof(b) - o, 1) == 1,
+  Zquic_CheckRT_1(Zquic::VarInt::encode(b + o, sizeof(b) - o, 1) == 1,
     "ACK ECN range encode failed"); o += 1;
   for (unsigned i = 0; i < 3; ++i) {
-    ZQUIC_CHECK_RT(Zquic::VarInt::encode(b + o, sizeof(b) - o, 0) == 1,
+    Zquic_CheckRT_1(Zquic::VarInt::encode(b + o, sizeof(b) - o, 0) == 1,
       "ACK ECN count encode failed");
     ++o;
   }
-  ZQUIC_CHECK_RT(!Zquic::FrameCodec::parse(
+  Zquic_CheckRT_1(!Zquic::FrameCodec::parse(
     ZuBSpan{b, o}, f, used) &&
     f.type == Zquic::FrameType::Ack && f.offset == 10 &&
     f.length == 2 && used == o &&
@@ -396,9 +396,9 @@ void testFramesAndParams()
   ecn.ce = 2;
   l = Zquic::FrameCodec::writeAckECN(
     b, sizeof(b), ecnRanges, 2, 9, ecn);
-  ZQUIC_CHECK_RT(l > 0 && b[0] == 0x03, "ACK_ECN write failed");
+  Zquic_CheckRT_1(l > 0 && b[0] == 0x03, "ACK_ECN write failed");
   f.reset();
-  ZQUIC_CHECK_RT(!Zquic::FrameCodec::parse(
+  Zquic_CheckRT_1(!Zquic::FrameCodec::parse(
       ZuBSpan{b, unsigned(l)}, f, used) &&
       used == unsigned(l) &&
       f.type == Zquic::FrameType::Ack &&
@@ -411,15 +411,15 @@ void testFramesAndParams()
       f.ackRanges[1].largest == 12,
     "ACK_ECN write/parse counters mismatch");
   f.reset();
-  ZQUIC_CHECK_RT(!f.ackECN.any(), "Frame reset retained ACK_ECN counters");
+  Zquic_CheckRT_1(!f.ackECN.any(), "Frame reset retained ACK_ECN counters");
 
   l = Zquic::FrameCodec::writeHandshakeDone(b, sizeof(b));
-  ZQUIC_CHECK_RT(l == 1, "HANDSHAKE_DONE write failed");
-  ZQUIC_CHECK_RT(!Zquic::FrameCodec::parse(
+  Zquic_CheckRT_1(l == 1, "HANDSHAKE_DONE write failed");
+  Zquic_CheckRT_1(!Zquic::FrameCodec::parse(
     ZuBSpan{b, unsigned(l)}, f, used) &&
     f.type == Zquic::FrameType::HandshakeDone && used == unsigned(l),
     "HANDSHAKE_DONE parse mismatch");
-  ZQUIC_CHECK_RT(Zquic::FrameCodec::ackEliciting(Zquic::FrameType::HandshakeDone),
+  Zquic_CheckRT_1(Zquic::FrameCodec::ackEliciting(Zquic::FrameType::HandshakeDone),
     "HANDSHAKE_DONE ack-eliciting classification mismatch");
 }
 

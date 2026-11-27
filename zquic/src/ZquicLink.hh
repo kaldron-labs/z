@@ -10,6 +10,10 @@
 #error "include zlib/Zquic.hh before this header"
 #endif
 
+#ifndef ZquicAckPubSlots
+#define ZquicAckPubSlots 64
+#endif
+
 namespace Zquic {
 
 ZtEnumStruct(ZquicAPI, CxnTimer, int8_t,
@@ -69,13 +73,32 @@ friend inline ZuStringT<"Zquic.Stream.Close"> ZmNHeapID(StreamCloseWork *);
 };
 
 struct AckSnapshot {
-  PktNumSpace::T	level = PktNumSpace::Initial;
   uint64_t		epoch = 0;
   uint64_t		delay = 0;
   uint64_t		receivedUS = 0;
   AckECN		ecn;
   Frame::AckRanges	ranges;
+  PktNumSpace::T	level = PktNumSpace::Initial;
 };
+
+struct PathTx {
+  enum { Direct, Probe, Filter, Validation, FilterProbe };
+};
+
+struct LocalStreamLimit : StreamLimit {
+  uint64_t	earned = MaxStreamCount;
+  uint64_t	lowWater = MaxStreamCount >> 1;
+  bool		peerBlocked = false;
+
+  LocalStreamLimit() : StreamLimit{MaxStreamCount} { }
+  void set(uint64_t window) {
+    StreamLimit::set(window);
+    earned = window;
+    lowWater = window >> 1;
+    peerBlocked = false;
+  }
+};
+
 struct RxAckUpdate {
   AckRange		range;
   uint64_t		receivedUS;
@@ -126,7 +149,8 @@ struct PeerAckPending {
   uint64_t sequence = 0;
 };
 using PeerAckQueue = ZmList<PeerAckPending, ZmListHeapID<"Zquic.PeerAck">>;
-enum { AckPubSlots = 64 }; // incoming peer ACKs
+enum { AckPubSlots = ZquicAckPubSlots }; // incoming peer ACKs
+static_assert(AckPubSlots > 0);
 struct alignas(Zm::CacheLineSize) RxPathPub {
   ZmAtomic<uint64_t>	epoch = 0;
   ZmAtomic<uint64_t>	bytes = 0;
@@ -1077,6 +1101,7 @@ protected:
   using LinkCID = Zquic_::LinkCID;
   using PathState = Zquic_::PathState;
   using AckSnapshot = Zquic_::AckSnapshot;
+  using PathTx = Zquic_::PathTx;
   using RxAckMeta = Zquic_::RxAckMeta;
   using TxAckWork = Zquic_::TxAckWork;
   using PeerAckPending = Zquic_::PeerAckPending;
@@ -3260,16 +3285,16 @@ protected:
   struct PathSend {
     Self *link;
     Path *path;
-    unsigned bytes;
     uint64_t runtime;
     uint64_t epoch;
     uint64_t attempt;
+    unsigned bytes;
     bool accepted = false;
 
     PathSend(Self *link_, Path &path_, unsigned bytes_) :
-      link{link_}, path{&path_}, bytes{bytes_},
+      link{link_}, path{&path_},
       runtime{link->m_linkTx.txRuntimeGen}, epoch{link->m_linkTx.txPathEpoch},
-      attempt{link->m_linkTx.migration.attemptID} { path->sent(bytes); }
+      attempt{link->m_linkTx.migration.attemptID}, bytes{bytes_} { path->sent(bytes); }
     ~PathSend() {
       if (accepted || runtime != link->m_linkTx.txRuntimeGen ||
 	  epoch != link->m_linkTx.txPathEpoch) return;
@@ -3280,9 +3305,6 @@ protected:
     }
   };
 
-  struct PathTx {
-    enum { Direct, Probe, Filter, Validation, FilterProbe };
-  };
   Path &txPath(const ZiSockAddr &addr) {
     if (m_config.isServer)
       if (auto path = impl()->outputPath()) return *path;
@@ -5296,25 +5318,16 @@ protected:
 	  m_linkTx.handshakeDoneControl, build, budget, refs,
 	  sentControls))
       return false;
-    auto iter = m_linkTx.pathResponses.iter();
-    while (refs.count() < SentPkt::MaxFrames) {
-      ControlFrame frame = iter();
-      if (!frame) break;
-      if (!appendControl(
-	    frame, build, budget, refs,
-	    sentControls))
-	return false;
-    }
-    auto cidIter = m_linkTx.newCxnIDControls.iter();
-    while (refs.count() < SentPkt::MaxFrames) {
-      ControlFrame frame = cidIter();
-      if (!frame) break;
-      if (!appendControl(
-	    frame, build, budget, refs,
-	    sentControls))
-	return false;
-    }
-    return true;
+    auto appendQueue = [this, &build, &budget, &refs, &sentControls](auto &queue) {
+      auto iter = queue.iter();
+      while (refs.count() < SentPkt::MaxFrames) {
+	ControlFrame frame = iter();
+	if (!frame) break;
+	if (!appendControl(frame, build, budget, refs, sentControls)) return false;
+      }
+      return true;
+    };
+    return appendQueue(m_linkTx.pathResponses) && appendQueue(m_linkTx.newCxnIDControls);
   }
 
   bool appendStreamCtls(
@@ -9332,19 +9345,20 @@ protected:
     }
     const auto &secret = txKeySecret_(keyLevel);
     if (!payload.padForProtSample(pnLength, secret.tagLen)) return false;
-    uint8_t header[64];
-    int headerLen = Pkt::writeLong(header, sizeof(header), Type,
-      headerCID(dcid), headerCID(scid), payload.bytes() + secret.tagLen, pnLength);
+    // Allocation can call application code. Encode the same CIDs and length used for sizing.
+    const CxnID dstCID = headerCID(dcid), srcCID = headerCID(scid);
+    const unsigned protectedBytes = payload.bytes() + secret.tagLen;
+    int headerLen = Pkt::longHdrLen(Type, dstCID, srcCID, protectedBytes, pnLength);
     if (headerLen < 0) return false;
-    unsigned required = unsigned(headerLen) + pnLength + payload.bytes() + secret.tagLen;
+    unsigned required = unsigned(headerLen) + pnLength + protectedBytes;
     unsigned offset = 0;
     auto buf = Type == PktType::Handshake ?
       allocLongPkt(required, addr, offset, allocTxPkt) : allocTxPkt();
     if (ZuUnlikely(!buf || runtime != txRuntime())) return false;
     unsigned capacity = txPktCapacity(buf) - offset;
     auto out = buf->data() + offset;
-    if (unsigned(headerLen) > capacity) return false;
-    memcpy(out, header, unsigned(headerLen));
+    headerLen = Pkt::writeLong(out, capacity, Type, dstCID, srcCID, protectedBytes, pnLength);
+    if (headerLen < 0) return false;
     if (PktNumber::encode(
 	  out + headerLen, capacity - unsigned(headerLen),
 	  m_linkTx.txPN[level], pnLength) != int(pnLength))
@@ -10686,7 +10700,11 @@ private:
 	m_linkTx.resetStreamCursor = static_cast<TxStreamList::Node::Ext *>(entry)->next;
       m_linkTx.allStreams.delNode(entry);
       stream->markRetiredTx();
-      (void)m_linkTx.txStreams->del(id);
+      auto owner = m_linkTx.txStreams->del(id);
+      if constexpr (Stream::hasTxDequeued()) {
+	// Release registry ownership behind the last queued producer notification.
+	app()->txRun([owner = ZuMv(owner)]() mutable { owner = nullptr; });
+      }
       return true;
     }
     return false;
@@ -11174,19 +11192,7 @@ private:
   TimerStorage m_timers;
 
   // Rx thread exclusive
-  struct LocalStreamLimit : StreamLimit {
-    LocalStreamLimit() : StreamLimit{MaxStreamCount} { }
-    void set(uint64_t window) {
-      StreamLimit::set(window);
-      earned = window;
-      lowWater = window >> 1;
-      peerBlocked = false;
-    }
-
-    uint64_t	earned = MaxStreamCount;
-    uint64_t	lowWater = MaxStreamCount >> 1;
-    bool	peerBlocked = false;
-  };
+  using LocalStreamLimit = Zquic_::LocalStreamLimit;
   struct alignas(Zm::CacheLineSize) RxStorage {
     Zquic_::LinkDiscFns discFns;
     ZmRef<StreamCloseWork> discWork;
