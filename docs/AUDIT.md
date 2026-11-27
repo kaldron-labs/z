@@ -231,6 +231,12 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
 - Red Flag: reimplementing lower-level Z Framework capabilities.
   Problem: duplicate code misses established semantics, optimizations, and maintenance paths.
   Fix: use the existing foundational libraries: `zu`, `zm`, `zt`, `zf`, `ze`, `zi`
+- Red Flag: direct use of `__atomic_*` builtins where `ZmAtomic` can represent
+  the storage and provide the required atomic operation and memory ordering.
+  Problem: direct calls bypass the framework's platform-specific implementations.
+  Fix: use `ZmAtomic` and preserve the required memory ordering. Allow direct
+  builtins in the `ZmAtomic` implementation or where an external storage layout
+  or required atomic semantics prevent using `ZmAtomic`.
 - Amber Flag: direct use of `FILE`, `syslog`, etc.
   Problem: it bypasses Z I/O and logging conventions.
   Fix: use `ZiFile`, `ZiLog`, etc.
