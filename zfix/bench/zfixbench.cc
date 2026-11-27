@@ -44,9 +44,15 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZfixClient.hh>
 #include <zlib/ZfixServer.hh>
+#include <zlib/Zpkt.hh>
+#include <zlib/ZpktEnv.hh>
 #include <zlib/Zutcp.hh>
 
 #ifdef HAVE_DPDK
+#include <rte_ethdev.h>
+#include <rte_lcore.h>
+#include <zlib/ZvCf.hh>
+#include "ZpktDPDKCf.hh"
 #include "zpktdkfixture.hh"
 #endif
 
@@ -241,20 +247,27 @@ using Queue = ZmList<Zfix::TxBody::Ref, ZmListHeapID<"Zfix.Bench.Queue">>;
 struct Config {
   bool server = false, native = false, appColocate = true, ll = false,
     congestionControl = true, allocationTuning = false, txBatch = false;
-  int xdpTxCPU = -1;
+  int xdpTxCPU = -1, afpBypass = -1;
   ZuBox<unsigned> spin, rxSpin, txSpin;
-  unsigned interface = 0, messages = 0, warmup = 0, pipeline = 0,
+  unsigned messages = 0, warmup = 0, pipeline = 0,
     connections = 0, reserve = 0, rxCPU = 0, txCPU = 0,
     appRxCPU = 0, appTxCPU = 0,
     workload = 0, burstSize = 0, burstUS = 1000, ackHoldUS = 25000,
     queueSize = DefaultQueueSize, hashBits = 0;
   ZiIP address;
   const char *backend = "kernel", *interfaceName = nullptr, *addressText = nullptr;
+  const char *routeInterface = nullptr, *dpdkConfig = nullptr;
+  const char *xdpModule = ZFIX_XDP_MODULE;
+  uint64_t tcpWindow = Zutcp::DefaultMaxData;
   const char *samples = nullptr;
   std::ostream *output = &std::cout;
   const char *telemetryDir = nullptr;
   const char *telemetryPeerDir = nullptr;
   OfferSchedule offers;
+
+  bool afxdp() const { return !strcmp(backend, "native") || !strcmp(backend, "xdp"); }
+  bool afp() const { return !strcmp(backend, "afp"); }
+  bool dpdk() const { return !strcmp(backend, "dpdk"); }
 };
 
 static int xdpSenderCPU(const cpu_set_t &allowed, unsigned rx, unsigned tx) {
@@ -1312,7 +1325,7 @@ static bool calibrate(const Config &c) {
 }
 
 static ZiMxParams endpointParams(const Config &c) {
-  bool afxdp = !strcmp(c.backend, "native");
+  bool afxdp = c.afxdp();
   unsigned senderSid = 3;
   ZmSchedTParams sender;
   sender.isolated(true).name("zpktTx");
@@ -1336,17 +1349,98 @@ static ZiMxParams endpointParams(const Config &c) {
   return params;
 }
 
-static bool initEndpoint(const Config &c, ZiMultiplex &mx, Zpkt::Env *env, bool sharedEnv) {
-  bool afxdp = c.native && !sharedEnv;
-  unsigned senderSid = 3;
+struct PacketEndpoint {
+  Zpkt::Nif *nif = nullptr; // retained by Zutcp after successful init
+  Zpkt::CfString module;
+  unsigned routeIfindex = 0;
+#ifdef HAVE_DPDK
+  uint16_t port = RTE_MAX_ETHPORTS;
+#endif
+};
+
+using CfNode = ZfCf::AnyNode;
+
+static CfNode *cfObject(CfNode *parent, ZuCSpan name) {
+  auto child = ZfCf::newNode<CfNode::Object>(parent);
+  auto ptr = child.ptr();
+  parent->data<CfNode::Object>().push(CfNode::Field{name, ZuMv(child)});
+  return ptr;
+}
+
+static void cfValue(CfNode *parent, ZuCSpan name, const auto &input) {
+  CfNode::String text;
+  text << input;
+  parent->data<CfNode::Object>().push(CfNode::Field{
+    name, ZfCf::newNode<CfNode::String>(parent, ZuMv(text))});
+}
+
+static const char *packetSelector(const Config &c, bool pair) {
+  if (!pair) return c.interfaceName;
+  return c.server ? "zfix_ring_peer" : "_loop";
+}
+
+#ifdef HAVE_DPDK
+static const char *ringPortName(const Config &c) {
+  return c.server ? "net_ring_zfix_server" : "net_ring_zfix_client";
+}
+
+static void initDpdkEnv(const Config &c, Zpkt::Env *env, PacketEndpoint &packet) {
+  auto loaded = ZvCf::load(c.dpdkConfig);
+  auto root = loaded.p<1>().ptr();
+  if (!root || !root->has<CfNode::Object>())
+    throw ZeEXCEPT(Error, "zfixbench", "BENCH_DPDK_CONFIG must contain an Env configuration");
+  bool haveModule = false;
+  for (const auto &field : root->data<CfNode::Object>())
+    if (field.p<0>() == "module"_z) { haveModule = true; break; }
+  // The loader allocates the underlying tree for this invocation.
+  if (!haveModule) cfValue(const_cast<CfNode *>(root), "module", ZFIX_DPDK_MODULE);
+  Zpkt::PluginLoadCf load;
+  ZfCf::handler<Zpkt::PluginLoadCf>(root).update(load);
+  Zpkt::Dpdk::PluginCf config;
+  ZfCf::handler<Zpkt::Dpdk::PluginCf>(root).update(config);
+  auto entry = config.interfaces->find(c.interfaceName);
+  if (!entry)
+    throw ZeEXCEPT(Error, "zfixbench", "BENCH_DPDK_CONFIG has no entry for the selected interface");
+  packet.module = ZuMv(load.module);
+  env->init(root);
+  if (int rc = rte_eth_dev_get_port_by_name(entry->val().port, &packet.port))
+    throw ZeEXCEPT(Error, "zfixbench", ([code = ZeError{-rc}](auto &out) {
+      out << "resolve configured DPDK port: " << code;
+    }));
+}
+#endif
+
+static void initPacketEnv(const Config &c, Zpkt::Env *env, PacketEndpoint &packet) {
+#ifdef HAVE_DPDK
+  if (c.dpdk()) { initDpdkEnv(c, env, packet); return; }
+#endif
+  auto root = ZfCf::newNode<CfNode::Object>(nullptr);
+  auto nif = cfObject(cfObject(root.ptr(), "interfaces"), c.interfaceName);
+  packet.module = c.afxdp() ? c.xdpModule : ZFIX_AFP_MODULE;
+  cfValue(root.ptr(), "module", packet.module);
+  if (*c.rxSpin) cfValue(nif, "rxSpin", c.rxSpin.val());
+  if (c.afxdp()) {
+    cfValue(nif, "txSid", 3);
+    if (*c.txSpin) cfValue(nif, "txSpin", c.txSpin.val());
+  } else if (c.afpBypass >= 0)
+    cfValue(nif, "qdiscBypass", c.afpBypass ? "true" : "false");
+  env->init(root.ptr());
+}
+
+static bool initEndpoint(
+  const Config &c, ZiMultiplex &mx, Zpkt::Env *env, PacketEndpoint &packet, bool sharedEnv = false)
+{
+  bool afxdp = c.afxdp();
+  enum { SenderSid = 3 };
   ZiMxParams defaults;
   auto requestHash = defaults.requestHash();
   *c.output << "config backend=" << c.backend
-    << " pmd=" << (sharedEnv ? "net_ring" : afxdp ? "af_xdp" : "none")
+    << " pmd=" << (sharedEnv ? "net_ring" : afxdp ? "af_xdp" :
+      c.afp() ? "af_packet" : c.dpdk() ? "configured" : "none")
     << " rx_cpu=" << c.rxCPU << " tx_cpu=" << c.txCPU
     << " app_rx_cpu=" << c.appRxCPU << " app_tx_cpu=" << c.appTxCPU
     << " app_colocate=" << unsigned(c.appColocate)
-    << " scheduler_threads=" << senderSid << " xdp_tx_sid=" << senderSid
+    << " scheduler_threads=" << SenderSid << " xdp_tx_sid=" << SenderSid
     << " queue_size=" << mx.ring(1).size()
     << " native_xdp_sender_threads=" << unsigned(afxdp)
     << " xdp_tx_cpu=" << (afxdp ? c.xdpTxCPU : -1)
@@ -1354,53 +1448,155 @@ static bool initEndpoint(const Config &c, ZiMultiplex &mx, Zpkt::Env *env, bool 
     << " app_tx_thread=" << (c.appColocate ? 2 : 4)
     << " spin=" << (*c.spin ? c.spin.val() : ZmSchedParams{}.spin())
     << " spin_inherited=" << unsigned(!*c.spin) << " ll=" << unsigned(c.ll)
-    << " rx_spin=" << (afxdp ? int64_t(*c.rxSpin ? c.rxSpin.val() : (Zi_DefltSpin<<2)) : -1)
+    << " rx_spin=" << (afxdp || c.afp() ?
+      int64_t(*c.rxSpin ? c.rxSpin.val() : (Zi_DefltSpin<<2)) : -1)
     << " tx_spin=" << (afxdp ? int64_t(*c.txSpin ? c.txSpin.val() : Zi_DefltSpin) : -1)
     << " allocation_tuning=" << unsigned(c.allocationTuning) << " hash_bits=" << c.hashBits
     << " request_hash=" << requestHash
     << " congestion_control=" << unsigned(!c.native || c.congestionControl)
     << " tx_batch=" << unsigned(c.native && c.txBatch)
+    << " tcp_window_bytes=" << (c.native ? c.tcpWindow : 0)
+    << " afp_qdisc_bypass_override=" << c.afpBypass
     << " offer_rate=" << c.offers.rate << " pending_cap=" << c.offers.cap << '\n';
-  if (c.native) {
-    if (!sharedEnv) {
-      using Node = ZfCf::AnyNode;
-      auto root = ZfCf::newNode<Node::Object>(nullptr);
-      auto interfaces = ZfCf::newNode<Node::Object>(root.ptr());
-      auto nif = ZfCf::newNode<Node::Object>(interfaces.ptr());
-      auto value = [](Node *parent, ZuCSpan key, auto value) {
-	Node::String text;
-	text << value;
-	parent->data<Node::Object>().push(Node::Field{
-	  key, ZfCf::newNode<Node::String>(parent, ZuMv(text))});
-      };
-      value(root.ptr(), "module", ZFIX_XDP_MODULE);
-      value(nif.ptr(), "txSid", senderSid);
-      if (*c.rxSpin) value(nif.ptr(), "rxSpin", c.rxSpin.val());
-      if (*c.txSpin) value(nif.ptr(), "txSpin", c.txSpin.val());
-      interfaces->data.push(Node::Field{c.interfaceName, ZuMv(nif)});
-      root->data.push(Node::Field{"interfaces", ZuMv(interfaces)});
-      try { env->init(root.ptr()); }
-      catch (ZeException &e) { ZiLogEvent(e); return false; }
+  if (!c.native) return true;
+  ZmRef<Zpkt::Nif> nif;
+  try {
+    if (!sharedEnv) initPacketEnv(c, env, packet);
+#ifdef HAVE_DPDK
+    else {
+      packet.module = ZFIX_DPDK_MODULE;
+      if (int rc = rte_eth_dev_get_port_by_name(ringPortName(c), &packet.port))
+	throw ZeEXCEPT(Error, "zfixbench", ([code = ZeError{-rc}](auto &out) {
+	  out << "resolve fixture DPDK port: " << code;
+	}));
     }
-    auto opened = env->nif(&mx, c.interfaceName);
-    if (opened.is<ZeException>()) {
-      ZiLogEvent(ZuMv(opened).p<ZeException>());
-      return false;
-    }
-    ZmRef<Zpkt::Nif> xdp = opened.p<Zpkt::Nif *>();
-    Zutcp::MxPlugin::Params settings{.packetCount = c.reserve,
+#endif
+    ZuCSpan selector = packetSelector(c, sharedEnv);
+    if (selector == "_loop"_z && !sharedEnv && !env->loopback())
+      throw ZeEXCEPT(Error, "zfixbench", "the loaded packet backend lacks loopback");
+    auto route = sharedEnv ? c.interfaceName : c.routeInterface;
+    if (!route && c.dpdk() && selector != "_loop"_z) route = c.interfaceName;
+    if (route && !(packet.routeIfindex = if_nametoindex(route)))
+      throw ZeEXCEPT(Error, "zfixbench", ([route = ZeString{route}](auto &out) {
+	out << "failed to resolve routing interface " << route;
+      }));
+    auto opened = env->nif(&mx, selector);
+    if (opened.is<ZeException>()) throw ZuMv(opened).p<ZeException>();
+    nif = opened.p<Zpkt::Nif *>();
+    if (!packet.routeIfindex) packet.routeIfindex = nif->ifindex();
+    Zutcp::MxPlugin::Params settings{.packetCount = c.reserve, .routingIfindex = packet.routeIfindex,
+      .maxData = c.tcpWindow,
       .ackHoldTimeout = ZuTime{0, int32_t(c.ackHoldUS * 1000)},
       .congestionControl = c.congestionControl, .txBatch = c.txBatch};
+    auto ptr = nif.ptr();
     auto stack = static_cast<Zutcp::MxPlugin *>(mx.plugin());
-    try { stack->init(&mx, env, ZuMv(xdp), ZuMv(settings)); }
-    catch (ZeException &e) {
-      xdp->final();
-      if (auto error = xdp->error()) ZiLogEvent(ZuMv(error));
-      ZiLogEvent(ZuMv(e));
-      return false;
+    stack->init(&mx, env, ZuMv(nif), ZuMv(settings));
+    packet.nif = ptr;
+  } catch (const ZeException &e) {
+    if (nif) {
+      nif->final();
+      if (auto error = nif->error()) ZiLogEvent(ZuMv(error));
     }
+    ZiLogEvent(e);
+    return false;
   }
   return true;
+}
+
+static void packetDrops(const Config &c, const PacketEndpoint &packet, const char *interval) {
+  if (!packet.nif) return;
+#ifdef HAVE_DPDK
+  if (c.dpdk()) {
+    rte_eth_stats stats{};
+    if (!rte_eth_stats_get(packet.port, &stats))
+      *c.output << "packet_drops source=rte_eth_stats interval=" << interval
+	<< " cumulative_imissed=" << stats.imissed << " cumulative_ierrors=" << stats.ierrors
+	<< " cumulative_oerrors=" << stats.oerrors << " cumulative_rx_nombuf=" << stats.rx_nombuf
+	<< '\n';
+    return;
+  }
+#endif
+  uint64_t full = 0;
+  unsigned rxQueues = 0;
+  packet.nif->allQueues([&full, &rxQueues](Ztc::Queue *queue) {
+    Ztc::QueueTelemetry data;
+    queue->telemetry(data);
+    if (data.type != Ztc::QueueType::Rx) return;
+    full += data.full;
+    ++rxQueues;
+  });
+  if (!rxQueues) return;
+  *c.output << "packet_drops source="
+    << (c.afp() ? "PACKET_STATISTICS.tp_drops" : "XDP_STATISTICS.rx_ring_full")
+    << " interval=" << interval << " cumulative_rx_full=" << full << '\n';
+  if (c.afp()) packet.nif->status(); // same per-run drop total, with software discards
+}
+
+#ifdef HAVE_DPDK
+static void dpdkStatus(std::ostream &out, uint16_t port) {
+  rte_eth_dev_info info{};
+  if (rte_eth_dev_info_get(port, &info)) return;
+  char name[RTE_ETH_NAME_MAX_LEN];
+  out << "packet_dpdk pmd=" << (info.driver_name ? info.driver_name : "unknown")
+    << " port_id=" << port
+    << " port_name=" << (rte_eth_dev_get_name_by_port(port, name) ? "unknown" : name)
+    << " rx_queues=" << info.nb_rx_queues << " tx_queues=" << info.nb_tx_queues;
+  rte_eth_conf conf{};
+  if (!rte_eth_dev_conf_get(port, &conf))
+    out << " rx_offloads=0x" << ZuBoxed(conf.rxmode.offloads).hex()
+      << " tx_offloads=0x" << ZuBoxed(conf.txmode.offloads).hex()
+      << " rx_queue_interrupts=" << unsigned(conf.intr_conf.rxq);
+  rte_eth_link link{};
+  if (!rte_eth_link_get_nowait(port, &link))
+    out << " link_up=" << unsigned(link.link_status) << " link_mbps=" << link.link_speed;
+  out << '\n';
+  for (uint16_t q = 0; q < info.nb_rx_queues; ++q) {
+    rte_eth_rxq_info queue{};
+    if (!rte_eth_rx_queue_info_get(port, q, &queue))
+      out << "packet_dpdk_queue direction=rx queue=" << q << " descriptors=" << queue.nb_desc
+	<< " offloads=0x" << ZuBoxed(queue.conf.offloads).hex() << '\n';
+  }
+  for (uint16_t q = 0; q < info.nb_tx_queues; ++q) {
+    rte_eth_txq_info queue{};
+    if (!rte_eth_tx_queue_info_get(port, q, &queue))
+      out << "packet_dpdk_queue direction=tx queue=" << q << " descriptors=" << queue.nb_desc
+	<< " offloads=0x" << ZuBoxed(queue.conf.offloads).hex() << '\n';
+  }
+  unsigned id;
+  RTE_LCORE_FOREACH(id) {
+    auto cpus = rte_lcore_cpuset(id);
+    out << "packet_dpdk_lcore id=" << id << " main=" << unsigned(id == rte_get_main_lcore())
+      << " cpus=";
+    bool first = true;
+    for (unsigned cpu = 0; cpu < CPU_SETSIZE; ++cpu) if (CPU_ISSET(cpu, &cpus)) {
+      if (!first) out << ',';
+      out << cpu;
+      first = false;
+    }
+    out << '\n';
+  }
+}
+#endif
+
+static void packetStatus(const Config &c, const PacketEndpoint &packet) {
+  auto nif = packet.nif;
+  if (!nif) return;
+  ZuCArray<18> mac;
+  for (auto octet : nif->mac()) {
+    if (mac.length()) mac << ':';
+    mac << ZuBoxed(unsigned(octet)).hex<false, ZuFmt::Right<2>>();
+  }
+  *c.output << "packet_backend module=" << packet.module
+    << " packet_selector=" << nif->name() << " interface=" << c.interfaceName
+    << " packet_ifindex=" << nif->ifindex() << " routing_ifindex=" << packet.routeIfindex
+    << " mac=" << mac << " mtu=" << nif->mtu() << " rx_queues=" << nif->rxQueues()
+    << " zero_copy=" << unsigned(nif->zeroCopy())
+    << " tcp_checksum_offload=" << unsigned(nif->tcpChksumOffload()) << '\n';
+  if (!c.afp()) nif->status();
+#ifdef HAVE_DPDK
+  if (c.dpdk()) dpdkStatus(*c.output, packet.port);
+#endif
+  packetDrops(c, packet, "activation");
 }
 
 #ifdef HAVE_DPDK
@@ -1426,7 +1622,7 @@ struct RingRun {
 struct RingRun;
 #endif
 
-static bool run(const Config &c, State &state, ZiMultiplex &mx,
+static bool run(const Config &c, State &state, ZiMultiplex &mx, const PacketEndpoint &packet,
     RingRun *ring = nullptr, State *peer = nullptr) {
 #ifdef HAVE_DPDK
   auto ringRx = ring ? mx.allocator<Zi::IOBufType::Rx>(c.reserve) : nullptr;
@@ -1447,6 +1643,7 @@ static bool run(const Config &c, State &state, ZiMultiplex &mx,
     if (!hub.init(Zfix::TCP::ServerParams{&mx, c.appColocate ? "1" : "3",
           c.appColocate ? "2" : "4"}) || !mx.start()) return false;
     if (!hub.start()) { mx.stop(); return false; }
+    packetStatus(c, packet);
     if (c.telemetryDir) state.trafficStart();
     hub.listen();
     bool listening = !state.ready.timedwait(Zm::now(30)) && !state.failed.load_();
@@ -1464,6 +1661,7 @@ static bool run(const Config &c, State &state, ZiMultiplex &mx,
       if (ok) ok = !state.done.timedwait(Zm::now(120));
     }
     if (peer && (!ok || state.failed.load_())) peer->fail("ring-server");
+    packetDrops(c, packet, "activation_through_fix_close");
     // The server stop barrier revokes listener admission and drains accepted
     // transports. FIX owner callbacks finish afterwards on the live scheduler.
     hub.stop();
@@ -1482,6 +1680,7 @@ static bool run(const Config &c, State &state, ZiMultiplex &mx,
     if (!hub.init(Zfix::TCP::ClientParams{&mx, c.appColocate ? "1" : "3",
           c.appColocate ? "2" : "4"}) || !mx.start()) return false;
     if (!hub.start()) { mx.stop(); return false; }
+    packetStatus(c, packet);
 #ifdef HAVE_DPDK
     if (ring) {
       auto wired = ring->wire.start({&ring->ports[0], ZpktDpdkTest::native(ringRx->pool.ptr())},
@@ -1507,6 +1706,7 @@ static bool run(const Config &c, State &state, ZiMultiplex &mx,
       if (!state.stopTime) state.stopTime = monotonic();
       if (!ok) state.fail("deadline");
     }
+    packetDrops(c, packet, "activation_through_fix_close");
     hub.rxRun([hub = &hub] {
       for (const auto &link : hub->links) if (link) {
 	link->stopping = true; link->cancelBurst(); link->disconnect_();
@@ -1560,33 +1760,24 @@ static bool runRingPair(Config &client, Config &server, const char *clientNetns,
   }
   std::cout << "pair_config pmd=net_ring wire_cpu=" << wireCPU << '\n';
   {
-    using Node = ZfCf::AnyNode;
-    auto root = ZfCf::newNode<Node::Object>(nullptr);
-    auto object = [](Node *parent, ZuCSpan name) {
-      auto child = ZfCf::newNode<Node::Object>(parent);
-      auto ptr = child.ptr();
-      parent->data<Node::Object>().push(Node::Field{name, ZuMv(child)});
-      return ptr;
-    };
-    auto value = [](Node *parent, ZuCSpan name, const auto &input) {
-      Node::String text;
-      text << input;
-      parent->data<Node::Object>().push(Node::Field{
-	name, ZfCf::newNode<Node::String>(parent, ZuMv(text))});
-    };
-    value(root.ptr(), "module", ZFIX_DPDK_MODULE);
-    auto interfaces = object(root.ptr(), "interfaces");
+    auto root = ZfCf::newNode<CfNode::Object>(nullptr);
+    cfValue(root.ptr(), "module", ZFIX_DPDK_MODULE);
+    auto interfaces = cfObject(root.ptr(), "interfaces");
     for (const auto *c : {&client, &server}) {
-      auto nif = object(interfaces, c->interfaceName);
-      value(nif, "port", c->server ? "net_ring_zfix_server" : "net_ring_zfix_client");
-      if (*c->spin) value(nif, "spin", c->spin.val());
+      auto nif = cfObject(interfaces, packetSelector(*c, true));
+      cfValue(nif, "port", ringPortName(*c));
+      if (*c->spin) cfValue(nif, "spin", c->spin.val());
     }
-    auto eal = object(root.ptr(), "eal");
+    auto eal = cfObject(root.ptr(), "eal");
     for (auto flag : {"noPCI", "noHuge", "noShconf", "noTelemetry"})
-      value(eal, flag, "true");
-    value(eal, "iova", "va");
+      cfValue(eal, flag, "true");
+    cfValue(eal, "iova", "va");
     try { env->init(root.ptr()); }
     catch (const ZeException &e) { ZiLogEvent(e); return false; }
+  }
+  if (!env->loopback()) {
+    std::cerr << "the DPDK fixture requires backend loopback\n";
+    return false;
   }
   constexpr unsigned RingSize = 4096;
   if (auto r = ring.ports[0].init("zfix_client", RingSize, {{2, 0, 0, 0, 0x87, 1}});
@@ -1598,12 +1789,13 @@ static bool runRingPair(Config &client, Config &server, const char *clientNetns,
   ZiMultiplex serverMx{endpointParams(server), ZmRef<Zutcp::MxPlugin>{new Zutcp::MxPlugin}};
   auto endpoint = [&env, &ring](
       Config &c, State &state, State &peer, ZiMultiplex &mx, const char *netns) {
-    if (!enterNetwork(netns) || !(c.interface = if_nametoindex(c.interfaceName))) {
+    if (!enterNetwork(netns)) {
       state.fail("ring-control-interface");
       return false;
     }
-    if (!initEndpoint(c, mx, env.ptr(), true)) return false;
-    return run(c, state, mx, &ring, &peer);
+    PacketEndpoint packet;
+    if (!initEndpoint(c, mx, env.ptr(), packet, true)) return false;
+    return run(c, state, mx, packet, &ring, &peer);
   };
   bool serverOK = false;
   ZmThread serverThread;
@@ -1743,17 +1935,45 @@ int main(int argc, char **argv) {
   bool pair = !strcmp(argv[1], "pair");
   if (!pair && !c.server && strcmp(argv[1], "client")) return 2;
   c.backend = argv[2];
-  c.native = !strcmp(c.backend, "native");
-  if (pair) {
+  if (pair && !c.dpdk()) return 2;
+  if (c.dpdk()) {
 #ifdef HAVE_DPDK
-    if (strcmp(c.backend, "dpdk")) return 2;
-    c.native = true;
+    if (!pair) {
+      c.dpdkConfig = getenv("BENCH_DPDK_CONFIG");
+      if (!c.dpdkConfig || !*c.dpdkConfig) {
+	std::cerr << "dpdk requires BENCH_DPDK_CONFIG\n";
+	return 2;
+      }
+    }
 #else
+    std::cerr << "zfixbench was built without DPDK support\n";
     return 2;
 #endif
-  } else if (!c.native && strcmp(c.backend, "kernel")) return 2;
+  } else if (!c.afxdp() && !c.afp() && strcmp(c.backend, "kernel")) return 2;
+  c.native = c.afxdp() || c.afp() || c.dpdk();
   c.interfaceName = argv[3];
-  c.interface = if_nametoindex(c.interfaceName); c.address = ZiIP{argv[4]};
+  if (c.native && !*c.interfaceName) return 2;
+  if (c.native && !pair) c.routeInterface = getenv("BENCH_ROUTE_INTERFACE");
+  if (c.afxdp())
+    if (auto path = getenv("BENCH_XDP_MODULE")) {
+      if (!*path) return 2;
+      c.xdpModule = path;
+    }
+  if (c.native)
+    if (auto value = getenv("BENCH_TCP_WINDOW_BYTES")) {
+      if (*value < '1' || *value > '9') return 2;
+      char *end;
+      auto bytes = strtoull(value, &end, 10);
+      if (*end || bytes > Zutcp::DefaultMaxData) return 2;
+      c.tcpWindow = bytes;
+    }
+  if (c.afp()) {
+    if (auto value = getenv("BENCH_AFP_QDISC_BYPASS")) {
+      if (strcmp(value, "0") && strcmp(value, "1")) return 2;
+      c.afpBypass = *value == '1';
+    }
+  }
+  c.address = ZiIP{argv[4]};
   c.addressText = argv[4];
   c.messages = unsigned(ZuBox<unsigned>{argv[5]});
   c.warmup = unsigned(ZuBox<unsigned>{argv[6]});
@@ -1782,7 +2002,7 @@ int main(int argc, char **argv) {
     if (c.xdpTxCPU < 0 || c.xdpTxCPU >= CPU_SETSIZE ||
         sched_getaffinity(0, sizeof(allowed), &allowed) ||
         !CPU_ISSET(c.xdpTxCPU, &allowed)) return 2;
-  } else if (!strcmp(c.backend, "native")) {
+  } else if (c.afxdp()) {
     cpu_set_t allowed;
     if (c.rxCPU >= CPU_SETSIZE || sched_getaffinity(0, sizeof(allowed), &allowed) ||
 	!CPU_ISSET(c.rxCPU, &allowed)) return 2;
@@ -1832,7 +2052,7 @@ int main(int argc, char **argv) {
     c.appColocate = true;
   }
   if (c.appColocate) { c.appRxCPU = c.rxCPU; c.appTxCPU = c.txCPU; }
-  if ((!pair && !c.interface) || !c.messages || !c.connections || c.connections > MaxCxns ||
+  if (!c.messages || !c.connections || c.connections > MaxCxns ||
       !c.pipeline || c.pipeline > MaxPipeline || c.reserve < MinReserve ||
       c.reserve > MaxReserve || uint64_t(c.messages) * c.connections > MaxSamples ||
       c.warmup > MaxSamples || c.burstSize > MaxPipeline || c.ackHoldUS >= 500000 ||
@@ -1872,8 +2092,16 @@ int main(int argc, char **argv) {
     auto env = ZmRef{new Zpkt::Env};
     ZiMultiplex mx{endpointParams(c), c.native ?
       ZmRef<Zutcp::MxPlugin>{new Zutcp::MxPlugin} : ZmRef<Zutcp::MxPlugin>{}};
-    ok = initEndpoint(c, mx, env.ptr(), false) && run(c, state, mx);
+    PacketEndpoint packet;
+    ok = initEndpoint(c, mx, env.ptr(), packet) && run(c, state, mx, packet);
   }
   ZiLog::stop();
+  rusage usage{};
+  if (!getrusage(RUSAGE_SELF, &usage)) {
+    auto seconds = [](const timeval &t) { return double(t.tv_sec) + double(t.tv_usec)/1e6; };
+    std::cout << "process_resources through_report=1 combined=" << unsigned(pair)
+      << " user_seconds=" << ZuBoxed(seconds(usage.ru_utime)).fp<6>()
+      << " system_seconds=" << ZuBoxed(seconds(usage.ru_stime)).fp<6>() << '\n';
+  }
   return ok ? 0 : 1;
 }

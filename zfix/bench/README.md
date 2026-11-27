@@ -418,25 +418,113 @@ The [2026-11-15 native TCP milestone](../../zutcp/bench/MILESTONE.md) records
 the matched kernel/native results and their measurement conditions.
 
 `zfixbench` drives managed `Zfix::Client` and `Zfix::Server` sessions through
-`Zfix::TCP`, `Ztcp`, `Zi`, and either kernel TCP or `Zutcp`/`Zpkt`. Kernel and
-AF_XDP use the same role/backend positional CLI as `zutcpbench`:
+`Zfix::TCP`, `Ztcp`, `Zi`, and kernel TCP or `Zutcp`/`Zpkt`. The role and
+backend use the same positional CLI as `zutcpbench`.
 
 ```sh
-zfix/bench/zfixbench server|client kernel|native INTERFACE ADDRESS MESSAGES \
+zfix/bench/zfixbench server|client kernel|native|afp|dpdk INTERFACE ADDRESS MESSAGES \
   WARMUP PIPELINE CONNECTIONS RESERVE RX_CPU TX_CPU SPIN|default [SAMPLES.csv]
 zfix/bench/zfixbench --selftest
 ```
 
-`BENCH_BACKENDS='kernel native dpdk'` selects the three backends in
-`zutcp/bench/run-compare.sh` when configured with `--with-dpdk=yes`. For DPDK,
-the launcher runs both endpoints in one process with two `net_ring` ports.
-Each endpoint keeps its own Rx and Tx owners and gets routes and permanent
-neighbors from a dummy interface in a private network namespace. A software
-wire transfers frames between the rings into the receiving port's mbuf pool.
-The pair log records the wire worker's CPU. Timing and CPU usage include the
-software wire. The run records combined process usage in `time` and retains
-the separate endpoint outputs. Veth capture and fault injection apply to the
-kernel TCP and AF_XDP backends.
+`native` selects AF_XDP and `afp` selects the AF_PACKET copy path.
+`BENCH_AFP_QDISC_BYPASS=0` uses ordinary egress scheduling and `1` requests
+bypass. With the override omitted, AFP uses its configured default. Its status
+records the requested and effective setting on each endpoint.
+
+The [private launcher](../../zutcp/bench/README.md#private-veth-runs-and-complete-workload-matrix)
+supports `BENCH_BACKENDS='kernel native afp'` over veth. Each AFP endpoint takes over ingress on its own veth.
+With `BENCH_CAPTURE=1` the launcher checks both peer directions for valid
+checksums and zero resets. Run `zfix/bench/check-wire.py` on the resulting
+directories to check managed FIX bytes and orderly TCP completion. The
+existing reorder validator retains its closed-connection RST evidence rule.
+
+`BENCH_BACKENDS=dpdk` selects the private two-port `net_ring` fixture in a
+DPDK-enabled build. The client opens `_loop` after querying Env, and the
+server uses a separate configured name in the same Env. Each endpoint resolves
+routes and permanent neighbors through its own private Linux dummy interface.
+A wire worker copies frames between ports into the receiving mbuf pool. The
+pair records that worker's CPU assignment, combined process CPU in `time`,
+and separate endpoint output. Treat the ring and veth runs as software results.
+
+### Physical-link comparisons
+
+Launch one server process and one client process on the matched endpoints.
+Set the variables below independently at each endpoint. `IFACE` is the local
+OS interface name and `SERVER_ADDRESS` is the benchmark server's address.
+`RX_CPU` and `TX_CPU` identify cores within the assigned service CPU budget.
+The per-role invocation is the same at either end once `ROLE` is set to
+`server` or `client`. Start the client after the server prints `ready=1`.
+
+```sh
+bench=$PWD/zfix/bench/zfixbench
+args=("$IFACE" "$SERVER_ADDRESS" 10000 1000 1 1 4096 "$RX_CPU" "$TX_CPU" default)
+
+# Kernel TCP
+/usr/bin/time -v -o kernel.cpu "$bench" "$ROLE" kernel "${args[@]}" > kernel.out 2> kernel.status
+
+# AF_PACKET with an explicit bypass policy
+BENCH_AFP_QDISC_BYPASS=1 /usr/bin/time -v -o afp.cpu \
+  "$bench" "$ROLE" afp "${args[@]}" > afp.out 2> afp.status
+
+# AF_XDP with a dedicated sender CPU at each endpoint
+BENCH_CLIENT_XDP_TX_CPU="$SENDER_CPU" BENCH_SERVER_XDP_TX_CPU="$SENDER_CPU" \
+  BENCH_TX_BATCH=1 /usr/bin/time -v -o xdp.cpu \
+  "$bench" "$ROLE" native "${args[@]}" > xdp.out 2> xdp.status
+
+# DPDK with the NIC's native PMD
+BENCH_DPDK_CONFIG="$DPDK_CONFIG" BENCH_ROUTE_INTERFACE="$ROUTE_IFACE" \
+  /usr/bin/time -v -o dpdk.cpu "$bench" "$ROLE" dpdk "${args[@]}" > dpdk.out 2> dpdk.status
+```
+
+The DPDK configuration contains native EAL settings and an `interfaces`
+entry keyed by `IFACE`. For PCI device `0000:05:00.0` and key `enp5s0`,
+the structure is shown below. Use the relevant PCI allow-list, file prefix,
+hugepage settings and queue policy at each endpoint. The PMD supplies the
+port MAC and MTU. Keep a Linux routing interface for route and neighbor
+resolution. Before the run, confirm that each route selects the intended
+interface and that its permanent neighbor resolves to the packet peer.
+
+```text
+{
+  eal: { allow: ["0000:05:00.0"], filePrefix: "zfix-server" },
+  interfaces: { enp5s0: { port: "0000:05:00.0", rxInterval: 0 } }
+}
+```
+
+For AFP, dedicate the named interface to the benchmark. Opening it suppresses
+kernel protocol delivery for all inbound traffic until the backend releases it.
+
+Verify peer exchange before timing and disable capture for timed runs. Match
+physical link speed, MTU, workload, message sizes, concurrency and CPU budget.
+Keep the endpoint interface and module names, actual AF_XDP mode or DPDK PMD,
+effective AFP bypass, queue and offload settings and service CPU assignments
+with each result. Include the AF_XDP sender. Record post-warmup client p50, p99
+and p99.9 in nanoseconds and requests per second. Use the role's `.cpu` file
+for whole-process user and system seconds. Keep backend drop samples with
+their source and interval.
+
+Compare each optimization independently on matched correctness-verified builds.
+For AF_XDP, use `BENCH_TX_BATCH=1` in both builds with matching mode and sender
+placement. Check sparse pipeline-one traffic and a ready burst, and confirm
+vector calls in a separate diagnostic run. Set `BENCH_XDP_MODULE` to the
+absolute path of the ABI-matched scalar or doubling-group module at each
+endpoint to compare both with one benchmark binary. A ready-burst profile
+uses `BENCH_TCP_WINDOW_BYTES=4096`, `BENCH_CONGESTION_CONTROL=0`, pipeline
+256, `BENCH_BURST_SIZE=256` and `BENCH_BURST_US=100` at both ends. The
+benchmark reports the configured window in `tcp_window_bytes`. With the override omitted, Zutcp
+uses its default receive window. For DPDK, use the same PMD, descriptors
+and pool geometry in both builds. For AFP, use bypass off and on at both
+endpoints. Replay the same egress load, recording its packet size, rate, burst
+schedule and endpoint. Report both measurements and candidate-minus-baseline
+deltas. Repeat ambiguous runs. A reproducible degradation in latency or
+throughput is grounds to reverse that optimization.
+
+For this upgrade, the owner directed that retention be presumed because a
+matched physical peer will be unavailable. The AF_XDP doubling groups,
+DPDK return-driven retirement and default AFP qdisc bypass are retained.
+The measured results cover software fixtures. Physical-link performance
+remains unmeasured.
 
 `RESERVE` sets the native ingress, TCP packet, and application Tx pool counts
 per endpoint. Size it above both the total pipeline window and the aggregate

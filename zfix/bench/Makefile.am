@@ -19,6 +19,7 @@ if LINUX
 noinst_PROGRAMS += zfixbench
 zfixbench_SOURCES = zfixbench.cc
 zfixbench_CPPFLAGS = -DZFIX_XDP_MODULE='"$(abs_top_builddir)/zpkt/xdp/.libs/libZpkt_xdp.so"' \
+	-DZFIX_AFP_MODULE='"$(abs_top_builddir)/zpkt/afp/.libs/libZpkt_afp.so"' \
 	-DZFIX_DPDK_MODULE='"$(abs_top_builddir)/zpkt/dpdk/.libs/libZpkt_dpdk.so"' \
 	$(AM_CPPFLAGS) -I$(top_srcdir)/zi/src \
 	-I$(top_srcdir)/ztcp/src -I$(top_srcdir)/ztls/src \
@@ -32,8 +33,10 @@ zfixbench_LDADD = $(top_builddir)/zfix/src/libZfix.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 if DPDK
-zfixbench_CPPFLAGS += $(DPDK_CFLAGS) -I$(top_srcdir)/zpkt/itest
-zfixbench_LDADD += $(top_builddir)/zpkt/itest/libZpktDpdkFixture.la $(DPDK_LIBS) -lrte_net_ring
+zfixbench_CPPFLAGS += $(DPDK_CFLAGS) -DALLOW_EXPERIMENTAL_API \
+	-I$(top_srcdir)/zpkt/dpdk -I$(top_srcdir)/zpkt/itest -I$(top_srcdir)/zv/src
+zfixbench_LDADD += $(top_builddir)/zpkt/itest/libZpktDpdkFixture.la \
+	$(top_builddir)/zv/src/libZv.la $(DPDK_LIBS) -lrte_net_ring
 zfixbench_LDFLAGS = $(AM_LDFLAGS) -Wl,--no-as-needed \
 	-Wl,$(abs_top_builddir)/zpkt/dpdk/.libs/libZpkt_dpdk.so \
 	-Wl,-rpath,$(abs_top_builddir)/zpkt/dpdk/.libs -Wl,--as-needed
