@@ -12,6 +12,7 @@ GPATH
 GRTAGS
 GTAGS
 gtags.files
+cscope.out
 Makefile
 !zpb/interop/go/Makefile
 !zgrpc/interop/go/Makefile
