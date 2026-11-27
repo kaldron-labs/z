@@ -1,5 +1,14 @@
 # TODO
 
+- `findings.md`
+
+- `ZiMultiplex`: factor out epoll, IOCP into plugins
+  - `zimx_refactor.md`
+
+- rename `Zutcp::MxPlugin` to `MxPlugin`
+
+- rename `ZmNHeap` to `ZmHeap`
+
 - `ZiTx` needs `Ztc::Queue` telemetry
 
 - fix `ZmList<X, ZmListNode<X>>` to be `ZmList<X, ZmListNode<>>`
