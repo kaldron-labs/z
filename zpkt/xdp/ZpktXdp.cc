@@ -35,7 +35,7 @@
 #include <zlib/ZiMultiplex.hh>
 
 #include <zlib/Zpkt.hh>
-#include <zlib/ZpktXDPCf.hh>
+#include <zlib/ZpktXdpCf.hh>
 #include <zlib/ZpktNif.hh>
 #include <zlib/ZpktBPF.hh>
 #include <zlib/ZpktUMem.hh>

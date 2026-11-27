@@ -12,7 +12,7 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZpktEnv.hh>
-#include <zlib/ZpktXDPCf.hh>
+#include <zlib/ZpktXdpCf.hh>
 #include "ZpktTestPlugin.hh"
 
 namespace Zpkt::Xdp {

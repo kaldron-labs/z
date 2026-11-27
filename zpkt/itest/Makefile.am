@@ -29,7 +29,7 @@ zpktpackettest_SOURCES = zpktpackettest.cc zpktfixture.hh
 zpktpackettest_CPPFLAGS = $(AM_CPPFLAGS) \
 	-DZPKT_XDP_TEST_MODULE='"$(abs_builddir)/.libs/libZpktTestXdp.so"'
 noinst_LTLIBRARIES = libZpktTestXdp.la
-libZpktTestXdp_la_SOURCES = ../xdp/ZpktXDP.cc
+libZpktTestXdp_la_SOURCES = ../xdp/ZpktXdp.cc
 libZpktTestXdp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZPKT_XDP_TEST
 libZpktTestXdp_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version \
 	-rpath $(abs_builddir)/.libs $(XDP_PRIVATE_LINK)

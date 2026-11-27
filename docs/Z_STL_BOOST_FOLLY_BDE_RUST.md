@@ -4736,7 +4736,7 @@ call `Env::final()` to finalize its interfaces and plugin. [Lifecycle and owners
 Query `zeroCopy()` for the active copy mode and `tcpChksumOffload()` after each
 start for the enabled TCP checksum mode. With offload active, the caller supplies
 the TCP pseudo-header seed. Otherwise it supplies the complete checksum.
-[AF_XDP implementation](../zpkt/xdp/ZpktXDP.cc) · [DPDK implementation](../zpkt/dpdk/ZpktDpdkNif.cc)
+[AF_XDP implementation](../zpkt/xdp/ZpktXdp.cc) · [DPDK implementation](../zpkt/dpdk/ZpktDpdkNif.cc)
 
 # Zutcp - User-mode TCP/IP stack
 

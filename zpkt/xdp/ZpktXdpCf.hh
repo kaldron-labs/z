@@ -6,10 +6,10 @@
 
 // Raw AF_XDP arena, pool and packet facilities.
 
-#ifndef ZpktXDPCf_HH
-#define ZpktXDPCf_HH
+#ifndef ZpktXdpCf_HH
+#define ZpktXdpCf_HH
 
-#include <zlib/ZpktXDPLib.hh>
+#include <zlib/ZpktXdpLib.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZfCf.hh>
 #include <zlib/ZiPlatform.hh>
@@ -44,4 +44,4 @@ ZfStruct(ZpktXDPAPI, (PluginCf, Cf),
   (interfaces, (Mutable, Required),	UDT));
 
 } // Zpkt::Xdp
-#endif /* ZpktXDPCf_HH */
+#endif /* ZpktXdpCf_HH */

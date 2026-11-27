@@ -9,8 +9,8 @@
 #ifndef ZpktRing_HH
 #define ZpktRing_HH
 
-#ifndef ZpktXDPLib_HH
-#include <zlib/ZpktXDPLib.hh>
+#ifndef ZpktXdpLib_HH
+#include <zlib/ZpktXdpLib.hh>
 #endif
 
 #include <stddef.h>

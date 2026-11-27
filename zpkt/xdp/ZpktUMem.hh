@@ -9,8 +9,8 @@
 #ifndef ZpktUMem_HH
 #define ZpktUMem_HH
 
-#ifndef ZpktXDPLib_HH
-#include <zlib/ZpktXDPLib.hh>
+#ifndef ZpktXdpLib_HH
+#include <zlib/ZpktXdpLib.hh>
 #endif
 
 #include <stddef.h>

@@ -6,8 +6,8 @@
 
 // Z AF_XDP library
 
-#ifndef ZpktXDPLib_HH
-#define ZpktXDPLib_HH
+#ifndef ZpktXdpLib_HH
+#define ZpktXdpLib_HH
 
 #include <zlib/ZuLib.hh>
 
@@ -30,4 +30,4 @@
 
 #endif
 
-#endif /* ZpktXDPLib_HH */
+#endif /* ZpktXdpLib_HH */

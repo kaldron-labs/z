@@ -9,8 +9,8 @@
 #ifndef ZpktTx_HH
 #define ZpktTx_HH
 
-#ifndef ZpktXDPLib_HH
-#include <zlib/ZpktXDPLib.hh>
+#ifndef ZpktXdpLib_HH
+#include <zlib/ZpktXdpLib.hh>
 #endif
 
 #ifndef ZpktXDPGenlReplySize
